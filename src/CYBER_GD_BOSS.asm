@@ -3312,18 +3312,12 @@ ESC_COMPLEX_INIT_B:
 ; Checked once per game tick (every 8 frames). Fires each scheduled
 ; spawn exactly once, in order, as GAME_TICK reaches its threshold -
 ; not when the previous one finishes. SPAWN_THRESHOLDS is a 16-bit
-; (DW) array so thresholds aren't capped at 255. Boss is the 27th
-; (final) entry, index26, threshold270. One-shot: once index 27
-; (all fired) is reached, this just returns immediately forever
-; after, so nothing loops.
-; Enemy4-only repeating test schedule: fires every 20 ticks (160
-; frames, ~2.7s), cycling Y16/Y32/Y48, for 30 spawns total (~90s of
-; play) - dedicated to isolating exactly when the BG-bullet-residue
-; bug shows up (on a hit that only damages, on a kill, or with no
-; hit at all). Nothing else in the game spawns while this is active.
+; (DW) array so thresholds aren't capped at 255. Boss is the final
+; entry, index44. One-shot: once index45 (all fired) is reached, this
+; just returns immediately forever after, so nothing loops.
 SPAWN_SCHEDULE_CHECK:
     LD A,(SPAWN_NEXT_INDEX)
-    CP 30
+    CP 45
     RET NC
     LD H,0 : LD L,A
     ADD HL,HL
@@ -3334,90 +3328,68 @@ SPAWN_SCHEDULE_CHECK:
     OR A
     SBC HL,DE
     RET C
+
+    ; --- E2インスタンスがまだ稼働中なら、インデックスを進めずに
+    ;     今回は何もしないで戻る(次フレームで同じ番号を再チェック)。
+    ;     これにより取りこぼし(無駄)なく、ACTIVEが0に戻った
+    ;     瞬間に確実に発火する ---
+    LD A,(SPAWN_NEXT_INDEX)
+    CP 12 : JR Z,SSC_BUSY_A
+    CP 14 : JR Z,SSC_BUSY_A
+    CP 13 : JR Z,SSC_BUSY_B
+    CP 16 : JR Z,SSC_BUSY_B
+    JR SSC_FIRE
+SSC_BUSY_A:
+    LD A,(E2A_ACTIVE) : OR A : RET NZ
+    JR SSC_FIRE
+SSC_BUSY_B:
+    LD A,(E2B_ACTIVE) : OR A : RET NZ
+
+SSC_FIRE:
     LD A,(SPAWN_NEXT_INDEX)
     INC A
     LD (SPAWN_NEXT_INDEX),A
     DEC A
-    LD B,A
-E4O_MOD3:
-    LD A,B
-    CP 3 : JR C,E4O_GOTMOD
-    SUB 3 : LD B,A
-    JR E4O_MOD3
-E4O_GOTMOD:
-    OR A : JP Z,SPAWN_E4_Y16
-    CP 1 : JP Z,SPAWN_E4_Y32
-    JP SPAWN_E4_Y48
-
-; --- SAVED (disabled): the normal mixed schedule (E2A/E2B/Enemy3/  ---
-; --- Enemy4/simple-formation). Swapped out for SPAWN_SCHEDULE_CHECK ---
-; --- above while chasing the BG-bullet-residue bug with a          ---
-; --- dedicated Enemy4-only repeating schedule. Restore by deleting  ---
-; --- the ENEMY4-only block above, uncommenting this block, and      ---
-; --- restoring SPAWN_THRESHOLDS the same way.                       ---
-;SPAWN_SCHEDULE_CHECK_SAVED_MIXED:
-;    LD A,(SPAWN_NEXT_INDEX)
-;    CP 27
-;    RET NC
-;    LD H,0 : LD L,A
-;    ADD HL,HL
-;    LD DE,SPAWN_THRESHOLDS
-;    ADD HL,DE
-;    LD E,(HL) : INC HL : LD D,(HL)
-;    LD HL,(GAME_TICK)
-;    OR A
-;    SBC HL,DE
-;    RET C
-
-;    ; --- E2インスタンスがまだ稼働中なら、インデックスを進めずに
-;    ;     今回は何もしないで戻る(次フレームで同じ番号を再チェック)。
-;    ;     これにより取りこぼし(無駄)なく、ACTIVEが0に戻った
-;    ;     瞬間に確実に発火する ---
-;    LD A,(SPAWN_NEXT_INDEX)
-;    CP 12 : JR Z,SSC_BUSY_A
-;    CP 14 : JR Z,SSC_BUSY_A
-;    CP 13 : JR Z,SSC_BUSY_B
-;    CP 16 : JR Z,SSC_BUSY_B
-;    JR SSC_FIRE
-;SSC_BUSY_A:
-;    LD A,(E2A_ACTIVE) : OR A : RET NZ
-;    JR SSC_FIRE
-;SSC_BUSY_B:
-;    LD A,(E2B_ACTIVE) : OR A : RET NZ
-
-;SSC_FIRE:
-;    LD A,(SPAWN_NEXT_INDEX)
-;    INC A
-;    LD (SPAWN_NEXT_INDEX),A
-;    DEC A
-;    CP 12 : JP Z,SPAWN_E2_TOP_A
-;    CP 13 : JP Z,SPAWN_E2_BOT_A
-;    CP 14 : JP Z,SPAWN_E2_TOP_B
-;    CP 15 : JP Z,SPAWN_E3_WAVE
-;    CP 16 : JP Z,SPAWN_E2_BOT_B
-;    ; --- Enemy4 (SPAWN_E4_Y16/32/48, indices 17-25) ALSO temporarily ---
-;    ; --- pulled out, same reason - user suspects it's linked to the  ---
-;    ; --- BG-bullet-residue bug too. SSC_NOOP just eats the schedule  ---
-;    ; --- slot (SPAWN_NEXT_INDEX already advanced above) and does     ---
-;    ; --- nothing else.                                               ---
-;    CP 17 : JP Z,SSC_NOOP
-;    CP 18 : JP Z,SSC_NOOP
-;    CP 19 : JP Z,SSC_NOOP
-;    CP 20 : JP Z,SSC_NOOP
-;    CP 21 : JP Z,SSC_NOOP
-;    CP 22 : JP Z,SSC_NOOP
-;    CP 23 : JP Z,SSC_NOOP
-;    CP 24 : JP Z,SSC_NOOP
-;    CP 25 : JP Z,SSC_NOOP
-;    ; --- TYPE_ENEMY1_LOOK test wave (SPAWN_E4B_Y16/32/48, indices    ---
-;    ; --- 26-34) pulled out of the schedule while chasing a reported  ---
-;    ; --- BG-bullet-residue bug the user suspects is linked to it -   ---
-;    ; --- see SPAWN_THRESHOLDS below. Routines/TYPE are still there,  ---
-;    ; --- just unreachable from here for now.                        ---
-;    CP 26 : JP Z,BOSS_SPAWN
-;    JP SPAWN_ONE_E1
-;SSC_NOOP:
-;    RET
+    CP 12 : JP Z,SPAWN_E2_TOP_A
+    CP 13 : JP Z,SPAWN_E2_BOT_A
+    CP 14 : JP Z,SPAWN_E2_TOP_B
+    CP 15 : JP Z,SPAWN_E3_WAVE
+    CP 16 : JP Z,SPAWN_E2_BOT_B
+    ; --- Enemy4: 6 waves of 3 (indices 17-34), each wave firing 1  ---
+    ; --- tick apart so Y16/Y32/Y48 (top/mid/bottom) are genuinely  ---
+    ; --- concurrent - the spawn style from testing, now folded     ---
+    ; --- into the full schedule at double the original wave count. ---
+    CP 17 : JP Z,SPAWN_E4_Y16
+    CP 18 : JP Z,SPAWN_E4_Y32
+    CP 19 : JP Z,SPAWN_E4_Y48
+    CP 20 : JP Z,SPAWN_E4_Y16
+    CP 21 : JP Z,SPAWN_E4_Y32
+    CP 22 : JP Z,SPAWN_E4_Y48
+    CP 23 : JP Z,SPAWN_E4_Y16
+    CP 24 : JP Z,SPAWN_E4_Y32
+    CP 25 : JP Z,SPAWN_E4_Y48
+    CP 26 : JP Z,SPAWN_E4_Y16
+    CP 27 : JP Z,SPAWN_E4_Y32
+    CP 28 : JP Z,SPAWN_E4_Y48
+    CP 29 : JP Z,SPAWN_E4_Y16
+    CP 30 : JP Z,SPAWN_E4_Y32
+    CP 31 : JP Z,SPAWN_E4_Y48
+    CP 32 : JP Z,SPAWN_E4_Y16
+    CP 33 : JP Z,SPAWN_E4_Y32
+    CP 34 : JP Z,SPAWN_E4_Y48
+    ; --- TYPE_ENEMY1_LOOK test wave ("Enemy5"): 3 waves of 3        ---
+    ; --- (indices 35-43), same concurrent-wave style.               ---
+    CP 35 : JP Z,SPAWN_E4B_Y16
+    CP 36 : JP Z,SPAWN_E4B_Y32
+    CP 37 : JP Z,SPAWN_E4B_Y48
+    CP 38 : JP Z,SPAWN_E4B_Y16
+    CP 39 : JP Z,SPAWN_E4B_Y32
+    CP 40 : JP Z,SPAWN_E4B_Y48
+    CP 41 : JP Z,SPAWN_E4B_Y16
+    CP 42 : JP Z,SPAWN_E4B_Y32
+    CP 43 : JP Z,SPAWN_E4B_Y48
+    CP 44 : JP Z,BOSS_SPAWN
+    JP SPAWN_ONE_E1
 
 ; --- saved (disabled) boss-only fast-iteration schedule - kept for  ---
 ; --- quickly testing boss-only features again later. Not active.   ---
@@ -7887,16 +7859,17 @@ ENEMY3_PATTERN3:
 ; E4O_GOTMOD's index%3 dispatch) - are genuinely concurrent on screen,
 ; not one at a time. Gap between waves gives room to watch each wave
 ; play out fully before the next.
+; indices 0-16: simple formation (SPAWN_ONE_E1) + E2A/E2B + Enemy3,
+; unchanged from the original schedule.
+; indices 17-34: Enemy4, 6 waves of 3 (1 tick apart within each wave
+; so Y16/Y32/Y48 are concurrent - see SSC_FIRE).
+; indices 35-43: TYPE_ENEMY1_LOOK ("Enemy5") test wave, 3 waves of 3.
+; index 44: boss.
 SPAWN_THRESHOLDS:
-    DW 10,11,12, 25,26,27, 40,41,42, 55,56,57, 70,71,72
-    DW 85,86,87, 100,101,102, 115,116,117, 130,131,132, 145,146,147
-
-; --- SAVED (disabled) normal mixed-schedule thresholds - restore   ---
-; --- alongside SPAWN_SCHEDULE_CHECK_SAVED_MIXED above.             ---
-;SPAWN_THRESHOLDS_SAVED_MIXED:
-;    DW 10,11,12,25,26,27,40,41,42,55,56,57,70,90,110,120,130
-;    DW 140,141,142,150,151,152,160,161,162
-;    DW 260
+    DW 10,11,12,25,26,27,40,41,42,55,56,57,70,90,110,120,130
+    DW 145,146,147, 160,161,162, 175,176,177, 190,191,192, 205,206,207, 220,221,222
+    DW 235,236,237, 250,251,252, 265,266,267
+    DW 320
 
 ; --- saved (disabled) boss-only single-entry schedule, used ---
 ; --- while iterating quickly on boss features - not deleted: ---
