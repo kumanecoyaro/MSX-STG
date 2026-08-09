@@ -4094,6 +4094,7 @@ BCDE_CLEAR_ENEMY_POOL:
     LD B,ENEMY_SLOT_COUNT
 BCEP_LOOP:
     PUSH BC
+    PUSH HL           ; BCDE_HIDE1/FREE_SPRITE_NUM below reuse HL - save our scan pointer
     PUSH HL : POP IX
     LD A,(IX+E_ACTIVE)
     OR A
@@ -4104,6 +4105,7 @@ BCEP_LOOP:
     LD A,(IX+E_SPRNUM) : CALL BCDE_HIDE1
     XOR A : LD (IX+E_ACTIVE),A
 BCEP_SKIP:
+    POP HL
     POP BC
     LD DE,ENEMY_SLOT_SIZE
     ADD HL,DE
@@ -7899,6 +7901,7 @@ ENEMY_POOL_UPDATE_ALL:
     LD B,ENEMY_SLOT_COUNT
 EPUA_LOOP:
     PUSH BC
+    PUSH HL           ; EBSB_UPDATE reuses HL for LUT/type-table lookups - save our scan pointer
     PUSH HL : POP IX
     LD A,(IX+E_ACTIVE)
     OR A
@@ -7907,6 +7910,7 @@ EPUA_LOOP:
     CP BEHAVIOR_SINE_BOB
     CALL Z,EBSB_UPDATE
 EPUA_SKIP:
+    POP HL
     POP BC
     LD DE,ENEMY_SLOT_SIZE
     ADD HL,DE
@@ -7993,6 +7997,7 @@ CHECK_BULLET_VS_ENEMY_POOL:
     LD B,ENEMY_SLOT_COUNT
 CBVEP_LOOP:
     PUSH BC
+    PUSH HL           ; EBSB_HIT_TEST reuses HL for LUT/type-table lookups - save our scan pointer
     PUSH HL : POP IX
     LD A,(IX+E_ACTIVE)
     OR A
@@ -8005,10 +8010,12 @@ CBVEP_LOOP:
     CALL EBSB_HIT_TEST
     OR A
     JR Z,CBVEP_SKIP
+    POP HL
     POP BC
     LD A,1
     RET
 CBVEP_SKIP:
+    POP HL
     POP BC
     LD DE,ENEMY_SLOT_SIZE
     ADD HL,DE
