@@ -1,7 +1,7 @@
 # MSX-STG — CYBER_SUZUKA
 
 MSX (SCREEN1/GRAPHIC1, T32) 用の縦シューティング(STG)カートリッジROM。
-多重レートのパララックス地形スクロール(6段)、自機ショット、ボスキャラを実装したZ80アセンブリ製ゲーム。
+多重レートのパララックス地形スクロール(5段)、自機ショット、ボスキャラを実装したZ80アセンブリ製ゲーム。
 
 ## 構成
 
@@ -18,7 +18,7 @@ tools/z80emu.py           デバッグ用の最小Z80+VDPエミュレータ(BIOS
 python3 tools/mini_z80asm.py src/CYBER_GD_BOSS.asm rom/CYBER_GD_BOSS1.rom 32768 ff
 ```
 
-`src/CYBER_GD_BOSS.asm` は `ORG 4000h` から始まり、アセンブル後の範囲は `4000h-99BFh`(22976バイト)。
+`src/CYBER_GD_BOSS.asm` は `ORG 4000h` から始まり、アセンブル後の範囲は `4000h-93BFh`(21440バイト)。
 出力ROMは32768バイト(32KB, カートリッジページ1: 4000h-BFFFh)、余白は `FFh` で埋める。
 上記コマンドでビルドすると `rom/CYBER_GD_BOSS1.rom` は元のROMバイナリとバイト単位で完全一致する。
 
