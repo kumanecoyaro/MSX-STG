@@ -7583,6 +7583,38 @@ ENEMY3_DO_SPAWN:
     LD A,(ENEMY3_SPAWN_COUNT) : INC A : LD (ENEMY3_SPAWN_COUNT),A
     RET
 
+; Input: IX = slot base (row at IX+4, col at IX+5). Restores whatever
+; should be showing at that nametable cell - the scroller's own
+; content if the row is within the scroller (read back from NAMEBUF),
+; else BLANKCODE (sky) - i.e. erases this slot's currently-drawn cell.
+; Shared by ENEMY3_UPDATE_SLOT's per-frame erase-before-redraw and
+; E3_HIT_ONE_SLOT's kill path: a bullet kill used to only zero ACTIVE
+; and skip this entirely, permanently stranding whatever cell was
+; drawn at the moment of the kill (that slot never runs
+; ENEMY3_UPDATE_SLOT's erase again, since it now returns immediately
+; on ACTIVE=0) - the long-standing "BG residue" bug, only ever cleaned
+; up by incident if something else (e.g. a bullet) happened to
+; overwrite that same cell later.
+; Clobbers: A, DE, HL.
+ENEMY3_ERASE_CELL:
+    LD A,(IX+4) : CP GROUND_ROW0
+    JR C,E3EC_SKY
+    LD A,(IX+4) : SUB GROUND_ROW0
+    ADD A,A : ADD A,A : ADD A,A : ADD A,A : ADD A,A
+    LD E,A : LD D,0
+    LD HL,NAMEBUF
+    ADD HL,DE
+    LD A,(IX+5) : LD E,A : LD D,0 : ADD HL,DE
+    LD A,(HL)
+    JR E3EC_GOT
+E3EC_SKY:
+    LD A,BLANKCODE
+E3EC_GOT:
+    LD (ANIM_TMP_VAL),A
+    LD A,(IX+4) : LD (ANIM_TMP_ROW),A
+    LD A,(IX+5) : LD (ANIM_TMP_COL),A
+    JP WRITE_ANIM_CELL
+
 ; Input: IX = slot base address. Advances one frame of that slot's
 ; spawn/diagonal/circle/exit sequence and its 1,2,3,2 pulse
 ; animation, then redraws it (erasing its previous cell first).
@@ -7591,23 +7623,7 @@ ENEMY3_UPDATE_SLOT:
     OR A
     RET Z
 
-    LD A,(IX+4) : CP GROUND_ROW0
-    JR C,E3_ERASE_SKY
-    LD A,(IX+4) : SUB GROUND_ROW0
-    ADD A,A : ADD A,A : ADD A,A : ADD A,A : ADD A,A
-    LD E,A : LD D,0
-    LD HL,NAMEBUF
-    ADD HL,DE
-    LD A,(IX+5) : LD E,A : LD D,0 : ADD HL,DE
-    LD A,(HL)
-    JR E3_ERASE_GOT
-E3_ERASE_SKY:
-    LD A,BLANKCODE
-E3_ERASE_GOT:
-    LD (ANIM_TMP_VAL),A
-    LD A,(IX+4) : LD (ANIM_TMP_ROW),A
-    LD A,(IX+5) : LD (ANIM_TMP_COL),A
-    CALL WRITE_ANIM_CELL
+    CALL ENEMY3_ERASE_CELL
 
     LD A,(IX+10)
     DEC A
@@ -7729,6 +7745,7 @@ E3_HIT_ONE_SLOT:
     OR A
     JR Z,E3H_NO
     XOR A : LD (IX+0),A
+    CALL ENEMY3_ERASE_CELL   ; the kill freezes this slot's cell forever otherwise - see ENEMY3_ERASE_CELL (only touches A/DE/HL, BC untouched)
     PUSH BC
     CALL TRIGGER_EXPLOSION
     CALL ADD_SCORE_300
