@@ -49,8 +49,21 @@ PHASE_G4    EQU 0E006h
 PHASE_G2    EQU 0E007h
 PHASE_G1    EQU 0E008h
 ROWPHASE    EQU 0E009h
-CURRID      EQU 0E00Ah
 NEXTID      EQU 0E00Bh
+
+; Per-row cache of ROWDATAn[PXCHARgroup..PXCHARgroup+32] already translated
+; through LUT (ASCII terrain letter -> 0-5 id). CELL_LOOP_0-5 read straight
+; from here instead of re-deriving each id from ROWDATA+LUT every frame;
+; REFRESH_IDCACHE_33 repopulates a row's slice only when its group's
+; PXCHAR actually advances (every 8/16/32/64 frames - see the PXCHAR_G8/
+; G4/G2/G1 gates in MAINLOOP), plus once at INIT to seed frame 1.
+; 33 bytes/row (32 cells + 1 lookahead byte for the last cell's "next").
+IDCACHE0    EQU 0E00Ch
+IDCACHE1    EQU 0E02Dh
+IDCACHE2    EQU 0E04Eh
+IDCACHE3    EQU 0E06Fh
+IDCACHE4    EQU 0E090h
+IDCACHE5    EQU 0E0B1h
 NAMEBUF     EQU 0E200h
 PREVBUF     EQU 0E300h
 STACKTOP    EQU 0F380h
@@ -520,6 +533,17 @@ INIT:
     LD (TICK),A : LD (PXCHAR_G8),A : LD (PXCHAR_G4),A
     LD (PXCHAR_G2),A : LD (PXCHAR_G1),A
 
+    ; Seed all 6 IDCACHEn buffers for PXCHAR=0 (the gates in MAINLOOP that
+    ; call REFRESH_IDCACHE_33 only fire once their group's PXCHAR actually
+    ; advances - every 8/16/32/64 frames - so without this, frame 1 would
+    ; render from stale/zeroed cache RAM).
+    LD HL,ROWDATA0 : LD IX,IDCACHE0 : CALL REFRESH_IDCACHE_33
+    LD HL,ROWDATA1 : LD IX,IDCACHE1 : CALL REFRESH_IDCACHE_33
+    LD HL,ROWDATA2 : LD IX,IDCACHE2 : CALL REFRESH_IDCACHE_33
+    LD HL,ROWDATA3 : LD IX,IDCACHE3 : CALL REFRESH_IDCACHE_33
+    LD HL,ROWDATA4 : LD IX,IDCACHE4 : CALL REFRESH_IDCACHE_33
+    LD HL,ROWDATA5 : LD IX,IDCACHE5 : CALL REFRESH_IDCACHE_33
+
     LD HL,PREVBUF : LD (HL),0FFh
     LD DE,PREVBUF+1 : LD BC,191 : LDIR
 
@@ -911,6 +935,8 @@ MAINLOOP:
     LD A,(TICK) : AND 07h
     JR NZ,SKIP_G8
     LD A,(PXCHAR_G8) : INC A : AND 3Fh : LD (PXCHAR_G8),A
+    LD HL,ROWDATA5 : LD A,(PXCHAR_G8) : LD E,A : LD D,0 : ADD HL,DE
+    LD IX,IDCACHE5 : CALL REFRESH_IDCACHE_33
     LD HL,(GAME_TICK) : INC HL : LD (GAME_TICK),HL
     CALL GAME_TICK_DISPLAY
     CALL SPAWN_SCHEDULE_CHECK
@@ -920,34 +946,43 @@ SKIP_G8:
     LD A,(TICK) : AND 0Fh
     JR NZ,SKIP_G4
     LD A,(PXCHAR_G4) : INC A : AND 3Fh : LD (PXCHAR_G4),A
+    LD HL,ROWDATA3 : LD A,(PXCHAR_G4) : LD E,A : LD D,0 : ADD HL,DE
+    LD IX,IDCACHE3 : CALL REFRESH_IDCACHE_33
+    LD HL,ROWDATA4 : LD A,(PXCHAR_G4) : LD E,A : LD D,0 : ADD HL,DE
+    LD IX,IDCACHE4 : CALL REFRESH_IDCACHE_33
 SKIP_G4:
     LD A,(TICK) : SRL A : AND 07h : LD (PHASE_G4),A
 
     LD A,(TICK) : AND 1Fh
     JR NZ,SKIP_G2
     LD A,(PXCHAR_G2) : INC A : AND 3Fh : LD (PXCHAR_G2),A
+    LD HL,ROWDATA2 : LD A,(PXCHAR_G2) : LD E,A : LD D,0 : ADD HL,DE
+    LD IX,IDCACHE2 : CALL REFRESH_IDCACHE_33
 SKIP_G2:
     LD A,(TICK) : SRL A : SRL A : AND 07h : LD (PHASE_G2),A
 
     LD A,(TICK) : AND 3Fh
     JR NZ,SKIP_G1
     LD A,(PXCHAR_G1) : INC A : AND 3Fh : LD (PXCHAR_G1),A
+    LD HL,ROWDATA0 : LD A,(PXCHAR_G1) : LD E,A : LD D,0 : ADD HL,DE
+    LD IX,IDCACHE0 : CALL REFRESH_IDCACHE_33
+    LD HL,ROWDATA1 : LD A,(PXCHAR_G1) : LD E,A : LD D,0 : ADD HL,DE
+    LD IX,IDCACHE1 : CALL REFRESH_IDCACHE_33
 SKIP_G1:
     LD A,(TICK) : SRL A : SRL A : SRL A : AND 07h : LD (PHASE_G1),A
 
     ; --- row 0: screen row 17 (TIER1_MOUNTAIN), group PXCHAR_G1 ---
     LD A,(PHASE_G1) : LD (ROWPHASE),A
-    LD HL,ROWDATA0 : LD A,(PXCHAR_G1) : LD E,A : LD D,0 : ADD HL,DE
+    LD HL,IDCACHE0                       ; pre-translated ids - see IDCACHE0 comment
     LD IX,NAMEBUF+0
     LD B,32
     ; --- prime C = curr_id for cell 0; each cell's "next" is the following---
     ; --- cell's "curr" (HL only advances by 1/cell), so C carries it       ---
-    ; --- forward every iteration instead of re-deriving it from ROWDATA+   ---
-    ; --- LUT (a second, redundant lookup) - saves ~30 T-states/cell.       ---
-    LD A,(HL) : LD E,A : LD D,LUT/256 : LD A,(DE) : LD C,A
+    ; --- forward every iteration instead of re-reading it. ---
+    LD A,(HL) : LD C,A
 CELL_LOOP_0:
     INC HL
-    LD A,(HL) : LD E,A : LD D,LUT/256 : LD A,(DE) : LD (NEXTID),A
+    LD A,(HL) : LD (NEXTID),A
     LD A,(ROWPHASE) : OR A
     JR NZ,NONZERO_0
     LD A,C : LD E,A : LD D,SOLOTAB/256 : LD A,(DE)
@@ -966,13 +1001,13 @@ STORE_0:
 
     ; --- row 1: screen row 18 (TIER2_DIAMOND), group PXCHAR_G1 ---
     LD A,(PHASE_G1) : LD (ROWPHASE),A
-    LD HL,ROWDATA1 : LD A,(PXCHAR_G1) : LD E,A : LD D,0 : ADD HL,DE
+    LD HL,IDCACHE1
     LD IX,NAMEBUF+32
     LD B,32
-    LD A,(HL) : LD E,A : LD D,LUT/256 : LD A,(DE) : LD C,A
+    LD A,(HL) : LD C,A
 CELL_LOOP_1:
     INC HL
-    LD A,(HL) : LD E,A : LD D,LUT/256 : LD A,(DE) : LD (NEXTID),A
+    LD A,(HL) : LD (NEXTID),A
     LD A,(ROWPHASE) : OR A
     JR NZ,NONZERO_1
     LD A,C : LD E,A : LD D,SOLOTAB/256 : LD A,(DE)
@@ -991,13 +1026,13 @@ STORE_1:
 
     ; --- row 2: screen row 19 (TIER3_DIAMOND), group PXCHAR_G2 ---
     LD A,(PHASE_G2) : LD (ROWPHASE),A
-    LD HL,ROWDATA2 : LD A,(PXCHAR_G2) : LD E,A : LD D,0 : ADD HL,DE
+    LD HL,IDCACHE2
     LD IX,NAMEBUF+64
     LD B,32
-    LD A,(HL) : LD E,A : LD D,LUT/256 : LD A,(DE) : LD C,A
+    LD A,(HL) : LD C,A
 CELL_LOOP_2:
     INC HL
-    LD A,(HL) : LD E,A : LD D,LUT/256 : LD A,(DE) : LD (NEXTID),A
+    LD A,(HL) : LD (NEXTID),A
     LD A,(ROWPHASE) : OR A
     JR NZ,NONZERO_2
     LD A,C : LD E,A : LD D,SOLOTAB/256 : LD A,(DE)
@@ -1016,13 +1051,13 @@ STORE_2:
 
     ; --- row 3: screen row 20 (TIER4_SLASH), group PXCHAR_G4 ---
     LD A,(PHASE_G4) : LD (ROWPHASE),A
-    LD HL,ROWDATA3 : LD A,(PXCHAR_G4) : LD E,A : LD D,0 : ADD HL,DE
+    LD HL,IDCACHE3
     LD IX,NAMEBUF+96
     LD B,32
-    LD A,(HL) : LD E,A : LD D,LUT/256 : LD A,(DE) : LD C,A
+    LD A,(HL) : LD C,A
 CELL_LOOP_3:
     INC HL
-    LD A,(HL) : LD E,A : LD D,LUT/256 : LD A,(DE) : LD (NEXTID),A
+    LD A,(HL) : LD (NEXTID),A
     LD A,(ROWPHASE) : OR A
     JR NZ,NONZERO_3
     LD A,C : LD E,A : LD D,SOLOTAB/256 : LD A,(DE)
@@ -1041,13 +1076,13 @@ STORE_3:
 
     ; --- row 4: screen row 21 (TIER5_BACKSLASH), group PXCHAR_G4 ---
     LD A,(PHASE_G4) : LD (ROWPHASE),A
-    LD HL,ROWDATA4 : LD A,(PXCHAR_G4) : LD E,A : LD D,0 : ADD HL,DE
+    LD HL,IDCACHE4
     LD IX,NAMEBUF+128
     LD B,32
-    LD A,(HL) : LD E,A : LD D,LUT/256 : LD A,(DE) : LD C,A
+    LD A,(HL) : LD C,A
 CELL_LOOP_4:
     INC HL
-    LD A,(HL) : LD E,A : LD D,LUT/256 : LD A,(DE) : LD (NEXTID),A
+    LD A,(HL) : LD (NEXTID),A
     LD A,(ROWPHASE) : OR A
     JR NZ,NONZERO_4
     LD A,C : LD E,A : LD D,SOLOTAB/256 : LD A,(DE)
@@ -1066,13 +1101,13 @@ STORE_4:
 
     ; --- row 5: screen row 22 (TIER6_WEDGE), group PXCHAR_G8 ---
     LD A,(PHASE_G8) : LD (ROWPHASE),A
-    LD HL,ROWDATA5 : LD A,(PXCHAR_G8) : LD E,A : LD D,0 : ADD HL,DE
+    LD HL,IDCACHE5
     LD IX,NAMEBUF+160
     LD B,32
-    LD A,(HL) : LD E,A : LD D,LUT/256 : LD A,(DE) : LD C,A
+    LD A,(HL) : LD C,A
 CELL_LOOP_5:
     INC HL
-    LD A,(HL) : LD E,A : LD D,LUT/256 : LD A,(DE) : LD (NEXTID),A
+    LD A,(HL) : LD (NEXTID),A
     LD A,(ROWPHASE) : OR A
     JR NZ,NONZERO_5
     LD A,C : LD E,A : LD D,SOLOTAB/256 : LD A,(DE)
@@ -7710,6 +7745,22 @@ CHECK_BULLET_VS_ENEMY3:
     LD IX,ENEMY3_POOL+77
     JP E3_HIT_ONE_SLOT
 
+; Translates 33 consecutive ROWDATA bytes (ASCII terrain letter) through
+; LUT into an IDCACHEn buffer - used to refresh a row's cache only when
+; its group's PXCHAR actually advances (see the PXCHAR_G8/G4/G2/G1 gates
+; in MAINLOOP), instead of re-deriving every id from ROWDATA+LUT every
+; single frame in CELL_LOOP_0-5.
+; Input: HL = source (ROWDATAn + PXCHARgroup), IX = dest (IDCACHEn).
+; Clobbers: A, B, D, E, HL, IX.
+REFRESH_IDCACHE_33:
+    LD B,33
+RIC_LOOP:
+    LD A,(HL) : LD E,A : LD D,LUT/256 : LD A,(DE)
+    LD (IX+0),A
+    INC HL
+    INC IX
+    DJNZ RIC_LOOP
+    RET
 
 
 
@@ -7754,8 +7805,8 @@ SOLOTAB:
     DB 00h,08h,10h,18h,20h,21h
 
     ALIGN 256
-; MUL6: base id (0-5) -> id*6. Optimization: avoids the previous
-; 5x(LD/ADD/LD) repeated-addition chain used to multiply CURRID
+; MUL6: base id (0-5) -> id*6. Optimization: avoids a previous
+; 5x(LD/ADD/LD) repeated-addition chain used to multiply curr_id
 ; by 6 when computing the PAIRBASE index (curr*6+next). A single
 ; table lookup replaces roughly 15 instructions with 4 per cell.
 MUL6:

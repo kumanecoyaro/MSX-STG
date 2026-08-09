@@ -38,6 +38,22 @@ def run_until_pc(z, target_pc, max_instr=200000):
     raise RuntimeError(f"never reached PC {target_pc:04X}, stuck at {z.pc:04X}")
 
 
+def seed_idcache(z, sym, row, rowdata_key, pxchar):
+    """Mimics what REFRESH_IDCACHE_33 does at the real PXCHAR gate: only
+    needed for source versions that read CELL_LOOP's ids from an IDCACHEn
+    buffer instead of ROWDATA+LUT directly. A no-op on older source that
+    doesn't have IDCACHE at all."""
+    cache_key = f'IDCACHE{row}'
+    if cache_key not in sym:
+        return
+    z.sp = 0xFF00
+    z.wr(0xFF00, 0x00); z.wr(0xFF01, 0x00)
+    z.sethl((sym[rowdata_key] + pxchar) & 0xFFFF)
+    z.ix = sym[cache_key]
+    z.pc = sym['REFRESH_IDCACHE_33']
+    run_until_pc(z, 0x0000)
+
+
 def run_terrain_block(mem, sym, phase_g1, phase_g2, phase_g4, phase_g8,
                        pxchar_g1, pxchar_g2, pxchar_g4, pxchar_g8):
     z = Z80(bytearray(mem))
@@ -49,6 +65,12 @@ def run_terrain_block(mem, sym, phase_g1, phase_g2, phase_g4, phase_g8,
     z.mem[sym['PXCHAR_G2']] = pxchar_g2
     z.mem[sym['PXCHAR_G4']] = pxchar_g4
     z.mem[sym['PXCHAR_G8']] = pxchar_g8
+    seed_idcache(z, sym, 0, 'ROWDATA0', pxchar_g1)
+    seed_idcache(z, sym, 1, 'ROWDATA1', pxchar_g1)
+    seed_idcache(z, sym, 2, 'ROWDATA2', pxchar_g2)
+    seed_idcache(z, sym, 3, 'ROWDATA3', pxchar_g4)
+    seed_idcache(z, sym, 4, 'ROWDATA4', pxchar_g4)
+    seed_idcache(z, sym, 5, 'ROWDATA5', pxchar_g8)
     z.pc = sym['SKIP_G1']
     run_until_pc(z, sym['ROWDONE_5'])
     namebuf = bytes(z.mem[sym['NAMEBUF']:sym['NAMEBUF'] + 192])
