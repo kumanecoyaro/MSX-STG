@@ -7127,9 +7127,13 @@ SPAWN_E4:
 ; TYPE_ENEMY1_LOOK instead - proves TYPE (display) and BEHAVIOR
 ; (movement) are independent. Same any-row baseY lookup as SPAWN_E4.
 SPAWN_E4B:
-    ; --- temporarily disabled (Enemy5) to isolate whether it's involved ---
-    ; --- in the BG-residue bug - see SPAWN_E3_WAVE's own note.          ---
-    RET
+    LD H,0 : LD L,A
+    LD DE,SPAWN_BASEY_TABLE
+    ADD HL,DE
+    LD A,(HL)
+    LD (E4_SPAWN_BASEY),A
+    LD A,TYPE_ENEMY1_LOOK : LD (E4_SPAWN_TYPE),A
+    JP ENEMY4_CLAIM_ANY
 
 ; Claims a free slot from the unified ENEMY_POOL for a fresh
 ; BEHAVIOR_SINE_BOB spawn: right-edge X, fresh LUT phase, this wave's
