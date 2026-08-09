@@ -86,6 +86,7 @@ PBD_D1       EQU 0E0D6h
 PBD_D2       EQU 0E0D7h
 FD_COL       EQU 0E0D8h
 FD_SLOT_IDX  EQU 0E0D9h
+WATCH_FIRST_READ EQU 0E0DAh
 
 NAMEBUF     EQU 0E200h
 PREVBUF     EQU 0E300h
@@ -2023,6 +2024,14 @@ BULLET2_NEXT:
     ; --- freeze and dump diagnostics instead of continuing - see        ---
     ; --- WATCH_ROW's own comment. Read mode, so no 40h on the high      ---
     ; --- byte (unlike every write-mode address-set elsewhere).          ---
+    ; --- Double-read confirmation: the first freeze-dump result was      ---
+    ; --- reported as a false detection (nothing was actually written     ---
+    ; --- there at that tick on real hardware) - this check's own          ---
+    ; --- address-set only had 2 NOPs, the same margin shown all through   ---
+    ; --- this session to sometimes not be enough, so the read-back        ---
+    ; --- itself could have been unreliable. Re-set the address and read   ---
+    ; --- again with a wider (6-NOP) margin on the confirm pass; only       ---
+    ; --- freezes if BOTH reads agree on the same non-blank value.         ---
     LD A,5Ah : OUT (99h),A
     NOP
     NOP
@@ -2031,7 +2040,29 @@ BULLET2_NEXT:
     NOP
     IN A,(98h)
     CP BLANKCODE
-    JP NZ,FREEZE_DUMP
+    JP Z,WATCH_CLEAR
+    LD (WATCH_FIRST_READ),A
+    LD A,5Ah : OUT (99h),A
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    LD A,18h : OUT (99h),A
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    IN A,(98h)
+    LD B,A
+    LD A,(WATCH_FIRST_READ)
+    CP B
+    JP NZ,WATCH_CLEAR    ; first/second read disagree - treat as a bad read, not real
+    JP FREEZE_DUMP        ; both reads agree on the same non-blank value - confirmed
+WATCH_CLEAR:
 
     EI
     HALT
