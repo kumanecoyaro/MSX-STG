@@ -3491,46 +3491,6 @@ AWARD_FORMATION_SCORE:
 AWARD_ENEMY2:
     JP ADD_SCORE_200
 
-
-
-; Starts whichever of the 4 spawn behaviors ENEMY_CYCLE points to,
-; then advances ENEMY_CYCLE (mod 4) for next time:
-;   0 = simple formation, spawn Y0(16), drifts left until off-screen
-;   1 = simple formation, spawn Y1(128), drifts left until off-screen
-;   2 = assemble/drift/fast-Z-exit (mirrored), spawn Y2(32)
-;   3 = assemble/drift/fast-Z-exit (normal), spawn Y1(128)
-ENEMY_START_CYCLE:
-    LD A,(ENEMY_CYCLE)
-    CP 2
-    JR NC,ENEMY_START_COMPLEX_A
-
-    LD A,1 : LD (ENEMY0_STATE),A
-    LD A,ENEMY_SPAWNX : LD (ENEMY0_X),A
-    XOR A : LD (ENEMY1_STATE),A
-    LD A,16 : LD (ENEMY1_DELAY),A
-    XOR A : LD (ENEMY2_STATE),A
-    LD A,32 : LD (ENEMY2_DELAY),A
-    LD A,1
-    LD (ENEMY0_TOP),A : LD (ENEMY0_BOT),A
-    LD (ENEMY1_TOP),A : LD (ENEMY1_BOT),A
-    LD (ENEMY2_TOP),A : LD (ENEMY2_BOT),A
-    LD HL,SPRPAT+32 : LD DE,ENEMY0_TOP : LD IX,ENEMY0_BOT
-    CALL REDRAW_UNIT_PATTERN
-    LD HL,SPRPAT+64 : LD DE,ENEMY1_TOP : LD IX,ENEMY1_BOT
-    CALL REDRAW_UNIT_PATTERN
-    LD HL,SPRPAT+96 : LD DE,ENEMY2_TOP : LD IX,ENEMY2_BOT
-    CALL REDRAW_UNIT_PATTERN
-    LD A,(ENEMY_CYCLE)
-    OR A
-    JR NZ,ESC_SIMPLE_Y1
-    LD A,ENEMY_Y0 : LD (ENEMY_Y),A
-    JR ESC_SIMPLE_DONE
-ESC_SIMPLE_Y1:
-    LD A,ENEMY_Y1 : LD (ENEMY_Y),A
-ESC_SIMPLE_DONE:
-    XOR A : LD (ENEMY_MODE),A
-    RET
-
 ; ===== Enemy2 instance A/B state (independent complex-mode formations) =====
 E2A_SEQ_STATE EQU 0E600h
 E2A_EXIT_PHASE EQU 0E601h
@@ -5041,32 +5001,6 @@ GET_POD_XY:
 ; pair every POD_FIRE_INTERVAL frames, cycling (1,2)(2,3)...(7,8)
 ; and back to (1,2). Also moves/erases the (at most 2) live bullets
 ; every frame regardless.
-; hides all 8 orbit pod sprites (20-27) - used right when the
-; volley fires, since they'd otherwise sit frozen exactly on top of
-; the volley bullets' spawn positions, risking the VDP's 4-sprite-
-; per-scanline limit silently dropping some of the bullets. They
-; reappear on their own once the orbit resumes (BOSS_ORBIT_UPDATE
-; calls BOSS_ORBIT_DRAW_ALL again as soon as POD_VOLLEY_ACTIVE clears).
-HIDE_ALL_PODS:
-    LD B,BOSS_ORBIT_BASE
-    LD C,8
-HAP_LOOP:
-    PUSH BC
-    LD A,B : ADD A,A : ADD A,A : LD E,A : LD D,0
-    LD A,E : OUT (99h),A
-    NOP
-    NOP
-    LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
-    LD A,209 : OUT (98h),A
-    NOP
-    NOP
-    POP BC
-    INC B
-    DEC C
-    JR NZ,HAP_LOOP
-    RET
 
 POD_FIRE_UPDATE:
     CALL POD_BULLET_MOVE
@@ -5250,22 +5184,6 @@ VU_PODLOST:
 ; position on the shared orbit LUT (a small white hex icon).
 ; draws the lap marker at whatever's currently in BOSS_ORBIT_XTMP/YTMP
 ; (the caller fills these in via GET_POD_XY before calling this).
-; C = pod index (0-7) - sets that pod's OWN sprite color to white,
-; leaving its Y/X/pattern untouched (it's already sitting there).
-LAP_WHITEN_POD:
-    LD A,BOSS_ORBIT_BASE
-    ADD A,C
-    ADD A,A : ADD A,A : LD E,A : LD D,0
-    LD A,E : ADD A,3 : OUT (99h),A
-    NOP
-    NOP
-    LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
-    LD A,15 : OUT (98h),A
-    NOP
-    NOP
-    RET
 
 LAP_MARKER_DRAW:
     LD A,LAP_MARKER_SPR : ADD A,A : ADD A,A : LD E,A : LD D,0
