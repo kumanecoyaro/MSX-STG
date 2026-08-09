@@ -3729,16 +3729,48 @@ BCEP_SKIP:
     DJNZ BCEP_LOOP
     RET
 
+; Safe VRAM block write, for use in place of BIOS LDIRVM(005Ch) at any
+; site that can run while the screen is actively displaying (i.e.
+; anywhere past INIT). LDIRVM's actual per-byte loop is baked into the
+; BIOS ROM and opaque to us - it may well be OTIR-based (21T/iteration,
+; fixed - NOPs cannot be inserted inside a single block instruction to
+; pad it out), same class of bug as an old OTIR-based scroll-write
+; corruption bug fixed by switching to an explicit OUT+NOP loop. This
+; mirrors ROWXFER's proven-safe per-byte shape (~46-60T/iteration,
+; used every frame for the terrain scroller with no reported
+; corruption) instead of trusting the BIOS's internal timing.
+; Input: HL=source(RAM), DE=dest(VRAM addr), BC=count (16-bit)
+SAFE_LDIRVM:
+    LD A,E : OUT (99h),A
+    NOP
+    NOP
+    LD A,D : OR 40h : OUT (99h),A
+    NOP
+    NOP
+SAFE_LDIRVM_LOOP:
+    LD A,(HL) : OUT (98h),A
+    NOP
+    NOP
+    NOP
+    INC HL
+    DEC BC
+    LD A,B : OR C
+    JR NZ,SAFE_LDIRVM_LOOP
+    RET
+
 BOSS_SPAWN:
     CALL BOSS_CLEAR_DYNAMIC_ENEMIES
     ; --- load boss pattern data now, just in time - not preloaded ---
     ; --- at INIT (that permanently claimed codes192-255, which    ---
     ; --- the terrain scroller actually needs some of - see INIT). ---
-    LD HL,BOSS_PATTERNS : LD DE,192*8 : LD BC,64*8 : CALL LDIRVM
-    LD HL,BOSS_HEX_PATTERN : LD DE,96*8+SPRPAT : LD BC,32 : CALL LDIRVM
-    LD HL,BOSS_ORBIT_PATTERN : LD DE,100*8+SPRPAT : LD BC,32 : CALL LDIRVM
-    LD HL,DFL_BULLET_PATTERN : LD DE,104*8+SPRPAT : LD BC,32 : CALL LDIRVM
-    LD HL,EXPLOSION_PATTERN : LD DE,108*8+SPRPAT : LD BC,32 : CALL LDIRVM
+    ; --- Uses SAFE_LDIRVM, not the BIOS LDIRVM - this runs mid-game ---
+    ; --- with the screen actively displaying; see SAFE_LDIRVM's own ---
+    ; --- header comment for why the BIOS routine isn't trusted here. ---
+    LD HL,BOSS_PATTERNS : LD DE,192*8 : LD BC,64*8 : CALL SAFE_LDIRVM
+    LD HL,BOSS_HEX_PATTERN : LD DE,96*8+SPRPAT : LD BC,32 : CALL SAFE_LDIRVM
+    LD HL,BOSS_ORBIT_PATTERN : LD DE,100*8+SPRPAT : LD BC,32 : CALL SAFE_LDIRVM
+    LD HL,DFL_BULLET_PATTERN : LD DE,104*8+SPRPAT : LD BC,32 : CALL SAFE_LDIRVM
+    LD HL,EXPLOSION_PATTERN : LD DE,108*8+SPRPAT : LD BC,32 : CALL SAFE_LDIRVM
     XOR A : LD (BOSS_ROW),A
     XOR A : LD (BOSS_COL),A
     LD A,1 : LD (BOSS_PHASE),A
