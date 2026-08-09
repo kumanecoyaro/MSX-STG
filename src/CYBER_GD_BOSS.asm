@@ -768,6 +768,7 @@ INIT_SPRATR_CLR:
     LD DE,E2B_SEQ_STATE+1 : LD BC,97 : LDIR
     LD HL,ENEMY4_POOL : LD (HL),A
     LD DE,ENEMY4_POOL+1 : LD BC,20 : LDIR
+    CALL ENEMY_POOL_INIT
     LD HL,ENEMY4_PATTERN : LD DE,PAT_ENEMY4*8+SPRPAT : LD BC,32 : CALL LDIRVM
     LD HL,PARTICLE_PATTERN : LD DE,PAT_PARTICLE*8+SPRPAT : LD BC,32 : CALL LDIRVM
     XOR A : LD (BOSS_EXPL_ACTIVE),A
@@ -3580,6 +3581,69 @@ PAT_PARTICLE   EQU 120        ; single-dot trail particle (32 bytes at SPRPAT+96
 ENEMY4_POOL EQU 0E6F4h ; 3*7 = 21 bytes (E6F4-E708)
 E4_SPAWN_BASEY EQU 0E709h ; scratch: this wave's base Y, set right before E4_CLAIM_ANY
 
+; ===== Unified sprite-enemy buffer (target for the ENEMY0/1/2, E2A/E2B ===
+; and ENEMY4 migration - ENEMY3 stays separate since it's BG/nametable  ===
+; drawn and isn't limited by the 32-sprite hardware budget). Each of    ===
+; the 32 slots is a generic struct; a slot's BEHAVIOR field selects     ===
+; which movement algorithm runs it and is independent of its TYPE       ===
+; field (which selects the sprite pattern/color/HP/score to draw and    ===
+; award), so e.g. Enemy2's look can run on Enemy4's movement.           ===
+; Slot layout (20 bytes):
+;   +0  ACTIVE      0=free, 1=in use
+;   +1  TYPE        display id (pattern/color/HP/score lookup)
+;   +2  BEHAVIOR    movement algorithm id (dispatch)
+;   +3  STATE       algorithm substate/sequence step
+;   +4  X
+;   +5  Y
+;   +6  TOP         sprite pattern number (top half, REDRAW_UNIT_PATTERN-style)
+;   +7  BOT         sprite pattern number (bottom half)
+;   +8  SPRNUM      hardware sprite number (via ALLOC_SPRITE_NUM/FREE_SPRITE_NUM)
+;   +9  FLAGS       bit0=EXITED (off left edge, formation-exit bookkeeping)
+;   +10 PARAM0       algorithm scratch (e.g. DIAG_REMAIN / group PROGRESS)
+;   +11 PARAM1       algorithm scratch (e.g. DIAG_DIR / group EXIT_PHASE)
+;   +12 PARAM2       algorithm scratch (e.g. EXITTYPE)
+;   +13 PARAM3       algorithm scratch (e.g. group TEMP_X)
+;   +14 TRAIL_CHAN   0=none, else 1-based index into ENEMY_TRAIL_CHANS
+;   +15 TRAIL_DELAY  frames this slot trails its channel's writer by
+;   +16 DELAY        generic countdown (e.g. staggered spawn delay)
+;   +17 HP           remaining hit points
+;   +18 PARAM4       spare algorithm scratch
+;   +19 PARAM5       spare algorithm scratch
+ENEMY_SLOT_SIZE  EQU 20
+ENEMY_SLOT_COUNT EQU 32
+ENEMY_POOL       EQU 0E84Dh   ; 32*20 = 640 bytes (E84D-EACC)
+
+; field offsets, for readable (IX+E_xxx) access
+E_ACTIVE      EQU 0
+E_TYPE        EQU 1
+E_BEHAVIOR    EQU 2
+E_STATE       EQU 3
+E_X           EQU 4
+E_Y           EQU 5
+E_TOP         EQU 6
+E_BOT         EQU 7
+E_SPRNUM      EQU 8
+E_FLAGS       EQU 9
+E_PARAM0      EQU 10
+E_PARAM1      EQU 11
+E_PARAM2      EQU 12
+E_PARAM3      EQU 13
+E_TRAIL_CHAN  EQU 14
+E_TRAIL_DELAY EQU 15
+E_DELAY       EQU 16
+E_HP          EQU 17
+E_PARAM4      EQU 18
+E_PARAM5      EQU 19
+
+; 2 shared trail-history ring buffers (TRAIL_BUFLEN*2 = 64 bytes each,
+; same X/Y-pair layout as the legacy E2A/E2B_TRAIL_HIST), for the
+; formation-leader/follower movement algorithm to be generalized onto
+; this buffer in a later migration step. A slot with E_TRAIL_CHAN=0 is
+; not part of a trail (most enemies); channels are claimed by whichever
+; slot is currently acting as a formation's leader.
+ENEMY_TRAIL_CHANS   EQU 0EACDh  ; 2*64 = 128 bytes (EACD-EB4C)
+ENEMY_TRAIL_CH_WIDX EQU 0EB4Dh  ; 2 bytes, one write-index per channel
+
 ; --- boss materialize effect state (non-blocking: BOSS_UPDATE is  ---
 ; --- called once per frame from MAINLOOP and returns immediately  ---
 ; --- most frames - it never loops/HALTs internally itself, so     ---
@@ -6164,6 +6228,65 @@ FREE_SPRITE_NUM:
     LD D,0 : LD E,A
     ADD HL,DE
     XOR A : LD (HL),A
+    RET
+
+; Clears every slot of the unified enemy buffer (ACTIVE=0) and resets
+; both shared trail-channel write indices. Called once from INIT.
+ENEMY_POOL_INIT:
+    LD HL,ENEMY_POOL
+    LD DE,ENEMY_POOL+1
+    LD BC,ENEMY_SLOT_SIZE*ENEMY_SLOT_COUNT-1
+    LD (HL),0
+    LDIR
+    XOR A
+    LD (ENEMY_TRAIL_CH_WIDX+0),A
+    LD (ENEMY_TRAIL_CH_WIDX+1),A
+    RET
+
+; Scans the unified enemy buffer for a free (ACTIVE=0) slot. On
+; success: IX = that slot's base address (zeroed first, so every field
+; starts at 0 without each movement algorithm having to clear its own
+; scratch fields), (IX+E_ACTIVE) is set to 1, and A=1. On failure
+; (buffer full): A=0, IX is undefined. Uses HL to scan (the assembler
+; here has no ADD IX,rr), then PUSH HL:POP IX once a slot is found.
+; Trashes A,B,DE,HL,IX.
+ALLOC_ENEMY_SLOT:
+    LD HL,ENEMY_POOL
+    LD B,ENEMY_SLOT_COUNT
+AES_SCAN:
+    LD A,(HL)
+    OR A
+    JR Z,AES_FOUND
+    LD DE,ENEMY_SLOT_SIZE
+    ADD HL,DE
+    DJNZ AES_SCAN
+    XOR A
+    RET
+AES_FOUND:
+    PUSH HL : POP IX
+    LD (HL),0
+    LD D,H : LD E,L : INC DE
+    LD BC,ENEMY_SLOT_SIZE-1
+    LDIR
+    LD (IX+E_ACTIVE),1
+    LD A,1
+    RET
+
+; Releases a slot back to the free pool: frees its hardware sprite
+; number (if any) and zeroes ACTIVE. Input: IX = slot base address.
+; Does not hide the sprite on screen - the caller must do that (hide
+; at the offscreen Y, same as the legacy per-type EXIT paths) before
+; freeing, since a freed sprite number may be reassigned to a new
+; owner as soon as the next ALLOC_SPRITE_NUM runs.
+FREE_ENEMY_SLOT:
+    LD A,(IX+E_ACTIVE)
+    OR A
+    RET Z
+    LD A,(IX+E_SPRNUM)
+    OR A
+    CALL NZ,FREE_SPRITE_NUM
+    XOR A
+    LD (IX+E_ACTIVE),A
     RET
 
 SPAWN_E2_TOP_A:
