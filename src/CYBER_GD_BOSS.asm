@@ -141,51 +141,11 @@ ENEMY_X       EQU 0E3DAh   ; shared group X, used once the complex formation is 
 
 ; Each unit is a 16x16 sprite showing a diagonal pair of asterisks
 ; (top-left + bottom-right, each its own 8x8 "enemy"); bottom-left
-; and top-right are always blank. 3 units side by side read as:
-;   *0*0*0
-;   0*0*0*
-; Each asterisk is tracked/killed independently (1=alive,0=dead);
-; a bullet passes through a quadrant that's already dead.
-ENEMY0_TOP EQU 0E3DBh
-ENEMY0_BOT EQU 0E3DCh
-ENEMY1_TOP EQU 0E3DDh
-ENEMY1_BOT EQU 0E3DEh
-ENEMY2_TOP EQU 0E3DFh
-ENEMY2_BOT EQU 0E3E0h
-
-; Units enter one at a time (16 frames apart, matching the 16px
-; formation spacing at 1 dot/frame) instead of all spawning at
-; ENEMY_SPAWNX(240) simultaneously - 3 units side by side would
-; put unit1/unit2 at X=256/272, which overflows a byte and wraps
-; onto the left side of the screen instead of clipping off the
-; right edge. STATE: 0=waiting(hidden), 1=active(moving,visible),
-; 2=done(exited off the left, hidden until the whole group respawns).
-ENEMY0_X     EQU 0E3E1h
-ENEMY0_STATE EQU 0E3E2h
-ENEMY1_X     EQU 0E3E3h
-ENEMY1_STATE EQU 0E3E4h
-ENEMY1_DELAY EQU 0E3E5h
-ENEMY2_X     EQU 0E3E6h
-ENEMY2_STATE EQU 0E3E7h
-ENEMY2_DELAY EQU 0E3E8h
-E1_U3_STATE EQU 0E6E2h
-E1_U3_X EQU 0E6E3h
-E1_U3_Y EQU 0E6E4h
-E1_U3_TOP EQU 0E6E5h
-E1_U3_BOT EQU 0E6E6h
-E1_U3_SPRNUM EQU 0E6E7h
-E1_U4_STATE EQU 0E6E8h
-E1_U4_X EQU 0E6E9h
-E1_U4_Y EQU 0E6EAh
-E1_U4_TOP EQU 0E6EBh
-E1_U4_BOT EQU 0E6ECh
-E1_U4_SPRNUM EQU 0E6EDh
-E1_U5_STATE EQU 0E6EEh
-E1_U5_X EQU 0E6EFh
-E1_U5_Y EQU 0E6F0h
-E1_U5_TOP EQU 0E6F1h
-E1_U5_BOT EQU 0E6F2h
-E1_U5_SPRNUM EQU 0E6F3h
+; and top-right are always blank. Each asterisk (quadrant) is
+; tracked/killed independently (E_TOP/E_BOT, 1=alive/0=dead) - a
+; bullet passes through a quadrant that's already dead. Migrated onto
+; the unified ENEMY_POOL as BEHAVIOR_SIMPLE_DRIFT_DODGE; see
+; SIMPLE_PATTERN_NUMS/EBSD_UPDATE/EBSD_HIT_TEST below.
 
 ENEMY_SPEED   EQU 4         ; dots/frame
 ENEMY_SPAWNX  EQU 240        ; right edge (256-16, sprite is 16 wide)
@@ -324,32 +284,15 @@ PLAYER_FLYAWAY_DIST EQU 0E839h   ; total px traveled since flyaway started (acce
 PARTICLE_SPAWN_COOLDOWN EQU 0E83Ah  ; frames until the next spawn is allowed
 
 ; --- Enemy1: one-time diagonal dodge toward the player when     ---
-; --- crossing screen-center X. 6 bytes, 1 per unit (0=not yet   ---
-; --- done this flight, 1=done). Reset to 0 at spawn. ---
-ENEMY0_DIAG_DONE EQU 0E83Bh
-ENEMY1_DIAG_DONE EQU 0E83Ch
-ENEMY2_DIAG_DONE EQU 0E83Dh
-E1_U3_DIAG_DONE  EQU 0E83Eh
-E1_U4_DIAG_DONE  EQU 0E83Fh
-E1_U5_DIAG_DONE  EQU 0E840h
+; --- crossing screen-center X. Per-instance now: E_PARAM0 (done?),  ---
+; --- E_PARAM1 (remain), E_PARAM2 (dir) on the unified ENEMY_POOL.   ---
 ENEMY_CENTER_X   EQU 128     ; screen-center X threshold for the dodge
 ENEMY_DODGE_DIST EQU 16      ; total px moved diagonally, 1px/frame, per flight
 
 ; --- per-frame dodge progress: REMAIN counts down 16->0 (1px/frame),---
 ; --- DIR is the signed per-frame Y step (+1 or -1, set once when   ---
-; --- the dodge triggers). 6 units x 2 bytes.                        ---
-ENEMY0_DIAG_REMAIN EQU 0E841h
-ENEMY0_DIAG_DIR    EQU 0E842h
-ENEMY1_DIAG_REMAIN EQU 0E843h
-ENEMY1_DIAG_DIR    EQU 0E844h
-ENEMY2_DIAG_REMAIN EQU 0E845h
-ENEMY2_DIAG_DIR    EQU 0E846h
-E1_U3_DIAG_REMAIN  EQU 0E847h
-E1_U3_DIAG_DIR     EQU 0E848h
-E1_U4_DIAG_REMAIN  EQU 0E849h
-E1_U4_DIAG_DIR     EQU 0E84Ah
-E1_U5_DIAG_REMAIN  EQU 0E84Bh
-E1_U5_DIAG_DIR     EQU 0E84Ch
+; --- the dodge triggers). Per-instance now: E_PARAM1/E_PARAM2 on    ---
+; --- the unified ENEMY_POOL (see ENEMY_CENTER_X above).             ---
 POD_VOLLEY_COLOR_TEST EQU 0E829h ; trial: +1 every frame while pods are launched, wraps 2-14
 
 ; --- rainbow particle trail during the flyaway: 2 slots (sprite    ---
@@ -416,9 +359,6 @@ GTD_ONES_TMP EQU 0E4D3h
 SPAWN_NEXT_INDEX EQU 0E4D4h
 SPAWN_E1_Y EQU 0E506h          ; Y chosen for the next independent Enemy1 spawn
 NEXT_SPRITE_NUM EQU 0E507h     ; rotating sprite attribute slot allocator (1-31, 0=player reserved)
-ENEMY0_SPRNUM EQU 0E508h       ; sprite slot number currently assigned to this Enemy1 unit
-ENEMY1_SPRNUM EQU 0E509h
-ENEMY2_SPRNUM EQU 0E50Ah
 
 ; --- score: enemy1=100pts, enemy2=200pts, enemy3=300pts per kill. ---
 ; --- 16-bit binary (score never realistically exceeds ~65535 in   ---
@@ -744,15 +684,6 @@ INIT_SPRATR_CLR:
     LD HL,SPRITE_USED : LD (HL),A
     LD DE,SPRITE_USED+1 : LD BC,31 : LDIR
     LD A,1 : LD (NEXT_SPRITE_NUM),A
-    LD A,2 : LD (ENEMY0_SPRNUM),A
-    LD A,3 : LD (ENEMY1_SPRNUM),A
-    LD A,4 : LD (ENEMY2_SPRNUM),A
-    LD A,5 : LD (E1_U3_SPRNUM),A
-    LD A,6 : LD (E1_U4_SPRNUM),A
-    LD A,7 : LD (E1_U5_SPRNUM),A
-    XOR A
-    LD (E1_U3_STATE),A : LD (E1_U4_STATE),A : LD (E1_U5_STATE),A
-    LD (ENEMY0_STATE),A : LD (ENEMY1_STATE),A : LD (ENEMY2_STATE),A
 
     ; --- fully clear E2A/E2B's entire state blocks (98 bytes each),  ---
     ; --- not just ACTIVE. CHECK_BULLET_VS_FORMATION_A/B gates on     ---
@@ -775,8 +706,6 @@ INIT_SPRATR_CLR:
     XOR A : LD (PLAYER_FLYAWAY_WAIT),A
     XOR A : LD (PLAYER_FLYAWAY_DIST),A
     XOR A : LD (PARTICLE_SPAWN_COOLDOWN),A
-    LD HL,ENEMY0_DIAG_DONE : LD (HL),0
-    LD DE,ENEMY0_DIAG_DONE+1 : LD BC,17 : LDIR
     LD A,2 : LD (POD_VOLLEY_COLOR_TEST),A
     LD HL,PARTICLE_ACT : LD (HL),0
     LD DE,PARTICLE_ACT+1 : LD BC,11 : LDIR
@@ -897,8 +826,6 @@ INIT_SPRATR_CLR:
     NOP
     NOP
     NOP
-    CALL ENEMY_DRAW_ALL
-
     ; --- dynamic sprite numbering means enemies can land on any slot ---
     ; --- 2-31 in any order, so the old "write a terminator right     ---
     ; --- after the last sequential write" trick no longer works.     ---
@@ -1649,336 +1576,6 @@ BULLET2_SPAWN_OK:
     CALL SOUND_SHOT
 FIRE_DONE:
 
-    ; ============================================================
-    ; --- enemy: Enemy1 pool (3 independent slots, straight drift) ---
-    ; --- and Enemy2 instances A/B (assemble/drift/fast-Z-exit)    ---
-    ; --- all run every frame, fully independently of each other.  ---
-    ; ============================================================
-
-    ; --- 3 independent Enemy1 slots. Each is either free (STATE 0 or ---
-    ; --- 2) or occupied (STATE 1); activation happens externally    ---
-    ; --- (see SPAWN_ONE_E1) whenever the scheduler fires and finds  ---
-    ; --- a free slot - this loop just moves/exits whatever is       ---
-    ; --- currently active in each slot, completely independently.   ---
-    LD A,(ENEMY0_STATE)
-    CP 1 : JR NZ,U0_DONE
-    LD A,(ENEMY0_X)
-    CP ENEMY_SPEED
-    JR C,U0_EXIT
-    SUB ENEMY_SPEED
-    LD (ENEMY0_X),A
-    LD A,(ENEMY0_DIAG_DONE)
-    OR A
-    JR NZ,U0_DIAG_SKIP_TRIGGER
-    LD A,(ENEMY0_X)
-    CP ENEMY_CENTER_X
-    JR NC,U0_DIAG_SKIP_TRIGGER
-    LD A,1 : LD (ENEMY0_DIAG_DONE),A
-    LD A,ENEMY_DODGE_DIST : LD (ENEMY0_DIAG_REMAIN),A
-    LD A,(PLAYERY) : LD B,A
-    LD A,(ENEMY0_Y)
-    CP B
-    JR NC,U0_DIAG_DIR_UP
-    LD A,1
-    JR U0_DIAG_DIR_SET
-U0_DIAG_DIR_UP:
-    LD A,0FFh
-U0_DIAG_DIR_SET:
-    LD (ENEMY0_DIAG_DIR),A
-U0_DIAG_SKIP_TRIGGER:
-    LD A,(ENEMY0_DIAG_REMAIN)
-    OR A
-    JR Z,U0_DONE
-    DEC A : LD (ENEMY0_DIAG_REMAIN),A
-    LD A,(ENEMY0_DIAG_DIR) : LD B,A
-    LD A,(ENEMY0_Y)
-    ADD A,B
-    LD (ENEMY0_Y),A
-    JR U0_DONE
-U0_EXIT:
-    LD A,2 : LD (ENEMY0_STATE),A
-    LD A,(ENEMY0_SPRNUM) : PUSH AF
-    ADD A,A : ADD A,A : OUT (99h),A
-    NOP
-    NOP
-    LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
-    LD A,ENEMY_HIDE_Y : OUT (98h),A
-    NOP
-    NOP
-    LD A,255 : OUT (98h),A
-    NOP
-    NOP
-    POP AF : CALL FREE_SPRITE_NUM
-U0_DONE:
-
-    LD A,(ENEMY1_STATE)
-    CP 1 : JR NZ,U1_DONE
-    LD A,(ENEMY1_X)
-    CP ENEMY_SPEED
-    JR C,U1_EXIT
-    SUB ENEMY_SPEED
-    LD (ENEMY1_X),A
-    LD A,(ENEMY1_DIAG_DONE)
-    OR A
-    JR NZ,U1_DIAG_SKIP_TRIGGER
-    LD A,(ENEMY1_X)
-    CP ENEMY_CENTER_X
-    JR NC,U1_DIAG_SKIP_TRIGGER
-    LD A,1 : LD (ENEMY1_DIAG_DONE),A
-    LD A,ENEMY_DODGE_DIST : LD (ENEMY1_DIAG_REMAIN),A
-    LD A,(PLAYERY) : LD B,A
-    LD A,(ENEMY1_Y)
-    CP B
-    JR NC,U1_DIAG_DIR_UP
-    LD A,1
-    JR U1_DIAG_DIR_SET
-U1_DIAG_DIR_UP:
-    LD A,0FFh
-U1_DIAG_DIR_SET:
-    LD (ENEMY1_DIAG_DIR),A
-U1_DIAG_SKIP_TRIGGER:
-    LD A,(ENEMY1_DIAG_REMAIN)
-    OR A
-    JR Z,U1_DONE
-    DEC A : LD (ENEMY1_DIAG_REMAIN),A
-    LD A,(ENEMY1_DIAG_DIR) : LD B,A
-    LD A,(ENEMY1_Y)
-    ADD A,B
-    LD (ENEMY1_Y),A
-    JR U1_DONE
-U1_EXIT:
-    LD A,2 : LD (ENEMY1_STATE),A
-    LD A,(ENEMY1_SPRNUM) : PUSH AF
-    ADD A,A : ADD A,A : OUT (99h),A
-    NOP
-    NOP
-    LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
-    LD A,ENEMY_HIDE_Y : OUT (98h),A
-    NOP
-    NOP
-    LD A,255 : OUT (98h),A
-    NOP
-    NOP
-    POP AF : CALL FREE_SPRITE_NUM
-U1_DONE:
-
-    LD A,(ENEMY2_STATE)
-    CP 1 : JR NZ,U2_DONE
-    LD A,(ENEMY2_X)
-    CP ENEMY_SPEED
-    JR C,U2_EXIT
-    SUB ENEMY_SPEED
-    LD (ENEMY2_X),A
-    LD A,(ENEMY2_DIAG_DONE)
-    OR A
-    JR NZ,U2_DIAG_SKIP_TRIGGER
-    LD A,(ENEMY2_X)
-    CP ENEMY_CENTER_X
-    JR NC,U2_DIAG_SKIP_TRIGGER
-    LD A,1 : LD (ENEMY2_DIAG_DONE),A
-    LD A,ENEMY_DODGE_DIST : LD (ENEMY2_DIAG_REMAIN),A
-    LD A,(PLAYERY) : LD B,A
-    LD A,(ENEMY2_Y)
-    CP B
-    JR NC,U2_DIAG_DIR_UP
-    LD A,1
-    JR U2_DIAG_DIR_SET
-U2_DIAG_DIR_UP:
-    LD A,0FFh
-U2_DIAG_DIR_SET:
-    LD (ENEMY2_DIAG_DIR),A
-U2_DIAG_SKIP_TRIGGER:
-    LD A,(ENEMY2_DIAG_REMAIN)
-    OR A
-    JR Z,U2_DONE
-    DEC A : LD (ENEMY2_DIAG_REMAIN),A
-    LD A,(ENEMY2_DIAG_DIR) : LD B,A
-    LD A,(ENEMY2_Y)
-    ADD A,B
-    LD (ENEMY2_Y),A
-    JR U2_DONE
-U2_EXIT:
-    LD A,2 : LD (ENEMY2_STATE),A
-    LD A,(ENEMY2_SPRNUM) : PUSH AF
-    ADD A,A : ADD A,A : OUT (99h),A
-    NOP
-    NOP
-    LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
-    LD A,ENEMY_HIDE_Y : OUT (98h),A
-    NOP
-    NOP
-    LD A,255 : OUT (98h),A
-    NOP
-    NOP
-    POP AF : CALL FREE_SPRITE_NUM
-U2_DONE:
-
-    LD A,(E1_U3_STATE)
-    CP 1 : JR NZ,U3_DONE
-    LD A,(E1_U3_X)
-    CP ENEMY_SPEED
-    JR C,U3_EXIT
-    SUB ENEMY_SPEED
-    LD (E1_U3_X),A
-    LD A,(E1_U3_DIAG_DONE)
-    OR A
-    JR NZ,U3_DIAG_SKIP_TRIGGER
-    LD A,(E1_U3_X)
-    CP ENEMY_CENTER_X
-    JR NC,U3_DIAG_SKIP_TRIGGER
-    LD A,1 : LD (E1_U3_DIAG_DONE),A
-    LD A,ENEMY_DODGE_DIST : LD (E1_U3_DIAG_REMAIN),A
-    LD A,(PLAYERY) : LD B,A
-    LD A,(E1_U3_Y)
-    CP B
-    JR NC,U3_DIAG_DIR_UP
-    LD A,1
-    JR U3_DIAG_DIR_SET
-U3_DIAG_DIR_UP:
-    LD A,0FFh
-U3_DIAG_DIR_SET:
-    LD (E1_U3_DIAG_DIR),A
-U3_DIAG_SKIP_TRIGGER:
-    LD A,(E1_U3_DIAG_REMAIN)
-    OR A
-    JR Z,U3_DONE
-    DEC A : LD (E1_U3_DIAG_REMAIN),A
-    LD A,(E1_U3_DIAG_DIR) : LD B,A
-    LD A,(E1_U3_Y)
-    ADD A,B
-    LD (E1_U3_Y),A
-    JR U3_DONE
-U3_EXIT:
-    LD A,2 : LD (E1_U3_STATE),A
-    LD A,(E1_U3_SPRNUM) : PUSH AF
-    ADD A,A : ADD A,A : OUT (99h),A
-    NOP
-    NOP
-    LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
-    LD A,ENEMY_HIDE_Y : OUT (98h),A
-    NOP
-    NOP
-    LD A,255 : OUT (98h),A
-    NOP
-    NOP
-    POP AF : CALL FREE_SPRITE_NUM
-U3_DONE:
-
-    LD A,(E1_U4_STATE)
-    CP 1 : JR NZ,U4_DONE
-    LD A,(E1_U4_X)
-    CP ENEMY_SPEED
-    JR C,U4_EXIT
-    SUB ENEMY_SPEED
-    LD (E1_U4_X),A
-    LD A,(E1_U4_DIAG_DONE)
-    OR A
-    JR NZ,U4_DIAG_SKIP_TRIGGER
-    LD A,(E1_U4_X)
-    CP ENEMY_CENTER_X
-    JR NC,U4_DIAG_SKIP_TRIGGER
-    LD A,1 : LD (E1_U4_DIAG_DONE),A
-    LD A,ENEMY_DODGE_DIST : LD (E1_U4_DIAG_REMAIN),A
-    LD A,(PLAYERY) : LD B,A
-    LD A,(E1_U4_Y)
-    CP B
-    JR NC,U4_DIAG_DIR_UP
-    LD A,1
-    JR U4_DIAG_DIR_SET
-U4_DIAG_DIR_UP:
-    LD A,0FFh
-U4_DIAG_DIR_SET:
-    LD (E1_U4_DIAG_DIR),A
-U4_DIAG_SKIP_TRIGGER:
-    LD A,(E1_U4_DIAG_REMAIN)
-    OR A
-    JR Z,U4_DONE
-    DEC A : LD (E1_U4_DIAG_REMAIN),A
-    LD A,(E1_U4_DIAG_DIR) : LD B,A
-    LD A,(E1_U4_Y)
-    ADD A,B
-    LD (E1_U4_Y),A
-    JR U4_DONE
-U4_EXIT:
-    LD A,2 : LD (E1_U4_STATE),A
-    LD A,(E1_U4_SPRNUM) : PUSH AF
-    ADD A,A : ADD A,A : OUT (99h),A
-    NOP
-    NOP
-    LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
-    LD A,ENEMY_HIDE_Y : OUT (98h),A
-    NOP
-    NOP
-    LD A,255 : OUT (98h),A
-    NOP
-    NOP
-    POP AF : CALL FREE_SPRITE_NUM
-U4_DONE:
-
-    LD A,(E1_U5_STATE)
-    CP 1 : JR NZ,U5_DONE
-    LD A,(E1_U5_X)
-    CP ENEMY_SPEED
-    JR C,U5_EXIT
-    SUB ENEMY_SPEED
-    LD (E1_U5_X),A
-    LD A,(E1_U5_DIAG_DONE)
-    OR A
-    JR NZ,U5_DIAG_SKIP_TRIGGER
-    LD A,(E1_U5_X)
-    CP ENEMY_CENTER_X
-    JR NC,U5_DIAG_SKIP_TRIGGER
-    LD A,1 : LD (E1_U5_DIAG_DONE),A
-    LD A,ENEMY_DODGE_DIST : LD (E1_U5_DIAG_REMAIN),A
-    LD A,(PLAYERY) : LD B,A
-    LD A,(E1_U5_Y)
-    CP B
-    JR NC,U5_DIAG_DIR_UP
-    LD A,1
-    JR U5_DIAG_DIR_SET
-U5_DIAG_DIR_UP:
-    LD A,0FFh
-U5_DIAG_DIR_SET:
-    LD (E1_U5_DIAG_DIR),A
-U5_DIAG_SKIP_TRIGGER:
-    LD A,(E1_U5_DIAG_REMAIN)
-    OR A
-    JR Z,U5_DONE
-    DEC A : LD (E1_U5_DIAG_REMAIN),A
-    LD A,(E1_U5_DIAG_DIR) : LD B,A
-    LD A,(E1_U5_Y)
-    ADD A,B
-    LD (E1_U5_Y),A
-    JR U5_DONE
-U5_EXIT:
-    LD A,2 : LD (E1_U5_STATE),A
-    LD A,(E1_U5_SPRNUM) : PUSH AF
-    ADD A,A : ADD A,A : OUT (99h),A
-    NOP
-    NOP
-    LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
-    LD A,ENEMY_HIDE_Y : OUT (98h),A
-    NOP
-    NOP
-    LD A,255 : OUT (98h),A
-    NOP
-    NOP
-    POP AF : CALL FREE_SPRITE_NUM
-U5_DONE:
-    CALL ENEMY_DRAW_ALL
-
     ; --- Enemy2 instances A and B: each internally no-ops if not ---
     ; --- active, so calling both unconditionally every frame is  ---
     ; --- always safe and lets them run fully concurrently.       ---
@@ -2088,9 +1685,6 @@ ANIM2_DONE:
     JP Z,BULLET0_NEXT
     LD A,(BULLET0_COL) : LD B,A
     LD A,(BULLET0_ROW) : LD C,A
-    CALL CHECK_BULLET_VS_FORMATION
-    OR A
-    JR NZ,BULLET0_ISHIT
     LD A,(BULLET0_COL) : LD B,A
     LD A,(BULLET0_ROW) : LD C,A
     CALL CHECK_BULLET_VS_FORMATION_A
@@ -2184,9 +1778,6 @@ BULLET0_NEXT:
     JP Z,BULLET1_NEXT
     LD A,(BULLET1_COL) : LD B,A
     LD A,(BULLET1_ROW) : LD C,A
-    CALL CHECK_BULLET_VS_FORMATION
-    OR A
-    JR NZ,BULLET1_ISHIT
     LD A,(BULLET1_COL) : LD B,A
     LD A,(BULLET1_ROW) : LD C,A
     CALL CHECK_BULLET_VS_FORMATION_A
@@ -2280,9 +1871,6 @@ BULLET1_NEXT:
     JP Z,BULLET2_NEXT
     LD A,(BULLET2_COL) : LD B,A
     LD A,(BULLET2_ROW) : LD C,A
-    CALL CHECK_BULLET_VS_FORMATION
-    OR A
-    JR NZ,BULLET2_ISHIT
     LD A,(BULLET2_COL) : LD B,A
     LD A,(BULLET2_ROW) : LD C,A
     CALL CHECK_BULLET_VS_FORMATION_A
@@ -2675,227 +2263,6 @@ RU_BR_BLANK_LOOP:
     NOP
     NOP
     DJNZ RU_BR_BLANK_LOOP
-    RET
-
-; Input: B = bullet column, C = bullet row (must stay untouched
-; across the QUAD_HIT_TEST calls below - they don't use B/C)
-; Output: A = 1 if this bullet just destroyed a quadrant (the
-; quadrant's flag is cleared and its unit's pattern redrawn to
-; drop that asterisk), else A = 0. An already-dead quadrant is
-; skipped entirely, so a bullet passes straight through it.
-CHECK_BULLET_VS_FORMATION:
-    LD A,(ENEMY0_STATE) : CP 1 : JR NZ,CBF_SKIP2
-    LD A,(ENEMY0_TOP) : OR A : JR Z,CBF_SKIP1
-    LD A,(ENEMY0_X) : LD D,A
-    LD A,(ENEMY0_Y) : LD E,A
-    CALL QUAD_HIT_TEST
-    OR A
-    JP NZ,CBF_KILL_U0_TOP
-CBF_SKIP1:
-    LD A,(ENEMY0_BOT) : OR A : JR Z,CBF_SKIP2
-    LD A,(ENEMY0_X) : ADD A,8 : LD D,A
-    LD A,(ENEMY0_Y) : ADD A,8 : LD E,A
-    CALL QUAD_HIT_TEST
-    OR A
-    JP NZ,CBF_KILL_U0_BOT
-CBF_SKIP2:
-    LD A,(ENEMY1_STATE) : CP 1 : JR NZ,CBF_SKIP4
-    LD A,(ENEMY1_TOP) : OR A : JR Z,CBF_SKIP3
-    LD A,(ENEMY1_X) : LD D,A
-    LD A,(ENEMY1_Y) : LD E,A
-    CALL QUAD_HIT_TEST
-    OR A
-    JP NZ,CBF_KILL_U1_TOP
-CBF_SKIP3:
-    LD A,(ENEMY1_BOT) : OR A : JR Z,CBF_SKIP4
-    LD A,(ENEMY1_X) : ADD A,8 : LD D,A
-    LD A,(ENEMY1_Y) : ADD A,8 : LD E,A
-    CALL QUAD_HIT_TEST
-    OR A
-    JP NZ,CBF_KILL_U1_BOT
-CBF_SKIP4:
-    LD A,(ENEMY2_STATE) : CP 1 : JR NZ,CBF_SKIP4B
-    LD A,(ENEMY2_TOP) : OR A : JR Z,CBF_SKIP5
-    LD A,(ENEMY2_X) : LD D,A
-    LD A,(ENEMY2_Y) : LD E,A
-    CALL QUAD_HIT_TEST
-    OR A
-    JP NZ,CBF_KILL_U2_TOP
-CBF_SKIP5:
-    LD A,(ENEMY2_BOT) : OR A : JR Z,CBF_SKIP4B
-    LD A,(ENEMY2_X) : ADD A,8 : LD D,A
-    LD A,(ENEMY2_Y) : ADD A,8 : LD E,A
-    CALL QUAD_HIT_TEST
-    OR A
-    JP NZ,CBF_KILL_U2_BOT
-    JR CBF_SKIP4B
-CBF_KILL_U2_BOT:
-    XOR A : LD (ENEMY2_BOT),A
-    PUSH DE
-    LD HL,SPRPAT+96 : LD DE,ENEMY2_TOP : LD IX,ENEMY2_BOT
-    CALL REDRAW_UNIT_PATTERN
-    POP DE
-    CALL TRIGGER_EXPLOSION
-    CALL AWARD_FORMATION_SCORE
-    LD A,1
-    RET
-CBF_SKIP4B:
-    LD A,(E1_U3_STATE) : CP 1 : JR NZ,CBF_SKIP4C
-    LD A,(E1_U3_TOP) : OR A : JR Z,CBF_SKIP4B2
-    LD A,(E1_U3_X) : LD D,A
-    LD A,(E1_U3_Y) : LD E,A
-    CALL QUAD_HIT_TEST
-    OR A
-    JP NZ,CBF_KILL_U3_TOP
-CBF_SKIP4B2:
-    LD A,(E1_U3_BOT) : OR A : JR Z,CBF_SKIP4C
-    LD A,(E1_U3_X) : ADD A,8 : LD D,A
-    LD A,(E1_U3_Y) : ADD A,8 : LD E,A
-    CALL QUAD_HIT_TEST
-    OR A
-    JP NZ,CBF_KILL_U3_BOT
-CBF_SKIP4C:
-    LD A,(E1_U4_STATE) : CP 1 : JR NZ,CBF_SKIP4D
-    LD A,(E1_U4_TOP) : OR A : JR Z,CBF_SKIP4C2
-    LD A,(E1_U4_X) : LD D,A
-    LD A,(E1_U4_Y) : LD E,A
-    CALL QUAD_HIT_TEST
-    OR A
-    JP NZ,CBF_KILL_U4_TOP
-CBF_SKIP4C2:
-    LD A,(E1_U4_BOT) : OR A : JR Z,CBF_SKIP4D
-    LD A,(E1_U4_X) : ADD A,8 : LD D,A
-    LD A,(E1_U4_Y) : ADD A,8 : LD E,A
-    CALL QUAD_HIT_TEST
-    OR A
-    JP NZ,CBF_KILL_U4_BOT
-CBF_SKIP4D:
-    LD A,(E1_U5_STATE) : CP 1 : JP NZ,CBF_MISS
-    LD A,(E1_U5_TOP) : OR A : JR Z,CBF_SKIP4D2
-    LD A,(E1_U5_X) : LD D,A
-    LD A,(E1_U5_Y) : LD E,A
-    CALL QUAD_HIT_TEST
-    OR A
-    JP NZ,CBF_KILL_U5_TOP
-CBF_SKIP4D2:
-    LD A,(E1_U5_BOT) : OR A : JP Z,CBF_MISS
-    LD A,(E1_U5_X) : ADD A,8 : LD D,A
-    LD A,(E1_U5_Y) : ADD A,8 : LD E,A
-    CALL QUAD_HIT_TEST
-    OR A
-    JP Z,CBF_MISS
-CBF_KILL_U5_BOT:
-    XOR A : LD (E1_U5_BOT),A
-    PUSH DE
-    LD HL,SPRPAT+640 : LD DE,E1_U5_TOP : LD IX,E1_U5_BOT
-    CALL REDRAW_UNIT_PATTERN
-    POP DE
-    CALL TRIGGER_EXPLOSION
-    CALL AWARD_FORMATION_SCORE
-    LD A,1
-    RET
-CBF_KILL_U3_TOP:
-    XOR A : LD (E1_U3_TOP),A
-    PUSH DE
-    LD HL,SPRPAT+576 : LD DE,E1_U3_TOP : LD IX,E1_U3_BOT
-    CALL REDRAW_UNIT_PATTERN
-    POP DE
-    CALL TRIGGER_EXPLOSION
-    CALL AWARD_FORMATION_SCORE
-    LD A,1
-    RET
-CBF_KILL_U3_BOT:
-    XOR A : LD (E1_U3_BOT),A
-    PUSH DE
-    LD HL,SPRPAT+576 : LD DE,E1_U3_TOP : LD IX,E1_U3_BOT
-    CALL REDRAW_UNIT_PATTERN
-    POP DE
-    CALL TRIGGER_EXPLOSION
-    CALL AWARD_FORMATION_SCORE
-    LD A,1
-    RET
-CBF_KILL_U4_TOP:
-    XOR A : LD (E1_U4_TOP),A
-    PUSH DE
-    LD HL,SPRPAT+608 : LD DE,E1_U4_TOP : LD IX,E1_U4_BOT
-    CALL REDRAW_UNIT_PATTERN
-    POP DE
-    CALL TRIGGER_EXPLOSION
-    CALL AWARD_FORMATION_SCORE
-    LD A,1
-    RET
-CBF_KILL_U4_BOT:
-    XOR A : LD (E1_U4_BOT),A
-    PUSH DE
-    LD HL,SPRPAT+608 : LD DE,E1_U4_TOP : LD IX,E1_U4_BOT
-    CALL REDRAW_UNIT_PATTERN
-    POP DE
-    CALL TRIGGER_EXPLOSION
-    CALL AWARD_FORMATION_SCORE
-    LD A,1
-    RET
-CBF_KILL_U5_TOP:
-    XOR A : LD (E1_U5_TOP),A
-    PUSH DE
-    LD HL,SPRPAT+640 : LD DE,E1_U5_TOP : LD IX,E1_U5_BOT
-    CALL REDRAW_UNIT_PATTERN
-    POP DE
-    CALL TRIGGER_EXPLOSION
-    CALL AWARD_FORMATION_SCORE
-    LD A,1
-    RET
-CBF_KILL_U0_TOP:
-    XOR A : LD (ENEMY0_TOP),A
-    PUSH DE
-    LD HL,SPRPAT+32 : LD DE,ENEMY0_TOP : LD IX,ENEMY0_BOT
-    CALL REDRAW_UNIT_PATTERN
-    POP DE
-    CALL TRIGGER_EXPLOSION
-    CALL AWARD_FORMATION_SCORE
-    LD A,1
-    RET
-CBF_KILL_U0_BOT:
-    XOR A : LD (ENEMY0_BOT),A
-    PUSH DE
-    LD HL,SPRPAT+32 : LD DE,ENEMY0_TOP : LD IX,ENEMY0_BOT
-    CALL REDRAW_UNIT_PATTERN
-    POP DE
-    CALL TRIGGER_EXPLOSION
-    CALL AWARD_FORMATION_SCORE
-    LD A,1
-    RET
-CBF_KILL_U1_TOP:
-    XOR A : LD (ENEMY1_TOP),A
-    PUSH DE
-    LD HL,SPRPAT+64 : LD DE,ENEMY1_TOP : LD IX,ENEMY1_BOT
-    CALL REDRAW_UNIT_PATTERN
-    POP DE
-    CALL TRIGGER_EXPLOSION
-    CALL AWARD_FORMATION_SCORE
-    LD A,1
-    RET
-CBF_KILL_U1_BOT:
-    XOR A : LD (ENEMY1_BOT),A
-    PUSH DE
-    LD HL,SPRPAT+64 : LD DE,ENEMY1_TOP : LD IX,ENEMY1_BOT
-    CALL REDRAW_UNIT_PATTERN
-    POP DE
-    CALL TRIGGER_EXPLOSION
-    CALL AWARD_FORMATION_SCORE
-    LD A,1
-    RET
-CBF_KILL_U2_TOP:
-    XOR A : LD (ENEMY2_TOP),A
-    PUSH DE
-    LD HL,SPRPAT+96 : LD DE,ENEMY2_TOP : LD IX,ENEMY2_BOT
-    CALL REDRAW_UNIT_PATTERN
-    POP DE
-    CALL TRIGGER_EXPLOSION
-    CALL AWARD_FORMATION_SCORE
-    LD A,1
-    RET
-CBF_MISS:
-    XOR A
     RET
 
 CHECK_BULLET_VS_FORMATION_A:
@@ -3642,6 +3009,9 @@ ENEMY_TRAIL_CH_WIDX EQU 0EB4Dh  ; 2 bytes, one write-index per channel
 ENEMY_HIT_COL       EQU 0EB4Fh  ; scratch: bullet col/row, saved across the
 ENEMY_HIT_ROW       EQU 0EB50h  ; pool scan so B/C are free for the loop counter
 ENEMY_SCORE_SEL_TMP EQU 0EB51h  ; scratch: score selector, stashed across TRIGGER_EXPLOSION (clobbers IX)
+SIMPLE_PATTERN_USED EQU 0EB52h  ; 6 bytes: which of the 6 physical pattern slots are claimed
+SIMPLE_SLOT_SCRATCH EQU 0EB58h  ; 2 bytes: ENEMY_POOL slot base, saved across REDRAW_UNIT_PATTERN
+                                 ; (which itself takes IX as an input parameter - see SIMPLE_REDRAW)
 
 ; A slot's TYPE (1-based) indexes this table for its display+stats,
 ; independent of its BEHAVIOR (movement). 4 bytes/entry:
@@ -3658,7 +3028,25 @@ ENEMY_TYPE_TABLE:
 
 ; movement algorithm ids, dispatched by ENEMY_POOL_UPDATE_ALL and
 ; CHECK_BULLET_VS_ENEMY_POOL.
-BEHAVIOR_SINE_BOB EQU 1   ; Enemy4-style: drift left, sine-wave vertical bob
+BEHAVIOR_SINE_BOB EQU 1          ; Enemy4-style: drift left, sine-wave vertical bob
+BEHAVIOR_SIMPLE_DRIFT_DODGE EQU 2 ; Enemy1-style: straight drift + one-shot diagonal dodge
+
+; BEHAVIOR_SIMPLE_DRIFT_DODGE needs its own mutable 32-byte VRAM
+; sprite pattern per instance (TOP/BOT quadrants independently show/
+; hide an asterisk as each is destroyed - see SIMPLE_REDRAW), unlike
+; TYPE-based static patterns. Only 6 physical pattern buffers exist
+; (matches the schedule's max of 6 concurrent: 3 top-wave + 3
+; bottom-wave), so this BEHAVIOR is capped at 6 concurrent regardless
+; of the 32-slot ENEMY_POOL's own capacity - same ceiling as before
+; migration, just enforced via a separate small allocator
+; (ALLOC_PATTERN_SLOT/FREE_PATTERN_SLOT) instead of 6 hardcoded units.
+; A slot using this BEHAVIOR stores its claimed pattern-slot index
+; (0-5) in E_PARAM3.
+SIMPLE_PATTERN_SLOTS EQU 6
+SIMPLE_PATTERN_NUMS:
+    DB PAT_ENEMY0,PAT_ENEMY1,PAT_ENEMY2,PAT_E1U3,PAT_E1U4,PAT_E1U5
+SIMPLE_PATTERN_VRAM:
+    DW SPRPAT+32,SPRPAT+64,SPRPAT+96,SPRPAT+576,SPRPAT+608,SPRPAT+640
 
 ; --- boss materialize effect state (non-blocking: BOSS_UPDATE is  ---
 ; --- called once per frame from MAINLOOP and returns immediately  ---
@@ -4020,31 +3408,6 @@ SSC_FIRE:
 ; --- and free every dynamic enemy right here, THEN permanently      ---
 ; --- reserve 8-31 so the allocator can never hand one out again.    ---
 BOSS_CLEAR_DYNAMIC_ENEMIES:
-    LD A,(ENEMY0_STATE) : CP 1 : JR NZ,BCDE_SKIP0
-    LD A,(ENEMY0_SPRNUM) : CALL BCDE_HIDE1
-    LD A,2 : LD (ENEMY0_STATE),A
-BCDE_SKIP0:
-    LD A,(ENEMY1_STATE) : CP 1 : JR NZ,BCDE_SKIP1
-    LD A,(ENEMY1_SPRNUM) : CALL BCDE_HIDE1
-    LD A,2 : LD (ENEMY1_STATE),A
-BCDE_SKIP1:
-    LD A,(ENEMY2_STATE) : CP 1 : JR NZ,BCDE_SKIP2
-    LD A,(ENEMY2_SPRNUM) : CALL BCDE_HIDE1
-    LD A,2 : LD (ENEMY2_STATE),A
-BCDE_SKIP2:
-    LD A,(E1_U3_STATE) : CP 1 : JR NZ,BCDE_SKIP3
-    LD A,(E1_U3_SPRNUM) : CALL BCDE_HIDE1
-    LD A,2 : LD (E1_U3_STATE),A
-BCDE_SKIP3:
-    LD A,(E1_U4_STATE) : CP 1 : JR NZ,BCDE_SKIP4
-    LD A,(E1_U4_SPRNUM) : CALL BCDE_HIDE1
-    LD A,2 : LD (E1_U4_STATE),A
-BCDE_SKIP4:
-    LD A,(E1_U5_STATE) : CP 1 : JR NZ,BCDE_SKIP5
-    LD A,(E1_U5_SPRNUM) : CALL BCDE_HIDE1
-    LD A,2 : LD (E1_U5_STATE),A
-BCDE_SKIP5:
-
     ; E2A/E2B: reuse their own full-teardown (hides all4, frees all4,
     ; clears ACTIVE) - safe to call unconditionally even if idle,
     ; since ENEMY_COMPLEX_STEP_A/B already gate everything else on
@@ -4100,8 +3463,10 @@ BCEP_LOOP:
     OR A
     JR Z,BCEP_SKIP
     LD A,(IX+E_BEHAVIOR)
-    CP BEHAVIOR_SINE_BOB
-    JR NZ,BCEP_SKIP
+    CP BEHAVIOR_SIMPLE_DRIFT_DODGE
+    JR NZ,BCEP_NOT_SIMPLE
+    LD A,(IX+E_PARAM3) : CALL FREE_PATTERN_SLOT
+BCEP_NOT_SIMPLE:
     LD A,(IX+E_SPRNUM) : CALL BCDE_HIDE1
     XOR A : LD (IX+E_ACTIVE),A
 BCEP_SKIP:
@@ -6069,13 +5434,13 @@ DFL_VEC_DX:
 DFL_VEC_DY:
     DB 0FCh,0FEh,00h,02h,04h,0FAh,06h,0FCh        ; -4,-2,0,2,4,-6,6,-4
 
-; simple, static, one-shot draw - triggered directly at tick10.
-; picks a free Enemy1 slot (STATE 0 or 2 - never spawned, or already
-; exited) and spawns ONE unit there. Slots that are still occupied
-; (STATE 1, mid-flight) are left completely untouched - each of the
-; 3 sprite slots is an independent enemy, not a synchronized group.
-; If all 3 are currently busy, this spawn is simply dropped (the
-; only real limit is the 3 available sprite slots).
+; Picks a free unified-pool slot and spawns ONE Enemy1-style unit
+; there (BEHAVIOR_SIMPLE_DRIFT_DODGE) at the Y implied by
+; SPAWN_NEXT_INDEX's position in its wave (1-3=top,4-6=bottom,
+; 7-9=top,10-12=bottom). Each spawn is independent - not a
+; synchronized group. If the pool (or the 6 physical sprite-pattern
+; slots this BEHAVIOR needs, see ALLOC_PATTERN_SLOT) is exhausted,
+; the spawn is simply dropped, same as before.
 SPAWN_ONE_E1:
     LD A,(SPAWN_NEXT_INDEX)   ; already incremented: 1-3=top,4-6=bottom,7-9=top,10-12=bottom
     CP 4 : JR C,SOE1_TOP
@@ -6084,144 +5449,39 @@ SPAWN_ONE_E1:
     JR SOE1_BOT
 SOE1_TOP:
     LD A,ENEMY_Y0 : LD (SPAWN_E1_Y),A
-    JR SOE1_TOP_TRY0
+    JR ENEMY1_CLAIM_ANY
 SOE1_BOT:
     LD A,ENEMY_Y1 : LD (SPAWN_E1_Y),A
-    JP SOE1_BOT_TRY5
+    JR ENEMY1_CLAIM_ANY
 
-SOE1_TOP_TRY0:
-    LD A,(ENEMY0_STATE)
-    CP 1 : JR Z,SOE1_TOP_TRY1
-    LD A,1 : LD (ENEMY0_STATE),A
-    LD A,ENEMY_SPAWNX : LD (ENEMY0_X),A
-    LD A,(SPAWN_E1_Y) : LD (ENEMY0_Y),A
-    LD A,1 : LD (ENEMY0_TOP),A : LD (ENEMY0_BOT),A
-    XOR A : LD (ENEMY0_DIAG_DONE),A : LD (ENEMY0_DIAG_REMAIN),A
-    CALL ALLOC_SPRITE_NUM : LD (ENEMY0_SPRNUM),A
-    LD HL,SPRPAT+32 : LD DE,ENEMY0_TOP : LD IX,ENEMY0_BOT
-    JP REDRAW_UNIT_PATTERN
-SOE1_TOP_TRY1:
-    LD A,(ENEMY1_STATE)
-    CP 1 : JR Z,SOE1_TOP_TRY2
-    LD A,1 : LD (ENEMY1_STATE),A
-    LD A,ENEMY_SPAWNX : LD (ENEMY1_X),A
-    LD A,(SPAWN_E1_Y) : LD (ENEMY1_Y),A
-    LD A,1 : LD (ENEMY1_TOP),A : LD (ENEMY1_BOT),A
-    XOR A : LD (ENEMY1_DIAG_DONE),A : LD (ENEMY1_DIAG_REMAIN),A
-    CALL ALLOC_SPRITE_NUM : LD (ENEMY1_SPRNUM),A
-    LD HL,SPRPAT+64 : LD DE,ENEMY1_TOP : LD IX,ENEMY1_BOT
-    JP REDRAW_UNIT_PATTERN
-SOE1_TOP_TRY2:
-    LD A,(ENEMY2_STATE)
-    CP 1 : JR Z,SOE1_TOP_TRY3
-    LD A,1 : LD (ENEMY2_STATE),A
-    LD A,ENEMY_SPAWNX : LD (ENEMY2_X),A
-    LD A,(SPAWN_E1_Y) : LD (ENEMY2_Y),A
-    LD A,1 : LD (ENEMY2_TOP),A : LD (ENEMY2_BOT),A
-    XOR A : LD (ENEMY2_DIAG_DONE),A : LD (ENEMY2_DIAG_REMAIN),A
-    CALL ALLOC_SPRITE_NUM : LD (ENEMY2_SPRNUM),A
-    LD HL,SPRPAT+96 : LD DE,ENEMY2_TOP : LD IX,ENEMY2_BOT
-    JP REDRAW_UNIT_PATTERN
-SOE1_TOP_TRY3:
-    LD A,(E1_U3_STATE)
-    CP 1 : JR Z,SOE1_TOP_TRY4
-    LD A,1 : LD (E1_U3_STATE),A
-    LD A,ENEMY_SPAWNX : LD (E1_U3_X),A
-    LD A,(SPAWN_E1_Y) : LD (E1_U3_Y),A
-    LD A,1 : LD (E1_U3_TOP),A : LD (E1_U3_BOT),A
-    XOR A : LD (E1_U3_DIAG_DONE),A : LD (E1_U3_DIAG_REMAIN),A
-    CALL ALLOC_SPRITE_NUM : LD (E1_U3_SPRNUM),A
-    LD HL,SPRPAT+576 : LD DE,E1_U3_TOP : LD IX,E1_U3_BOT
-    JP REDRAW_UNIT_PATTERN
-SOE1_TOP_TRY4:
-    LD A,(E1_U4_STATE)
-    CP 1 : JR Z,SOE1_TOP_TRY5
-    LD A,1 : LD (E1_U4_STATE),A
-    LD A,ENEMY_SPAWNX : LD (E1_U4_X),A
-    LD A,(SPAWN_E1_Y) : LD (E1_U4_Y),A
-    LD A,1 : LD (E1_U4_TOP),A : LD (E1_U4_BOT),A
-    XOR A : LD (E1_U4_DIAG_DONE),A : LD (E1_U4_DIAG_REMAIN),A
-    CALL ALLOC_SPRITE_NUM : LD (E1_U4_SPRNUM),A
-    LD HL,SPRPAT+608 : LD DE,E1_U4_TOP : LD IX,E1_U4_BOT
-    JP REDRAW_UNIT_PATTERN
-SOE1_TOP_TRY5:
-    LD A,(E1_U5_STATE)
-    CP 1 : RET Z
-    LD A,1 : LD (E1_U5_STATE),A
-    LD A,ENEMY_SPAWNX : LD (E1_U5_X),A
-    LD A,(SPAWN_E1_Y) : LD (E1_U5_Y),A
-    LD A,1 : LD (E1_U5_TOP),A : LD (E1_U5_BOT),A
-    XOR A : LD (E1_U5_DIAG_DONE),A : LD (E1_U5_DIAG_REMAIN),A
-    CALL ALLOC_SPRITE_NUM : LD (E1_U5_SPRNUM),A
-    LD HL,SPRPAT+640 : LD DE,E1_U5_TOP : LD IX,E1_U5_BOT
-    JP REDRAW_UNIT_PATTERN
-SOE1_BOT_TRY5:
-    LD A,(E1_U5_STATE)
-    CP 1 : JR Z,SOE1_BOT_TRY4
-    LD A,1 : LD (E1_U5_STATE),A
-    LD A,ENEMY_SPAWNX : LD (E1_U5_X),A
-    LD A,(SPAWN_E1_Y) : LD (E1_U5_Y),A
-    LD A,1 : LD (E1_U5_TOP),A : LD (E1_U5_BOT),A
-    XOR A : LD (E1_U5_DIAG_DONE),A : LD (E1_U5_DIAG_REMAIN),A
-    CALL ALLOC_SPRITE_NUM : LD (E1_U5_SPRNUM),A
-    LD HL,SPRPAT+640 : LD DE,E1_U5_TOP : LD IX,E1_U5_BOT
-    JP REDRAW_UNIT_PATTERN
-SOE1_BOT_TRY4:
-    LD A,(E1_U4_STATE)
-    CP 1 : JR Z,SOE1_BOT_TRY3
-    LD A,1 : LD (E1_U4_STATE),A
-    LD A,ENEMY_SPAWNX : LD (E1_U4_X),A
-    LD A,(SPAWN_E1_Y) : LD (E1_U4_Y),A
-    LD A,1 : LD (E1_U4_TOP),A : LD (E1_U4_BOT),A
-    XOR A : LD (E1_U4_DIAG_DONE),A : LD (E1_U4_DIAG_REMAIN),A
-    CALL ALLOC_SPRITE_NUM : LD (E1_U4_SPRNUM),A
-    LD HL,SPRPAT+608 : LD DE,E1_U4_TOP : LD IX,E1_U4_BOT
-    JP REDRAW_UNIT_PATTERN
-SOE1_BOT_TRY3:
-    LD A,(E1_U3_STATE)
-    CP 1 : JR Z,SOE1_BOT_TRY2
-    LD A,1 : LD (E1_U3_STATE),A
-    LD A,ENEMY_SPAWNX : LD (E1_U3_X),A
-    LD A,(SPAWN_E1_Y) : LD (E1_U3_Y),A
-    LD A,1 : LD (E1_U3_TOP),A : LD (E1_U3_BOT),A
-    XOR A : LD (E1_U3_DIAG_DONE),A : LD (E1_U3_DIAG_REMAIN),A
-    CALL ALLOC_SPRITE_NUM : LD (E1_U3_SPRNUM),A
-    LD HL,SPRPAT+576 : LD DE,E1_U3_TOP : LD IX,E1_U3_BOT
-    JP REDRAW_UNIT_PATTERN
-SOE1_BOT_TRY2:
-    LD A,(ENEMY2_STATE)
-    CP 1 : JR Z,SOE1_BOT_TRY1
-    LD A,1 : LD (ENEMY2_STATE),A
-    LD A,ENEMY_SPAWNX : LD (ENEMY2_X),A
-    LD A,(SPAWN_E1_Y) : LD (ENEMY2_Y),A
-    LD A,1 : LD (ENEMY2_TOP),A : LD (ENEMY2_BOT),A
-    XOR A : LD (ENEMY2_DIAG_DONE),A : LD (ENEMY2_DIAG_REMAIN),A
-    CALL ALLOC_SPRITE_NUM : LD (ENEMY2_SPRNUM),A
-    LD HL,SPRPAT+96 : LD DE,ENEMY2_TOP : LD IX,ENEMY2_BOT
-    JP REDRAW_UNIT_PATTERN
-SOE1_BOT_TRY1:
-    LD A,(ENEMY1_STATE)
-    CP 1 : JR Z,SOE1_BOT_TRY0
-    LD A,1 : LD (ENEMY1_STATE),A
-    LD A,ENEMY_SPAWNX : LD (ENEMY1_X),A
-    LD A,(SPAWN_E1_Y) : LD (ENEMY1_Y),A
-    LD A,1 : LD (ENEMY1_TOP),A : LD (ENEMY1_BOT),A
-    XOR A : LD (ENEMY1_DIAG_DONE),A : LD (ENEMY1_DIAG_REMAIN),A
-    CALL ALLOC_SPRITE_NUM : LD (ENEMY1_SPRNUM),A
-    LD HL,SPRPAT+64 : LD DE,ENEMY1_TOP : LD IX,ENEMY1_BOT
-    JP REDRAW_UNIT_PATTERN
-SOE1_BOT_TRY0:
-    LD A,(ENEMY0_STATE)
-    CP 1 : RET Z
-    LD A,1 : LD (ENEMY0_STATE),A
-    LD A,ENEMY_SPAWNX : LD (ENEMY0_X),A
-    LD A,(SPAWN_E1_Y) : LD (ENEMY0_Y),A
-    LD A,1 : LD (ENEMY0_TOP),A : LD (ENEMY0_BOT),A
-    XOR A : LD (ENEMY0_DIAG_DONE),A : LD (ENEMY0_DIAG_REMAIN),A
-    CALL ALLOC_SPRITE_NUM : LD (ENEMY0_SPRNUM),A
-    LD HL,SPRPAT+32 : LD DE,ENEMY0_TOP : LD IX,ENEMY0_BOT
-    JP REDRAW_UNIT_PATTERN
-
+; Claims a free ENEMY_POOL slot AND a free physical sprite-pattern
+; slot (this BEHAVIOR needs its own mutable 32-byte VRAM pattern per
+; instance, for the independent TOP/BOT quadrant redraw - see
+; SIMPLE_REDRAW) for a fresh BEHAVIOR_SIMPLE_DRIFT_DODGE spawn at the
+; right edge, Y from SPAWN_E1_Y, both quadrants alive. Drops the
+; spawn (rolling back any partial claim) if either pool is full.
+ENEMY1_CLAIM_ANY:
+    CALL ALLOC_PATTERN_SLOT
+    CP 0FFh
+    RET Z
+    PUSH AF
+    CALL ALLOC_ENEMY_SLOT
+    OR A
+    JR NZ,E1CA_GOTSLOT
+    POP AF
+    CALL FREE_PATTERN_SLOT
+    RET
+E1CA_GOTSLOT:
+    POP AF
+    LD (IX+E_PARAM3),A
+    LD A,BEHAVIOR_SIMPLE_DRIFT_DODGE : LD (IX+E_BEHAVIOR),A
+    LD A,ENEMY_SPAWNX : LD (IX+E_X),A
+    LD A,(SPAWN_E1_Y) : LD (IX+E_Y),A
+    LD A,1 : LD (IX+E_TOP),A : LD (IX+E_BOT),A
+    CALL ALLOC_SPRITE_NUM : LD (IX+E_SPRNUM),A
+    PUSH IX : POP HL
+    LD A,(IX+E_PARAM3)
+    JP SIMPLE_REDRAW
 
 ; true free-list sprite-number allocator: scans SPRITE_USED[2..31]
 ; for the first byte still 0 (free), claims it (sets 1), returns its
@@ -6319,6 +5579,73 @@ FREE_ENEMY_SLOT:
     LD (IX+E_ACTIVE),A
     RET
 
+; Claims one of the 6 physical sprite-pattern slots BEHAVIOR_SIMPLE_
+; DRIFT_DODGE needs (see the comment above SIMPLE_PATTERN_NUMS).
+; Output: A = claimed index (0-5), or A=0FFh if all 6 are taken.
+ALLOC_PATTERN_SLOT:
+    LD HL,SIMPLE_PATTERN_USED
+    LD B,SIMPLE_PATTERN_SLOTS
+APS_SCAN:
+    LD A,(HL)
+    OR A
+    JR Z,APS_FOUND
+    INC HL
+    DJNZ APS_SCAN
+    LD A,0FFh
+    RET
+APS_FOUND:
+    LD A,1 : LD (HL),A
+    LD A,SIMPLE_PATTERN_SLOTS
+    SUB B
+    RET
+
+; Input: A = pattern-slot index (0-5) to release.
+FREE_PATTERN_SLOT:
+    LD HL,SIMPLE_PATTERN_USED
+    LD D,0 : LD E,A
+    ADD HL,DE
+    XOR A : LD (HL),A
+    RET
+
+; Input: A = pattern-slot index (0-5). Output: HL = that slot's VRAM
+; pattern address. Trashes A,D,E.
+SIMPLE_PATTERN_LOOKUP:
+    ADD A,A : LD E,A : LD D,0
+    LD HL,SIMPLE_PATTERN_VRAM
+    ADD HL,DE
+    LD A,(HL) : INC HL : LD H,(HL) : LD L,A
+    RET
+
+; Input: A = pattern-slot index (0-5). Output: A = that slot's sprite
+; pattern number (for the OUT (98h) attribute write). Trashes H,L,D,E.
+SIMPLE_PATTERN_NUM:
+    LD E,A : LD D,0
+    LD HL,SIMPLE_PATTERN_NUMS
+    ADD HL,DE
+    LD A,(HL)
+    RET
+
+; Rebuilds a BEHAVIOR_SIMPLE_DRIFT_DODGE slot's owned VRAM sprite
+; pattern from its current TOP/BOT flags (mirrors the legacy per-unit
+; REDRAW_UNIT_PATTERN call sites). Input: HL = slot base address
+; (absolute), A = that slot's pattern-slot index (E_PARAM3). Tail-
+; calls into REDRAW_UNIT_PATTERN, which itself takes IX as an input
+; (the BOT-flag address) - callers that still need their own IX/slot
+; pointer afterward must save it themselves (see SIMPLE_SLOT_SCRATCH
+; use in EBSD_HIT_TEST). Trashes A,B,D,E,H,L,IX.
+SIMPLE_REDRAW:
+    LD (SIMPLE_SLOT_SCRATCH),HL
+    CALL SIMPLE_PATTERN_LOOKUP        ; A(idx) -> HL = vram addr
+    PUSH HL
+    LD HL,(SIMPLE_SLOT_SCRATCH)
+    LD DE,E_TOP : ADD HL,DE
+    PUSH HL : POP DE                  ; DE = TOP-flag address
+    LD HL,(SIMPLE_SLOT_SCRATCH)
+    LD BC,E_BOT : ADD HL,BC
+    PUSH HL : POP IX                  ; IX = BOT-flag address
+    POP HL                            ; HL = vram addr
+    JP REDRAW_UNIT_PATTERN
+
 SPAWN_E2_TOP_A:
     LD A,2 : LD (ENEMY_CYCLE),A
     JP ENEMY_START_COMPLEX_A
@@ -6335,159 +5662,6 @@ SPAWN_E3_WAVE:
     LD A,64 : LD (ENEMY3_BUDGET),A
     XOR A : LD (ENEMY3_SPAWN_COUNT),A
     LD A,1 : LD (ENEMY3_SPAWN_TIMER),A
-    RET
-
-; Writes all 3 formation units' sprite attributes (slots1-3):
-; real (X,ENEMY_Y)+pattern+color if that unit is STATE==1(active),
-; else hidden (Y=ENEMY_HIDE_Y, which is off the visible screen but
-; not the special 208 terminator, so later slots still draw).
-; Leaves the VRAM pointer right after slot3, so a terminator byte
-; can follow immediately without re-seeking.
-; Only touches the VDP for units currently STATE==1 (actively owning
-; their sprite number). A STATE 0/2 unit is skipped completely - no
-; VDP write at all - because with real sprite-number reuse, a unit's
-; number may already belong to someone else by the time this runs;
-; continuing to "hide" it every frame here would stomp the new
-; owner's draw. The one-time hide-on-exit write now lives at each
-; U*_EXIT site instead (see the movement loop above).
-ENEMY_DRAW_ALL:
-    LD A,(ENEMY0_STATE)
-    CP 1
-    JR NZ,EDA_U0_SKIP
-    LD A,(ENEMY0_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
-    NOP
-    NOP
-    LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
-    LD A,(ENEMY0_Y) : OUT (98h),A
-    NOP
-    NOP
-    LD A,(ENEMY0_X) : OUT (98h),A
-    NOP
-    NOP
-    LD A,PAT_ENEMY0 : OUT (98h),A
-    NOP
-    NOP
-    LD A,SPR_GRAY : OUT (98h),A
-    NOP
-    NOP
-EDA_U0_SKIP:
-
-    LD A,(ENEMY1_STATE)
-    CP 1
-    JR NZ,EDA_U1_SKIP
-    LD A,(ENEMY1_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
-    NOP
-    NOP
-    LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
-    LD A,(ENEMY1_Y) : OUT (98h),A
-    NOP
-    NOP
-    LD A,(ENEMY1_X) : OUT (98h),A
-    NOP
-    NOP
-    LD A,PAT_ENEMY1 : OUT (98h),A
-    NOP
-    NOP
-    LD A,SPR_GRAY : OUT (98h),A
-    NOP
-    NOP
-EDA_U1_SKIP:
-
-    LD A,(ENEMY2_STATE)
-    CP 1
-    JR NZ,EDA_U2_SKIP
-    LD A,(ENEMY2_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
-    NOP
-    NOP
-    LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
-    LD A,(ENEMY2_Y) : OUT (98h),A
-    NOP
-    NOP
-    LD A,(ENEMY2_X) : OUT (98h),A
-    NOP
-    NOP
-    LD A,PAT_ENEMY2 : OUT (98h),A
-    NOP
-    NOP
-    LD A,SPR_GRAY : OUT (98h),A
-    NOP
-    NOP
-EDA_U2_SKIP:
-
-    LD A,(E1_U3_STATE)
-    CP 1
-    JR NZ,EDA_U3_SKIP
-    LD A,(E1_U3_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
-    NOP
-    NOP
-    LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
-    LD A,(E1_U3_Y) : OUT (98h),A
-    NOP
-    NOP
-    LD A,(E1_U3_X) : OUT (98h),A
-    NOP
-    NOP
-    LD A,PAT_E1U3 : OUT (98h),A
-    NOP
-    NOP
-    LD A,SPR_GRAY : OUT (98h),A
-    NOP
-    NOP
-EDA_U3_SKIP:
-
-    LD A,(E1_U4_STATE)
-    CP 1
-    JR NZ,EDA_U4_SKIP
-    LD A,(E1_U4_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
-    NOP
-    NOP
-    LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
-    LD A,(E1_U4_Y) : OUT (98h),A
-    NOP
-    NOP
-    LD A,(E1_U4_X) : OUT (98h),A
-    NOP
-    NOP
-    LD A,PAT_E1U4 : OUT (98h),A
-    NOP
-    NOP
-    LD A,SPR_GRAY : OUT (98h),A
-    NOP
-    NOP
-EDA_U4_SKIP:
-
-    LD A,(E1_U5_STATE)
-    CP 1
-    JR NZ,EDA_U5_SKIP
-    LD A,(E1_U5_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
-    NOP
-    NOP
-    LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
-    LD A,(E1_U5_Y) : OUT (98h),A
-    NOP
-    NOP
-    LD A,(E1_U5_X) : OUT (98h),A
-    NOP
-    NOP
-    LD A,PAT_E1U5 : OUT (98h),A
-    NOP
-    NOP
-    LD A,SPR_GRAY : OUT (98h),A
-    NOP
-    NOP
-EDA_U5_SKIP:
     RET
 
 ; Draws all 3 units together from the shared ENEMY_X/ENEMY_Y group
@@ -7909,6 +7083,9 @@ EPUA_LOOP:
     LD A,(IX+E_BEHAVIOR)
     CP BEHAVIOR_SINE_BOB
     CALL Z,EBSB_UPDATE
+    LD A,(IX+E_BEHAVIOR)
+    CP BEHAVIOR_SIMPLE_DRIFT_DODGE
+    CALL Z,EBSD_UPDATE
 EPUA_SKIP:
     POP HL
     POP BC
@@ -7983,13 +7160,100 @@ EBSB_EXIT_LEFT:
     CALL FREE_ENEMY_SLOT
     RET
 
+; BEHAVIOR_SIMPLE_DRIFT_DODGE: drifts left at a fixed speed; once past
+; screen-center X, makes one diagonal dodge (toward/away from the
+; player's current Y, ENEMY_DODGE_DIST px total, 1px/frame) and then
+; continues straight. Draws from its own pattern slot (E_PARAM3) -
+; not a TYPE lookup, since each instance's pattern is independently
+; mutable (see SIMPLE_REDRAW). Exits (no score) off the left edge.
+; Input: IX = slot base (already confirmed ACTIVE).
+EBSD_UPDATE:
+    LD A,(IX+E_X)
+    CP ENEMY_SPEED
+    JR NC,EBSD_MOVEOK
+    JP EBSD_EXIT_LEFT
+EBSD_MOVEOK:
+    SUB ENEMY_SPEED
+    LD (IX+E_X),A
+    LD A,(IX+E_PARAM0)          ; DIAG_DONE
+    OR A
+    JR NZ,EBSD_DIAG_SKIP_TRIGGER
+    LD A,(IX+E_X)
+    CP ENEMY_CENTER_X
+    JR NC,EBSD_DIAG_SKIP_TRIGGER
+    LD A,1 : LD (IX+E_PARAM0),A
+    LD A,ENEMY_DODGE_DIST : LD (IX+E_PARAM1),A   ; DIAG_REMAIN
+    LD A,(PLAYERY) : LD B,A
+    LD A,(IX+E_Y)
+    CP B
+    JR NC,EBSD_DIAG_DIR_UP
+    LD A,1
+    JR EBSD_DIAG_DIR_SET
+EBSD_DIAG_DIR_UP:
+    LD A,0FFh
+EBSD_DIAG_DIR_SET:
+    LD (IX+E_PARAM2),A          ; DIAG_DIR
+EBSD_DIAG_SKIP_TRIGGER:
+    LD A,(IX+E_PARAM1)
+    OR A
+    JR Z,EBSD_DRAW
+    DEC A : LD (IX+E_PARAM1),A
+    LD A,(IX+E_PARAM2) : LD B,A
+    LD A,(IX+E_Y)
+    ADD A,B
+    LD (IX+E_Y),A
+EBSD_DRAW:
+    LD A,(IX+E_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
+    NOP
+    NOP
+    LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    LD A,(IX+E_Y) : OUT (98h),A
+    NOP
+    NOP
+    LD A,(IX+E_X) : OUT (98h),A
+    NOP
+    NOP
+    LD A,(IX+E_PARAM3) : CALL SIMPLE_PATTERN_NUM
+    OUT (98h),A
+    NOP
+    NOP
+    LD A,SPR_GRAY : OUT (98h),A
+    NOP
+    NOP
+    RET
+
+; Drifted off the left edge: hide the sprite, then free its sprite
+; number, pattern slot and pool slot. No score, no explosion - this
+; is an exit, not a kill (matches the legacy U*_EXIT paths, which
+; only ever freed on edge-exit, never on a quadrant kill - see
+; EBSD_HIT_TEST).
+EBSD_EXIT_LEFT:
+    LD A,(IX+E_SPRNUM) : PUSH AF
+    ADD A,A : ADD A,A : OUT (99h),A
+    NOP
+    NOP
+    LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    LD A,ENEMY_HIDE_Y : OUT (98h),A
+    NOP
+    NOP
+    LD A,255 : OUT (98h),A
+    NOP
+    NOP
+    POP AF : CALL FREE_SPRITE_NUM
+    LD A,(IX+E_PARAM3) : CALL FREE_PATTERN_SLOT
+    CALL FREE_ENEMY_SLOT
+    RET
+
 ; Input: B = bullet col, C = bullet row.
 ; Output: A = 1 if the bullet hit (and possibly destroyed) a unified
 ; enemy-pool slot, else 0. Scans every active slot, dispatching the
-; actual hitbox test/damage on BEHAVIOR (currently just
-; BEHAVIOR_SINE_BOB/Enemy4 - more join as they migrate in). B/C are
-; saved to scratch RAM across the scan so the loop can use B as its
-; counter; QUAD_HIT_TEST itself doesn't touch B/C.
+; actual hitbox test/damage on BEHAVIOR. B/C are saved to scratch RAM
+; across the scan so the loop can use B as its counter; QUAD_HIT_TEST
+; itself doesn't touch B/C.
 CHECK_BULLET_VS_ENEMY_POOL:
     LD A,B : LD (ENEMY_HIT_COL),A
     LD A,C : LD (ENEMY_HIT_ROW),A
@@ -8004,10 +7268,19 @@ CBVEP_LOOP:
     JR Z,CBVEP_SKIP
     LD A,(IX+E_BEHAVIOR)
     CP BEHAVIOR_SINE_BOB
-    JR NZ,CBVEP_SKIP
+    JR NZ,CBVEP_TRY_SIMPLE
     LD A,(ENEMY_HIT_COL) : LD B,A
     LD A,(ENEMY_HIT_ROW) : LD C,A
     CALL EBSB_HIT_TEST
+    JR CBVEP_CHECK_HIT
+CBVEP_TRY_SIMPLE:
+    LD A,(IX+E_BEHAVIOR)
+    CP BEHAVIOR_SIMPLE_DRIFT_DODGE
+    JR NZ,CBVEP_SKIP
+    LD A,(ENEMY_HIT_COL) : LD B,A
+    LD A,(ENEMY_HIT_ROW) : LD C,A
+    CALL EBSD_HIT_TEST
+CBVEP_CHECK_HIT:
     OR A
     JR Z,CBVEP_SKIP
     POP HL
@@ -8072,6 +7345,48 @@ EBSBH_DAMAGED:
     LD A,1
     RET
 EBSBH_NO:
+    XOR A
+    RET
+
+; Input: IX = slot base (already confirmed ACTIVE+BEHAVIOR_SIMPLE_
+; DRIFT_DODGE), B = bullet col, C = bullet row. Output: A = 1 if the
+; bullet destroyed a quadrant, else 0. Each of the 2 quadrants
+; (TOP-left at X,Y and BOT-right at X+8,Y+8) is independently
+; destructible - killing one just redraws the pattern with that
+; asterisk dropped and scores; it does NOT free the slot even once
+; both are gone (matches the legacy behavior exactly: a fully-gutted,
+; now-invisible unit keeps flying/dodging until it exits off the left
+; edge - see EBSD_EXIT_LEFT). An already-dead quadrant is skipped, so
+; a bullet passes straight through it.
+EBSD_HIT_TEST:
+    LD A,(IX+E_TOP) : OR A : JR Z,EBSD_HT_CHECKBOT
+    LD A,(IX+E_X) : LD D,A
+    LD A,(IX+E_Y) : LD E,A
+    CALL QUAD_HIT_TEST
+    OR A
+    JR NZ,EBSD_HT_KILL_TOP
+EBSD_HT_CHECKBOT:
+    LD A,(IX+E_BOT) : OR A : JR Z,EBSD_HT_NO
+    LD A,(IX+E_X) : ADD A,8 : LD D,A
+    LD A,(IX+E_Y) : ADD A,8 : LD E,A
+    CALL QUAD_HIT_TEST
+    OR A
+    JR Z,EBSD_HT_NO
+    XOR A : LD (IX+E_BOT),A
+    JR EBSD_HT_REDRAW
+EBSD_HT_KILL_TOP:
+    XOR A : LD (IX+E_TOP),A
+EBSD_HT_REDRAW:
+    PUSH IX : POP HL
+    LD A,(IX+E_PARAM3)
+    CALL SIMPLE_REDRAW
+    PUSH BC
+    CALL TRIGGER_EXPLOSION
+    CALL AWARD_FORMATION_SCORE
+    POP BC
+    LD A,1
+    RET
+EBSD_HT_NO:
     XOR A
     RET
 
