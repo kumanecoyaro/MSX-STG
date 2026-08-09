@@ -69,10 +69,19 @@ IDCACHE5    EQU 0E0B1h
 ; --- normal gameplay, safe to delete once the BG-residue bug is found. ---
 DEBUG_WATCH_ROW EQU 10   ; adjust to match the observed glitch position
 DEBUG_WATCH_COL EQU 25   ; adjust to match the observed glitch position
-DEBUG_WATCH_VAL  EQU 0E0D2h
-DWD_ONES_TMP     EQU 0E0D3h
-DEBUG_WATCH_PREV EQU 0E0D4h  ; last frame's watched value, to detect a change
-DEBUG_WATCH_AGE  EQU 0E0D5h  ; frames since the watched value last changed (caps at 255)
+; --- relocated away from IDCACHE5 (ends 0E0D1h) - these 4 bytes used to  ---
+; --- sit at 0E0D2h, IMMEDIATELY adjacent to IDCACHE5's last byte. If    ---
+; --- something were overrunning IDCACHE5's 33-byte allocation even by a ---
+; --- little, it would land exactly here and corrupt the watch's own    ---
+; --- readout rather than reflect real VRAM content - moving ~175 bytes ---
+; --- away (still inside the E0D2h-E1FFh free gap before NAMEBUF/E200h) ---
+; --- isolates that as a variable: if the "stuck" symptom persists       ---
+; --- identically here, it rules out a RAM-adjacency overflow as the     ---
+; --- cause; if it changes or stops, that confirms one.                  ---
+DEBUG_WATCH_VAL  EQU 0E180h
+DWD_ONES_TMP     EQU 0E181h
+DEBUG_WATCH_PREV EQU 0E182h  ; last frame's watched value, to detect a change
+DEBUG_WATCH_AGE  EQU 0E183h  ; frames since the watched value last changed (caps at 255)
 
 NAMEBUF     EQU 0E200h
 PREVBUF     EQU 0E300h
