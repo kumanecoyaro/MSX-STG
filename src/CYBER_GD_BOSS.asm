@@ -65,6 +65,26 @@ IDCACHE3    EQU 0E06Fh
 IDCACHE4    EQU 0E090h
 IDCACHE5    EQU 0E0B1h
 
+; --- one-shot deterministic-garbage watch/freeze-dump. Confirmed        ---
+; --- reproducible 100% at screen (row=2,col=26) with no shot fired -    ---
+; --- checked once per frame, right before EI/HALT, so it catches the   ---
+; --- state as of the end of whichever frame first shows non-blank      ---
+; --- there. Not a true write-instant hardware watchpoint (the VDP has  ---
+; --- no such capability to read back), but freezing within the same    ---
+; --- frame it appears, before anything else overwrites it, and dumping ---
+; --- every piece of state that could plausibly have written there is   ---
+; --- the closest approximation buildable in software. Remove once the  ---
+; --- bug is found. Scratch cells reused from the same free gap the old ---
+; --- (removed) debug watch used, E0D2h-E1FFh, before NAMEBUF.          ---
+WATCH_ROW    EQU 2
+WATCH_COL    EQU 26
+PBD_ROW      EQU 0E0D2h
+PBD_COL      EQU 0E0D3h
+PBD_VAL      EQU 0E0D4h
+PBD_D0       EQU 0E0D5h
+PBD_D1       EQU 0E0D6h
+PBD_D2       EQU 0E0D7h
+
 NAMEBUF     EQU 0E200h
 PREVBUF     EQU 0E300h
 STACKTOP    EQU 0F380h
@@ -1996,9 +2016,120 @@ BULLET2_OFF:
     XOR A : LD (BULLET2_ACT),A
 BULLET2_NEXT:
 
+    ; --- garbage watch: read back (WATCH_ROW,WATCH_COL) = VRAM 185Ah    ---
+    ; --- (1800h + 2*32+26) every frame; the moment it isn't BLANKCODE,  ---
+    ; --- freeze and dump diagnostics instead of continuing - see        ---
+    ; --- WATCH_ROW's own comment. Read mode, so no 40h on the high      ---
+    ; --- byte (unlike every write-mode address-set elsewhere).          ---
+    LD A,5Ah : OUT (99h),A
+    NOP
+    NOP
+    LD A,18h : OUT (99h),A
+    NOP
+    NOP
+    IN A,(98h)
+    CP BLANKCODE
+    JP NZ,FREEZE_DUMP
+
     EI
     HALT
     JP MAINLOOP
+
+; Input: A = byte to print (0-255), B = row, C = col. Writes 3 decimal
+; digits (hundreds/tens/ones) at (row,col),(row,col+1),(row,col+2).
+; Clobbers A,B,C,L and the PBD_* scratch cells.
+PRINT_BYTE_DEC:
+    LD (PBD_VAL),A
+    LD A,B : LD (PBD_ROW),A
+    LD A,C : LD (PBD_COL),A
+    LD A,(PBD_VAL) : LD L,A
+    LD B,0
+PBD_100:
+    LD A,L : CP 100
+    JR C,PBD_100_DONE
+    SUB 100 : LD L,A
+    INC B
+    JR PBD_100
+PBD_100_DONE:
+    LD A,B : LD (PBD_D2),A
+    LD B,0
+PBD_10:
+    LD A,L : CP 10
+    JR C,PBD_10_DONE
+    SUB 10 : LD L,A
+    INC B
+    JR PBD_10
+PBD_10_DONE:
+    LD A,B : LD (PBD_D1),A
+    LD A,L : LD (PBD_D0),A
+
+    LD A,(PBD_ROW) : LD (ANIM_TMP_ROW),A
+    LD A,(PBD_COL) : LD (ANIM_TMP_COL),A
+    LD A,(PBD_D2) : ADD A,DIGIT_BASE : LD (ANIM_TMP_VAL),A
+    CALL WRITE_ANIM_CELL
+
+    LD A,(PBD_ROW) : LD (ANIM_TMP_ROW),A
+    LD A,(PBD_COL) : INC A : LD (ANIM_TMP_COL),A
+    LD A,(PBD_D1) : ADD A,DIGIT_BASE : LD (ANIM_TMP_VAL),A
+    CALL WRITE_ANIM_CELL
+
+    LD A,(PBD_ROW) : LD (ANIM_TMP_ROW),A
+    LD A,(PBD_COL) : ADD A,2 : LD (ANIM_TMP_COL),A
+    LD A,(PBD_D0) : ADD A,DIGIT_BASE : LD (ANIM_TMP_VAL),A
+    CALL WRITE_ANIM_CELL
+    RET
+
+; Entered with A = the offending byte value just read from
+; (WATCH_ROW,WATCH_COL). Dumps every piece of state that could
+; plausibly explain it, then hangs forever (DI:JR $) - the display
+; stays frozen for as long as the machine stays powered on, since
+; nothing ever writes to VRAM again after this point.
+FREEZE_DUMP:
+    DI
+    LD B,1 : LD C,0 : CALL PRINT_BYTE_DEC          ; row1 col0-2: offending value
+    LD A,(TICK) : LD B,1 : LD C,5 : CALL PRINT_BYTE_DEC
+    LD A,(BOSS_STATE) : LD B,1 : LD C,10 : CALL PRINT_BYTE_DEC
+    LD A,(PLAYERX) : LD B,2 : LD C,0 : CALL PRINT_BYTE_DEC
+    LD A,(PLAYERY) : LD B,2 : LD C,5 : CALL PRINT_BYTE_DEC
+    ; --- GAME_TICK's 2 bytes read independently, not via LD HL,(GAME_TICK) -
+    ; --- PRINT_BYTE_DEC calls WRITE_ANIM_CELL internally, which clobbers
+    ; --- HL, so H would no longer hold the high byte by the second call. ---
+    LD A,(GAME_TICK) : LD B,2 : LD C,10 : CALL PRINT_BYTE_DEC
+    LD A,(GAME_TICK+1) : LD B,2 : LD C,15 : CALL PRINT_BYTE_DEC
+    LD A,(PXCHAR_G1) : LD B,3 : LD C,0 : CALL PRINT_BYTE_DEC
+    LD A,(PXCHAR_G2) : LD B,3 : LD C,5 : CALL PRINT_BYTE_DEC
+    LD A,(PXCHAR_G4) : LD B,3 : LD C,10 : CALL PRINT_BYTE_DEC
+    LD A,(PXCHAR_G8) : LD B,3 : LD C,15 : CALL PRINT_BYTE_DEC
+
+    ; ENEMY3_POOL slots 0-7: active/row/col at display rows 5-12,
+    ; cols 0-2/4-6/8-10 - unrolled (no loop) to keep this simple/safe.
+    LD A,(ENEMY3_POOL+0)  : LD B,5  : LD C,0 : CALL PRINT_BYTE_DEC
+    LD A,(ENEMY3_POOL+4)  : LD B,5  : LD C,4 : CALL PRINT_BYTE_DEC
+    LD A,(ENEMY3_POOL+5)  : LD B,5  : LD C,8 : CALL PRINT_BYTE_DEC
+    LD A,(ENEMY3_POOL+11) : LD B,6  : LD C,0 : CALL PRINT_BYTE_DEC
+    LD A,(ENEMY3_POOL+15) : LD B,6  : LD C,4 : CALL PRINT_BYTE_DEC
+    LD A,(ENEMY3_POOL+16) : LD B,6  : LD C,8 : CALL PRINT_BYTE_DEC
+    LD A,(ENEMY3_POOL+22) : LD B,7  : LD C,0 : CALL PRINT_BYTE_DEC
+    LD A,(ENEMY3_POOL+26) : LD B,7  : LD C,4 : CALL PRINT_BYTE_DEC
+    LD A,(ENEMY3_POOL+27) : LD B,7  : LD C,8 : CALL PRINT_BYTE_DEC
+    LD A,(ENEMY3_POOL+33) : LD B,8  : LD C,0 : CALL PRINT_BYTE_DEC
+    LD A,(ENEMY3_POOL+37) : LD B,8  : LD C,4 : CALL PRINT_BYTE_DEC
+    LD A,(ENEMY3_POOL+38) : LD B,8  : LD C,8 : CALL PRINT_BYTE_DEC
+    LD A,(ENEMY3_POOL+44) : LD B,9  : LD C,0 : CALL PRINT_BYTE_DEC
+    LD A,(ENEMY3_POOL+48) : LD B,9  : LD C,4 : CALL PRINT_BYTE_DEC
+    LD A,(ENEMY3_POOL+49) : LD B,9  : LD C,8 : CALL PRINT_BYTE_DEC
+    LD A,(ENEMY3_POOL+55) : LD B,10 : LD C,0 : CALL PRINT_BYTE_DEC
+    LD A,(ENEMY3_POOL+59) : LD B,10 : LD C,4 : CALL PRINT_BYTE_DEC
+    LD A,(ENEMY3_POOL+60) : LD B,10 : LD C,8 : CALL PRINT_BYTE_DEC
+    LD A,(ENEMY3_POOL+66) : LD B,11 : LD C,0 : CALL PRINT_BYTE_DEC
+    LD A,(ENEMY3_POOL+70) : LD B,11 : LD C,4 : CALL PRINT_BYTE_DEC
+    LD A,(ENEMY3_POOL+71) : LD B,11 : LD C,8 : CALL PRINT_BYTE_DEC
+    LD A,(ENEMY3_POOL+77) : LD B,12 : LD C,0 : CALL PRINT_BYTE_DEC
+    LD A,(ENEMY3_POOL+81) : LD B,12 : LD C,4 : CALL PRINT_BYTE_DEC
+    LD A,(ENEMY3_POOL+82) : LD B,12 : LD C,8 : CALL PRINT_BYTE_DEC
+
+FREEZE_FOREVER:
+    JR FREEZE_FOREVER
 
 ; ============================================================
 ; player movement helpers (called from the dispatch above)

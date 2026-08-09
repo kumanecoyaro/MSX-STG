@@ -85,16 +85,12 @@ def main():
         orig_step()
     z.step = traced_step
 
-    # --- init like real INIT ---
-    z.mem[sym['TICK']] = 0
-    for g in ['PXCHAR_G8', 'PXCHAR_G4', 'PXCHAR_G2', 'PXCHAR_G1']:
-        z.mem[sym[g]] = 0
-    for row in range(6):
-        z.sp = 0xFF00; z.wr(0xFF00, 0); z.wr(0xFF01, 0)
-        z.sethl(sym[f'ROWDATA{row}']); z.ix = sym[f'IDCACHE{row}']
-        z.pc = sym['REFRESH_IDCACHE_33']
-        run_until(z, 0)
-    z.mem[sym['BOSS_STATE']] = 0
+    # --- run the actual INIT routine (not a hand-rolled subset) - it now
+    # also blanks the whole sky to BLANKCODE, which the garbage-watch
+    # freeze-dump at the bottom of MAINLOOP relies on; a partial init
+    # that skips that would false-trigger the watch on frame 0. ---
+    z.pc = sym['INIT']
+    run_until(z, sym['MAINLOOP'])
     z.mem[sym['ENEMY3_BUDGET']] = 40
     z.mem[sym['ENEMY3_SPAWN_TIMER']] = 1
     z.mem[sym['PLAYERX']] = 16
