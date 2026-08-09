@@ -49,21 +49,8 @@ PHASE_G4    EQU 0E006h
 PHASE_G2    EQU 0E007h
 PHASE_G1    EQU 0E008h
 ROWPHASE    EQU 0E009h
+CURRID      EQU 0E00Ah
 NEXTID      EQU 0E00Bh
-
-; Per-row cache of ROWDATAn[PXCHARgroup..PXCHARgroup+32] already translated
-; through LUT (ASCII terrain letter -> 0-5 id). CELL_LOOP_0-5 read straight
-; from here instead of re-deriving each id from ROWDATA+LUT every frame;
-; REFRESH_IDCACHE_33 repopulates a row's slice only when its group's
-; PXCHAR actually advances (every 8/16/32/64 frames - see the PXCHAR_G8/
-; G4/G2/G1 gates in MAINLOOP), plus once at INIT to seed frame 1.
-; 33 bytes/row (32 cells + 1 lookahead byte for the last cell's "next").
-IDCACHE0    EQU 0E00Ch
-IDCACHE1    EQU 0E02Dh
-IDCACHE2    EQU 0E04Eh
-IDCACHE3    EQU 0E06Fh
-IDCACHE4    EQU 0E090h
-IDCACHE5    EQU 0E0B1h
 
 NAMEBUF     EQU 0E200h
 PREVBUF     EQU 0E300h
@@ -89,11 +76,10 @@ PLAYER_SPEED EQU 4
 PLAYER_MINX  EQU 0
 PLAYER_MAXX  EQU 240    ; 256-16 (ship is 16 dots wide)
 PLAYER_MINY  EQU 8      ; one char row (8px) down, clears row0 score/tick display
-PLAYER_MAXY  EQU 176    ; keeps the ship out of local row 6 (wedge, screen
-                        ; row 23) only - the very bottom row of the 6-row
-                        ; scroller; rows 1-5 (mountain/diamond/diamond/
-                        ; slash/backslash, screen rows 18-22) are now
-                        ; reachable.
+PLAYER_MAXY  EQU 176    ; keeps the ship out of local row 5 (wedge, screen
+                        ; row 23) only - the very bottom row of the 5-row
+                        ; scroller; rows 0-3 (mountain/diamond/slash/
+                        ; backslash, screen rows 19-22) are now reachable.
 PLAYER_INITX EQU 16
 PLAYER_INITY EQU 64
 
@@ -112,7 +98,11 @@ PLAYER_INITY EQU 64
 BULLET_PAT_BLUE  EQU 56
 BULLET_PAT_GREEN EQU 64
 BULLET_MAXCOL EQU 31    ; last valid column (32-wide name table, 0-31)
-GROUND_ROW0   EQU 18    ; first screen row of the 6-row ground scroller
+GROUND_ROW0   EQU 19    ; first screen row of the 5-row ground scroller
+                        ; (was 6 rows/GROUND_ROW0=18; TIER2_DIAMOND's own
+                        ; processing was removed to cut per-frame VDP/CPU
+                        ; load, and TIER1_MOUNTAIN now draws one row lower,
+                        ; at screen row19, to fill the gap)
 
 FIRE_COOLDOWN EQU 0E3D2h ; frames to wait before another shot can spawn
 FIRE_COOLDOWN_LEN EQU 1  ; "1 cycle" gap between shots (see fire logic)
@@ -149,7 +139,7 @@ BULLET2_PAT  EQU 0E3D4h
 ; --- the right edge, exits off the left edge (or is destroyed   ---
 ; --- by a shot), then respawns alternating between two fixed Y  ---
 ; --- positions (16 dots from the top, and 16 dots above the     ---
-; --- 6-row ground scroller).                                    ---
+; --- 5-row ground scroller).                                    ---
 ENEMY_Y       EQU 0E3D9h   ; shared Y of the whole formation
 ENEMY_X       EQU 0E3DAh   ; shared group X, used once the complex formation is fully assembled (drift/exit)
 
@@ -534,23 +524,12 @@ INIT:
     LD (TICK),A : LD (PXCHAR_G8),A : LD (PXCHAR_G4),A
     LD (PXCHAR_G2),A : LD (PXCHAR_G1),A
 
-    ; Seed all 6 IDCACHEn buffers for PXCHAR=0 (the gates in MAINLOOP that
-    ; call REFRESH_IDCACHE_33 only fire once their group's PXCHAR actually
-    ; advances - every 8/16/32/64 frames - so without this, frame 1 would
-    ; render from stale/zeroed cache RAM).
-    LD HL,ROWDATA0 : LD IX,IDCACHE0 : CALL REFRESH_IDCACHE_33
-    LD HL,ROWDATA1 : LD IX,IDCACHE1 : CALL REFRESH_IDCACHE_33
-    LD HL,ROWDATA2 : LD IX,IDCACHE2 : CALL REFRESH_IDCACHE_33
-    LD HL,ROWDATA3 : LD IX,IDCACHE3 : CALL REFRESH_IDCACHE_33
-    LD HL,ROWDATA4 : LD IX,IDCACHE4 : CALL REFRESH_IDCACHE_33
-    LD HL,ROWDATA5 : LD IX,IDCACHE5 : CALL REFRESH_IDCACHE_33
-
     LD HL,PREVBUF : LD (HL),0FFh
-    LD DE,PREVBUF+1 : LD BC,191 : LDIR
+    LD DE,PREVBUF+1 : LD BC,159 : LDIR
 
-    ; Clear the background rows (screen rows 0-17, 18*32=576 bytes,
-    ; i.e. everything above the 6-row scroller which now sits at
-    ; screen rows 18-23) to BLANKCODE, whose color group is set to
+    ; Clear the background rows (screen rows 0-18, 19*32=608 bytes,
+    ; i.e. everything above the 5-row scroller which now sits at
+    ; screen rows 19-23) to BLANKCODE, whose color group is set to
     ; fg=bg=blue in COLORDATA so it reads as solid blue regardless
     ; of pattern content.
     LD A,00h : OUT (99h),A
@@ -586,7 +565,7 @@ FILLBG_2:
     NOP
     NOP
     DJNZ FILLBG_2
-    LD B,64
+    LD B,96
 FILLBG_3:
     OUT (98h),A
     NOP
@@ -943,8 +922,6 @@ MAINLOOP:
     LD A,(TICK) : AND 07h
     JR NZ,SKIP_G8
     LD A,(PXCHAR_G8) : INC A : AND 3Fh : LD (PXCHAR_G8),A
-    LD HL,ROWDATA5 : LD A,(PXCHAR_G8) : LD E,A : LD D,0 : ADD HL,DE
-    LD IX,IDCACHE5 : CALL REFRESH_IDCACHE_33
     LD HL,(GAME_TICK) : INC HL : LD (GAME_TICK),HL
     CALL GAME_TICK_DISPLAY
     CALL SPAWN_SCHEDULE_CHECK
@@ -954,189 +931,154 @@ SKIP_G8:
     LD A,(TICK) : AND 0Fh
     JR NZ,SKIP_G4
     LD A,(PXCHAR_G4) : INC A : AND 3Fh : LD (PXCHAR_G4),A
-    LD HL,ROWDATA3 : LD A,(PXCHAR_G4) : LD E,A : LD D,0 : ADD HL,DE
-    LD IX,IDCACHE3 : CALL REFRESH_IDCACHE_33
-    LD HL,ROWDATA4 : LD A,(PXCHAR_G4) : LD E,A : LD D,0 : ADD HL,DE
-    LD IX,IDCACHE4 : CALL REFRESH_IDCACHE_33
 SKIP_G4:
     LD A,(TICK) : SRL A : AND 07h : LD (PHASE_G4),A
 
     LD A,(TICK) : AND 1Fh
     JR NZ,SKIP_G2
     LD A,(PXCHAR_G2) : INC A : AND 3Fh : LD (PXCHAR_G2),A
-    LD HL,ROWDATA2 : LD A,(PXCHAR_G2) : LD E,A : LD D,0 : ADD HL,DE
-    LD IX,IDCACHE2 : CALL REFRESH_IDCACHE_33
 SKIP_G2:
     LD A,(TICK) : SRL A : SRL A : AND 07h : LD (PHASE_G2),A
 
     LD A,(TICK) : AND 3Fh
     JR NZ,SKIP_G1
     LD A,(PXCHAR_G1) : INC A : AND 3Fh : LD (PXCHAR_G1),A
-    LD HL,ROWDATA0 : LD A,(PXCHAR_G1) : LD E,A : LD D,0 : ADD HL,DE
-    LD IX,IDCACHE0 : CALL REFRESH_IDCACHE_33
-    LD HL,ROWDATA1 : LD A,(PXCHAR_G1) : LD E,A : LD D,0 : ADD HL,DE
-    LD IX,IDCACHE1 : CALL REFRESH_IDCACHE_33
 SKIP_G1:
     LD A,(TICK) : SRL A : SRL A : SRL A : AND 07h : LD (PHASE_G1),A
 
-    ; --- row 0: screen row 17 (TIER1_MOUNTAIN), group PXCHAR_G1 ---
+    ; --- row 0: screen row 19 (TIER1_MOUNTAIN), group PXCHAR_G1 ---
+    ; --- (was screen row 18 - moved down 1 row to fill the gap left by ---
+    ; --- deleting TIER2_DIAMOND's own row, see GROUND_ROW0) ---
     LD A,(PHASE_G1) : LD (ROWPHASE),A
-    LD HL,IDCACHE0                       ; pre-translated ids - see IDCACHE0 comment
+    LD HL,ROWDATA0 : LD A,(PXCHAR_G1) : LD E,A : LD D,0 : ADD HL,DE
     LD IX,NAMEBUF+0
     LD B,32
-    ; --- prime C = curr_id for cell 0; each cell's "next" is the following---
-    ; --- cell's "curr" (HL only advances by 1/cell), so C carries it       ---
-    ; --- forward every iteration instead of re-reading it. ---
-    LD A,(HL) : LD C,A
 CELL_LOOP_0:
+    LD A,(HL) : LD E,A : LD D,LUT/256 : LD A,(DE) : LD (CURRID),A
     INC HL
-    LD A,(HL) : LD (NEXTID),A
+    LD A,(HL) : LD E,A : LD D,LUT/256 : LD A,(DE) : LD (NEXTID),A
     LD A,(ROWPHASE) : OR A
     JR NZ,NONZERO_0
-    LD A,C : LD E,A : LD D,SOLOTAB/256 : LD A,(DE)
+    LD A,(CURRID) : LD E,A : LD D,SOLOTAB/256 : LD A,(DE)
     JR STORE_0
 NONZERO_0:
-    LD A,C : LD E,A : LD D,MUL6/256 : LD A,(DE) : LD E,A  ; E = curr_id*6
-    LD A,(NEXTID) : ADD A,E             ; A = pairid = curr_id*6+next_id
+    LD A,(CURRID) : LD E,A : LD D,MUL6/256 : LD A,(DE) : LD E,A  ; E = curr*6
+    LD A,(NEXTID) : ADD A,E             ; A = pairid = curr*6+next
     LD E,A : LD D,PAIRBASE/256 : LD A,(DE)  ; A = PAIRBASE[pairid]
     LD E,A
     LD A,(ROWPHASE) : DEC A : ADD A,E   ; + (phase-1)
 STORE_0:
     LD (IX+0),A
     INC IX
-    LD A,(NEXTID) : LD C,A              ; carry next_id forward as next cell's curr_id
     DJNZ CELL_LOOP_0
 
-    ; --- row 1: screen row 18 (TIER2_DIAMOND), group PXCHAR_G1 ---
-    LD A,(PHASE_G1) : LD (ROWPHASE),A
-    LD HL,IDCACHE1
+    ; --- row 2: screen row 20 (TIER3_DIAMOND), group PXCHAR_G2 ---
+    ; --- (NAMEBUF slot shifted from +64 to +32 - row1/TIER2_DIAMOND's ---
+    ; --- slot was deleted, see GROUND_ROW0) ---
+    LD A,(PHASE_G2) : LD (ROWPHASE),A
+    LD HL,ROWDATA2 : LD A,(PXCHAR_G2) : LD E,A : LD D,0 : ADD HL,DE
     LD IX,NAMEBUF+32
     LD B,32
-    LD A,(HL) : LD C,A
-CELL_LOOP_1:
-    INC HL
-    LD A,(HL) : LD (NEXTID),A
-    LD A,(ROWPHASE) : OR A
-    JR NZ,NONZERO_1
-    LD A,C : LD E,A : LD D,SOLOTAB/256 : LD A,(DE)
-    JR STORE_1
-NONZERO_1:
-    LD A,C : LD E,A : LD D,MUL6/256 : LD A,(DE) : LD E,A  ; E = curr_id*6
-    LD A,(NEXTID) : ADD A,E             ; A = pairid = curr_id*6+next_id
-    LD E,A : LD D,PAIRBASE/256 : LD A,(DE)  ; A = PAIRBASE[pairid]
-    LD E,A
-    LD A,(ROWPHASE) : DEC A : ADD A,E   ; + (phase-1)
-STORE_1:
-    LD (IX+0),A
-    INC IX
-    LD A,(NEXTID) : LD C,A              ; carry next_id forward as next cell's curr_id
-    DJNZ CELL_LOOP_1
-
-    ; --- row 2: screen row 19 (TIER3_DIAMOND), group PXCHAR_G2 ---
-    LD A,(PHASE_G2) : LD (ROWPHASE),A
-    LD HL,IDCACHE2
-    LD IX,NAMEBUF+64
-    LD B,32
-    LD A,(HL) : LD C,A
 CELL_LOOP_2:
+    LD A,(HL) : LD E,A : LD D,LUT/256 : LD A,(DE) : LD (CURRID),A
     INC HL
-    LD A,(HL) : LD (NEXTID),A
+    LD A,(HL) : LD E,A : LD D,LUT/256 : LD A,(DE) : LD (NEXTID),A
     LD A,(ROWPHASE) : OR A
     JR NZ,NONZERO_2
-    LD A,C : LD E,A : LD D,SOLOTAB/256 : LD A,(DE)
+    LD A,(CURRID) : LD E,A : LD D,SOLOTAB/256 : LD A,(DE)
     JR STORE_2
 NONZERO_2:
-    LD A,C : LD E,A : LD D,MUL6/256 : LD A,(DE) : LD E,A  ; E = curr_id*6
-    LD A,(NEXTID) : ADD A,E             ; A = pairid = curr_id*6+next_id
+    LD A,(CURRID) : LD E,A : LD D,MUL6/256 : LD A,(DE) : LD E,A  ; E = curr*6
+    LD A,(NEXTID) : ADD A,E             ; A = pairid = curr*6+next
     LD E,A : LD D,PAIRBASE/256 : LD A,(DE)  ; A = PAIRBASE[pairid]
     LD E,A
     LD A,(ROWPHASE) : DEC A : ADD A,E   ; + (phase-1)
 STORE_2:
     LD (IX+0),A
     INC IX
-    LD A,(NEXTID) : LD C,A              ; carry next_id forward as next cell's curr_id
     DJNZ CELL_LOOP_2
 
-    ; --- row 3: screen row 20 (TIER4_SLASH), group PXCHAR_G4 ---
+    ; --- row 3: screen row 21 (TIER4_SLASH), group PXCHAR_G4 ---
+    ; --- (NAMEBUF slot shifted from +96 to +64) ---
     LD A,(PHASE_G4) : LD (ROWPHASE),A
-    LD HL,IDCACHE3
-    LD IX,NAMEBUF+96
+    LD HL,ROWDATA3 : LD A,(PXCHAR_G4) : LD E,A : LD D,0 : ADD HL,DE
+    LD IX,NAMEBUF+64
     LD B,32
-    LD A,(HL) : LD C,A
 CELL_LOOP_3:
+    LD A,(HL) : LD E,A : LD D,LUT/256 : LD A,(DE) : LD (CURRID),A
     INC HL
-    LD A,(HL) : LD (NEXTID),A
+    LD A,(HL) : LD E,A : LD D,LUT/256 : LD A,(DE) : LD (NEXTID),A
     LD A,(ROWPHASE) : OR A
     JR NZ,NONZERO_3
-    LD A,C : LD E,A : LD D,SOLOTAB/256 : LD A,(DE)
+    LD A,(CURRID) : LD E,A : LD D,SOLOTAB/256 : LD A,(DE)
     JR STORE_3
 NONZERO_3:
-    LD A,C : LD E,A : LD D,MUL6/256 : LD A,(DE) : LD E,A  ; E = curr_id*6
-    LD A,(NEXTID) : ADD A,E             ; A = pairid = curr_id*6+next_id
+    LD A,(CURRID) : LD E,A : LD D,MUL6/256 : LD A,(DE) : LD E,A  ; E = curr*6
+    LD A,(NEXTID) : ADD A,E             ; A = pairid = curr*6+next
     LD E,A : LD D,PAIRBASE/256 : LD A,(DE)  ; A = PAIRBASE[pairid]
     LD E,A
     LD A,(ROWPHASE) : DEC A : ADD A,E   ; + (phase-1)
 STORE_3:
     LD (IX+0),A
     INC IX
-    LD A,(NEXTID) : LD C,A              ; carry next_id forward as next cell's curr_id
     DJNZ CELL_LOOP_3
 
-    ; --- row 4: screen row 21 (TIER5_BACKSLASH), group PXCHAR_G4 ---
+    ; --- row 4: screen row 22 (TIER5_BACKSLASH), group PXCHAR_G4 ---
+    ; --- (NAMEBUF slot shifted from +128 to +96) ---
     LD A,(PHASE_G4) : LD (ROWPHASE),A
-    LD HL,IDCACHE4
-    LD IX,NAMEBUF+128
+    LD HL,ROWDATA4 : LD A,(PXCHAR_G4) : LD E,A : LD D,0 : ADD HL,DE
+    LD IX,NAMEBUF+96
     LD B,32
-    LD A,(HL) : LD C,A
 CELL_LOOP_4:
+    LD A,(HL) : LD E,A : LD D,LUT/256 : LD A,(DE) : LD (CURRID),A
     INC HL
-    LD A,(HL) : LD (NEXTID),A
+    LD A,(HL) : LD E,A : LD D,LUT/256 : LD A,(DE) : LD (NEXTID),A
     LD A,(ROWPHASE) : OR A
     JR NZ,NONZERO_4
-    LD A,C : LD E,A : LD D,SOLOTAB/256 : LD A,(DE)
+    LD A,(CURRID) : LD E,A : LD D,SOLOTAB/256 : LD A,(DE)
     JR STORE_4
 NONZERO_4:
-    LD A,C : LD E,A : LD D,MUL6/256 : LD A,(DE) : LD E,A  ; E = curr_id*6
-    LD A,(NEXTID) : ADD A,E             ; A = pairid = curr_id*6+next_id
+    LD A,(CURRID) : LD E,A : LD D,MUL6/256 : LD A,(DE) : LD E,A  ; E = curr*6
+    LD A,(NEXTID) : ADD A,E             ; A = pairid = curr*6+next
     LD E,A : LD D,PAIRBASE/256 : LD A,(DE)  ; A = PAIRBASE[pairid]
     LD E,A
     LD A,(ROWPHASE) : DEC A : ADD A,E   ; + (phase-1)
 STORE_4:
     LD (IX+0),A
     INC IX
-    LD A,(NEXTID) : LD C,A              ; carry next_id forward as next cell's curr_id
     DJNZ CELL_LOOP_4
 
-    ; --- row 5: screen row 22 (TIER6_WEDGE), group PXCHAR_G8 ---
+    ; --- row 5: screen row 23 (TIER6_WEDGE), group PXCHAR_G8 ---
+    ; --- (NAMEBUF slot shifted from +160 to +128) ---
     LD A,(PHASE_G8) : LD (ROWPHASE),A
-    LD HL,IDCACHE5
-    LD IX,NAMEBUF+160
+    LD HL,ROWDATA5 : LD A,(PXCHAR_G8) : LD E,A : LD D,0 : ADD HL,DE
+    LD IX,NAMEBUF+128
     LD B,32
-    LD A,(HL) : LD C,A
 CELL_LOOP_5:
+    LD A,(HL) : LD E,A : LD D,LUT/256 : LD A,(DE) : LD (CURRID),A
     INC HL
-    LD A,(HL) : LD (NEXTID),A
+    LD A,(HL) : LD E,A : LD D,LUT/256 : LD A,(DE) : LD (NEXTID),A
     LD A,(ROWPHASE) : OR A
     JR NZ,NONZERO_5
-    LD A,C : LD E,A : LD D,SOLOTAB/256 : LD A,(DE)
+    LD A,(CURRID) : LD E,A : LD D,SOLOTAB/256 : LD A,(DE)
     JR STORE_5
 NONZERO_5:
-    LD A,C : LD E,A : LD D,MUL6/256 : LD A,(DE) : LD E,A  ; E = curr_id*6
-    LD A,(NEXTID) : ADD A,E             ; A = pairid = curr_id*6+next_id
+    LD A,(CURRID) : LD E,A : LD D,MUL6/256 : LD A,(DE) : LD E,A  ; E = curr*6
+    LD A,(NEXTID) : ADD A,E             ; A = pairid = curr*6+next
     LD E,A : LD D,PAIRBASE/256 : LD A,(DE)  ; A = PAIRBASE[pairid]
     LD E,A
     LD A,(ROWPHASE) : DEC A : ADD A,E   ; + (phase-1)
 STORE_5:
     LD (IX+0),A
     INC IX
-    LD A,(NEXTID) : LD C,A              ; carry next_id forward as next cell's curr_id
     DJNZ CELL_LOOP_5
 
     ; --- push each row to VRAM, skipping rows unchanged since last frame ---
     ; (Name table base is 1800h in SCREEN1 too, so these VRAM
     ;  addresses are identical to the SCREEN2 version.)
 
-    ; row 0 -> VRAM 1A40h (screen row 18)
+    ; row 0 -> VRAM 1A60h (screen row 19 - moved down from 1A40h/row18,
+    ; see GROUND_ROW0)
     LD HL,NAMEBUF+0 : LD DE,PREVBUF+0 : LD B,32
 DIFF_LOOP_0:
     LD A,(DE) : CP (HL)
@@ -1147,7 +1089,7 @@ DIFF_LOOP_0:
 DIFFERENT_0:
     LD HL,NAMEBUF+0 : LD DE,PREVBUF+0 : LD BC,32 : LDIR
     LD HL,NAMEBUF+0
-    LD A,40h : OUT (99h),A
+    LD A,60h : OUT (99h),A
     NOP
     NOP
     LD A,5Ah : OUT (99h),A
@@ -1163,35 +1105,9 @@ ROWXFER_0:
     JP NZ,ROWXFER_0
 ROWDONE_0:
 
-    ; row 1 -> VRAM 1A60h (screen row 19)
+    ; row 2 -> VRAM 1A80h (screen row 20) - NAMEBUF slot shifted from
+    ; +64 to +32 (row1/TIER2_DIAMOND's slot removed, see GROUND_ROW0)
     LD HL,NAMEBUF+32 : LD DE,PREVBUF+32 : LD B,32
-DIFF_LOOP_1:
-    LD A,(DE) : CP (HL)
-    JR NZ,DIFFERENT_1
-    INC HL : INC DE
-    DJNZ DIFF_LOOP_1
-    JR ROWDONE_1
-DIFFERENT_1:
-    LD HL,NAMEBUF+32 : LD DE,PREVBUF+32 : LD BC,32 : LDIR
-    LD HL,NAMEBUF+32
-    LD A,60h : OUT (99h),A
-    NOP
-    NOP
-    LD A,5Ah : OUT (99h),A
-    NOP
-    NOP
-    LD C,98h
-    LD B,32
-ROWXFER_1:
-    LD A,(HL) : OUT (98h),A
-    NOP
-    NOP
-    INC HL : DEC B
-    JP NZ,ROWXFER_1
-ROWDONE_1:
-
-    ; row 2 -> VRAM 1A80h (screen row 20)
-    LD HL,NAMEBUF+64 : LD DE,PREVBUF+64 : LD B,32
 DIFF_LOOP_2:
     LD A,(DE) : CP (HL)
     JR NZ,DIFFERENT_2
@@ -1199,8 +1115,8 @@ DIFF_LOOP_2:
     DJNZ DIFF_LOOP_2
     JR ROWDONE_2
 DIFFERENT_2:
-    LD HL,NAMEBUF+64 : LD DE,PREVBUF+64 : LD BC,32 : LDIR
-    LD HL,NAMEBUF+64
+    LD HL,NAMEBUF+32 : LD DE,PREVBUF+32 : LD BC,32 : LDIR
+    LD HL,NAMEBUF+32
     LD A,80h : OUT (99h),A
     NOP
     NOP
@@ -1217,8 +1133,8 @@ ROWXFER_2:
     JP NZ,ROWXFER_2
 ROWDONE_2:
 
-    ; row 3 -> VRAM 1AA0h (screen row 21)
-    LD HL,NAMEBUF+96 : LD DE,PREVBUF+96 : LD B,32
+    ; row 3 -> VRAM 1AA0h (screen row 21) - NAMEBUF slot shifted from +96 to +64
+    LD HL,NAMEBUF+64 : LD DE,PREVBUF+64 : LD B,32
 DIFF_LOOP_3:
     LD A,(DE) : CP (HL)
     JR NZ,DIFFERENT_3
@@ -1226,8 +1142,8 @@ DIFF_LOOP_3:
     DJNZ DIFF_LOOP_3
     JR ROWDONE_3
 DIFFERENT_3:
-    LD HL,NAMEBUF+96 : LD DE,PREVBUF+96 : LD BC,32 : LDIR
-    LD HL,NAMEBUF+96
+    LD HL,NAMEBUF+64 : LD DE,PREVBUF+64 : LD BC,32 : LDIR
+    LD HL,NAMEBUF+64
     LD A,A0h : OUT (99h),A
     NOP
     NOP
@@ -1244,8 +1160,8 @@ ROWXFER_3:
     JP NZ,ROWXFER_3
 ROWDONE_3:
 
-    ; row 4 -> VRAM 1AC0h (screen row 22)
-    LD HL,NAMEBUF+128 : LD DE,PREVBUF+128 : LD B,32
+    ; row 4 -> VRAM 1AC0h (screen row 22) - NAMEBUF slot shifted from +128 to +96
+    LD HL,NAMEBUF+96 : LD DE,PREVBUF+96 : LD B,32
 DIFF_LOOP_4:
     LD A,(DE) : CP (HL)
     JR NZ,DIFFERENT_4
@@ -1253,8 +1169,8 @@ DIFF_LOOP_4:
     DJNZ DIFF_LOOP_4
     JR ROWDONE_4
 DIFFERENT_4:
-    LD HL,NAMEBUF+128 : LD DE,PREVBUF+128 : LD BC,32 : LDIR
-    LD HL,NAMEBUF+128
+    LD HL,NAMEBUF+96 : LD DE,PREVBUF+96 : LD BC,32 : LDIR
+    LD HL,NAMEBUF+96
     LD A,C0h : OUT (99h),A
     NOP
     NOP
@@ -1271,8 +1187,9 @@ ROWXFER_4:
     JP NZ,ROWXFER_4
 ROWDONE_4:
 
-    ; row 5 -> VRAM 1AE0h (screen row 23, bottom row of screen)
-    LD HL,NAMEBUF+160 : LD DE,PREVBUF+160 : LD B,32
+    ; row 5 -> VRAM 1AE0h (screen row 23, bottom row of screen) -
+    ; NAMEBUF slot shifted from +160 to +128
+    LD HL,NAMEBUF+128 : LD DE,PREVBUF+128 : LD B,32
 DIFF_LOOP_5:
     LD A,(DE) : CP (HL)
     JR NZ,DIFFERENT_5
@@ -1280,8 +1197,8 @@ DIFF_LOOP_5:
     DJNZ DIFF_LOOP_5
     JR ROWDONE_5
 DIFFERENT_5:
-    LD HL,NAMEBUF+160 : LD DE,PREVBUF+160 : LD BC,32 : LDIR
-    LD HL,NAMEBUF+160
+    LD HL,NAMEBUF+128 : LD DE,PREVBUF+128 : LD BC,32 : LDIR
+    LD HL,NAMEBUF+128
     LD A,E0h : OUT (99h),A
     NOP
     NOP
@@ -1513,7 +1430,7 @@ BULLET0_NOCLAMP:
     LD A,(BULLET0_ROW) : CP GROUND_ROW0
     JR C,BULLET0_BLUE
     JR Z,BULLET0_WHITE
-    CP GROUND_ROW0+5
+    CP GROUND_ROW0+4
     JR Z,BULLET0_BROWN
     JR C,BULLET0_GREEN
     JR BULLET0_BLUE
@@ -1557,7 +1474,7 @@ BULLET1_NOCLAMP:
     LD A,(BULLET1_ROW) : CP GROUND_ROW0
     JR C,BULLET1_BLUE
     JR Z,BULLET1_WHITE
-    CP GROUND_ROW0+5
+    CP GROUND_ROW0+4
     JR Z,BULLET1_BROWN
     JR C,BULLET1_GREEN
     JR BULLET1_BLUE
@@ -1601,7 +1518,7 @@ BULLET2_NOCLAMP:
     LD A,(BULLET2_ROW) : CP GROUND_ROW0
     JR C,BULLET2_BLUE
     JR Z,BULLET2_WHITE
-    CP GROUND_ROW0+5
+    CP GROUND_ROW0+4
     JR Z,BULLET2_BROWN
     JR C,BULLET2_GREEN
     JR BULLET2_BLUE
@@ -1731,7 +1648,7 @@ ANIM2_DONE:
     ; ============================================================
     ; --- shots: advance 1 character (8 dots) per frame. Erasing  ---
     ; --- restores whatever the ground scroller currently shows   ---
-    ; --- at that cell (if the shot is over the 6-row scroller),  ---
+    ; --- at that cell (if the shot is over the 5-row scroller),  ---
     ; --- or the sky blank otherwise - so the shot never leaves a ---
     ; --- hole in the terrain behind it.                          ---
     ; ============================================================
@@ -2590,7 +2507,7 @@ TE_NORESTORE:
     LD A,D : SRL A : SRL A : SRL A : LD (IX+4),A   ; COL
 
     ; SAVED = current value at that cell (BLANKCODE if above the
-    ; 6-row ground scroller, else the NAMEBUF mirror)
+    ; 5-row ground scroller, else the NAMEBUF mirror)
     LD A,(IX+3) : CP GROUND_ROW0
     JR C,TE_SAVE_SKY
     SUB GROUND_ROW0
@@ -2610,7 +2527,7 @@ TE_SAVE_GOT:
     LD A,(IX+3) : CP GROUND_ROW0
     JR C,TE_BLUE
     JR Z,TE_WHITE
-    CP GROUND_ROW0+5
+    CP GROUND_ROW0+4
     JR Z,TE_BROWN
     JR C,TE_GREEN
     JR TE_BLUE
@@ -2644,7 +2561,7 @@ TE_GOTCOLOR:
 
 ; Writes ANIM_TMP_VAL to the nametable cell at (ANIM_TMP_ROW,
 ; ANIM_TMP_COL): updates the NAMEBUF mirror too if that row is
-; within the 6-row ground scroller. Trashes A,H,L,DE.
+; within the 5-row ground scroller. Trashes A,H,L,DE.
 ; --- DEBUG: shows BIOS joystick results at row0 (top-center):        ---
 ; --- col15 = JOY_STICK (GTSTCK, 0=none..8=up-left), col17 = JOY_TRIG ---
 ; --- (GTTRIG, 0=released/1=pressed). Remove this call + routine     ---
@@ -7785,25 +7702,6 @@ CHECK_BULLET_VS_ENEMY3:
     LD IX,ENEMY3_POOL+77
     JP E3_HIT_ONE_SLOT
 
-; Translates 33 consecutive ROWDATA bytes (ASCII terrain letter) through
-; LUT into an IDCACHEn buffer - used to refresh a row's cache only when
-; its group's PXCHAR actually advances (see the PXCHAR_G8/G4/G2/G1 gates
-; in MAINLOOP), instead of re-deriving every id from ROWDATA+LUT every
-; single frame in CELL_LOOP_0-5.
-; Input: HL = source (ROWDATAn + PXCHARgroup), IX = dest (IDCACHEn).
-; Clobbers: A, B, D, E, HL, IX.
-REFRESH_IDCACHE_33:
-    LD B,33
-RIC_LOOP:
-    LD A,(HL) : LD E,A : LD D,LUT/256 : LD A,(DE)
-    LD (IX+0),A
-    INC HL
-    INC IX
-    DJNZ RIC_LOOP
-    RET
-
-
-
 ; ============================================================
 ; Data tables
 ; ============================================================
@@ -7949,7 +7847,7 @@ ASTERISK_PATTERN:
 
 ; Destroyed-quadrant explosion: 2 static 8x8 frames (anim1 then
 ; anim2), each replicated into 4 character-code groups so its
-; background color can match whichever of the 6-row scroller's
+; background color can match whichever of the 5-row scroller's
 ; terrain types (or sky) it lands over - same idea as the shot's
 ; blue/white/green/brown variants. Only the group's first code is
 ; actually used; the other 7 slots in each 8-code group are unused.
