@@ -2578,7 +2578,7 @@ TE_BLUE:
     LD A,ANIM2_BLUE : LD (IX+7),A
 TE_GOTCOLOR:
     LD A,1 : LD (IX+1),A                ; PHASE=1
-    LD A,ANIM_FRAME_LEN*2 : LD (IX+2),A  ; TIMER (2x - anim1 wasn't showing long enough)
+    LD A,ANIM_FRAME_LEN : LD (IX+2),A    ; TIMER (halved back down from ANIM_FRAME_LEN*2)
     LD A,1 : LD (IX+0),A                ; ACTIVE=1
 
     LD A,(IX+3) : LD (ANIM_TMP_ROW),A
@@ -7364,11 +7364,14 @@ EBSB_HIT_TEST:
     ; --- stash the score selector and free the slot BEFORE calling  ---
     ; --- TRIGGER_EXPLOSION, which reuses IX for its own ANIM_BASE   ---
     ; --- bookkeeping - nothing below this may rely on IX afterward. ---
+    PUSH DE                     ; TRIGGER_EXPLOSION needs D,E = hit X,Y - the type/score
+                                 ; lookup below (ENEMY_TYPE_LOOKUP, LD DE,ETT_SCORESEL) reuses DE
     LD A,(IX+E_TYPE) : CALL ENEMY_TYPE_LOOKUP
     LD DE,ETT_SCORESEL : ADD HL,DE
     LD A,(HL)
     LD (ENEMY_SCORE_SEL_TMP),A
     CALL FREE_ENEMY_SLOT
+    POP DE
     PUSH BC
     CALL TRIGGER_EXPLOSION
     LD A,(ENEMY_SCORE_SEL_TMP)
