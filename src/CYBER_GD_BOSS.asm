@@ -69,8 +69,10 @@ IDCACHE5    EQU 0E0B1h
 ; --- normal gameplay, safe to delete once the BG-residue bug is found. ---
 DEBUG_WATCH_ROW EQU 10   ; adjust to match the observed glitch position
 DEBUG_WATCH_COL EQU 25   ; adjust to match the observed glitch position
-DEBUG_WATCH_VAL EQU 0E0D2h
-DWD_ONES_TMP    EQU 0E0D3h
+DEBUG_WATCH_VAL  EQU 0E0D2h
+DWD_ONES_TMP     EQU 0E0D3h
+DEBUG_WATCH_PREV EQU 0E0D4h  ; last frame's watched value, to detect a change
+DEBUG_WATCH_AGE  EQU 0E0D5h  ; frames since the watched value last changed (caps at 255)
 
 NAMEBUF     EQU 0E200h
 PREVBUF     EQU 0E300h
@@ -2827,6 +2829,57 @@ DWD_SKY:
     IN A,(98h)
 DWD_GOT:
     LD (DEBUG_WATCH_VAL),A
+    ; --- staleness counter: how many frames since this value last  ---
+    ; --- changed. Legitimate live content (an active Enemy3 pulsing/---
+    ; --- moving, a bullet passing through) changes every few frames ---
+    ; --- at most; a counter climbing into the hundreds while the    ---
+    ; --- value stays non-blank is the smoking gun for stuck residue.---
+    LD B,A                          ; B = this frame's value, survives the CP below
+    LD A,(DEBUG_WATCH_PREV)
+    CP B
+    JR NZ,DWD_AGE_RESET
+    LD A,(DEBUG_WATCH_AGE)
+    CP 255
+    JR Z,DWD_AGE_DISPLAY
+    INC A
+    LD (DEBUG_WATCH_AGE),A
+    JR DWD_AGE_DISPLAY
+DWD_AGE_RESET:
+    LD A,B : LD (DEBUG_WATCH_PREV),A
+    XOR A : LD (DEBUG_WATCH_AGE),A
+DWD_AGE_DISPLAY:
+    LD A,(DEBUG_WATCH_AGE)
+    LD B,0
+DWDA100:
+    CP 100
+    JR C,DWDA100_DONE
+    SUB 100
+    INC B
+    JR DWDA100
+DWDA100_DONE:
+    LD C,0
+DWDA10:
+    CP 10
+    JR C,DWDA10_DONE
+    SUB 10
+    INC C
+    JR DWDA10
+DWDA10_DONE:
+    LD (DWD_ONES_TMP),A
+    XOR A : LD (ANIM_TMP_ROW),A
+    LD A,16 : LD (ANIM_TMP_COL),A
+    LD A,B : ADD A,DIGIT_BASE : LD (ANIM_TMP_VAL),A
+    CALL WRITE_ANIM_CELL
+    XOR A : LD (ANIM_TMP_ROW),A
+    LD A,17 : LD (ANIM_TMP_COL),A
+    LD A,C : ADD A,DIGIT_BASE : LD (ANIM_TMP_VAL),A
+    CALL WRITE_ANIM_CELL
+    XOR A : LD (ANIM_TMP_ROW),A
+    LD A,18 : LD (ANIM_TMP_COL),A
+    LD A,(DWD_ONES_TMP) : ADD A,DIGIT_BASE : LD (ANIM_TMP_VAL),A
+    CALL WRITE_ANIM_CELL
+
+    LD A,(DEBUG_WATCH_VAL)
     LD B,0
 DWDH100:
     CP 100
