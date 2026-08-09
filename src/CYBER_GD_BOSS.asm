@@ -2673,16 +2673,10 @@ WAC_SKIPBUF:
     LD A,L : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
     LD A,H : OR 40h : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
     LD A,(ANIM_TMP_VAL) : OUT (98h),A
-    NOP
-    NOP
     NOP
     NOP
     RET
