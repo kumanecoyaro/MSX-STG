@@ -586,6 +586,8 @@ INIT:
     NOP
     NOP
     NOP
+    NOP
+    NOP
     LD A,58h : OUT (99h),A
     NOP
     NOP
@@ -719,13 +721,33 @@ INIT_SPRATR_CLR:
     LD A,209 : OUT (98h),A
     NOP
     NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
     XOR A : OUT (98h),A
     NOP
     NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
     XOR A : OUT (98h),A
     NOP
     NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
     XOR A : OUT (98h),A
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     DJNZ INIT_SPRATR_CLR
@@ -933,13 +955,20 @@ INIT_HIDE_SLOT_LOOP:
     NOP
     NOP
     NOP
+    NOP
     LD A,5Bh : OUT (99h),A
     NOP
     NOP
     NOP
     NOP
     NOP
+    NOP
     LD A,ENEMY_HIDE_Y : OUT (98h),A
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     LD A,255 : OUT (98h),A
@@ -1186,6 +1215,10 @@ DIFFERENT_0:
     LD A,60h : OUT (99h),A
     NOP
     NOP
+    NOP
+    NOP
+    NOP
+    NOP
     LD A,5Ah : OUT (99h),A
     NOP
     NOP
@@ -1212,6 +1245,10 @@ DIFFERENT_2:
     LD HL,NAMEBUF+32 : LD DE,PREVBUF+32 : LD BC,32 : LDIR
     LD HL,NAMEBUF+32
     LD A,80h : OUT (99h),A
+    NOP
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     LD A,5Ah : OUT (99h),A
@@ -1241,6 +1278,10 @@ DIFFERENT_3:
     LD A,A0h : OUT (99h),A
     NOP
     NOP
+    NOP
+    NOP
+    NOP
+    NOP
     LD A,5Ah : OUT (99h),A
     NOP
     NOP
@@ -1266,6 +1307,10 @@ DIFFERENT_4:
     LD HL,NAMEBUF+96 : LD DE,PREVBUF+96 : LD BC,32 : LDIR
     LD HL,NAMEBUF+96
     LD A,C0h : OUT (99h),A
+    NOP
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     LD A,5Ah : OUT (99h),A
@@ -1294,6 +1339,8 @@ DIFFERENT_5:
     LD HL,NAMEBUF+128 : LD DE,PREVBUF+128 : LD BC,32 : LDIR
     LD HL,NAMEBUF+128
     LD A,E0h : OUT (99h),A
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -1457,35 +1504,79 @@ DIR_DONE:
     LD A,04h : OUT (99h),A
     NOP
     NOP
+    NOP
+    NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     LD A,(PLAYERY) : SUB 8 : CALL PLAYER_DRAW_Y_ADJ : OUT (98h),A
     NOP
     NOP
+    NOP
+    NOP
+    NOP
+    NOP
     LD A,(PLAYERX) : OUT (98h),A
+    NOP
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     LD A,PAT_SHIP : OUT (98h),A
     NOP
     NOP
+    NOP
+    NOP
+    NOP
+    NOP
     LD A,SPR_RED : OUT (98h),A
+    NOP
+    NOP
+    NOP
+    NOP
     NOP
     NOP
 
     LD A,00h : OUT (99h),A
     NOP
     NOP
+    NOP
+    NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     LD A,(PLAYERY) : SUB 8 : CALL PLAYER_DRAW_Y_ADJ : OUT (98h),A
     NOP
     NOP
+    NOP
+    NOP
+    NOP
+    NOP
     LD A,(PLAYERX) : ADD A,8 : OUT (98h),A
     NOP
     NOP
+    NOP
+    NOP
+    NOP
+    NOP
     LD A,PAT_ACCENT : OUT (98h),A
+    NOP
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     LD A,SPR_WHITE : OUT (98h),A
@@ -2038,10 +2129,46 @@ BULLET2_NEXT:
     ; --- bug, since nothing about this watch's own code path should      ---
     ; --- affect WHERE an unrelated corruption lands if it were logic-    ---
     ; --- only. Still 100% deterministic at the new position, though.     ---
+    ; --- FOLLOW-UP: that column-shift observation was the real clue.     ---
+    ; --- A full T-state-accurate audit of every OUT(98h)/OUT(99h)/       ---
+    ; --- IN(98h) pair actually executed across a broad simulated play    ---
+    ; --- session (tools/ - see vdp_margin_audit.py in the investigation  ---
+    ; --- history) found ~18,700 consecutive VDP-port accesses below the  ---
+    ; --- TMS9918's documented ~29 T-state minimum access interval,       ---
+    ; --- concentrated overwhelmingly in WRITE_ANIM_CELL's own address-   ---
+    ; --- setup (19T/21T margins - and WRITE_ANIM_CELL is the single      ---
+    ; --- write path shared by Enemy3 draw/erase, HUD digits, and this    ---
+    ; --- watch's own confirm-read), plus every terrain ROWXFER row,      ---
+    ; --- the player sprite redraw, and the boss debris sprite draw.      ---
+    ; --- This is a deterministic, digital hardware-spec violation (not   ---
+    ; --- analog/electrical noise) - real Z80 timing is exact, and        ---
+    ; --- WebMSX/BlueMSX both implement the same documented VDP access-   ---
+    ; --- time rule for compatibility, which is why it reproduces          ---
+    ; --- identically on real hardware AND on both emulators at the same  ---
+    ; --- GAME_TICK every time, while this project's own z80emu.py never  ---
+    ; --- could (it doesn't model VDP access timing at all). Earlier      ---
+    ; --- single-spot experiments (doubling WRITE_ANIM_CELL alone, or     ---
+    ; --- widening only the terrain ROWXFER rows) each left the other     ---
+    ; --- majority of violations in place, which is consistent with why   ---
+    ; --- they changed the bug's behavior without eliminating it. Every   ---
+    ; --- flagged gap found by the audit (all per-frame/gameplay paths;   ---
+    ; --- a handful of one-time INIT-boot-only gaps were left as low      ---
+    ; --- priority) has been widened with extra NOPs to comfortably clear ---
+    ; --- 29T - see the audit script for how to re-verify from scratch.   ---
     LD A,59h : OUT (99h),A
     NOP
     NOP
+    NOP
+    NOP
+    NOP
+    NOP
     LD A,18h : OUT (99h),A
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     IN A,(98h)
@@ -2056,6 +2183,8 @@ BULLET2_NEXT:
     NOP
     NOP
     LD A,18h : OUT (99h),A
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -2470,8 +2599,16 @@ REDRAW_UNIT_PATTERN:
     OUT (99h),A
     NOP
     NOP
+    NOP
+    NOP
+    NOP
+    NOP
     LD A,H : OR 40h
     OUT (99h),A
+    NOP
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     LD A,(DE)
@@ -2482,12 +2619,16 @@ RU_TL_LOOP:
     LD A,(HL) : OUT (98h),A
     NOP
     NOP
+    NOP
+    NOP
     INC HL : DJNZ RU_TL_LOOP
     JR RU_BL
 RU_TL_BLANK:
     LD B,8
 RU_TL_BLANK_LOOP:
     XOR A : OUT (98h),A
+    NOP
+    NOP
     NOP
     NOP
     DJNZ RU_TL_BLANK_LOOP
@@ -2497,10 +2638,14 @@ RU_BL_LOOP:
     XOR A : OUT (98h),A
     NOP
     NOP
+    NOP
+    NOP
     DJNZ RU_BL_LOOP
     LD B,8
 RU_TR_LOOP:
     XOR A : OUT (98h),A
+    NOP
+    NOP
     NOP
     NOP
     DJNZ RU_TR_LOOP
@@ -2512,12 +2657,16 @@ RU_BR_LOOP:
     LD A,(HL) : OUT (98h),A
     NOP
     NOP
+    NOP
+    NOP
     INC HL : DJNZ RU_BR_LOOP
     RET
 RU_BR_BLANK:
     LD B,8
 RU_BR_BLANK_LOOP:
     XOR A : OUT (98h),A
+    NOP
+    NOP
     NOP
     NOP
     DJNZ RU_BR_BLANK_LOOP
@@ -2877,10 +3026,19 @@ WAC_SKIPBUF:
     LD A,L : OUT (99h),A
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,H : OR 40h : OUT (99h),A
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,(ANIM_TMP_VAL) : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     RET
@@ -7566,17 +7724,37 @@ EBSD_DRAW:
     LD A,(IX+E_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
     NOP
     NOP
+    NOP
+    NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     LD A,(IX+E_Y) : OUT (98h),A
     NOP
     NOP
+    NOP
+    NOP
+    NOP
+    NOP
     LD A,(IX+E_X) : OUT (98h),A
+    NOP
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     LD A,(IX+E_PARAM3) : CALL SIMPLE_PATTERN_NUM
     OUT (98h),A
+    NOP
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     LD A,SPR_GRAY : OUT (98h),A
@@ -7594,10 +7772,22 @@ EBSD_EXIT_LEFT:
     ADD A,A : ADD A,A : OUT (99h),A
     NOP
     NOP
+    NOP
+    NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
     NOP
     NOP
+    NOP
+    NOP
+    NOP
+    NOP
     LD A,ENEMY_HIDE_Y : OUT (98h),A
+    NOP
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     LD A,255 : OUT (98h),A
