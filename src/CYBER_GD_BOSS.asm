@@ -7745,7 +7745,9 @@ E3_HIT_ONE_SLOT:
     OR A
     JR Z,E3H_NO
     XOR A : LD (IX+0),A
-    CALL ENEMY3_ERASE_CELL   ; the kill freezes this slot's cell forever otherwise - see ENEMY3_ERASE_CELL (only touches A/DE/HL, BC untouched)
+    PUSH DE                  ; D,E = hit X,Y for TRIGGER_EXPLOSION below - ENEMY3_ERASE_CELL clobbers DE
+    CALL ENEMY3_ERASE_CELL   ; the kill freezes this slot's cell forever otherwise - see ENEMY3_ERASE_CELL
+    POP DE
     PUSH BC
     CALL TRIGGER_EXPLOSION
     CALL ADD_SCORE_300

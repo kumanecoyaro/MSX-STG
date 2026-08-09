@@ -126,6 +126,38 @@ def check_hit_erases_cell(mem_old, sym_old, mem_new, sym_new):
     return results
 
 
+def check_explosion_lands_at_hit_position(mem_old, sym_old, mem_new, sym_new):
+    """TRIGGER_EXPLOSION expects D=hit X (pixel), E=hit Y (pixel), and
+    stores them (divided by 8) into the chosen ANIM_BASE slot's ROW/COL
+    fields - directly observable in RAM after the call. A regression
+    that clobbers D/E before TRIGGER_EXPLOSION runs (e.g. calling
+    ENEMY3_ERASE_CELL, which touches DE, without saving/restoring it
+    first) would show up here as a wrong COL/ROW, not just "some VDP
+    write happened" - this is what actually diagnoses the "explosion
+    at the left screen edge" symptom (COL landing on 0)."""
+    cases = [("mid-screen kill", 20, 15), ("near-left-edge kill (col=1, to distinguish from the COL=0 bug value)", 20, 1)]
+    results = []
+    for name, row, col in cases:
+        z_old = Z80(bytearray(mem_old))
+        z_new = Z80(bytearray(mem_new))
+        setup_slot(z_old.mem, sym_old, sym_old['ENEMY3_POOL'], row, col)
+        setup_slot(z_new.mem, sym_new, sym_new['ENEMY3_POOL'], row, col)
+        z_old.ix = sym_old['ENEMY3_POOL']
+        z_new.ix = sym_new['ENEMY3_POOL']
+        z_old.b = col; z_old.c = row
+        z_new.b = col; z_new.c = row
+        call_routine(z_old, sym_old['E3_HIT_ONE_SLOT'])
+        call_routine(z_new, sym_new['E3_HIT_ONE_SLOT'])
+        # first ANIM_BASE slot (index 0) is picked when all 3 are idle, which they are here
+        old_row = z_old.mem[sym_old['ANIM_BASE'] + 3]
+        old_col = z_old.mem[sym_old['ANIM_BASE'] + 4]
+        new_row = z_new.mem[sym_new['ANIM_BASE'] + 3]
+        new_col = z_new.mem[sym_new['ANIM_BASE'] + 4]
+        new_ok = (new_row == row and new_col == col)
+        results.append((name, row, col, old_row, old_col, new_row, new_col, new_ok))
+    return results
+
+
 def main():
     old_path = sys.argv[1] if len(sys.argv) > 1 else None
     if old_path is None:
@@ -162,7 +194,14 @@ def main():
               f"new writes erase byte {erase_val:#04x} early={new_has_erase_write}")
         print(f"    old VDP writes: {len(old_io)}, new VDP writes: {len(new_io)} (new should have ~3 more: erase addr+data)")
 
-    if not (ok1 and ok2):
+    print("\n=== 3. Explosion lands at the actual kill position (DE-clobber regression check) ===")
+    ok3 = True
+    for name, row, col, old_row, old_col, new_row, new_col, new_ok in check_explosion_lands_at_hit_position(mem_old, sym_old, mem_new, sym_new):
+        ok3 &= new_ok
+        print(f"  [{'OK' if new_ok else 'MISMATCH'}] {name}: expected row={row} col={col} - "
+              f"old gave row={old_row} col={old_col}, new gives row={new_row} col={new_col}")
+
+    if not (ok1 and ok2 and ok3):
         sys.exit(1)
 
 
