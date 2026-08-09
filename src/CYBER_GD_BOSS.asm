@@ -1135,13 +1135,19 @@ DIFFERENT_0:
     LD A,60h : OUT (99h),A
     NOP
     NOP
+    NOP
+    NOP
     LD A,5Ah : OUT (99h),A
+    NOP
+    NOP
     NOP
     NOP
     LD C,98h
     LD B,32
 ROWXFER_0:
     LD A,(HL) : OUT (98h),A
+    NOP
+    NOP
     NOP
     NOP
     INC HL : DEC B
@@ -1163,13 +1169,19 @@ DIFFERENT_2:
     LD A,80h : OUT (99h),A
     NOP
     NOP
+    NOP
+    NOP
     LD A,5Ah : OUT (99h),A
+    NOP
+    NOP
     NOP
     NOP
     LD C,98h
     LD B,32
 ROWXFER_2:
     LD A,(HL) : OUT (98h),A
+    NOP
+    NOP
     NOP
     NOP
     INC HL : DEC B
@@ -1190,13 +1202,19 @@ DIFFERENT_3:
     LD A,A0h : OUT (99h),A
     NOP
     NOP
+    NOP
+    NOP
     LD A,5Ah : OUT (99h),A
+    NOP
+    NOP
     NOP
     NOP
     LD C,98h
     LD B,32
 ROWXFER_3:
     LD A,(HL) : OUT (98h),A
+    NOP
+    NOP
     NOP
     NOP
     INC HL : DEC B
@@ -1217,13 +1235,19 @@ DIFFERENT_4:
     LD A,C0h : OUT (99h),A
     NOP
     NOP
+    NOP
+    NOP
     LD A,5Ah : OUT (99h),A
+    NOP
+    NOP
     NOP
     NOP
     LD C,98h
     LD B,32
 ROWXFER_4:
     LD A,(HL) : OUT (98h),A
+    NOP
+    NOP
     NOP
     NOP
     INC HL : DEC B
