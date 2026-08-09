@@ -37,70 +37,25 @@
     color: var(--ink);
     font-family: var(--font-ui);
     overscroll-behavior: none;
+    overflow: hidden;
   }
 
   body {
     display: flex;
-    flex-direction: column;
-    min-height: 100vh;
+    flex-direction: row;
+    height: 100vh;
   }
-
-  /* ---------- header ---------- */
-  header {
-    flex: 0 0 auto;
-    display: flex;
-    align-items: center;
-    gap: 14px;
-    padding: 10px 14px;
-    background: var(--surface);
-    border-bottom: 1px solid var(--line);
-    flex-wrap: wrap;
-  }
-
-  .title {
-    display: flex;
-    flex-direction: column;
-    gap: 1px;
-    margin-right: 6px;
-  }
-  .title .name {
-    font-family: var(--font-mono);
-    font-size: 13px;
-    letter-spacing: 0.06em;
-    color: var(--ink);
-    font-weight: 600;
-  }
-  .title .sub {
-    font-size: 10.5px;
-    color: var(--ink-dim);
-    letter-spacing: 0.03em;
-  }
-
-  .stat {
-    font-family: var(--font-mono);
-    font-size: 11px;
-    color: var(--ink-dim);
-    background: var(--surface-2);
-    border: 1px solid var(--line);
-    border-radius: 6px;
-    padding: 5px 9px;
-    white-space: nowrap;
-    font-variant-numeric: tabular-nums;
-  }
-  .stat b { color: var(--ink); font-weight: 600; }
-
-  .spacer { flex: 1 1 auto; }
 
   button {
     font-family: var(--font-ui);
-    font-size: 12.5px;
+    font-size: 12px;
     font-weight: 600;
     letter-spacing: 0.02em;
     border-radius: 7px;
     border: 1px solid var(--line);
     background: var(--surface-2);
     color: var(--ink);
-    padding: 7px 12px;
+    padding: 7px 8px;
     cursor: pointer;
     transition: border-color 120ms ease, background 120ms ease, transform 80ms ease;
   }
@@ -111,21 +66,14 @@
   button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
   button.danger-btn { background: var(--surface-2); color: var(--danger); border-color: #4a2226; }
   button.danger-btn.armed { background: var(--danger); color: var(--danger-ink); border-color: var(--danger); }
-  button.ghost { background: transparent; }
 
-  /* ---------- main layout ---------- */
-  main {
-    flex: 1 1 auto;
-    display: flex;
-    min-height: 0;
-  }
-
+  /* ---------- grid area (left, fills remaining space) ---------- */
   .gridwrap {
     flex: 1 1 auto;
     display: flex;
     flex-direction: column;
     min-width: 0;
-    border-right: 1px solid var(--line);
+    height: 100vh;
   }
 
   .ruler-row {
@@ -159,55 +107,94 @@
 
   .canvas-scroll {
     flex: 1 1 auto;
-    overflow: auto;
+    overflow-x: auto;
+    overflow-y: hidden;
     -webkit-overflow-scrolling: touch;
     background: var(--bg);
-    touch-action: pan-x pan-y;
+    touch-action: pan-x;
   }
   #grid {
     display: block;
     cursor: crosshair;
   }
 
-  .hint {
-    flex: 0 0 auto;
-    padding: 6px 12px;
-    font-size: 11px;
-    color: var(--ink-dim);
-    background: var(--surface);
-    border-top: 1px solid var(--line);
-    font-family: var(--font-mono);
-  }
-  .hint b { color: var(--ink); }
-
-  /* ---------- palette sidebar ---------- */
+  /* ---------- right sidebar: identity, stats, actions, palette ---------- */
   aside {
-    flex: 0 0 232px;
+    flex: 0 0 236px;
+    height: 100vh;
     background: var(--surface);
+    border-left: 1px solid var(--line);
     display: flex;
     flex-direction: column;
     min-height: 0;
   }
+
+  .side-title {
+    padding: 12px 14px 10px;
+    border-bottom: 1px solid var(--line);
+  }
+  .side-title .name {
+    font-family: var(--font-mono);
+    font-size: 13px;
+    letter-spacing: 0.06em;
+    font-weight: 600;
+  }
+  .side-title .sub {
+    font-size: 10.5px;
+    color: var(--ink-dim);
+    letter-spacing: 0.03em;
+  }
+
+  .side-stats {
+    display: flex;
+    gap: 6px;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--line);
+  }
+  .stat {
+    flex: 1 1 0;
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    color: var(--ink-dim);
+    background: var(--surface-2);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 5px 7px;
+    font-variant-numeric: tabular-nums;
+    min-width: 0;
+  }
+  .stat b { color: var(--ink); font-weight: 600; display: block; font-size: 13px; }
+
+  .side-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--line);
+  }
+  .side-actions button { width: 100%; }
+  .side-actions .full { grid-column: 1 / -1; }
+
   .aside-head {
-    padding: 12px 14px 8px;
-    font-size: 11px;
+    padding: 10px 14px 6px;
+    font-size: 10.5px;
     letter-spacing: 0.08em;
     text-transform: uppercase;
     color: var(--ink-dim);
-    border-bottom: 1px solid var(--line);
   }
   .palette {
     overflow-y: auto;
-    padding: 8px;
+    padding: 4px 8px 10px;
     display: flex;
     flex-direction: column;
     gap: 4px;
+    min-height: 0;
   }
   .pitem {
     display: flex;
     align-items: center;
     gap: 9px;
-    padding: 7px 9px;
+    padding: 6px 9px;
     border-radius: 8px;
     border: 1px solid transparent;
     background: var(--surface-2);
@@ -230,15 +217,15 @@
     font-variant-numeric: tabular-nums;
   }
   .pswatch {
-    width: 22px;
-    height: 22px;
+    width: 21px;
+    height: 21px;
     border-radius: 5px;
     flex: 0 0 auto;
     display: flex;
     align-items: center;
     justify-content: center;
     font-family: var(--font-mono);
-    font-size: 9.5px;
+    font-size: 9px;
     font-weight: 700;
     color: #05080d;
   }
@@ -248,23 +235,12 @@
     gap: 0;
     min-width: 0;
   }
-  .plabel .n { font-size: 12.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .plabel .d { font-size: 10px; color: var(--ink-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-
-  .aside-foot {
-    flex: 0 0 auto;
-    padding: 10px 14px 12px;
-    border-top: 1px solid var(--line);
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-  }
-  .aside-foot .row { display: flex; gap: 8px; }
-  .aside-foot button { flex: 1 1 0; }
+  .plabel .n { font-size: 12px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .plabel .d { font-size: 9.5px; color: var(--ink-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
   #liveMsg {
     position: fixed;
-    left: 50%;
+    left: calc(50% - 118px);
     bottom: 22px;
     transform: translate(-50%, 8px);
     background: var(--surface-2);
@@ -278,6 +254,10 @@
     pointer-events: none;
     transition: opacity 160ms ease, transform 160ms ease;
     z-index: 20;
+    max-width: min(70vw, 480px);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
   #liveMsg.show { opacity: 1; transform: translate(-50%, 0); }
 
@@ -287,48 +267,44 @@
 </style>
 
 <body>
-  <header>
-    <div class="title">
-      <span class="name">CYBER_SUZUKA</span>
-      <span class="sub">spawn schedule editor</span>
+  <div class="gridwrap">
+    <div class="ruler-row">
+      <div class="gutter-corner"></div>
+      <div class="ruler-scroll"><canvas id="ruler"></canvas></div>
     </div>
-    <div class="stat" id="statCount">placements: <b>0</b></div>
-    <div class="stat" id="statLast">last tick: <b>—</b></div>
-    <div class="spacer"></div>
-    <button class="ghost" id="btnPrev" title="Scroll back one screen (32 ticks)">◀ screen</button>
-    <button class="ghost" id="btnNext" title="Scroll forward one screen (32 ticks)">screen ▶</button>
-    <button id="btnClear">Clear all</button>
-    <button class="primary" id="btnSave">Save JSON</button>
-    <button id="btnCopy">Copy JSON</button>
-    <button id="btnLoad">Load JSON</button>
-    <input type="file" id="fileInput" accept="application/json" hidden>
-  </header>
+    <div class="grid-row">
+      <div class="row-gutter-scroll"><canvas id="rowGutter"></canvas></div>
+      <div class="canvas-scroll" id="canvasScroll">
+        <canvas id="grid"></canvas>
+      </div>
+    </div>
+  </div>
 
-  <main>
-    <div class="gridwrap">
-      <div class="ruler-row">
-        <div class="gutter-corner"></div>
-        <div class="ruler-scroll"><canvas id="ruler"></canvas></div>
-      </div>
-      <div class="grid-row">
-        <div class="row-gutter-scroll"><canvas id="rowGutter"></canvas></div>
-        <div class="canvas-scroll" id="canvasScroll">
-          <canvas id="grid"></canvas>
-        </div>
-      </div>
-      <div class="hint">tick = GAME_TICK (1 cell = 1 tick, 8 frames) · row = spawn lane (free placement, for layout) · tap a numbered enemy on the right, then tap the grid to place it · <b>Erase</b> arms remove-mode</div>
+  <aside>
+    <div class="side-title">
+      <div class="name">CYBER_SUZUKA</div>
+      <div class="sub">spawn schedule editor</div>
     </div>
 
-    <aside>
-      <div class="aside-head">enemies in use</div>
-      <div class="palette" id="palette"></div>
-      <div class="aside-foot">
-        <div class="row">
-          <button class="danger-btn" id="btnErase">Erase</button>
-        </div>
-      </div>
-    </aside>
-  </main>
+    <div class="side-stats">
+      <div class="stat">placements<b id="statCount">0</b></div>
+      <div class="stat">last tick<b id="statLast">—</b></div>
+    </div>
+
+    <div class="side-actions">
+      <button id="btnPrev" title="Scroll back one screen (32 ticks)">◀ screen</button>
+      <button id="btnNext" title="Scroll forward one screen (32 ticks)">screen ▶</button>
+      <button class="danger-btn full" id="btnErase">Erase</button>
+      <button class="primary" id="btnSave">Save JSON</button>
+      <button id="btnCopy">Copy JSON</button>
+      <button id="btnLoad">Load JSON</button>
+      <button id="btnClear">Clear all</button>
+      <input type="file" id="fileInput" accept="application/json" hidden>
+    </div>
+
+    <div class="aside-head">enemies in use</div>
+    <div class="palette" id="palette"></div>
+  </aside>
 
   <div id="liveMsg"></div>
 
@@ -382,10 +358,11 @@
   })();
 
   // ---------- geometry ----------
-  var CELL = 26;
   var ROWS = 24;
   var MAX_TICK = 400; // scrollable canvas width in cells; game currently uses up to ~270
-  var GUTTER_W = 34;
+  var GUTTER_W = 30;
+  var RULER_H = 22;
+  var CELL = 26; // recomputed in layout() so all 24 rows always fit vertically
   document.documentElement.style.setProperty("--gutter-w", GUTTER_W + "px");
 
   var css = getComputedStyle(document.documentElement);
@@ -395,8 +372,6 @@
   var placements = []; // {tick, row, type}
   var armedType = null;
   var eraseArmed = false;
-
-  function cellKey(tick, row) { return tick + "," + row; }
 
   function placementAt(tick, row) {
     for (var i = 0; i < placements.length; i++) {
@@ -450,7 +425,7 @@
   var grid = document.getElementById("grid");
   var canvasScroll = document.getElementById("canvasScroll");
   var rulerScroll = document.querySelector(".ruler-scroll");
-  var rowGutterScroll = document.querySelector(".row-gutter-scroll");
+  var gridwrap = document.querySelector(".gridwrap");
 
   var DPR = Math.max(1, window.devicePixelRatio || 1);
 
@@ -465,17 +440,20 @@
   }
 
   function layout() {
+    // all 24 rows must fit in the vertical space left after the ruler - compute
+    // the cell size from the available height instead of a fixed pixel value.
+    var availH = gridwrap.clientHeight - RULER_H;
+    CELL = Math.max(14, Math.min(30, Math.floor(availH / ROWS)));
+
     var gridW = MAX_TICK * CELL;
     var gridH = ROWS * CELL;
 
-    var rulerH = 26;
     var gctx = sizeCanvas(grid, gridW, gridH);
-    var rctx = sizeCanvas(ruler, gridW, rulerH);
-    var gutH = Math.max(gridH, canvasScroll.clientHeight || gridH);
-    var rgctx = sizeCanvas(rowGutter, GUTTER_W, gutH);
+    var rctx = sizeCanvas(ruler, gridW, RULER_H);
+    var rgctx = sizeCanvas(rowGutter, GUTTER_W, gridH);
 
-    drawRuler(rctx, gridW, rulerH);
-    drawRowGutter(rgctx, GUTTER_W, gutH);
+    drawRuler(rctx, gridW, RULER_H);
+    drawRowGutter(rgctx, GUTTER_W, gridH);
     drawGrid(gctx, gridW, gridH);
   }
 
@@ -483,7 +461,7 @@
     ctx.clearRect(0, 0, w, h);
     ctx.fillStyle = tok("--surface");
     ctx.fillRect(0, 0, w, h);
-    ctx.font = "10px " + tok("--font-mono").split(",")[0] + ", monospace";
+    ctx.font = "9.5px " + tok("--font-mono").split(",")[0] + ", monospace";
     ctx.textBaseline = "middle";
     for (var t = 0; t <= MAX_TICK; t += 1) {
       var x = t * CELL;
@@ -491,12 +469,12 @@
       ctx.strokeStyle = strong ? tok("--grid-line-strong") : tok("--grid-line");
       ctx.lineWidth = 1;
       ctx.beginPath();
-      ctx.moveTo(x + 0.5, h - (strong ? 12 : 6));
+      ctx.moveTo(x + 0.5, h - (strong ? 10 : 5));
       ctx.lineTo(x + 0.5, h);
       ctx.stroke();
-      if (t % 16 === 0) {
-        ctx.fillStyle = strong ? tok("--ink") : tok("--ink-dim");
-        ctx.fillText(String(t), x + 3, h - 15);
+      if (t % 32 === 0) {
+        ctx.fillStyle = tok("--ink");
+        ctx.fillText(String(t), x + 3, h - 13);
       }
     }
     ctx.strokeStyle = tok("--line");
@@ -510,16 +488,16 @@
     ctx.clearRect(0, 0, w, h);
     ctx.fillStyle = tok("--surface");
     ctx.fillRect(0, 0, w, h);
-    ctx.font = "10px " + tok("--font-mono").split(",")[0] + ", monospace";
+    ctx.font = "9.5px " + tok("--font-mono").split(",")[0] + ", monospace";
     ctx.textAlign = "right";
     ctx.textBaseline = "middle";
     for (var r = 0; r < ROWS; r++) {
       var y = r * CELL;
       ctx.fillStyle = tok("--ink-dim");
-      ctx.fillText(String(r), w - 8, y + CELL / 2);
+      ctx.fillText(String(r), w - 7, y + CELL / 2);
       ctx.strokeStyle = tok("--grid-line");
       ctx.beginPath();
-      ctx.moveTo(w - 6, y + 0.5);
+      ctx.moveTo(w - 5, y + 0.5);
       ctx.lineTo(w, y + 0.5);
       ctx.stroke();
     }
@@ -550,7 +528,7 @@
     }
 
     // placed enemies
-    ctx.font = "700 9.5px " + tok("--font-mono").split(",")[0] + ", monospace";
+    ctx.font = "700 " + Math.max(8, Math.round(CELL * 0.36)) + "px " + tok("--font-mono").split(",")[0] + ", monospace";
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     placements.forEach(function (p) {
@@ -603,10 +581,9 @@
     render();
   });
 
-  // keep the ruler / row-gutter in sync with the scrollable grid (this is the "swipe" pan)
+  // keep the ruler in sync with the scrollable grid (this is the "swipe" pan)
   canvasScroll.addEventListener("scroll", function () {
     rulerScroll.scrollLeft = canvasScroll.scrollLeft;
-    rowGutterScroll.scrollTop = canvasScroll.scrollTop;
   }, { passive: true });
 
   document.getElementById("btnPrev").addEventListener("click", function () {
@@ -707,9 +684,9 @@
     var gctx = grid.getContext("2d");
     gctx.setTransform(DPR, 0, 0, DPR, 0, 0);
     drawGrid(gctx, MAX_TICK * CELL, ROWS * CELL);
-    document.getElementById("statCount").innerHTML = "placements: <b>" + placements.length + "</b>";
+    document.getElementById("statCount").textContent = placements.length;
     var last = placements.reduce(function (m, p) { return Math.max(m, p.tick); }, 0);
-    document.getElementById("statLast").innerHTML = "last tick: <b>" + (placements.length ? last : "—") + "</b>";
+    document.getElementById("statLast").textContent = placements.length ? last : "—";
   }
 
   // ---------- boot ----------
