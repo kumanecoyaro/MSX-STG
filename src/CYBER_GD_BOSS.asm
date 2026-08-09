@@ -766,8 +766,36 @@ INIT_SPRATR_CLR:
     LD (ANIM_RR),A
     LD (ANIM_BASE+0),A : LD (ANIM_BASE+8),A : LD (ANIM_BASE+16),A
     LD (SND_TIMER),A
+    LD (SND_TIMER_B),A
     LD (SND_TIMER_C),A
     LD (SPAWN_NEXT_INDEX),A
+
+    ; --- these were never cleared anywhere (not here, not BOSS_SPAWN, ---
+    ; --- not the state1->state2 boss-landed transition that inits    ---
+    ; --- every other boss-adjacent slot array) - found by poisoning  ---
+    ; --- all work RAM to 0xFF before INIT in the emulator and         ---
+    ; --- tracing every read-before-write. Real hardware RAM is        ---
+    ; --- undefined at power-on (unlike this emulator's zero-filled    ---
+    ; --- bytearray), so DFL_UPDATE's very first read of DFL0_ACT/     ---
+    ; --- DFL1_ACT/DFL2_ACT (as soon as BOSS_STATE goes nonzero - i.e. ---
+    ; --- from the moment the boss starts materializing) could read   ---
+    ; --- garbage as "true", drawing a deflected-bullet sprite at a   ---
+    ; --- garbage X/Y with a garbage life counter - exactly matching  ---
+    ; --- the reported "stray content near the boss, persists a       ---
+    ; --- while, reproducible per machine" symptom, and it's a pure   ---
+    ; --- logic bug (reproducible in the emulator once poisoned),     ---
+    ; --- not a VDP-timing issue at all.                               ---
+    LD (DFL0_ACT),A
+    LD (DFL1_ACT),A
+    LD (DFL2_ACT),A
+
+    ; --- ALLOC_PATTERN_SLOT scans this 6-byte array for a 0 (free)   ---
+    ; --- byte; never cleared anywhere either, so on real hardware it ---
+    ; --- could read as "all 6 slots already taken" from power-on,    ---
+    ; --- permanently starving every BEHAVIOR_SIMPLE_DRIFT_DODGE      ---
+    ; --- (Enemy1) spawn of a pattern slot.                            ---
+    LD HL,SIMPLE_PATTERN_USED
+    LD (HL),A : LD DE,SIMPLE_PATTERN_USED+1 : LD BC,SIMPLE_PATTERN_SLOTS-1 : LDIR
 
     ; --- PSG: channel A = noise-only (destroy), channel B = tone-only ---
     ; --- (pod-fire "don"), channel C = tone-only (shot) ---
