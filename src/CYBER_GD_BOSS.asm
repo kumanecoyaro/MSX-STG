@@ -7214,21 +7214,25 @@ ENEMY_POOL_UPDATE_ALL:
     LD HL,ENEMY_POOL
     LD B,ENEMY_SLOT_COUNT
 EPUA_LOOP:
+    ; E_ACTIVE is offset 0, so check it straight off HL before paying for
+    ; PUSH HL:POP IX (there's no direct HL->IX move on Z80) - most slots
+    ; are idle most of the time, so this skips ~48 T-states/slot for
+    ; every one of them instead of always converting to IX first.
+    LD A,(HL)
+    OR A
+    JR Z,EPUA_SKIP
     PUSH BC
     PUSH HL           ; EBSB_UPDATE reuses HL for LUT/type-table lookups - save our scan pointer
     PUSH HL : POP IX
-    LD A,(IX+E_ACTIVE)
-    OR A
-    JR Z,EPUA_SKIP
     LD A,(IX+E_BEHAVIOR)
     CP BEHAVIOR_SINE_BOB
     CALL Z,EBSB_UPDATE
     LD A,(IX+E_BEHAVIOR)
     CP BEHAVIOR_SIMPLE_DRIFT_DODGE
     CALL Z,EBSD_UPDATE
-EPUA_SKIP:
     POP HL
     POP BC
+EPUA_SKIP:
     LD DE,ENEMY_SLOT_SIZE
     ADD HL,DE
     DJNZ EPUA_LOOP
@@ -7400,12 +7404,14 @@ CHECK_BULLET_VS_ENEMY_POOL:
     LD HL,ENEMY_POOL
     LD B,ENEMY_SLOT_COUNT
 CBVEP_LOOP:
+    ; E_ACTIVE is offset 0, so check it straight off HL before paying for
+    ; PUSH HL:POP IX - see ENEMY_POOL_UPDATE_ALL's EPUA_LOOP for why.
+    LD A,(HL)
+    OR A
+    JR Z,CBVEP_SKIP
     PUSH BC
     PUSH HL           ; EBSB_HIT_TEST reuses HL for LUT/type-table lookups - save our scan pointer
     PUSH HL : POP IX
-    LD A,(IX+E_ACTIVE)
-    OR A
-    JR Z,CBVEP_SKIP
     LD A,(IX+E_BEHAVIOR)
     CP BEHAVIOR_SINE_BOB
     JR NZ,CBVEP_TRY_SIMPLE
@@ -7416,20 +7422,21 @@ CBVEP_LOOP:
 CBVEP_TRY_SIMPLE:
     LD A,(IX+E_BEHAVIOR)
     CP BEHAVIOR_SIMPLE_DRIFT_DODGE
-    JR NZ,CBVEP_SKIP
+    JR NZ,CBVEP_NOHIT_ACTIVE
     LD A,(ENEMY_HIT_COL) : LD B,A
     LD A,(ENEMY_HIT_ROW) : LD C,A
     CALL EBSD_HIT_TEST
 CBVEP_CHECK_HIT:
     OR A
-    JR Z,CBVEP_SKIP
+    JR Z,CBVEP_NOHIT_ACTIVE
     POP HL
     POP BC
     LD A,1
     RET
-CBVEP_SKIP:
+CBVEP_NOHIT_ACTIVE:
     POP HL
     POP BC
+CBVEP_SKIP:
     LD DE,ENEMY_SLOT_SIZE
     ADD HL,DE
     DJNZ CBVEP_LOOP
