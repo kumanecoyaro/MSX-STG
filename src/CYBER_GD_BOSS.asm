@@ -766,8 +766,6 @@ INIT_SPRATR_CLR:
     LD DE,E2A_SEQ_STATE+1 : LD BC,97 : LDIR
     LD HL,E2B_SEQ_STATE : LD (HL),A
     LD DE,E2B_SEQ_STATE+1 : LD BC,97 : LDIR
-    LD HL,ENEMY4_POOL : LD (HL),A
-    LD DE,ENEMY4_POOL+1 : LD BC,20 : LDIR
     CALL ENEMY_POOL_INIT
     LD HL,ENEMY4_PATTERN : LD DE,PAT_ENEMY4*8+SPRPAT : LD BC,32 : CALL LDIRVM
     LD HL,PARTICLE_PATTERN : LD DE,PAT_PARTICLE*8+SPRPAT : LD BC,32 : CALL LDIRVM
@@ -2073,9 +2071,9 @@ ANIM2_DONE:
     LD IX,ENEMY3_POOL+55 : CALL ENEMY3_UPDATE_SLOT
     LD IX,ENEMY3_POOL+66 : CALL ENEMY3_UPDATE_SLOT
     LD IX,ENEMY3_POOL+77 : CALL ENEMY3_UPDATE_SLOT
-    LD IX,ENEMY4_POOL    : CALL ENEMY4_UPDATE_SLOT
-    LD IX,ENEMY4_POOL+7  : CALL ENEMY4_UPDATE_SLOT
-    LD IX,ENEMY4_POOL+14 : CALL ENEMY4_UPDATE_SLOT
+    ; --- unified sprite-enemy buffer: advance every active slot,   ---
+    ; --- regardless of which movement algorithm (BEHAVIOR) it uses ---
+    CALL ENEMY_POOL_UPDATE_ALL
 
     ; ============================================================
     ; --- shots: advance 1 character (8 dots) per frame. Erasing  ---
@@ -2106,7 +2104,7 @@ ANIM2_DONE:
     CALL CHECK_BULLET_VS_ENEMY3
     OR A
     JR NZ,BULLET0_ISHIT
-    CALL CHECK_BULLET_VS_ENEMY4
+    CALL CHECK_BULLET_VS_ENEMY_POOL
     OR A
     JR Z,BULLET0_NOHIT
 BULLET0_ISHIT:
@@ -2202,7 +2200,7 @@ BULLET0_NEXT:
     CALL CHECK_BULLET_VS_ENEMY3
     OR A
     JR NZ,BULLET1_ISHIT
-    CALL CHECK_BULLET_VS_ENEMY4
+    CALL CHECK_BULLET_VS_ENEMY_POOL
     OR A
     JR Z,BULLET1_NOHIT
 BULLET1_ISHIT:
@@ -2298,7 +2296,7 @@ BULLET1_NEXT:
     CALL CHECK_BULLET_VS_ENEMY3
     OR A
     JR NZ,BULLET2_ISHIT
-    CALL CHECK_BULLET_VS_ENEMY4
+    CALL CHECK_BULLET_VS_ENEMY_POOL
     OR A
     JR Z,BULLET2_NOHIT
 BULLET2_ISHIT:
@@ -3568,18 +3566,16 @@ E2B_ACTIVE EQU 0E6E1h
 ; --- the same asterisk sprite look as Enemy1/2 (built at spawn    ---
 ; --- time via REDRAW_UNIT_PATTERN, just like they do). Spawned in ---
 ; --- 2 waves of 3 via SPAWN_THRESHOLDS/SPAWN_SCHEDULE_CHECK (same ---
-; --- mechanism as Enemy1/2, right after Enemy2 in the schedule) - ---
-; --- 6 spawns total reusing the same 3 physical sprite slots.     ---
-ENEMY4_SLOTS   EQU 3
+; --- mechanism as Enemy1/2, right after Enemy2 in the schedule).  ---
+; --- Now lives in the unified ENEMY_POOL as BEHAVIOR_SINE_BOB/    ---
+; --- TYPE_ENEMY4 - see ENEMY_POOL_UPDATE_ALL and friends below.   ---
 ENEMY4_SPEED   EQU 3          ; dots/frame, left (faster than Enemy1's 2)
 ENEMY4_SPAWNX  EQU 240
 ENEMY4_HP      EQU 2          ; hits to destroy - trial run of the durability system
 ENEMY4_LUT_LEN EQU 32
 PAT_ENEMY4     EQU 84         ; patterns84-87 (32 bytes at SPRPAT+672)
 PAT_PARTICLE   EQU 120        ; single-dot trail particle (32 bytes at SPRPAT+960)
-; pool slot layout (7 bytes/slot): 0=ACTIVE,1=X,2=PHASE,3=SPRNUM,4=TOP,5=BOT,6=BASEY
-ENEMY4_POOL EQU 0E6F4h ; 3*7 = 21 bytes (E6F4-E708)
-E4_SPAWN_BASEY EQU 0E709h ; scratch: this wave's base Y, set right before E4_CLAIM_ANY
+E4_SPAWN_BASEY EQU 0E709h ; scratch: this wave's base Y, set right before ENEMY4_CLAIM_ANY
 
 ; ===== Unified sprite-enemy buffer (target for the ENEMY0/1/2, E2A/E2B ===
 ; and ENEMY4 migration - ENEMY3 stays separate since it's BG/nametable  ===
@@ -3643,6 +3639,26 @@ E_PARAM5      EQU 19
 ; slot is currently acting as a formation's leader.
 ENEMY_TRAIL_CHANS   EQU 0EACDh  ; 2*64 = 128 bytes (EACD-EB4C)
 ENEMY_TRAIL_CH_WIDX EQU 0EB4Dh  ; 2 bytes, one write-index per channel
+ENEMY_HIT_COL       EQU 0EB4Fh  ; scratch: bullet col/row, saved across the
+ENEMY_HIT_ROW       EQU 0EB50h  ; pool scan so B/C are free for the loop counter
+ENEMY_SCORE_SEL_TMP EQU 0EB51h  ; scratch: score selector, stashed across TRIGGER_EXPLOSION (clobbers IX)
+
+; A slot's TYPE (1-based) indexes this table for its display+stats,
+; independent of its BEHAVIOR (movement). 4 bytes/entry:
+;   +0 sprite pattern number, +1 sprite color, +2 initial HP,
+;   +3 score selector (0=100,1=200,2=300 via ENEMY_AWARD_SCORE_SEL)
+ENEMY_TYPE_ENTRYSIZE EQU 4
+ETT_PATTERN  EQU 0
+ETT_COLOR    EQU 1
+ETT_HP       EQU 2
+ETT_SCORESEL EQU 3
+TYPE_ENEMY4  EQU 1
+ENEMY_TYPE_TABLE:
+    DB PAT_ENEMY4, SPR_LTGREEN, ENEMY4_HP, 2   ; TYPE_ENEMY4
+
+; movement algorithm ids, dispatched by ENEMY_POOL_UPDATE_ALL and
+; CHECK_BULLET_VS_ENEMY_POOL.
+BEHAVIOR_SINE_BOB EQU 1   ; Enemy4-style: drift left, sine-wave vertical bob
 
 ; --- boss materialize effect state (non-blocking: BOSS_UPDATE is  ---
 ; --- called once per frame from MAINLOOP and returns immediately  ---
@@ -4039,9 +4055,7 @@ BCDE_SKIP5:
     CALL ECS_S8_A
     CALL ECS_S8_B
 
-    LD IX,ENEMY4_POOL    : CALL BCDE_E4_CLEAR
-    LD IX,ENEMY4_POOL+7  : CALL BCDE_E4_CLEAR
-    LD IX,ENEMY4_POOL+14 : CALL BCDE_E4_CLEAR
+    CALL BCDE_CLEAR_ENEMY_POOL
 
     ; permanently reserve 8-31 for the boss's fixed sprites
     LD HL,SPRITE_USED+8
@@ -4072,14 +4086,28 @@ BCDE_HIDE1:
     CALL FREE_SPRITE_NUM
     RET
 
-; Input: IX = an ENEMY4_POOL slot base. Force-hides+frees it if
-; still active (IX+0<>0).
-BCDE_E4_CLEAR:
-    LD A,(IX+0)
+; Force-hides+frees every active unified-pool slot (currently just the
+; BEHAVIOR_SINE_BOB/Enemy4-type ones - more BEHAVIORs join this sweep
+; as they migrate in). Called once, right before the boss spawns.
+BCDE_CLEAR_ENEMY_POOL:
+    LD HL,ENEMY_POOL
+    LD B,ENEMY_SLOT_COUNT
+BCEP_LOOP:
+    PUSH BC
+    PUSH HL : POP IX
+    LD A,(IX+E_ACTIVE)
     OR A
-    RET Z
-    XOR A : LD (IX+0),A
-    LD A,(IX+3) : CALL BCDE_HIDE1
+    JR Z,BCEP_SKIP
+    LD A,(IX+E_BEHAVIOR)
+    CP BEHAVIOR_SINE_BOB
+    JR NZ,BCEP_SKIP
+    LD A,(IX+E_SPRNUM) : CALL BCDE_HIDE1
+    XOR A : LD (IX+E_ACTIVE),A
+BCEP_SKIP:
+    POP BC
+    LD DE,ENEMY_SLOT_SIZE
+    ADD HL,DE
+    DJNZ BCEP_LOOP
     RET
 
 BOSS_SPAWN:
@@ -7818,139 +7846,193 @@ ECS_S8_B:
 ; behavior as Enemy1's SOE1_TOP/BOT).
 SPAWN_E4_Y16:
     LD A,32 : LD (E4_SPAWN_BASEY),A
-    JP E4_CLAIM_ANY
+    JP ENEMY4_CLAIM_ANY
 SPAWN_E4_Y32:
     LD A,64 : LD (E4_SPAWN_BASEY),A
-    JP E4_CLAIM_ANY
+    JP ENEMY4_CLAIM_ANY
 SPAWN_E4_Y48:
     LD A,72 : LD (E4_SPAWN_BASEY),A
-    JP E4_CLAIM_ANY
+    JP ENEMY4_CLAIM_ANY
 
-E4_CLAIM_ANY:
-    LD IX,ENEMY4_POOL    : CALL E4_TRY_CLAIM : RET NZ
-    LD IX,ENEMY4_POOL+7  : CALL E4_TRY_CLAIM : RET NZ
-    LD IX,ENEMY4_POOL+14 : CALL E4_TRY_CLAIM
-    RET
-
-; Input: IX = slot base, (E4_SPAWN_BASEY) = this wave's base Y.
-; Output: A<>0 (NZ) if this slot was free and got claimed, else
-; A=0 (Z). If free, claims it: spawns at the right edge with a
-; fresh LUT phase and builds this slot's asterisk pattern (same
-; look as a healthy Enemy1 unit).
-E4_TRY_CLAIM:
-    LD A,(IX+0)
-    OR A
-    JR Z,E4TC_FREE
-    XOR A
-    RET
-E4TC_FREE:
-    LD A,ENEMY4_HP : LD (IX+0),A
-    LD A,ENEMY4_SPAWNX : LD (IX+1),A
-    XOR A : LD (IX+2),A
-    CALL ALLOC_SPRITE_NUM : LD (IX+3),A
-    LD A,(E4_SPAWN_BASEY) : LD (IX+6),A
-    LD A,1
-    RET
-
-; Called once per pool slot per frame. Moves left, steps the sine
-; LUT phase, and draws (or hides) this slot's sprite: actual Y =
-; this slot's BASEY (fixed at spawn, per-wave: 16/32/48) plus the
-; LUT's relative offset for the current phase. A slot whose SPRNUM
-; is still 0 has never been spawned - it owns no VDP sprite
-; attribute entry at all, so it must be skipped entirely rather
-; than "hidden" (address 0 IS a real sprite - slot0, the ship's
-; accent overlay - writing there every frame for an unspawned
-; Enemy4 slot was overwriting it, which is why the ship's accent
-; vanished as soon as Enemy4 was added).
-; Input: IX = slot base.
-; Only touches the VDP while this slot is actively spawned (IX+0<>0).
-; An inactive slot (never spawned, or exited/destroyed - both cases
-; already did their own one-time hide+free at the moment they became
-; inactive) is skipped entirely here - with real sprite-number reuse,
-; its old number may already belong to a different enemy by now, so
-; continuing to write "hide" here every frame would stomp that new
-; owner's draw.
-; Input: IX = slot base.
-ENEMY4_UPDATE_SLOT:
-    LD A,(IX+0)
+; Claims a free slot from the unified ENEMY_POOL for a fresh Enemy4
+; (BEHAVIOR_SINE_BOB) spawn: right-edge X, fresh LUT phase, this
+; wave's base Y (from E4_SPAWN_BASEY). If the pool is full the spawn
+; is simply dropped (same skip-if-busy behavior as before).
+ENEMY4_CLAIM_ANY:
+    CALL ALLOC_ENEMY_SLOT
     OR A
     RET Z
+    LD A,TYPE_ENEMY4 : LD (IX+E_TYPE),A
+    LD A,BEHAVIOR_SINE_BOB : LD (IX+E_BEHAVIOR),A
+    LD A,ENEMY4_HP : LD (IX+E_HP),A
+    LD A,ENEMY4_SPAWNX : LD (IX+E_X),A
+    LD A,(E4_SPAWN_BASEY) : LD (IX+E_PARAM0),A
+    CALL ALLOC_SPRITE_NUM : LD (IX+E_SPRNUM),A
+    RET
 
-    LD A,(IX+3) : ADD A,A : ADD A,A : OUT (99h),A
+; Given A = TYPE (1-based), returns HL = pointer to that TYPE's
+; ENEMY_TYPE_TABLE entry (see layout comment above the table).
+; Trashes A,DE,HL.
+ENEMY_TYPE_LOOKUP:
+    DEC A
+    ADD A,A : ADD A,A   ; *ENEMY_TYPE_ENTRYSIZE(4)
+    LD E,A : LD D,0
+    LD HL,ENEMY_TYPE_TABLE
+    ADD HL,DE
+    RET
+
+; Input: A = score selector (0/1/2, from ETT_SCORESEL). Awards
+; 100/200/300 and refreshes the score display, same as the
+; formation/Enemy3 kill-score helpers.
+ENEMY_AWARD_SCORE_SEL:
+    OR A
+    JP Z,ADD_SCORE_100
+    CP 1
+    JP Z,ADD_SCORE_200
+    JP ADD_SCORE_300
+
+; Advances every active slot in the unified enemy buffer, dispatching
+; on BEHAVIOR. Currently only BEHAVIOR_SINE_BOB (Enemy4) lives here;
+; more movement algorithms join this dispatch as they migrate in.
+ENEMY_POOL_UPDATE_ALL:
+    LD HL,ENEMY_POOL
+    LD B,ENEMY_SLOT_COUNT
+EPUA_LOOP:
+    PUSH BC
+    PUSH HL : POP IX
+    LD A,(IX+E_ACTIVE)
+    OR A
+    JR Z,EPUA_SKIP
+    LD A,(IX+E_BEHAVIOR)
+    CP BEHAVIOR_SINE_BOB
+    CALL Z,EBSB_UPDATE
+EPUA_SKIP:
+    POP BC
+    LD DE,ENEMY_SLOT_SIZE
+    ADD HL,DE
+    DJNZ EPUA_LOOP
+    RET
+
+; BEHAVIOR_SINE_BOB: moves left at a fixed speed, steps a 32-entry
+; sine LUT for a vertical bob around E_PARAM0 (this slot's base Y,
+; fixed at spawn), and draws using E_TYPE's pattern/color - same
+; movement as the original Enemy4, just type-agnostic now. Exits
+; (deactivates, no score) once it drifts off the left edge.
+; Input: IX = slot base (already confirmed ACTIVE).
+EBSB_UPDATE:
+    LD A,(IX+E_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
     NOP
     NOP
     LD A,5Bh : OUT (99h),A
     NOP
     NOP
 
-    LD A,(IX+1)
+    LD A,(IX+E_X)
     CP ENEMY4_SPEED
-    JR NC,E4U_MOVEOK
-    XOR A : LD (IX+0),A
-    LD A,(IX+3) : CALL FREE_SPRITE_NUM
-    LD A,ENEMY_HIDE_Y : OUT (98h),A
-    NOP
-    NOP
-    LD A,255 : OUT (98h),A
-    NOP
-    NOP
-    LD A,PAT_ENEMY4 : OUT (98h),A
-    NOP
-    NOP
-    LD A,SPR_LTGREEN : OUT (98h),A
-    NOP
-    NOP
-    RET
-E4U_MOVEOK:
+    JR NC,EBSB_MOVEOK
+    JP EBSB_EXIT_LEFT
+EBSB_MOVEOK:
     SUB ENEMY4_SPEED
-    LD (IX+1),A
+    LD (IX+E_X),A
 
-    LD A,(IX+2) : INC A : CP ENEMY4_LUT_LEN : JR C,E4U_PHASEOK
+    LD A,(IX+E_STATE) : INC A : CP ENEMY4_LUT_LEN : JR C,EBSB_PHASEOK
     XOR A
-E4U_PHASEOK:
-    LD (IX+2),A
+EBSB_PHASEOK:
+    LD (IX+E_STATE),A
     LD E,A : LD D,0
     LD HL,ENEMY4_SINE_LUT
     ADD HL,DE
-    LD A,(IX+6) : ADD A,(HL) : OUT (98h),A
+    LD A,(IX+E_PARAM0) : ADD A,(HL) : OUT (98h),A
     NOP
     NOP
-    LD A,(IX+1) : OUT (98h),A
+    LD A,(IX+E_X) : OUT (98h),A
     NOP
     NOP
-    LD A,PAT_ENEMY4 : OUT (98h),A
+    LD A,(IX+E_TYPE) : CALL ENEMY_TYPE_LOOKUP
+    LD A,(HL) : OUT (98h),A          ; pattern
     NOP
     NOP
-    LD A,SPR_LTGREEN : OUT (98h),A
+    INC HL
+    LD A,(HL) : OUT (98h),A          ; color
     NOP
     NOP
+    RET
+
+; Drifted off the left edge: hide the sprite, restore its type's
+; pattern/color (matches the legacy Enemy4 exit write), and free the
+; slot. No score, no explosion - this is an exit, not a kill.
+EBSB_EXIT_LEFT:
+    LD A,ENEMY_HIDE_Y : OUT (98h),A
+    NOP
+    NOP
+    LD A,255 : OUT (98h),A
+    NOP
+    NOP
+    LD A,(IX+E_TYPE) : CALL ENEMY_TYPE_LOOKUP
+    LD A,(HL) : OUT (98h),A
+    NOP
+    NOP
+    INC HL
+    LD A,(HL) : OUT (98h),A
+    NOP
+    NOP
+    CALL FREE_ENEMY_SLOT
     RET
 
 ; Input: B = bullet col, C = bullet row.
-; Output: A = 1 if the bullet destroyed an Enemy4 instance, else 0.
-CHECK_BULLET_VS_ENEMY4:
-    LD IX,ENEMY4_POOL    : CALL E4_HIT_ONE_SLOT : OR A : RET NZ
-    LD IX,ENEMY4_POOL+7  : CALL E4_HIT_ONE_SLOT : OR A : RET NZ
-    LD IX,ENEMY4_POOL+14 : CALL E4_HIT_ONE_SLOT
+; Output: A = 1 if the bullet hit (and possibly destroyed) a unified
+; enemy-pool slot, else 0. Scans every active slot, dispatching the
+; actual hitbox test/damage on BEHAVIOR (currently just
+; BEHAVIOR_SINE_BOB/Enemy4 - more join as they migrate in). B/C are
+; saved to scratch RAM across the scan so the loop can use B as its
+; counter; QUAD_HIT_TEST itself doesn't touch B/C.
+CHECK_BULLET_VS_ENEMY_POOL:
+    LD A,B : LD (ENEMY_HIT_COL),A
+    LD A,C : LD (ENEMY_HIT_ROW),A
+    LD HL,ENEMY_POOL
+    LD B,ENEMY_SLOT_COUNT
+CBVEP_LOOP:
+    PUSH BC
+    PUSH HL : POP IX
+    LD A,(IX+E_ACTIVE)
+    OR A
+    JR Z,CBVEP_SKIP
+    LD A,(IX+E_BEHAVIOR)
+    CP BEHAVIOR_SINE_BOB
+    JR NZ,CBVEP_SKIP
+    LD A,(ENEMY_HIT_COL) : LD B,A
+    LD A,(ENEMY_HIT_ROW) : LD C,A
+    CALL EBSB_HIT_TEST
+    OR A
+    JR Z,CBVEP_SKIP
+    POP BC
+    LD A,1
+    RET
+CBVEP_SKIP:
+    POP BC
+    LD DE,ENEMY_SLOT_SIZE
+    ADD HL,DE
+    DJNZ CBVEP_LOOP
+    XOR A
     RET
 
-E4_HIT_ONE_SLOT:
-    LD A,(IX+0)
-    OR A
-    JR Z,E4H_NO
-    LD A,(IX+2) : LD E,A : LD D,0
+; Input: IX = slot base (already confirmed ACTIVE+BEHAVIOR_SINE_BOB),
+; B = bullet col, C = bullet row. Output: A = 1 if the bullet hit this
+; slot (consumed either way - damaged or destroyed), else A = 0.
+EBSB_HIT_TEST:
+    LD A,(IX+E_STATE) : LD E,A : LD D,0
     LD HL,ENEMY4_SINE_LUT
     ADD HL,DE
-    LD A,(IX+6) : ADD A,(HL) : ADD A,8 : LD E,A   ; +8: art/hitbox is the bottom half only
-    LD A,(IX+1) : LD D,A
+    LD A,(IX+E_PARAM0) : ADD A,(HL) : ADD A,8 : LD E,A   ; +8: art/hitbox is the bottom half only
+    LD A,(IX+E_X) : LD D,A
     CALL QUAD_HIT_TEST
     OR A
-    JR Z,E4H_NO
-    LD A,(IX+0) : DEC A : LD (IX+0),A
+    JR Z,EBSBH_NO
+    LD A,(IX+E_HP) : DEC A : LD (IX+E_HP),A
     OR A
-    JR NZ,E4H_DAMAGED
+    JR NZ,EBSBH_DAMAGED
     ; --- HP reached 0: fully destroy ---
-    LD A,(IX+3) : ADD A,A : ADD A,A : OUT (99h),A
+    LD A,(IX+E_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
     NOP
     NOP
     LD A,5Bh : OUT (99h),A
@@ -7962,19 +8044,27 @@ E4_HIT_ONE_SLOT:
     LD A,255 : OUT (98h),A
     NOP
     NOP
-    LD A,(IX+3) : CALL FREE_SPRITE_NUM
+    ; --- stash the score selector and free the slot BEFORE calling  ---
+    ; --- TRIGGER_EXPLOSION, which reuses IX for its own ANIM_BASE   ---
+    ; --- bookkeeping - nothing below this may rely on IX afterward. ---
+    LD A,(IX+E_TYPE) : CALL ENEMY_TYPE_LOOKUP
+    LD DE,ETT_SCORESEL : ADD HL,DE
+    LD A,(HL)
+    LD (ENEMY_SCORE_SEL_TMP),A
+    CALL FREE_ENEMY_SLOT
     PUSH BC
     CALL TRIGGER_EXPLOSION
-    CALL ADD_SCORE_300
+    LD A,(ENEMY_SCORE_SEL_TMP)
+    CALL ENEMY_AWARD_SCORE_SEL
     POP BC
     LD A,1
     RET
-E4H_DAMAGED:
+EBSBH_DAMAGED:
     ; --- still alive - bullet is consumed (caller stops it here) ---
     ; --- but the enemy keeps flying, no explosion/score yet.      ---
     LD A,1
     RET
-E4H_NO:
+EBSBH_NO:
     XOR A
     RET
 
