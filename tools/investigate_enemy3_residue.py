@@ -89,6 +89,11 @@ def main():
     z.mem[sym['TICK']] = 0
     for g in ['PXCHAR_G8', 'PXCHAR_G4', 'PXCHAR_G2', 'PXCHAR_G1']:
         z.mem[sym[g]] = 0
+    for row in range(6):
+        z.sp = 0xFF00; z.wr(0xFF00, 0); z.wr(0xFF01, 0)
+        z.sethl(sym[f'ROWDATA{row}']); z.ix = sym[f'IDCACHE{row}']
+        z.pc = sym['REFRESH_IDCACHE_33']
+        run_until(z, 0)
     z.mem[sym['BOSS_STATE']] = 0
     z.mem[sym['ENEMY3_BUDGET']] = 40
     z.mem[sym['ENEMY3_SPAWN_TIMER']] = 1
