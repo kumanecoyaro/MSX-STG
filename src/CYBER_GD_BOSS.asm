@@ -85,6 +85,7 @@ PBD_D0       EQU 0E0D5h
 PBD_D1       EQU 0E0D6h
 PBD_D2       EQU 0E0D7h
 FD_COL       EQU 0E0D8h
+FD_SLOT_IDX  EQU 0E0D9h
 
 NAMEBUF     EQU 0E200h
 PREVBUF     EQU 0E300h
@@ -2152,6 +2153,32 @@ FD_EPOOL_LOOP:
     ADD HL,DE
     POP BC
     DJNZ FD_EPOOL_LOOP
+
+    ; --- detail for the first active ENEMY_POOL slot found (if any):   ---
+    ; --- slot index/E_TYPE/E_BEHAVIOR at row14, E_X/E_Y at row15. Only ---
+    ; --- the first - the row13 bitmap already shows how many are      ---
+    ; --- active; this is just enough to identify which one.            ---
+    LD HL,ENEMY_POOL
+    LD B,32
+    XOR A : LD (FD_SLOT_IDX),A
+FD_SCAN1:
+    LD A,(HL)
+    OR A
+    JR NZ,FD_FOUND1
+    PUSH HL
+    LD A,(FD_SLOT_IDX) : INC A : LD (FD_SLOT_IDX),A
+    POP HL
+    LD DE,ENEMY_SLOT_SIZE
+    ADD HL,DE
+    DJNZ FD_SCAN1
+    JR FD_DETAIL_DONE
+FD_FOUND1:
+    LD A,(FD_SLOT_IDX) : LD B,14 : LD C,0 : PUSH HL : CALL PRINT_BYTE_DEC : POP HL
+    INC HL : LD A,(HL) : LD B,14 : LD C,4 : PUSH HL : CALL PRINT_BYTE_DEC : POP HL   ; E_TYPE
+    INC HL : LD A,(HL) : LD B,14 : LD C,8 : PUSH HL : CALL PRINT_BYTE_DEC : POP HL   ; E_BEHAVIOR
+    INC HL : INC HL : LD A,(HL) : LD B,15 : LD C,0 : PUSH HL : CALL PRINT_BYTE_DEC : POP HL  ; E_X
+    INC HL : LD A,(HL) : LD B,15 : LD C,4 : CALL PRINT_BYTE_DEC   ; E_Y
+FD_DETAIL_DONE:
 
 FREEZE_FOREVER:
     JR FREEZE_FOREVER
