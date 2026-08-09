@@ -7869,7 +7869,7 @@ SPAWN_THRESHOLDS:
     DW 10,11,12,25,26,27,40,41,42,55,56,57,70,90,110,120,130
     DW 145,146,147, 160,161,162, 175,176,177, 190,191,192, 205,206,207, 220,221,222
     DW 235,236,237, 250,251,252, 265,266,267
-    DW 320
+    DW 270
 
 ; --- saved (disabled) boss-only single-entry schedule, used ---
 ; --- while iterating quickly on boss features - not deleted: ---
