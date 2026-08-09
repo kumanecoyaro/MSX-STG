@@ -940,23 +940,28 @@ SKIP_G1:
     LD HL,ROWDATA0 : LD A,(PXCHAR_G1) : LD E,A : LD D,0 : ADD HL,DE
     LD IX,NAMEBUF+0
     LD B,32
+    ; --- prime C = curr_id for cell 0; each cell's "next" is the following---
+    ; --- cell's "curr" (HL only advances by 1/cell), so C carries it       ---
+    ; --- forward every iteration instead of re-deriving it from ROWDATA+   ---
+    ; --- LUT (a second, redundant lookup) - saves ~30 T-states/cell.       ---
+    LD A,(HL) : LD E,A : LD D,LUT/256 : LD A,(DE) : LD C,A
 CELL_LOOP_0:
-    LD A,(HL) : LD E,A : LD D,LUT/256 : LD A,(DE) : LD (CURRID),A
     INC HL
     LD A,(HL) : LD E,A : LD D,LUT/256 : LD A,(DE) : LD (NEXTID),A
     LD A,(ROWPHASE) : OR A
     JR NZ,NONZERO_0
-    LD A,(CURRID) : LD E,A : LD D,SOLOTAB/256 : LD A,(DE)
+    LD A,C : LD E,A : LD D,SOLOTAB/256 : LD A,(DE)
     JR STORE_0
 NONZERO_0:
-    LD A,(CURRID) : LD E,A : LD D,MUL6/256 : LD A,(DE) : LD E,A  ; E = curr*6
-    LD A,(NEXTID) : ADD A,E             ; A = pairid = curr*6+next
+    LD A,C : LD E,A : LD D,MUL6/256 : LD A,(DE) : LD E,A  ; E = curr_id*6
+    LD A,(NEXTID) : ADD A,E             ; A = pairid = curr_id*6+next_id
     LD E,A : LD D,PAIRBASE/256 : LD A,(DE)  ; A = PAIRBASE[pairid]
     LD E,A
     LD A,(ROWPHASE) : DEC A : ADD A,E   ; + (phase-1)
 STORE_0:
     LD (IX+0),A
     INC IX
+    LD A,(NEXTID) : LD C,A              ; carry next_id forward as next cell's curr_id
     DJNZ CELL_LOOP_0
 
     ; --- row 1: screen row 18 (TIER2_DIAMOND), group PXCHAR_G1 ---
@@ -964,23 +969,24 @@ STORE_0:
     LD HL,ROWDATA1 : LD A,(PXCHAR_G1) : LD E,A : LD D,0 : ADD HL,DE
     LD IX,NAMEBUF+32
     LD B,32
+    LD A,(HL) : LD E,A : LD D,LUT/256 : LD A,(DE) : LD C,A
 CELL_LOOP_1:
-    LD A,(HL) : LD E,A : LD D,LUT/256 : LD A,(DE) : LD (CURRID),A
     INC HL
     LD A,(HL) : LD E,A : LD D,LUT/256 : LD A,(DE) : LD (NEXTID),A
     LD A,(ROWPHASE) : OR A
     JR NZ,NONZERO_1
-    LD A,(CURRID) : LD E,A : LD D,SOLOTAB/256 : LD A,(DE)
+    LD A,C : LD E,A : LD D,SOLOTAB/256 : LD A,(DE)
     JR STORE_1
 NONZERO_1:
-    LD A,(CURRID) : LD E,A : LD D,MUL6/256 : LD A,(DE) : LD E,A  ; E = curr*6
-    LD A,(NEXTID) : ADD A,E             ; A = pairid = curr*6+next
+    LD A,C : LD E,A : LD D,MUL6/256 : LD A,(DE) : LD E,A  ; E = curr_id*6
+    LD A,(NEXTID) : ADD A,E             ; A = pairid = curr_id*6+next_id
     LD E,A : LD D,PAIRBASE/256 : LD A,(DE)  ; A = PAIRBASE[pairid]
     LD E,A
     LD A,(ROWPHASE) : DEC A : ADD A,E   ; + (phase-1)
 STORE_1:
     LD (IX+0),A
     INC IX
+    LD A,(NEXTID) : LD C,A              ; carry next_id forward as next cell's curr_id
     DJNZ CELL_LOOP_1
 
     ; --- row 2: screen row 19 (TIER3_DIAMOND), group PXCHAR_G2 ---
@@ -988,23 +994,24 @@ STORE_1:
     LD HL,ROWDATA2 : LD A,(PXCHAR_G2) : LD E,A : LD D,0 : ADD HL,DE
     LD IX,NAMEBUF+64
     LD B,32
+    LD A,(HL) : LD E,A : LD D,LUT/256 : LD A,(DE) : LD C,A
 CELL_LOOP_2:
-    LD A,(HL) : LD E,A : LD D,LUT/256 : LD A,(DE) : LD (CURRID),A
     INC HL
     LD A,(HL) : LD E,A : LD D,LUT/256 : LD A,(DE) : LD (NEXTID),A
     LD A,(ROWPHASE) : OR A
     JR NZ,NONZERO_2
-    LD A,(CURRID) : LD E,A : LD D,SOLOTAB/256 : LD A,(DE)
+    LD A,C : LD E,A : LD D,SOLOTAB/256 : LD A,(DE)
     JR STORE_2
 NONZERO_2:
-    LD A,(CURRID) : LD E,A : LD D,MUL6/256 : LD A,(DE) : LD E,A  ; E = curr*6
-    LD A,(NEXTID) : ADD A,E             ; A = pairid = curr*6+next
+    LD A,C : LD E,A : LD D,MUL6/256 : LD A,(DE) : LD E,A  ; E = curr_id*6
+    LD A,(NEXTID) : ADD A,E             ; A = pairid = curr_id*6+next_id
     LD E,A : LD D,PAIRBASE/256 : LD A,(DE)  ; A = PAIRBASE[pairid]
     LD E,A
     LD A,(ROWPHASE) : DEC A : ADD A,E   ; + (phase-1)
 STORE_2:
     LD (IX+0),A
     INC IX
+    LD A,(NEXTID) : LD C,A              ; carry next_id forward as next cell's curr_id
     DJNZ CELL_LOOP_2
 
     ; --- row 3: screen row 20 (TIER4_SLASH), group PXCHAR_G4 ---
@@ -1012,23 +1019,24 @@ STORE_2:
     LD HL,ROWDATA3 : LD A,(PXCHAR_G4) : LD E,A : LD D,0 : ADD HL,DE
     LD IX,NAMEBUF+96
     LD B,32
+    LD A,(HL) : LD E,A : LD D,LUT/256 : LD A,(DE) : LD C,A
 CELL_LOOP_3:
-    LD A,(HL) : LD E,A : LD D,LUT/256 : LD A,(DE) : LD (CURRID),A
     INC HL
     LD A,(HL) : LD E,A : LD D,LUT/256 : LD A,(DE) : LD (NEXTID),A
     LD A,(ROWPHASE) : OR A
     JR NZ,NONZERO_3
-    LD A,(CURRID) : LD E,A : LD D,SOLOTAB/256 : LD A,(DE)
+    LD A,C : LD E,A : LD D,SOLOTAB/256 : LD A,(DE)
     JR STORE_3
 NONZERO_3:
-    LD A,(CURRID) : LD E,A : LD D,MUL6/256 : LD A,(DE) : LD E,A  ; E = curr*6
-    LD A,(NEXTID) : ADD A,E             ; A = pairid = curr*6+next
+    LD A,C : LD E,A : LD D,MUL6/256 : LD A,(DE) : LD E,A  ; E = curr_id*6
+    LD A,(NEXTID) : ADD A,E             ; A = pairid = curr_id*6+next_id
     LD E,A : LD D,PAIRBASE/256 : LD A,(DE)  ; A = PAIRBASE[pairid]
     LD E,A
     LD A,(ROWPHASE) : DEC A : ADD A,E   ; + (phase-1)
 STORE_3:
     LD (IX+0),A
     INC IX
+    LD A,(NEXTID) : LD C,A              ; carry next_id forward as next cell's curr_id
     DJNZ CELL_LOOP_3
 
     ; --- row 4: screen row 21 (TIER5_BACKSLASH), group PXCHAR_G4 ---
@@ -1036,23 +1044,24 @@ STORE_3:
     LD HL,ROWDATA4 : LD A,(PXCHAR_G4) : LD E,A : LD D,0 : ADD HL,DE
     LD IX,NAMEBUF+128
     LD B,32
+    LD A,(HL) : LD E,A : LD D,LUT/256 : LD A,(DE) : LD C,A
 CELL_LOOP_4:
-    LD A,(HL) : LD E,A : LD D,LUT/256 : LD A,(DE) : LD (CURRID),A
     INC HL
     LD A,(HL) : LD E,A : LD D,LUT/256 : LD A,(DE) : LD (NEXTID),A
     LD A,(ROWPHASE) : OR A
     JR NZ,NONZERO_4
-    LD A,(CURRID) : LD E,A : LD D,SOLOTAB/256 : LD A,(DE)
+    LD A,C : LD E,A : LD D,SOLOTAB/256 : LD A,(DE)
     JR STORE_4
 NONZERO_4:
-    LD A,(CURRID) : LD E,A : LD D,MUL6/256 : LD A,(DE) : LD E,A  ; E = curr*6
-    LD A,(NEXTID) : ADD A,E             ; A = pairid = curr*6+next
+    LD A,C : LD E,A : LD D,MUL6/256 : LD A,(DE) : LD E,A  ; E = curr_id*6
+    LD A,(NEXTID) : ADD A,E             ; A = pairid = curr_id*6+next_id
     LD E,A : LD D,PAIRBASE/256 : LD A,(DE)  ; A = PAIRBASE[pairid]
     LD E,A
     LD A,(ROWPHASE) : DEC A : ADD A,E   ; + (phase-1)
 STORE_4:
     LD (IX+0),A
     INC IX
+    LD A,(NEXTID) : LD C,A              ; carry next_id forward as next cell's curr_id
     DJNZ CELL_LOOP_4
 
     ; --- row 5: screen row 22 (TIER6_WEDGE), group PXCHAR_G8 ---
@@ -1060,23 +1069,24 @@ STORE_4:
     LD HL,ROWDATA5 : LD A,(PXCHAR_G8) : LD E,A : LD D,0 : ADD HL,DE
     LD IX,NAMEBUF+160
     LD B,32
+    LD A,(HL) : LD E,A : LD D,LUT/256 : LD A,(DE) : LD C,A
 CELL_LOOP_5:
-    LD A,(HL) : LD E,A : LD D,LUT/256 : LD A,(DE) : LD (CURRID),A
     INC HL
     LD A,(HL) : LD E,A : LD D,LUT/256 : LD A,(DE) : LD (NEXTID),A
     LD A,(ROWPHASE) : OR A
     JR NZ,NONZERO_5
-    LD A,(CURRID) : LD E,A : LD D,SOLOTAB/256 : LD A,(DE)
+    LD A,C : LD E,A : LD D,SOLOTAB/256 : LD A,(DE)
     JR STORE_5
 NONZERO_5:
-    LD A,(CURRID) : LD E,A : LD D,MUL6/256 : LD A,(DE) : LD E,A  ; E = curr*6
-    LD A,(NEXTID) : ADD A,E             ; A = pairid = curr*6+next
+    LD A,C : LD E,A : LD D,MUL6/256 : LD A,(DE) : LD E,A  ; E = curr_id*6
+    LD A,(NEXTID) : ADD A,E             ; A = pairid = curr_id*6+next_id
     LD E,A : LD D,PAIRBASE/256 : LD A,(DE)  ; A = PAIRBASE[pairid]
     LD E,A
     LD A,(ROWPHASE) : DEC A : ADD A,E   ; + (phase-1)
 STORE_5:
     LD (IX+0),A
     INC IX
+    LD A,(NEXTID) : LD C,A              ; carry next_id forward as next cell's curr_id
     DJNZ CELL_LOOP_5
 
     ; --- push each row to VRAM, skipping rows unchanged since last frame ---
