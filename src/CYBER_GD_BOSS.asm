@@ -84,6 +84,7 @@ PBD_VAL      EQU 0E0D4h
 PBD_D0       EQU 0E0D5h
 PBD_D1       EQU 0E0D6h
 PBD_D2       EQU 0E0D7h
+FD_COL       EQU 0E0D8h
 
 NAMEBUF     EQU 0E200h
 PREVBUF     EQU 0E300h
@@ -2127,6 +2128,30 @@ FREEZE_DUMP:
     LD A,(ENEMY3_POOL+77) : LD B,12 : LD C,0 : CALL PRINT_BYTE_DEC
     LD A,(ENEMY3_POOL+81) : LD B,12 : LD C,4 : CALL PRINT_BYTE_DEC
     LD A,(ENEMY3_POOL+82) : LD B,12 : LD C,8 : CALL PRINT_BYTE_DEC
+
+    ; --- ENEMY_POOL (Enemy0-2/Enemy1/Enemy4/Enemy5's unified pool) ACTIVE
+    ; --- bitmap, 32 slots, one char each, row13: is anything from that
+    ; --- pool on screen at all right now? (Not IX-indexed - this
+    ; --- assembler has no ADD IX,rr - HL + a plain 1-byte E_ACTIVE read
+    ; --- is enough here.)
+    LD HL,ENEMY_POOL
+    LD B,32
+    XOR A : LD (FD_COL),A
+FD_EPOOL_LOOP:
+    PUSH BC
+    LD A,(HL)
+    ADD A,DIGIT_BASE
+    LD (ANIM_TMP_VAL),A
+    LD A,13 : LD (ANIM_TMP_ROW),A
+    LD A,(FD_COL) : LD (ANIM_TMP_COL),A
+    PUSH HL
+    CALL WRITE_ANIM_CELL
+    POP HL
+    LD A,(FD_COL) : INC A : LD (FD_COL),A
+    LD DE,ENEMY_SLOT_SIZE
+    ADD HL,DE
+    POP BC
+    DJNZ FD_EPOOL_LOOP
 
 FREEZE_FOREVER:
     JR FREEZE_FOREVER
