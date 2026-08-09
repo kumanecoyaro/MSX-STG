@@ -5747,10 +5747,9 @@ SPAWN_E2_BOT_B:
     LD A,3 : LD (ENEMY_CYCLE),A
     JP ENEMY_START_COMPLEX_B
 SPAWN_E3_WAVE:
-    ; --- temporarily disabled to isolate whether Enemy3's own spawn ---
-    ; --- schedule is involved in the BG-residue bug - see the       ---
-    ; --- GROUND_ROW0 comment for the terrain-side experiments this  ---
-    ; --- is being tried alongside.                                   ---
+    LD A,64 : LD (ENEMY3_BUDGET),A
+    XOR A : LD (ENEMY3_SPAWN_COUNT),A
+    LD A,1 : LD (ENEMY3_SPAWN_TIMER),A
     RET
 
 ; Draws all 3 units together from the shared ENEMY_X/ENEMY_Y group
