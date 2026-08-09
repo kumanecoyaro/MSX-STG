@@ -7882,10 +7882,14 @@ ENEMY3_PATTERN3:
 ; boss (index26, 270), all 16-bit words.
 ; Enemy4-only test schedule (see SPAWN_SCHEDULE_CHECK): every 20
 ; ticks, 30 entries total.
+; 10 waves of 3, each wave firing 1 tick apart (matches the original
+; game's spawn cadence) so all 3 - top/mid/bottom (Y16/Y32/Y48, see
+; E4O_GOTMOD's index%3 dispatch) - are genuinely concurrent on screen,
+; not one at a time. Gap between waves gives room to watch each wave
+; play out fully before the next.
 SPAWN_THRESHOLDS:
-    DW 10,30,50,70,90,110,130,150,170,190
-    DW 210,230,250,270,290,310,330,350,370,390
-    DW 410,430,450,470,490,510,530,550,570,590
+    DW 10,11,12, 25,26,27, 40,41,42, 55,56,57, 70,71,72
+    DW 85,86,87, 100,101,102, 115,116,117, 130,131,132, 145,146,147
 
 ; --- SAVED (disabled) normal mixed-schedule thresholds - restore   ---
 ; --- alongside SPAWN_SCHEDULE_CHECK_SAVED_MIXED above.             ---
