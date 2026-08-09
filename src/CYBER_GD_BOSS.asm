@@ -65,24 +65,6 @@ IDCACHE3    EQU 0E06Fh
 IDCACHE4    EQU 0E090h
 IDCACHE5    EQU 0E0B1h
 
-; --- TEMPORARY DEBUG AID (see DEBUG_WATCH_DISPLAY below) - not part of ---
-; --- normal gameplay, safe to delete once the BG-residue bug is found. ---
-DEBUG_WATCH_ROW EQU 10   ; adjust to match the observed glitch position
-DEBUG_WATCH_COL EQU 25   ; adjust to match the observed glitch position
-; --- relocated away from IDCACHE5 (ends 0E0D1h) - these 4 bytes used to  ---
-; --- sit at 0E0D2h, IMMEDIATELY adjacent to IDCACHE5's last byte. If    ---
-; --- something were overrunning IDCACHE5's 33-byte allocation even by a ---
-; --- little, it would land exactly here and corrupt the watch's own    ---
-; --- readout rather than reflect real VRAM content - moving ~175 bytes ---
-; --- away (still inside the E0D2h-E1FFh free gap before NAMEBUF/E200h) ---
-; --- isolates that as a variable: if the "stuck" symptom persists       ---
-; --- identically here, it rules out a RAM-adjacency overflow as the     ---
-; --- cause; if it changes or stops, that confirms one.                  ---
-DEBUG_WATCH_VAL  EQU 0E180h
-DWD_ONES_TMP     EQU 0E181h
-DEBUG_WATCH_PREV EQU 0E182h  ; last frame's watched value, to detect a change
-DEBUG_WATCH_AGE  EQU 0E183h  ; frames since the watched value last changed (caps at 255)
-
 NAMEBUF     EQU 0E200h
 PREVBUF     EQU 0E300h
 STACKTOP    EQU 0F380h
@@ -2026,8 +2008,6 @@ BULLET2_OFF:
     XOR A : LD (BULLET2_ACT),A
 BULLET2_NEXT:
 
-    CALL DEBUG_WATCH_DISPLAY   ; TEMPORARY DEBUG AID - see its own header comment
-
     EI
     HALT
     JP MAINLOOP
@@ -2809,121 +2789,6 @@ GTD_T10_DONE:
     XOR A : LD (ANIM_TMP_ROW),A
     LD A,31 : LD (ANIM_TMP_COL),A
     LD A,(GTD_ONES_TMP) : ADD A,DIGIT_BASE : LD (ANIM_TMP_VAL),A
-    CALL WRITE_ANIM_CELL
-    RET
-
-; --- TEMPORARY DEBUG AID: live-reads whatever byte is currently sitting
-; --- in the nametable at (DEBUG_WATCH_ROW,DEBUG_WATCH_COL) - straight
-; --- from VRAM for sky rows (not mirrored in NAMEBUF), from NAMEBUF for
-; --- scroller rows - and shows it as a 3-digit decimal in an unused HUD
-; --- slot (row 0, col 20-22), refreshed every frame. Point it at a
-; --- suspected "residue" cell to watch its value change live instead of
-; --- guessing from a screenshot. Not part of normal gameplay - safe to
-; --- delete (and its CALL site in MAINLOOP) once no longer needed.
-DEBUG_WATCH_DISPLAY:
-    LD A,DEBUG_WATCH_ROW
-    CP GROUND_ROW0
-    JR C,DWD_SKY
-    SUB GROUND_ROW0
-    ADD A,A : ADD A,A : ADD A,A : ADD A,A : ADD A,A
-    LD E,A : LD D,0
-    LD HL,NAMEBUF : ADD HL,DE
-    LD A,DEBUG_WATCH_COL : LD E,A : LD D,0 : ADD HL,DE
-    LD A,(HL)
-    JR DWD_GOT
-DWD_SKY:
-    LD A,DEBUG_WATCH_ROW : LD E,A : LD D,ROWADDR_LO/256 : LD A,(DE) : LD (ANIM_ADDR_TMP),A
-    LD A,DEBUG_WATCH_ROW : LD E,A : LD D,ROWADDR_HI/256 : LD A,(DE) : LD (ANIM_ADDR_TMP+1),A
-    LD HL,(ANIM_ADDR_TMP)
-    LD DE,DEBUG_WATCH_COL : ADD HL,DE
-    LD A,L : OUT (99h),A          ; address-set, read mode (no 40h flag)
-    NOP
-    NOP
-    LD A,H : OUT (99h),A
-    NOP
-    NOP
-    IN A,(98h)
-DWD_GOT:
-    LD (DEBUG_WATCH_VAL),A
-    ; --- staleness counter: how many frames since this value last  ---
-    ; --- changed. Legitimate live content (an active Enemy3 pulsing/---
-    ; --- moving, a bullet passing through) changes every few frames ---
-    ; --- at most; a counter climbing into the hundreds while the    ---
-    ; --- value stays non-blank is the smoking gun for stuck residue.---
-    LD B,A                          ; B = this frame's value, survives the CP below
-    LD A,(DEBUG_WATCH_PREV)
-    CP B
-    JR NZ,DWD_AGE_RESET
-    LD A,(DEBUG_WATCH_AGE)
-    CP 255
-    JR Z,DWD_AGE_DISPLAY
-    INC A
-    LD (DEBUG_WATCH_AGE),A
-    JR DWD_AGE_DISPLAY
-DWD_AGE_RESET:
-    LD A,B : LD (DEBUG_WATCH_PREV),A
-    XOR A : LD (DEBUG_WATCH_AGE),A
-DWD_AGE_DISPLAY:
-    LD A,(DEBUG_WATCH_AGE)
-    LD B,0
-DWDA100:
-    CP 100
-    JR C,DWDA100_DONE
-    SUB 100
-    INC B
-    JR DWDA100
-DWDA100_DONE:
-    LD C,0
-DWDA10:
-    CP 10
-    JR C,DWDA10_DONE
-    SUB 10
-    INC C
-    JR DWDA10
-DWDA10_DONE:
-    LD (DWD_ONES_TMP),A
-    XOR A : LD (ANIM_TMP_ROW),A
-    LD A,16 : LD (ANIM_TMP_COL),A
-    LD A,B : ADD A,DIGIT_BASE : LD (ANIM_TMP_VAL),A
-    CALL WRITE_ANIM_CELL
-    XOR A : LD (ANIM_TMP_ROW),A
-    LD A,17 : LD (ANIM_TMP_COL),A
-    LD A,C : ADD A,DIGIT_BASE : LD (ANIM_TMP_VAL),A
-    CALL WRITE_ANIM_CELL
-    XOR A : LD (ANIM_TMP_ROW),A
-    LD A,18 : LD (ANIM_TMP_COL),A
-    LD A,(DWD_ONES_TMP) : ADD A,DIGIT_BASE : LD (ANIM_TMP_VAL),A
-    CALL WRITE_ANIM_CELL
-
-    LD A,(DEBUG_WATCH_VAL)
-    LD B,0
-DWDH100:
-    CP 100
-    JR C,DWDH100_DONE
-    SUB 100
-    INC B
-    JR DWDH100
-DWDH100_DONE:
-    LD C,0
-DWDT10:
-    CP 10
-    JR C,DWDT10_DONE
-    SUB 10
-    INC C
-    JR DWDT10
-DWDT10_DONE:
-    LD (DWD_ONES_TMP),A
-    XOR A : LD (ANIM_TMP_ROW),A
-    LD A,20 : LD (ANIM_TMP_COL),A
-    LD A,B : ADD A,DIGIT_BASE : LD (ANIM_TMP_VAL),A
-    CALL WRITE_ANIM_CELL
-    XOR A : LD (ANIM_TMP_ROW),A
-    LD A,21 : LD (ANIM_TMP_COL),A
-    LD A,C : ADD A,DIGIT_BASE : LD (ANIM_TMP_VAL),A
-    CALL WRITE_ANIM_CELL
-    XOR A : LD (ANIM_TMP_ROW),A
-    LD A,22 : LD (ANIM_TMP_COL),A
-    LD A,(DWD_ONES_TMP) : ADD A,DIGIT_BASE : LD (ANIM_TMP_VAL),A
     CALL WRITE_ANIM_CELL
     RET
 
