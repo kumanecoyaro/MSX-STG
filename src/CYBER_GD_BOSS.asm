@@ -371,7 +371,11 @@ GTD_ONES_TMP EQU 0E4D3h
 ; --- nothing more triggers automatically (no looping).             ---
 SPAWN_NEXT_INDEX EQU 0E4D4h
 SPAWN_E1_Y EQU 0E506h          ; Y chosen for the next independent Enemy1 spawn
-NEXT_SPRITE_NUM EQU 0E507h     ; rotating sprite attribute slot allocator (1-31, 0=player reserved)
+; Advances by 1 each frame (mod 30, wrapping 0-29) - see SET_SPRITE_ADDR.
+; Reuses the RAM slot of the old NEXT_SPRITE_NUM round-robin allocator
+; (dead since the SPRITE_USED free-list replaced it - see that comment
+; above), which was never actually read anywhere, only written at INIT.
+SPRITE_ROTATE_OFS EQU 0E507h
 
 ; --- score: enemy1=100pts, enemy2=200pts, enemy3=300pts per kill. ---
 ; --- 16-bit binary (score never realistically exceeds ~65535 in   ---
@@ -707,7 +711,7 @@ INIT_SPRATR_CLR:
     XOR A
     LD HL,SPRITE_USED : LD (HL),A
     LD DE,SPRITE_USED+1 : LD BC,31 : LDIR
-    LD A,1 : LD (NEXT_SPRITE_NUM),A
+    LD (SPRITE_ROTATE_OFS),A      ; A is still 0 here (XOR A above, untouched by LDIR)
 
     ; --- fully clear E2A/E2B's entire state blocks (98 bytes each),  ---
     ; --- not just ACTIVE. CHECK_BULLET_VS_FORMATION_A/B gates on     ---
@@ -907,6 +911,12 @@ MAINLOOP:
     ; --- resumes.                                                       ---
     DI
     LD A,(TICK) : INC A : AND 3Fh : LD (TICK),A
+    ; advance the sprite-rotation offset once per frame (0-29 wrap) -
+    ; every SET_SPRITE_ADDR call this frame uses this same value, so
+    ; the whole frame's sprites rotate together - see SET_SPRITE_ADDR.
+    LD A,(SPRITE_ROTATE_OFS) : INC A : CP 30 : JR C,SRO_OK : XOR A
+SRO_OK:
+    LD (SPRITE_ROTATE_OFS),A
     LD A,(BOSS_STATE)
     CP 1
     CALL Z,BOSS_UPDATE_BODY
@@ -3209,12 +3219,7 @@ ESC_COMPLEX_INIT_A:
     CALL ALLOC_SPRITE_NUM : LD (E2A_U1_SPRNUM),A
     CALL ALLOC_SPRITE_NUM : LD (E2A_U2_SPRNUM),A
     CALL ALLOC_SPRITE_NUM : LD (E2A_TEMP_SPRNUM),A
-    LD A,(E2A_TEMP_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
-    NOP
-    NOP
-    LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
+    LD A,(E2A_TEMP_SPRNUM) : CALL SET_SPRITE_ADDR
     LD A,ENEMY_HIDE_Y : OUT (98h),A
     NOP
     NOP
@@ -3233,36 +3238,21 @@ ESC_COMPLEX_INIT_A:
     XOR A
     LD (E2A_SEQ_STATE),A : LD (E2A_PROGRESS),A
     LD A,ENEMY_SPAWNX : LD (E2A_U0_X),A
-    LD A,(E2A_U1_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
-    NOP
-    NOP
-    LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
+    LD A,(E2A_U1_SPRNUM) : CALL SET_SPRITE_ADDR
     LD A,ENEMY_HIDE_Y : OUT (98h),A
     NOP
     NOP
     LD A,255 : OUT (98h),A
     NOP
     NOP
-    LD A,(E2A_U2_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
-    NOP
-    NOP
-    LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
+    LD A,(E2A_U2_SPRNUM) : CALL SET_SPRITE_ADDR
     LD A,ENEMY_HIDE_Y : OUT (98h),A
     NOP
     NOP
     LD A,255 : OUT (98h),A
     NOP
     NOP
-    LD A,(E2A_TEMP_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
-    NOP
-    NOP
-    LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
+    LD A,(E2A_TEMP_SPRNUM) : CALL SET_SPRITE_ADDR
     LD A,ENEMY_HIDE_Y : OUT (98h),A
     NOP
     NOP
@@ -3291,12 +3281,7 @@ ESC_COMPLEX_INIT_B:
     CALL ALLOC_SPRITE_NUM : LD (E2B_U1_SPRNUM),A
     CALL ALLOC_SPRITE_NUM : LD (E2B_U2_SPRNUM),A
     CALL ALLOC_SPRITE_NUM : LD (E2B_TEMP_SPRNUM),A
-    LD A,(E2B_TEMP_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
-    NOP
-    NOP
-    LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
+    LD A,(E2B_TEMP_SPRNUM) : CALL SET_SPRITE_ADDR
     LD A,ENEMY_HIDE_Y : OUT (98h),A
     NOP
     NOP
@@ -3315,36 +3300,21 @@ ESC_COMPLEX_INIT_B:
     XOR A
     LD (E2B_SEQ_STATE),A : LD (E2B_PROGRESS),A
     LD A,ENEMY_SPAWNX : LD (E2B_U0_X),A
-    LD A,(E2B_U1_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
-    NOP
-    NOP
-    LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
+    LD A,(E2B_U1_SPRNUM) : CALL SET_SPRITE_ADDR
     LD A,ENEMY_HIDE_Y : OUT (98h),A
     NOP
     NOP
     LD A,255 : OUT (98h),A
     NOP
     NOP
-    LD A,(E2B_U2_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
-    NOP
-    NOP
-    LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
+    LD A,(E2B_U2_SPRNUM) : CALL SET_SPRITE_ADDR
     LD A,ENEMY_HIDE_Y : OUT (98h),A
     NOP
     NOP
     LD A,255 : OUT (98h),A
     NOP
     NOP
-    LD A,(E2B_TEMP_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
-    NOP
-    NOP
-    LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
+    LD A,(E2B_TEMP_SPRNUM) : CALL SET_SPRITE_ADDR
     LD A,ENEMY_HIDE_Y : OUT (98h),A
     NOP
     NOP
@@ -3551,12 +3521,7 @@ BCDE_RESERVE:
 ; X=255 to that VDP attribute slot, then frees it.
 BCDE_HIDE1:
     PUSH AF
-    ADD A,A : ADD A,A : OUT (99h),A
-    NOP
-    NOP
-    LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
+    CALL SET_SPRITE_ADDR
     LD A,ENEMY_HIDE_Y : OUT (98h),A
     NOP
     NOP
@@ -5603,6 +5568,52 @@ E1CA_GOTSLOT:
     LD A,(IX+E_PARAM3)
     JP SIMPLE_REDRAW
 
+; Sets the VDP address to SPRATR + (rotated sprite number)*4, write
+; mode - the shared 2-byte address-latch sequence every sprite-drawing
+; site used to do inline (ADD A,A:ADD A,A:OUT(99h),A / NOP NOP /
+; LD A,5Bh:OUT(99h),A / NOP NOP). Centralizing it here adds sprite-
+; number rotation: the hardware can only show 4 sprites per scanline,
+; and since a given logical sprite (E_SPRNUM etc.) keeps the same
+; number - and therefore the same fixed priority - for its whole
+; lifetime, an enemy unlucky enough to get a high number when many
+; others are already active would stay invisible for as long as it's
+; alive on a crowded scanline, not blink. Rotating which PHYSICAL VDP
+; table slot a logical number maps to each frame turns that into a
+; fair blink shared across whoever's contending that frame.
+; Input: A = logical sprite number (0-31).
+; Sprites 0-1 (player, never touched by ALLOC_SPRITE_NUM) always pass
+; through unrotated. 2-31 (the shared ALLOC_SPRITE_NUM/SPRITE_USED
+; pool - enemies, formations, Enemy3, bullets, particles, boss pods)
+; all rotate together by the same SPRITE_ROTATE_OFS. That "together"
+; is load-bearing: every one of these call sites was converted to
+; route through here, so no two logical sprites can ever land on the
+; same physical slot from this - only leaving some sites unrotated
+; while others still wrote raw addresses could cause that collision.
+; Preserves BC (used as scratch here) - matches what the inline
+; sequence it replaces never touched.
+SET_SPRITE_ADDR:
+    CP 2
+    JR C,SSA_GOTNUM
+    PUSH BC
+    LD B,A
+    LD A,(SPRITE_ROTATE_OFS)
+    ADD A,B
+    SUB 2
+    CP 30
+    JR C,SSA_INRANGE
+    SUB 30
+SSA_INRANGE:
+    ADD A,2
+    POP BC
+SSA_GOTNUM:
+    ADD A,A : ADD A,A : OUT (99h),A
+    NOP
+    NOP
+    LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    RET
+
 ; true free-list sprite-number allocator: scans SPRITE_USED[2..31]
 ; for the first byte still 0 (free), claims it (sets 1), returns its
 ; number in A. Unlike the old blind round-robin counter, this can
@@ -5794,12 +5805,7 @@ ENEMY_DRAW_ALL_COMPLEX_A:
     ADD A,16 : LD (E2A_U1_X),A
     LD A,(E2A_X) : ADD A,32 : LD (E2A_U2_X),A
     LD A,(E2A_Y) : LD (E2A_U0_Y),A : LD (E2A_U1_Y),A : LD (E2A_U2_Y),A
-    LD A,(E2A_U0_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
-    NOP
-    NOP
-    LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
+    LD A,(E2A_U0_SPRNUM) : CALL SET_SPRITE_ADDR
     LD A,(E2A_Y) : OUT (98h),A
     NOP
     NOP
@@ -5812,12 +5818,7 @@ ENEMY_DRAW_ALL_COMPLEX_A:
     LD A,SPR_GRAY : OUT (98h),A
     NOP
     NOP
-    LD A,(E2A_U1_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
-    NOP
-    NOP
-    LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
+    LD A,(E2A_U1_SPRNUM) : CALL SET_SPRITE_ADDR
     LD A,(E2A_Y) : OUT (98h),A
     NOP
     NOP
@@ -5830,12 +5831,7 @@ ENEMY_DRAW_ALL_COMPLEX_A:
     LD A,SPR_GRAY : OUT (98h),A
     NOP
     NOP
-    LD A,(E2A_U2_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
-    NOP
-    NOP
-    LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
+    LD A,(E2A_U2_SPRNUM) : CALL SET_SPRITE_ADDR
     LD A,(E2A_Y) : OUT (98h),A
     NOP
     NOP
@@ -5881,12 +5877,7 @@ EDS_U2_REAL_A:
 EDS_U2_SET_A:
     LD (E2A_EDS_Y2),A
 
-    LD A,(E2A_U0_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
-    NOP
-    NOP
-    LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
+    LD A,(E2A_U0_SPRNUM) : CALL SET_SPRITE_ADDR
     LD A,(E2A_EDS_Y0) : OUT (98h),A
     NOP
     NOP
@@ -5899,12 +5890,7 @@ EDS_U2_SET_A:
     LD A,SPR_GRAY : OUT (98h),A
     NOP
     NOP
-    LD A,(E2A_U1_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
-    NOP
-    NOP
-    LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
+    LD A,(E2A_U1_SPRNUM) : CALL SET_SPRITE_ADDR
     LD A,(E2A_EDS_Y1) : OUT (98h),A
     NOP
     NOP
@@ -5917,12 +5903,7 @@ EDS_U2_SET_A:
     LD A,SPR_GRAY : OUT (98h),A
     NOP
     NOP
-    LD A,(E2A_U2_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
-    NOP
-    NOP
-    LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
+    LD A,(E2A_U2_SPRNUM) : CALL SET_SPRITE_ADDR
     LD A,(E2A_EDS_Y2) : OUT (98h),A
     NOP
     NOP
@@ -5975,12 +5956,7 @@ ECS_S0_ARRIVED_A:
     LD A,1 : LD (E2A_SEQ_STATE),A
     LD A,ENEMY_SPAWNX : LD (E2A_TEMP_X),A
 ECS_S0_DRAW_A:
-    LD A,(E2A_U0_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
-    NOP
-    NOP
-    LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
+    LD A,(E2A_U0_SPRNUM) : CALL SET_SPRITE_ADDR
     LD A,(E2A_Y) : OUT (98h),A
     NOP
     NOP
@@ -6008,12 +5984,7 @@ ECS_S1_SAVE_A:
     JR ECS_S1_DRAW_A
 ECS_S1_ARRIVED_A:
     LD A,1 : LD (E2A_U0_STATE),A
-    LD A,(E2A_U0_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
-    NOP
-    NOP
-    LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
+    LD A,(E2A_U0_SPRNUM) : CALL SET_SPRITE_ADDR
     LD A,(E2A_Y) : OUT (98h),A
     NOP
     NOP
@@ -6026,12 +5997,7 @@ ECS_S1_ARRIVED_A:
     LD A,SPR_GRAY : OUT (98h),A
     NOP
     NOP
-    LD A,(E2A_TEMP_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
-    NOP
-    NOP
-    LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
+    LD A,(E2A_TEMP_SPRNUM) : CALL SET_SPRITE_ADDR
     LD A,ENEMY_HIDE_Y : OUT (98h),A
     NOP
     NOP
@@ -6042,12 +6008,7 @@ ECS_S1_ARRIVED_A:
     LD A,ENEMY_SPAWNX : LD (E2A_U1_X),A
     RET
 ECS_S1_DRAW_A:
-    LD A,(E2A_TEMP_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
-    NOP
-    NOP
-    LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
+    LD A,(E2A_TEMP_SPRNUM) : CALL SET_SPRITE_ADDR
     LD A,(E2A_Y) : OUT (98h),A
     NOP
     NOP
@@ -6077,12 +6038,7 @@ ECS_S2_ARRIVED_A:
     LD A,3 : LD (E2A_SEQ_STATE),A
     LD A,ENEMY_SPAWNX : LD (E2A_TEMP_X),A
 ECS_S2_DRAW_A:
-    LD A,(E2A_U1_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
-    NOP
-    NOP
-    LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
+    LD A,(E2A_U1_SPRNUM) : CALL SET_SPRITE_ADDR
     LD A,(E2A_Y) : OUT (98h),A
     NOP
     NOP
@@ -6110,12 +6066,7 @@ ECS_S3_SAVE_A:
     JR ECS_S3_DRAW_A
 ECS_S3_ARRIVED_A:
     LD A,1 : LD (E2A_U1_STATE),A
-    LD A,(E2A_U1_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
-    NOP
-    NOP
-    LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
+    LD A,(E2A_U1_SPRNUM) : CALL SET_SPRITE_ADDR
     LD A,(E2A_Y) : OUT (98h),A
     NOP
     NOP
@@ -6128,12 +6079,7 @@ ECS_S3_ARRIVED_A:
     LD A,SPR_GRAY : OUT (98h),A
     NOP
     NOP
-    LD A,(E2A_TEMP_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
-    NOP
-    NOP
-    LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
+    LD A,(E2A_TEMP_SPRNUM) : CALL SET_SPRITE_ADDR
     LD A,ENEMY_HIDE_Y : OUT (98h),A
     NOP
     NOP
@@ -6144,12 +6090,7 @@ ECS_S3_ARRIVED_A:
     LD A,ENEMY_SPAWNX : LD (E2A_U2_X),A
     RET
 ECS_S3_DRAW_A:
-    LD A,(E2A_TEMP_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
-    NOP
-    NOP
-    LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
+    LD A,(E2A_TEMP_SPRNUM) : CALL SET_SPRITE_ADDR
     LD A,(E2A_Y) : OUT (98h),A
     NOP
     NOP
@@ -6179,12 +6120,7 @@ ECS_S4_ARRIVED_A:
     LD A,5 : LD (E2A_SEQ_STATE),A
     LD A,ENEMY_SPAWNX : LD (E2A_TEMP_X),A
 ECS_S4_DRAW_A:
-    LD A,(E2A_U2_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
-    NOP
-    NOP
-    LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
+    LD A,(E2A_U2_SPRNUM) : CALL SET_SPRITE_ADDR
     LD A,(E2A_Y) : OUT (98h),A
     NOP
     NOP
@@ -6212,12 +6148,7 @@ ECS_S5_SAVE_A:
     JR ECS_S5_DRAW_A
 ECS_S5_ARRIVED_A:
     LD A,1 : LD (E2A_U2_STATE),A
-    LD A,(E2A_U2_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
-    NOP
-    NOP
-    LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
+    LD A,(E2A_U2_SPRNUM) : CALL SET_SPRITE_ADDR
     LD A,(E2A_Y) : OUT (98h),A
     NOP
     NOP
@@ -6230,12 +6161,7 @@ ECS_S5_ARRIVED_A:
     LD A,SPR_GRAY : OUT (98h),A
     NOP
     NOP
-    LD A,(E2A_TEMP_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
-    NOP
-    NOP
-    LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
+    LD A,(E2A_TEMP_SPRNUM) : CALL SET_SPRITE_ADDR
     LD A,ENEMY_HIDE_Y : OUT (98h),A
     NOP
     NOP
@@ -6247,12 +6173,7 @@ ECS_S5_ARRIVED_A:
     LD A,6 : LD (E2A_SEQ_STATE),A
     RET
 ECS_S5_DRAW_A:
-    LD A,(E2A_TEMP_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
-    NOP
-    NOP
-    LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
+    LD A,(E2A_TEMP_SPRNUM) : CALL SET_SPRITE_ADDR
     LD A,(E2A_Y) : OUT (98h),A
     NOP
     NOP
@@ -6394,48 +6315,28 @@ ECS_S7_STILLGOING_A:
 
 ; Hides all 3 formation-unit sprite slots (Y=ENEMY_HIDE_Y).
 ENEMY_HIDE_ALL3_A:
-    LD A,(E2A_U0_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
-    NOP
-    NOP
-    LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
+    LD A,(E2A_U0_SPRNUM) : CALL SET_SPRITE_ADDR
     LD A,ENEMY_HIDE_Y : OUT (98h),A
     NOP
     NOP
     LD A,255 : OUT (98h),A
     NOP
     NOP
-    LD A,(E2A_U1_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
-    NOP
-    NOP
-    LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
+    LD A,(E2A_U1_SPRNUM) : CALL SET_SPRITE_ADDR
     LD A,ENEMY_HIDE_Y : OUT (98h),A
     NOP
     NOP
     LD A,255 : OUT (98h),A
     NOP
     NOP
-    LD A,(E2A_U2_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
-    NOP
-    NOP
-    LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
+    LD A,(E2A_U2_SPRNUM) : CALL SET_SPRITE_ADDR
     LD A,ENEMY_HIDE_Y : OUT (98h),A
     NOP
     NOP
     LD A,255 : OUT (98h),A
     NOP
     NOP
-    LD A,(E2A_TEMP_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
-    NOP
-    NOP
-    LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
+    LD A,(E2A_TEMP_SPRNUM) : CALL SET_SPRITE_ADDR
     LD A,ENEMY_HIDE_Y : OUT (98h),A
     NOP
     NOP
@@ -6464,12 +6365,7 @@ ENEMY_DRAW_ALL_COMPLEX_B:
     ADD A,16 : LD (E2B_U1_X),A
     LD A,(E2B_X) : ADD A,32 : LD (E2B_U2_X),A
     LD A,(E2B_Y) : LD (E2B_U0_Y),A : LD (E2B_U1_Y),A : LD (E2B_U2_Y),A
-    LD A,(E2B_U0_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
-    NOP
-    NOP
-    LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
+    LD A,(E2B_U0_SPRNUM) : CALL SET_SPRITE_ADDR
     LD A,(E2B_Y) : OUT (98h),A
     NOP
     NOP
@@ -6482,12 +6378,7 @@ ENEMY_DRAW_ALL_COMPLEX_B:
     LD A,SPR_GRAY : OUT (98h),A
     NOP
     NOP
-    LD A,(E2B_U1_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
-    NOP
-    NOP
-    LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
+    LD A,(E2B_U1_SPRNUM) : CALL SET_SPRITE_ADDR
     LD A,(E2B_Y) : OUT (98h),A
     NOP
     NOP
@@ -6500,12 +6391,7 @@ ENEMY_DRAW_ALL_COMPLEX_B:
     LD A,SPR_GRAY : OUT (98h),A
     NOP
     NOP
-    LD A,(E2B_U2_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
-    NOP
-    NOP
-    LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
+    LD A,(E2B_U2_SPRNUM) : CALL SET_SPRITE_ADDR
     LD A,(E2B_Y) : OUT (98h),A
     NOP
     NOP
@@ -6551,12 +6437,7 @@ EDS_U2_REAL_B:
 EDS_U2_SET_B:
     LD (E2B_EDS_Y2),A
 
-    LD A,(E2B_U0_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
-    NOP
-    NOP
-    LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
+    LD A,(E2B_U0_SPRNUM) : CALL SET_SPRITE_ADDR
     LD A,(E2B_EDS_Y0) : OUT (98h),A
     NOP
     NOP
@@ -6569,12 +6450,7 @@ EDS_U2_SET_B:
     LD A,SPR_GRAY : OUT (98h),A
     NOP
     NOP
-    LD A,(E2B_U1_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
-    NOP
-    NOP
-    LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
+    LD A,(E2B_U1_SPRNUM) : CALL SET_SPRITE_ADDR
     LD A,(E2B_EDS_Y1) : OUT (98h),A
     NOP
     NOP
@@ -6587,12 +6463,7 @@ EDS_U2_SET_B:
     LD A,SPR_GRAY : OUT (98h),A
     NOP
     NOP
-    LD A,(E2B_U2_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
-    NOP
-    NOP
-    LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
+    LD A,(E2B_U2_SPRNUM) : CALL SET_SPRITE_ADDR
     LD A,(E2B_EDS_Y2) : OUT (98h),A
     NOP
     NOP
@@ -6645,12 +6516,7 @@ ECS_S0_ARRIVED_B:
     LD A,1 : LD (E2B_SEQ_STATE),A
     LD A,ENEMY_SPAWNX : LD (E2B_TEMP_X),A
 ECS_S0_DRAW_B:
-    LD A,(E2B_U0_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
-    NOP
-    NOP
-    LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
+    LD A,(E2B_U0_SPRNUM) : CALL SET_SPRITE_ADDR
     LD A,(E2B_Y) : OUT (98h),A
     NOP
     NOP
@@ -6678,12 +6544,7 @@ ECS_S1_SAVE_B:
     JR ECS_S1_DRAW_B
 ECS_S1_ARRIVED_B:
     LD A,1 : LD (E2B_U0_STATE),A
-    LD A,(E2B_U0_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
-    NOP
-    NOP
-    LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
+    LD A,(E2B_U0_SPRNUM) : CALL SET_SPRITE_ADDR
     LD A,(E2B_Y) : OUT (98h),A
     NOP
     NOP
@@ -6696,12 +6557,7 @@ ECS_S1_ARRIVED_B:
     LD A,SPR_GRAY : OUT (98h),A
     NOP
     NOP
-    LD A,(E2B_TEMP_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
-    NOP
-    NOP
-    LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
+    LD A,(E2B_TEMP_SPRNUM) : CALL SET_SPRITE_ADDR
     LD A,ENEMY_HIDE_Y : OUT (98h),A
     NOP
     NOP
@@ -6712,12 +6568,7 @@ ECS_S1_ARRIVED_B:
     LD A,ENEMY_SPAWNX : LD (E2B_U1_X),A
     RET
 ECS_S1_DRAW_B:
-    LD A,(E2B_TEMP_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
-    NOP
-    NOP
-    LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
+    LD A,(E2B_TEMP_SPRNUM) : CALL SET_SPRITE_ADDR
     LD A,(E2B_Y) : OUT (98h),A
     NOP
     NOP
@@ -6747,12 +6598,7 @@ ECS_S2_ARRIVED_B:
     LD A,3 : LD (E2B_SEQ_STATE),A
     LD A,ENEMY_SPAWNX : LD (E2B_TEMP_X),A
 ECS_S2_DRAW_B:
-    LD A,(E2B_U1_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
-    NOP
-    NOP
-    LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
+    LD A,(E2B_U1_SPRNUM) : CALL SET_SPRITE_ADDR
     LD A,(E2B_Y) : OUT (98h),A
     NOP
     NOP
@@ -6780,12 +6626,7 @@ ECS_S3_SAVE_B:
     JR ECS_S3_DRAW_B
 ECS_S3_ARRIVED_B:
     LD A,1 : LD (E2B_U1_STATE),A
-    LD A,(E2B_U1_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
-    NOP
-    NOP
-    LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
+    LD A,(E2B_U1_SPRNUM) : CALL SET_SPRITE_ADDR
     LD A,(E2B_Y) : OUT (98h),A
     NOP
     NOP
@@ -6798,12 +6639,7 @@ ECS_S3_ARRIVED_B:
     LD A,SPR_GRAY : OUT (98h),A
     NOP
     NOP
-    LD A,(E2B_TEMP_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
-    NOP
-    NOP
-    LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
+    LD A,(E2B_TEMP_SPRNUM) : CALL SET_SPRITE_ADDR
     LD A,ENEMY_HIDE_Y : OUT (98h),A
     NOP
     NOP
@@ -6814,12 +6650,7 @@ ECS_S3_ARRIVED_B:
     LD A,ENEMY_SPAWNX : LD (E2B_U2_X),A
     RET
 ECS_S3_DRAW_B:
-    LD A,(E2B_TEMP_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
-    NOP
-    NOP
-    LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
+    LD A,(E2B_TEMP_SPRNUM) : CALL SET_SPRITE_ADDR
     LD A,(E2B_Y) : OUT (98h),A
     NOP
     NOP
@@ -6849,12 +6680,7 @@ ECS_S4_ARRIVED_B:
     LD A,5 : LD (E2B_SEQ_STATE),A
     LD A,ENEMY_SPAWNX : LD (E2B_TEMP_X),A
 ECS_S4_DRAW_B:
-    LD A,(E2B_U2_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
-    NOP
-    NOP
-    LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
+    LD A,(E2B_U2_SPRNUM) : CALL SET_SPRITE_ADDR
     LD A,(E2B_Y) : OUT (98h),A
     NOP
     NOP
@@ -6882,12 +6708,7 @@ ECS_S5_SAVE_B:
     JR ECS_S5_DRAW_B
 ECS_S5_ARRIVED_B:
     LD A,1 : LD (E2B_U2_STATE),A
-    LD A,(E2B_U2_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
-    NOP
-    NOP
-    LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
+    LD A,(E2B_U2_SPRNUM) : CALL SET_SPRITE_ADDR
     LD A,(E2B_Y) : OUT (98h),A
     NOP
     NOP
@@ -6900,12 +6721,7 @@ ECS_S5_ARRIVED_B:
     LD A,SPR_GRAY : OUT (98h),A
     NOP
     NOP
-    LD A,(E2B_TEMP_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
-    NOP
-    NOP
-    LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
+    LD A,(E2B_TEMP_SPRNUM) : CALL SET_SPRITE_ADDR
     LD A,ENEMY_HIDE_Y : OUT (98h),A
     NOP
     NOP
@@ -6917,12 +6733,7 @@ ECS_S5_ARRIVED_B:
     LD A,6 : LD (E2B_SEQ_STATE),A
     RET
 ECS_S5_DRAW_B:
-    LD A,(E2B_TEMP_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
-    NOP
-    NOP
-    LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
+    LD A,(E2B_TEMP_SPRNUM) : CALL SET_SPRITE_ADDR
     LD A,(E2B_Y) : OUT (98h),A
     NOP
     NOP
@@ -7064,48 +6875,28 @@ ECS_S7_STILLGOING_B:
 
 ; Hides all 3 formation-unit sprite slots (Y=ENEMY_HIDE_Y).
 ENEMY_HIDE_ALL3_B:
-    LD A,(E2B_U0_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
-    NOP
-    NOP
-    LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
+    LD A,(E2B_U0_SPRNUM) : CALL SET_SPRITE_ADDR
     LD A,ENEMY_HIDE_Y : OUT (98h),A
     NOP
     NOP
     LD A,255 : OUT (98h),A
     NOP
     NOP
-    LD A,(E2B_U1_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
-    NOP
-    NOP
-    LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
+    LD A,(E2B_U1_SPRNUM) : CALL SET_SPRITE_ADDR
     LD A,ENEMY_HIDE_Y : OUT (98h),A
     NOP
     NOP
     LD A,255 : OUT (98h),A
     NOP
     NOP
-    LD A,(E2B_U2_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
-    NOP
-    NOP
-    LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
+    LD A,(E2B_U2_SPRNUM) : CALL SET_SPRITE_ADDR
     LD A,ENEMY_HIDE_Y : OUT (98h),A
     NOP
     NOP
     LD A,255 : OUT (98h),A
     NOP
     NOP
-    LD A,(E2B_TEMP_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
-    NOP
-    NOP
-    LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
+    LD A,(E2B_TEMP_SPRNUM) : CALL SET_SPRITE_ADDR
     LD A,ENEMY_HIDE_Y : OUT (98h),A
     NOP
     NOP
@@ -7245,12 +7036,7 @@ EPUA_SKIP:
 ; (deactivates, no score) once it drifts off the left edge.
 ; Input: IX = slot base (already confirmed ACTIVE).
 EBSB_UPDATE:
-    LD A,(IX+E_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
-    NOP
-    NOP
-    LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
+    LD A,(IX+E_SPRNUM) : CALL SET_SPRITE_ADDR
 
     LD A,(IX+E_X)
     CP ENEMY4_SPEED
@@ -7347,12 +7133,7 @@ EBSD_DIAG_SKIP_TRIGGER:
     ADD A,B
     LD (IX+E_Y),A
 EBSD_DRAW:
-    LD A,(IX+E_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
-    NOP
-    NOP
-    LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
+    LD A,(IX+E_SPRNUM) : CALL SET_SPRITE_ADDR
     LD A,(IX+E_Y) : OUT (98h),A
     NOP
     NOP
@@ -7375,12 +7156,7 @@ EBSD_DRAW:
 ; EBSD_HIT_TEST).
 EBSD_EXIT_LEFT:
     LD A,(IX+E_SPRNUM) : PUSH AF
-    ADD A,A : ADD A,A : OUT (99h),A
-    NOP
-    NOP
-    LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
+    CALL SET_SPRITE_ADDR
     LD A,ENEMY_HIDE_Y : OUT (98h),A
     NOP
     NOP
@@ -7459,12 +7235,7 @@ EBSB_HIT_TEST:
     OR A
     JR NZ,EBSBH_DAMAGED
     ; --- HP reached 0: fully destroy ---
-    LD A,(IX+E_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
-    NOP
-    NOP
-    LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
+    LD A,(IX+E_SPRNUM) : CALL SET_SPRITE_ADDR
     LD A,ENEMY_HIDE_Y : OUT (98h),A
     NOP
     NOP
