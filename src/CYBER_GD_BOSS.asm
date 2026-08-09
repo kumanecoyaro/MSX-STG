@@ -111,15 +111,11 @@ PLAYER_INITY EQU 64
 BULLET_PAT_BLUE  EQU 56
 BULLET_PAT_GREEN EQU 64
 BULLET_MAXCOL EQU 31    ; last valid column (32-wide name table, 0-31)
-GROUND_ROW0   EQU 19    ; first screen row of the 4-row ground scroller
+GROUND_ROW0   EQU 19    ; first screen row of the 5-row ground scroller
                         ; (was 6 rows/GROUND_ROW0=18; TIER2_DIAMOND's own
                         ; processing was removed to cut per-frame VDP/CPU
                         ; load, and TIER1_MOUNTAIN now draws one row lower,
-                        ; at screen row19, to fill the gap. TIER6_WEDGE's
-                        ; own row - the most frequently-updating one,
-                        ; PXCHAR_G8 - was removed too, leaving screen
-                        ; row23 permanently blank; the last ground row is
-                        ; now screen row22/GROUND_ROW0+3, not +4)
+                        ; at screen row19, to fill the gap)
 
 FIRE_COOLDOWN EQU 0E3D2h ; frames to wait before another shot can spawn
 FIRE_COOLDOWN_LEN EQU 1  ; "1 cycle" gap between shots (see fire logic)
@@ -551,17 +547,16 @@ INIT:
     LD HL,ROWDATA2 : LD IX,IDCACHE2 : CALL REFRESH_IDCACHE_33
     LD HL,ROWDATA3 : LD IX,IDCACHE3 : CALL REFRESH_IDCACHE_33
     LD HL,ROWDATA4 : LD IX,IDCACHE4 : CALL REFRESH_IDCACHE_33
+    LD HL,ROWDATA5 : LD IX,IDCACHE5 : CALL REFRESH_IDCACHE_33
 
     LD HL,PREVBUF : LD (HL),0FFh
-    LD DE,PREVBUF+1 : LD BC,127 : LDIR
+    LD DE,PREVBUF+1 : LD BC,159 : LDIR
 
     ; Clear the background rows (screen rows 0-18, 19*32=608 bytes,
-    ; i.e. everything above the 4-row scroller which now sits at
-    ; screen rows 19-22) to BLANKCODE, whose color group is set to
+    ; i.e. everything above the 5-row scroller which now sits at
+    ; screen rows 19-23) to BLANKCODE, whose color group is set to
     ; fg=bg=blue in COLORDATA so it reads as solid blue regardless
-    ; of pattern content. Screen row 23 (below the scroller) is
-    ; blanked separately below (FILLBG_4) since it's no longer
-    ; contiguous with this range.
+    ; of pattern content.
     LD A,00h : OUT (99h),A
     NOP
     NOP
@@ -605,25 +600,6 @@ FILLBG_3:
     NOP
     NOP
     DJNZ FILLBG_3
-
-    ; --- row 5/screen row23 (bottom row of screen) no longer has its own
-    ; --- terrain processing (TIER6_WEDGE's row was deleted - the ground
-    ; --- scroller is now 4 rows, screen 19-22) - blank it once here
-    ; --- instead, since nothing ever draws there again. A is still
-    ; --- BLANKCODE from the fill above.
-    LD A,0E0h : OUT (99h),A
-    NOP
-    NOP
-    LD A,5Ah : OUT (99h),A
-    NOP
-    NOP
-    LD A,BLANKCODE
-    LD B,32
-FILLBG_4:
-    OUT (98h),A
-    NOP
-    NOP
-    DJNZ FILLBG_4
 
     ; --- sprite pattern generator table (VRAM 3800h): ship is a static ---
     ; --- 16x16 pattern; the 3 enemy-formation units' patterns are      ---
@@ -971,6 +947,8 @@ MAINLOOP:
     LD A,(TICK) : AND 07h
     JR NZ,SKIP_G8
     LD A,(PXCHAR_G8) : INC A : AND 3Fh : LD (PXCHAR_G8),A
+    LD HL,ROWDATA5 : LD A,(PXCHAR_G8) : LD E,A : LD D,0 : ADD HL,DE
+    LD IX,IDCACHE5 : CALL REFRESH_IDCACHE_33
     LD HL,(GAME_TICK) : INC HL : LD (GAME_TICK),HL
     CALL GAME_TICK_DISPLAY
     CALL SPAWN_SCHEDULE_CHECK
@@ -1112,6 +1090,32 @@ STORE_4:
     LD A,(NEXTID) : LD C,A              ; carry next_id forward as next cell's curr_id
     DJNZ CELL_LOOP_4
 
+    ; --- row 5: screen row 23 (TIER6_WEDGE), group PXCHAR_G8 ---
+    ; --- (NAMEBUF slot shifted from +160 to +128) ---
+    LD A,(PHASE_G8) : LD (ROWPHASE),A
+    LD HL,IDCACHE5
+    LD IX,NAMEBUF+128
+    LD B,32
+    LD A,(HL) : LD C,A
+CELL_LOOP_5:
+    INC HL
+    LD A,(HL) : LD (NEXTID),A
+    LD A,(ROWPHASE) : OR A
+    JR NZ,NONZERO_5
+    LD A,C : LD E,A : LD D,SOLOTAB/256 : LD A,(DE)
+    JR STORE_5
+NONZERO_5:
+    LD A,C : LD E,A : LD D,MUL6/256 : LD A,(DE) : LD E,A  ; E = curr_id*6
+    LD A,(NEXTID) : ADD A,E             ; A = pairid = curr_id*6+next_id
+    LD E,A : LD D,PAIRBASE/256 : LD A,(DE)  ; A = PAIRBASE[pairid]
+    LD E,A
+    LD A,(ROWPHASE) : DEC A : ADD A,E   ; + (phase-1)
+STORE_5:
+    LD (IX+0),A
+    INC IX
+    LD A,(NEXTID) : LD C,A              ; carry next_id forward as next cell's curr_id
+    DJNZ CELL_LOOP_5
+
     ; --- push each row to VRAM, skipping rows unchanged since last frame ---
     ; (Name table base is 1800h in SCREEN1 too, so these VRAM
     ;  addresses are identical to the SCREEN2 version.)
@@ -1225,6 +1229,40 @@ ROWXFER_4:
     INC HL : DEC B
     JP NZ,ROWXFER_4
 ROWDONE_4:
+
+    ; row 5 -> VRAM 1AE0h (screen row 23, bottom row of screen) -
+    ; NAMEBUF slot shifted from +160 to +128
+    LD HL,NAMEBUF+128 : LD DE,PREVBUF+128 : LD B,32
+DIFF_LOOP_5:
+    LD A,(DE) : CP (HL)
+    JR NZ,DIFFERENT_5
+    INC HL : INC DE
+    DJNZ DIFF_LOOP_5
+    JR ROWDONE_5
+DIFFERENT_5:
+    LD HL,NAMEBUF+128 : LD DE,PREVBUF+128 : LD BC,32 : LDIR
+    LD HL,NAMEBUF+128
+    LD A,E0h : OUT (99h),A
+    NOP
+    NOP
+    NOP
+    NOP
+    LD A,5Ah : OUT (99h),A
+    NOP
+    NOP
+    NOP
+    NOP
+    LD C,98h
+    LD B,32
+ROWXFER_5:
+    LD A,(HL) : OUT (98h),A
+    NOP
+    NOP
+    NOP
+    NOP
+    INC HL : DEC B
+    JP NZ,ROWXFER_5
+ROWDONE_5:
 
     ; ============================================================
     ; --- player ship: read joystick (BIOS), move, redraw ---
@@ -1435,7 +1473,7 @@ BULLET0_NOCLAMP:
     LD A,(BULLET0_ROW) : CP GROUND_ROW0
     JR C,BULLET0_BLUE
     JR Z,BULLET0_WHITE
-    CP GROUND_ROW0+3
+    CP GROUND_ROW0+4
     JR Z,BULLET0_BROWN
     JR C,BULLET0_GREEN
     JR BULLET0_BLUE
@@ -1479,7 +1517,7 @@ BULLET1_NOCLAMP:
     LD A,(BULLET1_ROW) : CP GROUND_ROW0
     JR C,BULLET1_BLUE
     JR Z,BULLET1_WHITE
-    CP GROUND_ROW0+3
+    CP GROUND_ROW0+4
     JR Z,BULLET1_BROWN
     JR C,BULLET1_GREEN
     JR BULLET1_BLUE
@@ -1523,7 +1561,7 @@ BULLET2_NOCLAMP:
     LD A,(BULLET2_ROW) : CP GROUND_ROW0
     JR C,BULLET2_BLUE
     JR Z,BULLET2_WHITE
-    CP GROUND_ROW0+3
+    CP GROUND_ROW0+4
     JR Z,BULLET2_BROWN
     JR C,BULLET2_GREEN
     JR BULLET2_BLUE
@@ -2532,7 +2570,7 @@ TE_SAVE_GOT:
     LD A,(IX+3) : CP GROUND_ROW0
     JR C,TE_BLUE
     JR Z,TE_WHITE
-    CP GROUND_ROW0+3
+    CP GROUND_ROW0+4
     JR Z,TE_BROWN
     JR C,TE_GREEN
     JR TE_BLUE
