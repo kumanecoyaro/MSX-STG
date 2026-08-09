@@ -3921,37 +3921,61 @@ BOD_NORECOIL:
     LD A,E : OUT (99h),A
     NOP
     NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
     NOP
     NOP
     LD A,(BOSS_ORBIT_YTMP) : OUT (98h),A
     NOP
     NOP
+    NOP
+    NOP
     LD A,E : ADD A,1 : OUT (99h),A
     NOP
     NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
     NOP
     NOP
     LD A,(BOSS_ORBIT_XTMP) : OUT (98h),A
     NOP
     NOP
+    NOP
+    NOP
     LD A,E : ADD A,2 : OUT (99h),A
     NOP
     NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
     NOP
     NOP
     LD A,BOSS_ORBIT_PATNUM : OUT (98h),A
     NOP
     NOP
+    NOP
+    NOP
     LD A,E : ADD A,3 : OUT (99h),A
+    NOP
+    NOP
     NOP
     NOP
     LD A,5Bh : OUT (99h),A
     NOP
     NOP
+    NOP
+    NOP
     LD A,(BOSS_ORBIT_CTMP) : OUT (98h),A
+    NOP
+    NOP
     NOP
     NOP
 BOD_NEXT:
@@ -4040,10 +4064,16 @@ CB0_ERASE:
     LD A,L : OUT (99h),A
     NOP
     NOP
+    NOP
+    NOP
     LD A,H : OR 40h : OUT (99h),A
     NOP
     NOP
+    NOP
+    NOP
     LD A,(TEMP_ERASE_BYTE) : OUT (98h),A
+    NOP
+    NOP
     NOP
     NOP
     XOR A : LD (BULLET0_ACT),A
@@ -4060,10 +4090,16 @@ CB0_ERASE_FAST:
     LD A,L : OUT (99h),A
     NOP
     NOP
+    NOP
+    NOP
     LD A,H : OR 40h : OUT (99h),A
     NOP
     NOP
+    NOP
+    NOP
     LD A,BLANKCODE : OUT (98h),A
+    NOP
+    NOP
     NOP
     NOP
     XOR A : LD (BULLET0_ACT),A
@@ -4127,10 +4163,16 @@ CB1_ERASE:
     LD A,L : OUT (99h),A
     NOP
     NOP
+    NOP
+    NOP
     LD A,H : OR 40h : OUT (99h),A
     NOP
     NOP
+    NOP
+    NOP
     LD A,(TEMP_ERASE_BYTE) : OUT (98h),A
+    NOP
+    NOP
     NOP
     NOP
     XOR A : LD (BULLET1_ACT),A
@@ -4147,10 +4189,16 @@ CB1_ERASE_FAST:
     LD A,L : OUT (99h),A
     NOP
     NOP
+    NOP
+    NOP
     LD A,H : OR 40h : OUT (99h),A
     NOP
     NOP
+    NOP
+    NOP
     LD A,BLANKCODE : OUT (98h),A
+    NOP
+    NOP
     NOP
     NOP
     XOR A : LD (BULLET1_ACT),A
@@ -4214,10 +4262,16 @@ CB2_ERASE:
     LD A,L : OUT (99h),A
     NOP
     NOP
+    NOP
+    NOP
     LD A,H : OR 40h : OUT (99h),A
     NOP
     NOP
+    NOP
+    NOP
     LD A,(TEMP_ERASE_BYTE) : OUT (98h),A
+    NOP
+    NOP
     NOP
     NOP
     XOR A : LD (BULLET2_ACT),A
@@ -4234,10 +4288,16 @@ CB2_ERASE_FAST:
     LD A,L : OUT (99h),A
     NOP
     NOP
+    NOP
+    NOP
     LD A,H : OR 40h : OUT (99h),A
     NOP
     NOP
+    NOP
+    NOP
     LD A,BLANKCODE : OUT (98h),A
+    NOP
+    NOP
     NOP
     NOP
     XOR A : LD (BULLET2_ACT),A
@@ -4267,10 +4327,16 @@ POD_HIT_DESTROY:
     LD A,E : OUT (99h),A
     NOP
     NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
     NOP
     NOP
+    NOP
+    NOP
     LD A,209 : OUT (98h),A
+    NOP
+    NOP
     NOP
     NOP
     LD HL,POD_CUR_X : LD D,0 : LD E,B : ADD HL,DE
@@ -4322,37 +4388,61 @@ EXPLOSION_DRAW:
     LD A,E : OUT (99h),A
     NOP
     NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
     NOP
     NOP
     LD A,(BOSS_ORBIT_YTMP) : OUT (98h),A
     NOP
     NOP
+    NOP
+    NOP
     LD A,E : ADD A,1 : OUT (99h),A
     NOP
     NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
     NOP
     NOP
     LD A,(BOSS_ORBIT_XTMP) : OUT (98h),A
     NOP
     NOP
+    NOP
+    NOP
     LD A,E : ADD A,2 : OUT (99h),A
     NOP
     NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
     NOP
     NOP
     LD A,EXPLOSION_PATNUM : OUT (98h),A
     NOP
     NOP
+    NOP
+    NOP
     LD A,E : ADD A,3 : OUT (99h),A
+    NOP
+    NOP
     NOP
     NOP
     LD A,5Bh : OUT (99h),A
     NOP
     NOP
+    NOP
+    NOP
     LD A,8 : OUT (98h),A
+    NOP
+    NOP
     NOP
     NOP
     RET
@@ -4364,10 +4454,16 @@ EXPLOSION_HIDE:
     LD A,E : OUT (99h),A
     NOP
     NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
     NOP
     NOP
+    NOP
+    NOP
     LD A,209 : OUT (98h),A
+    NOP
+    NOP
     NOP
     NOP
     RET
@@ -4514,10 +4610,16 @@ BEU_DECODE_DONE:
     LD A,L : OUT (99h),A
     NOP
     NOP
+    NOP
+    NOP
     LD A,H : OR 40h : OUT (99h),A
     NOP
     NOP
+    NOP
+    NOP
     LD A,BLANKCODE : OUT (98h),A
+    NOP
+    NOP
     NOP
     NOP
 
@@ -4775,37 +4877,61 @@ LAP_MARKER_DRAW:
     LD A,E : OUT (99h),A
     NOP
     NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
     NOP
     NOP
     LD A,(BOSS_ORBIT_YTMP) : OUT (98h),A
     NOP
     NOP
+    NOP
+    NOP
     LD A,E : ADD A,1 : OUT (99h),A
     NOP
     NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
     NOP
     NOP
     LD A,(BOSS_ORBIT_XTMP) : OUT (98h),A
     NOP
     NOP
+    NOP
+    NOP
     LD A,E : ADD A,2 : OUT (99h),A
     NOP
     NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
     NOP
     NOP
     LD A,BOSS_HEX_PATNUM : OUT (98h),A
     NOP
     NOP
+    NOP
+    NOP
     LD A,E : ADD A,3 : OUT (99h),A
+    NOP
+    NOP
     NOP
     NOP
     LD A,5Bh : OUT (99h),A
     NOP
     NOP
+    NOP
+    NOP
     LD A,15 : OUT (98h),A
+    NOP
+    NOP
     NOP
     NOP
     RET
@@ -4815,10 +4941,16 @@ LAP_MARKER_HIDE:
     LD A,E : OUT (99h),A
     NOP
     NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
     NOP
     NOP
+    NOP
+    NOP
     LD A,209 : OUT (98h),A
+    NOP
+    NOP
     NOP
     NOP
     RET
@@ -4828,37 +4960,61 @@ LAP_MARKER_DRAW2:
     LD A,E : OUT (99h),A
     NOP
     NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
     NOP
     NOP
     LD A,(BOSS_ORBIT_YTMP) : OUT (98h),A
     NOP
     NOP
+    NOP
+    NOP
     LD A,E : ADD A,1 : OUT (99h),A
     NOP
     NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
     NOP
     NOP
     LD A,(BOSS_ORBIT_XTMP) : OUT (98h),A
     NOP
     NOP
+    NOP
+    NOP
     LD A,E : ADD A,2 : OUT (99h),A
     NOP
     NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
     NOP
     NOP
     LD A,BOSS_HEX_PATNUM : OUT (98h),A
     NOP
     NOP
+    NOP
+    NOP
     LD A,E : ADD A,3 : OUT (99h),A
+    NOP
+    NOP
     NOP
     NOP
     LD A,5Bh : OUT (99h),A
     NOP
     NOP
+    NOP
+    NOP
     LD A,15 : OUT (98h),A
+    NOP
+    NOP
     NOP
     NOP
     RET
@@ -4868,10 +5024,16 @@ LAP_MARKER_HIDE2:
     LD A,E : OUT (99h),A
     NOP
     NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
     NOP
     NOP
+    NOP
+    NOP
     LD A,209 : OUT (98h),A
+    NOP
+    NOP
     NOP
     NOP
     RET
@@ -5037,37 +5199,61 @@ LAUNCH_DRAW:
     LD A,E : OUT (99h),A
     NOP
     NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
     NOP
     NOP
     LD A,(BOSS_ORBIT_YTMP) : OUT (98h),A
     NOP
     NOP
+    NOP
+    NOP
     LD A,E : ADD A,1 : OUT (99h),A
     NOP
     NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
     NOP
     NOP
     LD A,(BOSS_ORBIT_XTMP) : OUT (98h),A
     NOP
     NOP
+    NOP
+    NOP
     LD A,E : ADD A,2 : OUT (99h),A
     NOP
     NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
     NOP
     NOP
     LD A,BOSS_ORBIT_PATNUM : OUT (98h),A
     NOP
     NOP
+    NOP
+    NOP
     LD A,E : ADD A,3 : OUT (99h),A
+    NOP
+    NOP
     NOP
     NOP
     LD A,5Bh : OUT (99h),A
     NOP
     NOP
+    NOP
+    NOP
     LD A,(POD_VOLLEY_COLOR_TEST) : AND 0Fh : OUT (98h),A
+    NOP
+    NOP
     NOP
     NOP
     RET
@@ -5105,37 +5291,61 @@ POD_BULLET_DRAW0:
     LD A,E : OUT (99h),A
     NOP
     NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
     NOP
     NOP
     LD A,(POD_BULLET0_Y) : OUT (98h),A
     NOP
     NOP
+    NOP
+    NOP
     LD A,E : ADD A,1 : OUT (99h),A
     NOP
     NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
     NOP
     NOP
     LD A,(POD_BULLET0_X) : OUT (98h),A
     NOP
     NOP
+    NOP
+    NOP
     LD A,E : ADD A,2 : OUT (99h),A
     NOP
     NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
     NOP
     NOP
     LD A,BOSS_HEX_PATNUM : OUT (98h),A
     NOP
     NOP
+    NOP
+    NOP
     LD A,E : ADD A,3 : OUT (99h),A
+    NOP
+    NOP
     NOP
     NOP
     LD A,5Bh : OUT (99h),A
     NOP
     NOP
+    NOP
+    NOP
     LD A,15 : OUT (98h),A
+    NOP
+    NOP
     NOP
     NOP
     RET
@@ -5145,37 +5355,61 @@ POD_BULLET_DRAW1:
     LD A,E : OUT (99h),A
     NOP
     NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
     NOP
     NOP
     LD A,(POD_BULLET1_Y) : OUT (98h),A
     NOP
     NOP
+    NOP
+    NOP
     LD A,E : ADD A,1 : OUT (99h),A
     NOP
     NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
     NOP
     NOP
     LD A,(POD_BULLET1_X) : OUT (98h),A
     NOP
     NOP
+    NOP
+    NOP
     LD A,E : ADD A,2 : OUT (99h),A
     NOP
     NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
     NOP
     NOP
     LD A,BOSS_HEX_PATNUM : OUT (98h),A
     NOP
     NOP
+    NOP
+    NOP
     LD A,E : ADD A,3 : OUT (99h),A
+    NOP
+    NOP
     NOP
     NOP
     LD A,5Bh : OUT (99h),A
     NOP
     NOP
+    NOP
+    NOP
     LD A,15 : OUT (98h),A
+    NOP
+    NOP
     NOP
     NOP
     RET
@@ -5185,10 +5419,16 @@ POD_BULLET_HIDE0:
     LD A,E : OUT (99h),A
     NOP
     NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
     NOP
     NOP
+    NOP
+    NOP
     LD A,209 : OUT (98h),A
+    NOP
+    NOP
     NOP
     NOP
     RET
@@ -5198,10 +5438,16 @@ POD_BULLET_HIDE1:
     LD A,E : OUT (99h),A
     NOP
     NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
     NOP
     NOP
+    NOP
+    NOP
     LD A,209 : OUT (98h),A
+    NOP
+    NOP
     NOP
     NOP
     RET
@@ -5251,10 +5497,16 @@ DEFLECT_BULLET0:
     LD A,L : OUT (99h),A
     NOP
     NOP
+    NOP
+    NOP
     LD A,H : OR 40h : OUT (99h),A
     NOP
     NOP
+    NOP
+    NOP
     LD A,BLANKCODE : OUT (98h),A
+    NOP
+    NOP
     NOP
     NOP
     XOR A : LD (BULLET0_ACT),A
@@ -5281,10 +5533,16 @@ DEFLECT_BULLET1:
     LD A,L : OUT (99h),A
     NOP
     NOP
+    NOP
+    NOP
     LD A,H : OR 40h : OUT (99h),A
     NOP
     NOP
+    NOP
+    NOP
     LD A,BLANKCODE : OUT (98h),A
+    NOP
+    NOP
     NOP
     NOP
     XOR A : LD (BULLET1_ACT),A
@@ -5311,10 +5569,16 @@ DEFLECT_BULLET2:
     LD A,L : OUT (99h),A
     NOP
     NOP
+    NOP
+    NOP
     LD A,H : OR 40h : OUT (99h),A
     NOP
     NOP
+    NOP
+    NOP
     LD A,BLANKCODE : OUT (98h),A
+    NOP
+    NOP
     NOP
     NOP
     XOR A : LD (BULLET2_ACT),A
@@ -5398,37 +5662,61 @@ DFL_DRAW0:
     LD A,E : OUT (99h),A
     NOP
     NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
     NOP
     NOP
     LD A,(DFL0_Y) : OUT (98h),A
     NOP
     NOP
+    NOP
+    NOP
     LD A,E : ADD A,1 : OUT (99h),A
     NOP
     NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
     NOP
     NOP
     LD A,(DFL0_X) : OUT (98h),A
     NOP
     NOP
+    NOP
+    NOP
     LD A,E : ADD A,2 : OUT (99h),A
     NOP
     NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
     NOP
     NOP
     LD A,DFL_BULLET_PATNUM : OUT (98h),A
     NOP
     NOP
+    NOP
+    NOP
     LD A,E : ADD A,3 : OUT (99h),A
+    NOP
+    NOP
     NOP
     NOP
     LD A,5Bh : OUT (99h),A
     NOP
     NOP
+    NOP
+    NOP
     LD A,8 : OUT (98h),A
+    NOP
+    NOP
     NOP
     NOP
     RET
@@ -5438,37 +5726,61 @@ DFL_DRAW1:
     LD A,E : OUT (99h),A
     NOP
     NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
     NOP
     NOP
     LD A,(DFL1_Y) : OUT (98h),A
     NOP
     NOP
+    NOP
+    NOP
     LD A,E : ADD A,1 : OUT (99h),A
     NOP
     NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
     NOP
     NOP
     LD A,(DFL1_X) : OUT (98h),A
     NOP
     NOP
+    NOP
+    NOP
     LD A,E : ADD A,2 : OUT (99h),A
     NOP
     NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
     NOP
     NOP
     LD A,DFL_BULLET_PATNUM : OUT (98h),A
     NOP
     NOP
+    NOP
+    NOP
     LD A,E : ADD A,3 : OUT (99h),A
+    NOP
+    NOP
     NOP
     NOP
     LD A,5Bh : OUT (99h),A
     NOP
     NOP
+    NOP
+    NOP
     LD A,8 : OUT (98h),A
+    NOP
+    NOP
     NOP
     NOP
     RET
@@ -5478,37 +5790,61 @@ DFL_DRAW2:
     LD A,E : OUT (99h),A
     NOP
     NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
     NOP
     NOP
     LD A,(DFL2_Y) : OUT (98h),A
     NOP
     NOP
+    NOP
+    NOP
     LD A,E : ADD A,1 : OUT (99h),A
     NOP
     NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
     NOP
     NOP
     LD A,(DFL2_X) : OUT (98h),A
     NOP
     NOP
+    NOP
+    NOP
     LD A,E : ADD A,2 : OUT (99h),A
     NOP
     NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
     NOP
     NOP
     LD A,DFL_BULLET_PATNUM : OUT (98h),A
     NOP
     NOP
+    NOP
+    NOP
     LD A,E : ADD A,3 : OUT (99h),A
+    NOP
+    NOP
     NOP
     NOP
     LD A,5Bh : OUT (99h),A
     NOP
     NOP
+    NOP
+    NOP
     LD A,8 : OUT (98h),A
+    NOP
+    NOP
     NOP
     NOP
     RET
@@ -5518,10 +5854,16 @@ DFL_HIDE0:
     LD A,E : OUT (99h),A
     NOP
     NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
     NOP
     NOP
+    NOP
+    NOP
     LD A,209 : OUT (98h),A
+    NOP
+    NOP
     NOP
     NOP
     RET
@@ -5531,10 +5873,16 @@ DFL_HIDE1:
     LD A,E : OUT (99h),A
     NOP
     NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
     NOP
     NOP
+    NOP
+    NOP
     LD A,209 : OUT (98h),A
+    NOP
+    NOP
     NOP
     NOP
     RET
@@ -5544,10 +5892,16 @@ DFL_HIDE2:
     LD A,E : OUT (99h),A
     NOP
     NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
     NOP
     NOP
+    NOP
+    NOP
     LD A,209 : OUT (98h),A
+    NOP
+    NOP
     NOP
     NOP
     RET
