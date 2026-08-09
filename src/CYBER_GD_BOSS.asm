@@ -77,7 +77,7 @@ IDCACHE5    EQU 0E0B1h
 ; --- bug is found. Scratch cells reused from the same free gap the old ---
 ; --- (removed) debug watch used, E0D2h-E1FFh, before NAMEBUF.          ---
 WATCH_ROW    EQU 2
-WATCH_COL    EQU 26
+WATCH_COL    EQU 25
 PBD_ROW      EQU 0E0D2h
 PBD_COL      EQU 0E0D3h
 PBD_VAL      EQU 0E0D4h
@@ -2019,20 +2019,26 @@ BULLET2_OFF:
     XOR A : LD (BULLET2_ACT),A
 BULLET2_NEXT:
 
-    ; --- garbage watch: read back (WATCH_ROW,WATCH_COL) = VRAM 185Ah    ---
-    ; --- (1800h + 2*32+26) every frame; the moment it isn't BLANKCODE,  ---
+    ; --- garbage watch: read back (WATCH_ROW,WATCH_COL) = VRAM 1859h    ---
+    ; --- (1800h + 2*32+25) every frame; the moment it isn't BLANKCODE,  ---
     ; --- freeze and dump diagnostics instead of continuing - see        ---
     ; --- WATCH_ROW's own comment. Read mode, so no 40h on the high      ---
     ; --- byte (unlike every write-mode address-set elsewhere).          ---
-    ; --- Double-read confirmation: the first freeze-dump result was      ---
-    ; --- reported as a false detection (nothing was actually written     ---
-    ; --- there at that tick on real hardware) - this check's own          ---
-    ; --- address-set only had 2 NOPs, the same margin shown all through   ---
-    ; --- this session to sometimes not be enough, so the read-back        ---
-    ; --- itself could have been unreliable. Re-set the address and read   ---
-    ; --- again with a wider (6-NOP) margin on the confirm pass; only       ---
-    ; --- freezes if BOTH reads agree on the same non-blank value.         ---
-    LD A,5Ah : OUT (99h),A
+    ; --- Double-read confirmation: an earlier freeze-dump result was     ---
+    ; --- reported as a false detection - this check's own address-set    ---
+    ; --- only had 2 NOPs, the same margin shown all through this         ---
+    ; --- session to sometimes not be enough, so the read-back itself     ---
+    ; --- could have been unreliable. Re-set the address and read again   ---
+    ; --- with a wider (6-NOP) margin on the confirm pass; only freezes   ---
+    ; --- if BOTH reads agree on the same non-blank value.                ---
+    ; --- Column moved 26->25 (still row 2) per a follow-up real-hardware ---
+    ; --- report: with the double-read watch's own extra NOPs added, the  ---
+    ; --- garbage's position itself shifted by one column - direct        ---
+    ; --- evidence this is timing-sensitive, not a fixed-address logic    ---
+    ; --- bug, since nothing about this watch's own code path should      ---
+    ; --- affect WHERE an unrelated corruption lands if it were logic-    ---
+    ; --- only. Still 100% deterministic at the new position, though.     ---
+    LD A,59h : OUT (99h),A
     NOP
     NOP
     LD A,18h : OUT (99h),A
@@ -2042,7 +2048,7 @@ BULLET2_NEXT:
     CP BLANKCODE
     JP Z,WATCH_CLEAR
     LD (WATCH_FIRST_READ),A
-    LD A,5Ah : OUT (99h),A
+    LD A,59h : OUT (99h),A
     NOP
     NOP
     NOP
