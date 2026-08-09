@@ -3317,7 +3317,7 @@ ESC_COMPLEX_INIT_B:
 ; just returns immediately forever after, so nothing loops.
 SPAWN_SCHEDULE_CHECK:
     LD A,(SPAWN_NEXT_INDEX)
-    CP 45
+    CP 48
     RET NC
     LD H,0 : LD L,A
     ADD HL,HL
@@ -3350,6 +3350,23 @@ SSC_FIRE:
     INC A
     LD (SPAWN_NEXT_INDEX),A
     DEC A
+    ; --- simple formation (indices 0-11): one type, any Y - see      ---
+    ; --- SPAWN_SIMPLE/SPAWN_SIMPLE_Y_TABLE. Dodge direction is       ---
+    ; --- decided dynamically from PLAYERY at screen center, not from ---
+    ; --- which row it spawned on, so there's no need for a TOP/BOT   ---
+    ; --- split - it can spawn anywhere.                              ---
+    CP 0  : JP Z,SPAWN_SIMPLE
+    CP 1  : JP Z,SPAWN_SIMPLE
+    CP 2  : JP Z,SPAWN_SIMPLE
+    CP 3  : JP Z,SPAWN_SIMPLE
+    CP 4  : JP Z,SPAWN_SIMPLE
+    CP 5  : JP Z,SPAWN_SIMPLE
+    CP 6  : JP Z,SPAWN_SIMPLE
+    CP 7  : JP Z,SPAWN_SIMPLE
+    CP 8  : JP Z,SPAWN_SIMPLE
+    CP 9  : JP Z,SPAWN_SIMPLE
+    CP 10 : JP Z,SPAWN_SIMPLE
+    CP 11 : JP Z,SPAWN_SIMPLE
     CP 12 : JP Z,SPAWN_E2_TOP_A
     CP 13 : JP Z,SPAWN_E2_BOT_A
     CP 14 : JP Z,SPAWN_E2_TOP_B
@@ -3377,19 +3394,22 @@ SSC_FIRE:
     CP 32 : JP Z,SPAWN_E4_Y16
     CP 33 : JP Z,SPAWN_E4_Y32
     CP 34 : JP Z,SPAWN_E4_Y48
-    ; --- TYPE_ENEMY1_LOOK test wave ("Enemy5"): 3 waves of 3        ---
-    ; --- (indices 35-43), same concurrent-wave style.               ---
+    ; --- TYPE_ENEMY1_LOOK test wave ("Enemy5"): 3 waves of 3, with  ---
+    ; --- one extra simple-formation spawn tucked in each gap        ---
+    ; --- (indices 35-46), from the schedule editor's layout.        ---
     CP 35 : JP Z,SPAWN_E4B_Y16
     CP 36 : JP Z,SPAWN_E4B_Y32
     CP 37 : JP Z,SPAWN_E4B_Y48
-    CP 38 : JP Z,SPAWN_E4B_Y16
-    CP 39 : JP Z,SPAWN_E4B_Y32
-    CP 40 : JP Z,SPAWN_E4B_Y48
-    CP 41 : JP Z,SPAWN_E4B_Y16
-    CP 42 : JP Z,SPAWN_E4B_Y32
-    CP 43 : JP Z,SPAWN_E4B_Y48
-    CP 44 : JP Z,BOSS_SPAWN
-    JP SPAWN_ONE_E1
+    CP 38 : JP Z,SPAWN_SIMPLE
+    CP 39 : JP Z,SPAWN_E4B_Y16
+    CP 40 : JP Z,SPAWN_E4B_Y32
+    CP 41 : JP Z,SPAWN_E4B_Y48
+    CP 42 : JP Z,SPAWN_SIMPLE
+    CP 43 : JP Z,SPAWN_E4B_Y16
+    CP 44 : JP Z,SPAWN_E4B_Y32
+    CP 45 : JP Z,SPAWN_E4B_Y48
+    CP 46 : JP Z,SPAWN_SIMPLE
+    JP BOSS_SPAWN
 
 ; --- saved (disabled) boss-only fast-iteration schedule - kept for  ---
 ; --- quickly testing boss-only features again later. Not active.   ---
@@ -5470,17 +5490,19 @@ DFL_VEC_DY:
 ; synchronized group. If the pool (or the 6 physical sprite-pattern
 ; slots this BEHAVIOR needs, see ALLOC_PATTERN_SLOT) is exhausted,
 ; the spawn is simply dropped, same as before.
-SPAWN_ONE_E1:
-    LD A,(SPAWN_NEXT_INDEX)   ; already incremented: 1-3=top,4-6=bottom,7-9=top,10-12=bottom
-    CP 4 : JR C,SOE1_TOP
-    CP 7 : JR C,SOE1_BOT
-    CP 10 : JR C,SOE1_TOP
-    JR SOE1_BOT
-SOE1_TOP:
-    LD A,ENEMY_Y0 : LD (SPAWN_E1_Y),A
-    JR ENEMY1_CLAIM_ANY
-SOE1_BOT:
-    LD A,ENEMY_Y1 : LD (SPAWN_E1_Y),A
+; Enemy1 needs only one type: its dodge direction is already decided
+; dynamically at screen center from PLAYERY vs its own Y (see
+; EBSD_UPDATE), not from which spawn slot it came from - so it isn't
+; restricted to 2 fixed rows (ENEMY_Y0/ENEMY_Y1) like the old TOP/BOT
+; split implied. A can spawn at any Y. On entry A = this schedule
+; index (SSC_FIRE's CP-dispatch leaves the pre-increment index in A),
+; used to look up this spawn's Y in SPAWN_SIMPLE_Y_TABLE.
+SPAWN_SIMPLE:
+    LD H,0 : LD L,A
+    LD DE,SPAWN_SIMPLE_Y_TABLE
+    ADD HL,DE
+    LD A,(HL)
+    LD (SPAWN_E1_Y),A
     JR ENEMY1_CLAIM_ANY
 
 ; Claims a free ENEMY_POOL slot AND a free physical sprite-pattern
@@ -7859,22 +7881,46 @@ ENEMY3_PATTERN3:
 ; E4O_GOTMOD's index%3 dispatch) - are genuinely concurrent on screen,
 ; not one at a time. Gap between waves gives room to watch each wave
 ; play out fully before the next.
-; indices 0-16: simple formation (SPAWN_ONE_E1) + E2A/E2B + Enemy3,
-; unchanged from the original schedule.
+; indices 0-11: simple formation (SPAWN_SIMPLE_TOP/BOT, per-index
+; explicit dispatch in SSC_FIRE - not inferred from index range
+; anymore, since the pattern is no longer a fixed TOP/BOT/TOP/BOT
+; alternation - see the schedule editor JSON import).
+; indices 12-16: E2A/E2B + Enemy3, unchanged from the original schedule.
 ; indices 17-34: Enemy4, 6 waves of 3 (1 tick apart within each wave
 ; so Y16/Y32/Y48 are concurrent - see SSC_FIRE).
-; indices 35-43: TYPE_ENEMY1_LOOK ("Enemy5") test wave, 3 waves of 3.
-; index 44: boss.
+; indices 35-46: TYPE_ENEMY1_LOOK ("Enemy5") test wave, 3 waves of 3,
+; interleaved with 3 extra simple-formation spawns (38,42,46).
+; index 47: boss.
 SPAWN_THRESHOLDS:
     DW 10,11,12,25,26,27,40,41,42,55,56,57,70,90,110,120,130
     DW 145,146,147, 160,161,162, 175,176,177, 190,191,192, 205,206,207, 220,221,222
-    DW 235,236,237, 250,251,252, 265,266,267
+    DW 235,236,237,238, 250,251,252,253, 265,266,267,268
     DW 270
 
 ; --- saved (disabled) boss-only single-entry schedule, used ---
 ; --- while iterating quickly on boss features - not deleted: ---
 ;SPAWN_THRESHOLDS_BOSSONLY_SAVED:
 ;    DW 10
+
+; Spawn Y for each SPAWN_SIMPLE schedule index (see SSC_FIRE/SPAWN_
+; SIMPLE) - one byte per index, same length/order as SPAWN_THRESHOLDS.
+; Only the indices that actually dispatch to SPAWN_SIMPLE are read;
+; the rest are unused placeholders (0). Currently still just the old
+; TOP(16)/BOT(128) rows, but any Y is valid now - a future schedule-
+; editor import can place Enemy1 on any row, not just top/bottom.
+SPAWN_SIMPLE_Y_TABLE:
+    DB ENEMY_Y0,ENEMY_Y0,ENEMY_Y0,ENEMY_Y0,ENEMY_Y0,ENEMY_Y0   ; 0-5:  top
+    DB ENEMY_Y1,ENEMY_Y1,ENEMY_Y1                              ; 6-8:  bottom
+    DB ENEMY_Y0,ENEMY_Y0,ENEMY_Y0                              ; 9-11: top
+    DB 0,0,0,0,0                                               ; 12-16: (E2A/E2B/E3, unused)
+    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0                     ; 17-34: (Enemy4, unused)
+    DB 0,0,0                                                   ; 35-37: (Enemy5, unused)
+    DB ENEMY_Y0                                                ; 38: top
+    DB 0,0,0                                                   ; 39-41: (Enemy5, unused)
+    DB ENEMY_Y0                                                ; 42: top
+    DB 0,0,0                                                   ; 43-45: (Enemy5, unused)
+    DB ENEMY_Y1                                                ; 46: bottom
+    DB 0                                                       ; 47: (boss, unused)
 
 ; --- Boss BG (nametable) graphics, generated from
 ; --- dotpict_20260806_173500 (12x37 dot art), resized directly
