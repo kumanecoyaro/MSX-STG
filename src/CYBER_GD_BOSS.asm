@@ -700,6 +700,9 @@ INIT_SPRATR_CLR:
     CALL ENEMY_POOL_INIT
     LD HL,ENEMY4_PATTERN : LD DE,PAT_ENEMY4*8+SPRPAT : LD BC,32 : CALL LDIRVM
     LD HL,PARTICLE_PATTERN : LD DE,PAT_PARTICLE*8+SPRPAT : LD BC,32 : CALL LDIRVM
+    LD A,1 : LD (ENEMY1_LOOK_FLAGS),A : LD (ENEMY1_LOOK_FLAGS+1),A
+    LD HL,PAT_ENEMY1_LOOK*8+SPRPAT : LD DE,ENEMY1_LOOK_FLAGS : LD IX,ENEMY1_LOOK_FLAGS+1
+    CALL REDRAW_UNIT_PATTERN
     XOR A : LD (BOSS_EXPL_ACTIVE),A
     XOR A : LD (BOSS_EXPL_STARTED),A
     XOR A : LD (PLAYER_FLYAWAY),A
@@ -2943,6 +2946,10 @@ ENEMY4_LUT_LEN EQU 32
 PAT_ENEMY4     EQU 84         ; patterns84-87 (32 bytes at SPRPAT+672)
 PAT_PARTICLE   EQU 120        ; single-dot trail particle (32 bytes at SPRPAT+960)
 E4_SPAWN_BASEY EQU 0E709h ; scratch: this wave's base Y, set right before ENEMY4_CLAIM_ANY
+PAT_ENEMY1_LOOK EQU 88     ; test: Enemy1's asterisk look, static (32 bytes at SPRPAT+704),
+                            ; run on BEHAVIOR_SINE_BOB (Enemy4's movement) instead of
+                            ; BEHAVIOR_SIMPLE_DRIFT_DODGE - proves TYPE/BEHAVIOR are
+                            ; independent (see TYPE_ENEMY1_LOOK / SPAWN_E4B_Y16 etc.)
 
 ; ===== Unified sprite-enemy buffer (target for the ENEMY0/1/2, E2A/E2B ===
 ; and ENEMY4 migration - ENEMY3 stays separate since it's BG/nametable  ===
@@ -3012,6 +3019,9 @@ ENEMY_SCORE_SEL_TMP EQU 0EB51h  ; scratch: score selector, stashed across TRIGGE
 SIMPLE_PATTERN_USED EQU 0EB52h  ; 6 bytes: which of the 6 physical pattern slots are claimed
 SIMPLE_SLOT_SCRATCH EQU 0EB58h  ; 2 bytes: ENEMY_POOL slot base, saved across REDRAW_UNIT_PATTERN
                                  ; (which itself takes IX as an input parameter - see SIMPLE_REDRAW)
+E4_SPAWN_TYPE     EQU 0EB5Ah    ; scratch: TYPE to assign, set right before ENEMY4_CLAIM_ANY
+ENEMY1_LOOK_FLAGS EQU 0EB5Bh    ; 2 bytes: permanently 1,1 (this look is never quadrant-
+                                 ; damaged under BEHAVIOR_SINE_BOB) - built once at INIT
 
 ; A slot's TYPE (1-based) indexes this table for its display+stats,
 ; independent of its BEHAVIOR (movement). 4 bytes/entry:
@@ -3022,9 +3032,11 @@ ETT_PATTERN  EQU 0
 ETT_COLOR    EQU 1
 ETT_HP       EQU 2
 ETT_SCORESEL EQU 3
-TYPE_ENEMY4  EQU 1
+TYPE_ENEMY4       EQU 1
+TYPE_ENEMY1_LOOK  EQU 2   ; test: Enemy1's asterisk look running on Enemy4's movement
 ENEMY_TYPE_TABLE:
     DB PAT_ENEMY4, SPR_LTGREEN, ENEMY4_HP, 2   ; TYPE_ENEMY4
+    DB PAT_ENEMY1_LOOK, SPR_GRAY, 1, 0         ; TYPE_ENEMY1_LOOK: 1-hit kill, 100pt score
 
 ; movement algorithm ids, dispatched by ENEMY_POOL_UPDATE_ALL and
 ; CHECK_BULLET_VS_ENEMY_POOL.
@@ -3312,7 +3324,7 @@ ESC_COMPLEX_INIT_B:
 ; after, so nothing loops.
 SPAWN_SCHEDULE_CHECK:
     LD A,(SPAWN_NEXT_INDEX)
-    CP 27
+    CP 36
     RET NC
     LD H,0 : LD L,A
     ADD HL,HL
@@ -3359,7 +3371,16 @@ SSC_FIRE:
     CP 23 : JP Z,SPAWN_E4_Y48
     CP 24 : JP Z,SPAWN_E4_Y48
     CP 25 : JP Z,SPAWN_E4_Y48
-    CP 26 : JP Z,BOSS_SPAWN
+    CP 26 : JP Z,SPAWN_E4B_Y16
+    CP 27 : JP Z,SPAWN_E4B_Y16
+    CP 28 : JP Z,SPAWN_E4B_Y16
+    CP 29 : JP Z,SPAWN_E4B_Y32
+    CP 30 : JP Z,SPAWN_E4B_Y32
+    CP 31 : JP Z,SPAWN_E4B_Y32
+    CP 32 : JP Z,SPAWN_E4B_Y48
+    CP 33 : JP Z,SPAWN_E4B_Y48
+    CP 34 : JP Z,SPAWN_E4B_Y48
+    CP 35 : JP Z,BOSS_SPAWN
     JP SPAWN_ONE_E1
 
 ; --- saved (disabled) boss-only fast-iteration schedule - kept for  ---
@@ -7022,28 +7043,50 @@ ECS_S8_B:
 ; behavior as Enemy1's SOE1_TOP/BOT).
 SPAWN_E4_Y16:
     LD A,32 : LD (E4_SPAWN_BASEY),A
+    LD A,TYPE_ENEMY4 : LD (E4_SPAWN_TYPE),A
     JP ENEMY4_CLAIM_ANY
 SPAWN_E4_Y32:
     LD A,64 : LD (E4_SPAWN_BASEY),A
+    LD A,TYPE_ENEMY4 : LD (E4_SPAWN_TYPE),A
     JP ENEMY4_CLAIM_ANY
 SPAWN_E4_Y48:
     LD A,72 : LD (E4_SPAWN_BASEY),A
+    LD A,TYPE_ENEMY4 : LD (E4_SPAWN_TYPE),A
     JP ENEMY4_CLAIM_ANY
 
-; Claims a free slot from the unified ENEMY_POOL for a fresh Enemy4
-; (BEHAVIOR_SINE_BOB) spawn: right-edge X, fresh LUT phase, this
-; wave's base Y (from E4_SPAWN_BASEY). If the pool is full the spawn
-; is simply dropped (same skip-if-busy behavior as before).
+; Test: same BEHAVIOR_SINE_BOB movement and the same 3-waves-of-3
+; schedule as Enemy4, but spawns TYPE_ENEMY1_LOOK instead - proves
+; TYPE (display) and BEHAVIOR (movement) are independent.
+SPAWN_E4B_Y16:
+    LD A,32 : LD (E4_SPAWN_BASEY),A
+    LD A,TYPE_ENEMY1_LOOK : LD (E4_SPAWN_TYPE),A
+    JP ENEMY4_CLAIM_ANY
+SPAWN_E4B_Y32:
+    LD A,64 : LD (E4_SPAWN_BASEY),A
+    LD A,TYPE_ENEMY1_LOOK : LD (E4_SPAWN_TYPE),A
+    JP ENEMY4_CLAIM_ANY
+SPAWN_E4B_Y48:
+    LD A,72 : LD (E4_SPAWN_BASEY),A
+    LD A,TYPE_ENEMY1_LOOK : LD (E4_SPAWN_TYPE),A
+    JP ENEMY4_CLAIM_ANY
+
+; Claims a free slot from the unified ENEMY_POOL for a fresh
+; BEHAVIOR_SINE_BOB spawn: right-edge X, fresh LUT phase, this wave's
+; base Y (from E4_SPAWN_BASEY), TYPE (and its HP) from E4_SPAWN_TYPE.
+; If the pool is full the spawn is simply dropped (same skip-if-busy
+; behavior as before).
 ENEMY4_CLAIM_ANY:
     CALL ALLOC_ENEMY_SLOT
     OR A
     RET Z
-    LD A,TYPE_ENEMY4 : LD (IX+E_TYPE),A
+    LD A,(E4_SPAWN_TYPE) : LD (IX+E_TYPE),A
     LD A,BEHAVIOR_SINE_BOB : LD (IX+E_BEHAVIOR),A
-    LD A,ENEMY4_HP : LD (IX+E_HP),A
-    LD A,ENEMY4_SPAWNX : LD (IX+E_X),A
+    LD A,ENEMY_SPAWNX : LD (IX+E_X),A
     LD A,(E4_SPAWN_BASEY) : LD (IX+E_PARAM0),A
     CALL ALLOC_SPRITE_NUM : LD (IX+E_SPRNUM),A
+    LD A,(IX+E_TYPE) : CALL ENEMY_TYPE_LOOKUP
+    LD DE,ETT_HP : ADD HL,DE
+    LD A,(HL) : LD (IX+E_HP),A
     RET
 
 ; Given A = TYPE (1-based), returns HL = pointer to that TYPE's
@@ -7801,6 +7844,7 @@ ENEMY3_PATTERN3:
 SPAWN_THRESHOLDS:
     DW 10,11,12,25,26,27,40,41,42,55,56,57,70,90,110,120,130
     DW 140,141,142,150,151,152,160,161,162
+    DW 170,171,172,180,181,182,190,191,192   ; test: TYPE_ENEMY1_LOOK on BEHAVIOR_SINE_BOB
     DW 260
 
 ; --- saved (disabled) boss-only single-entry schedule, used ---
