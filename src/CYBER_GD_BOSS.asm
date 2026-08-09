@@ -3318,7 +3318,7 @@ ESC_COMPLEX_INIT_B:
 ; after, so nothing loops.
 SPAWN_SCHEDULE_CHECK:
     LD A,(SPAWN_NEXT_INDEX)
-    CP 36
+    CP 27
     RET NC
     LD H,0 : LD L,A
     ADD HL,HL
@@ -3365,16 +3365,12 @@ SSC_FIRE:
     CP 23 : JP Z,SPAWN_E4_Y48
     CP 24 : JP Z,SPAWN_E4_Y48
     CP 25 : JP Z,SPAWN_E4_Y48
-    CP 26 : JP Z,SPAWN_E4B_Y16
-    CP 27 : JP Z,SPAWN_E4B_Y16
-    CP 28 : JP Z,SPAWN_E4B_Y16
-    CP 29 : JP Z,SPAWN_E4B_Y32
-    CP 30 : JP Z,SPAWN_E4B_Y32
-    CP 31 : JP Z,SPAWN_E4B_Y32
-    CP 32 : JP Z,SPAWN_E4B_Y48
-    CP 33 : JP Z,SPAWN_E4B_Y48
-    CP 34 : JP Z,SPAWN_E4B_Y48
-    CP 35 : JP Z,BOSS_SPAWN
+    ; --- TYPE_ENEMY1_LOOK test wave (SPAWN_E4B_Y16/32/48, indices    ---
+    ; --- 26-34) pulled out of the schedule while chasing a reported  ---
+    ; --- BG-bullet-residue bug the user suspects is linked to it -   ---
+    ; --- see SPAWN_THRESHOLDS below. Routines/TYPE are still there,  ---
+    ; --- just unreachable from here for now.                        ---
+    CP 26 : JP Z,BOSS_SPAWN
     JP SPAWN_ONE_E1
 
 ; --- saved (disabled) boss-only fast-iteration schedule - kept for  ---
@@ -7841,7 +7837,8 @@ ENEMY3_PATTERN3:
 SPAWN_THRESHOLDS:
     DW 10,11,12,25,26,27,40,41,42,55,56,57,70,90,110,120,130
     DW 140,141,142,150,151,152,160,161,162
-    DW 170,171,172,180,181,182,190,191,192   ; test: TYPE_ENEMY1_LOOK on BEHAVIOR_SINE_BOB
+    ; --- TYPE_ENEMY1_LOOK test wave temporarily removed from the ---
+    ; --- schedule - see the comment in SSC_FIRE.                 ---
     DW 260
 
 ; --- saved (disabled) boss-only single-entry schedule, used ---
