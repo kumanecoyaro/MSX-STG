@@ -35,6 +35,21 @@ def run_until(z, target, max_instr=400000):
     raise RuntimeError(f"never reached {target:04X}, stuck at {z.pc:04X}")
 
 
+def run_full_frame(z, max_instr=400000):
+    """Runs from wherever z.pc is (expected: MAINLOOP) all the way
+    through the entire per-frame body to the HALT at its end - this is
+    the only way ENEMY3_TRY_SPAWN/ENEMY3_UPDATE_SLOT/the bullet-vs-
+    ENEMY3 hit tests actually run; stopping at ANIM2_DONE (an earlier
+    version of this script's mistake) skips all of them, since
+    ENEMY3_TRY_SPAWN is CALLed right after ANIM2_DONE."""
+    z.halted = False
+    for _ in range(max_instr):
+        if z.halted:
+            return
+        z.step()
+    raise RuntimeError(f"never halted, stuck at {z.pc:04X}")
+
+
 def main():
     mem, sym = assemble()
     z = Z80(bytearray(mem))
@@ -91,19 +106,37 @@ def main():
     N_FRAMES = 500
     kill_every = 23  # arbitrary, not synced to any internal cadence
 
+    # MAINLOOP's player-direction dispatch reads the joystick via a BIOS
+    # call that z80emu's bios_call always stubs to "centered/no input",
+    # so a bare MAINLOOP run never actually moves the player - the
+    # reported repro needs the player actively moving vertically at the
+    # moment of a kill, so call MOVE_UP/MOVE_DOWN directly each frame
+    # (bypassing the joystick read) to simulate that.
+    move_toggle = 0
+
     for f in range(N_FRAMES):
         frame_counter[0] = f
         if f % 60 == 0:
             z.mem[sym['ENEMY3_BUDGET']] = 40  # keep the wave going
 
-        z.sp = 0xF000; z.wr(0xF000, 0); z.wr(0xF001, 0)
-        z.pc = sym['MAINLOOP']
-        run_until(z, sym['ANIM2_DONE'])
+        # alternate a few frames of holding up, a few of holding down,
+        # so kills happen mid-movement in both directions
+        move_toggle = (move_toggle + 1) % 16
+        z.sp = 0xF200; z.wr(0xF200, 0); z.wr(0xF201, 0)
+        z.pc = sym['MOVE_UP'] if move_toggle < 8 else sym['MOVE_DOWN']
+        run_until(z, 0)
 
-        # occasionally "fire a bullet" that kills whichever Enemy3 slot
-        # is active, wherever it currently is - exercises E3_HIT_ONE_SLOT
-        # repeatedly across many different live positions/speeds
-        if f % kill_every == 0:
+        z.sp = sym['STACKTOP']
+        z.pc = sym['MAINLOOP']
+        run_full_frame(z)
+
+        # Let several instances accumulate (don't kill for a stretch),
+        # then kill everything active in one frame - stress-tests
+        # TRIGGER_EXPLOSION's 3-slot round-robin reuse path (restore-
+        # still-animating-slot-before-reuse) with genuinely concurrent
+        # kills, which "kill immediately on spawn" never exercised since
+        # only ever one instance was alive at a time.
+        if f % 90 == 45:
             for slot in range(8):
                 base = sym['ENEMY3_POOL'] + slot * 11
                 if z.mem[base + 0]:
@@ -113,7 +146,6 @@ def main():
                     z.sp = 0xF100; z.wr(0xF100, 0); z.wr(0xF101, 0)
                     z.pc = sym['E3_HIT_ONE_SLOT']
                     run_until(z, 0)
-                    break
 
     print(f"Simulated {N_FRAMES} frames. Total WRITE_ANIM_CELL calls attributable to "
           f"Enemy3/explosion code: {len(writes)}")
@@ -129,11 +161,12 @@ def main():
 
     ground_row0 = sym['GROUND_ROW0']
     blankcode = sym['BLANKCODE']
-    # row0 col29-31 is GAME_TICK_DISPLAY's 3-digit tick counter (top-right
-    # HUD) - it also goes through WRITE_ANIM_CELL and legitimately never
-    # returns to BLANKCODE (it's always showing a digit), so it's not a
-    # residue candidate and would otherwise dominate the "suspicious" list.
-    hud_cells = {(0, 29), (0, 30), (0, 31)}
+    # row0 col0-7 is the 8-digit score display, row0 col29-31 is
+    # GAME_TICK_DISPLAY's 3-digit tick counter (top-right HUD) - both go
+    # through WRITE_ANIM_CELL and legitimately never return to BLANKCODE
+    # (always showing a digit), so neither is a residue candidate and
+    # they'd otherwise dominate the "suspicious" list.
+    hud_cells = {(0, c) for c in range(8)} | {(0, 29), (0, 30), (0, 31)}
     suspicious = []
     for (row, col), events in by_cell.items():
         if (row, col) in hud_cells:
