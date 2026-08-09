@@ -166,7 +166,8 @@ def main():
     # through WRITE_ANIM_CELL and legitimately never return to BLANKCODE
     # (always showing a digit), so neither is a residue candidate and
     # they'd otherwise dominate the "suspicious" list.
-    hud_cells = {(0, c) for c in range(8)} | {(0, 29), (0, 30), (0, 31)}
+    hud_cells = ({(0, c) for c in range(8)} | {(0, 29), (0, 30), (0, 31)} |
+                 {(0, 16), (0, 17), (0, 18)} | {(0, 20), (0, 21), (0, 22)})
     suspicious = []
     for (row, col), events in by_cell.items():
         if (row, col) in hud_cells:

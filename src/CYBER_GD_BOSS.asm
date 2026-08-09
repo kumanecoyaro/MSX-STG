@@ -664,10 +664,17 @@ FILLBG_3:
     XOR A : LD (ENEMY3_BUDGET),A
     XOR A : LD (ENEMY3_SPAWN_COUNT),A
     LD A,1 : LD (ENEMY3_SPAWN_TIMER),A
-    XOR A
-    LD (ENEMY3_POOL+0),A  : LD (ENEMY3_POOL+11),A : LD (ENEMY3_POOL+22),A
-    LD (ENEMY3_POOL+33),A : LD (ENEMY3_POOL+44),A : LD (ENEMY3_POOL+55),A
-    LD (ENEMY3_POOL+66),A : LD (ENEMY3_POOL+77),A
+    ; Full 88-byte clear (all 8 slots, not just each slot's ACTIVE byte) -
+    ; ENEMY3_UPDATE_SLOT's inactive-slot safety net (see its own comment)
+    ; reads ROW/COL (bytes 4/5) even for never-yet-spawned slots, and an
+    ; uninitialized (0,0) would blank row0/col0 - the score display's
+    ; first digit - every frame until the first real spawn.
+    LD HL,ENEMY3_POOL : LD (HL),0
+    LD DE,ENEMY3_POOL+1 : LD BC,88-1 : LDIR
+    LD A,1                          ; ROW=1 (sky, matches ENEMY3_SPAWN_Y>>3) - never HUD row0
+    LD (ENEMY3_POOL+4),A  : LD (ENEMY3_POOL+15),A : LD (ENEMY3_POOL+26),A
+    LD (ENEMY3_POOL+37),A : LD (ENEMY3_POOL+48),A : LD (ENEMY3_POOL+59),A
+    LD (ENEMY3_POOL+70),A : LD (ENEMY3_POOL+81),A
 
     ; --- switch sprites to 16x16 mode (VDP R1 bit1=SI), keep other bits ---
     LD A,(RG1SAV) : OR 02h : LD (RG1SAV),A
@@ -7748,8 +7755,21 @@ E3EC_GOT:
 ENEMY3_UPDATE_SLOT:
     LD A,(IX+0)
     OR A
-    RET Z
-
+    JR NZ,E3US_ACTIVE
+    ; --- defensive safety net: real gameplay showed a stray Enemy3     ---
+    ; --- pattern (152/160/168 - one of ENEMY3_CODE1/2/3) surviving     ---
+    ; --- indefinitely at this slot's last-drawn cell, confirmed stuck  ---
+    ; --- via the debug watch's staleness counter (capped at 255), but  ---
+    ; --- extensive logic-level simulation (thousands of frames, real   ---
+    ; --- bullets, mixed enemy types, player movement, natural kills    ---
+    ; --- and exits) never reproduced a leak, and doubling the VDP wait ---
+    ; --- didn't help either - so instead of a precise fix, keep        ---
+    ; --- forcing this inactive slot's last-known cell back to blank    ---
+    ; --- every frame. Whatever path is failing to erase it on          ---
+    ; --- deactivation, this guarantees the stray content can't survive ---
+    ; --- more than one frame once the slot goes inactive.              ---
+    JP ENEMY3_ERASE_CELL   ; tail-call - WRITE_ANIM_CELL's own RET returns to our caller
+E3US_ACTIVE:
     CALL ENEMY3_ERASE_CELL
 
     LD A,(IX+10)
