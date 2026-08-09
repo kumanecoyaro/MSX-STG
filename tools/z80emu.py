@@ -31,6 +31,7 @@ class Z80:
         self.tstates = 0
         self.tstates_indexed = 0
         self.tstates_pushpop = 0
+        self.tstates_nop = 0
         self.instr_count = 0
         self.instr_count_indexed = 0
 
@@ -39,6 +40,7 @@ class Z80:
             'tstates': self.tstates,
             'tstates_indexed': self.tstates_indexed,
             'tstates_pushpop': self.tstates_pushpop,
+            'tstates_nop': self.tstates_nop,
             'instr_count': self.instr_count,
             'instr_count_indexed': self.instr_count_indexed,
         }
@@ -47,6 +49,7 @@ class Z80:
         self.tstates = 0
         self.tstates_indexed = 0
         self.tstates_pushpop = 0
+        self.tstates_nop = 0
         self.instr_count = 0
         self.instr_count_indexed = 0
 
@@ -149,7 +152,7 @@ class Z80:
         pc0 = self.pc
         self.instr_count += 1
         op = self.fetch()
-        if op == 0x00: self.tstates += 4  # NOP
+        if op == 0x00: self.tstates += 4; self.tstates_nop += 4  # NOP
         elif op == 0x76:  # HALT
             self.tstates += 4
             self.halted = True

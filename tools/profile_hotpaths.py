@@ -108,17 +108,34 @@ def scenario_namebuf_regen(mem, sym):
     DIFF_LOOP_0..5 then compares it against PREVBUF and, on ANY mismatch
     in a row, LDIRs the whole 32-byte row and pushes all 32 bytes to VDP
     (there's no partial-row transfer - a single differing byte forces the
-    whole row out). Since ROWPHASE advances every frame, a fresh PREVBUF
-    of zeroes (mismatching the freshly computed NAMEBUF) approximates the
-    common case: this is not a contrived worst case, it's what happens
-    whenever a row's byte pattern isn't bit-for-bit identical to last
-    frame, which continuous scrolling makes the norm rather than the
-    exception.
+    whole row out). Since ROWPHASE advances every frame, PREVBUF starting
+    out different from the freshly computed NAMEBUF (real INIT sets
+    PREVBUF to FFh for exactly this reason - forces a full draw on the
+    first frame) approximates the common case: this is not a contrived
+    worst case, it's what happens whenever a row's byte pattern isn't
+    bit-for-bit identical to last frame, which continuous scrolling makes
+    the norm rather than the exception.
+
+    IDCACHE0-5 must be seeded (REFRESH_IDCACHE_33, same as real INIT)
+    before this runs - CELL_LOOP now reads ids from there, not straight
+    from ROWDATA+LUT, and an unseeded (all-zero) cache would make every
+    row compute the same degenerate id=0 pattern, which happens to make
+    NAMEBUF collide with an all-zero PREVBUF and silently skip every
+    row's VDP transfer - understating the real cost.
+
     Runs the *actual* assembled MAINLOOP bytes from SKIP_G1 (where phase
     is computed) through ROWDONE_5 (last row's VRAM transfer done, right
     before player-input code begins) - no reimplementation.
     """
     z = make_cpu(mem)
+    for row in range(6):
+        z.sp = 0xFF00
+        z.wr(0xFF00, 0x00); z.wr(0xFF01, 0x00)
+        z.sethl(sym[f'ROWDATA{row}'])  # PXCHAR=0 at cold start, same as real INIT
+        z.ix = sym[f'IDCACHE{row}']
+        z.pc = sym['REFRESH_IDCACHE_33']
+        run_until_pc(z, 0x0000)
+    z.mem[sym['PREVBUF']:sym['PREVBUF'] + 192] = bytes([0xFF]) * 192  # matches real INIT
     start = sym['SKIP_G1']
     regen_only_stop = sym['DIFF_LOOP_0'] - 8  # 8 bytes = LD HL,nn(3)+LD DE,nn(3)+LD B,n(2) right before DIFF_LOOP_0
     assert z.rd(regen_only_stop) == 0x21, "boundary drifted - CELL_LOOP_5/DIFF_LOOP_0 preamble changed, recompute the offset"
