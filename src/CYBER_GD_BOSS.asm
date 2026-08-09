@@ -3356,15 +3356,20 @@ SSC_FIRE:
     CP 14 : JP Z,SPAWN_E2_TOP_B
     CP 15 : JP Z,SPAWN_E3_WAVE
     CP 16 : JP Z,SPAWN_E2_BOT_B
-    CP 17 : JP Z,SPAWN_E4_Y16
-    CP 18 : JP Z,SPAWN_E4_Y16
-    CP 19 : JP Z,SPAWN_E4_Y16
-    CP 20 : JP Z,SPAWN_E4_Y32
-    CP 21 : JP Z,SPAWN_E4_Y32
-    CP 22 : JP Z,SPAWN_E4_Y32
-    CP 23 : JP Z,SPAWN_E4_Y48
-    CP 24 : JP Z,SPAWN_E4_Y48
-    CP 25 : JP Z,SPAWN_E4_Y48
+    ; --- Enemy4 (SPAWN_E4_Y16/32/48, indices 17-25) ALSO temporarily ---
+    ; --- pulled out, same reason - user suspects it's linked to the  ---
+    ; --- BG-bullet-residue bug too. SSC_NOOP just eats the schedule  ---
+    ; --- slot (SPAWN_NEXT_INDEX already advanced above) and does     ---
+    ; --- nothing else.                                               ---
+    CP 17 : JP Z,SSC_NOOP
+    CP 18 : JP Z,SSC_NOOP
+    CP 19 : JP Z,SSC_NOOP
+    CP 20 : JP Z,SSC_NOOP
+    CP 21 : JP Z,SSC_NOOP
+    CP 22 : JP Z,SSC_NOOP
+    CP 23 : JP Z,SSC_NOOP
+    CP 24 : JP Z,SSC_NOOP
+    CP 25 : JP Z,SSC_NOOP
     ; --- TYPE_ENEMY1_LOOK test wave (SPAWN_E4B_Y16/32/48, indices    ---
     ; --- 26-34) pulled out of the schedule while chasing a reported  ---
     ; --- BG-bullet-residue bug the user suspects is linked to it -   ---
@@ -3372,6 +3377,8 @@ SSC_FIRE:
     ; --- just unreachable from here for now.                        ---
     CP 26 : JP Z,BOSS_SPAWN
     JP SPAWN_ONE_E1
+SSC_NOOP:
+    RET
 
 ; --- saved (disabled) boss-only fast-iteration schedule - kept for  ---
 ; --- quickly testing boss-only features again later. Not active.   ---
