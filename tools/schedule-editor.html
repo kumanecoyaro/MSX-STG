@@ -1,0 +1,722 @@
+<title>CYBER_SUZUKA — Spawn Schedule Editor</title>
+<style>
+  :root {
+    --bg: #05080d;
+    --surface: #0b1220;
+    --surface-2: #0e1626;
+    --line: #17233a;
+    --grid-line: #1a2f52;
+    --grid-line-strong: #2c58a0;
+    --ink: #eaf1fb;
+    --ink-dim: #7f93ad;
+    --ink-faint: #4c5f7d;
+    --accent: #4fd2ff;
+    --accent-ink: #04141c;
+    --danger: #ff5d6c;
+    --danger-ink: #260607;
+    --ok: #6bdc7c;
+
+    --hue-simple: #b98cff;
+    --hue-e2a: #ff8fc6;
+    --hue-e2b: #ff5f9e;
+    --hue-e3: #38d9c4;
+    --hue-e4: #ffa94d;
+    --hue-e5: #6bdc7c;
+    --hue-boss: #ff5d5d;
+
+    --font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Hiragino Sans", "Noto Sans JP", sans-serif;
+    --font-mono: ui-monospace, "SF Mono", "Cascadia Mono", "Consolas", "Roboto Mono", monospace;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0;
+    height: 100%;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--font-ui);
+    overscroll-behavior: none;
+  }
+
+  body {
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
+  }
+
+  /* ---------- header ---------- */
+  header {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 10px 14px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--line);
+    flex-wrap: wrap;
+  }
+
+  .title {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    margin-right: 6px;
+  }
+  .title .name {
+    font-family: var(--font-mono);
+    font-size: 13px;
+    letter-spacing: 0.06em;
+    color: var(--ink);
+    font-weight: 600;
+  }
+  .title .sub {
+    font-size: 10.5px;
+    color: var(--ink-dim);
+    letter-spacing: 0.03em;
+  }
+
+  .stat {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--ink-dim);
+    background: var(--surface-2);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 5px 9px;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+  }
+  .stat b { color: var(--ink); font-weight: 600; }
+
+  .spacer { flex: 1 1 auto; }
+
+  button {
+    font-family: var(--font-ui);
+    font-size: 12.5px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    border-radius: 7px;
+    border: 1px solid var(--line);
+    background: var(--surface-2);
+    color: var(--ink);
+    padding: 7px 12px;
+    cursor: pointer;
+    transition: border-color 120ms ease, background 120ms ease, transform 80ms ease;
+  }
+  button:hover { border-color: var(--ink-faint); }
+  button:active { transform: translateY(1px); }
+  button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+  button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+  button.danger-btn { background: var(--surface-2); color: var(--danger); border-color: #4a2226; }
+  button.danger-btn.armed { background: var(--danger); color: var(--danger-ink); border-color: var(--danger); }
+  button.ghost { background: transparent; }
+
+  /* ---------- main layout ---------- */
+  main {
+    flex: 1 1 auto;
+    display: flex;
+    min-height: 0;
+  }
+
+  .gridwrap {
+    flex: 1 1 auto;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    border-right: 1px solid var(--line);
+  }
+
+  .ruler-row {
+    display: flex;
+    flex: 0 0 auto;
+    background: var(--surface);
+    border-bottom: 1px solid var(--line);
+  }
+  .gutter-corner {
+    flex: 0 0 var(--gutter-w);
+    background: var(--surface);
+  }
+  .ruler-scroll {
+    overflow: hidden;
+    flex: 1 1 auto;
+  }
+  #ruler {
+    display: block;
+  }
+
+  .grid-row {
+    display: flex;
+    flex: 1 1 auto;
+    min-height: 0;
+  }
+  .row-gutter-scroll {
+    overflow: hidden;
+    flex: 0 0 var(--gutter-w);
+  }
+  #rowGutter { display: block; }
+
+  .canvas-scroll {
+    flex: 1 1 auto;
+    overflow: auto;
+    -webkit-overflow-scrolling: touch;
+    background: var(--bg);
+    touch-action: pan-x pan-y;
+  }
+  #grid {
+    display: block;
+    cursor: crosshair;
+  }
+
+  .hint {
+    flex: 0 0 auto;
+    padding: 6px 12px;
+    font-size: 11px;
+    color: var(--ink-dim);
+    background: var(--surface);
+    border-top: 1px solid var(--line);
+    font-family: var(--font-mono);
+  }
+  .hint b { color: var(--ink); }
+
+  /* ---------- palette sidebar ---------- */
+  aside {
+    flex: 0 0 232px;
+    background: var(--surface);
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+  .aside-head {
+    padding: 12px 14px 8px;
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ink-dim);
+    border-bottom: 1px solid var(--line);
+  }
+  .palette {
+    overflow-y: auto;
+    padding: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .pitem {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    padding: 7px 9px;
+    border-radius: 8px;
+    border: 1px solid transparent;
+    background: var(--surface-2);
+    cursor: pointer;
+    text-align: left;
+    color: var(--ink);
+    font-family: var(--font-ui);
+  }
+  .pitem:hover { border-color: var(--ink-faint); }
+  .pitem.armed {
+    border-color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 14%, var(--surface-2));
+  }
+  .pnum {
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    color: var(--ink-faint);
+    width: 16px;
+    flex: 0 0 auto;
+    font-variant-numeric: tabular-nums;
+  }
+  .pswatch {
+    width: 22px;
+    height: 22px;
+    border-radius: 5px;
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: var(--font-mono);
+    font-size: 9.5px;
+    font-weight: 700;
+    color: #05080d;
+  }
+  .plabel {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    min-width: 0;
+  }
+  .plabel .n { font-size: 12.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .plabel .d { font-size: 10px; color: var(--ink-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  .aside-foot {
+    flex: 0 0 auto;
+    padding: 10px 14px 12px;
+    border-top: 1px solid var(--line);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .aside-foot .row { display: flex; gap: 8px; }
+  .aside-foot button { flex: 1 1 0; }
+
+  #liveMsg {
+    position: fixed;
+    left: 50%;
+    bottom: 22px;
+    transform: translate(-50%, 8px);
+    background: var(--surface-2);
+    border: 1px solid var(--accent);
+    color: var(--ink);
+    font-family: var(--font-mono);
+    font-size: 12px;
+    padding: 8px 14px;
+    border-radius: 8px;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 160ms ease, transform 160ms ease;
+    z-index: 20;
+  }
+  #liveMsg.show { opacity: 1; transform: translate(-50%, 0); }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; }
+  }
+</style>
+
+<body>
+  <header>
+    <div class="title">
+      <span class="name">CYBER_SUZUKA</span>
+      <span class="sub">spawn schedule editor</span>
+    </div>
+    <div class="stat" id="statCount">placements: <b>0</b></div>
+    <div class="stat" id="statLast">last tick: <b>—</b></div>
+    <div class="spacer"></div>
+    <button class="ghost" id="btnPrev" title="Scroll back one screen (32 ticks)">◀ screen</button>
+    <button class="ghost" id="btnNext" title="Scroll forward one screen (32 ticks)">screen ▶</button>
+    <button id="btnClear">Clear all</button>
+    <button class="primary" id="btnSave">Save JSON</button>
+    <button id="btnCopy">Copy JSON</button>
+    <button id="btnLoad">Load JSON</button>
+    <input type="file" id="fileInput" accept="application/json" hidden>
+  </header>
+
+  <main>
+    <div class="gridwrap">
+      <div class="ruler-row">
+        <div class="gutter-corner"></div>
+        <div class="ruler-scroll"><canvas id="ruler"></canvas></div>
+      </div>
+      <div class="grid-row">
+        <div class="row-gutter-scroll"><canvas id="rowGutter"></canvas></div>
+        <div class="canvas-scroll" id="canvasScroll">
+          <canvas id="grid"></canvas>
+        </div>
+      </div>
+      <div class="hint">tick = GAME_TICK (1 cell = 1 tick, 8 frames) · row = spawn lane (free placement, for layout) · tap a numbered enemy on the right, then tap the grid to place it · <b>Erase</b> arms remove-mode</div>
+    </div>
+
+    <aside>
+      <div class="aside-head">enemies in use</div>
+      <div class="palette" id="palette"></div>
+      <div class="aside-foot">
+        <div class="row">
+          <button class="danger-btn" id="btnErase">Erase</button>
+        </div>
+      </div>
+    </aside>
+  </main>
+
+  <div id="liveMsg"></div>
+
+<script>
+(function () {
+  "use strict";
+
+  // ---------- enemy palette (matches the current CYBER_GD_BOSS.asm schedule) ----------
+  var TYPES = [
+    { id: "simple_top", num: 1,  short: "S16", name: "Simple — Top",     desc: "ENEMY_Y0 (row2)",  hue: "--hue-simple", defaultRow: 2  },
+    { id: "simple_bot", num: 2,  short: "S128",name: "Simple — Bottom",  desc: "ENEMY_Y1 (row16)", hue: "--hue-simple", defaultRow: 16 },
+    { id: "e2a_top",    num: 3,  short: "2AT", name: "Enemy2A — Top",    desc: "SPAWN_E2_TOP_A",   hue: "--hue-e2a",    defaultRow: 4  },
+    { id: "e2a_bot",    num: 4,  short: "2AB", name: "Enemy2A — Bottom", desc: "SPAWN_E2_BOT_A",   hue: "--hue-e2a",    defaultRow: 12 },
+    { id: "e2b_top",    num: 5,  short: "2BT", name: "Enemy2B — Top",    desc: "SPAWN_E2_TOP_B",   hue: "--hue-e2b",    defaultRow: 6  },
+    { id: "e2b_bot",    num: 6,  short: "2BB", name: "Enemy2B — Bottom", desc: "SPAWN_E2_BOT_B",   hue: "--hue-e2b",    defaultRow: 14 },
+    { id: "enemy3_wave",num: 7,  short: "E3",  name: "Enemy3 — Wave",    desc: "SPAWN_E3_WAVE",    hue: "--hue-e3",     defaultRow: 1  },
+    { id: "enemy4_y16", num: 8,  short: "4-16",name: "Enemy4 — Top",     desc: "baseY 32",         hue: "--hue-e4",     defaultRow: 4  },
+    { id: "enemy4_y32", num: 9,  short: "4-32",name: "Enemy4 — Mid",     desc: "baseY 64",         hue: "--hue-e4",     defaultRow: 8  },
+    { id: "enemy4_y48", num: 10, short: "4-48",name: "Enemy4 — Bottom",  desc: "baseY 72",         hue: "--hue-e4",     defaultRow: 9  },
+    { id: "enemy5_y16", num: 11, short: "5-16",name: "Enemy5 — Top",     desc: "TYPE_ENEMY1_LOOK", hue: "--hue-e5",     defaultRow: 4  },
+    { id: "enemy5_y32", num: 12, short: "5-32",name: "Enemy5 — Mid",     desc: "TYPE_ENEMY1_LOOK", hue: "--hue-e5",     defaultRow: 8  },
+    { id: "enemy5_y48", num: 13, short: "5-48",name: "Enemy5 — Bottom",  desc: "TYPE_ENEMY1_LOOK", hue: "--hue-e5",     defaultRow: 9  },
+    { id: "boss",       num: 14, short: "BOSS",name: "Boss",             desc: "BOSS_SPAWN",       hue: "--hue-boss",   defaultRow: 20 }
+  ];
+  var TYPE_BY_ID = {};
+  TYPES.forEach(function (t) { TYPE_BY_ID[t.id] = t; });
+
+  // ---------- the schedule currently baked into CYBER_GD_BOSS.asm (SPAWN_THRESHOLDS) ----------
+  var DEFAULT_PLACEMENTS = (function () {
+    var p = [];
+    function add(ticks, typeId) {
+      ticks.forEach(function (t) {
+        p.push({ tick: t, row: TYPE_BY_ID[typeId].defaultRow, type: typeId });
+      });
+    }
+    add([10, 11, 12, 40, 41, 42], "simple_top");
+    add([25, 26, 27, 55, 56, 57], "simple_bot");
+    add([70], "e2a_top");
+    add([90], "e2a_bot");
+    add([110], "e2b_top");
+    add([120], "enemy3_wave");
+    add([130], "e2b_bot");
+    add([145, 160, 175, 190, 205, 220], "enemy4_y16");
+    add([146, 161, 176, 191, 206, 221], "enemy4_y32");
+    add([147, 162, 177, 192, 207, 222], "enemy4_y48");
+    add([235, 250, 265], "enemy5_y16");
+    add([236, 251, 266], "enemy5_y32");
+    add([237, 252, 267], "enemy5_y48");
+    add([270], "boss");
+    return p;
+  })();
+
+  // ---------- geometry ----------
+  var CELL = 26;
+  var ROWS = 24;
+  var MAX_TICK = 400; // scrollable canvas width in cells; game currently uses up to ~270
+  var GUTTER_W = 34;
+  document.documentElement.style.setProperty("--gutter-w", GUTTER_W + "px");
+
+  var css = getComputedStyle(document.documentElement);
+  function tok(name) { return css.getPropertyValue(name).trim(); }
+
+  // ---------- state ----------
+  var placements = []; // {tick, row, type}
+  var armedType = null;
+  var eraseArmed = false;
+
+  function cellKey(tick, row) { return tick + "," + row; }
+
+  function placementAt(tick, row) {
+    for (var i = 0; i < placements.length; i++) {
+      if (placements[i].tick === tick && placements[i].row === row) return i;
+    }
+    return -1;
+  }
+
+  function setCell(tick, row, typeId) {
+    var idx = placementAt(tick, row);
+    if (idx >= 0) placements.splice(idx, 1);
+    if (typeId) placements.push({ tick: tick, row: row, type: typeId });
+    placements.sort(function (a, b) { return a.tick - b.tick || a.row - b.row; });
+  }
+
+  // ---------- palette UI ----------
+  var paletteEl = document.getElementById("palette");
+  TYPES.forEach(function (t) {
+    var item = document.createElement("button");
+    item.className = "pitem";
+    item.dataset.type = t.id;
+    item.innerHTML =
+      '<span class="pnum">' + String(t.num).padStart(2, "0") + '</span>' +
+      '<span class="pswatch" style="background:var(' + t.hue + ')">' + t.short + '</span>' +
+      '<span class="plabel"><span class="n">' + t.name + '</span><span class="d">' + t.desc + '</span></span>';
+    item.addEventListener("click", function () {
+      eraseArmed = false;
+      document.getElementById("btnErase").classList.remove("armed");
+      armedType = armedType === t.id ? null : t.id;
+      refreshPaletteArmed();
+    });
+    paletteEl.appendChild(item);
+  });
+
+  function refreshPaletteArmed() {
+    Array.prototype.forEach.call(paletteEl.children, function (el) {
+      el.classList.toggle("armed", el.dataset.type === armedType);
+    });
+  }
+
+  document.getElementById("btnErase").addEventListener("click", function () {
+    armedType = null;
+    refreshPaletteArmed();
+    eraseArmed = !eraseArmed;
+    this.classList.toggle("armed", eraseArmed);
+  });
+
+  // ---------- canvases ----------
+  var ruler = document.getElementById("ruler");
+  var rowGutter = document.getElementById("rowGutter");
+  var grid = document.getElementById("grid");
+  var canvasScroll = document.getElementById("canvasScroll");
+  var rulerScroll = document.querySelector(".ruler-scroll");
+  var rowGutterScroll = document.querySelector(".row-gutter-scroll");
+
+  var DPR = Math.max(1, window.devicePixelRatio || 1);
+
+  function sizeCanvas(cv, wCss, hCss) {
+    cv.width = Math.round(wCss * DPR);
+    cv.height = Math.round(hCss * DPR);
+    cv.style.width = wCss + "px";
+    cv.style.height = hCss + "px";
+    var ctx = cv.getContext("2d");
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    return ctx;
+  }
+
+  function layout() {
+    var gridW = MAX_TICK * CELL;
+    var gridH = ROWS * CELL;
+
+    var rulerH = 26;
+    var gctx = sizeCanvas(grid, gridW, gridH);
+    var rctx = sizeCanvas(ruler, gridW, rulerH);
+    var gutH = Math.max(gridH, canvasScroll.clientHeight || gridH);
+    var rgctx = sizeCanvas(rowGutter, GUTTER_W, gutH);
+
+    drawRuler(rctx, gridW, rulerH);
+    drawRowGutter(rgctx, GUTTER_W, gutH);
+    drawGrid(gctx, gridW, gridH);
+  }
+
+  function drawRuler(ctx, w, h) {
+    ctx.clearRect(0, 0, w, h);
+    ctx.fillStyle = tok("--surface");
+    ctx.fillRect(0, 0, w, h);
+    ctx.font = "10px " + tok("--font-mono").split(",")[0] + ", monospace";
+    ctx.textBaseline = "middle";
+    for (var t = 0; t <= MAX_TICK; t += 1) {
+      var x = t * CELL;
+      var strong = t % 32 === 0;
+      ctx.strokeStyle = strong ? tok("--grid-line-strong") : tok("--grid-line");
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(x + 0.5, h - (strong ? 12 : 6));
+      ctx.lineTo(x + 0.5, h);
+      ctx.stroke();
+      if (t % 16 === 0) {
+        ctx.fillStyle = strong ? tok("--ink") : tok("--ink-dim");
+        ctx.fillText(String(t), x + 3, h - 15);
+      }
+    }
+    ctx.strokeStyle = tok("--line");
+    ctx.beginPath();
+    ctx.moveTo(0, h - 0.5);
+    ctx.lineTo(w, h - 0.5);
+    ctx.stroke();
+  }
+
+  function drawRowGutter(ctx, w, h) {
+    ctx.clearRect(0, 0, w, h);
+    ctx.fillStyle = tok("--surface");
+    ctx.fillRect(0, 0, w, h);
+    ctx.font = "10px " + tok("--font-mono").split(",")[0] + ", monospace";
+    ctx.textAlign = "right";
+    ctx.textBaseline = "middle";
+    for (var r = 0; r < ROWS; r++) {
+      var y = r * CELL;
+      ctx.fillStyle = tok("--ink-dim");
+      ctx.fillText(String(r), w - 8, y + CELL / 2);
+      ctx.strokeStyle = tok("--grid-line");
+      ctx.beginPath();
+      ctx.moveTo(w - 6, y + 0.5);
+      ctx.lineTo(w, y + 0.5);
+      ctx.stroke();
+    }
+    ctx.textAlign = "left";
+  }
+
+  function drawGrid(ctx, w, h) {
+    ctx.clearRect(0, 0, w, h);
+    ctx.fillStyle = tok("--bg");
+    ctx.fillRect(0, 0, w, h);
+
+    // 8px-equivalent cell grid, in blue, per spec
+    for (var c = 0; c <= MAX_TICK; c++) {
+      var strong = c % 32 === 0;
+      ctx.strokeStyle = strong ? tok("--grid-line-strong") : tok("--grid-line");
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(c * CELL + 0.5, 0);
+      ctx.lineTo(c * CELL + 0.5, h);
+      ctx.stroke();
+    }
+    for (var rr = 0; rr <= ROWS; rr++) {
+      ctx.strokeStyle = tok("--grid-line");
+      ctx.beginPath();
+      ctx.moveTo(0, rr * CELL + 0.5);
+      ctx.lineTo(w, rr * CELL + 0.5);
+      ctx.stroke();
+    }
+
+    // placed enemies
+    ctx.font = "700 9.5px " + tok("--font-mono").split(",")[0] + ", monospace";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    placements.forEach(function (p) {
+      var t = TYPE_BY_ID[p.type];
+      if (!t) return;
+      var x = p.tick * CELL, y = p.row * CELL;
+      ctx.fillStyle = tok(t.hue);
+      var pad = 2;
+      roundRect(ctx, x + pad, y + pad, CELL - pad * 2, CELL - pad * 2, 4);
+      ctx.fill();
+      ctx.fillStyle = "#05080d";
+      ctx.fillText(t.short, x + CELL / 2, y + CELL / 2 + 1);
+    });
+  }
+
+  function roundRect(ctx, x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r);
+    ctx.arcTo(x, y, x + w, y, r);
+    ctx.closePath();
+  }
+
+  // ---------- interaction ----------
+  function cellFromEvent(ev) {
+    var rect = grid.getBoundingClientRect();
+    var x = ev.clientX - rect.left;
+    var y = ev.clientY - rect.top;
+    var col = Math.floor(x / CELL);
+    var row = Math.floor(y / CELL);
+    if (col < 0 || col >= MAX_TICK || row < 0 || row >= ROWS) return null;
+    return { tick: col, row: row };
+  }
+
+  grid.addEventListener("click", function (ev) {
+    var c = cellFromEvent(ev);
+    if (!c) return;
+    if (eraseArmed) {
+      setCell(c.tick, c.row, null);
+      flash("erased tick " + c.tick + ", row " + c.row);
+    } else if (armedType) {
+      setCell(c.tick, c.row, armedType);
+      flash(TYPE_BY_ID[armedType].name + " → tick " + c.tick + ", row " + c.row);
+    } else {
+      flash("pick an enemy on the right first");
+      return;
+    }
+    render();
+  });
+
+  // keep the ruler / row-gutter in sync with the scrollable grid (this is the "swipe" pan)
+  canvasScroll.addEventListener("scroll", function () {
+    rulerScroll.scrollLeft = canvasScroll.scrollLeft;
+    rowGutterScroll.scrollTop = canvasScroll.scrollTop;
+  }, { passive: true });
+
+  document.getElementById("btnPrev").addEventListener("click", function () {
+    canvasScroll.scrollBy({ left: -32 * CELL, behavior: "smooth" });
+  });
+  document.getElementById("btnNext").addEventListener("click", function () {
+    canvasScroll.scrollBy({ left: 32 * CELL, behavior: "smooth" });
+  });
+
+  // ---------- save / load ----------
+  function currentJSON() {
+    return JSON.stringify({
+      version: 1,
+      game: "CYBER_SUZUKA",
+      maxTick: MAX_TICK,
+      placements: placements.slice().sort(function (a, b) { return a.tick - b.tick || a.row - b.row; })
+    }, null, 2);
+  }
+
+  document.getElementById("btnSave").addEventListener("click", function () {
+    var blob = new Blob([currentJSON()], { type: "application/json" });
+    var a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "cyber_suzuka_schedule.json";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    flash("saved cyber_suzuka_schedule.json");
+  });
+
+  document.getElementById("btnCopy").addEventListener("click", function () {
+    var text = currentJSON();
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(function () {
+        flash("JSON copied — paste it into the chat to import");
+      }, function () {
+        fallbackCopy(text);
+      });
+    } else {
+      fallbackCopy(text);
+    }
+  });
+
+  function fallbackCopy(text) {
+    var ta = document.createElement("textarea");
+    ta.value = text;
+    ta.style.position = "fixed";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand("copy"); flash("JSON copied — paste it into the chat to import"); }
+    catch (e) { flash("copy failed — use Save instead"); }
+    ta.remove();
+  }
+
+  document.getElementById("btnLoad").addEventListener("click", function () {
+    document.getElementById("fileInput").click();
+  });
+  document.getElementById("fileInput").addEventListener("change", function (ev) {
+    var file = ev.target.files[0];
+    if (!file) return;
+    var reader = new FileReader();
+    reader.onload = function () {
+      try {
+        var data = JSON.parse(reader.result);
+        if (!Array.isArray(data.placements)) throw new Error("no placements array");
+        placements = data.placements.filter(function (p) {
+          return TYPE_BY_ID[p.type] && Number.isInteger(p.tick) && Number.isInteger(p.row);
+        });
+        render();
+        flash("loaded " + placements.length + " placements");
+      } catch (e) {
+        flash("could not read that file: " + e.message);
+      }
+    };
+    reader.readAsText(file);
+    ev.target.value = "";
+  });
+
+  document.getElementById("btnClear").addEventListener("click", function () {
+    if (placements.length && !confirm("Clear all " + placements.length + " placements?")) return;
+    placements = [];
+    render();
+    flash("cleared");
+  });
+
+  // ---------- misc UI ----------
+  var liveMsg = document.getElementById("liveMsg");
+  var flashTimer = null;
+  function flash(msg) {
+    liveMsg.textContent = msg;
+    liveMsg.classList.add("show");
+    clearTimeout(flashTimer);
+    flashTimer = setTimeout(function () { liveMsg.classList.remove("show"); }, 1800);
+  }
+
+  function render() {
+    var gctx = grid.getContext("2d");
+    gctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    drawGrid(gctx, MAX_TICK * CELL, ROWS * CELL);
+    document.getElementById("statCount").innerHTML = "placements: <b>" + placements.length + "</b>";
+    var last = placements.reduce(function (m, p) { return Math.max(m, p.tick); }, 0);
+    document.getElementById("statLast").innerHTML = "last tick: <b>" + (placements.length ? last : "—") + "</b>";
+  }
+
+  // ---------- boot ----------
+  placements = DEFAULT_PLACEMENTS.slice();
+  layout();
+  render();
+  window.addEventListener("resize", function () { layout(); render(); });
+})();
+</script>
+</body>
