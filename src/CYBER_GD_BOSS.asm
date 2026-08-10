@@ -563,6 +563,7 @@ INIT:
     ; screen rows 19-23) to BLANKCODE, whose color group is set to
     ; fg=bg=blue in COLORDATA so it reads as solid blue regardless
     ; of pattern content.
+    DI
     LD A,00h : OUT (99h),A
     NOP
     NOP
@@ -589,7 +590,9 @@ INIT:
     NOP
     LD A,BLANKCODE
     LD B,00h
+    EI
 FILLBG_1:
+    DI
     OUT (98h),A
     NOP
     NOP
@@ -603,9 +606,11 @@ FILLBG_1:
     NOP
     NOP
     NOP
+    EI
     DJNZ FILLBG_1
     LD B,00h
 FILLBG_2:
+    DI
     OUT (98h),A
     NOP
     NOP
@@ -619,9 +624,11 @@ FILLBG_2:
     NOP
     NOP
     NOP
+    EI
     DJNZ FILLBG_2
     LD B,96
 FILLBG_3:
+    DI
     OUT (98h),A
     NOP
     NOP
@@ -635,6 +642,7 @@ FILLBG_3:
     NOP
     NOP
     NOP
+    EI
     DJNZ FILLBG_3
 
     ; --- sprite pattern generator table (VRAM 3800h): ship is a static ---
@@ -714,6 +722,7 @@ FILLBG_3:
     ; --- color but a not-yet-hidden Y is exactly the reported white  ---
     ; --- asterisk near the score, which then "moves" once real game  ---
     ; --- code finally claims that number and overwrites it for real. ---
+    DI
     LD A,0 : OUT (99h),A
     NOP
     NOP
@@ -733,7 +742,9 @@ FILLBG_3:
     NOP
     NOP
     LD B,32
+    EI
 INIT_SPRATR_CLR:
+    DI
     LD A,209 : OUT (98h),A
     NOP
     NOP
@@ -770,6 +781,7 @@ INIT_SPRATR_CLR:
     NOP
     NOP
     NOP
+    EI
     DJNZ INIT_SPRATR_CLR
 
     ; --- player initial state ---
@@ -849,6 +861,7 @@ INIT_SPRATR_CLR:
 
     ; --- sprite attribute table (VRAM 1B00h): ship body (16x16, slot1), ---
     ; --- accent overlay (16x16, slot0, drawn on top, at ship_X+8) ---
+    DI
     LD A,04h : OUT (99h),A
     NOP
     NOP
@@ -1012,7 +1025,9 @@ INIT_SPRATR_CLR:
     ; --- block every slot after it.
     LD B,30
     LD C,2
+    EI
 INIT_HIDE_SLOT_LOOP:
+    DI
     LD A,C : ADD A,A : ADD A,A : OUT (99h),A
     NOP
     NOP
@@ -1060,6 +1075,7 @@ INIT_HIDE_SLOT_LOOP:
     NOP
     NOP
     INC C
+    EI
     DJNZ INIT_HIDE_SLOT_LOOP
     NOP
 
@@ -1291,6 +1307,7 @@ DIFF_LOOP_0:
 DIFFERENT_0:
     LD HL,NAMEBUF+0 : LD DE,PREVBUF+0 : LD BC,32 : LDIR
     LD HL,NAMEBUF+0
+    DI
     LD A,60h : OUT (99h),A
     NOP
     NOP
@@ -1311,7 +1328,9 @@ DIFFERENT_0:
     NOP
     LD C,98h
     LD B,32
+    EI
 ROWXFER_0:
+    DI
     LD A,(HL) : OUT (98h),A
     NOP
     NOP
@@ -1322,6 +1341,7 @@ ROWXFER_0:
     NOP
     NOP
     INC HL : DEC B
+    EI
     JP NZ,ROWXFER_0
 ROWDONE_0:
 
@@ -1337,6 +1357,7 @@ DIFF_LOOP_2:
 DIFFERENT_2:
     LD HL,NAMEBUF+32 : LD DE,PREVBUF+32 : LD BC,32 : LDIR
     LD HL,NAMEBUF+32
+    DI
     LD A,80h : OUT (99h),A
     NOP
     NOP
@@ -1357,7 +1378,9 @@ DIFFERENT_2:
     NOP
     LD C,98h
     LD B,32
+    EI
 ROWXFER_2:
+    DI
     LD A,(HL) : OUT (98h),A
     NOP
     NOP
@@ -1368,6 +1391,7 @@ ROWXFER_2:
     NOP
     NOP
     INC HL : DEC B
+    EI
     JP NZ,ROWXFER_2
 ROWDONE_2:
 
@@ -1382,6 +1406,7 @@ DIFF_LOOP_3:
 DIFFERENT_3:
     LD HL,NAMEBUF+64 : LD DE,PREVBUF+64 : LD BC,32 : LDIR
     LD HL,NAMEBUF+64
+    DI
     LD A,A0h : OUT (99h),A
     NOP
     NOP
@@ -1402,7 +1427,9 @@ DIFFERENT_3:
     NOP
     LD C,98h
     LD B,32
+    EI
 ROWXFER_3:
+    DI
     LD A,(HL) : OUT (98h),A
     NOP
     NOP
@@ -1413,6 +1440,7 @@ ROWXFER_3:
     NOP
     NOP
     INC HL : DEC B
+    EI
     JP NZ,ROWXFER_3
 ROWDONE_3:
 
@@ -1427,6 +1455,7 @@ DIFF_LOOP_4:
 DIFFERENT_4:
     LD HL,NAMEBUF+96 : LD DE,PREVBUF+96 : LD BC,32 : LDIR
     LD HL,NAMEBUF+96
+    DI
     LD A,C0h : OUT (99h),A
     NOP
     NOP
@@ -1447,7 +1476,9 @@ DIFFERENT_4:
     NOP
     LD C,98h
     LD B,32
+    EI
 ROWXFER_4:
+    DI
     LD A,(HL) : OUT (98h),A
     NOP
     NOP
@@ -1458,6 +1489,7 @@ ROWXFER_4:
     NOP
     NOP
     INC HL : DEC B
+    EI
     JP NZ,ROWXFER_4
 ROWDONE_4:
 
@@ -1473,6 +1505,7 @@ DIFF_LOOP_5:
 DIFFERENT_5:
     LD HL,NAMEBUF+128 : LD DE,PREVBUF+128 : LD BC,32 : LDIR
     LD HL,NAMEBUF+128
+    DI
     LD A,E0h : OUT (99h),A
     NOP
     NOP
@@ -1497,7 +1530,9 @@ DIFFERENT_5:
     NOP
     LD C,98h
     LD B,32
+    EI
 ROWXFER_5:
+    DI
     LD A,(HL) : OUT (98h),A
     NOP
     NOP
@@ -1510,6 +1545,7 @@ ROWXFER_5:
     NOP
     NOP
     INC HL : DEC B
+    EI
     JP NZ,ROWXFER_5
 ROWDONE_5:
 
@@ -1652,6 +1688,7 @@ DIR_DONE:
 
     ; redraw ship: slot1=body, slot0=accent overlay (priority above ---
     ; body, drawn at PLAYERX+8, PLAYERY)
+    DI
     LD A,04h : OUT (99h),A
     NOP
     NOP
@@ -1769,6 +1806,7 @@ DIR_DONE:
     ; ============================================================
     LD A,(PLAYER_FLYAWAY)
     OR A
+    EI
     JP NZ,FIRE_DONE
     LD A,(FIRE_COOLDOWN)
     OR A
@@ -2052,6 +2090,7 @@ BULLET0_HITERASE_GOT:
     LD (TEMP_ERASE_BYTE),A
     LD HL,(BULLET0_ADDR)
     LD A,(BULLET0_COL) : LD E,A : LD D,0 : ADD HL,DE
+    DI
     LD A,L : OUT (99h),A
     NOP
     NOP
@@ -2080,6 +2119,7 @@ BULLET0_HITERASE_GOT:
     NOP
     NOP
     XOR A : LD (BULLET0_ACT),A
+    EI
     JP BULLET0_NEXT
 BULLET0_NOHIT:
     LD A,(BULLET0_ROW) : CP GROUND_ROW0
@@ -2097,6 +2137,7 @@ BULLET0_ERASE_GOT:
     LD (TEMP_ERASE_BYTE),A
     LD HL,(BULLET0_ADDR)
     LD A,(BULLET0_COL) : LD E,A : LD D,0 : ADD HL,DE
+    DI
     LD A,L : OUT (99h),A
     NOP
     NOP
@@ -2126,9 +2167,11 @@ BULLET0_ERASE_GOT:
     NOP
     LD A,(BULLET0_COL) : INC A : LD (BULLET0_COL),A
     CP BULLET_MAXCOL+1
+    EI
     JR NC,BULLET0_OFF
     LD HL,(BULLET0_ADDR)
     LD A,(BULLET0_COL) : LD E,A : LD D,0 : ADD HL,DE
+    DI
     LD A,L : OUT (99h),A
     NOP
     NOP
@@ -2156,6 +2199,7 @@ BULLET0_ERASE_GOT:
     NOP
     NOP
     NOP
+    EI
     JP BULLET0_NEXT
 BULLET0_OFF:
     XOR A : LD (BULLET0_ACT),A
@@ -2197,6 +2241,7 @@ BULLET1_HITERASE_GOT:
     LD (TEMP_ERASE_BYTE),A
     LD HL,(BULLET1_ADDR)
     LD A,(BULLET1_COL) : LD E,A : LD D,0 : ADD HL,DE
+    DI
     LD A,L : OUT (99h),A
     NOP
     NOP
@@ -2225,6 +2270,7 @@ BULLET1_HITERASE_GOT:
     NOP
     NOP
     XOR A : LD (BULLET1_ACT),A
+    EI
     JP BULLET1_NEXT
 BULLET1_NOHIT:
     LD A,(BULLET1_ROW) : CP GROUND_ROW0
@@ -2242,6 +2288,7 @@ BULLET1_ERASE_GOT:
     LD (TEMP_ERASE_BYTE),A
     LD HL,(BULLET1_ADDR)
     LD A,(BULLET1_COL) : LD E,A : LD D,0 : ADD HL,DE
+    DI
     LD A,L : OUT (99h),A
     NOP
     NOP
@@ -2271,9 +2318,11 @@ BULLET1_ERASE_GOT:
     NOP
     LD A,(BULLET1_COL) : INC A : LD (BULLET1_COL),A
     CP BULLET_MAXCOL+1
+    EI
     JR NC,BULLET1_OFF
     LD HL,(BULLET1_ADDR)
     LD A,(BULLET1_COL) : LD E,A : LD D,0 : ADD HL,DE
+    DI
     LD A,L : OUT (99h),A
     NOP
     NOP
@@ -2301,6 +2350,7 @@ BULLET1_ERASE_GOT:
     NOP
     NOP
     NOP
+    EI
     JP BULLET1_NEXT
 BULLET1_OFF:
     XOR A : LD (BULLET1_ACT),A
@@ -2342,6 +2392,7 @@ BULLET2_HITERASE_GOT:
     LD (TEMP_ERASE_BYTE),A
     LD HL,(BULLET2_ADDR)
     LD A,(BULLET2_COL) : LD E,A : LD D,0 : ADD HL,DE
+    DI
     LD A,L : OUT (99h),A
     NOP
     NOP
@@ -2370,6 +2421,7 @@ BULLET2_HITERASE_GOT:
     NOP
     NOP
     XOR A : LD (BULLET2_ACT),A
+    EI
     JP BULLET2_NEXT
 BULLET2_NOHIT:
     LD A,(BULLET2_ROW) : CP GROUND_ROW0
@@ -2387,6 +2439,7 @@ BULLET2_ERASE_GOT:
     LD (TEMP_ERASE_BYTE),A
     LD HL,(BULLET2_ADDR)
     LD A,(BULLET2_COL) : LD E,A : LD D,0 : ADD HL,DE
+    DI
     LD A,L : OUT (99h),A
     NOP
     NOP
@@ -2416,9 +2469,11 @@ BULLET2_ERASE_GOT:
     NOP
     LD A,(BULLET2_COL) : INC A : LD (BULLET2_COL),A
     CP BULLET_MAXCOL+1
+    EI
     JR NC,BULLET2_OFF
     LD HL,(BULLET2_ADDR)
     LD A,(BULLET2_COL) : LD E,A : LD D,0 : ADD HL,DE
+    DI
     LD A,L : OUT (99h),A
     NOP
     NOP
@@ -2446,6 +2501,7 @@ BULLET2_ERASE_GOT:
     NOP
     NOP
     NOP
+    EI
     JP BULLET2_NEXT
 BULLET2_OFF:
     XOR A : LD (BULLET2_ACT),A
@@ -2620,6 +2676,7 @@ PPF_LOOP:
 
     LD A,EXPLOSION_SPR_BASE : ADD A,C
     ADD A,A : ADD A,A : LD E,A : LD D,0
+    DI
     LD A,E : OUT (99h),A
     NOP
     NOP
@@ -2642,7 +2699,9 @@ PPF_LOOP:
     LD HL,PARTICLE_ACT : LD D,0 : LD E,C : ADD HL,DE
     LD A,(HL)
     OR A
+    EI
     JR NZ,PPF_VISIBLE
+    DI
     LD A,ENEMY_HIDE_Y : OUT (98h),A
     NOP
     NOP
@@ -2661,9 +2720,11 @@ PPF_LOOP:
     NOP
     NOP
     NOP
+    EI
     JP PPF_SKIP
 PPF_VISIBLE:
     LD HL,PARTICLE_Y : LD D,0 : LD E,C : ADD HL,DE
+    DI
     LD A,(HL) : OUT (98h),A
     NOP
     NOP
@@ -2702,6 +2763,7 @@ PPF_VISIBLE:
     NOP
     NOP
     NOP
+    EI
 PPF_SKIP:
     INC C
     LD A,C
@@ -2748,6 +2810,7 @@ QUAD_HIT_NO:
 ; Trashes A,B,HL.
 REDRAW_UNIT_PATTERN:
     LD A,L
+    DI
     OUT (99h),A
     NOP
     NOP
@@ -2769,9 +2832,11 @@ REDRAW_UNIT_PATTERN:
     NOP
     LD A,(DE)
     OR A
+    EI
     JR Z,RU_TL_BLANK
     LD HL,ASTERISK_PATTERN : LD B,8
 RU_TL_LOOP:
+    DI
     LD A,(HL) : OUT (98h),A
     NOP
     NOP
@@ -2781,11 +2846,13 @@ RU_TL_LOOP:
     NOP
     NOP
     NOP
+    EI
     INC HL : DJNZ RU_TL_LOOP
     JR RU_BL
 RU_TL_BLANK:
     LD B,8
 RU_TL_BLANK_LOOP:
+    DI
     XOR A : OUT (98h),A
     NOP
     NOP
@@ -2795,10 +2862,12 @@ RU_TL_BLANK_LOOP:
     NOP
     NOP
     NOP
+    EI
     DJNZ RU_TL_BLANK_LOOP
 RU_BL:
     LD B,8
 RU_BL_LOOP:
+    DI
     XOR A : OUT (98h),A
     NOP
     NOP
@@ -2808,9 +2877,11 @@ RU_BL_LOOP:
     NOP
     NOP
     NOP
+    EI
     DJNZ RU_BL_LOOP
     LD B,8
 RU_TR_LOOP:
+    DI
     XOR A : OUT (98h),A
     NOP
     NOP
@@ -2820,12 +2891,14 @@ RU_TR_LOOP:
     NOP
     NOP
     NOP
+    EI
     DJNZ RU_TR_LOOP
     LD A,(IX+0)
     OR A
     JR Z,RU_BR_BLANK
     LD HL,ASTERISK_PATTERN : LD B,8
 RU_BR_LOOP:
+    DI
     LD A,(HL) : OUT (98h),A
     NOP
     NOP
@@ -2835,11 +2908,13 @@ RU_BR_LOOP:
     NOP
     NOP
     NOP
+    EI
     INC HL : DJNZ RU_BR_LOOP
     RET
 RU_BR_BLANK:
     LD B,8
 RU_BR_BLANK_LOOP:
+    DI
     XOR A : OUT (98h),A
     NOP
     NOP
@@ -2849,6 +2924,7 @@ RU_BR_BLANK_LOOP:
     NOP
     NOP
     NOP
+    EI
     DJNZ RU_BR_BLANK_LOOP
     RET
 
@@ -3203,6 +3279,7 @@ WAC_SKIPBUF:
     LD A,(ANIM_TMP_ROW) : LD E,A : LD D,ROWADDR_HI/256 : LD A,(DE) : LD (ANIM_ADDR_TMP+1),A
     LD HL,(ANIM_ADDR_TMP)
     LD A,(ANIM_TMP_COL) : LD E,A : LD D,0 : ADD HL,DE
+    DI
     LD A,L : OUT (99h),A
     NOP
     NOP
@@ -3230,6 +3307,7 @@ WAC_SKIPBUF:
     NOP
     NOP
     NOP
+    EI
     RET
 
 ; PSG (AY-3-8910-compatible) sound effects: channel A = noise-only
@@ -3773,6 +3851,7 @@ ESC_COMPLEX_INIT_A:
     CALL ALLOC_SPRITE_NUM : LD (E2A_U1_SPRNUM),A
     CALL ALLOC_SPRITE_NUM : LD (E2A_U2_SPRNUM),A
     CALL ALLOC_SPRITE_NUM : LD (E2A_TEMP_SPRNUM),A
+    DI
     LD A,(E2A_TEMP_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
     NOP
     NOP
@@ -3810,6 +3889,7 @@ ESC_COMPLEX_INIT_A:
     NOP
     NOP
     LD HL,SPRPAT+256 : LD DE,E2A_U0_TOP : LD IX,E2A_U0_BOT
+    EI
     CALL REDRAW_UNIT_PATTERN
     LD HL,SPRPAT+288 : LD DE,E2A_U1_TOP : LD IX,E2A_U1_BOT
     CALL REDRAW_UNIT_PATTERN
@@ -3821,6 +3901,7 @@ ESC_COMPLEX_INIT_A:
     XOR A
     LD (E2A_SEQ_STATE),A : LD (E2A_PROGRESS),A
     LD A,ENEMY_SPAWNX : LD (E2A_U0_X),A
+    DI
     LD A,(E2A_U1_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
     NOP
     NOP
@@ -3930,6 +4011,7 @@ ESC_COMPLEX_INIT_A:
     NOP
     NOP
     LD A,1 : LD (E2A_ACTIVE),A
+    EI
     RET
 
 ENEMY_START_COMPLEX_B:
@@ -3951,6 +4033,7 @@ ESC_COMPLEX_INIT_B:
     CALL ALLOC_SPRITE_NUM : LD (E2B_U1_SPRNUM),A
     CALL ALLOC_SPRITE_NUM : LD (E2B_U2_SPRNUM),A
     CALL ALLOC_SPRITE_NUM : LD (E2B_TEMP_SPRNUM),A
+    DI
     LD A,(E2B_TEMP_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
     NOP
     NOP
@@ -3988,6 +4071,7 @@ ESC_COMPLEX_INIT_B:
     NOP
     NOP
     LD HL,SPRPAT+416 : LD DE,E2B_U0_TOP : LD IX,E2B_U0_BOT
+    EI
     CALL REDRAW_UNIT_PATTERN
     LD HL,SPRPAT+448 : LD DE,E2B_U1_TOP : LD IX,E2B_U1_BOT
     CALL REDRAW_UNIT_PATTERN
@@ -3999,6 +4083,7 @@ ESC_COMPLEX_INIT_B:
     XOR A
     LD (E2B_SEQ_STATE),A : LD (E2B_PROGRESS),A
     LD A,ENEMY_SPAWNX : LD (E2B_U0_X),A
+    DI
     LD A,(E2B_U1_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
     NOP
     NOP
@@ -4108,6 +4193,7 @@ ESC_COMPLEX_INIT_B:
     NOP
     NOP
     LD A,1 : LD (E2B_ACTIVE),A
+    EI
     RET
 
 ; Checked once per game tick (every 8 frames). Fires each scheduled
@@ -4307,6 +4393,7 @@ BCDE_RESERVE:
 ; X=255 to that VDP attribute slot, then frees it.
 BCDE_HIDE1:
     PUSH AF
+    DI
     ADD A,A : ADD A,A : OUT (99h),A
     NOP
     NOP
@@ -4343,6 +4430,7 @@ BCDE_HIDE1:
     NOP
     NOP
     NOP
+    EI
     POP AF
     CALL FREE_SPRITE_NUM
     RET
@@ -4506,6 +4594,7 @@ BOSS_DRAW_CUR_TILE:
     ADD HL,DE
     LD A,(HL) : LD (BOSS_TILETMP),A
     POP DE
+    DI
     LD A,E : OUT (99h),A
     NOP
     NOP
@@ -4539,6 +4628,7 @@ BOSS_DRAW_CUR_TILE:
     NOP
     NOP
     NOP
+    EI
     CALL SOUND_POD_HIT
     RET
 
@@ -4549,6 +4639,7 @@ BOSS_DRAW_CUR_TILE:
 BOSS_SPR_SET_YXP:
     LD A,BOSS_SPR_BASE : ADD A,A : ADD A,A : LD E,A : LD D,0
     LD A,E : LD (BOSS_SPR_ADDRLO),A
+    DI
     LD A,E : OUT (99h),A
     NOP
     NOP
@@ -4648,6 +4739,7 @@ BOSS_SPR_SET_YXP:
     NOP
     NOP
     NOP
+    EI
     RET
 
 ; writes the color byte (passed in A) for the fixed boss-effect
@@ -4655,6 +4747,7 @@ BOSS_SPR_SET_YXP:
 BOSS_SPR_SET_COLOR:
     LD (BOSS_CTMP),A
     LD A,(BOSS_SPR_ADDRLO) : LD E,A : LD D,0
+    DI
     LD A,E : ADD A,3 : OUT (99h),A
     NOP
     NOP
@@ -4688,12 +4781,14 @@ BOSS_SPR_SET_COLOR:
     NOP
     NOP
     NOP
+    EI
     RET
 
 ; parks the boss-effect sprite off-screen (Y=209: past the visible
 ; area and past the Y=208 stop sentinel) once the last row lands.
 BOSS_HIDE_SPRITE:
     LD A,BOSS_SPR_BASE : ADD A,A : ADD A,A : LD E,A : LD D,0
+    DI
     LD A,E : OUT (99h),A
     NOP
     NOP
@@ -4727,6 +4822,7 @@ BOSS_HIDE_SPRITE:
     NOP
     NOP
     NOP
+    EI
     RET
 
 ; called every frame once BOSS_STATE==2 (landed) - advances the
@@ -4798,6 +4894,7 @@ BOD_NORECOIL:
     LD A,BOSS_ORBIT_BASE
     ADD A,B
     ADD A,A : ADD A,A : LD E,A : LD D,0
+    DI
     LD A,E : OUT (99h),A
     NOP
     NOP
@@ -4906,6 +5003,7 @@ BOD_NORECOIL:
     NOP
     NOP
     NOP
+    EI
 BOD_NEXT:
     INC B
     LD A,B
@@ -4989,6 +5087,7 @@ CB0_ERASE:
     LD A,(BULLET0_COL)
     LD D,0 : LD E,A
     ADD HL,DE
+    DI
     LD A,L : OUT (99h),A
     NOP
     NOP
@@ -5017,6 +5116,7 @@ CB0_ERASE:
     NOP
     NOP
     XOR A : LD (BULLET0_ACT),A
+    EI
     RET
 CB0_ERASE_FAST:
     LD A,(BULLET0_ROW)
@@ -5027,6 +5127,7 @@ CB0_ERASE_FAST:
     LD A,(BULLET0_COL)
     LD D,0 : LD E,A
     ADD HL,DE
+    DI
     LD A,L : OUT (99h),A
     NOP
     NOP
@@ -5055,6 +5156,7 @@ CB0_ERASE_FAST:
     NOP
     NOP
     XOR A : LD (BULLET0_ACT),A
+    EI
     RET
 
 CHECK_BULLET1_VS_PODS:
@@ -5112,6 +5214,7 @@ CB1_ERASE:
     LD A,(BULLET1_COL)
     LD D,0 : LD E,A
     ADD HL,DE
+    DI
     LD A,L : OUT (99h),A
     NOP
     NOP
@@ -5140,6 +5243,7 @@ CB1_ERASE:
     NOP
     NOP
     XOR A : LD (BULLET1_ACT),A
+    EI
     RET
 CB1_ERASE_FAST:
     LD A,(BULLET1_ROW)
@@ -5150,6 +5254,7 @@ CB1_ERASE_FAST:
     LD A,(BULLET1_COL)
     LD D,0 : LD E,A
     ADD HL,DE
+    DI
     LD A,L : OUT (99h),A
     NOP
     NOP
@@ -5178,6 +5283,7 @@ CB1_ERASE_FAST:
     NOP
     NOP
     XOR A : LD (BULLET1_ACT),A
+    EI
     RET
 
 CHECK_BULLET2_VS_PODS:
@@ -5235,6 +5341,7 @@ CB2_ERASE:
     LD A,(BULLET2_COL)
     LD D,0 : LD E,A
     ADD HL,DE
+    DI
     LD A,L : OUT (99h),A
     NOP
     NOP
@@ -5263,6 +5370,7 @@ CB2_ERASE:
     NOP
     NOP
     XOR A : LD (BULLET2_ACT),A
+    EI
     RET
 CB2_ERASE_FAST:
     LD A,(BULLET2_ROW)
@@ -5273,6 +5381,7 @@ CB2_ERASE_FAST:
     LD A,(BULLET2_COL)
     LD D,0 : LD E,A
     ADD HL,DE
+    DI
     LD A,L : OUT (99h),A
     NOP
     NOP
@@ -5301,6 +5410,7 @@ CB2_ERASE_FAST:
     NOP
     NOP
     XOR A : LD (BULLET2_ACT),A
+    EI
     RET
 
 ; B = pod index (0-7) - knocks 1 HP off; at 0, destroys it (sound,
@@ -5324,6 +5434,7 @@ POD_HIT_DESTROY:
     CALL SOUND_DESTROY
     LD A,BOSS_ORBIT_BASE : ADD A,B
     ADD A,A : ADD A,A : LD E,A : LD D,0
+    DI
     LD A,E : OUT (99h),A
     NOP
     NOP
@@ -5363,6 +5474,7 @@ POD_HIT_DESTROY:
     LD (HL),1
     LD HL,EXPLOSION_TIMER : LD D,0 : LD E,B : ADD HL,DE
     LD (HL),EXPLOSION_DURATION
+    EI
     CALL EXPLOSION_DRAW
 
     CALL COUNT_ALIVE_PODS
@@ -5397,6 +5509,7 @@ EXPLOSION_DRAW:
     LD A,(HL) : LD (BOSS_ORBIT_YTMP),A
     LD A,EXPLOSION_SPR_BASE : ADD A,B
     ADD A,A : ADD A,A : LD E,A : LD D,0
+    DI
     LD A,E : OUT (99h),A
     NOP
     NOP
@@ -5505,12 +5618,14 @@ EXPLOSION_DRAW:
     NOP
     NOP
     NOP
+    EI
     RET
 
 ; B = pod index (0-7)
 EXPLOSION_HIDE:
     LD A,EXPLOSION_SPR_BASE : ADD A,B
     ADD A,A : ADD A,A : LD E,A : LD D,0
+    DI
     LD A,E : OUT (99h),A
     NOP
     NOP
@@ -5538,6 +5653,7 @@ EXPLOSION_HIDE:
     NOP
     NOP
     NOP
+    EI
     RET
 
 ; called every frame while BOSS_STATE==2 - counts down the burst's
@@ -5679,6 +5795,7 @@ BEU_DECODE_DONE:
     LD A,(BOSS_EXPL_COL)
     LD D,0 : LD E,A
     ADD HL,DE
+    DI
     LD A,L : OUT (99h),A
     NOP
     NOP
@@ -5718,6 +5835,7 @@ BEU_DECODE_DONE:
 
     LD A,(BOSS_EXPL_SPRIDX)
     LD H,0 : LD L,A
+    EI
     PUSH HL
     LD DE,EXPLOSION_Y
     ADD HL,DE
@@ -5958,6 +6076,7 @@ VU_PODLOST:
 
 LAP_MARKER_DRAW:
     LD A,LAP_MARKER_SPR : ADD A,A : ADD A,A : LD E,A : LD D,0
+    DI
     LD A,E : OUT (99h),A
     NOP
     NOP
@@ -6066,10 +6185,12 @@ LAP_MARKER_DRAW:
     NOP
     NOP
     NOP
+    EI
     RET
 
 LAP_MARKER_HIDE:
     LD A,LAP_MARKER_SPR : ADD A,A : ADD A,A : LD E,A : LD D,0
+    DI
     LD A,E : OUT (99h),A
     NOP
     NOP
@@ -6097,10 +6218,12 @@ LAP_MARKER_HIDE:
     NOP
     NOP
     NOP
+    EI
     RET
 
 LAP_MARKER_DRAW2:
     LD A,LAP_MARKER_SPR2 : ADD A,A : ADD A,A : LD E,A : LD D,0
+    DI
     LD A,E : OUT (99h),A
     NOP
     NOP
@@ -6209,10 +6332,12 @@ LAP_MARKER_DRAW2:
     NOP
     NOP
     NOP
+    EI
     RET
 
 LAP_MARKER_HIDE2:
     LD A,LAP_MARKER_SPR2 : ADD A,A : ADD A,A : LD E,A : LD D,0
+    DI
     LD A,E : OUT (99h),A
     NOP
     NOP
@@ -6240,6 +6365,7 @@ LAP_MARKER_HIDE2:
     NOP
     NOP
     NOP
+    EI
     RET
 
 ; sets Z if all 8 pods have finished their round trip (phase==1
@@ -6400,6 +6526,7 @@ LAUNCH_DRAW:
     LD A,(BOSS_ORBIT_YTMP) : LD (HL),A
     LD A,BOSS_ORBIT_BASE : ADD A,B
     ADD A,A : ADD A,A : LD E,A : LD D,0
+    DI
     LD A,E : OUT (99h),A
     NOP
     NOP
@@ -6508,6 +6635,7 @@ LAUNCH_DRAW:
     NOP
     NOP
     NOP
+    EI
     RET
 
 POD_BULLET_MOVE:
@@ -6540,6 +6668,7 @@ PBM_B1_OK:
 
 POD_BULLET_DRAW0:
     LD A,POD_BULLET_SPR0 : ADD A,A : ADD A,A : LD E,A : LD D,0
+    DI
     LD A,E : OUT (99h),A
     NOP
     NOP
@@ -6648,10 +6777,12 @@ POD_BULLET_DRAW0:
     NOP
     NOP
     NOP
+    EI
     RET
 
 POD_BULLET_DRAW1:
     LD A,POD_BULLET_SPR1 : ADD A,A : ADD A,A : LD E,A : LD D,0
+    DI
     LD A,E : OUT (99h),A
     NOP
     NOP
@@ -6760,10 +6891,12 @@ POD_BULLET_DRAW1:
     NOP
     NOP
     NOP
+    EI
     RET
 
 POD_BULLET_HIDE0:
     LD A,POD_BULLET_SPR0 : ADD A,A : ADD A,A : LD E,A : LD D,0
+    DI
     LD A,E : OUT (99h),A
     NOP
     NOP
@@ -6791,10 +6924,12 @@ POD_BULLET_HIDE0:
     NOP
     NOP
     NOP
+    EI
     RET
 
 POD_BULLET_HIDE1:
     LD A,POD_BULLET_SPR1 : ADD A,A : ADD A,A : LD E,A : LD D,0
+    DI
     LD A,E : OUT (99h),A
     NOP
     NOP
@@ -6822,6 +6957,7 @@ POD_BULLET_HIDE1:
     NOP
     NOP
     NOP
+    EI
     RET
 
 ; called every frame while BOSS_STATE==1 (materializing only - once
@@ -6866,6 +7002,7 @@ DEFLECT_BULLET0:
     LD A,(BULLET0_COL)
     LD D,0 : LD E,A
     ADD HL,DE
+    DI
     LD A,L : OUT (99h),A
     NOP
     NOP
@@ -6902,6 +7039,7 @@ DEFLECT_BULLET0:
     LD (DFL0_VEC),A
     LD A,1 : LD (DFL0_ACT),A
     LD A,DFL_LIFESPAN : LD (DFL0_LIFE),A
+    EI
     CALL DFL_DRAW0
     RET
 
@@ -6914,6 +7052,7 @@ DEFLECT_BULLET1:
     LD A,(BULLET1_COL)
     LD D,0 : LD E,A
     ADD HL,DE
+    DI
     LD A,L : OUT (99h),A
     NOP
     NOP
@@ -6950,6 +7089,7 @@ DEFLECT_BULLET1:
     LD (DFL1_VEC),A
     LD A,1 : LD (DFL1_ACT),A
     LD A,DFL_LIFESPAN : LD (DFL1_LIFE),A
+    EI
     CALL DFL_DRAW1
     RET
 
@@ -6962,6 +7102,7 @@ DEFLECT_BULLET2:
     LD A,(BULLET2_COL)
     LD D,0 : LD E,A
     ADD HL,DE
+    DI
     LD A,L : OUT (99h),A
     NOP
     NOP
@@ -6998,6 +7139,7 @@ DEFLECT_BULLET2:
     LD (DFL2_VEC),A
     LD A,1 : LD (DFL2_ACT),A
     LD A,DFL_LIFESPAN : LD (DFL2_LIFE),A
+    EI
     CALL DFL_DRAW2
     RET
 
@@ -7067,6 +7209,7 @@ DM2_GO:
 
 DFL_DRAW0:
     LD A,DFL_SPR0 : ADD A,A : ADD A,A : LD E,A : LD D,0
+    DI
     LD A,E : OUT (99h),A
     NOP
     NOP
@@ -7175,10 +7318,12 @@ DFL_DRAW0:
     NOP
     NOP
     NOP
+    EI
     RET
 
 DFL_DRAW1:
     LD A,DFL_SPR1 : ADD A,A : ADD A,A : LD E,A : LD D,0
+    DI
     LD A,E : OUT (99h),A
     NOP
     NOP
@@ -7287,10 +7432,12 @@ DFL_DRAW1:
     NOP
     NOP
     NOP
+    EI
     RET
 
 DFL_DRAW2:
     LD A,DFL_SPR2 : ADD A,A : ADD A,A : LD E,A : LD D,0
+    DI
     LD A,E : OUT (99h),A
     NOP
     NOP
@@ -7399,10 +7546,12 @@ DFL_DRAW2:
     NOP
     NOP
     NOP
+    EI
     RET
 
 DFL_HIDE0:
     LD A,DFL_SPR0 : ADD A,A : ADD A,A : LD E,A : LD D,0
+    DI
     LD A,E : OUT (99h),A
     NOP
     NOP
@@ -7430,10 +7579,12 @@ DFL_HIDE0:
     NOP
     NOP
     NOP
+    EI
     RET
 
 DFL_HIDE1:
     LD A,DFL_SPR1 : ADD A,A : ADD A,A : LD E,A : LD D,0
+    DI
     LD A,E : OUT (99h),A
     NOP
     NOP
@@ -7461,10 +7612,12 @@ DFL_HIDE1:
     NOP
     NOP
     NOP
+    EI
     RET
 
 DFL_HIDE2:
     LD A,DFL_SPR2 : ADD A,A : ADD A,A : LD E,A : LD D,0
+    DI
     LD A,E : OUT (99h),A
     NOP
     NOP
@@ -7492,6 +7645,7 @@ DFL_HIDE2:
     NOP
     NOP
     NOP
+    EI
     RET
 
 ; 8 fixed deflection vectors, all leftward-biased (dx always
@@ -7744,6 +7898,7 @@ ENEMY_DRAW_ALL_COMPLEX_A:
     ADD A,16 : LD (E2A_U1_X),A
     LD A,(E2A_X) : ADD A,32 : LD (E2A_U2_X),A
     LD A,(E2A_Y) : LD (E2A_U0_Y),A : LD (E2A_U1_Y),A : LD (E2A_U2_Y),A
+    DI
     LD A,(E2A_U0_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
     NOP
     NOP
@@ -7906,6 +8061,7 @@ ENEMY_DRAW_ALL_COMPLEX_A:
     NOP
     NOP
     NOP
+    EI
     RET
 
 ; Draws all 3 units at their OWN independent (X,Y) - used during the
@@ -7939,6 +8095,7 @@ EDS_U2_REAL_A:
 EDS_U2_SET_A:
     LD (E2A_EDS_Y2),A
 
+    DI
     LD A,(E2A_U0_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
     NOP
     NOP
@@ -8101,6 +8258,7 @@ EDS_U2_SET_A:
     NOP
     NOP
     NOP
+    EI
     RET
 
 ; Complex-mode per-frame state machine (E2A_SEQ_STATE 0-8):
@@ -8141,6 +8299,7 @@ ECS_S0_ARRIVED_A:
     LD A,1 : LD (E2A_SEQ_STATE),A
     LD A,ENEMY_SPAWNX : LD (E2A_TEMP_X),A
 ECS_S0_DRAW_A:
+    DI
     LD A,(E2A_U0_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
     NOP
     NOP
@@ -8195,6 +8354,7 @@ ECS_S0_DRAW_A:
     NOP
     NOP
     NOP
+    EI
     RET
 
 ECS_S1_A:
@@ -8210,6 +8370,7 @@ ECS_S1_SAVE_A:
     JP ECS_S1_DRAW_A
 ECS_S1_ARRIVED_A:
     LD A,1 : LD (E2A_U0_STATE),A
+    DI
     LD A,(E2A_U0_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
     NOP
     NOP
@@ -8302,8 +8463,10 @@ ECS_S1_ARRIVED_A:
     NOP
     LD A,2 : LD (E2A_SEQ_STATE),A
     LD A,ENEMY_SPAWNX : LD (E2A_U1_X),A
+    EI
     RET
 ECS_S1_DRAW_A:
+    DI
     LD A,(E2A_TEMP_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
     NOP
     NOP
@@ -8358,6 +8521,7 @@ ECS_S1_DRAW_A:
     NOP
     NOP
     NOP
+    EI
     RET
 
 ECS_S2_A:
@@ -8375,6 +8539,7 @@ ECS_S2_ARRIVED_A:
     LD A,3 : LD (E2A_SEQ_STATE),A
     LD A,ENEMY_SPAWNX : LD (E2A_TEMP_X),A
 ECS_S2_DRAW_A:
+    DI
     LD A,(E2A_U1_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
     NOP
     NOP
@@ -8429,6 +8594,7 @@ ECS_S2_DRAW_A:
     NOP
     NOP
     NOP
+    EI
     RET
 
 ECS_S3_A:
@@ -8444,6 +8610,7 @@ ECS_S3_SAVE_A:
     JP ECS_S3_DRAW_A
 ECS_S3_ARRIVED_A:
     LD A,1 : LD (E2A_U1_STATE),A
+    DI
     LD A,(E2A_U1_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
     NOP
     NOP
@@ -8536,8 +8703,10 @@ ECS_S3_ARRIVED_A:
     NOP
     LD A,4 : LD (E2A_SEQ_STATE),A
     LD A,ENEMY_SPAWNX : LD (E2A_U2_X),A
+    EI
     RET
 ECS_S3_DRAW_A:
+    DI
     LD A,(E2A_TEMP_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
     NOP
     NOP
@@ -8592,6 +8761,7 @@ ECS_S3_DRAW_A:
     NOP
     NOP
     NOP
+    EI
     RET
 
 ECS_S4_A:
@@ -8609,6 +8779,7 @@ ECS_S4_ARRIVED_A:
     LD A,5 : LD (E2A_SEQ_STATE),A
     LD A,ENEMY_SPAWNX : LD (E2A_TEMP_X),A
 ECS_S4_DRAW_A:
+    DI
     LD A,(E2A_U2_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
     NOP
     NOP
@@ -8663,6 +8834,7 @@ ECS_S4_DRAW_A:
     NOP
     NOP
     NOP
+    EI
     RET
 
 ECS_S5_A:
@@ -8678,6 +8850,7 @@ ECS_S5_SAVE_A:
     JP ECS_S5_DRAW_A
 ECS_S5_ARRIVED_A:
     LD A,1 : LD (E2A_U2_STATE),A
+    DI
     LD A,(E2A_U2_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
     NOP
     NOP
@@ -8771,8 +8944,10 @@ ECS_S5_ARRIVED_A:
     LD A,TARGETX0 : LD (E2A_X),A
     XOR A : LD (E2A_PROGRESS),A
     LD A,6 : LD (E2A_SEQ_STATE),A
+    EI
     RET
 ECS_S5_DRAW_A:
+    DI
     LD A,(E2A_TEMP_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
     NOP
     NOP
@@ -8827,6 +9002,7 @@ ECS_S5_DRAW_A:
     NOP
     NOP
     NOP
+    EI
     RET
 
 ECS_S6_A:
@@ -8956,6 +9132,7 @@ ECS_S7_STILLGOING_A:
 
 ; Hides all 3 formation-unit sprite slots (Y=ENEMY_HIDE_Y).
 ENEMY_HIDE_ALL3_A:
+    DI
     LD A,(E2A_U0_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
     NOP
     NOP
@@ -9100,6 +9277,7 @@ ENEMY_HIDE_ALL3_A:
     NOP
     NOP
     NOP
+    EI
     RET
 
 ECS_S7_OFFSCREEN_A:
@@ -9122,6 +9300,7 @@ ENEMY_DRAW_ALL_COMPLEX_B:
     ADD A,16 : LD (E2B_U1_X),A
     LD A,(E2B_X) : ADD A,32 : LD (E2B_U2_X),A
     LD A,(E2B_Y) : LD (E2B_U0_Y),A : LD (E2B_U1_Y),A : LD (E2B_U2_Y),A
+    DI
     LD A,(E2B_U0_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
     NOP
     NOP
@@ -9284,6 +9463,7 @@ ENEMY_DRAW_ALL_COMPLEX_B:
     NOP
     NOP
     NOP
+    EI
     RET
 
 ; Draws all 3 units at their OWN independent (X,Y) - used during the
@@ -9317,6 +9497,7 @@ EDS_U2_REAL_B:
 EDS_U2_SET_B:
     LD (E2B_EDS_Y2),A
 
+    DI
     LD A,(E2B_U0_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
     NOP
     NOP
@@ -9479,6 +9660,7 @@ EDS_U2_SET_B:
     NOP
     NOP
     NOP
+    EI
     RET
 
 ; Complex-mode per-frame state machine (E2B_SEQ_STATE 0-8):
@@ -9519,6 +9701,7 @@ ECS_S0_ARRIVED_B:
     LD A,1 : LD (E2B_SEQ_STATE),A
     LD A,ENEMY_SPAWNX : LD (E2B_TEMP_X),A
 ECS_S0_DRAW_B:
+    DI
     LD A,(E2B_U0_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
     NOP
     NOP
@@ -9573,6 +9756,7 @@ ECS_S0_DRAW_B:
     NOP
     NOP
     NOP
+    EI
     RET
 
 ECS_S1_B:
@@ -9588,6 +9772,7 @@ ECS_S1_SAVE_B:
     JP ECS_S1_DRAW_B
 ECS_S1_ARRIVED_B:
     LD A,1 : LD (E2B_U0_STATE),A
+    DI
     LD A,(E2B_U0_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
     NOP
     NOP
@@ -9680,8 +9865,10 @@ ECS_S1_ARRIVED_B:
     NOP
     LD A,2 : LD (E2B_SEQ_STATE),A
     LD A,ENEMY_SPAWNX : LD (E2B_U1_X),A
+    EI
     RET
 ECS_S1_DRAW_B:
+    DI
     LD A,(E2B_TEMP_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
     NOP
     NOP
@@ -9736,6 +9923,7 @@ ECS_S1_DRAW_B:
     NOP
     NOP
     NOP
+    EI
     RET
 
 ECS_S2_B:
@@ -9753,6 +9941,7 @@ ECS_S2_ARRIVED_B:
     LD A,3 : LD (E2B_SEQ_STATE),A
     LD A,ENEMY_SPAWNX : LD (E2B_TEMP_X),A
 ECS_S2_DRAW_B:
+    DI
     LD A,(E2B_U1_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
     NOP
     NOP
@@ -9807,6 +9996,7 @@ ECS_S2_DRAW_B:
     NOP
     NOP
     NOP
+    EI
     RET
 
 ECS_S3_B:
@@ -9822,6 +10012,7 @@ ECS_S3_SAVE_B:
     JP ECS_S3_DRAW_B
 ECS_S3_ARRIVED_B:
     LD A,1 : LD (E2B_U1_STATE),A
+    DI
     LD A,(E2B_U1_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
     NOP
     NOP
@@ -9914,8 +10105,10 @@ ECS_S3_ARRIVED_B:
     NOP
     LD A,4 : LD (E2B_SEQ_STATE),A
     LD A,ENEMY_SPAWNX : LD (E2B_U2_X),A
+    EI
     RET
 ECS_S3_DRAW_B:
+    DI
     LD A,(E2B_TEMP_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
     NOP
     NOP
@@ -9970,6 +10163,7 @@ ECS_S3_DRAW_B:
     NOP
     NOP
     NOP
+    EI
     RET
 
 ECS_S4_B:
@@ -9987,6 +10181,7 @@ ECS_S4_ARRIVED_B:
     LD A,5 : LD (E2B_SEQ_STATE),A
     LD A,ENEMY_SPAWNX : LD (E2B_TEMP_X),A
 ECS_S4_DRAW_B:
+    DI
     LD A,(E2B_U2_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
     NOP
     NOP
@@ -10041,6 +10236,7 @@ ECS_S4_DRAW_B:
     NOP
     NOP
     NOP
+    EI
     RET
 
 ECS_S5_B:
@@ -10056,6 +10252,7 @@ ECS_S5_SAVE_B:
     JP ECS_S5_DRAW_B
 ECS_S5_ARRIVED_B:
     LD A,1 : LD (E2B_U2_STATE),A
+    DI
     LD A,(E2B_U2_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
     NOP
     NOP
@@ -10149,8 +10346,10 @@ ECS_S5_ARRIVED_B:
     LD A,TARGETX0 : LD (E2B_X),A
     XOR A : LD (E2B_PROGRESS),A
     LD A,6 : LD (E2B_SEQ_STATE),A
+    EI
     RET
 ECS_S5_DRAW_B:
+    DI
     LD A,(E2B_TEMP_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
     NOP
     NOP
@@ -10205,6 +10404,7 @@ ECS_S5_DRAW_B:
     NOP
     NOP
     NOP
+    EI
     RET
 
 ECS_S6_B:
@@ -10334,6 +10534,7 @@ ECS_S7_STILLGOING_B:
 
 ; Hides all 3 formation-unit sprite slots (Y=ENEMY_HIDE_Y).
 ENEMY_HIDE_ALL3_B:
+    DI
     LD A,(E2B_U0_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
     NOP
     NOP
@@ -10478,6 +10679,7 @@ ENEMY_HIDE_ALL3_B:
     NOP
     NOP
     NOP
+    EI
     RET
 
 ECS_S7_OFFSCREEN_B:
@@ -10611,6 +10813,7 @@ EPUA_SKIP:
 ; (deactivates, no score) once it drifts off the left edge.
 ; Input: IX = slot base (already confirmed ACTIVE).
 EBSB_UPDATE:
+    DI
     LD A,(IX+E_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
     NOP
     NOP
@@ -10632,6 +10835,7 @@ EBSB_UPDATE:
 
     LD A,(IX+E_X)
     CP ENEMY4_SPEED
+    EI
     JR NC,EBSB_MOVEOK
     JP EBSB_EXIT_LEFT
 EBSB_MOVEOK:
@@ -10645,6 +10849,7 @@ EBSB_PHASEOK:
     LD E,A : LD D,0
     LD HL,ENEMY4_SINE_LUT
     ADD HL,DE
+    DI
     LD A,(IX+E_PARAM0) : ADD A,(HL) : OUT (98h),A
     NOP
     NOP
@@ -10663,7 +10868,9 @@ EBSB_PHASEOK:
     NOP
     NOP
     NOP
+    EI
     LD A,(IX+E_TYPE) : CALL ENEMY_TYPE_LOOKUP
+    DI
     LD A,(HL) : OUT (98h),A          ; pattern
     NOP
     NOP
@@ -10683,12 +10890,14 @@ EBSB_PHASEOK:
     NOP
     NOP
     NOP
+    EI
     RET
 
 ; Drifted off the left edge: hide the sprite, restore its type's
 ; pattern/color (matches the legacy Enemy4 exit write), and free the
 ; slot. No score, no explosion - this is an exit, not a kill.
 EBSB_EXIT_LEFT:
+    DI
     LD A,ENEMY_HIDE_Y : OUT (98h),A
     NOP
     NOP
@@ -10707,7 +10916,9 @@ EBSB_EXIT_LEFT:
     NOP
     NOP
     NOP
+    EI
     LD A,(IX+E_TYPE) : CALL ENEMY_TYPE_LOOKUP
+    DI
     LD A,(HL) : OUT (98h),A
     NOP
     NOP
@@ -10727,6 +10938,7 @@ EBSB_EXIT_LEFT:
     NOP
     NOP
     NOP
+    EI
     CALL FREE_ENEMY_SLOT
     RET
 
@@ -10773,6 +10985,7 @@ EBSD_DIAG_SKIP_TRIGGER:
     ADD A,B
     LD (IX+E_Y),A
 EBSD_DRAW:
+    DI
     LD A,(IX+E_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
     NOP
     NOP
@@ -10809,7 +11022,9 @@ EBSD_DRAW:
     NOP
     NOP
     NOP
+    EI
     LD A,(IX+E_PARAM3) : CALL SIMPLE_PATTERN_NUM
+    DI
     OUT (98h),A
     NOP
     NOP
@@ -10828,6 +11043,7 @@ EBSD_DRAW:
     NOP
     NOP
     NOP
+    EI
     RET
 
 ; Drifted off the left edge: hide the sprite, then free its sprite
@@ -10837,6 +11053,7 @@ EBSD_DRAW:
 ; EBSD_HIT_TEST).
 EBSD_EXIT_LEFT:
     LD A,(IX+E_SPRNUM) : PUSH AF
+    DI
     ADD A,A : ADD A,A : OUT (99h),A
     NOP
     NOP
@@ -10873,6 +11090,7 @@ EBSD_EXIT_LEFT:
     NOP
     NOP
     NOP
+    EI
     POP AF : CALL FREE_SPRITE_NUM
     LD A,(IX+E_PARAM3) : CALL FREE_PATTERN_SLOT
     CALL FREE_ENEMY_SLOT
@@ -10945,6 +11163,7 @@ EBSB_HIT_TEST:
     OR A
     JR NZ,EBSBH_DAMAGED
     ; --- HP reached 0: fully destroy ---
+    DI
     LD A,(IX+E_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
     NOP
     NOP
@@ -10984,6 +11203,7 @@ EBSB_HIT_TEST:
     ; --- stash the score selector and free the slot BEFORE calling  ---
     ; --- TRIGGER_EXPLOSION, which reuses IX for its own ANIM_BASE   ---
     ; --- bookkeeping - nothing below this may rely on IX afterward. ---
+    EI
     PUSH DE                     ; TRIGGER_EXPLOSION needs D,E = hit X,Y - the type/score
                                  ; lookup below (ENEMY_TYPE_LOOKUP, LD DE,ETT_SCORESEL) reuses DE
     LD A,(IX+E_TYPE) : CALL ENEMY_TYPE_LOOKUP
