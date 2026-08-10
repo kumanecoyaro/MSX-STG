@@ -479,6 +479,10 @@ ENEMY3_BUDGET      EQU 0E473h
 ENEMY3_SPAWN_TIMER EQU 0E474h
 ENEMY3_SPAWN_COUNT EQU 0E4CEh  ; how many spawned so far this wave (resume enemy1/2 at 32)
 ENEMY3_POOL        EQU 0E475h  ; 8*11 = 88 bytes
+; current group member's CIRCLE-entry LUT offset (0,2,4 - see
+; ENEMY3_TRY_SPAWN), read once by ENEMY3_DO_SPAWN when it pre-seeds
+; that instance's ANGLEIDX.
+ENEMY3_LUT_OFFSET  EQU 0EB5Dh
 
 ; --- shot background-color variants: blue(sky), white(mountain, ---
 ; --- screen row 18), green(diamond/slash/backslash, rows 19-22), ---
@@ -11294,6 +11298,30 @@ ENEMY4_SINE_LUT:
     DB 0,3,6,9,11,13,15,16,16,16,15,13,11,9,6,3
     DB 0,253,250,247,245,243,241,240,240,240,241,243,245,247,250,253
 
+; Scans the 8 ENEMY3_POOL slots for the first inactive one.
+; Output: A=1 and IX=that slot's base if found; A=0 (IX undefined) if
+; the pool is full. Trashes A, IX.
+ENEMY3_FIND_FREE_SLOT:
+    LD IX,ENEMY3_POOL             : LD A,(IX+0) : OR A : JR Z,E3FS_FOUND
+    LD IX,ENEMY3_POOL+11          : LD A,(IX+0) : OR A : JR Z,E3FS_FOUND
+    LD IX,ENEMY3_POOL+22          : LD A,(IX+0) : OR A : JR Z,E3FS_FOUND
+    LD IX,ENEMY3_POOL+33          : LD A,(IX+0) : OR A : JR Z,E3FS_FOUND
+    LD IX,ENEMY3_POOL+44          : LD A,(IX+0) : OR A : JR Z,E3FS_FOUND
+    LD IX,ENEMY3_POOL+55          : LD A,(IX+0) : OR A : JR Z,E3FS_FOUND
+    LD IX,ENEMY3_POOL+66          : LD A,(IX+0) : OR A : JR Z,E3FS_FOUND
+    LD IX,ENEMY3_POOL+77          : LD A,(IX+0) : OR A : JR Z,E3FS_FOUND
+    XOR A
+    RET
+E3FS_FOUND:
+    LD A,1
+    RET
+
+; Every ENEMY3_SPAWN_INTERVAL ticks, spawns up to 3 at once (LUT
+; offsets 0,2,4) so they enter the same circle together as a
+; synchronized trio, instead of trickling out one at a time with no
+; relation to each other. Stops early (this interval) if the budget
+; or free slots run out - whatever's left just waits for the next
+; interval, same skip-if-full behavior as before.
 ENEMY3_TRY_SPAWN:
     LD A,(ENEMY3_BUDGET)
     OR A
@@ -11304,15 +11332,23 @@ ENEMY3_TRY_SPAWN:
     RET NZ
     LD A,ENEMY3_SPAWN_INTERVAL
     LD (ENEMY3_SPAWN_TIMER),A
-    LD IX,ENEMY3_POOL             : LD A,(IX+0) : OR A : JP Z,ENEMY3_DO_SPAWN
-    LD IX,ENEMY3_POOL+11          : LD A,(IX+0) : OR A : JP Z,ENEMY3_DO_SPAWN
-    LD IX,ENEMY3_POOL+22          : LD A,(IX+0) : OR A : JP Z,ENEMY3_DO_SPAWN
-    LD IX,ENEMY3_POOL+33          : LD A,(IX+0) : OR A : JP Z,ENEMY3_DO_SPAWN
-    LD IX,ENEMY3_POOL+44          : LD A,(IX+0) : OR A : JP Z,ENEMY3_DO_SPAWN
-    LD IX,ENEMY3_POOL+55          : LD A,(IX+0) : OR A : JP Z,ENEMY3_DO_SPAWN
-    LD IX,ENEMY3_POOL+66          : LD A,(IX+0) : OR A : JP Z,ENEMY3_DO_SPAWN
-    LD IX,ENEMY3_POOL+77          : LD A,(IX+0) : OR A : JP Z,ENEMY3_DO_SPAWN
+    LD C,0
+E3TS_GROUP:
+    LD A,(ENEMY3_BUDGET)
+    OR A
+    RET Z
+    CALL ENEMY3_FIND_FREE_SLOT
+    OR A
+    RET Z
+    LD A,C : LD (ENEMY3_LUT_OFFSET),A
+    CALL ENEMY3_DO_SPAWN
+    LD A,C : ADD A,2 : LD C,A
+    CP 6
+    JR C,E3TS_GROUP
     RET
+
+; Input: IX = slot base address (from ENEMY3_FIND_FREE_SLOT),
+; ENEMY3_LUT_OFFSET = this group member's CIRCLE-entry angle offset.
 ENEMY3_DO_SPAWN:
     LD A,1 : LD (IX+0),A
     XOR A : LD (IX+1),A
@@ -11320,7 +11356,18 @@ ENEMY3_DO_SPAWN:
     LD A,ENEMY3_SPAWN_Y : LD (IX+3),A
     LD A,ENEMY3_SPAWN_Y : SRL A : SRL A : SRL A : LD (IX+4),A
     LD A,ENEMY3_SPAWN_X : SRL A : SRL A : SRL A : LD (IX+5),A
-    XOR A : LD (IX+6),A : LD (IX+7),A : LD (IX+8),A : LD (IX+9),A
+    ; --- pre-seed the CIRCLE starting angle now (ANGLEIDX, unused    ---
+    ; --- during DIAG) instead of at the DIAG->CIRCLE transition, so   ---
+    ; --- each trio member keeps its own offset even though           ---
+    ; --- ENEMY3_LUT_OFFSET is a shared scratch var reused for the    ---
+    ; --- next member right after this call returns.                  ---
+    LD A,ENEMY3_START_ANGLE : LD B,A
+    LD A,(ENEMY3_LUT_OFFSET) : ADD A,B
+    CP 24 : JR C,E3DS_ANGLEOK
+    SUB 24
+E3DS_ANGLEOK:
+    LD (IX+6),A
+    XOR A : LD (IX+7),A : LD (IX+8),A : LD (IX+9),A
     LD A,ANIM3_PACE : LD (IX+10),A
     LD A,(ENEMY3_BUDGET) : DEC A : LD (ENEMY3_BUDGET),A
     LD A,(ENEMY3_SPAWN_COUNT) : INC A : LD (ENEMY3_SPAWN_COUNT),A
@@ -11418,7 +11465,8 @@ E3_DIAG_YOK:
     LD A,(IX+3) : CP ENEMY3_CENTER_Y
     JP NZ,E3_DRAW
     LD A,1 : LD (IX+1),A
-    LD A,ENEMY3_START_ANGLE : LD (IX+6),A
+    ; IX+6 (ANGLEIDX) was already pre-seeded at spawn time with this
+    ; instance's own trio-offset - see ENEMY3_DO_SPAWN. Don't overwrite it.
     XOR A : LD (IX+7),A : LD (IX+8),A
     JP E3_DRAW
 
