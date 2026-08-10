@@ -116,15 +116,17 @@ GROUND_ROW0   EQU 19    ; first screen row of the 5-row ground scroller
                         ; load, and TIER1_MOUNTAIN now draws one row lower,
                         ; at screen row19, to fill the gap)
 
-; --- real-hardware-observed garbage cells (see GARBAGE_SCRUB): reverse-  ---
-; --- engineered from a screenshot, all 3 in the sky along Enemy3's      ---
-; --- flight path. Adjust if a report shows a different cell.            ---
-GARBAGE1_ROW EQU 9
-GARBAGE1_COL EQU 23
-GARBAGE2_ROW EQU 17
-GARBAGE2_COL EQU 26
-GARBAGE3_ROW EQU 3
-GARBAGE3_COL EQU 26
+; --- real-hardware-observed garbage cells (see GARBAGE_SCRUB): given    ---
+; --- directly as "Nth from the right"/"Nth from the top or bottom"      ---
+; --- (32 cols, 24 rows; 1st from right=col31, 1st from top=row0, 1st    ---
+; --- from bottom=row23). GARBAGE3_ROW's Y was reported as "row 8 or 9   ---
+; --- from the top" (ambiguous) - picked row8; adjust if wrong.          ---
+GARBAGE1_ROW EQU 2      ; 3rd from top
+GARBAGE1_COL EQU 25     ; 7th from right (32-7)
+GARBAGE2_ROW EQU 18     ; 6th from bottom (23-5)
+GARBAGE2_COL EQU 26     ; 6th from right (32-6)
+GARBAGE3_ROW EQU 8      ; 8th (or 9th=row7) from top - unconfirmed
+GARBAGE3_COL EQU 25     ; 7th from right (32-7)
 
 FIRE_COOLDOWN EQU 0E3D2h ; frames to wait before another shot can spawn
 FIRE_COOLDOWN_LEN EQU 1  ; "1 cycle" gap between shots (see fire logic)
@@ -1976,8 +1978,6 @@ BULLET2_OFF:
     XOR A : LD (BULLET2_ACT),A
 BULLET2_NEXT:
 
-    CALL GARBAGE_SCRUB
-
     EI
     HALT
     JP MAINLOOP
@@ -2652,10 +2652,10 @@ WAC_SKIPBUF:
 ; or per-frame-workload tuning; both were tried and made it worse, not
 ; better, so this isn't a simple margin/budget problem). Brute-force
 ; defensive fix: unconditionally rewrite these 3 fixed sky cells to
-; BLANKCODE every single frame, last thing before HALT, so any
-; corruption written earlier in the frame never survives past it.
-; Coordinates reverse-engineered from a real-hardware screenshot - see
-; GARBAGE1/2/3_ROW/COL if a report shows a different cell.
+; BLANKCODE. Called from ENEMY3_UPDATE_SLOT right after its own erase
+; write, so it only runs while some Enemy3 instance is active, not
+; unconditionally every frame. Coordinates given directly ("Nth from
+; the right/top/bottom") - see GARBAGE1/2/3_ROW/COL if wrong.
 GARBAGE_SCRUB:
     LD A,GARBAGE1_ROW : LD E,A : LD D,ROWADDR_LO/256 : LD A,(DE) : LD L,A
     LD A,GARBAGE1_ROW : LD E,A : LD D,ROWADDR_HI/256 : LD A,(DE) : LD H,A
@@ -7636,6 +7636,7 @@ E3_ERASE_GOT:
     LD A,(IX+4) : LD (ANIM_TMP_ROW),A
     LD A,(IX+5) : LD (ANIM_TMP_COL),A
     CALL WRITE_ANIM_CELL
+    CALL GARBAGE_SCRUB
 
     LD A,(IX+10)
     DEC A
