@@ -410,6 +410,13 @@
     { tick: 280, row: 20, type: "boss" }
   ];
 
+  // ---------- Enemy3 wave internals (ENEMY3_TRY_SPAWN in CYBER_GD_BOSS.asm) -
+  // kept in sync by hand with the ASM constants of the same name, used only
+  // to draw the derived-spawn preview in drawGrid(). ----------
+  var ENEMY3_WAVE_BUDGET = 32;          // ENEMY3_BUDGET set by SPAWN_E3_WAVE
+  var ENEMY3_SPAWN_INTERVAL_TICKS = 1;  // ENEMY3_SPAWN_INTERVAL(8 frames) == 1 GAME_TICK
+  var ENEMY3_OFFSET_COUNT = 3;          // ENEMY3_OFFSET_TABLE's current length
+
   // ---------- geometry ----------
   var ROWS = 24;
   var MAX_TICK = 400; // scrollable canvas width in cells; game currently uses up to ~270
@@ -579,6 +586,35 @@
       ctx.lineTo(w, rr * CELL + 0.5);
       ctx.stroke();
     }
+
+    // derived preview: enemy3_wave is a single schedule trigger (SPAWN_E3_WAVE)
+    // that just arms ENEMY3_BUDGET=32, then ENEMY3_TRY_SPAWN (mainloop, not the
+    // schedule) fires once every ENEMY3_SPAWN_INTERVAL - which is exactly 1
+    // GAME_TICK - cycling ENEMY3_OFFSET_TABLE (currently 3 entries). Preview the
+    // resulting 32 individual spawns as faded, non-editable ghost cells so the
+    // wave's actual duration/shape is visible while placing things around it.
+    // Not part of `placements` - never saved, never clickable.
+    ctx.font = "700 " + Math.max(7, Math.round(CELL * 0.3)) + "px " + tok("--font-mono").split(",")[0] + ", monospace";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    placements.forEach(function (p) {
+      if (p.type !== "enemy3_wave") return;
+      var hue = tok(TYPE_BY_ID[p.type].hue);
+      for (var i = 1; i < ENEMY3_WAVE_BUDGET; i++) {
+        var t = p.tick + i * ENEMY3_SPAWN_INTERVAL_TICKS;
+        if (t > MAX_TICK) break;
+        var x = t * CELL, y = p.row * CELL;
+        var pad = 5;
+        ctx.globalAlpha = 0.3;
+        ctx.fillStyle = hue;
+        roundRect(ctx, x + pad, y + pad, CELL - pad * 2, CELL - pad * 2, 3);
+        ctx.fill();
+        ctx.globalAlpha = 0.8;
+        ctx.fillStyle = "#05080d";
+        ctx.fillText(String(i % ENEMY3_OFFSET_COUNT), x + CELL / 2, y + CELL / 2 + 1);
+        ctx.globalAlpha = 1;
+      }
+    });
 
     // placed enemies
     ctx.font = "700 " + Math.max(8, Math.round(CELL * 0.36)) + "px " + tok("--font-mono").split(",")[0] + ", monospace";
