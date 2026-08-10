@@ -490,6 +490,13 @@ ENEMY3_SPAWN_COUNT EQU 0E4CEh  ; how many spawned so far in total (resume enemy1
 ; fixed value for every member that wave spawns, nothing more.
 ENEMY3_WAVE_SLOTS EQU 8
 ENEMY3_WAVE_POOL   EQU 0EBB7h  ; ENEMY3_WAVE_SLOTS*4 bytes: ACTIVE,BUDGET,TIMER,OFFSET
+; How many ENEMY3_POOL instances are alive right now, across every wave
+; (incremented in ENEMY3_DO_SPAWN, decremented in E3_DEACTIVATE and
+; E3_HIT_ONE_SLOT's kill - the only two places a unit goes inactive).
+; CHECK_BULLET_VS_ENEMY3 checks this first and bails out immediately
+; when it's 0 instead of paying for a full 64-slot scan on every
+; bullet, every frame, for a wave that isn't even running.
+ENEMY3_ACTIVE_COUNT EQU 0EBD7h
 ; ENEMY3_WAVE_SLOTS*ENEMY3_SLOTS*ENEMY3_STRUCT = 704 bytes each, laid
 ; out as ENEMY3_WAVE_SLOTS consecutive ENEMY3_SLOTS-instance slices (one
 ; per wave slot, same order). ENEMY3_CENTERX_TABLE is parallel to
@@ -719,6 +726,7 @@ FILLBG_3:
     ; --- enemy3 pool: idle at boot - waves start as the tick schedule ---
     ; --- reaches each trigger (see SPAWN_SCHEDULE_CHECK)               ---
     XOR A : LD (ENEMY3_SPAWN_COUNT),A
+    XOR A : LD (ENEMY3_ACTIVE_COUNT),A
     ; Full 704-byte clear (all 64 slots, not just each slot's ACTIVE     ---
     ; byte) - ENEMY3_UPDATE_SLOT's inactive-slot safety net (see its own
     ; comment) reads ROW/COL (bytes 4/5) even for never-yet-spawned
@@ -11460,6 +11468,7 @@ E3DS_XOK:                         ; would silently re-enter from the LEFT edge, 
     XOR A : LD (IX+6),A : LD (IX+7),A : LD (IX+8),A : LD (IX+9),A
     LD A,ANIM3_PACE : LD (IX+10),A
     LD A,(ENEMY3_SPAWN_COUNT) : INC A : LD (ENEMY3_SPAWN_COUNT),A
+    LD A,(ENEMY3_ACTIVE_COUNT) : INC A : LD (ENEMY3_ACTIVE_COUNT),A
     RET
 
 ; Input: IX = slot base address. Advances one frame of that slot's
@@ -11497,7 +11506,14 @@ E3EC_GOT:
 ; instead of unrolling 64 individual LD IX,.../CALL pairs. Every slot
 ; still needs visiting to check its ACTIVE flag, but ENEMY3_UPDATE_SLOT
 ; returns immediately (cheap) for inactive ones - see its own comment.
+; ENEMY3_ACTIVE_COUNT==0 means every one of the 64 is inactive right
+; now (spawning itself is ENEMY3_TRY_SPAWN's job, not this one's), so
+; skip the scan entirely rather than pay ~150 T-states/slot to find
+; that out the slow way.
 ENEMY3_UPDATE_ALL:
+    LD A,(ENEMY3_ACTIVE_COUNT)
+    OR A
+    RET Z
     LD HL,ENEMY3_POOL
     LD B,ENEMY3_WAVE_SLOTS*ENEMY3_SLOTS
 E3UA_LOOP:
@@ -11639,6 +11655,7 @@ E3_DEACTIVATE:
                               ; the one real gap ENEMY3_UPDATE_SLOT's blanket
                               ; every-frame safety net was masking (see its comment)
     XOR A : LD (IX+0),A
+    LD A,(ENEMY3_ACTIVE_COUNT) : DEC A : LD (ENEMY3_ACTIVE_COUNT),A
     RET
 
 E3_DRAW:
@@ -11667,6 +11684,7 @@ E3_HIT_ONE_SLOT:
     OR A
     JR Z,E3H_NO
     XOR A : LD (IX+0),A
+    LD A,(ENEMY3_ACTIVE_COUNT) : DEC A : LD (ENEMY3_ACTIVE_COUNT),A
     PUSH DE                  ; D,E = hit X,Y for TRIGGER_EXPLOSION below - ENEMY3_ERASE_CELL clobbers DE
     CALL ENEMY3_ERASE_CELL   ; the kill freezes this slot's cell forever otherwise - see ENEMY3_ERASE_CELL
     POP DE
@@ -11685,7 +11703,17 @@ E3H_NO:
 ; B/C are saved to scratch RAM across the scan (same ENEMY_HIT_COL/ROW
 ; used by CHECK_BULLET_VS_ENEMY_POOL) so the loop can use B as its
 ; counter over all ENEMY3_WAVE_SLOTS*ENEMY3_SLOTS (64) slots.
+;
+; Called once per active bullet, every frame - scanning all 64 slots
+; even when no wave has spawned anything cost ~13600 T-states PER
+; BULLET (confirmed via the emulator's T-state counter), which is what
+; made firing itself tank the frame rate even with no Enemy3 anywhere.
+; ENEMY3_ACTIVE_COUNT lets this bail out in a handful of T-states
+; whenever nothing is actually alive to check against.
 CHECK_BULLET_VS_ENEMY3:
+    LD A,(ENEMY3_ACTIVE_COUNT)
+    OR A
+    JR Z,CBVE3_NONE
     LD A,B : LD (ENEMY_HIT_COL),A
     LD A,C : LD (ENEMY_HIT_ROW),A
     LD HL,ENEMY3_POOL
@@ -11704,6 +11732,7 @@ CBVE3_LOOP:
     LD DE,ENEMY3_STRUCT
     ADD HL,DE
     DJNZ CBVE3_LOOP
+CBVE3_NONE:
     XOR A
     RET
 CBVE3_HIT:
