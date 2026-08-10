@@ -484,7 +484,7 @@ ENEMY3_EXIT_SPEED EQU 3
 ENEMY3_EXIT_TARGET_Y EQU 136       ; row 17 pixel Y (17*8): exit levels off
                                     ; here, above the scroller, then flies
                                     ; right off-screen
-ENEMY3_SPAWN_INTERVAL EQU 15   ; frames between spawn attempts
+ENEMY3_SPAWN_INTERVAL EQU 30   ; frames between spawn attempts
 
 ENEMY3_BUDGET      EQU 0E473h
 ENEMY3_SPAWN_TIMER EQU 0E474h
@@ -5832,7 +5832,7 @@ SPAWN_E2_BOT_B:
     LD A,3 : LD (ENEMY_CYCLE),A
     JP ENEMY_START_COMPLEX_B
 SPAWN_E3_WAVE:
-    LD A,64 : LD (ENEMY3_BUDGET),A
+    LD A,32 : LD (ENEMY3_BUDGET),A
     XOR A : LD (ENEMY3_SPAWN_COUNT),A
     LD A,1 : LD (ENEMY3_SPAWN_TIMER),A
     LD A,1 : LD (GARBAGE_SCRUB_ACTIVE),A
