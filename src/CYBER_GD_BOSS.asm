@@ -474,19 +474,14 @@ ENEMY3_EXIT_TARGET_Y EQU 136       ; row 17 pixel Y (17*8): exit levels off
                                     ; here, above the scroller, then flies
                                     ; right off-screen
 ENEMY3_SPAWN_INTERVAL EQU 30   ; frames between spawn attempts
+ENEMY3_TRIO_GAP EQU 8           ; frames between each of a trio's 3 members
+                                ; ("1 count" - matches the schedule tick unit)
 
 ENEMY3_BUDGET      EQU 0E473h
 ENEMY3_SPAWN_TIMER EQU 0E474h
 ENEMY3_SPAWN_COUNT EQU 0E4CEh  ; how many spawned so far this wave (resume enemy1/2 at 32)
 ENEMY3_POOL        EQU 0E475h  ; 8*11 = 88 bytes
-; Parallel array to ENEMY3_POOL (same 88-byte span, same stride - see
-; ENEMY3_CENTERX_ADDR) holding each slot's own CIRCLE-center X pixel
-; offset (0/16/32 - trio members orbit 3 separate, horizontally-
-; staggered circles, not 3 angles on one shared circle, so the whole
-; group reads as a wide horizontal ellipse). Set once at spawn time,
-; read every frame by E3_DIAG (as its approach target) and
-; E3_CIRCLE_POS (as its circle's center).
-ENEMY3_CENTERX_TABLE EQU 0EB5Eh
+ENEMY3_TRIO_POS    EQU 0EB5Eh  ; which of the current trio's 3 members spawns next (0-2)
 
 ; --- shot background-color variants: blue(sky), white(mountain, ---
 ; --- screen row 18), green(diamond/slash/backslash, rows 19-22), ---
@@ -722,8 +717,7 @@ FILLBG_3:
     LD (ENEMY3_POOL+4),A  : LD (ENEMY3_POOL+15),A : LD (ENEMY3_POOL+26),A
     LD (ENEMY3_POOL+37),A : LD (ENEMY3_POOL+48),A : LD (ENEMY3_POOL+59),A
     LD (ENEMY3_POOL+70),A : LD (ENEMY3_POOL+81),A
-    LD HL,ENEMY3_CENTERX_TABLE : LD (HL),0
-    LD DE,ENEMY3_CENTERX_TABLE+1 : LD BC,88-1 : LDIR
+    XOR A : LD (ENEMY3_TRIO_POS),A
 
     ; --- switch sprites to 16x16 mode (VDP R1 bit1=SI), keep other bits ---
     LD A,(RG1SAV) : OR 02h : LD (RG1SAV),A
@@ -11304,42 +11298,13 @@ ENEMY4_SINE_LUT:
     DB 0,3,6,9,11,13,15,16,16,16,15,13,11,9,6,3
     DB 0,253,250,247,245,243,241,240,240,240,241,243,245,247,250,253
 
-; Input: IX = a ENEMY3_POOL slot base. Output: HL = the same slot's
-; address in ENEMY3_CENTERX_TABLE (parallel array, same stride).
-; Trashes A, DE, HL.
-ENEMY3_CENTERX_ADDR:
-    PUSH IX
-    POP HL
-    LD DE,ENEMY3_POOL
-    OR A : SBC HL,DE
-    LD DE,ENEMY3_CENTERX_TABLE
-    ADD HL,DE
-    RET
-
-; Scans the 8 ENEMY3_POOL slots for the first inactive one.
-; Output: A=1 and IX=that slot's base if found; A=0 (IX undefined) if
-; the pool is full. Trashes A, IX.
-ENEMY3_FIND_FREE_SLOT:
-    LD IX,ENEMY3_POOL             : LD A,(IX+0) : OR A : JR Z,E3FS_FOUND
-    LD IX,ENEMY3_POOL+11          : LD A,(IX+0) : OR A : JR Z,E3FS_FOUND
-    LD IX,ENEMY3_POOL+22          : LD A,(IX+0) : OR A : JR Z,E3FS_FOUND
-    LD IX,ENEMY3_POOL+33          : LD A,(IX+0) : OR A : JR Z,E3FS_FOUND
-    LD IX,ENEMY3_POOL+44          : LD A,(IX+0) : OR A : JR Z,E3FS_FOUND
-    LD IX,ENEMY3_POOL+55          : LD A,(IX+0) : OR A : JR Z,E3FS_FOUND
-    LD IX,ENEMY3_POOL+66          : LD A,(IX+0) : OR A : JR Z,E3FS_FOUND
-    LD IX,ENEMY3_POOL+77          : LD A,(IX+0) : OR A : JR Z,E3FS_FOUND
-    XOR A
-    RET
-E3FS_FOUND:
-    LD A,1
-    RET
-
-; Every ENEMY3_SPAWN_INTERVAL ticks, spawns up to 3 at once - not 3
-; angles on one shared circle, but 3 separate circles whose centers
-; are staggered 2 name-table cells (16px) apart in X, so the trio
-; reads as a wide horizontal ellipse. Stops early (this interval) if
-; the budget or free slots run out - whatever's left just waits for
-; the next interval, same skip-if-full behavior as before.
+; Spawns a "trio" every ENEMY3_SPAWN_INTERVAL ticks, its 3 members
+; ENEMY3_TRIO_GAP frames apart from each other rather than all at
+; once: with everyone starting from the same fixed spawn/DIAG/CIRCLE
+; state, spawning simultaneously means every member is at the exact
+; same position AND the same point in the "1,2,3,2" pulse animation
+; forever - a small time offset makes both diverge for free, no extra
+; per-instance state needed.
 ENEMY3_TRY_SPAWN:
     LD A,(ENEMY3_BUDGET)
     OR A
@@ -11348,30 +11313,28 @@ ENEMY3_TRY_SPAWN:
     DEC A
     LD (ENEMY3_SPAWN_TIMER),A
     RET NZ
+    LD A,(ENEMY3_TRIO_POS)
+    INC A
+    CP 3
+    JR C,E3TS_MIDTRIO
+    XOR A : LD (ENEMY3_TRIO_POS),A
     LD A,ENEMY3_SPAWN_INTERVAL
     LD (ENEMY3_SPAWN_TIMER),A
-    LD C,0
-E3TS_GROUP:
-    LD A,(ENEMY3_BUDGET)
-    OR A
-    RET Z
-    CALL ENEMY3_FIND_FREE_SLOT
-    OR A
-    RET Z
-    ; C = this member's index*16 (0,16,32 - two name-table cells apart)
-    PUSH BC
-    CALL ENEMY3_CENTERX_ADDR
-    LD (HL),C
-    POP BC
-    CALL ENEMY3_DO_SPAWN
-    LD A,C : ADD A,16 : LD C,A
-    CP 48
-    JR C,E3TS_GROUP
+    JR E3TS_FIND
+E3TS_MIDTRIO:
+    LD (ENEMY3_TRIO_POS),A
+    LD A,ENEMY3_TRIO_GAP
+    LD (ENEMY3_SPAWN_TIMER),A
+E3TS_FIND:
+    LD IX,ENEMY3_POOL             : LD A,(IX+0) : OR A : JP Z,ENEMY3_DO_SPAWN
+    LD IX,ENEMY3_POOL+11          : LD A,(IX+0) : OR A : JP Z,ENEMY3_DO_SPAWN
+    LD IX,ENEMY3_POOL+22          : LD A,(IX+0) : OR A : JP Z,ENEMY3_DO_SPAWN
+    LD IX,ENEMY3_POOL+33          : LD A,(IX+0) : OR A : JP Z,ENEMY3_DO_SPAWN
+    LD IX,ENEMY3_POOL+44          : LD A,(IX+0) : OR A : JP Z,ENEMY3_DO_SPAWN
+    LD IX,ENEMY3_POOL+55          : LD A,(IX+0) : OR A : JP Z,ENEMY3_DO_SPAWN
+    LD IX,ENEMY3_POOL+66          : LD A,(IX+0) : OR A : JP Z,ENEMY3_DO_SPAWN
+    LD IX,ENEMY3_POOL+77          : LD A,(IX+0) : OR A : JP Z,ENEMY3_DO_SPAWN
     RET
-
-; Input: IX = slot base address (from ENEMY3_FIND_FREE_SLOT).
-; ENEMY3_CENTERX_TABLE for this slot must already hold this member's
-; center-X pixel offset (set by ENEMY3_TRY_SPAWN just before this call).
 ENEMY3_DO_SPAWN:
     LD A,1 : LD (IX+0),A
     XOR A : LD (IX+1),A
@@ -11379,8 +11342,7 @@ ENEMY3_DO_SPAWN:
     LD A,ENEMY3_SPAWN_Y : LD (IX+3),A
     LD A,ENEMY3_SPAWN_Y : SRL A : SRL A : SRL A : LD (IX+4),A
     LD A,ENEMY3_SPAWN_X : SRL A : SRL A : SRL A : LD (IX+5),A
-    LD A,ENEMY3_START_ANGLE : LD (IX+6),A
-    XOR A : LD (IX+7),A : LD (IX+8),A : LD (IX+9),A
+    XOR A : LD (IX+6),A : LD (IX+7),A : LD (IX+8),A : LD (IX+9),A
     LD A,ANIM3_PACE : LD (IX+10),A
     LD A,(ENEMY3_BUDGET) : DEC A : LD (ENEMY3_BUDGET),A
     LD A,(ENEMY3_SPAWN_COUNT) : INC A : LD (ENEMY3_SPAWN_COUNT),A
@@ -11452,14 +11414,8 @@ E3_ANIMDONE:
     CP 1 : JP Z,E3_CIRCLE
     JP E3_EXIT
 
-; Heads for THIS instance's own circle center (ENEMY3_CENTER_X +
-; ENEMY3_CENTERX_TABLE[slot], ENEMY3_CENTER_Y) rather than a shared
-; fixed point, so trio members visibly diverge throughout the whole
-; approach instead of only once they start circling.
 E3_DIAG:
-    CALL ENEMY3_CENTERX_ADDR
-    LD A,(HL) : ADD A,ENEMY3_CENTER_X : LD B,A
-    LD A,(IX+2) : CP B
+    LD A,(IX+2) : CP ENEMY3_CENTER_X
     JR Z,E3_DIAG_XOK
     JR C,E3_DIAG_XLOW
     SUB ENEMY3_DIAG_SPEED
@@ -11479,7 +11435,7 @@ E3_DIAG_YLOW:
     ADD A,ENEMY3_DIAG_SPEED
     LD (IX+3),A
 E3_DIAG_YOK:
-    LD A,(IX+2) : CP B
+    LD A,(IX+2) : CP ENEMY3_CENTER_X
     JP NZ,E3_DRAW
     LD A,(IX+3) : CP ENEMY3_CENTER_Y
     JP NZ,E3_DRAW
@@ -11511,11 +11467,9 @@ E3_CIRCLE_POS:
     LD E,A : LD D,0
     LD HL,CIRCLE_LUT
     ADD HL,DE
-    LD A,(HL) : LD C,A
+    LD A,(HL) : ADD A,ENEMY3_CENTER_X : LD (IX+2),A
     INC HL
     LD A,(HL) : ADD A,ENEMY3_CENTER_Y : LD (IX+3),A
-    CALL ENEMY3_CENTERX_ADDR
-    LD A,(HL) : ADD A,ENEMY3_CENTER_X : ADD A,C : LD (IX+2),A
     JP E3_DRAW
 
 ; Exit sequence: always drift right; drop toward ENEMY3_EXIT_TARGET_Y
