@@ -479,10 +479,14 @@ ENEMY3_BUDGET      EQU 0E473h
 ENEMY3_SPAWN_TIMER EQU 0E474h
 ENEMY3_SPAWN_COUNT EQU 0E4CEh  ; how many spawned so far this wave (resume enemy1/2 at 32)
 ENEMY3_POOL        EQU 0E475h  ; 8*11 = 88 bytes
-; current group member's CIRCLE-entry LUT offset (0,2,4 - see
-; ENEMY3_TRY_SPAWN), read once by ENEMY3_DO_SPAWN when it pre-seeds
-; that instance's ANGLEIDX.
-ENEMY3_LUT_OFFSET  EQU 0EB5Dh
+; Parallel array to ENEMY3_POOL (same 88-byte span, same stride - see
+; ENEMY3_CENTERX_ADDR) holding each slot's own CIRCLE-center X pixel
+; offset (0/16/32 - trio members orbit 3 separate, horizontally-
+; staggered circles, not 3 angles on one shared circle, so the whole
+; group reads as a wide horizontal ellipse). Set once at spawn time,
+; read every frame by E3_DIAG (as its approach target) and
+; E3_CIRCLE_POS (as its circle's center).
+ENEMY3_CENTERX_TABLE EQU 0EB5Eh
 
 ; --- shot background-color variants: blue(sky), white(mountain, ---
 ; --- screen row 18), green(diamond/slash/backslash, rows 19-22), ---
@@ -718,6 +722,8 @@ FILLBG_3:
     LD (ENEMY3_POOL+4),A  : LD (ENEMY3_POOL+15),A : LD (ENEMY3_POOL+26),A
     LD (ENEMY3_POOL+37),A : LD (ENEMY3_POOL+48),A : LD (ENEMY3_POOL+59),A
     LD (ENEMY3_POOL+70),A : LD (ENEMY3_POOL+81),A
+    LD HL,ENEMY3_CENTERX_TABLE : LD (HL),0
+    LD DE,ENEMY3_CENTERX_TABLE+1 : LD BC,88-1 : LDIR
 
     ; --- switch sprites to 16x16 mode (VDP R1 bit1=SI), keep other bits ---
     LD A,(RG1SAV) : OR 02h : LD (RG1SAV),A
@@ -11298,6 +11304,18 @@ ENEMY4_SINE_LUT:
     DB 0,3,6,9,11,13,15,16,16,16,15,13,11,9,6,3
     DB 0,253,250,247,245,243,241,240,240,240,241,243,245,247,250,253
 
+; Input: IX = a ENEMY3_POOL slot base. Output: HL = the same slot's
+; address in ENEMY3_CENTERX_TABLE (parallel array, same stride).
+; Trashes A, DE, HL.
+ENEMY3_CENTERX_ADDR:
+    PUSH IX
+    POP HL
+    LD DE,ENEMY3_POOL
+    OR A : SBC HL,DE
+    LD DE,ENEMY3_CENTERX_TABLE
+    ADD HL,DE
+    RET
+
 ; Scans the 8 ENEMY3_POOL slots for the first inactive one.
 ; Output: A=1 and IX=that slot's base if found; A=0 (IX undefined) if
 ; the pool is full. Trashes A, IX.
@@ -11316,12 +11334,12 @@ E3FS_FOUND:
     LD A,1
     RET
 
-; Every ENEMY3_SPAWN_INTERVAL ticks, spawns up to 3 at once (LUT
-; offsets 0,2,4) so they enter the same circle together as a
-; synchronized trio, instead of trickling out one at a time with no
-; relation to each other. Stops early (this interval) if the budget
-; or free slots run out - whatever's left just waits for the next
-; interval, same skip-if-full behavior as before.
+; Every ENEMY3_SPAWN_INTERVAL ticks, spawns up to 3 at once - not 3
+; angles on one shared circle, but 3 separate circles whose centers
+; are staggered 2 name-table cells (16px) apart in X, so the trio
+; reads as a wide horizontal ellipse. Stops early (this interval) if
+; the budget or free slots run out - whatever's left just waits for
+; the next interval, same skip-if-full behavior as before.
 ENEMY3_TRY_SPAWN:
     LD A,(ENEMY3_BUDGET)
     OR A
@@ -11340,48 +11358,28 @@ E3TS_GROUP:
     CALL ENEMY3_FIND_FREE_SLOT
     OR A
     RET Z
-    LD A,C : LD (ENEMY3_LUT_OFFSET),A
+    ; C = this member's index*16 (0,16,32 - two name-table cells apart)
+    PUSH BC
+    CALL ENEMY3_CENTERX_ADDR
+    LD (HL),C
+    POP BC
     CALL ENEMY3_DO_SPAWN
-    LD A,C : ADD A,2 : LD C,A
-    CP 6
+    LD A,C : ADD A,16 : LD C,A
+    CP 48
     JR C,E3TS_GROUP
     RET
 
-; Input: IX = slot base address (from ENEMY3_FIND_FREE_SLOT),
-; ENEMY3_LUT_OFFSET = this group member's CIRCLE-entry angle offset.
+; Input: IX = slot base address (from ENEMY3_FIND_FREE_SLOT).
+; ENEMY3_CENTERX_TABLE for this slot must already hold this member's
+; center-X pixel offset (set by ENEMY3_TRY_SPAWN just before this call).
 ENEMY3_DO_SPAWN:
     LD A,1 : LD (IX+0),A
     XOR A : LD (IX+1),A
-    ; --- stagger this trio member's spawn X by offset*4 (0/8/16) so   ---
-    ; --- the 3 don't fully overlap during the whole DIAG approach -   ---
-    ; --- always a multiple of 8 (even), which keeps the X==CENTER_X   ---
-    ; --- arrival check (DIAG_SPEED=2 steps) exact regardless of       ---
-    ; --- offset; an odd stagger could make X oscillate around the     ---
-    ; --- target forever instead of ever landing on it exactly.        ---
-    LD A,(ENEMY3_LUT_OFFSET) : ADD A,A : ADD A,A
-    ADD A,ENEMY3_SPAWN_X : LD (IX+2),A
+    LD A,ENEMY3_SPAWN_X : LD (IX+2),A
     LD A,ENEMY3_SPAWN_Y : LD (IX+3),A
     LD A,ENEMY3_SPAWN_Y : SRL A : SRL A : SRL A : LD (IX+4),A
-    LD A,(IX+2) : SRL A : SRL A : SRL A : LD (IX+5),A
-    ; --- pre-seed the CIRCLE starting angle now (ANGLEIDX, unused    ---
-    ; --- during DIAG) instead of at the DIAG->CIRCLE transition, so   ---
-    ; --- each trio member keeps its own offset even though           ---
-    ; --- ENEMY3_LUT_OFFSET is a shared scratch var reused for the    ---
-    ; --- next member right after this call returns.                  ---
-    ; --- seed angle is offset*2, not offset, to compensate: staggering ---
-    ; --- spawn X by offset*4 delays this member's circle-entry by      ---
-    ; --- offset*2 frames = offset STEP_FRAMES-holds, which would       ---
-    ; --- otherwise exactly cancel a plain +offset seed by the time it  ---
-    ; --- reaches CIRCLE (verified in the emulator: with a plain        ---
-    ; --- +offset seed, all 3 converge back to identical ANGLEIDX once  ---
-    ; --- circling). +offset*2 leaves a net +offset separation that     ---
-    ; --- holds constant for as long as they keep circling.             ---
-    LD A,ENEMY3_START_ANGLE : LD B,A
-    LD A,(ENEMY3_LUT_OFFSET) : ADD A,A : ADD A,B
-    CP 24 : JR C,E3DS_ANGLEOK
-    SUB 24
-E3DS_ANGLEOK:
-    LD (IX+6),A
+    LD A,ENEMY3_SPAWN_X : SRL A : SRL A : SRL A : LD (IX+5),A
+    LD A,ENEMY3_START_ANGLE : LD (IX+6),A
     XOR A : LD (IX+7),A : LD (IX+8),A : LD (IX+9),A
     LD A,ANIM3_PACE : LD (IX+10),A
     LD A,(ENEMY3_BUDGET) : DEC A : LD (ENEMY3_BUDGET),A
@@ -11454,8 +11452,14 @@ E3_ANIMDONE:
     CP 1 : JP Z,E3_CIRCLE
     JP E3_EXIT
 
+; Heads for THIS instance's own circle center (ENEMY3_CENTER_X +
+; ENEMY3_CENTERX_TABLE[slot], ENEMY3_CENTER_Y) rather than a shared
+; fixed point, so trio members visibly diverge throughout the whole
+; approach instead of only once they start circling.
 E3_DIAG:
-    LD A,(IX+2) : CP ENEMY3_CENTER_X
+    CALL ENEMY3_CENTERX_ADDR
+    LD A,(HL) : ADD A,ENEMY3_CENTER_X : LD B,A
+    LD A,(IX+2) : CP B
     JR Z,E3_DIAG_XOK
     JR C,E3_DIAG_XLOW
     SUB ENEMY3_DIAG_SPEED
@@ -11475,13 +11479,12 @@ E3_DIAG_YLOW:
     ADD A,ENEMY3_DIAG_SPEED
     LD (IX+3),A
 E3_DIAG_YOK:
-    LD A,(IX+2) : CP ENEMY3_CENTER_X
+    LD A,(IX+2) : CP B
     JP NZ,E3_DRAW
     LD A,(IX+3) : CP ENEMY3_CENTER_Y
     JP NZ,E3_DRAW
     LD A,1 : LD (IX+1),A
-    ; IX+6 (ANGLEIDX) was already pre-seeded at spawn time with this
-    ; instance's own trio-offset - see ENEMY3_DO_SPAWN. Don't overwrite it.
+    LD A,ENEMY3_START_ANGLE : LD (IX+6),A
     XOR A : LD (IX+7),A : LD (IX+8),A
     JP E3_DRAW
 
@@ -11508,9 +11511,11 @@ E3_CIRCLE_POS:
     LD E,A : LD D,0
     LD HL,CIRCLE_LUT
     ADD HL,DE
-    LD A,(HL) : ADD A,ENEMY3_CENTER_X : LD (IX+2),A
+    LD A,(HL) : LD C,A
     INC HL
     LD A,(HL) : ADD A,ENEMY3_CENTER_Y : LD (IX+3),A
+    CALL ENEMY3_CENTERX_ADDR
+    LD A,(HL) : ADD A,ENEMY3_CENTER_X : ADD A,C : LD (IX+2),A
     JP E3_DRAW
 
 ; Exit sequence: always drift right; drop toward ENEMY3_EXIT_TARGET_Y
