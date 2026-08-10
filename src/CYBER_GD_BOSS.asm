@@ -491,13 +491,12 @@ ENEMY3_SPAWN_TIMER EQU 0E474h
 ENEMY3_SPAWN_COUNT EQU 0E4CEh  ; how many spawned so far this wave (resume enemy1/2 at 32)
 ENEMY3_POOL        EQU 0E475h  ; 8*11 = 88 bytes
 
-; GARBAGE_SCRUB gating: 1=running, counts GARBAGE_SCRUB_TIMER up from 0
-; (set by SPAWN_E3_WAVE) to GARBAGE_SCRUB_LIMIT, then stops for good -
-; kept off outside that window so the forced blanks can't stomp on
-; unrelated content that legitimately occupies those cells later.
-GARBAGE_SCRUB_ACTIVE EQU 0EB5Dh
-GARBAGE_SCRUB_TIMER  EQU 0EB5Eh
-GARBAGE_SCRUB_LIMIT  EQU 170
+; GARBAGE_SCRUB gating: a fixed 170-frame window from wave start was too
+; short (ENEMY3_BUDGET=64 at a 15-frame spawn interval means new spawns
+; keep happening for up to ~960 frames, each retracing the same early
+; flight path past the scrubbed cells) - so instead of a timer, gate
+; live on whether Enemy3 could still be responsible: budget not yet
+; exhausted, or some pool slot still active. See GARBAGE_SCRUB_GATE.
 
 ; --- shot background-color variants: blue(sky), white(mountain, ---
 ; --- screen row 18), green(diamond/slash/backslash, rows 19-22), ---
@@ -684,8 +683,6 @@ FILLBG_3:
     XOR A : LD (ENEMY3_BUDGET),A
     XOR A : LD (ENEMY3_SPAWN_COUNT),A
     LD A,1 : LD (ENEMY3_SPAWN_TIMER),A
-    XOR A : LD (GARBAGE_SCRUB_ACTIVE),A
-    XOR A : LD (GARBAGE_SCRUB_TIMER),A
     XOR A
     LD (ENEMY3_POOL+0),A  : LD (ENEMY3_POOL+11),A : LD (ENEMY3_POOL+22),A
     LD (ENEMY3_POOL+33),A : LD (ENEMY3_POOL+44),A : LD (ENEMY3_POOL+55),A
@@ -1988,19 +1985,23 @@ BULLET2_OFF:
     XOR A : LD (BULLET2_ACT),A
 BULLET2_NEXT:
 
-    ; run GARBAGE_SCRUB only for GARBAGE_SCRUB_LIMIT frames starting at
-    ; SPAWN_E3_WAVE, never again after - see GARBAGE_SCRUB_ACTIVE/TIMER
-    LD A,(GARBAGE_SCRUB_ACTIVE)
+    ; run GARBAGE_SCRUB only while Enemy3 could still be responsible:
+    ; budget not yet exhausted (more will spawn), or some pool slot is
+    ; still active right now. Live-checked every frame instead of a
+    ; fixed timer, since spawning can continue for ~960 frames total.
+    LD A,(ENEMY3_BUDGET)
     OR A
-    JR Z,GARBAGE_SCRUB_SKIP
-    LD A,(GARBAGE_SCRUB_TIMER)
-    CP GARBAGE_SCRUB_LIMIT
-    JR NC,GARBAGE_SCRUB_EXPIRE
-    INC A : LD (GARBAGE_SCRUB_TIMER),A
+    JR NZ,GARBAGE_SCRUB_GO
+    LD IX,ENEMY3_POOL    : LD A,(IX+0) : OR A : JR NZ,GARBAGE_SCRUB_GO
+    LD IX,ENEMY3_POOL+11 : LD A,(IX+0) : OR A : JR NZ,GARBAGE_SCRUB_GO
+    LD IX,ENEMY3_POOL+22 : LD A,(IX+0) : OR A : JR NZ,GARBAGE_SCRUB_GO
+    LD IX,ENEMY3_POOL+33 : LD A,(IX+0) : OR A : JR NZ,GARBAGE_SCRUB_GO
+    LD IX,ENEMY3_POOL+44 : LD A,(IX+0) : OR A : JR NZ,GARBAGE_SCRUB_GO
+    LD IX,ENEMY3_POOL+55 : LD A,(IX+0) : OR A : JR NZ,GARBAGE_SCRUB_GO
+    LD IX,ENEMY3_POOL+66 : LD A,(IX+0) : OR A : JR NZ,GARBAGE_SCRUB_GO
+    LD IX,ENEMY3_POOL+77 : LD A,(IX+0) : OR A : JR Z,GARBAGE_SCRUB_SKIP
+GARBAGE_SCRUB_GO:
     CALL GARBAGE_SCRUB
-    JR GARBAGE_SCRUB_SKIP
-GARBAGE_SCRUB_EXPIRE:
-    XOR A : LD (GARBAGE_SCRUB_ACTIVE),A
 GARBAGE_SCRUB_SKIP:
 
     EI
@@ -5835,8 +5836,6 @@ SPAWN_E3_WAVE:
     LD A,64 : LD (ENEMY3_BUDGET),A
     XOR A : LD (ENEMY3_SPAWN_COUNT),A
     LD A,1 : LD (ENEMY3_SPAWN_TIMER),A
-    LD A,1 : LD (GARBAGE_SCRUB_ACTIVE),A
-    XOR A : LD (GARBAGE_SCRUB_TIMER),A
     RET
 
 ; Draws all 3 units together from the shared ENEMY_X/ENEMY_Y group
