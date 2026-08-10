@@ -88,6 +88,21 @@ FD_COL       EQU 0E0D8h
 FD_SLOT_IDX  EQU 0E0D9h
 WATCH_FIRST_READ EQU 0E0DAh
 WATCH_COL_HIT     EQU 0E0DBh   ; which column the scan actually caught it at
+WATCH_ROW_HIT     EQU 0E0DCh   ; which row the scan actually caught it at
+; --- WATCH2: a real-hardware report placed a second, separately        ---
+; --- persistent (not momentary) garbage blob at "6th from right, 12th  ---
+; --- from top" = (row=11, col=26) (32-6=26, 12-1=11, same convention   ---
+; --- confirmed against an earlier "7th from right, 3rd from top" ---   ---
+; --- (2,25) report). (11,26) sits inside BOSS_DRAW_CUR_TILE's own      ---
+; --- legitimate draw zone (row=1+BOSS_ROW, col=26+BOSS_COL - see the   ---
+; --- WATCH_SCAN_COL_LO comment above) at BOSS_ROW=10/BOSS_COL=0, a     ---
+; --- valid combination - but the report's own freeze-dump had          ---
+; --- BOSS_STATE=0 (boss not engaged) at the moment of detection, so    ---
+; --- this watch only arms when BOSS_STATE==0, matching that. If the    ---
+; --- boss later legitimately draws there mid-fight, WATCH2 simply      ---
+; --- doesn't check that frame.
+WATCH2_ROW EQU 11
+WATCH2_COL EQU 26
 ; WATCH_SCAN_COL_LO/COUNT: back to a single cell (col25 only). Two live
 ; runs each found a different reachable-by-legitimate-content zone that
 ; a wider scan walks straight into: cols 22-24 at this row are Enemy3's
@@ -2363,9 +2378,10 @@ WATCH_SCAN:
     JR NZ,WATCH_HIT
     INC C
     DJNZ WATCH_SCAN
-    JR WATCH_CLEAR
+    JR WATCH2_CHECK
 WATCH_HIT:
     LD (WATCH_FIRST_READ),A   ; A already holds the scan's own non-blank read
+    LD A,2 : LD (WATCH_ROW_HIT),A             ; this scan is always row 2
     LD A,C : SUB 64 : LD (WATCH_COL_HIT),A   ; C is the VRAM addr low byte
                                               ; (1840h+col); convert back to
                                               ; the actual 0-31 column number
@@ -2391,6 +2407,56 @@ WATCH_HIT:
     CP B
     JP NZ,WATCH_CLEAR    ; scan read/confirm read disagree - treat as a bad read, not real
     JP FREEZE_DUMP        ; both reads agree on the same non-blank value - confirmed
+WATCH2_CHECK:
+    ; --- WATCH2: (WATCH2_ROW,WATCH2_COL) = VRAM 197Ah, only checked      ---
+    ; --- while BOSS_STATE==0 - see WATCH2_ROW's own comment for why.     ---
+    LD A,(BOSS_STATE)
+    OR A
+    JR NZ,WATCH_CLEAR
+    LD A,7Ah : OUT (99h),A
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    LD A,19h : OUT (99h),A
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    IN A,(98h)
+    CP BLANKCODE
+    JR Z,WATCH_CLEAR
+    LD (WATCH_FIRST_READ),A
+    LD A,WATCH2_ROW : LD (WATCH_ROW_HIT),A
+    LD A,WATCH2_COL : LD (WATCH_COL_HIT),A
+    LD A,7Ah : OUT (99h),A
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    LD A,19h : OUT (99h),A
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    IN A,(98h)
+    LD B,A
+    LD A,(WATCH_FIRST_READ)
+    CP B
+    JP NZ,WATCH_CLEAR
+    JP FREEZE_DUMP
 WATCH_CLEAR:
 
     EI
@@ -2452,6 +2518,7 @@ FREEZE_DUMP:
     LD A,(TICK) : LD B,1 : LD C,5 : CALL PRINT_BYTE_DEC
     LD A,(BOSS_STATE) : LD B,1 : LD C,10 : CALL PRINT_BYTE_DEC
     LD A,(WATCH_COL_HIT) : LD B,1 : LD C,15 : CALL PRINT_BYTE_DEC   ; which column the scan caught
+    LD A,(WATCH_ROW_HIT) : LD B,1 : LD C,20 : CALL PRINT_BYTE_DEC   ; which row the scan caught
     LD A,(PLAYERX) : LD B,2 : LD C,0 : CALL PRINT_BYTE_DEC
     LD A,(PLAYERY) : LD B,2 : LD C,5 : CALL PRINT_BYTE_DEC
     ; --- GAME_TICK's 2 bytes read independently, not via LD HL,(GAME_TICK) -
