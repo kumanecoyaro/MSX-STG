@@ -463,8 +463,12 @@ ENEMY3_STEP_FRAMES EQU 2       ; frames held per LUT angle step
 ENEMY3_TOTAL_STEPS EQU 36      ; 24 LUT points x 1.5 revolutions
 ENEMY3_START_ANGLE EQU 6       ; LUT index for the top of the circle
 ENEMY3_EXIT_SPEED EQU 3
-ENEMY3_EXIT_TARGET_Y EQU WEDGE_Y-8 ; pixel Y just above the wedge row (176):
-                                    ; exit levels off here, then flies right
+; Row 17 = 7th row from the bottom (23,22,21,20,19,18,17) and sits just
+; above GROUND_ROW0(18) - i.e. above the scrolling ground entirely, in
+; the plain sky.
+ENEMY3_EXIT_TARGET_Y EQU 136       ; row 17 pixel Y (17*8): exit levels off
+                                    ; here, above the scroller, then flies
+                                    ; right off-screen
 ENEMY3_SPAWN_INTERVAL EQU 15   ; frames between spawn attempts
 
 ENEMY3_BUDGET      EQU 0E473h
