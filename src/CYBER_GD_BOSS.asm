@@ -463,6 +463,8 @@ ENEMY3_STEP_FRAMES EQU 2       ; frames held per LUT angle step
 ENEMY3_TOTAL_STEPS EQU 36      ; 24 LUT points x 1.5 revolutions
 ENEMY3_START_ANGLE EQU 6       ; LUT index for the top of the circle
 ENEMY3_EXIT_SPEED EQU 3
+ENEMY3_EXIT_TARGET_Y EQU WEDGE_Y-8 ; pixel Y just above the wedge row (176):
+                                    ; exit levels off here, then flies right
 ENEMY3_SPAWN_INTERVAL EQU 15   ; frames between spawn attempts
 
 ENEMY3_BUDGET      EQU 0E473h
@@ -7687,6 +7689,10 @@ E3_CIRCLE_POS:
     LD A,(HL) : ADD A,ENEMY3_CENTER_Y : LD (IX+3),A
     JP E3_DRAW
 
+; Exit sequence: always drift right; drop toward ENEMY3_EXIT_TARGET_Y
+; (just above the wedge row) while still short of it, then hold that
+; height once reached - so the tail end of the exit is a level flight
+; to the right over the wedge, not a dive into the bottom edge.
 E3_EXIT:
     LD A,(IX+2)
     ADD A,ENEMY3_EXIT_SPEED
@@ -7694,10 +7700,15 @@ E3_EXIT:
     CP 252
     JR NC,E3_DEACTIVATE
     LD A,(IX+3)
+    CP ENEMY3_EXIT_TARGET_Y
+    JR NC,E3_EXIT_YHOLD
     ADD A,ENEMY3_EXIT_SPEED
+    CP ENEMY3_EXIT_TARGET_Y
+    JR C,E3_EXIT_YSTORE
+    LD A,ENEMY3_EXIT_TARGET_Y
+E3_EXIT_YSTORE:
     LD (IX+3),A
-    CP 190
-    JR NC,E3_DEACTIVATE
+E3_EXIT_YHOLD:
     JP E3_DRAW
 E3_DEACTIVATE:
     XOR A : LD (IX+0),A
