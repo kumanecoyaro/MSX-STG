@@ -11494,9 +11494,9 @@ E3EC_GOT:
 
 ; Advances/redraws every one of the ENEMY3_WAVE_SLOTS*ENEMY3_SLOTS (64)
 ; pool slots, one frame each - called once per frame from the mainloop
-; instead of unrolling 64 individual LD IX,.../CALL pairs. Slots are
-; visited unconditionally (active or not) since ENEMY3_UPDATE_SLOT's own
-; inactive-slot safety net needs to run on every slot every frame too.
+; instead of unrolling 64 individual LD IX,.../CALL pairs. Every slot
+; still needs visiting to check its ACTIVE flag, but ENEMY3_UPDATE_SLOT
+; returns immediately (cheap) for inactive ones - see its own comment.
 ENEMY3_UPDATE_ALL:
     LD HL,ENEMY3_POOL
     LD B,ENEMY3_WAVE_SLOTS*ENEMY3_SLOTS
@@ -11515,17 +11515,15 @@ E3UA_LOOP:
 ENEMY3_UPDATE_SLOT:
     LD A,(IX+0)
     OR A
-    JR NZ,E3US_ACTIVE
-    ; --- defensive safety net: real gameplay showed a stray Enemy3     ---
-    ; --- pattern surviving indefinitely at this slot's last-drawn      ---
-    ; --- cell despite extensive logic-level simulation never           ---
-    ; --- reproducing a leak - so instead of a precise fix, keep        ---
-    ; --- forcing this inactive slot's last-known cell back to blank    ---
-    ; --- every frame. Whatever path is failing to erase it on          ---
-    ; --- deactivation, this guarantees the stray content can't survive ---
-    ; --- more than one frame once the slot goes inactive.              ---
-    JP ENEMY3_ERASE_CELL   ; tail-call - WRITE_ANIM_CELL's own RET returns to our caller
-E3US_ACTIVE:
+    RET Z    ; inactive - every deactivation path (E3_DEACTIVATE, E3_HIT_ONE_SLOT's
+             ; kill) already erased this slot's cell exactly once at the moment it
+             ; went inactive, so there's nothing left to do here. This used to
+             ; unconditionally re-erase (a VDP write) every idle slot every single
+             ; frame as a blanket safety net for a stray-sprite leak that E3_DEACTIVATE
+             ; turned out to be the real source of (see its own comment) - at
+             ; ENEMY3_WAVE_SLOTS*ENEMY3_SLOTS (64) slots that blanket cost alone ran
+             ; ~40000 T-states/frame (over half the whole frame budget) even with
+             ; nothing on screen, which is what made the game unplayably slow.
     CALL ENEMY3_ERASE_CELL
 
     LD A,(IX+10)
@@ -11636,6 +11634,10 @@ E3_EXIT_YSTORE:
 E3_EXIT_YHOLD:
     JP E3_DRAW
 E3_DEACTIVATE:
+    CALL ENEMY3_ERASE_CELL   ; erase the last-drawn cell now, at the exact moment
+                              ; this slot goes inactive - previously missing here,
+                              ; the one real gap ENEMY3_UPDATE_SLOT's blanket
+                              ; every-frame safety net was masking (see its comment)
     XOR A : LD (IX+0),A
     RET
 
