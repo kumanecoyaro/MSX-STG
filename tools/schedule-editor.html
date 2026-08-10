@@ -397,12 +397,17 @@
   // kept in sync by hand with the ASM constants of the same name, used only
   // to draw the derived-spawn preview in drawGrid(). ----------
   var ENEMY3_WAVE_BUDGET = 32;      // ENEMY3_BUDGET set by SPAWN_E3_WAVE
-  var ENEMY3_OFFSET_COUNT = 3;      // ENEMY3_OFFSET_TABLE's current length
+  var ENEMY3_OFFSET_TABLE_PX = [0, 16, 32]; // mirrors ENEMY3_OFFSET_TABLE (px)
+  var ENEMY3_OFFSET_COUNT = ENEMY3_OFFSET_TABLE_PX.length;
   // Real in-game spacing is 1 GAME_TICK/spawn (ENEMY3_SPAWN_INTERVAL=8 frames),
   // but drawing all 32 as solid adjacent cells reads as one indistinct smear.
   // 1 blank cell between each ghost is a display-only choice for legibility -
   // it does not change ENEMY3_SPAWN_INTERVAL in the actual game.
   var ENEMY3_PREVIEW_TICK_GAP = 2;
+  // Text shown beside every "start of a set" cell (the real trigger, and
+  // every ghost that lands back on offset-table index 0) - the offsets
+  // that set's 3 members will use, in nametable-cell units (px/8).
+  var ENEMY3_OFFSET_LABEL = ENEMY3_OFFSET_TABLE_PX.map(function (px) { return "+" + (px / 8); }).join(" ");
 
   // ---------- geometry ----------
   var ROWS = 24;
@@ -579,28 +584,48 @@
     // that just arms ENEMY3_BUDGET=32, then ENEMY3_TRY_SPAWN (mainloop, not the
     // schedule) fires once every ENEMY3_SPAWN_INTERVAL - which is exactly 1
     // GAME_TICK - cycling ENEMY3_OFFSET_TABLE (currently 3 entries). Preview the
-    // resulting 32 individual spawns as faded, non-editable ghost cells so the
-    // wave's actual duration/shape is visible while placing things around it.
-    // Not part of `placements` - never saved, never clickable.
-    ctx.font = "700 " + Math.max(7, Math.round(CELL * 0.3)) + "px " + tok("--font-mono").split(",")[0] + ", monospace";
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
+    // resulting 32 individual spawns as non-editable ghost cells so the wave's
+    // actual duration/shape is visible while placing things around it. Not
+    // part of `placements` - never saved, never clickable.
+    //
+    // Every 3rd ghost (offset-table index back to 0) is where a new "set"
+    // starts - drawn full-strength as its own "E3" cell, same as the real
+    // trigger, since that's the one that actually matters when reading the
+    // timeline; the other 2 members of each set stay as faded index ghosts.
+    var e3StartCells = []; // {xMid, yTop} of every set-start cell (real trigger + promoted ghosts) - offset-label pass runs after everything else so it's never covered
     placements.forEach(function (p) {
       if (p.type !== "enemy3_wave") return;
       var hue = tok(TYPE_BY_ID[p.type].hue);
+      e3StartCells.push({ xMid: p.tick * CELL + CELL / 2, yTop: p.row * CELL });
       for (var i = 1; i < ENEMY3_WAVE_BUDGET; i++) {
         var t = p.tick + i * ENEMY3_PREVIEW_TICK_GAP;
         if (t > MAX_TICK) break;
         var x = t * CELL, y = p.row * CELL;
-        var pad = 5;
-        ctx.globalAlpha = 0.3;
-        ctx.fillStyle = hue;
-        roundRect(ctx, x + pad, y + pad, CELL - pad * 2, CELL - pad * 2, 3);
-        ctx.fill();
-        ctx.globalAlpha = 0.8;
-        ctx.fillStyle = "#05080d";
-        ctx.fillText(String(i % ENEMY3_OFFSET_COUNT), x + CELL / 2, y + CELL / 2 + 1);
+        var isSetStart = (i % ENEMY3_OFFSET_COUNT) === 0;
         ctx.globalAlpha = 1;
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        if (isSetStart) {
+          var pad2 = 2;
+          ctx.fillStyle = hue;
+          roundRect(ctx, x + pad2, y + pad2, CELL - pad2 * 2, CELL - pad2 * 2, 4);
+          ctx.fill();
+          ctx.fillStyle = "#05080d";
+          ctx.font = "700 " + Math.max(8, Math.round(CELL * 0.36)) + "px " + tok("--font-mono").split(",")[0] + ", monospace";
+          ctx.fillText("E3", x + CELL / 2, y + CELL / 2 + 1);
+          e3StartCells.push({ xMid: x + CELL / 2, yTop: y });
+        } else {
+          var pad = 5;
+          ctx.globalAlpha = 0.3;
+          ctx.fillStyle = hue;
+          roundRect(ctx, x + pad, y + pad, CELL - pad * 2, CELL - pad * 2, 3);
+          ctx.fill();
+          ctx.globalAlpha = 0.8;
+          ctx.fillStyle = "#05080d";
+          ctx.font = "700 " + Math.max(7, Math.round(CELL * 0.3)) + "px " + tok("--font-mono").split(",")[0] + ", monospace";
+          ctx.fillText(String(i % ENEMY3_OFFSET_COUNT), x + CELL / 2, y + CELL / 2 + 1);
+          ctx.globalAlpha = 1;
+        }
       }
     });
 
@@ -619,6 +644,20 @@
       ctx.fillStyle = "#05080d";
       ctx.fillText(t.short, x + CELL / 2, y + CELL / 2 + 1);
     });
+
+    // Enemy3 set-start offset annotation ("+0 +2 +4") - sits directly above
+    // its cell (not beside it) so it never overlaps the next tick's ghost;
+    // drawn last so it's never painted over either.
+    if (e3StartCells.length) {
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = tok("--ink-dim");
+      ctx.font = "600 " + Math.max(6, Math.round(CELL * 0.22)) + "px " + tok("--font-mono").split(",")[0] + ", monospace";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "bottom";
+      e3StartCells.forEach(function (c) {
+        ctx.fillText(ENEMY3_OFFSET_LABEL, c.xMid, c.yTop - 1);
+      });
+    }
   }
 
   function roundRect(ctx, x, y, w, h, r) {
