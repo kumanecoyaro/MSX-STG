@@ -12382,39 +12382,46 @@ DIGIT_PATTERNS:
     DB 3Ch,66h,66h,3Eh,06h,0Ch,38h,00h   ; 9
 
 ; --- palette debug strip -------------------------------------------
-; Shows every MSX color the game actually uses as a labelled swatch:
-; black text on a color-N background, one cell per color, at row0
-; starting 1 cell right of the score display (score=col0-7, gap=col8,
-; swatches=col9-23). Color 0 (transparent) and the black-on-color1
-; case are skipped/blend in - not meaningful as a visible swatch - so
-; this covers colors 1-15 (15 cells), labelled 1-9 then A-F.
+; Shows every one of the 16 MSX colors as a labelled swatch: black
+; text on a color-N background, one cell per color, at row0 starting
+; 1 cell right of the score display (score=col0-7, gap=col8,
+; swatches=col9-24), labelled 0-9 then A-F.
 ;
 ; SCREEN1's color table only has one attribute per 8 CONSECUTIVE
 ; character codes (see the file's SCREEN2->SCREEN1 conversion notes
-; at the top), and all 32 groups (all 256 character codes) are
-; already claimed by other content, so there's no free block to give
-; these 15 swatches their own colors. Each borrows the color-table
-; entry of an existing single-character group (shots/anim1/anim2/
-; Enemy3's pulse dot - SWATCH_GROUPS lists which) and draws its glyph
-; at that group's code+1 - a code the group's real content never
-; uses (each of those only ever references its group's FIRST code;
+; at the top), so each of the 16 swatches needs its own group to get
+; an independent color. SWATCH_GROUPS borrows: shots/anim1/anim2/
+; Enemy3's pulse dot (groups 7-21, one real code each - see below) for
+; values 1-15, and one of the boss's groups (24-31) for value 0.
+; Boss's groups are free for the entire game up to that point - unlike
+; the comment above BOSS_SPAWN's own JIT load might suggest, nothing
+; (not even the terrain scroller) actually writes to codes192-255
+; before BOSS_SPAWN fires (confirmed: it's the only LDIRVM target in
+; that range in the whole file) - so borrowing one is safe right up
+; until the boss appears, which is the entire point of loading it
+; just-in-time instead of permanently claiming the range at INIT.
+; BOSS_SPAWN's own load then overwrites this strip's cell there with
+; real boss body tiles the moment it fires - an accepted tradeoff,
+; same as the other 15 already living rent-free in shots/anim1/anim2/
+; Enemy3's groups for as long as the strip is shown.
+;
+; Each swatch draws its glyph at its group's code+1 (its "0" index
+; group's code+1 too, even though that whole group becomes boss
+; content later - it doesn't matter which of its 8 codes is picked
+; since all 8 end up boss tiles regardless, so +1 just keeps the loop
+; uniform). For groups 7-21, code+1 is never referenced by that
+; group's real content (each only ever uses its group's FIRST code;
 ; verified by grep across every BULLET_PAT_*/ANIM1_*/ANIM2_*/
-; ENEMY3_CODE* use site), so the real content's SHAPE is untouched.
-; Its COLOR is not: for as long as this strip is shown, shots/anim1/
-; anim2/Enemy3 in that same color family render in black-on-swatch-
-; color instead of their normal color, which is an accepted tradeoff
-; for a permanently-visible reference strip. Boss's groups (24-31)
-; were deliberately NOT used here - BOSS_SPAWN reloads codes192-255
-; with real boss body tiles just-in-time (see its own comment), which
-; would silently overwrite/corrupt whatever this strip drew there the
-; first time the boss appears, so it's not a safe long-term home.
+; ENEMY3_CODE* use site), so that content's SHAPE stays correct while
+; this strip is shown - only its COLOR is shared.
 SWATCH_GROUPS:
-    DB 7,8,9,10,11,12,13,14,15,16,17,18,19,20,21
+    DB 24,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21
 
-; Glyphs for labels 1-9 (duplicated from DIGIT_PATTERNS - kept
-; separate so nothing here can affect the real digit/score display)
-; then A-F, in SWATCH_GROUPS order.
+; Glyphs 0-9 (duplicated from DIGIT_PATTERNS - kept separate so
+; nothing here can affect the real digit/score display) then A-F, in
+; SWATCH_GROUPS order.
 SWATCH_DIGIT_PATTERNS:
+    DB 3Ch,66h,6Eh,76h,66h,66h,3Ch,00h   ; 0
     DB 18h,38h,58h,18h,18h,18h,7Eh,00h   ; 1
     DB 3Ch,66h,06h,0Ch,30h,60h,7Eh,00h   ; 2
     DB 3Ch,66h,06h,1Ch,06h,66h,3Ch,00h   ; 3
@@ -12431,7 +12438,7 @@ SWATCH_DIGIT_PATTERNS:
     DB 0FEh,60h,60h,7Ch,60h,60h,0FEh,00h ; E
     DB 0FEh,60h,60h,7Ch,60h,60h,60h,00h  ; F
 
-; Writes all 15 swatch glyphs (pattern table), their borrowed color-
+; Writes all 16 swatch glyphs (pattern table), their borrowed color-
 ; table entries, and the row0 nametable cells that display them - see
 ; the block comment above SWATCH_GROUPS for the full design rationale.
 ; Called once from INIT, after every other static pattern/color load
@@ -12460,9 +12467,9 @@ CSI_LOOP:
     LD BC,8
     CALL LDIRVM
 
-    ; --- color: FG=black(1)/BG=(index+1) -> VRAM color table entry   ---
+    ; --- color: FG=black(1)/BG=index -> VRAM color table entry       ---
     ; --- 2000h+group (this group's ONE color-table byte)             ---
-    LD A,(CSI_INDEX) : INC A : OR 10h : LD (CSI_COLORBYTE),A
+    LD A,(CSI_INDEX) : OR 10h : LD (CSI_COLORBYTE),A
     LD HL,CSI_COLORBYTE
     LD A,(CSI_GROUP) : LD E,A : LD D,20h
     LD BC,1
@@ -12476,7 +12483,7 @@ CSI_LOOP:
     CALL WRITE_ANIM_CELL
 
     LD A,(CSI_INDEX) : INC A : LD (CSI_INDEX),A
-    CP 15
+    CP 16
     JR C,CSI_LOOP
     RET
 
