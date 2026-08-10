@@ -703,10 +703,17 @@ FILLBG_3:
     XOR A : LD (ENEMY3_BUDGET),A
     XOR A : LD (ENEMY3_SPAWN_COUNT),A
     LD A,1 : LD (ENEMY3_SPAWN_TIMER),A
-    XOR A
-    LD (ENEMY3_POOL+0),A  : LD (ENEMY3_POOL+11),A : LD (ENEMY3_POOL+22),A
-    LD (ENEMY3_POOL+33),A : LD (ENEMY3_POOL+44),A : LD (ENEMY3_POOL+55),A
-    LD (ENEMY3_POOL+66),A : LD (ENEMY3_POOL+77),A
+    ; Full 88-byte clear (all 8 slots, not just each slot's ACTIVE byte) -
+    ; ENEMY3_UPDATE_SLOT's inactive-slot safety net (see its own comment)
+    ; reads ROW/COL (bytes 4/5) even for never-yet-spawned slots, and an
+    ; uninitialized (0,0) would blank row0/col0 - the score display's
+    ; first digit - every frame until the first real spawn.
+    LD HL,ENEMY3_POOL : LD (HL),0
+    LD DE,ENEMY3_POOL+1 : LD BC,88-1 : LDIR
+    LD A,1                          ; ROW=1 (sky, matches ENEMY3_SPAWN_Y>>3) - never HUD row0
+    LD (ENEMY3_POOL+4),A  : LD (ENEMY3_POOL+15),A : LD (ENEMY3_POOL+26),A
+    LD (ENEMY3_POOL+37),A : LD (ENEMY3_POOL+48),A : LD (ENEMY3_POOL+59),A
+    LD (ENEMY3_POOL+70),A : LD (ENEMY3_POOL+81),A
 
     ; --- switch sprites to 16x16 mode (VDP R1 bit1=SI), keep other bits ---
     LD A,(RG1SAV) : OR 02h : LD (RG1SAV),A
@@ -4510,8 +4517,11 @@ BOSS_UPDATE_BODY:
     LD HL,SKY_SLOW_2H : LD (SKY_VEC_2H),HL
     LD HL,SKY_SLOW_2E : LD (SKY_VEC_2E),HL
     ; --- start the 8 orbiting ring pods ---
+    ; --- BOSS_ORBIT_DRAW_ALL reads POD_HP (hide-if-dead check) and     ---
+    ; --- POD_RECOIL (kick offset) for every pod it draws - it MUST run ---
+    ; --- after those are initialized, not before (real uninitialized-  ---
+    ; --- RAM bug, confirmed via poisoned-RAM testing).                 ---
     XOR A : LD (BOSS_ORBIT_ANGLE),A
-    CALL BOSS_ORBIT_DRAW_ALL
     ; --- arm the pod-fire sequence: starts POD_FIRE_DELAY_TICKS ---
     ; --- ticks from now ---
     XOR A : LD (POD_FIRE_ACTIVE),A
@@ -4529,6 +4539,7 @@ BSPAWN_CLEARVOLLEY:
     LD HL,POD_HP : LD B,8
 BSPAWN_INITHP:
     LD (HL),POD_HP_MAX : INC HL : DJNZ BSPAWN_INITHP
+    CALL BOSS_ORBIT_DRAW_ALL
     LD HL,EXPLOSION_ACT : LD B,8
 BSPAWN_CLEAREXPL:
     LD (HL),0 : INC HL : DJNZ BSPAWN_CLEAREXPL
@@ -11316,13 +11327,17 @@ ENEMY3_DO_SPAWN:
 ; Input: IX = slot base address. Advances one frame of that slot's
 ; spawn/diagonal/circle/exit sequence and its 1,2,3,2 pulse
 ; animation, then redraws it (erasing its previous cell first).
-ENEMY3_UPDATE_SLOT:
-    LD A,(IX+0)
-    OR A
-    RET Z
-
+; Input: IX = slot base (row at IX+4, col at IX+5). Restores whatever
+; should be showing at that nametable cell - the scroller's own
+; content if the row is within the scroller (read back from NAMEBUF),
+; else BLANKCODE (sky) - i.e. erases this slot's currently-drawn cell.
+; Shared by ENEMY3_UPDATE_SLOT's per-frame erase-before-redraw and
+; E3_HIT_ONE_SLOT's kill path: a bullet kill used to only zero ACTIVE
+; and skip this entirely, permanently stranding whatever cell was
+; drawn at the moment of the kill. Clobbers: A, DE, HL.
+ENEMY3_ERASE_CELL:
     LD A,(IX+4) : CP GROUND_ROW0
-    JR C,E3_ERASE_SKY
+    JR C,E3EC_SKY
     LD A,(IX+4) : SUB GROUND_ROW0
     ADD A,A : ADD A,A : ADD A,A : ADD A,A : ADD A,A
     LD E,A : LD D,0
@@ -11330,14 +11345,30 @@ ENEMY3_UPDATE_SLOT:
     ADD HL,DE
     LD A,(IX+5) : LD E,A : LD D,0 : ADD HL,DE
     LD A,(HL)
-    JR E3_ERASE_GOT
-E3_ERASE_SKY:
+    JR E3EC_GOT
+E3EC_SKY:
     LD A,BLANKCODE
-E3_ERASE_GOT:
+E3EC_GOT:
     LD (ANIM_TMP_VAL),A
     LD A,(IX+4) : LD (ANIM_TMP_ROW),A
     LD A,(IX+5) : LD (ANIM_TMP_COL),A
-    CALL WRITE_ANIM_CELL
+    JP WRITE_ANIM_CELL
+
+ENEMY3_UPDATE_SLOT:
+    LD A,(IX+0)
+    OR A
+    JR NZ,E3US_ACTIVE
+    ; --- defensive safety net: real gameplay showed a stray Enemy3     ---
+    ; --- pattern surviving indefinitely at this slot's last-drawn      ---
+    ; --- cell despite extensive logic-level simulation never           ---
+    ; --- reproducing a leak - so instead of a precise fix, keep        ---
+    ; --- forcing this inactive slot's last-known cell back to blank    ---
+    ; --- every frame. Whatever path is failing to erase it on          ---
+    ; --- deactivation, this guarantees the stray content can't survive ---
+    ; --- more than one frame once the slot goes inactive.              ---
+    JP ENEMY3_ERASE_CELL   ; tail-call - WRITE_ANIM_CELL's own RET returns to our caller
+E3US_ACTIVE:
+    CALL ENEMY3_ERASE_CELL
 
     LD A,(IX+10)
     DEC A
@@ -11443,19 +11474,7 @@ E3_DEACTIVATE:
     RET
 
 E3_DRAW:
-    ; --- defensive clamp: never draw/erase on the screen's very top or ---
-    ; --- very bottom row (0 or 23) - a real-hardware report saw a      ---
-    ; --- permanent garbage cell appear while an Enemy3 was in flight,  ---
-    ; --- root cause not yet isolated. Restricting the drawn row to     ---
-    ; --- 1..22 keeps Enemy3 off both edge rows entirely.               ---
-    LD A,(IX+3) : SRL A : SRL A : SRL A
-    OR A : JR NZ,E3_DRAW_ROWLO_OK
-    LD A,1
-E3_DRAW_ROWLO_OK:
-    CP 23 : JR C,E3_DRAW_ROWHI_OK
-    LD A,22
-E3_DRAW_ROWHI_OK:
-    LD (IX+4),A
+    LD A,(IX+3) : SRL A : SRL A : SRL A : LD (IX+4),A
     LD A,(IX+2) : SRL A : SRL A : SRL A : LD (IX+5),A
     LD A,(IX+9) : LD E,A : LD D,0
     LD HL,ANIM3_SEQ
@@ -11480,6 +11499,9 @@ E3_HIT_ONE_SLOT:
     OR A
     JR Z,E3H_NO
     XOR A : LD (IX+0),A
+    PUSH DE                  ; D,E = hit X,Y for TRIGGER_EXPLOSION below - ENEMY3_ERASE_CELL clobbers DE
+    CALL ENEMY3_ERASE_CELL   ; the kill freezes this slot's cell forever otherwise - see ENEMY3_ERASE_CELL
+    POP DE
     PUSH BC
     CALL TRIGGER_EXPLOSION
     CALL ADD_SCORE_300
