@@ -314,48 +314,101 @@
 
   // ---------- enemy palette (matches the current CYBER_GD_BOSS.asm schedule) ----------
   var TYPES = [
-    { id: "simple_top", num: 1,  short: "S16", name: "Simple — Top",     desc: "ENEMY_Y0 (row2)",  hue: "--hue-simple", defaultRow: 2  },
-    { id: "simple_bot", num: 2,  short: "S128",name: "Simple — Bottom",  desc: "ENEMY_Y1 (row16)", hue: "--hue-simple", defaultRow: 16 },
-    { id: "e2a_top",    num: 3,  short: "2AT", name: "Enemy2A — Top",    desc: "SPAWN_E2_TOP_A",   hue: "--hue-e2a",    defaultRow: 4  },
-    { id: "e2a_bot",    num: 4,  short: "2AB", name: "Enemy2A — Bottom", desc: "SPAWN_E2_BOT_A",   hue: "--hue-e2a",    defaultRow: 12 },
-    { id: "e2b_top",    num: 5,  short: "2BT", name: "Enemy2B — Top",    desc: "SPAWN_E2_TOP_B",   hue: "--hue-e2b",    defaultRow: 6  },
-    { id: "e2b_bot",    num: 6,  short: "2BB", name: "Enemy2B — Bottom", desc: "SPAWN_E2_BOT_B",   hue: "--hue-e2b",    defaultRow: 14 },
-    { id: "enemy3_wave",num: 7,  short: "E3",  name: "Enemy3 — Wave",    desc: "SPAWN_E3_WAVE",    hue: "--hue-e3",     defaultRow: 1  },
-    { id: "enemy4_y16", num: 8,  short: "4-16",name: "Enemy4 — Top",     desc: "baseY 32",         hue: "--hue-e4",     defaultRow: 4  },
-    { id: "enemy4_y32", num: 9,  short: "4-32",name: "Enemy4 — Mid",     desc: "baseY 64",         hue: "--hue-e4",     defaultRow: 8  },
-    { id: "enemy4_y48", num: 10, short: "4-48",name: "Enemy4 — Bottom",  desc: "baseY 72",         hue: "--hue-e4",     defaultRow: 9  },
-    { id: "enemy5_y16", num: 11, short: "5-16",name: "Enemy5 — Top",     desc: "TYPE_ENEMY1_LOOK", hue: "--hue-e5",     defaultRow: 4  },
-    { id: "enemy5_y32", num: 12, short: "5-32",name: "Enemy5 — Mid",     desc: "TYPE_ENEMY1_LOOK", hue: "--hue-e5",     defaultRow: 8  },
-    { id: "enemy5_y48", num: 13, short: "5-48",name: "Enemy5 — Bottom",  desc: "TYPE_ENEMY1_LOOK", hue: "--hue-e5",     defaultRow: 9  },
-    { id: "boss",       num: 14, short: "BOSS",name: "Boss",             desc: "BOSS_SPAWN",       hue: "--hue-boss",   defaultRow: 20 }
+    { id: "simple",     num: 1,  short: "S",   name: "Simple",           desc: "SPAWN_SIMPLE (any row)", hue: "--hue-simple", defaultRow: 2  },
+    { id: "e2a_top",    num: 2,  short: "2AT", name: "Enemy2A — Top",    desc: "SPAWN_E2_TOP_A",   hue: "--hue-e2a",    defaultRow: 4  },
+    { id: "e2a_bot",    num: 3,  short: "2AB", name: "Enemy2A — Bottom", desc: "SPAWN_E2_BOT_A",   hue: "--hue-e2a",    defaultRow: 12 },
+    { id: "e2b_top",    num: 4,  short: "2BT", name: "Enemy2B — Top",    desc: "SPAWN_E2_TOP_B",   hue: "--hue-e2b",    defaultRow: 6  },
+    { id: "e2b_bot",    num: 5,  short: "2BB", name: "Enemy2B — Bottom", desc: "SPAWN_E2_BOT_B",   hue: "--hue-e2b",    defaultRow: 14 },
+    { id: "enemy3_wave",num: 6,  short: "E3",  name: "Enemy3 — Wave",    desc: "SPAWN_E3_WAVE (budget 32)", hue: "--hue-e3", defaultRow: 1  },
+    { id: "enemy4_y16", num: 7,  short: "4-16",name: "Enemy4 — Top",     desc: "baseY 32",         hue: "--hue-e4",     defaultRow: 4  },
+    { id: "enemy4_y32", num: 8,  short: "4-32",name: "Enemy4 — Mid",     desc: "baseY 64",         hue: "--hue-e4",     defaultRow: 8  },
+    { id: "enemy4_y48", num: 9,  short: "4-48",name: "Enemy4 — Bottom",  desc: "baseY 72",         hue: "--hue-e4",     defaultRow: 9  },
+    { id: "enemy5_y16", num: 10, short: "5-16",name: "Enemy5 — Top",     desc: "TYPE_ENEMY1_LOOK", hue: "--hue-e5",     defaultRow: 4  },
+    { id: "enemy5_y32", num: 11, short: "5-32",name: "Enemy5 — Mid",     desc: "TYPE_ENEMY1_LOOK", hue: "--hue-e5",     defaultRow: 8  },
+    { id: "enemy5_y48", num: 12, short: "5-48",name: "Enemy5 — Bottom",  desc: "TYPE_ENEMY1_LOOK", hue: "--hue-e5",     defaultRow: 9  },
+    { id: "boss",       num: 13, short: "BOSS",name: "Boss",             desc: "BOSS_SPAWN",       hue: "--hue-boss",   defaultRow: 20 }
   ];
   var TYPE_BY_ID = {};
   TYPES.forEach(function (t) { TYPE_BY_ID[t.id] = t; });
 
-  // ---------- the schedule currently baked into CYBER_GD_BOSS.asm (SPAWN_THRESHOLDS) ----------
-  var DEFAULT_PLACEMENTS = (function () {
-    var p = [];
-    function add(ticks, typeId) {
-      ticks.forEach(function (t) {
-        p.push({ tick: t, row: TYPE_BY_ID[typeId].defaultRow, type: typeId });
-      });
-    }
-    add([10, 11, 12, 40, 41, 42], "simple_top");
-    add([25, 26, 27, 55, 56, 57], "simple_bot");
-    add([70], "e2a_top");
-    add([90], "e2a_bot");
-    add([110], "e2b_top");
-    add([120], "enemy3_wave");
-    add([130], "e2b_bot");
-    add([145, 160, 175, 190, 205, 220], "enemy4_y16");
-    add([146, 161, 176, 191, 206, 221], "enemy4_y32");
-    add([147, 162, 177, 192, 207, 222], "enemy4_y48");
-    add([235, 250, 265], "enemy5_y16");
-    add([236, 251, 266], "enemy5_y32");
-    add([237, 252, 267], "enemy5_y48");
-    add([270], "boss");
-    return p;
-  })();
+  // ---------- the schedule currently baked into CYBER_GD_BOSS.asm (SPAWN_THRESHOLDS/
+  // SPAWN_SIMPLE_Y_TABLE/SPAWN_BASEY_TABLE), transcribed exactly - row is whatever the
+  // table byte actually holds (row*8=Y), not a guessed preset. ----------
+  var DEFAULT_PLACEMENTS = [
+    { tick: 10, row: 2, type: "simple" },
+    { tick: 11, row: 2, type: "simple" },
+    { tick: 12, row: 2, type: "simple" },
+    { tick: 18, row: 8, type: "simple" },
+    { tick: 19, row: 8, type: "simple" },
+    { tick: 20, row: 8, type: "simple" },
+    { tick: 26, row: 16, type: "simple" },
+    { tick: 27, row: 16, type: "simple" },
+    { tick: 28, row: 16, type: "simple" },
+    { tick: 33, row: 8, type: "simple" },
+    { tick: 34, row: 8, type: "simple" },
+    { tick: 35, row: 8, type: "simple" },
+    { tick: 41, row: 2, type: "simple" },
+    { tick: 42, row: 2, type: "simple" },
+    { tick: 43, row: 2, type: "simple" },
+    { tick: 55, row: 2, type: "simple" },
+    { tick: 56, row: 2, type: "simple" },
+    { tick: 57, row: 2, type: "simple" },
+    { tick: 70, row: 4, type: "e2a_top" },
+    { tick: 90, row: 12, type: "e2a_bot" },
+    { tick: 110, row: 6, type: "e2b_top" },
+    { tick: 120, row: 1, type: "enemy3_wave" },
+    { tick: 130, row: 14, type: "e2b_bot" },
+    { tick: 145, row: 4, type: "enemy4_y16" },
+    { tick: 146, row: 8, type: "enemy4_y32" },
+    { tick: 147, row: 9, type: "enemy4_y48" },
+    { tick: 148, row: 13, type: "enemy4_y48" },
+    { tick: 153, row: 6, type: "simple" },
+    { tick: 154, row: 6, type: "simple" },
+    { tick: 155, row: 6, type: "simple" },
+    { tick: 160, row: 8, type: "enemy4_y32" },
+    { tick: 161, row: 12, type: "enemy4_y48" },
+    { tick: 162, row: 13, type: "enemy4_y48" },
+    { tick: 163, row: 17, type: "enemy4_y48" },
+    { tick: 168, row: 12, type: "simple" },
+    { tick: 169, row: 12, type: "simple" },
+    { tick: 170, row: 12, type: "simple" },
+    { tick: 175, row: 4, type: "enemy4_y16" },
+    { tick: 176, row: 8, type: "enemy4_y32" },
+    { tick: 177, row: 9, type: "enemy4_y48" },
+    { tick: 178, row: 13, type: "enemy4_y48" },
+    { tick: 183, row: 5, type: "simple" },
+    { tick: 184, row: 5, type: "simple" },
+    { tick: 185, row: 5, type: "simple" },
+    { tick: 190, row: 8, type: "enemy4_y32" },
+    { tick: 191, row: 12, type: "enemy4_y48" },
+    { tick: 192, row: 13, type: "enemy4_y48" },
+    { tick: 193, row: 17, type: "enemy4_y48" },
+    { tick: 198, row: 9, type: "enemy4_y48" },
+    { tick: 200, row: 14, type: "enemy4_y48" },
+    { tick: 205, row: 4, type: "enemy4_y16" },
+    { tick: 206, row: 8, type: "enemy4_y32" },
+    { tick: 207, row: 9, type: "enemy4_y48" },
+    { tick: 208, row: 13, type: "enemy4_y48" },
+    { tick: 213, row: 17, type: "enemy4_y48" },
+    { tick: 215, row: 11, type: "enemy4_y48" },
+    { tick: 220, row: 4, type: "enemy4_y16" },
+    { tick: 221, row: 8, type: "enemy4_y32" },
+    { tick: 222, row: 9, type: "enemy4_y48" },
+    { tick: 223, row: 13, type: "enemy4_y48" },
+    { tick: 235, row: 4, type: "enemy5_y16" },
+    { tick: 236, row: 8, type: "enemy5_y32" },
+    { tick: 237, row: 9, type: "enemy5_y48" },
+    { tick: 238, row: 2, type: "simple" },
+    { tick: 250, row: 4, type: "enemy5_y16" },
+    { tick: 251, row: 8, type: "enemy5_y32" },
+    { tick: 252, row: 9, type: "enemy5_y48" },
+    { tick: 253, row: 2, type: "simple" },
+    { tick: 265, row: 4, type: "enemy5_y16" },
+    { tick: 266, row: 8, type: "enemy5_y32" },
+    { tick: 267, row: 9, type: "enemy5_y48" },
+    { tick: 268, row: 16, type: "simple" },
+    { tick: 280, row: 20, type: "boss" }
+  ];
 
   // ---------- geometry ----------
   var ROWS = 24;
