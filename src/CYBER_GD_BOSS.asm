@@ -572,7 +572,13 @@ INIT:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,58h : OUT (99h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -585,6 +591,9 @@ INIT:
     LD B,00h
 FILLBG_1:
     OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -607,10 +616,16 @@ FILLBG_2:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     DJNZ FILLBG_2
     LD B,96
 FILLBG_3:
     OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -705,7 +720,13 @@ FILLBG_3:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -719,19 +740,31 @@ INIT_SPRATR_CLR:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
+    XOR A : OUT (98h),A
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
     XOR A : OUT (98h),A
     NOP
     NOP
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     XOR A : OUT (98h),A
     NOP
     NOP
     NOP
-    NOP
-    NOP
-    XOR A : OUT (98h),A
     NOP
     NOP
     NOP
@@ -825,6 +858,9 @@ INIT_SPRATR_CLR:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
     NOP
     NOP
@@ -834,7 +870,13 @@ INIT_SPRATR_CLR:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,PLAYER_INITY : SUB 8 : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -854,7 +896,13 @@ INIT_SPRATR_CLR:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,PAT_SHIP   : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -874,8 +922,14 @@ INIT_SPRATR_CLR:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
 
     LD A,00h : OUT (99h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -893,7 +947,13 @@ INIT_SPRATR_CLR:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,PLAYER_INITY : SUB 8 : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -913,6 +973,9 @@ INIT_SPRATR_CLR:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,PAT_ACCENT : OUT (98h),A
     NOP
     NOP
@@ -923,7 +986,13 @@ INIT_SPRATR_CLR:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,SPR_WHITE  : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -953,7 +1022,13 @@ INIT_HIDE_SLOT_LOOP:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -968,7 +1043,13 @@ INIT_HIDE_SLOT_LOOP:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,255 : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -1216,7 +1297,13 @@ DIFFERENT_0:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,5Ah : OUT (99h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -1226,6 +1313,9 @@ DIFFERENT_0:
     LD B,32
 ROWXFER_0:
     LD A,(HL) : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -1253,7 +1343,13 @@ DIFFERENT_2:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,5Ah : OUT (99h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -1263,6 +1359,9 @@ DIFFERENT_2:
     LD B,32
 ROWXFER_2:
     LD A,(HL) : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -1289,7 +1388,13 @@ DIFFERENT_3:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,5Ah : OUT (99h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -1299,6 +1404,9 @@ DIFFERENT_3:
     LD B,32
 ROWXFER_3:
     LD A,(HL) : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -1325,7 +1433,13 @@ DIFFERENT_4:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,5Ah : OUT (99h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -1335,6 +1449,9 @@ DIFFERENT_4:
     LD B,32
 ROWXFER_4:
     LD A,(HL) : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -1364,7 +1481,13 @@ DIFFERENT_5:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,5Ah : OUT (99h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -1376,6 +1499,9 @@ DIFFERENT_5:
     LD B,32
 ROWXFER_5:
     LD A,(HL) : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -1532,7 +1658,13 @@ DIR_DONE:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -1544,7 +1676,13 @@ DIR_DONE:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,(PLAYERX) : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -1556,7 +1694,13 @@ DIR_DONE:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,SPR_RED : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -1569,7 +1713,13 @@ DIR_DONE:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -1581,7 +1731,13 @@ DIR_DONE:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,(PLAYERX) : ADD A,8 : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -1593,7 +1749,13 @@ DIR_DONE:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,SPR_WHITE : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -1896,13 +2058,22 @@ BULLET0_HITERASE_GOT:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,H : OR 40h : OUT (99h),A
     NOP
     NOP
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,(TEMP_ERASE_BYTE) : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -1932,13 +2103,22 @@ BULLET0_ERASE_GOT:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,H : OR 40h : OUT (99h),A
     NOP
     NOP
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,(TEMP_ERASE_BYTE) : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -1955,13 +2135,22 @@ BULLET0_ERASE_GOT:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,H : OR 40h : OUT (99h),A
     NOP
     NOP
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,(BULLET0_PAT) : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -2014,13 +2203,22 @@ BULLET1_HITERASE_GOT:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,H : OR 40h : OUT (99h),A
     NOP
     NOP
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,(TEMP_ERASE_BYTE) : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -2050,13 +2248,22 @@ BULLET1_ERASE_GOT:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,H : OR 40h : OUT (99h),A
     NOP
     NOP
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,(TEMP_ERASE_BYTE) : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -2073,13 +2280,22 @@ BULLET1_ERASE_GOT:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,H : OR 40h : OUT (99h),A
     NOP
     NOP
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,(BULLET1_PAT) : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -2132,13 +2348,22 @@ BULLET2_HITERASE_GOT:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,H : OR 40h : OUT (99h),A
     NOP
     NOP
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,(TEMP_ERASE_BYTE) : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -2168,13 +2393,22 @@ BULLET2_ERASE_GOT:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,H : OR 40h : OUT (99h),A
     NOP
     NOP
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,(TEMP_ERASE_BYTE) : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -2191,13 +2425,22 @@ BULLET2_ERASE_GOT:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,H : OR 40h : OUT (99h),A
     NOP
     NOP
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,(BULLET2_PAT) : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -2383,7 +2626,13 @@ PPF_LOOP:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -2400,7 +2649,13 @@ PPF_LOOP:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,255 : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -2415,8 +2670,14 @@ PPF_VISIBLE:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD HL,PARTICLE_X : LD D,0 : LD E,C : ADD HL,DE
     LD A,(HL) : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -2428,8 +2689,14 @@ PPF_VISIBLE:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD HL,PARTICLE_COL : LD D,0 : LD E,C : ADD HL,DE
     LD A,(HL) : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -2487,8 +2754,14 @@ REDRAW_UNIT_PATTERN:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,H : OR 40h
     OUT (99h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -2505,12 +2778,18 @@ RU_TL_LOOP:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     INC HL : DJNZ RU_TL_LOOP
     JR RU_BL
 RU_TL_BLANK:
     LD B,8
 RU_TL_BLANK_LOOP:
     XOR A : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -2526,10 +2805,16 @@ RU_BL_LOOP:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     DJNZ RU_BL_LOOP
     LD B,8
 RU_TR_LOOP:
     XOR A : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -2547,12 +2832,18 @@ RU_BR_LOOP:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     INC HL : DJNZ RU_BR_LOOP
     RET
 RU_BR_BLANK:
     LD B,8
 RU_BR_BLANK_LOOP:
     XOR A : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -2918,13 +3209,22 @@ WAC_SKIPBUF:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,H : OR 40h : OUT (99h),A
     NOP
     NOP
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,(ANIM_TMP_VAL) : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -3479,7 +3779,13 @@ ESC_COMPLEX_INIT_A:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -3491,7 +3797,13 @@ ESC_COMPLEX_INIT_A:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,255 : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -3515,7 +3827,13 @@ ESC_COMPLEX_INIT_A:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -3527,7 +3845,13 @@ ESC_COMPLEX_INIT_A:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,255 : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -3539,7 +3863,13 @@ ESC_COMPLEX_INIT_A:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -3551,7 +3881,13 @@ ESC_COMPLEX_INIT_A:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,255 : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -3563,7 +3899,13 @@ ESC_COMPLEX_INIT_A:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -3575,7 +3917,13 @@ ESC_COMPLEX_INIT_A:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,255 : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -3609,7 +3957,13 @@ ESC_COMPLEX_INIT_B:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -3621,7 +3975,13 @@ ESC_COMPLEX_INIT_B:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,255 : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -3645,7 +4005,13 @@ ESC_COMPLEX_INIT_B:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -3657,7 +4023,13 @@ ESC_COMPLEX_INIT_B:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,255 : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -3669,7 +4041,13 @@ ESC_COMPLEX_INIT_B:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -3681,7 +4059,13 @@ ESC_COMPLEX_INIT_B:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,255 : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -3693,7 +4077,13 @@ ESC_COMPLEX_INIT_B:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -3705,7 +4095,13 @@ ESC_COMPLEX_INIT_B:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,255 : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -3917,7 +4313,13 @@ BCDE_HIDE1:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -3929,7 +4331,13 @@ BCDE_HIDE1:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,255 : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -4106,6 +4514,9 @@ BOSS_DRAW_CUR_TILE:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,D : OR 40h : OUT (99h),A
     NOP
     NOP
@@ -4114,7 +4525,13 @@ BOSS_DRAW_CUR_TILE:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,(BOSS_TILETMP) : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -4140,7 +4557,13 @@ BOSS_SPR_SET_YXP:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -4156,6 +4579,9 @@ BOSS_SPR_SET_YXP:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,E : ADD A,1 : OUT (99h),A
     NOP
     NOP
@@ -4164,7 +4590,13 @@ BOSS_SPR_SET_YXP:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -4180,7 +4612,13 @@ BOSS_SPR_SET_YXP:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,E : ADD A,2 : OUT (99h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -4196,7 +4634,13 @@ BOSS_SPR_SET_YXP:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,BOSS_HEX_PATNUM : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -4219,6 +4663,9 @@ BOSS_SPR_SET_COLOR:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
     NOP
     NOP
@@ -4227,7 +4674,13 @@ BOSS_SPR_SET_COLOR:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,(BOSS_CTMP) : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -4249,6 +4702,9 @@ BOSS_HIDE_SPRITE:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
     NOP
     NOP
@@ -4257,7 +4713,13 @@ BOSS_HIDE_SPRITE:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,209 : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -4342,7 +4804,13 @@ BOD_NORECOIL:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -4354,13 +4822,22 @@ BOD_NORECOIL:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,E : ADD A,1 : OUT (99h),A
     NOP
     NOP
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -4372,13 +4849,22 @@ BOD_NORECOIL:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,E : ADD A,2 : OUT (99h),A
     NOP
     NOP
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -4390,7 +4876,13 @@ BOD_NORECOIL:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,E : ADD A,3 : OUT (99h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -4402,7 +4894,13 @@ BOD_NORECOIL:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,(BOSS_ORBIT_CTMP) : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -4497,13 +4995,22 @@ CB0_ERASE:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,H : OR 40h : OUT (99h),A
     NOP
     NOP
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,(TEMP_ERASE_BYTE) : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -4526,13 +5033,22 @@ CB0_ERASE_FAST:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,H : OR 40h : OUT (99h),A
     NOP
     NOP
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,BLANKCODE : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -4602,13 +5118,22 @@ CB1_ERASE:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,H : OR 40h : OUT (99h),A
     NOP
     NOP
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,(TEMP_ERASE_BYTE) : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -4631,13 +5156,22 @@ CB1_ERASE_FAST:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,H : OR 40h : OUT (99h),A
     NOP
     NOP
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,BLANKCODE : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -4707,13 +5241,22 @@ CB2_ERASE:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,H : OR 40h : OUT (99h),A
     NOP
     NOP
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,(TEMP_ERASE_BYTE) : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -4736,13 +5279,22 @@ CB2_ERASE_FAST:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,H : OR 40h : OUT (99h),A
     NOP
     NOP
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,BLANKCODE : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -4778,13 +5330,22 @@ POD_HIT_DESTROY:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
     NOP
     NOP
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,209 : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -4842,7 +5403,13 @@ EXPLOSION_DRAW:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -4854,13 +5421,22 @@ EXPLOSION_DRAW:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,E : ADD A,1 : OUT (99h),A
     NOP
     NOP
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -4872,13 +5448,22 @@ EXPLOSION_DRAW:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,E : ADD A,2 : OUT (99h),A
     NOP
     NOP
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -4890,7 +5475,13 @@ EXPLOSION_DRAW:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,E : ADD A,3 : OUT (99h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -4902,7 +5493,13 @@ EXPLOSION_DRAW:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,8 : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -4920,13 +5517,22 @@ EXPLOSION_HIDE:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
     NOP
     NOP
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,209 : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -5079,13 +5685,22 @@ BEU_DECODE_DONE:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,H : OR 40h : OUT (99h),A
     NOP
     NOP
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,BLANKCODE : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -5349,7 +5964,13 @@ LAP_MARKER_DRAW:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -5361,13 +5982,22 @@ LAP_MARKER_DRAW:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,E : ADD A,1 : OUT (99h),A
     NOP
     NOP
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -5379,13 +6009,22 @@ LAP_MARKER_DRAW:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,E : ADD A,2 : OUT (99h),A
     NOP
     NOP
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -5397,7 +6036,13 @@ LAP_MARKER_DRAW:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,E : ADD A,3 : OUT (99h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -5409,7 +6054,13 @@ LAP_MARKER_DRAW:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,15 : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -5425,13 +6076,22 @@ LAP_MARKER_HIDE:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
     NOP
     NOP
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,209 : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -5447,7 +6107,13 @@ LAP_MARKER_DRAW2:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -5459,13 +6125,22 @@ LAP_MARKER_DRAW2:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,E : ADD A,1 : OUT (99h),A
     NOP
     NOP
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -5477,13 +6152,22 @@ LAP_MARKER_DRAW2:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,E : ADD A,2 : OUT (99h),A
     NOP
     NOP
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -5495,7 +6179,13 @@ LAP_MARKER_DRAW2:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,E : ADD A,3 : OUT (99h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -5507,7 +6197,13 @@ LAP_MARKER_DRAW2:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,15 : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -5523,13 +6219,22 @@ LAP_MARKER_HIDE2:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
     NOP
     NOP
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,209 : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -5701,7 +6406,13 @@ LAUNCH_DRAW:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -5713,13 +6424,22 @@ LAUNCH_DRAW:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,E : ADD A,1 : OUT (99h),A
     NOP
     NOP
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -5731,13 +6451,22 @@ LAUNCH_DRAW:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,E : ADD A,2 : OUT (99h),A
     NOP
     NOP
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -5749,7 +6478,13 @@ LAUNCH_DRAW:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,E : ADD A,3 : OUT (99h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -5761,7 +6496,13 @@ LAUNCH_DRAW:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,(POD_VOLLEY_COLOR_TEST) : AND 0Fh : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -5805,7 +6546,13 @@ POD_BULLET_DRAW0:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -5817,13 +6564,22 @@ POD_BULLET_DRAW0:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,E : ADD A,1 : OUT (99h),A
     NOP
     NOP
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -5835,13 +6591,22 @@ POD_BULLET_DRAW0:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,E : ADD A,2 : OUT (99h),A
     NOP
     NOP
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -5853,7 +6618,13 @@ POD_BULLET_DRAW0:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,E : ADD A,3 : OUT (99h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -5865,7 +6636,13 @@ POD_BULLET_DRAW0:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,15 : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -5881,7 +6658,13 @@ POD_BULLET_DRAW1:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -5893,13 +6676,22 @@ POD_BULLET_DRAW1:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,E : ADD A,1 : OUT (99h),A
     NOP
     NOP
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -5911,13 +6703,22 @@ POD_BULLET_DRAW1:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,E : ADD A,2 : OUT (99h),A
     NOP
     NOP
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -5929,7 +6730,13 @@ POD_BULLET_DRAW1:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,E : ADD A,3 : OUT (99h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -5941,7 +6748,13 @@ POD_BULLET_DRAW1:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,15 : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -5957,13 +6770,22 @@ POD_BULLET_HIDE0:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
     NOP
     NOP
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,209 : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -5979,13 +6801,22 @@ POD_BULLET_HIDE1:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
     NOP
     NOP
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,209 : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -6041,13 +6872,22 @@ DEFLECT_BULLET0:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,H : OR 40h : OUT (99h),A
     NOP
     NOP
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,BLANKCODE : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -6080,13 +6920,22 @@ DEFLECT_BULLET1:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,H : OR 40h : OUT (99h),A
     NOP
     NOP
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,BLANKCODE : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -6119,13 +6968,22 @@ DEFLECT_BULLET2:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,H : OR 40h : OUT (99h),A
     NOP
     NOP
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,BLANKCODE : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -6215,7 +7073,13 @@ DFL_DRAW0:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -6227,13 +7091,22 @@ DFL_DRAW0:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,E : ADD A,1 : OUT (99h),A
     NOP
     NOP
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -6245,13 +7118,22 @@ DFL_DRAW0:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,E : ADD A,2 : OUT (99h),A
     NOP
     NOP
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -6263,7 +7145,13 @@ DFL_DRAW0:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,E : ADD A,3 : OUT (99h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -6275,7 +7163,13 @@ DFL_DRAW0:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,8 : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -6291,7 +7185,13 @@ DFL_DRAW1:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -6303,13 +7203,22 @@ DFL_DRAW1:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,E : ADD A,1 : OUT (99h),A
     NOP
     NOP
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -6321,13 +7230,22 @@ DFL_DRAW1:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,E : ADD A,2 : OUT (99h),A
     NOP
     NOP
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -6339,7 +7257,13 @@ DFL_DRAW1:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,E : ADD A,3 : OUT (99h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -6351,7 +7275,13 @@ DFL_DRAW1:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,8 : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -6367,7 +7297,13 @@ DFL_DRAW2:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -6379,13 +7315,22 @@ DFL_DRAW2:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,E : ADD A,1 : OUT (99h),A
     NOP
     NOP
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -6397,13 +7342,22 @@ DFL_DRAW2:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,E : ADD A,2 : OUT (99h),A
     NOP
     NOP
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -6415,7 +7369,13 @@ DFL_DRAW2:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,E : ADD A,3 : OUT (99h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -6427,7 +7387,13 @@ DFL_DRAW2:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,8 : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -6443,13 +7409,22 @@ DFL_HIDE0:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
     NOP
     NOP
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,209 : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -6465,13 +7440,22 @@ DFL_HIDE1:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
     NOP
     NOP
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,209 : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -6487,13 +7471,22 @@ DFL_HIDE2:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
     NOP
     NOP
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,209 : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -6757,13 +7750,22 @@ ENEMY_DRAW_ALL_COMPLEX_A:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
     NOP
     NOP
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,(E2A_Y) : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -6775,13 +7777,22 @@ ENEMY_DRAW_ALL_COMPLEX_A:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,PAT_E2A0 : OUT (98h),A
     NOP
     NOP
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,SPR_GRAY : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -6793,13 +7804,22 @@ ENEMY_DRAW_ALL_COMPLEX_A:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
     NOP
     NOP
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,(E2A_Y) : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -6811,13 +7831,22 @@ ENEMY_DRAW_ALL_COMPLEX_A:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,PAT_E2A1 : OUT (98h),A
     NOP
     NOP
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,SPR_GRAY : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -6829,7 +7858,13 @@ ENEMY_DRAW_ALL_COMPLEX_A:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -6841,7 +7876,13 @@ ENEMY_DRAW_ALL_COMPLEX_A:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,(E2A_U2_X) : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -6853,7 +7894,13 @@ ENEMY_DRAW_ALL_COMPLEX_A:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,SPR_GRAY : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -6898,7 +7945,13 @@ EDS_U2_SET_A:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -6910,7 +7963,13 @@ EDS_U2_SET_A:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,(E2A_U0_X) : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -6922,7 +7981,13 @@ EDS_U2_SET_A:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,SPR_GRAY : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -6934,7 +7999,13 @@ EDS_U2_SET_A:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -6946,7 +8017,13 @@ EDS_U2_SET_A:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,(E2A_U1_X) : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -6958,7 +8035,13 @@ EDS_U2_SET_A:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,SPR_GRAY : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -6970,7 +8053,13 @@ EDS_U2_SET_A:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -6982,7 +8071,13 @@ EDS_U2_SET_A:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,(E2A_U2_X) : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -6994,7 +8089,13 @@ EDS_U2_SET_A:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,SPR_GRAY : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -7046,7 +8147,13 @@ ECS_S0_DRAW_A:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -7058,7 +8165,13 @@ ECS_S0_DRAW_A:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,(E2A_U0_X) : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -7070,7 +8183,13 @@ ECS_S0_DRAW_A:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,SPR_GRAY : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -7088,7 +8207,7 @@ ECS_S1_A:
     LD A,TARGETX0
 ECS_S1_SAVE_A:
     LD (E2A_TEMP_X),A
-    JR ECS_S1_DRAW_A
+    JP ECS_S1_DRAW_A
 ECS_S1_ARRIVED_A:
     LD A,1 : LD (E2A_U0_STATE),A
     LD A,(E2A_U0_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
@@ -7097,7 +8216,13 @@ ECS_S1_ARRIVED_A:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -7109,7 +8234,13 @@ ECS_S1_ARRIVED_A:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,(E2A_U0_X) : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -7121,7 +8252,13 @@ ECS_S1_ARRIVED_A:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,SPR_GRAY : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -7133,7 +8270,13 @@ ECS_S1_ARRIVED_A:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -7145,7 +8288,13 @@ ECS_S1_ARRIVED_A:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,255 : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -7161,7 +8310,13 @@ ECS_S1_DRAW_A:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -7173,7 +8328,13 @@ ECS_S1_DRAW_A:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,(E2A_TEMP_X) : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -7185,7 +8346,13 @@ ECS_S1_DRAW_A:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,SPR_GRAY : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -7214,7 +8381,13 @@ ECS_S2_DRAW_A:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -7226,7 +8399,13 @@ ECS_S2_DRAW_A:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,(E2A_U1_X) : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -7238,7 +8417,13 @@ ECS_S2_DRAW_A:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,SPR_GRAY : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -7256,7 +8441,7 @@ ECS_S3_A:
     LD A,TARGETX0+16
 ECS_S3_SAVE_A:
     LD (E2A_TEMP_X),A
-    JR ECS_S3_DRAW_A
+    JP ECS_S3_DRAW_A
 ECS_S3_ARRIVED_A:
     LD A,1 : LD (E2A_U1_STATE),A
     LD A,(E2A_U1_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
@@ -7265,7 +8450,13 @@ ECS_S3_ARRIVED_A:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -7277,7 +8468,13 @@ ECS_S3_ARRIVED_A:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,(E2A_U1_X) : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -7289,7 +8486,13 @@ ECS_S3_ARRIVED_A:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,SPR_GRAY : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -7301,7 +8504,13 @@ ECS_S3_ARRIVED_A:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -7313,7 +8522,13 @@ ECS_S3_ARRIVED_A:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,255 : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -7329,7 +8544,13 @@ ECS_S3_DRAW_A:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -7341,7 +8562,13 @@ ECS_S3_DRAW_A:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,(E2A_TEMP_X) : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -7353,7 +8580,13 @@ ECS_S3_DRAW_A:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,SPR_GRAY : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -7382,7 +8615,13 @@ ECS_S4_DRAW_A:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -7394,7 +8633,13 @@ ECS_S4_DRAW_A:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,(E2A_U2_X) : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -7406,7 +8651,13 @@ ECS_S4_DRAW_A:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,SPR_GRAY : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -7424,7 +8675,7 @@ ECS_S5_A:
     LD A,TARGETX0+32
 ECS_S5_SAVE_A:
     LD (E2A_TEMP_X),A
-    JR ECS_S5_DRAW_A
+    JP ECS_S5_DRAW_A
 ECS_S5_ARRIVED_A:
     LD A,1 : LD (E2A_U2_STATE),A
     LD A,(E2A_U2_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
@@ -7433,7 +8684,13 @@ ECS_S5_ARRIVED_A:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -7445,7 +8702,13 @@ ECS_S5_ARRIVED_A:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,(E2A_U2_X) : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -7457,7 +8720,13 @@ ECS_S5_ARRIVED_A:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,SPR_GRAY : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -7469,7 +8738,13 @@ ECS_S5_ARRIVED_A:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -7481,7 +8756,13 @@ ECS_S5_ARRIVED_A:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,255 : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -7498,7 +8779,13 @@ ECS_S5_DRAW_A:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -7510,7 +8797,13 @@ ECS_S5_DRAW_A:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,(E2A_TEMP_X) : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -7522,7 +8815,13 @@ ECS_S5_DRAW_A:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,SPR_GRAY : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -7663,7 +8962,13 @@ ENEMY_HIDE_ALL3_A:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -7675,7 +8980,13 @@ ENEMY_HIDE_ALL3_A:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,255 : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -7687,7 +8998,13 @@ ENEMY_HIDE_ALL3_A:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -7699,7 +9016,13 @@ ENEMY_HIDE_ALL3_A:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,255 : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -7711,7 +9034,13 @@ ENEMY_HIDE_ALL3_A:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -7723,7 +9052,13 @@ ENEMY_HIDE_ALL3_A:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,255 : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -7735,7 +9070,13 @@ ENEMY_HIDE_ALL3_A:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -7747,7 +9088,13 @@ ENEMY_HIDE_ALL3_A:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,255 : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -7781,13 +9128,22 @@ ENEMY_DRAW_ALL_COMPLEX_B:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
     NOP
     NOP
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,(E2B_Y) : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -7799,13 +9155,22 @@ ENEMY_DRAW_ALL_COMPLEX_B:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,PAT_E2B0 : OUT (98h),A
     NOP
     NOP
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,SPR_GRAY : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -7817,13 +9182,22 @@ ENEMY_DRAW_ALL_COMPLEX_B:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
     NOP
     NOP
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,(E2B_Y) : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -7835,13 +9209,22 @@ ENEMY_DRAW_ALL_COMPLEX_B:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,PAT_E2B1 : OUT (98h),A
     NOP
     NOP
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,SPR_GRAY : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -7853,7 +9236,13 @@ ENEMY_DRAW_ALL_COMPLEX_B:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -7865,7 +9254,13 @@ ENEMY_DRAW_ALL_COMPLEX_B:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,(E2B_U2_X) : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -7877,7 +9272,13 @@ ENEMY_DRAW_ALL_COMPLEX_B:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,SPR_GRAY : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -7922,7 +9323,13 @@ EDS_U2_SET_B:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -7934,7 +9341,13 @@ EDS_U2_SET_B:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,(E2B_U0_X) : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -7946,7 +9359,13 @@ EDS_U2_SET_B:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,SPR_GRAY : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -7958,7 +9377,13 @@ EDS_U2_SET_B:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -7970,7 +9395,13 @@ EDS_U2_SET_B:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,(E2B_U1_X) : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -7982,7 +9413,13 @@ EDS_U2_SET_B:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,SPR_GRAY : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -7994,7 +9431,13 @@ EDS_U2_SET_B:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -8006,7 +9449,13 @@ EDS_U2_SET_B:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,(E2B_U2_X) : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -8018,7 +9467,13 @@ EDS_U2_SET_B:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,SPR_GRAY : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -8070,7 +9525,13 @@ ECS_S0_DRAW_B:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -8082,7 +9543,13 @@ ECS_S0_DRAW_B:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,(E2B_U0_X) : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -8094,7 +9561,13 @@ ECS_S0_DRAW_B:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,SPR_GRAY : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -8112,7 +9585,7 @@ ECS_S1_B:
     LD A,TARGETX0
 ECS_S1_SAVE_B:
     LD (E2B_TEMP_X),A
-    JR ECS_S1_DRAW_B
+    JP ECS_S1_DRAW_B
 ECS_S1_ARRIVED_B:
     LD A,1 : LD (E2B_U0_STATE),A
     LD A,(E2B_U0_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
@@ -8121,7 +9594,13 @@ ECS_S1_ARRIVED_B:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -8133,7 +9612,13 @@ ECS_S1_ARRIVED_B:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,(E2B_U0_X) : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -8145,7 +9630,13 @@ ECS_S1_ARRIVED_B:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,SPR_GRAY : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -8157,7 +9648,13 @@ ECS_S1_ARRIVED_B:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -8169,7 +9666,13 @@ ECS_S1_ARRIVED_B:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,255 : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -8185,7 +9688,13 @@ ECS_S1_DRAW_B:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -8197,7 +9706,13 @@ ECS_S1_DRAW_B:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,(E2B_TEMP_X) : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -8209,7 +9724,13 @@ ECS_S1_DRAW_B:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,SPR_GRAY : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -8238,7 +9759,13 @@ ECS_S2_DRAW_B:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -8250,7 +9777,13 @@ ECS_S2_DRAW_B:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,(E2B_U1_X) : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -8262,7 +9795,13 @@ ECS_S2_DRAW_B:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,SPR_GRAY : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -8280,7 +9819,7 @@ ECS_S3_B:
     LD A,TARGETX0+16
 ECS_S3_SAVE_B:
     LD (E2B_TEMP_X),A
-    JR ECS_S3_DRAW_B
+    JP ECS_S3_DRAW_B
 ECS_S3_ARRIVED_B:
     LD A,1 : LD (E2B_U1_STATE),A
     LD A,(E2B_U1_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
@@ -8289,7 +9828,13 @@ ECS_S3_ARRIVED_B:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -8301,7 +9846,13 @@ ECS_S3_ARRIVED_B:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,(E2B_U1_X) : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -8313,7 +9864,13 @@ ECS_S3_ARRIVED_B:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,SPR_GRAY : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -8325,7 +9882,13 @@ ECS_S3_ARRIVED_B:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -8337,7 +9900,13 @@ ECS_S3_ARRIVED_B:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,255 : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -8353,7 +9922,13 @@ ECS_S3_DRAW_B:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -8365,7 +9940,13 @@ ECS_S3_DRAW_B:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,(E2B_TEMP_X) : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -8377,7 +9958,13 @@ ECS_S3_DRAW_B:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,SPR_GRAY : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -8406,7 +9993,13 @@ ECS_S4_DRAW_B:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -8418,7 +10011,13 @@ ECS_S4_DRAW_B:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,(E2B_U2_X) : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -8430,7 +10029,13 @@ ECS_S4_DRAW_B:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,SPR_GRAY : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -8448,7 +10053,7 @@ ECS_S5_B:
     LD A,TARGETX0+32
 ECS_S5_SAVE_B:
     LD (E2B_TEMP_X),A
-    JR ECS_S5_DRAW_B
+    JP ECS_S5_DRAW_B
 ECS_S5_ARRIVED_B:
     LD A,1 : LD (E2B_U2_STATE),A
     LD A,(E2B_U2_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
@@ -8457,7 +10062,13 @@ ECS_S5_ARRIVED_B:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -8469,7 +10080,13 @@ ECS_S5_ARRIVED_B:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,(E2B_U2_X) : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -8481,7 +10098,13 @@ ECS_S5_ARRIVED_B:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,SPR_GRAY : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -8493,7 +10116,13 @@ ECS_S5_ARRIVED_B:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -8505,7 +10134,13 @@ ECS_S5_ARRIVED_B:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,255 : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -8522,7 +10157,13 @@ ECS_S5_DRAW_B:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -8534,7 +10175,13 @@ ECS_S5_DRAW_B:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,(E2B_TEMP_X) : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -8546,7 +10193,13 @@ ECS_S5_DRAW_B:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,SPR_GRAY : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -8687,7 +10340,13 @@ ENEMY_HIDE_ALL3_B:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -8699,7 +10358,13 @@ ENEMY_HIDE_ALL3_B:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,255 : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -8711,7 +10376,13 @@ ENEMY_HIDE_ALL3_B:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -8723,7 +10394,13 @@ ENEMY_HIDE_ALL3_B:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,255 : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -8735,7 +10412,13 @@ ENEMY_HIDE_ALL3_B:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -8747,7 +10430,13 @@ ENEMY_HIDE_ALL3_B:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,255 : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -8759,7 +10448,13 @@ ENEMY_HIDE_ALL3_B:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -8771,7 +10466,13 @@ ENEMY_HIDE_ALL3_B:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,255 : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -8916,7 +10617,13 @@ EBSB_UPDATE:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -8944,7 +10651,13 @@ EBSB_PHASEOK:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,(IX+E_X) : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -8957,8 +10670,14 @@ EBSB_PHASEOK:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     INC HL
     LD A,(HL) : OUT (98h),A          ; color
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -8976,7 +10695,13 @@ EBSB_EXIT_LEFT:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,255 : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -8989,8 +10714,14 @@ EBSB_EXIT_LEFT:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     INC HL
     LD A,(HL) : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -9048,7 +10779,13 @@ EBSD_DRAW:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -9060,7 +10797,13 @@ EBSD_DRAW:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,(IX+E_X) : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -9073,7 +10816,13 @@ EBSD_DRAW:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,SPR_GRAY : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -9094,7 +10843,13 @@ EBSD_EXIT_LEFT:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -9106,7 +10861,13 @@ EBSD_EXIT_LEFT:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,255 : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -9190,7 +10951,13 @@ EBSB_HIT_TEST:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
@@ -9202,7 +10969,13 @@ EBSB_HIT_TEST:
     NOP
     NOP
     NOP
+    NOP
+    NOP
+    NOP
     LD A,255 : OUT (98h),A
+    NOP
+    NOP
+    NOP
     NOP
     NOP
     NOP
