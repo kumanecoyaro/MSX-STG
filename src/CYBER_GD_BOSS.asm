@@ -116,6 +116,16 @@ GROUND_ROW0   EQU 19    ; first screen row of the 5-row ground scroller
                         ; load, and TIER1_MOUNTAIN now draws one row lower,
                         ; at screen row19, to fill the gap)
 
+; --- real-hardware-observed garbage cells (see GARBAGE_SCRUB): reverse-  ---
+; --- engineered from a screenshot, all 3 in the sky along Enemy3's      ---
+; --- flight path. Adjust if a report shows a different cell.            ---
+GARBAGE1_ROW EQU 9
+GARBAGE1_COL EQU 23
+GARBAGE2_ROW EQU 17
+GARBAGE2_COL EQU 26
+GARBAGE3_ROW EQU 3
+GARBAGE3_COL EQU 26
+
 FIRE_COOLDOWN EQU 0E3D2h ; frames to wait before another shot can spawn
 FIRE_COOLDOWN_LEN EQU 1  ; "1 cycle" gap between shots (see fire logic)
 TEMP_ERASE_BYTE EQU 0E3D6h ; scratch: byte to restore when erasing a shot
@@ -1966,6 +1976,8 @@ BULLET2_OFF:
     XOR A : LD (BULLET2_ACT),A
 BULLET2_NEXT:
 
+    CALL GARBAGE_SCRUB
+
     EI
     HALT
     JP MAINLOOP
@@ -2631,6 +2643,56 @@ WAC_SKIPBUF:
     NOP
     NOP
     LD A,(ANIM_TMP_VAL) : OUT (98h),A
+    NOP
+    NOP
+    RET
+
+; Real-hardware-observed garbage cells (root cause not found - looks
+; like a VDP-timing/T-state phase collision, not fixable by NOP-margin
+; or per-frame-workload tuning; both were tried and made it worse, not
+; better, so this isn't a simple margin/budget problem). Brute-force
+; defensive fix: unconditionally rewrite these 3 fixed sky cells to
+; BLANKCODE every single frame, last thing before HALT, so any
+; corruption written earlier in the frame never survives past it.
+; Coordinates reverse-engineered from a real-hardware screenshot - see
+; GARBAGE1/2/3_ROW/COL if a report shows a different cell.
+GARBAGE_SCRUB:
+    LD A,GARBAGE1_ROW : LD E,A : LD D,ROWADDR_LO/256 : LD A,(DE) : LD L,A
+    LD A,GARBAGE1_ROW : LD E,A : LD D,ROWADDR_HI/256 : LD A,(DE) : LD H,A
+    LD DE,GARBAGE1_COL : ADD HL,DE
+    LD A,L : OUT (99h),A
+    NOP
+    NOP
+    LD A,H : OR 40h : OUT (99h),A
+    NOP
+    NOP
+    LD A,BLANKCODE : OUT (98h),A
+    NOP
+    NOP
+
+    LD A,GARBAGE2_ROW : LD E,A : LD D,ROWADDR_LO/256 : LD A,(DE) : LD L,A
+    LD A,GARBAGE2_ROW : LD E,A : LD D,ROWADDR_HI/256 : LD A,(DE) : LD H,A
+    LD DE,GARBAGE2_COL : ADD HL,DE
+    LD A,L : OUT (99h),A
+    NOP
+    NOP
+    LD A,H : OR 40h : OUT (99h),A
+    NOP
+    NOP
+    LD A,BLANKCODE : OUT (98h),A
+    NOP
+    NOP
+
+    LD A,GARBAGE3_ROW : LD E,A : LD D,ROWADDR_LO/256 : LD A,(DE) : LD L,A
+    LD A,GARBAGE3_ROW : LD E,A : LD D,ROWADDR_HI/256 : LD A,(DE) : LD H,A
+    LD DE,GARBAGE3_COL : ADD HL,DE
+    LD A,L : OUT (99h),A
+    NOP
+    NOP
+    LD A,H : OR 40h : OUT (99h),A
+    NOP
+    NOP
+    LD A,BLANKCODE : OUT (98h),A
     NOP
     NOP
     RET
