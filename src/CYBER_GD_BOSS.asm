@@ -4226,7 +4226,7 @@ ESC_COMPLEX_INIT_B:
 ; entries have fired, this just returns immediately forever after.
 SPAWN_SCHEDULE_CHECK:
     LD A,(SPAWN_NEXT_INDEX)
-    CP 6
+    CP 8
     RET NC
     LD H,0 : LD L,A
     ADD HL,HL
@@ -4259,16 +4259,19 @@ SSC_FIRE:
     INC A
     LD (SPAWN_NEXT_INDEX),A
     DEC A
-    ; --- TEMPORARY: focused Enemy3-offset test schedule, 6 enemy3_wave  ---
-    ; --- triggers only (tick8..23, offsets 0/2/4/6/8/10 cells), from    ---
-    ; --- the schedule editor's test JSON. The previous full 75-entry    ---
-    ; --- level schedule this replaced is preserved in git history.      ---
+    ; --- TEMPORARY: focused Enemy3-offset test schedule, 8 enemy3_wave  ---
+    ; --- triggers only (tick9..16, 1 tick apart, offsets 0/1/2/3/0/1/   ---
+    ; --- 2/3 cells), from the schedule editor's test JSON. The         ---
+    ; --- previous full 75-entry level schedule this replaced is        ---
+    ; --- preserved in git history.                                     ---
     CP 0  : JP Z,SPAWN_E3_WAVE
     CP 1  : JP Z,SPAWN_E3_WAVE
     CP 2  : JP Z,SPAWN_E3_WAVE
     CP 3  : JP Z,SPAWN_E3_WAVE
     CP 4  : JP Z,SPAWN_E3_WAVE
-    JP SPAWN_E3_WAVE  ; index 5 (last)
+    CP 5  : JP Z,SPAWN_E3_WAVE
+    CP 6  : JP Z,SPAWN_E3_WAVE
+    JP SPAWN_E3_WAVE  ; index 7 (last)
 
 ; --- saved (disabled) boss-only fast-iteration schedule - kept for  ---
 ; --- quickly testing boss-only features again later. Not active.   ---
@@ -11738,14 +11741,14 @@ ENEMY3_PATTERN2:
 ENEMY3_PATTERN3:
     DB 0FFh,0FFh,0FFh,0E7h,0E7h,0FFh,0FFh,0FFh
 
-; TEMPORARY: focused Enemy3-offset test schedule, 6 entries (indices
-; 0-5), all enemy3_wave, imported directly from the schedule editor's
+; TEMPORARY: focused Enemy3-offset test schedule, 8 entries (indices
+; 0-7), all enemy3_wave, imported directly from the schedule editor's
 ; test JSON. The previous full 75-entry level schedule is preserved in
 ; git history (see the "Add two early Enemy3 waves..." commit onward) -
 ; restore it here (and in SSC_FIRE/SPAWN_SCHEDULE_CHECK) once this test
 ; is done.
 SPAWN_THRESHOLDS:
-    DW 8,11,14,17,20,23
+    DW 9,10,11,12,13,14,15,16
 
 ; --- saved (disabled) boss-only single-entry schedule, used ---
 ; --- while iterating quickly on boss features - not deleted: ---
@@ -11757,19 +11760,19 @@ SPAWN_THRESHOLDS:
 ; row*8 from the schedule editor. Only indices that actually dispatch
 ; to SPAWN_SIMPLE are read; the rest are unused placeholders (0).
 SPAWN_SIMPLE_Y_TABLE:
-    DB 0,0,0,0,0,0
+    DB 0,0,0,0,0,0,0,0
 
 ; Same idea as SPAWN_SIMPLE_Y_TABLE but for Enemy4/Enemy5 (SPAWN_E4/
 ; SPAWN_E4B) baseY - row*8 from the schedule editor, any row, not
 ; just the old 3 fixed presets (32/64/72). Unused elsewhere (0).
 SPAWN_BASEY_TABLE:
-    DB 0,0,0,0,0,0
+    DB 0,0,0,0,0,0,0,0
 
 ; This trigger's own ENEMY3_CURRENT_OFFSET (px = cells*8), one byte per
 ; SPAWN_THRESHOLDS index, from the schedule editor's per-placement
 ; "offset" field - see SPAWN_E3_WAVE.
 SPAWN_E3_OFFSET_TABLE:
-    DB 0,16,32,48,64,80
+    DB 0,8,16,24,0,8,16,24
 
 ; --- Boss BG (nametable) graphics, generated from
 ; --- dotpict_20260806_173500 (12x37 dot art), resized directly
