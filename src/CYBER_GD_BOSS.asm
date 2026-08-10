@@ -11375,10 +11375,13 @@ E3FS_FOUND:
 ENEMY3_DO_SPAWN:
     LD A,1 : LD (IX+0),A
     XOR A : LD (IX+1),A
-    LD A,ENEMY3_SPAWN_X : LD (IX+2),A
+    CALL ENEMY3_CENTERX_ADDR      ; this slot's centerx offset was just written by
+    LD A,(HL)                     ; the caller - apply it to the entry point too, so
+    ADD A,ENEMY3_SPAWN_X          ; the trio visibly separates from the first frame
+    LD (IX+2),A                   ; instead of only once DIAG converges on the center
     LD A,ENEMY3_SPAWN_Y : LD (IX+3),A
     LD A,ENEMY3_SPAWN_Y : SRL A : SRL A : SRL A : LD (IX+4),A
-    LD A,ENEMY3_SPAWN_X : SRL A : SRL A : SRL A : LD (IX+5),A
+    LD A,(IX+2) : SRL A : SRL A : SRL A : LD (IX+5),A
     XOR A : LD (IX+6),A : LD (IX+7),A : LD (IX+8),A : LD (IX+9),A
     LD A,ANIM3_PACE : LD (IX+10),A
     LD A,(ENEMY3_BUDGET) : DEC A : LD (ENEMY3_BUDGET),A
