@@ -511,12 +511,6 @@ ENEMY3_ACTIVE_COUNT EQU 0EBD7h
 ENEMY3_POOL          EQU 0EBD8h
 ENEMY3_CENTERX_TABLE EQU 0EE98h
 
-; --- palette debug strip: 15 hex-digit swatches (1-F), one per     ---
-; --- BLACK-on-color(1..15) cell - see COLOR_SWATCH_INIT.           ---
-CSI_INDEX     EQU 0F158h    ; scratch: swatch loop index (0-14)
-CSI_GROUP     EQU 0F159h    ; scratch: this swatch's borrowed color-table group
-CSI_COLORBYTE EQU 0F15Ah    ; scratch: this swatch's FG=black/BG=value color byte
-
 ; --- shot background-color variants: blue(sky), white(mountain, ---
 ; --- screen row 18), green(diamond/slash/backslash, rows 19-22), ---
 ; --- brown(wedge, row 23) - same treatment as the existing green ---
@@ -711,9 +705,6 @@ FILLBG_3:
 
     ; --- digit glyphs (0-9) for the on-screen game-tick counter ---
     LD HL,DIGIT_PATTERNS : LD DE,DIGIT_BASE*8 : LD BC,80 : CALL LDIRVM
-
-    ; --- palette debug strip - see COLOR_SWATCH_INIT's own comment ---
-    CALL COLOR_SWATCH_INIT
 
     ; --- boss BG/sprite character patterns are NOT preloaded here ---
     ; --- anymore - the terrain scroller actually uses more of the ---
@@ -4532,13 +4523,6 @@ BOSS_SPAWN:
     LD HL,BOSS_ORBIT_PATTERN : LD DE,100*8+SPRPAT : LD BC,32 : CALL LDIRVM
     LD HL,DFL_BULLET_PATTERN : LD DE,104*8+SPRPAT : LD BC,32 : CALL LDIRVM
     LD HL,EXPLOSION_PATTERN : LD DE,108*8+SPRPAT : LD BC,32 : CALL LDIRVM
-    ; --- restore groups24-31's real color-table bytes, undoing        ---
-    ; --- COLOR_SWATCH_INIT's borrow of them (see its own comment) -    ---
-    ; --- that only ever touches VRAM once at boot and has no way to   ---
-    ; --- know when the boss actually appears, so without this the     ---
-    ; --- boss would render in black-on-swatch-color for the whole     ---
-    ; --- fight instead of its real gray/blue/black/red.               ---
-    LD HL,COLORDATA+24 : LD DE,2018h : LD BC,8 : CALL LDIRVM
     XOR A : LD (BOSS_ROW),A
     XOR A : LD (BOSS_COL),A
     LD A,1 : LD (BOSS_PHASE),A
@@ -12387,103 +12371,6 @@ DIGIT_PATTERNS:
     DB 7Eh,06h,0Ch,18h,30h,30h,30h,00h   ; 7
     DB 3Ch,66h,66h,3Ch,66h,66h,3Ch,00h   ; 8
     DB 3Ch,66h,66h,3Eh,06h,0Ch,38h,00h   ; 9
-
-; --- palette debug strip -------------------------------------------
-; Shows MSX colors as labelled swatches: black text on a color-N
-; background, one cell per color, at row0 starting 1 cell right of
-; the score display (score=col0-7, gap=col8, swatches from col9).
-;
-; TEMPORARY CUTBACK: this used to also borrow shots/anim1/anim2/
-; Enemy3's color-table groups (7-21) for values 1-15. That recolored
-; every shot, every explosion, and Enemy3 itself for as long as the
-; strip was shown - not an occasional/rare cost, those are core,
-; constantly-visible gameplay elements, so that was wrong to sign off
-; on. Cut back to ONLY the boss's groups (24-31), confirmed genuinely
-; unused by anything until BOSS_SPAWN's own just-in-time load fires
-; (grepped every LDIRVM call site in the file - nothing else targets
-; codes192-255) - so this only shows 8 of the 16 colors (0-7) for now,
-; none of it borrowed from anything actually on screen during normal
-; play. Still TODO: find real dead pattern-generator space (not
-; "sometimes used" content) for the remaining 8 (values 8-F).
-;
-; Each swatch draws its glyph at its group's code+1 - doesn't matter
-; which of the boss's 8 codes/group is picked since ALL of them become
-; boss body tiles once BOSS_SPAWN fires, so +1 just keeps the loop
-; uniform with how a genuinely-spare-code group would work.
-SWATCH_GROUPS:
-    DB 24,25,26,27,28,29,30,31
-
-; Glyphs 0-9 (duplicated from DIGIT_PATTERNS - kept separate so
-; nothing here can affect the real digit/score display) then A-F, in
-; SWATCH_GROUPS order.
-SWATCH_DIGIT_PATTERNS:
-    DB 3Ch,66h,6Eh,76h,66h,66h,3Ch,00h   ; 0
-    DB 18h,38h,58h,18h,18h,18h,7Eh,00h   ; 1
-    DB 3Ch,66h,06h,0Ch,30h,60h,7Eh,00h   ; 2
-    DB 3Ch,66h,06h,1Ch,06h,66h,3Ch,00h   ; 3
-    DB 0Ch,1Ch,2Ch,4Ch,7Eh,0Ch,0Ch,00h   ; 4
-    DB 7Eh,60h,7Ch,06h,06h,66h,3Ch,00h   ; 5
-    DB 1Ch,30h,60h,7Ch,66h,66h,3Ch,00h   ; 6
-    DB 7Eh,06h,0Ch,18h,30h,30h,30h,00h   ; 7
-    DB 3Ch,66h,66h,3Ch,66h,66h,3Ch,00h   ; 8
-    DB 3Ch,66h,66h,3Eh,06h,0Ch,38h,00h   ; 9
-    DB 38h,6Ch,0C6h,0C6h,0FEh,0C6h,0C6h,00h ; A
-    DB 0FCh,0C6h,0C6h,0FCh,0C6h,0C6h,0FCh,00h ; B
-    DB 3Ch,66h,0C0h,0C0h,0C0h,66h,3Ch,00h ; C
-    DB 0F8h,6Ch,66h,66h,66h,6Ch,0F8h,00h ; D
-    DB 0FEh,60h,60h,7Ch,60h,60h,0FEh,00h ; E
-    DB 0FEh,60h,60h,7Ch,60h,60h,60h,00h  ; F
-
-; Writes the 8 swatch glyphs currently in SWATCH_GROUPS (pattern
-; table), their borrowed color-table entries, and the row0 nametable
-; cells that display them - see the block comment above SWATCH_GROUPS.
-; SWATCH_DIGIT_PATTERNS still has all 16 glyphs ready (0-9 then A-F)
-; for whenever the remaining 8 slots (values 8-F) get a real home.
-; Called once from INIT, after every other static pattern/color load
-; (BULLET/ANIM/ENEMY3/DIGIT/COLORDATA) so this strip's writes are the
-; final word for the codes/groups it borrows.
-COLOR_SWATCH_INIT:
-    XOR A : LD (CSI_INDEX),A
-CSI_LOOP:
-    LD A,(CSI_INDEX) : LD B,A
-    LD H,0 : LD L,B
-    LD DE,SWATCH_GROUPS : ADD HL,DE
-    LD A,(HL) : LD (CSI_GROUP),A
-
-    ; --- pattern: SWATCH_DIGIT_PATTERNS[index] (8 bytes) -> VRAM      ---
-    ; --- address of character (group*8+1) - the group's spare code   ---
-    LD H,0 : LD L,B
-    ADD HL,HL : ADD HL,HL : ADD HL,HL
-    LD DE,SWATCH_DIGIT_PATTERNS : ADD HL,DE
-    PUSH HL                          ; save source glyph address
-    LD A,(CSI_GROUP) : LD L,A : LD H,0
-    ADD HL,HL : ADD HL,HL : ADD HL,HL   ; HL = group*8 (the character code)
-    INC HL                              ; +1: this group's spare code
-    ADD HL,HL : ADD HL,HL : ADD HL,HL   ; HL = code*8 = VRAM pattern address
-    LD D,H : LD E,L
-    POP HL                            ; HL = source glyph address again
-    LD BC,8
-    CALL LDIRVM
-
-    ; --- color: FG=black(1)/BG=index -> VRAM color table entry       ---
-    ; --- 2000h+group (this group's ONE color-table byte)             ---
-    LD A,(CSI_INDEX) : OR 10h : LD (CSI_COLORBYTE),A
-    LD HL,CSI_COLORBYTE
-    LD A,(CSI_GROUP) : LD E,A : LD D,20h
-    LD BC,1
-    CALL LDIRVM
-
-    ; --- nametable: char (group*8+1) at row0, col(9+index) ---
-    XOR A : LD (ANIM_TMP_ROW),A
-    LD A,(CSI_INDEX) : ADD A,9 : LD (ANIM_TMP_COL),A
-    LD A,(CSI_GROUP) : ADD A,A : ADD A,A : ADD A,A : INC A
-    LD (ANIM_TMP_VAL),A
-    CALL WRITE_ANIM_CELL
-
-    LD A,(CSI_INDEX) : INC A : LD (CSI_INDEX),A
-    CP 8
-    JR C,CSI_LOOP
-    RET
 
 ; enemy3's orbit: 24-point radius-24 circle around (0,0), as signed
 ; (dx,dy) byte pairs, counter-clockwise on-screen. Position for LUT
