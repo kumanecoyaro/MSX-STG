@@ -447,17 +447,18 @@ TRAIL_HIST   EQU 0E433h       ; TRAIL_BUFLEN*2 = 64 bytes (X,Y pairs)
 ; --- (pattern order 1,2,3,2 repeating). Enters diagonally from    ---
 ; --- upper-right to center, orbits a LUT-defined radius-24 circle ---
 ; --- CCW starting from the top, 1.5 revolutions (ends at the      ---
-; --- bottom), then exits diagonally toward the lower-right. A     ---
-; --- pool of ENEMY3_SLOTS concurrent instances is recycled until  ---
-; --- each spawning wave's own budget (see ENEMY3_WAVE_POOL) runs  ---
-; --- out; each instance is fully independent so overlapping cells ---
-; --- never affect tracking.                                       ---
+; --- bottom), then exits diagonally toward the lower-right. Each  ---
+; --- spawning wave (see ENEMY3_WAVE_POOL) owns its own dedicated  ---
+; --- ENEMY3_SLOTS-instance slice of ENEMY3_POOL, recycled until   ---
+; --- that wave's own budget runs out - waves never contend with   ---
+; --- each other for a slot, so several running at once each show  ---
+; --- up to ENEMY3_SLOTS of their own members on screen.           ---
 ; --- Destroyed by shots using the same shared explosion/sound.    ---
 ENEMY3_CODE1  EQU 152          ; pattern1 (gray/blue), group19
 ENEMY3_CODE2  EQU 160          ; pattern2 (gray/blue), group20
 ENEMY3_CODE3  EQU 168          ; pattern3 (gray/red),  group21
 ANIM3_PACE    EQU 6            ; frames held per pulse-animation frame
-ENEMY3_SLOTS  EQU 8
+ENEMY3_SLOTS  EQU 8            ; concurrent instances PER WAVE (its own dedicated slice)
 ENEMY3_STRUCT EQU 11           ; ACTIVE,PHASE,X,Y,ROW,COL,ANGLEIDX,STEPCNT,REVCNT,ANIMIDX,ANIMTIMER
 ENEMY3_SPAWN_X EQU 200
 ENEMY3_SPAWN_Y EQU 8
@@ -478,21 +479,24 @@ ENEMY3_SPAWN_INTERVAL EQU 8    ; frames between spawns WITHIN one wave's own bud
                                 ; ("1 count" - matches the schedule tick unit).
 
 ENEMY3_SPAWN_COUNT EQU 0E4CEh  ; how many spawned so far in total (resume enemy1/2 at 32)
-ENEMY3_POOL        EQU 0E475h  ; 8*11 = 88 bytes
-ENEMY3_CENTERX_TABLE EQU 0EB5Fh ; 8*11=88 bytes, parallel to ENEMY3_POOL: each slot's
-                                ; OWN circle-center X pixel offset, copied at spawn
-                                ; time from whichever wave slot spawned it - lets each
-                                ; instance orbit its own horizontally-offset center
-                                ; instead of sharing one circle
 ; Each schedule trigger (SPAWN_E3_WAVE) claims its own ENEMY3_WAVE_POOL
 ; slot and runs its own independent budget/timer/offset from there on -
-; nothing is shared between waves, so several triggers firing close
-; together never fight over each other's state. A wave's offset really
-; is just "how much to add on top of the CIRCLE_LUT position" (see
-; E3_CIRCLE_POS/E3_DIAG) - one fixed value for every member that wave
-; spawns, nothing more.
+; and now also its own dedicated ENEMY3_SLOTS-instance slice of
+; ENEMY3_POOL (wave slot N's units live at ENEMY3_POOL+N*ENEMY3_SLOTS*
+; ENEMY3_STRUCT), so nothing is shared between waves at all - several
+; triggers firing close together never fight over each other's state OR
+; each other's visible slots. A wave's offset is just "how much to add
+; on top of the CIRCLE_LUT position" (see E3_CIRCLE_POS/E3_DIAG) - one
+; fixed value for every member that wave spawns, nothing more.
 ENEMY3_WAVE_SLOTS EQU 8
 ENEMY3_WAVE_POOL   EQU 0EBB7h  ; ENEMY3_WAVE_SLOTS*4 bytes: ACTIVE,BUDGET,TIMER,OFFSET
+; ENEMY3_WAVE_SLOTS*ENEMY3_SLOTS*ENEMY3_STRUCT = 704 bytes each, laid
+; out as ENEMY3_WAVE_SLOTS consecutive ENEMY3_SLOTS-instance slices (one
+; per wave slot, same order). ENEMY3_CENTERX_TABLE is parallel to
+; ENEMY3_POOL (same stride/layout): each instance's OWN circle-center X
+; pixel offset, copied at spawn time from its owning wave's OFFSET.
+ENEMY3_POOL          EQU 0EBD8h
+ENEMY3_CENTERX_TABLE EQU 0EE98h
 
 ; --- shot background-color variants: blue(sky), white(mountain, ---
 ; --- screen row 18), green(diamond/slash/backslash, rows 19-22), ---
@@ -715,19 +719,22 @@ FILLBG_3:
     ; --- enemy3 pool: idle at boot - waves start as the tick schedule ---
     ; --- reaches each trigger (see SPAWN_SCHEDULE_CHECK)               ---
     XOR A : LD (ENEMY3_SPAWN_COUNT),A
-    ; Full 88-byte clear (all 8 slots, not just each slot's ACTIVE byte) -
-    ; ENEMY3_UPDATE_SLOT's inactive-slot safety net (see its own comment)
-    ; reads ROW/COL (bytes 4/5) even for never-yet-spawned slots, and an
-    ; uninitialized (0,0) would blank row0/col0 - the score display's
-    ; first digit - every frame until the first real spawn.
+    ; Full 704-byte clear (all 64 slots, not just each slot's ACTIVE     ---
+    ; byte) - ENEMY3_UPDATE_SLOT's inactive-slot safety net (see its own
+    ; comment) reads ROW/COL (bytes 4/5) even for never-yet-spawned
+    ; slots, and an uninitialized (0,0) would blank row0/col0 - the
+    ; score display's first digit - every frame until the first real spawn.
     LD HL,ENEMY3_POOL : LD (HL),0
-    LD DE,ENEMY3_POOL+1 : LD BC,88-1 : LDIR
-    LD A,1                          ; ROW=1 (sky, matches ENEMY3_SPAWN_Y>>3) - never HUD row0
-    LD (ENEMY3_POOL+4),A  : LD (ENEMY3_POOL+15),A : LD (ENEMY3_POOL+26),A
-    LD (ENEMY3_POOL+37),A : LD (ENEMY3_POOL+48),A : LD (ENEMY3_POOL+59),A
-    LD (ENEMY3_POOL+70),A : LD (ENEMY3_POOL+81),A
+    LD DE,ENEMY3_POOL+1 : LD BC,ENEMY3_WAVE_SLOTS*ENEMY3_SLOTS*ENEMY3_STRUCT-1 : LDIR
+    ; ROW=1 (sky, matches ENEMY3_SPAWN_Y>>3) for every slot - never HUD row0
+    LD HL,ENEMY3_POOL+4 : LD B,ENEMY3_WAVE_SLOTS*ENEMY3_SLOTS
+E3INIT_ROW_LOOP:
+    LD (HL),1
+    LD DE,ENEMY3_STRUCT
+    ADD HL,DE
+    DJNZ E3INIT_ROW_LOOP
     LD HL,ENEMY3_CENTERX_TABLE : LD (HL),0
-    LD DE,ENEMY3_CENTERX_TABLE+1 : LD BC,88-1 : LDIR
+    LD DE,ENEMY3_CENTERX_TABLE+1 : LD BC,ENEMY3_WAVE_SLOTS*ENEMY3_SLOTS*ENEMY3_STRUCT-1 : LDIR
     ; All wave slots idle (ACTIVE=0, byte 0 of each 4-byte slot) - see
     ; ENEMY3_WAVE_POOL.
     LD HL,ENEMY3_WAVE_POOL : LD (HL),0
@@ -2058,16 +2065,9 @@ ANIM2_DONE:
     OR A
     CALL NZ,PLAYER_PARTICLE_FADE
 
-    ; --- enemy3: spawn attempt + advance/redraw all 8 pool slots ---
+    ; --- enemy3: spawn attempt + advance/redraw all 64 pool slots ---
     CALL ENEMY3_TRY_SPAWN
-    LD IX,ENEMY3_POOL    : CALL ENEMY3_UPDATE_SLOT
-    LD IX,ENEMY3_POOL+11 : CALL ENEMY3_UPDATE_SLOT
-    LD IX,ENEMY3_POOL+22 : CALL ENEMY3_UPDATE_SLOT
-    LD IX,ENEMY3_POOL+33 : CALL ENEMY3_UPDATE_SLOT
-    LD IX,ENEMY3_POOL+44 : CALL ENEMY3_UPDATE_SLOT
-    LD IX,ENEMY3_POOL+55 : CALL ENEMY3_UPDATE_SLOT
-    LD IX,ENEMY3_POOL+66 : CALL ENEMY3_UPDATE_SLOT
-    LD IX,ENEMY3_POOL+77 : CALL ENEMY3_UPDATE_SLOT
+    CALL ENEMY3_UPDATE_ALL
     ; --- unified sprite-enemy buffer: advance every active slot,   ---
     ; --- regardless of which movement algorithm (BEHAVIOR) it uses ---
     CALL ENEMY_POOL_UPDATE_ALL
@@ -4227,11 +4227,11 @@ ESC_COMPLEX_INIT_B:
 ; spawn exactly once, in order, as GAME_TICK reaches its threshold -
 ; not when the previous one finishes. SPAWN_THRESHOLDS is a 16-bit
 ; (DW) array so thresholds aren't capped at 255. Boss is the final
-; entry, index74. One-shot: once all 75 have fired, this just returns
+; entry, index76. One-shot: once all 77 have fired, this just returns
 ; immediately forever after, so nothing loops.
 SPAWN_SCHEDULE_CHECK:
     LD A,(SPAWN_NEXT_INDEX)
-    CP 75
+    CP 77
     RET NC
     LD H,0 : LD L,A
     ADD HL,HL
@@ -4248,10 +4248,10 @@ SPAWN_SCHEDULE_CHECK:
     ;     これにより取りこぼし(無駄)なく、ACTIVEが0に戻った
     ;     瞬間に確実に発火する ---
     LD A,(SPAWN_NEXT_INDEX)
-    CP 20 : JR Z,SSC_BUSY_A
     CP 22 : JR Z,SSC_BUSY_A
-    CP 21 : JR Z,SSC_BUSY_B
-    CP 24 : JR Z,SSC_BUSY_B
+    CP 24 : JR Z,SSC_BUSY_A
+    CP 23 : JR Z,SSC_BUSY_B
+    CP 26 : JR Z,SSC_BUSY_B
     JR SSC_FIRE
 SSC_BUSY_A:
     LD A,(E2A_ACTIVE) : OR A : RET NZ
@@ -4268,9 +4268,10 @@ SSC_FIRE:
     ; --- SPAWN_SIMPLE_Y_TABLE. Dodge direction is decided dynamically   ---
     ; --- from PLAYERY at screen center, not from where it spawned, so   ---
     ; --- it can spawn anywhere - see the schedule editor's layout.      ---
-    ; --- enemy3_wave (indices 6,10,23): SPAWN_E3_WAVE claims its own    ---
-    ; --- independent ENEMY3_WAVE_POOL slot (budget 32) - see            ---
-    ; --- ENEMY3_TRY_SPAWN_SLOT for the per-frame spawning this triggers.---
+    ; --- enemy3_wave (indices 6,7,9,12,25): SPAWN_E3_WAVE claims its    ---
+    ; --- own independent ENEMY3_WAVE_POOL slot (budget 32, own          ---
+    ; --- dedicated ENEMY3_POOL slice) - see ENEMY3_TRY_SPAWN_SLOT for   ---
+    ; --- the per-frame spawning this triggers.                          ---
     CP 0  : JP Z,SPAWN_SIMPLE
     CP 1  : JP Z,SPAWN_SIMPLE
     CP 2  : JP Z,SPAWN_SIMPLE
@@ -4278,12 +4279,12 @@ SSC_FIRE:
     CP 4  : JP Z,SPAWN_SIMPLE
     CP 5  : JP Z,SPAWN_SIMPLE
     CP 6  : JP Z,SPAWN_E3_WAVE
-    CP 7  : JP Z,SPAWN_SIMPLE
+    CP 7  : JP Z,SPAWN_E3_WAVE
     CP 8  : JP Z,SPAWN_SIMPLE
-    CP 9  : JP Z,SPAWN_SIMPLE
-    CP 10 : JP Z,SPAWN_E3_WAVE
+    CP 9  : JP Z,SPAWN_E3_WAVE
+    CP 10 : JP Z,SPAWN_SIMPLE
     CP 11 : JP Z,SPAWN_SIMPLE
-    CP 12 : JP Z,SPAWN_SIMPLE
+    CP 12 : JP Z,SPAWN_E3_WAVE
     CP 13 : JP Z,SPAWN_SIMPLE
     CP 14 : JP Z,SPAWN_SIMPLE
     CP 15 : JP Z,SPAWN_SIMPLE
@@ -4291,37 +4292,37 @@ SSC_FIRE:
     CP 17 : JP Z,SPAWN_SIMPLE
     CP 18 : JP Z,SPAWN_SIMPLE
     CP 19 : JP Z,SPAWN_SIMPLE
-    CP 20 : JP Z,SPAWN_E2_TOP_A
-    CP 21 : JP Z,SPAWN_E2_BOT_A
-    CP 22 : JP Z,SPAWN_E2_TOP_B
-    CP 23 : JP Z,SPAWN_E3_WAVE
-    CP 24 : JP Z,SPAWN_E2_BOT_B
+    CP 20 : JP Z,SPAWN_SIMPLE
+    CP 21 : JP Z,SPAWN_SIMPLE
+    CP 22 : JP Z,SPAWN_E2_TOP_A
+    CP 23 : JP Z,SPAWN_E2_BOT_A
+    CP 24 : JP Z,SPAWN_E2_TOP_B
+    CP 25 : JP Z,SPAWN_E3_WAVE
+    CP 26 : JP Z,SPAWN_E2_BOT_B
     ; --- Enemy4 (TYPE_ENEMY4): any baseY now - see SPAWN_E4/            ---
     ; --- SPAWN_BASEY_TABLE. Includes the extra spawns tucked into       ---
     ; --- each wave's gap from this JSON.                                ---
-    CP 25 : JP Z,SPAWN_E4
-    CP 26 : JP Z,SPAWN_E4
     CP 27 : JP Z,SPAWN_E4
     CP 28 : JP Z,SPAWN_E4
-    CP 29 : JP Z,SPAWN_SIMPLE
-    CP 30 : JP Z,SPAWN_SIMPLE
+    CP 29 : JP Z,SPAWN_E4
+    CP 30 : JP Z,SPAWN_E4
     CP 31 : JP Z,SPAWN_SIMPLE
-    CP 32 : JP Z,SPAWN_E4
-    CP 33 : JP Z,SPAWN_E4
+    CP 32 : JP Z,SPAWN_SIMPLE
+    CP 33 : JP Z,SPAWN_SIMPLE
     CP 34 : JP Z,SPAWN_E4
     CP 35 : JP Z,SPAWN_E4
-    CP 36 : JP Z,SPAWN_SIMPLE
-    CP 37 : JP Z,SPAWN_SIMPLE
+    CP 36 : JP Z,SPAWN_E4
+    CP 37 : JP Z,SPAWN_E4
     CP 38 : JP Z,SPAWN_SIMPLE
-    CP 39 : JP Z,SPAWN_E4
-    CP 40 : JP Z,SPAWN_E4
+    CP 39 : JP Z,SPAWN_SIMPLE
+    CP 40 : JP Z,SPAWN_SIMPLE
     CP 41 : JP Z,SPAWN_E4
     CP 42 : JP Z,SPAWN_E4
-    CP 43 : JP Z,SPAWN_SIMPLE
-    CP 44 : JP Z,SPAWN_SIMPLE
+    CP 43 : JP Z,SPAWN_E4
+    CP 44 : JP Z,SPAWN_E4
     CP 45 : JP Z,SPAWN_SIMPLE
-    CP 46 : JP Z,SPAWN_E4
-    CP 47 : JP Z,SPAWN_E4
+    CP 46 : JP Z,SPAWN_SIMPLE
+    CP 47 : JP Z,SPAWN_SIMPLE
     CP 48 : JP Z,SPAWN_E4
     CP 49 : JP Z,SPAWN_E4
     CP 50 : JP Z,SPAWN_E4
@@ -4336,21 +4337,23 @@ SSC_FIRE:
     CP 59 : JP Z,SPAWN_E4
     CP 60 : JP Z,SPAWN_E4
     CP 61 : JP Z,SPAWN_E4
+    CP 62 : JP Z,SPAWN_E4
+    CP 63 : JP Z,SPAWN_E4
     ; --- TYPE_ENEMY1_LOOK test wave ("Enemy5"), with one extra          ---
     ; --- simple-formation spawn tucked in each gap, from the schedule   ---
     ; --- editor's layout.                                               ---
-    CP 62 : JP Z,SPAWN_E4B
-    CP 63 : JP Z,SPAWN_E4B
     CP 64 : JP Z,SPAWN_E4B
-    CP 65 : JP Z,SPAWN_SIMPLE
+    CP 65 : JP Z,SPAWN_E4B
     CP 66 : JP Z,SPAWN_E4B
-    CP 67 : JP Z,SPAWN_E4B
+    CP 67 : JP Z,SPAWN_SIMPLE
     CP 68 : JP Z,SPAWN_E4B
-    CP 69 : JP Z,SPAWN_SIMPLE
+    CP 69 : JP Z,SPAWN_E4B
     CP 70 : JP Z,SPAWN_E4B
-    CP 71 : JP Z,SPAWN_E4B
+    CP 71 : JP Z,SPAWN_SIMPLE
     CP 72 : JP Z,SPAWN_E4B
-    CP 73 : JP Z,SPAWN_SIMPLE
+    CP 73 : JP Z,SPAWN_E4B
+    CP 74 : JP Z,SPAWN_E4B
+    CP 75 : JP Z,SPAWN_SIMPLE
     JP BOSS_SPAWN
 
 ; --- saved (disabled) boss-only fast-iteration schedule - kept for  ---
@@ -11345,25 +11348,34 @@ ENEMY4_SINE_LUT:
 
 ; Advances all ENEMY3_WAVE_SLOTS wave slots by one frame - see
 ; ENEMY3_TRY_SPAWN_SLOT for the actual per-slot logic. Each slot is
-; fully independent (own ACTIVE/BUDGET/TIMER/OFFSET), so several
-; waves running at once never share or overwrite each other's state.
+; fully independent (own ACTIVE/BUDGET/TIMER/OFFSET) AND owns its own
+; dedicated ENEMY3_SLOTS-instance slice of ENEMY3_POOL (passed in as
+; HL), so several waves running at once never share or contend over
+; anything - each can have up to ENEMY3_SLOTS of its own members alive
+; at once regardless of what any other wave is doing.
 ENEMY3_TRY_SPAWN:
-    LD IX,ENEMY3_WAVE_POOL    : CALL ENEMY3_TRY_SPAWN_SLOT
-    LD IX,ENEMY3_WAVE_POOL+4  : CALL ENEMY3_TRY_SPAWN_SLOT
-    LD IX,ENEMY3_WAVE_POOL+8  : CALL ENEMY3_TRY_SPAWN_SLOT
-    LD IX,ENEMY3_WAVE_POOL+12 : CALL ENEMY3_TRY_SPAWN_SLOT
-    LD IX,ENEMY3_WAVE_POOL+16 : CALL ENEMY3_TRY_SPAWN_SLOT
-    LD IX,ENEMY3_WAVE_POOL+20 : CALL ENEMY3_TRY_SPAWN_SLOT
-    LD IX,ENEMY3_WAVE_POOL+24 : CALL ENEMY3_TRY_SPAWN_SLOT
-    LD IX,ENEMY3_WAVE_POOL+28 : JP ENEMY3_TRY_SPAWN_SLOT
+    LD IX,ENEMY3_WAVE_POOL    : LD HL,ENEMY3_POOL     : CALL ENEMY3_TRY_SPAWN_SLOT
+    LD IX,ENEMY3_WAVE_POOL+4  : LD HL,ENEMY3_POOL+88  : CALL ENEMY3_TRY_SPAWN_SLOT
+    LD IX,ENEMY3_WAVE_POOL+8  : LD HL,ENEMY3_POOL+176 : CALL ENEMY3_TRY_SPAWN_SLOT
+    LD IX,ENEMY3_WAVE_POOL+12 : LD HL,ENEMY3_POOL+264 : CALL ENEMY3_TRY_SPAWN_SLOT
+    LD IX,ENEMY3_WAVE_POOL+16 : LD HL,ENEMY3_POOL+352 : CALL ENEMY3_TRY_SPAWN_SLOT
+    LD IX,ENEMY3_WAVE_POOL+20 : LD HL,ENEMY3_POOL+440 : CALL ENEMY3_TRY_SPAWN_SLOT
+    LD IX,ENEMY3_WAVE_POOL+24 : LD HL,ENEMY3_POOL+528 : CALL ENEMY3_TRY_SPAWN_SLOT
+    LD IX,ENEMY3_WAVE_POOL+28 : LD HL,ENEMY3_POOL+616 : JP ENEMY3_TRY_SPAWN_SLOT
 
-; Input: IX = one wave slot (ACTIVE,BUDGET,TIMER,OFFSET). Counts down
-; this slot's OWN timer; when it expires, claims a free ENEMY3_POOL
-; unit slot (the shared, hardware-limited pool of visible instances)
-; and spawns it using THIS wave's fixed OFFSET - not read from any
-; table or cycled, just a plain constant for every member this wave
-; produces. Decrements this wave's own budget and deactivates the
-; slot once it reaches 0.
+; Input: IX = one wave slot (ACTIVE,BUDGET,TIMER,OFFSET), HL = base of
+; this wave's own dedicated ENEMY3_SLOTS-instance slice of ENEMY3_POOL.
+; Counts down this slot's OWN timer; when it expires, claims a free
+; unit slot from THIS WAVE'S OWN slice (see ENEMY3_FIND_FREE_SLOT) and
+; spawns it using THIS wave's fixed OFFSET - not read from any table or
+; cycled, just a plain constant for every member this wave produces.
+; Decrements this wave's own budget and deactivates the slot once it
+; reaches 0.
+;
+; On a FAILED claim (this wave's own slice is full - its own earlier
+; members haven't died yet), the retry is rearmed for the VERY NEXT
+; frame instead of waiting out the full ENEMY3_SPAWN_INTERVAL again, so
+; this wave's own turnover feels immediate once a slot of its own frees up.
 ENEMY3_TRY_SPAWN_SLOT:
     LD A,(IX+0)
     OR A
@@ -11372,24 +11384,27 @@ ENEMY3_TRY_SPAWN_SLOT:
     DEC A
     LD (IX+2),A
     RET NZ
-    LD A,ENEMY3_SPAWN_INTERVAL
-    LD (IX+2),A
     LD A,(IX+3) : LD B,A       ; B = this wave's offset, grabbed before IX changes
     PUSH IX                     ; save this wave slot's address
-    CALL ENEMY3_FIND_FREE_SLOT  ; IX <- a free ENEMY3_POOL unit slot (clobbers IX)
+    PUSH BC                     ; save B (offset) - ENEMY3_FIND_FREE_SLOT clobbers B/DE/HL
+    CALL ENEMY3_FIND_FREE_SLOT  ; HL(in)=this wave's own slice; IX(out)=free unit slot
+    POP BC                       ; restore B (offset) - A (the found/not-found flag) survives
     OR A
     JR NZ,E3TSS_GOTUNIT
-    POP IX                       ; no free unit slot - restore and wait for next frame
+    POP IX                       ; no free unit slot in this wave's own slice - retry next frame
+    LD (IX+2),1
     RET
 E3TSS_GOTUNIT:
     CALL ENEMY3_CENTERX_ADDR    ; HL <- &centerx table entry for the unit slot in IX
     LD (HL),B
     CALL ENEMY3_DO_SPAWN        ; spawns the unit at IX (its own RET returns here)
     POP HL                       ; HL = this wave slot's address again
-    INC HL                       ; -> BUDGET byte
-    LD A,(HL) : DEC A : LD (HL),A
+    PUSH HL : POP IX             ; IX = wave slot, so (IX+n) offsets work below
+    LD A,ENEMY3_SPAWN_INTERVAL
+    LD (IX+2),A                  ; this attempt succeeded - resume normal pacing
+    LD A,(IX+1) : DEC A : LD (IX+1),A
     RET NZ
-    DEC HL : LD (HL),0           ; budget exhausted - deactivate this wave (ACTIVE byte)
+    LD (IX+0),0                  ; budget exhausted - deactivate this wave
     RET
 
 ; Input: IX = slot base address (within ENEMY3_POOL). Output: HL =
@@ -11404,20 +11419,23 @@ ENEMY3_CENTERX_ADDR:
     ADD HL,DE
     RET
 
-; Output: A=1 and IX=slot base if a free (inactive) slot was found,
-; else A=0. Clobbers: A, IX.
+; Input: HL = base of an ENEMY3_SLOTS-instance slice of ENEMY3_POOL
+; (one wave's own dedicated slice - see ENEMY3_TRY_SPAWN). Output: A=1
+; and IX=slot base if a free (inactive) slot was found within that
+; slice, else A=0. Clobbers: A, B, DE, HL, IX.
 ENEMY3_FIND_FREE_SLOT:
-    LD IX,ENEMY3_POOL             : LD A,(IX+0) : OR A : JR Z,E3FS_FOUND
-    LD IX,ENEMY3_POOL+11          : LD A,(IX+0) : OR A : JR Z,E3FS_FOUND
-    LD IX,ENEMY3_POOL+22          : LD A,(IX+0) : OR A : JR Z,E3FS_FOUND
-    LD IX,ENEMY3_POOL+33          : LD A,(IX+0) : OR A : JR Z,E3FS_FOUND
-    LD IX,ENEMY3_POOL+44          : LD A,(IX+0) : OR A : JR Z,E3FS_FOUND
-    LD IX,ENEMY3_POOL+55          : LD A,(IX+0) : OR A : JR Z,E3FS_FOUND
-    LD IX,ENEMY3_POOL+66          : LD A,(IX+0) : OR A : JR Z,E3FS_FOUND
-    LD IX,ENEMY3_POOL+77          : LD A,(IX+0) : OR A : JR Z,E3FS_FOUND
+    LD B,ENEMY3_SLOTS
+E3FFS_LOOP:
+    LD A,(HL)
+    OR A
+    JR Z,E3FFS_FOUND
+    LD DE,ENEMY3_STRUCT
+    ADD HL,DE
+    DJNZ E3FFS_LOOP
     XOR A
     RET
-E3FS_FOUND:
+E3FFS_FOUND:
+    PUSH HL : POP IX
     LD A,1
     RET
 
@@ -11473,6 +11491,26 @@ E3EC_GOT:
     LD A,(IX+4) : LD (ANIM_TMP_ROW),A
     LD A,(IX+5) : LD (ANIM_TMP_COL),A
     JP WRITE_ANIM_CELL
+
+; Advances/redraws every one of the ENEMY3_WAVE_SLOTS*ENEMY3_SLOTS (64)
+; pool slots, one frame each - called once per frame from the mainloop
+; instead of unrolling 64 individual LD IX,.../CALL pairs. Slots are
+; visited unconditionally (active or not) since ENEMY3_UPDATE_SLOT's own
+; inactive-slot safety net needs to run on every slot every frame too.
+ENEMY3_UPDATE_ALL:
+    LD HL,ENEMY3_POOL
+    LD B,ENEMY3_WAVE_SLOTS*ENEMY3_SLOTS
+E3UA_LOOP:
+    PUSH BC
+    PUSH HL
+    PUSH HL : POP IX
+    CALL ENEMY3_UPDATE_SLOT
+    POP HL
+    POP BC
+    LD DE,ENEMY3_STRUCT
+    ADD HL,DE
+    DJNZ E3UA_LOOP
+    RET
 
 ENEMY3_UPDATE_SLOT:
     LD A,(IX+0)
@@ -11642,16 +11680,33 @@ E3H_NO:
 
 ; Input: B = bullet col, C = bullet row.
 ; Output: A = 1 if the bullet destroyed an enemy3 instance, else 0.
+; B/C are saved to scratch RAM across the scan (same ENEMY_HIT_COL/ROW
+; used by CHECK_BULLET_VS_ENEMY_POOL) so the loop can use B as its
+; counter over all ENEMY3_WAVE_SLOTS*ENEMY3_SLOTS (64) slots.
 CHECK_BULLET_VS_ENEMY3:
-    LD IX,ENEMY3_POOL    : CALL E3_HIT_ONE_SLOT : OR A : RET NZ
-    LD IX,ENEMY3_POOL+11 : CALL E3_HIT_ONE_SLOT : OR A : RET NZ
-    LD IX,ENEMY3_POOL+22 : CALL E3_HIT_ONE_SLOT : OR A : RET NZ
-    LD IX,ENEMY3_POOL+33 : CALL E3_HIT_ONE_SLOT : OR A : RET NZ
-    LD IX,ENEMY3_POOL+44 : CALL E3_HIT_ONE_SLOT : OR A : RET NZ
-    LD IX,ENEMY3_POOL+55 : CALL E3_HIT_ONE_SLOT : OR A : RET NZ
-    LD IX,ENEMY3_POOL+66 : CALL E3_HIT_ONE_SLOT : OR A : RET NZ
-    LD IX,ENEMY3_POOL+77
-    JP E3_HIT_ONE_SLOT
+    LD A,B : LD (ENEMY_HIT_COL),A
+    LD A,C : LD (ENEMY_HIT_ROW),A
+    LD HL,ENEMY3_POOL
+    LD B,ENEMY3_WAVE_SLOTS*ENEMY3_SLOTS
+CBVE3_LOOP:
+    PUSH HL
+    PUSH BC
+    PUSH HL : POP IX
+    LD A,(ENEMY_HIT_COL) : LD B,A
+    LD A,(ENEMY_HIT_ROW) : LD C,A
+    CALL E3_HIT_ONE_SLOT
+    POP BC
+    POP HL
+    OR A
+    JR NZ,CBVE3_HIT
+    LD DE,ENEMY3_STRUCT
+    ADD HL,DE
+    DJNZ CBVE3_LOOP
+    XOR A
+    RET
+CBVE3_HIT:
+    LD A,1
+    RET
 
 ; Translates 33 consecutive ROWDATA bytes (ASCII terrain letter) through
 ; LUT into an IDCACHEn buffer - used to refresh a row's cache only when
@@ -11863,7 +11918,7 @@ ENEMY3_PATTERN2:
 ENEMY3_PATTERN3:
     DB 0FFh,0FFh,0FFh,0E7h,0E7h,0FFh,0FFh,0FFh
 
-; Full schedule, 75 entries (indices 0-74), imported directly from the
+; Full schedule, 77 entries (indices 0-76), imported directly from the
 ; schedule editor's exported JSON (tick/row/type per placement) - see
 ; SSC_FIRE for the per-index dispatch this drives. Every tick here is
 ; a 16-bit word since thresholds run well past 255. Simple-formation
@@ -11871,11 +11926,11 @@ ENEMY3_PATTERN3:
 ; SPAWN_SIMPLE_Y_TABLE/SPAWN_BASEY_TABLE (row*8 from the editor),
 ; not from which of the old fixed presets they used to be.
 SPAWN_THRESHOLDS:
-    DW 10,11,12,18,19,20,23,26,27,28,29,33,34,35,41,42,43
-    DW 55,56,57,70,90,110,120,130,145,146,147,148,153,154,155,160,161
-    DW 162,163,168,169,170,175,176,177,178,183,184,185,190,191,192,193,198
-    DW 200,205,206,207,208,213,215,220,221,222,223,235,236,237,238,250,251
-    DW 252,253,265,266,267,268,280
+    DW 10,11,12,18,19,20,23,25,26,27,27,28,29,33,34,35,41
+    DW 42,43,55,56,57,70,90,110,120,130,145,146,147,148,153,154,155
+    DW 160,161,162,163,168,169,170,175,176,177,178,183,184,185,190,191,192
+    DW 193,198,200,205,206,207,208,213,215,220,221,222,223,235,236,237,238
+    DW 250,251,252,253,265,266,267,268,280
 
 ; --- saved (disabled) boss-only single-entry schedule, used ---
 ; --- while iterating quickly on boss features - not deleted: ---
@@ -11887,34 +11942,35 @@ SPAWN_THRESHOLDS:
 ; row*8 from the schedule editor. Only indices that actually dispatch
 ; to SPAWN_SIMPLE are read; the rest are unused placeholders (0).
 SPAWN_SIMPLE_Y_TABLE:
-    DB 16,16,16,64,64,64,0,128,128,128,0,64,64,64,16,16,16
-    DB 16,16,16,0,0,0,0,0,0,0,0,0,48,48,48,0,0
-    DB 0,0,96,96,96,0,0,0,0,40,40,40,0,0,0,0,0
-    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,16,0,0
-    DB 0,16,0,0,0,128,0
+    DB 16,16,16,64,64,64,0,0,128,0,128,128,0,64,64,64,16
+    DB 16,16,16,16,16,0,0,0,0,0,0,0,0,0,48,48,48
+    DB 0,0,0,0,96,96,96,0,0,0,0,40,40,40,0,0,0
+    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,16
+    DB 0,0,0,16,0,0,0,128,0
 
 ; Same idea as SPAWN_SIMPLE_Y_TABLE but for Enemy4/Enemy5 (SPAWN_E4/
 ; SPAWN_E4B) baseY - row*8 from the schedule editor, any row, not
 ; just the old 3 fixed presets (32/64/72). Unused elsewhere (0).
 SPAWN_BASEY_TABLE:
     DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-    DB 0,0,0,0,0,0,0,0,32,64,72,104,0,0,0,64,96
-    DB 104,136,0,0,0,32,64,72,104,0,0,0,64,96,104,136,72
-    DB 112,32,64,72,104,136,88,32,64,72,104,32,64,72,0,32,64
-    DB 72,0,32,64,72,0,0
+    DB 0,0,0,0,0,0,0,0,0,0,32,64,72,104,0,0,0
+    DB 64,96,104,136,0,0,0,32,64,72,104,0,0,0,64,96,104
+    DB 136,72,112,32,64,72,104,136,88,32,64,72,104,32,64,72,0
+    DB 32,64,72,0,32,64,72,0,0
 
 ; This trigger's own offset (px = cells*8), one byte per SPAWN_THRESHOLDS
 ; index, from the schedule editor's per-placement "offset" field - each
 ; enemy3_wave trigger copies its own entry straight into its own
-; ENEMY3_WAVE_POOL slot (see SPAWN_E3_WAVE). Only indices 6/10/23
-; (enemy3_wave) are read; the level schedule doesn't use per-trigger
-; offsets, so all three are 0 (a single shared circle).
+; ENEMY3_WAVE_POOL slot AND ITS OWN dedicated ENEMY3_POOL slice (see
+; SPAWN_E3_WAVE/ENEMY3_TRY_SPAWN), so several triggers at different
+; offsets run fully independently. Only indices 6/7/9/12/25
+; (enemy3_wave) are read; the rest are unused placeholders (0).
 SPAWN_E3_OFFSET_TABLE:
+    DB 0,0,0,0,0,0,0,16,0,32,0,0,48,0,0,0,0
     DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
     DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
     DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-    DB 0,0,0,0,0,0,0
+    DB 0,0,0,0,0,0,0,0,0
 
 ; --- Boss BG (nametable) graphics, generated from
 ; --- dotpict_20260806_173500 (12x37 dot art), resized directly
