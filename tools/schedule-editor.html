@@ -273,15 +273,6 @@
     font-size: 11.5px;
     line-height: 1.4;
   }
-  #offsetInput {
-    background: var(--surface-2);
-    color: var(--ink);
-    border: 1px solid var(--line);
-    border-radius: 7px;
-    padding: 8px;
-    font-family: var(--font-mono);
-    font-size: 15px;
-  }
   .overlay-actions { display: flex; gap: 8px; justify-content: flex-end; }
   .overlay-actions button { padding: 8px 14px; }
   /* Inline, not the bottom-fixed toast - on mobile a toast at the
@@ -379,18 +370,6 @@
     </div>
   </div>
 
-  <div id="offsetOverlay" class="overlay">
-    <div class="overlay-card" style="width: min(320px, 100%);">
-      <div class="overlay-title" id="offsetOverlayTitle">Edit offset</div>
-      <input type="number" id="offsetInput" inputmode="numeric" step="1" min="0">
-      <div class="overlay-status" id="offsetStatus"></div>
-      <div class="overlay-actions">
-        <button id="btnOffsetCancel">Cancel</button>
-        <button class="primary" id="btnOffsetSave">Save</button>
-      </div>
-    </div>
-  </div>
-
 <script>
 (function () {
   "use strict";
@@ -413,18 +392,6 @@
   ];
   var TYPE_BY_ID = {};
   TYPES.forEach(function (t) { TYPE_BY_ID[t.id] = t; });
-
-  // ---------- Enemy3 wave internals (ENEMY3_TRY_SPAWN in CYBER_GD_BOSS.asm) -
-  // kept in sync by hand with the ASM constants of the same name, used only
-  // to draw the one-set spawn preview in drawGrid(). SPAWN_E3_WAVE arms a
-  // budget of 32 (ENEMY3_BUDGET), which just repeats this same 3-member set
-  // shape until it runs out - the grid previews one set, not all ~11.
-  var ENEMY3_OFFSET_TABLE_PX = [0, 16, 32]; // mirrors ENEMY3_OFFSET_TABLE (px)
-  var ENEMY3_OFFSET_COUNT = ENEMY3_OFFSET_TABLE_PX.length;
-  // Real in-game spacing is 1 GAME_TICK/spawn (ENEMY3_SPAWN_INTERVAL=8 frames);
-  // 1 blank cell between each previewed member is a display-only choice for
-  // legibility and doesn't change ENEMY3_SPAWN_INTERVAL in the actual game.
-  var ENEMY3_PREVIEW_TICK_GAP = 2;
 
   // ---------- geometry ----------
   var ROWS = 24;
@@ -597,47 +564,6 @@
       ctx.stroke();
     }
 
-    // enemy3_wave preview: one set = ENEMY3_OFFSET_COUNT identical "E3"
-    // icons, ENEMY3_PREVIEW_TICK_GAP ticks apart, each with its own
-    // ENEMY3_OFFSET_TABLE_PX value labeled above it ("+0", "+2", "+4", ...).
-    // Index 0 is the real trigger (drawn by the placed-enemies pass below,
-    // just labeled here); index 1+ are non-editable preview cells - not
-    // part of `placements`, never saved, never clickable. The budget-32
-    // wave just repeats this same set shape until it runs out; the grid
-    // previews one set, not all ~11 repeats.
-    placements.forEach(function (p) {
-      if (p.type !== "enemy3_wave") return;
-      var hue = tok(TYPE_BY_ID[p.type].hue);
-      ENEMY3_OFFSET_TABLE_PX.forEach(function (px, i) {
-        var t = p.tick + i * ENEMY3_PREVIEW_TICK_GAP;
-        if (t > MAX_TICK) return;
-        var x = t * CELL, y = p.row * CELL;
-        if (i > 0) {
-          var pad2 = 2;
-          ctx.fillStyle = hue;
-          roundRect(ctx, x + pad2, y + pad2, CELL - pad2 * 2, CELL - pad2 * 2, 4);
-          ctx.fill();
-          ctx.fillStyle = "#05080d";
-          ctx.font = "700 " + Math.max(8, Math.round(CELL * 0.36)) + "px " + tok("--font-mono").split(",")[0] + ", monospace";
-          ctx.textAlign = "center";
-          ctx.textBaseline = "middle";
-          ctx.fillText("E3", x + CELL / 2, y + CELL / 2 + 1);
-        }
-        // faint outline = tappable (opens the offset editor - see
-        // enemy3OffsetHitTest, which uses this same labelH)
-        var labelH = enemy3OffsetLabelH();
-        ctx.strokeStyle = tok("--line");
-        ctx.lineWidth = 1;
-        roundRect(ctx, x + 1.5, y - labelH + 1.5, CELL - 3, labelH - 3, 3);
-        ctx.stroke();
-        ctx.fillStyle = tok("--ink");
-        ctx.font = "700 " + Math.max(8, Math.round(CELL * 0.36)) + "px " + tok("--font-mono").split(",")[0] + ", monospace";
-        ctx.textAlign = "center";
-        ctx.textBaseline = "bottom";
-        ctx.fillText("+" + (px / 8), x + CELL / 2, y - 1);
-      });
-    });
-
     // placed enemies
     ctx.font = "700 " + Math.max(8, Math.round(CELL * 0.36)) + "px " + tok("--font-mono").split(",")[0] + ", monospace";
     ctx.textAlign = "center";
@@ -676,77 +602,7 @@
     return { tick: col, row: row };
   }
 
-  // Hit zone for the "+N" offset label above an enemy3_wave preview cell -
-  // the strip of canvas directly above the cell's own top edge, not
-  // overlapping the cell itself (which keeps its normal place/erase click
-  // behavior for the real trigger at offset index 0).
-  function enemy3OffsetLabelH() { return Math.max(14, Math.round(CELL * 0.6)); }
-
-  function enemy3OffsetHitTest(x, y) {
-    var labelH = enemy3OffsetLabelH();
-    for (var pi = 0; pi < placements.length; pi++) {
-      var p = placements[pi];
-      if (p.type !== "enemy3_wave") continue;
-      for (var i = 0; i < ENEMY3_OFFSET_TABLE_PX.length; i++) {
-        var t = p.tick + i * ENEMY3_PREVIEW_TICK_GAP;
-        if (t > MAX_TICK) continue;
-        var cx = t * CELL, cy = p.row * CELL;
-        if (x >= cx && x < cx + CELL && y >= cy - labelH && y < cy) {
-          return i;
-        }
-      }
-    }
-    return null;
-  }
-
-  var offsetOverlay = document.getElementById("offsetOverlay");
-  var offsetInput = document.getElementById("offsetInput");
-  var offsetStatus = document.getElementById("offsetStatus");
-  var offsetEditIndex = null;
-
-  function openOffsetEditor(i) {
-    offsetEditIndex = i;
-    document.getElementById("offsetOverlayTitle").textContent = "Offset " + i + " (cells, 8px each)";
-    offsetInput.value = ENEMY3_OFFSET_TABLE_PX[i] / 8;
-    offsetStatus.textContent = "";
-    offsetStatus.classList.remove("ok");
-    offsetOverlay.classList.add("show");
-    offsetInput.focus();
-    offsetInput.select();
-  }
-
-  function saveOffsetEditor() {
-    var v = parseInt(offsetInput.value, 10);
-    if (!Number.isFinite(v) || v < 0) {
-      offsetStatus.textContent = "enter a whole number, 0 or more";
-      offsetStatus.classList.remove("ok");
-      return;
-    }
-    ENEMY3_OFFSET_TABLE_PX[offsetEditIndex] = v * 8;
-    offsetOverlay.classList.remove("show");
-    render();
-    flash("offset " + offsetEditIndex + " set to +" + v);
-  }
-
-  document.getElementById("btnOffsetCancel").addEventListener("click", function () {
-    offsetOverlay.classList.remove("show");
-  });
-  document.getElementById("btnOffsetSave").addEventListener("click", saveOffsetEditor);
-  offsetInput.addEventListener("keydown", function (ev) {
-    if (ev.key === "Enter") saveOffsetEditor();
-    if (ev.key === "Escape") offsetOverlay.classList.remove("show");
-  });
-  offsetOverlay.addEventListener("click", function (ev) {
-    if (ev.target === offsetOverlay) offsetOverlay.classList.remove("show");
-  });
-
   grid.addEventListener("click", function (ev) {
-    var rect = grid.getBoundingClientRect();
-    var offsetHit = enemy3OffsetHitTest(ev.clientX - rect.left, ev.clientY - rect.top);
-    if (offsetHit !== null) {
-      openOffsetEditor(offsetHit);
-      return;
-    }
     var c = cellFromEvent(ev);
     if (!c) return;
     if (eraseArmed) {
