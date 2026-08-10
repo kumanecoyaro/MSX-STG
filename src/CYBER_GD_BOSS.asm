@@ -703,6 +703,25 @@ FILLBG_3:
     LD HL,ENEMY3_PATTERN2 : LD DE,ENEMY3_CODE2*8 : LD BC,8 : CALL LDIRVM
     LD HL,ENEMY3_PATTERN3 : LD DE,ENEMY3_CODE3*8 : LD BC,8 : CALL LDIRVM
 
+    ; --- new BG enemy's 4 quadrant glyphs, at ENEMY3_CODE1's group's ---
+    ; --- spare codes 153-156 (152 itself untouched) - see the        ---
+    ; --- pattern data's own comment. TEMPORARY: also drawn at a      ---
+    ; --- fixed row2/col2 2x2 block here so the shape/color can be    ---
+    ; --- checked on real hardware before any spawn/movement logic    ---
+    ; --- exists for it.                                              ---
+    LD HL,NEWENEMY_PATTERN_TL : LD DE,NEWENEMY_CODE_TL*8 : LD BC,8 : CALL LDIRVM
+    LD HL,NEWENEMY_PATTERN_TR : LD DE,NEWENEMY_CODE_TR*8 : LD BC,8 : CALL LDIRVM
+    LD HL,NEWENEMY_PATTERN_BL : LD DE,NEWENEMY_CODE_BL*8 : LD BC,8 : CALL LDIRVM
+    LD HL,NEWENEMY_PATTERN_BR : LD DE,NEWENEMY_CODE_BR*8 : LD BC,8 : CALL LDIRVM
+    LD A,2 : LD (ANIM_TMP_ROW),A : LD A,2 : LD (ANIM_TMP_COL),A
+    LD A,NEWENEMY_CODE_TL : LD (ANIM_TMP_VAL),A : CALL WRITE_ANIM_CELL
+    LD A,2 : LD (ANIM_TMP_ROW),A : LD A,3 : LD (ANIM_TMP_COL),A
+    LD A,NEWENEMY_CODE_TR : LD (ANIM_TMP_VAL),A : CALL WRITE_ANIM_CELL
+    LD A,3 : LD (ANIM_TMP_ROW),A : LD A,2 : LD (ANIM_TMP_COL),A
+    LD A,NEWENEMY_CODE_BL : LD (ANIM_TMP_VAL),A : CALL WRITE_ANIM_CELL
+    LD A,3 : LD (ANIM_TMP_ROW),A : LD A,3 : LD (ANIM_TMP_COL),A
+    LD A,NEWENEMY_CODE_BR : LD (ANIM_TMP_VAL),A : CALL WRITE_ANIM_CELL
+
     ; --- digit glyphs (0-9) for the on-screen game-tick counter ---
     LD HL,DIGIT_PATTERNS : LD DE,DIGIT_BASE*8 : LD BC,80 : CALL LDIRVM
 
@@ -12000,6 +12019,26 @@ ENEMY3_PATTERN2:
     DB 00h,00h,0FFh,0FFh,0FFh,0FFh,00h,00h
 ENEMY3_PATTERN3:
     DB 0FFh,0FFh,0FFh,0E7h,0E7h,0FFh,0FFh,0FFh
+
+; New BG enemy's 16x16 glyph, split into 4 8x8 quadrants (TL/TR/BL/BR,
+; drawn as 4 adjacent nametable cells - not a hardware sprite). Pixel
+; data confirmed directly by hand-editing an on-screen grid (image-based
+; transcription wasn't reliable enough for this shape). Placed at
+; ENEMY3_CODE1's group (19) spare codes 153-156, so it uses Enemy3's
+; existing gray/blue color - no new color-table group needed, and
+; ENEMY3_CODE1(152) itself is untouched.
+NEWENEMY_CODE_TL EQU 153
+NEWENEMY_CODE_TR EQU 154
+NEWENEMY_CODE_BL EQU 155
+NEWENEMY_CODE_BR EQU 156
+NEWENEMY_PATTERN_TL:
+    DB 00h,2Ah,6Ah,0Ah,7Ah,02h,7Eh,00h
+NEWENEMY_PATTERN_TR:
+    DB 00h,0AAh,0AEh,0AEh,0BEh,0BEh,0FEh,0FEh
+NEWENEMY_PATTERN_BL:
+    DB 7Fh,03h,7Fh,0Fh,7Fh,3Fh,7Fh,00h
+NEWENEMY_PATTERN_BR:
+    DB 7Eh,0BEh,0DEh,0EEh,0F6h,0FAh,0FCh,00h
 
 ; Full schedule, 79 entries (indices 0-78), imported directly from the
 ; schedule editor's exported JSON (tick/row/type per placement) - see
