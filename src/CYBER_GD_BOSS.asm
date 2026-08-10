@@ -511,6 +511,12 @@ ENEMY3_ACTIVE_COUNT EQU 0EBD7h
 ENEMY3_POOL          EQU 0EBD8h
 ENEMY3_CENTERX_TABLE EQU 0EE98h
 
+; --- palette debug strip: 15 hex-digit swatches (1-F), one per     ---
+; --- BLACK-on-color(1..15) cell - see COLOR_SWATCH_INIT.           ---
+CSI_INDEX     EQU 0F158h    ; scratch: swatch loop index (0-14)
+CSI_GROUP     EQU 0F159h    ; scratch: this swatch's borrowed color-table group
+CSI_COLORBYTE EQU 0F15Ah    ; scratch: this swatch's FG=black/BG=value color byte
+
 ; --- shot background-color variants: blue(sky), white(mountain, ---
 ; --- screen row 18), green(diamond/slash/backslash, rows 19-22), ---
 ; --- brown(wedge, row 23) - same treatment as the existing green ---
@@ -705,6 +711,9 @@ FILLBG_3:
 
     ; --- digit glyphs (0-9) for the on-screen game-tick counter ---
     LD HL,DIGIT_PATTERNS : LD DE,DIGIT_BASE*8 : LD BC,80 : CALL LDIRVM
+
+    ; --- palette debug strip - see COLOR_SWATCH_INIT's own comment ---
+    CALL COLOR_SWATCH_INIT
 
     ; --- boss BG/sprite character patterns are NOT preloaded here ---
     ; --- anymore - the terrain scroller actually uses more of the ---
@@ -4241,11 +4250,11 @@ ESC_COMPLEX_INIT_B:
 ; spawn exactly once, in order, as GAME_TICK reaches its threshold -
 ; not when the previous one finishes. SPAWN_THRESHOLDS is a 16-bit
 ; (DW) array so thresholds aren't capped at 255. Boss is the final
-; entry, index76. One-shot: once all 77 have fired, this just returns
+; entry, index78. One-shot: once all 79 have fired, this just returns
 ; immediately forever after, so nothing loops.
 SPAWN_SCHEDULE_CHECK:
     LD A,(SPAWN_NEXT_INDEX)
-    CP 77
+    CP 79
     RET NC
     LD H,0 : LD L,A
     ADD HL,HL
@@ -4262,10 +4271,10 @@ SPAWN_SCHEDULE_CHECK:
     ;     これにより取りこぼし(無駄)なく、ACTIVEが0に戻った
     ;     瞬間に確実に発火する ---
     LD A,(SPAWN_NEXT_INDEX)
-    CP 22 : JR Z,SSC_BUSY_A
-    CP 24 : JR Z,SSC_BUSY_A
-    CP 23 : JR Z,SSC_BUSY_B
-    CP 26 : JR Z,SSC_BUSY_B
+    CP 18 : JR Z,SSC_BUSY_A
+    CP 20 : JR Z,SSC_BUSY_A
+    CP 19 : JR Z,SSC_BUSY_B
+    CP 24 : JR Z,SSC_BUSY_B
     JR SSC_FIRE
 SSC_BUSY_A:
     LD A,(E2A_ACTIVE) : OR A : RET NZ
@@ -4282,61 +4291,61 @@ SSC_FIRE:
     ; --- SPAWN_SIMPLE_Y_TABLE. Dodge direction is decided dynamically   ---
     ; --- from PLAYERY at screen center, not from where it spawned, so   ---
     ; --- it can spawn anywhere - see the schedule editor's layout.      ---
-    ; --- enemy3_wave (indices 6,7,9,12,25): SPAWN_E3_WAVE claims its    ---
-    ; --- own independent ENEMY3_WAVE_POOL slot (budget 32, own          ---
-    ; --- dedicated ENEMY3_POOL slice) - see ENEMY3_TRY_SPAWN_SLOT for   ---
-    ; --- the per-frame spawning this triggers.                          ---
+    ; --- enemy3_wave (indices 21,22,23): SPAWN_E3_WAVE claims its own   ---
+    ; --- independent ENEMY3_WAVE_POOL slot (budget 32, own dedicated    ---
+    ; --- ENEMY3_POOL slice) - see ENEMY3_TRY_SPAWN_SLOT for the         ---
+    ; --- per-frame spawning this triggers.                              ---
     CP 0  : JP Z,SPAWN_SIMPLE
     CP 1  : JP Z,SPAWN_SIMPLE
     CP 2  : JP Z,SPAWN_SIMPLE
     CP 3  : JP Z,SPAWN_SIMPLE
     CP 4  : JP Z,SPAWN_SIMPLE
     CP 5  : JP Z,SPAWN_SIMPLE
-    CP 6  : JP Z,SPAWN_E3_WAVE
-    CP 7  : JP Z,SPAWN_E3_WAVE
+    CP 6  : JP Z,SPAWN_SIMPLE
+    CP 7  : JP Z,SPAWN_SIMPLE
     CP 8  : JP Z,SPAWN_SIMPLE
-    CP 9  : JP Z,SPAWN_E3_WAVE
+    CP 9  : JP Z,SPAWN_SIMPLE
     CP 10 : JP Z,SPAWN_SIMPLE
     CP 11 : JP Z,SPAWN_SIMPLE
-    CP 12 : JP Z,SPAWN_E3_WAVE
+    CP 12 : JP Z,SPAWN_SIMPLE
     CP 13 : JP Z,SPAWN_SIMPLE
     CP 14 : JP Z,SPAWN_SIMPLE
     CP 15 : JP Z,SPAWN_SIMPLE
     CP 16 : JP Z,SPAWN_SIMPLE
     CP 17 : JP Z,SPAWN_SIMPLE
-    CP 18 : JP Z,SPAWN_SIMPLE
-    CP 19 : JP Z,SPAWN_SIMPLE
-    CP 20 : JP Z,SPAWN_SIMPLE
-    CP 21 : JP Z,SPAWN_SIMPLE
-    CP 22 : JP Z,SPAWN_E2_TOP_A
-    CP 23 : JP Z,SPAWN_E2_BOT_A
-    CP 24 : JP Z,SPAWN_E2_TOP_B
-    CP 25 : JP Z,SPAWN_E3_WAVE
-    CP 26 : JP Z,SPAWN_E2_BOT_B
+    CP 18 : JP Z,SPAWN_E2_TOP_A
+    CP 19 : JP Z,SPAWN_E2_BOT_A
+    CP 20 : JP Z,SPAWN_E2_TOP_B
+    CP 21 : JP Z,SPAWN_E3_WAVE
+    CP 22 : JP Z,SPAWN_E3_WAVE
+    CP 23 : JP Z,SPAWN_E3_WAVE
+    CP 24 : JP Z,SPAWN_E2_BOT_B
     ; --- Enemy4 (TYPE_ENEMY4): any baseY now - see SPAWN_E4/            ---
     ; --- SPAWN_BASEY_TABLE. Includes the extra spawns tucked into       ---
     ; --- each wave's gap from this JSON.                                ---
+    CP 25 : JP Z,SPAWN_E4
+    CP 26 : JP Z,SPAWN_E4
     CP 27 : JP Z,SPAWN_E4
     CP 28 : JP Z,SPAWN_E4
-    CP 29 : JP Z,SPAWN_E4
-    CP 30 : JP Z,SPAWN_E4
+    CP 29 : JP Z,SPAWN_SIMPLE
+    CP 30 : JP Z,SPAWN_SIMPLE
     CP 31 : JP Z,SPAWN_SIMPLE
-    CP 32 : JP Z,SPAWN_SIMPLE
-    CP 33 : JP Z,SPAWN_SIMPLE
+    CP 32 : JP Z,SPAWN_E4
+    CP 33 : JP Z,SPAWN_E4
     CP 34 : JP Z,SPAWN_E4
     CP 35 : JP Z,SPAWN_E4
-    CP 36 : JP Z,SPAWN_E4
-    CP 37 : JP Z,SPAWN_E4
+    CP 36 : JP Z,SPAWN_SIMPLE
+    CP 37 : JP Z,SPAWN_SIMPLE
     CP 38 : JP Z,SPAWN_SIMPLE
-    CP 39 : JP Z,SPAWN_SIMPLE
-    CP 40 : JP Z,SPAWN_SIMPLE
+    CP 39 : JP Z,SPAWN_E4
+    CP 40 : JP Z,SPAWN_E4
     CP 41 : JP Z,SPAWN_E4
     CP 42 : JP Z,SPAWN_E4
-    CP 43 : JP Z,SPAWN_E4
-    CP 44 : JP Z,SPAWN_E4
+    CP 43 : JP Z,SPAWN_SIMPLE
+    CP 44 : JP Z,SPAWN_SIMPLE
     CP 45 : JP Z,SPAWN_SIMPLE
-    CP 46 : JP Z,SPAWN_SIMPLE
-    CP 47 : JP Z,SPAWN_SIMPLE
+    CP 46 : JP Z,SPAWN_E4
+    CP 47 : JP Z,SPAWN_E4
     CP 48 : JP Z,SPAWN_E4
     CP 49 : JP Z,SPAWN_E4
     CP 50 : JP Z,SPAWN_E4
@@ -4351,23 +4360,25 @@ SSC_FIRE:
     CP 59 : JP Z,SPAWN_E4
     CP 60 : JP Z,SPAWN_E4
     CP 61 : JP Z,SPAWN_E4
-    CP 62 : JP Z,SPAWN_E4
-    CP 63 : JP Z,SPAWN_E4
     ; --- TYPE_ENEMY1_LOOK test wave ("Enemy5"), with one extra          ---
     ; --- simple-formation spawn tucked in each gap, from the schedule   ---
     ; --- editor's layout.                                               ---
+    CP 62 : JP Z,SPAWN_E4B
+    CP 63 : JP Z,SPAWN_E4B
     CP 64 : JP Z,SPAWN_E4B
-    CP 65 : JP Z,SPAWN_E4B
+    CP 65 : JP Z,SPAWN_SIMPLE
     CP 66 : JP Z,SPAWN_E4B
-    CP 67 : JP Z,SPAWN_SIMPLE
+    CP 67 : JP Z,SPAWN_E4B
     CP 68 : JP Z,SPAWN_E4B
-    CP 69 : JP Z,SPAWN_E4B
-    CP 70 : JP Z,SPAWN_E4B
+    CP 69 : JP Z,SPAWN_SIMPLE
+    CP 70 : JP Z,SPAWN_SIMPLE
     CP 71 : JP Z,SPAWN_SIMPLE
     CP 72 : JP Z,SPAWN_E4B
     CP 73 : JP Z,SPAWN_E4B
     CP 74 : JP Z,SPAWN_E4B
     CP 75 : JP Z,SPAWN_SIMPLE
+    CP 76 : JP Z,SPAWN_SIMPLE
+    CP 77 : JP Z,SPAWN_SIMPLE
     JP BOSS_SPAWN
 
 ; --- saved (disabled) boss-only fast-iteration schedule - kept for  ---
@@ -11999,7 +12010,7 @@ ENEMY3_PATTERN2:
 ENEMY3_PATTERN3:
     DB 0FFh,0FFh,0FFh,0E7h,0E7h,0FFh,0FFh,0FFh
 
-; Full schedule, 77 entries (indices 0-76), imported directly from the
+; Full schedule, 79 entries (indices 0-78), imported directly from the
 ; schedule editor's exported JSON (tick/row/type per placement) - see
 ; SSC_FIRE for the per-index dispatch this drives. Every tick here is
 ; a 16-bit word since thresholds run well past 255. Simple-formation
@@ -12007,11 +12018,11 @@ ENEMY3_PATTERN3:
 ; SPAWN_SIMPLE_Y_TABLE/SPAWN_BASEY_TABLE (row*8 from the editor),
 ; not from which of the old fixed presets they used to be.
 SPAWN_THRESHOLDS:
-    DW 10,11,12,18,19,20,23,25,26,27,27,28,29,33,34,35,41
-    DW 42,43,55,56,57,70,90,110,120,130,145,146,147,148,153,154,155
-    DW 160,161,162,163,168,169,170,175,176,177,178,183,184,185,190,191,192
-    DW 193,198,200,205,206,207,208,213,215,220,221,222,223,235,236,237,238
-    DW 250,251,252,253,265,266,267,268,280
+    DW 10,11,12,18,19,20,26,27,28,33,34,35,41,42,43,55,56
+    DW 57,70,90,110,120,121,122,130,145,146,147,148,153,154,155,160,161
+    DW 162,163,168,169,170,175,176,177,178,183,184,185,190,191,192,193,198
+    DW 200,205,206,207,208,213,215,220,221,222,223,235,236,237,238,250,251
+    DW 252,253,257,261,265,266,267,268,272,276,288
 
 ; --- saved (disabled) boss-only single-entry schedule, used ---
 ; --- while iterating quickly on boss features - not deleted: ---
@@ -12023,35 +12034,35 @@ SPAWN_THRESHOLDS:
 ; row*8 from the schedule editor. Only indices that actually dispatch
 ; to SPAWN_SIMPLE are read; the rest are unused placeholders (0).
 SPAWN_SIMPLE_Y_TABLE:
-    DB 16,16,16,64,64,64,0,0,128,0,128,128,0,64,64,64,16
-    DB 16,16,16,16,16,0,0,0,0,0,0,0,0,0,48,48,48
-    DB 0,0,0,0,96,96,96,0,0,0,0,40,40,40,0,0,0
-    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,16
-    DB 0,0,0,16,0,0,0,128,0
+    DB 16,16,16,64,64,64,128,128,128,64,64,64,16,16,16,16,16
+    DB 16,0,0,0,0,0,0,0,0,0,0,0,48,48,48,0,0
+    DB 0,0,96,96,96,0,0,0,0,40,40,40,0,0,0,0,0
+    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,16,0,0
+    DB 0,16,56,104,0,0,0,128,88,48,0
 
 ; Same idea as SPAWN_SIMPLE_Y_TABLE but for Enemy4/Enemy5 (SPAWN_E4/
 ; SPAWN_E4B) baseY - row*8 from the schedule editor, any row, not
 ; just the old 3 fixed presets (32/64/72). Unused elsewhere (0).
 SPAWN_BASEY_TABLE:
     DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-    DB 0,0,0,0,0,0,0,0,0,0,32,64,72,104,0,0,0
-    DB 64,96,104,136,0,0,0,32,64,72,104,0,0,0,64,96,104
-    DB 136,72,112,32,64,72,104,136,88,32,64,72,104,32,64,72,0
-    DB 32,64,72,0,32,64,72,0,0
+    DB 0,0,0,0,0,0,0,0,32,64,72,104,0,0,0,64,96
+    DB 104,136,0,0,0,32,64,72,104,0,0,0,64,96,104,136,72
+    DB 112,32,64,72,104,136,88,32,64,72,104,32,64,72,0,32,64
+    DB 72,0,0,0,32,64,72,0,0,0,0
 
 ; This trigger's own offset (px = cells*8), one byte per SPAWN_THRESHOLDS
 ; index, from the schedule editor's per-placement "offset" field - each
 ; enemy3_wave trigger copies its own entry straight into its own
 ; ENEMY3_WAVE_POOL slot AND ITS OWN dedicated ENEMY3_POOL slice (see
 ; SPAWN_E3_WAVE/ENEMY3_TRY_SPAWN), so several triggers at different
-; offsets run fully independently. Only indices 6/7/9/12/25
+; offsets run fully independently. Only indices 21/22/23
 ; (enemy3_wave) are read; the rest are unused placeholders (0).
 SPAWN_E3_OFFSET_TABLE:
-    DB 0,0,0,0,0,0,0,16,0,32,0,0,48,0,0,0,0
+    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+    DB 0,0,0,0,0,16,32,0,0,0,0,0,0,0,0,0,0
     DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
     DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-    DB 0,0,0,0,0,0,0,0,0
+    DB 0,0,0,0,0,0,0,0,0,0,0
 
 ; --- Boss BG (nametable) graphics, generated from
 ; --- dotpict_20260806_173500 (12x37 dot art), resized directly
@@ -12369,6 +12380,105 @@ DIGIT_PATTERNS:
     DB 7Eh,06h,0Ch,18h,30h,30h,30h,00h   ; 7
     DB 3Ch,66h,66h,3Ch,66h,66h,3Ch,00h   ; 8
     DB 3Ch,66h,66h,3Eh,06h,0Ch,38h,00h   ; 9
+
+; --- palette debug strip -------------------------------------------
+; Shows every MSX color the game actually uses as a labelled swatch:
+; black text on a color-N background, one cell per color, at row0
+; starting 1 cell right of the score display (score=col0-7, gap=col8,
+; swatches=col9-23). Color 0 (transparent) and the black-on-color1
+; case are skipped/blend in - not meaningful as a visible swatch - so
+; this covers colors 1-15 (15 cells), labelled 1-9 then A-F.
+;
+; SCREEN1's color table only has one attribute per 8 CONSECUTIVE
+; character codes (see the file's SCREEN2->SCREEN1 conversion notes
+; at the top), and all 32 groups (all 256 character codes) are
+; already claimed by other content, so there's no free block to give
+; these 15 swatches their own colors. Each borrows the color-table
+; entry of an existing single-character group (shots/anim1/anim2/
+; Enemy3's pulse dot - SWATCH_GROUPS lists which) and draws its glyph
+; at that group's code+1 - a code the group's real content never
+; uses (each of those only ever references its group's FIRST code;
+; verified by grep across every BULLET_PAT_*/ANIM1_*/ANIM2_*/
+; ENEMY3_CODE* use site), so the real content's SHAPE is untouched.
+; Its COLOR is not: for as long as this strip is shown, shots/anim1/
+; anim2/Enemy3 in that same color family render in black-on-swatch-
+; color instead of their normal color, which is an accepted tradeoff
+; for a permanently-visible reference strip. Boss's groups (24-31)
+; were deliberately NOT used here - BOSS_SPAWN reloads codes192-255
+; with real boss body tiles just-in-time (see its own comment), which
+; would silently overwrite/corrupt whatever this strip drew there the
+; first time the boss appears, so it's not a safe long-term home.
+SWATCH_GROUPS:
+    DB 7,8,9,10,11,12,13,14,15,16,17,18,19,20,21
+
+; Glyphs for labels 1-9 (duplicated from DIGIT_PATTERNS - kept
+; separate so nothing here can affect the real digit/score display)
+; then A-F, in SWATCH_GROUPS order.
+SWATCH_DIGIT_PATTERNS:
+    DB 18h,38h,58h,18h,18h,18h,7Eh,00h   ; 1
+    DB 3Ch,66h,06h,0Ch,30h,60h,7Eh,00h   ; 2
+    DB 3Ch,66h,06h,1Ch,06h,66h,3Ch,00h   ; 3
+    DB 0Ch,1Ch,2Ch,4Ch,7Eh,0Ch,0Ch,00h   ; 4
+    DB 7Eh,60h,7Ch,06h,06h,66h,3Ch,00h   ; 5
+    DB 1Ch,30h,60h,7Ch,66h,66h,3Ch,00h   ; 6
+    DB 7Eh,06h,0Ch,18h,30h,30h,30h,00h   ; 7
+    DB 3Ch,66h,66h,3Ch,66h,66h,3Ch,00h   ; 8
+    DB 3Ch,66h,66h,3Eh,06h,0Ch,38h,00h   ; 9
+    DB 38h,6Ch,0C6h,0C6h,0FEh,0C6h,0C6h,00h ; A
+    DB 0FCh,0C6h,0C6h,0FCh,0C6h,0C6h,0FCh,00h ; B
+    DB 3Ch,66h,0C0h,0C0h,0C0h,66h,3Ch,00h ; C
+    DB 0F8h,6Ch,66h,66h,66h,6Ch,0F8h,00h ; D
+    DB 0FEh,60h,60h,7Ch,60h,60h,0FEh,00h ; E
+    DB 0FEh,60h,60h,7Ch,60h,60h,60h,00h  ; F
+
+; Writes all 15 swatch glyphs (pattern table), their borrowed color-
+; table entries, and the row0 nametable cells that display them - see
+; the block comment above SWATCH_GROUPS for the full design rationale.
+; Called once from INIT, after every other static pattern/color load
+; (BULLET/ANIM/ENEMY3/DIGIT/COLORDATA) so this strip's writes are the
+; final word for the codes/groups it borrows.
+COLOR_SWATCH_INIT:
+    XOR A : LD (CSI_INDEX),A
+CSI_LOOP:
+    LD A,(CSI_INDEX) : LD B,A
+    LD H,0 : LD L,B
+    LD DE,SWATCH_GROUPS : ADD HL,DE
+    LD A,(HL) : LD (CSI_GROUP),A
+
+    ; --- pattern: SWATCH_DIGIT_PATTERNS[index] (8 bytes) -> VRAM      ---
+    ; --- address of character (group*8+1) - the group's spare code   ---
+    LD H,0 : LD L,B
+    ADD HL,HL : ADD HL,HL : ADD HL,HL
+    LD DE,SWATCH_DIGIT_PATTERNS : ADD HL,DE
+    PUSH HL                          ; save source glyph address
+    LD A,(CSI_GROUP) : LD L,A : LD H,0
+    ADD HL,HL : ADD HL,HL : ADD HL,HL   ; HL = group*8 (the character code)
+    INC HL                              ; +1: this group's spare code
+    ADD HL,HL : ADD HL,HL : ADD HL,HL   ; HL = code*8 = VRAM pattern address
+    LD D,H : LD E,L
+    POP HL                            ; HL = source glyph address again
+    LD BC,8
+    CALL LDIRVM
+
+    ; --- color: FG=black(1)/BG=(index+1) -> VRAM color table entry   ---
+    ; --- 2000h+group (this group's ONE color-table byte)             ---
+    LD A,(CSI_INDEX) : INC A : OR 10h : LD (CSI_COLORBYTE),A
+    LD HL,CSI_COLORBYTE
+    LD A,(CSI_GROUP) : LD E,A : LD D,20h
+    LD BC,1
+    CALL LDIRVM
+
+    ; --- nametable: char (group*8+1) at row0, col(9+index) ---
+    XOR A : LD (ANIM_TMP_ROW),A
+    LD A,(CSI_INDEX) : ADD A,9 : LD (ANIM_TMP_COL),A
+    LD A,(CSI_GROUP) : ADD A,A : ADD A,A : ADD A,A : INC A
+    LD (ANIM_TMP_VAL),A
+    CALL WRITE_ANIM_CELL
+
+    LD A,(CSI_INDEX) : INC A : LD (CSI_INDEX),A
+    CP 15
+    JR C,CSI_LOOP
+    RET
 
 ; enemy3's orbit: 24-point radius-24 circle around (0,0), as signed
 ; (dx,dy) byte pairs, counter-clockwise on-screen. Position for LUT
