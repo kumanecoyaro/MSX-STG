@@ -480,16 +480,23 @@ ENEMY3_BUDGET      EQU 0E473h
 ENEMY3_SPAWN_TIMER EQU 0E474h
 ENEMY3_SPAWN_COUNT EQU 0E4CEh  ; how many spawned so far this wave (resume enemy1/2 at 32)
 ENEMY3_POOL        EQU 0E475h  ; 8*11 = 88 bytes
-ENEMY3_CURRENT_OFFSET EQU 0EB5Eh ; this wave's circle-center X pixel offset - set by
-                                ; SPAWN_E3_WAVE from SPAWN_E3_OFFSET_TABLE (per-trigger,
-                                ; from the schedule editor's own "offset" field on that
-                                ; placement) and applied to every spawn until the next
-                                ; SPAWN_E3_WAVE call changes it
+ENEMY3_RING_COUNT  EQU 0EB5Eh  ; how many distinct offsets are currently in
+                                ; ENEMY3_OFFSET_RING (0..ENEMY3_RING_MAX)
 ENEMY3_CENTERX_TABLE EQU 0EB5Fh ; 8*11=88 bytes, parallel to ENEMY3_POOL: each slot's
                                 ; OWN circle-center X pixel offset, copied from
-                                ; ENEMY3_CURRENT_OFFSET at spawn time - lets each
+                                ; ENEMY3_OFFSET_RING at spawn time - lets each
                                 ; instance orbit its own horizontally-offset center
                                 ; instead of sharing one circle
+ENEMY3_RING_POS    EQU 0EBB7h  ; next ENEMY3_OFFSET_RING slot ENEMY3_TRY_SPAWN will
+                                ; read from, wraps at ENEMY3_RING_COUNT
+ENEMY3_OFFSET_RING EQU 0EBB8h  ; ENEMY3_RING_MAX bytes - every distinct offset from
+                                ; the schedule triggers that make up the CURRENT wave
+                                ; (see SPAWN_E3_WAVE), cycled per spawn by
+                                ; ENEMY3_TRY_SPAWN so several offsets stay visibly
+                                ; active together, same as the old fixed 3-entry
+                                ; ENEMY3_OFFSET_TABLE did, but populated by whichever
+                                ; triggers actually fired instead of being hardcoded
+ENEMY3_RING_MAX    EQU 8
 
 ; --- shot background-color variants: blue(sky), white(mountain, ---
 ; --- screen row 18), green(diamond/slash/backslash, rows 19-22), ---
@@ -725,7 +732,7 @@ FILLBG_3:
     LD (ENEMY3_POOL+4),A  : LD (ENEMY3_POOL+15),A : LD (ENEMY3_POOL+26),A
     LD (ENEMY3_POOL+37),A : LD (ENEMY3_POOL+48),A : LD (ENEMY3_POOL+59),A
     LD (ENEMY3_POOL+70),A : LD (ENEMY3_POOL+81),A
-    XOR A : LD (ENEMY3_CURRENT_OFFSET),A
+    XOR A : LD (ENEMY3_RING_COUNT),A : LD (ENEMY3_RING_POS),A
     LD HL,ENEMY3_CENTERX_TABLE : LD (HL),0
     LD DE,ENEMY3_CENTERX_TABLE+1 : LD BC,88-1 : LDIR
 
@@ -7839,11 +7846,33 @@ SPAWN_E2_BOT_B:
 ; A holds this schedule index on entry (SSC_FIRE's CP-dispatch convention -
 ; see SPAWN_SIMPLE/SPAWN_E4 for the same pattern) - used to look up this
 ; trigger's own offset in SPAWN_E3_OFFSET_TABLE.
+;
+; If a previous wave is still active (ENEMY3_BUDGET>0), this trigger's
+; offset is ADDED to ENEMY3_OFFSET_RING instead of replacing it, so
+; several near-together triggers all stay in rotation together (see
+; ENEMY3_TRY_SPAWN) rather than each overwriting the last one's offset.
+; A trigger that fires only after the previous wave fully finished
+; starts a fresh ring with just its own offset.
 SPAWN_E3_WAVE:
     LD H,0 : LD L,A
     LD DE,SPAWN_E3_OFFSET_TABLE
     ADD HL,DE
-    LD A,(HL) : LD (ENEMY3_CURRENT_OFFSET),A
+    LD A,(HL) : LD B,A             ; B = this trigger's own offset (px)
+
+    LD A,(ENEMY3_BUDGET)
+    OR A
+    JR NZ,E3W_APPEND
+    XOR A : LD (ENEMY3_RING_COUNT),A : LD (ENEMY3_RING_POS),A
+E3W_APPEND:
+    LD A,(ENEMY3_RING_COUNT)
+    CP ENEMY3_RING_MAX
+    JR NC,E3W_RING_FULL            ; already full - keep existing entries
+    LD L,A : LD H,0
+    LD DE,ENEMY3_OFFSET_RING
+    ADD HL,DE
+    LD (HL),B
+    INC A : LD (ENEMY3_RING_COUNT),A
+E3W_RING_FULL:
     LD A,32 : LD (ENEMY3_BUDGET),A
     XOR A : LD (ENEMY3_SPAWN_COUNT),A
     LD A,1 : LD (ENEMY3_SPAWN_TIMER),A
@@ -11243,11 +11272,12 @@ ENEMY4_SINE_LUT:
     DB 0,253,250,247,245,243,241,240,240,240,241,243,245,247,250,253
 
 ; Spawns one unit every ENEMY3_SPAWN_INTERVAL frames, a uniform pace for
-; the whole budget-32 formation, giving each spawn the wave's current
-; offset (ENEMY3_CURRENT_OFFSET - set once by SPAWN_E3_WAVE from this
-; trigger's own SPAWN_E3_OFFSET_TABLE entry, not cycled per spawn). All
-; members of one wave share that offset; different waves (schedule
-; triggers) get different offsets by each setting their own value.
+; the whole budget-32 formation, cycling one step through
+; ENEMY3_OFFSET_RING (see SPAWN_E3_WAVE) per spawn - same idea as the
+; old fixed 3-entry ENEMY3_OFFSET_TABLE, except the ring's contents
+; come from whichever schedule triggers actually fired into this wave,
+; so several offsets stay in simultaneous rotation together instead of
+; only the most-recently-fired trigger's offset ever being used.
 ENEMY3_TRY_SPAWN:
     LD A,(ENEMY3_BUDGET)
     OR A
@@ -11261,10 +11291,24 @@ ENEMY3_TRY_SPAWN:
     CALL ENEMY3_FIND_FREE_SLOT
     OR A
     RET Z
-    LD A,(ENEMY3_CURRENT_OFFSET)
-    PUSH AF
+    LD A,(ENEMY3_RING_POS)
+    LD E,A : LD D,0
+    LD HL,ENEMY3_OFFSET_RING
+    ADD HL,DE
+    LD C,(HL)                     ; C = this spawn's offset (px), read before advancing
+    LD A,(ENEMY3_RING_POS)
+    INC A
+    LD B,A
+    LD A,(ENEMY3_RING_COUNT)
+    CP B
+    JR NZ,E3TS_RINGOK
+    XOR A : LD B,A
+E3TS_RINGOK:
+    LD A,B : LD (ENEMY3_RING_POS),A
+    PUSH BC
     CALL ENEMY3_CENTERX_ADDR
-    POP AF
+    POP BC
+    LD A,C
     LD (HL),A
     JP ENEMY3_DO_SPAWN
 
@@ -11767,9 +11811,9 @@ SPAWN_SIMPLE_Y_TABLE:
 SPAWN_BASEY_TABLE:
     DB 0,0,0,0
 
-; This trigger's own ENEMY3_CURRENT_OFFSET (px = cells*8), one byte per
-; SPAWN_THRESHOLDS index, from the schedule editor's per-placement
-; "offset" field - see SPAWN_E3_WAVE.
+; This trigger's own offset (px = cells*8), one byte per SPAWN_THRESHOLDS
+; index, from the schedule editor's per-placement "offset" field - fed
+; into ENEMY3_OFFSET_RING by SPAWN_E3_WAVE.
 SPAWN_E3_OFFSET_TABLE:
     DB 0,16,32,48
 
