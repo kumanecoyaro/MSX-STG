@@ -11301,7 +11301,10 @@ ENEMY3_DO_SPAWN:
     CALL ENEMY3_CENTERX_ADDR      ; this slot's centerx offset was just written by
     LD A,(HL)                     ; the caller - apply it to the entry point too, so
     ADD A,ENEMY3_SPAWN_X          ; the trio visibly separates from the first frame
-    LD (IX+2),A                   ; instead of only once DIAG converges on the center
+    JR NC,E3DS_XOK                ; instead of only once DIAG converges on the center.
+    LD A,255                      ; A large offset can push this past 255 - an 8-bit
+E3DS_XOK:                         ; wrap would silently re-enter from the LEFT edge
+    LD (IX+2),A                   ; instead, so saturate at the right edge instead.
     LD A,ENEMY3_SPAWN_Y : LD (IX+3),A
     LD A,ENEMY3_SPAWN_Y : SRL A : SRL A : SRL A : LD (IX+4),A
     LD A,(IX+2) : SRL A : SRL A : SRL A : LD (IX+5),A
