@@ -3741,8 +3741,10 @@ BEHAVIOR_SIMPLE_DRIFT_DODGE EQU 2 ; Enemy1-style: straight drift + one-shot diag
 ; (ALLOC_PATTERN_SLOT/FREE_PATTERN_SLOT) instead of 6 hardcoded units.
 ; A slot using this BEHAVIOR stores its claimed pattern-slot index
 ; (0-5) in E_PARAM3.
-SIMPLE_PATTERN_SLOTS EQU 4     ; was 6 - lowered to cut per-frame Enemy1-type
-                                ; load (VBlank budget experiment)
+SIMPLE_PATTERN_SLOTS EQU 6     ; briefly lowered to 4 as a VBlank-budget
+                                ; experiment before the real DI/EI timing
+                                ; bug was found/fixed - back to the
+                                ; original 6 now that it's unnecessary
 SIMPLE_PATTERN_NUMS:
     DB PAT_ENEMY0,PAT_ENEMY1,PAT_ENEMY2,PAT_E1U3,PAT_E1U4,PAT_E1U5
 SIMPLE_PATTERN_VRAM:
