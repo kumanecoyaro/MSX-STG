@@ -491,6 +491,14 @@ ENEMY3_SPAWN_TIMER EQU 0E474h
 ENEMY3_SPAWN_COUNT EQU 0E4CEh  ; how many spawned so far this wave (resume enemy1/2 at 32)
 ENEMY3_POOL        EQU 0E475h  ; 8*11 = 88 bytes
 
+; GARBAGE_SCRUB gating: 1=running, counts GARBAGE_SCRUB_TIMER up from 0
+; (set by SPAWN_E3_WAVE) to GARBAGE_SCRUB_LIMIT, then stops for good -
+; kept off outside that window so the forced blanks can't stomp on
+; unrelated content that legitimately occupies those cells later.
+GARBAGE_SCRUB_ACTIVE EQU 0EB5Dh
+GARBAGE_SCRUB_TIMER  EQU 0EB5Eh
+GARBAGE_SCRUB_LIMIT  EQU 170
+
 ; --- shot background-color variants: blue(sky), white(mountain, ---
 ; --- screen row 18), green(diamond/slash/backslash, rows 19-22), ---
 ; --- brown(wedge, row 23) - same treatment as the existing green ---
@@ -676,6 +684,8 @@ FILLBG_3:
     XOR A : LD (ENEMY3_BUDGET),A
     XOR A : LD (ENEMY3_SPAWN_COUNT),A
     LD A,1 : LD (ENEMY3_SPAWN_TIMER),A
+    XOR A : LD (GARBAGE_SCRUB_ACTIVE),A
+    XOR A : LD (GARBAGE_SCRUB_TIMER),A
     XOR A
     LD (ENEMY3_POOL+0),A  : LD (ENEMY3_POOL+11),A : LD (ENEMY3_POOL+22),A
     LD (ENEMY3_POOL+33),A : LD (ENEMY3_POOL+44),A : LD (ENEMY3_POOL+55),A
@@ -1977,6 +1987,21 @@ BULLET2_ERASE_GOT:
 BULLET2_OFF:
     XOR A : LD (BULLET2_ACT),A
 BULLET2_NEXT:
+
+    ; run GARBAGE_SCRUB only for GARBAGE_SCRUB_LIMIT frames starting at
+    ; SPAWN_E3_WAVE, never again after - see GARBAGE_SCRUB_ACTIVE/TIMER
+    LD A,(GARBAGE_SCRUB_ACTIVE)
+    OR A
+    JR Z,GARBAGE_SCRUB_SKIP
+    LD A,(GARBAGE_SCRUB_TIMER)
+    CP GARBAGE_SCRUB_LIMIT
+    JR NC,GARBAGE_SCRUB_EXPIRE
+    INC A : LD (GARBAGE_SCRUB_TIMER),A
+    CALL GARBAGE_SCRUB
+    JR GARBAGE_SCRUB_SKIP
+GARBAGE_SCRUB_EXPIRE:
+    XOR A : LD (GARBAGE_SCRUB_ACTIVE),A
+GARBAGE_SCRUB_SKIP:
 
     EI
     HALT
@@ -5810,6 +5835,8 @@ SPAWN_E3_WAVE:
     LD A,64 : LD (ENEMY3_BUDGET),A
     XOR A : LD (ENEMY3_SPAWN_COUNT),A
     LD A,1 : LD (ENEMY3_SPAWN_TIMER),A
+    LD A,1 : LD (GARBAGE_SCRUB_ACTIVE),A
+    XOR A : LD (GARBAGE_SCRUB_TIMER),A
     RET
 
 ; Draws all 3 units together from the shared ENEMY_X/ENEMY_Y group
@@ -7636,7 +7663,6 @@ E3_ERASE_GOT:
     LD A,(IX+4) : LD (ANIM_TMP_ROW),A
     LD A,(IX+5) : LD (ANIM_TMP_COL),A
     CALL WRITE_ANIM_CELL
-    CALL GARBAGE_SCRUB
 
     LD A,(IX+10)
     DEC A
