@@ -46,7 +46,7 @@
     height: 100vh;
   }
 
-  button {
+  button, .btn-label {
     font-family: var(--font-ui);
     font-size: 12px;
     font-weight: 600;
@@ -59,8 +59,19 @@
     cursor: pointer;
     transition: border-color 120ms ease, background 120ms ease, transform 80ms ease;
   }
-  button:hover { border-color: var(--ink-faint); }
-  button:active { transform: translateY(1px); }
+  /* .btn-label wraps the hidden file input directly (native label-for
+     file-picker trigger) instead of a button that proxies a JS .click()
+     onto it - synthetic clicks on file inputs are unreliable inside a
+     sandboxed frame, this isn't. */
+  .btn-label {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    user-select: none;
+  }
+  button:hover, .btn-label:hover { border-color: var(--ink-faint); }
+  button:active, .btn-label:active { transform: translateY(1px); }
   button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
   button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
@@ -119,8 +130,14 @@
   }
 
   /* ---------- right sidebar: identity, stats, actions, palette ---------- */
+  /* Kept deliberately thin - the grid is the workspace, the sidebar is */
+  /* just controls. Palette entries are small color chips (number+code, */
+  /* the same glyph the grid itself draws for a placement) rather than  */
+  /* name+description cards, so 13 enemy types cost a few rows, not a   */
+  /* scroll-hogging list. Full names live in the title attr + the       */
+  /* one-line "armed" readout, not baked into every chip.               */
   aside {
-    flex: 0 0 236px;
+    flex: 0 0 196px;
     height: 100vh;
     background: var(--surface);
     border-left: 1px solid var(--line);
@@ -130,113 +147,72 @@
   }
 
   .side-title {
-    padding: 12px 14px 10px;
+    padding: 10px 12px 8px;
     border-bottom: 1px solid var(--line);
   }
   .side-title .name {
     font-family: var(--font-mono);
-    font-size: 13px;
+    font-size: 12px;
     letter-spacing: 0.06em;
     font-weight: 600;
   }
   .side-title .sub {
-    font-size: 10.5px;
+    font-size: 10px;
     color: var(--ink-dim);
     letter-spacing: 0.03em;
   }
 
-  .side-stats {
-    display: flex;
-    gap: 6px;
-    padding: 10px 14px;
-    border-bottom: 1px solid var(--line);
-  }
-  .stat {
-    flex: 1 1 0;
-    font-family: var(--font-mono);
-    font-size: 10.5px;
-    color: var(--ink-dim);
-    background: var(--surface-2);
-    border: 1px solid var(--line);
-    border-radius: 6px;
-    padding: 5px 7px;
-    font-variant-numeric: tabular-nums;
-    min-width: 0;
-  }
-  .stat b { color: var(--ink); font-weight: 600; display: block; font-size: 13px; }
-
   .side-actions {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    gap: 6px;
-    padding: 10px 14px;
+    gap: 5px;
+    padding: 8px 12px;
     border-bottom: 1px solid var(--line);
   }
-  .side-actions button { width: 100%; }
+  .side-actions button, .side-actions .btn-label { width: 100%; padding: 6px 6px; font-size: 11px; }
   .side-actions .full { grid-column: 1 / -1; }
 
-  .aside-head {
-    padding: 10px 14px 6px;
-    font-size: 10.5px;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    color: var(--ink-dim);
-  }
   .palette {
     overflow-y: auto;
-    padding: 4px 8px 10px;
+    padding: 5px 8px 8px;
     display: flex;
-    flex-direction: column;
+    flex-wrap: wrap;
     gap: 4px;
+    align-content: flex-start;
     min-height: 0;
   }
   .pitem {
-    display: flex;
-    align-items: center;
-    gap: 9px;
-    padding: 6px 9px;
-    border-radius: 8px;
-    border: 1px solid transparent;
-    background: var(--surface-2);
-    cursor: pointer;
-    text-align: left;
-    color: var(--ink);
-    font-family: var(--font-ui);
-  }
-  .pitem:hover { border-color: var(--ink-faint); }
-  .pitem.armed {
-    border-color: var(--accent);
-    background: color-mix(in srgb, var(--accent) 14%, var(--surface-2));
-  }
-  .pnum {
-    font-family: var(--font-mono);
-    font-size: 10.5px;
-    color: var(--ink-faint);
-    width: 16px;
+    width: 33px;
+    height: 30px;
     flex: 0 0 auto;
-    font-variant-numeric: tabular-nums;
-  }
-  .pswatch {
-    width: 21px;
-    height: 21px;
-    border-radius: 5px;
-    flex: 0 0 auto;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-family: var(--font-mono);
-    font-size: 9px;
-    font-weight: 700;
-    color: #05080d;
-  }
-  .plabel {
     display: flex;
     flex-direction: column;
-    gap: 0;
-    min-width: 0;
+    align-items: center;
+    justify-content: center;
+    gap: 1px;
+    border-radius: 5px;
+    border: 2px solid transparent;
+    cursor: pointer;
+    color: #05080d;
+    font-family: var(--font-mono);
+    padding: 0;
   }
-  .plabel .n { font-size: 12px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .plabel .d { font-size: 9.5px; color: var(--ink-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .pitem:hover { filter: brightness(1.08); }
+  .pitem.armed {
+    border-color: var(--ink);
+    box-shadow: 0 0 0 2px var(--accent);
+  }
+  .pitem .pnum {
+    font-size: 6px;
+    font-weight: 600;
+    opacity: 0.6;
+    font-variant-numeric: tabular-nums;
+  }
+  .pitem .pshort {
+    font-size: 8px;
+    font-weight: 800;
+    letter-spacing: 0.01em;
+  }
 
   #liveMsg {
     position: fixed;
@@ -261,8 +237,77 @@
   }
   #liveMsg.show { opacity: 1; transform: translate(-50%, 0); }
 
+  .overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(2, 4, 8, 0.72);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    z-index: 30;
+    padding: 20px;
+  }
+  .overlay.show { display: flex; }
+  .overlay-card {
+    width: min(560px, 100%);
+    max-height: 80vh;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .overlay-title { font-size: 13px; font-weight: 600; }
+  #pasteText {
+    flex: 1 1 auto;
+    min-height: 220px;
+    resize: vertical;
+    background: var(--surface-2);
+    color: var(--ink);
+    border: 1px solid var(--line);
+    border-radius: 7px;
+    padding: 8px;
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    line-height: 1.4;
+  }
+  .overlay-actions { display: flex; gap: 8px; justify-content: flex-end; }
+  .overlay-actions button { padding: 8px 14px; }
+  /* Inline, not the bottom-fixed toast - on mobile a toast at the
+     screen edge can end up hidden behind the on-screen keyboard right
+     after typing/pasting into the textarea above, making a real error
+     silently invisible. This sits in the card itself instead. */
+  .overlay-status {
+    font-size: 11.5px;
+    color: var(--danger);
+    min-height: 1.2em;
+  }
+  .overlay-status.ok { color: var(--ok); }
+
   @media (prefers-reduced-motion: reduce) {
     * { transition: none !important; }
+  }
+
+  /* ---------- narrow viewports (phone, or a narrow browser pane): ---------- */
+  /* the grid is the whole point, so it stays full-width and on top; the    */
+  /* sidebar drops below as a short, capped-height strip instead of eating  */
+  /* most of the screen's width down a 236px column.                       */
+  @media (max-width: 760px) {
+    body { flex-direction: column; }
+    .gridwrap { height: auto; flex: 1 1 auto; min-height: 0; }
+    aside {
+      flex: 0 0 auto;
+      width: 100%;
+      height: auto;
+      max-height: 42vh;
+      border-left: none;
+      border-top: 1px solid var(--line);
+    }
+    .side-title { display: none; }
+    .side-actions { grid-template-columns: repeat(4, 1fr); padding: 6px 10px; }
+    .side-actions .full { grid-column: auto; }
   }
 </style>
 
@@ -286,27 +331,44 @@
       <div class="sub">spawn schedule editor</div>
     </div>
 
-    <div class="side-stats">
-      <div class="stat">placements<b id="statCount">0</b></div>
-      <div class="stat">last tick<b id="statLast">—</b></div>
-    </div>
-
     <div class="side-actions">
       <button id="btnPrev" title="Scroll back one screen (32 ticks)">◀ screen</button>
       <button id="btnNext" title="Scroll forward one screen (32 ticks)">screen ▶</button>
       <button class="danger-btn full" id="btnErase">Erase</button>
       <button class="primary" id="btnSave">Save JSON</button>
       <button id="btnCopy">Copy JSON</button>
-      <button id="btnLoad">Load JSON</button>
-      <button id="btnClear">Clear all</button>
+      <label class="btn-label" for="fileInput">Load file</label>
+      <button id="btnPaste">Paste JSON</button>
+      <button class="full" id="btnClear">Clear all</button>
       <input type="file" id="fileInput" accept="application/json" hidden>
     </div>
 
-    <div class="aside-head">enemies in use</div>
     <div class="palette" id="palette"></div>
   </aside>
 
   <div id="liveMsg"></div>
+
+  <div id="clearOverlay" class="overlay">
+    <div class="overlay-card">
+      <div class="overlay-title" id="clearOverlayTitle">Clear all placements?</div>
+      <div class="overlay-actions">
+        <button id="btnClearCancel">Cancel</button>
+        <button class="danger-btn" id="btnClearConfirm">Clear all</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="pasteOverlay" class="overlay">
+    <div class="overlay-card">
+      <div class="overlay-title">Paste schedule JSON</div>
+      <textarea id="pasteText" placeholder="paste the exported {&quot;placements&quot;: [...]} JSON here"></textarea>
+      <div class="overlay-status" id="pasteStatus"></div>
+      <div class="overlay-actions">
+        <button id="btnPasteCancel">Cancel</button>
+        <button class="primary" id="btnPasteImport">Import</button>
+      </div>
+    </div>
+  </div>
 
 <script>
 (function () {
@@ -314,7 +376,7 @@
 
   // ---------- enemy palette (matches the current CYBER_GD_BOSS.asm schedule) ----------
   var TYPES = [
-    { id: "simple",     num: 1,  short: "S",   name: "Simple",           desc: "SPAWN_SIMPLE (any row)", hue: "--hue-simple", defaultRow: 2  },
+    { id: "simple",     num: 1,  short: "SIMP",name: "Simple (Enemy1)",  desc: "any row - dodge dir is decided from player Y at center", hue: "--hue-simple", defaultRow: 2  },
     { id: "e2a_top",    num: 2,  short: "2AT", name: "Enemy2A — Top",    desc: "SPAWN_E2_TOP_A",   hue: "--hue-e2a",    defaultRow: 4  },
     { id: "e2a_bot",    num: 3,  short: "2AB", name: "Enemy2A — Bottom", desc: "SPAWN_E2_BOT_A",   hue: "--hue-e2a",    defaultRow: 12 },
     { id: "e2b_top",    num: 4,  short: "2BT", name: "Enemy2B — Top",    desc: "SPAWN_E2_TOP_B",   hue: "--hue-e2b",    defaultRow: 6  },
@@ -330,85 +392,6 @@
   ];
   var TYPE_BY_ID = {};
   TYPES.forEach(function (t) { TYPE_BY_ID[t.id] = t; });
-
-  // ---------- the schedule currently baked into CYBER_GD_BOSS.asm (SPAWN_THRESHOLDS/
-  // SPAWN_SIMPLE_Y_TABLE/SPAWN_BASEY_TABLE), transcribed exactly - row is whatever the
-  // table byte actually holds (row*8=Y), not a guessed preset. ----------
-  var DEFAULT_PLACEMENTS = [
-    { tick: 10, row: 2, type: "simple" },
-    { tick: 11, row: 2, type: "simple" },
-    { tick: 12, row: 2, type: "simple" },
-    { tick: 18, row: 8, type: "simple" },
-    { tick: 19, row: 8, type: "simple" },
-    { tick: 20, row: 8, type: "simple" },
-    { tick: 26, row: 16, type: "simple" },
-    { tick: 27, row: 16, type: "simple" },
-    { tick: 28, row: 16, type: "simple" },
-    { tick: 33, row: 8, type: "simple" },
-    { tick: 34, row: 8, type: "simple" },
-    { tick: 35, row: 8, type: "simple" },
-    { tick: 41, row: 2, type: "simple" },
-    { tick: 42, row: 2, type: "simple" },
-    { tick: 43, row: 2, type: "simple" },
-    { tick: 55, row: 2, type: "simple" },
-    { tick: 56, row: 2, type: "simple" },
-    { tick: 57, row: 2, type: "simple" },
-    { tick: 70, row: 4, type: "e2a_top" },
-    { tick: 90, row: 12, type: "e2a_bot" },
-    { tick: 110, row: 6, type: "e2b_top" },
-    { tick: 120, row: 1, type: "enemy3_wave" },
-    { tick: 130, row: 14, type: "e2b_bot" },
-    { tick: 145, row: 4, type: "enemy4_y16" },
-    { tick: 146, row: 8, type: "enemy4_y32" },
-    { tick: 147, row: 9, type: "enemy4_y48" },
-    { tick: 148, row: 13, type: "enemy4_y48" },
-    { tick: 153, row: 6, type: "simple" },
-    { tick: 154, row: 6, type: "simple" },
-    { tick: 155, row: 6, type: "simple" },
-    { tick: 160, row: 8, type: "enemy4_y32" },
-    { tick: 161, row: 12, type: "enemy4_y48" },
-    { tick: 162, row: 13, type: "enemy4_y48" },
-    { tick: 163, row: 17, type: "enemy4_y48" },
-    { tick: 168, row: 12, type: "simple" },
-    { tick: 169, row: 12, type: "simple" },
-    { tick: 170, row: 12, type: "simple" },
-    { tick: 175, row: 4, type: "enemy4_y16" },
-    { tick: 176, row: 8, type: "enemy4_y32" },
-    { tick: 177, row: 9, type: "enemy4_y48" },
-    { tick: 178, row: 13, type: "enemy4_y48" },
-    { tick: 183, row: 5, type: "simple" },
-    { tick: 184, row: 5, type: "simple" },
-    { tick: 185, row: 5, type: "simple" },
-    { tick: 190, row: 8, type: "enemy4_y32" },
-    { tick: 191, row: 12, type: "enemy4_y48" },
-    { tick: 192, row: 13, type: "enemy4_y48" },
-    { tick: 193, row: 17, type: "enemy4_y48" },
-    { tick: 198, row: 9, type: "enemy4_y48" },
-    { tick: 200, row: 14, type: "enemy4_y48" },
-    { tick: 205, row: 4, type: "enemy4_y16" },
-    { tick: 206, row: 8, type: "enemy4_y32" },
-    { tick: 207, row: 9, type: "enemy4_y48" },
-    { tick: 208, row: 13, type: "enemy4_y48" },
-    { tick: 213, row: 17, type: "enemy4_y48" },
-    { tick: 215, row: 11, type: "enemy4_y48" },
-    { tick: 220, row: 4, type: "enemy4_y16" },
-    { tick: 221, row: 8, type: "enemy4_y32" },
-    { tick: 222, row: 9, type: "enemy4_y48" },
-    { tick: 223, row: 13, type: "enemy4_y48" },
-    { tick: 235, row: 4, type: "enemy5_y16" },
-    { tick: 236, row: 8, type: "enemy5_y32" },
-    { tick: 237, row: 9, type: "enemy5_y48" },
-    { tick: 238, row: 2, type: "simple" },
-    { tick: 250, row: 4, type: "enemy5_y16" },
-    { tick: 251, row: 8, type: "enemy5_y32" },
-    { tick: 252, row: 9, type: "enemy5_y48" },
-    { tick: 253, row: 2, type: "simple" },
-    { tick: 265, row: 4, type: "enemy5_y16" },
-    { tick: 266, row: 8, type: "enemy5_y32" },
-    { tick: 267, row: 9, type: "enemy5_y48" },
-    { tick: 268, row: 16, type: "simple" },
-    { tick: 280, row: 20, type: "boss" }
-  ];
 
   // ---------- Enemy3 wave internals (ENEMY3_TRY_SPAWN in CYBER_GD_BOSS.asm) -
   // kept in sync by hand with the ASM constants of the same name, used only
@@ -457,10 +440,11 @@
     var item = document.createElement("button");
     item.className = "pitem";
     item.dataset.type = t.id;
+    item.style.background = "var(" + t.hue + ")";
+    item.title = t.name + " — " + t.desc;
     item.innerHTML =
       '<span class="pnum">' + String(t.num).padStart(2, "0") + '</span>' +
-      '<span class="pswatch" style="background:var(' + t.hue + ')">' + t.short + '</span>' +
-      '<span class="plabel"><span class="n">' + t.name + '</span><span class="d">' + t.desc + '</span></span>';
+      '<span class="pshort">' + t.short + '</span>';
     item.addEventListener("click", function () {
       eraseArmed = false;
       document.getElementById("btnErase").classList.remove("armed");
@@ -478,9 +462,9 @@
 
   document.getElementById("btnErase").addEventListener("click", function () {
     armedType = null;
-    refreshPaletteArmed();
     eraseArmed = !eraseArmed;
     this.classList.toggle("armed", eraseArmed);
+    refreshPaletteArmed();
   });
 
   // ---------- canvases ----------
@@ -697,14 +681,20 @@
   }
 
   document.getElementById("btnSave").addEventListener("click", function () {
-    var blob = new Blob([currentJSON()], { type: "application/json" });
-    var a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = "cyber_suzuka_schedule.json";
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    flash("saved cyber_suzuka_schedule.json");
+    if (window.claude && window.claude.downloads) {
+      window.claude.downloads.save({ filename: "cyber_suzuka_schedule.json", data: currentJSON() }).then(
+        function () { flash("saved cyber_suzuka_schedule.json"); },
+        function (err) {
+          if (err && err.code === "declined") { flash("save cancelled"); return; }
+          flash("save unavailable here — use Copy JSON instead");
+        }
+      );
+      return;
+    }
+    // no downloads capability in this view - Blob/anchor downloads are
+    // commonly blocked in a sandboxed artifact frame, so don't pretend
+    // it worked. Copy JSON (clipboard) is the reliable path instead.
+    flash("save unavailable here — use Copy JSON instead");
   });
 
   document.getElementById("btnCopy").addEventListener("click", function () {
@@ -732,35 +722,90 @@
     ta.remove();
   }
 
-  document.getElementById("btnLoad").addEventListener("click", function () {
-    document.getElementById("fileInput").click();
-  });
+  // shared by both "Load file" (FileReader) and "Paste JSON" (textarea) -
+  // same JSON shape either way, just a different source for the text.
+  // Returns a status message rather than showing it - callers decide
+  // where that's safe to display (see the paste overlay's inline
+  // status, which doesn't rely on the bottom toast).
+  function importJSONText(text) {
+    var data = JSON.parse(text);
+    if (!Array.isArray(data.placements)) throw new Error("no placements array");
+    var valid = data.placements.filter(function (p) {
+      return TYPE_BY_ID[p.type] && Number.isInteger(p.tick) && Number.isInteger(p.row);
+    });
+    placements = valid;
+    render();
+    var skipped = data.placements.length - valid.length;
+    return "loaded " + valid.length + " placements" + (skipped ? " (" + skipped + " skipped - bad type/tick/row)" : "");
+  }
+
   document.getElementById("fileInput").addEventListener("change", function (ev) {
     var file = ev.target.files[0];
     if (!file) return;
     var reader = new FileReader();
     reader.onload = function () {
-      try {
-        var data = JSON.parse(reader.result);
-        if (!Array.isArray(data.placements)) throw new Error("no placements array");
-        placements = data.placements.filter(function (p) {
-          return TYPE_BY_ID[p.type] && Number.isInteger(p.tick) && Number.isInteger(p.row);
-        });
-        render();
-        flash("loaded " + placements.length + " placements");
-      } catch (e) {
-        flash("could not read that file: " + e.message);
-      }
+      try { flash(importJSONText(reader.result)); }
+      catch (e) { flash("could not read that file: " + e.message); }
     };
     reader.readAsText(file);
     ev.target.value = "";
   });
 
+  var pasteOverlay = document.getElementById("pasteOverlay");
+  var pasteText = document.getElementById("pasteText");
+  var pasteStatus = document.getElementById("pasteStatus");
+  document.getElementById("btnPaste").addEventListener("click", function () {
+    pasteText.value = "";
+    pasteStatus.textContent = "";
+    pasteStatus.classList.remove("ok");
+    pasteOverlay.classList.add("show");
+    pasteText.focus();
+  });
+  document.getElementById("btnPasteCancel").addEventListener("click", function () {
+    pasteOverlay.classList.remove("show");
+  });
+  document.getElementById("btnPasteImport").addEventListener("click", function () {
+    if (!pasteText.value.trim()) {
+      pasteStatus.textContent = "paste some JSON first";
+      pasteStatus.classList.remove("ok");
+      return;
+    }
+    try {
+      var msg = importJSONText(pasteText.value);
+      pasteStatus.textContent = msg;
+      pasteStatus.classList.add("ok");
+      flash(msg);
+      pasteOverlay.classList.remove("show");
+    } catch (e) {
+      pasteStatus.textContent = "could not read that JSON: " + e.message;
+      pasteStatus.classList.remove("ok");
+    }
+  });
+  pasteOverlay.addEventListener("click", function (ev) {
+    if (ev.target === pasteOverlay) pasteOverlay.classList.remove("show");
+  });
+
+  // window.confirm() is blocked (silently declines) inside the sandboxed
+  // artifact frame, which made the old confirm()-guarded Clear button a
+  // permanent no-op - this overlay replaces it with an in-page confirm
+  // that doesn't depend on a native dialog.
+  var clearOverlay = document.getElementById("clearOverlay");
   document.getElementById("btnClear").addEventListener("click", function () {
-    if (placements.length && !confirm("Clear all " + placements.length + " placements?")) return;
+    if (!placements.length) { flash("nothing to clear"); return; }
+    document.getElementById("clearOverlayTitle").textContent = "Clear all " + placements.length + " placements?";
+    clearOverlay.classList.add("show");
+  });
+  document.getElementById("btnClearCancel").addEventListener("click", function () {
+    clearOverlay.classList.remove("show");
+  });
+  document.getElementById("btnClearConfirm").addEventListener("click", function () {
     placements = [];
     render();
+    clearOverlay.classList.remove("show");
     flash("cleared");
+  });
+  clearOverlay.addEventListener("click", function (ev) {
+    if (ev.target === clearOverlay) clearOverlay.classList.remove("show");
   });
 
   // ---------- misc UI ----------
@@ -777,13 +822,9 @@
     var gctx = grid.getContext("2d");
     gctx.setTransform(DPR, 0, 0, DPR, 0, 0);
     drawGrid(gctx, MAX_TICK * CELL, ROWS * CELL);
-    document.getElementById("statCount").textContent = placements.length;
-    var last = placements.reduce(function (m, p) { return Math.max(m, p.tick); }, 0);
-    document.getElementById("statLast").textContent = placements.length ? last : "—";
   }
 
   // ---------- boot ----------
-  placements = DEFAULT_PLACEMENTS.slice();
   layout();
   render();
   window.addEventListener("resize", function () { layout(); render(); });
