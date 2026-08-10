@@ -905,17 +905,15 @@ INIT_HIDE_SLOT_LOOP:
     JP MAINLOOP
 
 MAINLOOP:
-    ; --- interrupts off for this whole per-frame body (same reason as  ---
-    ; --- INIT - keeps IX, and every raw VDP OUT sequence, safe from    ---
-    ; --- the BIOS timer interrupt landing mid-sequence). Re-enabled    ---
-    ; --- only right before the EI/HALT at the bottom of the loop,      ---
-    ; --- which blocks until the next vblank interrupt (H.TIMI is a     ---
-    ; --- bare RET - see INIT) and resumes here in DI, one frame later. ---
-    ; --- This replaces free-running + NOP padding with a real vblank-  ---
-    ; --- gated frame: all sprite/VDP attribute writes this iteration   ---
-    ; --- happen right after a fresh vblank, before active display      ---
-    ; --- resumes.                                                       ---
-    DI
+    ; --- free-running: no per-frame DI/EI/HALT. The vblank-gated DI/    ---
+    ; --- EI/HALT design (wait for a fresh vblank every frame) caused a  ---
+    ; --- large real-hardware slowdown once a frame's body ran long      ---
+    ; --- enough to occasionally miss its vblank window. Interrupts stay ---
+    ; --- enabled throughout (needed for the BIOS's interrupt-driven     ---
+    ; --- keyboard/joystick scan - GTSTCK/GTTRIG read state that only    ---
+    ; --- H.KEYI, called from the vblank ISR, keeps fresh); per-write    ---
+    ; --- NOP margins are what keep individual VDP OUT sequences safe    ---
+    ; --- from an interrupt landing mid-sequence, not DI.                ---
     LD A,(TICK) : INC A : AND 3Fh : LD (TICK),A
     LD A,(BOSS_STATE)
     CP 1
@@ -1966,8 +1964,6 @@ BULLET2_OFF:
     XOR A : LD (BULLET2_ACT),A
 BULLET2_NEXT:
 
-    EI
-    HALT
     JP MAINLOOP
 
 ; ============================================================
