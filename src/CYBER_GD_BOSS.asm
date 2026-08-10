@@ -479,10 +479,6 @@ ENEMY3_BUDGET      EQU 0E473h
 ENEMY3_SPAWN_TIMER EQU 0E474h
 ENEMY3_SPAWN_COUNT EQU 0E4CEh  ; how many spawned so far this wave (resume enemy1/2 at 32)
 ENEMY3_POOL        EQU 0E475h  ; 8*11 = 88 bytes
-; set by SPAWN_E3_WAVE (from ENEMY3_ROW_TABLE/ENEMY3_LUTOFS_TABLE),
-; read by ENEMY3_DO_SPAWN/the DIAG->CIRCLE transition
-ENEMY3_SPAWN_Y_CUR EQU 0EB5Dh
-ENEMY3_LUT_OFFSET  EQU 0EB5Eh
 
 ; --- shot background-color variants: blue(sky), white(mountain, ---
 ; --- screen row 18), green(diamond/slash/backslash, rows 19-22), ---
@@ -707,8 +703,6 @@ FILLBG_3:
     XOR A : LD (ENEMY3_BUDGET),A
     XOR A : LD (ENEMY3_SPAWN_COUNT),A
     LD A,1 : LD (ENEMY3_SPAWN_TIMER),A
-    LD A,ENEMY3_SPAWN_Y : LD (ENEMY3_SPAWN_Y_CUR),A
-    XOR A : LD (ENEMY3_LUT_OFFSET),A
     ; Full 88-byte clear (all 8 slots, not just each slot's ACTIVE byte) -
     ; ENEMY3_UPDATE_SLOT's inactive-slot safety net (see its own comment)
     ; reads ROW/COL (bytes 4/5) even for never-yet-spawned slots, and an
@@ -4219,7 +4213,7 @@ ESC_COMPLEX_INIT_B:
 ; immediately forever after, so nothing loops.
 SPAWN_SCHEDULE_CHECK:
     LD A,(SPAWN_NEXT_INDEX)
-    CP 75
+    CP 73
     RET NC
     LD H,0 : LD L,A
     ADD HL,HL
@@ -4239,7 +4233,7 @@ SPAWN_SCHEDULE_CHECK:
     CP 18 : JR Z,SSC_BUSY_A
     CP 20 : JR Z,SSC_BUSY_A
     CP 19 : JR Z,SSC_BUSY_B
-    CP 24 : JR Z,SSC_BUSY_B
+    CP 22 : JR Z,SSC_BUSY_B
     JR SSC_FIRE
 SSC_BUSY_A:
     LD A,(E2A_ACTIVE) : OR A : RET NZ
@@ -4257,16 +4251,16 @@ SSC_FIRE:
     ; --- Dodge direction is decided dynamically from PLAYERY at      ---
     ; --- screen center, not from where it spawned, so it can spawn   ---
     ; --- anywhere - see the schedule editor's layout for this JSON.  ---
-    CP 0 : JP Z,SPAWN_SIMPLE
-    CP 1 : JP Z,SPAWN_SIMPLE
-    CP 2 : JP Z,SPAWN_SIMPLE
-    CP 3 : JP Z,SPAWN_SIMPLE
-    CP 4 : JP Z,SPAWN_SIMPLE
-    CP 5 : JP Z,SPAWN_SIMPLE
-    CP 6 : JP Z,SPAWN_SIMPLE
-    CP 7 : JP Z,SPAWN_SIMPLE
-    CP 8 : JP Z,SPAWN_SIMPLE
-    CP 9 : JP Z,SPAWN_SIMPLE
+    CP 0  : JP Z,SPAWN_SIMPLE
+    CP 1  : JP Z,SPAWN_SIMPLE
+    CP 2  : JP Z,SPAWN_SIMPLE
+    CP 3  : JP Z,SPAWN_SIMPLE
+    CP 4  : JP Z,SPAWN_SIMPLE
+    CP 5  : JP Z,SPAWN_SIMPLE
+    CP 6  : JP Z,SPAWN_SIMPLE
+    CP 7  : JP Z,SPAWN_SIMPLE
+    CP 8  : JP Z,SPAWN_SIMPLE
+    CP 9  : JP Z,SPAWN_SIMPLE
     CP 10 : JP Z,SPAWN_SIMPLE
     CP 11 : JP Z,SPAWN_SIMPLE
     CP 12 : JP Z,SPAWN_SIMPLE
@@ -4279,33 +4273,33 @@ SSC_FIRE:
     CP 19 : JP Z,SPAWN_E2_BOT_A
     CP 20 : JP Z,SPAWN_E2_TOP_B
     CP 21 : JP Z,SPAWN_E3_WAVE
-    CP 22 : JP Z,SPAWN_E3_WAVE
-    CP 23 : JP Z,SPAWN_E3_WAVE
-    CP 24 : JP Z,SPAWN_E2_BOT_B
+    CP 22 : JP Z,SPAWN_E2_BOT_B
     ; --- Enemy4 (TYPE_ENEMY4, indices 23-26,30-33,37-40,44-59): any  ---
     ; --- baseY now - see SPAWN_E4/SPAWN_BASEY_TABLE. Includes the    ---
     ; --- extra spawns tucked into each wave's gap from this JSON.    ---
+    CP 23 : JP Z,SPAWN_E4
+    CP 24 : JP Z,SPAWN_E4
     CP 25 : JP Z,SPAWN_E4
     CP 26 : JP Z,SPAWN_E4
-    CP 27 : JP Z,SPAWN_E4
-    CP 28 : JP Z,SPAWN_E4
+    CP 27 : JP Z,SPAWN_SIMPLE
+    CP 28 : JP Z,SPAWN_SIMPLE
     CP 29 : JP Z,SPAWN_SIMPLE
-    CP 30 : JP Z,SPAWN_SIMPLE
-    CP 31 : JP Z,SPAWN_SIMPLE
+    CP 30 : JP Z,SPAWN_E4
+    CP 31 : JP Z,SPAWN_E4
     CP 32 : JP Z,SPAWN_E4
     CP 33 : JP Z,SPAWN_E4
-    CP 34 : JP Z,SPAWN_E4
-    CP 35 : JP Z,SPAWN_E4
+    CP 34 : JP Z,SPAWN_SIMPLE
+    CP 35 : JP Z,SPAWN_SIMPLE
     CP 36 : JP Z,SPAWN_SIMPLE
-    CP 37 : JP Z,SPAWN_SIMPLE
-    CP 38 : JP Z,SPAWN_SIMPLE
+    CP 37 : JP Z,SPAWN_E4
+    CP 38 : JP Z,SPAWN_E4
     CP 39 : JP Z,SPAWN_E4
     CP 40 : JP Z,SPAWN_E4
-    CP 41 : JP Z,SPAWN_E4
-    CP 42 : JP Z,SPAWN_E4
+    CP 41 : JP Z,SPAWN_SIMPLE
+    CP 42 : JP Z,SPAWN_SIMPLE
     CP 43 : JP Z,SPAWN_SIMPLE
-    CP 44 : JP Z,SPAWN_SIMPLE
-    CP 45 : JP Z,SPAWN_SIMPLE
+    CP 44 : JP Z,SPAWN_E4
+    CP 45 : JP Z,SPAWN_E4
     CP 46 : JP Z,SPAWN_E4
     CP 47 : JP Z,SPAWN_E4
     CP 48 : JP Z,SPAWN_E4
@@ -4320,23 +4314,21 @@ SSC_FIRE:
     CP 57 : JP Z,SPAWN_E4
     CP 58 : JP Z,SPAWN_E4
     CP 59 : JP Z,SPAWN_E4
-    CP 60 : JP Z,SPAWN_E4
-    CP 61 : JP Z,SPAWN_E4
     ; --- TYPE_ENEMY1_LOOK test wave ("Enemy5"): indices 60-70, with  ---
     ; --- one extra simple-formation spawn tucked in each gap         ---
     ; --- (63,67,71), from the schedule editor's layout.              ---
+    CP 60 : JP Z,SPAWN_E4B
+    CP 61 : JP Z,SPAWN_E4B
     CP 62 : JP Z,SPAWN_E4B
-    CP 63 : JP Z,SPAWN_E4B
+    CP 63 : JP Z,SPAWN_SIMPLE
     CP 64 : JP Z,SPAWN_E4B
-    CP 65 : JP Z,SPAWN_SIMPLE
+    CP 65 : JP Z,SPAWN_E4B
     CP 66 : JP Z,SPAWN_E4B
-    CP 67 : JP Z,SPAWN_E4B
+    CP 67 : JP Z,SPAWN_SIMPLE
     CP 68 : JP Z,SPAWN_E4B
-    CP 69 : JP Z,SPAWN_SIMPLE
+    CP 69 : JP Z,SPAWN_E4B
     CP 70 : JP Z,SPAWN_E4B
-    CP 71 : JP Z,SPAWN_E4B
-    CP 72 : JP Z,SPAWN_E4B
-    CP 73 : JP Z,SPAWN_SIMPLE
+    CP 71 : JP Z,SPAWN_SIMPLE
     JP BOSS_SPAWN
 
 ; --- saved (disabled) boss-only fast-iteration schedule - kept for  ---
@@ -7903,20 +7895,7 @@ SPAWN_E2_TOP_B:
 SPAWN_E2_BOT_B:
     LD A,3 : LD (ENEMY_CYCLE),A
     JP ENEMY_START_COMPLEX_B
-; A = this schedule index (from SSC_FIRE's CP-dispatch, untouched by
-; the CP/JP chain to get here) - looks up this entry's row/LUT-offset
-; from ENEMY3_ROW_TABLE/ENEMY3_LUTOFS_TABLE (same indexing as
-; SPAWN_E4/SPAWN_BASEY_TABLE) so multiple SPAWN_E3_WAVE schedule
-; entries can each place their wave at a different height/starting
-; circle angle.
 SPAWN_E3_WAVE:
-    LD B,A
-    LD H,0 : LD L,B
-    LD DE,ENEMY3_ROW_TABLE : ADD HL,DE
-    LD A,(HL) : ADD A,A : ADD A,A : ADD A,A : LD (ENEMY3_SPAWN_Y_CUR),A
-    LD H,0 : LD L,B
-    LD DE,ENEMY3_LUTOFS_TABLE : ADD HL,DE
-    LD A,(HL) : LD (ENEMY3_LUT_OFFSET),A
     LD A,32 : LD (ENEMY3_BUDGET),A
     XOR A : LD (ENEMY3_SPAWN_COUNT),A
     LD A,1 : LD (ENEMY3_SPAWN_TIMER),A
@@ -11338,23 +11317,10 @@ ENEMY3_DO_SPAWN:
     LD A,1 : LD (IX+0),A
     XOR A : LD (IX+1),A
     LD A,ENEMY3_SPAWN_X : LD (IX+2),A
-    LD A,(ENEMY3_SPAWN_Y_CUR) : LD (IX+3),A
-    LD A,(ENEMY3_SPAWN_Y_CUR) : SRL A : SRL A : SRL A : LD (IX+4),A
+    LD A,ENEMY3_SPAWN_Y : LD (IX+3),A
+    LD A,ENEMY3_SPAWN_Y : SRL A : SRL A : SRL A : LD (IX+4),A
     LD A,ENEMY3_SPAWN_X : SRL A : SRL A : SRL A : LD (IX+5),A
-    ; --- pre-seed the CIRCLE starting angle now (ANGLEIDX, unused    ---
-    ; --- during DIAG) rather than at the DIAG->CIRCLE transition -   ---
-    ; --- ENEMY3_LUT_OFFSET is a single "current wave" value that a   ---
-    ; --- later SPAWN_E3_WAVE call can overwrite before this instance ---
-    ; --- ever reaches CIRCLE (multiple schedule entries can fire     ---
-    ; --- just a couple frames apart), so it must be captured per-    ---
-    ; --- instance at spawn time to stay correct for this wave.       ---
-    LD A,ENEMY3_START_ANGLE : LD B,A
-    LD A,(ENEMY3_LUT_OFFSET) : ADD A,B
-    CP 24 : JR C,E3DS_ANGLEOK
-    SUB 24
-E3DS_ANGLEOK:
-    LD (IX+6),A
-    XOR A : LD (IX+7),A : LD (IX+8),A : LD (IX+9),A
+    XOR A : LD (IX+6),A : LD (IX+7),A : LD (IX+8),A : LD (IX+9),A
     LD A,ANIM3_PACE : LD (IX+10),A
     LD A,(ENEMY3_BUDGET) : DEC A : LD (ENEMY3_BUDGET),A
     LD A,(ENEMY3_SPAWN_COUNT) : INC A : LD (ENEMY3_SPAWN_COUNT),A
@@ -11452,8 +11418,7 @@ E3_DIAG_YOK:
     LD A,(IX+3) : CP ENEMY3_CENTER_Y
     JP NZ,E3_DRAW
     LD A,1 : LD (IX+1),A
-    ; IX+6 (ANGLEIDX) was already pre-seeded at spawn time with this
-    ; instance's own wave offset - see ENEMY3_DO_SPAWN. Don't overwrite it.
+    LD A,ENEMY3_START_ANGLE : LD (IX+6),A
     XOR A : LD (IX+7),A : LD (IX+8),A
     JP E3_DRAW
 
@@ -11781,10 +11746,10 @@ ENEMY3_PATTERN3:
 ; not from which of the old fixed presets they used to be.
 SPAWN_THRESHOLDS:
     DW 10,11,12,18,19,20,26,27,28,33,34,35,41,42,43,55,56
-    DW 57,70,90,110,120,122,124,130,145,146,147,148,153,154,155,160,161
-    DW 162,163,168,169,170,175,176,177,178,183,184,185,190,191,192,193,198
-    DW 200,205,206,207,208,213,215,220,221,222,223,235,236,237,238,250,251
-    DW 252,253,265,266,267,268,280
+    DW 57,70,90,110,120,130,145,146,147,148,153,154,155,160,161,162,163
+    DW 168,169,170,175,176,177,178,183,184,185,190,191,192,193,198,200,205
+    DW 206,207,208,213,215,220,221,222,223,235,236,237,238,250,251,252,253
+    DW 265,266,267,268,280
 
 ; --- saved (disabled) boss-only single-entry schedule, used ---
 ; --- while iterating quickly on boss features - not deleted: ---
@@ -11797,41 +11762,20 @@ SPAWN_THRESHOLDS:
 ; to SPAWN_SIMPLE are read; the rest are unused placeholders (0).
 SPAWN_SIMPLE_Y_TABLE:
     DB 16,16,16,64,64,64,128,128,128,64,64,64,16,16,16,16,16
-    DB 16,0,0,0,0,0,0,0,0,0,0,0,48,48,48,0,0
-    DB 0,0,96,96,96,0,0,0,0,40,40,40,0,0,0,0,0
-    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,16,0,0
-    DB 0,16,0,0,0,128,0
+    DB 16,0,0,0,0,0,0,0,0,0,48,48,48,0,0,0,0
+    DB 96,96,96,0,0,0,0,40,40,40,0,0,0,0,0,0,0
+    DB 0,0,0,0,0,0,0,0,0,0,0,0,16,0,0,0,16
+    DB 0,0,0,128,0
 
 ; Same idea as SPAWN_SIMPLE_Y_TABLE but for Enemy4/Enemy5 (SPAWN_E4/
 ; SPAWN_E4B) baseY - row*8 from the schedule editor, any row, not
 ; just the old 3 fixed presets (32/64/72). Unused elsewhere (0).
 SPAWN_BASEY_TABLE:
     DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-    DB 0,0,0,0,0,0,0,0,32,64,72,104,0,0,0,64,96
-    DB 104,136,0,0,0,32,64,72,104,0,0,0,64,96,104,136,72
-    DB 112,32,64,72,104,136,88,32,64,72,104,32,64,72,0,32,64
-    DB 72,0,32,64,72,0,0
-
-; Per-schedule-index Enemy3 spawn row/LUT-offset (same indexing as
-; SPAWN_THRESHOLDS) - only indices that dispatch to SPAWN_E3_WAVE are
-; read, the rest are unused placeholders (0). ENEMY3_ROW_TABLE gives
-; the spawn row (row*8 = ENEMY3_SPAWN_Y_CUR); ENEMY3_LUTOFS_TABLE gives
-; a CIRCLE_LUT starting-angle offset added to ENEMY3_START_ANGLE (mod
-; 24) for that wave's spawns, so different SPAWN_E3_WAVE triggers can
-; enter the circle at a different point for visual variety even though
-; the schedule only otherwise varies spawn timing.
-ENEMY3_ROW_TABLE:
-    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-    DB 0,0,0,0,1,1,1,0,0,0,0,0,0,0,0,0,0
-    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-    DB 0,0,0,0,0,0,0
-ENEMY3_LUTOFS_TABLE:
-    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-    DB 0,0,0,0,0,2,4,0,0,0,0,0,0,0,0,0,0
-    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-    DB 0,0,0,0,0,0,0
+    DB 0,0,0,0,0,0,32,64,72,104,0,0,0,64,96,104,136
+    DB 0,0,0,32,64,72,104,0,0,0,64,96,104,136,72,112,32
+    DB 64,72,104,136,88,32,64,72,104,32,64,72,0,32,64,72,0
+    DB 32,64,72,0,0
 
 ; --- Boss BG (nametable) graphics, generated from
 ; --- dotpict_20260806_173500 (12x37 dot art), resized directly
