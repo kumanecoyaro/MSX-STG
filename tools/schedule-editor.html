@@ -622,8 +622,8 @@
           ctx.fill();
           ctx.globalAlpha = 0.8;
           ctx.fillStyle = "#05080d";
-          ctx.font = "700 " + Math.max(7, Math.round(CELL * 0.3)) + "px " + tok("--font-mono").split(",")[0] + ", monospace";
-          ctx.fillText(String(i % ENEMY3_OFFSET_COUNT), x + CELL / 2, y + CELL / 2 + 1);
+          ctx.font = "700 " + Math.max(7, Math.round(CELL * 0.26)) + "px " + tok("--font-mono").split(",")[0] + ", monospace";
+          ctx.fillText("E-" + (i % ENEMY3_OFFSET_COUNT), x + CELL / 2, y + CELL / 2 + 1);
           ctx.globalAlpha = 1;
         }
       }
