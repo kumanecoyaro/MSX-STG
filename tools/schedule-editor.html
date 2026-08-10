@@ -273,6 +273,15 @@
     font-size: 11.5px;
     line-height: 1.4;
   }
+  #offsetInput {
+    background: var(--surface-2);
+    color: var(--ink);
+    border: 1px solid var(--line);
+    border-radius: 7px;
+    padding: 8px;
+    font-family: var(--font-mono);
+    font-size: 15px;
+  }
   .overlay-actions { display: flex; gap: 8px; justify-content: flex-end; }
   .overlay-actions button { padding: 8px 14px; }
   /* Inline, not the bottom-fixed toast - on mobile a toast at the
@@ -370,6 +379,18 @@
     </div>
   </div>
 
+  <div id="offsetOverlay" class="overlay">
+    <div class="overlay-card" style="width: min(320px, 100%);">
+      <div class="overlay-title" id="offsetOverlayTitle">Edit offset</div>
+      <input type="number" id="offsetInput" inputmode="numeric" step="1" min="0">
+      <div class="overlay-status" id="offsetStatus"></div>
+      <div class="overlay-actions">
+        <button id="btnOffsetCancel">Cancel</button>
+        <button class="primary" id="btnOffsetSave">Save</button>
+      </div>
+    </div>
+  </div>
+
 <script>
 (function () {
   "use strict";
@@ -419,7 +440,16 @@
   function setCell(tick, row, typeId) {
     var idx = placementAt(tick, row);
     if (idx >= 0) placements.splice(idx, 1);
-    if (typeId) placements.push({ tick: tick, row: row, type: typeId });
+    if (typeId) {
+      var p = { tick: tick, row: row, type: typeId };
+      // Per-placement, not a derived/shared table - each enemy3_wave cell
+      // gets its OWN independent offset (cells, 8px each), defaulting to
+      // +0. Placing more than one member of a "set" means placing more
+      // than one enemy3_wave cell by hand and editing each's own offset -
+      // nothing here auto-generates neighbors.
+      if (typeId === "enemy3_wave") p.offset = 0;
+      placements.push(p);
+    }
     placements.sort(function (a, b) { return a.tick - b.tick || a.row - b.row; });
   }
 
@@ -579,6 +609,25 @@
       ctx.fillStyle = "#05080d";
       ctx.fillText(t.short, x + CELL / 2, y + CELL / 2 + 1);
     });
+
+    // Each enemy3_wave cell's own offset (cells, 8px each - see
+    // ENEMY3_CENTERX_TABLE in the ASM), tappable via enemy3OffsetHitTest
+    // below. Per-placement, not derived/shared - drawn last so it's never
+    // covered by another cell.
+    ctx.font = "700 " + Math.max(8, Math.round(CELL * 0.36)) + "px " + tok("--font-mono").split(",")[0] + ", monospace";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "bottom";
+    placements.forEach(function (p) {
+      if (p.type !== "enemy3_wave") return;
+      var x = p.tick * CELL, y = p.row * CELL;
+      var labelH = enemy3OffsetLabelH();
+      ctx.strokeStyle = tok("--line");
+      ctx.lineWidth = 1;
+      roundRect(ctx, x + 1.5, y - labelH + 1.5, CELL - 3, labelH - 3, 3);
+      ctx.stroke();
+      ctx.fillStyle = tok("--ink");
+      ctx.fillText("+" + (p.offset || 0), x + CELL / 2, y - 1);
+    });
   }
 
   function roundRect(ctx, x, y, w, h, r) {
@@ -602,7 +651,70 @@
     return { tick: col, row: row };
   }
 
+  // Hit zone for an enemy3_wave cell's own "+N" offset label - the strip
+  // of canvas directly above the cell's own top edge, not overlapping the
+  // cell itself (which keeps its normal place/erase click behavior).
+  function enemy3OffsetLabelH() { return Math.max(14, Math.round(CELL * 0.6)); }
+
+  function enemy3OffsetHitTest(x, y) {
+    var labelH = enemy3OffsetLabelH();
+    for (var pi = 0; pi < placements.length; pi++) {
+      var p = placements[pi];
+      if (p.type !== "enemy3_wave") continue;
+      var cx = p.tick * CELL, cy = p.row * CELL;
+      if (x >= cx && x < cx + CELL && y >= cy - labelH && y < cy) return pi;
+    }
+    return null;
+  }
+
+  var offsetOverlay = document.getElementById("offsetOverlay");
+  var offsetInput = document.getElementById("offsetInput");
+  var offsetStatus = document.getElementById("offsetStatus");
+  var offsetEditPlacementIdx = null;
+
+  function openOffsetEditor(pi) {
+    offsetEditPlacementIdx = pi;
+    document.getElementById("offsetOverlayTitle").textContent = "Offset (cells, 8px each) — tick " + placements[pi].tick;
+    offsetInput.value = placements[pi].offset || 0;
+    offsetStatus.textContent = "";
+    offsetStatus.classList.remove("ok");
+    offsetOverlay.classList.add("show");
+    offsetInput.focus();
+    offsetInput.select();
+  }
+
+  function saveOffsetEditor() {
+    var v = parseInt(offsetInput.value, 10);
+    if (!Number.isFinite(v) || v < 0) {
+      offsetStatus.textContent = "enter a whole number, 0 or more";
+      offsetStatus.classList.remove("ok");
+      return;
+    }
+    placements[offsetEditPlacementIdx].offset = v;
+    offsetOverlay.classList.remove("show");
+    render();
+    flash("offset set to +" + v);
+  }
+
+  document.getElementById("btnOffsetCancel").addEventListener("click", function () {
+    offsetOverlay.classList.remove("show");
+  });
+  document.getElementById("btnOffsetSave").addEventListener("click", saveOffsetEditor);
+  offsetInput.addEventListener("keydown", function (ev) {
+    if (ev.key === "Enter") saveOffsetEditor();
+    if (ev.key === "Escape") offsetOverlay.classList.remove("show");
+  });
+  offsetOverlay.addEventListener("click", function (ev) {
+    if (ev.target === offsetOverlay) offsetOverlay.classList.remove("show");
+  });
+
   grid.addEventListener("click", function (ev) {
+    var rect = grid.getBoundingClientRect();
+    var offsetHit = enemy3OffsetHitTest(ev.clientX - rect.left, ev.clientY - rect.top);
+    if (offsetHit !== null) {
+      openOffsetEditor(offsetHit);
+      return;
+    }
     var c = cellFromEvent(ev);
     if (!c) return;
     if (eraseArmed) {
