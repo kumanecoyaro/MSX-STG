@@ -458,19 +458,13 @@ ENEMY3_CODE1  EQU 152          ; pattern1 (gray/blue), group19
 ENEMY3_CODE2  EQU 160          ; pattern2 (gray/blue), group20
 ENEMY3_CODE3  EQU 168          ; pattern3 (gray/red),  group21
 ANIM3_PACE    EQU 6            ; frames held per pulse-animation frame
-; Concurrent instances PER WAVE (its own dedicated slice). Measured via
-; the emulator's T-state counter: each ACTIVELY DRAWN Enemy3 costs
-; ~2778 T-states/frame (draw+erase+animate+bullet hit-test x3 bullets)
-; REGARDLESS of pool layout - real, unavoidable work, not scan
-; overhead. At 8/wave (64 total) even a light 4-active scene already
-; cost ~26000 T-states (44% of a 59659 T-state 60fps frame) on top of
-; everything else in the game, which is what made shooting near any
-; Enemy3 wave unplayably slow. 1/wave keeps each wave's total budget
-; (32) fully independent and guarantees it a slot nothing else can
-; take, while capping worst-case total concurrent Enemy3 at
-; ENEMY3_WAVE_SLOTS(8) - the same ceiling the original shared-pool
-; design ran fine at.
-ENEMY3_SLOTS  EQU 1
+; Concurrent instances PER WAVE (its own dedicated slice). BG-tile
+; instances aren't sprite-limited, so this is not a "safe count" cap -
+; see ENEMY3_UPDATE_SLOT/CHECK_BULLET_VS_ENEMY3 for the actual per-
+; instance cost reduction (skip the erase+redraw VDP writes when a
+; slot's cell hasn't moved since last frame) that makes a high count
+; affordable instead.
+ENEMY3_SLOTS  EQU 8
 ENEMY3_STRUCT EQU 11           ; ACTIVE,PHASE,X,Y,ROW,COL,ANGLEIDX,STEPCNT,REVCNT,ANIMIDX,ANIMTIMER
 ENEMY3_SPAWN_X EQU 200
 ENEMY3_SPAWN_Y EQU 8
@@ -11374,14 +11368,14 @@ ENEMY4_SINE_LUT:
 ; anything - each can have up to ENEMY3_SLOTS of its own members alive
 ; at once regardless of what any other wave is doing.
 ENEMY3_TRY_SPAWN:
-    LD IX,ENEMY3_WAVE_POOL    : LD HL,ENEMY3_POOL    : CALL ENEMY3_TRY_SPAWN_SLOT
-    LD IX,ENEMY3_WAVE_POOL+4  : LD HL,ENEMY3_POOL+11 : CALL ENEMY3_TRY_SPAWN_SLOT
-    LD IX,ENEMY3_WAVE_POOL+8  : LD HL,ENEMY3_POOL+22 : CALL ENEMY3_TRY_SPAWN_SLOT
-    LD IX,ENEMY3_WAVE_POOL+12 : LD HL,ENEMY3_POOL+33 : CALL ENEMY3_TRY_SPAWN_SLOT
-    LD IX,ENEMY3_WAVE_POOL+16 : LD HL,ENEMY3_POOL+44 : CALL ENEMY3_TRY_SPAWN_SLOT
-    LD IX,ENEMY3_WAVE_POOL+20 : LD HL,ENEMY3_POOL+55 : CALL ENEMY3_TRY_SPAWN_SLOT
-    LD IX,ENEMY3_WAVE_POOL+24 : LD HL,ENEMY3_POOL+66 : CALL ENEMY3_TRY_SPAWN_SLOT
-    LD IX,ENEMY3_WAVE_POOL+28 : LD HL,ENEMY3_POOL+77 : JP ENEMY3_TRY_SPAWN_SLOT
+    LD IX,ENEMY3_WAVE_POOL    : LD HL,ENEMY3_POOL     : CALL ENEMY3_TRY_SPAWN_SLOT
+    LD IX,ENEMY3_WAVE_POOL+4  : LD HL,ENEMY3_POOL+88  : CALL ENEMY3_TRY_SPAWN_SLOT
+    LD IX,ENEMY3_WAVE_POOL+8  : LD HL,ENEMY3_POOL+176 : CALL ENEMY3_TRY_SPAWN_SLOT
+    LD IX,ENEMY3_WAVE_POOL+12 : LD HL,ENEMY3_POOL+264 : CALL ENEMY3_TRY_SPAWN_SLOT
+    LD IX,ENEMY3_WAVE_POOL+16 : LD HL,ENEMY3_POOL+352 : CALL ENEMY3_TRY_SPAWN_SLOT
+    LD IX,ENEMY3_WAVE_POOL+20 : LD HL,ENEMY3_POOL+440 : CALL ENEMY3_TRY_SPAWN_SLOT
+    LD IX,ENEMY3_WAVE_POOL+24 : LD HL,ENEMY3_POOL+528 : CALL ENEMY3_TRY_SPAWN_SLOT
+    LD IX,ENEMY3_WAVE_POOL+28 : LD HL,ENEMY3_POOL+616 : JP ENEMY3_TRY_SPAWN_SLOT
 
 ; Input: IX = one wave slot (ACTIVE,BUDGET,TIMER,OFFSET), HL = base of
 ; this wave's own dedicated ENEMY3_SLOTS-instance slice of ENEMY3_POOL.
@@ -11561,7 +11555,15 @@ ENEMY3_UPDATE_SLOT:
              ; ENEMY3_WAVE_SLOTS*ENEMY3_SLOTS (64) slots that blanket cost alone ran
              ; ~40000 T-states/frame (over half the whole frame budget) even with
              ; nothing on screen, which is what made the game unplayably slow.
-    CALL ENEMY3_ERASE_CELL
+    ; The erase-old-cell VDP write moved from here into E3_DRAW, which is
+    ; the only place that knows the NEW row/col and can compare it
+    ; against the still-untouched OLD row/col at (IX+4)/(IX+5) - most
+    ; frames don't actually cross into a new nametable cell (DIAG/EXIT
+    ; move only 2-3px/frame, well under one 8px cell, and CIRCLE holds
+    ; its LUT position for ENEMY3_STEP_FRAMES-1 out of every
+    ; ENEMY3_STEP_FRAMES frames), so this skips a whole VDP write
+    ; (~177 T-states) on every one of those frames instead of paying
+    ; for an erase+redraw pair when nothing actually moved.
 
     LD A,(IX+10)
     DEC A
@@ -11679,9 +11681,25 @@ E3_DEACTIVATE:
     LD A,(ENEMY3_ACTIVE_COUNT) : DEC A : LD (ENEMY3_ACTIVE_COUNT),A
     RET
 
+; (IX+4)/(IX+5) still hold LAST frame's row/col here - DIAG/CIRCLE/EXIT
+; only touch X/Y (IX+2/+3). Erase the old cell ONLY if the new one
+; differs - DIAG/EXIT move just 2-3px/frame (under one 8px cell most
+; frames) and CIRCLE holds its LUT position for ENEMY3_STEP_FRAMES-1
+; out of every ENEMY3_STEP_FRAMES frames, so most frames land on the
+; SAME cell and can skip a whole VDP write (~177 T-states) instead of
+; erasing something that's about to be overwritten with new content anyway.
 E3_DRAW:
-    LD A,(IX+3) : SRL A : SRL A : SRL A : LD (IX+4),A
-    LD A,(IX+2) : SRL A : SRL A : SRL A : LD (IX+5),A
+    LD A,(IX+3) : SRL A : SRL A : SRL A : LD B,A   ; B = new row
+    LD A,(IX+2) : SRL A : SRL A : SRL A : LD C,A   ; C = new col
+    LD A,(IX+4) : CP B : JR NZ,E3_DRAW_MOVED
+    LD A,(IX+5) : CP C : JR Z,E3_DRAW_SAMECELL
+E3_DRAW_MOVED:
+    PUSH BC
+    CALL ENEMY3_ERASE_CELL   ; still reads the OLD row/col off (IX+4)/(IX+5)
+    POP BC
+E3_DRAW_SAMECELL:
+    LD A,B : LD (IX+4),A
+    LD A,C : LD (IX+5),A
     LD A,(IX+9) : LD E,A : LD D,0
     LD HL,ANIM3_SEQ
     ADD HL,DE
