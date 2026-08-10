@@ -11352,17 +11352,32 @@ E3TS_GROUP:
 ENEMY3_DO_SPAWN:
     LD A,1 : LD (IX+0),A
     XOR A : LD (IX+1),A
-    LD A,ENEMY3_SPAWN_X : LD (IX+2),A
+    ; --- stagger this trio member's spawn X by offset*4 (0/8/16) so   ---
+    ; --- the 3 don't fully overlap during the whole DIAG approach -   ---
+    ; --- always a multiple of 8 (even), which keeps the X==CENTER_X   ---
+    ; --- arrival check (DIAG_SPEED=2 steps) exact regardless of       ---
+    ; --- offset; an odd stagger could make X oscillate around the     ---
+    ; --- target forever instead of ever landing on it exactly.        ---
+    LD A,(ENEMY3_LUT_OFFSET) : ADD A,A : ADD A,A
+    ADD A,ENEMY3_SPAWN_X : LD (IX+2),A
     LD A,ENEMY3_SPAWN_Y : LD (IX+3),A
     LD A,ENEMY3_SPAWN_Y : SRL A : SRL A : SRL A : LD (IX+4),A
-    LD A,ENEMY3_SPAWN_X : SRL A : SRL A : SRL A : LD (IX+5),A
+    LD A,(IX+2) : SRL A : SRL A : SRL A : LD (IX+5),A
     ; --- pre-seed the CIRCLE starting angle now (ANGLEIDX, unused    ---
     ; --- during DIAG) instead of at the DIAG->CIRCLE transition, so   ---
     ; --- each trio member keeps its own offset even though           ---
     ; --- ENEMY3_LUT_OFFSET is a shared scratch var reused for the    ---
     ; --- next member right after this call returns.                  ---
+    ; --- seed angle is offset*2, not offset, to compensate: staggering ---
+    ; --- spawn X by offset*4 delays this member's circle-entry by      ---
+    ; --- offset*2 frames = offset STEP_FRAMES-holds, which would       ---
+    ; --- otherwise exactly cancel a plain +offset seed by the time it  ---
+    ; --- reaches CIRCLE (verified in the emulator: with a plain        ---
+    ; --- +offset seed, all 3 converge back to identical ANGLEIDX once  ---
+    ; --- circling). +offset*2 leaves a net +offset separation that     ---
+    ; --- holds constant for as long as they keep circling.             ---
     LD A,ENEMY3_START_ANGLE : LD B,A
-    LD A,(ENEMY3_LUT_OFFSET) : ADD A,B
+    LD A,(ENEMY3_LUT_OFFSET) : ADD A,A : ADD A,B
     CP 24 : JR C,E3DS_ANGLEOK
     SUB 24
 E3DS_ANGLEOK:
