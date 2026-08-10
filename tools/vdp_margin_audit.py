@@ -83,7 +83,7 @@ def main():
     z.mem[sym['PLAYERY']] = 64
     z.mem[sym['BOSS_STATE']] = 0
 
-    N_FRAMES = 400
+    N_FRAMES = 6000  # long enough to reach natural boss engagement/materialize
     move_toggle = 0
     for f in range(N_FRAMES):
         frame_counter[0] = f
