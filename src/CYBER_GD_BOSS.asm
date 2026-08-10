@@ -4226,11 +4226,11 @@ ESC_COMPLEX_INIT_B:
 ; spawn exactly once, in order, as GAME_TICK reaches its threshold -
 ; not when the previous one finishes. SPAWN_THRESHOLDS is a 16-bit
 ; (DW) array so thresholds aren't capped at 255. Boss is the final
-; entry, index72. One-shot: once all 73 have fired, this just returns
+; entry, index74. One-shot: once all 75 have fired, this just returns
 ; immediately forever after, so nothing loops.
 SPAWN_SCHEDULE_CHECK:
     LD A,(SPAWN_NEXT_INDEX)
-    CP 73
+    CP 75
     RET NC
     LD H,0 : LD L,A
     ADD HL,HL
@@ -4247,10 +4247,10 @@ SPAWN_SCHEDULE_CHECK:
     ;     これにより取りこぼし(無駄)なく、ACTIVEが0に戻った
     ;     瞬間に確実に発火する ---
     LD A,(SPAWN_NEXT_INDEX)
-    CP 18 : JR Z,SSC_BUSY_A
     CP 20 : JR Z,SSC_BUSY_A
-    CP 19 : JR Z,SSC_BUSY_B
-    CP 22 : JR Z,SSC_BUSY_B
+    CP 22 : JR Z,SSC_BUSY_A
+    CP 21 : JR Z,SSC_BUSY_B
+    CP 24 : JR Z,SSC_BUSY_B
     JR SSC_FIRE
 SSC_BUSY_A:
     LD A,(E2A_ACTIVE) : OR A : RET NZ
@@ -4263,22 +4263,24 @@ SSC_FIRE:
     INC A
     LD (SPAWN_NEXT_INDEX),A
     DEC A
-    ; --- simple formation (indices 0-17,27-29,34-36,41-43,63,67,71): ---
-    ; --- one type, any Y - see SPAWN_SIMPLE/SPAWN_SIMPLE_Y_TABLE.    ---
-    ; --- Dodge direction is decided dynamically from PLAYERY at      ---
-    ; --- screen center, not from where it spawned, so it can spawn   ---
-    ; --- anywhere - see the schedule editor's layout for this JSON.  ---
+    ; --- simple formation: one type, any Y - see SPAWN_SIMPLE/          ---
+    ; --- SPAWN_SIMPLE_Y_TABLE. Dodge direction is decided dynamically   ---
+    ; --- from PLAYERY at screen center, not from where it spawned, so   ---
+    ; --- it can spawn anywhere - see the schedule editor's layout.      ---
+    ; --- enemy3_wave (indices 6,10,23): SPAWN_E3_WAVE just arms         ---
+    ; --- ENEMY3_BUDGET=32 - see ENEMY3_TRY_SPAWN for the per-frame      ---
+    ; --- spawn/offset cycling this triggers.                            ---
     CP 0  : JP Z,SPAWN_SIMPLE
     CP 1  : JP Z,SPAWN_SIMPLE
     CP 2  : JP Z,SPAWN_SIMPLE
     CP 3  : JP Z,SPAWN_SIMPLE
     CP 4  : JP Z,SPAWN_SIMPLE
     CP 5  : JP Z,SPAWN_SIMPLE
-    CP 6  : JP Z,SPAWN_SIMPLE
+    CP 6  : JP Z,SPAWN_E3_WAVE
     CP 7  : JP Z,SPAWN_SIMPLE
     CP 8  : JP Z,SPAWN_SIMPLE
     CP 9  : JP Z,SPAWN_SIMPLE
-    CP 10 : JP Z,SPAWN_SIMPLE
+    CP 10 : JP Z,SPAWN_E3_WAVE
     CP 11 : JP Z,SPAWN_SIMPLE
     CP 12 : JP Z,SPAWN_SIMPLE
     CP 13 : JP Z,SPAWN_SIMPLE
@@ -4286,37 +4288,37 @@ SSC_FIRE:
     CP 15 : JP Z,SPAWN_SIMPLE
     CP 16 : JP Z,SPAWN_SIMPLE
     CP 17 : JP Z,SPAWN_SIMPLE
-    CP 18 : JP Z,SPAWN_E2_TOP_A
-    CP 19 : JP Z,SPAWN_E2_BOT_A
-    CP 20 : JP Z,SPAWN_E2_TOP_B
-    CP 21 : JP Z,SPAWN_E3_WAVE
-    CP 22 : JP Z,SPAWN_E2_BOT_B
-    ; --- Enemy4 (TYPE_ENEMY4, indices 23-26,30-33,37-40,44-59): any  ---
-    ; --- baseY now - see SPAWN_E4/SPAWN_BASEY_TABLE. Includes the    ---
-    ; --- extra spawns tucked into each wave's gap from this JSON.    ---
-    CP 23 : JP Z,SPAWN_E4
-    CP 24 : JP Z,SPAWN_E4
+    CP 18 : JP Z,SPAWN_SIMPLE
+    CP 19 : JP Z,SPAWN_SIMPLE
+    CP 20 : JP Z,SPAWN_E2_TOP_A
+    CP 21 : JP Z,SPAWN_E2_BOT_A
+    CP 22 : JP Z,SPAWN_E2_TOP_B
+    CP 23 : JP Z,SPAWN_E3_WAVE
+    CP 24 : JP Z,SPAWN_E2_BOT_B
+    ; --- Enemy4 (TYPE_ENEMY4): any baseY now - see SPAWN_E4/            ---
+    ; --- SPAWN_BASEY_TABLE. Includes the extra spawns tucked into       ---
+    ; --- each wave's gap from this JSON.                                ---
     CP 25 : JP Z,SPAWN_E4
     CP 26 : JP Z,SPAWN_E4
-    CP 27 : JP Z,SPAWN_SIMPLE
-    CP 28 : JP Z,SPAWN_SIMPLE
+    CP 27 : JP Z,SPAWN_E4
+    CP 28 : JP Z,SPAWN_E4
     CP 29 : JP Z,SPAWN_SIMPLE
-    CP 30 : JP Z,SPAWN_E4
-    CP 31 : JP Z,SPAWN_E4
+    CP 30 : JP Z,SPAWN_SIMPLE
+    CP 31 : JP Z,SPAWN_SIMPLE
     CP 32 : JP Z,SPAWN_E4
     CP 33 : JP Z,SPAWN_E4
-    CP 34 : JP Z,SPAWN_SIMPLE
-    CP 35 : JP Z,SPAWN_SIMPLE
+    CP 34 : JP Z,SPAWN_E4
+    CP 35 : JP Z,SPAWN_E4
     CP 36 : JP Z,SPAWN_SIMPLE
-    CP 37 : JP Z,SPAWN_E4
-    CP 38 : JP Z,SPAWN_E4
+    CP 37 : JP Z,SPAWN_SIMPLE
+    CP 38 : JP Z,SPAWN_SIMPLE
     CP 39 : JP Z,SPAWN_E4
     CP 40 : JP Z,SPAWN_E4
-    CP 41 : JP Z,SPAWN_SIMPLE
-    CP 42 : JP Z,SPAWN_SIMPLE
+    CP 41 : JP Z,SPAWN_E4
+    CP 42 : JP Z,SPAWN_E4
     CP 43 : JP Z,SPAWN_SIMPLE
-    CP 44 : JP Z,SPAWN_E4
-    CP 45 : JP Z,SPAWN_E4
+    CP 44 : JP Z,SPAWN_SIMPLE
+    CP 45 : JP Z,SPAWN_SIMPLE
     CP 46 : JP Z,SPAWN_E4
     CP 47 : JP Z,SPAWN_E4
     CP 48 : JP Z,SPAWN_E4
@@ -4331,21 +4333,23 @@ SSC_FIRE:
     CP 57 : JP Z,SPAWN_E4
     CP 58 : JP Z,SPAWN_E4
     CP 59 : JP Z,SPAWN_E4
-    ; --- TYPE_ENEMY1_LOOK test wave ("Enemy5"): indices 60-70, with  ---
-    ; --- one extra simple-formation spawn tucked in each gap         ---
-    ; --- (63,67,71), from the schedule editor's layout.              ---
-    CP 60 : JP Z,SPAWN_E4B
-    CP 61 : JP Z,SPAWN_E4B
+    CP 60 : JP Z,SPAWN_E4
+    CP 61 : JP Z,SPAWN_E4
+    ; --- TYPE_ENEMY1_LOOK test wave ("Enemy5"), with one extra          ---
+    ; --- simple-formation spawn tucked in each gap, from the schedule   ---
+    ; --- editor's layout.                                               ---
     CP 62 : JP Z,SPAWN_E4B
-    CP 63 : JP Z,SPAWN_SIMPLE
+    CP 63 : JP Z,SPAWN_E4B
     CP 64 : JP Z,SPAWN_E4B
-    CP 65 : JP Z,SPAWN_E4B
+    CP 65 : JP Z,SPAWN_SIMPLE
     CP 66 : JP Z,SPAWN_E4B
-    CP 67 : JP Z,SPAWN_SIMPLE
+    CP 67 : JP Z,SPAWN_E4B
     CP 68 : JP Z,SPAWN_E4B
-    CP 69 : JP Z,SPAWN_E4B
+    CP 69 : JP Z,SPAWN_SIMPLE
     CP 70 : JP Z,SPAWN_E4B
-    CP 71 : JP Z,SPAWN_SIMPLE
+    CP 71 : JP Z,SPAWN_E4B
+    CP 72 : JP Z,SPAWN_E4B
+    CP 73 : JP Z,SPAWN_SIMPLE
     JP BOSS_SPAWN
 
 ; --- saved (disabled) boss-only fast-iteration schedule - kept for  ---
@@ -11822,7 +11826,7 @@ ENEMY3_PATTERN2:
 ENEMY3_PATTERN3:
     DB 0FFh,0FFh,0FFh,0E7h,0E7h,0FFh,0FFh,0FFh
 
-; Full schedule, 73 entries (indices 0-72), imported directly from the
+; Full schedule, 75 entries (indices 0-74), imported directly from the
 ; schedule editor's exported JSON (tick/row/type per placement) - see
 ; SSC_FIRE for the per-index dispatch this drives. Every tick here is
 ; a 16-bit word since thresholds run well past 255. Simple-formation
@@ -11830,11 +11834,11 @@ ENEMY3_PATTERN3:
 ; SPAWN_SIMPLE_Y_TABLE/SPAWN_BASEY_TABLE (row*8 from the editor),
 ; not from which of the old fixed presets they used to be.
 SPAWN_THRESHOLDS:
-    DW 10,11,12,18,19,20,26,27,28,33,34,35,41,42,43,55,56
-    DW 57,70,90,110,120,130,145,146,147,148,153,154,155,160,161,162,163
-    DW 168,169,170,175,176,177,178,183,184,185,190,191,192,193,198,200,205
-    DW 206,207,208,213,215,220,221,222,223,235,236,237,238,250,251,252,253
-    DW 265,266,267,268,280
+    DW 10,11,12,18,19,20,23,26,27,28,29,33,34,35,41,42,43
+    DW 55,56,57,70,90,110,120,130,145,146,147,148,153,154,155,160,161
+    DW 162,163,168,169,170,175,176,177,178,183,184,185,190,191,192,193,198
+    DW 200,205,206,207,208,213,215,220,221,222,223,235,236,237,238,250,251
+    DW 252,253,265,266,267,268,280
 
 ; --- saved (disabled) boss-only single-entry schedule, used ---
 ; --- while iterating quickly on boss features - not deleted: ---
@@ -11846,21 +11850,21 @@ SPAWN_THRESHOLDS:
 ; row*8 from the schedule editor. Only indices that actually dispatch
 ; to SPAWN_SIMPLE are read; the rest are unused placeholders (0).
 SPAWN_SIMPLE_Y_TABLE:
-    DB 16,16,16,64,64,64,128,128,128,64,64,64,16,16,16,16,16
-    DB 16,0,0,0,0,0,0,0,0,0,48,48,48,0,0,0,0
-    DB 96,96,96,0,0,0,0,40,40,40,0,0,0,0,0,0,0
-    DB 0,0,0,0,0,0,0,0,0,0,0,0,16,0,0,0,16
-    DB 0,0,0,128,0
+    DB 16,16,16,64,64,64,0,128,128,128,0,64,64,64,16,16,16
+    DB 16,16,16,0,0,0,0,0,0,0,0,0,48,48,48,0,0
+    DB 0,0,96,96,96,0,0,0,0,40,40,40,0,0,0,0,0
+    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,16,0,0
+    DB 0,16,0,0,0,128,0
 
 ; Same idea as SPAWN_SIMPLE_Y_TABLE but for Enemy4/Enemy5 (SPAWN_E4/
 ; SPAWN_E4B) baseY - row*8 from the schedule editor, any row, not
 ; just the old 3 fixed presets (32/64/72). Unused elsewhere (0).
 SPAWN_BASEY_TABLE:
     DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-    DB 0,0,0,0,0,0,32,64,72,104,0,0,0,64,96,104,136
-    DB 0,0,0,32,64,72,104,0,0,0,64,96,104,136,72,112,32
-    DB 64,72,104,136,88,32,64,72,104,32,64,72,0,32,64,72,0
-    DB 32,64,72,0,0
+    DB 0,0,0,0,0,0,0,0,32,64,72,104,0,0,0,64,96
+    DB 104,136,0,0,0,32,64,72,104,0,0,0,64,96,104,136,72
+    DB 112,32,64,72,104,136,88,32,64,72,104,32,64,72,0,32,64
+    DB 72,0,32,64,72,0,0
 
 ; --- Boss BG (nametable) graphics, generated from
 ; --- dotpict_20260806_173500 (12x37 dot art), resized directly
