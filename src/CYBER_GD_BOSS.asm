@@ -473,19 +473,26 @@ ENEMY3_EXIT_SPEED EQU 3
 ENEMY3_EXIT_TARGET_Y EQU 136       ; row 17 pixel Y (17*8): exit levels off
                                     ; here, above the scroller, then flies
                                     ; right off-screen
-ENEMY3_SPAWN_INTERVAL EQU 30   ; frames between spawn attempts
-ENEMY3_TRIO_GAP EQU 8           ; frames between each of a trio's 3 members
-                                ; ("1 count" - matches the schedule tick unit)
+ENEMY3_SPAWN_INTERVAL EQU 8    ; frames between EVERY spawn in the budget-32 stream
+                                ; ("1 count" - matches the schedule tick unit). One
+                                ; single uniform pace for the whole formation - how
+                                ; many members read as "one set" is decided purely by
+                                ; ENEMY3_OFFSET_TABLE's length below, not by any
+                                ; grouping logic here.
 
 ENEMY3_BUDGET      EQU 0E473h
 ENEMY3_SPAWN_TIMER EQU 0E474h
 ENEMY3_SPAWN_COUNT EQU 0E4CEh  ; how many spawned so far this wave (resume enemy1/2 at 32)
 ENEMY3_POOL        EQU 0E475h  ; 8*11 = 88 bytes
-ENEMY3_TRIO_POS    EQU 0EB5Eh  ; which of the current trio's 3 members spawns next (0-2)
+ENEMY3_OFFSET_POS  EQU 0EB5Eh  ; index (0..ENEMY3_OFFSET_COUNT-1) of the offset this
+                                ; formation's NEXT spawn will read from
+                                ; ENEMY3_OFFSET_TABLE - wraps independently of any
+                                ; fixed group size
 ENEMY3_CENTERX_TABLE EQU 0EB5Fh ; 8*11=88 bytes, parallel to ENEMY3_POOL: each slot's
-                                ; own circle-center X pixel offset (0/16/32), so a
-                                ; trio's 3 members orbit 3 separate horizontally-
-                                ; offset centers instead of sharing one circle
+                                ; OWN circle-center X pixel offset, copied from
+                                ; ENEMY3_OFFSET_TABLE at spawn time - lets each
+                                ; instance orbit its own horizontally-offset center
+                                ; instead of sharing one circle
 
 ; --- shot background-color variants: blue(sky), white(mountain, ---
 ; --- screen row 18), green(diamond/slash/backslash, rows 19-22), ---
@@ -721,7 +728,7 @@ FILLBG_3:
     LD (ENEMY3_POOL+4),A  : LD (ENEMY3_POOL+15),A : LD (ENEMY3_POOL+26),A
     LD (ENEMY3_POOL+37),A : LD (ENEMY3_POOL+48),A : LD (ENEMY3_POOL+59),A
     LD (ENEMY3_POOL+70),A : LD (ENEMY3_POOL+81),A
-    XOR A : LD (ENEMY3_TRIO_POS),A
+    XOR A : LD (ENEMY3_OFFSET_POS),A
     LD HL,ENEMY3_CENTERX_TABLE : LD (HL),0
     LD DE,ENEMY3_CENTERX_TABLE+1 : LD BC,88-1 : LDIR
 
@@ -11304,13 +11311,15 @@ ENEMY4_SINE_LUT:
     DB 0,3,6,9,11,13,15,16,16,16,15,13,11,9,6,3
     DB 0,253,250,247,245,243,241,240,240,240,241,243,245,247,250,253
 
-; Spawns a "trio" every ENEMY3_SPAWN_INTERVAL ticks, its 3 members
-; ENEMY3_TRIO_GAP frames apart from each other rather than all at
-; once: with everyone starting from the same fixed spawn/DIAG/CIRCLE
-; state, spawning simultaneously means every member is at the exact
-; same position AND the same point in the "1,2,3,2" pulse animation
-; forever - a small time offset makes both diverge for free, no extra
-; per-instance state needed.
+; Spawns one unit every ENEMY3_SPAWN_INTERVAL frames, a uniform pace for
+; the whole budget-32 formation, giving it this spawn's own X-offset
+; read from ENEMY3_OFFSET_TABLE (cycled, wrapping at ENEMY3_OFFSET_COUNT).
+; This alone is everything a "set" is: with a same fixed spawn/DIAG/
+; CIRCLE state per instance, giving every spawn its own offset AND its
+; own frame-in-time makes both position and the "1,2,3,2" pulse
+; animation diverge naturally, no per-instance timing state needed.
+; The visual set size (3-wide, 6-wide, ...) is entirely a property of
+; ENEMY3_OFFSET_TABLE's length below - nothing here is aware of "3".
 ENEMY3_TRY_SPAWN:
     LD A,(ENEMY3_BUDGET)
     OR A
@@ -11319,29 +11328,35 @@ ENEMY3_TRY_SPAWN:
     DEC A
     LD (ENEMY3_SPAWN_TIMER),A
     RET NZ
-    LD A,(ENEMY3_TRIO_POS)
-    LD D,A                        ; D = this member's index (0,1,2) - stash before advancing
-    INC A
-    CP 3
-    JR C,E3TS_MIDTRIO
-    XOR A : LD (ENEMY3_TRIO_POS),A
     LD A,ENEMY3_SPAWN_INTERVAL
     LD (ENEMY3_SPAWN_TIMER),A
-    JR E3TS_FIND
-E3TS_MIDTRIO:
-    LD (ENEMY3_TRIO_POS),A
-    LD A,ENEMY3_TRIO_GAP
-    LD (ENEMY3_SPAWN_TIMER),A
-E3TS_FIND:
+    LD A,(ENEMY3_OFFSET_POS)
+    LD E,A : LD D,0
+    LD HL,ENEMY3_OFFSET_TABLE
+    ADD HL,DE
+    LD D,(HL)                     ; D = this spawn's offset (px), read before advancing
+    INC A
+    CP ENEMY3_OFFSET_COUNT
+    JR C,E3TS_POSOK
+    XOR A
+E3TS_POSOK:
+    LD (ENEMY3_OFFSET_POS),A
     CALL ENEMY3_FIND_FREE_SLOT
     OR A
     RET Z
-    LD A,D : ADD A,A : ADD A,A : ADD A,A : ADD A,A   ; D(0,1,2) * 16 px
-    PUSH AF
+    PUSH DE                       ; D = offset - hold across ENEMY3_CENTERX_ADDR (clobbers DE)
     CALL ENEMY3_CENTERX_ADDR
-    POP AF
+    POP DE
+    LD A,D
     LD (HL),A
     JP ENEMY3_DO_SPAWN
+
+; Cycled once per ENEMY3_TRY_SPAWN call (see ENEMY3_OFFSET_POS above).
+; Edit this list - any length - to change how many members read as one
+; visual "set" before the pattern repeats; no other code changes needed.
+ENEMY3_OFFSET_TABLE:
+    DB 0,16,32
+ENEMY3_OFFSET_COUNT EQU 3
 
 ; Input: IX = slot base address (within ENEMY3_POOL). Output: HL =
 ; address of this slot's entry in ENEMY3_CENTERX_TABLE (same stride,
