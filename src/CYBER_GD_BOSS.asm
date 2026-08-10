@@ -4532,6 +4532,13 @@ BOSS_SPAWN:
     LD HL,BOSS_ORBIT_PATTERN : LD DE,100*8+SPRPAT : LD BC,32 : CALL LDIRVM
     LD HL,DFL_BULLET_PATTERN : LD DE,104*8+SPRPAT : LD BC,32 : CALL LDIRVM
     LD HL,EXPLOSION_PATTERN : LD DE,108*8+SPRPAT : LD BC,32 : CALL LDIRVM
+    ; --- restore groups24-31's real color-table bytes, undoing        ---
+    ; --- COLOR_SWATCH_INIT's borrow of them (see its own comment) -    ---
+    ; --- that only ever touches VRAM once at boot and has no way to   ---
+    ; --- know when the boss actually appears, so without this the     ---
+    ; --- boss would render in black-on-swatch-color for the whole     ---
+    ; --- fight instead of its real gray/blue/black/red.               ---
+    LD HL,COLORDATA+24 : LD DE,2018h : LD BC,8 : CALL LDIRVM
     XOR A : LD (BOSS_ROW),A
     XOR A : LD (BOSS_COL),A
     LD A,1 : LD (BOSS_PHASE),A
