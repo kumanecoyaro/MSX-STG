@@ -3914,8 +3914,14 @@ BOSS_UPDATE_BODY:
     LD HL,SKY_SLOW_2H : LD (SKY_VEC_2H),HL
     LD HL,SKY_SLOW_2E : LD (SKY_VEC_2E),HL
     ; --- start the 8 orbiting ring pods ---
+    ; --- BOSS_ORBIT_DRAW_ALL reads POD_HP (hide-if-dead check) and     ---
+    ; --- POD_RECOIL (kick offset) for every pod it draws - it MUST run ---
+    ; --- after those are initialized, not before. Confirmed a real    ---
+    ; --- uninitialized-RAM read via poisoned-RAM testing: with POD_HP/ ---
+    ; --- POD_RECOIL never written yet this boot, the very first orbit ---
+    ; --- draw (right when the boss lands) read whatever power-on/     ---
+    ; --- leftover RAM was there instead of the intended fresh values. ---
     XOR A : LD (BOSS_ORBIT_ANGLE),A
-    CALL BOSS_ORBIT_DRAW_ALL
     ; --- arm the pod-fire sequence: starts POD_FIRE_DELAY_TICKS ---
     ; --- ticks from now ---
     XOR A : LD (POD_FIRE_ACTIVE),A
@@ -3933,6 +3939,7 @@ BSPAWN_CLEARVOLLEY:
     LD HL,POD_HP : LD B,8
 BSPAWN_INITHP:
     LD (HL),POD_HP_MAX : INC HL : DJNZ BSPAWN_INITHP
+    CALL BOSS_ORBIT_DRAW_ALL
     LD HL,EXPLOSION_ACT : LD B,8
 BSPAWN_CLEAREXPL:
     LD (HL),0 : INC HL : DJNZ BSPAWN_CLEAREXPL
