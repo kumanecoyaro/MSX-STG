@@ -7917,7 +7917,13 @@ SPAWN_E3_WAVE:
     LD H,0 : LD L,B
     LD DE,ENEMY3_LUTOFS_TABLE : ADD HL,DE
     LD A,(HL) : LD (ENEMY3_LUT_OFFSET),A
-    LD A,32 : LD (ENEMY3_BUDGET),A
+    ; --- additive, not an overwrite: Enemy3 is specifically designed  ---
+    ; --- to have many concurrent instances (drawn to the BG/nametable ---
+    ; --- layer, so it isn't bound by the sprite-per-scanline limit),  ---
+    ; --- so multiple close-together wave triggers should stack their  ---
+    ; --- budgets rather than one throwing away another's unspent      ---
+    ; --- allocation.                                                  ---
+    LD A,(ENEMY3_BUDGET) : ADD A,32 : LD (ENEMY3_BUDGET),A
     XOR A : LD (ENEMY3_SPAWN_COUNT),A
     LD A,1 : LD (ENEMY3_SPAWN_TIMER),A
     RET
