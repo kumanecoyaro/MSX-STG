@@ -4229,11 +4229,12 @@ ESC_COMPLEX_INIT_B:
 ; Checked once per game tick (every 8 frames). Fires each scheduled
 ; spawn exactly once, in order, as GAME_TICK reaches its threshold -
 ; not when the previous one finishes. SPAWN_THRESHOLDS is a 16-bit
-; (DW) array so thresholds aren't capped at 255. One-shot: once all
-; entries have fired, this just returns immediately forever after.
+; (DW) array so thresholds aren't capped at 255. Boss is the final
+; entry, index74. One-shot: once all 75 have fired, this just returns
+; immediately forever after, so nothing loops.
 SPAWN_SCHEDULE_CHECK:
     LD A,(SPAWN_NEXT_INDEX)
-    CP 4
+    CP 75
     RET NC
     LD H,0 : LD L,A
     ADD HL,HL
@@ -4266,18 +4267,94 @@ SSC_FIRE:
     INC A
     LD (SPAWN_NEXT_INDEX),A
     DEC A
-    ; --- TEMPORARY: focused Enemy3-offset test schedule, 4 enemy3_wave  ---
-    ; --- triggers, all at tick9, offsets 0/2/4/6 cells - from the       ---
-    ; --- schedule editor's test JSON. Note SPAWN_SCHEDULE_CHECK only    ---
-    ; --- fires ONE entry per GAME_TICK (see its own comment), so same-  ---
-    ; --- tick entries don't fire simultaneously - they fire one per     ---
-    ; --- tick starting the moment the shared threshold is reached       ---
-    ; --- (here: tick9,10,11,12). The previous full 75-entry level       ---
-    ; --- schedule this replaced is preserved in git history.            ---
-    CP 0  : JP Z,SPAWN_E3_WAVE
-    CP 1  : JP Z,SPAWN_E3_WAVE
-    CP 2  : JP Z,SPAWN_E3_WAVE
-    JP SPAWN_E3_WAVE  ; index 3 (last)
+    ; --- simple formation: one type, any Y - see SPAWN_SIMPLE/          ---
+    ; --- SPAWN_SIMPLE_Y_TABLE. Dodge direction is decided dynamically   ---
+    ; --- from PLAYERY at screen center, not from where it spawned, so   ---
+    ; --- it can spawn anywhere - see the schedule editor's layout.      ---
+    ; --- enemy3_wave (indices 6,10,23): SPAWN_E3_WAVE just arms         ---
+    ; --- ENEMY3_BUDGET=32 - see ENEMY3_TRY_SPAWN for the per-frame      ---
+    ; --- spawn/offset cycling this triggers.                            ---
+    CP 0  : JP Z,SPAWN_SIMPLE
+    CP 1  : JP Z,SPAWN_SIMPLE
+    CP 2  : JP Z,SPAWN_SIMPLE
+    CP 3  : JP Z,SPAWN_SIMPLE
+    CP 4  : JP Z,SPAWN_SIMPLE
+    CP 5  : JP Z,SPAWN_SIMPLE
+    CP 6  : JP Z,SPAWN_E3_WAVE
+    CP 7  : JP Z,SPAWN_SIMPLE
+    CP 8  : JP Z,SPAWN_SIMPLE
+    CP 9  : JP Z,SPAWN_SIMPLE
+    CP 10 : JP Z,SPAWN_E3_WAVE
+    CP 11 : JP Z,SPAWN_SIMPLE
+    CP 12 : JP Z,SPAWN_SIMPLE
+    CP 13 : JP Z,SPAWN_SIMPLE
+    CP 14 : JP Z,SPAWN_SIMPLE
+    CP 15 : JP Z,SPAWN_SIMPLE
+    CP 16 : JP Z,SPAWN_SIMPLE
+    CP 17 : JP Z,SPAWN_SIMPLE
+    CP 18 : JP Z,SPAWN_SIMPLE
+    CP 19 : JP Z,SPAWN_SIMPLE
+    CP 20 : JP Z,SPAWN_E2_TOP_A
+    CP 21 : JP Z,SPAWN_E2_BOT_A
+    CP 22 : JP Z,SPAWN_E2_TOP_B
+    CP 23 : JP Z,SPAWN_E3_WAVE
+    CP 24 : JP Z,SPAWN_E2_BOT_B
+    ; --- Enemy4 (TYPE_ENEMY4): any baseY now - see SPAWN_E4/            ---
+    ; --- SPAWN_BASEY_TABLE. Includes the extra spawns tucked into       ---
+    ; --- each wave's gap from this JSON.                                ---
+    CP 25 : JP Z,SPAWN_E4
+    CP 26 : JP Z,SPAWN_E4
+    CP 27 : JP Z,SPAWN_E4
+    CP 28 : JP Z,SPAWN_E4
+    CP 29 : JP Z,SPAWN_SIMPLE
+    CP 30 : JP Z,SPAWN_SIMPLE
+    CP 31 : JP Z,SPAWN_SIMPLE
+    CP 32 : JP Z,SPAWN_E4
+    CP 33 : JP Z,SPAWN_E4
+    CP 34 : JP Z,SPAWN_E4
+    CP 35 : JP Z,SPAWN_E4
+    CP 36 : JP Z,SPAWN_SIMPLE
+    CP 37 : JP Z,SPAWN_SIMPLE
+    CP 38 : JP Z,SPAWN_SIMPLE
+    CP 39 : JP Z,SPAWN_E4
+    CP 40 : JP Z,SPAWN_E4
+    CP 41 : JP Z,SPAWN_E4
+    CP 42 : JP Z,SPAWN_E4
+    CP 43 : JP Z,SPAWN_SIMPLE
+    CP 44 : JP Z,SPAWN_SIMPLE
+    CP 45 : JP Z,SPAWN_SIMPLE
+    CP 46 : JP Z,SPAWN_E4
+    CP 47 : JP Z,SPAWN_E4
+    CP 48 : JP Z,SPAWN_E4
+    CP 49 : JP Z,SPAWN_E4
+    CP 50 : JP Z,SPAWN_E4
+    CP 51 : JP Z,SPAWN_E4
+    CP 52 : JP Z,SPAWN_E4
+    CP 53 : JP Z,SPAWN_E4
+    CP 54 : JP Z,SPAWN_E4
+    CP 55 : JP Z,SPAWN_E4
+    CP 56 : JP Z,SPAWN_E4
+    CP 57 : JP Z,SPAWN_E4
+    CP 58 : JP Z,SPAWN_E4
+    CP 59 : JP Z,SPAWN_E4
+    CP 60 : JP Z,SPAWN_E4
+    CP 61 : JP Z,SPAWN_E4
+    ; --- TYPE_ENEMY1_LOOK test wave ("Enemy5"), with one extra          ---
+    ; --- simple-formation spawn tucked in each gap, from the schedule   ---
+    ; --- editor's layout.                                               ---
+    CP 62 : JP Z,SPAWN_E4B
+    CP 63 : JP Z,SPAWN_E4B
+    CP 64 : JP Z,SPAWN_E4B
+    CP 65 : JP Z,SPAWN_SIMPLE
+    CP 66 : JP Z,SPAWN_E4B
+    CP 67 : JP Z,SPAWN_E4B
+    CP 68 : JP Z,SPAWN_E4B
+    CP 69 : JP Z,SPAWN_SIMPLE
+    CP 70 : JP Z,SPAWN_E4B
+    CP 71 : JP Z,SPAWN_E4B
+    CP 72 : JP Z,SPAWN_E4B
+    CP 73 : JP Z,SPAWN_SIMPLE
+    JP BOSS_SPAWN
 
 ; --- saved (disabled) boss-only fast-iteration schedule - kept for  ---
 ; --- quickly testing boss-only features again later. Not active.   ---
@@ -11784,14 +11861,19 @@ ENEMY3_PATTERN2:
 ENEMY3_PATTERN3:
     DB 0FFh,0FFh,0FFh,0E7h,0E7h,0FFh,0FFh,0FFh
 
-; TEMPORARY: focused Enemy3-offset test schedule, 4 entries (indices
-; 0-3), all enemy3_wave, imported directly from the schedule editor's
-; test JSON. The previous full 75-entry level schedule is preserved in
-; git history (see the "Add two early Enemy3 waves..." commit onward) -
-; restore it here (and in SSC_FIRE/SPAWN_SCHEDULE_CHECK) once this test
-; is done.
+; Full schedule, 75 entries (indices 0-74), imported directly from the
+; schedule editor's exported JSON (tick/row/type per placement) - see
+; SSC_FIRE for the per-index dispatch this drives. Every tick here is
+; a 16-bit word since thresholds run well past 255. Simple-formation
+; and Enemy4/Enemy5 spawns pull their actual Y/baseY from
+; SPAWN_SIMPLE_Y_TABLE/SPAWN_BASEY_TABLE (row*8 from the editor),
+; not from which of the old fixed presets they used to be.
 SPAWN_THRESHOLDS:
-    DW 9,9,9,9
+    DW 10,11,12,18,19,20,23,26,27,28,29,33,34,35,41,42,43
+    DW 55,56,57,70,90,110,120,130,145,146,147,148,153,154,155,160,161
+    DW 162,163,168,169,170,175,176,177,178,183,184,185,190,191,192,193,198
+    DW 200,205,206,207,208,213,215,220,221,222,223,235,236,237,238,250,251
+    DW 252,253,265,266,267,268,280
 
 ; --- saved (disabled) boss-only single-entry schedule, used ---
 ; --- while iterating quickly on boss features - not deleted: ---
@@ -11803,19 +11885,34 @@ SPAWN_THRESHOLDS:
 ; row*8 from the schedule editor. Only indices that actually dispatch
 ; to SPAWN_SIMPLE are read; the rest are unused placeholders (0).
 SPAWN_SIMPLE_Y_TABLE:
-    DB 0,0,0,0
+    DB 16,16,16,64,64,64,0,128,128,128,0,64,64,64,16,16,16
+    DB 16,16,16,0,0,0,0,0,0,0,0,0,48,48,48,0,0
+    DB 0,0,96,96,96,0,0,0,0,40,40,40,0,0,0,0,0
+    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,16,0,0
+    DB 0,16,0,0,0,128,0
 
 ; Same idea as SPAWN_SIMPLE_Y_TABLE but for Enemy4/Enemy5 (SPAWN_E4/
 ; SPAWN_E4B) baseY - row*8 from the schedule editor, any row, not
 ; just the old 3 fixed presets (32/64/72). Unused elsewhere (0).
 SPAWN_BASEY_TABLE:
-    DB 0,0,0,0
+    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+    DB 0,0,0,0,0,0,0,0,32,64,72,104,0,0,0,64,96
+    DB 104,136,0,0,0,32,64,72,104,0,0,0,64,96,104,136,72
+    DB 112,32,64,72,104,136,88,32,64,72,104,32,64,72,0,32,64
+    DB 72,0,32,64,72,0,0
 
 ; This trigger's own offset (px = cells*8), one byte per SPAWN_THRESHOLDS
 ; index, from the schedule editor's per-placement "offset" field - fed
-; into ENEMY3_OFFSET_RING by SPAWN_E3_WAVE.
+; into ENEMY3_OFFSET_RING by SPAWN_E3_WAVE. Only indices 6/10/23
+; (enemy3_wave) are read; the level schedule doesn't use per-trigger
+; offsets, so all three are 0 (a single shared circle, as before this
+; test branch started).
 SPAWN_E3_OFFSET_TABLE:
-    DB 0,16,32,48
+    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+    DB 0,0,0,0,0,0,0
 
 ; --- Boss BG (nametable) graphics, generated from
 ; --- dotpict_20260806_173500 (12x37 dot art), resized directly
