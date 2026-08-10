@@ -413,9 +413,13 @@
   // ---------- Enemy3 wave internals (ENEMY3_TRY_SPAWN in CYBER_GD_BOSS.asm) -
   // kept in sync by hand with the ASM constants of the same name, used only
   // to draw the derived-spawn preview in drawGrid(). ----------
-  var ENEMY3_WAVE_BUDGET = 32;          // ENEMY3_BUDGET set by SPAWN_E3_WAVE
-  var ENEMY3_SPAWN_INTERVAL_TICKS = 1;  // ENEMY3_SPAWN_INTERVAL(8 frames) == 1 GAME_TICK
-  var ENEMY3_OFFSET_COUNT = 3;          // ENEMY3_OFFSET_TABLE's current length
+  var ENEMY3_WAVE_BUDGET = 32;      // ENEMY3_BUDGET set by SPAWN_E3_WAVE
+  var ENEMY3_OFFSET_COUNT = 3;      // ENEMY3_OFFSET_TABLE's current length
+  // Real in-game spacing is 1 GAME_TICK/spawn (ENEMY3_SPAWN_INTERVAL=8 frames),
+  // but drawing all 32 as solid adjacent cells reads as one indistinct smear.
+  // 1 blank cell between each ghost is a display-only choice for legibility -
+  // it does not change ENEMY3_SPAWN_INTERVAL in the actual game.
+  var ENEMY3_PREVIEW_TICK_GAP = 2;
 
   // ---------- geometry ----------
   var ROWS = 24;
@@ -601,7 +605,7 @@
       if (p.type !== "enemy3_wave") return;
       var hue = tok(TYPE_BY_ID[p.type].hue);
       for (var i = 1; i < ENEMY3_WAVE_BUDGET; i++) {
-        var t = p.tick + i * ENEMY3_SPAWN_INTERVAL_TICKS;
+        var t = p.tick + i * ENEMY3_PREVIEW_TICK_GAP;
         if (t > MAX_TICK) break;
         var x = t * CELL, y = p.row * CELL;
         var pad = 5;
