@@ -7704,7 +7704,19 @@ E3_DEACTIVATE:
     RET
 
 E3_DRAW:
-    LD A,(IX+3) : SRL A : SRL A : SRL A : LD (IX+4),A
+    ; --- defensive clamp: never draw/erase on the screen's very top or ---
+    ; --- very bottom row (0 or 23) - a real-hardware report saw a      ---
+    ; --- permanent garbage cell appear while an Enemy3 was in flight,  ---
+    ; --- root cause not yet isolated. Restricting the drawn row to     ---
+    ; --- 1..22 keeps Enemy3 off both edge rows entirely.               ---
+    LD A,(IX+3) : SRL A : SRL A : SRL A
+    OR A : JR NZ,E3_DRAW_ROWLO_OK
+    LD A,1
+E3_DRAW_ROWLO_OK:
+    CP 23 : JR C,E3_DRAW_ROWHI_OK
+    LD A,22
+E3_DRAW_ROWHI_OK:
+    LD (IX+4),A
     LD A,(IX+2) : SRL A : SRL A : SRL A : LD (IX+5),A
     LD A,(IX+9) : LD E,A : LD D,0
     LD HL,ANIM3_SEQ
