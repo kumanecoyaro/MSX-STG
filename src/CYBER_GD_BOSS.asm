@@ -458,7 +458,19 @@ ENEMY3_CODE1  EQU 152          ; pattern1 (gray/blue), group19
 ENEMY3_CODE2  EQU 160          ; pattern2 (gray/blue), group20
 ENEMY3_CODE3  EQU 168          ; pattern3 (gray/red),  group21
 ANIM3_PACE    EQU 6            ; frames held per pulse-animation frame
-ENEMY3_SLOTS  EQU 8            ; concurrent instances PER WAVE (its own dedicated slice)
+; Concurrent instances PER WAVE (its own dedicated slice). Measured via
+; the emulator's T-state counter: each ACTIVELY DRAWN Enemy3 costs
+; ~2778 T-states/frame (draw+erase+animate+bullet hit-test x3 bullets)
+; REGARDLESS of pool layout - real, unavoidable work, not scan
+; overhead. At 8/wave (64 total) even a light 4-active scene already
+; cost ~26000 T-states (44% of a 59659 T-state 60fps frame) on top of
+; everything else in the game, which is what made shooting near any
+; Enemy3 wave unplayably slow. 1/wave keeps each wave's total budget
+; (32) fully independent and guarantees it a slot nothing else can
+; take, while capping worst-case total concurrent Enemy3 at
+; ENEMY3_WAVE_SLOTS(8) - the same ceiling the original shared-pool
+; design ran fine at.
+ENEMY3_SLOTS  EQU 1
 ENEMY3_STRUCT EQU 11           ; ACTIVE,PHASE,X,Y,ROW,COL,ANGLEIDX,STEPCNT,REVCNT,ANIMIDX,ANIMTIMER
 ENEMY3_SPAWN_X EQU 200
 ENEMY3_SPAWN_Y EQU 8
@@ -11362,14 +11374,14 @@ ENEMY4_SINE_LUT:
 ; anything - each can have up to ENEMY3_SLOTS of its own members alive
 ; at once regardless of what any other wave is doing.
 ENEMY3_TRY_SPAWN:
-    LD IX,ENEMY3_WAVE_POOL    : LD HL,ENEMY3_POOL     : CALL ENEMY3_TRY_SPAWN_SLOT
-    LD IX,ENEMY3_WAVE_POOL+4  : LD HL,ENEMY3_POOL+88  : CALL ENEMY3_TRY_SPAWN_SLOT
-    LD IX,ENEMY3_WAVE_POOL+8  : LD HL,ENEMY3_POOL+176 : CALL ENEMY3_TRY_SPAWN_SLOT
-    LD IX,ENEMY3_WAVE_POOL+12 : LD HL,ENEMY3_POOL+264 : CALL ENEMY3_TRY_SPAWN_SLOT
-    LD IX,ENEMY3_WAVE_POOL+16 : LD HL,ENEMY3_POOL+352 : CALL ENEMY3_TRY_SPAWN_SLOT
-    LD IX,ENEMY3_WAVE_POOL+20 : LD HL,ENEMY3_POOL+440 : CALL ENEMY3_TRY_SPAWN_SLOT
-    LD IX,ENEMY3_WAVE_POOL+24 : LD HL,ENEMY3_POOL+528 : CALL ENEMY3_TRY_SPAWN_SLOT
-    LD IX,ENEMY3_WAVE_POOL+28 : LD HL,ENEMY3_POOL+616 : JP ENEMY3_TRY_SPAWN_SLOT
+    LD IX,ENEMY3_WAVE_POOL    : LD HL,ENEMY3_POOL    : CALL ENEMY3_TRY_SPAWN_SLOT
+    LD IX,ENEMY3_WAVE_POOL+4  : LD HL,ENEMY3_POOL+11 : CALL ENEMY3_TRY_SPAWN_SLOT
+    LD IX,ENEMY3_WAVE_POOL+8  : LD HL,ENEMY3_POOL+22 : CALL ENEMY3_TRY_SPAWN_SLOT
+    LD IX,ENEMY3_WAVE_POOL+12 : LD HL,ENEMY3_POOL+33 : CALL ENEMY3_TRY_SPAWN_SLOT
+    LD IX,ENEMY3_WAVE_POOL+16 : LD HL,ENEMY3_POOL+44 : CALL ENEMY3_TRY_SPAWN_SLOT
+    LD IX,ENEMY3_WAVE_POOL+20 : LD HL,ENEMY3_POOL+55 : CALL ENEMY3_TRY_SPAWN_SLOT
+    LD IX,ENEMY3_WAVE_POOL+24 : LD HL,ENEMY3_POOL+66 : CALL ENEMY3_TRY_SPAWN_SLOT
+    LD IX,ENEMY3_WAVE_POOL+28 : LD HL,ENEMY3_POOL+77 : JP ENEMY3_TRY_SPAWN_SLOT
 
 ; Input: IX = one wave slot (ACTIVE,BUDGET,TIMER,OFFSET), HL = base of
 ; this wave's own dedicated ENEMY3_SLOTS-instance slice of ENEMY3_POOL.
@@ -11517,12 +11529,21 @@ ENEMY3_UPDATE_ALL:
     LD HL,ENEMY3_POOL
     LD B,ENEMY3_WAVE_SLOTS*ENEMY3_SLOTS
 E3UA_LOOP:
+    ; ACTIVE is offset 0, so check it straight off HL before paying for
+    ; PUSH/POP/CALL (same reasoning as ENEMY_POOL_UPDATE_ALL's EPUA_LOOP) -
+    ; the ACTIVE_COUNT check above only skips the whole scan when EVERY
+    ; slot is idle; most slots stay idle even while a few are active, so
+    ; this per-slot check is still needed to keep those idle ones cheap.
+    LD A,(HL)
+    OR A
+    JR Z,E3UA_SKIP
     PUSH BC
     PUSH HL
     PUSH HL : POP IX
     CALL ENEMY3_UPDATE_SLOT
     POP HL
     POP BC
+E3UA_SKIP:
     LD DE,ENEMY3_STRUCT
     ADD HL,DE
     DJNZ E3UA_LOOP
@@ -11704,12 +11725,19 @@ E3H_NO:
 ; used by CHECK_BULLET_VS_ENEMY_POOL) so the loop can use B as its
 ; counter over all ENEMY3_WAVE_SLOTS*ENEMY3_SLOTS (64) slots.
 ;
-; Called once per active bullet, every frame - scanning all 64 slots
-; even when no wave has spawned anything cost ~13600 T-states PER
-; BULLET (confirmed via the emulator's T-state counter), which is what
-; made firing itself tank the frame rate even with no Enemy3 anywhere.
-; ENEMY3_ACTIVE_COUNT lets this bail out in a handful of T-states
-; whenever nothing is actually alive to check against.
+; Called once per active bullet, every frame. ENEMY3_ACTIVE_COUNT bails
+; out immediately when NOTHING is alive anywhere. But that alone wasn't
+; enough: once even one wave is running, the loop used to pay full
+; PUSH/POP/CALL overhead for EVERY one of the 64 slots regardless of
+; whether that particular slot was active, costing ~13600 T-states/bullet
+; even with just 1 real instance among the 64 (confirmed via the
+; emulator's T-state counter) - since the schedule's clustered
+; enemy3_wave triggers keep at least one wave alive for a long stretch
+; of ticks, this made firing slow for most of that stretch even when
+; the player wasn't looking at an Enemy3 at that exact instant. ACTIVE
+; is offset 0, so it's checked straight off HL first (same idiom as
+; CHECK_BULLET_VS_ENEMY_POOL/ENEMY_POOL_UPDATE_ALL) and only genuinely
+; active slots pay for the PUSH/POP/CALL dance.
 CHECK_BULLET_VS_ENEMY3:
     LD A,(ENEMY3_ACTIVE_COUNT)
     OR A
@@ -11719,6 +11747,9 @@ CHECK_BULLET_VS_ENEMY3:
     LD HL,ENEMY3_POOL
     LD B,ENEMY3_WAVE_SLOTS*ENEMY3_SLOTS
 CBVE3_LOOP:
+    LD A,(HL)
+    OR A
+    JR Z,CBVE3_SKIP
     PUSH HL
     PUSH BC
     PUSH HL : POP IX
@@ -11729,6 +11760,7 @@ CBVE3_LOOP:
     POP HL
     OR A
     JR NZ,CBVE3_HIT
+CBVE3_SKIP:
     LD DE,ENEMY3_STRUCT
     ADD HL,DE
     DJNZ CBVE3_LOOP
