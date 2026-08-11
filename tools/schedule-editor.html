@@ -1323,6 +1323,11 @@
 
   grid.addEventListener("pointerdown", function (ev) {
     inspectHandledByPointer = false;
+    // A tap that lands while momentum is still coasting is a "stop the
+    // scroll" tap, same as on a native scrollable page - it must not also
+    // place/erase/inspect wherever it happened to land. Capture this before
+    // stopMomentum() clears momentumRAF.
+    var wasMomentumStop = momentumRAF !== null;
     stopMomentum();
     var rect = grid.getBoundingClientRect();
     var offsetHit = enemy3OffsetHitTest(ev.clientX - rect.left + canvasScroll.scrollLeft, ev.clientY - rect.top);
@@ -1340,6 +1345,7 @@
       resolved: null,
       holdTimer: null,
       moved: false,
+      wasMomentumStop: wasMomentumStop,
       // Velocity (px/ms) of the pan itself, from the most recent two
       // pointermove samples only - not the whole gesture's average, so a
       // slow drag that ends in a quick flick still hands off the flick's
@@ -1348,7 +1354,7 @@
       lastMoveT: 0,
       lastMoveX: ev.clientX
     };
-    if (press.placementIdx >= 0) {
+    if (press.placementIdx >= 0 && !wasMomentumStop) {
       press.holdTimer = setTimeout(function () {
         if (!press || press.resolved) return;
         press.resolved = "holdmove";
@@ -1439,6 +1445,11 @@
       return;
     }
     // tap: released before the hold fired, without moving enough to pan.
+    // A tap that started while momentum was still coasting was only there
+    // to stop the scroll (already done, in pointerdown) - same as tapping
+    // a native scrollable page mid-fling, it shouldn't also place, erase,
+    // or inspect whatever happened to be under the finger.
+    if (p.wasMomentumStop) return;
     if (p.offsetHit !== null) {
       openOffsetEditor(p.offsetHit);
       return;
