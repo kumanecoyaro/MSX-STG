@@ -1,0 +1,711 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CYBER_SUZUKA — Sprite Editor</title>
+<style>
+  :root {
+    --bg: #05080d;
+    --surface: #0b1220;
+    --surface-2: #0e1626;
+    --line: #17233a;
+    --grid-line: #1a2f52;
+    --grid-line-strong: #2c58a0;
+    --ink: #eaf1fb;
+    --ink-dim: #7f93ad;
+    --ink-faint: #4c5f7d;
+    --accent: #4fd2ff;
+    --accent-ink: #04141c;
+    --danger: #ff5d6c;
+    --danger-ink: #260607;
+    --ok: #6bdc7c;
+
+    --font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Hiragino Sans", "Noto Sans JP", sans-serif;
+    --font-mono: ui-monospace, "SF Mono", "Cascadia Mono", "Consolas", "Roboto Mono", monospace;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0;
+    height: 100%;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--font-ui);
+    overscroll-behavior: none;
+  }
+
+  body {
+    display: flex;
+    flex-direction: row;
+    height: 100vh;
+  }
+
+  button, .btn-label {
+    font-family: var(--font-ui);
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    border-radius: 7px;
+    border: 1px solid var(--line);
+    background: var(--surface-2);
+    color: var(--ink);
+    padding: 7px 8px;
+    cursor: pointer;
+    transition: border-color 120ms ease, background 120ms ease, transform 80ms ease;
+  }
+  .btn-label {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    user-select: none;
+  }
+  button:hover, .btn-label:hover { border-color: var(--ink-faint); }
+  button:active, .btn-label:active { transform: translateY(1px); }
+  button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+  button.armed {
+    border-color: var(--ink);
+    box-shadow: 0 0 0 2px var(--accent);
+  }
+
+  /* ---------- pixel grid (left) ---------- */
+  .gridwrap {
+    flex: 1 1 auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 0;
+    padding: 20px;
+    overflow: auto;
+  }
+  .grid-panel {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 16px;
+  }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(16, 26px);
+    grid-template-rows: repeat(16, 26px);
+    border: 2px solid var(--grid-line-strong);
+    touch-action: none;
+    user-select: none;
+  }
+  .cell {
+    border: 1px solid var(--grid-line);
+    background: #000;
+    cursor: crosshair;
+  }
+  .cell.qdiv-right { border-right: 2px solid var(--grid-line-strong); }
+  .cell.qdiv-bottom { border-bottom: 2px solid var(--grid-line-strong); }
+  /* Checkerboard = MSX color index 0 (transparent) */
+  .transparent-swatch {
+    background-image:
+      linear-gradient(45deg, #666 25%, transparent 25%),
+      linear-gradient(-45deg, #666 25%, transparent 25%),
+      linear-gradient(45deg, transparent 75%, #666 75%),
+      linear-gradient(-45deg, transparent 75%, #666 75%);
+    background-size: 8px 8px;
+    background-position: 0 0, 0 4px, 4px -4px, -4px 0px;
+    background-color: #222;
+  }
+
+  /* ---------- right sidebar ---------- */
+  aside {
+    flex: 0 0 260px;
+    min-width: 0;
+    height: 100vh;
+    background: var(--surface);
+    border-left: 1px solid var(--line);
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    overflow-y: auto;
+  }
+  .side-title {
+    padding: 10px 12px 8px;
+    border-bottom: 1px solid var(--line);
+    flex: 0 0 auto;
+  }
+  .side-title .name {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    letter-spacing: 0.06em;
+    font-weight: 600;
+  }
+  .side-title .sub {
+    font-size: 10px;
+    color: var(--ink-dim);
+    letter-spacing: 0.03em;
+  }
+  .side-section {
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--line);
+    flex: 0 0 auto;
+  }
+  .side-section .section-label {
+    font-size: 10px;
+    color: var(--ink-dim);
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    margin-bottom: 6px;
+  }
+  .btn-row { display: flex; gap: 6px; flex-wrap: wrap; }
+  .btn-row + .btn-row { margin-top: 6px; }
+  .side-section button, .side-section .btn-label { flex: 1 1 0; height: 32px; padding: 0 6px; }
+
+  .color-target-row { display: flex; gap: 6px; }
+  .color-target {
+    flex: 1 1 0;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    height: 34px;
+    padding: 0 8px 0 6px;
+  }
+  .mini-swatch {
+    width: 18px;
+    height: 18px;
+    border-radius: 4px;
+    border: 1px solid var(--ink-faint);
+    flex: 0 0 auto;
+  }
+
+  .palette {
+    display: grid;
+    /* minmax(0, 1fr), not bare 1fr - a bare 1fr track won't shrink below
+       its content's auto min-size, and an empty swatch button's default
+       sizing was winning over the intended even 8-column split, pushing
+       the last couple of swatches out past the sidebar's right edge. */
+    grid-template-columns: repeat(8, minmax(0, 1fr));
+    gap: 4px;
+    margin-top: 8px;
+  }
+  .swatch {
+    width: 100%;
+    aspect-ratio: 1;
+    border-radius: 5px;
+    border: 2px solid var(--line);
+    padding: 0;
+    cursor: pointer;
+  }
+  .swatch:hover { border-color: var(--ink-faint); }
+  .swatch.armed-fg { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent); }
+  .swatch.armed-bg { border-color: var(--ok); box-shadow: 0 0 0 2px var(--ok); }
+
+  .output-label {
+    font-size: 10px;
+    color: var(--ink-dim);
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    margin-bottom: 6px;
+  }
+  #output {
+    width: 100%;
+    min-height: 200px;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    line-height: 1.5;
+    background: var(--surface-2);
+    color: var(--ink);
+    border: 1px solid var(--line);
+    border-radius: 7px;
+    padding: 8px;
+    resize: vertical;
+  }
+
+  #liveMsg {
+    position: fixed;
+    left: 50%;
+    bottom: 22px;
+    transform: translate(-50%, 8px);
+    background: var(--surface-2);
+    border: 1px solid var(--accent);
+    color: var(--ink);
+    font-family: var(--font-mono);
+    font-size: 12px;
+    padding: 8px 14px;
+    border-radius: 8px;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 160ms ease, transform 160ms ease;
+    z-index: 20;
+    max-width: min(70vw, 480px);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  #liveMsg.show { opacity: 1; transform: translate(-50%, 0); }
+
+  .overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(2, 4, 8, 0.72);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    z-index: 30;
+    padding: 20px;
+  }
+  .overlay.show { display: flex; }
+  .overlay-card {
+    width: min(320px, 100%);
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .overlay-title { font-size: 13px; font-weight: 600; }
+  #saveFilenameInput {
+    background: var(--surface-2);
+    color: var(--ink);
+    border: 1px solid var(--line);
+    border-radius: 7px;
+    padding: 8px;
+    font-family: var(--font-mono);
+    font-size: 15px;
+  }
+  .overlay-actions { display: flex; gap: 8px; justify-content: flex-end; }
+  .overlay-actions button { padding: 8px 14px; }
+  .overlay-status { font-size: 11.5px; color: var(--danger); min-height: 1.2em; }
+  .overlay-status.ok { color: var(--ok); }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; }
+  }
+
+  @media (max-width: 760px) {
+    body { flex-direction: column; }
+    .gridwrap { flex: 0 0 auto; padding: 12px; }
+    aside { flex: 1 1 auto; height: auto; border-left: none; border-top: 1px solid var(--line); }
+  }
+</style>
+
+<body>
+  <div class="gridwrap">
+    <div class="grid-panel">
+      <div class="grid" id="grid"></div>
+    </div>
+  </div>
+
+  <aside>
+    <div class="side-title">
+      <div class="name">CYBER_SUZUKA</div>
+      <div class="sub">sprite editor · 16×16</div>
+    </div>
+
+    <div class="side-section">
+      <div class="section-label">Actions</div>
+      <div class="btn-row">
+        <button class="primary" id="btnSave">Save JSON</button>
+        <button id="btnUndo" disabled>Undo</button>
+      </div>
+      <div class="btn-row">
+        <label class="btn-label" for="fileInput">Load JSON</label>
+        <input type="file" id="fileInput" accept=".json" hidden>
+        <button id="btnCopy">Copy 0/1</button>
+      </div>
+      <div class="btn-row">
+        <button id="btnClear">全部背景色</button>
+        <button id="btnFill">全部文字色</button>
+      </div>
+    </div>
+
+    <div class="side-section">
+      <div class="section-label">MSX Colors — tap a target, then a color</div>
+      <div class="color-target-row">
+        <button class="color-target" id="btnBgColor"><span class="mini-swatch" id="bgSwatch"></span>背景色</button>
+        <button class="color-target" id="btnFgColor"><span class="mini-swatch" id="fgSwatch"></span>文字色</button>
+      </div>
+      <div class="palette" id="palette"></div>
+    </div>
+
+    <div class="side-section" style="flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0;">
+      <div class="output-label">出力(0/1・全角)</div>
+      <textarea id="output" readonly spellcheck="false"></textarea>
+    </div>
+  </aside>
+
+  <div id="liveMsg"></div>
+
+  <div id="saveOverlay" class="overlay">
+    <div class="overlay-card">
+      <div class="overlay-title">Save as</div>
+      <input type="text" id="saveFilenameInput" value="Sprite.json">
+      <div class="overlay-status" id="saveStatus"></div>
+      <div class="overlay-actions">
+        <button id="btnSaveCancel">Cancel</button>
+        <button class="primary" id="btnSaveConfirm">Save</button>
+      </div>
+    </div>
+  </div>
+
+<script>
+(function () {
+  "use strict";
+
+  var GRID_N = 16;
+
+  // ---------- real MSX1 (TMS9918) 16-color palette ----------
+  // Same RGB values already used project-wide in schedule-editor.html's
+  // BOSS_TILES/GLYPHS (gray=SPR_GRAY 0Eh, ltgreen=SPR_LTGREEN 03h,
+  // red=SPR_RED 08h, dark blue used for Enemy3's BG tile) - kept in sync
+  // rather than re-guessed, so a color picked here matches what the game
+  // actually renders. Index 0 is the hardware's "transparent" - shown as
+  // a checkerboard, not a real fill color.
+  var MSX_PALETTE = [
+    { i: 0,  name: "透明",   hex: null },
+    { i: 1,  name: "黒",     hex: "#000000" },
+    { i: 2,  name: "緑",     hex: "#3eb849" },
+    { i: 3,  name: "黄緑",   hex: "#74d07d" },
+    { i: 4,  name: "濃紺",   hex: "#5955e0" },
+    { i: 5,  name: "青",     hex: "#8076f1" },
+    { i: 6,  name: "暗赤",   hex: "#b95e51" },
+    { i: 7,  name: "水色",   hex: "#65dbef" },
+    { i: 8,  name: "赤",     hex: "#db6559" },
+    { i: 9,  name: "明るい赤", hex: "#ff897d" },
+    { i: 10, name: "黄土色", hex: "#ccc35e" },
+    { i: 11, name: "黄",     hex: "#ded087" },
+    { i: 12, name: "暗緑",   hex: "#3aa241" },
+    { i: 13, name: "紫",     hex: "#b766b5" },
+    { i: 14, name: "灰",     hex: "#cccccc" },
+    { i: 15, name: "白",     hex: "#ffffff" }
+  ];
+
+  // ---------- state ----------
+  // bits[r][c] === true means "foreground color", false means "background
+  // color" - exactly the MSX SCREEN1 character-pattern model (Enemy3's
+  // glyph in schedule-editor.html is the same shape): one bitmap, two
+  // colors from the 16-color palette, never an arbitrary per-pixel color.
+  var bits = [];
+  for (var ri = 0; ri < GRID_N; ri++) bits.push(new Array(GRID_N).fill(false));
+  var fgIndex = 15; // white
+  var bgIndex = 1;  // black
+  var armedColorTarget = null; // "fg" | "bg" | null
+
+  function colorHex(i) {
+    var c = MSX_PALETTE[i];
+    return c ? c.hex : null;
+  }
+  function paintSwatchEl(el, idx) {
+    var hex = colorHex(idx);
+    if (hex) {
+      el.style.background = hex;
+      el.classList.remove("transparent-swatch");
+    } else {
+      el.style.background = "";
+      el.classList.add("transparent-swatch");
+    }
+  }
+
+  // ---------- undo ----------
+  // Same approach as schedule-editor.html: snapshot the whole state before
+  // every mutation rather than diffing - the state here is tiny (256 bits
+  // + 2 color indices), so a full copy costs nothing.
+  var history = [];
+  var MAX_HISTORY = 50;
+  var btnUndo = document.getElementById("btnUndo");
+  function pushHistory() {
+    history.push({
+      bits: bits.map(function (row) { return row.slice(); }),
+      fg: fgIndex,
+      bg: bgIndex
+    });
+    if (history.length > MAX_HISTORY) history.shift();
+    btnUndo.disabled = false;
+  }
+  function undo() {
+    if (!history.length) return;
+    var snap = history.pop();
+    bits = snap.bits;
+    fgIndex = snap.fg;
+    bgIndex = snap.bg;
+    btnUndo.disabled = history.length === 0;
+    renderAll();
+    flash("undo");
+  }
+  btnUndo.addEventListener("click", undo);
+  window.addEventListener("keydown", function (ev) {
+    if ((ev.metaKey || ev.ctrlKey) && !ev.shiftKey && ev.key.toLowerCase() === "z") {
+      ev.preventDefault();
+      undo();
+    }
+  });
+
+  // ---------- grid DOM ----------
+  var gridEl = document.getElementById("grid");
+  var cellEls = [];
+  for (var r = 0; r < GRID_N; r++) {
+    cellEls.push([]);
+    for (var c = 0; c < GRID_N; c++) {
+      var cell = document.createElement("div");
+      cell.className = "cell";
+      if (c === 7) cell.classList.add("qdiv-right");
+      if (r === 7) cell.classList.add("qdiv-bottom");
+      cell.dataset.r = r;
+      cell.dataset.c = c;
+      gridEl.appendChild(cell);
+      cellEls[r].push(cell);
+    }
+  }
+
+  function renderCell(r, c) {
+    var el = cellEls[r][c];
+    var hex = colorHex(bits[r][c] ? fgIndex : bgIndex);
+    if (hex) {
+      el.style.background = hex;
+      el.classList.remove("transparent-swatch");
+    } else {
+      el.style.background = "";
+      el.classList.add("transparent-swatch");
+    }
+  }
+
+  function updateColorTargetButtons() {
+    btnBgColor.classList.toggle("armed", armedColorTarget === "bg");
+    btnFgColor.classList.toggle("armed", armedColorTarget === "fg");
+    paintSwatchEl(bgSwatchEl, bgIndex);
+    paintSwatchEl(fgSwatchEl, fgIndex);
+  }
+
+  function updatePaletteHighlight() {
+    Array.prototype.forEach.call(paletteEl.children, function (el) {
+      var idx = +el.dataset.i;
+      el.classList.toggle("armed-fg", idx === fgIndex);
+      el.classList.toggle("armed-bg", idx === bgIndex);
+    });
+  }
+
+  // Full-width (zenkaku) 0/1, per spec - not the ASCII digits the earlier
+  // transcription-check tool used.
+  var ZEN_DIGIT = { "0": "０", "1": "１" };
+  function updateOutput() {
+    var lines = bits.map(function (row) {
+      return row.map(function (v) { return ZEN_DIGIT[v ? "1" : "0"]; }).join("");
+    });
+    document.getElementById("output").value = lines.join("\n");
+  }
+
+  function renderAll() {
+    for (var rr = 0; rr < GRID_N; rr++) for (var cc = 0; cc < GRID_N; cc++) renderCell(rr, cc);
+    updateColorTargetButtons();
+    updatePaletteHighlight();
+    updateOutput();
+  }
+
+  // ---------- color target buttons + palette ----------
+  var btnBgColor = document.getElementById("btnBgColor");
+  var btnFgColor = document.getElementById("btnFgColor");
+  var bgSwatchEl = document.getElementById("bgSwatch");
+  var fgSwatchEl = document.getElementById("fgSwatch");
+  var paletteEl = document.getElementById("palette");
+
+  btnBgColor.addEventListener("click", function () {
+    armedColorTarget = armedColorTarget === "bg" ? null : "bg";
+    updateColorTargetButtons();
+  });
+  btnFgColor.addEventListener("click", function () {
+    armedColorTarget = armedColorTarget === "fg" ? null : "fg";
+    updateColorTargetButtons();
+  });
+
+  MSX_PALETTE.forEach(function (col) {
+    var sw = document.createElement("button");
+    sw.className = "swatch";
+    sw.dataset.i = col.i;
+    sw.title = col.i + ": " + col.name;
+    paintSwatchEl(sw, col.i);
+    sw.addEventListener("click", function () {
+      if (!armedColorTarget) {
+        flash("先に背景色か文字色のボタンを選んでください");
+        return;
+      }
+      pushHistory();
+      if (armedColorTarget === "fg") fgIndex = col.i; else bgIndex = col.i;
+      armedColorTarget = null;
+      renderAll();
+    });
+    paletteEl.appendChild(sw);
+  });
+
+  // ---------- drawing: press to paint, drag to paint more cells ----------
+  // One history entry per gesture (pushed on pointerdown, like
+  // schedule-editor.html's hold-move), not one per cell - undo reverts the
+  // whole stroke in one step. The whole gesture paints a single value
+  // (whatever the first cell's opposite was), not a per-cell toggle, so
+  // dragging back over already-painted cells doesn't flicker them back.
+  var paintValue = null;
+  var paintPointerId = null;
+
+  function cellAtPoint(x, y) {
+    var el = document.elementFromPoint(x, y);
+    var cell = el && el.closest ? el.closest(".cell") : null;
+    if (!cell || !gridEl.contains(cell)) return null;
+    return { r: +cell.dataset.r, c: +cell.dataset.c };
+  }
+  function paintCell(r, c, value) {
+    if (bits[r][c] === value) return;
+    bits[r][c] = value;
+    renderCell(r, c);
+    updateOutput();
+  }
+
+  gridEl.addEventListener("pointerdown", function (ev) {
+    var cell = ev.target.closest(".cell");
+    if (!cell) return;
+    var r = +cell.dataset.r, c = +cell.dataset.c;
+    pushHistory();
+    paintValue = !bits[r][c];
+    paintPointerId = ev.pointerId;
+    gridEl.setPointerCapture(ev.pointerId);
+    paintCell(r, c, paintValue);
+  });
+  gridEl.addEventListener("pointermove", function (ev) {
+    if (paintPointerId === null || ev.pointerId !== paintPointerId) return;
+    var hit = cellAtPoint(ev.clientX, ev.clientY);
+    if (!hit) return;
+    paintCell(hit.r, hit.c, paintValue);
+  });
+  function endPaint(ev) {
+    if (paintPointerId === null || ev.pointerId !== paintPointerId) return;
+    paintPointerId = null;
+    paintValue = null;
+  }
+  gridEl.addEventListener("pointerup", endPaint);
+  gridEl.addEventListener("pointercancel", endPaint);
+
+  // ---------- clear / fill ----------
+  document.getElementById("btnClear").addEventListener("click", function () {
+    pushHistory();
+    bits = bits.map(function (row) { return row.map(function () { return false; }); });
+    renderAll();
+    flash("全部背景色にしました");
+  });
+  document.getElementById("btnFill").addEventListener("click", function () {
+    pushHistory();
+    bits = bits.map(function (row) { return row.map(function () { return true; }); });
+    renderAll();
+    flash("全部文字色にしました");
+  });
+
+  // ---------- copy ----------
+  document.getElementById("btnCopy").addEventListener("click", function () {
+    var text = document.getElementById("output").value;
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(
+        function () { flash("コピーしました"); },
+        function () { fallbackSelectOutput(); }
+      );
+    } else {
+      fallbackSelectOutput();
+    }
+  });
+  function fallbackSelectOutput() {
+    var ta = document.getElementById("output");
+    ta.focus();
+    ta.select();
+    flash("選択しました - Ctrl+C(⌘+C)でコピーしてください");
+  }
+
+  // ---------- save / load ----------
+  function currentJSON() {
+    return JSON.stringify({
+      version: 1,
+      game: "CYBER_SUZUKA",
+      width: GRID_N,
+      height: GRID_N,
+      fg: fgIndex,
+      bg: bgIndex,
+      bits: bits.map(function (row) { return row.map(function (v) { return v ? 1 : 0; }); })
+    }, null, 2);
+  }
+
+  var saveOverlay = document.getElementById("saveOverlay");
+  var saveFilenameInput = document.getElementById("saveFilenameInput");
+  var saveStatus = document.getElementById("saveStatus");
+
+  document.getElementById("btnSave").addEventListener("click", function () {
+    saveStatus.textContent = "";
+    saveStatus.classList.remove("ok");
+    saveOverlay.classList.add("show");
+    saveFilenameInput.focus();
+    saveFilenameInput.select();
+  });
+
+  function doSave() {
+    var filename = saveFilenameInput.value.trim() || "Sprite.json";
+    if (!window.claude || !window.claude.downloads) {
+      saveStatus.textContent = "save unavailable here";
+      saveStatus.classList.remove("ok");
+      return;
+    }
+    window.claude.downloads.save({ filename: filename, data: currentJSON() }).then(
+      function () {
+        saveOverlay.classList.remove("show");
+        flash("saved " + filename);
+      },
+      function (err) {
+        if (err && err.code === "declined") { saveOverlay.classList.remove("show"); flash("save cancelled"); return; }
+        saveStatus.textContent = "save failed";
+        saveStatus.classList.remove("ok");
+      }
+    );
+  }
+
+  document.getElementById("btnSaveCancel").addEventListener("click", function () {
+    saveOverlay.classList.remove("show");
+  });
+  document.getElementById("btnSaveConfirm").addEventListener("click", doSave);
+  saveFilenameInput.addEventListener("keydown", function (ev) {
+    if (ev.key === "Enter") doSave();
+    if (ev.key === "Escape") saveOverlay.classList.remove("show");
+  });
+  saveOverlay.addEventListener("click", function (ev) {
+    if (ev.target === saveOverlay) saveOverlay.classList.remove("show");
+  });
+
+  function importJSONText(text) {
+    var data = JSON.parse(text);
+    if (!Array.isArray(data.bits) || data.bits.length !== GRID_N) throw new Error("invalid bits array");
+    var newBits = data.bits.map(function (row) {
+      if (!Array.isArray(row) || row.length !== GRID_N) throw new Error("invalid row length");
+      return row.map(function (v) { return !!v; });
+    });
+    bits = newBits;
+    if (Number.isInteger(data.fg) && data.fg >= 0 && data.fg <= 15) fgIndex = data.fg;
+    if (Number.isInteger(data.bg) && data.bg >= 0 && data.bg <= 15) bgIndex = data.bg;
+    renderAll();
+    return "loaded";
+  }
+
+  document.getElementById("fileInput").addEventListener("change", function (ev) {
+    var file = ev.target.files[0];
+    if (!file) return;
+    var reader = new FileReader();
+    reader.onload = function () {
+      try { flash(importJSONText(reader.result)); }
+      catch (e) { flash("could not read that file: " + e.message); }
+    };
+    reader.readAsText(file);
+    ev.target.value = "";
+  });
+
+  // ---------- misc UI ----------
+  var liveMsg = document.getElementById("liveMsg");
+  var flashTimer = null;
+  function flash(msg) {
+    liveMsg.textContent = msg;
+    liveMsg.classList.add("show");
+    clearTimeout(flashTimer);
+    flashTimer = setTimeout(function () { liveMsg.classList.remove("show"); }, 1800);
+  }
+
+  // ---------- boot ----------
+  renderAll();
+})();
+</script>
+</body>
