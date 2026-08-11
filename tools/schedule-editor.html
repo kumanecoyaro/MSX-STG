@@ -118,11 +118,19 @@
     -webkit-overflow-scrolling: touch;
     background: var(--bg);
   }
+  /* Invisible - exists only to give #canvasScroll a scrollWidth spanning
+     the full MAX_TICK-tick timeline, since #grid itself (see below) no
+     longer does: it's sized to the viewport and repainted on scroll
+     instead of pre-rendering the whole timeline once. */
+  .grid-spacer {
+    width: 1px;
+    height: 1px;
+  }
   /* Sits over #grid at the same viewport position, showing only the one
      placement currently being hold-move-dragged - see the "drag overlay"
-     JS comment near applyHoldMoveTarget for why this exists (redrawing the
-     full #grid, which spans the whole MAX_TICK-wide timeline, was too slow
-     to do on every pointermove on at least one real device). */
+     JS comment near applyHoldMoveTarget for why this exists (redrawing
+     #grid - even just its now-viewport-sized area - on every single
+     pointermove was still too slow on at least one real device). */
   #dragOverlay {
     position: absolute;
     top: 0;
@@ -134,8 +142,16 @@
      it mid-gesture is unreliable (the browser can already have committed
      to native scrolling by the time a hold timer fires). Panning is
      driven entirely in JS instead (see the pointer handlers), resolved
-     into exactly one of pan/hold-move/tap per gesture. */
+     into exactly one of pan/hold-move/tap per gesture.
+     position:sticky pins #grid to the scrollport's left edge as
+     #canvasScroll scrolls past .grid-spacer, so the canvas element itself
+     only ever needs to be as wide as what's visible - see drawGrid's
+     scrollX param for the corresponding "draw at (world - scrollX)" side
+     of this. */
   #grid {
+    position: sticky;
+    top: 0;
+    left: 0;
     display: block;
     cursor: crosshair;
     touch-action: none;
@@ -364,6 +380,7 @@
     <div class="grid-row">
       <div class="row-gutter-scroll"><canvas id="rowGutter"></canvas></div>
       <div class="canvas-scroll" id="canvasScroll">
+        <div class="grid-spacer" id="gridSpacer"></div>
         <canvas id="grid"></canvas>
         <canvas id="dragOverlay"></canvas>
       </div>
@@ -807,6 +824,7 @@
   var rowGutter = document.getElementById("rowGutter");
   var grid = document.getElementById("grid");
   var dragOverlay = document.getElementById("dragOverlay");
+  var gridSpacer = document.getElementById("gridSpacer");
   var canvasScroll = document.getElementById("canvasScroll");
   var rulerScroll = document.querySelector(".ruler-scroll");
   var gridwrap = document.querySelector(".gridwrap");
@@ -863,13 +881,19 @@
     var gridW = MAX_TICK * CELL;
     var gridH = ROWS * CELL;
 
-    var gctx = sizeCanvas(grid, gridW, gridH);
+    // The spacer establishes #canvasScroll's scrollable width (the full
+    // timeline) - #grid itself (sticky-positioned, see its CSS) is only
+    // ever sized to the visible viewport, redrawn on scroll instead of
+    // pre-rendering the whole thing. See drawGrid's scrollX comment.
+    gridSpacer.style.width = gridW + "px";
+    var viewW = canvasScroll.clientWidth || gridW;
+    var gctx = sizeCanvas(grid, viewW, gridH);
     var rctx = sizeCanvas(ruler, gridW, RULER_H);
     var rgctx = sizeCanvas(rowGutter, GUTTER_W, gridH);
 
     drawRuler(rctx, gridW, RULER_H);
     drawRowGutter(rgctx, GUTTER_W, gridH);
-    drawGrid(gctx, gridW, gridH);
+    drawGrid(gctx, viewW, gridH, undefined, canvasScroll.scrollLeft);
   }
 
   function drawRuler(ctx, w, h) {
@@ -926,20 +950,32 @@
   // placement is being hold-move-dragged on the separate #dragOverlay (see
   // beginDragOverlay), so the full grid isn't left showing it twice (once
   // at its old spot here, once at its live spot on the overlay).
-  function drawGrid(ctx, w, h, skipIdx) {
+  //
+  // scrollX: #grid is now sized to just the visible viewport (see layout())
+  // instead of the whole MAX_TICK-tick timeline - a full-timeline canvas
+  // measured ~281ms per redraw on a real device (against 0.8ms here),
+  // which was the actual cause of place/erase/drag all feeling laggy on
+  // that device, batched strokes and cached glyphs notwithstanding: the
+  // clearRect/fillRect/stroke area itself was the cost, not the call count.
+  // w/h here are the small viewport dimensions; everything is drawn at
+  // (world position - scrollX) and only ticks that actually fall in view
+  // are visited at all.
+  function drawGrid(ctx, w, h, skipIdx, scrollX) {
+    scrollX = scrollX || 0;
     ctx.clearRect(0, 0, w, h);
     ctx.fillStyle = tok("--bg");
     ctx.fillRect(0, 0, w, h);
 
+    var firstTick = Math.max(0, Math.floor(scrollX / CELL) - 1);
+    var lastTick = Math.min(MAX_TICK, Math.ceil((scrollX + w) / CELL) + 1);
+
     // 8px-equivalent cell grid, in blue, per spec. One stroke() call per
-    // line color instead of one per line (~425 calls for a 400x24 grid) -
-    // each stroke() has real fixed overhead regardless of line length, and
-    // this ran on every render(), including every pointermove while
-    // dragging a placement.
+    // line color instead of one per line - each stroke() has real fixed
+    // overhead regardless of line length, and this ran on every render().
     var regular = new Path2D(), strong = new Path2D();
-    for (var c = 0; c <= MAX_TICK; c++) {
+    for (var c = firstTick; c <= lastTick; c++) {
       var p = (c % 32 === 0) ? strong : regular;
-      var x = c * CELL + 0.5;
+      var x = c * CELL - scrollX + 0.5;
       p.moveTo(x, 0);
       p.lineTo(x, h);
     }
@@ -961,12 +997,17 @@
     // else is a 16x16 sprite and fills exactly 2x2 cells. The boss is drawn
     // at its full real size (5x16 cells - see drawBossBody) instead of an
     // icon stand-in. Blitted from the offscreen caches above (getGlyphCanvas/
-    // getBossCanvas) instead of redrawing bit-by-bit every time.
+    // getBossCanvas) instead of redrawing bit-by-bit every time. Anything
+    // whose footprint can't possibly reach the visible tick range is
+    // skipped entirely - cheap since placements is usually small, but keeps
+    // this from scaling with MAX_TICK on a schedule with entries scattered
+    // across the whole timeline.
     placements.forEach(function (p, i) {
       if (i === skipIdx) return;
       var t = TYPE_BY_ID[p.type];
       if (!t) return;
-      var x = p.tick * CELL, y = p.row * CELL;
+      if (p.tick < firstTick - 6 || p.tick > lastTick) return;
+      var x = p.tick * CELL - scrollX, y = p.row * CELL;
       if (p.type === "boss") {
         // The boss's real spawn position is fixed in-game - its row/tick
         // here only mark *when* it triggers, not where it appears - so
@@ -975,7 +1016,7 @@
         // clipping the body against the bottom/right edge when placed
         // near them.
         var bo = bossOrigin(p.tick, p.row);
-        ctx.drawImage(getBossCanvas(CELL), bo.tick * CELL, bo.row * CELL, 5 * CELL, 16 * CELL);
+        ctx.drawImage(getBossCanvas(CELL), bo.tick * CELL - scrollX, bo.row * CELL, 5 * CELL, 16 * CELL);
         return;
       }
       var glyph = GLYPHS[t.glyph];
@@ -992,7 +1033,8 @@
     ctx.textBaseline = "bottom";
     placements.forEach(function (p, i) {
       if (i === skipIdx || p.type !== "enemy3_wave") return;
-      var x = p.tick * CELL, y = p.row * CELL;
+      if (p.tick < firstTick - 1 || p.tick > lastTick) return;
+      var x = p.tick * CELL - scrollX, y = p.row * CELL;
       var labelH = enemy3OffsetLabelH();
       ctx.strokeStyle = tok("--line");
       ctx.lineWidth = 1;
@@ -1014,9 +1056,13 @@
   }
 
   // ---------- interaction ----------
+  // #grid is viewport-sized and sticky-positioned (see its CSS) - its own
+  // bounding rect is just the visible slice, so every screen->world
+  // conversion here adds back canvasScroll.scrollLeft to land on the real
+  // tick, the same way drawGrid subtracts it to place things on screen.
   function cellFromEvent(ev) {
     var rect = grid.getBoundingClientRect();
-    var x = ev.clientX - rect.left;
+    var x = ev.clientX - rect.left + canvasScroll.scrollLeft;
     var y = ev.clientY - rect.top;
     var col = Math.floor(x / CELL);
     var row = Math.floor(y / CELL);
@@ -1165,7 +1211,7 @@
     var span = footprintOf({ tick: 0, row: 0, type: obj.type });
     var w = span.t1 - span.t0, h = span.r1 - span.r0;
     var rect = grid.getBoundingClientRect();
-    var col = Math.floor((ev.clientX - rect.left) / CELL) - Math.floor(w / 2);
+    var col = Math.floor((ev.clientX - rect.left + canvasScroll.scrollLeft) / CELL) - Math.floor(w / 2);
     var row = Math.floor((ev.clientY - rect.top) / CELL) - Math.floor(h / 2) - HOLD_LIFT_ROWS;
     col = Math.max(0, Math.min(col, MAX_TICK - w));
     row = Math.max(0, Math.min(row, ROWS - h));
@@ -1226,7 +1272,7 @@
   function rawCellFromEvent(ev) {
     var rect = grid.getBoundingClientRect();
     return {
-      tick: Math.floor((ev.clientX - rect.left) / CELL),
+      tick: Math.floor((ev.clientX - rect.left + canvasScroll.scrollLeft) / CELL),
       row: Math.floor((ev.clientY - rect.top) / CELL)
     };
   }
@@ -1234,7 +1280,7 @@
   grid.addEventListener("pointerdown", function (ev) {
     inspectHandledByPointer = false;
     var rect = grid.getBoundingClientRect();
-    var offsetHit = enemy3OffsetHitTest(ev.clientX - rect.left, ev.clientY - rect.top);
+    var offsetHit = enemy3OffsetHitTest(ev.clientX - rect.left + canvasScroll.scrollLeft, ev.clientY - rect.top);
     var c = cellFromEvent(ev);
     press = {
       pointerId: ev.pointerId,
@@ -1406,7 +1452,7 @@
     if (inspectHandledByPointer) { inspectHandledByPointer = false; return; }
     if (eraseArmed || armedType) return;
     var rect = grid.getBoundingClientRect();
-    if (enemy3OffsetHitTest(ev.clientX - rect.left, ev.clientY - rect.top) !== null) return;
+    if (enemy3OffsetHitTest(ev.clientX - rect.left + canvasScroll.scrollLeft, ev.clientY - rect.top) !== null) return;
     var c = cellFromEvent(ev);
     if (!c) return;
     var idx = placementIndexAtCell(c.tick, c.row);
@@ -1418,9 +1464,14 @@
     }
   });
 
-  // keep the ruler in sync with the scrollable grid (this is the "swipe" pan)
+  // keep the ruler in sync with the scrollable grid (this is the "swipe"
+  // pan), and repaint #grid for its new scroll position - it's viewport-
+  // sized now (see drawGrid's scrollX param), not a pre-rendered full-width
+  // canvas, so every scroll (pan gesture, prev/next buttons, or a native
+  // scrollbar/wheel/trackpad scroll) needs a fresh draw to show anything.
   canvasScroll.addEventListener("scroll", function () {
     rulerScroll.scrollLeft = canvasScroll.scrollLeft;
+    render();
   }, { passive: true });
 
   document.getElementById("btnPrev").addEventListener("click", function () {
@@ -1525,7 +1576,7 @@
   function render(skipIdx) {
     var gctx = grid.getContext("2d");
     gctx.setTransform(DPR, 0, 0, DPR, 0, 0);
-    drawGrid(gctx, MAX_TICK * CELL, ROWS * CELL, skipIdx);
+    drawGrid(gctx, canvasScroll.clientWidth, ROWS * CELL, skipIdx, canvasScroll.scrollLeft);
   }
 
   // ---------- boot ----------
