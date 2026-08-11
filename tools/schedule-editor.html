@@ -260,19 +260,6 @@
     gap: 10px;
   }
   .overlay-title { font-size: 13px; font-weight: 600; }
-  #pasteText {
-    flex: 1 1 auto;
-    min-height: 220px;
-    resize: vertical;
-    background: var(--surface-2);
-    color: var(--ink);
-    border: 1px solid var(--line);
-    border-radius: 7px;
-    padding: 8px;
-    font-family: var(--font-mono);
-    font-size: 11.5px;
-    line-height: 1.4;
-  }
   #offsetInput {
     background: var(--surface-2);
     color: var(--ink);
@@ -341,14 +328,12 @@
     </div>
 
     <div class="side-actions">
-      <button id="btnPrev" title="Scroll back one screen (32 ticks)">◀ screen</button>
-      <button id="btnNext" title="Scroll forward one screen (32 ticks)">screen ▶</button>
+      <button class="primary full" id="btnSave">Save JSON</button>
       <button class="danger-btn full" id="btnErase">Erase</button>
-      <button class="primary" id="btnSave">Save JSON</button>
-      <button id="btnCopy">Copy JSON</button>
-      <label class="btn-label" for="fileInput">Load file</label>
-      <button id="btnPaste">Paste JSON</button>
-      <button class="full" id="btnClear">Clear all</button>
+      <button class="full" id="btnUndo" disabled>Undo</button>
+      <button id="btnPrev" title="Scroll back one screen (32 ticks)">◀</button>
+      <button id="btnNext" title="Scroll forward one screen (32 ticks)">▶</button>
+      <label class="btn-label" for="fileInput">Load JSON</label>
       <input type="file" id="fileInput" accept="application/json" hidden>
     </div>
 
@@ -356,28 +341,6 @@
   </aside>
 
   <div id="liveMsg"></div>
-
-  <div id="clearOverlay" class="overlay">
-    <div class="overlay-card">
-      <div class="overlay-title" id="clearOverlayTitle">Clear all placements?</div>
-      <div class="overlay-actions">
-        <button id="btnClearCancel">Cancel</button>
-        <button class="danger-btn" id="btnClearConfirm">Clear all</button>
-      </div>
-    </div>
-  </div>
-
-  <div id="pasteOverlay" class="overlay">
-    <div class="overlay-card">
-      <div class="overlay-title">Paste schedule JSON</div>
-      <textarea id="pasteText" placeholder="paste the exported {&quot;placements&quot;: [...]} JSON here"></textarea>
-      <div class="overlay-status" id="pasteStatus"></div>
-      <div class="overlay-actions">
-        <button id="btnPasteCancel">Cancel</button>
-        <button class="primary" id="btnPasteImport">Import</button>
-      </div>
-    </div>
-  </div>
 
   <div id="offsetOverlay" class="overlay">
     <div class="overlay-card" style="width: min(320px, 100%);">
@@ -429,6 +392,37 @@
   var placements = []; // {tick, row, type}
   var armedType = null;
   var eraseArmed = false;
+
+  // ---------- undo ----------
+  // Snapshotted before every mutation (place/erase/offset edit/JSON load),
+  // not diffed - the schedule stays small enough that a full deep-copy per
+  // action costs nothing, and it means undo can never drift from what
+  // actually happened.
+  var history = [];
+  var MAX_HISTORY = 50;
+  var btnUndo = document.getElementById("btnUndo");
+
+  function pushHistory() {
+    history.push(JSON.parse(JSON.stringify(placements)));
+    if (history.length > MAX_HISTORY) history.shift();
+    btnUndo.disabled = false;
+  }
+
+  function undo() {
+    if (!history.length) return;
+    placements = history.pop();
+    btnUndo.disabled = history.length === 0;
+    render();
+    flash("undo");
+  }
+
+  btnUndo.addEventListener("click", undo);
+  window.addEventListener("keydown", function (ev) {
+    if ((ev.metaKey || ev.ctrlKey) && !ev.shiftKey && ev.key.toLowerCase() === "z") {
+      ev.preventDefault();
+      undo();
+    }
+  });
 
   function placementAt(tick, row) {
     for (var i = 0; i < placements.length; i++) {
@@ -690,6 +684,7 @@
       offsetStatus.classList.remove("ok");
       return;
     }
+    pushHistory();
     placements[offsetEditPlacementIdx].offset = v;
     offsetOverlay.classList.remove("show");
     render();
@@ -718,9 +713,11 @@
     var c = cellFromEvent(ev);
     if (!c) return;
     if (eraseArmed) {
+      pushHistory();
       setCell(c.tick, c.row, null);
       flash("erased tick " + c.tick + ", row " + c.row);
     } else if (armedType) {
+      pushHistory();
       setCell(c.tick, c.row, armedType);
       flash(TYPE_BY_ID[armedType].name + " → tick " + c.tick + ", row " + c.row);
     } else {
@@ -769,42 +766,15 @@
     flash("save unavailable here — use Copy JSON instead");
   });
 
-  document.getElementById("btnCopy").addEventListener("click", function () {
-    var text = currentJSON();
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(text).then(function () {
-        flash("JSON copied — paste it into the chat to import");
-      }, function () {
-        fallbackCopy(text);
-      });
-    } else {
-      fallbackCopy(text);
-    }
-  });
-
-  function fallbackCopy(text) {
-    var ta = document.createElement("textarea");
-    ta.value = text;
-    ta.style.position = "fixed";
-    ta.style.opacity = "0";
-    document.body.appendChild(ta);
-    ta.select();
-    try { document.execCommand("copy"); flash("JSON copied — paste it into the chat to import"); }
-    catch (e) { flash("copy failed — use Save instead"); }
-    ta.remove();
-  }
-
-  // shared by both "Load file" (FileReader) and "Paste JSON" (textarea) -
-  // same JSON shape either way, just a different source for the text.
   // Returns a status message rather than showing it - callers decide
-  // where that's safe to display (see the paste overlay's inline
-  // status, which doesn't rely on the bottom toast).
+  // where that's safe to display.
   function importJSONText(text) {
     var data = JSON.parse(text);
     if (!Array.isArray(data.placements)) throw new Error("no placements array");
     var valid = data.placements.filter(function (p) {
       return TYPE_BY_ID[p.type] && Number.isInteger(p.tick) && Number.isInteger(p.row);
     });
+    pushHistory();
     placements = valid;
     render();
     var skipped = data.placements.length - valid.length;
@@ -821,63 +791,6 @@
     };
     reader.readAsText(file);
     ev.target.value = "";
-  });
-
-  var pasteOverlay = document.getElementById("pasteOverlay");
-  var pasteText = document.getElementById("pasteText");
-  var pasteStatus = document.getElementById("pasteStatus");
-  document.getElementById("btnPaste").addEventListener("click", function () {
-    pasteText.value = "";
-    pasteStatus.textContent = "";
-    pasteStatus.classList.remove("ok");
-    pasteOverlay.classList.add("show");
-    pasteText.focus();
-  });
-  document.getElementById("btnPasteCancel").addEventListener("click", function () {
-    pasteOverlay.classList.remove("show");
-  });
-  document.getElementById("btnPasteImport").addEventListener("click", function () {
-    if (!pasteText.value.trim()) {
-      pasteStatus.textContent = "paste some JSON first";
-      pasteStatus.classList.remove("ok");
-      return;
-    }
-    try {
-      var msg = importJSONText(pasteText.value);
-      pasteStatus.textContent = msg;
-      pasteStatus.classList.add("ok");
-      flash(msg);
-      pasteOverlay.classList.remove("show");
-    } catch (e) {
-      pasteStatus.textContent = "could not read that JSON: " + e.message;
-      pasteStatus.classList.remove("ok");
-    }
-  });
-  pasteOverlay.addEventListener("click", function (ev) {
-    if (ev.target === pasteOverlay) pasteOverlay.classList.remove("show");
-  });
-
-  // window.confirm() is blocked (silently declines) inside the sandboxed
-  // artifact frame, which made the old confirm()-guarded Clear button a
-  // permanent no-op - this overlay replaces it with an in-page confirm
-  // that doesn't depend on a native dialog.
-  var clearOverlay = document.getElementById("clearOverlay");
-  document.getElementById("btnClear").addEventListener("click", function () {
-    if (!placements.length) { flash("nothing to clear"); return; }
-    document.getElementById("clearOverlayTitle").textContent = "Clear all " + placements.length + " placements?";
-    clearOverlay.classList.add("show");
-  });
-  document.getElementById("btnClearCancel").addEventListener("click", function () {
-    clearOverlay.classList.remove("show");
-  });
-  document.getElementById("btnClearConfirm").addEventListener("click", function () {
-    placements = [];
-    render();
-    clearOverlay.classList.remove("show");
-    flash("cleared");
-  });
-  clearOverlay.addEventListener("click", function (ev) {
-    if (ev.target === clearOverlay) clearOverlay.classList.remove("show");
   });
 
   // ---------- misc UI ----------
