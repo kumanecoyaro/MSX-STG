@@ -17,14 +17,6 @@
     --danger-ink: #260607;
     --ok: #6bdc7c;
 
-    --hue-simple: #b98cff;
-    --hue-e2a: #ff8fc6;
-    --hue-e2b: #ff5f9e;
-    --hue-e3: #38d9c4;
-    --hue-e4: #ffa94d;
-    --hue-e5: #6bdc7c;
-    --hue-boss: #ff5d5d;
-
     --font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Hiragino Sans", "Noto Sans JP", sans-serif;
     --font-mono: ui-monospace, "SF Mono", "Cascadia Mono", "Consolas", "Roboto Mono", monospace;
   }
@@ -190,11 +182,16 @@
     align-items: center;
     justify-content: center;
     border-radius: 5px;
-    border: 2px solid transparent;
+    border: 2px solid var(--line);
+    background: var(--surface-2);
     cursor: pointer;
     padding: 0;
+    color: var(--ink-dim);
+    font-family: var(--font-mono);
+    font-size: 8px;
+    font-weight: 700;
   }
-  .pitem:hover { filter: brightness(1.08); }
+  .pitem:hover { border-color: var(--ink-faint); }
   .pitem.armed {
     border-color: var(--ink);
     box-shadow: 0 0 0 2px var(--accent);
@@ -247,7 +244,7 @@
     gap: 10px;
   }
   .overlay-title { font-size: 13px; font-weight: 600; }
-  #offsetInput {
+  #offsetInput, #saveFilenameInput {
     background: var(--surface-2);
     color: var(--ink);
     border: 1px solid var(--line);
@@ -321,7 +318,7 @@
       <button id="btnPrev" title="Scroll back one screen (32 ticks)">◀</button>
       <button id="btnNext" title="Scroll forward one screen (32 ticks)">▶</button>
       <label class="btn-label" for="fileInput">Load JSON</label>
-      <input type="file" id="fileInput" accept="application/json" hidden>
+      <input type="file" id="fileInput" accept=".json,application/json" hidden>
     </div>
 
     <div class="palette" id="palette"></div>
@@ -341,13 +338,26 @@
     </div>
   </div>
 
+  <div id="saveOverlay" class="overlay">
+    <div class="overlay-card" style="width: min(320px, 100%);">
+      <div class="overlay-title">Save as</div>
+      <input type="text" id="saveFilenameInput" value="Schedule.json">
+      <div class="overlay-status" id="saveStatus"></div>
+      <div class="overlay-actions">
+        <button id="btnSaveCancel">Cancel</button>
+        <button class="primary" id="btnSaveConfirm">Save</button>
+      </div>
+    </div>
+  </div>
+
 <script>
 (function () {
   "use strict";
 
   // ---------- real in-game sprite/pattern data, transcribed byte-for-byte ----------
-  // from CYBER_GD_BOSS.asm (see ASTERISK_PATTERN, ENEMY3_PATTERN1, ENEMY4_PATTERN,
-  // BOSS_HEX_PATTERN and their draw sites for exact source lines). 16x16 entries use
+  // from CYBER_GD_BOSS.asm (see ASTERISK_PATTERN, ENEMY3_PATTERN1, ENEMY4_PATTERN
+  // and their draw sites for exact source lines; the boss's own BOSS_PATTERNS/
+  // BOSS_MAP are transcribed separately below). 16x16 entries use
   // the MSX1 hardware sprite quadrant order [top-left, bottom-left, top-right,
   // bottom-right], 8 bytes each, 1 bit/pixel (bit7=leftmost). "rows" (8x8) is a
   // background/nametable character instead - drawn opaque (bg fill + fg pixels),
@@ -385,21 +395,123 @@
       },
       color: "#74d07d"
     },
-    // Boss's own compact hex-icon sprite (BOSS_HEX_PATTERN) - used in-game as the
-    // materialize/lap-marker glyph, the closest thing to a single-cell "boss icon"
-    // rather than trying to shrink the full 5x16-tile BG body. White, always 15 (0Fh)
-    // at every draw site that sets it.
-    boss: {
-      size: 16,
-      quads: {
-        tl: [0x3C, 0x7E, 0xFF, 0xFF, 0xFF, 0xFF, 0x7E, 0x3C],
-        bl: [0, 0, 0, 0, 0, 0, 0, 0],
-        tr: [0, 0, 0, 0, 0, 0, 0, 0],
-        br: [0, 0, 0, 0, 0, 0, 0, 0]
-      },
-      color: "#ffffff"
-    }
   };
+
+  // ---------- boss's real BG body (BOSS_PATTERNS/BOSS_MAP in the ASM) ----------
+  // 5 tile columns x 16 tile rows, 8x8 px each - exactly 5x16 grid cells at this
+  // tool's 8px/cell scale, so unlike every other enemy the boss can be drawn at
+  // its true full size rather than a stand-in icon. code 48 (BLANKCODE) tiles
+  // carry no art - just the shared blue tile background, per BOSS_MAP's comment.
+  var BOSS_BG = "#5955e0";
+  var BOSS_TILES = (function () {
+    var t = {}, gray = "#cccccc", black = "#000000", red = "#db6559";
+    function add(code, fg, rows) { t[code] = { fg: fg, rows: rows }; }
+    // group24-27, codes 192-223: gray/blue
+    add(192, gray, [0x00, 0x00, 0x01, 0x03, 0x07, 0x0F, 0x1C, 0x30]);
+    add(193, gray, [0x7E, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x7F, 0x1F]);
+    add(194, gray, [0x00, 0x00, 0x80, 0xC0, 0xE0, 0xF0, 0xF8, 0xFC]);
+    add(195, gray, [0x0F, 0x0F, 0x17, 0x27, 0x27, 0x43, 0x43, 0x81]);
+    add(196, gray, [0xFE, 0xFE, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]);
+    add(197, gray, [0x00, 0x00, 0x00, 0x00, 0x80, 0x80, 0x80, 0xC0]);
+    add(198, gray, [0x81, 0x81, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
+    add(199, gray, [0xFF, 0xFF, 0xFF, 0xFF, 0x7F, 0x7F, 0x7F, 0x7F]);
+    add(200, gray, [0xC0, 0xE0, 0xE0, 0xE0, 0xE0, 0xF0, 0xF0, 0xF0]);
+    add(201, gray, [0x3F, 0x3F, 0x3F, 0x3F, 0x1F, 0x1F, 0x1F, 0x1F]);
+    add(202, gray, [0xF0, 0xF8, 0xF8, 0xF8, 0xF8, 0xF8, 0xF8, 0xF8]);
+    add(203, gray, [0x1F, 0x0F, 0x0F, 0x0F, 0x0F, 0x0F, 0x0F, 0x0F]);
+    add(204, gray, [0xF8, 0xF8, 0xF8, 0xF8, 0xF8, 0xFC, 0xFC, 0xFC]);
+    add(205, gray, [0x07, 0x07, 0x07, 0x07, 0x07, 0x07, 0x07, 0x07]);
+    add(206, gray, [0xFC, 0xFC, 0xFC, 0xFC, 0xFC, 0xFC, 0xFC, 0xFC]);
+    add(207, gray, [0x07, 0x07, 0x07, 0x03, 0x03, 0x03, 0x03, 0x03]);
+    add(208, gray, [0xFE, 0xFE, 0xFE, 0xFE, 0xFE, 0xFE, 0xFE, 0xFE]);
+    add(209, gray, [0x03, 0x03, 0x03, 0x03, 0x03, 0x03, 0x03, 0x03]);
+    add(210, gray, [0x03, 0x03, 0x03, 0x03, 0x03, 0x07, 0x07, 0x07]);
+    add(211, gray, [0x0F, 0x0F, 0x0F, 0x0F, 0x0F, 0x0F, 0x0F, 0x1F]);
+    add(212, gray, [0xFC, 0xFC, 0xFC, 0xF8, 0xF8, 0xF8, 0xF8, 0xF8]);
+    add(213, gray, [0x1F, 0x1F, 0x1F, 0x1F, 0x3F, 0x3F, 0x3F, 0x3F]);
+    add(214, gray, [0xF8, 0xF8, 0xF8, 0xF8, 0xF8, 0xF8, 0xF8, 0xF0]);
+    add(215, gray, [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x81, 0x81]);
+    add(216, gray, [0x7F, 0x7F, 0x7F, 0x7F, 0xFF, 0xFF, 0xFF, 0xFF]);
+    add(217, gray, [0xF0, 0xF0, 0xF0, 0xE0, 0xE0, 0xE0, 0xE0, 0xC0]);
+    add(218, gray, [0x81, 0x43, 0x43, 0x27, 0x27, 0x17, 0x0F, 0x0F]);
+    add(219, gray, [0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFE, 0xFE]);
+    add(220, gray, [0xC0, 0x80, 0x80, 0x80, 0x00, 0x00, 0x00, 0x00]);
+    add(221, gray, [0x30, 0x1C, 0x0F, 0x07, 0x03, 0x01, 0x00, 0x00]);
+    add(222, gray, [0x1F, 0x7F, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x7E]);
+    add(223, gray, [0xFC, 0xF8, 0xF0, 0xE0, 0xC0, 0x80, 0x00, 0x00]);
+    // group28-30, codes 224-247: black/blue
+    add(224, black, [0x00, 0x00, 0x00, 0x00, 0x01, 0x01, 0x01, 0x03]);
+    add(225, black, [0x7F, 0x7F, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]);
+    add(226, black, [0x03, 0x07, 0x07, 0x07, 0x07, 0x0F, 0x0F, 0x0F]);
+    add(227, black, [0xFF, 0xFF, 0xFE, 0xFE, 0xFC, 0xFC, 0xFC, 0xFC]);
+    add(228, black, [0x0F, 0x1F, 0x1F, 0x1F, 0x1F, 0x1F, 0x3F, 0x3F]);
+    add(229, black, [0xFC, 0xFC, 0xFC, 0xFC, 0xF8, 0xF8, 0xF8, 0xF8]);
+    add(230, black, [0x3F, 0x3F, 0x3F, 0x3F, 0x3F, 0x7F, 0x7F, 0x7F]);
+    add(231, black, [0xF8, 0xF0, 0xF0, 0xF0, 0xF0, 0xF0, 0xF0, 0xF0]);
+    add(232, black, [0x7F, 0x7F, 0x7F, 0x7F, 0x7F, 0x7F, 0x7F, 0x7F]);
+    add(233, black, [0xE0, 0xE0, 0xE0, 0xE0, 0xE0, 0xE0, 0xE0, 0xE0]);
+    add(234, black, [0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]);
+    add(235, black, [0xE0, 0xE0, 0xE0, 0xC0, 0xC0, 0xC0, 0xC0, 0xC0]);
+    add(236, black, [0xC0, 0xC0, 0xC0, 0xC0, 0xC0, 0xC0, 0xC0, 0xC0]);
+    add(237, black, [0xC0, 0xC0, 0xC0, 0xC0, 0xC0, 0xE0, 0xE0, 0xE0]);
+    add(238, black, [0x7F, 0x7F, 0x7F, 0x3F, 0x3F, 0x3F, 0x3F, 0x3F]);
+    add(239, black, [0xF0, 0xF0, 0xF0, 0xF0, 0xF0, 0xF0, 0xF0, 0xF8]);
+    add(240, black, [0x3F, 0x3F, 0x1F, 0x1F, 0x1F, 0x1F, 0x1F, 0x0F]);
+    add(241, black, [0xF8, 0xF8, 0xF8, 0xF8, 0xFC, 0xFC, 0xFC, 0xFC]);
+    add(242, black, [0x0F, 0x0F, 0x0F, 0x07, 0x07, 0x07, 0x07, 0x03]);
+    add(243, black, [0xFC, 0xFC, 0xFC, 0xFC, 0xFE, 0xFE, 0xFF, 0xFF]);
+    add(244, black, [0x03, 0x01, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00]);
+    add(245, black, [0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x7F, 0x7F]);
+    // group31, codes 248-252: red/blue
+    add(248, red, [0x00, 0x00, 0x00, 0x00, 0x00, 0x18, 0x38, 0x78]);
+    add(249, red, [0x78, 0xD8, 0xDC, 0x9C, 0x8C, 0x0E, 0x0E, 0x0E]);
+    add(250, red, [0x0F, 0x3F, 0xE7, 0x07, 0x07, 0xC7, 0x77, 0x1F]);
+    add(251, red, [0x07, 0x07, 0x0F, 0x0E, 0x8E, 0x8C, 0xDC, 0xD8]);
+    add(252, red, [0x78, 0x78, 0x30, 0x30, 0x00, 0x00, 0x00, 0x00]);
+    return t;
+  })();
+  var BOSS_MAP = [
+    [48, 192, 193, 194, 48],
+    [224, 225, 195, 196, 197],
+    [226, 227, 198, 199, 200],
+    [228, 229, 48, 201, 202],
+    [230, 231, 48, 203, 204],
+    [232, 233, 248, 205, 206],
+    [234, 235, 249, 207, 208],
+    [234, 236, 250, 209, 208],
+    [234, 236, 251, 209, 208],
+    [234, 237, 252, 210, 208],
+    [232, 233, 48, 205, 206],
+    [238, 239, 48, 211, 212],
+    [240, 241, 48, 213, 214],
+    [242, 243, 215, 216, 217],
+    [244, 245, 218, 219, 220],
+    [48, 221, 222, 223, 48]
+  ];
+
+  // Draws the boss's full 5x16-tile body at (x,y), top-left anchored, one grid
+  // cell per 8x8 tile (cell must equal the caller's real 8px-per-cell CELL).
+  function drawBossBody(ctx, x, y, cell) {
+    for (var r = 0; r < BOSS_MAP.length; r++) {
+      for (var c = 0; c < BOSS_MAP[r].length; c++) {
+        var tx = x + c * cell, ty = y + r * cell;
+        ctx.fillStyle = BOSS_BG;
+        ctx.fillRect(tx, ty, cell, cell);
+        var tile = BOSS_TILES[BOSS_MAP[r][c]];
+        if (!tile) continue;
+        ctx.fillStyle = tile.fg;
+        var px = cell / 8, py = cell / 8;
+        for (var rr = 0; rr < 8; rr++) {
+          var byte = tile.rows[rr];
+          for (var cc = 0; cc < 8; cc++) {
+            if (byte & (0x80 >> cc)) {
+              ctx.fillRect(tx + cc * px, ty + rr * py, Math.ceil(px) + 0.5, Math.ceil(py) + 0.5);
+            }
+          }
+        }
+      }
+    }
+  }
 
   // Draws a GLYPHS entry into ctx at (x,y), scaled to fill w x h. 8x8 "rows"
   // glyphs paint their bg first (opaque BG tile); 16x16 "quads" glyphs leave
@@ -430,19 +542,19 @@
 
   // ---------- enemy palette (matches the current CYBER_GD_BOSS.asm schedule) ----------
   var TYPES = [
-    { id: "simple",     name: "Simple (Enemy1)",  desc: "any row - dodge dir is decided from player Y at center", hue: "--hue-simple", defaultRow: 2,  glyph: "asterisk16" },
-    { id: "e2a_top",    name: "Enemy2A — Top",    desc: "SPAWN_E2_TOP_A",   hue: "--hue-e2a",    defaultRow: 4,  glyph: "asterisk16" },
-    { id: "e2a_bot",    name: "Enemy2A — Bottom", desc: "SPAWN_E2_BOT_A",   hue: "--hue-e2a",    defaultRow: 12, glyph: "asterisk16" },
-    { id: "e2b_top",    name: "Enemy2B — Top",    desc: "SPAWN_E2_TOP_B",   hue: "--hue-e2b",    defaultRow: 6,  glyph: "asterisk16" },
-    { id: "e2b_bot",    name: "Enemy2B — Bottom", desc: "SPAWN_E2_BOT_B",   hue: "--hue-e2b",    defaultRow: 14, glyph: "asterisk16" },
-    { id: "enemy3_wave",name: "Enemy3 — Wave",    desc: "SPAWN_E3_WAVE (budget 32)", hue: "--hue-e3", defaultRow: 1, glyph: "enemy3" },
-    { id: "enemy4_y16", name: "Enemy4 — Top",     desc: "baseY 32",         hue: "--hue-e4",     defaultRow: 4,  glyph: "enemy4" },
-    { id: "enemy4_y32", name: "Enemy4 — Mid",     desc: "baseY 64",         hue: "--hue-e4",     defaultRow: 8,  glyph: "enemy4" },
-    { id: "enemy4_y48", name: "Enemy4 — Bottom",  desc: "baseY 72",         hue: "--hue-e4",     defaultRow: 9,  glyph: "enemy4" },
-    { id: "enemy5_y16", name: "Enemy5 — Top",     desc: "TYPE_ENEMY1_LOOK", hue: "--hue-e5",     defaultRow: 4,  glyph: "asterisk16" },
-    { id: "enemy5_y32", name: "Enemy5 — Mid",     desc: "TYPE_ENEMY1_LOOK", hue: "--hue-e5",     defaultRow: 8,  glyph: "asterisk16" },
-    { id: "enemy5_y48", name: "Enemy5 — Bottom",  desc: "TYPE_ENEMY1_LOOK", hue: "--hue-e5",     defaultRow: 9,  glyph: "asterisk16" },
-    { id: "boss",       name: "Boss",             desc: "BOSS_SPAWN",       hue: "--hue-boss",   defaultRow: 20, glyph: "boss" }
+    { id: "simple",     name: "Simple (Enemy1)",  desc: "any row - dodge dir is decided from player Y at center", defaultRow: 2,  glyph: "asterisk16" },
+    { id: "e2a_top",    name: "Enemy2A — Top",    desc: "SPAWN_E2_TOP_A",   defaultRow: 4,  glyph: "asterisk16" },
+    { id: "e2a_bot",    name: "Enemy2A — Bottom", desc: "SPAWN_E2_BOT_A",   defaultRow: 12, glyph: "asterisk16" },
+    { id: "e2b_top",    name: "Enemy2B — Top",    desc: "SPAWN_E2_TOP_B",   defaultRow: 6,  glyph: "asterisk16" },
+    { id: "e2b_bot",    name: "Enemy2B — Bottom", desc: "SPAWN_E2_BOT_B",   defaultRow: 14, glyph: "asterisk16" },
+    { id: "enemy3_wave",name: "Enemy3 — Wave",    desc: "SPAWN_E3_WAVE (budget 32)", defaultRow: 1, glyph: "enemy3" },
+    { id: "enemy4_y16", name: "Enemy4 — Top",     desc: "baseY 32",         defaultRow: 4,  glyph: "enemy4" },
+    { id: "enemy4_y32", name: "Enemy4 — Mid",     desc: "baseY 64",         defaultRow: 8,  glyph: "enemy4" },
+    { id: "enemy4_y48", name: "Enemy4 — Bottom",  desc: "baseY 72",         defaultRow: 9,  glyph: "enemy4" },
+    { id: "enemy5_y16", name: "Enemy5 — Top",     desc: "TYPE_ENEMY1_LOOK", defaultRow: 4,  glyph: "asterisk16" },
+    { id: "enemy5_y32", name: "Enemy5 — Mid",     desc: "TYPE_ENEMY1_LOOK", defaultRow: 8,  glyph: "asterisk16" },
+    { id: "enemy5_y48", name: "Enemy5 — Bottom",  desc: "TYPE_ENEMY1_LOOK", defaultRow: 9,  glyph: "asterisk16" },
+    { id: "boss",       name: "Boss",             desc: "BOSS_SPAWN — full 5x16-cell body",  defaultRow: 20, glyph: null }
   ];
   var TYPE_BY_ID = {};
   TYPES.forEach(function (t) { TYPE_BY_ID[t.id] = t; });
@@ -518,30 +630,35 @@
   }
 
   // ---------- palette UI ----------
-  // Each swatch shows the enemy's real in-game glyph (see GLYPHS) on its
-  // hue-tinted background - the hue is kept purely so the 13 types stay
-  // tellable apart at a glance (several of them share the exact same
-  // gray asterisk sprite in-game - see GLYPHS.asterisk16's comment).
+  // Each swatch shows the enemy's real in-game glyph (see GLYPHS) - several
+  // types share the exact same gray asterisk sprite in-game (see
+  // GLYPHS.asterisk16's comment), so they look identical here too, on
+  // purpose. Boss has no small icon of its own (its real graphic is the
+  // full 5x16-cell body drawn on the grid, not something that shrinks to a
+  // 26x26 swatch) so its palette entry is just its name.
   var paletteEl = document.getElementById("palette");
   TYPES.forEach(function (t) {
     var item = document.createElement("button");
     item.className = "pitem";
     item.dataset.type = t.id;
-    item.style.background = "var(" + t.hue + ")";
     item.title = t.name + " — " + t.desc;
-    var glyph = GLYPHS[t.glyph];
-    var cv = document.createElement("canvas");
-    cv.className = "picon";
-    var cssSize = 26, dpr = Math.max(1, window.devicePixelRatio || 1);
-    cv.width = Math.round(cssSize * dpr);
-    cv.height = Math.round(cssSize * dpr);
-    cv.style.width = cssSize + "px";
-    cv.style.height = cssSize + "px";
-    var pctx = cv.getContext("2d");
-    pctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    var pad = glyph.size === 16 ? 1 : 5;
-    drawGlyph(pctx, glyph, pad, pad, cssSize - pad * 2, cssSize - pad * 2);
-    item.appendChild(cv);
+    if (t.glyph) {
+      var glyph = GLYPHS[t.glyph];
+      var cv = document.createElement("canvas");
+      cv.className = "picon";
+      var cssSize = 26, dpr = Math.max(1, window.devicePixelRatio || 1);
+      cv.width = Math.round(cssSize * dpr);
+      cv.height = Math.round(cssSize * dpr);
+      cv.style.width = cssSize + "px";
+      cv.style.height = cssSize + "px";
+      var pctx = cv.getContext("2d");
+      pctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      var pad = glyph.size === 16 ? 1 : 5;
+      drawGlyph(pctx, glyph, pad, pad, cssSize - pad * 2, cssSize - pad * 2);
+      item.appendChild(cv);
+    } else {
+      item.textContent = t.name;
+    }
     item.addEventListener("click", function () {
       eraseArmed = false;
       document.getElementById("btnErase").classList.remove("armed");
@@ -672,25 +789,24 @@
       ctx.stroke();
     }
 
-    // placed enemies - each drawn as its real in-game glyph (see GLYPHS) on a
-    // hue-tinted backing square, the icon itself sized to its real footprint:
-    // Enemy3's 8x8 BG tile fills the cell as before, everything else is a
-    // 16x16 sprite and is drawn noticeably larger (and centered, so it
-    // overflows into the cell's margin) to reflect that it's twice the size.
+    // placed enemies - each drawn as its real in-game glyph (see GLYPHS), no
+    // synthetic color coding, top-left anchored at (tick,row) since that's
+    // the sprite/tile's real top-left origin in-game. Sized to its true
+    // footprint: Enemy3's 8x8 BG tile fills exactly one cell, everything
+    // else is a 16x16 sprite and fills exactly 2x2 cells. The boss is drawn
+    // at its full real size (5x16 cells - see drawBossBody) instead of an
+    // icon stand-in.
     placements.forEach(function (p) {
       var t = TYPE_BY_ID[p.type];
       if (!t) return;
-      var glyph = GLYPHS[t.glyph];
       var x = p.tick * CELL, y = p.row * CELL;
-      ctx.fillStyle = tok(t.hue);
-      var pad = 2;
-      roundRect(ctx, x + pad, y + pad, CELL - pad * 2, CELL - pad * 2, 4);
-      ctx.fill();
-      var big = glyph.size === 16;
-      var box = big ? CELL * 1.55 : CELL - 6;
-      var bx = x + CELL / 2 - box / 2, by = y + CELL / 2 - box / 2;
-      var iconPad = box * 0.08;
-      drawGlyph(ctx, glyph, bx + iconPad, by + iconPad, box - iconPad * 2, box - iconPad * 2);
+      if (p.type === "boss") {
+        drawBossBody(ctx, x, y, CELL);
+        return;
+      }
+      var glyph = GLYPHS[t.glyph];
+      var box = glyph.size === 16 ? CELL * 2 : CELL;
+      drawGlyph(ctx, glyph, x, y, box, box);
     });
 
     // Each enemy3_wave cell's own offset (cells, 8px each - see
@@ -838,21 +954,48 @@
     }, null, 2);
   }
 
+  var saveOverlay = document.getElementById("saveOverlay");
+  var saveFilenameInput = document.getElementById("saveFilenameInput");
+  var saveStatus = document.getElementById("saveStatus");
+
   document.getElementById("btnSave").addEventListener("click", function () {
-    if (window.claude && window.claude.downloads) {
-      window.claude.downloads.save({ filename: "cyber_suzuka_schedule.json", data: currentJSON() }).then(
-        function () { flash("saved cyber_suzuka_schedule.json"); },
-        function (err) {
-          if (err && err.code === "declined") { flash("save cancelled"); return; }
-          flash("save unavailable here — use Copy JSON instead");
-        }
-      );
+    saveStatus.textContent = "";
+    saveStatus.classList.remove("ok");
+    saveOverlay.classList.add("show");
+    saveFilenameInput.focus();
+    saveFilenameInput.select();
+  });
+
+  function doSave() {
+    var filename = saveFilenameInput.value.trim() || "Schedule.json";
+    if (!window.claude || !window.claude.downloads) {
+      saveStatus.textContent = "save unavailable here";
+      saveStatus.classList.remove("ok");
       return;
     }
-    // no downloads capability in this view - Blob/anchor downloads are
-    // commonly blocked in a sandboxed artifact frame, so don't pretend
-    // it worked. Copy JSON (clipboard) is the reliable path instead.
-    flash("save unavailable here — use Copy JSON instead");
+    window.claude.downloads.save({ filename: filename, data: currentJSON() }).then(
+      function () {
+        saveOverlay.classList.remove("show");
+        flash("saved " + filename);
+      },
+      function (err) {
+        if (err && err.code === "declined") { saveOverlay.classList.remove("show"); flash("save cancelled"); return; }
+        saveStatus.textContent = "save failed";
+        saveStatus.classList.remove("ok");
+      }
+    );
+  }
+
+  document.getElementById("btnSaveCancel").addEventListener("click", function () {
+    saveOverlay.classList.remove("show");
+  });
+  document.getElementById("btnSaveConfirm").addEventListener("click", doSave);
+  saveFilenameInput.addEventListener("keydown", function (ev) {
+    if (ev.key === "Enter") doSave();
+    if (ev.key === "Escape") saveOverlay.classList.remove("show");
+  });
+  saveOverlay.addEventListener("click", function (ev) {
+    if (ev.target === saveOverlay) saveOverlay.classList.remove("show");
   });
 
   // Returns a status message rather than showing it - callers decide
