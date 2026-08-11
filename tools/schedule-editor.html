@@ -365,6 +365,7 @@
     <div class="side-actions">
       <div class="btn-row">
         <button class="primary" id="btnSave">Save JSON</button>
+        <button id="btnDeselect">Deselect</button>
         <button class="danger-btn" id="btnErase">Erase</button>
         <button id="btnUndo" disabled>Undo</button>
         <div class="spacer"></div>
@@ -773,6 +774,18 @@
     eraseArmed = !eraseArmed;
     this.classList.toggle("armed", eraseArmed);
     refreshPaletteArmed();
+  });
+
+  // Deselect: drop whatever's armed (a palette type or Erase) without
+  // having to re-tap the same palette icon to toggle it off - that was the
+  // only way before, and it's not obvious/reachable enough on a touch
+  // device mid-workflow.
+  document.getElementById("btnDeselect").addEventListener("click", function () {
+    armedType = null;
+    eraseArmed = false;
+    document.getElementById("btnErase").classList.remove("armed");
+    refreshPaletteArmed();
+    flash("deselected");
   });
 
   // ---------- canvases ----------
