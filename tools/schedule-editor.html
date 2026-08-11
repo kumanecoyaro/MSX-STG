@@ -191,12 +191,20 @@
      giving any button a size that depends on available width. */
   .spacer { flex: 1 1 auto; }
   /* Several enemy types render the exact same icon (see GLYPHS.asterisk16's
-     comment) - this is where a tapped placed cell's real type + position
-     shows up, since the grid icon alone can't tell them apart. */
+     comment) - the icon + text here show a tapped placed cell's real
+     graphic, type and position, since the grid icon alone can't tell
+     them apart. */
+  .cell-info-icon {
+    width: 24px;
+    height: 24px;
+    flex: 0 0 auto;
+    display: block;
+    margin-left: 6px;
+  }
   .cell-info {
     flex: 1 1 auto;
     min-width: 0;
-    padding-left: 8px;
+    padding-left: 6px;
     font-size: 11px;
     color: var(--ink-dim);
     white-space: nowrap;
@@ -362,6 +370,7 @@
       <div class="btn-row">
         <label class="btn-label" for="fileInput">Load JSON</label>
         <input type="file" id="fileInput" accept=".json" hidden>
+        <canvas class="cell-info-icon" id="cellInfoIcon"></canvas>
         <div class="cell-info" id="cellInfo" title="Tap a placed cell on the grid to identify it - several types share the same icon"></div>
       </div>
     </div>
@@ -996,14 +1005,32 @@
 
   // Several enemy types share the exact same icon (see GLYPHS.asterisk16's
   // comment), so the grid alone can't tell them apart - this readout shows
-  // a tapped cell's real type + position, next to Load JSON.
+  // a tapped cell's real icon, type and position, next to Load JSON.
   var cellInfoEl = document.getElementById("cellInfo");
+  var cellInfoIconEl = document.getElementById("cellInfoIcon");
+  var CELL_INFO_ICON_SIZE = 24, cellInfoIconDPR = Math.max(1, window.devicePixelRatio || 1);
+  cellInfoIconEl.width = Math.round(CELL_INFO_ICON_SIZE * cellInfoIconDPR);
+  cellInfoIconEl.height = Math.round(CELL_INFO_ICON_SIZE * cellInfoIconDPR);
+  cellInfoIconEl.style.width = CELL_INFO_ICON_SIZE + "px";
+  cellInfoIconEl.style.height = CELL_INFO_ICON_SIZE + "px";
+  var cellInfoIconCtx = cellInfoIconEl.getContext("2d");
+  cellInfoIconCtx.setTransform(cellInfoIconDPR, 0, 0, cellInfoIconDPR, 0, 0);
+
   function showCellInfo(p) {
     var t = TYPE_BY_ID[p.type];
     cellInfoEl.textContent = t ? (t.name + " · tick " + p.tick + " row " + p.row) : "";
+    cellInfoIconCtx.clearRect(0, 0, CELL_INFO_ICON_SIZE, CELL_INFO_ICON_SIZE);
+    if (t && t.glyph) {
+      var glyph = GLYPHS[t.glyph];
+      var pad = glyph.size === 16 ? 1 : 4;
+      drawGlyph(cellInfoIconCtx, glyph, pad, pad, CELL_INFO_ICON_SIZE - pad * 2, CELL_INFO_ICON_SIZE - pad * 2);
+    }
+    // boss has no small icon of its own (see the palette-building comment
+    // above TYPES) - the icon slot just stays blank, same as its palette entry.
   }
   function clearCellInfo() {
     cellInfoEl.textContent = "";
+    cellInfoIconCtx.clearRect(0, 0, CELL_INFO_ICON_SIZE, CELL_INFO_ICON_SIZE);
   }
 
   // Every gesture on the grid starts undecided and resolves into exactly
@@ -1042,8 +1069,18 @@
       press.holdTimer = setTimeout(function () {
         if (!press || press.resolved) return;
         press.resolved = "holdmove";
-        pushHistory();
-        flash("move " + TYPE_BY_ID[placements[press.placementIdx].type].name + " - drag to reposition");
+        press.moved = false;
+        var obj = placements[press.placementIdx];
+        press.origTick = obj.tick;
+        press.origRow = obj.row;
+        // Lift the icon 2 cells above wherever it's touched as soon as
+        // hold-move starts, so a finger doesn't just sit on top of it -
+        // purely a display change until an actual drag happens (see
+        // pointermove/endPress: released without moving, it reverts with
+        // no history entry, since nothing really changed).
+        obj.row = Math.max(0, obj.row - 2);
+        render();
+        flash("move " + TYPE_BY_ID[obj.type].name + " - drag to reposition");
       }, HOLD_MS);
     }
     grid.setPointerCapture(ev.pointerId);
@@ -1056,8 +1093,20 @@
       var c = cellFromEvent(ev);
       if (!c) return;
       var obj = placements[press.placementIdx];
+      if (!press.moved && (c.tick !== press.cell.tick || c.row !== press.cell.row)) {
+        // First real movement since the hold fired - snapshot the TRUE
+        // pre-drag position for undo, not the 2-cell "lifted" display
+        // position (which was never a real move by itself).
+        press.moved = true;
+        obj.tick = press.origTick;
+        obj.row = press.origRow;
+        pushHistory();
+      }
+      // The placement follows the icon's displayed position (2 cells
+      // above the finger), not the raw touch point, so it commits to
+      // wherever you can actually see it land.
       obj.tick = c.tick;
-      obj.row = c.row;
+      obj.row = Math.max(0, c.row - 2);
       render();
       return;
     }
@@ -1080,8 +1129,16 @@
     if (p.resolved === "pan") return;
     if (p.resolved === "holdmove") {
       var obj = placements[p.placementIdx];
-      placements.sort(function (a, b) { return a.tick - b.tick || a.row - b.row; });
-      flash("moved " + TYPE_BY_ID[obj.type].name + " to tick " + obj.tick + ", row " + obj.row);
+      if (p.moved) {
+        placements.sort(function (a, b) { return a.tick - b.tick || a.row - b.row; });
+        flash("moved " + TYPE_BY_ID[obj.type].name + " to tick " + obj.tick + ", row " + obj.row);
+      } else {
+        // Held without ever actually moving - snap back to the original
+        // cell instead of committing the 2-cell display lift as a move.
+        obj.tick = p.origTick;
+        obj.row = p.origRow;
+        render();
+      }
       showCellInfo(obj);
       return;
     }
