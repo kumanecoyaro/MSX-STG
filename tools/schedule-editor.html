@@ -653,6 +653,40 @@
     return -1;
   }
 
+  // The boss's real draw origin is clamped to stay on the grid (see
+  // drawBossBody's call site) - shared here so hit-testing agrees with
+  // wherever it actually got drawn, not with its raw stored tick/row.
+  function bossOrigin(tick, row) {
+    return {
+      tick: Math.max(0, Math.min(tick, MAX_TICK - 5)),
+      row: Math.max(0, Math.min(row, ROWS - 16))
+    };
+  }
+
+  // Every placement's real footprint in cells - Enemy3's 8x8 BG tile is
+  // exactly 1 cell, every other sprite is 16x16 (2x2 cells), the boss is
+  // its full 5x16 body. Tapping/inspecting/erasing needs to hit-test the
+  // whole visible icon, not just its anchor cell, now that icons are drawn
+  // at their real size instead of a uniform 1-cell swatch.
+  function footprintOf(p) {
+    var t = TYPE_BY_ID[p.type];
+    if (!t) return null;
+    if (p.type === "boss") {
+      var o = bossOrigin(p.tick, p.row);
+      return { t0: o.tick, t1: o.tick + 5, r0: o.row, r1: o.row + 16 };
+    }
+    var span = GLYPHS[t.glyph].size === 16 ? 2 : 1;
+    return { t0: p.tick, t1: p.tick + span, r0: p.row, r1: p.row + span };
+  }
+
+  function placementIndexAtCell(tick, row) {
+    for (var i = 0; i < placements.length; i++) {
+      var fp = footprintOf(placements[i]);
+      if (fp && tick >= fp.t0 && tick < fp.t1 && row >= fp.r0 && row < fp.r1) return i;
+    }
+    return -1;
+  }
+
   function setCell(tick, row, typeId) {
     var idx = placementAt(tick, row);
     if (idx >= 0) placements.splice(idx, 1);
@@ -844,11 +878,11 @@
         // The boss's real spawn position is fixed in-game - its row/tick
         // here only mark *when* it triggers, not where it appears - so
         // there's no "correct" pixel position to honor. Clamp the draw
-        // origin to stay fully on the grid instead of clipping the body
-        // against the bottom/right edge when placed near them.
-        var bx = Math.max(0, Math.min(x, (MAX_TICK - 5) * CELL));
-        var by = Math.max(0, Math.min(y, (ROWS - 16) * CELL));
-        drawBossBody(ctx, bx, by, CELL);
+        // origin (see bossOrigin) to stay fully on the grid instead of
+        // clipping the body against the bottom/right edge when placed
+        // near them.
+        var bo = bossOrigin(p.tick, p.row);
+        drawBossBody(ctx, bo.tick * CELL, bo.row * CELL, CELL);
         return;
       }
       var glyph = GLYPHS[t.glyph];
@@ -977,9 +1011,18 @@
     var c = cellFromEvent(ev);
     if (!c) return;
     if (eraseArmed) {
+      // Hit-test the tapped icon's real footprint, not just its anchor
+      // cell - a 16x16 sprite or the boss's body must erase from anywhere
+      // it's actually drawn, not only its top-left 8x8 cell.
+      var eraseIdx = placementIndexAtCell(c.tick, c.row);
+      if (eraseIdx < 0) {
+        flash("nothing there to erase");
+        return;
+      }
       pushHistory();
-      setCell(c.tick, c.row, null);
-      flash("erased tick " + c.tick + ", row " + c.row);
+      var erased = placements[eraseIdx];
+      placements.splice(eraseIdx, 1);
+      flash("erased " + TYPE_BY_ID[erased.type].name + " (tick " + erased.tick + ", row " + erased.row + ")");
       render();
       return;
     }
@@ -993,7 +1036,9 @@
     // neutral tap (nothing armed) on an already-placed cell - inspect only,
     // don't touch placements. Placing/erasing above never touch this
     // readout - it reflects what you tap to inspect, not what you just edited.
-    var idx = placementAt(c.tick, c.row);
+    // Hit-tests the icon's real footprint (see placementIndexAtCell), not
+    // just its anchor cell.
+    var idx = placementIndexAtCell(c.tick, c.row);
     if (idx >= 0) {
       showCellInfo(placements[idx]);
     } else {
