@@ -111,11 +111,24 @@
   #rowGutter { display: block; }
 
   .canvas-scroll {
+    position: relative;
     flex: 1 1 auto;
     overflow-x: auto;
     overflow-y: hidden;
     -webkit-overflow-scrolling: touch;
     background: var(--bg);
+  }
+  /* Sits over #grid at the same viewport position, showing only the one
+     placement currently being hold-move-dragged - see the "drag overlay"
+     JS comment near applyHoldMoveTarget for why this exists (redrawing the
+     full #grid, which spans the whole MAX_TICK-wide timeline, was too slow
+     to do on every pointermove on at least one real device). */
+  #dragOverlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    pointer-events: none;
+    display: none;
   }
   /* touch-action is permanently off, not toggled at drag-start - toggling
      it mid-gesture is unreliable (the browser can already have committed
@@ -352,6 +365,7 @@
       <div class="row-gutter-scroll"><canvas id="rowGutter"></canvas></div>
       <div class="canvas-scroll" id="canvasScroll">
         <canvas id="grid"></canvas>
+        <canvas id="dragOverlay"></canvas>
       </div>
     </div>
   </div>
@@ -793,6 +807,7 @@
   var ruler = document.getElementById("ruler");
   var rowGutter = document.getElementById("rowGutter");
   var grid = document.getElementById("grid");
+  var dragOverlay = document.getElementById("dragOverlay");
   var canvasScroll = document.getElementById("canvasScroll");
   var rulerScroll = document.querySelector(".ruler-scroll");
   var gridwrap = document.querySelector(".gridwrap");
@@ -908,7 +923,11 @@
     ctx.textAlign = "left";
   }
 
-  function drawGrid(ctx, w, h) {
+  // skipIdx: index into placements to leave undrawn - used while that one
+  // placement is being hold-move-dragged on the separate #dragOverlay (see
+  // beginDragOverlay), so the full grid isn't left showing it twice (once
+  // at its old spot here, once at its live spot on the overlay).
+  function drawGrid(ctx, w, h, skipIdx) {
     ctx.clearRect(0, 0, w, h);
     ctx.fillStyle = tok("--bg");
     ctx.fillRect(0, 0, w, h);
@@ -944,7 +963,8 @@
     // at its full real size (5x16 cells - see drawBossBody) instead of an
     // icon stand-in. Blitted from the offscreen caches above (getGlyphCanvas/
     // getBossCanvas) instead of redrawing bit-by-bit every time.
-    placements.forEach(function (p) {
+    placements.forEach(function (p, i) {
+      if (i === skipIdx) return;
       var t = TYPE_BY_ID[p.type];
       if (!t) return;
       var x = p.tick * CELL, y = p.row * CELL;
@@ -971,8 +991,8 @@
     ctx.font = "700 " + Math.max(8, Math.round(CELL * 0.36)) + "px " + tok("--font-mono").split(",")[0] + ", monospace";
     ctx.textAlign = "center";
     ctx.textBaseline = "bottom";
-    placements.forEach(function (p) {
-      if (p.type !== "enemy3_wave") return;
+    placements.forEach(function (p, i) {
+      if (i === skipIdx || p.type !== "enemy3_wave") return;
       var x = p.tick * CELL, y = p.row * CELL;
       var labelH = enemy3OffsetLabelH();
       ctx.strokeStyle = tok("--line");
@@ -1189,7 +1209,41 @@
     perfDebugEl.textContent =
       "moves: " + perfMoveCount +
       "\nmax gap between moves: " + perfMaxGapMs.toFixed(0) + "ms" +
-      "\nmax render() time: " + perfMaxRenderMs.toFixed(1) + "ms";
+      "\nmax overlay update time: " + perfMaxRenderMs.toFixed(1) + "ms";
+  }
+
+  // Small overlay canvas shown only while a placement is being hold-move-
+  // dragged: draws just that one icon, sized to the visible viewport, so a
+  // drag never has to redraw the full MAX_TICK-wide #grid canvas - measured
+  // on a real device (see perfDebug above) at ~281ms per full redraw, which
+  // is exactly why per-pointermove dragging was so laggy: every drag frame
+  // was paying that cost. #grid itself is redrawn (without this placement,
+  // via drawGrid's skipIdx) once when the drag starts, and once more (with
+  // the placement's final position baked in) when it ends - never in
+  // between.
+  var dragOverlayCtx = null;
+  function beginDragOverlay() {
+    var viewW = canvasScroll.clientWidth, viewH = ROWS * CELL;
+    dragOverlayCtx = sizeCanvas(dragOverlay, viewW, viewH);
+    dragOverlay.style.left = canvasScroll.scrollLeft + "px";
+    dragOverlay.style.display = "block";
+  }
+  function updateDragOverlay(obj) {
+    var viewW = canvasScroll.clientWidth, viewH = ROWS * CELL;
+    dragOverlayCtx.clearRect(0, 0, viewW, viewH);
+    var t = TYPE_BY_ID[obj.type];
+    if (obj.type === "boss") {
+      var bo = bossOrigin(obj.tick, obj.row);
+      dragOverlayCtx.drawImage(getBossCanvas(CELL), bo.tick * CELL - canvasScroll.scrollLeft, bo.row * CELL, 5 * CELL, 16 * CELL);
+      return;
+    }
+    var glyph = GLYPHS[t.glyph];
+    var box = glyph.size === 16 ? CELL * 2 : CELL;
+    dragOverlayCtx.drawImage(getGlyphCanvas(t.glyph, box), obj.tick * CELL - canvasScroll.scrollLeft, obj.row * CELL, box, box);
+  }
+  function endDragOverlay() {
+    dragOverlay.style.display = "none";
+    dragOverlayCtx = null;
   }
 
   function applyHoldMoveTarget(press, ev) {
@@ -1197,15 +1251,8 @@
     var lifted = liftedCellFromEvent(obj, ev);
     obj.tick = lifted.tick;
     obj.row = lifted.row;
-    // Draws synchronously, not via requestAnimationFrame - inside the
-    // claude.ai Artifact iframe, rAF is suspected to be heavily throttled
-    // (plausibly treated as background/non-visible), which turned "coalesce
-    // into one render per frame" into "one render per second or so" -
-    // exactly the multi-second drag lag that was reported. The batched
-    // strokes and cached glyph/boss canvases above make each render() call
-    // itself cheap enough to just call directly, every event.
     var renderStart = performance.now();
-    render();
+    updateDragOverlay(obj);
     var renderMs = performance.now() - renderStart;
     if (renderMs > perfMaxRenderMs) perfMaxRenderMs = renderMs;
     perfShow();
@@ -1250,6 +1297,12 @@
         // first (automatic) lift - if the finger never really moves, this
         // is exactly the entry endPress below pops to revert the preview.
         pushHistory();
+        // Redraw the full grid once with this placement hidden (it's about
+        // to live on the overlay instead), then hand off to the overlay for
+        // every move from here until release - see beginDragOverlay's
+        // comment on applyHoldMoveTarget for why.
+        render(press.placementIdx);
+        beginDragOverlay();
         // Jump to the lifted position immediately, using the most recent
         // pointer coordinates - a finger held perfectly still since
         // pointerdown should still see the icon pop up above it right
@@ -1298,6 +1351,7 @@
     inspectHandledByPointer = true;
     if (p.resolved === "pan") return;
     if (p.resolved === "holdmove") {
+      endDragOverlay();
       if (!p.moved) {
         // The finger never actually left its starting cell - the lift was
         // only a preview. Pop the history entry pushed at hold-fire to put
@@ -1313,6 +1367,10 @@
       }
       var obj = placements[p.placementIdx];
       placements.sort(function (a, b) { return a.tick - b.tick || a.row - b.row; });
+      // Bake the placement's final position back into the full grid - it
+      // was only ever drawn on the overlay (now hidden) while the drag was
+      // in progress.
+      render();
       flash("moved " + TYPE_BY_ID[obj.type].name + " to tick " + obj.tick + ", row " + obj.row);
       showCellInfo(obj);
       return;
@@ -1365,6 +1423,16 @@
   grid.addEventListener("pointercancel", function (ev) {
     if (!press || ev.pointerId !== press.pointerId) return;
     clearTimeout(press.holdTimer);
+    if (press.resolved === "holdmove") {
+      // Same treatment as a stationary hold+release (endPress's !p.moved
+      // branch): pop the single history entry the hold pushed and restore
+      // the full grid, so a cancelled gesture never leaves the placement
+      // stuck at a half-dragged position or the overlay stuck on-screen.
+      placements = history.pop();
+      btnUndo.disabled = history.length === 0;
+      endDragOverlay();
+      render();
+    }
     press = null;
   });
 
@@ -1494,10 +1562,10 @@
     flashTimer = setTimeout(function () { liveMsg.classList.remove("show"); }, 1800);
   }
 
-  function render() {
+  function render(skipIdx) {
     var gctx = grid.getContext("2d");
     gctx.setTransform(DPR, 0, 0, DPR, 0, 0);
-    drawGrid(gctx, MAX_TICK * CELL, ROWS * CELL);
+    drawGrid(gctx, MAX_TICK * CELL, ROWS * CELL, skipIdx);
   }
 
   // ---------- boot ----------
