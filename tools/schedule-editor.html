@@ -181,6 +181,25 @@
     justify-content: center;
   }
   .side-actions button.half { width: 35px; }
+  /* Pure layout spacer, no min-content width of its own - pushes the
+     left/right scroll buttons flush to the row's right edge without
+     giving any button a size that depends on available width. */
+  .spacer { flex: 1 1 auto; }
+  /* Several enemy types render the exact same icon (see GLYPHS.asterisk16's
+     comment) - this is where a tapped placed cell's real type + position
+     shows up, since the grid icon alone can't tell them apart. */
+  .cell-info {
+    flex: 1 1 auto;
+    min-width: 0;
+    padding-left: 8px;
+    font-size: 11px;
+    color: var(--ink-dim);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: flex;
+    align-items: center;
+  }
 
   .palette {
     overflow-y: auto;
@@ -331,12 +350,14 @@
         <button class="primary" id="btnSave">Save JSON</button>
         <button class="danger-btn" id="btnErase">Erase</button>
         <button id="btnUndo" disabled>Undo</button>
+        <div class="spacer"></div>
         <button class="half" id="btnPrev" title="Scroll back one screen (32 ticks)">◀</button>
         <button class="half" id="btnNext" title="Scroll forward one screen (32 ticks)">▶</button>
       </div>
       <div class="btn-row">
         <label class="btn-label" for="fileInput">Load JSON</label>
         <input type="file" id="fileInput" accept=".json,application/json" hidden>
+        <div class="cell-info" id="cellInfo" title="Tap a placed cell on the grid to identify it - several types share the same icon"></div>
       </div>
     </div>
 
@@ -934,6 +955,18 @@
     if (ev.target === offsetOverlay) offsetOverlay.classList.remove("show");
   });
 
+  // Several enemy types share the exact same icon (see GLYPHS.asterisk16's
+  // comment), so the grid alone can't tell them apart - this readout shows
+  // a tapped cell's real type + position, next to Load JSON.
+  var cellInfoEl = document.getElementById("cellInfo");
+  function showCellInfo(p) {
+    var t = TYPE_BY_ID[p.type];
+    cellInfoEl.textContent = t ? (t.name + " · tick " + p.tick + " row " + p.row) : "";
+  }
+  function clearCellInfo() {
+    cellInfoEl.textContent = "";
+  }
+
   grid.addEventListener("click", function (ev) {
     var rect = grid.getBoundingClientRect();
     var offsetHit = enemy3OffsetHitTest(ev.clientX - rect.left, ev.clientY - rect.top);
@@ -947,15 +980,26 @@
       pushHistory();
       setCell(c.tick, c.row, null);
       flash("erased tick " + c.tick + ", row " + c.row);
-    } else if (armedType) {
+      clearCellInfo();
+      render();
+      return;
+    }
+    if (armedType) {
       pushHistory();
       setCell(c.tick, c.row, armedType);
       flash(TYPE_BY_ID[armedType].name + " → tick " + c.tick + ", row " + c.row);
-    } else {
-      flash("pick an enemy on the right first");
+      showCellInfo({ tick: c.tick, row: c.row, type: armedType });
+      render();
       return;
     }
-    render();
+    // neutral tap (nothing armed) - inspect only, don't touch placements.
+    var idx = placementAt(c.tick, c.row);
+    if (idx >= 0) {
+      showCellInfo(placements[idx]);
+    } else {
+      clearCellInfo();
+      flash("pick an enemy on the right first");
+    }
   });
 
   // keep the ruler in sync with the scrollable grid (this is the "swipe" pan)
