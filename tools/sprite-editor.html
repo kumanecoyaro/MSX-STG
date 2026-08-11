@@ -82,7 +82,11 @@
     background: var(--surface);
     border: 1px solid var(--line);
     border-radius: 10px;
-    padding: 16px;
+    /* One full cell (26px) of breathing room on every side, not just a
+       generic padding value - a corner pixel flush against the panel
+       edge is hard to hit with a finger near the physical screen edge,
+       so the whole grid sits inset from it instead. */
+    padding: 26px;
   }
   .grid {
     display: grid;
@@ -121,7 +125,6 @@
     display: flex;
     flex-direction: column;
     min-height: 0;
-    overflow-y: auto;
   }
   .side-title {
     padding: 10px 12px 8px;
@@ -144,6 +147,16 @@
     border-bottom: 1px solid var(--line);
     flex: 0 0 auto;
   }
+  /* The output section is the only one allowed to grow/shrink - actions
+     and color-picking are fixed-height, everything fits in one viewport
+     (like schedule-editor.html's sidebar) with no inner scrollbar. */
+  .side-section.output-section {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    border-bottom: none;
+  }
   .side-section .section-label {
     font-size: 10px;
     color: var(--ink-dim);
@@ -153,11 +166,23 @@
   }
   .btn-row { display: flex; gap: 6px; flex-wrap: wrap; }
   .btn-row + .btn-row { margin-top: 6px; }
-  .side-section button, .side-section .btn-label { flex: 1 1 0; height: 32px; padding: 0 6px; }
+  /* min-width:0, not just flex:1 1 0 - a flex item's automatic minimum
+     width is its content's min-content size unless overridden, same
+     class of overflow the palette grid hit (see minmax(0,1fr) above) -
+     without this, 3 buttons with Japanese labels in one row push past
+     the sidebar's edge instead of shrinking evenly. */
+  .side-section button, .side-section .btn-label {
+    flex: 1 1 0;
+    min-width: 0;
+    height: 32px;
+    padding: 0 4px;
+    font-size: 11px;
+  }
 
   .color-target-row { display: flex; gap: 6px; }
   .color-target {
     flex: 1 1 0;
+    min-width: 0;
     display: flex;
     align-items: center;
     gap: 6px;
@@ -203,7 +228,8 @@
   }
   #output {
     width: 100%;
-    min-height: 200px;
+    flex: 1 1 auto;
+    min-height: 60px;
     font-family: var(--font-mono);
     font-size: 12px;
     line-height: 1.5;
@@ -302,16 +328,14 @@
       <div class="section-label">Actions</div>
       <div class="btn-row">
         <button class="primary" id="btnSave">Save JSON</button>
-        <button id="btnUndo" disabled>Undo</button>
-      </div>
-      <div class="btn-row">
         <label class="btn-label" for="fileInput">Load JSON</label>
         <input type="file" id="fileInput" accept=".json" hidden>
-        <button id="btnCopy">Copy 0/1</button>
+        <button id="btnUndo" disabled>Undo</button>
       </div>
       <div class="btn-row">
         <button id="btnClear">全部背景色</button>
         <button id="btnFill">全部文字色</button>
+        <button id="btnCopy">Copy 0/1</button>
       </div>
     </div>
 
@@ -324,7 +348,7 @@
       <div class="palette" id="palette"></div>
     </div>
 
-    <div class="side-section" style="flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0;">
+    <div class="side-section output-section">
       <div class="output-label">出力(0/1・全角)</div>
       <textarea id="output" readonly spellcheck="false"></textarea>
     </div>
