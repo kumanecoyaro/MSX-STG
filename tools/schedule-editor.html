@@ -1022,8 +1022,14 @@
   var HOLD_MS = 400;
   var MOVE_CANCEL = 10;
   var press = null; // {pointerId, startX, startY, startScrollLeft, cell, offsetHit, placementIdx, resolved, holdTimer}
+  // Set once per gesture when pointerup's neutral-tap branch below already
+  // handled the inspect readout - lets the native-click fallback (further
+  // down) skip re-running it and double-flashing on setups where pointer
+  // events work fine.
+  var inspectHandledByPointer = false;
 
   grid.addEventListener("pointerdown", function (ev) {
+    inspectHandledByPointer = false;
     var rect = grid.getBoundingClientRect();
     var offsetHit = enemy3OffsetHitTest(ev.clientX - rect.left, ev.clientY - rect.top);
     var c = cellFromEvent(ev);
@@ -1125,12 +1131,35 @@
       clearCellInfo();
       flash("pick an enemy on the right first");
     }
+    inspectHandledByPointer = true;
   }
   grid.addEventListener("pointerup", endPress);
   grid.addEventListener("pointercancel", function (ev) {
     if (!press || ev.pointerId !== press.pointerId) return;
     clearTimeout(press.holdTimer);
     press = null;
+  });
+
+  // Fallback for the inspect readout: the browser synthesizes a real
+  // 'click' from a tap independently of our own pointerdown/move/up gesture
+  // state machine above, so this keeps "tap a placed cell to identify it"
+  // working even on devices where that custom pointer tracking misbehaves
+  // (inspectHandledByPointer skips this when pointerup already did the job,
+  // so working setups don't double-flash).
+  grid.addEventListener("click", function (ev) {
+    if (inspectHandledByPointer) { inspectHandledByPointer = false; return; }
+    if (eraseArmed || armedType) return;
+    var rect = grid.getBoundingClientRect();
+    if (enemy3OffsetHitTest(ev.clientX - rect.left, ev.clientY - rect.top) !== null) return;
+    var c = cellFromEvent(ev);
+    if (!c) return;
+    var idx = placementIndexAtCell(c.tick, c.row);
+    if (idx >= 0) {
+      showCellInfo(placements[idx]);
+    } else {
+      clearCellInfo();
+      flash("pick an enemy on the right first");
+    }
   });
 
   // keep the ruler in sync with the scrollable grid (this is the "swipe" pan)
