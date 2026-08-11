@@ -1277,8 +1277,53 @@
     };
   }
 
+  // #grid has touch-action:none and panning is driven entirely by JS
+  // setting canvasScroll.scrollLeft directly (see the pan branches below) -
+  // that's a 1:1 finger-to-scroll mapping with none of a native scroll's
+  // momentum, so a fast flick just stopped dead the instant the finger
+  // lifted. This restores that: track the pan's recent velocity and, on
+  // release, keep scrolling with it, decelerating, like a normal browser
+  // scroll would.
+  function trackPanVelocity(press, ev) {
+    var now = performance.now();
+    if (press.lastMoveT) {
+      var dt = now - press.lastMoveT;
+      if (dt > 0) press.velX = (ev.clientX - press.lastMoveX) / dt;
+    }
+    press.lastMoveT = now;
+    press.lastMoveX = ev.clientX;
+  }
+
+  var MOMENTUM_DECAY_PER_16MS = 0.94;
+  var MOMENTUM_STOP_VELOCITY = 0.02; // px/ms
+  var momentumRAF = null;
+  function stopMomentum() {
+    if (momentumRAF !== null) {
+      cancelAnimationFrame(momentumRAF);
+      momentumRAF = null;
+    }
+  }
+  function startMomentum(velX) {
+    stopMomentum();
+    if (!velX || Math.abs(velX) < MOMENTUM_STOP_VELOCITY) return;
+    var lastT = performance.now();
+    function step(now) {
+      var dt = now - lastT;
+      lastT = now;
+      canvasScroll.scrollLeft -= velX * dt;
+      velX *= Math.pow(MOMENTUM_DECAY_PER_16MS, dt / 16);
+      if (Math.abs(velX) < MOMENTUM_STOP_VELOCITY) {
+        momentumRAF = null;
+        return;
+      }
+      momentumRAF = requestAnimationFrame(step);
+    }
+    momentumRAF = requestAnimationFrame(step);
+  }
+
   grid.addEventListener("pointerdown", function (ev) {
     inspectHandledByPointer = false;
+    stopMomentum();
     var rect = grid.getBoundingClientRect();
     var offsetHit = enemy3OffsetHitTest(ev.clientX - rect.left + canvasScroll.scrollLeft, ev.clientY - rect.top);
     var c = cellFromEvent(ev);
@@ -1294,7 +1339,14 @@
       placementIdx: (!eraseArmed && !armedType && c) ? placementIndexAtCell(c.tick, c.row) : -1,
       resolved: null,
       holdTimer: null,
-      moved: false
+      moved: false,
+      // Velocity (px/ms) of the pan itself, from the most recent two
+      // pointermove samples only - not the whole gesture's average, so a
+      // slow drag that ends in a quick flick still hands off the flick's
+      // speed to the momentum animation on release, not a diluted one.
+      velX: 0,
+      lastMoveT: 0,
+      lastMoveX: ev.clientX
     };
     if (press.placementIdx >= 0) {
       press.holdTimer = setTimeout(function () {
@@ -1333,12 +1385,14 @@
       return;
     }
     if (press.resolved === "pan") {
+      trackPanVelocity(press, ev);
       canvasScroll.scrollLeft = press.startScrollLeft - dx;
       return;
     }
     if (Math.hypot(dx, dy) > jitterTolerance()) {
       clearTimeout(press.holdTimer);
       press.resolved = "pan";
+      trackPanVelocity(press, ev);
       canvasScroll.scrollLeft = press.startScrollLeft - dx;
     }
   });
@@ -1355,7 +1409,10 @@
     // against stale coordinates once a holdmove has already relocated the
     // placement out from under them.
     inspectHandledByPointer = true;
-    if (p.resolved === "pan") return;
+    if (p.resolved === "pan") {
+      startMomentum(p.velX);
+      return;
+    }
     if (p.resolved === "holdmove") {
       endDragOverlay();
       if (!p.moved) {
