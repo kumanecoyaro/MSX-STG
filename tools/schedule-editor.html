@@ -808,6 +808,37 @@
     return ctx;
   }
 
+  // drawGlyph/drawBossBody paint bit-by-bit via one fillRect per pixel (up
+  // to a few hundred calls for a single 16x16 sprite, thousands for the
+  // boss's 5x16-tile body) - fine once, but drawGrid below repaints every
+  // placement on every render(), including on each pointermove during a
+  // hold-move drag, and that per-pixel cost was most of the visible lag.
+  // Render each distinct glyph/boss-body once into an offscreen canvas at
+  // its current CELL size and blit it after that with a single drawImage -
+  // caches are keyed (invalidated) by size so a layout()-driven CELL change
+  // regenerates them instead of reusing stale art.
+  var glyphCanvasCache = {};
+  function getGlyphCanvas(glyphKey, boxCss) {
+    var key = glyphKey + "@" + boxCss;
+    var cached = glyphCanvasCache[key];
+    if (cached) return cached;
+    var cv = document.createElement("canvas");
+    var ctx = sizeCanvas(cv, boxCss, boxCss);
+    drawGlyph(ctx, GLYPHS[glyphKey], 0, 0, boxCss, boxCss);
+    glyphCanvasCache[key] = cv;
+    return cv;
+  }
+  var bossCanvasCache = null, bossCanvasCacheCell = null;
+  function getBossCanvas(cellPx) {
+    if (bossCanvasCache && bossCanvasCacheCell === cellPx) return bossCanvasCache;
+    var cv = document.createElement("canvas");
+    var ctx = sizeCanvas(cv, 5 * cellPx, 16 * cellPx);
+    drawBossBody(ctx, 0, 0, cellPx);
+    bossCanvasCache = cv;
+    bossCanvasCacheCell = cellPx;
+    return cv;
+  }
+
   function layout() {
     // all 24 rows must fit in the vertical space left after the ruler - compute
     // the cell size from the available height instead of a fixed pixel value.
@@ -832,20 +863,23 @@
     ctx.fillRect(0, 0, w, h);
     ctx.font = "9.5px " + tok("--font-mono").split(",")[0] + ", monospace";
     ctx.textBaseline = "middle";
+    // One stroke() call per tick color instead of ~400 - a separate
+    // beginPath/stroke per tick mark was most of this function's cost.
+    var regular = new Path2D(), strong = new Path2D();
+    ctx.fillStyle = tok("--ink");
     for (var t = 0; t <= MAX_TICK; t += 1) {
-      var x = t * CELL;
-      var strong = t % 32 === 0;
-      ctx.strokeStyle = strong ? tok("--grid-line-strong") : tok("--grid-line");
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.moveTo(x + 0.5, h - (strong ? 10 : 5));
-      ctx.lineTo(x + 0.5, h);
-      ctx.stroke();
-      if (t % 32 === 0) {
-        ctx.fillStyle = tok("--ink");
-        ctx.fillText(String(t), x + 3, h - 13);
-      }
+      var x = t * CELL + 0.5;
+      var isStrong = t % 32 === 0;
+      var p = isStrong ? strong : regular;
+      p.moveTo(x, h - (isStrong ? 10 : 5));
+      p.lineTo(x, h);
+      if (isStrong) ctx.fillText(String(t), x + 2.5, h - 13);
     }
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = tok("--grid-line");
+    ctx.stroke(regular);
+    ctx.strokeStyle = tok("--grid-line-strong");
+    ctx.stroke(strong);
     ctx.strokeStyle = tok("--line");
     ctx.beginPath();
     ctx.moveTo(0, h - 0.5);
@@ -860,16 +894,16 @@
     ctx.font = "9.5px " + tok("--font-mono").split(",")[0] + ", monospace";
     ctx.textAlign = "right";
     ctx.textBaseline = "middle";
+    ctx.fillStyle = tok("--ink-dim");
+    var ticks = new Path2D();
     for (var r = 0; r < ROWS; r++) {
       var y = r * CELL;
-      ctx.fillStyle = tok("--ink-dim");
       ctx.fillText(String(r), w - 7, y + CELL / 2);
-      ctx.strokeStyle = tok("--grid-line");
-      ctx.beginPath();
-      ctx.moveTo(w - 5, y + 0.5);
-      ctx.lineTo(w, y + 0.5);
-      ctx.stroke();
+      ticks.moveTo(w - 5, y + 0.5);
+      ticks.lineTo(w, y + 0.5);
     }
+    ctx.strokeStyle = tok("--grid-line");
+    ctx.stroke(ticks);
     ctx.textAlign = "left";
   }
 
@@ -878,23 +912,28 @@
     ctx.fillStyle = tok("--bg");
     ctx.fillRect(0, 0, w, h);
 
-    // 8px-equivalent cell grid, in blue, per spec
+    // 8px-equivalent cell grid, in blue, per spec. One stroke() call per
+    // line color instead of one per line (~425 calls for a 400x24 grid) -
+    // each stroke() has real fixed overhead regardless of line length, and
+    // this ran on every render(), including every pointermove while
+    // dragging a placement.
+    var regular = new Path2D(), strong = new Path2D();
     for (var c = 0; c <= MAX_TICK; c++) {
-      var strong = c % 32 === 0;
-      ctx.strokeStyle = strong ? tok("--grid-line-strong") : tok("--grid-line");
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.moveTo(c * CELL + 0.5, 0);
-      ctx.lineTo(c * CELL + 0.5, h);
-      ctx.stroke();
+      var p = (c % 32 === 0) ? strong : regular;
+      var x = c * CELL + 0.5;
+      p.moveTo(x, 0);
+      p.lineTo(x, h);
     }
     for (var rr = 0; rr <= ROWS; rr++) {
-      ctx.strokeStyle = tok("--grid-line");
-      ctx.beginPath();
-      ctx.moveTo(0, rr * CELL + 0.5);
-      ctx.lineTo(w, rr * CELL + 0.5);
-      ctx.stroke();
+      var y = rr * CELL + 0.5;
+      regular.moveTo(0, y);
+      regular.lineTo(w, y);
     }
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = tok("--grid-line");
+    ctx.stroke(regular);
+    ctx.strokeStyle = tok("--grid-line-strong");
+    ctx.stroke(strong);
 
     // placed enemies - each drawn as its real in-game glyph (see GLYPHS), no
     // synthetic color coding, top-left anchored at (tick,row) since that's
@@ -902,7 +941,8 @@
     // footprint: Enemy3's 8x8 BG tile fills exactly one cell, everything
     // else is a 16x16 sprite and fills exactly 2x2 cells. The boss is drawn
     // at its full real size (5x16 cells - see drawBossBody) instead of an
-    // icon stand-in.
+    // icon stand-in. Blitted from the offscreen caches above (getGlyphCanvas/
+    // getBossCanvas) instead of redrawing bit-by-bit every time.
     placements.forEach(function (p) {
       var t = TYPE_BY_ID[p.type];
       if (!t) return;
@@ -915,12 +955,12 @@
         // clipping the body against the bottom/right edge when placed
         // near them.
         var bo = bossOrigin(p.tick, p.row);
-        drawBossBody(ctx, bo.tick * CELL, bo.row * CELL, CELL);
+        ctx.drawImage(getBossCanvas(CELL), bo.tick * CELL, bo.row * CELL, 5 * CELL, 16 * CELL);
         return;
       }
       var glyph = GLYPHS[t.glyph];
       var box = glyph.size === 16 ? CELL * 2 : CELL;
-      drawGlyph(ctx, glyph, x, y, box, box);
+      ctx.drawImage(getGlyphCanvas(t.glyph, box), x, y, box, box);
     });
 
     // Each enemy3_wave cell's own offset (cells, 8px each - see
@@ -1124,7 +1164,7 @@
     var lifted = liftedCellFromEvent(obj, ev);
     obj.tick = lifted.tick;
     obj.row = lifted.row;
-    render();
+    scheduleRender();
   }
 
   // Same-cell wobble (a real finger resting on a placement never sits
@@ -1412,6 +1452,21 @@
     var gctx = grid.getContext("2d");
     gctx.setTransform(DPR, 0, 0, DPR, 0, 0);
     drawGrid(gctx, MAX_TICK * CELL, ROWS * CELL);
+  }
+
+  // A hold-move drag can fire pointermove faster than the display refreshes
+  // (especially on touch) - calling render() straight from each event drew
+  // the same frame more than once for no visible benefit, on top of
+  // whatever the event itself cost. Coalesce into at most one render per
+  // animation frame instead.
+  var renderScheduled = false;
+  function scheduleRender() {
+    if (renderScheduled) return;
+    renderScheduled = true;
+    requestAnimationFrame(function () {
+      renderScheduled = false;
+      render();
+    });
   }
 
   // ---------- boot ----------
