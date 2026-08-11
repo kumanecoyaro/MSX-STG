@@ -365,8 +365,8 @@
     <div class="side-actions">
       <div class="btn-row">
         <button class="primary" id="btnSave">Save JSON</button>
-        <button id="btnDeselect">Deselect</button>
         <button class="danger-btn" id="btnErase">Erase</button>
+        <button id="btnDeselect">Deselect</button>
         <button id="btnUndo" disabled>Undo</button>
         <div class="spacer"></div>
         <button class="half" id="btnPrev" title="Scroll back one screen (32 ticks)">◀</button>
@@ -1058,9 +1058,9 @@
 
   // Every gesture on the grid starts undecided and resolves into exactly
   // one of three things by the time it ends:
-  //   - pan: moved past MOVE_CANCEL before the hold timer fired - scrolls
-  //     the grid (driven here in JS - see #grid's touch-action:none) and
-  //     does nothing else, whatever mode was armed.
+  //   - pan: moved past the jitter tolerance before the hold timer fired -
+  //     scrolls the grid (driven here in JS - see #grid's touch-action:none)
+  //     and does nothing else, whatever mode was armed.
   //   - holdmove: pressed on an existing placement, held still for
   //     HOLD_MS, then dragged - repositions it.
   //   - tap: released without enough movement to become a pan, and
@@ -1070,13 +1070,67 @@
   // swipe that starts in erase/place mode from erasing/placing at the
   // touch-start point before the swipe is even recognized.
   var HOLD_MS = 400;
+  // A real finger isn't a mouse - it wobbles a few px even when the user
+  // means to hold perfectly still, and that wobble was enough to cancel
+  // the hold timer and fall into "pan" instead before it ever fired. Any
+  // movement that stays inside the starting cell is not a real move, so
+  // tie the cancel threshold to the current cell size instead of a fixed
+  // small pixel count.
   var MOVE_CANCEL = 10;
-  var press = null; // {pointerId, startX, startY, startScrollLeft, cell, offsetHit, placementIdx, resolved, holdTimer}
+  function jitterTolerance() { return Math.max(MOVE_CANCEL, CELL); }
+  // Once a hold resolves into holdmove, the placement jumps to sit this
+  // many cells above wherever the finger actually is and tracks it from
+  // there - on a touchscreen the finger itself covers whatever's directly
+  // under it, so dragging a real finger over its own placement is unusable
+  // without an offset like this.
+  var HOLD_LIFT_ROWS = 2;
+  var press = null; // {pointerId, startX, startY, lastX, lastY, startScrollLeft, cell, offsetHit, placementIdx, resolved, holdTimer, moved}
   // Set once per gesture when pointerup's neutral-tap branch below already
   // handled the inspect readout - lets the native-click fallback (further
   // down) skip re-running it and double-flashing on setups where pointer
   // events work fine.
   var inspectHandledByPointer = false;
+
+  // Same idea as cellFromEvent, but for the holdmove target: offset
+  // HOLD_LIFT_ROWS above wherever the pointer actually is, clamped onto the
+  // grid instead of rejected when that puts it off-grid (cellFromEvent's
+  // null-outside-grid behavior is for taps, not for a lifted drag target
+  // whose underlying finger position may legitimately be off the top edge
+  // once lifted).
+  function liftedCellFromEvent(ev) {
+    var rect = grid.getBoundingClientRect();
+    var col = Math.floor((ev.clientX - rect.left) / CELL);
+    var row = Math.floor((ev.clientY - rect.top) / CELL) - HOLD_LIFT_ROWS;
+    col = Math.max(0, Math.min(col, MAX_TICK - 1));
+    row = Math.max(0, Math.min(row, ROWS - 1));
+    return { tick: col, row: row };
+  }
+
+  // The lifted target always tracks the raw finger position (offset by
+  // HOLD_LIFT_ROWS), from the instant the hold fires - even before any
+  // further movement, so the "picked up" feedback is immediate. Whether
+  // that's a real drag or just a stationary hold that happened to cross
+  // HOLD_MS is a separate question, tracked by comparing the raw (un-lifted)
+  // pointer cell against where the gesture actually started - see
+  // press.moved below.
+  function applyHoldMoveTarget(press, ev) {
+    var obj = placements[press.placementIdx];
+    var lifted = liftedCellFromEvent(ev);
+    obj.tick = lifted.tick;
+    obj.row = lifted.row;
+    render();
+  }
+
+  // Same-cell wobble (a real finger resting on a placement never sits
+  // perfectly still) isn't a real move - only count it once the raw
+  // pointer cell actually leaves the cell the gesture started in.
+  function rawCellFromEvent(ev) {
+    var rect = grid.getBoundingClientRect();
+    return {
+      tick: Math.floor((ev.clientX - rect.left) / CELL),
+      row: Math.floor((ev.clientY - rect.top) / CELL)
+    };
+  }
 
   grid.addEventListener("pointerdown", function (ev) {
     inspectHandledByPointer = false;
@@ -1087,18 +1141,29 @@
       pointerId: ev.pointerId,
       startX: ev.clientX,
       startY: ev.clientY,
+      lastX: ev.clientX,
+      lastY: ev.clientY,
       startScrollLeft: canvasScroll.scrollLeft,
       cell: c,
       offsetHit: offsetHit,
       placementIdx: (!eraseArmed && !armedType && c) ? placementIndexAtCell(c.tick, c.row) : -1,
       resolved: null,
-      holdTimer: null
+      holdTimer: null,
+      moved: false
     };
     if (press.placementIdx >= 0) {
       press.holdTimer = setTimeout(function () {
         if (!press || press.resolved) return;
         press.resolved = "holdmove";
+        // One history entry for the whole gesture, pushed before the very
+        // first (automatic) lift - if the finger never really moves, this
+        // is exactly the entry endPress below pops to revert the preview.
         pushHistory();
+        // Jump to the lifted position immediately, using the most recent
+        // pointer coordinates - a finger held perfectly still since
+        // pointerdown should still see the icon pop up above it right
+        // away, not wait for the next move event.
+        applyHoldMoveTarget(press, { clientX: press.lastX, clientY: press.lastY });
         flash("move " + TYPE_BY_ID[placements[press.placementIdx].type].name + " - drag to reposition");
       }, HOLD_MS);
     }
@@ -1107,21 +1172,20 @@
 
   grid.addEventListener("pointermove", function (ev) {
     if (!press || ev.pointerId !== press.pointerId) return;
+    press.lastX = ev.clientX;
+    press.lastY = ev.clientY;
     var dx = ev.clientX - press.startX, dy = ev.clientY - press.startY;
     if (press.resolved === "holdmove") {
-      var c = cellFromEvent(ev);
-      if (!c) return;
-      var obj = placements[press.placementIdx];
-      obj.tick = c.tick;
-      obj.row = c.row;
-      render();
+      var raw = rawCellFromEvent(ev);
+      if (raw.tick !== press.cell.tick || raw.row !== press.cell.row) press.moved = true;
+      applyHoldMoveTarget(press, ev);
       return;
     }
     if (press.resolved === "pan") {
       canvasScroll.scrollLeft = press.startScrollLeft - dx;
       return;
     }
-    if (Math.hypot(dx, dy) > MOVE_CANCEL) {
+    if (Math.hypot(dx, dy) > jitterTolerance()) {
       clearTimeout(press.holdTimer);
       press.resolved = "pan";
       canvasScroll.scrollLeft = press.startScrollLeft - dx;
@@ -1133,8 +1197,28 @@
     clearTimeout(press.holdTimer);
     var p = press;
     press = null;
+    // The browser fires a native 'click' right after this pointerup even
+    // when pointer events already fully resolved the gesture (pan or
+    // holdmove included) - mark it handled unconditionally here so the
+    // click-fallback below never re-runs its own (inspect-only) hit-test
+    // against stale coordinates once a holdmove has already relocated the
+    // placement out from under them.
+    inspectHandledByPointer = true;
     if (p.resolved === "pan") return;
     if (p.resolved === "holdmove") {
+      if (!p.moved) {
+        // The finger never actually left its starting cell - the lift was
+        // only a preview. Pop the history entry pushed at hold-fire to put
+        // the placement back exactly where it was, so a stationary
+        // hold+release is a true no-op on the grid: the same result a
+        // plain tap would have given (inspect only), not a bogus "moved to
+        // tick X row Y" confirmation or an accidental re-place/erase.
+        placements = history.pop();
+        btnUndo.disabled = history.length === 0;
+        render();
+        showCellInfo(placements[p.placementIdx]);
+        return;
+      }
       var obj = placements[p.placementIdx];
       placements.sort(function (a, b) { return a.tick - b.tick || a.row - b.row; });
       flash("moved " + TYPE_BY_ID[obj.type].name + " to tick " + obj.tick + ", row " + obj.row);
@@ -1184,7 +1268,6 @@
       clearCellInfo();
       flash("pick an enemy on the right first");
     }
-    inspectHandledByPointer = true;
   }
   grid.addEventListener("pointerup", endPress);
   grid.addEventListener("pointercancel", function (ev) {
