@@ -516,21 +516,18 @@ ENEMY3_CENTERX_TABLE EQU 0EE98h
 ; --- wider) - straight left drift, stepping one column (8px) every    ---
 ; --- ENEMY6_STEP_FRAMES frames. Glyph is NEWENEMY_CODE_TL/TR/BL/BR    ---
 ; --- (see their own comment, near NEWENEMY_PATTERN_*) - already       ---
-; --- loaded into VRAM at boot. Spawns on its own independent timer,   ---
-; --- not yet wired into the big 79-entry SPAWN_THRESHOLDS schedule    ---
-; --- (see the schedule editor for that follow-up once this movement   ---
-; --- is confirmed on real hardware).                                  ---
+; --- loaded into VRAM at boot. Spawns from the schedule now (SPAWN_E6,---
+; --- any row via ENEMY6_ROW_TABLE - same "any row" idea as SPAWN_E4/  ---
+; --- SPAWN_BASEY_TABLE, just a raw row number instead of a pixel      ---
+; --- baseY since ENEMY6_POOL already tracks ROW as a row, not a Y).   ---
 ENEMY6_SLOTS  EQU 4
 ENEMY6_STRUCT EQU 4             ; ACTIVE,ROW,COL,PHASE (COL = left column of the 2-wide glyph;
                                  ; PHASE = 0/1/2/3, index into ENEMY6_ANIM_CODES - advances
                                  ; one step every 1-cell move, see ENEMY6_STEP_ONE)
-ENEMY6_POOL   EQU 0EF00h        ; ENEMY6_SLOTS*ENEMY6_STRUCT = 12 bytes
+ENEMY6_POOL   EQU 0EF00h        ; ENEMY6_SLOTS*ENEMY6_STRUCT = 16 bytes
 ENEMY6_SPAWN_COL    EQU 30      ; matches ENEMY_SPAWNX/ENEMY4_SPAWNX(240) = col30
 ENEMY6_STEP_FRAMES  EQU 1       ; frames held per 1-column step (1 = fastest possible: every frame)
-ENEMY6_SPAWN_FRAMES EQU 240     ; frames between spawn attempts (~4s at 60fps)
 ENEMY6_STEP_TIMER   EQU 0EF10h  ; shared countdown to the next 1-column step
-ENEMY6_SPAWN_TIMER  EQU 0EF11h  ; countdown to the next spawn attempt
-ENEMY6_ROW_CYCLE    EQU 0EF12h  ; 0-3, index into ENEMY6_ROW_TABLE for the next spawn
 
 ; --- shot background-color variants: blue(sky), white(mountain, ---
 ; --- screen row 18), green(diamond/slash/backslash, rows 19-22), ---
@@ -727,7 +724,7 @@ FILLBG_3:
     ; --- enemy6's 4 quadrant glyphs, at ENEMY3_CODE1's group's spare  ---
     ; --- codes 153-156 (152 itself untouched) - see the pattern       ---
     ; --- data's own comment. No longer also drawn at a fixed test     ---
-    ; --- cell here - ENEMY6_TRY_SPAWN/ENEMY6_DRAW place and move it   ---
+    ; --- cell here - SPAWN_E6/ENEMY6_DRAW place and move it for real  ---
     ; --- for real now (see the ENEMY6_* routines, near                ---
     ; --- CHECK_BULLET_VS_ENEMY3).                                     ---
     LD HL,NEWENEMY_PATTERN_TL : LD DE,NEWENEMY_CODE_TL*8 : LD BC,8 : CALL LDIRVM
@@ -800,12 +797,8 @@ E3INIT_ROW_LOOP:
     LD HL,ENEMY3_WAVE_POOL : LD (HL),0
     LD DE,ENEMY3_WAVE_POOL+1 : LD BC,ENEMY3_WAVE_SLOTS*4-1 : LDIR
 
-    ; --- enemy6 pool: idle at boot - its own timer fires the first     ---
-    ; --- spawn attempt after ENEMY6_SPAWN_FRAMES frames (see           ---
-    ; --- ENEMY6_TRY_SPAWN)                                             ---
+    ; --- enemy6 pool: idle at boot - spawned from the schedule (SPAWN_E6) ---
     XOR A : LD (ENEMY6_STEP_TIMER),A
-    LD A,ENEMY6_SPAWN_FRAMES : LD (ENEMY6_SPAWN_TIMER),A
-    XOR A : LD (ENEMY6_ROW_CYCLE),A
     LD HL,ENEMY6_POOL : LD (HL),0
     LD DE,ENEMY6_POOL+1 : LD BC,ENEMY6_SLOTS*ENEMY6_STRUCT-1 : LDIR
 
@@ -2139,14 +2132,10 @@ ANIM2_DONE:
     ; --- enemy3: spawn attempt + advance/redraw all 64 pool slots ---
     CALL ENEMY3_TRY_SPAWN
     CALL ENEMY3_UPDATE_ALL
-    ; --- enemy6's standalone auto-spawn timer (ENEMY6_TRY_SPAWN) is  ---
-    ; --- disabled now that real placements go through the schedule  ---
-    ; --- like every other enemy - it was only ever a stand-in so    ---
-    ; --- the movement/collision code had something to spawn before  ---
-    ; --- SPAWN_THRESHOLDS/SSC_FIRE had a real enemy6 entry. Still    ---
-    ; --- calling ENEMY6_UPDATE_ALL costs nothing (no-ops with zero   ---
-    ; --- active slots) and keeps any slot that WAS active moving/   ---
-    ; --- erasing correctly if this ever gets re-enabled mid-session. ---
+    ; --- enemy6 now spawns from the schedule (SPAWN_E6, dispatched   ---
+    ; --- from SSC_FIRE like every other enemy) instead of its own    ---
+    ; --- standalone timer - only the per-frame move/erase/redraw     ---
+    ; --- sweep runs unconditionally here, same as ENEMY3_UPDATE_ALL. ---
     CALL ENEMY6_UPDATE_ALL
     ; --- unified sprite-enemy buffer: advance every active slot,   ---
     ; --- regardless of which movement algorithm (BEHAVIOR) it uses ---
@@ -4340,11 +4329,11 @@ ESC_COMPLEX_INIT_B:
 ; spawn exactly once, in order, as GAME_TICK reaches its threshold -
 ; not when the previous one finishes. SPAWN_THRESHOLDS is a 16-bit
 ; (DW) array so thresholds aren't capped at 255. Boss is the final
-; entry, index78. One-shot: once all 79 have fired, this just returns
+; entry, index87. One-shot: once all 88 have fired, this just returns
 ; immediately forever after, so nothing loops.
 SPAWN_SCHEDULE_CHECK:
     LD A,(SPAWN_NEXT_INDEX)
-    CP 79
+    CP 88
     RET NC
     LD H,0 : LD L,A
     ADD HL,HL
@@ -4356,16 +4345,16 @@ SPAWN_SCHEDULE_CHECK:
     SBC HL,DE
     RET C
 
-    ; --- Enemy2スポーン(index18,19,20,24 - SPAWN_E2)は、AとBの
+    ; --- Enemy2スポーン(index19,20,21,25 - SPAWN_E2)は、AとBの
     ;     どちらも稼働中なら今回は何もせず戻る(次フレームで同じ
     ;     番号を再チェック)。片方でも空いていればSPAWN_E2がそちら
     ;     を自動選択するので、この4インデックスはもう「Aだけ待つ/
     ;     Bだけ待つ」を区別しない - どちらの枠が空いても即発火 ---
     LD A,(SPAWN_NEXT_INDEX)
-    CP 18 : JR Z,SSC_BUSY_E2
     CP 19 : JR Z,SSC_BUSY_E2
     CP 20 : JR Z,SSC_BUSY_E2
-    CP 24 : JR Z,SSC_BUSY_E2
+    CP 21 : JR Z,SSC_BUSY_E2
+    CP 25 : JR Z,SSC_BUSY_E2
     JR SSC_FIRE
 SSC_BUSY_E2:
     LD A,(E2A_ACTIVE) : OR A : JR Z,SSC_FIRE   ; A is free -> go (SPAWN_E2 will claim it)
@@ -4380,11 +4369,12 @@ SSC_FIRE:
     ; --- SPAWN_SIMPLE_Y_TABLE. Dodge direction is decided dynamically   ---
     ; --- from PLAYERY at screen center, not from where it spawned, so   ---
     ; --- it can spawn anywhere - see the schedule editor's layout.      ---
-    ; --- enemy3_wave (indices 21,22,23): SPAWN_E3_WAVE claims its own   ---
+    ; --- enemy3_wave (indices 22,23,24): SPAWN_E3_WAVE claims its own   ---
     ; --- independent ENEMY3_WAVE_POOL slot (budget 32, own dedicated    ---
     ; --- ENEMY3_POOL slice) - see ENEMY3_TRY_SPAWN_SLOT for the         ---
-    ; --- per-frame spawning this triggers.                              ---
-    CP 0  : JP Z,SPAWN_SIMPLE
+    ; --- per-frame spawning this triggers. enemy6 (index0 and the      ---
+    ; --- 78-86 cluster): SPAWN_E6/ENEMY6_ROW_TABLE, any row.            ---
+    CP 0  : JP Z,SPAWN_E6
     CP 1  : JP Z,SPAWN_SIMPLE
     CP 2  : JP Z,SPAWN_SIMPLE
     CP 3  : JP Z,SPAWN_SIMPLE
@@ -4402,38 +4392,38 @@ SSC_FIRE:
     CP 15 : JP Z,SPAWN_SIMPLE
     CP 16 : JP Z,SPAWN_SIMPLE
     CP 17 : JP Z,SPAWN_SIMPLE
-    CP 18 : JP Z,SPAWN_E2
+    CP 18 : JP Z,SPAWN_SIMPLE
     CP 19 : JP Z,SPAWN_E2
     CP 20 : JP Z,SPAWN_E2
-    CP 21 : JP Z,SPAWN_E3_WAVE
+    CP 21 : JP Z,SPAWN_E2
     CP 22 : JP Z,SPAWN_E3_WAVE
     CP 23 : JP Z,SPAWN_E3_WAVE
-    CP 24 : JP Z,SPAWN_E2
+    CP 24 : JP Z,SPAWN_E3_WAVE
+    CP 25 : JP Z,SPAWN_E2
     ; --- Enemy4 (TYPE_ENEMY4): any baseY now - see SPAWN_E4/            ---
     ; --- SPAWN_BASEY_TABLE. Includes the extra spawns tucked into       ---
     ; --- each wave's gap from this JSON.                                ---
-    CP 25 : JP Z,SPAWN_E4
     CP 26 : JP Z,SPAWN_E4
     CP 27 : JP Z,SPAWN_E4
     CP 28 : JP Z,SPAWN_E4
-    CP 29 : JP Z,SPAWN_SIMPLE
+    CP 29 : JP Z,SPAWN_E4
     CP 30 : JP Z,SPAWN_SIMPLE
     CP 31 : JP Z,SPAWN_SIMPLE
-    CP 32 : JP Z,SPAWN_E4
+    CP 32 : JP Z,SPAWN_SIMPLE
     CP 33 : JP Z,SPAWN_E4
     CP 34 : JP Z,SPAWN_E4
     CP 35 : JP Z,SPAWN_E4
-    CP 36 : JP Z,SPAWN_SIMPLE
+    CP 36 : JP Z,SPAWN_E4
     CP 37 : JP Z,SPAWN_SIMPLE
     CP 38 : JP Z,SPAWN_SIMPLE
-    CP 39 : JP Z,SPAWN_E4
+    CP 39 : JP Z,SPAWN_SIMPLE
     CP 40 : JP Z,SPAWN_E4
     CP 41 : JP Z,SPAWN_E4
     CP 42 : JP Z,SPAWN_E4
-    CP 43 : JP Z,SPAWN_SIMPLE
+    CP 43 : JP Z,SPAWN_E4
     CP 44 : JP Z,SPAWN_SIMPLE
     CP 45 : JP Z,SPAWN_SIMPLE
-    CP 46 : JP Z,SPAWN_E4
+    CP 46 : JP Z,SPAWN_SIMPLE
     CP 47 : JP Z,SPAWN_E4
     CP 48 : JP Z,SPAWN_E4
     CP 49 : JP Z,SPAWN_E4
@@ -4449,25 +4439,34 @@ SSC_FIRE:
     CP 59 : JP Z,SPAWN_E4
     CP 60 : JP Z,SPAWN_E4
     CP 61 : JP Z,SPAWN_E4
+    CP 62 : JP Z,SPAWN_E4
     ; --- TYPE_ENEMY1_LOOK test wave ("Enemy5"), with one extra          ---
     ; --- simple-formation spawn tucked in each gap, from the schedule   ---
     ; --- editor's layout.                                               ---
-    CP 62 : JP Z,SPAWN_E4B
     CP 63 : JP Z,SPAWN_E4B
     CP 64 : JP Z,SPAWN_E4B
-    CP 65 : JP Z,SPAWN_SIMPLE
-    CP 66 : JP Z,SPAWN_E4B
+    CP 65 : JP Z,SPAWN_E4B
+    CP 66 : JP Z,SPAWN_SIMPLE
     CP 67 : JP Z,SPAWN_E4B
     CP 68 : JP Z,SPAWN_E4B
-    CP 69 : JP Z,SPAWN_SIMPLE
+    CP 69 : JP Z,SPAWN_E4B
     CP 70 : JP Z,SPAWN_SIMPLE
     CP 71 : JP Z,SPAWN_SIMPLE
-    CP 72 : JP Z,SPAWN_E4B
+    CP 72 : JP Z,SPAWN_SIMPLE
     CP 73 : JP Z,SPAWN_E4B
     CP 74 : JP Z,SPAWN_E4B
-    CP 75 : JP Z,SPAWN_SIMPLE
+    CP 75 : JP Z,SPAWN_E4B
     CP 76 : JP Z,SPAWN_SIMPLE
     CP 77 : JP Z,SPAWN_SIMPLE
+    CP 78 : JP Z,SPAWN_E6
+    CP 79 : JP Z,SPAWN_E6
+    CP 80 : JP Z,SPAWN_E6
+    CP 81 : JP Z,SPAWN_SIMPLE
+    CP 82 : JP Z,SPAWN_E6
+    CP 83 : JP Z,SPAWN_E6
+    CP 84 : JP Z,SPAWN_E6
+    CP 85 : JP Z,SPAWN_E6
+    CP 86 : JP Z,SPAWN_E6
     JP BOSS_SPAWN
 
 ; --- saved (disabled) boss-only fast-iteration schedule - kept for  ---
@@ -11909,19 +11908,18 @@ CBVE3_HIT:
 ; the end of the file) for the glyph itself.
 ; ============================================================
 
-; Countdown to the next spawn attempt; on expiry, claims a free
-; ENEMY6_POOL slot (if any), places it at ENEMY6_SPAWN_COL/next row
-; from ENEMY6_ROW_TABLE (cycled 0-3), and draws it immediately -
-; otherwise this wave's member wouldn't appear until the next
-; ENEMY6_STEP_FRAMES step. Skips silently (retries after the next
-; full interval) if the pool is already full.
-ENEMY6_TRY_SPAWN:
-    LD A,(ENEMY6_SPAWN_TIMER)
-    DEC A
-    LD (ENEMY6_SPAWN_TIMER),A
-    RET NZ
-    LD A,ENEMY6_SPAWN_FRAMES
-    LD (ENEMY6_SPAWN_TIMER),A
+; A holds this schedule index on entry (SSC_FIRE's CP-dispatch
+; convention - see SPAWN_SIMPLE/SPAWN_E4 for the same pattern). Looks
+; up this trigger's own row in ENEMY6_ROW_TABLE (any row, from the
+; schedule editor - same idea as SPAWN_E4/SPAWN_BASEY_TABLE, just a raw
+; row number here since ENEMY6_POOL already stores ROW directly, not a
+; pixel baseY). Claims a free ENEMY6_POOL slot and draws it immediately
+; there - drops the trigger silently if the pool (4 slots) is already full.
+SPAWN_E6:
+    LD H,0 : LD L,A
+    LD DE,ENEMY6_ROW_TABLE
+    ADD HL,DE
+    LD A,(HL) : LD C,A           ; C = this trigger's row
     LD HL,ENEMY6_POOL
     LD B,ENEMY6_SLOTS
 E6TS_LOOP:
@@ -11931,19 +11929,15 @@ E6TS_LOOP:
     LD DE,ENEMY6_STRUCT
     ADD HL,DE
     DJNZ E6TS_LOOP
-    RET                          ; pool full - skip this attempt
+    RET                          ; pool full - drop this trigger
 E6TS_FOUND:
     PUSH HL : POP IX
     LD (IX+0),1
-    LD A,(ENEMY6_ROW_CYCLE) : LD E,A : LD D,0
-    LD HL,ENEMY6_ROW_TABLE
-    ADD HL,DE
-    LD A,(HL)
+    LD A,C
     LD (IX+1),A
     LD A,ENEMY6_SPAWN_COL
     LD (IX+2),A
     XOR A : LD (IX+3),A          ; PHASE=0 (straight-on, unrotated)
-    LD A,(ENEMY6_ROW_CYCLE) : INC A : AND 3 : LD (ENEMY6_ROW_CYCLE),A
     JP ENEMY6_DRAW
 
 ; Advances the shared column-step timer; when it fires, moves every
@@ -11996,10 +11990,11 @@ E6SO_EXIT:
     RET
 
 ; Input: IX = slot base (ROW at IX+1, COL at IX+2). Blanks this slot's
-; current 2x2 nametable block back to sky (BLANKCODE) - always safe
-; since every ENEMY6_ROW_TABLE row (and its +1 partner) sits well
-; above GROUND_ROW0, unlike ENEMY3_ERASE_CELL this never needs to
-; restore ground-scroller content. Clobbers A,DE,HL.
+; current 2x2 nametable block back to sky (BLANKCODE) - unlike
+; ENEMY3_ERASE_CELL this never restores ground-scroller content, so
+; ENEMY6_ROW_TABLE entries (row and its +1 partner) need to stay above
+; GROUND_ROW0 - same any-row-but-mind-the-ground responsibility the
+; schedule editor already has for every other enemy. Clobbers A,DE,HL.
 ENEMY6_ERASE:
     LD A,BLANKCODE : LD (ANIM_TMP_VAL),A
     LD A,(IX+1) : LD (ANIM_TMP_ROW),A
@@ -12450,25 +12445,21 @@ ENEMY6_ANIM_CODES:
     DB NEWENEMY_CODE180_TL, NEWENEMY_CODE180_TR, NEWENEMY_CODE180_BL, NEWENEMY_CODE180_BR
     DB NEWENEMY_CODE270_TL, NEWENEMY_CODE270_TR, NEWENEMY_CODE270_BL, NEWENEMY_CODE270_BR
 
-; enemy6's 4 preset spawn rows (cycled by ENEMY6_ROW_CYCLE), all sky -
-; row+1 (the glyph's bottom half) tops out at 15, well clear of
-; GROUND_ROW0(19).
-ENEMY6_ROW_TABLE:
-    DB 2,6,10,14
-
-; Full schedule, 79 entries (indices 0-78), imported directly from the
+; Full schedule, 88 entries (indices 0-87), imported directly from the
 ; schedule editor's exported JSON (tick/row/type per placement) - see
 ; SSC_FIRE for the per-index dispatch this drives. Every tick here is
-; a 16-bit word since thresholds run well past 255. Simple-formation
-; and Enemy4/Enemy5 spawns pull their actual Y/baseY from
+; a 16-bit word since thresholds run well past 255. Simple-formation,
+; Enemy2, and Enemy4/Enemy5 spawns pull their actual Y/baseY from
 ; SPAWN_SIMPLE_Y_TABLE/SPAWN_BASEY_TABLE (row*8 from the editor),
-; not from which of the old fixed presets they used to be.
+; Enemy6 from ENEMY6_ROW_TABLE (raw row, from the editor) - none of
+; them from which of the old fixed presets they used to be.
 SPAWN_THRESHOLDS:
-    DW 10,11,12,18,19,20,26,27,28,33,34,35,41,42,43,55,56
-    DW 57,70,90,110,120,123,126,130,145,146,147,148,153,154,155,160,161
-    DW 162,163,168,169,170,175,176,177,178,183,184,185,190,191,192,193,198
-    DW 200,205,206,207,208,213,215,220,221,222,223,235,236,237,238,250,251
-    DW 252,253,257,261,265,266,267,268,272,276,288
+    DW 4,10,11,12,18,19,20,26,27,28,33,34,35,41,42,43,55
+    DW 56,57,70,90,110,120,123,126,130,145,146,147,148,153,154,155,160
+    DW 161,162,163,168,169,170,175,176,177,178,183,184,185,190,191,192,193
+    DW 198,200,205,206,207,208,213,215,220,221,222,223,235,236,237,238,250
+    DW 251,252,253,257,261,265,266,267,268,272,274,275,276,276,277,278,279
+    DW 280,281,288
 
 ; --- saved (disabled) boss-only single-entry schedule, used ---
 ; --- while iterating quickly on boss features - not deleted: ---
@@ -12480,37 +12471,52 @@ SPAWN_THRESHOLDS:
 ; row*8 from the schedule editor. Only indices that actually dispatch
 ; to SPAWN_SIMPLE are read; the rest are unused placeholders (0).
 SPAWN_SIMPLE_Y_TABLE:
-    DB 16,16,16,64,64,64,128,128,128,64,64,64,16,16,16,16,16
-    DB 16,0,0,0,0,0,0,0,0,0,0,0,48,48,48,0,0
-    DB 0,0,96,96,96,0,0,0,0,40,40,40,0,0,0,0,0
-    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,16,0,0
-    DB 0,16,56,104,0,0,0,128,88,48,0
+    DB 0,16,16,16,64,64,64,128,128,128,64,64,64,16,16,16,16
+    DB 16,16,0,0,0,0,0,0,0,0,0,0,0,48,48,48,0
+    DB 0,0,0,96,96,96,0,0,0,0,40,40,40,0,0,0,0
+    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,16,0
+    DB 0,0,16,56,104,0,0,0,128,88,0,0,0,48,0,0,0
+    DB 0,0,0
 
 ; Same idea as SPAWN_SIMPLE_Y_TABLE but for Enemy4/Enemy5 (SPAWN_E4/
 ; SPAWN_E4B) baseY - row*8 from the schedule editor, any row, not
 ; just the old 3 fixed presets (32/64/72). Also now used by Enemy2
-; (SPAWN_E2, indices 18/19/20/24 below - same "any row" idea, replacing
+; (SPAWN_E2, indices 19/20/21/25 below - same "any row" idea, replacing
 ; the old TOP=32/BOT=128 stub split). Unused elsewhere (0).
 SPAWN_BASEY_TABLE:
     DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-    DB 0,32,96,48,0,0,0,112,32,64,72,104,0,0,0,64,96
-    DB 104,136,0,0,0,32,64,72,104,0,0,0,64,96,104,136,72
-    DB 112,32,64,72,104,136,88,32,64,72,104,32,64,72,0,32,64
-    DB 72,0,0,0,32,64,72,0,0,0,0
+    DB 0,0,32,96,48,0,0,0,112,32,64,72,104,0,0,0,64
+    DB 96,104,136,0,0,0,32,64,72,104,0,0,0,64,96,104,136
+    DB 72,112,32,64,72,104,136,88,32,64,72,104,32,64,72,0,32
+    DB 64,72,0,0,0,32,64,72,0,0,0,0,0,0,0,0,0
+    DB 0,0,0
 
 ; This trigger's own offset (px = cells*8), one byte per SPAWN_THRESHOLDS
 ; index, from the schedule editor's per-placement "offset" field - each
 ; enemy3_wave trigger copies its own entry straight into its own
 ; ENEMY3_WAVE_POOL slot AND ITS OWN dedicated ENEMY3_POOL slice (see
 ; SPAWN_E3_WAVE/ENEMY3_TRY_SPAWN), so several triggers at different
-; offsets run fully independently. Only indices 21/22/23
+; offsets run fully independently. Only indices 22/23/24
 ; (enemy3_wave) are read; the rest are unused placeholders (0).
 SPAWN_E3_OFFSET_TABLE:
     DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-    DB 0,0,0,0,0,16,32,0,0,0,0,0,0,0,0,0,0
+    DB 0,0,0,0,0,0,16,32,0,0,0,0,0,0,0,0,0
     DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
     DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-    DB 0,0,0,0,0,0,0,0,0,0,0
+    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+    DB 0,0,0
+
+; This trigger's own row (raw, NOT *8 - ENEMY6_POOL stores ROW directly,
+; see its own comment), one byte per SPAWN_THRESHOLDS index, from the
+; schedule editor. Only enemy6 indices are read; the rest are unused
+; placeholders (0).
+ENEMY6_ROW_TABLE:
+    DB 4,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+    DB 0,0,0,0,0,0,0,0,0,0,1,3,5,0,7,9,11
+    DB 13,15,0
 
 ; --- Boss BG (nametable) graphics, generated from
 ; --- dotpict_20260806_173500 (12x37 dot art), resized directly
