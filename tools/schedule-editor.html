@@ -400,7 +400,6 @@
   </aside>
 
   <div id="liveMsg"></div>
-  <div id="perfDebug" style="position:fixed;top:4px;left:4px;z-index:50;font:11px ui-monospace,monospace;color:#0f0;background:rgba(0,0,0,0.7);padding:4px 6px;border-radius:4px;pointer-events:none;white-space:pre;"></div>
 
   <div id="offsetOverlay" class="overlay">
     <div class="overlay-card" style="width: min(320px, 100%);">
@@ -1180,47 +1179,14 @@
   // cross HOLD_MS is a separate question, tracked by comparing the raw
   // (un-lifted, un-centered) pointer cell against where the gesture
   // actually started - see press.moved below.
-  // ---- TEMPORARY on-device perf diagnostic (see #perfDebug) ----
-  // Reported lag couldn't be reproduced or explained from this environment
-  // after two blind fix attempts, so instead of guessing again: measure the
-  // two things that could actually cause a ~1s stall - the gap between
-  // consecutive pointermove events reaching this handler, and how long
-  // render() itself takes - and show both live during a drag. Remove once
-  // the real bottleneck is identified from those numbers.
-  var perfDebugEl = document.getElementById("perfDebug");
-  var perfLastMoveAt = 0, perfMaxGapMs = 0, perfMaxRenderMs = 0, perfMoveCount = 0;
-  function perfResetForNewDrag() {
-    perfLastMoveAt = 0;
-    perfMaxGapMs = 0;
-    perfMaxRenderMs = 0;
-    perfMoveCount = 0;
-    perfDebugEl.textContent = "";
-  }
-  function perfRecordMove() {
-    var now = performance.now();
-    if (perfLastMoveAt) {
-      var gap = now - perfLastMoveAt;
-      if (gap > perfMaxGapMs) perfMaxGapMs = gap;
-    }
-    perfLastMoveAt = now;
-    perfMoveCount++;
-  }
-  function perfShow() {
-    perfDebugEl.textContent =
-      "moves: " + perfMoveCount +
-      "\nmax gap between moves: " + perfMaxGapMs.toFixed(0) + "ms" +
-      "\nmax overlay update time: " + perfMaxRenderMs.toFixed(1) + "ms";
-  }
-
   // Small overlay canvas shown only while a placement is being hold-move-
   // dragged: draws just that one icon, sized to the visible viewport, so a
   // drag never has to redraw the full MAX_TICK-wide #grid canvas - measured
-  // on a real device (see perfDebug above) at ~281ms per full redraw, which
-  // is exactly why per-pointermove dragging was so laggy: every drag frame
-  // was paying that cost. #grid itself is redrawn (without this placement,
-  // via drawGrid's skipIdx) once when the drag starts, and once more (with
-  // the placement's final position baked in) when it ends - never in
-  // between.
+  // on a real device at ~281ms per full redraw, which is exactly why
+  // per-pointermove dragging was so laggy: every drag frame was paying that
+  // cost. #grid itself is redrawn (without this placement, via drawGrid's
+  // skipIdx) once when the drag starts, and once more (with the
+  // placement's final position baked in) when it ends - never in between.
   var dragOverlayCtx = null;
   function beginDragOverlay() {
     var viewW = canvasScroll.clientWidth, viewH = ROWS * CELL;
@@ -1251,11 +1217,7 @@
     var lifted = liftedCellFromEvent(obj, ev);
     obj.tick = lifted.tick;
     obj.row = lifted.row;
-    var renderStart = performance.now();
     updateDragOverlay(obj);
-    var renderMs = performance.now() - renderStart;
-    if (renderMs > perfMaxRenderMs) perfMaxRenderMs = renderMs;
-    perfShow();
   }
 
   // Same-cell wobble (a real finger resting on a placement never sits
@@ -1292,7 +1254,6 @@
       press.holdTimer = setTimeout(function () {
         if (!press || press.resolved) return;
         press.resolved = "holdmove";
-        perfResetForNewDrag();
         // One history entry for the whole gesture, pushed before the very
         // first (automatic) lift - if the finger never really moves, this
         // is exactly the entry endPress below pops to revert the preview.
@@ -1320,7 +1281,6 @@
     press.lastY = ev.clientY;
     var dx = ev.clientX - press.startX, dy = ev.clientY - press.startY;
     if (press.resolved === "holdmove") {
-      perfRecordMove();
       var raw = rawCellFromEvent(ev);
       if (raw.tick !== press.cell.tick || raw.row !== press.cell.row) press.moved = true;
       applyHoldMoveTarget(press, ev);
