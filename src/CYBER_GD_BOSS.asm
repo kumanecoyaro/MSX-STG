@@ -2137,8 +2137,14 @@ ANIM2_DONE:
     ; --- enemy3: spawn attempt + advance/redraw all 64 pool slots ---
     CALL ENEMY3_TRY_SPAWN
     CALL ENEMY3_UPDATE_ALL
-    ; --- enemy6: spawn attempt + advance/redraw all 4 pool slots ---
-    CALL ENEMY6_TRY_SPAWN
+    ; --- enemy6's standalone auto-spawn timer (ENEMY6_TRY_SPAWN) is  ---
+    ; --- disabled now that real placements go through the schedule  ---
+    ; --- like every other enemy - it was only ever a stand-in so    ---
+    ; --- the movement/collision code had something to spawn before  ---
+    ; --- SPAWN_THRESHOLDS/SSC_FIRE had a real enemy6 entry. Still    ---
+    ; --- calling ENEMY6_UPDATE_ALL costs nothing (no-ops with zero   ---
+    ; --- active slots) and keeps any slot that WAS active moving/   ---
+    ; --- erasing correctly if this ever gets re-enabled mid-session. ---
     CALL ENEMY6_UPDATE_ALL
     ; --- unified sprite-enemy buffer: advance every active slot,   ---
     ; --- regardless of which movement algorithm (BEHAVIOR) it uses ---
