@@ -9239,18 +9239,34 @@ ECS_S7_A:
     LD A,(E2A_EXITTYPE)
     OR A
     JR Z,ECS_S7_DOWN_A
-    LD A,(E2A_U0_Y) : SUB EXIT_SPEED : LD (E2A_U0_Y),A
-    LD A,TOP_Y
-    JR ECS_S7_CHECKY_A
-ECS_S7_DOWN_A:
-    LD A,(E2A_U0_Y) : ADD A,EXIT_SPEED : LD (E2A_U0_Y),A
-    LD A,ENEMY_Y1
-ECS_S7_CHECKY_A:
-    LD B,A
-    LD A,(E2A_U0_Y)
-    CP B
-    JR NZ,ECS_S7_RECORD_A
+    ; climb UP toward TOP_Y - clamp exactly on arrival instead of the
+    ; exact-equality check this used to be. That only ever worked
+    ; because the old fixed spawn-Y presets (32/128) were always
+    ; exactly EXIT_SPEED*16 apart; E2_SPAWN_Y now comes from any row
+    ; (SPAWN_BASEY_TABLE), so the remaining distance isn't guaranteed
+    ; to be a multiple of EXIT_SPEED - an exact match could get
+    ; stepped over entirely, leaving this searching forever and the
+    ; leader (and its trailing units) drifting off Y=0 unbounded.
+    LD A,(E2A_U0_Y) : SUB TOP_Y      ; A = distance still above TOP_Y
+    CP EXIT_SPEED
+    JR NC,ECS_S7_UPSTEP_A
+    LD A,TOP_Y : LD (E2A_U0_Y),A
     LD A,1 : LD (E2A_EXIT_PHASE),A
+    JR ECS_S7_RECORD_A
+ECS_S7_UPSTEP_A:
+    LD A,(E2A_U0_Y) : SUB EXIT_SPEED : LD (E2A_U0_Y),A
+    JR ECS_S7_RECORD_A
+ECS_S7_DOWN_A:
+    LD A,ENEMY_Y1 : LD B,A
+    LD A,(E2A_U0_Y) : LD C,A
+    LD A,B : SUB C                   ; A = distance still below ENEMY_Y1
+    CP EXIT_SPEED
+    JR NC,ECS_S7_DOWNSTEP_A
+    LD A,ENEMY_Y1 : LD (E2A_U0_Y),A
+    LD A,1 : LD (E2A_EXIT_PHASE),A
+    JR ECS_S7_RECORD_A
+ECS_S7_DOWNSTEP_A:
+    LD A,(E2A_U0_Y) : ADD A,EXIT_SPEED : LD (E2A_U0_Y),A
     JR ECS_S7_RECORD_A
 
 ECS_S7_HORIZ_A:
@@ -10641,18 +10657,27 @@ ECS_S7_B:
     LD A,(E2B_EXITTYPE)
     OR A
     JR Z,ECS_S7_DOWN_B
-    LD A,(E2B_U0_Y) : SUB EXIT_SPEED : LD (E2B_U0_Y),A
-    LD A,TOP_Y
-    JR ECS_S7_CHECKY_B
-ECS_S7_DOWN_B:
-    LD A,(E2B_U0_Y) : ADD A,EXIT_SPEED : LD (E2B_U0_Y),A
-    LD A,ENEMY_Y1
-ECS_S7_CHECKY_B:
-    LD B,A
-    LD A,(E2B_U0_Y)
-    CP B
-    JR NZ,ECS_S7_RECORD_B
+    ; See ECS_S7_A's comment - same clamp-on-arrival fix, instance B.
+    LD A,(E2B_U0_Y) : SUB TOP_Y      ; A = distance still above TOP_Y
+    CP EXIT_SPEED
+    JR NC,ECS_S7_UPSTEP_B
+    LD A,TOP_Y : LD (E2B_U0_Y),A
     LD A,1 : LD (E2B_EXIT_PHASE),A
+    JR ECS_S7_RECORD_B
+ECS_S7_UPSTEP_B:
+    LD A,(E2B_U0_Y) : SUB EXIT_SPEED : LD (E2B_U0_Y),A
+    JR ECS_S7_RECORD_B
+ECS_S7_DOWN_B:
+    LD A,ENEMY_Y1 : LD B,A
+    LD A,(E2B_U0_Y) : LD C,A
+    LD A,B : SUB C                   ; A = distance still below ENEMY_Y1
+    CP EXIT_SPEED
+    JR NC,ECS_S7_DOWNSTEP_B
+    LD A,ENEMY_Y1 : LD (E2B_U0_Y),A
+    LD A,1 : LD (E2B_EXIT_PHASE),A
+    JR ECS_S7_RECORD_B
+ECS_S7_DOWNSTEP_B:
+    LD A,(E2B_U0_Y) : ADD A,EXIT_SPEED : LD (E2B_U0_Y),A
     JR ECS_S7_RECORD_B
 
 ECS_S7_HORIZ_B:
