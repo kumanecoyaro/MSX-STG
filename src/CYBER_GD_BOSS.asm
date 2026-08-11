@@ -524,7 +524,7 @@ ENEMY6_SLOTS  EQU 4
 ENEMY6_STRUCT EQU 3             ; ACTIVE,ROW,COL (COL = left column of the 2-wide glyph)
 ENEMY6_POOL   EQU 0EF00h        ; ENEMY6_SLOTS*ENEMY6_STRUCT = 12 bytes
 ENEMY6_SPAWN_COL    EQU 30      ; matches ENEMY_SPAWNX/ENEMY4_SPAWNX(240) = col30
-ENEMY6_STEP_FRAMES  EQU 6       ; frames held per 1-column step
+ENEMY6_STEP_FRAMES  EQU 1       ; frames held per 1-column step (1 = fastest possible: every frame)
 ENEMY6_SPAWN_FRAMES EQU 240     ; frames between spawn attempts (~4s at 60fps)
 ENEMY6_STEP_TIMER   EQU 0EF10h  ; shared countdown to the next 1-column step
 ENEMY6_SPAWN_TIMER  EQU 0EF11h  ; countdown to the next spawn attempt
