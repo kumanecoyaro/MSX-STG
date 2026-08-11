@@ -4350,21 +4350,20 @@ SPAWN_SCHEDULE_CHECK:
     SBC HL,DE
     RET C
 
-    ; --- E2インスタンスがまだ稼働中なら、インデックスを進めずに
-    ;     今回は何もしないで戻る(次フレームで同じ番号を再チェック)。
-    ;     これにより取りこぼし(無駄)なく、ACTIVEが0に戻った
-    ;     瞬間に確実に発火する ---
+    ; --- Enemy2スポーン(index18,19,20,24 - SPAWN_E2)は、AとBの
+    ;     どちらも稼働中なら今回は何もせず戻る(次フレームで同じ
+    ;     番号を再チェック)。片方でも空いていればSPAWN_E2がそちら
+    ;     を自動選択するので、この4インデックスはもう「Aだけ待つ/
+    ;     Bだけ待つ」を区別しない - どちらの枠が空いても即発火 ---
     LD A,(SPAWN_NEXT_INDEX)
-    CP 18 : JR Z,SSC_BUSY_A
-    CP 20 : JR Z,SSC_BUSY_A
-    CP 19 : JR Z,SSC_BUSY_B
-    CP 24 : JR Z,SSC_BUSY_B
+    CP 18 : JR Z,SSC_BUSY_E2
+    CP 19 : JR Z,SSC_BUSY_E2
+    CP 20 : JR Z,SSC_BUSY_E2
+    CP 24 : JR Z,SSC_BUSY_E2
     JR SSC_FIRE
-SSC_BUSY_A:
-    LD A,(E2A_ACTIVE) : OR A : RET NZ
-    JR SSC_FIRE
-SSC_BUSY_B:
-    LD A,(E2B_ACTIVE) : OR A : RET NZ
+SSC_BUSY_E2:
+    LD A,(E2A_ACTIVE) : OR A : JR Z,SSC_FIRE   ; A is free -> go (SPAWN_E2 will claim it)
+    LD A,(E2B_ACTIVE) : OR A : RET NZ          ; both busy -> wait
 
 SSC_FIRE:
     LD A,(SPAWN_NEXT_INDEX)
@@ -4397,13 +4396,13 @@ SSC_FIRE:
     CP 15 : JP Z,SPAWN_SIMPLE
     CP 16 : JP Z,SPAWN_SIMPLE
     CP 17 : JP Z,SPAWN_SIMPLE
-    CP 18 : JP Z,SPAWN_E2_TOP_A
-    CP 19 : JP Z,SPAWN_E2_BOT_A
-    CP 20 : JP Z,SPAWN_E2_TOP_B
+    CP 18 : JP Z,SPAWN_E2
+    CP 19 : JP Z,SPAWN_E2
+    CP 20 : JP Z,SPAWN_E2
     CP 21 : JP Z,SPAWN_E3_WAVE
     CP 22 : JP Z,SPAWN_E3_WAVE
     CP 23 : JP Z,SPAWN_E3_WAVE
-    CP 24 : JP Z,SPAWN_E2_BOT_B
+    CP 24 : JP Z,SPAWN_E2
     ; --- Enemy4 (TYPE_ENEMY4): any baseY now - see SPAWN_E4/            ---
     ; --- SPAWN_BASEY_TABLE. Includes the extra spawns tucked into       ---
     ; --- each wave's gap from this JSON.                                ---
@@ -8017,25 +8016,30 @@ SIMPLE_REDRAW:
     POP HL                            ; HL = vram addr
     JP REDRAW_UNIT_PATTERN
 
-; Enemy2 spawn stubs: TOP/BOT is now just which Y value gets passed to
-; ENEMY_START_COMPLEX_A/B via E2_SPAWN_Y (see its own comment) - the
-; exit direction (mirrored-Z dive vs normal-Z climb) is no longer
-; decided here, it's computed dynamically from PLAYERY once the spawn
-; Y is known (same idea as EBSD_UPDATE's dodge-direction pick for
-; Enemy1). Instance selection (A vs B, i.e. which of the 2 concurrent
-; complex-formation RAM slots/schedule busy-guards this uses) is
-; unchanged - TOP still always claims slot A, BOT still always claims
-; slot B - so SPAWN_E2_TOP_A/TOP_B share one body and
-; SPAWN_E2_BOT_A/BOT_B share the other.
-SPAWN_E2_TOP_A:
-SPAWN_E2_TOP_B:
-    LD A,ENEMY_Y2 : LD (E2_SPAWN_Y),A
+; Single Enemy2 spawn stub for schedule indices 18/19/20/24. Y is now
+; just this placement's own row from SPAWN_BASEY_TABLE (same any-row
+; mechanism as SPAWN_E4 - see its comment), not a top/bottom preset;
+; exit direction (mirrored-Z dive vs normal-Z climb) is computed
+; dynamically from PLAYERY once that Y is known, in
+; ENEMY_START_COMPLEX_A/B (same idea as EBSD_UPDATE's dodge-direction
+; pick for Enemy1). Instance selection (A vs B, i.e. which of the 2
+; concurrent complex-formation RAM slots this uses) is no longer tied
+; to which stub was called either - it's picked here, whichever is
+; currently free (SPAWN_SCHEDULE_CHECK's SSC_BUSY_E2 guard already
+; guarantees at least one of them is). A pure capacity/concurrency
+; detail like this has no reason to be a choice the schedule editor
+; has to make - same reasoning as ENEMY4_CLAIM_ANY picking "any" free
+; ENEMY_POOL slot instead of the caller naming one.
+SPAWN_E2:
+    LD H,0 : LD L,A
+    LD DE,SPAWN_BASEY_TABLE
+    ADD HL,DE
+    LD A,(HL)
+    LD (E2_SPAWN_Y),A
     LD A,2 : LD (ENEMY_CYCLE),A
-    JP ENEMY_START_COMPLEX_A
-SPAWN_E2_BOT_A:
-SPAWN_E2_BOT_B:
-    LD A,ENEMY_Y1 : LD (E2_SPAWN_Y),A
-    LD A,2 : LD (ENEMY_CYCLE),A
+    LD A,(E2A_ACTIVE)
+    OR A
+    JP Z,ENEMY_START_COMPLEX_A
     JP ENEMY_START_COMPLEX_B
 ; A holds this schedule index on entry (SSC_FIRE's CP-dispatch convention -
 ; see SPAWN_SIMPLE/SPAWN_E4 for the same pattern) - used to look up this
@@ -12478,10 +12482,12 @@ SPAWN_SIMPLE_Y_TABLE:
 
 ; Same idea as SPAWN_SIMPLE_Y_TABLE but for Enemy4/Enemy5 (SPAWN_E4/
 ; SPAWN_E4B) baseY - row*8 from the schedule editor, any row, not
-; just the old 3 fixed presets (32/64/72). Unused elsewhere (0).
+; just the old 3 fixed presets (32/64/72). Also now used by Enemy2
+; (SPAWN_E2, indices 18/19/20/24 below - same "any row" idea, replacing
+; the old TOP=32/BOT=128 stub split). Unused elsewhere (0).
 SPAWN_BASEY_TABLE:
     DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-    DB 0,0,0,0,0,0,0,0,32,64,72,104,0,0,0,64,96
+    DB 0,32,128,32,0,0,0,128,32,64,72,104,0,0,0,64,96
     DB 104,136,0,0,0,32,64,72,104,0,0,0,64,96,104,136,72
     DB 112,32,64,72,104,136,88,32,64,72,104,32,64,72,0,32,64
     DB 72,0,0,0,32,64,72,0,0,0,0
