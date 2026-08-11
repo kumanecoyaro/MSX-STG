@@ -82,16 +82,19 @@
     background: var(--surface);
     border: 1px solid var(--line);
     border-radius: 10px;
-    /* One full cell (26px) of breathing room on every side, not just a
-       generic padding value - a corner pixel flush against the panel
-       edge is hard to hit with a finger near the physical screen edge,
-       so the whole grid sits inset from it instead. */
-    padding: 26px;
+    /* One full cell of breathing room on every side (--cell, computed in
+       JS - see fitGrid()) - a corner pixel flush against the panel edge
+       is hard to hit with a finger near the physical screen edge, so the
+       whole grid sits inset from it instead. Not a fixed px value: the
+       cell size itself is computed to fit the viewport, so this margin
+       has to track it or it stops being "one cell" once the grid scales
+       down (or, worse, forces the grid to overflow its container). */
+    padding: var(--cell, 26px);
   }
   .grid {
     display: grid;
-    grid-template-columns: repeat(16, 26px);
-    grid-template-rows: repeat(16, 26px);
+    grid-template-columns: repeat(16, var(--cell, 26px));
+    grid-template-rows: repeat(16, var(--cell, 26px));
     border: 2px solid var(--grid-line-strong);
     touch-action: none;
     user-select: none;
@@ -126,35 +129,12 @@
     flex-direction: column;
     min-height: 0;
   }
-  .side-title {
-    padding: 10px 12px 8px;
-    border-bottom: 1px solid var(--line);
-    flex: 0 0 auto;
-  }
-  .side-title .name {
-    font-family: var(--font-mono);
-    font-size: 12px;
-    letter-spacing: 0.06em;
-    font-weight: 600;
-  }
-  .side-title .sub {
-    font-size: 10px;
-    color: var(--ink-dim);
-    letter-spacing: 0.03em;
-  }
   .side-section {
     padding: 10px 12px;
     border-bottom: 1px solid var(--line);
     flex: 0 0 auto;
   }
   .side-section:last-child { border-bottom: none; }
-  .side-section .section-label {
-    font-size: 10px;
-    color: var(--ink-dim);
-    letter-spacing: 0.05em;
-    text-transform: uppercase;
-    margin-bottom: 6px;
-  }
   .btn-row { display: flex; gap: 6px; flex-wrap: wrap; }
   .btn-row + .btn-row { margin-top: 6px; }
   /* min-width:0, not just flex:1 1 0 - a flex item's automatic minimum
@@ -275,7 +255,11 @@
 
   @media (max-width: 760px) {
     body { flex-direction: column; }
-    .gridwrap { flex: 0 0 auto; padding: 12px; }
+    /* A bounded height (not flex:0 0 auto's content-driven height) is
+       what makes fitGrid() able to compute a cell size that actually
+       fits on screen here - auto would just grow to whatever the grid
+       wanted, which is the overflow this whole thing is meant to avoid. */
+    .gridwrap { flex: 0 0 auto; height: 56vh; padding: 12px; }
     aside { flex: 1 1 auto; height: auto; border-left: none; border-top: 1px solid var(--line); }
   }
 </style>
@@ -288,13 +272,7 @@
   </div>
 
   <aside>
-    <div class="side-title">
-      <div class="name">CYBER_SUZUKA</div>
-      <div class="sub">sprite editor · 16×16</div>
-    </div>
-
     <div class="side-section">
-      <div class="section-label">Actions</div>
       <div class="btn-row">
         <button class="primary" id="btnSave">Save JSON</button>
         <label class="btn-label" for="fileInput">Load JSON</label>
@@ -305,7 +283,6 @@
     </div>
 
     <div class="side-section">
-      <div class="section-label">MSX Colors — tap a target, then a color</div>
       <div class="color-target-row">
         <button class="color-target" id="btnBgColor"><span class="mini-swatch" id="bgSwatch"></span>背景色</button>
         <button class="color-target" id="btnFgColor"><span class="mini-swatch" id="fgSwatch"></span>文字色</button>
@@ -684,7 +661,33 @@
     flashTimer = setTimeout(function () { liveMsg.classList.remove("show"); }, 1800);
   }
 
+  // ---------- responsive cell size ----------
+  // Fixed-px cells don't fit every viewport - a 16-cell-wide grid plus a
+  // full cell of margin on every side (see .grid-panel's padding) needs
+  // 18 cells of space in each dimension, and on a narrow/short phone
+  // screen that easily exceeds what's actually available, forcing the
+  // page (or worse, just the grid) to overflow and eat the requested
+  // margin instead of showing it. Compute the largest cell size that
+  // still fits both dimensions of the current .gridwrap, the same way
+  // schedule-editor.html derives its own CELL from the viewport.
+  var CELL_MIN = 12, CELL_MAX = 36;
+  var gridWrapEl = document.querySelector(".gridwrap");
+  function fitGrid() {
+    var cs = getComputedStyle(gridWrapEl);
+    var padX = parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight);
+    var padY = parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom);
+    var BORDERS = 8; // grid-panel + grid borders, small and roughly constant
+    var availW = gridWrapEl.clientWidth - padX - BORDERS;
+    var availH = gridWrapEl.clientHeight - padY - BORDERS;
+    var units = GRID_N + 2; // the grid itself, plus 1 cell of margin each side
+    var cell = Math.floor(Math.min(availW, availH) / units);
+    cell = Math.max(CELL_MIN, Math.min(CELL_MAX, cell));
+    document.documentElement.style.setProperty("--cell", cell + "px");
+  }
+  window.addEventListener("resize", fitGrid);
+
   // ---------- boot ----------
+  fitGrid();
   renderAll();
 })();
 </script>
