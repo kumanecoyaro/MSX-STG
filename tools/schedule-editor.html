@@ -161,7 +161,7 @@
   /* Kept deliberately thin - the grid is the workspace, the sidebar is */
   /* just controls. Palette entries are small color chips (number+code, */
   /* the same glyph the grid itself draws for a placement) rather than  */
-  /* name+description cards, so 13 enemy types cost a few rows, not a   */
+  /* name+description cards, so 10 enemy types cost a few rows, not a   */
   /* scroll-hogging list. Full names live in the title attr + the       */
   /* one-line "armed" readout, not baked into every chip.               */
   aside {
@@ -257,6 +257,7 @@
     min-height: 0;
   }
   .pitem {
+    position: relative;
     width: 30px;
     height: 30px;
     flex: 0 0 auto;
@@ -279,6 +280,26 @@
     box-shadow: 0 0 0 2px var(--accent);
   }
   .pitem .picon { display: block; pointer-events: none; }
+  /* e2a_top/e2a_bot/e2b_top/e2b_bot render the exact same asterisk icon
+     (see GLYPHS.asterisk16's comment) as every other type sharing that
+     glyph, so all 4 - already grouped AABB in the palette array/DOM order -
+     read as indistinguishable duplicates at a glance without these. group
+     ("2A"/"2B") marks which independent instance; pos ("T"/"B") marks
+     which of that instance's two spawn Y presets. */
+  .pbadge {
+    position: absolute;
+    font-family: var(--font-mono);
+    font-size: 7px;
+    line-height: 1;
+    font-weight: 700;
+    padding: 1px 2px;
+    border-radius: 2px;
+    background: rgba(2, 4, 8, 0.72);
+    color: var(--ink);
+    pointer-events: none;
+  }
+  .pbadge-group { top: 1px; left: 1px; }
+  .pbadge-pos { bottom: 1px; right: 1px; color: var(--accent); }
 
   #liveMsg {
     position: fixed;
@@ -487,6 +508,24 @@
       },
       color: "#74d07d"
     },
+    // Enemy6's 0deg spin frame (NEWENEMY_PATTERN_TL/TR/BL/BR) - unlike every
+    // other 16x16 entry here this is 4 BG tiles (2x2, not an MSX sprite), so
+    // it's opaque like enemy3: FG gray on the same BG dark-blue. quads keyed
+    // tl/bl/tr/br to match drawGlyph's paint offsets, values taken directly
+    // from the ASM's DB bytes (TL/BL rows0-7 checked byte-for-byte against a
+    // hand-drawn bit matrix that turned out to have several transcription
+    // errors past row 2 - the ASM bytes are the ground truth, not the matrix).
+    enemy6: {
+      size: 16,
+      quads: {
+        tl: [0x00, 0x2A, 0x6A, 0x0A, 0x7A, 0x02, 0x7E, 0x00],
+        bl: [0x7F, 0x03, 0x7F, 0x0F, 0x7F, 0x3F, 0x7F, 0x00],
+        tr: [0x00, 0xAA, 0xAE, 0xAE, 0xBE, 0xBE, 0xFE, 0xFE],
+        br: [0x7E, 0xBE, 0xDE, 0xEE, 0xF6, 0xFA, 0xFC, 0x00]
+      },
+      color: "#cccccc",
+      bg: "#5955e0"
+    },
   };
 
   // ---------- boss's real BG body (BOSS_PATTERNS/BOSS_MAP in the ASM) ----------
@@ -635,13 +674,23 @@
   // ---------- enemy palette (matches the current CYBER_GD_BOSS.asm schedule) ----------
   var TYPES = [
     { id: "simple",     name: "Simple (Enemy1)",  desc: "any row - dodge dir is decided from player Y at center", glyph: "asterisk16" },
-    { id: "e2a_top",    name: "Enemy2A — Top",    desc: "SPAWN_E2_TOP_A",   glyph: "asterisk16" },
-    { id: "e2a_bot",    name: "Enemy2A — Bottom", desc: "SPAWN_E2_BOT_A",   glyph: "asterisk16" },
-    { id: "e2b_top",    name: "Enemy2B — Top",    desc: "SPAWN_E2_TOP_B",   glyph: "asterisk16" },
-    { id: "e2b_bot",    name: "Enemy2B — Bottom", desc: "SPAWN_E2_BOT_B",   glyph: "asterisk16" },
+    // e2a_top/e2a_bot/e2b_top/e2b_bot really are 4 distinct things (unlike the
+    // old enemy4/enemy5 y16/y32/y48 split) - A and B are independent RAM
+    // instances that can both be on screen at once (separate schedule busy
+    // guards too), while Top/Bottom just picks which of that instance's 2
+    // spawn Y presets to use. All 4 share the exact same asterisk16 icon
+    // though, so without the group/pos badges below they render as 4
+    // identical swatches in a row and read as duplicates - group ("2A"/"2B")
+    // and pos ("T"/"B") make the AABB grouping (already the real array/DOM
+    // order) visible without hovering for the title tooltip.
+    { id: "e2a_top",    name: "Enemy2A — Top",    desc: "SPAWN_E2_TOP_A — instance A, can run alongside B; Top/Bottom only picks spawn Y", glyph: "asterisk16", group: "2A", pos: "T" },
+    { id: "e2a_bot",    name: "Enemy2A — Bottom", desc: "SPAWN_E2_BOT_A — instance A, can run alongside B; Top/Bottom only picks spawn Y", glyph: "asterisk16", group: "2A", pos: "B" },
+    { id: "e2b_top",    name: "Enemy2B — Top",    desc: "SPAWN_E2_TOP_B — instance B, can run alongside A; Top/Bottom only picks spawn Y", glyph: "asterisk16", group: "2B", pos: "T" },
+    { id: "e2b_bot",    name: "Enemy2B — Bottom", desc: "SPAWN_E2_BOT_B — instance B, can run alongside A; Top/Bottom only picks spawn Y", glyph: "asterisk16", group: "2B", pos: "B" },
     { id: "enemy3_wave",name: "Enemy3 — Wave",    desc: "SPAWN_E3_WAVE (budget 32)", glyph: "enemy3" },
     { id: "enemy4",      name: "Enemy4",           desc: "SPAWN_E4 — baseY comes from SPAWN_BASEY_TABLE[row placed], any row", glyph: "enemy4" },
     { id: "enemy5",      name: "Enemy5",           desc: "SPAWN_E4B, TYPE_ENEMY1_LOOK — baseY comes from SPAWN_BASEY_TABLE[row placed], any row", glyph: "asterisk16" },
+    { id: "enemy6",      name: "Enemy6",           desc: "NEW - BG-tile spin (0/90/180/270°); placement staged here, not yet wired into SPAWN_THRESHOLDS/SSC_FIRE", glyph: "enemy6" },
     { id: "boss",       name: "Boss",             desc: "BOSS_SPAWN - fixed position, row/tick here are just for editing", glyph: null }
   ];
   var TYPE_BY_ID = {};
@@ -780,6 +829,21 @@
       item.appendChild(cv);
     } else {
       item.textContent = t.name;
+    }
+    // e2a_top/e2a_bot/e2b_top/e2b_bot share one icon (asterisk16) 4 ways -
+    // see the TYPES comment above e2a_top - these two badges are what makes
+    // the A/B instance and Top/Bottom-Y distinction visible without hovering.
+    if (t.group) {
+      var groupBadge = document.createElement("span");
+      groupBadge.className = "pbadge pbadge-group";
+      groupBadge.textContent = t.group;
+      item.appendChild(groupBadge);
+    }
+    if (t.pos) {
+      var posBadge = document.createElement("span");
+      posBadge.className = "pbadge pbadge-pos";
+      posBadge.textContent = t.pos;
+      item.appendChild(posBadge);
     }
     item.addEventListener("click", function () {
       eraseArmed = false;
