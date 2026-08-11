@@ -286,8 +286,7 @@
       border-top: 1px solid var(--line);
     }
     .side-title { display: none; }
-    .side-actions { grid-template-columns: repeat(4, 1fr); padding: 6px 10px; }
-    .side-actions .full { grid-column: auto; }
+    .side-actions { padding: 6px 10px; }
   }
 </style>
 
@@ -542,19 +541,19 @@
 
   // ---------- enemy palette (matches the current CYBER_GD_BOSS.asm schedule) ----------
   var TYPES = [
-    { id: "simple",     name: "Simple (Enemy1)",  desc: "any row - dodge dir is decided from player Y at center", defaultRow: 2,  glyph: "asterisk16" },
-    { id: "e2a_top",    name: "Enemy2A — Top",    desc: "SPAWN_E2_TOP_A",   defaultRow: 4,  glyph: "asterisk16" },
-    { id: "e2a_bot",    name: "Enemy2A — Bottom", desc: "SPAWN_E2_BOT_A",   defaultRow: 12, glyph: "asterisk16" },
-    { id: "e2b_top",    name: "Enemy2B — Top",    desc: "SPAWN_E2_TOP_B",   defaultRow: 6,  glyph: "asterisk16" },
-    { id: "e2b_bot",    name: "Enemy2B — Bottom", desc: "SPAWN_E2_BOT_B",   defaultRow: 14, glyph: "asterisk16" },
-    { id: "enemy3_wave",name: "Enemy3 — Wave",    desc: "SPAWN_E3_WAVE (budget 32)", defaultRow: 1, glyph: "enemy3" },
-    { id: "enemy4_y16", name: "Enemy4 — Top",     desc: "baseY 32",         defaultRow: 4,  glyph: "enemy4" },
-    { id: "enemy4_y32", name: "Enemy4 — Mid",     desc: "baseY 64",         defaultRow: 8,  glyph: "enemy4" },
-    { id: "enemy4_y48", name: "Enemy4 — Bottom",  desc: "baseY 72",         defaultRow: 9,  glyph: "enemy4" },
-    { id: "enemy5_y16", name: "Enemy5 — Top",     desc: "TYPE_ENEMY1_LOOK", defaultRow: 4,  glyph: "asterisk16" },
-    { id: "enemy5_y32", name: "Enemy5 — Mid",     desc: "TYPE_ENEMY1_LOOK", defaultRow: 8,  glyph: "asterisk16" },
-    { id: "enemy5_y48", name: "Enemy5 — Bottom",  desc: "TYPE_ENEMY1_LOOK", defaultRow: 9,  glyph: "asterisk16" },
-    { id: "boss",       name: "Boss",             desc: "BOSS_SPAWN — full 5x16-cell body",  defaultRow: 20, glyph: null }
+    { id: "simple",     name: "Simple (Enemy1)",  desc: "any row - dodge dir is decided from player Y at center", glyph: "asterisk16" },
+    { id: "e2a_top",    name: "Enemy2A — Top",    desc: "SPAWN_E2_TOP_A",   glyph: "asterisk16" },
+    { id: "e2a_bot",    name: "Enemy2A — Bottom", desc: "SPAWN_E2_BOT_A",   glyph: "asterisk16" },
+    { id: "e2b_top",    name: "Enemy2B — Top",    desc: "SPAWN_E2_TOP_B",   glyph: "asterisk16" },
+    { id: "e2b_bot",    name: "Enemy2B — Bottom", desc: "SPAWN_E2_BOT_B",   glyph: "asterisk16" },
+    { id: "enemy3_wave",name: "Enemy3 — Wave",    desc: "SPAWN_E3_WAVE (budget 32)", glyph: "enemy3" },
+    { id: "enemy4_y16", name: "Enemy4 — Top",     desc: "baseY 32 (fixed - row is just for editing)",  glyph: "enemy4" },
+    { id: "enemy4_y32", name: "Enemy4 — Mid",     desc: "baseY 64 (fixed - row is just for editing)",  glyph: "enemy4" },
+    { id: "enemy4_y48", name: "Enemy4 — Bottom",  desc: "baseY 72 (fixed - row is just for editing)",  glyph: "enemy4" },
+    { id: "enemy5_y16", name: "Enemy5 — Top",     desc: "TYPE_ENEMY1_LOOK, fixed Y - row is just for editing", glyph: "asterisk16" },
+    { id: "enemy5_y32", name: "Enemy5 — Mid",     desc: "TYPE_ENEMY1_LOOK, fixed Y - row is just for editing", glyph: "asterisk16" },
+    { id: "enemy5_y48", name: "Enemy5 — Bottom",  desc: "TYPE_ENEMY1_LOOK, fixed Y - row is just for editing", glyph: "asterisk16" },
+    { id: "boss",       name: "Boss",             desc: "BOSS_SPAWN - fixed position, row/tick here are just for editing", glyph: null }
   ];
   var TYPE_BY_ID = {};
   TYPES.forEach(function (t) { TYPE_BY_ID[t.id] = t; });
@@ -801,7 +800,14 @@
       if (!t) return;
       var x = p.tick * CELL, y = p.row * CELL;
       if (p.type === "boss") {
-        drawBossBody(ctx, x, y, CELL);
+        // The boss's real spawn position is fixed in-game - its row/tick
+        // here only mark *when* it triggers, not where it appears - so
+        // there's no "correct" pixel position to honor. Clamp the draw
+        // origin to stay fully on the grid instead of clipping the body
+        // against the bottom/right edge when placed near them.
+        var bx = Math.max(0, Math.min(x, (MAX_TICK - 5) * CELL));
+        var by = Math.max(0, Math.min(y, (ROWS - 16) * CELL));
+        drawBossBody(ctx, bx, by, CELL);
         return;
       }
       var glyph = GLYPHS[t.glyph];
