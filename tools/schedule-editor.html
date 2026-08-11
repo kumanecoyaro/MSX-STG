@@ -356,7 +356,7 @@
       </div>
       <div class="btn-row">
         <label class="btn-label" for="fileInput">Load JSON</label>
-        <input type="file" id="fileInput" accept=".json,application/json" hidden>
+        <input type="file" id="fileInput" accept=".json" hidden>
         <div class="cell-info" id="cellInfo" title="Tap a placed cell on the grid to identify it - several types share the same icon"></div>
       </div>
     </div>
@@ -1001,7 +1001,19 @@
     cellInfoEl.textContent = "";
   }
 
-  grid.addEventListener("click", function (ev) {
+  // Neutral-mode interaction on an existing placement is tap/hold/move:
+  // a quick release inspects it (unchanged), while pressing and holding
+  // still, then dragging, repositions it. The hold delay is what lets a
+  // normal horizontal swipe (to pan through ticks - see canvasScroll's
+  // touch-action:pan-x) keep working: if the pointer moves past
+  // HOLD_MOVE_CANCEL before HOLD_MS elapses, the press is abandoned and
+  // the browser's native scroll takes over untouched, exactly as before
+  // this feature existed.
+  var HOLD_MS = 400;
+  var HOLD_MOVE_CANCEL = 10;
+  var press = null; // {obj, pointerId, startX, startY, dragging, timer}
+
+  grid.addEventListener("pointerdown", function (ev) {
     var rect = grid.getBoundingClientRect();
     var offsetHit = enemy3OffsetHitTest(ev.clientX - rect.left, ev.clientY - rect.top);
     if (offsetHit !== null) {
@@ -1033,18 +1045,60 @@
       render();
       return;
     }
-    // neutral tap (nothing armed) on an already-placed cell - inspect only,
-    // don't touch placements. Placing/erasing above never touch this
-    // readout - it reflects what you tap to inspect, not what you just edited.
-    // Hit-tests the icon's real footprint (see placementIndexAtCell), not
-    // just its anchor cell.
+    // neutral: pressing on an existing placement starts a tap-or-hold
+    // gesture. Placing/erasing above never touch the info readout - it
+    // only ever reflects what you tap/hold to inspect or move.
     var idx = placementIndexAtCell(c.tick, c.row);
-    if (idx >= 0) {
-      showCellInfo(placements[idx]);
-    } else {
+    if (idx < 0) {
       clearCellInfo();
       flash("pick an enemy on the right first");
+      return;
     }
+    press = { obj: placements[idx], pointerId: ev.pointerId, startX: ev.clientX, startY: ev.clientY, dragging: false, timer: null };
+    press.timer = setTimeout(function () {
+      if (!press) return;
+      press.dragging = true;
+      pushHistory();
+      grid.style.touchAction = "none";
+      grid.setPointerCapture(press.pointerId);
+      flash("move " + TYPE_BY_ID[press.obj.type].name + " - drag to reposition");
+    }, HOLD_MS);
+  });
+
+  grid.addEventListener("pointermove", function (ev) {
+    if (!press || ev.pointerId !== press.pointerId) return;
+    var dx = ev.clientX - press.startX, dy = ev.clientY - press.startY;
+    if (!press.dragging) {
+      if (Math.hypot(dx, dy) > HOLD_MOVE_CANCEL) {
+        clearTimeout(press.timer);
+        press = null; // too much movement before the hold fired - let the browser pan/scroll as usual
+      }
+      return;
+    }
+    var c = cellFromEvent(ev);
+    if (!c) return;
+    press.obj.tick = c.tick;
+    press.obj.row = c.row;
+    render();
+  });
+
+  function endPress(ev) {
+    if (!press || ev.pointerId !== press.pointerId) return;
+    clearTimeout(press.timer);
+    grid.style.touchAction = "";
+    if (press.dragging) {
+      placements.sort(function (a, b) { return a.tick - b.tick || a.row - b.row; });
+      flash("moved " + TYPE_BY_ID[press.obj.type].name + " to tick " + press.obj.tick + ", row " + press.obj.row);
+    }
+    showCellInfo(press.obj);
+    press = null;
+  }
+  grid.addEventListener("pointerup", endPress);
+  grid.addEventListener("pointercancel", function (ev) {
+    if (!press || ev.pointerId !== press.pointerId) return;
+    clearTimeout(press.timer);
+    grid.style.touchAction = "";
+    press = null;
   });
 
   // keep the ruler in sync with the scrollable grid (this is the "swipe" pan)
