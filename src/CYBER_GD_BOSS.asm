@@ -521,7 +521,9 @@ ENEMY3_CENTERX_TABLE EQU 0EE98h
 ; --- (see the schedule editor for that follow-up once this movement   ---
 ; --- is confirmed on real hardware).                                  ---
 ENEMY6_SLOTS  EQU 4
-ENEMY6_STRUCT EQU 3             ; ACTIVE,ROW,COL (COL = left column of the 2-wide glyph)
+ENEMY6_STRUCT EQU 4             ; ACTIVE,ROW,COL,PHASE (COL = left column of the 2-wide glyph;
+                                 ; PHASE = 0/1/2/3, index into ENEMY6_ANIM_CODES - advances
+                                 ; one step every 1-cell move, see ENEMY6_STEP_ONE)
 ENEMY6_POOL   EQU 0EF00h        ; ENEMY6_SLOTS*ENEMY6_STRUCT = 12 bytes
 ENEMY6_SPAWN_COL    EQU 30      ; matches ENEMY_SPAWNX/ENEMY4_SPAWNX(240) = col30
 ENEMY6_STEP_FRAMES  EQU 1       ; frames held per 1-column step (1 = fastest possible: every frame)
@@ -732,6 +734,20 @@ FILLBG_3:
     LD HL,NEWENEMY_PATTERN_TR : LD DE,NEWENEMY_CODE_TR*8 : LD BC,8 : CALL LDIRVM
     LD HL,NEWENEMY_PATTERN_BL : LD DE,NEWENEMY_CODE_BL*8 : LD BC,8 : CALL LDIRVM
     LD HL,NEWENEMY_PATTERN_BR : LD DE,NEWENEMY_CODE_BR*8 : LD BC,8 : CALL LDIRVM
+    ; --- enemy6's 90/180/270-degree spin-animation quadrants (see  ---
+    ; --- their own comment, near NEWENEMY_PATTERN90_TL)             ---
+    LD HL,NEWENEMY_PATTERN90_TL : LD DE,NEWENEMY_CODE90_TL*8 : LD BC,8 : CALL LDIRVM
+    LD HL,NEWENEMY_PATTERN90_TR : LD DE,NEWENEMY_CODE90_TR*8 : LD BC,8 : CALL LDIRVM
+    LD HL,NEWENEMY_PATTERN90_BL : LD DE,NEWENEMY_CODE90_BL*8 : LD BC,8 : CALL LDIRVM
+    LD HL,NEWENEMY_PATTERN90_BR : LD DE,NEWENEMY_CODE90_BR*8 : LD BC,8 : CALL LDIRVM
+    LD HL,NEWENEMY_PATTERN180_TL : LD DE,NEWENEMY_CODE180_TL*8 : LD BC,8 : CALL LDIRVM
+    LD HL,NEWENEMY_PATTERN180_TR : LD DE,NEWENEMY_CODE180_TR*8 : LD BC,8 : CALL LDIRVM
+    LD HL,NEWENEMY_PATTERN180_BL : LD DE,NEWENEMY_CODE180_BL*8 : LD BC,8 : CALL LDIRVM
+    LD HL,NEWENEMY_PATTERN180_BR : LD DE,NEWENEMY_CODE180_BR*8 : LD BC,8 : CALL LDIRVM
+    LD HL,NEWENEMY_PATTERN270_TL : LD DE,NEWENEMY_CODE270_TL*8 : LD BC,8 : CALL LDIRVM
+    LD HL,NEWENEMY_PATTERN270_TR : LD DE,NEWENEMY_CODE270_TR*8 : LD BC,8 : CALL LDIRVM
+    LD HL,NEWENEMY_PATTERN270_BL : LD DE,NEWENEMY_CODE270_BL*8 : LD BC,8 : CALL LDIRVM
+    LD HL,NEWENEMY_PATTERN270_BR : LD DE,NEWENEMY_CODE270_BR*8 : LD BC,8 : CALL LDIRVM
 
     ; --- digit glyphs (0-9) for the on-screen game-tick counter ---
     LD HL,DIGIT_PATTERNS : LD DE,DIGIT_BASE*8 : LD BC,80 : CALL LDIRVM
@@ -11888,6 +11904,7 @@ E6TS_FOUND:
     LD (IX+1),A
     LD A,ENEMY6_SPAWN_COL
     LD (IX+2),A
+    XOR A : LD (IX+3),A          ; PHASE=0 (straight-on, unrotated)
     LD A,(ENEMY6_ROW_CYCLE) : INC A : AND 3 : LD (ENEMY6_ROW_CYCLE),A
     JP ENEMY6_DRAW
 
@@ -11922,9 +11939,10 @@ E6UA_SKIP:
     DJNZ E6UA_LOOP
     RET
 
-; Input: IX = slot base (ACTIVE,ROW,COL). One column-step: erase the
-; old 2x2 block, then either draw the new one one column left, or (if
-; already at col0) deactivate instead of stepping off the nametable.
+; Input: IX = slot base (ACTIVE,ROW,COL,PHASE). One column-step: erase
+; the old 2x2 block, then either advance PHASE to the next spin frame
+; and draw the new block one column left, or (if already at col0)
+; deactivate instead of stepping off the nametable.
 ENEMY6_STEP_ONE:
     CALL ENEMY6_ERASE
     LD A,(IX+2)
@@ -11932,6 +11950,7 @@ ENEMY6_STEP_ONE:
     JR Z,E6SO_EXIT
     DEC A
     LD (IX+2),A
+    LD A,(IX+3) : INC A : AND 3 : LD (IX+3),A   ; next spin frame (0/90/180/270)
     JP ENEMY6_DRAW
 E6SO_EXIT:
     XOR A
@@ -11959,22 +11978,32 @@ ENEMY6_ERASE:
     CALL WRITE_ANIM_CELL
     RET
 
-; Input: IX = slot base (ROW at IX+1, COL at IX+2). Draws this slot's
-; 4 quadrant codes at its current position. Clobbers A,DE,HL.
+; Input: IX = slot base (ROW at IX+1, COL at IX+2, PHASE at IX+3).
+; Draws this slot's current spin frame's 4 quadrant codes (from
+; ENEMY6_ANIM_CODES(PHASE)) at its current position. Clobbers A,DE,HL.
 ENEMY6_DRAW:
-    LD A,NEWENEMY_CODE_TL : LD (ANIM_TMP_VAL),A
+    LD A,(IX+3) : ADD A,A : ADD A,A : LD E,A : LD D,0   ; E = PHASE*4
+    LD HL,ENEMY6_ANIM_CODES
+    ADD HL,DE
+    LD A,(HL) : LD (ANIM_TMP_VAL),A
     LD A,(IX+1) : LD (ANIM_TMP_ROW),A
     LD A,(IX+2) : LD (ANIM_TMP_COL),A
+    PUSH HL
     CALL WRITE_ANIM_CELL
-    LD A,NEWENEMY_CODE_TR : LD (ANIM_TMP_VAL),A
+    POP HL : INC HL
+    LD A,(HL) : LD (ANIM_TMP_VAL),A
     LD A,(IX+1) : LD (ANIM_TMP_ROW),A
     LD A,(IX+2) : INC A : LD (ANIM_TMP_COL),A
+    PUSH HL
     CALL WRITE_ANIM_CELL
-    LD A,NEWENEMY_CODE_BL : LD (ANIM_TMP_VAL),A
+    POP HL : INC HL
+    LD A,(HL) : LD (ANIM_TMP_VAL),A
     LD A,(IX+1) : INC A : LD (ANIM_TMP_ROW),A
     LD A,(IX+2) : LD (ANIM_TMP_COL),A
+    PUSH HL
     CALL WRITE_ANIM_CELL
-    LD A,NEWENEMY_CODE_BR : LD (ANIM_TMP_VAL),A
+    POP HL : INC HL
+    LD A,(HL) : LD (ANIM_TMP_VAL),A
     LD A,(IX+1) : INC A : LD (ANIM_TMP_ROW),A
     LD A,(IX+2) : INC A : LD (ANIM_TMP_COL),A
     CALL WRITE_ANIM_CELL
@@ -12299,6 +12328,63 @@ NEWENEMY_PATTERN_BL:
     DB 7Fh,03h,7Fh,0Fh,7Fh,3Fh,7Fh,00h
 NEWENEMY_PATTERN_BR:
     DB 7Eh,0BEh,0DEh,0EEh,0F6h,0FAh,0FCh,00h
+
+; enemy6's 90/180/270-degree rotations of the same 16x16 glyph above
+; (bit-rotated the source grid itself, then re-split into quadrants -
+; not just a quadrant shuffle), for the spin animation ENEMY6_DRAW
+; cycles through one step at a time. Codes: group19's 3 remaining
+; spares (157-159) + group20's first spare (161) for 90-degrees,
+; group20's next 4 spares (162-165) for 180-degrees - both groups
+; share Enemy3's gray/blue color, so those two stay on-color. Only
+; group21's spares were left for 270-degrees, and that group is
+; gray/RED (Enemy3's pattern3 color) - so the spin flashes red for
+; that one quarter-turn instead of staying blue. SCREEN1's 8-codes-
+; share-1-color-pair layout leaves no untouched all-blue group large
+; enough for all 3 rotations; 270-degrees drew the short straw.
+NEWENEMY_CODE90_TL  EQU 157
+NEWENEMY_CODE90_TR  EQU 158
+NEWENEMY_CODE90_BL  EQU 159
+NEWENEMY_CODE90_BR  EQU 161
+NEWENEMY_CODE180_TL EQU 162
+NEWENEMY_CODE180_TR EQU 163
+NEWENEMY_CODE180_BL EQU 164
+NEWENEMY_CODE180_BR EQU 165
+NEWENEMY_CODE270_TL EQU 169
+NEWENEMY_CODE270_TR EQU 170
+NEWENEMY_CODE270_BL EQU 171
+NEWENEMY_CODE270_BR EQU 172
+NEWENEMY_PATTERN90_TL:
+    DB 00h,57h,77h,77h,7Fh,7Fh,7Dh,7Dh
+NEWENEMY_PATTERN90_TR:
+    DB 00h,54h,56h,50h,5Eh,40h,7Eh,00h
+NEWENEMY_PATTERN90_BL:
+    DB 7Eh,7Dh,7Bh,77h,6Fh,5Fh,3Fh,00h
+NEWENEMY_PATTERN90_BR:
+    DB 0FEh,0C0h,0EEh,0F0h,0FEh,0F4h,0F6h,00h
+NEWENEMY_PATTERN180_TL:
+    DB 00h,3Fh,5Fh,6Fh,77h,7Bh,7Dh,7Eh
+NEWENEMY_PATTERN180_TR:
+    DB 00h,0FEh,0FCh,0FEh,0F0h,0FEh,3Eh,0FEh
+NEWENEMY_PATTERN180_BL:
+    DB 7Fh,7Fh,7Dh,79h,15h,75h,55h,00h
+NEWENEMY_PATTERN180_BR:
+    DB 00h,7Eh,40h,5Eh,50h,56h,54h,00h
+NEWENEMY_PATTERN270_TL:
+    DB 00h,6Fh,2Fh,7Fh,0Fh,77h,03h,7Fh
+NEWENEMY_PATTERN270_TR:
+    DB 00h,0FCh,0FAh,0F6h,0EEh,0DEh,0BEh,7Eh
+NEWENEMY_PATTERN270_BL:
+    DB 00h,7Eh,02h,7Ah,0Ah,6Ah,2Ah,00h
+NEWENEMY_PATTERN270_BR:
+    DB 0BEh,0BEh,0FEh,0FEh,0EEh,0EEh,0EAh,00h
+
+; Per-phase code quads (TL,TR,BL,BR), phase order 0/90/180/270 -
+; indexed by ENEMY6_DRAW using (IX+3)*4. Must stay in this order.
+ENEMY6_ANIM_CODES:
+    DB NEWENEMY_CODE_TL,    NEWENEMY_CODE_TR,    NEWENEMY_CODE_BL,    NEWENEMY_CODE_BR
+    DB NEWENEMY_CODE90_TL,  NEWENEMY_CODE90_TR,  NEWENEMY_CODE90_BL,  NEWENEMY_CODE90_BR
+    DB NEWENEMY_CODE180_TL, NEWENEMY_CODE180_TR, NEWENEMY_CODE180_BL, NEWENEMY_CODE180_BR
+    DB NEWENEMY_CODE270_TL, NEWENEMY_CODE270_TR, NEWENEMY_CODE270_BL, NEWENEMY_CODE270_BR
 
 ; enemy6's 4 preset spawn rows (cycled by ENEMY6_ROW_CYCLE), all sky -
 ; row+1 (the glyph's bottom half) tops out at 15, well clear of
