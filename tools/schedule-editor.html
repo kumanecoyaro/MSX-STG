@@ -198,13 +198,24 @@
     flex: 1 1 auto;
     min-width: 0;
     padding-left: 8px;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+  }
+  .cell-info-icon {
+    flex: 0 0 auto;
+    width: 16px;
+    height: 16px;
+    display: none;
+  }
+  .cell-info-icon.show { display: block; }
+  .cell-info-text {
+    min-width: 0;
     font-size: 11px;
     color: var(--ink-dim);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    display: flex;
-    align-items: center;
   }
 
   .palette {
@@ -363,7 +374,10 @@
       <div class="btn-row">
         <label class="btn-label" for="fileInput">Load JSON</label>
         <input type="file" id="fileInput" accept=".json" hidden>
-        <div class="cell-info" id="cellInfo" title="Tap a placed cell on the grid to identify it - several types share the same icon"></div>
+        <div class="cell-info" id="cellInfo" title="Tap a placed cell on the grid to identify it - several types share the same icon">
+          <canvas class="cell-info-icon" id="cellInfoIcon"></canvas>
+          <span class="cell-info-text" id="cellInfoText"></span>
+        </div>
       </div>
     </div>
 
@@ -997,14 +1011,36 @@
 
   // Several enemy types share the exact same icon (see GLYPHS.asterisk16's
   // comment), so the grid alone can't tell them apart - this readout shows
-  // a tapped cell's real type + position, next to Load JSON.
-  var cellInfoEl = document.getElementById("cellInfo");
+  // a tapped cell's real type + position, next to Load JSON. The icon is
+  // its real in-game glyph (same art as the palette swatch), not a copy of
+  // whatever's drawn on the grid, so it stays correct even for the boss
+  // (which has no small palette icon of its own).
+  var cellInfoIconEl = document.getElementById("cellInfoIcon");
+  var cellInfoTextEl = document.getElementById("cellInfoText");
+  var cellInfoIconCtx = cellInfoIconEl.getContext("2d");
   function showCellInfo(p) {
     var t = TYPE_BY_ID[p.type];
-    cellInfoEl.textContent = t ? (t.name + " · tick " + p.tick + " row " + p.row) : "";
+    if (!t) { clearCellInfo(); return; }
+    cellInfoTextEl.textContent = t.name + " · tick " + p.tick + " row " + p.row;
+    if (t.glyph) {
+      var cssSize = 16, dpr = Math.max(1, window.devicePixelRatio || 1);
+      cellInfoIconEl.width = Math.round(cssSize * dpr);
+      cellInfoIconEl.height = Math.round(cssSize * dpr);
+      cellInfoIconEl.style.width = cssSize + "px";
+      cellInfoIconEl.style.height = cssSize + "px";
+      cellInfoIconCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      cellInfoIconCtx.clearRect(0, 0, cssSize, cssSize);
+      var glyph = GLYPHS[t.glyph];
+      var pad = glyph.size === 16 ? 0 : 3;
+      drawGlyph(cellInfoIconCtx, glyph, pad, pad, cssSize - pad * 2, cssSize - pad * 2);
+      cellInfoIconEl.classList.add("show");
+    } else {
+      cellInfoIconEl.classList.remove("show");
+    }
   }
   function clearCellInfo() {
-    cellInfoEl.textContent = "";
+    cellInfoTextEl.textContent = "";
+    cellInfoIconEl.classList.remove("show");
   }
 
   // Every gesture on the grid starts undecided and resolves into exactly
