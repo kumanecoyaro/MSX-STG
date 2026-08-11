@@ -1025,14 +1025,15 @@
   });
 
   // Returns a status message rather than showing it - callers decide
-  // where that's safe to display.
+  // where that's safe to display. Loading a file is not an edit, so it
+  // doesn't touch the undo history - it wouldn't make sense to "undo"
+  // your way back through a fresh load into whatever was there before.
   function importJSONText(text) {
     var data = JSON.parse(text);
     if (!Array.isArray(data.placements)) throw new Error("no placements array");
     var valid = data.placements.filter(function (p) {
       return TYPE_BY_ID[p.type] && Number.isInteger(p.tick) && Number.isInteger(p.row);
     });
-    pushHistory();
     placements = valid;
     render();
     var skipped = data.placements.length - valid.length;
