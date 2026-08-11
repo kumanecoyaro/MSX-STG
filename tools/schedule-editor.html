@@ -640,12 +640,8 @@
     { id: "e2b_top",    name: "Enemy2B — Top",    desc: "SPAWN_E2_TOP_B",   glyph: "asterisk16" },
     { id: "e2b_bot",    name: "Enemy2B — Bottom", desc: "SPAWN_E2_BOT_B",   glyph: "asterisk16" },
     { id: "enemy3_wave",name: "Enemy3 — Wave",    desc: "SPAWN_E3_WAVE (budget 32)", glyph: "enemy3" },
-    { id: "enemy4_y16", name: "Enemy4 — Top",     desc: "baseY 32 (fixed - row is just for editing)",  glyph: "enemy4" },
-    { id: "enemy4_y32", name: "Enemy4 — Mid",     desc: "baseY 64 (fixed - row is just for editing)",  glyph: "enemy4" },
-    { id: "enemy4_y48", name: "Enemy4 — Bottom",  desc: "baseY 72 (fixed - row is just for editing)",  glyph: "enemy4" },
-    { id: "enemy5_y16", name: "Enemy5 — Top",     desc: "TYPE_ENEMY1_LOOK, fixed Y - row is just for editing", glyph: "asterisk16" },
-    { id: "enemy5_y32", name: "Enemy5 — Mid",     desc: "TYPE_ENEMY1_LOOK, fixed Y - row is just for editing", glyph: "asterisk16" },
-    { id: "enemy5_y48", name: "Enemy5 — Bottom",  desc: "TYPE_ENEMY1_LOOK, fixed Y - row is just for editing", glyph: "asterisk16" },
+    { id: "enemy4",      name: "Enemy4",           desc: "SPAWN_E4 — baseY comes from SPAWN_BASEY_TABLE[row placed], any row", glyph: "enemy4" },
+    { id: "enemy5",      name: "Enemy5",           desc: "SPAWN_E4B, TYPE_ENEMY1_LOOK — baseY comes from SPAWN_BASEY_TABLE[row placed], any row", glyph: "asterisk16" },
     { id: "boss",       name: "Boss",             desc: "BOSS_SPAWN - fixed position, row/tick here are just for editing", glyph: null }
   ];
   var TYPE_BY_ID = {};
@@ -1603,6 +1599,17 @@
     if (ev.target === saveOverlay) saveOverlay.classList.remove("show");
   });
 
+  // enemy4/enemy5 used to be split into 3 palette entries each
+  // (_y16/_y32/_y48, picking a Top/Mid/Bottom baseY) before SPAWN_E4/SPAWN_E4B
+  // switched to reading baseY from SPAWN_BASEY_TABLE[row placed] for any row -
+  // see SPAWN_E4's comment in CYBER_GD_BOSS.asm. The 3-way split no longer
+  // affects anything in-game, but old saved JSON can still contain those ids,
+  // so remap them here rather than silently dropping those placements on load.
+  var LEGACY_TYPE_ALIASES = {
+    enemy4_y16: "enemy4", enemy4_y32: "enemy4", enemy4_y48: "enemy4",
+    enemy5_y16: "enemy5", enemy5_y32: "enemy5", enemy5_y48: "enemy5"
+  };
+
   // Returns a status message rather than showing it - callers decide
   // where that's safe to display. Loading a file is not an edit, so it
   // doesn't touch the undo history - it wouldn't make sense to "undo"
@@ -1610,7 +1617,11 @@
   function importJSONText(text) {
     var data = JSON.parse(text);
     if (!Array.isArray(data.placements)) throw new Error("no placements array");
-    var valid = data.placements.filter(function (p) {
+    var remapped = data.placements.map(function (p) {
+      var alias = p && LEGACY_TYPE_ALIASES[p.type];
+      return alias ? Object.assign({}, p, { type: alias }) : p;
+    });
+    var valid = remapped.filter(function (p) {
       return TYPE_BY_ID[p.type] && Number.isInteger(p.tick) && Number.isInteger(p.row);
     });
     placements = valid;
