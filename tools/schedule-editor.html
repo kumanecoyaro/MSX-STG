@@ -280,26 +280,6 @@
     box-shadow: 0 0 0 2px var(--accent);
   }
   .pitem .picon { display: block; pointer-events: none; }
-  /* e2a_top/e2a_bot/e2b_top/e2b_bot render the exact same asterisk icon
-     (see GLYPHS.asterisk16's comment) as every other type sharing that
-     glyph, so all 4 - already grouped AABB in the palette array/DOM order -
-     read as indistinguishable duplicates at a glance without these. group
-     ("2A"/"2B") marks which independent instance; pos ("T"/"B") marks
-     which of that instance's two spawn Y presets. */
-  .pbadge {
-    position: absolute;
-    font-family: var(--font-mono);
-    font-size: 7px;
-    line-height: 1;
-    font-weight: 700;
-    padding: 1px 2px;
-    border-radius: 2px;
-    background: rgba(2, 4, 8, 0.72);
-    color: var(--ink);
-    pointer-events: none;
-  }
-  .pbadge-group { top: 1px; left: 1px; }
-  .pbadge-pos { bottom: 1px; right: 1px; color: var(--accent); }
 
   #liveMsg {
     position: fixed;
@@ -674,19 +654,14 @@
   // ---------- enemy palette (matches the current CYBER_GD_BOSS.asm schedule) ----------
   var TYPES = [
     { id: "simple",     name: "Simple (Enemy1)",  desc: "any row - dodge dir is decided from player Y at center", glyph: "asterisk16" },
-    // e2a_top/e2a_bot/e2b_top/e2b_bot really are 4 distinct things (unlike the
-    // old enemy4/enemy5 y16/y32/y48 split) - A and B are independent RAM
-    // instances that can both be on screen at once (separate schedule busy
-    // guards too), while Top/Bottom just picks which of that instance's 2
-    // spawn Y presets to use. All 4 share the exact same asterisk16 icon
-    // though, so without the group/pos badges below they render as 4
-    // identical swatches in a row and read as duplicates - group ("2A"/"2B")
-    // and pos ("T"/"B") make the AABB grouping (already the real array/DOM
-    // order) visible without hovering for the title tooltip.
-    { id: "e2a_top",    name: "Enemy2A — Top",    desc: "SPAWN_E2_TOP_A — instance A, can run alongside B; Top/Bottom only picks spawn Y", glyph: "asterisk16", group: "2A", pos: "T" },
-    { id: "e2a_bot",    name: "Enemy2A — Bottom", desc: "SPAWN_E2_BOT_A — instance A, can run alongside B; Top/Bottom only picks spawn Y", glyph: "asterisk16", group: "2A", pos: "B" },
-    { id: "e2b_top",    name: "Enemy2B — Top",    desc: "SPAWN_E2_TOP_B — instance B, can run alongside A; Top/Bottom only picks spawn Y", glyph: "asterisk16", group: "2B", pos: "T" },
-    { id: "e2b_bot",    name: "Enemy2B — Bottom", desc: "SPAWN_E2_BOT_B — instance B, can run alongside A; Top/Bottom only picks spawn Y", glyph: "asterisk16", group: "2B", pos: "B" },
+    // e2a_top/e2a_bot/e2b_top/e2b_bot used to be 4 distinct placeable types -
+    // A/B picked which of 2 independent RAM instances got claimed, Top/Bottom
+    // picked a fixed spawn Y (32/128). SPAWN_E2 (src/CYBER_GD_BOSS.asm) now
+    // reads baseY from SPAWN_BASEY_TABLE[row placed] - same any-row mechanism
+    // as enemy4/enemy5 below - and auto-claims whichever of A/B is free at
+    // spawn time, so neither axis is a real choice anymore: one placeable,
+    // any row, same as enemy4/enemy5.
+    { id: "enemy2",     name: "Enemy2",           desc: "SPAWN_E2 — baseY comes from SPAWN_BASEY_TABLE[row placed], any row; A/B instance (2 formations can run at once) is auto-assigned to whichever is free", glyph: "asterisk16" },
     { id: "enemy3_wave",name: "Enemy3 — Wave",    desc: "SPAWN_E3_WAVE (budget 32)", glyph: "enemy3" },
     { id: "enemy4",      name: "Enemy4",           desc: "SPAWN_E4 — baseY comes from SPAWN_BASEY_TABLE[row placed], any row", glyph: "enemy4" },
     { id: "enemy5",      name: "Enemy5",           desc: "SPAWN_E4B, TYPE_ENEMY1_LOOK — baseY comes from SPAWN_BASEY_TABLE[row placed], any row", glyph: "asterisk16" },
@@ -829,21 +804,6 @@
       item.appendChild(cv);
     } else {
       item.textContent = t.name;
-    }
-    // e2a_top/e2a_bot/e2b_top/e2b_bot share one icon (asterisk16) 4 ways -
-    // see the TYPES comment above e2a_top - these two badges are what makes
-    // the A/B instance and Top/Bottom-Y distinction visible without hovering.
-    if (t.group) {
-      var groupBadge = document.createElement("span");
-      groupBadge.className = "pbadge pbadge-group";
-      groupBadge.textContent = t.group;
-      item.appendChild(groupBadge);
-    }
-    if (t.pos) {
-      var posBadge = document.createElement("span");
-      posBadge.className = "pbadge pbadge-pos";
-      posBadge.textContent = t.pos;
-      item.appendChild(posBadge);
     }
     item.addEventListener("click", function () {
       eraseArmed = false;
@@ -1666,12 +1626,16 @@
   // enemy4/enemy5 used to be split into 3 palette entries each
   // (_y16/_y32/_y48, picking a Top/Mid/Bottom baseY) before SPAWN_E4/SPAWN_E4B
   // switched to reading baseY from SPAWN_BASEY_TABLE[row placed] for any row -
-  // see SPAWN_E4's comment in CYBER_GD_BOSS.asm. The 3-way split no longer
-  // affects anything in-game, but old saved JSON can still contain those ids,
-  // so remap them here rather than silently dropping those placements on load.
+  // see SPAWN_E4's comment in CYBER_GD_BOSS.asm. Enemy2 went through the same
+  // collapse (e2a_top/e2a_bot/e2b_top/e2b_bot -> enemy2) once SPAWN_E2 started
+  // reading baseY the same way and auto-picking its A/B RAM instance instead
+  // of the caller choosing one. None of these splits affect anything in-game
+  // anymore, but old saved JSON can still contain the old ids, so remap them
+  // here rather than silently dropping those placements on load.
   var LEGACY_TYPE_ALIASES = {
     enemy4_y16: "enemy4", enemy4_y32: "enemy4", enemy4_y48: "enemy4",
-    enemy5_y16: "enemy5", enemy5_y32: "enemy5", enemy5_y48: "enemy5"
+    enemy5_y16: "enemy5", enemy5_y32: "enemy5", enemy5_y48: "enemy5",
+    e2a_top: "enemy2", e2a_bot: "enemy2", e2b_top: "enemy2", e2b_bot: "enemy2"
   };
 
   // Returns a status message rather than showing it - callers decide
