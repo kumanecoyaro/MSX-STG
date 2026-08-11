@@ -511,6 +511,25 @@ ENEMY3_ACTIVE_COUNT EQU 0EBD7h
 ENEMY3_POOL          EQU 0EBD8h
 ENEMY3_CENTERX_TABLE EQU 0EE98h
 
+; --- enemy6: new BG-cell enemy (16x16, drawn as a 2x2 block of        ---
+; --- nametable cells, same as enemy3's single-cell approach just      ---
+; --- wider) - straight left drift, stepping one column (8px) every    ---
+; --- ENEMY6_STEP_FRAMES frames. Glyph is NEWENEMY_CODE_TL/TR/BL/BR    ---
+; --- (see their own comment, near NEWENEMY_PATTERN_*) - already       ---
+; --- loaded into VRAM at boot. Spawns on its own independent timer,   ---
+; --- not yet wired into the big 79-entry SPAWN_THRESHOLDS schedule    ---
+; --- (see the schedule editor for that follow-up once this movement   ---
+; --- is confirmed on real hardware).                                  ---
+ENEMY6_SLOTS  EQU 4
+ENEMY6_STRUCT EQU 3             ; ACTIVE,ROW,COL (COL = left column of the 2-wide glyph)
+ENEMY6_POOL   EQU 0EF00h        ; ENEMY6_SLOTS*ENEMY6_STRUCT = 12 bytes
+ENEMY6_SPAWN_COL    EQU 30      ; matches ENEMY_SPAWNX/ENEMY4_SPAWNX(240) = col30
+ENEMY6_STEP_FRAMES  EQU 6       ; frames held per 1-column step
+ENEMY6_SPAWN_FRAMES EQU 240     ; frames between spawn attempts (~4s at 60fps)
+ENEMY6_STEP_TIMER   EQU 0EF10h  ; shared countdown to the next 1-column step
+ENEMY6_SPAWN_TIMER  EQU 0EF11h  ; countdown to the next spawn attempt
+ENEMY6_ROW_CYCLE    EQU 0EF12h  ; 0-3, index into ENEMY6_ROW_TABLE for the next spawn
+
 ; --- shot background-color variants: blue(sky), white(mountain, ---
 ; --- screen row 18), green(diamond/slash/backslash, rows 19-22), ---
 ; --- brown(wedge, row 23) - same treatment as the existing green ---
@@ -703,24 +722,16 @@ FILLBG_3:
     LD HL,ENEMY3_PATTERN2 : LD DE,ENEMY3_CODE2*8 : LD BC,8 : CALL LDIRVM
     LD HL,ENEMY3_PATTERN3 : LD DE,ENEMY3_CODE3*8 : LD BC,8 : CALL LDIRVM
 
-    ; --- new BG enemy's 4 quadrant glyphs, at ENEMY3_CODE1's group's ---
-    ; --- spare codes 153-156 (152 itself untouched) - see the        ---
-    ; --- pattern data's own comment. TEMPORARY: also drawn at a      ---
-    ; --- fixed row2/col2 2x2 block here so the shape/color can be    ---
-    ; --- checked on real hardware before any spawn/movement logic    ---
-    ; --- exists for it.                                              ---
+    ; --- enemy6's 4 quadrant glyphs, at ENEMY3_CODE1's group's spare  ---
+    ; --- codes 153-156 (152 itself untouched) - see the pattern       ---
+    ; --- data's own comment. No longer also drawn at a fixed test     ---
+    ; --- cell here - ENEMY6_TRY_SPAWN/ENEMY6_DRAW place and move it   ---
+    ; --- for real now (see the ENEMY6_* routines, near                ---
+    ; --- CHECK_BULLET_VS_ENEMY3).                                     ---
     LD HL,NEWENEMY_PATTERN_TL : LD DE,NEWENEMY_CODE_TL*8 : LD BC,8 : CALL LDIRVM
     LD HL,NEWENEMY_PATTERN_TR : LD DE,NEWENEMY_CODE_TR*8 : LD BC,8 : CALL LDIRVM
     LD HL,NEWENEMY_PATTERN_BL : LD DE,NEWENEMY_CODE_BL*8 : LD BC,8 : CALL LDIRVM
     LD HL,NEWENEMY_PATTERN_BR : LD DE,NEWENEMY_CODE_BR*8 : LD BC,8 : CALL LDIRVM
-    LD A,2 : LD (ANIM_TMP_ROW),A : LD A,2 : LD (ANIM_TMP_COL),A
-    LD A,NEWENEMY_CODE_TL : LD (ANIM_TMP_VAL),A : CALL WRITE_ANIM_CELL
-    LD A,2 : LD (ANIM_TMP_ROW),A : LD A,3 : LD (ANIM_TMP_COL),A
-    LD A,NEWENEMY_CODE_TR : LD (ANIM_TMP_VAL),A : CALL WRITE_ANIM_CELL
-    LD A,3 : LD (ANIM_TMP_ROW),A : LD A,2 : LD (ANIM_TMP_COL),A
-    LD A,NEWENEMY_CODE_BL : LD (ANIM_TMP_VAL),A : CALL WRITE_ANIM_CELL
-    LD A,3 : LD (ANIM_TMP_ROW),A : LD A,3 : LD (ANIM_TMP_COL),A
-    LD A,NEWENEMY_CODE_BR : LD (ANIM_TMP_VAL),A : CALL WRITE_ANIM_CELL
 
     ; --- digit glyphs (0-9) for the on-screen game-tick counter ---
     LD HL,DIGIT_PATTERNS : LD DE,DIGIT_BASE*8 : LD BC,80 : CALL LDIRVM
@@ -772,6 +783,15 @@ E3INIT_ROW_LOOP:
     ; ENEMY3_WAVE_POOL.
     LD HL,ENEMY3_WAVE_POOL : LD (HL),0
     LD DE,ENEMY3_WAVE_POOL+1 : LD BC,ENEMY3_WAVE_SLOTS*4-1 : LDIR
+
+    ; --- enemy6 pool: idle at boot - its own timer fires the first     ---
+    ; --- spawn attempt after ENEMY6_SPAWN_FRAMES frames (see           ---
+    ; --- ENEMY6_TRY_SPAWN)                                             ---
+    XOR A : LD (ENEMY6_STEP_TIMER),A
+    LD A,ENEMY6_SPAWN_FRAMES : LD (ENEMY6_SPAWN_TIMER),A
+    XOR A : LD (ENEMY6_ROW_CYCLE),A
+    LD HL,ENEMY6_POOL : LD (HL),0
+    LD DE,ENEMY6_POOL+1 : LD BC,ENEMY6_SLOTS*ENEMY6_STRUCT-1 : LDIR
 
     ; --- switch sprites to 16x16 mode (VDP R1 bit1=SI), keep other bits ---
     LD A,(RG1SAV) : OR 02h : LD (RG1SAV),A
@@ -2103,6 +2123,9 @@ ANIM2_DONE:
     ; --- enemy3: spawn attempt + advance/redraw all 64 pool slots ---
     CALL ENEMY3_TRY_SPAWN
     CALL ENEMY3_UPDATE_ALL
+    ; --- enemy6: spawn attempt + advance/redraw all 4 pool slots ---
+    CALL ENEMY6_TRY_SPAWN
+    CALL ENEMY6_UPDATE_ALL
     ; --- unified sprite-enemy buffer: advance every active slot,   ---
     ; --- regardless of which movement algorithm (BEHAVIOR) it uses ---
     CALL ENEMY_POOL_UPDATE_ALL
@@ -2129,6 +2152,11 @@ ANIM2_DONE:
     OR A
     JR NZ,BULLET0_ISHIT
     CALL CHECK_BULLET_VS_ENEMY3
+    OR A
+    JR NZ,BULLET0_ISHIT
+    LD A,(BULLET0_COL) : LD B,A
+    LD A,(BULLET0_ROW) : LD C,A
+    CALL CHECK_BULLET_VS_ENEMY6
     OR A
     JR NZ,BULLET0_ISHIT
     CALL CHECK_BULLET_VS_ENEMY_POOL
@@ -2282,6 +2310,11 @@ BULLET0_NEXT:
     CALL CHECK_BULLET_VS_ENEMY3
     OR A
     JR NZ,BULLET1_ISHIT
+    LD A,(BULLET1_COL) : LD B,A
+    LD A,(BULLET1_ROW) : LD C,A
+    CALL CHECK_BULLET_VS_ENEMY6
+    OR A
+    JR NZ,BULLET1_ISHIT
     CALL CHECK_BULLET_VS_ENEMY_POOL
     OR A
     JR Z,BULLET1_NOHIT
@@ -2431,6 +2464,11 @@ BULLET1_NEXT:
     OR A
     JR NZ,BULLET2_ISHIT
     CALL CHECK_BULLET_VS_ENEMY3
+    OR A
+    JR NZ,BULLET2_ISHIT
+    LD A,(BULLET2_COL) : LD B,A
+    LD A,(BULLET2_ROW) : LD C,A
+    CALL CHECK_BULLET_VS_ENEMY6
     OR A
     JR NZ,BULLET2_ISHIT
     CALL CHECK_BULLET_VS_ENEMY_POOL
@@ -11812,6 +11850,228 @@ CBVE3_HIT:
     LD A,1
     RET
 
+; ============================================================
+; enemy6: new BG-cell enemy (16x16 = 2x2 nametable cells), straight
+; left drift. See the ENEMY6_* EQUs (near ENEMY3_CENTERX_TABLE) for
+; the pool layout/timing, and NEWENEMY_PATTERN_*/NEWENEMY_CODE_* (near
+; the end of the file) for the glyph itself.
+; ============================================================
+
+; Countdown to the next spawn attempt; on expiry, claims a free
+; ENEMY6_POOL slot (if any), places it at ENEMY6_SPAWN_COL/next row
+; from ENEMY6_ROW_TABLE (cycled 0-3), and draws it immediately -
+; otherwise this wave's member wouldn't appear until the next
+; ENEMY6_STEP_FRAMES step. Skips silently (retries after the next
+; full interval) if the pool is already full.
+ENEMY6_TRY_SPAWN:
+    LD A,(ENEMY6_SPAWN_TIMER)
+    DEC A
+    LD (ENEMY6_SPAWN_TIMER),A
+    RET NZ
+    LD A,ENEMY6_SPAWN_FRAMES
+    LD (ENEMY6_SPAWN_TIMER),A
+    LD HL,ENEMY6_POOL
+    LD B,ENEMY6_SLOTS
+E6TS_LOOP:
+    LD A,(HL)
+    OR A
+    JR Z,E6TS_FOUND
+    LD DE,ENEMY6_STRUCT
+    ADD HL,DE
+    DJNZ E6TS_LOOP
+    RET                          ; pool full - skip this attempt
+E6TS_FOUND:
+    PUSH HL : POP IX
+    LD (IX+0),1
+    LD A,(ENEMY6_ROW_CYCLE) : LD E,A : LD D,0
+    LD HL,ENEMY6_ROW_TABLE
+    ADD HL,DE
+    LD A,(HL)
+    LD (IX+1),A
+    LD A,ENEMY6_SPAWN_COL
+    LD (IX+2),A
+    LD A,(ENEMY6_ROW_CYCLE) : INC A : AND 3 : LD (ENEMY6_ROW_CYCLE),A
+    JP ENEMY6_DRAW
+
+; Advances the shared column-step timer; when it fires, moves every
+; active slot left by one column (erase old 2x2 block, draw new one),
+; or deactivates it once it reaches the left edge. On non-step frames
+; this is a no-op - the BG cells already drawn stay put in VRAM
+; without any CPU/VDP work, same reasoning as ENEMY3_UPDATE_SLOT's
+; moved-cell check.
+ENEMY6_UPDATE_ALL:
+    LD A,(ENEMY6_STEP_TIMER)
+    DEC A
+    LD (ENEMY6_STEP_TIMER),A
+    RET NZ
+    LD A,ENEMY6_STEP_FRAMES
+    LD (ENEMY6_STEP_TIMER),A
+    LD HL,ENEMY6_POOL
+    LD B,ENEMY6_SLOTS
+E6UA_LOOP:
+    LD A,(HL)
+    OR A
+    JR Z,E6UA_SKIP
+    PUSH BC
+    PUSH HL
+    PUSH HL : POP IX
+    CALL ENEMY6_STEP_ONE
+    POP HL
+    POP BC
+E6UA_SKIP:
+    LD DE,ENEMY6_STRUCT
+    ADD HL,DE
+    DJNZ E6UA_LOOP
+    RET
+
+; Input: IX = slot base (ACTIVE,ROW,COL). One column-step: erase the
+; old 2x2 block, then either draw the new one one column left, or (if
+; already at col0) deactivate instead of stepping off the nametable.
+ENEMY6_STEP_ONE:
+    CALL ENEMY6_ERASE
+    LD A,(IX+2)
+    OR A
+    JR Z,E6SO_EXIT
+    DEC A
+    LD (IX+2),A
+    JP ENEMY6_DRAW
+E6SO_EXIT:
+    XOR A
+    LD (IX+0),A
+    RET
+
+; Input: IX = slot base (ROW at IX+1, COL at IX+2). Blanks this slot's
+; current 2x2 nametable block back to sky (BLANKCODE) - always safe
+; since every ENEMY6_ROW_TABLE row (and its +1 partner) sits well
+; above GROUND_ROW0, unlike ENEMY3_ERASE_CELL this never needs to
+; restore ground-scroller content. Clobbers A,DE,HL.
+ENEMY6_ERASE:
+    LD A,BLANKCODE : LD (ANIM_TMP_VAL),A
+    LD A,(IX+1) : LD (ANIM_TMP_ROW),A
+    LD A,(IX+2) : LD (ANIM_TMP_COL),A
+    CALL WRITE_ANIM_CELL
+    LD A,(IX+1) : INC A : LD (ANIM_TMP_ROW),A
+    LD A,(IX+2) : LD (ANIM_TMP_COL),A
+    CALL WRITE_ANIM_CELL
+    LD A,(IX+1) : LD (ANIM_TMP_ROW),A
+    LD A,(IX+2) : INC A : LD (ANIM_TMP_COL),A
+    CALL WRITE_ANIM_CELL
+    LD A,(IX+1) : INC A : LD (ANIM_TMP_ROW),A
+    LD A,(IX+2) : INC A : LD (ANIM_TMP_COL),A
+    CALL WRITE_ANIM_CELL
+    RET
+
+; Input: IX = slot base (ROW at IX+1, COL at IX+2). Draws this slot's
+; 4 quadrant codes at its current position. Clobbers A,DE,HL.
+ENEMY6_DRAW:
+    LD A,NEWENEMY_CODE_TL : LD (ANIM_TMP_VAL),A
+    LD A,(IX+1) : LD (ANIM_TMP_ROW),A
+    LD A,(IX+2) : LD (ANIM_TMP_COL),A
+    CALL WRITE_ANIM_CELL
+    LD A,NEWENEMY_CODE_TR : LD (ANIM_TMP_VAL),A
+    LD A,(IX+1) : LD (ANIM_TMP_ROW),A
+    LD A,(IX+2) : INC A : LD (ANIM_TMP_COL),A
+    CALL WRITE_ANIM_CELL
+    LD A,NEWENEMY_CODE_BL : LD (ANIM_TMP_VAL),A
+    LD A,(IX+1) : INC A : LD (ANIM_TMP_ROW),A
+    LD A,(IX+2) : LD (ANIM_TMP_COL),A
+    CALL WRITE_ANIM_CELL
+    LD A,NEWENEMY_CODE_BR : LD (ANIM_TMP_VAL),A
+    LD A,(IX+1) : INC A : LD (ANIM_TMP_ROW),A
+    LD A,(IX+2) : INC A : LD (ANIM_TMP_COL),A
+    CALL WRITE_ANIM_CELL
+    RET
+
+; Input: B = bullet column (0-31), C = bullet row (0-23), D = target
+; box's X (top-left, 16 wide), E = target box's Y (top-left, 16 tall).
+; Output: A = 1 if the bullet's 8x8 cell overlaps the 16x16 box, else
+; A = 0. Same edge-comparison idea as QUAD_HIT_TEST, just widened for
+; enemy6's 2x2-cell glyph. Trashes H,L.
+ENEMY6_HIT_TEST:
+    LD A,B : ADD A,A : ADD A,A : ADD A,A : LD H,A
+    LD A,C : ADD A,A : ADD A,A : ADD A,A : LD L,A
+    LD A,H : ADD A,7
+    CP D
+    JR C,E6HT_NO
+    LD A,D : ADD A,15
+    CP H
+    JR C,E6HT_NO
+    LD A,L : ADD A,7
+    CP E
+    JR C,E6HT_NO
+    LD A,E : ADD A,15
+    CP L
+    JR C,E6HT_NO
+    LD A,1
+    RET
+E6HT_NO:
+    XOR A
+    RET
+
+; Input: IX = slot base, B = bullet col, C = bullet row. Output: A=1 if
+; this active instance overlapped the bullet (destroyed: erased +
+; shared explosion/sound + score), else A=0 (inactive or no overlap).
+; Same shape as E3_HIT_ONE_SLOT.
+ENEMY6_HIT_ONE_SLOT:
+    LD A,(IX+0)
+    OR A
+    JR Z,E6H_NO
+    LD A,(IX+2) : ADD A,A : ADD A,A : ADD A,A : LD D,A
+    LD A,(IX+1) : ADD A,A : ADD A,A : ADD A,A : LD E,A
+    CALL ENEMY6_HIT_TEST
+    OR A
+    JR Z,E6H_NO
+    XOR A : LD (IX+0),A
+    PUSH DE                  ; D,E = hit X,Y for TRIGGER_EXPLOSION below - ENEMY6_ERASE clobbers DE
+    CALL ENEMY6_ERASE
+    POP DE
+    PUSH BC
+    CALL TRIGGER_EXPLOSION
+    CALL ADD_SCORE_300
+    POP BC
+    LD A,1
+    RET
+E6H_NO:
+    XOR A
+    RET
+
+; Input: B = bullet col, C = bullet row. Output: A=1 if the bullet
+; destroyed an ENEMY6 instance, else 0. Only ENEMY6_SLOTS(4) slots to
+; scan, so (unlike ENEMY3/ENEMY_POOL) this skips an active-count
+; short-circuit. Preserves the caller's B,C across the whole scan
+; (its own loop reuses B as the DJNZ counter).
+CHECK_BULLET_VS_ENEMY6:
+    PUSH BC
+    LD A,B : LD (ENEMY_HIT_COL),A
+    LD A,C : LD (ENEMY_HIT_ROW),A
+    LD HL,ENEMY6_POOL
+    LD B,ENEMY6_SLOTS
+CBVE6_LOOP:
+    LD A,(HL)
+    OR A
+    JR Z,CBVE6_SKIP
+    PUSH HL
+    PUSH BC
+    PUSH HL : POP IX
+    LD A,(ENEMY_HIT_COL) : LD B,A
+    LD A,(ENEMY_HIT_ROW) : LD C,A
+    CALL ENEMY6_HIT_ONE_SLOT
+    POP BC
+    POP HL
+    OR A
+    JR NZ,CBVE6_HIT
+CBVE6_SKIP:
+    LD DE,ENEMY6_STRUCT
+    ADD HL,DE
+    DJNZ CBVE6_LOOP
+    POP BC
+    XOR A
+    RET
+CBVE6_HIT:
+    POP BC
+    LD A,1
+    RET
+
 ; Translates 33 consecutive ROWDATA bytes (ASCII terrain letter) through
 ; LUT into an IDCACHEn buffer - used to refresh a row's cache only when
 ; its group's PXCHAR actually advances (see the PXCHAR_G8/G4/G2/G1 gates
@@ -12067,6 +12327,12 @@ NEWENEMY_PATTERN_BL:
     DB 7Fh,03h,7Fh,0Fh,7Fh,3Fh,7Fh,00h
 NEWENEMY_PATTERN_BR:
     DB 7Eh,0BEh,0DEh,0EEh,0F6h,0FAh,0FCh,00h
+
+; enemy6's 4 preset spawn rows (cycled by ENEMY6_ROW_CYCLE), all sky -
+; row+1 (the glyph's bottom half) tops out at 15, well clear of
+; GROUND_ROW0(19).
+ENEMY6_ROW_TABLE:
+    DB 2,6,10,14
 
 ; Full schedule, 79 entries (indices 0-78), imported directly from the
 ; schedule editor's exported JSON (tick/row/type per placement) - see
