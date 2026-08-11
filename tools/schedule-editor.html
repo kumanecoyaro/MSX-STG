@@ -115,11 +115,16 @@
     overflow-y: hidden;
     -webkit-overflow-scrolling: touch;
     background: var(--bg);
-    touch-action: pan-x;
   }
+  /* touch-action is permanently off, not toggled at drag-start - toggling
+     it mid-gesture is unreliable (the browser can already have committed
+     to native scrolling by the time a hold timer fires). Panning is
+     driven entirely in JS instead (see the pointer handlers), resolved
+     into exactly one of pan/hold-move/tap per gesture. */
   #grid {
     display: block;
     cursor: crosshair;
+    touch-action: none;
   }
 
   /* ---------- right sidebar: identity, stats, actions, palette ---------- */
@@ -1001,26 +1006,91 @@
     cellInfoEl.textContent = "";
   }
 
-  // Neutral-mode interaction on an existing placement is tap/hold/move:
-  // a quick release inspects it (unchanged), while pressing and holding
-  // still, then dragging, repositions it. The hold delay is what lets a
-  // normal horizontal swipe (to pan through ticks - see canvasScroll's
-  // touch-action:pan-x) keep working: if the pointer moves past
-  // HOLD_MOVE_CANCEL before HOLD_MS elapses, the press is abandoned and
-  // the browser's native scroll takes over untouched, exactly as before
-  // this feature existed.
+  // Every gesture on the grid starts undecided and resolves into exactly
+  // one of three things by the time it ends:
+  //   - pan: moved past MOVE_CANCEL before the hold timer fired - scrolls
+  //     the grid (driven here in JS - see #grid's touch-action:none) and
+  //     does nothing else, whatever mode was armed.
+  //   - holdmove: pressed on an existing placement, held still for
+  //     HOLD_MS, then dragged - repositions it.
+  //   - tap: released without enough movement to become a pan, and
+  //     without the hold timer firing - place/erase/inspect, same as a
+  //     plain click before this gesture system existed.
+  // Resolving erase/place at release (not on pointerdown) is what keeps a
+  // swipe that starts in erase/place mode from erasing/placing at the
+  // touch-start point before the swipe is even recognized.
   var HOLD_MS = 400;
-  var HOLD_MOVE_CANCEL = 10;
-  var press = null; // {obj, pointerId, startX, startY, dragging, timer}
+  var MOVE_CANCEL = 10;
+  var press = null; // {pointerId, startX, startY, startScrollLeft, cell, offsetHit, placementIdx, resolved, holdTimer}
 
   grid.addEventListener("pointerdown", function (ev) {
     var rect = grid.getBoundingClientRect();
     var offsetHit = enemy3OffsetHitTest(ev.clientX - rect.left, ev.clientY - rect.top);
-    if (offsetHit !== null) {
-      openOffsetEditor(offsetHit);
+    var c = cellFromEvent(ev);
+    press = {
+      pointerId: ev.pointerId,
+      startX: ev.clientX,
+      startY: ev.clientY,
+      startScrollLeft: canvasScroll.scrollLeft,
+      cell: c,
+      offsetHit: offsetHit,
+      placementIdx: (!eraseArmed && !armedType && c) ? placementIndexAtCell(c.tick, c.row) : -1,
+      resolved: null,
+      holdTimer: null
+    };
+    if (press.placementIdx >= 0) {
+      press.holdTimer = setTimeout(function () {
+        if (!press || press.resolved) return;
+        press.resolved = "holdmove";
+        pushHistory();
+        flash("move " + TYPE_BY_ID[placements[press.placementIdx].type].name + " - drag to reposition");
+      }, HOLD_MS);
+    }
+    grid.setPointerCapture(ev.pointerId);
+  });
+
+  grid.addEventListener("pointermove", function (ev) {
+    if (!press || ev.pointerId !== press.pointerId) return;
+    var dx = ev.clientX - press.startX, dy = ev.clientY - press.startY;
+    if (press.resolved === "holdmove") {
+      var c = cellFromEvent(ev);
+      if (!c) return;
+      var obj = placements[press.placementIdx];
+      obj.tick = c.tick;
+      obj.row = c.row;
+      render();
       return;
     }
-    var c = cellFromEvent(ev);
+    if (press.resolved === "pan") {
+      canvasScroll.scrollLeft = press.startScrollLeft - dx;
+      return;
+    }
+    if (Math.hypot(dx, dy) > MOVE_CANCEL) {
+      clearTimeout(press.holdTimer);
+      press.resolved = "pan";
+      canvasScroll.scrollLeft = press.startScrollLeft - dx;
+    }
+  });
+
+  function endPress(ev) {
+    if (!press || ev.pointerId !== press.pointerId) return;
+    clearTimeout(press.holdTimer);
+    var p = press;
+    press = null;
+    if (p.resolved === "pan") return;
+    if (p.resolved === "holdmove") {
+      var obj = placements[p.placementIdx];
+      placements.sort(function (a, b) { return a.tick - b.tick || a.row - b.row; });
+      flash("moved " + TYPE_BY_ID[obj.type].name + " to tick " + obj.tick + ", row " + obj.row);
+      showCellInfo(obj);
+      return;
+    }
+    // tap: released before the hold fired, without moving enough to pan.
+    if (p.offsetHit !== null) {
+      openOffsetEditor(p.offsetHit);
+      return;
+    }
+    var c = p.cell;
     if (!c) return;
     if (eraseArmed) {
       // Hit-test the tapped icon's real footprint, not just its anchor
@@ -1045,59 +1115,21 @@
       render();
       return;
     }
-    // neutral: pressing on an existing placement starts a tap-or-hold
-    // gesture. Placing/erasing above never touch the info readout - it
+    // neutral tap on an already-placed cell - inspect only, don't touch
+    // placements. Placing/erasing above never touch the info readout - it
     // only ever reflects what you tap/hold to inspect or move.
     var idx = placementIndexAtCell(c.tick, c.row);
-    if (idx < 0) {
+    if (idx >= 0) {
+      showCellInfo(placements[idx]);
+    } else {
       clearCellInfo();
       flash("pick an enemy on the right first");
-      return;
     }
-    press = { obj: placements[idx], pointerId: ev.pointerId, startX: ev.clientX, startY: ev.clientY, dragging: false, timer: null };
-    press.timer = setTimeout(function () {
-      if (!press) return;
-      press.dragging = true;
-      pushHistory();
-      grid.style.touchAction = "none";
-      grid.setPointerCapture(press.pointerId);
-      flash("move " + TYPE_BY_ID[press.obj.type].name + " - drag to reposition");
-    }, HOLD_MS);
-  });
-
-  grid.addEventListener("pointermove", function (ev) {
-    if (!press || ev.pointerId !== press.pointerId) return;
-    var dx = ev.clientX - press.startX, dy = ev.clientY - press.startY;
-    if (!press.dragging) {
-      if (Math.hypot(dx, dy) > HOLD_MOVE_CANCEL) {
-        clearTimeout(press.timer);
-        press = null; // too much movement before the hold fired - let the browser pan/scroll as usual
-      }
-      return;
-    }
-    var c = cellFromEvent(ev);
-    if (!c) return;
-    press.obj.tick = c.tick;
-    press.obj.row = c.row;
-    render();
-  });
-
-  function endPress(ev) {
-    if (!press || ev.pointerId !== press.pointerId) return;
-    clearTimeout(press.timer);
-    grid.style.touchAction = "";
-    if (press.dragging) {
-      placements.sort(function (a, b) { return a.tick - b.tick || a.row - b.row; });
-      flash("moved " + TYPE_BY_ID[press.obj.type].name + " to tick " + press.obj.tick + ", row " + press.obj.row);
-    }
-    showCellInfo(press.obj);
-    press = null;
   }
   grid.addEventListener("pointerup", endPress);
   grid.addEventListener("pointercancel", function (ev) {
     if (!press || ev.pointerId !== press.pointerId) return;
-    clearTimeout(press.timer);
-    grid.style.touchAction = "";
+    clearTimeout(press.holdTimer);
     press = null;
   });
 
