@@ -1091,31 +1091,37 @@
   // events work fine.
   var inspectHandledByPointer = false;
 
-  // Same idea as cellFromEvent, but for the holdmove target: offset
-  // HOLD_LIFT_ROWS above wherever the pointer actually is, clamped onto the
-  // grid instead of rejected when that puts it off-grid (cellFromEvent's
-  // null-outside-grid behavior is for taps, not for a lifted drag target
-  // whose underlying finger position may legitimately be off the top edge
-  // once lifted).
-  function liftedCellFromEvent(ev) {
+  // Same idea as cellFromEvent, but for the holdmove target: the touched
+  // point should land on the icon's CENTER, not its top-left anchor cell -
+  // anchoring at the raw cell left the whole icon sitting down-right of
+  // the finger (most icons are a 2x2-cell footprint), which read as drift
+  // even though the math was doing exactly what it said. Centers using the
+  // placement's own real footprint (footprintOf), then also lifts
+  // HOLD_LIFT_ROWS further above that. Clamped onto the grid instead of
+  // rejected when that puts it off-grid (cellFromEvent's null-outside-grid
+  // behavior is for taps, not for a lifted drag target whose underlying
+  // finger position may legitimately be off the top edge once lifted).
+  function liftedCellFromEvent(obj, ev) {
+    var span = footprintOf({ tick: 0, row: 0, type: obj.type });
+    var w = span.t1 - span.t0, h = span.r1 - span.r0;
     var rect = grid.getBoundingClientRect();
-    var col = Math.floor((ev.clientX - rect.left) / CELL);
-    var row = Math.floor((ev.clientY - rect.top) / CELL) - HOLD_LIFT_ROWS;
-    col = Math.max(0, Math.min(col, MAX_TICK - 1));
-    row = Math.max(0, Math.min(row, ROWS - 1));
+    var col = Math.floor((ev.clientX - rect.left) / CELL) - Math.floor(w / 2);
+    var row = Math.floor((ev.clientY - rect.top) / CELL) - Math.floor(h / 2) - HOLD_LIFT_ROWS;
+    col = Math.max(0, Math.min(col, MAX_TICK - w));
+    row = Math.max(0, Math.min(row, ROWS - h));
     return { tick: col, row: row };
   }
 
-  // The lifted target always tracks the raw finger position (offset by
-  // HOLD_LIFT_ROWS), from the instant the hold fires - even before any
-  // further movement, so the "picked up" feedback is immediate. Whether
-  // that's a real drag or just a stationary hold that happened to cross
-  // HOLD_MS is a separate question, tracked by comparing the raw (un-lifted)
-  // pointer cell against where the gesture actually started - see
-  // press.moved below.
+  // The lifted target always tracks the raw finger position (centered +
+  // offset by HOLD_LIFT_ROWS), from the instant the hold fires - even
+  // before any further movement, so the "picked up" feedback is immediate.
+  // Whether that's a real drag or just a stationary hold that happened to
+  // cross HOLD_MS is a separate question, tracked by comparing the raw
+  // (un-lifted, un-centered) pointer cell against where the gesture
+  // actually started - see press.moved below.
   function applyHoldMoveTarget(press, ev) {
     var obj = placements[press.placementIdx];
-    var lifted = liftedCellFromEvent(ev);
+    var lifted = liftedCellFromEvent(obj, ev);
     obj.tick = lifted.tick;
     obj.row = lifted.row;
     render();
