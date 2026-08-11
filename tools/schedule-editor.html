@@ -1083,7 +1083,7 @@
   // there - on a touchscreen the finger itself covers whatever's directly
   // under it, so dragging a real finger over its own placement is unusable
   // without an offset like this.
-  var HOLD_LIFT_ROWS = 4;
+  var HOLD_LIFT_ROWS = 3;
   var press = null; // {pointerId, startX, startY, lastX, lastY, startScrollLeft, cell, offsetHit, placementIdx, resolved, holdTimer, moved}
   // Set once per gesture when pointerup's neutral-tap branch below already
   // handled the inspect readout - lets the native-click fallback (further
