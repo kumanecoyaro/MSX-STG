@@ -125,6 +125,12 @@
     display: block;
     cursor: crosshair;
     touch-action: none;
+    /* A ~400ms hold is right in range for the browser's own long-press
+       handling (text selection, "save image" context menu) to fire and
+       steal/interrupt the gesture on a real device - suppress it here. */
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
   }
 
   /* ---------- right sidebar: identity, stats, actions, palette ---------- */
@@ -1047,7 +1053,12 @@
   // swipe that starts in erase/place mode from erasing/placing at the
   // touch-start point before the swipe is even recognized.
   var HOLD_MS = 400;
-  var MOVE_CANCEL = 10;
+  // A real finger is not a mouse pointer - normal contact-area jitter
+  // during a "stationary" tap or hold commonly reads as several px of
+  // movement on real touch hardware (unlike a synthetic/mouse pointer,
+  // which reports none), so this has to be generous enough to absorb
+  // that or every tap misreads as a pan and nothing else ever runs.
+  var MOVE_CANCEL = 24;
   var press = null; // {pointerId, startX, startY, startScrollLeft, cell, offsetHit, placementIdx, resolved, holdTimer}
 
   grid.addEventListener("pointerdown", function (ev) {
@@ -1085,6 +1096,8 @@
     }
     grid.setPointerCapture(ev.pointerId);
   });
+
+  grid.addEventListener("contextmenu", function (ev) { ev.preventDefault(); });
 
   grid.addEventListener("pointermove", function (ev) {
     if (!press || ev.pointerId !== press.pointerId) return;
