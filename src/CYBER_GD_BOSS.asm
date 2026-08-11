@@ -3645,7 +3645,8 @@ ADD_SCORE_COMMON:
     RET
 
 ; Awards the right formation-kill score (enemy1=100 while
-; ENEMY_CYCLE is 0/1, enemy2=200 while it's 2/3).
+; ENEMY_CYCLE is 0/1, enemy2=200 while it's >=2 - always exactly 2
+; now that top/bottom no longer uses 2 vs 3, see E2_SPAWN_Y).
 AWARD_FORMATION_SCORE:
     LD A,(ENEMY_CYCLE)
     CP 2
@@ -3653,6 +3654,14 @@ AWARD_FORMATION_SCORE:
     JP ADD_SCORE_100
 AWARD_ENEMY2:
     JP ADD_SCORE_200
+
+; Enemy2 spawn Y, passed in by the SPAWN_E2_TOP_*/BOT_* stubs (see
+; their own comment) instead of ENEMY_START_COMPLEX_A/B hardcoding it
+; from ENEMY_CYCLE. ENEMY_CYCLE itself is still set to 2 on every
+; Enemy2 spawn - not to distinguish top/bottom anymore (that's now
+; just this Y value), only so AWARD_FORMATION_SCORE's cycle>=2 check
+; still recognizes a complex-formation kill as the 200pt Enemy2 case.
+E2_SPAWN_Y EQU 0E84Eh
 
 ; ===== Enemy2 instance A/B state (independent complex-mode formations) =====
 E2A_SEQ_STATE EQU 0E600h
@@ -3948,16 +3957,23 @@ PAT_E2B2 EQU 60
 PAT_E2B_TT EQU 64
 PAT_E2B_TB EQU 68
 
+; Y comes straight from the caller's parameter now (see E2_SPAWN_Y).
+; Exit direction is decided dynamically, same comparison idiom as
+; EBSD_UPDATE's Enemy1 dodge-direction pick: spawning at/below the
+; player (spawnY >= PLAYERY) climbs UP (EXITTYPE=1); spawning above
+; the player (spawnY < PLAYERY) dives DOWN (EXITTYPE=0) - see
+; ECS_S7_A's use of E2A_EXITTYPE for what each value actually does.
 ENEMY_START_COMPLEX_A:
-    LD A,(ENEMY_CYCLE)
-    CP 2
-    JR NZ,ESC_COMPLEX_CYCLE3_A
-    LD A,ENEMY_Y2 : LD (E2A_Y),A
-    XOR A : LD (E2A_EXITTYPE),A
-    JR ESC_COMPLEX_INIT_A
-ESC_COMPLEX_CYCLE3_A:
-    LD A,ENEMY_Y1 : LD (E2A_Y),A
+    LD A,(E2_SPAWN_Y) : LD (E2A_Y),A
+    LD C,A
+    LD A,(PLAYERY) : LD B,A
+    LD A,C
+    CP B
+    JR C,ESC_EXIT_DOWN_A        ; spawnY < PLAYERY (above the player)
     LD A,1 : LD (E2A_EXITTYPE),A
+    JR ESC_COMPLEX_INIT_A
+ESC_EXIT_DOWN_A:
+    XOR A : LD (E2A_EXITTYPE),A
 ESC_COMPLEX_INIT_A:
     LD A,1
     LD (E2A_U0_TOP),A : LD (E2A_U0_BOT),A
@@ -4130,16 +4146,18 @@ ESC_COMPLEX_INIT_A:
     EI
     RET
 
+; See ENEMY_START_COMPLEX_A's comment - same idea, instance B.
 ENEMY_START_COMPLEX_B:
-    LD A,(ENEMY_CYCLE)
-    CP 2
-    JR NZ,ESC_COMPLEX_CYCLE3_B
-    LD A,ENEMY_Y2 : LD (E2B_Y),A
-    XOR A : LD (E2B_EXITTYPE),A
-    JR ESC_COMPLEX_INIT_B
-ESC_COMPLEX_CYCLE3_B:
-    LD A,ENEMY_Y1 : LD (E2B_Y),A
+    LD A,(E2_SPAWN_Y) : LD (E2B_Y),A
+    LD C,A
+    LD A,(PLAYERY) : LD B,A
+    LD A,C
+    CP B
+    JR C,ESC_EXIT_DOWN_B        ; spawnY < PLAYERY (above the player)
     LD A,1 : LD (E2B_EXITTYPE),A
+    JR ESC_COMPLEX_INIT_B
+ESC_EXIT_DOWN_B:
+    XOR A : LD (E2B_EXITTYPE),A
 ESC_COMPLEX_INIT_B:
     LD A,1
     LD (E2B_U0_TOP),A : LD (E2B_U0_BOT),A
@@ -7999,17 +8017,25 @@ SIMPLE_REDRAW:
     POP HL                            ; HL = vram addr
     JP REDRAW_UNIT_PATTERN
 
+; Enemy2 spawn stubs: TOP/BOT is now just which Y value gets passed to
+; ENEMY_START_COMPLEX_A/B via E2_SPAWN_Y (see its own comment) - the
+; exit direction (mirrored-Z dive vs normal-Z climb) is no longer
+; decided here, it's computed dynamically from PLAYERY once the spawn
+; Y is known (same idea as EBSD_UPDATE's dodge-direction pick for
+; Enemy1). Instance selection (A vs B, i.e. which of the 2 concurrent
+; complex-formation RAM slots/schedule busy-guards this uses) is
+; unchanged - TOP still always claims slot A, BOT still always claims
+; slot B - so SPAWN_E2_TOP_A/TOP_B share one body and
+; SPAWN_E2_BOT_A/BOT_B share the other.
 SPAWN_E2_TOP_A:
+SPAWN_E2_TOP_B:
+    LD A,ENEMY_Y2 : LD (E2_SPAWN_Y),A
     LD A,2 : LD (ENEMY_CYCLE),A
     JP ENEMY_START_COMPLEX_A
 SPAWN_E2_BOT_A:
-    LD A,3 : LD (ENEMY_CYCLE),A
-    JP ENEMY_START_COMPLEX_B
-SPAWN_E2_TOP_B:
-    LD A,2 : LD (ENEMY_CYCLE),A
-    JP ENEMY_START_COMPLEX_A
 SPAWN_E2_BOT_B:
-    LD A,3 : LD (ENEMY_CYCLE),A
+    LD A,ENEMY_Y1 : LD (E2_SPAWN_Y),A
+    LD A,2 : LD (ENEMY_CYCLE),A
     JP ENEMY_START_COMPLEX_B
 ; A holds this schedule index on entry (SSC_FIRE's CP-dispatch convention -
 ; see SPAWN_SIMPLE/SPAWN_E4 for the same pattern) - used to look up this
