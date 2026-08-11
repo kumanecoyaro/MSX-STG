@@ -147,16 +147,7 @@
     border-bottom: 1px solid var(--line);
     flex: 0 0 auto;
   }
-  /* The output section is the only one allowed to grow/shrink - actions
-     and color-picking are fixed-height, everything fits in one viewport
-     (like schedule-editor.html's sidebar) with no inner scrollbar. */
-  .side-section.output-section {
-    flex: 1 1 auto;
-    min-height: 0;
-    display: flex;
-    flex-direction: column;
-    border-bottom: none;
-  }
+  .side-section:last-child { border-bottom: none; }
   .side-section .section-label {
     font-size: 10px;
     color: var(--ink-dim);
@@ -218,28 +209,6 @@
   .swatch:hover { border-color: var(--ink-faint); }
   .swatch.armed-fg { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent); }
   .swatch.armed-bg { border-color: var(--ok); box-shadow: 0 0 0 2px var(--ok); }
-
-  .output-label {
-    font-size: 10px;
-    color: var(--ink-dim);
-    letter-spacing: 0.05em;
-    text-transform: uppercase;
-    margin-bottom: 6px;
-  }
-  #output {
-    width: 100%;
-    flex: 1 1 auto;
-    min-height: 60px;
-    font-family: var(--font-mono);
-    font-size: 12px;
-    line-height: 1.5;
-    background: var(--surface-2);
-    color: var(--ink);
-    border: 1px solid var(--line);
-    border-radius: 7px;
-    padding: 8px;
-    resize: vertical;
-  }
 
   #liveMsg {
     position: fixed;
@@ -331,10 +300,6 @@
         <label class="btn-label" for="fileInput">Load JSON</label>
         <input type="file" id="fileInput" accept=".json" hidden>
         <button id="btnUndo" disabled>Undo</button>
-      </div>
-      <div class="btn-row">
-        <button id="btnClear">全部背景色</button>
-        <button id="btnFill">全部文字色</button>
         <button id="btnCopy">Copy 0/1</button>
       </div>
     </div>
@@ -346,11 +311,6 @@
         <button class="color-target" id="btnFgColor"><span class="mini-swatch" id="fgSwatch"></span>文字色</button>
       </div>
       <div class="palette" id="palette"></div>
-    </div>
-
-    <div class="side-section output-section">
-      <div class="output-label">出力(0/1・全角)</div>
-      <textarea id="output" readonly spellcheck="false"></textarea>
     </div>
   </aside>
 
@@ -505,20 +465,19 @@
   }
 
   // Full-width (zenkaku) 0/1, per spec - not the ASCII digits the earlier
-  // transcription-check tool used.
+  // transcription-check tool used. Built lazily (just for Copy/Save), not
+  // kept live on screen - there's no visible output display anymore.
   var ZEN_DIGIT = { "0": "０", "1": "１" };
-  function updateOutput() {
-    var lines = bits.map(function (row) {
+  function outputText() {
+    return bits.map(function (row) {
       return row.map(function (v) { return ZEN_DIGIT[v ? "1" : "0"]; }).join("");
-    });
-    document.getElementById("output").value = lines.join("\n");
+    }).join("\n");
   }
 
   function renderAll() {
     for (var rr = 0; rr < GRID_N; rr++) for (var cc = 0; cc < GRID_N; cc++) renderCell(rr, cc);
     updateColorTargetButtons();
     updatePaletteHighlight();
-    updateOutput();
   }
 
   // ---------- color target buttons + palette ----------
@@ -575,7 +534,6 @@
     if (bits[r][c] === value) return;
     bits[r][c] = value;
     renderCell(r, c);
-    updateOutput();
   }
 
   gridEl.addEventListener("pointerdown", function (ev) {
@@ -602,37 +560,35 @@
   gridEl.addEventListener("pointerup", endPaint);
   gridEl.addEventListener("pointercancel", endPaint);
 
-  // ---------- clear / fill ----------
-  document.getElementById("btnClear").addEventListener("click", function () {
-    pushHistory();
-    bits = bits.map(function (row) { return row.map(function () { return false; }); });
-    renderAll();
-    flash("全部背景色にしました");
-  });
-  document.getElementById("btnFill").addEventListener("click", function () {
-    pushHistory();
-    bits = bits.map(function (row) { return row.map(function () { return true; }); });
-    renderAll();
-    flash("全部文字色にしました");
-  });
-
   // ---------- copy ----------
+  // No visible output field anymore - Copy builds the 0/1 text on demand
+  // and sends it straight to the clipboard. The fallback (Clipboard API
+  // unavailable/blocked) needs *some* text node to select, so it makes one
+  // temporarily rather than keeping a permanent output textarea just for
+  // this rare case.
   document.getElementById("btnCopy").addEventListener("click", function () {
-    var text = document.getElementById("output").value;
+    var text = outputText();
     if (navigator.clipboard && navigator.clipboard.writeText) {
       navigator.clipboard.writeText(text).then(
         function () { flash("コピーしました"); },
-        function () { fallbackSelectOutput(); }
+        function () { copyViaTempTextarea(text); }
       );
     } else {
-      fallbackSelectOutput();
+      copyViaTempTextarea(text);
     }
   });
-  function fallbackSelectOutput() {
-    var ta = document.getElementById("output");
+  function copyViaTempTextarea(text) {
+    var ta = document.createElement("textarea");
+    ta.value = text;
+    ta.style.position = "fixed";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
     ta.focus();
     ta.select();
-    flash("選択しました - Ctrl+C(⌘+C)でコピーしてください");
+    var ok = false;
+    try { ok = document.execCommand("copy"); } catch (e) { ok = false; }
+    document.body.removeChild(ta);
+    flash(ok ? "コピーしました" : "コピーできませんでした");
   }
 
   // ---------- save / load ----------
