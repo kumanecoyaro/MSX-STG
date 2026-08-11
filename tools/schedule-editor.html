@@ -980,7 +980,6 @@
       pushHistory();
       setCell(c.tick, c.row, null);
       flash("erased tick " + c.tick + ", row " + c.row);
-      clearCellInfo();
       render();
       return;
     }
@@ -988,11 +987,12 @@
       pushHistory();
       setCell(c.tick, c.row, armedType);
       flash(TYPE_BY_ID[armedType].name + " → tick " + c.tick + ", row " + c.row);
-      showCellInfo({ tick: c.tick, row: c.row, type: armedType });
       render();
       return;
     }
-    // neutral tap (nothing armed) - inspect only, don't touch placements.
+    // neutral tap (nothing armed) on an already-placed cell - inspect only,
+    // don't touch placements. Placing/erasing above never touch this
+    // readout - it reflects what you tap to inspect, not what you just edited.
     var idx = placementAt(c.tick, c.row);
     if (idx >= 0) {
       showCellInfo(placements[idx]);
