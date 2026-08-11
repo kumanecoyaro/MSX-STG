@@ -1,3 +1,4 @@
+<meta charset="utf-8">
 <title>CYBER_SUZUKA — Spawn Schedule Editor</title>
 <style>
   :root {
@@ -182,19 +183,15 @@
     min-height: 0;
   }
   .pitem {
-    width: 33px;
+    width: 30px;
     height: 30px;
     flex: 0 0 auto;
     display: flex;
-    flex-direction: column;
     align-items: center;
     justify-content: center;
-    gap: 1px;
     border-radius: 5px;
     border: 2px solid transparent;
     cursor: pointer;
-    color: #05080d;
-    font-family: var(--font-mono);
     padding: 0;
   }
   .pitem:hover { filter: brightness(1.08); }
@@ -202,17 +199,7 @@
     border-color: var(--ink);
     box-shadow: 0 0 0 2px var(--accent);
   }
-  .pitem .pnum {
-    font-size: 6px;
-    font-weight: 600;
-    opacity: 0.6;
-    font-variant-numeric: tabular-nums;
-  }
-  .pitem .pshort {
-    font-size: 8px;
-    font-weight: 800;
-    letter-spacing: 0.01em;
-  }
+  .pitem .picon { display: block; pointer-events: none; }
 
   #liveMsg {
     position: fixed;
@@ -358,21 +345,104 @@
 (function () {
   "use strict";
 
+  // ---------- real in-game sprite/pattern data, transcribed byte-for-byte ----------
+  // from CYBER_GD_BOSS.asm (see ASTERISK_PATTERN, ENEMY3_PATTERN1, ENEMY4_PATTERN,
+  // BOSS_HEX_PATTERN and their draw sites for exact source lines). 16x16 entries use
+  // the MSX1 hardware sprite quadrant order [top-left, bottom-left, top-right,
+  // bottom-right], 8 bytes each, 1 bit/pixel (bit7=leftmost). "rows" (8x8) is a
+  // background/nametable character instead - drawn opaque (bg fill + fg pixels),
+  // not transparent like a sprite.
+  var GLYPHS = {
+    // simple/Enemy1's look - also reused as-is for e2a/e2b's formation members and
+    // for enemy5 (TYPE_ENEMY1_LOOK is pixel-identical to Enemy1, just a different
+    // BEHAVIOR/score - see REDRAW_UNIT_PATTERN's call sites). Gray, SPR_GRAY(0Eh).
+    asterisk16: {
+      size: 16,
+      quads: {
+        tl: [0x00, 0x18, 0x99, 0x5A, 0x3C, 0x5A, 0x99, 0x00],
+        bl: [0, 0, 0, 0, 0, 0, 0, 0],
+        tr: [0, 0, 0, 0, 0, 0, 0, 0],
+        br: [0x00, 0x18, 0x99, 0x5A, 0x3C, 0x5A, 0x99, 0x00]
+      },
+      color: "#cccccc"
+    },
+    // Enemy3's pulse animation frame1 (ENEMY3_PATTERN1) - an 8x8 BG tile, not a
+    // sprite, so it's opaque: FG gray on BG dark-blue (COLORDATA group19 = E4h).
+    enemy3: {
+      size: 8,
+      rows: [0x00, 0x00, 0x00, 0xFF, 0xFF, 0x00, 0x00, 0x00],
+      color: "#cccccc",
+      bg: "#5955e0"
+    },
+    // Enemy4's static hand-drawn look (ENEMY4_PATTERN) - light green, SPR_LTGREEN(03h).
+    enemy4: {
+      size: 16,
+      quads: {
+        tl: [0, 0, 0, 0, 0, 0, 0, 0],
+        bl: [0x1F, 0x2F, 0x77, 0xF8, 0x77, 0x2A, 0x1F, 0x0A],
+        tr: [0, 0, 0, 0, 0, 0, 0, 0],
+        br: [0xF8, 0xF4, 0xEE, 0x15, 0xFF, 0xAA, 0xFC, 0xA8]
+      },
+      color: "#74d07d"
+    },
+    // Boss's own compact hex-icon sprite (BOSS_HEX_PATTERN) - used in-game as the
+    // materialize/lap-marker glyph, the closest thing to a single-cell "boss icon"
+    // rather than trying to shrink the full 5x16-tile BG body. White, always 15 (0Fh)
+    // at every draw site that sets it.
+    boss: {
+      size: 16,
+      quads: {
+        tl: [0x3C, 0x7E, 0xFF, 0xFF, 0xFF, 0xFF, 0x7E, 0x3C],
+        bl: [0, 0, 0, 0, 0, 0, 0, 0],
+        tr: [0, 0, 0, 0, 0, 0, 0, 0],
+        br: [0, 0, 0, 0, 0, 0, 0, 0]
+      },
+      color: "#ffffff"
+    }
+  };
+
+  // Draws a GLYPHS entry into ctx at (x,y), scaled to fill w x h. 8x8 "rows"
+  // glyphs paint their bg first (opaque BG tile); 16x16 "quads" glyphs leave
+  // 0-bits untouched (transparent sprite, like the real hardware).
+  function drawGlyph(ctx, glyph, x, y, w, h) {
+    var n = glyph.size, px = w / n, py = h / n;
+    if (glyph.bg) { ctx.fillStyle = glyph.bg; ctx.fillRect(x, y, w, h); }
+    ctx.fillStyle = glyph.color;
+    function paintRows(rows, offX, offY) {
+      for (var r = 0; r < rows.length; r++) {
+        var byte = rows[r];
+        for (var c = 0; c < 8; c++) {
+          if (byte & (0x80 >> c)) {
+            ctx.fillRect(x + (offX + c) * px, y + (offY + r) * py, Math.ceil(px) + 0.5, Math.ceil(py) + 0.5);
+          }
+        }
+      }
+    }
+    if (glyph.rows) {
+      paintRows(glyph.rows, 0, 0);
+    } else {
+      paintRows(glyph.quads.tl, 0, 0);
+      paintRows(glyph.quads.bl, 0, 8);
+      paintRows(glyph.quads.tr, 8, 0);
+      paintRows(glyph.quads.br, 8, 8);
+    }
+  }
+
   // ---------- enemy palette (matches the current CYBER_GD_BOSS.asm schedule) ----------
   var TYPES = [
-    { id: "simple",     num: 1,  short: "SIMP",name: "Simple (Enemy1)",  desc: "any row - dodge dir is decided from player Y at center", hue: "--hue-simple", defaultRow: 2  },
-    { id: "e2a_top",    num: 2,  short: "2AT", name: "Enemy2A — Top",    desc: "SPAWN_E2_TOP_A",   hue: "--hue-e2a",    defaultRow: 4  },
-    { id: "e2a_bot",    num: 3,  short: "2AB", name: "Enemy2A — Bottom", desc: "SPAWN_E2_BOT_A",   hue: "--hue-e2a",    defaultRow: 12 },
-    { id: "e2b_top",    num: 4,  short: "2BT", name: "Enemy2B — Top",    desc: "SPAWN_E2_TOP_B",   hue: "--hue-e2b",    defaultRow: 6  },
-    { id: "e2b_bot",    num: 5,  short: "2BB", name: "Enemy2B — Bottom", desc: "SPAWN_E2_BOT_B",   hue: "--hue-e2b",    defaultRow: 14 },
-    { id: "enemy3_wave",num: 6,  short: "E3",  name: "Enemy3 — Wave",    desc: "SPAWN_E3_WAVE (budget 32)", hue: "--hue-e3", defaultRow: 1  },
-    { id: "enemy4_y16", num: 7,  short: "4-16",name: "Enemy4 — Top",     desc: "baseY 32",         hue: "--hue-e4",     defaultRow: 4  },
-    { id: "enemy4_y32", num: 8,  short: "4-32",name: "Enemy4 — Mid",     desc: "baseY 64",         hue: "--hue-e4",     defaultRow: 8  },
-    { id: "enemy4_y48", num: 9,  short: "4-48",name: "Enemy4 — Bottom",  desc: "baseY 72",         hue: "--hue-e4",     defaultRow: 9  },
-    { id: "enemy5_y16", num: 10, short: "5-16",name: "Enemy5 — Top",     desc: "TYPE_ENEMY1_LOOK", hue: "--hue-e5",     defaultRow: 4  },
-    { id: "enemy5_y32", num: 11, short: "5-32",name: "Enemy5 — Mid",     desc: "TYPE_ENEMY1_LOOK", hue: "--hue-e5",     defaultRow: 8  },
-    { id: "enemy5_y48", num: 12, short: "5-48",name: "Enemy5 — Bottom",  desc: "TYPE_ENEMY1_LOOK", hue: "--hue-e5",     defaultRow: 9  },
-    { id: "boss",       num: 13, short: "BOSS",name: "Boss",             desc: "BOSS_SPAWN",       hue: "--hue-boss",   defaultRow: 20 }
+    { id: "simple",     name: "Simple (Enemy1)",  desc: "any row - dodge dir is decided from player Y at center", hue: "--hue-simple", defaultRow: 2,  glyph: "asterisk16" },
+    { id: "e2a_top",    name: "Enemy2A — Top",    desc: "SPAWN_E2_TOP_A",   hue: "--hue-e2a",    defaultRow: 4,  glyph: "asterisk16" },
+    { id: "e2a_bot",    name: "Enemy2A — Bottom", desc: "SPAWN_E2_BOT_A",   hue: "--hue-e2a",    defaultRow: 12, glyph: "asterisk16" },
+    { id: "e2b_top",    name: "Enemy2B — Top",    desc: "SPAWN_E2_TOP_B",   hue: "--hue-e2b",    defaultRow: 6,  glyph: "asterisk16" },
+    { id: "e2b_bot",    name: "Enemy2B — Bottom", desc: "SPAWN_E2_BOT_B",   hue: "--hue-e2b",    defaultRow: 14, glyph: "asterisk16" },
+    { id: "enemy3_wave",name: "Enemy3 — Wave",    desc: "SPAWN_E3_WAVE (budget 32)", hue: "--hue-e3", defaultRow: 1, glyph: "enemy3" },
+    { id: "enemy4_y16", name: "Enemy4 — Top",     desc: "baseY 32",         hue: "--hue-e4",     defaultRow: 4,  glyph: "enemy4" },
+    { id: "enemy4_y32", name: "Enemy4 — Mid",     desc: "baseY 64",         hue: "--hue-e4",     defaultRow: 8,  glyph: "enemy4" },
+    { id: "enemy4_y48", name: "Enemy4 — Bottom",  desc: "baseY 72",         hue: "--hue-e4",     defaultRow: 9,  glyph: "enemy4" },
+    { id: "enemy5_y16", name: "Enemy5 — Top",     desc: "TYPE_ENEMY1_LOOK", hue: "--hue-e5",     defaultRow: 4,  glyph: "asterisk16" },
+    { id: "enemy5_y32", name: "Enemy5 — Mid",     desc: "TYPE_ENEMY1_LOOK", hue: "--hue-e5",     defaultRow: 8,  glyph: "asterisk16" },
+    { id: "enemy5_y48", name: "Enemy5 — Bottom",  desc: "TYPE_ENEMY1_LOOK", hue: "--hue-e5",     defaultRow: 9,  glyph: "asterisk16" },
+    { id: "boss",       name: "Boss",             desc: "BOSS_SPAWN",       hue: "--hue-boss",   defaultRow: 20, glyph: "boss" }
   ];
   var TYPE_BY_ID = {};
   TYPES.forEach(function (t) { TYPE_BY_ID[t.id] = t; });
@@ -448,6 +518,10 @@
   }
 
   // ---------- palette UI ----------
+  // Each swatch shows the enemy's real in-game glyph (see GLYPHS) on its
+  // hue-tinted background - the hue is kept purely so the 13 types stay
+  // tellable apart at a glance (several of them share the exact same
+  // gray asterisk sprite in-game - see GLYPHS.asterisk16's comment).
   var paletteEl = document.getElementById("palette");
   TYPES.forEach(function (t) {
     var item = document.createElement("button");
@@ -455,9 +529,19 @@
     item.dataset.type = t.id;
     item.style.background = "var(" + t.hue + ")";
     item.title = t.name + " — " + t.desc;
-    item.innerHTML =
-      '<span class="pnum">' + String(t.num).padStart(2, "0") + '</span>' +
-      '<span class="pshort">' + t.short + '</span>';
+    var glyph = GLYPHS[t.glyph];
+    var cv = document.createElement("canvas");
+    cv.className = "picon";
+    var cssSize = 26, dpr = Math.max(1, window.devicePixelRatio || 1);
+    cv.width = Math.round(cssSize * dpr);
+    cv.height = Math.round(cssSize * dpr);
+    cv.style.width = cssSize + "px";
+    cv.style.height = cssSize + "px";
+    var pctx = cv.getContext("2d");
+    pctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    var pad = glyph.size === 16 ? 1 : 5;
+    drawGlyph(pctx, glyph, pad, pad, cssSize - pad * 2, cssSize - pad * 2);
+    item.appendChild(cv);
     item.addEventListener("click", function () {
       eraseArmed = false;
       document.getElementById("btnErase").classList.remove("armed");
@@ -588,20 +672,25 @@
       ctx.stroke();
     }
 
-    // placed enemies
-    ctx.font = "700 " + Math.max(8, Math.round(CELL * 0.36)) + "px " + tok("--font-mono").split(",")[0] + ", monospace";
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
+    // placed enemies - each drawn as its real in-game glyph (see GLYPHS) on a
+    // hue-tinted backing square, the icon itself sized to its real footprint:
+    // Enemy3's 8x8 BG tile fills the cell as before, everything else is a
+    // 16x16 sprite and is drawn noticeably larger (and centered, so it
+    // overflows into the cell's margin) to reflect that it's twice the size.
     placements.forEach(function (p) {
       var t = TYPE_BY_ID[p.type];
       if (!t) return;
+      var glyph = GLYPHS[t.glyph];
       var x = p.tick * CELL, y = p.row * CELL;
       ctx.fillStyle = tok(t.hue);
       var pad = 2;
       roundRect(ctx, x + pad, y + pad, CELL - pad * 2, CELL - pad * 2, 4);
       ctx.fill();
-      ctx.fillStyle = "#05080d";
-      ctx.fillText(t.short, x + CELL / 2, y + CELL / 2 + 1);
+      var big = glyph.size === 16;
+      var box = big ? CELL * 1.55 : CELL - 6;
+      var bx = x + CELL / 2 - box / 2, by = y + CELL / 2 - box / 2;
+      var iconPad = box * 0.08;
+      drawGlyph(ctx, glyph, bx + iconPad, by + iconPad, box - iconPad * 2, box - iconPad * 2);
     });
 
     // Each enemy3_wave cell's own offset (cells, 8px each - see
