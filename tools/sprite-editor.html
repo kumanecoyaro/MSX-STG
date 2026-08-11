@@ -82,14 +82,12 @@
     background: var(--surface);
     border: 1px solid var(--line);
     border-radius: 10px;
-    /* One full cell of breathing room on every side (--cell, computed in
-       JS - see fitGrid()) - a corner pixel flush against the panel edge
-       is hard to hit with a finger near the physical screen edge, so the
-       whole grid sits inset from it instead. Not a fixed px value: the
-       cell size itself is computed to fit the viewport, so this margin
-       has to track it or it stops being "one cell" once the grid scales
-       down (or, worse, forces the grid to overflow its container). */
-    padding: var(--cell, 26px);
+    /* No padding here - .gridwrap's own padding plus its flex centering
+       (fitGrid sizes the grid to the *smaller* of the two available
+       dimensions, so the other one already has slack) already keeps the
+       grid off the physical screen edge. Padding here on top of that
+       was doubling up on margin that already existed. */
+    padding: 8px;
   }
   .grid {
     display: grid;
@@ -664,23 +662,26 @@
   // ---------- responsive cell size ----------
   // Fixed-px cells don't fit every viewport - a 16-cell-wide grid plus a
   // full cell of margin on every side (see .grid-panel's padding) needs
-  // 18 cells of space in each dimension, and on a narrow/short phone
+  // 16 cells of space in each dimension, and on a narrow/short phone
   // screen that easily exceeds what's actually available, forcing the
-  // page (or worse, just the grid) to overflow and eat the requested
-  // margin instead of showing it. Compute the largest cell size that
-  // still fits both dimensions of the current .gridwrap, the same way
-  // schedule-editor.html derives its own CELL from the viewport.
+  // page (or worse, just the grid) to overflow. Compute the largest cell
+  // size that still fits both dimensions of the current .gridwrap, the
+  // same way schedule-editor.html derives its own CELL from the
+  // viewport. No margin reserved here on purpose - .gridwrap's own
+  // padding plus flex-centering the panel (sized to the *smaller*
+  // available dimension) already leaves visible space around it on the
+  // other axis, so reserving cells for margin on top of that just made
+  // the grid smaller than it needed to be for no visual benefit.
   var CELL_MIN = 12, CELL_MAX = 36;
   var gridWrapEl = document.querySelector(".gridwrap");
   function fitGrid() {
     var cs = getComputedStyle(gridWrapEl);
     var padX = parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight);
     var padY = parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom);
-    var BORDERS = 8; // grid-panel + grid borders, small and roughly constant
+    var BORDERS = 22; // grid-panel's own padding+border, plus the grid's border
     var availW = gridWrapEl.clientWidth - padX - BORDERS;
     var availH = gridWrapEl.clientHeight - padY - BORDERS;
-    var units = GRID_N + 2; // the grid itself, plus 1 cell of margin each side
-    var cell = Math.floor(Math.min(availW, availH) / units);
+    var cell = Math.floor(Math.min(availW, availH) / GRID_N);
     cell = Math.max(CELL_MIN, Math.min(CELL_MAX, cell));
     document.documentElement.style.setProperty("--cell", cell + "px");
   }
