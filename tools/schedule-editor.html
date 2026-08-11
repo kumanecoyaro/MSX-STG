@@ -131,6 +131,7 @@
   /* one-line "armed" readout, not baked into every chip.               */
   aside {
     flex: 0 0 196px;
+    min-width: 0;
     height: 100vh;
     background: var(--surface);
     border-left: 1px solid var(--line);
@@ -155,15 +156,31 @@
     letter-spacing: 0.03em;
   }
 
+  /* Fixed pixel sizes, deliberately NOT derived from the viewport/container
+     width (no % or fr units) - this is a tool, its controls must look and
+     sit exactly the same on every device instead of reflowing/resizing.
+     If the sidebar is ever narrower than the row, it scrolls horizontally
+     (overflow-x below) rather than shrinking the buttons. */
   .side-actions {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 5px;
-    padding: 8px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 8px 10px;
     border-bottom: 1px solid var(--line);
+    overflow-x: auto;
   }
-  .side-actions button, .side-actions .btn-label { width: 100%; padding: 6px 6px; font-size: 11px; }
-  .side-actions .full { grid-column: 1 / -1; }
+  .btn-row { display: flex; gap: 4px; }
+  .side-actions button, .side-actions .btn-label {
+    width: 74px;
+    height: 32px;
+    flex: 0 0 auto;
+    padding: 0;
+    font-size: 11px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .side-actions button.half { width: 35px; }
 
   .palette {
     overflow-y: auto;
@@ -286,7 +303,6 @@
       border-top: 1px solid var(--line);
     }
     .side-title { display: none; }
-    .side-actions { padding: 6px 10px; }
   }
 </style>
 
@@ -311,13 +327,17 @@
     </div>
 
     <div class="side-actions">
-      <button class="primary full" id="btnSave">Save JSON</button>
-      <button class="danger-btn full" id="btnErase">Erase</button>
-      <button class="full" id="btnUndo" disabled>Undo</button>
-      <button id="btnPrev" title="Scroll back one screen (32 ticks)">◀</button>
-      <button id="btnNext" title="Scroll forward one screen (32 ticks)">▶</button>
-      <label class="btn-label" for="fileInput">Load JSON</label>
-      <input type="file" id="fileInput" accept=".json,application/json" hidden>
+      <div class="btn-row">
+        <button class="primary" id="btnSave">Save JSON</button>
+        <button class="danger-btn" id="btnErase">Erase</button>
+        <button id="btnUndo" disabled>Undo</button>
+        <button class="half" id="btnPrev" title="Scroll back one screen (32 ticks)">◀</button>
+        <button class="half" id="btnNext" title="Scroll forward one screen (32 ticks)">▶</button>
+      </div>
+      <div class="btn-row">
+        <label class="btn-label" for="fileInput">Load JSON</label>
+        <input type="file" id="fileInput" accept=".json,application/json" hidden>
+      </div>
     </div>
 
     <div class="palette" id="palette"></div>
