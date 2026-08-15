@@ -37,7 +37,13 @@
   body {
     display: flex;
     flex-direction: row;
+    /* 100vh on mobile Chrome/Vivaldi is sized to the viewport with the
+       address bar HIDDEN, taller than what's actually visible whenever
+       the bar is showing. 100dvh tracks the actually-visible viewport
+       instead; the plain 100vh above is just the fallback for browsers
+       without dvh support. */
     height: 100vh;
+    height: 100dvh;
   }
 
   button, .btn-label {
@@ -89,6 +95,7 @@
     min-width: 0;
     padding: 2px;
     height: 100vh;
+    height: 100dvh;
     overflow: hidden;
   }
   .grid-panel {
@@ -199,11 +206,14 @@
     flex: 0 0 260px;
     min-width: 0;
     height: 100vh;
+    height: 100dvh;
     background: var(--surface);
     border-left: 1px solid var(--line);
     display: flex;
     flex-direction: column;
     min-height: 0;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
   }
   .side-section {
     padding: 10px 12px;

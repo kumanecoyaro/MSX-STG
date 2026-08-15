@@ -37,7 +37,15 @@
   body {
     display: flex;
     flex-direction: row;
+    /* 100vh on mobile Chrome/Vivaldi is sized to the viewport with the
+       address bar HIDDEN, which is taller than what's actually visible
+       whenever the bar is showing - the extra height pushed the sidebar's
+       lower rows past the real bottom edge with no way to scroll to them
+       (html/body has overflow:hidden). 100dvh tracks the actually-visible
+       viewport instead; the plain 100vh above is just the fallback for
+       browsers without dvh support. */
     height: 100vh;
+    height: 100dvh;
   }
 
   button, .btn-label {
@@ -79,6 +87,7 @@
     flex-direction: column;
     min-width: 0;
     height: 100vh;
+    height: 100dvh;
   }
 
   .ruler-row {
@@ -168,6 +177,7 @@
     flex: 0 0 196px;
     min-width: 0;
     height: 100vh;
+    height: 100dvh;
     background: var(--surface);
     border-left: 1px solid var(--line);
     display: flex;
@@ -372,6 +382,7 @@
       width: 100%;
       height: auto;
       max-height: 42vh;
+      max-height: 42dvh;
       border-left: none;
       border-top: 1px solid var(--line);
     }
