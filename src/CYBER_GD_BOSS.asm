@@ -914,6 +914,7 @@ INIT_SPRATR_CLR:
     CALL ENEMY_POOL_INIT
     LD HL,ENEMY4_PATTERN : LD DE,PAT_ENEMY4*8+SPRPAT : LD BC,32 : CALL LDIRVM
     LD HL,SHIP_MID_PATTERN : LD DE,PAT_SHIP*8+SPRPAT : LD BC,32 : CALL LDIRVM
+    LD HL,E1A_PATTERN : LD DE,PAT_ENEMY1*8+SPRPAT : LD BC,32 : CALL LDIRVM
     LD HL,PARTICLE_PATTERN : LD DE,PAT_PARTICLE*8+SPRPAT : LD BC,32 : CALL LDIRVM
     LD A,1 : LD (ENEMY1_LOOK_FLAGS),A : LD (ENEMY1_LOOK_FLAGS+1),A
     LD HL,PAT_ENEMY1_LOOK*8+SPRPAT : LD DE,ENEMY1_LOOK_FLAGS : LD IX,ENEMY1_LOOK_FLAGS+1
@@ -12229,10 +12230,10 @@ ACCENT_PATTERN:
 ; top half is fully transparent. Loaded once at INIT (not per-spawn -
 ; unlike the shared asterisk quadrant system, this is a static image).
 ENEMY4_PATTERN:
-    DB 00h,00h,00h,00h,00h,00h,00h,00h   ; top-left (blank)
-    DB 30h,64h,0FFh,07h,01h,2Ah,15h,00h  ; bottom-left
-    DB 00h,00h,00h,00h,00h,00h,00h,00h   ; top-right (blank)
-    DB 01h,06h,9Ch,0FFh,0FEh,7Ch,0Eh,03h ; bottom-right
+    DB 00h,00h,00h,00h,00h,00h,00h,00h   ; top-left
+    DB 30h,64h,FFh,07h,01h,2Ah,15h,00h   ; bottom-left
+    DB 00h,00h,00h,00h,00h,00h,00h,00h   ; top-right
+    DB 01h,06h,9Ch,FFh,FEh,7Ch,0Eh,03h   ; bottom-right
 
 ; 2x2 lit block, top-left corner of the 16x16 - the flyaway trail
 ; particle. Small but clearly visible, unlike a single dot.
@@ -12251,6 +12252,13 @@ ASTERISK_PATTERN:
     DB 04h   ; .....X..
     DB 9Eh   ; X..XXXX.
     DB 7Fh   ; .XXXXXXX
+
+; Enemy1 4-frame animation pattern
+E1A_PATTERN:
+    DB 7Fh,9Eh,04h,1Bh,1Bh,04h,9Eh,7Fh   ; top-left
+    DB 00h,00h,00h,00h,00h,00h,00h,00h   ; bottom-left
+    DB 00h,00h,00h,00h,00h,00h,00h,00h   ; top-right
+    DB 00h,00h,00h,00h,00h,00h,00h,00h   ; bottom-right
 
 ; Ship animation patterns (from the Sprite Editor's newer ship design;
 ; only MID is actually loaded/used for now - UP/DOWN are here for a

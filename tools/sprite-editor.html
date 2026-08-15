@@ -17,6 +17,7 @@
     --danger: #ff5d6c;
     --danger-ink: #260607;
     --ok: #6bdc7c;
+    --warn: #ffd166;
 
     --font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Hiragino Sans", "Noto Sans JP", sans-serif;
     --font-mono: ui-monospace, "SF Mono", "Cascadia Mono", "Consolas", "Roboto Mono", monospace;
@@ -41,16 +42,22 @@
 
   button, .btn-label {
     font-family: var(--font-ui);
-    font-size: 12px;
+    font-size: 11px;
     font-weight: 600;
-    letter-spacing: 0.02em;
+    letter-spacing: 0.01em;
     border-radius: 7px;
     border: 1px solid var(--line);
     background: var(--surface-2);
     color: var(--ink);
-    padding: 7px 8px;
+    padding: 0 4px;
     cursor: pointer;
     transition: border-color 120ms ease, background 120ms ease, transform 80ms ease;
+    white-space: nowrap;
+  }
+  button:disabled, .btn-label.disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+    transform: none !important;
   }
   .btn-label {
     display: flex;
@@ -59,13 +66,18 @@
     text-align: center;
     user-select: none;
   }
-  button:hover, .btn-label:hover { border-color: var(--ink-faint); }
-  button:active, .btn-label:active { transform: translateY(1px); }
+  button:hover:not(:disabled), .btn-label:hover { border-color: var(--ink-faint); }
+  button:active:not(:disabled), .btn-label:active { transform: translateY(1px); }
   button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
   button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
   button.armed {
     border-color: var(--ink);
     box-shadow: 0 0 0 2px var(--accent);
+  }
+  button.active-mode {
+    background: var(--warn);
+    color: #111;
+    border-color: var(--warn);
   }
 
   /* ---------- pixel grid (left) ---------- */
@@ -75,36 +87,102 @@
     align-items: center;
     justify-content: center;
     min-width: 0;
-    padding: 20px;
-    overflow: auto;
+    padding: 2px;
+    height: 100vh;
+    overflow: hidden;
   }
   .grid-panel {
     background: var(--surface);
     border: 1px solid var(--line);
-    border-radius: 10px;
-    /* No padding here - .gridwrap's own padding plus its flex centering
-       (fitGrid sizes the grid to the *smaller* of the two available
-       dimensions, so the other one already has slack) already keeps the
-       grid off the physical screen edge. Padding here on top of that
-       was doubling up on margin that already existed. */
-    padding: 8px;
+    border-radius: 8px;
+    padding: 4px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    align-items: center;
+    width: auto;
+    max-height: 100%;
+    margin: 0 auto;
   }
+
+  /* サイズ切り替えボタンエリア */
+  .size-selector {
+    display: flex;
+    gap: 4px;
+    width: 100%;
+    justify-content: center;
+  }
+  .size-btn {
+    flex: 1;
+    padding: 2px 6px;
+    font-size: 11px;
+  }
+  .size-btn.active {
+    background: var(--accent);
+    color: var(--accent-ink);
+    border-color: var(--accent);
+  }
+
+  /* フレーム切り替えボタンエリア（左右1234右の6列） */
+  .frame-selector {
+    display: grid;
+    grid-template-columns: repeat(6, 1fr);
+    gap: 4px;
+    width: 100%;
+    margin-top: 2px;
+  }
+  .frame-btn {
+    width: 100%;
+    padding: 4px 0;
+    font-size: 11px;
+    text-align: center;
+  }
+  .frame-btn.active {
+    background: var(--ok) !important;
+    color: var(--surface) !important;
+    border-color: var(--ok) !important;
+    font-weight: bold;
+  }
+  .frame-btn.nav-btn {
+    font-weight: bold;
+    background: var(--surface);
+  }
+
+  /* キャンバス外枠 */
   .grid {
     display: grid;
-    grid-template-columns: repeat(16, var(--cell, 26px));
-    grid-template-rows: repeat(16, var(--cell, 26px));
+    width: var(--grid-size, 300px);
+    height: var(--grid-size, 300px);
     border: 2px solid var(--grid-line-strong);
     touch-action: none;
     user-select: none;
+    position: relative;
+    box-sizing: border-box;
+    margin-top: 2px;
+    margin-bottom: 12px;
   }
   .cell {
     border: 1px solid var(--grid-line);
     background: #000;
     cursor: crosshair;
+    position: relative;
+    box-sizing: border-box;
   }
   .cell.qdiv-right { border-right: 2px solid var(--grid-line-strong); }
   .cell.qdiv-bottom { border-bottom: 2px solid var(--grid-line-strong); }
-  /* Checkerboard = MSX color index 0 (transparent) */
+  
+  /* 外枠ハイライト */
+  .cell.sel-top { border-top: 2px dashed var(--accent) !important; }
+  .cell.sel-bottom { border-bottom: 2px dashed var(--accent) !important; }
+  .cell.sel-left { border-left: 2px dashed var(--accent) !important; }
+  .cell.sel-right { border-right: 2px dashed var(--accent) !important; }
+
+  .cell.pst-top { border-top: 2px solid var(--warn) !important; }
+  .cell.pst-bottom { border-bottom: 2px solid var(--warn) !important; }
+  .cell.pst-left { border-left: 2px solid var(--warn) !important; }
+  .cell.pst-right { border-right: 2px solid var(--warn) !important; }
+
+  /* Checkerboard */
   .transparent-swatch {
     background-image:
       linear-gradient(45deg, #666 25%, transparent 25%),
@@ -133,19 +211,24 @@
     flex: 0 0 auto;
   }
   .side-section:last-child { border-bottom: none; }
-  .btn-row { display: flex; gap: 6px; flex-wrap: wrap; }
-  .btn-row + .btn-row { margin-top: 6px; }
-  /* min-width:0, not just flex:1 1 0 - a flex item's automatic minimum
-     width is its content's min-content size unless overridden, same
-     class of overflow the palette grid hit (see minmax(0,1fr) above) -
-     without this, 3 buttons with Japanese labels in one row push past
-     the sidebar's edge instead of shrinking evenly. */
-  .side-section button, .side-section .btn-label {
-    flex: 1 1 0;
-    min-width: 0;
+  
+  .btn-row {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 6px;
+    width: 100%;
+  }
+  .btn-row-2 {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 6px;
+    width: 100%;
+    margin-top: 6px;
+  }
+  .btn-row button, .btn-row .btn-label,
+  .btn-row-2 button {
     height: 32px;
-    padding: 0 4px;
-    font-size: 11px;
+    width: 100%;
   }
 
   .color-target-row { display: flex; gap: 6px; }
@@ -168,10 +251,6 @@
 
   .palette {
     display: grid;
-    /* minmax(0, 1fr), not bare 1fr - a bare 1fr track won't shrink below
-       its content's auto min-size, and an empty swatch button's default
-       sizing was winning over the intended even 8-column split, pushing
-       the last couple of swatches out past the sidebar's right edge. */
     grid-template-columns: repeat(8, minmax(0, 1fr));
     gap: 4px;
     margin-top: 8px;
@@ -233,7 +312,7 @@
     gap: 10px;
   }
   .overlay-title { font-size: 13px; font-weight: 600; }
-  #saveFilenameInput {
+  #saveFilenameInput, #textPasteInput {
     background: var(--surface-2);
     color: var(--ink);
     border: 1px solid var(--line);
@@ -241,6 +320,13 @@
     padding: 8px;
     font-family: var(--font-mono);
     font-size: 15px;
+  }
+  #textPasteInput {
+    width: 100%;
+    height: 140px;
+    resize: vertical;
+    font-size: 14px;
+    line-height: 1.4;
   }
   .overlay-actions { display: flex; gap: 8px; justify-content: flex-end; }
   .overlay-actions button { padding: 8px 14px; }
@@ -253,11 +339,11 @@
 
   @media (max-width: 760px) {
     body { flex-direction: column; }
-    /* A bounded height (not flex:0 0 auto's content-driven height) is
-       what makes fitGrid() able to compute a cell size that actually
-       fits on screen here - auto would just grow to whatever the grid
-       wanted, which is the overflow this whole thing is meant to avoid. */
-    .gridwrap { flex: 0 0 auto; height: 56vh; padding: 12px; }
+    /* height:auto, not a fixed vh - the square just needs to be as wide
+       as the screen (see fitGrid's STACKED_MQ branch), whatever height
+       that makes it. A vh cap here forced the square smaller than the
+       available width, leaving unwanted black margins on both sides. */
+    .gridwrap { flex: 0 0 auto; height: auto; padding: 8px; }
     aside { flex: 1 1 auto; height: auto; border-left: none; border-top: 1px solid var(--line); }
   }
 </style>
@@ -265,18 +351,44 @@
 <body>
   <div class="gridwrap">
     <div class="grid-panel">
+      <!-- サイズ切り替えボタンエリア -->
+      <div class="size-selector" id="sizeSelector">
+        <button class="size-btn" data-size="8">8x8</button>
+        <button class="size-btn active" data-size="16">16x16</button>
+        <button class="size-btn" data-size="24">24x24</button>
+        <button class="size-btn" data-size="32">32x32</button>
+      </div>
+
       <div class="grid" id="grid"></div>
+
+      <!-- フレーム切り替えボタンエリア（左右1234右の6列） -->
+      <div class="frame-selector" id="frameSelector">
+        <button class="frame-btn nav-btn" data-nav="-1">&lt;</button>
+        <button class="frame-btn page-btn active" data-frame="0">1</button>
+        <button class="frame-btn page-btn" data-frame="1">2</button>
+        <button class="frame-btn page-btn" data-frame="2">3</button>
+        <button class="frame-btn page-btn" data-frame="3">4</button>
+        <button class="frame-btn nav-btn" data-nav="1">&gt;</button>
+      </div>
     </div>
   </div>
 
   <aside>
     <div class="side-section">
+      <!-- 1行目: Load JSON, Copy, Paste, Undo (4列) -->
       <div class="btn-row">
-        <button class="primary" id="btnSave">Save JSON</button>
-        <label class="btn-label" for="fileInput">Load JSON</label>
+        <label class="btn-label" for="fileInput">Load Json</label>
         <input type="file" id="fileInput" accept=".json" hidden>
+        <button id="btnCopy">Copy</button>
+        <button id="btnPaste">Paste</button>
         <button id="btnUndo" disabled>Undo</button>
-        <button id="btnCopy">Copy 0/1</button>
+      </div>
+      <!-- 2行目: Save Json, Copy 0/1, Paste 0/1, All Clear (4列) -->
+      <div class="btn-row-2">
+        <button class="primary" id="btnSave">Save Json</button>
+        <button id="btnCopyText">Copy 0/1</button>
+        <button id="btnPasteText">Paste 0/1</button>
+        <button id="btnClear" style="background: var(--danger-ink); border-color: var(--danger); color: var(--danger);">All Clear</button>
       </div>
     </div>
 
@@ -303,19 +415,40 @@
     </div>
   </div>
 
+  <!-- Paste 0/1用ウィンドウ -->
+  <div id="textPasteOverlay" class="overlay">
+    <div class="overlay-card">
+      <div class="overlay-title">Paste 0/1 (全角)</div>
+      <textarea id="textPasteInput" placeholder="全角０１で入力または貼り付け"></textarea>
+      <div class="overlay-status" id="textPasteStatus"></div>
+      <div class="overlay-actions">
+        <button id="btnTextPasteCancel">Cancel</button>
+        <button class="primary" id="btnTextPasteConfirm">OK</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- All Clear 確認用ウィンドウ -->
+  <div id="clearOverlay" class="overlay">
+    <div class="overlay-card">
+      <div class="overlay-title">All Clear</div>
+      <div style="font-size: 12px; color: var(--ink-dim);">現在のフレームをすべて消去しますか？</div>
+      <div class="overlay-actions" style="margin-top: 6px;">
+        <button id="btnClearCancel">Cancel</button>
+        <button id="btnClearConfirm" style="background: var(--danger); color: var(--danger-ink); border-color: var(--danger);">Clear</button>
+      </div>
+    </div>
+  </div>
+
 <script>
 (function () {
   "use strict";
 
-  var GRID_N = 16;
+  var GRID_N = 16; // デフォルトサイズ
+  var NUM_FRAMES = 4;
+  var currentFrame = 0;
 
   // ---------- real MSX1 (TMS9918) 16-color palette ----------
-  // Same RGB values already used project-wide in schedule-editor.html's
-  // BOSS_TILES/GLYPHS (gray=SPR_GRAY 0Eh, ltgreen=SPR_LTGREEN 03h,
-  // red=SPR_RED 08h, dark blue used for Enemy3's BG tile) - kept in sync
-  // rather than re-guessed, so a color picked here matches what the game
-  // actually renders. Index 0 is the hardware's "transparent" - shown as
-  // a checkerboard, not a real fill color.
   var MSX_PALETTE = [
     { i: 0,  name: "透明",   hex: null },
     { i: 1,  name: "黒",     hex: "#000000" },
@@ -336,20 +469,71 @@
   ];
 
   // ---------- state ----------
-  // bits[r][c] === true means "foreground color", false means "background
-  // color" - exactly the MSX SCREEN1 character-pattern model (Enemy3's
-  // glyph in schedule-editor.html is the same shape): one bitmap, two
-  // colors from the 16-color palette, never an arbitrary per-pixel color.
-  var bits = [];
-  for (var ri = 0; ri < GRID_N; ri++) bits.push(new Array(GRID_N).fill(false));
-  var fgIndex = 15; // white
-  var bgIndex = 1;  // black
-  var armedColorTarget = null; // "fg" | "bg" | null
+  var frames = [];
+  var fgIndices = [15, 15, 15, 15]; // 各フレームごとの文字色
+  var bgIndices = [1, 1, 1, 1];     // 各フレームごとの背景色
+  var armedColorTarget = null;
+
+  // Modes: "draw" | "copy_select" | "paste_preview"
+  var currentMode = "draw"; 
+  var selectionStart = null; // {r, c}
+  var selectionEnd = null;   // {r, c}
+  var lastCopiedText = "";   // 直近でコピーしたテキスト
+  var pasteData = null;      // 2D boolean array
+  var pastePos = { r: 0, c: 0 }; // 貼り付け位置左上
+
+  function initBits(size) {
+    var b = [];
+    for (var ri = 0; ri < size; ri++) b.push(new Array(size).fill(false));
+    return b;
+  }
+
+  function initAllFrames(size) {
+    var f = [];
+    for (var i = 0; i < NUM_FRAMES; i++) f.push(initBits(size));
+    return f;
+  }
+
+  frames = initAllFrames(GRID_N);
+
+  function getFrameSize(fIdx) {
+    return frames[fIdx] ? frames[fIdx].length : GRID_N;
+  }
+
+  function isCurrentFrameEdited() {
+    var cur = frames[currentFrame];
+    var size = cur.length;
+    for (var r = 0; r < size; r++) {
+      for (var c = 0; c < size; c++) {
+        if (cur[r][c]) return true;
+      }
+    }
+    return false;
+  }
+
+  function updateSizeButtonsState() {
+    var edited = isCurrentFrameEdited();
+    var btns = document.querySelectorAll(".size-btn");
+    btns.forEach(function (btn) {
+      var size = parseInt(btn.dataset.size, 10);
+      btn.classList.toggle("active", size === GRID_N);
+      btn.disabled = edited && size !== GRID_N;
+    });
+  }
+
+  function updateFrameButtonsState() {
+    var btns = document.querySelectorAll(".page-btn");
+    btns.forEach(function (btn) {
+      var frameIdx = parseInt(btn.dataset.frame, 10);
+      btn.classList.toggle("active", frameIdx === currentFrame);
+    });
+  }
 
   function colorHex(i) {
     var c = MSX_PALETTE[i];
     return c ? c.hex : null;
   }
+
   function paintSwatchEl(el, idx) {
     var hex = colorHex(idx);
     if (hex) {
@@ -362,31 +546,42 @@
   }
 
   // ---------- undo ----------
-  // Same approach as schedule-editor.html: snapshot the whole state before
-  // every mutation rather than diffing - the state here is tiny (256 bits
-  // + 2 color indices), so a full copy costs nothing.
   var history = [];
   var MAX_HISTORY = 50;
   var btnUndo = document.getElementById("btnUndo");
+
   function pushHistory() {
+    var framesCopy = frames.map(function(f) {
+      return f.map(function(row) { return row.slice(); });
+    });
     history.push({
-      bits: bits.map(function (row) { return row.slice(); }),
-      fg: fgIndex,
-      bg: bgIndex
+      gridN: GRID_N,
+      frames: framesCopy,
+      currentFrame: currentFrame,
+      fgs: fgIndices.slice(), // カラー情報もコピーして保存
+      bgs: bgIndices.slice()
     });
     if (history.length > MAX_HISTORY) history.shift();
     btnUndo.disabled = false;
   }
+
   function undo() {
     if (!history.length) return;
+    exitSpecialModes();
     var snap = history.pop();
-    bits = snap.bits;
-    fgIndex = snap.fg;
-    bgIndex = snap.bg;
+    frames = snap.frames;
+    currentFrame = snap.currentFrame;
+    GRID_N = getFrameSize(currentFrame);
+    fgIndices = snap.fgs;
+    bgIndices = snap.bgs;
     btnUndo.disabled = history.length === 0;
+    
+    buildGridDOM();
     renderAll();
+    fitGrid();
     flash("undo");
   }
+
   btnUndo.addEventListener("click", undo);
   window.addEventListener("keydown", function (ev) {
     if ((ev.metaKey || ev.ctrlKey) && !ev.shiftKey && ev.key.toLowerCase() === "z") {
@@ -398,23 +593,83 @@
   // ---------- grid DOM ----------
   var gridEl = document.getElementById("grid");
   var cellEls = [];
-  for (var r = 0; r < GRID_N; r++) {
-    cellEls.push([]);
-    for (var c = 0; c < GRID_N; c++) {
-      var cell = document.createElement("div");
-      cell.className = "cell";
-      if (c === 7) cell.classList.add("qdiv-right");
-      if (r === 7) cell.classList.add("qdiv-bottom");
-      cell.dataset.r = r;
-      cell.dataset.c = c;
-      gridEl.appendChild(cell);
-      cellEls[r].push(cell);
+
+  function buildGridDOM() {
+    gridEl.innerHTML = "";
+    gridEl.style.gridTemplateColumns = "repeat(" + GRID_N + ", 1fr)";
+    gridEl.style.gridTemplateRows = "repeat(" + GRID_N + ", 1fr)";
+    cellEls = [];
+
+    for (var r = 0; r < GRID_N; r++) {
+      cellEls.push([]);
+      for (var c = 0; c < GRID_N; c++) {
+        var cell = document.createElement("div");
+        cell.className = "cell";
+        if ((c + 1) % 8 === 0 && c !== GRID_N - 1) cell.classList.add("qdiv-right");
+        if ((r + 1) % 8 === 0 && r !== GRID_N - 1) cell.classList.add("qdiv-bottom");
+        cell.dataset.r = r;
+        cell.dataset.c = c;
+        gridEl.appendChild(cell);
+        cellEls[r].push(cell);
+      }
     }
   }
 
+  function changeSize(newSize) {
+    if (newSize === GRID_N) return;
+    if (isCurrentFrameEdited()) {
+      flash("現在のフレームが編集中のためサイズ変更できません");
+      return;
+    }
+    exitSpecialModes();
+    GRID_N = newSize;
+    frames[currentFrame] = initBits(GRID_N);
+    pushHistory();
+    buildGridDOM();
+    fitGrid();
+    renderAll();
+  }
+
+  document.getElementById("sizeSelector").addEventListener("click", function (ev) {
+    var btn = ev.target.closest(".size-btn");
+    if (!btn || btn.disabled) return;
+    var size = parseInt(btn.dataset.size, 10);
+    changeSize(size);
+  });
+
+  document.getElementById("frameSelector").addEventListener("click", function (ev) {
+    var btn = ev.target.closest(".frame-btn");
+    if (!btn) return;
+    exitSpecialModes();
+    
+    if (btn.classList.contains("page-btn")) {
+      currentFrame = parseInt(btn.dataset.frame, 10);
+    } else if (btn.classList.contains("nav-btn")) {
+      var dir = parseInt(btn.dataset.nav, 10);
+      currentFrame = (currentFrame + dir + NUM_FRAMES) % NUM_FRAMES;
+    }
+    
+    GRID_N = getFrameSize(currentFrame);
+    buildGridDOM();
+    renderAll();
+    fitGrid();
+    flash("Frame " + (currentFrame + 1));
+  });
+
   function renderCell(r, c) {
+    if (!cellEls[r] || !cellEls[r][c]) return;
     var el = cellEls[r][c];
-    var hex = colorHex(bits[r][c] ? fgIndex : bgIndex);
+    var val = frames[currentFrame][r][c];
+    
+    if (currentMode === "paste_preview" && pasteData) {
+      var pr = r - pastePos.r;
+      var pc = c - pastePos.c;
+      if (pr >= 0 && pr < pasteData.length && pc >= 0 && pc < pasteData[0].length) {
+        val = pasteData[pr][pc];
+      }
+    }
+
+    var hex = colorHex(val ? fgIndices[currentFrame] : bgIndices[currentFrame]);
     if (hex) {
       el.style.background = hex;
       el.classList.remove("transparent-swatch");
@@ -422,37 +677,102 @@
       el.style.background = "";
       el.classList.add("transparent-swatch");
     }
+
+    el.classList.remove("sel-top", "sel-bottom", "sel-left", "sel-right");
+    el.classList.remove("pst-top", "pst-bottom", "pst-left", "pst-right");
+
+    if (currentMode === "copy_select" && selectionStart && selectionEnd) {
+      var minR = Math.min(selectionStart.r, selectionEnd.r);
+      var maxR = Math.max(selectionStart.r, selectionEnd.r);
+      var minC = Math.min(selectionStart.c, selectionEnd.c);
+      var maxC = Math.max(selectionStart.c, selectionEnd.c);
+
+      if (r >= minR && r <= maxR && c >= minC && c <= maxC) {
+        if (r === minR) el.classList.add("sel-top");
+        if (r === maxR) el.classList.add("sel-bottom");
+        if (c === minC) el.classList.add("sel-left");
+        if (c === maxC) el.classList.add("sel-right");
+      }
+    }
+
+    if (currentMode === "paste_preview" && pasteData) {
+      var pMinR = pastePos.r;
+      var pMaxR = pastePos.r + pasteData.length - 1;
+      var pMinC = pastePos.c;
+      var pMaxC = pastePos.c + pasteData[0].length - 1;
+
+      if (r >= pMinR && r <= pMaxR && c >= pMinC && c <= pMaxC) {
+        if (r === pMinR) el.classList.add("pst-top");
+        if (r === pMaxR) el.classList.add("pst-bottom");
+        if (c === pMinC) el.classList.add("pst-left");
+        if (c === pMaxC) el.classList.add("pst-right");
+      }
+    }
   }
 
   function updateColorTargetButtons() {
     btnBgColor.classList.toggle("armed", armedColorTarget === "bg");
     btnFgColor.classList.toggle("armed", armedColorTarget === "fg");
-    paintSwatchEl(bgSwatchEl, bgIndex);
-    paintSwatchEl(fgSwatchEl, fgIndex);
+    paintSwatchEl(bgSwatchEl, bgIndices[currentFrame]);
+    paintSwatchEl(fgSwatchEl, fgIndices[currentFrame]);
   }
 
   function updatePaletteHighlight() {
     Array.prototype.forEach.call(paletteEl.children, function (el) {
       var idx = +el.dataset.i;
-      el.classList.toggle("armed-fg", idx === fgIndex);
-      el.classList.toggle("armed-bg", idx === bgIndex);
+      el.classList.toggle("armed-fg", idx === fgIndices[currentFrame]);
+      el.classList.toggle("armed-bg", idx === bgIndices[currentFrame]);
     });
   }
 
-  // Full-width (zenkaku) 0/1, per spec - not the ASCII digits the earlier
-  // transcription-check tool used. Built lazily (just for Copy/Save), not
-  // kept live on screen - there's no visible output display anymore.
   var ZEN_DIGIT = { "0": "０", "1": "１" };
-  function outputText() {
-    return bits.map(function (row) {
+  
+  function outputFullText() {
+    return frames[currentFrame].map(function (row) {
       return row.map(function (v) { return ZEN_DIGIT[v ? "1" : "0"]; }).join("");
     }).join("\n");
   }
 
+  function getSelectedText() {
+    var minR = 0, maxR = GRID_N - 1, minC = 0, maxC = GRID_N - 1;
+    if (selectionStart && selectionEnd) {
+      minR = Math.min(selectionStart.r, selectionEnd.r);
+      maxR = Math.max(selectionStart.r, selectionEnd.r);
+      minC = Math.min(selectionStart.c, selectionEnd.c);
+      maxC = Math.max(selectionStart.c, selectionEnd.c);
+    }
+    var lines = [];
+    for (var r = minR; r <= maxR; r++) {
+      var rowStr = "";
+      for (var c = minC; c <= maxC; c++) {
+        rowStr += ZEN_DIGIT[frames[currentFrame][r][c] ? "1" : "0"];
+      }
+      lines.push(rowStr);
+    }
+    return lines.join("\n");
+  }
+
   function renderAll() {
-    for (var rr = 0; rr < GRID_N; rr++) for (var cc = 0; cc < GRID_N; cc++) renderCell(rr, cc);
+    for (var rr = 0; rr < GRID_N; rr++) {
+      for (var cc = 0; cc < GRID_N; cc++) {
+        renderCell(rr, cc);
+      }
+    }
     updateColorTargetButtons();
     updatePaletteHighlight();
+    updateSizeButtonsState();
+    updateFrameButtonsState();
+    
+    btnCopy.classList.toggle("active-mode", currentMode === "copy_select");
+    btnPaste.classList.toggle("active-mode", currentMode === "paste_preview");
+  }
+
+  function exitSpecialModes() {
+    currentMode = "draw";
+    selectionStart = null;
+    selectionEnd = null;
+    pasteData = null;
+    renderAll();
   }
 
   // ---------- color target buttons + palette ----------
@@ -483,21 +803,21 @@
         return;
       }
       pushHistory();
-      if (armedColorTarget === "fg") fgIndex = col.i; else bgIndex = col.i;
+      if (armedColorTarget === "fg") {
+        fgIndices[currentFrame] = col.i;
+      } else {
+        bgIndices[currentFrame] = col.i;
+      }
       armedColorTarget = null;
       renderAll();
     });
     paletteEl.appendChild(sw);
   });
 
-  // ---------- drawing: press to paint, drag to paint more cells ----------
-  // One history entry per gesture (pushed on pointerdown, like
-  // schedule-editor.html's hold-move), not one per cell - undo reverts the
-  // whole stroke in one step. The whole gesture paints a single value
-  // (whatever the first cell's opposite was), not a per-cell toggle, so
-  // dragging back over already-painted cells doesn't flicker them back.
+  // ---------- drawing & drag pointer handlers ----------
   var paintValue = null;
   var paintPointerId = null;
+  var dragStartPos = null;
 
   function cellAtPoint(x, y) {
     var el = document.elementFromPoint(x, y);
@@ -505,54 +825,160 @@
     if (!cell || !gridEl.contains(cell)) return null;
     return { r: +cell.dataset.r, c: +cell.dataset.c };
   }
+
   function paintCell(r, c, value) {
-    if (bits[r][c] === value) return;
-    bits[r][c] = value;
+    if (frames[currentFrame][r][c] === value) return;
+    frames[currentFrame][r][c] = value;
     renderCell(r, c);
+    updateSizeButtonsState();
   }
 
   gridEl.addEventListener("pointerdown", function (ev) {
-    var cell = ev.target.closest(".cell");
-    if (!cell) return;
-    var r = +cell.dataset.r, c = +cell.dataset.c;
-    pushHistory();
-    paintValue = !bits[r][c];
+    var hit = cellAtPoint(ev.clientX, ev.clientY);
+    if (!hit) return;
     paintPointerId = ev.pointerId;
     gridEl.setPointerCapture(ev.pointerId);
-    paintCell(r, c, paintValue);
+
+    if (currentMode === "draw") {
+      pushHistory();
+      paintValue = !frames[currentFrame][hit.r][hit.c];
+      paintCell(hit.r, hit.c, paintValue);
+    } else if (currentMode === "copy_select") {
+      selectionStart = hit;
+      selectionEnd = hit;
+      renderAll();
+    } else if (currentMode === "paste_preview") {
+      dragStartPos = hit;
+    }
   });
+
   gridEl.addEventListener("pointermove", function (ev) {
     if (paintPointerId === null || ev.pointerId !== paintPointerId) return;
     var hit = cellAtPoint(ev.clientX, ev.clientY);
     if (!hit) return;
-    paintCell(hit.r, hit.c, paintValue);
+
+    if (currentMode === "draw") {
+      paintCell(hit.r, hit.c, paintValue);
+    } else if (currentMode === "copy_select") {
+      selectionEnd = hit;
+      renderAll();
+    } else if (currentMode === "paste_preview" && dragStartPos) {
+      var dr = hit.r - dragStartPos.r;
+      var dc = hit.c - dragStartPos.c;
+      pastePos.r += dr;
+      pastePos.c += dc;
+      dragStartPos = hit;
+      renderAll();
+    }
   });
-  function endPaint(ev) {
+
+  function endPointer(ev) {
     if (paintPointerId === null || ev.pointerId !== paintPointerId) return;
     paintPointerId = null;
     paintValue = null;
+    dragStartPos = null;
   }
-  gridEl.addEventListener("pointerup", endPaint);
-  gridEl.addEventListener("pointercancel", endPaint);
+  gridEl.addEventListener("pointerup", endPointer);
+  gridEl.addEventListener("pointercancel", endPointer);
 
-  // ---------- copy ----------
-  // No visible output field anymore - Copy builds the 0/1 text on demand
-  // and sends it straight to the clipboard. The fallback (Clipboard API
-  // unavailable/blocked) needs *some* text node to select, so it makes one
-  // temporarily rather than keeping a permanent output textarea just for
-  // this rare case.
-  document.getElementById("btnCopy").addEventListener("click", function () {
-    var text = outputText();
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(text).then(
-        function () { flash("コピーしました"); },
-        function () { copyViaTempTextarea(text); }
-      );
+  // ---------- Copy 0/1 ----------
+  document.getElementById("btnCopyText").addEventListener("click", function () {
+    exitSpecialModes();
+    var text = outputFullText();
+    copyToClipboard(text, "Frame " + (currentFrame + 1) + " (0/1) をコピーしました");
+  });
+
+  // ---------- Paste 0/1 ----------
+  var textPasteOverlay = document.getElementById("textPasteOverlay");
+  var textPasteInput = document.getElementById("textPasteInput");
+  var textPasteStatus = document.getElementById("textPasteStatus");
+
+  document.getElementById("btnPasteText").addEventListener("click", function () {
+    exitSpecialModes();
+    textPasteStatus.textContent = "";
+    textPasteInput.value = "";
+    textPasteOverlay.classList.add("show");
+    textPasteInput.focus();
+  });
+
+  function doTextPaste() {
+    var text = textPasteInput.value;
+    var pData = parsePatternText(text);
+    if (!pData) {
+      textPasteStatus.textContent = "有効な全角0/1データがありません";
+      return;
+    }
+    
+    pushHistory();
+    for (var pr = 0; pr < pData.length; pr++) {
+      for (var pc = 0; pc < pData[0].length; pc++) {
+        if (pr < GRID_N && pc < GRID_N) {
+          frames[currentFrame][pr][pc] = pData[pr][pc];
+        }
+      }
+    }
+    textPasteOverlay.classList.remove("show");
+    renderAll();
+    flash("Paste 0/1 を完了しました");
+  }
+
+  document.getElementById("btnTextPasteCancel").addEventListener("click", function () {
+    textPasteOverlay.classList.remove("show");
+  });
+  document.getElementById("btnTextPasteConfirm").addEventListener("click", doTextPaste);
+  textPasteOverlay.addEventListener("click", function (ev) {
+    if (ev.target === textPasteOverlay) textPasteOverlay.classList.remove("show");
+  });
+
+  // ---------- All Clear ----------
+  var clearOverlay = document.getElementById("clearOverlay");
+  document.getElementById("btnClear").addEventListener("click", function () {
+    exitSpecialModes();
+    clearOverlay.classList.add("show");
+  });
+  document.getElementById("btnClearCancel").addEventListener("click", function () {
+    clearOverlay.classList.remove("show");
+  });
+  document.getElementById("btnClearConfirm").addEventListener("click", function () {
+    pushHistory();
+    frames[currentFrame] = initBits(GRID_N);
+    clearOverlay.classList.remove("show");
+    renderAll();
+    flash("All Clear 完了しました");
+  });
+  clearOverlay.addEventListener("click", function (ev) {
+    if (ev.target === clearOverlay) clearOverlay.classList.remove("show");
+  });
+
+  // ---------- Copy ----------
+  var btnCopy = document.getElementById("btnCopy");
+  btnCopy.addEventListener("click", function () {
+    if (currentMode !== "copy_select") {
+      currentMode = "copy_select";
+      selectionStart = { r: 0, c: 0 };
+      selectionEnd = { r: GRID_N - 1, c: GRID_N - 1 };
+      renderAll();
+      flash("範囲を選択し、もう一度Copyで確定");
     } else {
-      copyViaTempTextarea(text);
+      var text = getSelectedText();
+      lastCopiedText = text;
+      copyToClipboard(text, "選択範囲をコピーしました");
+      exitSpecialModes();
     }
   });
-  function copyViaTempTextarea(text) {
+
+  function copyToClipboard(text, successMsg) {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(
+        function () { flash(successMsg); },
+        function () { copyViaTempTextarea(text, successMsg); }
+      );
+    } else {
+      copyViaTempTextarea(text, successMsg);
+    }
+  }
+
+  function copyViaTempTextarea(text, successMsg) {
     var ta = document.createElement("textarea");
     ta.value = text;
     ta.style.position = "fixed";
@@ -563,19 +989,85 @@
     var ok = false;
     try { ok = document.execCommand("copy"); } catch (e) { ok = false; }
     document.body.removeChild(ta);
-    flash(ok ? "コピーしました" : "コピーできませんでした");
+    flash(ok ? successMsg : "コピーできませんでした");
+  }
+
+  // ---------- Paste ----------
+  var btnPaste = document.getElementById("btnPaste");
+  btnPaste.addEventListener("click", function () {
+    if (currentMode !== "paste_preview") {
+      if (navigator.clipboard && navigator.clipboard.readText) {
+        navigator.clipboard.readText().then(function (clipText) {
+          initPastePreview(clipText || lastCopiedText);
+        }).catch(function () {
+          initPastePreview(lastCopiedText);
+        });
+      } else {
+        initPastePreview(lastCopiedText);
+      }
+    } else {
+      if (pasteData) {
+        pushHistory();
+        for (var pr = 0; pr < pasteData.length; pr++) {
+          for (var pc = 0; pc < pasteData[0].length; pc++) {
+            var targetR = pastePos.r + pr;
+            var targetC = pastePos.c + pc;
+            if (targetR >= 0 && targetR < GRID_N && targetC >= 0 && targetC < GRID_N) {
+              frames[currentFrame][targetR][targetC] = pasteData[pr][pc];
+            }
+          }
+        }
+        flash("ペーストを確定しました");
+      }
+      exitSpecialModes();
+    }
+  });
+
+  function parsePatternText(text) {
+    if (!text) return null;
+    var lines = text.trim().split(/\r?\n/);
+    if (!lines.length) return null;
+    var grid = [];
+    for (var i = 0; i < lines.length; i++) {
+      var row = [];
+      var line = lines[i];
+      for (var j = 0; j < line.length; j++) {
+        var ch = line[j];
+        if (ch === "１" || ch === "1") row.push(true);
+        else if (ch === "０" || ch === "0") row.push(false);
+      }
+      if (row.length > 0) grid.push(row);
+    }
+    return grid.length > 0 ? grid : null;
+  }
+
+  function initPastePreview(text) {
+    var pData = parsePatternText(text);
+    if (!pData) {
+      flash("ペーストできる有効なデータがありません");
+      return;
+    }
+    currentMode = "paste_preview";
+    pasteData = pData;
+    pastePos = { r: 0, c: 0 };
+    renderAll();
+    flash("位置を合わせて、もう一度Pasteで確定");
   }
 
   // ---------- save / load ----------
   function currentJSON() {
+    var curFrameBits = frames[currentFrame].map(function (row) {
+      return row.map(function (v) { return v ? 1 : 0; });
+    });
+
     return JSON.stringify({
-      version: 1,
+      version: 2,
       game: "CYBER_SUZUKA",
       width: GRID_N,
       height: GRID_N,
-      fg: fgIndex,
-      bg: bgIndex,
-      bits: bits.map(function (row) { return row.map(function (v) { return v ? 1 : 0; }); })
+      fg: fgIndices[currentFrame],
+      bg: bgIndices[currentFrame],
+      bits: curFrameBits
     }, null, 2);
   }
 
@@ -586,29 +1078,41 @@
   document.getElementById("btnSave").addEventListener("click", function () {
     saveStatus.textContent = "";
     saveStatus.classList.remove("ok");
+    saveFilenameInput.value = "Sprite_" + GRID_N + "x" + GRID_N + ".json";
     saveOverlay.classList.add("show");
     saveFilenameInput.focus();
-    saveFilenameInput.select();
+    
+    var selLen = "Sprite".length;
+    if (saveFilenameInput.setSelectionRange) {
+      saveFilenameInput.setSelectionRange(0, selLen);
+    } else {
+      saveFilenameInput.select();
+    }
   });
 
   function doSave() {
-    var filename = saveFilenameInput.value.trim() || "Sprite.json";
-    if (!window.claude || !window.claude.downloads) {
-      saveStatus.textContent = "save unavailable here";
+    var filename = saveFilenameInput.value.trim() || ("Sprite_" + GRID_N + "x" + GRID_N + ".json");
+    try {
+      var jsonStr = currentJSON();
+      var blob = new Blob([jsonStr], { type: "application/json" });
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      
+      setTimeout(function () {
+        URL.revokeObjectURL(url);
+      }, 100);
+
+      saveOverlay.classList.remove("show");
+      flash("saved " + filename);
+    } catch (err) {
+      saveStatus.textContent = "save failed";
       saveStatus.classList.remove("ok");
-      return;
     }
-    window.claude.downloads.save({ filename: filename, data: currentJSON() }).then(
-      function () {
-        saveOverlay.classList.remove("show");
-        flash("saved " + filename);
-      },
-      function (err) {
-        if (err && err.code === "declined") { saveOverlay.classList.remove("show"); flash("save cancelled"); return; }
-        saveStatus.textContent = "save failed";
-        saveStatus.classList.remove("ok");
-      }
-    );
   }
 
   document.getElementById("btnSaveCancel").addEventListener("click", function () {
@@ -625,16 +1129,45 @@
 
   function importJSONText(text) {
     var data = JSON.parse(text);
-    if (!Array.isArray(data.bits) || data.bits.length !== GRID_N) throw new Error("invalid bits array");
-    var newBits = data.bits.map(function (row) {
-      if (!Array.isArray(row) || row.length !== GRID_N) throw new Error("invalid row length");
-      return row.map(function (v) { return !!v; });
-    });
-    bits = newBits;
-    if (Number.isInteger(data.fg) && data.fg >= 0 && data.fg <= 15) fgIndex = data.fg;
-    if (Number.isInteger(data.bg) && data.bg >= 0 && data.bg <= 15) bgIndex = data.bg;
+    var size = data.width || 16;
+    if (![8, 16, 24, 32].includes(size)) throw new Error("unsupported size");
+
+    var loadedTargetFrame = null;
+    if (data.bits && Array.isArray(data.bits) && data.bits.length === size) {
+      loadedTargetFrame = data.bits.map(function(row) {
+        if (!Array.isArray(row) || row.length !== size) throw new Error("invalid row length");
+        return row.map(function(v) { return !!v; });
+      });
+    } else if (data.frames && Array.isArray(data.frames) && data.frames.length > 0) {
+      var frameData = data.frames[0];
+      if (!Array.isArray(frameData) || frameData.length !== size) throw new Error("invalid frame array");
+      loadedTargetFrame = frameData.map(function(row) {
+        if (!Array.isArray(row) || row.length !== size) throw new Error("invalid row length");
+        return row.map(function(v) { return !!v; });
+      });
+    } else {
+      throw new Error("invalid data format");
+    }
+
+    exitSpecialModes();
+
+    GRID_N = size;
+    frames[currentFrame] = loadedTargetFrame;
+
+    history = [];
+    btnUndo.disabled = true;
+
+    if (Number.isInteger(data.fg) && data.fg >= 0 && data.fg <= 15) {
+      fgIndices[currentFrame] = data.fg;
+    }
+    if (Number.isInteger(data.bg) && data.bg >= 0 && data.bg <= 15) {
+      bgIndices[currentFrame] = data.bg;
+    }
+
+    buildGridDOM();
     renderAll();
-    return "loaded";
+    fitGrid();
+    return "loaded (Slot " + (currentFrame + 1) + " / " + size + "x" + size + ")";
   }
 
   document.getElementById("fileInput").addEventListener("change", function (ev) {
@@ -656,40 +1189,59 @@
     liveMsg.textContent = msg;
     liveMsg.classList.add("show");
     clearTimeout(flashTimer);
-    flashTimer = setTimeout(function () { liveMsg.classList.remove("show"); }, 1800);
+    flashTimer = setTimeout(function () { liveMsg.classList.remove("show"); }, 2200);
   }
 
-  // ---------- responsive cell size ----------
-  // Fixed-px cells don't fit every viewport - a 16-cell-wide grid plus a
-  // full cell of margin on every side (see .grid-panel's padding) needs
-  // 16 cells of space in each dimension, and on a narrow/short phone
-  // screen that easily exceeds what's actually available, forcing the
-  // page (or worse, just the grid) to overflow. Compute the largest cell
-  // size that still fits both dimensions of the current .gridwrap, the
-  // same way schedule-editor.html derives its own CELL from the
-  // viewport. No margin reserved here on purpose - .gridwrap's own
-  // padding plus flex-centering the panel (sized to the *smaller*
-  // available dimension) already leaves visible space around it on the
-  // other axis, so reserving cells for margin on top of that just made
-  // the grid smaller than it needed to be for no visual benefit.
-  var CELL_MIN = 12, CELL_MAX = 36;
   var gridWrapEl = document.querySelector(".gridwrap");
+  var STACKED_MQ = window.matchMedia("(max-width: 760px)");
   function fitGrid() {
     var cs = getComputedStyle(gridWrapEl);
     var padX = parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight);
     var padY = parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom);
-    var BORDERS = 22; // grid-panel's own padding+border, plus the grid's border
-    var availW = gridWrapEl.clientWidth - padX - BORDERS;
-    var availH = gridWrapEl.clientHeight - padY - BORDERS;
-    var cell = Math.floor(Math.min(availW, availH) / GRID_N);
-    cell = Math.max(CELL_MIN, Math.min(CELL_MAX, cell));
-    document.documentElement.style.setProperty("--cell", cell + "px");
+
+    // パネル内の余白やボタンの高さ分のみを考慮し、黒い外枠の余分なデッドスペースを限界まで削減
+    var BORDERS_Y = 40;
+    var BORDERS_X = 8;
+
+    var availW = gridWrapEl.clientWidth - padX - BORDERS_X;
+    var size;
+    if (STACKED_MQ.matches) {
+      // Stacked (narrow/mobile) layout: .gridwrap is full-width and no
+      // longer has a fixed vh height (see its media-query rule) - it
+      // just wraps to whatever height the resulting square needs, same
+      // as every button below spans edge-to-edge. Sizing off
+      // clientHeight here used to fight that: the old fixed vh cap made
+      // the square smaller than the available width, leaving dead
+      // black margins on both sides instead of filling it.
+      size = Math.floor(availW);
+    } else {
+      var availH = gridWrapEl.clientHeight - padY - BORDERS_Y;
+      size = Math.floor(Math.min(availW, availH));
+    }
+    size = Math.max(120, size);
+
+    document.documentElement.style.setProperty("--grid-size", size + "px");
   }
   window.addEventListener("resize", fitGrid);
+  // A published Artifact runs inside an iframe the host resizes to fit
+  // content AFTER first paint (measuring scrollHeight, then applying that
+  // as the iframe's real height) - since .gridwrap's own size depends on
+  // that height (height:100vh), the very first fitGrid() call below can
+  // run against a stale/interim size and never get corrected, because
+  // that resize is a change to the iframe element from OUTSIDE and isn't
+  // guaranteed to fire this page's own `window` resize event. Opening the
+  // same file directly in a normal tab doesn't have this two-step sizing,
+  // which is why the gap only showed up in the hosted Artifact. A
+  // ResizeObserver on .gridwrap itself reacts to the box actually
+  // changing size regardless of what caused it, closing that gap.
+  if (typeof ResizeObserver !== "undefined") {
+    new ResizeObserver(fitGrid).observe(gridWrapEl);
+  }
 
   // ---------- boot ----------
-  fitGrid();
+  buildGridDOM();
   renderAll();
+  fitGrid();
 })();
 </script>
 </body>
