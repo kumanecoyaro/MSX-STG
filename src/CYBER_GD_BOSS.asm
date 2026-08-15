@@ -12871,30 +12871,30 @@ PATTERNS:
     ;   0- 7 = mountain family        (color A4h)
     ;   8-31 = diamond/slash/backslash family (color C3h)
     ; 32-47 = wedge family            (color B3h)
-    DB 0Ch,3Ah,7Fh,DFh,F7h,F7h,EFh,DFh    ; code 0  mountain (new design)
-    DB 18h,74h,FEh,BFh,EFh,EFh,DFh,BFh    ; code 1  mountain^2 shift1
-    DB 30h,E8h,FDh,7Fh,DFh,DFh,BFh,7Fh    ; code 2  mountain^2 shift2
-    DB 60h,D1h,FBh,FEh,BFh,BFh,7Fh,FEh    ; code 3  mountain^2 shift3
-    DB C0h,A3h,F7h,FDh,7Fh,7Fh,FEh,FDh    ; code 4  mountain^2 shift4
-    DB 81h,47h,EFh,FBh,FEh,FEh,FDh,FBh    ; code 5  mountain^2 shift5
-    DB 03h,8Eh,DFh,F7h,FDh,FDh,FBh,F7h    ; code 6  mountain^2 shift6
-    DB 06h,1Dh,BFh,EFh,FBh,FBh,F7h,EFh    ; code 7  mountain^2 shift7
-    DB 01h,02h,04h,08h,08h,04h,02h,01h    ; code 8  diamond
-    DB 02h,04h,08h,10h,10h,08h,04h,02h    ; code 9  diamond^2 shift1
-    DB 04h,08h,10h,20h,20h,10h,08h,04h    ; code 10 diamond^2 shift2
-    DB 08h,10h,20h,40h,40h,20h,10h,08h    ; code 11 diamond^2 shift3
-    DB 10h,20h,40h,80h,80h,40h,20h,10h    ; code 12 diamond^2 shift4
-    DB 20h,40h,80h,01h,01h,80h,40h,20h    ; code 13 diamond^2 shift5
-    DB 40h,80h,01h,02h,02h,01h,80h,40h    ; code 14 diamond^2 shift6
-    DB 80h,01h,02h,04h,04h,02h,01h,80h    ; code 15 diamond^2 shift7
-    DB 01h,02h,04h,08h,10h,20h,40h,80h    ; code 16 slash
-    DB 02h,04h,08h,10h,20h,40h,80h,01h    ; code 17 slash^2 shift1
-    DB 04h,08h,10h,20h,40h,80h,01h,02h    ; code 18 slash^2 shift2
-    DB 08h,10h,20h,40h,80h,01h,02h,04h    ; code 19 slash^2 shift3
-    DB 10h,20h,40h,80h,01h,02h,04h,08h    ; code 20 slash^2 shift4
-    DB 20h,40h,80h,01h,02h,04h,08h,10h    ; code 21 slash^2 shift5
-    DB 40h,80h,01h,02h,04h,08h,10h,20h    ; code 22 slash^2 shift6
-    DB 80h,01h,02h,04h,08h,10h,20h,40h    ; code 23 slash^2 shift7
+    DB 06h,6Fh,FEh,9Bh,65h,FEh,4Bh,BDh    ; code 0 cloud (new design)
+    DB 0Ch,DEh,FDh,37h,CAh,FDh,96h,7Bh    ; code 1 cloud^2 shift1
+    DB 18h,BDh,FBh,6Eh,95h,FBh,2Dh,F6h    ; code 2 cloud^2 shift2
+    DB 30h,7Bh,F7h,DCh,2Bh,F7h,5Ah,EDh    ; code 3 cloud^2 shift3
+    DB 60h,F6h,EFh,B9h,56h,EFh,B4h,DBh    ; code 4 cloud^2 shift4
+    DB C0h,EDh,DFh,73h,ACh,DFh,69h,B7h    ; code 5 cloud^2 shift5
+    DB 81h,DBh,BFh,E6h,59h,BFh,D2h,6Fh    ; code 6 cloud^2 shift6
+    DB 03h,B7h,7Fh,CDh,B2h,7Fh,A5h,DEh    ; code 7 cloud^2 shift7
+    DB 86h,6Fh,FEh,1Bh,E4h,F1h,BFh,DFh    ; code 8 cloud (new design)
+    DB 0Dh,DEh,FDh,36h,C9h,E3h,7Fh,BFh    ; code 9 cloud^2 shift1
+    DB 1Ah,BDh,FBh,6Ch,93h,C7h,FEh,7Fh    ; code 10 cloud^2 shift2
+    DB 34h,7Bh,F7h,D8h,27h,8Fh,FDh,FEh    ; code 11 cloud^2 shift3
+    DB 68h,F6h,EFh,B1h,4Eh,1Fh,FBh,FDh    ; code 12 cloud^2 shift4
+    DB D0h,EDh,DFh,63h,9Ch,3Eh,F7h,FBh    ; code 13 cloud^2 shift5
+    DB A1h,DBh,BFh,C6h,39h,7Ch,EFh,F7h    ; code 14 cloud^2 shift6
+    DB 43h,B7h,7Fh,8Dh,72h,F8h,DFh,EFh    ; code 15 cloud^2 shift7
+    DB 86h,6Fh,FEh,1Bh,E4h,F1h,BFh,DFh    ; code 16 cloud (new design)
+    DB 0Dh,DEh,FDh,36h,C9h,E3h,7Fh,BFh    ; code 17 cloud^2 shift1
+    DB 1Ah,BDh,FBh,6Ch,93h,C7h,FEh,7Fh    ; code 18 cloud^2 shift2
+    DB 34h,7Bh,F7h,D8h,27h,8Fh,FDh,FEh    ; code 19 cloud^2 shift3
+    DB 68h,F6h,EFh,B1h,4Eh,1Fh,FBh,FDh    ; code 20 cloud^2 shift4
+    DB D0h,EDh,DFh,63h,9Ch,3Eh,F7h,FBh    ; code 21 cloud^2 shift5
+    DB A1h,DBh,BFh,C6h,39h,7Ch,EFh,F7h    ; code 22 cloud^2 shift6
+    DB 43h,B7h,7Fh,8Dh,72h,F8h,DFh,EFh    ; code 23 cloud^2 shift7
     DB 80h,40h,20h,10h,08h,04h,02h,01h    ; code 24 backslash
     DB 01h,80h,40h,20h,10h,08h,04h,02h    ; code 25 backslash^2 shift1
     DB 02h,01h,80h,40h,20h,10h,08h,04h    ; code 26 backslash^2 shift2
@@ -12903,22 +12903,22 @@ PATTERNS:
     DB 10h,08h,04h,02h,01h,80h,40h,20h    ; code 29 backslash^2 shift5
     DB 20h,10h,08h,04h,02h,01h,80h,40h    ; code 30 backslash^2 shift6
     DB 40h,20h,10h,08h,04h,02h,01h,80h    ; code 31 backslash^2 shift7
-    DB 00h,18h,3Dh,77h,EFh,EFh,DFh,BFh    ; code 32 wedgeA (new design)
-    DB 70h,E8h,FCh,DCh,DEh,BFh,7Dh,7Bh    ; code 33 wedgeB (new design)
-    DB 00h,31h,7Bh,EFh,DFh,DFh,BEh,7Eh    ; code 34 wedgeA->wedgeB shift1
-    DB 01h,63h,F7h,DFh,BFh,BEh,7Dh,FDh    ; code 35 wedgeA->wedgeB shift2
-    DB 03h,C7h,EFh,BEh,7Eh,7Dh,FBh,FBh    ; code 36 wedgeA->wedgeB shift3
-    DB 07h,8Eh,DFh,7Dh,FDh,FBh,F7h,F7h    ; code 37 wedgeA->wedgeB shift4
-    DB 0Eh,1Dh,BFh,FBh,FBh,F7h,EFh,EFh    ; code 38 wedgeA->wedgeB shift5
-    DB 1Ch,3Ah,7Fh,F7h,F7h,EFh,DFh,DEh    ; code 39 wedgeA->wedgeB shift6
-    DB 38h,74h,FEh,EEh,EFh,DFh,BEh,BDh    ; code 40 wedgeA->wedgeB shift7
-    DB E0h,D0h,F8h,B8h,BDh,7Fh,FBh,F7h    ; code 41 wedgeB->wedgeA shift1
-    DB C0h,A0h,F0h,71h,7Bh,FFh,F7h,EEh    ; code 42 wedgeB->wedgeA shift2
-    DB 80h,40h,E1h,E3h,F7h,FFh,EEh,DDh    ; code 43 wedgeB->wedgeA shift3
-    DB 00h,81h,C3h,C7h,EEh,FEh,DDh,BBh    ; code 44 wedgeB->wedgeA shift4
-    DB 00h,03h,87h,8Eh,DDh,FDh,BBh,77h    ; code 45 wedgeB->wedgeA shift5
-    DB 00h,06h,0Fh,1Dh,BBh,FBh,77h,EFh    ; code 46 wedgeB->wedgeA shift6
-    DB 00h,0Ch,1Eh,3Bh,77h,F7h,EFh,DFh    ; code 47 wedgeB->wedgeA shift7
+    DB FBh,6Fh,BCh,9Fh,DFh,55h,EEh,F7h    ; code 32 cloudA (new design)
+    DB FFh,DFh,E6h,79h,BEh,C9h,F7h,BFh    ; code 33 cloudB (new design)
+    DB F7h,DFh,79h,3Eh,BFh,ABh,DDh,EFh    ; code 34 cloudA->cloudB shift1
+    DB EFh,BFh,F3h,7Dh,7Eh,57h,BBh,DEh    ; code 35 cloudA->cloudB shift2
+    DB DFh,7Eh,E7h,FBh,FDh,AEh,77h,BDh    ; code 36 cloudA->cloudB shift3
+    DB BFh,FDh,CEh,F7h,FBh,5Ch,EFh,7Bh    ; code 37 cloudA->cloudB shift4
+    DB 7Fh,FBh,9Ch,EFh,F7h,B9h,DEh,F7h    ; code 38 cloudA->cloudB shift5
+    DB FFh,F7h,39h,DEh,EFh,72h,BDh,EFh    ; code 39 cloudA->cloudB shift6
+    DB FFh,EFh,73h,BCh,DFh,E4h,7Bh,DFh    ; code 40 cloudA->cloudB shift7
+    DB FFh,BEh,CDh,F3h,7Dh,92h,EFh,7Fh    ; code 41 cloudB->cloudA shift1
+    DB FFh,7Dh,9Ah,E6h,FBh,25h,DFh,FFh    ; code 42 cloudB->cloudA shift2
+    DB FFh,FBh,35h,CCh,F6h,4Ah,BFh,FFh    ; code 43 cloudB->cloudA shift3
+    DB FFh,F6h,6Bh,99h,EDh,95h,7Eh,FFh    ; code 44 cloudB->cloudA shift4
+    DB FFh,EDh,D7h,33h,DBh,2Ah,FDh,FEh    ; code 45 cloudB->cloudA shift5
+    DB FEh,DBh,AFh,67h,B7h,55h,FBh,FDh    ; code 46 cloudB->cloudA shift6
+    DB FDh,B7h,5Eh,CFh,6Fh,AAh,F7h,FBh    ; code 47 cloudB->cloudA shift7
 PATTERNS_LEN EQU 384
 
 BLANK_PATTERN:
