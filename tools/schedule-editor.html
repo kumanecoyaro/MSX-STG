@@ -495,13 +495,16 @@
     // simple/Enemy1's look - also reused as-is for e2a/e2b's formation members and
     // for enemy5 (TYPE_ENEMY1_LOOK is pixel-identical to Enemy1, just a different
     // BEHAVIOR/score - see REDRAW_UNIT_PATTERN's call sites). Gray, SPR_GRAY(0Eh).
+    // This is E1A_PATTERN/ASTERISK_PATTERN's base frame (seq0 of the 1,2,3,2
+    // quadrant animation cycle - see ENEMY_ANIM_SEQ_TABLE) - the older,
+    // rounder asterisk this replaced is gone from the ASM entirely now.
     asterisk16: {
       size: 16,
       quads: {
-        tl: [0x00, 0x18, 0x99, 0x5A, 0x3C, 0x5A, 0x99, 0x00],
+        tl: [0x7F, 0x9E, 0x04, 0x1B, 0x1B, 0x04, 0x9E, 0x7F],
         bl: [0, 0, 0, 0, 0, 0, 0, 0],
         tr: [0, 0, 0, 0, 0, 0, 0, 0],
-        br: [0x00, 0x18, 0x99, 0x5A, 0x3C, 0x5A, 0x99, 0x00]
+        br: [0x7F, 0x9E, 0x04, 0x1B, 0x1B, 0x04, 0x9E, 0x7F]
       },
       color: "#cccccc"
     },
@@ -513,16 +516,19 @@
       color: "#cccccc",
       bg: "#5955e0"
     },
-    // Enemy4's static hand-drawn look (ENEMY4_PATTERN) - light green, SPR_LTGREEN(03h).
+    // Enemy4's static hand-drawn look (ENEMY4_PATTERN) - black, SPR_BLACK(01h)
+    // as of the BEHAVIOR_SIMPLE_DRIFT_DODGE recolor (it used to be light
+    // green); the pixel data itself was also redrawn at some point since
+    // this was last transcribed here, so both changed.
     enemy4: {
       size: 16,
       quads: {
         tl: [0, 0, 0, 0, 0, 0, 0, 0],
-        bl: [0x1F, 0x2F, 0x77, 0xF8, 0x77, 0x2A, 0x1F, 0x0A],
+        bl: [0x30, 0x64, 0xFF, 0x07, 0x01, 0x2A, 0x15, 0x00],
         tr: [0, 0, 0, 0, 0, 0, 0, 0],
-        br: [0xF8, 0xF4, 0xEE, 0x15, 0xFF, 0xAA, 0xFC, 0xA8]
+        br: [0x01, 0x06, 0x9C, 0xFF, 0xFE, 0x7C, 0x0E, 0x03]
       },
-      color: "#74d07d"
+      color: "#000000"
     },
     // Enemy6's 0deg spin frame (NEWENEMY_PATTERN_TL/TR/BL/BR) - unlike every
     // other 16x16 entry here this is 4 BG tiles (2x2, not an MSX sprite), so
