@@ -1596,11 +1596,34 @@
     saveFilenameInput.select();
   });
 
+  // Published Artifact: goes through window.claude.downloads (blob/<a download>
+  // is inert in that sandbox). Run locally (file:// or any plain static host,
+  // no Claude frame runtime): window.claude doesn't exist at all, so fall back
+  // to the classic Blob + <a download> click, which works fine outside the
+  // sandbox.
+  function doSaveViaBlobLink(filename) {
+    try {
+      var blob = new Blob([currentJSON()], { type: "application/json" });
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(function () { URL.revokeObjectURL(url); }, 100);
+      saveOverlay.classList.remove("show");
+      flash("saved " + filename);
+    } catch (err) {
+      saveStatus.textContent = "save failed";
+      saveStatus.classList.remove("ok");
+    }
+  }
+
   function doSave() {
     var filename = saveFilenameInput.value.trim() || "Schedule.json";
     if (!window.claude || !window.claude.downloads) {
-      saveStatus.textContent = "save unavailable here";
-      saveStatus.classList.remove("ok");
+      doSaveViaBlobLink(filename);
       return;
     }
     window.claude.downloads.save({ filename: filename, data: currentJSON() }).then(
