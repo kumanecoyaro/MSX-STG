@@ -62,7 +62,6 @@ IDCACHE0    EQU 0E00Ch
 IDCACHE1    EQU 0E02Dh
 IDCACHE2    EQU 0E04Eh
 IDCACHE3    EQU 0E06Fh
-IDCACHE4    EQU 0E090h
 IDCACHE5    EQU 0E0B1h
 NAMEBUF     EQU 0E200h
 PREVBUF     EQU 0E300h
@@ -96,16 +95,16 @@ PLAYER_SPEED EQU 2     ; was raised to 4 to compensate for the (now-removed)
 PLAYER_MINX  EQU 0
 PLAYER_MAXX  EQU 240    ; 256-16 (ship is 16 dots wide)
 PLAYER_MINY  EQU 8      ; one char row (8px) down, clears row0 score/tick display
-PLAYER_MAXY  EQU 152    ; keeps the ship out of the whole 4-row ground
-                        ; scroller (screen rows 20-23) - was 176 (=184-8)
-                        ; to stay clear of just the bottom row (23) when
-                        ; the scroller was 5 rows; now 152 (=GROUND_ROW0*8-8
-                        ; = 160-8) for the same reason: the ship isn't
-                        ; bottom-aligned (its visible art is 8 dots tall,
-                        ; offset -8 from PLAYERY when drawn - see the
-                        ; "SUB 8" before each sprite Y OUT below), so the
-                        ; clamp has to stop 8 dots short of the first
-                        ; forbidden row's pixel Y, not sit right on it.
+PLAYER_MAXY  EQU 150    ; keeps the ship out of the whole 4-row ground
+                        ; scroller (screen rows 20-23), with an extra
+                        ; PLAYER_SPEED(2)-dot margin on top of the usual
+                        ; -8 non-bottom-aligned offset (see PLAYER_SPEED/
+                        ; the "SUB 8" before each sprite Y OUT below):
+                        ; 150 = GROUND_ROW0*8-8-2 = 160-8-2. This also
+                        ; pushes the shot spawn row - (PLAYERY+8)>>3 -
+                        ; below GROUND_ROW0 at every reachable PLAYERY,
+                        ; so shots can never land on/over the ground
+                        ; scroller either; see BULLET_PAT_BLUE below.
 PLAYER_INITX EQU 16
 PLAYER_INITY EQU 64
 
@@ -116,13 +115,12 @@ PLAYER_INITY EQU 64
 ; --- shape (2 rows tall) is placed starting at row=phase - this   ---
 ; --- spans a 6-dot range (0..6) and always fits inside the 8-row  ---
 ; --- cell with no clipping.                                       ---
-; --- Two color variants are needed because the shot may fly over  ---
-; --- the sky (blue bg) or over the diamond/slash terrain (light   ---
-; --- green bg, screen rows 19-21): codes 56-63 = blue variant,     ---
-; --- codes 64-71 = green variant (both phase-indexed 0-7, only the ---
-; --- even slots hold real content).                                ---
+; --- Only one color variant now (blue/sky): shots can never reach   ---
+; --- the ground scroller (see PLAYER_MAXY), so the green/white/     ---
+; --- brown variants that used to exist alongside this one were      ---
+; --- removed. Codes 56-63 = blue, phase-indexed 0-7, only the even  ---
+; --- slots hold real content.                                       ---
 BULLET_PAT_BLUE  EQU 56
-BULLET_PAT_GREEN EQU 64
 BULLET_MAXCOL EQU 31    ; last valid column (32-wide name table, 0-31)
 GROUND_ROW0   EQU 20    ; first screen row of the 4-row ground scroller
                         ; (was 5 rows/GROUND_ROW0=19; TIER5_BACKSLASH's own
@@ -550,13 +548,6 @@ ENEMY6_SPAWN_COL    EQU 30      ; matches ENEMY_SPAWNX/ENEMY4_SPAWNX(240) = col3
 ENEMY6_STEP_FRAMES  EQU 1       ; frames held per 1-column step (1 = fastest possible: every frame)
 ENEMY6_STEP_TIMER   EQU 0EF10h  ; shared countdown to the next 1-column step
 
-; --- shot background-color variants: blue(sky), white(mountain, ---
-; --- screen row 20), green(diamond/slash, rows 21-22), brown     ---
-; --- (wedge, row 23) - same treatment as the existing green       ---
-; --- variant, just matching each row's own dominant fill color.  ---
-BULLET_PAT_WHITE EQU 72
-BULLET_PAT_BROWN EQU 80
-
     DB "AB"
     DW INIT
     DW 0,0,0
@@ -613,12 +604,14 @@ INIT:
     LD (TICK),A : LD (PXCHAR_G8),A : LD (PXCHAR_G4),A
     LD (PXCHAR_G2),A : LD (PXCHAR_G1),A
 
-    ; Seed the 4 remaining IDCACHEn buffers (row1/IDCACHE1 and row4/
-    ; IDCACHE4 no longer used - TIER2_DIAMOND's and TIER5_BACKSLASH's
-    ; own rows were dropped, see GROUND_ROW0) for PXCHAR=0 (the gates
-    ; in MAINLOOP that call REFRESH_IDCACHE_33 only fire once their
-    ; group's PXCHAR actually advances - every 8/16/32/64 frames - so
-    ; without this, frame 1 would render from stale/zeroed cache RAM).
+    ; Seed the 4 remaining IDCACHEn buffers (row1/IDCACHE1 no longer
+    ; used - TIER2_DIAMOND's own row was dropped, see GROUND_ROW0; row4/
+    ; IDCACHE4, TIER5_BACKSLASH's own buffer, was removed entirely
+    ; along with ROWDATA4 when that row was dropped too) for PXCHAR=0
+    ; (the gates in MAINLOOP that call REFRESH_IDCACHE_33 only fire
+    ; once their group's PXCHAR actually advances - every 8/16/32/64
+    ; frames - so without this, frame 1 would render from stale/zeroed
+    ; cache RAM).
     LD HL,ROWDATA0 : LD IX,IDCACHE0 : CALL REFRESH_IDCACHE_33
     LD HL,ROWDATA2 : LD IX,IDCACHE2 : CALL REFRESH_IDCACHE_33
     LD HL,ROWDATA3 : LD IX,IDCACHE3 : CALL REFRESH_IDCACHE_33
@@ -714,15 +707,15 @@ FILLBG_3:
     EI
     DJNZ FILLBG_3
 
-    ; --- sprite pattern generator table (VRAM 3800h): ship is a static ---
-    ; --- 16x16 pattern; the 3 enemy-formation units' patterns are      ---
+    ; --- sprite pattern generator table (VRAM 3800h): ship/accent are ---
+    ; --- static 16x16 patterns (loaded further down, alongside their  ---
+    ; --- UP/DOWN animation frames - see SHIP_MID_PATTERN/ACCENT_MID_  ---
+    ; --- PATTERN); the 3 enemy-formation units' patterns are          ---
     ; --- generated at runtime (see REDRAW_UNIT_PATTERN / ENEMY_RESPAWN) ---
     ; --- since each asterisk quadrant can be independently shot out.   ---
-    LD HL,SPRITE_PATTERNS : LD DE,SPRPAT : LD BC,32 : CALL LDIRVM
-    LD HL,ACCENT_PATTERN : LD DE,SPRPAT+80h : LD BC,32 : CALL LDIRVM
 
-    ; --- shot character patterns (8 vertical phases x4 color variants), VRAM 0000h+56*8 ---
-    LD HL,BULLET_PATTERNS : LD DE,1C0h : LD BC,256 : CALL LDIRVM  ; 1C0h = BULLET_PAT_BLUE(56)*8
+    ; --- shot character patterns (8 vertical phases, blue only), VRAM 0000h+56*8 ---
+    LD HL,BULLET_PATTERNS : LD DE,1C0h : LD BC,64 : CALL LDIRVM  ; 1C0h = BULLET_PAT_BLUE(56)*8
 
     ; --- destroy-animation character patterns, VRAM 2C0h = ANIM1_BLUE(88)*8 ---
     LD HL,ANIM_PATTERNS : LD DE,2C0h : LD BC,512 : CALL LDIRVM
@@ -1914,27 +1907,9 @@ FIRE_REQUESTED:
     JR NZ,BULLET0_NOCLAMP
     LD A,6 : LD (M_TMP),A
 BULLET0_NOCLAMP:
-    LD A,(BULLET0_ROW) : CP GROUND_ROW0
-    JR C,BULLET0_BLUE
-    JR Z,BULLET0_WHITE
-    CP GROUND_ROW0+3
-    JR Z,BULLET0_BROWN
-    JR C,BULLET0_GREEN
-    JR BULLET0_BLUE
-BULLET0_GREEN:
-    LD A,BULLET_PAT_GREEN
-    JR BULLET0_GOTBASE
-BULLET0_WHITE:
-    LD A,BULLET_PAT_WHITE
-    JR BULLET0_GOTBASE
-BULLET0_BROWN:
-    LD A,BULLET_PAT_BROWN
-    JR BULLET0_GOTBASE
-BULLET0_BLUE:
-    LD A,BULLET_PAT_BLUE
-BULLET0_GOTBASE:
-    LD E,A
-    LD A,(M_TMP) : ADD A,E
+    ; shots can never reach the ground scroller anymore (see
+    ; PLAYER_MAXY) - always the sky/blue variant.
+    LD A,(M_TMP) : ADD A,BULLET_PAT_BLUE
     LD (BULLET0_PAT),A
     LD A,(BULLET0_ROW) : LD E,A : LD D,ROWADDR_LO/256 : LD A,(DE) : LD (BULLET0_ADDR),A
     LD A,(BULLET0_ROW) : LD E,A : LD D,ROWADDR_HI/256 : LD A,(DE) : LD (BULLET0_ADDR+1),A
@@ -1958,27 +1933,7 @@ TRY_BULLET1:
     JR NZ,BULLET1_NOCLAMP
     LD A,6 : LD (M_TMP),A
 BULLET1_NOCLAMP:
-    LD A,(BULLET1_ROW) : CP GROUND_ROW0
-    JR C,BULLET1_BLUE
-    JR Z,BULLET1_WHITE
-    CP GROUND_ROW0+3
-    JR Z,BULLET1_BROWN
-    JR C,BULLET1_GREEN
-    JR BULLET1_BLUE
-BULLET1_GREEN:
-    LD A,BULLET_PAT_GREEN
-    JR BULLET1_GOTBASE
-BULLET1_WHITE:
-    LD A,BULLET_PAT_WHITE
-    JR BULLET1_GOTBASE
-BULLET1_BROWN:
-    LD A,BULLET_PAT_BROWN
-    JR BULLET1_GOTBASE
-BULLET1_BLUE:
-    LD A,BULLET_PAT_BLUE
-BULLET1_GOTBASE:
-    LD E,A
-    LD A,(M_TMP) : ADD A,E
+    LD A,(M_TMP) : ADD A,BULLET_PAT_BLUE
     LD (BULLET1_PAT),A
     LD A,(BULLET1_ROW) : LD E,A : LD D,ROWADDR_LO/256 : LD A,(DE) : LD (BULLET1_ADDR),A
     LD A,(BULLET1_ROW) : LD E,A : LD D,ROWADDR_HI/256 : LD A,(DE) : LD (BULLET1_ADDR+1),A
@@ -2002,27 +1957,7 @@ TRY_BULLET2:
     JR NZ,BULLET2_NOCLAMP
     LD A,6 : LD (M_TMP),A
 BULLET2_NOCLAMP:
-    LD A,(BULLET2_ROW) : CP GROUND_ROW0
-    JR C,BULLET2_BLUE
-    JR Z,BULLET2_WHITE
-    CP GROUND_ROW0+3
-    JR Z,BULLET2_BROWN
-    JR C,BULLET2_GREEN
-    JR BULLET2_BLUE
-BULLET2_GREEN:
-    LD A,BULLET_PAT_GREEN
-    JR BULLET2_GOTBASE
-BULLET2_WHITE:
-    LD A,BULLET_PAT_WHITE
-    JR BULLET2_GOTBASE
-BULLET2_BROWN:
-    LD A,BULLET_PAT_BROWN
-    JR BULLET2_GOTBASE
-BULLET2_BLUE:
-    LD A,BULLET_PAT_BLUE
-BULLET2_GOTBASE:
-    LD E,A
-    LD A,(M_TMP) : ADD A,E
+    LD A,(M_TMP) : ADD A,BULLET_PAT_BLUE
     LD (BULLET2_PAT),A
     LD A,(BULLET2_ROW) : LD E,A : LD D,ROWADDR_LO/256 : LD A,(DE) : LD (BULLET2_ADDR),A
     LD A,(BULLET2_ROW) : LD E,A : LD D,ROWADDR_HI/256 : LD A,(DE) : LD (BULLET2_ADDR+1),A
@@ -2163,16 +2098,8 @@ ANIM2_DONE:
     OR A
     JR Z,BULLET0_NOHIT
 BULLET0_ISHIT:
-    LD A,(BULLET0_ROW) : CP GROUND_ROW0
-    JR C,BULLET0_HITERASE_SKY
-    SUB GROUND_ROW0
-    ADD A,A : ADD A,A : ADD A,A : ADD A,A : ADD A,A
-    LD E,A : LD D,0
-    LD HL,NAMEBUF : ADD HL,DE
-    LD A,(BULLET0_COL) : LD E,A : LD D,0 : ADD HL,DE
-    LD A,(HL)
-    JR BULLET0_HITERASE_GOT
-BULLET0_HITERASE_SKY:
+    ; a shot's row can never reach the ground scroller (see
+    ; PLAYER_MAXY) - always restore sky on erase.
     LD HL,(SKY_VEC_0H) : PUSH HL : RET
 BULLET0_HITERASE_GOT:
     LD (TEMP_ERASE_BYTE),A
@@ -2210,16 +2137,6 @@ BULLET0_HITERASE_GOT:
     EI
     JP BULLET0_NEXT
 BULLET0_NOHIT:
-    LD A,(BULLET0_ROW) : CP GROUND_ROW0
-    JR C,BULLET0_ERASE_SKY
-    SUB GROUND_ROW0
-    ADD A,A : ADD A,A : ADD A,A : ADD A,A : ADD A,A
-    LD E,A : LD D,0
-    LD HL,NAMEBUF : ADD HL,DE
-    LD A,(BULLET0_COL) : LD E,A : LD D,0 : ADD HL,DE
-    LD A,(HL)
-    JR BULLET0_ERASE_GOT
-BULLET0_ERASE_SKY:
     LD HL,(SKY_VEC_0E) : PUSH HL : RET
 BULLET0_ERASE_GOT:
     LD (TEMP_ERASE_BYTE),A
@@ -2319,16 +2236,6 @@ BULLET0_NEXT:
     OR A
     JR Z,BULLET1_NOHIT
 BULLET1_ISHIT:
-    LD A,(BULLET1_ROW) : CP GROUND_ROW0
-    JR C,BULLET1_HITERASE_SKY
-    SUB GROUND_ROW0
-    ADD A,A : ADD A,A : ADD A,A : ADD A,A : ADD A,A
-    LD E,A : LD D,0
-    LD HL,NAMEBUF : ADD HL,DE
-    LD A,(BULLET1_COL) : LD E,A : LD D,0 : ADD HL,DE
-    LD A,(HL)
-    JR BULLET1_HITERASE_GOT
-BULLET1_HITERASE_SKY:
     LD HL,(SKY_VEC_1H) : PUSH HL : RET
 BULLET1_HITERASE_GOT:
     LD (TEMP_ERASE_BYTE),A
@@ -2366,16 +2273,6 @@ BULLET1_HITERASE_GOT:
     EI
     JP BULLET1_NEXT
 BULLET1_NOHIT:
-    LD A,(BULLET1_ROW) : CP GROUND_ROW0
-    JR C,BULLET1_ERASE_SKY
-    SUB GROUND_ROW0
-    ADD A,A : ADD A,A : ADD A,A : ADD A,A : ADD A,A
-    LD E,A : LD D,0
-    LD HL,NAMEBUF : ADD HL,DE
-    LD A,(BULLET1_COL) : LD E,A : LD D,0 : ADD HL,DE
-    LD A,(HL)
-    JR BULLET1_ERASE_GOT
-BULLET1_ERASE_SKY:
     LD HL,(SKY_VEC_1E) : PUSH HL : RET
 BULLET1_ERASE_GOT:
     LD (TEMP_ERASE_BYTE),A
@@ -2475,16 +2372,6 @@ BULLET1_NEXT:
     OR A
     JR Z,BULLET2_NOHIT
 BULLET2_ISHIT:
-    LD A,(BULLET2_ROW) : CP GROUND_ROW0
-    JR C,BULLET2_HITERASE_SKY
-    SUB GROUND_ROW0
-    ADD A,A : ADD A,A : ADD A,A : ADD A,A : ADD A,A
-    LD E,A : LD D,0
-    LD HL,NAMEBUF : ADD HL,DE
-    LD A,(BULLET2_COL) : LD E,A : LD D,0 : ADD HL,DE
-    LD A,(HL)
-    JR BULLET2_HITERASE_GOT
-BULLET2_HITERASE_SKY:
     LD HL,(SKY_VEC_2H) : PUSH HL : RET
 BULLET2_HITERASE_GOT:
     LD (TEMP_ERASE_BYTE),A
@@ -2522,16 +2409,6 @@ BULLET2_HITERASE_GOT:
     EI
     JP BULLET2_NEXT
 BULLET2_NOHIT:
-    LD A,(BULLET2_ROW) : CP GROUND_ROW0
-    JR C,BULLET2_ERASE_SKY
-    SUB GROUND_ROW0
-    ADD A,A : ADD A,A : ADD A,A : ADD A,A : ADD A,A
-    LD E,A : LD D,0
-    LD HL,NAMEBUF : ADD HL,DE
-    LD A,(BULLET2_COL) : LD E,A : LD D,0 : ADD HL,DE
-    LD A,(HL)
-    JR BULLET2_ERASE_GOT
-BULLET2_ERASE_SKY:
     LD HL,(SKY_VEC_2E) : PUSH HL : RET
 BULLET2_ERASE_GOT:
     LD (TEMP_ERASE_BYTE),A
@@ -12242,40 +12119,12 @@ PAIRBASE:
     DB 00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h
     DB 00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h
 
-; Sprite pattern (32 bytes) for one 16x16 sprite in the pattern
-; generator table at VRAM 3800h. 16x16 sprite byte order is:
+; 16x16 sprite byte order in the pattern generator table (VRAM 3800h):
 ; [top-left 8x8][bottom-left 8x8][top-right 8x8][bottom-right 8x8].
-; Reconstructed from 自機.png (16x16 grid, black=transparent):
-SPRITE_PATTERNS:
-    DB 00h,00h,00h,00h,00h,00h,00h,00h   ; top-left (blank)
-    DB 0C4h  ; bottom-left row0
-    DB 76h   ; bottom-left row1
-    DB 37h   ; bottom-left row2
-    DB 0Fh   ; bottom-left row3
-    DB 1Fh   ; bottom-left row4
-    DB 70h   ; bottom-left row5
-    DB 0C0h  ; bottom-left row6
-    DB 00h   ; bottom-left row7
-    DB 00h,00h,00h,00h,00h,00h,00h,00h   ; top-right (blank)
-    DB 00h   ; bottom-right row0
-    DB 00h   ; bottom-right row1
-    DB 0C0h  ; bottom-right row2
-    DB 0F8h  ; bottom-right row3
-    DB 0FEh  ; bottom-right row4
-    DB 40h   ; bottom-right row5
-    DB 3Eh   ; bottom-right row6
-    DB 00h   ; bottom-right row7
-
-; Accent overlay (from 通常.png), drawn as its own sprite (slot0,
-; priority above the ship body in slot1) at ship_X+8, ship_Y.
-; Superseded by ACCENT_MID_PATTERN/ACCENT_DOWN_PATTERN below (Sprite
-; Editor's ShipMidW/ShipDownW) - kept, unreferenced, like the other
-; replaced-pattern data in this file.
-ACCENT_PATTERN:
-    DB 00h,00h,00h,00h,00h,00h,00h,00h   ; top-left (blank)
-    DB 00h,00h,00h,18h,00h,00h,00h,00h   ; bottom-left (small mark)
-    DB 00h,00h,00h,00h,00h,00h,00h,00h   ; top-right (blank)
-    DB 00h,00h,00h,00h,00h,00h,00h,00h   ; bottom-right (blank)
+; Ship body: see SHIP_MID_PATTERN/SHIP_UP_PATTERN/SHIP_DOWN_PATTERN
+; below. Accent overlay (slot0, priority above the ship body in
+; slot1, drawn at ship_X+8, ship_Y): see ACCENT_MID_PATTERN/
+; ACCENT_DOWN_PATTERN right below.
 
 ; Accent overlay animation, 2 frames (ShipMidW/ShipDownW from the
 ; Sprite Editor): MID shows with no vertical movement, DOWN shows
@@ -12999,30 +12848,8 @@ BULLET_PATTERNS:
     DB 00h,00h,00h,00h,00h,66h,33h,00h   ; BLUE M=5 (rows5-6)
     DB 00h,00h,00h,00h,00h,00h,66h,33h   ; BLUE M=6 (rows6-7)
     DB 00h,00h,00h,00h,00h,00h,00h,00h   ; BLUE M=7 slot (unused, code clamps to M=6)
-    DB 66h,33h,00h,00h,00h,00h,00h,00h   ; GREEN M=0 (rows0-1)
-    DB 00h,66h,33h,00h,00h,00h,00h,00h   ; GREEN M=1 (rows1-2)
-    DB 00h,00h,66h,33h,00h,00h,00h,00h   ; GREEN M=2 (rows2-3)
-    DB 00h,00h,00h,66h,33h,00h,00h,00h   ; GREEN M=3 (rows3-4)
-    DB 00h,00h,00h,00h,66h,33h,00h,00h   ; GREEN M=4 (rows4-5)
-    DB 00h,00h,00h,00h,00h,66h,33h,00h   ; GREEN M=5 (rows5-6)
-    DB 00h,00h,00h,00h,00h,00h,66h,33h   ; GREEN M=6 (rows6-7)
-    DB 00h,00h,00h,00h,00h,00h,00h,00h   ; GREEN M=7 slot (unused, code clamps to M=6)
-    DB 66h,33h,00h,00h,00h,00h,00h,00h   ; WHITE M=0 (rows0-1)
-    DB 00h,66h,33h,00h,00h,00h,00h,00h   ; WHITE M=1 (rows1-2)
-    DB 00h,00h,66h,33h,00h,00h,00h,00h   ; WHITE M=2 (rows2-3)
-    DB 00h,00h,00h,66h,33h,00h,00h,00h   ; WHITE M=3 (rows3-4)
-    DB 00h,00h,00h,00h,66h,33h,00h,00h   ; WHITE M=4 (rows4-5)
-    DB 00h,00h,00h,00h,00h,66h,33h,00h   ; WHITE M=5 (rows5-6)
-    DB 00h,00h,00h,00h,00h,00h,66h,33h   ; WHITE M=6 (rows6-7)
-    DB 00h,00h,00h,00h,00h,00h,00h,00h   ; WHITE M=7 slot (unused, code clamps to M=6)
-    DB 66h,33h,00h,00h,00h,00h,00h,00h   ; BROWN M=0 (rows0-1)
-    DB 00h,66h,33h,00h,00h,00h,00h,00h   ; BROWN M=1 (rows1-2)
-    DB 00h,00h,66h,33h,00h,00h,00h,00h   ; BROWN M=2 (rows2-3)
-    DB 00h,00h,00h,66h,33h,00h,00h,00h   ; BROWN M=3 (rows3-4)
-    DB 00h,00h,00h,00h,66h,33h,00h,00h   ; BROWN M=4 (rows4-5)
-    DB 00h,00h,00h,00h,00h,66h,33h,00h   ; BROWN M=5 (rows5-6)
-    DB 00h,00h,00h,00h,00h,00h,66h,33h   ; BROWN M=6 (rows6-7)
-    DB 00h,00h,00h,00h,00h,00h,00h,00h   ; BROWN M=7 slot (unused, code clamps to M=6)
+; GREEN/WHITE/BROWN variants removed - shots can never reach the
+; ground scroller anymore (see PLAYER_MAXY), so only BLUE is loaded.
 
     ALIGN 256
 ; VRAM address (low byte) of the start of each of the 24 screen
@@ -13124,9 +12951,6 @@ ROWDATA2:
 
 ROWDATA3:
     DB "SSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS"
-
-ROWDATA4:
-    DB "KKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKK"
 
 ROWDATA5:
     DB "ABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABAB"
