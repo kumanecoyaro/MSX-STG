@@ -338,7 +338,11 @@
 
   @media (max-width: 760px) {
     body { flex-direction: column; }
-    .gridwrap { flex: 0 0 auto; height: 52vh; padding: 2px; }
+    /* height:auto, not a fixed vh - the square just needs to be as wide
+       as the screen (see fitGrid's STACKED_MQ branch), whatever height
+       that makes it. A vh cap here forced the square smaller than the
+       available width, leaving unwanted black margins on both sides. */
+    .gridwrap { flex: 0 0 auto; height: auto; padding: 8px; }
     aside { flex: 1 1 auto; height: auto; border-left: none; border-top: 1px solid var(--line); }
   }
 </style>
@@ -1188,21 +1192,33 @@
   }
 
   var gridWrapEl = document.querySelector(".gridwrap");
+  var STACKED_MQ = window.matchMedia("(max-width: 760px)");
   function fitGrid() {
     var cs = getComputedStyle(gridWrapEl);
     var padX = parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight);
     var padY = parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom);
-    
+
     // パネル内の余白やボタンの高さ分のみを考慮し、黒い外枠の余分なデッドスペースを限界まで削減
-    var BORDERS_Y = 40; 
+    var BORDERS_Y = 40;
     var BORDERS_X = 8;
 
     var availW = gridWrapEl.clientWidth - padX - BORDERS_X;
-    var availH = gridWrapEl.clientHeight - padY - BORDERS_Y;
-    
-    var size = Math.floor(Math.min(availW, availH));
+    var size;
+    if (STACKED_MQ.matches) {
+      // Stacked (narrow/mobile) layout: .gridwrap is full-width and no
+      // longer has a fixed vh height (see its media-query rule) - it
+      // just wraps to whatever height the resulting square needs, same
+      // as every button below spans edge-to-edge. Sizing off
+      // clientHeight here used to fight that: the old fixed vh cap made
+      // the square smaller than the available width, leaving dead
+      // black margins on both sides instead of filling it.
+      size = Math.floor(availW);
+    } else {
+      var availH = gridWrapEl.clientHeight - padY - BORDERS_Y;
+      size = Math.floor(Math.min(availW, availH));
+    }
     size = Math.max(120, size);
-    
+
     document.documentElement.style.setProperty("--grid-size", size + "px");
   }
   window.addEventListener("resize", fitGrid);
