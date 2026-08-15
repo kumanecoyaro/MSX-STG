@@ -133,6 +133,25 @@ GROUND_ROW0   EQU 20    ; first screen row of the 4-row ground scroller
                         ; before that, when TIER2_DIAMOND's own row was
                         ; similarly deleted)
 
+; --- flowing background clouds: purely decorative, drawn as BG      ---
+; --- (name table) characters on the two sky rows just below the     ---
+; --- score line, independent of the 4-row ground scroller. Movement ---
+; --- is whole-character-cell (no sub-pixel rotation needed, unlike  ---
+; --- the ground scroller's LUT-driven smooth scroll) - see          ---
+; --- CLOUD_UPDATE_ALL. Codes 24-26 reuse the freed backslash-family  ---
+; --- slots (24-31, formerly dead TIER5_BACKSLASH data - see          ---
+; --- PATTERNS): their color group (group3, codes 24-31) was already  ---
+; --- fg=white/bg=blue in COLORDATA, matching the requested look with ---
+; --- no COLORDATA change needed.                                     ---
+CLOUD_S_CODE  EQU 24    ; small 8x8 cloud (screen row2, TIER3-independent)
+CLOUD_WA_CODE EQU 25    ; wide 16x8 cloud, left half (screen row1)
+CLOUD_WB_CODE EQU 26    ; wide 16x8 cloud, right half (screen row1)
+CLOUDW_ROW    EQU 1     ; screen row2 (0-indexed row1)
+CLOUDS_ROW    EQU 2     ; screen row3 (0-indexed row2)
+CLOUDW_INTERVAL EQU 2   ; frames per 1-cell move (wide cloud)
+CLOUDS_INTERVAL EQU 4   ; frames per 1-cell move (small cloud, slower)
+CLOUD_SPAWN_COL EQU 32  ; leftmost cell starts one column past the right edge
+
 FIRE_COOLDOWN EQU 0E3D2h ; frames to wait before another shot can spawn
 FIRE_COOLDOWN_LEN EQU 1  ; "1 cycle" gap between shots (see fire logic)
 TEMP_ERASE_BYTE EQU 0E3D6h ; scratch: byte to restore when erasing a shot
@@ -160,6 +179,15 @@ EBSD_DRAW_COLOR EQU 0EF18h    ; this frame - computed outside the DI-timed
                                ; VDP write block below, since a TYPE_ENEMY4
                                ; branch there would disturb the fixed NOP
                                ; spacing (see EBSD_DRAW)
+; --- flowing background clouds (see CLOUD_UPDATE_ALL) ---
+CLOUDW_ACTIVE EQU 0EF19h
+CLOUDW_COL    EQU 0EF1Ah   ; signed (two's complement): leftmost of the 2-cell wide cloud
+CLOUDW_TIMER  EQU 0EF1Bh   ; frames left until next 1-cell move
+CLOUDW_WAIT   EQU 0EF1Ch   ; frames left until next spawn attempt, while inactive
+CLOUDS_ACTIVE EQU 0EF1Dh
+CLOUDS_COL    EQU 0EF1Eh   ; signed (two's complement): the small cloud's single cell
+CLOUDS_TIMER  EQU 0EF1Fh
+CLOUDS_WAIT   EQU 0EF20h
 ; each bullet: ACT(active flag), ADDR(2 bytes: VRAM address of its
 ; row's column0, low byte then high byte so LD HL,(ADDR) loads
 ; both), COL(0-31, current column), ROW(0-23, fixed at spawn - used
@@ -834,6 +862,13 @@ E3INIT_ROW_LOOP:
     XOR A : LD (ENEMY6_STEP_TIMER),A
     LD HL,ENEMY6_POOL : LD (HL),0
     LD DE,ENEMY6_POOL+1 : LD BC,ENEMY6_SLOTS*ENEMY6_STRUCT-1 : LDIR
+
+    ; --- flowing background clouds: idle at boot, each with its own ---
+    ; --- random initial wait before first appearing (see CLOUD_UPDATE_ALL) ---
+    XOR A : LD (CLOUDW_ACTIVE),A
+    CALL CLOUD_RANDOM_WAIT : LD (CLOUDW_WAIT),A
+    XOR A : LD (CLOUDS_ACTIVE),A
+    CALL CLOUD_RANDOM_WAIT : LD (CLOUDS_WAIT),A
 
     ; --- switch sprites to 16x16 mode (VDP R1 bit1=SI), keep other bits ---
     LD A,(RG1SAV) : OR 02h : LD (RG1SAV),A
@@ -2087,6 +2122,7 @@ ANIM2_DONE:
     ; --- regardless of which movement algorithm (BEHAVIOR) it uses ---
     CALL ENEMY_POOL_UPDATE_ALL
     CALL ENEMY5_ANIM_STEP
+    CALL CLOUD_UPDATE_ALL
 
     ; ============================================================
     ; --- shots: advance 1 character (8 dots) per frame. Erasing  ---
@@ -11068,6 +11104,150 @@ E5AS_TICK:
     DEC A : LD (ENEMY5_ANIM_TIMER),A
     RET
 
+; Purely decorative flowing background clouds - two independent
+; whole-character-cell movers on the sky rows just below the score
+; line (see CLOUDW_ROW/CLOUDS_ROW), unrelated to the 4-row ground
+; scroller. Each cloud is either idle (counting down a random wait
+; before its next spawn) or active and sliding left, using ordinary
+; WRITE_ANIM_CELL erase/redraw rather than the ground scroller's
+; per-pixel rotated-pattern trick, since movement here is a full cell
+; every CLOUDW_INTERVAL/CLOUDS_INTERVAL frames, never a sub-cell
+; offset. COL is a signed (two's complement) column: DEC/INC across
+; the 0/255 wrap naturally tracks positions just off either edge, the
+; same trick used by ENEMY4_SINE_LUT's relative Y offsets. Called
+; once/frame from MAINLOOP.
+CLOUD_UPDATE_ALL:
+    CALL CLOUDW_UPDATE
+    JP CLOUDS_UPDATE
+
+; Wide (2-cell) cloud, screen row CLOUDW_ROW.
+CLOUDW_UPDATE:
+    LD A,(CLOUDW_ACTIVE)
+    OR A
+    JR NZ,CLOUDW_MOVE
+    LD A,(CLOUDW_WAIT)
+    OR A
+    JR Z,CLOUDW_SPAWN
+    DEC A : LD (CLOUDW_WAIT),A
+    RET
+CLOUDW_SPAWN:
+    LD A,1 : LD (CLOUDW_ACTIVE),A
+    LD A,CLOUD_SPAWN_COL : LD (CLOUDW_COL),A
+    LD A,CLOUDW_INTERVAL : LD (CLOUDW_TIMER),A
+    RET
+CLOUDW_MOVE:
+    LD A,(CLOUDW_TIMER)
+    DEC A
+    LD (CLOUDW_TIMER),A
+    RET NZ
+    LD A,CLOUDW_INTERVAL : LD (CLOUDW_TIMER),A
+    ; erase both cells at the current (about-to-move-away-from) position
+    LD A,(CLOUDW_COL) : LD B,A
+    CALL CLOUDW_ERASE_CELL
+    LD A,(CLOUDW_COL) : INC A : LD B,A
+    CALL CLOUDW_ERASE_CELL
+    ; advance one cell left
+    LD A,(CLOUDW_COL) : DEC A : LD (CLOUDW_COL),A
+    CP 0FEh                      ; -2: both cells now fully off the left edge
+    JR NZ,CLOUDW_DRAW
+    XOR A : LD (CLOUDW_ACTIVE),A
+    CALL CLOUD_RANDOM_WAIT
+    LD (CLOUDW_WAIT),A
+    RET
+CLOUDW_DRAW:
+    LD A,(CLOUDW_COL) : LD B,A : LD C,CLOUD_WA_CODE
+    CALL CLOUDW_DRAW_CELL
+    LD A,(CLOUDW_COL) : INC A : LD B,A : LD C,CLOUD_WB_CODE
+    CALL CLOUDW_DRAW_CELL
+    RET
+
+; Input: B = column (signed). No-ops if off-screen (col<0 or col>31 -
+; both read as >=32 unsigned, covering the two's-complement negatives
+; too). Trashes A,DE,HL.
+CLOUDW_ERASE_CELL:
+    LD A,B
+    CP 32
+    RET NC
+    LD (ANIM_TMP_COL),A
+    LD A,CLOUDW_ROW : LD (ANIM_TMP_ROW),A
+    LD A,BLANKCODE : LD (ANIM_TMP_VAL),A
+    JP WRITE_ANIM_CELL
+
+; Input: B = column (signed), C = character code to draw.
+CLOUDW_DRAW_CELL:
+    LD A,B
+    CP 32
+    RET NC
+    LD (ANIM_TMP_COL),A
+    LD A,CLOUDW_ROW : LD (ANIM_TMP_ROW),A
+    LD A,C : LD (ANIM_TMP_VAL),A
+    JP WRITE_ANIM_CELL
+
+; Small (1-cell) cloud, screen row CLOUDS_ROW - same shape as CLOUDW_
+; UPDATE, just one cell wide and a slower interval.
+CLOUDS_UPDATE:
+    LD A,(CLOUDS_ACTIVE)
+    OR A
+    JR NZ,CLOUDS_MOVE
+    LD A,(CLOUDS_WAIT)
+    OR A
+    JR Z,CLOUDS_SPAWN
+    DEC A : LD (CLOUDS_WAIT),A
+    RET
+CLOUDS_SPAWN:
+    LD A,1 : LD (CLOUDS_ACTIVE),A
+    LD A,CLOUD_SPAWN_COL : LD (CLOUDS_COL),A
+    LD A,CLOUDS_INTERVAL : LD (CLOUDS_TIMER),A
+    RET
+CLOUDS_MOVE:
+    LD A,(CLOUDS_TIMER)
+    DEC A
+    LD (CLOUDS_TIMER),A
+    RET NZ
+    LD A,CLOUDS_INTERVAL : LD (CLOUDS_TIMER),A
+    LD A,(CLOUDS_COL) : LD B,A
+    CALL CLOUDS_ERASE_CELL
+    LD A,(CLOUDS_COL) : DEC A : LD (CLOUDS_COL),A
+    CP 0FFh                      ; -1: the single cell is now fully off the left edge
+    JR NZ,CLOUDS_DRAW
+    XOR A : LD (CLOUDS_ACTIVE),A
+    CALL CLOUD_RANDOM_WAIT
+    LD (CLOUDS_WAIT),A
+    RET
+CLOUDS_DRAW:
+    LD A,(CLOUDS_COL) : LD B,A
+    CALL CLOUDS_DRAW_CELL
+    RET
+
+CLOUDS_ERASE_CELL:
+    LD A,B
+    CP 32
+    RET NC
+    LD (ANIM_TMP_COL),A
+    LD A,CLOUDS_ROW : LD (ANIM_TMP_ROW),A
+    LD A,BLANKCODE : LD (ANIM_TMP_VAL),A
+    JP WRITE_ANIM_CELL
+
+CLOUDS_DRAW_CELL:
+    LD A,B
+    CP 32
+    RET NC
+    LD (ANIM_TMP_COL),A
+    LD A,CLOUDS_ROW : LD (ANIM_TMP_ROW),A
+    LD A,CLOUD_S_CODE : LD (ANIM_TMP_VAL),A
+    JP WRITE_ANIM_CELL
+
+; Input: none. Output: A = a pseudo-random frame count (30-157) used
+; as the idle wait before a cloud's next spawn - "for now" just a
+; plain range off the shared free-running counter (see DFL_RNG),
+; same source/pattern the boss-shield deflect directions already use.
+; Trashes A.
+CLOUD_RANDOM_WAIT:
+    LD A,(DFL_RNG) : INC A : LD (DFL_RNG),A
+    AND 7Fh
+    ADD A,30
+    RET
+
 ; BEHAVIOR_SINE_BOB: moves left at a fixed speed, steps a 32-entry
 ; sine LUT for a vertical bob around E_PARAM0 (this slot's base Y,
 ; fixed at spawn), and draws using E_TYPE's pattern/color - same
@@ -13203,10 +13383,15 @@ ROWADDR_HI:
     DB 1Ah,1Ah,1Ah,1Ah,1Ah,1Ah,1Ah,1Ah
 
 PATTERNS:
-    ; Character codes renumbered into 3 color-uniform groups of 8:
-    ;   0- 7 = mountain family        (color A4h)
-    ;   8-31 = diamond/slash/backslash family (color C3h)
-    ; 32-47 = wedge family            (color B3h)
+    ; Character codes, in groups of 8 (SCREEN1 color table granularity -
+    ; see COLORDATA):
+    ;    0- 7 = ground scroller: mountain family (TIER1)
+    ;    8-15 = ground scroller: diamond family  (TIER3)
+    ;   16-23 = ground scroller: slash family    (TIER4)
+    ;      24 = flowing cloud: small (CLOUD_S_CODE, row3)
+    ;   25-26 = flowing cloud: wide, left/right half (CLOUD_WA/WB_CODE, row1)
+    ;   27-31 = unused
+    ;   32-47 = ground scroller: wedge family    (TIER6)
     DB 5Eh,EBh,FEh,9Bh,65h,FEh,4Bh,BDh    ; code 0 cloud (new design)
     DB BCh,D7h,FDh,37h,CAh,FDh,96h,7Bh    ; code 1 cloud^2 shift1
     DB 79h,AFh,FBh,6Eh,95h,FBh,2Dh,F6h    ; code 2 cloud^2 shift2
@@ -13231,14 +13416,14 @@ PATTERNS:
     DB CBh,7Dh,DFh,73h,ACh,DFh,69h,B7h    ; code 21 cloud^2 shift5
     DB 97h,FAh,BFh,E6h,59h,BFh,D2h,6Fh    ; code 22 cloud^2 shift6
     DB 2Fh,F5h,7Fh,CDh,B2h,7Fh,A5h,DEh    ; code 23 cloud^2 shift7
-    DB 80h,40h,20h,10h,08h,04h,02h,01h    ; code 24 backslash
-    DB 01h,80h,40h,20h,10h,08h,04h,02h    ; code 25 backslash^2 shift1
-    DB 02h,01h,80h,40h,20h,10h,08h,04h    ; code 26 backslash^2 shift2
-    DB 04h,02h,01h,80h,40h,20h,10h,08h    ; code 27 backslash^2 shift3
-    DB 08h,04h,02h,01h,80h,40h,20h,10h    ; code 28 backslash^2 shift4
-    DB 10h,08h,04h,02h,01h,80h,40h,20h    ; code 29 backslash^2 shift5
-    DB 20h,10h,08h,04h,02h,01h,80h,40h    ; code 30 backslash^2 shift6
-    DB 40h,20h,10h,08h,04h,02h,01h,80h    ; code 31 backslash^2 shift7
+    DB 06h,6Fh,0FEh,1Bh,04h,00h,00h,00h    ; code 24 CLOUD_S_CODE: small flowing cloud (row3)
+    DB 06h,6Fh,0FEh,1Bh,04h,00h,00h,00h    ; code 25 CLOUD_WA_CODE: wide flowing cloud, left half (row1)
+    DB 00h,0D8h,0B4h,0EFh,0B0h,60h,00h,00h ; code 26 CLOUD_WB_CODE: wide flowing cloud, right half (row1)
+    DB 00h,00h,00h,00h,00h,00h,00h,00h    ; code 27 unused
+    DB 00h,00h,00h,00h,00h,00h,00h,00h    ; code 28 unused
+    DB 00h,00h,00h,00h,00h,00h,00h,00h    ; code 29 unused
+    DB 00h,00h,00h,00h,00h,00h,00h,00h    ; code 30 unused
+    DB 00h,00h,00h,00h,00h,00h,00h,00h    ; code 31 unused
     DB 7Dh,E7h,DFh,7Eh,B9h,C7h,BEh,5Fh    ; code 32 cloudA (new design)
     DB F6h,DBh,BEh,FFh,5Bh,E5h,BEh,7Dh    ; code 33 cloudB (new design)
     DB FBh,CFh,BFh,FDh,72h,8Fh,7Dh,BEh    ; code 34 cloudA->cloudB shift1
