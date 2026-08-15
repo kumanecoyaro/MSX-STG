@@ -1206,6 +1206,20 @@
     document.documentElement.style.setProperty("--grid-size", size + "px");
   }
   window.addEventListener("resize", fitGrid);
+  // A published Artifact runs inside an iframe the host resizes to fit
+  // content AFTER first paint (measuring scrollHeight, then applying that
+  // as the iframe's real height) - since .gridwrap's own size depends on
+  // that height (height:100vh), the very first fitGrid() call below can
+  // run against a stale/interim size and never get corrected, because
+  // that resize is a change to the iframe element from OUTSIDE and isn't
+  // guaranteed to fire this page's own `window` resize event. Opening the
+  // same file directly in a normal tab doesn't have this two-step sizing,
+  // which is why the gap only showed up in the hosted Artifact. A
+  // ResizeObserver on .gridwrap itself reacts to the box actually
+  // changing size regardless of what caused it, closing that gap.
+  if (typeof ResizeObserver !== "undefined") {
+    new ResizeObserver(fitGrid).observe(gridWrapEl);
+  }
 
   // ---------- boot ----------
   buildGridDOM();
