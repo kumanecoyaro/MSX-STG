@@ -88,6 +88,7 @@ PAT_SHIP_DOWN EQU 116   ; SHIP_DOWN_PATTERN, shown while diving (32 bytes at SPR
 
 SPR_RED     EQU 08h     ; sprite color: red
 SPR_WHITE   EQU 0Fh     ; sprite color: white
+SPR_BLACK   EQU 01h     ; sprite color: black
 SPR_TERM_Y  EQU 208     ; special Y value: stop sprite processing here
 
 PLAYER_SPEED EQU 2     ; was raised to 4 to compensate for the (now-removed)
@@ -154,6 +155,11 @@ REDRAW_SRC_PATTERN EQU 0EF13h ; 2 bytes: which 8x8 glyph REDRAW_UNIT_PATTERN
 ENEMY5_ANIM_SEQ   EQU 0EF15h  ; enemy5's shared (all-instances-synced) 1,2,3,2
                                ; quadrant-anim index - see ENEMY5_ANIM_STEP
 ENEMY5_ANIM_TIMER EQU 0EF16h
+EBSD_DRAW_PAT   EQU 0EF17h    ; EBSD_DRAW's precomputed pattern#/color for
+EBSD_DRAW_COLOR EQU 0EF18h    ; this frame - computed outside the DI-timed
+                               ; VDP write block below, since a TYPE_ENEMY4
+                               ; branch there would disturb the fixed NOP
+                               ; spacing (see EBSD_DRAW)
 ; each bullet: ACT(active flag), ADDR(2 bytes: VRAM address of its
 ; row's column0, low byte then high byte so LD HL,(ADDR) loads
 ; both), COL(0-31, current column), ROW(0-23, fixed at spawn - used
@@ -3749,7 +3755,7 @@ ETT_SCORESEL EQU 3
 TYPE_ENEMY4       EQU 1
 TYPE_ENEMY1_LOOK  EQU 2   ; test: Enemy1's asterisk look running on Enemy4's movement
 ENEMY_TYPE_TABLE:
-    DB PAT_ENEMY4, SPR_RED, ENEMY4_HP, 2        ; TYPE_ENEMY4
+    DB PAT_ENEMY4, SPR_BLACK, ENEMY4_HP, 2       ; TYPE_ENEMY4
     DB PAT_ENEMY1_LOOK, SPR_GRAY, 1, 0         ; TYPE_ENEMY1_LOOK: 1-hit kill, 100pt score
 
 ; movement algorithm ids, dispatched by ENEMY_POOL_UPDATE_ALL and
@@ -10951,19 +10957,34 @@ SPAWN_E4B:
     LD A,TYPE_ENEMY1_LOOK : LD (E4_SPAWN_TYPE),A
     JP ENEMY4_CLAIM_ANY
 
-; Claims a free slot from the unified ENEMY_POOL for a fresh
-; BEHAVIOR_SINE_BOB spawn: right-edge X, fresh LUT phase, this wave's
-; base Y (from E4_SPAWN_BASEY), TYPE (and its HP) from E4_SPAWN_TYPE.
-; If the pool is full the spawn is simply dropped (same skip-if-busy
-; behavior as before).
+; Claims a free slot from the unified ENEMY_POOL for a fresh spawn:
+; right-edge X, TYPE (and its HP) from E4_SPAWN_TYPE. TYPE_ENEMY4
+; moves with BEHAVIOR_SIMPLE_DRIFT_DODGE (Enemy1's straight-drift +
+; one-shot diagonal dodge) while keeping its own static look/HP - see
+; EBSD_UPDATE/EBSD_DRAW/EBSD_HIT_TEST/EBSD_EXIT_LEFT's own TYPE_
+; ENEMY4 branches; its Y is set directly (E_Y) rather than via the
+; BASEY+sine-LUT scheme, and it never claims one of the 6 physical
+; asterisk pattern slots (nothing here does for it, and nothing
+; frees one for it either). Every other TYPE (e.g. TYPE_ENEMY1_LOOK)
+; keeps the original BEHAVIOR_SINE_BOB spawn, BASEY going to E_PARAM0
+; as before. If the pool is full the spawn is simply dropped (same
+; skip-if-busy behavior as before).
 ENEMY4_CLAIM_ANY:
     CALL ALLOC_ENEMY_SLOT
     OR A
     RET Z
     LD A,(E4_SPAWN_TYPE) : LD (IX+E_TYPE),A
+    CP TYPE_ENEMY4
+    JR NZ,E4CA_SINEBOB
+    LD A,BEHAVIOR_SIMPLE_DRIFT_DODGE : LD (IX+E_BEHAVIOR),A
+    XOR A : LD (IX+E_PARAM0),A            ; DIAG_DONE=0, dodge not yet triggered
+    LD A,(E4_SPAWN_BASEY) : LD (IX+E_Y),A
+    JR E4CA_COMMON
+E4CA_SINEBOB:
     LD A,BEHAVIOR_SINE_BOB : LD (IX+E_BEHAVIOR),A
-    LD A,ENEMY_SPAWNX : LD (IX+E_X),A
     LD A,(E4_SPAWN_BASEY) : LD (IX+E_PARAM0),A
+E4CA_COMMON:
+    LD A,ENEMY_SPAWNX : LD (IX+E_X),A
     CALL ALLOC_SPRITE_NUM : LD (IX+E_SPRNUM),A
     LD A,(IX+E_TYPE) : CALL ENEMY_TYPE_LOOKUP
     LD DE,ETT_HP : ADD HL,DE
@@ -11227,6 +11248,13 @@ EBSD_DIAG_SKIP_TRIGGER:
     ADD A,B
     LD (IX+E_Y),A
 
+    ; TYPE_ENEMY4 keeps its own static look (PAT_ENEMY4) instead of
+    ; the shared asterisk quadrants - see EBSD_DRAW - so it has no
+    ; frame to cycle through here.
+    LD A,(IX+E_TYPE)
+    CP TYPE_ENEMY4
+    JR Z,EBSD_DRAW
+
     ; quadrant-glyph animation (1,2,3,2 repeating - see ASTERISK_
     ; PATTERN/2/3, ENEMY_ANIM_SEQ_TABLE), advances once every
     ; ENEMY1_ANIM_FRAME_LEN frames while actively dodging, snaps
@@ -11294,9 +11322,25 @@ EBSD_DRAW:
     NOP
     NOP
     EI
+    ; Pattern#/color are precomputed here, outside the DI-timed VDP
+    ; write block below, since a TYPE_ENEMY4 branch inside it would
+    ; disturb the fixed NOP spacing - see EBSD_DRAW_PAT/EBSD_DRAW_COLOR.
+    LD A,(IX+E_TYPE)
+    CP TYPE_ENEMY4
+    JR Z,EBSD_DRAW_E4
     LD A,(IX+E_PARAM3) : CALL SIMPLE_PATTERN_NUM
+    LD (EBSD_DRAW_PAT),A
+    LD A,SPR_GRAY
+    LD (EBSD_DRAW_COLOR),A
+    JR EBSD_DRAW_GO
+EBSD_DRAW_E4:
+    LD A,PAT_ENEMY4
+    LD (EBSD_DRAW_PAT),A
+    LD A,SPR_BLACK
+    LD (EBSD_DRAW_COLOR),A
+EBSD_DRAW_GO:
     DI
-    OUT (98h),A
+    LD A,(EBSD_DRAW_PAT) : OUT (98h),A
     NOP
     NOP
     NOP
@@ -11305,7 +11349,7 @@ EBSD_DRAW:
     NOP
     NOP
     NOP
-    LD A,SPR_GRAY : OUT (98h),A
+    LD A,(EBSD_DRAW_COLOR) : OUT (98h),A
     NOP
     NOP
     NOP
@@ -11363,7 +11407,14 @@ EBSD_EXIT_LEFT:
     NOP
     EI
     POP AF : CALL FREE_SPRITE_NUM
+    ; TYPE_ENEMY4 never claimed a pattern slot (see EBSD_DRAW/
+    ; ENEMY4_CLAIM_ANY) - its E_PARAM3 is stale, so freeing it here
+    ; would corrupt the 6-slot pattern allocator's bookkeeping.
+    LD A,(IX+E_TYPE)
+    CP TYPE_ENEMY4
+    JR Z,EBSD_EXIT_LEFT_NOFREEPAT
     LD A,(IX+E_PARAM3) : CALL FREE_PATTERN_SLOT
+EBSD_EXIT_LEFT_NOFREEPAT:
     CALL FREE_ENEMY_SLOT
     RET
 
@@ -11510,6 +11561,12 @@ EBSBH_NO:
 ; edge - see EBSD_EXIT_LEFT). An already-dead quadrant is skipped, so
 ; a bullet passes straight through it.
 EBSD_HIT_TEST:
+    ; TYPE_ENEMY4 keeps its own single HP-based hitbox (matching
+    ; EBSB_HIT_TEST) instead of the TOP/BOT quadrant system below -
+    ; see EBSD_DRAW/ENEMY4_CLAIM_ANY.
+    LD A,(IX+E_TYPE)
+    CP TYPE_ENEMY4
+    JP Z,EBSD_HT_ENEMY4
     LD A,(IX+E_TOP) : OR A : JR Z,EBSD_HT_CHECKBOT
     LD A,(IX+E_X) : LD D,A
     LD A,(IX+E_Y) : LD E,A
@@ -11541,6 +11598,80 @@ EBSD_HT_REDRAW:
     RET
 EBSD_HT_NO:
     XOR A
+    RET
+
+; TYPE_ENEMY4 on BEHAVIOR_SIMPLE_DRIFT_DODGE: single HP-based hitbox
+; at the bottom half of the 16x16 sprite, mirroring EBSB_HIT_TEST
+; exactly (same art/hitbox offset, same HP-decrement/destroy sequence)
+; since TYPE_ENEMY4 keeps its own PAT_ENEMY4 look and ENEMY4_HP stat
+; regardless of which movement BEHAVIOR it's running under.
+EBSD_HT_ENEMY4:
+    LD A,(IX+E_Y) : ADD A,8 : LD E,A   ; +8: art/hitbox is the bottom half only
+    LD A,(IX+E_X) : LD D,A
+    CALL QUAD_HIT_TEST
+    OR A
+    JR Z,EBSD_HT_NO
+    LD A,(IX+E_HP) : DEC A : LD (IX+E_HP),A
+    OR A
+    JR NZ,EBSD_HT_E4_DAMAGED
+    ; --- HP reached 0: fully destroy ---
+    DI
+    LD A,(IX+E_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    LD A,ENEMY_HIDE_Y : OUT (98h),A
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    LD A,255 : OUT (98h),A
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    EI
+    PUSH DE                     ; TRIGGER_EXPLOSION needs D,E = hit X,Y - the type/score
+                                 ; lookup below (ENEMY_TYPE_LOOKUP, LD DE,ETT_SCORESEL) reuses DE
+    LD A,(IX+E_TYPE) : CALL ENEMY_TYPE_LOOKUP
+    LD DE,ETT_SCORESEL : ADD HL,DE
+    LD A,(HL)
+    LD (ENEMY_SCORE_SEL_TMP),A
+    CALL FREE_ENEMY_SLOT
+    POP DE
+    PUSH BC
+    CALL TRIGGER_EXPLOSION
+    LD A,(ENEMY_SCORE_SEL_TMP)
+    CALL ENEMY_AWARD_SCORE_SEL
+    POP BC
+    LD A,1
+    RET
+EBSD_HT_E4_DAMAGED:
+    ; --- still alive - bullet is consumed (caller stops it here) ---
+    ; --- but the enemy keeps flying, no explosion/score yet.      ---
+    LD A,1
     RET
 
 ; 32-entry sine LUT of RELATIVE Y offsets (amplitude 16): each
@@ -13076,30 +13207,30 @@ PATTERNS:
     ;   0- 7 = mountain family        (color A4h)
     ;   8-31 = diamond/slash/backslash family (color C3h)
     ; 32-47 = wedge family            (color B3h)
-    DB 06h,6Fh,FEh,9Bh,65h,FEh,4Bh,BDh    ; code 0 cloud (new design)
-    DB 0Ch,DEh,FDh,37h,CAh,FDh,96h,7Bh    ; code 1 cloud^2 shift1
-    DB 18h,BDh,FBh,6Eh,95h,FBh,2Dh,F6h    ; code 2 cloud^2 shift2
-    DB 30h,7Bh,F7h,DCh,2Bh,F7h,5Ah,EDh    ; code 3 cloud^2 shift3
-    DB 60h,F6h,EFh,B9h,56h,EFh,B4h,DBh    ; code 4 cloud^2 shift4
-    DB C0h,EDh,DFh,73h,ACh,DFh,69h,B7h    ; code 5 cloud^2 shift5
-    DB 81h,DBh,BFh,E6h,59h,BFh,D2h,6Fh    ; code 6 cloud^2 shift6
-    DB 03h,B7h,7Fh,CDh,B2h,7Fh,A5h,DEh    ; code 7 cloud^2 shift7
-    DB 86h,6Fh,FEh,1Bh,E4h,F1h,BFh,DFh    ; code 8 cloud (new design)
-    DB 0Dh,DEh,FDh,36h,C9h,E3h,7Fh,BFh    ; code 9 cloud^2 shift1
-    DB 1Ah,BDh,FBh,6Ch,93h,C7h,FEh,7Fh    ; code 10 cloud^2 shift2
-    DB 34h,7Bh,F7h,D8h,27h,8Fh,FDh,FEh    ; code 11 cloud^2 shift3
-    DB 68h,F6h,EFh,B1h,4Eh,1Fh,FBh,FDh    ; code 12 cloud^2 shift4
-    DB D0h,EDh,DFh,63h,9Ch,3Eh,F7h,FBh    ; code 13 cloud^2 shift5
-    DB A1h,DBh,BFh,C6h,39h,7Ch,EFh,F7h    ; code 14 cloud^2 shift6
-    DB 43h,B7h,7Fh,8Dh,72h,F8h,DFh,EFh    ; code 15 cloud^2 shift7
-    DB 86h,6Fh,FEh,1Bh,E4h,F1h,BFh,DFh    ; code 16 cloud (new design)
-    DB 0Dh,DEh,FDh,36h,C9h,E3h,7Fh,BFh    ; code 17 cloud^2 shift1
-    DB 1Ah,BDh,FBh,6Ch,93h,C7h,FEh,7Fh    ; code 18 cloud^2 shift2
-    DB 34h,7Bh,F7h,D8h,27h,8Fh,FDh,FEh    ; code 19 cloud^2 shift3
-    DB 68h,F6h,EFh,B1h,4Eh,1Fh,FBh,FDh    ; code 20 cloud^2 shift4
-    DB D0h,EDh,DFh,63h,9Ch,3Eh,F7h,FBh    ; code 21 cloud^2 shift5
-    DB A1h,DBh,BFh,C6h,39h,7Ch,EFh,F7h    ; code 22 cloud^2 shift6
-    DB 43h,B7h,7Fh,8Dh,72h,F8h,DFh,EFh    ; code 23 cloud^2 shift7
+    DB 5Eh,EBh,FEh,9Bh,65h,FEh,4Bh,BDh    ; code 0 cloud (new design)
+    DB BCh,D7h,FDh,37h,CAh,FDh,96h,7Bh    ; code 1 cloud^2 shift1
+    DB 79h,AFh,FBh,6Eh,95h,FBh,2Dh,F6h    ; code 2 cloud^2 shift2
+    DB F2h,5Fh,F7h,DCh,2Bh,F7h,5Ah,EDh    ; code 3 cloud^2 shift3
+    DB E5h,BEh,EFh,B9h,56h,EFh,B4h,DBh    ; code 4 cloud^2 shift4
+    DB CBh,7Dh,DFh,73h,ACh,DFh,69h,B7h    ; code 5 cloud^2 shift5
+    DB 97h,FAh,BFh,E6h,59h,BFh,D2h,6Fh    ; code 6 cloud^2 shift6
+    DB 2Fh,F5h,7Fh,CDh,B2h,7Fh,A5h,DEh    ; code 7 cloud^2 shift7
+    DB 5Eh,EBh,FEh,9Bh,65h,FEh,4Bh,BDh    ; code 8 cloud (new design)
+    DB BCh,D7h,FDh,37h,CAh,FDh,96h,7Bh    ; code 9 cloud^2 shift1
+    DB 79h,AFh,FBh,6Eh,95h,FBh,2Dh,F6h    ; code 10 cloud^2 shift2
+    DB F2h,5Fh,F7h,DCh,2Bh,F7h,5Ah,EDh    ; code 11 cloud^2 shift3
+    DB E5h,BEh,EFh,B9h,56h,EFh,B4h,DBh    ; code 12 cloud^2 shift4
+    DB CBh,7Dh,DFh,73h,ACh,DFh,69h,B7h    ; code 13 cloud^2 shift5
+    DB 97h,FAh,BFh,E6h,59h,BFh,D2h,6Fh    ; code 14 cloud^2 shift6
+    DB 2Fh,F5h,7Fh,CDh,B2h,7Fh,A5h,DEh    ; code 15 cloud^2 shift7
+    DB 5Eh,EBh,FEh,9Bh,65h,FEh,4Bh,BDh    ; code 16 cloud (new design)
+    DB BCh,D7h,FDh,37h,CAh,FDh,96h,7Bh    ; code 17 cloud^2 shift1
+    DB 79h,AFh,FBh,6Eh,95h,FBh,2Dh,F6h    ; code 18 cloud^2 shift2
+    DB F2h,5Fh,F7h,DCh,2Bh,F7h,5Ah,EDh    ; code 19 cloud^2 shift3
+    DB E5h,BEh,EFh,B9h,56h,EFh,B4h,DBh    ; code 20 cloud^2 shift4
+    DB CBh,7Dh,DFh,73h,ACh,DFh,69h,B7h    ; code 21 cloud^2 shift5
+    DB 97h,FAh,BFh,E6h,59h,BFh,D2h,6Fh    ; code 22 cloud^2 shift6
+    DB 2Fh,F5h,7Fh,CDh,B2h,7Fh,A5h,DEh    ; code 23 cloud^2 shift7
     DB 80h,40h,20h,10h,08h,04h,02h,01h    ; code 24 backslash
     DB 01h,80h,40h,20h,10h,08h,04h,02h    ; code 25 backslash^2 shift1
     DB 02h,01h,80h,40h,20h,10h,08h,04h    ; code 26 backslash^2 shift2
@@ -13108,22 +13239,22 @@ PATTERNS:
     DB 10h,08h,04h,02h,01h,80h,40h,20h    ; code 29 backslash^2 shift5
     DB 20h,10h,08h,04h,02h,01h,80h,40h    ; code 30 backslash^2 shift6
     DB 40h,20h,10h,08h,04h,02h,01h,80h    ; code 31 backslash^2 shift7
-    DB FBh,6Fh,BCh,9Fh,DFh,55h,EEh,F7h    ; code 32 cloudA (new design)
-    DB FFh,DFh,E6h,79h,BEh,C9h,F7h,BFh    ; code 33 cloudB (new design)
-    DB F7h,DFh,79h,3Eh,BFh,ABh,DDh,EFh    ; code 34 cloudA->cloudB shift1
-    DB EFh,BFh,F3h,7Dh,7Eh,57h,BBh,DEh    ; code 35 cloudA->cloudB shift2
-    DB DFh,7Eh,E7h,FBh,FDh,AEh,77h,BDh    ; code 36 cloudA->cloudB shift3
-    DB BFh,FDh,CEh,F7h,FBh,5Ch,EFh,7Bh    ; code 37 cloudA->cloudB shift4
-    DB 7Fh,FBh,9Ch,EFh,F7h,B9h,DEh,F7h    ; code 38 cloudA->cloudB shift5
-    DB FFh,F7h,39h,DEh,EFh,72h,BDh,EFh    ; code 39 cloudA->cloudB shift6
-    DB FFh,EFh,73h,BCh,DFh,E4h,7Bh,DFh    ; code 40 cloudA->cloudB shift7
-    DB FFh,BEh,CDh,F3h,7Dh,92h,EFh,7Fh    ; code 41 cloudB->cloudA shift1
-    DB FFh,7Dh,9Ah,E6h,FBh,25h,DFh,FFh    ; code 42 cloudB->cloudA shift2
-    DB FFh,FBh,35h,CCh,F6h,4Ah,BFh,FFh    ; code 43 cloudB->cloudA shift3
-    DB FFh,F6h,6Bh,99h,EDh,95h,7Eh,FFh    ; code 44 cloudB->cloudA shift4
-    DB FFh,EDh,D7h,33h,DBh,2Ah,FDh,FEh    ; code 45 cloudB->cloudA shift5
-    DB FEh,DBh,AFh,67h,B7h,55h,FBh,FDh    ; code 46 cloudB->cloudA shift6
-    DB FDh,B7h,5Eh,CFh,6Fh,AAh,F7h,FBh    ; code 47 cloudB->cloudA shift7
+    DB 7Dh,E7h,DFh,7Eh,B9h,C7h,BEh,5Fh    ; code 32 cloudA (new design)
+    DB F6h,DBh,BEh,FFh,5Bh,E5h,BEh,7Dh    ; code 33 cloudB (new design)
+    DB FBh,CFh,BFh,FDh,72h,8Fh,7Dh,BEh    ; code 34 cloudA->cloudB shift1
+    DB F7h,9Fh,7Eh,FBh,E5h,1Fh,FAh,7Dh    ; code 35 cloudA->cloudB shift2
+    DB EFh,3Eh,FDh,F7h,CAh,3Fh,F5h,FBh    ; code 36 cloudA->cloudB shift3
+    DB DFh,7Dh,FBh,EFh,95h,7Eh,EBh,F7h    ; code 37 cloudA->cloudB shift4
+    DB BEh,FBh,F7h,DFh,2Bh,FCh,D7h,EFh    ; code 38 cloudA->cloudB shift5
+    DB 7Dh,F6h,EFh,BFh,56h,F9h,AFh,DFh    ; code 39 cloudA->cloudB shift6
+    DB FBh,EDh,DFh,7Fh,ADh,F2h,5Fh,BEh    ; code 40 cloudA->cloudB shift7
+    DB ECh,B7h,7Dh,FEh,B7h,CBh,7Dh,FAh    ; code 41 cloudB->cloudA shift1
+    DB D9h,6Fh,FBh,FDh,6Eh,97h,FAh,F5h    ; code 42 cloudB->cloudA shift2
+    DB B3h,DFh,F6h,FBh,DDh,2Eh,F5h,EAh    ; code 43 cloudB->cloudA shift3
+    DB 67h,BEh,EDh,F7h,BBh,5Ch,EBh,D5h    ; code 44 cloudB->cloudA shift4
+    DB CFh,7Ch,DBh,EFh,77h,B8h,D7h,ABh    ; code 45 cloudB->cloudA shift5
+    DB 9Fh,F9h,B7h,DFh,EEh,71h,AFh,57h    ; code 46 cloudB->cloudA shift6
+    DB 3Eh,F3h,6Fh,BFh,DCh,E3h,5Fh,AFh    ; code 47 cloudB->cloudA shift7
 PATTERNS_LEN EQU 384
 
 BLANK_PATTERN:
