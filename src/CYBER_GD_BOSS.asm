@@ -877,6 +877,8 @@ INIT_SPRATR_CLR:
     LD DE,E2B_SEQ_STATE+1 : LD BC,97 : LDIR
     CALL ENEMY_POOL_INIT
     LD HL,ENEMY4_PATTERN : LD DE,PAT_ENEMY4*8+SPRPAT : LD BC,32 : CALL LDIRVM
+    LD HL,SHIP_MID_PATTERN : LD DE,PAT_SHIP*8+SPRPAT : LD BC,32 : CALL LDIRVM
+    LD HL,E1A_PATTERN : LD DE,PAT_ENEMY1*8+SPRPAT : LD BC,32 : CALL LDIRVM
     LD HL,PARTICLE_PATTERN : LD DE,PAT_PARTICLE*8+SPRPAT : LD BC,32 : CALL LDIRVM
     LD A,1 : LD (ENEMY1_LOOK_FLAGS),A : LD (ENEMY1_LOOK_FLAGS+1),A
     LD HL,PAT_ENEMY1_LOOK*8+SPRPAT : LD DE,ENEMY1_LOOK_FLAGS : LD IX,ENEMY1_LOOK_FLAGS+1
@@ -11949,10 +11951,10 @@ ACCENT_PATTERN:
 ; top half is fully transparent. Loaded once at INIT (not per-spawn -
 ; unlike the shared asterisk quadrant system, this is a static image).
 ENEMY4_PATTERN:
-    DB 00h,00h,00h,00h,00h,00h,00h,00h   ; top-left (blank)
-    DB 1Fh,2Fh,77h,F8h,77h,2Ah,1Fh,0Ah   ; bottom-left
-    DB 00h,00h,00h,00h,00h,00h,00h,00h   ; top-right (blank)
-    DB F8h,F4h,EEh,15h,FFh,AAh,FCh,A8h   ; bottom-right
+    DB 00h,00h,00h,00h,00h,00h,00h,00h   ; top-left
+    DB 00h,00h,00h,00h,00h,00h,00h,00h   ; top-right
+    DB 0Ch,26h,FFh,E0h,80h,54h,A8h,00h   ; bottom-left
+    DB 80h,60h,39h,FFh,7Fh,3Eh,70h,C0h   ; bottom-right
 
 ; 2x2 lit block, top-left corner of the 16x16 - the flyaway trail
 ; particle. Small but clearly visible, unlike a single dot.
@@ -11971,6 +11973,36 @@ ASTERISK_PATTERN:
     DB 5Ah   ; .X.XX.X.
     DB 99h   ; X..XX..X
     DB 00h   ; ........
+
+; Enemy1 4-frame animation pattern (version 2, anim-compatible)
+; Frame 0 (top-left): neutral
+; Frame 1 (top-right): moving up
+; Frame 2 (bottom-left): moving down
+; Frame 3 (bottom-right): alternate movement
+E1A_PATTERN:
+    DB FEh,79h,20h,D8h,D8h,20h,79h,FEh   ; frame 0 (neutral)
+    DB 00h,7Eh,FFh,D8h,D8h,FFh,7Eh,00h   ; frame 1 (up)
+    DB 00h,00h,00h,FFh,FFh,00h,00h,00h   ; frame 2 (down)
+    DB 00h,7Eh,FFh,D8h,D8h,FFh,7Eh,00h   ; frame 3 (alt)
+
+; Ship animation patterns (3 directions)
+SHIP_UP_PATTERN:
+    DB 00h,00h,00h,00h,0Fh,7Eh,F8h,FEh   ; top-left
+    DB 00h,00h,00h,00h,00h,00h,01h,07h   ; top-right
+    DB F5h,ABh,55h,ABh,55h,EBh,16h,0Ch   ; bottom-left
+    DB 1Fh,2Ah,55h,FAh,87h,00h,00h,00h   ; bottom-right
+
+SHIP_MID_PATTERN:
+    DB 00h,00h,07h,1Ch,3Eh,F0h,FCh,FFh   ; top-left
+    DB 00h,00h,00h,00h,00h,00h,03h,0Fh   ; top-right
+    DB 01h,FEh,ABh,01h,FEh,0Dh,00h,00h   ; bottom-left
+    DB 13h,2Eh,7Dh,F8h,8Fh,00h,00h,00h   ; bottom-right
+
+SHIP_DOWN_PATTERN:
+    DB 00h,00h,00h,07h,1Eh,7Fh,CFh,E1h   ; top-left
+    DB 00h,00h,00h,00h,00h,00h,00h,03h   ; top-right
+    DB FFh,FFh,81h,7Eh,FEh,31h,0Fh,03h   ; bottom-left
+    DB 11h,23h,7Fh,FFh,80h,00h,00h,00h   ; bottom-right
 
 ; Destroyed-quadrant explosion: 2 static 8x8 frames (anim1 then
 ; anim2), each replicated into 4 character-code groups so its
