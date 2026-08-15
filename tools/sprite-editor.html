@@ -410,6 +410,7 @@
       <div class="overlay-status" id="saveStatus"></div>
       <div class="overlay-actions">
         <button id="btnSaveCancel">Cancel</button>
+        <button id="btnSaveCopy">Copy JSON</button>
         <button class="primary" id="btnSaveConfirm">Save</button>
       </div>
     </div>
@@ -1112,6 +1113,9 @@
 
   document.getElementById("btnSaveCancel").addEventListener("click", function () {
     saveOverlay.classList.remove("show");
+  });
+  document.getElementById("btnSaveCopy").addEventListener("click", function () {
+    copyToClipboard(currentJSON(), "JSONをコピーしました（ファイルに貼り付けて保存してください）");
   });
   document.getElementById("btnSaveConfirm").addEventListener("click", doSave);
   saveFilenameInput.addEventListener("keydown", function (ev) {
