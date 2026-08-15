@@ -913,6 +913,7 @@ INIT_SPRATR_CLR:
     LD DE,E2B_SEQ_STATE+1 : LD BC,97 : LDIR
     CALL ENEMY_POOL_INIT
     LD HL,ENEMY4_PATTERN : LD DE,PAT_ENEMY4*8+SPRPAT : LD BC,32 : CALL LDIRVM
+    LD HL,SHIP_MID_PATTERN : LD DE,PAT_SHIP*8+SPRPAT : LD BC,32 : CALL LDIRVM
     LD HL,PARTICLE_PATTERN : LD DE,PAT_PARTICLE*8+SPRPAT : LD BC,32 : CALL LDIRVM
     LD A,1 : LD (ENEMY1_LOOK_FLAGS),A : LD (ENEMY1_LOOK_FLAGS+1),A
     LD HL,PAT_ENEMY1_LOOK*8+SPRPAT : LD DE,ENEMY1_LOOK_FLAGS : LD IX,ENEMY1_LOOK_FLAGS+1
@@ -12250,6 +12251,27 @@ ASTERISK_PATTERN:
     DB 04h   ; .....X..
     DB 9Eh   ; X..XXXX.
     DB 7Fh   ; .XXXXXXX
+
+; Ship animation patterns (from the Sprite Editor's newer ship design;
+; only MID is actually loaded/used for now - UP/DOWN are here for a
+; later pass that swaps frames with vertical movement)
+SHIP_UP_PATTERN:
+    DB 00h,00h,00h,00h,F0h,7Eh,1Fh,7Fh   ; top-left
+    DB AFh,D5h,AAh,D5h,AAh,D7h,68h,30h   ; bottom-left
+    DB 00h,00h,00h,00h,00h,00h,80h,E0h   ; top-right
+    DB F8h,54h,AAh,5Fh,E1h,00h,00h,00h   ; bottom-right
+
+SHIP_MID_PATTERN:
+    DB 00h,00h,E0h,38h,7Ch,0Fh,3Fh,FFh   ; top-left
+    DB 80h,7Fh,D5h,80h,7Fh,B0h,00h,00h   ; bottom-left
+    DB 00h,00h,00h,00h,00h,00h,C0h,F0h   ; top-right
+    DB C8h,74h,BEh,1Fh,F1h,00h,00h,00h   ; bottom-right
+
+SHIP_DOWN_PATTERN:
+    DB 00h,00h,00h,E0h,78h,FEh,F3h,87h   ; top-left
+    DB FFh,FFh,81h,7Eh,7Fh,8Ch,F0h,C0h   ; bottom-left
+    DB 00h,00h,00h,00h,00h,00h,00h,C0h   ; top-right
+    DB 88h,C4h,FEh,FFh,01h,00h,00h,00h   ; bottom-right
 
 ; Destroyed-quadrant explosion: 2 static 8x8 frames (anim1 then
 ; anim2), each replicated into 4 character-code groups so its
