@@ -79,7 +79,10 @@ SPRPAT      EQU 3800h   ; sprite pattern generator table (VRAM, BIOS default)
 
 PAT_SHIP    EQU 0       ; 16x16 sprite pattern number (32 bytes at SPRPAT+0);
                         ; holds SHIP_MID_PATTERN (level flight) - see PLAYER_SHIP_PAT
-PAT_ACCENT  EQU 16      ; 16x16 accent overlay, drawn at ship_X+8 (32 bytes at SPRPAT+128)
+PAT_ACCENT  EQU 16      ; 16x16 accent overlay, drawn at ship_X+8 (32 bytes at SPRPAT+128);
+                        ; holds ACCENT_MID_PATTERN - see PLAYER_ACCENT_PAT
+PAT_ACCENT_DOWN EQU 20  ; ACCENT_DOWN_PATTERN, shown while diving (32 bytes at SPRPAT+160;
+                        ; free range right after PAT_ACCENT's own 16-19)
 PAT_SHIP_UP   EQU 112   ; SHIP_UP_PATTERN, shown while climbing (32 bytes at SPRPAT+896;
                         ; free range between EXPLOSION_PATNUM's 108-111 and PAT_PARTICLE's 120)
 PAT_SHIP_DOWN EQU 116   ; SHIP_DOWN_PATTERN, shown while diving (32 bytes at SPRPAT+928)
@@ -142,6 +145,8 @@ PLAYER_SHIP_PAT EQU 0EF11h ; this frame's ship sprite pattern number (PAT_SHIP/
                             ; PAT_SHIP_UP/PAT_SHIP_DOWN) - set from JOY_STICK
                             ; right after the movement dispatch, read back at
                             ; the sprite-attribute write further down
+PLAYER_ACCENT_PAT EQU 0EF12h ; same idea for the accent overlay (PAT_ACCENT/
+                              ; PAT_ACCENT_DOWN only - no up-frame for this one)
 ; each bullet: ACT(active flag), ADDR(2 bytes: VRAM address of its
 ; row's column0, low byte then high byte so LD HL,(ADDR) loads
 ; both), COL(0-31, current column), ROW(0-23, fixed at spawn - used
@@ -897,6 +902,7 @@ INIT_SPRATR_CLR:
     LD A,PLAYER_INITX : LD (PLAYERX),A
     LD A,PLAYER_INITY : LD (PLAYERY),A
     LD A,PAT_SHIP : LD (PLAYER_SHIP_PAT),A
+    LD A,PAT_ACCENT : LD (PLAYER_ACCENT_PAT),A
     XOR A
     LD (BULLET0_ACT),A : LD (BULLET1_ACT),A : LD (BULLET2_ACT),A
     LD (JOY_TRIGB_PREV),A
@@ -925,6 +931,8 @@ INIT_SPRATR_CLR:
     LD HL,SHIP_MID_PATTERN : LD DE,PAT_SHIP*8+SPRPAT : LD BC,32 : CALL LDIRVM
     LD HL,SHIP_UP_PATTERN : LD DE,PAT_SHIP_UP*8+SPRPAT : LD BC,32 : CALL LDIRVM
     LD HL,SHIP_DOWN_PATTERN : LD DE,PAT_SHIP_DOWN*8+SPRPAT : LD BC,32 : CALL LDIRVM
+    LD HL,ACCENT_MID_PATTERN : LD DE,PAT_ACCENT*8+SPRPAT : LD BC,32 : CALL LDIRVM
+    LD HL,ACCENT_DOWN_PATTERN : LD DE,PAT_ACCENT_DOWN*8+SPRPAT : LD BC,32 : CALL LDIRVM
     LD HL,E1A_PATTERN : LD DE,PAT_ENEMY1*8+SPRPAT : LD BC,32 : CALL LDIRVM
     LD HL,PARTICLE_PATTERN : LD DE,PAT_PARTICLE*8+SPRPAT : LD BC,32 : CALL LDIRVM
     LD A,1 : LD (ENEMY1_LOOK_FLAGS),A : LD (ENEMY1_LOOK_FLAGS+1),A
@@ -1750,6 +1758,19 @@ SHIPFR_DOWN:
 SHIPFR_GOT:
     LD (PLAYER_SHIP_PAT),A
 
+    ; same idea for the accent overlay, but it only has MID/DOWN -
+    ; climbing (and everything else) keeps MID.
+    LD A,(JOY_STICK)
+    CP 4 : JR Z,ACCFR_DOWN
+    CP 5 : JR Z,ACCFR_DOWN
+    CP 6 : JR Z,ACCFR_DOWN
+    LD A,PAT_ACCENT
+    JR ACCFR_GOT
+ACCFR_DOWN:
+    LD A,PAT_ACCENT_DOWN
+ACCFR_GOT:
+    LD (PLAYER_ACCENT_PAT),A
+
     ; redraw ship: slot1=body, slot0=accent overlay (priority above ---
     ; body, drawn at PLAYERX+8, PLAYERY)
     DI
@@ -1844,7 +1865,7 @@ SHIPFR_GOT:
     NOP
     NOP
     NOP
-    LD A,PAT_ACCENT : OUT (98h),A
+    LD A,(PLAYER_ACCENT_PAT) : OUT (98h),A
     NOP
     NOP
     NOP
@@ -12247,9 +12268,28 @@ SPRITE_PATTERNS:
 
 ; Accent overlay (from 通常.png), drawn as its own sprite (slot0,
 ; priority above the ship body in slot1) at ship_X+8, ship_Y.
+; Superseded by ACCENT_MID_PATTERN/ACCENT_DOWN_PATTERN below (Sprite
+; Editor's ShipMidW/ShipDownW) - kept, unreferenced, like the other
+; replaced-pattern data in this file.
 ACCENT_PATTERN:
     DB 00h,00h,00h,00h,00h,00h,00h,00h   ; top-left (blank)
     DB 00h,00h,00h,18h,00h,00h,00h,00h   ; bottom-left (small mark)
+    DB 00h,00h,00h,00h,00h,00h,00h,00h   ; top-right (blank)
+    DB 00h,00h,00h,00h,00h,00h,00h,00h   ; bottom-right (blank)
+
+; Accent overlay animation, 2 frames (ShipMidW/ShipDownW from the
+; Sprite Editor): MID shows with no vertical movement, DOWN shows
+; while diving - no separate up-frame, climbing keeps MID. Picked
+; alongside the ship body's own frame - see PLAYER_ACCENT_PAT.
+ACCENT_MID_PATTERN:
+    DB 00h,00h,00h,00h,00h,00h,00h,00h   ; top-left (blank)
+    DB 30h,08h,00h,00h,00h,00h,00h,00h   ; bottom-left
+    DB 00h,00h,00h,00h,00h,00h,00h,00h   ; top-right (blank)
+    DB 00h,00h,00h,00h,00h,00h,00h,00h   ; bottom-right (blank)
+
+ACCENT_DOWN_PATTERN:
+    DB 00h,00h,00h,00h,00h,00h,00h,00h   ; top-left (blank)
+    DB 70h,38h,00h,00h,00h,00h,00h,00h   ; bottom-left
     DB 00h,00h,00h,00h,00h,00h,00h,00h   ; top-right (blank)
     DB 00h,00h,00h,00h,00h,00h,00h,00h   ; bottom-right (blank)
 
