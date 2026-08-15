@@ -4308,11 +4308,11 @@ ESC_COMPLEX_INIT_B:
 ; spawn exactly once, in order, as GAME_TICK reaches its threshold -
 ; not when the previous one finishes. SPAWN_THRESHOLDS is a 16-bit
 ; (DW) array so thresholds aren't capped at 255. Boss is the final
-; entry, index224. One-shot: once all 225 have fired, this just returns
+; entry, index252. One-shot: once all 253 have fired, this just returns
 ; immediately forever after, so nothing loops.
 SPAWN_SCHEDULE_CHECK:
     LD A,(SPAWN_NEXT_INDEX)
-    CP 225
+    CP 253
     RET NC
     LD H,0 : LD L,A
     ADD HL,HL
@@ -4329,7 +4329,7 @@ SPAWN_SCHEDULE_CHECK:
     ;     空いていればSPAWN_E2がそちらを自動選択するので、この各
     ;     インデックスはもう「Aだけ待つ/Bだけ待つ」を区別しない -
     ;     どちらの枠が空いても即発火。インデックス番号は現在の
-    ;     スケジュールJSON(225エントリ)でtype=enemy2の位置そのまま。 ---
+    ;     スケジュールJSON(253エントリ)でtype=enemy2の位置そのまま。 ---
     LD A,(SPAWN_NEXT_INDEX)
     CP 17 : JR Z,SSC_BUSY_E2
     CP 18 : JR Z,SSC_BUSY_E2
@@ -4342,6 +4342,10 @@ SPAWN_SCHEDULE_CHECK:
     CP 92 : JR Z,SSC_BUSY_E2
     CP 118 : JR Z,SSC_BUSY_E2
     CP 119 : JR Z,SSC_BUSY_E2
+    CP 153 : JR Z,SSC_BUSY_E2
+    CP 154 : JR Z,SSC_BUSY_E2
+    CP 155 : JR Z,SSC_BUSY_E2
+    CP 156 : JR Z,SSC_BUSY_E2
     JR SSC_FIRE
 SSC_BUSY_E2:
     LD A,(E2A_ACTIVE) : OR A : JR Z,SSC_FIRE   ; A is free -> go (SPAWN_E2 will claim it)
@@ -4352,16 +4356,16 @@ SSC_FIRE:
     INC A
     LD (SPAWN_NEXT_INDEX),A
     DEC A
-    ; --- 225-entry schedule, imported directly from the schedule editor's ---
+    ; --- 253-entry schedule, imported directly from the schedule editor's ---
     ; --- exported JSON (tick/row/type per placement, sorted tick then     ---
     ; --- row) - each index's dispatch target below is just that          ---
     ; --- placement's own type. simple/enemy2/enemy4/enemy5 pull baseY    ---
     ; --- from SPAWN_SIMPLE_Y_TABLE/SPAWN_BASEY_TABLE (row*8), enemy6      ---
     ; --- from ENEMY6_ROW_TABLE (raw row), enemy3_wave's own offset from  ---
     ; --- SPAWN_E3_OFFSET_TABLE (cells*8) - all parallel arrays, same     ---
-    ; --- index/order as SPAWN_THRESHOLDS. Index224 (the last) is the     ---
-    ; --- boss and falls through to JP BOSS_SPAWN below instead of its    ---
-    ; --- own CP, same convention the previous schedule used.             ---
+    ; --- index/order as SPAWN_THRESHOLDS. The last index (the boss)      ---
+    ; --- falls through to JP BOSS_SPAWN below instead of its own CP,     ---
+    ; --- same convention the previous schedule used.                     ---
     CP 0   : JP Z,SPAWN_SIMPLE
     CP 1   : JP Z,SPAWN_SIMPLE
     CP 2   : JP Z,SPAWN_SIMPLE
@@ -4512,31 +4516,31 @@ SSC_FIRE:
     CP 147 : JP Z,SPAWN_E4B
     CP 148 : JP Z,SPAWN_E4B
     CP 149 : JP Z,SPAWN_SIMPLE
-    CP 150 : JP Z,SPAWN_E6
-    CP 151 : JP Z,SPAWN_E6
-    CP 152 : JP Z,SPAWN_E6
-    CP 153 : JP Z,SPAWN_E6
-    CP 154 : JP Z,SPAWN_E6
-    CP 155 : JP Z,SPAWN_E6
-    CP 156 : JP Z,SPAWN_E6
-    CP 157 : JP Z,SPAWN_E6
-    CP 158 : JP Z,SPAWN_E6
-    CP 159 : JP Z,SPAWN_E6
-    CP 160 : JP Z,SPAWN_E6
-    CP 161 : JP Z,SPAWN_E6
-    CP 162 : JP Z,SPAWN_E6
-    CP 163 : JP Z,SPAWN_E6
-    CP 164 : JP Z,SPAWN_E6
-    CP 165 : JP Z,SPAWN_E6
-    CP 166 : JP Z,SPAWN_E6
-    CP 167 : JP Z,SPAWN_E6
-    CP 168 : JP Z,SPAWN_E6
-    CP 169 : JP Z,SPAWN_E6
-    CP 170 : JP Z,SPAWN_E6
-    CP 171 : JP Z,SPAWN_E6
-    CP 172 : JP Z,SPAWN_E6
-    CP 173 : JP Z,SPAWN_E6
-    CP 174 : JP Z,SPAWN_E6
+    CP 150 : JP Z,SPAWN_SIMPLE
+    CP 151 : JP Z,SPAWN_SIMPLE
+    CP 152 : JP Z,SPAWN_SIMPLE
+    CP 153 : JP Z,SPAWN_E2
+    CP 154 : JP Z,SPAWN_E2
+    CP 155 : JP Z,SPAWN_E2
+    CP 156 : JP Z,SPAWN_E2
+    CP 157 : JP Z,SPAWN_E4B
+    CP 158 : JP Z,SPAWN_E4B
+    CP 159 : JP Z,SPAWN_E4B
+    CP 160 : JP Z,SPAWN_E4B
+    CP 161 : JP Z,SPAWN_E4B
+    CP 162 : JP Z,SPAWN_E4B
+    CP 163 : JP Z,SPAWN_E4B
+    CP 164 : JP Z,SPAWN_E4B
+    CP 165 : JP Z,SPAWN_E4B
+    CP 166 : JP Z,SPAWN_E4B
+    CP 167 : JP Z,SPAWN_E4B
+    CP 168 : JP Z,SPAWN_E4B
+    CP 169 : JP Z,SPAWN_E4
+    CP 170 : JP Z,SPAWN_E4
+    CP 171 : JP Z,SPAWN_E4
+    CP 172 : JP Z,SPAWN_E4
+    CP 173 : JP Z,SPAWN_E4
+    CP 174 : JP Z,SPAWN_E4
     CP 175 : JP Z,SPAWN_E6
     CP 176 : JP Z,SPAWN_E6
     CP 177 : JP Z,SPAWN_E6
@@ -4586,6 +4590,34 @@ SSC_FIRE:
     CP 221 : JP Z,SPAWN_E6
     CP 222 : JP Z,SPAWN_E6
     CP 223 : JP Z,SPAWN_E6
+    CP 224 : JP Z,SPAWN_E6
+    CP 225 : JP Z,SPAWN_E6
+    CP 226 : JP Z,SPAWN_E6
+    CP 227 : JP Z,SPAWN_E6
+    CP 228 : JP Z,SPAWN_E6
+    CP 229 : JP Z,SPAWN_E6
+    CP 230 : JP Z,SPAWN_E6
+    CP 231 : JP Z,SPAWN_E6
+    CP 232 : JP Z,SPAWN_E6
+    CP 233 : JP Z,SPAWN_E6
+    CP 234 : JP Z,SPAWN_E6
+    CP 235 : JP Z,SPAWN_E6
+    CP 236 : JP Z,SPAWN_E6
+    CP 237 : JP Z,SPAWN_E6
+    CP 238 : JP Z,SPAWN_E6
+    CP 239 : JP Z,SPAWN_E6
+    CP 240 : JP Z,SPAWN_E6
+    CP 241 : JP Z,SPAWN_E6
+    CP 242 : JP Z,SPAWN_E6
+    CP 243 : JP Z,SPAWN_E6
+    CP 244 : JP Z,SPAWN_E6
+    CP 245 : JP Z,SPAWN_E6
+    CP 246 : JP Z,SPAWN_E6
+    CP 247 : JP Z,SPAWN_E6
+    CP 248 : JP Z,SPAWN_E6
+    CP 249 : JP Z,SPAWN_E6
+    CP 250 : JP Z,SPAWN_E6
+    CP 251 : JP Z,SPAWN_E6
     JP BOSS_SPAWN
 
 ; --- saved (disabled) boss-only fast-iteration schedule - kept for  ---
@@ -13023,7 +13055,7 @@ ENEMY6_ANIM_CODES:
     DB NEWENEMY_CODE180_TL, NEWENEMY_CODE180_TR, NEWENEMY_CODE180_BL, NEWENEMY_CODE180_BR
     DB NEWENEMY_CODE270_TL, NEWENEMY_CODE270_TR, NEWENEMY_CODE270_BL, NEWENEMY_CODE270_BR
 
-; Full schedule, 225 entries (indices 0-224), imported directly from the
+; Full schedule, 253 entries (indices 0-252), imported directly from the
 ; schedule editor's exported JSON (tick/row/type per placement) - see
 ; SSC_FIRE for the per-index dispatch this drives. Every tick here is
 ; a 16-bit word since thresholds run well past 255. Simple-formation,
@@ -13039,12 +13071,13 @@ SPAWN_THRESHOLDS:
     DW 388,392,402,406,410,423,428,432,437,439,441,445,447,449,460,461,462
     DW 463,482,483,484,485,488,489,490,491,498,504,505,506,507,514,542,558
     DW 566,580,581,582,591,593,600,610,611,612,613,616,617,618,619,623,624
-    DW 625,626,629,630,631,632,641,642,643,644,647,648,649,650,821,822,822
-    DW 823,823,824,824,831,832,832,833,833,834,834,878,879,880,881,882,883
-    DW 884,885,887,888,889,890,891,892,893,894,896,897,898,899,900,901,902
-    DW 903,932,933,934,935,936,937,938,939,940,941,942,943,944,945,946,947
-    DW 948,949,950,951,952,953,954,955,956,957,958,959,960,961,962,963,964
-    DW 965,966,967,992
+    DW 625,626,629,630,631,632,641,642,643,644,647,648,649,650,675,677,679
+    DW 683,683,695,695,705,707,709,712,721,723,725,728,737,739,741,744,751
+    DW 752,753,754,755,756,764,779,796,808,809,809,810,810,811,811,831,832
+    DW 832,833,833,834,834,878,879,880,881,882,883,884,885,887,888,889,890
+    DW 891,892,893,894,896,897,898,899,900,901,902,903,932,933,934,935,936
+    DW 937,938,939,940,941,942,943,944,945,946,947,948,949,950,951,952,953
+    DW 954,955,956,957,958,959,960,961,962,963,964,965,966,967,992
 
 ; --- saved (disabled) boss-only single-entry schedule, used ---
 ; --- while iterating quickly on boss features - not deleted: ---
@@ -13064,12 +13097,13 @@ SPAWN_SIMPLE_Y_TABLE:
     DB 0,0,0,0,0,0,72,0,16,16,16,128,128,128,0,0,0
     DB 16,0,0,0,64,0,0,0,120,0,0,0,0,112,0,64,0
     DB 0,0,0,0,0,0,0,0,0,0,64,0,0,0,120,0,0
-    DB 0,64,0,0,0,120,0,0,0,64,0,0,0,120,0,0,0
+    DB 0,64,0,0,0,120,0,0,0,64,0,0,0,120,16,24,32
     DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
     DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
     DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
     DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-    DB 0,0,0,0
+    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
 
 ; Same idea as SPAWN_SIMPLE_Y_TABLE but for Enemy4/Enemy5 (SPAWN_E4/
 ; SPAWN_E4B) baseY - row*8 from the schedule editor, any row, not
@@ -13086,11 +13120,12 @@ SPAWN_BASEY_TABLE:
     DB 0,80,112,120,0,24,56,64,0,24,16,48,56,0,16,0,32
     DB 120,80,64,48,104,24,64,80,112,120,0,24,56,64,0,80,112
     DB 120,0,24,56,64,0,80,112,120,0,24,56,64,0,0,0,0
+    DB 32,104,32,104,40,72,80,104,40,72,80,104,40,72,80,104,120
+    DB 104,88,72,56,40,0,0,0,0,0,0,0,0,0,0,0,0
     DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
     DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
     DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-    DB 0,0,0,0
+    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
 
 ; This trigger's own offset (px = cells*8), one byte per SPAWN_THRESHOLDS
 ; index, from the schedule editor's per-placement "offset" field - each
@@ -13113,7 +13148,8 @@ SPAWN_E3_OFFSET_TABLE:
     DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
     DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
     DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-    DB 0,0,0,0
+    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
 
 ; This trigger's own row (raw, NOT *8 - ENEMY6_POOL stores ROW directly,
 ; see its own comment), one byte per SPAWN_THRESHOLDS index, from the
@@ -13128,12 +13164,13 @@ ENEMY6_ROW_TABLE:
     DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
     DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
     DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,8,6,10
-    DB 4,12,2,14,8,6,10,4,12,2,14,1,3,5,7,9,11
-    DB 13,15,1,3,5,7,9,11,13,15,1,3,5,7,9,11,13
-    DB 15,1,3,5,7,9,11,13,15,13,11,9,7,5,3,1,3
-    DB 5,7,9,11,13,15,13,11,9,7,5,3,1,3,5,7,9
-    DB 11,13,15,0
+    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+    DB 0,0,0,0,0,2,2,2,8,6,10,4,12,2,14,8,6
+    DB 10,4,12,2,14,1,3,5,7,9,11,13,15,1,3,5,7
+    DB 9,11,13,15,1,3,5,7,9,11,13,15,1,3,5,7,9
+    DB 11,13,15,13,11,9,7,5,3,1,3,5,7,9,11,13,15
+    DB 13,11,9,7,5,3,1,3,5,7,9,11,13,15,0
 
 ; --- Boss BG (nametable) graphics, generated from
 ; --- dotpict_20260806_173500 (12x37 dot art), resized directly
