@@ -145,6 +145,15 @@ PLAYER_SHIP_PAT EQU 0EF11h ; this frame's ship sprite pattern number (PAT_SHIP/
                             ; the sprite-attribute write further down
 PLAYER_ACCENT_PAT EQU 0EF12h ; same idea for the accent overlay (PAT_ACCENT/
                               ; PAT_ACCENT_DOWN only - no up-frame for this one)
+REDRAW_SRC_PATTERN EQU 0EF13h ; 2 bytes: which 8x8 glyph REDRAW_UNIT_PATTERN
+                               ; copies into a unit's TL/BR quadrant this call -
+                               ; set by the caller (see SET_REDRAW_SRC_FROM_SEQ)
+                               ; right before every CALL, since it's shared/
+                               ; global state read by a routine with no spare
+                               ; register free to pass it directly
+ENEMY5_ANIM_SEQ   EQU 0EF15h  ; enemy5's shared (all-instances-synced) 1,2,3,2
+                               ; quadrant-anim index - see ENEMY5_ANIM_STEP
+ENEMY5_ANIM_TIMER EQU 0EF16h
 ; each bullet: ACT(active flag), ADDR(2 bytes: VRAM address of its
 ; row's column0, low byte then high byte so LD HL,(ADDR) loads
 ; both), COL(0-31, current column), ROW(0-23, fixed at spawn - used
@@ -325,6 +334,9 @@ PARTICLE_SPAWN_COOLDOWN EQU 0E83Ah  ; frames until the next spawn is allowed
 ; --- E_PARAM1 (remain), E_PARAM2 (dir) on the unified ENEMY_POOL.   ---
 ENEMY_CENTER_X   EQU 128     ; screen-center X threshold for the dodge
 ENEMY_DODGE_DIST EQU 16      ; total px moved diagonally, 1px/frame, per flight
+ENEMY1_ANIM_FRAME_LEN EQU 4  ; frames per 1,2,3,2 quadrant-anim step while
+                              ; dodging - 4 steps x 4 frames = the full
+                              ; ENEMY_DODGE_DIST(16)-frame dodge, one cycle
 
 ; --- per-frame dodge progress: REMAIN counts down 16->0 (1px/frame),---
 ; --- DIR is the signed per-frame Y step (+1 or -1, set once when   ---
@@ -432,6 +444,8 @@ FASTJUMP      EQU 10          ; px/frame while a quadrant flies into formation
 TARGETX0      EQU 112        ; unit0 assembly X (unit1=+16,unit2=+32) - roughly centered
 DRIFT_LEN     EQU 32         ; slow drift distance once assembled
 EXIT_SPEED    EQU 6          ; px/frame during the fast Z exit
+ENEMY2_ANIM_FRAME_LEN EQU 4  ; frames per 1,2,3,2 quadrant-anim step while
+                              ; diving/climbing (ECS_S7_A/B's diagonal phase)
 EXIT_SEGLEN   EQU 32         ; length of each of the Z's 3 segments
 PAT_TEMP_TOP  EQU 24         ; static pattern: top-left asterisk only  (patterns24-27)
 PAT_TEMP_BOT  EQU 28         ; static pattern: bottom-right asterisk only (patterns28-31)
@@ -916,9 +930,9 @@ INIT_SPRATR_CLR:
     ; --- garbage seen after a warm/hot reset.                        ---
     XOR A
     LD HL,E2A_SEQ_STATE : LD (HL),A
-    LD DE,E2A_SEQ_STATE+1 : LD BC,97 : LDIR
+    LD DE,E2A_SEQ_STATE+1 : LD BC,99 : LDIR   ; +2 to also clear E2A_ANIM_SEQ/TIMER
     LD HL,E2B_SEQ_STATE : LD (HL),A
-    LD DE,E2B_SEQ_STATE+1 : LD BC,97 : LDIR
+    LD DE,E2B_SEQ_STATE+1 : LD BC,99 : LDIR   ; +2 to also clear E2B_ANIM_SEQ/TIMER
     CALL ENEMY_POOL_INIT
     LD HL,ENEMY4_PATTERN : LD DE,PAT_ENEMY4*8+SPRPAT : LD BC,32 : CALL LDIRVM
     LD HL,SHIP_MID_PATTERN : LD DE,PAT_SHIP*8+SPRPAT : LD BC,32 : CALL LDIRVM
@@ -929,6 +943,8 @@ INIT_SPRATR_CLR:
     LD HL,E1A_PATTERN : LD DE,PAT_ENEMY1*8+SPRPAT : LD BC,32 : CALL LDIRVM
     LD HL,PARTICLE_PATTERN : LD DE,PAT_PARTICLE*8+SPRPAT : LD BC,32 : CALL LDIRVM
     LD A,1 : LD (ENEMY1_LOOK_FLAGS),A : LD (ENEMY1_LOOK_FLAGS+1),A
+    XOR A : LD (ENEMY5_ANIM_SEQ),A : LD (ENEMY5_ANIM_TIMER),A
+    LD HL,ASTERISK_PATTERN : LD (REDRAW_SRC_PATTERN),HL
     LD HL,PAT_ENEMY1_LOOK*8+SPRPAT : LD DE,ENEMY1_LOOK_FLAGS : LD IX,ENEMY1_LOOK_FLAGS+1
     CALL REDRAW_UNIT_PATTERN
     XOR A : LD (BOSS_EXPL_ACTIVE),A
@@ -2064,6 +2080,7 @@ ANIM2_DONE:
     ; --- unified sprite-enemy buffer: advance every active slot,   ---
     ; --- regardless of which movement algorithm (BEHAVIOR) it uses ---
     CALL ENEMY_POOL_UPDATE_ALL
+    CALL ENEMY5_ANIM_STEP
 
     ; ============================================================
     ; --- shots: advance 1 character (8 dots) per frame. Erasing  ---
@@ -2775,13 +2792,29 @@ QUAD_HIT_NO:
     XOR A
     RET
 
+; Sets REDRAW_SRC_PATTERN from a 1,2,3,2-cycle sequence index (0-3),
+; via ENEMY_ANIM_SEQ_TABLE. Input: HL = address of the sequence-index
+; byte. Trashes A,DE,HL.
+SET_REDRAW_SRC_FROM_SEQ:
+    LD A,(HL)
+    ADD A,A
+    LD E,A : LD D,0
+    LD HL,ENEMY_ANIM_SEQ_TABLE
+    ADD HL,DE
+    LD A,(HL) : INC HL : LD H,(HL) : LD L,A
+    LD (REDRAW_SRC_PATTERN),HL
+    RET
+
 ; Rewrites one unit's 32-byte 16x16 sprite pattern to match its
-; current TOP/BOT alive flags: top-left shows the asterisk if TOP
-; is alive (else blank), bottom-right shows it if BOT is alive
-; (else blank); bottom-left/top-right are always blank.
+; current TOP/BOT alive flags: top-left shows the REDRAW_SRC_PATTERN
+; glyph if TOP is alive (else blank), bottom-right shows it if BOT
+; is alive (else blank); bottom-left/top-right are always blank.
 ; Input: HL = VRAM address of this unit's 32-byte pattern block,
 ;        DE = address of this unit's TOP alive-flag byte,
-;        IX = address of this unit's BOT alive-flag byte
+;        IX = address of this unit's BOT alive-flag byte.
+; Caller must set REDRAW_SRC_PATTERN first (see SET_REDRAW_SRC_
+; FROM_SEQ) - it's shared/global state, not an input register, since
+; none were free to spare for it.
 ; Trashes A,B,HL.
 REDRAW_UNIT_PATTERN:
     LD A,L
@@ -2809,7 +2842,7 @@ REDRAW_UNIT_PATTERN:
     OR A
     EI
     JR Z,RU_TL_BLANK
-    LD HL,ASTERISK_PATTERN : LD B,8
+    LD HL,(REDRAW_SRC_PATTERN) : LD B,8
 RU_TL_LOOP:
     DI
     LD A,(HL) : OUT (98h),A
@@ -2871,7 +2904,7 @@ RU_TR_LOOP:
     LD A,(IX+0)
     OR A
     JR Z,RU_BR_BLANK
-    LD HL,ASTERISK_PATTERN : LD B,8
+    LD HL,(REDRAW_SRC_PATTERN) : LD B,8
 RU_BR_LOOP:
     DI
     LD A,(HL) : OUT (98h),A
@@ -2951,6 +2984,7 @@ CBF_SKIP5_A:
 CBF_KILL_U2_BOT_A:
     XOR A : LD (E2A_U2_BOT),A
     PUSH DE
+    LD HL,E2A_ANIM_SEQ : CALL SET_REDRAW_SRC_FROM_SEQ
     LD HL,SPRPAT+320 : LD DE,E2A_U2_TOP : LD IX,E2A_U2_BOT
     CALL REDRAW_UNIT_PATTERN
     POP DE
@@ -2961,6 +2995,7 @@ CBF_KILL_U2_BOT_A:
 CBF_KILL_U0_TOP_A:
     XOR A : LD (E2A_U0_TOP),A
     PUSH DE
+    LD HL,E2A_ANIM_SEQ : CALL SET_REDRAW_SRC_FROM_SEQ
     LD HL,SPRPAT+256 : LD DE,E2A_U0_TOP : LD IX,E2A_U0_BOT
     CALL REDRAW_UNIT_PATTERN
     POP DE
@@ -2971,6 +3006,7 @@ CBF_KILL_U0_TOP_A:
 CBF_KILL_U0_BOT_A:
     XOR A : LD (E2A_U0_BOT),A
     PUSH DE
+    LD HL,E2A_ANIM_SEQ : CALL SET_REDRAW_SRC_FROM_SEQ
     LD HL,SPRPAT+256 : LD DE,E2A_U0_TOP : LD IX,E2A_U0_BOT
     CALL REDRAW_UNIT_PATTERN
     POP DE
@@ -2981,6 +3017,7 @@ CBF_KILL_U0_BOT_A:
 CBF_KILL_U1_TOP_A:
     XOR A : LD (E2A_U1_TOP),A
     PUSH DE
+    LD HL,E2A_ANIM_SEQ : CALL SET_REDRAW_SRC_FROM_SEQ
     LD HL,SPRPAT+288 : LD DE,E2A_U1_TOP : LD IX,E2A_U1_BOT
     CALL REDRAW_UNIT_PATTERN
     POP DE
@@ -2991,6 +3028,7 @@ CBF_KILL_U1_TOP_A:
 CBF_KILL_U1_BOT_A:
     XOR A : LD (E2A_U1_BOT),A
     PUSH DE
+    LD HL,E2A_ANIM_SEQ : CALL SET_REDRAW_SRC_FROM_SEQ
     LD HL,SPRPAT+288 : LD DE,E2A_U1_TOP : LD IX,E2A_U1_BOT
     CALL REDRAW_UNIT_PATTERN
     POP DE
@@ -3001,6 +3039,7 @@ CBF_KILL_U1_BOT_A:
 CBF_KILL_U2_TOP_A:
     XOR A : LD (E2A_U2_TOP),A
     PUSH DE
+    LD HL,E2A_ANIM_SEQ : CALL SET_REDRAW_SRC_FROM_SEQ
     LD HL,SPRPAT+320 : LD DE,E2A_U2_TOP : LD IX,E2A_U2_BOT
     CALL REDRAW_UNIT_PATTERN
     POP DE
@@ -3060,6 +3099,7 @@ CBF_SKIP5_B:
 CBF_KILL_U2_BOT_B:
     XOR A : LD (E2B_U2_BOT),A
     PUSH DE
+    LD HL,E2B_ANIM_SEQ : CALL SET_REDRAW_SRC_FROM_SEQ
     LD HL,SPRPAT+480 : LD DE,E2B_U2_TOP : LD IX,E2B_U2_BOT
     CALL REDRAW_UNIT_PATTERN
     POP DE
@@ -3070,6 +3110,7 @@ CBF_KILL_U2_BOT_B:
 CBF_KILL_U0_TOP_B:
     XOR A : LD (E2B_U0_TOP),A
     PUSH DE
+    LD HL,E2B_ANIM_SEQ : CALL SET_REDRAW_SRC_FROM_SEQ
     LD HL,SPRPAT+416 : LD DE,E2B_U0_TOP : LD IX,E2B_U0_BOT
     CALL REDRAW_UNIT_PATTERN
     POP DE
@@ -3080,6 +3121,7 @@ CBF_KILL_U0_TOP_B:
 CBF_KILL_U0_BOT_B:
     XOR A : LD (E2B_U0_BOT),A
     PUSH DE
+    LD HL,E2B_ANIM_SEQ : CALL SET_REDRAW_SRC_FROM_SEQ
     LD HL,SPRPAT+416 : LD DE,E2B_U0_TOP : LD IX,E2B_U0_BOT
     CALL REDRAW_UNIT_PATTERN
     POP DE
@@ -3090,6 +3132,7 @@ CBF_KILL_U0_BOT_B:
 CBF_KILL_U1_TOP_B:
     XOR A : LD (E2B_U1_TOP),A
     PUSH DE
+    LD HL,E2B_ANIM_SEQ : CALL SET_REDRAW_SRC_FROM_SEQ
     LD HL,SPRPAT+448 : LD DE,E2B_U1_TOP : LD IX,E2B_U1_BOT
     CALL REDRAW_UNIT_PATTERN
     POP DE
@@ -3100,6 +3143,7 @@ CBF_KILL_U1_TOP_B:
 CBF_KILL_U1_BOT_B:
     XOR A : LD (E2B_U1_BOT),A
     PUSH DE
+    LD HL,E2B_ANIM_SEQ : CALL SET_REDRAW_SRC_FROM_SEQ
     LD HL,SPRPAT+448 : LD DE,E2B_U1_TOP : LD IX,E2B_U1_BOT
     CALL REDRAW_UNIT_PATTERN
     POP DE
@@ -3110,6 +3154,7 @@ CBF_KILL_U1_BOT_B:
 CBF_KILL_U2_TOP_B:
     XOR A : LD (E2B_U2_TOP),A
     PUSH DE
+    LD HL,E2B_ANIM_SEQ : CALL SET_REDRAW_SRC_FROM_SEQ
     LD HL,SPRPAT+480 : LD DE,E2B_U2_TOP : LD IX,E2B_U2_BOT
     CALL REDRAW_UNIT_PATTERN
     POP DE
@@ -3560,6 +3605,9 @@ E2A_U1_SPRNUM EQU 0E65Eh
 E2A_U2_SPRNUM EQU 0E65Fh
 E2A_TEMP_SPRNUM EQU 0E660h
 E2A_ACTIVE EQU 0E661h
+E2A_ANIM_SEQ EQU 0E662h    ; shared (all 3 units) 1,2,3,2 quadrant-anim index,
+                           ; free RAM right after E2A_ACTIVE - see ECS_S7_A
+E2A_ANIM_TIMER EQU 0E663h
 E2B_SEQ_STATE EQU 0E680h
 E2B_EXIT_PHASE EQU 0E681h
 E2B_EXITTYPE EQU 0E682h
@@ -3595,6 +3643,8 @@ E2B_U1_SPRNUM EQU 0E6DEh
 E2B_U2_SPRNUM EQU 0E6DFh
 E2B_TEMP_SPRNUM EQU 0E6E0h
 E2B_ACTIVE EQU 0E6E1h
+E2B_ANIM_SEQ EQU 0E6E2h    ; same idea as E2A_ANIM_SEQ, free RAM after E2B_ACTIVE
+E2B_ANIM_TIMER EQU 0E6E3h
 
 ; --- Enemy4: sine-wave vertical bob while moving left fast, using ---
 ; --- the same asterisk sprite look as Enemy1/2 (built at spawn    ---
@@ -3881,8 +3931,10 @@ ESC_COMPLEX_INIT_A:
     NOP
     NOP
     NOP
-    LD HL,SPRPAT+256 : LD DE,E2A_U0_TOP : LD IX,E2A_U0_BOT
     EI
+    XOR A : LD (E2A_ANIM_SEQ),A : LD (E2A_ANIM_TIMER),A
+    LD HL,ASTERISK_PATTERN : LD (REDRAW_SRC_PATTERN),HL
+    LD HL,SPRPAT+256 : LD DE,E2A_U0_TOP : LD IX,E2A_U0_BOT
     CALL REDRAW_UNIT_PATTERN
     LD HL,SPRPAT+288 : LD DE,E2A_U1_TOP : LD IX,E2A_U1_BOT
     CALL REDRAW_UNIT_PATTERN
@@ -4065,8 +4117,10 @@ ESC_COMPLEX_INIT_B:
     NOP
     NOP
     NOP
-    LD HL,SPRPAT+416 : LD DE,E2B_U0_TOP : LD IX,E2B_U0_BOT
     EI
+    XOR A : LD (E2B_ANIM_SEQ),A : LD (E2B_ANIM_TIMER),A
+    LD HL,ASTERISK_PATTERN : LD (REDRAW_SRC_PATTERN),HL
+    LD HL,SPRPAT+416 : LD DE,E2B_U0_TOP : LD IX,E2B_U0_BOT
     CALL REDRAW_UNIT_PATTERN
     LD HL,SPRPAT+448 : LD DE,E2B_U1_TOP : LD IX,E2B_U1_BOT
     CALL REDRAW_UNIT_PATTERN
@@ -7867,15 +7921,20 @@ SIMPLE_PATTERN_NUM:
     RET
 
 ; Rebuilds a BEHAVIOR_SIMPLE_DRIFT_DODGE slot's owned VRAM sprite
-; pattern from its current TOP/BOT flags (mirrors the legacy per-unit
-; REDRAW_UNIT_PATTERN call sites). Input: HL = slot base address
-; (absolute), A = that slot's pattern-slot index (E_PARAM3). Tail-
-; calls into REDRAW_UNIT_PATTERN, which itself takes IX as an input
-; (the BOT-flag address) - callers that still need their own IX/slot
-; pointer afterward must save it themselves (see SIMPLE_SLOT_SCRATCH
-; use in EBSD_HIT_TEST). Trashes A,B,D,E,H,L,IX.
+; pattern from its current TOP/BOT flags and its own E_PARAM4 (1,2,3,2
+; quadrant-anim index - see ASTERISK_PATTERN2/3, EBSD_UPDATE) (mirrors
+; the legacy per-unit REDRAW_UNIT_PATTERN call sites). Input: HL =
+; slot base address (absolute), A = that slot's pattern-slot index
+; (E_PARAM3). Tail-calls into REDRAW_UNIT_PATTERN, which itself takes
+; IX as an input (the BOT-flag address) - callers that still need
+; their own IX/slot pointer afterward must save it themselves (see
+; SIMPLE_SLOT_SCRATCH use in EBSD_HIT_TEST). Trashes A,B,D,E,H,L,IX.
 SIMPLE_REDRAW:
     LD (SIMPLE_SLOT_SCRATCH),HL
+    PUSH AF
+    LD HL,(SIMPLE_SLOT_SCRATCH) : LD DE,E_PARAM4 : ADD HL,DE
+    CALL SET_REDRAW_SRC_FROM_SEQ
+    POP AF
     CALL SIMPLE_PATTERN_LOOKUP        ; A(idx) -> HL = vram addr
     PUSH HL
     LD HL,(SIMPLE_SLOT_SCRATCH)
@@ -9092,6 +9151,28 @@ ECS_S6_PREFILL_A:
     XOR A : LD (E2A_TRAIL_WIDX),A
     RET
 
+; Resets E2A_ANIM_SEQ to 0 (base frame) if it wasn't already, and
+; redraws all 3 units to match - called once the dive/climb ends.
+; Trashes A,B,D,E,H,L,IX.
+ECS_S7_A_ANIM_RESET:
+    LD A,(E2A_ANIM_SEQ)
+    OR A
+    RET Z
+    XOR A : LD (E2A_ANIM_SEQ),A
+    JP E2A_ANIM_REDRAW_ALL
+
+; Rebuilds all 3 of instance A's unit sprite patterns from the
+; current E2A_ANIM_SEQ frame. Trashes A,B,D,E,H,L,IX.
+E2A_ANIM_REDRAW_ALL:
+    LD HL,E2A_ANIM_SEQ : CALL SET_REDRAW_SRC_FROM_SEQ
+    LD HL,SPRPAT+256 : LD DE,E2A_U0_TOP : LD IX,E2A_U0_BOT
+    CALL REDRAW_UNIT_PATTERN
+    LD HL,SPRPAT+288 : LD DE,E2A_U1_TOP : LD IX,E2A_U1_BOT
+    CALL REDRAW_UNIT_PATTERN
+    LD HL,SPRPAT+320 : LD DE,E2A_U2_TOP : LD IX,E2A_U2_BOT
+    CALL REDRAW_UNIT_PATTERN
+    RET
+
 ; Once assembled and drifted, the formation stops moving as a rigid
 ; block: the leader (unit0) dives/climbs diagonally to the opposite
 ; vertical extreme, then flattens into a horizontal exit; units1/2
@@ -9102,6 +9183,21 @@ ECS_S7_A:
     LD A,(E2A_EXIT_PHASE)
     OR A
     JR NZ,ECS_S7_HORIZ_A
+
+    ; quadrant-glyph animation (1,2,3,2 repeating), shared across all
+    ; 3 units - see ECS_S7_RECORD_A's own trail-replay, they move
+    ; together with only a delay. Advances once every ENEMY2_ANIM_
+    ; FRAME_LEN frames while actively diving/climbing.
+    LD A,(E2A_ANIM_TIMER)
+    OR A
+    JR NZ,ECS_S7_A_ANIM_TICK
+    LD A,ENEMY2_ANIM_FRAME_LEN : LD (E2A_ANIM_TIMER),A
+    LD A,(E2A_ANIM_SEQ) : INC A : AND 3 : LD (E2A_ANIM_SEQ),A
+    CALL E2A_ANIM_REDRAW_ALL
+    JR ECS_S7_A_ANIM_DONE
+ECS_S7_A_ANIM_TICK:
+    DEC A : LD (E2A_ANIM_TIMER),A
+ECS_S7_A_ANIM_DONE:
 
     LD A,(E2A_U0_X) : ADD A,EXIT_SPEED : LD (E2A_U0_X),A
     LD A,(E2A_EXITTYPE)
@@ -9120,6 +9216,7 @@ ECS_S7_A:
     JR NC,ECS_S7_UPSTEP_A
     LD A,TOP_Y : LD (E2A_U0_Y),A
     LD A,1 : LD (E2A_EXIT_PHASE),A
+    CALL ECS_S7_A_ANIM_RESET
     JR ECS_S7_RECORD_A
 ECS_S7_UPSTEP_A:
     LD A,(E2A_U0_Y) : SUB EXIT_SPEED : LD (E2A_U0_Y),A
@@ -9132,6 +9229,7 @@ ECS_S7_DOWN_A:
     JR NC,ECS_S7_DOWNSTEP_A
     LD A,ENEMY_Y1 : LD (E2A_U0_Y),A
     LD A,1 : LD (E2A_EXIT_PHASE),A
+    CALL ECS_S7_A_ANIM_RESET
     JR ECS_S7_RECORD_A
 ECS_S7_DOWNSTEP_A:
     LD A,(E2A_U0_Y) : ADD A,EXIT_SPEED : LD (E2A_U0_Y),A
@@ -10510,6 +10608,28 @@ ECS_S6_PREFILL_B:
     XOR A : LD (E2B_TRAIL_WIDX),A
     RET
 
+; Resets E2B_ANIM_SEQ to 0 (base frame) if it wasn't already, and
+; redraws all 3 units to match - called once the dive/climb ends.
+; Trashes A,B,D,E,H,L,IX.
+ECS_S7_B_ANIM_RESET:
+    LD A,(E2B_ANIM_SEQ)
+    OR A
+    RET Z
+    XOR A : LD (E2B_ANIM_SEQ),A
+    JP E2B_ANIM_REDRAW_ALL
+
+; Rebuilds all 3 of instance B's unit sprite patterns from the
+; current E2B_ANIM_SEQ frame. Trashes A,B,D,E,H,L,IX.
+E2B_ANIM_REDRAW_ALL:
+    LD HL,E2B_ANIM_SEQ : CALL SET_REDRAW_SRC_FROM_SEQ
+    LD HL,SPRPAT+416 : LD DE,E2B_U0_TOP : LD IX,E2B_U0_BOT
+    CALL REDRAW_UNIT_PATTERN
+    LD HL,SPRPAT+448 : LD DE,E2B_U1_TOP : LD IX,E2B_U1_BOT
+    CALL REDRAW_UNIT_PATTERN
+    LD HL,SPRPAT+480 : LD DE,E2B_U2_TOP : LD IX,E2B_U2_BOT
+    CALL REDRAW_UNIT_PATTERN
+    RET
+
 ; Once assembled and drifted, the formation stops moving as a rigid
 ; block: the leader (unit0) dives/climbs diagonally to the opposite
 ; vertical extreme, then flattens into a horizontal exit; units1/2
@@ -10521,6 +10641,18 @@ ECS_S7_B:
     OR A
     JR NZ,ECS_S7_HORIZ_B
 
+    ; quadrant-glyph animation - see ECS_S7_A's own comment.
+    LD A,(E2B_ANIM_TIMER)
+    OR A
+    JR NZ,ECS_S7_B_ANIM_TICK
+    LD A,ENEMY2_ANIM_FRAME_LEN : LD (E2B_ANIM_TIMER),A
+    LD A,(E2B_ANIM_SEQ) : INC A : AND 3 : LD (E2B_ANIM_SEQ),A
+    CALL E2B_ANIM_REDRAW_ALL
+    JR ECS_S7_B_ANIM_DONE
+ECS_S7_B_ANIM_TICK:
+    DEC A : LD (E2B_ANIM_TIMER),A
+ECS_S7_B_ANIM_DONE:
+
     LD A,(E2B_U0_X) : ADD A,EXIT_SPEED : LD (E2B_U0_X),A
     LD A,(E2B_EXITTYPE)
     OR A
@@ -10531,6 +10663,7 @@ ECS_S7_B:
     JR NC,ECS_S7_UPSTEP_B
     LD A,TOP_Y : LD (E2B_U0_Y),A
     LD A,1 : LD (E2B_EXIT_PHASE),A
+    CALL ECS_S7_B_ANIM_RESET
     JR ECS_S7_RECORD_B
 ECS_S7_UPSTEP_B:
     LD A,(E2B_U0_Y) : SUB EXIT_SPEED : LD (E2B_U0_Y),A
@@ -10543,6 +10676,7 @@ ECS_S7_DOWN_B:
     JR NC,ECS_S7_DOWNSTEP_B
     LD A,ENEMY_Y1 : LD (E2B_U0_Y),A
     LD A,1 : LD (E2B_EXIT_PHASE),A
+    CALL ECS_S7_B_ANIM_RESET
     JR ECS_S7_RECORD_B
 ECS_S7_DOWNSTEP_B:
     LD A,(E2B_U0_Y) : ADD A,EXIT_SPEED : LD (E2B_U0_Y),A
@@ -10888,6 +11022,31 @@ EPUA_SKIP:
     DJNZ EPUA_LOOP
     RET
 
+; Enemy5 (TYPE_ENEMY1_LOOK) shares one static VRAM pattern block
+; (PAT_ENEMY1_LOOK) across every simultaneously-active instance - see
+; its own comment - so it can't have a per-instance 1,2,3,2 quadrant
+; anim the way Enemy1/2 do; instead every live Enemy5 shows the same
+; frame in lockstep, driven by this one global timer/index (unlike
+; Enemy1/2, this isn't gated on "currently moving vertically" -
+; BEHAVIOR_SINE_BOB is always bobbing whenever alive, so it just
+; free-runs continuously; a few redraws while no Enemy5 is on screen
+; are harmless). Called once/frame from MAINLOOP, not from EBSB_
+; UPDATE (which also drives ordinary Enemy4 - touching that would
+; wrongly animate Enemy4 too). Trashes A,B,D,E,H,L,IX.
+ENEMY5_ANIM_STEP:
+    LD A,(ENEMY5_ANIM_TIMER)
+    OR A
+    JR NZ,E5AS_TICK
+    LD A,ENEMY2_ANIM_FRAME_LEN : LD (ENEMY5_ANIM_TIMER),A
+    LD A,(ENEMY5_ANIM_SEQ) : INC A : AND 3 : LD (ENEMY5_ANIM_SEQ),A
+    LD HL,ENEMY5_ANIM_SEQ : CALL SET_REDRAW_SRC_FROM_SEQ
+    LD HL,PAT_ENEMY1_LOOK*8+SPRPAT : LD DE,ENEMY1_LOOK_FLAGS : LD IX,ENEMY1_LOOK_FLAGS+1
+    CALL REDRAW_UNIT_PATTERN
+    RET
+E5AS_TICK:
+    DEC A : LD (ENEMY5_ANIM_TIMER),A
+    RET
+
 ; BEHAVIOR_SINE_BOB: moves left at a fixed speed, steps a 32-entry
 ; sine LUT for a vertical bob around E_PARAM0 (this slot's base Y,
 ; fixed at spawn), and draws using E_TYPE's pattern/color - same
@@ -11057,6 +11216,7 @@ EBSD_DIAG_DIR_UP:
     LD A,0FFh
 EBSD_DIAG_DIR_SET:
     LD (IX+E_PARAM2),A          ; DIAG_DIR
+    XOR A : LD (IX+E_PARAM4),A : LD (IX+E_PARAM5),A  ; reset quadrant-anim seq/timer for this dodge
 EBSD_DIAG_SKIP_TRIGGER:
     LD A,(IX+E_PARAM1)
     OR A
@@ -11066,6 +11226,35 @@ EBSD_DIAG_SKIP_TRIGGER:
     LD A,(IX+E_Y)
     ADD A,B
     LD (IX+E_Y),A
+
+    ; quadrant-glyph animation (1,2,3,2 repeating - see ASTERISK_
+    ; PATTERN/2/3, ENEMY_ANIM_SEQ_TABLE), advances once every
+    ; ENEMY1_ANIM_FRAME_LEN frames while actively dodging, snaps
+    ; back to the base frame (seq0/ASTERISK_PATTERN) the instant the
+    ; dodge ends.
+    LD A,(IX+E_PARAM1)
+    JR NZ,EBSD_ANIM_STEP
+    LD A,(IX+E_PARAM4)
+    OR A
+    JR Z,EBSD_DRAW
+    XOR A : LD (IX+E_PARAM4),A
+    JR EBSD_ANIM_REDRAW
+EBSD_ANIM_STEP:
+    LD A,(IX+E_PARAM5)
+    OR A
+    JR NZ,EBSD_ANIM_TICK
+    LD A,(IX+E_PARAM4) : INC A : AND 3 : LD (IX+E_PARAM4),A
+    JR EBSD_ANIM_REDRAW
+EBSD_ANIM_TICK:
+    DEC A : LD (IX+E_PARAM5),A
+    JR EBSD_DRAW
+EBSD_ANIM_REDRAW:
+    LD A,ENEMY1_ANIM_FRAME_LEN : LD (IX+E_PARAM5),A
+    PUSH IX
+    PUSH IX : POP HL
+    LD A,(IX+E_PARAM3)
+    CALL SIMPLE_REDRAW
+    POP IX
 EBSD_DRAW:
     DI
     LD A,(IX+E_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
@@ -12175,6 +12364,22 @@ ASTERISK_PATTERN:
     DB 04h   ; .....X..
     DB 9Eh   ; X..XXXX.
     DB 7Fh   ; .XXXXXXX
+
+; Enemy1/2/5's shared quadrant animation, frame2 of 3 (from E1Anim.json,
+; top-right quadrant) - see ENEMY_ANIM_SEQ_TABLE for the 1,2,3,2 cycle.
+ASTERISK_PATTERN2:
+    DB 00h,7Eh,0FFh,1Bh,1Bh,0FFh,7Eh,00h
+
+; frame3 of 3 (E1Anim.json, bottom-left quadrant).
+ASTERISK_PATTERN3:
+    DB 00h,00h,00h,0FFh,0FFh,00h,00h,00h
+
+; Sequence index (0-3) -> glyph address, for the shared "1,2,3,2"
+; quadrant animation cycle: seq0=base, seq1=frame2, seq2=frame3,
+; seq3=frame2 again (then wraps back to seq0=base). Read via
+; SET_REDRAW_SRC_FROM_SEQ.
+ENEMY_ANIM_SEQ_TABLE:
+    DW ASTERISK_PATTERN, ASTERISK_PATTERN2, ASTERISK_PATTERN3, ASTERISK_PATTERN2
 
 ; Enemy1 4-frame animation pattern
 E1A_PATTERN:
