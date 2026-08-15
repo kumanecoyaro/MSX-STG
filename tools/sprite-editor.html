@@ -159,6 +159,7 @@
     position: relative;
     box-sizing: border-box;
     margin-top: 2px;
+    margin-bottom: 12px;
   }
   .cell {
     border: 1px solid var(--grid-line);
@@ -337,7 +338,7 @@
   }
 
   @media (max-width: 760px) {
-    body { flex-direction: column; gap: 16px; }
+    body { flex-direction: column; }
     /* height:auto, not a fixed vh - the square just needs to be as wide
        as the screen (see fitGrid's STACKED_MQ branch), whatever height
        that makes it. A vh cap here forced the square smaller than the
