@@ -414,6 +414,14 @@
 
     <div class="side-actions">
       <div class="btn-row">
+        <label class="btn-label" for="fileInput">Load JSON</label>
+        <input type="file" id="fileInput" accept=".json" hidden>
+        <div class="cell-info" id="cellInfo" title="Tap a placed cell on the grid to identify it - several types share the same icon">
+          <canvas class="cell-info-icon" id="cellInfoIcon"></canvas>
+          <span class="cell-info-text" id="cellInfoText"></span>
+        </div>
+      </div>
+      <div class="btn-row">
         <button class="primary" id="btnSave">Save JSON</button>
         <button class="danger-btn" id="btnErase">Erase</button>
         <button id="btnDeselect">Deselect</button>
@@ -421,14 +429,6 @@
         <div class="spacer"></div>
         <button class="half" id="btnPrev" title="Scroll back one screen (32 ticks)">◀</button>
         <button class="half" id="btnNext" title="Scroll forward one screen (32 ticks)">▶</button>
-      </div>
-      <div class="btn-row">
-        <label class="btn-label" for="fileInput">Load JSON</label>
-        <input type="file" id="fileInput" accept=".json" hidden>
-        <div class="cell-info" id="cellInfo" title="Tap a placed cell on the grid to identify it - several types share the same icon">
-          <canvas class="cell-info-icon" id="cellInfoIcon"></canvas>
-          <span class="cell-info-text" id="cellInfoText"></span>
-        </div>
       </div>
     </div>
 
