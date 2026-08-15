@@ -908,15 +908,16 @@
     gridSpacer.style.width = gridW + "px";
     var viewW = canvasScroll.clientWidth || gridW;
     var gctx = sizeCanvas(grid, viewW, gridH);
-    var rctx = sizeCanvas(ruler, gridW, RULER_H);
+    var rctx = sizeCanvas(ruler, viewW, RULER_H);
     var rgctx = sizeCanvas(rowGutter, GUTTER_W, gridH);
 
-    drawRuler(rctx, gridW, RULER_H);
+    drawRuler(rctx, viewW, RULER_H, canvasScroll.scrollLeft);
     drawRowGutter(rgctx, GUTTER_W, gridH);
     drawGrid(gctx, viewW, gridH, undefined, canvasScroll.scrollLeft);
   }
 
-  function drawRuler(ctx, w, h) {
+  function drawRuler(ctx, w, h, scrollX) {
+    scrollX = scrollX || 0;
     ctx.clearRect(0, 0, w, h);
     ctx.fillStyle = tok("--surface");
     ctx.fillRect(0, 0, w, h);
@@ -926,8 +927,10 @@
     // beginPath/stroke per tick mark was most of this function's cost.
     var regular = new Path2D(), strong = new Path2D();
     ctx.fillStyle = tok("--ink");
-    for (var t = 0; t <= MAX_TICK; t += 1) {
-      var x = t * CELL + 0.5;
+    var firstTick = Math.floor(scrollX / CELL);
+    var lastTick = Math.ceil((scrollX + w) / CELL) + 1;
+    for (var t = firstTick; t <= lastTick && t <= MAX_TICK; t += 1) {
+      var x = t * CELL - scrollX + 0.5;
       var isStrong = t % 32 === 0;
       var p = isStrong ? strong : regular;
       p.moveTo(x, h - (isStrong ? 10 : 5));
@@ -1684,6 +1687,9 @@
     var gctx = grid.getContext("2d");
     gctx.setTransform(DPR, 0, 0, DPR, 0, 0);
     drawGrid(gctx, canvasScroll.clientWidth, ROWS * CELL, skipIdx, canvasScroll.scrollLeft);
+    var rctx = ruler.getContext("2d");
+    rctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    drawRuler(rctx, canvasScroll.clientWidth, RULER_H, canvasScroll.scrollLeft);
   }
 
   // ---------- boot ----------
