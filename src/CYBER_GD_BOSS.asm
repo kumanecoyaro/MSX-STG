@@ -183,7 +183,6 @@ PAT_E1U3      EQU 72         ; unit3: patterns72-75 (32 bytes at SPRPAT+576)
 PAT_E1U4      EQU 76         ; unit4: patterns76-79 (32 bytes at SPRPAT+608)
 PAT_E1U5      EQU 80         ; unit5: patterns80-83 (32 bytes at SPRPAT+640)
 SPR_GRAY      EQU 0Eh
-SPR_LTGREEN   EQU 03h     ; sprite color: light green
 
 ; --- destroyed-quadrant explosion (background-character animation) ---
 ; 3 slots (round-robin), 8 bytes each: ACTIVE,PHASE,TIMER,ROW,COL,SAVED,CODE1,CODE2
@@ -3831,7 +3830,7 @@ ETT_SCORESEL EQU 3
 TYPE_ENEMY4       EQU 1
 TYPE_ENEMY1_LOOK  EQU 2   ; test: Enemy1's asterisk look running on Enemy4's movement
 ENEMY_TYPE_TABLE:
-    DB PAT_ENEMY4, SPR_LTGREEN, ENEMY4_HP, 2   ; TYPE_ENEMY4
+    DB PAT_ENEMY4, SPR_RED, ENEMY4_HP, 2        ; TYPE_ENEMY4
     DB PAT_ENEMY1_LOOK, SPR_GRAY, 1, 0         ; TYPE_ENEMY1_LOOK: 1-hit kill, 100pt score
 
 ; movement algorithm ids, dispatched by ENEMY_POOL_UPDATE_ALL and
@@ -12295,9 +12294,9 @@ ACCENT_PATTERN:
 ; unlike the shared asterisk quadrant system, this is a static image).
 ENEMY4_PATTERN:
     DB 00h,00h,00h,00h,00h,00h,00h,00h   ; top-left (blank)
-    DB 1Fh,2Fh,77h,F8h,77h,2Ah,1Fh,0Ah   ; bottom-left
+    DB 30h,64h,0FFh,07h,01h,2Ah,15h,00h  ; bottom-left
     DB 00h,00h,00h,00h,00h,00h,00h,00h   ; top-right (blank)
-    DB F8h,F4h,EEh,15h,FFh,AAh,FCh,A8h   ; bottom-right
+    DB 01h,06h,9Ch,0FFh,0FEh,7Ch,0Eh,03h ; bottom-right
 
 ; 2x2 lit block, top-left corner of the 16x16 - the flyaway trail
 ; particle. Small but clearly visible, unlike a single dot.
@@ -12308,14 +12307,14 @@ PARTICLE_PATTERN:
     DB 00h,00h,00h,00h,00h,00h,00h,00h
 
 ASTERISK_PATTERN:
-    DB 00h   ; ........
-    DB 18h   ; ...XX...
-    DB 99h   ; X..XX..X
-    DB 5Ah   ; .X.XX.X.
-    DB 3Ch   ; ..XXXX..
-    DB 5Ah   ; .X.XX.X.
-    DB 99h   ; X..XX..X
-    DB 00h   ; ........
+    DB 7Fh   ; .XXXXXXX
+    DB 9Eh   ; X..XXXX.
+    DB 04h   ; .....X..
+    DB 1Bh   ; ...XX.XX
+    DB 1Bh   ; ...XX.XX
+    DB 04h   ; .....X..
+    DB 9Eh   ; X..XXXX.
+    DB 7Fh   ; .XXXXXXX
 
 ; Destroyed-quadrant explosion: 2 static 8x8 frames (anim1 then
 ; anim2), each replicated into 4 character-code groups so its
