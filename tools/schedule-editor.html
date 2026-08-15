@@ -161,7 +161,7 @@
   /* Kept deliberately thin - the grid is the workspace, the sidebar is */
   /* just controls. Palette entries are small color chips (number+code, */
   /* the same glyph the grid itself draws for a placement) rather than  */
-  /* name+description cards, so 13 enemy types cost a few rows, not a   */
+  /* name+description cards, so 10 enemy types cost a few rows, not a   */
   /* scroll-hogging list. Full names live in the title attr + the       */
   /* one-line "armed" readout, not baked into every chip.               */
   aside {
@@ -257,6 +257,7 @@
     min-height: 0;
   }
   .pitem {
+    position: relative;
     width: 30px;
     height: 30px;
     flex: 0 0 auto;
@@ -487,6 +488,24 @@
       },
       color: "#74d07d"
     },
+    // Enemy6's 0deg spin frame (NEWENEMY_PATTERN_TL/TR/BL/BR) - unlike every
+    // other 16x16 entry here this is 4 BG tiles (2x2, not an MSX sprite), so
+    // it's opaque like enemy3: FG gray on the same BG dark-blue. quads keyed
+    // tl/bl/tr/br to match drawGlyph's paint offsets, values taken directly
+    // from the ASM's DB bytes (TL/BL rows0-7 checked byte-for-byte against a
+    // hand-drawn bit matrix that turned out to have several transcription
+    // errors past row 2 - the ASM bytes are the ground truth, not the matrix).
+    enemy6: {
+      size: 16,
+      quads: {
+        tl: [0x00, 0x2A, 0x6A, 0x0A, 0x7A, 0x02, 0x7E, 0x00],
+        bl: [0x7F, 0x03, 0x7F, 0x0F, 0x7F, 0x3F, 0x7F, 0x00],
+        tr: [0x00, 0xAA, 0xAE, 0xAE, 0xBE, 0xBE, 0xFE, 0xFE],
+        br: [0x7E, 0xBE, 0xDE, 0xEE, 0xF6, 0xFA, 0xFC, 0x00]
+      },
+      color: "#cccccc",
+      bg: "#5955e0"
+    },
   };
 
   // ---------- boss's real BG body (BOSS_PATTERNS/BOSS_MAP in the ASM) ----------
@@ -635,17 +654,18 @@
   // ---------- enemy palette (matches the current CYBER_GD_BOSS.asm schedule) ----------
   var TYPES = [
     { id: "simple",     name: "Simple (Enemy1)",  desc: "any row - dodge dir is decided from player Y at center", glyph: "asterisk16" },
-    { id: "e2a_top",    name: "Enemy2A — Top",    desc: "SPAWN_E2_TOP_A",   glyph: "asterisk16" },
-    { id: "e2a_bot",    name: "Enemy2A — Bottom", desc: "SPAWN_E2_BOT_A",   glyph: "asterisk16" },
-    { id: "e2b_top",    name: "Enemy2B — Top",    desc: "SPAWN_E2_TOP_B",   glyph: "asterisk16" },
-    { id: "e2b_bot",    name: "Enemy2B — Bottom", desc: "SPAWN_E2_BOT_B",   glyph: "asterisk16" },
+    // e2a_top/e2a_bot/e2b_top/e2b_bot used to be 4 distinct placeable types -
+    // A/B picked which of 2 independent RAM instances got claimed, Top/Bottom
+    // picked a fixed spawn Y (32/128). SPAWN_E2 (src/CYBER_GD_BOSS.asm) now
+    // reads baseY from SPAWN_BASEY_TABLE[row placed] - same any-row mechanism
+    // as enemy4/enemy5 below - and auto-claims whichever of A/B is free at
+    // spawn time, so neither axis is a real choice anymore: one placeable,
+    // any row, same as enemy4/enemy5.
+    { id: "enemy2",     name: "Enemy2",           desc: "SPAWN_E2 — baseY comes from SPAWN_BASEY_TABLE[row placed], any row; A/B instance (2 formations can run at once) is auto-assigned to whichever is free", glyph: "asterisk16" },
     { id: "enemy3_wave",name: "Enemy3 — Wave",    desc: "SPAWN_E3_WAVE (budget 32)", glyph: "enemy3" },
-    { id: "enemy4_y16", name: "Enemy4 — Top",     desc: "baseY 32 (fixed - row is just for editing)",  glyph: "enemy4" },
-    { id: "enemy4_y32", name: "Enemy4 — Mid",     desc: "baseY 64 (fixed - row is just for editing)",  glyph: "enemy4" },
-    { id: "enemy4_y48", name: "Enemy4 — Bottom",  desc: "baseY 72 (fixed - row is just for editing)",  glyph: "enemy4" },
-    { id: "enemy5_y16", name: "Enemy5 — Top",     desc: "TYPE_ENEMY1_LOOK, fixed Y - row is just for editing", glyph: "asterisk16" },
-    { id: "enemy5_y32", name: "Enemy5 — Mid",     desc: "TYPE_ENEMY1_LOOK, fixed Y - row is just for editing", glyph: "asterisk16" },
-    { id: "enemy5_y48", name: "Enemy5 — Bottom",  desc: "TYPE_ENEMY1_LOOK, fixed Y - row is just for editing", glyph: "asterisk16" },
+    { id: "enemy4",      name: "Enemy4",           desc: "SPAWN_E4 — baseY comes from SPAWN_BASEY_TABLE[row placed], any row", glyph: "enemy4" },
+    { id: "enemy5",      name: "Enemy5",           desc: "SPAWN_E4B, TYPE_ENEMY1_LOOK — baseY comes from SPAWN_BASEY_TABLE[row placed], any row", glyph: "asterisk16" },
+    { id: "enemy6",      name: "Enemy6",           desc: "NEW - BG-tile spin (0/90/180/270°); placement staged here, not yet wired into SPAWN_THRESHOLDS/SSC_FIRE", glyph: "enemy6" },
     { id: "boss",       name: "Boss",             desc: "BOSS_SPAWN - fixed position, row/tick here are just for editing", glyph: null }
   ];
   var TYPE_BY_ID = {};
@@ -653,7 +673,7 @@
 
   // ---------- geometry ----------
   var ROWS = 24;
-  var MAX_TICK = 400; // scrollable canvas width in cells; game currently uses up to ~270
+  var MAX_TICK = 999; // scrollable canvas width in cells; game currently uses up to ~270
   var GUTTER_W = 30;
   var RULER_H = 22;
   var CELL = 26; // recomputed in layout() so all 24 rows always fit vertically
@@ -886,17 +906,19 @@
     // ever sized to the visible viewport, redrawn on scroll instead of
     // pre-rendering the whole thing. See drawGrid's scrollX comment.
     gridSpacer.style.width = gridW + "px";
+    console.log("layout:", {MAX_TICK, CELL, gridW, "gridSpacer.style.width": gridSpacer.style.width});
     var viewW = canvasScroll.clientWidth || gridW;
     var gctx = sizeCanvas(grid, viewW, gridH);
-    var rctx = sizeCanvas(ruler, gridW, RULER_H);
+    var rctx = sizeCanvas(ruler, viewW, RULER_H);
     var rgctx = sizeCanvas(rowGutter, GUTTER_W, gridH);
 
-    drawRuler(rctx, gridW, RULER_H);
+    drawRuler(rctx, viewW, RULER_H, canvasScroll.scrollLeft);
     drawRowGutter(rgctx, GUTTER_W, gridH);
     drawGrid(gctx, viewW, gridH, undefined, canvasScroll.scrollLeft);
   }
 
-  function drawRuler(ctx, w, h) {
+  function drawRuler(ctx, w, h, scrollX) {
+    scrollX = scrollX || 0;
     ctx.clearRect(0, 0, w, h);
     ctx.fillStyle = tok("--surface");
     ctx.fillRect(0, 0, w, h);
@@ -906,8 +928,10 @@
     // beginPath/stroke per tick mark was most of this function's cost.
     var regular = new Path2D(), strong = new Path2D();
     ctx.fillStyle = tok("--ink");
-    for (var t = 0; t <= MAX_TICK; t += 1) {
-      var x = t * CELL + 0.5;
+    var firstTick = Math.floor(scrollX / CELL);
+    var lastTick = Math.ceil((scrollX + w) / CELL) + 1;
+    for (var t = firstTick; t <= lastTick && t <= MAX_TICK; t += 1) {
+      var x = t * CELL - scrollX + 0.5;
       var isStrong = t % 32 === 0;
       var p = isStrong ? strong : regular;
       p.moveTo(x, h - (isStrong ? 10 : 5));
@@ -1603,6 +1627,21 @@
     if (ev.target === saveOverlay) saveOverlay.classList.remove("show");
   });
 
+  // enemy4/enemy5 used to be split into 3 palette entries each
+  // (_y16/_y32/_y48, picking a Top/Mid/Bottom baseY) before SPAWN_E4/SPAWN_E4B
+  // switched to reading baseY from SPAWN_BASEY_TABLE[row placed] for any row -
+  // see SPAWN_E4's comment in CYBER_GD_BOSS.asm. Enemy2 went through the same
+  // collapse (e2a_top/e2a_bot/e2b_top/e2b_bot -> enemy2) once SPAWN_E2 started
+  // reading baseY the same way and auto-picking its A/B RAM instance instead
+  // of the caller choosing one. None of these splits affect anything in-game
+  // anymore, but old saved JSON can still contain the old ids, so remap them
+  // here rather than silently dropping those placements on load.
+  var LEGACY_TYPE_ALIASES = {
+    enemy4_y16: "enemy4", enemy4_y32: "enemy4", enemy4_y48: "enemy4",
+    enemy5_y16: "enemy5", enemy5_y32: "enemy5", enemy5_y48: "enemy5",
+    e2a_top: "enemy2", e2a_bot: "enemy2", e2b_top: "enemy2", e2b_bot: "enemy2"
+  };
+
   // Returns a status message rather than showing it - callers decide
   // where that's safe to display. Loading a file is not an edit, so it
   // doesn't touch the undo history - it wouldn't make sense to "undo"
@@ -1610,7 +1649,11 @@
   function importJSONText(text) {
     var data = JSON.parse(text);
     if (!Array.isArray(data.placements)) throw new Error("no placements array");
-    var valid = data.placements.filter(function (p) {
+    var remapped = data.placements.map(function (p) {
+      var alias = p && LEGACY_TYPE_ALIASES[p.type];
+      return alias ? Object.assign({}, p, { type: alias }) : p;
+    });
+    var valid = remapped.filter(function (p) {
       return TYPE_BY_ID[p.type] && Number.isInteger(p.tick) && Number.isInteger(p.row);
     });
     placements = valid;
@@ -1645,6 +1688,9 @@
     var gctx = grid.getContext("2d");
     gctx.setTransform(DPR, 0, 0, DPR, 0, 0);
     drawGrid(gctx, canvasScroll.clientWidth, ROWS * CELL, skipIdx, canvasScroll.scrollLeft);
+    var rctx = ruler.getContext("2d");
+    rctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    drawRuler(rctx, canvasScroll.clientWidth, RULER_H, canvasScroll.scrollLeft);
   }
 
   // ---------- boot ----------
