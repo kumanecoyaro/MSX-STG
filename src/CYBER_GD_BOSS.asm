@@ -592,14 +592,26 @@ ENEMY3_CENTERX_TABLE EQU 0EE98h
 ; --- any row via ENEMY6_ROW_TABLE - same "any row" idea as SPAWN_E4/  ---
 ; --- SPAWN_BASEY_TABLE, just a raw row number instead of a pixel      ---
 ; --- baseY since ENEMY6_POOL already tracks ROW as a row, not a Y).   ---
-ENEMY6_SLOTS  EQU 4
+; --- It's BG cells, not hardware sprites, so it isn't subject to the  ---
+; --- MSX1 sprite-per-scanline limits Enemy3 (also BG-cell) already    ---
+; --- gets to ignore - matches ENEMY3_SLOTS's budget-32 headroom.      ---
+ENEMY6_SLOTS  EQU 32
 ENEMY6_STRUCT EQU 4             ; ACTIVE,ROW,COL,PHASE (COL = left column of the 2-wide glyph;
                                  ; PHASE = 0/1/2/3, index into ENEMY6_ANIM_CODES - advances
                                  ; one step every 1-cell move, see ENEMY6_STEP_ONE)
-ENEMY6_POOL   EQU 0EF00h        ; ENEMY6_SLOTS*ENEMY6_STRUCT = 16 bytes
+; Relocated off EF00h (originally right after ENEMY3_CENTERX_TABLE) to
+; F158h, clear of that table's real footprint - ENEMY3_CENTERX_TABLE
+; is addressed by (slot ptr - ENEMY3_POOL) + ENEMY3_CENTERX_TABLE (see
+; ENEMY3_CENTERX_ADDR), i.e. it spans the SAME 704 bytes as ENEMY3_POOL
+; itself (EE98h-F157h), not just the 64 bytes its data actually needs -
+; EF00h sat inside that span, byte-aliasing this pool against whichever
+; enemy3 wave/unit's own X-offset landed on the same byte. Growing this
+; pool 4->32 slots would only have made that collision worse, so it
+; moves out to genuinely free RAM instead of just resizing in place.
+ENEMY6_POOL   EQU 0F158h        ; ENEMY6_SLOTS*ENEMY6_STRUCT = 128 bytes (F158h-F1D7h)
 ENEMY6_SPAWN_COL    EQU 30      ; matches ENEMY_SPAWNX/ENEMY4_SPAWNX(240) = col30
 ENEMY6_STEP_FRAMES  EQU 1       ; frames held per 1-column step (1 = fastest possible: every frame)
-ENEMY6_STEP_TIMER   EQU 0EF10h  ; shared countdown to the next 1-column step
+ENEMY6_STEP_TIMER   EQU 0F1D8h  ; shared countdown to the next 1-column step
 
     DB "AB"
     DW INIT
@@ -12652,7 +12664,7 @@ E6H_NO:
     RET
 
 ; Input: B = bullet col, C = bullet row. Output: A=1 if the bullet
-; destroyed an ENEMY6 instance, else 0. Only ENEMY6_SLOTS(4) slots to
+; destroyed an ENEMY6 instance, else 0. Only ENEMY6_SLOTS(32) slots to
 ; scan, so (unlike ENEMY3/ENEMY_POOL) this skips an active-count
 ; short-circuit. Preserves the caller's B,C across the whole scan
 ; (its own loop reuses B as the DJNZ counter).
