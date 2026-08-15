@@ -11952,8 +11952,8 @@ ACCENT_PATTERN:
 ; unlike the shared asterisk quadrant system, this is a static image).
 ENEMY4_PATTERN:
     DB 00h,00h,00h,00h,00h,00h,00h,00h   ; top-left
-    DB 00h,00h,00h,00h,00h,00h,00h,00h   ; top-right
     DB 30h,64h,FFh,07h,01h,2Ah,15h,00h   ; bottom-left
+    DB 00h,00h,00h,00h,00h,00h,00h,00h   ; top-right
     DB 01h,06h,9Ch,FFh,FEh,7Ch,0Eh,03h   ; bottom-right
 
 ; 2x2 lit block, top-left corner of the 16x16 - the flyaway trail
@@ -11977,27 +11977,27 @@ ASTERISK_PATTERN:
 ; Enemy1 4-frame animation pattern
 E1A_PATTERN:
     DB 7Fh,9Eh,04h,1Bh,1Bh,04h,9Eh,7Fh   ; top-left
-    DB 00h,7Eh,FFh,1Bh,1Bh,FFh,7Eh,00h   ; top-right
     DB 00h,00h,00h,FFh,FFh,00h,00h,00h   ; bottom-left
+    DB 00h,7Eh,FFh,1Bh,1Bh,FFh,7Eh,00h   ; top-right
     DB 00h,7Eh,FFh,1Bh,1Bh,FFh,7Eh,00h   ; bottom-right
 
 ; Ship animation patterns
 SHIP_UP_PATTERN:
     DB 00h,00h,00h,00h,F0h,7Eh,1Fh,7Fh   ; top-left
-    DB 00h,00h,00h,00h,00h,00h,80h,E0h   ; top-right
     DB AFh,D5h,AAh,D5h,AAh,D7h,68h,30h   ; bottom-left
+    DB 00h,00h,00h,00h,00h,00h,80h,E0h   ; top-right
     DB F8h,54h,AAh,5Fh,E1h,00h,00h,00h   ; bottom-right
 
 SHIP_MID_PATTERN:
     DB 00h,00h,E0h,38h,7Ch,0Fh,3Fh,FFh   ; top-left
-    DB 00h,00h,00h,00h,00h,00h,C0h,F0h   ; top-right
     DB 80h,7Fh,D5h,80h,7Fh,B0h,00h,00h   ; bottom-left
+    DB 00h,00h,00h,00h,00h,00h,C0h,F0h   ; top-right
     DB C8h,74h,BEh,1Fh,F1h,00h,00h,00h   ; bottom-right
 
 SHIP_DOWN_PATTERN:
     DB 00h,00h,00h,E0h,78h,FEh,F3h,87h   ; top-left
-    DB 00h,00h,00h,00h,00h,00h,00h,C0h   ; top-right
     DB FFh,FFh,81h,7Eh,7Fh,8Ch,F0h,C0h   ; bottom-left
+    DB 00h,00h,00h,00h,00h,00h,00h,C0h   ; top-right
     DB 88h,C4h,FEh,FFh,01h,00h,00h,00h   ; bottom-right
 
 ; Destroyed-quadrant explosion: 2 static 8x8 frames (anim1 then
