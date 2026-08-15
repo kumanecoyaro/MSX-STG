@@ -77,8 +77,12 @@ RG1SAV      EQU 0F3E0h  ; RAM mirror of VDP register 1
 SPRATR      EQU 1B00h   ; sprite attribute table (VRAM, BIOS default for SCREEN1)
 SPRPAT      EQU 3800h   ; sprite pattern generator table (VRAM, BIOS default)
 
-PAT_SHIP    EQU 0       ; 16x16 sprite pattern number (32 bytes at SPRPAT+0)
+PAT_SHIP    EQU 0       ; 16x16 sprite pattern number (32 bytes at SPRPAT+0);
+                        ; holds SHIP_MID_PATTERN (level flight) - see PLAYER_SHIP_PAT
 PAT_ACCENT  EQU 16      ; 16x16 accent overlay, drawn at ship_X+8 (32 bytes at SPRPAT+128)
+PAT_SHIP_UP   EQU 112   ; SHIP_UP_PATTERN, shown while climbing (32 bytes at SPRPAT+896;
+                        ; free range between EXPLOSION_PATNUM's 108-111 and PAT_PARTICLE's 120)
+PAT_SHIP_DOWN EQU 116   ; SHIP_DOWN_PATTERN, shown while diving (32 bytes at SPRPAT+928)
 
 SPR_RED     EQU 08h     ; sprite color: red
 SPR_WHITE   EQU 0Fh     ; sprite color: white
@@ -134,6 +138,10 @@ M_TMP EQU 0E3D7h ; scratch: PLAYERY mod 8 during spawn calc
 
 PLAYERX      EQU 0E3C0h
 PLAYERY      EQU 0E3C1h
+PLAYER_SHIP_PAT EQU 0EF11h ; this frame's ship sprite pattern number (PAT_SHIP/
+                            ; PAT_SHIP_UP/PAT_SHIP_DOWN) - set from JOY_STICK
+                            ; right after the movement dispatch, read back at
+                            ; the sprite-attribute write further down
 ; each bullet: ACT(active flag), ADDR(2 bytes: VRAM address of its
 ; row's column0, low byte then high byte so LD HL,(ADDR) loads
 ; both), COL(0-31, current column), ROW(0-23, fixed at spawn - used
@@ -888,6 +896,7 @@ INIT_SPRATR_CLR:
     ; --- player initial state ---
     LD A,PLAYER_INITX : LD (PLAYERX),A
     LD A,PLAYER_INITY : LD (PLAYERY),A
+    LD A,PAT_SHIP : LD (PLAYER_SHIP_PAT),A
     XOR A
     LD (BULLET0_ACT),A : LD (BULLET1_ACT),A : LD (BULLET2_ACT),A
     LD (JOY_TRIGB_PREV),A
@@ -914,6 +923,8 @@ INIT_SPRATR_CLR:
     CALL ENEMY_POOL_INIT
     LD HL,ENEMY4_PATTERN : LD DE,PAT_ENEMY4*8+SPRPAT : LD BC,32 : CALL LDIRVM
     LD HL,SHIP_MID_PATTERN : LD DE,PAT_SHIP*8+SPRPAT : LD BC,32 : CALL LDIRVM
+    LD HL,SHIP_UP_PATTERN : LD DE,PAT_SHIP_UP*8+SPRPAT : LD BC,32 : CALL LDIRVM
+    LD HL,SHIP_DOWN_PATTERN : LD DE,PAT_SHIP_DOWN*8+SPRPAT : LD BC,32 : CALL LDIRVM
     LD HL,E1A_PATTERN : LD DE,PAT_ENEMY1*8+SPRPAT : LD BC,32 : CALL LDIRVM
     LD HL,PARTICLE_PATTERN : LD DE,PAT_PARTICLE*8+SPRPAT : LD BC,32 : CALL LDIRVM
     LD A,1 : LD (ENEMY1_LOOK_FLAGS),A : LD (ENEMY1_LOOK_FLAGS+1),A
@@ -1716,6 +1727,29 @@ DIR_UPLEFT:
     CALL MOVE_UP : CALL MOVE_LEFT
 DIR_DONE:
 
+    ; pick this frame's ship sprite frame from the raw stick direction
+    ; (not from PLAYERY's own clamped movement, so bumping the MINY/
+    ; MAXY ceiling still shows the tilt even though the ship stops
+    ; moving) - done here, before the timing-critical VDP write block
+    ; below, since the CP/JR chain's variable branch cost would throw
+    ; off that block's fixed NOP-padded OUT spacing.
+    LD A,(JOY_STICK)
+    CP 1 : JR Z,SHIPFR_UP
+    CP 2 : JR Z,SHIPFR_UP
+    CP 8 : JR Z,SHIPFR_UP
+    CP 4 : JR Z,SHIPFR_DOWN
+    CP 5 : JR Z,SHIPFR_DOWN
+    CP 6 : JR Z,SHIPFR_DOWN
+    LD A,PAT_SHIP
+    JR SHIPFR_GOT
+SHIPFR_UP:
+    LD A,PAT_SHIP_UP
+    JR SHIPFR_GOT
+SHIPFR_DOWN:
+    LD A,PAT_SHIP_DOWN
+SHIPFR_GOT:
+    LD (PLAYER_SHIP_PAT),A
+
     ; redraw ship: slot1=body, slot0=accent overlay (priority above ---
     ; body, drawn at PLAYERX+8, PLAYERY)
     DI
@@ -1755,7 +1789,7 @@ DIR_DONE:
     NOP
     NOP
     NOP
-    LD A,PAT_SHIP : OUT (98h),A
+    LD A,(PLAYER_SHIP_PAT) : OUT (98h),A
     NOP
     NOP
     NOP
@@ -12260,9 +12294,10 @@ E1A_PATTERN:
     DB 00h,00h,00h,00h,00h,00h,00h,00h   ; top-right
     DB 00h,00h,00h,00h,00h,00h,00h,00h   ; bottom-right
 
-; Ship animation patterns (from the Sprite Editor's newer ship design;
-; only MID is actually loaded/used for now - UP/DOWN are here for a
-; later pass that swaps frames with vertical movement)
+; Ship animation patterns (from the Sprite Editor's newer ship design).
+; MID/UP/DOWN load into PAT_SHIP/PAT_SHIP_UP/PAT_SHIP_DOWN at INIT;
+; PLAYER_SHIP_PAT picks which one to draw each frame from JOY_STICK
+; (see DIR_DONE, just before the sprite-attribute redraw block).
 SHIP_UP_PATTERN:
     DB 00h,00h,00h,00h,F0h,7Eh,1Fh,7Fh   ; top-left
     DB AFh,D5h,AAh,D5h,AAh,D7h,68h,30h   ; bottom-left
