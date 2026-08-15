@@ -906,6 +906,7 @@
     // ever sized to the visible viewport, redrawn on scroll instead of
     // pre-rendering the whole thing. See drawGrid's scrollX comment.
     gridSpacer.style.width = gridW + "px";
+    console.log("layout:", {MAX_TICK, CELL, gridW, "gridSpacer.style.width": gridSpacer.style.width});
     var viewW = canvasScroll.clientWidth || gridW;
     var gctx = sizeCanvas(grid, viewW, gridH);
     var rctx = sizeCanvas(ruler, viewW, RULER_H);
