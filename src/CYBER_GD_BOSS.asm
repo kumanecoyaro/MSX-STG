@@ -11977,9 +11977,9 @@ ASTERISK_PATTERN:
 ; Enemy1 4-frame animation pattern
 E1A_PATTERN:
     DB 7Fh,9Eh,04h,1Bh,1Bh,04h,9Eh,7Fh   ; top-left
-    DB 00h,00h,00h,FFh,FFh,00h,00h,00h   ; bottom-left
-    DB 00h,7Eh,FFh,1Bh,1Bh,FFh,7Eh,00h   ; top-right
-    DB 00h,7Eh,FFh,1Bh,1Bh,FFh,7Eh,00h   ; bottom-right
+    DB 00h,00h,00h,00h,00h,00h,00h,00h   ; bottom-left
+    DB 00h,00h,00h,00h,00h,00h,00h,00h   ; top-right
+    DB 00h,00h,00h,00h,00h,00h,00h,00h   ; bottom-right
 
 ; Ship animation patterns
 SHIP_UP_PATTERN:
