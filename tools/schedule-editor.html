@@ -1614,14 +1614,19 @@
     saveFilenameInput.select();
   });
 
-  // Published Artifact: goes through window.claude.downloads (blob/<a download>
-  // is inert in that sandbox). Run locally (file:// or any plain static host,
-  // no Claude frame runtime): window.claude doesn't exist at all, so fall back
-  // to the classic Blob + <a download> click, which works fine outside the
-  // sandbox.
-  function doSaveViaBlobLink(filename) {
+  // Three save paths, tried in order:
+  //  1. Web Share (navigator.share with a File) - hands off to the OS share
+  //     sheet ("Save to Files"/Drive/etc on Android). Not a "download" as
+  //     far as the browser is concerned, so it isn't subject to the
+  //     download-manager restrictions the other two paths can silently
+  //     fail under (repeat-download blocking, the Artifact sandbox).
+  //  2. window.claude.downloads - inside a published Artifact, where plain
+  //     <a download> is inert.
+  //  3. Blob + <a download> click - plain local/static hosting, no Claude
+  //     frame runtime, no window.claude at all.
+  function doSaveViaBlobLink(filename, jsonStr) {
     try {
-      var blob = new Blob([currentJSON()], { type: "application/json" });
+      var blob = new Blob([jsonStr], { type: "application/json" });
       var url = URL.createObjectURL(blob);
       var a = document.createElement("a");
       a.href = url;
@@ -1638,13 +1643,8 @@
     }
   }
 
-  function doSave() {
-    var filename = saveFilenameInput.value.trim() || "Schedule.json";
-    if (!window.claude || !window.claude.downloads) {
-      doSaveViaBlobLink(filename);
-      return;
-    }
-    window.claude.downloads.save({ filename: filename, data: currentJSON() }).then(
+  function doSaveViaDownloadsCapability(filename, jsonStr) {
+    window.claude.downloads.save({ filename: filename, data: jsonStr }).then(
       function () {
         saveOverlay.classList.remove("show");
         flash("saved " + filename);
@@ -1655,6 +1655,37 @@
         saveStatus.classList.remove("ok");
       }
     );
+  }
+
+  function doSaveViaDownloadOrBlob(filename, jsonStr) {
+    if (window.claude && window.claude.downloads) {
+      doSaveViaDownloadsCapability(filename, jsonStr);
+    } else {
+      doSaveViaBlobLink(filename, jsonStr);
+    }
+  }
+
+  function doSave() {
+    var filename = saveFilenameInput.value.trim() || "Schedule.json";
+    var jsonStr = currentJSON();
+
+    var file = null;
+    try { file = new File([jsonStr], filename, { type: "application/json" }); } catch (e) {}
+    if (file && navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
+      navigator.share({ files: [file] }).then(
+        function () {
+          saveOverlay.classList.remove("show");
+          flash("saved " + filename);
+        },
+        function (err) {
+          if (err && err.name === "AbortError") { saveOverlay.classList.remove("show"); flash("save cancelled"); return; }
+          doSaveViaDownloadOrBlob(filename, jsonStr);
+        }
+      );
+      return;
+    }
+
+    doSaveViaDownloadOrBlob(filename, jsonStr);
   }
 
   function copyToClipboard(text, successMsg) {
