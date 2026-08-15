@@ -12929,12 +12929,12 @@ BLANK_PATTERN:
 ; groups 6-31 (codes 48-255, unused by this scroller) are filled
 ; with a harmless placeholder color.
 COLORDATA:
-    DB 0F4h    ; group0 codes  0- 7 mountain family (white/blue, new design)
-    DB C3h    ; group1 codes  8-15 diamond family
-    DB C3h    ; group2 codes 16-23 slash family
-    DB C3h    ; group3 codes 24-31 backslash family
-    DB 0A2h    ; group4 codes 32-39 wedge family (brown/green, new design)
-    DB 0A2h    ; group5 codes 40-47 wedge family (brown/green, new design)
+    DB 0F4h    ; group0 codes  0- 7 mountain family (white/blue, cloud design)
+    DB 0F4h    ; group1 codes  8-15 diamond family (white/blue, cloud design)
+    DB 0F4h    ; group2 codes 16-23 slash family (white/blue, cloud design)
+    DB 0F4h    ; group3 codes 24-31 backslash family (unused, matched anyway)
+    DB 0F4h    ; group4 codes 32-39 wedge family (white/blue, cloud design)
+    DB 0F4h    ; group5 codes 40-47 wedge family (white/blue, cloud design)
     DB 44h,0D4h,0D3h,0DFh,0DAh,0F4h,0FFh,0F3h,0FAh,084h  ; group6=BLANKCODE, group7=shot-blue, group8=shot-green, group9=shot-white, group10=shot-brown, group11=anim1-blue(white/blue, DEBUG was yellow), group12=anim1-white(white/white, DEBUG), group13=anim1-green(white/lightgreen, DEBUG), group14=anim1-brown(white/brown, DEBUG), group15=anim2-blue(red/blue)
     DB 08Fh,083h,08Ah,0E4h,0E4h,0E8h,0F1h,0F1h,0E4h,0E4h  ; group16=anim2-white, group17=anim2-green, group18=anim2-brown, group19=enemy3-pat1(gray/blue), group20=enemy3-pat2(gray/blue), group21=enemy3-pat3(gray/red), group22=digits0-7(white/black), group23=digits8-9(white/black), group24=BOSS gray/blue, group25=BOSS gray/blue
     DB 0E4h,0E4h,014h,014h,014h,084h                       ; group26=BOSS gray/blue, group27=BOSS gray/blue, group28-30=BOSS black/blue, group31=BOSS red/blue
