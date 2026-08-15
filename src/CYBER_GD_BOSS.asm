@@ -12032,10 +12032,10 @@ ANIM_PATTERNS:
 ; arrives), PAT_TEMP_BOT shows just the bottom-right one (used by a
 ; spare/transient sprite slot for the second quadrant's arrival).
 TEMP_SPRITE_PATTERNS:
-    DB 00h,18h,99h,5Ah,3Ch,5Ah,99h,00h   ; top-left = asterisk
+    DB 7Fh,9Eh,04h,1Bh,1Bh,04h,9Eh,7Fh   ; top-left = asterisk
     DS 24,0
     DS 24,0
-    DB 00h,18h,99h,5Ah,3Ch,5Ah,99h,00h   ; bottom-right = asterisk
+    DB 7Fh,9Eh,04h,1Bh,1Bh,04h,9Eh,7Fh   ; bottom-right = asterisk
 
 ; enemy3: 3-frame pulsing animation, gray fg. Patterns1/2 use a
 ; fixed sky-blue bg (they never need row-matching since the whole
