@@ -11953,8 +11953,8 @@ ACCENT_PATTERN:
 ENEMY4_PATTERN:
     DB 00h,00h,00h,00h,00h,00h,00h,00h   ; top-left
     DB 00h,00h,00h,00h,00h,00h,00h,00h   ; top-right
-    DB 0Ch,26h,FFh,E0h,80h,54h,A8h,00h   ; bottom-left
-    DB 80h,60h,39h,FFh,7Fh,3Eh,70h,C0h   ; bottom-right
+    DB 30h,64h,FFh,07h,01h,2Ah,15h,00h   ; bottom-left
+    DB 01h,06h,9Ch,FFh,FEh,7Ch,0Eh,03h   ; bottom-right
 
 ; 2x2 lit block, top-left corner of the 16x16 - the flyaway trail
 ; particle. Small but clearly visible, unlike a single dot.
@@ -11976,29 +11976,29 @@ ASTERISK_PATTERN:
 
 ; Enemy1 4-frame animation pattern
 E1A_PATTERN:
-    DB FEh,79h,20h,D8h,D8h,20h,79h,FEh   ; top-left
-    DB 00h,7Eh,FFh,D8h,D8h,FFh,7Eh,00h   ; top-right
+    DB 7Fh,9Eh,04h,1Bh,1Bh,04h,9Eh,7Fh   ; top-left
+    DB 00h,7Eh,FFh,1Bh,1Bh,FFh,7Eh,00h   ; top-right
     DB 00h,00h,00h,FFh,FFh,00h,00h,00h   ; bottom-left
-    DB 00h,7Eh,FFh,D8h,D8h,FFh,7Eh,00h   ; bottom-right
+    DB 00h,7Eh,FFh,1Bh,1Bh,FFh,7Eh,00h   ; bottom-right
 
 ; Ship animation patterns
 SHIP_UP_PATTERN:
-    DB 00h,00h,00h,00h,0Fh,7Eh,F8h,FEh   ; top-left
-    DB 00h,00h,00h,00h,00h,00h,01h,07h   ; top-right
-    DB F5h,ABh,55h,ABh,55h,EBh,16h,0Ch   ; bottom-left
-    DB 1Fh,2Ah,55h,FAh,87h,00h,00h,00h   ; bottom-right
+    DB 00h,00h,00h,00h,F0h,7Eh,1Fh,7Fh   ; top-left
+    DB 00h,00h,00h,00h,00h,00h,80h,E0h   ; top-right
+    DB AFh,D5h,AAh,D5h,AAh,D7h,68h,30h   ; bottom-left
+    DB F8h,54h,AAh,5Fh,E1h,00h,00h,00h   ; bottom-right
 
 SHIP_MID_PATTERN:
-    DB 00h,00h,07h,1Ch,3Eh,F0h,FCh,FFh   ; top-left
-    DB 00h,00h,00h,00h,00h,00h,03h,0Fh   ; top-right
-    DB 01h,FEh,ABh,01h,FEh,0Dh,00h,00h   ; bottom-left
-    DB 13h,2Eh,7Dh,F8h,8Fh,00h,00h,00h   ; bottom-right
+    DB 00h,00h,E0h,38h,7Ch,0Fh,3Fh,FFh   ; top-left
+    DB 00h,00h,00h,00h,00h,00h,C0h,F0h   ; top-right
+    DB 80h,7Fh,D5h,80h,7Fh,B0h,00h,00h   ; bottom-left
+    DB C8h,74h,BEh,1Fh,F1h,00h,00h,00h   ; bottom-right
 
 SHIP_DOWN_PATTERN:
-    DB 00h,00h,00h,07h,1Eh,7Fh,CFh,E1h   ; top-left
-    DB 00h,00h,00h,00h,00h,00h,00h,03h   ; top-right
-    DB FFh,FFh,81h,7Eh,FEh,31h,0Fh,03h   ; bottom-left
-    DB 11h,23h,7Fh,FFh,80h,00h,00h,00h   ; bottom-right
+    DB 00h,00h,00h,E0h,78h,FEh,F3h,87h   ; top-left
+    DB 00h,00h,00h,00h,00h,00h,00h,C0h   ; top-right
+    DB FFh,FFh,81h,7Eh,7Fh,8Ch,F0h,C0h   ; bottom-left
+    DB 88h,C4h,FEh,FFh,01h,00h,00h,00h   ; bottom-right
 
 ; Destroyed-quadrant explosion: 2 static 8x8 frames (anim1 then
 ; anim2), each replicated into 4 character-code groups so its
