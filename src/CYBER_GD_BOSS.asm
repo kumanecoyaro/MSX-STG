@@ -11965,14 +11965,14 @@ PARTICLE_PATTERN:
     DB 00h,00h,00h,00h,00h,00h,00h,00h
 
 ASTERISK_PATTERN:
-    DB 00h   ; ........
-    DB 18h   ; ...XX...
-    DB 99h   ; X..XX..X
-    DB 5Ah   ; .X.XX.X.
-    DB 3Ch   ; ..XXXX..
-    DB 5Ah   ; .X.XX.X.
-    DB 99h   ; X..XX..X
-    DB 00h   ; ........
+    DB 7Fh
+    DB 9Eh
+    DB 04h
+    DB 1Bh
+    DB 1Bh
+    DB 04h
+    DB 9Eh
+    DB 7Fh
 
 ; Enemy1 4-frame animation pattern
 E1A_PATTERN:
