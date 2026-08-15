@@ -36,7 +36,7 @@ LDIRVM  EQU 005Ch
 TICK        EQU 0E000h
 
 ; Global game tick: increments once every time the wedge row
-; (screen row22, the fastest-scrolling tier - PXCHAR_G8) updates,
+; (screen row23, the fastest-scrolling tier - PXCHAR_G8) updates,
 ; i.e. once every 8 frames. 16-bit so it can run for a long time;
 ; only its low byte is shown on-screen (3 decimal digits, top-right).
 GAME_TICK   EQU 0E4D1h   ; 2 bytes
@@ -89,10 +89,16 @@ PLAYER_SPEED EQU 2     ; was raised to 4 to compensate for the (now-removed)
 PLAYER_MINX  EQU 0
 PLAYER_MAXX  EQU 240    ; 256-16 (ship is 16 dots wide)
 PLAYER_MINY  EQU 8      ; one char row (8px) down, clears row0 score/tick display
-PLAYER_MAXY  EQU 176    ; keeps the ship out of local row 5 (wedge, screen
-                        ; row 23) only - the very bottom row of the 5-row
-                        ; scroller; rows 0-3 (mountain/diamond/slash/
-                        ; backslash, screen rows 19-22) are now reachable.
+PLAYER_MAXY  EQU 152    ; keeps the ship out of the whole 4-row ground
+                        ; scroller (screen rows 20-23) - was 176 (=184-8)
+                        ; to stay clear of just the bottom row (23) when
+                        ; the scroller was 5 rows; now 152 (=GROUND_ROW0*8-8
+                        ; = 160-8) for the same reason: the ship isn't
+                        ; bottom-aligned (its visible art is 8 dots tall,
+                        ; offset -8 from PLAYERY when drawn - see the
+                        ; "SUB 8" before each sprite Y OUT below), so the
+                        ; clamp has to stop 8 dots short of the first
+                        ; forbidden row's pixel Y, not sit right on it.
 PLAYER_INITX EQU 16
 PLAYER_INITY EQU 64
 
@@ -111,11 +117,15 @@ PLAYER_INITY EQU 64
 BULLET_PAT_BLUE  EQU 56
 BULLET_PAT_GREEN EQU 64
 BULLET_MAXCOL EQU 31    ; last valid column (32-wide name table, 0-31)
-GROUND_ROW0   EQU 19    ; first screen row of the 5-row ground scroller
-                        ; (was 6 rows/GROUND_ROW0=18; TIER2_DIAMOND's own
-                        ; processing was removed to cut per-frame VDP/CPU
-                        ; load, and TIER1_MOUNTAIN now draws one row lower,
-                        ; at screen row19, to fill the gap)
+GROUND_ROW0   EQU 20    ; first screen row of the 4-row ground scroller
+                        ; (was 5 rows/GROUND_ROW0=19; TIER5_BACKSLASH's own
+                        ; row was deleted to cut per-frame VDP/CPU load,
+                        ; and TIER1_MOUNTAIN/TIER3_DIAMOND/TIER4_SLASH each
+                        ; now draw one row lower, filling the gap, while
+                        ; TIER6_WEDGE stays fixed at screen row23, the
+                        ; bottom of the screen; was 6 rows/GROUND_ROW0=18
+                        ; before that, when TIER2_DIAMOND's own row was
+                        ; similarly deleted)
 
 FIRE_COOLDOWN EQU 0E3D2h ; frames to wait before another shot can spawn
 FIRE_COOLDOWN_LEN EQU 1  ; "1 cycle" gap between shots (see fire logic)
@@ -152,7 +162,7 @@ BULLET2_PAT  EQU 0E3D4h
 ; --- the right edge, exits off the left edge (or is destroyed   ---
 ; --- by a shot), then respawns alternating between two fixed Y  ---
 ; --- positions (16 dots from the top, and 16 dots above the     ---
-; --- 5-row ground scroller).                                    ---
+; --- 4-row ground scroller).                                    ---
 ENEMY_Y       EQU 0E3D9h   ; shared Y of the whole formation
 ENEMY_X       EQU 0E3DAh   ; shared group X, used once the complex formation is fully assembled (drift/exit)
 
@@ -474,9 +484,8 @@ ENEMY3_STEP_FRAMES EQU 2       ; frames held per LUT angle step
 ENEMY3_TOTAL_STEPS EQU 36      ; 24 LUT points x 1.5 revolutions
 ENEMY3_START_ANGLE EQU 6       ; LUT index for the top of the circle
 ENEMY3_EXIT_SPEED EQU 3
-; Row 17 = 7th row from the bottom (23,22,21,20,19,18,17) and sits just
-; above GROUND_ROW0(18) - i.e. above the scrolling ground entirely, in
-; the plain sky.
+; Row 17 sits just above GROUND_ROW0(20) - i.e. above the scrolling
+; ground entirely, in the plain sky.
 ENEMY3_EXIT_TARGET_Y EQU 136       ; row 17 pixel Y (17*8): exit levels off
                                     ; here, above the scroller, then flies
                                     ; right off-screen
@@ -529,8 +538,8 @@ ENEMY6_STEP_FRAMES  EQU 1       ; frames held per 1-column step (1 = fastest pos
 ENEMY6_STEP_TIMER   EQU 0EF10h  ; shared countdown to the next 1-column step
 
 ; --- shot background-color variants: blue(sky), white(mountain, ---
-; --- screen row 18), green(diamond/slash/backslash, rows 19-22), ---
-; --- brown(wedge, row 23) - same treatment as the existing green ---
+; --- screen row 20), green(diamond/slash, rows 21-22), brown     ---
+; --- (wedge, row 23) - same treatment as the existing green       ---
 ; --- variant, just matching each row's own dominant fill color.  ---
 BULLET_PAT_WHITE EQU 72
 BULLET_PAT_BROWN EQU 80
@@ -591,24 +600,23 @@ INIT:
     LD (TICK),A : LD (PXCHAR_G8),A : LD (PXCHAR_G4),A
     LD (PXCHAR_G2),A : LD (PXCHAR_G1),A
 
-    ; Seed the 5 remaining IDCACHEn buffers (row1/IDCACHE1 no longer used -
-    ; TIER2_DIAMOND's processing was dropped, see GROUND_ROW0) for
-    ; PXCHAR=0 (the gates in MAINLOOP that call REFRESH_IDCACHE_33 only
-    ; fire once their group's PXCHAR actually advances - every 8/16/32/64
-    ; frames - so without this, frame 1 would render from stale/zeroed
-    ; cache RAM).
+    ; Seed the 4 remaining IDCACHEn buffers (row1/IDCACHE1 and row4/
+    ; IDCACHE4 no longer used - TIER2_DIAMOND's and TIER5_BACKSLASH's
+    ; own rows were dropped, see GROUND_ROW0) for PXCHAR=0 (the gates
+    ; in MAINLOOP that call REFRESH_IDCACHE_33 only fire once their
+    ; group's PXCHAR actually advances - every 8/16/32/64 frames - so
+    ; without this, frame 1 would render from stale/zeroed cache RAM).
     LD HL,ROWDATA0 : LD IX,IDCACHE0 : CALL REFRESH_IDCACHE_33
     LD HL,ROWDATA2 : LD IX,IDCACHE2 : CALL REFRESH_IDCACHE_33
     LD HL,ROWDATA3 : LD IX,IDCACHE3 : CALL REFRESH_IDCACHE_33
-    LD HL,ROWDATA4 : LD IX,IDCACHE4 : CALL REFRESH_IDCACHE_33
     LD HL,ROWDATA5 : LD IX,IDCACHE5 : CALL REFRESH_IDCACHE_33
 
     LD HL,PREVBUF : LD (HL),0FFh
-    LD DE,PREVBUF+1 : LD BC,159 : LDIR
+    LD DE,PREVBUF+1 : LD BC,127 : LDIR
 
-    ; Clear the background rows (screen rows 0-18, 19*32=608 bytes,
-    ; i.e. everything above the 5-row scroller which now sits at
-    ; screen rows 19-23) to BLANKCODE, whose color group is set to
+    ; Clear the background rows (screen rows 0-19, 20*32=640 bytes,
+    ; i.e. everything above the 4-row scroller which now sits at
+    ; screen rows 20-23) to BLANKCODE, whose color group is set to
     ; fg=bg=blue in COLORDATA so it reads as solid blue regardless
     ; of pattern content.
     DI
@@ -674,7 +682,7 @@ FILLBG_2:
     NOP
     EI
     DJNZ FILLBG_2
-    LD B,96
+    LD B,128
 FILLBG_3:
     DI
     OUT (98h),A
@@ -1228,8 +1236,6 @@ SKIP_G8:
     LD A,(PXCHAR_G4) : INC A : AND 3Fh : LD (PXCHAR_G4),A
     LD HL,ROWDATA3 : LD A,(PXCHAR_G4) : LD E,A : LD D,0 : ADD HL,DE
     LD IX,IDCACHE3 : CALL REFRESH_IDCACHE_33
-    LD HL,ROWDATA4 : LD A,(PXCHAR_G4) : LD E,A : LD D,0 : ADD HL,DE
-    LD IX,IDCACHE4 : CALL REFRESH_IDCACHE_33
 SKIP_G4:
     LD A,(TICK) : SRL A : AND 07h : LD (PHASE_G4),A
 
@@ -1249,9 +1255,9 @@ SKIP_G2:
 SKIP_G1:
     LD A,(TICK) : SRL A : SRL A : SRL A : AND 07h : LD (PHASE_G1),A
 
-    ; --- row 0: screen row 19 (TIER1_MOUNTAIN), group PXCHAR_G1 ---
-    ; --- (was screen row 18 - moved down 1 row to fill the gap left by ---
-    ; --- deleting TIER2_DIAMOND's own row, see GROUND_ROW0) ---
+    ; --- row 0: screen row 20 (TIER1_MOUNTAIN), group PXCHAR_G1 ---
+    ; --- (was screen row 19 - moved down 1 row to fill the gap left by ---
+    ; --- deleting TIER5_BACKSLASH's own row, see GROUND_ROW0) ---
     LD A,(PHASE_G1) : LD (ROWPHASE),A
     LD HL,IDCACHE0                       ; pre-translated ids - see IDCACHE0 comment
     LD IX,NAMEBUF+0
@@ -1279,9 +1285,8 @@ STORE_0:
     LD A,(NEXTID) : LD C,A              ; carry next_id forward as next cell's curr_id
     DJNZ CELL_LOOP_0
 
-    ; --- row 2: screen row 20 (TIER3_DIAMOND), group PXCHAR_G2 ---
-    ; --- (NAMEBUF slot shifted from +64 to +32 - row1/TIER2_DIAMOND's ---
-    ; --- slot was deleted, see GROUND_ROW0) ---
+    ; --- row 2: screen row 21 (TIER3_DIAMOND), group PXCHAR_G2 ---
+    ; --- (was screen row 20 - moved down 1 row, see GROUND_ROW0) ---
     LD A,(PHASE_G2) : LD (ROWPHASE),A
     LD HL,IDCACHE2
     LD IX,NAMEBUF+32
@@ -1306,8 +1311,8 @@ STORE_2:
     LD A,(NEXTID) : LD C,A              ; carry next_id forward as next cell's curr_id
     DJNZ CELL_LOOP_2
 
-    ; --- row 3: screen row 21 (TIER4_SLASH), group PXCHAR_G4 ---
-    ; --- (NAMEBUF slot shifted from +96 to +64) ---
+    ; --- row 3: screen row 22 (TIER4_SLASH), group PXCHAR_G4 ---
+    ; --- (was screen row 21 - moved down 1 row, see GROUND_ROW0) ---
     LD A,(PHASE_G4) : LD (ROWPHASE),A
     LD HL,IDCACHE3
     LD IX,NAMEBUF+64
@@ -1332,37 +1337,13 @@ STORE_3:
     LD A,(NEXTID) : LD C,A              ; carry next_id forward as next cell's curr_id
     DJNZ CELL_LOOP_3
 
-    ; --- row 4: screen row 22 (TIER5_BACKSLASH), group PXCHAR_G4 ---
-    ; --- (NAMEBUF slot shifted from +128 to +96) ---
-    LD A,(PHASE_G4) : LD (ROWPHASE),A
-    LD HL,IDCACHE4
-    LD IX,NAMEBUF+96
-    LD B,32
-    LD A,(HL) : LD C,A
-CELL_LOOP_4:
-    INC HL
-    LD A,(HL) : LD (NEXTID),A
-    LD A,(ROWPHASE) : OR A
-    JR NZ,NONZERO_4
-    LD A,C : LD E,A : LD D,SOLOTAB/256 : LD A,(DE)
-    JR STORE_4
-NONZERO_4:
-    LD A,C : LD E,A : LD D,MUL6/256 : LD A,(DE) : LD E,A  ; E = curr_id*6
-    LD A,(NEXTID) : ADD A,E             ; A = pairid = curr_id*6+next_id
-    LD E,A : LD D,PAIRBASE/256 : LD A,(DE)  ; A = PAIRBASE[pairid]
-    LD E,A
-    LD A,(ROWPHASE) : DEC A : ADD A,E   ; + (phase-1)
-STORE_4:
-    LD (IX+0),A
-    INC IX
-    LD A,(NEXTID) : LD C,A              ; carry next_id forward as next cell's curr_id
-    DJNZ CELL_LOOP_4
-
-    ; --- row 5: screen row 23 (TIER6_WEDGE), group PXCHAR_G8 ---
-    ; --- (NAMEBUF slot shifted from +160 to +128) ---
+    ; --- row 5: screen row 23 (TIER6_WEDGE), group PXCHAR_G8 - ---
+    ; --- stays fixed at the bottom of the screen; NAMEBUF slot ---
+    ; --- shifted from +128 to +96 now that TIER5_BACKSLASH's   ---
+    ; --- own row/slot is gone, see GROUND_ROW0 ---
     LD A,(PHASE_G8) : LD (ROWPHASE),A
     LD HL,IDCACHE5
-    LD IX,NAMEBUF+128
+    LD IX,NAMEBUF+96
     LD B,32
     LD A,(HL) : LD C,A
 CELL_LOOP_5:
@@ -1388,7 +1369,7 @@ STORE_5:
     ; (Name table base is 1800h in SCREEN1 too, so these VRAM
     ;  addresses are identical to the SCREEN2 version.)
 
-    ; row 0 -> VRAM 1A60h (screen row 19 - moved down from 1A40h/row18,
+    ; row 0 -> VRAM 1A80h (screen row 20 - moved down from 1A60h/row19,
     ; see GROUND_ROW0)
     LD HL,NAMEBUF+0 : LD DE,PREVBUF+0 : LD B,32
 DIFF_LOOP_0:
@@ -1401,7 +1382,7 @@ DIFFERENT_0:
     LD HL,NAMEBUF+0 : LD DE,PREVBUF+0 : LD BC,32 : LDIR
     LD HL,NAMEBUF+0
     DI
-    LD A,60h : OUT (99h),A
+    LD A,80h : OUT (99h),A
     NOP
     NOP
     NOP
@@ -1438,8 +1419,8 @@ ROWXFER_0:
     JP NZ,ROWXFER_0
 ROWDONE_0:
 
-    ; row 2 -> VRAM 1A80h (screen row 20) - NAMEBUF slot shifted from
-    ; +64 to +32 (row1/TIER2_DIAMOND's slot removed, see GROUND_ROW0)
+    ; row 2 -> VRAM 1AA0h (screen row 21 - moved down from 1A80h/row20,
+    ; see GROUND_ROW0)
     LD HL,NAMEBUF+32 : LD DE,PREVBUF+32 : LD B,32
 DIFF_LOOP_2:
     LD A,(DE) : CP (HL)
@@ -1451,7 +1432,7 @@ DIFFERENT_2:
     LD HL,NAMEBUF+32 : LD DE,PREVBUF+32 : LD BC,32 : LDIR
     LD HL,NAMEBUF+32
     DI
-    LD A,80h : OUT (99h),A
+    LD A,A0h : OUT (99h),A
     NOP
     NOP
     NOP
@@ -1488,7 +1469,8 @@ ROWXFER_2:
     JP NZ,ROWXFER_2
 ROWDONE_2:
 
-    ; row 3 -> VRAM 1AA0h (screen row 21) - NAMEBUF slot shifted from +96 to +64
+    ; row 3 -> VRAM 1AC0h (screen row 22 - moved down from 1AA0h/row21,
+    ; see GROUND_ROW0)
     LD HL,NAMEBUF+64 : LD DE,PREVBUF+64 : LD B,32
 DIFF_LOOP_3:
     LD A,(DE) : CP (HL)
@@ -1500,7 +1482,7 @@ DIFFERENT_3:
     LD HL,NAMEBUF+64 : LD DE,PREVBUF+64 : LD BC,32 : LDIR
     LD HL,NAMEBUF+64
     DI
-    LD A,A0h : OUT (99h),A
+    LD A,C0h : OUT (99h),A
     NOP
     NOP
     NOP
@@ -1537,58 +1519,11 @@ ROWXFER_3:
     JP NZ,ROWXFER_3
 ROWDONE_3:
 
-    ; row 4 -> VRAM 1AC0h (screen row 22) - NAMEBUF slot shifted from +128 to +96
+    ; row 5 -> VRAM 1AE0h (screen row 23, bottom row of screen -
+    ; stays fixed, TIER6_WEDGE doesn't move) - NAMEBUF slot shifted
+    ; from +128 to +96 now that TIER5_BACKSLASH's own row/slot is
+    ; gone, see GROUND_ROW0
     LD HL,NAMEBUF+96 : LD DE,PREVBUF+96 : LD B,32
-DIFF_LOOP_4:
-    LD A,(DE) : CP (HL)
-    JR NZ,DIFFERENT_4
-    INC HL : INC DE
-    DJNZ DIFF_LOOP_4
-    JR ROWDONE_4
-DIFFERENT_4:
-    LD HL,NAMEBUF+96 : LD DE,PREVBUF+96 : LD BC,32 : LDIR
-    LD HL,NAMEBUF+96
-    DI
-    LD A,C0h : OUT (99h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    LD A,5Ah : OUT (99h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    LD C,98h
-    LD B,32
-    EI
-ROWXFER_4:
-    DI
-    LD A,(HL) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    INC HL : DEC B
-    EI
-    JP NZ,ROWXFER_4
-ROWDONE_4:
-
-    ; row 5 -> VRAM 1AE0h (screen row 23, bottom row of screen) -
-    ; NAMEBUF slot shifted from +160 to +128
-    LD HL,NAMEBUF+128 : LD DE,PREVBUF+128 : LD B,32
 DIFF_LOOP_5:
     LD A,(DE) : CP (HL)
     JR NZ,DIFFERENT_5
@@ -1596,8 +1531,8 @@ DIFF_LOOP_5:
     DJNZ DIFF_LOOP_5
     JR ROWDONE_5
 DIFFERENT_5:
-    LD HL,NAMEBUF+128 : LD DE,PREVBUF+128 : LD BC,32 : LDIR
-    LD HL,NAMEBUF+128
+    LD HL,NAMEBUF+96 : LD DE,PREVBUF+96 : LD BC,32 : LDIR
+    LD HL,NAMEBUF+96
     DI
     LD A,E0h : OUT (99h),A
     NOP
@@ -1925,7 +1860,7 @@ BULLET0_NOCLAMP:
     LD A,(BULLET0_ROW) : CP GROUND_ROW0
     JR C,BULLET0_BLUE
     JR Z,BULLET0_WHITE
-    CP GROUND_ROW0+4
+    CP GROUND_ROW0+3
     JR Z,BULLET0_BROWN
     JR C,BULLET0_GREEN
     JR BULLET0_BLUE
@@ -1969,7 +1904,7 @@ BULLET1_NOCLAMP:
     LD A,(BULLET1_ROW) : CP GROUND_ROW0
     JR C,BULLET1_BLUE
     JR Z,BULLET1_WHITE
-    CP GROUND_ROW0+4
+    CP GROUND_ROW0+3
     JR Z,BULLET1_BROWN
     JR C,BULLET1_GREEN
     JR BULLET1_BLUE
@@ -2013,7 +1948,7 @@ BULLET2_NOCLAMP:
     LD A,(BULLET2_ROW) : CP GROUND_ROW0
     JR C,BULLET2_BLUE
     JR Z,BULLET2_WHITE
-    CP GROUND_ROW0+4
+    CP GROUND_ROW0+3
     JR Z,BULLET2_BROWN
     JR C,BULLET2_GREEN
     JR BULLET2_BLUE
@@ -2141,7 +2076,7 @@ ANIM2_DONE:
     ; ============================================================
     ; --- shots: advance 1 character (8 dots) per frame. Erasing  ---
     ; --- restores whatever the ground scroller currently shows   ---
-    ; --- at that cell (if the shot is over the 5-row scroller),  ---
+    ; --- at that cell (if the shot is over the 4-row scroller),  ---
     ; --- or the sky blank otherwise - so the shot never leaves a ---
     ; --- hole in the terrain behind it.                          ---
     ; ============================================================
@@ -3309,7 +3244,7 @@ TE_NORESTORE:
     LD A,D : SRL A : SRL A : SRL A : LD (IX+4),A   ; COL
 
     ; SAVED = current value at that cell (BLANKCODE if above the
-    ; 5-row ground scroller, else the NAMEBUF mirror)
+    ; 4-row ground scroller, else the NAMEBUF mirror)
     LD A,(IX+3) : CP GROUND_ROW0
     JR C,TE_SAVE_SKY
     SUB GROUND_ROW0
@@ -3329,7 +3264,7 @@ TE_SAVE_GOT:
     LD A,(IX+3) : CP GROUND_ROW0
     JR C,TE_BLUE
     JR Z,TE_WHITE
-    CP GROUND_ROW0+4
+    CP GROUND_ROW0+3
     JR Z,TE_BROWN
     JR C,TE_GREEN
     JR TE_BLUE
@@ -3363,7 +3298,7 @@ TE_GOTCOLOR:
 
 ; Writes ANIM_TMP_VAL to the nametable cell at (ANIM_TMP_ROW,
 ; ANIM_TMP_COL): updates the NAMEBUF mirror too if that row is
-; within the 5-row ground scroller. Trashes A,H,L,DE.
+; within the 4-row ground scroller. Trashes A,H,L,DE.
 ; --- DEBUG: shows BIOS joystick results at row0 (top-center):        ---
 ; --- col15 = JOY_STICK (GTSTCK, 0=none..8=up-left), col17 = JOY_TRIG ---
 ; --- (GTTRIG, 0=released/1=pressed). Remove this call + routine     ---
@@ -12318,7 +12253,7 @@ ASTERISK_PATTERN:
 
 ; Destroyed-quadrant explosion: 2 static 8x8 frames (anim1 then
 ; anim2), each replicated into 4 character-code groups so its
-; background color can match whichever of the 5-row scroller's
+; background color can match whichever of the 4-row scroller's
 ; terrain types (or sky) it lands over - same idea as the shot's
 ; blue/white/green/brown variants. Only the group's first code is
 ; actually used; the other 7 slots in each 8-code group are unused.
