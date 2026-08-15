@@ -310,6 +310,11 @@
     box-shadow: 0 0 0 2px var(--accent);
   }
   .pitem .picon { display: block; pointer-events: none; }
+  /* Boss has no glyph icon of its own (see TYPES) - just text - so it
+     needs its own visual distinction some other way. Red singles it out
+     as the one placement that isn't a regular enemy. */
+  .pitem-boss { background: var(--danger); color: var(--danger-ink); border-color: var(--danger); }
+  .pitem-boss:hover { border-color: var(--danger); }
 
   #liveMsg {
     position: fixed;
@@ -520,6 +525,12 @@
     // as of the BEHAVIOR_SIMPLE_DRIFT_DODGE recolor (it used to be light
     // green); the pixel data itself was also redrawn at some point since
     // this was last transcribed here, so both changed.
+    // bg here is an editor-only visibility aid, not a real hardware trait -
+    // it's a sprite, transparent in-game like every other 16x16 entry here.
+    // Solid black on this tool's near-black grid/palette was reported
+    // completely unreadable ("can't tell where it is to place it"), so it
+    // gets the same sky-blue backdrop as the actual sky the game draws
+    // behind it, purely so the black pixels have something to show against.
     enemy4: {
       size: 16,
       quads: {
@@ -528,7 +539,8 @@
         tr: [0, 0, 0, 0, 0, 0, 0, 0],
         br: [0x01, 0x06, 0x9C, 0xFF, 0xFE, 0x7C, 0x0E, 0x03]
       },
-      color: "#000000"
+      color: "#000000",
+      bg: "#5955e0"
     },
     // Enemy6's 0deg spin frame (NEWENEMY_PATTERN_TL/TR/BL/BR) - unlike every
     // other 16x16 entry here this is 4 BG tiles (2x2, not an MSX sprite), so
@@ -842,7 +854,7 @@
   var paletteEl = document.getElementById("palette");
   TYPES.forEach(function (t) {
     var item = document.createElement("button");
-    item.className = "pitem";
+    item.className = "pitem" + (t.id === "boss" ? " pitem-boss" : "");
     item.dataset.type = t.id;
     item.title = t.name + " — " + t.desc;
     if (t.glyph) {
