@@ -11974,33 +11974,33 @@ ASTERISK_PATTERN:
     DB 99h   ; X..XX..X
     DB 00h   ; ........
 
-; Enemy1 4-frame animation pattern (version 2, anim-compatible)
-; Frame 0 (top-left): neutral
-; Frame 1 (top-right): moving up
-; Frame 2 (bottom-left): moving down
-; Frame 3 (bottom-right): alternate movement
+; Enemy1 4-frame animation pattern (bottom half only, top is transparent)
+; Frame 0: neutral
+; Frame 1: moving up
+; Frame 2: moving down
+; Frame 3: alternate
 E1A_PATTERN:
-    DB FEh,79h,20h,D8h,D8h,20h,79h,FEh   ; frame 0 (neutral)
-    DB 00h,7Eh,FFh,D8h,D8h,FFh,7Eh,00h   ; frame 1 (up)
-    DB 00h,00h,00h,FFh,FFh,00h,00h,00h   ; frame 2 (down)
-    DB 00h,7Eh,FFh,D8h,D8h,FFh,7Eh,00h   ; frame 3 (alt)
+    DB 00h,00h,00h,00h,00h,00h,00h,00h   ; top-left (transparent)
+    DB 00h,00h,00h,00h,00h,00h,00h,00h   ; top-right (transparent)
+    DB 00h,00h,00h,FFh,FFh,00h,00h,00h   ; bottom-left (frame 0)
+    DB 00h,7Eh,FFh,D8h,D8h,FFh,7Eh,00h   ; bottom-right (frame 1)
 
-; Ship animation patterns (3 directions)
+; Ship animation patterns (bottom half only)
 SHIP_UP_PATTERN:
-    DB 00h,00h,00h,00h,0Fh,7Eh,F8h,FEh   ; top-left
-    DB 00h,00h,00h,00h,00h,00h,01h,07h   ; top-right
+    DB 00h,00h,00h,00h,00h,00h,00h,00h   ; top-left (transparent)
+    DB 00h,00h,00h,00h,00h,00h,00h,00h   ; top-right (transparent)
     DB F5h,ABh,55h,ABh,55h,EBh,16h,0Ch   ; bottom-left
     DB 1Fh,2Ah,55h,FAh,87h,00h,00h,00h   ; bottom-right
 
 SHIP_MID_PATTERN:
-    DB 00h,00h,07h,1Ch,3Eh,F0h,FCh,FFh   ; top-left
-    DB 00h,00h,00h,00h,00h,00h,03h,0Fh   ; top-right
+    DB 00h,00h,00h,00h,00h,00h,00h,00h   ; top-left (transparent)
+    DB 00h,00h,00h,00h,00h,00h,00h,00h   ; top-right (transparent)
     DB 01h,FEh,ABh,01h,FEh,0Dh,00h,00h   ; bottom-left
     DB 13h,2Eh,7Dh,F8h,8Fh,00h,00h,00h   ; bottom-right
 
 SHIP_DOWN_PATTERN:
-    DB 00h,00h,00h,07h,1Eh,7Fh,CFh,E1h   ; top-left
-    DB 00h,00h,00h,00h,00h,00h,00h,03h   ; top-right
+    DB 00h,00h,00h,00h,00h,00h,00h,00h   ; top-left (transparent)
+    DB 00h,00h,00h,00h,00h,00h,00h,00h   ; top-right (transparent)
     DB FFh,FFh,81h,7Eh,FEh,31h,0Fh,03h   ; bottom-left
     DB 11h,23h,7Fh,FFh,80h,00h,00h,00h   ; bottom-right
 
