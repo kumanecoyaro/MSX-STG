@@ -1092,27 +1092,22 @@
 
   function doSave() {
     var filename = saveFilenameInput.value.trim() || ("Sprite_" + GRID_N + "x" + GRID_N + ".json");
-    try {
-      var jsonStr = currentJSON();
-      var blob = new Blob([jsonStr], { type: "application/json" });
-      var url = URL.createObjectURL(blob);
-      var a = document.createElement("a");
-      a.href = url;
-      a.download = filename;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      
-      setTimeout(function () {
-        URL.revokeObjectURL(url);
-      }, 100);
-
-      saveOverlay.classList.remove("show");
-      flash("saved " + filename);
-    } catch (err) {
-      saveStatus.textContent = "save failed";
+    if (!window.claude || !window.claude.downloads) {
+      saveStatus.textContent = "save unavailable here";
       saveStatus.classList.remove("ok");
+      return;
     }
+    window.claude.downloads.save({ filename: filename, data: currentJSON() }).then(
+      function () {
+        saveOverlay.classList.remove("show");
+        flash("saved " + filename);
+      },
+      function (err) {
+        if (err && err.code === "declined") { saveOverlay.classList.remove("show"); flash("save cancelled"); return; }
+        saveStatus.textContent = "save failed";
+        saveStatus.classList.remove("ok");
+      }
+    );
   }
 
   document.getElementById("btnSaveCancel").addEventListener("click", function () {
