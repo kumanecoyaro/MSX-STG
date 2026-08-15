@@ -438,6 +438,7 @@
       <div class="overlay-status" id="saveStatus"></div>
       <div class="overlay-actions">
         <button id="btnSaveCancel">Cancel</button>
+        <button id="btnSaveCopy">Copy JSON</button>
         <button class="primary" id="btnSaveConfirm">Save</button>
       </div>
     </div>
@@ -1587,9 +1588,19 @@
   var saveFilenameInput = document.getElementById("saveFilenameInput");
   var saveStatus = document.getElementById("saveStatus");
 
+  function timestampSuffix() {
+    var d = new Date();
+    function pad(n) { return (n < 10 ? "0" : "") + n; }
+    return pad(d.getHours()) + pad(d.getMinutes()) + pad(d.getSeconds());
+  }
+
   document.getElementById("btnSave").addEventListener("click", function () {
     saveStatus.textContent = "";
     saveStatus.classList.remove("ok");
+    // Timestamp suffix so repeat saves don't reuse the exact same filename -
+    // some Android browsers silently fail a download when its name collides
+    // with a prior one still tracked in the OS download manager.
+    saveFilenameInput.value = "Schedule_" + timestampSuffix() + ".json";
     saveOverlay.classList.add("show");
     saveFilenameInput.focus();
     saveFilenameInput.select();
@@ -1615,8 +1626,36 @@
     );
   }
 
+  function copyToClipboard(text, successMsg) {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(
+        function () { flash(successMsg); },
+        function () { copyViaTempTextarea(text, successMsg); }
+      );
+    } else {
+      copyViaTempTextarea(text, successMsg);
+    }
+  }
+
+  function copyViaTempTextarea(text, successMsg) {
+    var ta = document.createElement("textarea");
+    ta.value = text;
+    ta.style.position = "fixed";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.select();
+    var ok = false;
+    try { ok = document.execCommand("copy"); } catch (e) { ok = false; }
+    document.body.removeChild(ta);
+    flash(ok ? successMsg : "コピーできませんでした");
+  }
+
   document.getElementById("btnSaveCancel").addEventListener("click", function () {
     saveOverlay.classList.remove("show");
+  });
+  document.getElementById("btnSaveCopy").addEventListener("click", function () {
+    copyToClipboard(currentJSON(), "JSONをコピーしました（ファイルに貼り付けて保存してください）");
   });
   document.getElementById("btnSaveConfirm").addEventListener("click", doSave);
   saveFilenameInput.addEventListener("keydown", function (ev) {

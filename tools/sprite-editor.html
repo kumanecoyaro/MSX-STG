@@ -1076,13 +1076,22 @@
   var saveFilenameInput = document.getElementById("saveFilenameInput");
   var saveStatus = document.getElementById("saveStatus");
 
+  function timestampSuffix() {
+    var d = new Date();
+    function pad(n) { return (n < 10 ? "0" : "") + n; }
+    return pad(d.getHours()) + pad(d.getMinutes()) + pad(d.getSeconds());
+  }
+
   document.getElementById("btnSave").addEventListener("click", function () {
     saveStatus.textContent = "";
     saveStatus.classList.remove("ok");
-    saveFilenameInput.value = "Sprite_" + GRID_N + "x" + GRID_N + ".json";
+    // Timestamp suffix so repeat saves don't reuse the exact same filename -
+    // some Android browsers silently fail a download when its name collides
+    // with a prior one still tracked in the OS download manager.
+    saveFilenameInput.value = "Sprite_" + GRID_N + "x" + GRID_N + "_" + timestampSuffix() + ".json";
     saveOverlay.classList.add("show");
     saveFilenameInput.focus();
-    
+
     var selLen = "Sprite".length;
     if (saveFilenameInput.setSelectionRange) {
       saveFilenameInput.setSelectionRange(0, selLen);
