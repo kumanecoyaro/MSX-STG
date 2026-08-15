@@ -173,6 +173,13 @@
     display: flex;
     flex-direction: column;
     min-height: 0;
+    /* Content (title + both button rows + full palette) can be taller than
+       the box in a short viewport (e.g. real mobile browser chrome eating
+       into 100vh/42vh differently than the Artifact host's frame did) -
+       scroll the sidebar itself instead of silently clipping whatever
+       doesn't fit, which also made the clipped buttons untappable. */
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
   }
 
   .side-title {
