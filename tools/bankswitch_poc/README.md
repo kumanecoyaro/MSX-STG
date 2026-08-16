@@ -83,12 +83,28 @@ mapper type, pick ASCII16.
      Confirmed in the emulator: all 32 groups read back as 0xF4.
      Whether this also explains the freeze, or the freeze is a second,
      separate issue, isn't known yet.
+4. Root cause of the real-hardware boot freeze, found by the user:
+   this specific flashcart **mirrors** an image instead of decoding it
+   as real independent banks unless the ROM file is a "regulation"
+   size for its mapper auto-detection - 64KB wasn't one of them.
+   Doubling the file to 128KB (the same 64KB image - banks 0-3 -
+   simply repeated once more) fixed the boot freeze completely. Both
+   `build_rom.py` and `build_full_rom.py` now emit doubled files
+   (64KB and 128KB respectively) for exactly this reason; only the
+   first half is ever actually addressed by this ROM's own bank-select
+   code, the second half is inert padding purely to satisfy the
+   flashcart's size detection. The switch-to-stage2 freeze itself is
+   still unresolved even with correct sizing - added more border-color
+   checkpoints (7 = about to switch, in MAINLOOP; 8 = landed at
+   STAGE2_ENTRY; 9 = color fill done; 10 = text draw done, entering
+   the counter loop) through the switch/STAGE2_ENTRY path to narrow
+   down exactly where it's still freezing.
 
 ## Files
 
 - `bank_a.asm`, `bank_b1.asm` - the two bank sources
 - `build_rom.py` - assembles both and concatenates them into
-  `BANKSWITCH_POC.rom` (32KB = bank0 + bank1)
+  `BANKSWITCH_POC.rom` (bank0 + bank1, doubled to 64KB - see finding 4 above)
 - `run_poc.py` - emulator-side verification: boots from `INIT`,
   confirms PC is in window A before the switch, confirms window B's
   bank actually changes, confirms landing exactly at `STAGE2_ENTRY`,
@@ -161,12 +177,11 @@ intended, with no garbage/crash in between. This does mean reaching
 the trigger requires actually playing through to the boss kill, not a
 short fixed wait.
 
-### Boot-time diagnostic checkpoints (border color)
+### Diagnostic checkpoints (border color)
 
-If the game never gets past its very first screen, the border color
-(the true overscan border, not the in-screen sky) tells you how far
-INIT got before whatever's wrong happens - report back which color
-(if any) it's stuck on:
+If the game freezes anywhere - at boot, or at the stage-2 switch - the
+border color (the true overscan border, not the in-screen sky) tells
+you how far it got. Report back which color it's stuck on:
 
 | Border color | Meaning |
 |---|---|
@@ -176,4 +191,8 @@ INIT got before whatever's wrong happens - report back which color
 | 3 | Bank-switch trampoline copied to RAM (0xF200) |
 | 4 | Bank1 explicitly selected for window B via the RAM trampoline, back in ROM |
 | 6 | BIOS SCREEN1 setup (INIT32) returned - normally instantly overwritten by the game's own border=1 (black) right after, so only visible if execution froze exactly here |
-| (anything else / game's own colors) | Past all of this patch's new code, running the game's own original INIT/MAINLOOP |
+| 7 | MAINLOOP: PLAYER_FLYAWAY==2 detected, about to call the RAM trampoline to switch to bank2 and jump |
+| 8 | Landed at STAGE2_ENTRY (bank2) - the switch and jump both succeeded |
+| 9 | STAGE2_ENTRY's color-table fill done |
+| 10 | STAGE2_ENTRY's "STAGE 2" text draw done, about to enter the counter loop |
+| (anything else / game's own colors) | Past all of this patch's new code, running the game's own original INIT/MAINLOOP, or well into the stage-2 placeholder's counter loop |

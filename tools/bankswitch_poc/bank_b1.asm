@@ -14,7 +14,16 @@
 ; this game's own custom pattern numbering.
     ORG 0BF00h
 
+WRTVDP EQU 0047h   ; BIOS: write VDP register (C=reg#, B=data)
+
 STAGE2_ENTRY:
+    ; --- DIAGNOSTIC checkpoint: border color 8 = "landed at         ---
+    ; --- STAGE2_ENTRY successfully" - the very first instruction    ---
+    ; --- executed after the switch+jump. If the border never gets   ---
+    ; --- past whatever MAINLOOP last set (color 7), the jump itself ---
+    ; --- - or the fetch immediately after it - is what's freezing.  ---
+    LD B,8 : LD C,7 : CALL WRTVDP
+
     ; one-shot: paint the whole color table (2000h, 32 groups) a single
     ; readable color (white text on blue background = 0F4h). The real
     ; game's own COLORDATA (loaded during INIT, long before this bank
@@ -47,6 +56,10 @@ STAGE2_COLORLOOP:
     DJNZ STAGE2_COLORLOOP
     EI
 
+    ; --- DIAGNOSTIC checkpoint: border color 9 = "color table fill  ---
+    ; --- done".                                                      ---
+    LD B,9 : LD C,7 : CALL WRTVDP
+
     ; one-shot: write "STAGE 2" into name table row0 cols0-7 (VRAM 1800h)
     DI
     LD A,00h : OUT (99h),A
@@ -75,6 +88,12 @@ STAGE2_TXTLOOP:
     INC HL
     DJNZ STAGE2_TXTLOOP
     EI
+
+    ; --- DIAGNOSTIC checkpoint: border color 10 = "text draw done,  ---
+    ; --- entering the counter loop". If this never appears, the     ---
+    ; --- text-draw block itself is what's freezing.                 ---
+    LD B,10 : LD C,7 : CALL WRTVDP
+
     XOR A
     LD (0E000h),A
 

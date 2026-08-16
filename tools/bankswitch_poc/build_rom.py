@@ -19,11 +19,15 @@ def assemble_to_bytes(path, base, size):
 def main():
     bank0 = assemble_to_bytes(os.path.join(HERE, "bank_a.asm"), 0x4000, 0x4000)
     bank1 = assemble_to_bytes(os.path.join(HERE, "bank_b1.asm"), 0x8000, 0x4000)
-    rom = bytes(bank0) + bytes(bank1)
+    rom32 = bytes(bank0) + bytes(bank1)
+    # doubled to 64KB - see the matching comment in build_full_rom.py's
+    # main(): a real flashcart mirrored a 64KB image instead of
+    # decoding real banks until doubled to a "regulation" size.
+    rom = rom32 + rom32
     out_path = os.path.join(HERE, "BANKSWITCH_POC.rom")
     with open(out_path, "wb") as f:
         f.write(rom)
-    print(f"wrote {out_path}: {len(rom)} bytes (bank0 {len(bank0)}B + bank1 {len(bank1)}B)")
+    print(f"wrote {out_path}: {len(rom)} bytes (bank0 {len(bank0)}B + bank1 {len(bank1)}B, doubled)")
     print("header:", rom[0:4].hex())
 
 

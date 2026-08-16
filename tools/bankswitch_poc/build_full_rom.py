@@ -95,6 +95,13 @@ MAINLOOP_PATCH = """MAINLOOP:
     LD A,(PLAYER_FLYAWAY)
     CP 2
     JR NZ,MAINLOOP_NO_TEST_SWITCH
+    ; --- DIAGNOSTIC checkpoint: border color 7 = "about to switch to ---
+    ; --- bank2 and jump" - set from window A, right before the      ---
+    ; --- RAM-trampoline call. If the border sticks on 7, the switch  ---
+    ; --- itself (or the jump into bank2) is what's freezing. A gets  ---
+    ; --- overwritten by "LD A,2" right after anyway, so no need to   ---
+    ; --- preserve it across this call.                                ---
+    LD B,7 : LD C,7 : CALL WRTVDP
     LD A,2
     LD HL,0BF00h
     JP 0F200h
@@ -198,12 +205,22 @@ def main():
     bank2, stage2_sym = assemble_placeholder()
     bank3 = bytearray([0xFF] * 0x4000)
 
-    rom = bytes(bank0) + bytes(bank1) + bytes(bank2) + bytes(bank3)
+    rom64 = bytes(bank0) + bytes(bank1) + bytes(bank2) + bytes(bank3)
+    # --- Real-hardware finding: this specific flashcart mirrors a    ---
+    # --- 64KB ASCII16 image instead of decoding it as 4 real banks   ---
+    # --- unless the file is a "regulation" size for its mapper       ---
+    # --- detection - doubling it to 128KB (banks 0-3 again at        ---
+    # --- 4-7, i.e. the whole 64KB image simply repeated once) fixed  ---
+    # --- a real-hardware boot freeze that the emulator never showed. ---
+    # --- Only banks 0-3 (the first half) are ever actually selected  ---
+    # --- by this ROM's own code, so the duplicate second half is     ---
+    # --- inert padding, not a second, different level.               ---
+    rom = rom64 + rom64
     out_path = os.path.join(HERE, "CYBER_SUZUKA_ASCII16_TEST.rom")
     with open(out_path, "wb") as f:
         f.write(rom)
 
-    print(f"wrote {out_path}: {len(rom)} bytes")
+    print(f"wrote {out_path}: {len(rom)} bytes (banks 0-3 real content, doubled to 128KB - see comment)")
     print(f"  bank0 (page1, real game + test patch): {len(bank0)}B, header {bytes(bank0[0:4]).hex()}")
     print(f"  bank1 (page2, real game, unpatched): {len(bank1)}B")
     print(f"  bank2 (stage2 placeholder): {len(bank2)}B, entry @ {stage2_sym['STAGE2_ENTRY']:04x}")
