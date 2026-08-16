@@ -182,11 +182,19 @@ for r in ROWS:
 
 
 # ---------- character code assignment ----------
-# codes 0-10: steady-state tile per id (id number == its own code)
-# codes 16+: 7-frame (phase 1-7) blend sequences, one block per pair,
+# BLANK (id0) is alone in group0 (codes 0-7, only code0 used) so it can
+# have its own sky color, independent of the rock/slope codes' color -
+# a color group is 8 CONSECUTIVE codes sharing one fg/bg byte, so
+# packing BLANK into the same group as rock codes (as the very first
+# version of this did) would force them to share one color.
+# codes 8-17: steady-state tile per id 1-10 (SOLOTAB below maps id->code)
+# codes 24+: 7-frame (phase 1-7) blend sequences, one block per pair,
 # in a fixed order so PAIRBASE[curr*N_IDS+next] can point at the block start.
-STEADY_BASE = 0
-BLEND_BASE = 16
+BLANK_CODE = 0
+STEADY_BASE = 8   # ids 1..10 -> codes 8..17
+BLEND_BASE = 24    # next group-aligned boundary after 8+10=18
+
+STEADY_CODE = [BLANK_CODE] + [STEADY_BASE + i for i in range(N_IDS - 1)]
 
 PAIR_LIST = sorted(PAIRS)
 PAIR_INDEX = {p: i for i, p in enumerate(PAIR_LIST)}
@@ -200,7 +208,7 @@ def build_pattern_table():
     """code -> 8 bytes. Returns (patterns dict, highest code used)."""
     patterns = {}
     for idx, tile in enumerate(ID_TILES):
-        patterns[STEADY_BASE + idx] = to_bytes(tile)
+        patterns[STEADY_CODE[idx]] = to_bytes(tile)
     for pair in PAIR_LIST:
         curr, nxt = pair
         base = pair_block_code(pair)
@@ -213,11 +221,25 @@ PATTERNS = build_pattern_table()
 MAX_CODE = max(PATTERNS)
 
 MUL_N = [i * N_IDS for i in range(N_IDS)]
-SOLOTAB = [i for i in range(N_IDS)]  # identity: steady code == id
+SOLOTAB = STEADY_CODE
 PAIRBASE = [0] * (N_IDS * N_IDS)
 for pair in PAIR_LIST:
     curr, nxt = pair
     PAIRBASE[curr * N_IDS + nxt] = pair_block_code(pair)
+
+# ---------- color table ----------
+# group0 (codes 0-7, BLANK's group) = sky: light blue on light blue
+# (BLANK's pattern is all-0 so only bg would ever show, but set both
+# nibbles the same for a clean solid fill regardless).
+# groups covering codes 8.. (rock/slope/blend) = fg unchanged from the
+# source sprites (8 = medium red), bg = dark yellow (per direct
+# instruction: keep the current reddish color, change the other one to
+# light red or dark yellow - dark yellow reads more like natural
+# rock/dirt, easy to flip to light red (9) if that reads better).
+SKY_COLOR = 0x55           # fg=5,bg=5 (light blue)
+ROCK_COLOR = 0x8A          # fg=8 (medium red, unchanged), bg=10 (dark yellow)
+N_COLOR_GROUPS = 32
+COLORDATA = [SKY_COLOR] + [ROCK_COLOR] * (N_COLOR_GROUPS - 1)
 
 WRAP_PAD = 33
 ROWDATA_PADDED = [r + r[:WRAP_PAD] for r in ROWS]
@@ -258,6 +280,9 @@ def emit_asm_tables():
         bytes_ = PATTERNS.get(code, [0] * 8)
         out.append(f"    DB " + ",".join(f"{b}" for b in bytes_) + f"  ; code {code}")
     out.append(f"TERRAIN_PATTERN_COUNT EQU {MAX_CODE + 1}")
+    out.append("")
+    out.append("TERRAIN_COLORDATA:")
+    out.append(db_bytes(COLORDATA))
     return "\n".join(out)
 
 

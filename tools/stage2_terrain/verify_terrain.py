@@ -17,7 +17,16 @@ from z80emu import Z80  # noqa: E402
 
 NAME_BASE = 0x1800
 PAT_BASE = 0x0000
-ROWS = [20, 21, 22, 23]
+COLOR_BASE = 0x2000
+ROWS = list(range(16, 24))  # a few sky rows above the ground band too
+
+# Approximate TMS9918/MSX1 16-color palette (index -> RGB)
+PALETTE = {
+    0: (0, 0, 0), 1: (0, 0, 0), 2: (33, 200, 66), 3: (94, 220, 120),
+    4: (84, 85, 237), 5: (125, 118, 252), 6: (212, 82, 77), 7: (66, 235, 245),
+    8: (252, 85, 84), 9: (255, 121, 120), 10: (212, 193, 84), 11: (230, 206, 128),
+    12: (33, 176, 59), 13: (201, 91, 186), 14: (204, 204, 204), 15: (255, 255, 255),
+}
 
 
 def run_and_dump(n_frames, sample_ticks):
@@ -59,19 +68,26 @@ def render_vram(vram, out_path, scale=3):
     def get_pattern(code):
         return vram[PAT_BASE + code * 8: PAT_BASE + code * 8 + 8]
 
+    def get_colors(code):
+        byte = vram[COLOR_BASE + (code // 8)]
+        fg = (byte >> 4) & 0xF
+        bg = byte & 0xF
+        return PALETTE[fg], PALETTE[bg]
+
     W = 32 * 8
     H = len(ROWS) * 8
-    img = [[(30, 30, 60)] * W for _ in range(H)]
+    img = [[(0, 0, 0)] * W for _ in range(H)]
     for ri, row in enumerate(ROWS):
         base = NAME_BASE + row * 32
         for col in range(32):
             code = vram[base + col]
             pat = get_pattern(code)
+            fg_rgb, bg_rgb = get_colors(code)
             for ry in range(8):
                 byte = pat[ry]
                 for rx in range(8):
                     v = (byte >> (7 - rx)) & 1
-                    img[ri * 8 + ry][col * 8 + rx] = (150, 120, 90) if v else (30, 30, 60)
+                    img[ri * 8 + ry][col * 8 + rx] = fg_rgb if v else bg_rgb
 
     with open(out_path, "wb") as f:
         f.write(f"P6\n{W} {H}\n255\n".encode())

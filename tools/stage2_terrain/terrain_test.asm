@@ -46,6 +46,15 @@ INIT:
     LD HL,TERRAIN_PATTERNS : LD DE,0000h : LD BC,TERRAIN_PATTERN_COUNT*8 : CALL LDIRVM
     LD HL,TERRAIN_COLORDATA : LD DE,2000h : LD BC,32 : CALL LDIRVM
 
+    ; border/backdrop = black
+    LD B,1 : LD C,7 : CALL WRTVDP
+
+    ; clear the WHOLE name table (768 cells) to code0 (BLANK, sky group)
+    ; first - MAINLOOP only ever touches rows 20-23 itself, so without
+    ; this the other 20 rows stay whatever leftover garbage BIOS SCREEN1
+    ; init left behind.
+    LD HL,TERRAIN_BLANK_ROW : LD DE,1800h : LD BC,768 : CALL LDIRVM
+
     XOR A
     LD (TICK),A
     LD (PXCHAR_T),A
@@ -143,7 +152,9 @@ TERRAIN_LUT:
     DB 0,1,2,3,4,5,6,7,8,9,10
     DS 245,0
 
-TERRAIN_COLORDATA:
-    DS 32,08Ch   ; fg=8,bg=12 (matches the source sprites' own fg/bg)
+; 768 zero bytes = code0 (BLANK) repeated, used to clear the whole name
+; table to sky/blank once at INIT.
+TERRAIN_BLANK_ROW:
+    DS 768,0
 
 ; ===== generated tables appended below by build_test.py =====
