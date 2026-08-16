@@ -1,0 +1,95 @@
+; --- Bank-switch POC: "bank 1" (window 8000h-BFFFh) content. ---
+; Entry stub deliberately placed near the very END of the 16KB window
+; (not the head) so that as real stage-2 content is added later,
+; growing upward from 8000h, it never has to push this stub around -
+; the jump target address stays fixed forever.
+;
+; SCREEN1 (T32) VRAM layout, set up by bank 0's INIT32 call:
+;   0000h-07FFh  pattern generator table (BIOS default font left as-is)
+;   1800h-1AFFh  name table (32 cols x 24 rows, 1 byte/cell = char code)
+;   2000h-201Fh  color table (32 groups of 8 codes)
+; so on-screen text is written at 1800h + row*32 + col, using the
+; BIOS's normal ASCII-ish default font (no custom patterns loaded by
+; this POC), which is why real ASCII codes are used below instead of
+; this game's own custom pattern numbering.
+    ORG 0BF00h
+
+STAGE2_ENTRY:
+    ; one-shot: write "STAGE 2" into name table row0 cols0-7 (VRAM 1800h)
+    DI
+    LD A,00h : OUT (99h),A
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    LD A,58h : OUT (99h),A   ; 1800h low=00h high=(18h|40h)=58h
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    LD HL,STAGE2_TEXT
+    LD B,8
+STAGE2_TXTLOOP:
+    LD A,(HL)
+    OUT (98h),A
+    INC HL
+    DJNZ STAGE2_TXTLOOP
+    EI
+    XOR A
+    LD (0E000h),A
+
+STAGE2_LOOP:
+    ; visible pacing: ~30 vblanks (roughly half a second) per digit step,
+    ; using this codebase's own EI+HALT idiom for vblank sync
+    LD B,30
+STAGE2_WAIT:
+    EI
+    HALT
+    DJNZ STAGE2_WAIT
+
+    LD A,(0E000h)
+    INC A
+    CP 10
+    JR C,STAGE2_NOWRAP
+    XOR A
+STAGE2_NOWRAP:
+    LD (0E000h),A
+
+    ; draw it as an ASCII digit at name table row1 col0 (VRAM 1820h)
+    ADD A,30h   ; '0'
+    LD C,A
+    DI
+    LD A,20h : OUT (99h),A
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    LD A,58h : OUT (99h),A   ; 1820h low=20h high=(18h|40h)=58h
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    LD A,C
+    OUT (98h),A
+    EI
+
+    JR STAGE2_LOOP
+
+STAGE2_TEXT:
+    DB "STAGE 2 "
