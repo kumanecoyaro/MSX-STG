@@ -1041,6 +1041,7 @@ INIT_SPRATR_CLR:
     LD (ANIM_BASE+0),A : LD (ANIM_BASE+8),A : LD (ANIM_BASE+16),A
     LD (SND_TIMER),A
     LD (SND_TIMER_C),A
+    LD (SND_TIMER_B),A
     LD (SPAWN_NEXT_INDEX),A
 
     ; --- PSG: channel A = noise-only (destroy), channel B = tone-only ---
