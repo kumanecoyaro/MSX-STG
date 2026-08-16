@@ -15,6 +15,38 @@
     ORG 0BF00h
 
 STAGE2_ENTRY:
+    ; one-shot: paint the whole color table (2000h, 32 groups) a single
+    ; readable color (white text on blue background = 0F4h). The real
+    ; game's own COLORDATA (loaded during INIT, long before this bank
+    ; is ever selected) is tuned for its own custom graphics, not for
+    ; displaying ASCII text - a real BlueMSX test showed "STAGE 2"
+    ; drawing correctly but in garbled/unintended colors without this.
+    DI
+    LD A,00h : OUT (99h),A
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    LD A,60h : OUT (99h),A   ; 2000h low=00h high=(20h|40h)=60h
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    LD B,32
+STAGE2_COLORLOOP:
+    LD A,0F4h
+    OUT (98h),A
+    DJNZ STAGE2_COLORLOOP
+    EI
+
     ; one-shot: write "STAGE 2" into name table row0 cols0-7 (VRAM 1800h)
     DI
     LD A,00h : OUT (99h),A

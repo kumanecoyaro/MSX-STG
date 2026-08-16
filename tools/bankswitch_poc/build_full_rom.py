@@ -38,6 +38,9 @@ INIT_ANCHOR = """    OUT (0A8h),A
 INIT_PATCH = """    OUT (0A8h),A
 
     ; --- [bankswitch_poc TEST PATCH, not in the tracked source] ---
+    ; --- DIAGNOSTIC checkpoint: border color 2 = "slot hack done". ---
+    LD B,2 : LD C,7 : CALL WRTVDP
+
     ; --- copy the bank-switch trampoline into RAM (0xF200, a       ---
     ; --- confirmed-free gap between ENEMY6_STEP_TIMER (0F1D8h) and ---
     ; --- STACKTOP (0F380h)) so any future switch executes from RAM ---
@@ -47,6 +50,9 @@ INIT_PATCH = """    OUT (0A8h),A
     LD DE,0F200h
     LD BC,BANKSWITCH_TRAMPOLINE_LEN
     LDIR
+
+    ; --- DIAGNOSTIC checkpoint: border color 3 = "trampoline copied". ---
+    LD B,3 : LD C,7 : CALL WRTVDP
 
     ; --- explicit ASCII16 bank select: bank 1 for window B        ---
     ; --- (8000h-BFFFh), matching the page2 content this game has  ---
@@ -59,6 +65,10 @@ INIT_PATCH = """    OUT (0A8h),A
     LD HL,INIT_RESUME_AFTER_BANK_SELECT
     JP 0F200h
 INIT_RESUME_AFTER_BANK_SELECT:
+    ; --- DIAGNOSTIC checkpoint: border color 4 = "bank1 select via  ---
+    ; --- RAM trampoline returned successfully".                     ---
+    LD B,4 : LD C,7 : CALL WRTVDP
+
     ; --- interrupts stay off for all of INIT's raw VDP/PSG port I/O; ---"""
 
 MAINLOOP_ANCHOR = """MAINLOOP:
@@ -98,6 +108,12 @@ TRAMPOLINE_PATCH = """INIT:
     LD SP,STACKTOP
 
     ; --- [bankswitch_poc TEST PATCH, not in the tracked source] ---
+    ; --- DIAGNOSTIC checkpoint: border color 1 = "INIT started,     ---
+    ; --- SP set". If the screen never shows even this color, real   ---
+    ; --- hardware is failing before/at cartridge boot itself, not   ---
+    ; --- anywhere in this patch.                                    ---
+    LD B,1 : LD C,7 : CALL WRTVDP
+
     ; --- source for the RAM-resident bank-switch trampoline, copied ---
     ; --- to 0xF200 below. Call/jump to it with A=bank number for   ---
     ; --- window B (8000h-BFFFh), HL=address to jump to afterward.  ---
@@ -118,12 +134,34 @@ def patch_trampoline_src(text):
     return text.replace(TRAMPOLINE_ANCHOR, TRAMPOLINE_PATCH, 1)
 
 
+POSTINIT32_ANCHOR = """    CALL INIT32
+
+    ; --- border/backdrop color"""
+
+POSTINIT32_PATCH = """    CALL INIT32
+
+    ; --- [bankswitch_poc TEST PATCH, not in the tracked source] ---
+    ; --- DIAGNOSTIC checkpoint: border color 6 = "INIT32 (BIOS      ---
+    ; --- SCREEN1 setup) returned successfully". Gets immediately    ---
+    ; --- overwritten by the game's own border color=1 write right   ---
+    ; --- below - only visible if execution froze exactly here.      ---
+    LD B,6 : LD C,7 : CALL WRTVDP
+
+    ; --- border/backdrop color"""
+
+
+def patch_postinit32(text):
+    assert text.count(POSTINIT32_ANCHOR) == 1, "post-INIT32 anchor not found (or not unique) - source drifted"
+    return text.replace(POSTINIT32_ANCHOR, POSTINIT32_PATCH, 1)
+
+
 def patched_game_text():
     src_path = os.path.join(REPO, "src", "CYBER_GD_BOSS.asm")
     text = open(src_path, encoding="utf-8").read()
     assert text.count(INIT_ANCHOR) == 1, "INIT anchor not found (or not unique) - source drifted"
     assert text.count(MAINLOOP_ANCHOR) == 1, "MAINLOOP anchor not found (or not unique) - source drifted"
     text = patch_trampoline_src(text)
+    text = patch_postinit32(text)
     text = text.replace(INIT_ANCHOR, INIT_PATCH, 1)
     text = text.replace(MAINLOOP_ANCHOR, MAINLOOP_PATCH, 1)
     return text

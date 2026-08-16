@@ -63,6 +63,26 @@ mapper type, pick ASCII16.
    issued the call. (This needed `JP (HL)` support added to
    `tools/mini_z80asm.py`/`tools/z80emu.py` - not previously used
    anywhere else in this codebase.)
+3. Two more findings from the RAM-trampoline version:
+   - Real hardware: froze immediately at the boot screen - a
+     regression, since the pre-trampoline version had booted and run
+     stage 1 fine for 13+ seconds. Root cause not yet identified.
+     Added border-color checkpoints (VDP register 7) through INIT's
+     new code (colors 1-4 through the trampoline setup/first select,
+     color 6 right after the BIOS SCREEN1 call returns) so a report of
+     "which color froze on screen" pinpoints exactly where boot stops,
+     instead of guessing further blind.
+   - BlueMSX (mapper correctly recognized as ASCII16): got further -
+     reached the switch, drew "STAGE 2" - but in garbled/wrong colors,
+     then froze. Root cause: the placeholder bank never set up its own
+     color table; it was drawing real ASCII text into the color table
+     the *real game* left behind from its own INIT (loaded for its own
+     custom graphics, not for readable text). Fixed by having
+     `STAGE2_ENTRY` paint the whole 32-group color table a single
+     readable color (white on blue, 0xF4) before drawing any text.
+     Confirmed in the emulator: all 32 groups read back as 0xF4.
+     Whether this also explains the freeze, or the freeze is a second,
+     separate issue, isn't known yet.
 
 ## Files
 
@@ -140,3 +160,20 @@ transition confirms the switch and jump both landed exactly where
 intended, with no garbage/crash in between. This does mean reaching
 the trigger requires actually playing through to the boss kill, not a
 short fixed wait.
+
+### Boot-time diagnostic checkpoints (border color)
+
+If the game never gets past its very first screen, the border color
+(the true overscan border, not the in-screen sky) tells you how far
+INIT got before whatever's wrong happens - report back which color
+(if any) it's stuck on:
+
+| Border color | Meaning |
+|---|---|
+| (BIOS/none - never changes) | Never reaches this patch's code at all - fails before/at cartridge boot |
+| 1 | INIT started, stack pointer set |
+| 2 | Primary-slot page-2 mapping step done |
+| 3 | Bank-switch trampoline copied to RAM (0xF200) |
+| 4 | Bank1 explicitly selected for window B via the RAM trampoline, back in ROM |
+| 6 | BIOS SCREEN1 setup (INIT32) returned - normally instantly overwritten by the game's own border=1 (black) right after, so only visible if execution froze exactly here |
+| (anything else / game's own colors) | Past all of this patch's new code, running the game's own original INIT/MAINLOOP |
