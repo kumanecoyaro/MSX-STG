@@ -108,6 +108,7 @@ def build_track():
     tier = 0
 
     def ground_i(t):
+        assert 0 <= t <= 3, f"tier {t} out of range - only 4 rows (20-23) exist, 3 climbs/descends max"
         return 3 - t
 
     def emit_flat(n):
@@ -153,25 +154,32 @@ def build_track():
                     rows[i].append(BLANK_ID)
         tier -= 1
 
+    # Only 4 rows (20-23 = tiers 0-3) exist, so reaching the top from
+    # the bottom - or the bottom from the top - takes exactly 3 climb/
+    # descend transitions, not 4 (a "4-tier slope" means 4 distinct
+    # height LEVELS, i.e. 3 steps between them - the same off-by-one
+    # every staircase has). A 4th call used to silently try tier 4,
+    # which doesn't exist - ground_i() now asserts on that instead of
+    # quietly corrupting the row past that point.
     FLAT_RUN = 24
-    for _ in range(4):
+    for _ in range(3):
         emit_flat(FLAT_RUN)
         emit_climb()
     emit_flat(FLAT_RUN)
-    for _ in range(4):
+    for _ in range(3):
         emit_flat(FLAT_RUN)
         emit_descend()
     emit_flat(FLAT_RUN)
 
-    # Rapid back-to-back climb: all 4 tiers chained with no flat run in
-    # between - this is the actual point of using a shallow 22.5-degree
-    # per-tier slope instead of a steep 45-degree one: 4 of them chained
-    # directly still reads as one continuous climbable ramp instead of a
-    # sheer wall. Then the same going down.
-    for _ in range(4):
+    # Rapid back-to-back climb: all 3 transitions (0->1->2->3) chained
+    # with no flat run in between - this is the actual point of using a
+    # shallow 22.5-degree per-tier slope instead of a steep 45-degree
+    # one: chaining them directly still reads as one continuous
+    # climbable ramp instead of a sheer wall. Then the same going down.
+    for _ in range(3):
         emit_climb()
     emit_flat(FLAT_RUN)
-    for _ in range(4):
+    for _ in range(3):
         emit_descend()
     emit_flat(FLAT_RUN)
 
