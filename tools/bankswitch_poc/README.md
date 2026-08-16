@@ -99,6 +99,23 @@ mapper type, pick ASCII16.
    STAGE2_ENTRY; 9 = color fill done; 10 = text draw done, entering
    the counter loop) through the switch/STAGE2_ENTRY path to narrow
    down exactly where it's still freezing.
+5. With correct sizing, real hardware turned out **not** to be frozen
+   at all - just showing a confusing screen. A real-hardware photo
+   showed "STAGE" readable, a garbled/noisy region where " 2 " and a
+   wide band at the bottom of the screen should be, plus stage 1's
+   clouds, ship sprite, and score still visible. Root cause:
+   `STAGE2_ENTRY` only ever wrote its own 8 text bytes and one digit -
+   it never cleared the rest of the name table or hid sprites, so all
+   of stage 1's leftover graphics stayed on screen, and painting a
+   single uniform color across all 32 color groups (fix 3 above) made
+   those un-cleared terrain/cloud patterns - designed to be viewed
+   with their own original colors - render as visual noise instead.
+   Fixed: `STAGE2_ENTRY` now clears the whole name table (1800h-1AFFh,
+   768 cells, filled with space) and hides every sprite (writes the
+   standard MSX "stop here" Y sentinel 0D1h to sprite 0, which halts
+   sprite rendering for the whole table) before doing the color fill
+   and text draw. Verified in the emulator by seeding VRAM with fake
+   "leftover" garbage beforehand and confirming it's fully overwritten.
 
 ## Files
 

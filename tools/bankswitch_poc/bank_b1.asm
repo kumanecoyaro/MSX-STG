@@ -24,6 +24,69 @@ STAGE2_ENTRY:
     ; --- - or the fetch immediately after it - is what's freezing.  ---
     LD B,8 : LD C,7 : CALL WRTVDP
 
+    ; one-shot: clear the whole name table (1800h-1AFFh, 32x24=768   ---
+    ; cells) to blank (32=space) and hide every sprite (write the     ---
+    ; standard MSX "stop here" Y sentinel 0D1h to sprite 0's Y byte   ---
+    ; at 1B00h, which halts sprite processing for the whole table).   ---
+    ; Real-hardware finding: without this, stage 1's leftover clouds/ ---
+    ; ship/terrain stayed on screen under the new single-color        ---
+    ; palette below, which made the un-cleared terrain patterns       ---
+    ; render as visual noise instead of their intended look.          ---
+    DI
+    LD A,00h : OUT (99h),A
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    LD A,58h : OUT (99h),A   ; 1800h low=00h high=(18h|40h)=58h
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    LD A,32           ; space
+    LD B,0            ; 256
+STAGE2_CLR1:
+    OUT (98h),A
+    DJNZ STAGE2_CLR1
+    LD B,0            ; 256 more (512 total)
+STAGE2_CLR2:
+    OUT (98h),A
+    DJNZ STAGE2_CLR2
+    LD B,0            ; 256 more (768 total = 32*24, exactly fills 1800h-1AFFh)
+STAGE2_CLR3:
+    OUT (98h),A
+    DJNZ STAGE2_CLR3
+
+    LD A,00h : OUT (99h),A
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    LD A,5Bh : OUT (99h),A   ; 1B00h low=00h high=(1Bh|40h)=5Bh (sprite attribute table)
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    LD A,0D1h
+    OUT (98h),A
+    EI
+
     ; one-shot: paint the whole color table (2000h, 32 groups) a single
     ; readable color (white text on blue background = 0F4h). The real
     ; game's own COLORDATA (loaded during INIT, long before this bank

@@ -126,7 +126,7 @@ assert switched, "never reached STAGE2_ENTRY within step budget after PLAYER_FLY
 assert mem.bankB == 2, "window B not switched to bank2 (stage2 placeholder)"
 
 steps3 = 0
-while cpu.pc != ssym["STAGE2_LOOP"] and steps3 < 500:
+while cpu.pc != ssym["STAGE2_LOOP"] and steps3 < 5000:
     cpu.step()
     steps3 += 1
 assert cpu.pc == ssym["STAGE2_LOOP"]

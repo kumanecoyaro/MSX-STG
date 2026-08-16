@@ -88,7 +88,7 @@ assert mem.bankB == 1, "window B did not switch to bank 1"
 # source, so HALT would spin forever; that part is standard BIOS
 # vblank behavior already proven throughout the real game's own code)
 steps2 = 0
-while cpu.pc != symB["STAGE2_LOOP"] and steps2 < 500:
+while cpu.pc != symB["STAGE2_LOOP"] and steps2 < 5000:
     cpu.step()
     steps2 += 1
 print(f"reached STAGE2_LOOP after {steps2} more steps, pc={cpu.pc:04x}")
