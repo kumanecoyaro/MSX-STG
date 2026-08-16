@@ -38,14 +38,27 @@ INIT_ANCHOR = """    OUT (0A8h),A
 INIT_PATCH = """    OUT (0A8h),A
 
     ; --- [bankswitch_poc TEST PATCH, not in the tracked source] ---
+    ; --- copy the bank-switch trampoline into RAM (0xF200, a       ---
+    ; --- confirmed-free gap between ENEMY6_STEP_TIMER (0F1D8h) and ---
+    ; --- STACKTOP (0F380h)) so any future switch executes from RAM ---
+    ; --- - immune to whatever's currently mapped in either ROM      ---
+    ; --- window, unlike executing the switch from ROM directly.     ---
+    LD HL,BANKSWITCH_TRAMPOLINE_SRC
+    LD DE,0F200h
+    LD BC,BANKSWITCH_TRAMPOLINE_LEN
+    LDIR
+
     ; --- explicit ASCII16 bank select: bank 1 for window B        ---
     ; --- (8000h-BFFFh), matching the page2 content this game has  ---
     ; --- always had. Explicit rather than relying on the mapper's ---
     ; --- power-on default, which isn't guaranteed the same across ---
-    ; --- every flashcart.                                          ---
+    ; --- every flashcart. The trampoline never returns via RET (it ---
+    ; --- just jumps to HL), so this sets HL to "come back here"   ---
+    ; --- and JPs to it, rather than CALLing it.                    ---
     LD A,1
-    LD (7000h),A
-
+    LD HL,INIT_RESUME_AFTER_BANK_SELECT
+    JP 0F200h
+INIT_RESUME_AFTER_BANK_SELECT:
     ; --- interrupts stay off for all of INIT's raw VDP/PSG port I/O; ---"""
 
 MAINLOOP_ANCHOR = """MAINLOOP:
@@ -65,40 +78,44 @@ MAINLOOP_PATCH = """MAINLOOP:
     ; --- when the boss landed, and BOSS_EXPL_UPDATE's completion is  ---
     ; --- what kicks off the flyaway in the first place), so nothing  ---
     ; --- is left mid-animation in window B for the switch to cut off. ---
-    ; --- Safe here because MAINLOOP always starts at a window-A      ---
-    ; --- address and every frame re-enters via "JP MAINLOOP", so     ---
-    ; --- this switch (which only touches window B) never risks       ---
-    ; --- changing out its own currently-executing bank.               ---
+    ; --- Goes through the RAM trampoline copied in during INIT       ---
+    ; --- (see BANKSWITCH_TRAMPOLINE_SRC) rather than switching and   ---
+    ; --- jumping directly from ROM - both a real flashcart and       ---
+    ; --- BlueMSX froze on the direct-from-ROM version.                ---
     LD A,(PLAYER_FLYAWAY)
     CP 2
     JR NZ,MAINLOOP_NO_TEST_SWITCH
     LD A,2
-    LD (7000h),A
-    ; --- settle delay: give the flashcart's flash chip time to     ---
-    ; --- actually present bank2's data before we fetch from it -   ---
-    ; --- bank1 never needed this because plenty of unrelated code  ---
-    ; --- ran between selecting it (in INIT) and first reading it,  ---
-    ; --- but here the very next fetch IS the newly-switched bank.  ---
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    JP 0BF00h
+    LD HL,0BF00h
+    JP 0F200h
 MAINLOOP_NO_TEST_SWITCH:
 
     ; --- free-running: no per-frame DI/EI/HALT. The vblank-gated DI/    ---"""
+
+TRAMPOLINE_ANCHOR = "INIT:\n    LD SP,STACKTOP"
+
+TRAMPOLINE_PATCH = """INIT:
+    LD SP,STACKTOP
+
+    ; --- [bankswitch_poc TEST PATCH, not in the tracked source] ---
+    ; --- source for the RAM-resident bank-switch trampoline, copied ---
+    ; --- to 0xF200 below. Call/jump to it with A=bank number for   ---
+    ; --- window B (8000h-BFFFh), HL=address to jump to afterward.  ---
+    ; --- Executing the actual "LD (7000h),A" from RAM instead of   ---
+    ; --- ROM means it can never itself be affected by the very     ---
+    ; --- bank switch it's performing, regardless of which ROM      ---
+    ; --- window issued the call.                                    ---
+    JP BANKSWITCH_TRAMPOLINE_END
+BANKSWITCH_TRAMPOLINE_SRC:
+    LD (7000h),A
+    JP (HL)
+BANKSWITCH_TRAMPOLINE_LEN EQU $ - BANKSWITCH_TRAMPOLINE_SRC
+BANKSWITCH_TRAMPOLINE_END:"""
+
+
+def patch_trampoline_src(text):
+    assert text.count(TRAMPOLINE_ANCHOR) == 1, "INIT: opening not found (or not unique) - source drifted"
+    return text.replace(TRAMPOLINE_ANCHOR, TRAMPOLINE_PATCH, 1)
 
 
 def patched_game_text():
@@ -106,6 +123,7 @@ def patched_game_text():
     text = open(src_path, encoding="utf-8").read()
     assert text.count(INIT_ANCHOR) == 1, "INIT anchor not found (or not unique) - source drifted"
     assert text.count(MAINLOOP_ANCHOR) == 1, "MAINLOOP anchor not found (or not unique) - source drifted"
+    text = patch_trampoline_src(text)
     text = text.replace(INIT_ANCHOR, INIT_PATCH, 1)
     text = text.replace(MAINLOOP_ANCHOR, MAINLOOP_PATCH, 1)
     return text

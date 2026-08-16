@@ -20,6 +20,24 @@ INIT32  EQU 006Fh   ; BIOS: switch to SCREEN1 (T32), default font/colors, clear 
 INIT:
     LD SP,0F380h
 
+    ; --- bank-switch trampoline source, copied to RAM (0xF200) below. ---
+    ; --- Call/jump to it with A=bank number for window B, HL=address  ---
+    ; --- to jump to afterward. Executing the actual "LD (7000h),A"    ---
+    ; --- from RAM instead of ROM means it can never itself be         ---
+    ; --- affected by the very bank switch it's performing. A real     ---
+    ; --- flashcart AND BlueMSX both froze on an earlier version of    ---
+    ; --- this POC that switched-and-jumped directly from ROM.         ---
+    JP BANKSWITCH_TRAMPOLINE_END
+BANKSWITCH_TRAMPOLINE_SRC:
+    LD (7000h),A
+    JP (HL)
+BANKSWITCH_TRAMPOLINE_LEN EQU $ - BANKSWITCH_TRAMPOLINE_SRC
+BANKSWITCH_TRAMPOLINE_END:
+    LD HL,BANKSWITCH_TRAMPOLINE_SRC
+    LD DE,0F200h
+    LD BC,BANKSWITCH_TRAMPOLINE_LEN
+    LDIR
+
     ; --- map our own primary slot into page 2 (8000h-BFFFh) as well - ---
     ; --- same belt-and-suspenders step CYBER_GD_BOSS.asm's INIT does, ---
     ; --- harmless for a true mapper cartridge (the mapper's internal  ---
@@ -43,26 +61,5 @@ INIT:
 
 STAGE1_END:
     LD A,1
-    LD (7000h),A     ; select bank 1 for window B (8000h-BFFFh)
-    ; --- settle delay: give the flashcart's flash chip time to    ---
-    ; --- actually present the new bank's data before the very next ---
-    ; --- fetch reads from it (real-hardware finding: without this, ---
-    ; --- the jump below landed on stale/transitional bytes -       ---
-    ; --- garbled display, then a freeze).                          ---
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    JP 0BF00h        ; jump to the entry stub near the tail of bank B/1
+    LD HL,0BF00h      ; jump to the entry stub near the tail of bank B/1
+    JP 0F200h         ; select bank 1 for window B (8000h-BFFFh), then jump to HL

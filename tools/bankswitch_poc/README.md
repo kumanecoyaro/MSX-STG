@@ -35,18 +35,34 @@ selects at 6000h for page 1 / 7000h for page 2 - a normal Z80 memory
 write, not an OUT to an I/O port). If your flashcart/loader asks for a
 mapper type, pick ASCII16.
 
-**Real-hardware finding:** the very first version of this POC jumped
-straight from the bank-select write to the target address with no
-delay in between, and on real flashcart hardware (with ASCII16
-correctly selected) that produced a garbled, unreadable screen that
-then froze - while the *first* switch (bank0->bank1, done once at
-boot with a lot of unrelated code executing before it was ever read)
-worked fine. The likely cause: the flashcart's flash chip needs a
-short settle time after a bank-select write before it actually
-presents the new bank's data; reading immediately (as the very next
-instruction fetch) can catch it mid-transition. Fix: both `bank_a.asm`
-and the MAINLOOP test trigger in `build_full_rom.py` now insert 16
-NOPs between the bank-select write and the jump into the new bank.
+**Real-hardware findings, in order:**
+
+1. The very first version jumped straight from the bank-select write
+   to the target address with no delay in between. On a real flashcart
+   (ASCII16 correctly selected) that produced a garbled, unreadable
+   screen that then froze - while the *first* switch (bank0->bank1,
+   done once at boot with a lot of unrelated code executing before it
+   was ever read) worked fine. Hypothesis at the time: the flashcart's
+   flash chip needs a short settle time after a bank-select write
+   before it presents the new bank's data. Fix tried: 16 NOPs between
+   the select write and the jump.
+2. That NOP fix alone did not hold up: the next real-hardware test (now
+   triggering on the actual boss-kill event instead of an arbitrary
+   tick, see below) froze again at the switch point - and so did
+   BlueMSX, a cycle-accurate emulator with no flash-chip timing quirks
+   of its own, which argues against "flash settle time" as the real
+   root cause and points at something more fundamental instead.
+   Adopted the standard, maximally-defensive MSX bank-switch pattern:
+   a tiny "LD (7000h),A : JP (HL)" trampoline, copied into RAM
+   (0xF200, a confirmed-free gap between ENEMY6_STEP_TIMER (0F1D8h)
+   and STACKTOP (0F380h)) once at boot. Every switch now goes
+   `LD A,<bank> : LD HL,<target> : JP 0F200h` instead of switching and
+   jumping directly from ROM - the actual "LD (7000h),A" now always
+   executes from RAM, so it can never itself be invalidated by the
+   very bank switch it's performing, regardless of which ROM window
+   issued the call. (This needed `JP (HL)` support added to
+   `tools/mini_z80asm.py`/`tools/z80emu.py` - not previously used
+   anywhere else in this codebase.)
 
 ## Files
 
@@ -107,9 +123,12 @@ an isolated stub:
 Run `python3 build_full_rom.py` to (re)build
 `CYBER_SUZUKA_ASCII16_TEST.rom` from the current source. Run
 `python3 verify_full.py` to re-verify in the emulator: confirms normal
-gameplay is untouched before tick 100 (bank never switches early),
-confirms the switch fires cleanly at tick 100, confirms it lands
-exactly on the placeholder's entry point, confirms the VRAM text draw.
+gameplay never switches early (PLAYER_FLYAWAY stays 0, bank stays 1),
+then pokes PLAYER_FLYAWAY=2 directly (simulating a real boss kill,
+which isn't practical to step through in the emulator - see the
+script for why) and confirms the very next MAINLOOP pass reacts
+correctly: switch fires through the RAM trampoline, lands exactly on
+the placeholder's entry point, VRAM text draw checks out.
 
 ### Expected on-screen result (full-game ROM)
 
