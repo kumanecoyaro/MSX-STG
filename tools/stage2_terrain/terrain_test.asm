@@ -24,9 +24,9 @@ WRTVDP  EQU 0047h
     DS 6,0
 
 TICK          EQU 0F000h
-PXCHAR_T      EQU 0F001h
-ROWPHASE_T    EQU 0F002h
-TERRAIN_NEXTID EQU 0F003h
+PXCHAR_T      EQU 0F001h   ; word (2 bytes) - track now exceeds 255 cells
+ROWPHASE_T    EQU 0F003h
+TERRAIN_NEXTID EQU 0F004h
 IDCACHE_T0    EQU 0F010h
 IDCACHE_T1    EQU 0F040h
 IDCACHE_T2    EQU 0F070h
@@ -55,9 +55,17 @@ INIT:
     ; init left behind.
     LD HL,TERRAIN_BLANK_ROW : LD DE,1800h : LD BC,768 : CALL LDIRVM
 
+    ; row 19 (one row above the 4-row climbable band) is a static solid
+    ; fill in Rock's own color, not part of the scroller - reads as
+    ; "more rock extends upward" above the tallest reachable tier
+    ; instead of sky butting straight up against the top tier.
+    LD HL,TERRAIN_ROCKY_BLANK : LD DE,TERRAIN_PATTERN_COUNT*8 : LD BC,8 : CALL LDIRVM
+    LD HL,TERRAIN_ROW19 : LD DE,1A60h : LD BC,32 : CALL LDIRVM       ; row19 = 1800h+19*32
+
     XOR A
     LD (TICK),A
-    LD (PXCHAR_T),A
+    LD HL,0
+    LD (PXCHAR_T),HL
     LD (ROWPHASE_T),A
 
     ; prime all 4 IDCACHEs at PXCHAR_T=0 so the very first frame (before
@@ -73,17 +81,28 @@ MAINLOOP:
 
     AND 07h
     JR NZ,SKIP_ADVANCE
-    LD A,(PXCHAR_T) : INC A : LD (PXCHAR_T),A   ; 256-cell track: byte wraps naturally
-    LD HL,TERRAIN_ROWDATA0 : LD E,A : LD D,0 : ADD HL,DE
+    ; advance PXCHAR_T (word) and wrap it back to 0 at TERRAIN_TRACK_LEN
+    ; (no longer a free byte wraparound - the track is now longer than
+    ; 255 cells - so this does an explicit 16-bit compare-and-reset).
+    LD HL,(PXCHAR_T) : INC HL
+    LD (PXCHAR_T),HL
+    LD DE,TERRAIN_TRACK_LEN
+    OR A : SBC HL,DE
+    JR NZ,PXT_NOWRAP
+    LD HL,0
+    LD (PXCHAR_T),HL
+PXT_NOWRAP:
+    LD DE,(PXCHAR_T)
+    LD HL,TERRAIN_ROWDATA0 : ADD HL,DE
     LD IX,IDCACHE_T0 : CALL REFRESH_IDCACHE_33
-    LD A,(PXCHAR_T)
-    LD HL,TERRAIN_ROWDATA1 : LD E,A : LD D,0 : ADD HL,DE
+    LD DE,(PXCHAR_T)
+    LD HL,TERRAIN_ROWDATA1 : ADD HL,DE
     LD IX,IDCACHE_T1 : CALL REFRESH_IDCACHE_33
-    LD A,(PXCHAR_T)
-    LD HL,TERRAIN_ROWDATA2 : LD E,A : LD D,0 : ADD HL,DE
+    LD DE,(PXCHAR_T)
+    LD HL,TERRAIN_ROWDATA2 : ADD HL,DE
     LD IX,IDCACHE_T2 : CALL REFRESH_IDCACHE_33
-    LD A,(PXCHAR_T)
-    LD HL,TERRAIN_ROWDATA3 : LD E,A : LD D,0 : ADD HL,DE
+    LD DE,(PXCHAR_T)
+    LD HL,TERRAIN_ROWDATA3 : ADD HL,DE
     LD IX,IDCACHE_T3 : CALL REFRESH_IDCACHE_33
 SKIP_ADVANCE:
     LD A,(TICK) : AND 07h : LD (ROWPHASE_T),A
@@ -156,5 +175,15 @@ TERRAIN_LUT:
 ; table to sky/blank once at INIT.
 TERRAIN_BLANK_ROW:
     DS 768,0
+
+; row19's static rock-colored fill: an all-zero pattern (same shape as
+; BLANK) loaded at code TERRAIN_PATTERN_COUNT - the next free code
+; right after every generated pattern, which lands inside a rock-color
+; group (COLORDATA assigns ROCK_COLOR to every group except group0/sky)
+; automatically, with no changes needed to the id/color generator.
+TERRAIN_ROCKY_BLANK:
+    DS 8,0
+TERRAIN_ROW19:
+    DS 32,TERRAIN_PATTERN_COUNT
 
 ; ===== generated tables appended below by build_test.py =====

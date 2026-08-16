@@ -162,6 +162,19 @@ def build_track():
         emit_flat(FLAT_RUN)
         emit_descend()
     emit_flat(FLAT_RUN)
+
+    # Rapid back-to-back climb: all 4 tiers chained with no flat run in
+    # between - this is the actual point of using a shallow 22.5-degree
+    # per-tier slope instead of a steep 45-degree one: 4 of them chained
+    # directly still reads as one continuous climbable ramp instead of a
+    # sheer wall. Then the same going down.
+    for _ in range(4):
+        emit_climb()
+    emit_flat(FLAT_RUN)
+    for _ in range(4):
+        emit_descend()
+    emit_flat(FLAT_RUN)
+
     assert tier == 0
     return rows
 
