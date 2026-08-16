@@ -448,12 +448,19 @@ SPAWN_NEXT_INDEX EQU 0E4D4h
 SPAWN_E1_Y EQU 0E506h          ; Y chosen for the next independent Enemy1 spawn
 NEXT_SPRITE_NUM EQU 0E507h     ; rotating sprite attribute slot allocator (1-31, 0=player reserved)
 
-; --- score: enemy1=100pts, enemy2=200pts, enemy3=300pts per kill. ---
-; --- 16-bit binary (score never realistically exceeds ~65535 in   ---
-; --- this game), displayed as a fixed 8-digit nametable string     ---
-; --- top-left (row0, cols0-7); the top 3 digits are always '0'.    ---
-SCORE        EQU 0E4D5h   ; 2 bytes
-SCORE_DIGITS EQU 0E4D7h   ; 5 bytes (ten-thousands..ones)
+; --- score: enemy1=100pts, enemy2=200pts, enemy3=300pts per kill -    ---
+; --- always a multiple of 100, so SCORE stores real_score/100 rather  ---
+; --- than the real score itself: a 24-bit binary counter (low word at ---
+; --- SCORE, high byte at SCORE+2), incremented by 1/2/3 per kill      ---
+; --- instead of 100/200/300 (see ADD_SCORE_100/200/300). This is what ---
+; --- lets the display reach 6 significant digits (real score up to   ---
+; --- 99,999,900) instead of the old plain-16-bit SCORE's ~65535      ---
+; --- ceiling (which silently wrapped past it - no overflow check on  ---
+; --- a bare ADD HL,DE). Displayed as a fixed 8-digit nametable string ---
+; --- top-left (row0, cols0-7): 6 real digits (cols0-5) then a fixed   ---
+; --- "00" (cols6-7, the two low decimal digits that are always zero). ---
+SCORE        EQU 0E4D5h   ; 3 bytes: low word at +0, high byte at +2
+SCORE_DIGITS EQU 0E4D8h   ; 6 bytes (hundred-thousands..ones, of SCORE - i.e. real score/100)
 
 ; --- direct/raw PSG joystick read (BIOS GTTRIG's trigger B never  ---
 ; --- worked on real hardware; a raw PSG read was confirmed correct---
@@ -464,12 +471,12 @@ SCORE_DIGITS EQU 0E4D7h   ; 5 bytes (ten-thousands..ones)
 JOY_PSG_ADDR EQU 0A0h
 JOY_PSG_DATA EQU 0A1h
 JOY_PSG_READ EQU 0A2h
-JOY_RAW EQU 0E4DCh
-JOY_STICK EQU 0E4DFh  ; BIOS GTSTCK result (0-8 direction code)
-JOY_TRIG EQU 0E4E0h   ; BIOS GTTRIG result, trigger A (0=released, FFh=pressed)
-JOY_TRIGB EQU 0E4DDh      ; BIOS GTTRIG result, trigger B (0=released, FFh=pressed)
-JOY_TRIGB_PREV EQU 0E4DEh ; trigger B state, previous frame (for edge detection)
-FIREB_EDGE EQU 0E4E1h     ; 1 = trigger B was just pressed this frame
+JOY_RAW EQU 0E4DEh
+JOY_STICK EQU 0E4E1h  ; BIOS GTSTCK result (0-8 direction code)
+JOY_TRIG EQU 0E4E2h   ; BIOS GTTRIG result, trigger A (0=released, FFh=pressed)
+JOY_TRIGB EQU 0E4DFh      ; BIOS GTTRIG result, trigger B (0=released, FFh=pressed)
+JOY_TRIGB_PREV EQU 0E4E0h ; trigger B state, previous frame (for edge detection)
+FIREB_EDGE EQU 0E4E3h     ; 1 = trigger B was just pressed this frame
 
 ; --- formation entrance/exit sequence (4-cycle: simple@Y0, simple@Y1, ---
 ; --- complex@Y2 mirrored-Z exit, complex@Y1 normal-Z exit, loop)      ---
@@ -848,6 +855,7 @@ FILLBG_3:
     LD HL,0 : LD (GAME_TICK),HL
     CALL GAME_TICK_DISPLAY
     LD HL,0 : LD (SCORE),HL
+    XOR A : LD (SCORE+2),A
     CALL SCORE_DISPLAY
 
     ; --- enemy3 pool: idle at boot - waves start as the tick schedule ---
@@ -3504,22 +3512,67 @@ GTD_T10_DONE:
     CALL WRITE_ANIM_CELL
     RET
 
-; Extracts SCORE's 5 low decimal digits (ten-thousands..ones) into
-; SCORE_DIGITS, then draws all 8 digits (3 fixed leading zeros +
-; those 5) at row0, cols0-7 (top-left, fixed width).
+; Extracts SCORE's 6 decimal digits (hundred-thousands..ones, of the
+; SCORE value itself - i.e. real_score/100, see SCORE's own comment)
+; into SCORE_DIGITS, then draws all 8 display cells at row0, cols0-7:
+; those 6, followed by a fixed "00" (real score's low 2 digits, always
+; zero).
+;
+; The hundred-thousands AND ten-thousands digits both need the full
+; 24-bit value (A:HL, A=SCORE+2's high byte): a remainder just under
+; 100000 (up to 99999) still doesn't fit in HL alone since 99999 >
+; 65535 - only once the ten-thousands digit is extracted is the
+; remainder guaranteed < 10000 < 65536, letting the remaining 4 digits
+; use plain 16-bit HL like the original 5-digit version did for all of
+; its digits. Each 24-bit-aware digit uses the standard multi-byte
+; subtract idiom (OR A : SBC HL,DE : SBC A,n, where the second SBC
+; folds in the first one's borrow to get the true 24-bit borrow-out in
+; its own carry) and, on the "done, restore" arm, the exact-inverse add
+; to undo the last (over-)subtraction without losing track of A - this
+; mini-assembler has no ADC, so the restore does ADD HL,DE (whose own
+; carry-out doubles as the borrow that needs folding back into A) then
+; a plain ADD A,n plus a conditional INC A for that carry. Dropping A's
+; restore after the hundred-thousands digit (as an earlier version of
+; this did) leaves A holding garbage that the ten-thousands digit
+; silently ignores, corrupting every digit after it whenever the true
+; remainder was ever >= 65536 (i.e. real score between roughly
+; 6,553,600 and 9,999,900).
 SCORE_DISPLAY:
     LD HL,(SCORE)
+    LD A,(SCORE+2)
+    LD B,0
+SD_HT:
+    LD DE,86A0h           ; 100000's low word (high byte is the 01h below)
+    OR A
+    SBC HL,DE
+    SBC A,01h
+    JR C,SD_HT_DONE
+    INC B
+    JR SD_HT
+SD_HT_DONE:
+    LD DE,86A0h
+    ADD HL,DE              ; this ADD's own carry-out doubles as the borrow to add back into A -
+    JR NC,SD_HT_RESTORE_A   ; this mini-assembler has no ADC, so fold it in with a plain INC first
+    INC A
+SD_HT_RESTORE_A:
+    ADD A,01h
+    PUSH AF
+    LD A,B : LD (SCORE_DIGITS+0),A
+    POP AF
+
     LD B,0
 SD_TT:
     LD DE,10000
     OR A
     SBC HL,DE
+    SBC A,00h
     JR C,SD_TT_DONE
     INC B
     JR SD_TT
 SD_TT_DONE:
+    LD DE,10000
     ADD HL,DE
-    LD A,B : LD (SCORE_DIGITS+0),A
+    LD A,B : LD (SCORE_DIGITS+1),A
 
     LD B,0
 SD_TH:
@@ -3531,7 +3584,7 @@ SD_TH:
     JR SD_TH
 SD_TH_DONE:
     ADD HL,DE
-    LD A,B : LD (SCORE_DIGITS+1),A
+    LD A,B : LD (SCORE_DIGITS+2),A
 
     LD B,0
 SD_H:
@@ -3543,7 +3596,7 @@ SD_H:
     JR SD_H
 SD_H_DONE:
     ADD HL,DE
-    LD A,B : LD (SCORE_DIGITS+2),A
+    LD A,B : LD (SCORE_DIGITS+3),A
 
     LD B,0
 SD_T:
@@ -3555,57 +3608,61 @@ SD_T:
     JR SD_T
 SD_T_DONE:
     ADD HL,DE
-    LD A,B : LD (SCORE_DIGITS+3),A
+    LD A,B : LD (SCORE_DIGITS+4),A
 
-    LD A,L : LD (SCORE_DIGITS+4),A
+    LD A,L : LD (SCORE_DIGITS+5),A
 
     XOR A : LD (ANIM_TMP_ROW),A
     LD A,0 : LD (ANIM_TMP_COL),A
-    LD A,DIGIT_BASE : LD (ANIM_TMP_VAL),A
-    CALL WRITE_ANIM_CELL
-    XOR A : LD (ANIM_TMP_ROW),A
-    LD A,1 : LD (ANIM_TMP_COL),A
-    LD A,DIGIT_BASE : LD (ANIM_TMP_VAL),A
-    CALL WRITE_ANIM_CELL
-    XOR A : LD (ANIM_TMP_ROW),A
-    LD A,2 : LD (ANIM_TMP_COL),A
-    LD A,DIGIT_BASE : LD (ANIM_TMP_VAL),A
-    CALL WRITE_ANIM_CELL
-    XOR A : LD (ANIM_TMP_ROW),A
-    LD A,3 : LD (ANIM_TMP_COL),A
     LD A,(SCORE_DIGITS+0) : ADD A,DIGIT_BASE : LD (ANIM_TMP_VAL),A
     CALL WRITE_ANIM_CELL
     XOR A : LD (ANIM_TMP_ROW),A
-    LD A,4 : LD (ANIM_TMP_COL),A
+    LD A,1 : LD (ANIM_TMP_COL),A
     LD A,(SCORE_DIGITS+1) : ADD A,DIGIT_BASE : LD (ANIM_TMP_VAL),A
     CALL WRITE_ANIM_CELL
     XOR A : LD (ANIM_TMP_ROW),A
-    LD A,5 : LD (ANIM_TMP_COL),A
+    LD A,2 : LD (ANIM_TMP_COL),A
     LD A,(SCORE_DIGITS+2) : ADD A,DIGIT_BASE : LD (ANIM_TMP_VAL),A
     CALL WRITE_ANIM_CELL
     XOR A : LD (ANIM_TMP_ROW),A
-    LD A,6 : LD (ANIM_TMP_COL),A
+    LD A,3 : LD (ANIM_TMP_COL),A
     LD A,(SCORE_DIGITS+3) : ADD A,DIGIT_BASE : LD (ANIM_TMP_VAL),A
     CALL WRITE_ANIM_CELL
     XOR A : LD (ANIM_TMP_ROW),A
-    LD A,7 : LD (ANIM_TMP_COL),A
+    LD A,4 : LD (ANIM_TMP_COL),A
     LD A,(SCORE_DIGITS+4) : ADD A,DIGIT_BASE : LD (ANIM_TMP_VAL),A
+    CALL WRITE_ANIM_CELL
+    XOR A : LD (ANIM_TMP_ROW),A
+    LD A,5 : LD (ANIM_TMP_COL),A
+    LD A,(SCORE_DIGITS+5) : ADD A,DIGIT_BASE : LD (ANIM_TMP_VAL),A
+    CALL WRITE_ANIM_CELL
+    XOR A : LD (ANIM_TMP_ROW),A
+    LD A,6 : LD (ANIM_TMP_COL),A
+    LD A,DIGIT_BASE : LD (ANIM_TMP_VAL),A
+    CALL WRITE_ANIM_CELL
+    XOR A : LD (ANIM_TMP_ROW),A
+    LD A,7 : LD (ANIM_TMP_COL),A
+    LD A,DIGIT_BASE : LD (ANIM_TMP_VAL),A
     CALL WRITE_ANIM_CELL
     RET
 
-; Score-award helpers, one per enemy type's per-kill value.
+; Score-award helpers, one per enemy type's per-kill value - SCORE is
+; real_score/100, so these add 1/2/3 (not 100/200/300) now.
 ADD_SCORE_100:
-    LD HL,100
+    LD HL,1
     JR ADD_SCORE_COMMON
 ADD_SCORE_200:
-    LD HL,200
+    LD HL,2
     JR ADD_SCORE_COMMON
 ADD_SCORE_300:
-    LD HL,300
+    LD HL,3
 ADD_SCORE_COMMON:
     LD DE,(SCORE)
     ADD HL,DE
     LD (SCORE),HL
+    JR NC,ASC_NO_CARRY
+    LD A,(SCORE+2) : INC A : LD (SCORE+2),A
+ASC_NO_CARRY:
     CALL SCORE_DISPLAY
     RET
 
@@ -11190,10 +11247,20 @@ SPAWN_E4B:
 ; ENEMY4 branches; its Y is set directly (E_Y) rather than via the
 ; BASEY+sine-LUT scheme, and it never claims one of the 6 physical
 ; asterisk pattern slots (nothing here does for it, and nothing
-; frees one for it either). Every other TYPE (e.g. TYPE_ENEMY1_LOOK)
-; keeps the original BEHAVIOR_SINE_BOB spawn, BASEY going to E_PARAM0
-; as before. If the pool is full the spawn is simply dropped (same
-; skip-if-busy behavior as before).
+; frees one for it either).
+;
+; Every other TYPE (currently just TYPE_ENEMY1_LOOK, "Enemy5") keeps
+; the original BEHAVIOR_SINE_BOB spawn, BASEY going to E_PARAM0 as
+; before - but now ALSO claims one of the same 6 physical pattern
+; slots Enemy1 (SPAWN_SIMPLE/ENEMY1_CLAIM_ANY) uses, with both quadrant
+; flags (E_TOP/E_BOT) starting alive and an initial SIMPLE_REDRAW, so
+; it gets Enemy1's own independent top/bottom hit judgment (see
+; EBSB_HIT_TEST) instead of the old single whole-sprite hitbox - a
+; bullet through just the top (or bottom) asterisk now kills only
+; that one, same as Enemy1/Enemy2's formations. This means Enemy5
+; now competes with Enemy1 for the same 6-slot pool; if it's already
+; exhausted, the spawn is dropped (rolling back the ENEMY_POOL claim)
+; same as any other pool-exhaustion drop in this game.
 ENEMY4_CLAIM_ANY:
     CALL ALLOC_ENEMY_SLOT
     OR A
@@ -11206,6 +11273,15 @@ ENEMY4_CLAIM_ANY:
     LD A,(E4_SPAWN_BASEY) : LD (IX+E_Y),A
     JR E4CA_COMMON
 E4CA_SINEBOB:
+    CALL ALLOC_PATTERN_SLOT
+    CP 0FFh
+    JR NZ,E4CA_SB_GOTPAT
+    CALL FREE_ENEMY_SLOT
+    XOR A
+    RET
+E4CA_SB_GOTPAT:
+    LD (IX+E_PARAM3),A
+    LD A,1 : LD (IX+E_TOP),A : LD (IX+E_BOT),A
     LD A,BEHAVIOR_SINE_BOB : LD (IX+E_BEHAVIOR),A
     LD A,(E4_SPAWN_BASEY) : LD (IX+E_PARAM0),A
 E4CA_COMMON:
@@ -11214,7 +11290,12 @@ E4CA_COMMON:
     LD A,(IX+E_TYPE) : CALL ENEMY_TYPE_LOOKUP
     LD DE,ETT_HP : ADD HL,DE
     LD A,(HL) : LD (IX+E_HP),A
-    RET
+    LD A,(IX+E_TYPE)
+    CP TYPE_ENEMY1_LOOK
+    RET NZ
+    PUSH IX : POP HL
+    LD A,(IX+E_PARAM3)
+    JP SIMPLE_REDRAW
 
 ; Given A = TYPE (1-based), returns HL = pointer to that TYPE's
 ; ENEMY_TYPE_TABLE entry (see layout comment above the table).
@@ -11520,9 +11601,17 @@ EBSB_PHASEOK:
     NOP
     NOP
     EI
-    LD A,(IX+E_TYPE) : CALL ENEMY_TYPE_LOOKUP
+    ; Draws from this instance's own pattern slot (E_PARAM3), not a
+    ; TYPE lookup - same reasoning as EBSD_DRAW's SIMPLE_PATTERN_NUM
+    ; use: each instance's pattern is independently mutable (top/bottom
+    ; quadrants killed one at a time - see EBSB_HIT_TEST/SIMPLE_REDRAW).
+    ; This BEHAVIOR is currently only ever TYPE_ENEMY1_LOOK (TYPE_ENEMY4
+    ; is BEHAVIOR_SIMPLE_DRIFT_DODGE - see ENEMY4_CLAIM_ANY), so there's
+    ; no other TYPE to branch on here; color is just the fixed SPR_GRAY
+    ; every asterisk quadrant already uses.
+    LD A,(IX+E_PARAM3) : CALL SIMPLE_PATTERN_NUM
     DI
-    LD A,(HL) : OUT (98h),A          ; pattern
+    OUT (98h),A                      ; pattern
     NOP
     NOP
     NOP
@@ -11531,8 +11620,7 @@ EBSB_PHASEOK:
     NOP
     NOP
     NOP
-    INC HL
-    LD A,(HL) : OUT (98h),A          ; color
+    LD A,SPR_GRAY : OUT (98h),A      ; color
     NOP
     NOP
     NOP
@@ -11545,8 +11633,11 @@ EBSB_PHASEOK:
     RET
 
 ; Drifted off the left edge: hide the sprite, restore its type's
-; pattern/color (matches the legacy Enemy4 exit write), and free the
-; slot. No score, no explosion - this is an exit, not a kill.
+; pattern/color (matches the legacy Enemy4 exit write - vestigial now
+; that Enemy5 flies with its own pattern slot, but harmless: the
+; sprite is already hidden off-screen by the time this runs), frees
+; this instance's pattern slot (see ENEMY4_CLAIM_ANY), then the slot.
+; No score, no explosion - this is an exit, not a kill.
 EBSB_EXIT_LEFT:
     DI
     LD A,ENEMY_HIDE_Y : OUT (98h),A
@@ -11590,6 +11681,7 @@ EBSB_EXIT_LEFT:
     NOP
     NOP
     EI
+    LD A,(IX+E_PARAM3) : CALL FREE_PATTERN_SLOT
     CALL FREE_ENEMY_SLOT
     RET
 
@@ -11858,81 +11950,56 @@ CBVEP_SKIP:
     XOR A
     RET
 
-; Input: IX = slot base (already confirmed ACTIVE+BEHAVIOR_SINE_BOB),
-; B = bullet col, C = bullet row. Output: A = 1 if the bullet hit this
-; slot (consumed either way - damaged or destroyed), else A = 0.
+; Input: IX = slot base (already confirmed ACTIVE+BEHAVIOR_SINE_BOB,
+; i.e. TYPE_ENEMY1_LOOK/"Enemy5" - the only TYPE this BEHAVIOR has
+; right now, see ENEMY4_CLAIM_ANY), B = bullet col, C = bullet row.
+; Output: A = 1 if the bullet destroyed a quadrant, else 0. Same
+; independent TOP/BOT quadrant system as EBSD_HIT_TEST (see its own
+; comment for the full rationale) - only the quadrants' current
+; position differs, since this one bobs along the sine LUT each frame
+; instead of sitting at a stored E_Y. Like EBSD_HIT_TEST, a
+; fully-gutted (both quadrants dead) unit is NOT freed early - it
+; keeps flying invisibly until EBSB_EXIT_LEFT.
 EBSB_HIT_TEST:
+    LD A,(IX+E_TOP) : OR A : JR Z,EBSB_HT_CHECKBOT
     LD A,(IX+E_STATE) : LD E,A : LD D,0
-    LD HL,ENEMY4_SINE_LUT
-    ADD HL,DE
-    LD A,(IX+E_PARAM0) : ADD A,(HL) : ADD A,8 : LD E,A   ; +8: art/hitbox is the bottom half only
+    LD HL,ENEMY4_SINE_LUT : ADD HL,DE
+    LD A,(IX+E_PARAM0) : ADD A,(HL) : LD E,A
     LD A,(IX+E_X) : LD D,A
     CALL QUAD_HIT_TEST
     OR A
-    JR Z,EBSBH_NO
-    LD A,(IX+E_HP) : DEC A : LD (IX+E_HP),A
+    JR NZ,EBSB_HT_KILL_TOP
+EBSB_HT_CHECKBOT:
+    LD A,(IX+E_BOT) : OR A : JR Z,EBSBH_NO
+    LD A,(IX+E_STATE) : LD E,A : LD D,0
+    LD HL,ENEMY4_SINE_LUT : ADD HL,DE
+    LD A,(IX+E_PARAM0) : ADD A,(HL) : ADD A,8 : LD E,A
+    LD A,(IX+E_X) : ADD A,8 : LD D,A
+    CALL QUAD_HIT_TEST
     OR A
-    JR NZ,EBSBH_DAMAGED
-    ; --- HP reached 0: fully destroy ---
-    DI
-    LD A,(IX+E_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    LD A,ENEMY_HIDE_Y : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    LD A,255 : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    ; --- stash the score selector and free the slot BEFORE calling  ---
-    ; --- TRIGGER_EXPLOSION, which reuses IX for its own ANIM_BASE   ---
-    ; --- bookkeeping - nothing below this may rely on IX afterward. ---
-    EI
-    PUSH DE                     ; TRIGGER_EXPLOSION needs D,E = hit X,Y - the type/score
-                                 ; lookup below (ENEMY_TYPE_LOOKUP, LD DE,ETT_SCORESEL) reuses DE
+    JR Z,EBSBH_NO
+    XOR A : LD (IX+E_BOT),A
+    JR EBSB_HT_REDRAW
+EBSB_HT_KILL_TOP:
+    XOR A : LD (IX+E_TOP),A
+EBSB_HT_REDRAW:
+    ; --- stash the score selector (IX-relative) BEFORE calling        ---
+    ; --- SIMPLE_REDRAW/TRIGGER_EXPLOSION, both of which trash IX -    ---
+    ; --- nothing below this may rely on IX afterward.                 ---
+    PUSH DE                      ; hit X,Y, needed later for TRIGGER_EXPLOSION
     LD A,(IX+E_TYPE) : CALL ENEMY_TYPE_LOOKUP
     LD DE,ETT_SCORESEL : ADD HL,DE
     LD A,(HL)
     LD (ENEMY_SCORE_SEL_TMP),A
-    CALL FREE_ENEMY_SLOT
+    PUSH IX : POP HL
+    LD A,(IX+E_PARAM3)
+    CALL SIMPLE_REDRAW
     POP DE
     PUSH BC
     CALL TRIGGER_EXPLOSION
     LD A,(ENEMY_SCORE_SEL_TMP)
     CALL ENEMY_AWARD_SCORE_SEL
     POP BC
-    LD A,1
-    RET
-EBSBH_DAMAGED:
-    ; --- still alive - bullet is consumed (caller stops it here) ---
-    ; --- but the enemy keeps flying, no explosion/score yet.      ---
     LD A,1
     RET
 EBSBH_NO:
