@@ -51,8 +51,47 @@ mapper type, pick ASCII16.
 - `BANKSWITCH_POC.rom` - the built ROM, ready to load on a flashcart
   or in an MSX1 emulator with ASCII16 support
 
-## Expected on-screen result
+## Expected on-screen result (standalone POC)
 
 Boots straight to a mostly-blank SCREEN1, "STAGE 2" text appears near
 the top-left almost immediately, and a single digit below it counts
 0-9 repeating, roughly twice a second.
+
+## Full-game integration test
+
+`build_full_rom.py` builds a 64KB, 4-bank ROM with the *real* game as
+stage 1, for testing the switch embedded in actual gameplay instead of
+an isolated stub:
+
+- bank0 (page1 @ boot) = the real game's page1 content, plus two small
+  test-only insertions applied **in memory only** - `src/CYBER_GD_BOSS.asm`
+  itself is never modified. See `patched_game_text()` for exactly what's
+  patched and why (baking the trigger into the tracked source would
+  make it leak into the normal single-bank `rom/CYBER_GD_BOSS1.rom`
+  build too, and outside a real mapper that jump has nowhere valid to
+  land).
+  1. INIT explicitly selects bank1 for window B (matching this game's
+     existing page2 content - explicit instead of relying on the
+     mapper's power-on default).
+  2. MAINLOOP gets a temporary trigger at its very top: once GAME_TICK
+     reaches 100 (~13 seconds of normal play), it switches window B to
+     bank2 and jumps to 0BF00h - simulating "stage 1 end".
+- bank1 (page2 @ boot) = the real game's page2 content, byte-for-byte
+  unchanged - normal stage-1 gameplay is untouched up to the trigger.
+- bank2 = the same stage-2 placeholder as the standalone POC (bank_b1.asm).
+- bank3 = blank, future headroom, rounds the ROM out to 64KB.
+
+Run `python3 build_full_rom.py` to (re)build
+`CYBER_SUZUKA_ASCII16_TEST.rom` from the current source. Run
+`python3 verify_full.py` to re-verify in the emulator: confirms normal
+gameplay is untouched before tick 100 (bank never switches early),
+confirms the switch fires cleanly at tick 100, confirms it lands
+exactly on the placeholder's entry point, confirms the VRAM text draw.
+
+### Expected on-screen result (full-game ROM)
+
+Normal gameplay (title/gameplay as usual) for about 13 seconds, then
+an abrupt cut to the same "STAGE 2" + counting-digit screen as the
+standalone POC. The cut itself is the thing being tested - a clean,
+instant transition confirms the switch and jump both landed exactly
+where intended, with no garbage/crash in between.
