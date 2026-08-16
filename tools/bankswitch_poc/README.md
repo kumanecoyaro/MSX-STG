@@ -139,66 +139,105 @@ Boots straight to a mostly-blank SCREEN1, "STAGE 2" text appears near
 the top-left almost immediately, and a single digit below it counts
 0-9 repeating, roughly twice a second.
 
-## Full-game integration test
+## Full-game integration test (stage2 world, not a placeholder)
 
-`build_full_rom.py` builds a 64KB, 4-bank ROM with the *real* game as
-stage 1, for testing the switch embedded in actual gameplay instead of
-an isolated stub:
+The static "STAGE 2 + counting digit" placeholder screen turned out to
+be the wrong shape of test - per direct feedback: *"Stage 1と全く同じ物
+をStage 2に移植してくれ、ただ敵はシンプルのみで、これは後で作り直すか
+らテストだ"* (port an exact copy of stage 1 into stage 2, enemies
+simple-type only, it's a throwaway test that'll be redone later). Ad
+hoc fixes for the placeholder not clearing the screen/colors/sprites
+were also the wrong approach - the real fix is that the switch should
+land on a **real re-init**, which naturally does all of that as a side
+effect of booting properly (exactly like stage 1's own boot already
+does, proven working).
 
-- bank0 (page1 @ boot) = the real game's page1 content, plus two small
-  test-only insertions applied **in memory only** - `src/CYBER_GD_BOSS.asm`
-  itself is never modified. See `patched_game_text()` for exactly what's
-  patched and why (baking the trigger into the tracked source would
-  make it leak into the normal single-bank `rom/CYBER_GD_BOSS1.rom`
-  build too, and outside a real mapper that jump has nowhere valid to
-  land).
+`build_stage2_world.py` builds a full second copy of the real game -
+same terrain/engine/graphics/HUD, same boss fight at the end - but:
+- the enemy roster is trimmed to type=simple only (61 entries, filtered
+  straight out of the real 253-entry schedule by tick/Y, same original
+  timing, just dropping every non-simple entry) plus the same boss at
+  the end (tick 992, unchanged) - see `extract_simple_only_schedule()`
+- a permanent "STAGE2" label is drawn next to the score (row0,
+  cols10-15), using 5 new letter glyphs (S,T,A,G,E - standard 8x8
+  bitmap font bytes) loaded into pattern codes 64-68 (a confirmed-free
+  range) alongside the existing digit glyphs, with color group8
+  (covering those codes, previously unused/free) repointed to a
+  readable white-on-black to match the digit HUD's own style
+
+Like `build_full_rom.py`, this never touches `src/CYBER_GD_BOSS.asm` -
+it transforms an in-memory copy of the raw source text (letter glyphs
++ HUD draw + color tweak + regenerated schedule tables/dispatch chain),
+independently assembled into its own bank pair.
+
+`build_full_rom.py` ties it together into the final ROM:
+- bank0 (page1 @ boot) = the real game's page1 content, plus test-only
+  insertions applied **in memory only** (see `patched_game_text()`):
   1. INIT explicitly selects bank1 for window B (matching this game's
      existing page2 content - explicit instead of relying on the
-     mapper's power-on default).
+     mapper's power-on default) via the RAM trampoline.
   2. MAINLOOP gets a temporary trigger at its very top: once
      PLAYER_FLYAWAY reaches 2 (boss fully destroyed AND the player's
-     exit/flyaway sequence has finished - off-screen/hidden), it
-     switches window B to bank2 and jumps to 0BF00h. This is the
-     actual real transition point stage 2 will eventually use, not an
-     arbitrary tick count - by design, nothing is left mid-animation
-     in window B at this point (BOSS_CLEAR_DYNAMIC_ENEMIES already
-     ran when the boss landed, and it's the boss explosion sequence's
-     own completion that kicks off the flyaway in the first place).
-     An earlier version of this test fired on a bare GAME_TICK>=100
-     threshold, which could land mid-battle with live enemy/bullet
-     state still active in window B - not a fair or safe test of the
-     real transition.
+     exit/flyaway sequence has finished), it (a) mutes all 3 PSG
+     channels - real-hardware finding: the flyaway sequence's sustained
+     engine noise was still mid-volume at the exact instant of the cut
+     and, since MAINLOOP (and the decay routine it drives) never runs
+     again after switching away, was never given the chance to fade,
+     leaving it stuck on - then (b) does a two-hop switch through the
+     RAM trampoline: switch window B to bank3 (stage2 world's page2),
+     return to window A (still bank0/stage1, untouched by that), then
+     switch window A to bank2 (stage2 world's page1) and jump straight
+     to its own INIT (0x4010 - same relative address, same ORG/layout).
+     An earlier version fired on a bare GAME_TICK>=100 threshold, which
+     could land mid-battle with live enemy/bullet state still active -
+     not a fair or safe test of the real transition.
 - bank1 (page2 @ boot) = the real game's page2 content, byte-for-byte
   unchanged - normal stage-1 gameplay is untouched up to the trigger.
-- bank2 = the same stage-2 placeholder as the standalone POC (bank_b1.asm).
-- bank3 = blank, future headroom, rounds the ROM out to 64KB.
+- bank2/bank3 = stage2 world's own page1/page2 (see above).
+
+The bank-switch trampoline (`BANKSWITCH_TRAMPOLINE_SRC`, copied to RAM
+at 0xF200) now takes the mapper select port as a parameter too -
+`LD (DE),A : JP (HL)`, called as `LD A,<bank> : LD DE,<6000h or
+7000h> : LD HL,<target> : JP 0F200h` - since stage2 world needs to
+switch window A as well as window B, not just window B like the old
+placeholder did.
 
 Run `python3 build_full_rom.py` to (re)build
-`CYBER_SUZUKA_ASCII16_TEST.rom` from the current source. Run
-`python3 verify_full.py` to re-verify in the emulator: confirms normal
-gameplay never switches early (PLAYER_FLYAWAY stays 0, bank stays 1),
-then pokes PLAYER_FLYAWAY=2 directly (simulating a real boss kill,
-which isn't practical to step through in the emulator - see the
-script for why) and confirms the very next MAINLOOP pass reacts
-correctly: switch fires through the RAM trampoline, lands exactly on
-the placeholder's entry point, VRAM text draw checks out.
+`CYBER_SUZUKA_ASCII16_TEST.rom` from the current source (this also
+calls into `build_stage2_world.py`). Run `python3 verify_full.py` to
+re-verify in the emulator: confirms normal gameplay never switches
+early, pokes PLAYER_FLYAWAY=2 directly (simulating a real boss kill,
+which isn't practical to step through in the emulator - actually
+playing stage 2's own simple-enemy gameplay through to a real boss
+kill would need simulated player input, so this isn't attempted either
+- see the script for the full reasoning), confirms the PSG-mute bytes
+are present (the emulator has no PSG model to observe at runtime, so
+this is a static byte check, not an execution trace), confirms the
+two-hop switch lands exactly on stage2 world's own INIT with both
+banks correctly selected, then runs that INIT through to stage2
+world's own MAINLOOP and confirms the "STAGE2" HUD label is drawn
+correctly - i.e. drawn via a real boot, not a placeholder's one-off
+VRAM poke.
 
 ### Expected on-screen result (full-game ROM)
 
 Normal gameplay as usual, through the full boss fight - only once the
 boss is destroyed and the player ship finishes flying off-screen does
-it cut to the same "STAGE 2" + counting-digit screen as the standalone
-POC. The cut itself is the thing being tested - a clean, instant
-transition confirms the switch and jump both landed exactly where
-intended, with no garbage/crash in between. This does mean reaching
+the sound cut cleanly (no stuck engine noise) and the screen redraw
+into what looks like an ordinary restart of the same game, except with
+a permanent "STAGE2" label next to the score and only the simple
+zigzag enemy type showing up (no formations, no waves, no BG-cell
+enemies) until the same boss fight at the end. This does mean reaching
 the trigger requires actually playing through to the boss kill, not a
 short fixed wait.
 
 ### Diagnostic checkpoints (border color)
 
-If the game freezes anywhere - at boot, or at the stage-2 switch - the
+If the game freezes at boot or exactly at the stage-2 switch, the
 border color (the true overscan border, not the in-screen sky) tells
-you how far it got. Report back which color it's stuck on:
+you how far it got. Report back which color it's stuck on - these only
+cover bank0's boot and the switch itself, not stage2 world's own boot
+(which reuses the real game's already-proven INIT unmodified):
 
 | Border color | Meaning |
 |---|---|
@@ -208,8 +247,5 @@ you how far it got. Report back which color it's stuck on:
 | 3 | Bank-switch trampoline copied to RAM (0xF200) |
 | 4 | Bank1 explicitly selected for window B via the RAM trampoline, back in ROM |
 | 6 | BIOS SCREEN1 setup (INIT32) returned - normally instantly overwritten by the game's own border=1 (black) right after, so only visible if execution froze exactly here |
-| 7 | MAINLOOP: PLAYER_FLYAWAY==2 detected, about to call the RAM trampoline to switch to bank2 and jump |
-| 8 | Landed at STAGE2_ENTRY (bank2) - the switch and jump both succeeded |
-| 9 | STAGE2_ENTRY's color-table fill done |
-| 10 | STAGE2_ENTRY's "STAGE 2" text draw done, about to enter the counter loop |
-| (anything else / game's own colors) | Past all of this patch's new code, running the game's own original INIT/MAINLOOP, or well into the stage-2 placeholder's counter loop |
+| 7 | MAINLOOP: PLAYER_FLYAWAY==2 detected, about to mute PSG and switch |
+| (game's own colors, changing normally) | Past this patch's code, either still in stage 1 or already into stage2 world's own (already-proven) boot sequence |

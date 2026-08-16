@@ -1,35 +1,36 @@
-"""Builds a real 64KB ASCII16 ROM embedding the actual game, for a
-real-hardware test of the bank-switch mechanism.
+"""Builds a real 64KB(x2=128KB) ASCII16 ROM embedding the actual game
+as stage 1 AND a full "stage 2 world" (see build_stage2_world.py) as
+stage 2, for a real-hardware test of the bank-switch mechanism against
+genuine, fully-playable content on both sides - not a static
+placeholder screen.
 
 IMPORTANT: src/CYBER_GD_BOSS.asm itself is NOT modified. The normal
 game only ever runs as a flat 32KB ROM (no mapper) - if a bank-switch
 test trigger were baked into the tracked source, the ordinary
 single-bank rom/CYBER_GD_BOSS1.rom build would inherit it too, and
-outside a real ASCII16 mapper "LD (7000h),A : JP 0BF00h" just jumps
-into whatever garbage happens to be at 0BF00h once GAME_TICK reaches
-100 - a real regression in the normal game. So the two small
-insertions below (explicit "select bank1 for window B" in INIT, and
-the GAME_TICK>=100 test-switch trigger at the top of MAINLOOP) are
-applied to an in-memory copy of the source text, only for this test
-build.
+outside a real ASCII16 mapper that has nowhere valid to land - a real
+regression in the normal game. So all insertions below are applied to
+an in-memory copy of the source text, only for this test build.
 
-Layout:
+Layout (before the real-hardware-required 128KB doubling - see main()):
   bank0 (file 0x0000-0x3FFF) = the real game's page1 content
-      (4000h-7FFFh) + the two patched-in test insertions above.
+      (4000h-7FFFh) + the test insertions below (RAM trampoline setup,
+      diagnostic checkpoints, the PLAYER_FLYAWAY==2 switch trigger).
   bank1 (file 0x4000-0x7FFF) = the real game's page2 content
       (8000h-BFFFh), byte-for-byte what it has always been - normal
       stage-1 gameplay is completely unchanged.
-  bank2 (file 0x8000-0xBFFF) = the bankswitch_poc stage-2 placeholder
-      (bank_b1.asm) - draws "STAGE 2" and loops a visible counter,
-      entry point near the end of the window (0BF00h).
-  bank3 (file 0xC000-0xFFFF) = blank (0xFF-filled) - future headroom.
+  bank2 (file 0x8000-0xBFFF) = stage2 world's page1 content (its own
+      INIT/MAINLOOP - same structure as bank0, simple-only enemies).
+  bank3 (file 0xC000-0xFFFF) = stage2 world's page2 content.
 """
 import os
 import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.join(HERE, "..", "..")
 sys.path.insert(0, os.path.join(HERE, ".."))
+sys.path.insert(0, HERE)
 from mini_z80asm import Assembler
+from build_stage2_world import assemble_stage2_world
 
 INIT_ANCHOR = """    OUT (0A8h),A
 
@@ -62,6 +63,7 @@ INIT_PATCH = """    OUT (0A8h),A
     ; --- just jumps to HL), so this sets HL to "come back here"   ---
     ; --- and JPs to it, rather than CALLing it.                    ---
     LD A,1
+    LD DE,7000h
     LD HL,INIT_RESUME_AFTER_BANK_SELECT
     JP 0F200h
 INIT_RESUME_AFTER_BANK_SELECT:
@@ -78,32 +80,56 @@ MAINLOOP_PATCH = """MAINLOOP:
     ; --- [bankswitch_poc TEST PATCH, not in the tracked source] ---
     ; --- TEMPORARY: once PLAYER_FLYAWAY reaches 2 (boss fully       ---
     ; --- destroyed AND the player's exit/flyaway sequence has       ---
-    ; --- finished - off-screen/hidden, per PLAYER_FLYAWAY's own     ---
-    ; --- 0=normal/1=auto-flying/2=off-screen states), simulate       ---
-    ; --- "stage 1 end" and switch to the stage-2 placeholder bank    ---
-    ; --- (bank2). This is the actual real transition point stage 2  ---
-    ; --- will eventually use - NOT an arbitrary tick count. At this  ---
-    ; --- point the boss, its explosion sequence, and every enemy/    ---
-    ; --- bullet are already long gone (BOSS_CLEAR_DYNAMIC_ENEMIES ran ---
-    ; --- when the boss landed, and BOSS_EXPL_UPDATE's completion is  ---
-    ; --- what kicks off the flyaway in the first place), so nothing  ---
-    ; --- is left mid-animation in window B for the switch to cut off. ---
-    ; --- Goes through the RAM trampoline copied in during INIT       ---
-    ; --- (see BANKSWITCH_TRAMPOLINE_SRC) rather than switching and   ---
-    ; --- jumping directly from ROM - both a real flashcart and       ---
-    ; --- BlueMSX froze on the direct-from-ROM version.                ---
+    ; --- finished - off-screen/hidden), switch to the full stage2   ---
+    ; --- world (see build_stage2_world.py - an exact port of stage  ---
+    ; --- 1's own engine/graphics, just with a simple-only enemy      ---
+    ; --- roster and a permanent "STAGE2" HUD label) via a real       ---
+    ; --- re-init, not a static placeholder screen. This is the       ---
+    ; --- actual real transition point stage 2 will eventually use.  ---
+    ; --- Safe here because MAINLOOP always starts at a window-A      ---
+    ; --- address and every frame re-enters via "JP MAINLOOP".        ---
     LD A,(PLAYER_FLYAWAY)
     CP 2
     JR NZ,MAINLOOP_NO_TEST_SWITCH
-    ; --- DIAGNOSTIC checkpoint: border color 7 = "about to switch to ---
-    ; --- bank2 and jump" - set from window A, right before the      ---
-    ; --- RAM-trampoline call. If the border sticks on 7, the switch  ---
-    ; --- itself (or the jump into bank2) is what's freezing. A gets  ---
-    ; --- overwritten by "LD A,2" right after anyway, so no need to   ---
-    ; --- preserve it across this call.                                ---
+
+    ; --- DIAGNOSTIC checkpoint: border color 7 = "about to switch". ---
     LD B,7 : LD C,7 : CALL WRTVDP
+
+    ; --- mute all 3 PSG channels before switching away - real-hw     ---
+    ; --- finding: the player flyaway sequence's sustained "engine    ---
+    ; --- goooo" noise (channel A, re-armed every frame while moving, ---
+    ; --- decays naturally only once fully hidden) was still mid-     ---
+    ; --- volume the instant PLAYER_FLYAWAY hit 2 - since MAINLOOP     ---
+    ; --- (and the SOUND_UPDATE decay it drives) never runs again      ---
+    ; --- after the switch, it was never given the chance to fade,    ---
+    ; --- leaving it stuck on indefinitely.                            ---
+    LD A,8 : OUT (PSG_ADDR),A : XOR A : OUT (PSG_DATA),A
+    LD A,9 : OUT (PSG_ADDR),A : XOR A : OUT (PSG_DATA),A
+    LD A,10 : OUT (PSG_ADDR),A : XOR A : OUT (PSG_DATA),A
+
+    ; --- hop 1 (through the RAM trampoline, so this is safe          ---
+    ; --- regardless of which window issues it): switch window B      ---
+    ; --- (8000h-BFFFh) to bank3 (stage2 world's page2), then return   ---
+    ; --- to MAINLOOP_HOP2 - still window A, still bank0/stage1,       ---
+    ; --- completely unaffected by the window-B switch.                ---
+    LD A,3
+    LD DE,7000h
+    LD HL,MAINLOOP_HOP2
+    JP 0F200h
+MAINLOOP_HOP2:
+    ; --- hop 2: switch window A (4000h-7FFFh) to bank2 (stage2       ---
+    ; --- world's page1) and jump straight to its own INIT (0x4010 -  ---
+    ; --- same relative address as this game's own INIT, since it's   ---
+    ; --- the identical ORG/layout). This is what makes it "just       ---
+    ; --- initialization" rather than a bespoke patchwork of screen-   ---
+    ; --- clear/color-table/sprite-hide fixes: stage2 world's INIT     ---
+    ; --- does the exact same full boot sequence stage 1's own INIT    ---
+    ; --- already does (BIOS SCREEN1 setup, pattern/color/digit loads, ---
+    ; --- RAM/sprite/schedule reset), which naturally clears and       ---
+    ; --- redraws everything from scratch.                             ---
     LD A,2
-    LD HL,0BF00h
+    LD DE,6000h
+    LD HL,04010h
     JP 0F200h
 MAINLOOP_NO_TEST_SWITCH:
 
@@ -122,15 +148,19 @@ TRAMPOLINE_PATCH = """INIT:
     LD B,1 : LD C,7 : CALL WRTVDP
 
     ; --- source for the RAM-resident bank-switch trampoline, copied ---
-    ; --- to 0xF200 below. Call/jump to it with A=bank number for   ---
-    ; --- window B (8000h-BFFFh), HL=address to jump to afterward.  ---
-    ; --- Executing the actual "LD (7000h),A" from RAM instead of   ---
-    ; --- ROM means it can never itself be affected by the very     ---
-    ; --- bank switch it's performing, regardless of which ROM      ---
-    ; --- window issued the call.                                    ---
+    ; --- to 0xF200 below. Call/jump to it with A=bank number,       ---
+    ; --- DE=the mapper's memory-mapped select address to write it   ---
+    ; --- to (6000h for window A/page1, 7000h for window B/page2),   ---
+    ; --- HL=address to jump to afterward. Executing the actual      ---
+    ; --- "LD (DE),A" from RAM instead of ROM means it can never     ---
+    ; --- itself be affected by the very bank switch it's performing, ---
+    ; --- regardless of which ROM window issued the call OR which    ---
+    ; --- window is being switched (needed once stage2 world - its   ---
+    ; --- own full bank pair, not a single placeholder bank - has to  ---
+    ; --- switch window A too, not just window B).                    ---
     JP BANKSWITCH_TRAMPOLINE_END
 BANKSWITCH_TRAMPOLINE_SRC:
-    LD (7000h),A
+    LD (DE),A
     JP (HL)
 BANKSWITCH_TRAMPOLINE_LEN EQU $ - BANKSWITCH_TRAMPOLINE_SRC
 BANKSWITCH_TRAMPOLINE_END:"""
@@ -189,21 +219,9 @@ def assemble_game():
     return bank0, bank1, a.symtab
 
 
-def assemble_placeholder():
-    text = open(os.path.join(HERE, "bank_b1.asm"), encoding="utf-8").read()
-    a = Assembler(text)
-    out = a.assemble()
-    bank2 = bytearray([0xFF] * 0x4000)
-    for addr, val in out.items():
-        assert 0x8000 <= addr <= 0xBFFF, f"{addr:04x} outside 8000-BFFF"
-        bank2[addr - 0x8000] = val
-    return bank2, a.symtab
-
-
 def main():
     bank0, bank1, game_sym = assemble_game()
-    bank2, stage2_sym = assemble_placeholder()
-    bank3 = bytearray([0xFF] * 0x4000)
+    bank2, bank3, stage2_sym, n_schedule = assemble_stage2_world()
 
     rom64 = bytes(bank0) + bytes(bank1) + bytes(bank2) + bytes(bank3)
     # --- Real-hardware finding: this specific flashcart mirrors a    ---
@@ -223,9 +241,10 @@ def main():
     print(f"wrote {out_path}: {len(rom)} bytes (banks 0-3 real content, doubled to 128KB - see comment)")
     print(f"  bank0 (page1, real game + test patch): {len(bank0)}B, header {bytes(bank0[0:4]).hex()}")
     print(f"  bank1 (page2, real game, unpatched): {len(bank1)}B")
-    print(f"  bank2 (stage2 placeholder): {len(bank2)}B, entry @ {stage2_sym['STAGE2_ENTRY']:04x}")
-    print(f"  bank3 (blank/future headroom): {len(bank3)}B")
+    print(f"  bank2 (stage2 world page1): {len(bank2)}B, header {bytes(bank2[0:4]).hex()}")
+    print(f"  bank3 (stage2 world page2): {len(bank3)}B")
     print(f"game MAINLOOP={game_sym['MAINLOOP']:04x} GAME_TICK={game_sym['GAME_TICK']:04x}")
+    print(f"stage2 world INIT={stage2_sym['INIT']:04x} MAINLOOP={stage2_sym['MAINLOOP']:04x} schedule entries={n_schedule}")
 
 
 if __name__ == "__main__":
