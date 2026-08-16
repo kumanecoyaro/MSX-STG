@@ -1,0 +1,2081 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CYBER SHMUP — Spawn Schedule Editor</title>
+<style>
+  :root {
+    --bg: #05080d;
+    --surface: #0b1220;
+    --surface-2: #0e1626;
+    --line: #17233a;
+    --grid-line: #1a2f52;
+    --grid-line-strong: #2c58a0;
+    --ink: #eaf1fb;
+    --ink-dim: #7f93ad;
+    --ink-faint: #4c5f7d;
+    --accent: #4fd2ff;
+    --accent-ink: #04141c;
+    --danger: #ff5d6c;
+    --danger-ink: #260607;
+    --ok: #6bdc7c;
+    --warn: #ffd166;
+
+    --font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Hiragino Sans", "Noto Sans JP", sans-serif;
+    --font-mono: ui-monospace, "SF Mono", "Cascadia Mono", "Consolas", "Roboto Mono", monospace;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0;
+    height: 100%;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--font-ui);
+    overscroll-behavior: none;
+    overflow: hidden;
+  }
+
+  body {
+    display: flex;
+    flex-direction: row;
+    /* 100vh on mobile Chrome/Vivaldi is sized to the viewport with the
+       address bar HIDDEN, which is taller than what's actually visible
+       whenever the bar is showing - the extra height pushed the sidebar's
+       lower rows past the real bottom edge with no way to scroll to them
+       (html/body has overflow:hidden). 100dvh tracks the actually-visible
+       viewport instead; the plain 100vh above is just the fallback for
+       browsers without dvh support. */
+    height: 100vh;
+    height: 100dvh;
+  }
+
+  button, .btn-label {
+    font-family: var(--font-ui);
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    border-radius: 7px;
+    border: 1px solid var(--line);
+    background: var(--surface-2);
+    color: var(--ink);
+    padding: 7px 8px;
+    cursor: pointer;
+    transition: border-color 120ms ease, background 120ms ease, transform 80ms ease;
+  }
+  /* .btn-label wraps the hidden file input directly (native label-for
+     file-picker trigger) instead of a button that proxies a JS .click()
+     onto it - synthetic clicks on file inputs are unreliable inside a
+     sandboxed frame, this isn't. */
+  .btn-label {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    user-select: none;
+  }
+  button:hover, .btn-label:hover { border-color: var(--ink-faint); }
+  button:active, .btn-label:active { transform: translateY(1px); }
+  button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+  button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+  button.danger-btn { background: var(--surface-2); color: var(--danger); border-color: #4a2226; }
+  button.danger-btn.armed { background: var(--danger); color: var(--danger-ink); border-color: var(--danger); }
+  button.active-mode { background: var(--warn); color: #111; border-color: var(--warn); }
+
+  /* ---------- grid area (left, fills remaining space) ---------- */
+  .gridwrap {
+    flex: 1 1 auto;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    height: 100vh;
+    height: 100dvh;
+  }
+
+  .ruler-row {
+    display: flex;
+    flex: 0 0 auto;
+    background: var(--surface);
+    border-bottom: 1px solid var(--line);
+  }
+  .gutter-corner {
+    flex: 0 0 var(--gutter-w);
+    background: var(--surface);
+  }
+  .ruler-scroll {
+    overflow: hidden;
+    flex: 1 1 auto;
+  }
+  #ruler {
+    display: block;
+  }
+
+  .grid-row {
+    display: flex;
+    flex: 1 1 auto;
+    min-height: 0;
+  }
+  .scrub-row {
+    flex: 0 0 auto;
+    padding: 6px 12px;
+    background: var(--surface);
+    border-top: 1px solid var(--line);
+  }
+  #scrubSlider {
+    display: block;
+    width: 100%;
+    accent-color: var(--accent);
+  }
+  .row-gutter-scroll {
+    overflow: hidden;
+    flex: 0 0 var(--gutter-w);
+  }
+  #rowGutter { display: block; }
+
+  .canvas-scroll {
+    position: relative;
+    flex: 1 1 auto;
+    overflow-x: auto;
+    overflow-y: hidden;
+    -webkit-overflow-scrolling: touch;
+    background: var(--bg);
+  }
+  /* Invisible - exists only to give #canvasScroll a scrollWidth spanning
+     the full MAX_TICK-tick timeline, since #grid itself (see below) no
+     longer does: it's sized to the viewport and repainted on scroll
+     instead of pre-rendering the whole timeline once. */
+  .grid-spacer {
+    width: 1px;
+    height: 1px;
+  }
+  /* Sits over #grid at the same viewport position, showing only the one
+     placement currently being hold-move-dragged - see the "drag overlay"
+     JS comment near applyHoldMoveTarget for why this exists (redrawing
+     #grid - even just its now-viewport-sized area - on every single
+     pointermove was still too slow on at least one real device). */
+  #dragOverlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    pointer-events: none;
+    display: none;
+  }
+  /* touch-action is permanently off, not toggled at drag-start - toggling
+     it mid-gesture is unreliable (the browser can already have committed
+     to native scrolling by the time a hold timer fires). Panning is
+     driven entirely in JS instead (see the pointer handlers), resolved
+     into exactly one of pan/hold-move/tap per gesture.
+     position:sticky pins #grid to the scrollport's left edge as
+     #canvasScroll scrolls past .grid-spacer, so the canvas element itself
+     only ever needs to be as wide as what's visible - see drawGrid's
+     scrollX param for the corresponding "draw at (world - scrollX)" side
+     of this. */
+  #grid {
+    position: sticky;
+    top: 0;
+    left: 0;
+    display: block;
+    cursor: crosshair;
+    touch-action: none;
+  }
+
+  /* ---------- right sidebar: identity, stats, actions, palette ---------- */
+  /* Kept deliberately thin - the grid is the workspace, the sidebar is */
+  /* just controls. Palette entries are small color chips (number+code, */
+  /* the same glyph the grid itself draws for a placement) rather than  */
+  /* name+description cards, so 10 enemy types cost a few rows, not a   */
+  /* scroll-hogging list. Full names live in the title attr + the       */
+  /* one-line "armed" readout, not baked into every chip.               */
+  aside {
+    flex: 0 0 196px;
+    min-width: 0;
+    height: 100vh;
+    height: 100dvh;
+    background: var(--surface);
+    border-left: 1px solid var(--line);
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    /* Content (title + both button rows + full palette) can be taller than
+       the box in a short viewport (e.g. real mobile browser chrome eating
+       into 100vh/42vh differently than the Artifact host's frame did) -
+       scroll the sidebar itself instead of silently clipping whatever
+       doesn't fit, which also made the clipped buttons untappable. */
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .side-title {
+    padding: 10px 12px 8px;
+    border-bottom: 1px solid var(--line);
+  }
+  .side-title .name {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    letter-spacing: 0.06em;
+    font-weight: 600;
+  }
+  .side-title .sub {
+    font-size: 10px;
+    color: var(--ink-dim);
+    letter-spacing: 0.03em;
+  }
+
+  /* Fixed pixel sizes, deliberately NOT derived from the viewport/container
+     width (no % or fr units) - this is a tool, its controls must look and
+     sit exactly the same on every device instead of reflowing/resizing.
+     If the sidebar is ever narrower than the row, it scrolls horizontally
+     (overflow-x below) rather than shrinking the buttons. */
+  .side-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--line);
+    overflow-x: auto;
+  }
+  .btn-row { display: flex; gap: 4px; }
+  .side-actions button, .side-actions .btn-label {
+    width: 74px;
+    height: 32px;
+    flex: 0 0 auto;
+    padding: 0;
+    font-size: 11px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .side-actions button.half { width: 35px; }
+  /* Pure layout spacer, no min-content width of its own - pushes the
+     left/right scroll buttons flush to the row's right edge without
+     giving any button a size that depends on available width. */
+  .spacer { flex: 1 1 auto; }
+  /* Several enemy types render the exact same icon (see GLYPHS.asterisk16's
+     comment) - this is where a tapped placed cell's real type + position
+     shows up, since the grid icon alone can't tell them apart. */
+  .cell-info {
+    flex: 1 1 auto;
+    min-width: 0;
+    padding-left: 8px;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+  }
+  .cell-info-icon {
+    flex: 0 0 auto;
+    width: 16px;
+    height: 16px;
+    display: none;
+  }
+  .cell-info-icon.show { display: block; }
+  .cell-info-text {
+    min-width: 0;
+    font-size: 11px;
+    color: var(--ink-dim);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .palette {
+    overflow-y: auto;
+    padding: 5px 8px 8px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    align-content: flex-start;
+    min-height: 0;
+  }
+  .pitem {
+    position: relative;
+    width: 30px;
+    height: 30px;
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 5px;
+    border: 2px solid var(--line);
+    background: var(--surface-2);
+    cursor: pointer;
+    padding: 0;
+    color: var(--ink-dim);
+    font-family: var(--font-mono);
+    font-size: 8px;
+    font-weight: 700;
+  }
+  .pitem:hover { border-color: var(--ink-faint); }
+  .pitem.armed {
+    border-color: var(--ink);
+    box-shadow: 0 0 0 2px var(--accent);
+  }
+  .pitem .picon { display: block; pointer-events: none; }
+  /* Boss has no glyph icon of its own (see TYPES) - just text - so it
+     needs its own visual distinction some other way. Red singles it out
+     as the one placement that isn't a regular enemy. */
+  .pitem-boss { background: var(--danger); color: var(--danger-ink); border-color: var(--danger); }
+  .pitem-boss:hover { border-color: var(--danger); }
+
+  #liveMsg {
+    position: fixed;
+    left: 50%;
+    bottom: 22px;
+    transform: translate(-50%, 8px);
+    background: var(--surface-2);
+    border: 1px solid var(--accent);
+    color: var(--ink);
+    font-family: var(--font-mono);
+    font-size: 12px;
+    padding: 8px 14px;
+    border-radius: 8px;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 160ms ease, transform 160ms ease;
+    z-index: 20;
+    max-width: min(70vw, 480px);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  #liveMsg.show { opacity: 1; transform: translate(-50%, 0); }
+
+  .overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(2, 4, 8, 0.72);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    z-index: 30;
+    padding: 20px;
+  }
+  .overlay.show { display: flex; }
+  .overlay-card {
+    width: min(560px, 100%);
+    max-height: 80vh;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .overlay-title { font-size: 13px; font-weight: 600; }
+  #offsetInput, #saveFilenameInput {
+    background: var(--surface-2);
+    color: var(--ink);
+    border: 1px solid var(--line);
+    border-radius: 7px;
+    padding: 8px;
+    font-family: var(--font-mono);
+    font-size: 15px;
+  }
+  .overlay-actions { display: flex; gap: 8px; justify-content: flex-end; }
+  .overlay-actions button { padding: 8px 14px; }
+  /* Inline, not the bottom-fixed toast - on mobile a toast at the
+     screen edge can end up hidden behind the on-screen keyboard right
+     after typing/pasting into the textarea above, making a real error
+     silently invisible. This sits in the card itself instead. */
+  .overlay-status {
+    font-size: 11.5px;
+    color: var(--danger);
+    min-height: 1.2em;
+  }
+  .overlay-status.ok { color: var(--ok); }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; }
+  }
+
+  /* ---------- narrow viewports (phone, or a narrow browser pane): ---------- */
+  /* the grid is the whole point, so it stays full-width and on top; the    */
+  /* sidebar drops below as a short, capped-height strip instead of eating  */
+  /* most of the screen's width down a 236px column.                       */
+  @media (max-width: 760px) {
+    body { flex-direction: column; }
+    .gridwrap { height: auto; flex: 1 1 auto; min-height: 0; }
+    aside {
+      flex: 0 0 auto;
+      width: 100%;
+      height: auto;
+      max-height: 42vh;
+      max-height: 42dvh;
+      border-left: none;
+      border-top: 1px solid var(--line);
+    }
+    .side-title { display: none; }
+  }
+</style>
+
+<body>
+  <div class="gridwrap">
+    <div class="ruler-row">
+      <div class="gutter-corner"></div>
+      <div class="ruler-scroll"><canvas id="ruler"></canvas></div>
+    </div>
+    <div class="grid-row">
+      <div class="row-gutter-scroll"><canvas id="rowGutter"></canvas></div>
+      <div class="canvas-scroll" id="canvasScroll">
+        <div class="grid-spacer" id="gridSpacer"></div>
+        <canvas id="grid"></canvas>
+        <canvas id="dragOverlay"></canvas>
+      </div>
+    </div>
+    <div class="scrub-row">
+      <input type="range" id="scrubSlider" min="0" max="999" step="1" value="0" title="Scrub to any tick, 0-999">
+    </div>
+  </div>
+
+  <aside>
+    <div class="side-title">
+      <div class="name">CYBER SHMUP</div>
+      <div class="sub">spawn schedule editor</div>
+    </div>
+
+    <div class="side-actions">
+      <div class="btn-row">
+        <label class="btn-label" for="fileInput">Load JSON</label>
+        <input type="file" id="fileInput" accept=".json" hidden>
+        <button id="btnCopy">Copy</button>
+        <button id="btnPaste">Paste</button>
+      </div>
+      <div class="btn-row">
+        <button class="primary" id="btnSave">Save JSON</button>
+        <button class="danger-btn" id="btnErase">Erase</button>
+        <button id="btnDeselect">Deselect</button>
+        <button id="btnUndo" disabled>Undo</button>
+      </div>
+      <div class="btn-row">
+        <div class="cell-info" id="cellInfo" title="Tap a placed cell on the grid to identify it - several types share the same icon">
+          <canvas class="cell-info-icon" id="cellInfoIcon"></canvas>
+          <span class="cell-info-text" id="cellInfoText"></span>
+        </div>
+      </div>
+    </div>
+
+    <div class="palette" id="palette"></div>
+  </aside>
+
+  <div id="liveMsg"></div>
+
+  <div id="offsetOverlay" class="overlay">
+    <div class="overlay-card" style="width: min(320px, 100%);">
+      <div class="overlay-title" id="offsetOverlayTitle">Edit offset</div>
+      <input type="number" id="offsetInput" inputmode="numeric" step="1" min="0">
+      <div class="overlay-status" id="offsetStatus"></div>
+      <div class="overlay-actions">
+        <button id="btnOffsetCancel">Cancel</button>
+        <button class="primary" id="btnOffsetSave">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="saveOverlay" class="overlay">
+    <div class="overlay-card" style="width: min(320px, 100%);">
+      <div class="overlay-title">Save as</div>
+      <input type="text" id="saveFilenameInput" value="Schedule.json">
+      <div class="overlay-status" id="saveStatus"></div>
+      <div class="overlay-actions">
+        <button id="btnSaveCancel">Cancel</button>
+        <button id="btnSaveCopy">Copy JSON</button>
+        <button class="primary" id="btnSaveConfirm">Save</button>
+      </div>
+    </div>
+  </div>
+
+<script>
+(function () {
+  "use strict";
+
+  // ---------- real in-game sprite/pattern data, transcribed byte-for-byte ----------
+  // from CYBER_GD_BOSS.asm (see ASTERISK_PATTERN, ENEMY3_PATTERN1, ENEMY4_PATTERN
+  // and their draw sites for exact source lines; the boss's own BOSS_PATTERNS/
+  // BOSS_MAP are transcribed separately below). 16x16 entries use
+  // the MSX1 hardware sprite quadrant order [top-left, bottom-left, top-right,
+  // bottom-right], 8 bytes each, 1 bit/pixel (bit7=leftmost). "rows" (8x8) is a
+  // background/nametable character instead - drawn opaque (bg fill + fg pixels),
+  // not transparent like a sprite.
+  var GLYPHS = {
+    // simple/Enemy1's look - also reused as-is for e2a/e2b's formation members and
+    // for enemy5 (TYPE_ENEMY1_LOOK is pixel-identical to Enemy1, just a different
+    // BEHAVIOR/score - see REDRAW_UNIT_PATTERN's call sites). Gray, SPR_GRAY(0Eh).
+    // This is E1A_PATTERN/ASTERISK_PATTERN's base frame (seq0 of the 1,2,3,2
+    // quadrant animation cycle - see ENEMY_ANIM_SEQ_TABLE) - the older,
+    // rounder asterisk this replaced is gone from the ASM entirely now.
+    asterisk16: {
+      size: 16,
+      quads: {
+        tl: [0x7F, 0x9E, 0x04, 0x1B, 0x1B, 0x04, 0x9E, 0x7F],
+        bl: [0, 0, 0, 0, 0, 0, 0, 0],
+        tr: [0, 0, 0, 0, 0, 0, 0, 0],
+        br: [0x7F, 0x9E, 0x04, 0x1B, 0x1B, 0x04, 0x9E, 0x7F]
+      },
+      color: "#cccccc"
+    },
+    // Enemy3's pulse animation frame1 (ENEMY3_PATTERN1) - an 8x8 BG tile, not a
+    // sprite, so it's opaque: FG gray on BG dark-blue (COLORDATA group19 = E4h).
+    enemy3: {
+      size: 8,
+      rows: [0x00, 0x00, 0x00, 0xFF, 0xFF, 0x00, 0x00, 0x00],
+      color: "#cccccc",
+      bg: "#5955e0"
+    },
+    // Enemy4's static hand-drawn look (ENEMY4_PATTERN) - black, SPR_BLACK(01h)
+    // as of the BEHAVIOR_SIMPLE_DRIFT_DODGE recolor (it used to be light
+    // green); the pixel data itself was also redrawn at some point since
+    // this was last transcribed here, so both changed.
+    // bg here is an editor-only visibility aid, not a real hardware trait -
+    // it's a sprite, transparent in-game like every other 16x16 entry here.
+    // Solid black on this tool's near-black grid/palette was reported
+    // completely unreadable ("can't tell where it is to place it"), so it
+    // gets the same sky-blue backdrop as the actual sky the game draws
+    // behind it, purely so the black pixels have something to show against.
+    enemy4: {
+      size: 16,
+      quads: {
+        tl: [0, 0, 0, 0, 0, 0, 0, 0],
+        bl: [0x30, 0x64, 0xFF, 0x07, 0x01, 0x2A, 0x15, 0x00],
+        tr: [0, 0, 0, 0, 0, 0, 0, 0],
+        br: [0x01, 0x06, 0x9C, 0xFF, 0xFE, 0x7C, 0x0E, 0x03]
+      },
+      color: "#000000",
+      bg: "#5955e0"
+    },
+    // Enemy6's 0deg spin frame (NEWENEMY_PATTERN_TL/TR/BL/BR) - unlike every
+    // other 16x16 entry here this is 4 BG tiles (2x2, not an MSX sprite), so
+    // it's opaque like enemy3: FG gray on the same BG dark-blue. quads keyed
+    // tl/bl/tr/br to match drawGlyph's paint offsets, values taken directly
+    // from the ASM's DB bytes (TL/BL rows0-7 checked byte-for-byte against a
+    // hand-drawn bit matrix that turned out to have several transcription
+    // errors past row 2 - the ASM bytes are the ground truth, not the matrix).
+    enemy6: {
+      size: 16,
+      quads: {
+        tl: [0x00, 0x2A, 0x6A, 0x0A, 0x7A, 0x02, 0x7E, 0x00],
+        bl: [0x7F, 0x03, 0x7F, 0x0F, 0x7F, 0x3F, 0x7F, 0x00],
+        tr: [0x00, 0xAA, 0xAE, 0xAE, 0xBE, 0xBE, 0xFE, 0xFE],
+        br: [0x7E, 0xBE, 0xDE, 0xEE, 0xF6, 0xFA, 0xFC, 0x00]
+      },
+      color: "#cccccc",
+      bg: "#5955e0"
+    },
+  };
+
+  // ---------- boss's real BG body (BOSS_PATTERNS/BOSS_MAP in the ASM) ----------
+  // 5 tile columns x 16 tile rows, 8x8 px each - exactly 5x16 grid cells at this
+  // tool's 8px/cell scale, so unlike every other enemy the boss can be drawn at
+  // its true full size rather than a stand-in icon. code 48 (BLANKCODE) tiles
+  // carry no art - just the shared blue tile background, per BOSS_MAP's comment.
+  var BOSS_BG = "#5955e0";
+  var BOSS_TILES = (function () {
+    var t = {}, gray = "#cccccc", black = "#000000", red = "#db6559";
+    function add(code, fg, rows) { t[code] = { fg: fg, rows: rows }; }
+    // group24-27, codes 192-223: gray/blue
+    add(192, gray, [0x00, 0x00, 0x01, 0x03, 0x07, 0x0F, 0x1C, 0x30]);
+    add(193, gray, [0x7E, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x7F, 0x1F]);
+    add(194, gray, [0x00, 0x00, 0x80, 0xC0, 0xE0, 0xF0, 0xF8, 0xFC]);
+    add(195, gray, [0x0F, 0x0F, 0x17, 0x27, 0x27, 0x43, 0x43, 0x81]);
+    add(196, gray, [0xFE, 0xFE, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]);
+    add(197, gray, [0x00, 0x00, 0x00, 0x00, 0x80, 0x80, 0x80, 0xC0]);
+    add(198, gray, [0x81, 0x81, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
+    add(199, gray, [0xFF, 0xFF, 0xFF, 0xFF, 0x7F, 0x7F, 0x7F, 0x7F]);
+    add(200, gray, [0xC0, 0xE0, 0xE0, 0xE0, 0xE0, 0xF0, 0xF0, 0xF0]);
+    add(201, gray, [0x3F, 0x3F, 0x3F, 0x3F, 0x1F, 0x1F, 0x1F, 0x1F]);
+    add(202, gray, [0xF0, 0xF8, 0xF8, 0xF8, 0xF8, 0xF8, 0xF8, 0xF8]);
+    add(203, gray, [0x1F, 0x0F, 0x0F, 0x0F, 0x0F, 0x0F, 0x0F, 0x0F]);
+    add(204, gray, [0xF8, 0xF8, 0xF8, 0xF8, 0xF8, 0xFC, 0xFC, 0xFC]);
+    add(205, gray, [0x07, 0x07, 0x07, 0x07, 0x07, 0x07, 0x07, 0x07]);
+    add(206, gray, [0xFC, 0xFC, 0xFC, 0xFC, 0xFC, 0xFC, 0xFC, 0xFC]);
+    add(207, gray, [0x07, 0x07, 0x07, 0x03, 0x03, 0x03, 0x03, 0x03]);
+    add(208, gray, [0xFE, 0xFE, 0xFE, 0xFE, 0xFE, 0xFE, 0xFE, 0xFE]);
+    add(209, gray, [0x03, 0x03, 0x03, 0x03, 0x03, 0x03, 0x03, 0x03]);
+    add(210, gray, [0x03, 0x03, 0x03, 0x03, 0x03, 0x07, 0x07, 0x07]);
+    add(211, gray, [0x0F, 0x0F, 0x0F, 0x0F, 0x0F, 0x0F, 0x0F, 0x1F]);
+    add(212, gray, [0xFC, 0xFC, 0xFC, 0xF8, 0xF8, 0xF8, 0xF8, 0xF8]);
+    add(213, gray, [0x1F, 0x1F, 0x1F, 0x1F, 0x3F, 0x3F, 0x3F, 0x3F]);
+    add(214, gray, [0xF8, 0xF8, 0xF8, 0xF8, 0xF8, 0xF8, 0xF8, 0xF0]);
+    add(215, gray, [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x81, 0x81]);
+    add(216, gray, [0x7F, 0x7F, 0x7F, 0x7F, 0xFF, 0xFF, 0xFF, 0xFF]);
+    add(217, gray, [0xF0, 0xF0, 0xF0, 0xE0, 0xE0, 0xE0, 0xE0, 0xC0]);
+    add(218, gray, [0x81, 0x43, 0x43, 0x27, 0x27, 0x17, 0x0F, 0x0F]);
+    add(219, gray, [0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFE, 0xFE]);
+    add(220, gray, [0xC0, 0x80, 0x80, 0x80, 0x00, 0x00, 0x00, 0x00]);
+    add(221, gray, [0x30, 0x1C, 0x0F, 0x07, 0x03, 0x01, 0x00, 0x00]);
+    add(222, gray, [0x1F, 0x7F, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x7E]);
+    add(223, gray, [0xFC, 0xF8, 0xF0, 0xE0, 0xC0, 0x80, 0x00, 0x00]);
+    // group28-30, codes 224-247: black/blue
+    add(224, black, [0x00, 0x00, 0x00, 0x00, 0x01, 0x01, 0x01, 0x03]);
+    add(225, black, [0x7F, 0x7F, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]);
+    add(226, black, [0x03, 0x07, 0x07, 0x07, 0x07, 0x0F, 0x0F, 0x0F]);
+    add(227, black, [0xFF, 0xFF, 0xFE, 0xFE, 0xFC, 0xFC, 0xFC, 0xFC]);
+    add(228, black, [0x0F, 0x1F, 0x1F, 0x1F, 0x1F, 0x1F, 0x3F, 0x3F]);
+    add(229, black, [0xFC, 0xFC, 0xFC, 0xFC, 0xF8, 0xF8, 0xF8, 0xF8]);
+    add(230, black, [0x3F, 0x3F, 0x3F, 0x3F, 0x3F, 0x7F, 0x7F, 0x7F]);
+    add(231, black, [0xF8, 0xF0, 0xF0, 0xF0, 0xF0, 0xF0, 0xF0, 0xF0]);
+    add(232, black, [0x7F, 0x7F, 0x7F, 0x7F, 0x7F, 0x7F, 0x7F, 0x7F]);
+    add(233, black, [0xE0, 0xE0, 0xE0, 0xE0, 0xE0, 0xE0, 0xE0, 0xE0]);
+    add(234, black, [0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]);
+    add(235, black, [0xE0, 0xE0, 0xE0, 0xC0, 0xC0, 0xC0, 0xC0, 0xC0]);
+    add(236, black, [0xC0, 0xC0, 0xC0, 0xC0, 0xC0, 0xC0, 0xC0, 0xC0]);
+    add(237, black, [0xC0, 0xC0, 0xC0, 0xC0, 0xC0, 0xE0, 0xE0, 0xE0]);
+    add(238, black, [0x7F, 0x7F, 0x7F, 0x3F, 0x3F, 0x3F, 0x3F, 0x3F]);
+    add(239, black, [0xF0, 0xF0, 0xF0, 0xF0, 0xF0, 0xF0, 0xF0, 0xF8]);
+    add(240, black, [0x3F, 0x3F, 0x1F, 0x1F, 0x1F, 0x1F, 0x1F, 0x0F]);
+    add(241, black, [0xF8, 0xF8, 0xF8, 0xF8, 0xFC, 0xFC, 0xFC, 0xFC]);
+    add(242, black, [0x0F, 0x0F, 0x0F, 0x07, 0x07, 0x07, 0x07, 0x03]);
+    add(243, black, [0xFC, 0xFC, 0xFC, 0xFC, 0xFE, 0xFE, 0xFF, 0xFF]);
+    add(244, black, [0x03, 0x01, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00]);
+    add(245, black, [0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x7F, 0x7F]);
+    // group31, codes 248-252: red/blue
+    add(248, red, [0x00, 0x00, 0x00, 0x00, 0x00, 0x18, 0x38, 0x78]);
+    add(249, red, [0x78, 0xD8, 0xDC, 0x9C, 0x8C, 0x0E, 0x0E, 0x0E]);
+    add(250, red, [0x0F, 0x3F, 0xE7, 0x07, 0x07, 0xC7, 0x77, 0x1F]);
+    add(251, red, [0x07, 0x07, 0x0F, 0x0E, 0x8E, 0x8C, 0xDC, 0xD8]);
+    add(252, red, [0x78, 0x78, 0x30, 0x30, 0x00, 0x00, 0x00, 0x00]);
+    return t;
+  })();
+  var BOSS_MAP = [
+    [48, 192, 193, 194, 48],
+    [224, 225, 195, 196, 197],
+    [226, 227, 198, 199, 200],
+    [228, 229, 48, 201, 202],
+    [230, 231, 48, 203, 204],
+    [232, 233, 248, 205, 206],
+    [234, 235, 249, 207, 208],
+    [234, 236, 250, 209, 208],
+    [234, 236, 251, 209, 208],
+    [234, 237, 252, 210, 208],
+    [232, 233, 48, 205, 206],
+    [238, 239, 48, 211, 212],
+    [240, 241, 48, 213, 214],
+    [242, 243, 215, 216, 217],
+    [244, 245, 218, 219, 220],
+    [48, 221, 222, 223, 48]
+  ];
+
+  // Draws the boss's full 5x16-tile body at (x,y), top-left anchored, one grid
+  // cell per 8x8 tile (cell must equal the caller's real 8px-per-cell CELL).
+  function drawBossBody(ctx, x, y, cell) {
+    for (var r = 0; r < BOSS_MAP.length; r++) {
+      for (var c = 0; c < BOSS_MAP[r].length; c++) {
+        var tx = x + c * cell, ty = y + r * cell;
+        ctx.fillStyle = BOSS_BG;
+        ctx.fillRect(tx, ty, cell, cell);
+        var tile = BOSS_TILES[BOSS_MAP[r][c]];
+        if (!tile) continue;
+        ctx.fillStyle = tile.fg;
+        var px = cell / 8, py = cell / 8;
+        for (var rr = 0; rr < 8; rr++) {
+          var byte = tile.rows[rr];
+          for (var cc = 0; cc < 8; cc++) {
+            if (byte & (0x80 >> cc)) {
+              ctx.fillRect(tx + cc * px, ty + rr * py, Math.ceil(px) + 0.5, Math.ceil(py) + 0.5);
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // Draws a GLYPHS entry into ctx at (x,y), scaled to fill w x h. 8x8 "rows"
+  // glyphs paint their bg first (opaque BG tile); 16x16 "quads" glyphs leave
+  // 0-bits untouched (transparent sprite, like the real hardware).
+  function drawGlyph(ctx, glyph, x, y, w, h) {
+    var n = glyph.size, px = w / n, py = h / n;
+    if (glyph.bg) { ctx.fillStyle = glyph.bg; ctx.fillRect(x, y, w, h); }
+    ctx.fillStyle = glyph.color;
+    function paintRows(rows, offX, offY) {
+      for (var r = 0; r < rows.length; r++) {
+        var byte = rows[r];
+        for (var c = 0; c < 8; c++) {
+          if (byte & (0x80 >> c)) {
+            ctx.fillRect(x + (offX + c) * px, y + (offY + r) * py, Math.ceil(px) + 0.5, Math.ceil(py) + 0.5);
+          }
+        }
+      }
+    }
+    if (glyph.rows) {
+      paintRows(glyph.rows, 0, 0);
+    } else {
+      paintRows(glyph.quads.tl, 0, 0);
+      paintRows(glyph.quads.bl, 0, 8);
+      paintRows(glyph.quads.tr, 8, 0);
+      paintRows(glyph.quads.br, 8, 8);
+    }
+  }
+
+  // ---------- enemy palette (matches the current CYBER_GD_BOSS.asm schedule) ----------
+  var TYPES = [
+    { id: "simple",     name: "Simple (Enemy1)",  desc: "any row - dodge dir is decided from player Y at center", glyph: "asterisk16" },
+    // e2a_top/e2a_bot/e2b_top/e2b_bot used to be 4 distinct placeable types -
+    // A/B picked which of 2 independent RAM instances got claimed, Top/Bottom
+    // picked a fixed spawn Y (32/128). SPAWN_E2 (src/CYBER_GD_BOSS.asm) now
+    // reads baseY from SPAWN_BASEY_TABLE[row placed] - same any-row mechanism
+    // as enemy4/enemy5 below - and auto-claims whichever of A/B is free at
+    // spawn time, so neither axis is a real choice anymore: one placeable,
+    // any row, same as enemy4/enemy5.
+    { id: "enemy2",     name: "Enemy2",           desc: "SPAWN_E2 — baseY comes from SPAWN_BASEY_TABLE[row placed], any row; A/B instance (2 formations can run at once) is auto-assigned to whichever is free", glyph: "asterisk16" },
+    { id: "enemy3_wave",name: "Enemy3 — Wave",    desc: "SPAWN_E3_WAVE (budget 32)", glyph: "enemy3" },
+    { id: "enemy4",      name: "Enemy4",           desc: "SPAWN_E4 — baseY comes from SPAWN_BASEY_TABLE[row placed], any row", glyph: "enemy4" },
+    { id: "enemy5",      name: "Enemy5",           desc: "SPAWN_E4B, TYPE_ENEMY1_LOOK — baseY comes from SPAWN_BASEY_TABLE[row placed], any row", glyph: "asterisk16" },
+    { id: "enemy6",      name: "Enemy6",           desc: "NEW - BG-tile spin (0/90/180/270°); placement staged here, not yet wired into SPAWN_THRESHOLDS/SSC_FIRE", glyph: "enemy6" },
+    { id: "boss",       name: "Boss",             desc: "BOSS_SPAWN - fixed position, row/tick here are just for editing", glyph: null }
+  ];
+  var TYPE_BY_ID = {};
+  TYPES.forEach(function (t) { TYPE_BY_ID[t.id] = t; });
+
+  // ---------- geometry ----------
+  var ROWS = 24;
+  var MAX_TICK = 999; // scrollable canvas width in cells; game currently uses up to ~270
+  var GUTTER_W = 30;
+  var RULER_H = 22;
+  var CELL = 26; // recomputed in layout() so all 24 rows always fit vertically
+  document.documentElement.style.setProperty("--gutter-w", GUTTER_W + "px");
+
+  var css = getComputedStyle(document.documentElement);
+  function tok(name) { return css.getPropertyValue(name).trim(); }
+
+  // ---------- state ----------
+  var placements = []; // {tick, row, type}
+  var armedType = null;
+  var eraseArmed = false;
+
+  // Modes: "normal" | "copy_select" | "paste_preview" - orthogonal to
+  // armedType/eraseArmed, same relationship Sprite Editor's currentMode has
+  // to its color-target state. While a special mode is active, the grid's
+  // normal place/erase/pan/holdmove gesture handling is bypassed entirely
+  // (see the currentMode checks at the top of each grid pointer handler).
+  var currentMode = "normal";
+  var selectionStart = null; // {tick, row} - copy_select's drag rectangle
+  var selectionEnd = null;
+  var lastCopiedText = "";
+  var pasteData = null;      // [{dtick, drow, type, offset}], relative to pastePos
+  var pastePos = { tick: 0, row: 0 };
+  var specialPointerId = null; // pointerId owning the current copy_select/paste_preview drag
+  var specialDragStart = null; // paste_preview's last drag sample, for incremental deltas
+
+  // ---------- undo ----------
+  // Snapshotted before every mutation (place/erase/offset edit/JSON load),
+  // not diffed - the schedule stays small enough that a full deep-copy per
+  // action costs nothing, and it means undo can never drift from what
+  // actually happened.
+  var history = [];
+  var MAX_HISTORY = 50;
+  var btnUndo = document.getElementById("btnUndo");
+
+  function pushHistory() {
+    history.push(JSON.parse(JSON.stringify(placements)));
+    if (history.length > MAX_HISTORY) history.shift();
+    btnUndo.disabled = false;
+  }
+
+  function undo() {
+    if (!history.length) return;
+    exitSpecialModes();
+    placements = history.pop();
+    btnUndo.disabled = history.length === 0;
+    render();
+    flash("undo");
+  }
+
+  btnUndo.addEventListener("click", undo);
+  window.addEventListener("keydown", function (ev) {
+    if ((ev.metaKey || ev.ctrlKey) && !ev.shiftKey && ev.key.toLowerCase() === "z") {
+      ev.preventDefault();
+      undo();
+    }
+  });
+
+  function placementAt(tick, row) {
+    for (var i = 0; i < placements.length; i++) {
+      if (placements[i].tick === tick && placements[i].row === row) return i;
+    }
+    return -1;
+  }
+
+  // The boss's real draw origin is clamped to stay on the grid (see
+  // drawBossBody's call site) - shared here so hit-testing agrees with
+  // wherever it actually got drawn, not with its raw stored tick/row.
+  function bossOrigin(tick, row) {
+    return {
+      tick: Math.max(0, Math.min(tick, MAX_TICK - 5)),
+      row: Math.max(0, Math.min(row, ROWS - 16))
+    };
+  }
+
+  // Every placement's real footprint in cells - Enemy3's 8x8 BG tile is
+  // exactly 1 cell, every other sprite is 16x16 (2x2 cells), the boss is
+  // its full 5x16 body. Tapping/inspecting/erasing needs to hit-test the
+  // whole visible icon, not just its anchor cell, now that icons are drawn
+  // at their real size instead of a uniform 1-cell swatch.
+  function footprintOf(p) {
+    var t = TYPE_BY_ID[p.type];
+    if (!t) return null;
+    if (p.type === "boss") {
+      var o = bossOrigin(p.tick, p.row);
+      return { t0: o.tick, t1: o.tick + 5, r0: o.row, r1: o.row + 16 };
+    }
+    var span = GLYPHS[t.glyph].size === 16 ? 2 : 1;
+    return { t0: p.tick, t1: p.tick + span, r0: p.row, r1: p.row + span };
+  }
+
+  function placementIndexAtCell(tick, row) {
+    for (var i = 0; i < placements.length; i++) {
+      var fp = footprintOf(placements[i]);
+      if (fp && tick >= fp.t0 && tick < fp.t1 && row >= fp.r0 && row < fp.r1) return i;
+    }
+    return -1;
+  }
+
+  function setCell(tick, row, typeId) {
+    var idx = placementAt(tick, row);
+    if (idx >= 0) placements.splice(idx, 1);
+    if (typeId) {
+      var p = { tick: tick, row: row, type: typeId };
+      // Per-placement, not a derived/shared table - each enemy3_wave cell
+      // gets its OWN independent offset (cells, 8px each), defaulting to
+      // +0. Placing more than one member of a "set" means placing more
+      // than one enemy3_wave cell by hand and editing each's own offset -
+      // nothing here auto-generates neighbors.
+      if (typeId === "enemy3_wave") p.offset = 0;
+      placements.push(p);
+    }
+    placements.sort(function (a, b) { return a.tick - b.tick || a.row - b.row; });
+  }
+
+  // ---------- palette UI ----------
+  // Each swatch shows the enemy's real in-game glyph (see GLYPHS) - several
+  // types share the exact same gray asterisk sprite in-game (see
+  // GLYPHS.asterisk16's comment), so they look identical here too, on
+  // purpose. Boss has no small icon of its own (its real graphic is the
+  // full 5x16-cell body drawn on the grid, not something that shrinks to a
+  // 26x26 swatch) so its palette entry is just its name.
+  var paletteEl = document.getElementById("palette");
+  TYPES.forEach(function (t) {
+    var item = document.createElement("button");
+    item.className = "pitem" + (t.id === "boss" ? " pitem-boss" : "");
+    item.dataset.type = t.id;
+    item.title = t.name + " — " + t.desc;
+    if (t.glyph) {
+      var glyph = GLYPHS[t.glyph];
+      var cv = document.createElement("canvas");
+      cv.className = "picon";
+      var cssSize = 26, dpr = Math.max(1, window.devicePixelRatio || 1);
+      cv.width = Math.round(cssSize * dpr);
+      cv.height = Math.round(cssSize * dpr);
+      cv.style.width = cssSize + "px";
+      cv.style.height = cssSize + "px";
+      var pctx = cv.getContext("2d");
+      pctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      var pad = glyph.size === 16 ? 1 : 5;
+      drawGlyph(pctx, glyph, pad, pad, cssSize - pad * 2, cssSize - pad * 2);
+      item.appendChild(cv);
+    } else {
+      item.textContent = t.name;
+    }
+    item.addEventListener("click", function () {
+      exitSpecialModes();
+      eraseArmed = false;
+      document.getElementById("btnErase").classList.remove("armed");
+      armedType = armedType === t.id ? null : t.id;
+      refreshPaletteArmed();
+    });
+    paletteEl.appendChild(item);
+  });
+
+  function refreshPaletteArmed() {
+    Array.prototype.forEach.call(paletteEl.children, function (el) {
+      el.classList.toggle("armed", el.dataset.type === armedType);
+    });
+  }
+
+  document.getElementById("btnErase").addEventListener("click", function () {
+    exitSpecialModes();
+    armedType = null;
+    eraseArmed = !eraseArmed;
+    this.classList.toggle("armed", eraseArmed);
+    refreshPaletteArmed();
+  });
+
+  // Deselect: drop whatever's armed (a palette type, Erase, or the Copy/
+  // Paste selection flow) without having to re-tap the same control to
+  // toggle it off - that was the only way before, and it's not obvious/
+  // reachable enough on a touch device mid-workflow.
+  document.getElementById("btnDeselect").addEventListener("click", function () {
+    exitSpecialModes();
+    armedType = null;
+    eraseArmed = false;
+    document.getElementById("btnErase").classList.remove("armed");
+    refreshPaletteArmed();
+    flash("deselected");
+  });
+
+  // ---------- canvases ----------
+  var ruler = document.getElementById("ruler");
+  var rowGutter = document.getElementById("rowGutter");
+  var grid = document.getElementById("grid");
+  var dragOverlay = document.getElementById("dragOverlay");
+  var gridSpacer = document.getElementById("gridSpacer");
+  var canvasScroll = document.getElementById("canvasScroll");
+  var rulerScroll = document.querySelector(".ruler-scroll");
+  var gridwrap = document.querySelector(".gridwrap");
+
+  var DPR = Math.max(1, window.devicePixelRatio || 1);
+
+  function sizeCanvas(cv, wCss, hCss) {
+    cv.width = Math.round(wCss * DPR);
+    cv.height = Math.round(hCss * DPR);
+    cv.style.width = wCss + "px";
+    cv.style.height = hCss + "px";
+    var ctx = cv.getContext("2d");
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    return ctx;
+  }
+
+  // drawGlyph/drawBossBody paint bit-by-bit via one fillRect per pixel (up
+  // to a few hundred calls for a single 16x16 sprite, thousands for the
+  // boss's 5x16-tile body) - fine once, but drawGrid below repaints every
+  // placement on every render(), including on each pointermove during a
+  // hold-move drag, and that per-pixel cost was most of the visible lag.
+  // Render each distinct glyph/boss-body once into an offscreen canvas at
+  // its current CELL size and blit it after that with a single drawImage -
+  // caches are keyed (invalidated) by size so a layout()-driven CELL change
+  // regenerates them instead of reusing stale art.
+  var glyphCanvasCache = {};
+  function getGlyphCanvas(glyphKey, boxCss) {
+    var key = glyphKey + "@" + boxCss;
+    var cached = glyphCanvasCache[key];
+    if (cached) return cached;
+    var cv = document.createElement("canvas");
+    var ctx = sizeCanvas(cv, boxCss, boxCss);
+    drawGlyph(ctx, GLYPHS[glyphKey], 0, 0, boxCss, boxCss);
+    glyphCanvasCache[key] = cv;
+    return cv;
+  }
+  var bossCanvasCache = null, bossCanvasCacheCell = null;
+  function getBossCanvas(cellPx) {
+    if (bossCanvasCache && bossCanvasCacheCell === cellPx) return bossCanvasCache;
+    var cv = document.createElement("canvas");
+    var ctx = sizeCanvas(cv, 5 * cellPx, 16 * cellPx);
+    drawBossBody(ctx, 0, 0, cellPx);
+    bossCanvasCache = cv;
+    bossCanvasCacheCell = cellPx;
+    return cv;
+  }
+
+  function layout() {
+    // all 24 rows must fit in the vertical space left after the ruler - compute
+    // the cell size from the available height instead of a fixed pixel value.
+    var availH = gridwrap.clientHeight - RULER_H;
+    CELL = Math.max(14, Math.min(30, Math.floor(availH / ROWS)));
+
+    var gridW = MAX_TICK * CELL;
+    var gridH = ROWS * CELL;
+
+    // The spacer establishes #canvasScroll's scrollable width (the full
+    // timeline) - #grid itself (sticky-positioned, see its CSS) is only
+    // ever sized to the visible viewport, redrawn on scroll instead of
+    // pre-rendering the whole thing. See drawGrid's scrollX comment.
+    gridSpacer.style.width = gridW + "px";
+    console.log("layout:", {MAX_TICK, CELL, gridW, "gridSpacer.style.width": gridSpacer.style.width});
+    var viewW = canvasScroll.clientWidth || gridW;
+    var gctx = sizeCanvas(grid, viewW, gridH);
+    var rctx = sizeCanvas(ruler, viewW, RULER_H);
+    var rgctx = sizeCanvas(rowGutter, GUTTER_W, gridH);
+
+    drawRuler(rctx, viewW, RULER_H, canvasScroll.scrollLeft);
+    drawRowGutter(rgctx, GUTTER_W, gridH);
+    drawGrid(gctx, viewW, gridH, undefined, canvasScroll.scrollLeft);
+  }
+
+  function drawRuler(ctx, w, h, scrollX) {
+    scrollX = scrollX || 0;
+    ctx.clearRect(0, 0, w, h);
+    ctx.fillStyle = tok("--surface");
+    ctx.fillRect(0, 0, w, h);
+    ctx.font = "9.5px " + tok("--font-mono").split(",")[0] + ", monospace";
+    ctx.textBaseline = "middle";
+    // One stroke() call per tick color instead of ~400 - a separate
+    // beginPath/stroke per tick mark was most of this function's cost.
+    var regular = new Path2D(), strong = new Path2D();
+    ctx.fillStyle = tok("--ink");
+    var firstTick = Math.floor(scrollX / CELL);
+    var lastTick = Math.ceil((scrollX + w) / CELL) + 1;
+    for (var t = firstTick; t <= lastTick && t <= MAX_TICK; t += 1) {
+      var x = t * CELL - scrollX + 0.5;
+      var isStrong = t % 32 === 0;
+      var p = isStrong ? strong : regular;
+      p.moveTo(x, h - (isStrong ? 10 : 5));
+      p.lineTo(x, h);
+      if (isStrong) ctx.fillText(String(t), x + 2.5, h - 13);
+    }
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = tok("--grid-line");
+    ctx.stroke(regular);
+    ctx.strokeStyle = tok("--grid-line-strong");
+    ctx.stroke(strong);
+    ctx.strokeStyle = tok("--line");
+    ctx.beginPath();
+    ctx.moveTo(0, h - 0.5);
+    ctx.lineTo(w, h - 0.5);
+    ctx.stroke();
+  }
+
+  function drawRowGutter(ctx, w, h) {
+    ctx.clearRect(0, 0, w, h);
+    ctx.fillStyle = tok("--surface");
+    ctx.fillRect(0, 0, w, h);
+    ctx.font = "9.5px " + tok("--font-mono").split(",")[0] + ", monospace";
+    ctx.textAlign = "right";
+    ctx.textBaseline = "middle";
+    ctx.fillStyle = tok("--ink-dim");
+    var ticks = new Path2D();
+    for (var r = 0; r < ROWS; r++) {
+      var y = r * CELL;
+      ctx.fillText(String(r), w - 7, y + CELL / 2);
+      ticks.moveTo(w - 5, y + 0.5);
+      ticks.lineTo(w, y + 0.5);
+    }
+    ctx.strokeStyle = tok("--grid-line");
+    ctx.stroke(ticks);
+    ctx.textAlign = "left";
+  }
+
+  // skipIdx: index into placements to leave undrawn - used while that one
+  // placement is being hold-move-dragged on the separate #dragOverlay (see
+  // beginDragOverlay), so the full grid isn't left showing it twice (once
+  // at its old spot here, once at its live spot on the overlay).
+  //
+  // scrollX: #grid is now sized to just the visible viewport (see layout())
+  // instead of the whole MAX_TICK-tick timeline - a full-timeline canvas
+  // measured ~281ms per redraw on a real device (against 0.8ms here),
+  // which was the actual cause of place/erase/drag all feeling laggy on
+  // that device, batched strokes and cached glyphs notwithstanding: the
+  // clearRect/fillRect/stroke area itself was the cost, not the call count.
+  // w/h here are the small viewport dimensions; everything is drawn at
+  // (world position - scrollX) and only ticks that actually fall in view
+  // are visited at all.
+  function drawGrid(ctx, w, h, skipIdx, scrollX) {
+    scrollX = scrollX || 0;
+    ctx.clearRect(0, 0, w, h);
+    ctx.fillStyle = tok("--bg");
+    ctx.fillRect(0, 0, w, h);
+
+    var firstTick = Math.max(0, Math.floor(scrollX / CELL) - 1);
+    var lastTick = Math.min(MAX_TICK, Math.ceil((scrollX + w) / CELL) + 1);
+
+    // 8px-equivalent cell grid, in blue, per spec. One stroke() call per
+    // line color instead of one per line - each stroke() has real fixed
+    // overhead regardless of line length, and this ran on every render().
+    var regular = new Path2D(), strong = new Path2D();
+    for (var c = firstTick; c <= lastTick; c++) {
+      var p = (c % 32 === 0) ? strong : regular;
+      var x = c * CELL - scrollX + 0.5;
+      p.moveTo(x, 0);
+      p.lineTo(x, h);
+    }
+    for (var rr = 0; rr <= ROWS; rr++) {
+      var y = rr * CELL + 0.5;
+      regular.moveTo(0, y);
+      regular.lineTo(w, y);
+    }
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = tok("--grid-line");
+    ctx.stroke(regular);
+    ctx.strokeStyle = tok("--grid-line-strong");
+    ctx.stroke(strong);
+
+    // placed enemies - each drawn as its real in-game glyph (see GLYPHS), no
+    // synthetic color coding, top-left anchored at (tick,row) since that's
+    // the sprite/tile's real top-left origin in-game. Sized to its true
+    // footprint: Enemy3's 8x8 BG tile fills exactly one cell, everything
+    // else is a 16x16 sprite and fills exactly 2x2 cells. The boss is drawn
+    // at its full real size (5x16 cells - see drawBossBody) instead of an
+    // icon stand-in. Blitted from the offscreen caches above (getGlyphCanvas/
+    // getBossCanvas) instead of redrawing bit-by-bit every time. Anything
+    // whose footprint can't possibly reach the visible tick range is
+    // skipped entirely - cheap since placements is usually small, but keeps
+    // this from scaling with MAX_TICK on a schedule with entries scattered
+    // across the whole timeline.
+    placements.forEach(function (p, i) {
+      if (i === skipIdx) return;
+      var t = TYPE_BY_ID[p.type];
+      if (!t) return;
+      if (p.tick < firstTick - 6 || p.tick > lastTick) return;
+      var x = p.tick * CELL - scrollX, y = p.row * CELL;
+      if (p.type === "boss") {
+        // The boss's real spawn position is fixed in-game - its row/tick
+        // here only mark *when* it triggers, not where it appears - so
+        // there's no "correct" pixel position to honor. Clamp the draw
+        // origin (see bossOrigin) to stay fully on the grid instead of
+        // clipping the body against the bottom/right edge when placed
+        // near them.
+        var bo = bossOrigin(p.tick, p.row);
+        ctx.drawImage(getBossCanvas(CELL), bo.tick * CELL - scrollX, bo.row * CELL, 5 * CELL, 16 * CELL);
+        return;
+      }
+      var glyph = GLYPHS[t.glyph];
+      var box = glyph.size === 16 ? CELL * 2 : CELL;
+      ctx.drawImage(getGlyphCanvas(t.glyph, box), x, y, box, box);
+    });
+
+    // Each enemy3_wave cell's own offset (cells, 8px each - see
+    // ENEMY3_CENTERX_TABLE in the ASM), tappable via enemy3OffsetHitTest
+    // below. Per-placement, not derived/shared - drawn last so it's never
+    // covered by another cell.
+    ctx.font = "700 " + Math.max(8, Math.round(CELL * 0.36)) + "px " + tok("--font-mono").split(",")[0] + ", monospace";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "bottom";
+    placements.forEach(function (p, i) {
+      if (i === skipIdx || p.type !== "enemy3_wave") return;
+      if (p.tick < firstTick - 1 || p.tick > lastTick) return;
+      var x = p.tick * CELL - scrollX, y = p.row * CELL;
+      var labelH = enemy3OffsetLabelH();
+      ctx.strokeStyle = tok("--line");
+      ctx.lineWidth = 1;
+      roundRect(ctx, x + 1.5, y - labelH + 1.5, CELL - 3, labelH - 3, 3);
+      ctx.stroke();
+      ctx.fillStyle = tok("--ink");
+      ctx.fillText("+" + (p.offset || 0), x + CELL / 2, y - 1);
+    });
+  }
+
+  function roundRect(ctx, x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r);
+    ctx.arcTo(x, y, x + w, y, r);
+    ctx.closePath();
+  }
+
+  // ---------- interaction ----------
+  // #grid is viewport-sized and sticky-positioned (see its CSS) - its own
+  // bounding rect is just the visible slice, so every screen->world
+  // conversion here adds back canvasScroll.scrollLeft to land on the real
+  // tick, the same way drawGrid subtracts it to place things on screen.
+  function cellFromEvent(ev) {
+    var rect = grid.getBoundingClientRect();
+    var x = ev.clientX - rect.left + canvasScroll.scrollLeft;
+    var y = ev.clientY - rect.top;
+    var col = Math.floor(x / CELL);
+    var row = Math.floor(y / CELL);
+    if (col < 0 || col >= MAX_TICK || row < 0 || row >= ROWS) return null;
+    return { tick: col, row: row };
+  }
+
+  // Hit zone for an enemy3_wave cell's own "+N" offset label - the strip
+  // of canvas directly above the cell's own top edge, not overlapping the
+  // cell itself (which keeps its normal place/erase click behavior).
+  function enemy3OffsetLabelH() { return Math.max(14, Math.round(CELL * 0.6)); }
+
+  function enemy3OffsetHitTest(x, y) {
+    var labelH = enemy3OffsetLabelH();
+    for (var pi = 0; pi < placements.length; pi++) {
+      var p = placements[pi];
+      if (p.type !== "enemy3_wave") continue;
+      var cx = p.tick * CELL, cy = p.row * CELL;
+      if (x >= cx && x < cx + CELL && y >= cy - labelH && y < cy) return pi;
+    }
+    return null;
+  }
+
+  var offsetOverlay = document.getElementById("offsetOverlay");
+  var offsetInput = document.getElementById("offsetInput");
+  var offsetStatus = document.getElementById("offsetStatus");
+  var offsetEditPlacementIdx = null;
+
+  function openOffsetEditor(pi) {
+    offsetEditPlacementIdx = pi;
+    document.getElementById("offsetOverlayTitle").textContent = "Offset (cells, 8px each) — tick " + placements[pi].tick;
+    offsetInput.value = placements[pi].offset || 0;
+    offsetStatus.textContent = "";
+    offsetStatus.classList.remove("ok");
+    offsetOverlay.classList.add("show");
+    offsetInput.focus();
+    offsetInput.select();
+  }
+
+  function saveOffsetEditor() {
+    var v = parseInt(offsetInput.value, 10);
+    if (!Number.isFinite(v) || v < 0) {
+      offsetStatus.textContent = "enter a whole number, 0 or more";
+      offsetStatus.classList.remove("ok");
+      return;
+    }
+    pushHistory();
+    placements[offsetEditPlacementIdx].offset = v;
+    offsetOverlay.classList.remove("show");
+    render();
+    flash("offset set to +" + v);
+  }
+
+  document.getElementById("btnOffsetCancel").addEventListener("click", function () {
+    offsetOverlay.classList.remove("show");
+  });
+  document.getElementById("btnOffsetSave").addEventListener("click", saveOffsetEditor);
+  offsetInput.addEventListener("keydown", function (ev) {
+    if (ev.key === "Enter") saveOffsetEditor();
+    if (ev.key === "Escape") offsetOverlay.classList.remove("show");
+  });
+  offsetOverlay.addEventListener("click", function (ev) {
+    if (ev.target === offsetOverlay) offsetOverlay.classList.remove("show");
+  });
+
+  // Several enemy types share the exact same icon (see GLYPHS.asterisk16's
+  // comment), so the grid alone can't tell them apart - this readout shows
+  // a tapped cell's real type + position, next to Load JSON. The icon is
+  // its real in-game glyph (same art as the palette swatch), not a copy of
+  // whatever's drawn on the grid, so it stays correct even for the boss
+  // (which has no small palette icon of its own).
+  var cellInfoIconEl = document.getElementById("cellInfoIcon");
+  var cellInfoTextEl = document.getElementById("cellInfoText");
+  var cellInfoIconCtx = cellInfoIconEl.getContext("2d");
+  function showCellInfo(p) {
+    var t = TYPE_BY_ID[p.type];
+    if (!t) { clearCellInfo(); return; }
+    cellInfoTextEl.textContent = t.name + " · tick " + p.tick + " row " + p.row;
+    if (t.glyph) {
+      var cssSize = 16, dpr = Math.max(1, window.devicePixelRatio || 1);
+      cellInfoIconEl.width = Math.round(cssSize * dpr);
+      cellInfoIconEl.height = Math.round(cssSize * dpr);
+      cellInfoIconEl.style.width = cssSize + "px";
+      cellInfoIconEl.style.height = cssSize + "px";
+      cellInfoIconCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      cellInfoIconCtx.clearRect(0, 0, cssSize, cssSize);
+      var glyph = GLYPHS[t.glyph];
+      var pad = glyph.size === 16 ? 0 : 3;
+      drawGlyph(cellInfoIconCtx, glyph, pad, pad, cssSize - pad * 2, cssSize - pad * 2);
+      cellInfoIconEl.classList.add("show");
+    } else {
+      cellInfoIconEl.classList.remove("show");
+    }
+  }
+  function clearCellInfo() {
+    cellInfoTextEl.textContent = "";
+    cellInfoIconEl.classList.remove("show");
+  }
+
+  // Every gesture on the grid starts undecided and resolves into exactly
+  // one of three things by the time it ends:
+  //   - pan: moved past the jitter tolerance before the hold timer fired -
+  //     scrolls the grid (driven here in JS - see #grid's touch-action:none)
+  //     and does nothing else, whatever mode was armed.
+  //   - holdmove: pressed on an existing placement, held still for
+  //     HOLD_MS, then dragged - repositions it.
+  //   - tap: released without enough movement to become a pan, and
+  //     without the hold timer firing - place/erase/inspect, same as a
+  //     plain click before this gesture system existed.
+  // Resolving erase/place at release (not on pointerdown) is what keeps a
+  // swipe that starts in erase/place mode from erasing/placing at the
+  // touch-start point before the swipe is even recognized.
+  var HOLD_MS = 400;
+  // A real finger isn't a mouse - it wobbles a few px even when the user
+  // means to hold perfectly still, and that wobble was enough to cancel
+  // the hold timer and fall into "pan" instead before it ever fired. Any
+  // movement that stays inside the starting cell is not a real move, so
+  // tie the cancel threshold to the current cell size instead of a fixed
+  // small pixel count.
+  var MOVE_CANCEL = 10;
+  function jitterTolerance() { return Math.max(MOVE_CANCEL, CELL); }
+  // Once a hold resolves into holdmove, the placement jumps to sit this
+  // many cells above wherever the finger actually is and tracks it from
+  // there - on a touchscreen the finger itself covers whatever's directly
+  // under it, so dragging a real finger over its own placement is unusable
+  // without an offset like this.
+  var HOLD_LIFT_ROWS = 3;
+  var press = null; // {pointerId, startX, startY, lastX, lastY, startScrollLeft, cell, offsetHit, placementIdx, resolved, holdTimer, moved}
+  // Set once per gesture when pointerup's neutral-tap branch below already
+  // handled the inspect readout - lets the native-click fallback (further
+  // down) skip re-running it and double-flashing on setups where pointer
+  // events work fine.
+  var inspectHandledByPointer = false;
+
+  // Same idea as cellFromEvent, but for the holdmove target: the touched
+  // point should land on the icon's CENTER, not its top-left anchor cell -
+  // anchoring at the raw cell left the whole icon sitting down-right of
+  // the finger (most icons are a 2x2-cell footprint), which read as drift
+  // even though the math was doing exactly what it said. Centers using the
+  // placement's own real footprint (footprintOf), then also lifts
+  // HOLD_LIFT_ROWS further above that. Clamped onto the grid instead of
+  // rejected when that puts it off-grid (cellFromEvent's null-outside-grid
+  // behavior is for taps, not for a lifted drag target whose underlying
+  // finger position may legitimately be off the top edge once lifted).
+  function liftedCellFromEvent(obj, ev) {
+    var span = footprintOf({ tick: 0, row: 0, type: obj.type });
+    var w = span.t1 - span.t0, h = span.r1 - span.r0;
+    var rect = grid.getBoundingClientRect();
+    var col = Math.floor((ev.clientX - rect.left + canvasScroll.scrollLeft) / CELL) - Math.floor(w / 2);
+    var row = Math.floor((ev.clientY - rect.top) / CELL) - Math.floor(h / 2) - HOLD_LIFT_ROWS;
+    col = Math.max(0, Math.min(col, MAX_TICK - w));
+    row = Math.max(0, Math.min(row, ROWS - h));
+    return { tick: col, row: row };
+  }
+
+  // The lifted target always tracks the raw finger position (centered +
+  // offset by HOLD_LIFT_ROWS), from the instant the hold fires - even
+  // before any further movement, so the "picked up" feedback is immediate.
+  // Whether that's a real drag or just a stationary hold that happened to
+  // cross HOLD_MS is a separate question, tracked by comparing the raw
+  // (un-lifted, un-centered) pointer cell against where the gesture
+  // actually started - see press.moved below.
+  // Small overlay canvas shown only while a placement is being hold-move-
+  // dragged: draws just that one icon, sized to the visible viewport, so a
+  // drag never has to redraw the full MAX_TICK-wide #grid canvas - measured
+  // on a real device at ~281ms per full redraw, which is exactly why
+  // per-pointermove dragging was so laggy: every drag frame was paying that
+  // cost. #grid itself is redrawn (without this placement, via drawGrid's
+  // skipIdx) once when the drag starts, and once more (with the
+  // placement's final position baked in) when it ends - never in between.
+  var dragOverlayCtx = null;
+  function beginDragOverlay() {
+    var viewW = canvasScroll.clientWidth, viewH = ROWS * CELL;
+    dragOverlayCtx = sizeCanvas(dragOverlay, viewW, viewH);
+    dragOverlay.style.left = canvasScroll.scrollLeft + "px";
+    dragOverlay.style.display = "block";
+  }
+  function updateDragOverlay(obj) {
+    var viewW = canvasScroll.clientWidth, viewH = ROWS * CELL;
+    dragOverlayCtx.clearRect(0, 0, viewW, viewH);
+    var t = TYPE_BY_ID[obj.type];
+    if (obj.type === "boss") {
+      var bo = bossOrigin(obj.tick, obj.row);
+      dragOverlayCtx.drawImage(getBossCanvas(CELL), bo.tick * CELL - canvasScroll.scrollLeft, bo.row * CELL, 5 * CELL, 16 * CELL);
+      return;
+    }
+    var glyph = GLYPHS[t.glyph];
+    var box = glyph.size === 16 ? CELL * 2 : CELL;
+    dragOverlayCtx.drawImage(getGlyphCanvas(t.glyph, box), obj.tick * CELL - canvasScroll.scrollLeft, obj.row * CELL, box, box);
+  }
+  function endDragOverlay() {
+    dragOverlay.style.display = "none";
+    dragOverlayCtx = null;
+  }
+
+  function applyHoldMoveTarget(press, ev) {
+    var obj = placements[press.placementIdx];
+    var lifted = liftedCellFromEvent(obj, ev);
+    obj.tick = lifted.tick;
+    obj.row = lifted.row;
+    updateDragOverlay(obj);
+  }
+
+  // Same-cell wobble (a real finger resting on a placement never sits
+  // perfectly still) isn't a real move - only count it once the raw
+  // pointer cell actually leaves the cell the gesture started in.
+  function rawCellFromEvent(ev) {
+    var rect = grid.getBoundingClientRect();
+    return {
+      tick: Math.floor((ev.clientX - rect.left + canvasScroll.scrollLeft) / CELL),
+      row: Math.floor((ev.clientY - rect.top) / CELL)
+    };
+  }
+
+  // #grid has touch-action:none and panning is driven entirely by JS
+  // setting canvasScroll.scrollLeft directly (see the pan branches below) -
+  // that's a 1:1 finger-to-scroll mapping with none of a native scroll's
+  // momentum, so a fast flick just stopped dead the instant the finger
+  // lifted. This restores that: track the pan's recent velocity and, on
+  // release, keep scrolling with it, decelerating, like a normal browser
+  // scroll would.
+  function trackPanVelocity(press, ev) {
+    var now = performance.now();
+    if (press.lastMoveT) {
+      var dt = now - press.lastMoveT;
+      if (dt > 0) press.velX = (ev.clientX - press.lastMoveX) / dt;
+    }
+    press.lastMoveT = now;
+    press.lastMoveX = ev.clientX;
+  }
+
+  var MOMENTUM_DECAY_PER_16MS = 0.94;
+  var MOMENTUM_STOP_VELOCITY = 0.02; // px/ms
+  var momentumRAF = null;
+  function stopMomentum() {
+    if (momentumRAF !== null) {
+      cancelAnimationFrame(momentumRAF);
+      momentumRAF = null;
+    }
+  }
+  function startMomentum(velX) {
+    stopMomentum();
+    if (!velX || Math.abs(velX) < MOMENTUM_STOP_VELOCITY) return;
+    var lastT = performance.now();
+    function step(now) {
+      var dt = now - lastT;
+      lastT = now;
+      canvasScroll.scrollLeft -= velX * dt;
+      velX *= Math.pow(MOMENTUM_DECAY_PER_16MS, dt / 16);
+      if (Math.abs(velX) < MOMENTUM_STOP_VELOCITY) {
+        momentumRAF = null;
+        return;
+      }
+      momentumRAF = requestAnimationFrame(step);
+    }
+    momentumRAF = requestAnimationFrame(step);
+  }
+
+  grid.addEventListener("pointerdown", function (ev) {
+    inspectHandledByPointer = false;
+    // A tap that lands while momentum is still coasting is a "stop the
+    // scroll" tap, same as on a native scrollable page - it must not also
+    // place/erase/inspect wherever it happened to land. Capture this before
+    // stopMomentum() clears momentumRAF.
+    var wasMomentumStop = momentumRAF !== null;
+    stopMomentum();
+
+    // copy_select/paste_preview bypass the whole pan/holdmove/tap gesture
+    // system below - they're much simpler (no hold-to-drag, no momentum),
+    // matching Sprite Editor's own copy_select/paste_preview: pointerdown
+    // starts a rectangle (copy) or records the drag origin (paste),
+    // pointermove updates it live, pointerup just ends the gesture.
+    if (currentMode === "copy_select" || currentMode === "paste_preview") {
+      if (wasMomentumStop) return;
+      var specialHit = cellFromEvent(ev);
+      if (!specialHit) return;
+      specialPointerId = ev.pointerId;
+      grid.setPointerCapture(ev.pointerId);
+      if (currentMode === "copy_select") {
+        selectionStart = specialHit;
+        selectionEnd = specialHit;
+        render();
+      } else {
+        specialDragStart = specialHit;
+      }
+      return;
+    }
+
+    var rect = grid.getBoundingClientRect();
+    var offsetHit = enemy3OffsetHitTest(ev.clientX - rect.left + canvasScroll.scrollLeft, ev.clientY - rect.top);
+    var c = cellFromEvent(ev);
+    press = {
+      pointerId: ev.pointerId,
+      startX: ev.clientX,
+      startY: ev.clientY,
+      lastX: ev.clientX,
+      lastY: ev.clientY,
+      startScrollLeft: canvasScroll.scrollLeft,
+      cell: c,
+      offsetHit: offsetHit,
+      placementIdx: (!eraseArmed && !armedType && c) ? placementIndexAtCell(c.tick, c.row) : -1,
+      resolved: null,
+      holdTimer: null,
+      moved: false,
+      wasMomentumStop: wasMomentumStop,
+      // Velocity (px/ms) of the pan itself, from the most recent two
+      // pointermove samples only - not the whole gesture's average, so a
+      // slow drag that ends in a quick flick still hands off the flick's
+      // speed to the momentum animation on release, not a diluted one.
+      velX: 0,
+      lastMoveT: 0,
+      lastMoveX: ev.clientX
+    };
+    if (press.placementIdx >= 0 && !wasMomentumStop) {
+      press.holdTimer = setTimeout(function () {
+        if (!press || press.resolved) return;
+        press.resolved = "holdmove";
+        // One history entry for the whole gesture, pushed before the very
+        // first (automatic) lift - if the finger never really moves, this
+        // is exactly the entry endPress below pops to revert the preview.
+        pushHistory();
+        // Redraw the full grid once with this placement hidden (it's about
+        // to live on the overlay instead), then hand off to the overlay for
+        // every move from here until release - see beginDragOverlay's
+        // comment on applyHoldMoveTarget for why.
+        render(press.placementIdx);
+        beginDragOverlay();
+        // Jump to the lifted position immediately, using the most recent
+        // pointer coordinates - a finger held perfectly still since
+        // pointerdown should still see the icon pop up above it right
+        // away, not wait for the next move event.
+        applyHoldMoveTarget(press, { clientX: press.lastX, clientY: press.lastY });
+        flash("move " + TYPE_BY_ID[placements[press.placementIdx].type].name + " - drag to reposition");
+      }, HOLD_MS);
+    }
+    grid.setPointerCapture(ev.pointerId);
+  });
+
+  grid.addEventListener("pointermove", function (ev) {
+    if (currentMode === "copy_select" || currentMode === "paste_preview") {
+      if (specialPointerId === null || ev.pointerId !== specialPointerId) return;
+      var specialHit = cellFromEvent(ev);
+      if (!specialHit) return;
+      if (currentMode === "copy_select") {
+        selectionEnd = specialHit;
+        render();
+      } else if (specialDragStart) {
+        pastePos.tick += specialHit.tick - specialDragStart.tick;
+        pastePos.row += specialHit.row - specialDragStart.row;
+        specialDragStart = specialHit;
+        render();
+      }
+      return;
+    }
+    if (!press || ev.pointerId !== press.pointerId) return;
+    press.lastX = ev.clientX;
+    press.lastY = ev.clientY;
+    var dx = ev.clientX - press.startX, dy = ev.clientY - press.startY;
+    if (press.resolved === "holdmove") {
+      var raw = rawCellFromEvent(ev);
+      if (raw.tick !== press.cell.tick || raw.row !== press.cell.row) press.moved = true;
+      applyHoldMoveTarget(press, ev);
+      return;
+    }
+    if (press.resolved === "pan") {
+      trackPanVelocity(press, ev);
+      canvasScroll.scrollLeft = press.startScrollLeft - dx;
+      return;
+    }
+    if (Math.hypot(dx, dy) > jitterTolerance()) {
+      clearTimeout(press.holdTimer);
+      press.resolved = "pan";
+      trackPanVelocity(press, ev);
+      canvasScroll.scrollLeft = press.startScrollLeft - dx;
+    }
+  });
+
+  function endPress(ev) {
+    if (currentMode === "copy_select" || currentMode === "paste_preview") {
+      if (ev.pointerId === specialPointerId) specialPointerId = null;
+      specialDragStart = null;
+      return;
+    }
+    if (!press || ev.pointerId !== press.pointerId) return;
+    clearTimeout(press.holdTimer);
+    var p = press;
+    press = null;
+    // The browser fires a native 'click' right after this pointerup even
+    // when pointer events already fully resolved the gesture (pan or
+    // holdmove included) - mark it handled unconditionally here so the
+    // click-fallback below never re-runs its own (inspect-only) hit-test
+    // against stale coordinates once a holdmove has already relocated the
+    // placement out from under them.
+    inspectHandledByPointer = true;
+    if (p.resolved === "pan") {
+      startMomentum(p.velX);
+      return;
+    }
+    if (p.resolved === "holdmove") {
+      endDragOverlay();
+      if (!p.moved) {
+        // The finger never actually left its starting cell - the lift was
+        // only a preview. Pop the history entry pushed at hold-fire to put
+        // the placement back exactly where it was, so a stationary
+        // hold+release is a true no-op on the grid: the same result a
+        // plain tap would have given (inspect only), not a bogus "moved to
+        // tick X row Y" confirmation or an accidental re-place/erase.
+        placements = history.pop();
+        btnUndo.disabled = history.length === 0;
+        render();
+        showCellInfo(placements[p.placementIdx]);
+        return;
+      }
+      var obj = placements[p.placementIdx];
+      placements.sort(function (a, b) { return a.tick - b.tick || a.row - b.row; });
+      // Bake the placement's final position back into the full grid - it
+      // was only ever drawn on the overlay (now hidden) while the drag was
+      // in progress.
+      render();
+      flash("moved " + TYPE_BY_ID[obj.type].name + " to tick " + obj.tick + ", row " + obj.row);
+      showCellInfo(obj);
+      return;
+    }
+    // tap: released before the hold fired, without moving enough to pan.
+    // A tap that started while momentum was still coasting was only there
+    // to stop the scroll (already done, in pointerdown) - same as tapping
+    // a native scrollable page mid-fling, it shouldn't also place, erase,
+    // or inspect whatever happened to be under the finger.
+    if (p.wasMomentumStop) return;
+    if (p.offsetHit !== null) {
+      openOffsetEditor(p.offsetHit);
+      return;
+    }
+    var c = p.cell;
+    if (!c) return;
+    if (eraseArmed) {
+      // Hit-test the tapped icon's real footprint, not just its anchor
+      // cell - a 16x16 sprite or the boss's body must erase from anywhere
+      // it's actually drawn, not only its top-left 8x8 cell.
+      var eraseIdx = placementIndexAtCell(c.tick, c.row);
+      if (eraseIdx < 0) {
+        flash("nothing there to erase");
+        return;
+      }
+      pushHistory();
+      var erased = placements[eraseIdx];
+      placements.splice(eraseIdx, 1);
+      flash("erased " + TYPE_BY_ID[erased.type].name + " (tick " + erased.tick + ", row " + erased.row + ")");
+      clearCellInfo();
+      render();
+      return;
+    }
+    if (armedType) {
+      pushHistory();
+      setCell(c.tick, c.row, armedType);
+      flash(TYPE_BY_ID[armedType].name + " → tick " + c.tick + ", row " + c.row);
+      showCellInfo({ tick: c.tick, row: c.row, type: armedType });
+      render();
+      return;
+    }
+    // neutral tap on an already-placed cell - inspect only, don't touch
+    // placements. The readout always reflects whatever's now at the
+    // tapped cell, whether that's from placing, erasing, or just looking -
+    // so it's never gated on first deselecting the armed palette type.
+    var idx = placementIndexAtCell(c.tick, c.row);
+    if (idx >= 0) {
+      showCellInfo(placements[idx]);
+    } else {
+      clearCellInfo();
+      flash("pick an enemy on the right first");
+    }
+  }
+  grid.addEventListener("pointerup", endPress);
+  grid.addEventListener("pointercancel", function (ev) {
+    if (currentMode === "copy_select" || currentMode === "paste_preview") {
+      if (ev.pointerId === specialPointerId) specialPointerId = null;
+      specialDragStart = null;
+      return;
+    }
+    if (!press || ev.pointerId !== press.pointerId) return;
+    clearTimeout(press.holdTimer);
+    if (press.resolved === "holdmove") {
+      // Same treatment as a stationary hold+release (endPress's !p.moved
+      // branch): pop the single history entry the hold pushed and restore
+      // the full grid, so a cancelled gesture never leaves the placement
+      // stuck at a half-dragged position or the overlay stuck on-screen.
+      placements = history.pop();
+      btnUndo.disabled = history.length === 0;
+      endDragOverlay();
+      render();
+    }
+    press = null;
+  });
+
+  // Fallback for the inspect readout: the browser synthesizes a real
+  // 'click' from a tap independently of our own pointerdown/move/up gesture
+  // state machine above, so this keeps "tap a placed cell to identify it"
+  // working even on devices where that custom pointer tracking misbehaves
+  // (inspectHandledByPointer skips this when pointerup already did the job,
+  // so working setups don't double-flash).
+  grid.addEventListener("click", function (ev) {
+    if (currentMode !== "normal") return;
+    if (inspectHandledByPointer) { inspectHandledByPointer = false; return; }
+    if (eraseArmed || armedType) return;
+    var rect = grid.getBoundingClientRect();
+    if (enemy3OffsetHitTest(ev.clientX - rect.left + canvasScroll.scrollLeft, ev.clientY - rect.top) !== null) return;
+    var c = cellFromEvent(ev);
+    if (!c) return;
+    var idx = placementIndexAtCell(c.tick, c.row);
+    if (idx >= 0) {
+      showCellInfo(placements[idx]);
+    } else {
+      clearCellInfo();
+      flash("pick an enemy on the right first");
+    }
+  });
+
+  // ---------- Copy / Paste ----------
+  // Same UX as Sprite Editor's Copy/Paste (not its separate "Copy 0/1"
+  // text feature): first click arms a mode and shows a manipulable
+  // preview; second click on the same button confirms it. Sprite Editor's
+  // "selection"/"paste data" are literal pixel bits, encoded as plain 0/1
+  // text; here they're placements, so the clipboard payload is JSON
+  // instead - a flat array of {dtick, drow, type, offset?} relative to the
+  // selection's top-left corner (copy) or the drag position (paste).
+  function copySelectionBounds() {
+    return {
+      minT: Math.min(selectionStart.tick, selectionEnd.tick),
+      maxT: Math.max(selectionStart.tick, selectionEnd.tick),
+      minR: Math.min(selectionStart.row, selectionEnd.row),
+      maxR: Math.max(selectionStart.row, selectionEnd.row)
+    };
+  }
+
+  // A placement is "in" the selection by its own anchor tick/row, not its
+  // full drawn footprint (which for a 16x16 sprite or the boss can extend
+  // well past the anchor cell) - simpler to reason about while dragging
+  // the rectangle, and matches how the palette/inspect readout already
+  // identify a placement by its anchor alone.
+  function copyFromSelection() {
+    var b = copySelectionBounds();
+    var items = [];
+    placements.forEach(function (p) {
+      if (p.tick < b.minT || p.tick > b.maxT || p.row < b.minR || p.row > b.maxR) return;
+      var item = { dtick: p.tick - b.minT, drow: p.row - b.minR, type: p.type };
+      if (p.type === "enemy3_wave") item.offset = p.offset || 0;
+      items.push(item);
+    });
+    return items;
+  }
+
+  function copiedSelectionText(items) {
+    return JSON.stringify({ game: "CYBER SHMUP", kind: "schedule-selection", placements: items });
+  }
+
+  function parseCopiedText(text) {
+    if (!text) return null;
+    var data;
+    try { data = JSON.parse(text); } catch (e) { return null; }
+    if (!data || data.kind !== "schedule-selection" || !Array.isArray(data.placements)) return null;
+    var items = data.placements.filter(function (p) {
+      return p && TYPE_BY_ID[p.type] && Number.isInteger(p.dtick) && Number.isInteger(p.drow) && p.dtick >= 0 && p.drow >= 0;
+    }).map(function (p) {
+      var item = { dtick: p.dtick, drow: p.drow, type: p.type };
+      if (p.type === "enemy3_wave") item.offset = Number.isInteger(p.offset) ? p.offset : 0;
+      return item;
+    });
+    return items.length ? items : null;
+  }
+
+  var btnCopy = document.getElementById("btnCopy");
+  btnCopy.addEventListener("click", function () {
+    if (currentMode !== "copy_select") {
+      armedType = null;
+      eraseArmed = false;
+      document.getElementById("btnErase").classList.remove("armed");
+      refreshPaletteArmed();
+      currentMode = "copy_select";
+      // Default to the current viewport, full row height - a workable
+      // starting rectangle to drag-adjust. Defaulting to the whole
+      // 999-tick timeline (as Sprite Editor does for its own small,
+      // fixed-size grid) would be an unusable rectangle here.
+      var firstTick = Math.max(0, Math.round(canvasScroll.scrollLeft / CELL));
+      var viewTicks = Math.max(1, Math.floor(canvasScroll.clientWidth / CELL) - 1);
+      selectionStart = { tick: firstTick, row: 0 };
+      selectionEnd = { tick: Math.min(MAX_TICK - 1, firstTick + viewTicks), row: ROWS - 1 };
+      render();
+      flash("範囲をドラッグで調整し、もう一度Copyで確定");
+    } else {
+      var items = copyFromSelection();
+      if (!items.length) {
+        flash("選択範囲に配置がありません");
+        exitSpecialModes();
+        return;
+      }
+      var text = copiedSelectionText(items);
+      lastCopiedText = text;
+      copyToClipboard(text, "選択範囲(" + items.length + "件)をコピーしました");
+      exitSpecialModes();
+    }
+  });
+
+  function initPastePreview(items) {
+    if (!items || !items.length) {
+      flash("ペーストできる有効なデータがありません");
+      return;
+    }
+    armedType = null;
+    eraseArmed = false;
+    document.getElementById("btnErase").classList.remove("armed");
+    refreshPaletteArmed();
+    currentMode = "paste_preview";
+    pasteData = items;
+    pastePos = { tick: Math.max(0, Math.round(canvasScroll.scrollLeft / CELL)), row: 0 };
+    render();
+    flash("位置をドラッグで合わせ、もう一度Pasteで確定");
+  }
+
+  function pasteCommit() {
+    pushHistory();
+    var placed = 0;
+    pasteData.forEach(function (pd) {
+      var tick = pastePos.tick + pd.dtick, row = pastePos.row + pd.drow;
+      if (tick < 0 || tick >= MAX_TICK || row < 0 || row >= ROWS) return;
+      var idx = placementAt(tick, row);
+      if (idx >= 0) placements.splice(idx, 1);
+      var p = { tick: tick, row: row, type: pd.type };
+      if (pd.type === "enemy3_wave") p.offset = pd.offset || 0;
+      placements.push(p);
+      placed++;
+    });
+    placements.sort(function (a, b) { return a.tick - b.tick || a.row - b.row; });
+    flash("ペーストを確定しました (" + placed + "件)");
+  }
+
+  var btnPaste = document.getElementById("btnPaste");
+  btnPaste.addEventListener("click", function () {
+    if (currentMode !== "paste_preview") {
+      if (navigator.clipboard && navigator.clipboard.readText) {
+        navigator.clipboard.readText().then(function (clipText) {
+          initPastePreview(parseCopiedText(clipText) || parseCopiedText(lastCopiedText));
+        }).catch(function () {
+          initPastePreview(parseCopiedText(lastCopiedText));
+        });
+      } else {
+        initPastePreview(parseCopiedText(lastCopiedText));
+      }
+    } else {
+      if (pasteData && pasteData.length) pasteCommit();
+      exitSpecialModes();
+    }
+  });
+
+  function exitSpecialModes() {
+    currentMode = "normal";
+    selectionStart = null;
+    selectionEnd = null;
+    pasteData = null;
+    specialPointerId = null;
+    specialDragStart = null;
+    endDragOverlay();
+    render();
+  }
+
+  // Draws the copy_select rectangle or the paste_preview ghost onto
+  // #dragOverlay - same canvas the holdmove drag uses (see beginDragOverlay
+  // et al above), safe to share since holdmove's own gesture handling is
+  // bypassed entirely while a special mode is active.
+  function drawModeOverlay() {
+    if (currentMode !== "copy_select" && currentMode !== "paste_preview") {
+      dragOverlay.style.display = "none";
+      return;
+    }
+    var viewW = canvasScroll.clientWidth, viewH = ROWS * CELL;
+    var ctx = sizeCanvas(dragOverlay, viewW, viewH);
+    dragOverlay.style.left = canvasScroll.scrollLeft + "px";
+    dragOverlay.style.display = "block";
+    ctx.clearRect(0, 0, viewW, viewH);
+
+    if (currentMode === "copy_select") {
+      if (!selectionStart || !selectionEnd) return;
+      var b = copySelectionBounds();
+      var x = b.minT * CELL - canvasScroll.scrollLeft, y = b.minR * CELL;
+      var w = (b.maxT - b.minT + 1) * CELL, h = (b.maxR - b.minR + 1) * CELL;
+      ctx.fillStyle = "rgba(79, 210, 255, 0.18)";
+      ctx.fillRect(x, y, w, h);
+      ctx.strokeStyle = tok("--accent");
+      ctx.lineWidth = 2;
+      ctx.strokeRect(x + 1, y + 1, Math.max(0, w - 2), Math.max(0, h - 2));
+      return;
+    }
+
+    // paste_preview
+    if (!pasteData) return;
+    ctx.globalAlpha = 0.7;
+    pasteData.forEach(function (pd) {
+      var t = TYPE_BY_ID[pd.type];
+      if (!t) return;
+      var tick = pastePos.tick + pd.dtick, row = pastePos.row + pd.drow;
+      var px = tick * CELL - canvasScroll.scrollLeft, py = row * CELL;
+      if (pd.type === "boss") {
+        var bo = bossOrigin(tick, row);
+        ctx.drawImage(getBossCanvas(CELL), bo.tick * CELL - canvasScroll.scrollLeft, bo.row * CELL, 5 * CELL, 16 * CELL);
+        return;
+      }
+      var glyph = GLYPHS[t.glyph];
+      var box = glyph.size === 16 ? CELL * 2 : CELL;
+      ctx.drawImage(getGlyphCanvas(t.glyph, box), px, py, box, box);
+    });
+    ctx.globalAlpha = 1;
+  }
+
+  // keep the ruler and scrub slider in sync with the scrollable grid (this
+  // is the "swipe" pan), and repaint #grid for its new scroll position -
+  // it's viewport-sized now (see drawGrid's scrollX param), not a
+  // pre-rendered full-width canvas, so every scroll (pan gesture, the
+  // scrub slider, or a native scrollbar/wheel/trackpad scroll) needs a
+  // fresh draw to show anything.
+  canvasScroll.addEventListener("scroll", function () {
+    rulerScroll.scrollLeft = canvasScroll.scrollLeft;
+    scrubSlider.value = String(Math.round(canvasScroll.scrollLeft / CELL));
+    render();
+  }, { passive: true });
+
+  // Scrub slider: jumps/scrolls to any tick 0-999 directly, replacing the
+  // old one-screen-at-a-time Prev/Next buttons. "input" (not "change")
+  // fires continuously while dragging, so the grid tracks the slider live
+  // instead of only updating on release. Setting scrubSlider.value
+  // programmatically (in the scroll listener above) never itself fires
+  // "input", so there's no feedback loop between the two listeners.
+  var scrubSlider = document.getElementById("scrubSlider");
+  scrubSlider.max = String(MAX_TICK);
+  scrubSlider.addEventListener("input", function () {
+    var tick = parseInt(scrubSlider.value, 10) || 0;
+    var maxScroll = Math.max(0, canvasScroll.scrollWidth - canvasScroll.clientWidth);
+    canvasScroll.scrollLeft = Math.min(tick * CELL, maxScroll);
+  });
+
+  // ---------- save / load ----------
+  function currentJSON() {
+    return JSON.stringify({
+      version: 1,
+      game: "CYBER SHMUP",
+      maxTick: MAX_TICK,
+      placements: placements.slice().sort(function (a, b) { return a.tick - b.tick || a.row - b.row; })
+    }, null, 2);
+  }
+
+  var saveOverlay = document.getElementById("saveOverlay");
+  var saveFilenameInput = document.getElementById("saveFilenameInput");
+  var saveStatus = document.getElementById("saveStatus");
+
+  document.getElementById("btnSave").addEventListener("click", function () {
+    saveStatus.textContent = "";
+    saveStatus.classList.remove("ok");
+    saveOverlay.classList.add("show");
+    saveFilenameInput.focus();
+    saveFilenameInput.select();
+  });
+
+  // Published Artifact: goes through window.claude.downloads (blob/<a download>
+  // is inert in that sandbox). Run locally (file:// or any plain static host,
+  // no Claude frame runtime): window.claude doesn't exist at all, so fall back
+  // to the classic Blob + <a download> click, which works fine outside the
+  // sandbox.
+  function doSaveViaBlobLink(filename) {
+    try {
+      var blob = new Blob([currentJSON()], { type: "application/json" });
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(function () { URL.revokeObjectURL(url); }, 100);
+      saveOverlay.classList.remove("show");
+      flash("saved " + filename);
+    } catch (err) {
+      saveStatus.textContent = "save failed";
+      saveStatus.classList.remove("ok");
+    }
+  }
+
+  function doSave() {
+    var filename = saveFilenameInput.value.trim() || "Schedule.json";
+    if (!window.claude || !window.claude.downloads) {
+      doSaveViaBlobLink(filename);
+      return;
+    }
+    window.claude.downloads.save({ filename: filename, data: currentJSON() }).then(
+      function () {
+        saveOverlay.classList.remove("show");
+        flash("saved " + filename);
+      },
+      function (err) {
+        if (err && err.code === "declined") { saveOverlay.classList.remove("show"); flash("save cancelled"); return; }
+        saveStatus.textContent = "save failed";
+        saveStatus.classList.remove("ok");
+      }
+    );
+  }
+
+  function copyToClipboard(text, successMsg) {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(
+        function () { flash(successMsg); },
+        function () { copyViaTempTextarea(text, successMsg); }
+      );
+    } else {
+      copyViaTempTextarea(text, successMsg);
+    }
+  }
+
+  function copyViaTempTextarea(text, successMsg) {
+    var ta = document.createElement("textarea");
+    ta.value = text;
+    ta.style.position = "fixed";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.select();
+    var ok = false;
+    try { ok = document.execCommand("copy"); } catch (e) { ok = false; }
+    document.body.removeChild(ta);
+    flash(ok ? successMsg : "コピーできませんでした");
+  }
+
+  document.getElementById("btnSaveCancel").addEventListener("click", function () {
+    saveOverlay.classList.remove("show");
+  });
+  document.getElementById("btnSaveCopy").addEventListener("click", function () {
+    copyToClipboard(currentJSON(), "JSONをコピーしました（ファイルに貼り付けて保存してください）");
+  });
+  document.getElementById("btnSaveConfirm").addEventListener("click", doSave);
+  saveFilenameInput.addEventListener("keydown", function (ev) {
+    if (ev.key === "Enter") doSave();
+    if (ev.key === "Escape") saveOverlay.classList.remove("show");
+  });
+  saveOverlay.addEventListener("click", function (ev) {
+    if (ev.target === saveOverlay) saveOverlay.classList.remove("show");
+  });
+
+  // enemy4/enemy5 used to be split into 3 palette entries each
+  // (_y16/_y32/_y48, picking a Top/Mid/Bottom baseY) before SPAWN_E4/SPAWN_E4B
+  // switched to reading baseY from SPAWN_BASEY_TABLE[row placed] for any row -
+  // see SPAWN_E4's comment in CYBER_GD_BOSS.asm. Enemy2 went through the same
+  // collapse (e2a_top/e2a_bot/e2b_top/e2b_bot -> enemy2) once SPAWN_E2 started
+  // reading baseY the same way and auto-picking its A/B RAM instance instead
+  // of the caller choosing one. None of these splits affect anything in-game
+  // anymore, but old saved JSON can still contain the old ids, so remap them
+  // here rather than silently dropping those placements on load.
+  var LEGACY_TYPE_ALIASES = {
+    enemy4_y16: "enemy4", enemy4_y32: "enemy4", enemy4_y48: "enemy4",
+    enemy5_y16: "enemy5", enemy5_y32: "enemy5", enemy5_y48: "enemy5",
+    e2a_top: "enemy2", e2a_bot: "enemy2", e2b_top: "enemy2", e2b_bot: "enemy2"
+  };
+
+  // Returns a status message rather than showing it - callers decide
+  // where that's safe to display. Loading a file is not an edit, so it
+  // doesn't touch the undo history - it wouldn't make sense to "undo"
+  // your way back through a fresh load into whatever was there before.
+  function importJSONText(text) {
+    var data = JSON.parse(text);
+    if (!Array.isArray(data.placements)) throw new Error("no placements array");
+    exitSpecialModes();
+    var remapped = data.placements.map(function (p) {
+      var alias = p && LEGACY_TYPE_ALIASES[p.type];
+      return alias ? Object.assign({}, p, { type: alias }) : p;
+    });
+    var valid = remapped.filter(function (p) {
+      return TYPE_BY_ID[p.type] && Number.isInteger(p.tick) && Number.isInteger(p.row);
+    });
+    placements = valid;
+    render();
+    var skipped = data.placements.length - valid.length;
+    return "loaded " + valid.length + " placements" + (skipped ? " (" + skipped + " skipped - bad type/tick/row)" : "");
+  }
+
+  document.getElementById("fileInput").addEventListener("change", function (ev) {
+    var file = ev.target.files[0];
+    if (!file) return;
+    var reader = new FileReader();
+    reader.onload = function () {
+      try { flash(importJSONText(reader.result)); }
+      catch (e) { flash("could not read that file: " + e.message); }
+    };
+    reader.readAsText(file);
+    ev.target.value = "";
+  });
+
+  // ---------- misc UI ----------
+  var liveMsg = document.getElementById("liveMsg");
+  var flashTimer = null;
+  function flash(msg) {
+    liveMsg.textContent = msg;
+    liveMsg.classList.add("show");
+    clearTimeout(flashTimer);
+    flashTimer = setTimeout(function () { liveMsg.classList.remove("show"); }, 1800);
+  }
+
+  function render(skipIdx) {
+    var gctx = grid.getContext("2d");
+    gctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    drawGrid(gctx, canvasScroll.clientWidth, ROWS * CELL, skipIdx, canvasScroll.scrollLeft);
+    var rctx = ruler.getContext("2d");
+    rctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    drawRuler(rctx, canvasScroll.clientWidth, RULER_H, canvasScroll.scrollLeft);
+    drawModeOverlay();
+    btnCopy.classList.toggle("active-mode", currentMode === "copy_select");
+    btnPaste.classList.toggle("active-mode", currentMode === "paste_preview");
+  }
+
+  // ---------- boot ----------
+  layout();
+  render();
+  window.addEventListener("resize", function () { layout(); render(); });
+})();
+</script>
+</body>
