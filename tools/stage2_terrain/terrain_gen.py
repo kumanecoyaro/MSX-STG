@@ -76,6 +76,15 @@ def blend(tile_a, tile_b, phase):
 
 
 # ---------- load + split the two sprites ----------
+# Both Rock and Rock225 only use their own top 16x8 half (one row, 2
+# cells) - the bottom half of each source JSON is unused (confirmed
+# per direct instruction). Rock225's marker appears exactly once, in
+# whichever row is newly becoming rock (or newly becoming open air,
+# on the way down) - it does NOT get a second, duplicate placement in
+# the row below/above it. Placing R225's own bottom half there too (an
+# earlier version of this did) put two markers at the same columns in
+# two different rows instead of one marker per row at its own correct
+# moment - that's the reported horizontal misalignment.
 rock = load_bits("Rock")
 r225 = load_bits("Rock225")
 
@@ -83,26 +92,20 @@ ROCK_L = sub_tile(rock, 0, 0)
 ROCK_R = sub_tile(rock, 0, 8)
 R225_UL = sub_tile(r225, 0, 0)
 R225_UR = sub_tile(r225, 0, 8)
-R225_LL = sub_tile(r225, 8, 0)
-R225_LR = sub_tile(r225, 8, 8)
 R225D_UL = hflip(R225_UR)
 R225D_UR = hflip(R225_UL)
-R225D_LL = hflip(R225_LR)
-R225D_LR = hflip(R225_LL)
 BLANK = [[0] * 8 for _ in range(8)]
 
 # ---------- id table ----------
-ID_NAMES = ["BLANK", "ROCK_L", "ROCK_R", "R225_UL", "R225_UR", "R225_LL",
-            "R225_LR", "R225D_UL", "R225D_UR", "R225D_LL", "R225D_LR"]
-ID_TILES = [BLANK, ROCK_L, ROCK_R, R225_UL, R225_UR, R225_LL,
-            R225_LR, R225D_UL, R225D_UR, R225D_LL, R225D_LR]
+ID_NAMES = ["BLANK", "ROCK_L", "ROCK_R", "R225_UL", "R225_UR", "R225D_UL", "R225D_UR"]
+ID_TILES = [BLANK, ROCK_L, ROCK_R, R225_UL, R225_UR, R225D_UL, R225D_UR]
 N_IDS = len(ID_NAMES)
 BLANK_ID, ROCK_L_ID, ROCK_R_ID = 0, 1, 2
-R225_UL_ID, R225_UR_ID, R225_LL_ID, R225_LR_ID = 3, 4, 5, 6
-R225D_UL_ID, R225D_UR_ID, R225D_LL_ID, R225D_LR_ID = 7, 8, 9, 10
+R225_UL_ID, R225_UR_ID = 3, 4
+R225D_UL_ID, R225D_UR_ID = 5, 6
 
 
-# ---------- build the 4-row test track (climb 4, descend 4, loop) ----------
+# ---------- build the 4-row test track (climb, descend, loop) ----------
 def build_track():
     rows = [[], [], [], []]  # row index 0=top(row20) .. 3=bottom(row23)
     tier = 0
@@ -115,23 +118,22 @@ def build_track():
         gi = ground_i(tier)
         for k in range(n):
             for i in range(4):
-                if i > gi:
-                    rows[i].append(ROCK_L_ID if k % 2 == 0 else ROCK_R_ID)
-                elif i == gi:
-                    rows[i].append(ROCK_L_ID if k % 2 == 0 else ROCK_R_ID)
-                else:
-                    rows[i].append(BLANK_ID)
+                rows[i].append((ROCK_L_ID if k % 2 == 0 else ROCK_R_ID) if i >= gi else BLANK_ID)
 
     def emit_climb():
+        # The Rock225 marker appears exactly once, in the row that's
+        # newly becoming rock (new_gi) - the row it climbs FROM (gi)
+        # already made its own transition earlier and stays ordinary
+        # flat rock here, not a second marker. Placing one in both rows
+        # at the same columns (an earlier version of this did) put two
+        # markers where only one belongs - reported as misaligned.
         nonlocal tier
         gi = ground_i(tier)
         new_gi = gi - 1
-        for k, (lo, up) in enumerate([(R225_LL_ID, R225_UL_ID), (R225_LR_ID, R225_UR_ID)]):
+        for k, up in enumerate([R225_UL_ID, R225_UR_ID]):
             for i in range(4):
-                if i > gi:
+                if i >= gi:
                     rows[i].append(ROCK_L_ID if k % 2 == 0 else ROCK_R_ID)
-                elif i == gi:
-                    rows[i].append(lo)
                 elif i == new_gi:
                     rows[i].append(up)
                 else:
@@ -139,17 +141,19 @@ def build_track():
         tier += 1
 
     def emit_descend():
+        # Mirror of emit_climb: the marker appears once, in the row
+        # that's newly becoming open air again (gi, the row being
+        # abandoned) - new_gi (one row further down) was already
+        # ordinary flat rock and stays that way, unaffected.
         nonlocal tier
         gi = ground_i(tier)
         new_gi = gi + 1
-        for k, (lo, up) in enumerate([(R225D_LL_ID, R225D_UL_ID), (R225D_LR_ID, R225D_UR_ID)]):
+        for k, down in enumerate([R225D_UL_ID, R225D_UR_ID]):
             for i in range(4):
-                if i > new_gi:
+                if i >= new_gi:
                     rows[i].append(ROCK_L_ID if k % 2 == 0 else ROCK_R_ID)
-                elif i == new_gi:
-                    rows[i].append(lo)
                 elif i == gi:
-                    rows[i].append(up)
+                    rows[i].append(down)
                 else:
                     rows[i].append(BLANK_ID)
         tier -= 1
