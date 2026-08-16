@@ -19,7 +19,7 @@ NTSC_TSTATES_PER_FRAME = 3579545 / 59.94  # ~59718 T-states/frame budget
 
 
 def assemble():
-    text = open(os.path.join(os.path.dirname(__file__), '..', 'src', 'CYBER_GD_BOSS.asm'), encoding='utf-8').read()
+    text = open(os.path.join(os.path.dirname(__file__), '..', 'src', 'CYBER SHMUP.asm'), encoding='utf-8').read()
     asm = Assembler(text)
     out = asm.assemble()
     mem = bytearray(65536)

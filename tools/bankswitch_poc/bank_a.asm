@@ -39,7 +39,7 @@ BANKSWITCH_TRAMPOLINE_END:
     LDIR
 
     ; --- map our own primary slot into page 2 (8000h-BFFFh) as well - ---
-    ; --- same belt-and-suspenders step CYBER_GD_BOSS.asm's INIT does, ---
+    ; --- same belt-and-suspenders step CYBER SHMUP.asm's INIT does, ---
     ; --- harmless for a true mapper cartridge (the mapper's internal  ---
     ; --- bank select is a separate mechanism from this outer slot     ---
     ; --- register) but guards against a flashcart that doesn't auto-  ---

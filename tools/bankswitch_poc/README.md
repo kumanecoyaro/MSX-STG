@@ -1,16 +1,21 @@
-# Bank-switch proof of concept (ASCII16)
+# Bank-switch mechanism (ASCII16)
 
-Standalone test of the "safe two-hop bank switch" mechanism planned for
-splitting CYBER SHMUP into per-stage ROM banks. Not wired into the
-real game yet - this is deliberately isolated so it can be verified on
-its own, both in the emulator and on real hardware.
+This directory started as a standalone, isolated test of the "safe
+two-hop bank switch" mechanism for splitting CYBER SHMUP into
+per-stage ROM banks (`bank_a.asm`/`bank_b1.asm`/`build_rom.py`/
+`run_poc.py` below, kept for reference). That mechanism is now proven
+on real hardware and BlueMSX/WebMSX and is the real, permanent build:
+`build_full_rom.py` builds `rom/CYBER SHMUP [ASCII16].rom`, the
+game's one and only shipped ROM (the old flat 32KB single-bank ROM is
+retired). See "Full-game integration test" below for the real build;
+the standalone POC section further down is historical/lower-priority.
 
 ## What it does
 
 `bank_a.asm` assembles to bank 0 (mapped at page 1, 4000h-7FFFh, where
 the MSX BIOS boots any cartridge). It's a normal, real-hardware-bootable
 cartridge: valid "AB" header, BIOS SCREEN1 init, the same page-2 slot
-mapping belt-and-suspenders step CYBER_GD_BOSS.asm's own INIT does.
+mapping belt-and-suspenders step CYBER SHMUP.asm's own INIT does.
 Right after boot (simulating "stage 1 just ended") it does the whole
 switch in 3 instructions:
 
@@ -165,7 +170,7 @@ same terrain/engine/graphics/HUD, same boss fight at the end - but:
   (covering those codes, previously unused/free) repointed to a
   readable white-on-black to match the digit HUD's own style
 
-Like `build_full_rom.py`, this never touches `src/CYBER_GD_BOSS.asm` -
+Like `build_full_rom.py`, this never touches `src/CYBER SHMUP.asm` -
 it transforms an in-memory copy of the raw source text (letter glyphs
 + HUD draw + color tweak + regenerated schedule tables/dispatch chain),
 independently assembled into its own bank pair.
@@ -203,7 +208,7 @@ switch window A as well as window B, not just window B like the old
 placeholder did.
 
 Run `python3 build_full_rom.py` to (re)build
-`CYBER SHMUP [ASCII16].rom` from the current source (this also
+`../../rom/CYBER SHMUP [ASCII16].rom` from the current source (this also
 calls into `build_stage2_world.py`). Run `python3 verify_full.py` to
 re-verify in the emulator: confirms normal gameplay never switches
 early, pokes PLAYER_FLYAWAY=2 directly (simulating a real boss kill,

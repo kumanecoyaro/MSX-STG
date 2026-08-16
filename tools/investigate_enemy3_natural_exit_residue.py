@@ -23,7 +23,7 @@ REPO_ROOT = os.path.join(os.path.dirname(__file__), '..')
 
 
 def assemble():
-    text = open(os.path.join(REPO_ROOT, 'src', 'CYBER_GD_BOSS.asm'), encoding='utf-8').read()
+    text = open(os.path.join(REPO_ROOT, 'src', 'CYBER SHMUP.asm'), encoding='utf-8').read()
     asm = Assembler(text)
     out = asm.assemble()
     mem = bytearray(65536)
