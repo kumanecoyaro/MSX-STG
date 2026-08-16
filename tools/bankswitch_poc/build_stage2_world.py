@@ -9,9 +9,10 @@ Explicitly a throwaway test per the user: "Stage 1と全く同じ物をStage 2�
 (port an exact copy of stage 1 into stage 2, but enemies simple-only,
 this is a test since it'll be rebuilt later).
 
-Does NOT touch src/CYBER_GD_BOSS.asm - takes the raw, unmodified source
-text and transforms an in-memory copy, so the normal single-bank
-production build stays completely unaffected. Assembled independently
+Does NOT touch src/CYBER SHMUP.asm - takes the raw, unmodified source
+text and transforms an in-memory copy, so stage 1 (bank0/bank1,
+assembled from that same source with its own separate patch set in
+build_full_rom.py) stays completely unaffected. Assembled independently
 from bank0/bank1 (the ORG addresses are identical - both worlds start
 at 4000h and use the same window-A/window-B split - only the FILE
 OFFSET differs).
@@ -30,7 +31,7 @@ def extract_simple_only_schedule():
     """Reads the REAL committed schedule and filters it down to just
     the type=simple entries (tick, Y), preserving original order/tick
     values, plus the original boss tick at the very end."""
-    src_path = os.path.join(REPO, "src", "CYBER_GD_BOSS.asm")
+    src_path = os.path.join(REPO, "src", "CYBER SHMUP.asm")
     text = open(src_path, encoding="utf-8").read()
     a = Assembler(text)
     out = a.assemble()
@@ -124,7 +125,7 @@ STAGE2_LETTER_BASE = 64  # confirmed-free code range (64-87), color group8
 
 
 def patched_stage2_text():
-    src_path = os.path.join(REPO, "src", "CYBER_GD_BOSS.asm")
+    src_path = os.path.join(REPO, "src", "CYBER SHMUP.asm")
     text = open(src_path, encoding="utf-8").read()
 
     # --- 1. spawn schedule: simple-only ---

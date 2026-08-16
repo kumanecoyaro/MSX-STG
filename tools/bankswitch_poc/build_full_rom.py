@@ -4,13 +4,17 @@ stage 2, for a real-hardware test of the bank-switch mechanism against
 genuine, fully-playable content on both sides - not a static
 placeholder screen.
 
-IMPORTANT: src/CYBER_GD_BOSS.asm itself is NOT modified. The normal
-game only ever runs as a flat 32KB ROM (no mapper) - if a bank-switch
-test trigger were baked into the tracked source, the ordinary
-single-bank "rom/CYBER SHMUP.rom" build would inherit it too, and
-outside a real ASCII16 mapper that has nowhere valid to land - a real
-regression in the normal game. So all insertions below are applied to
-an in-memory copy of the source text, only for this test build.
+This is now the primary/shipped build (the old flat 32KB single-bank
+ROM is retired - the game is ASCII16/64KB-based going forward).
+
+src/CYBER SHMUP.asm itself is still NOT modified by this script: the
+ASCII16-specific plumbing (RAM trampoline setup, the PLAYER_FLYAWAY==2
+switch trigger, the PSG mute) is applied to an in-memory copy of the
+source text at build time instead of being baked into the tracked
+source. This keeps the trampoline/switch mechanics all in one place
+here rather than scattered through the main source, and keeps the
+tracked .asm assemblable on its own (e.g. by tools/mini_z80asm.py
+directly) for debugging without ASCII16 entanglement.
 
 Layout (before the real-hardware-required 128KB doubling - see main()):
   bank0 (file 0x0000-0x3FFF) = the real game's page1 content
@@ -193,7 +197,7 @@ def patch_postinit32(text):
 
 
 def patched_game_text():
-    src_path = os.path.join(REPO, "src", "CYBER_GD_BOSS.asm")
+    src_path = os.path.join(REPO, "src", "CYBER SHMUP.asm")
     text = open(src_path, encoding="utf-8").read()
     assert text.count(INIT_ANCHOR) == 1, "INIT anchor not found (or not unique) - source drifted"
     assert text.count(MAINLOOP_ANCHOR) == 1, "MAINLOOP anchor not found (or not unique) - source drifted"
@@ -234,7 +238,7 @@ def main():
     # --- by this ROM's own code, so the duplicate second half is     ---
     # --- inert padding, not a second, different level.               ---
     rom = rom64 + rom64
-    out_path = os.path.join(HERE, "CYBER SHMUP [ASCII16].rom")
+    out_path = os.path.join(REPO, "rom", "CYBER SHMUP [ASCII16].rom")
     with open(out_path, "wb") as f:
         f.write(rom)
 

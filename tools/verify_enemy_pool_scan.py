@@ -129,11 +129,11 @@ def main():
     old_path = sys.argv[1] if len(sys.argv) > 1 else None
     if old_path is None:
         old_text = subprocess.run(
-            ['git', 'show', 'HEAD:src/CYBER_GD_BOSS.asm'],
+            ['git', 'show', 'HEAD:src/CYBER SHMUP.asm'],
             cwd=REPO_ROOT, capture_output=True, text=True, check=True).stdout
     else:
         old_text = open(old_path, encoding='utf-8').read()
-    new_text = open(os.path.join(REPO_ROOT, 'src', 'CYBER_GD_BOSS.asm'), encoding='utf-8').read()
+    new_text = open(os.path.join(REPO_ROOT, 'src', 'CYBER SHMUP.asm'), encoding='utf-8').read()
 
     mem_old, sym_old = assemble_text(old_text)
     mem_new, sym_new = assemble_text(new_text)

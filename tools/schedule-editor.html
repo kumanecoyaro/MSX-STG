@@ -489,7 +489,7 @@
   "use strict";
 
   // ---------- real in-game sprite/pattern data, transcribed byte-for-byte ----------
-  // from CYBER_GD_BOSS.asm (see ASTERISK_PATTERN, ENEMY3_PATTERN1, ENEMY4_PATTERN
+  // from CYBER SHMUP.asm (see ASTERISK_PATTERN, ENEMY3_PATTERN1, ENEMY4_PATTERN
   // and their draw sites for exact source lines; the boss's own BOSS_PATTERNS/
   // BOSS_MAP are transcribed separately below). 16x16 entries use
   // the MSX1 hardware sprite quadrant order [top-left, bottom-left, top-right,
@@ -705,12 +705,12 @@
     }
   }
 
-  // ---------- enemy palette (matches the current CYBER_GD_BOSS.asm schedule) ----------
+  // ---------- enemy palette (matches the current CYBER SHMUP.asm schedule) ----------
   var TYPES = [
     { id: "simple",     name: "Simple (Enemy1)",  desc: "any row - dodge dir is decided from player Y at center", glyph: "asterisk16" },
     // e2a_top/e2a_bot/e2b_top/e2b_bot used to be 4 distinct placeable types -
     // A/B picked which of 2 independent RAM instances got claimed, Top/Bottom
-    // picked a fixed spawn Y (32/128). SPAWN_E2 (src/CYBER_GD_BOSS.asm) now
+    // picked a fixed spawn Y (32/128). SPAWN_E2 (src/CYBER SHMUP.asm) now
     // reads baseY from SPAWN_BASEY_TABLE[row placed] - same any-row mechanism
     // as enemy4/enemy5 below - and auto-claims whichever of A/B is free at
     // spawn time, so neither axis is a real choice anymore: one placeable,
@@ -2005,7 +2005,7 @@
   // enemy4/enemy5 used to be split into 3 palette entries each
   // (_y16/_y32/_y48, picking a Top/Mid/Bottom baseY) before SPAWN_E4/SPAWN_E4B
   // switched to reading baseY from SPAWN_BASEY_TABLE[row placed] for any row -
-  // see SPAWN_E4's comment in CYBER_GD_BOSS.asm. Enemy2 went through the same
+  // see SPAWN_E4's comment in CYBER SHMUP.asm. Enemy2 went through the same
   // collapse (e2a_top/e2a_bot/e2b_top/e2b_bot -> enemy2) once SPAWN_E2 started
   // reading baseY the same way and auto-picking its A/B RAM instance instead
   // of the caller choosing one. None of these splits affect anything in-game
