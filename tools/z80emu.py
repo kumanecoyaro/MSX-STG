@@ -182,6 +182,8 @@ class Z80:
                 self.tstates += 10
         elif op == 0xC3:
             self.pc = self.fetch16(); self.tstates += 10
+        elif op == 0xE9:  # JP (HL)
+            self.pc = self.hl(); self.tstates += 4
         elif op in (0xC2,0xCA,0xD2,0xDA,0xE2,0xEA,0xF2,0xFA):
             cc=(op>>3)&7
             target=self.fetch16()

@@ -245,6 +245,8 @@ class Assembler:
                 target = self.eval_expr(ops[1], phase)
                 opc = {"NZ":0xC2,"Z":0xCA,"NC":0xD2,"C":0xDA,"PO":0xE2,"PE":0xEA,"P":0xF2,"M":0xFA}[cc]
                 self.emit([opc, target & 0xFF, (target >> 8) & 0xFF])
+            elif ops[0].strip().upper() == "(HL)":
+                self.emit([0xE9])
             else:
                 target = self.eval_expr(ops[0], phase)
                 self.emit([0xC3, target & 0xFF, (target >> 8) & 0xFF])
