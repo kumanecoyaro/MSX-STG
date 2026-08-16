@@ -209,11 +209,31 @@ BLEND_BASE = 24    # next group-aligned boundary after 8+10=18
 
 STEADY_CODE = [BLANK_CODE] + [STEADY_BASE + i for i in range(N_IDS - 1)]
 
-PAIR_LIST = sorted(PAIRS)
+# A same-id pair (curr==next) whose tile is uniformly blank in every
+# row (only BLANK qualifies) blends to itself at every phase - shifting
+# an all-zero tile by any amount and OR-ing it with another all-zero
+# tile is still all-zero. But CELL_LOOP's formula is always
+# code = PAIRBASE[pairid] + (phase-1) - it unconditionally adds the
+# phase offset, so pointing PAIRBASE straight at BLANK_CODE(0) is NOT
+# enough by itself: phases 1-7 would still land on codes 1-6, not 0.
+# Reserve the rest of group0 (codes 1-7, otherwise entirely unused) as
+# 7 more all-zero-pattern frames instead, so the phase offset always
+# lands somewhere inside group0 - the whole 8-code group ends up
+# blank-content + sky-colored, matching "confirm all 8 blank cells are
+# reserved". (First attempt pointed PAIRBASE at code0 directly and hit
+# exactly this bug: codes 1-6 flashing on screen during the scroll,
+# reported as yellow/blue flicker even after moving BLANK to its own
+# color group - the group was right, the phase arithmetic wasn't.)
+DEGENERATE_BLANK_PAIR = (BLANK_ID, BLANK_ID)
+DEGENERATE_BLANK_BASE = BLANK_CODE + 1   # codes 1-7
+
+PAIR_LIST = sorted(p for p in PAIRS if p != DEGENERATE_BLANK_PAIR)
 PAIR_INDEX = {p: i for i, p in enumerate(PAIR_LIST)}
 
 
 def pair_block_code(pair):
+    if pair == DEGENERATE_BLANK_PAIR:
+        return DEGENERATE_BLANK_BASE
     return BLEND_BASE + PAIR_INDEX[pair] * 7
 
 
@@ -222,6 +242,8 @@ def build_pattern_table():
     patterns = {}
     for idx, tile in enumerate(ID_TILES):
         patterns[STEADY_CODE[idx]] = to_bytes(tile)
+    for phase in range(1, 8):
+        patterns[DEGENERATE_BLANK_BASE + phase - 1] = to_bytes(BLANK)
     for pair in PAIR_LIST:
         curr, nxt = pair
         base = pair_block_code(pair)
@@ -236,7 +258,7 @@ MAX_CODE = max(PATTERNS)
 MUL_N = [i * N_IDS for i in range(N_IDS)]
 SOLOTAB = STEADY_CODE
 PAIRBASE = [0] * (N_IDS * N_IDS)
-for pair in PAIR_LIST:
+for pair in PAIRS:
     curr, nxt = pair
     PAIRBASE[curr * N_IDS + nxt] = pair_block_code(pair)
 
