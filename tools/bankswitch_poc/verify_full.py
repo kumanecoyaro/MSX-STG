@@ -77,7 +77,7 @@ cpu.pc = gsym["INIT"]
 cpu.sp = gsym["STACKTOP"]
 
 MAINLOOP = gsym["MAINLOOP"]
-GAME_TICK = gsym["GAME_TICK"]
+PLAYER_FLYAWAY = gsym["PLAYER_FLYAWAY"]
 STAGE2_ENTRY = ssym["STAGE2_ENTRY"]
 
 steps = 0
@@ -88,26 +88,42 @@ print(f"reached MAINLOOP after {steps} steps, bankB={mem.bankB} (expect 1)")
 assert cpu.pc == MAINLOOP
 assert mem.bankB == 1, "explicit bank1 select in INIT did not take effect"
 
-last_tick = -1
+# Real gameplay never naturally reaches PLAYER_FLYAWAY==2 without a
+# player actually shooting the boss down over what would be several
+# minutes of real play - not practical to simulate step-by-step here.
+# Instead: run a good chunk of ordinary gameplay first, confirming the
+# switch never fires early (bank stays 1) for as long as
+# PLAYER_FLYAWAY==0 (its true starting/idle value), then directly poke
+# PLAYER_FLYAWAY to 2 - exactly what BOSS_EXPL_UPDATE's completion
+# would eventually write - and confirm the very next MAINLOOP pass
+# reacts correctly. This tests the NEW trigger logic in isolation
+# without needing to also re-verify the pre-existing, untouched
+# boss/flyaway state machine that sets PLAYER_FLYAWAY in the first
+# place.
+steps1b = 0
+while steps1b < 2_000_000:
+    assert mem.flat[PLAYER_FLYAWAY] == 0, "PLAYER_FLYAWAY unexpectedly left 0 during ordinary early gameplay"
+    assert mem.bankB == 1, "bank switched with PLAYER_FLYAWAY still 0"
+    cpu.step()
+    steps1b += 1
+print(f"ran {steps1b} more steps of ordinary gameplay: PLAYER_FLYAWAY stayed 0, bank never switched - OK")
+
+mem.flat[PLAYER_FLYAWAY] = 2
+print("poked PLAYER_FLYAWAY=2 (simulating boss-destroyed + flyaway-complete)")
+
 switched = False
 steps2 = 0
-max_steps = 30_000_000
+max_steps = 2_000_000
 while steps2 < max_steps:
-    tick = mem.flat[GAME_TICK] | (mem.flat[GAME_TICK + 1] << 8)
-    if tick != last_tick:
-        if tick < 100:
-            assert mem.bankB == 1, f"bank switched early at tick={tick}"
-        last_tick = tick
     if cpu.pc == STAGE2_ENTRY:
         switched = True
         break
     cpu.step()
     steps2 += 1
 
-print(f"after {steps2} more steps: pc={cpu.pc:04x} tick={last_tick} bankB={mem.bankB} switch_log(tail)={mem.switch_log[-3:]}")
-assert switched, "never reached STAGE2_ENTRY within step budget"
+print(f"after {steps2} more steps: pc={cpu.pc:04x} bankB={mem.bankB} switch_log(tail)={mem.switch_log[-3:]}")
+assert switched, "never reached STAGE2_ENTRY within step budget after PLAYER_FLYAWAY=2"
 assert mem.bankB == 2, "window B not switched to bank2 (stage2 placeholder)"
-assert last_tick >= 100, f"switched too early, tick={last_tick}"
 
 steps3 = 0
 while cpu.pc != ssym["STAGE2_LOOP"] and steps3 < 500:

@@ -53,18 +53,25 @@ MAINLOOP_ANCHOR = """MAINLOOP:
 
 MAINLOOP_PATCH = """MAINLOOP:
     ; --- [bankswitch_poc TEST PATCH, not in the tracked source] ---
-    ; --- TEMPORARY: once GAME_TICK reaches 100 (~13s in), simulate ---
-    ; --- "stage 1 end" and switch to the stage-2 placeholder bank  ---
-    ; --- (bank2). Safe here because MAINLOOP always starts at a    ---
-    ; --- window-A address and every frame re-enters via            ---
-    ; --- "JP MAINLOOP", so this switch (which only touches window  ---
-    ; --- B) never risks changing out its own currently-executing   ---
-    ; --- bank.                                                      ---
-    LD HL,(GAME_TICK)
-    LD DE,100
-    OR A
-    SBC HL,DE
-    JR C,MAINLOOP_NO_TEST_SWITCH
+    ; --- TEMPORARY: once PLAYER_FLYAWAY reaches 2 (boss fully       ---
+    ; --- destroyed AND the player's exit/flyaway sequence has       ---
+    ; --- finished - off-screen/hidden, per PLAYER_FLYAWAY's own     ---
+    ; --- 0=normal/1=auto-flying/2=off-screen states), simulate       ---
+    ; --- "stage 1 end" and switch to the stage-2 placeholder bank    ---
+    ; --- (bank2). This is the actual real transition point stage 2  ---
+    ; --- will eventually use - NOT an arbitrary tick count. At this  ---
+    ; --- point the boss, its explosion sequence, and every enemy/    ---
+    ; --- bullet are already long gone (BOSS_CLEAR_DYNAMIC_ENEMIES ran ---
+    ; --- when the boss landed, and BOSS_EXPL_UPDATE's completion is  ---
+    ; --- what kicks off the flyaway in the first place), so nothing  ---
+    ; --- is left mid-animation in window B for the switch to cut off. ---
+    ; --- Safe here because MAINLOOP always starts at a window-A      ---
+    ; --- address and every frame re-enters via "JP MAINLOOP", so     ---
+    ; --- this switch (which only touches window B) never risks       ---
+    ; --- changing out its own currently-executing bank.               ---
+    LD A,(PLAYER_FLYAWAY)
+    CP 2
+    JR NZ,MAINLOOP_NO_TEST_SWITCH
     LD A,2
     LD (7000h),A
     ; --- settle delay: give the flashcart's flash chip time to     ---

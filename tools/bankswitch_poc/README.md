@@ -86,9 +86,19 @@ an isolated stub:
   1. INIT explicitly selects bank1 for window B (matching this game's
      existing page2 content - explicit instead of relying on the
      mapper's power-on default).
-  2. MAINLOOP gets a temporary trigger at its very top: once GAME_TICK
-     reaches 100 (~13 seconds of normal play), it switches window B to
-     bank2 and jumps to 0BF00h - simulating "stage 1 end".
+  2. MAINLOOP gets a temporary trigger at its very top: once
+     PLAYER_FLYAWAY reaches 2 (boss fully destroyed AND the player's
+     exit/flyaway sequence has finished - off-screen/hidden), it
+     switches window B to bank2 and jumps to 0BF00h. This is the
+     actual real transition point stage 2 will eventually use, not an
+     arbitrary tick count - by design, nothing is left mid-animation
+     in window B at this point (BOSS_CLEAR_DYNAMIC_ENEMIES already
+     ran when the boss landed, and it's the boss explosion sequence's
+     own completion that kicks off the flyaway in the first place).
+     An earlier version of this test fired on a bare GAME_TICK>=100
+     threshold, which could land mid-battle with live enemy/bullet
+     state still active in window B - not a fair or safe test of the
+     real transition.
 - bank1 (page2 @ boot) = the real game's page2 content, byte-for-byte
   unchanged - normal stage-1 gameplay is untouched up to the trigger.
 - bank2 = the same stage-2 placeholder as the standalone POC (bank_b1.asm).
@@ -103,8 +113,11 @@ exactly on the placeholder's entry point, confirms the VRAM text draw.
 
 ### Expected on-screen result (full-game ROM)
 
-Normal gameplay (title/gameplay as usual) for about 13 seconds, then
-an abrupt cut to the same "STAGE 2" + counting-digit screen as the
-standalone POC. The cut itself is the thing being tested - a clean,
-instant transition confirms the switch and jump both landed exactly
-where intended, with no garbage/crash in between.
+Normal gameplay as usual, through the full boss fight - only once the
+boss is destroyed and the player ship finishes flying off-screen does
+it cut to the same "STAGE 2" + counting-digit screen as the standalone
+POC. The cut itself is the thing being tested - a clean, instant
+transition confirms the switch and jump both landed exactly where
+intended, with no garbage/crash in between. This does mean reaching
+the trigger requires actually playing through to the boss kill, not a
+short fixed wait.
