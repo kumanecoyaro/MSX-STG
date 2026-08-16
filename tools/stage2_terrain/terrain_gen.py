@@ -195,55 +195,46 @@ for r in ROWS:
 
 
 # ---------- character code assignment ----------
-# BLANK (id0) is alone in group0 (codes 0-7, only code0 used) so it can
-# have its own sky color, independent of the rock/slope codes' color -
-# a color group is 8 CONSECUTIVE codes sharing one fg/bg byte, so
-# packing BLANK into the same group as rock codes (as the very first
-# version of this did) would force them to share one color.
-# codes 8-17: steady-state tile per id 1-10 (SOLOTAB below maps id->code)
-# codes 24+: 7-frame (phase 1-7) blend sequences, one block per pair,
-# in a fixed order so PAIRBASE[curr*N_IDS+next] can point at the block start.
-BLANK_CODE = 0
-STEADY_BASE = 8   # ids 1..10 -> codes 8..17
-BLEND_BASE = 24    # next group-aligned boundary after 8+10=18
+# id0 (BLANK) is used within build_track() for "not yet reached by
+# Rock" cells INSIDE the scrolling 4-row band - conceptually this is
+# still rock territory, just without texture grown in yet, so it needs
+# Rock's own (yellow) color, NOT the sky's blue. Reported as exactly
+# this: those cells rendered blue, which read as wrong/like a hole in
+# the ground. So id0 sits in the SAME rock-colored code range as every
+# other id here (STEADY_BASE+), not in its own group.
+#
+# The true, permanently-open sky ABOVE the whole terrain band (rows
+# outside it entirely, cleared once at INIT - see TERRAIN_BLANK_ROW in
+# terrain_test.asm) is a completely separate, dedicated code
+# (SKY_BLANK_CODE=0, its own group0/sky color) that this id/pattern
+# system never touches - it's a static one-time fill, not part of the
+# scrolling map, so it doesn't go through PAIRBASE/blending at all.
+SKY_BLANK_CODE = 0
+STEADY_BASE = 8    # ids 0..10 -> codes 8..18 (all rock-colored)
+BLEND_BASE = 24     # next group-aligned boundary after 8+11=19
 
-STEADY_CODE = [BLANK_CODE] + [STEADY_BASE + i for i in range(N_IDS - 1)]
+STEADY_CODE = [STEADY_BASE + i for i in range(N_IDS)]
 
-# A same-id pair (curr==next) whose tile is uniformly blank in every
-# row (only BLANK qualifies) blends to itself at every phase - shifting
-# an all-zero tile by any amount and OR-ing it with another all-zero
-# tile is still all-zero. But CELL_LOOP's formula is always
-# code = PAIRBASE[pairid] + (phase-1) - it unconditionally adds the
-# phase offset, so pointing PAIRBASE straight at BLANK_CODE(0) is NOT
-# enough by itself: phases 1-7 would still land on codes 1-6, not 0.
-# Reserve the rest of group0 (codes 1-7, otherwise entirely unused) as
-# 7 more all-zero-pattern frames instead, so the phase offset always
-# lands somewhere inside group0 - the whole 8-code group ends up
-# blank-content + sky-colored, matching "confirm all 8 blank cells are
-# reserved". (First attempt pointed PAIRBASE at code0 directly and hit
-# exactly this bug: codes 1-6 flashing on screen during the scroll,
-# reported as yellow/blue flicker even after moving BLANK to its own
-# color group - the group was right, the phase arithmetic wasn't.)
-DEGENERATE_BLANK_PAIR = (BLANK_ID, BLANK_ID)
-DEGENERATE_BLANK_BASE = BLANK_CODE + 1   # codes 1-7
-
-PAIR_LIST = sorted(p for p in PAIRS if p != DEGENERATE_BLANK_PAIR)
+# Every pair, including same-id ones (only (BLANK,BLANK) occurs), gets
+# a normal 7-frame block via the same PAIRBASE+({phase}-1) formula
+# CELL_LOOP always uses - safe now that every code involved (steady
+# and blended alike) lives in a uniformly rock-colored group, so which
+# exact code the phase offset lands on no longer matters for color.
+# blend(BLANK,BLANK,phase) is correctly all-zero for every phase
+# anyway (shifting an all-zero tile is still all-zero).
+PAIR_LIST = sorted(PAIRS)
 PAIR_INDEX = {p: i for i, p in enumerate(PAIR_LIST)}
 
 
 def pair_block_code(pair):
-    if pair == DEGENERATE_BLANK_PAIR:
-        return DEGENERATE_BLANK_BASE
     return BLEND_BASE + PAIR_INDEX[pair] * 7
 
 
 def build_pattern_table():
     """code -> 8 bytes. Returns (patterns dict, highest code used)."""
-    patterns = {}
+    patterns = {SKY_BLANK_CODE: to_bytes(BLANK)}
     for idx, tile in enumerate(ID_TILES):
         patterns[STEADY_CODE[idx]] = to_bytes(tile)
-    for phase in range(1, 8):
-        patterns[DEGENERATE_BLANK_BASE + phase - 1] = to_bytes(BLANK)
     for pair in PAIR_LIST:
         curr, nxt = pair
         base = pair_block_code(pair)
@@ -263,14 +254,16 @@ for pair in PAIRS:
     PAIRBASE[curr * N_IDS + nxt] = pair_block_code(pair)
 
 # ---------- color table ----------
-# group0 (codes 0-7, BLANK's group) = sky: light blue on light blue
-# (BLANK's pattern is all-0 so only bg would ever show, but set both
-# nibbles the same for a clean solid fill regardless).
-# groups covering codes 8.. (rock/slope/blend) = fg unchanged from the
-# source sprites (8 = medium red), bg = dark yellow (per direct
-# instruction: keep the current reddish color, change the other one to
-# light red or dark yellow - dark yellow reads more like natural
-# rock/dirt, easy to flip to light red (9) if that reads better).
+# group0 (SKY_BLANK_CODE=0 only) = sky: light blue on light blue
+# (SKY_BLANK's pattern is all-0 so only bg would ever show, but set
+# both nibbles the same for a clean solid fill regardless).
+# every other group (codes 8+ - the scrolling map's rock/air/slope/
+# blend content) = fg unchanged from the source sprites (8 = medium
+# red), bg = dark yellow (per direct instruction: keep the current
+# reddish color, change the other one to light red or dark yellow -
+# dark yellow reads more like natural rock/dirt, easy to flip to light
+# red (9) if that reads better). This deliberately includes id0/BLANK's
+# own codes - see the character-code-assignment comment above.
 SKY_COLOR = 0x55           # fg=5,bg=5 (light blue)
 ROCK_COLOR = 0x8A          # fg=8 (medium red, unchanged), bg=10 (dark yellow)
 N_COLOR_GROUPS = 32
