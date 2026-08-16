@@ -35,6 +35,19 @@ selects at 6000h for page 1 / 7000h for page 2 - a normal Z80 memory
 write, not an OUT to an I/O port). If your flashcart/loader asks for a
 mapper type, pick ASCII16.
 
+**Real-hardware finding:** the very first version of this POC jumped
+straight from the bank-select write to the target address with no
+delay in between, and on real flashcart hardware (with ASCII16
+correctly selected) that produced a garbled, unreadable screen that
+then froze - while the *first* switch (bank0->bank1, done once at
+boot with a lot of unrelated code executing before it was ever read)
+worked fine. The likely cause: the flashcart's flash chip needs a
+short settle time after a bank-select write before it actually
+presents the new bank's data; reading immediately (as the very next
+instruction fetch) can catch it mid-transition. Fix: both `bank_a.asm`
+and the MAINLOOP test trigger in `build_full_rom.py` now insert 16
+NOPs between the bank-select write and the jump into the new bank.
+
 ## Files
 
 - `bank_a.asm`, `bank_b1.asm` - the two bank sources

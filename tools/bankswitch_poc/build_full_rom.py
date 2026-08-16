@@ -67,6 +67,27 @@ MAINLOOP_PATCH = """MAINLOOP:
     JR C,MAINLOOP_NO_TEST_SWITCH
     LD A,2
     LD (7000h),A
+    ; --- settle delay: give the flashcart's flash chip time to     ---
+    ; --- actually present bank2's data before we fetch from it -   ---
+    ; --- bank1 never needed this because plenty of unrelated code  ---
+    ; --- ran between selecting it (in INIT) and first reading it,  ---
+    ; --- but here the very next fetch IS the newly-switched bank.  ---
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
     JP 0BF00h
 MAINLOOP_NO_TEST_SWITCH:
 

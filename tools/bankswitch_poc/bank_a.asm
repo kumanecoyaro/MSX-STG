@@ -44,4 +44,25 @@ INIT:
 STAGE1_END:
     LD A,1
     LD (7000h),A     ; select bank 1 for window B (8000h-BFFFh)
+    ; --- settle delay: give the flashcart's flash chip time to    ---
+    ; --- actually present the new bank's data before the very next ---
+    ; --- fetch reads from it (real-hardware finding: without this, ---
+    ; --- the jump below landed on stale/transitional bytes -       ---
+    ; --- garbled display, then a freeze).                          ---
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
     JP 0BF00h        ; jump to the entry stub near the tail of bank B/1
