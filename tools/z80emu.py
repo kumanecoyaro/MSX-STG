@@ -447,9 +447,35 @@ class Z80:
     def step_fd(self):
         self.instr_count_indexed += 1
         op=self.fetch()
-        if op == 0xE5: self.push(self.iy); cost = 15; self.tstates_pushpop += 15
+        if op == 0x21:  # LD IY,nn
+            self.iy=self.fetch16()
+            cost = 14
+        elif op == 0x2A:
+            addr=self.fetch16()
+            self.iy = self.rd(addr) | (self.rd(addr+1)<<8)
+            cost = 20
+        elif op == 0x23: self.iy=(self.iy+1)&0xFFFF; cost = 10
+        elif op == 0x2B: self.iy=(self.iy-1)&0xFFFF; cost = 10
+        elif op == 0xE5: self.push(self.iy); cost = 15; self.tstates_pushpop += 15
         elif op == 0xE1: self.iy=self.pop(); cost = 14; self.tstates_pushpop += 14
-        elif op == 0x21: self.iy=self.fetch16(); cost = 14
+        elif (op&0xC7)==0x46:  # LD r,(IY+d)
+            dst=(op>>3)&7
+            d=self.fetch()
+            if d>127: d-=256
+            self.setr8(dst, self.rd(self.iy+d))
+            cost = 19
+        elif (op&0xF8)==0x70 and op!=0x76:  # LD (IY+d),r
+            src=op&7
+            d=self.fetch()
+            if d>127: d-=256
+            self.wr(self.iy+d, self.getr8(src))
+            cost = 19
+        elif op == 0x36:  # LD (IY+d),n
+            d=self.fetch()
+            if d>127: d-=256
+            n=self.fetch()
+            self.wr(self.iy+d, n)
+            cost = 19
         else:
             raise Exception(f"unhandled FD op {op:02X} at {self.pc-2:04X}")
         self.tstates += cost

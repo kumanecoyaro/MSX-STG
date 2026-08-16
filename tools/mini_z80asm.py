@@ -138,6 +138,14 @@ class Assembler:
         if m3:
             dexpr = inner[re.match(r'^IX\s*-', inner, re.IGNORECASE).end():].strip()
             return ("mIXd", -self.eval_expr(dexpr, phase))
+        m4 = re.match(r'^IY\s*\+\s*(.+)$', iu, re.IGNORECASE)
+        if m4:
+            dexpr = inner[re.match(r'^IY\s*\+', inner, re.IGNORECASE).end():].strip()
+            return ("mIYd", self.eval_expr(dexpr, phase))
+        m5 = re.match(r'^IY\s*-\s*(.+)$', iu, re.IGNORECASE)
+        if m5:
+            dexpr = inner[re.match(r'^IY\s*-', inner, re.IGNORECASE).end():].strip()
+            return ("mIYd", -self.eval_expr(dexpr, phase))
         # else absolute address / port number expression
         return ("mNN", self.eval_expr(inner, phase))
 
@@ -152,6 +160,8 @@ class Assembler:
             return ("r16", REG16[u])
         if u == "IX":
             return ("ix", None)
+        if u == "IY":
+            return ("iy", None)
         if u == "AF":
             return ("af", None)
         # condition codes are handled separately by caller context
@@ -184,6 +194,8 @@ class Assembler:
                 self.emit([base_rr[name]])
             elif op[0] == "ix":
                 self.emit([0xDD, 0x23 if mnem=="INC" else 0x2B])
+            elif op[0] == "iy":
+                self.emit([0xFD, 0x23 if mnem=="INC" else 0x2B])
             else:
                 raise AsmError(f"bad {mnem} operand: {rest}")
             return
@@ -427,6 +439,27 @@ class Assembler:
                 return
             raise AsmError(f"bad LD (IX+d),<src> {src}")
 
+        if dst[0] == "iy":
+            if src[0] == "imm":
+                n = self.eval_expr(src[1], phase)
+                self.emit([0xFD, 0x21, n & 0xFF, (n >> 8) & 0xFF])
+                return
+            if src[0] == "mNN":
+                self.emit([0xFD, 0x2A, src[1] & 0xFF, (src[1] >> 8) & 0xFF])
+                return
+            raise AsmError(f"bad LD IY,<src> {src}")
+
+        if dst[0] == "mIYd":
+            d = dst[1]
+            if src[0] == "r8":
+                self.emit([0xFD, 0x70 + src[1], d & 0xFF])
+                return
+            if src[0] == "imm":
+                n = self.eval_expr(src[1], phase)
+                self.emit([0xFD, 0x36, d & 0xFF, n & 0xFF])
+                return
+            raise AsmError(f"bad LD (IY+d),<src> {src}")
+
         if dst[0] == "mHL":
             if src[0] == "r8":
                 self.emit([0x70 + src[1]])
@@ -474,6 +507,9 @@ class Assembler:
                 return
             if src[0] == "mIXd":
                 self.emit([0xDD, 0x46 + dst[1]*8, src[1] & 0xFF])
+                return
+            if src[0] == "mIYd":
+                self.emit([0xFD, 0x46 + dst[1]*8, src[1] & 0xFF])
                 return
             if src[0] == "mBC":
                 if dst[1] == REG8["A"]:
