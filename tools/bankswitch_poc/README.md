@@ -248,4 +248,14 @@ cover bank0's boot and the switch itself, not stage2 world's own boot
 | 4 | Bank1 explicitly selected for window B via the RAM trampoline, back in ROM |
 | 6 | BIOS SCREEN1 setup (INIT32) returned - normally instantly overwritten by the game's own border=1 (black) right after, so only visible if execution froze exactly here |
 | 7 | MAINLOOP: PLAYER_FLYAWAY==2 detected, about to mute PSG and switch |
+
+### BlueMSX ROM-type auto-detection
+
+Once the ROM file is doubled to 128KB (see finding 4 above), BlueMSX's
+own automatic mapper-type detection no longer identifies it as ASCII16
+on its own. This is a BlueMSX-side heuristic quirk, not a bug in the
+ROM - if BlueMSX shows the wrong/no mapper automatically, just set the
+ROM type to ASCII16 manually in its cartridge settings; it then runs
+correctly. Confirmed working this way on real hardware as well as
+BlueMSX with the manual setting.
 | (game's own colors, changing normally) | Past this patch's code, either still in stage 1 or already into stage2 world's own (already-proven) boot sequence |
