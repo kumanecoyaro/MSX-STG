@@ -1,7 +1,7 @@
 # Bank-switch proof of concept (ASCII16)
 
 Standalone test of the "safe two-hop bank switch" mechanism planned for
-splitting CYBER_SUZUKA into per-stage ROM banks. Not wired into the
+splitting CYBER SHMUP into per-stage ROM banks. Not wired into the
 real game yet - this is deliberately isolated so it can be verified on
 its own, both in the emulator and on real hardware.
 
@@ -203,7 +203,7 @@ switch window A as well as window B, not just window B like the old
 placeholder did.
 
 Run `python3 build_full_rom.py` to (re)build
-`CYBER_SUZUKA_ASCII16_TEST.rom` from the current source (this also
+`CYBER SHMUP [ASCII16].rom` from the current source (this also
 calls into `build_stage2_world.py`). Run `python3 verify_full.py` to
 re-verify in the emulator: confirms normal gameplay never switches
 early, pokes PLAYER_FLYAWAY=2 directly (simulating a real boss kill,

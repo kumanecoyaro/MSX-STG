@@ -1,6 +1,6 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>CYBER_SUZUKA — Spawn Schedule Editor</title>
+<title>CYBER SHMUP — Spawn Schedule Editor</title>
 <style>
   :root {
     --bg: #05080d;
@@ -429,7 +429,7 @@
 
   <aside>
     <div class="side-title">
-      <div class="name">CYBER_SUZUKA</div>
+      <div class="name">CYBER SHMUP</div>
       <div class="sub">spawn schedule editor</div>
     </div>
 
@@ -1711,7 +1711,7 @@
   }
 
   function copiedSelectionText(items) {
-    return JSON.stringify({ game: "CYBER_SUZUKA", kind: "schedule-selection", placements: items });
+    return JSON.stringify({ game: "CYBER SHMUP", kind: "schedule-selection", placements: items });
   }
 
   function parseCopiedText(text) {
@@ -1901,7 +1901,7 @@
   function currentJSON() {
     return JSON.stringify({
       version: 1,
-      game: "CYBER_SUZUKA",
+      game: "CYBER SHMUP",
       maxTick: MAX_TICK,
       placements: placements.slice().sort(function (a, b) { return a.tick - b.tick || a.row - b.row; })
     }, null, 2);

@@ -7,7 +7,7 @@ placeholder screen.
 IMPORTANT: src/CYBER_GD_BOSS.asm itself is NOT modified. The normal
 game only ever runs as a flat 32KB ROM (no mapper) - if a bank-switch
 test trigger were baked into the tracked source, the ordinary
-single-bank rom/CYBER_GD_BOSS1.rom build would inherit it too, and
+single-bank "rom/CYBER SHMUP.rom" build would inherit it too, and
 outside a real ASCII16 mapper that has nowhere valid to land - a real
 regression in the normal game. So all insertions below are applied to
 an in-memory copy of the source text, only for this test build.
@@ -234,7 +234,7 @@ def main():
     # --- by this ROM's own code, so the duplicate second half is     ---
     # --- inert padding, not a second, different level.               ---
     rom = rom64 + rom64
-    out_path = os.path.join(HERE, "CYBER_SUZUKA_ASCII16_TEST.rom")
+    out_path = os.path.join(HERE, "CYBER SHMUP [ASCII16].rom")
     with open(out_path, "wb") as f:
         f.write(rom)
 

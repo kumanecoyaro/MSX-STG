@@ -1,5 +1,5 @@
 ; ============================================================
-; CYBER_SUZUKA - multi-rate parallax ground (6-tier road)
+; CYBER SHMUP - multi-rate parallax ground (6-tier road)
 ; Z80 mnemonic source (sjasmplus-style syntax)
 ; MSX ROM cartridge, 16KB, page 1 (4000h-7FFFh)
 ; --- SCREEN 1 (GRAPHIC1 / T32) version ---
