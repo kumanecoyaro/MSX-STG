@@ -465,6 +465,18 @@ with no way to tell where.
     hit with `DX`=0/`DY`=-2 now drifts the enemy's Y by exactly -16px
     (8 x -2) over 8 visible frames before `ACT` returns to 0 on the
     9th, instead of the previous -14px/7-frame result.
+  - **Further speed/distance tuning** once actual play was possible
+    again (per direct instruction: "ZakoIIはの赤は速度３で...どちらも
+    接近しすぎなので４０ｐｘ手前じゃなく６４ｐｘ手前で引き返すこと
+    帰る時は倍速で"): `ENEMY_SPEED_RED` 2->3px/frame;
+    `ENEMY_TURNBACK_MARGIN` 40->64px (both variants were getting too
+    close to the tank before turning back); and `ENEMY_GET_STEP` now
+    doubles its result while `E_RETREAT`=1, so the flight home is
+    twice as fast as the approach (green 1.5->3px/frame avg, red
+    3->6px/frame) instead of the same speed both ways - "帰る時は倍速
+    で". Verified: green approaches at 1.5, retreats at 3; red
+    approaches at 3, retreats at 6; both now turn back with roughly a
+    64px gap from `TANK_X`.
 - **Enemy promoted from test scaffolding to a real buffer-managed
   pool** (per direct instruction: "で、敵は仮実装じゃなく出来たら
   本採用 きちんとクラスにしてあるな? 管理もバッファ経由だぞ 個別に

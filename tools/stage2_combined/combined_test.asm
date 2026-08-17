@@ -356,12 +356,13 @@ ENEMY_SPR_BASE_SLOT EQU 4       ; hw sprite index slot0 uses; slotN -> ENEMY_SPR
 ; 1/2-px-per-frame trick as TANK_SPEED_LO (see UTX_DO_RIGHT/LEFT),
 ; averaging 1.5px/frame - was a flat 1 ("スピードが遅いんで早くして").
 ENEMY_SPEED_LO  EQU 1
-ENEMY_SPEED_RED EQU 2   ; red variant: flat 2px/frame - "こいつは速度2で"
+ENEMY_SPEED_RED EQU 3   ; red variant: flat 3px/frame - "ZakoIIはの赤は速度３で" (was 2)
 ENEMY_SPAWNX      EQU 240   ; off the right edge (16px sprite, so fully offscreen at spawn) - "右から左へスライド"
 ; "移動は自機位置をみて手前で引き返す" - turns back once within this
-; many px of the tank, short of actually reaching it. Picked with no
-; more precise spec than "before reaching" - easy to retune.
-ENEMY_TURNBACK_MARGIN EQU 40
+; many px of the tank, short of actually reaching it. Was 40 - "どちら
+; も接近しすぎなので４０ｐｘ手前じゃなく６４ｐｘ手前で引き返すこと"
+; (both variants were getting too close).
+ENEMY_TURNBACK_MARGIN EQU 64
 ; "Skyのみのの位置に出現...現状はランダム" - Y confined to a band
 ; safely inside the open sky (below the HUD rows0-1 at y0-15, well
 ; above row19's ground top at y152) using a TICK-derived pseudo-random
@@ -1870,19 +1871,31 @@ AES_COUNT_DONE:
     RET
 
 ; IX = slot base. Returns this frame's movement step in A: red variant
-; (IX+6=1) is a flat ENEMY_SPEED_RED - "こいつは速度2で"; green is
-; ENEMY_SPEED_LO alternating with +1 on odd TICK frames (same trick as
-; TANK_SPEED_LO/UTX_DO_RIGHT), averaging 1.5px/frame - "自機と同じ
-; 1.5で". Shared by both the approach and retreat branches below.
+; (E_VARIANT=1) is a flat ENEMY_SPEED_RED - "ZakoIIはの赤は速度３で";
+; green is ENEMY_SPEED_LO alternating with +1 on odd TICK frames (same
+; trick as TANK_SPEED_LO/UTX_DO_RIGHT), averaging 1.5px/frame - "自機
+; と同じ1.5で". Either way, while retreating (E_RETREAT=1) the result
+; is doubled before returning - "帰る時は倍速で" (green -> 3px/frame
+; avg, red -> 6px/frame flat home). Shared by both the approach and
+; retreat branches in UPDATE_ONE_ENEMY below.
 ENEMY_GET_STEP:
     LD A,(IX+E_VARIANT)
     OR A
     JR NZ,EGS_RED
     LD A,(TICK) : AND 1 : LD B,A
     LD A,ENEMY_SPEED_LO : ADD A,B
-    RET
+    JR EGS_BASE_DONE
 EGS_RED:
     LD A,ENEMY_SPEED_RED
+EGS_BASE_DONE:
+    LD B,A
+    LD A,(IX+E_RETREAT)
+    OR A
+    JR Z,EGS_RETURN_BASE
+    LD A,B : ADD A,B
+    RET
+EGS_RETURN_BASE:
+    LD A,B
     RET
 
 ; IX = slot base. E_ACT=1 (alive): moves toward the tank, turns back
