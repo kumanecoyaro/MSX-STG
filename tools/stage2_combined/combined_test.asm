@@ -278,25 +278,36 @@ SHOT_SND_FRAMES   EQU 10
 ; 位置に出現 現状はランダム 地形も合わせてスケジュールエディタで
 ; 対応予定 移動は自機位置をみて手前で引き返す 引き返す際の左右反転
 ; キャラを生成 弾が当たっての爆発はStage1と同じ16x16のスプライト
-; 流用 当たったら100点 敵の管理や制御はStage1を流用" - a pool of 3
-; (same "3 concurrent" convention as the bullet pool), fixed 1:1 onto
-; hardware sprite slots4-6 (tank keeps 0-3) - simpler than
-; src/CYBER SHMUP.asm's own ALLOC_SPRITE_NUM (that pool is sized for
-; many simultaneous enemy TYPEs sharing 32 slots; this test only ever
-; has one type, so a fixed mapping needs no allocator). Struct mirrors
-; that file's E_ACT/E_X/E_Y idiom (see ENEMY_POOL's own E_xxx fields)
-; scaled down to what a single behavior actually needs - no E_TYPE/
-; E_BEHAVIOR dispatch, no HP (1 hit = kill, matching "当たったら100点"
-; with no HP mentioned).
-; +0 ACT(0=off,1=alive,2=exploding),+1 X,+2 Y,+3 RETREAT(0/1),
-; +4 EXPLODE_TIMER,+5 SPRIDX(0-2, fixed),+6 VARIANT(0=green,1=red -
-; see ENEMY_SPAWN_COUNT below, "10機出たら色替えの赤いZakoII"),
-; +7/+8 EXPLODE_DX/DY (signed, picked at hit time - see
-; EXPLODE_DIR_DX/DY, "8方向ランダムに移動後消えるように").
-ENEMY_SLOT_SIZE EQU 9
-ENEMY0_ACT    EQU 0F280h
-ENEMY1_ACT    EQU 0F289h
-ENEMY2_ACT    EQU 0F292h
+; 流用 当たったら100点 敵の管理や制御はStage1を流用" - later promoted
+; from test scaffolding to the real thing ("敵は仮実装じゃなく出来た
+; ら本採用 きちんとクラスにしてあるな? 管理もバッファ経由だぞ 個別に
+; 適当にやるなよ"): a genuine ENEMY_POOL buffer (base address +
+; ENEMY_SLOT_SIZE stride x ENEMY_SLOT_COUNT slots), walked with a
+; single HL-indexed DJNZ loop everywhere (ALLOC_ENEMY_SLOT scanning for
+; a free one, UPDATE_ENEMIES iterating all of them, CHECK_BULLET_VS_
+; ENEMY's own enemy-side loop) - not 3 separately-named slots checked/
+; called individually by hand. Field access goes through named E_xxx
+; offset constants (below), the same idiom and even the same names as
+; src/CYBER SHMUP.asm's own ENEMY_POOL/E_ACT/E_X/E_Y/ALLOC_ENEMY_SLOT -
+; intentionally, so this slots into that file's real system later with
+; minimal renaming. Still scaled down to what one behavior/type needs
+; (no E_TYPE/E_BEHAVIOR dispatch table, no HP - "当たったら100点"
+; implies a single hit kills), and still fixed 1:1 onto hw sprite
+; slots4-6 rather than that file's flexible ALLOC_SPRITE_NUM (this
+; test only ever has 3 enemies on screen at once, so a fixed mapping
+; needs no separate allocator - E_SPRIDX is simply set once at INIT).
+E_ACT     EQU 0   ; 0=off,1=alive,2=exploding
+E_X       EQU 1
+E_Y       EQU 2
+E_RETREAT EQU 3   ; 0/1 - see ENEMY_TURNBACK_MARGIN
+E_TIMER   EQU 4   ; EXPLODE_TIMER while E_ACT=2
+E_SPRIDX  EQU 5   ; 0..ENEMY_SLOT_COUNT-1, fixed hw sprite pool index (set once at INIT)
+E_VARIANT EQU 6   ; 0=green,1=red - see ENEMY_SPAWN_COUNT below, "10機出たら色替えの赤いZakoII"
+E_DX      EQU 7   ; signed, post-hit explosion drift - see EXPLODE_DIR_DX/DY
+E_DY      EQU 8
+ENEMY_SLOT_SIZE  EQU 9
+ENEMY_SLOT_COUNT EQU 3   ; same "3 concurrent" convention as the bullet pool
+ENEMY_POOL    EQU 0F280h   ; ENEMY_SLOT_SIZE*ENEMY_SLOT_COUNT = 27 bytes
 ENEMY_SPAWN_TIMER   EQU 0F29Bh
 ; total enemies spawned so far (capped at 10, never decremented) -
 ; "で、10機出たら色替えの赤いZakoII...アルゴリズムは同じ": once this
@@ -601,34 +612,46 @@ INIT_SPRATR_CLR:
     LD HL,ENEMY_ZACOII_FLIP : LD DE,PAT_ZACO_FLIP*8+SPRPAT : LD BC,32 : CALL LDIRVM
     LD HL,EXPLOSION_PATTERN : LD DE,PAT_EXPLOSION*8+SPRPAT : LD BC,32 : CALL LDIRVM
 
-    ; enemy pool: all 3 slots inactive, SPRIDX fixed per-slot (never
-    ; touched again - see ENEMY_SPR_BASE_SLOT). The hw sprite attribute
-    ; table itself is already hidden for slots4-6 too (the earlier
-    ; full 32-slot clear covers them along with the tank's own 0-3),
-    ; but ENEMY_SPRITE_ATTRS (the RAM staging buffer UPDATE_ENEMIES
-    ; blasts from every frame) starts blank, so it must be primed with
-    ; the same hidden Y or the first flush would show garbage at Y=0.
+    ; enemy pool: zero the whole buffer generically (all slots inactive,
+    ; all other fields 0) rather than naming each slot - "管理もバッファ
+    ; 経由だぞ 個別に適当にやるなよ" - then a 2nd pass sets each slot's
+    ; own fixed E_SPRIDX (never touched again, see ENEMY_SPR_BASE_SLOT).
+    LD HL,ENEMY_POOL
+    LD B,ENEMY_SLOT_SIZE*ENEMY_SLOT_COUNT
     XOR A
-    LD (ENEMY0_ACT+0),A : LD (ENEMY0_ACT+1),A : LD (ENEMY0_ACT+2),A : LD (ENEMY0_ACT+3),A : LD (ENEMY0_ACT+4),A
-    LD (ENEMY0_ACT+6),A : LD (ENEMY0_ACT+7),A : LD (ENEMY0_ACT+8),A
-    LD (ENEMY1_ACT+0),A : LD (ENEMY1_ACT+1),A : LD (ENEMY1_ACT+2),A : LD (ENEMY1_ACT+3),A : LD (ENEMY1_ACT+4),A
-    LD (ENEMY1_ACT+6),A : LD (ENEMY1_ACT+7),A : LD (ENEMY1_ACT+8),A
-    LD (ENEMY2_ACT+0),A : LD (ENEMY2_ACT+1),A : LD (ENEMY2_ACT+2),A : LD (ENEMY2_ACT+3),A : LD (ENEMY2_ACT+4),A
-    LD (ENEMY2_ACT+6),A : LD (ENEMY2_ACT+7),A : LD (ENEMY2_ACT+8),A
+IEZ_LOOP:
+    LD (HL),A
+    INC HL
+    DJNZ IEZ_LOOP
     LD (ENEMY_SPAWN_TIMER),A
     LD (ENEMY_SPAWN_COUNT),A
-    LD A,0 : LD (ENEMY0_ACT+5),A
-    LD A,1 : LD (ENEMY1_ACT+5),A
-    LD A,2 : LD (ENEMY2_ACT+5),A
 
-    LD A,209
-    LD (ENEMY_SPRITE_ATTRS+0),A
-    LD (ENEMY_SPRITE_ATTRS+4),A
-    LD (ENEMY_SPRITE_ATTRS+8),A
+    LD HL,ENEMY_POOL
+    LD B,ENEMY_SLOT_COUNT
+    LD C,0
+IESP_LOOP:
+    PUSH HL
+    POP IX
+    LD A,C : LD (IX+E_SPRIDX),A
+    INC C
+    LD DE,ENEMY_SLOT_SIZE : ADD HL,DE
+    DJNZ IESP_LOOP
+
+    ; the hw sprite attribute table itself is already hidden for
+    ; slots4-6 too (the earlier full 32-slot clear covers them along
+    ; with the tank's own 0-3), but ENEMY_SPRITE_ATTRS (the RAM staging
+    ; buffer UPDATE_ENEMIES blasts from every frame) starts blank, so
+    ; it must be primed with the same hidden Y or the first flush
+    ; would show garbage at Y=0.
+    LD HL,ENEMY_SPRITE_ATTRS
+    LD B,ENEMY_SLOT_COUNT
+IESA_LOOP:
+    LD A,209 : LD (HL),A : INC HL
     XOR A
-    LD (ENEMY_SPRITE_ATTRS+1),A : LD (ENEMY_SPRITE_ATTRS+2),A : LD (ENEMY_SPRITE_ATTRS+3),A
-    LD (ENEMY_SPRITE_ATTRS+5),A : LD (ENEMY_SPRITE_ATTRS+6),A : LD (ENEMY_SPRITE_ATTRS+7),A
-    LD (ENEMY_SPRITE_ATTRS+9),A : LD (ENEMY_SPRITE_ATTRS+10),A : LD (ENEMY_SPRITE_ATTRS+11),A
+    LD (HL),A : INC HL
+    LD (HL),A : INC HL
+    LD (HL),A : INC HL
+    DJNZ IESA_LOOP
 
     ; checkpoint 9: enemy patterns + pool set up - about to enter MAINLOOP
     LD B,9 : LD C,7 : CALL WRTVDP
@@ -1722,56 +1745,67 @@ UPDATE_ENEMIES:
     DEC A : LD (ENEMY_SPAWN_TIMER),A
     JR UE_UPDATE_ALL
 UE_TRY_SPAWN:
-    CALL ENEMY_TRY_SPAWN
+    CALL ALLOC_ENEMY_SLOT
+
+; walks ENEMY_POOL (HL-indexed, ENEMY_SLOT_SIZE stride, DJNZ over
+; ENEMY_SLOT_COUNT) calling UPDATE_ONE_ENEMY on every slot - same idiom
+; as src/CYBER SHMUP.asm's own ENEMY_POOL_UPDATE_ALL, not 3 individually
+; named CALLs. HL is pushed twice/popped once into IX so the 2nd copy
+; survives UPDATE_ONE_ENEMY's own (heavy) use of HL as scratch, then
+; restored after.
 UE_UPDATE_ALL:
-    LD IX,ENEMY0_ACT : CALL UPDATE_ONE_ENEMY
-    LD IX,ENEMY1_ACT : CALL UPDATE_ONE_ENEMY
-    LD IX,ENEMY2_ACT : CALL UPDATE_ONE_ENEMY
+    LD HL,ENEMY_POOL
+    LD B,ENEMY_SLOT_COUNT
+UEUA_LOOP:
+    PUSH HL
+    PUSH HL
+    POP IX
+    CALL UPDATE_ONE_ENEMY
+    POP HL
+    LD DE,ENEMY_SLOT_SIZE : ADD HL,DE
+    DJNZ UEUA_LOOP
     CALL FLUSH_ENEMY_SPRITES
     RET
 
-; claims the first inactive slot (ENEMY0, else 1, else 2); if all 3
-; are already active, spawning is simply retried next frame (the
-; timer is only reset on an actual spawn) - same pool-of-3 idea as
+; scans ENEMY_POOL for the first E_ACT=0 slot and spawns into it -
+; named/shaped like src/CYBER SHMUP.asm's own ALLOC_ENEMY_SLOT (walks
+; the buffer, doesn't check 3 named slots by hand). If every slot is
+; already active, spawning is simply retried next frame (the timer is
+; only reset on an actual spawn) - same pool-of-3 idea as
 ; TRY_SPAWN_BULLET.
-ENEMY_TRY_SPAWN:
-    LD A,(ENEMY0_ACT)
+ALLOC_ENEMY_SLOT:
+    LD HL,ENEMY_POOL
+    LD B,ENEMY_SLOT_COUNT
+AES_LOOP:
+    LD A,(HL)
     OR A
-    JR NZ,ETS_TRY1
-    LD IX,ENEMY0_ACT
-    JR ETS_DO_SPAWN
-ETS_TRY1:
-    LD A,(ENEMY1_ACT)
-    OR A
-    JR NZ,ETS_TRY2
-    LD IX,ENEMY1_ACT
-    JR ETS_DO_SPAWN
-ETS_TRY2:
-    LD A,(ENEMY2_ACT)
-    OR A
-    RET NZ
-    LD IX,ENEMY2_ACT
-ETS_DO_SPAWN:
-    LD A,1 : LD (IX+0),A
-    LD A,ENEMY_SPAWNX : LD (IX+1),A
-    LD A,(TICK) : AND ENEMY_SKY_Y_MASK : ADD A,ENEMY_SKY_Y_MIN : LD (IX+2),A
-    XOR A : LD (IX+3),A : LD (IX+4),A
+    JR Z,AES_FOUND
+    LD DE,ENEMY_SLOT_SIZE : ADD HL,DE
+    DJNZ AES_LOOP
+    RET   ; no free slot - try again next frame
+AES_FOUND:
+    PUSH HL
+    POP IX
+    LD A,1 : LD (IX+E_ACT),A
+    LD A,ENEMY_SPAWNX : LD (IX+E_X),A
+    LD A,(TICK) : AND ENEMY_SKY_Y_MASK : ADD A,ENEMY_SKY_Y_MIN : LD (IX+E_Y),A
+    XOR A : LD (IX+E_RETREAT),A : LD (IX+E_TIMER),A
 
     LD A,(ENEMY_SPAWN_COUNT)
     CP 10
-    JR C,ETS_VARIANT_GREEN
+    JR C,AES_VARIANT_GREEN
     LD A,1
-    JR ETS_VARIANT_SET
-ETS_VARIANT_GREEN:
+    JR AES_VARIANT_SET
+AES_VARIANT_GREEN:
     XOR A
-ETS_VARIANT_SET:
-    LD (IX+6),A
+AES_VARIANT_SET:
+    LD (IX+E_VARIANT),A
 
     LD A,(ENEMY_SPAWN_COUNT)
     CP 10
-    JR NC,ETS_COUNT_DONE
+    JR NC,AES_COUNT_DONE
     INC A : LD (ENEMY_SPAWN_COUNT),A
-ETS_COUNT_DONE:
+AES_COUNT_DONE:
     LD A,ENEMY_SPAWN_INTERVAL : LD (ENEMY_SPAWN_TIMER),A
     RET
 
@@ -1781,7 +1815,7 @@ ETS_COUNT_DONE:
 ; TANK_SPEED_LO/UTX_DO_RIGHT), averaging 1.5px/frame - "自機と同じ
 ; 1.5で". Shared by both the approach and retreat branches below.
 ENEMY_GET_STEP:
-    LD A,(IX+6)
+    LD A,(IX+E_VARIANT)
     OR A
     JR NZ,EGS_RED
     LD A,(TICK) : AND 1 : LD B,A
@@ -1791,50 +1825,50 @@ EGS_RED:
     LD A,ENEMY_SPEED_RED
     RET
 
-; IX = slot base. ACT=1 (alive): moves toward the tank, turns back
-; (RETREAT=1, mirrored sprite) once within ENEMY_TURNBACK_MARGIN of
+; IX = slot base. E_ACT=1 (alive): moves toward the tank, turns back
+; (E_RETREAT=1, mirrored sprite) once within ENEMY_TURNBACK_MARGIN of
 ; TANK_X - "移動は自機位置をみて手前で引き返す" - then despawns once
-; back off the spawn edge. ACT=2 (exploding, set by
-; CHECK_BULLET_VS_ENEMY): drifts by EXPLODE_DX/DY, counts EXPLODE_TIMER
-; down to 0 then despawns. Either way, stages this slot's 4 attribute
-; bytes into ENEMY_SPRITE_ATTRS at its own fixed SPRIDX offset -
-; inactive slots RET immediately and leave the buffer holding whatever
-; hidden (Y=209) bytes it already had.
+; back off the spawn edge. E_ACT=2 (exploding, set by
+; CHECK_BULLET_VS_ENEMY): drifts by E_DX/E_DY, counts E_TIMER down to
+; 0 then despawns. Either way, stages this slot's 4 attribute bytes
+; into ENEMY_SPRITE_ATTRS at its own fixed E_SPRIDX offset - inactive
+; slots RET immediately and leave the buffer holding whatever hidden
+; (Y=209) bytes it already had.
 UPDATE_ONE_ENEMY:
-    LD A,(IX+0)
+    LD A,(IX+E_ACT)
     CP 2
     JR Z,UOE_EXPLODING
     OR A
     RET Z
 
-    LD A,(IX+3)
+    LD A,(IX+E_RETREAT)
     OR A
     JR NZ,UOE_RETREAT
 
     CALL ENEMY_GET_STEP : LD B,A
-    LD A,(IX+1) : SUB B : LD (IX+1),A
+    LD A,(IX+E_X) : SUB B : LD (IX+E_X),A
     LD A,(TANK_X) : ADD A,ENEMY_TURNBACK_MARGIN : LD B,A
-    LD A,(IX+1)
+    LD A,(IX+E_X)
     CP B
     JR NC,UOE_DRAW
-    LD A,1 : LD (IX+3),A
+    LD A,1 : LD (IX+E_RETREAT),A
     JR UOE_DRAW
 
 UOE_RETREAT:
     CALL ENEMY_GET_STEP : LD B,A
-    LD A,(IX+1) : ADD A,B : LD (IX+1),A
+    LD A,(IX+E_X) : ADD A,B : LD (IX+E_X),A
     CP ENEMY_SPAWNX
     JR C,UOE_DRAW
-    XOR A : LD (IX+0),A
+    XOR A : LD (IX+E_ACT),A
     CALL UOE_HIDE
     RET
 
 UOE_DRAW:
-    LD A,(IX+5) : ADD A,A : ADD A,A : LD C,A : LD B,0
+    LD A,(IX+E_SPRIDX) : ADD A,A : ADD A,A : LD C,A : LD B,0
     LD HL,ENEMY_SPRITE_ATTRS : ADD HL,BC
-    LD A,(IX+2) : LD (HL),A : INC HL
-    LD A,(IX+1) : LD (HL),A : INC HL
-    LD A,(IX+3)
+    LD A,(IX+E_Y) : LD (HL),A : INC HL
+    LD A,(IX+E_X) : LD (HL),A : INC HL
+    LD A,(IX+E_RETREAT)
     OR A
     JR Z,UOE_PAT_NORMAL
     LD A,PAT_ZACO_FLIP
@@ -1843,7 +1877,7 @@ UOE_PAT_NORMAL:
     LD A,PAT_ZACO
 UOE_PAT_SET:
     LD (HL),A : INC HL
-    LD A,(IX+6)
+    LD A,(IX+E_VARIANT)
     OR A
     JR Z,UOE_COLOR_GREEN
     LD A,ENEMY_RED_COLOR
@@ -1855,29 +1889,29 @@ UOE_COLOR_SET:
     RET
 
 UOE_EXPLODING:
-    LD A,(IX+4)
-    DEC A : LD (IX+4),A
+    LD A,(IX+E_TIMER)
+    DEC A : LD (IX+E_TIMER),A
     JR NZ,UOE_EXPLODE_DRIFT
-    XOR A : LD (IX+0),A
+    XOR A : LD (IX+E_ACT),A
     CALL UOE_HIDE
     RET
 ; "8方向ランダムに移動後消えるように" - drift by the (dx,dy) picked at
 ; hit time (see CHECK_HIT_PAIR/EXPLODE_DIR_DX/DY) every frame it's
 ; shown, instead of holding still at the kill position.
 UOE_EXPLODE_DRIFT:
-    LD A,(IX+1) : LD B,A : LD A,(IX+7) : ADD A,B : LD (IX+1),A
-    LD A,(IX+2) : LD B,A : LD A,(IX+8) : ADD A,B : LD (IX+2),A
+    LD A,(IX+E_X) : LD B,A : LD A,(IX+E_DX) : ADD A,B : LD (IX+E_X),A
+    LD A,(IX+E_Y) : LD B,A : LD A,(IX+E_DY) : ADD A,B : LD (IX+E_Y),A
 UOE_DRAW_EXPLOSION:
-    LD A,(IX+5) : ADD A,A : ADD A,A : LD C,A : LD B,0
+    LD A,(IX+E_SPRIDX) : ADD A,A : ADD A,A : LD C,A : LD B,0
     LD HL,ENEMY_SPRITE_ATTRS : ADD HL,BC
-    LD A,(IX+2) : LD (HL),A : INC HL
-    LD A,(IX+1) : LD (HL),A : INC HL
+    LD A,(IX+E_Y) : LD (HL),A : INC HL
+    LD A,(IX+E_X) : LD (HL),A : INC HL
     LD A,PAT_EXPLOSION : LD (HL),A : INC HL
     LD A,EXPLOSION_COLOR : LD (HL),A
     RET
 
 UOE_HIDE:
-    LD A,(IX+5) : ADD A,A : ADD A,A : LD C,A : LD B,0
+    LD A,(IX+E_SPRIDX) : ADD A,A : ADD A,A : LD C,A : LD B,0
     LD HL,ENEMY_SPRITE_ATTRS : ADD HL,BC
     LD A,209 : LD (HL),A
     RET
@@ -1924,25 +1958,35 @@ FES_LOOP:
     EI
     RET
 
-; ---------- bullet x enemy collision (9 pairs, unrolled) ----------
+; ---------- bullet x enemy collision ----------
 ; "当たったら100点" - on a hit: erase the bullet's cell + deactivate
 ; it (same ERASE_BULLET_CELL a normal per-frame advance would use -
 ; this bullet just never gets that later, since it's going inactive
-; right now), switch the enemy to ACT=2 (exploding, see
+; right now), switch the enemy to E_ACT=2 (exploding, see
 ; UPDATE_ONE_ENEMY) at its current position, and award SCORE_PER_KILL.
+; The bullet side stays 3 individually-named CALLs (BULLET0/1/2 weren't
+; part of this round's "make it a real buffer" instruction - only the
+; enemy side loops over ENEMY_POOL genuinely, same as everywhere else
+; in this file that touches it).
 CHECK_BULLET_VS_ENEMY:
-    LD IX,BULLET0_ACT
-    LD IY,ENEMY0_ACT : CALL CHECK_HIT_PAIR
-    LD IY,ENEMY1_ACT : CALL CHECK_HIT_PAIR
-    LD IY,ENEMY2_ACT : CALL CHECK_HIT_PAIR
-    LD IX,BULLET1_ACT
-    LD IY,ENEMY0_ACT : CALL CHECK_HIT_PAIR
-    LD IY,ENEMY1_ACT : CALL CHECK_HIT_PAIR
-    LD IY,ENEMY2_ACT : CALL CHECK_HIT_PAIR
-    LD IX,BULLET2_ACT
-    LD IY,ENEMY0_ACT : CALL CHECK_HIT_PAIR
-    LD IY,ENEMY1_ACT : CALL CHECK_HIT_PAIR
-    LD IY,ENEMY2_ACT : CALL CHECK_HIT_PAIR
+    LD IX,BULLET0_ACT : CALL CHECK_HIT_ONE_BULLET
+    LD IX,BULLET1_ACT : CALL CHECK_HIT_ONE_BULLET
+    LD IX,BULLET2_ACT : CALL CHECK_HIT_ONE_BULLET
+    RET
+
+; IX = bullet slot base. Walks ENEMY_POOL (same HL/IY-via-stack idiom
+; as UE_UPDATE_ALL) testing this one bullet against every enemy slot.
+CHECK_HIT_ONE_BULLET:
+    LD HL,ENEMY_POOL
+    LD B,ENEMY_SLOT_COUNT
+CHOB_LOOP:
+    PUSH HL
+    PUSH HL
+    POP IY
+    CALL CHECK_HIT_PAIR
+    POP HL
+    LD DE,ENEMY_SLOT_SIZE : ADD HL,DE
+    DJNZ CHOB_LOOP
     RET
 
 ; IX = bullet slot base, IY = enemy slot base. AABB overlap test
@@ -1953,14 +1997,14 @@ CHECK_HIT_PAIR:
     LD A,(IX+0)
     OR A
     RET Z
-    LD A,(IY+0)
+    LD A,(IY+E_ACT)
     CP 1
     RET NZ
 
     LD A,(IX+2) : ADD A,A : ADD A,A : ADD A,A : LD B,A
     LD A,(IX+3) : ADD A,A : ADD A,A : ADD A,A : LD C,A
-    LD A,(IY+1) : LD D,A
-    LD A,(IY+2) : LD E,A
+    LD A,(IY+E_X) : LD D,A
+    LD A,(IY+E_Y) : LD E,A
 
     LD A,B : ADD A,7 : CP D : RET C
     LD A,D : ADD A,15 : CP B : RET C
@@ -1970,15 +2014,15 @@ CHECK_HIT_PAIR:
     CALL ERASE_BULLET_CELL
     XOR A : LD (IX+0),A
 
-    LD A,2 : LD (IY+0),A
-    LD A,EXPLOSION_DURATION : LD (IY+4),A
+    LD A,2 : LD (IY+E_ACT),A
+    LD A,EXPLOSION_DURATION : LD (IY+E_TIMER),A
 
     ; "8方向ランダムに移動後消えるように" - pick one of 8 drift
     ; directions (TICK's low 3 bits, 0-7) for UOE_EXPLODE_DRIFT to
     ; apply each frame the explosion is shown.
     LD A,(TICK) : AND 7 : LD C,A : LD B,0
-    LD HL,EXPLODE_DIR_DX : ADD HL,BC : LD A,(HL) : LD (IY+7),A
-    LD HL,EXPLODE_DIR_DY : ADD HL,BC : LD A,(HL) : LD (IY+8),A
+    LD HL,EXPLODE_DIR_DX : ADD HL,BC : LD A,(HL) : LD (IY+E_DX),A
+    LD HL,EXPLODE_DIR_DY : ADD HL,BC : LD A,(HL) : LD (IY+E_DY),A
 
     CALL SOUND_DESTROY
 

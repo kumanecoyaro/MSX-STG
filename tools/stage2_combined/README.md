@@ -454,6 +454,47 @@ with no way to tell where.
     and the enemy's Y visibly drifted -2px/frame every single frame
     (re-confirmed at both `EXPLOSION_DURATION` values tried) until
     `ACT` returned to 0 right on schedule.
+- **Enemy promoted from test scaffolding to a real buffer-managed
+  pool** (per direct instruction: "で、敵は仮実装じゃなく出来たら
+  本採用 きちんとクラスにしてあるな? 管理もバッファ経由だぞ 個別に
+  適当にやるなよ"): the previous round's enemy pool worked correctly
+  but was 3 separately-named constants (`ENEMY0_ACT`/`ENEMY1_ACT`/
+  `ENEMY2_ACT`) checked/updated by hand-written, individually-unrolled
+  code - functionally fine, but not the genuine buffer-plus-loop shape
+  `src/CYBER SHMUP.asm`'s own `ENEMY_POOL`/`ALLOC_ENEMY_SLOT`/
+  `ENEMY_POOL_UPDATE_ALL` use. Reworked to match that shape exactly,
+  intentionally reusing the same names (`ENEMY_POOL`, `E_ACT`/`E_X`/
+  `E_Y` field-offset constants replacing bare `IX+0`/`IX+1`/`IX+2`
+  everywhere) so this slots into that file's real system later with
+  minimal renaming if/when it's actually merged in:
+  - `ALLOC_ENEMY_SLOT` (renamed from `ENEMY_TRY_SPAWN`) scans
+    `ENEMY_POOL` in an `HL`-indexed `ENEMY_SLOT_SIZE`-stride `DJNZ`
+    loop for the first free slot, instead of 3 unrolled `ACT` checks.
+  - `UPDATE_ENEMIES`'s `UE_UPDATE_ALL` walks the same buffer calling
+    `UPDATE_ONE_ENEMY` on every slot, instead of 3 named `CALL`s -
+    `PUSH HL` twice/`POP IX` once (leaving a spare copy on the stack)
+    so `HL` survives `UPDATE_ONE_ENEMY`'s own heavy use of it as
+    scratch, restored via `POP HL` after - same idiom
+    `ENEMY_POOL_UPDATE_ALL` itself uses for the same reason.
+  - `CHECK_BULLET_VS_ENEMY` keeps its 3 individually-named bullet-side
+    `CALL`s (`BULLET0/1/2_ACT` weren't part of this instruction - it
+    said "敵は", the enemy) but factored a new
+    `CHECK_HIT_ONE_BULLET` that walks `ENEMY_POOL` the same
+    `PUSH HL`-twice way (into `IY` this time) for the enemy side of
+    each pair, instead of 3 unrolled `ENEMY0/1/2` checks per bullet.
+  - INIT's per-slot zeroing (18 individual `LD (ENEMYn_ACT+k),A` lines)
+    became a single generic `ENEMY_SLOT_SIZE*ENEMY_SLOT_COUNT`-byte
+    fill loop over the whole buffer, plus a small loop to assign each
+    slot's own fixed `E_SPRIDX` (0,1,2) - and likewise for
+    `ENEMY_SPRITE_ATTRS`' hidden-`Y`-priming.
+  - Purely structural - re-ran every check from the previous round
+    against the refactored code and got identical results: all 3
+    slots still spawn independently with distinct `E_SPRIDX`; green
+    still averages 1.5px/frame and red 2px/frame; turn-back still
+    fires at `TANK_X`+40; a hit against slot0 *and* slot2 (not just
+    the first slot - confirming the loop actually reaches every slot)
+    both still explode/deactivate/award score/kick the sound
+    identically to before.
 - Border-color diagnostic checkpoints through INIT (VDP R7), added
   specifically because the tank-only test froze on real hardware with
   no clue where:
