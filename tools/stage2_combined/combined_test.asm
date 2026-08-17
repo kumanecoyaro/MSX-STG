@@ -79,7 +79,15 @@ TANK_CLIMB_CATCHUP_SPEED EQU 8  ; px/frame (no gate) once TANK_CLIMB_CATCHUP_THR
 ; Threshold must stay > 8 for the smooth slow pace to ever run at all.
 TANK_CLIMB_CATCHUP_THRESHOLD EQU 9  ; px
 JUMP_PEAK     EQU 24       ; px
-JUMP_FRAMES   EQU 49       ; JUMP_OFFSET_TABLE length (0-24 rise, 23-0 fall)
+; "違和感あるのがジャンプ ふわっと浮いて降りてるんよな...ジャンプLut
+; のステップいじって速度の方をいじるしかないかもな" - felt slow/
+; floaty; 49 frames (JUMP_OFFSET_TABLE below) cut to 33, same 24px
+; peak, same half-sine shape (round(24*sin(pi*t/32)) for t=0..32) -
+; still eased in/out with a brief peak hang (sine's own nature, more
+; frames = more of it), just proportionally faster throughout. A first
+; guess at "adjust the speed side" per that instruction, not a
+; re-derivation of a specific target duration - easy to retune further.
+JUMP_FRAMES   EQU 33       ; JUMP_OFFSET_TABLE length
 SPRITE_ATTRS  EQU 0F200h   ; 16 bytes
 
 TANK_X        EQU 0F220h
@@ -512,9 +520,12 @@ ZUM_PUSH_SPEED EQU 3
 CLOUD_SLOT_SIZE  EQU 9
 ; briefly cut to 2 (rows2-3 only) as a slowdown-diagnosis experiment
 ; ("5から8行目は削除してみてくれ") - ruled out ("雲減らしても変わらん
-; な そんなに処理増えてないはずだが"), restored to all 6.
-CLOUD_SLOT_COUNT EQU 6
-CLOUD_POOL    EQU 0F2A9h   ; CLOUD_SLOT_SIZE*CLOUD_SLOT_COUNT = 54 bytes
+; な そんなに処理増えてないはずだが"), restored to all 6, then
+; permanently trimmed to 3 ("雲は6から8行目は削除していいわ") - keeps
+; just the fast band (rows2-4, 3rd-5th from top), drops the half-speed
+; one (rows5-7, 6th-8th from top) for good this time, not an experiment.
+CLOUD_SLOT_COUNT EQU 3
+CLOUD_POOL    EQU 0F2A9h   ; CLOUD_SLOT_SIZE*CLOUD_SLOT_COUNT bytes (27, was 54 with all 6 rows)
 CLOUD_RNG     EQU 0F2DFh   ; shared free-running counter, same idea as Stage1's DFL_RNG
 CLOUD_SPAWN_COL EQU 32     ; leftmost cell starts one column past the right edge
 ; codes1-2: genuinely unused pattern-code slots within group0 (see the
@@ -1000,6 +1011,7 @@ SKIP_ADVANCE:
     CALL UPDATE_TANK_XY
     CALL UPDATE_TERRAIN_COLLISION
     CALL UPDATE_JUMP
+    CALL UPDATE_TANK_ZUM_STAND
     CALL UPDATE_POSE
     CALL UPDATE_TANK_SPRITES
     ; bullets advance before a new one can spawn, so a shot fired this
@@ -2751,6 +2763,47 @@ UTZP_NEXT:
     DJNZ UTZP_LOOP
     RET
 
+; "Zumにジャンプで乗っかるとめり込んでくな ここはめり込まないように" -
+; while airborne and horizontally overlapping an active Zum, clamp
+; TANK_Y_CUR so the tank's own bottom never sinks below Zum's own top
+; surface - landing on top instead of sinking through. Only while
+; JUMP_ACTIVE (grounded overlap is the horizontal push's own job above,
+; not this - unguarded here would make the tank appear to stand on
+; Zum even while normally grounded and merely pushing into it). Runs
+; right after UPDATE_JUMP (before UPDATE_TANK_SPRITES) so this same
+; frame's sprite draw reflects it, but against ZUM_POOL's position
+; from last frame - Zum's own move for this frame hasn't run yet, same
+; 1-frame-stale precedent as UPDATE_TANK_ZUM_PUSH.
+UPDATE_TANK_ZUM_STAND:
+    LD A,(JUMP_ACTIVE)
+    OR A
+    RET Z
+    LD IX,ZUM_POOL
+    LD B,ZUM_SLOT_COUNT
+UTZS_LOOP:
+    LD A,(IX+0)
+    CP 1
+    JR NZ,UTZS_NEXT
+    ; horizontal overlap: TANK_X < Zum_X+16 AND Zum_X < TANK_X+TANK_PUSH_WIDTH
+    LD A,(IX+1) : ADD A,16 : LD D,A
+    LD A,(TANK_X)
+    CP D
+    JR NC,UTZS_NEXT
+    LD A,(TANK_X) : ADD A,TANK_PUSH_WIDTH : LD D,A
+    LD A,(IX+1)
+    CP D
+    JR NC,UTZS_NEXT
+    ; overlap confirmed - clamp so the tank's bottom rests on Zum's own top
+    LD A,(IX+2) : SUB TANK_PUSH_WIDTH : LD D,A
+    LD A,(TANK_Y_CUR)
+    CP D
+    JR C,UTZS_NEXT              ; TANK_Y_CUR already above (less than) the stand height - still clear
+    LD A,D : LD (TANK_Y_CUR),A
+UTZS_NEXT:
+    INC IX : INC IX : INC IX : INC IX : INC IX : INC IX : INC IX
+    DJNZ UTZS_LOOP
+    RET
+
 ; ---------- bullet x Zum collision: front (left half) absorbs the ----------
 ; ---------- shot with no effect, rear (right half) destroys it       ----------
 ; "正面からは無敵で弾は止まること 破壊条件は後ろから撃たれた場合の
@@ -3114,14 +3167,15 @@ TERRAIN_ROW_SKYSAND:
 TERRAIN_ROW_SAND:
     DS 32,TERRAIN_BLANK_CODE
 
-; 49 entries (jump frame 0-48): a half-sine arc, offset(t) =
-; round(24 * sin(pi*t/48)) - 24px peak at t=24, eased in/out (fast
+; 33 entries (jump frame 0-32): a half-sine arc, offset(t) =
+; round(24 * sin(pi*t/32)) - 24px peak at t=16, eased in/out (fast
 ; launch and landing, brief hang near the peak) instead of the
 ; earlier triangular (constant 1px/frame) ramp, per direct
-; instruction ("サインジャンプ"). JUMP_FRAMES above must match this
-; table's length.
+; instruction ("サインジャンプ"). Sped up from the original 49-entry
+; table (see JUMP_FRAMES above) - "ふわっと浮いて降りてる" felt too
+; slow/floaty. JUMP_FRAMES above must match this table's length.
 JUMP_OFFSET_TABLE:
-    DB 0,2,3,5,6,8,9,11,12,13,15,16,17,18,19,20,21,22,22,23,23,24,24,24,24,24,24,24,23,23,22,22,21,20,19,18,17,16,15,13,12,11,9,8,6,5,3,2,0
+    DB 0,2,5,7,9,11,13,15,17,19,20,21,22,23,24,24,24,24,24,23,22,21,20,19,17,15,13,11,9,7,5,2,0
 
 ; name-table row base address (1800h + row*32), rows 0-23 - shared by
 ; every bullet slot to turn a ROW byte back into a VRAM address
@@ -3210,27 +3264,29 @@ EXPLODE_DIR_DX:
 EXPLODE_DIR_DY:
     DB -2,-2,0,2,2,2,0,-2
 
-; per-slot fixed setup for CLOUD_POOL's rows (screen rows2-3, the
-; 3rd-4th row from the top) - row2 is the "3行目" special case (always
-; 4-cell wide); row3 randomly picks 2 or 4 at each spawn.
+; per-slot fixed setup for CLOUD_POOL's rows (screen rows2-4, the
+; 3rd-5th row from the top, all in the "fast" band) - row2 is the
+; "3行目" special case (always 4-cell wide); rows3-4 randomly pick 2
+; or 4 at each spawn.
 ; "3から5行目は最速の毎フレーム1セル移動 5から8行目は半速の2フレで
-; 1セル" (5行目は最速側): both remaining rows are in the fast band,
-; INTERVAL=2 (see the halving rounds below).
-; rows5-8(top) (screen rows4-7) were briefly dropped as a slowdown-
-; diagnosis experiment ("5から8行目は削除してみてくれ") - ruled out
-; ("雲減らしても変わらんな"), restored to the full 6 rows.
+; 1セル" (5行目は最速側). rows5-8(top) (screen rows4-7, the half-speed
+; band) were briefly dropped as a slowdown-diagnosis experiment
+; ("5から8行目は削除してみてくれ") and restored once ruled out
+; ("雲減らしても変わらんな"), then permanently cut ("雲は6から8行目は
+; 削除していいわ" - screen rows5-7 this time, i.e. everything past the
+; fast band) - only rows2-4 remain now.
 CLOUD_ROW_TABLE:
-    DB 2,3,4,5,6,7
+    DB 2,3,4
 ; "んー早すぎかもな 3から8行目までどちらも更に半速で 3から5が2フレ
 ; ごと 6から8が4フレごとだな" - both bands halved again from the
-; original 1/2, not just the slow one. Then "4フレはガタが目立つんで
-; 3フレで 中途半端だが仕方ない" - 4 read as visibly choppy, dropped to
-; 3 (rows3-5's own 2 untouched - only the slow band was reported as
-; choppy).
+; original 1/2, not just the slow one (now moot - the slow band itself
+; is gone, see above). Then "4フレはガタが目立つんで 3フレで 中途半端
+; だが仕方ない" - 4 read as choppy, dropped to 3 for that band (also
+; moot now).
 CLOUD_INTERVAL_TABLE:
-    DB 2,2,2,3,3,3
+    DB 2,2,2
 CLOUD_FIXED4_TABLE:
-    DB 1,0,0,0,0,0
+    DB 1,0,0
 
 ; src/CYBER SHMUP.asm's own CLOUD_WA_CODE/CLOUD_WB_CODE pattern bytes,
 ; copied byte-for-byte ("Stage1でもやってる雲を").

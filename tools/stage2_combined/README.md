@@ -980,6 +980,38 @@ with no way to tell where.
   correctly absorbed (front) rather than killing it; a shot fired once
   `TANK_X` has genuinely passed Zum's own X still kills it regardless
   of which half the bullet's own pixel lands on.
+- **Cloud rows cut for real this time, and 2 more real-hardware Zum/
+  jump fixes** ("んー 雲は6から8行目は削除していいわ で、Zumにジャンプ
+  で乗っかるとめり込んでくな ここはめり込まないように で、違和感ある
+  のがジャンプ ふわっと浮いて降りてるんよな...ジャンプLutのステップ
+  いじって速度の方をいじるしかないかもな"):
+  - **Clouds**: `CLOUD_SLOT_COUNT` 6->3, keeping only the fast band
+    (rows2-4, 3rd-5th from top) and permanently dropping the half-speed
+    one (rows5-7, 6th-8th from top) this time - not an experiment, a
+    direct instruction. Verified: rows5-7 stay pure sky over a
+    3000-frame run.
+  - **Zum landing-on-top**: new `UPDATE_TANK_ZUM_STAND`, called right
+    after `UPDATE_JUMP` (so the same frame's sprite draw reflects it)
+    and only while `JUMP_ACTIVE`=1 (grounded overlap stays the
+    horizontal push's own job, unaffected) - clamps `TANK_Y_CUR` so the
+    tank's own bottom never sinks below an overlapping Zum's own top
+    surface, landing on top of it instead of sinking through mid-jump.
+    Verified: with a Zum held fixed directly under the tank through a
+    whole jump, `TANK_Y_CUR` reaches and holds at exactly the Zum's-top
+    minus tank-height value for every frame the jump arc would
+    otherwise have sunk it lower, instead of continuing past it; the 4
+    guard conditions (overlapping+jumping+would-sink -> clamps;
+    overlapping+jumping+still-clear -> untouched;
+    overlapping+not-jumping -> untouched, unrelated to the horizontal
+    push; jumping+no-horizontal-overlap -> untouched) all individually
+    confirmed.
+  - **Jump sped up**: `JUMP_FRAMES` 49->33, `JUMP_OFFSET_TABLE`
+    regenerated with the same half-sine formula/24px peak
+    (`round(24*sin(pi*t/32))` for t=0..32) just over fewer steps - a
+    first guess at "ジャンプLutのステップいじって速度の方をいじる",
+    not a re-derivation of a specific target duration/curve shape.
+    Verified: the jump now completes (peaks at the same 24px, eases in/
+    out the same way) in 32 frames instead of 48.
 
 ## Bugs found and fixed while building this
 
