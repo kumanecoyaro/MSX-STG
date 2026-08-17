@@ -98,15 +98,15 @@ CUR_POSE_PAT  EQU 0F22Ah
 ; ---------- number can share a scanline with the tank with no       ----------
 ; ---------- "4 sprites per line" flicker (same reasoning as the      ----------
 ; ---------- player's own shots in src/CYBER SHMUP.asm). A shot can    ----------
-; ---------- sit over open sky, the 2 static rows (18 SkySand, 19       ----------
+; ---------- sit over open sky, the 4 static rows (16 SkySand, 17-19    ----------
 ; ---------- Sand), or the scrolling terrain (rows20-23) - erasing      ----------
 ; ---------- needs to restore whichever of those 4 is really there.     ----------
-; ---------- rows18-19 need an explicit erase write each (static,       ----------
+; ---------- rows16-19 need an explicit erase write each (static,       ----------
 ; ---------- filled once at INIT); rows20-23 get fully redrawn from     ----------
 ; ---------- NAMEBUF every frame before the bullet update runs, so      ----------
 ; ---------- erasing a bullet there is a no-op - see UPDATE_ONE_BULLET   ----------
 ; ---------- below.                                                     ----------
-BULLET_ROCK_ROW_MIN EQU 18      ; first row needing an explicit (non-sky) erase restore (18-23)
+BULLET_ROCK_ROW_MIN EQU 16      ; first row needing an explicit (non-sky) erase restore (16-23)
 ; the bullet's own drawn color (sky-blue bg vs ground-yellow bg fill
 ; for its sprite's own background pixels) is per-shot-type, and only
 ; the diagonal/U shot's own boundary moved - "斜めだけって言っただろ
@@ -129,10 +129,11 @@ BULLET_MUZZLE_DX  EQU 24        ; spawn column offset from TANK_X (muzzle, right
 BULLET_MUZZLE_DX_LEFT EQU 7     ; mirrored muzzle offset for a left-facing shot (32-1-24)
 SKY_BLANK_CODE    EQU 0         ; TERRAIN_BLANK_ROW's code - the permanent open-sky tile
 
-; row18: static sprites/SkySand.json fill (own color group31, fg5/
-; bg11). row19: static plain Sand fill, reusing the real scrolling-
+; row16: static sprites/SkySand.json fill (own color group31, fg5/
+; bg11). rows17-19: static plain Sand fill, reusing the real scrolling-
 ; terrain BLANK tile/group (TERRAIN_BLANK_CODE) instead of a new one -
-; "今の下から5行目のSkysandを1行上に 空いた下から5行目にSand埋め".
+; "下から7,8行目をSandで埋めてその上にSkysand、2行上げる" (Sand
+; expanded from 1 row to 3, SkySand pushed up 2 rows to stay just above it).
 SKYSAND_CODE  EQU 248
 SKYSAND_COLOR EQU 05Bh   ; fg5/bg11
 
@@ -438,13 +439,15 @@ INIT:
     ; checkpoint 3: whole name table cleared to sky
     LD B,3 : LD C,7 : CALL WRTVDP
 
-    ; row18: SkySand pattern + its own dedicated color group, static
-    ; one-time fill. row19: plain Sand fill (TERRAIN_BLANK_CODE, the
+    ; row16: SkySand pattern + its own dedicated color group, static
+    ; one-time fill. rows17-19: plain Sand fill (TERRAIN_BLANK_CODE, the
     ; scrolling terrain's own BLANK code/color - no new group needed).
     LD HL,SKYSAND_PATTERN : LD DE,SKYSAND_CODE*8 : LD BC,8 : CALL LDIRVM
     LD A,SKYSAND_COLOR : LD (HUD_TEMP_BYTE),A
     LD HL,HUD_TEMP_BYTE : LD DE,2000h+31 : LD BC,1 : CALL LDIRVM
-    LD HL,TERRAIN_ROW_SKYSAND : LD DE,1A40h : LD BC,32 : CALL LDIRVM
+    LD HL,TERRAIN_ROW_SKYSAND : LD DE,1A00h : LD BC,32 : CALL LDIRVM
+    LD HL,TERRAIN_ROW_SAND : LD DE,1A20h : LD BC,32 : CALL LDIRVM
+    LD HL,TERRAIN_ROW_SAND : LD DE,1A40h : LD BC,32 : CALL LDIRVM
     LD HL,TERRAIN_ROW_SAND : LD DE,1A60h : LD BC,32 : CALL LDIRVM
 
     XOR A
@@ -458,7 +461,7 @@ INIT:
     LD HL,TERRAIN_ROWDATA2 : LD IX,IDCACHE_T2 : CALL REFRESH_IDCACHE_33
     LD HL,TERRAIN_ROWDATA3 : LD IX,IDCACHE_T3 : CALL REFRESH_IDCACHE_33
 
-    ; checkpoint 4: rows18-19 filled, terrain IDCACHEs primed
+    ; checkpoint 4: rows16-19 filled, terrain IDCACHEs primed
     LD B,4 : LD C,7 : CALL WRTVDP
 
     ; 16x16 sprite mode (VDP R1 bit1=SI)
@@ -1442,8 +1445,8 @@ UOB_DEACTIVATE:
     XOR A : LD (IX+0),A
     RET
 
-; IX = slot base. row<18 sky, row==18 SkySand restore, row==19 Sand
-; restore (both static, only ever written at INIT), row>19 skip
+; IX = slot base. row<16 sky, row==16 SkySand restore, rows17-19 Sand
+; restore (all static, only ever written at INIT), row>19 skip
 ; entirely - rows20-23 already got fully redrawn from NAMEBUF earlier
 ; this same MAINLOOP iteration, so there's nothing to restore. Shared
 ; by UPDATE_ONE_BULLET's own per-frame erase-before-advance and
@@ -1453,14 +1456,14 @@ ERASE_BULLET_CELL:
     LD A,(IX+3)
     CP BULLET_ROCK_ROW_MIN
     JR C,EBC_SKY
-    CP BULLET_ROCK_ROW_MIN+2
+    CP BULLET_ROCK_ROW_MIN+4
     JR NC,EBC_SKIP
-    CP BULLET_ROCK_ROW_MIN+1
-    JR Z,EBC_SAND
-    LD A,SKYSAND_CODE
-    JR EBC_WRITE
-EBC_SAND:
+    CP BULLET_ROCK_ROW_MIN
+    JR Z,EBC_SKYSAND
     LD A,TERRAIN_BLANK_CODE
+    JR EBC_WRITE
+EBC_SKYSAND:
+    LD A,SKYSAND_CODE
     JR EBC_WRITE
 EBC_SKY:
     LD A,SKY_BLANK_CODE

@@ -625,6 +625,21 @@ with no way to tell where.
   just gone, same as flying off-screen. Plain Rock/Sand still let
   shots through. Verified directly (forcing `IDCACHE_T0` to each id at
   a bullet's next column): Rock225 ids deactivate, Rock/Sand ids don't.
+- **Sand widened to 3 rows, SkySand pushed up 2 more rows** ("下から
+  7,8行目をSandで埋めてその上にSkysand、2行上げる" - Sand expands from
+  1 row to 3, SkySand moves 2 rows higher to sit just above it): Sand
+  now fills rows17-19 (was just row19), SkySand moved from row18 to
+  row16 (all still static, written once at INIT, same
+  `TERRAIN_BLANK_CODE`/`SKYSAND_CODE` tiles as before - no new art or
+  color groups). `BULLET_ROCK_ROW_MIN` 18->16;
+  `ERASE_BULLET_CELL` widened from a 2-row (18/19) branch to a 4-row
+  (16 SkySand / 17-19 Sand) one, row>=20 still skipped (rows20-23 stay
+  NAMEBUF-redrawn). `BULLET_ROCK_COLOR_ROW_MIN_F/_U` (bullet's own
+  draw color threshold) untouched - not part of this instruction.
+  Verified: INIT-time VRAM dump shows row16=248(SkySand) uniformly,
+  rows17-19=16(Sand) uniformly, stable over 400 idle frames; a
+  synthetic `ERASE_BULLET_CELL` call at each row14-21 restores
+  sky/SkySand/Sand/skip exactly as expected.
 
 ## Bugs found and fixed while building this
 
