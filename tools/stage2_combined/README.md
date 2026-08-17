@@ -906,6 +906,21 @@ with no way to tell where.
     single jump bigger than `ZUM_PUSH_SPEED`; ordinary continuous
     contact still resolves in one call per frame as before, since it
     never needs to close more than `ZUM_SPEED_FAST`'s own 3px/frame.
+- **Ground offset overcorrected - now 5-6px sunk in, seen on real
+  hardware** ("さっきのスクショでもだが見えにくいが今度は5,6Px地面に
+  埋まってるな"): the full geometric `ZUM_Y_OFFSET`(16, exactly the
+  tank/Zum sprite-height difference) overshot, because Zum's own art
+  tapers off before its 16th row (see `sprites/Zum.json`) - its real
+  visible bottom sits a few px higher within its canvas than the full
+  height assumes. Backed off to 10 (16 minus the ~5-6px reported); an
+  estimate like the tank's own empirically-tuned landing offset
+  (`TANK_Y_BASE`'s own comment), not a re-derived formula - ready to
+  nudge further either way if still off. Separately: pushing *into* an
+  active Zum overlaps it instead of being blocked (the push clamp
+  above only prevents Zum from advancing past the tank, not the other
+  direction) - left as-is per direct instruction ("めり込みはこの
+  ままでいいわ オモロイから" - the overlap reads as funny, not a bug
+  to fix).
 
 ## Bugs found and fixed while building this
 

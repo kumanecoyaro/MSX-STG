@@ -462,9 +462,15 @@ ZUM_CLIMB_SPEED EQU 2       ; px/frame ease toward the target tier Y (see the co
 ; "地面に設置してないな 16px上に浮いてる" - TANK_TIER_Y_TABLE gives
 ; the tank's own (32px-tall sprite) top-anchor Y for each tier; Zum is
 ; only 16px tall, so using that value directly for Zum's own top-Y
-; left its bottom 16px short of the ground line. +16 aligns Zum's
-; bottom with the tank's own bottom (see UOZ_TERRAIN_FOLLOW).
-ZUM_Y_OFFSET EQU 16
+; left its bottom 16px short of the ground line (see
+; UOZ_TERRAIN_FOLLOW). The full geometric +16 overshot on real
+; hardware ("さっきのスクショでもだが...今度は5,6Px地面に埋まってる
+; な") - Zum's own art tapers off well before its 16th row (see
+; sprites/Zum.json), so its real visible bottom sits a few px higher
+; within its own canvas than the full height suggests. Backed off to
+; 10 (16 minus the ~5-6px reported); still an estimate, easy to nudge
+; further if it's still off by a couple px either way.
+ZUM_Y_OFFSET EQU 10
 ; must stay >= TANK_PUSH_WIDTH below, so UPDATE_TANK_ZUM_PUSH's own
 ; "Z_X - TANK_PUSH_WIDTH" never underflows while a Zum is still alive -
 ; conveniently also just means "despawn once close enough to the left
