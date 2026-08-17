@@ -115,7 +115,12 @@ BULLET_ROCK_ROW_MIN EQU 16      ; first row needing an explicit (non-sky) erase 
 ; (F was still using the old pre-widening boundary(19), so it showed
 ; blue/sky color over the newly-Sand rows17-18 instead of yellow).
 BULLET_ROCK_COLOR_ROW_MIN_F EQU 17
-BULLET_ROCK_COLOR_ROW_MIN_U EQU 20
+; U's own boundary now matches F's - "斜め打ちでSand埋め通過時も背景色
+; がブルーになってるな これもライトイエローに" (U's earlier "stays
+; blue over Sand" rule is superseded now that Sand covers rows17-19;
+; row16/SkySand itself is unaffected either way since UOB_DRAW skips
+; drawing there entirely for U, before this color check ever runs).
+BULLET_ROCK_COLOR_ROW_MIN_U EQU 17
 ; a diagonal/U shot decrements ROW every frame as it climbs; with no
 ; lower bound it could fly into rows0-1 (the HUD) and erase a glyph
 ; permanently instead of restoring it - "カラーバーAからF消えたぞ".

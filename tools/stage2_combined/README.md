@@ -661,6 +661,18 @@ with no way to tell where.
   from row17 into row16 leaves row16's cell reading `SKYSAND_CODE`
   (untouched) instead of a bullet pattern code, then on the next call
   advances into row15 and draws `BULLETU_SKY_CODE` there normally.
+- **U's "stays blue over Sand" rule reversed - now matches F** ("斜め
+  打ちでSand埋め通過時も背景色がブルーになってるな これもライトイエ
+  ローに"): supersedes the earlier "Skysandとその下のSandは...背景色
+  ブルーのままでいい" instruction, now that Sand is its own 3-row band
+  distinct from SkySand (which U skips drawing over entirely, per the
+  entry above, so it was never actually asking about that row).
+  `BULLET_ROCK_COLOR_ROW_MIN_U` 20->17, same value as F's own
+  boundary - U now shows rock/yellow across rows17-19 (Sand) and
+  20-23 (terrain) alike, blue only above row17. Verified: synthetic
+  `DRAW_BULLET_CELL` calls for TYPE=U show sky-code through row16,
+  rock-code from row17 on; the row16 SkySand skip-draw behavior itself
+  is unchanged (that check runs before this color logic).
 
 ## Bugs found and fixed while building this
 
