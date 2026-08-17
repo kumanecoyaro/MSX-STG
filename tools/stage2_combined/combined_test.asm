@@ -57,13 +57,16 @@ TANK_CLIMB_SPEED EQU 1     ; px/step, gated to every OTHER frame (see UPDATE_TER
 ; Swept 2/3/4/5/6/8 holding the stick right through the whole track and
 ; measured the worst-case lag behind TANK_TIER_Y_TABLE's target at
 ; each: 6/5/4/3/2/0px. 8 fully eliminated the lag ("食い込みはなく
-; なった") but closes a full 8px gap in a single frame, which then
-; read as an instant snap instead of a climb, especially moving
-; forward - "前後移動が加わると特に前方移動で8px登りになってる". 6
-; keeps the worst case down to 2px (barely perceptible) while every
-; climb still takes at least 2 frames (ceil(8/6)) to finish, so it
-; reads as climbing rather than snapping.
-TANK_CLIMB_SPEED_MOVING EQU 6
+; なった") but closes a full 8px gap in 1 frame, reading as an instant
+; snap instead of a climb; 6 (worst-case lag 2px) still completed a
+; climb in as few as 2 frames, which read the same way moving forward
+; - "前移動登りで8px登りになったな". Settled on 2 (same value the
+; very first easing attempt used, back when it was praised as "smooth
+; for one cell" before terrain-pace-matching became the goal) -
+; worst-case lag 6px, but spread over 4-5 frames, closer in feel to
+; the stationary pace above; the Gap art offset below also means that
+; 6px of lag no longer reads as visibly sinking the way it used to.
+TANK_CLIMB_SPEED_MOVING EQU 2
 TANK_CLIMB_CATCHUP_SPEED EQU 8  ; px/frame (no gate) once TANK_CLIMB_CATCHUP_THRESHOLD behind - see UPDATE_TERRAIN_COLLISION
 ; a normal single-tier transition always starts at diff=8 (the full
 ; TANK_TIER_Y_TABLE step) - a threshold of 5 (briefly tried) meant

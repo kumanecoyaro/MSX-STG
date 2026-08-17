@@ -93,9 +93,15 @@ with no way to tell where.
     stick right through the whole track, measuring the worst-case lag
     behind target at each (6/5/4/3/2/0px) - 8 reached 0 but closes a
     full 8px gap in a single frame, reading as an instant snap instead
-    of a climb ("前後移動が加わると特に前方移動で8px登りになってる") -
-    settled on 6 (worst-case lag 2px, barely perceptible, but every
-    climb still takes >=2 frames so it reads as climbing).
+    of a climb ("前後移動が加わると特に前方移動で8px登りになってる").
+    6 (worst-case lag 2px) still completed a climb in as few as 2
+    frames, which read the same way moving forward - "前移動登りで
+    8px登りになったな". Settled on 2 - the same value the very first
+    easing attempt used, back when it was praised as smooth for one
+    cell, before terrain-pace-matching became the goal - worst-case
+    lag 6px, but spread over 4-5 frames, closer in feel to the
+    stationary pace above; the Gap art offset below also means that
+    6px of lag no longer reads as visibly sinking the way it used to.
   - **Gap pose art offset**: `TankFGap`/`TankUGap`'s own art extends 3
     rows further down within their 32x32 canvas than `TankF`/`TankUp`
     does (lowest non-blank sprite row 29 vs 26, measured directly from
