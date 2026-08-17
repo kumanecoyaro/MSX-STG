@@ -104,6 +104,11 @@ R225D_UR = hflip(R225_UL)
 # still supplies the actual color (see COLORDATA below), same as
 # ROCK_L/ROCK_R's own fg/bg from Rock.json are ignored too.
 BLANK = load_bits("Sand")
+# Flat (all-zero) stand-in for BLANK, used ONLY when synthesizing the
+# handful of blend frames for a genuinely mixed pair (BLANK<->Rock/
+# R225 - the climb/descend edge itself, not steady Sand) - see the
+# ROCK225_MIX_TILE comment near build_pattern_table() for why.
+BLANK_FLAT = [[0] * 8 for _ in range(8)]
 
 # ---------- id table ----------
 ID_NAMES = ["BLANK", "ROCK_L", "ROCK_R", "R225_UL", "R225_UR", "R225D_UL", "R225D_UR"]
@@ -282,6 +287,27 @@ def pair_block_code(pair):
     return BLEND_BASE + PAIR_INDEX[pair] * 7
 
 
+# Mixed pairs (BLANK on exactly one side, not the same-id pair) are
+# now uniformly ROCK_COLOR (see the color-table comment below), but
+# blend()ing the REAL speckled Sand tile into them left Sand's own
+# texture bits showing up mid-scroll painted in Rock's red fg - stray
+# red flecks scattered across the sand right at the climb/descend
+# edge, not a coherent shape - "Rock225の前後にゴミ出てんだよ
+# チラついてるしよ". Before Sand had real texture (all-zero bits),
+# this never happened - blending a flat tile into Rock never produces
+# stray marks regardless of which color the block gets, since there
+# are no "1" bits on the flat side to mis-color. So mixed-pair blend
+# frames specifically use `BLANK_FLAT` (an all-zero stand-in) for
+# whichever side is BLANK, instead of the real textured `BLANK` -
+# steady Sand (the same-id pair, plus the solo tile) is untouched and
+# still shows its real texture; only the brief transition edge itself
+# reverts to a clean flat-to-Rock scroll, same as before Sand had art.
+def _blend_tile(id_, is_mixed_pair):
+    if is_mixed_pair and id_ == BLANK_ID:
+        return BLANK_FLAT
+    return ID_TILES[id_]
+
+
 def build_pattern_table():
     """code -> 8 bytes. Returns (patterns dict, highest code used)."""
     patterns = {SKY_BLANK_CODE: to_bytes(BLANK)}
@@ -289,9 +315,12 @@ def build_pattern_table():
         patterns[STEADY_CODE[idx]] = to_bytes(tile)
     for pair in sorted(PAIRS):
         curr, nxt = pair
+        is_mixed = BLANK_ID in pair and pair != _self_pair
+        tile_a = _blend_tile(curr, is_mixed)
+        tile_b = _blend_tile(nxt, is_mixed)
         base = pair_block_code(pair)
         for phase in range(1, 8):
-            patterns[base + phase - 1] = blend(ID_TILES[curr], ID_TILES[nxt], phase)
+            patterns[base + phase - 1] = blend(tile_a, tile_b, phase)
     return patterns
 
 
