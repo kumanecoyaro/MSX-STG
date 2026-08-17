@@ -6,3 +6,8 @@ __pycache__/
 tools/stage2_terrain/terrain_tables.inc.asm
 tools/stage2_terrain/frames*/
 tools/stage2_terrain/frames_*.png
+
+# tools/stage2_tank: same idea, regenerated debug/build output.
+tools/stage2_tank/tank_tables.inc.asm
+tools/stage2_tank/frames*/
+tools/stage2_tank/tank_poses.png
