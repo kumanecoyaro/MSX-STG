@@ -405,13 +405,50 @@ with no way to tell where.
     *generic* per-enemy-kill explosion is actually a BG-cell animation
     instead, not a sprite - see `TRIGGER_EXPLOSION` - so this reuses
     its pod-destroy-burst sprite art instead, the closer match to
-    "16x16のスプライト流用") - held in place at the kill position for
-    `EXPLOSION_DURATION`(20, matching that file's own constant of the
-    same name) frames on the same hw sprite slot the enemy itself was
-    using, then despawned, freeing the slot for a new spawn. Verified
-    both numerically (`EXPLODE_TIMER` counts 20->0 over frames, `ACT`
-    returns to 0 right after) and visually (rendered frame shows the
-    red spark-burst shape at the enemy's death position).
+    "16x16のスプライト流用") - shown for `EXPLOSION_DURATION` frames
+    on the same hw sprite slot the enemy itself was using, then
+    despawned, freeing the slot for a new spawn (see the follow-up
+    round below for the drift/duration/sound it since gained).
+- **Enemy speed, a red variant, explosion sound + drift** (per direct
+  instruction: "スピードが遅いんで早くして 自機と同じ1.5で で、10機
+  出たら色替えの赤いZakoII こいつは速度2で アルゴリズムは同じ で
+  爆発音追加 Stage1の爆発音流用 合わせて爆発スプライトは8フレ表示
+  8方向ランダムに移動後消えるように"):
+  - **Speed**: green (normal) `ZacoII` sped up from a flat 1px/frame
+    to 1.5, matching the tank's own `TANK_SPEED_LO` trick exactly
+    (`ENEMY_GET_STEP` alternates 1/2px on `TICK` bit0) - "自機と同じ
+    1.5で". Verified: 30px moved over 20 frames.
+  - **Red variant**: `ENEMY_SPAWN_COUNT` (capped at 10, never
+    decremented) tracks how many enemies have spawned in total; once
+    it's reached 10, every new spawn is the red variant instead of
+    green (`ENEMY_RED_COLOR`=9 light red vs `ENEMY_COLOR`=12 green,
+    same `ZacoII` art either way - only the sprite color attribute
+    differs) at a flat 2px/frame - "10機出たら色替えの赤いZakoII
+    こいつは速度2で". Movement/turn-back/hit-detection logic is
+    completely shared with the green variant - "アルゴリズムは同じ" -
+    `ENEMY_GET_STEP` is the only place the new per-slot `VARIANT`
+    field (+6) changes anything, plus the color pick in `UOE_DRAW`.
+    Verified: forcing `ENEMY_SPAWN_COUNT`=10 before a respawn produces
+    `VARIANT`=1 and exactly 2px/frame movement.
+  - **Explosion sound**: `SOUND_DESTROY`, byte-for-byte the same
+    period(20)/timer(15) `src/CYBER SHMUP.asm`'s own routine of that
+    name uses - "爆発音追加 Stage1の爆発音流用" - but retargeted to
+    PSG channel B (`SND_TIMER_B`) instead of reusing the shot sound's
+    channel A, since a shot fired right before its own kill would
+    otherwise cut its envelope short; mixer register7 tightened from
+    `0B1h` to `0E7h` (tones A/B/C off, noise A+B on) to enable it.
+    Verified: `SND_TIMER_B` kicks to 15 on a hit and decays 1/frame,
+    independent of `SND_TIMER`'s own decay.
+  - **Explosion duration + drift**: `EXPLOSION_DURATION` cut from 20
+    to 8 frames - "爆発スプライトは8フレ表示" - and the explosion no
+    longer just sits still at the kill position: `CHECK_HIT_PAIR`
+    picks one of 8 compass directions (`EXPLODE_DIR_DX`/`DY`, `TICK`'s
+    low 3 bits) at hit time, and `UOE_EXPLODE_DRIFT` adds that
+    (dx,dy) to the enemy slot's own X/Y every frame it's shown before
+    despawning - "8方向ランダムに移動後消えるように". Verified: a
+    synthetic hit produced `DX`=0/`DY`=-2 (one of the 8 directions),
+    and the enemy's Y visibly drifted -2px/frame for 7 frames before
+    `ACT` returned to 0 at frame 8.
 - Border-color diagnostic checkpoints through INIT (VDP R7), added
   specifically because the tank-only test froze on real hardware with
   no clue where:

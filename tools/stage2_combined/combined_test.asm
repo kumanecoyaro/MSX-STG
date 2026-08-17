@@ -247,6 +247,12 @@ HUD_COL       EQU 0F272h
 HUD_VAL       EQU 0F273h
 HUD_TEMP_BYTE EQU 0F274h
 SND_TIMER     EQU 0F275h   ; shot-sound fade countdown/volume (channel A, noise)
+; explosion-sound fade countdown/volume - its own channel (B) rather
+; than reusing channel A, since a shot fired right before a kill would
+; otherwise fight the same envelope/timer - "爆発音追加 Stage1の
+; 爆発音流用" (SOUND_DESTROY below reuses that file's exact
+; period(20)/timer(15) values, just retargeted to channel B).
+SND_TIMER_B   EQU 0F276h
 ; digit0 code; digitN = DIGIT_BASE+N for N=0-9 (score/counter, glyphs
 ; copied byte-for-byte from src/CYBER SHMUP.asm's own DIGIT_PATTERNS -
 ; "スコアの数字流用") and N=10-15 = A-F (new art, "AからFまで新規",
@@ -282,19 +288,34 @@ SHOT_SND_FRAMES   EQU 10
 ; scaled down to what a single behavior actually needs - no E_TYPE/
 ; E_BEHAVIOR dispatch, no HP (1 hit = kill, matching "当たったら100点"
 ; with no HP mentioned).
-ENEMY_SLOT_SIZE EQU 6   ; +0 ACT(0=off,1=alive,2=exploding),+1 X,+2 Y,+3 RETREAT(0/1),+4 EXPLODE_TIMER,+5 SPRIDX(0-2, fixed)
+; +0 ACT(0=off,1=alive,2=exploding),+1 X,+2 Y,+3 RETREAT(0/1),
+; +4 EXPLODE_TIMER,+5 SPRIDX(0-2, fixed),+6 VARIANT(0=green,1=red -
+; see ENEMY_SPAWN_COUNT below, "10機出たら色替えの赤いZakoII"),
+; +7/+8 EXPLODE_DX/DY (signed, picked at hit time - see
+; EXPLODE_DIR_DX/DY, "8方向ランダムに移動後消えるように").
+ENEMY_SLOT_SIZE EQU 9
 ENEMY0_ACT    EQU 0F280h
-ENEMY1_ACT    EQU 0F286h
-ENEMY2_ACT    EQU 0F28Ch
-ENEMY_SPAWN_TIMER   EQU 0F292h
+ENEMY1_ACT    EQU 0F289h
+ENEMY2_ACT    EQU 0F292h
+ENEMY_SPAWN_TIMER   EQU 0F29Bh
+; total enemies spawned so far (capped at 10, never decremented) -
+; "で、10機出たら色替えの赤いZakoII...アルゴリズムは同じ": once this
+; reaches 10, every spawn after is the red variant instead of green -
+; same movement/turn-back logic either way (ENEMY_GET_STEP is the only
+; place VARIANT changes behavior, for speed; UOE_DRAW picks the color).
+ENEMY_SPAWN_COUNT   EQU 0F29Ch
 ; staging buffer for the 3 enemy hw sprite slots (4-6, right after the
 ; tank's own 0-3) - same "build in RAM, blast once" pattern as
 ; SPRITE_ATTRS/UTS_OUT_LOOP, just a separate buffer so the two flushes
 ; stay independent.
-ENEMY_SPRITE_ATTRS EQU 0F293h   ; 12 bytes: Y,X,pat,col x3
+ENEMY_SPRITE_ATTRS EQU 0F29Dh   ; 12 bytes: Y,X,pat,col x3
 ENEMY_SPR_BASE_SLOT EQU 4       ; hw sprite index slot0 uses; slotN -> ENEMY_SPR_BASE_SLOT+N
 
-ENEMY_SPEED       EQU 1     ; px/frame, both approaching and retreating - untuned, easy to retime
+; green (normal) variant speed: "自機と同じ1.5で" - same alternating
+; 1/2-px-per-frame trick as TANK_SPEED_LO (see UTX_DO_RIGHT/LEFT),
+; averaging 1.5px/frame - was a flat 1 ("スピードが遅いんで早くして").
+ENEMY_SPEED_LO  EQU 1
+ENEMY_SPEED_RED EQU 2   ; red variant: flat 2px/frame - "こいつは速度2で"
 ENEMY_SPAWNX      EQU 240   ; off the right edge (16px sprite, so fully offscreen at spawn) - "右から左へスライド"
 ; "移動は自機位置をみて手前で引き返す" - turns back once within this
 ; many px of the tank, short of actually reaching it. Picked with no
@@ -309,16 +330,19 @@ ENEMY_TURNBACK_MARGIN EQU 40
 ENEMY_SKY_Y_MIN   EQU 24
 ENEMY_SKY_Y_MASK  EQU 3Fh   ; span 64 -> Y in [24,88), sprite bottom never past y151
 ENEMY_SPAWN_INTERVAL EQU 90 ; frames between spawns while a slot is free - untuned
-ENEMY_COLOR       EQU 12    ; from sprites/ZacoII.json's own fg
+ENEMY_COLOR       EQU 12    ; green, from sprites/ZacoII.json's own fg
+ENEMY_RED_COLOR   EQU 9     ; light red - "色替えの赤いZakoII" (kept distinct from the explosion's own medium red)
 ; PAT_ZACO/_FLIP (enemy_gen.py) and PAT_EXPLOSION (below) each need 4
 ; consecutive hw sprite pattern numbers (32 bytes / 8 = 4, 16x16 mode)
 ; - placed right after the tank's own 128 (4 poses x 2 facings x 16 -
-; see tank_gen.py's POSE_FLIP_OFFSET), aligned to 4 as convention.
+; see tank_gen.py's POSE_FLIP_OFFSET), aligned to 4 as convention. The
+; red variant reuses the SAME art (only its color attribute differs -
+; "アルゴリズムは同じ" applies to the sprite too, not just movement).
 PAT_ZACO          EQU 128
 PAT_ZACO_FLIP     EQU 132
 PAT_EXPLOSION     EQU 136
 EXPLOSION_COLOR    EQU 8    ; medium red - same color src/CYBER SHMUP.asm uses for EXPLOSION_PATTERN
-EXPLOSION_DURATION EQU 20   ; frames - same value as that file's own EXPLOSION_DURATION
+EXPLOSION_DURATION EQU 8    ; frames - "爆発スプライトは8フレ表示" (was 20, that file's own EXPLOSION_DURATION)
 
 STACKTOP      EQU 0F380h
 
@@ -539,15 +563,20 @@ INIT_SPRATR_CLR:
     LD HL,SWATCH_CODES : LD DE,1800h+SWATCH_COL0 : LD BC,16 : CALL LDIRVM
     LD HL,HEXLABEL_CODES : LD DE,1800h+32+HEXLABEL_COL0 : LD BC,16 : CALL LDIRVM
 
-    ; PSG: channel A = noise-only (shot sound); channels B/C left
-    ; silent (volume 0) since nothing else uses them here.
+    ; PSG: channel A = noise-only (shot sound), channel B = noise-only
+    ; too (explosion sound - its own channel so a shot's envelope never
+    ; fights an overlapping explosion's, see SND_TIMER_B); channel C
+    ; left silent (volume 0) since nothing here uses it. Mixer 0E7h =
+    ; tones A/B/C all off, noise A+B on, noise C off (was 0B1h, tone
+    ; B/C left enabled but silent via volume=0 - tightened now that
+    ; channel B actually carries a sound).
     LD A,7 : OUT (PSG_ADDR),A
-    LD A,0B1h : OUT (PSG_DATA),A
+    LD A,0E7h : OUT (PSG_DATA),A
     LD A,9 : OUT (PSG_ADDR),A
     XOR A : OUT (PSG_DATA),A
     LD A,10 : OUT (PSG_ADDR),A
     XOR A : OUT (PSG_DATA),A
-    XOR A : LD (SND_TIMER),A
+    XOR A : LD (SND_TIMER),A : LD (SND_TIMER_B),A
     LD A,8 : OUT (PSG_ADDR),A
     XOR A : OUT (PSG_DATA),A
 
@@ -575,9 +604,13 @@ INIT_SPRATR_CLR:
     ; the same hidden Y or the first flush would show garbage at Y=0.
     XOR A
     LD (ENEMY0_ACT+0),A : LD (ENEMY0_ACT+1),A : LD (ENEMY0_ACT+2),A : LD (ENEMY0_ACT+3),A : LD (ENEMY0_ACT+4),A
+    LD (ENEMY0_ACT+6),A : LD (ENEMY0_ACT+7),A : LD (ENEMY0_ACT+8),A
     LD (ENEMY1_ACT+0),A : LD (ENEMY1_ACT+1),A : LD (ENEMY1_ACT+2),A : LD (ENEMY1_ACT+3),A : LD (ENEMY1_ACT+4),A
+    LD (ENEMY1_ACT+6),A : LD (ENEMY1_ACT+7),A : LD (ENEMY1_ACT+8),A
     LD (ENEMY2_ACT+0),A : LD (ENEMY2_ACT+1),A : LD (ENEMY2_ACT+2),A : LD (ENEMY2_ACT+3),A : LD (ENEMY2_ACT+4),A
+    LD (ENEMY2_ACT+6),A : LD (ENEMY2_ACT+7),A : LD (ENEMY2_ACT+8),A
     LD (ENEMY_SPAWN_TIMER),A
+    LD (ENEMY_SPAWN_COUNT),A
     LD A,0 : LD (ENEMY0_ACT+5),A
     LD A,1 : LD (ENEMY1_ACT+5),A
     LD A,2 : LD (ENEMY2_ACT+5),A
@@ -1640,6 +1673,21 @@ SOUND_SHOT:
     LD A,SHOT_SND_FRAMES : LD (SND_TIMER),A
     RET
 
+; explosion sound - channel B, noise-only, byte-for-byte the same
+; period(20)/timer(15) src/CYBER SHMUP.asm's own SOUND_DESTROY uses
+; for its channel A - "爆発音追加 Stage1の爆発音流用". Register6 (the
+; noise period) is shared hardware-wide across every channel with
+; noise enabled, so triggering this while a shot is still fading
+; retunes both to this same pitch for the rest of their decay - a
+; minor, hardware-inherent quirk, not a bug (each channel keeps its
+; OWN independent volume/timer either way, so one never cuts the other
+; off - the actual goal here).
+SOUND_DESTROY:
+    LD A,6 : OUT (PSG_ADDR),A
+    LD A,20 : OUT (PSG_DATA),A
+    LD A,15 : LD (SND_TIMER_B),A
+    RET
+
 SOUND_UPDATE:
     LD A,(SND_TIMER)
     LD B,A
@@ -1647,8 +1695,17 @@ SOUND_UPDATE:
     LD A,B : OUT (PSG_DATA),A
     LD A,(SND_TIMER)
     OR A
-    RET Z
+    JR Z,SU_CHAN_B
     DEC A : LD (SND_TIMER),A
+SU_CHAN_B:
+    LD A,(SND_TIMER_B)
+    LD B,A
+    LD A,9 : OUT (PSG_ADDR),A
+    LD A,B : OUT (PSG_DATA),A
+    LD A,(SND_TIMER_B)
+    OR A
+    RET Z
+    DEC A : LD (SND_TIMER_B),A
     RET
 
 ; ---------- enemy (ZacoII): spawn timer, then all 3 slots ----------
@@ -1693,18 +1750,50 @@ ETS_DO_SPAWN:
     LD A,ENEMY_SPAWNX : LD (IX+1),A
     LD A,(TICK) : AND ENEMY_SKY_Y_MASK : ADD A,ENEMY_SKY_Y_MIN : LD (IX+2),A
     XOR A : LD (IX+3),A : LD (IX+4),A
+
+    LD A,(ENEMY_SPAWN_COUNT)
+    CP 10
+    JR C,ETS_VARIANT_GREEN
+    LD A,1
+    JR ETS_VARIANT_SET
+ETS_VARIANT_GREEN:
+    XOR A
+ETS_VARIANT_SET:
+    LD (IX+6),A
+
+    LD A,(ENEMY_SPAWN_COUNT)
+    CP 10
+    JR NC,ETS_COUNT_DONE
+    INC A : LD (ENEMY_SPAWN_COUNT),A
+ETS_COUNT_DONE:
     LD A,ENEMY_SPAWN_INTERVAL : LD (ENEMY_SPAWN_TIMER),A
+    RET
+
+; IX = slot base. Returns this frame's movement step in A: red variant
+; (IX+6=1) is a flat ENEMY_SPEED_RED - "こいつは速度2で"; green is
+; ENEMY_SPEED_LO alternating with +1 on odd TICK frames (same trick as
+; TANK_SPEED_LO/UTX_DO_RIGHT), averaging 1.5px/frame - "自機と同じ
+; 1.5で". Shared by both the approach and retreat branches below.
+ENEMY_GET_STEP:
+    LD A,(IX+6)
+    OR A
+    JR NZ,EGS_RED
+    LD A,(TICK) : AND 1 : LD B,A
+    LD A,ENEMY_SPEED_LO : ADD A,B
+    RET
+EGS_RED:
+    LD A,ENEMY_SPEED_RED
     RET
 
 ; IX = slot base. ACT=1 (alive): moves toward the tank, turns back
 ; (RETREAT=1, mirrored sprite) once within ENEMY_TURNBACK_MARGIN of
 ; TANK_X - "移動は自機位置をみて手前で引き返す" - then despawns once
 ; back off the spawn edge. ACT=2 (exploding, set by
-; CHECK_BULLET_VS_ENEMY): holds position, counts EXPLODE_TIMER down to
-; 0 then despawns. Either way, stages this slot's 4 attribute bytes
-; into ENEMY_SPRITE_ATTRS at its own fixed SPRIDX offset - inactive
-; slots RET immediately and leave the buffer holding whatever hidden
-; (Y=209) bytes it already had.
+; CHECK_BULLET_VS_ENEMY): drifts by EXPLODE_DX/DY, counts EXPLODE_TIMER
+; down to 0 then despawns. Either way, stages this slot's 4 attribute
+; bytes into ENEMY_SPRITE_ATTRS at its own fixed SPRIDX offset -
+; inactive slots RET immediately and leave the buffer holding whatever
+; hidden (Y=209) bytes it already had.
 UPDATE_ONE_ENEMY:
     LD A,(IX+0)
     CP 2
@@ -1716,7 +1805,8 @@ UPDATE_ONE_ENEMY:
     OR A
     JR NZ,UOE_RETREAT
 
-    LD A,(IX+1) : SUB ENEMY_SPEED : LD (IX+1),A
+    CALL ENEMY_GET_STEP : LD B,A
+    LD A,(IX+1) : SUB B : LD (IX+1),A
     LD A,(TANK_X) : ADD A,ENEMY_TURNBACK_MARGIN : LD B,A
     LD A,(IX+1)
     CP B
@@ -1725,7 +1815,8 @@ UPDATE_ONE_ENEMY:
     JR UOE_DRAW
 
 UOE_RETREAT:
-    LD A,(IX+1) : ADD A,ENEMY_SPEED : LD (IX+1),A
+    CALL ENEMY_GET_STEP : LD B,A
+    LD A,(IX+1) : ADD A,B : LD (IX+1),A
     CP ENEMY_SPAWNX
     JR C,UOE_DRAW
     XOR A : LD (IX+0),A
@@ -1746,16 +1837,30 @@ UOE_PAT_NORMAL:
     LD A,PAT_ZACO
 UOE_PAT_SET:
     LD (HL),A : INC HL
-    LD A,ENEMY_COLOR : LD (HL),A
+    LD A,(IX+6)
+    OR A
+    JR Z,UOE_COLOR_GREEN
+    LD A,ENEMY_RED_COLOR
+    JR UOE_COLOR_SET
+UOE_COLOR_GREEN:
+    LD A,ENEMY_COLOR
+UOE_COLOR_SET:
+    LD (HL),A
     RET
 
 UOE_EXPLODING:
     LD A,(IX+4)
     DEC A : LD (IX+4),A
-    JR NZ,UOE_DRAW_EXPLOSION
+    JR NZ,UOE_EXPLODE_DRIFT
     XOR A : LD (IX+0),A
     CALL UOE_HIDE
     RET
+; "8方向ランダムに移動後消えるように" - drift by the (dx,dy) picked at
+; hit time (see CHECK_HIT_PAIR/EXPLODE_DIR_DX/DY) every frame it's
+; shown, instead of holding still at the kill position.
+UOE_EXPLODE_DRIFT:
+    LD A,(IX+1) : LD B,A : LD A,(IX+7) : ADD A,B : LD (IX+1),A
+    LD A,(IX+2) : LD B,A : LD A,(IX+8) : ADD A,B : LD (IX+2),A
 UOE_DRAW_EXPLOSION:
     LD A,(IX+5) : ADD A,A : ADD A,A : LD C,A : LD B,0
     LD HL,ENEMY_SPRITE_ATTRS : ADD HL,BC
@@ -1861,6 +1966,15 @@ CHECK_HIT_PAIR:
 
     LD A,2 : LD (IY+0),A
     LD A,EXPLOSION_DURATION : LD (IY+4),A
+
+    ; "8方向ランダムに移動後消えるように" - pick one of 8 drift
+    ; directions (TICK's low 3 bits, 0-7) for UOE_EXPLODE_DRIFT to
+    ; apply each frame the explosion is shown.
+    LD A,(TICK) : AND 7 : LD C,A : LD B,0
+    LD HL,EXPLODE_DIR_DX : ADD HL,BC : LD A,(HL) : LD (IY+7),A
+    LD HL,EXPLODE_DIR_DY : ADD HL,BC : LD A,(HL) : LD (IY+8),A
+
+    CALL SOUND_DESTROY
 
     LD HL,SCORE_PER_KILL
     CALL ADD_SCORE
@@ -1981,16 +2095,25 @@ HUD_ZERO8:
 ; own EXPLOSION_PATTERN (its pod-destroy-burst spark shape) - "弾が
 ; 当たっての爆発はStage1と同じ16x16のスプライト流用". That file uses
 ; it differently (4 scattered copies for a pod burst); here it's just
-; shown once, held in place at the killed enemy's own position for
-; EXPLOSION_DURATION frames (see UPDATE_ONE_ENEMY) - a single static
-; pattern, not an animation (Stage1's own generic per-enemy-kill
-; explosion is a BG-cell animation instead, not a sprite at all - see
-; TRIGGER_EXPLOSION - so there was no closer "real" explosion sprite
-; to borrow from for a straightforward reuse).
+; shown once, drifting from the killed enemy's own position for
+; EXPLOSION_DURATION(8) frames (see UPDATE_ONE_ENEMY/EXPLODE_DIR_DX -
+; "爆発スプライトは8フレ表示 8方向ランダムに移動後消えるように") -
+; a single static pattern, not an animation (Stage1's own generic
+; per-enemy-kill explosion is a BG-cell animation instead, not a
+; sprite at all - see TRIGGER_EXPLOSION - so there was no closer
+; "real" explosion sprite to borrow from for a straightforward reuse).
 EXPLOSION_PATTERN:
     DB 84h,48h,00h,02h,49h,84h,20h,03h     ; top-left
     DB 13h,09h,20h,00h,09h,10h,04h,00h     ; bottom-left
     DB 00h,00h,40h,10h,20h,10h,8Ch,68h     ; top-right
     DB 90h,82h,48h,0C4h,20h,80h,00h,00h    ; bottom-right
+
+; 8-compass-direction (dx,dy) steps for the explosion's post-hit drift
+; - "8方向ランダムに移動後消えるように" - index picked at hit time
+; from TICK's low 3 bits (see CHECK_HIT_PAIR). N,NE,E,SE,S,SW,W,NW.
+EXPLODE_DIR_DX:
+    DB 0,2,2,2,0,-2,-2,-2
+EXPLODE_DIR_DY:
+    DB -2,-2,0,2,2,2,0,-2
 
 ; ===== generated tables (terrain + tank) appended below by build_test.py =====
