@@ -710,6 +710,57 @@ with no way to tell where.
   already-slow band, both. Verified: a synthetic same-frame-spawn test
   (rows3/8-from-top) moves 20px/10px over 40 frames at the new
   intervals, same 2:1 ratio as before just at half the absolute speed.
+- **Slow band retuned again, 4->3 frames/cell** ("4フレはガタが目立
+  つんで3フレで 中途半端だが仕方ない" - accepted as an odd ratio, not
+  a clean 2:1 against the fast band's 2 anymore): `CLOUD_INTERVAL_TABLE`
+  ...,4,4,4 -> ...,3,3,3; rows3-5's own 2 untouched (only the slow band
+  was reported as choppy). Verified: 60-frame synthetic run moves
+  30px(fast, interval2)/20px(slow, interval3).
+- **Diagonal/U shot moved to a hardware sprite; F unchanged** ("弾は
+  斜めのみスプライトに変更 水平は今のままで 伴って斜めうちのBG関係
+  の弾の処理は削除 Skysandのスキップも廃止"): U no longer draws as a
+  BG name-table character at all - `bullet_gen.py`'s `BULLET_U_SPRITE`/
+  `_L` embed the same 8x8 BulletU art at the top-left of an otherwise-
+  blank 16x16 sprite canvas (VDP already runs in 16x16 mode for the
+  tank/enemies), loaded at `PAT_BULLETU`(140)/`PAT_BULLETU_L`(144),
+  fixed 1:1 onto hw sprite slots7-9 (`BULLET_U_SPR_BASE_SLOT`, right
+  after the enemy pool's 4-6) - same "build in RAM, blast once"
+  staging-buffer pattern as `ENEMY_SPRITE_ATTRS`/`FLUSH_ENEMY_SPRITES`,
+  new `UPDATE_BULLET_U_SPRITES`/`FLUSH_BULLET_U_SPRITES`. Position
+  (Y=ROW*8,X=COL*8) comes straight from the existing bullet-pool ROW/
+  COL bookkeeping - unchanged movement/collision math, only the render
+  backend changed. Removed along with it: every U-specific branch in
+  `DRAW_BULLET_CELL` (now F-only, considerably shorter),
+  `BULLETU_SKY/ROCK_CODE`+`_L` pattern-code constants,
+  `BULLET_ROCK_COLOR_ROW_MIN_U`, and the SkySand row16 skip-draw
+  special case in `UOB_DRAW` - a hw sprite composites over whatever's
+  already there automatically, so there was nothing left to special-
+  case. `ERASE_BULLET_CELL` (still needed for F, which can still visit
+  rows16-19 during a jump) and `CHECK_HIT_PAIR`'s own erase-on-hit call
+  are now both TYPE-guarded (F only) - a U-type slot never had anything
+  drawn in the name table to erase, so calling it unconditionally would
+  have stomped whatever's actually there (a cloud, Sand, sky) with a
+  bogus "restore". Verified: a synthetic `UPDATE_ONE_BULLET` sweep with
+  rows2-19 pre-filled with a sentinel byte shows zero BG writes from a
+  6-frame U bullet flight; F's own BG draw/erase is bit-for-bit
+  unchanged; a synthetic hit test confirms score/enemy-explode still
+  fire correctly and the U sprite hides (Y=209) the same frame as the
+  hit, not one frame late.
+- **`render_check.py`'s sprite renderer stopped early on the wrong Y
+  value** (caught while trying to visually verify the new bullet
+  sprite, not a hardware report): its sprite loop broke out entirely
+  the moment it saw `Y==0xD1`(209, this ROM's own "hidden" convention -
+  `INIT_SPRATR_CLR`/`UOE_HIDE`/the new `UBUS_HIDE` all use it), instead
+  of only skipping that one slot - harmless while nothing occupied hw
+  sprite slots past the enemy pool's own sometimes-209 slots4-6, but
+  once the new bullet sprites landed at slots7-9 right after them, an
+  inactive enemy slot silently hid every later sprite from the preview
+  (though not from the real VRAM/hardware sprite table, confirmed by
+  reading it directly). Real VDP semantics: Y=208 is the actual early-
+  terminator, any other Y>=208 just hides that one sprite. Fixed:
+  break only on `y==208`, `continue` (skip, don't stop) for `y>=208`
+  otherwise. Verified: re-rendering the same scene now shows both the
+  tank's gun-up pose and 2 small diagonal bullet marks in flight.
 
 ## Bugs found and fixed while building this
 

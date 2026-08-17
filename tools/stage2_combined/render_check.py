@@ -38,7 +38,17 @@ def render_full(vram, path):
     for s in range(32):
         base = 0x1B00 + s * 4
         y, x, pat, col = vram[base], vram[base + 1], vram[base + 2], vram[base + 3]
-        if y == 0xD1:
+        # real VDP semantics: Y=208 stops the whole sprite list (early
+        # terminator); any other Y>=208 (e.g. 209, this ROM's own
+        # "hidden" convention - see INIT_SPRATR_CLR/UOE_HIDE/UBUS_HIDE)
+        # just places that one sprite off-screen without affecting
+        # later slots. Previously checked Y==0xD1(209) for the break,
+        # which stopped rendering everything after the first ordinary
+        # hidden slot - harmless while nothing used slots past the
+        # enemy pool's own always-sometimes-hidden 4-6, but silently
+        # hid every later sprite (bullet_gen.py's new U-type hw sprite
+        # sprites at slots7-9) once something finally did.
+        if y == 208:
             break
         if y >= 208:
             continue

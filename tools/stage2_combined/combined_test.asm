@@ -94,37 +94,38 @@ JUMP_FRAME    EQU 0F228h
 JUMP_Y_OFFSET EQU 0F229h
 CUR_POSE_PAT  EQU 0F22Ah
 
-; ---------- shots: BG (name-table) characters, not sprites - any     ----------
-; ---------- number can share a scanline with the tank with no       ----------
-; ---------- "4 sprites per line" flicker (same reasoning as the      ----------
-; ---------- player's own shots in src/CYBER SHMUP.asm). A shot can    ----------
-; ---------- sit over open sky, the 4 static rows (16 SkySand, 17-19    ----------
-; ---------- Sand), or the scrolling terrain (rows20-23) - erasing      ----------
-; ---------- needs to restore whichever of those 4 is really there.     ----------
-; ---------- rows16-19 need an explicit erase write each (static,       ----------
-; ---------- filled once at INIT); rows20-23 get fully redrawn from     ----------
-; ---------- NAMEBUF every frame before the bullet update runs, so      ----------
-; ---------- erasing a bullet there is a no-op - see UPDATE_ONE_BULLET   ----------
-; ---------- below.                                                     ----------
+; ---------- shots ----------
+; F (straight) stays a BG (name-table) character, not a sprite - any
+; number can share a scanline with the tank with no "4 sprites per
+; line" flicker (same reasoning as the player's own shots in src/CYBER
+; SHMUP.asm). A shot can sit over open sky, the 4 static rows (16
+; SkySand, 17-19 Sand), or the scrolling terrain (rows20-23) - erasing
+; needs to restore whichever of those 4 is really there. rows16-19
+; need an explicit erase write each (static, filled once at INIT);
+; rows20-23 get fully redrawn from NAMEBUF every frame before the
+; bullet update runs, so erasing a bullet there is a no-op - see
+; UPDATE_ONE_BULLET below.
+;
+; U (diagonal) is now a hardware sprite instead - "弾は斜めのみスプラ
+; イトに変更 水平は今のままで" - so none of the BG erase/color-matching
+; machinery below applies to it anymore; ERASE_BULLET_CELL/
+; DRAW_BULLET_CELL only ever run for TYPE=F now (both guard on TYPE
+; before doing anything). See UPDATE_BULLET_U_SPRITES/PAT_BULLETU
+; further down for U's own sprite-side setup.
 BULLET_ROCK_ROW_MIN EQU 16      ; first row needing an explicit (non-sky) erase restore (16-23)
-; the bullet's own drawn color (sky-blue bg vs ground-yellow bg fill
-; for its sprite's own background pixels) is per-shot-type. F's own
-; boundary tracks wherever Sand's own light-yellow band actually
-; starts (17, since Sand widened to rows17-19) - "水平打ちでの弾の
-; 背景色はライトイエローなのにブルーになってる 行を増やした影響かも"
-; (F was still using the old pre-widening boundary(19), so it showed
-; blue/sky color over the newly-Sand rows17-18 instead of yellow).
+; F's own color boundary tracks wherever Sand's own light-yellow band
+; actually starts (17, since Sand widened to rows17-19) - "水平打ちで
+; の弾の背景色はライトイエローなのにブルーになってる 行を増やした
+; 影響かも" (F was still using the old pre-widening boundary(19), so
+; it showed blue/sky color over the newly-Sand rows17-18 instead of
+; yellow).
 BULLET_ROCK_COLOR_ROW_MIN_F EQU 17
-; U's own boundary now matches F's - "斜め打ちでSand埋め通過時も背景色
-; がブルーになってるな これもライトイエローに" (U's earlier "stays
-; blue over Sand" rule is superseded now that Sand covers rows17-19;
-; row16/SkySand itself is unaffected either way since UOB_DRAW skips
-; drawing there entirely for U, before this color check ever runs).
-BULLET_ROCK_COLOR_ROW_MIN_U EQU 17
 ; a diagonal/U shot decrements ROW every frame as it climbs; with no
 ; lower bound it could fly into rows0-1 (the HUD) and erase a glyph
 ; permanently instead of restoring it - "カラーバーAからF消えたぞ".
-; Fixed by never letting a bullet's row go below this.
+; Fixed by never letting a bullet's row go below this. Still applies
+; now that U is a sprite (it's a position bound on the shared ROW/COL
+; bookkeeping, not a BG-erase concern specifically).
 BULLET_MIN_ROW    EQU 2
 BULLET_MAXCOL     EQU 31        ; last valid name-table column (0-31)
 BULLET_MUZZLE_DX  EQU 24        ; spawn column offset from TANK_X (muzzle, right side of the tank)
@@ -139,27 +140,22 @@ SKY_BLANK_CODE    EQU 0         ; TERRAIN_BLANK_ROW's code - the permanent open-
 SKYSAND_CODE  EQU 248
 SKYSAND_COLOR EQU 05Bh   ; fg5/bg11
 
-; Bullet BG pattern codes: each bullet's art needs one code per
-; background color group it can appear over (SCREEN1 colors are fixed
-; per 8-code group, not per screen position - see bullet_gen.py's own
-; comment). BulletF and BulletU share the same fg color again (both
-; black, per direct instruction - briefly split into 2 separate color
-; groups each when only BulletF was black), so they go back to
-; sharing one pair of groups, split only by background. Placed at
-; codes 88-103 (groups 11-12), well past every real terrain code
-; (0-87, groups 0-10 - see terrain_gen.py's STEADY_BASE/BLEND_BASE) so
-; nothing else ever references them.
+; Bullet BG pattern codes - F (straight) only now, U moved to a hw
+; sprite (see PAT_BULLETU below): needs one code per background color
+; group it can appear over (SCREEN1 colors are fixed per 8-code group,
+; not per screen position - see bullet_gen.py's own comment). Placed
+; at codes88/96 (groups11-12), well past every real terrain code
+; (0-87, groups0-10 - see terrain_gen.py's STEADY_BASE/BLEND_BASE) so
+; nothing else ever references them. Codes89/97 (ex-BULLETU_SKY/ROCK_
+; CODE) are simply unused now, not renumbered - no reason to renumber
+; F's own codes just because U vacated its neighbors.
 BULLETF_SKY_CODE  EQU 88
-BULLETU_SKY_CODE  EQU 89
 BULLETF_ROCK_CODE EQU 96
-BULLETU_ROCK_CODE EQU 97
-; left-facing (mirrored) shot patterns, same 2 color groups (color
+; left-facing (mirrored) shot pattern, same 2 color groups (color
 ; doesn't depend on facing, only the pattern shape does) - "今の自機
 ; と弾を左操作で左向きに...反転パターンはそっちで生成してくれ".
 BULLETF_L_SKY_CODE  EQU 90
-BULLETU_L_SKY_CODE  EQU 91
 BULLETF_L_ROCK_CODE EQU 98
-BULLETU_L_ROCK_CODE EQU 99
 ; color table (VRAM 2000h+group, 1 byte/group, hi nibble=fg/lo=bg -
 ; see terrain_gen.py's own SKY_COLOR/ROCK_COLOR): group11 (codes
 ; 88-95) = fg1 black/bg5 light blue, matching the sky's own bg5;
@@ -174,6 +170,25 @@ BULLET_SKY_COLORADDR  EQU 200Bh
 BULLET_ROCK_COLORADDR EQU 200Ch
 BULLET_SKY_COLORBYTE  EQU 015h
 BULLET_ROCK_COLORBYTE EQU 01Bh
+
+; ---------- diagonal/U shot, now a hardware sprite ----------
+; "で、弾は斜のみスプライトに変更 水平は今のままで 伴って斜めうちの
+; BG関係の弾の処理は削除 Skysandのスキップも廃止": bullet_gen.py's
+; own BULLET_U_SPRITE/_L embeds the same 8x8 BulletU art at the
+; top-left of an otherwise-blank 16x16 sprite canvas (VDP is already
+; in 16x16 mode for the tank/enemies), 1 hw sprite slot per pool slot
+; (fixed 1:1, same convention as ENEMY_SPR_BASE_SLOT), Y/X set straight
+; from the pool's own ROW*8/COL*8 - the exact same anchor point the
+; old BG cell used, so no position-math changes needed elsewhere. A hw
+; sprite composites over whatever's already drawn (terrain, clouds,
+; sky) automatically, which is what made the SkySand skip-draw special
+; case (and the whole sky/rock BG color-matching dance) unnecessary -
+; it's simply gone now, not replaced by anything.
+BULLET_U_SPR_BASE_SLOT EQU 7    ; hw sprite slots7-9, right after the enemy pool's 4-6
+PAT_BULLETU    EQU 140          ; right after PAT_EXPLOSION(136-139)
+PAT_BULLETU_L  EQU 144
+BULLET_U_COLOR EQU 1            ; black, same fg BulletF's BG version already used
+BULLET_U_SPRITE_ATTRS EQU 0F2E0h   ; 12 bytes: Y,X,pat,col x3, staged same as ENEMY_SPRITE_ATTRS
 
 JOY_TRIGA     EQU 0F22Bh
 ; frames left before another shot can fire while A is held ("間欠連射
@@ -534,25 +549,25 @@ INIT:
     LD HL,TANK_TANKFGAP_L_TL : LD DE,PAT_TANKFGAP_L*8+SPRPAT : LD BC,128 : CALL LDIRVM
     LD HL,TANK_TANKUGAP_L_TL : LD DE,PAT_TANKUGAP_L*8+SPRPAT : LD BC,128 : CALL LDIRVM
 
-    ; bullet BG patterns: each loaded twice, once per background color
-    ; group it can appear over (see BULLETF_SKY_CODE etc. above), and
-    ; the mirrored (left-facing) shapes the same way at their own codes.
+    ; F's own BG pattern: loaded twice, once per background color group
+    ; it can appear over (see BULLETF_SKY_CODE etc. above), and the
+    ; mirrored (left-facing) shape the same way at its own codes.
     LD HL,BULLET_F_PATTERN : LD DE,BULLETF_SKY_CODE*8  : LD BC,8 : CALL LDIRVM
-    LD HL,BULLET_U_PATTERN : LD DE,BULLETU_SKY_CODE*8  : LD BC,8 : CALL LDIRVM
     LD HL,BULLET_F_PATTERN : LD DE,BULLETF_ROCK_CODE*8 : LD BC,8 : CALL LDIRVM
-    LD HL,BULLET_U_PATTERN : LD DE,BULLETU_ROCK_CODE*8 : LD BC,8 : CALL LDIRVM
     LD HL,BULLET_F_L_PATTERN : LD DE,BULLETF_L_SKY_CODE*8  : LD BC,8 : CALL LDIRVM
-    LD HL,BULLET_U_L_PATTERN : LD DE,BULLETU_L_SKY_CODE*8  : LD BC,8 : CALL LDIRVM
     LD HL,BULLET_F_L_PATTERN : LD DE,BULLETF_L_ROCK_CODE*8 : LD BC,8 : CALL LDIRVM
-    LD HL,BULLET_U_L_PATTERN : LD DE,BULLETU_L_ROCK_CODE*8 : LD BC,8 : CALL LDIRVM
 
-    ; bullet color groups: patch over terrain_gen.py's generic per-
-    ; group defaults for the 4 groups the bullet codes above live in -
-    ; see BULLET_SKY_COLORADDR/BULLET_ROCK_COLORADDR above.
+    ; F's own bullet color groups: patch over terrain_gen.py's generic
+    ; per-group defaults for the 2 groups its codes live in - see
+    ; BULLET_SKY_COLORADDR/BULLET_ROCK_COLORADDR above.
     LD A,BULLET_SKY_COLORBYTE : LD (BULLET_TEMP_BYTE),A
     LD HL,BULLET_TEMP_BYTE : LD DE,BULLET_SKY_COLORADDR : LD BC,1 : CALL LDIRVM
     LD A,BULLET_ROCK_COLORBYTE : LD (BULLET_TEMP_BYTE),A
     LD HL,BULLET_TEMP_BYTE : LD DE,BULLET_ROCK_COLORADDR : LD BC,1 : CALL LDIRVM
+
+    ; U's own hw sprite pattern (16x16, right after PAT_EXPLOSION).
+    LD HL,BULLET_U_SPRITE : LD DE,PAT_BULLETU*8+SPRPAT : LD BC,32 : CALL LDIRVM
+    LD HL,BULLET_U_SPRITE_L : LD DE,PAT_BULLETU_L*8+SPRPAT : LD BC,32 : CALL LDIRVM
 
     ; checkpoint 6: tank + bullet patterns loaded
     LD B,6 : LD C,7 : CALL WRTVDP
@@ -771,6 +786,19 @@ IESA_LOOP:
     LD (HL),A : INC HL
     DJNZ IESA_LOOP
 
+    ; same priming for BULLET_U_SPRITE_ATTRS (hw sprite slots7-9) - the
+    ; VRAM attribute table itself is already hidden by INIT_SPRATR_CLR's
+    ; full 32-slot clear, but this RAM staging buffer starts blank.
+    LD HL,BULLET_U_SPRITE_ATTRS
+    LD B,3
+IBSA_LOOP:
+    LD A,209 : LD (HL),A : INC HL
+    XOR A
+    LD (HL),A : INC HL
+    LD (HL),A : INC HL
+    LD (HL),A : INC HL
+    DJNZ IBSA_LOOP
+
     ; cloud pool: each of the 6 slots gets its own fixed ROW (2-7,
     ; CLOUD_ROW_TABLE)/INTERVAL/FIXED4 from the 3 lookup tables below,
     ; ROWADDR precomputed once (row*32 fits an 8-bit low byte for
@@ -868,6 +896,7 @@ SKIP_ADVANCE:
     CALL UPDATE_SHOT
     CALL UPDATE_ENEMIES
     CALL CHECK_BULLET_VS_ENEMY
+    CALL UPDATE_BULLET_U_SPRITES
     CALL CLOUD_UPDATE_ALL
 
     LD HL,(GAME_TICK) : INC HL : LD (GAME_TICK),HL
@@ -1437,8 +1466,14 @@ TSB_COL_OK:
     LD HL,BULLET_ROWADDR_LO : ADD HL,DE : LD A,(HL) : LD (IX+4),A
     LD HL,BULLET_ROWADDR_HI : ADD HL,DE : LD A,(HL) : LD (IX+5),A
 
+    ; F draws its BG cell immediately; U is a hw sprite now - its own
+    ; position gets set by UPDATE_BULLET_U_SPRITES (called later this
+    ; same frame, after TRY_SPAWN_BULLET's caller returns), not here.
+    LD A,(IX+1)
+    OR A
+    JR NZ,TSB_SPAWN_U
     CALL DRAW_BULLET_CELL
-
+TSB_SPAWN_U:
     CALL SOUND_SHOT
     RET
 
@@ -1453,17 +1488,24 @@ UPDATE_BULLETS:
     RET
 
 ; IX = slot base (+0 ACT,+1 TYPE,+2 COL,+3 ROW,+4/+5 ADDR,+6 FACING).
-; Erases the current cell (restoring sky/SkySand/Sand, whichever this
-; bullet is actually over), advances 1 column (toward
-; FACING - right or left) and, for a diagonal/U shot, 1 row up too,
-; then redraws at the new position - or deactivates if it just left
-; the name table's top, left, or right edge.
+; For F (BG), erases the current cell (restoring sky/SkySand/Sand,
+; whichever this bullet is actually over) - U is a hw sprite now, so
+; there's nothing drawn in the name table to erase for it (skipping
+; this for U also keeps a bullet from stomping a cloud/Sand/etc cell
+; it's merely flying over). Then advances 1 column (toward FACING -
+; right or left) and, for a diagonal/U shot, 1 row up too, then
+; redraws (F only) at the new position - or deactivates if it just
+; left the name table's top, left, or right edge.
 UPDATE_ONE_BULLET:
     LD A,(IX+0)
     OR A
     RET Z
 
+    LD A,(IX+1)
+    OR A
+    JR NZ,UOB_SKIP_ERASE
     CALL ERASE_BULLET_CELL
+UOB_SKIP_ERASE:
 
     ; --- advance: column (direction from FACING), row too (upward) for a diagonal/U shot ---
     LD A,(IX+6)
@@ -1531,21 +1573,13 @@ UOB_TC_ADD:
     JR NC,UOB_DEACTIVATE
 
 UOB_DRAW:
-    ; diagonal/U shots skip drawing entirely while passing through
-    ; SkySand's own row(row16=BULLET_ROCK_ROW_MIN) - "斜め打ちはSkysand
-    ; と重なった時弾の表示はスキップに...Skysandより上に弾が行くと
-    ; 背景色ブルーの現在の弾を表示に" (F unaffected - only U skips
-    ; here; above row16 it's plain sky again and draws the usual
-    ; blue-bg bullet as before). The cell was already correctly
-    ; restored to SkySand this frame (ERASE_BULLET_CELL ran on the old
-    ; position above), so simply not drawing leaves it showing through.
+    ; F only - U is a hw sprite, positioned separately every frame by
+    ; UPDATE_BULLET_U_SPRITES (the old SkySand skip-draw special case
+    ; is gone along with the rest of U's BG handling - a sprite just
+    ; composites over whatever's there, nothing to special-case).
     LD A,(IX+1)
     OR A
-    JR Z,UOB_DRAW_DO
-    LD A,(IX+3)
-    CP BULLET_ROCK_ROW_MIN
-    RET Z
-UOB_DRAW_DO:
+    RET NZ
     CALL DRAW_BULLET_CELL
     RET
 UOB_DEACTIVATE:
@@ -1583,61 +1617,29 @@ EBC_WRITE:
 EBC_SKIP:
     RET
 
-; IX = slot base. Picks the pattern code for (TYPE x background-under-
-; current-row x FACING) and writes it at ADDR+COL. TYPE(IX+1) also
-; picks which row threshold applies before the actual color branch -
-; F and U no longer share one boundary, see BULLET_ROCK_COLOR_ROW_MIN_F/_U above.
+; IX = slot base. F only now (U is a hw sprite - see
+; UPDATE_BULLET_U_SPRITES). Picks the pattern code for (background-
+; under-current-row x FACING) and writes it at ADDR+COL.
 DRAW_BULLET_CELL:
-    LD A,(IX+1)
-    OR A
-    LD A,BULLET_ROCK_COLOR_ROW_MIN_F
-    JR Z,DBC_THRESH_SET
-    LD A,BULLET_ROCK_COLOR_ROW_MIN_U
-DBC_THRESH_SET:
-    LD B,A
     LD A,(IX+3)
-    CP B
+    CP BULLET_ROCK_COLOR_ROW_MIN_F
     JR NC,DBC_ROCK
     LD A,(IX+6)
     OR A
     JR NZ,DBC_SKY_LEFT
-    LD A,(IX+1)
-    OR A
-    JR NZ,DBC_SKY_U
     LD A,BULLETF_SKY_CODE
     JR DBC_CODE_SET
-DBC_SKY_U:
-    LD A,BULLETU_SKY_CODE
-    JR DBC_CODE_SET
 DBC_SKY_LEFT:
-    LD A,(IX+1)
-    OR A
-    JR NZ,DBC_SKY_U_L
     LD A,BULLETF_L_SKY_CODE
-    JR DBC_CODE_SET
-DBC_SKY_U_L:
-    LD A,BULLETU_L_SKY_CODE
     JR DBC_CODE_SET
 DBC_ROCK:
     LD A,(IX+6)
     OR A
     JR NZ,DBC_ROCK_LEFT
-    LD A,(IX+1)
-    OR A
-    JR NZ,DBC_ROCK_U
     LD A,BULLETF_ROCK_CODE
     JR DBC_CODE_SET
-DBC_ROCK_U:
-    LD A,BULLETU_ROCK_CODE
-    JR DBC_CODE_SET
 DBC_ROCK_LEFT:
-    LD A,(IX+1)
-    OR A
-    JR NZ,DBC_ROCK_U_L
     LD A,BULLETF_L_ROCK_CODE
-    JR DBC_CODE_SET
-DBC_ROCK_U_L:
-    LD A,BULLETU_L_ROCK_CODE
 DBC_CODE_SET:
     LD (BULLET_TEMP_BYTE),A
     LD L,(IX+4) : LD H,(IX+5)
@@ -2274,7 +2276,14 @@ CHECK_HIT_PAIR:
     LD A,C : ADD A,7 : CP E : RET C
     LD A,E : ADD A,15 : CP C : RET C
 
+    ; F needs its BG cell restored immediately on a hit; U is a hw
+    ; sprite (nothing drawn in the name table to erase) - UPDATE_
+    ; BULLET_U_SPRITES will hide it once it sees ACT=0 below.
+    LD A,(IX+1)
+    OR A
+    JR NZ,CHP_SKIP_ERASE
     CALL ERASE_BULLET_CELL
+CHP_SKIP_ERASE:
     XOR A : LD (IX+0),A
 
     LD A,2 : LD (IY+E_ACT),A
@@ -2291,6 +2300,88 @@ CHECK_HIT_PAIR:
 
     LD HL,SCORE_PER_KILL
     CALL ADD_SCORE
+    RET
+
+; U's own hw sprite position: builds BULLET_U_SPRITE_ATTRS (3 slots x
+; 4 bytes: Y,X,pat,col) straight from the bullet pool's own ROW/COL
+; (same row*8/col*8 anchor the old BG cell used - no new position math
+; needed) and flushes it to hw sprite slots BULLET_U_SPR_BASE_SLOT..+2
+; (7-9). Bullet side stays 3 individually-named CALLs, same "not part
+; of this instruction" precedent as CHECK_BULLET_VS_ENEMY's own bullet
+; loop - only the enemy/cloud pools are genuine buffer+loop here.
+UPDATE_BULLET_U_SPRITES:
+    LD IX,BULLET0_ACT : LD DE,0 : CALL UBUS_ONE
+    LD IX,BULLET1_ACT : LD DE,4 : CALL UBUS_ONE
+    LD IX,BULLET2_ACT : LD DE,8 : CALL UBUS_ONE
+    CALL FLUSH_BULLET_U_SPRITES
+    RET
+
+; IX = bullet slot base, DE = byte offset into BULLET_U_SPRITE_ATTRS
+; (0/4/8). Hides the slot (Y=209, same convention as UOE_HIDE) unless
+; it's an active U-type shot.
+UBUS_ONE:
+    LD HL,BULLET_U_SPRITE_ATTRS : ADD HL,DE
+    LD A,(IX+0)
+    OR A
+    JR Z,UBUS_HIDE
+    LD A,(IX+1)
+    OR A
+    JR Z,UBUS_HIDE
+    LD A,(IX+3) : ADD A,A : ADD A,A : ADD A,A : LD (HL),A : INC HL   ; Y = ROW*8
+    LD A,(IX+2) : ADD A,A : ADD A,A : ADD A,A : LD (HL),A : INC HL   ; X = COL*8
+    LD A,(IX+6)
+    OR A
+    JR NZ,UBUS_PAT_L
+    LD A,PAT_BULLETU
+    JR UBUS_PAT_SET
+UBUS_PAT_L:
+    LD A,PAT_BULLETU_L
+UBUS_PAT_SET:
+    LD (HL),A : INC HL
+    LD A,BULLET_U_COLOR : LD (HL),A
+    RET
+UBUS_HIDE:
+    LD A,209 : LD (HL),A
+    RET
+
+; blasts BULLET_U_SPRITE_ATTRS (12 bytes) to hw sprite slots
+; BULLET_U_SPR_BASE_SLOT..+2 - same raw DI-wrapped OUT + 8-NOP,
+; auto-incrementing-VDP-pointer pattern as FLUSH_ENEMY_SPRITES.
+FLUSH_BULLET_U_SPRITES:
+    DI
+    LD A,BULLET_U_SPR_BASE_SLOT*4 : OUT (99h),A
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    LD HL,BULLET_U_SPRITE_ATTRS
+    LD B,12
+FBUS_LOOP:
+    LD A,(HL) : OUT (98h),A
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    INC HL
+    DJNZ FBUS_LOOP
+    EI
     RET
 
 ; walks CLOUD_POOL (IX-indexed, 9x INC IX per slot - this assembler has
@@ -2589,9 +2680,12 @@ CLOUD_ROW_TABLE:
     DB 2,3,4,5,6,7
 ; "んー早すぎかもな 3から8行目までどちらも更に半速で 3から5が2フレ
 ; ごと 6から8が4フレごとだな" - both bands halved again from the
-; original 1/2, not just the slow one.
+; original 1/2, not just the slow one. Then "4フレはガタが目立つんで
+; 3フレで 中途半端だが仕方ない" - 4 read as visibly choppy, dropped to
+; 3 (rows3-5's own 2 untouched - only the slow band was reported as
+; choppy).
 CLOUD_INTERVAL_TABLE:
-    DB 2,2,2,4,4,4
+    DB 2,2,2,3,3,3
 CLOUD_FIXED4_TABLE:
     DB 1,0,0,0,0,0
 
