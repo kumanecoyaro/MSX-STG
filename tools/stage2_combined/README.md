@@ -300,6 +300,63 @@ with no way to tell where.
     shot travels up-and-left) - all composited through the real
     VRAM/sprite pipeline, not just `tank_gen.py`'s standalone bit-grid
     output.
+- **Score, tick counter, and a real-hardware color-calibration strip**
+  (per direct instruction: "では次はスコアとカウンター Stage1の物を
+  そのまま流用 でスコアの横にブランクの0から15のカラーセル表示
+  カラーは実機で合わせてるんで実際見ないとわからないんで でその下に
+  0からFまでで文字表示 スコアの数字流用とAからFまで新規 背景色は
+  ブラックで"):
+  - **Score** (row0 cols0-7) and **tick counter** (row0 cols29-31,
+    `GAME_TICK`, increments every frame, mod 1000) are ported from
+    `src/CYBER SHMUP.asm` essentially unchanged - same 24-bit-aware
+    digit-extraction algorithm, same real_score/100-plus-forced-"00"
+    trick, same digit glyphs (`DIGIT_PATTERNS_LOCAL`'s 0-9 rows are
+    byte-for-byte copies of that file's own `DIGIT_PATTERNS` -
+    "スコアの数字流用") ("そのまま流用"). Only the RAM addresses and
+    the per-cell VRAM writer changed - this ROM's rows0-1 have no
+    `NAMEBUF` (the ground scroller never touches them), so
+    `WRITE_HUD_CELL` is a plain single-cell write instead of
+    `WRITE_ANIM_CELL`'s NAMEBUF-mirroring version. No kill/enemy
+    mechanic exists yet in this test, so `SCORE` is wired to +1 per
+    shot fired (`TRY_SPAWN_BULLET` calls `ADD_SCORE`) purely so the
+    display has something to exercise - swap for a real scoring event
+    once one exists.
+  - **Color-calibration strip** (row0 cols8-23, 16 solid cells showing
+    palette index 0-15 left to right) with its **hex-label row**
+    underneath (row1 cols8-23, "0123456789ABCDEF") - since SCREEN1
+    color is fixed per 8-code group, each swatch cell needs its own
+    dedicated group (`SWATCH_CODES` places one blank/all-zero-pattern
+    code per group, groups15-30; `SWATCH_COLORS` sets each group's
+    byte to `(i<<4)|i` so palette index `i` shows regardless of which
+    nibble a blank glyph would draw) - between terrain (groups0-10),
+    bullets (11-12), digits/hex (13-14), and this strip (15-30), only
+    1 of the 32 total SCREEN1 color groups (31) is still free; a
+    future feature needing its own color will have to reclaim space
+    from here rather than assume there's room to spare. The point of the
+    strip is purely that "カラーは実機で合わせてるんで実際見ないと
+    わからないんで" - the emulator's palette is only an approximation,
+    so this exists to be read directly off a real TV/monitor. The hex
+    labels reuse the same 0-9 glyphs as the score/counter plus 6 new
+    A-F glyphs (`DIGIT_BASE`=104 covers all 16 in 2 groups,
+    104-119) - "AからFまで新規"; background black for both rows
+    (`HUD_DIGIT_COLORBYTE`=0F1h, fg15 white/bg1 black, matching
+    Stage1's own digit-group color exactly) - "背景色はブラックで".
+- **Shot sound** (PSG noise channel A - "で、ショット音追加 ノイズ
+  ｃｈで弾発射音ぽいの"): `SOUND_SHOT` (called from
+  `TRY_SPAWN_BULLET` alongside the score bump above) kicks channel A's
+  noise period and volume; `SOUND_UPDATE` (called every frame from
+  `MAINLOOP`) counts `SND_TIMER` down to 0 each frame, writing it
+  straight to the volume register so the "shot" fades out on its own -
+  same technique as `src/CYBER SHMUP.asm`'s own `SOUND_SHOT`/
+  `SOUND_UPDATE`, narrowed to the single channel this test uses (PSG
+  mixer register7 reuses that file's own known-good `0B1h`; channels
+  B/C volumes are explicitly zeroed at INIT so they stay silent rather
+  than depending on undefined power-on register state). Verified in
+  the emulator that `SND_TIMER` kicks to `SHOT_SND_FRAMES`(10) on each
+  auto-fired shot and decays 1/frame in between - `SHOT_NOISE_PERIOD`
+  and `SHOT_SND_FRAMES` were picked with no more precise spec than
+  "something shot-sound-like" and are easy first knobs to retune once
+  heard on real hardware.
 - Border-color diagnostic checkpoints through INIT (VDP R7), added
   specifically because the tank-only test froze on real hardware with
   no clue where:
@@ -313,7 +370,8 @@ with no way to tell where.
   | 4 | Row19 filled, terrain IDCACHEs primed |
   | 5 | 16x16 sprite mode set (VDP R1) |
   | 6 | Tank pattern data loaded |
-  | 7 | Tank sprite attributes written - about to enter MAINLOOP |
+  | 7 | Tank sprite attributes written |
+  | 8 | Score/counter/calibration-strip HUD + PSG set up - about to enter MAINLOOP |
 
   If it freezes again, report which color is showing.
 

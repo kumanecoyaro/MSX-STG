@@ -220,6 +220,53 @@ UTS_COLOR_1   EQU 0F24Bh
 UTS_COLOR_2   EQU 0F24Ch
 UTS_COLOR_3   EQU 0F24Dh
 
+; ---------- score/counter + calibration HUD (row0-1) ----------
+; "スコアとカウンター Stage1の物をそのまま流用" - SCORE/SCORE_DIGITS/
+; SCORE_DISPLAY and GAME_TICK/GAME_TICK_DISPLAY are ported from
+; src/CYBER SHMUP.asm essentially unchanged (same 24-bit-aware digit
+; algorithm, same real_score/100 + forced-"00" trick, same row0
+; cols0-7/cols29-31 layout) - only the RAM addresses and the per-cell
+; VRAM writer (WRITE_HUD_CELL, below - this ROM has no NAMEBUF for
+; rows0-1 since the ground scroller never touches them, so it's a
+; plain single-cell write, unlike WRITE_ANIM_CELL's NAMEBUF mirroring).
+; No kill/enemy mechanic exists yet in this test, so SCORE is wired to
+; +1 per shot fired instead (see TRY_SPAWN_BULLET) purely to have
+; something exercising the display - swap for a real scoring event
+; once one exists.
+;
+; Between the score and the counter, row0 cols8-23 show 16 solid color
+; cells (palette index 0-15, left to right) and row1 cols8-23 show
+; their hex labels "0123456789ABCDEF" underneath - a calibration strip
+; since the actual colors can only be judged on real hardware
+; ("カラーは実機で合わせてるんで実際見ないとわからないんで").
+GAME_TICK     EQU 0F266h   ; 2 bytes
+SCORE         EQU 0F268h   ; 3 bytes: low word at +0, high byte at +2 (real score = SCORE*100)
+SCORE_DIGITS  EQU 0F26Bh   ; 6 bytes
+HUD_ROW       EQU 0F271h   ; WRITE_HUD_CELL scratch
+HUD_COL       EQU 0F272h
+HUD_VAL       EQU 0F273h
+HUD_TEMP_BYTE EQU 0F274h
+SND_TIMER     EQU 0F275h   ; shot-sound fade countdown/volume (channel A, noise)
+; digit0 code; digitN = DIGIT_BASE+N for N=0-9 (score/counter, glyphs
+; copied byte-for-byte from src/CYBER SHMUP.asm's own DIGIT_PATTERNS -
+; "スコアの数字流用") and N=10-15 = A-F (new art, "AからFまで新規",
+; for the calibration strip's hex labels) - all 16 fit in exactly 2
+; groups (13-14), so one base covers the whole 0-F range.
+DIGIT_BASE       EQU 104
+HUD_DIGIT_COLORBYTE EQU 0F1h   ; fg15 white/bg1 black - same as Stage1's own digit groups ("背景色はブラックで")
+SCORE_PER_SHOT   EQU 1         ; test-only hookup, see comment above
+SWATCH_ROW       EQU 0
+SWATCH_COL0      EQU 8
+HEXLABEL_ROW     EQU 1
+HEXLABEL_COL0    EQU 8
+PSG_ADDR         EQU 0A0h
+PSG_DATA         EQU 0A1h
+; short/high-pitched noise burst for a shot "pyu" - "ノイズｃｈで弾
+; 発射音ぽいの" (noise channel, shot-sound-like); period/fade picked
+; with no more precise spec than that, easy to retune.
+SHOT_NOISE_PERIOD EQU 8
+SHOT_SND_FRAMES   EQU 10
+
 STACKTOP      EQU 0F380h
 
 INIT:
@@ -404,8 +451,64 @@ INIT_SPRATR_CLR:
     ; checkpoint 7: tank sprite attributes written
     LD B,7 : LD C,7 : CALL WRTVDP
 
-    ; border back to black - checkpoints 1-7 above were diagnostic
-    ; only, leaving it on whatever the last one was (cyan) would
+    ; digit/hex glyphs (16 consecutive codes, DIGIT_BASE=104-119) and
+    ; their shared color (groups13-14, both white/black).
+    LD HL,DIGIT_PATTERNS_LOCAL : LD DE,DIGIT_BASE*8 : LD BC,128 : CALL LDIRVM
+    LD A,HUD_DIGIT_COLORBYTE : LD (HUD_TEMP_BYTE),A
+    LD HL,HUD_TEMP_BYTE : LD DE,2000h+13 : LD BC,1 : CALL LDIRVM
+    LD A,HUD_DIGIT_COLORBYTE : LD (HUD_TEMP_BYTE),A
+    LD HL,HUD_TEMP_BYTE : LD DE,2000h+14 : LD BC,1 : CALL LDIRVM
+
+    ; color-cell strip: one representative code per group (120,128,...,
+    ; 240 - groups15-30), pattern left blank (all-zero) so only that
+    ; group's own color-table byte shows; SWATCH_COLORS below sets each
+    ; group's byte to (i<<4)|i so fg/bg both read as palette index i
+    ; regardless of which nibble a blank glyph would have shown.
+    LD HL,HUD_ZERO8 : LD DE,120*8 : LD BC,8 : CALL LDIRVM
+    LD HL,HUD_ZERO8 : LD DE,128*8 : LD BC,8 : CALL LDIRVM
+    LD HL,HUD_ZERO8 : LD DE,136*8 : LD BC,8 : CALL LDIRVM
+    LD HL,HUD_ZERO8 : LD DE,144*8 : LD BC,8 : CALL LDIRVM
+    LD HL,HUD_ZERO8 : LD DE,152*8 : LD BC,8 : CALL LDIRVM
+    LD HL,HUD_ZERO8 : LD DE,160*8 : LD BC,8 : CALL LDIRVM
+    LD HL,HUD_ZERO8 : LD DE,168*8 : LD BC,8 : CALL LDIRVM
+    LD HL,HUD_ZERO8 : LD DE,176*8 : LD BC,8 : CALL LDIRVM
+    LD HL,HUD_ZERO8 : LD DE,184*8 : LD BC,8 : CALL LDIRVM
+    LD HL,HUD_ZERO8 : LD DE,192*8 : LD BC,8 : CALL LDIRVM
+    LD HL,HUD_ZERO8 : LD DE,200*8 : LD BC,8 : CALL LDIRVM
+    LD HL,HUD_ZERO8 : LD DE,208*8 : LD BC,8 : CALL LDIRVM
+    LD HL,HUD_ZERO8 : LD DE,216*8 : LD BC,8 : CALL LDIRVM
+    LD HL,HUD_ZERO8 : LD DE,224*8 : LD BC,8 : CALL LDIRVM
+    LD HL,HUD_ZERO8 : LD DE,232*8 : LD BC,8 : CALL LDIRVM
+    LD HL,HUD_ZERO8 : LD DE,240*8 : LD BC,8 : CALL LDIRVM
+    LD HL,SWATCH_COLORS : LD DE,2000h+15 : LD BC,16 : CALL LDIRVM
+
+    ; name-table: swatch codes at row0 cols8-23, hex labels at row1 cols8-23
+    LD HL,SWATCH_CODES : LD DE,1800h+SWATCH_COL0 : LD BC,16 : CALL LDIRVM
+    LD HL,HEXLABEL_CODES : LD DE,1800h+32+HEXLABEL_COL0 : LD BC,16 : CALL LDIRVM
+
+    ; PSG: channel A = noise-only (shot sound); channels B/C left
+    ; silent (volume 0) since nothing else uses them here.
+    LD A,7 : OUT (PSG_ADDR),A
+    LD A,0B1h : OUT (PSG_DATA),A
+    LD A,9 : OUT (PSG_ADDR),A
+    XOR A : OUT (PSG_DATA),A
+    LD A,10 : OUT (PSG_ADDR),A
+    XOR A : OUT (PSG_DATA),A
+    XOR A : LD (SND_TIMER),A
+    LD A,8 : OUT (PSG_ADDR),A
+    XOR A : OUT (PSG_DATA),A
+
+    XOR A
+    LD (GAME_TICK),A : LD (GAME_TICK+1),A
+    LD (SCORE),A : LD (SCORE+1),A : LD (SCORE+2),A
+    CALL SCORE_DISPLAY
+    CALL GAME_TICK_DISPLAY
+
+    ; checkpoint 8: HUD (score/counter/calibration strip) + PSG set up
+    LD B,8 : LD C,7 : CALL WRTVDP
+
+    ; border back to black - checkpoints 1-8 above were diagnostic
+    ; only, leaving it on whatever the last one was (medium red) would
     ; otherwise sit there as a permanent, confusing border color.
     LD B,1 : LD C,7 : CALL WRTVDP
 
@@ -458,6 +561,10 @@ SKIP_ADVANCE:
     ; a 2nd time by this same frame's UPDATE_BULLETS sweep.
     CALL UPDATE_BULLETS
     CALL UPDATE_SHOT
+
+    LD HL,(GAME_TICK) : INC HL : LD (GAME_TICK),HL
+    CALL GAME_TICK_DISPLAY
+    CALL SOUND_UPDATE
 
     JP MAINLOOP
 
@@ -1024,6 +1131,13 @@ TSB_COL_OK:
     LD HL,BULLET_ROWADDR_HI : ADD HL,DE : LD A,(HL) : LD (IX+5),A
 
     CALL DRAW_BULLET_CELL
+
+    ; test-only hookup: no kill/enemy mechanic exists yet in this test,
+    ; so a shot firing is what exercises SCORE/the sound effect - see
+    ; the SCORE/SND_TIMER comment above.
+    LD HL,SCORE_PER_SHOT
+    CALL ADD_SCORE
+    CALL SOUND_SHOT
     RET
 
 ; ---------- shots: advance all 3 slots 1 column/frame ----------
@@ -1197,6 +1311,255 @@ WRITE_BULLET_BYTE_HL:
     EI
     RET
 
+; writes HUD_VAL to the name-table cell at (HUD_ROW,HUD_COL) - row0/1
+; only, so unlike WRITE_ANIM_CELL in src/CYBER SHMUP.asm there's no
+; NAMEBUF mirror to keep in sync (the ground scroller only ever
+; touches rows20-23). Same raw DI-wrapped OUT + 8-NOP pattern as
+; WRITE_BULLET_BYTE_HL above, for the same reason (runs every frame
+; under EI, no per-frame HALT).
+WRITE_HUD_CELL:
+    LD HL,1800h
+    LD A,(HUD_ROW)
+    OR A
+    JR Z,WHC_ROW_OK
+    LD DE,32
+    ADD HL,DE
+WHC_ROW_OK:
+    LD A,(HUD_COL) : LD E,A : LD D,0
+    ADD HL,DE
+    DI
+    LD A,L : OUT (99h),A
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    LD A,H : OR 40h : OUT (99h),A
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    LD A,(HUD_VAL) : OUT (98h),A
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    EI
+    RET
+
+; Adds HL to the 24-bit SCORE (low word +0, high byte +2) and redraws
+; it - ported from src/CYBER SHMUP.asm's ADD_SCORE_COMMON, simplified
+; to a single delta-in-HL entry point since this test only ever adds
+; SCORE_PER_SHOT (no 100/200/300 enemy-kill tiers to pick between yet).
+ADD_SCORE:
+    LD DE,(SCORE)
+    ADD HL,DE
+    LD (SCORE),HL
+    JR NC,AS_NO_CARRY
+    LD A,(SCORE+2) : INC A : LD (SCORE+2),A
+AS_NO_CARRY:
+    CALL SCORE_DISPLAY
+    RET
+
+; Extracts SCORE's 6 decimal digits (hundred-thousands..ones, of SCORE
+; itself - i.e. real_score/100) into SCORE_DIGITS, then draws all 8
+; display cells at row0 cols0-7: those 6, followed by a fixed "00"
+; (real score's low 2 digits, always zero) - ported from
+; src/CYBER SHMUP.asm's own SCORE_DISPLAY; see that file's comment on
+; SCORE_DIGITS for why the hundred-thousands/ten-thousands digits need
+; the full 24-bit A:HL subtract idiom.
+SCORE_DISPLAY:
+    LD HL,(SCORE)
+    LD A,(SCORE+2)
+    LD B,0
+SD_HT:
+    LD DE,86A0h
+    OR A
+    SBC HL,DE
+    SBC A,01h
+    JR C,SD_HT_DONE
+    INC B
+    JR SD_HT
+SD_HT_DONE:
+    LD DE,86A0h
+    ADD HL,DE
+    JR NC,SD_HT_RESTORE_A
+    INC A
+SD_HT_RESTORE_A:
+    ADD A,01h
+    PUSH AF
+    LD A,B : LD (SCORE_DIGITS+0),A
+    POP AF
+
+    LD B,0
+SD_TT:
+    LD DE,10000
+    OR A
+    SBC HL,DE
+    SBC A,00h
+    JR C,SD_TT_DONE
+    INC B
+    JR SD_TT
+SD_TT_DONE:
+    LD DE,10000
+    ADD HL,DE
+    LD A,B : LD (SCORE_DIGITS+1),A
+
+    LD B,0
+SD_TH:
+    LD DE,1000
+    OR A
+    SBC HL,DE
+    JR C,SD_TH_DONE
+    INC B
+    JR SD_TH
+SD_TH_DONE:
+    ADD HL,DE
+    LD A,B : LD (SCORE_DIGITS+2),A
+
+    LD B,0
+SD_H:
+    LD DE,100
+    OR A
+    SBC HL,DE
+    JR C,SD_H_DONE
+    INC B
+    JR SD_H
+SD_H_DONE:
+    ADD HL,DE
+    LD A,B : LD (SCORE_DIGITS+3),A
+
+    LD B,0
+SD_T:
+    LD DE,10
+    OR A
+    SBC HL,DE
+    JR C,SD_T_DONE
+    INC B
+    JR SD_T
+SD_T_DONE:
+    ADD HL,DE
+    LD A,B : LD (SCORE_DIGITS+4),A
+
+    LD A,L : LD (SCORE_DIGITS+5),A
+
+    XOR A : LD (HUD_ROW),A
+    LD A,0 : LD (HUD_COL),A
+    LD A,(SCORE_DIGITS+0) : ADD A,DIGIT_BASE : LD (HUD_VAL),A
+    CALL WRITE_HUD_CELL
+    XOR A : LD (HUD_ROW),A
+    LD A,1 : LD (HUD_COL),A
+    LD A,(SCORE_DIGITS+1) : ADD A,DIGIT_BASE : LD (HUD_VAL),A
+    CALL WRITE_HUD_CELL
+    XOR A : LD (HUD_ROW),A
+    LD A,2 : LD (HUD_COL),A
+    LD A,(SCORE_DIGITS+2) : ADD A,DIGIT_BASE : LD (HUD_VAL),A
+    CALL WRITE_HUD_CELL
+    XOR A : LD (HUD_ROW),A
+    LD A,3 : LD (HUD_COL),A
+    LD A,(SCORE_DIGITS+3) : ADD A,DIGIT_BASE : LD (HUD_VAL),A
+    CALL WRITE_HUD_CELL
+    XOR A : LD (HUD_ROW),A
+    LD A,4 : LD (HUD_COL),A
+    LD A,(SCORE_DIGITS+4) : ADD A,DIGIT_BASE : LD (HUD_VAL),A
+    CALL WRITE_HUD_CELL
+    XOR A : LD (HUD_ROW),A
+    LD A,5 : LD (HUD_COL),A
+    LD A,(SCORE_DIGITS+5) : ADD A,DIGIT_BASE : LD (HUD_VAL),A
+    CALL WRITE_HUD_CELL
+    XOR A : LD (HUD_ROW),A
+    LD A,6 : LD (HUD_COL),A
+    LD A,DIGIT_BASE : LD (HUD_VAL),A
+    CALL WRITE_HUD_CELL
+    XOR A : LD (HUD_ROW),A
+    LD A,7 : LD (HUD_COL),A
+    LD A,DIGIT_BASE : LD (HUD_VAL),A
+    CALL WRITE_HUD_CELL
+    RET
+
+; Converts GAME_TICK (mod 1000) to 3 decimal digits and draws them at
+; row0 cols29-31 - ported from src/CYBER SHMUP.asm's own
+; GAME_TICK_DISPLAY (called every frame there too, same as here).
+GAME_TICK_DISPLAY:
+    LD HL,(GAME_TICK)
+GTD_MOD1000:
+    LD DE,1000
+    OR A
+    SBC HL,DE
+    JR NC,GTD_MOD1000
+    ADD HL,DE
+
+    LD B,0
+GTD_H100:
+    LD DE,100
+    OR A
+    SBC HL,DE
+    JR C,GTD_H100_DONE
+    INC B
+    JR GTD_H100
+GTD_H100_DONE:
+    ADD HL,DE
+
+    LD C,0
+GTD_T10:
+    LD DE,10
+    OR A
+    SBC HL,DE
+    JR C,GTD_T10_DONE
+    INC C
+    JR GTD_T10
+GTD_T10_DONE:
+    ADD HL,DE
+    LD A,L : LD (HUD_TEMP_BYTE),A
+
+    XOR A : LD (HUD_ROW),A
+    LD A,29 : LD (HUD_COL),A
+    LD A,B : ADD A,DIGIT_BASE : LD (HUD_VAL),A
+    CALL WRITE_HUD_CELL
+    XOR A : LD (HUD_ROW),A
+    LD A,30 : LD (HUD_COL),A
+    LD A,C : ADD A,DIGIT_BASE : LD (HUD_VAL),A
+    CALL WRITE_HUD_CELL
+    XOR A : LD (HUD_ROW),A
+    LD A,31 : LD (HUD_COL),A
+    LD A,(HUD_TEMP_BYTE) : ADD A,DIGIT_BASE : LD (HUD_VAL),A
+    CALL WRITE_HUD_CELL
+    RET
+
+; PSG (AY-3-8910-compatible) shot sound: channel A, noise-only -
+; "ノイズｃｈで弾発射音ぽいの". SND_TIMER doubles as both the frame
+; countdown and channel A's volume (0-15, see SOUND_UPDATE), so the
+; sound fades out on its own as it counts down to 0 - same technique
+; as src/CYBER SHMUP.asm's own SOUND_SHOT/SOUND_UPDATE, just narrowed
+; to the one channel this test actually uses.
+SOUND_SHOT:
+    LD A,6 : OUT (PSG_ADDR),A
+    LD A,SHOT_NOISE_PERIOD : OUT (PSG_DATA),A
+    LD A,SHOT_SND_FRAMES : LD (SND_TIMER),A
+    RET
+
+SOUND_UPDATE:
+    LD A,(SND_TIMER)
+    LD B,A
+    LD A,8 : OUT (PSG_ADDR),A
+    LD A,B : OUT (PSG_DATA),A
+    LD A,(SND_TIMER)
+    OR A
+    RET Z
+    DEC A : LD (SND_TIMER),A
+    RET
+
 REFRESH_IDCACHE_33:
     LD B,33
 RIC_LOOP:
@@ -1269,5 +1632,43 @@ BULLET_ROWADDR_HI:
 ; TANK_Y_BASE(156) exactly - each row-index down means 8px higher.
 TANK_TIER_Y_TABLE:
     DB 132,140,148,156
+
+; digit glyphs 0-9, byte-for-byte from src/CYBER SHMUP.asm's own
+; DIGIT_PATTERNS ("スコアの数字流用" - reuse the score's numerals),
+; followed by A-F (new art, "AからFまで新規" - same weight/style as
+; the reused digits, no source glyph existed for these).
+DIGIT_PATTERNS_LOCAL:
+    DB 3Ch,66h,6Eh,76h,66h,66h,3Ch,00h   ; 0
+    DB 18h,38h,58h,18h,18h,18h,7Eh,00h   ; 1
+    DB 3Ch,66h,06h,0Ch,30h,60h,7Eh,00h   ; 2
+    DB 3Ch,66h,06h,1Ch,06h,66h,3Ch,00h   ; 3
+    DB 0Ch,1Ch,2Ch,4Ch,7Eh,0Ch,0Ch,00h   ; 4
+    DB 7Eh,60h,7Ch,06h,06h,66h,3Ch,00h   ; 5
+    DB 1Ch,30h,60h,7Ch,66h,66h,3Ch,00h   ; 6
+    DB 7Eh,06h,0Ch,18h,30h,30h,30h,00h   ; 7
+    DB 3Ch,66h,66h,3Ch,66h,66h,3Ch,00h   ; 8
+    DB 3Ch,66h,66h,3Eh,06h,0Ch,38h,00h   ; 9
+    DB 18h,3Ch,66h,66h,7Eh,66h,66h,00h   ; A
+    DB 7Ch,66h,66h,7Ch,66h,66h,7Ch,00h   ; B
+    DB 3Ch,66h,60h,60h,60h,66h,3Ch,00h   ; C
+    DB 78h,6Ch,66h,66h,66h,6Ch,78h,00h   ; D
+    DB 7Eh,60h,60h,78h,60h,60h,7Eh,00h   ; E
+    DB 7Eh,60h,60h,78h,60h,60h,60h,00h   ; F
+
+; calibration strip: 16 name-table codes (one per color group15-30,
+; see the INIT block that loads these) and their hex-label codes -
+; "スコアの横にブランクの0から15のカラーセル表示...でその下に0から
+; Fまでで文字表示".
+SWATCH_CODES:
+    DB 120,128,136,144,152,160,168,176,184,192,200,208,216,224,232,240
+; group N's color byte = (i<<4)|i for i=0-15 (palette index i in both
+; nibbles - the blank glyph never draws a fg pixel, so only bg would
+; normally show, but setting both means it's right either way).
+SWATCH_COLORS:
+    DB 000,017,034,051,068,085,102,119,136,153,170,187,204,221,238,255
+HEXLABEL_CODES:
+    DB 104,105,106,107,108,109,110,111,112,113,114,115,116,117,118,119
+HUD_ZERO8:
+    DS 8,0
 
 ; ===== generated tables (terrain + tank) appended below by build_test.py =====
