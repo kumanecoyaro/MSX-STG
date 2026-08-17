@@ -510,11 +510,11 @@ ZUM_PUSH_SPEED EQU 3
 ; +6 WIDTH (2 or 4, chosen at spawn), +7/+8 ROWADDR_LO/HI (this slot's
 ; fixed name-table row base address, precomputed once at INIT).
 CLOUD_SLOT_SIZE  EQU 9
-; 6->2: "5から8行目は削除してみてくれ" (slowdown-diagnosis experiment,
-; see CLOUD_ROW_TABLE's own comment) - only rows2-3 (3rd-4th from top)
-; remain.
-CLOUD_SLOT_COUNT EQU 2
-CLOUD_POOL    EQU 0F2A9h   ; CLOUD_SLOT_SIZE*CLOUD_SLOT_COUNT bytes (18, was 54 before the row cut above)
+; briefly cut to 2 (rows2-3 only) as a slowdown-diagnosis experiment
+; ("5から8行目は削除してみてくれ") - ruled out ("雲減らしても変わらん
+; な そんなに処理増えてないはずだが"), restored to all 6.
+CLOUD_SLOT_COUNT EQU 6
+CLOUD_POOL    EQU 0F2A9h   ; CLOUD_SLOT_SIZE*CLOUD_SLOT_COUNT = 54 bytes
 CLOUD_RNG     EQU 0F2DFh   ; shared free-running counter, same idea as Stage1's DFL_RNG
 CLOUD_SPAWN_COL EQU 32     ; leftmost cell starts one column past the right edge
 ; codes1-2: genuinely unused pattern-code slots within group0 (see the
@@ -2794,8 +2794,20 @@ CHECK_HIT_PAIR_ZUM:
     LD A,C : ADD A,7 : CP E : RET C
     LD A,E : ADD A,15 : CP C : RET C
 
-    LD A,(IY+1) : ADD A,8 : LD D,A   ; D = Zum's own horizontal midpoint
-    LD A,B                            ; bullet's own pixel X
+    ; front/back is decided by the TANK's own position relative to
+    ; Zum (TANK_X>=Zum_X - the same "already passed" test
+    ; UPDATE_TANK_ZUM_PUSH uses), not the bullet's own pixel position -
+    ; "でZum貫通中にショット撃ってると背中に当たって倒してしまう": the
+    ; muzzle spawns at TANK_X+~24, so while pushing forward into the
+    ; still-allowed overlap (still approaching from the front, hasn't
+    ; actually gotten behind it), a bullet could already spawn past
+    ; Zum's own midpoint on pure spawn-position math alone, letting a
+    ; point-blank shot cheese the "must attack from behind" rule
+    ; without ever actually maneuvering around it. Tying this to the
+    ; tank's own position instead means only genuinely being behind
+    ; Zum (same criterion the push-block already uses) ever counts.
+    LD A,(IY+1) : LD D,A              ; D = Zum_X
+    LD A,(TANK_X)
     CP D
     JR NC,CHPZ_REAR
 
@@ -3204,24 +3216,21 @@ EXPLODE_DIR_DY:
 ; "3から5行目は最速の毎フレーム1セル移動 5から8行目は半速の2フレで
 ; 1セル" (5行目は最速側): both remaining rows are in the fast band,
 ; INTERVAL=2 (see the halving rounds below).
-; "で、かなり速度落ちてるな 雲追加が原因かもな 5から8行目は削除して
-; みてくれ 遅くなった原因は雲かどうか分からんが" - rows5-8(top)
-; (screen rows4-7, CLOUD_SLOT_COUNT 6->2) dropped as an experiment to
-; see whether the clouds are actually behind the reported real-
-; hardware slowdown - unconfirmed either way, this is a test, not a
-; settled diagnosis.
+; rows5-8(top) (screen rows4-7) were briefly dropped as a slowdown-
+; diagnosis experiment ("5から8行目は削除してみてくれ") - ruled out
+; ("雲減らしても変わらんな"), restored to the full 6 rows.
 CLOUD_ROW_TABLE:
-    DB 2,3
+    DB 2,3,4,5,6,7
 ; "んー早すぎかもな 3から8行目までどちらも更に半速で 3から5が2フレ
 ; ごと 6から8が4フレごとだな" - both bands halved again from the
 ; original 1/2, not just the slow one. Then "4フレはガタが目立つんで
 ; 3フレで 中途半端だが仕方ない" - 4 read as visibly choppy, dropped to
 ; 3 (rows3-5's own 2 untouched - only the slow band was reported as
-; choppy; now moot, that band's rows are the ones removed above).
+; choppy).
 CLOUD_INTERVAL_TABLE:
-    DB 2,2
+    DB 2,2,2,3,3,3
 CLOUD_FIXED4_TABLE:
-    DB 1,0
+    DB 1,0,0,0,0,0
 
 ; src/CYBER SHMUP.asm's own CLOUD_WA_CODE/CLOUD_WB_CODE pattern bytes,
 ; copied byte-for-byte ("Stage1でもやってる雲を").

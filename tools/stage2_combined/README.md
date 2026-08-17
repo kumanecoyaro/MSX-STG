@@ -955,6 +955,31 @@ with no way to tell where.
   Verified: rows4-7 stay pure sky (code0) over a 3000-frame run, no
   stray codes; rows2-3 still show clouds normally; everything else
   (score/HUD/terrain/bullets/Zum) unaffected.
+- **Cloud-row experiment ruled out, restored to all 6** ("雲減らして
+  も変わらんな そんなに処理増えてないはずだが"): the cut above made
+  no difference to the reported real-hardware slowdown, so
+  `CLOUD_SLOT_COUNT`/`CLOUD_ROW_TABLE`/`CLOUD_INTERVAL_TABLE`/
+  `CLOUD_FIXED4_TABLE` are all back to their pre-experiment values
+  (rows2-7, matching the earlier cloud-feature entries above). Clouds
+  are ruled out as the cause; the real slowdown source is still open.
+- **Zum front/back hit test could be cheesed at point-blank range**
+  ("でZum貫通中にショット撃ってると背中に当たって倒してしまう"): the
+  previous front/back split compared the *bullet's own* pixel X
+  against Zum's midpoint - but the muzzle spawns at `TANK_X`+~24, so
+  while pushing forward into the still-allowed overlap (still
+  approaching from the front - see the earlier "めり込みはこのまま
+  でいいわ" entry - not yet actually behind it), a bullet could
+  already spawn past that midpoint purely from being at point-blank
+  range, letting a shot register as a rear kill without the player
+  ever genuinely maneuvering around Zum. Fixed by switching the test to
+  the *tank's own* position - `TANK_X>=Zum_X`, the exact same "already
+  passed" criterion `UPDATE_TANK_ZUM_PUSH` uses - so only a shot fired
+  after actually getting behind Zum (not just standing close to it)
+  counts as rear. Verified: a bullet landing on Zum's rear half by pure
+  pixel math, fired while `TANK_X` is still in front of Zum, is now
+  correctly absorbed (front) rather than killing it; a shot fired once
+  `TANK_X` has genuinely passed Zum's own X still kills it regardless
+  of which half the bullet's own pixel lands on.
 
 ## Bugs found and fixed while building this
 
