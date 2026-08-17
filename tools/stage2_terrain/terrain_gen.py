@@ -94,7 +94,16 @@ R225_UL = sub_tile(r225, 0, 0)
 R225_UR = sub_tile(r225, 0, 8)
 R225D_UL = hflip(R225_UR)
 R225D_UR = hflip(R225_UL)
-BLANK = [[0] * 8 for _ in range(8)]
+# id0/BLANK ("not yet grown into rock" cells within the scrolling band -
+# see the character-code-assignment comment below) used to be a flat
+# solid-color tile (all-zero bits, so only the group's own bg showed) -
+# given actual texture per direct instruction: "Rockの左右のイエロー
+# ブランクにSandを設定" (put Sand in the yellow blanks to the left/
+# right of Rock). Sand.json's own fg/bg are ignored - like every other
+# tile here, it just contributes bits; the uniform ROCK_COLOR group
+# still supplies the actual color (see COLORDATA below), same as
+# ROCK_L/ROCK_R's own fg/bg from Rock.json are ignored too.
+BLANK = load_bits("Sand")
 
 # ---------- id table ----------
 ID_NAMES = ["BLANK", "ROCK_L", "ROCK_R", "R225_UL", "R225_UR", "R225D_UL", "R225D_UR"]

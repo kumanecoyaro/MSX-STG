@@ -142,6 +142,22 @@ SKY_BLANK_CODE    EQU 0         ; TERRAIN_BLANK_ROW's code - the permanent open-
 ; here as the "restore rock" erase code, same tile row19 was filled
 ; with at INIT.
 
+; row18 (right above row19's flat rock top): a 2nd static one-time
+; fill, same idea as row19 itself, showing sprites/SkySand.json's
+; sky-to-sand dither pattern instead of an abrupt cut from open sky
+; straight into solid rock - "今イエローで埋めてる下から5行目の上に
+; SkySandで1行埋めて" (row19 is the 5th row from the bottom - "above
+; it" is row18). Own dedicated 2-tone color (fg5 light blue/bg11 light
+; yellow, straight from the source JSON, unlike the terrain's own
+; uniform-ROCK_COLOR tiles) needs its own group - placed at the last
+; still-free one (31, codes248-255; every other group is spoken for by
+; terrain/bullets/digits/swatch - see the code-budget comments on
+; those). Erased the same way row19 is - see ERASE_BULLET_CELL's new
+; row18 case below, added so a climbing shot can't blank it out the
+; same way it once could the HUD rows (see BULLET_MIN_ROW's own entry).
+SKYSAND_CODE  EQU 248
+SKYSAND_COLOR EQU 05Bh   ; fg5/bg11
+
 ; Bullet BG pattern codes: each bullet's art needs one code per
 ; background color group it can appear over (SCREEN1 colors are fixed
 ; per 8-code group, not per screen position - see bullet_gen.py's own
@@ -439,6 +455,14 @@ INIT:
 
     LD HL,TERRAIN_ROCKY_BLANK : LD DE,TERRAIN_PATTERN_COUNT*8 : LD BC,8 : CALL LDIRVM
     LD HL,TERRAIN_ROW19 : LD DE,1A60h : LD BC,32 : CALL LDIRVM
+
+    ; row18: SkySand pattern + its own dedicated color group, then a
+    ; static one-time fill across all 32 columns - same treatment as
+    ; row19 just above.
+    LD HL,SKYSAND_PATTERN : LD DE,SKYSAND_CODE*8 : LD BC,8 : CALL LDIRVM
+    LD A,SKYSAND_COLOR : LD (HUD_TEMP_BYTE),A
+    LD HL,HUD_TEMP_BYTE : LD DE,2000h+31 : LD BC,1 : CALL LDIRVM
+    LD HL,TERRAIN_ROW18 : LD DE,1A40h : LD BC,32 : CALL LDIRVM
 
     XOR A
     LD (TICK),A
@@ -1403,19 +1427,28 @@ UOB_DEACTIVATE:
     XOR A : LD (IX+0),A
     RET
 
-; IX = slot base. row<19 sky, row==19 explicit rock restore (row19 is
-; static, only ever written at INIT), row>19 skip entirely - rows
-; 20-23 already got fully redrawn from NAMEBUF earlier this same
-; MAINLOOP iteration (see the comment on BULLET_ROCK_ROW_MIN above),
-; so there's nothing to restore. Shared by UPDATE_ONE_BULLET's own
-; per-frame erase-before-advance and CHECK_BULLET_VS_ENEMY (a bullet
-; that hits an enemy needs the exact same cell restored immediately,
-; not just left to redraw stale next frame since it's now inactive).
+; IX = slot base. row==18 explicit SkySand restore, row<19 (other than
+; 18) sky, row==19 explicit rock restore (rows 18/19 are both static,
+; only ever written at INIT), row>19 skip entirely - rows 20-23
+; already got fully redrawn from NAMEBUF earlier this same MAINLOOP
+; iteration (see the comment on BULLET_ROCK_ROW_MIN above), so there's
+; nothing to restore. The row18 case exists for the same reason
+; BULLET_MIN_ROW does - a climbing shot blindly restoring "sky" would
+; otherwise blank out row18's own SkySand fill exactly like it once
+; could the HUD rows. Shared by UPDATE_ONE_BULLET's own per-frame
+; erase-before-advance and CHECK_BULLET_VS_ENEMY (a bullet that hits
+; an enemy needs the exact same cell restored immediately, not just
+; left to redraw stale next frame since it's now inactive).
 ERASE_BULLET_CELL:
     LD A,(IX+3)
+    CP 18
+    JR Z,EBC_ROW18
     CP BULLET_ROCK_ROW_MIN
     JR NC,EBC_ROCKBAND
     LD A,SKY_BLANK_CODE
+    JR EBC_WRITE
+EBC_ROW18:
+    LD A,SKYSAND_CODE
     JR EBC_WRITE
 EBC_ROCKBAND:
     JR NZ,EBC_SKIP
@@ -2175,6 +2208,13 @@ TERRAIN_ROCKY_BLANK:
     DS 8,0
 TERRAIN_ROW19:
     DS 32,TERRAIN_PATTERN_COUNT
+
+; sprites/SkySand.json, converted by hand (single static 8x8 tile, no
+; blending/quadrants needed) - see the SKYSAND_CODE comment above.
+SKYSAND_PATTERN:
+    DB 255,0,255,0,255,255,0,0
+TERRAIN_ROW18:
+    DS 32,SKYSAND_CODE
 
 ; 49 entries (jump frame 0-48): a half-sine arc, offset(t) =
 ; round(24 * sin(pi*t/48)) - 24px peak at t=24, eased in/out (fast

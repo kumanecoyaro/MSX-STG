@@ -26,6 +26,21 @@ actual emulated VRAM output before it's integrated.
   wedge-A->wedge-B transition convention.
 - Descent reuses Rock225 mirrored left-right (`hflip`, swapping which
   half is which) per direct instruction - no separate down-slope art.
+- `sprites/Sand.json` (8x8) - id0/BLANK's art, i.e. the "not yet grown
+  into rock" cells within the scrolling band (the rows above the
+  current ground tier, still waiting their turn to become Rock as the
+  track climbs/descends) - previously a flat solid-color tile (all-
+  zero bits, so only the uniform rock color group's own bg showed
+  through), given actual sand-speckle texture per direct instruction:
+  "Rockの左右のイエローブランクにSandを設定" (put Sand in the yellow
+  blanks to the left/right of Rock). Like every other tile here, only
+  its bit pattern is used - the JSON's own fg/bg are ignored since the
+  uniform `ROCK_COLOR` group still supplies the actual in-game color
+  (see the color-table comment in `terrain_gen.py`). The numeric id
+  (0) is unchanged, so `combined_test.asm`'s own terrain-collision
+  code (which scans for "the first non-BLANK id" using that exact
+  value as its sentinel) is entirely unaffected - only the rendered
+  art changed, not the id semantics.
 - The 4 rows (screen rows 20-23, i.e. `GROUND_ROW0`..+3, matching the
   4-row band Stage 1 already treats as "the ground scroller") share
   **one** PXCHAR/phase clock, gated every 8 ticks - unlike Stage 1's

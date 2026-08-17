@@ -549,6 +549,24 @@ with no way to tell where.
   | 9 | Enemy patterns + pool set up - about to enter MAINLOOP |
 
   If it freezes again, report which color is showing.
+- **SkySand transition row** (per direct instruction: "今イエローで
+  埋めてる下から5行目の上にSkySandで1行埋めて" - row19, the flat rock
+  top, is the 5th row from the bottom; "above it" is row18): a 2nd
+  static one-time fill, same treatment as row19 itself (never touched
+  again after INIT, no `NAMEBUF`/scrolling involvement), showing
+  `sprites/SkySand.json`'s dithered sky-to-sand pattern across all 32
+  columns instead of an abrupt cut straight from open sky into solid
+  rock. Its own dedicated 2-tone color (fg5 light blue/bg11 light
+  yellow, taken directly from the source JSON - unlike the terrain's
+  own uniform-`ROCK_COLOR` tiles) needed a whole new color group -
+  placed at group31 (codes248-255), the very last one still free after
+  terrain/bullets/digits/swatch. `ERASE_BULLET_CELL` gained a row18
+  case (restoring `SKYSAND_CODE` instead of the default "row<19 ->
+  sky" rule) for the same reason `BULLET_MIN_ROW` exists - a climbing
+  shot passing through would otherwise blank this row out exactly like
+  it once could the HUD rows. Verified: 400 frames of continuous
+  up-fire aimed straight through row18 left it byte-for-byte unchanged
+  afterward.
 
 ## Bugs found and fixed while building this
 
