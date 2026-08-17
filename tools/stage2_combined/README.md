@@ -47,6 +47,18 @@ with no way to tell where.
   this numbering runs opposite to `terrain_gen.py`'s own generator
   "tier" (which counts up while climbing), since row-index0 is the
   *highest* screen row.
+  - `TANK_ON_SLOPE` has a 2-frame hold (`TANK_SLOPE_HOLD`) after the
+    last "yes" reading before it actually drops to 0, instead of
+    following the raw per-frame probe directly - the rapid-climb
+    section chains transitions with no flat run between them, and a
+    single-frame gap of plain rock between 2 chained Rock225 markers
+    would otherwise flicker the pose back to Normal for 1 frame, per
+    direct instruction ("Gap判定が2連続なら(登ってもGap)またRockで
+    ないならノーマルに切り替えずGapスプライトのままに").
+  - `UPDATE_TANK_SPRITES` draws the Gap pose 4px lower than its
+    logical `TANK_Y_CUR`/`TANK_GROUND_Y` ("スプライトをGapにしたら
+    Y+4px") - purely a rendering offset (`TANK_DRAW_Y`), collision and
+    jump math are untouched.
 - **Pose selection** (`UPDATE_POSE`): TankF (grounded, neutral),
   TankUp (grounded, aiming up), TankFGap (airborne OR on a slope,
   neutral), TankUGap (airborne OR on a slope, aiming up) - jump takes

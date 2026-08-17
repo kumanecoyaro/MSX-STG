@@ -150,6 +150,8 @@ TANK_TIER     EQU 0F242h    ; 0-3, current ground tier (screen row 23-TANK_TIER)
 TANK_ROWPTR   EQU 0F243h    ; word: IDCACHE_Tn base address for the surface tier's row
 TANK_COL_R    EQU 0F245h    ; probe columns (name-table column, 0-31)
 TANK_COL_L    EQU 0F246h    ; = TANK_COL_R - 1
+TANK_SLOPE_HOLD EQU 0F247h  ; frames left before TANK_ON_SLOPE actually drops to 0 - see UPDATE_TERRAIN_COLLISION
+TANK_DRAW_Y   EQU 0F248h    ; TANK_Y_CUR, +4 while the Gap pose is showing - see UPDATE_TANK_SPRITES
 
 STACKTOP      EQU 0F380h
 
@@ -304,6 +306,7 @@ INIT_SPRATR_CLR:
     LD (TANK_DX),A
     LD (TANK_AIMUP),A
     LD (TANK_ON_SLOPE),A
+    LD (TANK_SLOPE_HOLD),A
     LD (PREV_TRIGB),A
     LD (JUMP_ACTIVE),A
     LD (JUMP_FRAME),A
@@ -451,6 +454,13 @@ UTX_DO_LEFT:
 ; solid ground). TANK_COL_L = TANK_COL_R-1 ("その横", beside it)
 ; then checks that SAME row for a Rock225/Rock225D id (3-6, vs. plain
 ; ROCK_L/ROCK_R's 1-2) to flag TANK_ON_SLOPE, consumed by UPDATE_POSE.
+; TANK_ON_SLOPE has 2 frames of hold after the last raw "yes" reading
+; (TANK_SLOPE_HOLD) before it actually drops to 0 - the rapid-climb
+; section chains transitions with no flat run between them, and a
+; single-frame gap of plain rock between 2 chained Rock225 markers
+; would otherwise flicker the pose back to Normal for 1 frame -
+; "Gap判定が2連続なら(登ってもGap)またRockでないならノーマルに
+; 切り替えずGapスプライトのままに".
 UPDATE_TERRAIN_COLLISION:
     LD A,(TANK_X) : ADD A,TANK_FOOT_DX
     SRL A
@@ -503,13 +513,20 @@ UTC_TIER_DONE:
     LD HL,(TANK_ROWPTR) : ADD HL,DE
     LD A,(HL)
     CP 3
-    JR C,UTC_SLOPE_NO
-    LD A,1
-    JR UTC_SLOPE_SET
-UTC_SLOPE_NO:
-    XOR A
-UTC_SLOPE_SET:
-    LD (TANK_ON_SLOPE),A
+    JR C,UTC_SLOPE_RAW_NO
+    ; raw slope detected this frame - (re)arm the 2-frame hold
+    LD A,2 : LD (TANK_SLOPE_HOLD),A
+    LD A,1 : LD (TANK_ON_SLOPE),A
+    RET
+UTC_SLOPE_RAW_NO:
+    LD A,(TANK_SLOPE_HOLD)
+    OR A
+    JR Z,UTC_SLOPE_EXPIRED
+    DEC A : LD (TANK_SLOPE_HOLD),A
+    LD A,1 : LD (TANK_ON_SLOPE),A
+    RET
+UTC_SLOPE_EXPIRED:
+    XOR A : LD (TANK_ON_SLOPE),A
     RET
 
 ; ---------- jump (B button, edge-triggered, 24px half-sine arc) ----------
@@ -583,23 +600,39 @@ UP_SET:
 ; ---------- writes the 4 sprite attribute entries from TANK_X/ ----------
 ; TANK_Y_CUR/CUR_POSE_PAT. Called once from INIT, then every frame.
 UPDATE_TANK_SPRITES:
+    ; the Gap pose (climbing/descending, or airborne) draws 4px lower
+    ; than its logical Y - "スプライトをGapにしたらY+4px" - a purely
+    ; visual offset (TANK_Y_CUR/TANK_GROUND_Y, used by collision and
+    ; jump math, are untouched).
+    LD A,(CUR_POSE_PAT)
+    CP PAT_TANKFGAP
+    JR Z,UTS_GAP_OFFSET
+    CP PAT_TANKUGAP
+    JR Z,UTS_GAP_OFFSET
+    LD A,(TANK_Y_CUR)
+    JR UTS_DRAW_Y_SET
+UTS_GAP_OFFSET:
+    LD A,(TANK_Y_CUR) : ADD A,4
+UTS_DRAW_Y_SET:
+    LD (TANK_DRAW_Y),A
+
     LD IX,SPRITE_ATTRS
-    LD A,(TANK_Y_CUR) : LD (IX+0),A
+    LD A,(TANK_DRAW_Y) : LD (IX+0),A
     LD A,(TANK_X)     : LD (IX+1),A
     LD A,(CUR_POSE_PAT) : LD (IX+2),A
     LD A,TANK_COLOR_TL : LD (IX+3),A
 
-    LD A,(TANK_Y_CUR) : LD (IX+4),A
+    LD A,(TANK_DRAW_Y) : LD (IX+4),A
     LD A,(TANK_X) : ADD A,16 : LD (IX+5),A
     LD A,(CUR_POSE_PAT) : ADD A,4 : LD (IX+6),A
     LD A,TANK_COLOR_TR : LD (IX+7),A
 
-    LD A,(TANK_Y_CUR) : ADD A,16 : LD (IX+8),A
+    LD A,(TANK_DRAW_Y) : ADD A,16 : LD (IX+8),A
     LD A,(TANK_X)     : LD (IX+9),A
     LD A,(CUR_POSE_PAT) : ADD A,8 : LD (IX+10),A
     LD A,TANK_COLOR_BL : LD (IX+11),A
 
-    LD A,(TANK_Y_CUR) : ADD A,16 : LD (IX+12),A
+    LD A,(TANK_DRAW_Y) : ADD A,16 : LD (IX+12),A
     LD A,(TANK_X) : ADD A,16 : LD (IX+13),A
     LD A,(CUR_POSE_PAT) : ADD A,12 : LD (IX+14),A
     LD A,TANK_COLOR_BR : LD (IX+15),A
