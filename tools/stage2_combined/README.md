@@ -21,15 +21,40 @@ with no way to tell where.
   `round(24*sin(pi*t/48))` for t=0..48 - eased in/out, brief hang near
   the peak, per direct instruction "サインジャンプ"; supersedes an
   earlier constant-1px/frame triangular arc), applied as
-  `TANK_Y_CUR = TANK_Y_BASE - JUMP_Y_OFFSET`. Not real gravity/physics,
-  just a fixed-shape hop - fine for now since there's no ground-height
-  variation to land on
-  yet anyway.
+  `TANK_Y_CUR = TANK_GROUND_Y - JUMP_Y_OFFSET` - `TANK_GROUND_Y` is the
+  terrain-following baseline from `UPDATE_TERRAIN_COLLISION` below
+  (used to be the fixed constant `TANK_Y_BASE`), so a jump arcs
+  relative to whichever tier the tank is currently standing on. Not
+  real gravity/physics, just a fixed-shape hop added on top of that.
+- **Terrain collision** (`UPDATE_TERRAIN_COLLISION`): the tank always
+  rests on whichever terrain tier is under it ("常にRockに設置") and
+  switches to the Gap pose while straddling a climb/descend transition
+  ("Rock225に接触したらGapスプライトに切り替えて登るように...Rock
+  戻ったらノーマルに戻す"). 2 probe name-table columns near the tank's
+  right/front edge: `TANK_COL_R` (`(TANK_X+24)>>3`, directly under -
+  "自機の右下") scans `IDCACHE_T0`-`IDCACHE_T3` top-to-bottom for the
+  first non-BLANK id at that column to find the surface tier - "下は
+  Rock設置を調べ" - any non-BLANK id (steady rock or a slope-transition
+  cell) counts as solid ground. `TANK_COL_L` (`TANK_COL_R-1`, one
+  column to its left - "その横") then checks that *same* row for a
+  Rock225/Rock225D id ("Gapを調べる") to set `TANK_ON_SLOPE`. No
+  descend art exists yet, so both the climb (`R225_UL`/`R225_UR`) and
+  descend (`R225D_UL`/`R225D_UR`) ids trigger the same Gap pose -
+  "まだ下りの絵を用意してないのでGapスプライト流用". `TANK_TIER_Y_TABLE`
+  converts the found row-index straight to a Y (`TANK_TIER=3`, the
+  track's starting/lowest tier, reproduces the original fixed
+  `TANK_Y_BASE`(156) exactly; each row-index down is 8px higher) - note
+  this numbering runs opposite to `terrain_gen.py`'s own generator
+  "tier" (which counts up while climbing), since row-index0 is the
+  *highest* screen row.
 - **Pose selection** (`UPDATE_POSE`): TankF (grounded, neutral),
-  TankUp (grounded, aiming up), TankFGap (airborne, neutral), TankUGap
-  (airborne, aiming up). Per direct instruction, the Gap poses are
-  wired up for "airborne" only right now - the terrain-slope-following
-  use of the same poses is deferred.
+  TankUp (grounded, aiming up), TankFGap (airborne OR on a slope,
+  neutral), TankUGap (airborne OR on a slope, aiming up) - jump takes
+  priority if both are somehow true at once (can't currently happen,
+  since a jump's peak height stays well inside the tank's own tier
+  range). The terrain-slope-following use of the Gap poses (originally
+  deferred, airborne-only) is now wired up per the terrain-collision
+  work above.
 - **Per-quadrant sprite color**: each 32x32 pose is 4 separate 16x16
   hardware sprites (TL/TR/BL/BR), and MSX1 sprites are monochrome, so
   each quadrant gets its own color attribute instead of one flat tank
@@ -85,13 +110,16 @@ with no way to tell where.
   - Per-frame draw/erase uses the same raw `DI`-wrapped `OUT` + 8-NOP
     pattern as `UPDATE_TANK_SPRITES`/`INIT_SPRATR_CLR` (see the bug
     entries below) - this runs every frame with `EI` active too.
-- **Not physics-integrated with the terrain yet**: `TANK_Y_BASE=156`
-  (row23's top minus the tank's 32px height plus a +4 landing offset)
-  is a fixed constant matching the terrain's starting flat tier -
-  jumps arc relative to it, but the tank does not track the terrain's
-  own climb/descend height changes. That needs the ground-height
-  collision system, still not built (also what keeps a shot's spawn
-  row bounded, making the bullet background-compositing above valid).
+- **Bullet spawn row stays bounded even with a moving tank**: the
+  shot background-compositing above depends on a shot's spawn row
+  always being `<= BULLET_ROCK_ROW_MIN`(19) - now that the tank's own
+  Y moves with the terrain instead of sitting at a fixed baseline,
+  that still holds by construction: `TANK_TIER_Y_TABLE`'s highest
+  entry (156, `TANK_TIER=3`, the track's lowest/starting tier) is the
+  same value the old fixed `TANK_Y_BASE` used, and the track only has
+  4 rows total (20-23) - there's no tier below that one for the tank
+  to reach, so its Y (and therefore a spawn row = `TANK_Y_CUR>>3`)
+  never exceeds 19 either.
 - Border-color diagnostic checkpoints through INIT (VDP R7), added
   specifically because the tank-only test froze on real hardware with
   no clue where:
@@ -111,6 +139,20 @@ with no way to tell where.
 
 ## Bugs found and fixed while building this
 
+- **Tank snapped to the wrong height at every tier except the
+  starting one** (caught by an emulator trace, not a hardware report):
+  `TANK_TIER_Y_TABLE` was written as `156,148,140,132` (highest Y
+  first), matching the intuition "tier0 = lowest ground = biggest Y",
+  but `TANK_TIER` as `UPDATE_TERRAIN_COLLISION` actually computes it
+  is an IDCACHE *row-index* (0=`IDCACHE_T0`/screen row20 .. 3=
+  `IDCACHE_T3`/screen row23), which runs the *opposite* direction from
+  `terrain_gen.py`'s own generator "tier" (which counts up while
+  climbing) - row-index0 is the highest screen row, so `TANK_TIER=3`
+  is actually the track's lowest/starting ground. Caught immediately
+  by logging `TANK_TIER`/`TANK_GROUND_Y` across a full climb+descend
+  sweep: the tank started at `TANK_TIER=3` but got `Y=132` (the
+  *highest* tier's height) instead of the expected 156. Fixed by
+  reversing the table to `132,140,148,156`.
 - **Per-frame sprite update via LDIRVM instead of a NOP-padded raw
   OUT sequence** (reported as persistent on-screen garbage after the
   movement/jump pass added a per-frame sprite table write): every
@@ -230,8 +272,7 @@ directly.
 
 ## Next step
 
-The ground-height collision system so the tank actually follows the
-terrain instead of sitting at a fixed Y (which is also when the Gap
-poses' terrain-slope use gets wired up, deferred from an earlier pass,
-and when the bullet background-compositing's "spawn row is always
-`<=` row19" assumption would need revisiting).
+Real descend art for the Gap pose (currently reusing the climb Gap
+sprite for both, per direct instruction, since only one was ready) -
+and eventual collision between shots and something to hit, once
+enemies exist in this test.

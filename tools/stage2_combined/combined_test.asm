@@ -1,16 +1,12 @@
 ; Combined test: the stage2 terrain scroller (tools/stage2_terrain)
 ; with the tank sprite (tools/stage2_tank) on top of it, now with
-; left/right movement, a B-button jump, and pose switching (up+aim
-; and airborne/Gap poses). Border-color diagnostic checkpoints through
-; INIT so a freeze report can point at exactly which step it's stuck
-; on (see the table in README.md).
-;
-; STILL not physics-integrated with the terrain: the tank's resting Y
-; is a fixed baseline (matching the terrain's starting flat tier), not
-; tracking the terrain's climb/descend height - that needs the
-; ground-height collision system, not built yet (per direct
-; instruction, deferred along with the terrain-slope Gap pose - the
-; Gap poses are wired up for the jump only right now).
+; left/right movement, a B-button jump, pose switching (up+aim and
+; airborne/Gap poses), shots, and terrain ground-height collision (see
+; UPDATE_TERRAIN_COLLISION) - the tank always rests on whichever
+; terrain tier is under it and shows the Gap pose while straddling a
+; climb/descend transition. Border-color diagnostic checkpoints
+; through INIT so a freeze report can point at exactly which step it's
+; stuck on (see the table in README.md).
     ORG 4000h
 
 INIT32  EQU 006Fh
@@ -135,6 +131,17 @@ BULLET0_ACT   EQU 0F22Dh
 BULLET1_ACT   EQU 0F233h
 BULLET2_ACT   EQU 0F239h
 BULLET_TEMP_BYTE EQU 0F23Fh
+
+; ---------- terrain collision: ground-height following + slope       ----------
+; ---------- (Rock225) detection - see UPDATE_TERRAIN_COLLISION below. ----------
+TANK_FOOT_DX  EQU 24        ; probe column offset from TANK_X (right/front side of the tank)
+TANK_GROUND_Y EQU 0F240h    ; current ground-follow baseline Y (tier-dependent) - UPDATE_JUMP
+                            ; subtracts JUMP_Y_OFFSET from this instead of the fixed TANK_Y_BASE
+TANK_ON_SLOPE EQU 0F241h    ; 1 while straddling a Rock225/Rock225D marker -> Gap pose
+TANK_TIER     EQU 0F242h    ; 0-3, current ground tier (screen row 23-TANK_TIER) under the tank
+TANK_ROWPTR   EQU 0F243h    ; word: IDCACHE_Tn base address for the surface tier's row
+TANK_COL_R    EQU 0F245h    ; probe columns (name-table column, 0-31)
+TANK_COL_L    EQU 0F246h    ; = TANK_COL_R - 1
 
 STACKTOP      EQU 0F380h
 
@@ -284,9 +291,11 @@ INIT_SPRATR_CLR:
     ; tank state: centered start, grounded, facing/aiming neutral
     LD A,TANK_X_INIT : LD (TANK_X),A
     LD A,TANK_Y_BASE : LD (TANK_Y_CUR),A
+    LD A,TANK_Y_BASE : LD (TANK_GROUND_Y),A
     XOR A
     LD (TANK_DX),A
     LD (TANK_AIMUP),A
+    LD (TANK_ON_SLOPE),A
     LD (PREV_TRIGB),A
     LD (JUMP_ACTIVE),A
     LD (JUMP_FRAME),A
@@ -350,6 +359,7 @@ SKIP_ADVANCE:
 
     CALL READ_INPUT
     CALL UPDATE_TANK_XY
+    CALL UPDATE_TERRAIN_COLLISION
     CALL UPDATE_JUMP
     CALL UPDATE_POSE
     CALL UPDATE_TANK_SPRITES
@@ -424,7 +434,77 @@ UTX_DO_LEFT:
     SUB TANK_SPEED : LD (TANK_X),A
     RET
 
-; ---------- jump (B button, edge-triggered, 16px triangular arc) ----------
+; ---------- terrain collision: ground-height following + slope check ----------
+; 2 probe name-table columns near the tank's right/front edge:
+; TANK_COL_R (directly under, "下") finds the ground tier by scanning
+; IDCACHE_T0-T3 top-to-bottom for the first non-BLANK id at that
+; column - "常にRockに設置" (always rest on whichever tier has
+; content, be it plain rock or a slope-transition cell - both are
+; solid ground). TANK_COL_L = TANK_COL_R-1 ("その横", beside it)
+; then checks that SAME row for a Rock225/Rock225D id (3-6, vs. plain
+; ROCK_L/ROCK_R's 1-2) to flag TANK_ON_SLOPE, consumed by UPDATE_POSE.
+UPDATE_TERRAIN_COLLISION:
+    LD A,(TANK_X) : ADD A,TANK_FOOT_DX
+    SRL A
+    SRL A
+    SRL A
+    LD (TANK_COL_R),A
+    DEC A
+    LD (TANK_COL_L),A
+
+    ; find the surface tier: first non-BLANK row, IDCACHE_T0 (highest)
+    ; downward - row-index3 (screen row23) is guaranteed non-BLANK
+    ; across the whole track (terrain_gen.py's build_track() always
+    ; keeps ground_i(tier)<=3), so no explicit check needed for it.
+    LD A,(TANK_COL_R) : LD E,A : LD D,0
+    LD HL,IDCACHE_T0 : ADD HL,DE : LD A,(HL)
+    OR A
+    JR NZ,UTC_TIER0
+    LD A,(TANK_COL_R) : LD E,A : LD D,0
+    LD HL,IDCACHE_T1 : ADD HL,DE : LD A,(HL)
+    OR A
+    JR NZ,UTC_TIER1
+    LD A,(TANK_COL_R) : LD E,A : LD D,0
+    LD HL,IDCACHE_T2 : ADD HL,DE : LD A,(HL)
+    OR A
+    JR NZ,UTC_TIER2
+    JR UTC_TIER3
+UTC_TIER0:
+    XOR A : LD (TANK_TIER),A
+    LD HL,IDCACHE_T0 : LD (TANK_ROWPTR),HL
+    JR UTC_TIER_DONE
+UTC_TIER1:
+    LD A,1 : LD (TANK_TIER),A
+    LD HL,IDCACHE_T1 : LD (TANK_ROWPTR),HL
+    JR UTC_TIER_DONE
+UTC_TIER2:
+    LD A,2 : LD (TANK_TIER),A
+    LD HL,IDCACHE_T2 : LD (TANK_ROWPTR),HL
+    JR UTC_TIER_DONE
+UTC_TIER3:
+    LD A,3 : LD (TANK_TIER),A
+    LD HL,IDCACHE_T3 : LD (TANK_ROWPTR),HL
+UTC_TIER_DONE:
+
+    LD A,(TANK_TIER) : LD E,A : LD D,0
+    LD HL,TANK_TIER_Y_TABLE : ADD HL,DE : LD A,(HL)
+    LD (TANK_GROUND_Y),A
+
+    ; slope check: TANK_COL_L's id at the SAME row as the surface tier
+    LD A,(TANK_COL_L) : LD E,A : LD D,0
+    LD HL,(TANK_ROWPTR) : ADD HL,DE
+    LD A,(HL)
+    CP 3
+    JR C,UTC_SLOPE_NO
+    LD A,1
+    JR UTC_SLOPE_SET
+UTC_SLOPE_NO:
+    XOR A
+UTC_SLOPE_SET:
+    LD (TANK_ON_SLOPE),A
+    RET
+
+; ---------- jump (B button, edge-triggered, 24px half-sine arc) ----------
 UPDATE_JUMP:
     LD A,(JOY_TRIGB)
     LD HL,PREV_TRIGB
@@ -455,17 +535,26 @@ UJ_DONE:
     LD HL,JUMP_OFFSET_TABLE : ADD HL,DE
     LD A,(HL) : LD (JUMP_Y_OFFSET),A
 
-    LD A,TANK_Y_BASE
+    LD A,(TANK_GROUND_Y)
     LD HL,JUMP_Y_OFFSET
     SUB (HL)
     LD (TANK_Y_CUR),A
     RET
 
 ; ---------- pose: ground/air x neutral/aim-up ----------
+; airborne OR straddling a climb/descend (Rock225/Rock225D) marker both
+; use the Gap pose - "Rock225に接触したらGapスプライトに切り替えて
+; 登るように", and (no descend art yet) "Gapスプライト流用" for the
+; descend case too, both handled the same way since TANK_ON_SLOPE
+; doesn't distinguish which (see UPDATE_TERRAIN_COLLISION).
 UPDATE_POSE:
     LD A,(JUMP_ACTIVE)
     OR A
+    JR NZ,UP_GAP
+    LD A,(TANK_ON_SLOPE)
+    OR A
     JR Z,UP_GROUND
+UP_GAP:
     LD A,(TANK_AIMUP)
     OR A
     JR Z,UP_FGAP
@@ -826,5 +915,15 @@ BULLET_ROWADDR_LO:
     DB 0,32,64,96,128,160,192,224,0,32,64,96,128,160,192,224,0,32,64,96,128,160,192,224
 BULLET_ROWADDR_HI:
     DB 24,24,24,24,24,24,24,24,25,25,25,25,25,25,25,25,26,26,26,26,26,26,26,26
+
+; ground Y indexed by TANK_TIER (the IDCACHE row-index UPDATE_TERRAIN_
+; COLLISION found content in, 0=IDCACHE_T0/screen row20 .. 3=IDCACHE_
+; T3/screen row23) - NOT the same numbering as terrain_gen.py's own
+; generator "tier" (which counts UP while climbing; row-index0 is the
+; HIGHEST screen row, so it's the opposite: TANK_TIER=3 is the
+; track's starting/lowest ground, reproducing the original fixed
+; TANK_Y_BASE(156) exactly - each row-index down means 8px higher.
+TANK_TIER_Y_TABLE:
+    DB 132,140,148,156
 
 ; ===== generated tables (terrain + tank) appended below by build_test.py =====
