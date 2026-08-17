@@ -117,6 +117,83 @@ INIT:
     ; checkpoint 6: tank pattern loaded
     LD B,6 : LD C,7 : CALL WRTVDP
 
+    ; --- explicitly clear the WHOLE sprite attribute table (32       ---
+    ; --- entries x 4 bytes = 128 bytes) to a fully hidden, known      ---
+    ; --- state (Y=209/0D1h - past the Y=208 stop-sentinel - X/pattern/---
+    ; --- color=0), matching src/CYBER SHMUP.asm's own INIT_SPRATR_CLR ---
+    ; --- exactly (raw OUT, DI/EI + 8 NOPs around every single byte -  ---
+    ; --- LDIRVM has no such interrupt-safety margin, matching this   ---
+    ; --- file's own UPDATE_TANK_SPRITES fix). The previous version of ---
+    ; --- this only hid slot 4 (aliasing PAT_TANKF's own TL quadrant   ---
+    ; --- via the emulator's all-zero VRAM default, so only ONE extra  ---
+    ; --- black blob ever showed up in emulator testing) and used      ---
+    ; --- LDIRVM for even that one write - slots 5-31 were never       ---
+    ; --- touched at all, left holding whatever real hardware's        ---
+    ; --- genuinely unpredictable power-on VRAM happened to contain,    ---
+    ; --- which is exactly the stray white blob reported on real       ---
+    ; --- hardware that the emulator could never reproduce.
+    DI
+    LD A,0 : OUT (99h),A
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    LD B,32
+    EI
+INIT_SPRATR_CLR:
+    DI
+    LD A,209 : OUT (98h),A
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    XOR A : OUT (98h),A
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    XOR A : OUT (98h),A
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    XOR A : OUT (98h),A
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    EI
+    DJNZ INIT_SPRATR_CLR
+
     ; tank state: centered start, grounded, facing/aiming neutral
     LD A,TANK_X_INIT : LD (TANK_X),A
     LD A,TANK_Y_BASE : LD (TANK_Y_CUR),A
@@ -129,16 +206,9 @@ INIT:
     LD (JUMP_Y_OFFSET),A
     LD A,PAT_TANKF : LD (CUR_POSE_PAT),A
 
+    ; overwrites slots 0-3 (the tank's own) with real data; slots 4-31
+    ; stay hidden from the full clear above.
     CALL UPDATE_TANK_SPRITES
-
-    ; hide every sprite slot past the tank's 4 (Y=0D1h is the standard
-    ; MSX "stop processing sprites here" sentinel) - the VRAM's
-    ; zero-initialized default otherwise leaves slot4 at Y=0/X=0/
-    ; pattern=0/color=0, which happens to alias the tank's own TL
-    ; pattern (PAT_TANKF=0) and renders it a second time in black at
-    ; the top-left corner. Caught visually, not by any register check.
-    LD A,0D1h : LD (SPR_HIDE),A
-    LD HL,SPR_HIDE : LD DE,SPRATR+16 : LD BC,1 : CALL LDIRVM
 
     ; checkpoint 7: tank sprite attributes written
     LD B,7 : LD C,7 : CALL WRTVDP
@@ -429,9 +499,6 @@ TERRAIN_ROCKY_BLANK:
     DS 8,0
 TERRAIN_ROW19:
     DS 32,TERRAIN_PATTERN_COUNT
-
-SPR_HIDE:
-    DS 1,0
 
 ; 49 entries (jump frame 0-48): a half-sine arc, offset(t) =
 ; round(24 * sin(pi*t/48)) - 24px peak at t=24, eased in/out (fast

@@ -85,7 +85,7 @@ with no way to tell where.
   values as before, now via real VDP port emulation instead of the
   `LDIRVM` BIOS-call intercept) and a randomized 3-track-loop stress
   test still runs clean.
-- **Sprite-table shadow bug** (visible immediately as a black
+- **Sprite-table shadow bug, round 1** (visible immediately as a black
   tank-shaped blob at the top-left corner): only wrote the tank's own
   4 sprite attribute entries (slots 0-3) and never touched the rest
   of the 32-slot table. z80emu.py's VRAM defaults to all-zero, so slot
@@ -93,10 +93,25 @@ with no way to tell where.
   position (not the Y=0xD1 "stop here" sentinel), and pattern=0
   happens to alias the tank's own top-left quadrant (`PAT_TANKF=0`),
   so it rendered a second, black (color=0) copy of that quadrant at
-  the top-left. Fixed by explicitly writing Y=0xD1 to slot 4 right
-  after the tank's own 4 entries - real hardware's own sprite RAM
-  contents at boot are unpredictable, so this isn't just an emulator-
-  cleanliness fix, it's required either way.
+  the top-left. "Fixed" by writing Y=0xD1 to slot 4 only, via `LDIRVM`.
+- **Sprite-table shadow bug, round 2** (round 1's fix was incomplete -
+  reported back as a *white* blob still sitting at the top-left on
+  real hardware after round 1 shipped): round 1 only ever cleared slot
+  4, leaving slots 5-31 completely untouched, and used `LDIRVM` (no
+  interrupt-safety margin, same class of bug as the sprite-garbage fix
+  above) for even that one write. z80emu.py's all-zero-VRAM default
+  made slots 5-31 invisible in every emulator check (Y=0/pattern=0/
+  color=0 across the board), but real hardware's power-on VRAM is
+  genuinely unpredictable - confirmed by re-running the emulator with
+  VRAM deliberately pre-filled with non-zero garbage instead of the
+  usual all-zero default, which reproduces a stray blob exactly like
+  the hardware report. Fixed by replicating `src/CYBER SHMUP.asm`'s own
+  `INIT_SPRATR_CLR` exactly: DI-wrapped raw `OUT`, 8 NOPs after every
+  byte, looping all 32 slots to Y=209/X=0/pattern=0/color=0 *before*
+  `UPDATE_TANK_SPRITES` writes the tank's real 4 entries over slots
+  0-3. Re-verified with the garbage-prefilled-VRAM emulator run: all of
+  slots 4-31 come out hidden (Y=209) regardless of what was in VRAM
+  beforehand.
 - **Python import shadowing in verification scripts** (not a ROM bug,
   just a debugging-script trap while building this):
   `tools/stage2_terrain/build_test.py`, `tools/stage2_tank/build_test.py`,
