@@ -591,6 +591,17 @@ with no way to tell where.
   then groups5-31, once `SAND_GROUPS` grew to 2-4). Verified directly
   against VRAM: groups2-4 all read `SAND_COLOR` (0xAB) while groups1/5/
   10 (genuinely rock-colored) still read the swapped `0x6A`.
+- **SkySand moved to row18, row19 now plain Sand** ("今の下から5行目の
+  Skysandを1行上に 空いた下から5行目にSand埋め"): `TERRAIN_ROW_SKYSAND`
+  moved to 1A40h (row18); a new `TERRAIN_ROW_SAND` (32 x
+  `TERRAIN_BLANK_CODE` - a new symbol `terrain_gen.py` now exports,
+  reusing the scrolling terrain's own BLANK code/color, no new group
+  needed) fills row19 at 1A60h. `BULLET_ROCK_ROW_MIN` 19->18 (both rows
+  share the same bg) and `ERASE_BULLET_CELL` now restores SkySand on
+  row18 and Sand on row19. Also fixed in passing: `BULLET_ROCK_COLOR-
+  BYTE` was still `01Ah` (bg10) from before `ROCK_COLOR` moved to bg11
+  - a bullet flying over any ground row showed a small dark-yellow
+    patch behind it - corrected to `01Bh`.
 
 ## Bugs found and fixed while building this
 

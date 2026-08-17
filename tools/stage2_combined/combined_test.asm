@@ -97,62 +97,32 @@ CUR_POSE_PAT  EQU 0F22Ah
 ; ---------- shots: BG (name-table) characters, not sprites - any     ----------
 ; ---------- number can share a scanline with the tank with no       ----------
 ; ---------- "4 sprites per line" flicker (same reasoning as the      ----------
-; ---------- player's own shots in src/CYBER SHMUP.asm). The tank     ----------
-; ---------- sits right at the terrain's own row19 (TANK_Y_BASE=156,  ----------
-; ---------- row19 spans y152-159), unlike that game's ship which     ----------
-; ---------- never reaches its own ground scroller - so a shot fired  ----------
-; ---------- from here really can be sitting on top of two DIFFERENT  ----------
-; ---------- backgrounds: open sky above row19, or the "rock" tier    ----------
-; ---------- (row19's own static flat top, or rows 20-23's scrolling  ----------
-; ---------- terrain) - and erasing/drawing needs to put back the      ----------
-; ---------- right one. terrain_gen.py's own color table only ever    ----------
-; ---------- uses 2 solid colors total: SKY_COLOR for the permanent    ----------
-; ---------- open sky, and ONE uniform ROCK_COLOR shared by literally  ----------
-; ---------- every terrain code in the scrolling band (flat/slope/     ----------
-; ---------- climb/still-blank alike - see that file's own comment on  ----------
-; ---------- id0/BLANK) - so "row>=BULLET_ROCK_ROW_MIN" is exactly     ----------
-; ---------- (not approximately) the right test for "rock-colored",    ----------
-; ---------- regardless of which exact terrain tile is really there.   ----------
-; ---------- Only row19 itself needs an explicit erase write (it's     ----------
-; ---------- static, filled once at INIT, never touched again);        ----------
-; ---------- rows 20-23 get fully redrawn from NAMEBUF every frame      ----------
-; ---------- BEFORE the bullet update runs (see MAINLOOP), so erasing   ----------
-; ---------- a bullet there is a no-op - skipped entirely, see          ----------
-; ---------- UPDATE_ONE_BULLET below.                                   ----------
-BULLET_ROCK_ROW_MIN EQU 19      ; first row where the "rock" bg applies (19-23)
-; a diagonal/U shot decrements ROW every frame as it climbs and had no
-; upper bound beyond "row0", letting it fly straight into rows0-1 -
-; where the score/counter/calibration-strip HUD lives - drawing a
-; bullet pattern over a HUD cell, then erasing it to plain sky on the
-; next frame (see ERASE_BULLET_CELL's "row<19 -> sky" rule, correct
-; for open sky but not for permanent HUD content) instead of restoring
-; whatever HUD glyph was actually there. Reported as the calibration
-; strip's hex labels vanishing one cell at a time - "カラーバーAから
-; F消えたぞ" - exactly the columns a bullet happened to pass through
-; while climbing. Fixed by simply never letting a bullet's row go
-; below this (rows0-1 are permanently off-limits, gameplay starts at
-; row2).
+; ---------- player's own shots in src/CYBER SHMUP.asm). A shot can    ----------
+; ---------- sit over 2 different backgrounds: open sky above row18,   ----------
+; ---------- or the ground tier (row18 SkySand, row19 Sand, rows20-23  ----------
+; ---------- scrolling terrain - all 3 share one bg via terrain_gen.py ----------
+; ---------- 's ROCK_COLOR/SAND_COLOR/SKYSAND_COLOR, so one boundary    ----------
+; ---------- test is enough) - erasing/drawing needs to put back the    ----------
+; ---------- right one. rows18-19 need an explicit erase write each     ----------
+; ---------- (static, filled once at INIT); rows20-23 get fully         ----------
+; ---------- redrawn from NAMEBUF every frame before the bullet update  ----------
+; ---------- runs, so erasing a bullet there is a no-op - see            ----------
+; ---------- UPDATE_ONE_BULLET below.                                    ----------
+BULLET_ROCK_ROW_MIN EQU 18      ; first row where the ground bg applies (18-23)
+; a diagonal/U shot decrements ROW every frame as it climbs; with no
+; lower bound it could fly into rows0-1 (the HUD) and erase a glyph
+; permanently instead of restoring it - "カラーバーAからF消えたぞ".
+; Fixed by never letting a bullet's row go below this.
 BULLET_MIN_ROW    EQU 2
 BULLET_MAXCOL     EQU 31        ; last valid name-table column (0-31)
 BULLET_MUZZLE_DX  EQU 24        ; spawn column offset from TANK_X (muzzle, right side of the tank)
 BULLET_MUZZLE_DX_LEFT EQU 7     ; mirrored muzzle offset for a left-facing shot (32-1-24)
 SKY_BLANK_CODE    EQU 0         ; TERRAIN_BLANK_ROW's code - the permanent open-sky tile
 
-; row19 (the 5th row from the bottom, previously a flat solid-color
-; tile) is now a static one-time fill of sprites/SkySand.json's
-; sky-to-sand dither pattern instead - "やっぱSkysandは下から５行目で"
-; (a correction: an earlier round put this one row too high, at row18
-; just above row19, instead of on row19 itself - "ブランクセルは削除"
-; removed that now-unwanted row18 fill and the old plain-blank tile
-; row19 used to use). Own dedicated 2-tone color (fg5 light blue/bg11
-; light yellow, straight from the source JSON, unlike the terrain's
-; own uniform-ROCK_COLOR tiles) needs its own group - placed at the
-; last still-free one (31, codes248-255; every other group is spoken
-; for by terrain/bullets/digits/swatch - see the code-budget comments
-; on those). `TERRAIN_PATTERN_COUNT` is still used elsewhere (loading
-; the real terrain pattern count), just no longer as a "blank tile
-; code" - see ERASE_BULLET_CELL's row19 case below, which now restores
-; SKYSAND_CODE instead.
+; row18: static sprites/SkySand.json fill (own color group31, fg5/
+; bg11). row19: static plain Sand fill, reusing the real scrolling-
+; terrain BLANK tile/group (TERRAIN_BLANK_CODE) instead of a new one -
+; "今の下から5行目のSkysandを1行上に 空いた下から5行目にSand埋め".
 SKYSAND_CODE  EQU 248
 SKYSAND_COLOR EQU 05Bh   ; fg5/bg11
 
@@ -180,15 +150,17 @@ BULLETU_L_ROCK_CODE EQU 99
 ; color table (VRAM 2000h+group, 1 byte/group, hi nibble=fg/lo=bg -
 ; see terrain_gen.py's own SKY_COLOR/ROCK_COLOR): group11 (codes
 ; 88-95) = fg1 black/bg5 light blue, matching the sky's own bg5;
-; group12 (codes 96-103) = fg1 black/bg10 dark yellow, matching the
-; rock tier's own bg10 (terrain_gen.py's ROCK_COLOR=0x8A) - both
-; groups patched over terrain_gen.py's generic per-group defaults
-; (unused by any real terrain code) rather than by changing that
-; shared module.
+; group12 (codes 96-103) = fg1 black/bg11 light yellow, matching the
+; rock tier's own bg (terrain_gen.py's ROCK_COLOR=0x8B) - both groups
+; patched over terrain_gen.py's generic per-group defaults (unused by
+; any real terrain code) rather than by changing that shared module.
+; ROCK_COLORBYTE's bg nibble must track ROCK_COLOR's own bg whenever
+; that changes (was 01Ah/bg10 - missed when ROCK_COLOR moved to bg11,
+; fixed alongside the row18/19 change below).
 BULLET_SKY_COLORADDR  EQU 200Bh
 BULLET_ROCK_COLORADDR EQU 200Ch
 BULLET_SKY_COLORBYTE  EQU 015h
-BULLET_ROCK_COLORBYTE EQU 01Ah
+BULLET_ROCK_COLORBYTE EQU 01Bh
 
 JOY_TRIGA     EQU 0F22Bh
 ; frames left before another shot can fire while A is held ("間欠連射
@@ -456,12 +428,14 @@ INIT:
     ; checkpoint 3: whole name table cleared to sky
     LD B,3 : LD C,7 : CALL WRTVDP
 
-    ; row19: SkySand pattern + its own dedicated color group, then a
-    ; static one-time fill across all 32 columns.
+    ; row18: SkySand pattern + its own dedicated color group, static
+    ; one-time fill. row19: plain Sand fill (TERRAIN_BLANK_CODE, the
+    ; scrolling terrain's own BLANK code/color - no new group needed).
     LD HL,SKYSAND_PATTERN : LD DE,SKYSAND_CODE*8 : LD BC,8 : CALL LDIRVM
     LD A,SKYSAND_COLOR : LD (HUD_TEMP_BYTE),A
     LD HL,HUD_TEMP_BYTE : LD DE,2000h+31 : LD BC,1 : CALL LDIRVM
-    LD HL,TERRAIN_ROW19 : LD DE,1A60h : LD BC,32 : CALL LDIRVM
+    LD HL,TERRAIN_ROW_SKYSAND : LD DE,1A40h : LD BC,32 : CALL LDIRVM
+    LD HL,TERRAIN_ROW_SAND : LD DE,1A60h : LD BC,32 : CALL LDIRVM
 
     XOR A
     LD (TICK),A
@@ -474,7 +448,7 @@ INIT:
     LD HL,TERRAIN_ROWDATA2 : LD IX,IDCACHE_T2 : CALL REFRESH_IDCACHE_33
     LD HL,TERRAIN_ROWDATA3 : LD IX,IDCACHE_T3 : CALL REFRESH_IDCACHE_33
 
-    ; checkpoint 4: row19 filled, terrain IDCACHEs primed
+    ; checkpoint 4: rows18-19 filled, terrain IDCACHEs primed
     LD B,4 : LD C,7 : CALL WRTVDP
 
     ; 16x16 sprite mode (VDP R1 bit1=SI)
@@ -1319,9 +1293,8 @@ TSB_DO_SPAWN:
     ; ROW = TANK_Y_CUR >> 3 (name-table row), +1 more for a straight/F
     ; shot only (per direct instruction "BulletFのセル表示を1セル下に") -
     ; U (diagonal) keeps the un-shifted muzzle row. Grounded F therefore
-    ; lands 1 row past BULLET_ROCK_ROW_MIN(19), inside the scrolling
-    ; band - fine, see the comment on BULLET_ROCK_ROW_MIN above for why
-    ; that's still handled correctly.
+    ; lands 1 row past the tank's own row (row19->20), inside the
+    ; scrolling band - fine, see BULLET_ROCK_ROW_MIN above.
     LD A,(TANK_Y_CUR)
     SRL A
     SRL A
@@ -1375,8 +1348,8 @@ UPDATE_BULLETS:
     RET
 
 ; IX = slot base (+0 ACT,+1 TYPE,+2 COL,+3 ROW,+4/+5 ADDR,+6 FACING).
-; Erases the current cell (restoring sky or row19's rock top,
-; whichever this bullet is actually over), advances 1 column (toward
+; Erases the current cell (restoring sky/SkySand/Sand, whichever this
+; bullet is actually over), advances 1 column (toward
 ; FACING - right or left) and, for a diagonal/U shot, 1 row up too,
 ; then redraws at the new position - or deactivates if it just left
 ; the name table's top, left, or right edge.
@@ -1426,23 +1399,28 @@ UOB_DEACTIVATE:
     XOR A : LD (IX+0),A
     RET
 
-; IX = slot base. row<19 sky, row==19 explicit SkySand restore (row19
-; is static, only ever written at INIT), row>19 skip entirely - rows
-; 20-23 already got fully redrawn from NAMEBUF earlier this same
-; MAINLOOP iteration (see the comment on BULLET_ROCK_ROW_MIN above),
-; so there's nothing to restore. Shared by UPDATE_ONE_BULLET's own
-; per-frame erase-before-advance and CHECK_BULLET_VS_ENEMY (a bullet
-; that hits an enemy needs the exact same cell restored immediately,
-; not just left to redraw stale next frame since it's now inactive).
+; IX = slot base. row<18 sky, row==18 SkySand restore, row==19 Sand
+; restore (both static, only ever written at INIT), row>19 skip
+; entirely - rows20-23 already got fully redrawn from NAMEBUF earlier
+; this same MAINLOOP iteration, so there's nothing to restore. Shared
+; by UPDATE_ONE_BULLET's own per-frame erase-before-advance and
+; CHECK_BULLET_VS_ENEMY (a bullet that hits an enemy needs the exact
+; same cell restored immediately, not left to redraw stale next frame).
 ERASE_BULLET_CELL:
     LD A,(IX+3)
     CP BULLET_ROCK_ROW_MIN
-    JR NC,EBC_ROCKBAND
-    LD A,SKY_BLANK_CODE
-    JR EBC_WRITE
-EBC_ROCKBAND:
-    JR NZ,EBC_SKIP
+    JR C,EBC_SKY
+    CP BULLET_ROCK_ROW_MIN+2
+    JR NC,EBC_SKIP
+    CP BULLET_ROCK_ROW_MIN+1
+    JR Z,EBC_SAND
     LD A,SKYSAND_CODE
+    JR EBC_WRITE
+EBC_SAND:
+    LD A,TERRAIN_BLANK_CODE
+    JR EBC_WRITE
+EBC_SKY:
+    LD A,SKY_BLANK_CODE
 EBC_WRITE:
     LD (BULLET_TEMP_BYTE),A
     LD L,(IX+4) : LD H,(IX+5)
@@ -2198,8 +2176,10 @@ TERRAIN_BLANK_ROW:
 ; blending/quadrants needed) - see the SKYSAND_CODE comment above.
 SKYSAND_PATTERN:
     DB 255,0,255,255,0,255,0,255
-TERRAIN_ROW19:
+TERRAIN_ROW_SKYSAND:
     DS 32,SKYSAND_CODE
+TERRAIN_ROW_SAND:
+    DS 32,TERRAIN_BLANK_CODE
 
 ; 49 entries (jump frame 0-48): a half-sine arc, offset(t) =
 ; round(24 * sin(pi*t/48)) - 24px peak at t=24, eased in/out (fast

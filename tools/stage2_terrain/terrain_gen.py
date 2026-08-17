@@ -389,6 +389,7 @@ def emit_asm_tables():
         bytes_ = PATTERNS.get(code, [0] * 8)
         out.append(f"    DB " + ",".join(f"{b}" for b in bytes_) + f"  ; code {code}")
     out.append(f"TERRAIN_PATTERN_COUNT EQU {MAX_CODE + 1}")
+    out.append(f"TERRAIN_BLANK_CODE EQU {BLANK_CODE}")
     out.append("")
     out.append("TERRAIN_COLORDATA:")
     out.append(db_bytes(COLORDATA))
