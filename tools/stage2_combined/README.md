@@ -635,11 +635,32 @@ with no way to tell where.
   `ERASE_BULLET_CELL` widened from a 2-row (18/19) branch to a 4-row
   (16 SkySand / 17-19 Sand) one, row>=20 still skipped (rows20-23 stay
   NAMEBUF-redrawn). `BULLET_ROCK_COLOR_ROW_MIN_F/_U` (bullet's own
-  draw color threshold) untouched - not part of this instruction.
-  Verified: INIT-time VRAM dump shows row16=248(SkySand) uniformly,
-  rows17-19=16(Sand) uniformly, stable over 400 idle frames; a
-  synthetic `ERASE_BULLET_CELL` call at each row14-21 restores
+  draw color threshold) left untouched in this round - see the bug
+  entry below for the follow-up that fixed. Verified: INIT-time VRAM
+  dump shows row16=248(SkySand) uniformly, rows17-19=16(Sand)
+  uniformly, stable over 400 idle frames; a synthetic
+  `ERASE_BULLET_CELL` call at each row14-21 restores
   sky/SkySand/Sand/skip exactly as expected.
+- **F shot's own boundary retuned after the Sand widening, and U now
+  skips drawing over SkySand's own row** ("弾の描画がおかしい 水平打ち
+  での弾の背景色はライトイエローなのにブルーになってる 行を増やした
+  影響かもな / で、斜め打ちはSkysandと重なった時弾の表示はスキップに
+  Skysandより上に弾が行くと背景色ブルーの現在の弾を表示に"): see the
+  Bugs section below for the F fix, and the change list entry
+  immediately above this one for what triggered it. New: diagonal/U
+  shots no longer draw at all while their row equals
+  `BULLET_ROCK_ROW_MIN`(16, SkySand's own row) - `UPDATE_ONE_BULLET`'s
+  `UOB_DRAW` skips the `DRAW_BULLET_CELL` call for TYPE=U at that one
+  row (F unaffected), leaving whatever's already there (SkySand,
+  correctly restored by that same frame's earlier `ERASE_BULLET_CELL`
+  call on the old position) untouched; rows above 16 (plain sky) still
+  draw the normal blue-bg bullet as before, and rows17-19 (Sand) are
+  unaffected by this - still blue per the earlier "Skysandとその下の
+  Sandは...背景色ブルーのままでいい" instruction. Verified with a
+  synthetic `UPDATE_ONE_BULLET` call sequence: a U bullet advancing
+  from row17 into row16 leaves row16's cell reading `SKYSAND_CODE`
+  (untouched) instead of a bullet pattern code, then on the next call
+  advances into row15 and draws `BULLETU_SKY_CODE` there normally.
 
 ## Bugs found and fixed while building this
 
@@ -936,6 +957,19 @@ with no way to tell where.
   its actual spawn position. Fixed by swapping the call order:
   existing bullets advance first, then a new one can spawn, so a
   freshly-fired shot is only ever touched once per frame.
+- **Straight/F shot showed the wrong background color after Sand
+  widened to 3 rows** ("水平打ちでの弾の背景色はライトイエローなのに
+  ブルーになってる 行を増やした影響かもな"): `BULLET_ROCK_COLOR_ROW_MIN_F`
+  was still 19 - the boundary from when Sand was a single row(19) -
+  unchanged by the row-widening change above, so F drew its sky-blue
+  bg over the newly-Sand rows17-18 instead of the ground-yellow bg
+  those rows should show. Fixed by moving the threshold to 17 (Sand's
+  new top row) so F switches to rock/yellow at exactly the same row
+  Sand itself now starts. `BULLET_ROCK_COLOR_ROW_MIN_U`(20) untouched -
+  U was already correct (U intentionally stays blue over the whole
+  SkySand+Sand band, see the SkySand-skip entry above). Verified: a
+  synthetic `DRAW_BULLET_CELL` call at each row14-20 for TYPE=F shows
+  sky-code through row16, rock-code from row17 on.
 
 ## Emulator-side testing note
 

@@ -108,16 +108,13 @@ CUR_POSE_PAT  EQU 0F22Ah
 ; ---------- below.                                                     ----------
 BULLET_ROCK_ROW_MIN EQU 16      ; first row needing an explicit (non-sky) erase restore (16-23)
 ; the bullet's own drawn color (sky-blue bg vs ground-yellow bg fill
-; for its sprite's own background pixels) is per-shot-type, and only
-; the diagonal/U shot's own boundary moved - "斜めだけって言っただろ
-; うが なんで水平ショットも変えた 水平は前に戻せ" (only U was meant;
-; straight/F shots go back to their original boundary, 19 - they never
-; actually reach rows18-19 in normal flight anyway, but a jump-time F
-; shot could, so the 2 thresholds must stay genuinely separate, not
-; just share one constant). U keeps blue over rows18-19 too - "Skysand
-; とその下のSandは...背景色ブルーのままでいい...背景色イエローでやる
-; と明るい色なので余計に目立つ".
-BULLET_ROCK_COLOR_ROW_MIN_F EQU 19
+; for its sprite's own background pixels) is per-shot-type. F's own
+; boundary tracks wherever Sand's own light-yellow band actually
+; starts (17, since Sand widened to rows17-19) - "水平打ちでの弾の
+; 背景色はライトイエローなのにブルーになってる 行を増やした影響かも"
+; (F was still using the old pre-widening boundary(19), so it showed
+; blue/sky color over the newly-Sand rows17-18 instead of yellow).
+BULLET_ROCK_COLOR_ROW_MIN_F EQU 17
 BULLET_ROCK_COLOR_ROW_MIN_U EQU 20
 ; a diagonal/U shot decrements ROW every frame as it climbs; with no
 ; lower bound it could fly into rows0-1 (the HUD) and erase a glyph
@@ -1439,6 +1436,21 @@ UOB_TC_ADD:
     JR NC,UOB_DEACTIVATE
 
 UOB_DRAW:
+    ; diagonal/U shots skip drawing entirely while passing through
+    ; SkySand's own row(row16=BULLET_ROCK_ROW_MIN) - "斜め打ちはSkysand
+    ; と重なった時弾の表示はスキップに...Skysandより上に弾が行くと
+    ; 背景色ブルーの現在の弾を表示に" (F unaffected - only U skips
+    ; here; above row16 it's plain sky again and draws the usual
+    ; blue-bg bullet as before). The cell was already correctly
+    ; restored to SkySand this frame (ERASE_BULLET_CELL ran on the old
+    ; position above), so simply not drawing leaves it showing through.
+    LD A,(IX+1)
+    OR A
+    JR Z,UOB_DRAW_DO
+    LD A,(IX+3)
+    CP BULLET_ROCK_ROW_MIN
+    RET Z
+UOB_DRAW_DO:
     CALL DRAW_BULLET_CELL
     RET
 UOB_DEACTIVATE:
