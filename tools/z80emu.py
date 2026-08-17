@@ -68,8 +68,8 @@ class Z80:
             return True
         if target == 0x0047:  # WRTVDP: C=reg,B=data - no-op (register state not tracked)
             return True
-        if target == 0x00D5:  # GTSTCK: A=id -> A=0 (centered/no input)
-            self.a = 0
+        if target == 0x00D5:  # GTSTCK: A=id -> A=0-8 direction (simulated via sim_dir, default 0=centered)
+            self.a = getattr(self, 'sim_dir', 0)
             return True
         if target == 0x00D8:  # GTTRIG: A=id -> simulated fire button
             self.a = 0xFF if getattr(self,'sim_fire',False) else 0
