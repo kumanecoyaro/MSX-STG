@@ -54,22 +54,25 @@ with no way to tell where.
   flip/left-facing state anywhere in this test).
   - **Background compositing** ("背景色は書換先のセルを調べて合成"):
     SCREEN1 color is fixed per 8-character-code group, not per screen
-    position, so a bullet can't just draw its green pixels over
-    whatever's already there - it needs a dedicated pattern code (with
-    green fg) placed in a color group whose bg matches the terrain
-    tile actually underneath. `terrain_gen.py`'s own color table only
-    ever uses 2 solid colors total: `SKY_COLOR` for the permanent open
-    sky, and one uniform `ROCK_COLOR` shared by *every* terrain code in
-    the scrolling band (flat/slope/climb/still-blank alike - see that
-    file's own comment on id0/BLANK) - so "row `>= BULLET_ROCK_ROW_MIN`
-    (19)" is exactly (not approximately) the right test for "rock-
-    colored", regardless of which tile is really at that cell:
-    `BULLETF_SKY_CODE`/`BULLETU_SKY_CODE` (color group 11: fg2
-    green/bg5, matching the sky's own bg) and `BULLETF_ROCK_CODE`/
-    `BULLETU_ROCK_CODE` (group 12: fg2 green/bg10, matching the rock
-    tier's own bg) - both groups patched onto 2 of `terrain_gen.py`'s
-    per-group color-table slots that no real terrain code ever uses
-    (codes 88-103, well past the terrain's own 0-87).
+    position, so a bullet can't just draw its pixels over whatever's
+    already there - it needs a dedicated pattern code placed in a
+    color group whose bg matches the terrain tile actually underneath.
+    `terrain_gen.py`'s own color table only ever uses 2 solid colors
+    total: `SKY_COLOR` for the permanent open sky, and one uniform
+    `ROCK_COLOR` shared by *every* terrain code in the scrolling band
+    (flat/slope/climb/still-blank alike - see that file's own comment
+    on id0/BLANK) - so "row `>= BULLET_ROCK_ROW_MIN`(19)" is exactly
+    (not approximately) the right test for "rock-colored", regardless
+    of which tile is really at that cell.
+  - `BulletF` and `BulletU` also have different fg colors from each
+    other now (black vs green, per direct instruction), so each needs
+    its own pair of color groups, not a shared pair split only by
+    background: `BULLETU_SKY_CODE`/`BULLETU_ROCK_CODE` (groups 11/12:
+    fg2 green/bg5, fg2 green/bg10) and `BULLETF_SKY_CODE`/
+    `BULLETF_ROCK_CODE` (groups 13/14: fg1 black/bg5, fg1 black/bg10)
+    - all 4 groups patched onto `terrain_gen.py`'s generic per-group
+    color-table slots that no real terrain code ever uses (codes
+    88-119, well past the terrain's own 0-87).
   - **Erasing** (before advancing) restores row19 explicitly (it's
     static, filled once at INIT and never touched again) or sky
     (`SKY_BLANK_CODE`), but is skipped entirely for rows 20-23 - those

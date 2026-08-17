@@ -101,24 +101,33 @@ SKY_BLANK_CODE    EQU 0         ; TERRAIN_BLANK_ROW's code - the permanent open-
 ; Bullet BG pattern codes: each bullet's art needs one code per
 ; background color group it can appear over (SCREEN1 colors are fixed
 ; per 8-code group, not per screen position - see bullet_gen.py's own
-; comment). Placed at codes 88-103 (groups 11-12), well past every
-; real terrain code (0-87, groups 0-10 - see terrain_gen.py's
-; STEADY_BASE/BLEND_BASE) so nothing else ever references them.
-BULLETF_SKY_CODE  EQU 88
+; comment). BulletF and BulletU now have DIFFERENT colors (F=black,
+; U=green - per direct instruction), so they also need DIFFERENT
+; color groups, not just different codes within a shared group.
+; Placed at codes 88-119 (groups 11-14), well past every real terrain
+; code (0-87, groups 0-10 - see terrain_gen.py's STEADY_BASE/
+; BLEND_BASE) so nothing else ever references them.
 BULLETU_SKY_CODE  EQU 89
-BULLETF_ROCK_CODE EQU 96
 BULLETU_ROCK_CODE EQU 97
+BULLETF_SKY_CODE  EQU 104
+BULLETF_ROCK_CODE EQU 112
 ; color table (VRAM 2000h+group, 1 byte/group, hi nibble=fg/lo=bg -
 ; see terrain_gen.py's own SKY_COLOR/ROCK_COLOR): group11 (codes
-; 88-95) = fg2 green/bg5 light blue, matching the sky's own bg5;
-; group12 (codes 96-103) = fg2 green/bg10 dark yellow, matching the
-; rock tier's own bg10 (terrain_gen.py's ROCK_COLOR=0x8A) - written by
+; 88-95, BulletU sky) = fg2 green/bg5 light blue, matching the sky's
+; own bg5; group12 (96-103, BulletU rock) = fg2 green/bg10 dark
+; yellow, matching the rock tier's own bg10 (terrain_gen.py's
+; ROCK_COLOR=0x8A); group13 (104-111, BulletF sky) = fg1 black/bg5;
+; group14 (112-119, BulletF rock) = fg1 black/bg10 - all 4 written by
 ; patching over terrain_gen.py's generic per-group defaults (unused by
 ; any real terrain code) rather than by changing that shared module.
-BULLET_SKY_COLORADDR  EQU 200Bh
-BULLET_ROCK_COLORADDR EQU 200Ch
-BULLET_SKY_COLORBYTE  EQU 025h
-BULLET_ROCK_COLORBYTE EQU 02Ah
+BULLETU_SKY_COLORADDR  EQU 200Bh
+BULLETU_ROCK_COLORADDR EQU 200Ch
+BULLETU_SKY_COLORBYTE  EQU 025h
+BULLETU_ROCK_COLORBYTE EQU 02Ah
+BULLETF_SKY_COLORADDR  EQU 200Dh
+BULLETF_ROCK_COLORADDR EQU 200Eh
+BULLETF_SKY_COLORBYTE  EQU 015h
+BULLETF_ROCK_COLORBYTE EQU 01Ah
 
 JOY_TRIGA     EQU 0F22Bh
 PREV_TRIGA    EQU 0F22Ch
@@ -189,12 +198,16 @@ INIT:
     LD HL,BULLET_U_PATTERN : LD DE,BULLETU_ROCK_CODE*8 : LD BC,8 : CALL LDIRVM
 
     ; bullet color groups: patch over terrain_gen.py's generic per-
-    ; group defaults for the 2 groups the bullet codes above live in -
-    ; see BULLET_SKY_COLORADDR/BULLET_ROCK_COLORADDR above.
-    LD A,BULLET_SKY_COLORBYTE : LD (BULLET_TEMP_BYTE),A
-    LD HL,BULLET_TEMP_BYTE : LD DE,BULLET_SKY_COLORADDR : LD BC,1 : CALL LDIRVM
-    LD A,BULLET_ROCK_COLORBYTE : LD (BULLET_TEMP_BYTE),A
-    LD HL,BULLET_TEMP_BYTE : LD DE,BULLET_ROCK_COLORADDR : LD BC,1 : CALL LDIRVM
+    ; group defaults for the 4 groups the bullet codes above live in -
+    ; see BULLETU_SKY_COLORADDR etc. above.
+    LD A,BULLETU_SKY_COLORBYTE : LD (BULLET_TEMP_BYTE),A
+    LD HL,BULLET_TEMP_BYTE : LD DE,BULLETU_SKY_COLORADDR : LD BC,1 : CALL LDIRVM
+    LD A,BULLETU_ROCK_COLORBYTE : LD (BULLET_TEMP_BYTE),A
+    LD HL,BULLET_TEMP_BYTE : LD DE,BULLETU_ROCK_COLORADDR : LD BC,1 : CALL LDIRVM
+    LD A,BULLETF_SKY_COLORBYTE : LD (BULLET_TEMP_BYTE),A
+    LD HL,BULLET_TEMP_BYTE : LD DE,BULLETF_SKY_COLORADDR : LD BC,1 : CALL LDIRVM
+    LD A,BULLETF_ROCK_COLORBYTE : LD (BULLET_TEMP_BYTE),A
+    LD HL,BULLET_TEMP_BYTE : LD DE,BULLETF_ROCK_COLORADDR : LD BC,1 : CALL LDIRVM
 
     ; checkpoint 6: tank + bullet patterns loaded
     LD B,6 : LD C,7 : CALL WRTVDP
