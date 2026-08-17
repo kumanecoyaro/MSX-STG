@@ -31,8 +31,8 @@ with no way to tell where.
   switches to the Gap pose while straddling a climb/descend transition
   ("Rock225に接触したらGapスプライトに切り替えて登るように...Rock
   戻ったらノーマルに戻す"). 2 probe name-table columns near the tank's
-  right/front edge: `TANK_COL_R` (`(TANK_X+24)>>3`, directly under -
-  "自機の右下") scans `IDCACHE_T0`-`IDCACHE_T3` top-to-bottom for the
+  right/front edge: `TANK_COL_R` (`(TANK_X+TANK_FOOT_DX)>>3`, directly
+  under - "自機の右下") scans `IDCACHE_T0`-`IDCACHE_T3` top-to-bottom for the
   first non-BLANK id at that column to find the surface tier - "下は
   Rock設置を調べ" - any non-BLANK id (steady rock or a slope-transition
   cell) counts as solid ground. `TANK_COL_L` (`TANK_COL_R-1`, one
@@ -139,6 +139,23 @@ with no way to tell where.
 
 ## Bugs found and fixed while building this
 
+- **Tank looked like it was floating above the slope while showing the
+  Gap pose** (reported from a screenshot after the first terrain-
+  collision pass shipped): `TANK_FOOT_DX` (the probe columns' offset
+  from `TANK_X`) was 24 - close to the tank's very front edge. That
+  meant `TANK_COL_R` detected a new (higher) tier - and snapped
+  `TANK_GROUND_Y` straight to it - as soon as the tank's *front* first
+  touched a Rock225 marker, well before that marker had scrolled far
+  enough left to actually sit under the sprite's own visible body. The
+  Y jump and Gap-pose switch both happened on time relative to the
+  probe, just not relative to what was on screen under the tank.
+  Fixed per direct instruction ("スプライトの切り替えを少し遅らせて
+  くれそうすれば埋まるはず。多分1セル8px送らせればいい感じ") by
+  pulling the probe back 1 cell, to the tank's own middle
+  (`TANK_FOOT_DX` 24->16) - delays both the Y-snap and the pose switch
+  until the transition has actually scrolled under the tank. Verified
+  by rendering 3 frames through a climb transition: the tank's treads
+  now sit right at the visible slope edge in all of them, not above it.
 - **Tank snapped to the wrong height at every tier except the
   starting one** (caught by an emulator trace, not a hardware report):
   `TANK_TIER_Y_TABLE` was written as `156,148,140,132` (highest Y

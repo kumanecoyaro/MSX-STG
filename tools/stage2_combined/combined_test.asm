@@ -134,7 +134,15 @@ BULLET_TEMP_BYTE EQU 0F23Fh
 
 ; ---------- terrain collision: ground-height following + slope       ----------
 ; ---------- (Rock225) detection - see UPDATE_TERRAIN_COLLISION below. ----------
-TANK_FOOT_DX  EQU 24        ; probe column offset from TANK_X (right/front side of the tank)
+; probe column offset from TANK_X - was 24 (near the tank's very front
+; edge), but that made the tank snap up to a new tier as soon as its
+; front touched a Rock225 marker, well before the marker had scrolled
+; under the sprite's own visual body - reported as the tank floating
+; above the slope while showing the Gap pose. Pulling the probe back 1
+; cell (8px, per direct instruction "1セル8px遅らせればいい感じ") to
+; the tank's own middle delays both the Y-snap and the Gap pose switch
+; until the transition has actually scrolled under the tank.
+TANK_FOOT_DX  EQU 16
 TANK_GROUND_Y EQU 0F240h    ; current ground-follow baseline Y (tier-dependent) - UPDATE_JUMP
                             ; subtracts JUMP_Y_OFFSET from this instead of the fixed TANK_Y_BASE
 TANK_ON_SLOPE EQU 0F241h    ; 1 while straddling a Rock225/Rock225D marker -> Gap pose
