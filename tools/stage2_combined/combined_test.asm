@@ -41,7 +41,7 @@ NAMEBUF_T3    EQU 0F160h
 ; ---------- tank state (past terrain's own range - 0F100h-0F180h) ----------
 SPRATR        EQU 1B00h
 SPRPAT        EQU 3800h
-TANK_COLOR_TL EQU 8        ; medium red (main body)
+TANK_COLOR_TL EQU 6        ; dark red (main body)
 TANK_COLOR_TR EQU 1        ; black
 TANK_COLOR_BL EQU 1        ; black
 TANK_COLOR_BR EQU 1        ; black
@@ -72,16 +72,24 @@ CUR_POSE_PAT  EQU 0F22Ah
 ; ---------- row19 spans y152-159), unlike that game's ship which     ----------
 ; ---------- never reaches its own ground scroller - so a shot fired  ----------
 ; ---------- from here really can be sitting on top of two DIFFERENT  ----------
-; ---------- backgrounds (open sky above, or the terrain's row19      ----------
-; ---------- "flat rock top" tier) depending on the tank's current Y, ----------
-; ---------- and erasing/drawing needs to put back the right one -    ----------
-; ---------- see BULLET_GROUND_ROW/DRAW_BULLET_CELL below. Since the   ----------
-; ---------- tank (and so every shot's spawn row) never goes BELOW    ----------
-; ---------- row19 (jumping only raises it further, and the ground-   ----------
-; ---------- height collision system that would let it descend into   ----------
-; ---------- the scrolling rows 20-23 doesn't exist yet), those are   ----------
-; ---------- the only two backgrounds a shot can ever be over.        ----------
-BULLET_GROUND_ROW EQU 19        ; the only row where the "rock" bg applies
+; ---------- backgrounds: open sky above row19, or the "rock" tier    ----------
+; ---------- (row19's own static flat top, or rows 20-23's scrolling  ----------
+; ---------- terrain) - and erasing/drawing needs to put back the      ----------
+; ---------- right one. terrain_gen.py's own color table only ever    ----------
+; ---------- uses 2 solid colors total: SKY_COLOR for the permanent    ----------
+; ---------- open sky, and ONE uniform ROCK_COLOR shared by literally  ----------
+; ---------- every terrain code in the scrolling band (flat/slope/     ----------
+; ---------- climb/still-blank alike - see that file's own comment on  ----------
+; ---------- id0/BLANK) - so "row>=BULLET_ROCK_ROW_MIN" is exactly     ----------
+; ---------- (not approximately) the right test for "rock-colored",    ----------
+; ---------- regardless of which exact terrain tile is really there.   ----------
+; ---------- Only row19 itself needs an explicit erase write (it's     ----------
+; ---------- static, filled once at INIT, never touched again);        ----------
+; ---------- rows 20-23 get fully redrawn from NAMEBUF every frame      ----------
+; ---------- BEFORE the bullet update runs (see MAINLOOP), so erasing   ----------
+; ---------- a bullet there is a no-op - skipped entirely, see          ----------
+; ---------- UPDATE_ONE_BULLET below.                                   ----------
+BULLET_ROCK_ROW_MIN EQU 19      ; first row where the "rock" bg applies (19-23)
 BULLET_MAXCOL     EQU 31        ; last valid name-table column (0-31)
 BULLET_MUZZLE_DX  EQU 24        ; spawn column offset from TANK_X (muzzle, right side of the tank)
 SKY_BLANK_CODE    EQU 0         ; TERRAIN_BLANK_ROW's code - the permanent open-sky tile
@@ -579,13 +587,23 @@ TSB_DO_SPAWN:
     LD A,1 : LD (IX+0),A
     LD A,(TANK_AIMUP) : LD (IX+1),A
 
-    ; ROW = TANK_Y_CUR >> 3 (name-table row) - always <= BULLET_GROUND_ROW,
-    ; since the tank's own Y never goes below its grounded baseline
-    ; (jumping only raises it further - see the comment on BULLET_GROUND_ROW).
+    ; ROW = TANK_Y_CUR >> 3 (name-table row), +1 more for a straight/F
+    ; shot only (per direct instruction "BulletFのセル表示を1セル下に") -
+    ; U (diagonal) keeps the un-shifted muzzle row. Grounded F therefore
+    ; lands 1 row past BULLET_ROCK_ROW_MIN(19), inside the scrolling
+    ; band - fine, see the comment on BULLET_ROCK_ROW_MIN above for why
+    ; that's still handled correctly.
     LD A,(TANK_Y_CUR)
     SRL A
     SRL A
     SRL A
+    LD B,A
+    LD A,(IX+1)
+    OR A
+    JR NZ,TSB_ROW_SET
+    INC B
+TSB_ROW_SET:
+    LD A,B
     LD (IX+3),A
 
     ; COL = (TANK_X + BULLET_MUZZLE_DX) >> 3, clamped to the last column
@@ -626,20 +644,26 @@ UPDATE_ONE_BULLET:
     OR A
     RET Z
 
-    ; --- erase: restore whichever background this cell's CURRENT row is over ---
+    ; --- erase: row<19 sky, row==19 explicit rock restore (row19 is    ---
+    ; --- static, only ever written at INIT), row>19 skip entirely -    ---
+    ; --- rows 20-23 already got fully redrawn from NAMEBUF earlier      ---
+    ; --- this same MAINLOOP iteration (see the comment on               ---
+    ; --- BULLET_ROCK_ROW_MIN above), so there's nothing to restore.     ---
     LD A,(IX+3)
-    CP BULLET_GROUND_ROW
-    JR Z,UOB_ERASE_ROCK
+    CP BULLET_ROCK_ROW_MIN
+    JR NC,UOB_ERASE_ROCKBAND
     LD A,SKY_BLANK_CODE
-    JR UOB_ERASE_SET
-UOB_ERASE_ROCK:
+    JR UOB_ERASE_WRITE
+UOB_ERASE_ROCKBAND:
+    JR NZ,UOB_ERASE_SKIP
     LD A,TERRAIN_PATTERN_COUNT
-UOB_ERASE_SET:
+UOB_ERASE_WRITE:
     LD (BULLET_TEMP_BYTE),A
     LD L,(IX+4) : LD H,(IX+5)
     LD E,(IX+2) : LD D,0
     ADD HL,DE
     CALL WRITE_BULLET_BYTE_HL
+UOB_ERASE_SKIP:
 
     ; --- advance: column always, row too (upward) for a diagonal/U shot ---
     LD A,(IX+2) : INC A : LD (IX+2),A
@@ -673,8 +697,8 @@ UOB_DEACTIVATE:
 ; current-row) and writes it at ADDR+COL.
 DRAW_BULLET_CELL:
     LD A,(IX+3)
-    CP BULLET_GROUND_ROW
-    JR Z,DBC_ROCK
+    CP BULLET_ROCK_ROW_MIN
+    JR NC,DBC_ROCK
     LD A,(IX+1)
     OR A
     JR NZ,DBC_SKY_U

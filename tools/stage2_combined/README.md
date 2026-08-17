@@ -36,8 +36,9 @@ with no way to tell where.
   color - TL (main body) medium red, TR/BL/BR (gun/treads) black - per
   direct instruction (initially "右上のスプライトの色をグレーに
   右下左下をブラックに", then TR changed from gray to black, then TL
-  changed from dark blue to medium red - "自機の左上のスプライトを
-  ミドルレッドに変更").
+  changed from dark blue to medium red to dark red over 3 rounds -
+  "自機の左上のスプライトをミドルレッドに変更", then "自機の色を
+  ダークレッドに").
 - **Shot** (A button, edge-triggered, pool of 3 - "Stage1と同様に
   制限数画面内3発", mirroring `src/CYBER SHMUP.asm`'s own BULLET0/1/2):
   drawn as BG (name-table) characters, not sprites - same reasoning as
@@ -46,7 +47,9 @@ with no way to tell where.
   Two shapes: `BulletF` (straight ahead, 1 column/frame, fixed row -
   the row it spawned at) and `BulletU` (diagonal, 1 column/frame *and*
   1 row up/frame - fired while holding up, i.e. `TANK_AIMUP`). Spawn
-  row = `TANK_Y_CUR>>3`, spawn column = `(TANK_X+24)>>3` (muzzle,
+  row = `TANK_Y_CUR>>3`, +1 more for `BulletF` only (per direct
+  instruction "BulletFのセル表示を1セル下に" - `BulletU` keeps the
+  un-shifted muzzle row); spawn column = `(TANK_X+24)>>3` (muzzle,
   right side of the tank - the tank only ever faces right, there's no
   flip/left-facing state anywhere in this test).
   - **Background compositing** ("背景色は書換先のセルを調べて合成"):
@@ -54,24 +57,28 @@ with no way to tell where.
     position, so a bullet can't just draw its green pixels over
     whatever's already there - it needs a dedicated pattern code (with
     green fg) placed in a color group whose bg matches the terrain
-    tile actually underneath. The tank's own Y never goes below its
-    grounded baseline (jumping only raises it further - no ground-
-    height collision system yet, see below), so a shot's spawn row is
-    always `<= BULLET_GROUND_ROW`(19), and a shot can only ever be
-    over one of exactly two backgrounds: open sky (rows 0-18) or
-    row19's own static "flat rock top" tile (which - unlike rows
-    20-23 - never scrolls/changes once INIT fills it). That reduces
-    "check the destination cell" to a cheap `CP BULLET_GROUND_ROW` per
-    frame per bullet, not a real per-cell lookup: `BULLETF_SKY_CODE`/
-    `BULLETU_SKY_CODE` (color group 11: fg2 green/bg5, matching the
-    sky's own bg) and `BULLETF_ROCK_CODE`/`BULLETU_ROCK_CODE` (group
-    12: fg2 green/bg10, matching row19's own bg) - both groups patched
-    onto 2 of `terrain_gen.py`'s per-group color-table slots that no
-    real terrain code ever uses (codes 88-103, well past the terrain's
-    own 0-87). Erasing (before advancing) picks the matching *blank*
-    code the same way (`SKY_BLANK_CODE`(0) or row19's own
-    `TERRAIN_PATTERN_COUNT`), so a shot never leaves a hole in either
-    background behind it.
+    tile actually underneath. `terrain_gen.py`'s own color table only
+    ever uses 2 solid colors total: `SKY_COLOR` for the permanent open
+    sky, and one uniform `ROCK_COLOR` shared by *every* terrain code in
+    the scrolling band (flat/slope/climb/still-blank alike - see that
+    file's own comment on id0/BLANK) - so "row `>= BULLET_ROCK_ROW_MIN`
+    (19)" is exactly (not approximately) the right test for "rock-
+    colored", regardless of which tile is really at that cell:
+    `BULLETF_SKY_CODE`/`BULLETU_SKY_CODE` (color group 11: fg2
+    green/bg5, matching the sky's own bg) and `BULLETF_ROCK_CODE`/
+    `BULLETU_ROCK_CODE` (group 12: fg2 green/bg10, matching the rock
+    tier's own bg) - both groups patched onto 2 of `terrain_gen.py`'s
+    per-group color-table slots that no real terrain code ever uses
+    (codes 88-103, well past the terrain's own 0-87).
+  - **Erasing** (before advancing) restores row19 explicitly (it's
+    static, filled once at INIT and never touched again) or sky
+    (`SKY_BLANK_CODE`), but is skipped entirely for rows 20-23 - those
+    already get fully redrawn from `NAMEBUF` every frame *before* the
+    bullet update runs (see `MAINLOOP`), so there's nothing for a
+    bullet to restore there; writing anything would just fight with -
+    and be overwritten by - that same frame's real terrain content one
+    step later. Verified with an emulator sweep: a `BulletF` traveling
+    the length of row20 leaves zero stray codes behind at any point.
   - Per-frame draw/erase uses the same raw `DI`-wrapped `OUT` + 8-NOP
     pattern as `UPDATE_TANK_SPRITES`/`INIT_SPRATR_CLR` (see the bug
     entries below) - this runs every frame with `EI` active too.
@@ -81,8 +88,7 @@ with no way to tell where.
   jumps arc relative to it, but the tank does not track the terrain's
   own climb/descend height changes. That needs the ground-height
   collision system, still not built (also what keeps a shot's spawn
-  row always `<=` row19, making the bullet background-compositing
-  simplification above valid).
+  row bounded, making the bullet background-compositing above valid).
 - Border-color diagnostic checkpoints through INIT (VDP R7), added
   specifically because the tank-only test froze on real hardware with
   no clue where:
