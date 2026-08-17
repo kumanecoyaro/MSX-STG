@@ -44,13 +44,25 @@ with no way to tell where.
   art exists yet, so both the climb (`R225_UL`/`R225_UR`) and descend
   (`R225D_UL`/`R225D_UR`) ids trigger the same Gap pose - "まだ下りの
   絵を用意してないのでGapスプライト流用".
-  - `TANK_GROUND_Y` eases toward that target at `TANK_CLIMB_SPEED`
-    (2px/frame) instead of snapping the full 8px in one frame, which
-    looked like a jolt/jitter at every tier change - "登り降り時に
-    一気に8px移動してるんでガタついてる...滑らかに繋げて". Verified
-    the Gap pose (already active a few frames before the Y-snap, and
-    held via `TANK_SLOPE_HOLD` afterward - see below) comfortably
-    covers the whole ~4-frame easing window with margin on both ends.
+  - `TANK_GROUND_Y` eases toward that target instead of snapping the
+    full 8px in one frame, which looked like a jolt/jitter at every
+    tier change - "登り降り時に一気に8px移動してるんでガタついてる
+    ...滑らかに繋げて". First cut moved at a flat `TANK_CLIMB_SPEED`
+    (2px/frame, 4 frames/tier) - visually smooth for one isolated
+    climb, but a flat speed unrelated to the terrain's own scroll rate
+    finished each climb well before the next chained one was ready,
+    reading as a momentary pause between them, and as "climbing on its
+    own" rather than moving with the terrain - "連続Gapだと一瞬止まっ
+    てる...地形に沿って移動じゃなく地形に入ったら自分で8pxのぼって
+    る...地形の移動とマッチしてない". Measured the actual gap between
+    chained tier changes on this track (~16 frames) and retuned:
+    `TANK_CLIMB_SPEED`(1px) is now gated to every *other* frame
+    (`TICK` bit0), averaging 0.5px/frame - 16 frames for the full 8px,
+    matching that pace. Verified with an emulator trace across the
+    rapid-chain climb section: `TANK_GROUND_Y` now counts down
+    continuously with no flat/paused frames between chained tier
+    changes, and the Gap pose (see `TANK_SLOPE_HOLD` below) stays
+    active for the whole stretch.
   - **Slope check** ("Gapを調べる", sets `TANK_ON_SLOPE`) went through
     2 rounds: a separate probe 1 column *behind* `TANK_COL_R` always
     lagged the Y-tier-snap by exactly 1 column's scroll time (it was

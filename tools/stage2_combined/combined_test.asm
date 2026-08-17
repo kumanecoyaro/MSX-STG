@@ -44,7 +44,8 @@ TANK_COLOR_BR EQU 1        ; black
 TANK_X_INIT   EQU 40
 TANK_Y_BASE   EQU 156      ; row23 top (23*8=184) - tank height(32) + landing offset(3+1)
 TANK_SPEED    EQU 2        ; px/frame, left/right
-TANK_CLIMB_SPEED EQU 2     ; px/frame - TANK_GROUND_Y eases toward each tier's Y instead of snapping
+TANK_CLIMB_SPEED EQU 1     ; px/step, gated to every OTHER frame (see UPDATE_TERRAIN_COLLISION) -
+                           ; 0.5px/frame effective, matching the terrain's own ~16-frame climb pace
 JUMP_PEAK     EQU 24       ; px
 JUMP_FRAMES   EQU 49       ; JUMP_OFFSET_TABLE length (0-24 rise, 23-0 fall)
 SPRITE_ATTRS  EQU 0F200h   ; 16 bytes
@@ -517,13 +518,27 @@ UTC_TIER_DONE:
     ; px/frame instead of snapping straight there - snapping the full
     ; 8px in one frame looked like a jolt/jitter at every tier change,
     ; per direct instruction ("登り降り時に一気に8px移動してるんで
-    ; ガタついてる...滑らかに繋げて").
+    ; ガタついてる...滑らかに繋げて"). A flat 2px/frame finished each
+    ; climb in 4 frames - much faster than the terrain itself actually
+    ; scrolls a transition by (measured ~16 frames between chained
+    ; tier changes on this track), so the climb looked detached from
+    ; the terrain's own motion and, chained back-to-back, visibly
+    ; paused waiting for the next tier - "連続Gapだと一瞬止まってる
+    ; ...地形に沿って移動じゃなく地形に入ったら自分で8pxのぼってる
+    ; 地形の移動とマッチしてない". Gated to every other frame (TICK
+    ; bit0) so 1px/step averages to the same 0.5px/frame the terrain
+    ; itself climbs at (8px over 16 frames), instead of a faster,
+    ; independently-timed animation.
     LD A,(TANK_TIER) : LD E,A : LD D,0
     LD HL,TANK_TIER_Y_TABLE : ADD HL,DE
     LD A,(HL) : LD B,A            ; B = target Y
     LD A,(TANK_GROUND_Y)          ; A = current (smoothed) Y
     CP B
     JR Z,UTC_GROUND_Y_DONE
+    LD A,(TICK) : AND 1
+    JR NZ,UTC_GROUND_Y_DONE
+    LD A,(TANK_GROUND_Y)
+    CP B
     JR C,UTC_GROUND_Y_RISE
     ; current > target (numerically lower on screen, i.e. climbing) -
     ; step down toward it, clamping so it can't undershoot past it
