@@ -549,24 +549,31 @@ with no way to tell where.
   | 9 | Enemy patterns + pool set up - about to enter MAINLOOP |
 
   If it freezes again, report which color is showing.
-- **SkySand transition row** (per direct instruction: "今イエローで
-  埋めてる下から5行目の上にSkySandで1行埋めて" - row19, the flat rock
-  top, is the 5th row from the bottom; "above it" is row18): a 2nd
-  static one-time fill, same treatment as row19 itself (never touched
-  again after INIT, no `NAMEBUF`/scrolling involvement), showing
-  `sprites/SkySand.json`'s dithered sky-to-sand pattern across all 32
-  columns instead of an abrupt cut straight from open sky into solid
-  rock. Its own dedicated 2-tone color (fg5 light blue/bg11 light
-  yellow, taken directly from the source JSON - unlike the terrain's
-  own uniform-`ROCK_COLOR` tiles) needed a whole new color group -
-  placed at group31 (codes248-255), the very last one still free after
-  terrain/bullets/digits/swatch. `ERASE_BULLET_CELL` gained a row18
-  case (restoring `SKYSAND_CODE` instead of the default "row<19 ->
-  sky" rule) for the same reason `BULLET_MIN_ROW` exists - a climbing
-  shot passing through would otherwise blank this row out exactly like
-  it once could the HUD rows. Verified: 400 frames of continuous
-  up-fire aimed straight through row18 left it byte-for-byte unchanged
-  afterward.
+- **SkySand row19** (per direct instruction, across 2 rounds: an
+  initial "今イエローで埋めてる下から5行目の上にSkySandで1行埋めて"
+  read "above" row19 - the flat rock top, 5th row from the bottom - as
+  a brand new row18, then corrected twice: "やっぱSkysandは下から
+  ５行目で ブランクセルは削除" and, once a revised source tile arrived,
+  "やっぱ６行目は削除 ５行目をこのキャラで埋めて" - row19 itself
+  should show SkySand, not a separate row18 above it): row19's own
+  static one-time fill (never touched again after INIT, no
+  `NAMEBUF`/scrolling involvement - same as always) now shows
+  `sprites/SkySand.json`'s dithered sky-to-sand pattern instead of the
+  old flat solid-color placeholder tile it used to use
+  (`TERRAIN_PATTERN_COUNT`'s own now-unused blank slot, along with the
+  `TERRAIN_ROCKY_BLANK` data that filled it, was removed entirely).
+  Its own dedicated 2-tone color (fg5 light blue/bg11 light yellow,
+  taken directly from the source JSON - unlike the terrain's own
+  uniform-`ROCK_COLOR` tiles) needed a whole new color group - placed
+  at group31 (codes248-255), the last one still free after terrain/
+  bullets/digits/swatch. `ERASE_BULLET_CELL`'s existing row19 case
+  (previously restoring the old blank tile) now restores
+  `SKYSAND_CODE` instead, for the same reason `BULLET_MIN_ROW` exists -
+  a climbing shot passing through would otherwise blank it back to
+  plain sky. Verified: row18 reads as plain sky (code 0) and row19
+  reads as `SKYSAND_CODE`(248) uniformly across all 32 columns, and
+  400 frames of continuous up-fire aimed straight through row19 left
+  it byte-for-byte unchanged afterward.
 
 ## Bugs found and fixed while building this
 
