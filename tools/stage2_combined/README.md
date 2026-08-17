@@ -761,6 +761,31 @@ with no way to tell where.
   break only on `y==208`, `continue` (skip, don't stop) for `y>=208`
   otherwise. Verified: re-rendering the same scene now shows both the
   tank's gun-up pose and 2 small diagonal bullet marks in flight.
+- **BulletF art replaced, spawn row +1->+2 to align with the tank's
+  actual gun muzzle** (new `sprites/BulletF.json` supplied directly -
+  the chevron moved from the bottom of its 8x8 cell to the top;
+  "BalletFを1セル下に描画 今のままだと16x16の敵を出すと当たらないと
+  思うんで...(垂直位置が)狂うんで...自機の下から8ドット上に描画と
+  判定が来ないと...表示と判定を一致させるため...自キャラの絵は銃が
+  描かれてるがその銃口に合わせる意味もある 今は1,2pxズレてるしな"):
+  with the new art's content starting right at its cell's own top row
+  (no more in-cell offset, unlike the old art's rows5-7), keeping the
+  spawn row at the old +1 would land the visible bullet 7-8px *above*
+  where it should be - widened to +2 instead. Cross-checked against 2
+  independent derivations rather than guessed: measuring `TankF.json`'s
+  own gun-barrel tip directly (rows10-13, centered ~row11-12) puts the
+  muzzle at TANK_Y_CUR+~11-12px; `TANK_Y_CUR>>3+2` (156 base tier) =
+  row21 = pixel168, landing within ~1px of that measurement - both
+  agree, and both close the previous ~2px gap the user had already
+  measured on real hardware rather than making it worse. Since F's
+  hitbox uses the same ROW value the visible draw does (`CHECK_HIT_PAIR`
+  reads straight from the bullet slot's own ROW/COL), this also fixes
+  the display/hit-test mismatch that made hits against a 16x16 enemy
+  positioned at the muzzle's own height unreliable - "表示と判定を
+  一致させるため". Verified: rendered close-up shows the new chevron
+  sitting right at the gun's own muzzle tip; a synthetic hit test with
+  an enemy box placed at the bullet's exact spawn pixel now registers;
+  4000-frame zero-input sweep still shows no score drift.
 
 ## Bugs found and fixed while building this
 

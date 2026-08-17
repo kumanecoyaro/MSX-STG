@@ -1424,11 +1424,19 @@ TSB_DO_SPAWN:
     LD A,(TANK_AIMUP) : LD (IX+1),A
     LD A,(TANK_FACING) : LD (IX+6),A
 
-    ; ROW = TANK_Y_CUR >> 3 (name-table row), +1 more for a straight/F
-    ; shot only (per direct instruction "BulletFのセル表示を1セル下に") -
-    ; U (diagonal) keeps the un-shifted muzzle row. Grounded F therefore
-    ; lands 1 row past the tank's own row (row19->20), inside the
-    ; scrolling band - fine, see BULLET_ROCK_ROW_MIN above.
+    ; ROW = TANK_Y_CUR >> 3 (name-table row), +2 more for a straight/F
+    ; shot only - U (diagonal) keeps the un-shifted muzzle row. Was +1
+    ; ("BulletFのセル表示を1セル下に"), widened to +2 to match the new
+    ; BulletF.json art (its chevron moved from the bottom of its 8x8
+    ; cell to the top) - "自機の下から8ドット上に描画と判定が来ないと
+    ; 16x16の敵を...当たらない...表示と判定を一致させるため...銃口に
+    ; 合わせる意味もある". With the new art's content starting at the
+    ; cell's own top row (no in-cell offset, unlike the old art's
+    ; rows5-7), +1 alone would land 7-8px above TankF.json's actual gun
+    ; muzzle (measured from that file's own bits: barrel tip rows10-13,
+    ; centered ~row11-12) - +2 lands within 1px of it instead. Grounded
+    ; F therefore lands 2 rows past the tank's own row (row19->21),
+    ; inside the scrolling band - fine, see BULLET_ROCK_ROW_MIN above.
     LD A,(TANK_Y_CUR)
     SRL A
     SRL A
@@ -1437,6 +1445,7 @@ TSB_DO_SPAWN:
     LD A,(IX+1)
     OR A
     JR NZ,TSB_ROW_SET
+    INC B
     INC B
 TSB_ROW_SET:
     LD A,B
