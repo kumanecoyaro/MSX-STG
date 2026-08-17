@@ -43,10 +43,11 @@ TANK_COLOR_BL EQU 1        ; black
 TANK_COLOR_BR EQU 1        ; black
 TANK_X_INIT   EQU 40
 TANK_Y_BASE   EQU 156      ; row23 top (23*8=184) - tank height(32) + landing offset(3+1)
-TANK_SPEED    EQU 2        ; px/frame, left/right
+TANK_SPEED    EQU 1        ; px/frame, left/right - was 2, slowed per direct instruction ("自機移動速度が速い気がするんで速度落として")
 TANK_CLIMB_SPEED EQU 1     ; px/step, gated to every OTHER frame (see UPDATE_TERRAIN_COLLISION) -
                            ; 0.5px/frame effective, matching the terrain's own ~16-frame climb pace
-TANK_CLIMB_CATCHUP_SPEED EQU 4  ; px/frame (no gate) once more than 1 tier behind - see UPDATE_TERRAIN_COLLISION
+TANK_CLIMB_CATCHUP_SPEED EQU 8  ; px/frame (no gate) once TANK_CLIMB_CATCHUP_THRESHOLD behind - see UPDATE_TERRAIN_COLLISION
+TANK_CLIMB_CATCHUP_THRESHOLD EQU 5  ; px - lowered from 9 (still slightly sinking in - "まだ少しだがめり込んでる")
 JUMP_PEAK     EQU 24       ; px
 JUMP_FRAMES   EQU 49       ; JUMP_OFFSET_TABLE length (0-24 rise, 23-0 fall)
 SPRITE_ATTRS  EQU 0F200h   ; 16 bytes
@@ -539,10 +540,14 @@ UTC_TIER_DONE:
     ; TANK_GROUND_Y then falls behind by more than one tier and the
     ; tank visibly sinks into the rock for a stretch - "左右移動が
     ; 加わるとGapに突っ込んでる...登ってはいるが地形にめり込んでる".
-    ; Once more than 1 tier(8px) behind, switch to catching up at
-    ; TANK_CLIMB_CATCHUP_SPEED every frame (no gate) instead - once
-    ; back within 1 tier, the smooth slow pace above takes back over
-    ; for the final approach.
+    ; Once TANK_CLIMB_CATCHUP_THRESHOLD behind, switch to catching up
+    ; at TANK_CLIMB_CATCHUP_SPEED every frame (no gate) instead - once
+    ; back under the threshold, the smooth slow pace above takes back
+    ; over for the final approach. Still sinking in slightly with the
+    ; original threshold(9)/speed(4) - "まだ少しだがめり込んでる" -
+    ; so the threshold is now tighter (5) and the catch-up itself
+    ; faster (8, enough to close any realistic single-frame gap in one
+    ; step) to stamp out the residual lag.
     LD A,(TANK_TIER) : LD E,A : LD D,0
     LD HL,TANK_TIER_Y_TABLE : ADD HL,DE
     LD A,(HL) : LD B,A            ; B = target Y
@@ -556,8 +561,8 @@ UTC_TIER_DONE:
 UTC_GROUND_Y_DIFF_BELOW:
     LD A,B : SUB C                ; diff = target-current (current<target)
 UTC_GROUND_Y_DIFF_READY:
-    CP 9
-    JR C,UTC_GROUND_Y_SLOWGATE     ; diff<9: normal smooth single-tier pace
+    CP TANK_CLIMB_CATCHUP_THRESHOLD
+    JR C,UTC_GROUND_Y_SLOWGATE     ; diff below threshold: normal smooth single-tier pace
     LD D,TANK_CLIMB_CATCHUP_SPEED
     JR UTC_GROUND_Y_STEP
 UTC_GROUND_Y_SLOWGATE:

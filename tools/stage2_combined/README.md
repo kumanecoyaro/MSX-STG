@@ -11,8 +11,9 @@ with no way to tell where.
 - Terrain engine (own INIT priming + MAINLOOP scroll update) and tank
   sprite (4x 16x16 hardware sprites) both set up in one INIT, both
   driven from the same MAINLOOP/TICK.
-- **Movement**: port1 stick, left/right only (`TANK_SPEED=2` px/frame,
-  clamped to the screen). Up alone or combined with left/right sets
+- **Movement**: port1 stick, left/right only (`TANK_SPEED=1` px/frame -
+  was 2, slowed per direct instruction "自機移動速度が速い気がするん
+  で速度落として"; clamped to the screen). Up alone or combined with left/right sets
   the "aim up" flag (`TANK_AIMUP`) without moving the tank vertically -
   it only switches the sprite pose (see below), matching "no up/down
   movement, left/right only" from the spec.
@@ -71,13 +72,17 @@ with no way to tell where.
     fell more than a tier behind and the tank visibly sank into the
     rock for a stretch - "左右移動が加わるとGapに突っ込んでる...登っ
     てはいるが地形にめり込んでる". Fixed by switching to
-    `TANK_CLIMB_CATCHUP_SPEED` (4px/frame, no gate) whenever more than
-    1 tier (8px) behind, reverting to the smooth slow pace once back
-    within a tier for the final approach. Verified with an emulator
-    sweep holding the stick right through the rapid-chain section: the
-    gap between `TANK_GROUND_Y` and its target never exceeds ~1 tier at
-    any point, and 5 rendered frames through that same stretch show the
-    tank staying grounded throughout instead of sinking in.
+    `TANK_CLIMB_CATCHUP_SPEED` whenever more than
+    `TANK_CLIMB_CATCHUP_THRESHOLD` behind, reverting to the smooth slow
+    pace once back under the threshold for the final approach. Still
+    sinking in slightly at the original threshold(9)/speed(4) -
+    "まだ少しだがめり込んでる" - so both were retuned tighter/faster
+    (threshold 5, speed 8, enough to close any realistic single-frame
+    gap in one step) alongside slowing `TANK_SPEED` itself (see above).
+    Verified with an emulator sweep holding the stick right through the
+    whole track, and again starting exactly at the rapid-chain section:
+    the gap between `TANK_GROUND_Y` and its target never exceeds 0 in
+    either case now (was up to 9px before this round).
   - **Slope check** ("Gapを調べる", sets `TANK_ON_SLOPE`) went through
     2 rounds: a separate probe 1 column *behind* `TANK_COL_R` always
     lagged the Y-tier-snap by exactly 1 column's scroll time (it was
