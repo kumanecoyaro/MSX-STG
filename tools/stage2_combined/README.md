@@ -921,6 +921,40 @@ with no way to tell where.
   direction) - left as-is per direct instruction ("めり込みはこの
   ままでいいわ オモロイから" - the overlap reads as funny, not a bug
   to fix).
+- **Zum "vanishing" once the tank pushed through it, and the push
+  ignoring the player's own movement** ("めり込みでそのまま通過すると
+  Zumは消えてしまってる で、...自機の移動量を考慮してないな"):
+  `UPDATE_TANK_ZUM_PUSH`'s clamp kept firing even after `TANK_X`
+  reached/passed the Zum's own X (moving right through the allowed
+  overlap) - it doesn't distinguish "Zum still ahead, blocking" from
+  "already passed", so it kept dragging `TANK_X` backward to chase the
+  Zum's own (still-decreasing) X. Reproduced directly: holding right
+  the entire time, `TANK_X` actually *decreased* from 59 to 35 over 20
+  frames instead of climbing - the tank got towed along right up until
+  Zum reached its own normal despawn point, reading as "Zum vanished
+  right in front of the tank" when it was really just despawning
+  on schedule while the tank was wrongly glued to it. Fixed by skipping
+  a Zum entirely once `TANK_X>=Zum_X` (no longer ahead of the tank, so
+  the block/push no longer applies) - the pre-pass-through overlap
+  itself (still explicitly wanted, see the entry above) is unaffected,
+  since that guard only trips *after* the tank's own X reaches the
+  Zum's. Verified: the same 20-frame held-right reproduction now shows
+  `TANK_X` climbing again (36->41->42) the moment it passes the Zum's
+  X instead of continuing to fall; the existing approach/jump-suspend/
+  rate-limited-close cases were re-checked and are all unaffected.
+- **Cloud rows cut from 6 to 2, as a slowdown-diagnosis experiment**
+  ("で、かなり速度落ちてるな 雲追加が原因かもな 5から8行目は削除して
+  みてくれ 遅くなった原因は雲かどうか分からんが" - this MAINLOOP has
+  no vsync/HALT pacing at all, so any extra per-frame work directly
+  slows the whole game's real-time pace, and clouds run unconditionally
+  every frame regardless of whether one's actually on screen):
+  `CLOUD_SLOT_COUNT` 6->2, `CLOUD_ROW_TABLE`/`CLOUD_INTERVAL_TABLE`/
+  `CLOUD_FIXED4_TABLE` trimmed to just rows2-3 (3rd-4th from the top;
+  the removed rows5-8-from-top were screen rows4-7). Explicitly a
+  test, not a confirmed diagnosis - the report itself said as much.
+  Verified: rows4-7 stay pure sky (code0) over a 3000-frame run, no
+  stray codes; rows2-3 still show clouds normally; everything else
+  (score/HUD/terrain/bullets/Zum) unaffected.
 
 ## Bugs found and fixed while building this
 

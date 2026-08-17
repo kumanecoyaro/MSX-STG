@@ -510,8 +510,11 @@ ZUM_PUSH_SPEED EQU 3
 ; +6 WIDTH (2 or 4, chosen at spawn), +7/+8 ROWADDR_LO/HI (this slot's
 ; fixed name-table row base address, precomputed once at INIT).
 CLOUD_SLOT_SIZE  EQU 9
-CLOUD_SLOT_COUNT EQU 6
-CLOUD_POOL    EQU 0F2A9h   ; CLOUD_SLOT_SIZE*CLOUD_SLOT_COUNT = 54 bytes
+; 6->2: "5から8行目は削除してみてくれ" (slowdown-diagnosis experiment,
+; see CLOUD_ROW_TABLE's own comment) - only rows2-3 (3rd-4th from top)
+; remain.
+CLOUD_SLOT_COUNT EQU 2
+CLOUD_POOL    EQU 0F2A9h   ; CLOUD_SLOT_SIZE*CLOUD_SLOT_COUNT bytes (18, was 54 before the row cut above)
 CLOUD_RNG     EQU 0F2DFh   ; shared free-running counter, same idea as Stage1's DFL_RNG
 CLOUD_SPAWN_COL EQU 32     ; leftmost cell starts one column past the right edge
 ; codes1-2: genuinely unused pattern-code slots within group0 (see the
@@ -2712,7 +2715,24 @@ UTZP_LOOP:
     LD A,(IX+0)
     CP 1
     JR NZ,UTZP_NEXT
+    ; "めり込みでそのまま通過するとZumは消えてしまってる...自機の
+    ; 移動量を考慮してないな" - once TANK_X reaches/passes Zum's own X
+    ; (moving right through it, the overlap left as-is per direct
+    ; instruction), the clamp below used to keep firing anyway,
+    ; dragging TANK_X backward to chase Zum's own X - it kept doing
+    ; this even while the player held right the entire time (verified:
+    ; TANK_X actually *decreased* from 59 to 35 over 20 frames of
+    ; continuous right input), reading as Zum "vanishing" right in
+    ; front of the tank once both converged near its normal despawn
+    ; point instead of the tank passing cleanly through. The clamp
+    ; only makes sense while Zum is still ahead of the tank (approaching
+    ; from the right) - once passed, skip this slot entirely.
     LD A,(IX+1)
+    LD D,A
+    LD A,(TANK_X)
+    CP D
+    JR NC,UTZP_NEXT             ; TANK_X>=Zum_X - already passed, no longer blocks
+    LD A,D
     SUB TANK_PUSH_WIDTH
     LD C,A                     ; C = target TANK_X (flush against this Zum)
     LD A,(TANK_X)
@@ -3178,24 +3198,30 @@ EXPLODE_DIR_DX:
 EXPLODE_DIR_DY:
     DB -2,-2,0,2,2,2,0,-2
 
-; per-slot fixed setup for CLOUD_POOL's 6 rows (screen rows2-7, the
-; 3rd-8th row from the top) - row2 is the "3行目" special case (always
-; 4-cell wide); rows3-7 randomly pick 2 or 4 at each spawn.
+; per-slot fixed setup for CLOUD_POOL's rows (screen rows2-3, the
+; 3rd-4th row from the top) - row2 is the "3行目" special case (always
+; 4-cell wide); row3 randomly picks 2 or 4 at each spawn.
 ; "3から5行目は最速の毎フレーム1セル移動 5から8行目は半速の2フレで
-; 1セル" (5行目は最速側): rows2-4 (screen, i.e. 3rd-5th from top)
-; INTERVAL=1, rows5-7 (6th-8th from top) INTERVAL=2.
+; 1セル" (5行目は最速側): both remaining rows are in the fast band,
+; INTERVAL=2 (see the halving rounds below).
+; "で、かなり速度落ちてるな 雲追加が原因かもな 5から8行目は削除して
+; みてくれ 遅くなった原因は雲かどうか分からんが" - rows5-8(top)
+; (screen rows4-7, CLOUD_SLOT_COUNT 6->2) dropped as an experiment to
+; see whether the clouds are actually behind the reported real-
+; hardware slowdown - unconfirmed either way, this is a test, not a
+; settled diagnosis.
 CLOUD_ROW_TABLE:
-    DB 2,3,4,5,6,7
+    DB 2,3
 ; "んー早すぎかもな 3から8行目までどちらも更に半速で 3から5が2フレ
 ; ごと 6から8が4フレごとだな" - both bands halved again from the
 ; original 1/2, not just the slow one. Then "4フレはガタが目立つんで
 ; 3フレで 中途半端だが仕方ない" - 4 read as visibly choppy, dropped to
 ; 3 (rows3-5's own 2 untouched - only the slow band was reported as
-; choppy).
+; choppy; now moot, that band's rows are the ones removed above).
 CLOUD_INTERVAL_TABLE:
-    DB 2,2,2,3,3,3
+    DB 2,2
 CLOUD_FIXED4_TABLE:
-    DB 1,0,0,0,0,0
+    DB 1,0
 
 ; src/CYBER SHMUP.asm's own CLOUD_WA_CODE/CLOUD_WB_CODE pattern bytes,
 ; copied byte-for-byte ("Stage1でもやってる雲を").
