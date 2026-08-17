@@ -516,6 +516,35 @@ with no way to tell where.
 
 ## Bugs found and fixed while building this
 
+- **Real-hardware freeze right after INIT, not reproducible in the
+  emulator** (reported right after the enemy-pool buffer refactor:
+  "初期画面後フリーズしたぞ" - border stuck black, meaning the freeze
+  hit somewhere in `MAINLOOP` itself, since INIT's own border resets
+  to black right before entering it). A 6000-frame emulator stress
+  test covering every enemy code path (spawn/turn-back/hit/explode/
+  respawn, both variants) found nothing, which pointed straight at
+  something real hardware does that the emulator structurally can't
+  (it never fires interrupts at all - see the emulator-testing note
+  below). The refactor's two new loops (`UE_UPDATE_ALL`,
+  `CHECK_HIT_ONE_BULLET`) carried their buffer pointer in `HL` across
+  a `CALL` by pushing it twice and popping once into `IX`/`IY` (a copy
+  surviving on the stack, restored via a later `POP HL`) - a correct,
+  self-balanced pattern in isolation, but needless: `UPDATE_ONE_ENEMY`
+  and `CHECK_HIT_PAIR` never actually reassign `IX`/`IY` themselves
+  (only read through them), so nothing needed preserving across those
+  calls in the first place. Simplified to walk the buffer with `IX`/
+  `IY` directly (9x `INC IX`/`INC IY` per slot, since this assembler
+  has no `ADD IX,DE`) - no push/pop, no window where an interrupt
+  landing mid-sequence could interact with anything. Not a confirmed
+  root cause (real-hardware-only, can't be proven in the emulator
+  either way), but a real simplification either way: removed a whole
+  class of stack-timing risk this codebase's own commit history
+  already flags as a recurring source of real-hardware-only bugs (see
+  `src/CYBER SHMUP.asm`'s own "IX-only protection wasn't enough to
+  stop VDP/sprite corruption, so BC/DE/HL/IX/IY are all preserved this
+  time" comment) for no cost - the emulator re-confirms identical
+  behavior (same speeds, same turn-back point, same hit/explode/score
+  results, no hang across a 6000-frame stress run) either way.
 - **SCORE incremented on every shot fired**, visible immediately once
   a real HUD existed to show it ("弾打っただけでスコア入ってるぞ"):
   the original score/counter round had wired `ADD_SCORE` straight into

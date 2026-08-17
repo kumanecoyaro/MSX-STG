@@ -1753,16 +1753,18 @@ UE_TRY_SPAWN:
 ; named CALLs. HL is pushed twice/popped once into IX so the 2nd copy
 ; survives UPDATE_ONE_ENEMY's own (heavy) use of HL as scratch, then
 ; restored after.
+; IX walks the buffer directly (9x INC IX per slot, matching
+; ENEMY_SLOT_SIZE - this assembler has no ADD IX,DE) rather than
+; carrying the pointer in HL across the CALL via a push/pop dance:
+; UPDATE_ONE_ENEMY and everything it calls only ever READS through IX
+; (IX+E_xxx), never reassigns the register itself, so it survives the
+; CALL on its own with nothing to preserve.
 UE_UPDATE_ALL:
-    LD HL,ENEMY_POOL
+    LD IX,ENEMY_POOL
     LD B,ENEMY_SLOT_COUNT
 UEUA_LOOP:
-    PUSH HL
-    PUSH HL
-    POP IX
     CALL UPDATE_ONE_ENEMY
-    POP HL
-    LD DE,ENEMY_SLOT_SIZE : ADD HL,DE
+    INC IX : INC IX : INC IX : INC IX : INC IX : INC IX : INC IX : INC IX : INC IX
     DJNZ UEUA_LOOP
     CALL FLUSH_ENEMY_SPRITES
     RET
@@ -1974,18 +1976,17 @@ CHECK_BULLET_VS_ENEMY:
     LD IX,BULLET2_ACT : CALL CHECK_HIT_ONE_BULLET
     RET
 
-; IX = bullet slot base. Walks ENEMY_POOL (same HL/IY-via-stack idiom
-; as UE_UPDATE_ALL) testing this one bullet against every enemy slot.
+; IX = bullet slot base (untouched throughout - CHECK_HIT_PAIR only
+; reads through it). IY walks ENEMY_POOL directly (9x INC IY per slot,
+; same reasoning as UE_UPDATE_ALL - CHECK_HIT_PAIR never reassigns IY
+; either, so there's nothing to preserve across the CALL) testing this
+; one bullet against every enemy slot.
 CHECK_HIT_ONE_BULLET:
-    LD HL,ENEMY_POOL
+    LD IY,ENEMY_POOL
     LD B,ENEMY_SLOT_COUNT
 CHOB_LOOP:
-    PUSH HL
-    PUSH HL
-    POP IY
     CALL CHECK_HIT_PAIR
-    POP HL
-    LD DE,ENEMY_SLOT_SIZE : ADD HL,DE
+    INC IY : INC IY : INC IY : INC IY : INC IY : INC IY : INC IY : INC IY : INC IY
     DJNZ CHOB_LOOP
     RET
 
