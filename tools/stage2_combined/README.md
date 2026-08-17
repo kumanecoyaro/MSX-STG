@@ -33,9 +33,9 @@ with no way to tell where.
 - **Per-quadrant sprite color**: each 32x32 pose is 4 separate 16x16
   hardware sprites (TL/TR/BL/BR), and MSX1 sprites are monochrome, so
   each quadrant gets its own color attribute instead of one flat tank
-  color - TL (main body) dark blue, TR (gun) gray, BL/BR (treads)
-  black - per direct instruction ("右上のスプライトの色をグレーに
-  右下左下をブラックに").
+  color - TL (main body) dark blue, TR/BL/BR (gun/treads) black - per
+  direct instruction (initially "右上のスプライトの色をグレーに
+  右下左下をブラックに", then TR changed from gray to black too).
 - **Not physics-integrated with the terrain yet**: `TANK_Y_BASE=156`
   (row23's top minus the tank's 32px height plus a +4 landing offset)
   is a fixed constant matching the terrain's starting flat tier -

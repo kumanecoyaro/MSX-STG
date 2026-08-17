@@ -42,7 +42,7 @@ NAMEBUF_T3    EQU 0F160h
 SPRATR        EQU 1B00h
 SPRPAT        EQU 3800h
 TANK_COLOR_TL EQU 4        ; dark blue (main body)
-TANK_COLOR_TR EQU 14       ; gray
+TANK_COLOR_TR EQU 1        ; black
 TANK_COLOR_BL EQU 1        ; black
 TANK_COLOR_BR EQU 1        ; black
 TANK_X_INIT   EQU 40
