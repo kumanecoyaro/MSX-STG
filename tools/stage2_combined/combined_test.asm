@@ -43,9 +43,10 @@ SPRATR        EQU 1B00h
 SPRPAT        EQU 3800h
 TANK_COLOR    EQU 4        ; dark blue
 TANK_X_INIT   EQU 40
-TANK_Y_BASE   EQU 155      ; row23 top (23*8=184) - tank height(32) + landing offset(3)
+TANK_Y_BASE   EQU 156      ; row23 top (23*8=184) - tank height(32) + landing offset(3+1)
 TANK_SPEED    EQU 2        ; px/frame, left/right
-JUMP_PEAK     EQU 16       ; px, per spec
+JUMP_PEAK     EQU 24       ; px
+JUMP_FRAMES   EQU 49       ; JUMP_OFFSET_TABLE length (0-24 rise, 23-0 fall)
 SPRITE_ATTRS  EQU 0F200h   ; 16 bytes
 
 TANK_X        EQU 0F220h
@@ -270,7 +271,7 @@ UJ_NO_NEW_PRESS:
     OR A
     JR Z,UJ_DONE
     LD A,(JUMP_FRAME) : INC A : LD (JUMP_FRAME),A
-    CP 16
+    CP JUMP_FRAMES
     JR C,UJ_STILL_JUMPING
     XOR A
     LD (JUMP_ACTIVE),A
@@ -333,7 +334,51 @@ UPDATE_TANK_SPRITES:
     LD A,(CUR_POSE_PAT) : ADD A,12 : LD (IX+14),A
     LD A,TANK_COLOR   : LD (IX+15),A
 
-    LD HL,SPRITE_ATTRS : LD DE,SPRATR : LD BC,16 : CALL LDIRVM
+    ; --- write to VRAM via raw NOP-padded OUT (address set once, then ---
+    ; --- 16 consecutive auto-incrementing OUT (98h) writes), matching ---
+    ; --- src/CYBER SHMUP.asm's own per-frame sprite update exactly    ---
+    ; --- (DI-wrapped there too) instead of LDIRVM. LDIRVM's BIOS      ---
+    ; --- internals have no such interrupt-safety margin, and this     ---
+    ; --- write runs with EI active every single frame (no per-frame   ---
+    ; --- HALT - see MAINLOOP), so an H.TIMI interrupt landing mid-copy---
+    ; --- could corrupt the sprite table. Real-hardware-reported       ---
+    ; --- garbage that z80emu.py can never reproduce (no interrupts at ---
+    ; --- all), so this can't be verified by emulator stepping - only  ---
+    ; --- that the bytes it writes are correct (see verify script).
+    DI
+    LD A,0 : OUT (99h),A
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    LD HL,SPRITE_ATTRS
+    LD B,16
+UTS_OUT_LOOP:
+    LD A,(HL) : OUT (98h),A
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    INC HL
+    DJNZ UTS_OUT_LOOP
+    EI
     RET
 
 REFRESH_IDCACHE_33:
@@ -385,11 +430,12 @@ TERRAIN_ROW19:
 SPR_HIDE:
     DS 1,0
 
-; 17 entries (jump frame 0-16): 0,2,4,...,16,...,4,2,0 - a triangular
-; 16px-peak arc, matching the spec height exactly regardless of frame
-; count (change this table's shape, not the frame-count logic, if the
-; arc needs to feel different later).
+; 49 entries (jump frame 0-48): 0,1,2,...,24 (rise, 1px/frame) then
+; 23,22,...,0 (fall) - a triangular 24px-peak arc, slower than the
+; original 16px/16-frame version (1px/frame instead of 2px/frame, and
+; 3x the total airtime) per direct instruction ("ジャンプ速すぎるから少しゆっくり").
+; JUMP_FRAMES above must match this table's length.
 JUMP_OFFSET_TABLE:
-    DB 0,2,4,6,8,10,12,14,16,14,12,10,8,6,4,2,0
+    DB 0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,23,22,21,20,19,18,17,16,15,14,13,12,11,10,9,8,7,6,5,4,3,2,1,0
 
 ; ===== generated tables (terrain + tank) appended below by build_test.py =====

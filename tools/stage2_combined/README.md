@@ -17,22 +17,24 @@ with no way to tell where.
   it only switches the sprite pose (see below), matching "no up/down
   movement, left/right only" from the spec.
 - **Jump**: button B, edge-triggered (a held button doesn't repeat).
-  16px triangular arc over 16 frames (`JUMP_OFFSET_TABLE`: 0,2,4,...,16
-  at frame 8,...,2,0), applied as `TANK_Y_CUR = TANK_Y_BASE -
-  JUMP_Y_OFFSET`. Not real gravity/physics, just a fixed-shape hop -
-  fine for now since there's no ground-height variation to land on
+  24px triangular arc over 49 frames (`JUMP_OFFSET_TABLE`: 0,1,2,...,24
+  at frame 24, then 23,...,0 - 1px/frame, slower than an earlier
+  16px/16-frame version per direct instruction), applied as
+  `TANK_Y_CUR = TANK_Y_BASE - JUMP_Y_OFFSET`. Not real gravity/physics,
+  just a fixed-shape hop - fine for now since there's no ground-height
+  variation to land on
   yet anyway.
 - **Pose selection** (`UPDATE_POSE`): TankF (grounded, neutral),
   TankUp (grounded, aiming up), TankFGap (airborne, neutral), TankUGap
   (airborne, aiming up). Per direct instruction, the Gap poses are
   wired up for "airborne" only right now - the terrain-slope-following
   use of the same poses is deferred.
-- **Not physics-integrated with the terrain yet**: `TANK_Y_BASE=155`
-  (row23's top minus the tank's 32px height plus the +3 landing
-  offset) is a fixed constant matching the terrain's starting flat
-  tier - jumps arc relative to it, but the tank does not track the
-  terrain's own climb/descend height changes. That needs the
-  ground-height collision system, still not built.
+- **Not physics-integrated with the terrain yet**: `TANK_Y_BASE=156`
+  (row23's top minus the tank's 32px height plus a +4 landing offset)
+  is a fixed constant matching the terrain's starting flat tier -
+  jumps arc relative to it, but the tank does not track the terrain's
+  own climb/descend height changes. That needs the ground-height
+  collision system, still not built.
 - Shot (A button) not implemented yet either - out of scope for this
   pass, movement + jump only.
 - Border-color diagnostic checkpoints through INIT (VDP R7), added
@@ -54,6 +56,28 @@ with no way to tell where.
 
 ## Bugs found and fixed while building this
 
+- **Per-frame sprite update via LDIRVM instead of a NOP-padded raw
+  OUT sequence** (reported as persistent on-screen garbage after the
+  movement/jump pass added a per-frame sprite table write): every
+  other per-frame VRAM write in `src/CYBER SHMUP.asm` that runs with
+  interrupts enabled (no per-frame HALT - see that file's own MAINLOOP
+  comment) wraps its raw `OUT` sequence in `DI`/`EI` with 8 NOPs after
+  every single port write - see the ship's own sprite update, e.g.
+  `src/CYBER SHMUP.asm` lines ~1852-1970. `LDIRVM` (a BIOS routine) has
+  no such interrupt-safety margin, and this ROM's `UPDATE_TANK_SPRITES`
+  was calling it fresh every MAINLOOP iteration with `EI` active the
+  whole time - an H.TIMI vblank interrupt landing mid-copy could
+  corrupt the sprite table read for that frame. z80emu.py generates no
+  interrupts at all, so this was invisible in every prior emulator
+  check despite being real on hardware. Fixed by replicating the real
+  game's exact pattern: `DI`, set the VRAM address once (2x `OUT
+  (99h)`), 16 consecutive auto-incrementing `OUT (98h)` writes (one
+  per sprite-attribute byte, 8 NOPs after each), `EI`. Can't be
+  directly verified by emulator stepping (no interrupts to collide
+  with), but confirmed the bytes it writes are still correct (same
+  values as before, now via real VDP port emulation instead of the
+  `LDIRVM` BIOS-call intercept) and a randomized 3-track-loop stress
+  test still runs clean.
 - **Sprite-table shadow bug** (visible immediately as a black
   tank-shaped blob at the top-left corner): only wrote the tank's own
   4 sprite attribute entries (slots 0-3) and never touched the rest
