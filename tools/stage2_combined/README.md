@@ -447,13 +447,24 @@ with no way to tell where.
     trigger - `UPDATE_ONE_ENEMY` runs unconditionally every frame from
     `MAINLOOP` via `UPDATE_ENEMIES`, regardless of `EXPLOSION_DURATION`'s
     length) before despawning - "8方向ランダムに移動後消えるように
-    ...で移動中毎フレーム表示だよな". `EXPLOSION_DURATION` itself was
-    briefly cut to 8 frames, then reverted back to `src/CYBER SHMUP.asm`'s
-    own value (20) once actually seen - "んー２０でいいわ". Verified: a
-    synthetic hit produced `DX`=0/`DY`=-2 (one of the 8 directions),
-    and the enemy's Y visibly drifted -2px/frame every single frame
-    (re-confirmed at both `EXPLOSION_DURATION` values tried) until
-    `ACT` returned to 0 right on schedule.
+    ...で移動中毎フレーム表示だよな". `EXPLOSION_DURATION` itself went
+    8 -> 20 (once briefly seen while the DJNZ/B-register corruption bug
+    was still silently running the enemy loop the wrong number of times
+    per frame - see the Bugs section - "んー２０でいいわ") -> 8 again
+    once that bug was actually fixed and 20 read as too long after all
+    ("バグってたからか爆発かなり長いわ"), with the drift speed (already
+    +-2px/frame the whole time, from `EXPLODE_DIR_DX`/`DY`'s own
+    magnitude) explicitly confirmed alongside it this time - "8フレで
+    スピードは２ｐｘでいいわ...なので爆発は１６ｐｘ移動だな" (8
+    frames x 2px = 16px along a cardinal direction). Getting that exact
+    16px took one more fix: `UOE_EXPLODING`'s decrement-then-check
+    order meant `E_TIMER`=8 only ever produced 7 actual drift+draw
+    calls (the 8th decrement landed on 0 and hid immediately, one call
+    short) - swapped to check-then-decrement so all 8 counted frames
+    genuinely drift before the 9th call hides it. Verified: a synthetic
+    hit with `DX`=0/`DY`=-2 now drifts the enemy's Y by exactly -16px
+    (8 x -2) over 8 visible frames before `ACT` returns to 0 on the
+    9th, instead of the previous -14px/7-frame result.
 - **Enemy promoted from test scaffolding to a real buffer-managed
   pool** (per direct instruction: "で、敵は仮実装じゃなく出来たら
   本採用 きちんとクラスにしてあるな? 管理もバッファ経由だぞ 個別に

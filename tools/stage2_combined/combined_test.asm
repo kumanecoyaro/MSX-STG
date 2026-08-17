@@ -370,13 +370,20 @@ PAT_ZACO          EQU 128
 PAT_ZACO_FLIP     EQU 132
 PAT_EXPLOSION     EQU 136
 EXPLOSION_COLOR    EQU 8    ; medium red - same color src/CYBER SHMUP.asm uses for EXPLOSION_PATTERN
-; frames - briefly cut to 8 ("爆発スプライトは8フレ表示"), reverted
-; back to src/CYBER SHMUP.asm's own EXPLOSION_DURATION value once seen
-; ("んー２０でいいわ"). UOE_EXPLODE_DRIFT/UOE_DRAW_EXPLOSION still run
-; every single frame this counts down (not just on trigger) - see
-; UPDATE_ONE_ENEMY/UPDATE_ENEMIES, called unconditionally from
+; frames - briefly cut to 8, reverted to 20 (src/CYBER SHMUP.asm's own
+; value) once seen ("んー２０でいいわ"), but that read was made while
+; the DJNZ/B-register corruption bug (see README) was still silently
+; running the enemy loop a wrong number of times per frame - once that
+; was actually fixed, 20 read as too long after all ("バグってたから
+; か爆発かなり長いわ"), settling back on 8 with the drift speed
+; (EXPLODE_DIR_DX/DY's own +-2px/frame magnitude, unchanged throughout
+; all of this) explicitly confirmed too - "8フレでスピードは２ｐｘで
+; いいわ" - for a total drift of 8*2=16px along a cardinal direction
+; ("なので爆発は１６ｐｘ移動だな"). UOE_EXPLODE_DRIFT/UOE_DRAW_EXPLOSION
+; still run every single frame this counts down (not just on trigger) -
+; see UPDATE_ONE_ENEMY/UPDATE_ENEMIES, called unconditionally from
 ; MAINLOOP each frame - so the drift stays smooth regardless of length.
-EXPLOSION_DURATION EQU 20
+EXPLOSION_DURATION EQU 8
 
 STACKTOP      EQU 0F380h
 
@@ -1928,17 +1935,20 @@ UOE_COLOR_SET:
     LD (HL),A
     RET
 
+; checks-before-decrementing (not the more usual decrement-then-check)
+; so E_TIMER=EXPLOSION_DURATION(8) actually produces exactly 8
+; drift+draw calls, not 7 - decrement-then-check would fire the 8th
+; DEC straight to 0 and hide on that same call, one short of the "8フレ
+; で...なので爆発は１６ｐｘ移動だな" spec (8 steps x 2px/step, from
+; EXPLODE_DIR_DX/DY's own magnitude).
 UOE_EXPLODING:
     LD A,(IX+E_TIMER)
+    OR A
+    JR Z,UOE_EXPLODE_HIDE
     DEC A : LD (IX+E_TIMER),A
-    JR NZ,UOE_EXPLODE_DRIFT
-    XOR A : LD (IX+E_ACT),A
-    CALL UOE_HIDE
-    RET
 ; "8方向ランダムに移動後消えるように" - drift by the (dx,dy) picked at
 ; hit time (see CHECK_HIT_PAIR/EXPLODE_DIR_DX/DY) every frame it's
 ; shown, instead of holding still at the kill position.
-UOE_EXPLODE_DRIFT:
     LD A,(IX+E_X) : LD B,A : LD A,(IX+E_DX) : ADD A,B : LD (IX+E_X),A
     LD A,(IX+E_Y) : LD B,A : LD A,(IX+E_DY) : ADD A,B : LD (IX+E_Y),A
 UOE_DRAW_EXPLOSION:
@@ -1948,6 +1958,10 @@ UOE_DRAW_EXPLOSION:
     LD A,(IX+E_X) : LD (HL),A : INC HL
     LD A,PAT_EXPLOSION : LD (HL),A : INC HL
     LD A,EXPLOSION_COLOR : LD (HL),A
+    RET
+UOE_EXPLODE_HIDE:
+    XOR A : LD (IX+E_ACT),A
+    CALL UOE_HIDE
     RET
 
 UOE_HIDE:
