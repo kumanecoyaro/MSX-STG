@@ -704,6 +704,12 @@ with no way to tell where.
   SkySand/Sand/terrain content is all unaffected (no B/C-register
   corruption from the new DJNZ loop - the CALL inside it is PUSH BC/
   POP BC-guarded per the established precaution).
+- **Both cloud speed bands halved again** ("んー早すぎかもな 3から8行
+  目までどちらも更に半速で 3から5が2フレごと 6から8が4フレごとだな"):
+  `CLOUD_INTERVAL_TABLE` 1,1,1,2,2,2 -> 2,2,2,4,4,4 - not just the
+  already-slow band, both. Verified: a synthetic same-frame-spawn test
+  (rows3/8-from-top) moves 20px/10px over 40 frames at the new
+  intervals, same 2:1 ratio as before just at half the absolute speed.
 
 ## Bugs found and fixed while building this
 

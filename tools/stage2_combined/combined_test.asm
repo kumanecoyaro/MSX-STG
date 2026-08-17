@@ -2587,8 +2587,11 @@ EXPLODE_DIR_DY:
 ; INTERVAL=1, rows5-7 (6th-8th from top) INTERVAL=2.
 CLOUD_ROW_TABLE:
     DB 2,3,4,5,6,7
+; "んー早すぎかもな 3から8行目までどちらも更に半速で 3から5が2フレ
+; ごと 6から8が4フレごとだな" - both bands halved again from the
+; original 1/2, not just the slow one.
 CLOUD_INTERVAL_TABLE:
-    DB 1,1,1,2,2,2
+    DB 2,2,2,4,4,4
 CLOUD_FIXED4_TABLE:
     DB 1,0,0,0,0,0
 
