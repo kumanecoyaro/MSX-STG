@@ -17,13 +17,14 @@ sys.path.insert(0, os.path.join(REPO, "tools", "stage2_tank"))
 import terrain_gen  # noqa: E402
 import tank_gen  # noqa: E402
 import bullet_gen  # noqa: E402
+import enemy_gen  # noqa: E402
 from mini_z80asm import Assembler  # noqa: E402
 
 
 def assemble():
     body = open(os.path.join(HERE, "combined_test.asm")).read()
     tables = (terrain_gen.emit_asm_tables() + "\n" + tank_gen.emit_asm_tables()
-              + "\n" + bullet_gen.emit_asm_tables())
+              + "\n" + bullet_gen.emit_asm_tables() + "\n" + enemy_gen.emit_asm_tables())
     text = body + "\n" + tables + "\n"
     asm = Assembler(text)
     out = asm.assemble()

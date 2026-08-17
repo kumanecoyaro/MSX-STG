@@ -357,6 +357,61 @@ with no way to tell where.
   and `SHOT_SND_FRAMES` were picked with no more precise spec than
   "something shot-sound-like" and are easy first knobs to retune once
   heard on real hardware.
+- **Enemy (ZacoII)** (per direct instruction: "では次敵の実装
+  スプライトで実装 右から左へスライド Skyのみのの位置に出現
+  現状はランダム 地形も合わせてスケジュールエディタで対応予定
+  移動は自機位置をみて手前で引き返す 引き返す際の左右反転キャラを
+  生成 弾が当たっての爆発はStage1と同じ16x16のスプライト流用
+  当たったら100点 敵の管理や制御はStage1を流用"): a pool of 3
+  (`enemy_gen.py` converts the supplied `sprites/ZacoII.json`, 16x16,
+  same single-hw-sprite quadrant layout as one tank quadrant), fixed
+  1:1 onto hw sprite slots4-6 (tank keeps 0-3) - simpler than
+  `src/CYBER SHMUP.asm`'s own flexible `ALLOC_SPRITE_NUM`/`E_TYPE`/
+  `E_BEHAVIOR` dispatch, appropriate since this test only has the one
+  enemy type/behavior. The slot struct (`ENEMY_SLOT_SIZE`=6:
+  ACT/X/Y/RETREAT/EXPLODE_TIMER/SPRIDX) mirrors that file's own
+  `ENEMY_POOL`/`E_ACT`/`E_X`/`E_Y` idiom, scaled down - no HP field
+  either, since "当たったら100点" implies a single hit kills.
+  - **Spawn**: right edge (`ENEMY_SPAWNX`=240, fully offscreen -
+    "右から左へスライド"), Y confined to a band inside the open sky
+    ("Skyのみのの位置に出現"), picked from `TICK`'s low bits masked to
+    a power-of-2 span ("現状はランダム" - a placeholder; matching
+    spawns to the terrain is deferred - "地形も合わせてスケジュール
+    エディタで対応予定").
+  - **Movement**: drifts toward `TANK_X`; once within
+    `ENEMY_TURNBACK_MARGIN`(40px) it turns back before actually
+    reaching the tank ("移動は自機位置をみて手前で引き返す") and
+    switches to a mirrored sprite for the retreat
+    (`enemy_gen.py`'s own `hflip_bits`, same technique as
+    `tank_gen.py`/`bullet_gen.py`'s own flipped poses - "引き返す際の
+    左右反転キャラを生成"), despawning once back off the spawn edge.
+    Verified in the emulator: a spawned enemy's X decreases from 239
+    down to exactly `TANK_X`(40)+40=80 before `RETREAT` flips to 1,
+    then X increases back out past 240.
+  - **Hit detection** (`CHECK_BULLET_VS_ENEMY`, 3 bullets x 3 enemies,
+    unrolled): the same AABB 4-edge-comparison shape as
+    `src/CYBER SHMUP.asm`'s own `QUAD_HIT_TEST`, just with the enemy
+    side's box widened from 8x8 to 16x16. On a hit: the bullet's cell
+    is erased and it's deactivated (factored `ERASE_BULLET_CELL` out
+    of `UPDATE_ONE_BULLET` so both that per-frame path and this
+    one-off hit path share it), the enemy switches to
+    `ACT`=2 (exploding) at its current position, and `SCORE_PER_KILL`
+    (=1, i.e. 100 points) is awarded via `ADD_SCORE` - "当たったら
+    100点". Verified directly: an overlapping bullet+enemy pair hits
+    on the very first `CHECK_BULLET_VS_ENEMY` call (enemy ACT 1->2,
+    bullet ACT 1->0, score 0->1); a non-overlapping pair doesn't.
+  - **Explosion**: `EXPLOSION_PATTERN`, byte-for-byte from
+    `src/CYBER SHMUP.asm`'s own 16x16 sprite of that name (that file's
+    *generic* per-enemy-kill explosion is actually a BG-cell animation
+    instead, not a sprite - see `TRIGGER_EXPLOSION` - so this reuses
+    its pod-destroy-burst sprite art instead, the closer match to
+    "16x16のスプライト流用") - held in place at the kill position for
+    `EXPLOSION_DURATION`(20, matching that file's own constant of the
+    same name) frames on the same hw sprite slot the enemy itself was
+    using, then despawned, freeing the slot for a new spawn. Verified
+    both numerically (`EXPLODE_TIMER` counts 20->0 over frames, `ACT`
+    returns to 0 right after) and visually (rendered frame shows the
+    red spark-burst shape at the enemy's death position).
 - Border-color diagnostic checkpoints through INIT (VDP R7), added
   specifically because the tank-only test froze on real hardware with
   no clue where:
@@ -371,12 +426,22 @@ with no way to tell where.
   | 5 | 16x16 sprite mode set (VDP R1) |
   | 6 | Tank pattern data loaded |
   | 7 | Tank sprite attributes written |
-  | 8 | Score/counter/calibration-strip HUD + PSG set up - about to enter MAINLOOP |
+  | 8 | Score/counter/calibration-strip HUD + PSG set up |
+  | 9 | Enemy patterns + pool set up - about to enter MAINLOOP |
 
   If it freezes again, report which color is showing.
 
 ## Bugs found and fixed while building this
 
+- **SCORE incremented on every shot fired**, visible immediately once
+  a real HUD existed to show it ("弾打っただけでスコア入ってるぞ"):
+  the original score/counter round had wired `ADD_SCORE` straight into
+  `TRY_SPAWN_BULLET` as a placeholder, since no kill mechanic existed
+  yet to award it properly - documented as a stopgap at the time, but
+  reads as a plain bug once actually seen scrolling up on every shot.
+  Fixed by moving the `ADD_SCORE` call to where a real scoring event
+  now exists - `CHECK_HIT_PAIR`'s hit branch, once an enemy exists to
+  kill (see the Enemy entry above).
 - **Climb easing regressed back to an instant 8px snap** (reported as
   "また8px上り下りに戻ってるな" right after `TANK_SPEED` changed to
   1px/frame): the *previous* round had tightened

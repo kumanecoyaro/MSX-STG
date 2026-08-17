@@ -229,10 +229,10 @@ UTS_COLOR_3   EQU 0F24Dh
 ; VRAM writer (WRITE_HUD_CELL, below - this ROM has no NAMEBUF for
 ; rows0-1 since the ground scroller never touches them, so it's a
 ; plain single-cell write, unlike WRITE_ANIM_CELL's NAMEBUF mirroring).
-; No kill/enemy mechanic exists yet in this test, so SCORE is wired to
-; +1 per shot fired instead (see TRY_SPAWN_BULLET) purely to have
-; something exercising the display - swap for a real scoring event
-; once one exists.
+; Originally wired to +1 per shot fired (no enemy existed yet to
+; award it properly) - reported as wrong once it was actually visible
+; ("弾打っただけでスコア入ってるぞ"), and fixed here now that a real
+; scoring event (a hit) exists - see ENEMY_HIT_CHECK/SCORE_PER_KILL.
 ;
 ; Between the score and the counter, row0 cols8-23 show 16 solid color
 ; cells (palette index 0-15, left to right) and row1 cols8-23 show
@@ -254,7 +254,7 @@ SND_TIMER     EQU 0F275h   ; shot-sound fade countdown/volume (channel A, noise)
 ; groups (13-14), so one base covers the whole 0-F range.
 DIGIT_BASE       EQU 104
 HUD_DIGIT_COLORBYTE EQU 0F1h   ; fg15 white/bg1 black - same as Stage1's own digit groups ("背景色はブラックで")
-SCORE_PER_SHOT   EQU 1         ; test-only hookup, see comment above
+SCORE_PER_KILL   EQU 1         ; ADD_SCORE units of 100 real points - "当たったら100点"
 SWATCH_ROW       EQU 0
 SWATCH_COL0      EQU 8
 HEXLABEL_ROW     EQU 1
@@ -266,6 +266,59 @@ PSG_DATA         EQU 0A1h
 ; with no more precise spec than that, easy to retune.
 SHOT_NOISE_PERIOD EQU 8
 SHOT_SND_FRAMES   EQU 10
+
+; ---------- enemy (ZacoII) ----------
+; "では次敵の実装 スプライトで実装 右から左へスライド Skyのみのの
+; 位置に出現 現状はランダム 地形も合わせてスケジュールエディタで
+; 対応予定 移動は自機位置をみて手前で引き返す 引き返す際の左右反転
+; キャラを生成 弾が当たっての爆発はStage1と同じ16x16のスプライト
+; 流用 当たったら100点 敵の管理や制御はStage1を流用" - a pool of 3
+; (same "3 concurrent" convention as the bullet pool), fixed 1:1 onto
+; hardware sprite slots4-6 (tank keeps 0-3) - simpler than
+; src/CYBER SHMUP.asm's own ALLOC_SPRITE_NUM (that pool is sized for
+; many simultaneous enemy TYPEs sharing 32 slots; this test only ever
+; has one type, so a fixed mapping needs no allocator). Struct mirrors
+; that file's E_ACT/E_X/E_Y idiom (see ENEMY_POOL's own E_xxx fields)
+; scaled down to what a single behavior actually needs - no E_TYPE/
+; E_BEHAVIOR dispatch, no HP (1 hit = kill, matching "当たったら100点"
+; with no HP mentioned).
+ENEMY_SLOT_SIZE EQU 6   ; +0 ACT(0=off,1=alive,2=exploding),+1 X,+2 Y,+3 RETREAT(0/1),+4 EXPLODE_TIMER,+5 SPRIDX(0-2, fixed)
+ENEMY0_ACT    EQU 0F280h
+ENEMY1_ACT    EQU 0F286h
+ENEMY2_ACT    EQU 0F28Ch
+ENEMY_SPAWN_TIMER   EQU 0F292h
+; staging buffer for the 3 enemy hw sprite slots (4-6, right after the
+; tank's own 0-3) - same "build in RAM, blast once" pattern as
+; SPRITE_ATTRS/UTS_OUT_LOOP, just a separate buffer so the two flushes
+; stay independent.
+ENEMY_SPRITE_ATTRS EQU 0F293h   ; 12 bytes: Y,X,pat,col x3
+ENEMY_SPR_BASE_SLOT EQU 4       ; hw sprite index slot0 uses; slotN -> ENEMY_SPR_BASE_SLOT+N
+
+ENEMY_SPEED       EQU 1     ; px/frame, both approaching and retreating - untuned, easy to retime
+ENEMY_SPAWNX      EQU 240   ; off the right edge (16px sprite, so fully offscreen at spawn) - "右から左へスライド"
+; "移動は自機位置をみて手前で引き返す" - turns back once within this
+; many px of the tank, short of actually reaching it. Picked with no
+; more precise spec than "before reaching" - easy to retune.
+ENEMY_TURNBACK_MARGIN EQU 40
+; "Skyのみのの位置に出現...現状はランダム" - Y confined to a band
+; safely inside the open sky (below the HUD rows0-1 at y0-15, well
+; above row19's ground top at y152) using a TICK-derived pseudo-random
+; low byte (AND with a power-of-2 span so it's a plain mask, no
+; divide) - a placeholder until terrain-aware spawning exists ("地形も
+; 合わせてスケジュールエディタで対応予定").
+ENEMY_SKY_Y_MIN   EQU 24
+ENEMY_SKY_Y_MASK  EQU 3Fh   ; span 64 -> Y in [24,88), sprite bottom never past y151
+ENEMY_SPAWN_INTERVAL EQU 90 ; frames between spawns while a slot is free - untuned
+ENEMY_COLOR       EQU 12    ; from sprites/ZacoII.json's own fg
+; PAT_ZACO/_FLIP (enemy_gen.py) and PAT_EXPLOSION (below) each need 4
+; consecutive hw sprite pattern numbers (32 bytes / 8 = 4, 16x16 mode)
+; - placed right after the tank's own 128 (4 poses x 2 facings x 16 -
+; see tank_gen.py's POSE_FLIP_OFFSET), aligned to 4 as convention.
+PAT_ZACO          EQU 128
+PAT_ZACO_FLIP     EQU 132
+PAT_EXPLOSION     EQU 136
+EXPLOSION_COLOR    EQU 8    ; medium red - same color src/CYBER SHMUP.asm uses for EXPLOSION_PATTERN
+EXPLOSION_DURATION EQU 20   ; frames - same value as that file's own EXPLOSION_DURATION
 
 STACKTOP      EQU 0F380h
 
@@ -507,8 +560,42 @@ INIT_SPRATR_CLR:
     ; checkpoint 8: HUD (score/counter/calibration strip) + PSG set up
     LD B,8 : LD C,7 : CALL WRTVDP
 
-    ; border back to black - checkpoints 1-8 above were diagnostic
-    ; only, leaving it on whatever the last one was (medium red) would
+    ; enemy (ZacoII) sprite patterns + explosion, one hw sprite pattern
+    ; slot each (128/132/136 - right after the tank's own 0-127).
+    LD HL,ENEMY_ZACOII : LD DE,PAT_ZACO*8+SPRPAT : LD BC,32 : CALL LDIRVM
+    LD HL,ENEMY_ZACOII_FLIP : LD DE,PAT_ZACO_FLIP*8+SPRPAT : LD BC,32 : CALL LDIRVM
+    LD HL,EXPLOSION_PATTERN : LD DE,PAT_EXPLOSION*8+SPRPAT : LD BC,32 : CALL LDIRVM
+
+    ; enemy pool: all 3 slots inactive, SPRIDX fixed per-slot (never
+    ; touched again - see ENEMY_SPR_BASE_SLOT). The hw sprite attribute
+    ; table itself is already hidden for slots4-6 too (the earlier
+    ; full 32-slot clear covers them along with the tank's own 0-3),
+    ; but ENEMY_SPRITE_ATTRS (the RAM staging buffer UPDATE_ENEMIES
+    ; blasts from every frame) starts blank, so it must be primed with
+    ; the same hidden Y or the first flush would show garbage at Y=0.
+    XOR A
+    LD (ENEMY0_ACT+0),A : LD (ENEMY0_ACT+1),A : LD (ENEMY0_ACT+2),A : LD (ENEMY0_ACT+3),A : LD (ENEMY0_ACT+4),A
+    LD (ENEMY1_ACT+0),A : LD (ENEMY1_ACT+1),A : LD (ENEMY1_ACT+2),A : LD (ENEMY1_ACT+3),A : LD (ENEMY1_ACT+4),A
+    LD (ENEMY2_ACT+0),A : LD (ENEMY2_ACT+1),A : LD (ENEMY2_ACT+2),A : LD (ENEMY2_ACT+3),A : LD (ENEMY2_ACT+4),A
+    LD (ENEMY_SPAWN_TIMER),A
+    LD A,0 : LD (ENEMY0_ACT+5),A
+    LD A,1 : LD (ENEMY1_ACT+5),A
+    LD A,2 : LD (ENEMY2_ACT+5),A
+
+    LD A,209
+    LD (ENEMY_SPRITE_ATTRS+0),A
+    LD (ENEMY_SPRITE_ATTRS+4),A
+    LD (ENEMY_SPRITE_ATTRS+8),A
+    XOR A
+    LD (ENEMY_SPRITE_ATTRS+1),A : LD (ENEMY_SPRITE_ATTRS+2),A : LD (ENEMY_SPRITE_ATTRS+3),A
+    LD (ENEMY_SPRITE_ATTRS+5),A : LD (ENEMY_SPRITE_ATTRS+6),A : LD (ENEMY_SPRITE_ATTRS+7),A
+    LD (ENEMY_SPRITE_ATTRS+9),A : LD (ENEMY_SPRITE_ATTRS+10),A : LD (ENEMY_SPRITE_ATTRS+11),A
+
+    ; checkpoint 9: enemy patterns + pool set up - about to enter MAINLOOP
+    LD B,9 : LD C,7 : CALL WRTVDP
+
+    ; border back to black - checkpoints 1-9 above were diagnostic
+    ; only, leaving it on whatever the last one was (blue) would
     ; otherwise sit there as a permanent, confusing border color.
     LD B,1 : LD C,7 : CALL WRTVDP
 
@@ -561,6 +648,8 @@ SKIP_ADVANCE:
     ; a 2nd time by this same frame's UPDATE_BULLETS sweep.
     CALL UPDATE_BULLETS
     CALL UPDATE_SHOT
+    CALL UPDATE_ENEMIES
+    CALL CHECK_BULLET_VS_ENEMY
 
     LD HL,(GAME_TICK) : INC HL : LD (GAME_TICK),HL
     CALL GAME_TICK_DISPLAY
@@ -1132,11 +1221,6 @@ TSB_COL_OK:
 
     CALL DRAW_BULLET_CELL
 
-    ; test-only hookup: no kill/enemy mechanic exists yet in this test,
-    ; so a shot firing is what exercises SCORE/the sound effect - see
-    ; the SCORE/SND_TIMER comment above.
-    LD HL,SCORE_PER_SHOT
-    CALL ADD_SCORE
     CALL SOUND_SHOT
     RET
 
@@ -1161,26 +1245,7 @@ UPDATE_ONE_BULLET:
     OR A
     RET Z
 
-    ; --- erase: row<19 sky, row==19 explicit rock restore (row19 is    ---
-    ; --- static, only ever written at INIT), row>19 skip entirely -    ---
-    ; --- rows 20-23 already got fully redrawn from NAMEBUF earlier      ---
-    ; --- this same MAINLOOP iteration (see the comment on               ---
-    ; --- BULLET_ROCK_ROW_MIN above), so there's nothing to restore.     ---
-    LD A,(IX+3)
-    CP BULLET_ROCK_ROW_MIN
-    JR NC,UOB_ERASE_ROCKBAND
-    LD A,SKY_BLANK_CODE
-    JR UOB_ERASE_WRITE
-UOB_ERASE_ROCKBAND:
-    JR NZ,UOB_ERASE_SKIP
-    LD A,TERRAIN_PATTERN_COUNT
-UOB_ERASE_WRITE:
-    LD (BULLET_TEMP_BYTE),A
-    LD L,(IX+4) : LD H,(IX+5)
-    LD E,(IX+2) : LD D,0
-    ADD HL,DE
-    CALL WRITE_BULLET_BYTE_HL
-UOB_ERASE_SKIP:
+    CALL ERASE_BULLET_CELL
 
     ; --- advance: column (direction from FACING), row too (upward) for a diagonal/U shot ---
     LD A,(IX+6)
@@ -1219,6 +1284,32 @@ UOB_ADV_DONE:
     RET
 UOB_DEACTIVATE:
     XOR A : LD (IX+0),A
+    RET
+
+; IX = slot base. row<19 sky, row==19 explicit rock restore (row19 is
+; static, only ever written at INIT), row>19 skip entirely - rows
+; 20-23 already got fully redrawn from NAMEBUF earlier this same
+; MAINLOOP iteration (see the comment on BULLET_ROCK_ROW_MIN above),
+; so there's nothing to restore. Shared by UPDATE_ONE_BULLET's own
+; per-frame erase-before-advance and CHECK_BULLET_VS_ENEMY (a bullet
+; that hits an enemy needs the exact same cell restored immediately,
+; not just left to redraw stale next frame since it's now inactive).
+ERASE_BULLET_CELL:
+    LD A,(IX+3)
+    CP BULLET_ROCK_ROW_MIN
+    JR NC,EBC_ROCKBAND
+    LD A,SKY_BLANK_CODE
+    JR EBC_WRITE
+EBC_ROCKBAND:
+    JR NZ,EBC_SKIP
+    LD A,TERRAIN_PATTERN_COUNT
+EBC_WRITE:
+    LD (BULLET_TEMP_BYTE),A
+    LD L,(IX+4) : LD H,(IX+5)
+    LD E,(IX+2) : LD D,0
+    ADD HL,DE
+    CALL WRITE_BULLET_BYTE_HL
+EBC_SKIP:
     RET
 
 ; IX = slot base. Picks the pattern code for (TYPE x background-under-
@@ -1361,7 +1452,7 @@ WHC_ROW_OK:
 ; Adds HL to the 24-bit SCORE (low word +0, high byte +2) and redraws
 ; it - ported from src/CYBER SHMUP.asm's ADD_SCORE_COMMON, simplified
 ; to a single delta-in-HL entry point since this test only ever adds
-; SCORE_PER_SHOT (no 100/200/300 enemy-kill tiers to pick between yet).
+; SCORE_PER_KILL (no 100/200/300 enemy-kill tiers to pick between yet).
 ADD_SCORE:
     LD DE,(SCORE)
     ADD HL,DE
@@ -1560,6 +1651,221 @@ SOUND_UPDATE:
     DEC A : LD (SND_TIMER),A
     RET
 
+; ---------- enemy (ZacoII): spawn timer, then all 3 slots ----------
+UPDATE_ENEMIES:
+    LD A,(ENEMY_SPAWN_TIMER)
+    OR A
+    JR Z,UE_TRY_SPAWN
+    DEC A : LD (ENEMY_SPAWN_TIMER),A
+    JR UE_UPDATE_ALL
+UE_TRY_SPAWN:
+    CALL ENEMY_TRY_SPAWN
+UE_UPDATE_ALL:
+    LD IX,ENEMY0_ACT : CALL UPDATE_ONE_ENEMY
+    LD IX,ENEMY1_ACT : CALL UPDATE_ONE_ENEMY
+    LD IX,ENEMY2_ACT : CALL UPDATE_ONE_ENEMY
+    CALL FLUSH_ENEMY_SPRITES
+    RET
+
+; claims the first inactive slot (ENEMY0, else 1, else 2); if all 3
+; are already active, spawning is simply retried next frame (the
+; timer is only reset on an actual spawn) - same pool-of-3 idea as
+; TRY_SPAWN_BULLET.
+ENEMY_TRY_SPAWN:
+    LD A,(ENEMY0_ACT)
+    OR A
+    JR NZ,ETS_TRY1
+    LD IX,ENEMY0_ACT
+    JR ETS_DO_SPAWN
+ETS_TRY1:
+    LD A,(ENEMY1_ACT)
+    OR A
+    JR NZ,ETS_TRY2
+    LD IX,ENEMY1_ACT
+    JR ETS_DO_SPAWN
+ETS_TRY2:
+    LD A,(ENEMY2_ACT)
+    OR A
+    RET NZ
+    LD IX,ENEMY2_ACT
+ETS_DO_SPAWN:
+    LD A,1 : LD (IX+0),A
+    LD A,ENEMY_SPAWNX : LD (IX+1),A
+    LD A,(TICK) : AND ENEMY_SKY_Y_MASK : ADD A,ENEMY_SKY_Y_MIN : LD (IX+2),A
+    XOR A : LD (IX+3),A : LD (IX+4),A
+    LD A,ENEMY_SPAWN_INTERVAL : LD (ENEMY_SPAWN_TIMER),A
+    RET
+
+; IX = slot base. ACT=1 (alive): moves toward the tank, turns back
+; (RETREAT=1, mirrored sprite) once within ENEMY_TURNBACK_MARGIN of
+; TANK_X - "移動は自機位置をみて手前で引き返す" - then despawns once
+; back off the spawn edge. ACT=2 (exploding, set by
+; CHECK_BULLET_VS_ENEMY): holds position, counts EXPLODE_TIMER down to
+; 0 then despawns. Either way, stages this slot's 4 attribute bytes
+; into ENEMY_SPRITE_ATTRS at its own fixed SPRIDX offset - inactive
+; slots RET immediately and leave the buffer holding whatever hidden
+; (Y=209) bytes it already had.
+UPDATE_ONE_ENEMY:
+    LD A,(IX+0)
+    CP 2
+    JR Z,UOE_EXPLODING
+    OR A
+    RET Z
+
+    LD A,(IX+3)
+    OR A
+    JR NZ,UOE_RETREAT
+
+    LD A,(IX+1) : SUB ENEMY_SPEED : LD (IX+1),A
+    LD A,(TANK_X) : ADD A,ENEMY_TURNBACK_MARGIN : LD B,A
+    LD A,(IX+1)
+    CP B
+    JR NC,UOE_DRAW
+    LD A,1 : LD (IX+3),A
+    JR UOE_DRAW
+
+UOE_RETREAT:
+    LD A,(IX+1) : ADD A,ENEMY_SPEED : LD (IX+1),A
+    CP ENEMY_SPAWNX
+    JR C,UOE_DRAW
+    XOR A : LD (IX+0),A
+    CALL UOE_HIDE
+    RET
+
+UOE_DRAW:
+    LD A,(IX+5) : ADD A,A : ADD A,A : LD C,A : LD B,0
+    LD HL,ENEMY_SPRITE_ATTRS : ADD HL,BC
+    LD A,(IX+2) : LD (HL),A : INC HL
+    LD A,(IX+1) : LD (HL),A : INC HL
+    LD A,(IX+3)
+    OR A
+    JR Z,UOE_PAT_NORMAL
+    LD A,PAT_ZACO_FLIP
+    JR UOE_PAT_SET
+UOE_PAT_NORMAL:
+    LD A,PAT_ZACO
+UOE_PAT_SET:
+    LD (HL),A : INC HL
+    LD A,ENEMY_COLOR : LD (HL),A
+    RET
+
+UOE_EXPLODING:
+    LD A,(IX+4)
+    DEC A : LD (IX+4),A
+    JR NZ,UOE_DRAW_EXPLOSION
+    XOR A : LD (IX+0),A
+    CALL UOE_HIDE
+    RET
+UOE_DRAW_EXPLOSION:
+    LD A,(IX+5) : ADD A,A : ADD A,A : LD C,A : LD B,0
+    LD HL,ENEMY_SPRITE_ATTRS : ADD HL,BC
+    LD A,(IX+2) : LD (HL),A : INC HL
+    LD A,(IX+1) : LD (HL),A : INC HL
+    LD A,PAT_EXPLOSION : LD (HL),A : INC HL
+    LD A,EXPLOSION_COLOR : LD (HL),A
+    RET
+
+UOE_HIDE:
+    LD A,(IX+5) : ADD A,A : ADD A,A : LD C,A : LD B,0
+    LD HL,ENEMY_SPRITE_ATTRS : ADD HL,BC
+    LD A,209 : LD (HL),A
+    RET
+
+; blasts ENEMY_SPRITE_ATTRS (12 bytes: Y,X,pat,col x3) to hw sprite
+; slots ENEMY_SPR_BASE_SLOT..+2 (4-6) - same raw DI-wrapped OUT +
+; 8-NOP, auto-incrementing-VDP-pointer pattern as UPDATE_TANK_SPRITES'
+; own UTS_OUT_LOOP, just a different attribute-table address and slot
+; count.
+FLUSH_ENEMY_SPRITES:
+    DI
+    LD A,ENEMY_SPR_BASE_SLOT*4 : OUT (99h),A
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    LD HL,ENEMY_SPRITE_ATTRS
+    LD B,12
+FES_LOOP:
+    LD A,(HL) : OUT (98h),A
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    INC HL
+    DJNZ FES_LOOP
+    EI
+    RET
+
+; ---------- bullet x enemy collision (9 pairs, unrolled) ----------
+; "当たったら100点" - on a hit: erase the bullet's cell + deactivate
+; it (same ERASE_BULLET_CELL a normal per-frame advance would use -
+; this bullet just never gets that later, since it's going inactive
+; right now), switch the enemy to ACT=2 (exploding, see
+; UPDATE_ONE_ENEMY) at its current position, and award SCORE_PER_KILL.
+CHECK_BULLET_VS_ENEMY:
+    LD IX,BULLET0_ACT
+    LD IY,ENEMY0_ACT : CALL CHECK_HIT_PAIR
+    LD IY,ENEMY1_ACT : CALL CHECK_HIT_PAIR
+    LD IY,ENEMY2_ACT : CALL CHECK_HIT_PAIR
+    LD IX,BULLET1_ACT
+    LD IY,ENEMY0_ACT : CALL CHECK_HIT_PAIR
+    LD IY,ENEMY1_ACT : CALL CHECK_HIT_PAIR
+    LD IY,ENEMY2_ACT : CALL CHECK_HIT_PAIR
+    LD IX,BULLET2_ACT
+    LD IY,ENEMY0_ACT : CALL CHECK_HIT_PAIR
+    LD IY,ENEMY1_ACT : CALL CHECK_HIT_PAIR
+    LD IY,ENEMY2_ACT : CALL CHECK_HIT_PAIR
+    RET
+
+; IX = bullet slot base, IY = enemy slot base. AABB overlap test
+; (bullet's 8x8 cell box vs the enemy's 16x16 pixel box) - same 4-edge-
+; comparison shape as src/CYBER SHMUP.asm's own QUAD_HIT_TEST, just
+; with the enemy side's box widened from 7 to 15.
+CHECK_HIT_PAIR:
+    LD A,(IX+0)
+    OR A
+    RET Z
+    LD A,(IY+0)
+    CP 1
+    RET NZ
+
+    LD A,(IX+2) : ADD A,A : ADD A,A : ADD A,A : LD B,A
+    LD A,(IX+3) : ADD A,A : ADD A,A : ADD A,A : LD C,A
+    LD A,(IY+1) : LD D,A
+    LD A,(IY+2) : LD E,A
+
+    LD A,B : ADD A,7 : CP D : RET C
+    LD A,D : ADD A,15 : CP B : RET C
+    LD A,C : ADD A,7 : CP E : RET C
+    LD A,E : ADD A,15 : CP C : RET C
+
+    CALL ERASE_BULLET_CELL
+    XOR A : LD (IX+0),A
+
+    LD A,2 : LD (IY+0),A
+    LD A,EXPLOSION_DURATION : LD (IY+4),A
+
+    LD HL,SCORE_PER_KILL
+    CALL ADD_SCORE
+    RET
+
 REFRESH_IDCACHE_33:
     LD B,33
 RIC_LOOP:
@@ -1670,5 +1976,21 @@ HEXLABEL_CODES:
     DB 104,105,106,107,108,109,110,111,112,113,114,115,116,117,118,119
 HUD_ZERO8:
     DS 8,0
+
+; explosion sprite (16x16), byte-for-byte from src/CYBER SHMUP.asm's
+; own EXPLOSION_PATTERN (its pod-destroy-burst spark shape) - "弾が
+; 当たっての爆発はStage1と同じ16x16のスプライト流用". That file uses
+; it differently (4 scattered copies for a pod burst); here it's just
+; shown once, held in place at the killed enemy's own position for
+; EXPLOSION_DURATION frames (see UPDATE_ONE_ENEMY) - a single static
+; pattern, not an animation (Stage1's own generic per-enemy-kill
+; explosion is a BG-cell animation instead, not a sprite at all - see
+; TRIGGER_EXPLOSION - so there was no closer "real" explosion sprite
+; to borrow from for a straightforward reuse).
+EXPLOSION_PATTERN:
+    DB 84h,48h,00h,02h,49h,84h,20h,03h     ; top-left
+    DB 13h,09h,20h,00h,09h,10h,04h,00h     ; bottom-left
+    DB 00h,00h,40h,10h,20h,10h,8Ch,68h     ; top-right
+    DB 90h,82h,48h,0C4h,20h,80h,00h,00h    ; bottom-right
 
 ; ===== generated tables (terrain + tank) appended below by build_test.py =====
