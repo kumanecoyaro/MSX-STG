@@ -179,9 +179,10 @@ with no way to tell where.
   1 row up/frame - fired while holding up, i.e. `TANK_AIMUP`). Spawn
   row = `TANK_Y_CUR>>3`, +1 more for `BulletF` only (per direct
   instruction "BulletFのセル表示を1セル下に" - `BulletU` keeps the
-  un-shifted muzzle row); spawn column = `(TANK_X+24)>>3` (muzzle,
-  right side of the tank - the tank only ever faces right, there's no
-  flip/left-facing state anywhere in this test).
+  un-shifted muzzle row); spawn column = `(TANK_X+24)>>3` on the right
+  side of the tank when facing right, `(TANK_X+7)>>3` (mirrored offset,
+  `BULLET_MUZZLE_DX_LEFT` = 32-1-24) on the left side when facing left
+  - see **Left-facing flip** below.
   - **Background compositing** ("背景色は書換先のセルを調べて合成"):
     SCREEN1 color is fixed per 8-character-code group, not per screen
     position, so a bullet can't just draw its pixels over whatever's
@@ -225,6 +226,80 @@ with no way to tell where.
   4 rows total (20-23) - there's no tier below that one for the tank
   to reach, so its Y (and therefore a spawn row = `TANK_Y_CUR>>3`)
   never exceeds 19 either.
+- **Left-facing flip, auto-fire, and direction lock** (per direct
+  instruction: "では次は機体の反転 今の自機と弾を左操作で左向きに
+  反転パターンはそっちで生成してくれ ダメなら修正する / で弾はボタン
+  押しっぱなし自動連射 3連射は同じだが間欠連射 1発打ったら1発空ける
+  / 発射ボタンのAが押されてなくて左右移動ならその向きを向くように
+  まあAボタンは向きのロックだな"):
+  - **Generated mirror art** ("反転パターンはそっちで生成してくれ" -
+    generate the flip yourself, no new source art): both `tank_gen.py`
+    and `bullet_gen.py` gained an `hflip_bits` helper (row-reversal of
+    the 2D bit grid, the same idea `terrain_gen.py` already used to
+    derive the descend slope from the climb slope) and now emit a
+    second, mirrored copy of every pose/pattern from the *same* source
+    JSON. For the tank, flipping the whole 32x32 grid before splitting
+    it into the usual 4 16x16-hardware-sprite quadrants makes the
+    quadrant swap (screen-left becomes what was screen-right) fall out
+    for free - no separate sub-tile-swap logic needed. The 4
+    left-facing poses land at pattern-group numbers 64-127
+    (`TANK_POSE_FLIP_OFFSET`), right after the 4 right-facing ones at
+    0-63; `UPDATE_POSE` adds that offset onto whatever pose it just
+    picked whenever `TANK_FACING`=1. Bullets get the same treatment:
+    `BULLET_F_L_PATTERN`/`BULLET_U_L_PATTERN`, loaded into 4 more
+    reused color-group codes (90/91/98/99, same sky/rock split as the
+    right-facing codes) alongside the existing ones.
+  - **Per-quadrant color also has to flip**: MSX1 sprite color is a
+    flat per-hardware-sprite attribute, not baked into the pattern
+    bytes, so mirroring the *art* alone would leave the TL quadrant
+    (main body, medium red) and TR quadrant (gun, black) sitting in
+    their un-mirrored screen positions even though the pixels under
+    them just swapped sides. `UPDATE_TANK_SPRITES` now stages the 4
+    quadrant colors into `UTS_COLOR_0-3` first, swapping TL<->TR and
+    BL<->BR when `TANK_FACING`=1, and writes sprite attributes from
+    those instead of the raw `TANK_COLOR_*` constants directly.
+  - **Muzzle/travel direction mirrors too**: `TRY_SPAWN_BULLET` now
+    branches its muzzle-column formula on `TANK_FACING` (copied into
+    each bullet slot's new `+6 FACING` byte at spawn, so an
+    already-flying bullet keeps its own direction even if the tank
+    flips afterward), and `UPDATE_ONE_BULLET`'s per-frame column
+    advance branches the same way - decrementing instead of
+    incrementing for a left-facing bullet, with a new col=0 guard
+    (`UOB_DEACTIVATE`) symmetric to the existing right-edge overflow
+    check, since a left-moving bullet can now run off the *left* edge
+    of the screen too. `DRAW_BULLET_CELL` picks among 8 pattern codes
+    now instead of 4 (type x sky/rock x facing).
+  - **Auto-fire** ("弾はボタン押しっぱなし自動連射...間欠連射 1発
+    打ったら1発空ける"): `UPDATE_SHOT` no longer edge-triggers on A: a
+    new `SHOT_COOLDOWN` byte (RAM) counts down every frame regardless
+    of input, and a shot can only spawn once it hits 0, which then
+    rearms it to `SHOT_COOLDOWN_FRAMES`(8) - so holding A fires
+    continuously but with a gap between each shot rather than one
+    every single frame, while the existing 3-bullet on-screen pool cap
+    (`TRY_SPAWN_BULLET`) still applies unchanged ("3連射は同じ").
+    Verified with an emulator sweep holding A for 60 frames: shots
+    spawn at frames 0,9,18,27,36,45,54 - a consistent 9-frame period
+    (1 fire + 8-frame cooldown). `SHOT_COOLDOWN_FRAMES` was picked
+    without an exact spec and is an easy first knob to retune if the
+    rate feels off.
+  - **Direction lock** ("発射ボタンのAが押されてなくて左右移動なら
+    その向きを向くように...まあAボタンは向きのロックだな"):
+    `TANK_FACING` only updates in `UPDATE_TANK_XY` when there is
+    left/right stick input (`TANK_DX`!=0) *and* A is not held; with no
+    movement, or with A held, it simply keeps whatever value it last
+    had - so holding A to keep firing in one direction while
+    strafing/backing away doesn't spin the tank around mid-volley.
+    Verified in the emulator: move left (facing->1) -> hold A + move
+    right (facing stays 1, locked) -> release A + move right (facing
+    ->0, follows again).
+  - Verified visually as well as numerically: rendered frames of the
+    tank facing left (gun correctly on the left side, colors on the
+    correct swapped quadrants), a straight `BulletF` fired left and
+    caught mid-flight to the left of the tank, and a diagonal
+    `BulletU` fired while holding up-left (aim-up pose also mirrors,
+    shot travels up-and-left) - all composited through the real
+    VRAM/sprite pipeline, not just `tank_gen.py`'s standalone bit-grid
+    output.
 - Border-color diagnostic checkpoints through INIT (VDP R7), added
   specifically because the tank-only test froze on real hardware with
   no clue where:

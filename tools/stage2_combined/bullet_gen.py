@@ -17,6 +17,11 @@ pixel is always solid green with nothing else drawn into the same
 Poses:
   BulletF - straight-ahead shot
   BulletU - diagonal (up+forward) shot
+
+Each also gets a mirrored (left-facing) pattern for when the tank
+itself is facing/firing left (see combined_test.asm's TANK_FACING) -
+same "generate the flip yourself" approach as tank_gen.py's own
+POSE_FLIP_OFFSET poses, reusing terrain_gen.py's hflip idea.
 """
 import json
 import os
@@ -31,6 +36,10 @@ def load_bits(name):
     return json.load(open(os.path.join(SPRITE_DIR, f"{name}.json")))["bits"]
 
 
+def hflip_bits(bits):
+    return [list(reversed(row)) for row in bits]
+
+
 def to_bytes(tile8x8):
     out = []
     for row in tile8x8:
@@ -42,13 +51,16 @@ def to_bytes(tile8x8):
     return out
 
 
-def bullet_pattern(name):
+def bullet_pattern(name, flipped=False):
     bits = load_bits(name)
+    if flipped:
+        bits = hflip_bits(bits)
     tile = [row[0:8] for row in bits[0:8]]
     return to_bytes(tile)
 
 
 ALL_PATTERNS = {code: bullet_pattern(name) for code, name in BULLETS}
+ALL_PATTERNS_L = {code: bullet_pattern(name, flipped=True) for code, name in BULLETS}
 
 
 def db_bytes(byte_list):
@@ -60,6 +72,9 @@ def emit_asm_tables():
     for code, name in BULLETS:
         out.append(f"BULLET_{code}_PATTERN:")
         out.append(db_bytes(ALL_PATTERNS[code]))
+    for code, name in BULLETS:
+        out.append(f"BULLET_{code}_L_PATTERN:")
+        out.append(db_bytes(ALL_PATTERNS_L[code]))
     return "\n".join(out)
 
 
