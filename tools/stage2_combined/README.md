@@ -527,6 +527,28 @@ with no way to tell where.
 
 ## Bugs found and fixed while building this
 
+- **A diagonal (U) shot could fly straight into the HUD rows and
+  permanently erase them** ("カラーバーAからF消えたぞ"): a U shot's
+  row decrements every frame as it climbs, and had no lower bound
+  besides "row0" - `ERASE_BULLET_CELL`'s "row<19 -> restore sky" rule
+  is correct for open sky but rows0-1 aren't sky, they're the score/
+  counter/calibration-strip HUD (see the HUD entry above). A bullet
+  passing through row0 or row1 would draw its own pattern over
+  whatever HUD glyph was there, then erase it to plain `SKY_BLANK_CODE`
+  on the next frame instead of restoring the glyph - permanently
+  blanking whichever HUD cells happened to sit in that bullet's
+  column, one column at a time as different shots happened to line up
+  with different cells (explaining why only *some* letters - "Aから
+  F" - were reported gone rather than the whole strip at once). Fixed
+  with a new `BULLET_MIN_ROW`(2): a U shot now deactivates once it
+  would cross from row2 into row1, instead of only stopping at row0.
+  Verified: with the tank positioned so its muzzle column lands
+  squarely in the hex-label strip, 400 frames of continuous up+A fire
+  never let a bullet's row go below 2, and the score/swatch/hex-label
+  cells in rows0-1 came out byte-for-byte identical to their INIT
+  values afterward (score cells still correctly update from *real*
+  kills scored during the same run, confirming this isn't just
+  "nothing draws there anymore").
 - **The enemy-pool buffer loops corrupted memory via a DJNZ/B-register
   collision - this was the real cause of the freeze, and of 2 further
   regressions the first attempted fix didn't touch** (reported in 2

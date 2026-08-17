@@ -117,6 +117,19 @@ CUR_POSE_PAT  EQU 0F22Ah
 ; ---------- a bullet there is a no-op - skipped entirely, see          ----------
 ; ---------- UPDATE_ONE_BULLET below.                                   ----------
 BULLET_ROCK_ROW_MIN EQU 19      ; first row where the "rock" bg applies (19-23)
+; a diagonal/U shot decrements ROW every frame as it climbs and had no
+; upper bound beyond "row0", letting it fly straight into rows0-1 -
+; where the score/counter/calibration-strip HUD lives - drawing a
+; bullet pattern over a HUD cell, then erasing it to plain sky on the
+; next frame (see ERASE_BULLET_CELL's "row<19 -> sky" rule, correct
+; for open sky but not for permanent HUD content) instead of restoring
+; whatever HUD glyph was actually there. Reported as the calibration
+; strip's hex labels vanishing one cell at a time - "カラーバーAから
+; F消えたぞ" - exactly the columns a bullet happened to pass through
+; while climbing. Fixed by simply never letting a bullet's row go
+; below this (rows0-1 are permanently off-limits, gameplay starts at
+; row2).
+BULLET_MIN_ROW    EQU 2
 BULLET_MAXCOL     EQU 31        ; last valid name-table column (0-31)
 BULLET_MUZZLE_DX  EQU 24        ; spawn column offset from TANK_X (muzzle, right side of the tank)
 BULLET_MUZZLE_DX_LEFT EQU 7     ; mirrored muzzle offset for a left-facing shot (32-1-24)
@@ -1352,8 +1365,8 @@ UOB_ADV_ROW:
     OR A
     JR Z,UOB_ADV_DONE
     LD A,(IX+3)
-    OR A
-    JR Z,UOB_DEACTIVATE   ; already at row0 - one more "up" would leave the screen
+    CP BULLET_MIN_ROW+1
+    JR C,UOB_DEACTIVATE   ; already at (or somehow below) BULLET_MIN_ROW - one more "up" would enter the HUD rows
     DEC A
     LD (IX+3),A
 UOB_ADV_DONE:
