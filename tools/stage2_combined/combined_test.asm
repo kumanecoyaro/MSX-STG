@@ -54,11 +54,16 @@ TANK_CLIMB_SPEED EQU 1     ; px/step, gated to every OTHER frame (see UPDATE_TER
                            ; used only while the tank is standing still (TANK_DX=0)
 ; px/frame (no gate), used instead of TANK_CLIMB_SPEED while the tank
 ; is actively steering (TANK_DX!=0) - see UPDATE_TERRAIN_COLLISION.
-; Swept 2/3/4/6/8 holding the stick right through the whole track and
+; Swept 2/3/4/5/6/8 holding the stick right through the whole track and
 ; measured the worst-case lag behind TANK_TIER_Y_TABLE's target at
-; each: 6/5/4/2/0px. Only 8 (matching TANK_CLIMB_CATCHUP_SPEED, i.e.
-; effectively no easing at all while moving) reaches 0.
-TANK_CLIMB_SPEED_MOVING EQU 8
+; each: 6/5/4/3/2/0px. 8 fully eliminated the lag ("食い込みはなく
+; なった") but closes a full 8px gap in a single frame, which then
+; read as an instant snap instead of a climb, especially moving
+; forward - "前後移動が加わると特に前方移動で8px登りになってる". 6
+; keeps the worst case down to 2px (barely perceptible) while every
+; climb still takes at least 2 frames (ceil(8/6)) to finish, so it
+; reads as climbing rather than snapping.
+TANK_CLIMB_SPEED_MOVING EQU 6
 TANK_CLIMB_CATCHUP_SPEED EQU 8  ; px/frame (no gate) once TANK_CLIMB_CATCHUP_THRESHOLD behind - see UPDATE_TERRAIN_COLLISION
 ; a normal single-tier transition always starts at diff=8 (the full
 ; TANK_TIER_Y_TABLE step) - a threshold of 5 (briefly tried) meant
@@ -171,6 +176,20 @@ TANK_TIER     EQU 0F242h    ; 0-3, current ground tier (screen row 23-TANK_TIER)
 TANK_ROWPTR   EQU 0F243h    ; word: IDCACHE_Tn base address for the surface tier's row
 TANK_COL_R    EQU 0F245h    ; probe column (name-table column, 0-31)
 TANK_SLOPE_HOLD EQU 0F247h  ; frames left before TANK_ON_SLOPE actually drops to 0 - see UPDATE_TERRAIN_COLLISION
+TANK_DRAW_Y   EQU 0F248h    ; TANK_Y_CUR, -TANK_GAP_ART_OFFSET while a Gap pose is showing - see UPDATE_TANK_SPRITES
+; TankFGap/TankUGap's own art extends 3 rows further down within their
+; fixed 32x32 canvas than TankF/TankUp does (lowest non-blank sprite
+; row 29 vs 26, measured directly from the source JSON) - a fixed
+; offset baked into the art itself, not the dynamic ground-Y logic, so
+; drawing a Gap pose at the exact same TANK_Y_CUR as a Normal pose
+; always put its own wheels 3px lower on screen than Normal's, i.e.
+; visibly sunk into the ground even once TANK_Y_CUR itself is fully
+; settled at the correct tier - "静止でもGapにまだ食い込んでた". (An
+; earlier +4 offset tried here made this worse, not better - it pushed
+; further in the same already-too-low direction; reverted for looking
+; like a jarring dip. This is -3, the other direction, sized from the
+; actual art discrepancy rather than guessed.)
+TANK_GAP_ART_OFFSET EQU 3
 
 STACKTOP      EQU 0F380h
 
@@ -742,23 +761,35 @@ UP_SET:
 ; ---------- writes the 4 sprite attribute entries from TANK_X/ ----------
 ; TANK_Y_CUR/CUR_POSE_PAT. Called once from INIT, then every frame.
 UPDATE_TANK_SPRITES:
+    LD A,(CUR_POSE_PAT)
+    CP PAT_TANKFGAP
+    JR Z,UTS_GAP_OFFSET
+    CP PAT_TANKUGAP
+    JR Z,UTS_GAP_OFFSET
+    LD A,(TANK_Y_CUR)
+    JR UTS_DRAW_Y_SET
+UTS_GAP_OFFSET:
+    LD A,(TANK_Y_CUR) : SUB TANK_GAP_ART_OFFSET
+UTS_DRAW_Y_SET:
+    LD (TANK_DRAW_Y),A
+
     LD IX,SPRITE_ATTRS
-    LD A,(TANK_Y_CUR) : LD (IX+0),A
+    LD A,(TANK_DRAW_Y) : LD (IX+0),A
     LD A,(TANK_X)     : LD (IX+1),A
     LD A,(CUR_POSE_PAT) : LD (IX+2),A
     LD A,TANK_COLOR_TL : LD (IX+3),A
 
-    LD A,(TANK_Y_CUR) : LD (IX+4),A
+    LD A,(TANK_DRAW_Y) : LD (IX+4),A
     LD A,(TANK_X) : ADD A,16 : LD (IX+5),A
     LD A,(CUR_POSE_PAT) : ADD A,4 : LD (IX+6),A
     LD A,TANK_COLOR_TR : LD (IX+7),A
 
-    LD A,(TANK_Y_CUR) : ADD A,16 : LD (IX+8),A
+    LD A,(TANK_DRAW_Y) : ADD A,16 : LD (IX+8),A
     LD A,(TANK_X)     : LD (IX+9),A
     LD A,(CUR_POSE_PAT) : ADD A,8 : LD (IX+10),A
     LD A,TANK_COLOR_BL : LD (IX+11),A
 
-    LD A,(TANK_Y_CUR) : ADD A,16 : LD (IX+12),A
+    LD A,(TANK_DRAW_Y) : ADD A,16 : LD (IX+12),A
     LD A,(TANK_X) : ADD A,16 : LD (IX+13),A
     LD A,(CUR_POSE_PAT) : ADD A,12 : LD (IX+14),A
     LD A,TANK_COLOR_BR : LD (IX+15),A

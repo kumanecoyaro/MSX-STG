@@ -89,12 +89,32 @@ with no way to tell where.
     closely matters more than matching the terrain's own scroll rate.
     Now selects the pace by whether `TANK_DX` is 0: stationary keeps
     the slow terrain-matched easing, steering switches to
-    `TANK_CLIMB_SPEED_MOVING` (ungated). Swept 2/3/4/6/8 holding the
+    `TANK_CLIMB_SPEED_MOVING` (ungated). Swept 2/3/4/5/6/8 holding the
     stick right through the whole track, measuring the worst-case lag
-    behind target at each - only 8 (effectively no easing at all while
-    moving) reached 0; 5 rendered frames through the rapid-chain
-    section while moving right confirm the tank stays grounded
-    throughout instead of sinking.
+    behind target at each (6/5/4/3/2/0px) - 8 reached 0 but closes a
+    full 8px gap in a single frame, reading as an instant snap instead
+    of a climb ("前後移動が加わると特に前方移動で8px登りになってる") -
+    settled on 6 (worst-case lag 2px, barely perceptible, but every
+    climb still takes >=2 frames so it reads as climbing).
+  - **Gap pose art offset**: `TankFGap`/`TankUGap`'s own art extends 3
+    rows further down within their 32x32 canvas than `TankF`/`TankUp`
+    does (lowest non-blank sprite row 29 vs 26, measured directly from
+    the source JSON) - a fixed offset baked into the art itself, not
+    the dynamic ground-Y logic above, so drawing a Gap pose at the
+    exact same `TANK_Y_CUR` as a Normal pose always put its own wheels
+    3px lower on screen, i.e. visibly sunk into the ground even once
+    `TANK_Y_CUR` itself was fully settled at the correct tier -
+    reported as digging in persisting even standing still, after the
+    lag-based fixes above already worked - "静止でもGapにまだ食い込ん
+    でた". An earlier `+4px` offset (tried, then reverted, several
+    rounds back) had pushed the *same direction* as this discrepancy,
+    making it worse rather than better, which is why it read as a
+    jarring dip back then. Fixed with `TANK_GAP_ART_OFFSET`(3), the
+    other direction and sized from the actual art gap instead of
+    guessed: `UPDATE_TANK_SPRITES` draws any Gap pose at
+    `TANK_Y_CUR - 3` (`TANK_DRAW_Y`) so its wheels land at the same
+    screen row Normal's would. Purely a rendering offset - collision
+    and jump math still use the untouched `TANK_Y_CUR`/`TANK_GROUND_Y`.
   - **Slope check** ("Gapを調べる", sets `TANK_ON_SLOPE`) went through
     2 rounds: a separate probe 1 column *behind* `TANK_COL_R` always
     lagged the Y-tier-snap by exactly 1 column's scroll time (it was
