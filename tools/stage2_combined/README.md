@@ -17,9 +17,10 @@ with no way to tell where.
   it only switches the sprite pose (see below), matching "no up/down
   movement, left/right only" from the spec.
 - **Jump**: button B, edge-triggered (a held button doesn't repeat).
-  24px triangular arc over 49 frames (`JUMP_OFFSET_TABLE`: 0,1,2,...,24
-  at frame 24, then 23,...,0 - 1px/frame, slower than an earlier
-  16px/16-frame version per direct instruction), applied as
+  24px half-sine arc over 49 frames (`JUMP_OFFSET_TABLE`, generated as
+  `round(24*sin(pi*t/48))` for t=0..48 - eased in/out, brief hang near
+  the peak, per direct instruction "サインジャンプ"; supersedes an
+  earlier constant-1px/frame triangular arc), applied as
   `TANK_Y_CUR = TANK_Y_BASE - JUMP_Y_OFFSET`. Not real gravity/physics,
   just a fixed-shape hop - fine for now since there's no ground-height
   variation to land on
@@ -29,6 +30,12 @@ with no way to tell where.
   (airborne, aiming up). Per direct instruction, the Gap poses are
   wired up for "airborne" only right now - the terrain-slope-following
   use of the same poses is deferred.
+- **Per-quadrant sprite color**: each 32x32 pose is 4 separate 16x16
+  hardware sprites (TL/TR/BL/BR), and MSX1 sprites are monochrome, so
+  each quadrant gets its own color attribute instead of one flat tank
+  color - TL (main body) dark blue, TR (gun) gray, BL/BR (treads)
+  black - per direct instruction ("右上のスプライトの色をグレーに
+  右下左下をブラックに").
 - **Not physics-integrated with the terrain yet**: `TANK_Y_BASE=156`
   (row23's top minus the tank's 32px height plus a +4 landing offset)
   is a fixed constant matching the terrain's starting flat tier -

@@ -41,7 +41,10 @@ NAMEBUF_T3    EQU 0F160h
 ; ---------- tank state (past terrain's own range - 0F100h-0F180h) ----------
 SPRATR        EQU 1B00h
 SPRPAT        EQU 3800h
-TANK_COLOR    EQU 4        ; dark blue
+TANK_COLOR_TL EQU 4        ; dark blue (main body)
+TANK_COLOR_TR EQU 14       ; gray
+TANK_COLOR_BL EQU 1        ; black
+TANK_COLOR_BR EQU 1        ; black
 TANK_X_INIT   EQU 40
 TANK_Y_BASE   EQU 156      ; row23 top (23*8=184) - tank height(32) + landing offset(3+1)
 TANK_SPEED    EQU 2        ; px/frame, left/right
@@ -317,22 +320,22 @@ UPDATE_TANK_SPRITES:
     LD A,(TANK_Y_CUR) : LD (IX+0),A
     LD A,(TANK_X)     : LD (IX+1),A
     LD A,(CUR_POSE_PAT) : LD (IX+2),A
-    LD A,TANK_COLOR   : LD (IX+3),A
+    LD A,TANK_COLOR_TL : LD (IX+3),A
 
     LD A,(TANK_Y_CUR) : LD (IX+4),A
     LD A,(TANK_X) : ADD A,16 : LD (IX+5),A
     LD A,(CUR_POSE_PAT) : ADD A,4 : LD (IX+6),A
-    LD A,TANK_COLOR   : LD (IX+7),A
+    LD A,TANK_COLOR_TR : LD (IX+7),A
 
     LD A,(TANK_Y_CUR) : ADD A,16 : LD (IX+8),A
     LD A,(TANK_X)     : LD (IX+9),A
     LD A,(CUR_POSE_PAT) : ADD A,8 : LD (IX+10),A
-    LD A,TANK_COLOR   : LD (IX+11),A
+    LD A,TANK_COLOR_BL : LD (IX+11),A
 
     LD A,(TANK_Y_CUR) : ADD A,16 : LD (IX+12),A
     LD A,(TANK_X) : ADD A,16 : LD (IX+13),A
     LD A,(CUR_POSE_PAT) : ADD A,12 : LD (IX+14),A
-    LD A,TANK_COLOR   : LD (IX+15),A
+    LD A,TANK_COLOR_BR : LD (IX+15),A
 
     ; --- write to VRAM via raw NOP-padded OUT (address set once, then ---
     ; --- 16 consecutive auto-incrementing OUT (98h) writes), matching ---
@@ -430,12 +433,13 @@ TERRAIN_ROW19:
 SPR_HIDE:
     DS 1,0
 
-; 49 entries (jump frame 0-48): 0,1,2,...,24 (rise, 1px/frame) then
-; 23,22,...,0 (fall) - a triangular 24px-peak arc, slower than the
-; original 16px/16-frame version (1px/frame instead of 2px/frame, and
-; 3x the total airtime) per direct instruction ("ジャンプ速すぎるから少しゆっくり").
-; JUMP_FRAMES above must match this table's length.
+; 49 entries (jump frame 0-48): a half-sine arc, offset(t) =
+; round(24 * sin(pi*t/48)) - 24px peak at t=24, eased in/out (fast
+; launch and landing, brief hang near the peak) instead of the
+; earlier triangular (constant 1px/frame) ramp, per direct
+; instruction ("サインジャンプ"). JUMP_FRAMES above must match this
+; table's length.
 JUMP_OFFSET_TABLE:
-    DB 0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,23,22,21,20,19,18,17,16,15,14,13,12,11,10,9,8,7,6,5,4,3,2,1,0
+    DB 0,2,3,5,6,8,9,11,12,13,15,16,17,18,19,20,21,22,22,23,23,24,24,24,24,24,24,24,23,23,22,22,21,20,19,18,17,16,15,13,12,11,9,8,6,5,3,2,0
 
 ; ===== generated tables (terrain + tank) appended below by build_test.py =====
