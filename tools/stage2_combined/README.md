@@ -618,6 +618,41 @@ with no way to tell where.
   actual id against the code drawn there, every single BLANK-involving
   cell - steady runs and the climb/descend edges alike - stayed within
   the sand-dedicated groups, never a rock-colored code.
+- **That 2nd-round fix above over-scoped and broke Rock225 itself**
+  ("お前Rock225弄ったんか 勝手なことしてんじゃねえよ Rock225の背景色
+  がダークイエローだからチラついてる上に一部が欠けてるじゃねえかよ
+  誰がRock関係いじれつった じゃあRock225の背景色ライトイエローにし
+  ろ"): giving *every* BLANK-involving pair its own dedicated group
+  included the mixed climb/descend-edge pairs
+  `(BLANK,R225_UL)`/`(R225D_UR,BLANK)`, which aren't "steady Sand" at
+  all - they're Rock225's own diagonal marker mid-transition. Painting
+  those with Sand's dark-yellow fg on Sand's light-yellow bg made the
+  marker barely visible against its own background ("一部が欠けてる"),
+  and since Rock225's *steady* tiles were still in the old dark-yellow-
+  bg rock pool at the time, there was a visible bg seam right where a
+  light-yellow-bg mixed frame met a dark-yellow-bg steady tile
+  ("チラついてる"). Fix (in `terrain_gen.py`, see its own README for
+  the full writeup): rather than giving Rock225 a 3rd dedicated color
+  group, `ROCK_COLOR`'s own bg changed to light yellow too - "カラー
+  グループ節約するから Rockも背景色ライトイエローにしろ Rock225と
+  同じだ" - so Rock/R225/every mixed pair share one bg again, and only
+  the genuinely-steady `(BLANK,BLANK)` pair needs its own group
+  (`SAND_GROUPS` back down to 1 group). Here, that meant narrowing
+  `ROCK_COLOR_SWAPPED_PATCH`'s skip range back to just group2 (was
+  groups2-4) and updating its fill byte's bg nibble from dark yellow to
+  light yellow (`06Ah` -> `06Bh`, fg unchanged - the swap patch is a
+  flat fg-only substitution, so it has to track `ROCK_COLOR`'s own bg
+  whenever that changes). Rock225's own sprite art/bits were never
+  touched anywhere in this - only which color group its derived
+  pattern codes were assigned to. Verified: rebuilt the per-cell ground
+  truth directly from `TERRAIN_RENDER_ROW`'s own phase logic (not just
+  an id-adjacency guess) and cross-checked every column/row over 500
+  frames through the first climb - every code matches the Python
+  model's own prediction exactly, and group2 codes appear if and only
+  if the cell is genuinely showing pure BLANK content, never a Rock/
+  R225 id in either direction; re-ran the existing zero-input-score,
+  row18/19-integrity, and 6000-frame stress regressions with no change
+  in outcome.
 - **A diagonal (U) shot could fly straight into the HUD rows and
   permanently erase them** ("カラーバーAからF消えたぞ"): a U shot's
   row decrements every frame as it climbs, and had no lower bound

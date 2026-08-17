@@ -241,34 +241,36 @@ STEADY_CODE = [BLANK_CODE] + [STEADY_BASE + i for i in range(N_IDS - 1)]
 # ({phase}-1) formula CELL_LOOP always uses. Fine for pairs where
 # NEITHER side is BLANK (still all uniformly rock-colored, so which
 # exact code the phase offset lands on doesn't matter for color), but
-# any pair involving BLANK on either side needs its OWN dedicated
-# group now that Sand has its own distinct color - first found with
-# (BLANK,BLANK) alone fixed ("Sandがチラついてるし色変わってないぞ
-# ８キャラ分変更だぞ"), but the *mixed* pairs (BLANK transitioning
-# to/from an actual Rock/R225 id - the climb/descend moment right at
-# BLANK's own edge, not just steady BLANK runs) were still landing in
-# a rock-colored group same as before, one frame call away from
-# steady Sand's own color - "まだチラついてる Rockの前後だけおかしい".
-# So every pair with BLANK on either side (not just the same-id one)
-# gets its own dedicated, group-aligned 8-code block (7 blend frames +
-# 1 spare) right after BLANK_CODE's own group2, instead of only the
-# same-id pair. How many of these exist depends on the track (built
-# generically here, not hardcoded to today's count) - see the
-# color-table comment below for how they're colored. BLEND_BASE (the
-# start of the remaining, genuinely-rock-colored pairs) is computed
-# right after all of these sand-dedicated groups, once their count is
-# known.
-# (BLANK,BLANK) always fills out BLANK_CODE's own group2 (codes17-23,
-# right after the solo code at 16, so group2 is fully self-contained),
-# then every other BLANK-involving pair gets its own group-aligned
-# block after that, in sorted order.
+# a *steady*, non-transitioning run of BLANK cells needs its own
+# dedicated group - "Sandがチラついてるし色変わってないぞ ８キャラ分
+# 変更だぞ": a cell sitting still on Sand still cycles every frame
+# through the (BLANK,BLANK) same-id pair's 7 blend phases (PXCHAR
+# keeps advancing even for a same-id "transition"), so if that pair's
+# frames aren't sand-colored too, the one physical screen cell visibly
+# flickers between sand color and whatever the pair landed on, 7
+# frames out of 8.
+#
+# The genuinely *mixed* pairs (BLANK<->Rock/R225 - the actual climb/
+# descend edge at Sand's own border) do NOT need their own dedicated
+# group, and an earlier round giving them one anyway ("まだチラつい
+# てる Rockの前後だけおかしい") turned out to be the wrong fix and a
+# new bug in its own right - it painted the R225 diagonal marker with
+# Sand's own dark-yellow fg, which barely shows up against Sand's own
+# light-yellow bg ("Rock225の背景色がダークイエローだからチラついてる
+# 上に一部が欠けてる"). What actually needed to change was simpler:
+# once Rock's own bg became light yellow too, matching Rock225/Sand
+# ("カラーグループ節約するから Rockも背景色ライトイエローにしろ
+# Rock225と同じだ"), every mixed pair is free to stay in the ordinary
+# rock-colored pool - no bg seam against neighboring Sand cells either
+# way, and the diagonal edge keeps reading in Rock's own (higher-
+# contrast, red-on-light-yellow) fg instead of sand-on-sand. So only
+# the same-id (BLANK,BLANK) pair gets carved out; BLEND_BASE (the
+# start of the remaining, ordinary rock-colored pairs) starts right
+# after BLANK_CODE's own group2.
 _self_pair = (BLANK_ID, BLANK_ID)
-_other_blank_pairs = sorted(p for p in PAIRS if BLANK_ID in p and p != _self_pair)
 BLANK_PAIR_BASE = {_self_pair: BLANK_CODE + 1}
-for i, pair in enumerate(_other_blank_pairs):
-    BLANK_PAIR_BASE[pair] = BLANK_CODE + 8 * (1 + i)
-SAND_GROUPS = sorted({BLANK_CODE // 8} | {code // 8 for code in BLANK_PAIR_BASE.values()})
-BLEND_BASE = BLANK_CODE + 8 * (1 + len(_other_blank_pairs))  # right after every sand-dedicated group
+SAND_GROUPS = [BLANK_CODE // 8]
+BLEND_BASE = BLANK_CODE + 8  # right after BLANK_CODE's own group2
 
 PAIR_LIST = sorted(PAIRS - set(BLANK_PAIR_BASE))
 PAIR_INDEX = {p: i for i, p in enumerate(PAIR_LIST)}
@@ -307,20 +309,27 @@ for pair in PAIRS:
 # group0 (SKY_BLANK_CODE=0 only) = sky: light blue on light blue
 # (SKY_BLANK's pattern is all-0 so only bg would ever show, but set
 # both nibbles the same for a clean solid fill regardless).
-# every other group (codes 8+ - the scrolling map's rock/air/slope/
-# blend content) = fg unchanged from the source sprites (8 = medium
-# red), bg = dark yellow (per direct instruction: keep the current
-# reddish color, change the other one to light red or dark yellow -
-# dark yellow reads more like natural rock/dirt, easy to flip to light
-# red (9) if that reads better).
-# SAND_GROUPS (BLANK_CODE's own group2, plus one dedicated group per
-# BLANK-involving pair - see BLANK_PAIR_BASE above) get their own
-# fg/bg pair instead - "Sandは文字色ダークイエロー、背景色ライト
-# イエローだぞ いまは多分同じ色" (fg dark yellow, bg LIGHT yellow -
-# an earlier round used the same dark yellow for both, an actual
-# mistake, not a deliberate "blend into the ground" choice).
+# every other group (codes 8+ - the scrolling map's rock/R225/blend
+# content, including the mixed BLANK<->Rock/R225 transition pairs) =
+# fg unchanged from the source sprites (8 = medium red), bg = LIGHT
+# yellow (11). Originally dark yellow (10); changed to match Rock225
+# and Sand's own bg exactly - "Rock225の背景色がダークイエローだから
+# チラついてる...Rock225の背景色ライトイエローにしろ", then widened
+# to plain Rock too rather than giving Rock225 its own separate color
+# group - "カラーグループ節約するから Rockも背景色ライトイエローにし
+# ろ Rock225と同じだ". Since Rock/R225/the mixed transition pairs all
+# share one bg now, there's no seam anywhere except at the one
+# genuinely different fg (Sand's), which is exactly where a dedicated
+# group is actually needed - see SAND_GROUPS below.
+# SAND_GROUPS (just BLANK_CODE's own group2, holding BLANK's solo tile
+# and the (BLANK,BLANK) same-id blend pair - see BLANK_PAIR_BASE
+# above) get their own fg/bg pair instead - "Sandは文字色ダークイエ
+# ロー、背景色ライトイエローだぞ いまは多分同じ色" (fg dark yellow,
+# bg LIGHT yellow - an earlier round used the same dark yellow for
+# both, an actual mistake, not a deliberate "blend into the ground"
+# choice).
 SKY_COLOR = 0x55           # fg=5,bg=5 (light blue)
-ROCK_COLOR = 0x8A          # fg=8 (medium red, unchanged), bg=10 (dark yellow)
+ROCK_COLOR = 0x8B          # fg=8 (medium red, unchanged), bg=11 (light yellow)
 SAND_COLOR = 0xAB          # fg=10 (dark yellow), bg=11 (light yellow)
 N_COLOR_GROUPS = 32
 COLORDATA = [SKY_COLOR] + [ROCK_COLOR] * (N_COLOR_GROUPS - 1)

@@ -438,15 +438,15 @@ INIT:
     ; tests) - same "patch over the shared module's defaults" approach
     ; already used for the bullet colors below. Groups1-31 all used to
     ; start out ROCK_COLOR-uniform, so one blind overwrite of the whole
-    ; range was harmless; groups2-4 (terrain_gen.py's own SAND_GROUPS -
-    ; Sand's dedicated solo/blend codes, see that file's own comment on
-    ; BLANK_PAIR_BASE) are explicitly skipped here, since group1/5-31
-    ; are the only groups still genuinely rock-colored (11-30 -
-    ; bullets/digits/swatch - get their own, unrelated colors patched
-    ; in further down anyway, so touching them here or not makes no
-    ; difference).
+    ; range was harmless; group2 (terrain_gen.py's own SAND_GROUPS -
+    ; just BLANK_CODE's dedicated solo/self-blend group now, see that
+    ; file's own comment on BLANK_PAIR_BASE) is explicitly skipped
+    ; here, since group1/3-31 are the only groups still genuinely
+    ; rock-colored (11-30 - bullets/digits/swatch - get their own,
+    ; unrelated colors patched in further down anyway, so touching
+    ; them here or not makes no difference).
     LD HL,ROCK_COLOR_SWAPPED_PATCH : LD DE,2001h : LD BC,1 : CALL LDIRVM
-    LD HL,ROCK_COLOR_SWAPPED_PATCH : LD DE,2005h : LD BC,27 : CALL LDIRVM
+    LD HL,ROCK_COLOR_SWAPPED_PATCH : LD DE,2003h : LD BC,29 : CALL LDIRVM
 
     ; checkpoint 2: terrain patterns + color table loaded
     LD B,2 : LD C,7 : CALL WRTVDP
@@ -2266,10 +2266,11 @@ HEXLABEL_CODES:
 HUD_ZERO8:
     DS 8,0
 
-; fg6 (dark red, was the tank's) / bg10 (dark yellow, unchanged) x31 -
-; see the color-swap patch in INIT above.
+; fg6 (dark red, was the tank's) / bg11 (light yellow - "カラーグルー
+; プ節約するから Rockも背景色ライトイエローにしろ Rock225と同じだ")
+; x31 - see the color-swap patch in INIT above.
 ROCK_COLOR_SWAPPED_PATCH:
-    DS 31,06Ah
+    DS 31,06Bh
 
 ; explosion sprite (16x16), byte-for-byte from src/CYBER SHMUP.asm's
 ; own EXPLOSION_PATTERN (its pod-destroy-burst spark shape) - "弾が
