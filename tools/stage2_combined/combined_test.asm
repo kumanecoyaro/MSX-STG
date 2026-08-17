@@ -43,11 +43,22 @@ TANK_COLOR_BL EQU 1        ; black
 TANK_COLOR_BR EQU 1        ; black
 TANK_X_INIT   EQU 40
 TANK_Y_BASE   EQU 156      ; row23 top (23*8=184) - tank height(32) + landing offset(3+1)
-TANK_SPEED    EQU 1        ; px/frame, left/right - was 2, slowed per direct instruction ("自機移動速度が速い気がするんで速度落として")
+; px/frame, left/right - was 2, slowed to 1 per direct instruction
+; ("自機移動速度が速い気がするんで速度落として"), then asked for 1.5
+; ("速度1.5に出来ないか") - alternates 1,2,1,2,... (gated by TICK
+; bit0, same trick as the vertical climb easing) since there's no
+; fractional pixel; averages to 1.5px/frame over any 2-frame window.
+TANK_SPEED_LO EQU 1
 TANK_CLIMB_SPEED EQU 1     ; px/step, gated to every OTHER frame (see UPDATE_TERRAIN_COLLISION) -
                            ; 0.5px/frame effective, matching the terrain's own ~16-frame climb pace
 TANK_CLIMB_CATCHUP_SPEED EQU 8  ; px/frame (no gate) once TANK_CLIMB_CATCHUP_THRESHOLD behind - see UPDATE_TERRAIN_COLLISION
-TANK_CLIMB_CATCHUP_THRESHOLD EQU 5  ; px - lowered from 9 (still slightly sinking in - "まだ少しだがめり込んでる")
+; a normal single-tier transition always starts at diff=8 (the full
+; TANK_TIER_Y_TABLE step) - a threshold of 5 (briefly tried) meant
+; EVERY tier change immediately qualified for the fast catch-up path,
+; turning every climb back into an instant 8px snap ("また8px上り
+; 下りに戻ってるな") instead of only genuine multi-tier backlogs.
+; Threshold must stay > 8 for the smooth slow pace to ever run at all.
+TANK_CLIMB_CATCHUP_THRESHOLD EQU 9  ; px
 JUMP_PEAK     EQU 24       ; px
 JUMP_FRAMES   EQU 49       ; JUMP_OFFSET_TABLE length (0-24 rise, 23-0 fall)
 SPRITE_ATTRS  EQU 0F200h   ; 16 bytes
@@ -436,13 +447,21 @@ UTX_DO_RIGHT:
     LD A,(TANK_X)
     CP 224
     RET NC
-    ADD A,TANK_SPEED : LD (TANK_X),A
+    LD A,(TICK) : AND 1 : LD B,A
+    LD A,TANK_SPEED_LO : ADD A,B   ; step = 1 or 2, alternating
+    LD C,A
+    LD A,(TANK_X) : ADD A,C
+    LD (TANK_X),A
     RET
 UTX_DO_LEFT:
+    LD A,(TICK) : AND 1 : LD B,A
+    LD A,TANK_SPEED_LO : ADD A,B   ; step = 1 or 2, alternating
+    LD C,A
     LD A,(TANK_X)
-    CP TANK_SPEED
-    RET C
-    SUB TANK_SPEED : LD (TANK_X),A
+    CP C
+    RET C                          ; X < step - don't move (avoid underflow)
+    SUB C
+    LD (TANK_X),A
     RET
 
 ; ---------- terrain collision: ground-height following + slope check ----------

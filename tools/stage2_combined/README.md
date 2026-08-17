@@ -11,9 +11,14 @@ with no way to tell where.
 - Terrain engine (own INIT priming + MAINLOOP scroll update) and tank
   sprite (4x 16x16 hardware sprites) both set up in one INIT, both
   driven from the same MAINLOOP/TICK.
-- **Movement**: port1 stick, left/right only (`TANK_SPEED=1` px/frame -
-  was 2, slowed per direct instruction "自機移動速度が速い気がするん
-  で速度落として"; clamped to the screen). Up alone or combined with left/right sets
+- **Movement**: port1 stick, left/right only, clamped to the screen.
+  Speed went 2 -> 1 -> 1.5px/frame ("自機移動速度が速い気がするんで
+  速度落として", then "速度1.5に出来ないか") - since there's no
+  fractional pixel, `TANK_SPEED_LO`(1) alternates with a +1 bump
+  gated by `TICK` bit0 (same trick as the vertical climb easing below)
+  so the step size alternates 1,2,1,2,..., averaging exactly
+  1.5px/frame over any 2-frame window (verified: 30px moved over 20
+  frames while holding the stick). Up alone or combined with left/right sets
   the "aim up" flag (`TANK_AIMUP`) without moving the tank vertically -
   it only switches the sprite pose (see below), matching "no up/down
   movement, left/right only" from the spec.
@@ -72,17 +77,16 @@ with no way to tell where.
     fell more than a tier behind and the tank visibly sank into the
     rock for a stretch - "左右移動が加わるとGapに突っ込んでる...登っ
     てはいるが地形にめり込んでる". Fixed by switching to
-    `TANK_CLIMB_CATCHUP_SPEED` whenever more than
-    `TANK_CLIMB_CATCHUP_THRESHOLD` behind, reverting to the smooth slow
-    pace once back under the threshold for the final approach. Still
-    sinking in slightly at the original threshold(9)/speed(4) -
-    "まだ少しだがめり込んでる" - so both were retuned tighter/faster
-    (threshold 5, speed 8, enough to close any realistic single-frame
-    gap in one step) alongside slowing `TANK_SPEED` itself (see above).
-    Verified with an emulator sweep holding the stick right through the
-    whole track, and again starting exactly at the rapid-chain section:
-    the gap between `TANK_GROUND_Y` and its target never exceeds 0 in
-    either case now (was up to 9px before this round).
+    `TANK_CLIMB_CATCHUP_SPEED`(8, no gate) whenever more than
+    `TANK_CLIMB_CATCHUP_THRESHOLD`(9px - must stay above 8, a normal
+    single-tier transition always *starts* at diff=8, so anything <=8
+    has to stay on the smooth slow path or every climb becomes an
+    instant snap again - see the bug entry below) behind, reverting to
+    the smooth slow pace once back under the threshold for the final
+    approach. Verified with an emulator sweep holding the stick right
+    (now at the 1.5px/frame pace above) through the whole track, and
+    again starting exactly at the rapid-chain section: `TANK_GROUND_Y`
+    never falls more than 1 tier behind its target in either case.
   - **Slope check** ("Gapを調べる", sets `TANK_ON_SLOPE`) went through
     2 rounds: a separate probe 1 column *behind* `TANK_COL_R` always
     lagged the Y-tier-snap by exactly 1 column's scroll time (it was
@@ -206,6 +210,23 @@ with no way to tell where.
 
 ## Bugs found and fixed while building this
 
+- **Climb easing regressed back to an instant 8px snap** (reported as
+  "また8px上り下りに戻ってるな" right after `TANK_SPEED` changed to
+  1px/frame): the *previous* round had tightened
+  `TANK_CLIMB_CATCHUP_THRESHOLD` from 9 to 5 to squeeze out a residual
+  1px of sink-in. But a normal single-tier transition always *starts*
+  at `diff=8` (the full step in `TANK_TIER_Y_TABLE`) the instant
+  `TANK_TIER` changes - with the threshold at 5, `8 >= 5` was true on
+  literally every tier change, so the fast, ungated
+  `TANK_CLIMB_CATCHUP_SPEED` path fired immediately every time instead
+  of only for genuine multi-tier backlogs, turning every climb back
+  into a 1-frame snap and defeating the smooth easing entirely (it
+  happened to also look like it fixed the sink-in complaint, since an
+  instant snap can't lag - but for the wrong reason). Fixed by moving
+  the threshold back above 8 (9, matching its original value) so only
+  a real backlog (more than 1 full tier) ever engages the fast path;
+  verified a stationary single climb again eases in visible 2px/8-
+  frame steps instead of jumping straight to the target.
 - **Tank looked like it was floating above the slope while showing the
   Gap pose** (reported from a screenshot after the first terrain-
   collision pass shipped): `TANK_FOOT_DX` (the probe columns' offset
