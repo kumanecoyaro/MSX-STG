@@ -593,6 +593,23 @@ with no way to tell where.
 
 ## Bugs found and fixed while building this
 
+- **Sand flickered between its own new color and Rock's**
+  ("Sandがチラついてるし色変わってないぞ ８キャラ分変更だぞ" -
+  immediately after giving Sand its own dedicated color group): giving
+  Sand's *steady* code its own group2 wasn't the whole story - a
+  "steady" (non-transitioning) Sand cell still cycles through 8 codes
+  per scroll cycle (1 solo + 7 blend-phase frames from the
+  `(BLANK,BLANK)` same-id pair, which goes through the same generic
+  PAIRBASE/phase-blend machinery every real transition pair does), and
+  only the solo one (1 code, 1/8 of frames) had been moved into
+  group2 - the other 7 were still landing wherever the shared per-pair
+  numbering happened to put them, in a rock-colored group. See
+  `terrain_gen.py`'s own README for the actual fix (reserving
+  `(BLANK,BLANK)`'s whole 7-frame block right after `BLANK_CODE`,
+  filling out group2's remaining codes) - nothing in this file needed
+  to change, the group2 color patch already covers whichever codes
+  live there. Verified: every code drawn on a steady-Sand row across
+  an 80-frame sample (several full scroll cycles) stayed within 16-23.
 - **A diagonal (U) shot could fly straight into the HUD rows and
   permanently erase them** ("カラーバーAからF消えたぞ"): a U shot's
   row decrements every frame as it climbs, and had no lower bound

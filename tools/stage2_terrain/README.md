@@ -40,12 +40,27 @@ actual emulated VRAM output before it's integrated.
   の文字色をダークイエローに" (dark yellow) needed a color independent
   of Rock's own fg, which SCREEN1 can't give 2 tiles sharing one
   8-code group. Lands in what used to be dead code space between the
-  steady ids and `BLEND_BASE`, so `MAX_CODE`/everything downstream
-  that assumes terrain tops out at 86 is unaffected. The numeric id
-  (0) is unchanged either way, so `combined_test.asm`'s own terrain-
-  collision code (which scans for "the first non-BLANK id" using that
-  exact value as its sentinel) is entirely unaffected - only the
-  rendered art/color changed, not the id semantics.
+  steady ids and `BLEND_BASE`. The numeric id (0) is unchanged either
+  way, so `combined_test.asm`'s own terrain-collision code (which
+  scans for "the first non-BLANK id" using that exact value as its
+  sentinel) is entirely unaffected - only the rendered art/color
+  changed, not the id semantics.
+  - The `(BLANK,BLANK)` same-id pair still goes through the general
+    PAIRBASE/phase-blend machinery like every real transition pair
+    does (7 more codes, pattern-identical to the solo tile since
+    blending a tile with itself is a no-op) - left in the *generic*
+    per-pair numbering (which lands wherever among the still-uniformly
+    rock-colored blend codes) that block would sit in a rock-colored
+    group 7 out of every 8 scroll-phase frames, flickering a "steady"
+    Sand cell between Sand's own color and Rock's - "Sandがチラつい
+    てるし色変わってないぞ ８キャラ分変更だぞ". Fixed by special-
+    casing `(BLANK,BLANK)`'s own 7-frame block to land right after
+    `BLANK_CODE` (17-23), completing group2's own 8 codes instead of
+    borrowing space from the shared pool - `MAX_CODE` dropped from 86
+    to 79 as a result (one whole pair's worth of blend codes no longer
+    needed from the shared range). Verified: every code drawn on a
+    steady-Sand row across 80 frames (a full scroll cycle several times
+    over) stayed within 16-23.
 - The 4 rows (screen rows 20-23, i.e. `GROUND_ROW0`..+3, matching the
   4-row band Stage 1 already treats as "the ground scroller") share
   **one** PXCHAR/phase clock, gated every 8 ticks - unlike Stage 1's

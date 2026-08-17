@@ -244,16 +244,29 @@ STEADY_CODE = [BLANK_CODE] + [STEADY_BASE + i for i in range(N_IDS - 1)]
 
 # Every pair, including same-id ones (only (BLANK,BLANK) occurs), gets
 # a normal 7-frame block via the same PAIRBASE+({phase}-1) formula
-# CELL_LOOP always uses - safe now that every code involved (steady
-# and blended alike) lives in a uniformly rock-colored group, so which
-# exact code the phase offset lands on no longer matters for color.
-# blend(BLANK,BLANK,phase) is correctly all-zero for every phase
-# anyway (shifting an all-zero tile is still all-zero).
-PAIR_LIST = sorted(PAIRS)
+# CELL_LOOP always uses. That's fine for every OTHER pair (still all
+# uniformly rock-colored, so which exact code the phase offset lands
+# on doesn't matter for color) but not for (BLANK,BLANK): left in the
+# generic BLEND_BASE-numbered pool, its 7 phase-frames (pattern-
+# identical to BLANK's own solo tile - blend(BLANK,BLANK,phase) is
+# just BLANK's own bits for any phase, shifting an all-same tile stays
+# that tile - but still 7 SEPARATE code numbers) landed in whichever
+# rock-colored group the generic pair numbering happened to give them,
+# not Sand's own group2. A "steady" (non-transitioning) Sand cell
+# therefore flickered between Sand's color (phase0, BLANK_CODE via
+# SOLOTAB) and Rock's color (phases1-7) every single scroll cycle -
+# "Sandがチラついてるし色変わってないぞ ８キャラ分変更だぞ". Fixed by
+# reserving (BLANK,BLANK)'s entire 7-frame block right after
+# BLANK_CODE itself (17-23), completing group2's own 8 codes, instead
+# of letting it fall into the shared per-pair numbering.
+BLANK_BLANK_PAIR = (BLANK_ID, BLANK_ID)
+PAIR_LIST = sorted(PAIRS - {BLANK_BLANK_PAIR})
 PAIR_INDEX = {p: i for i, p in enumerate(PAIR_LIST)}
 
 
 def pair_block_code(pair):
+    if pair == BLANK_BLANK_PAIR:
+        return BLANK_CODE + 1
     return BLEND_BASE + PAIR_INDEX[pair] * 7
 
 
@@ -262,7 +275,7 @@ def build_pattern_table():
     patterns = {SKY_BLANK_CODE: to_bytes(BLANK)}
     for idx, tile in enumerate(ID_TILES):
         patterns[STEADY_CODE[idx]] = to_bytes(tile)
-    for pair in PAIR_LIST:
+    for pair in sorted(PAIRS):
         curr, nxt = pair
         base = pair_block_code(pair)
         for phase in range(1, 8):
