@@ -103,32 +103,12 @@ actual emulated VRAM output before it's integrated.
     only if the cell is genuinely showing pure BLANK content (solo, or
     the `(BLANK,BLANK)` blend pair) - never for a Rock/R225 id, steady
     or mid-transition, in either direction.
-  - **Round 3 - stray red flecks in the sand right at the climb/
-    descend edge** ("Rock225の前後にゴミ出てんだよ チラついてるしよ
-    Rock225のいくつかのパターンを書き換えただろ 何してんだよ"):
-    Rock225's own pattern bytes were never touched (still byte-for-
-    byte from `Rock225.json`, unchanged since the very first version)
-    - what changed was that the mixed-pair blend frames, now uniformly
-    `ROCK_COLOR`, were still being synthesized from the REAL, textured
-    `BLANK` (Sand) tile. `blend()` genuinely mixes both tiles' bits, so
-    Sand's own speckle "1" bits leaking into an early-phase (still
-    mostly-Sand) mixed frame got painted in Rock's red fg instead of
-    Sand's - isolated red dots scattered across otherwise-plain sand,
-    right where the climb/descend transition happens. Before Sand had
-    real texture (all-zero bits), this never happened, since a flat
-    tile contributes no stray "1" bits to mis-color regardless of
-    which single color the block gets. Fix: `_blend_tile()` substitutes
-    an all-zero `BLANK_FLAT` placeholder for BLANK's side specifically
-    when synthesizing a *mixed* pair's blend frames (`BLANK_ID in pair
-    and pair != (BLANK_ID,BLANK_ID)`) - steady Sand (the solo tile and
-    the same-id self-blend pair) is completely untouched and keeps its
-    real texture; only the brief transition edge reverts to a clean
-    flat-to-Rock scroll, same shape it had before Sand got art.
-    Verified by inspecting the actual synthesized pattern bytes for
-    both mixed pairs (`(BLANK,R225_UL)` and `(R225D_UR,BLANK)`) across
-    all 7 phases: each now grows as a single clean, coherent diagonal
-    marker with zero stray bits outside it, instead of scattered noise
-    unrelated to the marker's own shape.
+  - **Round 3** ("Rock225の前後にゴミ出てんだよ"): mixed-pair blend
+    frames still used the real textured Sand tile, so its speckle bits
+    leaked into the rock-colored frame as red flecks. `_blend_tile()`
+    swaps in a flat placeholder for BLANK's side in mixed pairs only;
+    steady Sand is untouched. Rock225's own pattern bytes never
+    changed.
 - The 4 rows (screen rows 20-23, i.e. `GROUND_ROW0`..+3, matching the
   4-row band Stage 1 already treats as "the ground scroller") share
   **one** PXCHAR/phase clock, gated every 8 ticks - unlike Stage 1's

@@ -653,27 +653,10 @@ with no way to tell where.
   R225 id in either direction; re-ran the existing zero-input-score,
   row18/19-integrity, and 6000-frame stress regressions with no change
   in outcome.
-- **Round 3 of the same saga - stray red flecks in the sand right at
-  the climb/descend edge** ("Rock225の前後にゴミ出てんだよ チラつい
-  てるしよ Rock225のいくつかのパターンを書き換えただろ 何してんだ
-  よ"): Rock225's own pattern bytes were never rewritten - what
-  actually changed 2 rounds ago was that mixed-pair blend frames
-  became uniformly `ROCK_COLOR`. Since `blend()` genuinely mixes both
-  tiles' bits (a real per-pixel horizontal scroll, not a full-tile
-  swap), Sand's own speckle "1" bits leaking into an early-phase
-  (still mostly-Sand) mixed frame got painted in Rock's red fg -
-  scattered red dots on otherwise-plain sand, right at the transition.
-  Before Sand had real texture this never happened, since a flat tile
-  has no stray bits to mis-color. Fix (in `terrain_gen.py`, full
-  writeup in its own README): a mixed pair's blend frames now
-  synthesize from an all-zero `BLANK_FLAT` stand-in for BLANK's own
-  side, instead of the real textured tile - steady Sand (solo + same-
-  id self-blend) is untouched, only the transition edge reverts to a
-  clean flat-to-Rock scroll. Verified by inspecting the actual
-  synthesized bytes for both mixed pairs across all 7 phases: each now
-  grows as one clean, coherent diagonal marker with no stray bits
-  outside its own shape; re-ran the zero-input-score, row18/19-
-  integrity, and 6000-frame stress regressions with no change.
+- **Round 3** ("Rock225の前後にゴミ出てんだよ"): mixed-pair blend
+  frames still used the real textured Sand tile, leaking speckle bits
+  into the rock-colored frame as red flecks. Fixed in `terrain_gen.py`
+  (see its own README) - Rock225's own pattern bytes never changed.
 - **A diagonal (U) shot could fly straight into the HUD rows and
   permanently erase them** ("カラーバーAからF消えたぞ"): a U shot's
   row decrements every frame as it climbs, and had no lower bound
