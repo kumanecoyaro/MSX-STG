@@ -30,35 +30,51 @@ with no way to tell where.
   rests on whichever terrain tier is under it ("常にRockに設置") and
   switches to the Gap pose while straddling a climb/descend transition
   ("Rock225に接触したらGapスプライトに切り替えて登るように...Rock
-  戻ったらノーマルに戻す"). 2 probe name-table columns near the tank's
-  right/front edge: `TANK_COL_R` (`(TANK_X+TANK_FOOT_DX)>>3`, directly
-  under - "自機の右下") scans `IDCACHE_T0`-`IDCACHE_T3` top-to-bottom for the
+  戻ったらノーマルに戻す"). One probe name-table column near the
+  tank's right/front edge, `TANK_COL_R` (`(TANK_X+TANK_FOOT_DX)>>3` -
+  "自機の右下"), scans `IDCACHE_T0`-`IDCACHE_T3` top-to-bottom for the
   first non-BLANK id at that column to find the surface tier - "下は
   Rock設置を調べ" - any non-BLANK id (steady rock or a slope-transition
-  cell) counts as solid ground. `TANK_COL_L` (`TANK_COL_R-1`, one
-  column to its left - "その横") then checks that *same* row for a
-  Rock225/Rock225D id ("Gapを調べる") to set `TANK_ON_SLOPE`. No
-  descend art exists yet, so both the climb (`R225_UL`/`R225_UR`) and
-  descend (`R225D_UL`/`R225D_UR`) ids trigger the same Gap pose -
-  "まだ下りの絵を用意してないのでGapスプライト流用". `TANK_TIER_Y_TABLE`
-  converts the found row-index straight to a Y (`TANK_TIER=3`, the
-  track's starting/lowest tier, reproduces the original fixed
-  `TANK_Y_BASE`(156) exactly; each row-index down is 8px higher) - note
-  this numbering runs opposite to `terrain_gen.py`'s own generator
-  "tier" (which counts up while climbing), since row-index0 is the
-  *highest* screen row.
-  - `TANK_ON_SLOPE` has a 2-frame hold (`TANK_SLOPE_HOLD`) after the
-    last "yes" reading before it actually drops to 0, instead of
-    following the raw per-frame probe directly - the rapid-climb
+  cell) counts as solid ground. `TANK_TIER_Y_TABLE` converts the found
+  row-index straight to a Y (`TANK_TIER=3`, the track's starting/
+  lowest tier, reproduces the original fixed `TANK_Y_BASE`(156)
+  exactly; each row-index down is 8px higher) - note this numbering
+  runs opposite to `terrain_gen.py`'s own generator "tier" (which
+  counts up while climbing), since row-index0 is the *highest* screen
+  row. No descend art exists yet, so both the climb (`R225_UL`/
+  `R225_UR`) and descend (`R225D_UL`/`R225D_UR`) ids trigger the same
+  Gap pose - "まだ下りの絵を用意してないのでGapスプライト流用".
+  - **Slope check** ("Gapを調べる", sets `TANK_ON_SLOPE`) went through
+    2 rounds: a separate probe 1 column *behind* `TANK_COL_R` always
+    lagged the Y-tier-snap by exactly 1 column's scroll time (it was
+    reading what `TANK_COL_R` had already scrolled past), which showed
+    up as the tank floating above the slope for a stretch after each Y
+    jump, since the Gap pose hadn't caught up yet - "判定位置の問題
+    ...登ってからでは遅い". `TANK_FOOT_DX` was also pulled back twice
+    (24->16->12, delaying the Y-snap itself further from the tank's
+    front edge) and a rendering-only `+4px` Gap offset was tried and
+    dropped (it caused a visible dip right when the pose switched,
+    once it was finally lagging even further behind the Y-snap).
+    Reworked to check relative to `TANK_COL_R` itself instead of a
+    lagging probe: (a) is `TANK_COL_R`'s own cell, at the tier just
+    found, itself a Rock225/Rock225D id (3-6, vs. plain `ROCK_L`/
+    `ROCK_R`'s 1-2) - currently straddling it - or (b) is the cell
+    diagonally up-right from it (1 row up - the tier *above* the one
+    just found, where a climb marker actually lives, since R225 sits
+    in the row "newly becoming rock" - 1 column ahead of `TANK_COL_R`)
+    a marker - about to reach it - per direct instruction ("今の前の
+    判定の斜め右上と同一のGapセルならGapスプライト維持で"). Either
+    condition holds Gap; (b) lets the pose switch slightly *before*
+    the Y-snap instead of after, so by the time Y jumps the sprite is
+    already showing Gap.
+  - `TANK_ON_SLOPE` also has a 2-frame hold (`TANK_SLOPE_HOLD`) after
+    the last raw "yes" reading before it actually drops to 0, instead
+    of following the raw per-frame probe directly - the rapid-climb
     section chains transitions with no flat run between them, and a
     single-frame gap of plain rock between 2 chained Rock225 markers
     would otherwise flicker the pose back to Normal for 1 frame, per
     direct instruction ("Gap判定が2連続なら(登ってもGap)またRockで
     ないならノーマルに切り替えずGapスプライトのままに").
-  - `UPDATE_TANK_SPRITES` draws the Gap pose 4px lower than its
-    logical `TANK_Y_CUR`/`TANK_GROUND_Y` ("スプライトをGapにしたら
-    Y+4px") - purely a rendering offset (`TANK_DRAW_Y`), collision and
-    jump math are untouched.
 - **Pose selection** (`UPDATE_POSE`): TankF (grounded, neutral),
   TankUp (grounded, aiming up), TankFGap (airborne OR on a slope,
   neutral), TankUGap (airborne OR on a slope, aiming up) - jump takes

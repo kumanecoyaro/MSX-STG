@@ -135,23 +135,19 @@ BULLET_TEMP_BYTE EQU 0F23Fh
 ; ---------- terrain collision: ground-height following + slope       ----------
 ; ---------- (Rock225) detection - see UPDATE_TERRAIN_COLLISION below. ----------
 ; probe column offset from TANK_X - was 24 (near the tank's very front
-; edge), but that made the tank snap up to a new tier as soon as its
-; front touched a Rock225 marker, well before the marker had scrolled
-; under the sprite's own visual body - reported as the tank floating
-; above the slope while showing the Gap pose. Pulling the probe back 1
-; cell (8px, per direct instruction "1セル8px遅らせればいい感じ") to
-; the tank's own middle delays both the Y-snap and the Gap pose switch
-; until the transition has actually scrolled under the tank.
-TANK_FOOT_DX  EQU 16
+; edge, made the tank snap to a new tier before the marker had
+; scrolled under its own visual body - reported as floating), then 16
+; (1 cell back). Still switching too early, so pulled back another 4px
+; per direct instruction ("もっとGapスプライト切り替えを遅らせるべき
+; あと4Px遅れるようにしてくれ").
+TANK_FOOT_DX  EQU 12
 TANK_GROUND_Y EQU 0F240h    ; current ground-follow baseline Y (tier-dependent) - UPDATE_JUMP
                             ; subtracts JUMP_Y_OFFSET from this instead of the fixed TANK_Y_BASE
 TANK_ON_SLOPE EQU 0F241h    ; 1 while straddling a Rock225/Rock225D marker -> Gap pose
 TANK_TIER     EQU 0F242h    ; 0-3, current ground tier (screen row 23-TANK_TIER) under the tank
 TANK_ROWPTR   EQU 0F243h    ; word: IDCACHE_Tn base address for the surface tier's row
-TANK_COL_R    EQU 0F245h    ; probe columns (name-table column, 0-31)
-TANK_COL_L    EQU 0F246h    ; = TANK_COL_R - 1
+TANK_COL_R    EQU 0F245h    ; probe column (name-table column, 0-31)
 TANK_SLOPE_HOLD EQU 0F247h  ; frames left before TANK_ON_SLOPE actually drops to 0 - see UPDATE_TERRAIN_COLLISION
-TANK_DRAW_Y   EQU 0F248h    ; TANK_Y_CUR, +4 while the Gap pose is showing - see UPDATE_TANK_SPRITES
 
 STACKTOP      EQU 0F380h
 
@@ -451,13 +447,27 @@ UTX_DO_LEFT:
 ; IDCACHE_T0-T3 top-to-bottom for the first non-BLANK id at that
 ; column - "常にRockに設置" (always rest on whichever tier has
 ; content, be it plain rock or a slope-transition cell - both are
-; solid ground). TANK_COL_L = TANK_COL_R-1 ("その横", beside it)
-; then checks that SAME row for a Rock225/Rock225D id (3-6, vs. plain
-; ROCK_L/ROCK_R's 1-2) to flag TANK_ON_SLOPE, consumed by UPDATE_POSE.
-; TANK_ON_SLOPE has 2 frames of hold after the last raw "yes" reading
-; (TANK_SLOPE_HOLD) before it actually drops to 0 - the rapid-climb
-; section chains transitions with no flat run between them, and a
-; single-frame gap of plain rock between 2 chained Rock225 markers
+; solid ground).
+;
+; Slope check ("Gapを調べる", to flag TANK_ON_SLOPE): checking a probe
+; 1 column BEHIND TANK_COL_R (as an earlier version of this did) meant
+; the Gap-pose signal always lagged the Y-tier-snap signal by exactly
+; 1 column's scroll time, since it was reading what TANK_COL_R itself
+; had already scrolled past - "判定位置の問題...登ってからでは遅い".
+; Reworked to check relative to TANK_COL_R itself instead: (a) is
+; TANK_COL_R's OWN cell (at the tier just found) a Rock225/Rock225D id
+; (3-6, vs. plain ROCK_L/ROCK_R's 1-2) - i.e. is the front foot
+; currently straddling the marker - or (b) is the cell diagonally
+; up-right from it (1 row up - the tier ABOVE the one just found,
+; where a climb marker actually lives, since R225 sits in the row
+; "newly becoming rock" - and 1 column ahead of TANK_COL_R) a marker -
+; i.e. is one about to be reached - "今の前の判定の斜め右上と同一の
+; Gapセルなら". Either one holds Gap.
+;
+; TANK_ON_SLOPE also has 2 frames of hold after the last raw "yes"
+; reading (TANK_SLOPE_HOLD) before it actually drops to 0 - the rapid-
+; climb section chains transitions with no flat run between them, and
+; a single-frame gap of plain rock between 2 chained Rock225 markers
 ; would otherwise flicker the pose back to Normal for 1 frame -
 ; "Gap判定が2連続なら(登ってもGap)またRockでないならノーマルに
 ; 切り替えずGapスプライトのままに".
@@ -467,8 +477,6 @@ UPDATE_TERRAIN_COLLISION:
     SRL A
     SRL A
     LD (TANK_COL_R),A
-    DEC A
-    LD (TANK_COL_L),A
 
     ; find the surface tier: first non-BLANK row, IDCACHE_T0 (highest)
     ; downward - row-index3 (screen row23) is guaranteed non-BLANK
@@ -508,12 +516,29 @@ UTC_TIER_DONE:
     LD HL,TANK_TIER_Y_TABLE : ADD HL,DE : LD A,(HL)
     LD (TANK_GROUND_Y),A
 
-    ; slope check: TANK_COL_L's id at the SAME row as the surface tier
-    LD A,(TANK_COL_L) : LD E,A : LD D,0
+    ; slope check (a): TANK_COL_R's own cell at the tier just found
+    LD A,(TANK_COL_R) : LD E,A : LD D,0
     LD HL,(TANK_ROWPTR) : ADD HL,DE
     LD A,(HL)
     CP 3
+    JR NC,UTC_SLOPE_RAW_YES
+
+    ; slope check (b): 1 row up from the tier just found (skip if
+    ; TANK_TIER is already 0 - the topmost row, nothing above it),
+    ; 1 column ahead of TANK_COL_R. IDCACHE_T0..T3 are evenly spaced
+    ; 48 bytes apart, so "1 row up" is simply TANK_ROWPTR-48.
+    LD A,(TANK_TIER)
+    OR A
+    JR Z,UTC_SLOPE_RAW_NO
+    LD HL,(TANK_ROWPTR)
+    LD DE,-48
+    ADD HL,DE
+    LD A,(TANK_COL_R) : INC A : LD E,A : LD D,0
+    ADD HL,DE
+    LD A,(HL)
+    CP 3
     JR C,UTC_SLOPE_RAW_NO
+UTC_SLOPE_RAW_YES:
     ; raw slope detected this frame - (re)arm the 2-frame hold
     LD A,2 : LD (TANK_SLOPE_HOLD),A
     LD A,1 : LD (TANK_ON_SLOPE),A
@@ -600,39 +625,23 @@ UP_SET:
 ; ---------- writes the 4 sprite attribute entries from TANK_X/ ----------
 ; TANK_Y_CUR/CUR_POSE_PAT. Called once from INIT, then every frame.
 UPDATE_TANK_SPRITES:
-    ; the Gap pose (climbing/descending, or airborne) draws 4px lower
-    ; than its logical Y - "スプライトをGapにしたらY+4px" - a purely
-    ; visual offset (TANK_Y_CUR/TANK_GROUND_Y, used by collision and
-    ; jump math, are untouched).
-    LD A,(CUR_POSE_PAT)
-    CP PAT_TANKFGAP
-    JR Z,UTS_GAP_OFFSET
-    CP PAT_TANKUGAP
-    JR Z,UTS_GAP_OFFSET
-    LD A,(TANK_Y_CUR)
-    JR UTS_DRAW_Y_SET
-UTS_GAP_OFFSET:
-    LD A,(TANK_Y_CUR) : ADD A,4
-UTS_DRAW_Y_SET:
-    LD (TANK_DRAW_Y),A
-
     LD IX,SPRITE_ATTRS
-    LD A,(TANK_DRAW_Y) : LD (IX+0),A
+    LD A,(TANK_Y_CUR) : LD (IX+0),A
     LD A,(TANK_X)     : LD (IX+1),A
     LD A,(CUR_POSE_PAT) : LD (IX+2),A
     LD A,TANK_COLOR_TL : LD (IX+3),A
 
-    LD A,(TANK_DRAW_Y) : LD (IX+4),A
+    LD A,(TANK_Y_CUR) : LD (IX+4),A
     LD A,(TANK_X) : ADD A,16 : LD (IX+5),A
     LD A,(CUR_POSE_PAT) : ADD A,4 : LD (IX+6),A
     LD A,TANK_COLOR_TR : LD (IX+7),A
 
-    LD A,(TANK_DRAW_Y) : ADD A,16 : LD (IX+8),A
+    LD A,(TANK_Y_CUR) : ADD A,16 : LD (IX+8),A
     LD A,(TANK_X)     : LD (IX+9),A
     LD A,(CUR_POSE_PAT) : ADD A,8 : LD (IX+10),A
     LD A,TANK_COLOR_BL : LD (IX+11),A
 
-    LD A,(TANK_DRAW_Y) : ADD A,16 : LD (IX+12),A
+    LD A,(TANK_Y_CUR) : ADD A,16 : LD (IX+12),A
     LD A,(TANK_X) : ADD A,16 : LD (IX+13),A
     LD A,(CUR_POSE_PAT) : ADD A,12 : LD (IX+14),A
     LD A,TANK_COLOR_BR : LD (IX+15),A
