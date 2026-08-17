@@ -108,13 +108,17 @@ CUR_POSE_PAT  EQU 0F22Ah
 ; ---------- below.                                                     ----------
 BULLET_ROCK_ROW_MIN EQU 18      ; first row needing an explicit (non-sky) erase restore (18-23)
 ; the bullet's own drawn color (sky-blue bg vs ground-yellow bg fill
-; for its sprite's own background pixels) switches later than the
-; erase boundary above - "Skysandとその下のSandは...背景色ブルーのまま
-; でいい...背景色イエローでやると明るい色なので余計に目立つ" (keep
-; blue over rows18-19 too; yellow there is too bright/stands out) - so
-; only the real scrolling terrain (rows20-23) gets the yellow variant.
-; Applies identically to F and U shots - "斜め打ちは同じってことだな".
-BULLET_ROCK_COLOR_ROW_MIN EQU 20
+; for its sprite's own background pixels) is per-shot-type, and only
+; the diagonal/U shot's own boundary moved - "斜めだけって言っただろ
+; うが なんで水平ショットも変えた 水平は前に戻せ" (only U was meant;
+; straight/F shots go back to their original boundary, 19 - they never
+; actually reach rows18-19 in normal flight anyway, but a jump-time F
+; shot could, so the 2 thresholds must stay genuinely separate, not
+; just share one constant). U keeps blue over rows18-19 too - "Skysand
+; とその下のSandは...背景色ブルーのままでいい...背景色イエローでやる
+; と明るい色なので余計に目立つ".
+BULLET_ROCK_COLOR_ROW_MIN_F EQU 19
+BULLET_ROCK_COLOR_ROW_MIN_U EQU 20
 ; a diagonal/U shot decrements ROW every frame as it climbs; with no
 ; lower bound it could fly into rows0-1 (the HUD) and erase a glyph
 ; permanently instead of restoring it - "カラーバーAからF消えたぞ".
@@ -1399,6 +1403,39 @@ UOB_ADV_DONE:
     LD HL,BULLET_ROWADDR_LO : ADD HL,DE : LD A,(HL) : LD (IX+4),A
     LD HL,BULLET_ROWADDR_HI : ADD HL,DE : LD A,(HL) : LD (IX+5),A
 
+    ; "ショットは地形貫通しない 今はRock225だけなんで当たったら弾は
+    ; 消す" - only the scrolling terrain band (rows20-23) can hold
+    ; Rock225 content; same id>=3 test as UPDATE_TERRAIN_COLLISION's
+    ; own slope check (ids3-6 = R225/R225D, vs plain ROCK/BLANK's 0-2).
+    ; IDCACHE_T0..T3 are indexed by screen column directly and spaced
+    ; 48 bytes apart (see UPDATE_TERRAIN_COLLISION's own comment).
+    LD A,(IX+3)
+    CP 20
+    JR C,UOB_DRAW
+    SUB 20
+    LD B,A
+    LD A,(IX+2) : LD E,A : LD D,0
+    LD A,B
+    OR A
+    JR NZ,UOB_TC1
+    LD HL,IDCACHE_T0 : JR UOB_TC_ADD
+UOB_TC1:
+    CP 1
+    JR NZ,UOB_TC2
+    LD HL,IDCACHE_T1 : JR UOB_TC_ADD
+UOB_TC2:
+    CP 2
+    JR NZ,UOB_TC3
+    LD HL,IDCACHE_T2 : JR UOB_TC_ADD
+UOB_TC3:
+    LD HL,IDCACHE_T3
+UOB_TC_ADD:
+    ADD HL,DE
+    LD A,(HL)
+    CP 3
+    JR NC,UOB_DEACTIVATE
+
+UOB_DRAW:
     CALL DRAW_BULLET_CELL
     RET
 UOB_DEACTIVATE:
@@ -1437,10 +1474,19 @@ EBC_SKIP:
     RET
 
 ; IX = slot base. Picks the pattern code for (TYPE x background-under-
-; current-row x FACING) and writes it at ADDR+COL.
+; current-row x FACING) and writes it at ADDR+COL. TYPE(IX+1) also
+; picks which row threshold applies before the actual color branch -
+; F and U no longer share one boundary, see BULLET_ROCK_COLOR_ROW_MIN_F/_U above.
 DRAW_BULLET_CELL:
+    LD A,(IX+1)
+    OR A
+    LD A,BULLET_ROCK_COLOR_ROW_MIN_F
+    JR Z,DBC_THRESH_SET
+    LD A,BULLET_ROCK_COLOR_ROW_MIN_U
+DBC_THRESH_SET:
+    LD B,A
     LD A,(IX+3)
-    CP BULLET_ROCK_COLOR_ROW_MIN
+    CP B
     JR NC,DBC_ROCK
     LD A,(IX+6)
     OR A

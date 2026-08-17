@@ -602,13 +602,29 @@ with no way to tell where.
   `ROCK_COLOR` moved to bg11 - corrected to `01Bh`.
 - **Bullet's own color stays blue over rows18-19** ("Skysandとその下の
   Sandは...背景色ブルーのままでいい...背景色イエローでやると明るい色
-  なので余計に目立つ"): split the erase-boundary constant from the
-  draw-color one - `BULLET_ROCK_ROW_MIN`(18, erase/restore logic,
-  unchanged) vs new `BULLET_ROCK_COLOR_ROW_MIN`(20) - so only rows20-23
-  (the real scrolling terrain) draw the bullet's yellow-bg variant;
-  rows18-19 keep the sky/blue one. Applies identically to F and U -
-  "斜め打ちは同じってことだな". Verified against actual VRAM codes at
-  each row.
+  なので余計に目立つ"): split the erase-boundary constant
+  (`BULLET_ROCK_ROW_MIN`=18, unchanged) from the draw-color one, and
+  further split *that* by shot type - a first pass shared one new
+  threshold(20) between F and U, which the user hadn't asked for
+  ("斜めだけって言っただろうが なんで水平ショットも変えた 水平は前に
+  戻せ" - F never visits rows18-19 in normal flight, but can during a
+  jump, so sharing the constant was a real behavior change, not just
+  unnecessary code). Split into `BULLET_ROCK_COLOR_ROW_MIN_F`(19, back
+  to its original pre-this-saga value) and `_U`(20, the new blue-over-
+  18-19 rule) - `DRAW_BULLET_CELL` now picks the threshold from
+  TYPE(IX+1) before comparing. Verified against actual VRAM codes,
+  including a forced mid-jump F shot at row17-19 to exercise the
+  boundary F normally never reaches.
+- **Bullets now stop at Rock225** ("ショットは地形貫通しない 今は
+  Rock225だけなんで当たったら弾は消す"): `UPDATE_ONE_BULLET`, right
+  before drawing at its newly-advanced position, checks rows20-23
+  against `IDCACHE_T0..T3` (same id>=3 test and same column-indexed/
+  48-byte-spaced lookup `UPDATE_TERRAIN_COLLISION` already uses for
+  the tank's own ground probe) and deactivates the bullet instead of
+  drawing if it landed on a Rock225 id (3-6) - no score, no explosion,
+  just gone, same as flying off-screen. Plain Rock/Sand still let
+  shots through. Verified directly (forcing `IDCACHE_T0` to each id at
+  a bullet's next column): Rock225 ids deactivate, Rock/Sand ids don't.
 
 ## Bugs found and fixed while building this
 
