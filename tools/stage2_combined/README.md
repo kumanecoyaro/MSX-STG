@@ -439,16 +439,21 @@ with no way to tell where.
     `0B1h` to `0E7h` (tones A/B/C off, noise A+B on) to enable it.
     Verified: `SND_TIMER_B` kicks to 15 on a hit and decays 1/frame,
     independent of `SND_TIMER`'s own decay.
-  - **Explosion duration + drift**: `EXPLOSION_DURATION` cut from 20
-    to 8 frames - "爆発スプライトは8フレ表示" - and the explosion no
-    longer just sits still at the kill position: `CHECK_HIT_PAIR`
-    picks one of 8 compass directions (`EXPLODE_DIR_DX`/`DY`, `TICK`'s
-    low 3 bits) at hit time, and `UOE_EXPLODE_DRIFT` adds that
-    (dx,dy) to the enemy slot's own X/Y every frame it's shown before
-    despawning - "8方向ランダムに移動後消えるように". Verified: a
+  - **Explosion drift**: the explosion no longer just sits still at
+    the kill position: `CHECK_HIT_PAIR` picks one of 8 compass
+    directions (`EXPLODE_DIR_DX`/`DY`, `TICK`'s low 3 bits) at hit
+    time, and `UOE_EXPLODE_DRIFT` adds that (dx,dy) to the enemy
+    slot's own X/Y every single frame it's shown (not just on
+    trigger - `UPDATE_ONE_ENEMY` runs unconditionally every frame from
+    `MAINLOOP` via `UPDATE_ENEMIES`, regardless of `EXPLOSION_DURATION`'s
+    length) before despawning - "8方向ランダムに移動後消えるように
+    ...で移動中毎フレーム表示だよな". `EXPLOSION_DURATION` itself was
+    briefly cut to 8 frames, then reverted back to `src/CYBER SHMUP.asm`'s
+    own value (20) once actually seen - "んー２０でいいわ". Verified: a
     synthetic hit produced `DX`=0/`DY`=-2 (one of the 8 directions),
-    and the enemy's Y visibly drifted -2px/frame for 7 frames before
-    `ACT` returned to 0 at frame 8.
+    and the enemy's Y visibly drifted -2px/frame every single frame
+    (re-confirmed at both `EXPLOSION_DURATION` values tried) until
+    `ACT` returned to 0 right on schedule.
 - Border-color diagnostic checkpoints through INIT (VDP R7), added
   specifically because the tank-only test froze on real hardware with
   no clue where:

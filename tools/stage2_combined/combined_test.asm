@@ -342,7 +342,13 @@ PAT_ZACO          EQU 128
 PAT_ZACO_FLIP     EQU 132
 PAT_EXPLOSION     EQU 136
 EXPLOSION_COLOR    EQU 8    ; medium red - same color src/CYBER SHMUP.asm uses for EXPLOSION_PATTERN
-EXPLOSION_DURATION EQU 8    ; frames - "爆発スプライトは8フレ表示" (was 20, that file's own EXPLOSION_DURATION)
+; frames - briefly cut to 8 ("爆発スプライトは8フレ表示"), reverted
+; back to src/CYBER SHMUP.asm's own EXPLOSION_DURATION value once seen
+; ("んー２０でいいわ"). UOE_EXPLODE_DRIFT/UOE_DRAW_EXPLOSION still run
+; every single frame this counts down (not just on trigger) - see
+; UPDATE_ONE_ENEMY/UPDATE_ENEMIES, called unconditionally from
+; MAINLOOP each frame - so the drift stays smooth regardless of length.
+EXPLOSION_DURATION EQU 20
 
 STACKTOP      EQU 0F380h
 
