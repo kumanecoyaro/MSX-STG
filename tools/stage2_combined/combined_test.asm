@@ -451,16 +451,38 @@ ZUM_SPAWNX EQU 240          ; off the right edge, same "fully offscreen at 16px"
 ; to gate spawning on "地形最下部で上りがない" (see ZUM_TERRAIN_OK).
 ZUM_SPAWN_COL EQU 30
 ZUM_SPAWN_INTERVAL EQU 90   ; same untuned-but-reasonable value as ENEMY_SPAWN_INTERVAL
-ZUM_SPEED_SLOW EQU 1
-ZUM_SPEED_FAST EQU 2
-ZUM_CHARGE_MARGIN EQU 64    ; "自機に64pxまで近づくと速度2で"
+; "速度１だと地面と動悸してるんで速度1.5 加速時3で" - slow speed
+; averages 1.5 (base1 alternating with +1 on odd TICK frames, same
+; trick as TANK_SPEED_LO/ENEMY_GET_STEP's own green-variant 1.5),
+; charge speed is a flat 3 (was flat 2).
+ZUM_SPEED_SLOW_BASE EQU 1
+ZUM_SPEED_FAST EQU 3
+ZUM_CHARGE_MARGIN EQU 64    ; "自機に64pxまで近づくと速度2で自機に突っ込んでくる" (now 3, see above)
 ZUM_CLIMB_SPEED EQU 2       ; px/frame ease toward the target tier Y (see the comment above)
+; "地面に設置してないな 16px上に浮いてる" - TANK_TIER_Y_TABLE gives
+; the tank's own (32px-tall sprite) top-anchor Y for each tier; Zum is
+; only 16px tall, so using that value directly for Zum's own top-Y
+; left its bottom 16px short of the ground line. +16 aligns Zum's
+; bottom with the tank's own bottom (see UOZ_TERRAIN_FOLLOW).
+ZUM_Y_OFFSET EQU 16
 ; must stay >= TANK_PUSH_WIDTH below, so UPDATE_TANK_ZUM_PUSH's own
 ; "Z_X - TANK_PUSH_WIDTH" never underflows while a Zum is still alive -
 ; conveniently also just means "despawn once close enough to the left
 ; edge that it's no longer visible anyway".
 ZUM_DESPAWN_MARGIN EQU 32
 TANK_PUSH_WIDTH EQU 32      ; tank's own collision width for the Zum push-block below
+; "Zumと接触状態でジャンプすると自機がワープしてしまう" - the push
+; below was an unconditional snap to Zum's exact position; harmless
+; frame-to-frame during ordinary continuous contact (the gap it has to
+; close each frame is always small), but the push is fully suspended
+; for the ~49 frames of a jump ("自機がジャンプで避けると") while Zum
+; keeps moving the whole time - by landing, the accumulated gap could
+; be huge, and snapping it shut in a single frame reads as the tank
+; teleporting. Capped at this many px/frame instead - matches
+; ZUM_SPEED_FAST so ordinary continuous-contact pushing (which never
+; needs to close more than one frame's worth of Zum movement) still
+; resolves in a single frame, same as before.
+ZUM_PUSH_SPEED EQU 3
 
 ; ---------- flowing background clouds (see CLOUD_UPDATE_ALL) ----------
 ; "Stage1でもやってる雲を上から3行目に4セルの雲をランダムタイミングで
@@ -2480,7 +2502,7 @@ AZS_FOUND:
     POP IX
     LD A,1 : LD (IX+0),A
     LD A,ZUM_SPAWNX : LD (IX+1),A
-    LD A,TANK_Y_BASE : LD (IX+2),A
+    LD A,TANK_Y_BASE : ADD A,ZUM_Y_OFFSET : LD (IX+2),A   ; tier3's own Y, +16 for Zum's shorter sprite (see ZUM_Y_OFFSET)
     XOR A : LD (IX+3),A
     LD A,ZUM_SPAWN_INTERVAL : LD (ZUM_SPAWN_TIMER),A
     RET
@@ -2520,11 +2542,14 @@ UOZ_MOVE:
     LD C,A
     LD A,B : SUB C            ; Z_X-TANK_X; wraps large if Z_X<TANK_X (already passed) - falls through to speed1 below either way
     CP ZUM_CHARGE_MARGIN
-    JR NC,UOZ_SPEED1
+    JR NC,UOZ_SPEED_SLOW
     LD A,ZUM_SPEED_FAST
     JR UOZ_SPEED_SET
-UOZ_SPEED1:
-    LD A,ZUM_SPEED_SLOW
+UOZ_SPEED_SLOW:
+    ; averaged 1.5: base1 alternating with +1 on odd TICK frames, same
+    ; trick as TANK_SPEED_LO/ENEMY_GET_STEP's own green-variant 1.5.
+    LD A,(TICK) : AND 1 : LD B,A
+    LD A,ZUM_SPEED_SLOW_BASE : ADD A,B
 UOZ_SPEED_SET:
     LD B,A
     LD A,(IX+1) : SUB B : LD (IX+1),A
@@ -2598,6 +2623,7 @@ UTF_T2:
 UTF_TIER_SET:
     LD E,A : LD D,0
     LD HL,TANK_TIER_Y_TABLE : ADD HL,DE : LD A,(HL)
+    ADD A,ZUM_Y_OFFSET          ; 16px-tall sprite vs the table's own 32px-tall (tank) anchor - see ZUM_Y_OFFSET
     LD B,A                     ; B = target Y
     LD A,(IX+2)                ; A = current Z_Y
     CP B
@@ -2682,11 +2708,18 @@ UTZP_LOOP:
     JR NZ,UTZP_NEXT
     LD A,(IX+1)
     SUB TANK_PUSH_WIDTH
-    LD C,A
+    LD C,A                     ; C = target TANK_X (flush against this Zum)
     LD A,(TANK_X)
     CP C
-    JR C,UTZP_NEXT
-    LD A,C : LD (TANK_X),A
+    JR C,UTZP_NEXT             ; TANK_X already < target - no overlap, nothing to do
+    JR Z,UTZP_NEXT              ; already exactly flush
+    SUB C                      ; A = gap = TANK_X-target
+    CP ZUM_PUSH_SPEED
+    JR NC,UTZP_STEP             ; gap bigger than one step - just close by the capped amount
+    LD A,C : LD (TANK_X),A      ; gap fits within one step - snap the rest of the way, no overshoot
+    JR UTZP_NEXT
+UTZP_STEP:
+    LD A,(TANK_X) : SUB ZUM_PUSH_SPEED : LD (TANK_X),A
 UTZP_NEXT:
     INC IX : INC IX : INC IX : INC IX : INC IX : INC IX : INC IX
     DJNZ UTZP_LOOP

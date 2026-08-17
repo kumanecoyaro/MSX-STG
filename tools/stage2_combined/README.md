@@ -875,6 +875,37 @@ with no way to tell where.
     rear-half hit at the same encounter destroys it and awards score;
     an 8000-frame varied-input stress run (movement/fire/jump cycling)
     shows no score drift and `TANK_X` staying in-bounds throughout.
+- **3 Zum fixes from real testing** ("さっきのスクショでもだが地面に
+  設置してないな 16px上に浮いてる で速度1だと地面と動悸してるんで
+  速度1.5 加速時3で でZumと接触状態でジャンプすると自機がワープして
+  しまう"):
+  - **Floating 16px above the ground**: `TANK_TIER_Y_TABLE` gives the
+    *tank's* own top-anchor Y for a 32px-tall sprite; Zum is only
+    16px tall, so using that value directly for its own top-Y left its
+    bottom 16px short of the ground line. Fixed with `ZUM_Y_OFFSET`(16)
+    added both in `UOZ_TERRAIN_FOLLOW`'s target and `ALLOC_ZUM_SLOT`'s
+    own spawn Y, aligning Zum's bottom with the tank's.
+  - **Speed retuned**: slow speed now averages 1.5 (`ZUM_SPEED_SLOW_BASE`
+    alternating with +1 on odd `TICK` frames, same trick as
+    `TANK_SPEED_LO`/`ENEMY_GET_STEP`'s own green-variant 1.5 - matches
+    the same "flat integer speed looks like it's fighting the terrain
+    scroll" concern those already solved), was a flat 1. Charge speed
+    `ZUM_SPEED_FAST` 2->3 flat.
+  - **Tank teleporting when jumping while in contact**: `UPDATE_TANK_
+    ZUM_PUSH`'s clamp was an unconditional snap to `Zum_X-TANK_PUSH_
+    WIDTH` - harmless frame-to-frame during ordinary continuous
+    contact (never more than one frame's worth of Zum movement to
+    close), but the push is fully suspended for a jump's ~49 frames
+    while Zum keeps moving the whole time; landing with a large
+    accumulated gap snapped it shut in a single frame, reading as a
+    teleport. Fixed with `ZUM_PUSH_SPEED`(3) rate-limiting the clamp -
+    closes at most that many px/call, snapping only the final
+    sub-`ZUM_PUSH_SPEED` remainder directly (no overshoot). Verified:
+    a synthetic 22px gap (simulating a Zum that sailed past during a
+    jump) closes 3px/call over 8 calls then a 1px remainder, never a
+    single jump bigger than `ZUM_PUSH_SPEED`; ordinary continuous
+    contact still resolves in one call per frame as before, since it
+    never needs to close more than `ZUM_SPEED_FAST`'s own 3px/frame.
 
 ## Bugs found and fixed while building this
 
