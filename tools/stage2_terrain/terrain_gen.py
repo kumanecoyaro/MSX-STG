@@ -216,13 +216,18 @@ for r in ROWS:
 
 
 # ---------- character code assignment ----------
-# id0 (BLANK) is used within build_track() for "not yet reached by
-# Rock" cells INSIDE the scrolling 4-row band - conceptually this is
-# still rock territory, just without texture grown in yet, so it needs
-# Rock's own (yellow) color, NOT the sky's blue. Reported as exactly
-# this: those cells rendered blue, which read as wrong/like a hole in
-# the ground. So id0 sits in the SAME rock-colored code range as every
-# other id here (STEADY_BASE+), not in its own group.
+# id0 (BLANK, now Sand-textured - see the BLANK= assignment above) is
+# used within build_track() for "not yet reached by Rock" cells INSIDE
+# the scrolling 4-row band - conceptually still rock territory, just
+# without texture grown in yet, so historically it shared Rock's own
+# code range (and therefore its color) rather than the sky's. That
+# stayed true even once it got real Sand art - until "Sandの文字色を
+# ダークイエローに" needed Sand's own fg independent of Rock's, which
+# SCREEN1 can't do while packed into the same 8-code color group.
+# BLANK_CODE now sits alone in its own group (2, codes16-23 - what
+# used to be dead space between the steady ids' codes and BLEND_BASE,
+# so MAX_CODE/everything downstream that assumes terrain tops out at
+# 86 is unaffected).
 #
 # The true, permanently-open sky ABOVE the whole terrain band (rows
 # outside it entirely, cleared once at INIT - see TERRAIN_BLANK_ROW in
@@ -231,10 +236,11 @@ for r in ROWS:
 # system never touches - it's a static one-time fill, not part of the
 # scrolling map, so it doesn't go through PAIRBASE/blending at all.
 SKY_BLANK_CODE = 0
-STEADY_BASE = 8    # ids 0..10 -> codes 8..18 (all rock-colored)
-BLEND_BASE = 24     # next group-aligned boundary after 8+11=19
+STEADY_BASE = 8     # ROCK_L..R225D_UR (ids1-6) -> codes8-13, all rock-colored
+BLANK_CODE = 16     # id0/Sand's own dedicated code/color group (2)
+BLEND_BASE = 24     # group-aligned boundary, past both of the above
 
-STEADY_CODE = [STEADY_BASE + i for i in range(N_IDS)]
+STEADY_CODE = [BLANK_CODE] + [STEADY_BASE + i for i in range(N_IDS - 1)]
 
 # Every pair, including same-id ones (only (BLANK,BLANK) occurs), gets
 # a normal 7-frame block via the same PAIRBASE+({phase}-1) formula
@@ -283,12 +289,17 @@ for pair in PAIRS:
 # red), bg = dark yellow (per direct instruction: keep the current
 # reddish color, change the other one to light red or dark yellow -
 # dark yellow reads more like natural rock/dirt, easy to flip to light
-# red (9) if that reads better). This deliberately includes id0/BLANK's
-# own codes - see the character-code-assignment comment above.
+# red (9) if that reads better).
+# group2 (BLANK_CODE=16 only - Sand) is its own dedicated fg/bg pair
+# instead - "Sandの文字色をダークイエローに" (dark yellow, matching
+# the ground's own bg so the speckle texture reads as a subtle tonal
+# variation rather than a contrasting dot pattern).
 SKY_COLOR = 0x55           # fg=5,bg=5 (light blue)
 ROCK_COLOR = 0x8A          # fg=8 (medium red, unchanged), bg=10 (dark yellow)
+SAND_COLOR = 0xAA          # fg=10 (dark yellow), bg=10 (dark yellow)
 N_COLOR_GROUPS = 32
 COLORDATA = [SKY_COLOR] + [ROCK_COLOR] * (N_COLOR_GROUPS - 1)
+COLORDATA[2] = SAND_COLOR
 
 WRAP_PAD = 33
 ROWDATA_PADDED = [r + r[:WRAP_PAD] for r in ROWS]

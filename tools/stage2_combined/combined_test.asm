@@ -436,12 +436,16 @@ INIT:
     ; red - see the tank sprite color patch below). Patched here rather
     ; than editing terrain_gen.py itself (shared with the other stage2
     ; tests) - same "patch over the shared module's defaults" approach
-    ; already used for the bullet colors below. Groups1-31 all start
-    ; out ROCK_COLOR-uniform (see TERRAIN_COLORDATA); overwriting all
-    ; of them here is harmless even though only groups1-10 are real
-    ; rock - groups11-30 (bullets/digits/swatch) get their own,
-    ; unrelated colors patched in further down anyway.
-    LD HL,ROCK_COLOR_SWAPPED_PATCH : LD DE,2001h : LD BC,31 : CALL LDIRVM
+    ; already used for the bullet colors below. Groups1-31 all used to
+    ; start out ROCK_COLOR-uniform, so one blind overwrite of the whole
+    ; range was harmless; group2 (Sand's own dedicated color, set by
+    ; terrain_gen.py's own COLORDATA now - see SAND_COLOR there) is
+    ; explicitly skipped here, since group1/3-31 are the only groups
+    ; still genuinely rock-colored (11-30 - bullets/digits/swatch - get
+    ; their own, unrelated colors patched in further down anyway, so
+    ; touching them here or not makes no difference).
+    LD HL,ROCK_COLOR_SWAPPED_PATCH : LD DE,2001h : LD BC,1 : CALL LDIRVM
+    LD HL,ROCK_COLOR_SWAPPED_PATCH : LD DE,2003h : LD BC,29 : CALL LDIRVM
 
     ; checkpoint 2: terrain patterns + color table loaded
     LD B,2 : LD C,7 : CALL WRTVDP
@@ -2192,7 +2196,7 @@ TERRAIN_BLANK_ROW:
 ; sprites/SkySand.json, converted by hand (single static 8x8 tile, no
 ; blending/quadrants needed) - see the SKYSAND_CODE comment above.
 SKYSAND_PATTERN:
-    DB 0,255,0,255,255,0,255,255
+    DB 255,0,255,255,0,255,0,255
 TERRAIN_ROW19:
     DS 32,SKYSAND_CODE
 

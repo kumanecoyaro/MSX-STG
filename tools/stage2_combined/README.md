@@ -573,7 +573,23 @@ with no way to tell where.
   plain sky. Verified: row18 reads as plain sky (code 0) and row19
   reads as `SKYSAND_CODE`(248) uniformly across all 32 columns, and
   400 frames of continuous up-fire aimed straight through row19 left
-  it byte-for-byte unchanged afterward.
+  it byte-for-byte unchanged afterward. The art itself went through 2
+  more straight swaps after this ("Skysand差し替え" x2) -
+  `SKYSAND_PATTERN`/`sprites/SkySand.json` just get overwritten with
+  whatever the latest upload's bits are, no logic changes needed.
+- **Sand gets its own dark-yellow color** ("でSandの文字色をダーク
+  イエローに"): `terrain_gen.py`'s `BLANK_CODE`(Sand's steady tile)
+  moved out of the shared `STEADY_BASE` color group into its own
+  dedicated one (group2, `SAND_COLOR`=fg10/bg10 dark yellow) - see
+  that file's own README entry for why (SCREEN1 can't give 2 tiles in
+  the same 8-code group different colors). That broke this file's own
+  `ROCK_COLOR_SWAPPED_PATCH` from the color-swap round, which blindly
+  overwrote the *entire* groups1-31 range including the new group2 -
+  split into 2 `LDIRVM` calls (group1 alone, then groups3-31) to skip
+  over it. Verified directly against VRAM: group2 reads `SAND_COLOR`
+  (0xAA) while groups1/3/5/10 (the genuinely rock-colored ones) still
+  read the swapped `0x6A`, and code16's pattern bytes match Sand's own
+  art - full regression still passes.
 
 ## Bugs found and fixed while building this
 
