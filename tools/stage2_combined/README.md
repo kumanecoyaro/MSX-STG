@@ -63,6 +63,21 @@ with no way to tell where.
     continuously with no flat/paused frames between chained tier
     changes, and the Gap pose (see `TANK_SLOPE_HOLD` below) stays
     active for the whole stretch.
+  - That ~16-frame pace was measured with the tank standing still,
+    though - `TANK_COL_R` also moves when the tank itself steers, so
+    moving toward oncoming terrain (especially through the rapid-chain
+    section) lets the probe advance through tiers faster than the
+    stationary baseline. At the slow pace alone, `TANK_GROUND_Y` then
+    fell more than a tier behind and the tank visibly sank into the
+    rock for a stretch - "左右移動が加わるとGapに突っ込んでる...登っ
+    てはいるが地形にめり込んでる". Fixed by switching to
+    `TANK_CLIMB_CATCHUP_SPEED` (4px/frame, no gate) whenever more than
+    1 tier (8px) behind, reverting to the smooth slow pace once back
+    within a tier for the final approach. Verified with an emulator
+    sweep holding the stick right through the rapid-chain section: the
+    gap between `TANK_GROUND_Y` and its target never exceeds ~1 tier at
+    any point, and 5 rendered frames through that same stretch show the
+    tank staying grounded throughout instead of sinking in.
   - **Slope check** ("Gapを調べる", sets `TANK_ON_SLOPE`) went through
     2 rounds: a separate probe 1 column *behind* `TANK_COL_R` always
     lagged the Y-tier-snap by exactly 1 column's scroll time (it was

@@ -46,6 +46,7 @@ TANK_Y_BASE   EQU 156      ; row23 top (23*8=184) - tank height(32) + landing of
 TANK_SPEED    EQU 2        ; px/frame, left/right
 TANK_CLIMB_SPEED EQU 1     ; px/step, gated to every OTHER frame (see UPDATE_TERRAIN_COLLISION) -
                            ; 0.5px/frame effective, matching the terrain's own ~16-frame climb pace
+TANK_CLIMB_CATCHUP_SPEED EQU 4  ; px/frame (no gate) once more than 1 tier behind - see UPDATE_TERRAIN_COLLISION
 JUMP_PEAK     EQU 24       ; px
 JUMP_FRAMES   EQU 49       ; JUMP_OFFSET_TABLE length (0-24 rise, 23-0 fall)
 SPRITE_ATTRS  EQU 0F200h   ; 16 bytes
@@ -515,34 +516,61 @@ UTC_TIER3:
 UTC_TIER_DONE:
 
     ; move TANK_GROUND_Y toward the tier's target Y at TANK_CLIMB_SPEED
-    ; px/frame instead of snapping straight there - snapping the full
-    ; 8px in one frame looked like a jolt/jitter at every tier change,
-    ; per direct instruction ("登り降り時に一気に8px移動してるんで
-    ; ガタついてる...滑らかに繋げて"). A flat 2px/frame finished each
-    ; climb in 4 frames - much faster than the terrain itself actually
+    ; instead of snapping straight there - snapping the full 8px in
+    ; one frame looked like a jolt/jitter at every tier change, per
+    ; direct instruction ("登り降り時に一気に8px移動してるんでガタ
+    ; ついてる...滑らかに繋げて"). A flat 2px/frame finished each climb
+    ; in 4 frames - much faster than the terrain itself actually
     ; scrolls a transition by (measured ~16 frames between chained
-    ; tier changes on this track), so the climb looked detached from
-    ; the terrain's own motion and, chained back-to-back, visibly
-    ; paused waiting for the next tier - "連続Gapだと一瞬止まってる
-    ; ...地形に沿って移動じゃなく地形に入ったら自分で8pxのぼってる
-    ; 地形の移動とマッチしてない". Gated to every other frame (TICK
-    ; bit0) so 1px/step averages to the same 0.5px/frame the terrain
-    ; itself climbs at (8px over 16 frames), instead of a faster,
-    ; independently-timed animation.
+    ; tier changes with the tank stationary), so the climb looked
+    ; detached from the terrain's own motion and, chained back-to-
+    ; back, visibly paused waiting for the next tier - "連続Gapだと
+    ; 一瞬止まってる...地形に沿って移動じゃなく地形に入ったら自分で
+    ; 8pxのぼってる...地形の移動とマッチしてない". Gated to every
+    ; other frame (TICK bit0) so 1px/step averages 0.5px/frame,
+    ; matching that ~16-frame pace.
+    ;
+    ; That pace was measured with the tank standing still, though -
+    ; TANK_COL_R (the probe column) also moves when the tank itself
+    ; steers left/right, so moving toward oncoming terrain lets the
+    ; probe advance through tiers faster than the stationary baseline
+    ; (especially through the rapid-chain section, where consecutive
+    ; markers are close together) - at the slow pace alone,
+    ; TANK_GROUND_Y then falls behind by more than one tier and the
+    ; tank visibly sinks into the rock for a stretch - "左右移動が
+    ; 加わるとGapに突っ込んでる...登ってはいるが地形にめり込んでる".
+    ; Once more than 1 tier(8px) behind, switch to catching up at
+    ; TANK_CLIMB_CATCHUP_SPEED every frame (no gate) instead - once
+    ; back within 1 tier, the smooth slow pace above takes back over
+    ; for the final approach.
     LD A,(TANK_TIER) : LD E,A : LD D,0
     LD HL,TANK_TIER_Y_TABLE : ADD HL,DE
     LD A,(HL) : LD B,A            ; B = target Y
-    LD A,(TANK_GROUND_Y)          ; A = current (smoothed) Y
+    LD A,(TANK_GROUND_Y)
+    LD C,A                        ; C = current (smoothed) Y
     CP B
     JR Z,UTC_GROUND_Y_DONE
+    JR C,UTC_GROUND_Y_DIFF_BELOW
+    LD A,C : SUB B                ; diff = current-target (current>target)
+    JR UTC_GROUND_Y_DIFF_READY
+UTC_GROUND_Y_DIFF_BELOW:
+    LD A,B : SUB C                ; diff = target-current (current<target)
+UTC_GROUND_Y_DIFF_READY:
+    CP 9
+    JR C,UTC_GROUND_Y_SLOWGATE     ; diff<9: normal smooth single-tier pace
+    LD D,TANK_CLIMB_CATCHUP_SPEED
+    JR UTC_GROUND_Y_STEP
+UTC_GROUND_Y_SLOWGATE:
     LD A,(TICK) : AND 1
     JR NZ,UTC_GROUND_Y_DONE
-    LD A,(TANK_GROUND_Y)
+    LD D,TANK_CLIMB_SPEED
+UTC_GROUND_Y_STEP:
+    LD A,C
     CP B
     JR C,UTC_GROUND_Y_RISE
     ; current > target (numerically lower on screen, i.e. climbing) -
     ; step down toward it, clamping so it can't undershoot past it
-    SUB TANK_CLIMB_SPEED
+    SUB D
     CP B
     JR NC,UTC_GROUND_Y_SET
     LD A,B
@@ -550,7 +578,7 @@ UTC_TIER_DONE:
 UTC_GROUND_Y_RISE:
     ; current < target (descending) - step up toward it, clamping so
     ; it can't overshoot past it
-    ADD A,TANK_CLIMB_SPEED
+    LD A,C : ADD A,D
     CP B
     JR C,UTC_GROUND_Y_SET
     LD A,B
