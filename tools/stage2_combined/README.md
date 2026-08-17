@@ -516,35 +516,73 @@ with no way to tell where.
 
 ## Bugs found and fixed while building this
 
-- **Real-hardware freeze right after INIT, not reproducible in the
-  emulator** (reported right after the enemy-pool buffer refactor:
-  "初期画面後フリーズしたぞ" - border stuck black, meaning the freeze
-  hit somewhere in `MAINLOOP` itself, since INIT's own border resets
-  to black right before entering it). A 6000-frame emulator stress
-  test covering every enemy code path (spawn/turn-back/hit/explode/
-  respawn, both variants) found nothing, which pointed straight at
-  something real hardware does that the emulator structurally can't
-  (it never fires interrupts at all - see the emulator-testing note
-  below). The refactor's two new loops (`UE_UPDATE_ALL`,
-  `CHECK_HIT_ONE_BULLET`) carried their buffer pointer in `HL` across
-  a `CALL` by pushing it twice and popping once into `IX`/`IY` (a copy
-  surviving on the stack, restored via a later `POP HL`) - a correct,
-  self-balanced pattern in isolation, but needless: `UPDATE_ONE_ENEMY`
-  and `CHECK_HIT_PAIR` never actually reassign `IX`/`IY` themselves
-  (only read through them), so nothing needed preserving across those
-  calls in the first place. Simplified to walk the buffer with `IX`/
-  `IY` directly (9x `INC IX`/`INC IY` per slot, since this assembler
-  has no `ADD IX,DE`) - no push/pop, no window where an interrupt
-  landing mid-sequence could interact with anything. Not a confirmed
-  root cause (real-hardware-only, can't be proven in the emulator
-  either way), but a real simplification either way: removed a whole
-  class of stack-timing risk this codebase's own commit history
-  already flags as a recurring source of real-hardware-only bugs (see
-  `src/CYBER SHMUP.asm`'s own "IX-only protection wasn't enough to
-  stop VDP/sprite corruption, so BC/DE/HL/IX/IY are all preserved this
-  time" comment) for no cost - the emulator re-confirms identical
-  behavior (same speeds, same turn-back point, same hit/explode/score
-  results, no hang across a 6000-frame stress run) either way.
+- **The enemy-pool buffer loops corrupted memory via a DJNZ/B-register
+  collision - this was the real cause of the freeze, and of 2 further
+  regressions the first attempted fix didn't touch** (reported in 2
+  rounds: "初期画面後フリーズしたぞ", then after an incomplete first
+  fix, "動いたがくそ遅くなったぞ サウンドも弾打ったら出っぱなしだ
+  ふざけんな Stage1と同じ構造化するだけだぞ なんで構築済みのシステム
+  でバグんだよ"). `UE_UPDATE_ALL` and `CHECK_HIT_ONE_BULLET` both use
+  `DJNZ` over `ENEMY_SLOT_COUNT` slots, which keeps its loop counter in
+  register `B` for the whole loop - but the routine each iteration
+  `CALL`s (`UPDATE_ONE_ENEMY` via `ENEMY_GET_STEP`'s own "LD B,A" speed
+  scratch; `CHECK_HIT_PAIR`'s own pixel-box math) *also* uses `B` (and
+  `C`) as scratch, with no save/restore. Every single iteration, `B`
+  came back from the `CALL` holding leftover scratch data instead of
+  the real remaining slot count, so `DJNZ` decremented garbage - the
+  loop could run far more (or fewer) times than 3, walking `IX`/`IY`
+  arbitrarily far past the end of `ENEMY_POOL` into unrelated RAM,
+  reading/writing whatever happened to be there as if it were slot
+  data. This explains every symptom at once: the original freeze (a
+  wildly wrong iteration count doing enormous amounts of extra,
+  increasingly out-of-bounds work), the "くそ遅くなった" slowdown once
+  the freeze was papered over (same wrong-iteration-count problem,
+  just landing on a still-bad-but-not-infinite value instead of a
+  hanging one - this ROM has no vsync/HALT frame sync at all, so any
+  extra per-frame work directly slows the whole game's real-time
+  pace), and a `SCORE` that changed with zero player input in an
+  emulator test with no enemies actually hit (`IX`/`IY` wandering into
+  garbage that happened to read as "a hit"). The *previous* round's
+  fix attempt (swapping a push-HL-twice/pop-IX-once idiom for direct
+  `IX`/`IY` increments) was a reasonable simplification on its own
+  merits but addressed the wrong register entirely (`IX`/`IY` were
+  never actually the problem - `B`/`C` were) and so didn't touch the
+  real bug at all, which is exactly why the same class of symptom
+  persisted after it shipped. Fixed by wrapping each loop's `CALL`
+  with `PUSH BC`/`POP BC`, restoring the true loop counter every
+  iteration regardless of what the callee did to `B`/`C` internally.
+  Verified this time with a test built for the *actual* failure mode,
+  not just "did it hang": ran 120 frames with zero player input and
+  confirmed `SCORE` never left `[0,0,0]` (previously it read `[1,0,0]`
+  within the first 1-2 frames purely from the corrupted loop), then
+  re-ran every prior check (speeds, turn-back point, hit detection on
+  slot0 *and* slot2, sound envelope, a 6000-frame varied-input stress
+  run) and got sane, consistent results throughout instead of the
+  wildly climbing score the corrupted version produced under the same
+  input.
+- **Shot sound never actually reached silence during sustained
+  auto-fire** (part of the same "サウンドも弾打ったら出っぱなしだ"
+  report as the loop-corruption bug above, but a real, independent
+  tuning bug, confirmable in the emulator with no hardware involved at
+  all): `SHOT_SND_FRAMES` was 10, but auto-fire only leaves a 9-frame
+  gap between shots (`SHOT_COOLDOWN_FRAMES`+1) - `SND_TIMER` decays
+  10->1 over those 9 frames and jumps straight back to 10 on the next
+  shot, *never once reaching 0*. With A held, channel A's volume was
+  therefore never actually silent, reading as one continuous tone
+  instead of a series of distinct blips. Cut to 6 (comfortably under
+  the 9-frame gap, leaving a real few-frame gap of silence between
+  shots) - confirmed via emulator: `SND_TIMER` now reads
+  `...,1,0,0,0,0,5,4,...` every cycle instead of never touching 0.
+- Also (unrelated to any specific bug report, but worth doing while
+  performance was already under scrutiny): `GAME_TICK_DISPLAY` used to
+  redraw all 3 tick-counter cells unconditionally every single frame,
+  like `src/CYBER SHMUP.asm`'s own version does - reasonable there
+  (frame-synced), wasteful here (no vsync/HALT sync at all - see
+  above) since 2 of the 3 digits usually haven't changed. Added
+  `GTD_LAST_H`/`_T`/`_O` (last-drawn digit per cell) so each of the 3
+  `WRITE_HUD_CELL` calls only fires when its own digit actually
+  changed - confirmed via emulator: normal frames now do 1
+  `WRITE_HUD_CELL` call (just the ones digit) instead of always 3.
 - **SCORE incremented on every shot fired**, visible immediately once
   a real HUD existed to show it ("弾打っただけでスコア入ってるぞ"):
   the original score/counter round had wired `ADD_SCORE` straight into

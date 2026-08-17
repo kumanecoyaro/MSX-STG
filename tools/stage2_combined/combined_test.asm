@@ -253,6 +253,18 @@ SND_TIMER     EQU 0F275h   ; shot-sound fade countdown/volume (channel A, noise)
 ; 爆発音流用" (SOUND_DESTROY below reuses that file's exact
 ; period(20)/timer(15) values, just retargeted to channel B).
 SND_TIMER_B   EQU 0F276h
+; last-drawn hundreds/tens/ones digit for GAME_TICK_DISPLAY - unlike
+; src/CYBER SHMUP.asm (which can afford an unconditional redraw every
+; frame), this ROM has no vsync/HALT frame sync at all, so every extra
+; per-frame VRAM write directly slows the whole game's real-time pace
+; down (more T-states/iteration = fewer iterations/second = everything
+; TICK-paced runs slower) - redrawing 3 cells every single frame when
+; usually only the ones digit actually changed was real, avoidable
+; cost. Init to 0FFh (never a real digit) so the very first call still
+; draws all 3 - see GAME_TICK_DISPLAY.
+GTD_LAST_H    EQU 0F277h
+GTD_LAST_T    EQU 0F278h
+GTD_LAST_O    EQU 0F279h
 ; digit0 code; digitN = DIGIT_BASE+N for N=0-9 (score/counter, glyphs
 ; copied byte-for-byte from src/CYBER SHMUP.asm's own DIGIT_PATTERNS -
 ; "スコアの数字流用") and N=10-15 = A-F (new art, "AからFまで新規",
@@ -271,7 +283,12 @@ PSG_DATA         EQU 0A1h
 ; 発射音ぽいの" (noise channel, shot-sound-like); period/fade picked
 ; with no more precise spec than that, easy to retune.
 SHOT_NOISE_PERIOD EQU 8
-SHOT_SND_FRAMES   EQU 10
+; must stay LESS than the auto-fire period (SHOT_COOLDOWN_FRAMES+1 = 9
+; frames between shots) - was 10, which never actually reached 0
+; (decays 10->1 over the 9-frame gap, then jumps straight back to 10)
+; so held-fire sounded permanently "on" instead of a series of
+; distinct blips - "サウンドも弾打ったら出っぱなしだ".
+SHOT_SND_FRAMES   EQU 6
 
 ; ---------- enemy (ZacoII) ----------
 ; "では次敵の実装 スプライトで実装 右から左へスライド Skyのみのの
@@ -600,6 +617,7 @@ INIT_SPRATR_CLR:
     XOR A
     LD (GAME_TICK),A : LD (GAME_TICK+1),A
     LD (SCORE),A : LD (SCORE+1),A : LD (SCORE+2),A
+    LD A,0FFh : LD (GTD_LAST_H),A : LD (GTD_LAST_T),A : LD (GTD_LAST_O),A
     CALL SCORE_DISPLAY
     CALL GAME_TICK_DISPLAY
 
@@ -1676,18 +1694,27 @@ GTD_T10_DONE:
     ADD HL,DE
     LD A,L : LD (HUD_TEMP_BYTE),A
 
+    LD A,B : LD HL,GTD_LAST_H : CP (HL) : JR Z,GTD_SKIP_H
+    LD (HL),A
     XOR A : LD (HUD_ROW),A
     LD A,29 : LD (HUD_COL),A
     LD A,B : ADD A,DIGIT_BASE : LD (HUD_VAL),A
     CALL WRITE_HUD_CELL
+GTD_SKIP_H:
+    LD A,C : LD HL,GTD_LAST_T : CP (HL) : JR Z,GTD_SKIP_T
+    LD (HL),A
     XOR A : LD (HUD_ROW),A
     LD A,30 : LD (HUD_COL),A
     LD A,C : ADD A,DIGIT_BASE : LD (HUD_VAL),A
     CALL WRITE_HUD_CELL
+GTD_SKIP_T:
+    LD A,(HUD_TEMP_BYTE) : LD HL,GTD_LAST_O : CP (HL) : JR Z,GTD_SKIP_O
+    LD (HL),A
     XOR A : LD (HUD_ROW),A
     LD A,31 : LD (HUD_COL),A
     LD A,(HUD_TEMP_BYTE) : ADD A,DIGIT_BASE : LD (HUD_VAL),A
     CALL WRITE_HUD_CELL
+GTD_SKIP_O:
     RET
 
 ; PSG (AY-3-8910-compatible) shot sound: channel A, noise-only -
@@ -1759,11 +1786,22 @@ UE_TRY_SPAWN:
 ; UPDATE_ONE_ENEMY and everything it calls only ever READS through IX
 ; (IX+E_xxx), never reassigns the register itself, so it survives the
 ; CALL on its own with nothing to preserve.
+; PUSH/POP BC around the CALL: DJNZ's loop counter lives in B, and
+; UPDATE_ONE_ENEMY (via ENEMY_GET_STEP's own "LD B,A" speed-step scratch,
+; and UOE_DRAW's "LD C,A" sprite-offset scratch) clobbers both B and C -
+; without saving/restoring it, DJNZ decrements whatever garbage B was
+; left holding instead of the real remaining count, so the loop runs a
+; wrong (often huge) number of times and IX walks off the end of the
+; buffer into unrelated RAM. This was the real freeze/corruption cause
+; from the previous 2 rounds, not the push-HL-vs-direct-IX question -
+; see the README bug entry.
 UE_UPDATE_ALL:
     LD IX,ENEMY_POOL
     LD B,ENEMY_SLOT_COUNT
 UEUA_LOOP:
+    PUSH BC
     CALL UPDATE_ONE_ENEMY
+    POP BC
     INC IX : INC IX : INC IX : INC IX : INC IX : INC IX : INC IX : INC IX : INC IX
     DJNZ UEUA_LOOP
     CALL FLUSH_ENEMY_SPRITES
@@ -1980,12 +2018,17 @@ CHECK_BULLET_VS_ENEMY:
 ; reads through it). IY walks ENEMY_POOL directly (9x INC IY per slot,
 ; same reasoning as UE_UPDATE_ALL - CHECK_HIT_PAIR never reassigns IY
 ; either, so there's nothing to preserve across the CALL) testing this
-; one bullet against every enemy slot.
+; one bullet against every enemy slot. PUSH/POP BC around the CALL for
+; the same reason as UEUA_LOOP - CHECK_HIT_PAIR's own AABB math uses
+; both B and C as scratch, which would otherwise corrupt this loop's
+; DJNZ counter.
 CHECK_HIT_ONE_BULLET:
     LD IY,ENEMY_POOL
     LD B,ENEMY_SLOT_COUNT
 CHOB_LOOP:
+    PUSH BC
     CALL CHECK_HIT_PAIR
+    POP BC
     INC IY : INC IY : INC IY : INC IY : INC IY : INC IY : INC IY : INC IY : INC IY
     DJNZ CHOB_LOOP
     RET
