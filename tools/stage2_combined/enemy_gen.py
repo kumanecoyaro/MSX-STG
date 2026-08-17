@@ -1,16 +1,19 @@
-"""Converts the ZacoII enemy sprite (16x16, Sprite Editor JSON) into
-MSX hardware sprite pattern data - one 16x16 hardware sprite, 4 8x8
-sub-patterns in [top-left][bottom-left][top-right][bottom-right] byte
-order (32 bytes), same layout as one quadrant of the tank's own 32x32
-poses (see tools/stage2_tank/tank_gen.py's block16_bytes).
+"""Converts enemy sprites (16x16, Sprite Editor JSON) into MSX hardware
+sprite pattern data - one 16x16 hardware sprite, 4 8x8 sub-patterns in
+[top-left][bottom-left][top-right][bottom-right] byte order (32
+bytes), same layout as one quadrant of the tank's own 32x32 poses (see
+tools/stage2_tank/tank_gen.py's block16_bytes).
 
-Also emits a mirrored (left-right flipped) copy for when the enemy
-turns back and flies away right-to-left instead of its normal
-left-to-right approach - "移動は自機位置をみて手前で引き返す...
-引き返す際の左右反転キャラを生成" (watches the player's position and
-turns back before reaching them; generate the flipped character for
-the turn-back) - same hflip idea as tank_gen.py/bullet_gen.py's own
-mirrored poses, generated here rather than needing new source art.
+Also emits a mirrored (left-right flipped) copy of each - for ZacoII,
+used when it turns back and flies away right-to-left instead of its
+normal left-to-right approach ("移動は自機位置をみて手前で引き返す...
+引き返す際の左右反転キャラを生成", same hflip idea as tank_gen.py/
+bullet_gen.py's own mirrored poses). Zum never reverses direction (it
+only ever moves left, charging the tank then continuing off the left
+edge if avoided), so its own flip output is simply unused by
+combined_test.asm - generated anyway since ALL_PATTERNS_FLIP is
+built generically for every name in ENEMIES, and the couple dozen
+unused ROM bytes aren't worth a special case.
 """
 import json
 import os
@@ -18,7 +21,7 @@ import os
 HERE = os.path.dirname(os.path.abspath(__file__))
 SPRITE_DIR = os.path.join(HERE, "sprites")
 
-ENEMIES = ["ZacoII"]
+ENEMIES = ["ZacoII", "Zum"]
 
 
 def load_bits(name):

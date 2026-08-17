@@ -786,6 +786,95 @@ with no way to tell where.
   sitting right at the gun's own muzzle tip; a synthetic hit test with
   an enemy box placed at the bullet's exact spawn pixel now registers;
   4000-frame zero-input sweep still shows no score drift.
+- **Zum, a ground-based enemy** (per direct instruction, confirmed in
+  2 follow-up rounds: "では敵を追加する 赤ZakoIIが10体で終わったら
+  地形右から登場 もちろん地形は避けること 地面に設置してること 上り
+  下り出来ること 自機と同じだね で上りがない地形最下部でスポーン
+  速度は1で自機に64pxまで近づくと速度2で自機に突っ込んでくる お互い
+  貫通せず止まること つまり何も操作しなければ敵に押される 自機が
+  ジャンプで避けるとそのまま左に消える 正面からは無敵で弾は止まる
+  こと 破壊条件は後ろから撃たれた場合のみ" - ZacoII keeps spawning
+  unaffected ("ZakoIIは継続、Zumが追加で登場"), pool capped at 2
+  concurrent ("横並び制限があるんで")): `ZUM_POOL`, `sprites/Zum.json`
+  converted via `enemy_gen.py` (added to its `ENEMIES` list alongside
+  ZacoII - no flip needed, Zum never reverses direction), own hw
+  sprite slots10-11 and pattern group148.
+  - **Spawn gate** (`ALLOC_ZUM_SLOT`): 3 conditions, all must hold -
+    `ENEMY_SPAWN_COUNT>=10` (reuses the *existing* red-ZacoII
+    threshold rather than a new counter), a free pool slot, and
+    `ZUM_TERRAIN_OK` - the terrain at a fixed spawn column (30, under
+    `ZUM_SPAWNX`=240) must read as genuinely flat ground at the lowest
+    tier (IDCACHE_T0-T2 all BLANK there, IDCACHE_T3 a steady plain-rock
+    id, not a Rock225 climb/descend marker) - "上りがない地形最下部で
+    スポーン". Any failed condition just retries next frame rather
+    than waiting a fixed interval, since the terrain condition is
+    transient (the track scrolls continuously, so polling catches the
+    next flat window as soon as it scrolls into place).
+  - **Ground-following** ("地面に設置してること 上り下り出来ること
+    自機と同じだね"): reuses the same idea as
+    `UPDATE_TERRAIN_COLLISION` (probe IDCACHE_T0-T3 at its own column
+    for the first non-BLANK tier, ease Z_Y toward
+    `TANK_TIER_Y_TABLE[tier]` - the same table the tank's own Y
+    targets) but *without* that routine's own hard-won catch-up-
+    threshold refinements (born from a long tuning saga - see that
+    routine's own comment) - just a flat `ZUM_CLIMB_SPEED`(2)px/frame
+    ease, clamped at the target. A deliberate simplification, not a
+    re-derivation of that tuning; easy to revisit if it reads as
+    jittery/laggy once actually seen on real hardware.
+  - **Speed/charge**: `ZUM_SPEED_SLOW`(1) normally, `ZUM_SPEED_FAST`(2)
+    once within `ZUM_CHARGE_MARGIN`(64px) of `TANK_X` - "速度は1で
+    自機に64pxまで近づくと速度2で自機に突っ込んでくる". The distance
+    check is a plain unsigned subtraction (`Z_X-TANK_X`) with no
+    special-casing for "Zum has already passed the tank" - if `Z_X <
+    TANK_X` the subtraction wraps to a large value, which the
+    threshold compare naturally reads as "far" (falls back to speed1)
+    without any extra branch.
+  - **Push collision** (`UPDATE_TANK_ZUM_PUSH`, new MAINLOOP step
+    after `UPDATE_ZUM_ALL`): "お互い貫通せず止まること つまり何も
+    操作しなければ敵に押される" - Zum's own X always advances at its
+    own pace regardless of the tank; contact instead clamps
+    `TANK_X = min(TANK_X, Z_X-TANK_PUSH_WIDTH)`, so a stationary
+    player gets shoved left as Zum keeps advancing, while the player
+    can still freely move away (just never *into* an active Zum).
+    Entirely suspended while `JUMP_ACTIVE`=1 - "自機がジャンプで避け
+    るとそのまま左に消える" - letting Zum slide underneath and
+    continue off the left edge uninterrupted. Runs after the tank's
+    own `UPDATE_TERRAIN_COLLISION`/`UPDATE_TANK_SPRITES` already used
+    this frame's *pre*-push `TANK_X`, so a push visually lands 1 frame
+    later than the contact itself - accepted as a minor lag, same
+    class as every other post-tank-sprite system in this MAINLOOP
+    (enemies, clouds, bullet-U sprites).
+  - **Front/rear hit direction** (`CHECK_BULLET_VS_ZUM`/
+    `CHECK_HIT_PAIR_ZUM`): "正面からは無敵で弾は止まること 破壊条件
+    は後ろから撃たれた場合のみ". Same AABB overlap shape as
+    `CHECK_HIT_PAIR` (bullet 8x8 vs enemy box widened to 15), plus a
+    2nd check against Zum's own horizontal midpoint (`Z_X+8`) once
+    overlap is confirmed - since Zum only ever moves left, its own
+    left half is permanently its "front" (bullet absorbed: deactivated
+    with no score/explosion/sound, same as flying off-screen) and its
+    right half permanently its "back" (bullet kills it: same explosion/
+    score/sound as a ZacoII kill), independent of which direction the
+    bullet itself was travelling.
+  - **Explosion**: reuses `EXPLOSION_PATTERN`/`EXPLOSION_COLOR`/
+    `EXPLOSION_DURATION`/`SOUND_DESTROY`/`SCORE_PER_KILL` unchanged -
+    not explicitly specified for Zum, so matched to ZacoII's own for
+    consistency rather than invented from nothing; easy to split out
+    a distinct value if that turns out wrong.
+  - Verified: `ALLOC_ZUM_SLOT` correctly refuses to spawn below the
+    count threshold and during a forced climb-marker terrain state,
+    then spawns the instant both clear; speed reads 1 far away, 2 once
+    within 64px, and correctly falls back to 1 once past the tank
+    (wraparound case); `UOZ_TERRAIN_FOLLOW` eases toward each tier's Y
+    and clamps without overshoot; the push clamp holds `TANK_X` exactly
+    `TANK_PUSH_WIDTH`(32) behind an approaching Zum and is fully
+    inert while `JUMP_ACTIVE`=1 (confirmed visually too - a forced
+    encounter shows the tank pinned 32px behind Zum when not jumping,
+    and Zum sailing straight through to X34 with `TANK_X` completely
+    unchanged when jumping the whole time); a front-half hit
+    deactivates the bullet with the Zum and score untouched, a
+    rear-half hit at the same encounter destroys it and awards score;
+    an 8000-frame varied-input stress run (movement/fire/jump cycling)
+    shows no score drift and `TANK_X` staying in-bounds throughout.
 
 ## Bugs found and fixed while building this
 

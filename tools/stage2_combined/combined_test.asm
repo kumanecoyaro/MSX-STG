@@ -416,6 +416,52 @@ EXPLOSION_COLOR    EQU 8    ; medium red - same color src/CYBER SHMUP.asm uses f
 ; MAINLOOP each frame - so the drift stays smooth regardless of length.
 EXPLOSION_DURATION EQU 8
 
+; ---------- Zum ground enemy (see UPDATE_ZUM_ALL) ----------
+; "では敵を追加する 赤ZakoIIが10体で終わったら地形右から登場 もちろん
+; 地形は避けること 地面に設置してること 上り下り出来ること 自機と
+; 同じだね で上りがない地形最下部でスポーン 速度は1で自機に64pxまで
+; 近づくと速度2で自機に突っ込んでくる お互い貫通せず止まること つまり
+; 何も操作しなければ敵に押される 自機がジャンプで避けるとそのまま
+; 左に消える 正面からは無敵で弾は止まること 破壊条件は後ろから撃たれ
+; た場合のみ" - confirmed in 2 follow-up rounds: ZacoII keeps spawning
+; as usual (Zum is additive, not a replacement once the red-variant
+; threshold hits), and up to 2 Zum can be on screen at once ("横並び
+; 制限があるんで").
+;
+; Ground-following reuses the same idea UPDATE_TERRAIN_COLLISION uses
+; for the tank itself ("自機と同じだね") - probe IDCACHE_T0..T3 at
+; this enemy's own column, walk down for the first non-BLANK tier,
+; ease Z_Y toward TANK_TIER_Y_TABLE[tier] (the same table the tank's
+; own Y targets, since Zum is meant to stand at the same height class)
+; - but WITHOUT the tank's own hard-won catch-up-threshold refinements
+; (see UPDATE_TERRAIN_COLLISION's own comment for that whole saga) -
+; just a flat ZUM_CLIMB_SPEED/frame ease, clamped at the target. A
+; simplification, not a re-derivation of that tuning; easy to revisit
+; if it reads as jittery/laggy once actually seen.
+ZUM_SLOT_SIZE  EQU 7    ; +0 Z_ACT,+1 Z_X,+2 Z_Y,+3 Z_TIMER(explosion),+4 Z_SPRIDX,+5/+6 Z_DX/Z_DY(explosion drift)
+ZUM_SLOT_COUNT EQU 2
+ZUM_POOL       EQU 0F2ECh   ; ZUM_SLOT_SIZE*ZUM_SLOT_COUNT = 14 bytes
+ZUM_SPRITE_ATTRS EQU 0F2FAh ; 8 bytes: Y,X,pat,col x2 - same staging-buffer pattern as ENEMY_SPRITE_ATTRS
+ZUM_SPAWN_TIMER  EQU 0F302h
+ZUM_SPR_BASE_SLOT EQU 10    ; hw sprite slots10-11, right after the bullet pool's own 7-9
+PAT_ZUM EQU 148             ; right after PAT_BULLETU_L(144-147)
+ZUM_COLOR EQU 13            ; from sprites/Zum.json's own fg
+ZUM_SPAWNX EQU 240          ; off the right edge, same "fully offscreen at 16px" convention as ENEMY_SPAWNX
+; the column ZUM_SPAWNX itself lands on (240>>3) - probed at spawn time
+; to gate spawning on "地形最下部で上りがない" (see ZUM_TERRAIN_OK).
+ZUM_SPAWN_COL EQU 30
+ZUM_SPAWN_INTERVAL EQU 90   ; same untuned-but-reasonable value as ENEMY_SPAWN_INTERVAL
+ZUM_SPEED_SLOW EQU 1
+ZUM_SPEED_FAST EQU 2
+ZUM_CHARGE_MARGIN EQU 64    ; "自機に64pxまで近づくと速度2で"
+ZUM_CLIMB_SPEED EQU 2       ; px/frame ease toward the target tier Y (see the comment above)
+; must stay >= TANK_PUSH_WIDTH below, so UPDATE_TANK_ZUM_PUSH's own
+; "Z_X - TANK_PUSH_WIDTH" never underflows while a Zum is still alive -
+; conveniently also just means "despawn once close enough to the left
+; edge that it's no longer visible anyway".
+ZUM_DESPAWN_MARGIN EQU 32
+TANK_PUSH_WIDTH EQU 32      ; tank's own collision width for the Zum push-block below
+
 ; ---------- flowing background clouds (see CLOUD_UPDATE_ALL) ----------
 ; "Stage1でもやってる雲を上から3行目に4セルの雲をランダムタイミングで
 ; 4行目はから8行目まで2セルと4セル雲をランダムに各行で速度変化をつけて
@@ -745,6 +791,10 @@ INIT_SPRATR_CLR:
     LD HL,ENEMY_ZACOII_FLIP : LD DE,PAT_ZACO_FLIP*8+SPRPAT : LD BC,32 : CALL LDIRVM
     LD HL,EXPLOSION_PATTERN : LD DE,PAT_EXPLOSION*8+SPRPAT : LD BC,32 : CALL LDIRVM
 
+    ; Zum's own pattern (enemy_gen.py, generated alongside ZacoII's -
+    ; no flip needed, it never reverses direction).
+    LD HL,ENEMY_ZUM : LD DE,PAT_ZUM*8+SPRPAT : LD BC,32 : CALL LDIRVM
+
     ; enemy pool: zero the whole buffer generically (all slots inactive,
     ; all other fields 0) rather than naming each slot - "管理もバッファ
     ; 経由だぞ 個別に適当にやるなよ" - then a 2nd pass sets each slot's
@@ -798,6 +848,38 @@ IBSA_LOOP:
     LD (HL),A : INC HL
     LD (HL),A : INC HL
     DJNZ IBSA_LOOP
+
+    ; Zum pool: same generic zero-then-assign-Z_SPRIDX shape as the
+    ; enemy pool above, plus its own sprite-attrs priming.
+    LD HL,ZUM_POOL
+    LD B,ZUM_SLOT_SIZE*ZUM_SLOT_COUNT
+    XOR A
+IZZ_LOOP:
+    LD (HL),A
+    INC HL
+    DJNZ IZZ_LOOP
+    LD (ZUM_SPAWN_TIMER),A
+
+    LD HL,ZUM_POOL
+    LD B,ZUM_SLOT_COUNT
+    LD C,0
+IZSP_LOOP:
+    PUSH HL
+    POP IX
+    LD A,C : LD (IX+4),A
+    INC C
+    LD DE,ZUM_SLOT_SIZE : ADD HL,DE
+    DJNZ IZSP_LOOP
+
+    LD HL,ZUM_SPRITE_ATTRS
+    LD B,ZUM_SLOT_COUNT
+IZSA_LOOP:
+    LD A,209 : LD (HL),A : INC HL
+    XOR A
+    LD (HL),A : INC HL
+    LD (HL),A : INC HL
+    LD (HL),A : INC HL
+    DJNZ IZSA_LOOP
 
     ; cloud pool: each of the 6 slots gets its own fixed ROW (2-7,
     ; CLOUD_ROW_TABLE)/INTERVAL/FIXED4 from the 3 lookup tables below,
@@ -897,6 +979,9 @@ SKIP_ADVANCE:
     CALL UPDATE_ENEMIES
     CALL CHECK_BULLET_VS_ENEMY
     CALL UPDATE_BULLET_U_SPRITES
+    CALL UPDATE_ZUM_ALL
+    CALL CHECK_BULLET_VS_ZUM
+    CALL UPDATE_TANK_ZUM_PUSH
     CALL CLOUD_UPDATE_ALL
 
     LD HL,(GAME_TICK) : INC HL : LD (GAME_TICK),HL
@@ -2304,6 +2389,381 @@ CHP_SKIP_ERASE:
     LD A,(TICK) : AND 7 : LD C,A : LD B,0
     LD HL,EXPLODE_DIR_DX : ADD HL,BC : LD A,(HL) : LD (IY+E_DX),A
     LD HL,EXPLODE_DIR_DY : ADD HL,BC : LD A,(HL) : LD (IY+E_DY),A
+
+    CALL SOUND_DESTROY
+
+    LD HL,SCORE_PER_KILL
+    CALL ADD_SCORE
+    RET
+
+; ---------- Zum: spawn timer, then all slots (see ZUM_SLOT_SIZE above) ----------
+UPDATE_ZUM_ALL:
+    LD A,(ZUM_SPAWN_TIMER)
+    OR A
+    JR Z,UZA_TRY_SPAWN
+    DEC A : LD (ZUM_SPAWN_TIMER),A
+    JR UZA_UPDATE_ALL
+UZA_TRY_SPAWN:
+    CALL ALLOC_ZUM_SLOT
+UZA_UPDATE_ALL:
+    LD IX,ZUM_POOL
+    LD B,ZUM_SLOT_COUNT
+UZAU_LOOP:
+    PUSH BC
+    CALL UPDATE_ONE_ZUM
+    POP BC
+    INC IX : INC IX : INC IX : INC IX : INC IX : INC IX : INC IX
+    DJNZ UZAU_LOOP
+    CALL FLUSH_ZUM_SPRITES
+    RET
+
+; A=1 if the terrain at ZUM_SPAWN_COL is genuinely flat ground at the
+; lowest tier (IDCACHE_T0/T1/T2 all BLANK there - nothing above tier3
+; yet - and IDCACHE_T3 is a steady plain-rock id, not a Rock225 climb/
+; descend marker), else 0 - "上りがない地形最下部でスポーン". Same
+; walk-down-tiers probe UPDATE_TERRAIN_COLLISION uses, just as a
+; boolean test at a fixed column instead of driving TANK_TIER. Trashes
+; A,DE,HL.
+ZUM_TERRAIN_OK:
+    LD A,ZUM_SPAWN_COL : LD E,A : LD D,0
+    LD HL,IDCACHE_T0 : ADD HL,DE : LD A,(HL)
+    OR A
+    JR NZ,ZTO_FAIL
+    LD A,ZUM_SPAWN_COL : LD E,A : LD D,0
+    LD HL,IDCACHE_T1 : ADD HL,DE : LD A,(HL)
+    OR A
+    JR NZ,ZTO_FAIL
+    LD A,ZUM_SPAWN_COL : LD E,A : LD D,0
+    LD HL,IDCACHE_T2 : ADD HL,DE : LD A,(HL)
+    OR A
+    JR NZ,ZTO_FAIL
+    LD A,ZUM_SPAWN_COL : LD E,A : LD D,0
+    LD HL,IDCACHE_T3 : ADD HL,DE : LD A,(HL)
+    CP 3
+    JR NC,ZTO_FAIL
+    OR A
+    JR Z,ZTO_FAIL
+    LD A,1
+    RET
+ZTO_FAIL:
+    XOR A
+    RET
+
+; gated on 3 things, all must hold: the red-ZacoII threshold reached
+; ("赤ZakoIIが10体で終わったら" - reuses ENEMY_SPAWN_COUNT, ZacoII's
+; own spawning keeps running unaffected - "ZakoIIは継続"), the terrain
+; is currently flat at the spawn column (ZUM_TERRAIN_OK), and a slot
+; is free (pool of ZUM_SLOT_COUNT=2 - "横並び制限"). Any failure just
+; retries next frame (ZUM_SPAWN_TIMER stays 0) rather than waiting out
+; a fixed interval - the terrain condition is transient (the track
+; scrolls continuously) so polling every frame catches the next flat
+; window as soon as it appears.
+ALLOC_ZUM_SLOT:
+    LD A,(ENEMY_SPAWN_COUNT)
+    CP 10
+    RET C
+    CALL ZUM_TERRAIN_OK
+    OR A
+    RET Z
+
+    LD HL,ZUM_POOL
+    LD B,ZUM_SLOT_COUNT
+AZS_LOOP:
+    LD A,(HL)
+    OR A
+    JR Z,AZS_FOUND
+    LD DE,ZUM_SLOT_SIZE : ADD HL,DE
+    DJNZ AZS_LOOP
+    RET
+AZS_FOUND:
+    PUSH HL
+    POP IX
+    LD A,1 : LD (IX+0),A
+    LD A,ZUM_SPAWNX : LD (IX+1),A
+    LD A,TANK_Y_BASE : LD (IX+2),A
+    XOR A : LD (IX+3),A
+    LD A,ZUM_SPAWN_INTERVAL : LD (ZUM_SPAWN_TIMER),A
+    RET
+
+; IX = slot base. E_ACT=1: probes the terrain under its own column and
+; eases Z_Y toward the target tier, then advances Z_X left (speed2
+; once within ZUM_CHARGE_MARGIN of TANK_X - "自機に64pxまで近づくと
+; 速度2で自機に突っ込んでくる" - unsigned-subtraction wraparound
+; naturally also keeps it at speed2 if TANK_X briefly reads higher, and
+; falls back to speed1 once it's actually passed/moved away). E_ACT=2:
+; same drift-then-hide explosion shape as UPDATE_ONE_ENEMY's own
+; UOE_EXPLODING, reusing EXPLOSION_DURATION/PATTERN/COLOR.
+UPDATE_ONE_ZUM:
+    LD A,(IX+0)
+    CP 2
+    JR Z,UOZ_EXPLODING
+    OR A
+    RET Z
+
+    CALL UOZ_TERRAIN_FOLLOW
+
+    ; despawn once close enough to the left edge (also guarantees Z_X
+    ; never underflows the "-TANK_PUSH_WIDTH" subtraction in
+    ; UPDATE_TANK_ZUM_PUSH while this slot is still active) - covers
+    ; both "自機がジャンプで避けるとそのまま左に消える" (nothing
+    ; blocked it, it just kept going) and the normal off-screen exit.
+    LD A,(IX+1)
+    CP ZUM_DESPAWN_MARGIN
+    JR NC,UOZ_MOVE
+    XOR A : LD (IX+0),A
+    CALL UOZ_HIDE
+    RET
+
+UOZ_MOVE:
+    LD A,(IX+1) : LD B,A
+    LD A,(TANK_X)
+    LD C,A
+    LD A,B : SUB C            ; Z_X-TANK_X; wraps large if Z_X<TANK_X (already passed) - falls through to speed1 below either way
+    CP ZUM_CHARGE_MARGIN
+    JR NC,UOZ_SPEED1
+    LD A,ZUM_SPEED_FAST
+    JR UOZ_SPEED_SET
+UOZ_SPEED1:
+    LD A,ZUM_SPEED_SLOW
+UOZ_SPEED_SET:
+    LD B,A
+    LD A,(IX+1) : SUB B : LD (IX+1),A
+
+UOZ_DRAW:
+    LD A,(IX+4) : ADD A,A : ADD A,A : LD C,A : LD B,0
+    LD HL,ZUM_SPRITE_ATTRS : ADD HL,BC
+    LD A,(IX+2) : LD (HL),A : INC HL
+    LD A,(IX+1) : LD (HL),A : INC HL
+    LD A,PAT_ZUM : LD (HL),A : INC HL
+    LD A,ZUM_COLOR : LD (HL),A
+    RET
+
+UOZ_EXPLODING:
+    LD A,(IX+3)
+    OR A
+    JR Z,UOZ_EXPLODE_HIDE
+    DEC A : LD (IX+3),A
+    LD A,(IX+1) : LD B,A : LD A,(IX+5) : ADD A,B : LD (IX+1),A
+    LD A,(IX+2) : LD B,A : LD A,(IX+6) : ADD A,B : LD (IX+2),A
+UOZ_DRAW_EXPLOSION:
+    LD A,(IX+4) : ADD A,A : ADD A,A : LD C,A : LD B,0
+    LD HL,ZUM_SPRITE_ATTRS : ADD HL,BC
+    LD A,(IX+2) : LD (HL),A : INC HL
+    LD A,(IX+1) : LD (HL),A : INC HL
+    LD A,PAT_EXPLOSION : LD (HL),A : INC HL
+    LD A,EXPLOSION_COLOR : LD (HL),A
+    RET
+UOZ_EXPLODE_HIDE:
+    XOR A : LD (IX+0),A
+    CALL UOZ_HIDE
+    RET
+
+UOZ_HIDE:
+    LD A,(IX+4) : ADD A,A : ADD A,A : LD C,A : LD B,0
+    LD HL,ZUM_SPRITE_ATTRS : ADD HL,BC
+    LD A,209 : LD (HL),A
+    RET
+
+; IX = slot base. Probes IDCACHE_T0..T3 at this Zum's own column
+; ((Z_X+8)>>3, its horizontal center) for the first non-BLANK tier,
+; same walk as UPDATE_TERRAIN_COLLISION, then eases Z_Y toward
+; TANK_TIER_Y_TABLE[tier] by ZUM_CLIMB_SPEED/frame, clamped at the
+; target (no overshoot).
+UOZ_TERRAIN_FOLLOW:
+    LD A,(IX+1) : ADD A,8 : SRL A : SRL A : SRL A
+    LD E,A : LD D,0
+    LD HL,IDCACHE_T0 : ADD HL,DE : LD A,(HL)
+    OR A
+    JR NZ,UTF_T0
+    LD A,(IX+1) : ADD A,8 : SRL A : SRL A : SRL A
+    LD E,A : LD D,0
+    LD HL,IDCACHE_T1 : ADD HL,DE : LD A,(HL)
+    OR A
+    JR NZ,UTF_T1
+    LD A,(IX+1) : ADD A,8 : SRL A : SRL A : SRL A
+    LD E,A : LD D,0
+    LD HL,IDCACHE_T2 : ADD HL,DE : LD A,(HL)
+    OR A
+    JR NZ,UTF_T2
+    LD A,3
+    JR UTF_TIER_SET
+UTF_T0:
+    XOR A
+    JR UTF_TIER_SET
+UTF_T1:
+    LD A,1
+    JR UTF_TIER_SET
+UTF_T2:
+    LD A,2
+UTF_TIER_SET:
+    LD E,A : LD D,0
+    LD HL,TANK_TIER_Y_TABLE : ADD HL,DE : LD A,(HL)
+    LD B,A                     ; B = target Y
+    LD A,(IX+2)                ; A = current Z_Y
+    CP B
+    RET Z
+    JR C,UTF_RISE
+    SUB ZUM_CLIMB_SPEED
+    CP B
+    JR NC,UTF_STORE
+    LD A,B
+    JR UTF_STORE
+UTF_RISE:
+    ADD A,ZUM_CLIMB_SPEED
+    CP B
+    JR C,UTF_STORE
+    LD A,B
+UTF_STORE:
+    LD (IX+2),A
+    RET
+
+; blasts ZUM_SPRITE_ATTRS (8 bytes) to hw sprite slots
+; ZUM_SPR_BASE_SLOT..+1 - same raw DI-wrapped OUT + 8-NOP pattern as
+; FLUSH_ENEMY_SPRITES/FLUSH_BULLET_U_SPRITES.
+FLUSH_ZUM_SPRITES:
+    DI
+    LD A,ZUM_SPR_BASE_SLOT*4 : OUT (99h),A
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    LD HL,ZUM_SPRITE_ATTRS
+    LD B,8
+FZS_LOOP:
+    LD A,(HL) : OUT (98h),A
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    INC HL
+    DJNZ FZS_LOOP
+    EI
+    RET
+
+; "自機がジャンプで避けるとそのまま左に消える" - suspended entirely
+; while airborne, letting a Zum slide underneath uninterrupted. Must
+; run after UPDATE_ZUM_ALL (uses each Zum's already-advanced X this
+; frame) - one frame later than TANK_X's own terrain-collision/sprite-
+; draw for this same frame, so a push only visually lands next frame;
+; accepted as a minor lag, same class as every other post-tank-sprite
+; system in this MAINLOOP (enemies, clouds).
+; "お互い貫通せず止まること つまり何も操作しなければ敵に押される" -
+; the Zum's own X always advances at its own pace regardless (computed
+; above, unaffected by the tank); contact instead clamps TANK_X to stay
+; flush with whichever Zum is nearest, so a stationary player gets
+; shoved left as the enemy keeps coming - the player can still move
+; freely away, just never *into* an active Zum.
+UPDATE_TANK_ZUM_PUSH:
+    LD A,(JUMP_ACTIVE)
+    OR A
+    RET NZ
+    LD IX,ZUM_POOL
+    LD B,ZUM_SLOT_COUNT
+UTZP_LOOP:
+    LD A,(IX+0)
+    CP 1
+    JR NZ,UTZP_NEXT
+    LD A,(IX+1)
+    SUB TANK_PUSH_WIDTH
+    LD C,A
+    LD A,(TANK_X)
+    CP C
+    JR C,UTZP_NEXT
+    LD A,C : LD (TANK_X),A
+UTZP_NEXT:
+    INC IX : INC IX : INC IX : INC IX : INC IX : INC IX : INC IX
+    DJNZ UTZP_LOOP
+    RET
+
+; ---------- bullet x Zum collision: front (left half) absorbs the ----------
+; ---------- shot with no effect, rear (right half) destroys it       ----------
+; "正面からは無敵で弾は止まること 破壊条件は後ろから撃たれた場合の
+; み" - Zum only ever moves left, so its own left half is permanently
+; its "front" and its right half its "back", independent of which way
+; the bullet itself was travelling. Same AABB shape as CHECK_HIT_PAIR
+; (enemy box widened to 15); the front/back split is a 2nd check on
+; top of that, against the Zum's own horizontal midpoint.
+CHECK_BULLET_VS_ZUM:
+    LD IX,BULLET0_ACT : CALL CHECK_HIT_ONE_BULLET_ZUM
+    LD IX,BULLET1_ACT : CALL CHECK_HIT_ONE_BULLET_ZUM
+    LD IX,BULLET2_ACT : CALL CHECK_HIT_ONE_BULLET_ZUM
+    RET
+
+CHECK_HIT_ONE_BULLET_ZUM:
+    LD IY,ZUM_POOL
+    LD B,ZUM_SLOT_COUNT
+CHOBZ_LOOP:
+    PUSH BC
+    CALL CHECK_HIT_PAIR_ZUM
+    POP BC
+    INC IY : INC IY : INC IY : INC IY : INC IY : INC IY : INC IY
+    DJNZ CHOBZ_LOOP
+    RET
+
+CHECK_HIT_PAIR_ZUM:
+    LD A,(IX+0)
+    OR A
+    RET Z
+    LD A,(IY+0)
+    CP 1
+    RET NZ
+
+    LD A,(IX+2) : ADD A,A : ADD A,A : ADD A,A : LD B,A
+    LD A,(IX+3) : ADD A,A : ADD A,A : ADD A,A : LD C,A
+    LD A,(IY+1) : LD D,A
+    LD A,(IY+2) : LD E,A
+
+    LD A,B : ADD A,7 : CP D : RET C
+    LD A,D : ADD A,15 : CP B : RET C
+    LD A,C : ADD A,7 : CP E : RET C
+    LD A,E : ADD A,15 : CP C : RET C
+
+    LD A,(IY+1) : ADD A,8 : LD D,A   ; D = Zum's own horizontal midpoint
+    LD A,B                            ; bullet's own pixel X
+    CP D
+    JR NC,CHPZ_REAR
+
+    ; front: absorb only - erase F's own BG cell (U has nothing to
+    ; erase), deactivate the bullet, no score/explosion/sound.
+    LD A,(IX+1)
+    OR A
+    JR NZ,CHPZ_FRONT_SKIP_ERASE
+    CALL ERASE_BULLET_CELL
+CHPZ_FRONT_SKIP_ERASE:
+    XOR A : LD (IX+0),A
+    RET
+
+CHPZ_REAR:
+    LD A,(IX+1)
+    OR A
+    JR NZ,CHPZ_REAR_SKIP_ERASE
+    CALL ERASE_BULLET_CELL
+CHPZ_REAR_SKIP_ERASE:
+    XOR A : LD (IX+0),A
+
+    LD A,2 : LD (IY+0),A
+    LD A,EXPLOSION_DURATION : LD (IY+3),A
+
+    LD A,(TICK) : AND 7 : LD C,A : LD B,0
+    LD HL,EXPLODE_DIR_DX : ADD HL,BC : LD A,(HL) : LD (IY+5),A
+    LD HL,EXPLODE_DIR_DY : ADD HL,BC : LD A,(HL) : LD (IY+6),A
 
     CALL SOUND_DESTROY
 
