@@ -35,15 +35,22 @@ with no way to tell where.
   "自機の右下"), scans `IDCACHE_T0`-`IDCACHE_T3` top-to-bottom for the
   first non-BLANK id at that column to find the surface tier - "下は
   Rock設置を調べ" - any non-BLANK id (steady rock or a slope-transition
-  cell) counts as solid ground. `TANK_TIER_Y_TABLE` converts the found
-  row-index straight to a Y (`TANK_TIER=3`, the track's starting/
-  lowest tier, reproduces the original fixed `TANK_Y_BASE`(156)
-  exactly; each row-index down is 8px higher) - note this numbering
-  runs opposite to `terrain_gen.py`'s own generator "tier" (which
-  counts up while climbing), since row-index0 is the *highest* screen
-  row. No descend art exists yet, so both the climb (`R225_UL`/
-  `R225_UR`) and descend (`R225D_UL`/`R225D_UR`) ids trigger the same
-  Gap pose - "まだ下りの絵を用意してないのでGapスプライト流用".
+  cell) counts as solid ground. `TANK_TIER_Y_TABLE` gives the found
+  row-index's target Y (`TANK_TIER=3`, the track's starting/lowest
+  tier, reproduces the original fixed `TANK_Y_BASE`(156) exactly; each
+  row-index down is 8px higher) - note this numbering runs opposite to
+  `terrain_gen.py`'s own generator "tier" (which counts up while
+  climbing), since row-index0 is the *highest* screen row. No descend
+  art exists yet, so both the climb (`R225_UL`/`R225_UR`) and descend
+  (`R225D_UL`/`R225D_UR`) ids trigger the same Gap pose - "まだ下りの
+  絵を用意してないのでGapスプライト流用".
+  - `TANK_GROUND_Y` eases toward that target at `TANK_CLIMB_SPEED`
+    (2px/frame) instead of snapping the full 8px in one frame, which
+    looked like a jolt/jitter at every tier change - "登り降り時に
+    一気に8px移動してるんでガタついてる...滑らかに繋げて". Verified
+    the Gap pose (already active a few frames before the Y-snap, and
+    held via `TANK_SLOPE_HOLD` afterward - see below) comfortably
+    covers the whole ~4-frame easing window with margin on both ends.
   - **Slope check** ("Gapを調べる", sets `TANK_ON_SLOPE`) went through
     2 rounds: a separate probe 1 column *behind* `TANK_COL_R` always
     lagged the Y-tier-snap by exactly 1 column's scroll time (it was

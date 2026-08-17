@@ -44,6 +44,7 @@ TANK_COLOR_BR EQU 1        ; black
 TANK_X_INIT   EQU 40
 TANK_Y_BASE   EQU 156      ; row23 top (23*8=184) - tank height(32) + landing offset(3+1)
 TANK_SPEED    EQU 2        ; px/frame, left/right
+TANK_CLIMB_SPEED EQU 2     ; px/frame - TANK_GROUND_Y eases toward each tier's Y instead of snapping
 JUMP_PEAK     EQU 24       ; px
 JUMP_FRAMES   EQU 49       ; JUMP_OFFSET_TABLE length (0-24 rise, 23-0 fall)
 SPRITE_ATTRS  EQU 0F200h   ; 16 bytes
@@ -512,9 +513,35 @@ UTC_TIER3:
     LD HL,IDCACHE_T3 : LD (TANK_ROWPTR),HL
 UTC_TIER_DONE:
 
+    ; move TANK_GROUND_Y toward the tier's target Y at TANK_CLIMB_SPEED
+    ; px/frame instead of snapping straight there - snapping the full
+    ; 8px in one frame looked like a jolt/jitter at every tier change,
+    ; per direct instruction ("登り降り時に一気に8px移動してるんで
+    ; ガタついてる...滑らかに繋げて").
     LD A,(TANK_TIER) : LD E,A : LD D,0
-    LD HL,TANK_TIER_Y_TABLE : ADD HL,DE : LD A,(HL)
+    LD HL,TANK_TIER_Y_TABLE : ADD HL,DE
+    LD A,(HL) : LD B,A            ; B = target Y
+    LD A,(TANK_GROUND_Y)          ; A = current (smoothed) Y
+    CP B
+    JR Z,UTC_GROUND_Y_DONE
+    JR C,UTC_GROUND_Y_RISE
+    ; current > target (numerically lower on screen, i.e. climbing) -
+    ; step down toward it, clamping so it can't undershoot past it
+    SUB TANK_CLIMB_SPEED
+    CP B
+    JR NC,UTC_GROUND_Y_SET
+    LD A,B
+    JR UTC_GROUND_Y_SET
+UTC_GROUND_Y_RISE:
+    ; current < target (descending) - step up toward it, clamping so
+    ; it can't overshoot past it
+    ADD A,TANK_CLIMB_SPEED
+    CP B
+    JR C,UTC_GROUND_Y_SET
+    LD A,B
+UTC_GROUND_Y_SET:
     LD (TANK_GROUND_Y),A
+UTC_GROUND_Y_DONE:
 
     ; slope check (a): TANK_COL_R's own cell at the tier just found
     LD A,(TANK_COL_R) : LD E,A : LD D,0
