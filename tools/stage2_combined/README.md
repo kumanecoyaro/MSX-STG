@@ -64,15 +64,15 @@ with no way to tell where.
     on id0/BLANK) - so "row `>= BULLET_ROCK_ROW_MIN`(19)" is exactly
     (not approximately) the right test for "rock-colored", regardless
     of which tile is really at that cell.
-  - `BulletF` and `BulletU` also have different fg colors from each
-    other now (black vs green, per direct instruction), so each needs
-    its own pair of color groups, not a shared pair split only by
-    background: `BULLETU_SKY_CODE`/`BULLETU_ROCK_CODE` (groups 11/12:
-    fg2 green/bg5, fg2 green/bg10) and `BULLETF_SKY_CODE`/
-    `BULLETF_ROCK_CODE` (groups 13/14: fg1 black/bg5, fg1 black/bg10)
-    - all 4 groups patched onto `terrain_gen.py`'s generic per-group
-    color-table slots that no real terrain code ever uses (codes
-    88-119, well past the terrain's own 0-87).
+  - `BulletF` and `BulletU` share one fg color again (both black - per
+    direct instruction; briefly split into 2 separate color-group
+    pairs each when only `BulletF` was black, one round earlier), so
+    they share one pair of groups, split only by background:
+    `BULLETF_SKY_CODE`/`BULLETU_SKY_CODE` (color group 11: fg1
+    black/bg5) and `BULLETF_ROCK_CODE`/`BULLETU_ROCK_CODE` (group 12:
+    fg1 black/bg10) - both groups patched onto `terrain_gen.py`'s
+    generic per-group color-table slots that no real terrain code ever
+    uses (codes 88-103, well past the terrain's own 0-87).
   - **Erasing** (before advancing) restores row19 explicitly (it's
     static, filled once at INIT and never touched again) or sky
     (`SKY_BLANK_CODE`), but is skipped entirely for rows 20-23 - those
