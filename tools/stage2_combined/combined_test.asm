@@ -37,7 +37,10 @@ NAMEBUF_T3    EQU 0F160h
 ; ---------- tank state (past terrain's own range - 0F100h-0F180h) ----------
 SPRATR        EQU 1B00h
 SPRPAT        EQU 3800h
-TANK_COLOR_TL EQU 6        ; dark red (main body)
+; medium red (main body) - was dark red(6), swapped with the rock's own
+; fg color - "カラー変更 Rockの文字色レッドと自機のレッドを入れ替えて"
+; (see the ROCK_COLOR_SWAPPED_PATCH comment in INIT).
+TANK_COLOR_TL EQU 8
 TANK_COLOR_TR EQU 1        ; black
 TANK_COLOR_BL EQU 1        ; black
 TANK_COLOR_BR EQU 1        ; black
@@ -412,6 +415,19 @@ INIT:
 
     LD HL,TERRAIN_PATTERNS : LD DE,0000h : LD BC,TERRAIN_PATTERN_COUNT*8 : CALL LDIRVM
     LD HL,TERRAIN_COLORDATA : LD DE,2000h : LD BC,32 : CALL LDIRVM
+
+    ; "カラー変更 Rockの文字色レッドと自機のレッドを入れ替えて" - swap
+    ; the rock's own fg color (terrain_gen.py's ROCK_COLOR, fg8 medium
+    ; red) with the tank's TL/main-body color (TANK_COLOR_TL, fg6 dark
+    ; red - see the tank sprite color patch below). Patched here rather
+    ; than editing terrain_gen.py itself (shared with the other stage2
+    ; tests) - same "patch over the shared module's defaults" approach
+    ; already used for the bullet colors below. Groups1-31 all start
+    ; out ROCK_COLOR-uniform (see TERRAIN_COLORDATA); overwriting all
+    ; of them here is harmless even though only groups1-10 are real
+    ; rock - groups11-30 (bullets/digits/swatch) get their own,
+    ; unrelated colors patched in further down anyway.
+    LD HL,ROCK_COLOR_SWAPPED_PATCH : LD DE,2001h : LD BC,31 : CALL LDIRVM
 
     ; checkpoint 2: terrain patterns + color table loaded
     LD B,2 : LD C,7 : CALL WRTVDP
@@ -2224,6 +2240,11 @@ HEXLABEL_CODES:
     DB 104,105,106,107,108,109,110,111,112,113,114,115,116,117,118,119
 HUD_ZERO8:
     DS 8,0
+
+; fg6 (dark red, was the tank's) / bg10 (dark yellow, unchanged) x31 -
+; see the color-swap patch in INIT above.
+ROCK_COLOR_SWAPPED_PATCH:
+    DS 31,06Ah
 
 ; explosion sprite (16x16), byte-for-byte from src/CYBER SHMUP.asm's
 ; own EXPLOSION_PATTERN (its pod-destroy-burst spark shape) - "弾が

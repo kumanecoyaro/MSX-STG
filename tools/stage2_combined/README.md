@@ -518,6 +518,19 @@ with no way to tell where.
     the first slot - confirming the loop actually reaches every slot)
     both still explode/deactivate/award score/kick the sound
     identically to before.
+- **Rock/tank red swap** ("カラー変更 Rockの文字色レッドと自機の
+  レッドを入れ替えて"): `terrain_gen.py`'s own `ROCK_COLOR` (fg8
+  medium red) and `TANK_COLOR_TL` (fg6 dark red, the tank's main body)
+  traded fg values - rock is now fg6, the tank's main body now fg8.
+  Patched in `combined_test.asm`'s own `INIT` (`ROCK_COLOR_SWAPPED_PATCH`,
+  31 bytes covering color groups1-31) rather than editing
+  `terrain_gen.py` itself, matching the existing precedent of patching
+  specific groups locally rather than changing that shared module (see
+  the bullet color patch) - groups11-30 get their own unrelated colors
+  patched in right after anyway, so overwriting the whole 1-31 range
+  here is harmless. Verified directly against VRAM: color group1
+  (and 5, 10 - representative rock groups) all read fg6/bg10, and the
+  tank's TL sprite attribute reads color 8.
 - Border-color diagnostic checkpoints through INIT (VDP R7), added
   specifically because the tank-only test froze on real hardware with
   no clue where:
