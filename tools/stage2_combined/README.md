@@ -33,17 +33,56 @@ with no way to tell where.
 - **Per-quadrant sprite color**: each 32x32 pose is 4 separate 16x16
   hardware sprites (TL/TR/BL/BR), and MSX1 sprites are monochrome, so
   each quadrant gets its own color attribute instead of one flat tank
-  color - TL (main body) dark blue, TR/BL/BR (gun/treads) black - per
+  color - TL (main body) medium red, TR/BL/BR (gun/treads) black - per
   direct instruction (initially "右上のスプライトの色をグレーに
-  右下左下をブラックに", then TR changed from gray to black too).
+  右下左下をブラックに", then TR changed from gray to black, then TL
+  changed from dark blue to medium red - "自機の左上のスプライトを
+  ミドルレッドに変更").
+- **Shot** (A button, edge-triggered, pool of 3 - "Stage1と同様に
+  制限数画面内3発", mirroring `src/CYBER SHMUP.asm`'s own BULLET0/1/2):
+  drawn as BG (name-table) characters, not sprites - same reasoning as
+  the player's own shots in that file, any number can share a scanline
+  with the tank/terrain sprites with no "4 sprites per line" flicker.
+  Two shapes: `BulletF` (straight ahead, 1 column/frame, fixed row -
+  the row it spawned at) and `BulletU` (diagonal, 1 column/frame *and*
+  1 row up/frame - fired while holding up, i.e. `TANK_AIMUP`). Spawn
+  row = `TANK_Y_CUR>>3`, spawn column = `(TANK_X+24)>>3` (muzzle,
+  right side of the tank - the tank only ever faces right, there's no
+  flip/left-facing state anywhere in this test).
+  - **Background compositing** ("背景色は書換先のセルを調べて合成"):
+    SCREEN1 color is fixed per 8-character-code group, not per screen
+    position, so a bullet can't just draw its green pixels over
+    whatever's already there - it needs a dedicated pattern code (with
+    green fg) placed in a color group whose bg matches the terrain
+    tile actually underneath. The tank's own Y never goes below its
+    grounded baseline (jumping only raises it further - no ground-
+    height collision system yet, see below), so a shot's spawn row is
+    always `<= BULLET_GROUND_ROW`(19), and a shot can only ever be
+    over one of exactly two backgrounds: open sky (rows 0-18) or
+    row19's own static "flat rock top" tile (which - unlike rows
+    20-23 - never scrolls/changes once INIT fills it). That reduces
+    "check the destination cell" to a cheap `CP BULLET_GROUND_ROW` per
+    frame per bullet, not a real per-cell lookup: `BULLETF_SKY_CODE`/
+    `BULLETU_SKY_CODE` (color group 11: fg2 green/bg5, matching the
+    sky's own bg) and `BULLETF_ROCK_CODE`/`BULLETU_ROCK_CODE` (group
+    12: fg2 green/bg10, matching row19's own bg) - both groups patched
+    onto 2 of `terrain_gen.py`'s per-group color-table slots that no
+    real terrain code ever uses (codes 88-103, well past the terrain's
+    own 0-87). Erasing (before advancing) picks the matching *blank*
+    code the same way (`SKY_BLANK_CODE`(0) or row19's own
+    `TERRAIN_PATTERN_COUNT`), so a shot never leaves a hole in either
+    background behind it.
+  - Per-frame draw/erase uses the same raw `DI`-wrapped `OUT` + 8-NOP
+    pattern as `UPDATE_TANK_SPRITES`/`INIT_SPRATR_CLR` (see the bug
+    entries below) - this runs every frame with `EI` active too.
 - **Not physics-integrated with the terrain yet**: `TANK_Y_BASE=156`
   (row23's top minus the tank's 32px height plus a +4 landing offset)
   is a fixed constant matching the terrain's starting flat tier -
   jumps arc relative to it, but the tank does not track the terrain's
   own climb/descend height changes. That needs the ground-height
-  collision system, still not built.
-- Shot (A button) not implemented yet either - out of scope for this
-  pass, movement + jump only.
+  collision system, still not built (also what keeps a shot's spawn
+  row always `<=` row19, making the bullet background-compositing
+  simplification above valid).
 - Border-color diagnostic checkpoints through INIT (VDP R7), added
   specifically because the tank-only test froze on real hardware with
   no clue where:
@@ -137,6 +176,16 @@ with no way to tell where.
   superseded it per direct instruction: "コンバインは動いてるからそっちだけで").
   Left as-is; not a bug worth chasing in a file that's no longer the
   one being iterated on.
+- **Newly-fired shot silently skips its muzzle cell and appears 1
+  column ahead (2 up, for a diagonal shot)** (caught by an emulator
+  test, not a hardware report): `MAINLOOP` originally called
+  `UPDATE_SHOT` (spawns a new bullet, drawing it at the muzzle) before
+  `UPDATE_BULLETS` (advances every active slot 1 cell and redraws) -
+  so a bullet spawned this frame was immediately advanced *again* by
+  the same frame's `UPDATE_BULLETS` sweep before ever being seen at
+  its actual spawn position. Fixed by swapping the call order:
+  existing bullets advance first, then a new one can spawn, so a
+  freshly-fired shot is only ever touched once per frame.
 
 ## Emulator-side testing note
 
@@ -147,13 +196,24 @@ existed. Added `sim_dir` (default 0, same as the old hardcoded
 behavior) so `cpu.sim_dir = 3` etc. can drive movement/aim through the
 exact same code path the real BIOS call would take, instead of poking
 `TANK_X`/`TANK_DX` directly and bypassing the input-decoding logic
-being tested.
+being tested. `GTTRIG` itself later got the same treatment: it used to
+return the same `sim_fire` value regardless of which trigger id (A vs
+B) was actually requested, which was fine while only jump (button B)
+needed simulating, but testing shots (button A) needed the two
+independent - now `sim_trig_a`/`sim_trig_b` (id 1/3, matching
+`READ_INPUT`) are read separately; `sim_fire` is kept as a fallback
+alias for `sim_trig_b` only, for any older test still setting it
+directly.
 
 ## Files
 
 - `combined_test.asm`, `build_test.py` - the merged engine + build
-  script (imports both `terrain_gen.py` and `tank_gen.py`).
+  script (imports `terrain_gen.py`, `tank_gen.py`, and `bullet_gen.py`).
 - `combined_test.rom` - the built ROM.
+- `bullet_gen.py`, `sprites/BulletF.json`, `sprites/BulletU.json` - the
+  2 shot shapes' source art + BG-pattern conversion (8x8, single
+  character each - no quadrant splitting needed, unlike the tank's
+  32x32 sprite).
 - `render_check.py` - emulator verification: boots, runs several full
   track loops with no crash/hang, and renders 2 sample frames from
   real VRAM (BG + sprites composited together) to `combined0.ppm`/
@@ -161,7 +221,8 @@ being tested.
 
 ## Next step
 
-A=shot, and the ground-height collision system so the tank actually
-follows the terrain instead of sitting at a fixed Y (which is also
-when the Gap poses' terrain-slope use gets wired up, deferred from
-this pass).
+The ground-height collision system so the tank actually follows the
+terrain instead of sitting at a fixed Y (which is also when the Gap
+poses' terrain-slope use gets wired up, deferred from an earlier pass,
+and when the bullet background-compositing's "spawn row is always
+`<=` row19" assumption would need revisiting).

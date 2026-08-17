@@ -71,8 +71,19 @@ class Z80:
         if target == 0x00D5:  # GTSTCK: A=id -> A=0-8 direction (simulated via sim_dir, default 0=centered)
             self.a = getattr(self, 'sim_dir', 0)
             return True
-        if target == 0x00D8:  # GTTRIG: A=id -> simulated fire button
-            self.a = 0xFF if getattr(self,'sim_fire',False) else 0
+        if target == 0x00D8:  # GTTRIG: A=id -> simulated trigger button.
+            # id=1: port1 trigger A (shot); id=3: port1 trigger B (jump) -
+            # see combined_test.asm's READ_INPUT. Simulated independently
+            # (sim_trig_a/sim_trig_b) so a test can press one without the
+            # other; sim_fire is kept as an alias for trigger B only, for
+            # any older test still setting it directly.
+            trig_id = self.a
+            if trig_id == 1:
+                self.a = 0xFF if getattr(self, 'sim_trig_a', False) else 0
+            elif trig_id == 3:
+                self.a = 0xFF if getattr(self, 'sim_trig_b', getattr(self, 'sim_fire', False)) else 0
+            else:
+                self.a = 0
             return True
         return False
 
