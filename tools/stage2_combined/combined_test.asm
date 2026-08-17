@@ -98,17 +98,23 @@ CUR_POSE_PAT  EQU 0F22Ah
 ; ---------- number can share a scanline with the tank with no       ----------
 ; ---------- "4 sprites per line" flicker (same reasoning as the      ----------
 ; ---------- player's own shots in src/CYBER SHMUP.asm). A shot can    ----------
-; ---------- sit over 2 different backgrounds: open sky above row18,   ----------
-; ---------- or the ground tier (row18 SkySand, row19 Sand, rows20-23  ----------
-; ---------- scrolling terrain - all 3 share one bg via terrain_gen.py ----------
-; ---------- 's ROCK_COLOR/SAND_COLOR/SKYSAND_COLOR, so one boundary    ----------
-; ---------- test is enough) - erasing/drawing needs to put back the    ----------
-; ---------- right one. rows18-19 need an explicit erase write each     ----------
-; ---------- (static, filled once at INIT); rows20-23 get fully         ----------
-; ---------- redrawn from NAMEBUF every frame before the bullet update  ----------
-; ---------- runs, so erasing a bullet there is a no-op - see            ----------
-; ---------- UPDATE_ONE_BULLET below.                                    ----------
-BULLET_ROCK_ROW_MIN EQU 18      ; first row where the ground bg applies (18-23)
+; ---------- sit over open sky, the 2 static rows (18 SkySand, 19       ----------
+; ---------- Sand), or the scrolling terrain (rows20-23) - erasing      ----------
+; ---------- needs to restore whichever of those 4 is really there.     ----------
+; ---------- rows18-19 need an explicit erase write each (static,       ----------
+; ---------- filled once at INIT); rows20-23 get fully redrawn from     ----------
+; ---------- NAMEBUF every frame before the bullet update runs, so      ----------
+; ---------- erasing a bullet there is a no-op - see UPDATE_ONE_BULLET   ----------
+; ---------- below.                                                     ----------
+BULLET_ROCK_ROW_MIN EQU 18      ; first row needing an explicit (non-sky) erase restore (18-23)
+; the bullet's own drawn color (sky-blue bg vs ground-yellow bg fill
+; for its sprite's own background pixels) switches later than the
+; erase boundary above - "Skysandとその下のSandは...背景色ブルーのまま
+; でいい...背景色イエローでやると明るい色なので余計に目立つ" (keep
+; blue over rows18-19 too; yellow there is too bright/stands out) - so
+; only the real scrolling terrain (rows20-23) gets the yellow variant.
+; Applies identically to F and U shots - "斜め打ちは同じってことだな".
+BULLET_ROCK_COLOR_ROW_MIN EQU 20
 ; a diagonal/U shot decrements ROW every frame as it climbs; with no
 ; lower bound it could fly into rows0-1 (the HUD) and erase a glyph
 ; permanently instead of restoring it - "カラーバーAからF消えたぞ".
@@ -1434,7 +1440,7 @@ EBC_SKIP:
 ; current-row x FACING) and writes it at ADDR+COL.
 DRAW_BULLET_CELL:
     LD A,(IX+3)
-    CP BULLET_ROCK_ROW_MIN
+    CP BULLET_ROCK_COLOR_ROW_MIN
     JR NC,DBC_ROCK
     LD A,(IX+6)
     OR A

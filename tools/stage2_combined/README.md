@@ -596,12 +596,19 @@ with no way to tell where.
   moved to 1A40h (row18); a new `TERRAIN_ROW_SAND` (32 x
   `TERRAIN_BLANK_CODE` - a new symbol `terrain_gen.py` now exports,
   reusing the scrolling terrain's own BLANK code/color, no new group
-  needed) fills row19 at 1A60h. `BULLET_ROCK_ROW_MIN` 19->18 (both rows
-  share the same bg) and `ERASE_BULLET_CELL` now restores SkySand on
-  row18 and Sand on row19. Also fixed in passing: `BULLET_ROCK_COLOR-
-  BYTE` was still `01Ah` (bg10) from before `ROCK_COLOR` moved to bg11
-  - a bullet flying over any ground row showed a small dark-yellow
-    patch behind it - corrected to `01Bh`.
+  needed) fills row19 at 1A60h. `ERASE_BULLET_CELL` now restores
+  SkySand on row18 and Sand on row19. Also fixed in passing:
+  `BULLET_ROCK_COLORBYTE` was still `01Ah` (bg10) from before
+  `ROCK_COLOR` moved to bg11 - corrected to `01Bh`.
+- **Bullet's own color stays blue over rows18-19** ("Skysandとその下の
+  Sandは...背景色ブルーのままでいい...背景色イエローでやると明るい色
+  なので余計に目立つ"): split the erase-boundary constant from the
+  draw-color one - `BULLET_ROCK_ROW_MIN`(18, erase/restore logic,
+  unchanged) vs new `BULLET_ROCK_COLOR_ROW_MIN`(20) - so only rows20-23
+  (the real scrolling terrain) draw the bullet's yellow-bg variant;
+  rows18-19 keep the sky/blue one. Applies identically to F and U -
+  "斜め打ちは同じってことだな". Verified against actual VRAM codes at
+  each row.
 
 ## Bugs found and fixed while building this
 
