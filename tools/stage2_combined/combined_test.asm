@@ -401,6 +401,38 @@ EXPLOSION_COLOR    EQU 8    ; medium red - same color src/CYBER SHMUP.asm uses f
 ; MAINLOOP each frame - so the drift stays smooth regardless of length.
 EXPLOSION_DURATION EQU 8
 
+; ---------- flowing background clouds (see CLOUD_UPDATE_ALL) ----------
+; "Stage1でもやってる雲を上から3行目に4セルの雲をランダムタイミングで
+; 4行目はから8行目まで2セルと4セル雲をランダムに各行で速度変化をつけて
+; 3から5行目は最速の毎フレーム1セル移動 5から8行目は半速の2フレで1セル"
+; (5行目は最速側 - confirmed directly). 6 independent generators, one
+; per screen row2-7 (3rd-8th row from the top), buffer+DJNZ-loop driven
+; like ENEMY_POOL, not individually unrolled - same "管理もバッファ経由
+; だぞ" precedent. Reuses src/CYBER SHMUP.asm's own CLOUDW/CLOUDN idea
+; (idle/wait/move/erase-redraw, 2-tile WA/WB glyph pair) generalized to
+; N rows with a per-slot ROW/INTERVAL/FIXED4 instead of 2 hardcoded
+; instances.
+;
+; slot layout (CLOUD_SLOT_SIZE=9): +0 ACT, +1 INTERVAL (frames per
+; 1-cell move, fixed per row), +2 FIXED4 (1=row2's cloud is always
+; 4-cell wide, 0=every other row randomly picks 2 or 4 at spawn),
+; +3 COL (signed, leftmost cell), +4 TIMER (frames left to next
+; move), +5 WAIT (frames left to next spawn attempt while inactive),
+; +6 WIDTH (2 or 4, chosen at spawn), +7/+8 ROWADDR_LO/HI (this slot's
+; fixed name-table row base address, precomputed once at INIT).
+CLOUD_SLOT_SIZE  EQU 9
+CLOUD_SLOT_COUNT EQU 6
+CLOUD_POOL    EQU 0F2A9h   ; CLOUD_SLOT_SIZE*CLOUD_SLOT_COUNT = 54 bytes
+CLOUD_RNG     EQU 0F2DFh   ; shared free-running counter, same idea as Stage1's DFL_RNG
+CLOUD_SPAWN_COL EQU 32     ; leftmost cell starts one column past the right edge
+; codes1-2: genuinely unused pattern-code slots within group0 (see the
+; INIT-time load below) - reuses src/CYBER SHMUP.asm's own CLOUD_WA/
+; WB_CODE art byte-for-byte, just renumbered since Stage2's own code
+; map is unrelated to Stage1's.
+CLOUD_A_CODE  EQU 1
+CLOUD_B_CODE  EQU 2
+CLOUD_GROUP0_COLOR EQU 0F5h   ; fg15 white / bg5 light blue (group0 was 0x55 sky-on-sky)
+
 STACKTOP      EQU 0F380h
 
 INIT:
@@ -432,6 +464,25 @@ INIT:
     ; them here or not makes no difference).
     LD HL,ROCK_COLOR_SWAPPED_PATCH : LD DE,2001h : LD BC,1 : CALL LDIRVM
     LD HL,ROCK_COLOR_SWAPPED_PATCH : LD DE,2003h : LD BC,29 : CALL LDIRVM
+
+    ; flowing background clouds: 2-tile glyph pair at codes1-2, genuinely
+    ; unused slots within group0 (SKY_BLANK_CODE=0 is group0's only real
+    ; occupant per terrain_gen.py - codes1-7 are never emitted by the
+    ; terrain generator at all). Group0's color becomes white-on-sky-
+    ; blue instead of sky-on-sky.
+    LD HL,CLOUD_A_PATTERN : LD DE,CLOUD_A_CODE*8 : LD BC,8 : CALL LDIRVM
+    LD HL,CLOUD_B_PATTERN : LD DE,CLOUD_B_CODE*8 : LD BC,8 : CALL LDIRVM
+    LD A,CLOUD_GROUP0_COLOR : LD (HUD_TEMP_BYTE),A
+    LD HL,HUD_TEMP_BYTE : LD DE,2000h : LD BC,1 : CALL LDIRVM
+    ; SKY_BLANK_CODE(0)'s own pattern actually has a few stray "1" bits
+    ; (terrain_gen.py's BLANK tile, some faint speckle never meant to
+    ; be visible) - harmless while group0 was sky-on-sky (fg==bg hid
+    ; them), but they'd show through as a whole-screen fg-white speckle
+    ; the instant group0 gets a real fg/bg split (caught by rendering
+    ; the ROM and comparing against the intended cloud-only look).
+    ; Zeroed here (VRAM-only patch, terrain_gen.py's own BLANK data
+    ; untouched) so plain open sky stays genuinely blank.
+    LD HL,HUD_ZERO8 : LD DE,SKY_BLANK_CODE*8 : LD BC,8 : CALL LDIRVM
 
     ; checkpoint 2: terrain patterns + color table loaded
     LD B,2 : LD C,7 : CALL WRTVDP
@@ -720,6 +771,44 @@ IESA_LOOP:
     LD (HL),A : INC HL
     DJNZ IESA_LOOP
 
+    ; cloud pool: each of the 6 slots gets its own fixed ROW (2-7,
+    ; CLOUD_ROW_TABLE)/INTERVAL/FIXED4 from the 3 lookup tables below,
+    ; ROWADDR precomputed once (row*32 fits an 8-bit low byte for
+    ; rows0-7, so the high byte is always 18h - no per-frame lookup
+    ; needed later), and a random initial WAIT so all 6 don't spawn in
+    ; lockstep - same idea as CLOUDW/CLOUDN's own idle-at-boot random
+    ; wait in src/CYBER SHMUP.asm. C is the table index (0-5); PUSH BC
+    ; around the CALL protects both it and the outer DJNZ counter B,
+    ; same precaution as every other pool loop in this file after the
+    ; enemy-pool DJNZ/B-clobber bug (see README).
+    LD HL,CLOUD_POOL
+    LD B,CLOUD_SLOT_COUNT
+    LD C,0
+ICL_LOOP:
+    PUSH HL
+    POP IX
+    XOR A : LD (IX+0),A                       ; ACT=0
+
+    PUSH BC
+    LD A,C : LD E,A : LD D,0
+    LD HL,CLOUD_ROW_TABLE : ADD HL,DE : LD A,(HL)
+    ADD A,A : ADD A,A : ADD A,A : ADD A,A : ADD A,A   ; row*32 (row<=7, fits in 8 bits)
+    LD (IX+7),A
+    LD A,18h : LD (IX+8),A
+    LD A,C : LD E,A : LD D,0
+    LD HL,CLOUD_INTERVAL_TABLE : ADD HL,DE : LD A,(HL) : LD (IX+1),A
+    LD A,C : LD E,A : LD D,0
+    LD HL,CLOUD_FIXED4_TABLE : ADD HL,DE : LD A,(HL) : LD (IX+2),A
+    CALL CLOUD_RANDOM_WAIT
+    LD (IX+5),A
+    POP BC
+
+    PUSH IX
+    POP HL
+    LD DE,CLOUD_SLOT_SIZE : ADD HL,DE
+    INC C
+    DJNZ ICL_LOOP
+
     ; checkpoint 9: enemy patterns + pool set up - about to enter MAINLOOP
     LD B,9 : LD C,7 : CALL WRTVDP
 
@@ -779,6 +868,7 @@ SKIP_ADVANCE:
     CALL UPDATE_SHOT
     CALL UPDATE_ENEMIES
     CALL CHECK_BULLET_VS_ENEMY
+    CALL CLOUD_UPDATE_ALL
 
     LD HL,(GAME_TICK) : INC HL : LD (GAME_TICK),HL
     CALL GAME_TICK_DISPLAY
@@ -2203,6 +2293,146 @@ CHECK_HIT_PAIR:
     CALL ADD_SCORE
     RET
 
+; walks CLOUD_POOL (IX-indexed, 9x INC IX per slot - this assembler has
+; no ADD IX,DE, same as UE_UPDATE_ALL) calling UPDATE_ONE_CLOUD on every
+; slot. PUSH/POP BC around the CALL: UPDATE_ONE_CLOUD's own cell-write
+; helpers use B/C as scratch, which would otherwise corrupt this loop's
+; DJNZ counter - same precaution as every other pool loop in this file.
+CLOUD_UPDATE_ALL:
+    LD IX,CLOUD_POOL
+    LD B,CLOUD_SLOT_COUNT
+CUA_LOOP:
+    PUSH BC
+    CALL UPDATE_ONE_CLOUD
+    POP BC
+    INC IX : INC IX : INC IX : INC IX : INC IX : INC IX : INC IX : INC IX : INC IX
+    DJNZ CUA_LOOP
+    RET
+
+; IX = slot base. Idle (counting down WAIT) -> spawn at the right edge
+; (picking WIDTH: forced 4 if FIXED4, else random 2/4) -> move 1 cell
+; left every INTERVAL frames (erase old position, redraw new) -> once
+; fully off the left edge, deactivate and pick a new random WAIT. Same
+; shape as src/CYBER SHMUP.asm's own CLOUDW_UPDATE/CLOUDN_UPDATE.
+UPDATE_ONE_CLOUD:
+    LD A,(IX+0)
+    OR A
+    JR NZ,UOC_MOVE
+    LD A,(IX+5)
+    OR A
+    JR Z,UOC_SPAWN
+    DEC A : LD (IX+5),A
+    RET
+UOC_SPAWN:
+    LD A,1 : LD (IX+0),A
+    LD A,CLOUD_SPAWN_COL : LD (IX+3),A
+    LD A,(IX+1) : LD (IX+4),A
+    LD A,(IX+2)
+    OR A
+    JR NZ,UOC_SPAWN_W4
+    CALL CLOUD_RANDOM_WIDTH
+    JR UOC_SPAWN_WSET
+UOC_SPAWN_W4:
+    LD A,4
+UOC_SPAWN_WSET:
+    LD (IX+6),A
+    RET
+UOC_MOVE:
+    LD A,(IX+4)
+    DEC A
+    LD (IX+4),A
+    RET NZ
+    LD A,(IX+1) : LD (IX+4),A
+    CALL UOC_ERASE_CELLS
+    LD A,(IX+3) : DEC A : LD (IX+3),A
+    LD B,A
+    LD A,(IX+6)
+    CP 4
+    JR Z,UOC_CHECKW4
+    LD A,B
+    CP 0FEh                      ; -2: both cells now fully off the left edge
+    JR Z,UOC_DEACT
+    JR UOC_DRAW
+UOC_CHECKW4:
+    LD A,B
+    CP 0FCh                      ; -4: all 4 cells now fully off the left edge
+    JR Z,UOC_DEACT
+UOC_DRAW:
+    CALL UOC_DRAW_CELLS
+    RET
+UOC_DEACT:
+    XOR A : LD (IX+0),A
+    CALL CLOUD_RANDOM_WAIT
+    LD (IX+5),A
+    RET
+
+UOC_ERASE_CELLS:
+    LD A,(IX+3) : LD B,A : LD C,SKY_BLANK_CODE
+    CALL UOC_WRITE_CELL
+    LD A,(IX+3) : INC A : LD B,A : LD C,SKY_BLANK_CODE
+    CALL UOC_WRITE_CELL
+    LD A,(IX+6)
+    CP 4
+    RET NZ
+    LD A,(IX+3) : ADD A,2 : LD B,A : LD C,SKY_BLANK_CODE
+    CALL UOC_WRITE_CELL
+    LD A,(IX+3) : ADD A,3 : LD B,A : LD C,SKY_BLANK_CODE
+    CALL UOC_WRITE_CELL
+    RET
+
+UOC_DRAW_CELLS:
+    LD A,(IX+3) : LD B,A : LD C,CLOUD_A_CODE
+    CALL UOC_WRITE_CELL
+    LD A,(IX+3) : INC A : LD B,A : LD C,CLOUD_B_CODE
+    CALL UOC_WRITE_CELL
+    LD A,(IX+6)
+    CP 4
+    RET NZ
+    LD A,(IX+3) : ADD A,2 : LD B,A : LD C,CLOUD_A_CODE
+    CALL UOC_WRITE_CELL
+    LD A,(IX+3) : ADD A,3 : LD B,A : LD C,CLOUD_B_CODE
+    CALL UOC_WRITE_CELL
+    RET
+
+; B = column (signed two's-complement; a negative or >31 value reads
+; as >=32 unsigned, so it's simply skipped - same clipping idiom as
+; src/CYBER SHMUP.asm's own CLOUDW_ERASE_CELL/DRAW_CELL), C = code to
+; write, IX = slot base (for its precomputed ROWADDR_LO/HI). Reuses
+; WRITE_BULLET_BYTE_HL (a plain "write byte at VRAM address HL" raw
+; DI/OUT primitive, not actually bullet-specific) instead of a 3rd copy
+; of the same DI-wrapped OUT+8-NOP block.
+UOC_WRITE_CELL:
+    LD A,B
+    CP 32
+    RET NC
+    LD A,C
+    LD (BULLET_TEMP_BYTE),A
+    LD L,(IX+7) : LD H,(IX+8)
+    LD E,B : LD D,0
+    ADD HL,DE
+    JP WRITE_BULLET_BYTE_HL
+
+; Output: A = a pseudo-random frame count (30-157) used as the idle
+; wait before a cloud's next spawn - same range/shape as src/CYBER
+; SHMUP.asm's own CLOUD_RANDOM_WAIT. Trashes A.
+CLOUD_RANDOM_WAIT:
+    LD A,(CLOUD_RNG) : INC A : LD (CLOUD_RNG),A
+    AND 7Fh
+    ADD A,30
+    RET
+
+; Output: A = 2 or 4 (random cloud width for a non-FIXED4 slot).
+; Trashes A.
+CLOUD_RANDOM_WIDTH:
+    LD A,(CLOUD_RNG) : INC A : LD (CLOUD_RNG),A
+    AND 1
+    JR Z,CRW_2
+    LD A,4
+    RET
+CRW_2:
+    LD A,2
+    RET
+
 REFRESH_IDCACHE_33:
     LD B,33
 RIC_LOOP:
@@ -2348,5 +2578,25 @@ EXPLODE_DIR_DX:
     DB 0,2,2,2,0,-2,-2,-2
 EXPLODE_DIR_DY:
     DB -2,-2,0,2,2,2,0,-2
+
+; per-slot fixed setup for CLOUD_POOL's 6 rows (screen rows2-7, the
+; 3rd-8th row from the top) - row2 is the "3行目" special case (always
+; 4-cell wide); rows3-7 randomly pick 2 or 4 at each spawn.
+; "3から5行目は最速の毎フレーム1セル移動 5から8行目は半速の2フレで
+; 1セル" (5行目は最速側): rows2-4 (screen, i.e. 3rd-5th from top)
+; INTERVAL=1, rows5-7 (6th-8th from top) INTERVAL=2.
+CLOUD_ROW_TABLE:
+    DB 2,3,4,5,6,7
+CLOUD_INTERVAL_TABLE:
+    DB 1,1,1,2,2,2
+CLOUD_FIXED4_TABLE:
+    DB 1,0,0,0,0,0
+
+; src/CYBER SHMUP.asm's own CLOUD_WA_CODE/CLOUD_WB_CODE pattern bytes,
+; copied byte-for-byte ("Stage1でもやってる雲を").
+CLOUD_A_PATTERN:
+    DB 06h,6Fh,0FEh,1Bh,04h,00h,00h,00h
+CLOUD_B_PATTERN:
+    DB 00h,0D8h,0B4h,0EFh,0B0h,60h,00h,00h
 
 ; ===== generated tables (terrain + tank) appended below by build_test.py =====

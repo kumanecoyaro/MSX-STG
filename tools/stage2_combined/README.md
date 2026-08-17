@@ -673,6 +673,37 @@ with no way to tell where.
   `DRAW_BULLET_CELL` calls for TYPE=U show sky-code through row16,
   rock-code from row17 on; the row16 SkySand skip-draw behavior itself
   is unchanged (that check runs before this color logic).
+- **Flowing background clouds, 6 rows** ("Stage1でもやってる雲を上から
+  3行目に4セルの雲をランダムタイミングで 4行目はから8行目まで2セルと
+  4セル雲をランダムに各行で速度変化をつけて 3から5行目は最速の毎フレ
+  ーム1セル移動 5から8行目は半速の2フレで1セル" - the overlapping
+  "5行目" between the two speed ranges confirmed as the fast side, i.e.
+  rows3-5(top) fast / rows6-8(top) half-speed, not a 4-way split):
+  `CLOUD_POOL`, 6 slots (screen rows2-7, the 3rd-8th row from the top),
+  buffer+DJNZ-loop driven like `ENEMY_POOL` rather than 6 individually-
+  unrolled instances - each slot fixed at INIT to its own ROW (2-7),
+  INTERVAL (1=every frame for rows2-4, 2=every other frame for
+  rows5-7) and FIXED4 (row2's cloud is always 4-cell wide; rows3-7
+  randomly pick 2 or 4 at each spawn via a new shared `CLOUD_RNG`
+  counter, same idle/wait/move/erase-redraw shape as `src/CYBER
+  SHMUP.asm`'s own `CLOUDW_UPDATE`/`CLOUDN_UPDATE`, generalized instead
+  of duplicated). Reuses that file's own 2-tile WA/WB cloud glyph pair
+  byte-for-byte ("Stage1でもやってる雲を"), placed at codes1-2 -
+  genuinely unused slots within group0 (`SKY_BLANK_CODE`=0 is group0's
+  only real occupant; terrain_gen.py never emits codes1-7 at all) - no
+  new color group needed even though all 32 were already spoken for
+  (see the color-strip entry's own note that only 1 was ever free, and
+  that one's since gone to SkySand). Group0's color moved from sky-on-
+  sky(0x55) to white-on-sky-blue(0xF5) for the clouds; see the Bugs
+  section below for why `SKY_BLANK_CODE` itself needed a follow-up
+  patch once that color changed. Verified over a 4000-frame run: cloud
+  rows2-7 only ever contain codes0/1/2 (no stray leftovers from
+  erase/deactivate), a synthetic same-frame-spawn test confirms the
+  fast/half-speed rows move at exactly 20px/10px over 20 frames (2:1,
+  matching "毎フレーム1セル" vs "2フレで1セル"), and score/HUD/
+  SkySand/Sand/terrain content is all unaffected (no B/C-register
+  corruption from the new DJNZ loop - the CALL inside it is PUSH BC/
+  POP BC-guarded per the established precaution).
 
 ## Bugs found and fixed while building this
 
@@ -982,6 +1013,23 @@ with no way to tell where.
   SkySand+Sand band, see the SkySand-skip entry above). Verified: a
   synthetic `DRAW_BULLET_CELL` call at each row14-20 for TYPE=F shows
   sky-code through row16, rock-code from row17 on.
+- **Recoloring group0 for the clouds turned the entire open sky into
+  white speckle** (caught by rendering the ROM before shipping, not a
+  hardware report): `terrain_gen.py`'s own comment claims
+  `SKY_BLANK_CODE`'s pattern is "all-0 so only bg would ever show" -
+  false; its actual tile (`BLANK` in that file) has a handful of
+  stray "1" bits, harmless while group0 was sky-on-sky (fg==bg hid
+  them everywhere `SKY_BLANK_CODE` is used, i.e. the entire non-
+  terrain, non-HUD screen) but instantly visible as a whole-screen
+  white speckle the moment group0 got a real fg/bg split for the
+  clouds. Fixed with a VRAM-only patch right after the cloud pattern
+  loads - `LD HL,HUD_ZERO8 : LD DE,SKY_BLANK_CODE*8 : LD BC,8 : CALL
+  LDIRVM` zeroes code0's rendered bytes without touching
+  `terrain_gen.py`'s own shared `BLANK` data (same "patch locally,
+  don't edit the shared module" precedent as the color-swap/Sand
+  fixes elsewhere in this file). Verified visually: a 60-frame render
+  before the fix showed the whole sky as a dense white dot-matrix;
+  after, only the actual cloud shapes are visible against solid blue.
 
 ## Emulator-side testing note
 
