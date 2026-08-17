@@ -74,19 +74,27 @@ with no way to tell where.
     moving toward oncoming terrain (especially through the rapid-chain
     section) lets the probe advance through tiers faster than the
     stationary baseline. At the slow pace alone, `TANK_GROUND_Y` then
-    fell more than a tier behind and the tank visibly sank into the
-    rock for a stretch - "左右移動が加わるとGapに突っ込んでる...登っ
-    てはいるが地形にめり込んでる". Fixed by switching to
-    `TANK_CLIMB_CATCHUP_SPEED`(8, no gate) whenever more than
-    `TANK_CLIMB_CATCHUP_THRESHOLD`(9px - must stay above 8, a normal
-    single-tier transition always *starts* at diff=8, so anything <=8
-    has to stay on the smooth slow path or every climb becomes an
-    instant snap again - see the bug entry below) behind, reverting to
-    the smooth slow pace once back under the threshold for the final
-    approach. Verified with an emulator sweep holding the stick right
-    (now at the 1.5px/frame pace above) through the whole track, and
-    again starting exactly at the rapid-chain section: `TANK_GROUND_Y`
-    never falls more than 1 tier behind its target in either case.
+    fell behind and the tank visibly sank into the rock for a stretch -
+    "左右移動が加わるとGapに突っ込んでる...登ってはいるが地形にめり
+    込んでる". A `TANK_CLIMB_CATCHUP_SPEED` fast-path (only engaging
+    past `TANK_CLIMB_CATCHUP_THRESHOLD`(9px, must stay above the 8px
+    every single-tier transition *starts* at, or every climb becomes
+    an instant snap again - see the bug entry below) behind) narrowed
+    the worst case but never fully closed it - even a single ordinary
+    climb's own 8px starting gap could grow while below that
+    threshold, so "まだ左右移動で地形めり込んでる" persisted. Root
+    issue: the slow, terrain-matched pace only ever looked right with
+    the tank standing still - once actively steering, the tank's own
+    motion is already the dominant visual cue, so tracking the ground
+    closely matters more than matching the terrain's own scroll rate.
+    Now selects the pace by whether `TANK_DX` is 0: stationary keeps
+    the slow terrain-matched easing, steering switches to
+    `TANK_CLIMB_SPEED_MOVING` (ungated). Swept 2/3/4/6/8 holding the
+    stick right through the whole track, measuring the worst-case lag
+    behind target at each - only 8 (effectively no easing at all while
+    moving) reached 0; 5 rendered frames through the rapid-chain
+    section while moving right confirm the tank stays grounded
+    throughout instead of sinking.
   - **Slope check** ("Gapを調べる", sets `TANK_ON_SLOPE`) went through
     2 rounds: a separate probe 1 column *behind* `TANK_COL_R` always
     lagged the Y-tier-snap by exactly 1 column's scroll time (it was

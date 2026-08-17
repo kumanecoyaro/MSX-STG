@@ -50,7 +50,15 @@ TANK_Y_BASE   EQU 156      ; row23 top (23*8=184) - tank height(32) + landing of
 ; fractional pixel; averages to 1.5px/frame over any 2-frame window.
 TANK_SPEED_LO EQU 1
 TANK_CLIMB_SPEED EQU 1     ; px/step, gated to every OTHER frame (see UPDATE_TERRAIN_COLLISION) -
-                           ; 0.5px/frame effective, matching the terrain's own ~16-frame climb pace
+                           ; 0.5px/frame effective, matching the terrain's own ~16-frame climb pace,
+                           ; used only while the tank is standing still (TANK_DX=0)
+; px/frame (no gate), used instead of TANK_CLIMB_SPEED while the tank
+; is actively steering (TANK_DX!=0) - see UPDATE_TERRAIN_COLLISION.
+; Swept 2/3/4/6/8 holding the stick right through the whole track and
+; measured the worst-case lag behind TANK_TIER_Y_TABLE's target at
+; each: 6/5/4/2/0px. Only 8 (matching TANK_CLIMB_CATCHUP_SPEED, i.e.
+; effectively no easing at all while moving) reaches 0.
+TANK_CLIMB_SPEED_MOVING EQU 8
 TANK_CLIMB_CATCHUP_SPEED EQU 8  ; px/frame (no gate) once TANK_CLIMB_CATCHUP_THRESHOLD behind - see UPDATE_TERRAIN_COLLISION
 ; a normal single-tier transition always starts at diff=8 (the full
 ; TANK_TIER_Y_TABLE step) - a threshold of 5 (briefly tried) meant
@@ -581,13 +589,28 @@ UTC_GROUND_Y_DIFF_BELOW:
     LD A,B : SUB C                ; diff = target-current (current<target)
 UTC_GROUND_Y_DIFF_READY:
     CP TANK_CLIMB_CATCHUP_THRESHOLD
-    JR C,UTC_GROUND_Y_SLOWGATE     ; diff below threshold: normal smooth single-tier pace
+    JR C,UTC_GROUND_Y_BELOW_THRESHOLD  ; diff below threshold: not a multi-tier backlog
     LD D,TANK_CLIMB_CATCHUP_SPEED
     JR UTC_GROUND_Y_STEP
-UTC_GROUND_Y_SLOWGATE:
+UTC_GROUND_Y_BELOW_THRESHOLD:
+    ; while actively steering, use the faster ungated pace instead of
+    ; the terrain-matched slow one - TANK_COL_R moves with TANK_X, so
+    ; even a single ordinary climb's own diff=8 start can grow before
+    ; the slow pace closes it, reading as sinking into the rock -
+    ; "まだ左右移動で地形めり込んでるな...速度1.5の影響っぽい". The
+    ; slow pace's terrain-matched feel was validated with the tank
+    ; standing still (see above); once moving, the tank's own motion
+    ; is already the dominant visual cue, so tracking the ground
+    ; closely matters more here than matching the terrain's scroll.
+    LD A,(TANK_DX)
+    OR A
+    JR NZ,UTC_GROUND_Y_MOVING
     LD A,(TICK) : AND 1
     JR NZ,UTC_GROUND_Y_DONE
     LD D,TANK_CLIMB_SPEED
+    JR UTC_GROUND_Y_STEP
+UTC_GROUND_Y_MOVING:
+    LD D,TANK_CLIMB_SPEED_MOVING
 UTC_GROUND_Y_STEP:
     LD A,C
     CP B
