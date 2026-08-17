@@ -438,14 +438,15 @@ INIT:
     ; tests) - same "patch over the shared module's defaults" approach
     ; already used for the bullet colors below. Groups1-31 all used to
     ; start out ROCK_COLOR-uniform, so one blind overwrite of the whole
-    ; range was harmless; group2 (Sand's own dedicated color, set by
-    ; terrain_gen.py's own COLORDATA now - see SAND_COLOR there) is
-    ; explicitly skipped here, since group1/3-31 are the only groups
-    ; still genuinely rock-colored (11-30 - bullets/digits/swatch - get
-    ; their own, unrelated colors patched in further down anyway, so
-    ; touching them here or not makes no difference).
+    ; range was harmless; groups2-4 (terrain_gen.py's own SAND_GROUPS -
+    ; Sand's dedicated solo/blend codes, see that file's own comment on
+    ; BLANK_PAIR_BASE) are explicitly skipped here, since group1/5-31
+    ; are the only groups still genuinely rock-colored (11-30 -
+    ; bullets/digits/swatch - get their own, unrelated colors patched
+    ; in further down anyway, so touching them here or not makes no
+    ; difference).
     LD HL,ROCK_COLOR_SWAPPED_PATCH : LD DE,2001h : LD BC,1 : CALL LDIRVM
-    LD HL,ROCK_COLOR_SWAPPED_PATCH : LD DE,2003h : LD BC,29 : CALL LDIRVM
+    LD HL,ROCK_COLOR_SWAPPED_PATCH : LD DE,2005h : LD BC,27 : CALL LDIRVM
 
     ; checkpoint 2: terrain patterns + color table loaded
     LD B,2 : LD C,7 : CALL WRTVDP

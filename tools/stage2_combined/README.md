@@ -577,39 +577,47 @@ with no way to tell where.
   more straight swaps after this ("Skysand差し替え" x2) -
   `SKYSAND_PATTERN`/`sprites/SkySand.json` just get overwritten with
   whatever the latest upload's bits are, no logic changes needed.
-- **Sand gets its own dark-yellow color** ("でSandの文字色をダーク
-  イエローに"): `terrain_gen.py`'s `BLANK_CODE`(Sand's steady tile)
-  moved out of the shared `STEADY_BASE` color group into its own
-  dedicated one (group2, `SAND_COLOR`=fg10/bg10 dark yellow) - see
-  that file's own README entry for why (SCREEN1 can't give 2 tiles in
-  the same 8-code group different colors). That broke this file's own
-  `ROCK_COLOR_SWAPPED_PATCH` from the color-swap round, which blindly
-  overwrote the *entire* groups1-31 range including the new group2 -
-  split into 2 `LDIRVM` calls (group1 alone, then groups3-31) to skip
-  over it. Verified directly against VRAM: group2 reads `SAND_COLOR`
-  (0xAA) while groups1/3/5/10 (the genuinely rock-colored ones) still
-  read the swapped `0x6A`, and code16's pattern bytes match Sand's own
-  art - full regression still passes.
+- **Sand gets its own dark-yellow-on-light-yellow color** ("でSandの
+  文字色をダークイエローに", corrected once seen to "文字色ダーク
+  イエロー、背景色ライトイエロー" - fg10/bg11, not fg10/bg10 as an
+  earlier round mistakenly used): `terrain_gen.py`'s `BLANK_CODE`
+  (Sand's steady tile) and, after 2 flicker rounds, every pair
+  involving it, moved out of the shared rock color group into their
+  own dedicated ones (`SAND_GROUPS` - see that file's own README entry
+  for the full story, including why 1 group turned out not to be
+  enough). That broke this file's own `ROCK_COLOR_SWAPPED_PATCH` from
+  the color-swap round, which blindly overwrote the *entire*
+  groups1-31 range - narrowed to skip `SAND_GROUPS` (group1 alone,
+  then groups5-31, once `SAND_GROUPS` grew to 2-4). Verified directly
+  against VRAM: groups2-4 all read `SAND_COLOR` (0xAB) while groups1/5/
+  10 (genuinely rock-colored) still read the swapped `0x6A`.
 
 ## Bugs found and fixed while building this
 
-- **Sand flickered between its own new color and Rock's**
-  ("Sandがチラついてるし色変わってないぞ ８キャラ分変更だぞ" -
-  immediately after giving Sand its own dedicated color group): giving
-  Sand's *steady* code its own group2 wasn't the whole story - a
+- **Sand flickered between its own new color and Rock's, twice over**
+  ("Sandがチラついてるし色変わってないぞ ８キャラ分変更だぞ", then
+  "まだチラついてる Rockの前後だけおかしい" - 2 separate rounds after
+  giving Sand its own dedicated color group): 1st round - giving just
+  Sand's *steady* code its own group wasn't the whole story, since a
   "steady" (non-transitioning) Sand cell still cycles through 8 codes
   per scroll cycle (1 solo + 7 blend-phase frames from the
   `(BLANK,BLANK)` same-id pair, which goes through the same generic
-  PAIRBASE/phase-blend machinery every real transition pair does), and
-  only the solo one (1 code, 1/8 of frames) had been moved into
-  group2 - the other 7 were still landing wherever the shared per-pair
-  numbering happened to put them, in a rock-colored group. See
-  `terrain_gen.py`'s own README for the actual fix (reserving
-  `(BLANK,BLANK)`'s whole 7-frame block right after `BLANK_CODE`,
-  filling out group2's remaining codes) - nothing in this file needed
-  to change, the group2 color patch already covers whichever codes
-  live there. Verified: every code drawn on a steady-Sand row across
-  an 80-frame sample (several full scroll cycles) stayed within 16-23.
+  PAIRBASE/phase-blend machinery every real transition pair does) -
+  only the solo code had moved, the other 7 still landed in a rock-
+  colored group 7/8 of the time. 2nd round, even with that fixed - the
+  *mixed* pairs (Sand transitioning to/from an actual climb/descend
+  marker, right at Sand's own edge next to Rock) were *still* using
+  the shared rock-colored pool, same bug in a different spot. See
+  `terrain_gen.py`'s own README for the actual fix (every BLANK-
+  involving pair, not just the same-id one, gets its own dedicated
+  group, built generically rather than hardcoded to a specific count)
+  - nothing in this file needed to change beyond widening the
+  `ROCK_COLOR_SWAPPED_PATCH` skip range to match (see the Sand color
+  entry above). Verified: scanning every row/column over 400 frames,
+  through the track's first climb, and cross-checking each cell's
+  actual id against the code drawn there, every single BLANK-involving
+  cell - steady runs and the climb/descend edges alike - stayed within
+  the sand-dedicated groups, never a rock-colored code.
 - **A diagonal (U) shot could fly straight into the HUD rows and
   permanently erase them** ("カラーバーAからF消えたぞ"): a U shot's
   row decrements every frame as it climbs, and had no lower bound

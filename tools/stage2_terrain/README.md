@@ -34,33 +34,48 @@ actual emulated VRAM output before it's integrated.
   through), given actual sand-speckle texture per direct instruction:
   "Rockの左右のイエローブランクにSandを設定" (put Sand in the yellow
   blanks to the left/right of Rock). Like every other tile here, only
-  its bit pattern is used - the JSON's own fg/bg are ignored. Sand's
-  own steady code (`BLANK_CODE`=16) was later split out of the shared
-  `STEADY_BASE` group into its own dedicated color group (2) - "Sand
-  の文字色をダークイエローに" (dark yellow) needed a color independent
-  of Rock's own fg, which SCREEN1 can't give 2 tiles sharing one
-  8-code group. Lands in what used to be dead code space between the
-  steady ids and `BLEND_BASE`. The numeric id (0) is unchanged either
-  way, so `combined_test.asm`'s own terrain-collision code (which
-  scans for "the first non-BLANK id" using that exact value as its
-  sentinel) is entirely unaffected - only the rendered art/color
-  changed, not the id semantics.
-  - The `(BLANK,BLANK)` same-id pair still goes through the general
-    PAIRBASE/phase-blend machinery like every real transition pair
-    does (7 more codes, pattern-identical to the solo tile since
-    blending a tile with itself is a no-op) - left in the *generic*
-    per-pair numbering (which lands wherever among the still-uniformly
-    rock-colored blend codes) that block would sit in a rock-colored
-    group 7 out of every 8 scroll-phase frames, flickering a "steady"
-    Sand cell between Sand's own color and Rock's - "Sandがチラつい
-    てるし色変わってないぞ ８キャラ分変更だぞ". Fixed by special-
-    casing `(BLANK,BLANK)`'s own 7-frame block to land right after
-    `BLANK_CODE` (17-23), completing group2's own 8 codes instead of
-    borrowing space from the shared pool - `MAX_CODE` dropped from 86
-    to 79 as a result (one whole pair's worth of blend codes no longer
-    needed from the shared range). Verified: every code drawn on a
-    steady-Sand row across 80 frames (a full scroll cycle several times
-    over) stayed within 16-23.
+  its bit pattern is used - the JSON's own fg/bg are ignored. The
+  numeric id (0) is unchanged, so `combined_test.asm`'s own terrain-
+  collision code (which scans for "the first non-BLANK id" using that
+  exact value as its sentinel) is entirely unaffected by any of this -
+  only the rendered art/color ever changed, not the id semantics.
+  - **Sand's own color** ("Sandの文字色をダークイエローに", later
+    corrected to "文字色ダークイエロー、背景色ライトイエロー" - fg10
+    dark yellow, bg11 light yellow, `SAND_COLOR`=0xAB - an earlier
+    round used the same dark yellow for both by mistake) needed
+    independence from Rock's own fg, which SCREEN1 can't give 2 tiles
+    sharing one 8-code color group. Getting this genuinely flicker-free
+    took 2 rounds: giving just `BLANK_CODE`(16)'s own *solo* tile its
+    own group2 wasn't enough, because a "steady" Sand cell still
+    cycles through 8 codes per scroll cycle (1 solo + 7 blend-phase
+    frames from the `(BLANK,BLANK)` same-id pair, which goes through
+    the same generic PAIRBASE/phase-blend machinery every real
+    transition pair does) - only the solo code had moved, so the other
+    7 still landed in a rock-colored group 7 out of 8 frames -
+    "Sandがチラついてるし色変わってないぞ ８キャラ分変更だぞ". Then,
+    even with `(BLANK,BLANK)` fixed, the genuinely *mixed* transition
+    pairs (BLANK<->R225_UL/R225D_UR - the exact climb/descend moment at
+    Sand's own edge) were *still* landing in a rock-colored group -
+    "まだチラついてる Rockの前後だけおかしい".
+  - **`BLANK_PAIR_BASE`**: every pair with `BLANK_ID` on either side
+    (not just the same-id one) now gets its own dedicated, group-
+    aligned 8-code block, built generically (not hardcoded to today's
+    exact count) - `(BLANK,BLANK)` fills out `BLANK_CODE`'s own group2
+    (17-23, right after the solo code at 16), then each other
+    BLANK-involving pair gets the next group in line (group3, group4,
+    ...). `SAND_GROUPS` collects exactly which groups these turned out
+    to be, and the color table paints all of them `SAND_COLOR` -
+    `BLEND_BASE` (where the remaining, genuinely-rock-only pairs start)
+    is computed right after, so it's never hardcoded either. `MAX_CODE`
+    ended up at 81 (up from an original 86, despite 2 more dedicated
+    groups going in, since `(BLANK,BLANK)` no longer needs a slot from
+    the shared pool at all).
+  - Verified: scanning every row/column over 400 frames (through the
+    track's first climb) and cross-checking each cell's actual id
+    (BLANK on either side or not) against the code drawn there, every
+    single BLANK-involving cell - steady runs *and* the climb/descend
+    edges - stayed within the sand-dedicated groups (16-30), never a
+    rock-colored code.
 - The 4 rows (screen rows 20-23, i.e. `GROUND_ROW0`..+3, matching the
   4-row band Stage 1 already treats as "the ground scroller") share
   **one** PXCHAR/phase clock, gated every 8 ticks - unlike Stage 1's
