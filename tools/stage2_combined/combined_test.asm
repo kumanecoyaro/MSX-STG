@@ -781,13 +781,26 @@ BIGZUM_COLOR      EQU 13   ; from sprites/BigZum.json's own fg (same magenta as 
 ; punch-contact range check (ALLOC_BIGZUM_SLOT, UOBZ_PUNCH_MOVE,
 ; UPDATE_TANK_BIGZUM_PUNCH) were all using the full 32x32 canvas (via
 ; TANK_PUSH_WIDTH/hardcoded 31) instead of the drawn art's real
-; footprint. Now: BIGZUM_COLLISION_SIZE(24) replaces those, and
-; BIGZUM_ART_Y_OFFSET(8) shifts the box's own top down to match the
-; art's real top row - no X offset needed since the art's left edge
-; already sits flush with BZ_X (col0), only the right ~8 blank columns
-; and top 8 blank rows needed trimming.
-BIGZUM_COLLISION_SIZE EQU 24
-BIGZUM_ART_Y_OFFSET    EQU 8
+; footprint. BIGZUM_COLLISION_SIZE(24, unchanged) is the box's width.
+;
+; "飛び越えられない原因わかった 接触状態ではパンチでノックバックされ
+; 元々自機ジャンプ頂点のみなので飛び越える条件が成立しない なので
+; シンプルにBigZumのコリジョンを２４ｘ１６に" - the box's HEIGHT was
+; still the art's own full 24px (exactly matching the tank's own 24px
+; jump peak, `JUMP_OFFSET_TABLE`), leaving zero real margin to clear it
+; even once the punch-vs-jump `JUMP_ACTIVE` race was fixed - a bare tie
+; between "how high the tank can jump" and "how tall the thing is"
+; isn't a usable window in practice. Deliberately shrunk to 16
+; (BIGZUM_COLLISION_HEIGHT) for gameplay, past what the raw art pixels
+; alone would justify - a real jump now clears with 8px to spare.
+; BIGZUM_COLLISION_Y_OFFSET(16, was 8) moves with it, keeping the box
+; flush with the sprite's own bottom row (32-16=16) - the "physical
+; standing" footprint a jump needs to clear, not literally hugging the
+; ink's own topmost pixel line anymore. No X offset needed either way
+; - the art's left edge already sits flush with BZ_X (col0).
+BIGZUM_COLLISION_SIZE   EQU 24   ; width
+BIGZUM_COLLISION_HEIGHT EQU 16   ; height - "コリジョンを24x16に"
+BIGZUM_COLLISION_Y_OFFSET EQU 32-BIGZUM_COLLISION_HEIGHT
 BIGZUM_SPAWNX     EQU ZUM_SPAWNX          ; same off-right-edge spawn X as Zum - "スポーン条件は同じ"
 BIGZUM_PROBE_DX   EQU 16                  ; horizontal-center probe offset for a 32px-wide sprite (vs Zum's 8, for its 16px width)
 BIGZUM_SPAWN_COL  EQU BIGZUM_SPAWNX+BIGZUM_PROBE_DX/8
@@ -1424,6 +1437,7 @@ SKIP_ADVANCE:
     CALL UPDATE_TERRAIN_COLLISION
     CALL UPDATE_JUMP
     CALL UPDATE_TANK_ZUM_STAND
+    CALL UPDATE_TANK_BIGZUM_STAND
     CALL UPDATE_POSE
     CALL UPDATE_TANK_SPRITES
     ; bullets advance before a new one can spawn, so a shot fired this
@@ -3131,12 +3145,15 @@ ALLOC_ZUM_SLOT:
     LD A,(ENEMY_SPAWN_COUNT)
     CP 10
     RET C
-    ; "BigZum出現中はZumは出ないように" - refuse to spawn a new Zum
-    ; while BigZum is out (alive or still mid-explosion); existing Zum
-    ; already on screen are left alone, only new spawns are gated.
-    LD A,(BIGZUM_POOL)
-    OR A
-    RET NZ
+    ; "Zumは殆ど出ないので条件緩和する 赤緑ZakoIIになったら何時でも
+    ; スポーンできること" - a previous round added a "refuse to spawn
+    ; while BigZum is out" gate here ("BigZum出現中はZumは出ないよう
+    ; に"), but BigZum ended up occupying the screen for a large enough
+    ; share of playtime (especially once its own give-up/re-engage loop
+    ; made it far more persistent) that this starved Zum's own spawns
+    ; almost entirely - reversed per direct instruction. Once past the
+    ; red/green threshold, only the terrain/free-slot checks below
+    ; still gate a spawn attempt.
     CALL ZUM_TERRAIN_OK
     OR A
     RET Z
@@ -3574,6 +3591,52 @@ UTZS_LOOP:
 UTZS_NEXT:
     INC IX : INC IX : INC IX : INC IX : INC IX : INC IX : INC IX : INC IX
     DJNZ UTZS_LOOP
+    RET
+
+; "もちろん自機が乗っかった場合はZumと同じでオートジャンプ" - same
+; stand-on-top clamp as UPDATE_TANK_ZUM_STAND, against BigZum's own
+; (now 24x16) collision box instead, reusing the SAME TANK_ZUM_STANDING
+; flag - UPDATE_JUMP doesn't care which enemy the tank is parked on,
+; only whether that flag is set, so no separate auto-land plumbing is
+; needed. Deliberately does NOT clear TANK_ZUM_STANDING to 0 on its
+; own (only ever sets it to 1) - UPDATE_TANK_ZUM_STAND, called right
+; before this every frame, already did that reset once for the whole
+; frame (including "not jumping at all"); this routine only ever adds
+; a positive result on top of that, so standing on either enemy (or
+; neither) comes out correct regardless of which one actually landed
+; on. Same 1-frame-stale precedent as UPDATE_TANK_ZUM_STAND itself
+; (BIGZUM_POOL's position is last frame's, since UPDATE_BIGZUM_ALL
+; hasn't run yet this frame).
+UPDATE_TANK_BIGZUM_STAND:
+    LD A,(JUMP_ACTIVE)
+    OR A
+    RET Z
+    LD IX,BIGZUM_POOL
+    LD A,(IX+0)
+    OR A
+    RET Z
+    ; horizontal overlap: TANK_X<BZ_X+BIGZUM_COLLISION_SIZE AND
+    ; BZ_X<TANK_X+BIGZUM_COLLISION_SIZE - same symmetric-box shape as
+    ; Zum's own post-fix stand check.
+    LD A,(IX+1) : ADD A,BIGZUM_COLLISION_SIZE : LD D,A
+    LD A,(TANK_X)
+    CP D
+    RET NC
+    LD A,(TANK_X) : ADD A,BIGZUM_COLLISION_SIZE : LD D,A
+    LD A,(IX+1)
+    CP D
+    RET NC
+    ; overlap confirmed - clamp so the tank's own bottom rests on the
+    ; collision box's own top (BZ_Y+BIGZUM_COLLISION_Y_OFFSET, not
+    ; BZ_Y itself - the box no longer starts flush with the sprite's
+    ; own top), same TANK_GROUND_OFFSET anchor-to-surface convention
+    ; as standing on ordinary terrain or on Zum.
+    LD A,(IX+2) : ADD A,BIGZUM_COLLISION_Y_OFFSET : SUB TANK_GROUND_OFFSET : LD D,A
+    LD A,(TANK_Y_CUR)
+    CP D
+    RET C
+    LD A,D : LD (TANK_Y_CUR),A
+    LD A,1 : LD (TANK_ZUM_STANDING),A
     RET
 
 ; ---------- bullet x Zum collision: front (left half) absorbs the ----------
@@ -4377,20 +4440,19 @@ CHECK_HIT_PAIR_BIGZUM:
     CP 1
     RET NZ
 
-    ; AABB against the real art footprint - BIGZUM_COLLISION_SIZE(24)
-    ; wide starting at BZ_X (left edge, no offset needed) and
-    ; BIGZUM_ART_Y_OFFSET(8) down from BZ_Y (top of the actual art,
-    ; not the blank canvas above it) - see BIGZUM_COLLISION_SIZE's own
-    ; comment.
+    ; AABB against the (deliberately shrunk-for-gameplay) collision box
+    ; - BIGZUM_COLLISION_SIZE(24) wide starting at BZ_X (left edge, no
+    ; offset needed) and BIGZUM_COLLISION_Y_OFFSET(16) down from BZ_Y -
+    ; see BIGZUM_COLLISION_SIZE's own comment.
     LD A,(IX+2) : ADD A,A : ADD A,A : ADD A,A : LD B,A
     LD A,(IX+3) : ADD A,A : ADD A,A : ADD A,A : LD C,A
     LD A,(IY+1) : LD D,A
-    LD A,(IY+2) : ADD A,BIGZUM_ART_Y_OFFSET : LD E,A
+    LD A,(IY+2) : ADD A,BIGZUM_COLLISION_Y_OFFSET : LD E,A
 
     LD A,B : ADD A,7 : CP D : RET C
     LD A,D : ADD A,BIGZUM_COLLISION_SIZE-1 : CP B : RET C
     LD A,C : ADD A,7 : CP E : RET C
-    LD A,E : ADD A,BIGZUM_COLLISION_SIZE-1 : CP C : RET C
+    LD A,E : ADD A,BIGZUM_COLLISION_HEIGHT-1 : CP C : RET C
 
     LD A,(IY+1) : LD D,A
     LD A,(IY+9)

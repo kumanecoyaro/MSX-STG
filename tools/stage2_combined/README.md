@@ -1951,6 +1951,57 @@ with no way to tell where.
     pass-through before it starts moving again.
   Full regression: 15000-frame random-input sweep, no crash/stall;
   `render_check.py` clean.
+- **Diagnosed why the jump-over still never worked despite the
+  `JUMP_ACTIVE` fix, shrunk BigZum's own collision to make it actually
+  clearable, added the missing Zum-style stand-on-top auto-jump, and
+  relaxed Zum's own spawn gate** ("飛び越えられない原因わかった 接触
+  状態ではパンチでノックバックされ元々自機ジャンプ頂点のみなので飛び
+  越える条件が成立しない なのでシンプルにBigZumのコリジョンを２４ｘ
+  １６に これで飛び越えられる もちろん自機が乗っかった場合はZumと同
+  じでオートジャンプ で、Zumは殆ど出ないので条件緩和する 赤緑ZakoII
+  になったら何時でもスポーンできること"):
+  - The collision box's own height had exactly matched the tank's own
+    24px jump peak (`JUMP_OFFSET_TABLE`) - a bare tie with zero real
+    margin, not a usable window even with the knockback-during-jump
+    bug already fixed. `BIGZUM_COLLISION_HEIGHT`(16, was 24, same as
+    the width) shrinks it for gameplay past what the raw art pixels
+    alone would justify - "シンプルにBigZumのコリジョンを24x16に" -
+    giving a real jump 8px of clearance instead of none.
+    `BIGZUM_COLLISION_Y_OFFSET`(16, was `BIGZUM_ART_Y_OFFSET`=8) moves
+    with it, keeping the box flush with the sprite's own bottom row.
+    Applied to both `CHECK_HIT_PAIR_BIGZUM`'s own bullet hit-box and
+    (implicitly, via the shared width constant) every push/punch
+    contact check - only the height/Y-offset actually changed, the
+    24px width is unaffected. Verified: the tank's own jump-peak Y
+    (132, ground 156 minus the 24px jump offset) sits well above the
+    collision box's own top (144 = 156+16-28) with real margin, and no
+    longer trips the new stand-on-top clamp at that height.
+  - "もちろん自機が乗っかった場合はZumと同じでオートジャンプ" - added
+    `UPDATE_TANK_BIGZUM_STAND`, mirroring `UPDATE_TANK_ZUM_STAND`
+    exactly (symmetric horizontal overlap test against the same
+    `BIGZUM_COLLISION_SIZE` width, clamp `TANK_Y_CUR` to rest on the
+    collision box's own top) but reusing the SAME shared
+    `TANK_ZUM_STANDING` flag `UPDATE_JUMP`'s own auto-land-restart
+    logic already reads - no new plumbing needed, since that logic
+    doesn't care which enemy the tank is actually parked on. Careful
+    ordering detail: this routine only ever SETS the flag, never
+    clears it, since `UPDATE_TANK_ZUM_STAND` (called immediately
+    before it every frame) already does that reset once for the whole
+    frame - clearing it again here would silently undo a genuine
+    Zum-stand result. Verified: standing directly on top clamps to the
+    expected Y (144) and sets the flag; a clean jump over does neither.
+  - "Zumは殆ど出ないので条件緩和する 赤緑ZakoIIになったら何時でも
+    スポーンできること" - reversed the "BigZum active blocks new Zum
+    spawns" gate added 2 rounds ago: BigZum ended up occupying the
+    screen for a large enough share of playtime (especially once its
+    own give-up/re-engage loop made it far more persistent) that Zum
+    almost never got a spawn window at all. `ALLOC_ZUM_SLOT` no longer
+    checks BigZum's own state - only the terrain/free-slot conditions
+    gate a spawn attempt now, same as before that gate existed.
+    Verified: forcing BigZum permanently active no longer prevents a
+    real Zum spawn (observed within ~1200 frames, vs. never before).
+  Full regression: 15000-frame random-input sweep, no crash/stall;
+  `render_check.py` clean.
 
 ## Bugs found and fixed while building this
 
