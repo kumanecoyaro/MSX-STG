@@ -1478,6 +1478,83 @@ with no way to tell where.
   fully overwritten (15/1, not merged or averaged with the shot's
   10/2) - a clean cutover, matching "被れば消える" exactly. Full
   regression sweep clean.
+- **Right-edge spawn: refused-to-spawn softlock, replaced with an
+  instant push at spawn** ("押してくるようになった しかしスポーンキャ
+  ンセルでは自機が右端に居続けると永遠にスポーンできない 自機が右端
+  にいたら押してスポーンするように"). The previous round's fix
+  refused to spawn a Zum at all while the tank was within `ZUM_DETECT_
+  RANGE` of the spawn point, to stop slip-through - but that meant a
+  Zum could never spawn again if the tank simply parked near the right
+  edge, a real (if narrow) softlock for this enemy type. Reverted
+  `ALLOC_ZUM_SLOT` back to its original 3-condition gate (spawn count,
+  terrain, free slot - no tank-distance check), and instead added an
+  *instant* overlap resolution to `AZS_FOUND` itself: if `TANK_X` is
+  already within `TANK_PUSH_WIDTH` of the fresh Zum's spawn X, snap it
+  straight to `ZUM_SPAWNX-TANK_PUSH_WIDTH` (208) as part of spawning,
+  rather than waiting for the next several frames of `UPDATE_TANK_ZUM_
+  PUSH`'s own rate-limited clamp to catch up - closes the same-frame
+  slip-through window without ever blocking a spawn. Verified: a spawn
+  attempt with `TANK_X=223` (max-right) now succeeds *and* instantly
+  resolves `TANK_X` to 208; camping right continuously for the full
+  natural spawn-gate cycle (~1200 frames) still produces a Zum on
+  schedule, not never.
+- **Explosion sound protected from being cut off by the shot sound**
+  ("爆発音はショット音で消えるとまずいんで爆発音は鳴り終わるまで継続
+  しショット音で消えないように"). New `SND_EXPLODING` flag: set by
+  `SOUND_DESTROY`, checked by `SOUND_SHOT` (which now refuses to fire
+  at all while it's set, leaving the explosion's own `SND_TIMER`/mixer
+  completely undisturbed), cleared automatically the instant the
+  explosion's own `SND_TIMER` reaches 0 in `SOUND_UPDATE`. `SOUND_ZUM_
+  DEFLECT` still cuts an explosion off same as any other sound - only
+  the shot sound is singled out here, per the literal instruction.
+  Verified: firing shot immediately after an explosion leaves `SND_
+  TIMER`/`SND_DECAY` at the explosion's own 15/1 untouched; once 15
+  frames of `SOUND_UPDATE` let it finish naturally, a shot fired after
+  that does play normally (10/2).
+- **Zum can now randomly flee instead of always charging in, sine-
+  accelerating away just like ZacoII's own retreat** ("ついでに 自機
+  の前まで減速したら押してくるやつと反転して逃げるやつをランダムに
+  引き返しもサイン移動で"). New per-slot `Z_RETREAT` field (0=still
+  approaching/undecided, 1=fleeing, 2=charging/decided) - `ZUM_SLOT_
+  SIZE` 7->8. The instant a Zum's own deceleration first crosses into
+  the near-tank zone (`distance<ZUM_MID_RANGE`), it rolls once (a
+  simple `CLOUD_RNG`-based coin flip, the same free-running-counter
+  RNG idiom clouds already use) between continuing to charge in
+  (unchanged existing behavior) or reversing to flee back off the
+  right edge - sine-accelerating away through a new `ZUM_FLEE_TABLE`
+  (same distance-indexed, error-diffused, floored-at-1 construction as
+  every other speed table in this file), cruising at `ZUM_FLEE_SPEED`
+  (6 - doubled from the ordinary cruise speed, matching ZacoII's own
+  established "帰る時は倍速で" retreat-doubling convention, since no
+  specific number was given for Zum's own flee). Draws with `PAT_ZUM_
+  FLIP` while fleeing - the mirrored Zum art `enemy_gen.py` generated
+  from day one but never actually used until now. Front/rear hit
+  orientation (`CHECK_HIT_PAIR_ZUM`) inverts while fleeing too: a
+  fleeing Zum has turned to face right, so its exposed back is now its
+  *left* side (`TANK_X<Zum_X`) instead of its right - verified
+  directly (a bullet hitting a fleeing Zum from what would normally be
+  its "front" side now kills it, and vice versa; a non-fleeing/
+  charging Zum's orientation is confirmed unchanged). Roll outcomes
+  verified 50/50 over 40 trials; the full flee sequence (roll -> sine
+  ease from the decel trough up to 6 -> despawn back off the spawn
+  edge) confirmed end-to-end; a render shows the mirrored sprite
+  displaying correctly, sitting flush on the ground exactly like the
+  normal pose.
+- **Idle push strength raised 3->6px/frame** ("あと無操作でも押しては
+  くるが弱いんで自機が押してるのと同じ押し量で"). Measured directly
+  before changing anything, since the numbers were surprising: idle
+  contact already moved `TANK_X` the full `ZUM_PUSH_SPEED`(3) every
+  single frame, but steering *into* an approaching Zum netted only
+  ~1px/frame of actual backward drift (the tank's own 1-2px/frame step
+  fights the same clamp each frame) - numerically, idle was already
+  the *stronger* push, not the weaker one. Confirmed with the user
+  before touching anything: they wanted the already-stronger idle
+  number raised further, not brought down to match the resisted-push
+  feel. `ZUM_PUSH_SPEED` raised to `ZUM_FLEE_SPEED`(6) - Zum's fastest
+  speed anywhere in this file - rather than its own ordinary cruise
+  (3). Full regression sweep clean (`render_check.py`, 3000-frame idle
+  sweep, 6000-frame random-input stress sweep with live Zum/ZacoII
+  spawns and kills throughout).
 
 ## Bugs found and fixed while building this
 
