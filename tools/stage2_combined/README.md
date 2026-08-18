@@ -1211,6 +1211,47 @@ with no way to tell where.
   ground-standing uses) instead of the old 32-offset's implied 0px
   (which read as the reported gap). Re-rendered visually: the tank's
   own tracks now sit flush on top of Zum with no visible seam.
+- **Jumping while parked on top of Zum ("乗っかり中にジャンプできない
+  ")**: `UPDATE_JUMP` always refused a new press whenever `JUMP_ACTIVE`
+  was already set - which, while parked on a Zum, is *permanently*
+  true (the auto-land cycle from the earlier "乗っかりから降りる時の
+  速度が速すぎてワープにみえる" fix never actually clears `JUMP_ACTIVE`,
+  it only rewinds `JUMP_FRAME` back to `JUMP_LANDING_RESTART_FRAME`
+  forever). Now a new press is also honored while `TANK_ZUM_STANDING`
+  is set (an ordinary mid-air jump, not parked, still can't be
+  re-triggered - verified separately, `JUMP_FRAME` just keeps
+  incrementing normally on a repeat press mid-air).
+  Per direct instruction ("この時ジャンプが加算されて地面までの距離が
+  変わりLutがオーバーすると思うがその時はLut最終値を使い回すこと"):
+  simply restarting `JUMP_FRAME` at 0 against the existing formula
+  (`TANK_Y_CUR = TANK_GROUND_Y - JUMP_OFFSET_TABLE[JUMP_FRAME]`) would
+  snap the tank down to true ground for one frame (table[0]=0) before
+  arcing up from there - visibly wrong, since the tank is currently
+  sitting on top of Zum, well above true ground. New `JUMP_STAND_
+  BASELINE` byte captures the current elevation above true ground
+  (`TANK_GROUND_Y-TANK_Y_CUR`) at the exact moment a re-jump is
+  honored, and `JUMP_Y_OFFSET` is now `JUMP_OFFSET_TABLE[JUMP_FRAME] +
+  JUMP_STAND_BASELINE` instead of the table value alone - so the new
+  arc adds its own 24px on top of wherever the tank already was. Reset
+  to 0 on init and whenever a jump ends normally (`UJ_END_NORMALLY`),
+  so it never leaks into an unrelated later jump; an ordinary ground
+  jump (never parked) always starts it at 0, so its own behavior is
+  numerically unchanged (verified: peak still exactly `TANK_GROUND_Y-
+  24`, lands exactly back at `TANK_GROUND_Y`, `JUMP_ACTIVE` clears at
+  the end same as before). The table itself is never read out of
+  bounds by any of this - `JUMP_FRAME` is already always kept within
+  the existing `CP JUMP_FRAMES` guard before every table read, re-jump
+  or not, so there's no separate "reuse the LUT's last entry" branch
+  needed beyond what that guard (and the existing auto-restart-at-16 /
+  end-normally logic) already does.
+  Verified end-to-end in a full mainloop run (`UPDATE_JUMP` +
+  `UPDATE_TANK_ZUM_STAND` both active, a pinned Zum directly under the
+  tank): parks at `Y=140` (`Zum_top(168)-TANK_GROUND_OFFSET(28)`,
+  matching the standing-fix above), a fresh press while parked peaks
+  at exactly `Y=116` (`140-24`, the full jump height added on top of
+  the parked elevation) and settles back into the same parked cycle
+  afterward. `render_check.py` and the 3000-frame idle sweep both
+  clean, SCORE unaffected.
 
 ## Bugs found and fixed while building this
 

@@ -470,6 +470,16 @@ ZUM_SPAWN_TIMER  EQU 0F302h
 ; instant the jump timer runs out while still parked - see
 ; JUMP_LANDING_RESTART_FRAME below.
 TANK_ZUM_STANDING EQU 0F303h
+; "乗っかり中にジャンプできないんで オートジャンプ中でも出来るように" -
+; UPDATE_JUMP normally refuses a new press whenever JUMP_ACTIVE is
+; already set, which while parked on a Zum is *always* true (the
+; auto-land cycle above never clears it, only restarts JUMP_FRAME).
+; JUMP_STAND_BASELINE holds the current stand-elevation above true
+; ground (TANK_GROUND_Y-TANK_Y_CUR) at the moment a fresh jump is
+; honored while parked, so the new jump's own arc adds on top of
+; where the tank already is instead of first snapping down to
+; TANK_GROUND_Y and jumping from there - see UPDATE_JUMP.
+JUMP_STAND_BASELINE EQU 0F304h
 ZUM_SPR_BASE_SLOT EQU 10    ; hw sprite slots10-11, right after the bullet pool's own 7-9
 PAT_ZUM EQU 148             ; right after PAT_BULLETU_L(144-147)
 ZUM_COLOR EQU 13            ; from sprites/Zum.json's own fg
@@ -825,6 +835,7 @@ INIT_SPRATR_CLR:
     LD (JUMP_FRAME),A
     LD (JUMP_Y_OFFSET),A
     LD (TANK_ZUM_STANDING),A
+    LD (JUMP_STAND_BASELINE),A
     LD A,PAT_TANKF : LD (CUR_POSE_PAT),A
     XOR A
     LD (SHOT_COOLDOWN),A
@@ -1422,6 +1433,15 @@ TEY_DONE:
     RET
 
 ; ---------- jump (B button, edge-triggered, 24px half-sine arc) ----------
+; "乗っかり中にジャンプできないんでオートジャンプ中でも出来るように" -
+; a new press was always refused whenever JUMP_ACTIVE was already set,
+; which is continuously true the entire time the tank is parked on a
+; Zum (the auto-land cycle above never actually clears JUMP_ACTIVE,
+; only rewinds JUMP_FRAME - see JUMP_LANDING_RESTART_FRAME). Now also
+; honored while TANK_ZUM_STANDING is set, so a fresh press works from
+; a parked-on-Zum stand exactly like from ordinary ground - an
+; ordinary *mid-air* jump (JUMP_ACTIVE set, not parked) still can't be
+; re-triggered, unchanged.
 UPDATE_JUMP:
     LD A,(JOY_TRIGB)
     LD HL,PREV_TRIGB
@@ -1431,9 +1451,24 @@ UPDATE_JUMP:
     JR Z,UJ_NO_NEW_PRESS
     LD A,(JUMP_ACTIVE)
     OR A
-    JR NZ,UJ_NO_NEW_PRESS
+    JR Z,UJ_START_FRESH
+    LD A,(TANK_ZUM_STANDING)
+    OR A
+    JR Z,UJ_NO_NEW_PRESS
+    ; re-jumping from a parked stand: capture the current elevation
+    ; above true ground ("ジャンプが加算されて地面までの距離が変わり")
+    ; so the new arc adds on top of where the tank already is instead
+    ; of first snapping down to TANK_GROUND_Y and jumping from there.
+    LD A,(TANK_GROUND_Y) : LD B,A
+    LD A,(TANK_Y_CUR)
+    LD C,A
+    LD A,B : SUB C : LD (JUMP_STAND_BASELINE),A
+    XOR A : LD (JUMP_FRAME),A
+    JR UJ_NO_NEW_PRESS
+UJ_START_FRESH:
     LD A,1 : LD (JUMP_ACTIVE),A
     XOR A : LD (JUMP_FRAME),A
+    LD (JUMP_STAND_BASELINE),A
 UJ_NO_NEW_PRESS:
     LD A,(JOY_TRIGB) : LD (PREV_TRIGB),A
 
@@ -1445,7 +1480,12 @@ UJ_NO_NEW_PRESS:
     JR C,UJ_STILL_JUMPING
     ; would end here - if still parked on a Zum (see TANK_ZUM_STANDING
     ; above), auto-land instead: restart from the table's own peak so
-    ; it eases back down to ground instead of snapping.
+    ; it eases back down to ground instead of snapping. This is also
+    ; where a table "overflow" past its last entry is always avoided -
+    ; JUMP_FRAME never advances past this check without either
+    ; restarting at JUMP_LANDING_RESTART_FRAME or ending (below), so
+    ; UJ_DONE's own table read is never out of bounds even across a
+    ; re-jump.
     LD A,(TANK_ZUM_STANDING)
     OR A
     JR Z,UJ_END_NORMALLY
@@ -1455,11 +1495,14 @@ UJ_END_NORMALLY:
     XOR A
     LD (JUMP_ACTIVE),A
     LD (JUMP_FRAME),A
+    LD (JUMP_STAND_BASELINE),A
 UJ_STILL_JUMPING:
 UJ_DONE:
     LD A,(JUMP_FRAME) : LD E,A : LD D,0
     LD HL,JUMP_OFFSET_TABLE : ADD HL,DE
-    LD A,(HL) : LD (JUMP_Y_OFFSET),A
+    LD A,(HL) : LD B,A
+    LD A,(JUMP_STAND_BASELINE) : ADD A,B
+    LD (JUMP_Y_OFFSET),A
 
     LD A,(TANK_GROUND_Y)
     LD HL,JUMP_Y_OFFSET
