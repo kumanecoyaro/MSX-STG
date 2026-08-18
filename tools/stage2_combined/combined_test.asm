@@ -398,6 +398,16 @@ ENEMY_SPAWNX      EQU 240   ; off the right edge (16px sprite, so fully offscree
 ; も接近しすぎなので４０ｐｘ手前じゃなく６４ｐｘ手前で引き返すこと"
 ; (both variants were getting too close).
 ENEMY_TURNBACK_MARGIN EQU 64
+; "ZukuIIにもサイン減速 で、反転して帰っていく際はサイン加速 速度は
+; 今のままでいい" - width (px) of the sine-eased zone straddling the
+; turnback pivot on both sides: the last ENEMY_RAMP_RANGE px of the
+; approach ease down to a stop right at the pivot, and the first
+; ENEMY_RAMP_RANGE px of the retreat ease back up to full retreat
+; speed - see ENEMY_GET_STEP_RAMPED. Outside this zone (i.e. most of
+; the actual travel, on both legs) nothing changes - still the exact
+; same flat/TICK-averaged cruise speed ENEMY_GET_STEP always gave, per
+; "速度は今のままでいい".
+ENEMY_RAMP_RANGE EQU 32
 ; "Skyのみのの位置に出現...現状はランダム" - Y confined to a band
 ; safely inside the open sky (below the HUD rows0-1 at y0-15, well
 ; above row19's ground top at y152) using a TICK-derived pseudo-random
@@ -498,13 +508,25 @@ ZUM_PROBE_DX EQU 8
 ; not hand-typed, so it always matches UOZ_TERRAIN_FOLLOW's own probe.
 ZUM_SPAWN_COL EQU ZUM_SPAWNX+ZUM_PROBE_DX/8
 ZUM_SPAWN_INTERVAL EQU 90   ; same untuned-but-reasonable value as ENEMY_SPAWN_INTERVAL
-; "速度１だと地面と動悸してるんで速度1.5 加速時3で" - slow speed
-; averages 1.5 (base1 alternating with +1 on odd TICK frames, same
-; trick as TANK_SPEED_LO/ENEMY_GET_STEP's own green-variant 1.5),
-; charge speed is a flat 3 (was flat 2).
-ZUM_SPEED_SLOW_BASE EQU 1
-ZUM_SPEED_FAST EQU 3
-ZUM_CHARGE_MARGIN EQU 64    ; "自機に64pxまで近づくと速度2で自機に突っ込んでくる" (now 3, see above)
+; "敵のX移動にサイン移動を採用する Zumは出現時速度２ 自機に近づいたら
+; サイン減速で速度1.5 今の時期検知は近いんでもっと離れた位置に" -
+; replaces the old flat-1.5-then-flat-3-once-close speed model
+; entirely: a flat cruise speed (2) far away, sine-eased down to a
+; slower flat cruise (1.5) once within ZUM_DECEL_RANGE of the tank -
+; no more sudden "charge" speed-up. The old trigger distance (formerly
+; ZUM_CHARGE_MARGIN, 64px) was "too close" per this same instruction,
+; so the new one is double that, giving the ease real room to play out
+; before Zum is right on top of the tank. ZUM_DECEL_TABLE is indexed
+; directly by distance-to-tank (not elapsed frames) - self-correcting
+; every frame regardless of how the tank itself moves in the meantime,
+; no extra per-slot state needed. Generated (not hand-tuned) via
+; error-diffusion of speed(d)=1.5+0.5*sin(pi/2*d/(RANGE-1)) walked
+; from d=RANGE-1 (far, ~2.0) down to d=0 (near, 1.5) - the same
+; direction Zum actually traverses the table in, so any local window
+; of consecutive frames still averages to the intended curve despite
+; each individual entry being a whole px step.
+ZUM_SPEED_BASE EQU 2
+ZUM_DECEL_RANGE EQU 128
 ; "地面に設置してないな 16px上に浮いてる" - TANK_TIER_Y_TABLE gives
 ; the tank's own (32px-tall sprite) top-anchor Y for each tier; Zum is
 ; only 16px tall, so using that value directly for Zum's own top-Y
@@ -575,10 +597,11 @@ TANK_GROUND_OFFSET EQU 28
 ; for the ~49 frames of a jump ("自機がジャンプで避けると") while Zum
 ; keeps moving the whole time - by landing, the accumulated gap could
 ; be huge, and snapping it shut in a single frame reads as the tank
-; teleporting. Capped at this many px/frame instead - matches
-; ZUM_SPEED_FAST so ordinary continuous-contact pushing (which never
-; needs to close more than one frame's worth of Zum movement) still
-; resolves in a single frame, same as before.
+; teleporting. Capped at this many px/frame instead - at or above
+; Zum's own max speed (ZUM_SPEED_BASE, 2) so ordinary continuous-
+; contact pushing (which never needs to close more than one frame's
+; worth of Zum movement) still resolves in a single frame, same as
+; before.
 ZUM_PUSH_SPEED EQU 3
 
 ; ---------- flowing background clouds (see CLOUD_UPDATE_ALL) ----------
@@ -2367,6 +2390,66 @@ EGS_RETURN_BASE:
     LD A,B
     RET
 
+; IX = slot base. Distance-ramped wrapper around ENEMY_GET_STEP, used
+; near the turnback pivot on both legs - "ZukuIIにもサイン減速 で、
+; 反転して帰っていく際はサイン加速 速度は今のままでいい". Outside
+; ENEMY_RAMP_RANGE px of the pivot on either side, falls straight
+; through to plain ENEMY_GET_STEP unchanged (the "速度は今のままでいい"
+; cruise speed, both legs) - only the last ENEMY_RAMP_RANGE px of the
+; approach (easing down to a stop right at the pivot) and the first
+; ENEMY_RAMP_RANGE px of the retreat (easing back up to full retreat
+; speed) read ENEMY_DECEL_TABLE_*/ENEMY_ACCEL_TABLE_* instead, indexed
+; directly by distance-to-pivot (not elapsed frames) - self-correcting
+; every frame regardless of how TANK_X itself moves meanwhile.
+ENEMY_GET_STEP_RAMPED:
+    LD A,(IX+E_RETREAT)
+    OR A
+    JR NZ,EGSR_RETREAT
+
+EGSR_APPROACH:
+    ; approaching: E_X is always >= TANK_X+MARGIN while E_RETREAT=0
+    ; (that's exactly the condition that keeps E_RETREAT at 0), so this
+    ; subtraction never underflows here.
+    LD A,(TANK_X) : ADD A,ENEMY_TURNBACK_MARGIN : LD B,A
+    LD A,(IX+E_X) : SUB B
+    CP ENEMY_RAMP_RANGE
+    JR NC,EGSR_FULL
+    LD C,A
+    LD A,(IX+E_VARIANT)
+    OR A
+    LD HL,ENEMY_DECEL_TABLE_GREEN
+    JR Z,EGSR_ADD
+    LD HL,ENEMY_DECEL_TABLE_RED
+    JR EGSR_ADD
+
+EGSR_RETREAT:
+    ; retreating: E_X can still be slightly short of TANK_X+MARGIN
+    ; right after the flip (this frame's approach overshot it by a few
+    ; px before the flip was noticed) - clamp that underflow to 0
+    ; (right at the pivot) rather than treating it as "far away".
+    LD A,(TANK_X) : ADD A,ENEMY_TURNBACK_MARGIN : LD B,A
+    LD A,(IX+E_X) : SUB B
+    JR NC,EGSR_RETREAT_POS
+    XOR A
+EGSR_RETREAT_POS:
+    CP ENEMY_RAMP_RANGE
+    JR NC,EGSR_FULL
+    LD C,A
+    LD A,(IX+E_VARIANT)
+    OR A
+    LD HL,ENEMY_ACCEL_TABLE_GREEN
+    JR Z,EGSR_ADD
+    LD HL,ENEMY_ACCEL_TABLE_RED
+
+EGSR_ADD:
+    LD A,C : LD E,A : LD D,0
+    ADD HL,DE
+    LD A,(HL)
+    RET
+
+EGSR_FULL:
+    JP ENEMY_GET_STEP
+
 ; IX = slot base. E_ACT=1 (alive): moves toward the tank, turns back
 ; (E_RETREAT=1, mirrored sprite) once within ENEMY_TURNBACK_MARGIN of
 ; TANK_X - "移動は自機位置をみて手前で引き返す" - then despawns once
@@ -2387,7 +2470,7 @@ UPDATE_ONE_ENEMY:
     OR A
     JR NZ,UOE_RETREAT
 
-    CALL ENEMY_GET_STEP : LD B,A
+    CALL ENEMY_GET_STEP_RAMPED : LD B,A
     LD A,(IX+E_X) : SUB B : LD (IX+E_X),A
     LD A,(TANK_X) : ADD A,ENEMY_TURNBACK_MARGIN : LD B,A
     LD A,(IX+E_X)
@@ -2397,7 +2480,7 @@ UPDATE_ONE_ENEMY:
     JR UOE_DRAW
 
 UOE_RETREAT:
-    CALL ENEMY_GET_STEP : LD B,A
+    CALL ENEMY_GET_STEP_RAMPED : LD B,A
     LD A,(IX+E_X) : ADD A,B : LD (IX+E_X),A
     CP ENEMY_SPAWNX
     JR C,UOE_DRAW
@@ -2680,13 +2763,14 @@ AZS_FOUND:
     RET
 
 ; IX = slot base. E_ACT=1: probes the terrain under its own column and
-; eases Z_Y toward the target tier, then advances Z_X left (speed2
-; once within ZUM_CHARGE_MARGIN of TANK_X - "自機に64pxまで近づくと
-; 速度2で自機に突っ込んでくる" - unsigned-subtraction wraparound
-; naturally also keeps it at speed2 if TANK_X briefly reads higher, and
-; falls back to speed1 once it's actually passed/moved away). E_ACT=2:
-; same drift-then-hide explosion shape as UPDATE_ONE_ENEMY's own
-; UOE_EXPLODING, reusing EXPLOSION_DURATION/PATTERN/COLOR.
+; eases Z_Y toward the target tier, then advances Z_X left - flat
+; ZUM_SPEED_BASE while farther than ZUM_DECEL_RANGE from the tank,
+; sine-eased down via ZUM_DECEL_TABLE (indexed directly by distance,
+; not elapsed frames) once inside it - see ZUM_DECEL_RANGE's own
+; comment. Unsigned-subtraction wraparound naturally also keeps it at
+; full ZUM_SPEED_BASE if TANK_X briefly reads higher (already passed).
+; E_ACT=2: same drift-then-hide explosion shape as UPDATE_ONE_ENEMY's
+; own UOE_EXPLODING, reusing EXPLOSION_DURATION/PATTERN/COLOR.
 UPDATE_ONE_ZUM:
     LD A,(IX+0)
     CP 2
@@ -2700,16 +2784,15 @@ UOZ_MOVE:
     LD A,(IX+1) : LD B,A
     LD A,(TANK_X)
     LD C,A
-    LD A,B : SUB C            ; Z_X-TANK_X; wraps large if Z_X<TANK_X (already passed) - falls through to speed1 below either way
-    CP ZUM_CHARGE_MARGIN
-    JR NC,UOZ_SPEED_SLOW
-    LD A,ZUM_SPEED_FAST
+    LD A,B : SUB C            ; Z_X-TANK_X; wraps large if Z_X<TANK_X (already passed) - falls through to full speed below either way
+    CP ZUM_DECEL_RANGE
+    JR NC,UOZ_SPEED_FULL
+    LD E,A : LD D,0
+    LD HL,ZUM_DECEL_TABLE : ADD HL,DE
+    LD A,(HL)
     JR UOZ_SPEED_SET
-UOZ_SPEED_SLOW:
-    ; averaged 1.5: base1 alternating with +1 on odd TICK frames, same
-    ; trick as TANK_SPEED_LO/ENEMY_GET_STEP's own green-variant 1.5.
-    LD A,(TICK) : AND 1 : LD B,A
-    LD A,ZUM_SPEED_SLOW_BASE : ADD A,B
+UOZ_SPEED_FULL:
+    LD A,ZUM_SPEED_BASE
 UOZ_SPEED_SET:
     LD B,A
     ; despawn only once X can no longer subtract this frame's own speed
@@ -3351,6 +3434,51 @@ BULLET_ROWADDR_HI:
 ; TANK_Y_BASE(156) exactly - each row-index down means 8px higher.
 TANK_TIER_Y_TABLE:
     DB 132,140,148,156
+
+; distance-to-tank-indexed sine ease, ZUM_DECEL_RANGE(128) entries -
+; see ZUM_DECEL_RANGE's own comment. index0=right next to the tank
+; (~1.5px/frame), index127=at the edge of the decel zone (~2.0px/frame).
+ZUM_DECEL_TABLE:
+    DB 2,1,2,1,2,1,2,1,2,2,1,2,1,2,1,2
+    DB 2,1,2,1,2,2,1,2,2,1,2,2,1,2,2,1
+    DB 2,2,1,2,2,2,1,2,2,2,1,2,2,2,1,2
+    DB 2,2,1,2,2,2,2,1,2,2,2,2,2,1,2,2
+    DB 2,2,2,2,1,2,2,2,2,2,2,2,2,2,1,2
+    DB 2,2,2,2,2,2,2,2,2,2,2,2,2,1,2,2
+    DB 2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2
+    DB 2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2
+
+; distance-from-pivot-indexed sine eases for ZacoII, ENEMY_RAMP_RANGE
+; (32) entries each - see ENEMY_GET_STEP_RAMPED. DECEL tables ease the
+; *approach* cruise speed down to 0 as ZacoII nears the turnback pivot
+; (index0=at the pivot/stopped, index31=edge of the ramp zone/full
+; cruise); ACCEL tables ease back up from 0 to the *retreat* cruise
+; speed (already doubled, unchanged - "速度は今のままでいい") as it
+; pulls away (index0=at the pivot/stopped, index31=edge of the ramp
+; zone/full retreat speed). Generated via the same error-diffusion
+; approach as ZUM_DECEL_TABLE, walked in the direction each table is
+; actually traversed during play (DECEL: far->near, i.e. index31->0;
+; ACCEL: near->far, i.e. index0->31).
+; every entry in all 4 tables below is >=1 - guaranteed, not
+; coincidental. A table entry of 0 would make the enemy freeze in
+; place (distance-to-pivot unchanged next frame -> the same 0 entry
+; read again -> forever), so unlike ZUM_DECEL_TABLE (whose whole
+; range, 1.5-2.0, is naturally >=1), the DECEL tables here are floored
+; at 1 instead of the pure eased curve's own true 0 at the pivot -
+; ZacoII always creeps forward at least 1px/frame even at its slowest,
+; guaranteeing it actually reaches and crosses the pivot to retreat.
+ENEMY_DECEL_TABLE_GREEN:
+    DB 1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1
+    DB 1,2,1,1,1,2,1,1,2,1,2,1,2,1,1,2
+ENEMY_DECEL_TABLE_RED:
+    DB 1,1,1,1,1,1,1,2,1,1,1,2,2,2,2,2
+    DB 2,2,2,3,2,3,3,3,2,3,3,3,3,3,3,3
+ENEMY_ACCEL_TABLE_GREEN:
+    DB 1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,2
+    DB 2,3,2,3,2,3,2,3,3,3,3,3,3,3,3,3
+ENEMY_ACCEL_TABLE_RED:
+    DB 1,1,1,1,1,1,1,1,3,2,3,4,3,4,4,4
+    DB 4,5,4,5,5,6,5,5,6,6,6,5,6,6,6,6
 
 ; digit glyphs 0-9, byte-for-byte from src/CYBER SHMUP.asm's own
 ; DIGIT_PATTERNS ("スコアの数字流用" - reuse the score's numerals),

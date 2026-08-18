@@ -1252,6 +1252,70 @@ with no way to tell where.
   the parked elevation) and settles back into the same parked cycle
   afterward. `render_check.py` and the 3000-frame idle sweep both
   clean, SCORE unaffected.
+- **Sine-eased X speed for both enemies, replacing instant speed
+  switches** ("では敵のX移動にサイン移動を採用する Zumは出現時速度２
+  自機に近づいたらサイン減速で速度1.5 今の時期検知は近いんでもっと
+  離れた位置に で、ZukuIIにもサイン減速 で、反転して帰っていく際は
+  サイン加速 速度は今のままでいい" - "ZukuII" read as ZacoII, the only
+  other enemy in this file). Both enemies previously snapped between
+  speed tiers in a single frame (Zum: flat 1.5-avg -> flat 3 once
+  within 64px; ZacoII: flat cruise -> flat *doubled* cruise the exact
+  frame it turns back) - now both ease smoothly via small sine-shaped
+  tables instead, **indexed directly by current distance, not elapsed
+  frames** - self-correcting every single frame regardless of how the
+  tank itself moves during the approach, and needing no new per-slot
+  "which frame of the ramp am I on" state at all.
+  - **Zum**: flat `ZUM_SPEED_BASE`(2) cruise beyond `ZUM_DECEL_RANGE`
+    of the tank, sine-eased down to a flat 1.5 avg via `ZUM_DECEL_
+    TABLE` (128 entries, one per px of distance) once inside it - no
+    more sudden charge speed-up, replacing `ZUM_SPEED_SLOW_BASE`/
+    `ZUM_SPEED_FAST`/`ZUM_CHARGE_MARGIN` entirely. The old 64px trigger
+    distance was "今の時期検知は近い" (too close) per this same
+    instruction, so `ZUM_DECEL_RANGE` is double that (128) - not a
+    number given directly, doubling the prior "too close" value being
+    the most literal reading available; easy to retune further from
+    real-hardware feedback.
+  - **ZacoII**: unchanged cruise speed on both legs everywhere except
+    the last `ENEMY_RAMP_RANGE`(32, an assumed value - not specified)
+    px of the approach (eases down toward the turnback pivot) and the
+    first 32px of the retreat (eases back up) - `ENEMY_GET_STEP_RAMPED`
+    wraps the existing `ENEMY_GET_STEP` and only diverts to a table
+    read within that zone, so "速度は今のままでいい" (the actual cruise
+    magnitudes, including the existing 2x retreat doubling) is
+    untouched by construction, not just by intent - outside the ramp
+    zone it's a straight passthrough to the same code as before.
+  - Every table entry across all 5 tables (`ZUM_DECEL_TABLE`,
+    `ENEMY_DECEL_TABLE_GREEN/RED`, `ENEMY_ACCEL_TABLE_GREEN/RED`) is
+    generated (not hand-tuned) via error-diffusion of a quarter-sine
+    ease, walked in the same direction gameplay actually traverses the
+    index (so any short window of consecutive frames still averages
+    close to the intended continuous curve despite each entry being a
+    whole px step) - same idea as `JUMP_OFFSET_TABLE`, just distance-
+    indexed instead of frame-indexed.
+  - **Bug caught before shipping**: a first pass let the DECEL tables'
+    curve reach its true continuous 0 right at the pivot - which is a
+    hard freeze, not a pause: once a table entry reads 0, distance-to-
+    pivot doesn't change next frame either, so the *same* 0 entry gets
+    read forever and ZacoII never actually crosses the pivot to
+    retreat (caught immediately in the emulator - a green ZacoII
+    parked motionlessly a few px short of the turnback line for 100+
+    frames straight, `E_RETREAT` never flipping). Every DECEL/ACCEL
+    table entry is now floored at 1 during generation (Zum's own table
+    never needed this - its whole 1.5-2.0 range is naturally >=1) -
+    ZacoII always creeps forward at least 1px/frame even at its
+    slowest near the pivot, trading a true dead stop for a guaranteed
+    crossing.
+  Verified: a green ZacoII eases from -3px/frame cruise down through
+  -1px/frame near the pivot, flips to retreat, eases +1 up to the full
+  +6px/frame retreat cruise (red variant, matching the existing 2x-
+  doubled target exactly), and despawns cleanly off the spawn edge -
+  no stall anywhere in the sequence. Zum's own table read directly
+  confirms flat 2 outside `ZUM_DECEL_RANGE` and a smooth 1-2 alternation
+  averaging toward 1.5 as distance shrinks. A 4000-frame stress sweep
+  (random direction/shot/jump input each frame, enemies actively
+  spawning and dying) plus the standard `render_check.py` and 3000-
+  frame idle sweep all ran clean, no crash/hang, SCORE incrementing
+  normally from a real kill during the stress sweep.
 
 ## Bugs found and fixed while building this
 
