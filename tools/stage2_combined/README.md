@@ -2049,6 +2049,26 @@ with no way to tell where.
   only after; staying on the same side the whole time never touches
   `STATE=4` at all. Full regression: 15000-frame random-input sweep,
   no crash/stall; `render_check.py` clean.
+- **Flip-pause lengthened 6->10 frames, and front-invincibility
+  suspended entirely while jumping** ("停止を１０フレに でBigZumジャン
+  プ中は前面攻撃無効が解除されてヒットするように変更"):
+  - `BIGZUM_FLIP_PAUSE_FRAMES` 6->10.
+  - `CHECK_HIT_PAIR_BIGZUM`'s own front(invincible)/rear(vulnerable)
+    split is now skipped entirely whenever BigZum's own `STATE=1`
+    (jumping) - any hit, from either side, counts as a rear
+    (damaging) hit while airborne; the ordinary front/rear rule still
+    applies in every grounded state (approach/pause/punch/flip-pause).
+    Verified via a direct, isolated `CHECK_HIT_PAIR_BIGZUM` call
+    (bypassing the per-frame movement update, since BigZum's own X-
+    chase during a jump would otherwise drift it away from a bullet
+    aimed at a fixed position before the real collision check ran,
+    confounding a precise same-frame test): a front-side hit while
+    `STATE=1` now damages (HP 8->7) instead of deflecting; the
+    identical front-side hit while grounded (`STATE=0`) still
+    deflects with no damage, confirming no regression to the ordinary
+    rule; rear-side hits damage in both states as before.
+  Full regression: 15000-frame random-input sweep, no crash/stall;
+  `render_check.py` clean.
 
 ## Bugs found and fixed while building this
 

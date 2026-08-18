@@ -834,11 +834,12 @@ BIGZUM_GIVEUP_RANGE EQU ZUM_DETECT_RANGE
 BIGZUM_GIVEUP_PAUSE_FRAMES EQU ZUM_PAUSE_FRAMES
 ; "BigZumが反転する場合は少し動きを止めてから反転し改めて接近モードに
 ; ループ ６フレとまること すぐに反転して向かってくると自機から離れ
-; なくなる" - whenever STATE=0's own approach logic would flip FACING
-; (BigZum's own side relative to the tank), it stops motionless for
-; this many frames first instead of committing to the new facing and
-; moving toward it the very same frame - see UOBZ_FLIP_PAUSE_MOVE.
-BIGZUM_FLIP_PAUSE_FRAMES EQU 6
+; なくなる" (then "停止を１０フレに") - whenever STATE=0's own approach
+; logic would flip FACING (BigZum's own side relative to the tank), it
+; stops motionless for this many frames first instead of committing to
+; the new facing and moving toward it the very same frame - see
+; UOBZ_FLIP_PAUSE_MOVE.
+BIGZUM_FLIP_PAUSE_FRAMES EQU 10
 ; ground reference used throughout a jump arc is the flat spawn tier
 ; (TANK_Y_BASE) rather than a live per-frame terrain probe - the jump
 ; is a short, self-contained maneuver that starts from the guaranteed-
@@ -4501,6 +4502,15 @@ CHECK_HIT_PAIR_BIGZUM:
     LD A,D : ADD A,BIGZUM_COLLISION_SIZE-1 : CP B : RET C
     LD A,C : ADD A,7 : CP E : RET C
     LD A,E : ADD A,BIGZUM_COLLISION_HEIGHT-1 : CP C : RET C
+
+    ; "BigZumジャンプ中は前面攻撃無効が解除されてヒットするように" -
+    ; while airborne (STATE=1), the front/rear split is suspended
+    ; entirely - any hit, from either side, counts as a rear hit. Only
+    ; while STATE=1; grounded states (approach/pause/punch/flip-pause)
+    ; keep the ordinary front-invincible/rear-vulnerable rule below.
+    LD A,(IY+7)
+    CP 1
+    JR Z,CHPBZ_REAR
 
     LD A,(IY+1) : LD D,A
     LD A,(IY+9)
