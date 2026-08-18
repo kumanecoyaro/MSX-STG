@@ -1758,6 +1758,68 @@ with no way to tell where.
   `BIGZUM_SPAWN_INTERVAL` reuse Zum's own constants verbatim; and the
   punch's actual knockback magnitude (`BIGZUM_PUNCH_KNOCKBACK`=12) and
   cadence are untuned placeholders, easy to retune.
+- **BigZum tuning + Zum/BigZum mutual exclusion + durability changes**
+  ("BigZumは１体のみ 横並びあるから で、BigZum出現中はZumは出ないよ
+  うに ZakoII赤の耐久２ BigZum耐久８に変更 で、Zumのコリジョンは２４
+  ｘ２４ 今のままだと飛び越えるのが困難 絵も２４ｘ２４くらいになって
+  るんで"):
+  - `BIGZUM_SLOT_COUNT` 2->1 - the previous round wrongly assumed
+    BigZum's own concurrent-instance limit matched Zum's just because
+    "スポーン条件は同じ" (spawn *conditions*, not the count itself).
+    The pool/attr-buffer RAM stays sized for the old count rather than
+    shrunk (no address renumbering needed for a *smaller* footprint -
+    the unused tail simply never gets touched once only 1 slot is ever
+    iterated).
+  - `ALLOC_ZUM_SLOT` now refuses to spawn a new Zum while any BigZum
+    slot is active (`ACT!=0`, alive or mid-explosion) - "BigZum出現中
+    はZumは出ないように". One-directional as specified (an already-
+    active Zum isn't force-removed if a BigZum spawns after it, and
+    BigZum's own spawn gate is untouched - only new Zum spawns are
+    blocked). Verified: forcing `BIGZUM_POOL`'s ACT byte to 1 (with
+    BigZum's own spawn timer frozen so it can't be a real spawn
+    coincidentally refilling it) held Zum's pool at all-zero for 600
+    frames; clearing it let a real Zum spawn again 591 frames later
+    once the terrain lined up flat at its own spawn column.
+  - `ENEMY_RED_HP`(2) - red ZacoII now takes 2 hits instead of the
+    usual 1; green is unaffected. Tracked in `E_DX` (offset+7) while
+    alive - unused until `E_ACT=2` (explosion drift only reads/writes
+    it once actually destroyed), so no slot-size growth (and no
+    cascading RAM-address renumbering downstream of `ENEMY_POOL`) was
+    needed - same "repurpose an otherwise-idle field" precedent as
+    Zum's own `Z_TIMER` doing double duty. A surviving (non-final) red
+    hit still consumes the bullet, just with a lighter deflect cue
+    (`SOUND_ZUM_DEFLECT`, no score) instead of the full destroy
+    sequence. Verified: green explodes on hit1; red survives hit1
+    (E_DX 2->1, ACT still 1), explodes on hit2.
+  - `BIGZUM_HP_INIT` 5->8 - "BigZum耐久８に変更". Verified: 8 forced
+    rear hits, HP counting down 7,6,5,4,3,2,1,0, exploding only on the
+    8th.
+  - `ZUM_COLLISION_SIZE`(24) - a new, Zum-specific collision constant
+    replacing the mismatched mix that was there before: `UPDATE_TANK_
+    ZUM_STAND`'s own stand-on-top overlap test used to pair Zum's real
+    16px sprite width on one side against the *tank's own* (larger,
+    32px) `TANK_PUSH_WIDTH` on the other - an asymmetric combined
+    window up to 48px wide that made a clean jump-over needlessly hard
+    to time - "今のままだと飛び越えるのが困難 絵も24x24くらいになっ
+    てるんで". Now a symmetric 24px box used consistently everywhere
+    Zum's own collision extent matters: the stand-on-top overlap test,
+    the push-contact boundary (`UPDATE_TANK_ZUM_PUSH`), the spawn-time
+    overlap resolution (`ALLOC_ZUM_SLOT`), and the bullet hit-box
+    (`CHECK_HIT_PAIR_ZUM`, both axes). `TANK_PUSH_WIDTH` itself is
+    untouched and still governs the tank's own collision width
+    elsewhere, including BigZum's (not requested to change). Verified:
+    the stand-on-top overlap now flips exactly at offset +-24 (true at
+    +-23, false at +-24, both sides - was an asymmetric 16/32 split
+    before); the push boundary now engages at gap=20 but not gap=25
+    (was 32).
+  Full regression: standalone forced-scenario tests for every item
+  above pass; a 15000-frame random-input sweep across the combined
+  changes shows no crash/stall and BigZum never exceeding 1 concurrent
+  instance - it also shows Zum and BigZum *can* be on screen together
+  (a Zum that spawned first, before BigZum's own conditions were met,
+  is never force-removed once BigZum shows up on top of it - expected
+  given the gate is one-directional, not a bug); `render_check.py`
+  clean.
 
 ## Bugs found and fixed while building this
 

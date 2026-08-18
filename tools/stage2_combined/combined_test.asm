@@ -421,6 +421,15 @@ ENEMY_SPR_BASE_SLOT EQU 4       ; hw sprite index slot0 uses; slotN -> ENEMY_SPR
 ; averaging 1.5px/frame - was a flat 1 ("スピードが遅いんで早くして").
 ENEMY_SPEED_LO  EQU 1
 ENEMY_SPEED_RED EQU 3   ; red variant: flat 3px/frame - "ZakoIIはの赤は速度３で" (was 2)
+; "ZakoII赤の耐久２" - red now takes 2 hits instead of the usual 1;
+; green is unaffected (still 1-hit, see CHECK_HIT_PAIR's own variant
+; check). Tracked in E_DX (offset+7) while alive - that field is
+; otherwise unused until E_ACT=2 (explosion drift only reads/writes it
+; once actually destroyed), so no new pool field/slot-size growth (and
+; no cascading RAM-address renumbering downstream of ENEMY_POOL) is
+; needed - same "repurpose an otherwise-idle field" precedent as Zum's
+; own Z_TIMER doing double duty for explosion timer/pause countdown.
+ENEMY_RED_HP EQU 2
 ENEMY_SPAWNX      EQU 240   ; off the right edge (16px sprite, so fully offscreen at spawn) - "右から左へスライド"
 ; "移動は自機位置をみて手前で引き返す" - turns back once within this
 ; many px of the tank, short of actually reaching it. Was 40 - "どちら
@@ -646,6 +655,22 @@ ZUM_Y_OFFSET EQU 12
 ; guarantees Zum_X>TANK_X>=0 whenever it actually reaches that
 ; subtraction.
 TANK_PUSH_WIDTH EQU 32      ; tank's own collision width for the Zum push-block below
+; "Zumのコリジョンは24x24 今のままだと飛び越えるのが困難 絵も24x24
+; くらいになってるんで" - Zum's OWN collision footprint (distinct from
+; TANK_PUSH_WIDTH above, which is the tank's own width) is now this
+; explicit, correctly-sized box instead of the mismatched mix that was
+; there before: UPDATE_TANK_ZUM_STAND's own stand-on-top overlap test
+; used to pair Zum's real 16px sprite width on one side against the
+; tank's own (larger, 32px) TANK_PUSH_WIDTH on the other - an
+; asymmetric combined window (up to 48px wide) that made a clean
+; jump-over needlessly hard to time. Now used symmetrically everywhere
+; Zum's own collision extent matters: the push-contact boundary
+; (UPDATE_TANK_ZUM_PUSH), the stand-on-top overlap test (UPDATE_TANK_
+; ZUM_STAND), the spawn-time overlap resolution (ALLOC_ZUM_SLOT), and
+; the bullet hit-box (CHECK_HIT_PAIR_ZUM, both X and Y). BigZum's own
+; collision (TANK_PUSH_WIDTH reused there) is untouched - this is
+; Zum-specific.
+ZUM_COLLISION_SIZE EQU 24
 ; how far the tank's own top-anchor Y sits above whatever it's
 ; standing on - tank height(32) minus the same landing offset(4) baked
 ; into TANK_Y_BASE/TANK_TIER_Y_TABLE's own derivation ("row23 top
@@ -724,11 +749,17 @@ ZUM_PUSH_SPEED EQU 6
 ; from the right, TANK_X>=BZ_X once FACING=1/behind-the-tank and
 ; facing right - same "mirrors when it turns around" rule Zum's own
 ; CHPZ_ORIENT_FLEE already established). Unlike Zum's 1-hit kill, a
-; rear hit only decrements BZ_HP (init BIGZUM_HP_INIT=5 - "耐久5") and
-; only actually destroys it once that reaches 0.
+; rear hit only decrements BZ_HP (init BIGZUM_HP_INIT=8 - "BigZum耐久
+; ８に変更", was 5) and only actually destroys it once that reaches 0.
 BIGZUM_SLOT_SIZE  EQU 12   ; +0 ACT,+1 X,+2 Y,+3 TIMER(explosion/pause countdown/punch-pose-frames - all mutually exclusive across states),+4 SPRIDX,+5/+6 DX/DY(explosion drift),+7 STATE(0=approach,3=pause,1=jump,2=punch),+8 HP,+9 FACING(0=normal facing left,1=flipped facing right),+10 JUMPFRAME,+11 PUNCH_COOLDOWN
-BIGZUM_SLOT_COUNT EQU 2    ; same "横並び制限" concurrent-count convention as Zum - "スポーン条件は同じ"
-BIGZUM_POOL       EQU 0F305h  ; BIGZUM_SLOT_SIZE*BIGZUM_SLOT_COUNT = 24 bytes
+; "BigZumは１体のみ 横並びあるから" - was 2 (mistakenly assumed to
+; match Zum's own concurrent limit just because "スポーン条件は同じ" -
+; corrected: BigZum's own side-by-side limit is 1, distinct from
+; Zum's). Reserved pool/attr-buffer space (below) is left sized for
+; the old count rather than shrunk - harmless, the unused tail simply
+; never gets written/flushed once only 1 slot is ever iterated.
+BIGZUM_SLOT_COUNT EQU 1
+BIGZUM_POOL       EQU 0F305h  ; BIGZUM_SLOT_SIZE*BIGZUM_SLOT_COUNT = 24 bytes reserved (only the first 12 actually used now - see BIGZUM_SLOT_COUNT)
 BIGZUM_SPAWN_TIMER EQU 0F31Dh
 ; staging buffer for BIGZUM_SLOT_COUNT*4 hw sprite slots (4 per
 ; instance - a 32x32 BigZum is 2x2 of 16x16 hw sprites, same quadrant
@@ -745,7 +776,7 @@ BIGZUM_SPAWNX     EQU ZUM_SPAWNX          ; same off-right-edge spawn X as Zum -
 BIGZUM_PROBE_DX   EQU 16                  ; horizontal-center probe offset for a 32px-wide sprite (vs Zum's 8, for its 16px width)
 BIGZUM_SPAWN_COL  EQU BIGZUM_SPAWNX+BIGZUM_PROBE_DX/8
 BIGZUM_SPAWN_INTERVAL EQU ZUM_SPAWN_INTERVAL
-BIGZUM_HP_INIT    EQU 5    ; "耐久5"
+BIGZUM_HP_INIT    EQU 8    ; "BigZum耐久８に変更" (was 5)
 ; jump arc: same half-sine construction as the tank's own JUMP_OFFSET_
 ; TABLE (round(H*sin(pi*t/32)) for t=0..32), just H=32 instead of 24 -
 ; "ジャンプは自機より高く32ｐｘ サインジャンプ". Same 33-frame duration
@@ -2645,6 +2676,13 @@ AES_VARIANT_GREEN:
     XOR A
 AES_VARIANT_SET:
     LD (IX+E_VARIANT),A
+    ; red-only hit counter (E_DX, see ENEMY_RED_HP's own comment) -
+    ; green never reads this, so it's left at the 0 the earlier XOR A
+    ; already cleared it to.
+    OR A
+    JR Z,AES_HP_DONE
+    LD A,ENEMY_RED_HP : LD (IX+E_DX),A
+AES_HP_DONE:
 
     LD A,(ENEMY_SPAWN_COUNT)
     CP 10
@@ -2949,6 +2987,23 @@ CHECK_HIT_PAIR:
 CHP_SKIP_ERASE:
     XOR A : LD (IX+0),A
 
+    ; "ZakoII赤の耐久２" - red needs a 2nd rear... any hit, since
+    ; ZacoII has no front/rear distinction, only variant. Green
+    ; destroys immediately as before; red decrements its own E_DX hit
+    ; counter (see ENEMY_RED_HP) and only actually explodes once it
+    ; reaches 0 - a surviving hit just consumes the bullet with a
+    ; lighter "hit but not destroyed" cue (SOUND_ZUM_DEFLECT, same
+    ; convention BigZum's own multi-hit HP uses) instead of the full
+    ; destroy sequence.
+    LD A,(IY+E_VARIANT)
+    OR A
+    JR Z,CHP_DESTROY
+    LD A,(IY+E_DX) : DEC A : LD (IY+E_DX),A
+    JR Z,CHP_DESTROY
+    CALL SOUND_ZUM_DEFLECT
+    RET
+
+CHP_DESTROY:
     LD A,2 : LD (IY+E_ACT),A
     LD A,EXPLOSION_DURATION : LD (IY+E_TIMER),A
 
@@ -3041,6 +3096,12 @@ ALLOC_ZUM_SLOT:
     LD A,(ENEMY_SPAWN_COUNT)
     CP 10
     RET C
+    ; "BigZum出現中はZumは出ないように" - refuse to spawn a new Zum
+    ; while BigZum is out (alive or still mid-explosion); existing Zum
+    ; already on screen are left alone, only new spawns are gated.
+    LD A,(BIGZUM_POOL)
+    OR A
+    RET NZ
     CALL ZUM_TERRAIN_OK
     OR A
     RET Z
@@ -3070,7 +3131,7 @@ AZS_FOUND:
     ; the window a same-frame slip-through could happen in, without
     ; blocking the spawn itself the way the previous round's distance
     ; gate did.
-    LD A,ZUM_SPAWNX-TANK_PUSH_WIDTH : LD B,A   ; target TANK_X
+    LD A,ZUM_SPAWNX-ZUM_COLLISION_SIZE : LD B,A   ; target TANK_X
     LD A,(TANK_X)
     CP B
     RET C          ; TANK_X already < target - clear, nothing to resolve
@@ -3392,7 +3453,7 @@ UTZP_LOOP:
     CP D
     JR NC,UTZP_NEXT             ; TANK_X>=Zum_X - already passed, no longer blocks
     LD A,D
-    SUB TANK_PUSH_WIDTH
+    SUB ZUM_COLLISION_SIZE
     LD C,A                     ; C = target TANK_X (flush against this Zum)
     LD A,(TANK_X)
     CP C
@@ -3452,12 +3513,16 @@ UTZS_LOOP:
     LD A,(IX+0)
     CP 1
     JR NZ,UTZS_NEXT
-    ; horizontal overlap: TANK_X < Zum_X+16 AND Zum_X < TANK_X+TANK_PUSH_WIDTH
-    LD A,(IX+1) : ADD A,16 : LD D,A
+    ; horizontal overlap: TANK_X < Zum_X+ZUM_COLLISION_SIZE AND
+    ; Zum_X < TANK_X+ZUM_COLLISION_SIZE - symmetric 24px box on both
+    ; sides now (was an asymmetric 16/TANK_PUSH_WIDTH(32) mix - see
+    ; ZUM_COLLISION_SIZE's own comment on why that made jumping over
+    ; needlessly hard to time).
+    LD A,(IX+1) : ADD A,ZUM_COLLISION_SIZE : LD D,A
     LD A,(TANK_X)
     CP D
     JR NC,UTZS_NEXT
-    LD A,(TANK_X) : ADD A,TANK_PUSH_WIDTH : LD D,A
+    LD A,(TANK_X) : ADD A,ZUM_COLLISION_SIZE : LD D,A
     LD A,(IX+1)
     CP D
     JR NC,UTZS_NEXT
@@ -3514,10 +3579,13 @@ CHECK_HIT_PAIR_ZUM:
     LD A,(IY+1) : LD D,A
     LD A,(IY+2) : LD E,A
 
+    ; box widened to ZUM_COLLISION_SIZE-1(23) - was a hardcoded 15
+    ; (matching Zum's own 16px sprite width) - see ZUM_COLLISION_SIZE's
+    ; own comment.
     LD A,B : ADD A,7 : CP D : RET C
-    LD A,D : ADD A,15 : CP B : RET C
+    LD A,D : ADD A,ZUM_COLLISION_SIZE-1 : CP B : RET C
     LD A,C : ADD A,7 : CP E : RET C
-    LD A,E : ADD A,15 : CP C : RET C
+    LD A,E : ADD A,ZUM_COLLISION_SIZE-1 : CP C : RET C
 
     ; front/back is decided by the TANK's own position relative to
     ; Zum (TANK_X>=Zum_X - the same "already passed" test
