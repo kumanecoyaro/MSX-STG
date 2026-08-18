@@ -1820,6 +1820,34 @@ with no way to tell where.
   is never force-removed once BigZum shows up on top of it - expected
   given the gate is one-directional, not a bug); `render_check.py`
   clean.
+- **BigZum's collision now matches its real art footprint (bottom-left
+  24x24 of the 32x32 canvas), not the full canvas** ("BigZumは３２ｘ
+  ３２だが絵は左下２４ｘ２４ コリジョンも同じでそうなってるか") -
+  confirmed against both sprite JSONs directly first (ink genuinely
+  spans rows8-31/cols~0-24 of the 32x32 grid for both poses - 8 blank
+  rows on top, ~8 blank columns on the right, no padding on the left
+  or bottom), then confirmed it was NOT reflected in the collision
+  code: `CHECK_HIT_PAIR_BIGZUM`'s own bullet hit-box and every push/
+  punch-contact range check (`ALLOC_BIGZUM_SLOT`, `UOBZ_PUNCH_MOVE`,
+  `UPDATE_TANK_BIGZUM_PUNCH`) were all still sized against the full
+  32x32 canvas (`TANK_PUSH_WIDTH`/a hardcoded 31). Fixed with 2 new
+  constants: `BIGZUM_COLLISION_SIZE`(24, replacing every one of those
+  `TANK_PUSH_WIDTH`/31 uses) and `BIGZUM_ART_Y_OFFSET`(8, added to
+  `BZ_Y` only in the bullet hit-box's own Y bound - no X offset needed
+  since the art's left edge already sits flush with `BZ_X`, only the
+  right ~8 blank columns and top 8 blank rows needed trimming).
+  Verified via an isolated direct call into `CHECK_HIT_PAIR_BIGZUM`
+  (bypassing the per-frame movement update, which would otherwise
+  shift BigZum's own position mid-test and confound a precise
+  boundary check): a bullet lands inside the art's own top-left
+  corner and a well-inside point, but NOT in the blank top strip
+  (`Y+4`) or the blank right strip (`X+28`) - the box genuinely
+  tracks the drawn art now, not the padded canvas. The push/punch
+  contact boundary was also confirmed to have moved from 32 to 24
+  (front: triggers at gap<=24, was 32; behind: triggers at gap<=23 -
+  the 1px front/behind asymmetry is an inherited comparison-direction
+  quirk, same shape Zum's own push/stand-on checks already have, not
+  something newly introduced here).
 
 ## Bugs found and fixed while building this
 

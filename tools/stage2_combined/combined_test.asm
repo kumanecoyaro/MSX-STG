@@ -667,9 +667,9 @@ TANK_PUSH_WIDTH EQU 32      ; tank's own collision width for the Zum push-block 
 ; Zum's own collision extent matters: the push-contact boundary
 ; (UPDATE_TANK_ZUM_PUSH), the stand-on-top overlap test (UPDATE_TANK_
 ; ZUM_STAND), the spawn-time overlap resolution (ALLOC_ZUM_SLOT), and
-; the bullet hit-box (CHECK_HIT_PAIR_ZUM, both X and Y). BigZum's own
-; collision (TANK_PUSH_WIDTH reused there) is untouched - this is
-; Zum-specific.
+; the bullet hit-box (CHECK_HIT_PAIR_ZUM, both X and Y). BigZum has
+; its own separate collision constant (BIGZUM_COLLISION_SIZE) - this
+; is Zum-specific.
 ZUM_COLLISION_SIZE EQU 24
 ; how far the tank's own top-anchor Y sits above whatever it's
 ; standing on - tank height(32) minus the same landing offset(4) baked
@@ -724,8 +724,8 @@ ZUM_PUSH_SPEED EQU 6
 ; punch-vs-jump-on:
 ;   BZ_STATE=2 (punching) - closes any remaining gap (same ZUM_ACCEL_
 ;     TABLE ease Zum's own charge uses), then holds position once
-;     within TANK_PUSH_WIDTH and throws a punch (BIGZUM_PUNCH_INTERVAL
-;     frame cadence) instead of Zum's continuous 1:1 push - see
+;     within BIGZUM_COLLISION_SIZE and throws a punch (BIGZUM_PUNCH_
+;     INTERVAL frame cadence) instead of Zum's continuous 1:1 push - see
 ;     UPDATE_TANK_BIGZUM_PUNCH. Shows BigZumP (punch pose) for
 ;     BIGZUM_PUNCH_POSE_FRAMES after each punch lands.
 ;   BZ_STATE=1 (jumping) - a sine-arc jump (BIGZUM_JUMP_TABLE, 32px
@@ -772,6 +772,22 @@ BIGZUM_SPR_BASE_SLOT EQU 12      ; hw sprite slots12-19 (2 instances x4), right 
 ; right after Zum's own PAT_ZUM_FLIP(152-155); 2 poses x2 facings x4
 ; quadrant-groups x4 sub-patterns = 64 total codes, 156-219.
 BIGZUM_COLOR      EQU 13   ; from sprites/BigZum.json's own fg (same magenta as Zum)
+; "BigZumは32x32だが絵は左下24x24 コリジョンも同じでそうなってるか" -
+; confirmed against both sprite JSONs directly (ink spans rows8-31,
+; cols~0-24 of the 32x32 canvas for both poses) - the canvas has 8
+; blank rows on top and ~8 blank columns on the right, art hugging the
+; bottom-left corner. It was NOT reflected in the collision before
+; this - CHECK_HIT_PAIR_BIGZUM's own bullet hit-box and every push/
+; punch-contact range check (ALLOC_BIGZUM_SLOT, UOBZ_PUNCH_MOVE,
+; UPDATE_TANK_BIGZUM_PUNCH) were all using the full 32x32 canvas (via
+; TANK_PUSH_WIDTH/hardcoded 31) instead of the drawn art's real
+; footprint. Now: BIGZUM_COLLISION_SIZE(24) replaces those, and
+; BIGZUM_ART_Y_OFFSET(8) shifts the box's own top down to match the
+; art's real top row - no X offset needed since the art's left edge
+; already sits flush with BZ_X (col0), only the right ~8 blank columns
+; and top 8 blank rows needed trimming.
+BIGZUM_COLLISION_SIZE EQU 24
+BIGZUM_ART_Y_OFFSET    EQU 8
 BIGZUM_SPAWNX     EQU ZUM_SPAWNX          ; same off-right-edge spawn X as Zum - "スポーン条件は同じ"
 BIGZUM_PROBE_DX   EQU 16                  ; horizontal-center probe offset for a 32px-wide sprite (vs Zum's 8, for its 16px width)
 BIGZUM_SPAWN_COL  EQU BIGZUM_SPAWNX+BIGZUM_PROBE_DX/8
@@ -3740,7 +3756,7 @@ ABZS_FOUND:
     LD A,BIGZUM_HP_INIT : LD (IX+8),A
     LD A,BIGZUM_SPAWN_INTERVAL : LD (BIGZUM_SPAWN_TIMER),A
 
-    LD A,BIGZUM_SPAWNX-TANK_PUSH_WIDTH : LD B,A
+    LD A,BIGZUM_SPAWNX-BIGZUM_COLLISION_SIZE : LD B,A
     LD A,(TANK_X)
     CP B
     RET C
@@ -3834,7 +3850,7 @@ UOBZ_PAUSE_DECIDE_JUMP:
 
 ; punching (STATE=2): closes any remaining gap via ZUM_ACCEL_TABLE
 ; (same ease Zum's own charge uses), then holds position once within
-; TANK_PUSH_WIDTH - the actual punch delivery (knockback + pose timer)
+; BIGZUM_COLLISION_SIZE - the actual punch delivery (knockback + pose timer)
 ; is UPDATE_TANK_BIGZUM_PUNCH's own job, run once per frame from
 ; MAINLOOP after every BigZum has moved, same separation of concerns
 ; as UPDATE_TANK_ZUM_PUSH. FACING=1 (already landed behind the tank)
@@ -3855,7 +3871,7 @@ UOBZP_TIMER_DONE:
     JR C,UOBZP_HOLD
     LD A,D : SUB E
     LD D,A
-    CP TANK_PUSH_WIDTH
+    CP BIGZUM_COLLISION_SIZE
     JR C,UOBZP_HOLD
     CP ZUM_MID_RANGE
     JR NC,UOBZP_SPEED_FULL
@@ -4117,7 +4133,7 @@ UTBP_LOOP:
     JR NZ,UTBP_BEHIND
 
     LD A,(IX+1) : LD D,A
-    LD A,D : SUB TANK_PUSH_WIDTH
+    LD A,D : SUB BIGZUM_COLLISION_SIZE
     LD C,A
     LD A,(TANK_X)
     CP C
@@ -4143,7 +4159,7 @@ UTBP_FRONT_DEC:
 
 UTBP_BEHIND:
     LD A,(IX+1) : LD D,A
-    LD A,D : ADD A,TANK_PUSH_WIDTH
+    LD A,D : ADD A,BIGZUM_COLLISION_SIZE
     LD C,A
     LD A,(TANK_X)
     CP C
@@ -4199,16 +4215,20 @@ CHECK_HIT_PAIR_BIGZUM:
     CP 1
     RET NZ
 
-    ; AABB, box widened to 31 (32px BigZum vs the bullet's own 8px cell)
+    ; AABB against the real art footprint - BIGZUM_COLLISION_SIZE(24)
+    ; wide starting at BZ_X (left edge, no offset needed) and
+    ; BIGZUM_ART_Y_OFFSET(8) down from BZ_Y (top of the actual art,
+    ; not the blank canvas above it) - see BIGZUM_COLLISION_SIZE's own
+    ; comment.
     LD A,(IX+2) : ADD A,A : ADD A,A : ADD A,A : LD B,A
     LD A,(IX+3) : ADD A,A : ADD A,A : ADD A,A : LD C,A
     LD A,(IY+1) : LD D,A
-    LD A,(IY+2) : LD E,A
+    LD A,(IY+2) : ADD A,BIGZUM_ART_Y_OFFSET : LD E,A
 
     LD A,B : ADD A,7 : CP D : RET C
-    LD A,D : ADD A,31 : CP B : RET C
+    LD A,D : ADD A,BIGZUM_COLLISION_SIZE-1 : CP B : RET C
     LD A,C : ADD A,7 : CP E : RET C
-    LD A,E : ADD A,31 : CP C : RET C
+    LD A,E : ADD A,BIGZUM_COLLISION_SIZE-1 : CP C : RET C
 
     LD A,(IY+1) : LD D,A
     LD A,(IY+9)
