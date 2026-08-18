@@ -546,6 +546,18 @@ ZUM_Y_OFFSET EQU 12
 ; guarantees Zum_X>TANK_X>=0 whenever it actually reaches that
 ; subtraction.
 TANK_PUSH_WIDTH EQU 32      ; tank's own collision width for the Zum push-block below
+; how far the tank's own top-anchor Y sits above whatever it's
+; standing on - tank height(32) minus the same landing offset(4) baked
+; into TANK_Y_BASE/TANK_TIER_Y_TABLE's own derivation ("row23 top
+; (23*8=184) - tank height(32) + landing offset(3+1)" -> the anchor is
+; always groundline-28, never groundline-32). Used by UPDATE_TANK_ZUM_
+; STAND below so standing on top of Zum uses the exact same anchor-to-
+; surface relationship as standing on ordinary terrain - previously
+; that code subtracted TANK_PUSH_WIDTH(32) instead (an unrelated
+; *horizontal* collision-width constant that just happened to also be
+; 32), landing the tank 4px higher than it should sit and reproducing
+; almost exactly the "5,6px隙間" gap once blamed on ZUM_Y_OFFSET.
+TANK_GROUND_OFFSET EQU 28
 ; "Zumと接触状態でジャンプすると自機がワープしてしまう" - the push
 ; below was an unconditional snap to Zum's exact position; harmless
 ; frame-to-frame during ordinary continuous contact (the gap it has to
@@ -2891,8 +2903,11 @@ UTZS_LOOP:
     LD A,(IX+1)
     CP D
     JR NC,UTZS_NEXT
-    ; overlap confirmed - clamp so the tank's bottom rests on Zum's own top
-    LD A,(IX+2) : SUB TANK_PUSH_WIDTH : LD D,A
+    ; overlap confirmed - clamp so the tank's bottom rests on Zum's own top,
+    ; using the same anchor-to-surface offset as standing on ordinary
+    ; terrain (TANK_GROUND_OFFSET, not the horizontal TANK_PUSH_WIDTH -
+    ; see TANK_GROUND_OFFSET's own comment)
+    LD A,(IX+2) : SUB TANK_GROUND_OFFSET : LD D,A
     LD A,(TANK_Y_CUR)
     CP D
     JR C,UTZS_NEXT              ; TANK_Y_CUR already above (less than) the stand height - still clear

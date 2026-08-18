@@ -1187,6 +1187,30 @@ with no way to tell where.
   confirms `Zum_bottom == ground_line` exactly, not just "looks close"
   in a render. Full regression sweep (`render_check.py`, 3000-frame
   idle sweep) still clean.
+- **Ground fix confirmed working, but standing-on-top of Zum still
+  didn't settle - a different bug, not the same one** ("よし修正された
+  ...今度は乗っかりでZumに設置してない問題 原因はそこかと思ったが別だな
+  Zumへの着地位置が間違ってると言うこと"). `UPDATE_TANK_ZUM_STAND`'s
+  own vertical clamp (`LD A,(IX+2) : SUB TANK_PUSH_WIDTH : LD D,A`) was
+  subtracting `TANK_PUSH_WIDTH` (32) - a *horizontal* collision-width
+  constant for the separate push-block check, reused here purely
+  because it happened to also equal 32, the tank's own sprite height.
+  But the tank's own top-anchor never sits a full 32px above whatever
+  it's standing on - same reasoning as the ground fix just above: it's
+  groundline-28 (`TANK_GROUND_OFFSET`, newly named, matching `TANK_Y_
+  BASE`'s own "tank height(32) - landing offset(4)" derivation), not
+  groundline-32. Standing on Zum was using the wrong offset (32
+  instead of 28) for a completely different reason than the ground-Y
+  bug above - this one was never touched by the `ZUM_Y_OFFSET` fix at
+  all, which is exactly why it needed a separate report and separate
+  fix. Now uses `TANK_GROUND_OFFSET` instead, the same anchor-to-
+  surface relationship as standing on ordinary terrain. Verified: a
+  Zum placed directly under the tank with `TANK_Y_CUR` starting below
+  the stand line clamps to exactly `Zum_top-28`, giving a 4px tank-
+  bottom/Zum-top overlap (matching the same 4px landing overlap normal
+  ground-standing uses) instead of the old 32-offset's implied 0px
+  (which read as the reported gap). Re-rendered visually: the tank's
+  own tracks now sit flush on top of Zum with no visible seam.
 
 ## Bugs found and fixed while building this
 
