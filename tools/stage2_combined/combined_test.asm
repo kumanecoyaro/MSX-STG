@@ -488,14 +488,21 @@ ZUM_CLIMB_SPEED EQU 2       ; px/frame ease toward the target tier Y (see the co
 ; the tank's own (32px-tall sprite) top-anchor Y for each tier; Zum is
 ; only 16px tall, so using that value directly for Zum's own top-Y
 ; left its bottom 16px short of the ground line (see
-; UOZ_TERRAIN_FOLLOW). The full geometric +16 overshot on real
-; hardware ("さっきのスクショでもだが...今度は5,6Px地面に埋まってる
-; な") - Zum's own art tapers off well before its 16th row (see
-; sprites/Zum.json), so its real visible bottom sits a few px higher
-; within its own canvas than the full height suggests. Backed off to
-; 10 (16 minus the ~5-6px reported); still an estimate, easy to nudge
-; further if it's still off by a couple px either way.
-ZUM_Y_OFFSET EQU 10
+; UOZ_TERRAIN_FOLLOW). Went through 2 empirically-tuned ADD offsets
+; (+16, then backed off to +10 after "今度は5,6Px地面に埋まってるな")
+; trying to visually match the tank's own bottom - "位置だけ一致させ
+; ると判定が狂ってしまう原因になる" (matching the *visual* position
+; alone is exactly what made the collision geometry wrong - Zum's own
+; hit-box, the push-block height, and the stand-on-top target all read
+; straight from this same Y, so fudging it to look right under
+; UPDATE_ONE_ZUM's own gravity broke standing-on-top - "乗っかった時
+; に自機とZumの間に隙間が出来て...多分Zumをオフセットしたからだろう
+; そもそもこのオフセットは必要ないからな"). Replaced with a plain
+; geometric derivation instead of a re-tuned fudge: "地形1番下の高さ
+; は8px Zumは16px 8px上にスプライトを出せば自然に設置するはず" - one
+; terrain tier step is 8px, Zum is exactly 2 steps tall, so its own
+; top-Y is the tank's own tier-Y minus 8 (SUB, not ADD, below).
+ZUM_Y_OFFSET EQU 8
 ; despawn margin removed - "Zumが画面左まで行った際にかなり手前で
 ; 止まってそのまま消えてる 左端まで到達してないぞ": a fixed 32px
 ; margin (matching TANK_PUSH_WIDTH, to keep UPDATE_TANK_ZUM_PUSH's own
@@ -2557,7 +2564,7 @@ AZS_FOUND:
     POP IX
     LD A,1 : LD (IX+0),A
     LD A,ZUM_SPAWNX : LD (IX+1),A
-    LD A,TANK_Y_BASE : ADD A,ZUM_Y_OFFSET : LD (IX+2),A   ; tier3's own Y, +16 for Zum's shorter sprite (see ZUM_Y_OFFSET)
+    LD A,TANK_Y_BASE : SUB ZUM_Y_OFFSET : LD (IX+2),A   ; tier3's own Y, -8 for Zum's shorter sprite (see ZUM_Y_OFFSET)
     XOR A : LD (IX+3),A
     LD A,ZUM_SPAWN_INTERVAL : LD (ZUM_SPAWN_TIMER),A
     RET
@@ -2679,7 +2686,7 @@ UTF_T2:
 UTF_TIER_SET:
     LD E,A : LD D,0
     LD HL,TANK_TIER_Y_TABLE : ADD HL,DE : LD A,(HL)
-    ADD A,ZUM_Y_OFFSET          ; 16px-tall sprite vs the table's own 32px-tall (tank) anchor - see ZUM_Y_OFFSET
+    SUB ZUM_Y_OFFSET            ; one terrain step (8px) above the tank's own tier-Y - see ZUM_Y_OFFSET
     LD B,A                     ; B = target Y
     LD A,(IX+2)                ; A = current Z_Y
     CP B

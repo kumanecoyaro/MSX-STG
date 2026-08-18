@@ -1057,6 +1057,30 @@ with no way to tell where.
   down 1-3px/frame over ~11 frames instead of jumping straight to
   ground in one; an ordinary jump with no Zum involved still ends
   cleanly after the normal 32 frames, unaffected.
+- **`ZUM_Y_OFFSET` replaced with a geometric derivation instead of a
+  visually-tuned fudge** ("乗っかった時に自機とZumの間に隙間が出来て
+  不自然だな 5,6Px下だな 多分Zumをオフセットしたからだろう そもそも
+  このオフセットは必要ないからな 位置だけ一致させると判定が狂って
+  しまう原因になる 地形1番下の高さは8px Zumは16px 8px上にスプライト
+  を出せば自然に設置するはず"): the previous +10 (before that, +16)
+  was tuned purely to make Zum's *visible* bottom line up with the
+  ground on real hardware - but every Zum-related hit/collision check
+  (`UOZ_TERRAIN_FOLLOW`'s own target, the push-block height reference,
+  the stand-on-top clamp, `CHECK_HIT_PAIR_ZUM`'s Y-based AABB) reads
+  straight from that same value, so a fudge tuned for one visual case
+  (grounded walking) skewed the geometry for another (standing on top,
+  where the gap was reported). Replaced with a plain derivation: one
+  terrain tier step is 8px, Zum is exactly 2 steps (16px) tall, so its
+  own top-Y is the tank's own tier-Y minus 8 (`SUB`, not `ADD`, in both
+  `ALLOC_ZUM_SLOT`'s spawn Y and `UOZ_TERRAIN_FOLLOW`'s per-frame
+  target) - not re-tuned to visually match anything, per direct
+  instruction that doing so was the actual root cause. Verified
+  mechanically: spawn Y now reads 148 (156-8) for the base tier,
+  matching the formula exactly; existing push-block/stand/hit-test
+  behavior all still function correctly against the new value (no
+  logic elsewhere assumed a particular magnitude). Real-hardware
+  appearance not independently re-confirmed here - flagged for a quick
+  look since this is a meaningfully different Y than before.
 
 ## Bugs found and fixed while building this
 
