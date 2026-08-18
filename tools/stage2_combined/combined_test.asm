@@ -574,15 +574,16 @@ ZUM_SPAWN_INTERVAL EQU 90   ; same untuned-but-reasonable value as ENEMY_SPAWN_I
 ZUM_SPEED_BASE EQU 3
 ZUM_DETECT_RANGE EQU 80
 ZUM_MID_RANGE EQU 40    ; assumed split point (half of ZUM_DETECT_RANGE) - not itself specified
-; flee cruise speed once clear of the tank - doubled from ZUM_SPEED_
-; BASE(3), matching ZacoII's own "帰る時は倍速で" retreat-doubling
-; convention (no equivalent number was given for Zum's own flee, so
-; reusing that established ratio). ZUM_FLEE_TABLE (below) sine-
-; accelerates from wherever the flee roll happened (near the decel
-; trough, ~1.5) up to this over the same ZUM_MID_RANGE(40) width,
-; indexed by growing distance-from-tank exactly like ZacoII's own
-; ACCEL tables - "引き返しもサイン移動で".
-ZUM_FLEE_SPEED EQU 6
+; flee cruise speed once clear of the tank - "反転時の速度が速いので
+; 落としてくれ もしかして2倍にしてないか": it was exactly that, ZacoII's
+; own "帰る時は倍速で" retreat-doubling convention borrowed without a
+; real basis (no equivalent number was ever given for Zum's own flee)
+; - dropped back to a flat match of ZUM_SPEED_BASE(3) instead of
+; doubling it. ZUM_FLEE_TABLE (below) sine-accelerates from wherever
+; the flee roll happened (near the decel trough, ~1.5) up to this over
+; ZUM_MID_RANGE(40), indexed by growing distance-from-tank exactly
+; like ZacoII's own ACCEL tables - "引き返しもサイン移動で".
+ZUM_FLEE_SPEED EQU ZUM_SPEED_BASE
 ; "地面に設置してないな 16px上に浮いてる" - TANK_TIER_Y_TABLE gives
 ; the tank's own (32px-tall sprite) top-anchor Y for each tier; Zum is
 ; only 16px tall, so using that value directly for Zum's own top-Y
@@ -3189,11 +3190,25 @@ UTZP_LOOP:
     LD A,(TANK_X)
     CP C
     JR C,UTZP_NEXT             ; TANK_X already < target - no overlap, nothing to do
-    JR Z,UTZP_NEXT              ; already exactly flush
-    SUB C                      ; A = gap = TANK_X-target
+    ; in contact - apply the FULL push speed unconditionally every
+    ; frame instead of clamping/snapping toward the target boundary -
+    ; "無操作時の押し量が変わってない...パラメータを変えても変わって
+    ; ないのでバグだろうな": the old snap-to-target-when-close branch
+    ; made the tank converge to exactly gap=32 and then just track that
+    ; target 1:1 forever after - once locked on, TANK_X's *sustained*
+    ; rate of movement was actually whatever Zum's own current speed
+    ; happened to be (often as low as 1, near the decel trough), not
+    ; ZUM_PUSH_SPEED at all - which is exactly why raising that
+    ; constant had no visible effect. Now the tank gets shoved the full
+    ; ZUM_PUSH_SPEED every single frame it's in contact, independent of
+    ; Zum's own pace, overshooting past the nominal 32px buffer on
+    ; purpose (contact simply disengages for a frame or two until Zum
+    ; catches back up, then pushes again) instead of settling into a
+    ; perfectly smooth, barely-there 1:1 tracking.
+    LD A,(TANK_X)
     CP ZUM_PUSH_SPEED
-    JR NC,UTZP_STEP             ; gap bigger than one step - just close by the capped amount
-    LD A,C : LD (TANK_X),A      ; gap fits within one step - snap the rest of the way, no overshoot
+    JR NC,UTZP_STEP
+    XOR A : LD (TANK_X),A       ; underflow floor at 0
     JR UTZP_NEXT
 UTZP_STEP:
     LD A,(TANK_X) : SUB ZUM_PUSH_SPEED : LD (TANK_X),A
@@ -3686,9 +3701,9 @@ ZUM_ACCEL_TABLE:
 ; see ZUM_FLEE_SPEED's own comment. Same construction as the tables
 ; above (error-diffused, floored at 1).
 ZUM_FLEE_TABLE:
-    DB 2,1,2,2,2,3,2,3,3,3,3,4,3,4,4,4
-    DB 4,5,4,5,4,5,5,5,6,5,5,6,5,6,6,5
-    DB 6,6,6,6,6,6,6,6
+    DB 2,1,2,1,2,2,2,2,2,2,2,2,2,2,3,2
+    DB 2,3,2,3,2,3,3,2,3,3,3,3,2,3,3,3
+    DB 3,3,3,3,3,3,3,3
 
 ; distance-from-pivot-indexed sine eases for ZacoII, ENEMY_RAMP_RANGE
 ; (32) entries each - see ENEMY_GET_STEP_RAMPED. DECEL tables ease the

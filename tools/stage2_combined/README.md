@@ -1555,6 +1555,52 @@ with no way to tell where.
   (3). Full regression sweep clean (`render_check.py`, 3000-frame idle
   sweep, 6000-frame random-input stress sweep with live Zum/ZacoII
   spawns and kills throughout).
+- **The real bug behind "raising ZUM_PUSH_SPEED changed nothing" -
+  found and fixed** ("で、やはり自機が前に入れて押している時より無操
+  作時の押し量が変わってない 地形の左移動量のカウンター1で1pxスクロ
+  ールと一致してて止まって見えるんだよ 自機が地形より下がっていかな
+  いと バグなのか押し量が足りないのか判断つかないがパラメータを変え
+  ても変わってないのでバグだろうな" - exactly right, and traced to a
+  concrete mechanism, not just "needs a bigger number"). `UPDATE_TANK_
+  ZUM_PUSH`'s old design clamped `TANK_X` *toward* a fixed target
+  (`Zum_X-TANK_PUSH_WIDTH`) and snapped precisely onto it once the
+  remaining gap was smaller than `ZUM_PUSH_SPEED` - which means once
+  the tank actually caught up to that boundary (almost immediately),
+  every later frame's movement was governed entirely by how far the
+  *target itself* moved, i.e. by Zum's own current speed, completely
+  independent of `ZUM_PUSH_SPEED`'s value. Directly reproduced in the
+  emulator before touching any code: with a Zum forced to keep
+  charging (no flee roll), steady-state contact settled into a flat
+  **1px/frame** drift no matter whether `ZUM_PUSH_SPEED` was 3 or 6 -
+  because Zum's own accel-table speed right around the typical contact
+  distance (gap≈32) is 1. `ZUM_PUSH_SPEED` genuinely only ever
+  mattered for the brief initial catch-up transient, never for
+  sustained pushing - exactly matching "パラメータを変えても変わって
+  ないので". Fixed by removing the snap-to-target shortcut entirely:
+  `UPDATE_TANK_ZUM_PUSH` now applies the *full* `ZUM_PUSH_SPEED`
+  unconditionally every single frame the tank is in contact, with no
+  attempt to land precisely on the 32px boundary - this overshoots
+  past it on purpose, contact simply disengages for a frame or two
+  until Zum closes back in, then pushes again, instead of settling
+  into an unnoticeable 1:1 tracking. The original rate-limiting itself
+  (the actual anti-warp fix from a much earlier round) is untouched -
+  still bounded to `ZUM_PUSH_SPEED`/frame, still never a single-frame
+  snap across a large gap. Verified: the same forced-charging scenario
+  now shows `TANK_X` dropping in full 6px bursts roughly every 3
+  frames (~2px/frame average, a real improvement over the old flat 1)
+  instead of a flat 1px/frame the whole time; a large post-contact gap
+  (created by simulating a jump-suspended push) still resolves
+  gradually in 6px steps, never an instant snap; full regression sweep
+  clean.
+- **Flee speed dropped back from doubled to flat** ("反転時の速度が速
+  いので落としてくれ もしかして2倍にしてないか"). Correct guess -
+  `ZUM_FLEE_SPEED` was `ZUM_SPEED_BASE*2`(6), borrowing ZacoII's own
+  "帰る時は倍速で" retreat-doubling convention without a real basis
+  (no number was ever given for Zum's own flee specifically). Dropped
+  to a flat match of `ZUM_SPEED_BASE`(3) instead, `ZUM_FLEE_TABLE`
+  regenerated to match (same 1.5->3 ease shape `ZUM_DECEL_TABLE`
+  already uses, just walked in the opposite - growing-distance -
+  direction).
 
 ## Bugs found and fixed while building this
 
