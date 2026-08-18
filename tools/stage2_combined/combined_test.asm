@@ -479,11 +479,18 @@ ZUM_CLIMB_SPEED EQU 2       ; px/frame ease toward the target tier Y (see the co
 ; 10 (16 minus the ~5-6px reported); still an estimate, easy to nudge
 ; further if it's still off by a couple px either way.
 ZUM_Y_OFFSET EQU 10
-; must stay >= TANK_PUSH_WIDTH below, so UPDATE_TANK_ZUM_PUSH's own
-; "Z_X - TANK_PUSH_WIDTH" never underflows while a Zum is still alive -
-; conveniently also just means "despawn once close enough to the left
-; edge that it's no longer visible anyway".
-ZUM_DESPAWN_MARGIN EQU 32
+; despawn margin removed - "Zumが画面左まで行った際にかなり手前で
+; 止まってそのまま消えてる 左端まで到達してないぞ": a fixed 32px
+; margin (matching TANK_PUSH_WIDTH, to keep UPDATE_TANK_ZUM_PUSH's own
+; "Z_X-TANK_PUSH_WIDTH" from underflowing) stopped Zum visibly short of
+; the actual edge. UPDATE_ONE_ZUM now despawns right at the last frame
+; it can still subtract its own speed without underflowing X (see
+; UOZ_MOVE) - reaches X=0 before disappearing instead of stopping 32px
+; short. UPDATE_TANK_ZUM_PUSH no longer depends on this invariant for
+; its own underflow safety either - it already skips entirely once
+; TANK_X>=Zum_X (see its own "already passed" fix), which alone
+; guarantees Zum_X>TANK_X>=0 whenever it actually reaches that
+; subtraction.
 TANK_PUSH_WIDTH EQU 32      ; tank's own collision width for the Zum push-block below
 ; "Zumと接触状態でジャンプすると自機がワープしてしまう" - the push
 ; below was an unconditional snap to Zum's exact position; harmless
@@ -2545,18 +2552,6 @@ UPDATE_ONE_ZUM:
 
     CALL UOZ_TERRAIN_FOLLOW
 
-    ; despawn once close enough to the left edge (also guarantees Z_X
-    ; never underflows the "-TANK_PUSH_WIDTH" subtraction in
-    ; UPDATE_TANK_ZUM_PUSH while this slot is still active) - covers
-    ; both "自機がジャンプで避けるとそのまま左に消える" (nothing
-    ; blocked it, it just kept going) and the normal off-screen exit.
-    LD A,(IX+1)
-    CP ZUM_DESPAWN_MARGIN
-    JR NC,UOZ_MOVE
-    XOR A : LD (IX+0),A
-    CALL UOZ_HIDE
-    RET
-
 UOZ_MOVE:
     LD A,(IX+1) : LD B,A
     LD A,(TANK_X)
@@ -2573,6 +2568,19 @@ UOZ_SPEED_SLOW:
     LD A,ZUM_SPEED_SLOW_BASE : ADD A,B
 UOZ_SPEED_SET:
     LD B,A
+    ; despawn only once X can no longer subtract this frame's own speed
+    ; without underflowing - covers both "自機がジャンプで避けると
+    ; そのまま左に消える" (nothing blocked it, it just kept going) and
+    ; the normal off-screen exit, reaching X=0 before disappearing
+    ; instead of a fixed margin short of the edge (see the constant
+    ; block's own comment above).
+    LD A,(IX+1)
+    CP B
+    JR NC,UOZ_MOVE_OK
+    XOR A : LD (IX+0),A
+    CALL UOZ_HIDE
+    RET
+UOZ_MOVE_OK:
     LD A,(IX+1) : SUB B : LD (IX+1),A
 
 UOZ_DRAW:

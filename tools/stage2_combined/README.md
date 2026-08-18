@@ -1012,6 +1012,25 @@ with no way to tell where.
     not a re-derivation of a specific target duration/curve shape.
     Verified: the jump now completes (peaks at the same 24px, eases in/
     out the same way) in 32 frames instead of 48.
+- **Zum despawned well short of the left edge** ("Zumが画面左まで行った
+  際にかなり手前で止まってそのまま消えてる 左端まで到達してないぞ"):
+  `ZUM_DESPAWN_MARGIN`(32) was a fixed stand-in for "close enough to
+  the edge, and conveniently keeps `UPDATE_TANK_ZUM_PUSH`'s own
+  `Zum_X-TANK_PUSH_WIDTH` from underflowing" - Zum was disappearing a
+  visible 32px before actually reaching X=0. Removed the fixed margin;
+  `UPDATE_ONE_ZUM` now only despawns once its own X can no longer
+  subtract this frame's speed without underflowing (checked right
+  where the speed is already known, in `UOZ_MOVE`), so it rides all
+  the way down to X=0/1 before disappearing instead of stopping short.
+  `UPDATE_TANK_ZUM_PUSH`'s own underflow safety no longer depends on
+  the removed margin either - its existing `TANK_X>=Zum_X` "already
+  passed" skip (see the earlier fix above) alone guarantees
+  `Zum_X>TANK_X>=0` whenever it actually reaches that subtraction.
+  Verified: a Zum moving at the slow/averaged speed now reaches X=1
+  before despawning next frame (previously stopped at 32); the push
+  clamp produces no bogus/wrapped `TANK_X` value in either a
+  Zum-already-passed or Zum-still-approaching scenario right at the
+  edge (X=1).
 
 ## Bugs found and fixed while building this
 
