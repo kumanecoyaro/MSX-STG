@@ -1848,6 +1848,57 @@ with no way to tell where.
   the 1px front/behind asymmetry is an inherited comparison-direction
   quirk, same shape Zum's own push/stand-on checks already have, not
   something newly introduced here).
+- **BigZum's punch state was badly broken - the tank could pass
+  straight through it, and knockback never stopped no matter how far
+  away the tank got** ("パンチに入ったら色々おかしい 自機が突き抜け
+  てしまうし かなり離れてもずっとパンチしてきてノックバックが続く
+  Zumのパンチ判定を確認 反転非反転で自機が接触範囲周辺にいるか で反転
+  後パンチは変わらないが 離れたら接近戦モードにループしてまた飛ぶか
+  突っ込んでパンチするか選択して倒されるまでループ"). Root cause,
+  found by comparing against "Zumのパンチ判定" (i.e. Zum's own
+  equivalent, `UPDATE_TANK_ZUM_PUSH`): `UPDATE_TANK_BIGZUM_PUNCH`'s
+  contact test only ever checked a LOWER bound on the gap
+  (`TANK_X>=BZ_X-COLLISION_SIZE`), with no upper bound at all - once
+  the tank slipped past BigZum to the *other* side, or was simply far
+  away but still nominally on the "right" side of that one inequality,
+  it stayed "in contact" forever, exactly matching both reported
+  symptoms. Fixed with a signed-safe distance calc per facing
+  (subtraction + the CPU's own carry flag standing in for "wrong side
+  of BigZum entirely" - reused for both the reject check and the
+  in-range distance itself), giving a real bounded window on both
+  sides, mirroring the "already passed -> skip entirely" guard Zum's
+  own push already had.
+  A 2nd, deeper problem: even with contact correctly bounded, nothing
+  ever happened when the tank genuinely left that range - BigZum just
+  sat there holding forever (FACING=1/behind literally skipped its own
+  distance check outright and always held, unconditionally). Per
+  "離れたら接近戦モードにループして...また飛ぶか突っ込んでパンチする
+  か選択して倒されるまでループ", `UOBZ_PUNCH_MOVE` now handles both
+  facings symmetrically and reverts fully to `STATE=0` (approaching)
+  whenever either (a) the tank slips to the opposite side of whichever
+  side BigZum currently expects it on (the same "passed through" case,
+  now caught at the *movement* level too, not just the knockback
+  level), or (b) the gap grows past `BIGZUM_GIVEUP_RANGE` (reuses
+  `ZUM_DETECT_RANGE`(80), an inferred choice - genuinely "ran away" vs.
+  ordinary post-knockback separation still within contact-chasing
+  range). This in turn required `STATE=0`'s own approach logic to
+  become bidirectional - it used to assume BigZum was always
+  approaching from the right (`BZ_X>=TANK_X`), true only for the very
+  first spawn approach; re-entering it after a give-up (now possibly
+  from either side) needed FACING/direction recomputed fresh each
+  frame instead of assumed. The old "despawn if the next step would
+  underflow X" fallback (copied from Zum's own off-screen-exit logic,
+  now unreachable in normal play since the pause always triggers well
+  before that) was replaced with a plain clamp at each screen edge
+  instead - BigZum should never simply vanish, only ever be destroyed.
+  Verified via forced scenarios for both facings: teleporting the tank
+  to the opposite side mid-punch stops all further knockback
+  immediately (was: continued indefinitely); teleporting it far away
+  on the correct side triggers a give-up, followed by BigZum visibly
+  re-approaching (X trending back toward the tank) and cycling back
+  through pause/reroll (states 0/3/1-or-2 all observed) rather than
+  freezing in place. Full regression: 15000-frame random-input sweep,
+  no crash/stall; `render_check.py` clean.
 
 ## Bugs found and fixed while building this
 

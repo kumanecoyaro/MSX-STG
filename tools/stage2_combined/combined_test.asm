@@ -800,6 +800,18 @@ BIGZUM_HP_INIT    EQU 8    ; "BigZum耐久８に変更" (was 5)
 ; BIGZUM_JUMP_TABLE below).
 BIGZUM_JUMP_FRAMES EQU 33
 BIGZUM_JUMP_XSPEED EQU ZUM_SPEED_BASE     ; horizontal travel speed while airborne, same as the ordinary approach cruise
+; right-edge clamp for BigZum's own rightward chase (FACING=1, moving
+; toward increasing X while circling behind or re-approaching from
+; behind) - same 32px-sprite-width margin convention as the tank's own
+; UTX_DO_RIGHT bound (224 = 256-32).
+BIGZUM_MAX_X EQU 224
+; "離れたら接近戦モードにループして" - once a punch commitment's own
+; target distance grows past this, BigZum gives up and reverts to
+; STATE=0 to re-detect/re-approach/re-roll from scratch, rather than
+; endlessly chasing or endlessly holding a stale contact - see UOBZ_
+; PUNCH_MOVE. Reuses Zum's own detection range rather than a new
+; untuned number - not directly specified, an inferred choice.
+BIGZUM_GIVEUP_RANGE EQU ZUM_DETECT_RANGE
 ; ground reference used throughout a jump arc is the flat spawn tier
 ; (TANK_Y_BASE) rather than a live per-frame terrain probe - the jump
 ; is a short, self-contained maneuver that starts from the guaranteed-
@@ -3791,11 +3803,26 @@ UPDATE_ONE_BIGZUM:
 
     ; STATE=0: approaching - identical distance-indexed decel to Zum's
     ; own charge leg (ZUM_DETECT_RANGE/ZUM_MID_RANGE/ZUM_DECEL_TABLE) -
-    ; "アルゴリズムもほぼ同じ".
-    LD A,(IX+1) : LD D,A
-    LD A,(TANK_X) : LD E,A
+    ; "アルゴリズムもほぼ同じ" - now bidirectional (was assumed BZ_X>=
+    ; TANK_X always, i.e. only ever approaching from the right): FACING
+    ; is recomputed fresh here every frame from whichever side BigZum
+    ; is currently on, so re-entering this state from behind (after a
+    ; punch bout gives up because the tank ran off - see UOBZ_PUNCH_
+    ; MOVE's own "離れたら接近戦モードにループして") approaches
+    ; correctly instead of assuming it's still on the original side.
+    LD A,(IX+1) : LD D,A          ; D = BZ_X
+    LD A,(TANK_X) : LD E,A        ; E = TANK_X
+    LD A,D : CP E
+    JR C,UOBZ_APPROACH_BEHIND     ; BZ_X<TANK_X - on the far/behind side
+
+    XOR A : LD (IX+9),A           ; FACING=0 (front/right side, the usual case)
     LD A,D : SUB E
-    LD D,A                      ; D = distance (BZ_X-TANK_X)
+    JR UOBZ_APPROACH_DIST
+UOBZ_APPROACH_BEHIND:
+    LD A,1 : LD (IX+9),A          ; FACING=1 (behind/left side)
+    LD A,E : SUB D
+UOBZ_APPROACH_DIST:
+    LD D,A                        ; D = distance, either side
     CP ZUM_DETECT_RANGE
     JR NC,UOBZ_SPEED_FULL
     CP ZUM_MID_RANGE
@@ -3816,15 +3843,30 @@ UOBZ_SPEED_DECEL:
 UOBZ_SPEED_FULL:
     LD A,ZUM_SPEED_BASE
 UOBZ_SPEED_SET:
+    ; B = speed magnitude this frame; direction to apply it comes from
+    ; FACING (already set above) - 0 moves left/toward decreasing X,
+    ; 1 moves right/toward increasing X. Clamped at each screen edge
+    ; instead of despawning either way - BigZum never just vanishes
+    ; except by being destroyed (no flee/exit condition, unlike Zum).
     LD B,A
+    LD A,(IX+9)
+    OR A
+    JR NZ,UOBZ_MOVE_ADD
     LD A,(IX+1)
     CP B
-    JR NC,UOBZ_MOVE_OK
-    XOR A : LD (IX+0),A
-    CALL UOBZ_HIDE
-    RET
-UOBZ_MOVE_OK:
+    JR NC,UOBZ_MOVE_SUB_OK
+    XOR A : LD (IX+1),A
+    JP UOBZ_DRAW
+UOBZ_MOVE_SUB_OK:
     LD A,(IX+1) : SUB B : LD (IX+1),A
+    JP UOBZ_DRAW
+UOBZ_MOVE_ADD:
+    LD A,(IX+1) : ADD A,B
+    CP BIGZUM_MAX_X+1
+    JR C,UOBZ_MOVE_ADD_OK
+    LD A,BIGZUM_MAX_X
+UOBZ_MOVE_ADD_OK:
+    LD (IX+1),A
     JP UOBZ_DRAW
 
 ; pausing (STATE=3): motionless for ZUM_PAUSE_FRAMES (reusing +3 as
@@ -3848,31 +3890,57 @@ UOBZ_PAUSE_DECIDE_JUMP:
     XOR A : LD (IX+10),A
     JP UOBZ_JUMP_MOVE
 
-; punching (STATE=2): closes any remaining gap via ZUM_ACCEL_TABLE
-; (same ease Zum's own charge uses), then holds position once within
-; BIGZUM_COLLISION_SIZE - the actual punch delivery (knockback + pose timer)
-; is UPDATE_TANK_BIGZUM_PUNCH's own job, run once per frame from
-; MAINLOOP after every BigZum has moved, same separation of concerns
-; as UPDATE_TANK_ZUM_PUSH. FACING=1 (already landed behind the tank)
-; always holds - it's already in punch range the instant it lands
-; (see UOBZ_JUMP_MOVE's own landing check).
+; punching (STATE=2): "パンチに入ったら色々おかしい 自機が突き抜けて
+; しまうし かなり離れてもずっとパンチしてきてノックバックが続く
+; Zumのパンチ判定を確認 反転非反転で自機が接触範囲周辺にいるか で反転
+; 後パンチは変わらないが 離れたら接近戦モードにループしてまた飛ぶか
+; 突っ込んでパンチするか選択して倒されるまでループ" - closes any
+; remaining gap via ZUM_ACCEL_TABLE (same ease Zum's own charge uses,
+; now working from either side via FACING, not just the front), then
+; holds once within BIGZUM_COLLISION_SIZE - the actual punch delivery
+; (knockback + pose timer) is UPDATE_TANK_BIGZUM_PUNCH's own job, same
+; separation of concerns as UPDATE_TANK_ZUM_PUSH (that routine now has
+; its own matching upper-bound fix - see its own comment - the missing
+; upper bound there, not this routine, was the direct cause of the
+; tank passing straight through with knockback never actually
+; stopping). 2 conditions give up the current commitment and revert to
+; STATE=0 (fresh re-approach/pause/reroll, exactly "接近戦モードに
+; ループして...また...選択して"): the tank slipping clean past to the
+; opposite side (checked BEFORE the distance itself, since a stale
+; positive "distance" computed the wrong way would otherwise read as
+; still-in-range) - this is the actual fix for "自機が突き抜けて
+; しまう"; or the distance simply growing past BIGZUM_GIVEUP_RANGE
+; while still on the expected side (genuinely ran away, not just
+; ordinary post-knockback separation within contact-chasing range).
 UOBZ_PUNCH_MOVE:
     LD A,(IX+3)
     OR A
     JR Z,UOBZP_TIMER_DONE
     DEC A : LD (IX+3),A
 UOBZP_TIMER_DONE:
+    LD A,(IX+1) : LD D,A          ; D = BZ_X
+    LD A,(TANK_X) : LD E,A        ; E = TANK_X
+
     LD A,(IX+9)
     OR A
-    JR NZ,UOBZP_HOLD
-    LD A,(IX+1) : LD D,A
-    LD A,(TANK_X) : LD E,A
+    JR NZ,UOBZP_BEHIND
+
+    ; FACING=0 (front): tank should still be on the left (TANK_X<=BZ_X)
     LD A,D : CP E
-    JR C,UOBZP_HOLD
-    LD A,D : SUB E
-    LD D,A
-    CP BIGZUM_COLLISION_SIZE
-    JR C,UOBZP_HOLD
+    JP C,UOBZP_GIVE_UP             ; BZ_X<TANK_X - tank slipped past to the right
+    LD A,D : SUB E                 ; A = distance
+    JR UOBZP_CHECK_DIST
+UOBZP_BEHIND:
+    ; FACING=1 (behind): tank should still be on the right (TANK_X>=BZ_X)
+    LD A,E : CP D
+    JP C,UOBZP_GIVE_UP             ; TANK_X<BZ_X - tank slipped past to the left
+    LD A,E : SUB D                 ; A = distance
+
+UOBZP_CHECK_DIST:
+    CP BIGZUM_GIVEUP_RANGE
+    JP NC,UOBZP_GIVE_UP
+    CP BIGZUM_COLLISION_SIZE+1
+    JP C,UOBZ_DRAW                  ; already in contact - hold, draw as-is
     CP ZUM_MID_RANGE
     JR NC,UOBZP_SPEED_FULL
     LD E,A : LD D,0
@@ -3883,9 +3951,28 @@ UOBZP_SPEED_FULL:
     LD A,ZUM_SPEED_BASE
 UOBZP_SPEED_SET:
     LD B,A
+    LD A,(IX+9)
+    OR A
+    JR NZ,UOBZP_MOVE_ADD
+    LD A,(IX+1)
+    CP B
+    JR NC,UOBZP_MOVE_SUB_OK
+    XOR A : LD (IX+1),A
+    JP UOBZ_DRAW
+UOBZP_MOVE_SUB_OK:
     LD A,(IX+1) : SUB B : LD (IX+1),A
     JP UOBZ_DRAW
-UOBZP_HOLD:
+UOBZP_MOVE_ADD:
+    LD A,(IX+1) : ADD A,B
+    CP BIGZUM_MAX_X+1
+    JR C,UOBZP_MOVE_ADD_OK
+    LD A,BIGZUM_MAX_X
+UOBZP_MOVE_ADD_OK:
+    LD (IX+1),A
+    JP UOBZ_DRAW
+
+UOBZP_GIVE_UP:
+    XOR A : LD (IX+7),A            ; STATE=0 - resume approach/pause/reroll fresh
     JP UOBZ_DRAW
 
 ; jumping (STATE=1): sine arc via BIGZUM_JUMP_TABLE while still
@@ -4117,6 +4204,20 @@ FBZS_LOOP:
 ; run after it in MAINLOOP for the same 1-frame-stale-contact reason.
 ; FACING=0 (approaching from the front/right) knocks the tank left;
 ; FACING=1 (landed behind) knocks it right instead - "後ろからパンチ".
+;
+; "自機が突き抜けてしまうし かなり離れてもずっとパンチしてきてノック
+; バックが続く Zumのパンチ判定を確認" - the contact test used to be a
+; lower bound only (TANK_X>=BZ_X-SIZE), with no upper bound at all, so
+; once the tank slipped past BigZum to the OTHER side (or was simply
+; far away on the correct side but past SIZE), TANK_X still trivially
+; satisfied that single inequality and kept "in contact" forever -
+; exactly the reported symptom, and the same "already passed" case
+; Zum's own UPDATE_TANK_ZUM_PUSH explicitly guards against. Both
+; bounds are now folded into one signed-safe distance calc per side
+; (subtraction with the CPU's own carry flag standing in for "would
+; underflow", i.e. "the tank is on the wrong side of this comparison"
+; - reused for both the reject check and the in-range distance itself,
+; not 2 separate computations).
 UPDATE_TANK_BIGZUM_PUNCH:
     LD IX,BIGZUM_POOL
     LD B,BIGZUM_SLOT_COUNT
@@ -4128,16 +4229,20 @@ UTBP_LOOP:
     CP 2
     JP NZ,UTBP_NEXT
 
+    LD A,(IX+1) : LD D,A          ; D = BZ_X
+    LD A,(TANK_X) : LD E,A        ; E = TANK_X
+
     LD A,(IX+9)
     OR A
     JR NZ,UTBP_BEHIND
 
-    LD A,(IX+1) : LD D,A
-    LD A,D : SUB BIGZUM_COLLISION_SIZE
-    LD C,A
-    LD A,(TANK_X)
-    CP C
-    JP C,UTBP_NEXT
+    ; FACING=0 (front): contact only while TANK_X<=BZ_X (else already
+    ; passed through) AND BZ_X-TANK_X<=BIGZUM_COLLISION_SIZE
+    LD A,D : CP E
+    JP C,UTBP_NEXT                 ; BZ_X<TANK_X - already passed through, no contact
+    LD A,D : SUB E                 ; A = distance
+    CP BIGZUM_COLLISION_SIZE+1
+    JP NC,UTBP_NEXT                ; out of range
     LD A,(IX+11)
     OR A
     JR NZ,UTBP_FRONT_DEC
@@ -4158,19 +4263,20 @@ UTBP_FRONT_DEC:
     JP UTBP_NEXT
 
 UTBP_BEHIND:
-    LD A,(IX+1) : LD D,A
-    LD A,D : ADD A,BIGZUM_COLLISION_SIZE
-    LD C,A
-    LD A,(TANK_X)
-    CP C
-    JP NC,UTBP_NEXT
+    ; FACING=1 (behind): contact only while TANK_X>=BZ_X (else already
+    ; passed through the other way) AND TANK_X-BZ_X<=BIGZUM_COLLISION_SIZE
+    LD A,E : CP D
+    JP C,UTBP_NEXT                 ; TANK_X<BZ_X - already passed through, no contact
+    LD A,E : SUB D                 ; A = distance
+    CP BIGZUM_COLLISION_SIZE+1
+    JP NC,UTBP_NEXT                ; out of range
     LD A,(IX+11)
     OR A
     JR NZ,UTBP_BEHIND_DEC
     LD A,(TANK_X) : ADD A,BIGZUM_PUNCH_KNOCKBACK
-    CP 224
+    CP BIGZUM_MAX_X+1
     JR C,UTBP_BEHIND_SET
-    LD A,224
+    LD A,BIGZUM_MAX_X
 UTBP_BEHIND_SET:
     LD (TANK_X),A
     LD A,BIGZUM_PUNCH_INTERVAL : LD (IX+11),A
