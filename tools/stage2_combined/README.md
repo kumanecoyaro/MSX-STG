@@ -1031,6 +1031,32 @@ with no way to tell where.
   clamp produces no bogus/wrapped `TANK_X` value in either a
   Zum-already-passed or Zum-still-approaching scenario right at the
   edge (X=1).
+- **Coming down off a standing-on-Zum position snapped instantly**
+  ("乗っかりから降りる時の速度が速すぎてワープにみえる ここもサイン
+  Lut使わないとだな 自然に見せるには乗っかったらサインジャンプ前半
+  16px相当をスキップしてオートジャンプかな"): the jump's own fixed
+  33-frame timer kept advancing underneath `UPDATE_TANK_ZUM_STAND`'s
+  clamp even while parked, so once it ran out (`JUMP_ACTIVE`->0),
+  `TANK_Y_CUR` reverted straight to `TANK_GROUND_Y` (offset 0) in a
+  single frame - a real snap from the parked height, not just a visual
+  impression. New `TANK_ZUM_STANDING` (set by `UPDATE_TANK_ZUM_STAND`
+  whenever it actually clamped that call, read by `UPDATE_JUMP` the
+  following frame): if the jump would end while this is still set,
+  `UPDATE_JUMP` restarts `JUMP_FRAME` at `JUMP_LANDING_RESTART_FRAME`
+  (16, `JUMP_OFFSET_TABLE`'s own peak/24px index) instead of ending -
+  auto-playing just the falling half of the same sine curve back down
+  to ground, matching the suggested "skip the first half, auto-jump"
+  design. While genuinely still standing this cycles harmlessly
+  (the clamp keeps overriding the replayed curve's own value the whole
+  time, restarting again every ~17 frames); once the Zum actually
+  moves out from under or the player steps off, whatever point the
+  cycle happens to be at lands smoothly. `TANK_ZUM_STANDING` inits to 0
+  at boot. Verified: held fixed under a Zum, `TANK_Y_CUR` stays parked
+  and `JUMP_FRAME` visibly restarts at 16 instead of `JUMP_ACTIVE`
+  dropping to 0; releasing the Zum mid-cycle shows `TANK_Y_CUR` easing
+  down 1-3px/frame over ~11 frames instead of jumping straight to
+  ground in one; an ordinary jump with no Zum involved still ends
+  cleanly after the normal 32 frames, unaffected.
 
 ## Bugs found and fixed while building this
 

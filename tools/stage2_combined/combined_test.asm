@@ -88,6 +88,16 @@ JUMP_PEAK     EQU 24       ; px
 ; guess at "adjust the speed side" per that instruction, not a
 ; re-derivation of a specific target duration - easy to retune further.
 JUMP_FRAMES   EQU 33       ; JUMP_OFFSET_TABLE length
+; "乗っかりから降りる時の速度が速すぎてワープにみえる ここもサインLut
+; 使わないとだな 自然に見せるには乗っかったらサインジャンプ前半16px
+; 相当をスキップしてオートジャンプかな" - if the jump's own timer runs
+; out while still standing on a Zum (see UPDATE_TANK_ZUM_STAND/
+; TANK_ZUM_STANDING), UPDATE_JUMP restarts JUMP_FRAME here instead of
+; ending - the table's own peak index (24px, JUMP_OFFSET_TABLE[16]) -
+; so it auto-plays just the falling half of the same sine curve back
+; down to 0 instead of snapping straight from the parked height to
+; ground in a single frame.
+JUMP_LANDING_RESTART_FRAME EQU 16
 SPRITE_ATTRS  EQU 0F200h   ; 16 bytes
 
 TANK_X        EQU 0F220h
@@ -451,6 +461,13 @@ ZUM_SLOT_COUNT EQU 2
 ZUM_POOL       EQU 0F2ECh   ; ZUM_SLOT_SIZE*ZUM_SLOT_COUNT = 14 bytes
 ZUM_SPRITE_ATTRS EQU 0F2FAh ; 8 bytes: Y,X,pat,col x2 - same staging-buffer pattern as ENEMY_SPRITE_ATTRS
 ZUM_SPAWN_TIMER  EQU 0F302h
+; "乗っかりから降りる時の速度が速すぎてワープにみえる" - set by
+; UPDATE_TANK_ZUM_STAND (1 if it actually clamped TANK_Y_CUR against a
+; Zum this call, else 0); read by UPDATE_JUMP the following frame to
+; auto-land smoothly instead of snapping straight to ground the
+; instant the jump timer runs out while still parked - see
+; JUMP_LANDING_RESTART_FRAME below.
+TANK_ZUM_STANDING EQU 0F303h
 ZUM_SPR_BASE_SLOT EQU 10    ; hw sprite slots10-11, right after the bullet pool's own 7-9
 PAT_ZUM EQU 148             ; right after PAT_BULLETU_L(144-147)
 ZUM_COLOR EQU 13            ; from sprites/Zum.json's own fg
@@ -758,6 +775,7 @@ INIT_SPRATR_CLR:
     LD (JUMP_ACTIVE),A
     LD (JUMP_FRAME),A
     LD (JUMP_Y_OFFSET),A
+    LD (TANK_ZUM_STANDING),A
     LD A,PAT_TANKF : LD (CUR_POSE_PAT),A
     XOR A
     LD (SHOT_COOLDOWN),A
@@ -1351,6 +1369,15 @@ UJ_NO_NEW_PRESS:
     LD A,(JUMP_FRAME) : INC A : LD (JUMP_FRAME),A
     CP JUMP_FRAMES
     JR C,UJ_STILL_JUMPING
+    ; would end here - if still parked on a Zum (see TANK_ZUM_STANDING
+    ; above), auto-land instead: restart from the table's own peak so
+    ; it eases back down to ground instead of snapping.
+    LD A,(TANK_ZUM_STANDING)
+    OR A
+    JR Z,UJ_END_NORMALLY
+    LD A,JUMP_LANDING_RESTART_FRAME : LD (JUMP_FRAME),A
+    JR UJ_STILL_JUMPING
+UJ_END_NORMALLY:
     XOR A
     LD (JUMP_ACTIVE),A
     LD (JUMP_FRAME),A
@@ -2785,7 +2812,14 @@ UTZP_NEXT:
 UPDATE_TANK_ZUM_STAND:
     LD A,(JUMP_ACTIVE)
     OR A
-    RET Z
+    JR NZ,UTZS_START
+    XOR A : LD (TANK_ZUM_STANDING),A
+    RET
+UTZS_START:
+    ; TANK_ZUM_STANDING accumulates to 1 below the moment any slot
+    ; actually clamps this call, read by UPDATE_JUMP next frame to
+    ; auto-land instead of snapping - see JUMP_LANDING_RESTART_FRAME.
+    XOR A : LD (TANK_ZUM_STANDING),A
     LD IX,ZUM_POOL
     LD B,ZUM_SLOT_COUNT
 UTZS_LOOP:
@@ -2807,6 +2841,7 @@ UTZS_LOOP:
     CP D
     JR C,UTZS_NEXT              ; TANK_Y_CUR already above (less than) the stand height - still clear
     LD A,D : LD (TANK_Y_CUR),A
+    LD A,1 : LD (TANK_ZUM_STANDING),A
 UTZS_NEXT:
     INC IX : INC IX : INC IX : INC IX : INC IX : INC IX : INC IX
     DJNZ UTZS_LOOP
