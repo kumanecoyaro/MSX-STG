@@ -812,6 +812,13 @@ BIGZUM_MAX_X EQU 224
 ; PUNCH_MOVE. Reuses Zum's own detection range rather than a new
 ; untuned number - not directly specified, an inferred choice.
 BIGZUM_GIVEUP_RANGE EQU ZUM_DETECT_RANGE
+; "次にBigZumが通過してパンチかジャンプかまで時間をおいてくれ" - a
+; fully motionless beat right after a give-up (the tank slipping past,
+; or running far enough away), before STATE=0's own approach logic
+; even starts - on top of, not instead of, the ordinary ZUM_PAUSE_
+; FRAMES pre-decision pause once back in near-tank range. Reuses that
+; same magnitude rather than a new untuned number.
+BIGZUM_GIVEUP_PAUSE_FRAMES EQU ZUM_PAUSE_FRAMES
 ; ground reference used throughout a jump arc is the flat spawn tier
 ; (TANK_Y_BASE) rather than a live per-frame terrain probe - the jump
 ; is a short, self-contained maneuver that starts from the guaranteed-
@@ -3810,6 +3817,21 @@ UPDATE_ONE_BIGZUM:
     ; punch bout gives up because the tank ran off - see UOBZ_PUNCH_
     ; MOVE's own "離れたら接近戦モードにループして") approaches
     ; correctly instead of assuming it's still on the original side.
+    ;
+    ; "次にBigZumが通過してパンチかジャンプかまで時間をおいてくれ" -
+    ; +3(TIMER, otherwise idle in this state) doubles as a give-up
+    ; cooldown here: UOBZP_GIVE_UP sets it on the way in, so a BigZum
+    ; that just had the tank slip past it sits fully motionless for
+    ; BIGZUM_GIVEUP_PAUSE_FRAMES before this state's own approach logic
+    ; (and therefore the eventual pause->reroll into punch/jump again)
+    ; starts running at all - a beat on TOP of the ordinary pre-decision
+    ; pause (ZUM_PAUSE_FRAMES), not a replacement for it.
+    LD A,(IX+3)
+    OR A
+    JR Z,UOBZ_APPROACH_START
+    DEC A : LD (IX+3),A
+    JP UOBZ_DRAW
+UOBZ_APPROACH_START:
     LD A,(IX+1) : LD D,A          ; D = BZ_X
     LD A,(TANK_X) : LD E,A        ; E = TANK_X
     LD A,D : CP E
@@ -3973,6 +3995,7 @@ UOBZP_MOVE_ADD_OK:
 
 UOBZP_GIVE_UP:
     XOR A : LD (IX+7),A            ; STATE=0 - resume approach/pause/reroll fresh
+    LD A,BIGZUM_GIVEUP_PAUSE_FRAMES : LD (IX+3),A
     JP UOBZ_DRAW
 
 ; jumping (STATE=1): sine arc via BIGZUM_JUMP_TABLE while still
@@ -4016,46 +4039,66 @@ UOBZJ_FRAME_OK:
 UOBZJ_APPLY:
     LD A,(IX+10) : LD E,A : LD D,0
     LD HL,BIGZUM_JUMP_TABLE : ADD HL,DE
-    LD A,(HL) : LD B,A
-    LD A,TANK_Y_BASE : SUB B     ; ground reference - see BIGZUM_JUMP_FRAMES's own comment on this simplification
+    LD A,(HL) : LD B,A             ; B = jump offset this frame
+    PUSH BC
+    CALL UOBZ_GET_GROUND_Y         ; A = current tier's own ground Y - live every frame, not a fixed tier3 guess (see its own comment)
+    POP BC
+    SUB B
     LD (IX+2),A
     JP UOBZ_DRAW
 
-; IX = slot base. Probes IDCACHE_T0..T3 at BigZum's own column
-; ((BZ_X+BIGZUM_PROBE_DX)>>3) and eases toward TANK_TIER_Y_TABLE
-; [tier] via the shared TERRAIN_EASE_Y routine - identical to Zum's
-; own UOZ_TERRAIN_FOLLOW, just no ZUM_Y_OFFSET-style add (BigZum is
-; 32px tall like the tank itself, so TANK_TIER_Y_TABLE[tier] is
-; already its own correct top-anchor - see BIGZUM_SLOT_SIZE's comment).
-UOBZ_TERRAIN_FOLLOW:
+; IX = slot base. Returns the current tier's ground Y (TANK_TIER_Y_
+; TABLE[tier]) in A, probing IDCACHE_T0..T3 at BigZum's own column
+; ((BZ_X+BIGZUM_PROBE_DX)>>3) - same walk UPDATE_TERRAIN_COLLISION and
+; Zum's own UOZ_TERRAIN_FOLLOW use. Trashes D,E,HL. Shared by UOBZ_
+; TERRAIN_FOLLOW (eases toward it while grounded) and UOBZ_JUMP_MOVE
+; (uses it directly, live every frame, as the jump arc's own ground
+; reference) - "まずジャンプで地面に潜り込む場合がある": the arc used
+; to subtract its own offset from one fixed value (tier3's own Y,
+; TANK_Y_BASE) regardless of which tier BigZum actually stood over
+; while jumping - tier3 is the LOWEST tier (its own Y is the largest
+; of the 4 TANK_TIER_Y_TABLE entries, since higher screen tiers have
+; smaller Y), so jumping from any higher tier read as sinking below
+; that tier's own, numerically smaller real ground line.
+UOBZ_GET_GROUND_Y:
     LD A,(IX+1) : ADD A,BIGZUM_PROBE_DX : SRL A : SRL A : SRL A
     LD E,A : LD D,0
     LD HL,IDCACHE_T0 : ADD HL,DE : LD A,(HL)
     OR A
-    JR NZ,UOBZTF_T0
+    JR NZ,UOBZGY_T0
     LD A,(IX+1) : ADD A,BIGZUM_PROBE_DX : SRL A : SRL A : SRL A
     LD E,A : LD D,0
     LD HL,IDCACHE_T1 : ADD HL,DE : LD A,(HL)
     OR A
-    JR NZ,UOBZTF_T1
+    JR NZ,UOBZGY_T1
     LD A,(IX+1) : ADD A,BIGZUM_PROBE_DX : SRL A : SRL A : SRL A
     LD E,A : LD D,0
     LD HL,IDCACHE_T2 : ADD HL,DE : LD A,(HL)
     OR A
-    JR NZ,UOBZTF_T2
+    JR NZ,UOBZGY_T2
     LD A,3
-    JR UOBZTF_TIER_SET
-UOBZTF_T0:
+    JR UOBZGY_TIER_SET
+UOBZGY_T0:
     XOR A
-    JR UOBZTF_TIER_SET
-UOBZTF_T1:
+    JR UOBZGY_TIER_SET
+UOBZGY_T1:
     LD A,1
-    JR UOBZTF_TIER_SET
-UOBZTF_T2:
+    JR UOBZGY_TIER_SET
+UOBZGY_T2:
     LD A,2
-UOBZTF_TIER_SET:
+UOBZGY_TIER_SET:
     LD E,A : LD D,0
     LD HL,TANK_TIER_Y_TABLE : ADD HL,DE : LD A,(HL)
+    RET
+
+; IX = slot base. Eases Z_Y toward the current tier's ground line
+; (UOBZ_GET_GROUND_Y) via the shared TERRAIN_EASE_Y routine - identical
+; to Zum's own UOZ_TERRAIN_FOLLOW, just no ZUM_Y_OFFSET-style add
+; (BigZum is 32px tall like the tank itself, so TANK_TIER_Y_TABLE
+; [tier] is already its own correct top-anchor - see BIGZUM_SLOT_
+; SIZE's comment).
+UOBZ_TERRAIN_FOLLOW:
+    CALL UOBZ_GET_GROUND_Y
     LD B,A
     LD A,(IX+2) : LD C,A
     LD E,1
@@ -4219,6 +4262,19 @@ FBZS_LOOP:
 ; - reused for both the reject check and the in-range distance itself,
 ; not 2 separate computations).
 UPDATE_TANK_BIGZUM_PUNCH:
+    ; "自機がBigZumを飛び越えられない ２４ｐｘなら飛び越えられるはず
+    ; 自機と速度が噛み合って全くバックが取れない" - missing the same
+    ; JUMP_ACTIVE guard UPDATE_TANK_ZUM_PUSH already has: the knockback
+    ; kept firing every single frame regardless of whether the tank was
+    ; airborne, so a jump attempt just got punched right back down/away
+    ; before it could ever clear BigZum's own (now correctly 24px-tall)
+    ; collision box - the tank could never open enough separation to
+    ; even line a jump up. Suspended entirely while jumping, exactly
+    ; like Zum's own push - BigZum keeps closing in underneath
+    ; regardless (only the knockback itself pauses, not its approach).
+    LD A,(JUMP_ACTIVE)
+    OR A
+    RET NZ
     LD IX,BIGZUM_POOL
     LD B,BIGZUM_SLOT_COUNT
 UTBP_LOOP:

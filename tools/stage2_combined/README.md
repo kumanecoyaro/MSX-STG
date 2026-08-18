@@ -1899,6 +1899,58 @@ with no way to tell where.
   through pause/reroll (states 0/3/1-or-2 all observed) rather than
   freezing in place. Full regression: 15000-frame random-input sweep,
   no crash/stall; `render_check.py` clean.
+- **3 more BigZum fixes after real-hardware play: the tank genuinely
+  could not jump over it, its own jump could sink into the ground, and
+  it re-engaged instantly after a pass-through with no breathing
+  room** ("まずジャンプで地面に潜り込む場合がある で、自機がBigZumを
+  飛び越えられない ２４ｐｘなら飛び越えられるはず 次にBigZumが通過
+  してパンチかジャンプかまで時間をおいてくれ 自機と速度が噛み合って
+  全くバックが取れない ジャンプで越えられないのも要因だが 飛び越え
+  られないので通貨はほぼ画面左端に押し込まれた時しかない状態"):
+  - `UPDATE_TANK_BIGZUM_PUNCH` was missing the exact `JUMP_ACTIVE`
+    guard `UPDATE_TANK_ZUM_PUSH` already has - the knockback kept
+    firing every single frame regardless of whether the tank was
+    airborne, so a jump attempt just got punched straight back down/
+    away before it could ever clear BigZum's own (correctly 24px-tall
+    since the previous round) collision box - "自機と速度が噛み合っ
+    て全くバックが取れない" was this: the tank could never open enough
+    separation to even line a jump up in the first place. Now
+    suspended entirely while jumping, exactly like Zum's own push -
+    BigZum still keeps closing in underneath regardless (only the
+    knockback itself pauses, not its approach, same as Zum sliding
+    under a jumping tank). Verified: knockback stays fully suspended
+    for the whole duration `JUMP_ACTIVE` is set, resumes the instant
+    it clears.
+  - "まずジャンプで地面に潜り込む場合がある" - `UOBZ_JUMP_MOVE`'s own
+    ground reference was a single fixed value (`TANK_Y_BASE`, tier3's
+    own Y - the LOWEST of the 4 tiers, i.e. numerically the largest)
+    used for every jump regardless of which tier BigZum actually
+    stood over - jumping from any higher tier undershot that tier's
+    own real (smaller-Y) ground line, reading as sinking into it.
+    Extracted the tier-probe half of `UOBZ_TERRAIN_FOLLOW` into a
+    shared `UOBZ_GET_GROUND_Y` (returns the CURRENT tier's own ground
+    Y, probed fresh - same walk `UPDATE_TERRAIN_COLLISION`/Zum's own
+    terrain-follow use) and had the jump arc read it live every frame
+    instead of the fixed constant. Verified: forcing tier0 (Y=132)
+    solid under a jumping BigZum (with the poke re-applied right as
+    `UPDATE_BIGZUM_ALL` runs each frame, so `MAINLOOP`'s own periodic
+    `IDCACHE` refresh from real terrain data can't race it) produces
+    an exact symmetric 132-anchored parabola (peak Y=100, i.e.
+    132-32) that never exceeds 132 - the old bug would have anchored
+    to 156 (tier3) throughout instead.
+  - "次にBigZumが通過してパンチかジャンプかまで時間をおいてくれ" - a
+    new `BIGZUM_GIVEUP_PAUSE_FRAMES`(reuses `ZUM_PAUSE_FRAMES`) beat:
+    right after a give-up (the tank slipping past, or running far
+    enough away - see the previous round's own give-up entry),
+    `STATE=0`'s own approach logic now sits fully motionless for this
+    many frames before it starts running at all, reusing `+3`(TIMER,
+    otherwise idle in this state) as the countdown - on top of, not
+    instead of, the ordinary pre-decision pause once back in near-tank
+    range. Verified: `BZ_X` stays frozen for exactly
+    `BIGZUM_GIVEUP_PAUSE_FRAMES` frames immediately after a forced
+    pass-through before it starts moving again.
+  Full regression: 15000-frame random-input sweep, no crash/stall;
+  `render_check.py` clean.
 
 ## Bugs found and fixed while building this
 
