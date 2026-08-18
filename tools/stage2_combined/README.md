@@ -1661,6 +1661,103 @@ with no way to tell where.
   15 consecutive enemy spawns (forced past the red/green threshold)
   show 12 distinct Y values spanning the full band and a genuine mix
   of both variants, not a fixed pattern. Full regression sweep clean.
+- **ZacoII recolored to light green** ("まずZakoIIの色をライトグリー
+  ンに"). `ENEMY_COLOR` 12(dark green, `sprites/ZacoII.json`'s own
+  original fg) -> 3(light green) - a straight sprite-color-attribute
+  swap, no art/pattern change (the red variant's own `ENEMY_RED_COLOR`
+  is untouched).
+- **BigZum: a second, tougher ground enemy** ("次BigZumの実装 Zumと
+  スポーン条件は同じ アルゴリズムもほぼ同じ 違うのは停止後引き返さず
+  パンチするかジャンプして乗っかってくる ジャンプは自機より高く32ｐｘ
+  サインジャンプ 自機に設置したら連続ジャンプで飛び越え 自機の後ろを
+  取って地上に降りたら後ろからパンチ なので添付のデータは反転も生成
+  攻撃判定も同じで後ろしか当たらない 耐久5", 2 uploaded 32x32 sprite
+  JSONs - `BigZum`/normal pose, `BigZumP`/punch pose). A 32x32 sprite
+  (2x2 of 16x16 hw sprites, same quadrant convention `tank_gen.py`
+  established for the tank - `bigzum_gen.py`, a new generator module
+  mirroring `tank_gen.py`'s own quadrant-splitting + hflip approach for
+  BigZum's 2 poses instead of the tank's 4, patterns at codes156-219
+  right after `PAT_ZUM_FLIP`(152-155)). Reuses Zum's own spawn gating
+  outright (`ENEMY_SPAWN_COUNT>=10`, flat-ground probe at its own
+  spawn column, `BIGZUM_SLOT_COUNT`=2 concurrent - "スポーン条件は同
+  じ") and its exact distance-indexed decel/pause shape (`ZUM_DETECT_
+  RANGE`/`ZUM_MID_RANGE`/`ZUM_SPEED_BASE`/`ZUM_ACCEL_TABLE`/`ZUM_
+  DECEL_TABLE`/`ZUM_PAUSE_FRAMES` literally reused, not re-derived -
+  "アルゴリズムもほぼ同じ"). The 2 post-pause branches replace Zum's
+  push-vs-flee coin flip with punch-vs-jump-on:
+  - **Punch** (`BZ_STATE=2`): closes any remaining gap the same way
+    Zum's own charge does, then holds position once within
+    `TANK_PUSH_WIDTH` and delivers a single stronger knockback pulse
+    every `BIGZUM_PUNCH_INTERVAL`(16) frames instead of Zum's smooth
+    continuous push - "パンチ" read as a discrete hit rather than a
+    shove, since no tank-HP/damage system exists anywhere in this
+    codebase to actually apply damage to (an inference, not confirmed
+    - easy to redirect into real damage later). Shows the `BigZumP`
+    pose for `BIGZUM_PUNCH_POSE_FRAMES`(8) after each punch lands
+    (`UPDATE_TANK_BIGZUM_PUNCH`, separated from the per-frame move the
+    same way `UPDATE_TANK_ZUM_PUSH` is separated from Zum's own).
+  - **Jump-on** (`BZ_STATE=1`): a sine-arc jump, `BIGZUM_JUMP_TABLE` -
+    same `round(H*sin(pi*t/32))` half-sine construction as the tank's
+    own `JUMP_OFFSET_TABLE`, just `H`=32 instead of 24 ("ジャンプは自
+    機より高く32ｐｘ サインジャンプ") - while still advancing toward
+    the tank's own X. If a 33-frame arc completes while BigZum's X
+    still hasn't reached/passed the tank's own (would land ON/in front
+    of it), the arc simply restarts from frame0 instead of ending -
+    "自機に設置したら連続ジャンプで飛び越え" (chain another full arc
+    rather than landing on top; verified via a forced test with a
+    99px gap - 2 chain restarts observed before it clears). Only once
+    an arc completes with BigZum's X already at/past the tank's does
+    it count as landed behind - "自機の後ろを取って地上に降りたら" -
+    switching to `BZ_STATE=2` with `BZ_FACING=1` (flipped `BigZum_L`/
+    `BigZumP_L` art, now facing right toward the tank) and punching
+    from there instead - "後ろからパンチ" (verified: knocks the tank
+    rightward once landed behind, vs. leftward while approaching from
+    the front).
+  - `BZ_FACING` also drives `CHECK_HIT_PAIR_BIGZUM`'s own front/rear
+    split - "攻撃判定も同じで後ろしか当たらない" reuses `CHECK_HIT_
+    PAIR_ZUM`'s exact front(invincible)/rear(vulnerable) geometry, just
+    keyed off `BZ_FACING` instead of `Z_RETREAT==1` (front is whichever
+    side BigZum is currently oriented toward - mirrors the same way
+    Zum's own `CHPZ_ORIENT_FLEE` does when it turns around). Unlike
+    Zum's 1-hit kill, a rear hit only decrements `BZ_HP` (init 5 -
+    "耐久5") and only actually destroys it once that reaches 0 -
+    verified via 5 forced rear hits (HP 5->4->3->2->1->0, exploding
+    only on the 5th) and confirmed the front/rear split itself flips
+    correctly once `BZ_FACING=1`.
+  Verified: standalone `bigzum_gen.py` run (4 pattern groups emitted,
+  base156/172/188/204 as expected); full build assembles clean (2
+  `JR`->`JP`/`DJNZ`->`DEC B:JP NZ` conversions needed once the new
+  routines grew past 8-bit relative-branch range, same recurring
+  pattern as earlier in this file); `render_check.py` clean; a forced-
+  state emulator test suite (not just black-box play) directly proved
+  all 4 mechanics above (front punch knockback+pose, jump chain-over,
+  landed-behind knockback direction, front/rear HP damage with
+  orientation flip) since a black-box idle sweep alone couldn't -
+  once a BigZum reaches the punch state it never despawns on its own
+  (no flee/retreat exit exists for it, unlike Zum - it's meant to be
+  fought, not avoided), so both pool slots fill permanently within a
+  few spawns under idle input and the RNG coin-flip toward the jump
+  branch specifically only got 2 real chances to land in a 12000-frame
+  idle run; a 15000-frame *random*-input sweep (driving `cpu.sim_dir`/
+  `sim_trig_a`/`sim_trig_b`, not raw `JOY_DIR`/`JOY_TRIGB`/`JOY_TRIGA`
+  RAM pokes - those get overwritten by `READ_INPUT`'s own `GTSTCK`/
+  `GTTRIG` calls before game logic ever reads them) organically hit
+  every state including a full bullet-kill, with no crash/stall
+  either way. A visual render (both poses, both facings, forced
+  on-screen) confirmed the 32x32 quadrant assembly itself renders
+  as a coherent, uncorrupted sprite.
+  Several design points were genuine inferences, not directly
+  specified, flagged here in case they need correcting: BigZum's own
+  32px-tall vertical anchor reuses `TANK_TIER_Y_TABLE[tier]` directly
+  with no offset (it shares the tank's own 32x32 convention, unlike
+  Zum's 16px-tall `ZUM_Y_OFFSET` derivation); the jump's ground
+  reference is the flat spawn tier (`TANK_Y_BASE`) throughout an arc
+  rather than a live per-frame terrain probe (a short, self-contained
+  maneuver starting from the guaranteed-flat spawn ground, same
+  guarantee Zum's own spawn gate already relies on); `BIGZUM_SPAWNX`/
+  `BIGZUM_SPAWN_INTERVAL` reuse Zum's own constants verbatim; and the
+  punch's actual knockback magnitude (`BIGZUM_PUNCH_KNOCKBACK`=12) and
+  cadence are untuned placeholders, easy to retune.
 
 ## Bugs found and fixed while building this
 
@@ -2009,12 +2106,20 @@ directly.
 ## Files
 
 - `combined_test.asm`, `build_test.py` - the merged engine + build
-  script (imports `terrain_gen.py`, `tank_gen.py`, and `bullet_gen.py`).
+  script (imports `terrain_gen.py`, `tank_gen.py`, `bullet_gen.py`,
+  `enemy_gen.py`, and `bigzum_gen.py`).
 - `combined_test.rom` - the built ROM.
 - `bullet_gen.py`, `sprites/BulletF.json`, `sprites/BulletU.json` - the
   2 shot shapes' source art + BG-pattern conversion (8x8, single
   character each - no quadrant splitting needed, unlike the tank's
   32x32 sprite).
+- `enemy_gen.py`, `sprites/ZacoII.json`, `sprites/Zum.json` - the 2
+  16x16 ground/air enemy sprites' hw-pattern conversion (single hw
+  sprite each, no quadrant splitting).
+- `bigzum_gen.py`, `sprites/BigZum.json`, `sprites/BigZumP.json` -
+  BigZum's 2 32x32 poses' hw-pattern conversion, mirroring
+  `tank_gen.py`'s own quadrant-splitting + hflip approach (see the
+  BigZum entry above).
 - `render_check.py` - emulator verification: boots, runs several full
   track loops with no crash/hang, and renders 2 sample frames from
   real VRAM (BG + sprites composited together) to `combined0.ppm`/
