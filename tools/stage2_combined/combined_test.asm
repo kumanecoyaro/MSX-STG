@@ -294,13 +294,22 @@ HUD_ROW       EQU 0F271h   ; WRITE_HUD_CELL scratch
 HUD_COL       EQU 0F272h
 HUD_VAL       EQU 0F273h
 HUD_TEMP_BYTE EQU 0F274h
-SND_TIMER     EQU 0F275h   ; shot-sound fade countdown/volume (channel A, noise)
-; explosion-sound fade countdown/volume - its own channel (B) rather
-; than reusing channel A, since a shot fired right before a kill would
-; otherwise fight the same envelope/timer - "爆発音追加 Stage1の
-; 爆発音流用" (SOUND_DESTROY below reuses that file's exact
-; period(20)/timer(15) values, just retargeted to channel B).
-SND_TIMER_B   EQU 0F276h
+; "サウンドはノイズｃｈ使用音は別にしなくていいぞ どうせ被れば消える
+; PSGは3ch+ノイズ1chが仕様 2chはBGM用に常に空けておきたいしな" -
+; SOUND_SHOT/SOUND_DESTROY/SOUND_ZUM_DEFLECT all share this single
+; channel A now (previously spread across A/B/C to keep them from
+; ever fighting each other's envelope) - only the AY-3-8910's single
+; shared noise generator was ever truly exclusive anyway, so 3
+; separate channels never actually bought independent *sounds*, just
+; independent volume envelopes; letting a later trigger simply cut off
+; whatever's still fading is an accepted, direct simplification, and
+; leaves channels B/C completely untouched for BGM. SND_TIMER doubles
+; as both the frame countdown and channel A's volume (0-15, see
+; SOUND_UPDATE); SND_DECAY (below) is how much it drops per frame -
+; each sound sets both when triggered, so one shared decay loop in
+; SOUND_UPDATE handles every sound's own pacing.
+SND_TIMER     EQU 0F275h
+SND_DECAY     EQU 0F276h
 ; last-drawn hundreds/tens/ones digit for GAME_TICK_DISPLAY - unlike
 ; src/CYBER SHMUP.asm (which can afford an unconditional redraw every
 ; frame), this ROM has no vsync/HALT frame sync at all, so every extra
@@ -313,9 +322,6 @@ SND_TIMER_B   EQU 0F276h
 GTD_LAST_H    EQU 0F277h
 GTD_LAST_T    EQU 0F278h
 GTD_LAST_O    EQU 0F279h
-; "キンキン" metallic deflect-sound fade countdown/volume - channel C,
-; tone (not noise) - see SOUND_ZUM_DEFLECT.
-SND_TIMER_C   EQU 0F27Ah
 ; digit0 code; digitN = DIGIT_BASE+N for N=0-9 (score/counter, glyphs
 ; copied byte-for-byte from src/CYBER SHMUP.asm's own DIGIT_PATTERNS -
 ; "スコアの数字流用") and N=10-15 = A-F (new art, "AからFまで新規",
@@ -330,28 +336,26 @@ HEXLABEL_ROW     EQU 1
 HEXLABEL_COL0    EQU 8
 PSG_ADDR         EQU 0A0h
 PSG_DATA         EQU 0A1h
+; mixer (R7) values for channel A only - tone/noise B and C always
+; off, leaving those 2 channels genuinely untouched for BGM. bit
+; layout: 0=tone A,1=tone B,2=tone C,3=noise A,4=noise B,5=noise C
+; (0=enabled,1=disabled), bits6-7 unused here (kept 1).
+MIXER_NOISE_A EQU 0F7h   ; noise A on, everything else off - shot/explosion
+MIXER_TONE_A  EQU 0FEh   ; tone A on, everything else off - "kin" deflect
 ; short/high-pitched noise burst for a shot "pyu" - "ノイズｃｈで弾
 ; 発射音ぽいの" (noise channel, shot-sound-like); period/fade picked
 ; with no more precise spec than that, easy to retune.
 SHOT_NOISE_PERIOD EQU 8
-; must stay LESS than the auto-fire period (SHOT_COOLDOWN_FRAMES+1 = 9
-; frames between shots) - was 10, which never actually reached 0
-; (decays 10->1 over the 9-frame gap, then jumps straight back to 10)
-; so held-fire sounded permanently "on" instead of a series of
-; distinct blips - "サウンドも弾打ったら出っぱなしだ". Still true here -
-; SHOT_SND_FRAMES itself stays 6 even though the volume it plays at
-; was later raised (see SHOT_VOLUME_BOOST) - undoing this fix to make
-; the sound louder by just raising this value back toward 10 would
-; reintroduce that exact bug.
-SHOT_SND_FRAMES   EQU 6
-; "自機ショット音も多分8だと思うんで10に" - SHOT_SND_FRAMES (this
-; decides how many frames the sound plays for) has to stay short to
-; avoid the held-fire bug above, so raising loudness is a separate
-; knob: SOUND_UPDATE adds this to SND_TIMER's own value only while
-; nonzero (never touching the silent/0 case), so the sound now peaks
-; at SHOT_SND_FRAMES+SHOT_VOLUME_BOOST = 6+4 = 10 and still reaches
-; true silence (0) at the same frame it always did.
-SHOT_VOLUME_BOOST EQU 4
+; peak volume ("自機ショット音も多分8だと思うんで10に") must still
+; fully decay before the next auto-fire shot (SHOT_COOLDOWN_FRAMES+1 =
+; 9 frames later) or held-fire sounds permanently "on" instead of a
+; series of distinct blips - "サウンドも弾打ったら出っぱなしだ", a bug
+; already hit once before. At the old decay-by-1/frame pace, peak 10
+; would take 10 frames - too slow. SHOT_SND_DECAY(2) instead of the
+; usual 1 gets it to 0 in 5 frames (10,8,6,4,2,0), comfortably inside
+; the gap, so the louder peak doesn't reopen that bug.
+SHOT_SND_PEAK  EQU 10
+SHOT_SND_DECAY EQU 2
 
 ; ---------- enemy (ZacoII) ----------
 ; "では次敵の実装 スプライトで実装 右から左へスライド Skyのみのの
@@ -927,22 +931,24 @@ INIT_SPRATR_CLR:
     LD HL,SWATCH_CODES : LD DE,1800h+SWATCH_COL0 : LD BC,16 : CALL LDIRVM
     LD HL,HEXLABEL_CODES : LD DE,1800h+32+HEXLABEL_COL0 : LD BC,16 : CALL LDIRVM
 
-    ; PSG: channel A = noise-only (shot sound), channel B = noise-only
-    ; too (explosion sound - its own channel so a shot's envelope never
-    ; fights an overlapping explosion's, see SND_TIMER_B); channel C =
-    ; tone-only ("Zumの前面無敵に弾が当たったらキンキンと言うサウンド
-    ; 追加 これはStage1のボスの弾き音流用" - SOUND_ZUM_DEFLECT reuses
-    ; src/CYBER SHMUP.asm's own SOUND_POD_HIT). Mixer 0E3h = tones A/B
-    ; off (C now on), noise A+B on (C off) - bit2 (tone C disable)
-    ; cleared from the previous 0E7h now that channel C actually
-    ; carries a sound.
+    ; PSG: everything (shot, explosion, "kin" deflect) lives on channel
+    ; A only now - "サウンドはノイズｃｈ使用音は別にしなくていいぞ
+    ; どうせ被れば消える PSGは3ch+ノイズ1chが仕様 2chはBGM用に常に空け
+    ; ておきたいしな" - channels B/C stay silent and completely untouched
+    ; from here on (volume 0, never written again) so they're free for
+    ; future BGM. Each SOUND_* routine sets mixer R7 itself when
+    ; triggered (MIXER_NOISE_A for shot/explosion, MIXER_TONE_A for the
+    ; deflect ping) since channel A now has to switch between noise and
+    ; tone mode depending on which sound last fired; this just primes a
+    ; silent boot state (SND_TIMER=0 makes R8=0 regardless of mixer
+    ; mode).
     LD A,7 : OUT (PSG_ADDR),A
-    LD A,0E3h : OUT (PSG_DATA),A
+    LD A,MIXER_NOISE_A : OUT (PSG_DATA),A
     LD A,9 : OUT (PSG_ADDR),A
     XOR A : OUT (PSG_DATA),A
     LD A,10 : OUT (PSG_ADDR),A
     XOR A : OUT (PSG_DATA),A
-    XOR A : LD (SND_TIMER),A : LD (SND_TIMER_B),A : LD (SND_TIMER_C),A
+    XOR A : LD (SND_TIMER),A : LD (SND_DECAY),A
     LD A,8 : OUT (PSG_ADDR),A
     XOR A : OUT (PSG_DATA),A
 
@@ -2253,88 +2259,78 @@ GTD_SKIP_O:
 
 ; PSG (AY-3-8910-compatible) shot sound: channel A, noise-only -
 ; "ノイズｃｈで弾発射音ぽいの". SND_TIMER doubles as both the frame
-; countdown and channel A's volume (0-15, see SOUND_UPDATE), so the
-; sound fades out on its own as it counts down to 0 - same technique
-; as src/CYBER SHMUP.asm's own SOUND_SHOT/SOUND_UPDATE, just narrowed
-; to the one channel this test actually uses.
+; countdown and channel A's volume (0-15, see SOUND_UPDATE); SND_DECAY
+; is how fast it counts down - see SHOT_SND_PEAK/SHOT_SND_DECAY's own
+; comment for why this decays faster than the others below. Sets the
+; mixer to noise-A mode itself since channel A now also carries the
+; deflect ping's tone sound - "サウンドはノイズｃｈ使用音は別にしなく
+; ていいぞ どうせ被れば消える" (whichever sound fires most recently
+; simply overwrites SND_TIMER/SND_DECAY/the mixer, cutting off
+; whatever was still playing - accepted, not a bug).
 SOUND_SHOT:
+    LD A,7 : OUT (PSG_ADDR),A
+    LD A,MIXER_NOISE_A : OUT (PSG_DATA),A
     LD A,6 : OUT (PSG_ADDR),A
     LD A,SHOT_NOISE_PERIOD : OUT (PSG_DATA),A
-    LD A,SHOT_SND_FRAMES : LD (SND_TIMER),A
+    LD A,SHOT_SND_PEAK : LD (SND_TIMER),A
+    LD A,SHOT_SND_DECAY : LD (SND_DECAY),A
     RET
 
-; explosion sound - channel B, noise-only, byte-for-byte the same
-; period(20)/timer(15) src/CYBER SHMUP.asm's own SOUND_DESTROY uses
-; for its channel A - "爆発音追加 Stage1の爆発音流用". Register6 (the
-; noise period) is shared hardware-wide across every channel with
-; noise enabled, so triggering this while a shot is still fading
-; retunes both to this same pitch for the rest of their decay - a
-; minor, hardware-inherent quirk, not a bug (each channel keeps its
-; OWN independent volume/timer either way, so one never cuts the other
-; off - the actual goal here).
+; explosion sound - channel A, noise-only, byte-for-byte the same
+; period(20)/timer(15) src/CYBER SHMUP.asm's own SOUND_DESTROY uses -
+; "爆発音追加 Stage1の爆発音流用". Decays 1/frame (15 frames) same as
+; that file's own pacing - no held-fire-style concern like the shot
+; sound's own faster decay, explosions don't repeat rapidly enough to
+; matter, and overlapping with a shot/deflect sound is fine to just
+; cut off per the shared-channel design above.
 SOUND_DESTROY:
+    LD A,7 : OUT (PSG_ADDR),A
+    LD A,MIXER_NOISE_A : OUT (PSG_DATA),A
     LD A,6 : OUT (PSG_ADDR),A
     LD A,20 : OUT (PSG_DATA),A
-    LD A,15 : LD (SND_TIMER_B),A
+    LD A,15 : LD (SND_TIMER),A
+    LD A,1 : LD (SND_DECAY),A
     RET
 
-; "キンキン" metallic ping for a bullet absorbed by Zum's front
+; "キンキン" metallic ping for a bullet absorbed by Zum's own front
 ; invincibility - "Zumの前面無敵に弾が当たったらキンキンと言うサウンド
-; 追加 これはStage1のボスの弾き音流用". Channel C tone period(10) still
-; byte-for-byte src/CYBER SHMUP.asm's own SOUND_POD_HIT; its own
-; channel (C) rather than reusing A/B so it never fights a shot or
-; explosion sound playing at the same moment. Peak volume/timer raised
-; 10->12 - "音が小さいな 12くらいに上げてくれ" (repeated hits don't
-; come fast enough for this one to need the shot sound's own duration-
-; vs-volume split below, so just raising the plain initial value is
-; enough - louder AND very slightly longer).
+; 追加 これはStage1のボスの弾き音流用". Channel A tone period(10) still
+; byte-for-byte src/CYBER SHMUP.asm's own SOUND_POD_HIT (registers 0/1
+; instead of that routine's own 4/5, since this now plays on channel A
+; rather than a dedicated C). Peak 12, decays 1/frame - "音が小さいな
+; 12くらいに上げてくれ".
 SOUND_ZUM_DEFLECT:
-    LD A,4 : OUT (PSG_ADDR),A
+    LD A,7 : OUT (PSG_ADDR),A
+    LD A,MIXER_TONE_A : OUT (PSG_DATA),A
+    LD A,0 : OUT (PSG_ADDR),A
     LD A,10 : OUT (PSG_DATA),A
-    LD A,5 : OUT (PSG_ADDR),A
+    LD A,1 : OUT (PSG_ADDR),A
     XOR A : OUT (PSG_DATA),A
-    LD A,12 : LD (SND_TIMER_C),A
+    LD A,12 : LD (SND_TIMER),A
+    LD A,1 : LD (SND_DECAY),A
     RET
 
-; channel A (shot) volume is SND_TIMER+SHOT_VOLUME_BOOST while SND_
-; TIMER is still counting down (peaking at 6+4=10 - "自機ショット音も
-; 多分8だと思うんで10に"), and exactly 0 the moment it reaches 0 - see
-; SHOT_VOLUME_BOOST's own comment for why this is a separate knob from
-; SHOT_SND_FRAMES (the actual duration) rather than just raising that.
+; single shared channel-A envelope for every sound above - writes
+; SND_TIMER's own current value as the volume (register8, 0-15), then
+; steps it toward 0 by SND_DECAY (clamped so it can't undershoot past
+; 0 - see SOUND_SHOT/SOUND_DESTROY/SOUND_ZUM_DEFLECT for how each
+; sound picks its own peak/decay pair when triggered).
 SOUND_UPDATE:
     LD A,(SND_TIMER)
-    OR A
-    JR Z,SU_CHAN_A_SILENT
-    ADD A,SHOT_VOLUME_BOOST
-    JR SU_CHAN_A_WRITE
-SU_CHAN_A_SILENT:
-    XOR A
-SU_CHAN_A_WRITE:
     LD B,A
     LD A,8 : OUT (PSG_ADDR),A
     LD A,B : OUT (PSG_DATA),A
     LD A,(SND_TIMER)
     OR A
-    JR Z,SU_CHAN_B
-    DEC A : LD (SND_TIMER),A
-SU_CHAN_B:
-    LD A,(SND_TIMER_B)
-    LD B,A
-    LD A,9 : OUT (PSG_ADDR),A
-    LD A,B : OUT (PSG_DATA),A
-    LD A,(SND_TIMER_B)
-    OR A
-    JR Z,SU_CHAN_C
-    DEC A : LD (SND_TIMER_B),A
-SU_CHAN_C:
-    LD A,(SND_TIMER_C)
-    LD B,A
-    LD A,10 : OUT (PSG_ADDR),A
-    LD A,B : OUT (PSG_DATA),A
-    LD A,(SND_TIMER_C)
-    OR A
     RET Z
-    DEC A : LD (SND_TIMER_C),A
+    LD A,(SND_DECAY) : LD C,A
+    LD A,(SND_TIMER)
+    CP C
+    JR NC,SU_STEP
+    XOR A : LD (SND_TIMER),A
+    RET
+SU_STEP:
+    SUB C : LD (SND_TIMER),A
     RET
 
 ; ---------- enemy (ZacoII): spawn timer, then all 3 slots ----------
@@ -2786,19 +2782,37 @@ ZTO_FAIL:
     XOR A
     RET
 
-; gated on 3 things, all must hold: the red-ZacoII threshold reached
+; gated on 4 things, all must hold: the red-ZacoII threshold reached
 ; ("赤ZakoIIが10体で終わったら" - reuses ENEMY_SPAWN_COUNT, ZacoII's
-; own spawning keeps running unaffected - "ZakoIIは継続"), the terrain
-; is currently flat at the spawn column (ZUM_TERRAIN_OK), and a slot
-; is free (pool of ZUM_SLOT_COUNT=2 - "横並び制限"). Any failure just
+; own spawning keeps running unaffected - "ZakoIIは継続"), the tank
+; isn't already sitting right under the spawn point, the terrain is
+; currently flat at the spawn column (ZUM_TERRAIN_OK), and a slot is
+; free (pool of ZUM_SLOT_COUNT=2 - "横並び制限"). Any failure just
 ; retries next frame (ZUM_SPAWN_TIMER stays 0) rather than waiting out
 ; a fixed interval - the terrain condition is transient (the track
 ; scrolls continuously) so polling every frame catches the next flat
 ; window as soon as it appears.
+;
+; "右端でスポーン時に自機が右端のいるとすり抜けていく すり抜けないよ
+; うに 左端はすり抜けるがこれはそのままでいいわ" - if the tank is
+; already hugging the right edge the instant a slot frees up, a fresh
+; Zum spawns at ZUM_SPAWNX effectively right on top of it - too close
+; for UPDATE_TANK_ZUM_PUSH's own approach-then-clamp sequence to ever
+; get a normal run-up, reading as Zum sliding straight through instead
+; of pushing. (The *left*-edge case - the tank actively driving through
+; an already-approaching Zum - is the separate, intentional "already
+; passed" pass-through from earlier in this file, explicitly left
+; alone here.) Refusing to spawn until the tank clears ZUM_DETECT_RANGE
+; of the spawn point guarantees every Zum gets its full intended
+; approach (cruise -> decel -> accel -> push) instead of skipping
+; straight into point-blank range.
 ALLOC_ZUM_SLOT:
     LD A,(ENEMY_SPAWN_COUNT)
     CP 10
     RET C
+    LD A,(TANK_X)
+    CP ZUM_SPAWNX-ZUM_DETECT_RANGE
+    RET NC
     CALL ZUM_TERRAIN_OK
     OR A
     RET Z

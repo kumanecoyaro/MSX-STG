@@ -1422,6 +1422,62 @@ with no way to tell where.
   old instant flat-3 charge did. Would help to know: does it fail on
   literally the first contact ever, or only after some other
   interaction (jumping, a kill, standing on a Zum) first?
+- **Follow-up: Zum spawning too close to the tank at the right edge -
+  likely the real explanation for the "doesn't push" report above**
+  ("自機が前に押してる場合は押してくるが 前に移動操作してないと押し
+  込んでこないからだな あと右端でスポーン時に自機が右端のいるとすり
+  抜けていく すり抜けないように 左端はすり抜けるがこれはそのままで
+  いいわ"). Root cause: `ALLOC_ZUM_SLOT` set a fresh Zum's `Z_X` to
+  `ZUM_SPAWNX`(240) unconditionally the instant a slot freed up, with
+  no check on where the tank currently was - if the tank happened to
+  already be near the right edge at that exact moment, the new Zum
+  spawned effectively right on top of it, too close for `UPDATE_TANK_
+  ZUM_PUSH`'s own approach-then-clamp sequence to get a normal run-up,
+  reading as sliding straight through instead of pushing. This most
+  naturally happens while the player *isn't* actively driving toward
+  the spawn edge (an idle or drifting tank has more opportunity to
+  linger there than one being actively steered elsewhere) - matching
+  the "no forward input -> no push" pattern reported, without needing
+  a second, separate bug in the push logic itself (which, per the
+  investigation above, checks out fine on its own). Left-edge pass-
+  through (the tank actively driving *through* an approaching Zum) is
+  the separate, already-intentional "already passed" mechanic from
+  earlier in this file and stays untouched, exactly as asked.
+  `ALLOC_ZUM_SLOT` now also requires `TANK_X < ZUM_SPAWNX-ZUM_DETECT_
+  RANGE` (160) before granting a spawn - same "retry next frame, no
+  fixed wait" polling pattern as the existing terrain-flatness gate,
+  so camping the right edge just delays the next Zum rather than
+  softlocking anything. Verified: a spawn attempt with `TANK_X=223`
+  (the tank's own max-right position) is refused, the same attempt
+  with `TANK_X=100` succeeds, and camping right for 400 frames blocks
+  spawning the whole time but a Zum spawns normally within a couple
+  hundred frames of moving back out of the zone - no permanent
+  spawn-lock. Full regression sweep clean.
+- **"サウンドはノイズｃｈ使用音は別にしなくていいぞ どうせ被れば消
+  える PSGは3ch+ノイズ1chが仕様 2chはBGM用に常に空けておきたいしな"
+  - consolidated every current sound effect onto channel A alone**,
+  freeing channels B and C entirely for future BGM. Previously shot/
+  explosion/deflect each had their own channel specifically so they'd
+  never cut each other off mid-fade; per this instruction that's an
+  accepted tradeoff now, not something worth 3 channels for - the
+  PSG's single shared noise generator meant the 2 noise-based sounds
+  (shot, explosion) never had fully independent *sound* anyway, only
+  independent volume envelopes. `SND_TIMER_B`/`SND_TIMER_C` removed;
+  a single `SND_TIMER`/`SND_DECAY` pair now drives channel A for
+  whichever sound fired most recently (`SOUND_SHOT`/`SOUND_DESTROY`/
+  `SOUND_ZUM_DEFLECT` each set both, plus the mixer register (`MIXER_
+  NOISE_A`/`MIXER_TONE_A`) since channel A now has to switch between
+  noise and tone mode depending on which sound is currently playing).
+  `SOUND_UPDATE` is now one generic decay loop instead of 3 near-
+  identical per-channel copies. The shot sound's own peak(10)/fast-
+  decay(2/frame) split from the previous round carries over unchanged
+  (still needed to avoid the held-fire sustain bug); explosion and
+  deflect just decay 1/frame from their own peak, matching their
+  previous per-channel durations (15 and 12 frames). Verified: firing
+  shot then immediately explosion shows the shot's own timer/decay
+  fully overwritten (15/1, not merged or averaged with the shot's
+  10/2) - a clean cutover, matching "被れば消える" exactly. Full
+  regression sweep clean.
 
 ## Bugs found and fixed while building this
 
