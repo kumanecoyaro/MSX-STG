@@ -1081,6 +1081,57 @@ with no way to tell where.
   logic elsewhere assumed a particular magnitude). Real-hardware
   appearance not independently re-confirmed here - flagged for a quick
   look since this is a meaningfully different Y than before.
+- **Zum still wasn't grounded on real hardware - 2 root causes, both
+  confirmed and fixed** ("提示したスクショ見れば一目瞭然だがZumは地面
+  に設置してない 初期スポーン位置がおかしいかZumの下がRockまたは
+  Rock225をチェックしてないってこと まあスポーン位置がそもそもおかし
+  いし 設置チェックも出来てない 坂の上り下りも自機と全く同じ処理に
+  しないとガタガタの8px昇降になる"):
+  1. **Spawn-column mismatch.** `ZUM_SPAWN_COL` (the column
+     `ZUM_TERRAIN_OK` checks before allowing a spawn, "地形最下部で
+     上りがない") was hand-typed as 30, but `UOZ_TERRAIN_FOLLOW`'s own
+     runtime probe actually reads `(Z_X+8)>>3` = 31 at the spawn X
+     (240) - the spawn gate was verifying flat ground one column to
+     the *left* of where Zum's own ground-follow immediately probed
+     for real the instant it spawned, so the two could disagree right
+     out of the gate. Fixed by naming the shared `+8` offset
+     (`ZUM_PROBE_DX`) and deriving `ZUM_SPAWN_COL` from it
+     (`ZUM_SPAWNX+ZUM_PROBE_DX/8`) instead of a second hand-typed
+     constant, so they can't drift apart again. Verified: both now
+     compute to column 31.
+  2. **Slope climb/descend not using the tank's own processing.**
+     `UOZ_TERRAIN_FOLLOW`'s Y-easing was a simplified flat
+     `ZUM_CLIMB_SPEED`(2)/frame step with none of the tank's own
+     catch-up-threshold refinement (`UPDATE_TERRAIN_COLLISION`'s own
+     multi-round-tuned system) - exactly the kind of jittery, snapped
+     8px-at-a-time movement that system was built to eliminate for the
+     tank in the first place. Per direct instruction that Zum must use
+     the *exact same* processing, extracted that easing block out of
+     `UPDATE_TERRAIN_COLLISION` into a shared `TERRAIN_EASE_Y`
+     subroutine (`B`=target Y, `C`=current Y, `E`=moving flag ->
+     `A`=new eased Y), and `UPDATE_TERRAIN_COLLISION` and
+     `UOZ_TERRAIN_FOLLOW` both now call the byte-identical routine
+     (Zum passes `E=1`, since it's always "moving"). The ground-check
+     itself (IDCACHE_T0-T3 walk for the first non-BLANK tier, covering
+     both plain Rock and Rock225 ids) was already structurally
+     identical to the tank's own - the "not checking Rock/Rock225"
+     symptom traced back to the spawn-column mismatch above feeding it
+     the wrong column at spawn time, not a distinct bug in the walk
+     itself.
+
+  Verified: `TERRAIN_EASE_Y` called directly with known target/current/
+  moving inputs reproduces the tank's exact catch-up and steady-pace
+  arithmetic (e.g. target140/current100/E0 -> single-step catch-up to
+  108; target140/current136/E1 -> steady-pace step to 138). A Zum
+  placed at the spawn column and driven through a forced tier change
+  eases smoothly 148->140->138->136->134->132 (catch-up step then
+  steady 2px/frame, converging and holding exactly at the target, no
+  overshoot) instead of jumping straight 8px. A Zum spawned normally
+  and left to run renders with its sprite resting flush on the visible
+  rock/sand line at the same height as the tank's own tracks (see
+  `render_check.py`-driven render). Full regression sweep (`render_
+  check.py`, 3000-frame idle sweep) still clean, no crash/hang, SCORE
+  unaffected.
 
 ## Bugs found and fixed while building this
 

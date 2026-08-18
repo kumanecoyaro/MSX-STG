@@ -450,12 +450,14 @@ EXPLOSION_DURATION EQU 8
 ; for the tank itself ("自機と同じだね") - probe IDCACHE_T0..T3 at
 ; this enemy's own column, walk down for the first non-BLANK tier,
 ; ease Z_Y toward TANK_TIER_Y_TABLE[tier] (the same table the tank's
-; own Y targets, since Zum is meant to stand at the same height class)
-; - but WITHOUT the tank's own hard-won catch-up-threshold refinements
-; (see UPDATE_TERRAIN_COLLISION's own comment for that whole saga) -
-; just a flat ZUM_CLIMB_SPEED/frame ease, clamped at the target. A
-; simplification, not a re-derivation of that tuning; easy to revisit
-; if it reads as jittery/laggy once actually seen.
+; own Y targets, since Zum is meant to stand at the same height class).
+; Originally a simplified flat-speed ease WITHOUT the tank's own hard-
+; won catch-up-threshold refinements, which read as jittery/laggy 8px
+; steps on real hardware exactly as expected - "坂の上り下りも自機と
+; 全く同じ処理にしないとガタガタの8px昇降になる". UOZ_TERRAIN_FOLLOW
+; now calls the tank's own easing routine directly (TERRAIN_EASE_Y,
+; factored out of UPDATE_TERRAIN_COLLISION) instead of a second,
+; simpler copy of that tuning.
 ZUM_SLOT_SIZE  EQU 7    ; +0 Z_ACT,+1 Z_X,+2 Z_Y,+3 Z_TIMER(explosion),+4 Z_SPRIDX,+5/+6 Z_DX/Z_DY(explosion drift)
 ZUM_SLOT_COUNT EQU 2
 ZUM_POOL       EQU 0F2ECh   ; ZUM_SLOT_SIZE*ZUM_SLOT_COUNT = 14 bytes
@@ -472,9 +474,19 @@ ZUM_SPR_BASE_SLOT EQU 10    ; hw sprite slots10-11, right after the bullet pool'
 PAT_ZUM EQU 148             ; right after PAT_BULLETU_L(144-147)
 ZUM_COLOR EQU 13            ; from sprites/Zum.json's own fg
 ZUM_SPAWNX EQU 240          ; off the right edge, same "fully offscreen at 16px" convention as ENEMY_SPAWNX
-; the column ZUM_SPAWNX itself lands on (240>>3) - probed at spawn time
-; to gate spawning on "地形最下部で上りがない" (see ZUM_TERRAIN_OK).
-ZUM_SPAWN_COL EQU 30
+; horizontal-center probe offset shared by ZUM_SPAWN_COL below and
+; UOZ_TERRAIN_FOLLOW's own per-frame probe - "初期スポーン位置がおかし
+; いか Zumの下がRockまたはRock225をチェックしてないってこと" traced to
+; ZUM_SPAWN_COL being hand-typed as 30 while the runtime probe actually
+; used (Z_X+8)>>3 = 31 at X=240 - the spawn gate was checking one column
+; to the *left* of where Zum actually stands the instant it spawns, so
+; ZUM_TERRAIN_OK's "flat ground" check didn't match what UOZ_TERRAIN_
+; FOLLOW immediately probed for real. Named here and reused by both so
+; they can't drift apart again.
+ZUM_PROBE_DX EQU 8
+; the column Zum's own horizontal center lands on at spawn - derived,
+; not hand-typed, so it always matches UOZ_TERRAIN_FOLLOW's own probe.
+ZUM_SPAWN_COL EQU ZUM_SPAWNX+ZUM_PROBE_DX/8
 ZUM_SPAWN_INTERVAL EQU 90   ; same untuned-but-reasonable value as ENEMY_SPAWN_INTERVAL
 ; "速度１だと地面と動悸してるんで速度1.5 加速時3で" - slow speed
 ; averages 1.5 (base1 alternating with +1 on odd TICK frames, same
@@ -483,7 +495,6 @@ ZUM_SPAWN_INTERVAL EQU 90   ; same untuned-but-reasonable value as ENEMY_SPAWN_I
 ZUM_SPEED_SLOW_BASE EQU 1
 ZUM_SPEED_FAST EQU 3
 ZUM_CHARGE_MARGIN EQU 64    ; "自機に64pxまで近づくと速度2で自機に突っ込んでくる" (now 3, see above)
-ZUM_CLIMB_SPEED EQU 2       ; px/frame ease toward the target tier Y (see the comment above)
 ; "地面に設置してないな 16px上に浮いてる" - TANK_TIER_Y_TABLE gives
 ; the tank's own (32px-tall sprite) top-anchor Y for each tier; Zum is
 ; only 16px tall, so using that value directly for Zum's own top-Y
@@ -1226,95 +1237,23 @@ UTC_TIER3:
     LD HL,IDCACHE_T3 : LD (TANK_ROWPTR),HL
 UTC_TIER_DONE:
 
-    ; move TANK_GROUND_Y toward the tier's target Y at TANK_CLIMB_SPEED
-    ; instead of snapping straight there - snapping the full 8px in
-    ; one frame looked like a jolt/jitter at every tier change, per
-    ; direct instruction ("登り降り時に一気に8px移動してるんでガタ
-    ; ついてる...滑らかに繋げて"). A flat 2px/frame finished each climb
-    ; in 4 frames - much faster than the terrain itself actually
-    ; scrolls a transition by (measured ~16 frames between chained
-    ; tier changes with the tank stationary), so the climb looked
-    ; detached from the terrain's own motion and, chained back-to-
-    ; back, visibly paused waiting for the next tier - "連続Gapだと
-    ; 一瞬止まってる...地形に沿って移動じゃなく地形に入ったら自分で
-    ; 8pxのぼってる...地形の移動とマッチしてない". Gated to every
-    ; other frame (TICK bit0) so 1px/step averages 0.5px/frame,
-    ; matching that ~16-frame pace.
-    ;
-    ; That pace was measured with the tank standing still, though -
-    ; TANK_COL_R (the probe column) also moves when the tank itself
-    ; steers left/right, so moving toward oncoming terrain lets the
-    ; probe advance through tiers faster than the stationary baseline
-    ; (especially through the rapid-chain section, where consecutive
-    ; markers are close together) - at the slow pace alone,
-    ; TANK_GROUND_Y then falls behind by more than one tier and the
-    ; tank visibly sinks into the rock for a stretch - "左右移動が
-    ; 加わるとGapに突っ込んでる...登ってはいるが地形にめり込んでる".
-    ; Once TANK_CLIMB_CATCHUP_THRESHOLD behind, switch to catching up
-    ; at TANK_CLIMB_CATCHUP_SPEED every frame (no gate) instead - once
-    ; back under the threshold, the smooth slow pace above takes back
-    ; over for the final approach. Still sinking in slightly with the
-    ; original threshold(9)/speed(4) - "まだ少しだがめり込んでる" -
-    ; so the threshold is now tighter (5) and the catch-up itself
-    ; faster (8, enough to close any realistic single-frame gap in one
-    ; step) to stamp out the residual lag.
+    ; move TANK_GROUND_Y toward the tier's target Y via the shared
+    ; TERRAIN_EASE_Y easing routine (below) instead of snapping
+    ; straight there - see TERRAIN_EASE_Y's own comment for the full
+    ; history of why (jolt-on-tier-change, terrain-scroll pace
+    ; matching, the moving-vs-stationary split, the catch-up
+    ; threshold). E=1 while actively steering (TANK_DX!=0), else 0.
     LD A,(TANK_TIER) : LD E,A : LD D,0
     LD HL,TANK_TIER_Y_TABLE : ADD HL,DE
     LD A,(HL) : LD B,A            ; B = target Y
-    LD A,(TANK_GROUND_Y)
-    LD C,A                        ; C = current (smoothed) Y
-    CP B
-    JR Z,UTC_GROUND_Y_DONE
-    JR C,UTC_GROUND_Y_DIFF_BELOW
-    LD A,C : SUB B                ; diff = current-target (current>target)
-    JR UTC_GROUND_Y_DIFF_READY
-UTC_GROUND_Y_DIFF_BELOW:
-    LD A,B : SUB C                ; diff = target-current (current<target)
-UTC_GROUND_Y_DIFF_READY:
-    CP TANK_CLIMB_CATCHUP_THRESHOLD
-    JR C,UTC_GROUND_Y_BELOW_THRESHOLD  ; diff below threshold: not a multi-tier backlog
-    LD D,TANK_CLIMB_CATCHUP_SPEED
-    JR UTC_GROUND_Y_STEP
-UTC_GROUND_Y_BELOW_THRESHOLD:
-    ; while actively steering, use the faster ungated pace instead of
-    ; the terrain-matched slow one - TANK_COL_R moves with TANK_X, so
-    ; even a single ordinary climb's own diff=8 start can grow before
-    ; the slow pace closes it, reading as sinking into the rock -
-    ; "まだ左右移動で地形めり込んでるな...速度1.5の影響っぽい". The
-    ; slow pace's terrain-matched feel was validated with the tank
-    ; standing still (see above); once moving, the tank's own motion
-    ; is already the dominant visual cue, so tracking the ground
-    ; closely matters more here than matching the terrain's scroll.
-    LD A,(TANK_DX)
-    OR A
-    JR NZ,UTC_GROUND_Y_MOVING
-    LD A,(TICK) : AND 1
-    JR NZ,UTC_GROUND_Y_DONE
-    LD D,TANK_CLIMB_SPEED
-    JR UTC_GROUND_Y_STEP
-UTC_GROUND_Y_MOVING:
-    LD D,TANK_CLIMB_SPEED_MOVING
-UTC_GROUND_Y_STEP:
-    LD A,C
-    CP B
-    JR C,UTC_GROUND_Y_RISE
-    ; current > target (numerically lower on screen, i.e. climbing) -
-    ; step down toward it, clamping so it can't undershoot past it
-    SUB D
-    CP B
-    JR NC,UTC_GROUND_Y_SET
-    LD A,B
-    JR UTC_GROUND_Y_SET
-UTC_GROUND_Y_RISE:
-    ; current < target (descending) - step up toward it, clamping so
-    ; it can't overshoot past it
-    LD A,C : ADD A,D
-    CP B
-    JR C,UTC_GROUND_Y_SET
-    LD A,B
-UTC_GROUND_Y_SET:
+    LD A,(TANK_GROUND_Y) : LD C,A ; C = current (smoothed) Y
+    LD A,(TANK_DX) : OR A
+    LD E,0
+    JR Z,UTC_EASE_CALL
+    LD E,1
+UTC_EASE_CALL:
+    CALL TERRAIN_EASE_Y
     LD (TANK_GROUND_Y),A
-UTC_GROUND_Y_DONE:
 
     ; slope check (a): TANK_COL_R's own cell at the tier just found
     LD A,(TANK_COL_R) : LD E,A : LD D,0
@@ -1352,6 +1291,103 @@ UTC_SLOPE_RAW_NO:
     RET
 UTC_SLOPE_EXPIRED:
     XOR A : LD (TANK_ON_SLOPE),A
+    RET
+
+; ---------- shared terrain-Y easing (tank & Zum) ----------
+; Input: B=target Y, C=current Y, E=1 if actively steering/moving
+; (else 0). Output: A=new eased Y. Trashes D.
+;
+; Factored out of UPDATE_TERRAIN_COLLISION so Zum's own ground-follow
+; (UOZ_TERRAIN_FOLLOW) can call the byte-identical routine the tank
+; uses, per direct instruction: "坂の上り下りも自機と全く同じ処理に
+; しないとガタガタの8px昇降になる". Was previously a second, simpler
+; copy (flat ZUM_CLIMB_SPEED/frame, no catch-up threshold) which read
+; as exactly that kind of jitter on real hardware.
+;
+; Moves toward the target at TANK_CLIMB_SPEED instead of snapping
+; straight there - snapping the full 8px in one frame looked like a
+; jolt/jitter at every tier change, per direct instruction ("登り降り
+; 時に一気に8px移動してるんでガタついてる...滑らかに繋げて"). A flat
+; 2px/frame finished each climb in 4 frames - much faster than the
+; terrain itself actually scrolls a transition by (measured ~16 frames
+; between chained tier changes with the tank stationary), so the climb
+; looked detached from the terrain's own motion and, chained back-to-
+; back, visibly paused waiting for the next tier - "連続Gapだと一瞬
+; 止まってる...地形に沿って移動じゃなく地形に入ったら自分で8pxのぼっ
+; てる...地形の移動とマッチしてない". Gated to every other frame
+; (TICK bit0) so 1px/step averages 0.5px/frame, matching that ~16-
+; frame pace.
+;
+; That pace was measured with the tank standing still, though - the
+; probe column also moves when actively steering, so moving toward
+; oncoming terrain lets the probe advance through tiers faster than
+; the stationary baseline (especially through the rapid-chain section,
+; where consecutive markers are close together) - at the slow pace
+; alone, the eased Y then falls behind by more than one tier and the
+; tank visibly sinks into the rock for a stretch - "左右移動が加わると
+; Gapに突っ込んでる...登ってはいるが地形にめり込んでる". Once
+; TANK_CLIMB_CATCHUP_THRESHOLD behind, switch to catching up at
+; TANK_CLIMB_CATCHUP_SPEED every frame (no gate) instead - once back
+; under the threshold, the smooth slow pace above takes back over for
+; the final approach. Still sinking in slightly with the original
+; threshold(9)/speed(4) - "まだ少しだがめり込んでる" - so the
+; threshold is tighter (5) and the catch-up itself faster (8, enough
+; to close any realistic single-frame gap in one step) to stamp out
+; the residual lag. And while actively steering (E=1), the moving-
+; speed pace (TANK_CLIMB_SPEED_MOVING, ungated) is used below the
+; threshold instead of the terrain-matched slow one - a single
+; ordinary climb's own diff=8 start could otherwise grow before the
+; slow pace closes it, reading as sinking into the rock - "まだ左右
+; 移動で地形めり込んでるな...速度1.5の影響っぽい".
+TERRAIN_EASE_Y:
+    LD A,C
+    CP B
+    JR Z,TEY_DONE
+    JR C,TEY_DIFF_BELOW
+    LD A,C : SUB B                ; diff = current-target (current>target)
+    JR TEY_DIFF_READY
+TEY_DIFF_BELOW:
+    LD A,B : SUB C                ; diff = target-current (current<target)
+TEY_DIFF_READY:
+    CP TANK_CLIMB_CATCHUP_THRESHOLD
+    JR C,TEY_BELOW_THRESHOLD      ; diff below threshold: not a multi-tier backlog
+    LD D,TANK_CLIMB_CATCHUP_SPEED
+    JR TEY_STEP
+TEY_BELOW_THRESHOLD:
+    LD A,E
+    OR A
+    JR NZ,TEY_MOVING
+    LD A,(TICK) : AND 1
+    JR NZ,TEY_DONE_KEEP
+    LD D,TANK_CLIMB_SPEED
+    JR TEY_STEP
+TEY_MOVING:
+    LD D,TANK_CLIMB_SPEED_MOVING
+TEY_STEP:
+    LD A,C
+    CP B
+    JR C,TEY_RISE
+    ; current > target (numerically lower on screen, i.e. climbing) -
+    ; step down toward it, clamping so it can't undershoot past it
+    SUB D
+    CP B
+    JR NC,TEY_RET
+    LD A,B
+    RET
+TEY_RISE:
+    ; current < target (descending) - step up toward it, clamping so
+    ; it can't overshoot past it
+    LD A,C : ADD A,D
+    CP B
+    JR C,TEY_RET
+    LD A,B
+TEY_RET:
+    RET
+TEY_DONE_KEEP:
+    LD A,C
+    RET
+TEY_DONE:
+    LD A,B
     RET
 
 ; ---------- jump (B button, edge-triggered, 24px half-sine arc) ----------
@@ -2653,22 +2689,28 @@ UOZ_HIDE:
     RET
 
 ; IX = slot base. Probes IDCACHE_T0..T3 at this Zum's own column
-; ((Z_X+8)>>3, its horizontal center) for the first non-BLANK tier,
-; same walk as UPDATE_TERRAIN_COLLISION, then eases Z_Y toward
-; TANK_TIER_Y_TABLE[tier] by ZUM_CLIMB_SPEED/frame, clamped at the
-; target (no overshoot).
+; ((Z_X+ZUM_PROBE_DX)>>3, its horizontal center) for the first non-BLANK
+; tier, same walk as UPDATE_TERRAIN_COLLISION, then eases Z_Y toward
+; TANK_TIER_Y_TABLE[tier] via the SAME TERRAIN_EASE_Y subroutine the
+; tank's own UPDATE_TERRAIN_COLLISION uses - "坂の上り下りも自機と全く
+; 同じ処理にしないとガタガタの8px昇降になる": this used to be its own
+; simplified flat ZUM_CLIMB_SPEED/frame ease (no catch-up-threshold
+; refinement), which is exactly the "ガタガタの8px昇降" the tank's own
+; climb code went through several rounds to eliminate - reusing the
+; tank's exact routine instead of re-deriving a second copy of that
+; tuning.
 UOZ_TERRAIN_FOLLOW:
-    LD A,(IX+1) : ADD A,8 : SRL A : SRL A : SRL A
+    LD A,(IX+1) : ADD A,ZUM_PROBE_DX : SRL A : SRL A : SRL A
     LD E,A : LD D,0
     LD HL,IDCACHE_T0 : ADD HL,DE : LD A,(HL)
     OR A
     JR NZ,UTF_T0
-    LD A,(IX+1) : ADD A,8 : SRL A : SRL A : SRL A
+    LD A,(IX+1) : ADD A,ZUM_PROBE_DX : SRL A : SRL A : SRL A
     LD E,A : LD D,0
     LD HL,IDCACHE_T1 : ADD HL,DE : LD A,(HL)
     OR A
     JR NZ,UTF_T1
-    LD A,(IX+1) : ADD A,8 : SRL A : SRL A : SRL A
+    LD A,(IX+1) : ADD A,ZUM_PROBE_DX : SRL A : SRL A : SRL A
     LD E,A : LD D,0
     LD HL,IDCACHE_T2 : ADD HL,DE : LD A,(HL)
     OR A
@@ -2688,21 +2730,9 @@ UTF_TIER_SET:
     LD HL,TANK_TIER_Y_TABLE : ADD HL,DE : LD A,(HL)
     SUB ZUM_Y_OFFSET            ; one terrain step (8px) above the tank's own tier-Y - see ZUM_Y_OFFSET
     LD B,A                     ; B = target Y
-    LD A,(IX+2)                ; A = current Z_Y
-    CP B
-    RET Z
-    JR C,UTF_RISE
-    SUB ZUM_CLIMB_SPEED
-    CP B
-    JR NC,UTF_STORE
-    LD A,B
-    JR UTF_STORE
-UTF_RISE:
-    ADD A,ZUM_CLIMB_SPEED
-    CP B
-    JR C,UTF_STORE
-    LD A,B
-UTF_STORE:
+    LD A,(IX+2) : LD C,A       ; C = current Z_Y
+    LD E,1                     ; Zum is always "moving" (never stands idle)
+    CALL TERRAIN_EASE_Y
     LD (IX+2),A
     RET
 
