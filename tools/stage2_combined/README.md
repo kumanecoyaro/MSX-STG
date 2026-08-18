@@ -1618,6 +1618,49 @@ with no way to tell where.
   and the countdown ticks 3,2,1,0, then resumes moving the same frame
   the roll resolves; both outcomes (flee/charge) still reachable
   roughly 50/50 after the pause. Full regression sweep clean.
+- **Pause raised 4->8 frames** ("停止を8フレに").
+- **The real cause of clouds/ZacoII "randomness" sometimes getting
+  stuck at a fixed value - found and fixed, not just a bigger-range
+  band-aid** ("気になってたのが雲とZakoIIのランダムパラメータ 一定で
+  固定されてるときがある 特に雲は最初の方がかたまって出てくる").
+  `CLOUD_RNG` (renamed `GAME_RNG` - it's shared by clouds, ZacoII, and
+  Zum's own roll now) was a bare "read, +1, store" counter, same idea
+  as Stage1's own `DFL_RNG`. That design only gains 1 unit of real
+  entropy per read - fine if reads come from unpredictable, irregular
+  triggers, but any consumer with its *own* perfectly regular cadence
+  (a fixed-interval spawn timer, for instance) sees the exact same
+  delta between consecutive reads every time, cycling through a short,
+  fully deterministic sequence - or landing on one single fixed value
+  outright if that delta happens to be a multiple of the consumer's
+  own mask+1. ZacoII's own spawn Y (`TICK AND ENEMY_SKY_Y_MASK`, not
+  even `GAME_RNG`-based) had exactly this problem: spawns always
+  reload `ENEMY_SPAWN_TIMER` to the same fixed 90, so `TICK`'s value at
+  each spawn advances by a constant 90 (mod 256) - with a 64-wide mask,
+  that's a fixed delta of 90 mod 64 = 26, which only touches half the
+  possible Y band (`gcd(26,64)=2`) in the same repeating 32-step order
+  forever. Clouds "bunching up especially at the start" fits the same
+  root cause from a different angle - early in a run, before any
+  ZacoII/Zum have spawned to interleave *their own* reads into `GAME_
+  RNG`, cloud logic is the *only* thing touching it, so its progression
+  is at its most nakedly deterministic exactly when the player first
+  sees the game.
+  Fixed at the source rather than patched per-symptom: `GAME_RNG` now
+  also advances every single frame in `MAINLOOP`, unconditionally, by
+  the *current `TICK` value* (not a flat +1) - the running sum
+  1+2+3+...+`TICK` grows non-linearly, so no fixed-interval consumer
+  can ever see a constant delta between reads again, regardless of its
+  own period. `ALLOC_ENEMY_SLOT`'s own Y draw switched from raw `TICK`
+  to this same (now-fixed) shared source for consistency. Also, per
+  direct instruction, ZacoII's red/green pick past the 10-spawn
+  threshold is no longer permanently red - "あとZakoIIが10機でたら
+  (Zumと同じタイミング)あとは赤ZakoIIと緑ZakoIIランダムで" - a 50/50
+  `GAME_RNG`-based coin flip on every spawn once the threshold is
+  reached, matching Zum's own timing convention. Verified: sampling
+  `GAME_RNG` at the old resonant 90-frame interval now shows wildly
+  varying deltas (previously would have been a flat, constant value);
+  15 consecutive enemy spawns (forced past the red/green threshold)
+  show 12 distinct Y values spanning the full band and a genuine mix
+  of both variants, not a fixed pattern. Full regression sweep clean.
 
 ## Bugs found and fixed while building this
 

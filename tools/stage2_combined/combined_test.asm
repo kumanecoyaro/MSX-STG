@@ -579,12 +579,12 @@ ZUM_SPEED_BASE EQU 3
 ZUM_DETECT_RANGE EQU 80
 ZUM_MID_RANGE EQU 40    ; assumed split point (half of ZUM_DETECT_RANGE) - not itself specified
 ; "ツッコミと反転の分岐時に少し止まってから反転するか突っ込むかに変更
-; 今のカウンター基準だと4フレ停止かな" - Zum now comes to a full,
-; motionless stop for this many frames right at the roll point (the
-; instant distance first drops under ZUM_MID_RANGE), instead of
-; deciding and moving on the very same frame - see Z_RETREAT=3
-; (pausing) in UOZ_MOVE/UOZ_PAUSE_MOVE.
-ZUM_PAUSE_FRAMES EQU 4
+; 今のカウンター基準だと4フレ停止かな" (then "停止を8フレに") - Zum
+; now comes to a full, motionless stop for this many frames right at
+; the roll point (the instant distance first drops under ZUM_MID_
+; RANGE), instead of deciding and moving on the very same frame - see
+; Z_RETREAT=3 (pausing) in UOZ_MOVE/UOZ_PAUSE_MOVE.
+ZUM_PAUSE_FRAMES EQU 8
 ; flee cruise speed once clear of the tank - "反転時の速度が速いので
 ; 落としてくれ もしかして2倍にしてないか": it was exactly that, ZacoII's
 ; own "帰る時は倍速で" retreat-doubling convention borrowed without a
@@ -711,7 +711,25 @@ CLOUD_SLOT_SIZE  EQU 9
 ; one (rows5-7, 6th-8th from top) for good this time, not an experiment.
 CLOUD_SLOT_COUNT EQU 3
 CLOUD_POOL    EQU 0F2A9h   ; CLOUD_SLOT_SIZE*CLOUD_SLOT_COUNT bytes (27, was 54 with all 6 rows)
-CLOUD_RNG     EQU 0F2DFh   ; shared free-running counter, same idea as Stage1's DFL_RNG
+; shared free-running counter, same idea as Stage1's DFL_RNG - used by
+; every "random-ish" draw in this file (cloud timing/width, ZacoII's
+; own spawn Y and red/green pick, Zum's flee/charge roll). "気になっ
+; てたのが雲とZakoIIのランダムパラメータ 一定で固定されてるときがあ
+; る 特に雲は最初の方がかたまって出てくる" - traced to resonance: a
+; plain "read, +1, store" counter only gains 1 unit of real entropy
+; per read, so a consumer with its own perfectly regular cadence (like
+; a fixed-interval spawn timer) sees the exact same fixed delta every
+; time, cycling through a short, fully deterministic, repeating
+; sequence (or landing on a single fixed value outright if that delta
+; happens to be a multiple of the consumer's own mask+1) - worst right
+; at the start of a run, before anything else with irregular timing
+; has had a chance to interleave reads and break the pattern up, which
+; is exactly when clouds are first establishing their own spacing.
+; Fixed by also advancing this every single frame in MAINLOOP,
+; unconditionally, by the current TICK value (not a flat +1) - the
+; cumulative sum of 1+2+3+...+TICK grows non-linearly, so no fixed-
+; interval consumer ever sees a constant delta between reads again.
+GAME_RNG     EQU 0F2DFh
 CLOUD_SPAWN_COL EQU 32     ; leftmost cell starts one column past the right edge
 ; codes1-2: genuinely unused pattern-code slots within group0 (see the
 ; INIT-time load below) - reuses src/CYBER SHMUP.asm's own CLOUD_WA/
@@ -1163,6 +1181,13 @@ ICL_LOOP:
 
 MAINLOOP:
     LD A,(TICK) : INC A : LD (TICK),A
+
+    ; GAME_RNG += TICK, every single frame, unconditionally - see
+    ; GAME_RNG's own comment for why a flat +1-per-read counter wasn't
+    ; enough to break resonance with fixed-interval consumers.
+    LD B,A
+    LD A,(GAME_RNG) : ADD A,B : LD (GAME_RNG),A
+    LD A,(TICK)
 
     AND 07h
     JR NZ,SKIP_ADVANCE
@@ -2466,13 +2491,23 @@ AES_FOUND:
     POP IX
     LD A,1 : LD (IX+E_ACT),A
     LD A,ENEMY_SPAWNX : LD (IX+E_X),A
-    LD A,(TICK) : AND ENEMY_SKY_Y_MASK : ADD A,ENEMY_SKY_Y_MIN : LD (IX+E_Y),A
+    ; GAME_RNG instead of raw TICK - "ZakoIIの...ランダムパラメータ
+    ; 一定で固定されてるときがある" traced to TICK being sampled at a
+    ; perfectly regular phase (this spawn timer always reloads to the
+    ; same fixed ENEMY_SPAWN_INTERVAL), so its own masked low bits
+    ; cycled through the same short, fully predictable sequence every
+    ; time - see GAME_RNG's own comment.
+    LD A,(GAME_RNG) : AND ENEMY_SKY_Y_MASK : ADD A,ENEMY_SKY_Y_MIN : LD (IX+E_Y),A
     XOR A : LD (IX+E_RETREAT),A : LD (IX+E_TIMER),A
 
+    ; "あとZakoIIが10機でたら(Zumと同じタイミング)あとは赤ZakoIIと緑
+    ; ZakoIIランダムで" - once the threshold is reached, every further
+    ; spawn is a 50/50 coin flip instead of permanently red.
     LD A,(ENEMY_SPAWN_COUNT)
     CP 10
     JR C,AES_VARIANT_GREEN
-    LD A,1
+    LD A,(GAME_RNG) : INC A : LD (GAME_RNG),A
+    AND 1
     JR AES_VARIANT_SET
 AES_VARIANT_GREEN:
     XOR A
@@ -3041,7 +3076,7 @@ UOZ_PAUSE_MOVE:
     DEC A : LD (IX+3),A
     JR UOZ_DRAW
 UOZ_PAUSE_ROLL:
-    LD A,(CLOUD_RNG) : INC A : LD (CLOUD_RNG),A
+    LD A,(GAME_RNG) : INC A : LD (GAME_RNG),A
     AND 1
     JR NZ,UOZ_PAUSE_DECIDE_CHARGE
     LD A,1 : LD (IX+7),A
@@ -3623,7 +3658,7 @@ UOC_WRITE_CELL:
 ; wait before a cloud's next spawn - same range/shape as src/CYBER
 ; SHMUP.asm's own CLOUD_RANDOM_WAIT. Trashes A.
 CLOUD_RANDOM_WAIT:
-    LD A,(CLOUD_RNG) : INC A : LD (CLOUD_RNG),A
+    LD A,(GAME_RNG) : INC A : LD (GAME_RNG),A
     AND 7Fh
     ADD A,30
     RET
@@ -3631,7 +3666,7 @@ CLOUD_RANDOM_WAIT:
 ; Output: A = 2 or 4 (random cloud width for a non-FIXED4 slot).
 ; Trashes A.
 CLOUD_RANDOM_WIDTH:
-    LD A,(CLOUD_RNG) : INC A : LD (CLOUD_RNG),A
+    LD A,(GAME_RNG) : INC A : LD (GAME_RNG),A
     AND 1
     JR Z,CRW_2
     LD A,4
