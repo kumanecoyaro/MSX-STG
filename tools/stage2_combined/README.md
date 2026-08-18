@@ -1316,6 +1316,35 @@ with no way to tell where.
   spawning and dying) plus the standard `render_check.py` and 3000-
   frame idle sweep all ran clean, no crash/hang, SCORE incrementing
   normally from a real kill during the stress sweep.
+- **Zum's re-acceleration was missing entirely - a follow-up
+  correction, not a bug in the ZacoII half above** ("Zumの加速は必要
+  だぞ その前提で考えてるんだから ただロジック的に両立出来ないんで
+  出現時速度３で右から出てきたら 80pxで自機を検知して速度1にサイン
+  減速 減速終了で速度3までサイン加速して自機に突っ込む"). The first
+  pass only decelerated Zum down to a slower flat cruise (1.5) and left
+  it there - dropping the re-acceleration/charge the original premise
+  actually needed. Replaced with the full 3-phase profile now spelled
+  out explicitly: flat `ZUM_SPEED_BASE`(3, was 2) beyond `ZUM_DETECT_
+  RANGE`(80, replacing the old `ZUM_DECEL_RANGE`/64px trigger) of the
+  tank; inside it, the 80px zone splits into two `ZUM_MID_RANGE`(40,
+  assumed - the split point itself wasn't specified, taken as half of
+  80) halves - the outer half sine-decelerates 3->1 via `ZUM_DECEL_
+  TABLE` (rebuilt, 40 entries), the inner half sine-accelerates 1->3
+  back up to full charge speed via a new `ZUM_ACCEL_TABLE` (40
+  entries), reaching full speed again right as it reaches the tank -
+  "減速終了で速度3までサイン加速して自機に突っ込む". Both tables keep
+  the same distance-indexed, error-diffused, floored-at-1 construction
+  as the rest of this feature (see the entry above) - no stall risk,
+  no new per-slot state. Verified: a Zum released 150px out holds flat
+  -3px/frame until well inside the detection zone, eases down through
+  -1px/frame around the midpoint, then eases back up to a flat -3px/
+  frame right up to contact - the full deceleration-then-charge shape,
+  not the old single one-way ease. Full regression sweep (`render_
+  check.py`, 3000-frame idle sweep, 4000-frame random-input stress
+  sweep including live Zum/ZacoII spawns) still clean; also confirmed
+  a Zum released far out and left completely unopposed charges all the
+  way in and pushes the tank to `TANK_X=0` (no player input at all),
+  matching "何も操作しなければ敵に押される" end-to-end.
 
 ## Bugs found and fixed while building this
 

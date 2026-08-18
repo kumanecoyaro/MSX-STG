@@ -508,25 +508,29 @@ ZUM_PROBE_DX EQU 8
 ; not hand-typed, so it always matches UOZ_TERRAIN_FOLLOW's own probe.
 ZUM_SPAWN_COL EQU ZUM_SPAWNX+ZUM_PROBE_DX/8
 ZUM_SPAWN_INTERVAL EQU 90   ; same untuned-but-reasonable value as ENEMY_SPAWN_INTERVAL
-; "敵のX移動にサイン移動を採用する Zumは出現時速度２ 自機に近づいたら
-; サイン減速で速度1.5 今の時期検知は近いんでもっと離れた位置に" -
-; replaces the old flat-1.5-then-flat-3-once-close speed model
-; entirely: a flat cruise speed (2) far away, sine-eased down to a
-; slower flat cruise (1.5) once within ZUM_DECEL_RANGE of the tank -
-; no more sudden "charge" speed-up. The old trigger distance (formerly
-; ZUM_CHARGE_MARGIN, 64px) was "too close" per this same instruction,
-; so the new one is double that, giving the ease real room to play out
-; before Zum is right on top of the tank. ZUM_DECEL_TABLE is indexed
-; directly by distance-to-tank (not elapsed frames) - self-correcting
-; every frame regardless of how the tank itself moves in the meantime,
-; no extra per-slot state needed. Generated (not hand-tuned) via
-; error-diffusion of speed(d)=1.5+0.5*sin(pi/2*d/(RANGE-1)) walked
-; from d=RANGE-1 (far, ~2.0) down to d=0 (near, 1.5) - the same
-; direction Zum actually traverses the table in, so any local window
-; of consecutive frames still averages to the intended curve despite
-; each individual entry being a whole px step.
-ZUM_SPEED_BASE EQU 2
-ZUM_DECEL_RANGE EQU 128
+; "Zumの加速は必要だぞ その前提で考えてるんだから ただロジック的に
+; 両立出来ないんで 出現時速度３で右から出てきたら 80pxで自機を検知
+; して速度1にサイン減速 減速終了で速度3までサイン加速して自機に突っ
+; 込む" - supersedes the previous decel-only design (which dropped to a
+; slower flat cruise and stayed there - missing the re-acceleration
+; the actual premise called for). Now: flat ZUM_SPEED_BASE(3) cruise
+; beyond ZUM_DETECT_RANGE(80) of the tank; within it, the 80px zone
+; splits into two 40px (ZUM_MID_RANGE) halves - the outer half sine-
+; decelerates 3->1 (ZUM_DECEL_TABLE), the inner half sine-accelerates
+; back 1->3 (ZUM_ACCEL_TABLE), reaching full charge speed again right
+; as it reaches the tank. Both tables are indexed directly by current
+; distance-to-tank (not elapsed frames) - self-correcting every frame
+; regardless of how the tank itself moves meanwhile, no extra per-slot
+; ramp state needed - and, like the ZacoII ramp tables, every entry is
+; floored at 1 during generation so distance always shrinks by at
+; least 1px/frame (a literal-0 entry would freeze distance-to-tank,
+; and therefore the table index, forever - see ENEMY_DECEL_TABLE_
+; GREEN's own comment for how this was first caught). Generated via
+; error-diffusion walked high-index->low-index in both tables, matching
+; the direction Zum actually traverses each half as it approaches.
+ZUM_SPEED_BASE EQU 3
+ZUM_DETECT_RANGE EQU 80
+ZUM_MID_RANGE EQU 40    ; assumed split point (half of ZUM_DETECT_RANGE) - not itself specified
 ; "地面に設置してないな 16px上に浮いてる" - TANK_TIER_Y_TABLE gives
 ; the tank's own (32px-tall sprite) top-anchor Y for each tier; Zum is
 ; only 16px tall, so using that value directly for Zum's own top-Y
@@ -598,7 +602,7 @@ TANK_GROUND_OFFSET EQU 28
 ; keeps moving the whole time - by landing, the accumulated gap could
 ; be huge, and snapping it shut in a single frame reads as the tank
 ; teleporting. Capped at this many px/frame instead - at or above
-; Zum's own max speed (ZUM_SPEED_BASE, 2) so ordinary continuous-
+; Zum's own max speed (ZUM_SPEED_BASE, 3) so ordinary continuous-
 ; contact pushing (which never needs to close more than one frame's
 ; worth of Zum movement) still resolves in a single frame, same as
 ; before.
@@ -2764,11 +2768,12 @@ AZS_FOUND:
 
 ; IX = slot base. E_ACT=1: probes the terrain under its own column and
 ; eases Z_Y toward the target tier, then advances Z_X left - flat
-; ZUM_SPEED_BASE while farther than ZUM_DECEL_RANGE from the tank,
-; sine-eased down via ZUM_DECEL_TABLE (indexed directly by distance,
-; not elapsed frames) once inside it - see ZUM_DECEL_RANGE's own
-; comment. Unsigned-subtraction wraparound naturally also keeps it at
-; full ZUM_SPEED_BASE if TANK_X briefly reads higher (already passed).
+; ZUM_SPEED_BASE while farther than ZUM_DETECT_RANGE from the tank;
+; inside it, sine-decelerates through ZUM_DECEL_TABLE then sine-
+; accelerates back up through ZUM_ACCEL_TABLE (both indexed directly
+; by distance, not elapsed frames) - see ZUM_SPEED_BASE's own comment.
+; Unsigned-subtraction wraparound naturally also keeps it at full
+; ZUM_SPEED_BASE if TANK_X briefly reads higher (already passed).
 ; E_ACT=2: same drift-then-hide explosion shape as UPDATE_ONE_ENEMY's
 ; own UOE_EXPLODING, reusing EXPLOSION_DURATION/PATTERN/COLOR.
 UPDATE_ONE_ZUM:
@@ -2785,10 +2790,19 @@ UOZ_MOVE:
     LD A,(TANK_X)
     LD C,A
     LD A,B : SUB C            ; Z_X-TANK_X; wraps large if Z_X<TANK_X (already passed) - falls through to full speed below either way
-    CP ZUM_DECEL_RANGE
+    CP ZUM_DETECT_RANGE
     JR NC,UOZ_SPEED_FULL
+    CP ZUM_MID_RANGE
+    JR C,UOZ_SPEED_ACCEL      ; distance<40: inner half, sine-accelerating back up
+    ; distance in [40,79]: outer half, sine-decelerating - index=distance-40
+    SUB ZUM_MID_RANGE
     LD E,A : LD D,0
     LD HL,ZUM_DECEL_TABLE : ADD HL,DE
+    LD A,(HL)
+    JR UOZ_SPEED_SET
+UOZ_SPEED_ACCEL:
+    LD E,A : LD D,0            ; index=distance directly
+    LD HL,ZUM_ACCEL_TABLE : ADD HL,DE
     LD A,(HL)
     JR UOZ_SPEED_SET
 UOZ_SPEED_FULL:
@@ -3435,18 +3449,23 @@ BULLET_ROWADDR_HI:
 TANK_TIER_Y_TABLE:
     DB 132,140,148,156
 
-; distance-to-tank-indexed sine ease, ZUM_DECEL_RANGE(128) entries -
-; see ZUM_DECEL_RANGE's own comment. index0=right next to the tank
-; (~1.5px/frame), index127=at the edge of the decel zone (~2.0px/frame).
+; distance-to-tank-indexed sine eases, ZUM_MID_RANGE(40) entries each -
+; see ZUM_SPEED_BASE's own comment. ZUM_DECEL_TABLE covers the outer
+; half (distance 40-79, index=distance-40): index0 (d=40, closest point
+; of this half) reads ~1, index39 (d=79, the detection edge) reads ~3.
+; ZUM_ACCEL_TABLE covers the inner half (distance 0-39, index=distance
+; directly): index0 (d=0, at the tank) reads ~3, index39 (d=39, right
+; where DECEL leaves off) reads ~1 - so the two tables meet at a
+; matching ~1 in the middle of the 80px zone, per "減速終了で速度3まで
+; サイン加速".
 ZUM_DECEL_TABLE:
-    DB 2,1,2,1,2,1,2,1,2,2,1,2,1,2,1,2
-    DB 2,1,2,1,2,2,1,2,2,1,2,2,1,2,2,1
-    DB 2,2,1,2,2,2,1,2,2,2,1,2,2,2,1,2
-    DB 2,2,1,2,2,2,2,1,2,2,2,2,2,1,2,2
-    DB 2,2,2,2,1,2,2,2,2,2,2,2,2,2,1,2
-    DB 2,2,2,2,2,2,2,2,2,2,2,2,2,1,2,2
-    DB 2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2
-    DB 2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2
+    DB 1,1,2,1,1,2,1,2,1,2,2,2,2,2,2,2
+    DB 2,2,2,3,2,3,2,3,3,2,3,3,3,2,3,3
+    DB 3,3,3,3,3,3,3,3
+ZUM_ACCEL_TABLE:
+    DB 3,3,2,3,3,2,3,2,3,2,2,2,2,2,2,2
+    DB 2,2,2,1,2,1,2,1,1,2,1,1,1,2,1,1
+    DB 1,1,1,1,1,1,1,1
 
 ; distance-from-pivot-indexed sine eases for ZacoII, ENEMY_RAMP_RANGE
 ; (32) entries each - see ENEMY_GET_STEP_RAMPED. DECEL tables ease the
