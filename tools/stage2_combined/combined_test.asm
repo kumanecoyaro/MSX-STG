@@ -832,6 +832,13 @@ BIGZUM_GIVEUP_RANGE EQU ZUM_DETECT_RANGE
 ; FRAMES pre-decision pause once back in near-tank range. Reuses that
 ; same magnitude rather than a new untuned number.
 BIGZUM_GIVEUP_PAUSE_FRAMES EQU ZUM_PAUSE_FRAMES
+; "BigZumが反転する場合は少し動きを止めてから反転し改めて接近モードに
+; ループ ６フレとまること すぐに反転して向かってくると自機から離れ
+; なくなる" - whenever STATE=0's own approach logic would flip FACING
+; (BigZum's own side relative to the tank), it stops motionless for
+; this many frames first instead of committing to the new facing and
+; moving toward it the very same frame - see UOBZ_FLIP_PAUSE_MOVE.
+BIGZUM_FLIP_PAUSE_FRAMES EQU 6
 ; ground reference used throughout a jump arc is the flat spawn tier
 ; (TANK_Y_BASE) rather than a live per-frame terrain probe - the jump
 ; is a short, self-contained maneuver that starts from the guaranteed-
@@ -3875,6 +3882,8 @@ UPDATE_ONE_BIGZUM:
     JP Z,UOBZ_PAUSE_MOVE
     CP 2
     JP Z,UOBZ_PUNCH_MOVE
+    CP 4
+    JP Z,UOBZ_FLIP_PAUSE_MOVE
 
     ; STATE=0: approaching - identical distance-indexed decel to Zum's
     ; own charge leg (ZUM_DETECT_RANGE/ZUM_MID_RANGE/ZUM_DECEL_TABLE) -
@@ -3903,13 +3912,30 @@ UOBZ_APPROACH_START:
     LD A,(IX+1) : LD D,A          ; D = BZ_X
     LD A,(TANK_X) : LD E,A        ; E = TANK_X
     LD A,D : CP E
-    JR C,UOBZ_APPROACH_BEHIND     ; BZ_X<TANK_X - on the far/behind side
+    JR C,UOBZ_APPROACH_SIDE_BEHIND ; BZ_X<TANK_X - on the far/behind side
+    LD C,0                         ; C = the side BigZum is currently on (0=front/right)
+    JR UOBZ_APPROACH_CHECK_FLIP
+UOBZ_APPROACH_SIDE_BEHIND:
+    LD C,1                         ; C = behind/left
+UOBZ_APPROACH_CHECK_FLIP:
+    ; only actually WRITE +9(FACING) via the flip-pause commit below -
+    ; if it already matches the side just computed, nothing to do here.
+    LD A,(IX+9)
+    CP C
+    JR Z,UOBZ_APPROACH_NOFLIP
 
-    XOR A : LD (IX+9),A           ; FACING=0 (front/right side, the usual case)
+    LD A,C : LD (IX+5),A           ; stash the pending facing (+5/DX, idle outside an explosion)
+    LD A,4 : LD (IX+7),A           ; STATE=4 (flip-pause)
+    LD A,BIGZUM_FLIP_PAUSE_FRAMES : LD (IX+3),A
+    JP UOBZ_DRAW
+
+UOBZ_APPROACH_NOFLIP:
+    LD A,C
+    OR A
+    JR NZ,UOBZ_APPROACH_DIST_BEHIND
     LD A,D : SUB E
     JR UOBZ_APPROACH_DIST
-UOBZ_APPROACH_BEHIND:
-    LD A,1 : LD (IX+9),A          ; FACING=1 (behind/left side)
+UOBZ_APPROACH_DIST_BEHIND:
     LD A,E : SUB D
 UOBZ_APPROACH_DIST:
     LD D,A                        ; D = distance, either side
@@ -3979,6 +4005,23 @@ UOBZ_PAUSE_DECIDE_JUMP:
     LD A,1 : LD (IX+7),A
     XOR A : LD (IX+10),A
     JP UOBZ_JUMP_MOVE
+
+; flip-pause (STATE=4): motionless for BIGZUM_FLIP_PAUSE_FRAMES (+3,
+; same reused-countdown-field convention as every other BigZum pause),
+; then commits the pending facing stashed in +5 by UOBZ_APPROACH_
+; CHECK_FLIP and hands back to STATE=0 to resume approaching from
+; there - "BigZumが反転する場合は少し動きを止めてから反転し改めて接近
+; モードにループ".
+UOBZ_FLIP_PAUSE_MOVE:
+    LD A,(IX+3)
+    OR A
+    JR Z,UOBZ_FLIP_COMMIT
+    DEC A : LD (IX+3),A
+    JP UOBZ_DRAW
+UOBZ_FLIP_COMMIT:
+    LD A,(IX+5) : LD (IX+9),A
+    XOR A : LD (IX+7),A
+    JP UOBZ_DRAW
 
 ; punching (STATE=2): "パンチに入ったら色々おかしい 自機が突き抜けて
 ; しまうし かなり離れてもずっとパンチしてきてノックバックが続く

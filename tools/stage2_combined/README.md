@@ -2028,6 +2028,27 @@ with no way to tell where.
   Full regression: 15000-frame random-input sweep, no crash/stall,
   Zum and BigZum never observed active simultaneously (as intended
   again); `render_check.py` clean.
+- **A brief stop before BigZum actually reverses which side it's on**
+  ("BigZumが反転する場合は少し動きを止めてから反転し改めて接近モードに
+  ループ ６フレとまること すぐに反転して向かってくると自機から離れ
+  なくなる"). `STATE=0`'s own approach logic recomputes FACING every
+  single frame from whichever side of the tank BigZum is currently on
+  (needed for the bidirectional re-approach a few rounds back), and
+  used to commit + start moving toward the new side in that exact same
+  frame the moment the tank crossed over - reads as BigZum reversing
+  and closing back in instantly, giving the player no real window to
+  put distance between themselves and it. New `STATE=4` (flip-pause):
+  the moment a frame's freshly-computed side first disagrees with the
+  currently-stored `FACING`, BigZum stashes the pending value (`+5`,
+  idle outside an explosion) and freezes fully motionless for
+  `BIGZUM_FLIP_PAUSE_FRAMES`(6) before actually committing the flip
+  and handing back to `STATE=0` to resume approaching from there.
+  Verified: teleporting the tank to BigZum's other side shows it enter
+  `STATE=4` immediately (facing not yet changed), stay frozen in place
+  through the countdown, then commit the new facing and resume moving
+  only after; staying on the same side the whole time never touches
+  `STATE=4` at all. Full regression: 15000-frame random-input sweep,
+  no crash/stall; `render_check.py` clean.
 
 ## Bugs found and fixed while building this
 
