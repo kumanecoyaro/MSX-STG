@@ -3090,28 +3090,33 @@ UZAU_LOOP:
     CALL FLUSH_ZUM_SPRITES
     RET
 
-; A=1 if the terrain at ZUM_SPAWN_COL is genuinely flat ground at the
-; lowest tier (IDCACHE_T0/T1/T2 all BLANK there - nothing above tier3
-; yet - and IDCACHE_T3 is a steady plain-rock id, not a Rock225 climb/
-; descend marker), else 0 - "上りがない地形最下部でスポーン". Same
-; walk-down-tiers probe UPDATE_TERRAIN_COLLISION uses, just as a
-; boolean test at a fixed column instead of driving TANK_TIER. Trashes
-; A,DE,HL.
+; A=1 if the terrain at ZUM_SPAWN_COL is flat, steady ground at
+; WHICHEVER tier is actually on top there (the first non-BLANK id
+; found walking IDCACHE_T0->T1->T2->T3, same walk UPDATE_TERRAIN_
+; COLLISION/UOZ_TERRAIN_FOLLOW use), as long as that tier's own id is
+; a steady plain-rock one (not a Rock225 climb/descend marker), else
+; 0. "Zum制限緩和は地形が1番下にある時と言う部分をやめると言うこと" -
+; previously only accepted the terrain being flat specifically at the
+; very LOWEST tier (T0/T1/T2 all BLANK, i.e. nothing climbed above
+; tier3 yet anywhere on the visible track) - "上りがない地形最下部で
+; スポーン" - now any tier being the current flat/steady surface
+; qualifies, not just the lowest one.
 ZUM_TERRAIN_OK:
     LD A,ZUM_SPAWN_COL : LD E,A : LD D,0
     LD HL,IDCACHE_T0 : ADD HL,DE : LD A,(HL)
     OR A
-    JR NZ,ZTO_FAIL
+    JR NZ,ZTO_CHECK_ID
     LD A,ZUM_SPAWN_COL : LD E,A : LD D,0
     LD HL,IDCACHE_T1 : ADD HL,DE : LD A,(HL)
     OR A
-    JR NZ,ZTO_FAIL
+    JR NZ,ZTO_CHECK_ID
     LD A,ZUM_SPAWN_COL : LD E,A : LD D,0
     LD HL,IDCACHE_T2 : ADD HL,DE : LD A,(HL)
     OR A
-    JR NZ,ZTO_FAIL
+    JR NZ,ZTO_CHECK_ID
     LD A,ZUM_SPAWN_COL : LD E,A : LD D,0
     LD HL,IDCACHE_T3 : ADD HL,DE : LD A,(HL)
+ZTO_CHECK_ID:
     CP 3
     JR NC,ZTO_FAIL
     OR A
@@ -3145,15 +3150,15 @@ ALLOC_ZUM_SLOT:
     LD A,(ENEMY_SPAWN_COUNT)
     CP 10
     RET C
-    ; "Zumは殆ど出ないので条件緩和する 赤緑ZakoIIになったら何時でも
-    ; スポーンできること" - a previous round added a "refuse to spawn
-    ; while BigZum is out" gate here ("BigZum出現中はZumは出ないよう
-    ; に"), but BigZum ended up occupying the screen for a large enough
-    ; share of playtime (especially once its own give-up/re-engage loop
-    ; made it far more persistent) that this starved Zum's own spawns
-    ; almost entirely - reversed per direct instruction. Once past the
-    ; red/green threshold, only the terrain/free-slot checks below
-    ; still gate a spawn attempt.
+    ; "BicZum出現中にZumは出さないでくれ キャラが消えてしまうしテスト
+    ; 出来ない" - the previous round removed this gate to fix Zum
+    ; almost never spawning, but that turned out to be the wrong fix -
+    ; restored (see ZUM_TERRAIN_OK's own comment for the actually-
+    ; intended relaxation instead: any flat tier now qualifies, not
+    ; just the very lowest one).
+    LD A,(BIGZUM_POOL)
+    OR A
+    RET NZ
     CALL ZUM_TERRAIN_OK
     OR A
     RET Z

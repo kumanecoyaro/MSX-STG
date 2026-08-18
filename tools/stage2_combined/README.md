@@ -2002,6 +2002,32 @@ with no way to tell where.
     real Zum spawn (observed within ~1200 frames, vs. never before).
   Full regression: 15000-frame random-input sweep, no crash/stall;
   `render_check.py` clean.
+- **The previous round's "let Zum spawn even while BigZum is active"
+  fix was the wrong fix - reverted, and re-diagnosed the actual
+  relaxation wanted** ("BicZum出現中にZumは出さないでくれ キャラが
+  消えてしまうしテスト出来ない Zum制限緩和は地形が1番下にある時と
+  言う部分をやめると言うこと"):
+  - `ALLOC_ZUM_SLOT`'s "refuse while BigZum is active" gate is back -
+    letting both coexist caused something to visibly disappear and
+    broke testing, so this direction was never the right fix for
+    "Zumは殆ど出ない" in the first place.
+  - The actual relaxation intended: `ZUM_TERRAIN_OK` used to require
+    the terrain be flat specifically at the very LOWEST tier
+    (`IDCACHE_T0/T1/T2` all BLANK, i.e. nothing climbed above tier3
+    anywhere on the visible track) - "地形が1番下にある時と言う部分"
+    - which is a narrow window on a track that spends plenty of time
+    climbed above that. Now accepts flat, steady ground at WHICHEVER
+    tier is actually on top at the spawn column (same walk-down-tiers
+    probe `UPDATE_TERRAIN_COLLISION`/`UOZ_TERRAIN_FOLLOW` use, just
+    checking the id found there instead of insisting it land on tier3
+    specifically). Verified: forcing tier0 (the highest platform, not
+    the lowest) solid and steady at the spawn column now lets a Zum
+    spawn there; forcing every tier to a climb-marker id everywhere
+    still correctly refuses (no regression on the "must be steady, not
+    mid-climb" half of the original check).
+  Full regression: 15000-frame random-input sweep, no crash/stall,
+  Zum and BigZum never observed active simultaneously (as intended
+  again); `render_check.py` clean.
 
 ## Bugs found and fixed while building this
 
