@@ -504,9 +504,13 @@ EXPLOSION_DURATION EQU 8
 ; or reversing and fleeing back off the right edge, sine-accelerating
 ; away just like ZacoII's own retreat leg - see UOZ_MOVE/ZUM_FLEE_
 ; TABLE. +7 Z_RETREAT tracks this: 0=undecided (still approaching,
-; hasn't reached the roll point yet), 1=fleeing (rolled away), 2=
-; charging (rolled to push, decided - skips the roll on later frames).
-ZUM_SLOT_SIZE  EQU 8    ; +0 Z_ACT,+1 Z_X,+2 Z_Y,+3 Z_TIMER(explosion),+4 Z_SPRIDX,+5/+6 Z_DX/Z_DY(explosion drift),+7 Z_RETREAT
+; hasn't reached the roll point yet), 3=pausing (reached it, sitting
+; motionless for ZUM_PAUSE_FRAMES before actually rolling - "少し止ま
+; ってから反転するか突っ込むかに変更", reusing +3 Z_TIMER as the
+; countdown since it's otherwise unused while alive), 1=fleeing (rolled
+; away), 2=charging (rolled to push, decided - skips the roll on later
+; frames).
+ZUM_SLOT_SIZE  EQU 8    ; +0 Z_ACT,+1 Z_X,+2 Z_Y,+3 Z_TIMER(explosion)/pause countdown while alive,+4 Z_SPRIDX,+5/+6 Z_DX/Z_DY(explosion drift),+7 Z_RETREAT
 ZUM_SLOT_COUNT EQU 2
 ZUM_POOL       EQU 0F2ECh   ; ZUM_SLOT_SIZE*ZUM_SLOT_COUNT = 14 bytes
 ZUM_SPRITE_ATTRS EQU 0F2FAh ; 8 bytes: Y,X,pat,col x2 - same staging-buffer pattern as ENEMY_SPRITE_ATTRS
@@ -574,6 +578,13 @@ ZUM_SPAWN_INTERVAL EQU 90   ; same untuned-but-reasonable value as ENEMY_SPAWN_I
 ZUM_SPEED_BASE EQU 3
 ZUM_DETECT_RANGE EQU 80
 ZUM_MID_RANGE EQU 40    ; assumed split point (half of ZUM_DETECT_RANGE) - not itself specified
+; "ツッコミと反転の分岐時に少し止まってから反転するか突っ込むかに変更
+; 今のカウンター基準だと4フレ停止かな" - Zum now comes to a full,
+; motionless stop for this many frames right at the roll point (the
+; instant distance first drops under ZUM_MID_RANGE), instead of
+; deciding and moving on the very same frame - see Z_RETREAT=3
+; (pausing) in UOZ_MOVE/UOZ_PAUSE_MOVE.
+ZUM_PAUSE_FRAMES EQU 4
 ; flee cruise speed once clear of the tank - "反転時の速度が速いので
 ; 落としてくれ もしかして2倍にしてないか": it was exactly that, ZacoII's
 ; own "帰る時は倍速で" retreat-doubling convention borrowed without a
@@ -2928,6 +2939,8 @@ UOZ_MOVE:
     LD A,(IX+7)
     CP 1
     JP Z,UOZ_FLEE_MOVE
+    CP 3
+    JP Z,UOZ_PAUSE_MOVE
 
     LD A,(IX+1) : LD B,A
     LD A,(TANK_X)
@@ -2944,14 +2957,13 @@ UOZ_MOVE:
     OR A
     JR NZ,UOZ_SPEED_ACCEL      ; already decided to charge (2) - proceed as before
 
-    ; still undecided - roll now, the first frame this zone is entered
-    LD A,(CLOUD_RNG) : INC A : LD (CLOUD_RNG),A
-    AND 1
-    JR NZ,UOZ_DECIDE_CHARGE
-    LD A,1 : LD (IX+7),A      ; decided: flee - switch immediately, this same frame
-    JP UOZ_FLEE_MOVE
-UOZ_DECIDE_CHARGE:
-    LD A,2 : LD (IX+7),A      ; decided: charge - fall through to the accel table below
+    ; still undecided - enter the pause state instead of rolling and
+    ; moving on this same frame - "ツッコミと反転の分岐時に少し止まっ
+    ; てから反転するか突っ込むかに変更". UOZ_PAUSE_MOVE (below) rolls
+    ; once ZUM_PAUSE_FRAMES of standing still have elapsed.
+    LD A,3 : LD (IX+7),A
+    LD A,ZUM_PAUSE_FRAMES : LD (IX+3),A
+    JP UOZ_PAUSE_MOVE
 
 UOZ_SPEED_ACCEL:
     LD A,D : LD E,A : LD D,0   ; index=distance directly
@@ -3014,6 +3026,34 @@ UOZ_FLEE_SPEED_SET:
     XOR A : LD (IX+0),A
     CALL UOZ_HIDE
     RET
+
+; pausing (Z_RETREAT=3): motionless for ZUM_PAUSE_FRAMES (counted down
+; in +3, reused from the explosion timer field since it's otherwise
+; idle while alive), then rolls once between charging (2, ZUM_ACCEL_
+; TABLE) and fleeing (1, UOZ_FLEE_MOVE) - "少し止まってから反転するか
+; 突っ込むかに変更". Distance is recomputed fresh here rather than
+; carried over from UOZ_MOVE's own dispatch, since this can also be
+; reached fresh next frame while still counting down.
+UOZ_PAUSE_MOVE:
+    LD A,(IX+3)
+    OR A
+    JR Z,UOZ_PAUSE_ROLL
+    DEC A : LD (IX+3),A
+    JR UOZ_DRAW
+UOZ_PAUSE_ROLL:
+    LD A,(CLOUD_RNG) : INC A : LD (CLOUD_RNG),A
+    AND 1
+    JR NZ,UOZ_PAUSE_DECIDE_CHARGE
+    LD A,1 : LD (IX+7),A
+    JP UOZ_FLEE_MOVE
+UOZ_PAUSE_DECIDE_CHARGE:
+    LD A,2 : LD (IX+7),A
+    LD A,(IX+1) : LD B,A
+    LD A,(TANK_X)
+    LD C,A
+    LD A,B : SUB C
+    LD D,A
+    JP UOZ_SPEED_ACCEL
 
 UOZ_DRAW:
     LD A,(IX+4) : ADD A,A : ADD A,A : LD C,A : LD B,0

@@ -1601,6 +1601,23 @@ with no way to tell where.
   regenerated to match (same 1.5->3 ease shape `ZUM_DECEL_TABLE`
   already uses, just walked in the opposite - growing-distance -
   direction).
+- **A motionless pause at the charge/flee decision point** ("Okツッコ
+  ミと反転の分岐時に少し止まってから反転するか突っ込むかに変更 今の
+  カウンター基準だと4フレ停止かな"). Previously the coin-flip roll and
+  the resulting movement (charging or fleeing) happened on the exact
+  same frame the near-tank zone was first entered - no beat at all.
+  New `Z_RETREAT=3` (pausing) state: the instant distance first drops
+  under `ZUM_MID_RANGE`, Zum goes fully motionless for `ZUM_PAUSE_
+  FRAMES`(4) - counted down in `+3` (the same byte `Z_TIMER` uses for
+  the explosion countdown, otherwise idle the whole time Zum is alive)
+  - then rolls exactly as before. Terrain-height easing keeps running
+  throughout the pause (`UOZ_TERRAIN_FOLLOW` is called unconditionally
+  ahead of the whole dispatch), and the sprite stays in its normal,
+  unflipped pose the entire time (`Z_RETREAT` isn't 1 yet). Verified:
+  `Z_X` sits completely flat for exactly 4 frames while `Z_RETREAT=3`
+  and the countdown ticks 3,2,1,0, then resumes moving the same frame
+  the roll resolves; both outcomes (flee/charge) still reachable
+  roughly 50/50 after the pause. Full regression sweep clean.
 
 ## Bugs found and fixed while building this
 
