@@ -1373,6 +1373,55 @@ with no way to tell where.
   of 1s) instead of the old flat-1 stretch. Full regression sweep
   (`render_check.py`, 3000-frame idle sweep, 4000-frame random-input
   stress sweep) still clean.
+- **Sound volumes raised - shot to 10, Zum deflect to 12** ("あと音が
+  小さいな 12くらいに上げてくれ 自機ショット音も多分8だと思うんで
+  10に" - referring to the new "kin" deflect sound and the shot sound
+  respectively). `SOUND_ZUM_DEFLECT`'s `SND_TIMER_C` initial value
+  raised 10->12 directly (peak volume and duration both scale with it,
+  and nothing repeats fast enough for that to matter here). The shot
+  sound needed more care: `SHOT_SND_FRAMES` (6) directly doubles as
+  both the fade duration *and* (previously) the peak volume, and it
+  has to stay under the 9-frame auto-fire gap or held-fire never
+  actually reaches silence between shots - a bug already found and
+  fixed earlier in this same file (see `SHOT_SND_FRAMES`'s own
+  comment). Simply raising it back toward 10 to get a louder shot
+  would silently reintroduce that exact bug. Split the two instead:
+  new `SHOT_VOLUME_BOOST`(4) is added to `SND_TIMER`'s own value only
+  while it's still counting down (never touching the silent/0 case),
+  so the shot now peaks at `6+4=10` and reaches true silence at
+  exactly the same frame as before - duration unchanged, only volume
+  raised. Verified by single-stepping `SOUND_UPDATE` and inspecting
+  the accumulator value right before each PSG write (this emulator
+  doesn't actually simulate the PSG chip itself, so port writes can't
+  be read back after the fact): the shot sound's register-8 write
+  peaks at exactly 10 on the first update after firing and decays
+  0,1,2,3,4,5 frames later to exactly 0 - not 4 (which an unconditional
+  `+4` offset would have produced instead of true silence). `SND_
+  TIMER`/`SND_TIMER_C` themselves (the underlying countdown, unaffected
+  by the boost) still decay to 0 after exactly 6 and 12 frames
+  respectively, matching their own unchanged/new duration. Full
+  regression sweep clean.
+- **Investigated: "Zumと自機が接触した時に押し込んでこなくなってるぞ"
+  (Zum no longer pushes on contact) - could not reproduce.**
+  `UPDATE_TANK_ZUM_PUSH` itself was untouched by every change in this
+  session's sine-speed/sound rounds, and direct testing found it
+  working in every scenario tried: a Zum released just outside push
+  range still clamps `TANK_X` down to the screen edge with no player
+  input; a naturally-spawned Zum (via the real spawn gate, not a
+  forced position) engages the same way; holding right (steering
+  *into* the approaching Zum) still gets held at the push boundary
+  until the tank genuinely passes it; and parking on top of a Zum via
+  a jump, then moving away before approaching a *different* Zum on the
+  ground, still pushes normally afterward (`JUMP_ACTIVE` reliably
+  clears within a few frames of losing overlap, so it doesn't get
+  stuck suppressing `UPDATE_TANK_ZUM_PUSH`, which bails immediately
+  while airborne). Flagging this rather than guessing at a fix -
+  possible it's specific to real-hardware timing this emulator can't
+  reproduce, or that the gentler sine approach (this session's earlier
+  rounds) just makes the moment of contact read differently than the
+  old instant flat-3 charge did. Would help to know: does it fail on
+  literally the first contact ever, or only after some other
+  interaction (jumping, a kill, standing on a Zum) first?
 
 ## Bugs found and fixed while building this
 

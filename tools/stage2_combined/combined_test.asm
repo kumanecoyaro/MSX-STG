@@ -338,8 +338,20 @@ SHOT_NOISE_PERIOD EQU 8
 ; frames between shots) - was 10, which never actually reached 0
 ; (decays 10->1 over the 9-frame gap, then jumps straight back to 10)
 ; so held-fire sounded permanently "on" instead of a series of
-; distinct blips - "サウンドも弾打ったら出っぱなしだ".
+; distinct blips - "サウンドも弾打ったら出っぱなしだ". Still true here -
+; SHOT_SND_FRAMES itself stays 6 even though the volume it plays at
+; was later raised (see SHOT_VOLUME_BOOST) - undoing this fix to make
+; the sound louder by just raising this value back toward 10 would
+; reintroduce that exact bug.
 SHOT_SND_FRAMES   EQU 6
+; "自機ショット音も多分8だと思うんで10に" - SHOT_SND_FRAMES (this
+; decides how many frames the sound plays for) has to stay short to
+; avoid the held-fire bug above, so raising loudness is a separate
+; knob: SOUND_UPDATE adds this to SND_TIMER's own value only while
+; nonzero (never touching the silent/0 case), so the sound now peaks
+; at SHOT_SND_FRAMES+SHOT_VOLUME_BOOST = 6+4 = 10 and still reaches
+; true silence (0) at the same frame it always did.
+SHOT_VOLUME_BOOST EQU 4
 
 ; ---------- enemy (ZacoII) ----------
 ; "では次敵の実装 スプライトで実装 右から左へスライド Skyのみのの
@@ -2268,21 +2280,36 @@ SOUND_DESTROY:
 
 ; "キンキン" metallic ping for a bullet absorbed by Zum's front
 ; invincibility - "Zumの前面無敵に弾が当たったらキンキンと言うサウンド
-; 追加 これはStage1のボスの弾き音流用". Byte-for-byte the same channel
-; C tone period(10)/timer(10) src/CYBER SHMUP.asm's own SOUND_POD_HIT
-; uses for a non-lethal boss-pod hit - same idea here (bullet absorbed,
-; not destroyed). Its own channel (C) rather than reusing A/B so it
-; never fights a shot or explosion sound playing at the same moment.
+; 追加 これはStage1のボスの弾き音流用". Channel C tone period(10) still
+; byte-for-byte src/CYBER SHMUP.asm's own SOUND_POD_HIT; its own
+; channel (C) rather than reusing A/B so it never fights a shot or
+; explosion sound playing at the same moment. Peak volume/timer raised
+; 10->12 - "音が小さいな 12くらいに上げてくれ" (repeated hits don't
+; come fast enough for this one to need the shot sound's own duration-
+; vs-volume split below, so just raising the plain initial value is
+; enough - louder AND very slightly longer).
 SOUND_ZUM_DEFLECT:
     LD A,4 : OUT (PSG_ADDR),A
     LD A,10 : OUT (PSG_DATA),A
     LD A,5 : OUT (PSG_ADDR),A
     XOR A : OUT (PSG_DATA),A
-    LD A,10 : LD (SND_TIMER_C),A
+    LD A,12 : LD (SND_TIMER_C),A
     RET
 
+; channel A (shot) volume is SND_TIMER+SHOT_VOLUME_BOOST while SND_
+; TIMER is still counting down (peaking at 6+4=10 - "自機ショット音も
+; 多分8だと思うんで10に"), and exactly 0 the moment it reaches 0 - see
+; SHOT_VOLUME_BOOST's own comment for why this is a separate knob from
+; SHOT_SND_FRAMES (the actual duration) rather than just raising that.
 SOUND_UPDATE:
     LD A,(SND_TIMER)
+    OR A
+    JR Z,SU_CHAN_A_SILENT
+    ADD A,SHOT_VOLUME_BOOST
+    JR SU_CHAN_A_WRITE
+SU_CHAN_A_SILENT:
+    XOR A
+SU_CHAN_A_WRITE:
     LD B,A
     LD A,8 : OUT (PSG_ADDR),A
     LD A,B : OUT (PSG_DATA),A
