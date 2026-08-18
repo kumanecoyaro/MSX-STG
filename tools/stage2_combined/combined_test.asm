@@ -508,12 +508,31 @@ ZUM_CHARGE_MARGIN EQU 64    ; "自機に64pxまで近づくと速度2で自機�
 ; straight from this same Y, so fudging it to look right under
 ; UPDATE_ONE_ZUM's own gravity broke standing-on-top - "乗っかった時
 ; に自機とZumの間に隙間が出来て...多分Zumをオフセットしたからだろう
-; そもそもこのオフセットは必要ないからな"). Replaced with a plain
-; geometric derivation instead of a re-tuned fudge: "地形1番下の高さ
-; は8px Zumは16px 8px上にスプライトを出せば自然に設置するはず" - one
-; terrain tier step is 8px, Zum is exactly 2 steps tall, so its own
-; top-Y is the tank's own tier-Y minus 8 (SUB, not ADD, below).
-ZUM_Y_OFFSET EQU 8
+; そもそもこのオフセットは必要ないからな"). First replaced with a
+; plain SUB from TANK_TIER_Y_TABLE per direct instruction ("地形1番下
+; の高さは8px Zumは16px 8px上にスプライトを出せば自然に設置するはず")
+; - but that treated TANK_TIER_Y_TABLE[tier] itself as the ground
+; line, which it is NOT: TANK_TIER_Y_TABLE[i] is the TANK's own 32px-
+; sprite top-anchor, already offset 28px *above* the true ground line
+; by TANK_Y_BASE's own documented derivation ("row23 top (23*8=184) -
+; tank height(32) + landing offset(3+1)" -> 184-32+4=156 -> ground_
+; line=TANK_TIER_Y_TABLE[i]+28, confirmed to hold for all 4 tiers:
+; 132+28=160=20*8, 140+28=168=21*8, 148+28=176=22*8, 156+28=184=23*8).
+; SUB 8 from that anchor undershot the real ground line by ~20px
+; instead of the intended 0 - still floating, confirmed at that
+; magnitude by this exact report ("16px以上浮いてる").
+;
+; Corrected derivation, still geometric (not re-tuned by eye): the
+; true ground line for a tier is ground_line=(20+tier)*8 - the actual
+; top pixel row of the solid rock/Rock225 BG tile there, unrelated to
+; the tank's own sprite-anchor fudging. Zum is exactly 2 terrain steps
+; (16px) tall and its own art fills essentially the whole 16 rows (no
+; large blank-bottom padding like the tank's own 32px canvas has -
+; sprites/Zum.json has real pixels through its very last row), so no
+; separate landing-offset fudge is needed: Zum's bottom should simply
+; BE the ground line, i.e. Zum_top=ground_line-16=TANK_TIER_Y_TABLE
+; [tier]+28-16=TANK_TIER_Y_TABLE[tier]+12 (ADD, not SUB, below).
+ZUM_Y_OFFSET EQU 12
 ; despawn margin removed - "Zumが画面左まで行った際にかなり手前で
 ; 止まってそのまま消えてる 左端まで到達してないぞ": a fixed 32px
 ; margin (matching TANK_PUSH_WIDTH, to keep UPDATE_TANK_ZUM_PUSH's own
@@ -2600,7 +2619,7 @@ AZS_FOUND:
     POP IX
     LD A,1 : LD (IX+0),A
     LD A,ZUM_SPAWNX : LD (IX+1),A
-    LD A,TANK_Y_BASE : SUB ZUM_Y_OFFSET : LD (IX+2),A   ; tier3's own Y, -8 for Zum's shorter sprite (see ZUM_Y_OFFSET)
+    LD A,TANK_Y_BASE : ADD A,ZUM_Y_OFFSET : LD (IX+2),A   ; tier3's own Y, +12 for Zum's own ground-line math (see ZUM_Y_OFFSET)
     XOR A : LD (IX+3),A
     LD A,ZUM_SPAWN_INTERVAL : LD (ZUM_SPAWN_TIMER),A
     RET
@@ -2728,7 +2747,7 @@ UTF_T2:
 UTF_TIER_SET:
     LD E,A : LD D,0
     LD HL,TANK_TIER_Y_TABLE : ADD HL,DE : LD A,(HL)
-    SUB ZUM_Y_OFFSET            ; one terrain step (8px) above the tank's own tier-Y - see ZUM_Y_OFFSET
+    ADD A,ZUM_Y_OFFSET          ; ground-line-matched target for a 16px sprite - see ZUM_Y_OFFSET
     LD B,A                     ; B = target Y
     LD A,(IX+2) : LD C,A       ; C = current Z_Y
     LD E,1                     ; Zum is always "moving" (never stands idle)

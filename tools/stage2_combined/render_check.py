@@ -52,14 +52,27 @@ def render_full(vram, path):
             break
         if y >= 208:
             continue
+        # real VDP quirk: the sprite attribute table's Y byte is the
+        # actual display row MINUS 1 (this is how Y=255/-1 places a
+        # sprite flush at row 0, with no other way to reach row 0) -
+        # every sprite is really drawn 1 scanline lower than its own
+        # stored Y. This script drew straight at the stored Y with no
+        # +1, so every hw sprite in these renders sat 1px higher than
+        # real hardware - caught by direct pixel comparison against a
+        # real-hardware screenshot showing the tank sitting flush on
+        # the ground while this script's own render showed it 1px
+        # short. Y itself (and the 208 sentinel checks above, which
+        # compare the raw stored byte) is unaffected - only where the
+        # pattern data actually gets plotted needs the +1.
         color = vt.PALETTE[col & 0xF]
+        y1 = (y + 1) & 0xFF  # wraps 255->0, same as real hardware's own top-row trick
         for qi, (dy, dx) in enumerate([(0, 0), (8, 0), (0, 8), (8, 8)]):
             pbase = 0x3800 + (pat + qi) * 8
             for ry in range(8):
                 byte = vram[pbase + ry]
                 for rx in range(8):
                     if (byte >> (7 - rx)) & 1:
-                        py, px = y + dy + ry, x + dx + rx
+                        py, px = y1 + dy + ry, x + dx + rx
                         if 0 <= py < H and 0 <= px < W:
                             img[py][px] = color
     with open(path, "wb") as f:

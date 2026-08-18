@@ -1132,6 +1132,61 @@ with no way to tell where.
   `render_check.py`-driven render). Full regression sweep (`render_
   check.py`, 3000-frame idle sweep) still clean, no crash/hang, SCORE
   unaffected.
+- **Still floating 16px+ on real hardware after the above - the actual
+  geometry bug, plus a `render_check.py` accuracy bug caught by the
+  same report** ("全く変わってねえよ 地面から16px以上浮いてるだろうが
+  ...自機も同じ処理してるだろうが" - with a real-hardware screenshot
+  showing the tank sitting flush on the ground but Zum floating well
+  clear of it, and separately noting this tool's own preview render
+  has consistently shown the tank sitting 1px higher than that same
+  real-hardware screenshot). Two independent bugs, both confirmed:
+  1. **`ZUM_Y_OFFSET`'s SUB from the previous entry was arithmetically
+     wrong.** It treated `TANK_TIER_Y_TABLE[tier]` as if it *were* the
+     ground line - it isn't. `TANK_Y_BASE`'s own long-documented
+     derivation ("row23 top (23*8=184) - tank height(32) + landing
+     offset(3+1)" -> 156) means `TANK_TIER_Y_TABLE[i] = ground_line -
+     28` (confirmed for all 4 tiers: 132+28=160=20*8, 140+28=168=21*8,
+     148+28=176=22*8, 156+28=184=23*8) - the tank's own table is
+     already offset 28px *above* the real ground line by its own
+     32px-sprite/landing-offset math. `SUB 8` from that anchor landed
+     ~20px short of the real ground line instead of on it - which is
+     exactly the "16px以上浮いてる" reported here. Re-derived from the
+     actual geometry instead: `ground_line=(20+tier)*8` (the literal
+     top pixel row of the rock/Rock225 BG tile), Zum is exactly 2
+     terrain steps (16px) tall and its own art fills essentially the
+     whole 16 rows (`sprites/Zum.json` has real pixels through its
+     last row, unlike the tank's own 32px canvas which has 5 blank
+     rows at the bottom needing that landing-offset fudge in the first
+     place) - so Zum's bottom should simply BE the ground line, no
+     separate fudge needed: `Zum_top = ground_line-16 =
+     TANK_TIER_Y_TABLE[tier]+28-16 = TANK_TIER_Y_TABLE[tier]+12`.
+     `ZUM_Y_OFFSET` is now `12`, `ADD` (not `SUB`) in both
+     `ALLOC_ZUM_SLOT` and `UOZ_TERRAIN_FOLLOW`. Verified mechanically:
+     spawn Y now reads 168 (156+12), and `Z_Y+16` (Zum's own bottom)
+     equals `184` (tier3's `ground_line`) exactly.
+  2. **`render_check.py` itself was 1px off for every hardware sprite**
+     - a real MSX1/TMS9918 VDP quirk this tool never accounted for:
+     the sprite attribute table's Y byte is the actual display row
+     *minus 1* (this is the only way to place a sprite flush at row 0
+     - write Y=255/-1). Every hw sprite this tool has ever rendered
+     (the tank itself, ZacoII, bullet U, Zum) was drawn 1 scanline
+     higher than real hardware actually shows it, because the render
+     loop plotted straight at the stored Y with no `+1`. Fixed in
+     `render_full()` - the 208+ hide-sentinel checks still compare the
+     raw stored byte (unaffected, that's VDP list-processing behavior,
+     not a display-row quirk), but the actual pixel-plotting Y now
+     uses `(y+1)&0xFF`. This alone doesn't explain Zum's 16px+ float
+     (1px is far too small), but it does explain this tool's own
+     tank-vs-real-hardware 1px mismatch, and matters for trusting any
+     future pixel-level comparison against a real-hardware screenshot.
+
+  Verified: with both fixes, a normally-spawned Zum's rendered sprite
+  now rests flush on the visible rock/sand boundary at the same height
+  as the tank's own tracks (re-rendered via the corrected
+  `render_check.py`), and the spawn-time arithmetic check above
+  confirms `Zum_bottom == ground_line` exactly, not just "looks close"
+  in a render. Full regression sweep (`render_check.py`, 3000-frame
+  idle sweep) still clean.
 
 ## Bugs found and fixed while building this
 
