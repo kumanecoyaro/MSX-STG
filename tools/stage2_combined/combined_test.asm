@@ -2607,8 +2607,10 @@ SOUND_DESTROY:
 ; 追加 これはStage1のボスの弾き音流用". Channel A tone period(10) still
 ; byte-for-byte src/CYBER SHMUP.asm's own SOUND_POD_HIT (registers 0/1
 ; instead of that routine's own 4/5, since this now plays on channel A
-; rather than a dedicated C). Peak 12, decays 1/frame - "音が小さいな
-; 12くらいに上げてくれ".
+; rather than a dedicated C). Peak 15 (was 12, then 12 again - "キンキン
+; 音量アップ" - now the PSG's own hardware max, register8's volume
+; field only has 4 bits/16 steps so there's no higher to go), decays
+; 1/frame.
 SOUND_ZUM_DEFLECT:
     LD A,7 : OUT (PSG_ADDR),A
     LD A,MIXER_TONE_A : OUT (PSG_DATA),A
@@ -2616,7 +2618,7 @@ SOUND_ZUM_DEFLECT:
     LD A,10 : OUT (PSG_DATA),A
     LD A,1 : OUT (PSG_ADDR),A
     XOR A : OUT (PSG_DATA),A
-    LD A,12 : LD (SND_TIMER),A
+    LD A,15 : LD (SND_TIMER),A
     LD A,1 : LD (SND_DECAY),A
     XOR A : LD (SND_EXPLODING),A
     RET
@@ -4544,9 +4546,14 @@ CHPBZ_REAR:
 CHPBZ_REAR_SKIP_ERASE:
     XOR A : LD (IX+0),A
 
+    ; "BigZumにダメージ入った場合はキンキン音は無しで" - a rear hit
+    ; that damages but doesn't destroy it plays no sound at all now
+    ; (was reusing SOUND_ZUM_DEFLECT, the same "kin-kin" front-deflect
+    ; cue); only the final, destroying hit still plays SOUND_DESTROY
+    ; below. Front hits (still fully absorbed, no damage) are untouched
+    ; - CHPBZ_FRONT keeps its own SOUND_ZUM_DEFLECT call.
     LD A,(IY+8) : DEC A : LD (IY+8),A
     JR Z,CHPBZ_DESTROY
-    CALL SOUND_ZUM_DEFLECT
     RET
 CHPBZ_DESTROY:
     LD A,2 : LD (IY+0),A

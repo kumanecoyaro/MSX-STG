@@ -2069,6 +2069,27 @@ with no way to tell where.
     rule; rear-side hits damage in both states as before.
   Full regression: 15000-frame random-input sweep, no crash/stall;
   `render_check.py` clean.
+- **"Kin-kin" deflect sound raised to full volume, and silenced for a
+  BigZum hit that damages but doesn't destroy it** ("キンキン音量アッ
+  プ BigZumにダメージ入った場合はキンキン音は無しで"):
+  - `SOUND_ZUM_DEFLECT`'s own peak (`SND_TIMER` init, doubling as
+    channel A's volume - see `SND_TIMER`'s own comment) 12->15 - the
+    PSG's own hardware ceiling (register8's volume field is 4 bits,
+    0-15), nothing higher to raise it to.
+  - `CHECK_HIT_PAIR_BIGZUM`'s own `CHPBZ_REAR` no longer plays
+    `SOUND_ZUM_DEFLECT` on a rear hit that decrements `BZ_HP` without
+    reaching 0 - that reused the same "kin-kin" cue as a front hit's
+    own full-absorb deflect, and per direct instruction a genuine
+    damaging hit should stay silent instead (only the final, actually-
+    destroying hit still plays `SOUND_DESTROY`). Front hits (still
+    fully invincible/absorbed, no HP change) are untouched - `CHPBZ_
+    FRONT` keeps its own `SOUND_ZUM_DEFLECT` call. Verified via
+    isolated `CHECK_HIT_PAIR_BIGZUM` calls: a damaging (non-lethal)
+    rear hit leaves `SND_TIMER` at 0 (no sound fired); the lethal rear
+    hit still fires `SOUND_DESTROY` (`SND_TIMER`=15); a front hit still
+    fires `SOUND_ZUM_DEFLECT` at the new peak (15).
+  Full regression: 15000-frame random-input sweep, no crash/stall;
+  `render_check.py` clean.
 
 ## Bugs found and fixed while building this
 
