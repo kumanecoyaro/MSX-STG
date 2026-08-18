@@ -313,6 +313,9 @@ SND_TIMER_B   EQU 0F276h
 GTD_LAST_H    EQU 0F277h
 GTD_LAST_T    EQU 0F278h
 GTD_LAST_O    EQU 0F279h
+; "キンキン" metallic deflect-sound fade countdown/volume - channel C,
+; tone (not noise) - see SOUND_ZUM_DEFLECT.
+SND_TIMER_C   EQU 0F27Ah
 ; digit0 code; digitN = DIGIT_BASE+N for N=0-9 (score/counter, glyphs
 ; copied byte-for-byte from src/CYBER SHMUP.asm's own DIGIT_PATTERNS -
 ; "スコアの数字流用") and N=10-15 = A-F (new art, "AからFまで新規",
@@ -914,18 +917,20 @@ INIT_SPRATR_CLR:
 
     ; PSG: channel A = noise-only (shot sound), channel B = noise-only
     ; too (explosion sound - its own channel so a shot's envelope never
-    ; fights an overlapping explosion's, see SND_TIMER_B); channel C
-    ; left silent (volume 0) since nothing here uses it. Mixer 0E7h =
-    ; tones A/B/C all off, noise A+B on, noise C off (was 0B1h, tone
-    ; B/C left enabled but silent via volume=0 - tightened now that
-    ; channel B actually carries a sound).
+    ; fights an overlapping explosion's, see SND_TIMER_B); channel C =
+    ; tone-only ("Zumの前面無敵に弾が当たったらキンキンと言うサウンド
+    ; 追加 これはStage1のボスの弾き音流用" - SOUND_ZUM_DEFLECT reuses
+    ; src/CYBER SHMUP.asm's own SOUND_POD_HIT). Mixer 0E3h = tones A/B
+    ; off (C now on), noise A+B on (C off) - bit2 (tone C disable)
+    ; cleared from the previous 0E7h now that channel C actually
+    ; carries a sound.
     LD A,7 : OUT (PSG_ADDR),A
-    LD A,0E7h : OUT (PSG_DATA),A
+    LD A,0E3h : OUT (PSG_DATA),A
     LD A,9 : OUT (PSG_ADDR),A
     XOR A : OUT (PSG_DATA),A
     LD A,10 : OUT (PSG_ADDR),A
     XOR A : OUT (PSG_DATA),A
-    XOR A : LD (SND_TIMER),A : LD (SND_TIMER_B),A
+    XOR A : LD (SND_TIMER),A : LD (SND_TIMER_B),A : LD (SND_TIMER_C),A
     LD A,8 : OUT (PSG_ADDR),A
     XOR A : OUT (PSG_DATA),A
 
@@ -2261,6 +2266,21 @@ SOUND_DESTROY:
     LD A,15 : LD (SND_TIMER_B),A
     RET
 
+; "キンキン" metallic ping for a bullet absorbed by Zum's front
+; invincibility - "Zumの前面無敵に弾が当たったらキンキンと言うサウンド
+; 追加 これはStage1のボスの弾き音流用". Byte-for-byte the same channel
+; C tone period(10)/timer(10) src/CYBER SHMUP.asm's own SOUND_POD_HIT
+; uses for a non-lethal boss-pod hit - same idea here (bullet absorbed,
+; not destroyed). Its own channel (C) rather than reusing A/B so it
+; never fights a shot or explosion sound playing at the same moment.
+SOUND_ZUM_DEFLECT:
+    LD A,4 : OUT (PSG_ADDR),A
+    LD A,10 : OUT (PSG_DATA),A
+    LD A,5 : OUT (PSG_ADDR),A
+    XOR A : OUT (PSG_DATA),A
+    LD A,10 : LD (SND_TIMER_C),A
+    RET
+
 SOUND_UPDATE:
     LD A,(SND_TIMER)
     LD B,A
@@ -2277,8 +2297,17 @@ SU_CHAN_B:
     LD A,B : OUT (PSG_DATA),A
     LD A,(SND_TIMER_B)
     OR A
-    RET Z
+    JR Z,SU_CHAN_C
     DEC A : LD (SND_TIMER_B),A
+SU_CHAN_C:
+    LD A,(SND_TIMER_C)
+    LD B,A
+    LD A,10 : OUT (PSG_ADDR),A
+    LD A,B : OUT (PSG_DATA),A
+    LD A,(SND_TIMER_C)
+    OR A
+    RET Z
+    DEC A : LD (SND_TIMER_C),A
     RET
 
 ; ---------- enemy (ZacoII): spawn timer, then all 3 slots ----------
@@ -3119,13 +3148,15 @@ CHECK_HIT_PAIR_ZUM:
     JR NC,CHPZ_REAR
 
     ; front: absorb only - erase F's own BG cell (U has nothing to
-    ; erase), deactivate the bullet, no score/explosion/sound.
+    ; erase), deactivate the bullet, no score/explosion - "キンキン"
+    ; deflect sound only (SOUND_ZUM_DEFLECT).
     LD A,(IX+1)
     OR A
     JR NZ,CHPZ_FRONT_SKIP_ERASE
     CALL ERASE_BULLET_CELL
 CHPZ_FRONT_SKIP_ERASE:
     XOR A : LD (IX+0),A
+    CALL SOUND_ZUM_DEFLECT
     RET
 
 CHPZ_REAR:
@@ -3452,20 +3483,21 @@ TANK_TIER_Y_TABLE:
 ; distance-to-tank-indexed sine eases, ZUM_MID_RANGE(40) entries each -
 ; see ZUM_SPEED_BASE's own comment. ZUM_DECEL_TABLE covers the outer
 ; half (distance 40-79, index=distance-40): index0 (d=40, closest point
-; of this half) reads ~1, index39 (d=79, the detection edge) reads ~3.
-; ZUM_ACCEL_TABLE covers the inner half (distance 0-39, index=distance
-; directly): index0 (d=0, at the tank) reads ~3, index39 (d=39, right
-; where DECEL leaves off) reads ~1 - so the two tables meet at a
-; matching ~1 in the middle of the 80px zone, per "減速終了で速度3まで
-; サイン加速".
+; of this half) reads ~1.5, index39 (d=79, the detection edge) reads
+; ~3. ZUM_ACCEL_TABLE covers the inner half (distance 0-39, index=
+; distance directly): index0 (d=0, at the tank) reads ~3, index39
+; (d=39, right where DECEL leaves off) reads ~1.5 - so the two tables
+; meet at a matching ~1.5 in the middle of the 80px zone. Trough was
+; originally a full stop-reading 1 - "減速目標を1から1.5に変更 1だと
+; 止まって見えてしまうんで" (1 read as a dead stop, not a slowdown).
 ZUM_DECEL_TABLE:
-    DB 1,1,2,1,1,2,1,2,1,2,2,2,2,2,2,2
-    DB 2,2,2,3,2,3,2,3,3,2,3,3,3,2,3,3
+    DB 2,1,2,1,2,2,2,2,2,2,2,2,2,2,3,2
+    DB 2,3,2,3,2,3,3,2,3,3,3,3,2,3,3,3
     DB 3,3,3,3,3,3,3,3
 ZUM_ACCEL_TABLE:
-    DB 3,3,2,3,3,2,3,2,3,2,2,2,2,2,2,2
-    DB 2,2,2,1,2,1,2,1,1,2,1,1,1,2,1,1
-    DB 1,1,1,1,1,1,1,1
+    DB 3,3,3,3,2,3,3,2,3,2,3,2,2,3,2,2
+    DB 2,2,2,2,2,2,2,2,1,2,2,1,2,2,1,2
+    DB 1,2,1,2,1,2,1,2
 
 ; distance-from-pivot-indexed sine eases for ZacoII, ENEMY_RAMP_RANGE
 ; (32) entries each - see ENEMY_GET_STEP_RAMPED. DECEL tables ease the

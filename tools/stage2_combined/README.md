@@ -1345,6 +1345,34 @@ with no way to tell where.
   a Zum released far out and left completely unopposed charges all the
   way in and pushes the tank to `TANK_X=0` (no player input at all),
   matching "何も操作しなければ敵に押される" end-to-end.
+- **Zum's decel trough raised from 1 to 1.5, plus a new "kin" deflect
+  sound on its invincible front** ("減速目標を1から1.5に変更 1だと
+  止まって見えてしまうんで で、Zumの前面無敵に弾が当たったらキンキン
+  と言うサウンド追加 これはStage1のボスの弾き音流用"). `ZUM_DECEL_
+  TABLE`/`ZUM_ACCEL_TABLE` regenerated with their trough at 1.5 instead
+  of 1 - at a flat 1, several consecutive frames near the midpoint
+  read as a dead stop rather than a slowdown; 1.5's own 1/2 dithering
+  never holds still for more than a couple frames even at its slowest.
+  Separately, added `SOUND_ZUM_DEFLECT` - a new PSG channel C (tone),
+  byte-for-byte the same period(10)/timer(10) as `src/CYBER SHMUP.asm`'s
+  own `SOUND_POD_HIT` (a metallic "kin" ping for a non-lethal boss-pod
+  hit - same idea here, a bullet absorbed rather than destroyed).
+  Channel C was previously unused by this file (mixer register7 had
+  its tone-C bit disabled, `0E7h`) - now enabled (`0E3h`) alongside a
+  new `SND_TIMER_C` fade timer and a 3rd `SOUND_UPDATE` stage, on its
+  own channel so it never fights a shot or explosion sound triggered
+  the same frame. Wired into `CHECK_HIT_PAIR_ZUM`'s existing front-hit
+  branch (absorb-only, no score/explosion) right where the bullet gets
+  deactivated. Verified: a bullet AABB-overlapping Zum with `TANK_X` <
+  `Zum_X` (front) sets `SND_TIMER_C=10` and deactivates the bullet
+  without touching Zum's own `Z_ACT`; the same overlap with `TANK_X` >
+  `Zum_X` (rear/kill) leaves `SND_TIMER_C` untouched at 0 and instead
+  sets `Z_ACT=2` (exploding) - the sound only ever fires on the
+  no-effect front case, never alongside a kill. Zum's own decel/accel
+  profile re-verified showing a 1-2 dithered plateau (never a flat run
+  of 1s) instead of the old flat-1 stretch. Full regression sweep
+  (`render_check.py`, 3000-frame idle sweep, 4000-frame random-input
+  stress sweep) still clean.
 
 ## Bugs found and fixed while building this
 
