@@ -2090,6 +2090,28 @@ with no way to tell where.
     fires `SOUND_ZUM_DEFLECT` at the new peak (15).
   Full regression: 15000-frame random-input sweep, no crash/stall;
   `render_check.py` clean.
+- **`GAME_TICK` (the displayed HUD counter) was advancing 8x faster
+  than intended - fixed to match Stage1's own cadence** ("では表示し
+  てるタイマーは何の数字だ この件で気づいたがカウントがものすごく早
+  い Stage1は地形書き換え8回に1回カウントする作り すべての基準はこの
+  カウント これはスケジュールエディタで指定するため カウント表示を
+  Stage1と同様に修正" - surfaced while investigating an unrelated
+  question about frame-pacing/interrupts). `GAME_TICK` used to
+  increment (and redraw) once every single `MAINLOOP` pass,
+  unconditionally - but the raw per-pass `TICK` counter only actually
+  advances the terrain scroll once every 8 passes (`AND 07h`, see
+  `MAINLOOP`'s own terrain-rewrite gate) - the loop runs far more
+  passes than real "game frames" in Stage1's own sense. Moved the
+  increment+`GAME_TICK_DISPLAY` call inside that same `AND 07h==0`
+  branch, so it now advances in lockstep with the actual terrain-
+  scroll-step rate, matching Stage1's own design ("地形書き換え8回に1
+  回カウントする作り") - this is the unit the schedule editor actually
+  schedules events against, so this wasn't just cosmetic, it was
+  running 8x too fast to mean anything as a scheduling reference.
+  Verified: sampling `GAME_TICK` every frame over 24 raw `TICK`s now
+  shows exactly 3 real increments (was 24), each landing exactly on
+  the frames where raw `TICK MOD 8==0`. Full regression: 15000-frame
+  random-input sweep, no crash/stall; `render_check.py` clean.
 
 ## Bugs found and fixed while building this
 

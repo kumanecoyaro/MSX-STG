@@ -1427,6 +1427,20 @@ PXT_NOWRAP:
     LD DE,(PXCHAR_T)
     LD HL,TERRAIN_ROWDATA3 : ADD HL,DE
     LD IX,IDCACHE_T3 : CALL REFRESH_IDCACHE_33
+
+    ; "Stage1は地形書き換え8回に1回カウントする作り すべての基準は
+    ; このカウント これはスケジュールエディタで指定するため カウント
+    ; 表示をStage1と同様に修正" - GAME_TICK previously incremented
+    ; every single MAINLOOP pass (see the old unconditional INC further
+    ; down, now removed), 8x faster than the actual terrain-scroll-step
+    ; rate - this branch only runs once per 8 raw TICKs (the same
+    ; AND 07h gate the terrain rewrite above already uses), so moving
+    ; the increment+redraw here syncs the displayed count to the same
+    ; unit Stage1's own schedule editor actually schedules events
+    ; against, instead of a rate 8x too fast to mean anything as a
+    ; scheduling unit.
+    LD HL,(GAME_TICK) : INC HL : LD (GAME_TICK),HL
+    CALL GAME_TICK_DISPLAY
 SKIP_ADVANCE:
     LD A,(TICK) : AND 07h : LD (ROWPHASE_T),A
 
@@ -1464,8 +1478,6 @@ SKIP_ADVANCE:
     CALL UPDATE_TANK_BIGZUM_PUNCH
     CALL CLOUD_UPDATE_ALL
 
-    LD HL,(GAME_TICK) : INC HL : LD (GAME_TICK),HL
-    CALL GAME_TICK_DISPLAY
     CALL SOUND_UPDATE
 
     JP MAINLOOP
