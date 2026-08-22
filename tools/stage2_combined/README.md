@@ -2311,6 +2311,50 @@ with no way to tell where.
   simultaneously with BigZum, Flyer cycled through all 3 phases; a
   separate 8000-frame idle sweep (no input held) also clean;
   `render_check.py` clean.
+- **Real-hardware freeze right after boot, with garbled sprite/BG
+  graphics - the Etank/Flyer round above's own new RAM was silently
+  encroaching on real MSX BIOS work-area RAM** ("いきなりこうなって
+  フリーズ", with a screenshot: the tank sprite itself rendered as
+  scrambled pixels instead of its normal shape, plus stray corrupted
+  glyphs elsewhere on screen). Every emulator regression that round ran
+  clean (20000-frame random sweep, 8000-frame idle sweep, all 29
+  targeted tests, `render_check.py`) - the freeze never reproduced in
+  `z80emu.py` at all, which was the tell: that emulator has no
+  interrupt simulation and no BIOS memory model whatsoever (already
+  noted elsewhere in this file, re: `UPDATE_TANK_SPRITES`'s own raw
+  VRAM writes possibly racing a real H.TIMI interrupt). Root cause:
+  Etank's and (originally 2-wide) Flyer's own new RAM needed more space
+  than fit below the existing `STACKTOP`(0F380h), so that round moved
+  `STACKTOP` up to 0F390h and placed the new pools in the vacated
+  0F380h-0F389h range - but 0F380h+ is genuine MSX BIOS system-variable
+  territory (VDP register shadows etc., read/written by the BIOS's own
+  H.TIMI interrupt handler every VBlank on real hardware, entirely
+  independent of this ROM's own no-HALT/no-VSync design - interrupts
+  still fire even though this code never waits on one). Writing game
+  state there let the game and the BIOS interrupt handler stomp on each
+  other's data every frame - invisible to `z80emu.py` (which doesn't
+  model the BIOS or fire interrupts at all, so reads back exactly what
+  the game itself last wrote) but real garbage/instability on actual
+  hardware. Fixed by reverting `STACKTOP` to 0F380h (unchanged from
+  before that round) and squeezing Etank/Flyer's own RAM back under it
+  - `FLYER_SLOT_COUNT` dropped 2->1 (11+16+3=30 bytes) alongside
+  Etank's own 17 bytes, 47 total against the 65-byte gap actually free
+  below 0F380h, versus the 74 bytes the 2-wide version needed. "頻出
+  するので" (frequent appearances) is now served only by `FLYER_SPAWN_
+  INTERVAL`'s own shorter-than-Zum/BigZum interval (frequent respawns
+  of one instance) rather than multiple simultaneous Flyers - a
+  reading forced by this RAM correction, not reconfirmed with the user.
+  `FLUSH_FLYER_SPRITES`'s own hardcoded `LD B,32` blast-loop count
+  (now wrong for a 16-byte buffer) is `FLYER_SLOT_COUNT*16` instead, so
+  it stays correct if the count ever changes again. Verified: rebuilt,
+  reran the full regression set from the entry above (all 29 targeted
+  tests still pass, 20000-frame random sweep + 8000-frame idle sweep
+  both clean, `render_check.py` clean, forced-spawn render still shows
+  clean Etank/Flyer art) - this specific bug class (real-hardware-only
+  RAM/interrupt collision) is inherently outside what `z80emu.py` can
+  ever directly confirm fixed, same limitation already true of the
+  sprite-DMA-vs-interrupt race noted elsewhere in this file; re-flagging
+  here rather than claiming certainty the emulator can't actually back.
 
 ## Bugs found and fixed while building this
 

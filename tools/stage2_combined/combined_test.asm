@@ -926,6 +926,21 @@ ETANK_SLOT_SIZE  EQU 8   ; +0 ACT,+1 X,+2 Y(fixed at spawn, never re-probed),+3 
 ; for Zum specifically) - both Etank and BigZum read as the "one large
 ; tank" class of enemy here.
 ETANK_SLOT_COUNT EQU 1
+; "いきなりこうなってフリーズ" - real-hardware freeze + garbled VRAM,
+; absent from every emulator regression run this round (20000-frame
+; random sweep, 8000-frame idle sweep, 29 targeted tests, all clean) -
+; the same "z80emu.py has no interrupt simulation at all" gap this
+; file's own STACKTOP comment already flags elsewhere. Root cause: this
+; new RAM (and Flyer's own below) originally reused 0F340h-0F389h and
+; pushed STACKTOP up to 0F390h to make room - but 0F380h+ is real MSX
+; BIOS work-area territory (VDP register shadows etc., serviced by the
+; H.TIMI interrupt handler every VBlank on real hardware regardless of
+; this ROM's own no-HALT design), not free RAM at all. The emulator
+; has no interrupts and no BIOS memory model, so clobbering it read
+; back clean there and only broke on a real MSX. Every EQU below is
+; now squeezed back under the ORIGINAL 0F380h boundary (STACKTOP itself
+; reverted to 0F380h, unchanged from before this round) instead -
+; FLYER_SLOT_COUNT dropped 2->1 to make it fit (see its own comment).
 ETANK_POOL         EQU 0F340h  ; ETANK_SLOT_SIZE*ETANK_SLOT_COUNT = 8 bytes
 ETANK_SPRITE_ATTRS EQU 0F348h  ; ETANK_SLOT_COUNT*8 = 8 bytes: (Y,X,pat,col)x2 - BL/BR only, TL/TR always hidden (see ETANK_BL/ETANK_BR in etank_gen.py)
 ETANK_SPAWN_TIMER  EQU 0F350h
@@ -964,15 +979,26 @@ PAT_ETANK_BR EQU PAT_BIGZUM+3
 ; homing speed/cruise height are all untuned/inferred - none were given
 ; a specific number, only the shape of the path.
 FLYER_SLOT_SIZE  EQU 11  ; +0 ACT,+1 X,+2 Y,+3 TIMER(explosion),+4 SPRIDX,+5/+6 DX/DY(explosion drift),+7 HP,+8 PHASE(0=cruise,1=home,2=exit),+9 FACING(0=left-facing,1=right-facing/flipped),+10 FLASH_TIMER
-; "頻出するので" - genuinely concurrent (unlike Etank's singleton),
-; same 2-wide convention as Zum's own explicit "横並び制限".
-FLYER_SLOT_COUNT EQU 2
-FLYER_POOL         EQU 0F351h  ; FLYER_SLOT_SIZE*FLYER_SLOT_COUNT = 22 bytes
-FLYER_SPRITE_ATTRS EQU 0F367h  ; FLYER_SLOT_COUNT*16 = 32 bytes: (Y,X,pat,col)x4 per instance
-FLYER_SPAWN_TIMER  EQU 0F387h
-FLYER_DRAW_TEMP  EQU 0F388h    ; scratch byte, UOFL_DRAW's own chosen pattern base
-FLYER_DRAW_COLOR EQU 0F389h    ; scratch byte, UOFL_DRAW's own resolved color (FLYER_COLOR or FLASH_COLOR)
-FLYER_SPR_BASE_SLOT EQU 22     ; hw sprite slots22-29 (2 instances x4), right after Etank's own 20-21
+; "頻出するので" - originally genuinely concurrent (FLYER_SLOT_COUNT=2,
+; same 2-wide convention as Zum's own explicit "横並び制限"), dropped
+; to a 1-wide singleton after the real-hardware freeze (see ETANK_
+; SLOT_COUNT's own comment) - the 2-wide version's own RAM didn't fit
+; under the real 0F380h BIOS-work-area boundary once that was
+; corrected. "頻出" is still served by FLYER_SPAWN_INTERVAL's own
+; shorter-than-Zum/BigZum interval below (frequent respawns of one
+; instance, rather than several simultaneous) - only ever appearing
+; alone, not the literal "several on screen together" reading, is an
+; inference forced by the RAM-budget correction, not confirmed with
+; the user.
+FLYER_SLOT_COUNT EQU 1
+FLYER_POOL         EQU 0F351h  ; FLYER_SLOT_SIZE*FLYER_SLOT_COUNT = 11 bytes
+FLYER_SPRITE_ATTRS EQU 0F35Ch  ; FLYER_SLOT_COUNT*16 = 16 bytes: (Y,X,pat,col)x4
+FLYER_SPAWN_TIMER  EQU 0F36Ch
+FLYER_DRAW_TEMP  EQU 0F36Dh    ; scratch byte, UOFL_DRAW's own chosen pattern base
+FLYER_DRAW_COLOR EQU 0F36Eh    ; scratch byte, UOFL_DRAW's own resolved color (FLYER_COLOR or FLASH_COLOR)
+; ends at 0F36Fh - 16 bytes of margin before the real 0F380h BIOS
+; boundary (see ETANK_SLOT_COUNT's own comment), not flush against it.
+FLYER_SPR_BASE_SLOT EQU 22     ; hw sprite slots22-25 (1 instance x4), right after Etank's own 20-21
 FLYER_COLOR EQU 7              ; cyan - sprites/Flyer.json's own fg
 ; "頻出するので" - shorter spawn interval than Zum/BigZum's own 90, so
 ; it actually shows up noticeably more often - untuned/inferred number.
@@ -1040,11 +1066,13 @@ CLOUD_A_CODE  EQU 1
 CLOUD_B_CODE  EQU 2
 CLOUD_GROUP0_COLOR EQU 0F5h   ; fg15 white / bg5 light blue (group0 was 0x55 sky-on-sky)
 
-; bumped 0F380h->0F390h: Etank/Flyer's own new RAM (ETANK_POOL..
-; FLYER_DRAW_COLOR, 0F340h-0F389h) grew past the old boundary - see
-; those constants' own comments. A few bytes of margin above the last
-; used address (0F389h) rather than placing STACKTOP flush against it.
-STACKTOP      EQU 0F390h
+; unchanged at 0F380h - briefly bumped to 0F390h to make room for
+; Etank/Flyer's own new RAM, then reverted (see ETANK_SLOT_COUNT's own
+; comment): 0F380h+ turned out to be real MSX BIOS work-area territory,
+; not free RAM, and encroaching on it caused a real-hardware freeze the
+; emulator (no interrupt/BIOS simulation at all) couldn't reproduce.
+; Etank/Flyer's own RAM was squeezed back under this boundary instead.
+STACKTOP      EQU 0F380h
 
 INIT:
     LD SP,STACKTOP
@@ -5364,9 +5392,9 @@ UOFLH_LOOP:
     DJNZ UOFLH_LOOP
     RET
 
-; blasts FLYER_SPRITE_ATTRS (32 bytes) to hw sprite slots
-; FLYER_SPR_BASE_SLOT..+7 - same raw DI-wrapped OUT + 8-NOP pattern as
-; FLUSH_BIGZUM_SPRITES.
+; blasts FLYER_SPRITE_ATTRS (FLYER_SLOT_COUNT*16 bytes) to hw sprite
+; slots FLYER_SPR_BASE_SLOT.. - same raw DI-wrapped OUT + 8-NOP pattern
+; as FLUSH_BIGZUM_SPRITES.
 FLUSH_FLYER_SPRITES:
     DI
     LD A,FLYER_SPR_BASE_SLOT*4 : OUT (99h),A
@@ -5388,7 +5416,7 @@ FLUSH_FLYER_SPRITES:
     NOP
     NOP
     LD HL,FLYER_SPRITE_ATTRS
-    LD B,32
+    LD B,FLYER_SLOT_COUNT*16
 FFLS_LOOP:
     LD A,(HL) : OUT (98h),A
     NOP
