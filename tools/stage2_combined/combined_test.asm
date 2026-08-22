@@ -928,13 +928,17 @@ BIGZUM_PUNCH_KNOCKBACK EQU 12
 ; the tank's own position, instead of the ordinary chase-toward-the-
 ; tank jump - jumping straight up while the tank sits centered on top
 ; wouldn't actually carry it anywhere. Originally 90 (untuned guess -
-; "そのまま動かないと" didn't give a specific duration) - "ただ振り払
-; いに入るのが遅いな 乗っかられたら直ぐでいい" (still too slow to
-; trigger even after the JUMP_ACTIVE-hold fix below - trigger the
-; instant it's ridden on instead). 1 means the very first standing
-; frame (counter INCs to 1, immediately >= threshold) fires it -
-; effectively "no delay", not "a very short delay".
-BIGZUM_SHAKE_STAND_FRAMES EQU 1
+; "そのまま動かないと" didn't give a specific duration), then dropped
+; to 1 ("ただ振り払いに入るのが遅いな 乗っかられたら直ぐでいい") -
+; but instant-on-touch turned out to be the wrong extreme too:
+; "即発火は速すぎて飛び越えも出来なくなってるから60フレくらいで" - a
+; deliberate brief jump-and-land-on-top (to clear BigZum) now itself
+; reads as "parked" and gets shaken off before the player can carry on,
+; since even a 1-frame touch instantly meets threshold=1. 60 frames
+; (~1s) gives a real jump-over enough slack to land, stand a moment,
+; and move on without triggering, while still shaking off a truly
+; stationary rider reasonably quickly.
+BIGZUM_SHAKE_STAND_FRAMES EQU 60
 
 ; ---------- Flyer flying enemy (see UPDATE_FLYER_ALL) ----------
 ; test implementation, reimplemented from scratch after a full rollback

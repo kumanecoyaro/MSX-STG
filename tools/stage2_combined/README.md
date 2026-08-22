@@ -2532,6 +2532,26 @@ with no way to tell where.
   regression: 20000-frame random-input sweep, 20000-frame idle sweep,
   existing Flyer/terrain targeted suites, all no crash/stall;
   `render_check.py` clean.
+- **Instant shake-off was itself too aggressive**:
+  > 即発火は速すぎて飛び越えも出来なくなってるから60フレくらいで
+  - `BIGZUM_SHAKE_STAND_FRAMES` 1 -> 60 (~1s of accumulated standing
+    time, per the counter's own `JUMP_ACTIVE`-hold accounting from the
+    previous round - not raw wall-clock frames). A deliberate jump-over
+    was itself briefly reading as "parked" and getting shaken off
+    before the player could land and move on; 60 gives that real
+    jump-over enough slack while still reacting to a genuinely
+    stationary rider in about 2s of real time (the counter only
+    accumulates on the ~40% of frames the auto-land bounce animation
+    actually reports standing=1, so 60 counted frames takes roughly
+    127 real frames in the natural-flow test below).
+  Verified: unit tests updated - a brief 10-frame touch (well under the
+  new 60-frame threshold) no longer triggers; reaching the threshold
+  from `STATE`=2 still does - all pass. Natural-flow simulation (BigZum
+  pinned to `STATE`=2, tank genuinely parked) now triggers at frame 127
+  (was frame 0 with the 1-frame threshold, frame 184 before the
+  `JUMP_ACTIVE`-hold fix). Full regression: 20000-frame random-input
+  sweep, 20000-frame idle sweep, existing Flyer/terrain targeted
+  suites, all no crash/stall; `render_check.py` clean.
 
 ## Bugs found and fixed while building this
 
