@@ -2372,6 +2372,55 @@ with no way to tell where.
     ン中に") was never actually exercised there - the natural-flow
     version is the one that matters.) Full regression: 20000-frame
     random-input sweep, no crash/stall; `render_check.py` clean.
+- **BigZum now shakes off a tank parked motionless on top of it, plus
+  new BulletF/BulletU art and a gray recolor** - with 2 attached 8x8
+  sprite JSONs (`BulletU_8x8.json`, `BulletF_8x8.json`, both fg14/bg1):
+  > 次はBigZumの上に自機が乗ったそのまま動かないとずっと乗りっぱなし
+  > なので右にジャンプして振り払うように
+  >
+  > バレットUとFの変更
+  > カラーもグレーに
+  - **Shake-off**: `UPDATE_TANK_BIGZUM_STAND`'s own auto-land-on-top
+    clamp keeps `JUMP_ACTIVE` perpetually re-engaged while the tank
+    stays parked (`JUMP_LANDING_RESTART_FRAME`), and nothing on
+    BigZum's own side ever reacted to that - a player who just sits
+    there could ride forever. New `BIGZUM_SHAKE_STAND_FRAMES`(90,
+    untuned/inferred) counter in +11 (`PUNCH_COOLDOWN`, otherwise idle
+    during `STATE`=0 - never both at once), incremented every frame
+    `TANK_ZUM_STANDING` is set while `STATE`=0, reset to 0 otherwise.
+    Once it reaches the threshold, forces `STATE`=1 (jump) with a
+    distinct "shake-off" marker (also +11, repurposed the instant the
+    jump starts) that makes `UOBZ_JUMP_MOVE`'s own arc always move
+    RIGHT at `BIGZUM_JUMP_XSPEED` regardless of the tank's position -
+    the ordinary chase-the-tank jump logic would barely move at all
+    with the tank centered directly on top, since "distance to tank" is
+    ~0. A shake-off jump also always lands straight back into `STATE`=0
+    once the arc completes (no "didn't clear yet, chain again" retry,
+    no punch transition - the point was just to relocate, not engage),
+    clearing the marker. The ordinary jump-trigger (`UOBZ_PAUSE_ROLL`)
+    now also explicitly clears +11 on the way in, so a stale marker
+    from an earlier shake-off can never leak into a genuinely normal
+    jump.
+  - **Bullet art + color**: `sprites/BulletF.json`/`BulletU.json`
+    replaced with the 2 attached files (`bullet_gen.py` picks them up
+    automatically, no code changes needed there). Color changed black
+    (1) -> gray (14) in all 3 places it's set: `BULLET_U_COLOR` (the
+    diagonal shot's own hw sprite color) and both `BULLET_SKY_
+    COLORBYTE`/`BULLET_ROCK_COLORBYTE` (the straight shot's own 2 BG
+    color groups, matched against sky/rock backgrounds respectively) -
+    "カラーもグレーに".
+  Verified: 7 targeted tests (isolated-subroutine + a natural per-frame
+  accumulation loop) covering the stand-timer's own increment/reset,
+  the threshold-triggered transition into a shake-off jump (`STATE`=1,
+  marker set, `JUMPFRAME` reset), rightward movement even with the tank
+  centered directly on top (where the ordinary chase logic would move
+  0px), and that a genuinely normal jump clears a stale marker - all
+  pass (1 RNG-dependent sub-case skipped when that particular run
+  happened to roll punch instead of jump - not itself part of this fix).
+  Bullet color confirmed directly by reading the rendered VRAM color
+  byte for both a live F shot (fg=14) and a live U shot (hw sprite
+  color=14) after firing in each direction. Full regression: 20000-
+  frame random-input sweep, no crash/stall; `render_check.py` clean.
 
 ## Bugs found and fixed while building this
 

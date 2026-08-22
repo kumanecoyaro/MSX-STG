@@ -176,18 +176,19 @@ BULLETF_L_SKY_CODE  EQU 90
 BULLETF_L_ROCK_CODE EQU 98
 ; color table (VRAM 2000h+group, 1 byte/group, hi nibble=fg/lo=bg -
 ; see terrain_gen.py's own SKY_COLOR/ROCK_COLOR): group11 (codes
-; 88-95) = fg1 black/bg5 light blue, matching the sky's own bg5;
-; group12 (codes 96-103) = fg1 black/bg11 light yellow, matching the
+; 88-95) = fgE gray/bg5 light blue, matching the sky's own bg5;
+; group12 (codes 96-103) = fgE gray/bg11 light yellow, matching the
 ; rock tier's own bg (terrain_gen.py's ROCK_COLOR=0x8B) - both groups
 ; patched over terrain_gen.py's generic per-group defaults (unused by
 ; any real terrain code) rather than by changing that shared module.
 ; ROCK_COLORBYTE's bg nibble must track ROCK_COLOR's own bg whenever
 ; that changes (was 01Ah/bg10 - missed when ROCK_COLOR moved to bg11,
-; fixed alongside the row18/19 change below).
+; fixed alongside the row18/19 change below). fg was black(1), now
+; gray(14/0xE) - "バレットUとFの変更 カラーもグレーに".
 BULLET_SKY_COLORADDR  EQU 200Bh
 BULLET_ROCK_COLORADDR EQU 200Ch
-BULLET_SKY_COLORBYTE  EQU 015h
-BULLET_ROCK_COLORBYTE EQU 01Bh
+BULLET_SKY_COLORBYTE  EQU 0E5h
+BULLET_ROCK_COLORBYTE EQU 0EBh
 
 ; ---------- diagonal/U shot, now a hardware sprite ----------
 ; "で、弾は斜のみスプライトに変更 水平は今のままで 伴って斜めうちの
@@ -205,7 +206,7 @@ BULLET_ROCK_COLORBYTE EQU 01Bh
 BULLET_U_SPR_BASE_SLOT EQU 7    ; hw sprite slots7-9, right after the enemy pool's 4-6
 PAT_BULLETU    EQU 140          ; right after PAT_EXPLOSION(136-139)
 PAT_BULLETU_L  EQU 144
-BULLET_U_COLOR EQU 1            ; black, same fg BulletF's BG version already used
+BULLET_U_COLOR EQU 14           ; gray, same fg BulletF's BG version now uses - "カラーもグレーに"
 BULLET_U_SPRITE_ATTRS EQU 0F2E0h   ; 12 bytes: Y,X,pat,col x3, staged same as ENEMY_SPRITE_ATTRS
 
 JOY_TRIGA     EQU 0F22Bh
@@ -908,6 +909,25 @@ BIGZUM_PUNCH_POSE_FRAMES EQU 8    ; how long BigZumP (punch pose) shows after ea
 ; an inference, not confirmed with the user; easy to redirect into a
 ; real damage system later if one gets added.
 BIGZUM_PUNCH_KNOCKBACK EQU 12
+; "BigZumの上に自機が乗ったそのまま動かないとずっと乗りっぱなしなので
+; 右にジャンプして振り払うように" - UPDATE_TANK_BIGZUM_STAND's own
+; auto-land-on-top clamp (JUMP_LANDING_RESTART_FRAME) keeps JUMP_ACTIVE
+; perpetually re-engaged while the tank stays parked, and nothing on
+; BigZum's own side ever reacted to that - a player who just sits there
+; could ride forever. Tracked in +11 (PUNCH_COOLDOWN, otherwise idle
+; while STATE=0 - never both at once, same "state-scoped field reuse"
+; precedent as +3/+5 elsewhere in this slot) as a running "how many
+; consecutive frames has the tank been standing on me" counter, checked
+; only while STATE=0 (approach) to avoid colliding with +11's own
+; PUNCH_COOLDOWN duty during STATE=2. Once it reaches this many frames,
+; forces STATE=1 (jump) with a distinct "shake-off" marker (also +11,
+; repurposed the instant the jump starts - see UOBZ_JUMP_MOVE's own
+; check) that makes the arc always move right regardless of the tank's
+; own position, instead of the ordinary chase-toward-the-tank jump -
+; jumping straight up while the tank sits centered on top wouldn't
+; actually carry it anywhere. Untuned/inferred - "そのまま動かないと"
+; didn't give a specific duration.
+BIGZUM_SHAKE_STAND_FRAMES EQU 90
 
 ; ---------- Flyer flying enemy (see UPDATE_FLYER_ALL) ----------
 ; test implementation, reimplemented from scratch after a full rollback
@@ -4107,6 +4127,24 @@ UPDATE_ONE_BIGZUM:
     CP 4
     JP Z,UOBZ_FLIP_PAUSE_MOVE
 
+    ; "BigZumの上に自機が乗ったそのまま動かないとずっと乗りっぱなしな
+    ; ので右にジャンプして振り払うように" - see BIGZUM_SHAKE_STAND_
+    ; FRAMES's own comment. TANK_ZUM_STANDING is already fresh for this
+    ; frame (UPDATE_TANK_BIGZUM_STAND runs earlier in MAINLOOP).
+    LD A,(TANK_ZUM_STANDING)
+    OR A
+    JR Z,UOBZ_STAND_TIMER_RESET
+    LD A,(IX+11) : INC A : LD (IX+11),A
+    CP BIGZUM_SHAKE_STAND_FRAMES
+    JR C,UOBZ_STAND_TIMER_DONE
+    LD A,1 : LD (IX+7),A           ; STATE=1 (jump)
+    XOR A : LD (IX+10),A           ; JUMPFRAME=0
+    LD A,1 : LD (IX+11),A          ; shake-off marker, checked by UOBZ_JUMP_MOVE
+    JP UOBZ_JUMP_MOVE
+UOBZ_STAND_TIMER_RESET:
+    XOR A : LD (IX+11),A
+UOBZ_STAND_TIMER_DONE:
+
     ; STATE=0: approaching - identical distance-indexed decel to Zum's
     ; own charge leg (ZUM_DETECT_RANGE/ZUM_MID_RANGE/ZUM_DECEL_TABLE) -
     ; "アルゴリズムもほぼ同じ" - now bidirectional (was assumed BZ_X>=
@@ -4226,6 +4264,7 @@ UOBZ_PAUSE_ROLL:
 UOBZ_PAUSE_DECIDE_JUMP:
     LD A,1 : LD (IX+7),A
     XOR A : LD (IX+10),A
+    LD (IX+11),A                   ; not a shake-off jump - see UOBZ_JUMP_MOVE's own marker check
     JP UOBZ_JUMP_MOVE
 
 ; flip-pause (STATE=4): motionless for BIGZUM_FLIP_PAUSE_FRAMES (+3,
@@ -4339,7 +4378,19 @@ UOBZP_GIVE_UP:
 ; Only once an arc completes with BigZum's X already at or past the
 ; tank's own X (genuinely cleared, landed behind) does it switch to
 ; STATE=2/FACING=1 - "自機の後ろを取って地上に降りたら後ろからパンチ".
+;
+; Unless +11 holds the "shake-off" marker (see BIGZUM_SHAKE_STAND_
+; FRAMES's own comment) - then X always moves RIGHT at BIGZUM_JUMP_
+; XSPEED regardless of the tank's own position (chasing toward it, as
+; the ordinary case does, wouldn't move BigZum out from under a tank
+; parked directly on top of it at all), and the arc always lands
+; straight back into STATE=0 once complete - no "didn't clear yet,
+; chain again" retry, no punch transition, marker cleared.
 UOBZ_JUMP_MOVE:
+    LD A,(IX+11)
+    CP 1
+    JR Z,UOBZJ_SHAKE_XMOVE
+
     LD A,(IX+1) : LD D,A
     LD A,(TANK_X) : LD E,A
     LD A,D : CP E
@@ -4349,11 +4400,23 @@ UOBZ_JUMP_MOVE:
     XOR A
 UOBZJ_XSET:
     LD (IX+1),A
+    JR UOBZJ_NO_XMOVE
+UOBZJ_SHAKE_XMOVE:
+    LD A,(IX+1) : ADD A,BIGZUM_JUMP_XSPEED
+    CP BIGZUM_MAX_X+1
+    JR C,UOBZJ_SHAKE_XSET
+    LD A,BIGZUM_MAX_X
+UOBZJ_SHAKE_XSET:
+    LD (IX+1),A
 UOBZJ_NO_XMOVE:
 
     LD A,(IX+10) : INC A
     CP BIGZUM_JUMP_FRAMES
     JR C,UOBZJ_FRAME_OK
+
+    LD A,(IX+11)
+    CP 1
+    JR Z,UOBZJ_SHAKE_LAND
 
     LD A,(IX+1) : LD D,A
     LD A,(TANK_X)
@@ -4367,6 +4430,10 @@ UOBZJ_NO_XMOVE:
 UOBZJ_CHAIN:
     XOR A : LD (IX+10),A
     JP UOBZJ_APPLY
+UOBZJ_SHAKE_LAND:
+    XOR A : LD (IX+7),A            ; STATE=0 - back to ordinary approach
+    XOR A : LD (IX+11),A           ; clear the shake-off marker
+    JP UOBZ_DRAW
 UOBZJ_FRAME_OK:
     LD (IX+10),A
 UOBZJ_APPLY:
