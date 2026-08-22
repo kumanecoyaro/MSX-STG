@@ -2316,6 +2316,62 @@ with no way to tell where.
   away" cases) all pass, alongside the existing 17. Full regression:
   20000-frame random-input sweep, no crash/stall; `render_check.py`
   clean.
+- **2 old BigZum bugs recurring: feet sinking a few px into the ground,
+  and a punch-state slip-through when pushed toward it** - "では前から
+  あるバグ再発の修正 まずBigZumの表示位置 足元が地面に数ｐｘめり込ん
+  でる ただ地形の上に表示するだけがなぜこうなるか調べて修正 次にまた
+  BigZumパンチ中に自機をBigZum方向に押すとすり抜けが起こってる 抜け
+  ないようにしろ パンチモーション中にガードされてないからだな".
+  - **Feet sinking into the ground**: BigZum's own Y anchor directly
+    reused `TANK_TIER_Y_TABLE` on the assumption it needed "no offset"
+    (same 32px-tall convention as the tank) - but that table's own
+    values are NOT a pure geometric anchor. `TANK_Y_BASE`'s own
+    derivation ("row23 top(184) - tank height(32) + landing
+    offset(3+1)") bakes in a +4 fudge specifically compensating for the
+    TANK's own sprite art having ~5px of blank rows at its own bottom
+    (`sprites/TankF.json`: ink stops at row26 of 32 - confirmed
+    directly). BigZum's own art has no such gap - its own ink runs all
+    the way to row31 of 32 (confirmed directly, matching the earlier
+    "絵は左下24x24" finding) - so reusing the tank's already-
+    compensated anchor pushed BigZum's real, un-padded feet that same
+    ~4px below the true ground line. New `BIGZUM_Y_OFFSET`(4)
+    subtracted wherever BigZum's own Y is derived from `TANK_TIER_Y_
+    TABLE` - `UOBZ_GET_GROUND_Y` (the single shared source for both
+    `UOBZ_TERRAIN_FOLLOW`'s own easing target and `UOBZ_JUMP_MOVE`'s
+    own jump-arc ground reference) and `ALLOC_BIGZUM_SLOT`'s own spawn-
+    time init. Verified: a forced spawn now sets Y=152 (was 156);
+    `UOBZ_GET_GROUND_Y` returns the same corrected value; a forced-
+    spawn render shows BigZum's own feet flush with the ground, same as
+    the tank's own footing.
+  - **Punch-state slip-through**: `UPDATE_TANK_BIGZUM_PUNCH`'s own
+    knockback only fired once every `BIGZUM_PUNCH_INTERVAL`(16) frames
+    - "パンチモーション中にガードされてないからだな" - between pulses,
+    nothing stopped the tank from freely walking deeper into contact.
+    16 frames x the tank's own ~1.5px/frame average speed = 24px -
+    exactly `BIGZUM_COLLISION_SIZE`, wide enough to cross the entire
+    box in a single uncontested gap and come out "already passed" the
+    other side, after which the existing "already passed, no longer
+    blocks" check (itself a real, working fix from an earlier round)
+    simply let it through for good. Added a hard, unconditional
+    boundary clamp - independent of the knockback cadence - that pins
+    `TANK_X` flush at BigZum's own outer collision edge every single
+    frame it's within range, same continuous-clamp shape `UPDATE_TANK_
+    ZUM_PUSH` already uses for Zum. Verified: isolated calls confirm
+    the wall fires even mid-cooldown and pulls an already-too-deep
+    `TANK_X` back to the boundary in one frame, on both sides
+    (`FACING`=0 and 1); a full natural-flow simulation - spawn BigZum,
+    let it approach and reach `STATE`=2 on its own, then hold the stick
+    toward it continuously for 1900 frames - never once let `TANK_X`
+    cross past `BZ_X`, settling the tank pinned at the boundary
+    (eventually against the screen's own left edge) instead. (An
+    earlier attempt at this same test, forcing `STATE`=2 directly from
+    far away, wasn't a valid reproduction - it immediately triggered
+    `UOBZ_PUNCH_MOVE`'s own give-up-and-revert-to-STATE=0 logic since
+    the forced distance exceeded `BIGZUM_GIVEUP_RANGE`, so the fix
+    (STATE=2-only by design, matching the report's own "パンチモーショ
+    ン中に") was never actually exercised there - the natural-flow
+    version is the one that matters.) Full regression: 20000-frame
+    random-input sweep, no crash/stall; `render_check.py` clean.
 
 ## Bugs found and fixed while building this
 

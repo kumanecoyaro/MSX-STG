@@ -803,6 +803,27 @@ BIGZUM_SPR_BASE_SLOT EQU 12      ; hw sprite slots12-19 (2 instances x4), right 
 ; right after Zum's own PAT_ZUM_FLIP(152-155); 2 poses x2 facings x4
 ; quadrant-groups x4 sub-patterns = 64 total codes, 156-219.
 BIGZUM_COLOR      EQU 13   ; from sprites/BigZum.json's own fg (same magenta as Zum)
+; "足元が地面に数px めり込んでる ただ地形の上に表示するだけがなぜこう
+; なるか調べて修正" - BigZum's own Y anchor directly reused TANK_TIER_Y_
+; TABLE (see BIGZUM_SLOT_SIZE's own comment: "shares the tank's own 32px
+; anchor convention, no offset needed") without noticing that table's
+; own values are NOT a pure geometric anchor - TANK_Y_BASE's own
+; derivation ("row23 top(184) - tank height(32) + landing offset(3+1)")
+; bakes in a +4 fudge specifically compensating for the TANK's own
+; sprite art having ~5px of blank/transparent rows at its own bottom
+; (`sprites/TankF.json`: ink stops at row26 of 32, confirmed directly) -
+; without that +4, the tank's own visible pixels would float a few px
+; above the true ground line. BigZum's own art has NO such gap - its
+; ink runs all the way to row31 (see the comment above), so reusing the
+; tank's own already-compensated anchor pushes BigZum's real, un-padded
+; feet that same ~4px BELOW the true ground line instead - sinking in
+; by exactly the margin the tank's own fudge was adding for a padding
+; gap BigZum's own art never had. Subtracted back out wherever BigZum's
+; own Y is derived from TANK_TIER_Y_TABLE (UOBZ_GET_GROUND_Y - the
+; single shared source for both UOBZ_TERRAIN_FOLLOW's own easing target
+; and UOBZ_JUMP_MOVE's own jump-arc ground reference - and ALLOC_
+; BIGZUM_SLOT's own spawn-time init).
+BIGZUM_Y_OFFSET EQU 4
 ; "BigZumは32x32だが絵は左下24x24 コリジョンも同じでそうなってるか" -
 ; confirmed against both sprite JSONs directly (ink spans rows8-31,
 ; cols~0-24 of the 32x32 canvas for both poses) - the canvas has 8
@@ -4038,7 +4059,7 @@ ABZS_FOUND:
     POP IX
     LD A,1 : LD (IX+0),A
     LD A,BIGZUM_SPAWNX : LD (IX+1),A
-    LD A,TANK_Y_BASE : LD (IX+2),A   ; tier3's own Y - BigZum shares the tank's own 32px anchor convention, no offset needed (see BIGZUM_SLOT_SIZE's own comment block)
+    LD A,TANK_Y_BASE-BIGZUM_Y_OFFSET : LD (IX+2),A   ; tier3's own Y, minus the tank-art-padding fudge that doesn't apply to BigZum's own art (see BIGZUM_Y_OFFSET's own comment)
     XOR A
     LD (IX+3),A
     LD (IX+5),A
@@ -4401,6 +4422,7 @@ UOBZGY_T2:
 UOBZGY_TIER_SET:
     LD E,A : LD D,0
     LD HL,TANK_TIER_Y_TABLE : ADD HL,DE : LD A,(HL)
+    SUB BIGZUM_Y_OFFSET   ; see BIGZUM_Y_OFFSET's own comment - undoes the tank-art-specific padding fudge baked into this table
     RET
 
 ; IX = slot base. Eases Z_Y toward the current tier's ground line
@@ -4626,6 +4648,26 @@ UTBP_LOOP:
     LD A,D : SUB E                 ; A = distance
     CP BIGZUM_COLLISION_SIZE+1
     JP NC,UTBP_NEXT                ; out of range
+
+    ; hard "can't clip through" wall, every frame regardless of the
+    ; punch-cooldown-gated knockback pulse below - "パンチ中に自機を
+    ; BigZum方向に押すとすり抜けが起こってる パンチモーション中にガー
+    ; ドされてないからだな" - the periodic knockback alone left a full
+    ; BIGZUM_COLLISION_SIZE(24)-wide gap uncontested between pulses
+    ; (BIGZUM_PUNCH_INTERVAL(16) frames x the tank's own ~1.5px/frame
+    ; average speed = 24px - exactly wide enough to cross the whole box
+    ; in a single cooldown gap and come out "already passed" the other
+    ; side), same continuous-clamp shape UPDATE_TANK_ZUM_PUSH already
+    ; uses - pins TANK_X flush at BigZum's own outer collision boundary
+    ; every single frame it's in range, independent of the punch
+    ; cadence itself.
+    LD A,D : SUB BIGZUM_COLLISION_SIZE : LD C,A
+    LD A,(TANK_X)
+    CP C
+    JR C,UTBP_FRONT_WALL_OK
+    LD A,C : LD (TANK_X),A
+UTBP_FRONT_WALL_OK:
+
     LD A,(IX+11)
     OR A
     JR NZ,UTBP_FRONT_DEC
@@ -4654,6 +4696,16 @@ UTBP_BEHIND:
     LD A,E : SUB D                 ; A = distance
     CP BIGZUM_COLLISION_SIZE+1
     JP NC,UTBP_NEXT                ; out of range
+
+    ; same hard wall as the FRONT branch above, mirrored - pins TANK_X
+    ; flush at BigZum's own outer boundary on this side instead.
+    LD A,D : ADD A,BIGZUM_COLLISION_SIZE : LD C,A
+    LD A,(TANK_X)
+    CP C
+    JR NC,UTBP_BEHIND_WALL_OK
+    LD A,C : LD (TANK_X),A
+UTBP_BEHIND_WALL_OK:
+
     LD A,(IX+11)
     OR A
     JR NZ,UTBP_BEHIND_DEC
