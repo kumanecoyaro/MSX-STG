@@ -2478,6 +2478,60 @@ with no way to tell where.
   Full regression: 20000-frame random-input sweep, 20000-frame idle
   sweep, existing Flyer/terrain targeted suites, all no crash/stall;
   `render_check.py` clean.
+- **Shake-off still too slow, plus a suspected real-hardware bank/slot
+  bug from before the rollback**:
+  > Ok
+  > ただ振り払いに入るのが遅いな
+  > 乗っかられたら直ぐでいい
+  >
+  > で、ロールバックする前のの実装で
+  > 暴走状態になる原因に思い当たるのが
+  > バンク
+  > 本編組み込みでは必要ないが
+  > 今のテストではバンク初期化してないと
+  > 16KB超えたらバンクBが見えなくて暴走かフリーズする
+  > きちんと初期化してるかと言うのと
+  > 本編組み込みでは初期化処理は削除することを確認
+  - **Immediate shake-off**: `BIGZUM_SHAKE_STAND_FRAMES` 90 -> 1 - "乗っ
+    かられたら直ぐでいい" - the counter INCs to 1 and immediately meets
+    the (now 1-frame) threshold on the very first standing frame, so
+    the jump fires the instant the tank lands on top instead of after
+    any delay.
+  - **Suspected pre-rollback slot/bank bug**: this file assembles to a
+    flat, single-content 32KB image (`ORG 4000h`, currently ~15KB used,
+    all in page1) with no real second ROM bank to switch to - but
+    `INIT` never explicitly mapped this cartridge's own primary slot
+    into page2 (8000h-BFFFh). On real hardware, page2 isn't guaranteed
+    to already point at the cartridge's own slot at boot; whatever else
+    was left mapped there (RAM, BIOS, etc) would make any code/data
+    that spills past 7FFFh read back as garbage - invisible to
+    `z80emu.py` (no slot/page model at all) but exactly the shape of
+    unexplained runaway/freeze chased earlier this session, and
+    plausible pre-rollback too since that version's code was larger
+    still. Confirmed via `git grep`/`grep` that no bank or primary-slot
+    setup existed anywhere in this file before this fix. Added the same
+    "map primary slot into page2" step `CYBER SHMUP.asm`'s own `INIT`
+    and `tools/bankswitch_poc/bank_a.asm` already use and have
+    confirmed working on real hardware (PPI port 0A8h: copy the page1
+    slot-select bits into the page2 field, write back) - no RAM
+    trampoline or mapper bank-select needed here, since unlike
+    `bankswitch_poc` this file has no second bank of actual content to
+    switch to, only the one slot that needs to also cover page2.
+    Marked TEST-ONLY in a comment at the call site - "本編組み込みでは
+    必要ない" - to be deleted once this code folds into the real game,
+    which already does its own equivalent setup in `CYBER SHMUP.asm`'s
+    own `INIT`. Not independently verifiable on real hardware from this
+    environment; verified only that it assembles, boots to `MAINLOOP`
+    in the emulator (whose own no-slot-model behavior is unchanged
+    either way), and the exact byte sequence matches the real-hardware-
+    confirmed pattern from `bankswitch_poc` verbatim.
+  Verified: unit tests updated for the new 1-frame threshold (first
+  standing frame triggers immediately, `STATE`=1, counter cleared) -
+  all pass; natural-flow simulation (BigZum pinned to `STATE`=2, tank
+  genuinely parked) now triggers at frame 0 instead of frame 184. Full
+  regression: 20000-frame random-input sweep, 20000-frame idle sweep,
+  existing Flyer/terrain targeted suites, all no crash/stall;
+  `render_check.py` clean.
 
 ## Bugs found and fixed while building this
 

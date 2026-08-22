@@ -927,9 +927,14 @@ BIGZUM_PUNCH_KNOCKBACK EQU 12
 ; real duty there) that makes the arc always move right regardless of
 ; the tank's own position, instead of the ordinary chase-toward-the-
 ; tank jump - jumping straight up while the tank sits centered on top
-; wouldn't actually carry it anywhere. Untuned/inferred - "そのまま動
-; かないと" didn't give a specific duration.
-BIGZUM_SHAKE_STAND_FRAMES EQU 90
+; wouldn't actually carry it anywhere. Originally 90 (untuned guess -
+; "そのまま動かないと" didn't give a specific duration) - "ただ振り払
+; いに入るのが遅いな 乗っかられたら直ぐでいい" (still too slow to
+; trigger even after the JUMP_ACTIVE-hold fix below - trigger the
+; instant it's ridden on instead). 1 means the very first standing
+; frame (counter INCs to 1, immediately >= threshold) fires it -
+; effectively "no delay", not "a very short delay".
+BIGZUM_SHAKE_STAND_FRAMES EQU 1
 
 ; ---------- Flyer flying enemy (see UPDATE_FLYER_ALL) ----------
 ; test implementation, reimplemented from scratch after a full rollback
@@ -1072,11 +1077,51 @@ STACKTOP      EQU 0F380h
 
 INIT:
     LD SP,STACKTOP
+
+    ; "本編組み込みでは必要ないが 今のテストではバンク初期化してないと
+    ; 16KB超えたらバンクBが見えなくて暴走かフリーズする" - this file
+    ; assembles to a flat, single-content 32KB image (ORG 4000h,
+    ; currently ~15KB used, page1 only) with no real second bank to
+    ; switch to - but on real hardware, page2 (8000h-BFFFh) isn't
+    ; guaranteed to already be mapped to this cartridge's own primary
+    ; slot at boot; some loaders leave it pointed at whatever slot was
+    ; last selected there (RAM, BIOS, etc). Any code/data that ends up
+    ; past 7FFFh would then physically land in the WRONG slot - reads
+    ; back as garbage/uninitialized, not this ROM's own bytes - which
+    ; is invisible in `z80emu.py` (no slot/page model at all) but would
+    ; show up on real hardware as exactly the kind of unexplained
+    ; runaway/freeze this session chased before the full rollback, once
+    ; the code was big enough to spill past 16KB (as this file itself
+    ; nearly is now - currently ~15KB of ~16KB). Same "map our own
+    ; primary slot into page2" belt-and-suspenders step as `CYBER
+    ; SHMUP.asm`'s own INIT and `tools/bankswitch_poc/bank_a.asm`
+    ; (confirmed working on real hardware there) - reads the current
+    ; slot config from the PPI (port 0A8h), copies the page1 (bits2-3)
+    ; slot number into the page2 (bits4-5) field, writes it back. Since
+    ; this file has no true bank-switch mechanism of its own (unlike
+    ; bankswitch_poc), that's the ONLY step needed here - no RAM
+    ; trampoline, no mapper bank-select write. TEST-ONLY: remove this
+    ; block entirely once this code is folded into the real game, which
+    ; already does its own equivalent slot/bank setup via `CYBER
+    ; SHMUP.asm`'s own INIT - duplicating it there would be redundant,
+    ; not harmful, but it belongs to that integration, not here.
+    IN A,(0A8h)
+    LD B,A
+    AND 0Ch
+    ADD A,A
+    ADD A,A
+    LD C,A
+    LD A,B
+    AND 0CFh
+    OR C
+    OUT (0A8h),A
+
     DI
     CALL INIT32
     EI
 
-    ; checkpoint 1: INIT started, SP set, BIOS SCREEN1 setup done
+    ; checkpoint 1: INIT started, SP set, primary slot mapped into
+    ; page2, BIOS SCREEN1 setup done
     LD B,1 : LD C,7 : CALL WRTVDP
 
     LD HL,TERRAIN_PATTERNS : LD DE,0000h : LD BC,TERRAIN_PATTERN_COUNT*8 : CALL LDIRVM
