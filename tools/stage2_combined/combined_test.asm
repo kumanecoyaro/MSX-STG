@@ -4885,26 +4885,50 @@ UOFL_CRUISE_STEP:
 ; PHASE=1: fly a straight diagonal line - X always rightward at
 ; FLYER_SPEED, Y by the FIXED step locked in +6 at reversal time (never
 ; re-read from TANK_Y_CUR again) - "一度方向を決定したら自機は追跡しな
-; い". Once vertically clear of the tank by more than FLYER_CLEAR_Y in
-; either direction, "自機に被らないY位置まで来たら右に消える" - advance
-; to PHASE=2 and stop tracking Y at all from then on.
+; い". Once it has flown PAST the tank's own Y (in the locked travel
+; direction) by more than FLYER_CLEAR_Y, "自機に被らないY位置まで来た
+; ら右に消える" - advance to PHASE=2.
+;
+; "Flyerが下に降りてこないぞ" - the first attempt at this exit check
+; compared plain absolute |Flyer_Y-Tank_Y| against FLYER_CLEAR_Y with no
+; regard for direction, so it fired the very FIRST frame of PHASE=1
+; (that raw distance is just as large right after reversing, before any
+; descent has happened at all, as it is after actually flying past and
+; clearing the tank) - Flyer exited almost immediately, reading as "it
+; never comes down" since it barely moved 1px before leaving. Fixed by
+; checking the correct SIDE of the tank's own Y for the locked travel
+; direction instead of raw distance: descending (+6 positive) needs
+; Flyer_Y>=Tank_Y+FLYER_CLEAR_Y (passed BELOW and cleared it); ascending
+; (+6 negative, stored as 0-FLYER_VY) needs Flyer_Y<=Tank_Y-FLYER_CLEAR_Y
+; (passed ABOVE and cleared it) - either way this can only become true
+; after actually crossing the tank's own Y in that direction, not before.
+; No signed-flag branch (JP M/P) here - this assembler only implements
+; Z/NZ/C/NC - so the sign of +6 is read via "CP 128" instead (FLYER_VY
+; is always a small positive magnitude, so its negative two's-complement
+; encoding is always >=128 and the positive encoding always <128).
 UOFL_HOME_MOVE:
     LD A,1 : LD (IX+9),A          ; right-facing while homing
     LD A,(IX+1) : ADD A,FLYER_SPEED : LD (IX+1),A
     LD A,(IX+2) : LD B,A : LD A,(IX+6) : ADD A,B : LD (IX+2),A
 
-    LD A,(IX+2) : LD D,A           ; D = Flyer_Y
-    LD A,(TANK_Y_CUR) : LD E,A     ; E = Tank_Y
+    LD A,(IX+6)
+    OR A
+    JR Z,UOFL_HOME_NO_EXIT        ; DY=0 (tank was level at lock time) - never auto-exits via this path
+    CP 128
+    JR NC,UOFL_HOME_CHECK_UP      ; DY stored >=128 -> negative -> ascending
+    LD A,(TANK_Y_CUR) : ADD A,FLYER_CLEAR_Y : LD D,A
+    LD A,(IX+2)
     CP D
-    JR C,UOFL_HOME_FLYER_BELOW     ; Tank_Y<Flyer_Y -> Flyer below the tank; diff=Flyer_Y-Tank_Y
-    LD A,E : SUB D                 ; diff = Tank_Y-Flyer_Y
-    JR UOFL_HOME_CLEAR_CHECK
-UOFL_HOME_FLYER_BELOW:
-    LD A,D : SUB E                 ; diff = Flyer_Y-Tank_Y
-UOFL_HOME_CLEAR_CHECK:
-    CP FLYER_CLEAR_Y
-    JP C,UOFL_DRAW                 ; still within clearance - keep going
+    JR C,UOFL_HOME_NO_EXIT        ; Flyer_Y still < Tank_Y+CLEAR - hasn't cleared below yet
+    JR UOFL_HOME_DO_EXIT
+UOFL_HOME_CHECK_UP:
+    LD A,(TANK_Y_CUR) : SUB FLYER_CLEAR_Y : LD D,A
+    LD A,(IX+2)
+    CP D
+    JR NC,UOFL_HOME_NO_EXIT       ; Flyer_Y still >= Tank_Y-CLEAR - hasn't cleared above yet
+UOFL_HOME_DO_EXIT:
     LD A,2 : LD (IX+8),A
+UOFL_HOME_NO_EXIT:
     JP UOFL_DRAW
 
 ; PHASE=2: straight right only, ignoring the tank entirely, until off

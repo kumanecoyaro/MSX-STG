@@ -2257,6 +2257,33 @@ with no way to tell where.
   no crash/stall, BigZum and Flyer never observed active at the same
   time this time; 8000-frame idle sweep also clean; `render_check.py`
   clean.
+- **Flyer never actually appeared to descend - the clearance->exit
+  check from the entry above compared raw, direction-blind distance and
+  fired on the very FIRST frame of homing** ("Flyerが下に降りてこない
+  ぞ"). Traced by stepping a forced Flyer spawn frame-by-frame and
+  printing its own X/Y/PHASE every frame: `PHASE` flipped straight from
+  1(home) to 2(exit) after a single 1px step - `|Flyer_Y-Tank_Y|` is
+  just as large right after reversing (before any real descent has
+  happened) as it is after actually flying past and clearing the tank,
+  so the old check couldn't tell "hasn't arrived yet" from "already
+  passed through" and always picked the first frame it saw a big gap,
+  which is immediately. Fixed by checking the correct SIDE of the
+  tank's own Y for the locked travel direction instead of raw distance
+  - descending needs `Flyer_Y>=Tank_Y+FLYER_CLEAR_Y`, ascending needs
+  `Flyer_Y<=Tank_Y-FLYER_CLEAR_Y` - either can only become true after
+  genuinely crossing the tank's own Y in that direction. This assembler
+  has no `JP M`/`JP P` (only Z/NZ/C/NC), so the locked direction's own
+  sign is read via `CP 128` instead (a small positive magnitude like
+  `FLYER_VY` is always <128; its two's-complement negative encoding is
+  always >=128). Verified: the same frame-by-frame trace now shows
+  continuous, monotonic descent from `FLYER_CRUISE_Y`(64) all the way
+  past the tank's own Y before switching to exit (125 frames to fully
+  cross the screen and clear the tank, vs. the old bug's 2); a forced-
+  spawn render mid-flight visibly shows the sprite well below its own
+  cruise altitude, approaching the tank. All 17 targeted tests (mostly
+  unchanged, since the fix only changes WHEN the exit fires, not the
+  other mechanics) still pass. Full regression: 20000-frame random-
+  input sweep, no crash/stall; `render_check.py` clean.
 
 ## Bugs found and fixed while building this
 
