@@ -2552,6 +2552,48 @@ with no way to tell where.
   `JUMP_ACTIVE`-hold fix). Full regression: 20000-frame random-input
   sweep, 20000-frame idle sweep, existing Flyer/terrain targeted
   suites, all no crash/stall; `render_check.py` clean.
+- **ZacoII sometimes spawns already white**:
+  > Ok
+  > ではZakoIIの変色バグ
+  > 多分フラッシュ処理実装で出たと思う
+  > どちらか分からんが最初からホワイトで出てくる場合がある
+  - Root cause: `E_DY` (enemy slot offset+8) does double duty - it's the
+    hit-flash countdown while alive (`UOE_DRAW`: nonzero -> render
+    `FLASH_COLOR`/white, same repurposed-idle-field precedent used
+    throughout this session) and the explosion drift value while
+    exploding (set fresh from `EXPLODE_DIR_DY` on every kill). Once an
+    explosion finishes and the slot frees up (`E_ACT`->0), nothing ever
+    reset `E_DY` back to 0 - it just sat there holding that occupant's
+    last drift value until the slot got reused. `ALLOC_ENEMY_SLOT`
+    already reset `E_RETREAT`/`E_TIMER` on every fresh spawn but never
+    touched `E_DY`, so a new ZacoII landing in a slot whose previous
+    occupant had a nonzero vertical explosion-drift direction inherited
+    that stale value and immediately read as "mid-flash" - rendered
+    white from frame 1, then counted down and faded to its real color a
+    few frames later. Matches the report precisely: intermittent
+    (depends on which pool slot + that slot's own last explosion
+    direction, not on anything about the new spawn itself), and
+    specifically traces back to the hit-flash feature reusing this
+    field without the corresponding spawn-time reset the other 2 fields
+    already got. Fixed: `E_DY` zeroed alongside `E_RETREAT`/`E_TIMER`
+    in `ALLOC_ENEMY_SLOT`. (Zum has no hit-flash at all - 1-hit kill,
+    no HP/durability to flash for - so no equivalent field-reuse there;
+    BigZum and Flyer each already zero their own *dedicated* (not
+    reused) `FLASH_TIMER` fields at spawn, confirmed by re-reading both
+    `ALLOC_BIGZUM_SLOT` and `ALLOC_FLYER_SLOT` - this was ZacoII-only.)
+  Verified: a new targeted test reproduces the exact mechanism directly
+  - forces a slot through an explosion with a nonzero leftover `E_DY`,
+    confirms the slot frees up with that stale value still sitting in
+    `E_DY`, respawns a fresh enemy into that same slot, and confirms
+    both `E_DY` reads 0 and the drawn sprite color resolves to the
+    normal variant color rather than `FLASH_COLOR`. Re-ran this same
+    test against the pre-fix code (temporarily, via `git stash`) to
+    confirm it actually fails without the fix (3 of 6 checks fail,
+    including the drawn-color check) before confirming it passes with
+    the fix restored - not just a test that happens to pass either way.
+    Full regression: 20000-frame random-input sweep, 20000-frame idle
+    sweep, existing shake-off/Flyer/terrain targeted suites, all no
+    crash/stall; `render_check.py` clean.
 
 ## Bugs found and fixed while building this
 

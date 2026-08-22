@@ -2990,7 +2990,22 @@ AES_FOUND:
     ; cycled through the same short, fully predictable sequence every
     ; time - see GAME_RNG's own comment.
     LD A,(GAME_RNG) : AND ENEMY_SKY_Y_MASK : ADD A,ENEMY_SKY_Y_MIN : LD (IX+E_Y),A
-    XOR A : LD (IX+E_RETREAT),A : LD (IX+E_TIMER),A
+    ; "ZakoIIの変色バグ 多分フラッシュ処理実装で出たと思う どちらか分から
+    ; んが最初からホワイトで出てくる場合がある" - E_DY (offset+8) doubles
+    ; as the hit-flash countdown while alive (UOE_DRAW: nonzero -> render
+    ; FLASH_COLOR/white) and the explosion drift value while exploding
+    ; (set fresh from EXPLODE_DIR_DY on each kill - see CHECK_HIT_PAIR).
+    ; A slot's E_DY was never reset here on respawn, so it kept whatever
+    ; its previous occupant's LAST explosion-drift value happened to be
+    ; (that value stays in E_DY untouched from the moment the explosion
+    ; finishes and E_ACT resets to 0, all the way until the slot is
+    ; reused) - a fresh spawn landing in a slot whose last occupant had
+    ; a nonzero vertical drift direction immediately read as mid-flash
+    ; and rendered white from frame 1, counting down and fading back to
+    ; normal a few frames later - exactly the intermittent (depends on
+    ; which slot + that slot's own last explosion direction) white-on-
+    ; spawn glitch reported. Zeroed here alongside E_RETREAT/E_TIMER.
+    XOR A : LD (IX+E_RETREAT),A : LD (IX+E_TIMER),A : LD (IX+E_DY),A
 
     ; "あとZakoIIが10機でたら(Zumと同じタイミング)あとは赤ZakoIIと緑
     ; ZakoIIランダムで" - once the threshold is reached, every further
