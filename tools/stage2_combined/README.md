@@ -2112,6 +2112,89 @@ with no way to tell where.
   shows exactly 3 real increments (was 24), each landing exactly on
   the frames where raw `TICK MOD 8==0`. Full regression: 15000-frame
   random-input sweep, no crash/stall; `render_check.py` clean.
+- **Full rollback of an over-ambitious round (white hit-flash + Etank +
+  Flyer + BigZum HP retune, all at once), then reimplemented one piece
+  at a time** - real-hardware testing on that round kept surfacing new
+  problems (a `STACKTOP`/MSX-BIOS RAM collision, then a genuine Etank/
+  BigZum shared-VRAM race once the first fix was in) faster than they
+  could be pinned down, so per direct instruction the whole round was
+  reverted back to this exact tree (commit `bfb3651`) rather than
+  patched forward again - "全然変わってない バグりまくって もうむちゃ
+  くちゃで原因特定できないのでロールバックしろ 1つずつ実装し直す".
+  Then, per a follow-up naming which pieces to redo and in what order:
+  > 1と2は問題があるとは思えないんで実装
+  > なので4をテスト実装
+  > BigZum出現時はFlyerは出ない
+  > で、Flyerの速度は2
+  > 右から出て画面左まで行き反転
+  > 自機に向かって降りてくる
+  ("1" = BigZum HP 8->5, "2" = the white hit-flash, "4" = Flyer -
+  Etank, "3", is deliberately skipped this round; the reverted round's
+  own Etank/pattern-VRAM-sharing mechanism was the direct cause of the
+  worst bug, so it isn't being touched again yet).
+  - **BigZum HP**: `BIGZUM_HP_INIT` 8->5, identical to the reverted
+    round's own change - re-implemented byte-for-byte.
+  - **White hit-flash**: `FLASH_COLOR`(15/white)/`FLASH_DURATION`(6
+    frames) constants, applied to ZacoII red (reuses its own idle
+    `E_DY` field), BigZum (`BIGZUM_SLOT_SIZE` grown 12->13 for a new
+    `+12` field, still fits the old 24-byte reservation), and the tank
+    itself (new `TANK_FLASH_TIMER`, triggered only by BigZum's own
+    punch connecting - no tank-HP system exists anywhere in this
+    codebase, same inference as before) - functionally identical to
+    the reverted round's own implementation, since nothing about it was
+    ever actually reported as broken.
+  - **Flyer, reimplemented from scratch, deliberately simpler than
+    before**: singleton (`FLYER_SLOT_COUNT`=1, not 2) with its OWN
+    dedicated permanent pattern allocation (codes220-251, both facings)
+    - no VRAM-sharing scheme this time, since that mechanism was the
+    direct cause of the worst bug in the reverted round and Etank isn't
+    being reimplemented yet to need it. New spawn gate, "BigZum出現時は
+    Flyerは出ない" - `ALLOC_FLYER_SLOT` refuses while `BIGZUM_POOL` is
+    active, same `ALLOC_ZUM_SLOT`-style precedent, one-directional only
+    (Flyer has nothing for `ALLOC_BIGZUM_SLOT` to clobber, so no
+    reverse gate is actually needed this time, unlike the reverted
+    Etank/BigZum pair). Speed is now an explicit `FLYER_SPEED`=2
+    ("速度は2") rather than an untuned guess. 2-phase movement (down
+    from the reverted round's own 3): `PHASE`=0 cruises left at a fixed
+    height until the screen's own left edge, clamps to X=0 and reverses
+    into `PHASE`=1; homing steps toward the tank's own current X AND Y
+    every frame on both axes ("自機に向かって降りてくる" - the tank can
+    be anywhere vertically, not just below, so this isn't a fixed
+    downward-only vector) and simply holds position once it matches -
+    no exit/despawn-on-reaching-the-tank phase this round, since that
+    wasn't restated and re-inventing it risked repeating the same
+    "adding more than was asked" pattern that led to the rollback;
+    flagged as an open question for a follow-up round. HP4 (carried
+    over from the original, reverted spec, not contradicted this
+    round), hit-flash included (participates in the general mechanism
+    above), full 32x32 bullet-hit box (no shrink specified).
+  - New RAM (`FLYER_POOL`..`FLYER_DRAW_COLOR`, 0F340h-0F35Dh, plus
+    BigZum's own new `BIGZUM_DRAW_COLOR` at 0F33Fh) stays well clear of
+    the real 0F380h MSX BIOS-work-area boundary this time -
+    `STACKTOP` itself was left completely untouched at 0F380h, with an
+    explicit warning comment added there against ever growing past it
+    again (see the reverted round's own freeze postmortem, still
+    recorded further down in this file).
+  - New hw sprite slots: Flyer 20-23 (1 instance x4, right after
+    BigZum's own 12-19) - total hw sprite usage now 0-23 of the
+    hardware's own 32-slot ceiling (well down from the reverted round's
+    0-29, since Etank doesn't exist and Flyer is singleton this time).
+  Verified: a 30-case targeted test suite (isolated-subroutine calls)
+  covering `BIGZUM_HP_INIT`=5; ZacoII red/BigZum/tank hit-flash
+  (trigger, color override, timer decay, all 3 checked directly);
+  `ALLOC_FLYER_SLOT`'s own BigZum-active gate; Flyer's own spawn-time
+  field init; cruise movement at the correct speed; the left-edge
+  clamp+phase-flip; homing on both axes in both directions (tank
+  below/right AND above/left, plus the exact-match hold case); non-
+  lethal hit HP-decrement+flash vs. lethal explode - all pass. A
+  forced-spawn render (via the real `ALLOC_FLYER_SLOT`, not a hand-
+  poked slot) shows a clean cyan Flyer sprite with no corruption. Full
+  regression: 20000-frame random-input sweep (`sim_dir`/`sim_trig_a`/
+  `sim_trig_b`) with no crash/stall - BigZum flash/explosion and tank
+  flash all naturally observed, Flyer reached both movement phases,
+  its own flash, and was never observed active while BigZum was also
+  active; a separate 8000-frame idle sweep also clean; `render_
+  check.py` clean.
 
 ## Bugs found and fixed while building this
 

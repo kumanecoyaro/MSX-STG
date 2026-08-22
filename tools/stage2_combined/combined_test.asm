@@ -209,6 +209,16 @@ BULLET_U_COLOR EQU 1            ; black, same fg BulletF's BG version already us
 BULLET_U_SPRITE_ATTRS EQU 0F2E0h   ; 12 bytes: Y,X,pat,col x3, staged same as ENEMY_SPRITE_ATTRS
 
 JOY_TRIGA     EQU 0F22Bh
+; "耐久値を持つ敵や自機がダメージを食らったら一瞬ホワイトに光るように" -
+; no tank-HP/damage system exists anywhere in this codebase (same gap
+; BIGZUM_PUNCH_KNOCKBACK's own comment already notes), so the tank's
+; only discrete "took damage" moment is BigZum's own punch connecting
+; (UPDATE_TANK_BIGZUM_PUNCH) - Zum's own push is a smooth continuous
+; shove with no single hit instant, so nothing sets this from there.
+; An inference, not confirmed with the user. Same FLASH_DURATION-driven
+; countdown/FLASH_COLOR override as every other HP-bearing entity's own
+; flash - see UPDATE_TANK_SPRITES.
+TANK_FLASH_TIMER EQU 0F22Ch
 ; frames left before another shot can fire while A is held ("間欠連射
 ; ...1発打ったら1発空ける" - hold-to-auto-fire, but rate-limited
 ; rather than one every single frame) - see UPDATE_SHOT. Tunable;
@@ -430,6 +440,19 @@ ENEMY_SPEED_RED EQU 3   ; red variant: flat 3px/frame - "ZakoIIはの赤は速�
 ; needed - same "repurpose an otherwise-idle field" precedent as Zum's
 ; own Z_TIMER doing double duty for explosion timer/pause countdown.
 ENEMY_RED_HP EQU 2
+; "耐久値を持つ敵や自機がダメージを食らったら一瞬ホワイトに光るように
+; スプライトのカラー指定だな" - every HP-bearing entity (ZacoII red,
+; BigZum, and later any other durability-bearing enemy) and the tank
+; itself gets the same mechanism: a per-slot countdown field, set to
+; FLASH_DURATION on a non-lethal damaging hit, that overrides the
+; sprite's normal color attribute(s) to FLASH_COLOR while nonzero and
+; ticks down by 1 once per drawn frame. ZacoII's own 1-hit-kill green
+; variant and every entity's own final, destroying hit never flash
+; (they explode the same frame instead - nothing to flash). Both
+; values are untuned/inferred - "一瞬" (an instant) suggested a short
+; flicker, not a held glow.
+FLASH_COLOR    EQU 15   ; white
+FLASH_DURATION EQU 6    ; frames
 ENEMY_SPAWNX      EQU 240   ; off the right edge (16px sprite, so fully offscreen at spawn) - "右から左へスライド"
 ; "移動は自機位置をみて手前で引き返す" - turns back once within this
 ; many px of the tank, short of actually reaching it. Was 40 - "どちら
@@ -749,9 +772,16 @@ ZUM_PUSH_SPEED EQU 6
 ; from the right, TANK_X>=BZ_X once FACING=1/behind-the-tank and
 ; facing right - same "mirrors when it turns around" rule Zum's own
 ; CHPZ_ORIENT_FLEE already established). Unlike Zum's 1-hit kill, a
-; rear hit only decrements BZ_HP (init BIGZUM_HP_INIT=8 - "BigZum耐久
-; ８に変更", was 5) and only actually destroys it once that reaches 0.
-BIGZUM_SLOT_SIZE  EQU 12   ; +0 ACT,+1 X,+2 Y,+3 TIMER(explosion/pause countdown/punch-pose-frames - all mutually exclusive across states),+4 SPRIDX,+5/+6 DX/DY(explosion drift),+7 STATE(0=approach,3=pause,1=jump,2=punch),+8 HP,+9 FACING(0=normal facing left,1=flipped facing right),+10 JUMPFRAME,+11 PUNCH_COOLDOWN
+; rear hit only decrements BZ_HP (init BIGZUM_HP_INIT=5 - see its own
+; comment for the full history) and only actually destroys it once that
+; reaches 0.
+; grew 12->13 for +12 FLASH_TIMER (hit-flash countdown - see FLASH_
+; DURATION's own comment) - still fits inside the original 24-byte
+; (BIGZUM_SLOT_SIZE(12, old)*BIGZUM_SLOT_COUNT(2, old)) RAM reservation
+; even at 13 bytes/slot, since only 1 slot is ever actually used now
+; (BIGZUM_SLOT_COUNT=1 below) - no address renumbering of anything
+; downstream of BIGZUM_POOL needed.
+BIGZUM_SLOT_SIZE  EQU 13   ; +0 ACT,+1 X,+2 Y,+3 TIMER(explosion/pause countdown/punch-pose-frames - all mutually exclusive across states),+4 SPRIDX,+5/+6 DX/DY(explosion drift),+7 STATE(0=approach,3=pause,1=jump,2=punch),+8 HP,+9 FACING(0=normal facing left,1=flipped facing right),+10 JUMPFRAME,+11 PUNCH_COOLDOWN,+12 FLASH_TIMER
 ; "BigZumは１体のみ 横並びあるから" - was 2 (mistakenly assumed to
 ; match Zum's own concurrent limit just because "スポーン条件は同じ" -
 ; corrected: BigZum's own side-by-side limit is 1, distinct from
@@ -767,6 +797,7 @@ BIGZUM_SPAWN_TIMER EQU 0F31Dh
 ; per-pool-slot via BZ_SPRIDX instead of a single fixed instance).
 BIGZUM_SPRITE_ATTRS EQU 0F31Eh   ; BIGZUM_SLOT_COUNT*16 = 32 bytes: (Y,X,pat,col)x4 per instance
 BIGZUM_DRAW_TEMP  EQU 0F33Eh     ; scratch byte, UOBZ_DRAW's own chosen pattern base
+BIGZUM_DRAW_COLOR EQU 0F33Fh     ; scratch byte, UOBZ_DRAW's own resolved color (BIGZUM_COLOR or FLASH_COLOR) - still well under the real 0F380h BIOS-work-area boundary (see STACKTOP's own comment)
 BIGZUM_SPR_BASE_SLOT EQU 12      ; hw sprite slots12-19 (2 instances x4), right after Zum's own 10-11
 ; PAT_BIGZUM/PAT_BIGZUMP/_L (bigzum_gen.py) - BASE_OFFSET=156 there,
 ; right after Zum's own PAT_ZUM_FLIP(152-155); 2 poses x2 facings x4
@@ -805,7 +836,7 @@ BIGZUM_SPAWNX     EQU ZUM_SPAWNX          ; same off-right-edge spawn X as Zum -
 BIGZUM_PROBE_DX   EQU 16                  ; horizontal-center probe offset for a 32px-wide sprite (vs Zum's 8, for its 16px width)
 BIGZUM_SPAWN_COL  EQU BIGZUM_SPAWNX+BIGZUM_PROBE_DX/8
 BIGZUM_SPAWN_INTERVAL EQU ZUM_SPAWN_INTERVAL
-BIGZUM_HP_INIT    EQU 8    ; "BigZum耐久８に変更" (was 5)
+BIGZUM_HP_INIT    EQU 5    ; "合わせてBigZum耐久値5に変更" (was 8, briefly; 5 before that)
 ; jump arc: same half-sine construction as the tank's own JUMP_OFFSET_
 ; TABLE (round(H*sin(pi*t/32)) for t=0..32), just H=32 instead of 24 -
 ; "ジャンプは自機より高く32ｐｘ サインジャンプ". Same 33-frame duration
@@ -856,6 +887,53 @@ BIGZUM_PUNCH_POSE_FRAMES EQU 8    ; how long BigZumP (punch pose) shows after ea
 ; an inference, not confirmed with the user; easy to redirect into a
 ; real damage system later if one gets added.
 BIGZUM_PUNCH_KNOCKBACK EQU 12
+
+; ---------- Flyer flying enemy (see UPDATE_FLYER_ALL) ----------
+; test implementation, reimplemented from scratch after a full rollback
+; of a previous, more ambitious round (Etank + Flyer + hit-flash all at
+; once) that kept surfacing new real-hardware-only bugs faster than
+; they could be pinned down - "1つずつ実装し直す". Etank does NOT exist
+; in this build; only Flyer, deliberately singleton (FLYER_SLOT_COUNT=
+; 1) and with its own dedicated permanent pattern allocation (no VRAM-
+; sharing scheme this round - that specific mechanism was the direct
+; cause of the worst of the previous round's bugs).
+;
+; "BigZum出現時はFlyerは出ない 速度は2 右から出て画面左まで行き反転
+; 自機に向かって降りてくる" - spawn gate mirrors ALLOC_ZUM_SLOT's own
+; "BigZum出現中にZumは出さない" precedent (refuses while BIGZUM_POOL is
+; active). Speed is now an explicit 2px/frame (not inferred, unlike the
+; previous round's own untuned guess). Movement tracked in +8 PHASE:
+; 0=cruise (straight left at a fixed height, normal-facing art) until
+; it reaches the screen's own left edge; 1=home (reverses, turns to
+; face right, steps diagonally toward the tank's own current X/Y every
+; frame - "自機に向かって降りてくる" emphasizes the downward component,
+; but the tank can be anywhere vertically, so this steps toward both
+; axes, not a fixed downward-only vector). No 3rd/exit phase this round
+; - what happens once Flyer actually reaches the tank (hover in place?
+; despawn? something else?) was not specified this time (the earlier,
+; reverted round's own "自機の上まで来たら右に消える" wasn't repeated
+; here) - left as an open question rather than reinventing that detail,
+; flagged for a follow-up round.
+FLYER_SLOT_SIZE  EQU 11  ; +0 ACT,+1 X,+2 Y,+3 TIMER(explosion),+4 SPRIDX,+5/+6 DX/DY(explosion drift),+7 HP,+8 PHASE(0=cruise,1=home),+9 FACING(0=left-facing,1=right-facing/flipped),+10 FLASH_TIMER
+FLYER_SLOT_COUNT EQU 1
+; strictly below the real 0F380h MSX BIOS-work-area boundary (see
+; STACKTOP's own comment - this exact mistake caused a real-hardware
+; freeze last round).
+FLYER_POOL         EQU 0F340h  ; FLYER_SLOT_SIZE*FLYER_SLOT_COUNT = 11 bytes
+FLYER_SPRITE_ATTRS EQU 0F34Bh  ; FLYER_SLOT_COUNT*16 = 16 bytes: (Y,X,pat,col)x4
+FLYER_SPAWN_TIMER  EQU 0F35Bh
+FLYER_DRAW_TEMP  EQU 0F35Ch    ; scratch byte, UOFL_DRAW's own chosen pattern base
+FLYER_DRAW_COLOR EQU 0F35Dh    ; scratch byte, UOFL_DRAW's own resolved color (FLYER_COLOR or FLASH_COLOR)
+; ends at 0F35Dh - well clear of the 0F380h boundary.
+FLYER_SPR_BASE_SLOT EQU 20     ; hw sprite slots20-23 (1 instance x4), right after BigZum's own 12-19
+FLYER_COLOR EQU 7              ; cyan - sprites/Flyer.json's own fg
+FLYER_SPAWN_INTERVAL EQU ZUM_SPAWN_INTERVAL  ; same untuned-but-reasonable value as everything else's own spawn interval - not itself specified
+FLYER_SPAWNX   EQU 240
+FLYER_CRUISE_Y EQU 64   ; fixed cruise height (well above the terrain rows) - untuned/inferred, no height was specified
+FLYER_SPEED    EQU 2    ; px/frame, both cruise and homing legs - "速度は2"
+FLYER_VY       EQU 1    ; px/frame vertical homing step while closing in on the tank's own Y - untuned/inferred, no vertical speed was specified
+FLYER_HP_INIT  EQU 4    ; carried over from the original (reverted) request's own "耐久値4", not contradicted this round
+FLYER_COLLISION_SIZE EQU 32  ; full 32x32 canvas - no shrink specified
 
 ; ---------- flowing background clouds (see CLOUD_UPDATE_ALL) ----------
 ; "Stage1でもやってる雲を上から3行目に4セルの雲をランダムタイミングで
@@ -913,6 +991,16 @@ CLOUD_A_CODE  EQU 1
 CLOUD_B_CODE  EQU 2
 CLOUD_GROUP0_COLOR EQU 0F5h   ; fg15 white / bg5 light blue (group0 was 0x55 sky-on-sky)
 
+; 0F380h+ is real MSX BIOS work-area territory (VDP register shadows
+; etc., serviced by the H.TIMI interrupt handler every VBlank on real
+; hardware, entirely independent of this ROM's own no-HALT design -
+; interrupts still fire even though this code never waits on one), NOT
+; free RAM - a prior round briefly grew this past 0F380h to make room
+; for new enemy pools and got a real-hardware freeze with garbled
+; graphics that no emulator run ever reproduced (z80emu.py has no
+; interrupt/BIOS simulation at all, so it read back exactly what the
+; game itself last wrote there). Any new RAM belongs strictly BELOW
+; this line, never at or above it.
 STACKTOP      EQU 0F380h
 
 INIT:
@@ -1130,6 +1218,7 @@ INIT_SPRATR_CLR:
     LD (JUMP_Y_OFFSET),A
     LD (TANK_ZUM_STANDING),A
     LD (JUMP_STAND_BASELINE),A
+    LD (TANK_FLASH_TIMER),A
     LD A,PAT_TANKF : LD (CUR_POSE_PAT),A
     XOR A
     LD (SHOT_COOLDOWN),A
@@ -1228,6 +1317,11 @@ INIT_SPRATR_CLR:
     LD HL,BIGZUM_BIGZUMP_TL   : LD DE,PAT_BIGZUMP*8+SPRPAT   : LD BC,128 : CALL LDIRVM
     LD HL,BIGZUM_BIGZUM_L_TL  : LD DE,PAT_BIGZUM_L*8+SPRPAT  : LD BC,128 : CALL LDIRVM
     LD HL,BIGZUM_BIGZUMP_L_TL : LD DE,PAT_BIGZUMP_L*8+SPRPAT : LD BC,128 : CALL LDIRVM
+
+    ; Flyer's own pattern (flyer_gen.py) - permanent allocation, both
+    ; facings, right after BigZum's own last group.
+    LD HL,FLYER_TL   : LD DE,PAT_FLYER*8+SPRPAT   : LD BC,128 : CALL LDIRVM
+    LD HL,FLYER_L_TL : LD DE,PAT_FLYER_L*8+SPRPAT : LD BC,128 : CALL LDIRVM
 
     ; enemy pool: zero the whole buffer generically (all slots inactive,
     ; all other fields 0) rather than naming each slot - "管理もバッファ
@@ -1348,6 +1442,38 @@ IBZSA_LOOP:
     LD (HL),A : INC HL
     LD (HL),A : INC HL
     DJNZ IBZSA_LOOP
+
+    ; Flyer pool: same generic zero-then-assign-SPRIDX shape as the
+    ; pools above.
+    LD HL,FLYER_POOL
+    LD B,FLYER_SLOT_SIZE*FLYER_SLOT_COUNT
+    XOR A
+IFLZ_LOOP:
+    LD (HL),A
+    INC HL
+    DJNZ IFLZ_LOOP
+    LD (FLYER_SPAWN_TIMER),A
+
+    LD HL,FLYER_POOL
+    LD B,FLYER_SLOT_COUNT
+    LD C,0
+IFLSP_LOOP:
+    PUSH HL
+    POP IX
+    LD A,C : LD (IX+4),A
+    INC C
+    LD DE,FLYER_SLOT_SIZE : ADD HL,DE
+    DJNZ IFLSP_LOOP
+
+    LD HL,FLYER_SPRITE_ATTRS
+    LD B,FLYER_SLOT_COUNT*4
+IFLSA_LOOP:
+    LD A,209 : LD (HL),A : INC HL
+    XOR A
+    LD (HL),A : INC HL
+    LD (HL),A : INC HL
+    LD (HL),A : INC HL
+    DJNZ IFLSA_LOOP
 
     ; cloud pool: each of the 6 slots gets its own fixed ROW (2-7,
     ; CLOUD_ROW_TABLE)/INTERVAL/FIXED4 from the 3 lookup tables below,
@@ -1476,6 +1602,8 @@ SKIP_ADVANCE:
     CALL UPDATE_BIGZUM_ALL
     CALL CHECK_BULLET_VS_BIGZUM
     CALL UPDATE_TANK_BIGZUM_PUNCH
+    CALL UPDATE_FLYER_ALL
+    CALL CHECK_BULLET_VS_FLYER
     CALL CLOUD_UPDATE_ALL
 
     CALL SOUND_UPDATE
@@ -1951,6 +2079,20 @@ UTS_COLOR_NORMAL:
     LD A,TANK_COLOR_BL : LD (UTS_COLOR_2),A
     LD A,TANK_COLOR_BR : LD (UTS_COLOR_3),A
 UTS_COLOR_DONE:
+    ; hit-flash: BigZum's own punch connecting is the tank's only
+    ; discrete damage moment (see TANK_FLASH_TIMER's own comment) -
+    ; overrides all 4 quadrant colors to white for the flash duration,
+    ; same mechanism as every other HP-bearing entity's own flash.
+    LD A,(TANK_FLASH_TIMER)
+    OR A
+    JR Z,UTS_FLASH_DONE
+    DEC A : LD (TANK_FLASH_TIMER),A
+    LD A,FLASH_COLOR
+    LD (UTS_COLOR_0),A
+    LD (UTS_COLOR_1),A
+    LD (UTS_COLOR_2),A
+    LD (UTS_COLOR_3),A
+UTS_FLASH_DONE:
 
     LD IX,SPRITE_ATTRS
     LD A,(TANK_DRAW_Y) : LD (IX+0),A
@@ -2903,6 +3045,17 @@ UOE_PAT_NORMAL:
     LD A,PAT_ZACO
 UOE_PAT_SET:
     LD (HL),A : INC HL
+    ; hit-flash: E_DY(offset+8, idle while alive - see FLASH_DURATION's
+    ; own comment) doubles as a white-flash countdown. Checked before
+    ; the ordinary variant color so a flashing red ZacoII still reads as
+    ; a hit even though its own color is already the brighter of the 2.
+    LD A,(IX+E_DY)
+    OR A
+    JR Z,UOE_COLOR_NORMAL
+    DEC A : LD (IX+E_DY),A
+    LD A,FLASH_COLOR
+    JR UOE_COLOR_SET
+UOE_COLOR_NORMAL:
     LD A,(IX+E_VARIANT)
     OR A
     JR Z,UOE_COLOR_GREEN
@@ -3071,6 +3224,7 @@ CHP_SKIP_ERASE:
     JR Z,CHP_DESTROY
     LD A,(IY+E_DX) : DEC A : LD (IY+E_DX),A
     JR Z,CHP_DESTROY
+    LD A,FLASH_DURATION : LD (IY+E_DY),A   ; hit-flash - see FLASH_DURATION's own comment (E_DY idle while alive)
     CALL SOUND_ZUM_DEFLECT
     RET
 
@@ -3862,6 +4016,7 @@ ABZS_FOUND:
     LD (IX+9),A
     LD (IX+10),A
     LD (IX+11),A
+    LD (IX+12),A
     LD A,BIGZUM_HP_INIT : LD (IX+8),A
     LD A,BIGZUM_SPAWN_INTERVAL : LD (BIGZUM_SPAWN_TIMER),A
 
@@ -4260,6 +4415,21 @@ UOBZD_SET_BIGZUM:
 UOBZD_BASE_SET:
     LD (BIGZUM_DRAW_TEMP),A
 
+    ; hit-flash color resolve, once per draw call - see FLASH_DURATION's
+    ; own comment. BIGZUM_DRAW_COLOR feeds all 4 quadrant writes below
+    ; instead of BIGZUM_COLOR directly so the timer only ticks down once
+    ; per frame, not 4 times.
+    LD A,(IX+12)
+    OR A
+    JR Z,UOBZD_COLOR_NORMAL
+    DEC A : LD (IX+12),A
+    LD A,FLASH_COLOR
+    JR UOBZD_COLOR_SET
+UOBZD_COLOR_NORMAL:
+    LD A,BIGZUM_COLOR
+UOBZD_COLOR_SET:
+    LD (BIGZUM_DRAW_COLOR),A
+
     LD A,(IX+4) : ADD A,A : ADD A,A : ADD A,A : ADD A,A
     LD C,A : LD B,0
     LD HL,BIGZUM_SPRITE_ATTRS : ADD HL,BC
@@ -4267,22 +4437,22 @@ UOBZD_BASE_SET:
     LD A,(IX+2) : LD (HL),A : INC HL
     LD A,(IX+1) : LD (HL),A : INC HL
     LD A,(BIGZUM_DRAW_TEMP) : LD (HL),A : INC HL
-    LD A,BIGZUM_COLOR : LD (HL),A : INC HL
+    LD A,(BIGZUM_DRAW_COLOR) : LD (HL),A : INC HL
 
     LD A,(IX+2) : LD (HL),A : INC HL
     LD A,(IX+1) : ADD A,16 : LD (HL),A : INC HL
     LD A,(BIGZUM_DRAW_TEMP) : ADD A,4 : LD (HL),A : INC HL
-    LD A,BIGZUM_COLOR : LD (HL),A : INC HL
+    LD A,(BIGZUM_DRAW_COLOR) : LD (HL),A : INC HL
 
     LD A,(IX+2) : ADD A,16 : LD (HL),A : INC HL
     LD A,(IX+1) : LD (HL),A : INC HL
     LD A,(BIGZUM_DRAW_TEMP) : ADD A,8 : LD (HL),A : INC HL
-    LD A,BIGZUM_COLOR : LD (HL),A : INC HL
+    LD A,(BIGZUM_DRAW_COLOR) : LD (HL),A : INC HL
 
     LD A,(IX+2) : ADD A,16 : LD (HL),A : INC HL
     LD A,(IX+1) : ADD A,16 : LD (HL),A : INC HL
     LD A,(BIGZUM_DRAW_TEMP) : ADD A,12 : LD (HL),A : INC HL
-    LD A,BIGZUM_COLOR : LD (HL),A
+    LD A,(BIGZUM_DRAW_COLOR) : LD (HL),A
     RET
 
 UOBZ_EXPLODING:
@@ -4438,6 +4608,7 @@ UTBP_FRONT_APPLY:
 UTBP_FRONT_DONE:
     LD A,BIGZUM_PUNCH_INTERVAL : LD (IX+11),A
     LD A,BIGZUM_PUNCH_POSE_FRAMES : LD (IX+3),A
+    LD A,FLASH_DURATION : LD (TANK_FLASH_TIMER),A
     CALL SOUND_ZUM_DEFLECT
     JP UTBP_NEXT
 UTBP_FRONT_DEC:
@@ -4463,6 +4634,7 @@ UTBP_BEHIND_SET:
     LD (TANK_X),A
     LD A,BIGZUM_PUNCH_INTERVAL : LD (IX+11),A
     LD A,BIGZUM_PUNCH_POSE_FRAMES : LD (IX+3),A
+    LD A,FLASH_DURATION : LD (TANK_FLASH_TIMER),A
     CALL SOUND_ZUM_DEFLECT
     JP UTBP_NEXT
 UTBP_BEHIND_DEC:
@@ -4566,8 +4738,317 @@ CHPBZ_REAR_SKIP_ERASE:
     ; - CHPBZ_FRONT keeps its own SOUND_ZUM_DEFLECT call.
     LD A,(IY+8) : DEC A : LD (IY+8),A
     JR Z,CHPBZ_DESTROY
+    LD A,FLASH_DURATION : LD (IY+12),A   ; hit-flash - see FLASH_DURATION's own comment
     RET
 CHPBZ_DESTROY:
+    LD A,2 : LD (IY+0),A
+    LD A,EXPLOSION_DURATION : LD (IY+3),A
+
+    LD A,(TICK) : AND 7 : LD C,A : LD B,0
+    LD HL,EXPLODE_DIR_DX : ADD HL,BC : LD A,(HL) : LD (IY+5),A
+    LD HL,EXPLODE_DIR_DY : ADD HL,BC : LD A,(HL) : LD (IY+6),A
+
+    CALL SOUND_DESTROY
+    LD HL,SCORE_PER_KILL
+    CALL ADD_SCORE
+    RET
+
+; ---------- Flyer: spawn/update/draw (see FLYER_SLOT_SIZE's own ----------
+; ---------- comment block above for the full design rationale)   ----------
+UPDATE_FLYER_ALL:
+    LD A,(FLYER_SPAWN_TIMER)
+    OR A
+    JR Z,UFLA_TRY_SPAWN
+    DEC A : LD (FLYER_SPAWN_TIMER),A
+    JR UFLA_UPDATE_ALL
+UFLA_TRY_SPAWN:
+    CALL ALLOC_FLYER_SLOT
+UFLA_UPDATE_ALL:
+    LD IX,FLYER_POOL
+    LD B,FLYER_SLOT_COUNT
+UFLAU_LOOP:
+    PUSH BC
+    CALL UPDATE_ONE_FLYER
+    POP BC
+    ; FLYER_SLOT_SIZE(11) worth of INC IX - this assembler has no ADD
+    ; IX,DE, same precedent as every other pool loop in this file.
+    INC IX : INC IX : INC IX : INC IX : INC IX : INC IX
+    INC IX : INC IX : INC IX : INC IX : INC IX
+    DJNZ UFLAU_LOOP
+    CALL FLUSH_FLYER_SPRITES
+    RET
+
+; airborne - no terrain gate at all, just a free slot and BigZum
+; inactive - "BigZum出現時はFlyerは出ない", same "BigZum出現中にZumは
+; 出さない" precedent ALLOC_ZUM_SLOT already uses (one-directional only
+; - Flyer has its own dedicated pattern allocation, no VRAM sharing
+; with BigZum this round, so nothing requires the reverse gate too).
+ALLOC_FLYER_SLOT:
+    LD A,(BIGZUM_POOL)
+    OR A
+    RET NZ
+    LD HL,FLYER_POOL
+    LD B,FLYER_SLOT_COUNT
+AFLS_LOOP:
+    LD A,(HL)
+    OR A
+    JR Z,AFLS_FOUND
+    LD DE,FLYER_SLOT_SIZE : ADD HL,DE
+    DJNZ AFLS_LOOP
+    RET
+AFLS_FOUND:
+    PUSH HL
+    POP IX
+    LD A,1 : LD (IX+0),A
+    LD A,FLYER_SPAWNX : LD (IX+1),A
+    LD A,FLYER_CRUISE_Y : LD (IX+2),A
+    XOR A
+    LD (IX+3),A
+    LD (IX+5),A
+    LD (IX+6),A
+    LD (IX+8),A
+    LD (IX+9),A
+    LD (IX+10),A
+    LD A,FLYER_HP_INIT : LD (IX+7),A
+    LD A,FLYER_SPAWN_INTERVAL : LD (FLYER_SPAWN_TIMER),A
+    RET
+
+; IX = slot base. ACT=2: same drift-then-hide explosion shape as every
+; other exploding entity here. ACT=1: dispatches on PHASE(+8) - see
+; FLYER_SLOT_SIZE's own comment for the 2-phase overview (no exit phase
+; this round).
+UPDATE_ONE_FLYER:
+    LD A,(IX+0)
+    CP 2
+    JP Z,UOFL_EXPLODING
+    OR A
+    RET Z
+
+    LD A,(IX+8)
+    CP 1
+    JP Z,UOFL_HOME_MOVE
+
+; PHASE=0: cruise left at a fixed height/speed, normal (left-facing)
+; art - "右から出て画面左まで行き". Once it can no longer subtract this
+; frame's own step without underflowing, clamp to X=0 and reverse into
+; homing instead of despawning - "反転".
+UOFL_CRUISE_MOVE:
+    LD A,(IX+1)
+    CP FLYER_SPEED
+    JR NC,UOFL_CRUISE_STEP
+    XOR A : LD (IX+1),A
+    LD A,1 : LD (IX+8),A
+    JP UOFL_DRAW
+UOFL_CRUISE_STEP:
+    LD A,(IX+1) : SUB FLYER_SPEED : LD (IX+1),A
+    JP UOFL_DRAW
+
+; PHASE=1: home diagonally toward the tank's own current X/Y -
+; "自機に向かって降りてくる" - steps both axes toward the tank every
+; frame, indefinitely (no exit condition this round - see FLYER_SLOT_
+; SIZE's own comment).
+UOFL_HOME_MOVE:
+    LD A,1 : LD (IX+9),A          ; right-facing while homing
+    LD A,(IX+1) : LD D,A
+    LD A,(TANK_X)
+    CP D
+    JR Z,UOFL_HOME_X_DONE
+    JR C,UOFL_HOME_X_LEFT
+    LD A,(IX+1) : ADD A,FLYER_SPEED : LD (IX+1),A
+    JR UOFL_HOME_X_DONE
+UOFL_HOME_X_LEFT:
+    LD A,(IX+1) : SUB FLYER_SPEED : LD (IX+1),A
+UOFL_HOME_X_DONE:
+    LD A,(IX+2) : LD D,A
+    LD A,(TANK_Y_CUR)
+    CP D
+    JR Z,UOFL_HOME_Y_DONE
+    JR C,UOFL_HOME_Y_UP
+    LD A,(IX+2) : ADD A,FLYER_VY : LD (IX+2),A
+    JR UOFL_HOME_Y_DONE
+UOFL_HOME_Y_UP:
+    LD A,(IX+2) : SUB FLYER_VY : LD (IX+2),A
+UOFL_HOME_Y_DONE:
+    JP UOFL_DRAW
+
+UOFL_DRAW:
+    LD A,(IX+9)
+    OR A
+    JR Z,UOFLD_NORMAL
+    LD A,PAT_FLYER_L : JR UOFLD_BASE_SET
+UOFLD_NORMAL:
+    LD A,PAT_FLYER
+UOFLD_BASE_SET:
+    LD (FLYER_DRAW_TEMP),A
+
+    LD A,(IX+10)
+    OR A
+    JR Z,UOFLD_COLOR_NORMAL
+    DEC A : LD (IX+10),A
+    LD A,FLASH_COLOR
+    JR UOFLD_COLOR_SET
+UOFLD_COLOR_NORMAL:
+    LD A,FLYER_COLOR
+UOFLD_COLOR_SET:
+    LD (FLYER_DRAW_COLOR),A
+
+    LD A,(IX+4) : ADD A,A : ADD A,A : ADD A,A : ADD A,A
+    LD C,A : LD B,0
+    LD HL,FLYER_SPRITE_ATTRS : ADD HL,BC
+
+    LD A,(IX+2) : LD (HL),A : INC HL
+    LD A,(IX+1) : LD (HL),A : INC HL
+    LD A,(FLYER_DRAW_TEMP) : LD (HL),A : INC HL
+    LD A,(FLYER_DRAW_COLOR) : LD (HL),A : INC HL
+
+    LD A,(IX+2) : LD (HL),A : INC HL
+    LD A,(IX+1) : ADD A,16 : LD (HL),A : INC HL
+    LD A,(FLYER_DRAW_TEMP) : ADD A,4 : LD (HL),A : INC HL
+    LD A,(FLYER_DRAW_COLOR) : LD (HL),A : INC HL
+
+    LD A,(IX+2) : ADD A,16 : LD (HL),A : INC HL
+    LD A,(IX+1) : LD (HL),A : INC HL
+    LD A,(FLYER_DRAW_TEMP) : ADD A,8 : LD (HL),A : INC HL
+    LD A,(FLYER_DRAW_COLOR) : LD (HL),A : INC HL
+
+    LD A,(IX+2) : ADD A,16 : LD (HL),A : INC HL
+    LD A,(IX+1) : ADD A,16 : LD (HL),A : INC HL
+    LD A,(FLYER_DRAW_TEMP) : ADD A,12 : LD (HL),A : INC HL
+    LD A,(FLYER_DRAW_COLOR) : LD (HL),A
+    RET
+
+UOFL_EXPLODING:
+    LD A,(IX+3)
+    OR A
+    JR Z,UOFL_EXPLODE_HIDE
+    DEC A : LD (IX+3),A
+    LD A,(IX+1) : LD B,A : LD A,(IX+5) : ADD A,B : LD (IX+1),A
+    LD A,(IX+2) : LD B,A : LD A,(IX+6) : ADD A,B : LD (IX+2),A
+
+    LD A,(IX+4) : ADD A,A : ADD A,A : ADD A,A : ADD A,A
+    LD C,A : LD B,0
+    LD HL,FLYER_SPRITE_ATTRS : ADD HL,BC
+    LD A,(IX+2) : LD (HL),A : INC HL
+    LD A,(IX+1) : LD (HL),A : INC HL
+    LD A,PAT_EXPLOSION : LD (HL),A : INC HL
+    LD A,EXPLOSION_COLOR : LD (HL),A : INC HL
+    LD B,3
+UOFLE_HIDE_REST:
+    LD A,209 : LD (HL),A : INC HL
+    XOR A : LD (HL),A : INC HL
+    LD (HL),A : INC HL
+    LD (HL),A : INC HL
+    DJNZ UOFLE_HIDE_REST
+    RET
+UOFL_EXPLODE_HIDE:
+    XOR A : LD (IX+0),A
+    CALL UOFL_HIDE
+    RET
+
+UOFL_HIDE:
+    LD A,(IX+4) : ADD A,A : ADD A,A : ADD A,A : ADD A,A
+    LD C,A : LD B,0
+    LD HL,FLYER_SPRITE_ATTRS : ADD HL,BC
+    LD B,4
+UOFLH_LOOP:
+    LD A,209 : LD (HL),A : INC HL
+    XOR A : LD (HL),A : INC HL
+    LD (HL),A : INC HL
+    LD (HL),A : INC HL
+    DJNZ UOFLH_LOOP
+    RET
+
+; blasts FLYER_SPRITE_ATTRS (FLYER_SLOT_COUNT*16 bytes) to hw sprite
+; slots FLYER_SPR_BASE_SLOT.. - same raw DI-wrapped OUT + 8-NOP pattern
+; as FLUSH_BIGZUM_SPRITES.
+FLUSH_FLYER_SPRITES:
+    DI
+    LD A,FLYER_SPR_BASE_SLOT*4 : OUT (99h),A
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    LD HL,FLYER_SPRITE_ATTRS
+    LD B,FLYER_SLOT_COUNT*16
+FFLS_LOOP:
+    LD A,(HL) : OUT (98h),A
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    INC HL
+    DJNZ FFLS_LOOP
+    EI
+    RET
+
+; ---------- bullet x Flyer collision: plain omnidirectional HP------------
+; ---------- decrement, full 32x32 box (no shrink specified)   ----------
+CHECK_BULLET_VS_FLYER:
+    LD IX,BULLET0_ACT : CALL CHECK_HIT_ONE_BULLET_FLYER
+    LD IX,BULLET1_ACT : CALL CHECK_HIT_ONE_BULLET_FLYER
+    LD IX,BULLET2_ACT : CALL CHECK_HIT_ONE_BULLET_FLYER
+    RET
+
+CHECK_HIT_ONE_BULLET_FLYER:
+    LD IY,FLYER_POOL
+    LD B,FLYER_SLOT_COUNT
+CHOBFL_LOOP:
+    PUSH BC
+    CALL CHECK_HIT_PAIR_FLYER
+    POP BC
+    INC IY : INC IY : INC IY : INC IY : INC IY : INC IY
+    INC IY : INC IY : INC IY : INC IY : INC IY
+    DJNZ CHOBFL_LOOP
+    RET
+
+CHECK_HIT_PAIR_FLYER:
+    LD A,(IX+0)
+    OR A
+    RET Z
+    LD A,(IY+0)
+    CP 1
+    RET NZ
+
+    LD A,(IX+2) : ADD A,A : ADD A,A : ADD A,A : LD B,A
+    LD A,(IX+3) : ADD A,A : ADD A,A : ADD A,A : LD C,A
+    LD A,(IY+1) : LD D,A
+    LD A,(IY+2) : LD E,A
+
+    LD A,B : ADD A,7 : CP D : RET C
+    LD A,D : ADD A,FLYER_COLLISION_SIZE-1 : CP B : RET C
+    LD A,C : ADD A,7 : CP E : RET C
+    LD A,E : ADD A,FLYER_COLLISION_SIZE-1 : CP C : RET C
+
+    LD A,(IX+1)
+    OR A
+    JR NZ,CHPFL_SKIP_ERASE
+    CALL ERASE_BULLET_CELL
+CHPFL_SKIP_ERASE:
+    XOR A : LD (IX+0),A
+
+    LD A,(IY+7) : DEC A : LD (IY+7),A
+    JR Z,CHPFL_DESTROY
+    LD A,FLASH_DURATION : LD (IY+10),A
+    CALL SOUND_ZUM_DEFLECT
+    RET
+CHPFL_DESTROY:
     LD A,2 : LD (IY+0),A
     LD A,EXPLOSION_DURATION : LD (IY+3),A
 
