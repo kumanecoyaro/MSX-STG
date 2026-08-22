@@ -905,13 +905,17 @@ BIGZUM_PUNCH_KNOCKBACK EQU 12
 ; the ordinary 24-cell/192px runs elsewhere) is deliberately rejected
 ; here even though Zum/BigZum would both happily spawn there.
 ;
-; "キャラ位置は３２ｘ３２の内左下２４ｘ２４な" - overrides the earlier,
-; literal "24x16" art-bounding-box description once the pattern-VRAM
-; sharing question came up: the COLLISION box (not the raw art, which
-; really is only 24x16 - TL/TR are both fully blank in sprites/
-; Etank.json, confirmed directly) is 24x24, same "collision doesn't
-; have to match the raw art bounds" precedent BIGZUM_COLLISION_SIZE/
-; HEIGHT already established.
+; collision box history: the original request's own literal "左下24x16"
+; (matching the raw art - TL/TR are both fully blank in sprites/
+; Etank.json, BL/BR together span the full bottom 32x16, confirmed
+; directly) was briefly overridden to 24x24 ("キャラ位置は３２ｘ３２の
+; 内左下２４ｘ２４な") when the pattern-VRAM sharing question came up,
+; then corrected back to 24x16 in a follow-up report ("ETankの描画も
+; おかしい...コリジョンだけ24x16") alongside the real bug that report
+; actually diagnosed (see ALLOC_BIGZUM_SLOT's own comment) - final
+; value: `ETANK_COLLISION_SIZE`=24/`ETANK_COLLISION_HEIGHT`=16, i.e.
+; the collision box now exactly matches Etank's own real art bounds
+; (unlike BigZum's own deliberately-shrunk-below-its-art box).
 ;
 ; No front/rear invincible-side rule - unlike Zum/BigZum, which both
 ; got an explicit "後ろからしか当たらない" instruction, nothing was said
@@ -954,8 +958,8 @@ ETANK_PROBE_DX EQU 16          ; horizontal-center probe offset for a 32px-wide 
 ETANK_SPAWN_COL EQU ETANK_SPAWNX+ETANK_PROBE_DX/8
 ETANK_SPAWN_INTERVAL EQU ZUM_SPAWN_INTERVAL
 ETANK_COLLISION_SIZE     EQU 24  ; width
-ETANK_COLLISION_HEIGHT   EQU 24  ; height - "キャラ位置は３２ｘ３２の内左下２４ｘ２４な"
-ETANK_COLLISION_Y_OFFSET EQU 32-ETANK_COLLISION_HEIGHT  ; =8
+ETANK_COLLISION_HEIGHT   EQU 16  ; height - "コリジョンだけ24x16" (was briefly 24, see the comment block above)
+ETANK_COLLISION_Y_OFFSET EQU 32-ETANK_COLLISION_HEIGHT  ; =16
 ETANK_HP_INIT EQU 10
 ETANK_PUSH_SPEED EQU ZUM_PUSH_SPEED  ; "自機はZum同様押される" - same push mechanic/speed as Zum's own UPDATE_TANK_ZUM_PUSH
 ; the 2 BigZum pattern-groups Etank dynamically borrows (see ALLOC_
@@ -4083,11 +4087,26 @@ BZTO_FAIL:
 
 ; same 3-condition gate as ALLOC_ZUM_SLOT (spawn-count threshold, flat
 ; terrain, free slot) plus the same instant-overlap resolution at
-; spawn - "スポーン条件は同じ".
+; spawn - "スポーン条件は同じ" - plus a 4th: refuse while Etank is
+; active. "画面がグリッチ状態...ETankの描画もおかしい" - ALLOC_ETANK_
+; SLOT already refused to spawn a NEW Etank while BigZum was active,
+; but nothing stopped a NEW BigZum from spawning while an Etank spawned
+; earlier was still alive - the two are only actually safe to share
+; PAT_BIGZUM's own VRAM (see ETANK_SLOT_SIZE's own comment) if truly
+; mutually exclusive for their WHOLE lifetimes, not just at Etank's own
+; spawn instant. Once both were simultaneously active, ALLOC_BIGZUM_
+; SLOT's own spawn-time full pattern reload silently overwrote Etank's
+; still-in-use BL/BR bytes underneath it - confirmed directly: forcing
+; Etank active then calling ALLOC_BIGZUM_SLOT let BigZum spawn anyway,
+; corrupting shared VRAM both entities were still reading from every
+; frame afterward.
 ALLOC_BIGZUM_SLOT:
     LD A,(ENEMY_SPAWN_COUNT)
     CP 10
     RET C
+    LD A,(ETANK_POOL)
+    OR A
+    RET NZ
     CALL BIGZUM_TERRAIN_OK
     OR A
     RET Z

@@ -2355,6 +2355,54 @@ with no way to tell where.
   ever directly confirm fixed, same limitation already true of the
   sprite-DMA-vs-interrupt race noted elsewhere in this file; re-flagging
   here rather than claiming certainty the emulator can't actually back.
+- **Etank's own art still rendered wrong after the freeze fix above,
+  plus a screen-wide flicker - a 2nd, genuine logic bug the freeze had
+  been masking** ("画面がグリッチ状態 緑の変な表示のスプライトが画面
+  を上から下までチラチラ高速で動いてる ETankの描画もおかしい"), with a
+  follow-up correcting the collision box back down: "32x32のJsonデータ
+  の内 下の32x16を使用 コリジョンだけ24x16" (the earlier round's own
+  "左下24x24" instruction, itself a correction of the original "24x16",
+  reverted again here - final value: 24x16, matching Etank's own real
+  art bounds exactly).
+  - **Root cause**: `ALLOC_ETANK_SLOT` already refused to spawn a NEW
+    Etank while BigZum was active, but nothing symmetrically stopped a
+    NEW BigZum from spawning while an Etank spawned earlier was still
+    alive - dynamically sharing `PAT_BIGZUM`'s own VRAM (see `ETANK_
+    SLOT_SIZE`'s own comment) is only actually safe if the 2 are
+    mutually exclusive for their WHOLE lifetimes, not just at Etank's
+    own spawn instant. Once both were simultaneously active (easily
+    reached in real, longer play - the reported screenshot showed
+    score1200/tick220, well past either one's own first natural spawn),
+    `ALLOC_BIGZUM_SLOT`'s own spawn-time full pattern reload silently
+    overwrote Etank's still-in-use BL/BR bytes underneath it every time
+    BigZum (re)spawned - confirmed directly: forcing Etank active then
+    calling `ALLOC_BIGZUM_SLOT` let BigZum spawn anyway HP=5, corrupting
+    the shared VRAM both entities were still reading from every frame
+    afterward. This never reproduced in any of this round's own
+    regression runs because none of them ran long enough (or via the
+    right RNG draws) for both to naturally coexist at once - a real gap
+    in that coverage, not a hardware-only limitation like the STACKTOP
+    issue above. Fixed with the missing 4th gate, mirroring `ALLOC_
+    ETANK_SLOT`'s own shape: `ALLOC_BIGZUM_SLOT` now also refuses to
+    spawn while `ETANK_POOL`'s own ACT is nonzero.
+  - **Collision box reverted to 24x16**: `ETANK_COLLISION_HEIGHT` 24->16,
+    `ETANK_COLLISION_Y_OFFSET` 8->16 (=32-16) - now exactly matches
+    Etank's own real art bounds (TL/TR blank, BL/BR span the full
+    bottom 32x16) instead of deliberately extending past them the way
+    BigZum's own box does.
+  Verified: a new targeted test (same isolated-subroutine technique)
+  confirms `ALLOC_BIGZUM_SLOT` now refuses to spawn while Etank is
+  active, and that a refused spawn attempt never touches `PAT_BIGZUM`'s
+  own VRAM at all (no more silent Etank-clobbering reload) - the full
+  existing 29-case suite (updated for the new collision Y offset) plus
+  this new case, all 31 pass. Full regression re-run: 20000-frame
+  random-input sweep + 8000-frame idle sweep, both clean; `render_
+  check.py` clean; forced-spawn render still shows clean Etank/Flyer
+  art. The specific "both active at once" condition this bug needed is
+  now provably unreachable (both `ALLOC_*` routines refuse the other's
+  presence), so this class of corruption can't recur regardless of how
+  long a real play session runs - not something the earlier rounds'
+  shorter/luckier regression sweeps could have caught on their own.
 
 ## Bugs found and fixed while building this
 
