@@ -180,6 +180,23 @@ def build_track():
         emit_flat(FLAT_RUN)
         emit_climb()
     emit_flat(FLAT_RUN)
+    # Extra flat cells merged into the tier-3 apex run above (still tier
+    # 3, no transition between this and the emit_flat(FLAT_RUN) just
+    # before or the loop's own first emit_flat(FLAT_RUN) just after -
+    # same "no transition = one continuous run" mechanic that already
+    # produces the existing 48-cell/384px apex run) - a slow ground
+    # enemy that doesn't elevation-follow terrain at all (Etank) needs
+    # to stay on flat ground for its *entire* crossing, not just at
+    # spawn, so the flat window has to outlast its full on-screen
+    # lifetime plus however far the terrain itself scrolls meanwhile -
+    # "地形上り下りはしないので長い平地のみスポーン 合わせて通過に
+    # 必要な長い平地を設置". Widened well past the original 384px with
+    # margin (44 extra cells = 352px, total run now 92 cells = 736px,
+    # since it also merges with the descend loop's own leading
+    # emit_flat(FLAT_RUN) right after this call, still tier 3 - verified
+    # directly: the row0-solid steady-flat run spans columns 78-169,
+    # 92 cells) rather than cutting it close.
+    emit_flat(44)
     for _ in range(3):
         emit_flat(FLAT_RUN)
         emit_descend()
@@ -190,9 +207,21 @@ def build_track():
     # shallow 22.5-degree per-tier slope instead of a steep 45-degree
     # one: chaining them directly still reads as one continuous
     # climbable ramp instead of a sheer wall. Then the same going down.
+    #
+    # This is the ONLY other tier-3(apex)/row0-solid stretch in the
+    # whole track besides the widened run above - Etank's own spawn
+    # gate (ETANK_TERRAIN_OK in combined_test.asm) can only probe
+    # "is the currently-visible surface tier 0 (topmost/apex)" at
+    # runtime, with no way to tell which of the 2 occurrences it's
+    # looking at, so leaving this one at the original short FLAT_RUN
+    # (24 cells/192px) would let Etank spawn here too and run out of
+    # matching flat ground mid-crossing exactly the way the widened
+    # run above was fixing. Widened to the same 92-cell length as that
+    # run instead of a fresh, differently-tuned number, so both tier-3
+    # windows carry equal safety margin.
     for _ in range(3):
         emit_climb()
-    emit_flat(FLAT_RUN)
+    emit_flat(92)
     for _ in range(3):
         emit_descend()
     emit_flat(FLAT_RUN)
