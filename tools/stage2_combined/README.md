@@ -2421,6 +2421,63 @@ with no way to tell where.
   byte for both a live F shot (fg=14) and a live U shot (hw sprite
   color=14) after firing in each direction. Full regression: 20000-
   frame random-input sweep, no crash/stall; `render_check.py` clean.
+- **Shake-off still never actually happened, plus bullet color to light
+  red**:
+  > 振り払いが発生しないな
+  > バレットカラーをライトレッドに変更
+  - **Shake-off, root cause #1 (STATE-scoping)**: the previous round's
+    counter lived in +11 and was only ever incremented inside `UPDATE_
+    ONE_BIGZUM`'s `STATE`=0 (approach) branch. In practice the tank
+    lands on top while BigZum is in ANY state, and once it lands during
+    `STATE`=2 (punch), `UOBZ_PUNCH_MOVE`'s own "already in contact -
+    hold" branch keeps it there indefinitely - an overlapping tank never
+    separates far enough to trip the give-up-range check - so the
+    `STATE`=0-only counter simply never ran at all in what's actually
+    the most common real scenario (punch range and stand-on-top range
+    overlap almost entirely). Moved the whole check to the very top of
+    `UPDATE_ONE_BIGZUM`, before any state dispatch (only skipped while
+    already `STATE`=1/jumping, so an in-progress arc is never
+    interrupted), and moved the counter off +11 onto +6 (`DY`, explosion
+    drift - idle outside `ACT`=2) so it no longer collides with +11's
+    real job as `PUNCH_COOLDOWN` during `STATE`=2; +11 now serves only
+    as the shake-off-jump-in-progress marker.
+  - **Shake-off, root cause #2 (flickering `TANK_ZUM_STANDING`)**: fixing
+    #1 alone still wasn't enough - traced with a corrected natural-flow
+    simulation (tank genuinely parked via real `JUMP_ACTIVE`/overlap
+    conditions, BigZum pinned to `STATE`=2) and found `TANK_ZUM_STANDING`
+    itself isn't held at 1 continuously while parked: `UPDATE_JUMP`'s own
+    auto-land replay (`JUMP_LANDING_RESTART_FRAME`) bounces the jump
+    table back to its peak and eases it down every ~17 frames, and
+    `UPDATE_TANK_BIGZUM_STAND`'s clamp only sets `TANK_ZUM_STANDING`=1
+    for the handful of frames near the bottom of each bounce - traced
+    directly as a repeating `1111111000000000` pattern (~7-8 standing
+    frames out of every ~17). The counter's own "reset to 0 on any
+    non-standing frame" rule threw away all that progress every single
+    cycle, long before ever reaching `BIGZUM_SHAKE_STAND_FRAMES`(90).
+    Fixed by resetting the counter only when `JUMP_ACTIVE` itself drops
+    to 0 (the codebase's own existing definition of "no longer parked at
+    all" - see `UPDATE_JUMP`'s own landing-restart comment) rather than
+    on every momentary non-standing frame; while `JUMP_ACTIVE` stays 1
+    but the current frame isn't clamped, the counter just holds instead
+    of losing progress, so it now accumulates cumulatively across bounce
+    cycles.
+  - **Bullet color**: gray(14) -> light red(9) in the same 3 places
+    changed to gray last round - "バレットカラーをライトレッドに変更".
+  Verified: 11 isolated-subroutine unit tests against the new field
+  layout (counter increments under `STATE`=2 specifically, resets only
+  when not standing in isolation, threshold trigger sets `STATE`=1/
+  marker/clears counter, `STATE`=1 skips the check entirely leaving the
+  counter untouched, a normal jump via `UOBZ_PAUSE_DECIDE_JUMP` still
+  clears a stale marker, shake-off jump moves right regardless of tank
+  position) - all pass. A corrected natural-flow simulation (BigZum
+  pinned to `STATE`=2, tank genuinely parked via real `JUMP_ACTIVE`/
+  overlap, no manual flag forcing) now reaches the shake-off trigger at
+  frame 184 and BigZum visibly relocates right (X 63->123) - the earlier
+  (now-superseded) simulation attempt was itself confounded by not
+  accounting for the bounce pattern and wrongly read as "still broken."
+  Full regression: 20000-frame random-input sweep, 20000-frame idle
+  sweep, existing Flyer/terrain targeted suites, all no crash/stall;
+  `render_check.py` clean.
 
 ## Bugs found and fixed while building this
 

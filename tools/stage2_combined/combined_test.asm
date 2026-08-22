@@ -183,12 +183,13 @@ BULLETF_L_ROCK_CODE EQU 98
 ; any real terrain code) rather than by changing that shared module.
 ; ROCK_COLORBYTE's bg nibble must track ROCK_COLOR's own bg whenever
 ; that changes (was 01Ah/bg10 - missed when ROCK_COLOR moved to bg11,
-; fixed alongside the row18/19 change below). fg was black(1), now
-; gray(14/0xE) - "バレットUとFの変更 カラーもグレーに".
+; fixed alongside the row18/19 change below). fg was black(1), then
+; gray(14/0xE) - "バレットUとFの変更 カラーもグレーに" - now light
+; red(9) - "バレットカラーをライトレッドに変更".
 BULLET_SKY_COLORADDR  EQU 200Bh
 BULLET_ROCK_COLORADDR EQU 200Ch
-BULLET_SKY_COLORBYTE  EQU 0E5h
-BULLET_ROCK_COLORBYTE EQU 0EBh
+BULLET_SKY_COLORBYTE  EQU 095h
+BULLET_ROCK_COLORBYTE EQU 09Bh
 
 ; ---------- diagonal/U shot, now a hardware sprite ----------
 ; "で、弾は斜のみスプライトに変更 水平は今のままで 伴って斜めうちの
@@ -206,7 +207,7 @@ BULLET_ROCK_COLORBYTE EQU 0EBh
 BULLET_U_SPR_BASE_SLOT EQU 7    ; hw sprite slots7-9, right after the enemy pool's 4-6
 PAT_BULLETU    EQU 140          ; right after PAT_EXPLOSION(136-139)
 PAT_BULLETU_L  EQU 144
-BULLET_U_COLOR EQU 14           ; gray, same fg BulletF's BG version now uses - "カラーもグレーに"
+BULLET_U_COLOR EQU 9            ; light red, same fg BulletF's BG version now uses - "バレットカラーをライトレッドに変更" (was gray/14)
 BULLET_U_SPRITE_ATTRS EQU 0F2E0h   ; 12 bytes: Y,X,pat,col x3, staged same as ENEMY_SPRITE_ATTRS
 
 JOY_TRIGA     EQU 0F22Bh
@@ -782,7 +783,7 @@ ZUM_PUSH_SPEED EQU 6
 ; even at 13 bytes/slot, since only 1 slot is ever actually used now
 ; (BIGZUM_SLOT_COUNT=1 below) - no address renumbering of anything
 ; downstream of BIGZUM_POOL needed.
-BIGZUM_SLOT_SIZE  EQU 13   ; +0 ACT,+1 X,+2 Y,+3 TIMER(explosion/pause countdown/punch-pose-frames - all mutually exclusive across states),+4 SPRIDX,+5/+6 DX/DY(explosion drift),+7 STATE(0=approach,3=pause,1=jump,2=punch),+8 HP,+9 FACING(0=normal facing left,1=flipped facing right),+10 JUMPFRAME,+11 PUNCH_COOLDOWN,+12 FLASH_TIMER
+BIGZUM_SLOT_SIZE  EQU 13   ; +0 ACT,+1 X,+2 Y,+3 TIMER(explosion/pause countdown/punch-pose-frames - all mutually exclusive across states),+4 SPRIDX,+5/+6 DX/DY(explosion drift while ACT=2; +6 doubles as the shake-off stand-timer while ACT=1 - see BIGZUM_SHAKE_STAND_FRAMES),+7 STATE(0=approach,3=pause,1=jump,2=punch),+8 HP,+9 FACING(0=normal facing left,1=flipped facing right),+10 JUMPFRAME,+11 PUNCH_COOLDOWN(STATE=2)/shake-off-jump marker(STATE=1),+12 FLASH_TIMER
 ; "BigZumは１体のみ 横並びあるから" - was 2 (mistakenly assumed to
 ; match Zum's own concurrent limit just because "スポーン条件は同じ" -
 ; corrected: BigZum's own side-by-side limit is 1, distinct from
@@ -914,19 +915,20 @@ BIGZUM_PUNCH_KNOCKBACK EQU 12
 ; auto-land-on-top clamp (JUMP_LANDING_RESTART_FRAME) keeps JUMP_ACTIVE
 ; perpetually re-engaged while the tank stays parked, and nothing on
 ; BigZum's own side ever reacted to that - a player who just sits there
-; could ride forever. Tracked in +11 (PUNCH_COOLDOWN, otherwise idle
-; while STATE=0 - never both at once, same "state-scoped field reuse"
-; precedent as +3/+5 elsewhere in this slot) as a running "how many
+; could ride forever. Tracked in +6 (DY, explosion drift - fully idle
+; here, only read/written during ACT=2) as a running "how many
 ; consecutive frames has the tank been standing on me" counter, checked
-; only while STATE=0 (approach) to avoid colliding with +11's own
-; PUNCH_COOLDOWN duty during STATE=2. Once it reaches this many frames,
-; forces STATE=1 (jump) with a distinct "shake-off" marker (also +11,
-; repurposed the instant the jump starts - see UOBZ_JUMP_MOVE's own
-; check) that makes the arc always move right regardless of the tank's
-; own position, instead of the ordinary chase-toward-the-tank jump -
-; jumping straight up while the tank sits centered on top wouldn't
-; actually carry it anywhere. Untuned/inferred - "そのまま動かないと"
-; didn't give a specific duration.
+; at the very top of UPDATE_ONE_BIGZUM regardless of STATE (a 1st
+; attempt scoped this to STATE=0 only and never actually fired in
+; practice - "振り払いが発生しないな" - see UPDATE_ONE_BIGZUM's own
+; comment for why). Once it reaches this many frames, forces STATE=1
+; (jump) with a distinct "shake-off" marker in +11 (PUNCH_COOLDOWN,
+; otherwise idle outside STATE=2, so this doesn't collide with its own
+; real duty there) that makes the arc always move right regardless of
+; the tank's own position, instead of the ordinary chase-toward-the-
+; tank jump - jumping straight up while the tank sits centered on top
+; wouldn't actually carry it anywhere. Untuned/inferred - "そのまま動
+; かないと" didn't give a specific duration.
 BIGZUM_SHAKE_STAND_FRAMES EQU 90
 
 ; ---------- Flyer flying enemy (see UPDATE_FLYER_ALL) ----------
@@ -4113,6 +4115,70 @@ UPDATE_ONE_BIGZUM:
     OR A
     RET Z
 
+    ; "BigZumの上に自機が乗ったそのまま動かないとずっと乗りっぱなしな
+    ; ので右にジャンプして振り払うように" - see BIGZUM_SHAKE_STAND_
+    ; FRAMES's own comment. TANK_ZUM_STANDING is already fresh for this
+    ; frame (UPDATE_TANK_BIGZUM_STAND runs earlier in MAINLOOP).
+    ;
+    ; "振り払いが発生しないな" - the first attempt scoped this check to
+    ; STATE=0 (approach) only, reusing +11(PUNCH_COOLDOWN) as the
+    ; counter there - but the tank can end up parked on top while
+    ; BigZum is in ANY state, and once it lands during STATE=2 (punch),
+    ; UOBZ_PUNCH_MOVE's own "already in contact - hold" branch keeps it
+    ; there indefinitely (an overlapping tank never separates far enough
+    ; to trip the give-up-range check), so the STATE=0-only version
+    ; simply never got a chance to run at all in that case - the most
+    ; likely real scenario, since punch range and stand-on-top range
+    ; overlap almost entirely. Moved to the very top of this routine,
+    ; before ANY state dispatch, so it can preempt approach/pause/punch/
+    ; flip-pause alike - only skipped while STATE is already 1 (jumping)
+    ; so an in-progress jump (shake-off or ordinary) is never interrupted
+    ; mid-arc. Also moved off +11 onto +6 (DY, explosion drift - fully
+    ; idle here, only read/written during ACT=2) so it no longer
+    ; conflicts with +11's own real job as PUNCH_COOLDOWN during STATE=2
+    ; - +11 now serves only as the shake-off-jump-in-progress marker,
+    ; set at the transition below and read by UOBZ_JUMP_MOVE, decoupled
+    ; from the counter that leads up to it.
+    LD A,(IX+7)
+    CP 1
+    JR Z,UOBZ_SHAKE_CHECK_DONE
+    ; "振り払いが発生しないな" (round 2) - even after the STATE-scoping fix
+    ; above, TANK_ZUM_STANDING itself isn't held at 1 continuously while
+    ; genuinely parked: UPDATE_JUMP's own auto-land replay
+    ; (JUMP_LANDING_RESTART_FRAME) bounces JUMP_Y_OFFSET back up to the
+    ; table's peak and eases it back down every ~17 frames, and the
+    ; BigZum-stand clamp (UPDATE_TANK_BIGZUM_STAND) only sets
+    ; TANK_ZUM_STANDING=1 for the handful of frames near the bottom of
+    ; each bounce - traced as a repeating "11111110000000000" pattern,
+    ; ~7-8 standing frames out of every ~17. A reset-the-counter-on-any-
+    ; miss design (as below) never got anywhere close to
+    ; BIGZUM_SHAKE_STAND_FRAMES(90) before the very next non-standing
+    ; frame zeroed it again. JUMP_ACTIVE, not the per-frame
+    ; TANK_ZUM_STANDING flag, is the codebase's own existing definition
+    ; of "still parked" (see UPDATE_JUMP's own landing-restart comment) -
+    ; it stays 1 continuously across the whole bounce cycle, only
+    ; dropping to 0 once the tank truly leaves. So: reset the counter
+    ; only when JUMP_ACTIVE is 0; while JUMP_ACTIVE stays 1 but this
+    ; particular frame isn't clamped, just hold the counter instead of
+    ; losing progress, so it still accumulates across bounce cycles.
+    LD A,(TANK_ZUM_STANDING)
+    OR A
+    JR Z,UOBZ_SHAKE_MAYBE_RESET
+    LD A,(IX+6) : INC A : LD (IX+6),A
+    CP BIGZUM_SHAKE_STAND_FRAMES
+    JR C,UOBZ_SHAKE_CHECK_DONE
+    LD A,1 : LD (IX+7),A           ; STATE=1 (jump)
+    XOR A : LD (IX+10),A           ; JUMPFRAME=0
+    LD (IX+6),A                    ; counter done its job - clear it (A=0 from the XOR above)
+    LD A,1 : LD (IX+11),A          ; shake-off marker, checked by UOBZ_JUMP_MOVE
+    JP UOBZ_JUMP_MOVE
+UOBZ_SHAKE_MAYBE_RESET:
+    LD A,(JUMP_ACTIVE)
+    OR A
+    JR NZ,UOBZ_SHAKE_CHECK_DONE     ; still mid bounce-cycle - hold, don't lose progress
+    XOR A : LD (IX+6),A             ; genuinely not parked at all - reset
+UOBZ_SHAKE_CHECK_DONE:
+
     LD A,(IX+7)
     CP 1
     JP Z,UOBZ_JUMP_MOVE
@@ -4126,24 +4192,6 @@ UPDATE_ONE_BIGZUM:
     JP Z,UOBZ_PUNCH_MOVE
     CP 4
     JP Z,UOBZ_FLIP_PAUSE_MOVE
-
-    ; "BigZumの上に自機が乗ったそのまま動かないとずっと乗りっぱなしな
-    ; ので右にジャンプして振り払うように" - see BIGZUM_SHAKE_STAND_
-    ; FRAMES's own comment. TANK_ZUM_STANDING is already fresh for this
-    ; frame (UPDATE_TANK_BIGZUM_STAND runs earlier in MAINLOOP).
-    LD A,(TANK_ZUM_STANDING)
-    OR A
-    JR Z,UOBZ_STAND_TIMER_RESET
-    LD A,(IX+11) : INC A : LD (IX+11),A
-    CP BIGZUM_SHAKE_STAND_FRAMES
-    JR C,UOBZ_STAND_TIMER_DONE
-    LD A,1 : LD (IX+7),A           ; STATE=1 (jump)
-    XOR A : LD (IX+10),A           ; JUMPFRAME=0
-    LD A,1 : LD (IX+11),A          ; shake-off marker, checked by UOBZ_JUMP_MOVE
-    JP UOBZ_JUMP_MOVE
-UOBZ_STAND_TIMER_RESET:
-    XOR A : LD (IX+11),A
-UOBZ_STAND_TIMER_DONE:
 
     ; STATE=0: approaching - identical distance-indexed decel to Zum's
     ; own charge leg (ZUM_DETECT_RANGE/ZUM_MID_RANGE/ZUM_DECEL_TABLE) -
