@@ -16,7 +16,5 @@ tools/stage2_tank/tank_poses.png
 tools/stage2_combined/combined0.ppm
 tools/stage2_combined/combined1.ppm
 tools/stage2_combined/combined_check.png
-tools/stage2_combined/forced_etank_flyer.ppm
-tools/stage2_combined/forced_etank_flyer.png
 tools/stage2_combined/bullet_tables.inc.asm
 tools/stage2_combined/enemy_tables.inc.asm
