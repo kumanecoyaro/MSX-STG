@@ -946,6 +946,16 @@ FLYER_CRUISE_Y EQU 64   ; fixed cruise height (well above the terrain rows) - un
 FLYER_SPEED    EQU 2    ; px/frame, both cruise and homing legs - "速度は2"
 FLYER_VY       EQU 1    ; px/frame vertical homing step, locked at reversal - untuned/inferred, no vertical speed was specified
 FLYER_CLEAR_Y  EQU 32   ; px vertical clearance from the tank before switching to exit - untuned/inferred, matches both sprites' own 32px height ("自機に被らない" read as "no longer overlapping" in that sense)
+; hard cap on how far a descending Flyer is ever allowed to sink,
+; independent of the tank's own current tier - "右端に帰ってく時に地形
+; に突っ込んでる 地形に入らないように". Flyer_Y+32(its own sprite
+; height)=144 stays comfortably above the highest possible terrain
+; ground line (160, tier0 - see TANK_GROUND_OFFSET's own ground_line=
+; (20+tier)*8 derivation) with margin, even though the tank-relative
+; FLYER_CLEAR_Y check alone could otherwise push a descending Flyer as
+; deep as Tank_Y(156, tier3)+32=188, well past the ground - see UOFL_
+; HOME_MOVE's own comment for the full story.
+FLYER_DESCEND_LIMIT_Y EQU 112
 FLYER_HP_INIT  EQU 4    ; carried over from the original (reverted) request's own "耐久値4", not contradicted this round
 FLYER_COLLISION_SIZE EQU 32  ; full 32x32 canvas - no shrink specified
 
@@ -4902,6 +4912,25 @@ UOFL_CRUISE_STEP:
 ; (+6 negative, stored as 0-FLYER_VY) needs Flyer_Y<=Tank_Y-FLYER_CLEAR_Y
 ; (passed ABOVE and cleared it) - either way this can only become true
 ; after actually crossing the tank's own Y in that direction, not before.
+;
+; "右端に帰ってく時に地形に突っ込んでる 地形に入らないように" - the fix
+; above let a descending Flyer overshoot to Tank_Y+FLYER_CLEAR_Y before
+; exiting, but the tank's own lowest tier sits at Y=156 - +32 lands at
+; Y=188, already past the true ground line (max 184, see TANK_GROUND_
+; OFFSET's own derivation: ground_line=(20+tier)*8, worst case 184) -
+; PHASE=2's own fixed-Y rightward flight then stayed AT that sunk-in-
+; terrain depth the whole way to the edge. Descending is now additionally
+; hard-capped at FLYER_DESCEND_LIMIT_Y(112) regardless of the tank's own
+; Y - Flyer_Y+32(its own sprite height)=144, still comfortably above the
+; highest possible ground line(160, tier0) with margin - so a descending
+; Flyer always exits at a safe sky altitude no matter which tier the
+; tank happens to be standing on. Ascending is unaffected (moving away
+; from the ground, into the sky, never at any terrain risk) and keeps
+; the original tank-relative check. DY=0 (tank exactly level with Flyer
+; at the reversal instant - a rare, near-impossible tie) now also exits
+; immediately instead of looping PHASE=1 forever with X silently
+; wrapping past 255 - not itself reported, but the same class of bug.
+;
 ; No signed-flag branch (JP M/P) here - this assembler only implements
 ; Z/NZ/C/NC - so the sign of +6 is read via "CP 128" instead (FLYER_VY
 ; is always a small positive magnitude, so its negative two's-complement
@@ -4913,9 +4942,18 @@ UOFL_HOME_MOVE:
 
     LD A,(IX+6)
     OR A
-    JR Z,UOFL_HOME_NO_EXIT        ; DY=0 (tank was level at lock time) - never auto-exits via this path
+    JR Z,UOFL_HOME_DO_EXIT        ; DY=0 (tank was level at lock time) - nothing left to descend/ascend through, exit now
     CP 128
     JR NC,UOFL_HOME_CHECK_UP      ; DY stored >=128 -> negative -> ascending
+
+    ; descending: hard sky-altitude cap first (terrain safety, tier-
+    ; independent), then the ordinary tank-relative clear check.
+    LD A,(IX+2)
+    CP FLYER_DESCEND_LIMIT_Y+1
+    JR C,UOFL_HOME_CHECK_DOWN_TANK
+    LD A,FLYER_DESCEND_LIMIT_Y : LD (IX+2),A
+    JR UOFL_HOME_DO_EXIT
+UOFL_HOME_CHECK_DOWN_TANK:
     LD A,(TANK_Y_CUR) : ADD A,FLYER_CLEAR_Y : LD D,A
     LD A,(IX+2)
     CP D

@@ -2284,6 +2284,38 @@ with no way to tell where.
   unchanged, since the fix only changes WHEN the exit fires, not the
   other mechanics) still pass. Full regression: 20000-frame random-
   input sweep, no crash/stall; `render_check.py` clean.
+- **A descending Flyer's own exit could still land it inside the
+  terrain while flying back to the right edge** ("右端に帰ってく時に
+  地形に突っ込んでる 地形に入らないように") - the fix above let a
+  descending Flyer overshoot to `Tank_Y+FLYER_CLEAR_Y` before exiting,
+  which is safe while the tank stands on a higher tier but not on its
+  own lowest one: `Tank_Y`(156)+32=188 lands well past the true ground
+  line there (184 at worst, `(20+tier)*8` - see `TANK_GROUND_OFFSET`'s
+  own derivation), and `UOFL_EXIT_MOVE`'s own fixed-Y rightward flight
+  then stayed at that sunk-in-terrain depth the whole way to the edge.
+  Added `FLYER_DESCEND_LIMIT_Y`(112, tier-independent) as a hard cap on
+  a descending Flyer's own Y - `Flyer_Y+32`(its own sprite height)=144
+  stays comfortably above the highest possible ground line (160,
+  tier0) regardless of which tier the tank actually happens to be
+  standing on, so exiting always happens at a safe sky altitude. The
+  ordinary tank-relative clear check still applies underneath the cap
+  (whichever condition is reached first wins) so a higher-tier tank
+  still gets the original, closer clearance. Ascending is untouched
+  (moving away from the ground, no terrain risk either way). Also
+  closed a related, not-yet-reported edge case found while re-deriving
+  this: DY=0 (the tank exactly level with Flyer at the reversal
+  instant, an unlikely tie) used to leave `PHASE`=1 forever with no
+  exit condition ever true, silently wrapping `X` past 255 forever
+  instead of ever despawning - now exits immediately instead, same as
+  reaching either clearance condition. Verified: forcing the tank to
+  its own worst-case lowest tier (Y=156) before a Flyer spawn and
+  tracing frame-by-frame shows Y descending smoothly and then holding
+  exactly at 112 (never exceeding it) for the entire rightward exit
+  flight. 5 new targeted tests (the cap itself, the DY=0 fix, and that
+  ascending stays unaffected in both the "still close" and "moved
+  away" cases) all pass, alongside the existing 17. Full regression:
+  20000-frame random-input sweep, no crash/stall; `render_check.py`
+  clean.
 
 ## Bugs found and fixed while building this
 
