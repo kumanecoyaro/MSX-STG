@@ -2191,10 +2191,72 @@ with no way to tell where.
   poked slot) shows a clean cyan Flyer sprite with no corruption. Full
   regression: 20000-frame random-input sweep (`sim_dir`/`sim_trig_a`/
   `sim_trig_b`) with no crash/stall - BigZum flash/explosion and tank
-  flash all naturally observed, Flyer reached both movement phases,
-  its own flash, and was never observed active while BigZum was also
-  active; a separate 8000-frame idle sweep also clean; `render_
-  check.py` clean.
+  flash all naturally observed, Flyer reached both movement phases and
+  its own flash; a separate 8000-frame idle sweep also clean; `render_
+  check.py` clean. **Correction to the claim just above**: that same
+  sweep actually DID observe BigZum and Flyer active at the same time
+  (`ALLOC_FLYER_SLOT`'s own gate only blocks a NEW Flyer while BigZum
+  is active - nothing yet stopped a NEW BigZum from spawning while an
+  already-active Flyer was still alive, the identical asymmetric-gate
+  shape the reverted round's own Etank/BigZum bug had) - reported to
+  the user as a question rather than silently left in, and addressed
+  in the follow-up entry immediately below.
+- **Flyer's own homing reworked from continuous tracking to a locked-
+  once direction, plus BigZum/Flyer exclusivity made properly
+  bidirectional** - direct follow-up correcting both of the open items
+  from the entry above:
+  > まあ良いだろう バグは出なかった
+  > Flyerは反転時に自機には向かうが
+  > 一度方向を決定したら自機は追跡しない
+  > 自機に被らないY位置まで来たら右に消える
+  > で、BigZumが同時に出てきてる
+  > お前もしかしてまたエネミーバッファ使わず個別にやってんじゃないだろうな
+  > バッファにBigZumがあったら登録しないんだぞ
+  > てか全ての敵はスポーン条件外はそもそも登録しない
+  > そうしないと
+  > BigZumやFlayerが出続けるだろ
+  - **Homing**: PHASE=1 used to re-read `TANK_X`/`TANK_Y_CUR` and
+    re-aim every single frame - a true continuous heat-seeking track.
+    "一度方向を決定したら自機は追跡しない" - the vertical direction is
+    now decided exactly ONCE, at the instant of reversal (`UOFL_
+    CRUISE_MOVE`'s own left-edge clamp), from wherever the tank's Y
+    happened to be at that moment - stashed in +6 (idle while alive,
+    same "repurpose an otherwise-idle field" precedent used throughout
+    this file) - and simply held constant every frame afterward.
+    Horizontal movement was always a flat rightward `FLYER_SPEED` once
+    reversed anyway, so only the vertical axis needed the lock.
+    "自機に被らないY位置まで来たら右に消える" - a 3rd `PHASE` (2=exit)
+    is back: once Flyer's own Y clears the tank's own Y by more than
+    `FLYER_CLEAR_Y`(32, untuned/inferred - matches both sprites' own
+    32px height) in either direction, PHASE advances to 2 and Flyer
+    flies straight right, ignoring the tank entirely, until off the
+    right edge, then despawns - same shape the original (reverted)
+    request's own exit condition had, just re-derived from this
+    round's own simpler request rather than copied forward.
+  - **BigZum/Flyer exclusivity, now bidirectional**: `ALLOC_BIGZUM_
+    SLOT` also refuses to spawn while `FLYER_POOL` is active - the
+    missing other half of "BigZum出現時はFlyerは出ない", the same fix
+    already applied once for Etank/BigZum before the full rollback.
+    "お前もしかしてまたエネミーバッファ使わず個別にやってんじゃないだ
+    ろうな...全ての敵はスポーン条件外はそもそも登録しない" - both
+    `ALLOC_*` routines already DO gate registration strictly through
+    their own pool-buffer scan (no enemy has ever registered outside
+    that path in this file); what was actually missing was this one
+    specific cross-enemy exclusion check, now added the same way its
+    Zum/BigZum and (reverted) Etank/BigZum precedents both work: each
+    side's own `ALLOC_*` reads the OTHER pool's own ACT byte directly.
+  Verified: 17 targeted tests (isolated-subroutine calls) covering the
+  new bidirectional gate (both directions, both the refuse and the
+  allowed case), the direction-lock at reversal (tank below vs. above
+  at the instant of reversal, 2 separate cases), homing now ignoring a
+  simulated tank move after the lock (moved the tank to the opposite
+  side mid-flight and confirmed Flyer's own step didn't follow it), the
+  clearance->exit transition (both the "still close, stays homing" and
+  "far enough, switches to exit" cases), and exit-phase movement/
+  despawn - all pass. Full regression: 20000-frame random-input sweep,
+  no crash/stall, BigZum and Flyer never observed active at the same
+  time this time; 8000-frame idle sweep also clean; `render_check.py`
+  clean.
 
 ## Bugs found and fixed while building this
 

@@ -901,20 +901,33 @@ BIGZUM_PUNCH_KNOCKBACK EQU 12
 ; "BigZum出現時はFlyerは出ない 速度は2 右から出て画面左まで行き反転
 ; 自機に向かって降りてくる" - spawn gate mirrors ALLOC_ZUM_SLOT's own
 ; "BigZum出現中にZumは出さない" precedent (refuses while BIGZUM_POOL is
-; active). Speed is now an explicit 2px/frame (not inferred, unlike the
-; previous round's own untuned guess). Movement tracked in +8 PHASE:
-; 0=cruise (straight left at a fixed height, normal-facing art) until
-; it reaches the screen's own left edge; 1=home (reverses, turns to
-; face right, steps diagonally toward the tank's own current X/Y every
-; frame - "自機に向かって降りてくる" emphasizes the downward component,
-; but the tank can be anywhere vertically, so this steps toward both
-; axes, not a fixed downward-only vector). No 3rd/exit phase this round
-; - what happens once Flyer actually reaches the tank (hover in place?
-; despawn? something else?) was not specified this time (the earlier,
-; reverted round's own "自機の上まで来たら右に消える" wasn't repeated
-; here) - left as an open question rather than reinventing that detail,
-; flagged for a follow-up round.
-FLYER_SLOT_SIZE  EQU 11  ; +0 ACT,+1 X,+2 Y,+3 TIMER(explosion),+4 SPRIDX,+5/+6 DX/DY(explosion drift),+7 HP,+8 PHASE(0=cruise,1=home),+9 FACING(0=left-facing,1=right-facing/flipped),+10 FLASH_TIMER
+; active) - and, once the first test-implementation round showed BigZum
+; and Flyer visibly coexisting anyway ("で、BigZumが同時に出てきてる"),
+; made properly BIDIRECTIONAL this time: ALLOC_BIGZUM_SLOT now also
+; refuses to spawn while FLYER_POOL is active, the same fix already
+; applied once for Etank/BigZum before the full rollback - "全ての敵は
+; スポーン条件外はそもそも登録しない" (every enemy's own registration
+; must always go through its real spawn gate, no exceptions) is the
+; general principle this enforces. Speed is an explicit 2px/frame
+; ("速度は2").
+;
+; Movement tracked in +8 PHASE: 0=cruise (straight left at a fixed
+; height, normal-facing art) until it reaches the screen's own left
+; edge; 1=home; 2=exit. A first attempt at PHASE=1 re-aimed at the
+; tank's CURRENT position every single frame (a true heat-seeking
+; track) - corrected per direct instruction: "Flyerは反転時に自機には
+; 向かうが 一度方向を決定したら自機は追跡しない" - the homing DIRECTION
+; is decided ONCE, at the instant of reversal (a fixed vertical step
+; sign toward wherever the tank was at that moment, stashed in +6 -
+; idle while alive, same "repurpose an otherwise-idle field" precedent
+; as ZacoII's own E_DX/E_DY), then held constant every frame after -
+; Flyer flies a straight diagonal line, not a continuously-retargeting
+; missile. "自機に被らないY位置まで来たら右に消える" - once Flyer's own
+; Y clears the tank's by more than FLYER_CLEAR_Y px in either
+; direction (no longer visually overlapping it), PHASE advances to 2
+; (exit): straight right only, ignoring the tank entirely, until off
+; the right edge, then despawns.
+FLYER_SLOT_SIZE  EQU 11  ; +0 ACT,+1 X,+2 Y,+3 TIMER(explosion),+4 SPRIDX,+5 DX(explosion drift)/+6 DY(explosion drift while ACT=2, locked vertical homing step while ACT=1),+7 HP,+8 PHASE(0=cruise,1=home,2=exit),+9 FACING(0=left-facing,1=right-facing/flipped),+10 FLASH_TIMER
 FLYER_SLOT_COUNT EQU 1
 ; strictly below the real 0F380h MSX BIOS-work-area boundary (see
 ; STACKTOP's own comment - this exact mistake caused a real-hardware
@@ -931,7 +944,8 @@ FLYER_SPAWN_INTERVAL EQU ZUM_SPAWN_INTERVAL  ; same untuned-but-reasonable value
 FLYER_SPAWNX   EQU 240
 FLYER_CRUISE_Y EQU 64   ; fixed cruise height (well above the terrain rows) - untuned/inferred, no height was specified
 FLYER_SPEED    EQU 2    ; px/frame, both cruise and homing legs - "速度は2"
-FLYER_VY       EQU 1    ; px/frame vertical homing step while closing in on the tank's own Y - untuned/inferred, no vertical speed was specified
+FLYER_VY       EQU 1    ; px/frame vertical homing step, locked at reversal - untuned/inferred, no vertical speed was specified
+FLYER_CLEAR_Y  EQU 32   ; px vertical clearance from the tank before switching to exit - untuned/inferred, matches both sprites' own 32px height ("自機に被らない" read as "no longer overlapping" in that sense)
 FLYER_HP_INIT  EQU 4    ; carried over from the original (reverted) request's own "耐久値4", not contradicted this round
 FLYER_COLLISION_SIZE EQU 32  ; full 32x32 canvas - no shrink specified
 
@@ -3984,11 +3998,18 @@ BZTO_FAIL:
 
 ; same 3-condition gate as ALLOC_ZUM_SLOT (spawn-count threshold, flat
 ; terrain, free slot) plus the same instant-overlap resolution at
-; spawn - "スポーン条件は同じ".
+; spawn - "スポーン条件は同じ" - plus a 4th: refuse while Flyer is
+; active, the other half of "BigZum出現時はFlyerは出ない"'s own
+; bidirectional exclusion (see FLYER_SLOT_SIZE's own comment - a
+; Flyer-active BigZum spawn was directly observed in testing before
+; this gate existed).
 ALLOC_BIGZUM_SLOT:
     LD A,(ENEMY_SPAWN_COUNT)
     CP 10
     RET C
+    LD A,(FLYER_POOL)
+    OR A
+    RET NZ
     CALL BIGZUM_TERRAIN_OK
     OR A
     RET Z
@@ -4815,8 +4836,7 @@ AFLS_FOUND:
 
 ; IX = slot base. ACT=2: same drift-then-hide explosion shape as every
 ; other exploding entity here. ACT=1: dispatches on PHASE(+8) - see
-; FLYER_SLOT_SIZE's own comment for the 2-phase overview (no exit phase
-; this round).
+; FLYER_SLOT_SIZE's own comment for the full 3-phase overview.
 UPDATE_ONE_FLYER:
     LD A,(IX+0)
     CP 2
@@ -4825,51 +4845,79 @@ UPDATE_ONE_FLYER:
     RET Z
 
     LD A,(IX+8)
+    CP 2
+    JP Z,UOFL_EXIT_MOVE
     CP 1
     JP Z,UOFL_HOME_MOVE
 
 ; PHASE=0: cruise left at a fixed height/speed, normal (left-facing)
 ; art - "右から出て画面左まで行き". Once it can no longer subtract this
 ; frame's own step without underflowing, clamp to X=0 and reverse into
-; homing instead of despawning - "反転".
+; homing instead of despawning - "反転". Locks the vertical homing
+; direction (+6) from the tank's own Y at this exact instant, once -
+; "一度方向を決定したら自機は追跡しない" - never recomputed again after
+; this, even though PHASE=1 keeps reading it every frame.
 UOFL_CRUISE_MOVE:
     LD A,(IX+1)
     CP FLYER_SPEED
     JR NC,UOFL_CRUISE_STEP
     XOR A : LD (IX+1),A
     LD A,1 : LD (IX+8),A
+    LD A,(IX+2) : LD D,A
+    LD A,(TANK_Y_CUR)
+    CP D
+    JR Z,UOFL_LOCK_DY_ZERO
+    JR C,UOFL_LOCK_DY_UP
+    LD A,FLYER_VY
+    JR UOFL_LOCK_DY_SET
+UOFL_LOCK_DY_UP:
+    XOR A : SUB FLYER_VY
+    JR UOFL_LOCK_DY_SET
+UOFL_LOCK_DY_ZERO:
+    XOR A
+UOFL_LOCK_DY_SET:
+    LD (IX+6),A
     JP UOFL_DRAW
 UOFL_CRUISE_STEP:
     LD A,(IX+1) : SUB FLYER_SPEED : LD (IX+1),A
     JP UOFL_DRAW
 
-; PHASE=1: home diagonally toward the tank's own current X/Y -
-; "自機に向かって降りてくる" - steps both axes toward the tank every
-; frame, indefinitely (no exit condition this round - see FLYER_SLOT_
-; SIZE's own comment).
+; PHASE=1: fly a straight diagonal line - X always rightward at
+; FLYER_SPEED, Y by the FIXED step locked in +6 at reversal time (never
+; re-read from TANK_Y_CUR again) - "一度方向を決定したら自機は追跡しな
+; い". Once vertically clear of the tank by more than FLYER_CLEAR_Y in
+; either direction, "自機に被らないY位置まで来たら右に消える" - advance
+; to PHASE=2 and stop tracking Y at all from then on.
 UOFL_HOME_MOVE:
     LD A,1 : LD (IX+9),A          ; right-facing while homing
-    LD A,(IX+1) : LD D,A
-    LD A,(TANK_X)
-    CP D
-    JR Z,UOFL_HOME_X_DONE
-    JR C,UOFL_HOME_X_LEFT
     LD A,(IX+1) : ADD A,FLYER_SPEED : LD (IX+1),A
-    JR UOFL_HOME_X_DONE
-UOFL_HOME_X_LEFT:
-    LD A,(IX+1) : SUB FLYER_SPEED : LD (IX+1),A
-UOFL_HOME_X_DONE:
-    LD A,(IX+2) : LD D,A
-    LD A,(TANK_Y_CUR)
+    LD A,(IX+2) : LD B,A : LD A,(IX+6) : ADD A,B : LD (IX+2),A
+
+    LD A,(IX+2) : LD D,A           ; D = Flyer_Y
+    LD A,(TANK_Y_CUR) : LD E,A     ; E = Tank_Y
     CP D
-    JR Z,UOFL_HOME_Y_DONE
-    JR C,UOFL_HOME_Y_UP
-    LD A,(IX+2) : ADD A,FLYER_VY : LD (IX+2),A
-    JR UOFL_HOME_Y_DONE
-UOFL_HOME_Y_UP:
-    LD A,(IX+2) : SUB FLYER_VY : LD (IX+2),A
-UOFL_HOME_Y_DONE:
+    JR C,UOFL_HOME_FLYER_BELOW     ; Tank_Y<Flyer_Y -> Flyer below the tank; diff=Flyer_Y-Tank_Y
+    LD A,E : SUB D                 ; diff = Tank_Y-Flyer_Y
+    JR UOFL_HOME_CLEAR_CHECK
+UOFL_HOME_FLYER_BELOW:
+    LD A,D : SUB E                 ; diff = Flyer_Y-Tank_Y
+UOFL_HOME_CLEAR_CHECK:
+    CP FLYER_CLEAR_Y
+    JP C,UOFL_DRAW                 ; still within clearance - keep going
+    LD A,2 : LD (IX+8),A
     JP UOFL_DRAW
+
+; PHASE=2: straight right only, ignoring the tank entirely, until off
+; the right edge, then despawns - same "CP FLYER_SPAWNX" convention as
+; UOZ_FLEE_MOVE's own off-right-edge despawn.
+UOFL_EXIT_MOVE:
+    LD A,1 : LD (IX+9),A
+    LD A,(IX+1) : ADD A,FLYER_SPEED : LD (IX+1),A
+    CP FLYER_SPAWNX
+    JP C,UOFL_DRAW
+    XOR A : LD (IX+0),A
+    CALL UOFL_HIDE
+    RET
 
 UOFL_DRAW:
     LD A,(IX+9)
