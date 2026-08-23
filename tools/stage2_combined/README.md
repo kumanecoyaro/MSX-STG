@@ -3779,55 +3779,6 @@ with no way to tell where.
   (smaller) windows - and a re-rendered frame after the fix still shows
   correct, uncorrupted art.
 
-- **The boss-specific fix above didn't touch the real, pre-existing
-  cause - found by a screenshot proving it wasn't boss-specific at
-  all**: "変わってないな スクショ見ればわかる 殆どの表示は欠けてない
-  が 例えば8フレに1フレくらいこうなってる 位置は狂ってないようには見
-  えるが それまでの敵のスプライト消し忘れとかかもな", with a
-  screenshot showing a torn/jagged enemy sprite at `GAME_TICK`=167 -
-  nowhere near `BOSS_SPAWN_TICK`(999), proving the boss's own code
-  couldn't be the cause of THAT particular frame's corruption at all
-  (it doesn't even exist yet at tick167). Audited every `CALL LDIRVM`
-  in the file for how often each one actually runs: every INIT-time one
-  is a non-issue (nothing else is happening yet), the rare ones
-  (`CHECK_NIGHT`'s own 2, `ALLOC_BIGZUM_SLOT`'s reload, Etank's own
-  share, the boss's own from the entry above) are all low-frequency -
-  but the terrain scroller's own 4 `NAMEBUF_T0-T3` LDIRVM calls in
-  `MAINLOOP` (128 bytes total) run completely unprotected on
-  EVERY SINGLE FRAME, unconditionally (not gated by the 8-tick divider
-  the nearby `GAME_TICK` increment uses - that's a separate, smaller
-  block; the smooth pixel-scroll redraw itself runs every frame
-  regardless) - by a wide margin the single most-exercised unprotected
-  VRAM write in the entire file, and a far more likely real source of
-  ongoing, general corruption than anything specific to the boss.
-  Matches the reported shape well: an H.TIMI landing mid-copy here
-  leaves the VDP's own write-address counter pointing wherever the
-  interrupt handler's own VDP writes left it, so the REST of that
-  LDIRVM burst (and this runs 4 times per frame) scribbles a few stray
-  bytes into whatever VRAM address that happens to be - not necessarily
-  the terrain data itself, could just as easily land on a sprite
-  attribute table or another entity's own data flushed later the same
-  frame, consistent with "位置は狂ってない...スプライト消し忘れとか
-  もな" (looked like an intact-but-misplaced/stale sprite, not a
-  logic bug in any specific entity's own hide/despawn code - because it
-  wasn't one). Fixed the same way as `FLUSH_BOSS_SPRITES`: each of the
-  4 row writes wrapped in its OWN `DI`/`EI` pair rather than 1 covering
-  all 4, keeping every individual protected window small.
-  Not directly verifiable by emulator stepping (`z80emu.py` has no
-  interrupt simulation, same limitation as every other fix in this bug
-  class). Confirmed: full suite still 180/180 (terrain rendering logic
-  itself untouched, only how the resulting bytes reach VRAM), and a
-  re-rendered early-game frame (tick~25, terrain/clouds/tank all
-  present) still shows fully correct, uncorrupted output.
-  **Still not proven this was THE cause of the reported screenshot
-  specifically** - `z80emu.py` can't confirm or deny that, only that
-  this was the most-exercised unprotected write in the file and a
-  plausible match for the symptom's own shape. If the same kind of
-  torn/jagged glitch is still visible after this, that rules this
-  theory out too and the search needs to go somewhere else - possibly
-  `CHECK_NIGHT`'s own 2 unprotected `LDIRVM` calls (lower frequency,
-  not yet fixed) or a genuine per-entity hide/despawn bug after all.
-
 ## Bugs found and fixed while building this
 
 - **Sand flickered between its own new color and Rock's, twice over**

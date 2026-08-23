@@ -159,25 +159,6 @@ Communicates in terse, often angry Japanese. Expects:
   session** (out of scope, left as a known latent issue, not "proven
   safe") — worth fixing preemptively rather than waiting for it to get
   reported the same way.
-- **That boss-specific fix wasn't the real cause of the reported
-  corruption - a screenshot at `GAME_TICK`=167 (long before the boss
-  can even exist) proved it was general/pre-existing.** Auditing every
-  `CALL LDIRVM` in the file by how often each one actually runs found
-  the real likely culprit: `MAINLOOP`'s own terrain-scroller redraw
-  (`NAMEBUF_T0`-`T3`, 4x32=128 bytes) runs completely unprotected on
-  EVERY SINGLE FRAME unconditionally — not gated by the same 8-tick
-  divider the nearby `GAME_TICK` increment uses, that's a separate
-  block — by far the most-exercised unprotected VRAM write in the
-  entire file, more likely than anything boss-specific to be hit by a
-  real H.TIMI collision. Fixed the same way (4 separate small `DI`/`EI`
-  pairs, one per row). **Still not confirmed as THE actual cause** -
-  `z80emu.py` can't prove that either way, only that it was the most
-  exercised candidate. If a torn/jagged glitch is still reported after
-  this, that rules this out too - check `CHECK_NIGHT`'s own 2
-  unprotected `LDIRVM` calls next (lower frequency, still not fixed),
-  or reconsider whether it's a genuine per-entity hide/despawn logic
-  bug rather than an interrupt-timing one after all. See README's own
-  entry for the full reasoning and the exact quote this was chasing.
 - MSX1/TMS9918 also has a real per-scanline sprite limit (max 4,
   separate from — and much stricter than — the 32-slot total budget),
   which `z80emu.py` doesn't model either. The boss's own 4x4 quadrant
