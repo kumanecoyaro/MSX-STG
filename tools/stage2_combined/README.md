@@ -3522,6 +3522,31 @@ with no way to tell where.
   unaffected, clouds frozen in place rather than erased - matches the
   design exactly.
 
+- **Night start moved again (850), and all 5 enemy types stop spawning
+  at Tick950**: "では夜の処理をTick850に変更 950で全ての敵のスポーン
+  を停止". `NIGHT_START_TICK` 900->850 (single `EQU`, same mechanism as
+  the previous entry - no other code changes needed). New
+  `ENEMY_SPAWN_STOP_TICK`(950) and a shared `SPAWN_STOPPED` helper (a
+  true 16-bit `SBC HL,DE` compare, learned from this same session's
+  `CLOUD_UPDATE_ALL` bug rather than repeating an 8-bit `CP`) - every
+  `ALLOC_*_SLOT` routine (`ALLOC_ENEMY_SLOT`/ZacoII, `ALLOC_ZUM_SLOT`,
+  `ALLOC_BIGZUM_SLOT`, `ALLOC_FLYER_SLOT`, `ALLOC_ETANK_SLOT`) now opens
+  with `CALL SPAWN_STOPPED : RET NC` before doing anything else, one
+  shared check instead of 5 separate hardcoded ones. `ALLOC_ETANK_SLOT`
+  keeps its own older `GAME_TICK>=70` gate too (unrelated, still needed)
+  - the new gate stacks on top, not in place of it.
+  Verified: new `enemy_spawn_stop_test.py` (11 checks) - direct
+  `SPAWN_STOPPED` boundary checks including the truncated-8-bit-low-byte
+  regression check (same shape as `cloud_changes_test.py`'s own), full
+  behavioral spawn-refusal checks on `ALLOC_ENEMY_SLOT`/`ALLOC_FLYER_SLOT`
+  /`ALLOC_ETANK_SLOT` (the 3 with simple-enough preconditions to set up
+  directly), and a structural check that `ALLOC_ZUM_SLOT`/
+  `ALLOC_BIGZUM_SLOT` both open with the identical guard (their own
+  preconditions - `ENEMY_SPAWN_COUNT>=10` plus overlap/terrain checks -
+  aren't worth hand-reconstructing just to re-prove the same 2-line
+  idiom already proven elsewhere). All pass; full suite (152 checks)
+  passes.
+
 ## Bugs found and fixed while building this
 
 - **Sand flickered between its own new color and Rock's, twice over**

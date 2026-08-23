@@ -396,7 +396,7 @@ LIFE_CODE           EQU 128       ; group16 (128-135)
 LIFE_COLOR          EQU 035h      ; fg3/bg5, from Life_8x8.json's own fg/bg
 LIFE_BAR_ROW        EQU 0
 LIFE_BAR_COL0       EQU 9         ; 1 blank cell past the score's own 8 (cols0-7) - "スコアから１セル空けた位置"
-; "夜になっていく演出" - once GAME_TICK reaches NIGHT_START_TICK(900),
+; "夜になっていく演出" - once GAME_TICK reaches NIGHT_START_TICK(850),
 ; every NIGHT_INTERVAL(8) further GAME_TICKs, one more sky row (top
 ; down, NIGHT_START_ROW(1, "スコアの下の行から" - the row right below
 ; the score/life-bar row0, off-by-one vs an earlier "2行目"=row-index-2
@@ -414,12 +414,20 @@ LIFE_BAR_COL0       EQU 9         ; 1 blank cell past the score's own 8 (cols0-7
 ; "done" rows). Stops once NIGHT_END_ROW itself becomes the leading
 ; row - the SkySand row is never itself blackened over, since nothing
 ; requested darkening the ground/terrain, only the sky above it.
-NIGHT_START_TICK EQU 900
+NIGHT_START_TICK EQU 850
 NIGHT_INTERVAL   EQU 8
 NIGHT_START_ROW  EQU 1
 NIGHT_END_ROW    EQU 16
 NIGHT_CODE       EQU 136       ; group17 (136-143)
 NIGHT_COLOR      EQU 015h      ; "ブラックとブルーの文字色と背景色を逆に" - fg1 black / bg5 light blue (was fg5/bg1)
+; endgame GAME_TICK timeline (all 3 share this one clock, none re-derive
+; their own): night sweep starts at NIGHT_START_TICK(850) above: every
+; ordinary enemy (ZacoII/Zum/BigZum/Flyer/Etank) stops spawning at
+; ENEMY_SPAWN_STOP_TICK(950) - SPAWN_STOPPED (below) is the single
+; shared 16-bit-safe check every ALLOC_*_SLOT routine calls, rather than
+; each re-implementing its own GAME_TICK compare; the boss spawns once
+; at BOSS_SPAWN_TICK(999) - see its own comment further down.
+ENEMY_SPAWN_STOP_TICK EQU 950
 PSG_ADDR         EQU 0A0h
 PSG_DATA         EQU 0A1h
 ; mixer (R7) values for channel A only - tone/noise B and C always
@@ -3394,6 +3402,21 @@ UEUA_LOOP:
     CALL FLUSH_ENEMY_SPRITES
     RET
 
+; shared by every ALLOC_*_SLOT below (ZacoII/Zum/BigZum/Flyer/Etank) -
+; "950で全ての敵のスポーンを停止". Returns with Carry set while spawning
+; is still allowed (GAME_TICK<ENEMY_SPAWN_STOP_TICK), Carry clear once
+; it's time to stop - callers just do `CALL SPAWN_STOPPED : RET NC`
+; before doing anything else, one shared 16-bit-safe GAME_TICK compare
+; instead of 5 separate ones (see the CLOUD_UPDATE_ALL bug this same
+; session for what happens when a GAME_TICK compare isn't genuinely
+; 16-bit).
+SPAWN_STOPPED:
+    LD HL,(GAME_TICK)
+    LD DE,ENEMY_SPAWN_STOP_TICK
+    OR A
+    SBC HL,DE
+    RET
+
 ; scans ENEMY_POOL for the first E_ACT=0 slot and spawns into it -
 ; named/shaped like src/CYBER SHMUP.asm's own ALLOC_ENEMY_SLOT (walks
 ; the buffer, doesn't check 3 named slots by hand). If every slot is
@@ -3401,6 +3424,7 @@ UEUA_LOOP:
 ; only reset on an actual spawn) - same pool-of-3 idea as
 ; TRY_SPAWN_BULLET.
 ALLOC_ENEMY_SLOT:
+    CALL SPAWN_STOPPED : RET NC
     LD HL,ENEMY_POOL
     LD B,ENEMY_SLOT_COUNT
 AES_LOOP:
@@ -3885,6 +3909,7 @@ ZTO_FAIL:
 ; type specifically. Replaced with AZS_FOUND's own instant overlap
 ; resolution below instead of refusing the spawn.
 ALLOC_ZUM_SLOT:
+    CALL SPAWN_STOPPED : RET NC
     LD A,(ENEMY_SPAWN_COUNT)
     CP 10
     RET C
@@ -4597,6 +4622,7 @@ BZTO_FAIL:
 ; 良い" (was bidirectionally excluded before; that exclusion removed
 ; from both ALLOC_FLYER_SLOT and here).
 ALLOC_BIGZUM_SLOT:
+    CALL SPAWN_STOPPED : RET NC
     LD A,(ENEMY_SPAWN_COUNT)
     CP 10
     RET C
@@ -5534,6 +5560,7 @@ UFLAU_LOOP:
 ; Etankは同時存在して良い" (was excluded against BigZum bidirectionally
 ; before; both halves removed).
 ALLOC_FLYER_SLOT:
+    CALL SPAWN_STOPPED : RET NC
     LD HL,FLYER_POOL
     LD B,FLYER_SLOT_COUNT
 AFLS_LOOP:
@@ -5952,6 +5979,7 @@ ETO_FAIL:
 ; these 3 ground enemies, nor they against it - "FlyerとBigZum、Flyer
 ; とEtankは同時存在して良い".
 ALLOC_ETANK_SLOT:
+    CALL SPAWN_STOPPED : RET NC
     LD HL,(GAME_TICK)
     LD A,H
     OR A
