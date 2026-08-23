@@ -15,7 +15,7 @@ round quotes the user's exact Japanese instruction).
 - **Regression suite**: `tests/` (in this directory, **just added to
   git this session** — previously these lived only in an ephemeral
   scratchpad and would NOT have survived a session handoff). Run
-  `python3 tests/run_all.py` for the full suite (141 checks as of this
+  `python3 tests/run_all.py` for the full suite (168 checks as of this
   commit). Each file is also independently runnable and self-reports
   `N passed, M failed`.
 - **Emulator**: `../z80emu.py` — a from-scratch Z80 interpreter used
@@ -87,9 +87,9 @@ Communicates in terse, often angry Japanese. Expects:
   instead). Its expression evaluator only supports `+ - * /`, left-to-
   right, no operator precedence and no parentheses — write constant
   expressions as plain literals rather than anything clever.
-- **Night-transition effect** (`CHECK_NIGHT`, `NIGHT_START_TICK`=900 in
-  `GAME_TICK` units as of this session, was 100): sweeps 1 more row
-  black every `NIGHT_INTERVAL`(8 as of this session, was 16)
+- **Night-transition effect** (`CHECK_NIGHT`, `NIGHT_START_TICK`=850 in
+  `GAME_TICK` units as of this session, was 100 then 900): sweeps 1 more
+  row black every `NIGHT_INTERVAL`(8 as of this session, was 16)
   `GAME_TICK`s, from `NIGHT_START_ROW`(1) through `NIGHT_END_ROW`(16,
   the SkySand row). `NIGHT_ROW` (RAM) tracks the current leading row —
   compare a row number against it (`NIGHT_ROW>=row` means "already
@@ -105,12 +105,52 @@ Communicates in terse, often angry Japanese. Expects:
   exactly this bug in `CLOUD_UPDATE_ALL`'s own cloud-stop gate when
   `NIGHT_START_TICK` moved from 100 to 900 this session — see README's
   own entry on it for the full story.
+- **Endgame `GAME_TICK` timeline, all sharing one clock**:
+  `NIGHT_START_TICK`(850) starts the night sweep above; `ENEMY_SPAWN_
+  STOP_TICK`(950) stops every ordinary enemy type (ZacoII/Zum/BigZum/
+  Flyer/Etank) from spawning again, via a shared `SPAWN_STOPPED` helper
+  every `ALLOC_*_SLOT` routine calls first — don't add a 6th hand-
+  rolled `GAME_TICK` compare for a new enemy type, call this instead;
+  `BOSS_SPAWN_TICK`(999) spawns the boss (Sasapi) once. By direct
+  instruction ("自機以外はもうスポーンしないんで オールフリー"), once
+  spawning has stopped at 950 every ordinary enemy's own hw-sprite-slot
+  and pattern-VRAM budget is fair game to reuse for later systems (the
+  boss reuses Zum/BigZum/Flyer/Etank's hw slots10-25 and BigZum's whole
+  pattern-code footprint 156-219, loaded fresh at boss-spawn time, not
+  INIT) — the real budget (32 hw sprite slots, ~256 sprite pattern
+  codes) doesn't have room for a 64x64 boss (16 hw-sprite quadrants, 64
+  pattern codes) as a NEW permanent allocation on top of everything
+  already using it.
+- **Sprite pattern VRAM has a real base offset (`SPRPAT`=0x3800h) that's
+  easy to forget** — a hardware sprite's pattern data lives at
+  `SPRPAT+pattern*8`, NOT `pattern*8` alone (that bare form lands in the
+  BG pattern table's own address space instead, silently). Missing
+  `+SPRPAT` on a fresh `LDIRVM` pattern load produces a build that
+  passes unit tests testing VRAM state against itself (comparing loaded
+  bytes against the SAME wrong address the buggy code wrote to) but
+  renders visibly wrong (leftover/garbage patterns) the moment you
+  actually render a frame — caught exactly this way building the boss
+  this session. Any pattern-load check needs to compare against
+  `SPRPAT+PAT_xxx*8`, and any new sprite needs an actual render, not
+  just unit tests, before calling it verified.
 
 ## Open items / things to watch
 
-- No known open bugs as of this handoff — the last several rounds were
-  bug reports against the night effect and horizontal-shot coloring,
-  all resolved and verified (see README's most recent entries).
+- No known open bugs as of this handoff — the boss's own SPRPAT bug
+  (see above) was caught and fixed before shipping; the last several
+  rounds before that were bug reports against the night effect and
+  horizontal-shot coloring, all resolved and verified (see README's
+  most recent entries).
+- **The boss (Sasapi) has spawn+patrol movement only** — HP is stored
+  (255) but nothing reads or decrements it, no collision box, no death/
+  explosion state, no facing flip on direction change (single art
+  orientation only). All deliberate scope for this round ("取り敢えず
+  確認") — don't assume any of it exists until asked to add it.
+- `BOSS_SPAWN_Y`(56) was read as "the sprite's own bottom edge sits 8px
+  above SkySand's top row" - an interpretation, not confirmed by a
+  screenshot yet. If a future instruction implies a different vertical
+  position, that's the thing to revisit first, same as
+  `NIGHT_START_ROW`'s own history of a wrong first guess.
 - The row-range boundaries in the night-glyph work (`DRAW_BULLET_CELL`,
   `ERASE_BULLET_CELL`) went through 2 wrong guesses before landing
   correctly — re-read the last 4-5 README entries in full before

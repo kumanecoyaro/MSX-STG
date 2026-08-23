@@ -3547,6 +3547,96 @@ with no way to tell where.
   idiom already proven elsewhere). All pass; full suite (152 checks)
   passes.
 
+- **Night start moved again (Tick850), and the boss (Sasapi) added -
+  first pass: sprite conversion, one-shot spawn at Tick999, and an
+  endless left-right patrol**: "では夜の処理をTick850に変更 950で全て
+  の敵のスポーンを停止 このあとボスの実装に移る 添付Jsonがボス Tick999
+  でスポーン Skysandの８ｐｘ上あたり 右から出現し左へ 左端に着いたら
+  反転 右端に 以降繰り返し 耐久値は255で 速度は2 取り敢えず確認", then
+  (after asking whether reusing other enemies' now-idle hw sprite/
+  pattern-VRAM budget for the boss was safe) "自機以外はもうスポーン
+  しないんで オールフリー".
+  `NIGHT_START_TICK` 900->850 (single `EQU`, no other change needed -
+  same mechanism as the last 2 rounds).
+  Sasapi (`sprites/Sasapi.json`, 64x64) converted by new `sasapi_gen.py`
+  - same TL/BL/TR/BR-per-16x16-quadrant approach as `bigzum_gen.py`/
+  `flyer_gen.py`, just a 4x4 grid of quadrants (16) instead of 2x2 (4),
+  1 facing only (no mirrored art - nothing in the spec asked for a
+  flipped look on direction change, unlike Flyer's own explicit "反転
+  も生成してくれ"; revisit if that turns out wrong). No permanent
+  pattern-code or hw-sprite-slot allocation - budget doesn't have room
+  (Flyer's own last pattern group already ends at 251, only 4 free
+  above it; hw sprite slots were down to 6 truly free of 32). Instead,
+  since every ordinary enemy type has been refused new spawns since
+  `ENEMY_SPAWN_STOP_TICK`(950) - confirmed safe to reuse their now-
+  permanently-idle budget by direct instruction above - Sasapi's 64
+  patterns (exactly matching BigZum's own whole 64-slot footprint,
+  156-219) load into `PAT_BIGZUM`'s VRAM range fresh at boss-spawn time
+  rather than at INIT (new `PAT_SASAPI EQU PAT_BIGZUM` alias), and its
+  16 hw sprite quadrants reuse slots10-25 (Zum/BigZum/Flyer/Etank's own
+  ranges) via new `BOSS_SPR_BASE_SLOT`(10) - safe as long as
+  `UPDATE_BOSS_ALL` runs after all 4 of those types' own per-frame
+  flushes in `MAINLOOP` (it does, right before `CLOUD_UPDATE_ALL`), so
+  the boss's real data is always that frame's last word on those slots.
+  New `BOSS_SPAWN_TICK`(999, a true 16-bit `SBC HL,DE` compare, not
+  another 8-bit `CP` mistake) gates a one-shot spawn - `BOSS_SPAWNX`
+  (192 = 256-64, same "screen_width - sprite_width" shape as
+  `ENEMY_SPAWNX`) and `BOSS_SPAWN_Y`(56, read as the sprite's own
+  bottom edge sitting 8px above SkySand's top row(16*8=128) - "Skysand
+  の８ｐｘ上あたり" - revisit from a screenshot if that's not the
+  intended anchor, same precedent as `NIGHT_START_ROW`'s own history).
+  `UPDATE_BOSS_ALL` then patrols `BOSS_X` between 0 and `BOSS_SPAWNX` at
+  `BOSS_SPEED`(2px/frame flat - "速度は2", same units as `FLYER_SPEED`'s
+  own "速度は2") forever, clamping and reversing `BOSS_DIR` at either
+  edge - "左端に着いたら反転 右端に 以降繰り返し" describes an unending
+  patrol, not a one-shot pass, so there's no despawn. `BOSS_HP`(255 -
+  "耐久値は255で") is stored only - no collision/damage spec was given
+  yet, so nothing reads or decrements it this round. Draws its own 16
+  quadrants via a loop over a new `BOSS_QUAD_OFFSETS` table (Y-delta/
+  X-delta/pattern-delta per quadrant) rather than 16 hand-unrolled
+  blocks like BigZum/Flyer's own draw code - worth it at 16 quadrants
+  where it wasn't at 2-4; `ADD A,(IX+d)` isn't an operand form this
+  assembler supports (`mini_z80asm.py`'s own `enc_alu_a` only handles
+  r8/mHL/imm sources), so each delta loads into a register first. The
+  hw sprite flush is the same DI-wrapped raw-`OUT`+8-NOP idiom as every
+  other sprite flush here, also as a loop (the VDP's own auto-increment
+  already advances the write address every `OUT`, so a loop costs
+  nothing an unrolled version wouldn't already pay, unlike the flush's
+  own interrupt-safety NOPs which still apply either way).
+  **Bug caught by actually rendering the boss, not by the unit tests
+  alone**: `LOAD_SASAPI_PATTERNS`'s own `LDIRVM` destination was
+  `PAT_SASAPI*8` - missing `+SPRPAT`(0x3800h, the real sprite pattern
+  generator table's own VRAM base; `PAT_SASAPI*8` alone lands in the BG
+  pattern table's address space instead, see `BigZum`'s own pattern
+  load at INIT for the `+SPRPAT` form this should have matched from the
+  start). The boss's own attribute table (Y/X/pattern/color) was 100%
+  correct - `boss_test.py`'s own checks all passed - but they only ever
+  compared VRAM against the SAME wrong address the buggy code itself
+  wrote to, so a self-consistent bug stayed invisible to them; a real
+  frame render showed scrambled fragments (BigZum's own leftover
+  pattern data at INIT-loaded slots156-219, never actually overwritten,
+  rendered at the boss's 16 quadrant positions) instead of Sasapi's
+  actual art. Fixed by adding `+SPRPAT`; `boss_test.py`'s own pattern-
+  load check rewritten to compare against `SPRPAT+PAT_SASAPI*8` (the
+  real address `render_check.py` itself reads sprites from) instead of
+  the bare offset, so it would actually have caught this.
+  Verified: new `boss_test.py` (16 checks - boot state, refuses to spawn
+  before `BOSS_SPAWN_TICK` including the truncated-8-bit-low-byte
+  regression shape, spawns with the right X/DIR/HP, pattern data lands
+  at the real sprite pattern table address, all 16 quadrants' Y/X/
+  pattern/color match `BOSS_QUAD_OFFSETS`, the real hw sprite table
+  matches the staged attrs, a full left-then-right patrol round trip
+  including both edge clamps/reversals, and a real-`MAINLOOP` spawn-
+  timing check) all pass. Full suite (168 checks) passes. Also
+  re-rendered real frames after the `+SPRPAT` fix: at spawn (X~190, full
+  screen-right position, tick display reads 999), mid-patrol (coherent
+  64x64 art, matches `sprites/Sasapi.json` exactly - confirmed by a
+  separate bit-for-bit round-trip check of `sasapi_gen.py`'s own
+  quadrant conversion against the source JSON before ever touching the
+  emulator), and near the left edge just after reversing (`BOSS_DIR`
+  flips to 1) - all show the intended look and position, boss sitting
+  entirely in the (by then fully night-swept) sky, clear of SkySand.
+
 ## Bugs found and fixed while building this
 
 - **Sand flickered between its own new color and Rock's, twice over**

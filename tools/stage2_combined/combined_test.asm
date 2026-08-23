@@ -428,6 +428,48 @@ NIGHT_COLOR      EQU 015h      ; "ブラックとブルーの文字色と背景�
 ; each re-implementing its own GAME_TICK compare; the boss spawns once
 ; at BOSS_SPAWN_TICK(999) - see its own comment further down.
 ENEMY_SPAWN_STOP_TICK EQU 950
+; ---------- boss (Sasapi): spawns once at BOSS_SPAWN_TICK(999), then ----------
+; patrols left<->right forever - "Tick999でスポーン Skysandの８ｐｘ上
+; あたり 右から出現し左へ 左端に着いたら反転 右端に 以降繰り返し 耐久
+; 値は255で 速度は2". No collision/HP-depletion wired yet - BOSS_HP is
+; just stored, no spec given yet for what damages it or what happens at
+; 0; no despawn either, matching "反転...以降繰り返し" describing an
+; unending patrol, not a one-shot pass.
+BOSS_SPAWN_TICK EQU 999
+BOSS_SPAWNX     EQU 192     ; 256-64: off/at the right edge, sprite fully inside the screen the instant it spawns - same "screen_width - sprite_width" shape as ENEMY_SPAWNX(240=256-16), just for a 64px-wide sprite instead of 16px
+; "Skysandの８ｐｘ上あたり" - read as the sprite's own BOTTOM edge
+; sitting 8px above SkySand's top row (NIGHT_END_ROW=16, pixel row
+; 16*8=128): bottom at 128-8=120, so this (top-left) Y = 120-64=56.
+; Revisit from a screenshot if that's not the intended anchor - same
+; "correct from what's actually shown" precedent as NIGHT_START_ROW's
+; own history.
+BOSS_SPAWN_Y    EQU 56
+BOSS_SPEED      EQU 2       ; px/frame, flat (not the tank's 1.5px alternating trick) - "速度は2", same units/convention as FLYER_SPEED's own "速度は2"
+BOSS_HP_INIT    EQU 255     ; "耐久値は255で" - stored only, nothing reads/decrements it yet
+BOSS_COLOR      EQU 9       ; from sprites/Sasapi.json's own fg (light red)
+; hw sprite slots10-25 (16 quadrants, one per 16x16 cell of the 4x4
+; grid making up the 64x64 sprite) - reuses Zum/BigZum/Flyer/Etank's
+; own ranges (10-11/12-19/20-23/24-25) rather than a fresh permanent
+; allocation (would overflow the 32-slot budget outright) - "自機以外
+; はもうスポーンしないんで オールフリー": every one of those pools has
+; been refused new spawns since ENEMY_SPAWN_STOP_TICK(950), 49
+; GAME_TICKs before the boss can even appear, so by BOSS_SPAWN_TICK
+; none of them still hold anything real. Safe as long as UPDATE_BOSS_ALL
+; is called AFTER all 4 of their own per-frame flushes in MAINLOOP (so
+; the boss's own real data is always the last write to these slots each
+; frame, not overwritten a moment later by an old, now-permanently-empty
+; pool's own routine flushing Y=209-hidden over it) - it is, right
+; before CLOUD_UPDATE_ALL.
+BOSS_SPR_BASE_SLOT EQU 10
+; reuses BigZum's own whole pattern-code footprint (156-219, PAT_BIGZUM
+; below) rather than a new permanent block - Sasapi's 16 quadrants x4
+; patterns = exactly 64 slots, exactly BigZum's entire footprint (all 4
+; of its pose/facing groups). Same "オールフリー" reasoning as the hw
+; sprite slots above, plus there simply isn't 64 more spare slots above
+; Flyer's own last group (ends at 251, only 4 free) for a permanent 5th
+; allocation. Loaded fresh into VRAM once, at boss-spawn time (not at
+; INIT) - see LOAD_SASAPI_PATTERNS.
+PAT_SASAPI      EQU PAT_BIGZUM
 PSG_ADDR         EQU 0A0h
 PSG_DATA         EQU 0A1h
 ; mixer (R7) values for channel A only - tone/noise B and C always
@@ -1175,6 +1217,18 @@ ETANK_DRAW_COLOR EQU F275h
 ; GAME_TICK value that advances it, starting at NIGHT_START_TICK.
 NIGHT_ROW        EQU F276h
 NIGHT_NEXT_TICK  EQU F277h   ; 2 bytes
+; boss (Sasapi) state - see BOSS_SPAWN_TICK's own comment. BOSS_ACT:
+; 0=not spawned yet, 1=active (patrolling - no exploding/dead state this
+; round). BOSS_DIR: 0=moving left (X decreasing), 1=moving right.
+; BOSS_SPRITE_ATTRS is the 16-quadrant staging buffer FLUSH_BOSS_SPRITES
+; blasts to the real hw sprite table, same staging-then-flush shape as
+; every other enemy's own *_SPRITE_ATTRS - still well under the real
+; 0F380h BIOS-work-area boundary (see STACKTOP's own comment).
+BOSS_ACT           EQU F279h
+BOSS_X             EQU F27Ah
+BOSS_DIR           EQU F27Bh
+BOSS_HP            EQU F27Ch
+BOSS_SPRITE_ATTRS  EQU F27Dh   ; 16 quadrants x4 bytes (Y,X,pat,col) = 64 bytes
 ETANK_SPR_BASE_SLOT EQU 24     ; hw sprite slots24-25 (BL/BR only x1 instance), right after Flyer's own 20-23
 ; "カラーはダークレッド" - NOT sprites/Etank.json's own fg, overridden
 ; directly here (same "override the JSON's own fg" precedent as
@@ -1895,6 +1949,22 @@ IETSA_LOOP:
     LD (HL),A : INC HL
     DJNZ IETSA_LOOP
 
+    ; boss (Sasapi): just BOSS_ACT=0 (not spawned) plus the rest of its
+    ; own state zeroed alongside it - no pattern-VRAM load and no hw
+    ; sprite hide-init here either, same reasoning as Etank just above
+    ; (borrows its hw slots AND pattern-VRAM only at its own spawn time,
+    ; see BOSS_SPR_BASE_SLOT/PAT_SASAPI's own comments - the slots it
+    ; will reuse are already hidden by Zum/BigZum/Flyer/Etank's own
+    ; INIT code above, and stay correctly hidden every frame until the
+    ; boss spawns since UPDATE_BOSS_ALL is a no-op with BOSS_ACT=0).
+    LD HL,BOSS_ACT
+    LD B,4
+    XOR A
+IBOZ_LOOP:
+    LD (HL),A
+    INC HL
+    DJNZ IBOZ_LOOP
+
     ; cloud pool: each of the 6 slots gets its own fixed ROW (2-7,
     ; CLOUD_ROW_TABLE)/INTERVAL/FIXED4/initial WAIT from the 4 lookup
     ; tables below, ROWADDR precomputed once (row*32 fits an 8-bit low
@@ -2032,6 +2102,11 @@ SKIP_ADVANCE:
     CALL UPDATE_ETANK_ALL
     CALL CHECK_BULLET_VS_ETANK
     CALL UPDATE_TANK_ETANK_PUSH
+    ; after every other enemy type's own per-frame flush above, so the
+    ; boss's own hw sprite writes (reusing their slots - see
+    ; BOSS_SPR_BASE_SLOT's own comment) are always the last word each
+    ; frame, never overwritten a moment later by one of theirs.
+    CALL UPDATE_BOSS_ALL
     CALL CLOUD_UPDATE_ALL
 
     CALL SOUND_UPDATE
@@ -6335,6 +6410,147 @@ FBUS_LOOP:
     NOP
     INC HL
     DJNZ FBUS_LOOP
+    EI
+    RET
+
+; ---------- boss (Sasapi) ----------
+; per-quadrant (Y-delta,X-delta,pattern-delta) for the 4x4 grid of
+; 16x16 quadrants making up the 64x64 sprite, row-major (TL of the
+; whole boss first, then rightward, then down a row) - same order
+; sasapi_gen.py's own quadrants_from_bits walks, so pattern-delta here
+; (quadrant_index*4, one pattern group per quadrant) lines up with
+; where that quadrant's own 4 bytes actually landed in SASAPI_QUADS.
+BOSS_QUAD_OFFSETS:
+    DB 0,0,0,     0,16,4,     0,32,8,     0,48,12
+    DB 16,0,16,   16,16,20,   16,32,24,   16,48,28
+    DB 32,0,32,   32,16,36,   32,32,40,   32,48,44
+    DB 48,0,48,   48,16,52,   48,32,56,   48,48,60
+
+; blasts SASAPI_QUADS (512 bytes, sasapi_gen.py) into PAT_SASAPI's own
+; VRAM slot range in one shot - called once, right when the boss spawns
+; (see UPDATE_BOSS_ALL's own one-shot check), not at INIT, since this
+; overwrites BigZum's own pattern data (see PAT_SASAPI's own comment).
+LOAD_SASAPI_PATTERNS:
+    LD HL,SASAPI_QUADS : LD DE,PAT_SASAPI*8+SPRPAT : LD BC,16*32 : CALL LDIRVM
+    RET
+
+; spawns once at BOSS_SPAWN_TICK (a true 16-bit SBC HL,DE compare, same
+; idiom as CHECK_NIGHT/SPAWN_STOPPED - see the CLOUD_UPDATE_ALL bug this
+; same session for why an 8-bit CP against a >255 constant is wrong),
+; then patrols X between 0 and BOSS_SPAWNX forever, reversing at either
+; edge - "右から出現し左へ 左端に着いたら反転 右端に 以降繰り返し". Y
+; never changes (BOSS_SPAWN_Y, horizontal patrol only).
+UPDATE_BOSS_ALL:
+    LD A,(BOSS_ACT)
+    OR A
+    JR NZ,UBA_MOVE
+    LD HL,(GAME_TICK)
+    LD DE,BOSS_SPAWN_TICK
+    OR A
+    SBC HL,DE
+    RET C                      ; not yet time
+    CALL LOAD_SASAPI_PATTERNS
+    LD A,1 : LD (BOSS_ACT),A
+    LD A,BOSS_SPAWNX : LD (BOSS_X),A
+    XOR A : LD (BOSS_DIR),A    ; 0 = moving left first - "右から出現し左へ"
+    LD A,BOSS_HP_INIT : LD (BOSS_HP),A
+    JR UBA_DRAW
+UBA_MOVE:
+    LD A,(BOSS_DIR)
+    OR A
+    JR NZ,UBA_MOVE_RIGHT
+UBA_MOVE_LEFT:
+    LD A,(BOSS_X)
+    CP BOSS_SPEED
+    JR NC,UBA_STEP_LEFT
+    XOR A : LD (BOSS_X),A      ; clamp to the left edge
+    LD A,1 : LD (BOSS_DIR),A   ; 反転 - now heads right
+    JR UBA_DRAW
+UBA_STEP_LEFT:
+    SUB BOSS_SPEED : LD (BOSS_X),A
+    JR UBA_DRAW
+UBA_MOVE_RIGHT:
+    LD A,(BOSS_X) : ADD A,BOSS_SPEED
+    CP BOSS_SPAWNX
+    JR C,UBA_STEP_RIGHT
+    LD A,BOSS_SPAWNX : LD (BOSS_X),A   ; clamp to the right edge
+    XOR A : LD (BOSS_DIR),A            ; 反転 - back to heading left
+    JR UBA_DRAW
+UBA_STEP_RIGHT:
+    LD (BOSS_X),A
+UBA_DRAW:
+    CALL DRAW_BOSS
+    CALL FLUSH_BOSS_SPRITES
+    RET
+
+; fills BOSS_SPRITE_ATTRS (16 quadrants x4 bytes) from BOSS_QUAD_OFFSETS
+; - a loop over 16 entries rather than 16 hand-unrolled blocks (unlike
+; BigZum/Flyer's own draw routines, which only ever had 2-4 quadrants to
+; write): plain RAM writes here, no VDP port access, so none of the
+; DI/NOP interrupt-safety margin FLUSH_BOSS_SPRITES needs applies to
+; this stage. ADD A,(IX+d) isn't a form this assembler supports (see
+; mini_z80asm.py's own enc_alu_a - only r8/mHL/imm sources), so each
+; delta is loaded into B first and added from there instead.
+DRAW_BOSS:
+    LD IX,BOSS_QUAD_OFFSETS
+    LD HL,BOSS_SPRITE_ATTRS
+    LD B,16
+DRB_LOOP:
+    LD A,(IX+0) : LD C,A
+    LD A,BOSS_SPAWN_Y : ADD A,C
+    LD (HL),A : INC HL
+    LD A,(IX+1) : LD C,A
+    LD A,(BOSS_X) : ADD A,C
+    LD (HL),A : INC HL
+    LD A,(IX+2) : LD C,A
+    LD A,PAT_SASAPI : ADD A,C
+    LD (HL),A : INC HL
+    LD A,BOSS_COLOR : LD (HL),A : INC HL
+    INC IX : INC IX : INC IX
+    DJNZ DRB_LOOP
+    RET
+
+; blasts BOSS_SPRITE_ATTRS (64 bytes) to hw sprite slots
+; BOSS_SPR_BASE_SLOT.. - same raw DI-wrapped OUT + 8-NOP pattern as
+; FLUSH_FLYER_SPRITES, just a loop instead of an unrolled per-quadrant
+; block (16 quadrants would make an unrolled version 4x longer for no
+; benefit - the VDP's own auto-increment already advances the write
+; address every OUT, a loop here costs nothing an unrolled block
+; wouldn't already pay).
+FLUSH_BOSS_SPRITES:
+    DI
+    LD A,BOSS_SPR_BASE_SLOT*4 : OUT (99h),A
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    LD HL,BOSS_SPRITE_ATTRS
+    LD B,16*4
+FBOS_LOOP:
+    LD A,(HL) : OUT (98h),A
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    INC HL
+    DJNZ FBOS_LOOP
     EI
     RET
 
