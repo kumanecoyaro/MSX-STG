@@ -1104,12 +1104,12 @@ ETANK_COLOR EQU 6
 ETANK_SPAWNX EQU 240           ; off the right edge, same convention as every other enemy's own spawn-X
 ETANK_PROBE_DX EQU 16          ; horizontal-center probe offset for a 32px-wide sprite
 ETANK_SPAWN_COL EQU ETANK_SPAWNX+ETANK_PROBE_DX/8
-ETANK_SPAWN_INTERVAL EQU ZUM_SPAWN_INTERVAL
+ETANK_SPAWN_INTERVAL EQU ZUM_SPAWN_INTERVAL*2  ; "出現頻度高すぎるんで半分くらいに" - doubled cooldown, half the frequency
 ETANK_SPEED EQU 2               ; px/frame, flat - "速度は2"
 ETANK_COLLISION_SIZE     EQU 24  ; width
 ETANK_COLLISION_HEIGHT   EQU 16  ; height - "キャラ位置は32x32の内左下24x16"
 ETANK_COLLISION_Y_OFFSET EQU 32-ETANK_COLLISION_HEIGHT  ; =16
-ETANK_HP_INIT EQU 10
+ETANK_HP_INIT EQU 8   ; "Etankの耐久値8" (was 10)
 ETANK_PUSH_SPEED EQU ZUM_PUSH_SPEED  ; "Zumと同じで接触で自機を押す" - same push mechanic/speed as Zum's own UPDATE_TANK_ZUM_PUSH
 ; "Etankの位置がおかしい また自機基準でオフセットしてねえだろうな
 ; 毎回同じミスしてる 自機だけジャンプの関係でやってるだけで特殊" - same
@@ -3682,6 +3682,12 @@ ALLOC_ZUM_SLOT:
     LD A,(BIGZUM_POOL)
     OR A
     RET NZ
+    ; "Etank出現中はZumも出ないように 横並びでEtankが消える" - same
+    ; ground-lane exclusion as BigZum above (see ALLOC_ETANK_SLOT's own
+    ; matching check) - bidirectional.
+    LD A,(ETANK_POOL)
+    OR A
+    RET NZ
     CALL ZUM_TERRAIN_OK
     OR A
     RET Z
@@ -4331,22 +4337,18 @@ BZTO_FAIL:
 
 ; same 3-condition gate as ALLOC_ZUM_SLOT (spawn-count threshold, flat
 ; terrain, free slot) plus the same instant-overlap resolution at
-; spawn - "スポーン条件は同じ" - plus a 4th: refuse while Flyer is
-; active, the other half of "BigZum出現時はFlyerは出ない"'s own
-; bidirectional exclusion (see FLYER_SLOT_SIZE's own comment - a
-; Flyer-active BigZum spawn was directly observed in testing before
-; this gate existed) - and a 5th: refuse while Etank is active, the
-; other half of Etank's OWN bidirectional exclusion (see ETANK_SLOT_
-; SIZE's own comment - this one isn't just screen-clutter, the 2
-; actually share pattern-VRAM bytes, so getting this gate wrong would
-; corrupt what's on screen, not just look busy).
+; spawn - "スポーン条件は同じ" - plus a 4th: refuse while Etank is
+; active, the other half of Etank's OWN bidirectional exclusion (see
+; PAT_ETANK_BL's own comment - this one isn't just screen-clutter, the
+; 2 actually share pattern-VRAM bytes, so getting this gate wrong would
+; corrupt what's on screen, not just look busy). Flyer is airborne and
+; NOT gated here any more - "FlyerとBigZum、FlyerとEtankは同時存在して
+; 良い" (was bidirectionally excluded before; that exclusion removed
+; from both ALLOC_FLYER_SLOT and here).
 ALLOC_BIGZUM_SLOT:
     LD A,(ENEMY_SPAWN_COUNT)
     CP 10
     RET C
-    LD A,(FLYER_POOL)
-    OR A
-    RET NZ
     LD A,(ETANK_POOL)
     OR A
     RET NZ
@@ -5274,15 +5276,11 @@ UFLAU_LOOP:
     CALL FLUSH_FLYER_SPRITES
     RET
 
-; airborne - no terrain gate at all, just a free slot and BigZum
-; inactive - "BigZum出現時はFlyerは出ない", same "BigZum出現中にZumは
-; 出さない" precedent ALLOC_ZUM_SLOT already uses (one-directional only
-; - Flyer has its own dedicated pattern allocation, no VRAM sharing
-; with BigZum, so nothing requires the reverse gate too).
+; airborne - no terrain gate at all, just a free slot. NOT gated
+; against BigZum/Etank/Zum any more - "FlyerとBigZum、Flyerと
+; Etankは同時存在して良い" (was excluded against BigZum bidirectionally
+; before; both halves removed).
 ALLOC_FLYER_SLOT:
-    LD A,(BIGZUM_POOL)
-    OR A
-    RET NZ
     LD HL,FLYER_POOL
     LD B,FLYER_SLOT_COUNT
 AFLS_LOOP:
@@ -5681,12 +5679,22 @@ ETO_FAIL:
 ; see ALLOC_BIGZUM_SLOT's own matching check and PAT_ETANK_BL's own
 ; pattern-VRAM-sharing comment - a one-directional gate here would be a
 ; real correctness bug, not just a design preference, since the two
-; actually share pattern-VRAM bytes, unlike BigZum/Flyer's own
-; screen-clutter-only exclusion), the terrain-length gate above, and a
-; free slot - same shape as ALLOC_ZUM_SLOT/ALLOC_BIGZUM_SLOT, plus the
-; same instant spawn-time overlap resolution.
+; actually share pattern-VRAM bytes), Zum currently active ("Etank出現中
+; はZumも出ないように 横並びでEtankが消える" - same ground-lane
+; exclusion as BigZum, checking both of ZUM_SLOT_COUNT=2's own slots),
+; the terrain-length gate above, and a free slot - same shape as
+; ALLOC_ZUM_SLOT/ALLOC_BIGZUM_SLOT, plus the same instant spawn-time
+; overlap resolution. Flyer is airborne and never gated against any of
+; these 3 ground enemies, nor they against it - "FlyerとBigZum、Flyerと
+; Etankは同時存在して良い".
 ALLOC_ETANK_SLOT:
     LD A,(BIGZUM_POOL)
+    OR A
+    RET NZ
+    LD A,(ZUM_POOL)
+    OR A
+    RET NZ
+    LD A,(ZUM_POOL+ZUM_SLOT_SIZE)
     OR A
     RET NZ
     CALL ETANK_TERRAIN_OK

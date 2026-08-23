@@ -3007,6 +3007,44 @@ with no way to tell where.
   - **"BigZumがでないままになってるからもとに戻せ で、EtankとBigZumは同時には存在しない Etank用の長い平地でEtankをスポーンしてBigZumは出すなよ"** - restored BigZum's complete implementation (constants/RAM/all routines/`INIT` pattern-loading and pool-clear/`MAINLOOP` calls/`BIGZUM_JUMP_TABLE`) from git history (commit `28ba232`, the last one before its diagnostic removal), reintegrated into the current file with every RAM address shifted the same `-100h` the rest of the file's own addresses already were - it slotted back into the exact gap deliberately left behind during the removal (`JUMP_STAND_BASELINE` through `FLYER_POOL`) with zero new overlaps, confirmed by a full systematic pool-by-pool audit. Etank went back to its ORIGINAL design too - dynamically sharing BigZum's own `PAT_BIGZUM` BL/BR pattern-VRAM groups at spawn time (`PAT_ETANK_BL`/`PAT_ETANK_BR` back to `PAT_BIGZUM+8`/`+12`, no longer a fixed permanent code) - restoring the bidirectional spawn-gate exclusion in both directions (`ALLOC_ZUM_SLOT`/`ALLOC_FLYER_SLOT`/`ALLOC_ETANK_SLOT` all refuse while `BIGZUM_POOL` is active; `ALLOC_BIGZUM_SLOT` refuses while `FLYER_POOL`/`ETANK_POOL` are active) - exactly "EtankとBigZumは同時には存在しない". Kept 2 improvements from the diagnostic round that don't conflict with any of this: Etank's own dedicated `ETANK_DRAW_COLOR` scratch byte (RAM is no longer the tight resource pattern-code space still is) and the `ETANK_Y_OFFSET` fix above.
   Verified: full systematic RAM-overlap audit (31 pools/scratch-bytes, sorted and checked pairwise) - zero overlaps, 266 bytes of headroom still intact below `STACKTOP`. `etank_unit.py` (18 checks, including the Y-offset fix and both directions of the bidirectional exclusion), `etank_pattern_vram_test.py` (10 checks, rewritten back to testing the dynamic-sharing mechanism - BigZum's TL/TR untouched by an Etank spawn, Etank's BL/BR VRAM matches its own real art, BigZum's own next spawn correctly reloads and undoes Etank's borrow), `shakeoff_unit.py` (12 checks, BigZum's own shake-off mechanic - unchanged, still passes byte-for-byte identical to before the diagnostic removal), plus the existing Flyer-terrain (5)/ZacoII-flash (6)/Zum-overlap (3) suites - 54 checks total, all pass. Fresh 20000-frame random-input sweep with an explicit per-frame invariant check ("Etank and BigZum active at the same time" - 0 occurrences across the whole run) and 20000-frame idle sweep, both clean, no crash/stall; `render_check.py` boots correctly with the ASCII16 bank-switch intact; rendered Etank and BigZum separately to PNG and visually confirmed both draw correctly - Etank now sits flush on the terrain instead of sunk in, BigZum renders with no stray artifacts.
 
+- **Ground-enemy exclusion rules reworked; Etank HP/frequency tuned**:
+  "ではEtank出現中はZumも出ないように 横並びでEtankが消える 更にFlyer
+  とBigZum、FlyerとEtankは同時存在して良い Etankの耐久値8 出現頻度高
+  すぎるんで半分くらいに" - 4 changes:
+  - New bidirectional exclusion between Zum and Etank ("横並びでEtank
+    が消える") - `ALLOC_ZUM_SLOT` now also refuses while `ETANK_POOL`
+    is active, and `ALLOC_ETANK_SLOT` refuses while EITHER of
+    `ZUM_SLOT_COUNT`(2)'s own slots is active - checked both, not just
+    slot0, since a Zum spawn could occupy either one.
+  - The existing BigZum<->Flyer bidirectional exclusion REMOVED
+    entirely (both halves, `ALLOC_FLYER_SLOT` and `ALLOC_BIGZUM_SLOT`)
+    - "FlyerとBigZum、FlyerとEtankは同時存在して良い". Etank<->Flyer
+      never had an exclusion in the first place (only confirmed, no
+      code change needed there). The mental model is now: the 3
+      GROUND enemies (Zum/BigZum/Etank) stay pairwise mutually
+      exclusive with each other (can't share the same ground lane),
+      while Flyer, being airborne, is free to coexist with any of
+      them.
+  - `ETANK_HP_INIT` 10 -> 8 ("Etankの耐久値8").
+  - `ETANK_SPAWN_INTERVAL` changed from `ZUM_SPAWN_INTERVAL` (same
+    value, 90) to `ZUM_SPAWN_INTERVAL*2` (180) - "出現頻度高すぎるんで
+    半分くらいに" (doubling the cooldown halves how often a new Etank
+    can appear).
+  Verified: `etank_unit.py` expanded to 24 checks (added: Etank refuses
+  while either Zum slot is active, Zum refuses while Etank is active,
+  Flyer CAN now spawn while BigZum is active and vice versa, HP=8,
+  spawn interval = Zum's own doubled) - all pass; the other existing
+  suites (pattern-VRAM 10, BigZum shake-off 12, ZacoII-flash 6,
+  Zum-overlap 3, Flyer-terrain 5 - 60 checks total) unaffected, all
+  still pass. Fresh 20000-frame random-input sweep with explicit
+  invariant checks: Etank+Zum simultaneously active - 0 occurrences
+  (new exclusion holds); Flyer+BigZum simultaneously active - 15222 of
+  20000 frames (relaxation confirmed working, not accidentally still
+  gated); stack headroom unchanged (still 250+ bytes of margin below
+  `STACKTOP`). 20000-frame idle sweep clean; `render_check.py` clean;
+  rendered a scene with Flyer and BigZum both visibly on screen at
+  once to confirm the relaxed exclusion renders correctly.
+
 ## Bugs found and fixed while building this
 
 - **Sand flickered between its own new color and Rock's, twice over**
