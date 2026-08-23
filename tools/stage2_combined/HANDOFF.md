@@ -187,6 +187,38 @@ Communicates in terse, often angry Japanese. Expects:
   itself next, not adjacent systems, however plausible the theory feels
   - and don't touch terrain-scroll again on speculation alone.
 
+## ⚠ Current build is a DIAGNOSTIC (terrain-scroll-freeze test)
+
+- `GAME_TICK` boots at **840**, not 0 (`LD HL,840 : LD (GAME_TICK),HL`
+  in `INIT`, ~line 1742) — night starts almost immediately and the boss
+  spawns shortly after, so the test below doesn't need a real 999-tick
+  playthrough. **3 regression tests fail as a direct, expected
+  consequence** (`boss_test.py`/`etank_gametick_gate_test.py`/
+  `night_effect_test.py`, each checking "doesn't happen before real
+  frame X" against a boot-at-0 assumption) — this is the same known
+  effect as the round-1 Flyer diagnostic earlier this session, not a
+  regression. Revert to `XOR A` / 0 for a real shipped build.
+- **`MAINLOOP`'s terrain-scroll redraw (`TERRAIN_RENDER_ROW`×4 +
+  `NAMEBUF_T0`-`T3` `LDIRVM`×4, at `SKIP_ADVANCE:`) is now skipped
+  entirely once `BOSS_ACT!=0`** — gated by a `JR NZ,SKIP_TERRAIN_SCROLL`
+  right at the top of that block. `READ_INPUT` and everything after it
+  still runs every frame unconditionally either way. This is a
+  **user-directed experiment** ("出現したら地形スクロール処理を停止し
+  てみてくれ"), not a reversal of the "don't touch terrain-scroll on
+  your own speculation" rule below — that rule is about MY unilateral
+  theories, not the user's own requested tests. Verified via
+  `banked_helpers`: terrain VRAM (0x1A80/1AA0/1AC0/1AE0, 32B each) is
+  byte-identical every frame from boss-spawn onward while the boss
+  itself keeps patrolling (`BOSS_X` still changing) — confirms the gate
+  itself works exactly as written. **Whether this actually affects the
+  real-hardware/WebMSX tearing is NOT verifiable here** (`z80emu.py` has
+  no interrupt simulation) — only the user can judge that from real
+  playback. Round 1 (Flyer-art swap) and round 2 (real Flyer instances,
+  4x64x64 one-at-a-time) were BOTH tried first and BOTH reported as "no
+  change, same 1px disturbance" — cleanly reverted (see README), so the
+  "one big lump vs many small ops" theory is looking unlikely, though
+  not explicitly confirmed dead by the user yet.
+
 ## Open items / things to watch
 
 - No known open bugs as of this handoff — the boss's own SPRPAT bug

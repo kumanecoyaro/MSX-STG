@@ -3802,6 +3802,97 @@ with no way to tell where.
   The real bug is still somewhere in the boss's own code specifically -
   not yet found as of this entry.
 
+- **Diagnostic round 1: swap the boss for 4 Flyers at 64x64 to test "one
+  big combined operation vs several small ones" - REJECTED, was a fake
+  test**: "では検証で今のボスの代わりに Flyerを4体64x64に並べてだせ
+  表示条件は同じになる もしかすると64x64のスプライトを一気にひとまと
+  めで操作するとVDP処理オーバーの可能性がある で、それまでの処理は
+  問題ないんで Tickの初期値を840にしろ 直後に夜の処理が入ってすぐボス
+  になる". Built `DRAW_FLUSH_BOSS_BLOCKS`, a hand-written draw routine
+  reusing `PAT_FLYER`'s own pixel art but drawn with `BOSS_COLOR` and
+  the boss's own position/timing logic - NOT Flyer's own code path at
+  all. `GAME_TICK` booted at 840 for fast iteration. User caught it
+  immediately from the wrong color, before any real verification of the
+  underlying theory happened: "変わってないが、、、 お前ただキャラ差し
+  替えただけじゃねえだろうな Flyerを4体並べてスポーンさせんだよ キャラ
+  変えただけでなんの検証になるんだよ 色も違うし 64x64まとめて処理する
+  とダメな可能性があるかもって言うテストなんだよ なら1体ずつ処理して
+  の64x64ではどうなるかって言うことだ". Reverted clean (`git revert`).
+
+- **Diagnostic round 2: 4 REAL Flyer pool instances, spawned and updated
+  through Flyer's own actual code, one at a time - result: no change,
+  same 1px disturbance still visible**: same instruction as above,
+  corrected per the rejection - genuinely spawn 4 `FLYER_POOL` entries
+  (not a graphic swap) positioned as a 2x2 64x64 block, each updated via
+  its own real `CALL UPDATE_ONE_FLYER`/flushed via its own real hw-
+  sprite-write path, one Flyer at a time through the existing per-slot
+  loop rather than one combined 64-byte burst. Needed a scratch RAM byte
+  (`BOSS_FLYER_CUR_SLOT`) to hold the hw-slot parameter across both
+  calls, since `HL` was being used as both the loop's own table-walk
+  pointer AND clobbered internally by `UPDATE_ONE_FLYER`/the flush call
+  - `PUSH BC`/`PUSH HL` wraps both calls together so the loop survives
+  regardless of what either callee does to registers internally. Also
+  hit an assembler limitation building this: `ADD IX,DE` isn't a
+  supported instruction form in `mini_z80asm.py` (same class of gap as
+  the already-documented missing `EX DE,HL`) - replaced with 11x
+  `INC IX` (`FLYER_SLOT_SIZE`=11) at both call sites. User's report after
+  running it: "なるほど 結果は変わらず １ｐｘの表示乱れも見える" - even
+  with genuinely independent, one-at-a-time real Flyer updates instead
+  of one combined 64x64 write, the same tearing/garbage persists. This
+  makes the "one big lump vs many small independent ops" theory look
+  unlikely as the actual cause, though not explicitly declared dead.
+  Also separately flagged by the user as an aside (not an action item
+  this round): ordinary Flyer's own spawn Y is supposed to be random but
+  is always the same in practice (`FLYER_CRUISE_Y` is a fixed constant,
+  already documented in its own comment as "untuned/inferred, no height
+  was specified" - a known gap, now confirmed as an actual mismatch, not
+  yet requested to be fixed). Both diagnostic rounds reverted clean
+  (`git revert` x2, no conflicts) - `combined_test.asm` back to the real
+  Sasapi boss code (same state as 2 entries above), `GAME_TICK` boot
+  back to 0. Full suite (180 checks) passes clean after both reverts.
+
+- **New experiment: freeze terrain-scroll entirely once the boss has
+  spawned, and see if that's connected to the tearing**: "なるほど
+  結果は変わらず １ｐｘの表示乱れも見える で、Flyerのバグは気づいてた
+  スポーン時Y位置ランダムなはずが常に同じになってた では元のSasapiに
+  戻して 出現したら地形スクロール処理を停止してみてくれ". A different
+  angle from both prior theories (not "interrupt-unsafe write" and not
+  "one big op vs many small ops") - whether the terrain-scroll's mere
+  ongoing per-frame activity while the boss is active is somehow
+  implicated, regardless of its own interrupt-safety. This is the
+  user's OWN requested test this time, not unilateral speculation on my
+  part - explicitly not a violation of the earlier "don't touch
+  terrain-scroll without hard evidence" rule, which was about me acting
+  on my own theory, not the user directing a specific controlled
+  experiment.
+  `MAINLOOP`'s `SKIP_ADVANCE:` block (the 4x `TERRAIN_RENDER_ROW` calls
+  + 4x `NAMEBUF_T0`-`T3` `LDIRVM`, plus their own `ROWPHASE_T` update -
+  confirmed used nowhere outside `TERRAIN_RENDER_ROW` itself, safe to
+  gate together) now checks `BOSS_ACT` first and skips the whole block
+  via `JR NZ,SKIP_TERRAIN_SCROLL` once the boss has spawned; `READ_INPUT`
+  and everything after it in `MAINLOOP` still runs every frame
+  unconditionally either way, gated or not. `GAME_TICK` boots at 840
+  again for fast iteration (see the top of this file's own DIAGNOSTIC
+  callout in `HANDOFF.md`).
+  Verified: a fresh `banked_helpers`-driven sweep confirms terrain VRAM
+  (all 4 `NAMEBUF_T0`-`T3` destinations, 0x1A80/1AA0/1AC0/1AE0) is
+  byte-identical every single frame from the moment `BOSS_ACT` becomes
+  nonzero through 300 more frames, while `BOSS_X` keeps changing
+  (patrol still running normally) over the same span - confirms the
+  gate itself does exactly what was asked, terrain frozen, boss still
+  moving. Full suite: 177/180 pass: the 3 failures (`boss_test.py`'s
+  own real-`MAINLOOP` spawn-timing check, `etank_gametick_gate_test.py`,
+  `night_effect_test.py`'s own real-`MAINLOOP` night-start check) are
+  the exact same expected consequence of the `GAME_TICK`=840 boot
+  override as round 1's diagnostic above (each checks "doesn't happen
+  before some real frame count" against a boot-at-0 assumption) - not a
+  new regression, same known effect. **Whether this actually changes
+  the real-hardware/WebMSX tearing itself is NOT something the emulator
+  can confirm either way** (`z80emu.py` has no interrupt simulation) -
+  only real playback can judge that; what's verified here is only that
+  the freeze logic itself is implemented correctly and nothing else
+  broke.
+
 ## Bugs found and fixed while building this
 
 - **Sand flickered between its own new color and Rock's, twice over**

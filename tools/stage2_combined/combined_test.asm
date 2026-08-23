@@ -1739,8 +1739,12 @@ INIT_SPRATR_CLR:
     LD A,8 : OUT (PSG_ADDR),A
     XOR A : OUT (PSG_DATA),A
 
+    ; ⚠ DIAGNOSTIC: boot GAME_TICK at 840 (night starts almost immediately,
+    ; boss spawns shortly after) so the terrain-freeze-on-boss-spawn test
+    ; doesn't require a real 999-tick playthrough to verify. Revert to
+    ; XOR A / 0 for a real shipped build.
+    LD HL,840 : LD (GAME_TICK),HL
     XOR A
-    LD (GAME_TICK),A : LD (GAME_TICK+1),A
     LD (SCORE),A : LD (SCORE+1),A : LD (SCORE+2),A
     LD A,0FFh : LD (GTD_LAST_H),A : LD (GTD_LAST_T),A : LD (GTD_LAST_O),A
     CALL SCORE_DISPLAY
@@ -2062,6 +2066,14 @@ PXT_NOWRAP:
     CALL GAME_TICK_DISPLAY
     CALL CHECK_NIGHT
 SKIP_ADVANCE:
+    ; 出現したら地形スクロール処理を停止してみてくれ - diagnostic test
+    ; requested by the user: once the boss has spawned, stop touching
+    ; the terrain-scroll VRAM writes entirely for the rest of the game
+    ; and see if that affects the reported tearing. Everything from
+    ; READ_INPUT onward must still run every frame regardless.
+    LD A,(BOSS_ACT) : OR A
+    JR NZ,SKIP_TERRAIN_SCROLL
+
     LD A,(TICK) : AND 07h : LD (ROWPHASE_T),A
 
     LD HL,IDCACHE_T0 : LD IX,NAMEBUF_T0 : CALL TERRAIN_RENDER_ROW
@@ -2074,6 +2086,7 @@ SKIP_ADVANCE:
     LD HL,NAMEBUF_T2 : LD DE,1AC0h : LD BC,32 : CALL LDIRVM
     LD HL,NAMEBUF_T3 : LD DE,1AE0h : LD BC,32 : CALL LDIRVM
 
+SKIP_TERRAIN_SCROLL:
     CALL READ_INPUT
     CALL UPDATE_TANK_XY
     CALL UPDATE_TERRAIN_COLLISION
