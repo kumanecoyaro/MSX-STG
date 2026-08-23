@@ -21,20 +21,20 @@ GTTRIG  EQU 00D8h
     DS 6,0
 
 ; ---------- terrain state (see tools/stage2_terrain/terrain_test.asm) ----------
-TICK          EQU 0F000h
-PXCHAR_T      EQU 0F001h   ; word
-ROWPHASE_T    EQU 0F003h
-TERRAIN_NEXTID EQU 0F004h
-IDCACHE_T0    EQU 0F010h
-IDCACHE_T1    EQU 0F040h
-IDCACHE_T2    EQU 0F070h
-IDCACHE_T3    EQU 0F0A0h
-NAMEBUF_T0    EQU 0F100h
-NAMEBUF_T1    EQU 0F120h
-NAMEBUF_T2    EQU 0F140h
-NAMEBUF_T3    EQU 0F160h
+TICK          EQU EF00h
+PXCHAR_T      EQU EF01h   ; word
+ROWPHASE_T    EQU EF03h
+TERRAIN_NEXTID EQU EF04h
+IDCACHE_T0    EQU EF10h
+IDCACHE_T1    EQU EF40h
+IDCACHE_T2    EQU EF70h
+IDCACHE_T3    EQU EFA0h
+NAMEBUF_T0    EQU F000h
+NAMEBUF_T1    EQU F020h
+NAMEBUF_T2    EQU F040h
+NAMEBUF_T3    EQU F060h
 
-; ---------- tank state (past terrain's own range - 0F100h-0F180h) ----------
+; ---------- tank state (past terrain's own range - F000h-F080h) ----------
 SPRATR        EQU 1B00h
 SPRPAT        EQU 3800h
 ; medium red (main body) - was dark red(6), swapped with the rock's own
@@ -98,19 +98,19 @@ JUMP_FRAMES   EQU 33       ; JUMP_OFFSET_TABLE length
 ; down to 0 instead of snapping straight from the parked height to
 ; ground in a single frame.
 JUMP_LANDING_RESTART_FRAME EQU 16
-SPRITE_ATTRS  EQU 0F200h   ; 16 bytes
+SPRITE_ATTRS  EQU F100h   ; 16 bytes
 
-TANK_X        EQU 0F220h
-TANK_Y_CUR    EQU 0F221h
-TANK_DX       EQU 0F222h   ; 1=right, 0FFh=left, 0=none
-TANK_AIMUP    EQU 0F223h   ; 1 while holding up (diagonal-aim pose)
-JOY_DIR       EQU 0F224h
-JOY_TRIGB     EQU 0F225h
-PREV_TRIGB    EQU 0F226h
-JUMP_ACTIVE   EQU 0F227h
-JUMP_FRAME    EQU 0F228h
-JUMP_Y_OFFSET EQU 0F229h
-CUR_POSE_PAT  EQU 0F22Ah
+TANK_X        EQU F120h
+TANK_Y_CUR    EQU F121h
+TANK_DX       EQU F122h   ; 1=right, 0FFh=left, 0=none
+TANK_AIMUP    EQU F123h   ; 1 while holding up (diagonal-aim pose)
+JOY_DIR       EQU F124h
+JOY_TRIGB     EQU F125h
+PREV_TRIGB    EQU F126h
+JUMP_ACTIVE   EQU F127h
+JUMP_FRAME    EQU F128h
+JUMP_Y_OFFSET EQU F129h
+CUR_POSE_PAT  EQU F12Ah
 
 ; ---------- shots ----------
 ; F (straight) stays a BG (name-table) character, not a sprite - any
@@ -208,9 +208,9 @@ BULLET_U_SPR_BASE_SLOT EQU 7    ; hw sprite slots7-9, right after the enemy pool
 PAT_BULLETU    EQU 140          ; right after PAT_EXPLOSION(136-139)
 PAT_BULLETU_L  EQU 144
 BULLET_U_COLOR EQU 9            ; light red, same fg BulletF's BG version now uses - "バレットカラーをライトレッドに変更" (was gray/14)
-BULLET_U_SPRITE_ATTRS EQU 0F2E0h   ; 12 bytes: Y,X,pat,col x3, staged same as ENEMY_SPRITE_ATTRS
+BULLET_U_SPRITE_ATTRS EQU F1E0h   ; 12 bytes: Y,X,pat,col x3, staged same as ENEMY_SPRITE_ATTRS
 
-JOY_TRIGA     EQU 0F22Bh
+JOY_TRIGA     EQU F12Bh
 ; "耐久値を持つ敵や自機がダメージを食らったら一瞬ホワイトに光るように" -
 ; no tank-HP/damage system exists anywhere in this codebase, so the
 ; tank's only discrete "took damage" moment used to be BigZum's own
@@ -222,23 +222,23 @@ JOY_TRIGA     EQU 0F22Bh
 ; mechanism itself is generic and reusable by any future tank-damage
 ; source. Same FLASH_DURATION-driven countdown/FLASH_COLOR override as
 ; every other HP-bearing entity's own flash - see UPDATE_TANK_SPRITES.
-TANK_FLASH_TIMER EQU 0F22Ch
+TANK_FLASH_TIMER EQU F12Ch
 ; frames left before another shot can fire while A is held ("間欠連射
 ; ...1発打ったら1発空ける" - hold-to-auto-fire, but rate-limited
 ; rather than one every single frame) - see UPDATE_SHOT. Tunable;
 ; picked with no more precise spec than "leave a gap" ("ダメなら修正
 ; する" - happy to retune if this cadence isn't right).
-SHOT_COOLDOWN EQU 0F24Eh
+SHOT_COOLDOWN EQU F14Eh
 SHOT_COOLDOWN_FRAMES EQU 8
 ; 3 shot slots, 7 bytes each: +0 ACT, +1 TYPE(0=F straight,1=U
 ; diagonal), +2 COL, +3 ROW, +4 ADDR_LO, +5 ADDR_HI (name-table row
 ; base address, from BULLET_ROWADDR_LO/HI), +6 FACING(0=right,1=left,
 ; copied from TANK_FACING at spawn) - same pool-of-3 design as
 ; BULLET0/1/2 in src/CYBER SHMUP.asm ("Stage1と同様に制限数画面内3発").
-BULLET0_ACT   EQU 0F250h
-BULLET1_ACT   EQU 0F257h
-BULLET2_ACT   EQU 0F25Eh
-BULLET_TEMP_BYTE EQU 0F265h
+BULLET0_ACT   EQU F150h
+BULLET1_ACT   EQU F157h
+BULLET2_ACT   EQU F15Eh
+BULLET_TEMP_BYTE EQU F165h
 
 ; ---------- terrain collision: ground-height following + slope       ----------
 ; ---------- (Rock225) detection - see UPDATE_TERRAIN_COLLISION below. ----------
@@ -249,14 +249,14 @@ BULLET_TEMP_BYTE EQU 0F265h
 ; per direct instruction ("もっとGapスプライト切り替えを遅らせるべき
 ; あと4Px遅れるようにしてくれ").
 TANK_FOOT_DX  EQU 12
-TANK_GROUND_Y EQU 0F240h    ; current ground-follow baseline Y (tier-dependent) - UPDATE_JUMP
+TANK_GROUND_Y EQU F140h    ; current ground-follow baseline Y (tier-dependent) - UPDATE_JUMP
                             ; subtracts JUMP_Y_OFFSET from this instead of the fixed TANK_Y_BASE
-TANK_ON_SLOPE EQU 0F241h    ; 1 while straddling a Rock225/Rock225D marker -> Gap pose
-TANK_TIER     EQU 0F242h    ; 0-3, current ground tier (screen row 23-TANK_TIER) under the tank
-TANK_ROWPTR   EQU 0F243h    ; word: IDCACHE_Tn base address for the surface tier's row
-TANK_COL_R    EQU 0F245h    ; probe column (name-table column, 0-31)
-TANK_SLOPE_HOLD EQU 0F247h  ; frames left before TANK_ON_SLOPE actually drops to 0 - see UPDATE_TERRAIN_COLLISION
-TANK_DRAW_Y   EQU 0F248h    ; TANK_Y_CUR, -TANK_GAP_ART_OFFSET while a Gap pose is showing - see UPDATE_TANK_SPRITES
+TANK_ON_SLOPE EQU F141h    ; 1 while straddling a Rock225/Rock225D marker -> Gap pose
+TANK_TIER     EQU F142h    ; 0-3, current ground tier (screen row 23-TANK_TIER) under the tank
+TANK_ROWPTR   EQU F143h    ; word: IDCACHE_Tn base address for the surface tier's row
+TANK_COL_R    EQU F145h    ; probe column (name-table column, 0-31)
+TANK_SLOPE_HOLD EQU F147h  ; frames left before TANK_ON_SLOPE actually drops to 0 - see UPDATE_TERRAIN_COLLISION
+TANK_DRAW_Y   EQU F148h    ; TANK_Y_CUR, -TANK_GAP_ART_OFFSET while a Gap pose is showing - see UPDATE_TANK_SPRITES
 ; TankFGap/TankUGap's own art extends 3 rows further down within their
 ; fixed 32x32 canvas than TankF/TankUp does (lowest non-blank sprite
 ; row 29 vs 26, measured directly from the source JSON) - a fixed
@@ -276,11 +276,11 @@ TANK_GAP_ART_OFFSET EQU 3
 ; 左右移動ならその向きを向くように...Aボタンは向きのロックだな" -
 ; see UPDATE_TANK_XY (updates this), UPDATE_POSE/UPDATE_TANK_SPRITES
 ; (consume it for the tank), TRY_SPAWN_BULLET (consumes it for shots).
-TANK_FACING   EQU 0F249h    ; 0=right, 1=left
-UTS_COLOR_0   EQU 0F24Ah    ; UPDATE_TANK_SPRITES scratch: per-slot color, swapped when facing left
-UTS_COLOR_1   EQU 0F24Bh
-UTS_COLOR_2   EQU 0F24Ch
-UTS_COLOR_3   EQU 0F24Dh
+TANK_FACING   EQU F149h    ; 0=right, 1=left
+UTS_COLOR_0   EQU F14Ah    ; UPDATE_TANK_SPRITES scratch: per-slot color, swapped when facing left
+UTS_COLOR_1   EQU F14Bh
+UTS_COLOR_2   EQU F14Ch
+UTS_COLOR_3   EQU F14Dh
 
 ; ---------- score/counter + calibration HUD (row0-1) ----------
 ; "スコアとカウンター Stage1の物をそのまま流用" - SCORE/SCORE_DIGITS/
@@ -301,13 +301,13 @@ UTS_COLOR_3   EQU 0F24Dh
 ; their hex labels "0123456789ABCDEF" underneath - a calibration strip
 ; since the actual colors can only be judged on real hardware
 ; ("カラーは実機で合わせてるんで実際見ないとわからないんで").
-GAME_TICK     EQU 0F266h   ; 2 bytes
-SCORE         EQU 0F268h   ; 3 bytes: low word at +0, high byte at +2 (real score = SCORE*100)
-SCORE_DIGITS  EQU 0F26Bh   ; 6 bytes
-HUD_ROW       EQU 0F271h   ; WRITE_HUD_CELL scratch
-HUD_COL       EQU 0F272h
-HUD_VAL       EQU 0F273h
-HUD_TEMP_BYTE EQU 0F274h
+GAME_TICK     EQU F166h   ; 2 bytes
+SCORE         EQU F168h   ; 3 bytes: low word at +0, high byte at +2 (real score = SCORE*100)
+SCORE_DIGITS  EQU F16Bh   ; 6 bytes
+HUD_ROW       EQU F171h   ; WRITE_HUD_CELL scratch
+HUD_COL       EQU F172h
+HUD_VAL       EQU F173h
+HUD_TEMP_BYTE EQU F174h
 ; "サウンドはノイズｃｈ使用音は別にしなくていいぞ どうせ被れば消える
 ; PSGは3ch+ノイズ1chが仕様 2chはBGM用に常に空けておきたいしな" -
 ; SOUND_SHOT/SOUND_DESTROY/SOUND_ZUM_DEFLECT all share this single
@@ -322,8 +322,8 @@ HUD_TEMP_BYTE EQU 0F274h
 ; SOUND_UPDATE); SND_DECAY (below) is how much it drops per frame -
 ; each sound sets both when triggered, so one shared decay loop in
 ; SOUND_UPDATE handles every sound's own pacing.
-SND_TIMER     EQU 0F275h
-SND_DECAY     EQU 0F276h
+SND_TIMER     EQU F175h
+SND_DECAY     EQU F176h
 ; last-drawn hundreds/tens/ones digit for GAME_TICK_DISPLAY - unlike
 ; src/CYBER SHMUP.asm (which can afford an unconditional redraw every
 ; frame), this ROM has no vsync/HALT frame sync at all, so every extra
@@ -333,9 +333,9 @@ SND_DECAY     EQU 0F276h
 ; usually only the ones digit actually changed was real, avoidable
 ; cost. Init to 0FFh (never a real digit) so the very first call still
 ; draws all 3 - see GAME_TICK_DISPLAY.
-GTD_LAST_H    EQU 0F277h
-GTD_LAST_T    EQU 0F278h
-GTD_LAST_O    EQU 0F279h
+GTD_LAST_H    EQU F177h
+GTD_LAST_T    EQU F178h
+GTD_LAST_O    EQU F179h
 ; "爆発音はショット音で消えるとまずいんで爆発音は鳴り終わるまで継続
 ; しショット音で消えないように" - the shared-channel-A design lets any
 ; sound cut off whatever's currently playing, but an explosion in
@@ -345,7 +345,7 @@ GTD_LAST_O    EQU 0F279h
 ; SND_TIMER actually reaches 0, and cleared by SOUND_ZUM_DEFLECT too
 ; (that one's still allowed to cut an explosion off, same as always -
 ; only the shot sound is singled out here).
-SND_EXPLODING EQU 0F27Ah
+SND_EXPLODING EQU F17Ah
 ; digit0 code; digitN = DIGIT_BASE+N for N=0-9 (score/counter, glyphs
 ; copied byte-for-byte from src/CYBER SHMUP.asm's own DIGIT_PATTERNS -
 ; "スコアの数字流用") and N=10-15 = A-F (new art, "AからFまで新規",
@@ -415,19 +415,19 @@ E_DX      EQU 7   ; signed, post-hit explosion drift - see EXPLODE_DIR_DX/DY
 E_DY      EQU 8
 ENEMY_SLOT_SIZE  EQU 9
 ENEMY_SLOT_COUNT EQU 3   ; same "3 concurrent" convention as the bullet pool
-ENEMY_POOL    EQU 0F280h   ; ENEMY_SLOT_SIZE*ENEMY_SLOT_COUNT = 27 bytes
-ENEMY_SPAWN_TIMER   EQU 0F29Bh
+ENEMY_POOL    EQU F180h   ; ENEMY_SLOT_SIZE*ENEMY_SLOT_COUNT = 27 bytes
+ENEMY_SPAWN_TIMER   EQU F19Bh
 ; total enemies spawned so far (capped at 10, never decremented) -
 ; "で、10機出たら色替えの赤いZakoII...アルゴリズムは同じ": once this
 ; reaches 10, every spawn after is the red variant instead of green -
 ; same movement/turn-back logic either way (ENEMY_GET_STEP is the only
 ; place VARIANT changes behavior, for speed; UOE_DRAW picks the color).
-ENEMY_SPAWN_COUNT   EQU 0F29Ch
+ENEMY_SPAWN_COUNT   EQU F19Ch
 ; staging buffer for the 3 enemy hw sprite slots (4-6, right after the
 ; tank's own 0-3) - same "build in RAM, blast once" pattern as
 ; SPRITE_ATTRS/UTS_OUT_LOOP, just a separate buffer so the two flushes
 ; stay independent.
-ENEMY_SPRITE_ATTRS EQU 0F29Dh   ; 12 bytes: Y,X,pat,col x3
+ENEMY_SPRITE_ATTRS EQU F19Dh   ; 12 bytes: Y,X,pat,col x3
 ENEMY_SPR_BASE_SLOT EQU 4       ; hw sprite index slot0 uses; slotN -> ENEMY_SPR_BASE_SLOT+N
 
 ; green (normal) variant speed: "自機と同じ1.5で" - same alternating
@@ -548,7 +548,7 @@ EXPLOSION_DURATION EQU 8
 ; frames).
 ZUM_SLOT_SIZE  EQU 8    ; +0 Z_ACT,+1 Z_X,+2 Z_Y,+3 Z_TIMER(explosion)/pause countdown while alive,+4 Z_SPRIDX,+5/+6 Z_DX/Z_DY(explosion drift),+7 Z_RETREAT
 ZUM_SLOT_COUNT EQU 2
-ZUM_POOL       EQU 0F2ECh   ; ZUM_SLOT_SIZE*ZUM_SLOT_COUNT = 14 bytes
+ZUM_POOL       EQU F1ECh   ; ZUM_SLOT_SIZE*ZUM_SLOT_COUNT = 14 bytes
 ; "ZUM_SLOT_SIZE*ZUM_SLOT_COUNT = 14 bytes" (this comment's own original
 ; value, before Z_RETREAT - see ZUM_SLOT_SIZE's own comment - grew the
 ; struct from 7 to 8 fields/14 to 16 bytes total without this address
@@ -559,15 +559,15 @@ ZUM_POOL       EQU 0F2ECh   ; ZUM_SLOT_SIZE*ZUM_SLOT_COUNT = 14 bytes
 ; Etank/Flyer/BigZum touched this session is clean). Every RAM address
 ; from here through BANKSWITCH_TRAMPOLINE_RAM shifted +2 bytes to
 ; actually clear ZUM_POOL's real 16-byte span.
-ZUM_SPRITE_ATTRS EQU 0F2FCh ; 8 bytes: Y,X,pat,col x2 - same staging-buffer pattern as ENEMY_SPRITE_ATTRS
-ZUM_SPAWN_TIMER  EQU 0F304h
+ZUM_SPRITE_ATTRS EQU F1FCh ; 8 bytes: Y,X,pat,col x2 - same staging-buffer pattern as ENEMY_SPRITE_ATTRS
+ZUM_SPAWN_TIMER  EQU F204h
 ; "乗っかりから降りる時の速度が速すぎてワープにみえる" - set by
 ; UPDATE_TANK_ZUM_STAND (1 if it actually clamped TANK_Y_CUR against a
 ; Zum this call, else 0); read by UPDATE_JUMP the following frame to
 ; auto-land smoothly instead of snapping straight to ground the
 ; instant the jump timer runs out while still parked - see
 ; JUMP_LANDING_RESTART_FRAME below.
-TANK_ZUM_STANDING EQU 0F305h
+TANK_ZUM_STANDING EQU F205h
 ; "乗っかり中にジャンプできないんで オートジャンプ中でも出来るように" -
 ; UPDATE_JUMP normally refuses a new press whenever JUMP_ACTIVE is
 ; already set, which while parked on a Zum is *always* true (the
@@ -577,7 +577,7 @@ TANK_ZUM_STANDING EQU 0F305h
 ; honored while parked, so the new jump's own arc adds on top of
 ; where the tank already is instead of first snapping down to
 ; TANK_GROUND_Y and jumping from there - see UPDATE_JUMP.
-JUMP_STAND_BASELINE EQU 0F306h
+JUMP_STAND_BASELINE EQU F206h
 ZUM_SPR_BASE_SLOT EQU 10    ; hw sprite slots10-11, right after the bullet pool's own 7-9
 PAT_ZUM EQU 148             ; right after PAT_BULLETU_L(144-147)
 ; mirrored Zum art, generated by enemy_gen.py from day one but unused
@@ -777,12 +777,12 @@ FLYER_SLOT_COUNT EQU 1
 ; strictly below the real 0F380h MSX BIOS-work-area boundary (see
 ; STACKTOP's own comment - this exact mistake caused a real-hardware
 ; freeze last round).
-FLYER_POOL         EQU 0F342h  ; FLYER_SLOT_SIZE*FLYER_SLOT_COUNT = 11 bytes
-FLYER_SPRITE_ATTRS EQU 0F34Dh  ; FLYER_SLOT_COUNT*16 = 16 bytes: (Y,X,pat,col)x4
-FLYER_SPAWN_TIMER  EQU 0F35Dh
-FLYER_DRAW_TEMP  EQU 0F35Eh    ; scratch byte, UOFL_DRAW's own chosen pattern base
-FLYER_DRAW_COLOR EQU 0F35Fh    ; scratch byte, UOFL_DRAW's own resolved color (FLYER_COLOR or FLASH_COLOR)
-; ends at 0F35Dh - well clear of the 0F380h boundary.
+FLYER_POOL         EQU F242h  ; FLYER_SLOT_SIZE*FLYER_SLOT_COUNT = 11 bytes
+FLYER_SPRITE_ATTRS EQU F24Dh  ; FLYER_SLOT_COUNT*16 = 16 bytes: (Y,X,pat,col)x4
+FLYER_SPAWN_TIMER  EQU F25Dh
+FLYER_DRAW_TEMP  EQU F25Eh    ; scratch byte, UOFL_DRAW's own chosen pattern base
+FLYER_DRAW_COLOR EQU F25Fh    ; scratch byte, UOFL_DRAW's own resolved color (FLYER_COLOR or FLASH_COLOR)
+; ends at F25Dh - well clear of the 0F380h boundary.
 FLYER_SPR_BASE_SLOT EQU 20     ; hw sprite slots20-23 (1 instance x4), right after Zum's own 10-11 (12-19 formerly BigZum's, now unused)
 FLYER_COLOR EQU 7              ; cyan - sprites/Flyer.json's own fg
 FLYER_SPAWN_INTERVAL EQU ZUM_SPAWN_INTERVAL  ; same untuned-but-reasonable value as everything else's own spawn interval - not itself specified
@@ -858,18 +858,18 @@ ETANK_SLOT_SIZE  EQU 8   ; +0 ACT,+1 X,+2 Y(fixed at spawn, never re-probed),+3 
 ETANK_SLOT_COUNT EQU 1
 ; strictly below the real 0F380h MSX BIOS-work-area boundary (see
 ; STACKTOP's own comment).
-ETANK_POOL         EQU 0F360h  ; ETANK_SLOT_SIZE*ETANK_SLOT_COUNT = 8 bytes
-ETANK_SPRITE_ATTRS EQU 0F368h  ; ETANK_SLOT_COUNT*8 = 8 bytes: (Y,X,pat,col)x2 - BL/BR only, TL/TR always hidden
-ETANK_SPAWN_TIMER  EQU 0F370h
+ETANK_POOL         EQU F260h  ; ETANK_SLOT_SIZE*ETANK_SLOT_COUNT = 8 bytes
+ETANK_SPRITE_ATTRS EQU F268h  ; ETANK_SLOT_COUNT*8 = 8 bytes: (Y,X,pat,col)x2 - BL/BR only, TL/TR always hidden
+ETANK_SPAWN_TIMER  EQU F270h
 ; ASCII16 bank-switch RAM trampoline (see INIT's own comment) - 4 bytes
 ; ("LD (DE),A"=3, "JP (HL)"=1), same real-hardware-confirmed idea as
-; bankswitch_poc's own 0F200h (SPRITE_ATTRS already owns that address
+; bankswitch_poc's own F100h (SPRITE_ATTRS already owns that address
 ; in this file, so a different free gap is used here).
-BANKSWITCH_TRAMPOLINE_RAM EQU 0F371h
+BANKSWITCH_TRAMPOLINE_RAM EQU F271h
 ; scratch byte, UOET_DRAW's own resolved color (ETANK_COLOR or
 ; FLASH_COLOR) - was BIGZUM_DRAW_COLOR before BigZum's own removal.
 ; Still well under the real 0F380h BIOS-work-area boundary.
-ETANK_DRAW_COLOR EQU 0F375h
+ETANK_DRAW_COLOR EQU F275h
 ETANK_SPR_BASE_SLOT EQU 24     ; hw sprite slots24-25 (BL/BR only x1 instance), right after Flyer's own 20-23
 ; "カラーはダークレッド" - NOT sprites/Etank.json's own fg, overridden
 ; directly here (same "override the JSON's own fg" precedent as
@@ -920,7 +920,7 @@ CLOUD_SLOT_SIZE  EQU 9
 ; just the fast band (rows2-4, 3rd-5th from top), drops the half-speed
 ; one (rows5-7, 6th-8th from top) for good this time, not an experiment.
 CLOUD_SLOT_COUNT EQU 3
-CLOUD_POOL    EQU 0F2A9h   ; CLOUD_SLOT_SIZE*CLOUD_SLOT_COUNT bytes (27, was 54 with all 6 rows)
+CLOUD_POOL    EQU F1A9h   ; CLOUD_SLOT_SIZE*CLOUD_SLOT_COUNT bytes (27, was 54 with all 6 rows)
 ; shared free-running counter, same idea as Stage1's DFL_RNG - used by
 ; every "random-ish" draw in this file (cloud timing/width, ZacoII's
 ; own spawn Y and red/green pick, Zum's flee/charge roll). "気になっ
@@ -939,7 +939,7 @@ CLOUD_POOL    EQU 0F2A9h   ; CLOUD_SLOT_SIZE*CLOUD_SLOT_COUNT bytes (27, was 54 
 ; unconditionally, by the current TICK value (not a flat +1) - the
 ; cumulative sum of 1+2+3+...+TICK grows non-linearly, so no fixed-
 ; interval consumer ever sees a constant delta between reads again.
-GAME_RNG     EQU 0F2DFh
+GAME_RNG     EQU F1DFh
 CLOUD_SPAWN_COL EQU 32     ; leftmost cell starts one column past the right edge
 ; codes1-2: genuinely unused pattern-code slots within group0 (see the
 ; INIT-time load below) - reuses src/CYBER SHMUP.asm's own CLOUD_WA/
@@ -959,6 +959,39 @@ CLOUD_GROUP0_COLOR EQU 0F5h   ; fg15 white / bg5 light blue (group0 was 0x55 sky
 ; interrupt/BIOS simulation at all, so it read back exactly what the
 ; game itself last wrote there). Any new RAM belongs strictly BELOW
 ; this line, never at or above it.
+;
+; "白いEtankがでて右側にゴミ...過去の例では使用する変数やRamが初期化
+; されてなくて誤動作したり スタックの扱いをミスってたりな Push Pop
+; 不整合だ" - this earlier fix (keeping our OWN variables below 0F380h)
+; was necessary but NOT sufficient: it only protects against variables
+; growing UP into BIOS territory, it says nothing about the STACK
+; (which starts AT 0F380h and grows DOWN) needing enough of its own
+; headroom before it reaches back down into OUR variables. Measured
+; directly in z80emu.py (tracking SP on every single instruction
+; step, not just at frame boundaries): ordinary nested CALLs during a
+; single MAINLOOP frame - no interrupts involved at all - already
+; dipped SP to 0F374h (12 bytes below STACKTOP), which used to be
+; INSIDE BANKSWITCH_TRAMPOLINE_RAM and only 1 byte from ETANK_DRAW_
+; COLOR - with the H.TIMI interrupt overhead this same comment already
+; warned about on top of that (a real save-registers-then-work ISR
+; easily needs several times that many bytes), a live game variable
+; getting clobbered mid-frame by an ordinary PUSH is entirely
+; plausible, exactly matching "白いEtankが...スポーンで描画されてる
+; わけじゃない" (garbage showing up with no real spawn behind it) and
+; explaining why the SAME symptom tracked whichever entity's own scratch
+; RAM happened to sit closest to STACKTOP (BigZum's own DRAW_COLOR
+; before its removal, Etank's own DRAW_COLOR after). Not a PUSH/POP
+; mismatch (every push in this file was re-audited and balances - SP
+; always returns exactly to STACKTOP at the top of every frame), just
+; too little real distance between "everything we use" and "where the
+; stack lives" for a system whose interrupt overhead this file's own
+; test harness cannot simulate at all. Fixed by shifting every OTHER
+; RAM address in this file down by 100h (256 bytes, TICK now at
+; 0EF00h instead of 0F000h) - STACKTOP itself is untouched (still the
+; correct real BIOS boundary), but now has 256+ bytes of genuinely
+; free headroom below it before reaching our own topmost variable,
+; comfortably past anything a real interrupt handler plus our own
+; deepest measured call nesting could plausibly need.
 STACKTOP      EQU 0F380h
 
 INIT:
@@ -2875,7 +2908,6 @@ UEUA_LOOP:
 ; only reset on an actual spawn) - same pool-of-3 idea as
 ; TRY_SPAWN_BULLET.
 ALLOC_ENEMY_SLOT:
-    RET   ; DIAGNOSTIC: ZacoII spawning disabled - Etank-only isolation build
     LD HL,ENEMY_POOL
     LD B,ENEMY_SLOT_COUNT
 AES_LOOP:
@@ -3360,7 +3392,6 @@ ZTO_FAIL:
 ; type specifically. Replaced with AZS_FOUND's own instant overlap
 ; resolution below instead of refusing the spawn.
 ALLOC_ZUM_SLOT:
-    RET   ; DIAGNOSTIC: Zum spawning disabled - Etank-only isolation build
     LD A,(ENEMY_SPAWN_COUNT)
     CP 10
     RET C
@@ -3942,7 +3973,6 @@ UFLAU_LOOP:
 
 ; airborne - no terrain gate at all, just a free slot.
 ALLOC_FLYER_SLOT:
-    RET   ; DIAGNOSTIC: Flyer spawning disabled - Etank-only isolation build
     LD HL,FLYER_POOL
     LD B,FLYER_SLOT_COUNT
 AFLS_LOOP:
