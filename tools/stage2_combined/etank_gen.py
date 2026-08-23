@@ -10,15 +10,16 @@ box), so TL/TR are never drawn at runtime (those 2 hw sprite slots are
 simply never allocated - see ETANK_SPR_BASE_SLOT in combined_test.asm)
 and only BL/BR need real pattern bytes at all.
 
-No separate permanent pattern-code allocation either: the hardware
-pattern-code budget is already tight, so per direct instruction
-("BigZum出現時は出さないので動的に書き換え") Etank instead shares
-BigZum's own PAT_BIGZUM BL/BR groups at runtime: ALLOC_ETANK_SLOT
-LDIRVMs the 64 bytes this module emits into that VRAM region on
-Etank's own spawn, and ALLOC_BIGZUM_SLOT reloads BigZum's own real
-bytes back into the whole region on ITS spawn (undoing any stale Etank
-data) - safe only because the 2 are spawn-gated mutually exclusive,
-bidirectionally, in combined_test.asm.
+Originally shared BigZum's own PAT_BIGZUM BL/BR pattern-VRAM groups
+dynamically at runtime (the pattern-code budget was tight with
+BigZum's own 64 codes loaded). BigZum was removed entirely as a
+diagnostic isolation step ("BigZumのコードは全て一旦削除 変わりに
+Etankと差し替えてEtank周りが正常動作するか確認する"), freeing up its
+whole pattern-code range - Etank now gets its own dedicated PERMANENT
+allocation there instead (PAT_ETANK_BL/PAT_ETANK_BR in
+combined_test.asm), loaded once at INIT: the 64 bytes this module
+emits are LDIRVM'd into VRAM a single time at boot, same convention as
+Flyer's own permanent pattern load.
 
 Color is NOT read from the JSON's own fg (8, medium red) - "カラーは
 ダークレッド" overrides it to dark red (MSX palette index 6) directly

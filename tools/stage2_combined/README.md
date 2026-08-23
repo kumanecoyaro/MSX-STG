@@ -2910,6 +2910,92 @@ with no way to tell where.
   under the banked model; fresh 20000-frame random-input sweep and
   20000-frame idle sweep, no crash/stall; `render_check.py` clean.
 
+- **BigZum removed entirely as a diagnostic isolation step - reported
+  glitches never reproduced in the emulator**: after the Zum RAM-
+  overlap and Etank quadrant-addressing fixes above, 2 screenshots
+  still showed real glitches on WebMSX: "まず１枚目 右下の地形に青や
+  緑のスプライトが出てる これは地形の中なので出るはずがない これらが
+  上から下に高速で点滅しながら移動してる 2枚目が左上の雲のあたりに
+  白いBigZumが表示されてる". Extensive automated reproduction attempts
+  (a 30000-frame BigZum-focused "ghost hunt" sweep asserting per-frame
+  invariants like "quadrant color=15/white implies flash timer>0" and
+  "Y never implausibly small/near the top of screen", a separate
+  20000-frame sweep checking every enemy never sinks below the terrain
+  line, and a frame-by-frame trace of the shake-off jump specifically)
+  found nothing - 0 sunk-sprite anomalies, 0 genuine white-BigZum
+  frames (the only 16 flagged were a false-positive of the detector's
+  own timing, a legitimate last frame of an ordinary hit-flash), peak
+  jump Y=112 (nowhere near the clouds). Asked whether the white BigZum
+  appeared before or after BigZum's own real spawn gate
+  (`ENEMY_SPAWN_COUNT>=10`) could first fire - "だからよ スタート直後
+  から出てるって言ったろ そもそもこれはスポーンで描画されてるわけ
+  じゃない バグだからな" confirmed it happens before BigZum could ever
+  legitimately be alive, i.e. it is NOT BigZum's own real spawn/draw
+  logic executing correctly (something is putting stray, off-spec
+  sprite/color data on screen through some other path this session's
+  static analysis and automated sweeps both failed to find). New
+  instruction, changing the diagnostic strategy entirely: "なので方針
+  を変える BigZumのコードは全て一旦削除 変わりにEtankと差し替えて
+  Etank周りが正常動作するか確認する" - delete BigZum completely and
+  verify Etank still works correctly on its own, to isolate whether
+  the glitch lives specifically in BigZum's own code/interactions or
+  is something else entirely (e.g. a WebMSX-specific VDP-timing/
+  sprite-per-scanline-limit behavior unrelated to any of this file's
+  own code).
+  - Removed every `BIGZUM_*`/`BigZum` constant, RAM address, routine
+    (`ALLOC_BIGZUM_SLOT`, `UPDATE_BIGZUM_ALL`/`UPDATE_ONE_BIGZUM` and
+    all its `UOBZ_*` sub-states, `UOBZ_DRAW`, `UOBZ_EXPLODING`/
+    `UOBZ_HIDE`, `UOBZ_GET_GROUND_Y`, `FLUSH_BIGZUM_SPRITES`,
+    `UPDATE_TANK_BIGZUM_STAND`/`UPDATE_TANK_BIGZUM_PUNCH`,
+    `CHECK_BULLET_VS_BIGZUM`/`CHECK_HIT_ONE_BULLET_BIGZUM`/
+    `CHECK_HIT_PAIR_BIGZUM`, `BIGZUM_TERRAIN_OK`), pattern-loading
+    LDIRVMs and RAM-clear/hide loop in `INIT`, its 4 `MAINLOOP` calls,
+    the `BIGZUM_JUMP_TABLE` data, and the BigZum-side mutual-exclusion
+    checks inside `ALLOC_ZUM_SLOT`/`ALLOC_FLYER_SLOT`/
+    `ALLOC_ETANK_SLOT` (no longer meaningful with BigZum gone).
+    `bigzum_gen.py`'s import and table concatenation removed from
+    `build_test.py` - its pattern data is no longer emitted into the
+    ROM at all.
+  - **Etank given its own permanent pattern allocation**, since
+    BigZum's removal freed up the whole 156-219 pattern-code range it
+    used to dynamically borrow from: `PAT_ETANK_BL`/`PAT_ETANK_BR` are
+    now fixed codes (156/160, still 4 apart per the same quadrant-
+    group convention) instead of `PAT_BIGZUM+8`/`+12`, and its 64-byte
+    pattern LDIRVM moved from `ALLOC_ETANK_SLOT` (dynamic, every spawn)
+    to a one-time load in `INIT` (permanent, same convention as
+    Flyer's own `PAT_FLYER`). `UOET_DRAW`'s scratch color byte moved
+    off the now-deleted `BIGZUM_DRAW_COLOR` onto its own new
+    `ETANK_DRAW_COLOR` (0F375h, still clear of the 0F380h BIOS-work-
+    area boundary). `etank_gen.py`'s own docstring updated to describe
+    the new permanent-allocation design instead of the old dynamic
+    BigZum-sharing scheme.
+  Verified: `etank_pattern_vram_test.py` rewritten for the new
+  architecture (8 checks) - confirms Etank's own pattern VRAM is
+  already correct right after `INIT`, before any spawn has ever
+  happened (proving the permanent load actually works), and that a
+  spawn no longer re-touches pattern VRAM at all (poisoned bytes
+  survive `ALLOC_ETANK_SLOT`, proving the old per-spawn LDIRVM is
+  really gone) - all 8 pass. `etank_unit.py`'s 2 BigZum-bidirectional-
+  exclusion checks removed (no longer meaningful); its remaining 16
+  checks (spawn gating, straight-line movement, despawn, push,
+  omnidirectional bullet damage) still pass. All other existing
+  targeted suites (Flyer-terrain 5, ZacoII-flash 6, Zum-overlap 3)
+  re-run clean. Fresh 20000-frame random-input sweep and 20000-frame
+  idle sweep under the properly-banked ASCII16 model, no crash/stall;
+  `render_check.py` still boots clean with bank1 correctly selected.
+  Rendered an Etank-only scene (`visual_check3.py`) to a PNG and
+  visually confirmed it draws correctly - dark red tank shape on the
+  terrain, no stray/misplaced sprites, no white ghosts near the sky.
+  The user's specific reported symptoms (terrain-embedded flickering
+  blue/green sprites, white BigZum near the clouds) were never
+  reproduced by any means available in this emulator-based test
+  harness even before this removal - whether they're now gone in
+  WebMSX (confirming the cause lived specifically in BigZum's own
+  code) or still present with BigZum fully deleted (pointing to
+  something else, e.g. WebMSX-specific behavior unrelated to this
+  file's own code) still needs real-WebMSX confirmation, not
+  independently verifiable from this environment.
+
 ## Bugs found and fixed while building this
 
 - **Sand flickered between its own new color and Rock's, twice over**
@@ -3258,7 +3344,7 @@ directly.
 
 - `combined_test.asm`, `build_test.py` - the merged engine + build
   script (imports `terrain_gen.py`, `tank_gen.py`, `bullet_gen.py`,
-  `enemy_gen.py`, `bigzum_gen.py`, `flyer_gen.py`, and `etank_gen.py`).
+  `enemy_gen.py`, `flyer_gen.py`, and `etank_gen.py`).
 - `combined_test [ASCII16].rom` - the built ROM, 64KB (bank0+bank1,
   doubled). The `[ASCII16]` filename tag is required, not cosmetic -
   WebMSX (the actual verification method used for this file - not real
@@ -3273,17 +3359,13 @@ directly.
 - `enemy_gen.py`, `sprites/ZacoII.json`, `sprites/Zum.json` - the 2
   16x16 ground/air enemy sprites' hw-pattern conversion (single hw
   sprite each, no quadrant splitting).
-- `bigzum_gen.py`, `sprites/BigZum.json`, `sprites/BigZumP.json` -
-  BigZum's 2 32x32 poses' hw-pattern conversion, mirroring
-  `tank_gen.py`'s own quadrant-splitting + hflip approach (see the
-  BigZum entry above).
 - `flyer_gen.py`, `sprites/Flyer.json` - Flyer's own 32x32 hw-pattern
   conversion, permanent pattern allocation (no VRAM sharing).
 - `etank_gen.py`, `sprites/Etank.json` - Etank's own 32x32 art, but
   only the bottom-left BL/BR quadrants are ever emitted (TL/TR are
-  fully blank in the source art) - dynamically shares BigZum's own
-  pattern-VRAM at runtime instead of a permanent allocation (see the
-  Etank entry above).
+  fully blank in the source art) - own permanent pattern allocation,
+  loaded once at `INIT` (see the BigZum-removal entry above; BigZum's
+  own sprite JSONs/`bigzum_gen.py` are no longer used by this file).
 - `render_check.py` - emulator verification: boots, runs several full
   track loops with no crash/hang, and renders 2 sample frames from
   real VRAM (BG + sprites composited together) to `combined0.ppm`/
