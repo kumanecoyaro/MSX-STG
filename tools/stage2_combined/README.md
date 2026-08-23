@@ -3368,6 +3368,31 @@ with no way to tell where.
   band now reads mostly-black-with-thin-light-blue-streaks instead of
   the previous mostly-blue-with-thin-black-lines.
 
+- **Night effect started 1 row too late - real off-by-one, confirmed
+  from a screenshot**: "夜の処理の最初の塗りつぶしが2行目からじゃな
+  く3行目からになってる スコアの下の行からだぞ そう指示したろ".
+  `NIGHT_START_ROW` was `2`, read from "画面2行目から" as a literal
+  0-indexed row index - but the original instruction meant it the
+  ordinary 1-indexed way ("2nd row on screen" = row0's score/life-bar
+  row is the "1st row", so the "2nd row" is row index 1, immediately
+  below it) - "スコアの下の行から" (starting from the row right below
+  the score) pins this down exactly. `NIGHT_END_ROW`(16, "下から8行
+  目") is unaffected - that one was independently cross-checked
+  against the pre-existing `SKYSAND_CODE` row before this round even
+  started, and "Nth from the bottom" is an ordinal count either way,
+  not subject to the same 0-vs-1-indexed ambiguity as counting down
+  from the top. `NIGHT_START_ROW` changed from `2` to `1`.
+  Verified: `night_effect_test.py` reworked to reference
+  `NIGHT_START_ROW`/`NIGHT_END_ROW` symbolically instead of hardcoded
+  row numbers (so it can't silently drift out of sync with the
+  constant again), plus a new explicit check that `NIGHT_START_ROW`
+  really is `1`, and that row0 (the score/HUD row) is byte-for-byte
+  unchanged by the first `CHECK_NIGHT` call - 16 checks, all pass.
+  Full suite (124 checks) passes. Rendered a frame right after the
+  effect starts and visually confirmed the striped row now sits
+  immediately below the score/life-bar row, no untouched blue row
+  in between any more.
+
 ## Bugs found and fixed while building this
 
 - **Sand flickered between its own new color and Rock's, twice over**

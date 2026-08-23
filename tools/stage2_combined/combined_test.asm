@@ -375,8 +375,12 @@ LIFE_BAR_ROW        EQU 0
 LIFE_BAR_COL0       EQU 9         ; 1 blank cell past the score's own 8 (cols0-7) - "スコアから１セル空けた位置"
 ; "夜になっていく演出" - once GAME_TICK reaches NIGHT_START_TICK(100),
 ; every NIGHT_INTERVAL(16) further GAME_TICKs, one more sky row (top
-; down, NIGHT_START_ROW(2) through NIGHT_END_ROW(16, the SkySand row -
-; "下から8行目" - see SKYSAND_CODE's own comment, same row) darkens:
+; down, NIGHT_START_ROW(1, "スコアの下の行から" - the row right below
+; the score/life-bar row0, off-by-one vs an earlier "2行目"=row-index-2
+; misreading, fixed once shown a real screenshot of it starting 1 row
+; too late) through NIGHT_END_ROW(16, the SkySand row - "下から8行目" -
+; see SKYSAND_CODE's own comment, same row either way this is counted)
+; darkens:
 ; the new leading row gets NIGHT_CODE's own striped tile (a fresh copy
 ; of SKYSAND_PATTERN's own bits - the same "横縞" (horizontal-stripe)
 ; look, recolored fg5(light blue)/bg1(black) instead of SkySand's own
@@ -389,7 +393,7 @@ LIFE_BAR_COL0       EQU 9         ; 1 blank cell past the score's own 8 (cols0-7
 ; requested darkening the ground/terrain, only the sky above it.
 NIGHT_START_TICK EQU 100
 NIGHT_INTERVAL   EQU 16
-NIGHT_START_ROW  EQU 2
+NIGHT_START_ROW  EQU 1
 NIGHT_END_ROW    EQU 16
 NIGHT_CODE       EQU 136       ; group17 (136-143)
 NIGHT_COLOR      EQU 015h      ; "ブラックとブルーの文字色と背景色を逆に" - fg1 black / bg5 light blue (was fg5/bg1)
