@@ -3286,6 +3286,46 @@ with no way to tell where.
   confirms Etank spawns naturally at frame 559 with BigZum not even
   active yet - matching the isolated unit-test timing exactly.
 
+- **Night-transition effect added**: "じゃあ次はTick100になったら 16Tick
+  毎に1行背景をブラックのセルに書き換える 書き換えは画面2行目から下
+  から8行目まで繰り返す(横縞のパターンのセルまで) 書き換えは最初縞
+  パターンのセルの色替えで1行分 背景色ブラックで文字色ライトブルー
+  次の16Tickになったら2行書き換えながら 下の行に縞模様のセルでその
+  上にブラックがくる形 夜になっていく演出だな". Once `GAME_TICK`
+  reaches `NIGHT_START_TICK`(100), every further `NIGHT_INTERVAL`(16)
+  `GAME_TICK`s, one more sky row darkens, sweeping top-down from
+  `NIGHT_START_ROW`(2) through `NIGHT_END_ROW`(16 - "下から8行目",
+  confirmed the same row as the existing SkySand transition tile, see
+  `SKYSAND_CODE`'s own comment). Each step: the row that was the
+  leading edge last time solidifies to plain black (reuses the
+  existing `HUD_ROW_BLANK_CODE`, already black-on-black - no new code
+  needed there), and the next row down becomes the new striped leading
+  edge - "縞パターンのセル" turned out to be a real, already-existing
+  concept in this file: `SKYSAND_PATTERN`'s own bits
+  (`255,0,255,255,0,255,0,255` - literally alternating solid fg/bg
+  8-pixel bands, i.e. horizontal stripes) are copied into a brand new
+  dedicated code (`NIGHT_CODE`=136, group17) recolored fg5(light
+  blue)/bg1(black) - "背景色ブラックで文字色ライトブルー" - instead of
+  SkySand's own fg5/bg11, kept in its own group so recoloring one never
+  touches the other. Stops once `NIGHT_END_ROW` itself becomes the
+  leading row (the real SkySand row is never blackened over - only the
+  sky above it darkens, not the ground).
+  Verified: new `night_effect_test.py` (15 checks - boot state
+  (`NIGHT_ROW`=0, first trigger scheduled at 100), the first row
+  converts to the striped tile exactly at `GAME_TICK`=100 with
+  neighboring rows untouched, the 2nd trigger at 116 both solidifies
+  row2 to black AND makes row3 the new striped row, a repeated call at
+  the same tick is a no-op, jumping straight to the final row confirms
+  `NIGHT_END_ROW` itself stays striped rather than blackening, further
+  calls once done are no-ops, and - through the real `MAINLOOP`, not a
+  poke - the effect genuinely doesn't start before real frame ~799,
+  exactly when `GAME_TICK` reaches 100) - all pass. Full suite (117
+  checks across all files) passes. Rendered a frame partway through
+  (`NIGHT_ROW`=12) to PNG and visually confirmed: solid black from
+  row2 down to row11, a visible thin horizontal-stripe band at row12
+  (the current leading edge), ordinary sky below it, terrain/HUD
+  entirely unaffected.
+
 ## Bugs found and fixed while building this
 
 - **Sand flickered between its own new color and Rock's, twice over**

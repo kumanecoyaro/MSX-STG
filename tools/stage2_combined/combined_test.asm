@@ -373,6 +373,26 @@ LIFE_CODE           EQU 128       ; group16 (128-135)
 LIFE_COLOR          EQU 035h      ; fg3/bg5, from Life_8x8.json's own fg/bg
 LIFE_BAR_ROW        EQU 0
 LIFE_BAR_COL0       EQU 9         ; 1 blank cell past the score's own 8 (cols0-7) - "スコアから１セル空けた位置"
+; "夜になっていく演出" - once GAME_TICK reaches NIGHT_START_TICK(100),
+; every NIGHT_INTERVAL(16) further GAME_TICKs, one more sky row (top
+; down, NIGHT_START_ROW(2) through NIGHT_END_ROW(16, the SkySand row -
+; "下から8行目" - see SKYSAND_CODE's own comment, same row) darkens:
+; the new leading row gets NIGHT_CODE's own striped tile (a fresh copy
+; of SKYSAND_PATTERN's own bits - the same "横縞" (horizontal-stripe)
+; look, recolored fg5(light blue)/bg1(black) instead of SkySand's own
+; fg5/bg11 - own dedicated group17, distinct from SKYSAND_CODE's own
+; group31 so recoloring one never touches the other), and the row that
+; was the leading edge last time solidifies to HUD_ROW_BLANK_CODE
+; (already black-on-black, reused as-is - no new code needed for the
+; "done" rows). Stops once NIGHT_END_ROW itself becomes the leading
+; row - the SkySand row is never itself blackened over, since nothing
+; requested darkening the ground/terrain, only the sky above it.
+NIGHT_START_TICK EQU 100
+NIGHT_INTERVAL   EQU 16
+NIGHT_START_ROW  EQU 2
+NIGHT_END_ROW    EQU 16
+NIGHT_CODE       EQU 136       ; group17 (136-143)
+NIGHT_COLOR      EQU 051h      ; fg5 light blue / bg1 black - "背景色ブラックで文字色ライトブルー"
 PSG_ADDR         EQU 0A0h
 PSG_DATA         EQU 0A1h
 ; mixer (R7) values for channel A only - tone/noise B and C always
@@ -1113,6 +1133,13 @@ BANKSWITCH_TRAMPOLINE_RAM EQU F271h
 ; any "never runs interleaved" assumption between the two. Still well
 ; under the real 0F380h BIOS-work-area boundary.
 ETANK_DRAW_COLOR EQU F275h
+; night-transition state (see NIGHT_START_TICK's own comment). NIGHT_ROW
+; is 0 before the effect starts, then the current leading (striped) row
+; NIGHT_START_ROW-NIGHT_END_ROW; once it reaches NIGHT_END_ROW, done.
+; NIGHT_NEXT_TICK (2 bytes, 16-bit like GAME_TICK itself) is the next
+; GAME_TICK value that advances it, starting at NIGHT_START_TICK.
+NIGHT_ROW        EQU F276h
+NIGHT_NEXT_TICK  EQU F277h   ; 2 bytes
 ETANK_SPR_BASE_SLOT EQU 24     ; hw sprite slots24-25 (BL/BR only x1 instance), right after Flyer's own 20-23
 ; "カラーはダークレッド" - NOT sprites/Etank.json's own fg, overridden
 ; directly here (same "override the JSON's own fg" precedent as
@@ -1578,6 +1605,15 @@ INIT_SPRATR_CLR:
     LD A,LIFE_COLOR : LD (HUD_TEMP_BYTE),A
     LD HL,HUD_TEMP_BYTE : LD DE,2000h+16 : LD BC,1 : CALL LDIRVM
 
+    ; night-transition tile: SKYSAND_PATTERN's own bits (the striped
+    ; look), own dedicated group17 colored fg5/bg1 instead of SkySand's
+    ; own fg5/bg11 - see NIGHT_START_TICK's own comment.
+    LD HL,SKYSAND_PATTERN : LD DE,NIGHT_CODE*8 : LD BC,8 : CALL LDIRVM
+    LD A,NIGHT_COLOR : LD (HUD_TEMP_BYTE),A
+    LD HL,HUD_TEMP_BYTE : LD DE,2000h+17 : LD BC,1 : CALL LDIRVM
+    XOR A : LD (NIGHT_ROW),A
+    LD HL,NIGHT_START_TICK : LD (NIGHT_NEXT_TICK),HL
+
     ; "最上部の行はブラックで初期化" - the whole top HUD row (32 cells)
     ; to HUD_ROW_BLANK_CODE first; SCORE_DISPLAY/LIFE_DISPLAY/
     ; GAME_TICK_DISPLAY overwrite their own specific cells afterward.
@@ -1909,6 +1945,7 @@ PXT_NOWRAP:
     ; scheduling unit.
     LD HL,(GAME_TICK) : INC HL : LD (GAME_TICK),HL
     CALL GAME_TICK_DISPLAY
+    CALL CHECK_NIGHT
 SKIP_ADVANCE:
     LD A,(TICK) : AND 07h : LD (ROWPHASE_T),A
 
@@ -3095,6 +3132,48 @@ GTD_SKIP_T:
     LD A,(HUD_TEMP_BYTE) : ADD A,DIGIT_BASE : LD (HUD_VAL),A
     CALL WRITE_HUD_CELL
 GTD_SKIP_O:
+    RET
+
+; advances the night-transition by at most 1 row per call - called
+; once every 8 raw frames alongside GAME_TICK_DISPLAY itself (same
+; cadence GAME_TICK advances on), so it can never skip a 16-tick
+; boundary. See NIGHT_START_TICK's own comment for the full design.
+CHECK_NIGHT:
+    LD A,(NIGHT_ROW)
+    CP NIGHT_END_ROW
+    RET Z                      ; already reached the final row - done for good
+    LD HL,(GAME_TICK)
+    LD DE,(NIGHT_NEXT_TICK)
+    OR A
+    SBC HL,DE
+    RET C                      ; not yet time for the next row
+
+    LD A,(NIGHT_ROW)
+    OR A
+    JR Z,CN_FIRST
+    ; solidify the previous leading row to plain black
+    CALL NIGHT_ROW_ADDR
+    LD HL,HUD_BLACKROW32 : LD BC,32 : CALL LDIRVM
+    LD A,(NIGHT_ROW) : INC A
+    JR CN_SET_ROW
+CN_FIRST:
+    LD A,NIGHT_START_ROW
+CN_SET_ROW:
+    LD (NIGHT_ROW),A
+    CALL NIGHT_ROW_ADDR
+    LD HL,NIGHT_STRIPEROW32 : LD BC,32 : CALL LDIRVM
+
+    LD HL,(NIGHT_NEXT_TICK) : LD DE,NIGHT_INTERVAL : ADD HL,DE
+    LD (NIGHT_NEXT_TICK),HL
+    RET
+
+; A=row(0-23) -> DE=1800h+row*32, the name-table address of that row's
+; own first column. Trashes HL.
+NIGHT_ROW_ADDR:
+    LD L,A : LD H,0
+    ADD HL,HL : ADD HL,HL : ADD HL,HL : ADD HL,HL : ADD HL,HL   ; *32
+    LD DE,1800h : ADD HL,DE
+    LD D,H : LD E,L
     RET
 
 ; PSG (AY-3-8910-compatible) shot sound: channel A, noise-only -
@@ -6462,6 +6541,8 @@ HUD_ZERO8:
     DS 8,0
 HUD_BLACKROW32:
     DS 32,HUD_ROW_BLANK_CODE
+NIGHT_STRIPEROW32:
+    DS 32,NIGHT_CODE
 
 ; fg6 (dark red, was the tank's) / bg11 (light yellow - "カラーグルー
 ; プ節約するから Rockも背景色ライトイエローにしろ Rock225と同じだ")
