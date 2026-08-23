@@ -629,7 +629,14 @@ ENEMY_RED_HP EQU 2
 ; (they explode the same frame instead - nothing to flash). Both
 ; values are untuned/inferred - "一瞬" (an instant) suggested a short
 ; flicker, not a held glow.
-FLASH_COLOR    EQU 15   ; white
+; "ほかの敵のフラッシュ処理もレッドに" - was white(15), too bright per
+; the same complaint that led to the boss's own dedicated BOSS_FLASH_
+; COLOR; now the same medium-red(8) shade globally, for every entity
+; that shares this one constant (tank, ZacoII, Zum, BigZum, Flyer,
+; Etank). No entity's own base color is red except Etank(6, dark red) -
+; still a visibly distinct shade shift, same as every other entity's
+; own color->8 change.
+FLASH_COLOR    EQU 8    ; medium red
 FLASH_DURATION EQU 6    ; frames
 ENEMY_SPAWNX      EQU 240   ; off the right edge (16px sprite, so fully offscreen at spawn) - "右から左へスライド"
 ; "移動は自機位置をみて手前で引き返す" - turns back once within this
@@ -1829,12 +1836,11 @@ INIT_SPRATR_CLR:
     LD A,8 : OUT (PSG_ADDR),A
     XOR A : OUT (PSG_DATA),A
 
-    ; ⚠ DIAGNOSTIC: boot GAME_TICK at 840 (night starts almost immediately,
-    ; boss spawns shortly after) so the terrain-freeze-on-boss-spawn test
-    ; doesn't require a real 999-tick playthrough to verify. Revert to
-    ; XOR A / 0 for a real shipped build.
-    LD HL,840 : LD (GAME_TICK),HL
+    ; "Tickスキップを一旦戻して０に" - the GAME_TICK=840 fast-iteration
+    ; diagnostic (used since the terrain-freeze/boss-tearing rounds) is
+    ; reverted - real 0 boot again.
     XOR A
+    LD (GAME_TICK),A : LD (GAME_TICK+1),A
     LD (SCORE),A : LD (SCORE+1),A : LD (SCORE+2),A
     LD A,0FFh : LD (GTD_LAST_H),A : LD (GTD_LAST_T),A : LD (GTD_LAST_O),A
     CALL SCORE_DISPLAY

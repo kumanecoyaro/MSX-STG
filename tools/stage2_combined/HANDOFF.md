@@ -586,6 +586,48 @@ the tearing got fixed.
   Full suite passes with no new regressions beyond the same 3 known
   GAME_TICK=840-boot-effect failures.
 
+## GAME_TICK boots at real 0 again; FLASH_COLOR is now red for every entity, not just the boss
+
+- "Ok では Tickスキップを一旦戻して０に で、ほかの敵のフラッシュ処理も
+  レッドに". Two changes:
+  1. **The `GAME_TICK`=840 fast-iteration diagnostic (in place since the
+     terrain-freeze/tearing-fix rounds) is fully reverted** - `INIT` now
+     boots `GAME_TICK` to real 0 again (`XOR A`/`LD (GAME_TICK),A` /
+     `LD (GAME_TICK+1),A`). **This has a real, non-obvious consequence
+     for future test-writing**: any "real `MAINLOOP` sweep" test that
+     waits for the boss to spawn naturally now needs to step through the
+     REAL `BOSS_SPAWN_TICK*8`(7992) frames, not the ~1271 frames the 840
+     boot allowed - noticeably slower in `z80emu.py`'s pure-Python
+     interpreter (tens of seconds, not instant). 2 existing tests had
+     hardcoded frame-loop bounds sized for the OLD 840 boot and needed
+     fixing this round (see below) - **any NEW boss-related real-sweep
+     test must size its own frame loop as `BOSS_SPAWN_TICK*8 + margin`,
+     not a small hardcoded literal**, or it will silently under-run and
+     report a false failure once GAME_TICK is at a real boot value.
+  2. **`FLASH_COLOR` (the shared global hit-flash color every entity
+     except the boss used) changed from white(15) to medium-red(8)** -
+     the SAME shade `BOSS_FLASH_COLOR` already used, making the two
+     constants numerically identical now (left as 2 separate named
+     constants rather than consolidated - not asked for, and keeps
+     independent tunability if they diverge again later). This
+     supersedes the earlier hard instruction to leave the global white
+     untouched ("通常はホワイトのままでいじるな") - that constraint no
+     longer applies, the user explicitly extended red to everyone.
+     No entity's own base color is red except `ETANK_COLOR`(6, dark
+     red) - still a visibly distinct shade shift. **Worth knowing**:
+     `TANK_COLOR_TL`(the tank's own top-left quadrant) is ALSO already
+     8 (medium red) - identical to the new `FLASH_COLOR` - so that ONE
+     quadrant shows no visible change during the tank's own hit-flash
+     (the other 3, previously black, still clearly flip to red) - a
+     real, observed quirk, not flagged as broken since the flash still
+     reads clearly overall; mention if the tank's flash ever looks
+     "off" on one corner specifically.
+  Fixed 2 stale test assumptions this round exposed: `tests/boss_pose_
+  test.py`'s own real-sweep frame bound (was a hardcoded 3200, now
+  `BOSS_SPAWN_TICK*8 + margin`), and `tests/boss_collision_test.py`'s
+  own `BOSS_FLASH_COLOR != FLASH_COLOR` assertion (now correctly
+  expects them EQUAL, matching the new unified-red state).
+
 ## Open items / things to watch
 
 - No known open bugs as of this handoff — the boss's own SPRPAT bug

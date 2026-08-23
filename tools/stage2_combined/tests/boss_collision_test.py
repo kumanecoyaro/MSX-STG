@@ -30,8 +30,11 @@ SAT_BASE = 0x1B00
 
 check("BOSS_COLLISION_SIZE matches the real 64x64 visible footprint - 見た目通り",
       BOSS_COLLISION_SIZE == 64)
-check("BOSS_FLASH_COLOR is its own boss-only value, distinct from the shared global FLASH_COLOR(white)",
-      BOSS_FLASH_COLOR != FLASH_COLOR)
+# "ほかの敵のフラッシュ処理もレッドに" - the shared global FLASH_COLOR
+# is now the same medium-red shade as BOSS_FLASH_COLOR (both were white
+# vs boss-only-red before this round) - no longer expected to differ.
+check("BOSS_FLASH_COLOR and the shared global FLASH_COLOR are now the same red shade",
+      BOSS_FLASH_COLOR == FLASH_COLOR)
 check("BOSS_FLASH_COLOR is also distinct from BOSS_COLOR itself (flash must actually read as a color change)",
       BOSS_FLASH_COLOR != BOSS_COLOR)
 

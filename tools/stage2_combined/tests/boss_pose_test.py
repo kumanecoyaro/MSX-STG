@@ -181,7 +181,12 @@ boss_spawned_at = None
 saw_pose = False
 pose_entered_at = None
 pose_exited = False
-for f in range(3200):
+# BOSS_SPAWN_TICK*8 to reach spawn (GAME_TICK boots at real 0 again -
+# "Tickスキップを一旦戻して０に") + enough margin for a full patrol
+# cycle (left+right, ~192 frames) and the full pose duration
+# (BOSS_POSE_TICKS*8) afterward.
+sweep_frames = sym["BOSS_SPAWN_TICK"] * 8 + 200 + sym["BOSS_POSE_TICKS"] * 8 + 200
+for f in range(sweep_frames):
     step_frame(cpu)
     if cpu.mem[BOSS_ACT] == 1:
         if boss_spawned_at is None:

@@ -4310,6 +4310,47 @@ with no way to tell where.
   new regressions beyond the same 3 known GAME_TICK=840-boot-effect
   failures.
 
+- **`GAME_TICK` reverted to a real 0 boot, and the hit-flash color went
+  fully global-red**: "Ok では Tickスキップを一旦戻して０に で、ほかの
+  敵のフラッシュ処理もレッドに".
+  `INIT` no longer boots `GAME_TICK` at 840 (the fast-iteration
+  diagnostic used since the terrain-freeze/tearing-fix rounds) - back to
+  a real `XOR A` boot. Real consequence for testing: any "spawn the boss
+  for real via `MAINLOOP`" test now needs `BOSS_SPAWN_TICK*8`(7992) real
+  frames, not ~1271 - noticeably slower in `z80emu.py`'s pure-Python
+  interpreter, and any test with a hardcoded small frame-loop bound
+  written during the 840-boot era silently stops reaching the boss
+  entirely. 2 existing tests hit exactly this: `tests/boss_pose_test.py`'s
+  own real-sweep loop (hardcoded 3200, well short of the real 7992+ now
+  needed) - fixed to size itself as `BOSS_SPAWN_TICK*8 + margin`
+  dynamically instead of a literal, so it stays correct if the boot
+  value or spawn tick ever changes again.
+  Separately, the shared global `FLASH_COLOR` (every entity's own hit-
+  flash EXCEPT the boss, which already had its own dedicated red) is now
+  the SAME medium-red(8) shade instead of white(15) - this explicitly
+  supersedes the earlier hard instruction to leave it untouched ("通常
+  はホワイトのままでいじるな") - the user is now extending red to
+  everyone on purpose. `BOSS_FLASH_COLOR` and `FLASH_COLOR` are
+  numerically identical now (left as 2 separate constants rather than
+  consolidated into one, for independent tunability later, since that
+  wasn't asked for). No entity's own base color is red except `ETANK_
+  COLOR`(6, dark red) - still visibly distinct from medium-red(8) when
+  flashing. One real, worth-knowing quirk found while checking this:
+  `TANK_COLOR_TL` (the tank's own top-left quadrant) is ALSO already
+  medium-red(8) - identical to the new flash color - so that ONE
+  quadrant shows no visible change during the tank's own flash (the
+  other 3, previously black, still clearly flip to red, so the flash
+  still reads clearly overall) - confirmed by rendering the tank mid-
+  flash, not flagged as broken, just noted.
+  `tests/boss_collision_test.py`'s own `BOSS_FLASH_COLOR != FLASH_COLOR`
+  assertion was stale (assumed they'd always differ) - updated to expect
+  them equal, matching the new intentionally-unified red. Also rendered
+  a real frame of a flashing BigZum and the flashing tank, confirming
+  both show the new red (not white) and read clearly as damage feedback.
+  **Full suite: 232/232 pass - a fully clean run**, the first since the
+  GAME_TICK=840 diagnostics began; the 3 boot-effect failures that
+  showed up every round since are gone now that the boot value is real.
+
 ## Bugs found and fixed while building this
 
 - **Sand flickered between its own new color and Rock's, twice over**
