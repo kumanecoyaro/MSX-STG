@@ -212,16 +212,14 @@ BULLET_U_SPRITE_ATTRS EQU F1E0h   ; 12 bytes: Y,X,pat,col x3, staged same as ENE
 
 JOY_TRIGA     EQU F12Bh
 ; "耐久値を持つ敵や自機がダメージを食らったら一瞬ホワイトに光るように" -
-; no tank-HP/damage system exists anywhere in this codebase, so the
-; tank's only discrete "took damage" moment used to be BigZum's own
-; punch connecting (UPDATE_TANK_BIGZUM_PUNCH) - Zum's own push is a
-; smooth continuous shove with no single hit instant, so nothing sets
-; this from there. Currently dead (never set nonzero) now that BigZum
-; has been removed entirely ("BigZumのコードは全て一旦削除" - see
-; UPDATE_ETANK_ALL's own comment block) - left in place since the
-; mechanism itself is generic and reusable by any future tank-damage
-; source. Same FLASH_DURATION-driven countdown/FLASH_COLOR override as
-; every other HP-bearing entity's own flash - see UPDATE_TANK_SPRITES.
+; no tank-HP/damage system exists anywhere in this codebase (same gap
+; BIGZUM_PUNCH_KNOCKBACK's own comment already notes), so the tank's
+; only discrete "took damage" moment is BigZum's own punch connecting
+; (UPDATE_TANK_BIGZUM_PUNCH) - Zum's own push is a smooth continuous
+; shove with no single hit instant, so nothing sets this from there.
+; An inference, not confirmed with the user. Same FLASH_DURATION-driven
+; countdown/FLASH_COLOR override as every other HP-bearing entity's own
+; flash - see UPDATE_TANK_SPRITES.
 TANK_FLASH_TIMER EQU F12Ch
 ; frames left before another shot can fire while A is held ("間欠連射
 ; ...1発打ったら1発空ける" - hold-to-auto-fire, but rate-limited
@@ -743,6 +741,212 @@ TANK_GROUND_OFFSET EQU 28
 ; cruise.
 ZUM_PUSH_SPEED EQU 6
 
+; ---------- BigZum ground enemy (see UPDATE_BIGZUM_ALL) ----------
+; "次BigZumの実装 Zumとスポーン条件は同じ アルゴリズムもほぼ同じ 違う
+; のは停止後引き返さずパンチするかジャンプして乗っかってくる ジャンプ
+; は自機より高く32ｐｘ サインジャンプ 自機に設置したら連続ジャンプで
+; 飛び越え 自機の後ろを取って地上に降りたら後ろからパンチ なので添付
+; のデータは反転も生成 攻撃判定も同じで後ろしか当たらない 耐久5" -
+; same spawn gating as Zum (ENEMY_SPAWN_COUNT>=10, flat-ground probe at
+; its own spawn column, free-slot check - see BIGZUM_TERRAIN_OK/
+; ALLOC_BIGZUM_SLOT) and the same approach/decel/pause shape (reuses
+; ZUM_DETECT_RANGE/ZUM_MID_RANGE/ZUM_SPEED_BASE/ZUM_ACCEL_TABLE/
+; ZUM_DECEL_TABLE/ZUM_PAUSE_FRAMES outright - "アルゴリズムもほぼ同じ"
+; means literally reusing those tables/constants, not re-deriving new
+; ones). The 2 post-pause branches replace Zum's push-vs-flee with
+; punch-vs-jump-on:
+;   BZ_STATE=2 (punching) - closes any remaining gap (same ZUM_ACCEL_
+;     TABLE ease Zum's own charge uses), then holds position once
+;     within BIGZUM_COLLISION_SIZE and throws a punch (BIGZUM_PUNCH_
+;     INTERVAL frame cadence) instead of Zum's continuous 1:1 push - see
+;     UPDATE_TANK_BIGZUM_PUNCH. Shows BigZumP (punch pose) for
+;     BIGZUM_PUNCH_POSE_FRAMES after each punch lands.
+;   BZ_STATE=1 (jumping) - a sine-arc jump (BIGZUM_JUMP_TABLE, 32px
+;     peak - "自機より高く32ｐｘ サインジャンプ", vs the tank's own
+;     24px JUMP_OFFSET_TABLE) while still advancing toward the tank.
+;     If the arc completes while BigZum still hasn't cleared past the
+;     tank's own X (would land ON it), the jump simply restarts from
+;     frame0 instead of ending - "自機に設置したら連続ジャンプで飛び
+;     越え" (chain another full arc rather than landing on top). Once
+;     an arc completes with BigZum's own X already past (left of) the
+;     tank's, it's genuinely landed behind - "自機の後ろを取って地上に
+;     降りたら" - switches to BZ_STATE=2 with BZ_FACING=1 (flipped
+;     art, now facing right toward the tank) and starts punching from
+;     there instead - "後ろからパンチ".
+;
+; BZ_FACING doubles as CHECK_HIT_PAIR_BIGZUM's own front/rear split -
+; "攻撃判定も同じで後ろしか当たらない" reuses CHECK_HIT_PAIR_ZUM's
+; exact front(invincible)/rear(vulnerable) geometry, just keyed off
+; BZ_FACING instead of Z_RETREAT==1 (front is whichever side BigZum is
+; currently oriented toward - TANK_X<BZ_X while FACING=0/approaching
+; from the right, TANK_X>=BZ_X once FACING=1/behind-the-tank and
+; facing right - same "mirrors when it turns around" rule Zum's own
+; CHPZ_ORIENT_FLEE already established). Unlike Zum's 1-hit kill, a
+; rear hit only decrements BZ_HP (init BIGZUM_HP_INIT=5 - see its own
+; comment for the full history) and only actually destroys it once that
+; reaches 0.
+; grew 12->13 for +12 FLASH_TIMER (hit-flash countdown - see FLASH_
+; DURATION's own comment) - still fits inside the original 24-byte
+; (BIGZUM_SLOT_SIZE(12, old)*BIGZUM_SLOT_COUNT(2, old)) RAM reservation
+; even at 13 bytes/slot, since only 1 slot is ever actually used now
+; (BIGZUM_SLOT_COUNT=1 below) - no address renumbering of anything
+; downstream of BIGZUM_POOL needed.
+BIGZUM_SLOT_SIZE  EQU 13   ; +0 ACT,+1 X,+2 Y,+3 TIMER(explosion/pause countdown/punch-pose-frames - all mutually exclusive across states),+4 SPRIDX,+5/+6 DX/DY(explosion drift while ACT=2; +6 doubles as the shake-off stand-timer while ACT=1 - see BIGZUM_SHAKE_STAND_FRAMES),+7 STATE(0=approach,3=pause,1=jump,2=punch),+8 HP,+9 FACING(0=normal facing left,1=flipped facing right),+10 JUMPFRAME,+11 PUNCH_COOLDOWN(STATE=2)/shake-off-jump marker(STATE=1),+12 FLASH_TIMER
+; "BigZumは１体のみ 横並びあるから" - was 2 (mistakenly assumed to
+; match Zum's own concurrent limit just because "スポーン条件は同じ" -
+; corrected: BigZum's own side-by-side limit is 1, distinct from
+; Zum's). Reserved pool/attr-buffer space (below) is left sized for
+; the old count rather than shrunk - harmless, the unused tail simply
+; never gets written/flushed once only 1 slot is ever iterated.
+BIGZUM_SLOT_COUNT EQU 1
+BIGZUM_POOL       EQU 0F207h  ; BIGZUM_SLOT_SIZE*BIGZUM_SLOT_COUNT = 24 bytes reserved (only the first 12 actually used now - see BIGZUM_SLOT_COUNT)
+BIGZUM_SPAWN_TIMER EQU 0F21Fh
+; staging buffer for BIGZUM_SLOT_COUNT*4 hw sprite slots (4 per
+; instance - a 32x32 BigZum is 2x2 of 16x16 hw sprites, same quadrant
+; convention as the tank's own SPRITE_ATTRS/UPDATE_TANK_SPRITES, just
+; per-pool-slot via BZ_SPRIDX instead of a single fixed instance).
+BIGZUM_SPRITE_ATTRS EQU 0F220h   ; BIGZUM_SLOT_COUNT*16 = 32 bytes: (Y,X,pat,col)x4 per instance
+BIGZUM_DRAW_TEMP  EQU 0F240h     ; scratch byte, UOBZ_DRAW's own chosen pattern base
+BIGZUM_DRAW_COLOR EQU 0F241h     ; scratch byte, UOBZ_DRAW's own resolved color (BIGZUM_COLOR or FLASH_COLOR) - still well under the real 0F380h BIOS-work-area boundary (see STACKTOP's own comment)
+BIGZUM_SPR_BASE_SLOT EQU 12      ; hw sprite slots12-19 (2 instances x4), right after Zum's own 10-11
+; PAT_BIGZUM/PAT_BIGZUMP/_L (bigzum_gen.py) - BASE_OFFSET=156 there,
+; right after Zum's own PAT_ZUM_FLIP(152-155); 2 poses x2 facings x4
+; quadrant-groups x4 sub-patterns = 64 total codes, 156-219.
+BIGZUM_COLOR      EQU 13   ; from sprites/BigZum.json's own fg (same magenta as Zum)
+; "足元が地面に数px めり込んでる ただ地形の上に表示するだけがなぜこう
+; なるか調べて修正" - BigZum's own Y anchor directly reused TANK_TIER_Y_
+; TABLE (see BIGZUM_SLOT_SIZE's own comment: "shares the tank's own 32px
+; anchor convention, no offset needed") without noticing that table's
+; own values are NOT a pure geometric anchor - TANK_Y_BASE's own
+; derivation ("row23 top(184) - tank height(32) + landing offset(3+1)")
+; bakes in a +4 fudge specifically compensating for the TANK's own
+; sprite art having ~5px of blank/transparent rows at its own bottom
+; (`sprites/TankF.json`: ink stops at row26 of 32, confirmed directly) -
+; without that +4, the tank's own visible pixels would float a few px
+; above the true ground line. BigZum's own art has NO such gap - its
+; ink runs all the way to row31 (see the comment above), so reusing the
+; tank's own already-compensated anchor pushes BigZum's real, un-padded
+; feet that same ~4px BELOW the true ground line instead - sinking in
+; by exactly the margin the tank's own fudge was adding for a padding
+; gap BigZum's own art never had. Subtracted back out wherever BigZum's
+; own Y is derived from TANK_TIER_Y_TABLE (UOBZ_GET_GROUND_Y - the
+; single shared source for both UOBZ_TERRAIN_FOLLOW's own easing target
+; and UOBZ_JUMP_MOVE's own jump-arc ground reference - and ALLOC_
+; BIGZUM_SLOT's own spawn-time init).
+BIGZUM_Y_OFFSET EQU 4
+; "BigZumは32x32だが絵は左下24x24 コリジョンも同じでそうなってるか" -
+; confirmed against both sprite JSONs directly (ink spans rows8-31,
+; cols~0-24 of the 32x32 canvas for both poses) - the canvas has 8
+; blank rows on top and ~8 blank columns on the right, art hugging the
+; bottom-left corner. It was NOT reflected in the collision before
+; this - CHECK_HIT_PAIR_BIGZUM's own bullet hit-box and every push/
+; punch-contact range check (ALLOC_BIGZUM_SLOT, UOBZ_PUNCH_MOVE,
+; UPDATE_TANK_BIGZUM_PUNCH) were all using the full 32x32 canvas (via
+; TANK_PUSH_WIDTH/hardcoded 31) instead of the drawn art's real
+; footprint. BIGZUM_COLLISION_SIZE(24, unchanged) is the box's width.
+;
+; "飛び越えられない原因わかった 接触状態ではパンチでノックバックされ
+; 元々自機ジャンプ頂点のみなので飛び越える条件が成立しない なので
+; シンプルにBigZumのコリジョンを２４ｘ１６に" - the box's HEIGHT was
+; still the art's own full 24px (exactly matching the tank's own 24px
+; jump peak, `JUMP_OFFSET_TABLE`), leaving zero real margin to clear it
+; even once the punch-vs-jump `JUMP_ACTIVE` race was fixed - a bare tie
+; between "how high the tank can jump" and "how tall the thing is"
+; isn't a usable window in practice. Deliberately shrunk to 16
+; (BIGZUM_COLLISION_HEIGHT) for gameplay, past what the raw art pixels
+; alone would justify - a real jump now clears with 8px to spare.
+; BIGZUM_COLLISION_Y_OFFSET(16, was 8) moves with it, keeping the box
+; flush with the sprite's own bottom row (32-16=16) - the "physical
+; standing" footprint a jump needs to clear, not literally hugging the
+; ink's own topmost pixel line anymore. No X offset needed either way
+; - the art's left edge already sits flush with BZ_X (col0).
+BIGZUM_COLLISION_SIZE   EQU 24   ; width
+BIGZUM_COLLISION_HEIGHT EQU 16   ; height - "コリジョンを24x16に"
+BIGZUM_COLLISION_Y_OFFSET EQU 32-BIGZUM_COLLISION_HEIGHT
+BIGZUM_SPAWNX     EQU ZUM_SPAWNX          ; same off-right-edge spawn X as Zum - "スポーン条件は同じ"
+BIGZUM_PROBE_DX   EQU 16                  ; horizontal-center probe offset for a 32px-wide sprite (vs Zum's 8, for its 16px width)
+BIGZUM_SPAWN_COL  EQU BIGZUM_SPAWNX+BIGZUM_PROBE_DX/8
+BIGZUM_SPAWN_INTERVAL EQU ZUM_SPAWN_INTERVAL
+BIGZUM_HP_INIT    EQU 5    ; "合わせてBigZum耐久値5に変更" (was 8, briefly; 5 before that)
+; jump arc: same half-sine construction as the tank's own JUMP_OFFSET_
+; TABLE (round(H*sin(pi*t/32)) for t=0..32), just H=32 instead of 24 -
+; "ジャンプは自機より高く32ｐｘ サインジャンプ". Same 33-frame duration
+; as the tank's own jump (no duration was specified, only height - see
+; BIGZUM_JUMP_TABLE below).
+BIGZUM_JUMP_FRAMES EQU 33
+BIGZUM_JUMP_XSPEED EQU ZUM_SPEED_BASE     ; horizontal travel speed while airborne, same as the ordinary approach cruise
+; right-edge clamp for BigZum's own rightward chase (FACING=1, moving
+; toward increasing X while circling behind or re-approaching from
+; behind) - same 32px-sprite-width margin convention as the tank's own
+; UTX_DO_RIGHT bound (224 = 256-32).
+BIGZUM_MAX_X EQU 224
+; "離れたら接近戦モードにループして" - once a punch commitment's own
+; target distance grows past this, BigZum gives up and reverts to
+; STATE=0 to re-detect/re-approach/re-roll from scratch, rather than
+; endlessly chasing or endlessly holding a stale contact - see UOBZ_
+; PUNCH_MOVE. Reuses Zum's own detection range rather than a new
+; untuned number - not directly specified, an inferred choice.
+BIGZUM_GIVEUP_RANGE EQU ZUM_DETECT_RANGE
+; "次にBigZumが通過してパンチかジャンプかまで時間をおいてくれ" - a
+; fully motionless beat right after a give-up (the tank slipping past,
+; or running far enough away), before STATE=0's own approach logic
+; even starts - on top of, not instead of, the ordinary ZUM_PAUSE_
+; FRAMES pre-decision pause once back in near-tank range. Reuses that
+; same magnitude rather than a new untuned number.
+BIGZUM_GIVEUP_PAUSE_FRAMES EQU ZUM_PAUSE_FRAMES
+; "BigZumが反転する場合は少し動きを止めてから反転し改めて接近モードに
+; ループ ６フレとまること すぐに反転して向かってくると自機から離れ
+; なくなる" (then "停止を１０フレに") - whenever STATE=0's own approach
+; logic would flip FACING (BigZum's own side relative to the tank), it
+; stops motionless for this many frames first instead of committing to
+; the new facing and moving toward it the very same frame - see
+; UOBZ_FLIP_PAUSE_MOVE.
+BIGZUM_FLIP_PAUSE_FRAMES EQU 10
+; ground reference used throughout a jump arc is the flat spawn tier
+; (TANK_Y_BASE) rather than a live per-frame terrain probe - the jump
+; is a short, self-contained maneuver that starts from the guaranteed-
+; flat spawn ground ("上りがない地形最下部でスポーン", same spawn-
+; terrain guarantee Zum itself relies on), so this is a reasonable
+; simplification rather than a tuned/confirmed value - flagged the
+; same way Zum's own Y-offset derivation went through several rounds
+; of correction, in case real play crosses a tier boundary mid-jump.
+BIGZUM_PUNCH_INTERVAL EQU 16      ; frames between punches once in contact - untuned, easy to retune
+BIGZUM_PUNCH_POSE_FRAMES EQU 8    ; how long BigZumP (punch pose) shows after each punch - same magnitude as EXPLOSION_DURATION
+; "パンチ" effect on the tank: no tank-HP/damage system exists anywhere
+; in this codebase, so interpreted as a single stronger, discrete
+; knockback pulse (vs. Zum's smooth continuous ZUM_PUSH_SPEED shove) -
+; an inference, not confirmed with the user; easy to redirect into a
+; real damage system later if one gets added.
+BIGZUM_PUNCH_KNOCKBACK EQU 12
+; "BigZumの上に自機が乗ったそのまま動かないとずっと乗りっぱなしなので
+; 右にジャンプして振り払うように" - UPDATE_TANK_BIGZUM_STAND's own
+; auto-land-on-top clamp (JUMP_LANDING_RESTART_FRAME) keeps JUMP_ACTIVE
+; perpetually re-engaged while the tank stays parked, and nothing on
+; BigZum's own side ever reacted to that - a player who just sits there
+; could ride forever. Tracked in +6 (DY, explosion drift - fully idle
+; here, only read/written during ACT=2) as a running "how many
+; consecutive frames has the tank been standing on me" counter, checked
+; at the very top of UPDATE_ONE_BIGZUM regardless of STATE (a 1st
+; attempt scoped this to STATE=0 only and never actually fired in
+; practice - "振り払いが発生しないな" - see UPDATE_ONE_BIGZUM's own
+; comment for why). Once it reaches this many frames, forces STATE=1
+; (jump) with a distinct "shake-off" marker in +11 (PUNCH_COOLDOWN,
+; otherwise idle outside STATE=2, so this doesn't collide with its own
+; real duty there) that makes the arc always move right regardless of
+; the tank's own position, instead of the ordinary chase-toward-the-
+; tank jump - jumping straight up while the tank sits centered on top
+; wouldn't actually carry it anywhere. Originally 90 (untuned guess -
+; "そのまま動かないと" didn't give a specific duration), then dropped
+; to 1 ("ただ振り払いに入るのが遅いな 乗っかられたら直ぐでいい") -
+; but instant-on-touch turned out to be the wrong extreme too:
+; "即発火は速すぎて飛び越えも出来なくなってるから60フレくらいで" - a
+; deliberate brief jump-and-land-on-top (to clear BigZum) now itself
+; reads as "parked" and gets shaken off before the player can carry on,
+; since even a 1-frame touch instantly meets threshold=1. 60 frames
+; (~1s) gives a real jump-over enough slack to land, stand a moment,
+; and move on without triggering, while still shaking off a truly
+; stationary rider reasonably quickly.
+BIGZUM_SHAKE_STAND_FRAMES EQU 60
 ; ---------- Flyer flying enemy (see UPDATE_FLYER_ALL) ----------
 ; test implementation, reimplemented from scratch after a full rollback
 ; of a previous, more ambitious round (Etank + Flyer + hit-flash all at
@@ -750,11 +954,22 @@ ZUM_PUSH_SPEED EQU 6
 ; they could be pinned down - "1つずつ実装し直す". At the time this
 ; block was written, Etank did not exist yet - deliberately skipped
 ; that round ("3をスキップ") - only Flyer, singleton (FLYER_SLOT_COUNT=
-; 1) and with its own dedicated permanent pattern allocation. Etank has
-; since been reimplemented (see ETANK_SLOT_SIZE below).
+; 1) and with its own dedicated permanent pattern allocation (no VRAM-
+; sharing scheme, unlike Etank's own dynamic BigZum-pattern-sharing).
+; Etank has since been reimplemented (see ETANK_SLOT_SIZE below), and
+; BigZum itself restored after a diagnostic removal (see the BigZum
+; entry above) once the real bug turned out to be unrelated to it.
 ;
-; "速度は2 右から出て画面左まで行き反転自機に向かって降りてくる" -
-; speed is an explicit 2px/frame.
+; "BigZum出現時はFlyerは出ない 速度は2 右から出て画面左まで行き反転
+; 自機に向かって降りてくる" - spawn gate mirrors ALLOC_ZUM_SLOT's own
+; "BigZum出現中にZumは出さない" precedent (refuses while BIGZUM_POOL is
+; active) - and, once the first test-implementation round showed BigZum
+; and Flyer visibly coexisting anyway ("で、BigZumが同時に出てきてる"),
+; made properly BIDIRECTIONAL: ALLOC_BIGZUM_SLOT also refuses to spawn
+; while FLYER_POOL is active - "全ての敵はスポーン条件外はそもそも登録
+; しない" (every enemy's own registration must always go through its
+; real spawn gate, no exceptions) is the general principle this
+; enforces. Speed is an explicit 2px/frame ("速度は2").
 ;
 ; Movement tracked in +8 PHASE: 0=cruise (straight left at a fixed
 ; height, normal-facing art) until it reaches the screen's own left
@@ -783,7 +998,7 @@ FLYER_SPAWN_TIMER  EQU F25Dh
 FLYER_DRAW_TEMP  EQU F25Eh    ; scratch byte, UOFL_DRAW's own chosen pattern base
 FLYER_DRAW_COLOR EQU F25Fh    ; scratch byte, UOFL_DRAW's own resolved color (FLYER_COLOR or FLASH_COLOR)
 ; ends at F25Dh - well clear of the 0F380h boundary.
-FLYER_SPR_BASE_SLOT EQU 20     ; hw sprite slots20-23 (1 instance x4), right after Zum's own 10-11 (12-19 formerly BigZum's, now unused)
+FLYER_SPR_BASE_SLOT EQU 20     ; hw sprite slots20-23 (1 instance x4), right after BigZum's own 12-19
 FLYER_COLOR EQU 7              ; cyan - sprites/Flyer.json's own fg
 FLYER_SPAWN_INTERVAL EQU ZUM_SPAWN_INTERVAL  ; same untuned-but-reasonable value as everything else's own spawn interval - not itself specified
 FLYER_SPAWNX   EQU 240
@@ -835,17 +1050,25 @@ FLYER_COLLISION_SIZE EQU 32  ; full 32x32 canvas - no shrink specified
 ; permanently, same "don't allocate hw sprites for a permanently-blank
 ; quadrant" precedent as nothing else in this file needed until now.
 ;
-; Originally (before this diagnostic round) shared BigZum's own
-; PAT_BIGZUM BL/BR pattern-VRAM groups dynamically at spawn time,
-; since the pattern-code budget was already tight with BigZum's own 64
-; codes loaded. "BigZumもEtankも出現しない...VDPのスプライト操作で
-; ミスがあるはず" - BigZum was removed entirely as a diagnostic
-; isolation step ("BigZumのコードは全て一旦削除 変わりにEtankと差し
-; 替えてEtank周りが正常動作するか確認する"), freeing up its whole
-; 156-219 pattern-code range - Etank now gets its own dedicated
-; PERMANENT allocation there instead (loaded once at INIT, same
-; convention as Flyer's own PAT_FLYER), no more dynamic VRAM sharing
-; or spawn-gated mutual exclusion with anything.
+; "BigZumもEtankも出現しない...VDPのスプライト操作でミスがあるはず" -
+; BigZum was removed entirely as a diagnostic isolation step for one
+; round ("BigZumのコードは全て一旦削除 変わりにEtankと差し替えてEtank
+; 周りが正常動作するか確認する") to rule out any interaction with its
+; own code, giving Etank a permanent pattern allocation in the range
+; BigZum's own 64 codes used to occupy - the ghost persisted even with
+; only Etank active, and the real cause turned out to be unrelated to
+; either entity (see STACKTOP's own comment: the stack itself had too
+; little headroom below it, corrupting whichever scratch RAM happened
+; to sit closest). With BigZum now restored ("BigZumがでないままに
+; なってるからもとに戻せ"), the pattern-code budget is tight again, so
+; Etank goes back to its ORIGINAL design: dynamically sharing BigZum's
+; own PAT_BIGZUM BL/BR pattern-VRAM groups at spawn time (ALLOC_ETANK_
+; SLOT), restored whenever BigZum itself next spawns (ALLOC_BIGZUM_
+; SLOT's own reload) - safe ONLY because the 2 are spawn-gated
+; bidirectionally exclusive (both ALLOC routines check the other's
+; pool - "EtankとBigZumは同時には存在しない", every enemy's own
+; registration must always go through its real spawn gate, no
+; exceptions).
 ;
 ; HP10 ("耐久値10"), omnidirectional bullet damage (no front/rear
 ; invulnerability rule like Zum - nothing about facing/direction was
@@ -867,8 +1090,11 @@ ETANK_SPAWN_TIMER  EQU F270h
 ; in this file, so a different free gap is used here).
 BANKSWITCH_TRAMPOLINE_RAM EQU F271h
 ; scratch byte, UOET_DRAW's own resolved color (ETANK_COLOR or
-; FLASH_COLOR) - was BIGZUM_DRAW_COLOR before BigZum's own removal.
-; Still well under the real 0F380h BIOS-work-area boundary.
+; FLASH_COLOR) - its own byte rather than reusing BIGZUM_DRAW_COLOR
+; (as before the diagnostic round) since RAM is no longer the tight
+; resource pattern-code space still is, and a dedicated byte removes
+; any "never runs interleaved" assumption between the two. Still well
+; under the real 0F380h BIOS-work-area boundary.
 ETANK_DRAW_COLOR EQU F275h
 ETANK_SPR_BASE_SLOT EQU 24     ; hw sprite slots24-25 (BL/BR only x1 instance), right after Flyer's own 20-23
 ; "カラーはダークレッド" - NOT sprites/Etank.json's own fg, overridden
@@ -885,13 +1111,29 @@ ETANK_COLLISION_HEIGHT   EQU 16  ; height - "キャラ位置は32x32の内左下
 ETANK_COLLISION_Y_OFFSET EQU 32-ETANK_COLLISION_HEIGHT  ; =16
 ETANK_HP_INIT EQU 10
 ETANK_PUSH_SPEED EQU ZUM_PUSH_SPEED  ; "Zumと同じで接触で自機を押す" - same push mechanic/speed as Zum's own UPDATE_TANK_ZUM_PUSH
-; own dedicated permanent pattern-code allocation (etank_gen.py) -
-; right after Zum's own PAT_ZUM_FLIP(152-155), the range BigZum's own
-; 64 codes used to occupy before its removal. Only BL/BR are ever
-; drawn (TL/TR permanently hidden - see the design comment above), so
-; only 8 codes are needed, not the full 16 a 4-quadrant entity would use.
-PAT_ETANK_BL EQU 156
-PAT_ETANK_BR EQU 160
+; "Etankの位置がおかしい また自機基準でオフセットしてねえだろうな
+; 毎回同じミスしてる 自機だけジャンプの関係でやってるだけで特殊" - same
+; bug class as BIGZUM_Y_OFFSET before it: ALLOC_ETANK_SLOT copied
+; TANK_TIER_Y_TABLE's value onto Etank's own Y directly, without
+; correcting for the +4 landing-offset fudge TANK_Y_BASE's own
+; derivation bakes in specifically for the TANK's own art (which has
+; ~5 blank rows at its own bottom - ink stops at row26 of 32,
+; `stage2_tank/sprites/TankF.json`). Confirmed directly against
+; `sprites/Etank.json`: ink runs all the way to row31 (bottom-left
+; 24x16 region, no gap at all - same as BigZum's own art before it),
+; so reusing the tank's already-compensated anchor sinks Etank's real,
+; un-padded feet ~4px below the true ground line. Subtracted back out
+; wherever Etank's own Y is derived from TANK_TIER_Y_TABLE.
+ETANK_Y_OFFSET EQU 4
+; the 2 BigZum pattern-groups Etank dynamically borrows (see ALLOC_
+; ETANK_SLOT/UOET_DRAW) - named here rather than written inline as
+; PAT_BIGZUM+8/+12 everywhere it's used. Re-derived directly from
+; UOBZ_DRAW's own actual quadrant addressing (TL=+0,TR=+4,BL=+8,BR=+12
+; - each 16x16-mode hw sprite code needs its own 4-code group) - see
+; the "Etank実装で根本的なバグがある" history in git for the
+; PAT_BIGZUM+2/+3 mistake this was originally corrected from.
+PAT_ETANK_BL EQU PAT_BIGZUM+8
+PAT_ETANK_BR EQU PAT_BIGZUM+12
 
 ; ---------- flowing background clouds (see CLOUD_UPDATE_ALL) ----------
 ; "Stage1でもやってる雲を上から3行目に4セルの雲をランダムタイミングで
@@ -1378,14 +1620,16 @@ INIT_SPRATR_CLR:
     LD HL,ENEMY_ZUM : LD DE,PAT_ZUM*8+SPRPAT : LD BC,32 : CALL LDIRVM
     LD HL,ENEMY_ZUM_FLIP : LD DE,PAT_ZUM_FLIP*8+SPRPAT : LD BC,32 : CALL LDIRVM
 
-    ; Etank's own pattern (etank_gen.py, BL/BR only - see PAT_ETANK_BL's
-    ; own comment) - own permanent allocation now that BigZum's removal
-    ; freed up this range, loaded once here instead of dynamically at
-    ; spawn time (see ALLOC_ETANK_SLOT).
-    LD HL,ETANK_BL : LD DE,PAT_ETANK_BL*8+SPRPAT : LD BC,64 : CALL LDIRVM
+    ; BigZum's own patterns (bigzum_gen.py) - both poses, both facings,
+    ; 128 bytes each (4 quadrants x32 bytes, same per-pose size as the
+    ; tank's own loads above) - "なので添付のデータは反転も生成".
+    LD HL,BIGZUM_BIGZUM_TL    : LD DE,PAT_BIGZUM*8+SPRPAT    : LD BC,128 : CALL LDIRVM
+    LD HL,BIGZUM_BIGZUMP_TL   : LD DE,PAT_BIGZUMP*8+SPRPAT   : LD BC,128 : CALL LDIRVM
+    LD HL,BIGZUM_BIGZUM_L_TL  : LD DE,PAT_BIGZUM_L*8+SPRPAT  : LD BC,128 : CALL LDIRVM
+    LD HL,BIGZUM_BIGZUMP_L_TL : LD DE,PAT_BIGZUMP_L*8+SPRPAT : LD BC,128 : CALL LDIRVM
 
     ; Flyer's own pattern (flyer_gen.py) - permanent allocation, both
-    ; facings, right after Zum's own last group.
+    ; facings, right after BigZum's own last group.
     LD HL,FLYER_TL   : LD DE,PAT_FLYER*8+SPRPAT   : LD BC,128 : CALL LDIRVM
     LD HL,FLYER_L_TL : LD DE,PAT_FLYER_L*8+SPRPAT : LD BC,128 : CALL LDIRVM
 
@@ -1475,6 +1719,40 @@ IZSA_LOOP:
     LD (HL),A : INC HL
     DJNZ IZSA_LOOP
 
+    ; BigZum pool: same generic zero-then-assign-SPRIDX shape as the
+    ; Zum pool above, plus its own sprite-attrs priming (BIGZUM_SLOT_
+    ; COUNT*4 hw sprite entries this time, not 1 per slot - see
+    ; BIGZUM_SPRITE_ATTRS's own comment).
+    LD HL,BIGZUM_POOL
+    LD B,BIGZUM_SLOT_SIZE*BIGZUM_SLOT_COUNT
+    XOR A
+IBZZ_LOOP:
+    LD (HL),A
+    INC HL
+    DJNZ IBZZ_LOOP
+    LD (BIGZUM_SPAWN_TIMER),A
+
+    LD HL,BIGZUM_POOL
+    LD B,BIGZUM_SLOT_COUNT
+    LD C,0
+IBZSP_LOOP:
+    PUSH HL
+    POP IX
+    LD A,C : LD (IX+4),A
+    INC C
+    LD DE,BIGZUM_SLOT_SIZE : ADD HL,DE
+    DJNZ IBZSP_LOOP
+
+    LD HL,BIGZUM_SPRITE_ATTRS
+    LD B,BIGZUM_SLOT_COUNT*4
+IBZSA_LOOP:
+    LD A,209 : LD (HL),A : INC HL
+    XOR A
+    LD (HL),A : INC HL
+    LD (HL),A : INC HL
+    LD (HL),A : INC HL
+    DJNZ IBZSA_LOOP
+
     ; Flyer pool: same generic zero-then-assign-SPRIDX shape as the
     ; pools above.
     LD HL,FLYER_POOL
@@ -1509,9 +1787,9 @@ IFLSA_LOOP:
 
     ; Etank pool: no per-slot SPRIDX assignment needed (ETANK_SLOT_COUNT
     ; =1, its own draw code writes ETANK_SPRITE_ATTRS directly - see
-    ; UOET_DRAW). Pattern-VRAM already loaded once above (own permanent
-    ; allocation, see PAT_ETANK_BL's own comment), no per-spawn load
-    ; needed here.
+    ; UOET_DRAW). No pattern-VRAM load here either - Etank dynamically
+    ; borrows BigZum's own PAT_BIGZUM BL/BR groups only at its own spawn
+    ; time (see ALLOC_ETANK_SLOT).
     LD HL,ETANK_POOL
     LD B,ETANK_SLOT_SIZE*ETANK_SLOT_COUNT
     XOR A
@@ -1641,6 +1919,7 @@ SKIP_ADVANCE:
     CALL UPDATE_TERRAIN_COLLISION
     CALL UPDATE_JUMP
     CALL UPDATE_TANK_ZUM_STAND
+    CALL UPDATE_TANK_BIGZUM_STAND
     CALL UPDATE_POSE
     CALL UPDATE_TANK_SPRITES
     ; bullets advance before a new one can spawn, so a shot fired this
@@ -1654,6 +1933,9 @@ SKIP_ADVANCE:
     CALL UPDATE_ZUM_ALL
     CALL CHECK_BULLET_VS_ZUM
     CALL UPDATE_TANK_ZUM_PUSH
+    CALL UPDATE_BIGZUM_ALL
+    CALL CHECK_BULLET_VS_BIGZUM
+    CALL UPDATE_TANK_BIGZUM_PUNCH
     CALL UPDATE_FLYER_ALL
     CALL CHECK_BULLET_VS_FLYER
     CALL UPDATE_ETANK_ALL
@@ -2134,9 +2416,9 @@ UTS_COLOR_NORMAL:
     LD A,TANK_COLOR_BL : LD (UTS_COLOR_2),A
     LD A,TANK_COLOR_BR : LD (UTS_COLOR_3),A
 UTS_COLOR_DONE:
-    ; hit-flash: currently dead (TANK_FLASH_TIMER's own comment) since
-    ; BigZum's removal, left in place as the generic mechanism - would
-    ; override all 4 quadrant colors to white for the flash duration,
+    ; hit-flash: BigZum's own punch connecting is the tank's only
+    ; discrete damage moment (see TANK_FLASH_TIMER's own comment) -
+    ; overrides all 4 quadrant colors to white for the flash duration,
     ; same mechanism as every other HP-bearing entity's own flash.
     LD A,(TANK_FLASH_TIMER)
     OR A
@@ -3395,6 +3677,11 @@ ALLOC_ZUM_SLOT:
     LD A,(ENEMY_SPAWN_COUNT)
     CP 10
     RET C
+    ; "BigZum出現中にZumは出さないでくれ キャラが消えてしまうしテスト
+    ; 出来ない"
+    LD A,(BIGZUM_POOL)
+    OR A
+    RET NZ
     CALL ZUM_TERRAIN_OK
     OR A
     RET Z
@@ -3834,6 +4121,52 @@ UTZS_NEXT:
     DJNZ UTZS_LOOP
     RET
 
+; "もちろん自機が乗っかった場合はZumと同じでオートジャンプ" - same
+; stand-on-top clamp as UPDATE_TANK_ZUM_STAND, against BigZum's own
+; (now 24x16) collision box instead, reusing the SAME TANK_ZUM_STANDING
+; flag - UPDATE_JUMP doesn't care which enemy the tank is parked on,
+; only whether that flag is set, so no separate auto-land plumbing is
+; needed. Deliberately does NOT clear TANK_ZUM_STANDING to 0 on its
+; own (only ever sets it to 1) - UPDATE_TANK_ZUM_STAND, called right
+; before this every frame, already did that reset once for the whole
+; frame (including "not jumping at all"); this routine only ever adds
+; a positive result on top of that, so standing on either enemy (or
+; neither) comes out correct regardless of which one actually landed
+; on. Same 1-frame-stale precedent as UPDATE_TANK_ZUM_STAND itself
+; (BIGZUM_POOL's position is last frame's, since UPDATE_BIGZUM_ALL
+; hasn't run yet this frame).
+UPDATE_TANK_BIGZUM_STAND:
+    LD A,(JUMP_ACTIVE)
+    OR A
+    RET Z
+    LD IX,BIGZUM_POOL
+    LD A,(IX+0)
+    OR A
+    RET Z
+    ; horizontal overlap: TANK_X<BZ_X+BIGZUM_COLLISION_SIZE AND
+    ; BZ_X<TANK_X+BIGZUM_COLLISION_SIZE - same symmetric-box shape as
+    ; Zum's own post-fix stand check.
+    LD A,(IX+1) : ADD A,BIGZUM_COLLISION_SIZE : LD D,A
+    LD A,(TANK_X)
+    CP D
+    RET NC
+    LD A,(TANK_X) : ADD A,BIGZUM_COLLISION_SIZE : LD D,A
+    LD A,(IX+1)
+    CP D
+    RET NC
+    ; overlap confirmed - clamp so the tank's own bottom rests on the
+    ; collision box's own top (BZ_Y+BIGZUM_COLLISION_Y_OFFSET, not
+    ; BZ_Y itself - the box no longer starts flush with the sprite's
+    ; own top), same TANK_GROUND_OFFSET anchor-to-surface convention
+    ; as standing on ordinary terrain or on Zum.
+    LD A,(IX+2) : ADD A,BIGZUM_COLLISION_Y_OFFSET : SUB TANK_GROUND_OFFSET : LD D,A
+    LD A,(TANK_Y_CUR)
+    CP D
+    RET C
+    LD A,D : LD (TANK_Y_CUR),A
+    LD A,1 : LD (TANK_ZUM_STANDING),A
+    RET
+
 ; ---------- bullet x Zum collision: front (left half) absorbs the ----------
 ; ---------- shot with no effect, rear (right half) destroys it       ----------
 ; "正面からは無敵で弾は止まること 破壊条件は後ろから撃たれた場合の
@@ -3946,6 +4279,976 @@ CHPZ_REAR_SKIP_ERASE:
     CALL ADD_SCORE
     RET
 
+; ---------- BigZum: spawn/update/draw (see BIGZUM_SLOT_SIZE's own ----------
+; ---------- comment block for the state machine overview)           ----------
+UPDATE_BIGZUM_ALL:
+    LD A,(BIGZUM_SPAWN_TIMER)
+    OR A
+    JR Z,UBZA_TRY_SPAWN
+    DEC A : LD (BIGZUM_SPAWN_TIMER),A
+    JR UBZA_UPDATE_ALL
+UBZA_TRY_SPAWN:
+    CALL ALLOC_BIGZUM_SLOT
+UBZA_UPDATE_ALL:
+    LD IX,BIGZUM_POOL
+    LD B,BIGZUM_SLOT_COUNT
+UBZAU_LOOP:
+    PUSH BC
+    CALL UPDATE_ONE_BIGZUM
+    POP BC
+    INC IX : INC IX : INC IX : INC IX : INC IX : INC IX
+    INC IX : INC IX : INC IX : INC IX : INC IX : INC IX
+    DJNZ UBZAU_LOOP
+    CALL FLUSH_BIGZUM_SPRITES
+    RET
+
+; same flat-ground probe as ZUM_TERRAIN_OK, just at BigZum's own wider
+; (32px) spawn column.
+BIGZUM_TERRAIN_OK:
+    LD A,BIGZUM_SPAWN_COL : LD E,A : LD D,0
+    LD HL,IDCACHE_T0 : ADD HL,DE : LD A,(HL)
+    OR A
+    JR NZ,BZTO_FAIL
+    LD A,BIGZUM_SPAWN_COL : LD E,A : LD D,0
+    LD HL,IDCACHE_T1 : ADD HL,DE : LD A,(HL)
+    OR A
+    JR NZ,BZTO_FAIL
+    LD A,BIGZUM_SPAWN_COL : LD E,A : LD D,0
+    LD HL,IDCACHE_T2 : ADD HL,DE : LD A,(HL)
+    OR A
+    JR NZ,BZTO_FAIL
+    LD A,BIGZUM_SPAWN_COL : LD E,A : LD D,0
+    LD HL,IDCACHE_T3 : ADD HL,DE : LD A,(HL)
+    CP 3
+    JR NC,BZTO_FAIL
+    OR A
+    JR Z,BZTO_FAIL
+    LD A,1
+    RET
+BZTO_FAIL:
+    XOR A
+    RET
+
+; same 3-condition gate as ALLOC_ZUM_SLOT (spawn-count threshold, flat
+; terrain, free slot) plus the same instant-overlap resolution at
+; spawn - "スポーン条件は同じ" - plus a 4th: refuse while Flyer is
+; active, the other half of "BigZum出現時はFlyerは出ない"'s own
+; bidirectional exclusion (see FLYER_SLOT_SIZE's own comment - a
+; Flyer-active BigZum spawn was directly observed in testing before
+; this gate existed) - and a 5th: refuse while Etank is active, the
+; other half of Etank's OWN bidirectional exclusion (see ETANK_SLOT_
+; SIZE's own comment - this one isn't just screen-clutter, the 2
+; actually share pattern-VRAM bytes, so getting this gate wrong would
+; corrupt what's on screen, not just look busy).
+ALLOC_BIGZUM_SLOT:
+    LD A,(ENEMY_SPAWN_COUNT)
+    CP 10
+    RET C
+    LD A,(FLYER_POOL)
+    OR A
+    RET NZ
+    LD A,(ETANK_POOL)
+    OR A
+    RET NZ
+    CALL BIGZUM_TERRAIN_OK
+    OR A
+    RET Z
+
+    LD HL,BIGZUM_POOL
+    LD B,BIGZUM_SLOT_COUNT
+ABZS_LOOP:
+    LD A,(HL)
+    OR A
+    JR Z,ABZS_FOUND
+    LD DE,BIGZUM_SLOT_SIZE : ADD HL,DE
+    DJNZ ABZS_LOOP
+    RET
+ABZS_FOUND:
+    PUSH HL
+    POP IX
+    LD A,1 : LD (IX+0),A
+    LD A,BIGZUM_SPAWNX : LD (IX+1),A
+    LD A,TANK_Y_BASE-BIGZUM_Y_OFFSET : LD (IX+2),A   ; tier3's own Y, minus the tank-art-padding fudge that doesn't apply to BigZum's own art (see BIGZUM_Y_OFFSET's own comment)
+    XOR A
+    LD (IX+3),A
+    LD (IX+5),A
+    LD (IX+6),A
+    LD (IX+7),A
+    LD (IX+9),A
+    LD (IX+10),A
+    LD (IX+11),A
+    LD (IX+12),A
+    LD A,BIGZUM_HP_INIT : LD (IX+8),A
+    LD A,BIGZUM_SPAWN_INTERVAL : LD (BIGZUM_SPAWN_TIMER),A
+
+    ; restore BigZum's own real BL/BR pattern bytes - undoes whatever
+    ; Etank's own dynamic VRAM-sharing may have left behind from an
+    ; earlier appearance (see ETANK_SLOT_SIZE's own comment). The
+    ; bidirectional exclusion above only prevents the 2 being active at
+    ; the SAME time, not stale bytes left over from an Etank that has
+    ; since despawned - this reload is what actually fixes that up,
+    ; every single BigZum spawn, not just when Etank happened to run
+    ; recently (cheap/harmless either way - same 128-byte LDIRVM INIT
+    ; already does once for this same pattern).
+    LD HL,BIGZUM_BIGZUM_TL : LD DE,PAT_BIGZUM*8+SPRPAT : LD BC,128 : CALL LDIRVM
+
+    LD A,BIGZUM_SPAWNX-BIGZUM_COLLISION_SIZE : LD B,A
+    LD A,(TANK_X)
+    CP B
+    RET C
+    LD A,B : LD (TANK_X),A
+    RET
+
+; IX = slot base. ACT=2: same drift-then-hide explosion shape as
+; UOZ_EXPLODING (reuses EXPLOSION_DURATION/PATTERN/COLOR/EXPLODE_DIR),
+; just showing the single 16x16 explosion sprite on quadrant-slot0 and
+; hiding the other 3 quadrant hw sprites for this instance. ACT=1:
+; dispatches on STATE (+7) - jumping (1) skips the ordinary terrain
+; follow entirely (its own Y comes from BIGZUM_JUMP_TABLE instead),
+; every other state calls it first exactly like Zum's own UOZ_MOVE.
+UPDATE_ONE_BIGZUM:
+    LD A,(IX+0)
+    CP 2
+    JP Z,UOBZ_EXPLODING
+    OR A
+    RET Z
+
+    ; "BigZumの上に自機が乗ったそのまま動かないとずっと乗りっぱなしな
+    ; ので右にジャンプして振り払うように" - see BIGZUM_SHAKE_STAND_
+    ; FRAMES's own comment. TANK_ZUM_STANDING is already fresh for this
+    ; frame (UPDATE_TANK_BIGZUM_STAND runs earlier in MAINLOOP).
+    ;
+    ; "振り払いが発生しないな" - the first attempt scoped this check to
+    ; STATE=0 (approach) only, reusing +11(PUNCH_COOLDOWN) as the
+    ; counter there - but the tank can end up parked on top while
+    ; BigZum is in ANY state, and once it lands during STATE=2 (punch),
+    ; UOBZ_PUNCH_MOVE's own "already in contact - hold" branch keeps it
+    ; there indefinitely (an overlapping tank never separates far enough
+    ; to trip the give-up-range check), so the STATE=0-only version
+    ; simply never got a chance to run at all in that case - the most
+    ; likely real scenario, since punch range and stand-on-top range
+    ; overlap almost entirely. Moved to the very top of this routine,
+    ; before ANY state dispatch, so it can preempt approach/pause/punch/
+    ; flip-pause alike - only skipped while STATE is already 1 (jumping)
+    ; so an in-progress jump (shake-off or ordinary) is never interrupted
+    ; mid-arc. Also moved off +11 onto +6 (DY, explosion drift - fully
+    ; idle here, only read/written during ACT=2) so it no longer
+    ; conflicts with +11's own real job as PUNCH_COOLDOWN during STATE=2
+    ; - +11 now serves only as the shake-off-jump-in-progress marker,
+    ; set at the transition below and read by UOBZ_JUMP_MOVE, decoupled
+    ; from the counter that leads up to it.
+    LD A,(IX+7)
+    CP 1
+    JR Z,UOBZ_SHAKE_CHECK_DONE
+    ; "振り払いが発生しないな" (round 2) - even after the STATE-scoping fix
+    ; above, TANK_ZUM_STANDING itself isn't held at 1 continuously while
+    ; genuinely parked: UPDATE_JUMP's own auto-land replay
+    ; (JUMP_LANDING_RESTART_FRAME) bounces JUMP_Y_OFFSET back up to the
+    ; table's peak and eases it back down every ~17 frames, and the
+    ; BigZum-stand clamp (UPDATE_TANK_BIGZUM_STAND) only sets
+    ; TANK_ZUM_STANDING=1 for the handful of frames near the bottom of
+    ; each bounce - traced as a repeating "11111110000000000" pattern,
+    ; ~7-8 standing frames out of every ~17. A reset-the-counter-on-any-
+    ; miss design (as below) never got anywhere close to
+    ; BIGZUM_SHAKE_STAND_FRAMES(90) before the very next non-standing
+    ; frame zeroed it again. JUMP_ACTIVE, not the per-frame
+    ; TANK_ZUM_STANDING flag, is the codebase's own existing definition
+    ; of "still parked" (see UPDATE_JUMP's own landing-restart comment) -
+    ; it stays 1 continuously across the whole bounce cycle, only
+    ; dropping to 0 once the tank truly leaves. So: reset the counter
+    ; only when JUMP_ACTIVE is 0; while JUMP_ACTIVE stays 1 but this
+    ; particular frame isn't clamped, just hold the counter instead of
+    ; losing progress, so it still accumulates across bounce cycles.
+    LD A,(TANK_ZUM_STANDING)
+    OR A
+    JR Z,UOBZ_SHAKE_MAYBE_RESET
+    LD A,(IX+6) : INC A : LD (IX+6),A
+    CP BIGZUM_SHAKE_STAND_FRAMES
+    JR C,UOBZ_SHAKE_CHECK_DONE
+    LD A,1 : LD (IX+7),A           ; STATE=1 (jump)
+    XOR A : LD (IX+10),A           ; JUMPFRAME=0
+    LD (IX+6),A                    ; counter done its job - clear it (A=0 from the XOR above)
+    LD A,1 : LD (IX+11),A          ; shake-off marker, checked by UOBZ_JUMP_MOVE
+    JP UOBZ_JUMP_MOVE
+UOBZ_SHAKE_MAYBE_RESET:
+    LD A,(JUMP_ACTIVE)
+    OR A
+    JR NZ,UOBZ_SHAKE_CHECK_DONE     ; still mid bounce-cycle - hold, don't lose progress
+    XOR A : LD (IX+6),A             ; genuinely not parked at all - reset
+UOBZ_SHAKE_CHECK_DONE:
+
+    LD A,(IX+7)
+    CP 1
+    JP Z,UOBZ_JUMP_MOVE
+
+    CALL UOBZ_TERRAIN_FOLLOW
+
+    LD A,(IX+7)
+    CP 3
+    JP Z,UOBZ_PAUSE_MOVE
+    CP 2
+    JP Z,UOBZ_PUNCH_MOVE
+    CP 4
+    JP Z,UOBZ_FLIP_PAUSE_MOVE
+
+    ; STATE=0: approaching - identical distance-indexed decel to Zum's
+    ; own charge leg (ZUM_DETECT_RANGE/ZUM_MID_RANGE/ZUM_DECEL_TABLE) -
+    ; "アルゴリズムもほぼ同じ" - now bidirectional (was assumed BZ_X>=
+    ; TANK_X always, i.e. only ever approaching from the right): FACING
+    ; is recomputed fresh here every frame from whichever side BigZum
+    ; is currently on, so re-entering this state from behind (after a
+    ; punch bout gives up because the tank ran off - see UOBZ_PUNCH_
+    ; MOVE's own "離れたら接近戦モードにループして") approaches
+    ; correctly instead of assuming it's still on the original side.
+    ;
+    ; "次にBigZumが通過してパンチかジャンプかまで時間をおいてくれ" -
+    ; +3(TIMER, otherwise idle in this state) doubles as a give-up
+    ; cooldown here: UOBZP_GIVE_UP sets it on the way in, so a BigZum
+    ; that just had the tank slip past it sits fully motionless for
+    ; BIGZUM_GIVEUP_PAUSE_FRAMES before this state's own approach logic
+    ; (and therefore the eventual pause->reroll into punch/jump again)
+    ; starts running at all - a beat on TOP of the ordinary pre-decision
+    ; pause (ZUM_PAUSE_FRAMES), not a replacement for it.
+    LD A,(IX+3)
+    OR A
+    JR Z,UOBZ_APPROACH_START
+    DEC A : LD (IX+3),A
+    JP UOBZ_DRAW
+UOBZ_APPROACH_START:
+    LD A,(IX+1) : LD D,A          ; D = BZ_X
+    LD A,(TANK_X) : LD E,A        ; E = TANK_X
+    LD A,D : CP E
+    JR C,UOBZ_APPROACH_SIDE_BEHIND ; BZ_X<TANK_X - on the far/behind side
+    LD C,0                         ; C = the side BigZum is currently on (0=front/right)
+    JR UOBZ_APPROACH_CHECK_FLIP
+UOBZ_APPROACH_SIDE_BEHIND:
+    LD C,1                         ; C = behind/left
+UOBZ_APPROACH_CHECK_FLIP:
+    ; only actually WRITE +9(FACING) via the flip-pause commit below -
+    ; if it already matches the side just computed, nothing to do here.
+    LD A,(IX+9)
+    CP C
+    JR Z,UOBZ_APPROACH_NOFLIP
+
+    LD A,C : LD (IX+5),A           ; stash the pending facing (+5/DX, idle outside an explosion)
+    LD A,4 : LD (IX+7),A           ; STATE=4 (flip-pause)
+    LD A,BIGZUM_FLIP_PAUSE_FRAMES : LD (IX+3),A
+    JP UOBZ_DRAW
+
+UOBZ_APPROACH_NOFLIP:
+    LD A,C
+    OR A
+    JR NZ,UOBZ_APPROACH_DIST_BEHIND
+    LD A,D : SUB E
+    JR UOBZ_APPROACH_DIST
+UOBZ_APPROACH_DIST_BEHIND:
+    LD A,E : SUB D
+UOBZ_APPROACH_DIST:
+    LD D,A                        ; D = distance, either side
+    CP ZUM_DETECT_RANGE
+    JR NC,UOBZ_SPEED_FULL
+    CP ZUM_MID_RANGE
+    JR NC,UOBZ_SPEED_DECEL
+
+    ; near-tank zone, still undecided - pause before rolling punch-vs-
+    ; jump, same "少し止まってから" pause Zum itself uses.
+    LD A,3 : LD (IX+7),A
+    LD A,ZUM_PAUSE_FRAMES : LD (IX+3),A
+    JP UOBZ_PAUSE_MOVE
+
+UOBZ_SPEED_DECEL:
+    LD A,D : SUB ZUM_MID_RANGE
+    LD E,A : LD D,0
+    LD HL,ZUM_DECEL_TABLE : ADD HL,DE
+    LD A,(HL)
+    JR UOBZ_SPEED_SET
+UOBZ_SPEED_FULL:
+    LD A,ZUM_SPEED_BASE
+UOBZ_SPEED_SET:
+    ; B = speed magnitude this frame; direction to apply it comes from
+    ; FACING (already set above) - 0 moves left/toward decreasing X,
+    ; 1 moves right/toward increasing X. Clamped at each screen edge
+    ; instead of despawning either way - BigZum never just vanishes
+    ; except by being destroyed (no flee/exit condition, unlike Zum).
+    LD B,A
+    LD A,(IX+9)
+    OR A
+    JR NZ,UOBZ_MOVE_ADD
+    LD A,(IX+1)
+    CP B
+    JR NC,UOBZ_MOVE_SUB_OK
+    XOR A : LD (IX+1),A
+    JP UOBZ_DRAW
+UOBZ_MOVE_SUB_OK:
+    LD A,(IX+1) : SUB B : LD (IX+1),A
+    JP UOBZ_DRAW
+UOBZ_MOVE_ADD:
+    LD A,(IX+1) : ADD A,B
+    CP BIGZUM_MAX_X+1
+    JR C,UOBZ_MOVE_ADD_OK
+    LD A,BIGZUM_MAX_X
+UOBZ_MOVE_ADD_OK:
+    LD (IX+1),A
+    JP UOBZ_DRAW
+
+; pausing (STATE=3): motionless for ZUM_PAUSE_FRAMES (reusing +3 as
+; the countdown, same as Zum), then rolls once between punching (2)
+; and jumping (1) - "違うのは停止後引き返さずパンチするかジャンプ
+; して乗っかってくる".
+UOBZ_PAUSE_MOVE:
+    LD A,(IX+3)
+    OR A
+    JR Z,UOBZ_PAUSE_ROLL
+    DEC A : LD (IX+3),A
+    JP UOBZ_DRAW
+UOBZ_PAUSE_ROLL:
+    LD A,(GAME_RNG) : INC A : LD (GAME_RNG),A
+    AND 1
+    JR NZ,UOBZ_PAUSE_DECIDE_JUMP
+    LD A,2 : LD (IX+7),A
+    JP UOBZ_PUNCH_MOVE
+UOBZ_PAUSE_DECIDE_JUMP:
+    LD A,1 : LD (IX+7),A
+    XOR A : LD (IX+10),A
+    LD (IX+11),A                   ; not a shake-off jump - see UOBZ_JUMP_MOVE's own marker check
+    JP UOBZ_JUMP_MOVE
+
+; flip-pause (STATE=4): motionless for BIGZUM_FLIP_PAUSE_FRAMES (+3,
+; same reused-countdown-field convention as every other BigZum pause),
+; then commits the pending facing stashed in +5 by UOBZ_APPROACH_
+; CHECK_FLIP and hands back to STATE=0 to resume approaching from
+; there - "BigZumが反転する場合は少し動きを止めてから反転し改めて接近
+; モードにループ".
+UOBZ_FLIP_PAUSE_MOVE:
+    LD A,(IX+3)
+    OR A
+    JR Z,UOBZ_FLIP_COMMIT
+    DEC A : LD (IX+3),A
+    JP UOBZ_DRAW
+UOBZ_FLIP_COMMIT:
+    LD A,(IX+5) : LD (IX+9),A
+    XOR A : LD (IX+7),A
+    JP UOBZ_DRAW
+
+; punching (STATE=2): "パンチに入ったら色々おかしい 自機が突き抜けて
+; しまうし かなり離れてもずっとパンチしてきてノックバックが続く
+; Zumのパンチ判定を確認 反転非反転で自機が接触範囲周辺にいるか で反転
+; 後パンチは変わらないが 離れたら接近戦モードにループしてまた飛ぶか
+; 突っ込んでパンチするか選択して倒されるまでループ" - closes any
+; remaining gap via ZUM_ACCEL_TABLE (same ease Zum's own charge uses,
+; now working from either side via FACING, not just the front), then
+; holds once within BIGZUM_COLLISION_SIZE - the actual punch delivery
+; (knockback + pose timer) is UPDATE_TANK_BIGZUM_PUNCH's own job, same
+; separation of concerns as UPDATE_TANK_ZUM_PUSH (that routine now has
+; its own matching upper-bound fix - see its own comment - the missing
+; upper bound there, not this routine, was the direct cause of the
+; tank passing straight through with knockback never actually
+; stopping). 2 conditions give up the current commitment and revert to
+; STATE=0 (fresh re-approach/pause/reroll, exactly "接近戦モードに
+; ループして...また...選択して"): the tank slipping clean past to the
+; opposite side (checked BEFORE the distance itself, since a stale
+; positive "distance" computed the wrong way would otherwise read as
+; still-in-range) - this is the actual fix for "自機が突き抜けて
+; しまう"; or the distance simply growing past BIGZUM_GIVEUP_RANGE
+; while still on the expected side (genuinely ran away, not just
+; ordinary post-knockback separation within contact-chasing range).
+UOBZ_PUNCH_MOVE:
+    LD A,(IX+3)
+    OR A
+    JR Z,UOBZP_TIMER_DONE
+    DEC A : LD (IX+3),A
+UOBZP_TIMER_DONE:
+    LD A,(IX+1) : LD D,A          ; D = BZ_X
+    LD A,(TANK_X) : LD E,A        ; E = TANK_X
+
+    LD A,(IX+9)
+    OR A
+    JR NZ,UOBZP_BEHIND
+
+    ; FACING=0 (front): tank should still be on the left (TANK_X<=BZ_X)
+    LD A,D : CP E
+    JP C,UOBZP_GIVE_UP             ; BZ_X<TANK_X - tank slipped past to the right
+    LD A,D : SUB E                 ; A = distance
+    JR UOBZP_CHECK_DIST
+UOBZP_BEHIND:
+    ; FACING=1 (behind): tank should still be on the right (TANK_X>=BZ_X)
+    LD A,E : CP D
+    JP C,UOBZP_GIVE_UP             ; TANK_X<BZ_X - tank slipped past to the left
+    LD A,E : SUB D                 ; A = distance
+
+UOBZP_CHECK_DIST:
+    CP BIGZUM_GIVEUP_RANGE
+    JP NC,UOBZP_GIVE_UP
+    CP BIGZUM_COLLISION_SIZE+1
+    JP C,UOBZ_DRAW                  ; already in contact - hold, draw as-is
+    CP ZUM_MID_RANGE
+    JR NC,UOBZP_SPEED_FULL
+    LD E,A : LD D,0
+    LD HL,ZUM_ACCEL_TABLE : ADD HL,DE
+    LD A,(HL)
+    JR UOBZP_SPEED_SET
+UOBZP_SPEED_FULL:
+    LD A,ZUM_SPEED_BASE
+UOBZP_SPEED_SET:
+    LD B,A
+    LD A,(IX+9)
+    OR A
+    JR NZ,UOBZP_MOVE_ADD
+    LD A,(IX+1)
+    CP B
+    JR NC,UOBZP_MOVE_SUB_OK
+    XOR A : LD (IX+1),A
+    JP UOBZ_DRAW
+UOBZP_MOVE_SUB_OK:
+    LD A,(IX+1) : SUB B : LD (IX+1),A
+    JP UOBZ_DRAW
+UOBZP_MOVE_ADD:
+    LD A,(IX+1) : ADD A,B
+    CP BIGZUM_MAX_X+1
+    JR C,UOBZP_MOVE_ADD_OK
+    LD A,BIGZUM_MAX_X
+UOBZP_MOVE_ADD_OK:
+    LD (IX+1),A
+    JP UOBZ_DRAW
+
+UOBZP_GIVE_UP:
+    XOR A : LD (IX+7),A            ; STATE=0 - resume approach/pause/reroll fresh
+    LD A,BIGZUM_GIVEUP_PAUSE_FRAMES : LD (IX+3),A
+    JP UOBZ_DRAW
+
+; jumping (STATE=1): sine arc via BIGZUM_JUMP_TABLE while still
+; advancing toward the tank at BIGZUM_JUMP_XSPEED. If the arc
+; completes while BigZum's own X still hasn't reached/passed the
+; tank's (would land ON/in front of it), the arc simply restarts from
+; frame0 instead of ending - "自機に設置したら連続ジャンプで飛び越え".
+; Only once an arc completes with BigZum's X already at or past the
+; tank's own X (genuinely cleared, landed behind) does it switch to
+; STATE=2/FACING=1 - "自機の後ろを取って地上に降りたら後ろからパンチ".
+;
+; Unless +11 holds the "shake-off" marker (see BIGZUM_SHAKE_STAND_
+; FRAMES's own comment) - then X always moves RIGHT at BIGZUM_JUMP_
+; XSPEED regardless of the tank's own position (chasing toward it, as
+; the ordinary case does, wouldn't move BigZum out from under a tank
+; parked directly on top of it at all), and the arc always lands
+; straight back into STATE=0 once complete - no "didn't clear yet,
+; chain again" retry, no punch transition, marker cleared.
+UOBZ_JUMP_MOVE:
+    LD A,(IX+11)
+    CP 1
+    JR Z,UOBZJ_SHAKE_XMOVE
+
+    LD A,(IX+1) : LD D,A
+    LD A,(TANK_X) : LD E,A
+    LD A,D : CP E
+    JR C,UOBZJ_NO_XMOVE
+    LD A,D : SUB BIGZUM_JUMP_XSPEED
+    JR NC,UOBZJ_XSET
+    XOR A
+UOBZJ_XSET:
+    LD (IX+1),A
+    JR UOBZJ_NO_XMOVE
+UOBZJ_SHAKE_XMOVE:
+    LD A,(IX+1) : ADD A,BIGZUM_JUMP_XSPEED
+    CP BIGZUM_MAX_X+1
+    JR C,UOBZJ_SHAKE_XSET
+    LD A,BIGZUM_MAX_X
+UOBZJ_SHAKE_XSET:
+    LD (IX+1),A
+UOBZJ_NO_XMOVE:
+
+    LD A,(IX+10) : INC A
+    CP BIGZUM_JUMP_FRAMES
+    JR C,UOBZJ_FRAME_OK
+
+    LD A,(IX+11)
+    CP 1
+    JR Z,UOBZJ_SHAKE_LAND
+
+    LD A,(IX+1) : LD D,A
+    LD A,(TANK_X)
+    CP D
+    JR C,UOBZJ_CHAIN
+    LD A,2 : LD (IX+7),A
+    LD A,1 : LD (IX+9),A
+    LD A,BIGZUM_PUNCH_INTERVAL : LD (IX+11),A
+    XOR A : LD (IX+3),A
+    JP UOBZ_DRAW
+UOBZJ_CHAIN:
+    XOR A : LD (IX+10),A
+    JP UOBZJ_APPLY
+UOBZJ_SHAKE_LAND:
+    XOR A : LD (IX+7),A            ; STATE=0 - back to ordinary approach
+    XOR A : LD (IX+11),A           ; clear the shake-off marker
+    JP UOBZ_DRAW
+UOBZJ_FRAME_OK:
+    LD (IX+10),A
+UOBZJ_APPLY:
+    LD A,(IX+10) : LD E,A : LD D,0
+    LD HL,BIGZUM_JUMP_TABLE : ADD HL,DE
+    LD A,(HL) : LD B,A             ; B = jump offset this frame
+    PUSH BC
+    CALL UOBZ_GET_GROUND_Y         ; A = current tier's own ground Y - live every frame, not a fixed tier3 guess (see its own comment)
+    POP BC
+    SUB B
+    LD (IX+2),A
+    JP UOBZ_DRAW
+
+; IX = slot base. Returns the current tier's ground Y (TANK_TIER_Y_
+; TABLE[tier]) in A, probing IDCACHE_T0..T3 at BigZum's own column
+; ((BZ_X+BIGZUM_PROBE_DX)>>3) - same walk UPDATE_TERRAIN_COLLISION and
+; Zum's own UOZ_TERRAIN_FOLLOW use. Trashes D,E,HL. Shared by UOBZ_
+; TERRAIN_FOLLOW (eases toward it while grounded) and UOBZ_JUMP_MOVE
+; (uses it directly, live every frame, as the jump arc's own ground
+; reference) - "まずジャンプで地面に潜り込む場合がある": the arc used
+; to subtract its own offset from one fixed value (tier3's own Y,
+; TANK_Y_BASE) regardless of which tier BigZum actually stood over
+; while jumping - tier3 is the LOWEST tier (its own Y is the largest
+; of the 4 TANK_TIER_Y_TABLE entries, since higher screen tiers have
+; smaller Y), so jumping from any higher tier read as sinking below
+; that tier's own, numerically smaller real ground line.
+UOBZ_GET_GROUND_Y:
+    LD A,(IX+1) : ADD A,BIGZUM_PROBE_DX : SRL A : SRL A : SRL A
+    LD E,A : LD D,0
+    LD HL,IDCACHE_T0 : ADD HL,DE : LD A,(HL)
+    OR A
+    JR NZ,UOBZGY_T0
+    LD A,(IX+1) : ADD A,BIGZUM_PROBE_DX : SRL A : SRL A : SRL A
+    LD E,A : LD D,0
+    LD HL,IDCACHE_T1 : ADD HL,DE : LD A,(HL)
+    OR A
+    JR NZ,UOBZGY_T1
+    LD A,(IX+1) : ADD A,BIGZUM_PROBE_DX : SRL A : SRL A : SRL A
+    LD E,A : LD D,0
+    LD HL,IDCACHE_T2 : ADD HL,DE : LD A,(HL)
+    OR A
+    JR NZ,UOBZGY_T2
+    LD A,3
+    JR UOBZGY_TIER_SET
+UOBZGY_T0:
+    XOR A
+    JR UOBZGY_TIER_SET
+UOBZGY_T1:
+    LD A,1
+    JR UOBZGY_TIER_SET
+UOBZGY_T2:
+    LD A,2
+UOBZGY_TIER_SET:
+    LD E,A : LD D,0
+    LD HL,TANK_TIER_Y_TABLE : ADD HL,DE : LD A,(HL)
+    SUB BIGZUM_Y_OFFSET   ; see BIGZUM_Y_OFFSET's own comment - undoes the tank-art-specific padding fudge baked into this table
+    RET
+
+; IX = slot base. Eases Z_Y toward the current tier's ground line
+; (UOBZ_GET_GROUND_Y) via the shared TERRAIN_EASE_Y routine - identical
+; to Zum's own UOZ_TERRAIN_FOLLOW, just no ZUM_Y_OFFSET-style add
+; (BigZum is 32px tall like the tank itself, so TANK_TIER_Y_TABLE
+; [tier] is already its own correct top-anchor - see BIGZUM_SLOT_
+; SIZE's comment).
+UOBZ_TERRAIN_FOLLOW:
+    CALL UOBZ_GET_GROUND_Y
+    LD B,A
+    LD A,(IX+2) : LD C,A
+    LD E,1
+    CALL TERRAIN_EASE_Y
+    LD (IX+2),A
+    RET
+
+; picks the current pattern base (PAT_BIGZUM/PAT_BIGZUMP x normal/_L)
+; from STATE/+3(pose-timer)/FACING, then writes all 4 quadrant hw
+; sprite entries into this instance's own slice of BIGZUM_SPRITE_ATTRS
+; - same TL/TR/BL/BR layout and +4/+8/+12 pattern-offset convention as
+; UPDATE_TANK_SPRITES.
+UOBZ_DRAW:
+    LD A,(IX+7)
+    CP 2
+    JR NZ,UOBZD_WALK
+    LD A,(IX+3)
+    OR A
+    JR Z,UOBZD_WALK
+    LD A,(IX+9)
+    OR A
+    JR Z,UOBZD_SET_BIGZUMP
+    LD A,PAT_BIGZUMP_L : JR UOBZD_BASE_SET
+UOBZD_SET_BIGZUMP:
+    LD A,PAT_BIGZUMP : JR UOBZD_BASE_SET
+UOBZD_WALK:
+    LD A,(IX+9)
+    OR A
+    JR Z,UOBZD_SET_BIGZUM
+    LD A,PAT_BIGZUM_L : JR UOBZD_BASE_SET
+UOBZD_SET_BIGZUM:
+    LD A,PAT_BIGZUM
+UOBZD_BASE_SET:
+    LD (BIGZUM_DRAW_TEMP),A
+
+    ; hit-flash color resolve, once per draw call - see FLASH_DURATION's
+    ; own comment. BIGZUM_DRAW_COLOR feeds all 4 quadrant writes below
+    ; instead of BIGZUM_COLOR directly so the timer only ticks down once
+    ; per frame, not 4 times.
+    LD A,(IX+12)
+    OR A
+    JR Z,UOBZD_COLOR_NORMAL
+    DEC A : LD (IX+12),A
+    LD A,FLASH_COLOR
+    JR UOBZD_COLOR_SET
+UOBZD_COLOR_NORMAL:
+    LD A,BIGZUM_COLOR
+UOBZD_COLOR_SET:
+    LD (BIGZUM_DRAW_COLOR),A
+
+    LD A,(IX+4) : ADD A,A : ADD A,A : ADD A,A : ADD A,A
+    LD C,A : LD B,0
+    LD HL,BIGZUM_SPRITE_ATTRS : ADD HL,BC
+
+    LD A,(IX+2) : LD (HL),A : INC HL
+    LD A,(IX+1) : LD (HL),A : INC HL
+    LD A,(BIGZUM_DRAW_TEMP) : LD (HL),A : INC HL
+    LD A,(BIGZUM_DRAW_COLOR) : LD (HL),A : INC HL
+
+    LD A,(IX+2) : LD (HL),A : INC HL
+    LD A,(IX+1) : ADD A,16 : LD (HL),A : INC HL
+    LD A,(BIGZUM_DRAW_TEMP) : ADD A,4 : LD (HL),A : INC HL
+    LD A,(BIGZUM_DRAW_COLOR) : LD (HL),A : INC HL
+
+    LD A,(IX+2) : ADD A,16 : LD (HL),A : INC HL
+    LD A,(IX+1) : LD (HL),A : INC HL
+    LD A,(BIGZUM_DRAW_TEMP) : ADD A,8 : LD (HL),A : INC HL
+    LD A,(BIGZUM_DRAW_COLOR) : LD (HL),A : INC HL
+
+    LD A,(IX+2) : ADD A,16 : LD (HL),A : INC HL
+    LD A,(IX+1) : ADD A,16 : LD (HL),A : INC HL
+    LD A,(BIGZUM_DRAW_TEMP) : ADD A,12 : LD (HL),A : INC HL
+    LD A,(BIGZUM_DRAW_COLOR) : LD (HL),A
+    RET
+
+UOBZ_EXPLODING:
+    LD A,(IX+3)
+    OR A
+    JR Z,UOBZ_EXPLODE_HIDE
+    DEC A : LD (IX+3),A
+    LD A,(IX+1) : LD B,A : LD A,(IX+5) : ADD A,B : LD (IX+1),A
+    LD A,(IX+2) : LD B,A : LD A,(IX+6) : ADD A,B : LD (IX+2),A
+
+    LD A,(IX+4) : ADD A,A : ADD A,A : ADD A,A : ADD A,A
+    LD C,A : LD B,0
+    LD HL,BIGZUM_SPRITE_ATTRS : ADD HL,BC
+    LD A,(IX+2) : LD (HL),A : INC HL
+    LD A,(IX+1) : LD (HL),A : INC HL
+    LD A,PAT_EXPLOSION : LD (HL),A : INC HL
+    LD A,EXPLOSION_COLOR : LD (HL),A : INC HL
+    LD B,3
+UOBZE_HIDE_REST:
+    LD A,209 : LD (HL),A : INC HL
+    XOR A : LD (HL),A : INC HL
+    LD (HL),A : INC HL
+    LD (HL),A : INC HL
+    DJNZ UOBZE_HIDE_REST
+    RET
+UOBZ_EXPLODE_HIDE:
+    XOR A : LD (IX+0),A
+    CALL UOBZ_HIDE
+    RET
+
+UOBZ_HIDE:
+    LD A,(IX+4) : ADD A,A : ADD A,A : ADD A,A : ADD A,A
+    LD C,A : LD B,0
+    LD HL,BIGZUM_SPRITE_ATTRS : ADD HL,BC
+    LD B,4
+UOBZH_LOOP:
+    LD A,209 : LD (HL),A : INC HL
+    XOR A : LD (HL),A : INC HL
+    LD (HL),A : INC HL
+    LD (HL),A : INC HL
+    DJNZ UOBZH_LOOP
+    RET
+
+; blasts BIGZUM_SPRITE_ATTRS (32 bytes) to hw sprite slots
+; BIGZUM_SPR_BASE_SLOT..+7 - same raw DI-wrapped OUT + 8-NOP pattern
+; as FLUSH_ZUM_SPRITES.
+FLUSH_BIGZUM_SPRITES:
+    DI
+    LD A,BIGZUM_SPR_BASE_SLOT*4 : OUT (99h),A
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    LD HL,BIGZUM_SPRITE_ATTRS
+    LD B,BIGZUM_SLOT_COUNT*16
+FBZS_LOOP:
+    LD A,(HL) : OUT (98h),A
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    INC HL
+    DJNZ FBZS_LOOP
+    EI
+    RET
+
+; delivers the actual punch effect (BIGZUM_PUNCH_INTERVAL-frame
+; cadence knockback + BigZumP pose timer) for any BigZum currently in
+; STATE=2 contact range - separated from UOBZ_PUNCH_MOVE the same way
+; UPDATE_TANK_ZUM_PUSH is separated from Zum's own per-frame move, and
+; run after it in MAINLOOP for the same 1-frame-stale-contact reason.
+; FACING=0 (approaching from the front/right) knocks the tank left;
+; FACING=1 (landed behind) knocks it right instead - "後ろからパンチ".
+;
+; "自機が突き抜けてしまうし かなり離れてもずっとパンチしてきてノック
+; バックが続く Zumのパンチ判定を確認" - the contact test used to be a
+; lower bound only (TANK_X>=BZ_X-SIZE), with no upper bound at all, so
+; once the tank slipped past BigZum to the OTHER side (or was simply
+; far away on the correct side but past SIZE), TANK_X still trivially
+; satisfied that single inequality and kept "in contact" forever -
+; exactly the reported symptom, and the same "already passed" case
+; Zum's own UPDATE_TANK_ZUM_PUSH explicitly guards against. Both
+; bounds are now folded into one signed-safe distance calc per side
+; (subtraction with the CPU's own carry flag standing in for "would
+; underflow", i.e. "the tank is on the wrong side of this comparison"
+; - reused for both the reject check and the in-range distance itself,
+; not 2 separate computations).
+UPDATE_TANK_BIGZUM_PUNCH:
+    ; "自機がBigZumを飛び越えられない ２４ｐｘなら飛び越えられるはず
+    ; 自機と速度が噛み合って全くバックが取れない" - missing the same
+    ; JUMP_ACTIVE guard UPDATE_TANK_ZUM_PUSH already has: the knockback
+    ; kept firing every single frame regardless of whether the tank was
+    ; airborne, so a jump attempt just got punched right back down/away
+    ; before it could ever clear BigZum's own (now correctly 24px-tall)
+    ; collision box - the tank could never open enough separation to
+    ; even line a jump up. Suspended entirely while jumping, exactly
+    ; like Zum's own push - BigZum keeps closing in underneath
+    ; regardless (only the knockback itself pauses, not its approach).
+    LD A,(JUMP_ACTIVE)
+    OR A
+    RET NZ
+    LD IX,BIGZUM_POOL
+    LD B,BIGZUM_SLOT_COUNT
+UTBP_LOOP:
+    LD A,(IX+0)
+    OR A
+    JP Z,UTBP_NEXT
+    LD A,(IX+7)
+    CP 2
+    JP NZ,UTBP_NEXT
+
+    LD A,(IX+1) : LD D,A          ; D = BZ_X
+    LD A,(TANK_X) : LD E,A        ; E = TANK_X
+
+    LD A,(IX+9)
+    OR A
+    JR NZ,UTBP_BEHIND
+
+    ; FACING=0 (front): contact only while TANK_X<=BZ_X (else already
+    ; passed through) AND BZ_X-TANK_X<=BIGZUM_COLLISION_SIZE
+    LD A,D : CP E
+    JP C,UTBP_NEXT                 ; BZ_X<TANK_X - already passed through, no contact
+    LD A,D : SUB E                 ; A = distance
+    CP BIGZUM_COLLISION_SIZE+1
+    JP NC,UTBP_NEXT                ; out of range
+
+    ; hard "can't clip through" wall, every frame regardless of the
+    ; punch-cooldown-gated knockback pulse below - "パンチ中に自機を
+    ; BigZum方向に押すとすり抜けが起こってる パンチモーション中にガー
+    ; ドされてないからだな" - the periodic knockback alone left a full
+    ; BIGZUM_COLLISION_SIZE(24)-wide gap uncontested between pulses
+    ; (BIGZUM_PUNCH_INTERVAL(16) frames x the tank's own ~1.5px/frame
+    ; average speed = 24px - exactly wide enough to cross the whole box
+    ; in a single cooldown gap and come out "already passed" the other
+    ; side), same continuous-clamp shape UPDATE_TANK_ZUM_PUSH already
+    ; uses - pins TANK_X flush at BigZum's own outer collision boundary
+    ; every single frame it's in range, independent of the punch
+    ; cadence itself.
+    LD A,D : SUB BIGZUM_COLLISION_SIZE : LD C,A
+    LD A,(TANK_X)
+    CP C
+    JR C,UTBP_FRONT_WALL_OK
+    LD A,C : LD (TANK_X),A
+UTBP_FRONT_WALL_OK:
+
+    LD A,(IX+11)
+    OR A
+    JR NZ,UTBP_FRONT_DEC
+    LD A,(TANK_X)
+    CP BIGZUM_PUNCH_KNOCKBACK
+    JR NC,UTBP_FRONT_APPLY
+    XOR A : LD (TANK_X),A
+    JR UTBP_FRONT_DONE
+UTBP_FRONT_APPLY:
+    LD A,(TANK_X) : SUB BIGZUM_PUNCH_KNOCKBACK : LD (TANK_X),A
+UTBP_FRONT_DONE:
+    LD A,BIGZUM_PUNCH_INTERVAL : LD (IX+11),A
+    LD A,BIGZUM_PUNCH_POSE_FRAMES : LD (IX+3),A
+    LD A,FLASH_DURATION : LD (TANK_FLASH_TIMER),A
+    CALL SOUND_ZUM_DEFLECT
+    JP UTBP_NEXT
+UTBP_FRONT_DEC:
+    DEC A : LD (IX+11),A
+    JP UTBP_NEXT
+
+UTBP_BEHIND:
+    ; FACING=1 (behind): contact only while TANK_X>=BZ_X (else already
+    ; passed through the other way) AND TANK_X-BZ_X<=BIGZUM_COLLISION_SIZE
+    LD A,E : CP D
+    JP C,UTBP_NEXT                 ; TANK_X<BZ_X - already passed through, no contact
+    LD A,E : SUB D                 ; A = distance
+    CP BIGZUM_COLLISION_SIZE+1
+    JP NC,UTBP_NEXT                ; out of range
+
+    ; same hard wall as the FRONT branch above, mirrored - pins TANK_X
+    ; flush at BigZum's own outer boundary on this side instead.
+    LD A,D : ADD A,BIGZUM_COLLISION_SIZE : LD C,A
+    LD A,(TANK_X)
+    CP C
+    JR NC,UTBP_BEHIND_WALL_OK
+    LD A,C : LD (TANK_X),A
+UTBP_BEHIND_WALL_OK:
+
+    LD A,(IX+11)
+    OR A
+    JR NZ,UTBP_BEHIND_DEC
+    LD A,(TANK_X) : ADD A,BIGZUM_PUNCH_KNOCKBACK
+    CP BIGZUM_MAX_X+1
+    JR C,UTBP_BEHIND_SET
+    LD A,BIGZUM_MAX_X
+UTBP_BEHIND_SET:
+    LD (TANK_X),A
+    LD A,BIGZUM_PUNCH_INTERVAL : LD (IX+11),A
+    LD A,BIGZUM_PUNCH_POSE_FRAMES : LD (IX+3),A
+    LD A,FLASH_DURATION : LD (TANK_FLASH_TIMER),A
+    CALL SOUND_ZUM_DEFLECT
+    JP UTBP_NEXT
+UTBP_BEHIND_DEC:
+    DEC A : LD (IX+11),A
+UTBP_NEXT:
+    INC IX : INC IX : INC IX : INC IX : INC IX : INC IX
+    INC IX : INC IX : INC IX : INC IX : INC IX : INC IX
+    DEC B : JP NZ,UTBP_LOOP
+    RET
+
+; ---------- bullet x BigZum collision: same front-invincible/rear- ----------
+; ---------- vulnerable shape as CHECK_HIT_PAIR_ZUM, keyed off        ----------
+; ---------- BZ_FACING instead of Z_RETREAT, plus HP instead of a     ----------
+; ---------- 1-hit kill - "攻撃判定も同じで後ろしか当たらない 耐久5". ----------
+CHECK_BULLET_VS_BIGZUM:
+    LD IX,BULLET0_ACT : CALL CHECK_HIT_ONE_BULLET_BIGZUM
+    LD IX,BULLET1_ACT : CALL CHECK_HIT_ONE_BULLET_BIGZUM
+    LD IX,BULLET2_ACT : CALL CHECK_HIT_ONE_BULLET_BIGZUM
+    RET
+
+CHECK_HIT_ONE_BULLET_BIGZUM:
+    LD IY,BIGZUM_POOL
+    LD B,BIGZUM_SLOT_COUNT
+CHOBBZ_LOOP:
+    PUSH BC
+    CALL CHECK_HIT_PAIR_BIGZUM
+    POP BC
+    INC IY : INC IY : INC IY : INC IY : INC IY : INC IY
+    INC IY : INC IY : INC IY : INC IY : INC IY : INC IY
+    DJNZ CHOBBZ_LOOP
+    RET
+
+CHECK_HIT_PAIR_BIGZUM:
+    LD A,(IX+0)
+    OR A
+    RET Z
+    LD A,(IY+0)
+    CP 1
+    RET NZ
+
+    ; AABB against the (deliberately shrunk-for-gameplay) collision box
+    ; - BIGZUM_COLLISION_SIZE(24) wide starting at BZ_X (left edge, no
+    ; offset needed) and BIGZUM_COLLISION_Y_OFFSET(16) down from BZ_Y -
+    ; see BIGZUM_COLLISION_SIZE's own comment.
+    LD A,(IX+2) : ADD A,A : ADD A,A : ADD A,A : LD B,A
+    LD A,(IX+3) : ADD A,A : ADD A,A : ADD A,A : LD C,A
+    LD A,(IY+1) : LD D,A
+    LD A,(IY+2) : ADD A,BIGZUM_COLLISION_Y_OFFSET : LD E,A
+
+    LD A,B : ADD A,7 : CP D : RET C
+    LD A,D : ADD A,BIGZUM_COLLISION_SIZE-1 : CP B : RET C
+    LD A,C : ADD A,7 : CP E : RET C
+    LD A,E : ADD A,BIGZUM_COLLISION_HEIGHT-1 : CP C : RET C
+
+    ; "BigZumジャンプ中は前面攻撃無効が解除されてヒットするように" -
+    ; while airborne (STATE=1), the front/rear split is suspended
+    ; entirely - any hit, from either side, counts as a rear hit. Only
+    ; while STATE=1; grounded states (approach/pause/punch/flip-pause)
+    ; keep the ordinary front-invincible/rear-vulnerable rule below.
+    LD A,(IY+7)
+    CP 1
+    JR Z,CHPBZ_REAR
+
+    LD A,(IY+1) : LD D,A
+    LD A,(IY+9)
+    CP 1
+    JR Z,CHPBZ_ORIENT_FLIP
+    LD A,(TANK_X)
+    CP D
+    JR NC,CHPBZ_REAR
+    JR CHPBZ_FRONT
+CHPBZ_ORIENT_FLIP:
+    LD A,(TANK_X)
+    CP D
+    JR NC,CHPBZ_FRONT
+    JR CHPBZ_REAR
+
+CHPBZ_FRONT:
+    LD A,(IX+1)
+    OR A
+    JR NZ,CHPBZ_FRONT_SKIP_ERASE
+    CALL ERASE_BULLET_CELL
+CHPBZ_FRONT_SKIP_ERASE:
+    XOR A : LD (IX+0),A
+    CALL SOUND_ZUM_DEFLECT
+    RET
+
+CHPBZ_REAR:
+    LD A,(IX+1)
+    OR A
+    JR NZ,CHPBZ_REAR_SKIP_ERASE
+    CALL ERASE_BULLET_CELL
+CHPBZ_REAR_SKIP_ERASE:
+    XOR A : LD (IX+0),A
+
+    ; "BigZumにダメージ入った場合はキンキン音は無しで" - a rear hit
+    ; that damages but doesn't destroy it plays no sound at all now
+    ; (was reusing SOUND_ZUM_DEFLECT, the same "kin-kin" front-deflect
+    ; cue); only the final, destroying hit still plays SOUND_DESTROY
+    ; below. Front hits (still fully absorbed, no damage) are untouched
+    ; - CHPBZ_FRONT keeps its own SOUND_ZUM_DEFLECT call.
+    LD A,(IY+8) : DEC A : LD (IY+8),A
+    JR Z,CHPBZ_DESTROY
+    LD A,FLASH_DURATION : LD (IY+12),A   ; hit-flash - see FLASH_DURATION's own comment
+    RET
+CHPBZ_DESTROY:
+    LD A,2 : LD (IY+0),A
+    LD A,EXPLOSION_DURATION : LD (IY+3),A
+
+    LD A,(TICK) : AND 7 : LD C,A : LD B,0
+    LD HL,EXPLODE_DIR_DX : ADD HL,BC : LD A,(HL) : LD (IY+5),A
+    LD HL,EXPLODE_DIR_DY : ADD HL,BC : LD A,(HL) : LD (IY+6),A
+
+    CALL SOUND_DESTROY
+    LD HL,SCORE_PER_KILL
+    CALL ADD_SCORE
+    RET
+
 ; ---------- Flyer: spawn/update/draw (see FLYER_SLOT_SIZE's own ----------
 ; ---------- comment block above for the full design rationale)   ----------
 UPDATE_FLYER_ALL:
@@ -3971,8 +5274,15 @@ UFLAU_LOOP:
     CALL FLUSH_FLYER_SPRITES
     RET
 
-; airborne - no terrain gate at all, just a free slot.
+; airborne - no terrain gate at all, just a free slot and BigZum
+; inactive - "BigZum出現時はFlyerは出ない", same "BigZum出現中にZumは
+; 出さない" precedent ALLOC_ZUM_SLOT already uses (one-directional only
+; - Flyer has its own dedicated pattern allocation, no VRAM sharing
+; with BigZum, so nothing requires the reverse gate too).
 ALLOC_FLYER_SLOT:
+    LD A,(BIGZUM_POOL)
+    OR A
+    RET NZ
     LD HL,FLYER_POOL
     LD B,FLYER_SLOT_COUNT
 AFLS_LOOP:
@@ -4225,7 +5535,7 @@ UOFLH_LOOP:
 
 ; blasts FLYER_SPRITE_ATTRS (FLYER_SLOT_COUNT*16 bytes) to hw sprite
 ; slots FLYER_SPR_BASE_SLOT.. - same raw DI-wrapped OUT + 8-NOP pattern
-; as FLUSH_ZUM_SPRITES.
+; as FLUSH_BIGZUM_SPRITES.
 FLUSH_FLYER_SPRITES:
     DI
     LD A,FLYER_SPR_BASE_SLOT*4 : OUT (99h),A
@@ -4367,10 +5677,18 @@ ETO_FAIL:
     XOR A
     RET
 
-; gated on the terrain-length gate above and a free slot - same shape
-; as ALLOC_ZUM_SLOT, plus the same instant spawn-time overlap
-; resolution.
+; gated on: BigZum currently active (mutual exclusion - both directions,
+; see ALLOC_BIGZUM_SLOT's own matching check and PAT_ETANK_BL's own
+; pattern-VRAM-sharing comment - a one-directional gate here would be a
+; real correctness bug, not just a design preference, since the two
+; actually share pattern-VRAM bytes, unlike BigZum/Flyer's own
+; screen-clutter-only exclusion), the terrain-length gate above, and a
+; free slot - same shape as ALLOC_ZUM_SLOT/ALLOC_BIGZUM_SLOT, plus the
+; same instant spawn-time overlap resolution.
 ALLOC_ETANK_SLOT:
+    LD A,(BIGZUM_POOL)
+    OR A
+    RET NZ
     CALL ETANK_TERRAIN_OK
     OR A
     RET Z
@@ -4389,7 +5707,7 @@ AETS_FOUND:
     POP IX
     LD A,1 : LD (IX+0),A
     LD A,ETANK_SPAWNX : LD (IX+1),A
-    LD A,(TANK_TIER_Y_TABLE) : LD (IX+2),A   ; apex tier's own Y, fixed for Etank's whole lifetime - never re-probed (see ETANK_SLOT_SIZE's own comment)
+    LD A,(TANK_TIER_Y_TABLE) : SUB ETANK_Y_OFFSET : LD (IX+2),A   ; apex tier's own Y minus the tank-art-padding fudge (see ETANK_Y_OFFSET's own comment) - fixed for Etank's whole lifetime, never re-probed (see ETANK_SLOT_SIZE's own comment)
     XOR A
     LD (IX+3),A
     LD (IX+4),A
@@ -4397,6 +5715,12 @@ AETS_FOUND:
     LD (IX+7),A
     LD A,ETANK_HP_INIT : LD (IX+6),A
     LD A,ETANK_SPAWN_INTERVAL : LD (ETANK_SPAWN_TIMER),A
+
+    ; dynamic pattern-VRAM share: overwrite BigZum's own BL/BR groups
+    ; (PAT_BIGZUM+8/+12) with Etank's own art - safe only while BigZum
+    ; is inactive (already gated above), restored whenever BigZum
+    ; itself next spawns (see ALLOC_BIGZUM_SLOT's own reload).
+    LD HL,ETANK_BL : LD DE,PAT_ETANK_BL*8+SPRPAT : LD BC,64 : CALL LDIRVM
 
     ; "自機はZumと同じで接触で自機を押す" - same instant overlap
     ; resolution at spawn as ALLOC_ZUM_SLOT.
@@ -4905,6 +6229,13 @@ TERRAIN_ROW_SAND:
 ; slow/floaty. JUMP_FRAMES above must match this table's length.
 JUMP_OFFSET_TABLE:
     DB 0,2,5,7,9,11,13,15,17,19,20,21,22,23,24,24,24,24,24,23,22,21,20,19,17,15,13,11,9,7,5,2,0
+
+; BigZum's own jump-on arc - same half-sine construction as
+; JUMP_OFFSET_TABLE above (round(H*sin(pi*t/32)) for t=0..32), H=32
+; instead of 24 - "ジャンプは自機より高く32ｐｘ サインジャンプ".
+; BIGZUM_JUMP_FRAMES above must match this table's length.
+BIGZUM_JUMP_TABLE:
+    DB 0,3,6,9,12,15,18,20,23,25,27,28,30,31,31,32,32,32,31,31,30,28,27,25,23,20,18,15,12,9,6,3,0
 
 ; name-table row base address (1800h + row*32), rows 0-23 - shared by
 ; every bullet slot to turn a ROW byte back into a VRAM address

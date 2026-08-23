@@ -3002,6 +3002,11 @@ with no way to tell where.
   - Fixed by shifting every OTHER RAM address in the file down by `100h` (256 bytes) via a mechanical, whole-file substitution (`TICK` now at `0EF00h` instead of `0F000h`, etc.) - `STACKTOP` itself is untouched (still the same real BIOS boundary), but now has 266 bytes of genuinely free headroom below it before reaching the topmost variable (`ETANK_DRAW_COLOR`, now at `0F275h`), comfortably past both the measured call-depth dip and any realistic H.TIMI interrupt overhead. Reverted the 3 diagnostic `RET`s (Zum/Flyer/ZacoII spawning restored) now that the isolation step had already answered the question.
   Verified: full regression suite (Etank pattern-VRAM 8, Etank unit 16, ZacoII-flash 6, Zum-overlap 3, Flyer-terrain 5 - 38 checks) all still pass after the address shift; fresh 20000-frame random-input and idle sweeps under the properly-banked ASCII16 model, no crash/stall; `render_check.py` clean with bank1 correctly selected; re-measured the same SP-dip trace after the fix - the 12-byte-below-`STACKTOP` dip is unchanged (same call depth, expected), but now lands in genuinely empty RAM with 255+ bytes of margin above the nearest live variable instead of inside it. Real-WebMSX confirmation that the ghost is actually gone is still the only way to know for certain - `z80emu.py` could verify the mechanism (the dangerous dip) but, having no interrupt simulation at all, can never directly witness the corruption itself the way WebMSX's own real VDP/interrupt timing can.
 
+- **Ghost confirmed gone; Etank's own Y-offset bug found and fixed; BigZum restored** - "ゴミは消えた やはりお前のミスじゃねえか" confirmed the stack-headroom fix actually worked. Two follow-up instructions:
+  - **"Etankの位置がおかしい また自機基準でオフセットしてねえだろうな 毎回同じミスしてる 自機だけジャンプの関係でやってるだけで特殊"** - exactly the same bug class as `BIGZUM_Y_OFFSET` before it: `ALLOC_ETANK_SLOT` copied `TANK_TIER_Y_TABLE`'s value onto Etank's own Y directly, without correcting for the +4 landing-offset fudge `TANK_Y_BASE`'s own derivation bakes in specifically for the TANK's own art. Confirmed directly against `sprites/Etank.json`: ink runs all the way to row31 (no bottom padding, same as BigZum's own art), so reusing the tank's already-compensated anchor sank Etank's real feet ~4px below the true ground line. Added `ETANK_Y_OFFSET EQU 4`, subtracted the same way `BIGZUM_Y_OFFSET` already was.
+  - **"BigZumがでないままになってるからもとに戻せ で、EtankとBigZumは同時には存在しない Etank用の長い平地でEtankをスポーンしてBigZumは出すなよ"** - restored BigZum's complete implementation (constants/RAM/all routines/`INIT` pattern-loading and pool-clear/`MAINLOOP` calls/`BIGZUM_JUMP_TABLE`) from git history (commit `28ba232`, the last one before its diagnostic removal), reintegrated into the current file with every RAM address shifted the same `-100h` the rest of the file's own addresses already were - it slotted back into the exact gap deliberately left behind during the removal (`JUMP_STAND_BASELINE` through `FLYER_POOL`) with zero new overlaps, confirmed by a full systematic pool-by-pool audit. Etank went back to its ORIGINAL design too - dynamically sharing BigZum's own `PAT_BIGZUM` BL/BR pattern-VRAM groups at spawn time (`PAT_ETANK_BL`/`PAT_ETANK_BR` back to `PAT_BIGZUM+8`/`+12`, no longer a fixed permanent code) - restoring the bidirectional spawn-gate exclusion in both directions (`ALLOC_ZUM_SLOT`/`ALLOC_FLYER_SLOT`/`ALLOC_ETANK_SLOT` all refuse while `BIGZUM_POOL` is active; `ALLOC_BIGZUM_SLOT` refuses while `FLYER_POOL`/`ETANK_POOL` are active) - exactly "EtankとBigZumは同時には存在しない". Kept 2 improvements from the diagnostic round that don't conflict with any of this: Etank's own dedicated `ETANK_DRAW_COLOR` scratch byte (RAM is no longer the tight resource pattern-code space still is) and the `ETANK_Y_OFFSET` fix above.
+  Verified: full systematic RAM-overlap audit (31 pools/scratch-bytes, sorted and checked pairwise) - zero overlaps, 266 bytes of headroom still intact below `STACKTOP`. `etank_unit.py` (18 checks, including the Y-offset fix and both directions of the bidirectional exclusion), `etank_pattern_vram_test.py` (10 checks, rewritten back to testing the dynamic-sharing mechanism - BigZum's TL/TR untouched by an Etank spawn, Etank's BL/BR VRAM matches its own real art, BigZum's own next spawn correctly reloads and undoes Etank's borrow), `shakeoff_unit.py` (12 checks, BigZum's own shake-off mechanic - unchanged, still passes byte-for-byte identical to before the diagnostic removal), plus the existing Flyer-terrain (5)/ZacoII-flash (6)/Zum-overlap (3) suites - 54 checks total, all pass. Fresh 20000-frame random-input sweep with an explicit per-frame invariant check ("Etank and BigZum active at the same time" - 0 occurrences across the whole run) and 20000-frame idle sweep, both clean, no crash/stall; `render_check.py` boots correctly with the ASCII16 bank-switch intact; rendered Etank and BigZum separately to PNG and visually confirmed both draw correctly - Etank now sits flush on the terrain instead of sunk in, BigZum renders with no stray artifacts.
+
 ## Bugs found and fixed while building this
 
 - **Sand flickered between its own new color and Rock's, twice over**
@@ -3350,7 +3355,7 @@ directly.
 
 - `combined_test.asm`, `build_test.py` - the merged engine + build
   script (imports `terrain_gen.py`, `tank_gen.py`, `bullet_gen.py`,
-  `enemy_gen.py`, `flyer_gen.py`, and `etank_gen.py`).
+  `enemy_gen.py`, `bigzum_gen.py`, `flyer_gen.py`, and `etank_gen.py`).
 - `combined_test [ASCII16].rom` - the built ROM, 64KB (bank0+bank1,
   doubled). The `[ASCII16]` filename tag is required, not cosmetic -
   WebMSX (the actual verification method used for this file - not real
@@ -3365,13 +3370,17 @@ directly.
 - `enemy_gen.py`, `sprites/ZacoII.json`, `sprites/Zum.json` - the 2
   16x16 ground/air enemy sprites' hw-pattern conversion (single hw
   sprite each, no quadrant splitting).
+- `bigzum_gen.py`, `sprites/BigZum.json`, `sprites/BigZumP.json` -
+  BigZum's 2 32x32 poses' hw-pattern conversion, mirroring
+  `tank_gen.py`'s own quadrant-splitting + hflip approach (see the
+  BigZum entry above).
 - `flyer_gen.py`, `sprites/Flyer.json` - Flyer's own 32x32 hw-pattern
   conversion, permanent pattern allocation (no VRAM sharing).
 - `etank_gen.py`, `sprites/Etank.json` - Etank's own 32x32 art, but
   only the bottom-left BL/BR quadrants are ever emitted (TL/TR are
-  fully blank in the source art) - own permanent pattern allocation,
-  loaded once at `INIT` (see the BigZum-removal entry above; BigZum's
-  own sprite JSONs/`bigzum_gen.py` are no longer used by this file).
+  fully blank in the source art) - dynamically shares BigZum's own
+  pattern-VRAM at runtime instead of a permanent allocation (see the
+  Etank entry above).
 - `render_check.py` - emulator verification: boots, runs several full
   track loops with no crash/hang, and renders 2 sample frames from
   real VRAM (BG + sprites composited together) to `combined0.ppm`/
