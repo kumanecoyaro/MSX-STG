@@ -15,6 +15,7 @@ CLOUD_POOL = sym["CLOUD_POOL"]
 CLOUD_SLOT_SIZE = sym["CLOUD_SLOT_SIZE"]
 GAME_TICK = sym["GAME_TICK"]
 NIGHT_COLOR = sym["NIGHT_COLOR"]
+NIGHT_START_TICK = sym["NIGHT_START_TICK"]
 
 
 def set_game_tick(cpu, val):
@@ -36,36 +37,50 @@ check("the 3 initial cloud WAITs are not clustered within 3 of each other",
       max(waits) - min(waits) > 10)
 check("all 3 initial cloud WAITs are distinct", len(set(waits)) == 3)
 
-# Test 3: CLOUD_UPDATE_ALL is a no-op once GAME_TICK>=100 - a cloud
-# mid-flight simply stops advancing.
+# Test 3: CLOUD_UPDATE_ALL is a no-op once GAME_TICK>=NIGHT_START_TICK - a
+# cloud mid-flight simply stops advancing. The comparison must be a true
+# 16-bit one (NIGHT_START_TICK is well above 255) - also checked directly
+# at the old 8-bit-truncated low byte of NIGHT_START_TICK (what a
+# `CP NIGHT_START_TICK`-style compare would have wrongly matched against,
+# since Z80's CP only ever takes an 8-bit immediate) to guard against that
+# exact class of bug reappearing.
 cpu = fresh_cpu()
-cpu.mem[CLOUD_POOL + 0] = 1          # ACT=1 (spawned/moving)
-cpu.mem[CLOUD_POOL + 3] = 200        # some X position
-before = cpu.mem[CLOUD_POOL + 3]
-set_game_tick(cpu, 99)
-call_routine(cpu, "CLOUD_UPDATE_ALL")
-after_99 = cpu.mem[CLOUD_POOL + 3]
-cpu.mem[CLOUD_POOL + 0] = 1
-cpu.mem[CLOUD_POOL + 3] = 200
-set_game_tick(cpu, 100)
-call_routine(cpu, "CLOUD_UPDATE_ALL")
-after_100 = cpu.mem[CLOUD_POOL + 3]
-check("clouds still update normally just before GAME_TICK=100", after_99 != before or True)
-check("clouds stop updating at GAME_TICK=100 (X frozen)", after_100 == before)
+def arm_cloud(cpu):
+    cpu.mem[CLOUD_POOL + 0] = 1          # ACT=1 (spawned/moving)
+    cpu.mem[CLOUD_POOL + 3] = 200        # some X position
+    cpu.mem[CLOUD_POOL + 4] = 1          # per-frame speed countdown=1, forces a move this call
 
-# Test 4: real end-to-end - clouds are still moving/spawning well
-# before frame 799 (GAME_TICK=100), confirming the gate doesn't kick in
+arm_cloud(cpu)
+before = cpu.mem[CLOUD_POOL + 3]
+set_game_tick(cpu, NIGHT_START_TICK - 1)
+call_routine(cpu, "CLOUD_UPDATE_ALL")
+after_before_start = cpu.mem[CLOUD_POOL + 3]
+arm_cloud(cpu)
+set_game_tick(cpu, NIGHT_START_TICK & 0xFF)   # the truncated-8-bit false trigger
+call_routine(cpu, "CLOUD_UPDATE_ALL")
+after_truncated = cpu.mem[CLOUD_POOL + 3]
+arm_cloud(cpu)
+set_game_tick(cpu, NIGHT_START_TICK)
+call_routine(cpu, "CLOUD_UPDATE_ALL")
+after_start = cpu.mem[CLOUD_POOL + 3]
+check("clouds still update normally just before NIGHT_START_TICK", after_before_start != before)
+check("clouds do NOT stop at the truncated-8-bit low byte of NIGHT_START_TICK",
+      after_truncated != before)
+check("clouds stop updating at GAME_TICK=NIGHT_START_TICK (X frozen)", after_start == before)
+
+# Test 4: real end-to-end - clouds are still moving/spawning well before
+# GAME_TICK reaches NIGHT_START_TICK, confirming the gate doesn't kick in
 # too early.
 cpu2 = fresh_cpu()
 cpu2.sim_dir = 0
 cpu2.sim_trig_a = False
 cpu2.sim_trig_b = False
 any_cloud_active_early = False
-for f in range(700):
+for f in range(min(700, NIGHT_START_TICK * 8 - 50)):
     step_frame(cpu2)
     if any(cpu2.mem[CLOUD_POOL + i * CLOUD_SLOT_SIZE + 0] != 0 for i in range(3)):
         any_cloud_active_early = True
-check("at least one cloud is active well before GAME_TICK reaches 100",
+check("at least one cloud is active well before GAME_TICK reaches NIGHT_START_TICK",
       any_cloud_active_early)
 
 print()

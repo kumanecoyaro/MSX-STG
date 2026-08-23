@@ -3476,6 +3476,52 @@ with no way to tell where.
   always using the unaffected rock glyph) - all pass. Full suite (140
   checks) passes.
 
+- **Night effect retimed - sweep now 1 row per 8 `GAME_TICK`s (was 16),
+  starting at `GAME_TICK` 900 (was 100); confirmed the whole
+  cloud-stop/BG-blackout/bullet-black-restore trio is already one set
+  gated entirely off these 2 named constants, not scattered hardcoded
+  ticks - and fixed the one place that quietly wasn't**: "では夜の処理
+  は今16Tickごとに1行分描画してるが8Tickに変更 開始もTick900に変更
+  夜の処理は雲の描画停止 ブラックにBGを上から書き換えていき 自機ショ
+  ットの水平打ちの復元処理、ショットの背景色をブラックに ここまでが
+  セット Tickでハードコードせず 一連の処理にしてTick900で発火するよ
+  うに". `NIGHT_START_TICK`(100->900) and `NIGHT_INTERVAL`(16->8)
+  changed at their own single `EQU` definitions - `CHECK_NIGHT`'s own
+  sweep timer (`NIGHT_NEXT_TICK`, seeded from `NIGHT_START_TICK` at
+  INIT, stepped by `NIGHT_INTERVAL` every trigger, compared via a
+  genuine 16-bit `SBC HL,DE`) and the bullet night-glyph/night-erase
+  checks (both keyed off `NIGHT_ROW`, itself only ever advanced by
+  `CHECK_NIGHT`) picked up the new timing automatically with no other
+  code changes needed - already a single mechanism sharing these 2
+  constants, exactly as asked.
+  One place wasn't actually 16-bit-safe despite reading the same
+  constant: `CLOUD_UPDATE_ALL`'s own "stop drawing clouds once night
+  starts" gate compared `GAME_TICK`'s low byte against
+  `NIGHT_START_TICK` with an 8-bit `CP` (only ever correct because the
+  old value, 100, fit in a byte - Z80's `CP` always takes an 8-bit
+  immediate, and this custom assembler truncates an out-of-range one
+  silently, with no error). With `NIGHT_START_TICK` now 900, that would
+  have silently compared against just its truncated low byte (132)
+  instead, stopping clouds 768 ticks early - completely invisible from
+  the `EQU` value alone. Rewritten to a true 16-bit `SBC HL,DE` compare
+  against `NIGHT_START_TICK` directly, the same idiom `CHECK_NIGHT`'s
+  own timer already uses.
+  Verified: `night_effect_test.py` (16 checks, including a full real-
+  `MAINLOOP` run confirming the first row change lands at frame
+  `NIGHT_START_TICK*8` and not earlier) and `cloud_changes_test.py` (7
+  checks - rewrote to pull `NIGHT_START_TICK` from the assembled symbol
+  table instead of hardcoding 100/16, and added a direct check at the
+  old 8-bit-truncated low byte of `NIGHT_START_TICK` confirming clouds
+  do NOT stop there - this check fails against the un-fixed `CP`-based
+  gate and passes against the `SBC HL,DE` fix, so it actually catches
+  the bug class rather than just re-asserting the fixed behavior) all
+  pass. Full suite (141 checks) passes. Also re-rendered a real frame
+  past the new start tick (`tests/night_visual_check.py`, updated to
+  sweep past `GAME_TICK=900`): the score/HUD row plus 4 more rows solid
+  black, the 5th (leading) row showing the striped night tile, sky below
+  unaffected, clouds frozen in place rather than erased - matches the
+  design exactly.
+
 ## Bugs found and fixed while building this
 
 - **Sand flickered between its own new color and Rock's, twice over**

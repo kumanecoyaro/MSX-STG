@@ -11,7 +11,7 @@ cpu.sim_dir = 0
 cpu.sim_trig_a = False
 cpu.sim_trig_b = False
 
-for f in range(2100):
+for f in range(7500):
     step_frame(cpu)
 
 print("NIGHT_ROW =", cpu.mem[sym["NIGHT_ROW"]], "GAME_TICK =",

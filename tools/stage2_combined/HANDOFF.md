@@ -15,7 +15,7 @@ round quotes the user's exact Japanese instruction).
 - **Regression suite**: `tests/` (in this directory, **just added to
   git this session** — previously these lived only in an ephemeral
   scratchpad and would NOT have survived a session handoff). Run
-  `python3 tests/run_all.py` for the full suite (140 checks as of this
+  `python3 tests/run_all.py` for the full suite (141 checks as of this
   commit). Each file is also independently runnable and self-reports
   `N passed, M failed`.
 - **Emulator**: `../z80emu.py` — a from-scratch Z80 interpreter used
@@ -87,14 +87,24 @@ Communicates in terse, often angry Japanese. Expects:
   instead). Its expression evaluator only supports `+ - * /`, left-to-
   right, no operator precedence and no parentheses — write constant
   expressions as plain literals rather than anything clever.
-- **Night-transition effect** (`CHECK_NIGHT`, `NIGHT_START_TICK`=100 in
-  `GAME_TICK` units): sweeps 1 more row black every 16 `GAME_TICK`s,
-  from `NIGHT_START_ROW`(1) through `NIGHT_END_ROW`(16, the SkySand
-  row). `NIGHT_ROW` (RAM) tracks the current leading row — compare a
-  row number against it (`NIGHT_ROW>=row` means "already darkened by
-  the sweep") any time new code needs to know whether a specific row is
-  currently dark. Don't gate on `GAME_TICK>=100` alone for anything
-  row-specific — the sweep takes real time to reach any given row.
+- **Night-transition effect** (`CHECK_NIGHT`, `NIGHT_START_TICK`=900 in
+  `GAME_TICK` units as of this session, was 100): sweeps 1 more row
+  black every `NIGHT_INTERVAL`(8 as of this session, was 16)
+  `GAME_TICK`s, from `NIGHT_START_ROW`(1) through `NIGHT_END_ROW`(16,
+  the SkySand row). `NIGHT_ROW` (RAM) tracks the current leading row —
+  compare a row number against it (`NIGHT_ROW>=row` means "already
+  darkened by the sweep") any time new code needs to know whether a
+  specific row is currently dark. Don't gate on
+  `GAME_TICK>=NIGHT_START_TICK` alone for anything row-specific — the
+  sweep takes real time to reach any given row. Also: any GAME_TICK
+  threshold compare MUST be a real 16-bit one (`SBC HL,DE`, the idiom
+  `CHECK_NIGHT`'s own timer uses) once the threshold can exceed 255 -
+  Z80's `CP` only ever takes an 8-bit immediate, and this custom
+  assembler silently truncates an out-of-range one with no error
+  (`n & 0xFF`, no range check) instead of failing the build. Found
+  exactly this bug in `CLOUD_UPDATE_ALL`'s own cloud-stop gate when
+  `NIGHT_START_TICK` moved from 100 to 900 this session — see README's
+  own entry on it for the full story.
 
 ## Open items / things to watch
 

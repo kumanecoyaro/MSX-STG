@@ -396,8 +396,8 @@ LIFE_CODE           EQU 128       ; group16 (128-135)
 LIFE_COLOR          EQU 035h      ; fg3/bg5, from Life_8x8.json's own fg/bg
 LIFE_BAR_ROW        EQU 0
 LIFE_BAR_COL0       EQU 9         ; 1 blank cell past the score's own 8 (cols0-7) - "スコアから１セル空けた位置"
-; "夜になっていく演出" - once GAME_TICK reaches NIGHT_START_TICK(100),
-; every NIGHT_INTERVAL(16) further GAME_TICKs, one more sky row (top
+; "夜になっていく演出" - once GAME_TICK reaches NIGHT_START_TICK(900),
+; every NIGHT_INTERVAL(8) further GAME_TICKs, one more sky row (top
 ; down, NIGHT_START_ROW(1, "スコアの下の行から" - the row right below
 ; the score/life-bar row0, off-by-one vs an earlier "2行目"=row-index-2
 ; misreading, fixed once shown a real screenshot of it starting 1 row
@@ -414,8 +414,8 @@ LIFE_BAR_COL0       EQU 9         ; 1 blank cell past the score's own 8 (cols0-7
 ; "done" rows). Stops once NIGHT_END_ROW itself becomes the leading
 ; row - the SkySand row is never itself blackened over, since nothing
 ; requested darkening the ground/terrain, only the sky above it.
-NIGHT_START_TICK EQU 100
-NIGHT_INTERVAL   EQU 16
+NIGHT_START_TICK EQU 900
+NIGHT_INTERVAL   EQU 8
 NIGHT_START_ROW  EQU 1
 NIGHT_END_ROW    EQU 16
 NIGHT_CODE       EQU 136       ; group17 (136-143)
@@ -6315,18 +6315,20 @@ FBUS_LOOP:
 ; slot. PUSH/POP BC around the CALL: UPDATE_ONE_CLOUD's own cell-write
 ; helpers use B/C as scratch, which would otherwise corrupt this loop's
 ; DJNZ counter - same precaution as every other pool loop in this file.
-; "Tick100以降は雲の描画を停止" - once GAME_TICK>=NIGHT_START_TICK(100)
-; (16-bit safe, same shape as ALLOC_ETANK_SLOT's own GAME_TICK check),
-; clouds stop moving/spawning/drawing entirely for the rest of the run
-; - whatever cell each one last drew stays frozen until CHECK_NIGHT's
-; own sweep overwrites that row anyway, so nothing lingers once night
-; actually reaches it.
+; once GAME_TICK>=NIGHT_START_TICK(900), clouds stop moving/spawning/
+; drawing entirely for the rest of the run - whatever cell each one
+; last drew stays frozen until CHECK_NIGHT's own sweep overwrites that
+; row anyway, so nothing lingers once night actually reaches it. A real
+; 16-bit compare (SBC HL,DE, same idiom CHECK_NIGHT's own timer check
+; uses) - NIGHT_START_TICK is well past 255, so the old single-byte
+; `CP NIGHT_START_TICK` this used to be (correct only while the
+; constant fit in 8 bits) would silently compare against just its low
+; byte instead, firing 768 GAME_TICKs early.
 CLOUD_UPDATE_ALL:
-    LD A,(GAME_TICK+1)
+    LD HL,(GAME_TICK)
+    LD DE,NIGHT_START_TICK
     OR A
-    RET NZ
-    LD A,(GAME_TICK)
-    CP NIGHT_START_TICK
+    SBC HL,DE
     RET NC
     LD IX,CLOUD_POOL
     LD B,CLOUD_SLOT_COUNT
