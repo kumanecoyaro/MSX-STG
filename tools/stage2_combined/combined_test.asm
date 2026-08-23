@@ -4448,6 +4448,33 @@ BZTO_FAIL:
 ; NOT gated here any more - "FlyerとBigZum、FlyerとEtankは同時存在して
 ; 良い" (was bidirectionally excluded before; that exclusion removed
 ; from both ALLOC_FLYER_SLOT and here).
+; "Etankでねえよ" - root cause found by DIRECT MEASUREMENT (not
+; guesswork): 2 separate emulator sweeps (15000 frames idle input, then
+; 40000 frames of randomized movement/jump/shoot combat) both show
+; BigZum, once it first spawns (very early - its own gate is just
+; ENEMY_SPAWN_COUNT>=10, reached almost immediately, on terrain that's
+; ALSO satisfied from the very start of the track), staying active for
+; effectively the ENTIRE rest of the run - 0 deaths in 40000 combat
+; frames despite firing ~1 shot in 3. Not a bug in the damage code
+; itself - BigZum is deliberately front-invincible, only takes damage
+; from a rear hit (grounded) or any hit while airborne (STATE=1), so
+; landing one takes a real, deliberate flank, not random button-mashing
+; - but the practical result is BigZum wins the ALLOC_ETANK_SLOT/
+; ALLOC_BIGZUM_SLOT mutual-exclusion race (both directions, both
+; correctly implemented) every single time under ordinary play: it's
+; already alive and holding the slot long before ENEMY_SPAWN_COUNT
+; ever reaches Etank's own 70 threshold, and even on the rare death,
+; BIGZUM_SPAWN_INTERVAL(90 frames/1.5s) reclaims the slot again almost
+; immediately - long before Etank's OWN full gate (count>=70 AND both
+; Zum slots inactive AND its own apex terrain) can realistically land
+; in that narrow gap. The exclusion itself is correct and stays
+; (EtankとBigZumは同時には存在しない, unconditionally) - what was
+; missing is a tiebreak for the instant both become eligible at once:
+; give Etank first claim whenever ITS OWN full gate is already
+; satisfied, instead of always letting BigZum's own much shorter
+; cooldown win by default. UPDATE_ETANK_ALL runs later in MAINLOOP
+; than UPDATE_BIGZUM_ALL (same frame), so deferring here is enough -
+; ALLOC_ETANK_SLOT picks the slot up itself right after.
 ALLOC_BIGZUM_SLOT:
     LD A,(ENEMY_SPAWN_COUNT)
     CP 10
@@ -4455,6 +4482,19 @@ ALLOC_BIGZUM_SLOT:
     LD A,(ETANK_POOL)
     OR A
     RET NZ
+    LD A,(ENEMY_SPAWN_COUNT)
+    CP 70
+    JR C,ABZS_NO_DEFER
+    LD A,(ZUM_POOL)
+    OR A
+    JR NZ,ABZS_NO_DEFER
+    LD A,(ZUM_POOL+ZUM_SLOT_SIZE)
+    OR A
+    JR NZ,ABZS_NO_DEFER
+    CALL ETANK_TERRAIN_OK
+    OR A
+    RET NZ                          ; Etank's own full gate is ready - defer, let it take the slot this frame
+ABZS_NO_DEFER:
     CALL BIGZUM_TERRAIN_OK
     OR A
     RET Z

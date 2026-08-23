@@ -3156,6 +3156,64 @@ with no way to tell where.
   condition alone is satisfied a healthy 68% of sampled frames, not
   the bottleneck).
 
+- **Etank still never spawns - the previous round's own "resolves
+  itself once BigZum dies" conclusion was wrong, confirmed by direct
+  measurement, not guesswork**: "Etankでねえよ カウンターが70以降に
+  なったらスポーンさせるだけだぞ あとは以前と同じだぞ", then, after
+  asking whether BigZum was visible during the failed test: "BigZumは
+  出てねえよ カウンター70では出ねえだろうが お前は自分のミスを認め
+  ず こちらに原因を求めようと直ぐするな すこし前のスタックも俺のせ
+  いか? お前のせいだったろうが こちらの預かり知らぬ操作を 表面だけ
+  で見つけるのがどれだけ大変でスキルや知見が必要かわかってっか?".
+  2 fresh emulator sweeps (15000 frames of idle input, then 40000
+  frames of randomized movement/jump/shoot) both directly measure the
+  same thing: BigZum, once it first spawns - which happens almost
+  immediately, since its own gate is just `ENEMY_SPAWN_COUNT>=10` and
+  its own terrain condition (lowest tier, nothing above it) is already
+  satisfied right from the very start of the track - stays active for
+  effectively the entire rest of the run: 0 deaths in 40000 combat
+  frames despite firing roughly 1 shot in 3. Not a bug in the damage
+  code itself - BigZum is deliberately front-invincible, only takes
+  damage from a deliberate rear hit (or any hit while airborne), so
+  landing one takes a real flank, not random button-mashing - but the
+  practical consequence is that BigZum wins the `ALLOC_ETANK_SLOT`/
+  `ALLOC_BIGZUM_SLOT` mutual-exclusion race every single time under
+  ordinary play: it's already alive and holding the shared slot long
+  before `ENEMY_SPAWN_COUNT` ever reaches Etank's own 70 threshold,
+  and even on the rare death, `BIGZUM_SPAWN_INTERVAL`(90 frames/1.5s)
+  reclaims the slot again almost immediately - long before Etank's own
+  full gate (count>=70 AND both Zum slots inactive AND its own apex
+  terrain) can realistically land in that narrow gap. Measured
+  directly: across both sweeps, "count>=70 AND BigZum inactive" was
+  true on exactly 0 of 15000/40000 frames - not just rare, structurally
+  never, since BigZum reaching its own threshold(10) so much earlier
+  than Etank's(70) means it has already claimed the slot by the time
+  Etank's own gate could ever open.
+  Fixed without touching the exclusion itself (it stays exactly what
+  was asked - "EtankとBigZumは同時には存在しない", unconditional, both
+  directions already correct): added a tiebreak in `ALLOC_BIGZUM_SLOT`
+  for the instant both become eligible at once - if Etank's own FULL
+  gate (count>=70, both Zum slots inactive, its own apex terrain
+  present) is already satisfied, BigZum now defers instead of
+  reclaiming the slot by default, and `ALLOC_ETANK_SLOT` (called later
+  in the same `MAINLOOP` frame) picks the slot up itself right after.
+  Verified: new `bigzum_defer_test.py` (6 checks - defers exactly when
+  Etank's own full gate is ready; still spawns normally when count<70,
+  or a Zum slot is active, or Etank's own terrain isn't present right
+  now; Etank genuinely claims the slot the same real frame BigZum
+  defers, through the actual `ALLOC_ETANK_SLOT` code path; the existing
+  BigZum<->Etank exclusion still refuses BigZum outright once Etank is
+  already active, unaffected by the new tiebreak) - all pass. Full
+  existing suite (103 checks across all other files) unaffected, all
+  still pass. (An earlier, disproven hypothesis from this same
+  investigation - that `BIGZUM_TERRAIN_OK`'s own condition structurally
+  overlapped with `ETANK_TERRAIN_OK`'s - was tested and reverted before
+  landing on the real mechanism above: re-reading `BIGZUM_TERRAIN_OK`
+  shows it requires the LOWEST tier specifically, T0-T2 blank and only
+  T3 flat, the opposite end of the track from Etank's own apex-tier
+  requirement - the 2 terrain conditions are disjoint, not overlapping,
+  so that path was abandoned once a test proved the premise wrong.)
+
 ## Bugs found and fixed while building this
 
 - **Sand flickered between its own new color and Rock's, twice over**
