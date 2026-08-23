@@ -4,36 +4,6 @@ Session handoff written 2026-08-23. Read this first, then `README.md`
 in this same directory for the full chronological changelog (every
 round quotes the user's exact Japanese instruction).
 
-## ⚠ Current build is a DIAGNOSTIC, not the real boss
-
-As of the most recent commit, `combined_test.asm` is deliberately in a
-**temporary test state**, by direct instruction - do not "fix" any of
-this without being told the test is done:
-- `UPDATE_BOSS_ALL` draws 4 independent Flyer-art 32x32 blocks
-  (`DRAW_FLUSH_BOSS_BLOCKS`) instead of Sasapi's own real 64x64 art
-  (`DRAW_BOSS`/`FLUSH_BOSS_SPRITES`/`LOAD_SASAPI_PATTERNS` - still in
-  the file, just unreferenced) - testing whether operating the whole
-  64x64 area as one combined unit (vs 4 fully independent smaller ones)
-  is the real cause of a still-open tearing/garbage report. Spawn tick/
-  position/patrol logic is unchanged either way.
-- `GAME_TICK` boots at 840 (was 0) so night (850) and the boss (999)
-  both arrive within ~1300 frames of booting, for fast manual testing.
-- Consequently `python3 tests/run_all.py` currently shows **8 expected
-  failures** (172/180): all 6 in `boss_test.py` check the now-bypassed
-  Sasapi path, 1 each in `etank_gametick_gate_test.py`/
-  `night_effect_test.py` assumed `GAME_TICK` starts at 0. Not
-  regressions - see README's own entry (search "DIAGNOSTIC BUILD") for
-  the full reasoning and exactly what still passes.
-- **Also**: don't revisit the "terrain-scroll `LDIRVM` causes tearing"
-  theory - already tried, already explicitly rejected by direct
-  instruction, see README's own correction entry and the "Do NOT touch"
-  bullet further down.
-- Reverting to the real boss once this test concludes: swap
-  `UBA_DRAW`'s call target back to `DRAW_BOSS`+`FLUSH_BOSS_SPRITES`,
-  restore the 3 `LOAD_SASAPI_PATTERNS` call-sites (spawn + each
-  reversal), and put `GAME_TICK`'s boot value back to a plain `XOR A`
-  zero.
-
 ## Where things are
 
 - **Main source**: `combined_test.asm` (this directory). Single file,

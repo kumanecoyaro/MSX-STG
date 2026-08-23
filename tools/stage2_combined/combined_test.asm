@@ -1740,16 +1740,8 @@ INIT_SPRATR_CLR:
     XOR A : OUT (PSG_DATA),A
 
     XOR A
+    LD (GAME_TICK),A : LD (GAME_TICK+1),A
     LD (SCORE),A : LD (SCORE+1),A : LD (SCORE+2),A
-    ; DIAGNOSTIC BUILD: "Tickの初期値を840にしろ 直後に夜の処理が入って
-    ; すぐボスになる" - starts 10 GAME_TICKs before NIGHT_START_TICK(850)
-    ; so night and the boss (999) both arrive within seconds of booting,
-    ; for fast manual testing instead of waiting through the whole real
-    ; timeline. Revert to XOR A/0 (GAME_TICK genuinely starts at 0) once
-    ; this round's verification is done - this is not the intended
-    ; shipping value.
-    LD HL,840
-    LD (GAME_TICK),HL
     LD A,0FFh : LD (GTD_LAST_H),A : LD (GTD_LAST_T),A : LD (GTD_LAST_O),A
     CALL SCORE_DISPLAY
     CALL GAME_TICK_DISPLAY
@@ -6514,14 +6506,6 @@ LOAD_SASAPI_PATTERNS:
 ; never changes (BOSS_SPAWN_Y, horizontal patrol only). Reloads the
 ; matching facing's pattern data (see LOAD_SASAPI_PATTERNS's own
 ; comment) at spawn and at each reversal, never mid-step.
-; DIAGNOSTIC BUILD: UBA_DRAW below calls DRAW_FLUSH_BOSS_BLOCKS (4
-; independent Flyer-art 32x32 blocks) instead of DRAW_BOSS/
-; FLUSH_BOSS_SPRITES/LOAD_SASAPI_PATTERNS (Sasapi's own real 64x64 art)
-; - see DRAW_FLUSH_BOSS_BLOCKS' own comment for why. Spawn/position/
-; patrol logic below is completely UNCHANGED from the real boss -
-; "表示条件は同じになる" - only the draw+flush step differs, so the
-; LOAD_SASAPI_PATTERNS calls that used to sit at each of these 3 spots
-; are removed for this build (nothing here reads PAT_SASAPI any more).
 UPDATE_BOSS_ALL:
     LD A,(BOSS_ACT)
     OR A
@@ -6531,6 +6515,7 @@ UPDATE_BOSS_ALL:
     OR A
     SBC HL,DE
     RET C                      ; not yet time
+    LD HL,SASAPI_QUADS : CALL LOAD_SASAPI_PATTERNS   ; DIR=0 facing below
     LD A,1 : LD (BOSS_ACT),A
     LD A,BOSS_SPAWNX : LD (BOSS_X),A
     XOR A : LD (BOSS_DIR),A    ; 0 = moving left first - "右から出現し左へ"
@@ -6546,6 +6531,7 @@ UBA_MOVE_LEFT:
     JR NC,UBA_STEP_LEFT
     XOR A : LD (BOSS_X),A      ; clamp to the left edge
     LD A,1 : LD (BOSS_DIR),A   ; 反転 - now heads right
+    LD HL,SASAPI_QUADS_L : CALL LOAD_SASAPI_PATTERNS
     JR UBA_DRAW
 UBA_STEP_LEFT:
     SUB BOSS_SPEED : LD (BOSS_X),A
@@ -6556,131 +6542,15 @@ UBA_MOVE_RIGHT:
     JR C,UBA_STEP_RIGHT
     LD A,BOSS_SPAWNX : LD (BOSS_X),A   ; clamp to the right edge
     XOR A : LD (BOSS_DIR),A            ; 反転 - back to heading left
+    LD HL,SASAPI_QUADS : CALL LOAD_SASAPI_PATTERNS
     JR UBA_DRAW
 UBA_STEP_RIGHT:
     LD (BOSS_X),A
 UBA_DRAW:
-    CALL DRAW_FLUSH_BOSS_BLOCKS
+    CALL DRAW_BOSS
+    CALL FLUSH_BOSS_SPRITES
     RET
 
-; ---------- DIAGNOSTIC BUILD: 4 independent Flyer-art 32x32 blocks ----------
-; ---------- in place of Sasapi's own real 64x64 art/draw/flush      ----------
-;
-; "検証で今のボスの代わりにFlyerを4体64x64に並べてだせ 表示条件は同じ
-; になる もしかすると64x64のスプライトを一気にひとまとめで操作すると
-; VDP処理オーバーの可能性がある" - tests whether operating the whole
-; 64x64 area as ONE combined draw+flush (even the already-DI/EI-chunked
-; real DRAW_BOSS/FLUSH_BOSS_SPRITES still compute and flush all 16
-; quadrants together, back to back, every frame, as one unit) is itself
-; the problem, versus 4 fully independent 32x32 pieces - each its own
-; draw + its own single small DI/EI flush (16 bytes, 4 quadrants -
-; identical size/shape to Flyer's own real single-instance flush,
-; already proven safe elsewhere in this file) - with nothing shared
-; between them but which hw sprite slots they land in.
-; UPDATE_BOSS_ALL's own spawn/position/patrol logic is untouched; only
-; the draw+flush step is swapped. Uses Flyer's own already-resident
-; PAT_FLYER art (no dynamic pattern load at all for this build -
-; SASAPI_QUADS/_L and LOAD_SASAPI_PATTERNS go unused here, removing
-; that 512-byte transfer as a variable too).
-BOSS_BLOCK_OFFSETS:
-    DB 0,0
-    DB 0,32
-    DB 32,0
-    DB 32,32
-
-; walks BOSS_BLOCK_OFFSETS (4 entries x2: Y-delta,X-delta), C tracking
-; each block's own hw sprite base slot (BOSS_SPR_BASE_SLOT, +4 per
-; block - same 16 slots the real boss used, just split 4-ways instead
-; of used as one range).
-DRAW_FLUSH_BOSS_BLOCKS:
-    LD IX,BOSS_BLOCK_OFFSETS
-    LD C,BOSS_SPR_BASE_SLOT
-    LD B,4
-DFBB_LOOP:
-    PUSH BC
-    CALL DRAW_FLUSH_ONE_BLOCK
-    POP BC
-    INC IX : INC IX
-    LD A,C : ADD A,4 : LD C,A
-    DJNZ DFBB_LOOP
-    RET
-
-; IX = &(Y-delta,X-delta) for this block; C = its own hw sprite base
-; slot (4 consecutive slots). D/E hold this block's own resolved Y/X
-; (BOSS_SPAWN_Y/BOSS_X + this block's own delta) for the whole call.
-; Stages its own 4 quadrants (TL,TR,BL,BR - same order Flyer's own
-; UOFL_DRAW uses) into BOSS_SPRITE_ATTRS, then flushes just those 16
-; bytes through their own single DI/EI pair - own address set, own
-; NOP-padded OUT burst, own EI - completely independent of the other 3
-; blocks' own calls.
-DRAW_FLUSH_ONE_BLOCK:
-    LD A,(IX+0) : LD B,A
-    LD A,BOSS_SPAWN_Y : ADD A,B : LD D,A
-    LD A,(IX+1) : LD B,A
-    LD A,(BOSS_X) : ADD A,B : LD E,A
-
-    LD HL,BOSS_SPRITE_ATTRS
-    LD A,D : LD (HL),A : INC HL
-    LD A,E : LD (HL),A : INC HL
-    LD A,PAT_FLYER : LD (HL),A : INC HL
-    LD A,BOSS_COLOR : LD (HL),A : INC HL
-
-    LD A,D : LD (HL),A : INC HL
-    LD A,E : ADD A,16 : LD (HL),A : INC HL
-    LD A,PAT_FLYER : ADD A,4 : LD (HL),A : INC HL
-    LD A,BOSS_COLOR : LD (HL),A : INC HL
-
-    LD A,D : ADD A,16 : LD (HL),A : INC HL
-    LD A,E : LD (HL),A : INC HL
-    LD A,PAT_FLYER : ADD A,8 : LD (HL),A : INC HL
-    LD A,BOSS_COLOR : LD (HL),A : INC HL
-
-    LD A,D : ADD A,16 : LD (HL),A : INC HL
-    LD A,E : ADD A,16 : LD (HL),A : INC HL
-    LD A,PAT_FLYER : ADD A,12 : LD (HL),A : INC HL
-    LD A,BOSS_COLOR : LD (HL),A
-
-    LD A,C : ADD A,C : ADD A,C : ADD A,C   ; slot*4 (low byte of 1B00h+slot*4 - fits in 8 bits for any slot<64)
-    DI
-    OUT (99h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    LD HL,BOSS_SPRITE_ATTRS
-    LD B,16
-DFOB_LOOP:
-    LD A,(HL) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    INC HL
-    DJNZ DFOB_LOOP
-    EI
-    RET
-
-; ---------- Sasapi's real 64x64 draw/flush - NOT called by the      ----------
-; ---------- diagnostic build above, kept intact to revert back to   ----------
-; ---------- once this round's test is done.                        ----------
-;
 ; fills BOSS_SPRITE_ATTRS (16 quadrants x4 bytes) from BOSS_QUAD_OFFSETS
 ; - a loop over 16 entries rather than 16 hand-unrolled blocks (unlike
 ; BigZum/Flyer's own draw routines, which only ever had 2-4 quadrants to
