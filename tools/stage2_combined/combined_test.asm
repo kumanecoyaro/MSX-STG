@@ -2069,10 +2069,38 @@ SKIP_ADVANCE:
     LD HL,IDCACHE_T2 : LD IX,NAMEBUF_T2 : CALL TERRAIN_RENDER_ROW
     LD HL,IDCACHE_T3 : LD IX,NAMEBUF_T3 : CALL TERRAIN_RENDER_ROW
 
+    ; DI/EI-wrapped, each row on its own: LDIRVM has no interrupt-safety
+    ; margin of its own (see UPDATE_TANK_SPRITES' and LOAD_SASAPI_
+    ; PATTERNS' own comments on this exact bug class), and this runs
+    ; EVERY single frame (unlike LOAD_SASAPI_PATTERNS' rare calls) -
+    ; likely the single most-exercised unprotected VRAM write in the
+    ; whole file, and the most likely real explanation for "8フレに1フレ
+    ; くらい...関係のない場所で" garbage reported well before the boss
+    ; even existed (GAME_TICK=167 in that screenshot - nowhere near
+    ; BOSS_SPAWN_TICK) - an H.TIMI landing mid-copy here can leave the
+    ; VDP's own write-address counter pointing anywhere, corrupting
+    ; whatever ELSE happens to be flushed to VRAM later the same frame
+    ; (a sprite table, another entity's own flush), not just this row's
+    ; own terrain data - matching "位置は狂ってない...それまでの敵の
+    ; スプライト消し忘れとかかもな" (looked like a stale sprite, not a
+    ; miscalculated position) as a plausible symptom of exactly this:
+    ; not a logic bug in any specific entity's own hide/despawn code,
+    ; a corrupted write landing on top of otherwise-correct sprite data
+    ; already in VRAM. 4 separate DI/EI pairs (one per row) rather than
+    ; 1 covering all 4 - same "keep each individual protected window
+    ; small" reasoning as FLUSH_BOSS_SPRITES' own fix.
+    DI
     LD HL,NAMEBUF_T0 : LD DE,1A80h : LD BC,32 : CALL LDIRVM
+    EI
+    DI
     LD HL,NAMEBUF_T1 : LD DE,1AA0h : LD BC,32 : CALL LDIRVM
+    EI
+    DI
     LD HL,NAMEBUF_T2 : LD DE,1AC0h : LD BC,32 : CALL LDIRVM
+    EI
+    DI
     LD HL,NAMEBUF_T3 : LD DE,1AE0h : LD BC,32 : CALL LDIRVM
+    EI
 
     CALL READ_INPUT
     CALL UPDATE_TANK_XY
