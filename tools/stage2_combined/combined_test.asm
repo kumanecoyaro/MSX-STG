@@ -438,6 +438,12 @@ ENEMY_SPAWN_TIMER   EQU F19Bh
 ; same movement/turn-back logic either way (ENEMY_GET_STEP is the only
 ; place VARIANT changes behavior, for speed; UOE_DRAW picks the color).
 ENEMY_SPAWN_COUNT   EQU F19Ch
+; ceiling ALLOC_ENEMY_SLOT stops incrementing ENEMY_SPAWN_COUNT at -
+; comfortably past every threshold that reads this (variant-switch(10),
+; Zum/BigZum's own spawn gates(10), Etank's own(70)) while staying well
+; clear of an 8-bit wraparound (255) - see ALLOC_ENEMY_SLOT's own
+; comment.
+ENEMY_SPAWN_COUNT_MAX EQU 200
 ; staging buffer for the 3 enemy hw sprite slots (4-6, right after the
 ; tank's own 0-3) - same "build in RAM, blast once" pattern as
 ; SPRITE_ATTRS/UTS_OUT_LOOP, just a separate buffer so the two flushes
@@ -3296,8 +3302,18 @@ AES_VARIANT_SET:
     LD A,ENEMY_RED_HP : LD (IX+E_DX),A
 AES_HP_DONE:
 
+    ; "Etankが出なくなったぞ" - this cap used to stop at 10 (all this
+    ; counter's OTHER readers only ever check ">=10", so it never
+    ; needed to go higher) - but ALLOC_ETANK_SLOT's own new ">=70" gate
+    ; could then never be satisfied, since the counter physically could
+    ; never exceed 10. Raised to ENEMY_SPAWN_COUNT_MAX(200) - comfortably
+    ; past Etank's own 70 threshold with plenty of margin before an
+    ; 8-bit wraparound (255) could ever matter, while every existing
+    ; ">=10" reader (variant-switch above, Zum/BigZum's own spawn
+    ; gates) is unaffected, since the count only ever climbing higher
+    ; keeps those checks true exactly the same as before.
     LD A,(ENEMY_SPAWN_COUNT)
-    CP 10
+    CP ENEMY_SPAWN_COUNT_MAX
     JR NC,AES_COUNT_DONE
     INC A : LD (ENEMY_SPAWN_COUNT),A
 AES_COUNT_DONE:

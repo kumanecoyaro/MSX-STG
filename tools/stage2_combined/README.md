@@ -3124,6 +3124,38 @@ with no way to tell where.
   visually confirmed the life bar depletes from the right with no
   trace of the old calibration strip.
 
+- **The real "Etankが出なくなった" bug: `ENEMY_SPAWN_COUNT` physically
+  could never reach 70** - `ALLOC_ENEMY_SLOT`'s own counter-increment
+  code stops incrementing once the count hits 10 (deliberate: every
+  OTHER reader of this counter - the red/green ZacoII variant switch,
+  Zum's own spawn gate, BigZum's own spawn gate - only ever checks
+  `>=10`, so it never needed to go higher before). The new Etank gate
+  added last round (`ENEMY_SPAWN_COUNT>=70`) could therefore never be
+  satisfied - the counter was permanently stuck at 10, so Etank could
+  never spawn again, exactly as reported. Fixed by raising the cap to
+  a new `ENEMY_SPAWN_COUNT_MAX`(200) - comfortably past Etank's own
+  70 threshold, still well clear of an 8-bit wraparound (255), and
+  every existing `>=10` reader is unaffected (the count only ever
+  climbing higher keeps those checks true the same as before).
+  Verified: `git stash`-based before/after testing - the count
+  provably capped at 10 before the fix (confirmed directly) and
+  climbed past 70 after it. New `enemy_spawn_count_test.py` (4 checks:
+  repeated real spawns via `ALLOC_ENEMY_SLOT` actually climb the
+  counter past the old 10 cap, reach at least 70, stop at the new
+  `ENEMY_SPAWN_COUNT_MAX`(200) with no wraparound, and Etank genuinely
+  spawns once the counter is authentically >=70 through the real code
+  path) - all pass. Full existing suite (99 checks) still passes.
+  A follow-up diagnostic sweep also found that BigZum, once spawned,
+  can occupy the vast majority of frames in a run where its 5 HP never
+  happens to get finished off by uncoordinated random fire (89% of
+  20000 sampled frames in one run) - since Etank and BigZum are
+  mutually exclusive by design ("EtankとBigZumは同時には存在しない"),
+  a still-alive BigZum blocks Etank for as long as it survives; this
+  is expected behavior given the exclusion, not a bug, and resolves
+  itself once BigZum is actually destroyed (confirmed the terrain
+  condition alone is satisfied a healthy 68% of sampled frames, not
+  the bottleneck).
+
 ## Bugs found and fixed while building this
 
 - **Sand flickered between its own new color and Rock's, twice over**
