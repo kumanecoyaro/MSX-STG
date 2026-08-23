@@ -187,7 +187,7 @@ Communicates in terse, often angry Japanese. Expects:
   itself next, not adjacent systems, however plausible the theory feels
   - and don't touch terrain-scroll again on speculation alone.
 
-## ⚠ Current build is a DIAGNOSTIC (boss display-only, no movement)
+## ⚠ Current build is a DIAGNOSTIC (boss display-only + enemy systems disabled)
 
 - `GAME_TICK` boots at **840**, not 0 (`LD HL,840 : LD (GAME_TICK),HL`
   in `INIT`, ~line 1742) — night starts almost immediately and the boss
@@ -208,6 +208,22 @@ Communicates in terse, often angry Japanese. Expects:
   resuming terrain after a freeze) - reverted, unconditional again.**
   Not a bug per the user ("これはバグではないので今ははよい") since it
   was never meant to ship, just not worth chasing further right now.
+- **Every ordinary enemy type's own per-frame update+flush is now
+  skipped entirely once the boss is active** - "使われない物を呼ぶのは
+  無駄だし ボスはStage1でもそうだが それまでの処理は捨ててボス専用
+  もうザコは出ないからな". `MAINLOOP` now checks `BOSS_ACT` before
+  `UPDATE_ENEMIES`/`CHECK_BULLET_VS_ENEMY` and again before `UPDATE_
+  ZUM_ALL` through `UPDATE_TANK_ETANK_PUSH` (ZacoII, Zum, BigZum, Flyer,
+  Etank, and their own bullet-collision/tank-push-punch reactions), all
+  skipped once `BOSS_ACT!=0` - real per-frame VDP write volume removed
+  (5 separate DI/EI-wrapped `FLUSH_*_SPRITES` bursts every frame,
+  regardless of whether their pools had anything active). `UPDATE_
+  BULLET_U_SPRITES` (the PLAYER's own shot rendering, not an enemy
+  system - do not confuse the two) sits between the two gates and stays
+  unconditional, unaffected. Verified: ZacoII's own hw slots (4-6, the
+  only range not reused by the boss itself) go byte-identical forever
+  from the instant the boss spawns - confirms the flush genuinely
+  stopped running, not just "writing the same bytes as before."
 - **`UPDATE_BOSS_ALL` now skips its own movement entirely once spawned
   - "ボスは表示だけで動かさないでくれ"**: `JR NZ,UBA_MOVE` (branch to
   the patrol/reversal/pattern-reload logic once already spawned)
@@ -239,6 +255,41 @@ Communicates in terse, often angry Japanese. Expects:
   scroll-freeze (see above). The per-scanline sprite limit theory was
   also explicitly rejected early on as something already designed
   around, not the bug.
+- **Y=208 (SAT early-terminator) theory checked and NOT observed**:
+  raised by the user as a real TMS9918 hardware quirk (Y=0xD0 in any
+  SAT slot stops the VDP from evaluating every later-numbered slot that
+  frame - distinct from Y=209's own per-sprite hide idiom, which this
+  file already uses consistently everywhere, confirmed by grep - no
+  literal 208 exists anywhere in the source). INIT clears all 32 slots
+  to 209 at boot, and a real 9200-frame `MAINLOOP` sweep (varying
+  direction/A/B input every frame, spanning boot through well past
+  boss-spawn) found Y=208 in **zero** of the 32 slots at **any** sampled
+  frame. Rules out "ordinary game logic accidentally produces 208" as
+  the cause - does NOT rule out a genuinely transient interrupt-torn
+  byte landing on 208 mid-write, same "can't verify either way"
+  limitation as the tearing itself (`z80emu.py` has no interrupt sim).
+- **Now confirmed and fixed: every ordinary enemy type's own per-frame
+  flush kept running, unconditionally, forever, even once fully
+  inactive**: `FLUSH_ENEMY_SPRITES`/`FLUSH_ZUM_SPRITES`/`FLUSH_BIGZUM_
+  SPRITES`/`FLUSH_FLYER_SPRITES`/`FLUSH_ETANK_SPRITES` (each its own
+  DI/EI-wrapped VRAM burst) were called every single `MAINLOOP` frame
+  regardless of whether their own pool had anything active -
+  `ENEMY_SPAWN_STOP_TICK` only ever gated new spawns, never the
+  per-frame update+flush of an already-fully-hidden pool. This meant
+  real, needless per-frame VDP write volume (5 separate DI/EI bursts)
+  stacking on top of the boss's own 16-quadrant writes for the entire
+  rest of the game once the boss is active - see README's own entry for
+  the fix (all 5 enemy types + their bullet-collision/tank-push-punch
+  reactions now skipped entirely once `BOSS_ACT` is set, per direct
+  instruction: "使われない物を呼ぶのは無駄だし ボスはStage1でもそうだ
+  が それまでの処理は捨ててボス専用 もうザコは出ないからな").
+  `UPDATE_BULLET_U_SPRITES` (the PLAYER's own shot rendering, not an
+  enemy system) stays untouched, still runs every frame regardless.
+  Verified: ZacoII's own hw slots (4-6, the one range not reused by the
+  boss - Zum/BigZum/Flyer/Etank's own 10-25 range IS reused by the boss
+  itself, so checking those wouldn't isolate anything) go byte-identical
+  forever from the instant the boss spawns, confirming the flush
+  genuinely stopped, not just "still writing the same bytes."
 
 ## Open items / things to watch
 

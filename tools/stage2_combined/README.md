@@ -3931,6 +3931,69 @@ with no way to tell where.
   and can't reproduce or rule out the underlying hardware bug either
   way, only confirm the freeze logic itself behaves as written.
 
+- **Checked a real TMS9918 hardware quirk the user raised (Y=208 SAT
+  early-terminator) - not observed anywhere in this codebase**: "未使用
+  スプライトの「Y=208（&HD0）」設定による誤作動 原因: VDPはSATを面番号
+  0から順番に読み込み、Y座標に208（&HD0）を見つけると、それ以降のスプ
+  ライト判定を打ち切る仕様になっているわ... もしそうならスプライトの
+  初期化で修整できる可能性がある". A real, documented TMS9918 behavior -
+  distinct from Y=209's own per-sprite hide idiom this file already uses
+  everywhere (confirmed by grep: no literal `208` exists anywhere in the
+  source, `INIT` clears all 32 hw sprite slots to 209 at boot, not 0 or
+  208). Ran a real 9200-frame `MAINLOOP` sweep (varying stick direction
+  and both trigger buttons throughout, spanning boot through well past
+  boss-spawn) checking all 32 SAT slots every single frame for Y=208 -
+  **zero occurrences**. Rules out "ordinary game logic ever produces
+  208" as the cause of the tearing. Does NOT rule out a genuinely
+  transient interrupt-torn byte landing on 208 mid-write for one frame -
+  same "can't verify either way" limitation as the tearing report itself
+  (`z80emu.py` has no interrupt simulation, so a value that only ever
+  exists mid-write, never at a frame boundary, can't be caught by this
+  kind of sweep either way).
+
+- **New finding, confirmed real (not speculation) and fixed on request:
+  every ordinary enemy type's own per-frame flush was still running,
+  unconditionally, forever, layered on top of the boss's own writes**:
+  raised as a direct question - "で、SATの更新処理は通常表示に一旦設定
+  すれば座標を変更すれば動くが もしかして毎度全て更新してないだろう
+  な". Checked and confirmed: yes - `FLUSH_BOSS_SPRITES` (and every
+  other entity's own `FLUSH_*_SPRITES`) has no dirty-check at all, and
+  this is the file's own universal convention, not something unique to
+  the boss - `UPDATE_ENEMIES`(ZacoII)/`UPDATE_ZUM_ALL`/`UPDATE_BIGZUM_
+  ALL`/`UPDATE_FLYER_ALL`/`UPDATE_ETANK_ALL` were ALL still being called
+  every single `MAINLOOP` frame regardless of GAME_TICK, each doing its
+  own DI/EI-wrapped `FLUSH_*_SPRITES` burst even though every pool had
+  been fully inactive/hidden since `ENEMY_SPAWN_STOP_TICK`(950) -
+  `SPAWN_STOPPED` only ever gated NEW spawns, never the per-frame
+  update+flush of an already-empty pool. This meant real, needless
+  per-frame VDP write volume (5 separate DI/EI bursts, on top of every
+  other system) concentrated specifically during the boss-active window
+  - the same window the tearing is reported in - never reduced by any
+  prior round's testing (the terrain-freeze test above never touched
+  this).
+  User's follow-up, confirming the fix and its scope explicitly: "やっ
+  てくれ 使われない物を呼ぶのは無駄だし ボスはStage1でもそうだが それ
+  までの処理は捨ててボス専用 もうザコは出ないからな". `MAINLOOP` now
+  checks `BOSS_ACT` before `UPDATE_ENEMIES`/`CHECK_BULLET_VS_ENEMY`, and
+  again before the whole `UPDATE_ZUM_ALL`...`UPDATE_TANK_ETANK_PUSH` run
+  (Zum/BigZum/Flyer/Etank + their own bullet-collision/tank-push-punch
+  reactions) - both skipped entirely once `BOSS_ACT!=0`. `UPDATE_
+  BULLET_U_SPRITES` sits between the two gates and stays unconditional
+  on purpose - it's the PLAYER's own shot rendering (`BULLET0/1/2_ACT`),
+  not an enemy system, and still needs to work during the boss fight.
+  Verified: ZacoII's own hw sprite slots (4-6 - the one range in this
+  whole chain the boss does NOT reuse, since Zum/BigZum/Flyer/Etank's
+  own 10-25 range IS reused by the boss itself, so checking those
+  wouldn't isolate "did the enemy flush stop" from "the boss writes
+  there now instead") go byte-identical forever from the exact frame the
+  boss spawns, through 400+ more frames - confirms the calls genuinely
+  stopped, not just "still writing the same bytes as before." Full
+  suite: 173/180 pass, same 7 failures as the prior diagnostic round
+  (2 from the GAME_TICK=840 boot effect, 5 from the boss's own
+  intentionally-disabled movement) - no new regressions from this
+  change. **Whether this reduces the real tearing is still only
+  something the user can judge from real playback.**
+
 ## Bugs found and fixed while building this
 
 - **Sand flickered between its own new color and Rock's, twice over**

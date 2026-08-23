@@ -2094,9 +2094,26 @@ SKIP_ADVANCE:
     ; a 2nd time by this same frame's UPDATE_BULLETS sweep.
     CALL UPDATE_BULLETS
     CALL UPDATE_SHOT
+    ; "使われない物を呼ぶのは無駄だし ボスはStage1でもそうだが それまでの
+    ; 処理は捨ててボス専用 もうザコは出ないからな" - once the boss has
+    ; spawned, every ordinary enemy type's own per-frame update+flush
+    ; (ZacoII/Zum/BigZum/Flyer/Etank, plus their own bullet-collision and
+    ; tank-push/punch reactions) is skipped entirely instead of running
+    ; unconditionally against an already-fully-inactive pool every single
+    ; frame - was real, needless per-frame VDP write volume (each of
+    ; these has its own DI/EI-wrapped FLUSH_*_SPRITES burst) stacking on
+    ; top of the boss's own 16-quadrant writes for the rest of the game.
+    ; UPDATE_BULLET_U_SPRITES is NOT part of this - it's the player's own
+    ; shot rendering (BULLET0/1/2_ACT), not an enemy system, and must
+    ; keep running regardless of the boss.
+    LD A,(BOSS_ACT) : OR A
+    JR NZ,SKIP_ZACO_ENEMY
     CALL UPDATE_ENEMIES
     CALL CHECK_BULLET_VS_ENEMY
+SKIP_ZACO_ENEMY:
     CALL UPDATE_BULLET_U_SPRITES
+    LD A,(BOSS_ACT) : OR A
+    JR NZ,SKIP_OTHER_ENEMIES
     CALL UPDATE_ZUM_ALL
     CALL CHECK_BULLET_VS_ZUM
     CALL UPDATE_TANK_ZUM_PUSH
@@ -2108,10 +2125,7 @@ SKIP_ADVANCE:
     CALL UPDATE_ETANK_ALL
     CALL CHECK_BULLET_VS_ETANK
     CALL UPDATE_TANK_ETANK_PUSH
-    ; after every other enemy type's own per-frame flush above, so the
-    ; boss's own hw sprite writes (reusing their slots - see
-    ; BOSS_SPR_BASE_SLOT's own comment) are always the last word each
-    ; frame, never overwritten a moment later by one of theirs.
+SKIP_OTHER_ENEMIES:
     CALL UPDATE_BOSS_ALL
     CALL CLOUD_UPDATE_ALL
 
