@@ -3994,6 +3994,67 @@ with no way to tell where.
   change. **Whether this reduces the real tearing is still only
   something the user can judge from real playback.**
 
+- **Confirmed fixed on real hardware/WebMSX: "チラツキ止まった 原因は
+  209クリアか 無駄なルーチン呼び出しか分からんが 出来たから良し"** -
+  the tearing reported since the boss's introduction is gone after
+  skipping the now-unused enemy systems' own per-frame flush once
+  `BOSS_ACT` is set (previous entry). The user themselves isn't certain
+  whether it was the Y=209-boot-clear angle checked the round before, or
+  simply the reduced per-frame VDP write volume, or both - not worth
+  chasing further, "できたから良し".
+
+- **New, separate bug reported and fixed: U (diagonal shot) disappearing
+  during the boss fight - reverted to BG drawing, but only while the
+  boss is active**: "自機ショットで消えてしまう問題があるので ボス戦に
+  なったら斜めショットをBG描画に変更". U (the diagonal/climbing shot,
+  bullet pool's own `IX+1`=1) is normally a hw sprite (slots7-9, `PAT_
+  BULLETU`/`_L`) - per this file's own earlier history (see `BULLET_U_
+  SPR_BASE_SLOT`'s own comment), it used to be drawn as a BG character
+  cell exactly like F still is, before an earlier round converted it to
+  a hw sprite and explicitly DELETED the old BG-drawing code ("弾は斜の
+  みスプライトに変更...斜めうちのBG関係の弾の処理は削除"). This round
+  rebuilds an equivalent BG-drawing path, but scoped to ONLY run while
+  `BOSS_ACT!=0` - outside the boss fight U stays a plain hw sprite,
+  completely unchanged.
+  Added 6 new BG pattern codes for U's own art: `BULLETU_SKY_CODE`(89)/
+  `BULLETU_L_SKY_CODE`(91) in group11, `BULLETU_ROCK_CODE`(99)/
+  `BULLETU_L_ROCK_CODE`(100) in group12, `BULLETU_NIGHT_CODE`(146)/
+  `BULLETU_L_NIGHT_CODE`(147) in group18 - the SAME 3 groups F's own
+  `BULLETF_*_CODE`s already claimed and colored (each only used 2 of its
+  8 codes), so no new SCREEN1 color-table writes were needed at all,
+  just U's own pattern data (`bullet_gen.py` now also exports raw 8x8
+  `BULLET_U_PATTERN`/`BULLET_U_L_PATTERN`, distinct from the existing
+  `BULLET_U_SPRITE`/`_L` which pad the same art into a 16x16 hw sprite
+  canvas) loaded into these 6 codes at `INIT`.
+  `DRAW_BULLET_CELL` (shared with F) now branches on bullet TYPE at each
+  of its 3 background-band leaves (night-sky/day-sky/rock) to pick F's
+  codes or U's - day-sky is provably unreachable for a `BOSS_ACT=1` call
+  (the night sweep is always fully complete well before `BOSS_SPAWN_
+  TICK`, see `NIGHT_START_TICK`'s own entry), implemented anyway rather
+  than silently relying on that timing coincidence. `ERASE_BULLET_CELL`
+  needed NO changes - it only ever restores whatever background was
+  under the cell, regardless of which bullet type occupied it, so it
+  already worked correctly for U as soon as its call sites started
+  calling it for U too.
+  3 call sites gated on `BOSS_ACT`: `TRY_SPAWN_BULLET` (draws
+  immediately on spawn) and `UPDATE_ONE_BULLET`'s own erase-before-
+  advance/draw-after-advance - each checks TYPE first (F always
+  proceeds), and for U additionally checks `BOSS_ACT` before falling
+  through to the same path F uses. `UBUS_ONE` (U's own hw sprite
+  positioning) now also force-hides the slot (Y=209) whenever `BOSS_
+  ACT!=0`, even for an otherwise-active U shot - without this the
+  (already broken) hw sprite would sit uselessly on top of the new BG
+  cell, still costing a real per-frame VDP write for nothing.
+  Verified: new `tests/bulletu_boss_bg_test.py` (8 checks - correct BG
+  code for all 4 band/facing combinations while `BOSS_ACT=1`, hw sprite
+  hidden(209) while `BOSS_ACT=1` vs shown normally while `BOSS_ACT=0`,
+  and a real `MAINLOOP` end-to-end test firing a diagonal shot right
+  after boss-spawn that confirms a genuine `BULLETU_*` code lands in
+  VRAM during flight while the hw sprite slot stays hidden the whole
+  time) all pass. Full suite: 173/180 pass, same 7 failures as the
+  prior 2 diagnostic rounds (GAME_TICK=840 boot effect + the boss's own
+  intentionally-disabled movement) - no new regressions.
+
 ## Bugs found and fixed while building this
 
 - **Sand flickered between its own new color and Rock's, twice over**

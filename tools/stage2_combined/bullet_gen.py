@@ -68,6 +68,15 @@ def bullet_pattern(name, flipped=False):
 ALL_F_PATTERNS = {"F": bullet_pattern("BulletF")}
 ALL_F_PATTERNS_L = {"F": bullet_pattern("BulletF", flipped=True)}
 
+# Raw 8x8 BG-pattern version of U's own art (distinct from bullet_u_sprite()
+# below, which pads it into a 16x16 hw sprite canvas) - "ボス戦になったら
+# 斜めショットをBG描画に変更": once the boss is active, U switches back to
+# the same BG-cell drawing approach F always used (see combined_test.asm's
+# DRAW_BULLET_CELL), since the diagonal shot's own hw sprite slots7-9
+# were reported disappearing during the boss fight.
+ALL_U_PATTERNS = {"U": bullet_pattern("BulletU")}
+ALL_U_PATTERNS_L = {"U": bullet_pattern("BulletU", flipped=True)}
+
 
 def bullet_u_sprite(flipped=False):
     """BulletU's 8x8 art, embedded at the top-left of an otherwise-blank
@@ -99,6 +108,10 @@ def emit_asm_tables():
     out.append(db_bytes(BULLET_U_SPRITE))
     out.append("BULLET_U_SPRITE_L:")
     out.append(db_bytes(BULLET_U_SPRITE_L))
+    out.append("BULLET_U_PATTERN:")
+    out.append(db_bytes(ALL_U_PATTERNS["U"]))
+    out.append("BULLET_U_L_PATTERN:")
+    out.append(db_bytes(ALL_U_PATTERNS_L["U"]))
     return "\n".join(out)
 
 

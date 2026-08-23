@@ -214,6 +214,24 @@ BULLETF_NIGHT_CODE   EQU 144      ; group18 (144-151)
 BULLETF_L_NIGHT_CODE EQU 145
 BULLET_NIGHT_COLORBYTE EQU 091h   ; fg9 light red / bg1 black
 
+; U's own BG-cell codes, used only while BOSS_ACT!=0 - "自機ショットで
+; 消えてしまう問題があるので ボス戦になったら斜めショットをBG描画に変更"
+; (U's own hw sprite slots7-9 were reported disappearing during the boss
+; fight - switches back to the same BG-cell approach F always used,
+; DRAW_BULLET_CELL/ERASE_BULLET_CELL, instead of a hw sprite, for this
+; specific window only; F itself is untouched). Same 3-groups-x-2-facings
+; shape as F's own codes above, placed in the SAME groups (11/12/18) F
+; already claimed and colored - group18(night)/group12(rock)/group11(sky)
+; all still have free code slots (F only uses 2 of each group's 8), so no
+; new SCREEN1 color-table writes are needed, just more pattern data
+; loaded into already-colored slots.
+BULLETU_SKY_CODE    EQU 89    ; group11 (88-95), same BULLET_SKY_COLORBYTE as F's own day-sky code
+BULLETU_L_SKY_CODE  EQU 91
+BULLETU_ROCK_CODE   EQU 99    ; group12 (96-103), same BULLET_ROCK_COLORBYTE as F's own rock code
+BULLETU_L_ROCK_CODE EQU 100
+BULLETU_NIGHT_CODE   EQU 146  ; group18 (144-151), same BULLET_NIGHT_COLORBYTE as F's own night code
+BULLETU_L_NIGHT_CODE EQU 147
+
 ; ---------- diagonal/U shot, now a hardware sprite ----------
 ; "で、弾は斜のみスプライトに変更 水平は今のままで 伴って斜めうちの
 ; BG関係の弾の処理は削除 Skysandのスキップも廃止": bullet_gen.py's
@@ -1568,6 +1586,16 @@ INIT_RESUME_AFTER_BANK_SELECT:
     LD A,BULLET_NIGHT_COLORBYTE : LD (HUD_TEMP_BYTE),A
     LD HL,HUD_TEMP_BYTE : LD DE,2000h+18 : LD BC,1 : CALL LDIRVM
 
+    ; U's own BG-cell pattern (see BULLETU_SKY_CODE's own comment) -
+    ; loaded into F's already-colored groups11/12/18, no new color-table
+    ; writes needed.
+    LD HL,BULLET_U_PATTERN   : LD DE,BULLETU_SKY_CODE*8    : LD BC,8 : CALL LDIRVM
+    LD HL,BULLET_U_L_PATTERN : LD DE,BULLETU_L_SKY_CODE*8  : LD BC,8 : CALL LDIRVM
+    LD HL,BULLET_U_PATTERN   : LD DE,BULLETU_ROCK_CODE*8   : LD BC,8 : CALL LDIRVM
+    LD HL,BULLET_U_L_PATTERN : LD DE,BULLETU_L_ROCK_CODE*8 : LD BC,8 : CALL LDIRVM
+    LD HL,BULLET_U_PATTERN   : LD DE,BULLETU_NIGHT_CODE*8   : LD BC,8 : CALL LDIRVM
+    LD HL,BULLET_U_L_PATTERN : LD DE,BULLETU_L_NIGHT_CODE*8 : LD BC,8 : CALL LDIRVM
+
     ; U's own hw sprite pattern (16x16, right after PAT_EXPLOSION).
     LD HL,BULLET_U_SPRITE : LD DE,PAT_BULLETU*8+SPRPAT : LD BC,32 : CALL LDIRVM
     LD HL,BULLET_U_SPRITE_L : LD DE,PAT_BULLETU_L*8+SPRPAT : LD BC,32 : CALL LDIRVM
@@ -2783,12 +2811,17 @@ TSB_COL_OK:
     LD HL,BULLET_ROWADDR_LO : ADD HL,DE : LD A,(HL) : LD (IX+4),A
     LD HL,BULLET_ROWADDR_HI : ADD HL,DE : LD A,(HL) : LD (IX+5),A
 
-    ; F draws its BG cell immediately; U is a hw sprite now - its own
-    ; position gets set by UPDATE_BULLET_U_SPRITES (called later this
-    ; same frame, after TRY_SPAWN_BULLET's caller returns), not here.
+    ; F draws its BG cell immediately; U is normally a hw sprite instead
+    ; (own position set later this frame by UPDATE_BULLET_U_SPRITES), but
+    ; while BOSS_ACT!=0 U also draws its BG cell here immediately, same
+    ; as F - "ボス戦になったら斜めショットをBG描画に変更".
     LD A,(IX+1)
     OR A
-    JR NZ,TSB_SPAWN_U
+    JR Z,TSB_DRAW_F
+    LD A,(BOSS_ACT)
+    OR A
+    JR Z,TSB_SPAWN_U
+TSB_DRAW_F:
     CALL DRAW_BULLET_CELL
 TSB_SPAWN_U:
     CALL SOUND_SHOT
@@ -2820,7 +2853,11 @@ UPDATE_ONE_BULLET:
 
     LD A,(IX+1)
     OR A
-    JR NZ,UOB_SKIP_ERASE
+    JR Z,UOB_DO_ERASE
+    LD A,(BOSS_ACT)
+    OR A
+    JR Z,UOB_SKIP_ERASE
+UOB_DO_ERASE:
     CALL ERASE_BULLET_CELL
 UOB_SKIP_ERASE:
 
@@ -2890,13 +2927,17 @@ UOB_TC_ADD:
     JR NC,UOB_DEACTIVATE
 
 UOB_DRAW:
-    ; F only - U is a hw sprite, positioned separately every frame by
-    ; UPDATE_BULLET_U_SPRITES (the old SkySand skip-draw special case
-    ; is gone along with the rest of U's BG handling - a sprite just
-    ; composites over whatever's there, nothing to special-case).
+    ; F always draws its BG cell here; U normally doesn't (positioned
+    ; separately every frame by UPDATE_BULLET_U_SPRITES as a hw sprite
+    ; instead), except while BOSS_ACT!=0 - "ボス戦になったら斜めショッ
+    ; トをBG描画に変更".
     LD A,(IX+1)
     OR A
-    RET NZ
+    JR Z,UOBD_DRAW
+    LD A,(BOSS_ACT)
+    OR A
+    RET Z
+UOBD_DRAW:
     CALL DRAW_BULLET_CELL
     RET
 UOB_DEACTIVATE:
@@ -2963,9 +3004,10 @@ EBC_WRITE:
 EBC_SKIP:
     RET
 
-; IX = slot base. F only now (U is a hw sprite - see
-; UPDATE_BULLET_U_SPRITES). Picks the pattern code for (background-
-; under-current-row x FACING) and writes it at ADDR+COL.
+; IX = slot base. F always; U too while BOSS_ACT!=0 (see TRY_SPAWN_BULLET/
+; UPDATE_ONE_BULLET's own call-site gating - "ボス戦になったら斜めショ
+; ットをBG描画に変更"). Picks the pattern code for (background-under-
+; current-row x FACING x bullet TYPE) and writes it at ADDR+COL.
 DRAW_BULLET_CELL:
     LD A,(IX+3)
     CP BULLET_ROCK_COLOR_ROW_MIN_F
@@ -2979,6 +3021,9 @@ DRAW_BULLET_CELL:
     LD A,(NIGHT_ROW)
     CP B
     JR C,DBC_SKY            ; NIGHT_ROW<row - not dark here yet
+    LD A,(IX+1)
+    OR A
+    JR NZ,DBC_NIGHT_U
     LD A,(IX+6)
     OR A
     JR NZ,DBC_NIGHT_LEFT
@@ -2987,8 +3032,20 @@ DRAW_BULLET_CELL:
 DBC_NIGHT_LEFT:
     LD A,BULLETF_L_NIGHT_CODE
     JR DBC_CODE_SET
+DBC_NIGHT_U:
+    LD A,(IX+6)
+    OR A
+    JR NZ,DBC_NIGHT_U_LEFT
+    LD A,BULLETU_NIGHT_CODE
+    JR DBC_CODE_SET
+DBC_NIGHT_U_LEFT:
+    LD A,BULLETU_L_NIGHT_CODE
+    JR DBC_CODE_SET
 
 DBC_SKY:
+    LD A,(IX+1)
+    OR A
+    JR NZ,DBC_SKY_U
     LD A,(IX+6)
     OR A
     JR NZ,DBC_SKY_LEFT
@@ -2997,7 +3054,20 @@ DBC_SKY:
 DBC_SKY_LEFT:
     LD A,BULLETF_L_SKY_CODE
     JR DBC_CODE_SET
+DBC_SKY_U:
+    LD A,(IX+6)
+    OR A
+    JR NZ,DBC_SKY_U_LEFT
+    LD A,BULLETU_SKY_CODE
+    JR DBC_CODE_SET
+DBC_SKY_U_LEFT:
+    LD A,BULLETU_L_SKY_CODE
+    JR DBC_CODE_SET
+
 DBC_ROCK:
+    LD A,(IX+1)
+    OR A
+    JR NZ,DBC_ROCK_U
     LD A,(IX+6)
     OR A
     JR NZ,DBC_ROCK_LEFT
@@ -3005,6 +3075,15 @@ DBC_ROCK:
     JR DBC_CODE_SET
 DBC_ROCK_LEFT:
     LD A,BULLETF_L_ROCK_CODE
+    JR DBC_CODE_SET
+DBC_ROCK_U:
+    LD A,(IX+6)
+    OR A
+    JR NZ,DBC_ROCK_U_LEFT
+    LD A,BULLETU_ROCK_CODE
+    JR DBC_CODE_SET
+DBC_ROCK_U_LEFT:
+    LD A,BULLETU_L_ROCK_CODE
 DBC_CODE_SET:
     LD (BULLET_TEMP_BYTE),A
     LD L,(IX+4) : LD H,(IX+5)
@@ -6414,7 +6493,10 @@ UPDATE_BULLET_U_SPRITES:
 
 ; IX = bullet slot base, DE = byte offset into BULLET_U_SPRITE_ATTRS
 ; (0/4/8). Hides the slot (Y=209, same convention as UOE_HIDE) unless
-; it's an active U-type shot.
+; it's an active U-type shot - also hidden while BOSS_ACT!=0, since U
+; is BG-drawn instead during the boss fight (see DRAW_BULLET_CELL) and
+; the hw sprite would otherwise sit uselessly on top of it, still
+; costing a per-frame VDP write for nothing.
 UBUS_ONE:
     LD HL,BULLET_U_SPRITE_ATTRS : ADD HL,DE
     LD A,(IX+0)
@@ -6423,6 +6505,9 @@ UBUS_ONE:
     LD A,(IX+1)
     OR A
     JR Z,UBUS_HIDE
+    LD A,(BOSS_ACT)
+    OR A
+    JR NZ,UBUS_HIDE
     LD A,(IX+3) : ADD A,A : ADD A,A : ADD A,A : LD (HL),A : INC HL   ; Y = ROW*8
     LD A,(IX+2) : ADD A,A : ADD A,A : ADD A,A : LD (HL),A : INC HL   ; X = COL*8
     LD A,(IX+6)

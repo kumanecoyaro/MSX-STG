@@ -291,6 +291,65 @@ Communicates in terse, often angry Japanese. Expects:
   forever from the instant the boss spawns, confirming the flush
   genuinely stopped, not just "still writing the same bytes."
 
+## ⚠ New feature this round: U (diagonal shot) switches to BG drawing during the boss fight
+
+- **The tearing IS gone** ("チラツキ止まった" - confirmed by the user on
+  real hardware/WebMSX) after skipping the now-unused enemy systems'
+  own per-frame flush once `BOSS_ACT` is set. Cause unconfirmed either
+  way by the user themselves ("209クリアか 無駄なルーチン呼び出しか分
+  からんが") - could be the Y=209 boot-clear angle checked earlier, or
+  simply the reduced per-frame VDP write volume, or both together. Not
+  worth chasing further per the user's own "できたから良し".
+- **New, separate issue reported**: "自機ショットで消えてしまう問題があ
+  るので ボス戦になったら斜めショットをBG描画に変更" - U (the diagonal/
+  climbing shot, `BULLET0/1/2_ACT`'s own `IX+1`=1) was disappearing
+  during the boss fight while still a hw sprite (slots7-9). Per the
+  file's own history (see `BULLET_U_SPR_BASE_SLOT`'s own comment), U
+  used to be BG-drawn exactly like F still is, before an earlier round
+  converted it to a hw sprite and DELETED the old BG-drawing code
+  entirely ("弾は斜のみスプライトに変更...斜めうちのBG関係の弾の処理
+  は削除"). This round rebuilds an equivalent BG-drawing path for U,
+  gated to ONLY run while `BOSS_ACT!=0` - outside the boss fight, U is
+  still a plain hw sprite, completely unchanged.
+- **New BG pattern codes**: `BULLETU_SKY_CODE`(89)/`BULLETU_L_SKY_
+  CODE`(91) (group11), `BULLETU_ROCK_CODE`(99)/`BULLETU_L_ROCK_CODE`
+  (100) (group12), `BULLETU_NIGHT_CODE`(146)/`BULLETU_L_NIGHT_CODE`
+  (147) (group18) - all placed in the SAME 3 groups F's own
+  `BULLETF_*_CODE`s already claimed and colored (each group only had 2
+  of its 8 codes used), so no new SCREEN1 color-table writes were
+  needed, just `BULLET_U_PATTERN`/`BULLET_U_L_PATTERN` (new raw 8x8
+  exports from `bullet_gen.py`, distinct from `BULLET_U_SPRITE`/`_L`
+  which pad the same art into a 16x16 hw sprite canvas) loaded into
+  these 6 codes at `INIT`.
+- **`DRAW_BULLET_CELL`** (shared by F and now U) branches on `IX+1`
+  (bullet TYPE) at each of its 3 background-band leaves (night-sky/day-
+  sky/rock - though day-sky is provably unreachable for a `BOSS_ACT=1`
+  call, since the night sweep is always fully complete well before
+  `BOSS_SPAWN_TICK` - see `NIGHT_START_TICK`'s own entry - implemented
+  anyway for correctness/symmetry rather than leaning on that timing
+  coincidence silently). **`ERASE_BULLET_CELL` needed NO changes at
+  all** - it only ever restores the background that was there
+  regardless of which bullet type occupied the cell, so it already
+  worked correctly for U the moment its call sites started calling it.
+- **3 call sites gated on `BOSS_ACT`**: `TRY_SPAWN_BULLET` (draws
+  immediately on spawn), `UPDATE_ONE_BULLET`'s own erase-before-advance
+  and draw-after-advance (`UOB_SKIP_ERASE`/`UOB_DRAW`) - each now reads
+  `IX+1`(TYPE) first (F always proceeds), and for U checks `BOSS_ACT`
+  before falling through to the same F path. **`UBUS_ONE`** (U's own hw
+  sprite positioning) now also hides the slot (Y=209) whenever
+  `BOSS_ACT!=0`, even for an active U-type shot - otherwise the (already
+  reported-broken) hw sprite would sit uselessly on top of the new BG
+  cell, still costing a real per-frame VDP write for nothing.
+- Verified: `tests/bulletu_boss_bg_test.py` (new, 8 checks - BG code
+  selection for all 4 band/facing combinations, hw sprite hidden while
+  `BOSS_ACT=1` vs shown normally while `BOSS_ACT=0`, and a real
+  `MAINLOOP` end-to-end firing a diagonal shot after boss-spawn that
+  confirms a real `BULLETU_*` code lands in VRAM during flight while the
+  hw sprite slot stays hidden throughout) all pass. Full suite: 173/180
+  - same 7 failures as the prior 2 diagnostic rounds (GAME_TICK=840 boot
+  effect + boss's own intentionally-disabled movement), no new
+  regressions from this change.
+
 ## Open items / things to watch
 
 - No known open bugs as of this handoff — the boss's own SPRPAT bug
