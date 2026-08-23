@@ -3420,6 +3420,42 @@ with no way to tell where.
   and blue before the night effect has started at all) - all pass.
   Full suite (131 checks across all files) passes.
 
+- **SkySand's own shot-erase restore was stale after night reaches it;
+  the shot's own drawn glyph still showed a light-blue background at
+  night**: "Sandskyのラインも夜対応に 今は夜の前に復元されてる 更に
+  スクロールしていない行の弾の水平打ちの背景色がライトブルーのまま
+  になってる つまり スクロールの4行はこのままで その上の下5行より
+  上でショットを夜に打った場合はショットの背景色をブラックに".
+  1. `ERASE_BULLET_CELL`'s `EBC_SKYSAND` branch (row16) restored
+     `SKYSAND_CODE` unconditionally - but once `CHECK_NIGHT`'s own
+     sweep reaches `NIGHT_END_ROW`(16, this same row), it overwrites
+     that row's real on-screen content with `NIGHT_CODE` (the striped
+     leading tile) and leaves it that way for good - restoring the old
+     `SKYSAND_CODE` there was stale from that point on, leaving a
+     wrong-tile patch behind a passing shot. Now compares `NIGHT_ROW`
+     against `NIGHT_END_ROW` and restores whichever is actually there.
+  2. `DRAW_BULLET_CELL`'s own sky-style glyph (`BULLETF_SKY_CODE`/
+     `BULLETF_L_SKY_CODE`) has a light-blue background baked into its
+     own dedicated color group (SCREEN1 color is per 8-code group, not
+     per screen position - same constraint that group's own comment
+     already explains) - so a shot fired through the now-dark sky kept
+     showing its old daytime look. New `BULLETF_NIGHT_CODE`/
+     `BULLETF_L_NIGHT_CODE` (own dedicated group18, fg9 light red/bg1
+     black - same fg as the day glyph) used instead once `NIGHT_ROW`
+     shows the sweep has reached that specific row, but only for rows
+     0-`NIGHT_BULLET_ROW_MAX`(14) - "スクロールの4行(20-23)はこのま
+     まで、その上の下5行(15-19、SkySand/Sandの帯)より上で" pins the
+     band precisely: rows15-19 keep the ordinary day glyph regardless
+     (row16 own night-awareness is `ERASE_BULLET_CELL`'s job instead,
+     fixed above).
+  Verified: new `skysand_night_bullet_test.py` (9 checks - `EBC_SKYSAND`
+  restores the real tile before the sweep reaches row16 and `NIGHT_CODE`
+  once it does; `DRAW_BULLET_CELL` uses the day glyph before the sweep
+  reaches a row, the night glyph (both facings) once it has, the night
+  glyph exactly at the row14 boundary, and the ordinary day glyph at
+  row15 and row16 regardless of `NIGHT_ROW`) - all pass. Full suite
+  (140 checks across all files) passes.
+
 ## Bugs found and fixed while building this
 
 - **Sand flickered between its own new color and Rock's, twice over**

@@ -194,6 +194,24 @@ BULLET_SKY_COLORADDR  EQU 200Bh
 BULLET_ROCK_COLORADDR EQU 200Ch
 BULLET_SKY_COLORBYTE  EQU 095h
 BULLET_ROCK_COLORBYTE EQU 09Bh
+; night-black variant of the sky glyph above - "スクロールしていない
+; 行の弾の水平打ちの背景色がライトブルーのままになってる...ショット
+; を夜に打った場合はショットの背景色をブラックに" - own dedicated
+; group18 (144-151, right after NIGHT_CODE's own group17) since
+; BULLETF_SKY_CODE/L_SKY_CODE's own group11 can't be conditionally
+; recolored per-row (SCREEN1 color is per 8-code group, not per screen
+; position - same constraint bullet_gen.py's own comment on
+; BULLETF_SKY_CODE/ROCK_CODE already explains). Same fg9(light red) as
+; the day glyph, bg1(black) instead of bg5. Only applies rows0-
+; NIGHT_BULLET_ROW_MAX(14) once CHECK_NIGHT's own sweep has reached
+; that row - "スクロールの4行はこのままで その上の下5行より上で" -
+; rows15-19 (SkySand/Sand's own lower band) keep the ordinary day
+; glyph regardless (row16/SkySand's own night-awareness is handled
+; separately, in ERASE_BULLET_CELL's own EBC_SKYSAND branch instead).
+BULLETF_NIGHT_CODE   EQU 144      ; group18 (144-151)
+BULLETF_L_NIGHT_CODE EQU 145
+BULLET_NIGHT_COLORBYTE EQU 091h   ; fg9 light red / bg1 black
+NIGHT_BULLET_ROW_MAX EQU 14
 
 ; ---------- diagonal/U shot, now a hardware sprite ----------
 ; "で、弾は斜のみスプライトに変更 水平は今のままで 伴って斜めうちの
@@ -1479,6 +1497,13 @@ INIT_RESUME_AFTER_BANK_SELECT:
     LD HL,BULLET_TEMP_BYTE : LD DE,BULLET_SKY_COLORADDR : LD BC,1 : CALL LDIRVM
     LD A,BULLET_ROCK_COLORBYTE : LD (BULLET_TEMP_BYTE),A
     LD HL,BULLET_TEMP_BYTE : LD DE,BULLET_ROCK_COLORADDR : LD BC,1 : CALL LDIRVM
+
+    ; F's own night-black glyph (see BULLETF_NIGHT_CODE's own comment) -
+    ; same shapes as the day glyph, own dedicated color group.
+    LD HL,BULLET_F_PATTERN   : LD DE,BULLETF_NIGHT_CODE*8   : LD BC,8 : CALL LDIRVM
+    LD HL,BULLET_F_L_PATTERN : LD DE,BULLETF_L_NIGHT_CODE*8 : LD BC,8 : CALL LDIRVM
+    LD A,BULLET_NIGHT_COLORBYTE : LD (HUD_TEMP_BYTE),A
+    LD HL,HUD_TEMP_BYTE : LD DE,2000h+18 : LD BC,1 : CALL LDIRVM
 
     ; U's own hw sprite pattern (16x16, right after PAT_EXPLOSION).
     LD HL,BULLET_U_SPRITE : LD DE,PAT_BULLETU*8+SPRPAT : LD BC,32 : CALL LDIRVM
@@ -2791,7 +2816,21 @@ ERASE_BULLET_CELL:
     JR Z,EBC_SKYSAND
     LD A,TERRAIN_BLANK_CODE
     JR EBC_WRITE
+; "Sandskyのラインも夜対応に 今は夜の前に復元されてる" - once
+; CHECK_NIGHT's own sweep reaches NIGHT_END_ROW(16, this same row),
+; it overwrites row16's real on-screen content with NIGHT_CODE (the
+; striped leading tile - see NIGHT_START_TICK's own comment, "stops
+; once NIGHT_END_ROW itself becomes the leading row") and leaves it
+; that way permanently - restoring the old SKYSAND_CODE unconditionally
+; here was stale from that point on, leaving a wrong-tile patch behind
+; a passing shot.
 EBC_SKYSAND:
+    LD A,(NIGHT_ROW)
+    CP NIGHT_END_ROW
+    JR C,EBC_SKYSAND_DAY   ; sweep hasn't reached row16 yet - still the real SkySand tile
+    LD A,NIGHT_CODE
+    JR EBC_WRITE
+EBC_SKYSAND_DAY:
     LD A,SKYSAND_CODE
     JR EBC_WRITE
 ; "ショット水平打ちのBG復元カラーを夜になったらブラックに変更" - once
@@ -2827,6 +2866,28 @@ DRAW_BULLET_CELL:
     LD A,(IX+3)
     CP BULLET_ROCK_COLOR_ROW_MIN_F
     JR NC,DBC_ROCK
+
+    ; night-black glyph for rows0-NIGHT_BULLET_ROW_MAX(14) once the
+    ; sweep has darkened this specific row - see BULLETF_NIGHT_CODE's
+    ; own comment. Rows15-16 (SkySand's own lower band) always fall
+    ; through to the ordinary day glyph below.
+    LD A,(IX+3)
+    CP NIGHT_BULLET_ROW_MAX+1
+    JR NC,DBC_SKY
+    LD B,A
+    LD A,(NIGHT_ROW)
+    CP B
+    JR C,DBC_SKY            ; NIGHT_ROW<row - not dark here yet
+    LD A,(IX+6)
+    OR A
+    JR NZ,DBC_NIGHT_LEFT
+    LD A,BULLETF_NIGHT_CODE
+    JR DBC_CODE_SET
+DBC_NIGHT_LEFT:
+    LD A,BULLETF_L_NIGHT_CODE
+    JR DBC_CODE_SET
+
+DBC_SKY:
     LD A,(IX+6)
     OR A
     JR NZ,DBC_SKY_LEFT
