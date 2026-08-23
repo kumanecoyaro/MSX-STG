@@ -3456,6 +3456,26 @@ with no way to tell where.
   row15 and row16 regardless of `NIGHT_ROW`) - all pass. Full suite
   (140 checks across all files) passes.
 
+- **The row14 cutoff above was wrong - SkySand and everything above it
+  needed the night glyph too**: "復元処理事態は問題なし あとはSkysand
+  とその上の行で ショットの背景色をブラックにすれば良い". Confirms
+  the `ERASE_BULLET_CELL` restore fix (both `EBC_SKY` and `EBC_SKYSAND`)
+  was correct as shipped - only `DRAW_BULLET_CELL`'s own row0-14 cutoff
+  needed widening. Removed `NIGHT_BULLET_ROW_MAX` entirely; the night-
+  glyph check now covers the whole sky+SkySand band `DRAW_BULLET_CELL`
+  already splits on (rows0-16, the same boundary as its existing
+  `BULLET_ROCK_COLOR_ROW_MIN_F`(17) rock/sky split) - a shot fired at
+  row15 or row16 now gets the night glyph too, once the sweep has
+  actually reached that row. rows17-19 (Sand) and 20-23 (scrolling
+  terrain) still always use the ordinary rock glyph - the ground itself
+  never darkens.
+  Verified: `skysand_night_bullet_test.py` reworked (9 checks - drops
+  the wrong row14/row15/row16-exclusion checks, adds row15 and row16
+  both getting the night glyph once the sweep reaches them, row16
+  still using the day glyph before the sweep gets there, and row17
+  always using the unaffected rock glyph) - all pass. Full suite (140
+  checks) passes.
+
 ## Bugs found and fixed while building this
 
 - **Sand flickered between its own new color and Rock's, twice over**

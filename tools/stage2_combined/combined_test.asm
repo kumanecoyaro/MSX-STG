@@ -202,16 +202,17 @@ BULLET_ROCK_COLORBYTE EQU 09Bh
 ; recolored per-row (SCREEN1 color is per 8-code group, not per screen
 ; position - same constraint bullet_gen.py's own comment on
 ; BULLETF_SKY_CODE/ROCK_CODE already explains). Same fg9(light red) as
-; the day glyph, bg1(black) instead of bg5. Only applies rows0-
-; NIGHT_BULLET_ROW_MAX(14) once CHECK_NIGHT's own sweep has reached
-; that row - "スクロールの4行はこのままで その上の下5行より上で" -
-; rows15-19 (SkySand/Sand's own lower band) keep the ordinary day
-; glyph regardless (row16/SkySand's own night-awareness is handled
-; separately, in ERASE_BULLET_CELL's own EBC_SKYSAND branch instead).
+; the day glyph, bg1(black) instead of bg5. Applies across the whole
+; sky+SkySand band (rows0-16, same range DRAW_BULLET_CELL's own sky/
+; rock split already covers) once CHECK_NIGHT's own sweep has darkened
+; that specific row - "Skysandとその上の行でショットの背景色をブラッ
+; クにすれば良い" (an earlier, narrower row0-14 cutoff excluding
+; SkySand itself was wrong - corrected here). rows17-19 (Sand) and
+; 20-23 (scrolling terrain) are unaffected either way - the ground
+; itself never darkens.
 BULLETF_NIGHT_CODE   EQU 144      ; group18 (144-151)
 BULLETF_L_NIGHT_CODE EQU 145
 BULLET_NIGHT_COLORBYTE EQU 091h   ; fg9 light red / bg1 black
-NIGHT_BULLET_ROW_MAX EQU 14
 
 ; ---------- diagonal/U shot, now a hardware sprite ----------
 ; "で、弾は斜のみスプライトに変更 水平は今のままで 伴って斜めうちの
@@ -2867,14 +2868,11 @@ DRAW_BULLET_CELL:
     CP BULLET_ROCK_COLOR_ROW_MIN_F
     JR NC,DBC_ROCK
 
-    ; night-black glyph for rows0-NIGHT_BULLET_ROW_MAX(14) once the
-    ; sweep has darkened this specific row - see BULLETF_NIGHT_CODE's
-    ; own comment. Rows15-16 (SkySand's own lower band) always fall
-    ; through to the ordinary day glyph below.
-    LD A,(IX+3)
-    CP NIGHT_BULLET_ROW_MAX+1
-    JR NC,DBC_SKY
-    LD B,A
+    ; "Skysandとその上の行でショットの背景色をブラックにすれば良い" -
+    ; night-black glyph for the whole sky+SkySand band (rows0-16, same
+    ; range this branch already covers) once the sweep has darkened
+    ; this specific row - see BULLETF_NIGHT_CODE's own comment.
+    LD A,(IX+3) : LD B,A
     LD A,(NIGHT_ROW)
     CP B
     JR C,DBC_SKY            ; NIGHT_ROW<row - not dark here yet
