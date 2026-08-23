@@ -1,8 +1,22 @@
 """Assembles the combined terrain + tank test: the stage2_terrain
 scroller (own INIT/MAINLOOP engine) with the tank sprite sitting on
-top of it, into one standalone 32KB ROM. Border-color diagnostic
-checkpoints added through INIT (see the README) since the tank-only
-test reportedly froze on real hardware with no clue where.
+top of it. Border-color diagnostic checkpoints through INIT (see the
+README) since the tank-only test reportedly froze on real hardware
+with no clue where.
+
+Now a real ASCII16 MegaROM (bank0=page1/4000h-7FFFh, bank1=page2/
+8000h-BFFFh, RAM-trampoline bank-select in INIT), not a flat 32KB
+image - "フリーズはしてないがグリッチ ボーダーはブラックだな...
+ASCII16の本番形式でやってみろ 64KBだからな": once content grew past
+16KB, the flashcart being tested on evidently can't boot a plain
+linear image at all (confirmed on real hardware: didn't even reach
+INIT's own first instruction), the same real, production mechanism
+`tools/bankswitch_poc/build_full_rom.py` already uses for the shipped
+game. Since this file has no genuine second PHASE of content the way
+the main game's stage1->stage2 transition does - just needs more than
+16KB total for one continuous program - bank1 is selected exactly
+once, at boot, and left selected permanently; unlike bankswitch_poc's
+own multi-bank build, there's no later mid-game switch to test.
 """
 import os
 import sys
@@ -36,16 +50,89 @@ def assemble():
     return out, asm.symtab, text
 
 
+def build_banks(out):
+    """Splits the flat address->byte dict from assemble() into bank0
+    (page1, 4000h-7FFFh) and bank1 (page2, 8000h-BFFFh) - same 0xFF-
+    padded-unused-space convention as bankswitch_poc's own
+    assemble_to_bytes(). Raises if anything landed outside 4000h-
+    BFFFh (the 32KB-per-bank-pair budget)."""
+    bank0 = bytearray([0xFF] * 0x4000)
+    bank1 = bytearray([0xFF] * 0x4000)
+    for addr, val in out.items():
+        if 0x4000 <= addr <= 0x7FFF:
+            bank0[addr - 0x4000] = val
+        elif 0x8000 <= addr <= 0xBFFF:
+            bank1[addr - 0x8000] = val
+        else:
+            raise Exception(f"address {addr:04X}h outside 4000h-BFFFh (bank0+bank1 budget exceeded)")
+    return bank0, bank1
+
+
+class BankedMem:
+    """ASCII16-style mapper emulation for testing in z80emu.py - a
+    plain flat bytearray would let the trampoline's own write to
+    6000h/7000h silently corrupt whatever live program byte happens to
+    sit at that address (confirmed: 0x7000 held a real opcode byte in
+    this file's own current layout), producing misleading results.
+    Writes to `portA`(6000h)/`portB`(7000h) select which bank is
+    currently visible at page1/page2; any other write within 4000h-
+    BFFFh is silently ignored (real ROM, matches actual cartridge
+    behavior); everything outside 4000h-BFFFh is flat, directly-
+    writable RAM (also where the BIOS's own low-memory area lives,
+    same as z80emu.py's own bios_call() stubs already assume). Same
+    shape as bankswitch_poc's own BankedMem (run_poc.py/verify_full.py)
+    - banksB index0 is an unused blank placeholder purely so "A=1
+    selects index1" lines up with the real bank-select convention this
+    file's own INIT actually uses.
+    """
+    def __init__(self, bank0, bank1, portA=0x6000, portB=0x7000):
+        self.flat = bytearray(0x10000)
+        self.banksA = [bank0]
+        self.banksB = [bytearray([0xFF] * 0x4000), bank1]
+        self.bankA = 0
+        self.bankB = 0
+        self.portA = portA
+        self.portB = portB
+        self.switch_log = []
+
+    def __getitem__(self, addr):
+        addr &= 0xFFFF
+        if 0x4000 <= addr <= 0x7FFF:
+            return self.banksA[self.bankA][addr - 0x4000]
+        if 0x8000 <= addr <= 0xBFFF:
+            return self.banksB[self.bankB][addr - 0x8000]
+        return self.flat[addr]
+
+    def __setitem__(self, addr, val):
+        addr &= 0xFFFF
+        val &= 0xFF
+        if addr == self.portA:
+            self.bankA = val % len(self.banksA)
+            self.switch_log.append(("A", val, self.bankA))
+            return
+        if addr == self.portB:
+            self.bankB = val % len(self.banksB)
+            self.switch_log.append(("B", val, self.bankB))
+            return
+        if 0x4000 <= addr <= 0xBFFF:
+            return  # ROM: writes silently ignored
+        self.flat[addr] = val
+
+
 def main():
     out, sym, text = assemble()
     lo, hi = min(out), max(out)
-    mem = bytearray(32768)
-    for a, b in out.items():
-        mem[a - 0x4000] = b
+    bank0, bank1 = build_banks(out)
+    rom32 = bytes(bank0) + bytes(bank1)
+    # doubled to 64KB - same real-hardware-required convention as
+    # bankswitch_poc/build_rom.py (a real flashcart mirrored a 32KB
+    # image instead of decoding real ASCII16 banks until doubled to a
+    # "regulation" size for its own mapper auto-detection).
+    rom = rom32 + rom32
     rom_path = os.path.join(HERE, "combined_test.rom")
     with open(rom_path, "wb") as f:
-        f.write(bytes(mem))
-    print(f"assembled {lo:04X}h-{hi:04X}h ({hi-lo+1} bytes), wrote {rom_path}")
+        f.write(rom)
+    print(f"assembled {lo:04X}h-{hi:04X}h ({hi-lo+1} bytes across bank0+bank1), wrote {rom_path}: {len(rom)} bytes (doubled)")
     print("INIT =", hex(sym["INIT"]), "MAINLOOP =", hex(sym["MAINLOOP"]))
     return out, sym, text
 

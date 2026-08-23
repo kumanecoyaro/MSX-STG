@@ -1073,6 +1073,11 @@ ETANK_SPRITE_ATTRS EQU 0F366h  ; ETANK_SLOT_COUNT*8 = 8 bytes: (Y,X,pat,col)x2 -
 ETANK_SPAWN_TIMER  EQU 0F36Eh
 ; ends at 0F36Eh - well clear of the 0F380h boundary, no DRAW_TEMP/
 ; DRAW_COLOR scratch needed (reuses BIGZUM_DRAW_COLOR - see UOET_DRAW).
+; ASCII16 bank-switch RAM trampoline (see INIT's own comment) - 4 bytes
+; ("LD (DE),A"=3, "JP (HL)"=1), same real-hardware-confirmed idea as
+; bankswitch_poc's own 0F200h (SPRITE_ATTRS already owns that address
+; in this file, so a different free gap is used here).
+BANKSWITCH_TRAMPOLINE_RAM EQU 0F36Fh
 ETANK_SPR_BASE_SLOT EQU 24     ; hw sprite slots24-25 (BL/BR only x1 instance), right after Flyer's own 20-23
 ; "カラーはダークレッド" - NOT sprites/Etank.json's own fg, overridden
 ; directly here (same "override the JSON's own fg" precedent as
@@ -1165,75 +1170,49 @@ STACKTOP      EQU 0F380h
 INIT:
     LD SP,STACKTOP
 
-    ; checkpoint P1 (border color 11): INIT reached, SP set, about to
-    ; touch the slot register below - see the checkpoint P2/1 pair's own
-    ; comment for why this specific pair exists.
+    ; checkpoint P1 (border color 11): INIT reached, SP set.
     LD B,11 : LD C,7 : CALL WRTVDP
 
-    ; "グリッチ状態 ロールバックしたときと同じ状況 推測通り16KB超えた
-    ; 途端バグってると思われる ちゃんとバンクの初期化が出来てないな"
-    ; then, once asked whether to go with a real ASCII16 mapper instead:
-    ; "ASCII16バンク実装でも構わないが MSXは標準でも32KBリニアマップは
-    ; 出来る BIOSではPage2がマッピングされないので初期化でマッピング
-    ; するコードを入れるだけ 過去にも全く同じミスをお前がやらかしてて
-    ; 特定に時間かかった 調べて実装" - this file assembles to a flat,
-    ; single-content 32KB image (ORG 4000h, now >16KB, genuinely
-    ; spilling into page2) with no real second bank to switch to, so a
-    ; real mapper isn't needed - just mapping the primary slot into
-    ; page2, which the BIOS's own cartridge-boot sequence does NOT do on
-    ; its own (it only auto-maps page1, where execution starts).
-    ;
-    ; Exhaustively re-verified against `CYBER SHMUP.asm`'s own INIT
-    ; (the "same belt-and-suspenders step" this was copied from,
-    ; itself claimed "confirmed working on real hardware"): the actual
-    ; instruction sequence below is byte-for-byte identical (diffed
-    ; both source and the assembled opcode bytes directly - IN/AND/ADD/
-    ; LD/OR/OUT all match exactly), correctly assembled (DB A8/D3 A8 for
-    ; the IN/OUT), runs as literally the first thing in INIT (nothing
-    ; upstream could already be touching page2), and nothing later in
-    ; this file writes to port 0A8h again to undo it. No bug found in
-    ; the mapping logic itself through static analysis - the general
-    ; approach ("just add mapping code") is confirmed correct, matching
-    ; the reference precisely, not a guess.
-    ;
-    ; 2 changes made anyway, since "全く同じミスを...特定に時間かかった"
-    ; means this needs to actually be resolved, not just re-confirmed
-    ; correct on paper:
-    ; 1. DI moved to BEFORE this block (was after, matching the
-    ;    reference) - a real MSX BIOS interrupt handler can itself
-    ;    perform inter-slot calls that touch this same port 0A8h
-    ;    register internally; if one fires between this block's own IN
-    ;    and OUT, the read-modify-write becomes unsafe. The reference
-    ;    code doesn't guard against this either, so this may be a
-    ;    latent bug there too (interrupt-timing races are notoriously
-    ;    hard to reproduce reliably, which would explain why it reads
-    ;    as "confirmed working" there without actually being immune).
-    ;    Zero downside either way - this whole region already needs to
-    ;    run with interrupts off for the raw VDP/PSG port I/O right
-    ;    after it (see the existing DI/CALL INIT32/EI shape), so
-    ;    widening that protected region to also cover this block is
-    ;    free.
-    ; 2. Checkpoint P1 above and checkpoint P2 below bracket this block
-    ;    specifically (distinct border colors 11/12, chosen NOT to
-    ;    collide with the existing checkpoints 1-9 table in README.md -
-    ;    a deliberate choice to avoid renumbering that established,
-    ;    already-documented sequence) - since the code has now been
-    ;    re-verified as correct by every means available from this
-    ;    environment (no access to real hardware to test further), the
-    ;    only way to find out whether the CPU is even reaching/clearing
-    ;    this exact block on the real board it's still glitching on is
-    ;    to ask the board directly. Report which color (11, 12, both,
-    ;    or neither) is showing if it glitches/freezes again - that
-    ;    pinpoints whether this specific block is really where things
-    ;    go wrong, or whether the problem is somewhere else entirely
-    ;    (e.g. within BIOS SCREEN1 setup itself, or later).
-    ;
-    ; TEST-ONLY: remove this whole block once this code is folded into
-    ; the real game, which already does its own equivalent slot setup
-    ; via `CYBER SHMUP.asm`'s own INIT - duplicating it there would be
-    ; redundant, not harmful, but it belongs to that integration, not
-    ; here.
-    DI
+    ; "フリーズはしてないがグリッチ ボーダーはブラックだな" - even
+    ; checkpoint P1 above (literally the first 2 real instructions in
+    ; INIT) never showed on the board that reported this, which rules
+    ; out the previous fix's own logic (already re-verified byte-for-
+    ; byte correct against its own reference) and confirms this specific
+    ; flashcart genuinely can't boot a >16KB image without a real
+    ; ASCII16 mapper - MSX-internal slot routing was never going to be
+    ; enough. "ASCII16バンク実装でも構わないが...本番形式でやってみろ
+    ; 64KBだからな" - this is now the SAME real, production ASCII16
+    ; bank-switch mechanism `tools/bankswitch_poc/build_full_rom.py`'s
+    ; own `patched_game_text()` injects into the actually-shipped game
+    ; (not the simpler standalone POC in `bank_a.asm`, and not the bare
+    ; `CYBER SHMUP.asm` source, which - confirmed by grepping it - has
+    ; only the PPI slot-mapping step below, no trampoline at all; that
+    ; step's own "confirmed working on real hardware" history predates
+    ; the ASCII16 migration and evidently doesn't hold for whatever
+    ; flashcart is being used to test this file). Copied verbatim from
+    ; that real, currently-shipped mechanism, not reconstructed from
+    ; memory - RAM trampoline source below, called with A=bank number,
+    ; DE=mapper select address (6000h=window A/page1, 7000h=window
+    ; B/page2), HL=address to resume at afterward. Only ONE switch is
+    ; ever needed here (bank1 into window B, once, at boot, then left
+    ; selected permanently - this file has no real second phase of
+    ; content the way the main game's stage1->stage2 transition does,
+    ; just needs more than 16KB total), so window A (page1, where this
+    ; INIT itself lives) is never touched.
+    JP BANKSWITCH_TRAMPOLINE_END
+BANKSWITCH_TRAMPOLINE_SRC:
+    LD (DE),A
+    JP (HL)
+BANKSWITCH_TRAMPOLINE_LEN EQU $ - BANKSWITCH_TRAMPOLINE_SRC
+BANKSWITCH_TRAMPOLINE_END:
+
+    ; same "map our own primary slot into page2" PPI step `CYBER
+    ; SHMUP.asm`'s own INIT already has (kept, not replaced - the real
+    ; shipped game keeps both this AND the ASCII16 trampoline together,
+    ; per `build_full_rom.py`'s own patch, so this does too) - belt-
+    ; and-suspenders for a flashcart that doesn't auto-map page2 to the
+    ; same OUTER slot as page1, independent of the mapper's own INNER
+    ; bank selection handled below.
     IN A,(0A8h)
     LD B,A
     AND 0Ch
@@ -1245,14 +1224,32 @@ INIT:
     OR C
     OUT (0A8h),A
 
-    ; checkpoint P2 (border color 12): slot register write done -
-    ; page2 should now show this ROM's own real content.
+    ; checkpoint P2 (border color 12): slot register write done.
     LD B,12 : LD C,7 : CALL WRTVDP
 
+    LD HL,BANKSWITCH_TRAMPOLINE_SRC
+    LD DE,BANKSWITCH_TRAMPOLINE_RAM
+    LD BC,BANKSWITCH_TRAMPOLINE_LEN
+    LDIR
+
+    ; checkpoint P3 (border color 13): trampoline copied to RAM.
+    LD B,13 : LD C,7 : CALL WRTVDP
+
+    LD A,1
+    LD DE,7000h
+    LD HL,INIT_RESUME_AFTER_BANK_SELECT
+    JP BANKSWITCH_TRAMPOLINE_RAM
+INIT_RESUME_AFTER_BANK_SELECT:
+    ; checkpoint P4 (border color 14): bank1 select via the RAM
+    ; trampoline returned successfully - page2 should now show this
+    ; ROM's own real bank1 content.
+    LD B,14 : LD C,7 : CALL WRTVDP
+
+    DI
     CALL INIT32
     EI
 
-    ; checkpoint 1: INIT started, SP set, primary slot mapped into
+    ; checkpoint 1: INIT started, SP set, ASCII16 bank1 selected for
     ; page2, BIOS SCREEN1 setup done
     LD B,1 : LD C,7 : CALL WRTVDP
 

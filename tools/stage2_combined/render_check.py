@@ -93,9 +93,8 @@ def run_frames(cpu, mainloop, n):
 
 def main():
     out, sym, text = build_test.assemble()
-    mem = bytearray(65536)
-    for a, b in out.items():
-        mem[a] = b
+    bank0, bank1 = build_test.build_banks(out)
+    mem = build_test.BankedMem(bank0, bank1)
     cpu = Z80(mem)
     cpu.pc = sym["INIT"]
     mainloop = sym["MAINLOOP"]
@@ -104,6 +103,8 @@ def main():
         cpu.step()
         steps += 1
     print("reached MAINLOOP after", steps, "steps")
+    assert mem.bankB == 1, f"ASCII16 bank1 was never selected for page2 (bankB={mem.bankB}) - the boot-time trampoline switch didn't take effect"
+    print("ASCII16 bank1 correctly selected for page2 by boot:", mem.switch_log)
 
     run_frames(cpu, mainloop, 5)
     render_full(bytes(cpu.vram), os.path.join(HERE, "combined0.ppm"))

@@ -547,8 +547,10 @@ with no way to tell where.
   | 7 | Tank sprite attributes written |
   | 8 | Score/counter/calibration-strip HUD + PSG set up |
   | 9 | Enemy patterns + pool set up - about to enter MAINLOOP |
-  | 11 | INIT reached, SP set - about to map the primary slot into page2 (added once the ROM grew past 16KB - see the page2-mapping entry further down) |
-  | 12 | Primary slot mapped into page2 - about to call BIOS SCREEN1 setup |
+  | 11 | INIT reached, SP set (added once the ROM grew past 16KB and needed a real ASCII16 bank-switch - see the ASCII16 entry further down) |
+  | 12 | Primary slot mapped into page2 (PPI belt-and-suspenders step, kept alongside the real bank-switch) |
+  | 13 | ASCII16 bank-switch trampoline copied to RAM |
+  | 14 | Bank1 selected for page2 via the RAM trampoline - returned successfully |
 
   If it freezes again, report which color is showing.
 - **SkySand row19** (per direct instruction, across 2 rounds: an
@@ -2757,6 +2759,94 @@ with no way to tell where.
   risk, and instrumented for a decisive answer on the next real-
   hardware test - report which border color (11, 12, both, or neither)
   is showing if it still glitches or freezes.
+- **Real answer from the board: real ASCII16 bank-switching needed, not
+  slot mapping** - the checkpoint instrumentation above gave a
+  decisive result:
+  > フリーズはしてないがグリッチ
+  > ボーダーはブラックだな
+  > 何故か初期化方法も分からず調べもしないようなので無理だな
+  > 出来てたことなのに
+  > ではASCII16の本番形式でやってみろ
+  > 64KBだからな
+  > 出来たら一度確認でStage1のROMにマージして確認する
+  > 今はStage1終わったら実装でStage1を移植してある状態
+
+  Border stayed black - not even checkpoint 11 (literally the first 2
+  instructions in `INIT`) showed. That rules out the page2-mapping
+  fix's own correctness entirely (it was never even reached) and
+  confirms the flashcart being tested on genuinely can't boot a >16KB
+  image without a real ASCII16 mapper - no amount of MSX-internal slot
+  routing was ever going to fix it.
+  - **Replaced the page2-mapping-only approach with the real,
+    production ASCII16 bank-switch mechanism** - copied verbatim from
+    `tools/bankswitch_poc/build_full_rom.py`'s own `patched_game_text()`
+    (the mechanism the actually-shipped game uses), not reconstructed
+    from memory: a RAM trampoline (`LD (DE),A : JP (HL)`, copied to a
+    newly-reserved `BANKSWITCH_TRAMPOLINE_RAM`(0F36Fh, 4 bytes) since
+    the real game's own 0F200h is already `SPRITE_ATTRS` in this file)
+    called as `LD A,<bank> : LD DE,<select addr> : LD HL,<resume
+    addr> : JP <trampoline>`. Since this file has no genuine second
+    PHASE of content the way the main game's stage1->stage2 transition
+    does - just needs more than 16KB total for one continuous program -
+    bank1 is selected exactly once at boot (`LD A,1 : LD DE,7000h`) and
+    left selected permanently; window A (page1, where `INIT` itself
+    lives) is never switched. The PPI page2-mapping step from the
+    previous round is kept alongside it (not removed) - the real
+    shipped game keeps both together too, per `build_full_rom.py`'s own
+    patch, and it's harmless belt-and-suspenders for a flashcart that
+    doesn't auto-map page2 to the same outer slot as page1, independent
+    of the mapper's own inner bank selection.
+  - **`build_test.py` rewritten to produce a genuine bank0+bank1 ROM,
+    doubled to 64KB** ("ASCII16の本番形式でやってみろ 64KBだからな") -
+    same layout and doubling convention as `bankswitch_poc/build_rom.py`
+    (a real flashcart mirrored a 32KB image instead of decoding real
+    banks until doubled to a "regulation" size for its own mapper
+    auto-detection). `build_banks()` splits the existing flat
+    address->byte dict from `assemble()` by page (4000h-7FFFh vs
+    8000h-BFFFh) - no reorganization of `combined_test.asm`'s own
+    source needed at all, since ASCII16 addresses each bank starting
+    from its own page's base exactly the same way the old flat-32KB
+    layout already did (the only real difference is that page2's
+    content is now behind a bank *switch* instead of being permanently,
+    unconditionally wired there).
+  - **Test harness rewritten to model the mapper properly, not a flat
+    bytearray** - a flat memory model would let the trampoline's own
+    write to `7000h` silently corrupt whatever live program byte
+    happens to sit at that address in a flat 64KB emulator image
+    (confirmed directly: `0x7000` held a real opcode byte in this
+    file's own layout) - a real bug in the TEST HARNESS, not the game,
+    but one that would have produced misleading results either way.
+    New `BankedMem` class in `build_test.py` (same shape as
+    `bankswitch_poc`'s own `run_poc.py`/`verify_full.py` - writes to
+    `6000h`/`7000h` select which bank is visible at page1/page2,
+    everything else in `4000h-BFFFh` is read-only ROM matching real
+    cartridge behavior, everything outside that range is flat RAM) -
+    duck-typed to `z80emu.py`'s own `Z80(mem)` constructor exactly like
+    `bankswitch_poc`'s own custom memory model already is. All targeted
+    test scripts (Etank/shake-off/Flyer-terrain/ZacoII-flash, the full
+    regression sweeps) now boot through a REAL cold start (bankB=0,
+    matching real ASCII16 power-on default) and assert bank1 actually
+    gets selected via the trampoline before trusting anything past
+    `MAINLOOP` - this is a strictly stronger verification than before:
+    it now actually exercises (and could have caught bugs in) the real
+    boot-time bank-switch logic itself, not just the game logic that
+    happens to run after it.
+  Verified: `render_check.py` now asserts `mem.bankB == 1` after
+  reaching `MAINLOOP` from a genuine cold start and reports the
+  trampoline's own switch log - passes. All existing targeted suites
+  (18 Etank + 12 shake-off + 5 Flyer/terrain + 6 ZacoII-flash checks)
+  re-run against the properly-banked model - all still pass, now with
+  a strictly stronger guarantee than the previous flat-memory version
+  ever provided. Fresh 20000-frame random-input sweep and 20000-frame
+  idle sweep, both under the banked model, no crash/stall; BigZum/Etank
+  never simultaneously active, Etank's own Y never changes mid-life.
+  `combined_test.rom` is now 65536 bytes (bank0+bank1, doubled).
+  Real-hardware confirmation is still the only way to know for certain
+  whether THIS mechanism actually boots on the flashcart in question -
+  not independently verifiable from this environment beyond what's
+  described above. Per direct instruction, the next step once this is
+  confirmed working standalone is a one-time merge into the real
+  Stage1 ROM to verify there too - not attempted this round.
 
 ## Bugs found and fixed while building this
 
