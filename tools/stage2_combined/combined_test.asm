@@ -392,7 +392,7 @@ NIGHT_INTERVAL   EQU 16
 NIGHT_START_ROW  EQU 2
 NIGHT_END_ROW    EQU 16
 NIGHT_CODE       EQU 136       ; group17 (136-143)
-NIGHT_COLOR      EQU 051h      ; fg5 light blue / bg1 black - "背景色ブラックで文字色ライトブルー"
+NIGHT_COLOR      EQU 015h      ; "ブラックとブルーの文字色と背景色を逆に" - fg1 black / bg5 light blue (was fg5/bg1)
 PSG_ADDR         EQU 0A0h
 PSG_DATA         EQU 0A1h
 ; mixer (R7) values for channel A only - tone/noise B and C always
@@ -1854,15 +1854,17 @@ IETSA_LOOP:
     DJNZ IETSA_LOOP
 
     ; cloud pool: each of the 6 slots gets its own fixed ROW (2-7,
-    ; CLOUD_ROW_TABLE)/INTERVAL/FIXED4 from the 3 lookup tables below,
-    ; ROWADDR precomputed once (row*32 fits an 8-bit low byte for
-    ; rows0-7, so the high byte is always 18h - no per-frame lookup
-    ; needed later), and a random initial WAIT so all 6 don't spawn in
-    ; lockstep - same idea as CLOUDW/CLOUDN's own idle-at-boot random
-    ; wait in src/CYBER SHMUP.asm. C is the table index (0-5); PUSH BC
-    ; around the CALL protects both it and the outer DJNZ counter B,
-    ; same precaution as every other pool loop in this file after the
-    ; enemy-pool DJNZ/B-clobber bug (see README).
+    ; CLOUD_ROW_TABLE)/INTERVAL/FIXED4/initial WAIT from the 4 lookup
+    ; tables below, ROWADDR precomputed once (row*32 fits an 8-bit low
+    ; byte for rows0-7, so the high byte is always 18h - no per-frame
+    ; lookup needed later). The initial WAIT is a fixed per-slot stagger
+    ; (CLOUD_INIT_WAIT_TABLE), NOT CLOUD_RANDOM_WAIT - see that table's
+    ; own comment for why a real RNG call here produced 3 near-identical
+    ; values and all 3 clouds spawning bunched together the first time.
+    ; C is the table index (0-5); PUSH BC around the CALL protects both
+    ; it and the outer DJNZ counter B, same precaution as every other
+    ; pool loop in this file after the enemy-pool DJNZ/B-clobber bug
+    ; (see README).
     LD HL,CLOUD_POOL
     LD B,CLOUD_SLOT_COUNT
     LD C,0
@@ -1881,7 +1883,8 @@ ICL_LOOP:
     LD HL,CLOUD_INTERVAL_TABLE : ADD HL,DE : LD A,(HL) : LD (IX+1),A
     LD A,C : LD E,A : LD D,0
     LD HL,CLOUD_FIXED4_TABLE : ADD HL,DE : LD A,(HL) : LD (IX+2),A
-    CALL CLOUD_RANDOM_WAIT
+    LD A,C : LD E,A : LD D,0
+    LD HL,CLOUD_INIT_WAIT_TABLE : ADD HL,DE : LD A,(HL)
     LD (IX+5),A
     POP BC
 
@@ -6230,7 +6233,19 @@ FBUS_LOOP:
 ; slot. PUSH/POP BC around the CALL: UPDATE_ONE_CLOUD's own cell-write
 ; helpers use B/C as scratch, which would otherwise corrupt this loop's
 ; DJNZ counter - same precaution as every other pool loop in this file.
+; "Tick100以降は雲の描画を停止" - once GAME_TICK>=NIGHT_START_TICK(100)
+; (16-bit safe, same shape as ALLOC_ETANK_SLOT's own GAME_TICK check),
+; clouds stop moving/spawning/drawing entirely for the rest of the run
+; - whatever cell each one last drew stays frozen until CHECK_NIGHT's
+; own sweep overwrites that row anyway, so nothing lingers once night
+; actually reaches it.
 CLOUD_UPDATE_ALL:
+    LD A,(GAME_TICK+1)
+    OR A
+    RET NZ
+    LD A,(GAME_TICK)
+    CP NIGHT_START_TICK
+    RET NC
     LD IX,CLOUD_POOL
     LD B,CLOUD_SLOT_COUNT
 CUA_LOOP:
@@ -6598,6 +6613,21 @@ CLOUD_INTERVAL_TABLE:
     DB 2,2,2
 CLOUD_FIXED4_TABLE:
     DB 1,0,0
+; "一番最初の雲が3行必ず固まって出てくる 1回目が多分ランダム前の初期
+; 値使ってるだろ" - confirmed: ICL_LOOP's own INIT-time CLOUD_RANDOM_
+; WAIT calls ran before a single real MAINLOOP frame had ever executed,
+; so GAME_RNG was still its own fresh-boot value each time - 3
+; consecutive CALLs just INC it 3 times in a row (0->1->2->3), giving
+; slots 0-2 nearly identical WAIT values(31/32/33) instead of a real
+; spread, so all 3 clouds spawned in lockstep the very first time.
+; Fixed the same way CLOUD_ROW_TABLE/INTERVAL/FIXED4 already are: a
+; fixed per-slot table for this one INIT-time use only, spread across
+; CLOUD_RANDOM_WAIT's own real 30-157 range. UPDATE_ONE_CLOUD's own
+; later respawn-time CLOUD_RANDOM_WAIT call is untouched - by then
+; GAME_RNG has plenty of real accumulated entropy from actual gameplay
+; frames, so it's genuinely random from the 2nd spawn on.
+CLOUD_INIT_WAIT_TABLE:
+    DB 30,72,114
 
 ; src/CYBER SHMUP.asm's own CLOUD_WA_CODE/CLOUD_WB_CODE pattern bytes,
 ; copied byte-for-byte ("Stage1でもやってる雲を").

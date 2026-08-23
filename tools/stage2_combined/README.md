@@ -3326,6 +3326,48 @@ with no way to tell where.
   (the current leading edge), ordinary sky below it, terrain/HUD
   entirely unaffected.
 
+- **3 follow-ups on the night effect and clouds**: "OK ではTick100以降
+  は雲の描画を停止 でブラックとブルーの文字色と背景色を逆に で、雲で
+  気になってたが一番最初の雲が3行必ず固まって出てくる 1回目が多分ラ
+  ンダム前の初期値使ってるだろ".
+  1. `CLOUD_UPDATE_ALL` now returns immediately (16-bit safe) once
+     `GAME_TICK>=NIGHT_START_TICK`(100) - clouds stop moving/spawning/
+     drawing entirely once the night sweep begins. Whatever cell a
+     cloud last drew stays frozen, but `CHECK_NIGHT`'s own sweep
+     overwrites that whole row anyway once it gets there, so nothing
+     lingers once night actually reaches it.
+  2. `NIGHT_COLOR` swapped from fg5(light blue)/bg1(black) to fg1
+     (black)/bg5(light blue) - "ブラックとブルーの文字色と背景色を逆
+     に". Only the striped leading-edge tile is affected (the solid
+     "done" rows already reuse `HUD_ROW_BLANK_CODE`, fg1/bg1 - both
+     black already, nothing to swap there).
+  3. **Real bug, confirmed and fixed**: the very first cloud spawn
+     really was clustered - `ICL_LOOP`'s own INIT-time
+     `CALL CLOUD_RANDOM_WAIT` ran 3 times in a row before a single real
+     `MAINLOOP` frame had ever executed, so `GAME_RNG` was still its
+     fresh-boot value each time - 3 consecutive calls just `INC`
+     it 3 times (0->1->2->3), giving the 3 slots nearly-identical WAIT
+     values (31/32/33) instead of any real spread, so all 3 clouds
+     spawned in lockstep the first time - exactly "1回目が多分ランダ
+     ム前の初期値使ってるだろ". Fixed the same way the other 3 per-
+     slot cloud tables already work: a new fixed `CLOUD_INIT_WAIT_TABLE`
+     (30/72/114, spread across `CLOUD_RANDOM_WAIT`'s own real 30-157
+     range) used only for this one INIT-time case. `UPDATE_ONE_CLOUD`'s
+     own later respawn-time `CLOUD_RANDOM_WAIT` call is untouched - by
+     then `GAME_RNG` has real accumulated entropy from actual gameplay
+     frames, so every respawn after the first is genuinely random.
+  Verified: new `cloud_changes_test.py` (6 checks - `NIGHT_COLOR` is
+  the swapped byte, the 3 initial cloud WAITs are now spread apart
+  and distinct (30/72/114, confirmed via direct RAM read at boot - no
+  longer 31/32/33), `CLOUD_UPDATE_ALL` still updates normally just
+  before `GAME_TICK`=100 and freezes a cloud's own X the instant it
+  reaches 100, and clouds are genuinely still active through the real
+  `MAINLOOP` well before that point) - all pass. Full suite (123
+  checks across all files) passes. Rendered and visually confirmed:
+  clouds gone entirely once the night sweep starts, and the transition
+  band now reads mostly-black-with-thin-light-blue-streaks instead of
+  the previous mostly-blue-with-thin-black-lines.
+
 ## Bugs found and fixed while building this
 
 - **Sand flickered between its own new color and Rock's, twice over**
