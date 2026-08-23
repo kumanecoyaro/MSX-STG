@@ -129,7 +129,24 @@ def main():
     # image instead of decoding real ASCII16 banks until doubled to a
     # "regulation" size for its own mapper auto-detection).
     rom = rom32 + rom32
-    rom_path = os.path.join(HERE, "combined_test.rom")
+    # "またお前は忘れてるがファイル名に[ASCII16]を含めろと過去に指示し
+    # てる リセットはそのせいだった" - real-hardware testing was never
+    # actually the method here; verification is via WebMSX, which
+    # auto-detects the mapper type from the FILENAME (matching the real
+    # shipped ROM's own "CYBER SHMUP [ASCII16].rom" convention - see
+    # bankswitch_poc/build_full_rom.py), not from file content/size the
+    # way this session had been assuming throughout the whole page2-
+    # mapping investigation. Without the tag, WebMSX evidently fell
+    # back to some other ROM-type guess for both the 32KB and 64KB
+    # builds - explaining the instant reset on the 64KB file (wrong
+    # type for that size) and, per direct confirmation, the SAME
+    # glitch on both the pre- and post-ASCII16 versions (meaning the
+    # bank-switch code was very likely never actually being exercised
+    # at all before now - the glitch itself is apparently unrelated to
+    # any of the page2/bank-switch work and still needs its own real
+    # root cause once this file is finally loaded under its correct
+    # mapper type for the first time).
+    rom_path = os.path.join(HERE, "combined_test [ASCII16].rom")
     with open(rom_path, "wb") as f:
         f.write(rom)
     print(f"assembled {lo:04X}h-{hi:04X}h ({hi-lo+1} bytes across bank0+bank1), wrote {rom_path}: {len(rom)} bytes (doubled)")

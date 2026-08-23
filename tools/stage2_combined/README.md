@@ -3197,7 +3197,13 @@ directly.
 - `combined_test.asm`, `build_test.py` - the merged engine + build
   script (imports `terrain_gen.py`, `tank_gen.py`, `bullet_gen.py`,
   `enemy_gen.py`, `bigzum_gen.py`, `flyer_gen.py`, and `etank_gen.py`).
-- `combined_test.rom` - the built ROM.
+- `combined_test [ASCII16].rom` - the built ROM, 64KB (bank0+bank1,
+  doubled). The `[ASCII16]` filename tag is required, not cosmetic -
+  WebMSX (the actual verification method used for this file - not real
+  hardware) detects the mapper type from the filename, matching the
+  real shipped game's own `rom/CYBER SHMUP [ASCII16].rom` convention;
+  without it, WebMSX falls back to guessing some other ROM type
+  regardless of the file's own real content/size.
 - `bullet_gen.py`, `sprites/BulletF.json`, `sprites/BulletU.json` - the
   2 shot shapes' source art + BG-pattern conversion (8x8, single
   character each - no quadrant splitting needed, unlike the tank's
