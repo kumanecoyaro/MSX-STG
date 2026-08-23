@@ -2847,6 +2847,68 @@ with no way to tell where.
   described above. Per direct instruction, the next step once this is
   confirmed working standalone is a one-time merge into the real
   Stage1 ROM to verify there too - not attempted this round.
+- **WebMSX needs the `[ASCII16]` filename tag - verification was never
+  actually real hardware**: "即リセットで起動しない" (the 64KB build) -
+  turned out testing has always been via WebMSX, which detects a ROM's
+  mapper type from its FILENAME (same convention as the real shipped
+  `rom/CYBER SHMUP [ASCII16].rom`), not from file content/size the way
+  every "real hardware" theory this session had been chasing assumed.
+  Renamed the build output to `combined_test [ASCII16].rom` (no other
+  changes). Per direct follow-up confirmation, the pre-ASCII16 32KB
+  build's own glitch was identical to the post-ASCII16 one - meaning
+  the bank-switch code had likely never actually been exercised by
+  WebMSX at all until this rename, and the real glitch was always
+  something else entirely.
+- **The real Etank bug, finally found**: "動作はしたがな Etank実装で
+  根本的なバグがあるってことだが 16KB超えで起こるからバンクの問題で
+  あることは明らか":
+  - **First, a full systematic RAM-overlap audit across every pool in
+    the file** (computed each pool's real end address from its own
+    `SLOT_SIZE*SLOT_COUNT` and compared against the next pool's start,
+    programmatically, not by hand) - found exactly one: `ZUM_POOL`
+    (16 bytes: `ZUM_SLOT_SIZE`(8)*`ZUM_SLOT_COUNT`(2)) overlapped
+    `ZUM_SPRITE_ATTRS`'s own first 2 bytes by 2 bytes. `ZUM_POOL`'s own
+    comment still said "14 bytes" - `ZUM_SLOT_SIZE` grew from 7 to 8
+    (Z_RETREAT added) at some point without `ZUM_SPRITE_ATTRS`'s own
+    address ever being pushed forward to compensate. Predates this
+    entire session (both addresses untouched by any Etank/Flyer/BigZum
+    work) and isn't Etank-specific, but real - every RAM address from
+    `ZUM_SPRITE_ATTRS` through `BANKSWITCH_TRAMPOLINE_RAM` shifted +2
+    bytes to actually clear the real 16-byte span; everything Etank/
+    Flyer/BigZum itself owns was independently confirmed already clean
+    in the same audit.
+  - **The actual Etank bug**: re-derived `UOBZ_DRAW`'s real quadrant
+    pattern-code addressing directly from its own code (TL=+0, TR=+4,
+    BL=+8, BR=+12 - each 16x16-mode hw sprite code needs its own
+    4-code group; every other multi-quadrant entity in this file
+    already follows this same 4-apart spacing) and compared it against
+    `PAT_ETANK_BL`/`PAT_ETANK_BR` (`PAT_BIGZUM+2`/`+3` - copied
+    verbatim from the pre-rollback implementation without re-deriving
+    it against the CURRENT `UOBZ_DRAW`) - only 1 code apart, landing
+    inside the MIDDLE of BigZum's own TL quadrant's 4-code span
+    instead of at BigZum's real BL/BR quadrant bases. Etank's own
+    64-byte dynamic pattern-share LDIRVM (using this wrong base)
+    corrupted BigZum's TL's own last 2 sub-tiles and all of TR's, and
+    Etank's own BL/BR hw sprites showed a misaligned slice of the
+    wrong bytes instead of real quadrant art - garbled graphics on
+    both BigZum and Etank, real visual glitching, entirely
+    independent of ROM banking (the ">16KB" correlation was
+    circumstantial - Etank happened to be the same feature that also
+    pushed the ROM over 16KB, not a causal link). Corrected to
+    BigZum's own real quadrant bases (`PAT_BIGZUM+8`/`+12`) - still
+    contiguous, so the existing single 64-byte LDIRVM still covers
+    both quadrants correctly with no other code change needed.
+  Verified: `git stash`-based before/after testing for BOTH fixes -
+  the Zum RAM-overlap regression test (3 checks: does a slot1 field
+  survive a slot0 sprite-attrs write) and the new Etank pattern-VRAM
+  test (8 checks: quadrant spacing, BigZum's own TL/TR untouched by
+  an Etank spawn, Etank's own BL/BR VRAM matches its real source art
+  byte-for-byte) both correctly fail without their respective fix (6/8
+  and 3/3 failures) and pass with it - not tests that happen to pass
+  either way. Full regression: all existing targeted suites (Etank/
+  shake-off/Flyer-terrain/ZacoII-flash, 52 checks total) re-run clean
+  under the banked model; fresh 20000-frame random-input sweep and
+  20000-frame idle sweep, no crash/stall; `render_check.py` clean.
 
 ## Bugs found and fixed while building this
 
