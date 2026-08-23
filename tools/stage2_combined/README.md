@@ -3802,6 +3802,61 @@ with no way to tell where.
   The real bug is still somewhere in the boss's own code specifically -
   not yet found as of this entry.
 
+- **DIAGNOSTIC BUILD, not a real feature: swapped the boss's own real
+  64x64 art for 4 independent Flyer-art 32x32 blocks, and moved
+  `GAME_TICK`'s boot value from 0 to 840, to test a specific
+  hypothesis**: "検証で今のボスの代わりにFlyerを4体64x64に並べてだせ
+  表示条件は同じになる もしかすると64x64のスプライトを一気にひとま
+  とめで操作するとVDP処理オーバーの可能性がある で、それまでの処理は
+  問題ないんで Tickの初期値を840にしろ 直後に夜の処理が入ってすぐ
+  ボスになる".
+  New `DRAW_FLUSH_BOSS_BLOCKS`/`DRAW_FLUSH_ONE_BLOCK` replace
+  `UBA_DRAW`'s own call target (was `DRAW_BOSS`+`FLUSH_BOSS_SPRITES`) -
+  `UPDATE_BOSS_ALL`'s own spawn-tick check, X/Y/`BOSS_DIR` patrol logic
+  is completely untouched, only the draw+flush step differs, so timing
+  and position stay identical to the real boss ("表示条件は同じにな
+  る"). Each of the 4 blocks (`BOSS_BLOCK_OFFSETS`: TL/TR/BL/BR of the
+  64x64 area) is drawn and flushed FULLY INDEPENDENTLY - own Y/X
+  resolve, own 4-quadrant stage into `BOSS_SPRITE_ATTRS`, own single
+  small `DI`/`EI` pair (16 bytes - identical size/shape to Flyer's own
+  real single-instance flush, proven safe elsewhere in this file) -
+  rather than the real boss's own 16-quadrant-in-one-unit approach
+  (which, even after the earlier DI/EI-chunking fix, still computes and
+  flushes all 16 quadrants back-to-back as one unit every frame). Uses
+  Flyer's own already-resident `PAT_FLYER` art (no pattern-VRAM load at
+  all for this build - removes `LOAD_SASAPI_PATTERNS`'s 512-byte
+  transfer as a variable too, isolating specifically the "one combined
+  operation vs 4 independent ones" question). `LOAD_SASAPI_PATTERNS`/
+  `DRAW_BOSS`/`FLUSH_BOSS_SPRITES`/`BOSS_QUAD_OFFSETS`/`SASAPI_QUADS(_L)`
+  are all left in the file, just unreferenced - reverting to the real
+  boss is swapping `UBA_DRAW`'s call target back plus restoring the 3
+  `LOAD_SASAPI_PATTERNS` call-sites, not rewriting anything from
+  scratch.
+  `GAME_TICK` now boots at 840 (was 0) instead of via `XOR A` - 10
+  `GAME_TICK`s before `NIGHT_START_TICK`(850), so night and the boss
+  (999) both arrive within ~1300 real frames of booting instead of the
+  full ~8000-frame real timeline - "直後に夜の処理が入ってすぐボスに
+  なる". Marked as a diagnostic-only value in its own comment; NOT the
+  intended shipping value.
+  Verified: full suite now shows 8 EXPECTED failures (172/180) - all 6
+  in `boss_test.py` are checks against the now-bypassed Sasapi pattern-
+  load/draw path (not run by this build at all), and 1 each in
+  `etank_gametick_gate_test.py`/`night_effect_test.py` are real-
+  `MAINLOOP`-timing checks that assumed `GAME_TICK` starts at 0 - not
+  regressions, direct consequences of the 2 deliberate changes above.
+  The boss's own movement/patrol checks inside `boss_test.py` (spawn
+  timing, X stepping, both edge clamps/reversals) all still PASS
+  unchanged, confirming that logic genuinely wasn't touched. Rendered a
+  real frame shortly after spawn (`GAME_TICK`~1002, reached in ~1300
+  frames from boot thanks to the 840 starting value): 4 Flyer bodies
+  correctly tiled into a 2x2 grid at the boss's own real position
+  (Y=56, X=132 mid-patrol), matching `BOSS_X` exactly.
+  **Whether this build actually avoids the reported tearing/garbage can
+  only be judged on real hardware/WebMSX** - `z80emu.py` has no
+  interrupt simulation, so it can't confirm or deny the "one combined
+  operation vs 4 independent ones" hypothesis either way, only that the
+  positions/timing/bytes this build produces are all correct going in.
+
 ## Bugs found and fixed while building this
 
 - **Sand flickered between its own new color and Rock's, twice over**
