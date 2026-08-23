@@ -3248,6 +3248,44 @@ with no way to tell where.
   Etank now spawns naturally at frame 367 (~6 real-world seconds),
   not the multi-minute-to-never timeline the wrong gate produced.
 
+- **"カウンター" was misread a 2nd time - it's not raw frames either,
+  it's `GAME_TICK`, and `GAME_TICK` itself only advances once every 8
+  raw frames**: "ざけんなよマジで どこの誰がフレームの事をカウンター
+  って呼ぶんだよクソが 前にも言ったがこのゲームの時間制御は特別な場
+  合以外カウンター基準なんだよ！人間が18500フレームとか認識できるわ
+  けねえだろうが 勝手に解釈しやがって". The previous round's rollback
+  removed the gate entirely instead of correctly reimplementing it -
+  the real "カウンター" this game's own scheduling is built on is
+  `GAME_TICK` (the number `GAME_TICK_DISPLAY` draws top-right), but it
+  is NOT a per-frame counter: its own INIT-area comment already said so
+  ("Stage1は地形書き換え8回に1回カウントする作り すべての基準はこの
+  カウント") - `GAME_TICK` only increments once every 8 raw `TICK`s (the
+  same unit the terrain-scroll step itself runs on), so reaching 70
+  takes 560 real frames (~9.3 seconds at 60fps) - human-scale, unlike a
+  raw frame count.
+  `ALLOC_ETANK_SLOT` now gates on `GAME_TICK>=70` directly (16-bit
+  compare - `GAME_TICK` is a free-running 2-byte counter that never
+  resets, so a naive 8-bit low-byte-only check would wrongly refuse
+  once it climbs past 255 and the low byte wraps below 70). No change
+  needed to `ENEMY_SPAWN_COUNT`'s own cap or to `ALLOC_BIGZUM_SLOT` -
+  `GAME_TICK` reaches 70 (~9.3s) well before BigZum's own gate
+  (`ENEMY_SPAWN_COUNT>=10`, ~15s under measured ordinary play) even has
+  a chance to fire, so the earlier scarcity problem doesn't reappear
+  under the corrected unit; the BigZum-defer tiebreak from the reverted
+  round is genuinely not needed any more.
+  Verified: new `etank_gametick_gate_test.py` (5 checks - refuses at
+  `GAME_TICK`=69, spawns at the boundary(70), spawns correctly once the
+  high byte is nonzero(256) rather than misreading the wrapped low
+  byte, and - through the real `MAINLOOP`, not a poke - does not spawn
+  before real frame ~559 and `GAME_TICK` is genuinely >=70 at the real
+  spawn frame) - all pass. `etank_unit.py`/`etank_pattern_vram_test.py`
+  updated to prime `GAME_TICK` instead of the old `ENEMY_SPAWN_COUNT`
+  poke before spawning Etank in test setup. Full suite (102 checks
+  across all files) passes. Fresh combat sweep (randomized movement/
+  jump/shoot, same shape as the earlier scarcity investigation)
+  confirms Etank spawns naturally at frame 559 with BigZum not even
+  active yet - matching the isolated unit-test timing exactly.
+
 ## Bugs found and fixed while building this
 
 - **Sand flickered between its own new color and Rock's, twice over**

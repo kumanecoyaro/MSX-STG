@@ -5764,27 +5764,38 @@ ETO_FAIL:
     XOR A
     RET
 
-; "カウンター対応前にロールバックしろ" - the ENEMY_SPAWN_COUNT>=70
-; gate below has been REMOVED. It was built on a wrong assumption:
-; "カウンター" in "Etankのスポーンはカウンター70以降で" meant the
-; visible on-screen number GAME_TICK_DISPLAY draws top-right (cols
-; 29-31, from GAME_TICK, incremented once per frame) - NOT this file's
-; own internal ENEMY_SPAWN_COUNT (the pre-existing Zum(10)/red-ZacoII
-; threshold convention this was wrongly assumed to extend). Reverted
-; to the gate shape from before that misunderstanding: BigZum currently
-; active (mutual exclusion - both directions, see ALLOC_BIGZUM_SLOT's
-; own matching check and PAT_ETANK_BL's own pattern-VRAM-sharing
-; comment - a one-directional gate here would be a real correctness
-; bug, not just a design preference, since the two actually share
-; pattern-VRAM bytes), Zum currently active ("Etank出現中はZumも出ない
-; ように 横並びでEtankが消える" - same ground-lane exclusion as
-; BigZum, checking both of ZUM_SLOT_COUNT=2's own slots), the terrain-
-; length gate below, and a free slot - same shape as ALLOC_ZUM_SLOT/
-; ALLOC_BIGZUM_SLOT, plus the same instant spawn-time overlap
-; resolution. Flyer is airborne and never gated against any of these 3
-; ground enemies, nor they against it - "FlyerとBigZum、FlyerとEtankは
-; 同時存在して良い".
+; "誰の事をフレームの事をカウンターって呼ぶんだよ このゲームの時間
+; 制御は特別な場合以外カウンター基準なんだよ" - 2nd correction: the
+; real "カウンター" is `GAME_TICK` (displayed top-right via
+; `GAME_TICK_DISPLAY`), but it does NOT increment every raw frame -
+; see its own INIT-area comment ("Stage1は地形書き換え8回に1回カウ
+; ントする作り すべての基準はこのカウント"): `GAME_TICK` only advances
+; once every 8 raw `TICK`s, the same unit every OTHER schedule in this
+; game is already built against. Gated on `GAME_TICK>=70` (~9.3 real
+; seconds at 60fps - human-scale, unlike raw frame counts), 16-bit
+; safe (`GAME_TICK` is a free-running 2-byte counter, never reset,
+; keeps counting long past the mod-1000 the on-screen display wraps
+; at). BigZum currently active (mutual exclusion - both directions,
+; see ALLOC_BIGZUM_SLOT's own matching check and PAT_ETANK_BL's own
+; pattern-VRAM-sharing comment - a one-directional gate here would be
+; a real correctness bug, not just a design preference, since the two
+; actually share pattern-VRAM bytes), Zum currently active ("Etank出現
+; 中はZumも出ないように 横並びでEtankが消える" - same ground-lane
+; exclusion as BigZum, checking both of ZUM_SLOT_COUNT=2's own slots),
+; the terrain-length gate below, and a free slot - same shape as
+; ALLOC_ZUM_SLOT/ALLOC_BIGZUM_SLOT, plus the same instant spawn-time
+; overlap resolution. Flyer is airborne and never gated against any of
+; these 3 ground enemies, nor they against it - "FlyerとBigZum、Flyer
+; とEtankは同時存在して良い".
 ALLOC_ETANK_SLOT:
+    LD HL,(GAME_TICK)
+    LD A,H
+    OR A
+    JR NZ,AETS_COUNT_OK
+    LD A,L
+    CP 70
+    RET C
+AETS_COUNT_OK:
     LD A,(BIGZUM_POOL)
     OR A
     RET NZ
