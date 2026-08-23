@@ -4055,6 +4055,82 @@ with no way to tell where.
   prior 2 diagnostic rounds (GAME_TICK=840 boot effect + the boss's own
   intentionally-disabled movement) - no new regressions.
 
+- **Boss collision, matching its own visible footprint, HP=255, and a
+  boss-only red hit-flash**: "ではボスにコリジョン 見た目通り 耐久値
+  255 んでフラッシュ処理はホワイトだと眩しいのでレッドに ボス戦だけな
+  通常はホワイトのままでいじるな". `BOSS_COLLISION_SIZE`(64) is the
+  boss's own real 64x64 footprint (`BOSS_X`..+63, `BOSS_SPAWN_Y`..+63) -
+  the full box, not a smaller hitbox, same AABB shape `CHECK_HIT_PAIR_
+  FLYER`/`_ETANK` already use for their own entities. `BOSS_HP_INIT`
+  (255) was already stored at spawn from an earlier round ("耐久値は
+  255で") but nothing read or decremented it until now.
+  `BOSS_FLASH_COLOR`(8, medium red - the same shade `EXPLOSION_COLOR`
+  already uses in this file for damage feedback) is its own dedicated
+  constant, separate from the shared global `FLASH_COLOR`(15/white)
+  every other entity's own hit-flash still uses unmodified - "通常は
+  ホワイトのままでいじるな" is a hard constraint, not a suggestion.
+  Deliberately NOT `BOSS_COLOR`'s own light red(9) either, so the flash
+  actually reads as a distinct color change rather than disappearing
+  into the boss's own base color - confirmed visually (see below), the
+  boss visibly shifts from light red to a clearly deeper/more saturated
+  red on a hit.
+  New `CHECK_BULLET_VS_BOSS`/`CHECK_HIT_PAIR_BOSS` (only ever matters
+  while `BOSS_ACT=1`, checked first) - on a hit, calls `ERASE_BULLET_
+  CELL` unconditionally (no F/U type branch needed, unlike `CHECK_HIT_
+  PAIR_FLYER`/`_ETANK`: this check only ever runs during the exact
+  window where BOTH bullet types are guaranteed BG-drawn, not a hw
+  sprite - see the U-BG-drawing entry above), deactivates the bullet,
+  decrements `BOSS_HP`, and either arms `BOSS_FLASH_TIMER`(`FLASH_
+  DURATION`, same shared duration constant every entity's flash uses)
+  plus the usual `SOUND_ZUM_DEFLECT` on a non-lethal hit, or destroys
+  the boss once HP reaches exactly 0.
+  `DRAW_BOSS` now resolves the flash color once per call (not once per
+  quadrant, so the timer only ticks down once/frame - same `BOSS_DRAW_
+  COLOR` scratch-byte-feeds-all-quadrants idiom `BIGZUM_DRAW_COLOR`
+  already established) instead of hardcoding `BOSS_COLOR` into every
+  quadrant write directly.
+  Destroying the boss needed a real design decision `UPDATE_BOSS_ALL`'s
+  existing `BOSS_ACT` field couldn't express on its own: 0(not yet
+  spawned) and 1(active) already meant "check spawn timing" vs "just
+  draw", so simply zeroing `BOSS_ACT` on death would have looked
+  identical to "never spawned" and the very next frame's `GAME_TICK>=
+  BOSS_SPAWN_TICK` check would have immediately re-spawned it. Added
+  `BOSS_ACT=2` ("destroyed, permanently gone") with its own `CP 2/RET Z`
+  guard at the very top of `UPDATE_BOSS_ALL`, checked before the
+  existing `OR A/JR NZ` active-check - a destroyed boss is now left
+  alone forever, never redrawn or re-spawned. New `HIDE_BOSS_SPRITES`
+  (same per-quadrant DI/EI-wrapped idiom as `FLUSH_BOSS_SPRITES`, but
+  writing just the Y byte=209 per quadrant instead of all 4) runs once
+  at the exact moment of death, since nothing would otherwise ever
+  refresh or hide those 16 hw sprite slots again once `DRAW_BOSS`/
+  `FLUSH_BOSS_SPRITES` stop being called. **Scope decision, not yet
+  requested**: death is a plain disappearance (HP hits 0 -> hidden,
+  `BOSS_ACT=2`) - no explosion animation/sound/score, unlike every
+  other entity's own destroy path (`CHPFL_DESTROY`/`CHPET_DESTROY`
+  etc.). Easy to add if wanted; left out since it wasn't part of this
+  instruction and boss-death's own broader behavior (does the stage/
+  game actually end?) hasn't been specified yet either.
+  Verified: new `tests/boss_collision_test.py` (18 checks - box size/
+  flash-color constants, a hit inside the box registers and decrements
+  HP/deactivates the bullet/arms the flash timer, a bullet outside the
+  box or against an unspawned boss never registers, a bullet at the
+  box's own far edge still registers - confirming the full 64px box,
+  not a smaller one, `DRAW_BOSS` resolving `BOSS_FLASH_COLOR` for all 16
+  quadrants while the timer is active and decrementing it exactly once
+  per call, HP reaching exactly 0 destroying the boss and hiding all 16
+  hw sprite slots, a destroyed boss never being touched by `UPDATE_BOSS_
+  ALL` again, and a real end-to-end `MAINLOOP` sweep - spawn for real,
+  drive HP to 0 via repeated real hits, confirm it stays destroyed
+  through 120 more real frames) all pass. Also rendered real frames
+  (`render_full`) confirming the visual result directly: the boss's own
+  color visibly shifts from its normal light red to a clearly deeper,
+  more saturated red the instant a hit lands, not merely "some other
+  color" - readable as damage feedback, not eye-searing white. Full
+  suite: 199/206 pass, same 7 known failures as every round since the
+  GAME_TICK=840/boss-frozen-movement diagnostics began (2 from the
+  GAME_TICK boot effect, 5 from the boss's own intentionally-disabled
+  patrol) - no new regressions from this round.
+
 ## Bugs found and fixed while building this
 
 - **Sand flickered between its own new color and Rock's, twice over**

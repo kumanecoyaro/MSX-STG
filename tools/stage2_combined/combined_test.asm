@@ -463,8 +463,21 @@ BOSS_SPAWNX     EQU 192     ; 256-64: off/at the right edge, sprite fully inside
 ; own history.
 BOSS_SPAWN_Y    EQU 56
 BOSS_SPEED      EQU 2       ; px/frame, flat (not the tank's 1.5px alternating trick) - "速度は2", same units/convention as FLYER_SPEED's own "速度は2"
-BOSS_HP_INIT    EQU 255     ; "耐久値は255で" - stored only, nothing reads/decrements it yet
+BOSS_HP_INIT    EQU 255     ; "耐久値は255で"
 BOSS_COLOR      EQU 9       ; from sprites/Sasapi.json's own fg (light red)
+; "ボスにコリジョン 見た目通り" - the boss's own real 64x64 visible
+; footprint, full AABB against BOSS_X/BOSS_SPAWN_Y (see CHECK_HIT_PAIR_
+; BOSS) - not a smaller hitbox.
+BOSS_COLLISION_SIZE EQU 64
+; "フラッシュ処理はホワイトだと眩しいのでレッドに ボス戦だけな 通常は
+; ホワイトのままでいじるな" - a BOSS-ONLY override of the hit-flash
+; color; the shared global FLASH_COLOR(white) every other entity uses
+; is untouched. Medium red(8), same shade EXPLOSION_COLOR already uses
+; in this file for damage/destruction feedback - deliberately NOT
+; BOSS_COLOR's own light red(9), so the flash actually reads as a
+; distinct color change against the boss's own base color instead of
+; disappearing into it.
+BOSS_FLASH_COLOR EQU 8
 ; hw sprite slots10-25 (16 quadrants, one per 16x16 cell of the 4x4
 ; grid making up the 64x64 sprite) - reuses Zum/BigZum/Flyer/Etank's
 ; own ranges (10-11/12-19/20-23/24-25) rather than a fresh permanent
@@ -1247,6 +1260,8 @@ BOSS_X             EQU F27Ah
 BOSS_DIR           EQU F27Bh
 BOSS_HP            EQU F27Ch
 BOSS_SPRITE_ATTRS  EQU F27Dh   ; 16 quadrants x4 bytes (Y,X,pat,col) = 64 bytes
+BOSS_FLASH_TIMER   EQU F2BDh   ; hit-flash countdown, same FLASH_DURATION-driven mechanism as every other HP-bearing entity's own flash timer
+BOSS_DRAW_COLOR    EQU F2BEh   ; scratch byte, DRAW_BOSS's own resolved color (BOSS_COLOR or BOSS_FLASH_COLOR) - feeds all 16 quadrant writes so the timer only ticks down once per frame, not 16 times
 ETANK_SPR_BASE_SLOT EQU 24     ; hw sprite slots24-25 (BL/BR only x1 instance), right after Flyer's own 20-23
 ; "カラーはダークレッド" - NOT sprites/Etank.json's own fg, overridden
 ; directly here (same "override the JSON's own fg" precedent as
@@ -2155,6 +2170,7 @@ SKIP_ZACO_ENEMY:
     CALL UPDATE_TANK_ETANK_PUSH
 SKIP_OTHER_ENEMIES:
     CALL UPDATE_BOSS_ALL
+    CALL CHECK_BULLET_VS_BOSS
     CALL CLOUD_UPDATE_ALL
 
     CALL SOUND_UPDATE
@@ -6612,7 +6628,13 @@ LOAD_SASAPI_PATTERNS:
 ; matching facing's pattern data (see LOAD_SASAPI_PATTERNS's own
 ; comment) at spawn and at each reversal, never mid-step.
 UPDATE_BOSS_ALL:
+    ; BOSS_ACT=2 = destroyed by CHECK_HIT_PAIR_BOSS (HP reached 0) -
+    ; permanently gone, nothing left to spawn/move/draw. Checked before
+    ; the ACT!=0 check below, which would otherwise treat 2 the same as
+    ; 1 (active) and keep drawing/re-spawning it forever.
     LD A,(BOSS_ACT)
+    CP 2
+    RET Z
     OR A
     ; ⚠ DIAGNOSTIC: "ボスは表示だけで動かさないでくれ" - once spawned,
     ; skip all patrol/reversal/pattern-reload logic (UBA_MOVE below) and
@@ -6632,6 +6654,7 @@ UPDATE_BOSS_ALL:
     LD A,BOSS_SPAWNX : LD (BOSS_X),A
     XOR A : LD (BOSS_DIR),A    ; 0 = moving left first - "右から出現し左へ"
     LD A,BOSS_HP_INIT : LD (BOSS_HP),A
+    XOR A : LD (BOSS_FLASH_TIMER),A
     JR UBA_DRAW
 UBA_MOVE:
     LD A,(BOSS_DIR)
@@ -6671,7 +6694,23 @@ UBA_DRAW:
 ; this stage. ADD A,(IX+d) isn't a form this assembler supports (see
 ; mini_z80asm.py's own enc_alu_a - only r8/mHL/imm sources), so each
 ; delta is loaded into B first and added from there instead.
+; hit-flash color resolve, once per draw call (not once per quadrant) -
+; same mechanism as every other HP-bearing entity's own flash (see
+; UOBZD_COLOR_SET's own comment), but BOSS_FLASH_COLOR instead of the
+; shared global FLASH_COLOR - "フラッシュ処理はホワイトだと眩しいので
+; レッドに ボス戦だけな 通常はホワイトのままでいじるな".
 DRAW_BOSS:
+    LD A,(BOSS_FLASH_TIMER)
+    OR A
+    JR Z,DRB_COLOR_NORMAL
+    DEC A : LD (BOSS_FLASH_TIMER),A
+    LD A,BOSS_FLASH_COLOR
+    JR DRB_COLOR_SET
+DRB_COLOR_NORMAL:
+    LD A,BOSS_COLOR
+DRB_COLOR_SET:
+    LD (BOSS_DRAW_COLOR),A
+
     LD IX,BOSS_QUAD_OFFSETS
     LD HL,BOSS_SPRITE_ATTRS
     LD B,16
@@ -6685,7 +6724,7 @@ DRB_LOOP:
     LD A,(IX+2) : LD C,A
     LD A,PAT_SASAPI : ADD A,C
     LD (HL),A : INC HL
-    LD A,BOSS_COLOR : LD (HL),A : INC HL
+    LD A,(BOSS_DRAW_COLOR) : LD (HL),A : INC HL
     INC IX : INC IX : INC IX
     DJNZ DRB_LOOP
     RET
@@ -6784,6 +6823,99 @@ FBOS_LOOP:
     EI
     LD A,C : ADD A,4 : LD C,A
     DJNZ FBOS_LOOP
+    RET
+
+; called once, the instant the boss is destroyed (HP reaches 0) - hides
+; all 16 hw sprite slots permanently (Y=209, same hide convention as
+; every other entity). Needed because UPDATE_BOSS_ALL stops calling
+; DRAW_BOSS/FLUSH_BOSS_SPRITES entirely once BOSS_ACT=2 (see its own
+; CP 2/RET Z guard), so nothing would ever refresh or hide these slots
+; again otherwise - only the Y byte of each quadrant needs writing (X/
+; pattern/color no longer matter once hidden), so 1 OUT per quadrant
+; instead of FLUSH_BOSS_SPRITES's own 4.
+HIDE_BOSS_SPRITES:
+    LD C,BOSS_SPR_BASE_SLOT*4
+    LD B,16
+HBOS_LOOP:
+    DI
+    LD A,C : OUT (99h),A
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    LD A,209 : OUT (98h),A
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    EI
+    LD A,C : ADD A,4 : LD C,A
+    DJNZ HBOS_LOOP
+    RET
+
+CHECK_BULLET_VS_BOSS:
+    LD IX,BULLET0_ACT : CALL CHECK_HIT_PAIR_BOSS
+    LD IX,BULLET1_ACT : CALL CHECK_HIT_PAIR_BOSS
+    LD IX,BULLET2_ACT : CALL CHECK_HIT_PAIR_BOSS
+    RET
+
+; IX = bullet slot base. AABB vs the boss's own real 64x64 footprint
+; (BOSS_X..+63, BOSS_SPAWN_Y..+63, BOSS_COLLISION_SIZE=64) - "ボスに
+; コリジョン 見た目通り" - same shape as CHECK_HIT_PAIR_FLYER/ETANK,
+; just with the boss's own fixed-Y/full-size box. Only ever matters
+; while BOSS_ACT=1 (checked first) - by that same point every ordinary
+; enemy has stopped spawning, and BOTH bullet types (F and U - see
+; DRAW_BULLET_CELL's own boss-only U-BG-drawing entry) are guaranteed
+; BG-drawn, not a hw sprite, so ERASE_BULLET_CELL is called
+; unconditionally on a hit here, with no IX+1(TYPE) branch needed
+; (unlike CHECK_HIT_PAIR_FLYER/ETANK, written back when U was always a
+; hw sprite outside this exact window).
+CHECK_HIT_PAIR_BOSS:
+    LD A,(IX+0)
+    OR A
+    RET Z
+    LD A,(BOSS_ACT)
+    CP 1
+    RET NZ
+
+    LD A,(IX+2) : ADD A,A : ADD A,A : ADD A,A : LD B,A
+    LD A,(IX+3) : ADD A,A : ADD A,A : ADD A,A : LD C,A
+    LD A,(BOSS_X) : LD D,A
+    LD A,BOSS_SPAWN_Y : LD E,A
+
+    LD A,B : ADD A,7 : CP D : RET C
+    LD A,D : ADD A,BOSS_COLLISION_SIZE-1 : CP B : RET C
+    LD A,C : ADD A,7 : CP E : RET C
+    LD A,E : ADD A,BOSS_COLLISION_SIZE-1 : CP C : RET C
+
+    CALL ERASE_BULLET_CELL
+    XOR A : LD (IX+0),A
+
+    LD A,(BOSS_HP) : DEC A : LD (BOSS_HP),A
+    JR Z,CHPBOSS_DESTROY
+    LD A,FLASH_DURATION : LD (BOSS_FLASH_TIMER),A
+    CALL SOUND_ZUM_DEFLECT
+    RET
+CHPBOSS_DESTROY:
+    LD A,2 : LD (BOSS_ACT),A
+    CALL HIDE_BOSS_SPRITES
     RET
 
 ; walks CLOUD_POOL (IX-indexed, 9x INC IX per slot - this assembler has

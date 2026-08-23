@@ -350,6 +350,58 @@ Communicates in terse, often angry Japanese. Expects:
   effect + boss's own intentionally-disabled movement), no new
   regressions from this change.
 
+## Boss now has real collision, HP, and a boss-only red hit-flash
+
+- "ではボスにコリジョン 見た目通り 耐久値255 んでフラッシュ処理はホワ
+  イトだと眩しいのでレッドに ボス戦だけな 通常はホワイトのままでいじ
+  るな". `CHECK_BULLET_VS_BOSS`/`CHECK_HIT_PAIR_BOSS` (new) AABB-check
+  every bullet against the boss's own real 64x64 box (`BOSS_COLLISION_
+  SIZE`=64, `BOSS_X`..+63/`BOSS_SPAWN_Y`..+63 - the full visible
+  footprint, not a smaller hitbox), only while `BOSS_ACT=1`. On a hit:
+  `ERASE_BULLET_CELL` unconditionally (both F and U are guaranteed
+  BG-drawn during this exact window - see the U-BG-drawing entry above
+  - so no type branch is needed here, unlike `CHECK_HIT_PAIR_FLYER`/
+  `_ETANK`), deactivate the bullet, decrement `BOSS_HP`, then either arm
+  `BOSS_FLASH_TIMER` + play `SOUND_ZUM_DEFLECT` (non-lethal) or destroy
+  the boss (HP hit 0).
+- **`BOSS_FLASH_COLOR`(8, medium red) is its own dedicated constant -
+  the shared global `FLASH_COLOR`(white) every OTHER entity's hit-flash
+  uses is untouched, per direct instruction.** Deliberately not `BOSS_
+  COLOR`'s own light red(9) either, so the flash actually reads as a
+  distinct color change - confirmed by rendering an actual frame (see
+  README), the boss visibly shifts to a clearly deeper/more saturated
+  red on a hit, not an invisible same-color flash.
+- **New `BOSS_ACT=2` state ("destroyed, permanently gone") was a real
+  design necessity, not just a nice-to-have**: the existing `BOSS_ACT`
+  field only had 0(not spawned)/1(active) before this round, and
+  `UPDATE_BOSS_ALL`'s own spawn check runs whenever `BOSS_ACT=0` - so
+  simply zeroing it on death would have looked identical to "never
+  spawned yet" and the very next frame would have immediately
+  re-triggered `GAME_TICK>=BOSS_SPAWN_TICK` and re-spawned it. Added a
+  `CP 2/RET Z` guard at the very top of `UPDATE_BOSS_ALL`, before the
+  existing active-check, so a destroyed boss is left alone forever.
+  `HIDE_BOSS_SPRITES` (new, same per-quadrant DI/EI idiom as `FLUSH_
+  BOSS_SPRITES` but 1 OUT/quadrant instead of 4 - only the Y byte
+  matters once hidden) runs once at the exact moment of death, since
+  nothing else will ever touch those 16 hw sprite slots again once
+  `DRAW_BOSS`/`FLUSH_BOSS_SPRITES` stop being called for a `BOSS_ACT=2`
+  boss.
+- **Scope decision, not yet requested - death is a plain disappearance,
+  no explosion**: unlike every other entity's own destroy path (random
+  drift, `EXPLOSION_DURATION` animation, `SOUND_DESTROY`, score add via
+  `ADD_SCORE`), the boss just vanishes the instant HP hits 0 (`BOSS_
+  ACT=2` + hidden). Easy to add if the user wants parity with the other
+  entities' own explosion - left out since the instruction didn't ask
+  for it, and what should actually happen when the boss dies (does the
+  stage/game end? a victory state?) hasn't been specified at all yet.
+- Verified: new `tests/boss_collision_test.py` (18 checks, including a
+  real end-to-end `MAINLOOP` sweep - spawn for real, drive HP to 0 via
+  repeated real hits, confirm it stays destroyed through 120 more real
+  frames) all pass, plus a real `render_full` frame render confirming
+  the flash color visually. Full suite: 199/206 pass, same 7 known
+  failures as every round since the GAME_TICK=840/boss-frozen-movement
+  diagnostics began - no new regressions.
+
 ## Open items / things to watch
 
 - No known open bugs as of this handoff — the boss's own SPRPAT bug
