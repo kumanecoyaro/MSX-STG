@@ -547,6 +547,8 @@ with no way to tell where.
   | 7 | Tank sprite attributes written |
   | 8 | Score/counter/calibration-strip HUD + PSG set up |
   | 9 | Enemy patterns + pool set up - about to enter MAINLOOP |
+  | 11 | INIT reached, SP set - about to map the primary slot into page2 (added once the ROM grew past 16KB - see the page2-mapping entry further down) |
+  | 12 | Primary slot mapped into page2 - about to call BIOS SCREEN1 setup |
 
   If it freezes again, report which color is showing.
 - **SkySand row19** (per direct instruction, across 2 rounds: an
@@ -2673,6 +2675,88 @@ with no way to tell where.
   spilling into page2) for the first time this session - exercises the
   primary-slot page2-mapping fix added earlier specifically for this
   scenario.
+- **Real hardware still glitching past 16KB, Etank not appearing at
+  all**:
+  > グリッチ状態
+  > ロールバックしたときと同じ状況
+  > 推測通り16KB超えた途端バグってると思われる
+  > ちゃんとバンクの初期化が出来てないな
+  > その上ETankは全く出現しない
+
+  then, after being asked whether to invest in a real ASCII16 mapper
+  instead:
+
+  > ASCII16バンク実装でも構わないが
+  > MSXは標準でも32KBリニアマップは出来る
+  > BIOSではPage2がマッピングされないので初期化でマッピングするコード
+  > を入れるだけ
+  > 過去にも全く同じミスをお前がやらかしてて特定に時間かかった
+  > 調べて実装
+  - **Etank never appearing traces directly to the same overflow**:
+    checked exactly where the assembler placed `ETANK_BL`/`ETANK_BR`
+    (Etank's own sprite pattern data, LDIRVM'd into VRAM on every spawn)
+    - `0x8135`/`0x8155`, both past `0x8000`/page2. If page2 isn't
+    correctly visible, that LDIRVM copies whatever garbage is actually
+    there instead of Etank's real art, independent of whether Etank's
+    own spawn/movement LOGIC (which lives entirely in page1) is correct
+    - not a separate bug, a direct symptom of the same root cause.
+  - **Re-verified the existing page2-mapping fix against `CYBER
+    SHMUP.asm`'s own INIT (the "confirmed working on real hardware"
+    reference it was copied from) by every means available from this
+    environment**: diffed both the source text and the actual assembled
+    opcode bytes (`DB A8`/`D3 A8` for the IN/OUT, confirmed via a direct
+    symbol-table dump) - byte-for-byte identical. Confirmed it runs as
+    the literal first thing in `INIT` (nothing upstream could already
+    be touching page2) and that nothing later in the file writes to
+    port `0A8h` again to undo it. No bug found in the mapping logic
+    itself through static analysis - the general approach was already
+    correct, not a guess, matching the proven reference precisely.
+  - Since "properly done" clearly still needs *something* more (per
+    the report) and real-hardware verification isn't possible from this
+    environment, 2 concrete, low-risk changes rather than a repeat
+    guess:
+    1. **`DI` moved to before the slot-register read-modify-write**
+       (was after, matching the reference) - a real MSX BIOS interrupt
+       handler can itself perform inter-slot calls that touch this same
+       port `0A8h` register internally; if one fires between the `IN`
+       and the `OUT`, the sequence becomes unsafe. The reference code
+       doesn't guard against this either, so it may be a latent bug
+       there too (interrupt-timing races are notoriously hard to
+       reproduce reliably, which would explain "confirmed working"
+       without actually being immune). Zero downside - this whole
+       region already needs interrupts off for the raw VDP/PSG port I/O
+       right after it, so widening that protected region to also cover
+       this block is free.
+    2. **2 new border-color diagnostic checkpoints (11 before, 12
+       after)** bracketing the slot-mapping block specifically, chosen
+       not to collide with the existing 1-9 sequence (deliberately not
+       renumbering that already-documented table). Since the code has
+       now been re-verified correct by every static means available,
+       the only way to find out whether the CPU is even reaching/
+       clearing this exact block on the board that's still glitching is
+       to ask the board directly next time.
+  - Considered and explicitly rejected: hand-rolling `EXPTBL`/`SLTTBL`/
+    `ENASLT`-based expanded-slot handling (the ONE documented gap in the
+    existing fix - "correct for an unexpanded slot ... not [for] a
+    cartridge slot with sub-slots"). Real MSX expanded-slot secondary-
+    register bit-packing needed for that is not something this session
+    could verify with confidence from memory alone, and `z80emu.py` has
+    no slot/page model at all to test it against even approximately - a
+    wrong guess at the bit format could make a genuinely expanded-slot
+    board WORSE (misdirected slot switch) than the current already-
+    broken state. Not attempted without a way to verify it.
+  Verified: full regression suite (existing shake-off/Flyer/terrain/
+  ZacoII-flash/Etank targeted suites, 20000-frame random-input sweep,
+  20000-frame idle sweep, all no crash/stall; `render_check.py` clean)
+  confirms the `DI` reorder didn't regress anything already working in
+  the emulator - but the emulator cannot verify the actual real-
+  hardware question here (no slot/page model), so this entry is
+  explicitly NOT claiming the glitch or the missing Etank are fixed,
+  only that the existing fix was re-verified correct wherever
+  verification is possible, hardened against one identified latent
+  risk, and instrumented for a decisive answer on the next real-
+  hardware test - report which border color (11, 12, both, or neither)
+  is showing if it still glitches or freezes.
 
 ## Bugs found and fixed while building this
 

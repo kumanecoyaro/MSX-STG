@@ -1165,33 +1165,75 @@ STACKTOP      EQU 0F380h
 INIT:
     LD SP,STACKTOP
 
-    ; "本編組み込みでは必要ないが 今のテストではバンク初期化してないと
-    ; 16KB超えたらバンクBが見えなくて暴走かフリーズする" - this file
-    ; assembles to a flat, single-content 32KB image (ORG 4000h,
-    ; currently ~15KB used, page1 only) with no real second bank to
-    ; switch to - but on real hardware, page2 (8000h-BFFFh) isn't
-    ; guaranteed to already be mapped to this cartridge's own primary
-    ; slot at boot; some loaders leave it pointed at whatever slot was
-    ; last selected there (RAM, BIOS, etc). Any code/data that ends up
-    ; past 7FFFh would then physically land in the WRONG slot - reads
-    ; back as garbage/uninitialized, not this ROM's own bytes - which
-    ; is invisible in `z80emu.py` (no slot/page model at all) but would
-    ; show up on real hardware as exactly the kind of unexplained
-    ; runaway/freeze this session chased before the full rollback, once
-    ; the code was big enough to spill past 16KB (as this file itself
-    ; nearly is now - currently ~15KB of ~16KB). Same "map our own
-    ; primary slot into page2" belt-and-suspenders step as `CYBER
-    ; SHMUP.asm`'s own INIT and `tools/bankswitch_poc/bank_a.asm`
-    ; (confirmed working on real hardware there) - reads the current
-    ; slot config from the PPI (port 0A8h), copies the page1 (bits2-3)
-    ; slot number into the page2 (bits4-5) field, writes it back. Since
-    ; this file has no true bank-switch mechanism of its own (unlike
-    ; bankswitch_poc), that's the ONLY step needed here - no RAM
-    ; trampoline, no mapper bank-select write. TEST-ONLY: remove this
-    ; block entirely once this code is folded into the real game, which
-    ; already does its own equivalent slot/bank setup via `CYBER
-    ; SHMUP.asm`'s own INIT - duplicating it there would be redundant,
-    ; not harmful, but it belongs to that integration, not here.
+    ; checkpoint P1 (border color 11): INIT reached, SP set, about to
+    ; touch the slot register below - see the checkpoint P2/1 pair's own
+    ; comment for why this specific pair exists.
+    LD B,11 : LD C,7 : CALL WRTVDP
+
+    ; "グリッチ状態 ロールバックしたときと同じ状況 推測通り16KB超えた
+    ; 途端バグってると思われる ちゃんとバンクの初期化が出来てないな"
+    ; then, once asked whether to go with a real ASCII16 mapper instead:
+    ; "ASCII16バンク実装でも構わないが MSXは標準でも32KBリニアマップは
+    ; 出来る BIOSではPage2がマッピングされないので初期化でマッピング
+    ; するコードを入れるだけ 過去にも全く同じミスをお前がやらかしてて
+    ; 特定に時間かかった 調べて実装" - this file assembles to a flat,
+    ; single-content 32KB image (ORG 4000h, now >16KB, genuinely
+    ; spilling into page2) with no real second bank to switch to, so a
+    ; real mapper isn't needed - just mapping the primary slot into
+    ; page2, which the BIOS's own cartridge-boot sequence does NOT do on
+    ; its own (it only auto-maps page1, where execution starts).
+    ;
+    ; Exhaustively re-verified against `CYBER SHMUP.asm`'s own INIT
+    ; (the "same belt-and-suspenders step" this was copied from,
+    ; itself claimed "confirmed working on real hardware"): the actual
+    ; instruction sequence below is byte-for-byte identical (diffed
+    ; both source and the assembled opcode bytes directly - IN/AND/ADD/
+    ; LD/OR/OUT all match exactly), correctly assembled (DB A8/D3 A8 for
+    ; the IN/OUT), runs as literally the first thing in INIT (nothing
+    ; upstream could already be touching page2), and nothing later in
+    ; this file writes to port 0A8h again to undo it. No bug found in
+    ; the mapping logic itself through static analysis - the general
+    ; approach ("just add mapping code") is confirmed correct, matching
+    ; the reference precisely, not a guess.
+    ;
+    ; 2 changes made anyway, since "全く同じミスを...特定に時間かかった"
+    ; means this needs to actually be resolved, not just re-confirmed
+    ; correct on paper:
+    ; 1. DI moved to BEFORE this block (was after, matching the
+    ;    reference) - a real MSX BIOS interrupt handler can itself
+    ;    perform inter-slot calls that touch this same port 0A8h
+    ;    register internally; if one fires between this block's own IN
+    ;    and OUT, the read-modify-write becomes unsafe. The reference
+    ;    code doesn't guard against this either, so this may be a
+    ;    latent bug there too (interrupt-timing races are notoriously
+    ;    hard to reproduce reliably, which would explain why it reads
+    ;    as "confirmed working" there without actually being immune).
+    ;    Zero downside either way - this whole region already needs to
+    ;    run with interrupts off for the raw VDP/PSG port I/O right
+    ;    after it (see the existing DI/CALL INIT32/EI shape), so
+    ;    widening that protected region to also cover this block is
+    ;    free.
+    ; 2. Checkpoint P1 above and checkpoint P2 below bracket this block
+    ;    specifically (distinct border colors 11/12, chosen NOT to
+    ;    collide with the existing checkpoints 1-9 table in README.md -
+    ;    a deliberate choice to avoid renumbering that established,
+    ;    already-documented sequence) - since the code has now been
+    ;    re-verified as correct by every means available from this
+    ;    environment (no access to real hardware to test further), the
+    ;    only way to find out whether the CPU is even reaching/clearing
+    ;    this exact block on the real board it's still glitching on is
+    ;    to ask the board directly. Report which color (11, 12, both,
+    ;    or neither) is showing if it glitches/freezes again - that
+    ;    pinpoints whether this specific block is really where things
+    ;    go wrong, or whether the problem is somewhere else entirely
+    ;    (e.g. within BIOS SCREEN1 setup itself, or later).
+    ;
+    ; TEST-ONLY: remove this whole block once this code is folded into
+    ; the real game, which already does its own equivalent slot setup
+    ; via `CYBER SHMUP.asm`'s own INIT - duplicating it there would be
+    ; redundant, not harmful, but it belongs to that integration, not
+    ; here.
+    DI
     IN A,(0A8h)
     LD B,A
     AND 0Ch
@@ -1203,7 +1245,10 @@ INIT:
     OR C
     OUT (0A8h),A
 
-    DI
+    ; checkpoint P2 (border color 12): slot register write done -
+    ; page2 should now show this ROM's own real content.
+    LD B,12 : LD C,7 : CALL WRTVDP
+
     CALL INIT32
     EI
 
