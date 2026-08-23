@@ -139,12 +139,16 @@ BULLET_ROCK_ROW_MIN EQU 16      ; first row needing an explicit (non-sky) erase 
 ; yellow).
 BULLET_ROCK_COLOR_ROW_MIN_F EQU 17
 ; a diagonal/U shot decrements ROW every frame as it climbs; with no
-; lower bound it could fly into rows0-1 (the HUD) and erase a glyph
-; permanently instead of restoring it - "カラーバーAからF消えたぞ".
-; Fixed by never letting a bullet's row go below this. Still applies
-; now that U is a sprite (it's a position bound on the shared ROW/COL
-; bookkeeping, not a BG-erase concern specifically).
-BULLET_MIN_ROW    EQU 2
+; lower bound it could fly into row0 (the HUD/score row) and erase a
+; glyph permanently instead of restoring it - "カラーバーAからF消え
+; たぞ". Fixed by never letting a bullet's row go below this. Still
+; applies now that U is a sprite (it's a position bound on the shared
+; ROW/COL bookkeeping, not a BG-erase concern specifically). Was 2
+; (guarding rows0-1, back when row1 still held calibration-strip
+; content); row1 is ordinary sky now (see NIGHT_START_ROW's own
+; comment on that same row) - "斜めショットのガードが今は上から2行に
+; なってるが1行目だけに変更" - only row0 itself needs guarding.
+BULLET_MIN_ROW    EQU 1
 BULLET_MAXCOL     EQU 31        ; last valid name-table column (0-31)
 BULLET_MUZZLE_DX  EQU 24        ; spawn column offset from TANK_X (muzzle, right side of the tank)
 BULLET_MUZZLE_DX_LEFT EQU 7     ; mirrored muzzle offset for a left-facing shot (32-1-24)
@@ -2790,7 +2794,22 @@ ERASE_BULLET_CELL:
 EBC_SKYSAND:
     LD A,SKYSAND_CODE
     JR EBC_WRITE
+; "ショット水平打ちのBG復元カラーを夜になったらブラックに変更" - once
+; CHECK_NIGHT's own sweep has already darkened this particular row
+; (NIGHT_ROW>=this row - not just "is it night at all", since the
+; sweep only covers 1 more row every 16 GAME_TICKs and a bullet could
+; be flying through a row the sweep hasn't reached yet), restore
+; HUD_ROW_BLANK_CODE(black) instead of the ordinary SKY_BLANK_CODE so
+; an erased shot trail doesn't leave a stray blue patch in the
+; already-dark sky.
 EBC_SKY:
+    LD A,(IX+3) : LD B,A
+    LD A,(NIGHT_ROW)
+    CP B
+    JR C,EBC_SKY_BLUE      ; NIGHT_ROW<row - not reached by the sweep yet
+    LD A,HUD_ROW_BLANK_CODE
+    JR EBC_WRITE
+EBC_SKY_BLUE:
     LD A,SKY_BLANK_CODE
 EBC_WRITE:
     LD (BULLET_TEMP_BYTE),A

@@ -3393,6 +3393,33 @@ with no way to tell where.
   immediately below the score/life-bar row, no untouched blue row
   in between any more.
 
+- **Diagonal-shot row guard narrowed to row0 only; horizontal shot's
+  erase color follows the night sweep**: "斜めショットのガードが今は
+  上から2行になってるが1行目だけに変更 ショット水平打ちのBG復元カラ
+  ーを夜になったらブラックに変更".
+  `BULLET_MIN_ROW` was `2` (guarding rows0-1, from back when row1 still
+  held the now-removed calibration strip - see `NIGHT_START_ROW`'s own
+  comment on that same row being ordinary sky now) - changed to `1`, so
+  a climbing shot can now reach row1 and only row0 (the score/life-bar
+  row itself) stays off-limits.
+  `ERASE_BULLET_CELL`'s own `EBC_SKY` branch (the horizontal/F shot's
+  own BG-restore, run every frame as the shot advances and whenever it
+  hits something) now compares its own row against `NIGHT_ROW`: if
+  `CHECK_NIGHT`'s own sweep has already darkened that specific row
+  (`NIGHT_ROW>=`row), it restores `HUD_ROW_BLANK_CODE`(black) instead
+  of the ordinary `SKY_BLANK_CODE` - not a blanket "once it's night"
+  switch, since the sweep only covers 1 more row every 16 `GAME_TICK`s
+  and a shot could well be flying through a row it hasn't reached yet;
+  checking the specific row avoids leaving a stray blue patch in
+  already-dark sky OR a stray black patch in still-blue sky.
+  Verified: new `bullet_night_test.py` (7 checks - `BULLET_MIN_ROW`
+  is `1`, a real climbing shot now reaches row1 through
+  `UPDATE_ONE_BULLET` and still deactivates rather than ever reaching
+  row0, `ERASE_BULLET_CELL` restores blue for a not-yet-reached row,
+  black for an already-reached row, black at the exact boundary row,
+  and blue before the night effect has started at all) - all pass.
+  Full suite (131 checks across all files) passes.
+
 ## Bugs found and fixed while building this
 
 - **Sand flickered between its own new color and Rock's, twice over**
