@@ -457,33 +457,77 @@ the tearing got fixed.
 - **Known, unaddressed edge case, documented in-code**: a BG-drawn
   bullet (F always, or U while `BOSS_ACT!=0` - see the U-BG-drawing
   entry above) whose cell happens to overlap col24-31/row7-14 while the
-  hand is on screen would locally corrupt part of it (drawn over, then
-  erased back to `NIGHT_CODE` instead of the hand's own tile) - not
-  handled this round, same class of accepted, un-fixed interaction as
-  the per-scanline sprite-priority quirk documented elsewhere. Also:
-  collision (`CHECK_HIT_PAIR_BOSS`) stays fully active during the pose
-  (same AABB, same position) - a hit while posing still decrements HP
-  and arms the flash timer, but `DRAW_BOSS` (which would normally
-  consume/show that flash) isn't called again until the pose ends, so
-  any flash armed mid-pose only becomes visible once sprite mode
-  resumes. Neither of these was asked about - flagged, not fixed.
-  "攻撃内容はまた今度" - the actual attack/damage-to-player behavior
-  during this pose is explicitly deferred to a future round.
-- Verified: new `tests/boss_pose_test.py` (21 checks - left-edge
-  reversal unchanged, right-edge return enters the pose instead of
-  reversing immediately, sprite hidden + hand codes drawn at the exact
-  expected VRAM addresses the instant the pose starts, `BOSS_X`/`BOSS_
-  DIR` frozen and both stay put through several more calls while still
-  posing, pose exit exactly at the GAME_TICK threshold restores `NIGHT_
-  CODE`/reloads the normal facing/shows the sprite again/resumes DIR=0,
-  and a real end-to-end `MAINLOOP` sweep through a full spawn->left-
-  edge->right-edge->pose-entry->pose-exit cycle) all pass. `tests/
-  boss_test.py`'s own stale "immediate reversal at the right edge"
-  assertions (2 of them) were updated to check for pose-entry instead,
-  since that behavior is now intentionally different - not a
-  regression, a corrected test. Also rendered a real frame during the
-  pose (`render_full`) confirming the hand art actually displays
-  correctly at the boss's own position while the hw sprite is hidden.
+  hand is on screen WAS flagged as a locally-corrupting, unaddressed
+  edge case - **confirmed real on real hardware and fixed the same
+  round it was reported, see the entry right below.** Also: collision
+  (`CHECK_HIT_PAIR_BOSS`) stays fully active during the pose (same
+  AABB, same position) - a hit while posing still decrements HP and
+  arms the flash timer, but `DRAW_BOSS` (which would normally consume/
+  show that flash) isn't called again until the pose ends, so any flash
+  armed mid-pose only becomes visible once sprite mode resumes - still
+  unaddressed, not asked about. "攻撃内容はまた今度" - the actual
+  attack/damage-to-player behavior during this pose is explicitly
+  deferred to a future round.
+- Verified: new `tests/boss_pose_test.py` (23 checks as of the fix
+  round below - left-edge reversal unchanged, right-edge return enters
+  the pose instead of reversing immediately, sprite hidden + hand codes
+  drawn at the exact expected VRAM addresses the instant the pose
+  starts, `BOSS_X`/`BOSS_DIR` frozen and both stay put through several
+  more calls while still posing, pose exit exactly at the GAME_TICK
+  threshold restores the cells/reloads the normal facing/shows the
+  sprite again/resumes DIR=0, and a real end-to-end `MAINLOOP` sweep
+  through a full spawn->left-edge->right-edge->pose-entry->pose-exit
+  cycle) all pass. `tests/boss_test.py`'s own stale "immediate reversal
+  at the right edge" assertions (2 of them) were updated to check for
+  pose-entry instead, since that behavior is now intentionally
+  different - not a regression, a corrected test. Also rendered a real
+  frame during the pose (`render_full`) confirming the hand art actually
+  displays correctly at the boss's own position while the hw sprite is
+  hidden.
+
+## Bug fix round: erase used the wrong "blank" code, and the flagged bullet-vs-hand corruption really happened
+
+- User's report (with a real WebMSX screenshot at GAME_TICK≈1183):
+  "BG復帰処理でSandskyが書き込まれてるな ブランクのブラック でお前が
+  指摘してたボスBG表示欠け発生 消えないようにするか 復帰処理で対応".
+  Two separate real bugs, both confirmed:
+  1. **`ERASE_SASAPI_HAND`'s own `NIGHT_ROW_BLANK8` source table used
+     `NIGHT_CODE`, not `HUD_ROW_BLANK_CODE`** - a real bug, not a
+     naming confusion caught in review: `NIGHT_CODE` is `CHECK_NIGHT`'s
+     own STRIPED leading-row tile (used for exactly 1 row at a time,
+     the current sweep frontier - see its own `CN_SET_ROW` comment),
+     NOT a general "already dark" restore value; `HUD_ROW_BLANK_CODE`
+     (the SAME code `EBC_SKY`'s own already-swept branch already uses)
+     is the actual plain solid black. Once the pose ended, the hand's
+     own 8x8 cell block showed the striped tile instead of solid black
+     - exactly the screenshot's own visible artifact. Fixed by
+     switching `NIGHT_ROW_BLANK8` to `HUD_ROW_BLANK_CODE`.
+  2. **The bullet-vs-hand-art corruption flagged (not fixed) in the
+     round above really happened** - confirmed by the same screenshot.
+     Fixed via "復帰処理で対応" (handle it through the recovery
+     process) exactly as directed: `DRAW_SASAPI_HAND` is now called
+     every frame `UBA_POSE` is still waiting (`UBA_POSE`'s own `RET C`
+     early-return became `JR NC,UBAP_END` / `CALL DRAW_SASAPI_HAND :
+     RET`), not just once at pose-entry - any bullet-caused corruption
+     heals back to the correct tile within 1 more frame, same "restore
+     the known-correct value every frame" idiom this file already uses
+     for terrain/night, rather than trying to prevent the bullet's own
+     write from ever landing there in the first place. A real,
+     deliberate per-frame VDP write during the pose specifically (not
+     the whole game) - an accepted cost for the fix to actually work,
+     not a regression of the tearing-fix rounds' own "avoid needless
+     per-frame writes" theme (that theme was about writes with NO
+     purpose; this one has one).
+  Verified: `tests/boss_pose_test.py` grew from 21 to 23 checks - the
+  restore-target check switched from `NIGHT_CODE` to `HUD_ROW_BLANK_
+  CODE` (was itself checking the wrong value before this fix, silently
+  passing because the buggy code and the buggy test agreed), plus a new
+  check that deliberately corrupts one hand cell mid-pose and confirms
+  it heals back to the correct code within exactly 1 more `UPDATE_BOSS_
+  ALL` call. Also re-rendered a real frame right after a pose ends,
+  confirming plain solid black (not the striped tile) is what's
+  actually shown. Full suite: 225/228 pass, same 3 known GAME_TICK=840-
+  boot-effect failures - no new regressions.
 
 ## Open items / things to watch
 

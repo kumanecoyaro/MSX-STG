@@ -4219,6 +4219,49 @@ with no way to tell where.
   checks) - no new regressions, and note the boss-frozen-movement
   failures from prior rounds are gone now that real movement is back.
 
+- **2 real bugs from a real WebMSX screenshot (GAME_TICK≈1183): the
+  pose-exit erase used the wrong "blank" code, and the flagged bullet-
+  vs-hand corruption really happened**: "BG復帰処理でSandskyが書き込ま
+  れてるな ブランクのブラック でお前が指摘してたボスBG表示欠け発生
+  消えないようにするか 復帰処理で対応".
+  1. `ERASE_SASAPI_HAND`'s own `NIGHT_ROW_BLANK8` source table wrote
+     `NIGHT_CODE` for all 64 restored cells - genuinely wrong, not just
+     a naming mix-up: `NIGHT_CODE` is `CHECK_NIGHT`'s own STRIPED
+     leading-row tile, used for exactly 1 row at a time (the sweep's
+     current frontier - see its own `CN_SET_ROW` comment), never a
+     general "already dark" value. `HUD_ROW_BLANK_CODE` - the SAME code
+     `EBC_SKY`'s own already-swept branch already uses elsewhere in
+     this file - is the real plain solid black. Once the pose ended,
+     the hand's own 8x8 block showed the striped tile instead, exactly
+     what the screenshot shows. Fixed by switching the table to `HUD_
+     ROW_BLANK_CODE`.
+  2. The bullet-vs-hand-art corruption explicitly flagged (but not
+     fixed) in the round that added the pose was confirmed real by the
+     same screenshot. Fixed exactly as directed - "復帰処理で対応"
+     (handle it through the recovery process): `DRAW_SASAPI_HAND` now
+     runs every frame `UBA_POSE` is still waiting, not just once at
+     entry (`RET C` became `JR NC,UBAP_END` / `CALL DRAW_SASAPI_HAND :
+     RET`) - any bullet-caused corruption heals back to the correct
+     tile within 1 more frame instead of leaving a lasting gap, same
+     "restore the known-correct value every frame" idiom this file
+     already uses for terrain/night, rather than trying to prevent the
+     bullet's own write from landing there at all. A real, deliberate
+     per-frame VDP write during the pose specifically (not the whole
+     game) - accepted cost for the fix to actually work, not a
+     contradiction of the tearing-fix rounds' own "avoid needless
+     per-frame writes" theme (that was about writes with no purpose;
+     this one has one).
+  Verified: `tests/boss_pose_test.py` grew from 21 to 23 checks - the
+  restore-target check switched from `NIGHT_CODE` to `HUD_ROW_BLANK_
+  CODE` (had itself been checking the wrong value before this fix,
+  silently passing because the buggy code and the buggy test agreed
+  with each other), plus a new check that deliberately corrupts one
+  hand cell mid-pose and confirms it heals back to the correct code
+  within exactly 1 more `UPDATE_BOSS_ALL` call. Also re-rendered a real
+  frame right after a pose ends, confirming plain solid black (not the
+  striped tile) actually shows. Full suite: 225/228 pass, same 3 known
+  GAME_TICK=840-boot-effect failures - no new regressions.
+
 ## Bugs found and fixed while building this
 
 - **Sand flickered between its own new color and Rock's, twice over**

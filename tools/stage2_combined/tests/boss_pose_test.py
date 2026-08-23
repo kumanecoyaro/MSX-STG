@@ -22,7 +22,7 @@ BOSS_SPAWNX = sym["BOSS_SPAWNX"]
 BOSS_SPEED = sym["BOSS_SPEED"]
 BOSS_SPR_BASE_SLOT = sym["BOSS_SPR_BASE_SLOT"]
 SASAPI_HAND_CODE_BASE = sym["SASAPI_HAND_CODE_BASE"]
-NIGHT_CODE = sym["NIGHT_CODE"]
+HUD_ROW_BLANK_CODE = sym["HUD_ROW_BLANK_CODE"]
 SASAPI_QUADS = sym["SASAPI_QUADS"]
 SASAPI_QUADS_L = sym["SASAPI_QUADS_L"]
 SPRPAT = sym["SPRPAT"]
@@ -58,7 +58,7 @@ def all_hand_codes_present(cpu):
 
 def all_hand_cells_night(cpu):
     for addr in HAND_ROW_ADDRS:
-        if list(cpu.vram[addr:addr + 8]) != [NIGHT_CODE] * 8:
+        if list(cpu.vram[addr:addr + 8]) != [HUD_ROW_BLANK_CODE] * 8:
             return False
     return True
 
@@ -112,6 +112,17 @@ check("BOSS_X/BOSS_DIR frozen while posing (not yet BOSS_POSE_TICKS ticks later)
       cpu.mem[BOSS_X] == x_before and cpu.mem[BOSS_DIR] == dir_before)
 check("sprite still hidden mid-pose", all_sprites_hidden(cpu))
 check("hand art still drawn mid-pose", all_hand_codes_present(cpu))
+
+# a BG-drawn bullet (or anything else) corrupting one of the hand's own
+# cells mid-pose should get healed back within 1 more UPDATE_BOSS_ALL
+# call - "ボスBG表示欠け発生...復帰処理で対応": DRAW_SASAPI_HAND now
+# runs every frame while posing, not just once at entry.
+cpu.vram[HAND_ROW_ADDRS[3] + 2] = 0
+check("a corrupted hand cell mid-pose is a real corruption (sanity check before healing)",
+      not all_hand_codes_present(cpu))
+call_routine(cpu, "UPDATE_BOSS_ALL")
+check("a corrupted hand cell heals back to the correct code within 1 more frame while still posing",
+      all_hand_codes_present(cpu) and cpu.mem[BOSS_PHASE] == 1)
 
 # ---- advance GAME_TICK to just before the pose ends - still posing ----
 set_game_tick(cpu, tick_before_pose + BOSS_POSE_TICKS - 1)

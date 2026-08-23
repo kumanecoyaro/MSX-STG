@@ -6732,15 +6732,27 @@ UBA_STEP_RIGHT:
 ; for BOSS_POSE_TICKS(32) GAME_TICKs (a true 16-bit SBC HL,DE compare
 ; against the target captured at pose-entry, same idiom as every other
 ; GAME_TICK threshold in this file - NOT a raw-frame countdown like
-; FLASH_DURATION/EXPLOSION_DURATION, see BOSS_POSE_TICKS' own comment),
-; doing nothing else meanwhile (no per-frame redraw needed - the hand
-; art was already painted once at entry and doesn't change).
+; FLASH_DURATION/EXPLOSION_DURATION, see BOSS_POSE_TICKS' own comment).
+; "でお前が指摘してたボスBG表示欠け発生 消えないようにするか 復帰処理
+; で対応" - a BG-drawn bullet (F, or U while BOSS_ACT!=0) passing
+; through col24-31/row7-14 while posing locally overwrites part of the
+; hand art; rather than trying to prevent that write in the first place
+; (would need DRAW_BULLET_CELL itself to know about the boss's own
+; screen region), DRAW_SASAPI_HAND is now called every frame while
+; posing too, not just once at entry - any such corruption gets healed
+; back to the correct tile within 1 frame, same "restore the known-
+; correct value every frame" idiom this file already uses for terrain/
+; night. A real, deliberate per-frame VDP write during the pose only
+; (not the whole game) - accepted cost for the fix actually working.
 UBA_POSE:
     LD HL,(GAME_TICK)
     LD DE,(BOSS_POSE_END_TICK)
     OR A
     SBC HL,DE
-    RET C                      ; still posing
+    JR NC,UBAP_END
+    CALL DRAW_SASAPI_HAND
+    RET                        ; still posing
+UBAP_END:
     ; "また巡回 BGは消してスプライトに戻す" - resume the patrol, moving
     ; left again from the right edge, exactly like the very first spawn.
     XOR A : LD (BOSS_PHASE),A
@@ -6949,15 +6961,21 @@ SASAPI_HAND_NAME_CODES:
     DB SASAPI_HAND_CODE_BASE+48,SASAPI_HAND_CODE_BASE+49,SASAPI_HAND_CODE_BASE+50,SASAPI_HAND_CODE_BASE+51,SASAPI_HAND_CODE_BASE+52,SASAPI_HAND_CODE_BASE+53,SASAPI_HAND_CODE_BASE+54,SASAPI_HAND_CODE_BASE+55
     DB SASAPI_HAND_CODE_BASE+56,SASAPI_HAND_CODE_BASE+57,SASAPI_HAND_CODE_BASE+58,SASAPI_HAND_CODE_BASE+59,SASAPI_HAND_CODE_BASE+60,SASAPI_HAND_CODE_BASE+61,SASAPI_HAND_CODE_BASE+62,SASAPI_HAND_CODE_BASE+63
 
-; 8 bytes all NIGHT_CODE - reused as ERASE_SASAPI_HAND's own LDIRVM
-; source for every one of the 8 rows. By BOSS_SPAWN_TICK the whole sky
-; band (rows0-16, covers rows7-14 the hand occupies) is always already
-; fully night-swept (see NIGHT_START_TICK's own comment for why - the
-; sweep completes well before the boss can ever reach this pose), so
-; NIGHT_CODE is always the correct restore value here - same reasoning
-; as EBC_SKY's own HUD_ROW_BLANK_CODE branch elsewhere in this file.
+; 8 bytes all HUD_ROW_BLANK_CODE (plain solid black) - reused as
+; ERASE_SASAPI_HAND's own LDIRVM source for every one of the 8 rows.
+; "BG復帰処理でSandskyが書き込まれてるな ブランクのブラック" - this
+; used to write NIGHT_CODE here, which is WRONG: NIGHT_CODE is the
+; striped LEADING-ROW tile CHECK_NIGHT's own sweep uses only for the
+; single row currently being darkened (see its own CN_SET_ROW comment),
+; not a general "already dark" restore value - real hardware showed the
+; striped tile instead of solid black once the pose ended, exactly this
+; bug. By BOSS_SPAWN_TICK the whole sky band (rows0-16, covers rows7-14
+; the hand occupies) is always already fully night-swept (see NIGHT_
+; START_TICK's own comment for why), so HUD_ROW_BLANK_CODE - the SAME
+; solid-black code EBC_SKY's own already-dark branch uses elsewhere in
+; this file - is the actually-correct restore value here.
 NIGHT_ROW_BLANK8:
-    DB NIGHT_CODE,NIGHT_CODE,NIGHT_CODE,NIGHT_CODE,NIGHT_CODE,NIGHT_CODE,NIGHT_CODE,NIGHT_CODE
+    DB HUD_ROW_BLANK_CODE,HUD_ROW_BLANK_CODE,HUD_ROW_BLANK_CODE,HUD_ROW_BLANK_CODE,HUD_ROW_BLANK_CODE,HUD_ROW_BLANK_CODE,HUD_ROW_BLANK_CODE,HUD_ROW_BLANK_CODE
 
 ; 8 bytes all SASAPI_HAND_COLORBYTE - INIT's own LDIRVM source, colors
 ; groups19-26 (the hand's own 8 pattern-code groups) in one shot.
@@ -6970,17 +6988,18 @@ SASAPI_HAND_COLOR8:
 ; a fixed literal (col24-31 x row7-14 - the last 8 columns of the
 ; screen, exactly the boss's own 64px width at its right-edge parked X)
 ; rather than anything computed at runtime. DI/EI-wrapped as a whole,
-; not per-row chunked like FLUSH_BOSS_SPRITES needs - this only ever
-; runs at the pose transition, not every frame, same "rare, not
-; per-frame" reasoning as LOAD_SASAPI_PATTERNS's own single DI/EI wrap.
-; Known, unaddressed edge case: a BG-drawn bullet (F always, or U while
+; not per-row chunked like FLUSH_BOSS_SPRITES needs - the whole pose is
+; a rare, short window (BOSS_POSE_TICKS), not the kind of every-frame-
+; for-the-whole-game write FLUSH_BOSS_SPRITES had to chunk.
+; Called every frame while UBA_POSE is waiting, not just once at
+; pose-entry: "でお前が指摘してたボスBG表示欠け発生 消えないようにす
+; るか 復帰処理で対応" - a BG-drawn bullet (F always, or U while
 ; BOSS_ACT!=0 - see DRAW_BULLET_CELL's own boss-only entry) whose cell
-; happens to overlap col24-31/row7-14 while the hand is on screen would
-; locally overwrite part of it, and its own erase would then restore
-; NIGHT_CODE there instead of the hand's own tile - not handled here,
-; same class of un-fixed interaction as the per-scanline sprite-
-; priority quirk documented elsewhere in this file. "攻撃内容はまた今
-; 度" - left for a future round along with the actual attack itself.
+; overlaps col24-31/row7-14 while the hand is on screen locally
+; overwrites part of it; redrawing every frame heals that back to the
+; correct tile within 1 frame instead of leaving a lasting gap, same
+; "restore the known-correct value every frame" idiom this file already
+; uses for terrain/night.
 DRAW_SASAPI_HAND:
     DI
     LD HL,SASAPI_HAND_NAME_CODES+0  : LD DE,18F8h : LD BC,8 : CALL LDIRVM
