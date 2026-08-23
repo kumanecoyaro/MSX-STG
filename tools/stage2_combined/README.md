@@ -3071,6 +3071,59 @@ with no way to tell where.
   fresh 20000-frame random sweep and idle sweep both clean, stack
   headroom unchanged.
 
+- **Etank spawn gated behind counter 70; calibration strip removed;
+  real tank-HP/life bar added**: "ではEtankのスポーンはカウンター70以降
+  で 次にカラーバーやその下の数値は削除 変わりに画面最上部にライフ
+  バーを追加 自機のライフは6 ダメージで1減少 表示は右から減ってくよう
+  に 現在はBigZumのみだがいずれ敵弾実装予定 今は0になっても死なない
+  スコアから１セル空けた位置 添付はそのセルデータ で、最上部の行は
+  ブラックで初期化" (attached `sprites/Life_8x8.json`, fg3/bg5, cols0-6
+  filled/col7 blank - converted by hand to `DB 254,254,254,254,254,254,
+  254,254`, same "hand-converted single static 8x8 tile" precedent as
+  `SKYSAND_PATTERN`):
+  - `ALLOC_ETANK_SLOT` gated on `ENEMY_SPAWN_COUNT>=70` - same
+    threshold convention Zum(10) already uses, just a much higher,
+    Etank-specific number.
+  - The old calibration strip (`SWATCH_CODES`/`SWATCH_COLORS`/
+    `HEXLABEL_CODES`, the 16-color-cell bar at row0 cols8-23 and its
+    hex labels at row1 cols8-23) removed entirely - both the INIT-time
+    loading code and the now-dead data tables.
+  - New `HUD_ROW_BLANK_CODE`(120, group15, fg1/bg1 black) fills the
+    ENTIRE top HUD row (32 cells) at INIT - "最上部の行はブラックで
+    初期化" - before `SCORE_DISPLAY`/`LIFE_DISPLAY`/
+    `GAME_TICK_DISPLAY` draw their own specific cells on top of it.
+  - New `LIFE_CODE`(128, group16, fg3/bg5 from the attached JSON) is
+    the life-bar's own tile. New `LIFE_DISPLAY` draws `TANK_LIFE`(0-6)
+    at row0 starting `LIFE_BAR_COL0`(9, one blank cell past the
+    score's own cols0-7 - "スコアから１セル空けた位置") - always the
+    LEFTMOST `TANK_LIFE` cells filled, the rest `HUD_ROW_BLANK_CODE` -
+    "表示は右から減ってくように" (a hit removes the current rightmost
+    filled cell, not the leftmost).
+  - New `TANK_LIFE`(init 6, `TANK_LIFE_INIT`) is real tank HP now (the
+    "no tank-HP system exists" gap `TANK_FLASH_TIMER`'s own comment
+    used to note is closed). New `APPLY_TANK_DAMAGE` decrements it by
+    1, floored at 0 with no death/game-over handling yet ("今は0に
+    なっても死なない"), then redraws the life bar - called from both
+    of `UPDATE_TANK_BIGZUM_PUNCH`'s own hit branches (front/behind),
+    right alongside the existing `TANK_FLASH_TIMER` set - "現在は
+    BigZumのみだがいずれ敵弾実装予定" (future enemy-bullet damage
+    sources will call the same routine once they exist).
+  Verified: new `life_bar_test.py` (31 checks - boot state, calibration
+  symbols genuinely gone, row0 background forced black, depletion from
+  the right across multiple hits, floors at 0 via a real decrement
+  sequence not a direct poke, and an integration check that a real
+  `UPDATE_TANK_BIGZUM_PUNCH` hit actually decrements `TANK_LIFE`) and
+  `etank_unit.py` extended with the counter-70 spawn gate (2 new
+  checks, plus every existing spawn-condition test updated to set
+  `ENEMY_SPAWN_COUNT=70` first) - all pass. Full existing suite (68
+  checks across all other files) unaffected, all still pass. Fresh
+  20000-frame random sweep with an explicit invariant check
+  (`TANK_LIFE` never exceeds 6, never goes negative) and 20000-frame
+  idle sweep, both clean; stack headroom unchanged; `render_check.py`
+  clean; rendered the HUD at boot and after 2 simulated hits and
+  visually confirmed the life bar depletes from the right with no
+  trace of the old calibration strip.
+
 ## Bugs found and fixed while building this
 
 - **Sand flickered between its own new color and Rock's, twice over**

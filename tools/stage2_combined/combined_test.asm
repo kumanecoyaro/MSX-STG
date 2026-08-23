@@ -212,15 +212,22 @@ BULLET_U_SPRITE_ATTRS EQU F1E0h   ; 12 bytes: Y,X,pat,col x3, staged same as ENE
 
 JOY_TRIGA     EQU F12Bh
 ; "耐久値を持つ敵や自機がダメージを食らったら一瞬ホワイトに光るように" -
-; no tank-HP/damage system exists anywhere in this codebase (same gap
-; BIGZUM_PUNCH_KNOCKBACK's own comment already notes), so the tank's
-; only discrete "took damage" moment is BigZum's own punch connecting
-; (UPDATE_TANK_BIGZUM_PUNCH) - Zum's own push is a smooth continuous
-; shove with no single hit instant, so nothing sets this from there.
-; An inference, not confirmed with the user. Same FLASH_DURATION-driven
-; countdown/FLASH_COLOR override as every other HP-bearing entity's own
-; flash - see UPDATE_TANK_SPRITES.
+; the tank's only discrete "took damage" moment is BigZum's own punch
+; connecting (UPDATE_TANK_BIGZUM_PUNCH) - Zum's own push is a smooth
+; continuous shove with no single hit instant, so nothing sets this
+; from there. Same FLASH_DURATION-driven countdown/FLASH_COLOR
+; override as every other HP-bearing entity's own flash - see
+; UPDATE_TANK_SPRITES.
 TANK_FLASH_TIMER EQU F12Ch
+; "自機のライフは6 ダメージで1減少...現在はBigZumのみだがいずれ敵弾
+; 実装予定 今は0になっても死なない" - real tank-HP now exists (the gap
+; the comment above used to note is closed); same discrete-damage
+; moment as TANK_FLASH_TIMER (BigZum's punch connecting), decremented
+; alongside it in UPDATE_TANK_BIGZUM_PUNCH, floored at 0 with no
+; death/game-over handling yet - future enemy-bullet damage sources
+; will feed the same counter once they exist. See LIFE_DISPLAY.
+TANK_LIFE EQU F12Dh
+TANK_LIFE_INIT EQU 6
 ; frames left before another shot can fire while A is held ("間欠連射
 ; ...1発打ったら1発空ける" - hold-to-auto-fire, but rate-limited
 ; rather than one every single frame) - see UPDATE_SHOT. Tunable;
@@ -346,16 +353,26 @@ GTD_LAST_O    EQU F179h
 SND_EXPLODING EQU F17Ah
 ; digit0 code; digitN = DIGIT_BASE+N for N=0-9 (score/counter, glyphs
 ; copied byte-for-byte from src/CYBER SHMUP.asm's own DIGIT_PATTERNS -
-; "スコアの数字流用") and N=10-15 = A-F (new art, "AからFまで新規",
-; for the calibration strip's hex labels) - all 16 fit in exactly 2
-; groups (13-14), so one base covers the whole 0-F range.
+; "スコアの数字流用") - the old N=10-15=A-F hex-label glyphs (added for
+; the now-removed calibration strip, see LIFE_CODE's own comment) are
+; still loaded (harmless, unused) rather than ripping out DIGIT_
+; PATTERNS_LOCAL's own shared table.
 DIGIT_BASE       EQU 104
 HUD_DIGIT_COLORBYTE EQU 0F1h   ; fg15 white/bg1 black - same as Stage1's own digit groups ("背景色はブラックで")
 SCORE_PER_KILL   EQU 1         ; ADD_SCORE units of 100 real points - "当たったら100点"
-SWATCH_ROW       EQU 0
-SWATCH_COL0      EQU 8
-HEXLABEL_ROW     EQU 1
-HEXLABEL_COL0    EQU 8
+; "次にカラーバーやその下の数値は削除 変わりに画面最上部にライフバーを
+; 追加...スコアから１セル空けた位置" - the old calibration strip
+; (SWATCH_CODES/HEXLABEL_CODES, groups15-30) is gone; group15's own
+; single code is reused as a plain blank-black filler for the whole
+; top HUD row ("最上部の行はブラックで初期化"), group16's own single
+; code holds the new life-bar tile (sprites/Life_8x8.json, fg3/bg5 -
+; own dedicated color group, distinct from the row-blank filler).
+HUD_ROW_BLANK_CODE  EQU 120       ; group15 (120-127)
+HUD_ROW_BLANK_COLOR EQU 011h      ; fg1/bg1 - irrelevant fg, blank pattern
+LIFE_CODE           EQU 128       ; group16 (128-135)
+LIFE_COLOR          EQU 035h      ; fg3/bg5, from Life_8x8.json's own fg/bg
+LIFE_BAR_ROW        EQU 0
+LIFE_BAR_COL0       EQU 9         ; 1 blank cell past the score's own 8 (cols0-7) - "スコアから１セル空けた位置"
 PSG_ADDR         EQU 0A0h
 PSG_DATA         EQU 0A1h
 ; mixer (R7) values for channel A only - tone/noise B and C always
@@ -1551,32 +1568,23 @@ INIT_SPRATR_CLR:
     LD A,HUD_DIGIT_COLORBYTE : LD (HUD_TEMP_BYTE),A
     LD HL,HUD_TEMP_BYTE : LD DE,2000h+14 : LD BC,1 : CALL LDIRVM
 
-    ; color-cell strip: one representative code per group (120,128,...,
-    ; 240 - groups15-30), pattern left blank (all-zero) so only that
-    ; group's own color-table byte shows; SWATCH_COLORS below sets each
-    ; group's byte to (i<<4)|i so fg/bg both read as palette index i
-    ; regardless of which nibble a blank glyph would have shown.
-    LD HL,HUD_ZERO8 : LD DE,120*8 : LD BC,8 : CALL LDIRVM
-    LD HL,HUD_ZERO8 : LD DE,128*8 : LD BC,8 : CALL LDIRVM
-    LD HL,HUD_ZERO8 : LD DE,136*8 : LD BC,8 : CALL LDIRVM
-    LD HL,HUD_ZERO8 : LD DE,144*8 : LD BC,8 : CALL LDIRVM
-    LD HL,HUD_ZERO8 : LD DE,152*8 : LD BC,8 : CALL LDIRVM
-    LD HL,HUD_ZERO8 : LD DE,160*8 : LD BC,8 : CALL LDIRVM
-    LD HL,HUD_ZERO8 : LD DE,168*8 : LD BC,8 : CALL LDIRVM
-    LD HL,HUD_ZERO8 : LD DE,176*8 : LD BC,8 : CALL LDIRVM
-    LD HL,HUD_ZERO8 : LD DE,184*8 : LD BC,8 : CALL LDIRVM
-    LD HL,HUD_ZERO8 : LD DE,192*8 : LD BC,8 : CALL LDIRVM
-    LD HL,HUD_ZERO8 : LD DE,200*8 : LD BC,8 : CALL LDIRVM
-    LD HL,HUD_ZERO8 : LD DE,208*8 : LD BC,8 : CALL LDIRVM
-    LD HL,HUD_ZERO8 : LD DE,216*8 : LD BC,8 : CALL LDIRVM
-    LD HL,HUD_ZERO8 : LD DE,224*8 : LD BC,8 : CALL LDIRVM
-    LD HL,HUD_ZERO8 : LD DE,232*8 : LD BC,8 : CALL LDIRVM
-    LD HL,HUD_ZERO8 : LD DE,240*8 : LD BC,8 : CALL LDIRVM
-    LD HL,SWATCH_COLORS : LD DE,2000h+15 : LD BC,16 : CALL LDIRVM
+    ; life bar (see LIFE_CODE's own comment): HUD_ROW_BLANK_CODE's own
+    ; pattern (blank) + color (black), LIFE_CODE's own pattern (Life_
+    ; 8x8.json) + color (fg3/bg5).
+    LD HL,HUD_ZERO8 : LD DE,HUD_ROW_BLANK_CODE*8 : LD BC,8 : CALL LDIRVM
+    LD A,HUD_ROW_BLANK_COLOR : LD (HUD_TEMP_BYTE),A
+    LD HL,HUD_TEMP_BYTE : LD DE,2000h+15 : LD BC,1 : CALL LDIRVM
+    LD HL,LIFE_PATTERN : LD DE,LIFE_CODE*8 : LD BC,8 : CALL LDIRVM
+    LD A,LIFE_COLOR : LD (HUD_TEMP_BYTE),A
+    LD HL,HUD_TEMP_BYTE : LD DE,2000h+16 : LD BC,1 : CALL LDIRVM
 
-    ; name-table: swatch codes at row0 cols8-23, hex labels at row1 cols8-23
-    LD HL,SWATCH_CODES : LD DE,1800h+SWATCH_COL0 : LD BC,16 : CALL LDIRVM
-    LD HL,HEXLABEL_CODES : LD DE,1800h+32+HEXLABEL_COL0 : LD BC,16 : CALL LDIRVM
+    ; "最上部の行はブラックで初期化" - the whole top HUD row (32 cells)
+    ; to HUD_ROW_BLANK_CODE first; SCORE_DISPLAY/LIFE_DISPLAY/
+    ; GAME_TICK_DISPLAY overwrite their own specific cells afterward.
+    LD HL,HUD_BLACKROW32 : LD DE,1800h : LD BC,32 : CALL LDIRVM
+
+    LD A,TANK_LIFE_INIT : LD (TANK_LIFE),A
+    CALL LIFE_DISPLAY
 
     ; PSG: everything (shot, explosion, "kin" deflect) lives on channel
     ; A only now - "サウンドはノイズｃｈ使用音は別にしなくていいぞ
@@ -2992,6 +3000,44 @@ SD_T_DONE:
     LD A,DIGIT_BASE : LD (HUD_VAL),A
     CALL WRITE_HUD_CELL
     RET
+
+; draws TANK_LIFE(0-6) at row LIFE_BAR_ROW, cols LIFE_BAR_COL0..+5 -
+; always redraws all 6 cells (same "just redraw everything" shape as
+; SCORE_DISPLAY, not an incremental diff like GAME_TICK_DISPLAY - life
+; only changes on a discrete hit, not every frame, so there's no
+; per-frame cost to worry about). Filled cells are always the LEFTMOST
+; `life` of the 6 - blank ones peel off from the right as life drops,
+; "表示は右から減ってくように".
+LIFE_DISPLAY:
+    LD A,(TANK_LIFE) : LD B,A
+    LD C,0
+LFD_LOOP:
+    LD A,LIFE_BAR_ROW : LD (HUD_ROW),A
+    LD A,C : ADD A,LIFE_BAR_COL0 : LD (HUD_COL),A
+    LD A,C : CP B
+    JR NC,LFD_BLANK
+    LD A,LIFE_CODE : LD (HUD_VAL),A
+    JR LFD_SET
+LFD_BLANK:
+    LD A,HUD_ROW_BLANK_CODE : LD (HUD_VAL),A
+LFD_SET:
+    CALL WRITE_HUD_CELL
+    INC C
+    LD A,C : CP 6
+    JR C,LFD_LOOP
+    RET
+
+; decrements TANK_LIFE by 1, floored at 0 ("今は0になっても死なない" -
+; no death handling yet, just stop counting down), then redraws the
+; life bar. Called from both of UPDATE_TANK_BIGZUM_PUNCH's own hit
+; branches (front/behind) - "現在はBigZumのみだがいずれ敵弾実装予定"
+; (future enemy-bullet damage sources will call this same routine).
+APPLY_TANK_DAMAGE:
+    LD A,(TANK_LIFE)
+    OR A
+    RET Z
+    DEC A : LD (TANK_LIFE),A
+    JP LIFE_DISPLAY
 
 ; Converts GAME_TICK (mod 1000) to 3 decimal digits and draws them at
 ; row0 cols29-31 - ported from src/CYBER SHMUP.asm's own
@@ -5138,6 +5184,7 @@ UTBP_FRONT_DONE:
     LD A,BIGZUM_PUNCH_INTERVAL : LD (IX+11),A
     LD A,BIGZUM_PUNCH_POSE_FRAMES : LD (IX+3),A
     LD A,FLASH_DURATION : LD (TANK_FLASH_TIMER),A
+    CALL APPLY_TANK_DAMAGE
     CALL SOUND_ZUM_DEFLECT
     JP UTBP_NEXT
 UTBP_FRONT_DEC:
@@ -5174,6 +5221,7 @@ UTBP_BEHIND_SET:
     LD A,BIGZUM_PUNCH_INTERVAL : LD (IX+11),A
     LD A,BIGZUM_PUNCH_POSE_FRAMES : LD (IX+3),A
     LD A,FLASH_DURATION : LD (TANK_FLASH_TIMER),A
+    CALL APPLY_TANK_DAMAGE
     CALL SOUND_ZUM_DEFLECT
     JP UTBP_NEXT
 UTBP_BEHIND_DEC:
@@ -5716,19 +5764,24 @@ ETO_FAIL:
     XOR A
     RET
 
-; gated on: BigZum currently active (mutual exclusion - both directions,
-; see ALLOC_BIGZUM_SLOT's own matching check and PAT_ETANK_BL's own
-; pattern-VRAM-sharing comment - a one-directional gate here would be a
-; real correctness bug, not just a design preference, since the two
-; actually share pattern-VRAM bytes), Zum currently active ("Etank出現中
-; はZumも出ないように 横並びでEtankが消える" - same ground-lane
-; exclusion as BigZum, checking both of ZUM_SLOT_COUNT=2's own slots),
-; the terrain-length gate above, and a free slot - same shape as
-; ALLOC_ZUM_SLOT/ALLOC_BIGZUM_SLOT, plus the same instant spawn-time
-; overlap resolution. Flyer is airborne and never gated against any of
-; these 3 ground enemies, nor they against it - "FlyerとBigZum、Flyerと
-; Etankは同時存在して良い".
+; gated on: ENEMY_SPAWN_COUNT>=70 ("Etankのスポーンはカウンター70以降
+; で" - same ENEMY_SPAWN_COUNT threshold convention as Zum(10), just a
+; much higher number specific to Etank), BigZum currently active
+; (mutual exclusion - both directions, see ALLOC_BIGZUM_SLOT's own
+; matching check and PAT_ETANK_BL's own pattern-VRAM-sharing comment -
+; a one-directional gate here would be a real correctness bug, not
+; just a design preference, since the two actually share pattern-VRAM
+; bytes), Zum currently active ("Etank出現中はZumも出ないように 横並び
+; でEtankが消える" - same ground-lane exclusion as BigZum, checking
+; both of ZUM_SLOT_COUNT=2's own slots), the terrain-length gate below,
+; and a free slot - same shape as ALLOC_ZUM_SLOT/ALLOC_BIGZUM_SLOT,
+; plus the same instant spawn-time overlap resolution. Flyer is
+; airborne and never gated against any of these 3 ground enemies, nor
+; they against it - "FlyerとBigZum、FlyerとEtankは同時存在して良い".
 ALLOC_ETANK_SLOT:
+    LD A,(ENEMY_SPAWN_COUNT)
+    CP 70
+    RET C
     LD A,(BIGZUM_POOL)
     OR A
     RET NZ
@@ -6260,6 +6313,12 @@ TERRAIN_LUT:
 TERRAIN_BLANK_ROW:
     DS 768,0
 
+; sprites/Life_8x8.json, converted by hand (single static 8x8 tile) -
+; see the LIFE_CODE comment above. cols0-6 filled, col7 blank -> every
+; row is 11111110b = 254.
+LIFE_PATTERN:
+    DB 254,254,254,254,254,254,254,254
+
 ; sprites/SkySand.json, converted by hand (single static 8x8 tile, no
 ; blending/quadrants needed) - see the SKYSAND_CODE comment above.
 SKYSAND_PATTERN:
@@ -6385,21 +6444,10 @@ DIGIT_PATTERNS_LOCAL:
     DB 7Eh,60h,60h,78h,60h,60h,7Eh,00h   ; E
     DB 7Eh,60h,60h,78h,60h,60h,60h,00h   ; F
 
-; calibration strip: 16 name-table codes (one per color group15-30,
-; see the INIT block that loads these) and their hex-label codes -
-; "スコアの横にブランクの0から15のカラーセル表示...でその下に0から
-; Fまでで文字表示".
-SWATCH_CODES:
-    DB 120,128,136,144,152,160,168,176,184,192,200,208,216,224,232,240
-; group N's color byte = (i<<4)|i for i=0-15 (palette index i in both
-; nibbles - the blank glyph never draws a fg pixel, so only bg would
-; normally show, but setting both means it's right either way).
-SWATCH_COLORS:
-    DB 000,017,034,051,068,085,102,119,136,153,170,187,204,221,238,255
-HEXLABEL_CODES:
-    DB 104,105,106,107,108,109,110,111,112,113,114,115,116,117,118,119
 HUD_ZERO8:
     DS 8,0
+HUD_BLACKROW32:
+    DS 32,HUD_ROW_BLANK_CODE
 
 ; fg6 (dark red, was the tank's) / bg11 (light yellow - "カラーグルー
 ; プ節約するから Rockも背景色ライトイエローにしろ Rock225と同じだ")
