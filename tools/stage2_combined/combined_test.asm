@@ -1920,6 +1920,7 @@ SKIP_ADVANCE:
     CALL UPDATE_JUMP
     CALL UPDATE_TANK_ZUM_STAND
     CALL UPDATE_TANK_BIGZUM_STAND
+    CALL UPDATE_TANK_ETANK_STAND
     CALL UPDATE_POSE
     CALL UPDATE_TANK_SPRITES
     ; bullets advance before a new one can spawn, so a shot fired this
@@ -4166,6 +4167,46 @@ UPDATE_TANK_BIGZUM_STAND:
     ; own top), same TANK_GROUND_OFFSET anchor-to-surface convention
     ; as standing on ordinary terrain or on Zum.
     LD A,(IX+2) : ADD A,BIGZUM_COLLISION_Y_OFFSET : SUB TANK_GROUND_OFFSET : LD D,A
+    LD A,(TANK_Y_CUR)
+    CP D
+    RET C
+    LD A,D : LD (TANK_Y_CUR),A
+    LD A,1 : LD (TANK_ZUM_STANDING),A
+    RET
+
+; "Etankも地上機なんで乗っかれるように 32x32の内24x16の左下の範囲で
+; まあ今のコリジョンと同じはずだが" - same stand-on-top clamp as
+; UPDATE_TANK_ZUM_STAND/UPDATE_TANK_BIGZUM_STAND, against Etank's own
+; existing 24x16 collision box (ETANK_COLLISION_SIZE/_Y_OFFSET - the
+; same box CHECK_HIT_PAIR_ETANK/UPDATE_TANK_ETANK_PUSH already use, per
+; direct confirmation it's unchanged), reusing the same shared
+; TANK_ZUM_STANDING flag - UPDATE_JUMP doesn't care which enemy the
+; tank is parked on. No shake-off mechanic (that was BigZum-specific,
+; never requested for Etank).
+UPDATE_TANK_ETANK_STAND:
+    LD A,(JUMP_ACTIVE)
+    OR A
+    RET Z
+    LD IX,ETANK_POOL
+    LD A,(IX+0)
+    OR A
+    RET Z
+    ; horizontal overlap: TANK_X<ET_X+ETANK_COLLISION_SIZE AND
+    ; ET_X<TANK_X+ETANK_COLLISION_SIZE - same symmetric-box shape as
+    ; Zum/BigZum's own post-fix stand checks.
+    LD A,(IX+1) : ADD A,ETANK_COLLISION_SIZE : LD D,A
+    LD A,(TANK_X)
+    CP D
+    RET NC
+    LD A,(TANK_X) : ADD A,ETANK_COLLISION_SIZE : LD D,A
+    LD A,(IX+1)
+    CP D
+    RET NC
+    ; overlap confirmed - clamp so the tank's own bottom rests on the
+    ; collision box's own top (ET_Y+ETANK_COLLISION_Y_OFFSET, not ET_Y
+    ; itself), same TANK_GROUND_OFFSET anchor-to-surface convention as
+    ; standing on ordinary terrain, Zum, or BigZum.
+    LD A,(IX+2) : ADD A,ETANK_COLLISION_Y_OFFSET : SUB TANK_GROUND_OFFSET : LD D,A
     LD A,(TANK_Y_CUR)
     CP D
     RET C

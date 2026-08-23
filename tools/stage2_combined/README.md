@@ -3045,6 +3045,32 @@ with no way to tell where.
   rendered a scene with Flyer and BigZum both visibly on screen at
   once to confirm the relaxed exclusion renders correctly.
 
+- **Etank: stand-on-top added** - "Etankも地上機なんで乗っかれるように
+  32x32の内24x16の左下の範囲で まあ今のコリジョンと同じはずだが" -
+  Etank had `UPDATE_TANK_ETANK_PUSH` (continuous push) but no
+  stand-on-top clamp, unlike Zum/BigZum which both have both. New
+  `UPDATE_TANK_ETANK_STAND`, same shape as `UPDATE_TANK_ZUM_STAND`/
+  `UPDATE_TANK_BIGZUM_STAND` (symmetric horizontal-overlap check,
+  clamps `TANK_Y_CUR` to the box's own top minus `TANK_GROUND_OFFSET`,
+  sets the shared `TANK_ZUM_STANDING` flag only while `JUMP_ACTIVE`),
+  reusing Etank's own EXISTING `ETANK_COLLISION_SIZE`/
+  `ETANK_COLLISION_Y_OFFSET` (24x16, bottom-left of the 32x32 canvas) -
+  confirmed unchanged, exactly the box `CHECK_HIT_PAIR_ETANK`/
+  `UPDATE_TANK_ETANK_PUSH` already use. No shake-off mechanic (that was
+  BigZum-specific, never requested for Etank). Called from `MAINLOOP`
+  right after `UPDATE_TANK_BIGZUM_STAND`, before `UPDATE_POSE` - same
+  position in the frame as the other 2 stand checks.
+  Verified: new `etank_stand_test.py` (6 checks: no-op while not
+  jumping, no-op while Etank inactive, no-op when horizontally clear,
+  clamps `TANK_Y_CUR` and sets the standing flag on overlap, doesn't
+  push the tank down if already above the stand height) - all pass.
+  Natural-flow trace (force-spawn Etank under the tank, trigger a real
+  jump) confirms `TANK_Y_CUR` gets held near the box's own top while
+  airborne over Etank instead of falling through to normal ground
+  level. Full existing suite (66 checks across all files) still passes;
+  fresh 20000-frame random sweep and idle sweep both clean, stack
+  headroom unchanged.
+
 ## Bugs found and fixed while building this
 
 - **Sand flickered between its own new color and Rock's, twice over**
