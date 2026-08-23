@@ -3713,6 +3713,72 @@ with no way to tell where.
   persists even with zero bullets on screen, that prediction is wrong
   and points to something else - worth checking next.
 
+- **The scanline-limit theory above was wrong - real bug, found and
+  fixed: the boss's own sprite writes weren't interrupt-safe**: "そんな
+  事は分かってて設計してる 敵の出現制限も全て横並びを回避するため
+  ボスは弾も撃ってない状態でチラついてる...64x64は16x16x4で横並び4枚
+  で収まってる チラツキは表示消えと言うより ティアリングに近い しかし
+  ゴミも少し見えている トップとボトムライン1pxくらいで 関係のない場所
+  で". Confirms `ENEMY_SPAWN_STOP_TICK`/the whole endgame timeline was
+  already deliberately designed around the real per-scanline limit
+  (not something this session discovered new), and the boss's own
+  4x4/16x16x4 layout was already engineered to fit it exactly - so
+  sprite-count reasoning was never the actual gap. "Tearing, not
+  vanishing" plus small garbage at unrelated VRAM locations is the
+  exact signature of an *interrupt landing mid-VRAM-write*, not a
+  sprite-priority drop - and this file already has precedent for
+  exactly that bug class, verbatim: `UPDATE_TANK_SPRITES`'s own comment
+  describes switching from `LDIRVM` to DI-wrapped raw `OUT` specifically
+  because "LDIRVM's BIOS internals have no interrupt-safety margin...
+  an H.TIMI interrupt landing mid-copy could corrupt the sprite table.
+  Real-hardware-reported garbage that z80emu.py can never reproduce."
+  The boss had 2 writes with exactly this exposure:
+  1. `FLUSH_BOSS_SPRITES` wrote all 64 bytes (16 quadrants) under one
+     single `DI`/`EI` pair - this file's own largest per-frame sprite
+     write by a wide margin (BigZum's own, the next biggest, is half
+     this at 32 bytes). A single `DI` still fully protects the write
+     FROM corruption, but it blocks H.TIMI for a stretch several times
+     longer than anything else here, and since `MAINLOOP` never `HALT`s
+     for vblank (same "no per-frame HALT" design as every other sprite
+     write in this file), the VDP's own raster can land on this exact
+     VRAM range mid-write on any given frame regardless of burst size -
+     a long burst just makes a torn frame far likelier to actually
+     land there than a short one, not a difference in kind, a
+     difference in degree big enough to become visible as ongoing
+     tearing. Rewritten as 16 INDEPENDENT per-quadrant `DI`/`EI`-wrapped
+     mini-bursts (4 bytes each, own address set every time) - each
+     individual protected window is now the same ~4-byte scale
+     everything else in this file already uses safely (Zum's own whole
+     update is this size), removing the outlier without touching the
+     "no per-frame HALT" architecture itself.
+  2. `LOAD_SASAPI_PATTERNS`'s 512-byte `LDIRVM` (both facings' worth,
+     see the mirrored-facing entry above) had NO `DI`/`EI` at all - an
+     interrupted mid-transfer would let the interrupt handler's own VDP
+     port writes clobber the VDP's internal write-address counter this
+     transfer relies on auto-incrementing, then resume writing to
+     whatever address the interrupt handler left behind - stray bytes
+     landing essentially at random in VRAM, matching "ゴミ...トップと
+     ボトムライン...関係のない場所で" exactly. Only runs a handful of
+     times per game (spawn + each reversal, not every frame), so a
+     plain `DI`/`EI` wrap around the whole call is enough - no need to
+     chunk it the way the every-frame `FLUSH_BOSS_SPRITES` needed.
+  Also corrects last entry's own conclusion: Etank's analogous runtime
+  pattern-VRAM share (`PAT_ETANK_BL`/`_BR`, 64 bytes, unprotected) was
+  called "precedent this doesn't need fixing" - backwards. It's very
+  likely the same latent bug, just small enough (64 bytes vs 512, and
+  spawns far less often near player attention) to not have been
+  reported yet. Left as-is for now since it's out of scope for this
+  round, not because it's actually safe.
+  Neither fix is directly verifiable by emulator stepping - `z80emu.py`
+  has no interrupt simulation at all, same limitation
+  `UPDATE_TANK_SPRITES`'s own precedent bug already documented. Only
+  confirmed: full suite (180 checks) still passes, including
+  `boss_test.py`'s own byte-for-byte hw-sprite-table checks - the
+  chunked `FLUSH_BOSS_SPRITES` still produces identical final VRAM
+  content to the old single-burst version, just delivered through more
+  (smaller) windows - and a re-rendered frame after the fix still shows
+  correct, uncorrupted art.
+
 ## Bugs found and fixed while building this
 
 - **Sand flickered between its own new color and Rock's, twice over**

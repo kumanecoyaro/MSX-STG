@@ -134,17 +134,38 @@ Communicates in terse, often angry Japanese. Expects:
   `SPRPAT+PAT_xxx*8`, and any new sprite needs an actual render, not
   just unit tests, before calling it verified.
 
-- **MSX1/TMS9918's real per-scanline sprite limit (max 4) is separate
-  from — and much stricter than — the 32-slot total budget**, and
-  `z80emu.py`/`render_check.py` don't model it at all (only the 32-slot
-  total), so a real-hardware/WebMSX flicker report from too many
-  sprites sharing a scanline can never be reproduced or caught here,
-  only reasoned about from the actual slot numbers in the code. The
-  boss's own 4x4 quadrant grid already sits exactly at that per-line
-  ceiling on every one of its 4 row-bands (4 quadrants, same Y, every
-  scanline) with zero margin — any other visible sprite (a bullet
-  climbing through the sky is the likely case) sharing one of those
-  scanlines forces a real drop, since `z80emu` can't warn about it.
+- **Any VRAM write bigger or more frequent than this file's usual small
+  per-frame sprite writes needs its own DI/EI interrupt-safety check —
+  don't assume an existing unprotected `LDIRVM` call is "safe
+  precedent" just because nothing was reported against IT yet.** This
+  file already documents the bug class once (`UPDATE_TANK_SPRITES`'s
+  own comment: `LDIRVM` has no interrupt-safety margin, `MAINLOOP`
+  never `HALT`s for vblank, so an H.TIMI landing mid-write can corrupt
+  the VDP's own write-address counter and scribble stray bytes wherever
+  the interrupt handler leaves it — real-hardware garbage `z80emu.py`
+  can never reproduce, since it has no interrupt simulation at all).
+  This session repeated it building the boss (`FLUSH_BOSS_SPRITES`'s
+  64-byte single-`DI` burst — 2x this file's next-biggest per-frame
+  sprite write, BigZum's 32 — and `LOAD_SASAPI_PATTERNS`'s wholly
+  unprotected 512-byte `LDIRVM`), reported back as real "tearing, plus
+  small garbage at unrelated VRAM locations" - exactly this bug's own
+  signature, not a sprite-priority/scanline-count issue (that theory
+  was floated first and was WRONG — see README's own correction entry).
+  Fixed by chunking the per-frame write into 16 small per-quadrant
+  DI/EI-wrapped mini-bursts, and wrapping the rare (not per-frame)
+  512-byte load in a plain DI/EI pair. **Etank's own analogous runtime
+  pattern-VRAM share (`PAT_ETANK_BL`/`_BR`, 64 bytes) still has this
+  exact same unprotected-`LDIRVM` exposure and was NOT fixed this
+  session** (out of scope, left as a known latent issue, not "proven
+  safe") — worth fixing preemptively rather than waiting for it to get
+  reported the same way.
+- MSX1/TMS9918 also has a real per-scanline sprite limit (max 4,
+  separate from — and much stricter than — the 32-slot total budget),
+  which `z80emu.py` doesn't model either. The boss's own 4x4 quadrant
+  grid was already deliberately designed around this (confirmed by
+  direct instruction: "敵の出現制限も全て横並びを回避するため") — this
+  was NOT the cause of the flicker reported this session (see above),
+  but keep it in mind for any other future wide/tall sprite.
   Keep this in mind for any future wide/tall sprite built from ordinary
   (non-magnified) 16x16 hw sprites.
 

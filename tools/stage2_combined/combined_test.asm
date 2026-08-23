@@ -6481,8 +6481,21 @@ BOSS_QUAD_OFFSETS:
 ; 2nd free 64-slot block exists anywhere in the pattern-code budget -
 ; see PAT_SASAPI's own comment), so whichever one is "in" has to be
 ; reloaded on every facing change.
+;
+; DI/EI-wrapped: LDIRVM (a BIOS routine) has no interrupt-safety margin
+; of its own (see UPDATE_TANK_SPRITES' own comment on this exact class
+; of bug) - an H.TIMI interrupt landing mid-copy could run its own VDP
+; port writes, clobbering the VDP's own internal write-address counter
+; this 512-byte transfer relies on auto-incrementing, and corrupt
+; whatever unrelated VRAM the interrupt handler's own address happened
+; to land on next. Only called a handful of times per game (not every
+; frame, unlike FLUSH_BOSS_SPRITES), so a plain DI/EI wrap around the
+; whole call is enough here - no need to chunk it into smaller pieces
+; the way a genuinely per-frame write would.
 LOAD_SASAPI_PATTERNS:
+    DI
     LD DE,PAT_SASAPI*8+SPRPAT : LD BC,16*32 : CALL LDIRVM
+    EI
     RET
 
 ; spawns once at BOSS_SPAWN_TICK (a true 16-bit SBC HL,DE compare, same
@@ -6566,15 +6579,43 @@ DRB_LOOP:
     RET
 
 ; blasts BOSS_SPRITE_ATTRS (64 bytes) to hw sprite slots
-; BOSS_SPR_BASE_SLOT.. - same raw DI-wrapped OUT + 8-NOP pattern as
-; FLUSH_FLYER_SPRITES, just a loop instead of an unrolled per-quadrant
-; block (16 quadrants would make an unrolled version 4x longer for no
-; benefit - the VDP's own auto-increment already advances the write
-; address every OUT, a loop here costs nothing an unrolled block
-; wouldn't already pay).
+; BOSS_SPR_BASE_SLOT.. as 16 INDEPENDENT per-quadrant DI/EI-wrapped
+; mini-bursts (4 bytes each - own address set + own EI/DI pair), not
+; one 64-byte burst under a single DI.
+;
+; "チラツキ...ティアリングに近い...関係のない場所で1pxくらいの
+; ゴミも" - a single DI blocks H.TIMI for the WHOLE burst's duration;
+; MAINLOOP never HALTs for vblank (same "no per-frame HALT" design as
+; every other per-frame VRAM write in this file), so the VDP's own
+; raster can land on this exact VRAM range mid-write on any given frame
+; regardless of burst size - but a 64-byte burst (this file's single
+; largest per-frame sprite write by a wide margin: BigZum's own, the
+; next biggest, is half this at 32 bytes) blocks interrupts, and keeps
+; the table in a torn state if the raster DOES land there, for a
+; stretch several times longer than anything else here ever does,
+; making a torn frame far more likely to actually show up than for any
+; other entity - not a difference in KIND from every other sprite write
+; in this file, just a big enough difference in DEGREE to actually
+; become visible. Shrinking each individual DI-protected window back
+; down to the same ~4-byte scale everything else in this file already
+; uses (Zum's own whole update is this same size) removes the outlier
+; without touching the "no per-frame HALT" architecture this whole file
+; is built on. Total OUT count goes up (each quadrant re-sets its own
+; VRAM address rather than relying on one shared auto-increment run),
+; a deliberate trade for many short interrupt-safe windows instead of
+; one long unsafe one.
+;
+; Not directly verifiable by emulator stepping - z80emu.py has no
+; interrupt simulation at all (same limitation as UPDATE_TANK_SPRITES'
+; own identically-shaped bug/fix - see that comment for the precedent)
+; - only that the bytes each mini-burst writes are still correct.
 FLUSH_BOSS_SPRITES:
+    LD HL,BOSS_SPRITE_ATTRS
+    LD C,BOSS_SPR_BASE_SLOT*4
+    LD B,16
+FBOS_LOOP:
     DI
-    LD A,BOSS_SPR_BASE_SLOT*4 : OUT (99h),A
+    LD A,C : OUT (99h),A
     NOP
     NOP
     NOP
@@ -6592,10 +6633,7 @@ FLUSH_BOSS_SPRITES:
     NOP
     NOP
     NOP
-    LD HL,BOSS_SPRITE_ATTRS
-    LD B,16*4
-FBOS_LOOP:
-    LD A,(HL) : OUT (98h),A
+    LD A,(HL) : OUT (98h),A : INC HL
     NOP
     NOP
     NOP
@@ -6604,9 +6642,36 @@ FBOS_LOOP:
     NOP
     NOP
     NOP
-    INC HL
-    DJNZ FBOS_LOOP
+    LD A,(HL) : OUT (98h),A : INC HL
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    LD A,(HL) : OUT (98h),A : INC HL
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    LD A,(HL) : OUT (98h),A : INC HL
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
     EI
+    LD A,C : ADD A,4 : LD C,A
+    DJNZ FBOS_LOOP
     RET
 
 ; walks CLOUD_POOL (IX-indexed, 9x INC IX per slot - this assembler has
