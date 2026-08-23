@@ -498,6 +498,17 @@ SASAPI_HAND_CODE_BASE EQU 152
 ; (see NIGHT_START_TICK's own comment - the sweep always completes well
 ; before the boss can ever reach this pose).
 SASAPI_HAND_COLORBYTE EQU 091h
+; hit-flash color for the hand's own BG art while posing - "ポーズ中の
+; 被弾フラッシュ演出を追加(復帰処理とは別に併用)". BG color is fixed
+; per 8-code group (unlike a hw sprite's own per-instance SAT color
+; byte, which is how BOSS_FLASH_COLOR flashes the body for free) - but
+; since the hand's own 8 groups (19-26) are exclusively its own art,
+; nothing else shares them, a full group recolor is just as cheap here
+; (8 bytes, one LDIRVM) as a sprite's own color-byte swap, with zero
+; risk of recoloring anything unrelated. Same medium-red shade as
+; BOSS_FLASH_COLOR(8) - fg8/bg1, not fg9(BOSS_COLOR)'s own light red -
+; so it reads as the same flash, not a different color entirely.
+SASAPI_HAND_FLASH_COLORBYTE EQU 081h
 ; hw sprite slots10-25 (16 quadrants, one per 16x16 cell of the 4x4
 ; grid making up the 64x64 sprite) - reuses Zum/BigZum/Flyer/Etank's
 ; own ranges (10-11/12-19/20-23/24-25) rather than a fresh permanent
@@ -6982,6 +6993,11 @@ NIGHT_ROW_BLANK8:
 SASAPI_HAND_COLOR8:
     DB SASAPI_HAND_COLORBYTE,SASAPI_HAND_COLORBYTE,SASAPI_HAND_COLORBYTE,SASAPI_HAND_COLORBYTE,SASAPI_HAND_COLORBYTE,SASAPI_HAND_COLORBYTE,SASAPI_HAND_COLORBYTE,SASAPI_HAND_COLORBYTE
 
+; same 8 bytes, but SASAPI_HAND_FLASH_COLORBYTE - DRAW_SASAPI_HAND's
+; own LDIRVM source while the hit-flash is active.
+SASAPI_HAND_FLASH_COLOR8:
+    DB SASAPI_HAND_FLASH_COLORBYTE,SASAPI_HAND_FLASH_COLORBYTE,SASAPI_HAND_FLASH_COLORBYTE,SASAPI_HAND_FLASH_COLORBYTE,SASAPI_HAND_FLASH_COLORBYTE,SASAPI_HAND_FLASH_COLORBYTE,SASAPI_HAND_FLASH_COLORBYTE,SASAPI_HAND_FLASH_COLORBYTE
+
 ; draws the attack-pose hand art straight into the name table at the
 ; boss's own parked position - BOSS_SPAWNX/BOSS_SPAWN_Y are both
 ; compile-time constants (192,56), so every name-table address here is
@@ -7000,6 +7016,12 @@ SASAPI_HAND_COLOR8:
 ; correct tile within 1 frame instead of leaving a lasting gap, same
 ; "restore the known-correct value every frame" idiom this file already
 ; uses for terrain/night.
+; Also resolves+applies the hit-flash color (see SASAPI_HAND_FLASH_
+; COLORBYTE's own comment) once per call, same BOSS_FLASH_TIMER this
+; file's own body-flash (DRAW_BOSS) already uses - safe to share since
+; only one of DRAW_BOSS/DRAW_SASAPI_HAND ever runs in a given frame
+; (gated by BOSS_PHASE), so whichever draw path is active that frame is
+; the one that consumes the timer.
 DRAW_SASAPI_HAND:
     DI
     LD HL,SASAPI_HAND_NAME_CODES+0  : LD DE,18F8h : LD BC,8 : CALL LDIRVM
@@ -7010,6 +7032,19 @@ DRAW_SASAPI_HAND:
     LD HL,SASAPI_HAND_NAME_CODES+40 : LD DE,1998h : LD BC,8 : CALL LDIRVM
     LD HL,SASAPI_HAND_NAME_CODES+48 : LD DE,19B8h : LD BC,8 : CALL LDIRVM
     LD HL,SASAPI_HAND_NAME_CODES+56 : LD DE,19D8h : LD BC,8 : CALL LDIRVM
+    EI
+
+    LD A,(BOSS_FLASH_TIMER)
+    OR A
+    JR Z,DSH_COLOR_NORMAL
+    DEC A : LD (BOSS_FLASH_TIMER),A
+    LD HL,SASAPI_HAND_FLASH_COLOR8
+    JR DSH_COLOR_SET
+DSH_COLOR_NORMAL:
+    LD HL,SASAPI_HAND_COLOR8
+DSH_COLOR_SET:
+    DI
+    LD DE,2000h+19 : LD BC,8 : CALL LDIRVM
     EI
     RET
 

@@ -27,6 +27,15 @@ SASAPI_QUADS = sym["SASAPI_QUADS"]
 SASAPI_QUADS_L = sym["SASAPI_QUADS_L"]
 SPRPAT = sym["SPRPAT"]
 PAT_SASAPI = sym["PAT_SASAPI"]
+BOSS_FLASH_TIMER = sym["BOSS_FLASH_TIMER"]
+SASAPI_HAND_COLORBYTE = sym["SASAPI_HAND_COLORBYTE"]
+SASAPI_HAND_FLASH_COLORBYTE = sym["SASAPI_HAND_FLASH_COLORBYTE"]
+
+HAND_COLOR_ADDRS = list(range(0x2000 + 19, 0x2000 + 27))
+
+
+def hand_colors_are(cpu, byte_value):
+    return all(cpu.vram[a] == byte_value for a in HAND_COLOR_ADDRS)
 
 SAT_BASE = 0x1B00
 HAND_ROW_ADDRS = [0x18F8, 0x1918, 0x1938, 0x1958, 0x1978, 0x1998, 0x19B8, 0x19D8]
@@ -123,6 +132,25 @@ check("a corrupted hand cell mid-pose is a real corruption (sanity check before 
 call_routine(cpu, "UPDATE_BOSS_ALL")
 check("a corrupted hand cell heals back to the correct code within 1 more frame while still posing",
       all_hand_codes_present(cpu) and cpu.mem[BOSS_PHASE] == 1)
+
+# ---- hit-flash during the pose: "ポーズ中の被弾フラッシュ演出を追加" ----
+check("hand color groups are the normal color before any hit", hand_colors_are(cpu, SASAPI_HAND_COLORBYTE))
+cpu.mem[BOSS_FLASH_TIMER] = 3
+call_routine(cpu, "UPDATE_BOSS_ALL")
+check("hand color groups switch to the flash color while the timer is active",
+      hand_colors_are(cpu, SASAPI_HAND_FLASH_COLORBYTE))
+check("the flash timer decrements once per call (not once per group)",
+      cpu.mem[BOSS_FLASH_TIMER] == 2)
+# timer was armed to 3, 1 call already consumed (->2, still flashing
+# that same frame); 3 more calls bring it 2->1->0 (still flashing on
+# the frame that brings it to 0, same "check before decrement" idiom
+# every other flash timer in this file uses), then a 4th call finally
+# sees timer==0 and reverts to normal.
+call_routine(cpu, "UPDATE_BOSS_ALL")
+call_routine(cpu, "UPDATE_BOSS_ALL")
+call_routine(cpu, "UPDATE_BOSS_ALL")
+check("hand color groups revert to normal once the flash timer reaches 0",
+      hand_colors_are(cpu, SASAPI_HAND_COLORBYTE) and cpu.mem[BOSS_FLASH_TIMER] == 0)
 
 # ---- advance GAME_TICK to just before the pose ends - still posing ----
 set_game_tick(cpu, tick_before_pose + BOSS_POSE_TICKS - 1)

@@ -529,6 +529,63 @@ the tearing got fixed.
   actually shown. Full suite: 225/228 pass, same 3 known GAME_TICK=840-
   boot-effect failures - no new regressions.
 
+## Hand-pose hit-flash added (asked-for clarification first, then implemented)
+
+- "一度ボス表示欠け復帰処理の代わりにフラッシュ処理してみてくれ コス
+  ト的に可能か検証 多分同一パターンの色替えを定義しなきゃならないので
+  まあ地形と弾とスコア、ライフ以外は全て空きなので256パターンあれば充
+  分だと思うが" - ambiguous enough (replace the corruption-healing
+  redraw with something "flash"-based, or add a flash effect alongside
+  it?) that it was asked via `AskUserQuestion` rather than guessed at -
+  a wrong implementation here would have wasted a full round either
+  way. **Answer: add a hit-flash effect for the pose, alongside the
+  corruption-healing redraw (not replacing it).**
+- **Important technical fact surfaced by the clarifying question
+  itself, worth remembering**: BG tiles are NOT like hw sprites here -
+  a hw sprite's color is a byte in its own SAT entry (free to change per
+  instance, which is exactly why `BOSS_FLASH_COLOR`'s own body-flash
+  costs nothing extra), but a BG tile's color is fixed per 8-code GROUP,
+  shared by every code in that group. A pure color-table swap can never
+  repair the corruption issue (a bullet overwriting one of the hand's
+  64 cells with a DIFFERENT PATTERN CODE reference is a shape/reference
+  problem, not a color problem) - only rewriting the actual name-table
+  code (what `DRAW_SASAPI_HAND`'s per-frame redraw already does) can
+  fix that. Keep this in mind before ever proposing "just recolor it"
+  as a fix for a BG-layer content bug.
+- **Implementation, reusing the existing per-entity flash idiom
+  directly**: new `SASAPI_HAND_FLASH_COLORBYTE`(081h, fg8/bg1 - same
+  medium-red shade as `BOSS_FLASH_COLOR`, distinct from `SASAPI_HAND_
+  COLORBYTE`'s own fg9/bg1 so the flash reads as an actual color
+  change) and its own 8-byte source table `SASAPI_HAND_FLASH_COLOR8`.
+  `DRAW_SASAPI_HAND` (already called every frame during the pose, per
+  the round above) now also resolves+applies this once per call: reads
+  `BOSS_FLASH_TIMER` (the SAME shared timer `DRAW_BOSS`'s own body-
+  flash uses - safe to share since only one of `DRAW_BOSS`/`DRAW_
+  SASAPI_HAND` ever runs in a given frame, `BOSS_PHASE` picks which),
+  decrements it once if nonzero, and writes the resolved 8-byte color
+  table (normal or flash) to `2000h+19` (groups19-26, the hand's own
+  exclusively-owned pattern-code groups - safe to fully recolor, no
+  risk of affecting anything else) via a small DI/EI-wrapped LDIRVM.
+  **Cost, as asked**: 8 extra bytes/frame during the pose (1 more small
+  DI/EI-wrapped LDIRVM), on top of the 64-byte name-table redraw the
+  corruption-healing fix already does every frame - negligible relative
+  to that existing cost, same cost class as any other entity's own
+  flash. This is the FIRST per-frame write to the 0x2000 color-table
+  region in this whole file (previously only touched at `INIT`, one-
+  time) - DI/EI-wrapped for the same interrupt-safety reason every
+  other gameplay-time VRAM write in this file already is.
+- Verified: `tests/boss_pose_test.py` grew from 23 to 27 checks -
+  normal color before any hit, switches to the flash color and
+  decrements the timer once per call (not once per group) when armed,
+  reverts to normal once the timer reaches 0 (matches the same "check-
+  before-decrement" timing every other entity's own flash timer uses -
+  the frame that brings the timer to exactly 0 still shows the flash
+  that frame, reverting only on the NEXT call). Also rendered a real
+  frame with the flash active, visually confirming the hand shifts to
+  the same deeper/more saturated red the boss's own body flash uses.
+  Full suite passes with no new regressions beyond the same 3 known
+  GAME_TICK=840-boot-effect failures.
+
 ## Open items / things to watch
 
 - No known open bugs as of this handoff — the boss's own SPRPAT bug
