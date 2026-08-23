@@ -3214,6 +3214,40 @@ with no way to tell where.
   requirement - the 2 terrain conditions are disjoint, not overlapping,
   so that path was abandoned once a test proved the premise wrong.)
 
+- **The entire "counter 70" gate was built on a wrong reading of
+  "カウンター" and has been rolled back** - "もういいわ この程度でき
+  ないとはな めちゃくちゃ時間とトークン使ってよ クズが カウンター
+  対応前にロールバックしろ ちなみにカウンターは右上に表示してる数
+  字のことだからな". "Etankのスポーンはカウンター70以降で" was
+  originally read as this file's own internal `ENEMY_SPAWN_COUNT`
+  (the existing Zum(10)/red-ZacoII-variant threshold convention) - but
+  "カウンター" actually meant the visible on-screen number
+  `GAME_TICK_DISPLAY` draws top-right (cols29-31, from `GAME_TICK`,
+  incremented once per frame - roughly 1.2 real-world seconds to reach
+  70, not the minutes-to-never `ENEMY_SPAWN_COUNT` route this session
+  spent 2 full rounds chasing). Rolled back to the gate shape from
+  before that misreading (`ALLOC_ETANK_SLOT`: BigZum inactive, both
+  Zum slots inactive, Etank's own apex terrain, free slot - no counter
+  check of any kind) - and, since both were built only to route around
+  problems the wrong gate itself created, also reverted along with it:
+  `ALLOC_ENEMY_SLOT`'s counter-increment cap back to `10` (removing
+  `ENEMY_SPAWN_COUNT_MAX`(200), no reader needs it once nothing checks
+  `>=70` any more) and `ALLOC_BIGZUM_SLOT`'s "defer to Etank" tiebreak
+  from the immediately preceding entry above (nothing left for it to
+  break the tie on, once Etank no longer needs `ENEMY_SPAWN_COUNT` to
+  reach 70 in the first place). The life bar / HUD-row-blank work from
+  the same original round is untouched - only the counter-gate part of
+  that round is reverted.
+  Verified: `enemy_spawn_count_test.py` and `bigzum_defer_test.py`
+  removed (both existed only to test the now-reverted behavior). Full
+  remaining suite (97 checks across `etank_unit.py`(24),
+  `etank_pattern_vram_test.py`(10), `shakeoff_unit.py`(12),
+  `zaco_flash_bug.py`(6), `zum_overlap_test.py`(3),
+  `flyer_terrain_test.py`(5), `etank_stand_test.py`(6),
+  `life_bar_test.py`(31)) all pass. Fresh idle-input sweep confirms
+  Etank now spawns naturally at frame 367 (~6 real-world seconds),
+  not the multi-minute-to-never timeline the wrong gate produced.
+
 ## Bugs found and fixed while building this
 
 - **Sand flickered between its own new color and Rock's, twice over**

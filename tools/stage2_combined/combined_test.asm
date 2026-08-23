@@ -438,12 +438,6 @@ ENEMY_SPAWN_TIMER   EQU F19Bh
 ; same movement/turn-back logic either way (ENEMY_GET_STEP is the only
 ; place VARIANT changes behavior, for speed; UOE_DRAW picks the color).
 ENEMY_SPAWN_COUNT   EQU F19Ch
-; ceiling ALLOC_ENEMY_SLOT stops incrementing ENEMY_SPAWN_COUNT at -
-; comfortably past every threshold that reads this (variant-switch(10),
-; Zum/BigZum's own spawn gates(10), Etank's own(70)) while staying well
-; clear of an 8-bit wraparound (255) - see ALLOC_ENEMY_SLOT's own
-; comment.
-ENEMY_SPAWN_COUNT_MAX EQU 200
 ; staging buffer for the 3 enemy hw sprite slots (4-6, right after the
 ; tank's own 0-3) - same "build in RAM, blast once" pattern as
 ; SPRITE_ATTRS/UTS_OUT_LOOP, just a separate buffer so the two flushes
@@ -3302,18 +3296,8 @@ AES_VARIANT_SET:
     LD A,ENEMY_RED_HP : LD (IX+E_DX),A
 AES_HP_DONE:
 
-    ; "Etankが出なくなったぞ" - this cap used to stop at 10 (all this
-    ; counter's OTHER readers only ever check ">=10", so it never
-    ; needed to go higher) - but ALLOC_ETANK_SLOT's own new ">=70" gate
-    ; could then never be satisfied, since the counter physically could
-    ; never exceed 10. Raised to ENEMY_SPAWN_COUNT_MAX(200) - comfortably
-    ; past Etank's own 70 threshold with plenty of margin before an
-    ; 8-bit wraparound (255) could ever matter, while every existing
-    ; ">=10" reader (variant-switch above, Zum/BigZum's own spawn
-    ; gates) is unaffected, since the count only ever climbing higher
-    ; keeps those checks true exactly the same as before.
     LD A,(ENEMY_SPAWN_COUNT)
-    CP ENEMY_SPAWN_COUNT_MAX
+    CP 10
     JR NC,AES_COUNT_DONE
     INC A : LD (ENEMY_SPAWN_COUNT),A
 AES_COUNT_DONE:
@@ -4448,33 +4432,6 @@ BZTO_FAIL:
 ; NOT gated here any more - "FlyerとBigZum、FlyerとEtankは同時存在して
 ; 良い" (was bidirectionally excluded before; that exclusion removed
 ; from both ALLOC_FLYER_SLOT and here).
-; "Etankでねえよ" - root cause found by DIRECT MEASUREMENT (not
-; guesswork): 2 separate emulator sweeps (15000 frames idle input, then
-; 40000 frames of randomized movement/jump/shoot combat) both show
-; BigZum, once it first spawns (very early - its own gate is just
-; ENEMY_SPAWN_COUNT>=10, reached almost immediately, on terrain that's
-; ALSO satisfied from the very start of the track), staying active for
-; effectively the ENTIRE rest of the run - 0 deaths in 40000 combat
-; frames despite firing ~1 shot in 3. Not a bug in the damage code
-; itself - BigZum is deliberately front-invincible, only takes damage
-; from a rear hit (grounded) or any hit while airborne (STATE=1), so
-; landing one takes a real, deliberate flank, not random button-mashing
-; - but the practical result is BigZum wins the ALLOC_ETANK_SLOT/
-; ALLOC_BIGZUM_SLOT mutual-exclusion race (both directions, both
-; correctly implemented) every single time under ordinary play: it's
-; already alive and holding the slot long before ENEMY_SPAWN_COUNT
-; ever reaches Etank's own 70 threshold, and even on the rare death,
-; BIGZUM_SPAWN_INTERVAL(90 frames/1.5s) reclaims the slot again almost
-; immediately - long before Etank's OWN full gate (count>=70 AND both
-; Zum slots inactive AND its own apex terrain) can realistically land
-; in that narrow gap. The exclusion itself is correct and stays
-; (EtankとBigZumは同時には存在しない, unconditionally) - what was
-; missing is a tiebreak for the instant both become eligible at once:
-; give Etank first claim whenever ITS OWN full gate is already
-; satisfied, instead of always letting BigZum's own much shorter
-; cooldown win by default. UPDATE_ETANK_ALL runs later in MAINLOOP
-; than UPDATE_BIGZUM_ALL (same frame), so deferring here is enough -
-; ALLOC_ETANK_SLOT picks the slot up itself right after.
 ALLOC_BIGZUM_SLOT:
     LD A,(ENEMY_SPAWN_COUNT)
     CP 10
@@ -4482,19 +4439,6 @@ ALLOC_BIGZUM_SLOT:
     LD A,(ETANK_POOL)
     OR A
     RET NZ
-    LD A,(ENEMY_SPAWN_COUNT)
-    CP 70
-    JR C,ABZS_NO_DEFER
-    LD A,(ZUM_POOL)
-    OR A
-    JR NZ,ABZS_NO_DEFER
-    LD A,(ZUM_POOL+ZUM_SLOT_SIZE)
-    OR A
-    JR NZ,ABZS_NO_DEFER
-    CALL ETANK_TERRAIN_OK
-    OR A
-    RET NZ                          ; Etank's own full gate is ready - defer, let it take the slot this frame
-ABZS_NO_DEFER:
     CALL BIGZUM_TERRAIN_OK
     OR A
     RET Z
@@ -5820,24 +5764,27 @@ ETO_FAIL:
     XOR A
     RET
 
-; gated on: ENEMY_SPAWN_COUNT>=70 ("Etankのスポーンはカウンター70以降
-; で" - same ENEMY_SPAWN_COUNT threshold convention as Zum(10), just a
-; much higher number specific to Etank), BigZum currently active
-; (mutual exclusion - both directions, see ALLOC_BIGZUM_SLOT's own
-; matching check and PAT_ETANK_BL's own pattern-VRAM-sharing comment -
-; a one-directional gate here would be a real correctness bug, not
-; just a design preference, since the two actually share pattern-VRAM
-; bytes), Zum currently active ("Etank出現中はZumも出ないように 横並び
-; でEtankが消える" - same ground-lane exclusion as BigZum, checking
-; both of ZUM_SLOT_COUNT=2's own slots), the terrain-length gate below,
-; and a free slot - same shape as ALLOC_ZUM_SLOT/ALLOC_BIGZUM_SLOT,
-; plus the same instant spawn-time overlap resolution. Flyer is
-; airborne and never gated against any of these 3 ground enemies, nor
-; they against it - "FlyerとBigZum、FlyerとEtankは同時存在して良い".
+; "カウンター対応前にロールバックしろ" - the ENEMY_SPAWN_COUNT>=70
+; gate below has been REMOVED. It was built on a wrong assumption:
+; "カウンター" in "Etankのスポーンはカウンター70以降で" meant the
+; visible on-screen number GAME_TICK_DISPLAY draws top-right (cols
+; 29-31, from GAME_TICK, incremented once per frame) - NOT this file's
+; own internal ENEMY_SPAWN_COUNT (the pre-existing Zum(10)/red-ZacoII
+; threshold convention this was wrongly assumed to extend). Reverted
+; to the gate shape from before that misunderstanding: BigZum currently
+; active (mutual exclusion - both directions, see ALLOC_BIGZUM_SLOT's
+; own matching check and PAT_ETANK_BL's own pattern-VRAM-sharing
+; comment - a one-directional gate here would be a real correctness
+; bug, not just a design preference, since the two actually share
+; pattern-VRAM bytes), Zum currently active ("Etank出現中はZumも出ない
+; ように 横並びでEtankが消える" - same ground-lane exclusion as
+; BigZum, checking both of ZUM_SLOT_COUNT=2's own slots), the terrain-
+; length gate below, and a free slot - same shape as ALLOC_ZUM_SLOT/
+; ALLOC_BIGZUM_SLOT, plus the same instant spawn-time overlap
+; resolution. Flyer is airborne and never gated against any of these 3
+; ground enemies, nor they against it - "FlyerとBigZum、FlyerとEtankは
+; 同時存在して良い".
 ALLOC_ETANK_SLOT:
-    LD A,(ENEMY_SPAWN_COUNT)
-    CP 70
-    RET C
     LD A,(BIGZUM_POOL)
     OR A
     RET NZ
