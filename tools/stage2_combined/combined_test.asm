@@ -2875,6 +2875,7 @@ UEUA_LOOP:
 ; only reset on an actual spawn) - same pool-of-3 idea as
 ; TRY_SPAWN_BULLET.
 ALLOC_ENEMY_SLOT:
+    RET   ; DIAGNOSTIC: ZacoII spawning disabled - Etank-only isolation build
     LD HL,ENEMY_POOL
     LD B,ENEMY_SLOT_COUNT
 AES_LOOP:
@@ -3359,6 +3360,7 @@ ZTO_FAIL:
 ; type specifically. Replaced with AZS_FOUND's own instant overlap
 ; resolution below instead of refusing the spawn.
 ALLOC_ZUM_SLOT:
+    RET   ; DIAGNOSTIC: Zum spawning disabled - Etank-only isolation build
     LD A,(ENEMY_SPAWN_COUNT)
     CP 10
     RET C
@@ -3940,6 +3942,7 @@ UFLAU_LOOP:
 
 ; airborne - no terrain gate at all, just a free slot.
 ALLOC_FLYER_SLOT:
+    RET   ; DIAGNOSTIC: Flyer spawning disabled - Etank-only isolation build
     LD HL,FLYER_POOL
     LD B,FLYER_SLOT_COUNT
 AFLS_LOOP:
