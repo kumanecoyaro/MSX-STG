@@ -29,6 +29,7 @@ SASAPI_QUADS = sym["SASAPI_QUADS"]
 SASAPI_QUADS_L = sym["SASAPI_QUADS_L"]
 BOSS_QUAD_OFFSETS = sym["BOSS_QUAD_OFFSETS"]
 SPRPAT = sym["SPRPAT"]
+BOSS_PHASE = sym["BOSS_PHASE"]
 
 
 def sprpat_matches(cpu, rom_label):
@@ -137,10 +138,12 @@ while cpu.mem[BOSS_X] < BOSS_SPAWNX and steps < 200:
     steps += 1
 check("returns to X=BOSS_SPAWNX exactly (clamped)", cpu.mem[BOSS_X] == BOSS_SPAWNX)
 call_routine(cpu, "UPDATE_BOSS_ALL")
-check("reverses back to DIR=0 (moving left) once X=BOSS_SPAWNX is reached again",
-      cpu.mem[BOSS_DIR] == 0)
-check("normal facing (SASAPI_QUADS) reloaded into VRAM on this reversal",
-      sprpat_matches(cpu, SASAPI_QUADS))
+# returning to the right edge no longer reverses immediately - it now
+# enters the attack pose instead ("右端に戻ったら...攻撃ポーズ"); the
+# actual DIR=0/normal-facing-reload only happens once the pose ends -
+# see tests/boss_pose_test.py for the full pose lifecycle.
+check("returning to the right edge enters the attack pose (BOSS_PHASE=1) instead of reversing immediately",
+      cpu.mem[BOSS_PHASE] == 1)
 
 # Test 12: real end-to-end - spawns at the real frame BOSS_SPAWN_TICK*8,
 # not before (GAME_TICK advances once per 8 raw frames).

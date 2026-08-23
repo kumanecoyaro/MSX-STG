@@ -478,6 +478,26 @@ BOSS_COLLISION_SIZE EQU 64
 ; distinct color change against the boss's own base color instead of
 ; disappearing into it.
 BOSS_FLASH_COLOR EQU 8
+; "右から出て左に行き反転して右端に戻ったら 添付のパターンをBGに描画し
+; スプライトは一旦消す ようするに移動中はスプライト 停止中はBGて切り
+; 替え これは攻撃ポーズなのでその状態で32Tick停止後 また巡回" - "Tick"
+; means GAME_TICK throughout this session's own instructions (Tick850/
+; 900/950/999 etc.), so this is a true 16-bit GAME_TICK duration, not a
+; raw-frame countdown like FLASH_DURATION/EXPLOSION_DURATION - see
+; BOSS_POSE_END_TICK's own comment.
+BOSS_POSE_TICKS EQU 32
+; the attack-pose hand art is drawn straight into the name table, not a
+; hw sprite - needs its own 64 BG pattern codes (groups19-26, 152-215 -
+; the next free block after group18/BULLETF's own night codes, per
+; HANDOFF's "groups19-30 still free" note) since it's a genuinely
+; different 64x64 image from the boss's own body (SASAPI_QUADS).
+SASAPI_HAND_CODE_BASE EQU 152
+; same fg9(light red)/bg1(black) as sprites/SasapiHand_64x64.json's own
+; header - matches BOSS_COLOR's own light red, and bg1/black matches
+; the sky band's own already-fully-night-swept color by BOSS_SPAWN_TICK
+; (see NIGHT_START_TICK's own comment - the sweep always completes well
+; before the boss can ever reach this pose).
+SASAPI_HAND_COLORBYTE EQU 091h
 ; hw sprite slots10-25 (16 quadrants, one per 16x16 cell of the 4x4
 ; grid making up the 64x64 sprite) - reuses Zum/BigZum/Flyer/Etank's
 ; own ranges (10-11/12-19/20-23/24-25) rather than a fresh permanent
@@ -1262,6 +1282,8 @@ BOSS_HP            EQU F27Ch
 BOSS_SPRITE_ATTRS  EQU F27Dh   ; 16 quadrants x4 bytes (Y,X,pat,col) = 64 bytes
 BOSS_FLASH_TIMER   EQU F2BDh   ; hit-flash countdown, same FLASH_DURATION-driven mechanism as every other HP-bearing entity's own flash timer
 BOSS_DRAW_COLOR    EQU F2BEh   ; scratch byte, DRAW_BOSS's own resolved color (BOSS_COLOR or BOSS_FLASH_COLOR) - feeds all 16 quadrant writes so the timer only ticks down once per frame, not 16 times
+BOSS_PHASE          EQU F2BFh  ; 0=patrolling(hw sprite), 1=parked in the attack pose(BG art) - "移動中はスプライト 停止中はBGて切り替え"
+BOSS_POSE_END_TICK  EQU F2C0h  ; 2 bytes - GAME_TICK value the pose ends at (GAME_TICK+BOSS_POSE_TICKS, captured once at pose-entry), compared via true 16-bit SBC HL,DE every frame while BOSS_PHASE=1, same idiom as every other GAME_TICK threshold in this file (BOSS_SPAWN_TICK/NIGHT_START_TICK/etc.)
 ETANK_SPR_BASE_SLOT EQU 24     ; hw sprite slots24-25 (BL/BR only x1 instance), right after Flyer's own 20-23
 ; "カラーはダークレッド" - NOT sprites/Etank.json's own fg, overridden
 ; directly here (same "override the JSON's own fg" precedent as
@@ -1614,6 +1636,20 @@ INIT_RESUME_AFTER_BANK_SELECT:
     ; U's own hw sprite pattern (16x16, right after PAT_EXPLOSION).
     LD HL,BULLET_U_SPRITE : LD DE,PAT_BULLETU*8+SPRPAT : LD BC,32 : CALL LDIRVM
     LD HL,BULLET_U_SPRITE_L : LD DE,PAT_BULLETU_L*8+SPRPAT : LD BC,32 : CALL LDIRVM
+
+    ; Sasapi's own attack-pose hand art (BG pattern, not a hw sprite -
+    ; see SASAPI_HAND_CODE_BASE's own comment) - a permanent allocation
+    ; loaded once here, unlike the boss's own body (SASAPI_QUADS/_L,
+    ; loaded dynamically by LOAD_SASAPI_PATTERNS at spawn/reversal since
+    ; it reuses BigZum's own pattern-VRAM budget instead of a fresh
+    ; block). 512 bytes, DI/EI-wrapped same as LOAD_SASAPI_PATTERNS's
+    ; own 512-byte load - not a per-frame write, so a single wrap
+    ; (rather than FLUSH_BOSS_SPRITES's own per-quadrant chunking) is
+    ; enough.
+    DI
+    LD HL,SASAPI_HAND_TILES : LD DE,SASAPI_HAND_CODE_BASE*8 : LD BC,64*8 : CALL LDIRVM
+    EI
+    LD HL,SASAPI_HAND_COLOR8 : LD DE,2000h+19 : LD BC,8 : CALL LDIRVM
 
     ; checkpoint 6: tank + bullet patterns loaded
     LD B,6 : LD C,7 : CALL WRTVDP
@@ -6622,11 +6658,17 @@ LOAD_SASAPI_PATTERNS:
 ; spawns once at BOSS_SPAWN_TICK (a true 16-bit SBC HL,DE compare, same
 ; idiom as CHECK_NIGHT/SPAWN_STOPPED - see the CLOUD_UPDATE_ALL bug this
 ; same session for why an 8-bit CP against a >255 constant is wrong),
-; then patrols X between 0 and BOSS_SPAWNX forever, reversing at either
-; edge - "右から出現し左へ 左端に着いたら反転 右端に 以降繰り返し". Y
-; never changes (BOSS_SPAWN_Y, horizontal patrol only). Reloads the
-; matching facing's pattern data (see LOAD_SASAPI_PATTERNS's own
-; comment) at spawn and at each reversal, never mid-step.
+; then patrols X between 0 and BOSS_SPAWNX, reversing at the LEFT edge
+; same as always - "右から出現し左へ 左端に着いたら反転 右端に". Once
+; back at the RIGHT edge, though (BOSS_SPAWNX), it no longer just
+; reverses and keeps looping: "右から出て左に行き反転して右端に戻った
+; ら 添付のパターンをBGに描画しスプライトは一旦消す ようするに移動中は
+; スプライト 停止中はBGて切り替え これは攻撃ポーズなのでその状態で32
+; Tick停止後 また巡回 BGは消してスプライトに戻す" - see BOSS_PHASE's
+; own comment for the pose sub-state-machine this adds. Y never changes
+; (BOSS_SPAWN_Y, horizontal patrol only). Reloads the matching facing's
+; pattern data (see LOAD_SASAPI_PATTERNS's own comment) at spawn and at
+; each reversal, never mid-step.
 UPDATE_BOSS_ALL:
     ; BOSS_ACT=2 = destroyed by CHECK_HIT_PAIR_BOSS (HP reached 0) -
     ; permanently gone, nothing left to spawn/move/draw. Checked before
@@ -6636,14 +6678,7 @@ UPDATE_BOSS_ALL:
     CP 2
     RET Z
     OR A
-    ; ⚠ DIAGNOSTIC: "ボスは表示だけで動かさないでくれ" - once spawned,
-    ; skip all patrol/reversal/pattern-reload logic (UBA_MOVE below) and
-    ; go straight to the same per-frame DRAW_BOSS/FLUSH_BOSS_SPRITES
-    ; every other frame already does, at a fixed BOSS_X/BOSS_DIR. Isolates
-    ; whether the tearing depends on the patrol logic itself (X update,
-    ; edge-clamp, direction-reversal pattern reload) or shows up purely
-    ; from the same per-frame hw-sprite-table flush regardless of motion.
-    JR NZ,UBA_DRAW
+    JR NZ,UBA_ACTIVE
     LD HL,(GAME_TICK)
     LD DE,BOSS_SPAWN_TICK
     OR A
@@ -6655,8 +6690,12 @@ UPDATE_BOSS_ALL:
     XOR A : LD (BOSS_DIR),A    ; 0 = moving left first - "右から出現し左へ"
     LD A,BOSS_HP_INIT : LD (BOSS_HP),A
     XOR A : LD (BOSS_FLASH_TIMER),A
+    XOR A : LD (BOSS_PHASE),A  ; 0 = patrolling/sprite
     JR UBA_DRAW
-UBA_MOVE:
+UBA_ACTIVE:
+    LD A,(BOSS_PHASE)
+    OR A
+    JR NZ,UBA_POSE
     LD A,(BOSS_DIR)
     OR A
     JR NZ,UBA_MOVE_RIGHT
@@ -6676,11 +6715,38 @@ UBA_MOVE_RIGHT:
     CP BOSS_SPAWNX
     JR C,UBA_STEP_RIGHT
     LD A,BOSS_SPAWNX : LD (BOSS_X),A   ; clamp to the right edge
-    XOR A : LD (BOSS_DIR),A            ; 反転 - back to heading left
-    LD HL,SASAPI_QUADS : CALL LOAD_SASAPI_PATTERNS
-    JR UBA_DRAW
+    ; enter the attack pose instead of reversing/continuing the patrol
+    ; loop - "右端に戻ったら...BGに描画しスプライトは一旦消す". Not
+    ; drawn/flushed as a sprite again until the pose ends (UBA_POSE
+    ; below), so RET directly here rather than falling into UBA_DRAW.
+    LD A,1 : LD (BOSS_PHASE),A
+    LD HL,(GAME_TICK) : LD DE,BOSS_POSE_TICKS : ADD HL,DE
+    LD (BOSS_POSE_END_TICK),HL
+    CALL HIDE_BOSS_SPRITES
+    CALL DRAW_SASAPI_HAND
+    RET
 UBA_STEP_RIGHT:
     LD (BOSS_X),A
+    JR UBA_DRAW
+; parked at the right edge, hand art on screen, sprite hidden - waits
+; for BOSS_POSE_TICKS(32) GAME_TICKs (a true 16-bit SBC HL,DE compare
+; against the target captured at pose-entry, same idiom as every other
+; GAME_TICK threshold in this file - NOT a raw-frame countdown like
+; FLASH_DURATION/EXPLOSION_DURATION, see BOSS_POSE_TICKS' own comment),
+; doing nothing else meanwhile (no per-frame redraw needed - the hand
+; art was already painted once at entry and doesn't change).
+UBA_POSE:
+    LD HL,(GAME_TICK)
+    LD DE,(BOSS_POSE_END_TICK)
+    OR A
+    SBC HL,DE
+    RET C                      ; still posing
+    ; "また巡回 BGは消してスプライトに戻す" - resume the patrol, moving
+    ; left again from the right edge, exactly like the very first spawn.
+    XOR A : LD (BOSS_PHASE),A
+    XOR A : LD (BOSS_DIR),A
+    CALL ERASE_SASAPI_HAND
+    LD HL,SASAPI_QUADS : CALL LOAD_SASAPI_PATTERNS
 UBA_DRAW:
     CALL DRAW_BOSS
     CALL FLUSH_BOSS_SPRITES
@@ -6868,6 +6934,79 @@ HBOS_LOOP:
     EI
     LD A,C : ADD A,4 : LD C,A
     DJNZ HBOS_LOOP
+    RET
+
+; the 8x8 grid of hand-art name-table codes (SASAPI_HAND_CODE_BASE..
+; +63, sequential, row-major) - reused unmodified as DRAW_SASAPI_HAND's
+; own LDIRVM source every time the attack pose is entered.
+SASAPI_HAND_NAME_CODES:
+    DB SASAPI_HAND_CODE_BASE+0,SASAPI_HAND_CODE_BASE+1,SASAPI_HAND_CODE_BASE+2,SASAPI_HAND_CODE_BASE+3,SASAPI_HAND_CODE_BASE+4,SASAPI_HAND_CODE_BASE+5,SASAPI_HAND_CODE_BASE+6,SASAPI_HAND_CODE_BASE+7
+    DB SASAPI_HAND_CODE_BASE+8,SASAPI_HAND_CODE_BASE+9,SASAPI_HAND_CODE_BASE+10,SASAPI_HAND_CODE_BASE+11,SASAPI_HAND_CODE_BASE+12,SASAPI_HAND_CODE_BASE+13,SASAPI_HAND_CODE_BASE+14,SASAPI_HAND_CODE_BASE+15
+    DB SASAPI_HAND_CODE_BASE+16,SASAPI_HAND_CODE_BASE+17,SASAPI_HAND_CODE_BASE+18,SASAPI_HAND_CODE_BASE+19,SASAPI_HAND_CODE_BASE+20,SASAPI_HAND_CODE_BASE+21,SASAPI_HAND_CODE_BASE+22,SASAPI_HAND_CODE_BASE+23
+    DB SASAPI_HAND_CODE_BASE+24,SASAPI_HAND_CODE_BASE+25,SASAPI_HAND_CODE_BASE+26,SASAPI_HAND_CODE_BASE+27,SASAPI_HAND_CODE_BASE+28,SASAPI_HAND_CODE_BASE+29,SASAPI_HAND_CODE_BASE+30,SASAPI_HAND_CODE_BASE+31
+    DB SASAPI_HAND_CODE_BASE+32,SASAPI_HAND_CODE_BASE+33,SASAPI_HAND_CODE_BASE+34,SASAPI_HAND_CODE_BASE+35,SASAPI_HAND_CODE_BASE+36,SASAPI_HAND_CODE_BASE+37,SASAPI_HAND_CODE_BASE+38,SASAPI_HAND_CODE_BASE+39
+    DB SASAPI_HAND_CODE_BASE+40,SASAPI_HAND_CODE_BASE+41,SASAPI_HAND_CODE_BASE+42,SASAPI_HAND_CODE_BASE+43,SASAPI_HAND_CODE_BASE+44,SASAPI_HAND_CODE_BASE+45,SASAPI_HAND_CODE_BASE+46,SASAPI_HAND_CODE_BASE+47
+    DB SASAPI_HAND_CODE_BASE+48,SASAPI_HAND_CODE_BASE+49,SASAPI_HAND_CODE_BASE+50,SASAPI_HAND_CODE_BASE+51,SASAPI_HAND_CODE_BASE+52,SASAPI_HAND_CODE_BASE+53,SASAPI_HAND_CODE_BASE+54,SASAPI_HAND_CODE_BASE+55
+    DB SASAPI_HAND_CODE_BASE+56,SASAPI_HAND_CODE_BASE+57,SASAPI_HAND_CODE_BASE+58,SASAPI_HAND_CODE_BASE+59,SASAPI_HAND_CODE_BASE+60,SASAPI_HAND_CODE_BASE+61,SASAPI_HAND_CODE_BASE+62,SASAPI_HAND_CODE_BASE+63
+
+; 8 bytes all NIGHT_CODE - reused as ERASE_SASAPI_HAND's own LDIRVM
+; source for every one of the 8 rows. By BOSS_SPAWN_TICK the whole sky
+; band (rows0-16, covers rows7-14 the hand occupies) is always already
+; fully night-swept (see NIGHT_START_TICK's own comment for why - the
+; sweep completes well before the boss can ever reach this pose), so
+; NIGHT_CODE is always the correct restore value here - same reasoning
+; as EBC_SKY's own HUD_ROW_BLANK_CODE branch elsewhere in this file.
+NIGHT_ROW_BLANK8:
+    DB NIGHT_CODE,NIGHT_CODE,NIGHT_CODE,NIGHT_CODE,NIGHT_CODE,NIGHT_CODE,NIGHT_CODE,NIGHT_CODE
+
+; 8 bytes all SASAPI_HAND_COLORBYTE - INIT's own LDIRVM source, colors
+; groups19-26 (the hand's own 8 pattern-code groups) in one shot.
+SASAPI_HAND_COLOR8:
+    DB SASAPI_HAND_COLORBYTE,SASAPI_HAND_COLORBYTE,SASAPI_HAND_COLORBYTE,SASAPI_HAND_COLORBYTE,SASAPI_HAND_COLORBYTE,SASAPI_HAND_COLORBYTE,SASAPI_HAND_COLORBYTE,SASAPI_HAND_COLORBYTE
+
+; draws the attack-pose hand art straight into the name table at the
+; boss's own parked position - BOSS_SPAWNX/BOSS_SPAWN_Y are both
+; compile-time constants (192,56), so every name-table address here is
+; a fixed literal (col24-31 x row7-14 - the last 8 columns of the
+; screen, exactly the boss's own 64px width at its right-edge parked X)
+; rather than anything computed at runtime. DI/EI-wrapped as a whole,
+; not per-row chunked like FLUSH_BOSS_SPRITES needs - this only ever
+; runs at the pose transition, not every frame, same "rare, not
+; per-frame" reasoning as LOAD_SASAPI_PATTERNS's own single DI/EI wrap.
+; Known, unaddressed edge case: a BG-drawn bullet (F always, or U while
+; BOSS_ACT!=0 - see DRAW_BULLET_CELL's own boss-only entry) whose cell
+; happens to overlap col24-31/row7-14 while the hand is on screen would
+; locally overwrite part of it, and its own erase would then restore
+; NIGHT_CODE there instead of the hand's own tile - not handled here,
+; same class of un-fixed interaction as the per-scanline sprite-
+; priority quirk documented elsewhere in this file. "攻撃内容はまた今
+; 度" - left for a future round along with the actual attack itself.
+DRAW_SASAPI_HAND:
+    DI
+    LD HL,SASAPI_HAND_NAME_CODES+0  : LD DE,18F8h : LD BC,8 : CALL LDIRVM
+    LD HL,SASAPI_HAND_NAME_CODES+8  : LD DE,1918h : LD BC,8 : CALL LDIRVM
+    LD HL,SASAPI_HAND_NAME_CODES+16 : LD DE,1938h : LD BC,8 : CALL LDIRVM
+    LD HL,SASAPI_HAND_NAME_CODES+24 : LD DE,1958h : LD BC,8 : CALL LDIRVM
+    LD HL,SASAPI_HAND_NAME_CODES+32 : LD DE,1978h : LD BC,8 : CALL LDIRVM
+    LD HL,SASAPI_HAND_NAME_CODES+40 : LD DE,1998h : LD BC,8 : CALL LDIRVM
+    LD HL,SASAPI_HAND_NAME_CODES+48 : LD DE,19B8h : LD BC,8 : CALL LDIRVM
+    LD HL,SASAPI_HAND_NAME_CODES+56 : LD DE,19D8h : LD BC,8 : CALL LDIRVM
+    EI
+    RET
+
+; restores the same 8x8 cell block back to plain night-black - "BGは
+; 消してスプライトに戻す". Same fixed addresses as DRAW_SASAPI_HAND.
+ERASE_SASAPI_HAND:
+    DI
+    LD HL,NIGHT_ROW_BLANK8 : LD DE,18F8h : LD BC,8 : CALL LDIRVM
+    LD HL,NIGHT_ROW_BLANK8 : LD DE,1918h : LD BC,8 : CALL LDIRVM
+    LD HL,NIGHT_ROW_BLANK8 : LD DE,1938h : LD BC,8 : CALL LDIRVM
+    LD HL,NIGHT_ROW_BLANK8 : LD DE,1958h : LD BC,8 : CALL LDIRVM
+    LD HL,NIGHT_ROW_BLANK8 : LD DE,1978h : LD BC,8 : CALL LDIRVM
+    LD HL,NIGHT_ROW_BLANK8 : LD DE,1998h : LD BC,8 : CALL LDIRVM
+    LD HL,NIGHT_ROW_BLANK8 : LD DE,19B8h : LD BC,8 : CALL LDIRVM
+    LD HL,NIGHT_ROW_BLANK8 : LD DE,19D8h : LD BC,8 : CALL LDIRVM
+    EI
     RET
 
 CHECK_BULLET_VS_BOSS:

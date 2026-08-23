@@ -4131,6 +4131,94 @@ with no way to tell where.
   GAME_TICK boot effect, 5 from the boss's own intentionally-disabled
   patrol) - no new regressions from this round.
 
+- **Patrol redesigned: the right edge now triggers an attack pose
+  instead of just reversing, with a new attached art asset for it**:
+  "では巡回 前回はループだったが 右から出て左に行き反転して右端に戻っ
+  たら 添付のパターンをBGに描画しスプライトは一旦消す ようするに移動
+  中はスプライト 停止中はBGて切り替え これは攻撃ポーズなのでその状態
+  で32Tick停止後 また巡回 BGは消してスプライトに戻す 攻撃内容はまた今
+  度" (with `sprites/SasapiHand_64x64.json` attached).
+  First: **the "ボスは表示だけで動かさないでくれ" no-movement diagnostic
+  from several rounds ago was fully removed** - this instruction
+  explicitly describes real patrol motion, and the tearing fix (skipping
+  unused enemy flushes) had already been confirmed independent of
+  whether the boss itself moves, so there was no more reason to keep it
+  frozen.
+  The LEFT-edge reversal is completely unchanged (still an ordinary
+  reversal - mirrored facing reload, flip DIR, keep patrolling). Only
+  the RIGHT-edge return (`X==BOSS_SPAWNX`) is new: a `BOSS_PHASE` field
+  (0=patrolling/hw-sprite, 1=parked/BG-art) now gates a small sub-
+  state-machine inside `UPDATE_BOSS_ALL`. Reaching the right edge sets
+  `BOSS_PHASE=1`, arms `BOSS_POSE_END_TICK` (`GAME_TICK+BOSS_POSE_
+  TICKS`(32) captured at that exact moment - "32Tick" means `GAME_TICK`
+  units, same convention as every "TickNNN" instruction this whole
+  session, so this is a true 16-bit `SBC HL,DE` compare against a
+  captured target, NOT a raw-frame countdown like `FLASH_DURATION`/
+  `EXPLOSION_DURATION`), hides all 16 hw sprite slots (`HIDE_BOSS_
+  SPRITES`, reused from the death path) and paints the attack-pose art
+  (new `DRAW_SASAPI_HAND`) - then returns directly, without calling
+  `DRAW_BOSS`/`FLUSH_BOSS_SPRITES` again. While parked, `UPDATE_BOSS_
+  ALL` does nothing per frame but check the tick threshold - no
+  redundant per-frame redraw, since the art doesn't change while
+  posing (matches this whole session's "avoid needless per-frame VDP
+  writes" theme from the tearing-fix rounds). Once the threshold
+  passes: phase resets to 0, `BOSS_DIR` resets to 0 (resumes moving
+  left, same direction as the very first spawn - "また巡回"), the hand
+  art is erased back to plain night-black (`ERASE_SASAPI_HAND`), the
+  normal (non-mirrored) sprite pattern is reloaded, and the same per-
+  frame `DRAW_BOSS`/`FLUSH_BOSS_SPRITES` resumes that same frame -
+  "BGは消してスプライトに戻す".
+  New art pipeline: `sprites/SasapiHand_64x64.json` (user-uploaded) ->
+  new `sasapi_hand_gen.py`, converting it into 64 row-major 8x8 BG tiles
+  (straight name-table order - NOT the TL/BL/TR/BR sprite-quadrant order
+  `sasapi_gen.py`/`tank_gen.py` use, since this art never becomes a hw
+  sprite). Needed a genuinely NEW permanent 512-byte BG pattern-code
+  block (`SASAPI_HAND_CODE_BASE`=152, groups19-26) - unlike the boss's
+  own body (`SASAPI_QUADS`/`_L`, which reuses BigZum's own pattern-VRAM
+  dynamically), nothing else was using groups19-26, so this loads once
+  at `INIT`, not per-spawn. Colored fg9(light red)/bg1(black) - matches
+  both the JSON's own header AND the sky band's own already-fully-
+  night-swept color by the time the boss can ever reach this pose (see
+  `NIGHT_START_TICK`'s own comment for why that's guaranteed). Both
+  `DRAW_SASAPI_HAND`/`ERASE_SASAPI_HAND` write to 8 FIXED, compile-time-
+  literal row addresses - `BOSS_SPAWNX`/`BOSS_SPAWN_Y` are both
+  constants, so the entire 64-cell block's screen position (columns
+  24-31, the screen's own last 8 columns, rows7-14) never needs runtime
+  math at all.
+  **2 things flagged but not addressed, out of scope for this round**:
+  a BG-drawn bullet (F always, or U during the boss fight) whose cell
+  happens to overlap the hand's own col24-31/row7-14 block while it's
+  displayed would locally corrupt part of it - not handled, same
+  accepted-limitation class as the per-scanline sprite-priority quirk
+  documented earlier. Collision stays fully active during the pose (same
+  AABB/position) - a hit while posing still decrements HP and arms the
+  flash timer, but since `DRAW_BOSS` isn't called again until the pose
+  ends, any flash armed mid-pose only becomes visible once sprite mode
+  resumes. "攻撃内容はまた今度" - the actual attack/damage-to-player
+  behavior during this pose is explicitly deferred.
+  Verified: new `tests/boss_pose_test.py` (21 checks - left-edge
+  reversal unchanged, right-edge return enters the pose instead of an
+  immediate reversal, sprite hidden + all 64 hand codes drawn at the
+  exact expected VRAM addresses the instant the pose starts, `BOSS_X`/
+  `BOSS_DIR` genuinely frozen through several more calls while still
+  posing, pose-exit exactly at the GAME_TICK threshold restores `NIGHT_
+  CODE`/reloads the normal facing/shows the sprite again/resumes DIR=0,
+  and a real end-to-end `MAINLOOP` sweep through a full spawn -> left-
+  edge -> right-edge -> pose-entry -> pose-exit cycle) all pass.
+  `tests/boss_test.py`'s own 2 stale "immediate reversal at the right
+  edge" assertions were updated to check for pose-entry instead, since
+  that's now the intentional behavior - a corrected test, not a
+  regression. Also rendered a real frame during the pose (`render_full`)
+  and directly compared it pixel-for-pixel against the source JSON to
+  confirm the art actually displays correctly at the boss's own position
+  while the hw sprite is hidden (it initially looked confusingly similar
+  to the boss's own normal body pose in the render - turned out to be
+  correct, just the same red color scheme/character, not a bug). Full
+  suite: 223/226 pass, only the same 3 GAME_TICK=840-boot-effect
+  failures remain (boss/etank/night-effect real-`MAINLOOP` spawn-timing
+  checks) - no new regressions, and note the boss-frozen-movement
+  failures from prior rounds are gone now that real movement is back.
+
 ## Bugs found and fixed while building this
 
 - **Sand flickered between its own new color and Rock's, twice over**
