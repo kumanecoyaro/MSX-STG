@@ -176,10 +176,30 @@ def build_track():
     # which doesn't exist - ground_i() now asserts on that instead of
     # quietly corrupting the row past that point.
     FLAT_RUN = 24
+    # Etank (see ETANK_SLOT_SIZE's own comment in combined_test.asm)
+    # never follows terrain elevation - it moves in a straight
+    # horizontal line at whatever height was under it at spawn, so it
+    # needs the SAME terrain height under it for its entire on-screen
+    # crossing, not just at spawn. "速度は2 ... 128カウントで端から端
+    # まで行けるはずなので150の平地は欲しいな" (256px screen / 2px per
+    # frame = 128 frames edge-to-edge; 150 tiles requested for margin
+    # over that, also covering however far the terrain itself scrolls
+    # underneath meanwhile). ETANK_APEX_FLAT_RUN(150) replaces FLAT_RUN
+    # at both places tier reaches its highest point (apex) below -
+    # Etank's own spawn gate (ETANK_TERRAIN_OK) checks IDCACHE_T0 (the
+    # topmost screen row), which is only solid at this apex tier, and
+    # can't distinguish which of the 2 occurrences in the loop it's
+    # currently looking at, so both must satisfy the requirement (same
+    # "widen both occurrences" precedent as before the full rollback).
+    # Each merges with the following/preceding already-apex-tier
+    # emit_flat(FLAT_RUN) right next to it (no transition in between,
+    # so it's one continuous run) for extra margin - 150+24=174 total,
+    # well past 150.
+    ETANK_APEX_FLAT_RUN = 150
     for _ in range(3):
         emit_flat(FLAT_RUN)
         emit_climb()
-    emit_flat(FLAT_RUN)
+    emit_flat(ETANK_APEX_FLAT_RUN)
     for _ in range(3):
         emit_flat(FLAT_RUN)
         emit_descend()
@@ -192,7 +212,7 @@ def build_track():
     # climbable ramp instead of a sheer wall. Then the same going down.
     for _ in range(3):
         emit_climb()
-    emit_flat(FLAT_RUN)
+    emit_flat(ETANK_APEX_FLAT_RUN)
     for _ in range(3):
         emit_descend()
     emit_flat(FLAT_RUN)

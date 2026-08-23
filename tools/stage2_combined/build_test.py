@@ -20,6 +20,7 @@ import bullet_gen  # noqa: E402
 import enemy_gen  # noqa: E402
 import bigzum_gen  # noqa: E402
 import flyer_gen  # noqa: E402
+import etank_gen  # noqa: E402
 from mini_z80asm import Assembler  # noqa: E402
 
 
@@ -27,7 +28,8 @@ def assemble():
     body = open(os.path.join(HERE, "combined_test.asm")).read()
     tables = (terrain_gen.emit_asm_tables() + "\n" + tank_gen.emit_asm_tables()
               + "\n" + bullet_gen.emit_asm_tables() + "\n" + enemy_gen.emit_asm_tables()
-              + "\n" + bigzum_gen.emit_asm_tables() + "\n" + flyer_gen.emit_asm_tables())
+              + "\n" + bigzum_gen.emit_asm_tables() + "\n" + flyer_gen.emit_asm_tables()
+              + "\n" + etank_gen.emit_asm_tables())
     text = body + "\n" + tables + "\n"
     asm = Assembler(text)
     out = asm.assemble()

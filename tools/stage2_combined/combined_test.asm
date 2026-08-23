@@ -944,11 +944,16 @@ BIGZUM_SHAKE_STAND_FRAMES EQU 60
 ; test implementation, reimplemented from scratch after a full rollback
 ; of a previous, more ambitious round (Etank + Flyer + hit-flash all at
 ; once) that kept surfacing new real-hardware-only bugs faster than
-; they could be pinned down - "1つずつ実装し直す". Etank does NOT exist
-; in this build; only Flyer, deliberately singleton (FLYER_SLOT_COUNT=
+; they could be pinned down - "1つずつ実装し直す". At the time this
+; block was written, Etank did not exist yet - deliberately skipped
+; that round ("3をスキップ") - only Flyer, singleton (FLYER_SLOT_COUNT=
 ; 1) and with its own dedicated permanent pattern allocation (no VRAM-
-; sharing scheme this round - that specific mechanism was the direct
-; cause of the worst of the previous round's bugs).
+; sharing scheme, unlike Etank's own dynamic BigZum-pattern-sharing
+; from before the rollback - that specific mechanism, combined with a
+; MISSING bidirectional BigZum/Etank spawn exclusion, was the direct
+; cause of the worst of the previous round's bugs). Etank has since
+; been reimplemented (see ETANK_SLOT_SIZE below) with that exclusion
+; bidirectional from the start this time.
 ;
 ; "BigZum出現時はFlyerは出ない 速度は2 右から出て画面左まで行き反転
 ; 自機に向かって降りてくる" - spawn gate mirrors ALLOC_ZUM_SLOT's own
@@ -1010,6 +1015,84 @@ FLYER_CLEAR_Y  EQU 32   ; px vertical clearance from the tank before switching t
 FLYER_DESCEND_LIMIT_Y EQU 112
 FLYER_HP_INIT  EQU 4    ; carried over from the original (reverted) request's own "耐久値4", not contradicted this round
 FLYER_COLLISION_SIZE EQU 32  ; full 32x32 canvas - no shrink specified
+
+; ---------- Etank ground enemy (see UPDATE_ETANK_ALL) ----------
+; reimplemented after the full rollback, per direct instruction giving
+; a complete fresh spec (movement/terrain-specific details corrected
+; from before the rollback; everything else - HP, collision, color,
+; push mechanic, dynamic BigZum-pattern-VRAM sharing - carried over
+; from that prior (reverted, not itself buggy on its own) design,
+; still visible in git history at commit 8f8d046):
+; "ETank 右からでて左に消える 速度は2 Zumと同じで接触で自機を押す
+; 坂の昇降はしないんで マップに長い平地を設置 速度２なら１２８カウン
+; トで端から端まで行けるはずなので１５０の平地は欲しいな"
+;
+; Unlike Zum/BigZum, Etank never follows terrain elevation at all: its
+; own Y is set once at spawn (from TANK_TIER_Y_TABLE's own index0, the
+; apex/highest tier) and never re-probed - straight horizontal line,
+; "坂の昇降はしない". Since it can't correct for a height change
+; mid-crossing, it only ever spawns while the apex tier is the CURRENT
+; surface (ETANK_TERRAIN_OK, checking IDCACHE_T0) - and that surface
+; has to stay the apex tier for the enemy's entire on-screen lifetime,
+; not just at the spawn instant, which is why terrain_gen.py's own
+; build_track() now carries a dedicated 150-tile-plus flat run at that
+; tier (ETANK_APEX_FLAT_RUN, see its own comment there) instead of the
+; ordinary 24-tile FLAT_RUN every other flat stretch uses.
+;
+; Collision is 24(W)x16(H), anchored at the bottom-left of the 32x32
+; canvas ("キャラ位置は32x32の内左下24x16" - the raw art itself only
+; occupies that same bottom-left region, confirmed directly against
+; sprites/Etank.json: rows0-15 and cols24-31 are fully blank), so only
+; the BL/BR quadrant hw sprites are ever drawn - TL/TR stay hidden
+; permanently, same "don't allocate hw sprites for a permanently-blank
+; quadrant" precedent as nothing else in this file needed until now.
+; No permanent pattern-code allocation either - the pattern-code budget
+; is already tight, so per the same "BigZum出現時は出さないので動的に
+; 書き換え" reasoning as before the rollback, Etank dynamically
+; overwrites BigZum's own PAT_BIGZUM BL/BR pattern-VRAM groups at its
+; own spawn time (ALLOC_ETANK_SLOT), restored whenever BigZum itself
+; next spawns (ALLOC_BIGZUM_SLOT's own reload) - safe ONLY because the
+; 2 are now spawn-gated bidirectionally exclusive (both ALLOC routines
+; check the other's pool), unlike before the rollback where only one
+; direction was gated and the two were directly observed active at the
+; same time, corrupting the shared VRAM.
+;
+; HP10 ("耐久値10"), omnidirectional bullet damage (no front/rear
+; invulnerability rule like Zum/BigZum - nothing about facing/direction
+; was specified for Etank), dark red color (6, not sprites/Etank.json's
+; own fg), Zum-style continuous push while in contact ("Zumと同じで
+; 接触で自機を押す" - same UPDATE_TANK_ZUM_PUSH shape/speed, suspended
+; entirely while JUMP_ACTIVE so the box stays cleanly jumpable).
+; Despawns once it reaches the left edge ("左に消える").
+ETANK_SLOT_SIZE  EQU 8   ; +0 ACT,+1 X,+2 Y(fixed at spawn, never re-probed),+3 TIMER(explosion),+4/+5 DX/DY(explosion drift),+6 HP,+7 FLASH_TIMER
+ETANK_SLOT_COUNT EQU 1
+; strictly below the real 0F380h MSX BIOS-work-area boundary (see
+; STACKTOP's own comment).
+ETANK_POOL         EQU 0F35Eh  ; ETANK_SLOT_SIZE*ETANK_SLOT_COUNT = 8 bytes
+ETANK_SPRITE_ATTRS EQU 0F366h  ; ETANK_SLOT_COUNT*8 = 8 bytes: (Y,X,pat,col)x2 - BL/BR only, TL/TR always hidden
+ETANK_SPAWN_TIMER  EQU 0F36Eh
+; ends at 0F36Eh - well clear of the 0F380h boundary, no DRAW_TEMP/
+; DRAW_COLOR scratch needed (reuses BIGZUM_DRAW_COLOR - see UOET_DRAW).
+ETANK_SPR_BASE_SLOT EQU 24     ; hw sprite slots24-25 (BL/BR only x1 instance), right after Flyer's own 20-23
+; "カラーはダークレッド" - NOT sprites/Etank.json's own fg, overridden
+; directly here (same "override the JSON's own fg" precedent as
+; BULLET_U_COLOR/BULLET_SKY_COLORBYTE elsewhere in this file).
+ETANK_COLOR EQU 6
+ETANK_SPAWNX EQU 240           ; off the right edge, same convention as every other enemy's own spawn-X
+ETANK_PROBE_DX EQU 16          ; horizontal-center probe offset for a 32px-wide sprite, same as BIGZUM_PROBE_DX
+ETANK_SPAWN_COL EQU ETANK_SPAWNX+ETANK_PROBE_DX/8
+ETANK_SPAWN_INTERVAL EQU ZUM_SPAWN_INTERVAL
+ETANK_SPEED EQU 2               ; px/frame, flat - "速度は2"
+ETANK_COLLISION_SIZE     EQU 24  ; width
+ETANK_COLLISION_HEIGHT   EQU 16  ; height - "キャラ位置は32x32の内左下24x16"
+ETANK_COLLISION_Y_OFFSET EQU 32-ETANK_COLLISION_HEIGHT  ; =16
+ETANK_HP_INIT EQU 10
+ETANK_PUSH_SPEED EQU ZUM_PUSH_SPEED  ; "Zumと同じで接触で自機を押す" - same push mechanic/speed as Zum's own UPDATE_TANK_ZUM_PUSH
+; the 2 BigZum pattern-groups Etank dynamically borrows (see ALLOC_
+; ETANK_SLOT/UOET_DRAW) - named here rather than written inline as
+; PAT_BIGZUM+2/+3 everywhere it's used.
+PAT_ETANK_BL EQU PAT_BIGZUM+2
+PAT_ETANK_BR EQU PAT_BIGZUM+3
 
 ; ---------- flowing background clouds (see CLOUD_UPDATE_ALL) ----------
 ; "Stage1でもやってる雲を上から3行目に4セルの雲をランダムタイミングで
@@ -1591,6 +1674,30 @@ IFLSA_LOOP:
     LD (HL),A : INC HL
     DJNZ IFLSA_LOOP
 
+    ; Etank pool: no per-slot SPRIDX assignment needed (ETANK_SLOT_COUNT
+    ; =1, its own draw code writes ETANK_SPRITE_ATTRS directly - see
+    ; UOET_DRAW). No pattern-VRAM load here either - Etank dynamically
+    ; borrows BigZum's own PAT_BIGZUM BL/BR groups only at its own spawn
+    ; time (see ALLOC_ETANK_SLOT).
+    LD HL,ETANK_POOL
+    LD B,ETANK_SLOT_SIZE*ETANK_SLOT_COUNT
+    XOR A
+IETZ_LOOP:
+    LD (HL),A
+    INC HL
+    DJNZ IETZ_LOOP
+    LD (ETANK_SPAWN_TIMER),A
+
+    LD HL,ETANK_SPRITE_ATTRS
+    LD B,ETANK_SLOT_COUNT*2
+IETSA_LOOP:
+    LD A,209 : LD (HL),A : INC HL
+    XOR A
+    LD (HL),A : INC HL
+    LD (HL),A : INC HL
+    LD (HL),A : INC HL
+    DJNZ IETSA_LOOP
+
     ; cloud pool: each of the 6 slots gets its own fixed ROW (2-7,
     ; CLOUD_ROW_TABLE)/INTERVAL/FIXED4 from the 3 lookup tables below,
     ; ROWADDR precomputed once (row*32 fits an 8-bit low byte for
@@ -1720,6 +1827,9 @@ SKIP_ADVANCE:
     CALL UPDATE_TANK_BIGZUM_PUNCH
     CALL UPDATE_FLYER_ALL
     CALL CHECK_BULLET_VS_FLYER
+    CALL UPDATE_ETANK_ALL
+    CALL CHECK_BULLET_VS_ETANK
+    CALL UPDATE_TANK_ETANK_PUSH
     CALL CLOUD_UPDATE_ALL
 
     CALL SOUND_UPDATE
@@ -4119,12 +4229,19 @@ BZTO_FAIL:
 ; active, the other half of "BigZum出現時はFlyerは出ない"'s own
 ; bidirectional exclusion (see FLYER_SLOT_SIZE's own comment - a
 ; Flyer-active BigZum spawn was directly observed in testing before
-; this gate existed).
+; this gate existed) - and a 5th: refuse while Etank is active, the
+; other half of Etank's OWN bidirectional exclusion (see ETANK_SLOT_
+; SIZE's own comment - this one isn't just screen-clutter, the 2
+; actually share pattern-VRAM bytes, so getting this gate wrong would
+; corrupt what's on screen, not just look busy).
 ALLOC_BIGZUM_SLOT:
     LD A,(ENEMY_SPAWN_COUNT)
     CP 10
     RET C
     LD A,(FLYER_POOL)
+    OR A
+    RET NZ
+    LD A,(ETANK_POOL)
     OR A
     RET NZ
     CALL BIGZUM_TERRAIN_OK
@@ -4157,6 +4274,17 @@ ABZS_FOUND:
     LD (IX+12),A
     LD A,BIGZUM_HP_INIT : LD (IX+8),A
     LD A,BIGZUM_SPAWN_INTERVAL : LD (BIGZUM_SPAWN_TIMER),A
+
+    ; restore BigZum's own real BL/BR pattern bytes - undoes whatever
+    ; Etank's own dynamic VRAM-sharing may have left behind from an
+    ; earlier appearance (see ETANK_SLOT_SIZE's own comment). The
+    ; bidirectional exclusion above only prevents the 2 being active at
+    ; the SAME time, not stale bytes left over from an Etank that has
+    ; since despawned - this reload is what actually fixes that up,
+    ; every single BigZum spawn, not just when Etank happened to run
+    ; recently (cheap/harmless either way - same 128-byte LDIRVM INIT
+    ; already does once for this same pattern).
+    LD HL,BIGZUM_BIGZUM_TL : LD DE,PAT_BIGZUM*8+SPRPAT : LD BC,128 : CALL LDIRVM
 
     LD A,BIGZUM_SPAWNX-BIGZUM_COLLISION_SIZE : LD B,A
     LD A,(TANK_X)
@@ -5396,6 +5524,318 @@ CHPFL_DESTROY:
     LD A,(TICK) : AND 7 : LD C,A : LD B,0
     LD HL,EXPLODE_DIR_DX : ADD HL,BC : LD A,(HL) : LD (IY+5),A
     LD HL,EXPLODE_DIR_DY : ADD HL,BC : LD A,(HL) : LD (IY+6),A
+
+    CALL SOUND_DESTROY
+    LD HL,SCORE_PER_KILL
+    CALL ADD_SCORE
+    RET
+
+; ---------- Etank ground enemy: spawn/update/draw (see ETANK_SLOT_ ----------
+; ---------- SIZE's own comment block for the full design rationale) ----------
+UPDATE_ETANK_ALL:
+    LD A,(ETANK_SPAWN_TIMER)
+    OR A
+    JR Z,UETA_TRY_SPAWN
+    DEC A : LD (ETANK_SPAWN_TIMER),A
+    JR UETA_UPDATE_ALL
+UETA_TRY_SPAWN:
+    CALL ALLOC_ETANK_SLOT
+UETA_UPDATE_ALL:
+    LD IX,ETANK_POOL
+    LD B,ETANK_SLOT_COUNT
+UETAU_LOOP:
+    PUSH BC
+    CALL UPDATE_ONE_ETANK
+    POP BC
+    INC IX : INC IX : INC IX : INC IX : INC IX : INC IX : INC IX : INC IX
+    DJNZ UETAU_LOOP
+    CALL FLUSH_ETANK_SPRITES
+    RET
+
+; A=1 only while the CURRENT surface at ETANK_SPAWN_COL is specifically
+; the apex tier (IDCACHE_T0, the topmost cache row) and steady (not a
+; climb/descend marker) - stricter than a "any flat tier" check, since
+; Etank never re-probes its own Y after spawn (see ETANK_SLOT_SIZE's
+; own comment) and needs the SAME height under it for its whole
+; crossing - see ETANK_APEX_FLAT_RUN in terrain_gen.py.
+ETANK_TERRAIN_OK:
+    LD A,ETANK_SPAWN_COL : LD E,A : LD D,0
+    LD HL,IDCACHE_T0 : ADD HL,DE : LD A,(HL)
+    CP 3
+    JR NC,ETO_FAIL
+    OR A
+    JR Z,ETO_FAIL
+    LD A,1
+    RET
+ETO_FAIL:
+    XOR A
+    RET
+
+; gated on: BigZum currently active (mutual exclusion - both directions,
+; see ALLOC_BIGZUM_SLOT's own matching check and ETANK_SLOT_SIZE's own
+; pattern-VRAM-sharing comment - a one-directional gate here would be a
+; real correctness bug, not just a design preference, since the two
+; actually share pattern-VRAM bytes, unlike BigZum/Flyer's own
+; screen-clutter-only exclusion), the terrain-length gate above, and a
+; free slot - same shape as ALLOC_ZUM_SLOT/ALLOC_BIGZUM_SLOT, plus the
+; same instant spawn-time overlap resolution.
+ALLOC_ETANK_SLOT:
+    LD A,(BIGZUM_POOL)
+    OR A
+    RET NZ
+    CALL ETANK_TERRAIN_OK
+    OR A
+    RET Z
+
+    LD HL,ETANK_POOL
+    LD B,ETANK_SLOT_COUNT
+AETS_LOOP:
+    LD A,(HL)
+    OR A
+    JR Z,AETS_FOUND
+    LD DE,ETANK_SLOT_SIZE : ADD HL,DE
+    DJNZ AETS_LOOP
+    RET
+AETS_FOUND:
+    PUSH HL
+    POP IX
+    LD A,1 : LD (IX+0),A
+    LD A,ETANK_SPAWNX : LD (IX+1),A
+    LD A,(TANK_TIER_Y_TABLE) : LD (IX+2),A   ; apex tier's own Y, fixed for Etank's whole lifetime - never re-probed (see ETANK_SLOT_SIZE's own comment)
+    XOR A
+    LD (IX+3),A
+    LD (IX+4),A
+    LD (IX+5),A
+    LD (IX+7),A
+    LD A,ETANK_HP_INIT : LD (IX+6),A
+    LD A,ETANK_SPAWN_INTERVAL : LD (ETANK_SPAWN_TIMER),A
+
+    ; dynamic pattern-VRAM share: overwrite BigZum's own BL/BR groups
+    ; (PAT_BIGZUM+2/+3) with Etank's own art - safe only while BigZum is
+    ; inactive (already gated above), restored whenever BigZum itself
+    ; next spawns (see ALLOC_BIGZUM_SLOT's own reload).
+    LD HL,ETANK_BL : LD DE,PAT_ETANK_BL*8+SPRPAT : LD BC,64 : CALL LDIRVM
+
+    ; "自機はZumと同じで接触で自機を押す" - same instant overlap
+    ; resolution at spawn as ALLOC_ZUM_SLOT/ALLOC_BIGZUM_SLOT.
+    LD A,ETANK_SPAWNX-ETANK_COLLISION_SIZE : LD B,A
+    LD A,(TANK_X)
+    CP B
+    RET C
+    LD A,B : LD (TANK_X),A
+    RET
+
+; IX = slot base. ACT=1: fixed Y (never re-probed), advances X left at
+; a flat ETANK_SPEED(2px/frame - "速度は2") every frame, straight-line,
+; no terrain following at all ("坂の昇降はしない"). Despawns once X can
+; no longer subtract the speed without underflow, i.e. off the left
+; edge ("右からでて左に消える"). ACT=2: same drift-then-hide explosion
+; shape as every other enemy here.
+UPDATE_ONE_ETANK:
+    LD A,(IX+0)
+    CP 2
+    JP Z,UOET_EXPLODING
+    OR A
+    RET Z
+
+    LD A,(IX+1)
+    CP ETANK_SPEED
+    JR NC,UOET_MOVE_OK
+    XOR A : LD (IX+0),A
+    CALL UOET_HIDE
+    RET
+UOET_MOVE_OK:
+    LD A,(IX+1) : SUB ETANK_SPEED : LD (IX+1),A
+
+UOET_DRAW:
+    ; hit-flash color resolve, once per draw call (see FLASH_DURATION's
+    ; own comment) - both hw sprite slots (BL/BR) share the one result.
+    LD A,(IX+7)
+    OR A
+    JR Z,UOETD_COLOR_NORMAL
+    DEC A : LD (IX+7),A
+    LD A,FLASH_COLOR
+    JR UOETD_COLOR_SET
+UOETD_COLOR_NORMAL:
+    LD A,ETANK_COLOR
+UOETD_COLOR_SET:
+    LD (BIGZUM_DRAW_COLOR),A   ; scratch reuse - UOET_DRAW never runs interleaved with UOBZ_DRAW's own use of it (BigZum/Etank are mutually exclusive)
+
+    LD HL,ETANK_SPRITE_ATTRS
+    LD A,(IX+2) : ADD A,16 : LD (HL),A : INC HL   ; BL: Y+16 (bottom half of the 32px canvas), X+0
+    LD A,(IX+1) : LD (HL),A : INC HL
+    LD A,PAT_ETANK_BL : LD (HL),A : INC HL
+    LD A,(BIGZUM_DRAW_COLOR) : LD (HL),A : INC HL
+
+    LD A,(IX+2) : ADD A,16 : LD (HL),A : INC HL   ; BR: Y+16, X+16
+    LD A,(IX+1) : ADD A,16 : LD (HL),A : INC HL
+    LD A,PAT_ETANK_BR : LD (HL),A : INC HL
+    LD A,(BIGZUM_DRAW_COLOR) : LD (HL),A
+    RET
+
+UOET_EXPLODING:
+    LD A,(IX+3)
+    OR A
+    JR Z,UOET_EXPLODE_HIDE
+    DEC A : LD (IX+3),A
+    LD A,(IX+1) : LD B,A : LD A,(IX+4) : ADD A,B : LD (IX+1),A
+    LD A,(IX+2) : LD B,A : LD A,(IX+5) : ADD A,B : LD (IX+2),A
+    LD HL,ETANK_SPRITE_ATTRS
+    LD A,(IX+2) : LD (HL),A : INC HL
+    LD A,(IX+1) : LD (HL),A : INC HL
+    LD A,PAT_EXPLOSION : LD (HL),A : INC HL
+    LD A,EXPLOSION_COLOR : LD (HL),A : INC HL
+    LD A,209 : LD (HL),A : INC HL
+    XOR A : LD (HL),A : INC HL : LD (HL),A : INC HL : LD (HL),A
+    RET
+UOET_EXPLODE_HIDE:
+    XOR A : LD (IX+0),A
+    CALL UOET_HIDE
+    RET
+
+UOET_HIDE:
+    LD HL,ETANK_SPRITE_ATTRS
+    LD A,209 : LD (HL),A : INC HL
+    XOR A : LD (HL),A : INC HL : LD (HL),A : INC HL : LD (HL),A : INC HL
+    LD A,209 : LD (HL),A : INC HL
+    XOR A : LD (HL),A : INC HL : LD (HL),A : INC HL : LD (HL),A
+    RET
+
+; blasts ETANK_SPRITE_ATTRS (8 bytes) to hw sprite slots
+; ETANK_SPR_BASE_SLOT..+1 - same raw DI-wrapped OUT + 8-NOP pattern as
+; FLUSH_FLYER_SPRITES.
+FLUSH_ETANK_SPRITES:
+    DI
+    LD A,ETANK_SPR_BASE_SLOT*4 : OUT (99h),A
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    LD HL,ETANK_SPRITE_ATTRS
+    LD B,ETANK_SLOT_COUNT*8
+FETS_LOOP:
+    LD A,(HL) : OUT (98h),A
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    INC HL
+    DJNZ FETS_LOOP
+    EI
+    RET
+
+; "Zumと同じで接触で自機を押す" - same shape as UPDATE_TANK_ZUM_PUSH:
+; run after UPDATE_ETANK_ALL (this frame's already-advanced X),
+; JUMP_ACTIVE suspends it entirely (same reasoning as Zum's own - stays
+; cleanly jumpable), skips once the tank has already passed through,
+; otherwise shoves TANK_X left by ETANK_PUSH_SPEED every frame it's in
+; contact.
+UPDATE_TANK_ETANK_PUSH:
+    LD A,(JUMP_ACTIVE)
+    OR A
+    RET NZ
+    LD IX,ETANK_POOL
+    LD B,ETANK_SLOT_COUNT
+UTETP_LOOP:
+    LD A,(IX+0)
+    CP 1
+    JR NZ,UTETP_NEXT
+    LD A,(IX+1)
+    LD D,A
+    LD A,(TANK_X)
+    CP D
+    JR NC,UTETP_NEXT             ; TANK_X>=Etank_X - already passed, no longer blocks
+    LD A,D
+    SUB ETANK_COLLISION_SIZE
+    LD C,A
+    LD A,(TANK_X)
+    CP C
+    JR C,UTETP_NEXT              ; TANK_X already < target - no overlap
+    LD A,(TANK_X)
+    CP ETANK_PUSH_SPEED
+    JR NC,UTETP_STEP
+    XOR A : LD (TANK_X),A
+    JR UTETP_NEXT
+UTETP_STEP:
+    LD A,(TANK_X) : SUB ETANK_PUSH_SPEED : LD (TANK_X),A
+UTETP_NEXT:
+    INC IX : INC IX : INC IX : INC IX : INC IX : INC IX : INC IX : INC IX
+    DJNZ UTETP_LOOP
+    RET
+
+; ---------- bullet x Etank collision: plain omnidirectional HP ----------
+; ---------- decrement against the 24x16 collision box            ----------
+CHECK_BULLET_VS_ETANK:
+    LD IX,BULLET0_ACT : CALL CHECK_HIT_ONE_BULLET_ETANK
+    LD IX,BULLET1_ACT : CALL CHECK_HIT_ONE_BULLET_ETANK
+    LD IX,BULLET2_ACT : CALL CHECK_HIT_ONE_BULLET_ETANK
+    RET
+
+CHECK_HIT_ONE_BULLET_ETANK:
+    LD IY,ETANK_POOL
+    LD B,ETANK_SLOT_COUNT
+CHOBET_LOOP:
+    PUSH BC
+    CALL CHECK_HIT_PAIR_ETANK
+    POP BC
+    INC IY : INC IY : INC IY : INC IY : INC IY : INC IY : INC IY : INC IY
+    DJNZ CHOBET_LOOP
+    RET
+
+CHECK_HIT_PAIR_ETANK:
+    LD A,(IX+0)
+    OR A
+    RET Z
+    LD A,(IY+0)
+    CP 1
+    RET NZ
+
+    LD A,(IX+2) : ADD A,A : ADD A,A : ADD A,A : LD B,A
+    LD A,(IX+3) : ADD A,A : ADD A,A : ADD A,A : LD C,A
+    LD A,(IY+1) : LD D,A
+    LD A,(IY+2) : ADD A,ETANK_COLLISION_Y_OFFSET : LD E,A
+
+    LD A,B : ADD A,7 : CP D : RET C
+    LD A,D : ADD A,ETANK_COLLISION_SIZE-1 : CP B : RET C
+    LD A,C : ADD A,7 : CP E : RET C
+    LD A,E : ADD A,ETANK_COLLISION_HEIGHT-1 : CP C : RET C
+
+    LD A,(IX+1)
+    OR A
+    JR NZ,CHPET_SKIP_ERASE
+    CALL ERASE_BULLET_CELL
+CHPET_SKIP_ERASE:
+    XOR A : LD (IX+0),A
+
+    LD A,(IY+6) : DEC A : LD (IY+6),A
+    JR Z,CHPET_DESTROY
+    LD A,FLASH_DURATION : LD (IY+7),A
+    CALL SOUND_ZUM_DEFLECT
+    RET
+CHPET_DESTROY:
+    LD A,2 : LD (IY+0),A
+    LD A,EXPLOSION_DURATION : LD (IY+3),A
+
+    LD A,(TICK) : AND 7 : LD C,A : LD B,0
+    LD HL,EXPLODE_DIR_DX : ADD HL,BC : LD A,(HL) : LD (IY+4),A
+    LD HL,EXPLODE_DIR_DY : ADD HL,BC : LD A,(HL) : LD (IY+5),A
 
     CALL SOUND_DESTROY
     LD HL,SCORE_PER_KILL

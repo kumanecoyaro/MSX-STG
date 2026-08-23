@@ -2594,6 +2594,85 @@ with no way to tell where.
     Full regression: 20000-frame random-input sweep, 20000-frame idle
     sweep, existing shake-off/Flyer/terrain targeted suites, all no
     crash/stall; `render_check.py` clean.
+- **Etank reimplemented** (the enemy deliberately skipped, "3をスキッ
+  プ", after the full rollback - now given a complete fresh spec):
+  > Ok
+  > ではETank
+  > 右からでて左に消える
+  > 速度は2
+  > Zumと同じで接触で自機を押す
+  > 坂の昇降はしないんで
+  > マップに長い平地を設置
+  > 速度２なら１２８カウントで端から端まで行けるはずなので１５０の平地は欲しいな
+  - Everything about Etank NOT covered by this message (HP, collision
+    box, color, dynamic BigZum-pattern-VRAM sharing) is carried over
+    from the design still visible in git history at commit 8f8d046
+    (the round that triggered the rollback) - not itself shown to be
+    wrong, and referenced by name here as an already-established
+    concept rather than something to redesign from scratch: HP10,
+    24(W)x16(H) collision anchored at the art's own bottom-left
+    (confirmed directly against `sprites/Etank.json` - TL/TR fully
+    blank, even BL/BR's own cols24-31 are blank, matching the box),
+    dark red color (6, overriding the JSON's own fg), no permanent
+    pattern-code allocation (shares BigZum's own `PAT_BIGZUM` BL/BR
+    groups dynamically, restored on BigZum's own next spawn).
+  - **Movement**: unlike Zum/BigZum, Etank never follows terrain
+    elevation - Y is set once at spawn (`TANK_TIER_Y_TABLE` index0, the
+    apex/highest tier) and never re-probed, straight horizontal line at
+    a flat `ETANK_SPEED`(2) px/frame - "坂の昇降はしないんで...速度は
+    2". Despawns once X can't subtract the speed without underflow -
+    off the left edge, "左に消える".
+  - **Terrain**: since Etank can't correct for a height change
+    mid-crossing, `ETANK_TERRAIN_OK` only allows it to spawn while the
+    apex tier (`IDCACHE_T0`) is the CURRENT surface, and that surface
+    has to stay the apex tier for its entire on-screen lifetime, not
+    just at the spawn instant - "速度２なら128カウントで端から端まで
+    行けるはずなので150の平地は欲しいな". `terrain_gen.py`'s own
+    `build_track()` widened both apex-tier flat runs (the runtime check
+    can't tell which one it's currently looking at, same "widen both
+    occurrences" precedent as before the rollback) from 24 tiles to a
+    new `ETANK_APEX_FLAT_RUN`(150), each merging with an adjacent
+    already-apex flat run for extra margin (174 total each, confirmed
+    directly: runs of 178 and 154 cells). Track length grew 264->516
+    cells; the pattern/color-group budget is unaffected (widening a
+    flat run repeats existing (curr,next) pairs, adds no new ones).
+  - **Push**: "Zumと同じで接触で自機を押す" - `UPDATE_TANK_ETANK_PUSH`
+    is `UPDATE_TANK_ZUM_PUSH`'s own shape/speed verbatim, suspended
+    entirely while `JUMP_ACTIVE` so the box stays cleanly jumpable.
+  - **Bidirectional exclusion with BigZum, from the start this time**:
+    the previous (pre-rollback) round's Etank/BigZum spawn gate was
+    only one-directional (Etank refused to spawn while BigZum was
+    active, but not the reverse), and the 2 were directly observed
+    active simultaneously, corrupting the pattern-VRAM they share -
+    exactly the kind of bug this session's own established
+    "全ての敵はスポーン条件外はそもそも登録しない" principle exists to
+    prevent (already applied once this session for BigZum/Flyer).
+    `ALLOC_BIGZUM_SLOT` now also refuses while `ETANK_POOL` is active,
+    and reloads BigZum's own real BL/BR pattern bytes on every spawn
+    (not just when Etank happened to run recently) to undo any stale
+    Etank art left over from an earlier appearance.
+  Verified: 18 isolated-subroutine unit tests (terrain-gate spawn
+  conditions including the climb/descend-marker case, spawn field
+  init, BOTH directions of the BigZum exclusion, flat 2px/frame
+  movement with no Y change, despawn at the left edge instead of
+  wrapping negative, Zum-style push including the `JUMP_ACTIVE`
+  suspension, omnidirectional bullet damage - lethal and non-lethal,
+  hit-flash, bullet consumption) - all pass. A natural-flow simulation
+  on the real scrolling track (no forced state) shows Etank spawning
+  on its own, crossing the full screen with zero Y change, and
+  despawning cleanly after exactly 120 frames (240px÷2px/frame,
+  matching the math precisely). A dedicated 20000-frame random-input
+  sweep additionally confirms: Etank reaches active state, only ever
+  shows Y=132 (a single value, i.e. never changes) across its entire
+  observed lifetime, hit-flash fires under random bullet contact, and
+  BigZum/Etank are never simultaneously active across the whole run.
+  Full regression: existing shake-off/Flyer/terrain/ZacoII-flash
+  targeted suites, a separate 20000-frame random-input sweep, a
+  20000-frame idle sweep, all no crash/stall; `render_check.py` clean.
+  Total assembled size grew past 16KB (14917->16757 bytes, now genuinely
+  spilling into page2) for the first time this session - exercises the
+  primary-slot page2-mapping fix added earlier specifically for this
+  scenario.
 
 ## Bugs found and fixed while building this
 
@@ -2943,7 +3022,7 @@ directly.
 
 - `combined_test.asm`, `build_test.py` - the merged engine + build
   script (imports `terrain_gen.py`, `tank_gen.py`, `bullet_gen.py`,
-  `enemy_gen.py`, and `bigzum_gen.py`).
+  `enemy_gen.py`, `bigzum_gen.py`, `flyer_gen.py`, and `etank_gen.py`).
 - `combined_test.rom` - the built ROM.
 - `bullet_gen.py`, `sprites/BulletF.json`, `sprites/BulletU.json` - the
   2 shot shapes' source art + BG-pattern conversion (8x8, single
@@ -2956,6 +3035,13 @@ directly.
   BigZum's 2 32x32 poses' hw-pattern conversion, mirroring
   `tank_gen.py`'s own quadrant-splitting + hflip approach (see the
   BigZum entry above).
+- `flyer_gen.py`, `sprites/Flyer.json` - Flyer's own 32x32 hw-pattern
+  conversion, permanent pattern allocation (no VRAM sharing).
+- `etank_gen.py`, `sprites/Etank.json` - Etank's own 32x32 art, but
+  only the bottom-left BL/BR quadrants are ever emitted (TL/TR are
+  fully blank in the source art) - dynamically shares BigZum's own
+  pattern-VRAM at runtime instead of a permanent allocation (see the
+  Etank entry above).
 - `render_check.py` - emulator verification: boots, runs several full
   track loops with no crash/hang, and renders 2 sample frames from
   real VRAM (BG + sprites composited together) to `combined0.ppm`/
