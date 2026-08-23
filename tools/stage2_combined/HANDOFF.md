@@ -4,35 +4,48 @@ Session handoff written 2026-08-23. Read this first, then `README.md`
 in this same directory for the full chronological changelog (every
 round quotes the user's exact Japanese instruction).
 
-## ⚠ Current build is a DIAGNOSTIC, not the real boss
+## ⚠ Current build is a DIAGNOSTIC, not the real boss (round 2)
 
 As of the most recent commit, `combined_test.asm` is deliberately in a
 **temporary test state**, by direct instruction - do not "fix" any of
-this without being told the test is done:
-- `UPDATE_BOSS_ALL` draws 4 independent Flyer-art 32x32 blocks
-  (`DRAW_FLUSH_BOSS_BLOCKS`) instead of Sasapi's own real 64x64 art
-  (`DRAW_BOSS`/`FLUSH_BOSS_SPRITES`/`LOAD_SASAPI_PATTERNS` - still in
-  the file, just unreferenced) - testing whether operating the whole
-  64x64 area as one combined unit (vs 4 fully independent smaller ones)
-  is the real cause of a still-open tearing/garbage report. Spawn tick/
-  position/patrol logic is unchanged either way.
-- `GAME_TICK` boots at 840 (was 0) so night (850) and the boss (999)
-  both arrive within ~1300 frames of booting, for fast manual testing.
-- Consequently `python3 tests/run_all.py` currently shows **8 expected
-  failures** (172/180): all 6 in `boss_test.py` check the now-bypassed
-  Sasapi path, 1 each in `etank_gametick_gate_test.py`/
-  `night_effect_test.py` assumed `GAME_TICK` starts at 0. Not
-  regressions - see README's own entry (search "DIAGNOSTIC BUILD") for
-  the full reasoning and exactly what still passes.
+this without being told the test is done. Round 1 (art-only swap using
+a hand-written draw routine, `BOSS_COLOR` instead of `FLYER_COLOR`) was
+explicitly rejected as not a real test - round 2 replaces it:
+- `UPDATE_BOSS_ALL` spawns 4 genuine instances into a NEW, separate
+  `BOSS_FLYER_POOL` (NOT the real `FLYER_POOL`/`FLYER_SLOT_COUNT`=1 -
+  ordinary early-game Flyer spawning is untouched), then every frame
+  `UBA_UPDATE_REAL_FLYERS` processes each ONE AT A TIME: `CALL
+  UPDATE_ONE_FLYER` (the real, unmodified routine - real AI, draws
+  itself via its own real `UOFL_DRAW`) then `CALL FLUSH_ONE_REAL_FLYER`
+  for just that instance's own 16 bytes, before moving to the next.
+  Sasapi's own real 64x64 art/draw/flush (`DRAW_BOSS`/
+  `FLUSH_BOSS_SPRITES`/`LOAD_SASAPI_PATTERNS`) and round 1's own
+  `DRAW_FLUSH_BOSS_BLOCKS`/`DRAW_FLUSH_ONE_BLOCK` are both still in the
+  file, just unreferenced.
+- The former hand-written `BOSS_X`/`BOSS_DIR` bounce-patrol is GONE for
+  this build - Flyer's own real AI (cruise/home/exit, not a forever
+  loop) drives each instance instead. Spawn TICK/position are still the
+  same anchor as before; ongoing movement/timing is not "identical" any
+  more in the strict sense round 1 could claim, because Flyer's own
+  real behavior genuinely differs from the boss's own hand-written
+  patrol - an accepted, disclosed side effect of using the real
+  subsystem unmodified.
+- `GAME_TICK` still boots at 840 (was 0) - unchanged from round 1.
+- `boss_test.py` is now substantially stale (most of it targets round
+  1's `BOSS_X`/`BOSS_DIR`/pattern-load state, gone in round 2) and was
+  NOT rewritten - not worth investing full coverage in a throwaway
+  diagnostic state. Real verification for round 2 is a direct
+  `BOSS_FLYER_POOL` RAM check + a render, both in README's own entry.
 - **Also**: don't revisit the "terrain-scroll `LDIRVM` causes tearing"
   theory - already tried, already explicitly rejected by direct
   instruction, see README's own correction entry and the "Do NOT touch"
   bullet further down.
-- Reverting to the real boss once this test concludes: swap
-  `UBA_DRAW`'s call target back to `DRAW_BOSS`+`FLUSH_BOSS_SPRITES`,
-  restore the 3 `LOAD_SASAPI_PATTERNS` call-sites (spawn + each
-  reversal), and put `GAME_TICK`'s boot value back to a plain `XOR A`
-  zero.
+- Reverting to the real boss once this whole test concludes: swap
+  `UBA_DRAW`'s (round 1) or `UPDATE_BOSS_ALL`'s (round 2) call target
+  back to `DRAW_BOSS`+`FLUSH_BOSS_SPRITES`, restore the 3
+  `LOAD_SASAPI_PATTERNS` call-sites and the `BOSS_X`/`BOSS_DIR` bounce-
+  patrol logic, and put `GAME_TICK`'s boot value back to a plain
+  `XOR A` zero.
 
 ## Where things are
 

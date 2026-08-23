@@ -1229,6 +1229,12 @@ BOSS_X             EQU F27Ah
 BOSS_DIR           EQU F27Bh
 BOSS_HP            EQU F27Ch
 BOSS_SPRITE_ATTRS  EQU F27Dh   ; 16 quadrants x4 bytes (Y,X,pat,col) = 64 bytes
+; DIAGNOSTIC BUILD: 4 real, independent Flyer-pool-shaped slots (own
+; RAM, NOT the real FLYER_POOL/FLYER_SLOT_COUNT=1 - keeps ordinary
+; early-game Flyer spawning completely untouched) - see
+; UPDATE_REAL_FLYER_BLOCK's own comment for why a separate pool.
+BOSS_FLYER_POOL    EQU F2BDh   ; 4 x FLYER_SLOT_SIZE(11) = 44 bytes
+BOSS_FLYER_CUR_SLOT EQU F2E9h  ; scratch: this instance's own hw slot base, read from BOSS_FLYER_HW_SLOTS before either call in UBA_URF_LOOP so HL is free to be clobbered by both
 ETANK_SPR_BASE_SLOT EQU 24     ; hw sprite slots24-25 (BL/BR only x1 instance), right after Flyer's own 20-23
 ; "カラーはダークレッド" - NOT sprites/Etank.json's own fg, overridden
 ; directly here (same "override the JSON's own fg" precedent as
@@ -6506,140 +6512,110 @@ LOAD_SASAPI_PATTERNS:
     EI
     RET
 
-; spawns once at BOSS_SPAWN_TICK (a true 16-bit SBC HL,DE compare, same
-; idiom as CHECK_NIGHT/SPAWN_STOPPED - see the CLOUD_UPDATE_ALL bug this
-; same session for why an 8-bit CP against a >255 constant is wrong),
-; then patrols X between 0 and BOSS_SPAWNX forever, reversing at either
-; edge - "右から出現し左へ 左端に着いたら反転 右端に 以降繰り返し". Y
-; never changes (BOSS_SPAWN_Y, horizontal patrol only). Reloads the
-; matching facing's pattern data (see LOAD_SASAPI_PATTERNS's own
-; comment) at spawn and at each reversal, never mid-step.
-; DIAGNOSTIC BUILD: UBA_DRAW below calls DRAW_FLUSH_BOSS_BLOCKS (4
-; independent Flyer-art 32x32 blocks) instead of DRAW_BOSS/
-; FLUSH_BOSS_SPRITES/LOAD_SASAPI_PATTERNS (Sasapi's own real 64x64 art)
-; - see DRAW_FLUSH_BOSS_BLOCKS' own comment for why. Spawn/position/
-; patrol logic below is completely UNCHANGED from the real boss -
-; "表示条件は同じになる" - only the draw+flush step differs, so the
-; LOAD_SASAPI_PATTERNS calls that used to sit at each of these 3 spots
-; are removed for this build (nothing here reads PAT_SASAPI any more).
+; ---------- DIAGNOSTIC BUILD (round 2): 4 REAL, independent Flyer ---------
+; ---------- pool entities - not a graphic-only swap this time      ---------
+;
+; "お前ただキャラ差し替えただけじゃねえだろうな Flyerを4体並べてスポ
+; ーンさせんだよ キャラ変えただけでなんの検証になるんだよ 色も違うし
+; 64x64まとめて処理するとダメな可能性があるかもって言うテストなんだ
+; よ なら1体ずつ処理しての64x64ではどうなるかって言うことだ" - round 1
+; (see README) only borrowed Flyer's own pixel art into the boss's own
+; single hand-written draw/flush routine - looked like Flyer, wasn't
+; actually running Flyer's own code (hence the wrong color: it used
+; BOSS_COLOR, not FLYER_COLOR, since it never touched UOFL_DRAW at all).
+; This round genuinely spawns 4 independent instances into their own
+; pool (BOSS_FLYER_POOL, NOT the real FLYER_POOL/FLYER_SLOT_COUNT=1 -
+; keeps ordinary early-game Flyer spawning completely untouched) and
+; runs each one through the REAL, completely unmodified UPDATE_ONE_
+; FLYER every frame (real cruise/home/exit AI, real UOFL_DRAW - so
+; FLYER_COLOR/PAT_FLYER/PAT_FLYER_L resolve exactly like a genuine
+; Flyer, not reimplemented) - processed one at a time, in sequence:
+; update instance0 (which draws into FLYER_SPRITE_ATTRS itself, same as
+; it always does), flush JUST those 16 bytes to instance0's own hw
+; slots, then instance1, etc. All 4 share SPRIDX=0 (always) so they
+; each land in the SAME 16-byte FLYER_SPRITE_ATTRS staging spot in
+; turn - safe specifically BECAUSE each one is flushed before the next
+; one's UPDATE_ONE_FLYER call overwrites it.
+;
+; UPDATE_BOSS_ALL's own former X/DIR bounce-patrol is GONE for this
+; build - Flyer's own real AI (cruise left, home toward whichever Y
+; each instance itself sits at vs TANK_Y_CUR, exit right, despawn) runs
+; instead, unmodified. BOSS_ACT is kept only as the one-shot "have the
+; 4 instances been spawned yet" gate.
+BOSS_FLYER_HW_SLOTS:
+    DB 10,14,18,22   ; own 4-slot group per instance, same 10-25 range the real boss used (safe: by BOSS_SPAWN_TICK, SPAWN_STOPPED/BigZum's own forced retreat have already cleared every ordinary user of these slots)
+BOSS_FLYER_POS:
+    DB 0,0
+    DB 0,32
+    DB 32,0
+    DB 32,32
+
 UPDATE_BOSS_ALL:
     LD A,(BOSS_ACT)
     OR A
-    JR NZ,UBA_MOVE
+    JR NZ,UBA_UPDATE_REAL_FLYERS
     LD HL,(GAME_TICK)
     LD DE,BOSS_SPAWN_TICK
     OR A
     SBC HL,DE
     RET C                      ; not yet time
     LD A,1 : LD (BOSS_ACT),A
-    LD A,BOSS_SPAWNX : LD (BOSS_X),A
-    XOR A : LD (BOSS_DIR),A    ; 0 = moving left first - "右から出現し左へ"
-    LD A,BOSS_HP_INIT : LD (BOSS_HP),A
-    JR UBA_DRAW
-UBA_MOVE:
-    LD A,(BOSS_DIR)
-    OR A
-    JR NZ,UBA_MOVE_RIGHT
-UBA_MOVE_LEFT:
-    LD A,(BOSS_X)
-    CP BOSS_SPEED
-    JR NC,UBA_STEP_LEFT
-    XOR A : LD (BOSS_X),A      ; clamp to the left edge
-    LD A,1 : LD (BOSS_DIR),A   ; 反転 - now heads right
-    JR UBA_DRAW
-UBA_STEP_LEFT:
-    SUB BOSS_SPEED : LD (BOSS_X),A
-    JR UBA_DRAW
-UBA_MOVE_RIGHT:
-    LD A,(BOSS_X) : ADD A,BOSS_SPEED
-    CP BOSS_SPAWNX
-    JR C,UBA_STEP_RIGHT
-    LD A,BOSS_SPAWNX : LD (BOSS_X),A   ; clamp to the right edge
-    XOR A : LD (BOSS_DIR),A            ; 反転 - back to heading left
-    JR UBA_DRAW
-UBA_STEP_RIGHT:
-    LD (BOSS_X),A
-UBA_DRAW:
-    CALL DRAW_FLUSH_BOSS_BLOCKS
-    RET
-
-; ---------- DIAGNOSTIC BUILD: 4 independent Flyer-art 32x32 blocks ----------
-; ---------- in place of Sasapi's own real 64x64 art/draw/flush      ----------
-;
-; "検証で今のボスの代わりにFlyerを4体64x64に並べてだせ 表示条件は同じ
-; になる もしかすると64x64のスプライトを一気にひとまとめで操作すると
-; VDP処理オーバーの可能性がある" - tests whether operating the whole
-; 64x64 area as ONE combined draw+flush (even the already-DI/EI-chunked
-; real DRAW_BOSS/FLUSH_BOSS_SPRITES still compute and flush all 16
-; quadrants together, back to back, every frame, as one unit) is itself
-; the problem, versus 4 fully independent 32x32 pieces - each its own
-; draw + its own single small DI/EI flush (16 bytes, 4 quadrants -
-; identical size/shape to Flyer's own real single-instance flush,
-; already proven safe elsewhere in this file) - with nothing shared
-; between them but which hw sprite slots they land in.
-; UPDATE_BOSS_ALL's own spawn/position/patrol logic is untouched; only
-; the draw+flush step is swapped. Uses Flyer's own already-resident
-; PAT_FLYER art (no dynamic pattern load at all for this build -
-; SASAPI_QUADS/_L and LOAD_SASAPI_PATTERNS go unused here, removing
-; that 512-byte transfer as a variable too).
-BOSS_BLOCK_OFFSETS:
-    DB 0,0
-    DB 0,32
-    DB 32,0
-    DB 32,32
-
-; walks BOSS_BLOCK_OFFSETS (4 entries x2: Y-delta,X-delta), C tracking
-; each block's own hw sprite base slot (BOSS_SPR_BASE_SLOT, +4 per
-; block - same 16 slots the real boss used, just split 4-ways instead
-; of used as one range).
-DRAW_FLUSH_BOSS_BLOCKS:
-    LD IX,BOSS_BLOCK_OFFSETS
-    LD C,BOSS_SPR_BASE_SLOT
+    LD IX,BOSS_FLYER_POOL
+    LD HL,BOSS_FLYER_POS
     LD B,4
-DFBB_LOOP:
+UBA_SPAWN_LOOP:
+    LD A,1 : LD (IX+0),A               ; ACT=1
+    LD A,(HL) : LD C,A
+    LD A,BOSS_SPAWN_Y : ADD A,C : LD (IX+2),A   ; Y = anchor + this instance's own row delta
+    INC HL
+    LD A,(HL) : LD C,A
+    LD A,BOSS_SPAWNX : ADD A,C : LD (IX+1),A    ; X = anchor + this instance's own column delta
+    INC HL
+    XOR A
+    LD (IX+3),A                        ; TIMER=0
+    LD (IX+4),A                        ; SPRIDX=0 (always - see this block's own header comment)
+    LD (IX+5),A : LD (IX+6),A          ; DX/DY=0
+    LD (IX+8),A                        ; PHASE=0 (cruise)
+    LD (IX+9),A                        ; FACING=0
+    LD (IX+10),A                       ; FLASH_TIMER=0
+    LD A,FLYER_HP_INIT : LD (IX+7),A
+    INC IX : INC IX : INC IX : INC IX : INC IX : INC IX
+    INC IX : INC IX : INC IX : INC IX : INC IX
+    DJNZ UBA_SPAWN_LOOP
+UBA_UPDATE_REAL_FLYERS:
+    LD IX,BOSS_FLYER_POOL
+    LD HL,BOSS_FLYER_HW_SLOTS
+    LD B,4
+UBA_URF_LOOP:
+    ; this instance's own hw slot base saved to RAM (not just a
+    ; register) since both calls below are free to clobber A/B/C/HL
+    ; internally (UPDATE_ONE_FLYER's real body does, and
+    ; FLUSH_ONE_REAL_FLYER's own LD HL,FLYER_SPRITE_ATTRS definitely
+    ; does) - HL/BC are still PUSH/POP-protected around both calls
+    ; together so this loop's own table-walk (HL) and DJNZ counter (B)
+    ; survive regardless.
+    LD A,(HL) : LD (BOSS_FLYER_CUR_SLOT),A
     PUSH BC
-    CALL DRAW_FLUSH_ONE_BLOCK
+    PUSH HL
+    CALL UPDATE_ONE_FLYER    ; real, unmodified - draws into FLYER_SPRITE_ATTRS itself via its own UOFL_DRAW/UOFL_HIDE
+    LD A,(BOSS_FLYER_CUR_SLOT) : LD C,A
+    CALL FLUSH_ONE_REAL_FLYER
+    POP HL
     POP BC
-    INC IX : INC IX
-    LD A,C : ADD A,4 : LD C,A
-    DJNZ DFBB_LOOP
+    INC HL
+    INC IX : INC IX : INC IX : INC IX : INC IX : INC IX
+    INC IX : INC IX : INC IX : INC IX : INC IX
+    DJNZ UBA_URF_LOOP
     RET
 
-; IX = &(Y-delta,X-delta) for this block; C = its own hw sprite base
-; slot (4 consecutive slots). D/E hold this block's own resolved Y/X
-; (BOSS_SPAWN_Y/BOSS_X + this block's own delta) for the whole call.
-; Stages its own 4 quadrants (TL,TR,BL,BR - same order Flyer's own
-; UOFL_DRAW uses) into BOSS_SPRITE_ATTRS, then flushes just those 16
-; bytes through their own single DI/EI pair - own address set, own
-; NOP-padded OUT burst, own EI - completely independent of the other 3
-; blocks' own calls.
-DRAW_FLUSH_ONE_BLOCK:
-    LD A,(IX+0) : LD B,A
-    LD A,BOSS_SPAWN_Y : ADD A,B : LD D,A
-    LD A,(IX+1) : LD B,A
-    LD A,(BOSS_X) : ADD A,B : LD E,A
-
-    LD HL,BOSS_SPRITE_ATTRS
-    LD A,D : LD (HL),A : INC HL
-    LD A,E : LD (HL),A : INC HL
-    LD A,PAT_FLYER : LD (HL),A : INC HL
-    LD A,BOSS_COLOR : LD (HL),A : INC HL
-
-    LD A,D : LD (HL),A : INC HL
-    LD A,E : ADD A,16 : LD (HL),A : INC HL
-    LD A,PAT_FLYER : ADD A,4 : LD (HL),A : INC HL
-    LD A,BOSS_COLOR : LD (HL),A : INC HL
-
-    LD A,D : ADD A,16 : LD (HL),A : INC HL
-    LD A,E : LD (HL),A : INC HL
-    LD A,PAT_FLYER : ADD A,8 : LD (HL),A : INC HL
-    LD A,BOSS_COLOR : LD (HL),A : INC HL
-
-    LD A,D : ADD A,16 : LD (HL),A : INC HL
-    LD A,E : ADD A,16 : LD (HL),A : INC HL
-    LD A,PAT_FLYER : ADD A,12 : LD (HL),A : INC HL
-    LD A,BOSS_COLOR : LD (HL),A
-
+; blasts FLYER_SPRITE_ATTRS (16 bytes - always just the ONE instance
+; UPDATE_ONE_FLYER most recently drew, since every BOSS_FLYER_POOL
+; instance shares SPRIDX=0) to hw sprite slots C..C+3 - own single
+; DI/EI pair, same NOP-padded raw-OUT shape as every other sprite flush
+; in this file, just parameterized by C instead of a fixed constant
+; (FLUSH_FLYER_SPRITES' own real base, FLYER_SPR_BASE_SLOT, is a fixed
+; EQU - can't reuse it unmodified for 4 different slot groups).
+FLUSH_ONE_REAL_FLYER:
     LD A,C : ADD A,C : ADD A,C : ADD A,C   ; slot*4 (low byte of 1B00h+slot*4 - fits in 8 bits for any slot<64)
     DI
     OUT (99h),A
@@ -6660,9 +6636,9 @@ DRAW_FLUSH_ONE_BLOCK:
     NOP
     NOP
     NOP
-    LD HL,BOSS_SPRITE_ATTRS
+    LD HL,FLYER_SPRITE_ATTRS
     LD B,16
-DFOB_LOOP:
+FORF_LOOP:
     LD A,(HL) : OUT (98h),A
     NOP
     NOP
@@ -6673,7 +6649,7 @@ DFOB_LOOP:
     NOP
     NOP
     INC HL
-    DJNZ DFOB_LOOP
+    DJNZ FORF_LOOP
     EI
     RET
 
