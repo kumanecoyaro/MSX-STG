@@ -164,10 +164,28 @@ Communicates in terse, often angry Japanese. Expects:
   which `z80emu.py` doesn't model either. The boss's own 4x4 quadrant
   grid was already deliberately designed around this (confirmed by
   direct instruction: "敵の出現制限も全て横並びを回避するため") — this
-  was NOT the cause of the flicker reported this session (see above),
-  but keep it in mind for any other future wide/tall sprite.
-  Keep this in mind for any future wide/tall sprite built from ordinary
-  (non-magnified) 16x16 hw sprites.
+  was NOT the cause of the flicker reported this session, and this
+  theory was already explicitly rejected — see the entry right below.
+- **Do NOT touch `MAINLOOP`'s own terrain-scroller redraw
+  (`NAMEBUF_T0`-`T3`) again without hard, direct evidence it's actually
+  involved.** A follow-up round DI/EI-wrapped it on the theory that its
+  every-frame unprotected `LDIRVM` was the real source of the boss-
+  adjacent tearing/garbage report above — reasonable-sounding (it IS
+  the most-exercised unprotected `LDIRVM` in the file) but was flatly
+  wrong and immediately reverted: "根拠のない推測で無関係な処理に手を
+  入れんな 地形スクロールなんて関係ないわ それならボスまでに問題が
+  起きてるだろうが そこは非常に重要な処理だから勝手にいじってんじゃ
+  ねえよ お前の実装に問題があるだけだ". The user's own logic: terrain
+  redraw runs every single frame from the very start of the game, so if
+  IT were the real cause, the same corruption would show up constantly
+  throughout ordinary play, not specifically in boss-adjacent testing -
+  it doesn't, so it isn't. The real bug is still somewhere in the
+  boss's OWN code specifically (not yet found as of this handoff) - the
+  `FLUSH_BOSS_SPRITES`/`LOAD_SASAPI_PATTERNS` DI/EI fixes from the
+  round before this one are still in place (never shown wrong, just not
+  yet confirmed as the actual full fix either) but re-examine the boss
+  itself next, not adjacent systems, however plausible the theory feels
+  - and don't touch terrain-scroll again on speculation alone.
 
 ## Open items / things to watch
 

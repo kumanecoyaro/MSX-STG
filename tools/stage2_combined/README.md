@@ -3779,6 +3779,29 @@ with no way to tell where.
   (smaller) windows - and a re-rendered frame after the fix still shows
   correct, uncorrupted art.
 
+- **The terrain-scroll DI/EI fix from the round right after this one
+  was wrong and reverted - rejected the theory, not just the change**:
+  "根拠のない推測で無関係な処理に手を入れんな 地形スクロールなんて
+  関係ないわボケが それならボスまでに問題が起きてるだろうが そこは
+  非常に重要な処理だから勝手にいじってんじゃねえよ お前の実装に問題
+  があるだけだ クソが". The reasoning that round (terrain redraw is the
+  file's single most-exercised unprotected `LDIRVM`, therefore the most
+  statistically likely to collide with an interrupt) was real, but
+  never actually connected to the report with hard evidence - a
+  plausible-sounding mechanism stood in for proof. The user's own
+  counter-logic is airtight: terrain redraw runs every single frame
+  from the start of the game, so if it were really the cause, the same
+  corruption would show up constantly throughout ordinary play, not
+  specifically around the boss - it doesn't, so it isn't. Reverted
+  clean (`git revert`, single commit, no conflicts) - `combined_test.asm`
+  back to the DI/EI-wrapped-per-quadrant `FLUSH_BOSS_SPRITES`/
+  `LOAD_SASAPI_PATTERNS` state from 2 entries above, terrain-scroll
+  untouched. Full suite (180 checks) still passes; ROM rebuilds
+  byte-identical to what `git revert` alone produced (deterministic
+  build, confirmed by re-running `build_test.py` and diffing - clean).
+  The real bug is still somewhere in the boss's own code specifically -
+  not yet found as of this entry.
+
 ## Bugs found and fixed while building this
 
 - **Sand flickered between its own new color and Rock's, twice over**
