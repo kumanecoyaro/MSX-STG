@@ -4767,6 +4767,28 @@ UPDATE_ONE_BIGZUM:
     OR A
     RET Z
 
+    ; "Tick950でBigZumが居たら左へ撤退し消す" - once ordinary spawning
+    ; has stopped (ENEMY_SPAWN_STOP_TICK, a true 16-bit compare - same
+    ; bug class as CLOUD_UPDATE_ALL if this were an 8-bit CP), force any
+    ; still-active BigZum into a dedicated retreat state (5) that
+    ; overrides whatever it was doing (approach/pause/punch/jump/flip-
+    ; pause alike), before any of that logic below gets a chance to run.
+    ; This is what makes the boss's own reuse of BigZum's hw sprite
+    ; slots/pattern VRAM (see BOSS_SPR_BASE_SLOT/PAT_SASAPI's own
+    ; comments) actually safe rather than just an assumption.
+    LD A,(IX+7)
+    CP 5
+    JP Z,UOBZ_RETREAT_MOVE      ; already retreating
+    LD HL,(GAME_TICK)
+    LD DE,ENEMY_SPAWN_STOP_TICK
+    OR A
+    SBC HL,DE
+    JR C,UOBZ_NOT_RETREAT_TIME
+    LD A,5 : LD (IX+7),A       ; STATE=5 (forced retreat)
+    XOR A : LD (IX+9),A        ; FACING=0 (normal art, facing left)
+    JP UOBZ_RETREAT_MOVE
+UOBZ_NOT_RETREAT_TIME:
+
     ; "BigZumの上に自機が乗ったそのまま動かないとずっと乗りっぱなしな
     ; ので右にジャンプして振り払うように" - see BIGZUM_SHAKE_STAND_
     ; FRAMES's own comment. TANK_ZUM_STANDING is already fresh for this
@@ -5207,6 +5229,25 @@ UOBZ_TERRAIN_FOLLOW:
     LD (IX+2),A
     RET
 
+; STATE=5 (forced retreat, see UPDATE_ONE_BIGZUM's own top-of-function
+; check): walks left at BIGZUM_JUMP_XSPEED (the same "approach cruise"
+; speed used elsewhere), no terrain-follow (Y just stays put - it was
+; already grounded the moment retreat started, and this is a straight
+; horizontal exit, not a walk requiring an updated ground height) and
+; no give-up/pause/punch logic - clamps and deactivates once it would
+; go negative, same "CP speed: step else clamp-and-stop" idiom as
+; UPDATE_BOSS_ALL's own edge clamps.
+UOBZ_RETREAT_MOVE:
+    LD A,(IX+1)
+    CP BIGZUM_JUMP_XSPEED
+    JR NC,UOBZ_RETREAT_STEP
+    XOR A : LD (IX+0),A        ; off the left edge - deactivate ("消す")
+    CALL UOBZ_HIDE
+    RET
+UOBZ_RETREAT_STEP:
+    SUB BIGZUM_JUMP_XSPEED : LD (IX+1),A
+    JP UOBZ_DRAW
+
 ; picks the current pattern base (PAT_BIGZUM/PAT_BIGZUMP x normal/_L)
 ; from STATE/+3(pose-timer)/FACING, then writes all 4 quadrant hw
 ; sprite entries into this instance's own slice of BIGZUM_SPRITE_ATTRS
@@ -5526,6 +5567,12 @@ CHECK_HIT_PAIR_BIGZUM:
     LD A,(IY+0)
     CP 1
     RET NZ
+    ; "この時は弾が居ても貫通しコリジョン無効に" - STATE=5 (forced
+    ; retreat, see UPDATE_ONE_BIGZUM's own comment) is a scripted exit,
+    ; not something a shot should be able to interrupt or score against.
+    LD A,(IY+7)
+    CP 5
+    RET Z
 
     ; AABB against the (deliberately shrunk-for-gameplay) collision box
     ; - BIGZUM_COLLISION_SIZE(24) wide starting at BZ_X (left edge, no
@@ -6426,12 +6473,16 @@ BOSS_QUAD_OFFSETS:
     DB 32,0,32,   32,16,36,   32,32,40,   32,48,44
     DB 48,0,48,   48,16,52,   48,32,56,   48,48,60
 
-; blasts SASAPI_QUADS (512 bytes, sasapi_gen.py) into PAT_SASAPI's own
-; VRAM slot range in one shot - called once, right when the boss spawns
-; (see UPDATE_BOSS_ALL's own one-shot check), not at INIT, since this
-; overwrites BigZum's own pattern data (see PAT_SASAPI's own comment).
+; blasts HL (caller sets SASAPI_QUADS or SASAPI_QUADS_L - both 512
+; bytes, sasapi_gen.py) into PAT_SASAPI's own VRAM slot range in one
+; shot. Called only when BOSS_DIR actually changes (spawn, and each
+; edge-reversal - see UPDATE_BOSS_ALL), not every frame: both facings
+; share this same 64-slot range rather than each getting its own (no
+; 2nd free 64-slot block exists anywhere in the pattern-code budget -
+; see PAT_SASAPI's own comment), so whichever one is "in" has to be
+; reloaded on every facing change.
 LOAD_SASAPI_PATTERNS:
-    LD HL,SASAPI_QUADS : LD DE,PAT_SASAPI*8+SPRPAT : LD BC,16*32 : CALL LDIRVM
+    LD DE,PAT_SASAPI*8+SPRPAT : LD BC,16*32 : CALL LDIRVM
     RET
 
 ; spawns once at BOSS_SPAWN_TICK (a true 16-bit SBC HL,DE compare, same
@@ -6439,7 +6490,9 @@ LOAD_SASAPI_PATTERNS:
 ; same session for why an 8-bit CP against a >255 constant is wrong),
 ; then patrols X between 0 and BOSS_SPAWNX forever, reversing at either
 ; edge - "右から出現し左へ 左端に着いたら反転 右端に 以降繰り返し". Y
-; never changes (BOSS_SPAWN_Y, horizontal patrol only).
+; never changes (BOSS_SPAWN_Y, horizontal patrol only). Reloads the
+; matching facing's pattern data (see LOAD_SASAPI_PATTERNS's own
+; comment) at spawn and at each reversal, never mid-step.
 UPDATE_BOSS_ALL:
     LD A,(BOSS_ACT)
     OR A
@@ -6449,7 +6502,7 @@ UPDATE_BOSS_ALL:
     OR A
     SBC HL,DE
     RET C                      ; not yet time
-    CALL LOAD_SASAPI_PATTERNS
+    LD HL,SASAPI_QUADS : CALL LOAD_SASAPI_PATTERNS   ; DIR=0 facing below
     LD A,1 : LD (BOSS_ACT),A
     LD A,BOSS_SPAWNX : LD (BOSS_X),A
     XOR A : LD (BOSS_DIR),A    ; 0 = moving left first - "右から出現し左へ"
@@ -6465,6 +6518,7 @@ UBA_MOVE_LEFT:
     JR NC,UBA_STEP_LEFT
     XOR A : LD (BOSS_X),A      ; clamp to the left edge
     LD A,1 : LD (BOSS_DIR),A   ; 反転 - now heads right
+    LD HL,SASAPI_QUADS_L : CALL LOAD_SASAPI_PATTERNS
     JR UBA_DRAW
 UBA_STEP_LEFT:
     SUB BOSS_SPEED : LD (BOSS_X),A
@@ -6475,6 +6529,7 @@ UBA_MOVE_RIGHT:
     JR C,UBA_STEP_RIGHT
     LD A,BOSS_SPAWNX : LD (BOSS_X),A   ; clamp to the right edge
     XOR A : LD (BOSS_DIR),A            ; 反転 - back to heading left
+    LD HL,SASAPI_QUADS : CALL LOAD_SASAPI_PATTERNS
     JR UBA_DRAW
 UBA_STEP_RIGHT:
     LD (BOSS_X),A

@@ -15,7 +15,7 @@ round quotes the user's exact Japanese instruction).
 - **Regression suite**: `tests/` (in this directory, **just added to
   git this session** — previously these lived only in an ephemeral
   scratchpad and would NOT have survived a session handoff). Run
-  `python3 tests/run_all.py` for the full suite (168 checks as of this
+  `python3 tests/run_all.py` for the full suite (180 checks as of this
   commit). Each file is also independently runnable and self-reports
   `N passed, M failed`.
 - **Emulator**: `../z80emu.py` — a from-scratch Z80 interpreter used
@@ -134,23 +134,42 @@ Communicates in terse, often angry Japanese. Expects:
   `SPRPAT+PAT_xxx*8`, and any new sprite needs an actual render, not
   just unit tests, before calling it verified.
 
+- **MSX1/TMS9918's real per-scanline sprite limit (max 4) is separate
+  from — and much stricter than — the 32-slot total budget**, and
+  `z80emu.py`/`render_check.py` don't model it at all (only the 32-slot
+  total), so a real-hardware/WebMSX flicker report from too many
+  sprites sharing a scanline can never be reproduced or caught here,
+  only reasoned about from the actual slot numbers in the code. The
+  boss's own 4x4 quadrant grid already sits exactly at that per-line
+  ceiling on every one of its 4 row-bands (4 quadrants, same Y, every
+  scanline) with zero margin — any other visible sprite (a bullet
+  climbing through the sky is the likely case) sharing one of those
+  scanlines forces a real drop, since `z80emu` can't warn about it.
+  Keep this in mind for any future wide/tall sprite built from ordinary
+  (non-magnified) 16x16 hw sprites.
+
 ## Open items / things to watch
 
 - No known open bugs as of this handoff — the boss's own SPRPAT bug
   (see above) was caught and fixed before shipping; the last several
   rounds before that were bug reports against the night effect and
   horizontal-shot coloring, all resolved and verified (see README's
-  most recent entries).
-- **The boss (Sasapi) has spawn+patrol movement only** — HP is stored
-  (255) but nothing reads or decrements it, no collision box, no death/
-  explosion state, no facing flip on direction change (single art
-  orientation only). All deliberate scope for this round ("取り敢えず
-  確認") — don't assume any of it exists until asked to add it.
+  most recent entries). The per-scanline flicker (see above) is a real
+  hardware limit, not something fixed in code.
+- **The boss (Sasapi) has spawn+patrol movement (both facings, reloaded
+  on direction change) only** — HP is stored (255) but nothing reads or
+  decrements it, no collision box, no death/explosion state. Deliberate
+  scope so far ("取り敢えず確認") — don't assume any of it exists until
+  asked to add it.
 - `BOSS_SPAWN_Y`(56) was read as "the sprite's own bottom edge sits 8px
   above SkySand's top row" - an interpretation, not confirmed by a
   screenshot yet. If a future instruction implies a different vertical
   position, that's the thing to revisit first, same as
   `NIGHT_START_ROW`'s own history of a wrong first guess.
+- **BigZum's own STATE field now goes up to 5** (forced retreat once
+  `GAME_TICK>=ENEMY_SPAWN_STOP_TICK` - see `UPDATE_ONE_BIGZUM`'s own
+  top-of-function check) - any future code reading/switching on
+  `BIGZUM_POOL+7` needs to account for this 6th value, not just 0-4.
 - The row-range boundaries in the night-glyph work (`DRAW_BULLET_CELL`,
   `ERASE_BULLET_CELL`) went through 2 wrong guesses before landing
   correctly — re-read the last 4-5 README entries in full before

@@ -3637,6 +3637,82 @@ with no way to tell where.
   flips to 1) - all show the intended look and position, boss sitting
   entirely in the (by then fully night-swept) sky, clear of SkySand.
 
+- **Sasapi's mirrored facing, and BigZum forced off the stage once
+  ordinary spawning stops - "自機以外はもうスポーンしないんで オール
+  フリー" turned out to need enforcing, not just assuming**: "まず反転
+  パターンを生成 Tick950でBigZumが居たら左へ撤退し消す この時は時期
+  がいても貫通しコリジョン無効に".
+  `sasapi_gen.py` now emits both `SASAPI_QUADS` (as-provided) and
+  `SASAPI_QUADS_L` (horizontally mirrored - `hflip_bits` applied to the
+  whole 64x64 bitmap before slicing into quadrants, so both the per-
+  pixel mirror and the quadrant repositioning fall out of the same
+  step). No 2nd permanent 64-slot pattern-code block exists to hold a
+  2nd facing (BigZum's own whole footprint, already reused for the 1st
+  facing, is the only free block that size in the entire budget) - both
+  facings share the SAME `PAT_SASAPI` VRAM range instead, and
+  `UPDATE_BOSS_ALL` reloads whichever one is needed via `LOAD_SASAPI_
+  PATTERNS` only at spawn and at each edge reversal (a few times over a
+  whole patrol), not every frame.
+  `UPDATE_ONE_BIGZUM` now force-transitions any still-active BigZum
+  into a new STATE=5 ("forced retreat") the moment `GAME_TICK` reaches
+  `ENEMY_SPAWN_STOP_TICK`(950, the SAME constant/true-16-bit-compare
+  `SPAWN_STOPPED` already uses to stop new spawns - not a 2nd hand-
+  rolled threshold), overriding whatever it was doing (approach/pause/
+  punch/jump/flip-pause alike) - checked and applied before any of that
+  logic gets a chance to run. `UOBZ_RETREAT_MOVE` then walks it left at
+  `BIGZUM_JUMP_XSPEED` with no terrain-follow/give-up/pause logic,
+  deactivating and hiding once it goes off the left edge - "消す".
+  `CHECK_HIT_PAIR_BIGZUM` now returns immediately once `IY+7`(STATE)=5,
+  before the AABB box or front/rear-facing logic ever runs - "この時は
+  弾が居ても貫通しコリジョン無効に": a scripted exit isn't something a
+  shot should be able to interrupt or score against. This is what
+  actually makes the boss's own reuse of BigZum's hw sprite slots/
+  pattern VRAM safe, rather than merely assumed.
+  Verified: new `bigzum_retreat_test.py` (10 checks - not forced before
+  `ENEMY_SPAWN_STOP_TICK` including the truncated-8-bit-low-byte
+  regression shape, forced to STATE=5 with FACING reset even overriding
+  an in-progress punch, steps left and clamps/deactivates/hides off the
+  left edge, and a bullet-collision positive control (STATE=1, bypasses
+  the front/rear split, confirms the AABB setup genuinely overlaps)
+  against the STATE=5 negative case showing the identical overlap does
+  NOT register) and 2 new checks in `boss_test.py` (pattern VRAM
+  genuinely swaps to `SASAPI_QUADS_L` on the first reversal and back to
+  `SASAPI_QUADS` on the second) all pass. Full suite (180 checks)
+  passes. Also re-rendered real frames: the boss moving right shows the
+  correctly mirrored art (claws now on the left), and a live BigZum
+  injected right at the `GAME_TICK`=950 boundary via a real `MAINLOOP`
+  run walks left and vanishes cleanly within a handful of frames, no
+  leftover sprite garbage where it was.
+  **On the side, investigated a separate flicker report** ("すごいちら
+  ついてるがなぜだ スプライト表示数は16で余裕のはず"): the boss's own
+  4x4 quadrant grid puts exactly 4 hw sprites on every one of its 4
+  16-scanline row-bands (Y56-71/72-87/88-103/104-119) - already the
+  real TMS9918's own hard per-SCANLINE sprite limit (distinct from the
+  32-slot total budget the "16, plenty of room" reasoning was based on -
+  a wide sprite can exhaust the per-line limit with total usage nowhere
+  near 32), with zero margin for anything else sharing those lines. Any
+  bullet whose Y crosses into that band (a diagonal/U shot climbing
+  through open sky, most likely) has a LOWER hw sprite slot number
+  (`BULLET_U_SPR_BASE_SLOT`=7-9) than every boss quadrant (10-25), so
+  real hardware's own per-line priority scan would render the bullet
+  and drop one of the boss's own same-row quadrants for that line
+  instead - a momentary gap in whichever row currently shares the
+  bullet's Y, changing frame to frame as the bullet climbs, reading as
+  flicker. This is a real, zero-slack limit inherent to any 64px-wide
+  sprite built from ordinary (non-magnified) MSX1 hw sprites, not
+  something in this codebase's own control, and not reproducible in
+  `z80emu.py` (it doesn't model per-scanline sprite limits at all, only
+  the 32-slot total - so this couldn't be caught here, only reasoned
+  about from the real hardware's own documented behavior and this
+  session's own exact slot numbers). Not fixed - no code change without
+  restructuring the boss's own sprite composition entirely, which
+  wasn't asked for. Also checked and ruled out as unrelated: BigZum's
+  own runtime pattern-VRAM share (Etank's own precedent, `PAT_ETANK_BL`/
+  `_BR`) doesn't wrap its `LDIRVM` in DI/EI either, so `LOAD_SASAPI_
+  PATTERNS` not doing so either isn't a new risk. If the flicker
+  persists even with zero bullets on screen, that prediction is wrong
+  and points to something else - worth checking next.
+
 ## Bugs found and fixed while building this
 
 - **Sand flickered between its own new color and Rock's, twice over**

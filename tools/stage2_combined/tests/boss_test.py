@@ -26,8 +26,15 @@ BOSS_DIR = sym["BOSS_DIR"]
 BOSS_HP = sym["BOSS_HP"]
 BOSS_SPRITE_ATTRS = sym["BOSS_SPRITE_ATTRS"]
 SASAPI_QUADS = sym["SASAPI_QUADS"]
+SASAPI_QUADS_L = sym["SASAPI_QUADS_L"]
 BOSS_QUAD_OFFSETS = sym["BOSS_QUAD_OFFSETS"]
 SPRPAT = sym["SPRPAT"]
+
+
+def sprpat_matches(cpu, rom_label):
+    base = SPRPAT + PAT_SASAPI * 8
+    rom_bytes = [out[rom_label + i] for i in range(16 * 32)]
+    return rom_bytes == list(cpu.vram[base: base + 16 * 32])
 
 
 def set_game_tick(cpu, val):
@@ -120,6 +127,8 @@ while cpu.mem[BOSS_X] > 0 and steps < 200:
 check("reaches X=0 exactly (clamped, no negative wraparound)", cpu.mem[BOSS_X] == 0)
 call_routine(cpu, "UPDATE_BOSS_ALL")
 check("reverses to DIR=1 (moving right) once X=0 is reached", cpu.mem[BOSS_DIR] == 1)
+check("mirrored facing (SASAPI_QUADS_L) reloaded into VRAM on this reversal - まず反転パターンを生成",
+      sprpat_matches(cpu, SASAPI_QUADS_L))
 
 # drive it all the way back to the right edge
 steps = 0
@@ -130,6 +139,8 @@ check("returns to X=BOSS_SPAWNX exactly (clamped)", cpu.mem[BOSS_X] == BOSS_SPAW
 call_routine(cpu, "UPDATE_BOSS_ALL")
 check("reverses back to DIR=0 (moving left) once X=BOSS_SPAWNX is reached again",
       cpu.mem[BOSS_DIR] == 0)
+check("normal facing (SASAPI_QUADS) reloaded into VRAM on this reversal",
+      sprpat_matches(cpu, SASAPI_QUADS))
 
 # Test 12: real end-to-end - spawns at the real frame BOSS_SPAWN_TICK*8,
 # not before (GAME_TICK advances once per 8 raw frames).
