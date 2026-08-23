@@ -2066,14 +2066,8 @@ PXT_NOWRAP:
     CALL GAME_TICK_DISPLAY
     CALL CHECK_NIGHT
 SKIP_ADVANCE:
-    ; 出現したら地形スクロール処理を停止してみてくれ - diagnostic test
-    ; requested by the user: once the boss has spawned, stop touching
-    ; the terrain-scroll VRAM writes entirely for the rest of the game
-    ; and see if that affects the reported tearing. Everything from
-    ; READ_INPUT onward must still run every frame regardless.
-    LD A,(BOSS_ACT) : OR A
-    JR NZ,SKIP_TERRAIN_SCROLL
-
+    ; 地形スクロール停止テストは「表示が崩れる(復帰処理未実装)」で
+    ; バグではないが今回はやめる、に戻す - always runs again, unconditional.
     LD A,(TICK) : AND 07h : LD (ROWPHASE_T),A
 
     LD HL,IDCACHE_T0 : LD IX,NAMEBUF_T0 : CALL TERRAIN_RENDER_ROW
@@ -2086,7 +2080,6 @@ SKIP_ADVANCE:
     LD HL,NAMEBUF_T2 : LD DE,1AC0h : LD BC,32 : CALL LDIRVM
     LD HL,NAMEBUF_T3 : LD DE,1AE0h : LD BC,32 : CALL LDIRVM
 
-SKIP_TERRAIN_SCROLL:
     CALL READ_INPUT
     CALL UPDATE_TANK_XY
     CALL UPDATE_TERRAIN_COLLISION
@@ -6522,7 +6515,14 @@ LOAD_SASAPI_PATTERNS:
 UPDATE_BOSS_ALL:
     LD A,(BOSS_ACT)
     OR A
-    JR NZ,UBA_MOVE
+    ; ⚠ DIAGNOSTIC: "ボスは表示だけで動かさないでくれ" - once spawned,
+    ; skip all patrol/reversal/pattern-reload logic (UBA_MOVE below) and
+    ; go straight to the same per-frame DRAW_BOSS/FLUSH_BOSS_SPRITES
+    ; every other frame already does, at a fixed BOSS_X/BOSS_DIR. Isolates
+    ; whether the tearing depends on the patrol logic itself (X update,
+    ; edge-clamp, direction-reversal pattern reload) or shows up purely
+    ; from the same per-frame hw-sprite-table flush regardless of motion.
+    JR NZ,UBA_DRAW
     LD HL,(GAME_TICK)
     LD DE,BOSS_SPAWN_TICK
     OR A

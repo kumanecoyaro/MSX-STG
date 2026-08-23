@@ -3893,6 +3893,44 @@ with no way to tell where.
   the freeze logic itself is implemented correctly and nothing else
   broke.
 
+- **Terrain-scroll-freeze reported as still no change, and it has its
+  own side-effect corruption (accepted as out of scope) - moved to a
+  new isolating test: freeze the boss's own movement instead**:
+  "変わらないな で地形止めると描画復帰処理してないから表示が崩れてし
+  まう これはバグではないので今ははよい ではボスは表示だけで動かさな
+  いでくれ 正直論理的にチラつく理由がない 64x64のボックスなら横並び
+  制限は起きないしスプライトは32枚使える ボスは16枚しか使ってないんで
+  表示数の問題でもない 自機は固定されてるし差し引きでも20枚 あと12枚
+  余裕があるはず". Terrain-freeze reverted (`SKIP_ADVANCE` back to
+  always running unconditionally, no `BOSS_ACT` gate) - the corruption
+  it causes once frozen (no redraw-recovery logic exists to resume
+  terrain cleanly) is accepted as expected/out-of-scope, not a bug to
+  fix, since the freeze itself wasn't the answer anyway.
+  New test: `UPDATE_BOSS_ALL`'s own `JR NZ,UBA_MOVE` (branch into the
+  patrol/edge-clamp/direction-reversal/pattern-reload logic once
+  already spawned) changed to `JR NZ,UBA_DRAW` - skips straight to the
+  same per-frame `DRAW_BOSS`/`FLUSH_BOSS_SPRITES` call every other
+  frame already made, at a permanently frozen `BOSS_X`/`BOSS_DIR`. The
+  boss now spawns, displays, and sits still forever - "表示だけで動か
+  さない" - isolating whether the tearing depends on the patrol logic
+  itself (the X update, edge-clamp, or the 512-byte pattern reload on
+  direction reversal) versus showing up purely from the same per-frame
+  64-byte hw-sprite-table flush regardless of any motion at all.
+  Verified via a real-`MAINLOOP` sweep: boss spawns at the expected
+  frame, `BOSS_X` stays exactly at `BOSS_SPAWNX`(192) and `BOSS_DIR`
+  never changes for 400+ frames afterward - confirms the freeze itself
+  works exactly as intended (not merely "moves less", genuinely static)
+  while `DRAW_BOSS`/`FLUSH_BOSS_SPRITES` still run every single frame
+  same as before. Full suite: 173/180 pass - 7 failures are the direct,
+  expected consequence of this diagnostic (2 from the same known
+  `GAME_TICK`=840-boot effect as every prior diagnostic round; 5 are
+  `boss_test.py`'s own patrol-movement checks, which now correctly fail
+  since movement is intentionally disabled - not new bugs). **Whether
+  this changes the real tearing is still only something the user can
+  judge from real playback** - `z80emu.py` has no interrupt simulation
+  and can't reproduce or rule out the underlying hardware bug either
+  way, only confirm the freeze logic itself behaves as written.
+
 ## Bugs found and fixed while building this
 
 - **Sand flickered between its own new color and Rock's, twice over**

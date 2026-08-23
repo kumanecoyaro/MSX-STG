@@ -187,37 +187,58 @@ Communicates in terse, often angry Japanese. Expects:
   itself next, not adjacent systems, however plausible the theory feels
   - and don't touch terrain-scroll again on speculation alone.
 
-## ⚠ Current build is a DIAGNOSTIC (terrain-scroll-freeze test)
+## ⚠ Current build is a DIAGNOSTIC (boss display-only, no movement)
 
 - `GAME_TICK` boots at **840**, not 0 (`LD HL,840 : LD (GAME_TICK),HL`
   in `INIT`, ~line 1742) — night starts almost immediately and the boss
-  spawns shortly after, so the test below doesn't need a real 999-tick
-  playthrough. **3 regression tests fail as a direct, expected
-  consequence** (`boss_test.py`/`etank_gametick_gate_test.py`/
-  `night_effect_test.py`, each checking "doesn't happen before real
-  frame X" against a boot-at-0 assumption) — this is the same known
-  effect as the round-1 Flyer diagnostic earlier this session, not a
-  regression. Revert to `XOR A` / 0 for a real shipped build.
-- **`MAINLOOP`'s terrain-scroll redraw (`TERRAIN_RENDER_ROW`×4 +
-  `NAMEBUF_T0`-`T3` `LDIRVM`×4, at `SKIP_ADVANCE:`) is now skipped
-  entirely once `BOSS_ACT!=0`** — gated by a `JR NZ,SKIP_TERRAIN_SCROLL`
-  right at the top of that block. `READ_INPUT` and everything after it
-  still runs every frame unconditionally either way. This is a
-  **user-directed experiment** ("出現したら地形スクロール処理を停止し
-  てみてくれ"), not a reversal of the "don't touch terrain-scroll on
-  your own speculation" rule below — that rule is about MY unilateral
-  theories, not the user's own requested tests. Verified via
-  `banked_helpers`: terrain VRAM (0x1A80/1AA0/1AC0/1AE0, 32B each) is
-  byte-identical every frame from boss-spawn onward while the boss
-  itself keeps patrolling (`BOSS_X` still changing) — confirms the gate
-  itself works exactly as written. **Whether this actually affects the
-  real-hardware/WebMSX tearing is NOT verifiable here** (`z80emu.py` has
-  no interrupt simulation) — only the user can judge that from real
-  playback. Round 1 (Flyer-art swap) and round 2 (real Flyer instances,
-  4x64x64 one-at-a-time) were BOTH tried first and BOTH reported as "no
-  change, same 1px disturbance" — cleanly reverted (see README), so the
-  "one big lump vs many small ops" theory is looking unlikely, though
-  not explicitly confirmed dead by the user yet.
+  spawns shortly after. **7 regression tests fail as a direct, expected
+  consequence** of this diagnostic build, not a regression:
+  - `etank_gametick_gate_test.py`/`night_effect_test.py` (1 each): the
+    same known GAME_TICK=840-boot effect as every earlier diagnostic
+    round this session (checks "doesn't happen before real frame X"
+    against a boot-at-0 assumption).
+  - `boss_test.py` (5): the patrol-movement checks (`steps left by
+    BOSS_SPEED`, `reaches X=0`, `reverses to DIR=1`, `mirrored facing
+    reloaded`, real-MAINLOOP spawn-timing) now correctly fail because
+    the boss's movement is intentionally disabled below - not a bug.
+  Revert `GAME_TICK` to `XOR A`/0 for a real shipped build.
+- **Terrain-scroll-freeze-on-boss-spawn (the round right before this
+  one) was tried, reported as no change in the tearing AND as causing
+  its own visible corruption (no redraw-recovery logic exists for
+  resuming terrain after a freeze) - reverted, unconditional again.**
+  Not a bug per the user ("これはバグではないので今ははよい") since it
+  was never meant to ship, just not worth chasing further right now.
+- **`UPDATE_BOSS_ALL` now skips its own movement entirely once spawned
+  - "ボスは表示だけで動かさないでくれ"**: `JR NZ,UBA_MOVE` (branch to
+  the patrol/reversal/pattern-reload logic once already spawned)
+  changed to `JR NZ,UBA_DRAW` (skip straight to the same per-frame
+  `DRAW_BOSS`/`FLUSH_BOSS_SPRITES` every other frame already does, at a
+  frozen `BOSS_X`/`BOSS_DIR`) - `UBA_MOVE` and everything under it is
+  now dead code, never jumped to, left in place rather than deleted
+  since this is a diagnostic, not a permanent change. Isolates whether
+  the tearing depends on the patrol logic itself (X update, edge-clamp,
+  the 512-byte pattern reload on direction reversal) versus showing up
+  purely from the same per-frame 64-byte hw-sprite-table flush
+  regardless of motion. User's own reasoning for doubting a sprite-count
+  cause at this point: 64x64 doesn't hit the per-scanline limit, the
+  boss only uses 16 of 32 hw slots, the tank's own slot is fixed, so
+  ~20 used / 12 free even together.
+  Verified via `banked_helpers`: boss spawns at the expected frame,
+  `BOSS_X` stays exactly at `BOSS_SPAWNX`(192) and `BOSS_DIR` never
+  changes for 400+ frames after spawn - confirms the freeze itself
+  works exactly as written; `DRAW_BOSS`/`FLUSH_BOSS_SPRITES` are still
+  called every frame (same as before), only the movement is gone.
+  **Whether this changes the real-hardware/WebMSX tearing is NOT
+  verifiable here** (`z80emu.py` has no interrupt simulation) - only the
+  user can judge that from real playback.
+- Prior rounds this session, all reported "no change" and reverted:
+  interrupt-unsafe boss VRAM writes (fixed regardless, kept - see
+  README's DI/EI entry), terrain-scroll DI/EI-wrap (wrong theory,
+  explicitly rejected by the user), Flyer-art-swap and real-4-Flyer-
+  instance tests ("one big op vs many small ops" theory), terrain-
+  scroll-freeze (see above). The per-scanline sprite limit theory was
+  also explicitly rejected early on as something already designed
+  around, not the bug.
 
 ## Open items / things to watch
 
