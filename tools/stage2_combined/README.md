@@ -4652,6 +4652,25 @@ with no way to tell where.
   distinct target positions, and the doubled speed visibly covers more
   ground per rendered interval than before.
 
+- **Homing missile round 6: speed tuned to 3, surfacing a real rise-
+  distance bug**: "速度3に" - `HORMING_SPEED` 4->3. This was the first
+  speed value tried that doesn't divide evenly into `HORMING_RISE_DIST`
+  (32) - `UOH_RISE`'s own termination check relied on that evenness
+  (subtract, then test for an exact 0), so with speed 3 `RISE_REMAIN`
+  stepped 32,29,...,5,2, then underflowed to 255 on the next subtract
+  instead of ever reading back 0 - the missile got stuck rising forever,
+  never reaching the wander/pursuit phases at all. Fixed generally: once
+  the remaining distance drops under a full step, the final step moves
+  exactly what's left instead of a fixed amount (same idea `UOH_WANDER`'s
+  own `TARGET_X` arrival snap already uses), so it works for any speed
+  value, not just 3. A second bug turned up fixing that one - the Y
+  component of the new partial step used `ADD` instead of `SUB`, moving
+  the wrong direction on the rise's own last frame - caught and fixed
+  before shipping. `tests/horming_test.py`'s own rise-completion test
+  needed a matching update (ceiling instead of floor division to know
+  how many frames to drive). 157 checks pass; full suite 386/389, same 3
+  known GAME_TICK=840-boot-effect failures, no new regressions.
+
 ## Bugs found and fixed while building this
 
 - **Sand flickered between its own new color and Rock's, twice over**

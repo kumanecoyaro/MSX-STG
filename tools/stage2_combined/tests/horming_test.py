@@ -185,17 +185,20 @@ check("state0 counts RISE_REMAIN down by HORMING_SPEED", s["rise_remain"] == HOR
 check("still state0 (rise) with distance left to travel", s["state"] == 0)
 check("facing stays SL(0) throughout state0 (cosmetic)", s["facing"] == 0)
 
-# drive it through the whole rise - transitions to state1 (wander) exactly
-# when RISE_REMAIN reaches 0, having moved exactly HORMING_RISE_DIST
-# total, and picks a TARGET_X inside the window on that same transition
+# drive it through the whole rise - transitions to state1 (wander) once
+# RISE_REMAIN reaches 0, having moved exactly HORMING_RISE_DIST total
+# (round6: HORMING_RISE_DIST doesn't necessarily divide evenly by
+# HORMING_SPEED any more - a final PARTIAL step covers whatever's left,
+# so this drives enough steps for that to complete rather than assuming
+# floor(RISE_DIST/SPEED) lands exactly on state1)
 cpu = fresh_cpu()
 make_slot(cpu, 0, x=200, y=100, facing=0, state=0, rise_remain=HORMING_RISE_DIST)
 cpu.ix = slot_addr(0)
-steps = HORMING_RISE_DIST // HORMING_SPEED
+steps = -(-HORMING_RISE_DIST // HORMING_SPEED)  # ceil division
 for _ in range(steps):
     call_routine(cpu, "UPDATE_ONE_HORMING")
 s = slot(cpu, 0)
-check("state1 (wander) reached after exactly HORMING_RISE_DIST/HORMING_SPEED steps",
+check("state1 (wander) reached after ceil(HORMING_RISE_DIST/HORMING_SPEED) steps",
       s["state"] == 1)
 check("total X displacement over the rise is exactly HORMING_RISE_DIST",
       s["x"] == 200 - HORMING_RISE_DIST)

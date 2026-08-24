@@ -1405,11 +1405,15 @@ HORMING_VOLLEY_TIMER EQU F2EFh   ; raw frames remaining until the next intermitt
 ; box's own top edge (Y56) instead of spawning inside the hand art.
 HORMING_SPAWN_X EQU 232
 HORMING_SPAWN_Y EQU 48
-; px/frame, flat per-axis (not a normalized diagonal distance) - "ミサ
-; イル速度2倍に" (round5: was 2, matching BOSS_SPEED/FLYER_SPEED/
-; ETANK_SPEED's own "速度は2" convention - the missile is the only one
-; of these doubled).
-HORMING_SPEED EQU 4
+; px/frame, flat per-axis (not a normalized diagonal distance) - "速度
+; 3に" (round6: was 4/round5's "2倍に", before that 2, matching BOSS_
+; SPEED/FLYER_SPEED/ETANK_SPEED's own "速度は2" convention - the
+; missile is the only one of these tuned away from 2). Odd, unlike
+; every previous value here - the snap-when-close logic in UOH_WANDER
+; and the >=-not-exact-match trigger in UOH_H2_TRIGGER were both
+; already written to handle an arbitrary HORMING_SPEED/parity, not just
+; even values, so this needed no other code changes.
+HORMING_SPEED EQU 3
 ; "最初は左斜上に32px移動" - state0's own fixed diagonal rise, tracked
 ; as a per-slot countdown (RISE_REMAIN) rather than a fixed frame count,
 ; so it stays exact regardless of HORMING_SPEED.
@@ -7460,8 +7464,37 @@ UPDATE_ONE_HORMING:
     JP Z,UOH_HOMING2
     JP UOH_LOCKED
 
+; round6 fix: "速度3に" - HORMING_RISE_DIST(32) doesn't divide evenly by
+; an odd HORMING_SPEED, so always subtracting a full HORMING_SPEED and
+; checking for an EXACT zero (as this used to) would step clean past 0
+; and underflow (32,29,...,2,-1=255) - RISE_REMAIN would never read
+; back as 0, leaving the missile stuck rising far past its own intended
+; 32px forever. Fixed to handle any HORMING_SPEED/parity generally: the
+; final step, once remaining distance is under a full HORMING_SPEED,
+; moves exactly what's left instead of a fixed amount, so the total
+; rise stays exactly HORMING_RISE_DIST regardless of divisibility -
+; same "snap the remainder instead of a fixed step" idea as UOH_WANDER's
+; own TARGET_X arrival logic. Costs nothing extra on the still-common
+; evenly-divisible case (checked first, transitions the same frame
+; RISE_REMAIN reads back as 0, same as before this fix).
 UOH_RISE:
     XOR A : LD (IX+3),A            ; facing SL (cosmetic)
+    LD A,(IX+5)
+    OR A
+    JP Z,UOH_RISE_ARRIVED           ; already exactly 0 - previous frame's step landed on it
+    CP HORMING_SPEED
+    JP NC,UOH_RISE_FULL_STEP        ; remain >= HORMING_SPEED - normal full step
+    ; 0 < remain < HORMING_SPEED - final partial step, move exactly
+    ; what's left rather than a fixed HORMING_SPEED.
+    LD B,A
+    LD A,(IX+1) : SUB B : LD (IX+1),A
+    LD A,(IX+2) : SUB B : LD (IX+2),A
+    XOR A : LD (IX+5),A
+UOH_RISE_ARRIVED:
+    LD A,1 : LD (IX+4),A           ; rise complete -> wander
+    CALL PICK_HORMING_TARGET_X     ; picks (IX+6) once, right at the transition
+    JP UOH_COLLIDE
+UOH_RISE_FULL_STEP:
     LD A,(IX+1)
     CP HORMING_SPEED
     JP C,UOH_DEACTIVATE
@@ -7471,9 +7504,6 @@ UOH_RISE:
     JP C,UOH_DEACTIVATE
     SUB HORMING_SPEED : LD (IX+2),A
     LD A,(IX+5) : SUB HORMING_SPEED : LD (IX+5),A
-    JP NZ,UOH_COLLIDE              ; still rising
-    LD A,1 : LD (IX+4),A           ; rise complete -> wander
-    CALL PICK_HORMING_TARGET_X     ; picks (IX+6) once, right at the transition
     JP UOH_COLLIDE
 
 ; steps straight toward this slot's own one-shot TARGET_X(IX+6) - see

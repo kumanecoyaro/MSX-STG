@@ -1167,6 +1167,42 @@ the tearing got fixed.
   ~150-frame window this round's own render script uses, versus 6->4
   over a similar window last round).
 
+## Homing missile round 6: speed tuned to 3, surfacing (and fixing) a rise-distance bug
+
+- "速度3に" - `HORMING_SPEED` 4->3 (round5 had doubled it 2->4; this
+  round dials it back down by one).
+- **A real bug this exact change surfaced**: `HORMING_RISE_DIST`(32)
+  had always been evenly divisible by every `HORMING_SPEED` value used
+  so far (2, then 4) - 3 is the first value that doesn't divide evenly.
+  `UOH_RISE`'s own termination check (`SUB HORMING_SPEED` then test for
+  an exact 0) relied on that evenness: with speed 3, `RISE_REMAIN` steps
+  32,29,26,...,5,2, then the next `SUB 3` underflows to 255 (a byte
+  wrap, not 0) - `RISE_REMAIN` never reads back as exactly 0, so the
+  missile never left state0 at all, stuck rising far past its own
+  intended 32px. Fixed generally (works for ANY `HORMING_SPEED`, even
+  a value nobody's tried yet): once remaining distance drops under a
+  full `HORMING_SPEED`, the final step moves exactly what's left instead
+  of a fixed amount - same "snap the remainder" idea `UOH_WANDER`'s own
+  `TARGET_X` arrival logic already uses. Introduced (and caught by the
+  test suite before shipping) a second bug in that same fix: the Y
+  component of the partial final step used `ADD` instead of `SUB`,
+  moving Y the wrong way (down instead of up) on the rise's own last
+  partial frame - fixed to `SUB`, matching the full-step branch.
+- No other code changes - the snap-when-close logic in `UOH_WANDER` and
+  the `>=`-not-exact-match trigger in `UOH_H2_TRIGGER` were both already
+  written to handle an arbitrary `HORMING_SPEED`/parity from round4/5's
+  own fixes, so speed3 needed nothing further there.
+- Verified: `tests/horming_test.py`'s own rise-completion test was
+  itself relying on `HORMING_RISE_DIST // HORMING_SPEED` (floor
+  division) to know how many frames to drive - correct only when it
+  divides evenly. Updated to ceiling division so it drives enough frames
+  to reach the final partial step regardless of `HORMING_SPEED`. 157
+  checks, all pass. Full suite: 386/389, same 3 known GAME_TICK=840-
+  boot-effect failures, no new regressions. Rendered a real frame
+  showing correct full-arc progression at the new speed (4 missiles'
+  own `TARGET_X` still genuinely distinct - 170/129/73/98 in one run -
+  and `TANK_LIFE` dropping 6->5->3 across the same render window).
+
 ## Open items / things to watch
 
 - No known open bugs as of this handoff — the boss's own SPRPAT bug
