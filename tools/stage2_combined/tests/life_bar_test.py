@@ -77,6 +77,15 @@ cpu.mem[JUMP_ACTIVE] = 0
 call_routine(cpu, "UPDATE_TANK_BIGZUM_PUNCH")
 check("a real BigZum punch connecting decrements TANK_LIFE", cpu.mem[TANK_LIFE] == life_before - 1)
 
+# Test 7: "ライフ表示の背景色をブラックに" - LIFE_CODE's own color-table
+# group (group16, LIFE_CODE/8=16) has a black (bg1) background now, not
+# the uploaded art's own bg5 (purple).
+cpu = fresh_cpu()
+LIFE_COLOR = sym["LIFE_COLOR"]
+check("LIFE_COLOR's own bg nibble is 1 (black)", (LIFE_COLOR & 0x0F) == 1)
+check("INIT actually writes LIFE_COLOR into LIFE_CODE's own color-table group",
+      cpu.vram[0x2000 + (LIFE_CODE // 8)] == LIFE_COLOR)
+
 print()
 print(f"{len(ok)} passed, {len(fail)} failed")
 if fail:

@@ -438,7 +438,10 @@ SCORE_PER_KILL   EQU 1         ; ADD_SCORE units of 100 real points - "当たっ
 HUD_ROW_BLANK_CODE  EQU 120       ; group15 (120-127)
 HUD_ROW_BLANK_COLOR EQU 011h      ; fg1/bg1 - irrelevant fg, blank pattern
 LIFE_CODE           EQU 128       ; group16 (128-135)
-LIFE_COLOR          EQU 035h      ; fg3/bg5, from Life_8x8.json's own fg/bg
+; "ライフ表示の背景色をブラックに" - bg nibble 5(purple, Life_8x8.json's
+; own uploaded bg) -> 1(black), same bg1 convention HUD_ROW_BLANK_COLOR
+; above already uses; fg3 (the bar's own fill color) unchanged.
+LIFE_COLOR          EQU 031h
 LIFE_BAR_ROW        EQU 0
 LIFE_BAR_COL0       EQU 9         ; 1 blank cell past the score's own 8 (cols0-7) - "スコアから１セル空けた位置"
 ; "夜になっていく演出" - once GAME_TICK reaches NIGHT_START_TICK(850),
@@ -1396,7 +1399,16 @@ FLYER_SPR_BASE_SLOT EQU 20     ; hw sprite slots20-23 (1 instance x4), right aft
 FLYER_COLOR EQU 7              ; cyan - sprites/Flyer.json's own fg
 FLYER_SPAWN_INTERVAL EQU ZUM_SPAWN_INTERVAL  ; same untuned-but-reasonable value as everything else's own spawn interval - not itself specified
 FLYER_SPAWNX   EQU 240
-FLYER_CRUISE_Y EQU 64   ; fixed cruise height (well above the terrain rows) - untuned/inferred, no height was specified
+; "Flyerのスポーン位置はランダムで指示してたはずだが固定されてしまって
+; る 画面上部8pxからSandsky上部までのランダムで" - was a fixed FLYER_
+; CRUISE_Y(64) constant; now a real per-spawn random pick (see
+; PICK_FLYER_SPAWN_Y below), matching HORMING_WANDER's own established
+; GAME_RNG idiom (read-only, XOR TICK + the slot's own address, masked
+; and folded - HORMING_WANDER_WIDTH's own round4/5 fixes for why a plain
+; "read GAME_RNG and INC it" reads as fixed/correlated). Span = SkySand's
+; own top row pixel(16*8=128) minus 8, +1 inclusive of both ends.
+FLYER_SPAWN_Y_MIN  EQU 8
+FLYER_SPAWN_Y_SPAN EQU 121
 FLYER_SPEED    EQU 2    ; px/frame, both cruise and homing legs - "速度は2"
 FLYER_VY       EQU 1    ; px/frame vertical homing step, locked at reversal - untuned/inferred, no vertical speed was specified
 FLYER_CLEAR_Y  EQU 32   ; px vertical clearance from the tank before switching to exit - untuned/inferred, matches both sprites' own 32px height ("自機に被らない" read as "no longer overlapping" in that sense)
@@ -6394,6 +6406,30 @@ UFLAU_LOOP:
     CALL FLUSH_FLYER_SPRITES
     RET
 
+; IX = slot base (already the new slot, from ALLOC_FLYER_SLOT's own
+; AFLS_FOUND). Picks one random Y in [FLYER_SPAWN_Y_MIN, FLYER_SPAWN_Y_
+; MIN+FLYER_SPAWN_Y_SPAN) - same GAME_RNG idiom as PICK_HORMING_TARGET_X
+; (read-only, XOR TICK + this slot's own low address byte, AND 7Fh then
+; fold-subtract once since 121 isn't a power of 2 - see that routine's
+; own comment for why a naive "read-and-INC GAME_RNG" reads as fixed).
+PICK_FLYER_SPAWN_Y:
+    LD A,(GAME_RNG)
+    LD B,A
+    LD A,(TICK)
+    XOR B
+    LD B,A
+    PUSH IX
+    POP HL
+    LD A,L
+    XOR B
+    AND 7Fh
+    CP FLYER_SPAWN_Y_SPAN
+    JR C,PFSY_OK
+    SUB FLYER_SPAWN_Y_SPAN
+PFSY_OK:
+    ADD A,FLYER_SPAWN_Y_MIN
+    RET
+
 ; airborne - no terrain gate at all, just a free slot. NOT gated
 ; against BigZum/Etank/Zum any more - "FlyerとBigZum、Flyerと
 ; Etankは同時存在して良い" (was excluded against BigZum bidirectionally
@@ -6414,7 +6450,7 @@ AFLS_FOUND:
     POP IX
     LD A,1 : LD (IX+0),A
     LD A,FLYER_SPAWNX : LD (IX+1),A
-    LD A,FLYER_CRUISE_Y : LD (IX+2),A
+    CALL PICK_FLYER_SPAWN_Y : LD (IX+2),A
     XOR A
     LD (IX+3),A
     LD (IX+5),A
@@ -7419,11 +7455,26 @@ UBA_POSE:
     RET                        ; still posing
 UBAP_END:
     ; count this completed pose (SBeam's own SBEAM_POSE_GATE eligibility
-    ; check in FIRE_SBEAM), and forcibly clear any still-mid-animation
-    ; beam - UBA_DRAW below (DRAW_BOSS+FLUSH_BOSS_SPRITES) is about to
-    ; reclaim SBEAM_SPR_BASE_SLOT.. for the boss's own real body art
-    ; again, so SBeam must never touch those slots past this point.
-    LD A,(BOSS_POSE_COUNT) : INC A : LD (BOSS_POSE_COUNT),A
+    ; check in FIRE_SBEAM) - "サンダービームのあとは最初のホーミングに
+    ; 戻るように" (round-6): once the pose that JUST ended was itself an
+    ; SBeam pose (BOSS_POSE_COUNT was already >=SBEAM_POSE_GATE at this
+    ; pose's own entry, since nothing else touches BOSS_POSE_COUNT mid-
+    ; pose), reset the whole cycle back to 0 instead of incrementing
+    ; further - otherwise every pose from here on stays >=SBEAM_POSE_GATE
+    ; forever and Homing never fires again ("現在はサンダーとサンダー
+    ; ビームがリピートしてる"). Below the gate, increment as before.
+    LD A,(BOSS_POSE_COUNT)
+    CP SBEAM_POSE_GATE
+    JR C,UBAP_INC_POSE_COUNT
+    XOR A : LD (BOSS_POSE_COUNT),A
+    JR UBAP_POSE_COUNT_DONE
+UBAP_INC_POSE_COUNT:
+    INC A : LD (BOSS_POSE_COUNT),A
+UBAP_POSE_COUNT_DONE:
+    ; forcibly clear any still-mid-animation beam - UBA_DRAW below
+    ; (DRAW_BOSS+FLUSH_BOSS_SPRITES) is about to reclaim SBEAM_SPR_BASE_
+    ; SLOT.. for the boss's own real body art again, so SBeam must never
+    ; touch those slots past this point.
     XOR A : LD (SBEAM_ACT),A
     ; "また巡回 BGは消してスプライトに戻す" - resume the patrol, moving
     ; left again from the right edge, exactly like the very first spawn.

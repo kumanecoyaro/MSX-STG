@@ -514,6 +514,33 @@ check("real MAINLOOP: SBEAM_ACT is always back to 0 (fully idle) whenever the bo
       "own body sprite for SBEAM_SPR_BASE_SLOT..",
       body_slot_sane_while_patrolling)
 
+
+# ---- "サンダービームのあとは最初のホーミングに戻るように 現在はサン
+# ダーとサンダービームがリピートしてる" - BOSS_POSE_COUNT must reset to
+# 0 once the SBeam pose itself ends, not keep incrementing (or just
+# staying >=SBEAM_POSE_GATE forever) - otherwise every pose from then on
+# fires SBeam again and Homing never comes back ----
+cpu = fresh_cpu()
+cpu.sim_dir = 0
+cpu.sim_trig_a = False
+cpu.sim_trig_b = False
+prev_phase = None
+pose_counts_at_entry = []
+for f in range(200000):
+    step_frame(cpu)
+    phase = cpu.mem[BOSS_PHASE]
+    if prev_phase is not None and prev_phase != 1 and phase == 1:
+        pose_counts_at_entry.append(cpu.mem[BOSS_POSE_COUNT])
+    prev_phase = phase
+    if len(pose_counts_at_entry) >= 7:
+        break
+
+check("real MAINLOOP: BOSS_POSE_COUNT cycles 0,1,2,0,1,2,... at each pose entry - "
+      "Homing/Thunder/Homing/Thunder/SBeam repeats forever, SBeam never becomes "
+      "permanent (this was the actual bug reported: サンダーとサンダービームがリピー"
+      "トしてる)",
+      pose_counts_at_entry == [0, 1, 2, 0, 1, 2, 0][:len(pose_counts_at_entry)])
+
 print()
 print(f"{len(ok)} passed, {len(fail)} failed")
 if fail:

@@ -1932,6 +1932,59 @@ Thunder activity) confirming it survives completely untouched.
   visually via 2 rendered frames (the tank's own top half visibly
   compressed down into the bottom half mid-dash vs. its normal pose).
 
+## Round 17: pose-cycle reset, life bar background, and real Flyer spawn randomness
+
+- User feedback (verbatim, 3 separate items in one message): "Ok では
+  サンダービームは2往復に で、点滅表示は2フレ表示1フレ非表示に変更
+  次に自機にダッシュを追加..." (Round16's own dash/2-trip/blink work,
+  already covered above) "...サンダービームのあとは最初のホーミングに
+  戻るように 現在はサンダーとサンダービームがリピートしてる ライフ表示
+  の背景色をブラックに Flyerのスポーン位置はランダムで指示してたはず
+  だが固定されてしまってる 画面上部8pxからSandsky上部までのランダムで".
+- **Pose-cycle reset ("サンダービームのあとは最初のホーミングに戻る
+  ように")**: `UBAP_END` incremented `BOSS_POSE_COUNT` unconditionally
+  every pose, forever - once it first reached `SBEAM_POSE_GATE`(2), it
+  only ever grew further (3,4,5...), so EVERY pose from then on kept
+  re-arming SBeam and Homing never came back - "現在はサンダーとサン
+  ダービームがリピートしてる" was real, not a misreading. Fixed by
+  checking, at the moment a pose ends, whether `BOSS_POSE_COUNT` was
+  ALREADY `>=SBEAM_POSE_GATE` at that pose's own entry (i.e. the pose
+  that just ended WAS the SBeam pose) - if so, reset to 0 instead of
+  incrementing, restarting the whole Homing/Thunder/Homing/Thunder/SBeam
+  cycle. Verified with a real `MAINLOOP` sweep checking `BOSS_POSE_COUNT`
+  at 7 consecutive pose entries lands exactly on `[0,1,2,0,1,2,0]`.
+- **Life bar background ("ライフ表示の背景色をブラックに")**: `LIFE_
+  COLOR`'s own bg nibble was 5 (the uploaded `Life_8x8.json`'s own
+  purple bg, never actually questioned before) - changed to 1 (black),
+  matching `HUD_ROW_BLANK_COLOR`'s own existing bg1 convention for the
+  "peeled off" empty cells right next to it.
+- **Flyer spawn Y ("Flyerのスポーン位置はランダムで指示してたはずだが
+  固定されてしまってる")**: `ALLOC_FLYER_SLOT` was spawning every Flyer
+  at a single fixed `FLYER_CRUISE_Y`(64) constant, whose own comment
+  even said "untuned/inferred, no height was specified" - genuinely
+  wrong regardless of whether an earlier random-Y instruction actually
+  existed and got lost, or the user is recalling ZacoII's own established
+  random-Y idiom (`ENEMY_SKY_Y_MIN`/`_MASK`) and expecting the same
+  treatment for Flyer. Replaced with `PICK_FLYER_SPAWN_Y`, a new routine
+  copying `PICK_HORMING_TARGET_X`'s own proven GAME_RNG idiom exactly
+  (read-only, XOR `TICK` + the slot's own low address byte for cross-
+  slot decorrelation, `AND 7Fh` then fold-subtract once since the
+  121-value span isn't a power of 2) - same round4/5 lesson as Homing's
+  own wander fix: a naive "read GAME_RNG and INC it" correlates across
+  back-to-back callers and reads as fixed. Range: `FLYER_SPAWN_Y_MIN`(8,
+  "画面上部8px") through `FLYER_SPAWN_Y_MIN+FLYER_SPAWN_Y_SPAN-1`(128,
+  SkySand's own top row pixel, `16*8`) inclusive.
+- Verified: `tests/sbeam_test.py` gained a 7-pose real-`MAINLOOP` sweep
+  confirming the `[0,1,2,0,1,2,0]` cycle; `tests/life_bar_test.py`
+  gained a check on `LIFE_COLOR`'s own bg nibble and that INIT actually
+  writes it into the right color-table group; `tests/flyer_terrain_
+  test.py` gained a `PICK_FLYER_SPAWN_Y` unit sweep (range + real
+  variance + GAME_RNG left unmutated) plus a real-`MAINLOOP` check that
+  several consecutive natural spawns land at different Y values. Full
+  regression suite: see this round's own commit for the exact pass/fail
+  counts - same 3 pre-existing known failures expected, no new
+  regressions.
+
 ## Open items / things to watch
 
 - **RAM addresses that need to persist across frames must stay clear of
