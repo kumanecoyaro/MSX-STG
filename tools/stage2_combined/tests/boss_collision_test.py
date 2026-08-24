@@ -13,6 +13,7 @@ def check(label, cond):
 
 BOSS_ACT = sym["BOSS_ACT"]
 BOSS_X = sym["BOSS_X"]
+BOSS_Y = sym["BOSS_Y"]
 BOSS_SPAWN_Y = sym["BOSS_SPAWN_Y"]
 BOSS_HP = sym["BOSS_HP"]
 BOSS_HP_INIT = sym["BOSS_HP_INIT"]
@@ -42,6 +43,13 @@ check("BOSS_FLASH_COLOR is also distinct from BOSS_COLOR itself (flash must actu
 def make_boss(cpu, x=100, hp=BOSS_HP_INIT):
     cpu.mem[BOSS_ACT] = 1
     cpu.mem[BOSS_X] = x
+    # round11: BOSS_Y is now a real, dynamic RAM variable (was a fixed
+    # BOSS_SPAWN_Y constant) - CHECK_HIT_PAIR_BOSS's own collision box
+    # reads it directly, so a manually-poked boss (bypassing the real
+    # spawn branch, which is the only place that normally sets it) needs
+    # it set explicitly too, or the box ends up at whatever BOSS_Y last
+    # happened to be (0 on a fresh boot).
+    cpu.mem[BOSS_Y] = BOSS_SPAWN_Y
     cpu.mem[BOSS_HP] = hp
     cpu.mem[BOSS_FLASH_TIMER] = 0
 

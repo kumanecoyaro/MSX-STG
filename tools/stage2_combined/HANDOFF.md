@@ -1468,6 +1468,79 @@ the tearing got fixed.
   dependent - the sweep now gets a 2nd volley's worth of chances rather
   than asserting on just the first).
 
+## Round 11: Thunder tuning again - 1 cell shorter, ThunderS is 2x2 diagonal, 8-Tick pause, boss dip/rise
+
+- User feedback (verbatim): "サンダーの到達を1セル手前に サンダーSを
+  左右斜め下に で、今は左右1セルだが２セルな 斜め下1セル横に１セル
+  ００１１００ ２２００２２ こういう形状 １がサンダー ２がサンダーS
+  で、サンダーSを消す時も順に ２２００２２ から ２００００２ という
+  具合で で、まだ反転時ボスにサンダーが当たってるんで８Tick停止に変
+  更 次に右初期位置から左に移動する際に左斜下8px移動してから水平移
+  動に変更 戻る時は逆に到達8px前から右斜め上に移動して初期位置に".
+- **Thunder stops 1 cell earlier**: `UOT_GROW`'s own stop-line moved
+  from `terrain_row` to `terrain_row-1`, so `DEEP_ROW` ends up
+  `terrain_row-2` (was `terrain_row-1`).
+- **ThunderS redesigned as a 4-cell diagonal shape** (2 cells per side,
+  not 1): `00 11 00 / 22 00 22` - left pair at `(COL-2,COL-1)`, right
+  pair at `(COL+2,COL+3)`, BOTH at row `DEEP_ROW+1` (one row below the
+  bolt's own new, 1-cell-shorter stop point - visually fills back in
+  almost exactly where the bolt used to reach before this round, just
+  diagonally offset). Erase is now 2 explicit sub-steps spliced onto the
+  end of the shrink sequence (`ROW` counts up past `DEEP_ROW` to
+  `DEEP_ROW+1`/`+2`): inner cells (`COL-1`,`COL+2`) first, outer cells
+  (`COL-2`,`COL+3`) one step later - "２２００２２から２００００２".
+  The contested-row (>=20) reassertion pass (`UOT_REASSERT_SIDES`) now
+  covers this too, including the 1-frame gap where only the outer cells
+  are still meant to be visible.
+- **Real bug caught and fixed while building this**: every ThunderS
+  helper (`UOT_DRAW_SIDES`/`UOT_ERASE_SIDES_INNER`/`_OUTER`/`UOT_
+  REASSERT_SIDES_OUTER`) originally cached the target row once in
+  register `D` before looping over 2-4 cells - but `WRITE_THUNDERS_
+  CELL`/`ERASE_ONE_THUNDER_CELL` both call `NIGHT_ROW_ADDR` internally,
+  which returns its own result in `DE`, silently clobbering that cached
+  row for every cell after the first. Fixed by re-reading `(IX+3)+1`
+  fresh immediately before each individual cell write/erase instead of
+  caching it - caught by a real test (not inspection) checking all 4
+  cells actually appear, not just the first.
+- **`BOSS_LEFT_PAUSE_TICKS` 2->8** - "まだ反転時ボスにサンダーが当た
+  ってるんで" - round9's own 2-tick pause wasn't long enough.
+- **The boss's own patrol gained a diagonal dip/rise** at each end -
+  "右初期位置から左に移動する際に左斜下8px移動してから水平移動に変更
+  戻る時は逆に到達8px前から右斜め上に移動して初期位置に". New
+  `BOSS_DIP_DIST`(8, divides evenly by `BOSS_SPEED`(2) - no partial-step
+  remainder to handle) and a genuinely dynamic `BOSS_Y` RAM variable
+  (was a fixed `BOSS_SPAWN_Y` constant everywhere - `DRAW_BOSS` and the
+  collision box both needed updating to read it). `UBA_MOVE_LEFT` now
+  steps diagonally (both axes) until `BOSS_Y` reaches `BOSS_SPAWN_Y+
+  BOSS_DIP_DIST`, then falls through to the pre-existing horizontal-only
+  logic unchanged; `UBA_MOVE_RIGHT` mirrors this for the final
+  `BOSS_DIP_DIST` px before `BOSS_SPAWNX`, clamping `BOSS_Y` back to
+  exactly `BOSS_SPAWN_Y` the instant `BOSS_X` reaches `BOSS_SPAWNX`
+  (same frame the pose begins - the hand-pose art's own fixed VRAM
+  addresses assume `BOSS_Y` is always exactly `BOSS_SPAWN_Y` there, so
+  this clamp matters). `CHECK_THUNDER_TRIGGER_LEFT`/`_RIGHT` are only
+  called from the horizontal-only branches, same as before - Thunder
+  doesn't fire during the diagonal segments.
+- Verified: `tests/thunder_test.py` extended again (69 checks - the new
+  1-cell-shorter stop line, the 4-cell diagonal shape and its 2-step
+  erase order including the outer-only gap, and new unit + real-
+  `MAINLOOP` checks for the dip/rise's own exact stepping and timing),
+  plus `tests/boss_test.py`/`tests/boss_pose_test.py` (already updated
+  for the pause in Round10) needed no further changes - they drive
+  through movement with `while`-loops robust to a few extra dip/rise
+  frames - `boss_collision_test.py` DID need a real fix (its own
+  `make_boss` test helper bypasses the real spawn branch entirely by
+  poking `BOSS_ACT` directly, so it never set the new `BOSS_Y` either -
+  fixed by having it also set `BOSS_Y=BOSS_SPAWN_Y`, matching what real
+  spawn now does). Also confirmed visually via 3 new rendered frames
+  (the boss visibly lower right after spawning, mid-dip; a landed bolt
+  with the new diagonal ThunderS cells at its base; and the boss paused
+  at the now-lower left-edge Y with no overlap against nearby columns).
+  Full regression suite: 457/460 passing - same 3 known
+  `GAME_TICK=840`-boot-effect failures (`boss_test.py`,
+  `etank_gametick_gate_test.py`, `night_effect_test.py`), no new
+  regressions.
+
 ## Open items / things to watch
 
 - No known open bugs as of this handoff — the boss's own SPRPAT bug

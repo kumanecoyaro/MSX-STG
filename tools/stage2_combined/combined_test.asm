@@ -463,6 +463,14 @@ BOSS_SPAWNX     EQU 192     ; 256-64: off/at the right edge, sprite fully inside
 ; own history.
 BOSS_SPAWN_Y    EQU 56
 BOSS_SPEED      EQU 2       ; px/frame, flat (not the tank's 1.5px alternating trick) - "速度は2", same units/convention as FLYER_SPEED's own "速度は2"
+; "右初期位置から左に移動する際に左斜下8px移動してから水平移動に変更
+; 戻る時は逆に到達8px前から右斜め上に移動して初期位置に" (round11) - the
+; boss now dips 8px down at the START of the leftward leg (diagonal,
+; both axes at BOSS_SPEED/frame - 8 divides evenly by BOSS_SPEED(2), no
+; partial-step remainder to handle) before going purely horizontal, and
+; symmetrically rises back up over the FINAL 8px of the rightward leg,
+; landing exactly back at BOSS_SPAWN_Y right as it re-enters the pose.
+BOSS_DIP_DIST EQU 8
 BOSS_HP_INIT    EQU 255     ; "耐久値は255で"
 BOSS_COLOR      EQU 9       ; from sprites/Sasapi.json's own fg (light red)
 ; "ボスにコリジョン 見た目通り" - the boss's own real 64x64 visible
@@ -490,10 +498,11 @@ BOSS_FLASH_COLOR EQU 8
 ; a different magnitude was wanted.
 BOSS_POSE_TICKS EQU 24
 ; "左端は2Tick停止してから反転発射に 反転した時にボス自身に当たって
-; しまう" (round9) - a brief stationary pause at the left edge before
-; actually reversing, same true 16-bit GAME_TICK-duration idiom as
-; BOSS_POSE_TICKS (see UBA_LEFT_PAUSE).
-BOSS_LEFT_PAUSE_TICKS EQU 2
+; しまう" (round9), then "まだ反転時ボスにサンダーが当たってるんで8
+; Tick停止に変更" (round11, 2->8) - a brief stationary pause at the left
+; edge before actually reversing, same true 16-bit GAME_TICK-duration
+; idiom as BOSS_POSE_TICKS (see UBA_LEFT_PAUSE).
+BOSS_LEFT_PAUSE_TICKS EQU 8
 ; the attack-pose hand art is drawn straight into the name table, not a
 ; hw sprite - needs its own 64 BG pattern codes (groups19-26, 152-215 -
 ; the next free block after group18/BULLETF's own night codes, per
@@ -1445,6 +1454,13 @@ THUNDER_VIS_HIGH EQU F30Ah
 ; left-edge pause ends at, same 2-byte/true-16-bit-compare shape as
 ; BOSS_POSE_END_TICK.
 BOSS_LEFT_PAUSE_END_TICK EQU F30Bh
+; "左斜下8px移動してから水平移動に変更 戻る時は逆に..." (round11) - the
+; boss's own real, DYNAMIC current Y - was a fixed BOSS_SPAWN_Y constant
+; everywhere until now (horizontal-only patrol); DRAW_BOSS and the
+; collision box both need to read this instead now. Always resets to
+; BOSS_SPAWN_Y exactly at spawn and again the instant the diagonal rise
+; completes (right before entering the pose).
+BOSS_Y EQU F30Dh
 
 ; "ボスに被らない位置の右上 今の発射位置の16px上あたり" - same X as
 ; before (still within the boss's own 64x64 box's own column range,
@@ -6979,6 +6995,7 @@ UPDATE_BOSS_ALL:
     EI
     LD A,1 : LD (BOSS_ACT),A
     LD A,BOSS_SPAWNX : LD (BOSS_X),A
+    LD A,BOSS_SPAWN_Y : LD (BOSS_Y),A
     XOR A : LD (BOSS_DIR),A    ; 0 = moving left first - "右から出現し左へ"
     LD A,BOSS_HP_INIT : LD (BOSS_HP),A
     XOR A : LD (BOSS_FLASH_TIMER),A
@@ -6996,7 +7013,18 @@ UBA_ACTIVE:
     LD A,(BOSS_DIR)
     OR A
     JR NZ,UBA_MOVE_RIGHT
+; "右初期位置から左に移動する際に左斜下8px移動してから水平移動に変更"
+; (round11) - the leg starts with a diagonal dip (both axes BOSS_SPEED/
+; frame) until BOSS_Y reaches BOSS_SPAWN_Y+BOSS_DIP_DIST, THEN goes
+; purely horizontal (the pre-existing logic below, unchanged).
 UBA_MOVE_LEFT:
+    LD A,(BOSS_Y)
+    CP BOSS_SPAWN_Y+BOSS_DIP_DIST
+    JR Z,UBA_MOVE_LEFT_HORIZ
+    LD A,(BOSS_X) : SUB BOSS_SPEED : LD (BOSS_X),A
+    LD A,(BOSS_Y) : ADD A,BOSS_SPEED : LD (BOSS_Y),A
+    JP UBA_DRAW
+UBA_MOVE_LEFT_HORIZ:
     LD A,(BOSS_X)
     CP BOSS_SPEED
     JR NC,UBA_STEP_LEFT
@@ -7038,11 +7066,20 @@ UBA_LEFT_PAUSE:
     XOR A : LD (THUNDER_LEG_START_X),A   ; BOSS_X is 0 here
     LD A,1 : LD (THUNDER_PENDING),A
     JP UBA_DRAW
+; "戻る時は逆に到達8px前から右斜め上に移動して初期位置に" (round11) -
+; the FINAL BOSS_DIP_DIST px of the rightward leg rise back up
+; diagonally (both axes BOSS_SPEED/frame), landing exactly back at
+; BOSS_SPAWN_Y right as BOSS_X reaches BOSS_SPAWNX and the pose begins.
+; Everything before that point is unchanged, purely horizontal.
 UBA_MOVE_RIGHT:
+    LD A,(BOSS_X)
+    CP BOSS_SPAWNX-BOSS_DIP_DIST
+    JR C,UBA_STEP_RIGHT_HORIZ
     LD A,(BOSS_X) : ADD A,BOSS_SPEED
     CP BOSS_SPAWNX
-    JR C,UBA_STEP_RIGHT
+    JR C,UBA_STEP_RIGHT_DIAG
     LD A,BOSS_SPAWNX : LD (BOSS_X),A   ; clamp to the right edge
+    LD A,BOSS_SPAWN_Y : LD (BOSS_Y),A   ; clamp the diagonal rise exactly too
     ; enter the attack pose instead of reversing/continuing the patrol
     ; loop - "右端に戻ったら...BGに描画しスプライトは一旦消す". Not
     ; drawn/flushed as a sprite again until the pose ends (UBA_POSE
@@ -7054,8 +7091,12 @@ UBA_MOVE_RIGHT:
     CALL DRAW_SASAPI_HAND
     CALL ARM_HORMING_VOLLEY
     RET
-UBA_STEP_RIGHT:
+UBA_STEP_RIGHT_DIAG:
     LD (BOSS_X),A
+    LD A,(BOSS_Y) : SUB BOSS_SPEED : LD (BOSS_Y),A
+    JP UBA_DRAW
+UBA_STEP_RIGHT_HORIZ:
+    LD A,(BOSS_X) : ADD A,BOSS_SPEED : LD (BOSS_X),A
     CALL CHECK_THUNDER_TRIGGER_RIGHT
     JP UBA_DRAW
 ; parked at the right edge, hand art on screen, sprite hidden - waits
@@ -7131,7 +7172,7 @@ DRB_COLOR_SET:
     LD B,16
 DRB_LOOP:
     LD A,(IX+0) : LD C,A
-    LD A,BOSS_SPAWN_Y : ADD A,C
+    LD A,(BOSS_Y) : ADD A,C
     LD (HL),A : INC HL
     LD A,(IX+1) : LD C,A
     LD A,(BOSS_X) : ADD A,C
@@ -7585,45 +7626,127 @@ UOT_REASSERT_SHRINK:
     LD A,(IX+2) : LD (THUNDER_VIS_LOW),A
     JP UOT_REASSERT_4
 
-; IX=slot. Draws the 2 ThunderS cells beside the bolt at its own DEEP_
-; ROW(IX+3)/COL(IX+1) - one column left, one column right. Skips a side
-; that would fall outside the 0-31 column range (defensive - COL is
-; always derived from the boss's own edge X, well within range in
-; practice, but avoid ever wrapping into an adjacent row).
+; IX=slot. Draws all 4 ThunderS cells diagonally below the bolt's own
+; deepest row - "サンダーSを左右斜め下に...斜め下1セル横に1セル...
+; 2セルな" (round11): 00 11 00 / 22 00 22 shape - left pair at
+; (COL-2,COL-1), right pair at (COL+2,COL+3), all at row DEEP_ROW+1 (1
+; row below the bolt's own last row - the "斜め下" step). Skips a side
+; that would fall outside the 0-31 column range (defensive).
+; NOTE: the ThunderS row (DEEP_ROW+1) is deliberately RE-READ fresh from
+; (IX+3) before every single WRITE_THUNDERS_CELL/ERASE_ONE_THUNDER_CELL
+; call below, rather than cached once in a register - both of those
+; routines call NIGHT_ROW_ADDR internally, which returns its own result
+; in DE, clobbering any row value a caller had stashed in D across
+; multiple calls (a real bug caught by inspection: the 2nd/3rd/4th cell
+; in a 4-cell run silently used a corrupted row otherwise).
 UOT_DRAW_SIDES:
     LD A,(IX+1)
-    OR A
-    JR Z,UDS_SKIP_LEFT
-    DEC A : LD B,A                 ; B = COL-1
-    LD A,(IX+3)
+    CP 2
+    JR C,UDS_SKIP_LEFT
+    SUB 2 : LD B,A                   ; B = COL-2
+    LD A,(IX+3) : INC A
+    CALL WRITE_THUNDERS_CELL
+    LD A,(IX+1) : DEC A : LD B,A     ; B = COL-1
+    LD A,(IX+3) : INC A
     CALL WRITE_THUNDERS_CELL
 UDS_SKIP_LEFT:
     LD A,(IX+1)
-    CP 30
+    CP 29
     JR NC,UDS_SKIP_RIGHT
-    ADD A,2 : LD B,A                ; B = COL+2
-    LD A,(IX+3)
+    ADD A,2 : LD B,A                  ; B = COL+2
+    LD A,(IX+3) : INC A
+    CALL WRITE_THUNDERS_CELL
+    LD A,(IX+1) : ADD A,3 : LD B,A     ; B = COL+3
+    LD A,(IX+3) : INC A
     CALL WRITE_THUNDERS_CELL
 UDS_SKIP_RIGHT:
     RET
 
-; IX=slot. Erases the 2 ThunderS side cells - same shape as UOT_DRAW_
-; SIDES.
-UOT_ERASE_SIDES:
+; IX=slot. Erases just the 2 INNER ThunderS cells (COL-1,COL+2) - round
+; 11's own 2-step erase order: "２２００２２から２００００２" (inner
+; first, outer stays a beat longer).
+UOT_ERASE_SIDES_INNER:
     LD A,(IX+1)
     OR A
-    JR Z,UES_SKIP_LEFT
+    JR Z,UESI_SKIP_LEFT
     DEC A : LD B,A
-    LD A,(IX+3)
+    LD A,(IX+3) : INC A
     CALL ERASE_ONE_THUNDER_CELL
-UES_SKIP_LEFT:
+UESI_SKIP_LEFT:
     LD A,(IX+1)
     CP 30
-    JR NC,UES_SKIP_RIGHT
+    JR NC,UESI_SKIP_RIGHT
     ADD A,2 : LD B,A
-    LD A,(IX+3)
+    LD A,(IX+3) : INC A
     CALL ERASE_ONE_THUNDER_CELL
-UES_SKIP_RIGHT:
+UESI_SKIP_RIGHT:
+    RET
+
+; IX=slot. Erases the 2 OUTER ThunderS cells (COL-2,COL+3) - the 2nd
+; and final step of the side-cell erase sequence.
+UOT_ERASE_SIDES_OUTER:
+    LD A,(IX+1)
+    CP 2
+    JR C,UESO_SKIP_LEFT
+    SUB 2 : LD B,A
+    LD A,(IX+3) : INC A
+    CALL ERASE_ONE_THUNDER_CELL
+UESO_SKIP_LEFT:
+    LD A,(IX+1)
+    CP 29
+    JR NC,UESO_SKIP_RIGHT
+    ADD A,3 : LD B,A
+    LD A,(IX+3) : INC A
+    CALL ERASE_ONE_THUNDER_CELL
+UESO_SKIP_RIGHT:
+    RET
+
+; IX=slot. Redraws just the 2 OUTER ThunderS cells - used by the
+; contested-row (>=20) reassertion pass once the inner cells have
+; already been erased but the outer ones haven't yet (the 1-frame gap
+; between the 2 erase sub-steps).
+UOT_REASSERT_SIDES_OUTER:
+    LD A,(IX+1)
+    CP 2
+    JR C,URSO_SKIP_LEFT
+    SUB 2 : LD B,A
+    LD A,(IX+3) : INC A
+    CALL WRITE_THUNDERS_CELL
+URSO_SKIP_LEFT:
+    LD A,(IX+1)
+    CP 29
+    JR NC,URSO_SKIP_RIGHT
+    ADD A,3 : LD B,A
+    LD A,(IX+3) : INC A
+    CALL WRITE_THUNDERS_CELL
+URSO_SKIP_RIGHT:
+    RET
+
+; IX=slot. Re-asserts whichever ThunderS cells should currently still
+; be visible, if their own row (DEEP_ROW+1) falls in the contested band
+; (>=20) - same "restore every frame" idiom as the main bolt's own
+; reassertion. Only relevant while ACT=2 (sides only ever exist during
+; shrink, drawn at the very moment growth transitions into it).
+UOT_REASSERT_SIDES:
+    LD A,(IX+0)
+    CP 2
+    RET NZ
+    LD A,(IX+3) : INC A
+    CP 20
+    RET C
+    LD A,(IX+2) : LD D,A          ; D = ROW (shrink frontier, current)
+    LD A,(IX+3) : LD E,A          ; E = DEEP_ROW
+    LD A,D : CP E
+    JR C,URS_ALL                   ; ROW<=DEEP_ROW - sides untouched yet, all 4 still visible
+    JR Z,URS_ALL
+    LD A,D : SUB E                  ; A = ROW-DEEP_ROW (1 or 2 at this point)
+    CP 2
+    JR Z,URS_OUTER_ONLY
+URS_ALL:
+    CALL UOT_DRAW_SIDES              ; idempotent - redrawing an already-correct cell is harmless
+    RET
+URS_OUTER_ONLY:
+    CALL UOT_REASSERT_SIDES_OUTER
     RET
 
 ; IX = slot base (+0 ACT,+1 COL,+2 ROW,+3 DEEP_ROW). Advances this
@@ -7645,17 +7768,27 @@ UPDATE_ONE_THUNDER:
     OR A
     RET Z
     CP 1
-    JP Z,UOT_GROW
-    JP UOT_SHRINK
+    JR Z,UOT_DISPATCH_GROW
+    CALL UOT_SHRINK
+    JR UOT_DISPATCH_SIDES
+UOT_DISPATCH_GROW:
+    CALL UOT_GROW
+UOT_DISPATCH_SIDES:
+    CALL UOT_REASSERT_SIDES
+    RET
 
+; "サンダーの到達を1セル手前に" (round11) - stops 1 row short of where
+; it used to (terrain_row-1 instead of terrain_row), so DEEP_ROW ends up
+; terrain_row-2.
 UOT_GROW:
     LD A,(IX+1) : CALL GET_TERRAIN_ROW_FOR_COL
-    LD B,A                       ; B = terrain row for this column
+    DEC A                         ; terrain_row-1 - the new, 1-cell-earlier stop line
+    LD B,A
     LD A,(IX+2)                  ; A = current ROW
     CP B
-    JR C,UOT_GROW_STEP           ; ROW < terrain row - safe to draw here
-    ; reached the terrain - "地形に到達したら" - stop growing, drop the
-    ; 2 ThunderS cells beside the bolt, and start shrinking.
+    JR C,UOT_GROW_STEP           ; ROW < stop line - safe to draw here
+    ; reached the (now 1-cell-earlier) stop line - stop growing, drop
+    ; the 4 ThunderS cells beside the bolt, and start shrinking.
     DEC A : LD (IX+3),A          ; DEEP_ROW = last row actually drawn (ROW-1)
     ; re-draw DEEP_ROW's own main-bolt row too (not just the new side
     ; cells): it was drawn on a PREVIOUS frame, so if it's in the
@@ -7679,26 +7812,32 @@ UOT_GROW_STEP:
     CALL UOT_REASSERT_GROW
     RET
 
+; shrink now runs 2 extra "virtual" steps past DEEP_ROW for the 2-stage
+; ThunderS erase (round11: "サンダーSを消す時も順に...という具合で") -
+; ROW==DEEP_ROW+1 erases the INNER side cells, ROW==DEEP_ROW+2 erases
+; the OUTER ones and finishes.
 UOT_SHRINK:
-    LD A,(IX+3)                  ; A = DEEP_ROW
-    LD B,(IX+2)                  ; B = ROW (shrink frontier)
-    CP B
-    JR C,UOT_SHRINK_DONE         ; DEEP_ROW < ROW - nothing left to erase
-    LD A,B                        ; A = ROW
+    LD A,(IX+3) : LD D,A          ; D = DEEP_ROW
+    LD A,(IX+2) : LD E,A          ; E = ROW
+    CP D
+    JR Z,UOT_SHRINK_MAIN
+    JR C,UOT_SHRINK_MAIN
+    LD A,E : SUB D                  ; A = ROW-DEEP_ROW (1 or 2 - anything else is unreachable)
+    CP 1
+    JR Z,UOT_SHRINK_INNER
+    CALL UOT_ERASE_SIDES_OUTER
+    XOR A : LD (IX+0),A
+    RET
+UOT_SHRINK_INNER:
+    CALL UOT_ERASE_SIDES_INNER
+    LD A,(IX+2) : INC A : LD (IX+2),A
+    RET
+UOT_SHRINK_MAIN:
     LD B,(IX+1)                   ; B = COL
+    LD A,E                          ; A = ROW
     CALL ERASE_ONE_THUNDER_ROW
-    LD A,(IX+2)
-    LD C,A
-    LD A,(IX+3)
-    CP C
-    JR NZ,UOT_SHRINK_ADVANCE
-    CALL UOT_ERASE_SIDES          ; this frame's row IS the deepest one - also clear the side cells
-UOT_SHRINK_ADVANCE:
     LD A,(IX+2) : INC A : LD (IX+2),A
     CALL UOT_REASSERT_SHRINK
-    RET
-UOT_SHRINK_DONE:
-    XOR A : LD (IX+0),A
     RET
 
 ; called every MAINLOOP frame - advances every active Thunder slot by
@@ -8424,7 +8563,7 @@ CHECK_HIT_PAIR_BOSS:
     LD A,(IX+2) : ADD A,A : ADD A,A : ADD A,A : LD B,A
     LD A,(IX+3) : ADD A,A : ADD A,A : ADD A,A : LD C,A
     LD A,(BOSS_X) : LD D,A
-    LD A,BOSS_SPAWN_Y : LD E,A
+    LD A,(BOSS_Y) : LD E,A
 
     LD A,B : ADD A,7 : CP D : RET C
     LD A,D : ADD A,BOSS_COLLISION_SIZE-1 : CP B : RET C

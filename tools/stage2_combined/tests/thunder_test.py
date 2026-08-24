@@ -33,6 +33,9 @@ IDCACHE_T0 = sym["IDCACHE_T0"]
 IDCACHE_T1 = sym["IDCACHE_T1"]
 IDCACHE_T2 = sym["IDCACHE_T2"]
 GAME_TICK = sym["GAME_TICK"]
+BOSS_Y = sym["BOSS_Y"]
+BOSS_SPAWN_Y = sym["BOSS_SPAWN_Y"]
+BOSS_DIP_DIST = sym["BOSS_DIP_DIST"]
 
 TL, TR, BL, BR = (THUNDER_CODE_BASE + i for i in range(4))
 
@@ -180,8 +183,11 @@ check("ERASE_ONE_THUNDER_CELL restores a safe-zone side cell to plain sky",
 
 
 # ---- UPDATE_ONE_THUNDER: full lifecycle against a SAFE terrain row
-# (tier0, terrain row20 -> DEEP_ROW19, everything stays <20, no
-# reassertion needed at all) ----
+# (tier0, terrain row20 -> DEEP_ROW18 - round11: "サンダーの到達を1セ
+# ル手前に", 1 row earlier than before - everything stays <20, no
+# reassertion needed at all). ThunderS is now a 4-cell diagonal shape
+# ("斜め下1セル横に1セル...2セルな"): 00 11 00 / 22 00 22 - left pair
+# at (COL-2,COL-1), right pair at (COL+2,COL+3), both at DEEP_ROW+1 ----
 cpu = fresh_cpu()
 set_terrain_flat(cpu, 0)
 cpu.a = 8
@@ -195,86 +201,121 @@ for _ in range(40):
         break
     grew_rows.append(slot(cpu, 0)["row"])
 s = slot(cpu, 0)
-check("tier0: growth stops with DEEP_ROW=19 (terrain_row20 - 1)", s["deep"] == 19)
+check("tier0: growth stops with DEEP_ROW=18 (terrain_row20 - 2, 1 cell earlier than before) - "
+      "サンダーの到達を1セル手前に", s["deep"] == 18)
 check("tier0: transitions to shrinking (ACT=2) once the terrain is reached - 地形に到達したら",
       s["act"] == 2)
-check("tier0: the bolt's own deepest row (19) is drawn", cell(cpu, 19, 8) in (TL, TR, BL, BR))
-check("tier0: ThunderS side cells appear left (col7) and right (col10) of the bolt at DEEP_ROW - "
+check("tier0: the bolt's own deepest row (18) is drawn", cell(cpu, 18, 8) in (TL, TR, BL, BR))
+check("tier0: row19 (DEEP_ROW+1, one row below the bolt) has no main-bolt content in its own "
+      "center columns - only the ThunderS pairs flank it",
+      cell(cpu, 19, 8) not in (TL, TR, BL, BR) and cell(cpu, 19, 9) not in (TL, TR, BL, BR))
+check("tier0: ThunderS LEFT pair (col6,col7) appears diagonally below-left of the bolt - "
       "地形に到達したら添付のキャラを地上の上に左右に発射",
-      cell(cpu, 19, 7) == THUNDERS_CODE and cell(cpu, 19, 10) == THUNDERS_CODE)
+      cell(cpu, 19, 6) == THUNDERS_CODE and cell(cpu, 19, 7) == THUNDERS_CODE)
+check("tier0: ThunderS RIGHT pair (col10,col11) appears diagonally below-right of the bolt",
+      cell(cpu, 19, 10) == THUNDERS_CODE and cell(cpu, 19, 11) == THUNDERS_CODE)
 check("tier0: row20 (the real terrain) was never touched", cell(cpu, 20, 8) == 0 or cell(cpu, 20, 8) != TL)
 
-# drive through the shrink phase
-for _ in range(40):
+# ---- erase order: inner cells (col7,col10) first, THEN outer (col6,col11)
+# - "サンダーSを消す時も順に ２２００２２ から ２００００２ という具合で" ----
+for _ in range(30):
     cpu.ix = ix
     call_routine(cpu, "UPDATE_ONE_THUNDER")
-    if slot(cpu, 0)["act"] == 0:
-        break
-check("tier0: fully shrinks back to inactive (ACT=0)", slot(cpu, 0)["act"] == 0)
-check("tier0: the bolt's own deepest row is erased", cell(cpu, 19, 8) not in (TL, TR, BL, BR))
-check("tier0: the ThunderS side cells are erased too - サンダーが着地したら左右同時に2セル描いて消せばおｋ",
+    if slot(cpu, 0)["deep"] == 18 and slot(cpu, 0)["row"] == 19:
+        break  # shrink frontier just reached the ThunderS row's own inner-erase step
+check("shrink reaches the ThunderS row's own erase steps (ROW=DEEP_ROW+1) after the main bolt "
+      "is fully erased", slot(cpu, 0)["row"] == 19)
+check("main bolt's own deepest row (18) is erased by the time the ThunderS erase steps begin",
+      cell(cpu, 18, 8) not in (TL, TR, BL, BR))
+check("all 4 ThunderS cells still present just before the inner-erase step",
+      cell(cpu, 19, 6) == THUNDERS_CODE and cell(cpu, 19, 7) == THUNDERS_CODE
+      and cell(cpu, 19, 10) == THUNDERS_CODE and cell(cpu, 19, 11) == THUNDERS_CODE)
+
+cpu.ix = ix
+call_routine(cpu, "UPDATE_ONE_THUNDER")  # the inner-erase step itself
+check("inner-erase step: INNER cells (col7,col10) are erased - ２２００２２ -> ２００００２",
       cell(cpu, 19, 7) != THUNDERS_CODE and cell(cpu, 19, 10) != THUNDERS_CODE)
+check("inner-erase step: OUTER cells (col6,col11) are still there for one more beat",
+      cell(cpu, 19, 6) == THUNDERS_CODE and cell(cpu, 19, 11) == THUNDERS_CODE)
+check("still active (ACT=2) - the outer-erase step hasn't run yet", slot(cpu, 0)["act"] == 2)
+
+cpu.ix = ix
+call_routine(cpu, "UPDATE_ONE_THUNDER")  # the outer-erase step - finishes the cycle
+check("tier0: fully shrinks back to inactive (ACT=0)", slot(cpu, 0)["act"] == 0)
+check("outer-erase step: the last 2 ThunderS cells (col6,col11) are erased too",
+      cell(cpu, 19, 6) != THUNDERS_CODE and cell(cpu, 19, 11) != THUNDERS_CODE)
 
 
 # ---- UPDATE_ONE_THUNDER: full lifecycle against a DEEP terrain row
-# (tier3, terrain row23 -> DEEP_ROW22) - forces the bolt into the
-# ground/rock band (row>=20), which needs the continuous per-frame
-# reassertion to actually stay visible against TERRAIN_RENDER_ROW's own
-# unconditional per-frame redraw (simulated here by corrupting the
-# contested cells between calls, matching the real MAINLOOP's own call
-# order: terrain redraw happens before UPDATE_THUNDER every frame) ----
+# (tier3, terrain row23 -> DEEP_ROW21, round11: 1 cell earlier than the
+# old terrain_row-1) - forces the bolt into the ground/rock band
+# (row>=20), which needs the continuous per-frame reassertion to
+# actually stay visible against TERRAIN_RENDER_ROW's own unconditional
+# per-frame redraw (simulated here by corrupting the contested cells
+# between calls, matching the real MAINLOOP's own call order: terrain
+# redraw happens before UPDATE_THUNDER every frame) ----
 cpu = fresh_cpu()
 set_terrain_flat(cpu, 3)
 cpu.a = 8
 call_routine(cpu, "ALLOC_THUNDER_SLOT")
 ix = slot_addr(0)
+
+
+def clobber_contested(cpu):
+    for row in range(20, 24):
+        for col in range(6, 12):
+            cpu.vram[name_addr(row, col)] = 0
+
+
 saw_contested_row_drawn = False
 for _ in range(60):
-    # simulate the terrain's own unconditional per-frame redraw
-    # clobbering the contested band (rows20-23) BEFORE Thunder's own
-    # update runs this frame, exactly like real MAINLOOP ordering.
-    for row in range(20, 24):
-        cpu.vram[name_addr(row, 8)] = 0
-        cpu.vram[name_addr(row, 9)] = 0
+    clobber_contested(cpu)
     cpu.ix = ix
     call_routine(cpu, "UPDATE_ONE_THUNDER")
-    if cell(cpu, 21, 8) in (TL, TR, BL, BR) or cell(cpu, 22, 8) in (TL, TR, BL, BR):
+    if cell(cpu, 20, 8) in (TL, TR, BL, BR) or cell(cpu, 21, 8) in (TL, TR, BL, BR):
         saw_contested_row_drawn = True
     if slot(cpu, 0)["act"] == 2:
         break
 s = slot(cpu, 0)
-check("tier3: growth reaches all the way down to DEEP_ROW=22 (terrain row23 - 1) - "
-      "終了位置は地形までに変更", s["deep"] == 22)
+check("tier3: growth reaches DEEP_ROW=21 (terrain row23 - 2, 1 cell earlier than before) - "
+      "終了位置は地形までに変更 + サンダーの到達を1セル手前に", s["deep"] == 21)
 check("tier3: a contested row (>=20) actually got (re)drawn during growth despite the simulated "
       "per-frame terrain overwrite - the reassertion pass is doing real work, not a no-op",
       saw_contested_row_drawn)
-check("tier3: the deepest row (22, inside the ground/rock band) is visible right after landing "
+check("tier3: the deepest row (21, inside the ground/rock band) is visible right after landing "
       "even though this test frame started by clobbering it first",
-      cell(cpu, 22, 8) in (TL, TR, BL, BR))
-check("tier3: ThunderS side cells also land inside the contested band and are visible",
-      cell(cpu, 22, 7) == THUNDERS_CODE and cell(cpu, 22, 10) == THUNDERS_CODE)
+      cell(cpu, 21, 8) in (TL, TR, BL, BR))
+check("tier3: all 4 ThunderS cells land inside the contested band (row22) and are visible",
+      cell(cpu, 22, 6) == THUNDERS_CODE and cell(cpu, 22, 7) == THUNDERS_CODE
+      and cell(cpu, 22, 10) == THUNDERS_CODE and cell(cpu, 22, 11) == THUNDERS_CODE)
 
 # drive through shrink, continuing to simulate the terrain's own
-# clobbering every frame - contested rows must keep reasserting until
-# shrink actually passes them, then STAY gone (terrain reclaims them)
-still_reasserting_at_22 = None
+# clobbering every frame - contested rows/cells must keep reasserting
+# (including through the 1-frame gap between the inner- and outer-erase
+# steps) until shrink actually passes them, then STAY gone
+saw_outer_only_gap = False
 for step in range(60):
-    for row in range(20, 24):
-        cpu.vram[name_addr(row, 8)] = 0
-        cpu.vram[name_addr(row, 9)] = 0
+    clobber_contested(cpu)
     cpu.ix = ix
     call_routine(cpu, "UPDATE_ONE_THUNDER")
+    if (cell(cpu, 22, 6) == THUNDERS_CODE and cell(cpu, 22, 7) != THUNDERS_CODE
+            and cell(cpu, 22, 10) != THUNDERS_CODE and cell(cpu, 22, 11) == THUNDERS_CODE):
+        saw_outer_only_gap = True
     if slot(cpu, 0)["act"] == 0:
         break
 check("tier3: fully shrinks back to inactive (ACT=0) even from the deep-terrain case",
       slot(cpu, 0)["act"] == 0)
+check("tier3: the outer-only gap (inner erased, outer still reasserted every frame against the "
+      "simulated terrain clobber) was actually observed - the contested-row reassertion covers "
+      "the ThunderS row too, not just the main bolt",
+      saw_outer_only_gap)
 # once inactive, nothing reasserts row22 any more - a fresh simulated
 # terrain overwrite should stick (not get fought back to a Thunder code)
-cpu.vram[name_addr(22, 8)] = 0
+cpu.vram[name_addr(21, 8)] = 0
 call_routine(cpu, "UPDATE_ONE_THUNDER")  # ACT=0 - no-op, must not resurrect anything
 check("tier3: once fully inactive, nothing keeps re-asserting the old contested rows any more - "
       "the terrain's own redraw is free to reclaim them",
-      cell(cpu, 22, 8) not in (TL, TR, BL, BR))
+      cell(cpu, 21, 8) not in (TL, TR, BL, BR))
 
 
 # ---- CHECK_THUNDER_TRIGGER_LEFT/_RIGHT: fire every 32px, repeatedly,
@@ -327,6 +368,88 @@ cpu.mem[BOSS_X] += THUNDER_TRIGGER_DX
 call_routine(cpu, "CHECK_THUNDER_TRIGGER_RIGHT")
 check("CHECK_THUNDER_TRIGGER_RIGHT also fires again after another THUNDER_TRIGGER_DX px",
       slot(cpu, 1)["act"] == 1)
+
+
+# ---- UPDATE_BOSS_ALL: the new diagonal dip (leftward leg start) / rise
+# (rightward leg end) - round11: "右初期位置から左に移動する際に左斜下
+# 8px移動してから水平移動に変更 戻る時は逆に到達8px前から右斜め上に移
+# 動して初期位置に" ----
+BOSS_SPAWN_TICK = sym["BOSS_SPAWN_TICK"]
+
+
+def spawn_boss(cpu):
+    set_game_tick(cpu, BOSS_SPAWN_TICK)
+    call_routine(cpu, "UPDATE_BOSS_ALL")
+
+
+cpu = fresh_cpu()
+spawn_boss(cpu)
+check("boss spawns at BOSS_SPAWN_Y (undipped)", cpu.mem[BOSS_Y] == BOSS_SPAWN_Y)
+x0 = cpu.mem[BOSS_X]
+call_routine(cpu, "UPDATE_BOSS_ALL")
+check("leftward leg starts with a DIAGONAL step (both X and Y move) - 左斜下8px移動してから",
+      cpu.mem[BOSS_X] == x0 - BOSS_SPEED and cpu.mem[BOSS_Y] == BOSS_SPAWN_Y + BOSS_SPEED)
+
+# drive through the rest of the dip
+steps = 0
+while cpu.mem[BOSS_Y] < BOSS_SPAWN_Y + BOSS_DIP_DIST and steps < 20:
+    call_routine(cpu, "UPDATE_BOSS_ALL")
+    steps += 1
+check(f"dip completes after exactly BOSS_DIP_DIST/BOSS_SPEED steps, reaching BOSS_SPAWN_Y+"
+      f"BOSS_DIP_DIST({BOSS_SPAWN_Y + BOSS_DIP_DIST}) exactly",
+      cpu.mem[BOSS_Y] == BOSS_SPAWN_Y + BOSS_DIP_DIST
+      and steps == BOSS_DIP_DIST // BOSS_SPEED - 1)
+x_after_dip = cpu.mem[BOSS_X]
+call_routine(cpu, "UPDATE_BOSS_ALL")
+check("once fully dipped, movement is purely horizontal again (Y unchanged, same as before this round)",
+      cpu.mem[BOSS_X] == x_after_dip - BOSS_SPEED and cpu.mem[BOSS_Y] == BOSS_SPAWN_Y + BOSS_DIP_DIST)
+
+# ---- the rise on the rightward leg's own final BOSS_DIP_DIST px ----
+cpu = fresh_cpu()
+spawn_boss(cpu)
+cpu.mem[BOSS_X] = BOSS_SPAWNX - BOSS_DIP_DIST - BOSS_SPEED
+cpu.mem[BOSS_Y] = BOSS_SPAWN_Y + BOSS_DIP_DIST
+cpu.mem[BOSS_DIR] = 1
+call_routine(cpu, "UPDATE_BOSS_ALL")
+check("still purely horizontal 1 step before the diagonal-rise point (BOSS_SPAWNX-BOSS_DIP_DIST)",
+      cpu.mem[BOSS_X] == BOSS_SPAWNX - BOSS_DIP_DIST and cpu.mem[BOSS_Y] == BOSS_SPAWN_Y + BOSS_DIP_DIST)
+call_routine(cpu, "UPDATE_BOSS_ALL")
+check("the very next step (now AT BOSS_SPAWNX-BOSS_DIP_DIST) starts the diagonal rise - "
+      "戻る時は逆に到達8px前から右斜め上に移動",
+      cpu.mem[BOSS_X] == BOSS_SPAWNX - BOSS_DIP_DIST + BOSS_SPEED
+      and cpu.mem[BOSS_Y] == BOSS_SPAWN_Y + BOSS_DIP_DIST - BOSS_SPEED)
+steps = 0
+while cpu.mem[BOSS_X] < BOSS_SPAWNX and steps < 20:
+    call_routine(cpu, "UPDATE_BOSS_ALL")
+    steps += 1
+check("the rise lands exactly back at BOSS_SPAWNX/BOSS_SPAWN_Y and enters the attack pose - "
+      "初期位置に",
+      cpu.mem[BOSS_X] == BOSS_SPAWNX and cpu.mem[BOSS_Y] == BOSS_SPAWN_Y
+      and cpu.mem[BOSS_PHASE] == 1)
+
+
+# ---- real MAINLOOP: the dip/rise actually happen during a full patrol
+# cycle, and BOSS_Y is genuinely dynamic (DRAW_BOSS/collision now read
+# it instead of a fixed BOSS_SPAWN_Y constant) ----
+cpu = fresh_cpu()
+cpu.sim_dir = 0
+cpu.sim_trig_a = False
+cpu.sim_trig_b = False
+saw_dipped_y = False
+saw_pose = False
+for f in range(20000):
+    step_frame(cpu)
+    if cpu.mem[BOSS_Y] == BOSS_SPAWN_Y + BOSS_DIP_DIST:
+        saw_dipped_y = True
+    if cpu.mem[BOSS_PHASE] == 1:
+        saw_pose = True
+        if saw_dipped_y:
+            break
+check("real MAINLOOP: BOSS_Y genuinely reaches the fully-dipped value during patrol", saw_dipped_y)
+check("real MAINLOOP: the boss still reaches the attack pose (BOSS_Y correctly rises back to "
+      "BOSS_SPAWN_Y exactly, not stuck dipped)", saw_pose)
+check("real MAINLOOP: BOSS_Y is back to BOSS_SPAWN_Y once posing (pose art is anchored there)",
+      cpu.mem[BOSS_Y] == BOSS_SPAWN_Y)
 
 
 # ---- real MAINLOOP: boss reaches the left edge, PAUSES (BOSS_PHASE=2,
@@ -385,8 +508,8 @@ for f in range(20000):
     for i in range(THUNDER_SLOT_COUNT):
         s = slot(cpu, i)
         if s["act"] == 2:
-            row, col = s["deep"], s["col"]
-            if col > 0 and cell(cpu, row, col - 1) == THUNDERS_CODE:
+            row, col = s["deep"] + 1, s["col"]
+            if col >= 2 and cell(cpu, row, col - 1) == THUNDERS_CODE:
                 saw_side_cells = True
     if max_concurrent >= 2 and saw_side_cells:
         break

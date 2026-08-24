@@ -4792,6 +4792,36 @@ with no way to tell where.
   `horming_test.py` needed real updates for the new left-edge pause and
   its own knock-on RNG-timing shift - see HANDOFF.md).
 
+- **Round 11: Thunder 1 cell shorter, ThunderS is a 2x2 diagonal shape,
+  8-Tick pause, and the boss's own patrol gained a diagonal dip/rise**:
+  "サンダーの到達を1セル手前に サンダーSを左右斜め下に...2セルな
+  00 11 00 / 22 00 22...消す時も順に 22 00 22 から 20 00 02...ま
+  だ反転時ボスにサンダーが当たってるんで8Tick停止に変更 次に右初期
+  位置から左に移動する際に左斜下8px移動してから水平移動に変更 戻る
+  時は逆に到達8px前から右斜め上に移動して初期位置に". `DEEP_ROW` now
+  stops 1 cell earlier (`terrain_row-2`); ThunderS is a real 4-cell
+  diagonal shape (2 per side at `DEEP_ROW+1`) erased in 2 explicit
+  steps (inner cells, then outer). Caught and fixed a real bug while
+  building this: the ThunderS helpers cached their own target row in
+  register `D` across multiple cell writes, but the cell-write routine
+  itself clobbers `D` internally (`NIGHT_ROW_ADDR`'s own return value) -
+  every cell after the first silently used a corrupted row until fixed
+  to re-read fresh each time. `BOSS_LEFT_PAUSE_TICKS` 2->8 (still not
+  enough separation before). The boss's own patrol now dips 8px
+  diagonally at the start of the leftward leg and rises back 8px
+  diagonally over the final stretch of the rightward leg, landing
+  exactly back at `BOSS_SPAWN_Y` right as the pose begins - required
+  promoting `BOSS_Y` from a fixed constant to a real, dynamic RAM
+  variable (`DRAW_BOSS`/the collision box both needed updating).
+  Verified: `tests/thunder_test.py` extended again (69 checks), plus 3
+  new rendered frames (boss visibly dipped right after spawn, a landed
+  bolt with the new diagonal ThunderS cells, and the paused boss at its
+  own lower left-edge Y with no overlap). `boss_collision_test.py`
+  needed a real fix too - its own `make_boss` helper pokes `BOSS_ACT`
+  directly, bypassing the real spawn branch that's the only place that
+  normally sets the new `BOSS_Y`. Full suite 457/460, same 3 known
+  GAME_TICK=840-boot-effect failures, no new regressions.
+
 ## Bugs found and fixed while building this
 
 - **Sand flickered between its own new color and Rock's, twice over**
