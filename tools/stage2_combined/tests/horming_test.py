@@ -15,12 +15,15 @@ HORMING_SLOT_COUNT = sym["HORMING_SLOT_COUNT"]
 HORMING_SLOT_SIZE = sym["HORMING_SLOT_SIZE"]
 HORMING_POOL = sym["HORMING_POOL"]
 HORMING_SPRITE_ATTRS = sym["HORMING_SPRITE_ATTRS"]
+HORMING_VOLLEY_COUNT = sym["HORMING_VOLLEY_COUNT"]
+HORMING_VOLLEY_TIMER = sym["HORMING_VOLLEY_TIMER"]
+HORMING_VOLLEY_INTERVAL = sym["HORMING_VOLLEY_INTERVAL"]
 HORMING_SPAWN_X = sym["HORMING_SPAWN_X"]
 HORMING_SPAWN_Y = sym["HORMING_SPAWN_Y"]
-HORMING_CENTER_X = sym["HORMING_CENTER_X"]
 HORMING_SPEED = sym["HORMING_SPEED"]
-TANK_WIDTH = sym["TANK_WIDTH"]
-HORMING_SIDE_DIST = sym["HORMING_SIDE_DIST"]
+HORMING_RISE_DIST = sym["HORMING_RISE_DIST"]
+HORMING_WANDER_MIN_X = sym["HORMING_WANDER_MIN_X"]
+HORMING_WANDER_MAX_X = sym["HORMING_WANDER_MAX_X"]
 HORMING_MAXX = sym["HORMING_MAXX"]
 HORMING_MAXY = sym["HORMING_MAXY"]
 HORMING_COLOR = sym["HORMING_COLOR"]
@@ -41,9 +44,8 @@ BOSS_PHASE = sym["BOSS_PHASE"]
 SPRATR = sym["SPRATR"]
 
 PAT_CODE = [PAT_HORMING_SL, PAT_HORMING_DL, PAT_HORMING_DOWN, PAT_HORMING_DR, PAT_HORMING_SR]
-label_to_code = {"SL": 0, "DL": 1, "Down": 2, "DR": 3, "SR": 4}
 
-# slot layout: +0 ACT,+1 X,+2 Y,+3 FACING,+4 PHASE
+# slot layout: +0 ACT,+1 X,+2 Y,+3 FACING(cosmetic,eased),+4 STATE(0=rise,1=wander,2=homing),+5 RISE_REMAIN
 def slot_addr(i):
     return HORMING_POOL + i * HORMING_SLOT_SIZE
 
@@ -55,14 +57,14 @@ def slot(cpu, i):
         "x": cpu.mem[base + 1],
         "y": cpu.mem[base + 2],
         "facing": cpu.mem[base + 3],
-        "phase": cpu.mem[base + 4],
+        "state": cpu.mem[base + 4],
+        "rise_remain": cpu.mem[base + 5],
     }
 
 
 def sat_entry(cpu, hw_slot):
     # SPRATR is a VRAM address (the hw Sprite Attribute Table), not RAM -
-    # FLUSH_HORMING_SPRITES writes it via VDP OUT ports, so it only shows
-    # up in cpu.vram, same as HORMING_ADDR_LO/HI's old BG-cell reads did.
+    # FLUSH_HORMING_SPRITES writes it via VDP OUT ports.
     base = SPRATR + hw_slot * 4
     return {
         "y": cpu.vram[base + 0],
@@ -72,227 +74,287 @@ def sat_entry(cpu, hw_slot):
     }
 
 
-def make_active(cpu, slot_i, x, y, tank_x, phase=1):
+def make_slot(cpu, slot_i, x, y, facing=0, state=2, rise_remain=0, tank_x=None, tank_y=None):
     base = slot_addr(slot_i)
     cpu.mem[base + 0] = 1
     cpu.mem[base + 1] = x
     cpu.mem[base + 2] = y
-    cpu.mem[base + 3] = 0
-    cpu.mem[base + 4] = phase
-    cpu.mem[TANK_X] = tank_x
-    cpu.mem[TANK_Y_CUR] = 200  # far below by default - keeps height out of facing checks
+    cpu.mem[base + 3] = facing
+    cpu.mem[base + 4] = state
+    cpu.mem[base + 5] = rise_remain
+    if tank_x is not None:
+        cpu.mem[TANK_X] = tank_x
+    if tank_y is not None:
+        cpu.mem[TANK_Y_CUR] = tank_y
 
 
-# ---- FIRE_HORMING: fires a full volley of 4 ----
+# ---- FIRE_ONE_HORMING: spawns into the first inactive slot ----
 cpu = fresh_cpu()
-call_routine(cpu, "FIRE_HORMING")
-for i in range(HORMING_SLOT_COUNT):
-    s = slot(cpu, i)
-    check(f"slot{i} fires with ACT=1 - 同時に4発", s["act"] == 1)
-    check(f"slot{i} fires with PHASE=0 (straight)", s["phase"] == 0)
-    check(f"slot{i} fires facing SL(0)", s["facing"] == 0)
-    check(f"slot{i} fires at HORMING_SPAWN_X - ボス右上あたり", s["x"] == HORMING_SPAWN_X)
-    check(f"slot{i} spawn Y is staggered by 8px x slot index", s["y"] == HORMING_SPAWN_Y + i * 8)
+cpu.ix = 0  # unused by this routine, just to be explicit nothing stale leaks in
+call_routine(cpu, "FIRE_ONE_HORMING")
+s = slot(cpu, 0)
+check("fires into slot0 with ACT=1", s["act"] == 1)
+check("fires at HORMING_SPAWN_X/Y - ボスに被らない位置の右上", s["x"] == HORMING_SPAWN_X and s["y"] == HORMING_SPAWN_Y)
+check("fires facing SL(0) (cosmetic - no true upward sprite)", s["facing"] == 0)
+check("fires in state0 (rise)", s["state"] == 0)
+check("fires with the full HORMING_RISE_DIST still to travel", s["rise_remain"] == HORMING_RISE_DIST)
+for i in range(1, HORMING_SLOT_COUNT):
+    check(f"slot{i} untouched by a single FIRE_ONE_HORMING call", slot(cpu, i)["act"] == 0)
 
-# refuses to re-fire an already-active slot (drops the attempt, per slot)
-x_before = [slot(cpu, i)["x"] for i in range(HORMING_SLOT_COUNT)]
-call_routine(cpu, "FIRE_HORMING")
-x_after = [slot(cpu, i)["x"] for i in range(HORMING_SLOT_COUNT)]
-check("refuses to re-fire while all 4 slots are already active (drops the attempt)",
-      x_before == x_after)
+# a second call fills slot1, leaving slot0 alone
+call_routine(cpu, "FIRE_ONE_HORMING")
+check("a second call fires into the next free slot (slot1), not slot0 again",
+      slot(cpu, 1)["act"] == 1 and slot(cpu, 0)["x"] == HORMING_SPAWN_X)
 
-# a partially-drained pool only refills the inactive slots
+# once all 4 slots are full, drops the attempt
 cpu2 = fresh_cpu()
-call_routine(cpu2, "FIRE_HORMING")
-base1 = slot_addr(1)
-cpu2.mem[base1 + 0] = 0  # slot1 deactivated (as if it hit or went off-screen)
-cpu2.mem[base1 + 1] = 77
-call_routine(cpu2, "FIRE_HORMING")
-check("a re-fire only refills the inactive slot, leaving the other 3 untouched",
-      cpu2.mem[base1 + 0] == 1 and cpu2.mem[base1 + 1] == HORMING_SPAWN_X)
+for i in range(HORMING_SLOT_COUNT):
+    call_routine(cpu2, "FIRE_ONE_HORMING")
+for i in range(HORMING_SLOT_COUNT):
+    check(f"slot{i} active after filling the whole pool", slot(cpu2, i)["act"] == 1)
+call_routine(cpu2, "FIRE_ONE_HORMING")  # pool full - should be a no-op
+check("drops the attempt once the whole pool is full (no crash, no state corruption)",
+      all(slot(cpu2, i)["act"] == 1 for i in range(HORMING_SLOT_COUNT)))
 
 
-# ---- phase0: straight left, HORMING_SPEED px/frame, always SL ----
+# ---- ARM_HORMING_VOLLEY / UPDATE_HORMING_VOLLEY: intermittent fire ----
+# "弾は4発同時発射ではなく間欠で4発発射"
 cpu = fresh_cpu()
-make_active(cpu, 0, x=200, y=64, tank_x=0, phase=0)
+call_routine(cpu, "ARM_HORMING_VOLLEY")
+check("ARM resets the launch counter to 0", cpu.mem[HORMING_VOLLEY_COUNT] == 0)
+check("ARM resets the timer to 0 (fires the first shot on the very next check)",
+      cpu.mem[HORMING_VOLLEY_TIMER] == 0)
+
+# does NOT fire all 4 at once - only 1 launches on the first tick
+call_routine(cpu, "UPDATE_HORMING_VOLLEY")
+active_count = sum(1 for i in range(HORMING_SLOT_COUNT) if slot(cpu, i)["act"] == 1)
+check("the first UPDATE_HORMING_VOLLEY tick launches exactly 1 missile, not 4 - 間欠で4発発射",
+      active_count == 1)
+check("HORMING_VOLLEY_COUNT is now 1", cpu.mem[HORMING_VOLLEY_COUNT] == 1)
+check("the timer is reset to HORMING_VOLLEY_INTERVAL after a launch",
+      cpu.mem[HORMING_VOLLEY_TIMER] == HORMING_VOLLEY_INTERVAL)
+
+# ticking again before the interval elapses does NOT fire another
+call_routine(cpu, "UPDATE_HORMING_VOLLEY")
+active_count = sum(1 for i in range(HORMING_SLOT_COUNT) if slot(cpu, i)["act"] == 1)
+check("still only 1 active right after the interval-reset tick (timer hasn't reached 0 yet)",
+      active_count == 1)
+
+# tick through the whole interval - a 2nd missile launches right on
+# schedule. The "ticking again" call above already consumed 1 of the
+# INTERVAL decrements (timer went INTERVAL->INTERVAL-1); it takes
+# INTERVAL more calls from there for the timer to count down through 0
+# AND be read as 0 on a following call (the decrement that reaches 0
+# doesn't itself fire - the NEXT call, seeing 0, does).
+for _ in range(HORMING_VOLLEY_INTERVAL):
+    call_routine(cpu, "UPDATE_HORMING_VOLLEY")
+active_count = sum(1 for i in range(HORMING_SLOT_COUNT) if slot(cpu, i)["act"] == 1)
+check("a 2nd missile launches exactly HORMING_VOLLEY_INTERVAL ticks after the 1st",
+      active_count == 2)
+
+# drive it all the way through - exactly 4 launch total, never more
+cpu2 = fresh_cpu()
+call_routine(cpu2, "ARM_HORMING_VOLLEY")
+for _ in range(HORMING_VOLLEY_INTERVAL * 6):
+    call_routine(cpu2, "UPDATE_HORMING_VOLLEY")
+active_count = sum(1 for i in range(HORMING_SLOT_COUNT) if slot(cpu2, i)["act"] == 1)
+check("exactly 4 launch in total over enough ticks, never more than the pool size",
+      active_count == HORMING_SLOT_COUNT)
+
+
+# ---- state0 (rise): diagonal up-left, exactly HORMING_RISE_DIST total ----
+cpu = fresh_cpu()
+make_slot(cpu, 0, x=200, y=100, facing=0, state=0, rise_remain=HORMING_RISE_DIST)
 cpu.ix = slot_addr(0)
 call_routine(cpu, "UPDATE_ONE_HORMING")
 s = slot(cpu, 0)
-check("steps left by HORMING_SPEED px/frame during phase0", s["x"] == 200 - HORMING_SPEED)
-check("still facing SL during phase0", s["facing"] == 0)
+check("state0 steps left by HORMING_SPEED - 最初は左斜上に32px移動", s["x"] == 200 - HORMING_SPEED)
+check("state0 steps up by HORMING_SPEED (same frame, diagonal)", s["y"] == 100 - HORMING_SPEED)
+check("state0 counts RISE_REMAIN down by HORMING_SPEED", s["rise_remain"] == HORMING_RISE_DIST - HORMING_SPEED)
+check("still state0 (rise) with distance left to travel", s["state"] == 0)
+check("facing stays SL(0) throughout state0 (cosmetic)", s["facing"] == 0)
 
-# ---- phase transition at screen center ----
+# drive it through the whole rise - transitions to state1 (wander) exactly
+# when RISE_REMAIN reaches 0, having moved exactly HORMING_RISE_DIST total
 cpu = fresh_cpu()
-make_active(cpu, 0, x=HORMING_CENTER_X + 1, y=64, tank_x=0, phase=0)
+make_slot(cpu, 0, x=200, y=100, facing=0, state=0, rise_remain=HORMING_RISE_DIST)
+cpu.ix = slot_addr(0)
+steps = HORMING_RISE_DIST // HORMING_SPEED
+for _ in range(steps):
+    call_routine(cpu, "UPDATE_ONE_HORMING")
+s = slot(cpu, 0)
+check("state1 (wander) reached after exactly HORMING_RISE_DIST/HORMING_SPEED steps",
+      s["state"] == 1)
+check("total X displacement over the rise is exactly HORMING_RISE_DIST",
+      s["x"] == 200 - HORMING_RISE_DIST)
+check("total Y displacement over the rise is exactly HORMING_RISE_DIST",
+      s["y"] == 100 - HORMING_RISE_DIST)
+
+
+# ---- state1 (wander): random horizontal within the window, continuous descent ----
+cpu = fresh_cpu()
+make_slot(cpu, 0, x=(HORMING_WANDER_MIN_X + HORMING_WANDER_MAX_X) // 2, y=20, facing=2, state=1)
+cpu.mem[TANK_Y_CUR] = 200  # keep the trigger far away for this check
+cpu.ix = slot_addr(0)
+x_before = slot(cpu, 0)["x"]
+call_routine(cpu, "UPDATE_ONE_HORMING")
+s = slot(cpu, 0)
+check("state1 moves X by exactly HORMING_SPEED (either direction), never stands still",
+      abs(s["x"] - x_before) == HORMING_SPEED)
+check("state1 keeps descending by HORMING_SPEED/frame - Y is 20+speed",
+      s["y"] == 20 + HORMING_SPEED)
+check("state1's own eased facing is DL or DR (never SL/Down/SR) - matches a diagonal step",
+      s["facing"] in (1, 3))
+
+# forced back inside the window when below HORMING_WANDER_MIN_X
+cpu = fresh_cpu()
+make_slot(cpu, 0, x=HORMING_WANDER_MIN_X, y=20, facing=2, state=1, tank_y=200)
+cpu.ix = slot_addr(0)
+call_routine(cpu, "UPDATE_ONE_HORMING")
+check("forced rightward when at/below HORMING_WANDER_MIN_X - stays inside the window",
+      slot(cpu, 0)["x"] == HORMING_WANDER_MIN_X + HORMING_SPEED)
+
+# forced back inside the window when at/above HORMING_WANDER_MAX_X
+cpu = fresh_cpu()
+make_slot(cpu, 0, x=HORMING_WANDER_MAX_X, y=20, facing=2, state=1, tank_y=200)
+cpu.ix = slot_addr(0)
+call_routine(cpu, "UPDATE_ONE_HORMING")
+check("forced leftward when at/above HORMING_WANDER_MAX_X - stays inside the window",
+      slot(cpu, 0)["x"] == HORMING_WANDER_MAX_X - HORMING_SPEED)
+
+# the 45-degree-max-turn rule: facing eases by only 1 step per call, even
+# if the desired facing keeps flipping between DL(1) and DR(3) - "で方向
+# を変える時は45度まで"
+cpu = fresh_cpu()
+make_slot(cpu, 0, x=HORMING_WANDER_MIN_X + 20, y=20, facing=1, state=1, tank_y=200)  # starts at DL
 cpu.ix = slot_addr(0)
 call_routine(cpu, "UPDATE_ONE_HORMING")
 s = slot(cpu, 0)
-check("still phase0 while 1px before center", s["phase"] == 0 and s["x"] == HORMING_CENTER_X + 1 - HORMING_SPEED)
+check("facing never jumps more than 1 step even toward the opposite (DR) desired direction",
+      abs(s["facing"] - 1) <= 1)
+
+# state2 trigger: once missile_Y >= TANK_Y_CUR, switches to homing -
+# "自機のY位置以上で一致したら水平に自機へホーミング"
+cpu = fresh_cpu()
+make_slot(cpu, 0, x=100, y=100 - HORMING_SPEED, facing=2, state=1, tank_y=100)
+cpu.ix = slot_addr(0)
+call_routine(cpu, "UPDATE_ONE_HORMING")
+check("switches to state2 (homing) the instant missile_Y reaches TANK_Y_CUR",
+      slot(cpu, 0)["state"] == 2)
 
 cpu = fresh_cpu()
-make_active(cpu, 0, x=HORMING_CENTER_X, y=64, tank_x=0, phase=0)
+make_slot(cpu, 0, x=100, y=50, facing=2, state=1, tank_y=200)
+cpu.ix = slot_addr(0)
+call_routine(cpu, "UPDATE_ONE_HORMING")
+check("stays in state1 while missile_Y is still well above TANK_Y_CUR",
+      slot(cpu, 0)["state"] == 1)
+
+# off-screen bottom bail-out during the wander's own descent
+cpu = fresh_cpu()
+make_slot(cpu, 0, x=100, y=HORMING_MAXY, facing=2, state=1, tank_y=255)
+cpu.ix = slot_addr(0)
+call_routine(cpu, "UPDATE_ONE_HORMING")
+check("state1 deactivates instead of falling off the bottom of the screen",
+      slot(cpu, 0)["act"] == 0)
+
+
+# ---- state2 (homing): purely horizontal, Y frozen ----
+cpu = fresh_cpu()
+make_slot(cpu, 0, x=100, y=90, facing=1, state=2, tank_x=100 + 50)  # tank to the right
 cpu.ix = slot_addr(0)
 call_routine(cpu, "UPDATE_ONE_HORMING")
 s = slot(cpu, 0)
-check("phase flips to homing(1) once X reaches screen-center - X軸中央辺りまで水平打ち その後ホーミング動作",
-      s["phase"] == 1)
+check("state2 steps toward the tank's X (tank right -> moves right)", s["x"] == 100 + HORMING_SPEED)
+check("state2 never changes Y - 水平に自機へホーミング", s["y"] == 90)
 
-
-# ---- RESOLVE_HORMING_FACING_IX bucket boundaries ----
-# missile at X=160. Tank to the LEFT of missile at various distances
-# ("自機より右方向に離れている時はSL、DL" - missile right of tank).
 cpu = fresh_cpu()
-missile_x = 160
-cases_right_of_tank = [
-    (0, "Down"),
-    (TANK_WIDTH, "Down"),                      # dx=32, boundary -> Down
-    (TANK_WIDTH + 1, "DL"),                    # dx=33 -> diagonal
-    (HORMING_SIDE_DIST - 1, "DL"),             # dx=63 -> still diagonal
-    (HORMING_SIDE_DIST, "SL"),                 # dx=64, boundary -> side
-    (HORMING_SIDE_DIST + 40, "SL"),
-]
-for dx, expected in cases_right_of_tank:
-    tank_x = missile_x - dx
-    cpu.mem[TANK_X] = max(tank_x, 0)
-    cpu.mem[slot_addr(0) + 1] = missile_x
-    cpu.ix = slot_addr(0)
-    call_routine(cpu, "RESOLVE_HORMING_FACING_IX")
-    check(f"missile right of tank by {dx}px -> facing {expected}",
-          cpu.mem[slot_addr(0) + 3] == label_to_code[expected])
-
-# missile to the LEFT of the tank ("左ならSR、DR").
-cases_left_of_tank = [
-    (0, "Down"),
-    (TANK_WIDTH, "Down"),
-    (TANK_WIDTH + 1, "DR"),
-    (HORMING_SIDE_DIST - 1, "DR"),
-    (HORMING_SIDE_DIST, "SR"),
-    (HORMING_SIDE_DIST + 40, "SR"),
-]
-for dx, expected in cases_left_of_tank:
-    tank_x = missile_x + dx
-    cpu.mem[TANK_X] = min(tank_x, 255)
-    cpu.mem[slot_addr(0) + 1] = missile_x
-    cpu.ix = slot_addr(0)
-    call_routine(cpu, "RESOLVE_HORMING_FACING_IX")
-    check(f"missile left of tank by {dx}px -> facing {expected}",
-          cpu.mem[slot_addr(0) + 3] == label_to_code[expected])
-
-
-# ---- movement deltas per facing (via UPDATE_ONE_HORMING, homing phase) ----
-cpu = fresh_cpu()
-make_active(cpu, 0, x=80, y=80, tank_x=80 + 100)  # tank far right -> missile left of tank -> SR
+make_slot(cpu, 0, x=100, y=90, facing=3, state=2, tank_x=100 - 50)  # tank to the left
 cpu.ix = slot_addr(0)
 call_routine(cpu, "UPDATE_ONE_HORMING")
 s = slot(cpu, 0)
-check("SR steps right, Y unchanged", s["x"] == 80 + HORMING_SPEED and s["y"] == 80)
+check("state2 steps toward the tank's X (tank left -> moves left)", s["x"] == 100 - HORMING_SPEED)
+check("state2 never changes Y (tank-left case too)", s["y"] == 90)
 
+# once aligned, holds position and facing rather than oscillating
 cpu = fresh_cpu()
-make_active(cpu, 0, x=80, y=80, tank_x=80 - 70)  # tank far left -> missile right of tank -> SL
+make_slot(cpu, 0, x=100, y=90, facing=0, state=2, tank_x=100)
 cpu.ix = slot_addr(0)
 call_routine(cpu, "UPDATE_ONE_HORMING")
 s = slot(cpu, 0)
-check("SL steps left, Y unchanged", s["x"] == 80 - HORMING_SPEED and s["y"] == 80)
+check("state2 holds X once aligned with the tank, no overshoot/oscillation", s["x"] == 100)
+check("state2 holds facing once aligned", s["facing"] == 0)
 
+# the 45-degree easing also applies at the state1->state2 handoff (DL/DR
+# -> SL/SR is exactly 1 step, so it should complete in a single call)
 cpu = fresh_cpu()
-make_active(cpu, 0, x=80, y=80, tank_x=80)  # directly below -> Down
-cpu.mem[TANK_Y_CUR] = 200
+make_slot(cpu, 0, x=100, y=90, facing=1, state=2, tank_x=100 + 50)  # was DL(1), tank now demands SR(4)
 cpu.ix = slot_addr(0)
 call_routine(cpu, "UPDATE_ONE_HORMING")
-s = slot(cpu, 0)
-check("Down steps down, X unchanged", s["x"] == 80 and s["y"] == 80 + HORMING_SPEED)
+check("facing eases by only 1 step toward SR even though DL->SR would be a 3-step jump",
+      slot(cpu, 0)["facing"] == 2)  # DL(1) -> Down(2), one step closer to SR(4)
 
+# off-screen bail-outs still apply in state2
 cpu = fresh_cpu()
-make_active(cpu, 0, x=80, y=80, tank_x=80 + 45)  # diagonal range, tank right -> DR
+make_slot(cpu, 0, x=HORMING_SPEED - 1, y=90, facing=0, state=2, tank_x=0)
 cpu.ix = slot_addr(0)
 call_routine(cpu, "UPDATE_ONE_HORMING")
-s = slot(cpu, 0)
-check("DR steps down-right", s["x"] == 80 + HORMING_SPEED and s["y"] == 80 + HORMING_SPEED)
+check("state2 deactivates instead of underflowing off the left edge", slot(cpu, 0)["act"] == 0)
 
 cpu = fresh_cpu()
-make_active(cpu, 0, x=80, y=80, tank_x=80 - 45)  # diagonal range, tank left -> DL
+make_slot(cpu, 0, x=HORMING_MAXX, y=90, facing=4, state=2, tank_x=255)
 cpu.ix = slot_addr(0)
 call_routine(cpu, "UPDATE_ONE_HORMING")
-s = slot(cpu, 0)
-check("DL steps down-left", s["x"] == 80 - HORMING_SPEED and s["y"] == 80 + HORMING_SPEED)
+check("state2 deactivates instead of overflowing off the right edge", slot(cpu, 0)["act"] == 0)
 
 
-# ---- off-screen deactivation ----
-# SL at a tiny X (or SR at HORMING_MAXX) can't be reached from a STATIC
-# tank position within the valid 0-255 X range (the >=64px side
-# threshold would need an impossible negative/>255 TANK_X at that exact
-# X) - but IS reachable in real play if the tank moves rapidly away
-# while the missile is mid-approach, so the underflow/overflow guard is
-# real defensive code, not dead code. Tested here by calling the
-# internal step label directly (bypassing RESOLVE_HORMING_FACING_IX's
-# own tank-position-derived resolve) with FACING irrelevant to the step
-# itself, same approach the prior (BG-based) round's test used.
+# ---- tank collision (applies in every state) ----
 cpu = fresh_cpu()
-make_active(cpu, 0, x=HORMING_SPEED - 1, y=80, tank_x=0, phase=1)
-cpu.ix = slot_addr(0)
-call_routine(cpu, "UOH_STEP_SL")
-check("deactivates instead of underflowing off the left edge", cpu.mem[slot_addr(0) + 0] == 0)
-
-cpu = fresh_cpu()
-make_active(cpu, 0, x=HORMING_MAXX, y=80, tank_x=0, phase=1)
-cpu.ix = slot_addr(0)
-call_routine(cpu, "UOH_STEP_SR")
-check("deactivates instead of overflowing off the right edge", cpu.mem[slot_addr(0) + 0] == 0)
-
-cpu = fresh_cpu()
-make_active(cpu, 0, x=100, y=HORMING_MAXY, tank_x=100)  # Down at the bottom
-cpu.mem[TANK_Y_CUR] = 200
-cpu.ix = slot_addr(0)
-call_routine(cpu, "UPDATE_ONE_HORMING")
-check("deactivates instead of falling off the bottom of the screen", cpu.mem[slot_addr(0) + 0] == 0)
-
-
-# ---- tank collision ----
-cpu = fresh_cpu()
-make_active(cpu, 0, x=100, y=80, tank_x=100)
-cpu.mem[TANK_Y_CUR] = 80  # same row as the missile's own next step - guaranteed overlap
+make_slot(cpu, 0, x=100, y=80, facing=0, state=2, tank_x=100)
+cpu.mem[TANK_Y_CUR] = 80  # same row - guaranteed overlap
 cpu.mem[TANK_LIFE] = TANK_LIFE_INIT
 life_before = cpu.mem[TANK_LIFE]
 cpu.ix = slot_addr(0)
 call_routine(cpu, "UPDATE_ONE_HORMING")
-check("a real hit deactivates the missile", cpu.mem[slot_addr(0) + 0] == 0)
+check("a real hit deactivates the missile", slot(cpu, 0)["act"] == 0)
 check("a real hit decrements TANK_LIFE - APPLY_TANK_DAMAGE", cpu.mem[TANK_LIFE] == life_before - 1)
 check("a real hit arms the tank's own hit-flash", cpu.mem[TANK_FLASH_TIMER] == FLASH_DURATION)
 
 # a clear miss (tank far away) does NOT damage the tank
 cpu = fresh_cpu()
-make_active(cpu, 0, x=100, y=80, tank_x=100)
+make_slot(cpu, 0, x=100, y=80, facing=0, state=2, tank_x=100)
 cpu.mem[TANK_Y_CUR] = 200  # far below, no overlap
 cpu.mem[TANK_LIFE] = TANK_LIFE_INIT
 cpu.ix = slot_addr(0)
 call_routine(cpu, "UPDATE_ONE_HORMING")
 check("no collision registers while the tank is far from the missile's own path",
-      cpu.mem[TANK_LIFE] == TANK_LIFE_INIT and cpu.mem[slot_addr(0) + 0] == 1)
+      cpu.mem[TANK_LIFE] == TANK_LIFE_INIT and slot(cpu, 0)["act"] == 1)
 
 
 # ---- UPDATE_HORMING_ALL: staging + hw sprite flush ----
 cpu = fresh_cpu()
-call_routine(cpu, "FIRE_HORMING")
+call_routine(cpu, "FIRE_ONE_HORMING")
 call_routine(cpu, "UPDATE_HORMING_ALL")
-for i in range(HORMING_SLOT_COUNT):
-    s = slot(cpu, i)
-    sat = sat_entry(cpu, HORMING_SPR_BASE_SLOT + i)
-    check(f"slot{i} SAT Y matches the pool after UPDATE_HORMING_ALL", sat["y"] == s["y"])
-    check(f"slot{i} SAT X matches the pool after UPDATE_HORMING_ALL", sat["x"] == s["x"])
-    check(f"slot{i} SAT pattern matches PAT_HORMING_SL (facing 0 at spawn)", sat["pat"] == PAT_HORMING_SL)
-    check(f"slot{i} SAT color is HORMING_COLOR (gray, matches the uploaded sprites)", sat["col"] == HORMING_COLOR)
+s = slot(cpu, 0)
+sat = sat_entry(cpu, HORMING_SPR_BASE_SLOT + 0)
+check("slot0 SAT Y matches the pool after UPDATE_HORMING_ALL", sat["y"] == s["y"])
+check("slot0 SAT X matches the pool after UPDATE_HORMING_ALL", sat["x"] == s["x"])
+check("slot0 SAT pattern matches PAT_HORMING_SL (facing 0 at spawn)", sat["pat"] == PAT_HORMING_SL)
+check("slot0 SAT color is HORMING_COLOR (gray, matches the uploaded sprites)", sat["col"] == HORMING_COLOR)
+for i in range(1, HORMING_SLOT_COUNT):
+    check(f"slot{i} (never fired) is hidden (Y=209) in the SAT",
+          sat_entry(cpu, HORMING_SPR_BASE_SLOT + i)["y"] == 209)
 
 # an inactive slot is hidden (Y=209) in the SAT, not left stale
 cpu2 = fresh_cpu()
-call_routine(cpu2, "FIRE_HORMING")
-cpu2.mem[slot_addr(2) + 0] = 0
+call_routine(cpu2, "FIRE_ONE_HORMING")
+cpu2.mem[slot_addr(0) + 0] = 0
 call_routine(cpu2, "UPDATE_HORMING_ALL")
 check("a deactivated slot is hidden (Y=209) in the SAT",
-      sat_entry(cpu2, HORMING_SPR_BASE_SLOT + 2)["y"] == 209)
+      sat_entry(cpu2, HORMING_SPR_BASE_SLOT + 0)["y"] == 209)
 
 # pattern code follows FACING through RESOLVE_HORMING_PATTERN_IX
 cpu3 = fresh_cpu()
-call_routine(cpu3, "FIRE_HORMING")
+call_routine(cpu3, "FIRE_ONE_HORMING")
 for i, pat in enumerate(PAT_CODE):
     cpu3.mem[slot_addr(0) + 3] = i
     cpu3.ix = slot_addr(0)
@@ -300,37 +362,63 @@ for i, pat in enumerate(PAT_CODE):
     check(f"RESOLVE_HORMING_PATTERN_IX returns the right pattern for facing {i}", cpu3.a == pat)
 
 
-# ---- real end-to-end: fire during a real pose, confirm a volley actually flies ----
+# ---- EASE_HORMING_FACING_IX: standalone 45-degree-max-turn checks ----
+cpu = fresh_cpu()
+cases = [
+    (0, 4, 1),   # SL -> desired SR: eases only to DL(1), not straight to SR
+    (4, 0, 3),   # SR -> desired SL: eases only to DR(3)
+    (2, 2, 2),   # already at desired: no change
+    (1, 3, 2),   # DL -> desired DR: eases to Down(2), one step
+]
+for start, desired, expected in cases:
+    cpu.mem[slot_addr(0) + 3] = start
+    cpu.ix = slot_addr(0)
+    cpu.b = desired
+    call_routine(cpu, "EASE_HORMING_FACING_IX")
+    check(f"EASE_HORMING_FACING_IX({start}->{desired}) yields {expected}, not a direct jump",
+          cpu.mem[slot_addr(0) + 3] == expected)
+
+
+# ---- real end-to-end: fire during a real pose, confirm intermittent volley + full flight arc ----
 cpu = fresh_cpu()
 cpu.sim_dir = 0
 cpu.sim_trig_a = False
 cpu.sim_trig_b = False
 pose_entered_at = None
-saw_4_active = False
-saw_move = False
-first_x = [None] * HORMING_SLOT_COUNT
-for f in range(3200):
+pose_ended_at = None
+launch_frames = []
+saw_state1 = False
+saw_state2 = False
+prev_active = [0] * HORMING_SLOT_COUNT
+for f in range(4000):
     step_frame(cpu)
     if cpu.mem[BOSS_PHASE] == 1 and pose_entered_at is None:
         pose_entered_at = f
-    active_count = sum(1 for i in range(HORMING_SLOT_COUNT) if cpu.mem[slot_addr(i) + 0] == 1)
-    if active_count == HORMING_SLOT_COUNT:
-        saw_4_active = True
+    if pose_entered_at is not None and pose_ended_at is None and cpu.mem[BOSS_PHASE] == 0:
+        pose_ended_at = f
     for i in range(HORMING_SLOT_COUNT):
-        if cpu.mem[slot_addr(i) + 0] == 1:
-            x = cpu.mem[slot_addr(i) + 1]
-            if first_x[i] is None:
-                first_x[i] = x
-            elif x != first_x[i]:
-                saw_move = True
-    if pose_entered_at is not None and f - pose_entered_at > 80:
+        act = cpu.mem[slot_addr(i) + 0]
+        if act == 1 and prev_active[i] == 0:
+            launch_frames.append(f)
+        prev_active[i] = act
+        if act == 1:
+            st = cpu.mem[slot_addr(i) + 4]
+            if st == 1:
+                saw_state1 = True
+            elif st == 2:
+                saw_state2 = True
+    # stop shortly after THIS pose ends (not a fixed frame budget) so a
+    # second patrol/pose cycle can't sneak a 5th launch into the count.
+    if pose_ended_at is not None and f - pose_ended_at > 20:
         break
 
 check("real MAINLOOP: boss reaches the pose", pose_entered_at is not None)
-check("real MAINLOOP: a real volley of 4 missiles actually fires during the pose - 同時に4発",
-      saw_4_active)
-check("real MAINLOOP: fired missiles actually move frame to frame",
-      saw_move)
+check("real MAINLOOP: exactly 4 missiles launch in total across the pose",
+      len(launch_frames) == HORMING_SLOT_COUNT)
+check("real MAINLOOP: the 4 launches are spread out over time, not simultaneous - 間欠で4発発射",
+      len(launch_frames) < 2 or (max(launch_frames) - min(launch_frames)) >= HORMING_VOLLEY_INTERVAL)
+check("real MAINLOOP: a real missile reaches state1 (wander)", saw_state1)
+check("real MAINLOOP: a real missile reaches state2 (homing)", saw_state2)
 
 print()
 print(f"{len(ok)} passed, {len(fail)} failed")

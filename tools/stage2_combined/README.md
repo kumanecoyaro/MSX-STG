@@ -4485,6 +4485,59 @@ with no way to tell where.
   economical accordingly (12 of Flyer's own 32 reused codes still spare,
   12 of the boss's own freed 16 slots still spare).
 
+- **Homing missile round 3: full flight-arc rewrite - 3-state (rise/
+  wander/homing) + intermittent fire, replacing round 2's 4-simultaneous
+  straight-then-homing flight**: "まず発射方法 ボスに被らない位置の右
+  上 今の発射位置の16px上あたり 次に最初は左斜上に32px移動 その後は
+  Xは左端64pxから右72pxの範囲でランダムに水平移動 その後ホーミング
+  弾は4発同時発射ではなく間欠で4発発射 で方向を変える時は45度まで
+  自機のY位置以上で一致したら水平に自機へホーミング".
+  `HORMING_SPAWN_Y` raised 16px (64->48) to clear the boss's own box's
+  own top edge. 3-state per-slot flight (pool's own `+4` field, `STATE`
+  not `PHASE`): **state0 (rise)** - fixed 32px diagonal up-left, tracked
+  by a countdown (`RISE_REMAIN`) so the total stays exact regardless of
+  speed; cosmetic facing forced SL the whole time since none of the 5
+  uploaded sprites face upward. **state1 (wander)** - X takes a random
+  `GAME_RNG`-driven step left/right each frame, forced back inward at
+  either edge of `[HORMING_WANDER_MIN_X(64),HORMING_WANDER_MAX_X(184)]`
+  - **read as an ABSOLUTE screen-relative window (64px from the left
+  edge, 72px from the right edge), not relative to the missile's own
+  position - INFERRED**, since the relative reading would put the right
+  bound past X255 for this boss. Y keeps descending throughout (not
+  stated explicitly - inferred, needed for the trigger below to ever
+  fire); the instant missile_Y reaches/passes `TANK_Y_CUR`, advances to
+  state2. **state2 (homing)** - purely horizontal, Y completely frozen,
+  X steps toward `TANK_X` and holds once aligned. The old X-distance-
+  bucket facing classifier is gone entirely; each state computes its own
+  movement directly now.
+  "で方向を変える時は45度まで": the shown facing is a separate cosmetic
+  value (`EASE_HORMING_FACING_IX`) eased toward each state's own
+  desired facing by at most 1 of 5 discrete 45-degree steps per frame,
+  decoupled from the actual movement math so the state1->state2 facing
+  catch-up can never reintroduce a stray vertical step during state2.
+  "弾は4発同時発射ではなく間欠で4発発射": `ARM_HORMING_VOLLEY` (pose-
+  entry) just resets a counter/timer; `UPDATE_HORMING_VOLLEY` (every
+  frame during the pose) fires one more missile via `FIRE_ONE_HORMING`
+  every `HORMING_VOLLEY_INTERVAL`(24, inferred/tunable) raw frames until
+  all 4 are out.
+  Two bugs caught by this round's own tests before shipping: `UOH_
+  WANDER`'s own window-boundary comparisons originally forced correction
+  1px past either edge instead of at it, letting a missile exactly on
+  the boundary roll one step outside the window before being caught -
+  fixed to trigger deterministically at the boundary itself.
+  Verified: `tests/horming_test.py` rewritten again (74 checks covering
+  every state transition, the intermittent-fire timing exactly, the
+  45-degree easing rule standalone and at the state1->state2 handoff,
+  and a real end-to-end sweep) all pass. Full suite: 303/306 pass, same
+  3 known GAME_TICK=840-boot-effect failures, no new regressions.
+  Rendered real frames across a full pose: a single missile mid-rise
+  clear of the hand art, two missiles mid-wander at staggered heights
+  while a third is already homing near the tank, and by the end of the
+  pose the tank's own life bar dropped from 6 to 2 segments (this sweep
+  never moves the tank, so all 4 hit - a real player dodging would avoid
+  most/all of them) - confirms the complete rise-wander-home-hit arc
+  actually works end to end.
+
 ## Bugs found and fixed while building this
 
 - **Sand flickered between its own new color and Rock's, twice over**

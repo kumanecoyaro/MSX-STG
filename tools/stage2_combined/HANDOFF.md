@@ -833,6 +833,123 @@ the tearing got fixed.
   spare), and only 4 of the boss's own freed 16 slots (10-13; 14-25
   spare).
 
+## Homing missile round 3: full flight-arc rewrite - 3-state (rise/wander/homing) + intermittent fire
+
+- The 4-simultaneous, straight-then-homing flight from round 2 was
+  replaced by a much more detailed spec: "まず発射方法 ボスに被らない
+  位置の右上 今の発射位置の16px上あたり 次に最初は左斜上に32px移動
+  その後はXは左端64pxから右72pxの範囲でランダムに水平移動 その後ホー
+  ミング 弾は4発同時発射ではなく間欠で4発発射 で方向を変える時は45度
+  まで 自機のY位置以上で一致したら水平に自機へホーミング".
+- **Spawn**: `HORMING_SPAWN_Y` raised from 64 to 48 (16px higher) so it
+  clears the boss's own 64x64 box's own top edge (Y56) instead of
+  spawning inside the hand art - "ボスに被らない位置の右上 今の発射位
+  置の16px上あたり". `HORMING_SPAWN_X` unchanged (232).
+- **3-state per-slot flight** (`HORMING_POOL`'s own `+4` field, was
+  `PHASE` 0/1, now `STATE` 0/1/2), replacing the old straight-then-
+  homing 2-phase flight entirely:
+  - **state0 (rise)**: "最初は左斜上に32px移動" - a fixed diagonal, X
+    and Y both decrease `HORMING_SPEED`/frame, tracked via a per-slot
+    countdown (`RISE_REMAIN`, new `+5` field, starts at
+    `HORMING_RISE_DIST`=32) so the total distance is always exactly 32px
+    regardless of `HORMING_SPEED`. Cosmetic facing forced SL throughout
+    - **there is no true "upward" sprite among the 5 uploaded facings**
+      (they only span the lower 180 degrees), so SL (the closest
+      available) is shown while the missile is actually moving up-left -
+      an unavoidable art-vs-motion mismatch, not a bug, flagged here in
+      case a 6th "upward" facing ever gets added.
+  - **state1 (wander)**: "Xは左端64pxから右72pxの範囲でランダムに水平
+    移動" - X takes a random `HORMING_SPEED` step left or right each
+    frame (`GAME_RNG` coin flip, same idiom as `UOZ_PAUSE_ROLL`), forced
+    back inward whenever it's at/past either edge of
+    `[HORMING_WANDER_MIN_X(64),HORMING_WANDER_MAX_X(184)]` instead of
+    rolling. **This window was read as an ABSOLUTE screen-relative range
+    (64px from the screen's own left edge, 72px from its own right edge
+    = 256-72=184), not relative to the missile's own spawn/rise-end X -
+    INFERRED, flag for correction.** The alternative reading (relative
+    to where the rise ends, ~X200 for this boss's own spawn X) would put
+    the right bound past X255, which can't be right, so the absolute
+    reading was chosen instead. Y keeps descending
+    `HORMING_SPEED`/frame throughout this state - **not stated
+    explicitly by the user, but required for the state2 trigger below to
+    ever fire - inferred.** The instant missile_Y reaches/passes
+    `TANK_Y_CUR` ("自機のY位置以上で一致したら"), advances to state2.
+  - **state2 (homing)**: "水平に自機へホーミング" - purely horizontal
+    now: Y is completely frozen, X steps `HORMING_SPEED`/frame toward
+    `TANK_X` (holds position once aligned, rather than oscillating past
+    it).
+  - The old X-distance-bucket facing classifier (`RESOLVE_HORMING_
+    FACING_IX`, `TANK_WIDTH`/`HORMING_SIDE_DIST`) is gone entirely -
+    each state now computes its own movement directly (hardcoded per
+    state, not derived from a shared classifier), since the new spec's
+    3 states each have their own distinct movement rule with nothing
+    left in common with the old single continuous tracking model.
+- **"で方向を変える時は45度まで"**: the sprite's own shown facing is
+  now a SEPARATE cosmetic value (`EASE_HORMING_FACING_IX`, a small leaf
+  routine) that eases toward each state's own "desired" facing by at
+  most 1 of the 5 discrete 45-degree steps per frame - never snaps
+  directly across more than one step, even when the desired facing is
+  further away (e.g. DL straight to SR would need 3 frames now, not 1).
+  Deliberately DECOUPLED from the actual movement math (which stays
+  hardcoded per state) specifically so the state1->state2 handoff's own
+  facing catch-up (still easing toward SL/SR for a frame or two after
+  the transition) can never reintroduce a stray vertical step during
+  state2, which is supposed to be Y-frozen.
+- **"弾は4発同時発射ではなく間欠で4発発射"**: no longer one `FIRE_
+  HORMING` call launching all 4 at pose-entry. `ARM_HORMING_VOLLEY`
+  (called at pose-entry, replacing the old call there) just resets a
+  launch counter/timer; `UPDATE_HORMING_VOLLEY` (called every frame from
+  `UBA_POSE`, alongside `DRAW_SASAPI_HAND`) ticks the timer down and
+  fires one more missile via `FIRE_ONE_HORMING` (spawns into the first
+  inactive pool slot) every `HORMING_VOLLEY_INTERVAL`(24) raw frames,
+  until all 4 are out. **The interval's own exact magnitude (24 raw
+  frames) was not specified by the user - inferred/tunable** - chosen so
+  all 4 launches finish within the first third of the pose's own 256
+  raw frames (`BOSS_POSE_TICKS`(32)*8), leaving the rest of the pose for
+  them to actually fly.
+- RAM: `HORMING_SLOT_SIZE` grew from 5 to 6 bytes/slot (added
+  `STATE`/`RISE_REMAIN`, replacing `PHASE`), so `HORMING_POOL` grew to
+  24 bytes and everything after it shifted (`HORMING_SPRITE_ATTRS` now
+  at `F2DAh`, plus two new bytes `HORMING_VOLLEY_COUNT`/`HORMING_VOLLEY_
+  TIMER` at `F2EAh`/`F2EBh`) - `UPDATE_HORMING_ALL`'s own field reads
+  (X/Y/FACING at `+1`/`+2`/`+3`) didn't need to change since those 3
+  fields kept their same offsets; only the "skip a whole slot" `INC IX`
+  chains needed updating from 5 to 6 repeats.
+- Verified: `tests/horming_test.py` rewritten again for the 3-state/
+  intermittent-fire API (74 checks - `FIRE_ONE_HORMING`'s own single-
+  slot spawn and pool-full drop, `ARM_HORMING_VOLLEY`/`UPDATE_HORMING_
+  VOLLEY`'s own intermittent timing (confirmed only 1 launches per tick,
+  never all 4 at once, exactly `HORMING_VOLLEY_INTERVAL` frames apart,
+  exactly 4 total), state0's own exact 32px diagonal and state1
+  transition, state1's own window-forcing at both edges and the Y>=tank_Y
+  trigger, the 45-degree-max-turn rule both standalone
+  (`EASE_HORMING_FACING_IX`) and at the state1->state2 handoff
+  specifically, state2's own Y-frozen horizontal-only homing and hold-
+  on-alignment, tank collision, `UPDATE_HORMING_ALL`'s own SAT staging,
+  and a real end-to-end `MAINLOOP` sweep confirming exactly 4 missiles
+  launch across one real pose, spread apart in time, reaching both
+  state1 and state2) all pass. Full suite: 303/306 pass, same 3 known
+  GAME_TICK=840-boot-effect failures, no new regressions. Rendered real
+  frames across the pose: at pose-entry+20 frames a single missile is
+  visible above-left of the boss mid-rise, clear of the hand art; at
+  +100 frames two missiles are visible mid-wander at different heights
+  (staggered by the intermittent launch timing) while a third is already
+  down near the tank in state2; by +250 frames the tank's own life bar
+  has dropped from 6 to 2 segments (the stationary test tank took all 4
+  hits, since this sweep never moves it - a real player dodging would
+  avoid most/all of them) - end-to-end confirms the full rise-wander-
+  home-hit arc actually works, not just the individual state
+  transitions in isolation.
+- Two bug fixes caught by this round's own tests before shipping (both
+  in `UOH_WANDER`'s window-forcing comparison): the boundary checks
+  originally used `CP HORMING_WANDER_MIN_X`/`CP HORMING_WANDER_MAX_X+1`,
+  which only forced correction 1px PAST either edge instead of AT it -
+  a missile sitting exactly on `HORMING_WANDER_MAX_X` could still roll
+  right via `GAME_RNG` and briefly step outside the window before being
+  caught the following frame. Fixed to `CP HORMING_WANDER_MIN_X+1`/`CP
+  HORMING_WANDER_MAX_X` so the force triggers deterministically at the
+  boundary itself, not past it.
+
 ## Open items / things to watch
 
 - No known open bugs as of this handoff — the boss's own SPRPAT bug
