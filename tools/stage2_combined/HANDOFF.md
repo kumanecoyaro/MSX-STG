@@ -1985,6 +1985,45 @@ Thunder activity) confirming it survives completely untouched.
   counts - same 3 pre-existing known failures expected, no new
   regressions.
 
+## Round 18: Thunder and SBeam now damage the tank (tip-only collision)
+
+- User feedback (verbatim): "サンダーやサンダービームも自機が当たると
+  ダメージ食らうように 判定は先端部だけでいいだろう". Neither attack
+  had ever damaged the tank before this round (Homing already did, via
+  `UOH_COLLIDE`, the precedent this round copies).
+- **"先端部だけ" (tip only, not the whole line/bolt)**: for Thunder,
+  the tip is `ROW-1` while growing (`ROW` is always one past the last
+  row actually drawn - see `UOT_GROW_STEP`'s own comment) or `DEEP_ROW`
+  while shrinking (fixed - `UOT_SHRINK` erases from the TOP down, so the
+  bolt's own deepest cell is the last thing to disappear, staying "live"
+  for nearly the entire shrink). For SBeam, the tip is exactly `SBEAM_
+  LINE_TX`/`_TY`, the same single grid point `STAGE_SBEAM`'s own line
+  algorithm already tracks every frame - reused directly rather than
+  recomputed, so `CHECK_SBEAM_VS_TANK` must run after `UPDATE_SBEAM`
+  within the same frame (it does, see `MAINLOOP`).
+- **AABB shape**: same tank-side box as Homing's own `UOH_COLLIDE`
+  (`TANK_X`/`TANK_Y_CUR`, real 32x32), 16px wide for Thunder's own tip
+  (the bolt is drawn 2 name-table columns wide) and 8px for SBeam's
+  (its own lit art is a single 8x8 cell).
+- **Repeat-hit gating**: unlike Homing (a projectile that consumes
+  itself on hit) or BigZum's punch (its own per-instance cooldown byte),
+  Thunder/SBeam are environmental hazards with no natural "consumed on
+  hit" moment and no spare per-slot byte to add a cooldown to cheaply -
+  reused `TANK_FLASH_TIMER` itself as a shared "just got hit, briefly
+  immune" gate (checked before applying a new hit, same `FLASH_DURATION`
+  window already used for the visual flash) rather than adding new
+  state - standing in a bolt/beam now costs 1 life on contact, then
+  nothing more until the flash window (and the flash animation itself)
+  ends.
+- Verified: `tests/thunder_test.py` (+11 checks - growing-bolt tip hit,
+  the trailing-body/tip distinction, shrinking-bolt tip hit, the flash-
+  gated no-repeat-hit, far-away/inactive no-hits, and a real `MAINLOOP`
+  check that parking the tank on a live bolt's own tip actually costs
+  life) and `tests/sbeam_test.py` (+6 checks - same shape for the single-
+  point tip, plus its own real `MAINLOOP` check). Full regression suite:
+  see this round's own commit for the exact pass/fail counts - same 3
+  pre-existing known failures expected, no new regressions.
+
 ## Open items / things to watch
 
 - **RAM addresses that need to persist across frames must stay clear of

@@ -36,6 +36,10 @@ GAME_TICK = sym["GAME_TICK"]
 BOSS_Y = sym["BOSS_Y"]
 BOSS_SPAWN_Y = sym["BOSS_SPAWN_Y"]
 BOSS_DIP_DIST = sym["BOSS_DIP_DIST"]
+TANK_X = sym["TANK_X"]
+TANK_Y_CUR = sym["TANK_Y_CUR"]
+TANK_LIFE = sym["TANK_LIFE"]
+TANK_FLASH_TIMER = sym["TANK_FLASH_TIMER"]
 
 TL, TR, BL, BR = (THUNDER_CODE_BASE + i for i in range(4))
 
@@ -519,6 +523,98 @@ check("real MAINLOOP: at least 2 Thunder columns are genuinely active at the sam
       max_concurrent >= 2)
 check("real MAINLOOP: a real ThunderS side cell actually appears once a bolt reaches the terrain",
       saw_side_cells)
+
+
+# ---- "サンダーやサンダービームも自機が当たるとダメージ食らうように
+# 判定は先端部だけでいいだろう" - CHECK_THUNDER_VS_TANK only hits when
+# the tank overlaps the bolt's own CURRENT leading edge (tip), not its
+# whole trailing length ----
+def make_thunder(cpu, act, col, row, deep):
+    cpu.mem[THUNDER_POOL + 0] = act
+    cpu.mem[THUNDER_POOL + 1] = col
+    cpu.mem[THUNDER_POOL + 2] = row
+    cpu.mem[THUNDER_POOL + 3] = deep
+
+
+# growing: tip = ROW-1
+cpu = fresh_cpu()
+make_thunder(cpu, 1, 10, 6, 0)   # tip row = 5
+cpu.mem[TANK_X] = 10 * 8
+cpu.mem[TANK_Y_CUR] = 5 * 8
+life0 = cpu.mem[TANK_LIFE]
+call_routine(cpu, "CHECK_THUNDER_VS_TANK")
+check("growing bolt: tank overlapping the tip (ROW-1) takes damage", cpu.mem[TANK_LIFE] == life0 - 1)
+check("a hit sets TANK_FLASH_TIMER (post-hit immunity window)", cpu.mem[TANK_FLASH_TIMER] > 0)
+
+# same frame again - flash timer gates a 2nd hit
+life1 = cpu.mem[TANK_LIFE]
+call_routine(cpu, "CHECK_THUNDER_VS_TANK")
+check("no repeat damage while TANK_FLASH_TIMER is still active", cpu.mem[TANK_LIFE] == life1)
+
+# tank under the TRAILING body (above the tip), not the tip itself - no hit
+cpu = fresh_cpu()
+make_thunder(cpu, 1, 10, 6, 0)   # tip row = 5
+cpu.mem[TANK_X] = 10 * 8
+cpu.mem[TANK_Y_CUR] = 1 * 8      # THUNDER_TOP_ROW, well above the tip
+life2 = cpu.mem[TANK_LIFE]
+call_routine(cpu, "CHECK_THUNDER_VS_TANK")
+check("growing bolt: tank under the trailing body (not the tip) takes no damage - 判定は先端部だけ",
+      cpu.mem[TANK_LIFE] == life2)
+
+# tank far away horizontally - no hit
+cpu = fresh_cpu()
+make_thunder(cpu, 1, 10, 6, 0)
+cpu.mem[TANK_X] = 200
+cpu.mem[TANK_Y_CUR] = 5 * 8
+life3 = cpu.mem[TANK_LIFE]
+call_routine(cpu, "CHECK_THUNDER_VS_TANK")
+check("far away horizontally - no damage", cpu.mem[TANK_LIFE] == life3)
+
+# shrinking: tip = DEEP_ROW (fixed - UOT_SHRINK erases from the top down,
+# so the deepest cell stays drawn until the very end)
+cpu = fresh_cpu()
+make_thunder(cpu, 2, 10, 3, 12)
+cpu.mem[TANK_X] = 10 * 8
+cpu.mem[TANK_Y_CUR] = 12 * 8
+life4 = cpu.mem[TANK_LIFE]
+call_routine(cpu, "CHECK_THUNDER_VS_TANK")
+check("shrinking bolt: tank overlapping DEEP_ROW takes damage", cpu.mem[TANK_LIFE] == life4 - 1)
+
+# inactive slot never hits
+cpu = fresh_cpu()
+make_thunder(cpu, 0, 10, 6, 0)
+cpu.mem[TANK_X] = 10 * 8
+cpu.mem[TANK_Y_CUR] = 5 * 8
+life5 = cpu.mem[TANK_LIFE]
+call_routine(cpu, "CHECK_THUNDER_VS_TANK")
+check("inactive Thunder slot never damages the tank", cpu.mem[TANK_LIFE] == life5)
+
+# real MAINLOOP: the tank can actually take Thunder damage in real play
+cpu = fresh_cpu()
+cpu.sim_dir = 0
+cpu.sim_trig_a = False
+cpu.sim_trig_b = False
+life_before = cpu.mem[TANK_LIFE]
+saw_thunder_damage = False
+for f in range(40000):
+    # park the tank directly on top of any active Thunder bolt's own tip
+    for i in range(THUNDER_SLOT_COUNT):
+        base = THUNDER_POOL + i * THUNDER_SLOT_SIZE
+        act = cpu.mem[base + 0]
+        if act == 0:
+            continue
+        col = cpu.mem[base + 1]
+        deep = cpu.mem[base + 3]
+        row = cpu.mem[base + 2] - 1 if act == 1 else deep
+        cpu.mem[TANK_X] = col * 8
+        cpu.mem[TANK_Y_CUR] = row * 8
+        break
+    step_frame(cpu)
+    if cpu.mem[TANK_LIFE] < life_before:
+        saw_thunder_damage = True
+        break
+check("real MAINLOOP: parking the tank on a Thunder bolt's own tip actually costs life",
+      saw_thunder_damage)
 
 print()
 print(f"{len(ok)} passed, {len(fail)} failed")

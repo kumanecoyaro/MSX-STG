@@ -40,6 +40,10 @@ GAME_TICK = sym["GAME_TICK"]
 HORMING_VOLLEY_COUNT = sym["HORMING_VOLLEY_COUNT"]
 HORMING_POOL = sym["HORMING_POOL"]
 HORMING_SLOT_COUNT = sym["HORMING_SLOT_COUNT"]
+TANK_X = sym["TANK_X"]
+TANK_Y_CUR = sym["TANK_Y_CUR"]
+TANK_LIFE = sym["TANK_LIFE"]
+TANK_FLASH_TIMER = sym["TANK_FLASH_TIMER"]
 
 
 def set_terrain_flat(cpu, tier):
@@ -540,6 +544,63 @@ check("real MAINLOOP: BOSS_POSE_COUNT cycles 0,1,2,0,1,2,... at each pose entry 
       "permanent (this was the actual bug reported: サンダーとサンダービームがリピー"
       "トしてる)",
       pose_counts_at_entry == [0, 1, 2, 0, 1, 2, 0][:len(pose_counts_at_entry)])
+
+
+# ---- "サンダーやサンダービームも自機が当たるとダメージ食らうように
+# 判定は先端部だけでいいだろう" - CHECK_SBEAM_VS_TANK only hits when the
+# tank overlaps SBeam's own current single-point tip ----
+cpu = fresh_cpu()
+cpu.mem[SBEAM_ACT] = 2
+cpu.mem[sym["SBEAM_LINE_TX"]] = 15
+cpu.mem[sym["SBEAM_LINE_TY"]] = 18
+cpu.mem[TANK_X] = 15 * 8
+cpu.mem[TANK_Y_CUR] = 18 * 8
+life0 = cpu.mem[TANK_LIFE]
+call_routine(cpu, "CHECK_SBEAM_VS_TANK")
+check("tank overlapping the tip takes damage", cpu.mem[TANK_LIFE] == life0 - 1)
+check("a hit sets TANK_FLASH_TIMER (post-hit immunity window)", cpu.mem[TANK_FLASH_TIMER] > 0)
+
+life1 = cpu.mem[TANK_LIFE]
+call_routine(cpu, "CHECK_SBEAM_VS_TANK")
+check("no repeat damage while TANK_FLASH_TIMER is still active", cpu.mem[TANK_LIFE] == life1)
+
+cpu = fresh_cpu()
+cpu.mem[SBEAM_ACT] = 0
+cpu.mem[sym["SBEAM_LINE_TX"]] = 15
+cpu.mem[sym["SBEAM_LINE_TY"]] = 18
+cpu.mem[TANK_X] = 15 * 8
+cpu.mem[TANK_Y_CUR] = 18 * 8
+life2 = cpu.mem[TANK_LIFE]
+call_routine(cpu, "CHECK_SBEAM_VS_TANK")
+check("SBEAM_ACT=0 (inactive) never damages the tank", cpu.mem[TANK_LIFE] == life2)
+
+cpu = fresh_cpu()
+cpu.mem[SBEAM_ACT] = 3
+cpu.mem[sym["SBEAM_LINE_TX"]] = 15
+cpu.mem[sym["SBEAM_LINE_TY"]] = 18
+cpu.mem[TANK_X] = 200
+cpu.mem[TANK_Y_CUR] = 18 * 8
+life3 = cpu.mem[TANK_LIFE]
+call_routine(cpu, "CHECK_SBEAM_VS_TANK")
+check("far away horizontally - no damage", cpu.mem[TANK_LIFE] == life3)
+
+# real MAINLOOP: the tank can actually take SBeam damage in real play
+cpu = fresh_cpu()
+cpu.sim_dir = 0
+cpu.sim_trig_a = False
+cpu.sim_trig_b = False
+life_before = cpu.mem[TANK_LIFE]
+saw_sbeam_damage = False
+for f in range(60000):
+    if cpu.mem[SBEAM_ACT] != 0:
+        cpu.mem[TANK_X] = cpu.mem[sym["SBEAM_LINE_TX"]] * 8
+        cpu.mem[TANK_Y_CUR] = cpu.mem[sym["SBEAM_LINE_TY"]] * 8
+    step_frame(cpu)
+    if cpu.mem[TANK_LIFE] < life_before:
+        saw_sbeam_damage = True
+        break
+check("real MAINLOOP: parking the tank on SBeam's own tip actually costs life",
+      saw_sbeam_damage)
 
 print()
 print(f"{len(ok)} passed, {len(fail)} failed")

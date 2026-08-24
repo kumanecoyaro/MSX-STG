@@ -2677,7 +2677,9 @@ SKIP_OTHER_ENEMIES:
     CALL CHECK_BULLET_VS_HORMING
     CALL UPDATE_HORMING_ALL
     CALL UPDATE_THUNDER
+    CALL CHECK_THUNDER_VS_TANK
     CALL UPDATE_SBEAM
+    CALL CHECK_SBEAM_VS_TANK
     CALL CLOUD_UPDATE_ALL
 
     CALL SOUND_UPDATE
@@ -8206,6 +8208,63 @@ UT_LOOP:
     DJNZ UT_LOOP
     RET
 
+; "サンダーやサンダービームも自機が当たるとダメージ食らうように 判定
+; は先端部だけでいいだろう" - only the bolt's own current LEADING edge
+; is a hazard, not its whole trailing length: while growing (ACT=1) that's
+; ROW-1 (the deepest row actually drawn so far - ROW itself is always one
+; PAST the last draw, see UOT_GROW_STEP's own comment); while shrinking
+; (ACT=2) it's DEEP_ROW, which stays fixed and still fully drawn for
+; nearly the whole shrink (UOT_SHRINK erases from the TOP down, so the
+; bolt's own deepest cell is the LAST thing to go). Same AABB shape as
+; UOH_COLLIDE (tank's own real 32x32 box), 16px wide for the tip (the
+; bolt is drawn 2 name-table columns wide - see DRAW_ONE_THUNDER_ROW).
+; TANK_FLASH_TIMER doubles as a brief post-hit immunity window here (not
+; just cosmetic) - without it, standing in a bolt/beam for consecutive
+; frames would drain TANK_LIFE by 1 EVERY frame, unlike every other
+; damage source in this file (BigZum's own punch has a real per-instance
+; cooldown; Homing simply consumes itself on hit) - reusing the flash
+; window is the simplest gate that doesn't need new per-slot state.
+CHECK_THUNDER_VS_TANK:
+    LD IX,THUNDER_POOL
+    LD B,THUNDER_SLOT_COUNT
+CTVT_LOOP:
+    PUSH BC
+    CALL CHECK_ONE_THUNDER_VS_TANK
+    POP BC
+    INC IX : INC IX : INC IX : INC IX
+    DJNZ CTVT_LOOP
+    RET
+
+CHECK_ONE_THUNDER_VS_TANK:
+    LD A,(IX+0)
+    OR A
+    RET Z
+    LD A,(TANK_FLASH_TIMER)
+    OR A
+    RET NZ
+    LD A,(IX+0)
+    CP 1
+    JR Z,CTVT_GROWING
+    LD A,(IX+3) : LD C,A          ; C = DEEP_ROW (shrinking - tip stays put)
+    JR CTVT_HAVE_ROW
+CTVT_GROWING:
+    LD A,(IX+2) : DEC A : LD C,A  ; C = ROW-1 (deepest row drawn so far)
+CTVT_HAVE_ROW:
+    LD A,C : ADD A,A : ADD A,A : ADD A,A : LD C,A   ; C = tip pixel Y
+    LD A,(IX+1) : ADD A,A : ADD A,A : ADD A,A : LD B,A  ; B = tip pixel X
+    LD A,(TANK_X) : LD D,A
+    LD A,(TANK_Y_CUR) : LD E,A
+
+    LD A,B : ADD A,15 : CP D : RET C
+    LD A,D : ADD A,31 : CP B : RET C
+    LD A,C : ADD A,7 : CP E : RET C
+    LD A,E : ADD A,31 : CP C : RET C
+
+    LD A,FLASH_DURATION : LD (TANK_FLASH_TIMER),A
+    CALL APPLY_TANK_DAMAGE
+    CALL SOUND_ZUM_DEFLECT
+    RET
+
 ; checks whether the leftward leg's own 32px-moved trigger should fire
 ; Thunder this frame - called from UBA_STEP_LEFT, after BOSS_X has
 ; already been updated for this frame. Repeats for the WHOLE leg
@@ -8932,6 +8991,37 @@ US_STEP_DROP:
 US_STAGE:
     CALL STAGE_SBEAM
     CALL FLUSH_SBEAM_SPRITES
+    RET
+
+; "サンダーやサンダービームも自機が当たるとダメージ食らうように 判定
+; は先端部だけでいいだろう" - SBeam's own "tip" is already tracked as a
+; single point (SBEAM_LINE_TX/TY, in 8px-grid units) by STAGE_SBEAM's
+; own line algorithm every frame this is active - reused directly rather
+; than recomputed, so this MUST run after UPDATE_SBEAM's own CALL within
+; the same frame (see MAINLOOP). Same AABB shape as CHECK_ONE_THUNDER_
+; VS_TANK/UOH_COLLIDE (tank's own real 32x32 box), 8px wide/tall for the
+; tip (SBeam's own lit art is a single 8x8 cell - see sbeam_gen.py).
+; TANK_FLASH_TIMER doubles as the same brief post-hit immunity window.
+CHECK_SBEAM_VS_TANK:
+    LD A,(SBEAM_ACT)
+    OR A
+    RET Z
+    LD A,(TANK_FLASH_TIMER)
+    OR A
+    RET NZ
+    LD A,(SBEAM_LINE_TY) : ADD A,A : ADD A,A : ADD A,A : LD C,A   ; C = tip pixel Y
+    LD A,(SBEAM_LINE_TX) : ADD A,A : ADD A,A : ADD A,A : LD B,A   ; B = tip pixel X
+    LD A,(TANK_X) : LD D,A
+    LD A,(TANK_Y_CUR) : LD E,A
+
+    LD A,B : ADD A,7 : CP D : RET C
+    LD A,D : ADD A,31 : CP B : RET C
+    LD A,C : ADD A,7 : CP E : RET C
+    LD A,E : ADD A,31 : CP C : RET C
+
+    LD A,FLASH_DURATION : LD (TANK_FLASH_TIMER),A
+    CALL APPLY_TANK_DAMAGE
+    CALL SOUND_ZUM_DEFLECT
     RET
 
 ; drop phase (SBEAM_ACT=1): grows SBEAM_ROWS by one 8px-tall segment per
