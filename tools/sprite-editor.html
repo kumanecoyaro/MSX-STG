@@ -32,6 +32,7 @@
     color: var(--ink);
     font-family: var(--font-ui);
     overscroll-behavior: none;
+    overscroll-behavior-x: none;
     /* pan-y (not none) - a horizontal swipe is what the browser reads as
        "swipe back", but the sidebar still needs to scroll vertically. This
        only affects panning/navigation gestures, not taps, so buttons near
@@ -1401,6 +1402,26 @@
   if (typeof ResizeObserver !== "undefined") {
     new ResizeObserver(fitGrid).observe(gridWrapEl);
   }
+
+  // ---------- edge-swipe-back guard ----------
+  // CSS (touch-action/overscroll-behavior) is not enough on its own - some
+  // mobile browsers still treat a touch that starts within a few px of the
+  // screen edge as "go back" before the DOM's touch-action is consulted.
+  // Explicitly preventDefault() on a touchstart that begins there (and isn't
+  // on a button/input, so taps on edge-hugging sidebar buttons still work)
+  // stops it from being recognized as a navigation gesture in the first
+  // place. iOS Safari's edge-swipe is a system-level gesture outside the
+  // page's control, so this is best-effort there, not a guarantee.
+  var EDGE_GUARD_PX = 24;
+  document.addEventListener("touchstart", function (ev) {
+    if (ev.touches.length !== 1) return;
+    var t = ev.target;
+    if (t && t.closest && t.closest("button, .btn-label, input, textarea, select, a")) return;
+    var x = ev.touches[0].clientX;
+    if (x <= EDGE_GUARD_PX || x >= window.innerWidth - EDGE_GUARD_PX) {
+      ev.preventDefault();
+    }
+  }, { passive: false, capture: true });
 
   // ---------- boot ----------
   buildGridDOM();
