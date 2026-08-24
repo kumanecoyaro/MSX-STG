@@ -32,6 +32,11 @@
     color: var(--ink);
     font-family: var(--font-ui);
     overscroll-behavior: none;
+    /* pan-y (not none) - a horizontal swipe is what the browser reads as
+       "swipe back", but the sidebar still needs to scroll vertically. This
+       only affects panning/navigation gestures, not taps, so buttons near
+       the screen edge are unaffected. */
+    touch-action: pan-y;
   }
 
   body {
@@ -219,6 +224,7 @@
     min-height: 0;
     overflow-y: auto;
     -webkit-overflow-scrolling: touch;
+    touch-action: pan-y;
   }
   .side-section {
     padding: 10px 12px;
