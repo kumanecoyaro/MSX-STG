@@ -2122,6 +2122,71 @@ Thunder activity) confirming it survives completely untouched.
   for the exact pass/fail counts - expect 0 failures, matching Round19's
   now-genuinely-clean baseline.
 
+## Round 21: Thunder now actually reaches the screen's left edge
+
+- User feedback (verbatim): "サンダー攻撃で自機が画面左端にいると当たら
+  ない 明らかに直撃してる".
+- **Root cause, confirmed empirically (not guessed)**: on the rightward
+  leg (after the left-edge reversal), `CHECK_THUNDER_TRIGGER_RIGHT`
+  places each bolt at column `(BOSS_X-16)/8`, trailing behind the boss's
+  own left edge (Round9's own anti-self-overlap fix). Its FIRST trigger
+  of the leg waited for the same `THUNDER_TRIGGER_DX`(32) cadence as
+  every later trigger, but the leg always starts with `BOSS_X=0` (the
+  reversal point) - so the first bolt could never fire before
+  `BOSS_X>=32`, putting its own leftmost reach at column2/pixel16. A
+  real MAINLOOP sweep through a full patrol (`min col ever seen`)
+  confirmed column2 really was the minimum ever allocated under the old
+  code - it can never go lower, in any real play sequence, not just the
+  synthetic unit tests. Meanwhile the tank's own Round19 hitbox
+  (`TANK_COLLISION_WIDTH`=16, `_X_OFFSET`=0) at `TANK_X=0` (the screen's
+  actual leftmost clamp) covers pixels[0,15] only - one pixel short of
+  ever touching a bolt at pixel16. Adjacent, not overlapping: a real,
+  reproducible dead zone exactly at the screen's left edge, matching the
+  report precisely ("画面左端にいると" - specifically there, nowhere
+  else, since everywhere else the player has room to shift right into
+  the overlap).
+- Ruled out first: `CHECK_ONE_THUNDER_VS_TANK`'s own AABB arithmetic
+  (swept tank_x in [0,1,2,8,15,16] x bolt_col in [0,1,2,3] directly
+  against the built ROM - every case matched the expected overlap
+  formula exactly, including tank_x=0) and 8-bit underflow in the
+  trigger's own column math (structurally impossible - the leg can't
+  even reach its first trigger before `BOSS_X>=THUNDER_TRIGGER_DX`,
+  well clear of underflow). Also considered whether the ThunderS side-
+  flare cells (drawn diagonally beside the bolt's own tip, up to
+  COL-2..COL+3) were the mismatch instead - rejected: the user's own
+  prior explicit instruction ("判定は先端部だけでいいだろう", Round18)
+  deliberately excludes them from collision, so a miss there is by
+  design, not a bug to fix.
+- **Fix**: new `THUNDER_EDGE_TRIGGER_DX`(16) - the true minimum distance
+  needed to keep the bolt (`BOSS_X-16`) clear of the boss's own
+  `[BOSS_X,BOSS_X+64)` body, independent of the 32px pacing cadence.
+  `CHECK_THUNDER_TRIGGER_RIGHT` now uses this narrower threshold ONLY
+  for the leg's very first trigger (detected via `THUNDER_LEG_START_X
+  ==0`, a value that only ever occurs right after the left-edge
+  reversal - never again mid-leg, since it's re-armed to a nonzero
+  `BOSS_X` the instant that first bolt fires). Every subsequent trigger
+  in the leg still uses the full `THUNDER_TRIGGER_DX`(32) cadence,
+  unchanged - "ボスが横に32px移動毎に発射" (Round9) still holds for the
+  whole leg except this one earlier first shot. At `BOSS_X=16` the first
+  bolt now lands at column0 (pixel0-15) - the ONE column that can
+  actually overlap a tank sitting at `TANK_X=0`.
+- The leftward leg was checked too and needs no equivalent fix: its own
+  bolts trail behind the boss's right edge (`BOSS_X+64`), so as `BOSS_X`
+  decreases toward the left-edge reversal the column only ever gets
+  LARGER, never smaller - the sweep's own leftward-leg minimum (column8/
+  pixel64) is nowhere near the edge and was never the reported problem.
+- Verified: `tests/thunder_test.py` gained a direct
+  `CHECK_THUNDER_TRIGGER_RIGHT` unit test at the new 16px threshold
+  (fires exactly at 16, not 1px short; lands at column0; still clear of
+  the boss's own body; the 2nd trigger in the leg still needs the full
+  32px, not another 16), a direct `CHECK_THUNDER_VS_TANK` integration
+  check (a column0 bolt actually damages a tank at `TANK_X=0` - the
+  exact reported scenario), and a real MAINLOOP sweep asserting a
+  genuine column0 bolt is reached during an actual patrol (not just
+  constructible by hand). 89/89 passed. Full regression
+  (`tests/run_all.py` + every individual file): **592 passed, 0
+  failed** - no regressions from Round20's own clean baseline.
+
 ## Open items / things to watch
 
 - **RAM addresses that need to persist across frames must stay clear of

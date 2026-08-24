@@ -1771,6 +1771,19 @@ THUNDER_TOP_ROW EQU NIGHT_START_ROW
 ; "ボスが横に32px移動毎に発射" - re-checked continuously through the
 ; whole leg now (round9), not just once near the edge.
 THUNDER_TRIGGER_DX EQU 32
+; "サンダー攻撃で自機が画面左端にいると当たらない 明らかに直撃してる"
+; fix - see CHECK_THUNDER_TRIGGER_RIGHT's own comment: the rightward
+; leg's FIRST trigger only needs the boss to have moved 16px (just
+; enough to keep the bolt, placed at BOSS_X-16, clear of the boss's own
+; [BOSS_X,BOSS_X+64) body) rather than the full THUNDER_TRIGGER_DX(32)
+; every other trigger in the leg waits for - waiting for 32 pushed that
+; first bolt's own leftmost reach to column2/pixel16, which can never
+; overlap a tank pinned at the screen's absolute left edge (TANK_X=0,
+; TANK_COLLISION_WIDTH-wide hitbox [0,15]) no matter how the player
+; positions themselves. Confirmed via a real MAINLOOP sweep through a
+; full patrol that column2 truly was the minimum column ever allocated
+; under the old single-threshold code.
+THUNDER_EDGE_TRIGGER_DX EQU 16
 ETANK_SPR_BASE_SLOT EQU 24     ; hw sprite slots24-25 (BL/BR only x1 instance), right after Flyer's own 20-23
 ; "カラーはダークレッド" - NOT sprites/Etank.json's own fg, overridden
 ; directly here (same "override the JSON's own fg" precedent as
@@ -8366,8 +8379,25 @@ CHECK_THUNDER_TRIGGER_RIGHT:
     LD A,(BOSS_X) : LD B,A
     LD A,(THUNDER_LEG_START_X) : LD C,A
     LD A,B : SUB C                  ; distance moved = current - start
+    LD D,A
+    ; leg's own FIRST trigger (THUNDER_LEG_START_X still 0, the left-
+    ; edge reversal value - never 0 again once this fires, since it's
+    ; re-armed to a nonzero BOSS_X right below) only needs
+    ; THUNDER_EDGE_TRIGGER_DX(16) - see that constant's own comment for
+    ; why. Every later trigger in the leg keeps the normal
+    ; THUNDER_TRIGGER_DX(32) cadence.
+    LD A,C
+    OR A
+    JR NZ,CTTR_MID_LEG
+    LD A,D
+    CP THUNDER_EDGE_TRIGGER_DX
+    RET C
+    JR CTTR_FIRE
+CTTR_MID_LEG:
+    LD A,D
     CP THUNDER_TRIGGER_DX
     RET C
+CTTR_FIRE:
     LD A,(BOSS_X) : LD (THUNDER_LEG_START_X),A
     LD A,(BOSS_X) : SUB 16           ; boss's own current left edge, minus the bolt's own 16px width
     SRL A : SRL A : SRL A

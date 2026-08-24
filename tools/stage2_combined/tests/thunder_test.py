@@ -374,6 +374,85 @@ check("CHECK_THUNDER_TRIGGER_RIGHT also fires again after another THUNDER_TRIGGE
       slot(cpu, 1)["act"] == 1)
 
 
+# ---- "サンダー攻撃で自機が画面左端にいると当たらない 明らかに直撃し
+# てる" fix - the rightward leg's own FIRST trigger only needs
+# THUNDER_EDGE_TRIGGER_DX(16), not the full THUNDER_TRIGGER_DX(32), so a
+# bolt can land at column0 (pixel0-15) - the ONLY column that can ever
+# overlap a tank pinned at TANK_X=0 (hitbox [0,15]). A real MAINLOOP
+# sweep (see HANDOFF.md) confirmed column2/pixel16 was the true minimum
+# ever reached under the old single-threshold code. ----
+THUNDER_EDGE_TRIGGER_DX = sym["THUNDER_EDGE_TRIGGER_DX"]
+check("THUNDER_EDGE_TRIGGER_DX is genuinely narrower than THUNDER_TRIGGER_DX",
+      THUNDER_EDGE_TRIGGER_DX < THUNDER_TRIGGER_DX)
+
+cpu = fresh_cpu()
+cpu.mem[THUNDER_PENDING] = 1
+cpu.mem[THUNDER_LEG_START_X] = 0   # the left-edge reversal value
+cpu.mem[BOSS_X] = THUNDER_EDGE_TRIGGER_DX - 1
+call_routine(cpu, "CHECK_THUNDER_TRIGGER_RIGHT")
+check("leg's own first trigger does NOT fire 1px short of THUNDER_EDGE_TRIGGER_DX",
+      all(slot(cpu, i)["act"] == 0 for i in range(THUNDER_SLOT_COUNT)))
+
+cpu = fresh_cpu()
+cpu.mem[THUNDER_PENDING] = 1
+cpu.mem[THUNDER_LEG_START_X] = 0
+cpu.mem[BOSS_X] = THUNDER_EDGE_TRIGGER_DX
+call_routine(cpu, "CHECK_THUNDER_TRIGGER_RIGHT")
+check("leg's own first trigger fires right at THUNDER_EDGE_TRIGGER_DX(16), well short of the old "
+      "THUNDER_TRIGGER_DX(32) threshold", slot(cpu, 0)["act"] == 1)
+check("the resulting bolt lands at column0 - pixel0-15, finally reachable by a tank at TANK_X=0",
+      slot(cpu, 0)["col"] == 0)
+check("still doesn't overlap the boss's own [BOSS_X,BOSS_X+64) box (col0 -> pixel0-15, "
+      "boss -> pixel16-79)", slot(cpu, 0)["col"] * 8 + 16 <= cpu.mem[BOSS_X])
+
+# the leg's SECOND trigger still needs the full 32px cadence from the
+# first bolt's own re-armed THUNDER_LEG_START_X(16), not another 16
+cpu.mem[BOSS_X] += THUNDER_EDGE_TRIGGER_DX
+call_routine(cpu, "CHECK_THUNDER_TRIGGER_RIGHT")
+check("16px after the first shot (still short of the normal 32px cadence) does NOT fire a 2nd bolt",
+      slot(cpu, 1)["act"] == 0)
+cpu.mem[BOSS_X] += (THUNDER_TRIGGER_DX - THUNDER_EDGE_TRIGGER_DX)
+call_routine(cpu, "CHECK_THUNDER_TRIGGER_RIGHT")
+check("the full THUNDER_TRIGGER_DX(32) after the first shot does fire the 2nd bolt - only the "
+      "leg's very first trigger uses the narrower threshold",
+      slot(cpu, 1)["act"] == 1)
+
+# direct integration check: a col0 bolt (the newly-reachable minimum)
+# genuinely damages a tank sitting at the screen's absolute left edge
+cpu = fresh_cpu()
+make_thunder = lambda c, act, col, row, deep: (
+    c.mem.__setitem__(THUNDER_POOL + 0, act),
+    c.mem.__setitem__(THUNDER_POOL + 1, col),
+    c.mem.__setitem__(THUNDER_POOL + 2, row),
+    c.mem.__setitem__(THUNDER_POOL + 3, deep),
+)
+make_thunder(cpu, 1, 0, 6, 0)   # tip row = 5, col0 (pixel0-15)
+cpu.mem[TANK_X] = 0             # screen's absolute left edge
+cpu.mem[TANK_Y_CUR] = 5 * 8 - sym["TANK_COLLISION_Y_OFFSET"]
+life_edge = cpu.mem[TANK_LIFE]
+call_routine(cpu, "CHECK_THUNDER_VS_TANK")
+check("a col0 Thunder bolt now actually damages a tank at TANK_X=0 - the exact reported scenario",
+      cpu.mem[TANK_LIFE] == life_edge - 1)
+
+# real MAINLOOP: driving the boss through a full patrol never produces a
+# bolt column below 0 (sanity) and DOES reach column0 at least once
+cpu = fresh_cpu()
+cpu.sim_dir = 0
+cpu.sim_trig_a = False
+cpu.sim_trig_b = False
+min_col_seen = 99
+for f in range(80000):
+    step_frame(cpu)
+    for i in range(THUNDER_SLOT_COUNT):
+        if slot(cpu, i)["act"] != 0:
+            min_col_seen = min(min_col_seen, slot(cpu, i)["col"])
+    if min_col_seen == 0:
+        break
+check("real MAINLOOP: a genuine Thunder bolt reaches column0 at some point during a full patrol - "
+      "the screen's left edge is now actually reachable, not just in a synthetic unit test",
+      min_col_seen == 0)
+
+
 # ---- UPDATE_BOSS_ALL: the new diagonal dip (leftward leg start) / rise
 # (rightward leg end) - round11: "右初期位置から左に移動する際に左斜下
 # 8px移動してから水平移動に変更 戻る時は逆に到達8px前から右斜め上に移
