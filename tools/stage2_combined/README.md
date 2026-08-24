@@ -4425,6 +4425,66 @@ with no way to tell where.
   840-boot-effect failures (expected now that the diagnostic boot is
   back) - no new regressions.
 
+- **Homing missile round 2: the BG-drawing decision above was WRONG,
+  corrected hard by the user, redesigned as a real 4-instance hw-sprite
+  pool**: "スプライトパターンそんなに使ってるか? 自機とボスだけだぞ
+  もしそうなら動的に書き換えしてくれ 反転パターンは動的に書き換え BG
+  では今のようにかなりの速度じゃないと動きがガタガタで速すぎるんだよ
+  スプライト必須 で、同時に4発は欲しい そのために攻撃中はボスをBGにし
+  てんの まだ他にもスプライト使うが それは1パターン 更にファンネルも
+  やるんで". Two corrections: (1) the pattern-budget analysis above was
+  incomplete - only BigZum's own block was counted as dynamically
+  reusable, but ZacoII/Zum/Flyer never spawn again either once the boss
+  fight is active, so their entire footprint was free too, not just
+  BigZum's; there was no real budget problem. (2) BG movement itself is
+  wrong for this regardless of budget - its column-granular movement is
+  too choppy unless moving very fast; a real hw sprite (true per-pixel
+  motion) is mandatory. Also revealed design intent not stated before:
+  the boss's own body becoming BG during the pose was partly deliberate
+  specifically to free its own hw sprite slots10-25 for this missile
+  volley - "そのために攻撃中はボスをBGにしてんの".
+  Redesigned as `HORMING_POOL` (4 slots x5 bytes: ACT/X/Y/FACING/PHASE,
+  real pixel X/Y now, not COL/ROW cells), reusing **Flyer's own whole
+  pattern block** (`PAT_HORMING_SL/DL/DOWN/DR/SR EQU PAT_FLYER+0/4/8/12/
+  16`) loaded once at boss-spawn time (`UPDATE_BOSS_ALL`'s own spawn
+  branch, alongside `LOAD_SASAPI_PATTERNS`) rather than at `INIT` -
+  Flyer needs its own real pattern data intact for ordinary gameplay
+  before the boss ever appears. `horming_gen.py` rewritten to emit
+  16x16-padded hw sprite data (same convention as `bullet_gen.py`'s own
+  `bullet_u_sprite()`) instead of raw BG tiles. Uses hw sprite slots
+  `HORMING_SPR_BASE_SLOT`(10)`..+3` - the boss's own body's own slots
+  10-13, guaranteed free for a missile's own full screen-crossing.
+  `FIRE_HORMING` now fires all 4 slots as one volley - "同時に4発" -
+  with an 8px-per-slot spawn-Y stagger (**inferred, not explicitly
+  specified** - purely to keep the 4 missiles visually distinct rather
+  than perfectly overlapping forever, since identical position+phase
+  would otherwise produce identical facing/movement every frame; flag
+  for correction if unwanted). The 5-way facing/homing algorithm itself
+  is UNCHANGED from round 1 (same thresholds, same fixed per-facing
+  step, same two-phase flight), just re-expressed in real pixels instead
+  of `COL*8` - actually simpler, no `*8`/`/8` conversion needed anywhere.
+  A real bug this round's own tests caught before shipping: `UPDATE_
+  HORMING_ALL`'s staging loop walks `HORMING_SPRITE_ATTRS` via `HL`, but
+  both `UPDATE_ONE_HORMING` (via `APPLY_TANK_DAMAGE`/`SOUND_ZUM_DEFLECT`
+  on a hit) and `RESOLVE_HORMING_PATTERN_IX` (its own table lookup) use
+  `HL` as scratch - without `PUSH HL`/`POP HL` around both calls, the
+  attrs buffer got written to whatever address either of them left `HL`
+  pointing at, corrupting every slot after the first. The end-to-end
+  `MAINLOOP` sweep didn't catch it (too coarse); the SAT-matches-pool
+  per-field checks did.
+  Verified: `tests/horming_test.py` fully rewritten (75 checks) for the
+  new pool/hw-sprite API - all pass. Full suite: 304/307 pass, same 3
+  known GAME_TICK=840-boot-effect failures, no new regressions (`flyer_
+  terrain_test.py` confirms Flyer's own ordinary pre-boss appearance is
+  genuinely unaffected by the dynamic pattern reuse). Rendered real
+  frames: the volley of 4 is clearly visible near the boss at pose-entry
+  (4 small gray blobs, vertically staggered) and 60 frames later, having
+  moved smoothly left as a group. Not yet implemented (user flagged as
+  still to come): one more small hw sprite need ("それは1パターン") and
+  a "funnel"-style attack ("ファンネル") - this round kept usage
+  economical accordingly (12 of Flyer's own 32 reused codes still spare,
+  12 of the boss's own freed 16 slots still spare).
+
 ## Bugs found and fixed while building this
 
 - **Sand flickered between its own new color and Rock's, twice over**

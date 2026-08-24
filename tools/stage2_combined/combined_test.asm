@@ -509,18 +509,43 @@ SASAPI_HAND_COLORBYTE EQU 091h
 ; BOSS_FLASH_COLOR(8) - fg8/bg1, not fg9(BOSS_COLOR)'s own light red -
 ; so it reads as the same flash, not a different color entirely.
 SASAPI_HAND_FLASH_COLORBYTE EQU 081h
-; homing missile's own 5 BG codes (group27, 216-223 - the next free
-; group after the hand's own 19-26/152-215) - see horming_gen.py's own
-; comment for why this is BG, not a hw sprite.
-HORMING_CODE_BASE  EQU 216
-HORMING_SL_CODE    EQU HORMING_CODE_BASE+0
-HORMING_DL_CODE    EQU HORMING_CODE_BASE+1
-HORMING_DOWN_CODE  EQU HORMING_CODE_BASE+2
-HORMING_DR_CODE    EQU HORMING_CODE_BASE+3
-HORMING_SR_CODE    EQU HORMING_CODE_BASE+4
-; fg14(gray)/bg1(black) - matches every one of the 5 uploaded JSON
-; sprites' own header exactly.
-HORMING_COLORBYTE  EQU 0E1h
+; "スプライトパターンそんなに使ってるか? 自機とボスだけだぞ もしそう
+; なら動的に書き換えしてくれ...BGでは...動きがガタガタで速すぎるんだ
+; よ スプライト必須" - a REAL hw sprite after all, not BG (round-2
+; correction of the previous round's BG-drawing decision - BG's own
+; column-granular movement was too coarse for a fast, smooth-tracking
+; missile). Corrected budget count: once the boss is active, ZacoII/
+; Zum/Flyer never spawn again (same "オールフリー" principle the boss's
+; own body already relies on for BigZum's block) - their entire
+; pattern-code footprint is genuinely free for dynamic reuse, not just
+; BigZum's own. Reuses Flyer's own whole block (PAT_FLYER, 220-251, 32
+; codes - Flyer itself never appears again once the boss fight starts)
+; rather than a fresh permanent allocation - loaded dynamically at boss
+; spawn time (see UPDATE_BOSS_ALL's own spawn branch), the same "load
+; once when the reused owner is guaranteed gone for good" idiom LOAD_
+; SASAPI_PATTERNS already uses for the boss's own body. 5 facings x4
+; slots each (16x16-padded, TL/BL/TR/BR - same "VDP already in 16x16
+; mode" constraint as every other hw sprite here) = 20 of Flyer's own
+; 32 slots, 12 left spare.
+PAT_HORMING_SL   EQU PAT_FLYER+0
+PAT_HORMING_DL   EQU PAT_FLYER+4
+PAT_HORMING_DOWN EQU PAT_FLYER+8
+PAT_HORMING_DR   EQU PAT_FLYER+12
+PAT_HORMING_SR   EQU PAT_FLYER+16
+; fg14(gray) - matches every one of the 5 uploaded JSON sprites' own
+; header exactly (a hw sprite's own color is a free per-instance SAT
+; byte, no group/background constraint the way BG tiles have).
+HORMING_COLOR EQU 14
+; "同時に4発は欲しい そのために攻撃中はボスをBGにしてんの" - reuses
+; the boss's own hw sprite slots10-25 (guaranteed free for the entire
+; time any missile can exist - fired only at pose-entry, and a missile's
+; own full screen-crossing takes far less time than the pose lasts, so
+; the boss's own body, which those slots would otherwise hold, is
+; always still hidden/BG-drawn whenever a missile is alive). Only
+; slots10-13 used (4, one per missile) - slots14-25 stay spare for
+; whatever "まだ他にもスプライト使うが それは1パターン" / "更にファン
+; ネルもやるんで" ends up needing next.
+HORMING_SPR_BASE_SLOT EQU 10
 ; hw sprite slots10-25 (16 quadrants, one per 16x16 cell of the 4x4
 ; grid making up the 64x64 sprite) - reuses Zum/BigZum/Flyer/Etank's
 ; own ranges (10-11/12-19/20-23/24-25) rather than a fresh permanent
@@ -1315,47 +1340,43 @@ BOSS_DRAW_COLOR    EQU F2BEh   ; scratch byte, DRAW_BOSS's own resolved color (B
 BOSS_PHASE          EQU F2BFh  ; 0=patrolling(hw sprite), 1=parked in the attack pose(BG art) - "移動中はスプライト 停止中はBGて切り替え"
 BOSS_POSE_END_TICK  EQU F2C0h  ; 2 bytes - GAME_TICK value the pose ends at (GAME_TICK+BOSS_POSE_TICKS, captured once at pose-entry), compared via true 16-bit SBC HL,DE every frame while BOSS_PHASE=1, same idiom as every other GAME_TICK threshold in this file (BOSS_SPAWN_TICK/NIGHT_START_TICK/etc.)
 
-; ---------- homing missile (fired once per attack pose) ----------
+; ---------- homing missile (4-instance pool, fired as a volley once ----------
+; ---------- per attack pose) ----------
 ; "ホーミングミサイルを実装 ボスポーズでボス右上あたりから発射し X軸
-; 中央辺りまで水平打ち その後ホーミング動作". Single slot (not a pool)
-; - a whole patrol+pose cycle (~448 frames) is far longer than the
-; missile's own travel time, so the previous one is always long gone
-; before the next pose could fire another; matches how bullets drop a
-; spawn attempt if the pool's full instead of anything fancier.
-; A BG-drawn element (see horming_gen.py's own comment for the full
-; reasoning: the hw sprite pattern-code budget is nearly exhausted, and
-; BG-drawing sidesteps the same per-scanline priority bug class that
-; already forced BulletU to BG during the boss fight). RAM layout
-; mirrors the bullet pool's own field offsets exactly (ACT@0, COL@2,
-; ROW@3, ADDR_LO@4, ADDR_HI@5) on purpose - ERASE_BULLET_CELL is fully
-; generic (only ever reads those 4 fields) and gets reused as-is below
-; rather than duplicating it.
-HORMING_ACT      EQU F2C2h
-HORMING_PHASE    EQU F2C3h   ; 0=straight horizontal (spawn - center), 1=homing (center - onward)
-HORMING_COL      EQU F2C4h
-HORMING_ROW      EQU F2C5h
-HORMING_ADDR_LO  EQU F2C6h
-HORMING_ADDR_HI  EQU F2C7h
-HORMING_FACING   EQU F2C8h   ; 0=SL,1=DL,2=Down,3=DR,4=SR - selects both the drawn code and the per-frame (dcol,drow)
+; 中央辺りまで水平打ち その後ホーミング動作...同時に4発は欲しい".
+; A real hw sprite pool now (see PAT_HORMING_SL's own comment for why -
+; BG's own column-granular movement was too choppy at any speed fast
+; enough to be threatening). Real pixel coordinates (X/Y), not COL/ROW
+; cells - the whole reason for switching to a hw sprite was smooth,
+; fast, non-choppy movement, so cell-snapped position would defeat the
+; point.
+HORMING_SLOT_COUNT EQU 4
+HORMING_SLOT_SIZE  EQU 5   ; +0 ACT,+1 X,+2 Y,+3 FACING(0=SL,1=DL,2=Down,3=DR,4=SR),+4 PHASE(0=straight,1=homing)
+HORMING_POOL EQU F2C2h   ; 4 slots x5 bytes = 20 bytes
+HORMING_SPRITE_ATTRS EQU F2D6h   ; 4 slots x4 bytes (Y,X,pattern,color), staged same as ENEMY_SPRITE_ATTRS
 
 ; "ボス右上あたりから発射し" - within the boss's own 64x64 box
-; (col24-31/row7-14), toward its own upper-right.
-HORMING_SPAWN_COL  EQU 29
-HORMING_SPAWN_ROW  EQU 8
-; "X軸中央辺りまで水平打ち" - 256px-wide screen, center = col16(128px).
-HORMING_CENTER_COL EQU 16
+; (col24-31/row7-14 in pixels: X192-255/Y56-119), toward its own
+; upper-right.
+HORMING_SPAWN_X EQU 232
+HORMING_SPAWN_Y EQU 64
+; "X軸中央辺りまで水平打ち" - 256px-wide screen, center=128.
+HORMING_CENTER_X EQU 128
+; px/frame, flat per-axis (not a normalized diagonal distance) - same
+; "速度は2" convention as BOSS_SPEED/FLYER_SPEED/ETANK_SPEED.
+HORMING_SPEED EQU 2
 ; "自機のXとの距離が自機幅より外にある時" / "自機幅内に収まっている
 ; 時" - the tank's own real sprite width (tank_gen.py's poses are all
 ; 32x32).
 TANK_WIDTH EQU 32
 ; "SL、SRは自機から64px以上Xが離れている時"
 HORMING_SIDE_DIST EQU 64
-; off-screen/reached-the-ground bail-out, same convention as
-; BULLET_MAXCOL/the rock-row band below.
-HORMING_MAXCOL EQU 31
-HORMING_MAXROW EQU 23
-; AABB vs the tank's own 32x32 box (TANK_X/TANK_Y_CUR) - missile is
-; 8x8.
+; off-screen/reached-the-ground bail-out.
+HORMING_MAXY EQU 184
+; off-screen bail-out, X side - 256px-wide screen minus the sprite's own
+; 8px width, same "screen_dim - 8" convention as HORMING_MAXY.
+HORMING_MAXX EQU 248
+; AABB vs the tank's own 32x32 box (TANK_X/TANK_Y_CUR) - missile is 8x8.
 HORMING_COLLISION_SIZE EQU 32
 ETANK_SPR_BASE_SLOT EQU 24     ; hw sprite slots24-25 (BL/BR only x1 instance), right after Flyer's own 20-23
 ; "カラーはダークレッド" - NOT sprites/Etank.json's own fg, overridden
@@ -1724,17 +1745,13 @@ INIT_RESUME_AFTER_BANK_SELECT:
     EI
     LD HL,SASAPI_HAND_COLOR8 : LD DE,2000h+19 : LD BC,8 : CALL LDIRVM
 
-    ; homing missile's own 5 BG codes (see HORMING_CODE_BASE's own
-    ; comment) - 5 separate 8-byte loads (not one contiguous LDIRVM),
-    ; since each facing is its own independent 8x8 pattern, not a
-    ; multi-tile image like the hand's own 64-tile block.
-    LD HL,HORMING_SL_PATTERN   : LD DE,HORMING_SL_CODE*8   : LD BC,8 : CALL LDIRVM
-    LD HL,HORMING_DL_PATTERN   : LD DE,HORMING_DL_CODE*8   : LD BC,8 : CALL LDIRVM
-    LD HL,HORMING_DOWN_PATTERN : LD DE,HORMING_DOWN_CODE*8 : LD BC,8 : CALL LDIRVM
-    LD HL,HORMING_DR_PATTERN   : LD DE,HORMING_DR_CODE*8   : LD BC,8 : CALL LDIRVM
-    LD HL,HORMING_SR_PATTERN   : LD DE,HORMING_SR_CODE*8   : LD BC,8 : CALL LDIRVM
-    LD A,HORMING_COLORBYTE : LD (HUD_TEMP_BYTE),A
-    LD HL,HUD_TEMP_BYTE : LD DE,2000h+27 : LD BC,1 : CALL LDIRVM
+    ; homing missile's own hw sprite patterns are NOT loaded here - round-
+    ; 2 correction moved them to a dynamically-reused block (Flyer's own,
+    ; PAT_HORMING_SL etc.) loaded at boss-spawn time instead (see
+    ; UPDATE_BOSS_ALL's own spawn branch) - Flyer needs its own real
+    ; pattern data intact for ordinary gameplay before the boss ever
+    ; appears, same timing constraint LOAD_SASAPI_PATTERNS already
+    ; follows for the boss's own body reusing BigZum's block.
 
     ; checkpoint 6: tank + bullet patterns loaded
     LD B,6 : LD C,7 : CALL WRTVDP
@@ -1908,7 +1925,10 @@ INIT_SPRATR_CLR:
     ; spawns shortly after). Revert to XOR A / 0 for a real shipped build.
     LD HL,840 : LD (GAME_TICK),HL
     XOR A
-    LD (HORMING_ACT),A
+    LD (HORMING_POOL+0),A
+    LD (HORMING_POOL+5),A
+    LD (HORMING_POOL+10),A
+    LD (HORMING_POOL+15),A
     LD (SCORE),A : LD (SCORE+1),A : LD (SCORE+2),A
     LD A,0FFh : LD (GTD_LAST_H),A : LD (GTD_LAST_T),A : LD (GTD_LAST_O),A
     CALL SCORE_DISPLAY
@@ -2292,7 +2312,7 @@ SKIP_ZACO_ENEMY:
 SKIP_OTHER_ENEMIES:
     CALL UPDATE_BOSS_ALL
     CALL CHECK_BULLET_VS_BOSS
-    CALL UPDATE_HORMING
+    CALL UPDATE_HORMING_ALL
     CALL CLOUD_UPDATE_ALL
 
     CALL SOUND_UPDATE
@@ -6771,6 +6791,21 @@ UPDATE_BOSS_ALL:
     SBC HL,DE
     RET C                      ; not yet time
     LD HL,SASAPI_QUADS : CALL LOAD_SASAPI_PATTERNS   ; DIR=0 facing below
+    ; homing missile's own 5 facings, loaded once here (not at INIT) into
+    ; Flyer's own now-permanently-dormant pattern block - "スプライトパ
+    ; ターンそんなに使ってるか? 自機とボスだけだぞ...動的に書き換えして
+    ; くれ 反転パターンは動的に書き換え" - Flyer never spawns again once
+    ; the boss fight starts, so this is safe exactly once, right here,
+    ; same "load once when the reused owner is guaranteed gone for good"
+    ; idiom as LOAD_SASAPI_PATTERNS's own BigZum-block reuse above. 5x32
+    ; bytes (16x16-padded), DI/EI-wrapped same as that call.
+    DI
+    LD HL,HORMING_SL_SPRITE   : LD DE,PAT_HORMING_SL*8+SPRPAT   : LD BC,32 : CALL LDIRVM
+    LD HL,HORMING_DL_SPRITE   : LD DE,PAT_HORMING_DL*8+SPRPAT   : LD BC,32 : CALL LDIRVM
+    LD HL,HORMING_DOWN_SPRITE : LD DE,PAT_HORMING_DOWN*8+SPRPAT : LD BC,32 : CALL LDIRVM
+    LD HL,HORMING_DR_SPRITE   : LD DE,PAT_HORMING_DR*8+SPRPAT   : LD BC,32 : CALL LDIRVM
+    LD HL,HORMING_SR_SPRITE   : LD DE,PAT_HORMING_SR*8+SPRPAT   : LD BC,32 : CALL LDIRVM
+    EI
     LD A,1 : LD (BOSS_ACT),A
     LD A,BOSS_SPAWNX : LD (BOSS_X),A
     XOR A : LD (BOSS_DIR),A    ; 0 = moving left first - "右から出現し左へ"
@@ -7139,231 +7174,297 @@ ERASE_SASAPI_HAND:
     EI
     RET
 
-; ---------- homing missile ----------
-; fires the missile once per pose - "ボスポーズでボス右上あたりから
-; 発射し". Drops the attempt if the previous one somehow hasn't
-; deactivated yet (shouldn't normally happen - a full patrol+pose cycle
-; is far longer than the missile's own travel time) rather than
-; clobbering it mid-flight, same "screen limit, drop the shot" idiom
-; TRY_SPAWN_BULLET already uses.
+; ---------- homing missile (4-instance hw-sprite pool) ----------
+; fires a full volley of 4 once per pose entry - "ボスポーズでボス右上
+; あたりから発射し...同時に4発は欲しい そのために攻撃中はボスをBGに
+; してんの" (the boss's own body becomes BG during the pose specifically
+; to free hw sprite slots10-13 for this volley - the user's own stated
+; reasoning, not something inferred). Each slot independently drops its
+; own fire attempt if still in flight from a previous pose (shouldn't
+; normally happen - a full patrol+pose cycle is far longer than a
+; missile's own travel time), same "screen limit, drop the shot" idiom
+; TRY_SPAWN_BULLET already uses, just applied per-slot instead of once.
+; Spawn Y is staggered by 8px per slot - INFERRED, not explicitly
+; specified by the user: purely so the 4 missiles are visually distinct
+; rather than perfectly overlapping forever (identical start position +
+; phase would otherwise produce identical facing/movement every frame,
+; since homing depends only on current position) - flag for correction
+; if this isn't what's wanted.
 FIRE_HORMING:
-    LD A,(HORMING_ACT)
+    LD B,HORMING_SLOT_COUNT
+    LD IX,HORMING_POOL
+FH_LOOP:
+    LD A,(IX+0)
     OR A
-    RET NZ
-    LD A,1 : LD (HORMING_ACT),A
-    XOR A : LD (HORMING_PHASE),A
-    LD A,HORMING_SPAWN_COL : LD (HORMING_COL),A
-    LD A,HORMING_SPAWN_ROW : LD (HORMING_ROW),A
-    XOR A : LD (HORMING_FACING),A   ; 0=SL - "X軸中央辺りまで水平打ち"
-    LD A,(HORMING_ROW) : LD E,A : LD D,0
-    LD HL,BULLET_ROWADDR_LO : ADD HL,DE : LD A,(HL) : LD (HORMING_ADDR_LO),A
-    LD HL,BULLET_ROWADDR_HI : ADD HL,DE : LD A,(HL) : LD (HORMING_ADDR_HI),A
-    LD IX,HORMING_ACT
-    CALL DRAW_HORMING_CELL
+    JR NZ,FH_SKIP
+    LD A,1 : LD (IX+0),A
+    LD A,HORMING_SPAWN_X : LD (IX+1),A
+    LD A,HORMING_SLOT_COUNT : SUB B      ; slot index 0..3 (B not yet clobbered this iter)
+    ADD A,A : ADD A,A : ADD A,A          ; *8px stagger
+    ADD A,HORMING_SPAWN_Y
+    LD (IX+2),A
+    XOR A
+    LD (IX+3),A                          ; facing 0=SL - "X軸中央辺りまで水平打ち"
+    LD (IX+4),A                          ; phase 0=straight
+FH_SKIP:
+    INC IX : INC IX : INC IX : INC IX : INC IX
+    DJNZ FH_LOOP
     RET
 
-; IX = HORMING_ACT base. Picks the BG code by HORMING_FACING and writes
-; it at ADDR+COL - same "restore/draw at ADDR+COL" mechanics as
-; DRAW_BULLET_CELL, just a straight 5-way lookup instead of a
-; background-color-matching dance (the sky is already fully night-dark
-; by the time the boss can ever fire this - same reasoning as
-; SASAPI_HAND_COLORBYTE's own comment - no day/rock color variants
-; needed).
-DRAW_HORMING_CELL:
-    LD A,(IX+6)
-    OR A
-    JR Z,DHC_SL
-    CP 1
-    JR Z,DHC_DL
-    CP 2
-    JR Z,DHC_DOWN
-    CP 3
-    JR Z,DHC_DR
-    LD A,HORMING_SR_CODE
-    JR DHC_WRITE
-DHC_SL:
-    LD A,HORMING_SL_CODE
-    JR DHC_WRITE
-DHC_DL:
-    LD A,HORMING_DL_CODE
-    JR DHC_WRITE
-DHC_DOWN:
-    LD A,HORMING_DOWN_CODE
-    JR DHC_WRITE
-DHC_DR:
-    LD A,HORMING_DR_CODE
-DHC_WRITE:
-    LD (BULLET_TEMP_BYTE),A
-    LD L,(IX+4) : LD H,(IX+5)
-    LD E,(IX+2) : LD D,0
+; IX = slot base. A = hw sprite pattern code for this slot's CURRENT
+; FACING (0=SL,1=DL,2=Down,3=DR,4=SR) - flat table lookup, same order as
+; PAT_HORMING_SL's own comment (5 facings x4 codes each, all inside
+; Flyer's dynamically-reused block).
+RESOLVE_HORMING_PATTERN_IX:
+    LD A,(IX+3)
+    LD E,A : LD D,0
+    LD HL,HORMING_PATTERN_TABLE
     ADD HL,DE
-    CALL WRITE_BULLET_BYTE_HL
+    LD A,(HL)
     RET
+HORMING_PATTERN_TABLE:
+    DB PAT_HORMING_SL,PAT_HORMING_DL,PAT_HORMING_DOWN,PAT_HORMING_DR,PAT_HORMING_SR
 
-; sets HORMING_FACING (0=SL,1=DL,2=Down,3=DR,4=SR) from the CURRENT
-; horizontal distance to the tank - "自機のXとの距離が自機幅より外に
-; ある時は斜めのミサイルへ Downは自機幅内に収まっている時 SL、SRは
-; 自機から64px以上Xが離れている時 自機より右方向に離れている時はSL、
-; DL 左ならSR、DR". Checked fresh every frame during the homing phase
-; (RESOLVE_HORMING_FACING's own caller), not just once - the facing
-; genuinely tracks the tank as it moves, "自機方向に追尾".
-RESOLVE_HORMING_FACING:
-    LD A,(HORMING_COL) : ADD A,A : ADD A,A : ADD A,A : LD B,A   ; missile_X
+; IX = slot base. Sets FACING from the CURRENT horizontal pixel distance
+; to the tank - "自機のXとの距離が自機幅より外にある時は斜めのミサイル
+; へ Downは自機幅内に収まっている時 SL、SRは自機から64px以上Xが離れて
+; いる時 自機より右方向に離れている時はSL、DL 左ならSR、DR". Checked
+; fresh every frame during the homing phase (UOH_HOMING's own caller),
+; not just once - true continuous tracking, "自機方向に追尾". Real
+; pixel X now, not COL*8 - the whole reason this round switched to a hw
+; sprite in the first place, so no conversion needed here any more.
+RESOLVE_HORMING_FACING_IX:
+    LD A,(IX+1) : LD B,A        ; missile_X
     LD A,(TANK_X) : LD C,A
 
     LD A,B : SUB C
-    JR NC,RHF_RIGHT     ; missile_X>=TANK_X, no borrow - missile is right of the tank
-    LD A,C : SUB B        ; TANK_X-missile_X - missile is LEFT of the tank
+    JR NC,RHFI_RIGHT     ; missile_X>=TANK_X, no borrow - missile is right of the tank
+    LD A,C : SUB B         ; TANK_X-missile_X - missile is LEFT of the tank
     LD D,A
-    JR RHF_LEFT_SIDE
-RHF_RIGHT:
-    LD D,A                 ; A already = missile_X-TANK_X
-RHF_RIGHT_SIDE:
+    JR RHFI_LEFT_SIDE
+RHFI_RIGHT:
+    LD D,A                  ; A already = missile_X-TANK_X
+RHFI_RIGHT_SIDE:
     LD A,D
     CP TANK_WIDTH+1
-    JR C,RHF_DOWN
+    JR C,RHFI_DOWN
     CP HORMING_SIDE_DIST
-    JR NC,RHF_SET_SL
-    LD A,1 : LD (HORMING_FACING),A    ; DL - missile right of tank, needs to head left
+    JR NC,RHFI_SET_SL
+    LD A,1 : LD (IX+3),A    ; DL - missile right of tank, needs to head left
     RET
-RHF_SET_SL:
-    XOR A : LD (HORMING_FACING),A     ; SL
+RHFI_SET_SL:
+    XOR A : LD (IX+3),A     ; SL
     RET
-RHF_LEFT_SIDE:
+RHFI_LEFT_SIDE:
     LD A,D
     CP TANK_WIDTH+1
-    JR C,RHF_DOWN
+    JR C,RHFI_DOWN
     CP HORMING_SIDE_DIST
-    JR NC,RHF_SET_SR
-    LD A,3 : LD (HORMING_FACING),A    ; DR - missile left of tank, needs to head right
+    JR NC,RHFI_SET_SR
+    LD A,3 : LD (IX+3),A    ; DR - missile left of tank, needs to head right
     RET
-RHF_SET_SR:
-    LD A,4 : LD (HORMING_FACING),A    ; SR
+RHFI_SET_SR:
+    LD A,4 : LD (IX+3),A    ; SR
     RET
-RHF_DOWN:
-    LD A,2 : LD (HORMING_FACING),A
+RHFI_DOWN:
+    LD A,2 : LD (IX+3),A
     RET
 
-; called every frame regardless of boss/pose state - a missile in
-; flight keeps flying even if the pose that fired it has already ended
-; (crossing the whole screen takes far less time than a pose lasts, so
-; this is mostly a defensive guarantee, not something that normally
-; matters in practice).
-UPDATE_HORMING:
-    LD A,(HORMING_ACT)
+; IX = slot base. Runs one frame of movement + tank-collision for one
+; ACTIVE missile - phase0 (straight left from spawn, "X軸中央辺りまで
+; 水平打ち") until X reaches screen-center, then phase1 (homing, facing
+; recomputed fresh every frame - not locked once at the transition). May
+; clear (IX+0) to 0 on an off-screen bail-out or a tank hit; the caller
+; (UPDATE_HORMING_ALL) re-checks that right after this returns, before
+; drawing. Every early-exit branch uses JP, not JR - this routine is long
+; enough that a JR would risk "JR/DJNZ out of range" (already hit once
+; this session in a routine of similar shape).
+UPDATE_ONE_HORMING:
+    LD A,(IX+4)
     OR A
-    RET Z
+    JP NZ,UOH_HOMING
+    LD A,(IX+1)
+    CP HORMING_CENTER_X+1
+    JP NC,UOH_STRAIGHT
+    LD A,1 : LD (IX+4),A
+    JP UOH_HOMING
+UOH_STRAIGHT:
+    XOR A : LD (IX+3),A          ; SL
+    LD A,(IX+1)
+    CP HORMING_SPEED
+    JP C,UOH_DEACTIVATE
+    SUB HORMING_SPEED : LD (IX+1),A
+    JP UOH_COLLIDE
 
-    ; "X軸中央辺りまで水平打ち その後ホーミング動作" - phase flips the
-    ; instant COL reaches screen-center, checked before this frame's own
-    ; movement so the transition and the homing facing/move are resolved
-    ; consistently in the same pass.
-    LD A,(HORMING_PHASE)
+UOH_HOMING:
+    CALL RESOLVE_HORMING_FACING_IX
+    LD A,(IX+3)
     OR A
-    JR NZ,UH_PHASE_KNOWN
-    LD A,(HORMING_COL)
-    CP HORMING_CENTER_COL+1
-    JR NC,UH_PHASE_KNOWN
-    LD A,1 : LD (HORMING_PHASE),A
-UH_PHASE_KNOWN:
-
-    LD IX,HORMING_ACT
-    CALL ERASE_BULLET_CELL
-
-    LD A,(HORMING_PHASE)
-    OR A
-    JR NZ,UH_HOMING
-
-    ; --- phase0: straight left, always SL ---
-    XOR A : LD (HORMING_FACING),A
-    LD A,(HORMING_COL)
-    OR A
-    JP Z,UH_DEACTIVATE
-    DEC A : LD (HORMING_COL),A
-    JR UH_RECOMPUTE_ADDR
-
-UH_HOMING:
-    CALL RESOLVE_HORMING_FACING
-    LD A,(HORMING_FACING)
-    OR A
-    JR Z,UH_STEP_SL
+    JP Z,UOH_STEP_SL
     CP 1
-    JR Z,UH_STEP_DL
+    JP Z,UOH_STEP_DL
     CP 2
-    JR Z,UH_STEP_DOWN
+    JP Z,UOH_STEP_DOWN
     CP 3
-    JR Z,UH_STEP_DR
-    JR UH_STEP_SR
+    JP Z,UOH_STEP_DR
+    JP UOH_STEP_SR
 
-UH_STEP_SL:
-    LD A,(HORMING_COL)
-    OR A
-    JP Z,UH_DEACTIVATE
-    DEC A : LD (HORMING_COL),A
-    JR UH_RECOMPUTE_ADDR
-UH_STEP_SR:
-    LD A,(HORMING_COL)
-    CP HORMING_MAXCOL
-    JP NC,UH_DEACTIVATE
-    INC A : LD (HORMING_COL),A
-    JR UH_RECOMPUTE_ADDR
-UH_STEP_DOWN:
-    LD A,(HORMING_ROW)
-    CP HORMING_MAXROW
-    JP NC,UH_DEACTIVATE
-    INC A : LD (HORMING_ROW),A
-    JR UH_RECOMPUTE_ADDR
-UH_STEP_DL:
-    LD A,(HORMING_COL)
-    OR A
-    JP Z,UH_DEACTIVATE
-    LD A,(HORMING_ROW)
-    CP HORMING_MAXROW
-    JP NC,UH_DEACTIVATE
-    LD A,(HORMING_COL) : DEC A : LD (HORMING_COL),A
-    LD A,(HORMING_ROW) : INC A : LD (HORMING_ROW),A
-    JR UH_RECOMPUTE_ADDR
-UH_STEP_DR:
-    LD A,(HORMING_COL)
-    CP HORMING_MAXCOL
-    JP NC,UH_DEACTIVATE
-    LD A,(HORMING_ROW)
-    CP HORMING_MAXROW
-    JP NC,UH_DEACTIVATE
-    LD A,(HORMING_COL) : INC A : LD (HORMING_COL),A
-    LD A,(HORMING_ROW) : INC A : LD (HORMING_ROW),A
+UOH_STEP_SL:
+    LD A,(IX+1)
+    CP HORMING_SPEED
+    JP C,UOH_DEACTIVATE
+    SUB HORMING_SPEED : LD (IX+1),A
+    JP UOH_COLLIDE
+UOH_STEP_SR:
+    LD A,(IX+1) : ADD A,HORMING_SPEED
+    CP HORMING_MAXX
+    JP NC,UOH_DEACTIVATE
+    LD (IX+1),A
+    JP UOH_COLLIDE
+UOH_STEP_DOWN:
+    LD A,(IX+2) : ADD A,HORMING_SPEED
+    CP HORMING_MAXY
+    JP NC,UOH_DEACTIVATE
+    LD (IX+2),A
+    JP UOH_COLLIDE
+UOH_STEP_DL:
+    LD A,(IX+1)
+    CP HORMING_SPEED
+    JP C,UOH_DEACTIVATE
+    LD A,(IX+2) : ADD A,HORMING_SPEED
+    CP HORMING_MAXY
+    JP NC,UOH_DEACTIVATE
+    LD (IX+2),A
+    LD A,(IX+1) : SUB HORMING_SPEED : LD (IX+1),A
+    JP UOH_COLLIDE
+UOH_STEP_DR:
+    LD A,(IX+1) : ADD A,HORMING_SPEED
+    CP HORMING_MAXX
+    JP NC,UOH_DEACTIVATE
+    LD B,A
+    LD A,(IX+2) : ADD A,HORMING_SPEED
+    CP HORMING_MAXY
+    JP NC,UOH_DEACTIVATE
+    LD (IX+2),A
+    LD A,B : LD (IX+1),A
 
-UH_RECOMPUTE_ADDR:
-    LD A,(HORMING_ROW) : LD E,A : LD D,0
-    LD HL,BULLET_ROWADDR_LO : ADD HL,DE : LD A,(HL) : LD (HORMING_ADDR_LO),A
-    LD HL,BULLET_ROWADDR_HI : ADD HL,DE : LD A,(HL) : LD (HORMING_ADDR_HI),A
+; AABB vs the tank's own real 32x32 box - missile is 8x8. Same shape as
+; every other hit-pair test in this file (see CHECK_HIT_PAIR_BOSS).
+UOH_COLLIDE:
+    LD A,(IX+1) : LD B,A        ; mx
+    LD A,(IX+2) : LD C,A        ; my
+    LD A,(TANK_X) : LD D,A      ; tx
+    LD A,(TANK_Y_CUR) : LD E,A  ; ty
 
-    ; AABB vs the tank's own real 32x32 box - missile is 8x8.
-    LD A,(HORMING_COL) : ADD A,A : ADD A,A : ADD A,A : LD B,A
-    LD A,(HORMING_ROW) : ADD A,A : ADD A,A : ADD A,A : LD C,A
-    LD A,(TANK_X) : LD D,A
-    LD A,(TANK_Y_CUR) : LD E,A
+    LD A,B : ADD A,7 : CP D : JR C,UOH_NO_HIT
+    LD A,D : ADD A,HORMING_COLLISION_SIZE-1 : CP B : JR C,UOH_NO_HIT
+    LD A,C : ADD A,7 : CP E : JR C,UOH_NO_HIT
+    LD A,E : ADD A,HORMING_COLLISION_SIZE-1 : CP C : JR C,UOH_NO_HIT
 
-    LD A,B : ADD A,7 : CP D : JR C,UH_NO_HIT
-    LD A,D : ADD A,HORMING_COLLISION_SIZE-1 : CP B : JR C,UH_NO_HIT
-    LD A,C : ADD A,7 : CP E : JR C,UH_NO_HIT
-    LD A,E : ADD A,HORMING_COLLISION_SIZE-1 : CP C : JR C,UH_NO_HIT
-
-    ; hit - matches APPLY_TANK_DAMAGE's own documented future-use
-    ; comment ("いずれ敵弾実装予定") - this is exactly that.
+    ; hit - matches APPLY_TANK_DAMAGE's own documented future-use comment
+    ; ("いずれ敵弾実装予定") - this is exactly that.
     LD A,FLASH_DURATION : LD (TANK_FLASH_TIMER),A
     CALL APPLY_TANK_DAMAGE
     CALL SOUND_ZUM_DEFLECT
-    XOR A : LD (HORMING_ACT),A
+    XOR A : LD (IX+0),A
     RET
 
-UH_NO_HIT:
-    LD IX,HORMING_ACT
-    CALL DRAW_HORMING_CELL
+UOH_NO_HIT:
     RET
 
-UH_DEACTIVATE:
-    XOR A : LD (HORMING_ACT),A
+UOH_DEACTIVATE:
+    XOR A : LD (IX+0),A
+    RET
+
+; called every frame regardless of boss/pose state - a missile in flight
+; keeps flying even if the pose that fired it has already ended (crossing
+; the whole screen takes far less time than a pose lasts, so this is
+; mostly a defensive guarantee, not something that normally matters in
+; practice). Walks HORMING_POOL (IX, 5 bytes/slot) and HORMING_SPRITE_
+; ATTRS (HL, 4 bytes/slot) in lockstep - inactive slots are hidden
+; (Y=209), active ones updated then staged, then the whole 4-slot buffer
+; is flushed to hw sprite slots10-13 once at the end (not per-slot - same
+; "one flush after N stages" shape as FLUSH_ZUM_SPRITES's own callers).
+UPDATE_HORMING_ALL:
+    LD IX,HORMING_POOL
+    LD HL,HORMING_SPRITE_ATTRS
+    LD B,HORMING_SLOT_COUNT
+UHA_LOOP:
+    PUSH BC
+    LD A,(IX+0)
+    OR A
+    JR Z,UHA_HIDE
+    ; HL is this loop's own walking pointer into HORMING_SPRITE_ATTRS -
+    ; UPDATE_ONE_HORMING (via APPLY_TANK_DAMAGE/SOUND_ZUM_DEFLECT on a
+    ; hit) and RESOLVE_HORMING_PATTERN_IX (its own table lookup) both use
+    ; HL as scratch, so it must be saved/restored around both calls or
+    ; the attrs buffer gets written to whatever address either of them
+    ; left HL pointing at instead.
+    PUSH HL
+    CALL UPDATE_ONE_HORMING
+    POP HL
+    LD A,(IX+0)
+    OR A
+    JR Z,UHA_HIDE
+    LD A,(IX+2) : LD (HL),A : INC HL      ; Y
+    LD A,(IX+1) : LD (HL),A : INC HL      ; X
+    PUSH HL
+    CALL RESOLVE_HORMING_PATTERN_IX
+    POP HL
+    LD (HL),A : INC HL
+    LD A,HORMING_COLOR : LD (HL),A : INC HL
+    JR UHA_NEXT
+UHA_HIDE:
+    LD A,209 : LD (HL),A : INC HL
+    XOR A : LD (HL),A : INC HL
+    XOR A : LD (HL),A : INC HL
+    XOR A : LD (HL),A : INC HL
+UHA_NEXT:
+    INC IX : INC IX : INC IX : INC IX : INC IX
+    POP BC
+    DJNZ UHA_LOOP
+    CALL FLUSH_HORMING_SPRITES
+    RET
+
+; blasts HORMING_SPRITE_ATTRS (4 slots x4 bytes = 16 bytes) to hw sprite
+; slots HORMING_SPR_BASE_SLOT..+3 - same single DI/EI-wrapped raw OUT +
+; 8-NOP loop as FLUSH_ZUM_SPRITES/FLUSH_ENEMY_SPRITES (small enough for
+; one wrap, unlike FLUSH_BOSS_SPRITES's own per-quadrant DI/EI chunking).
+FLUSH_HORMING_SPRITES:
+    DI
+    LD A,HORMING_SPR_BASE_SLOT*4 : OUT (99h),A
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    LD HL,HORMING_SPRITE_ATTRS
+    LD B,16
+FHS_LOOP:
+    LD A,(HL) : OUT (98h),A
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    INC HL
+    DJNZ FHS_LOOP
+    EI
     RET
 
 CHECK_BULLET_VS_BOSS:

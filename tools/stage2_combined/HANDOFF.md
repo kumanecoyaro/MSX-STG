@@ -717,6 +717,122 @@ the tearing got fixed.
   correctly colored/shaped in both. Full suite: 267/270 pass, same 3
   known GAME_TICK=840-boot-effect failures - no new regressions.
 
+## Homing missile round 2: BG-drawing was WRONG - corrected to a real hw-sprite 4-instance pool
+
+- **The previous round's whole "BG not hw sprite" decision above was
+  corrected by the user, hard**: "スプライトパターンそんなに使ってるか?
+  自機とボスだけだぞ もしそうなら動的に書き換えしてくれ 反転パターンは
+  動的に書き換え BGでは今のようにかなりの速度じゃないと動きがガタガタ
+  で速すぎるんだよ スプライト必須 で、同時に4発は欲しい そのために攻
+  撃中はボスをBGにしてんの まだ他にもスプライト使うが それは1パターン
+  更にファンネルもやるんで". Two separate corrections in one message:
+  1. **My pattern-budget analysis was incomplete.** I had only counted
+     BigZum's own block as dynamically reusable (matching the boss's own
+     body reusing it). The user's point: once the boss fight is active,
+     ZacoII/Zum/Flyer never spawn again either (same "オールフリー"
+     principle) - their ENTIRE pattern-code footprint is free too, not
+     just BigZum's. There was never really a budget problem.
+  2. **BG movement itself is architecturally wrong for this feature
+     regardless of budget** - BG's column-granular (8px/frame) movement
+     is too choppy unless moving very fast; a real hw sprite (true
+     per-pixel movement) is mandatory for a homing missile that has to
+     look smooth while tracking. "スプライト必須".
+  Also revealed a piece of the user's own original design intent I
+  hadn't been told directly: **converting the boss's own body to BG
+  during the attack pose was partly deliberate specifically to free its
+  own 16 hw sprite slots (10-25) for this missile volley** - "そのため
+  に攻撃中はボスをBGにしてんの". Not something I inferred; the user's
+  own stated reasoning.
+- **Redesigned as a real 4-instance hw-sprite pool** (`HORMING_POOL`,
+  `F2C2h`, 4 slots x5 bytes: ACT/X/Y/FACING/PHASE - real pixel X/Y this
+  time, not COL/ROW cells, since the whole point of switching to a hw
+  sprite was smooth movement). Reuses **Flyer's own whole pattern block**
+  (`PAT_HORMING_SL/DL/DOWN/DR/SR EQU PAT_FLYER+0/4/8/12/16` - Flyer's own
+  32 codes, 220-251) instead of a fresh permanent allocation, loaded
+  dynamically **once, at boss-spawn time** (`UPDATE_BOSS_ALL`'s own spawn
+  branch, alongside the existing `LOAD_SASAPI_PATTERNS` call for the
+  boss's own body) - not at `INIT`, same "load once when the reused
+  owner is guaranteed gone for good" idiom `LOAD_SASAPI_PATTERNS` already
+  established. `horming_gen.py` was rewritten to emit 16x16-padded hw
+  sprite pattern data (8x8 art embedded top-left of an otherwise-blank
+  16x16 canvas, same convention as `bullet_gen.py`'s own `bullet_u_
+  sprite()`) instead of raw BG tiles. Uses hw sprite slots
+  `HORMING_SPR_BASE_SLOT`(10)`..+3` - the boss's own body's slots10-13,
+  guaranteed free for a missile's own full screen-crossing (which takes
+  far less time than a pose lasts, so the boss's own body - which would
+  otherwise hold those slots - is always still hidden/BG-drawn whenever
+  a missile is alive).
+- **`FIRE_HORMING` now fires a full volley of all 4 slots at once** -
+  "同時に4発". Spawn X is the same for all 4 (`HORMING_SPAWN_X`, 232);
+  spawn Y is staggered by 8px per slot index (**inferred, not explicitly
+  specified by the user** - purely so the 4 missiles are visually
+  distinct instead of perfectly overlapping forever, since identical
+  start position+phase would otherwise produce identical facing/movement
+  every frame - flag for correction if this isn't what's wanted). Each
+  slot independently drops its own fire attempt if still active from a
+  previous pose (same "screen limit, drop the shot" idiom as before, now
+  per-slot instead of once).
+- **The 5-way discretized facing/homing algorithm itself is UNCHANGED**
+  from the previous round - same bucket thresholds
+  (`|dx|<=TANK_WIDTH`(32)->Down, `32<|dx|<64`->diagonal, `|dx|>=64`->
+  side, direction by which side of the tank the missile is on), same
+  fixed per-axis step per facing, same two-phase flight (straight until
+  `HORMING_CENTER_X`(128), then continuous homing recomputed every
+  frame) - only re-expressed against real pixel X instead of `COL*8`
+  (actually simpler now, no `*8`/`/8` conversion needed anywhere).
+  Collision still uses `APPLY_TANK_DAMAGE` unchanged.
+- **A real bug this round's own tests caught before shipping**:
+  `UPDATE_HORMING_ALL`'s staging loop walks `HORMING_SPRITE_ATTRS` via
+  `HL`, but both `CALL UPDATE_ONE_HORMING` (which can call `APPLY_TANK_
+  DAMAGE`/`SOUND_ZUM_DEFLECT` on a hit) and `CALL RESOLVE_HORMING_
+  PATTERN_IX` (its own table lookup) use `HL` as scratch internally -
+  without saving/restoring `HL` around both calls, the attrs buffer got
+  written to whatever address either of them left `HL` pointing at
+  instead, corrupting the sprite attribute staging for every slot after
+  the first. Fixed with `PUSH HL`/`POP HL` around both calls. Caught by
+  `tests/horming_test.py`'s own SAT-matches-pool checks, not by the
+  end-to-end `MAINLOOP` sweep (the corruption didn't happen to break
+  that sweep's own coarser "did it move" check) - worth remembering:
+  **the fine-grained per-field checks catch bugs the coarse end-to-end
+  sweep alone would miss**.
+- Every far conditional branch inside the new, long `UPDATE_ONE_HORMING`
+  uses `JP`, not `JR`, from the start (not as a post-hoc fix) - a
+  routine of this shape/length already hit "JR/DJNZ out of range" once
+  this session (`UPDATE_HORMING`'s own `UH_DEACTIVATE` branches, prior
+  round) and would very likely hit it again here.
+- Verified: `tests/horming_test.py` fully rewritten for the new pool/hw-
+  sprite API (75 checks - volley-of-4 fire with per-slot spawn/stagger
+  verification, partial-refill-only-refills-inactive-slots, phase0
+  straight movement, the phase transition timing, all 6 bucket-boundary
+  cases on both sides (12 checks) via the new `RESOLVE_HORMING_FACING_
+  IX`, all 5 facings' own movement deltas via `UPDATE_ONE_HORMING`, both
+  edge-underflow/overflow guards (same "call the internal step label
+  directly" approach as before, still needed for the same reason), a
+  real hit decrementing `TANK_LIFE`/arming the flash/deactivating the
+  missile, a clean miss registering nothing, `UPDATE_HORMING_ALL`'s own
+  SAT staging (Y/X/pattern/color per slot, hiding a deactivated slot at
+  Y=209), `RESOLVE_HORMING_PATTERN_IX`'s own pattern-code lookup for all
+  5 facings, and a real end-to-end `MAINLOOP` sweep confirming a real
+  volley of 4 actually fires during the pose and moves frame to frame)
+  all pass. Full suite: 304/307 pass, same 3 known GAME_TICK=840-boot-
+  effect failures - no new regressions (`flyer_terrain_test.py` in
+  particular still passes clean, confirming Flyer's own ordinary,
+  pre-boss appearance is genuinely unaffected by the dynamic pattern
+  reuse). Also rendered real frames: the volley of 4 missiles is clearly
+  visible near the boss's own body at pose-entry (4 small gray blobs,
+  vertically staggered) and mid-flight 60 frames later (moved smoothly
+  left as a group, still phase0/facing-SL at that point) - visually
+  confirms both the "4 simultaneous" requirement and smooth per-pixel hw
+  sprite movement (not the choppy column-snapped motion BG drawing would
+  have produced).
+- **Not yet implemented** (explicitly flagged by the user as still to
+  come): "まだ他にもスプライト使うが それは1パターン" (one more small
+  hw sprite need) and "更にファンネルもやるんで" (a "funnel"-style
+  attack, likely a swarm/drone type). Both reasons this round kept usage
+  economical - only 20 of Flyer's own 32 reused codes are used (12
+  spare), and only 4 of the boss's own freed 16 slots (10-13; 14-25
+  spare).
+
 ## Open items / things to watch
 
 - No known open bugs as of this handoff — the boss's own SPRPAT bug
