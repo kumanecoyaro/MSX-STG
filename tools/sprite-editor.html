@@ -1075,6 +1075,20 @@
   var saveFilenameInput = document.getElementById("saveFilenameInput");
   var saveStatus = document.getElementById("saveStatus");
 
+  // A script-clicked <a download> (blob: or data:) is inert inside the
+  // Artifact viewer's sandbox - it never reaches the browser's real save
+  // surface, which is why Save silently did nothing (worst on mobile,
+  // where there's no separate "tab" to catch a dropped download). The
+  // downloads capability is the only way a published Artifact can hand a
+  // file to the viewer. window.claude only ever exposes use() - there's
+  // no window.claude.downloads property to feature-check - so resolve the
+  // namespace once at boot and cache it; doSave() just reads the cached
+  // value (null until resolved, or forever if this view can't run it).
+  var downloadsCap = null;
+  if (window.claude && window.claude.use) {
+    window.claude.use("downloads").then(function (cap) { downloadsCap = cap; });
+  }
+
   document.getElementById("btnSave").addEventListener("click", function () {
     saveStatus.textContent = "";
     saveStatus.classList.remove("ok");
@@ -1092,27 +1106,22 @@
 
   function doSave() {
     var filename = saveFilenameInput.value.trim() || ("Sprite_" + GRID_N + "x" + GRID_N + ".json");
-    try {
-      var jsonStr = currentJSON();
-      var blob = new Blob([jsonStr], { type: "application/json" });
-      var url = URL.createObjectURL(blob);
-      var a = document.createElement("a");
-      a.href = url;
-      a.download = filename;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      
-      setTimeout(function () {
-        URL.revokeObjectURL(url);
-      }, 100);
-
-      saveOverlay.classList.remove("show");
-      flash("saved " + filename);
-    } catch (err) {
-      saveStatus.textContent = "save failed";
+    if (!downloadsCap) {
+      saveStatus.textContent = "save unavailable here";
       saveStatus.classList.remove("ok");
+      return;
     }
+    downloadsCap.save({ filename: filename, data: currentJSON() }).then(
+      function () {
+        saveOverlay.classList.remove("show");
+        flash("saved " + filename);
+      },
+      function (err) {
+        if (err && err.code === "declined") { saveOverlay.classList.remove("show"); flash("save cancelled"); return; }
+        saveStatus.textContent = "save failed";
+        saveStatus.classList.remove("ok");
+      }
+    );
   }
 
   document.getElementById("btnSaveCancel").addEventListener("click", function () {
