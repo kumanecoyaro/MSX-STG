@@ -1367,18 +1367,109 @@ the tearing got fixed.
   `etank_gametick_gate_test.py`, `night_effect_test.py`), no new
   regressions.
 
+## Round 10: Thunder - a real pool, reaches the actual terrain, spawns ThunderS, left-edge pause
+
+- User feedback (verbatim, angry - a real regression against explicit
+  intent, not a preference tweak): "左端は2Tick停止してから反転発射に
+  反転した時にボス自身に当たってしまう で、いつからサンダーは1本しか
+  出せない仕様に? そんな指示はしてねえぞ BGを使ってるのは表示制限が
+  ないからだろが 勝手に仕様を決めんな お前がゲーム作ってんのか? あと
+  終了位置は地形までに変更 地形に到達したら添付のキャラを地上の上に
+  左右に発射 地形に沿う形で移動し画面外に出たら消せ Zumなんかと同じ
+  だ" - then, after seeing the plan, corrected the ThunderS part again:
+  "やっぱThunderSは2セル分でいいわ サンダーが着地したら左右同時に2セ
+  ル描いて消せばおｋ 地形に沿うのは無しで" (no moving hw sprite after
+  all - just 2 more static BG cells).
+- **Thunder is now a real 4-instance pool** (`THUNDER_SLOT_SIZE`=4
+  bytes/slot x`THUNDER_SLOT_COUNT`=4, `THUNDER_POOL`) - Round8/9's own
+  single-instance design (with a busy-gate in the trigger checks) was
+  never asked for; BG has no hw-sprite-style slot budget, so there was
+  no real reason to serialize columns. `ALLOC_THUNDER_SLOT` (renamed
+  from `FIRE_THUNDER`) finds the first inactive slot, same "pool full ->
+  drop the attempt" idiom as `FIRE_ONE_HORMING`. The trigger checks no
+  longer gate on any previous column finishing at all.
+- **The column now grows all the way to the ACTUAL terrain surface**,
+  not a fixed row: `GET_TERRAIN_ROW_FOR_COL` re-probes `IDCACHE_T0..T2`
+  (the same per-column tier cache `UPDATE_TERRAIN_COLLISION`/`UOZ_
+  TERRAIN_FOLLOW` already read for the tank/Zum) fresh every single grow
+  step, since the terrain scrolls underneath a fixed screen column while
+  a Thunder instance is alive. Growth now steps 1 row (not 2) at a time,
+  stopping the instant the next row would reach the terrain row.
+- **The ground/rock band (rows20-23) is no longer off-limits.** The key
+  discovery: `MAINLOOP` already does an UNCONDITIONAL full 4-row LDIRVM
+  redraw of rows20-23 (`TERRAIN_RENDER_ROW`x4 + LDIRVM) EVERY frame,
+  before `UPDATE_THUNDER` runs - so anything Thunder draws there would
+  get silently overwritten within 1 frame regardless of `ERASE_BULLET_
+  CELL`'s own restore-path limits (which only ever mattered for rows
+  0-19, never applied to 20-23 at all). Fix: re-assert (redraw) whatever
+  of a slot's own currently-visible range falls in rows20-23 EVERY
+  frame, racing that redraw - same "restore the known-correct value
+  every frame" idiom as `DRAW_SASAPI_HAND`'s own per-frame healing.
+  Simply STOPPING re-assertion (no explicit erase call) is then enough
+  to hand a cell back to the terrain's own redraw once it's not wanted -
+  no restore path is needed for that band at all, cutting the earlier
+  rounds' entire `THUNDER_BOTTOM_ROW`/`THUNDER_EXTRA_ROW` machinery.
+  Caught one real gap in this scheme by a test that simulates the
+  terrain's own per-frame clobber precisely: the exact grow->shrink
+  transition frame wasn't re-asserting the deepest main-bolt row (only
+  the brand-new side cells), a real 1-frame flicker risk - fixed by
+  re-drawing that row explicitly at the transition too.
+- **ThunderS**: "地形に到達したら添付のキャラを地上の上に左右に発射"
+  - originally planned as a moving, terrain-following hw sprite pool
+    (mirroring Zum), but the user simplified this before it was built:
+    "地形に沿うのは無しで...2セル分でいいわ...左右同時に2セル描いて
+    消せばおｋ" - just 1 more static BG tile (`THUNDERS_CODE`, group27's
+    5th code, `thunder_gen.py`'s own single-tile conversion of the
+    uploaded `ThunderS_8x8.json`), drawn once at the bolt's own landing
+    row, 1 column to either side, and erased together with the bolt's
+    own deepest row once shrink reaches it. No hw sprite, no pool, no
+    movement/despawn logic needed at all.
+- **"反転した時にボス自身に当たってしまう" - two real fixes, not one**:
+  (1) `CHECK_THUNDER_TRIGGER_RIGHT`'s own column math was a genuine bug
+  - it used `BOSS_X` (the boss's own CURRENT left edge) directly as the
+  bolt's own start column, putting the bolt's 2-column-wide art directly
+  UNDER the boss's own body (both start at the same X); now uses
+  `BOSS_X-16` so the bolt sits flush against the boss's own trailing
+  left edge instead, entirely outside its box - mirrors how the
+  leftward leg's own `BOSS_X+64` was already correct (trailing outside
+  on the other side). (2) A new `BOSS_LEFT_PAUSE_TICKS`(2)-GAME_TICK
+  pause at the left edge (`BOSS_PHASE`=2, a new sub-state, boss drawn
+  stationary as an ordinary sprite) before the boss actually reverses -
+  gives whatever Thunder column fired late in the leftward leg (which
+  can end up positioned close to X=0 by the time the boss gets there) a
+  beat to grow/shrink on its own before the boss starts moving back
+  through that space.
+- Verified: `tests/thunder_test.py` rewritten again for the pool/
+  terrain-reaching/ThunderS-cells/pause design (51 checks) - pool
+  alloc/reset, `GET_TERRAIN_ROW_FOR_COL`'s own tier->row mapping (all 4
+  tiers), per-row draw/erase parity, a full lifecycle test against a
+  SAFE terrain tier (0, everything stays <20, no reassertion needed)
+  AND a DEEP tier (3, forces the ground band, with the test itself
+  simulating the real per-frame terrain clobber between calls to prove
+  the reassertion pass is doing real work, not a no-op - this is what
+  caught the transition-frame gap above), the fixed trigger-column math
+  for both legs with a real no-overlap-with-the-boss assertion, and a
+  real `MAINLOOP` sweep confirming the left-edge pause's own actual
+  duration, multiple concurrent columns genuinely alive at once, and a
+  real ThunderS cell actually appearing on landing. Also confirmed
+  visually via 3 rendered frames (two columns growing simultaneously,
+  a column that reached deep into the ground band with visible
+  ThunderS cells at its base, and the boss paused at the left edge with
+  no visual overlap against nearby columns). Full regression suite:
+  439/442 passing - same 3 known `GAME_TICK=840`-boot-effect failures
+  (`boss_test.py`, `etank_gametick_gate_test.py`, `night_effect_test.py`),
+  no new regressions - `boss_test.py`/`boss_pose_test.py`/`horming_
+  test.py` needed real updates for the new left-edge pause (drive
+  through `BOSS_PHASE=2` via a direct `GAME_TICK` bump, same pattern
+  already used for `BOSS_POSE_TICKS`) and the pause's own knock-on
+  shift to `GAME_RNG`'s accumulated value at first-fire time (which
+  volley target a homing missile wanders to, and therefore whether it
+  reaches state3 before hitting the stationary test tank, is RNG-timing
+  dependent - the sweep now gets a 2nd volley's worth of chances rather
+  than asserting on just the first).
+
 ## Open items / things to watch
 
-- **Thunder's own column never reaches rows20-23** (the ground/rock
-  terrain band) - see Round9's own `THUNDER_EXTRA_ROW` note above (this
-  moved 1 row closer since Round8, but the same underlying
-  `ERASE_BULLET_CELL` restore-path limit still applies). Not a bug, but
-  worth confirming with the user whether "下まで" needs to go further.
-- **Thunder's own real firing cadence is ~40px, not the literal 32px
-  asked for** - see Round9's own note above (a consequence of the
-  single-instance constraint + the grow+shrink cycle's own fixed
-  length). Flag this to the user; a faster art/step count could close
-  the gap if a truer 32px cadence is wanted.
 - No known open bugs as of this handoff — the boss's own SPRPAT bug
   (see above) was caught and fixed before shipping; the last several
   rounds before that were bug reports against the night effect and

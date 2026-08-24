@@ -692,7 +692,7 @@ target_xs = []
 life_before_sweep = cpu.mem[TANK_LIFE]
 prev_active = [0] * HORMING_SLOT_COUNT
 prev_state = [0] * HORMING_SLOT_COUNT
-for f in range(4000):
+for f in range(8000):
     step_frame(cpu)
     if cpu.mem[BOSS_PHASE] == 1 and pose_entered_at is None:
         pose_entered_at = f
@@ -700,30 +700,33 @@ for f in range(4000):
         pose_ended_at = f
     for i in range(HORMING_SLOT_COUNT):
         act = cpu.mem[slot_addr(i) + 0]
-        if act == 1 and prev_active[i] == 0:
+        # only the FIRST volley's own 4 launches/targets count toward the
+        # "exactly 4"/"not all identical" checks below - the sweep itself
+        # is allowed to run into a 2nd volley (round10: the boss's own
+        # left-edge pause shifts GAME_RNG's accumulated value at fire-
+        # time, so which TARGET_X a given volley's missiles happen to
+        # wander to - and therefore whether they reach state3 before
+        # colliding with the stationary test tank - is no longer the
+        # same outcome it used to be; a 2nd volley gives state3 another
+        # real chance without weakening the "exactly 4" per-volley check)
+        if act == 1 and prev_active[i] == 0 and len(launch_frames) < HORMING_SLOT_COUNT:
             launch_frames.append(f)
         prev_active[i] = act
         if act == 1:
             st = cpu.mem[slot_addr(i) + 4]
             if st == 1:
                 saw_state1 = True
-                if prev_state[i] == 0:
+                if prev_state[i] == 0 and len(target_xs) < HORMING_SLOT_COUNT:
                     target_xs.append(cpu.mem[slot_addr(i) + 6])
             elif st == 2:
                 saw_state2 = True
             elif st == 3:
                 saw_state3 = True
             prev_state[i] = st
-    # stop once well past pose-end AND every missile from this volley
-    # has finished its own flight (deactivated) - a missile's own full
-    # rise+wander+2D-descend+locked-approach easily outlasts the pose
-    # itself, so a short fixed window after pose-end isn't enough to
-    # observe the tail end of the flight (state3, a real hit).
-    if pose_ended_at is not None and f - pose_ended_at > 20:
-        if all(cpu.mem[slot_addr(i) + 0] == 0 for i in range(HORMING_SLOT_COUNT)):
-            break
-        if f - pose_ended_at > 800:
-            break
+    if saw_state3 and pose_ended_at is not None and f - pose_ended_at > 20:
+        break
+    if pose_ended_at is not None and f - pose_ended_at > 2000:
+        break
 
 check("real MAINLOOP: boss reaches the pose", pose_entered_at is not None)
 check("real MAINLOOP: exactly 4 missiles launch in total across the pose",

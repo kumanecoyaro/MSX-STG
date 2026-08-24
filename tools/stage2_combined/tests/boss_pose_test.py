@@ -83,13 +83,23 @@ call_routine(cpu, "UPDATE_BOSS_ALL")
 check("boss spawns with BOSS_PHASE=0 (patrolling)", cpu.mem[BOSS_PHASE] == 0)
 check("boss spawns at BOSS_SPAWNX", cpu.mem[BOSS_X] == BOSS_SPAWNX)
 
-# ---- drive it to the left edge - normal reversal, no pose ----
+# ---- drive it to the left edge - now pauses briefly (BOSS_PHASE=2)
+# before reversing - "左端は2Tick停止してから反転発射に" (round10) ----
 steps = 0
 while cpu.mem[BOSS_X] > 0 and steps < 200:
     call_routine(cpu, "UPDATE_BOSS_ALL")
     steps += 1
 call_routine(cpu, "UPDATE_BOSS_ALL")
-check("left-edge reversal is still a normal patrol reversal (DIR=1, moving right)",
+check("enters the left-edge pause (BOSS_PHASE=2) instead of reversing immediately",
+      cpu.mem[BOSS_PHASE] == 2 and cpu.mem[BOSS_X] == 0)
+# UPDATE_BOSS_ALL never advances GAME_TICK itself (only real MAINLOOP
+# does) - set it forward directly, same pattern already used below for
+# BOSS_POSE_TICKS.
+BOSS_LEFT_PAUSE_TICKS = sym["BOSS_LEFT_PAUSE_TICKS"]
+tick_at_pause = get_game_tick(cpu)
+set_game_tick(cpu, tick_at_pause + BOSS_LEFT_PAUSE_TICKS)
+call_routine(cpu, "UPDATE_BOSS_ALL")
+check("left-edge reversal is still a normal patrol reversal (DIR=1, moving right) once the pause elapses",
       cpu.mem[BOSS_DIR] == 1 and cpu.mem[BOSS_PHASE] == 0)
 check("left-edge reversal reloads the mirrored facing (unchanged from before this round)",
       sprpat_matches(cpu, SASAPI_QUADS_L))

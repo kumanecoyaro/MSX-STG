@@ -489,6 +489,11 @@ BOSS_FLASH_COLOR EQU 8
 ; specified, a modest ~25% cut chosen as "少し" - flag for correction if
 ; a different magnitude was wanted.
 BOSS_POSE_TICKS EQU 24
+; "左端は2Tick停止してから反転発射に 反転した時にボス自身に当たって
+; しまう" (round9) - a brief stationary pause at the left edge before
+; actually reversing, same true 16-bit GAME_TICK-duration idiom as
+; BOSS_POSE_TICKS (see UBA_LEFT_PAUSE).
+BOSS_LEFT_PAUSE_TICKS EQU 2
 ; the attack-pose hand art is drawn straight into the name table, not a
 ; hw sprite - needs its own 64 BG pattern codes (groups19-26, 152-215 -
 ; the next free block after group18/BULLETF's own night codes, per
@@ -1378,7 +1383,7 @@ BOSS_HP            EQU F27Ch
 BOSS_SPRITE_ATTRS  EQU F27Dh   ; 16 quadrants x4 bytes (Y,X,pat,col) = 64 bytes
 BOSS_FLASH_TIMER   EQU F2BDh   ; hit-flash countdown, same FLASH_DURATION-driven mechanism as every other HP-bearing entity's own flash timer
 BOSS_DRAW_COLOR    EQU F2BEh   ; scratch byte, DRAW_BOSS's own resolved color (BOSS_COLOR or BOSS_FLASH_COLOR) - feeds all 16 quadrant writes so the timer only ticks down once per frame, not 16 times
-BOSS_PHASE          EQU F2BFh  ; 0=patrolling(hw sprite), 1=parked in the attack pose(BG art) - "移動中はスプライト 停止中はBGて切り替え"
+BOSS_PHASE          EQU F2BFh  ; 0=patrolling(hw sprite), 1=parked in the attack pose(BG art) - "移動中はスプライト 停止中はBGて切り替え", 2=left-edge pause (round9, see UBA_LEFT_PAUSE) - stationary sprite, not the BG pose
 BOSS_POSE_END_TICK  EQU F2C0h  ; 2 bytes - GAME_TICK value the pose ends at (GAME_TICK+BOSS_POSE_TICKS, captured once at pose-entry), compared via true 16-bit SBC HL,DE every frame while BOSS_PHASE=1, same idiom as every other GAME_TICK threshold in this file (BOSS_SPAWN_TICK/NIGHT_START_TICK/etc.)
 
 ; ---------- homing missile (4-instance pool, fired as a volley once ----------
@@ -1405,25 +1410,41 @@ HORMING_POOL EQU F2C2h   ; 4 slots x7 bytes = 28 bytes
 HORMING_SPRITE_ATTRS EQU F2DEh   ; 4 slots x4 bytes (Y,X,pattern,color), staged same as ENEMY_SPRITE_ATTRS
 HORMING_VOLLEY_COUNT EQU F2EEh   ; how many of this pose's 4 have launched so far - see UPDATE_HORMING_VOLLEY
 HORMING_VOLLEY_TIMER EQU F2EFh   ; raw frames remaining until the next intermittent launch
-; Thunder's own single-instance state (not a pool - only ever one
-; column active at a time).
-THUNDER_ACT   EQU F2F0h   ; 0=inactive,1=growing(filling down),2=shrinking(erasing from the top)
-THUNDER_COL   EQU F2F1h   ; fixed BG column (0-31) for the active instance
-THUNDER_ROW   EQU F2F2h   ; current leading-edge row being drawn(growing)/erased(shrinking)
-THUNDER_TIMER EQU F2F3h   ; raw frames until the next grow/shrink step
-; per-boss-leg trigger tracking - "ボスが横に32px移動毎に発射" (round9:
-; repeats for the whole leg, not just once - see CHECK_THUNDER_TRIGGER_
-; LEFT/_RIGHT's own comment).
-THUNDER_PENDING       EQU F2F4h   ; 1=this leg is eligible/armed (stays 1 the whole leg); 0=not armed at all - see THUNDER_ELIGIBLE
-THUNDER_ELIGIBLE      EQU F2F5h   ; 0 until the first attack pose ever completes, then permanently 1 - "ホーミング攻撃後" gates Thunder off entirely during the boss's own pre-first-pose patrol legs
-THUNDER_LEG_START_X   EQU F2F6h   ; BOSS_X captured at the start of the current leg (pose-end for the leftward leg, left-edge reversal for the rightward leg)
+; Thunder's own state - a real POOL now (round9 fix: "いつからサンダー
+; は1本しか出せない仕様に? そんな指示はしてねえぞ...BGを使ってるのは
+; 表示制限がないからだろが" - BG has no hw-sprite-style display limit,
+; so multiple columns can and should coexist, same idea as the terrain-
+; scroller's own always-on redraw having no slot budget at all).
+THUNDER_SLOT_SIZE  EQU 4    ; +0 ACT(0=inactive,1=growing,2=shrinking),+1 COL,+2 ROW(grow/shrink frontier),+3 DEEP_ROW(deepest row reached - valid once shrinking; see UPDATE_ONE_THUNDER)
+THUNDER_SLOT_COUNT EQU 4
+THUNDER_POOL EQU F2F0h   ; THUNDER_SLOT_SIZE*THUNDER_SLOT_COUNT = 16 bytes (F2F0h-F2FFh)
+; per-boss-leg trigger tracking - "ボスが横に32px移動毎に発射" - repeats
+; for the whole leg, not just once, and (round9) no longer gated on any
+; previous column finishing first - see CHECK_THUNDER_TRIGGER_LEFT/_
+; RIGHT's own comment.
+THUNDER_PENDING       EQU F300h   ; 1=this leg is eligible/armed (stays 1 the whole leg); 0=not armed at all - see THUNDER_ELIGIBLE
+THUNDER_ELIGIBLE      EQU F301h   ; 0 until the first attack pose ever completes, then permanently 1 - "ホーミング攻撃後" gates Thunder off entirely during the boss's own pre-first-pose patrol legs
+THUNDER_LEG_START_X   EQU F302h   ; BOSS_X captured at the start of the current leg (pose-end for the leftward leg, left-edge reversal for the rightward leg)
 ; scratch record shaped to match ERASE_BULLET_CELL's own IX+2(COL)/+3
 ; (ROW)/+4(ADDR_LO)/+5(ADDR_HI) field expectations, reused as-is so
 ; Thunder's own erase gets the exact same background-aware restore
 ; (sky/skysand/rock) bullets already have, instead of a hand-rolled
-; duplicate - see ERASE_THUNDER_BLOCK's own comment. +0/+1 unused
-; (ERASE_BULLET_CELL never reads them).
-THUNDER_ERASE_BASE    EQU F2F7h   ; +2=COL,+3=ROW,+4=ADDR_LO,+5=ADDR_HI (6 bytes, F2F7h-F2FCh)
+; duplicate - see ERASE_ONE_THUNDER_ROW's own comment. +0/+1 unused
+; (ERASE_BULLET_CELL never reads them). Shared/reused across every
+; slot's own erase calls (safe - erases happen synchronously, one cell
+; at a time, never interleaved across slots within a single call).
+THUNDER_ERASE_BASE    EQU F303h   ; +2=COL,+3=ROW,+4=ADDR_LO,+5=ADDR_HI (6 bytes, F303h-F308h)
+; transient scratch pair for the contested-row (>=20) reassertion pass -
+; see UOT_REASSERT_GROW/_SHRINK/UOT_MAYBE_DRAW's own comments. Reloaded
+; fresh before each of the (at most 4) row checks since DRAW_ONE_
+; THUNDER_ROW's own NIGHT_ROW_ADDR call trashes DE - only 1 slot is
+; ever being reasserted at a time, no reentrancy risk.
+THUNDER_VIS_LOW  EQU F309h
+THUNDER_VIS_HIGH EQU F30Ah
+; "左端は2Tick停止してから反転発射に" (round9) - GAME_TICK value the
+; left-edge pause ends at, same 2-byte/true-16-bit-compare shape as
+; BOSS_POSE_END_TICK.
+BOSS_LEFT_PAUSE_END_TICK EQU F30Bh
 
 ; "ボスに被らない位置の右上 今の発射位置の16px上あたり" - same X as
 ; before (still within the boss's own 64x64 box's own column range,
@@ -1492,15 +1513,20 @@ HORMING_HOMING_Y_OFFSET EQU 8
 ; "サンダーの実装 ホーミング攻撃後左に移動中に添付のキャラを画面2行目
 ; から下まで移動しながら埋める 埋め終わったら上から消す 発射位置とタ
 ; イミングはボスの右のX位置でボスが16px移動したら発射 そのまま左まで
-; 行き反転後はボスの左に発射 BGで描画". A single-instance effect (not a
-; pool) - only ever one column active at a time, one per boss movement
-; leg between poses.
-; 4 new BG pattern codes (2x2 tile grid, group27 - the next free BG
-; group after SASAPI_HAND's own groups19-26, per HANDOFF's "groups19-30
-; still free" note - group31 is SkySand's own, so 27-30 were the
-; remaining candidates).
+; 行き反転後はボスの左に発射 BGで描画", plus round9's corrections:
+; "端だけではなくボスが横に32px移動毎に発射"(a real pool, not 1-shot-
+; per-leg), "終了位置は地形までに変更 地形に到達したら添付のキャラを
+; 地上の上に左右に発射"(grows all the way to the actual terrain surface,
+; then drops 2 ThunderS cells beside it - see UPDATE_ONE_THUNDER),
+; "表示ウェイト不要"(no step delay).
+; 5 new BG pattern codes (2x2 grid for the bolt itself + 1 for ThunderS,
+; group27 - the next free BG group after SASAPI_HAND's own groups19-26,
+; group31 is SkySand's own, so 27-30 were the remaining candidates).
 THUNDER_CODE_BASE EQU 216
-; fg7(cyan)/bg1(black), matching the uploaded JSON's own header exactly.
+THUNDERS_CODE EQU THUNDER_CODE_BASE+4   ; group27's 5th code (216-223 has 8 total, only 5 used)
+; fg7(cyan)/bg1(black), matching both uploaded JSONs' own header exactly
+; - THUNDERS_CODE shares this same group/color, no separate color-table
+; write needed for it.
 THUNDER_COLORBYTE EQU 071h
 ; "画面2行目から" - INFERRED to mean the same row NIGHT_START_ROW(1)
 ; already anchors to ("スコアの下の行から" - the row right below the
@@ -1509,34 +1535,9 @@ THUNDER_COLORBYTE EQU 071h
 ; row-index-2 reading, which would be one row further down than where
 ; the sky itself is considered to start.
 THUNDER_TOP_ROW EQU NIGHT_START_ROW
-; 16px tall image = 2 tile-rows per grown/shrunk segment.
-THUNDER_ROW_STEP EQU 2
-; last START row for a full 2-row block whose erase is actually
-; restorable - ERASE_BULLET_CELL (reused by ERASE_THUNDER_BLOCK below)
-; itself gives up on row>=BULLET_ROCK_ROW_MIN+4(20) - EBC_SKIP, no write
-; at all - since that band is real ground/rock terrain with no generic
-; BG restore path, the exact same boundary bullets themselves respect
-; flying through there. So the last row a 2-row block can safely BOTH
-; draw AND later erase is row18 (start row17, covering rows17-18, both
-; <20).
-THUNDER_BOTTOM_ROW EQU 17
-; "終了位置はあと1セル分長く" - one more single 8x8 row past the last
-; full block (THUNDER_BOTTOM_ROW+2=19), drawn/erased as a HALF block
-; (bottom-half tiles only - DRAW_THUNDER_HALF/ERASE_THUNDER_HALF) since
-; there's no more Thunder art to fill a 2nd row with. Row19 is still
-; <20 so ERASE_BULLET_CELL can restore it same as the full blocks
-; above it; row20 itself is the first row it can't restore at all (see
-; THUNDER_BOTTOM_ROW's own comment), so this is as far down as the
-; column can safely go - rows20-23 (the ground/rock band) stay
-; uncovered. Flagged as a real (not cosmetic) limitation: extending
-; further would need a genuine new restore path for that band, out of
-; scope unless asked for.
-THUNDER_EXTRA_ROW EQU THUNDER_BOTTOM_ROW+THUNDER_ROW_STEP
 ; "ボスが横に32px移動毎に発射" - re-checked continuously through the
 ; whole leg now (round9), not just once near the edge.
 THUNDER_TRIGGER_DX EQU 32
-; "表示ウェイト不要" - steps every single frame, no pacing delay.
-THUNDER_STEP_INTERVAL EQU 0
 ETANK_SPR_BASE_SLOT EQU 24     ; hw sprite slots24-25 (BL/BR only x1 instance), right after Flyer's own 20-23
 ; "カラーはダークレッド" - NOT sprites/Etank.json's own fg, overridden
 ; directly here (same "override the JSON's own fg" precedent as
@@ -1908,6 +1909,7 @@ INIT_RESUME_AFTER_BANK_SELECT:
     ; comment) - same permanent-allocation idiom as the hand art above.
     DI
     LD HL,THUNDER_TILES : LD DE,THUNDER_CODE_BASE*8 : LD BC,4*8 : CALL LDIRVM
+    LD HL,THUNDERS_TILE : LD DE,THUNDERS_CODE*8 : LD BC,1*8 : CALL LDIRVM
     EI
     LD A,THUNDER_COLORBYTE : LD (HUD_TEMP_BYTE),A
     LD HL,HUD_TEMP_BYTE : LD DE,2000h+27 : LD BC,1 : CALL LDIRVM
@@ -6981,14 +6983,16 @@ UPDATE_BOSS_ALL:
     LD A,BOSS_HP_INIT : LD (BOSS_HP),A
     XOR A : LD (BOSS_FLASH_TIMER),A
     XOR A : LD (BOSS_PHASE),A  ; 0 = patrolling/sprite
-    XOR A : LD (THUNDER_ACT),A
+    CALL RESET_THUNDER_POOL
     XOR A : LD (THUNDER_PENDING),A
     XOR A : LD (THUNDER_ELIGIBLE),A   ; not eligible until the first pose ends - see UBAP_END
     JP UBA_DRAW
 UBA_ACTIVE:
     LD A,(BOSS_PHASE)
-    OR A
-    JR NZ,UBA_POSE
+    CP 1
+    JP Z,UBA_POSE
+    CP 2
+    JP Z,UBA_LEFT_PAUSE
     LD A,(BOSS_DIR)
     OR A
     JR NZ,UBA_MOVE_RIGHT
@@ -6997,7 +7001,32 @@ UBA_MOVE_LEFT:
     CP BOSS_SPEED
     JR NC,UBA_STEP_LEFT
     XOR A : LD (BOSS_X),A      ; clamp to the left edge
+    ; "左端は2Tick停止してから反転発射に 反転した時にボス自身に当たっ
+    ; てしまう" (round9) - pause here instead of reversing immediately;
+    ; UBA_LEFT_PAUSE below does the actual reversal once it elapses.
+    LD A,2 : LD (BOSS_PHASE),A
+    LD HL,(GAME_TICK) : LD DE,BOSS_LEFT_PAUSE_TICKS : ADD HL,DE
+    LD (BOSS_LEFT_PAUSE_END_TICK),HL
+    JP UBA_DRAW
+UBA_STEP_LEFT:
+    SUB BOSS_SPEED : LD (BOSS_X),A
+    CALL CHECK_THUNDER_TRIGGER_LEFT
+    JP UBA_DRAW
+; waits BOSS_LEFT_PAUSE_TICKS(2) GAME_TICKs at the left edge (true
+; 16-bit compare, same idiom as BOSS_POSE_END_TICK) before actually
+; reversing - gives whatever Thunder column fired late in the leftward
+; leg (positioned near the boss's own right edge, which can be close to
+; X=0 by then) a beat to grow/shrink on its own before the boss starts
+; moving back into that space. Boss stays drawn as an ordinary
+; stationary sprite throughout (unlike the attack pose's own BG art).
+UBA_LEFT_PAUSE:
+    LD HL,(GAME_TICK)
+    LD DE,(BOSS_LEFT_PAUSE_END_TICK)
+    OR A
+    SBC HL,DE
+    JP C,UBA_DRAW              ; still pausing
     LD A,1 : LD (BOSS_DIR),A   ; 反転 - now heads right
+    XOR A : LD (BOSS_PHASE),A
     LD HL,SASAPI_QUADS_L : CALL LOAD_SASAPI_PATTERNS
     ; arm this rightward leg's own Thunder trigger - "そのまま左まで行き
     ; 反転後はボスの左に発射". Only once THUNDER_ELIGIBLE(set permanently
@@ -7008,10 +7037,6 @@ UBA_MOVE_LEFT:
     JP Z,UBA_DRAW
     XOR A : LD (THUNDER_LEG_START_X),A   ; BOSS_X is 0 here
     LD A,1 : LD (THUNDER_PENDING),A
-    JP UBA_DRAW
-UBA_STEP_LEFT:
-    SUB BOSS_SPEED : LD (BOSS_X),A
-    CALL CHECK_THUNDER_TRIGGER_LEFT
     JP UBA_DRAW
 UBA_MOVE_RIGHT:
     LD A,(BOSS_X) : ADD A,BOSS_SPEED
@@ -7364,202 +7389,379 @@ ERASE_SASAPI_HAND:
     EI
     RET
 
-; ---------- Thunder (BG-drawn lightning column, single instance) ----------
+; ---------- Thunder (BG-drawn lightning column, a real pool now - see
+; THUNDER_SLOT_SIZE's own comment) ----------
 ; the 4 Thunder codes, TL/TR/BL/BR - row-major, matching thunder_gen.py's
 ; own tiles_row_major output order (top row first: TL,TR then BL,BR).
 THUNDER_NAME_CODES:
     DB THUNDER_CODE_BASE+0,THUNDER_CODE_BASE+1,THUNDER_CODE_BASE+2,THUNDER_CODE_BASE+3
 
+; zeroes every slot's own ACT byte - called at boss spawn.
+RESET_THUNDER_POOL:
+    LD B,THUNDER_SLOT_COUNT
+    LD IX,THUNDER_POOL
+RTP_LOOP:
+    XOR A : LD (IX+0),A
+    INC IX : INC IX : INC IX : INC IX
+    DJNZ RTP_LOOP
+    RET
+
 ; A = starting BG column (0-31, already resolved by the caller from the
-; boss's own current right/left edge). Arms a fresh grow cycle.
-FIRE_THUNDER:
-    LD (THUNDER_COL),A
-    LD A,1 : LD (THUNDER_ACT),A
-    LD A,THUNDER_TOP_ROW : LD (THUNDER_ROW),A
-    XOR A : LD (THUNDER_TIMER),A
-    RET
-
-; called every MAINLOOP frame regardless of boss state - once armed by
-; FIRE_THUNDER, runs its own grow-then-shrink cycle to completion
-; independently, same "keeps going even if the leg/pose that triggered
-; it has already ended" idea as the homing missile's own flight.
-UPDATE_THUNDER:
-    LD A,(THUNDER_ACT)
+; boss's own current right/left edge). Finds the first inactive slot
+; and arms a fresh grow cycle there - "いつからサンダーは1本しか出せな
+; い仕様に? そんな指示はしてねえぞ...BGを使ってるのは表示制限がない
+; からだろが" (round9: a real pool, THUNDER_SLOT_COUNT concurrent
+; columns, not an invented 1-at-a-time cap) - same "pool full -> drop
+; the attempt" idiom as FIRE_ONE_HORMING.
+ALLOC_THUNDER_SLOT:
+    LD C,A                      ; C = col, preserved across the scan
+    LD B,THUNDER_SLOT_COUNT
+    LD IX,THUNDER_POOL
+ATS_LOOP:
+    LD A,(IX+0)
     OR A
-    RET Z
-    LD A,(THUNDER_TIMER)
+    JR Z,ATS_SPAWN
+    INC IX : INC IX : INC IX : INC IX
+    DJNZ ATS_LOOP
+    RET                          ; pool full - drop the attempt
+ATS_SPAWN:
+    LD A,1 : LD (IX+0),A
+    LD A,C : LD (IX+1),A
+    LD A,THUNDER_TOP_ROW : LD (IX+2),A
+    RET
+
+; A = column (0-31). Returns A = the terrain surface ROW (20-23) at
+; that column - same IDCACHE_T0..T3 top-to-bottom walk UPDATE_TERRAIN_
+; COLLISION/UOZ_TERRAIN_FOLLOW already use for the tank/Zum, just
+; indexed directly by a BG column (already in column units) instead of
+; a pixel X needing its own /8 first. Re-probed fresh every step (not
+; cached at fire-time) since the terrain scrolls underneath a fixed
+; screen column while a Thunder instance is alive.
+GET_TERRAIN_ROW_FOR_COL:
+    LD E,A : LD D,0
+    LD HL,IDCACHE_T0 : ADD HL,DE : LD A,(HL)
     OR A
-    JR Z,UT_STEP
-    DEC A : LD (THUNDER_TIMER),A
+    JR NZ,GTRC_T0
+    LD HL,IDCACHE_T1 : ADD HL,DE : LD A,(HL)
+    OR A
+    JR NZ,GTRC_T1
+    LD HL,IDCACHE_T2 : ADD HL,DE : LD A,(HL)
+    OR A
+    JR NZ,GTRC_T2
+    LD A,23
     RET
-UT_STEP:
-    LD A,THUNDER_STEP_INTERVAL : LD (THUNDER_TIMER),A
-    LD A,(THUNDER_ACT)
-    CP 1
-    JP Z,UT_GROW
-    JP UT_SHRINK
-
-; rows1,3,...,THUNDER_BOTTOM_ROW(17) draw full 2x2 blocks; the final
-; step at THUNDER_EXTRA_ROW(19, ==BOTTOM_ROW+ROW_STEP so it's reached
-; naturally by the same +ROW_STEP increment, no extra branch needed for
-; that part) draws only the bottom-half tiles - "終了位置はあと1セル
-;分長く" - see THUNDER_EXTRA_ROW's own comment for why it stops there.
-UT_GROW:
-    LD A,(THUNDER_ROW)
-    CP THUNDER_EXTRA_ROW
-    JR Z,UT_GROW_HALF
-    CALL DRAW_THUNDER_BLOCK
-    LD A,(THUNDER_ROW) : ADD A,THUNDER_ROW_STEP
-    LD (THUNDER_ROW),A
+GTRC_T0:
+    LD A,20
     RET
-UT_GROW_HALF:
-    CALL DRAW_THUNDER_HALF
-    ; fully grown - "埋め終わったら上から消す" - start shrinking from the top
-    LD A,THUNDER_TOP_ROW : LD (THUNDER_ROW),A
-    LD A,2 : LD (THUNDER_ACT),A
+GTRC_T1:
+    LD A,21
+    RET
+GTRC_T2:
+    LD A,22
     RET
 
-UT_SHRINK:
-    LD A,(THUNDER_ROW)
-    CP THUNDER_EXTRA_ROW
-    JR Z,UT_SHRINK_HALF
-    CALL ERASE_THUNDER_BLOCK
-    LD A,(THUNDER_ROW) : ADD A,THUNDER_ROW_STEP
-    LD (THUNDER_ROW),A
-    RET
-UT_SHRINK_HALF:
-    CALL ERASE_THUNDER_HALF
-    XOR A : LD (THUNDER_ACT),A
-    RET
-
-; writes the 4 Thunder codes as a 2x2 block at THUNDER_ROW/THUNDER_COL.
-; NIGHT_ROW_ADDR is re-called fresh for each row (rather than reusing a
-; stored DE across the two LDIRVM calls) since LDIRVM's own BIOS
-; implementation consumes/advances its HL/DE/BC arguments - a DE
-; computed before the first LDIRVM can't be safely chained into the
-; second.
-DRAW_THUNDER_BLOCK:
-    LD A,(THUNDER_ROW)
-    CALL NIGHT_ROW_ADDR              ; DE = top row's own base address
-    LD A,(THUNDER_COL) : LD L,A : LD H,0
+; A=row,B=col. Writes the correct tile pair (ODD row=TL/TR - a block-
+; top row, EVEN row=BL/BR - a block-bottom row; THUNDER_TOP_ROW(1) is
+; itself odd so this parity holds for every row the bolt ever visits)
+; at (row,col)/(row,col+1) in one 2-byte LDIRVM. NIGHT_ROW_ADDR trashes
+; A, so the row is stashed via PUSH/POP AF across that call rather than
+; reloaded from anywhere (this routine only ever receives it via A).
+DRAW_ONE_THUNDER_ROW:
+    PUSH AF
+    CALL NIGHT_ROW_ADDR              ; DE = this row's own base address
+    LD A,B : LD L,A : LD H,0
     ADD HL,DE
     LD D,H : LD E,L
+    POP AF
+    AND 1
+    JR Z,DOTR_BLBR
     DI
     LD HL,THUNDER_NAME_CODES+0 : LD BC,2 : CALL LDIRVM
     EI
-    LD A,(THUNDER_ROW) : INC A
-    CALL NIGHT_ROW_ADDR              ; DE = bottom row's own base address
-    LD A,(THUNDER_COL) : LD L,A : LD H,0
-    ADD HL,DE
-    LD D,H : LD E,L
+    RET
+DOTR_BLBR:
     DI
     LD HL,THUNDER_NAME_CODES+2 : LD BC,2 : CALL LDIRVM
     EI
     RET
 
-; writes just the bottom-half tiles (BL/BR) as a single row at
-; THUNDER_ROW/THUNDER_COL - the final "1セル分" extension past the last
-; full 2x2 block (see THUNDER_EXTRA_ROW's own comment).
-DRAW_THUNDER_HALF:
-    LD A,(THUNDER_ROW)
+; A=row,B=col. Writes 1 THUNDERS_CODE cell at (row,col) - "地形に到達
+; したら添付のキャラを地上の上に左右に発射...サンダーが着地したら左右
+; 同時に2セル描いて消せばおｋ 地形に沿うのは無しで" (round9: a static
+; BG cell, not a moving hw sprite).
+WRITE_THUNDERS_CELL:
     CALL NIGHT_ROW_ADDR
-    LD A,(THUNDER_COL) : LD L,A : LD H,0
+    LD A,B : LD L,A : LD H,0
     ADD HL,DE
     LD D,H : LD E,L
+    LD A,THUNDERS_CODE : LD (HUD_TEMP_BYTE),A
     DI
-    LD HL,THUNDER_NAME_CODES+2 : LD BC,2 : CALL LDIRVM
+    LD HL,HUD_TEMP_BYTE : LD BC,1 : CALL LDIRVM
     EI
     RET
 
-; erases the single extra row at THUNDER_ROW/THUNDER_COL (2 cells, not
-; 4) via ERASE_BULLET_CELL, same reuse idea as ERASE_THUNDER_BLOCK.
-ERASE_THUNDER_HALF:
-    LD A,(THUNDER_ROW) : LD C,A
-    LD A,(THUNDER_COL) : LD B,A
-    CALL THUNDER_ERASE_ONE_CELL
-    LD A,(THUNDER_COL) : INC A : LD B,A
-    CALL THUNDER_ERASE_ONE_CELL
-    RET
-
-; erases the 2x2 block at THUNDER_ROW/THUNDER_COL - reuses ERASE_BULLET_
-; CELL's own background-aware single-cell restore (sky/skysand/rock, see
-; THUNDER_BOTTOM_ROW's own comment for why the column never reaches the
-; rows that restore can't handle) via THUNDER_ERASE_BASE, once per cell
-; (4 calls), instead of duplicating that whole branch tree here.
-ERASE_THUNDER_BLOCK:
-    LD A,(THUNDER_ROW) : LD C,A
-    LD A,(THUNDER_COL) : LD B,A
-    CALL THUNDER_ERASE_ONE_CELL      ; top-left
-    LD A,(THUNDER_COL) : INC A : LD B,A
-    CALL THUNDER_ERASE_ONE_CELL      ; top-right
-    LD A,(THUNDER_ROW) : INC A : LD C,A
-    LD A,(THUNDER_COL) : LD B,A
-    CALL THUNDER_ERASE_ONE_CELL      ; bottom-left
-    LD A,(THUNDER_COL) : INC A : LD B,A
-    CALL THUNDER_ERASE_ONE_CELL      ; bottom-right
-    RET
-
-; C=row, B=col. Erases one cell via ERASE_BULLET_CELL (IX+2=COL,+3=ROW,
-; +4/+5=ADDR_LO/HI of the row's own base address).
-THUNDER_ERASE_ONE_CELL:
-    LD A,C : LD (THUNDER_ERASE_BASE+3),A
-    LD A,B : LD (THUNDER_ERASE_BASE+2),A
-    LD A,C
+; A=row,B=col. Restores 1 cell via ERASE_BULLET_CELL - a no-op for
+; row>=20 (real ground/rock terrain - TERRAIN_RENDER_ROW's own
+; UNCONDITIONAL full-row redraw, called every MAINLOOP frame before the
+; boss/Thunder update, naturally reclaims it within 1 frame once
+; nothing keeps re-asserting it there - see UOT_REASSERT_GROW/_SHRINK's
+; own comment; no separate restore path is needed for that band at
+; all). PUSH/POP IX around the ERASE_BULLET_CELL call since that
+; routine needs IX pointed at THUNDER_ERASE_BASE for its own field
+; reads, but the CALLER's own IX (a Thunder slot pointer) must survive
+; this call intact.
+ERASE_ONE_THUNDER_CELL:
+    CP 20
+    RET NC
+    LD (THUNDER_ERASE_BASE+3),A
     CALL NIGHT_ROW_ADDR
     LD A,E : LD (THUNDER_ERASE_BASE+4),A
     LD A,D : LD (THUNDER_ERASE_BASE+5),A
+    LD A,B : LD (THUNDER_ERASE_BASE+2),A
+    PUSH IX
     LD IX,THUNDER_ERASE_BASE
     CALL ERASE_BULLET_CELL
+    POP IX
+    RET
+
+; A=row,B=col. Restores both cells (col,col+1).
+ERASE_ONE_THUNDER_ROW:
+    PUSH AF
+    PUSH BC
+    CALL ERASE_ONE_THUNDER_CELL
+    POP BC
+    POP AF
+    INC B
+    CALL ERASE_ONE_THUNDER_CELL
+    RET
+
+; A=row candidate,B=col. Draws only if THUNDER_VIS_LOW<=row<=THUNDER_
+; VIS_HIGH (reloaded fresh from scratch each call, not passed via
+; registers - DRAW_ONE_THUNDER_ROW's own NIGHT_ROW_ADDR call trashes
+; DE, so a register-passed bound wouldn't survive across the 4 calls
+; UOT_REASSERT_4 makes).
+UOT_MAYBE_DRAW:
+    LD C,A
+    LD A,(THUNDER_VIS_LOW) : LD D,A
+    LD A,C
+    CP D
+    RET C                          ; row<low
+    LD A,(THUNDER_VIS_HIGH) : LD E,A
+    LD A,E
+    CP C
+    RET C                          ; high<row
+    LD A,C
+    CALL DRAW_ONE_THUNDER_ROW
+    RET
+
+; IX=slot, THUNDER_VIS_LOW/_HIGH already set. Redraws whichever of
+; rows20-23 fall within [LOW,HIGH] - only 4 possible rows, so just
+; unrolled rather than a real loop.
+UOT_REASSERT_4:
+    LD B,(IX+1) : LD A,20 : CALL UOT_MAYBE_DRAW
+    LD B,(IX+1) : LD A,21 : CALL UOT_MAYBE_DRAW
+    LD B,(IX+1) : LD A,22 : CALL UOT_MAYBE_DRAW
+    LD B,(IX+1) : LD A,23 : CALL UOT_MAYBE_DRAW
+    RET
+
+; IX=slot. GROW's own visible range is always [20,ROW-1] (low fixed at
+; 20 - growth only ever extends downward during this phase, never
+; retracts mid-grow).
+UOT_REASSERT_GROW:
+    LD A,(IX+2) : DEC A
+    CP 20
+    RET C
+    LD (THUNDER_VIS_HIGH),A
+    LD A,20 : LD (THUNDER_VIS_LOW),A
+    JP UOT_REASSERT_4
+
+; IX=slot. SHRINK's own visible range is [ROW,DEEP_ROW] (both move as
+; erasing marches down from the top).
+UOT_REASSERT_SHRINK:
+    LD A,(IX+3)
+    CP 20
+    RET C
+    LD (THUNDER_VIS_HIGH),A
+    LD A,(IX+2) : LD (THUNDER_VIS_LOW),A
+    JP UOT_REASSERT_4
+
+; IX=slot. Draws the 2 ThunderS cells beside the bolt at its own DEEP_
+; ROW(IX+3)/COL(IX+1) - one column left, one column right. Skips a side
+; that would fall outside the 0-31 column range (defensive - COL is
+; always derived from the boss's own edge X, well within range in
+; practice, but avoid ever wrapping into an adjacent row).
+UOT_DRAW_SIDES:
+    LD A,(IX+1)
+    OR A
+    JR Z,UDS_SKIP_LEFT
+    DEC A : LD B,A                 ; B = COL-1
+    LD A,(IX+3)
+    CALL WRITE_THUNDERS_CELL
+UDS_SKIP_LEFT:
+    LD A,(IX+1)
+    CP 30
+    JR NC,UDS_SKIP_RIGHT
+    ADD A,2 : LD B,A                ; B = COL+2
+    LD A,(IX+3)
+    CALL WRITE_THUNDERS_CELL
+UDS_SKIP_RIGHT:
+    RET
+
+; IX=slot. Erases the 2 ThunderS side cells - same shape as UOT_DRAW_
+; SIDES.
+UOT_ERASE_SIDES:
+    LD A,(IX+1)
+    OR A
+    JR Z,UES_SKIP_LEFT
+    DEC A : LD B,A
+    LD A,(IX+3)
+    CALL ERASE_ONE_THUNDER_CELL
+UES_SKIP_LEFT:
+    LD A,(IX+1)
+    CP 30
+    JR NC,UES_SKIP_RIGHT
+    ADD A,2 : LD B,A
+    LD A,(IX+3)
+    CALL ERASE_ONE_THUNDER_CELL
+UES_SKIP_RIGHT:
+    RET
+
+; IX = slot base (+0 ACT,+1 COL,+2 ROW,+3 DEEP_ROW). Advances this
+; slot's own grow/shrink cycle by exactly 1 row (表示ウェイト不要 - no
+; pacing), then re-asserts whatever of its own visible range currently
+; falls in the ground/rock band (row>=20) - "終了位置は地形までに変更"
+; means the bolt can now reach real ground rows, which TERRAIN_RENDER_
+; ROW's own UNCONDITIONAL full-row redraw (see MAINLOOP, runs every
+; single frame before this routine) would otherwise silently overwrite
+; within 1 frame; re-asserting every frame here (racing that redraw,
+; same "restore the known-correct value every frame" idiom as DRAW_
+; SASAPI_HAND's own per-frame healing) keeps it visible for as long as
+; it's still supposed to be, and simply STOPPING re-assertion (rather
+; than any explicit erase) is enough to hand the cell back to the
+; terrain's own redraw once it's not wanted any more - no separate
+; restore path needed for that band at all.
+UPDATE_ONE_THUNDER:
+    LD A,(IX+0)
+    OR A
+    RET Z
+    CP 1
+    JP Z,UOT_GROW
+    JP UOT_SHRINK
+
+UOT_GROW:
+    LD A,(IX+1) : CALL GET_TERRAIN_ROW_FOR_COL
+    LD B,A                       ; B = terrain row for this column
+    LD A,(IX+2)                  ; A = current ROW
+    CP B
+    JR C,UOT_GROW_STEP           ; ROW < terrain row - safe to draw here
+    ; reached the terrain - "地形に到達したら" - stop growing, drop the
+    ; 2 ThunderS cells beside the bolt, and start shrinking.
+    DEC A : LD (IX+3),A          ; DEEP_ROW = last row actually drawn (ROW-1)
+    ; re-draw DEEP_ROW's own main-bolt row too (not just the new side
+    ; cells): it was drawn on a PREVIOUS frame, so if it's in the
+    ; contested band (>=20) this exact frame's own terrain redraw
+    ; (which already ran earlier in MAINLOOP, before UPDATE_THUNDER)
+    ; could have just clobbered it, and UOT_REASSERT_GROW/_SHRINK don't
+    ; cover this one specific transition frame (growth's own reassert
+    ; already happened for the PREVIOUS row before this call; shrink's
+    ; own reassert doesn't start until next frame) - caught by a real
+    ; test simulating that exact per-frame clobber.
+    LD B,(IX+1)
+    CALL DRAW_ONE_THUNDER_ROW
+    CALL UOT_DRAW_SIDES
+    LD A,THUNDER_TOP_ROW : LD (IX+2),A
+    LD A,2 : LD (IX+0),A
+    RET
+UOT_GROW_STEP:
+    LD B,(IX+1)                  ; B = col
+    CALL DRAW_ONE_THUNDER_ROW
+    LD A,(IX+2) : INC A : LD (IX+2),A
+    CALL UOT_REASSERT_GROW
+    RET
+
+UOT_SHRINK:
+    LD A,(IX+3)                  ; A = DEEP_ROW
+    LD B,(IX+2)                  ; B = ROW (shrink frontier)
+    CP B
+    JR C,UOT_SHRINK_DONE         ; DEEP_ROW < ROW - nothing left to erase
+    LD A,B                        ; A = ROW
+    LD B,(IX+1)                   ; B = COL
+    CALL ERASE_ONE_THUNDER_ROW
+    LD A,(IX+2)
+    LD C,A
+    LD A,(IX+3)
+    CP C
+    JR NZ,UOT_SHRINK_ADVANCE
+    CALL UOT_ERASE_SIDES          ; this frame's row IS the deepest one - also clear the side cells
+UOT_SHRINK_ADVANCE:
+    LD A,(IX+2) : INC A : LD (IX+2),A
+    CALL UOT_REASSERT_SHRINK
+    RET
+UOT_SHRINK_DONE:
+    XOR A : LD (IX+0),A
+    RET
+
+; called every MAINLOOP frame - advances every active Thunder slot by
+; exactly 1 row, independently of the boss/trigger state that armed
+; them (same "keeps going even after the trigger that started it" idea
+; as the homing missile's own flight).
+UPDATE_THUNDER:
+    LD B,THUNDER_SLOT_COUNT
+    LD IX,THUNDER_POOL
+UT_LOOP:
+    PUSH BC
+    CALL UPDATE_ONE_THUNDER
+    POP BC
+    INC IX : INC IX : INC IX : INC IX
+    DJNZ UT_LOOP
     RET
 
 ; checks whether the leftward leg's own 32px-moved trigger should fire
 ; Thunder this frame - called from UBA_STEP_LEFT, after BOSS_X has
-; already been updated for this frame. "端だけではなくボスが横に32px移
-; 動毎に発射" (round9) - keeps re-arming and re-firing every
-; THUNDER_TRIGGER_DX px for the whole leg, not just once near the edge.
-; Since it's a single-instance effect, a trigger that lands while the
-; previous column is still animating (THUNDER_ACT!=0) is simply skipped
-; this frame - THUNDER_LEG_START_X is left untouched so the distance
-; keeps accumulating, and it fires (using whatever the boss's edge X is
-; AT THAT MOMENT, not the original 32px mark) the instant the previous
-; one finishes.
+; already been updated for this frame. Repeats for the WHOLE leg
+; (round9: "端だけではなくボスが横に32px移動毎に発射"), no longer
+; gated on any previous column finishing - ALLOC_THUNDER_SLOT is a real
+; pool now (see its own comment).
 CHECK_THUNDER_TRIGGER_LEFT:
     LD A,(THUNDER_PENDING)
     OR A
     RET Z
-    LD A,(THUNDER_ACT)
-    OR A
-    RET NZ                          ; previous column still animating
     LD A,(THUNDER_LEG_START_X) : LD B,A
     LD A,(BOSS_X) : LD C,A
     LD A,B : SUB C                  ; distance moved = start - current (X decreases moving left)
     CP THUNDER_TRIGGER_DX
     RET C
     LD A,(BOSS_X) : LD (THUNDER_LEG_START_X),A   ; re-arm baseline for the next THUNDER_TRIGGER_DX
-    LD A,(BOSS_X) : ADD A,64        ; boss's own current right edge
+    LD A,(BOSS_X) : ADD A,64        ; boss's own current right edge - trailing behind it as it moves left, no overlap
     SRL A : SRL A : SRL A            ; X -> BG column
-    CALL FIRE_THUNDER
+    CALL ALLOC_THUNDER_SLOT
     RET
 
 ; same idea for the rightward leg (after the left-edge reversal) -
 ; called from UBA_STEP_RIGHT, after BOSS_X has already been updated for
-; this frame.
+; this frame. Fires trailing behind the boss here too (its own left
+; side, as it moves right) - "反転した時にボス自身に当たってしまう":
+; the old code used BOSS_X itself (the boss's own CURRENT left edge) as
+; the column start, putting the bolt's own 2-column-wide art directly
+; UNDER the boss's own body (both start at the same X); BOSS_X-16
+; instead positions it flush against the boss's own trailing left edge
+; (column range [BOSS_X-16,BOSS_X), entirely outside the boss's own
+; [BOSS_X,BOSS_X+64) box), mirroring the leftward leg's own BOSS_X+64
+; (entirely outside on the other side). No underflow risk: the first
+; rightward fire can't happen before BOSS_X>=THUNDER_TRIGGER_DX(32).
 CHECK_THUNDER_TRIGGER_RIGHT:
     LD A,(THUNDER_PENDING)
     OR A
     RET Z
-    LD A,(THUNDER_ACT)
-    OR A
-    RET NZ
     LD A,(BOSS_X) : LD B,A
     LD A,(THUNDER_LEG_START_X) : LD C,A
     LD A,B : SUB C                  ; distance moved = current - start
     CP THUNDER_TRIGGER_DX
     RET C
     LD A,(BOSS_X) : LD (THUNDER_LEG_START_X),A
-    LD A,(BOSS_X)                    ; boss's own current left edge
+    LD A,(BOSS_X) : SUB 16           ; boss's own current left edge, minus the bolt's own 16px width
     SRL A : SRL A : SRL A
-    CALL FIRE_THUNDER
+    CALL ALLOC_THUNDER_SLOT
     RET
 
 ; ---------- homing missile (4-instance hw-sprite pool) ----------

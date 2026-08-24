@@ -127,7 +127,20 @@ while cpu.mem[BOSS_X] > 0 and steps < 200:
     steps += 1
 check("reaches X=0 exactly (clamped, no negative wraparound)", cpu.mem[BOSS_X] == 0)
 call_routine(cpu, "UPDATE_BOSS_ALL")
-check("reverses to DIR=1 (moving right) once X=0 is reached", cpu.mem[BOSS_DIR] == 1)
+# round10: the boss no longer reverses immediately at the left edge - it
+# pauses first (BOSS_PHASE=2, "左端は2Tick停止してから反転発射に") and
+# only actually reverses once BOSS_LEFT_PAUSE_TICKS GAME_TICKs elapse.
+# UPDATE_BOSS_ALL never advances GAME_TICK itself (only real MAINLOOP
+# does, gated behind its own 8-frame counter) - same reason boss_pose_
+# test.py sets GAME_TICK directly for BOSS_POSE_TICKS rather than
+# looping calls hoping it advances on its own.
+check("enters the left-edge pause (BOSS_PHASE=2) instead of reversing immediately",
+      cpu.mem[BOSS_PHASE] == 2 and cpu.mem[BOSS_X] == 0)
+BOSS_LEFT_PAUSE_TICKS = sym["BOSS_LEFT_PAUSE_TICKS"]
+tick_at_pause = cpu.mem[GAME_TICK] | (cpu.mem[GAME_TICK + 1] << 8)
+set_game_tick(cpu, tick_at_pause + BOSS_LEFT_PAUSE_TICKS)
+call_routine(cpu, "UPDATE_BOSS_ALL")
+check("reverses to DIR=1 (moving right) once the left-edge pause elapses", cpu.mem[BOSS_DIR] == 1)
 check("mirrored facing (SASAPI_QUADS_L) reloaded into VRAM on this reversal - まず反転パターンを生成",
       sprpat_matches(cpu, SASAPI_QUADS_L))
 

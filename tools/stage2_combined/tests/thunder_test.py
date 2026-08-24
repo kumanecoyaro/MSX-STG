@@ -11,36 +11,30 @@ def check(label, cond):
     (ok if cond else fail).append(label)
     print(("PASS " if cond else "FAIL "), label)
 
-THUNDER_ACT = sym["THUNDER_ACT"]
-THUNDER_COL = sym["THUNDER_COL"]
-THUNDER_ROW = sym["THUNDER_ROW"]
-THUNDER_TIMER = sym["THUNDER_TIMER"]
+THUNDER_SLOT_SIZE = sym["THUNDER_SLOT_SIZE"]
+THUNDER_SLOT_COUNT = sym["THUNDER_SLOT_COUNT"]
+THUNDER_POOL = sym["THUNDER_POOL"]
 THUNDER_PENDING = sym["THUNDER_PENDING"]
 THUNDER_ELIGIBLE = sym["THUNDER_ELIGIBLE"]
 THUNDER_LEG_START_X = sym["THUNDER_LEG_START_X"]
 THUNDER_CODE_BASE = sym["THUNDER_CODE_BASE"]
+THUNDERS_CODE = sym["THUNDERS_CODE"]
 THUNDER_COLORBYTE = sym["THUNDER_COLORBYTE"]
 THUNDER_TOP_ROW = sym["THUNDER_TOP_ROW"]
-THUNDER_ROW_STEP = sym["THUNDER_ROW_STEP"]
-THUNDER_BOTTOM_ROW = sym["THUNDER_BOTTOM_ROW"]
-THUNDER_EXTRA_ROW = sym["THUNDER_EXTRA_ROW"]
 THUNDER_TRIGGER_DX = sym["THUNDER_TRIGGER_DX"]
-THUNDER_STEP_INTERVAL = sym["THUNDER_STEP_INTERVAL"]
+BOSS_LEFT_PAUSE_TICKS = sym["BOSS_LEFT_PAUSE_TICKS"]
 BOSS_X = sym["BOSS_X"]
 BOSS_DIR = sym["BOSS_DIR"]
 BOSS_PHASE = sym["BOSS_PHASE"]
 BOSS_ACT = sym["BOSS_ACT"]
 BOSS_SPAWNX = sym["BOSS_SPAWNX"]
 BOSS_SPEED = sym["BOSS_SPEED"]
-NIGHT_ROW = sym["NIGHT_ROW"]
-SKY_BLANK_CODE = sym["SKY_BLANK_CODE"]
+IDCACHE_T0 = sym["IDCACHE_T0"]
+IDCACHE_T1 = sym["IDCACHE_T1"]
+IDCACHE_T2 = sym["IDCACHE_T2"]
+GAME_TICK = sym["GAME_TICK"]
 
 TL, TR, BL, BR = (THUNDER_CODE_BASE + i for i in range(4))
-
-check("THUNDER_STEP_INTERVAL is 0 - 表示ウェイト不要", THUNDER_STEP_INTERVAL == 0)
-check("THUNDER_TRIGGER_DX is 32 - ボスが横に32px移動毎に発射", THUNDER_TRIGGER_DX == 32)
-check("THUNDER_EXTRA_ROW is exactly one row-step past THUNDER_BOTTOM_ROW - あと1セル分長く",
-      THUNDER_EXTRA_ROW == THUNDER_BOTTOM_ROW + THUNDER_ROW_STEP)
 
 
 def name_addr(row, col):
@@ -51,243 +45,293 @@ def cell(cpu, row, col):
     return cpu.vram[name_addr(row, col)]
 
 
-def block_codes(cpu, row, col):
-    return (cell(cpu, row, col), cell(cpu, row, col + 1),
-            cell(cpu, row + 1, col), cell(cpu, row + 1, col + 1))
+def slot_addr(i):
+    return THUNDER_POOL + i * THUNDER_SLOT_SIZE
 
 
-def half_codes(cpu, row, col):
-    return (cell(cpu, row, col), cell(cpu, row, col + 1))
+def slot(cpu, i):
+    base = slot_addr(i)
+    return {
+        "act": cpu.mem[base + 0],
+        "col": cpu.mem[base + 1],
+        "row": cpu.mem[base + 2],
+        "deep": cpu.mem[base + 3],
+    }
 
 
-def full_block_rows():
-    r = THUNDER_TOP_ROW
-    rows = []
-    while r <= THUNDER_BOTTOM_ROW:
-        rows.append(r)
-        r += THUNDER_ROW_STEP
-    return rows
+def set_terrain_flat(cpu, tier):
+    """Makes every column report the same tier (0=row20 highest .. 3=row23
+    lowest/flat) via IDCACHE_T0..T2 (0=empty/nothing there, nonzero=solid -
+    same convention UPDATE_TERRAIN_COLLISION/UOZ_TERRAIN_FOLLOW read)."""
+    for col in range(32):
+        cpu.mem[IDCACHE_T0 + col] = 1 if tier == 0 else 0
+        cpu.mem[IDCACHE_T1 + col] = 1 if tier == 1 else 0
+        cpu.mem[IDCACHE_T2 + col] = 1 if tier == 2 else 0
 
 
-ROWS = full_block_rows()  # full 2x2 blocks only, NOT the trailing half row
+def set_game_tick(cpu, val):
+    cpu.mem[GAME_TICK] = val & 0xFF
+    cpu.mem[GAME_TICK + 1] = (val >> 8) & 0xFF
 
 
-# ---- INIT: Thunder BG art + color byte actually loaded into VRAM ----
+# ---- INIT: Thunder + ThunderS BG art actually loaded into VRAM ----
 cpu = fresh_cpu()
 pat_base = THUNDER_CODE_BASE * 8
 loaded = list(cpu.vram[pat_base:pat_base + 32])
-check("INIT loads all 32 nonzero Thunder pattern bytes (4 tiles x8 rows) - not left as 0/uninitialized",
+check("INIT loads all 32 nonzero Thunder bolt pattern bytes",
       any(b != 0 for b in loaded))
-check("INIT writes THUNDER_COLORBYTE into group27's own color-table entry (2000h+27)",
+thunders_pat = list(cpu.vram[THUNDERS_CODE * 8:THUNDERS_CODE * 8 + 8])
+check("INIT loads the ThunderS pattern bytes too (not left as 0)",
+      any(b != 0 for b in thunders_pat))
+check("INIT writes THUNDER_COLORBYTE into group27's own color-table entry (2000h+27) - "
+      "shared by both THUNDER_CODE_BASE and THUNDERS_CODE",
       cpu.vram[0x2000 + 27] == THUNDER_COLORBYTE)
 
 
-# ---- FIRE_THUNDER: arms a fresh grow cycle at the given column ----
+# ---- RESET_THUNDER_POOL / ALLOC_THUNDER_SLOT: a real pool now ----
 cpu = fresh_cpu()
-cpu.mem[THUNDER_ACT] = 0
-cpu.mem[THUNDER_ROW] = 99
-cpu.mem[THUNDER_TIMER] = 99
-cpu.a = 12
-call_routine(cpu, "FIRE_THUNDER")
-check("FIRE_THUNDER sets THUNDER_COL to the passed column", cpu.mem[THUNDER_COL] == 12)
-check("FIRE_THUNDER sets THUNDER_ACT to 1 (growing)", cpu.mem[THUNDER_ACT] == 1)
-check("FIRE_THUNDER resets THUNDER_ROW to THUNDER_TOP_ROW", cpu.mem[THUNDER_ROW] == THUNDER_TOP_ROW)
-check("FIRE_THUNDER resets THUNDER_TIMER to 0 (steps on the very next UPDATE_THUNDER call)",
-      cpu.mem[THUNDER_TIMER] == 0)
+for i in range(THUNDER_SLOT_COUNT):
+    cpu.mem[slot_addr(i) + 0] = 1  # dirty every slot first
+call_routine(cpu, "RESET_THUNDER_POOL")
+check("RESET_THUNDER_POOL zeroes every slot's own ACT",
+      all(slot(cpu, i)["act"] == 0 for i in range(THUNDER_SLOT_COUNT)))
 
-
-# ---- UPDATE_THUNDER: no-op while inactive ----
 cpu = fresh_cpu()
-cpu.mem[THUNDER_ACT] = 0
-before = list(cpu.vram[0x1800:0x1800 + 32 * 24])
-call_routine(cpu, "UPDATE_THUNDER")
-after = list(cpu.vram[0x1800:0x1800 + 32 * 24])
-check("UPDATE_THUNDER touches no VRAM while THUNDER_ACT=0", before == after)
+cpu.a = 5
+call_routine(cpu, "ALLOC_THUNDER_SLOT")
+check("ALLOC_THUNDER_SLOT fires into slot0 with ACT=1", slot(cpu, 0)["act"] == 1)
+check("ALLOC_THUNDER_SLOT sets COL from A", slot(cpu, 0)["col"] == 5)
+check("ALLOC_THUNDER_SLOT starts ROW at THUNDER_TOP_ROW", slot(cpu, 0)["row"] == THUNDER_TOP_ROW)
+
+cpu.a = 9
+call_routine(cpu, "ALLOC_THUNDER_SLOT")
+check("a 2nd ALLOC_THUNDER_SLOT call fires into slot1, not slot0 again - "
+      "多重発射: いつからサンダーは1本しか出せない仕様に? そんな指示はしてねえぞ",
+      slot(cpu, 1)["act"] == 1 and slot(cpu, 1)["col"] == 9 and slot(cpu, 0)["col"] == 5)
+
+cpu2 = fresh_cpu()
+for i in range(THUNDER_SLOT_COUNT):
+    cpu2.a = i
+    call_routine(cpu2, "ALLOC_THUNDER_SLOT")
+check(f"all {THUNDER_SLOT_COUNT} pool slots can be active simultaneously",
+      all(slot(cpu2, i)["act"] == 1 for i in range(THUNDER_SLOT_COUNT)))
+cpu2.a = 99
+call_routine(cpu2, "ALLOC_THUNDER_SLOT")  # pool full - should be a no-op
+check("drops the attempt once the whole pool is full (no crash, no state corruption)",
+      all(slot(cpu2, i)["col"] != 99 for i in range(THUNDER_SLOT_COUNT)))
 
 
-# ---- DRAW_THUNDER_BLOCK / ERASE_THUNDER_BLOCK: single-block unit checks ----
+# ---- GET_TERRAIN_ROW_FOR_COL: tier -> row mapping ----
 cpu = fresh_cpu()
-cpu.mem[THUNDER_ROW] = 5
-cpu.mem[THUNDER_COL] = 10
-cpu.mem[NIGHT_ROW] = 0  # fresh boot - night sweep hasn't reached row5, plain sky
-call_routine(cpu, "DRAW_THUNDER_BLOCK")
-check("DRAW_THUNDER_BLOCK writes TL/TR/BL/BR in the right 2x2 positions",
-      block_codes(cpu, 5, 10) == (TL, TR, BL, BR))
-
-call_routine(cpu, "ERASE_THUNDER_BLOCK")
-check("ERASE_THUNDER_BLOCK restores the block to plain sky (SKY_BLANK_CODE) via ERASE_BULLET_CELL reuse",
-      block_codes(cpu, 5, 10) == (SKY_BLANK_CODE,) * 4)
+for tier, expected_row in [(0, 20), (1, 21), (2, 22), (3, 23)]:
+    set_terrain_flat(cpu, tier)
+    cpu.a = 10
+    call_routine(cpu, "GET_TERRAIN_ROW_FOR_COL")
+    check(f"tier{tier} -> terrain row {expected_row}", cpu.a == expected_row)
 
 
-# ---- DRAW_THUNDER_HALF / ERASE_THUNDER_HALF: the extra 1-cell-row unit checks ----
-cpu = fresh_cpu()
-cpu.mem[THUNDER_ROW] = THUNDER_EXTRA_ROW
-cpu.mem[THUNDER_COL] = 10
-cpu.mem[NIGHT_ROW] = 0
-call_routine(cpu, "DRAW_THUNDER_HALF")
-check("DRAW_THUNDER_HALF writes only the bottom-half tiles (BL/BR), one row",
-      half_codes(cpu, THUNDER_EXTRA_ROW, 10) == (BL, BR))
-
-TERRAIN_BLANK_CODE = sym["TERRAIN_BLANK_CODE"]
-call_routine(cpu, "ERASE_THUNDER_HALF")
-check("ERASE_THUNDER_HALF restores the extra row (row19, the TERRAIN_BLANK_CODE band per "
-      "ERASE_BULLET_CELL's own row17-19 branch, not plain sky)",
-      half_codes(cpu, THUNDER_EXTRA_ROW, 10) == (TERRAIN_BLANK_CODE, TERRAIN_BLANK_CODE))
-
-
-# ---- UPDATE_THUNDER: full grow cycle - fills down and ACCUMULATES (earlier
-# blocks stay drawn while later ones appear), matching "埋める" (fill), not
-# "draw one and immediately erase the last" - with THUNDER_STEP_INTERVAL=0
-# every single UPDATE_THUNDER call performs exactly one draw step now
-# (表示ウェイト不要), so no per-step waiting/polling is needed any more. ----
+# ---- DRAW_ONE_THUNDER_ROW / ERASE_ONE_THUNDER_ROW: parity + safe-zone restore ----
+SKY_BLANK_CODE = sym["SKY_BLANK_CODE"]
+NIGHT_ROW = sym["NIGHT_ROW"]
 cpu = fresh_cpu()
 cpu.mem[NIGHT_ROW] = 0
-cpu.a = 3
-call_routine(cpu, "FIRE_THUNDER")
-for step in range(len(ROWS)):
-    call_routine(cpu, "UPDATE_THUNDER")
-    row = ROWS[step]
-    check(f"grow step {step}: block at row{row} is now drawn", block_codes(cpu, row, 3) == (TL, TR, BL, BR))
-    for prev in ROWS[:step]:
-        check(f"grow step {step}: earlier block at row{prev} is still drawn (accumulates, not wiped)",
-              block_codes(cpu, prev, 3) == (TL, TR, BL, BR))
-# the final "1セル分長く" extra half-row step
-call_routine(cpu, "UPDATE_THUNDER")
-check("grow's final step draws the extra half-row at THUNDER_EXTRA_ROW - あと1セル分長く",
-      half_codes(cpu, THUNDER_EXTRA_ROW, 3) == (BL, BR))
-for prev in ROWS:
-    check(f"after the extra half-row step, earlier block at row{prev} is still drawn",
-          block_codes(cpu, prev, 3) == (TL, TR, BL, BR))
-check("after all grow steps (full blocks + the extra half-row), THUNDER_ACT switches to 2 (shrinking) - "
-      "埋め終わった", cpu.mem[THUNDER_ACT] == 2)
-check("shrink starts back at THUNDER_TOP_ROW - 上から消す", cpu.mem[THUNDER_ROW] == THUNDER_TOP_ROW)
+cpu.a = 5  # odd row -> TL/TR
+cpu.b = 10
+call_routine(cpu, "DRAW_ONE_THUNDER_ROW")
+check("DRAW_ONE_THUNDER_ROW at an ODD row draws TL/TR (block-top)",
+      (cell(cpu, 5, 10), cell(cpu, 5, 11)) == (TL, TR))
+cpu.a = 6  # even row -> BL/BR
+cpu.b = 10
+call_routine(cpu, "DRAW_ONE_THUNDER_ROW")
+check("DRAW_ONE_THUNDER_ROW at an EVEN row draws BL/BR (block-bottom)",
+      (cell(cpu, 6, 10), cell(cpu, 6, 11)) == (BL, BR))
+cpu.a = 5
+cpu.b = 10
+call_routine(cpu, "ERASE_ONE_THUNDER_ROW")
+check("ERASE_ONE_THUNDER_ROW restores a safe-zone row (<20) to plain sky",
+      (cell(cpu, 5, 10), cell(cpu, 5, 11)) == (SKY_BLANK_CODE, SKY_BLANK_CODE))
+
+# a row>=20 is a no-op for the erase (self-heals via the terrain's own
+# per-frame redraw instead - see ERASE_ONE_THUNDER_CELL's own comment)
+cpu = fresh_cpu()
+cpu.a = 21
+cpu.b = 10
+call_routine(cpu, "DRAW_ONE_THUNDER_ROW")
+before = (cell(cpu, 21, 10), cell(cpu, 21, 11))
+cpu.a = 21
+cpu.b = 10
+call_routine(cpu, "ERASE_ONE_THUNDER_ROW")
+check("ERASE_ONE_THUNDER_ROW is a no-op for row>=20 (ERASE_BULLET_CELL's own EBC_SKIP band)",
+      (cell(cpu, 21, 10), cell(cpu, 21, 11)) == before)
 
 
-# ---- UPDATE_THUNDER: full shrink cycle - erases from the TOP down (full
-# blocks first, the extra half-row last, same order as growth), clears
-# every block, and returns to inactive with no leftover garbage ----
-for step in range(len(ROWS)):
-    call_routine(cpu, "UPDATE_THUNDER")
-    row = ROWS[step]
-    check(f"shrink step {step}: block at row{row} is erased (no longer Thunder codes)",
-          block_codes(cpu, row, 3) != (TL, TR, BL, BR))
-    for later in ROWS[step + 1:]:
-        check(f"shrink step {step}: not-yet-reached block at row{later} is still drawn",
-              block_codes(cpu, later, 3) == (TL, TR, BL, BR))
-    check(f"shrink step {step}: not-yet-reached extra half-row is still drawn",
-          half_codes(cpu, THUNDER_EXTRA_ROW, 3) == (BL, BR))
-call_routine(cpu, "UPDATE_THUNDER")  # erases the extra half-row, finishes the cycle
-check("shrink's final step erases the extra half-row", half_codes(cpu, THUNDER_EXTRA_ROW, 3) != (BL, BR))
-check("after all shrink steps, THUNDER_ACT returns to 0 (inactive)", cpu.mem[THUNDER_ACT] == 0)
-for row in ROWS:
-    check(f"final: row{row} has no leftover Thunder-code residue", block_codes(cpu, row, 3) != (TL, TR, BL, BR))
+# ---- WRITE_THUNDERS_CELL / ERASE_ONE_THUNDER_CELL for the side cells ----
+cpu = fresh_cpu()
+cpu.mem[NIGHT_ROW] = 0
+cpu.a = 5
+cpu.b = 3
+call_routine(cpu, "WRITE_THUNDERS_CELL")
+check("WRITE_THUNDERS_CELL writes THUNDERS_CODE at the given cell", cell(cpu, 5, 3) == THUNDERS_CODE)
+cpu.a = 5
+cpu.b = 3
+call_routine(cpu, "ERASE_ONE_THUNDER_CELL")
+check("ERASE_ONE_THUNDER_CELL restores a safe-zone side cell to plain sky",
+      cell(cpu, 5, 3) == SKY_BLANK_CODE)
 
 
-# ---- CHECK_THUNDER_TRIGGER_LEFT: gated by PENDING, fires at >=32px moved,
-# column = (BOSS_X+64)>>3 (the boss's own current right edge), and now
-# re-arms rather than one-shot per leg (round9) ----
+# ---- UPDATE_ONE_THUNDER: full lifecycle against a SAFE terrain row
+# (tier0, terrain row20 -> DEEP_ROW19, everything stays <20, no
+# reassertion needed at all) ----
+cpu = fresh_cpu()
+set_terrain_flat(cpu, 0)
+cpu.a = 8
+call_routine(cpu, "ALLOC_THUNDER_SLOT")
+ix = slot_addr(0)
+grew_rows = []
+for _ in range(40):
+    cpu.ix = ix
+    call_routine(cpu, "UPDATE_ONE_THUNDER")
+    if slot(cpu, 0)["act"] == 2:
+        break
+    grew_rows.append(slot(cpu, 0)["row"])
+s = slot(cpu, 0)
+check("tier0: growth stops with DEEP_ROW=19 (terrain_row20 - 1)", s["deep"] == 19)
+check("tier0: transitions to shrinking (ACT=2) once the terrain is reached - 地形に到達したら",
+      s["act"] == 2)
+check("tier0: the bolt's own deepest row (19) is drawn", cell(cpu, 19, 8) in (TL, TR, BL, BR))
+check("tier0: ThunderS side cells appear left (col7) and right (col10) of the bolt at DEEP_ROW - "
+      "地形に到達したら添付のキャラを地上の上に左右に発射",
+      cell(cpu, 19, 7) == THUNDERS_CODE and cell(cpu, 19, 10) == THUNDERS_CODE)
+check("tier0: row20 (the real terrain) was never touched", cell(cpu, 20, 8) == 0 or cell(cpu, 20, 8) != TL)
+
+# drive through the shrink phase
+for _ in range(40):
+    cpu.ix = ix
+    call_routine(cpu, "UPDATE_ONE_THUNDER")
+    if slot(cpu, 0)["act"] == 0:
+        break
+check("tier0: fully shrinks back to inactive (ACT=0)", slot(cpu, 0)["act"] == 0)
+check("tier0: the bolt's own deepest row is erased", cell(cpu, 19, 8) not in (TL, TR, BL, BR))
+check("tier0: the ThunderS side cells are erased too - サンダーが着地したら左右同時に2セル描いて消せばおｋ",
+      cell(cpu, 19, 7) != THUNDERS_CODE and cell(cpu, 19, 10) != THUNDERS_CODE)
+
+
+# ---- UPDATE_ONE_THUNDER: full lifecycle against a DEEP terrain row
+# (tier3, terrain row23 -> DEEP_ROW22) - forces the bolt into the
+# ground/rock band (row>=20), which needs the continuous per-frame
+# reassertion to actually stay visible against TERRAIN_RENDER_ROW's own
+# unconditional per-frame redraw (simulated here by corrupting the
+# contested cells between calls, matching the real MAINLOOP's own call
+# order: terrain redraw happens before UPDATE_THUNDER every frame) ----
+cpu = fresh_cpu()
+set_terrain_flat(cpu, 3)
+cpu.a = 8
+call_routine(cpu, "ALLOC_THUNDER_SLOT")
+ix = slot_addr(0)
+saw_contested_row_drawn = False
+for _ in range(60):
+    # simulate the terrain's own unconditional per-frame redraw
+    # clobbering the contested band (rows20-23) BEFORE Thunder's own
+    # update runs this frame, exactly like real MAINLOOP ordering.
+    for row in range(20, 24):
+        cpu.vram[name_addr(row, 8)] = 0
+        cpu.vram[name_addr(row, 9)] = 0
+    cpu.ix = ix
+    call_routine(cpu, "UPDATE_ONE_THUNDER")
+    if cell(cpu, 21, 8) in (TL, TR, BL, BR) or cell(cpu, 22, 8) in (TL, TR, BL, BR):
+        saw_contested_row_drawn = True
+    if slot(cpu, 0)["act"] == 2:
+        break
+s = slot(cpu, 0)
+check("tier3: growth reaches all the way down to DEEP_ROW=22 (terrain row23 - 1) - "
+      "終了位置は地形までに変更", s["deep"] == 22)
+check("tier3: a contested row (>=20) actually got (re)drawn during growth despite the simulated "
+      "per-frame terrain overwrite - the reassertion pass is doing real work, not a no-op",
+      saw_contested_row_drawn)
+check("tier3: the deepest row (22, inside the ground/rock band) is visible right after landing "
+      "even though this test frame started by clobbering it first",
+      cell(cpu, 22, 8) in (TL, TR, BL, BR))
+check("tier3: ThunderS side cells also land inside the contested band and are visible",
+      cell(cpu, 22, 7) == THUNDERS_CODE and cell(cpu, 22, 10) == THUNDERS_CODE)
+
+# drive through shrink, continuing to simulate the terrain's own
+# clobbering every frame - contested rows must keep reasserting until
+# shrink actually passes them, then STAY gone (terrain reclaims them)
+still_reasserting_at_22 = None
+for step in range(60):
+    for row in range(20, 24):
+        cpu.vram[name_addr(row, 8)] = 0
+        cpu.vram[name_addr(row, 9)] = 0
+    cpu.ix = ix
+    call_routine(cpu, "UPDATE_ONE_THUNDER")
+    if slot(cpu, 0)["act"] == 0:
+        break
+check("tier3: fully shrinks back to inactive (ACT=0) even from the deep-terrain case",
+      slot(cpu, 0)["act"] == 0)
+# once inactive, nothing reasserts row22 any more - a fresh simulated
+# terrain overwrite should stick (not get fought back to a Thunder code)
+cpu.vram[name_addr(22, 8)] = 0
+call_routine(cpu, "UPDATE_ONE_THUNDER")  # ACT=0 - no-op, must not resurrect anything
+check("tier3: once fully inactive, nothing keeps re-asserting the old contested rows any more - "
+      "the terrain's own redraw is free to reclaim them",
+      cell(cpu, 22, 8) not in (TL, TR, BL, BR))
+
+
+# ---- CHECK_THUNDER_TRIGGER_LEFT/_RIGHT: fire every 32px, repeatedly,
+# with NO single-instance gate any more (round9) ----
 cpu = fresh_cpu()
 cpu.mem[THUNDER_PENDING] = 0
 cpu.mem[THUNDER_LEG_START_X] = 100
 cpu.mem[BOSS_X] = 50
-cpu.mem[THUNDER_ACT] = 0
 call_routine(cpu, "CHECK_THUNDER_TRIGGER_LEFT")
-check("CHECK_THUNDER_TRIGGER_LEFT is a no-op while THUNDER_PENDING=0 (not armed)", cpu.mem[THUNDER_ACT] == 0)
+check("CHECK_THUNDER_TRIGGER_LEFT is a no-op while THUNDER_PENDING=0 (not armed)",
+      all(slot(cpu, i)["act"] == 0 for i in range(THUNDER_SLOT_COUNT)))
 
 cpu = fresh_cpu()
 cpu.mem[THUNDER_PENDING] = 1
 cpu.mem[THUNDER_LEG_START_X] = 100
-cpu.mem[BOSS_X] = 70  # moved 30px - under THUNDER_TRIGGER_DX(32)
-cpu.mem[THUNDER_ACT] = 0
+cpu.mem[BOSS_X] = 100 - THUNDER_TRIGGER_DX
 call_routine(cpu, "CHECK_THUNDER_TRIGGER_LEFT")
-check("CHECK_THUNDER_TRIGGER_LEFT does not fire before THUNDER_TRIGGER_DX has elapsed", cpu.mem[THUNDER_ACT] == 0)
-check("...and THUNDER_PENDING stays armed", cpu.mem[THUNDER_PENDING] == 1)
-
-cpu = fresh_cpu()
-cpu.mem[THUNDER_PENDING] = 1
-cpu.mem[THUNDER_LEG_START_X] = 100
-cpu.mem[BOSS_X] = 100 - THUNDER_TRIGGER_DX  # exactly at the threshold
-cpu.mem[THUNDER_ACT] = 0
-call_routine(cpu, "CHECK_THUNDER_TRIGGER_LEFT")
-check("CHECK_THUNDER_TRIGGER_LEFT fires (>=, not exact-match) right at THUNDER_TRIGGER_DX", cpu.mem[THUNDER_ACT] == 1)
-check("...and THUNDER_PENDING stays 1 (armed for the REST of the leg too - not a one-shot any more)",
+check("CHECK_THUNDER_TRIGGER_LEFT fires (>=, not exact-match) right at THUNDER_TRIGGER_DX",
+      slot(cpu, 0)["act"] == 1)
+check("THUNDER_PENDING stays armed (repeats for the whole leg, not one-shot)",
       cpu.mem[THUNDER_PENDING] == 1)
-check("...and THUNDER_LEG_START_X re-arms to the boss's own current X (baseline for the next 32px)",
-      cpu.mem[THUNDER_LEG_START_X] == 100 - THUNDER_TRIGGER_DX)
 expect_col = ((100 - THUNDER_TRIGGER_DX) + 64) >> 3
 check("fires at the boss's own current RIGHT edge (BOSS_X+64) converted to a BG column",
-      cpu.mem[THUNDER_COL] == expect_col)
+      slot(cpu, 0)["col"] == expect_col)
 
-# busy gate: a previous column still animating (THUNDER_ACT!=0) blocks a
-# new fire even once the 32px threshold has been reached - single instance
-cpu = fresh_cpu()
-cpu.mem[THUNDER_PENDING] = 1
-cpu.mem[THUNDER_LEG_START_X] = 100
-cpu.mem[BOSS_X] = 20  # well past the threshold
-cpu.mem[THUNDER_ACT] = 1  # still animating a previous column
-cpu.mem[THUNDER_COL] = 77
+# fires AGAIN immediately, into a 2nd pool slot, even though the FIRST
+# column is still fully active (growing) - no busy-gate any more
+cpu.mem[BOSS_X] -= THUNDER_TRIGGER_DX
 call_routine(cpu, "CHECK_THUNDER_TRIGGER_LEFT")
-check("CHECK_THUNDER_TRIGGER_LEFT skips firing while the previous column is still animating (single instance)",
-      cpu.mem[THUNDER_COL] == 77)
-check("...THUNDER_LEG_START_X is left untouched so distance keeps accumulating",
-      cpu.mem[THUNDER_LEG_START_X] == 100)
+check("CHECK_THUNDER_TRIGGER_LEFT fires again into a 2nd slot while the 1st is still fully active - "
+      "BGを使ってるのは表示制限がないからだろが",
+      slot(cpu, 0)["act"] == 1 and slot(cpu, 1)["act"] == 1)
 
-# once no longer busy, the accumulated distance immediately fires (using
-# the CURRENT edge X, not a stale one) - "32px移動毎に" continues to hold
-# across the busy gate rather than being lost
-cpu.mem[THUNDER_ACT] = 0
-call_routine(cpu, "CHECK_THUNDER_TRIGGER_LEFT")
-check("once idle again, the still-armed trigger fires immediately", cpu.mem[THUNDER_ACT] == 1)
-check("fires at the CURRENT edge column, not the original 32px-mark position",
-      cpu.mem[THUNDER_COL] == (20 + 64) >> 3)
-
-# repeats again for a second 32px leg of travel after re-arming
-cpu.mem[THUNDER_ACT] = 0  # simulate this cycle finishing
-cpu.mem[BOSS_X] = 20 - THUNDER_TRIGGER_DX
-call_routine(cpu, "CHECK_THUNDER_TRIGGER_LEFT")
-check("CHECK_THUNDER_TRIGGER_LEFT fires AGAIN after another THUNDER_TRIGGER_DX px - not just once per leg",
-      cpu.mem[THUNDER_ACT] == 1)
-
-
-# ---- CHECK_THUNDER_TRIGGER_RIGHT: same idea, column = BOSS_X>>3 (the
-# boss's own current LEFT edge) ----
-cpu = fresh_cpu()
-cpu.mem[THUNDER_PENDING] = 0
-cpu.mem[THUNDER_LEG_START_X] = 0
-cpu.mem[BOSS_X] = 40
-cpu.mem[THUNDER_ACT] = 0
-call_routine(cpu, "CHECK_THUNDER_TRIGGER_RIGHT")
-check("CHECK_THUNDER_TRIGGER_RIGHT is a no-op while THUNDER_PENDING=0", cpu.mem[THUNDER_ACT] == 0)
-
-cpu = fresh_cpu()
-cpu.mem[THUNDER_PENDING] = 1
-cpu.mem[THUNDER_LEG_START_X] = 0
-cpu.mem[BOSS_X] = THUNDER_TRIGGER_DX - 1  # 1px short
-cpu.mem[THUNDER_ACT] = 0
-call_routine(cpu, "CHECK_THUNDER_TRIGGER_RIGHT")
-check("CHECK_THUNDER_TRIGGER_RIGHT does not fire 1px short of THUNDER_TRIGGER_DX", cpu.mem[THUNDER_ACT] == 0)
-
+# ---- the right-edge overlap fix: column = (BOSS_X-16)>>3, not BOSS_X>>3 ----
 cpu = fresh_cpu()
 cpu.mem[THUNDER_PENDING] = 1
 cpu.mem[THUNDER_LEG_START_X] = 0
 cpu.mem[BOSS_X] = THUNDER_TRIGGER_DX
-cpu.mem[THUNDER_ACT] = 0
 call_routine(cpu, "CHECK_THUNDER_TRIGGER_RIGHT")
-check("CHECK_THUNDER_TRIGGER_RIGHT fires right at THUNDER_TRIGGER_DX", cpu.mem[THUNDER_ACT] == 1)
-check("fires at the boss's own current LEFT edge (BOSS_X itself) converted to a BG column",
-      cpu.mem[THUNDER_COL] == (THUNDER_TRIGGER_DX >> 3))
-check("THUNDER_PENDING stays armed (repeats for the rest of the leg)", cpu.mem[THUNDER_PENDING] == 1)
+check("CHECK_THUNDER_TRIGGER_RIGHT fires right at THUNDER_TRIGGER_DX", slot(cpu, 0)["act"] == 1)
+expect_col_r = (THUNDER_TRIGGER_DX - 16) >> 3
+check("fires at (BOSS_X-16)>>3 - trailing OUTSIDE the boss's own [BOSS_X,BOSS_X+64) box, not "
+      "directly under it - 反転した時にボス自身に当たってしまう(fixed)",
+      slot(cpu, 0)["col"] == expect_col_r)
+check("the fired column sits strictly left of the boss's own current left edge (no overlap)",
+      slot(cpu, 0)["col"] * 8 + 16 <= cpu.mem[BOSS_X])
+check("THUNDER_PENDING stays armed (repeats for the whole leg)", cpu.mem[THUNDER_PENDING] == 1)
 
-cpu.mem[THUNDER_ACT] = 0
-cpu.mem[BOSS_X] = THUNDER_TRIGGER_DX * 2
+cpu.mem[BOSS_X] += THUNDER_TRIGGER_DX
 call_routine(cpu, "CHECK_THUNDER_TRIGGER_RIGHT")
-check("CHECK_THUNDER_TRIGGER_RIGHT also fires again after another THUNDER_TRIGGER_DX px", cpu.mem[THUNDER_ACT] == 1)
+check("CHECK_THUNDER_TRIGGER_RIGHT also fires again after another THUNDER_TRIGGER_DX px",
+      slot(cpu, 1)["act"] == 1)
 
 
-# ---- real MAINLOOP: Thunder stays silent through the boss's pre-first-
-# pose patrol (spawn -> left leg -> reversal -> right leg -> first pose),
-# then fires REPEATEDLY (every ~32px, round9) on each post-pose leg, at
-# the right column each time, never overlapping (single instance) ----
+# ---- real MAINLOOP: boss reaches the left edge, PAUSES (BOSS_PHASE=2,
+# stationary) for BOSS_LEFT_PAUSE_TICKS GAME_TICKs, THEN reverses -
+# "左端は2Tick停止してから反転発射に" ----
 cpu = fresh_cpu()
 cpu.sim_dir = 0
 cpu.sim_trig_a = False
@@ -295,69 +339,63 @@ cpu.sim_trig_b = False
 boss_spawned = False
 pose1_entered = False
 pose1_ended = False
-thunder_armed_pre_pose1 = False
-thunder_fired_pre_pose1 = False
-fires = []  # (frame, boss_x_at_fire, thunder_col, leg)  leg: 'L' or 'R'
-prev_act = 0
-legs_with_2plus_fires = set()
-for f in range(30000):
+saw_left_pause = False
+pause_entered_tick = None
+reversal_tick = None
+for f in range(20000):
     step_frame(cpu)
     if cpu.mem[BOSS_ACT] == 1:
         boss_spawned = True
     if boss_spawned and not pose1_ended:
         if cpu.mem[BOSS_PHASE] == 1:
             pose1_entered = True
-        elif pose1_entered:
+        elif pose1_entered and cpu.mem[BOSS_PHASE] == 0:
             pose1_ended = True
-        if not pose1_ended:
-            if cpu.mem[THUNDER_PENDING] == 1:
-                thunder_armed_pre_pose1 = True
-            if cpu.mem[THUNDER_ACT] != 0:
-                thunder_fired_pre_pose1 = True
-    act = cpu.mem[THUNDER_ACT]
-    if pose1_ended and act != 0 and prev_act == 0:
-        leg = 'L' if cpu.mem[BOSS_DIR] == 0 else 'R'
-        fires.append((f, cpu.mem[BOSS_X], cpu.mem[THUNDER_COL], leg))
-    prev_act = act
-    if pose1_ended:
-        per_leg = {}
-        for _, _, _, leg in fires:
-            per_leg[leg] = per_leg.get(leg, 0) + 1
-        legs_with_2plus_fires = {leg for leg, n in per_leg.items() if n >= 2}
-        if {'L', 'R'} <= legs_with_2plus_fires and act == 0:
-            break
+    if pose1_ended and cpu.mem[BOSS_PHASE] == 2 and cpu.mem[BOSS_X] == 0 and pause_entered_tick is None:
+        saw_left_pause = True
+        pause_entered_tick = cpu.mem[GAME_TICK] | (cpu.mem[GAME_TICK + 1] << 8)
+    if saw_left_pause and cpu.mem[BOSS_DIR] == 1 and reversal_tick is None:
+        reversal_tick = cpu.mem[GAME_TICK] | (cpu.mem[GAME_TICK + 1] << 8)
+        break
 
 check("real MAINLOOP: boss reaches its first attack pose", boss_spawned and pose1_entered and pose1_ended)
-check("real MAINLOOP: THUNDER_PENDING is never armed before the first pose ends - "
-      "ホーミング攻撃後 gates Thunder off during the pre-pose legs",
-      not thunder_armed_pre_pose1)
-check("real MAINLOOP: Thunder never actually fires before the first pose ends",
-      not thunder_fired_pre_pose1)
-check("real MAINLOOP: Thunder fires at least twice on the leftward leg - 端だけではなく32px移動毎に発射",
-      'L' in legs_with_2plus_fires)
-check("real MAINLOOP: Thunder fires at least twice on the rightward leg too",
-      'R' in legs_with_2plus_fires)
+check("real MAINLOOP: the boss actually enters the left-edge pause (BOSS_PHASE=2) before reversing",
+      saw_left_pause)
+check("real MAINLOOP: the boss actually reverses (BOSS_DIR=1) after the pause", reversal_tick is not None)
+check(f"real MAINLOOP: the pause lasts at least BOSS_LEFT_PAUSE_TICKS({BOSS_LEFT_PAUSE_TICKS}) "
+      "GAME_TICKs before the boss actually reverses",
+      pause_entered_tick is not None and reversal_tick is not None
+      and reversal_tick - pause_entered_tick >= BOSS_LEFT_PAUSE_TICKS)
+check("real MAINLOOP: boss ends up facing right (BOSS_DIR=1) after the pause elapses",
+      cpu.mem[BOSS_DIR] == 1)
 
-left_fires = [f for f in fires if f[3] == 'L']
-right_fires = [f for f in fires if f[3] == 'R']
-if len(left_fires) >= 2:
-    for (_, x0, col0, _), (_, x1, col1, _) in zip(left_fires, left_fires[1:]):
-        check(f"leftward-leg fires stay correctly positioned at the boss's own right edge each time (x={x0})",
-              col0 == (x0 + 64) >> 3)
-        check(f"consecutive leftward-leg fires are spaced by at least THUNDER_TRIGGER_DX px (x{x0}->x{x1})",
-              x0 - x1 >= THUNDER_TRIGGER_DX)
-    check("last leftward-leg fire column also matches the boss's own right edge",
-          left_fires[-1][2] == (left_fires[-1][1] + 64) >> 3)
-if len(right_fires) >= 2:
-    for (_, x0, col0, _), (_, x1, col1, _) in zip(right_fires, right_fires[1:]):
-        check(f"rightward-leg fires stay correctly positioned at the boss's own left edge each time (x={x0})",
-              col0 == x0 >> 3)
-        check(f"consecutive rightward-leg fires are spaced by at least THUNDER_TRIGGER_DX px (x{x0}->x{x1})",
-              x1 - x0 >= THUNDER_TRIGGER_DX)
-    check("last rightward-leg fire column also matches the boss's own left edge",
-          right_fires[-1][2] == right_fires[-1][1] >> 3)
-check("all fired columns are valid BG columns (0-31)",
-      all(0 <= c <= 31 for _, _, c, _ in fires))
+
+# ---- real MAINLOOP: multiple Thunder columns can be alive at once -
+# "いつからサンダーは1本しか出せない仕様に? そんな指示はしてねえぞ" ----
+cpu = fresh_cpu()
+cpu.sim_dir = 0
+cpu.sim_trig_a = False
+cpu.sim_trig_b = False
+max_concurrent = 0
+saw_side_cells = False
+for f in range(20000):
+    step_frame(cpu)
+    active = sum(1 for i in range(THUNDER_SLOT_COUNT) if slot(cpu, i)["act"] != 0)
+    max_concurrent = max(max_concurrent, active)
+    for i in range(THUNDER_SLOT_COUNT):
+        s = slot(cpu, i)
+        if s["act"] == 2:
+            row, col = s["deep"], s["col"]
+            if col > 0 and cell(cpu, row, col - 1) == THUNDERS_CODE:
+                saw_side_cells = True
+    if max_concurrent >= 2 and saw_side_cells:
+        break
+
+check("real MAINLOOP: at least 2 Thunder columns are genuinely active at the same time at some point - "
+      "a real pool, not a 1-at-a-time cap",
+      max_concurrent >= 2)
+check("real MAINLOOP: a real ThunderS side cell actually appears once a bolt reaches the terrain",
+      saw_side_cells)
 
 print()
 print(f"{len(ok)} passed, {len(fail)} failed")

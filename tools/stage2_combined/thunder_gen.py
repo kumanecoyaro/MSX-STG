@@ -41,6 +41,15 @@ def tiles_row_major(bits):
 
 THUNDER_TILES = tiles_row_major(load_bits("Thunder_16x16"))
 
+# "やっぱThunderSは2セル分でいいわ サンダーが着地したら左右同時に2セル
+# 描いて消せばおｋ 地形に沿うのは無しで" - ThunderS is NOT a moving hw
+# sprite (round9 dropped that idea) - just 1 more static 8x8 BG tile,
+# same conversion shape as the single-tile bullet_gen.py patterns, drawn
+# once at the landing point (1 cell left, 1 cell right of the bolt) when
+# the bolt reaches the terrain, and erased again once the bolt itself
+# finishes shrinking.
+THUNDERS_TILE = to_bytes([row[0:8] for row in load_bits("ThunderS_8x8")[0:8]])
+
 
 def db_bytes(byte_list):
     return "    DB " + ",".join(f"{b}" for b in byte_list)
@@ -51,8 +60,11 @@ def emit_asm_tables():
     out.append("THUNDER_TILES:")
     for tile in THUNDER_TILES:
         out.append(db_bytes(tile))
+    out.append("THUNDERS_TILE:")
+    out.append(db_bytes(THUNDERS_TILE))
     return "\n".join(out)
 
 
 if __name__ == "__main__":
     print(f"Thunder converted: {len(THUNDER_TILES)} 8x8 BG tiles ({len(THUNDER_TILES) * 8} bytes)")
+    print(f"ThunderS converted: 1 8x8 BG tile ({len(THUNDERS_TILE)} bytes)")

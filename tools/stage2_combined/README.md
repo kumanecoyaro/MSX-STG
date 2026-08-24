@@ -4752,6 +4752,46 @@ with no way to tell where.
   row, and a 2nd mid-leg fire at a new position). Full suite 558/561,
   same 3 known GAME_TICK=840-boot-effect failures, no new regressions.
 
+- **Round 10: Thunder is a real pool now, reaches the actual terrain,
+  spawns ThunderS, and a left-edge pause fixes the boss-overlap bug**:
+  "いつからサンダーは1本しか出せない仕様に? そんな指示はしてねえぞ
+  BGを使ってるのは表示制限がないからだろが 勝手に仕様を決めんな...
+  終了位置は地形までに変更 地形に到達したら添付のキャラを地上の上に
+  左右に発射...左端は2Tick停止してから反転発射に 反転した時にボス
+  自身に当たってしまう" (ThunderS was initially planned as a moving
+  terrain-following hw sprite per an early "Zumと同じ" note, then the
+  user simplified it: "やっぱThunderSは2セル分でいいわ...地形に沿う
+  のは無しで" - just 2 more static BG cells). Round8/9's single-instance
+  design (with a busy-gate) was never asked for - now a real 4-slot
+  pool (`THUNDER_POOL`/`ALLOC_THUNDER_SLOT`, same "pool full -> drop"
+  idiom as the homing missiles), no gating on any previous column at
+  all. The column now grows to the ACTUAL terrain surface (`GET_
+  TERRAIN_ROW_FOR_COL` re-probes the same per-column tier cache the
+  tank/Zum already use, fresh every step, 1 row at a time) instead of a
+  fixed row - the real unlock was discovering `MAINLOOP` already does an
+  unconditional full-row terrain redraw of rows20-23 EVERY frame, so
+  Thunder just needs to keep re-asserting its own cells there every
+  frame to win that race (and stopping is enough to erase - no restore
+  path needed), which let the whole earlier `THUNDER_BOTTOM_ROW`/
+  `THUNDER_EXTRA_ROW` machinery get deleted outright. Once landed, 2
+  `THUNDERS_CODE` BG cells (from `ThunderS_8x8.json`) appear beside the
+  bolt and clear together with its own deepest row. The boss-overlap bug
+  was 2 separate real fixes: `CHECK_THUNDER_TRIGGER_RIGHT` was using
+  `BOSS_X` itself (putting the bolt directly under the boss's own body)
+  instead of `BOSS_X-16`, and a new 2-GAME_TICK pause at the left edge
+  (`BOSS_PHASE`=2) gives a late-leg column a beat to grow/shrink before
+  the boss reverses back into that space. Verified: `tests/
+  thunder_test.py` rewritten again (51 checks, including a test that
+  simulates the real per-frame terrain clobber to prove the reassertion
+  pass does real work - this caught one genuine 1-frame flicker gap at
+  the exact grow->shrink transition, fixed), plus 3 new rendered frames
+  (2 columns growing at once, a column landed deep in the ground band
+  with visible ThunderS cells, and the boss paused at the left edge with
+  no overlap). Full suite 439/442, same 3 known GAME_TICK=840-boot-
+  effect failures, no new regressions (`boss_test.py`/`boss_pose_test.py`/
+  `horming_test.py` needed real updates for the new left-edge pause and
+  its own knock-on RNG-timing shift - see HANDOFF.md).
+
 ## Bugs found and fixed while building this
 
 - **Sand flickered between its own new color and Rock's, twice over**
