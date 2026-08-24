@@ -1308,12 +1308,77 @@ the tearing got fixed.
   Thunder wiring code was inserted between them and their own target -
   converted to `JP` (established fix, same as prior rounds).
 
+## Round 9: Thunder tuning - extend 1 cell, remove the step wait, fire every 32px
+
+- "サンダーの表示開始位置はOk 終了位置はあと１セル分長く 表示ウェイト
+  不要 で、端だけではなくボスが横に32px移動毎に発射" - 3 corrections to
+  Round8's Thunder.
+- **"終了位置はあと1セル分長く"**: added `THUNDER_EXTRA_ROW`
+  (=`THUNDER_BOTTOM_ROW`+`THUNDER_ROW_STEP`=19) as one final single-row
+  step past the last full 2x2 block - drawn/erased with just the
+  bottom-half tiles (`DRAW_THUNDER_HALF`/`ERASE_THUNDER_HALF`, new)
+  since there's no more Thunder art for a 2nd row. Row19 is still <20
+  so `ERASE_BULLET_CELL` can restore it (falls into the same
+  `TERRAIN_BLANK_CODE` branch as rows17-18, not plain sky - confirmed
+  by a test failure that assumed sky and had to be corrected). Row20 is
+  still the hard limit (`ERASE_BULLET_CELL`'s own `EBC_SKIP`, no
+  restore path at all) - the column now covers rows1-19, one row short
+  of that limit, not the literal screen bottom.
+- **"表示ウェイト不要"**: `THUNDER_STEP_INTERVAL` 4->0. `UPDATE_THUNDER`
+  reads this back into its own timer after every step, so 0 makes each
+  call perform exactly one step - no restructuring needed, just the
+  constant. Simplified `tests/thunder_test.py`'s own grow/shrink driving
+  loop at the same time (no longer needs to poll for "did a step
+  happen", since it's now deterministic 1-call-1-step).
+- **"端だけではなくボスが横に32px移動毎に発射"**: the biggest change -
+  Thunder used to fire once near the start of each leg then go silent
+  for the rest of it; now it keeps re-arming and re-firing every
+  `THUNDER_TRIGGER_DX`(16->32) px for the WHOLE leg.
+  `CHECK_THUNDER_TRIGGER_LEFT`/`_RIGHT` no longer clear `THUNDER_PENDING`
+  after firing (it now means "this leg is armed at all", not "hasn't
+  fired yet"); instead they re-arm `THUNDER_LEG_START_X` to the boss's
+  own current X right after each fire, and gate on `THUNDER_ACT==0`
+  (single instance - a trigger that lands while the previous column is
+  still animating is skipped that frame, not lost: the distance keeps
+  accumulating against the old baseline, and it fires the instant the
+  previous one finishes, at whatever the boss's CURRENT edge X is then).
+  **Real observed cadence is ~40px, not exactly 32px** - a full grow
+  (10 steps)+shrink(10 steps) cycle now takes 20 raw frames even with
+  no wait, and at `BOSS_SPEED`(2px/frame) that's 40px of travel, longer
+  than the 32px/16-frame trigger distance - so in practice each fire
+  waits for the previous one to finish, landing ~40px apart rather than
+  a strict 32px cadence. This is an inherent consequence of the single-
+  instance constraint (never 2 columns on screen at once), not a bug -
+  flagged for the user in case a faster/simultaneous look was wanted.
+- Verified: `tests/thunder_test.py` rewritten for the new behavior (172
+  checks) - constant sanity checks, `DRAW_THUNDER_HALF`/
+  `ERASE_THUNDER_HALF` unit checks, a full grow/shrink cycle now
+  including the extra half-row step, the busy-gate/re-arm/repeat-firing
+  behavior of both `CHECK_THUNDER_TRIGGER_LEFT`/`_RIGHT` (including the
+  "fires again immediately once idle, at the current edge, not the
+  stale 32px mark" case), and a real `MAINLOOP` sweep confirming
+  multiple correctly-positioned fires per leg (not just one near the
+  edge) with a hard "consecutive same-leg fires are >=32px apart"
+  invariant check, still silent through the pre-first-pose legs. Also
+  confirmed visually via 2 new rendered frames (the column reaching the
+  new row19 extra cell, and a 2nd fire mid-leg at a new leftward
+  position). Full regression suite: 558/561 passing - same 3 known
+  `GAME_TICK=840`-boot-effect failures (`boss_test.py`,
+  `etank_gametick_gate_test.py`, `night_effect_test.py`), no new
+  regressions.
+
 ## Open items / things to watch
 
-- **Thunder's own column never reaches rows19-23** (the ground/rock
-  terrain band) - see Round8's own `THUNDER_BOTTOM_ROW` note above. Not
-  a bug, but worth confirming with the user whether "下まで" needs to
-  go further once they've seen it in motion.
+- **Thunder's own column never reaches rows20-23** (the ground/rock
+  terrain band) - see Round9's own `THUNDER_EXTRA_ROW` note above (this
+  moved 1 row closer since Round8, but the same underlying
+  `ERASE_BULLET_CELL` restore-path limit still applies). Not a bug, but
+  worth confirming with the user whether "下まで" needs to go further.
+- **Thunder's own real firing cadence is ~40px, not the literal 32px
+  asked for** - see Round9's own note above (a consequence of the
+  single-instance constraint + the grow+shrink cycle's own fixed
+  length). Flag this to the user; a faster art/step count could close
+  the gap if a truer 32px cadence is wanted.
 - No known open bugs as of this handoff — the boss's own SPRPAT bug
   (see above) was caught and fixed before shipping; the last several
   rounds before that were bug reports against the night effect and

@@ -1411,8 +1411,10 @@ THUNDER_ACT   EQU F2F0h   ; 0=inactive,1=growing(filling down),2=shrinking(erasi
 THUNDER_COL   EQU F2F1h   ; fixed BG column (0-31) for the active instance
 THUNDER_ROW   EQU F2F2h   ; current leading-edge row being drawn(growing)/erased(shrinking)
 THUNDER_TIMER EQU F2F3h   ; raw frames until the next grow/shrink step
-; per-boss-leg trigger tracking - "ボスが16px移動したら発射".
-THUNDER_PENDING       EQU F2F4h   ; 1=armed, waiting for THUNDER_TRIGGER_DX to elapse this leg; 0=already fired (or not armed at all - see THUNDER_ELIGIBLE)
+; per-boss-leg trigger tracking - "ボスが横に32px移動毎に発射" (round9:
+; repeats for the whole leg, not just once - see CHECK_THUNDER_TRIGGER_
+; LEFT/_RIGHT's own comment).
+THUNDER_PENDING       EQU F2F4h   ; 1=this leg is eligible/armed (stays 1 the whole leg); 0=not armed at all - see THUNDER_ELIGIBLE
 THUNDER_ELIGIBLE      EQU F2F5h   ; 0 until the first attack pose ever completes, then permanently 1 - "ホーミング攻撃後" gates Thunder off entirely during the boss's own pre-first-pose patrol legs
 THUNDER_LEG_START_X   EQU F2F6h   ; BOSS_X captured at the start of the current leg (pose-end for the leftward leg, left-edge reversal for the rightward leg)
 ; scratch record shaped to match ERASE_BULLET_CELL's own IX+2(COL)/+3
@@ -1509,27 +1511,32 @@ THUNDER_COLORBYTE EQU 071h
 THUNDER_TOP_ROW EQU NIGHT_START_ROW
 ; 16px tall image = 2 tile-rows per grown/shrunk segment.
 THUNDER_ROW_STEP EQU 2
-; last START row for a 2-row block whose erase is actually restorable -
-; ERASE_BULLET_CELL (reused by ERASE_THUNDER_BLOCK below) itself gives
-; up on row>=BULLET_ROCK_ROW_MIN+4(20) - EBC_SKIP, no write at all -
-; since that band is real ground/rock terrain with no generic BG
-; restore path, the exact same boundary bullets themselves respect
+; last START row for a full 2-row block whose erase is actually
+; restorable - ERASE_BULLET_CELL (reused by ERASE_THUNDER_BLOCK below)
+; itself gives up on row>=BULLET_ROCK_ROW_MIN+4(20) - EBC_SKIP, no write
+; at all - since that band is real ground/rock terrain with no generic
+; BG restore path, the exact same boundary bullets themselves respect
 ; flying through there. So the last row a 2-row block can safely BOTH
 ; draw AND later erase is row18 (start row17, covering rows17-18, both
-; <20). This means the column only reaches row18 out of the screen's
-; 24 rows (0-23), NOT all the way to the literal bottom - rows19-23
-; (the ground/rock band) are left uncovered rather than risk drawing
-; Thunder tiles there that this file's own bullet-erase system could
-; never clean back up. Flagged as a real (not cosmetic) limitation:
-; extending further would need a genuine new restore path for that
-; band, out of scope unless asked for.
+; <20).
 THUNDER_BOTTOM_ROW EQU 17
-; "ボスが16px移動したら発射"
-THUNDER_TRIGGER_DX EQU 16
-; raw frames between each grow/shrink step - not specified by the user,
-; inferred/tunable (fast enough to read as a quick lightning flash, not
-; a slow crawl).
-THUNDER_STEP_INTERVAL EQU 4
+; "終了位置はあと1セル分長く" - one more single 8x8 row past the last
+; full block (THUNDER_BOTTOM_ROW+2=19), drawn/erased as a HALF block
+; (bottom-half tiles only - DRAW_THUNDER_HALF/ERASE_THUNDER_HALF) since
+; there's no more Thunder art to fill a 2nd row with. Row19 is still
+; <20 so ERASE_BULLET_CELL can restore it same as the full blocks
+; above it; row20 itself is the first row it can't restore at all (see
+; THUNDER_BOTTOM_ROW's own comment), so this is as far down as the
+; column can safely go - rows20-23 (the ground/rock band) stay
+; uncovered. Flagged as a real (not cosmetic) limitation: extending
+; further would need a genuine new restore path for that band, out of
+; scope unless asked for.
+THUNDER_EXTRA_ROW EQU THUNDER_BOTTOM_ROW+THUNDER_ROW_STEP
+; "ボスが横に32px移動毎に発射" - re-checked continuously through the
+; whole leg now (round9), not just once near the edge.
+THUNDER_TRIGGER_DX EQU 32
+; "表示ウェイト不要" - steps every single frame, no pacing delay.
+THUNDER_STEP_INTERVAL EQU 0
 ETANK_SPR_BASE_SLOT EQU 24     ; hw sprite slots24-25 (BL/BR only x1 instance), right after Flyer's own 20-23
 ; "カラーはダークレッド" - NOT sprites/Etank.json's own fg, overridden
 ; directly here (same "override the JSON's own fg" precedent as
@@ -7392,27 +7399,36 @@ UT_STEP:
     JP Z,UT_GROW
     JP UT_SHRINK
 
+; rows1,3,...,THUNDER_BOTTOM_ROW(17) draw full 2x2 blocks; the final
+; step at THUNDER_EXTRA_ROW(19, ==BOTTOM_ROW+ROW_STEP so it's reached
+; naturally by the same +ROW_STEP increment, no extra branch needed for
+; that part) draws only the bottom-half tiles - "終了位置はあと1セル
+;分長く" - see THUNDER_EXTRA_ROW's own comment for why it stops there.
 UT_GROW:
+    LD A,(THUNDER_ROW)
+    CP THUNDER_EXTRA_ROW
+    JR Z,UT_GROW_HALF
     CALL DRAW_THUNDER_BLOCK
     LD A,(THUNDER_ROW) : ADD A,THUNDER_ROW_STEP
-    CP THUNDER_BOTTOM_ROW+1
-    JR NC,UT_GROW_DONE
     LD (THUNDER_ROW),A
     RET
-UT_GROW_DONE:
+UT_GROW_HALF:
+    CALL DRAW_THUNDER_HALF
     ; fully grown - "埋め終わったら上から消す" - start shrinking from the top
     LD A,THUNDER_TOP_ROW : LD (THUNDER_ROW),A
     LD A,2 : LD (THUNDER_ACT),A
     RET
 
 UT_SHRINK:
+    LD A,(THUNDER_ROW)
+    CP THUNDER_EXTRA_ROW
+    JR Z,UT_SHRINK_HALF
     CALL ERASE_THUNDER_BLOCK
     LD A,(THUNDER_ROW) : ADD A,THUNDER_ROW_STEP
-    CP THUNDER_BOTTOM_ROW+1
-    JR NC,UT_SHRINK_DONE
     LD (THUNDER_ROW),A
     RET
-UT_SHRINK_DONE:
+UT_SHRINK_HALF:
+    CALL ERASE_THUNDER_HALF
     XOR A : LD (THUNDER_ACT),A
     RET
 
@@ -7439,6 +7455,30 @@ DRAW_THUNDER_BLOCK:
     DI
     LD HL,THUNDER_NAME_CODES+2 : LD BC,2 : CALL LDIRVM
     EI
+    RET
+
+; writes just the bottom-half tiles (BL/BR) as a single row at
+; THUNDER_ROW/THUNDER_COL - the final "1セル分" extension past the last
+; full 2x2 block (see THUNDER_EXTRA_ROW's own comment).
+DRAW_THUNDER_HALF:
+    LD A,(THUNDER_ROW)
+    CALL NIGHT_ROW_ADDR
+    LD A,(THUNDER_COL) : LD L,A : LD H,0
+    ADD HL,DE
+    LD D,H : LD E,L
+    DI
+    LD HL,THUNDER_NAME_CODES+2 : LD BC,2 : CALL LDIRVM
+    EI
+    RET
+
+; erases the single extra row at THUNDER_ROW/THUNDER_COL (2 cells, not
+; 4) via ERASE_BULLET_CELL, same reuse idea as ERASE_THUNDER_BLOCK.
+ERASE_THUNDER_HALF:
+    LD A,(THUNDER_ROW) : LD C,A
+    LD A,(THUNDER_COL) : LD B,A
+    CALL THUNDER_ERASE_ONE_CELL
+    LD A,(THUNDER_COL) : INC A : LD B,A
+    CALL THUNDER_ERASE_ONE_CELL
     RET
 
 ; erases the 2x2 block at THUNDER_ROW/THUNDER_COL - reuses ERASE_BULLET_
@@ -7472,19 +7512,30 @@ THUNDER_ERASE_ONE_CELL:
     CALL ERASE_BULLET_CELL
     RET
 
-; checks whether the leftward leg's own 16px-moved trigger should fire
+; checks whether the leftward leg's own 32px-moved trigger should fire
 ; Thunder this frame - called from UBA_STEP_LEFT, after BOSS_X has
-; already been updated for this frame.
+; already been updated for this frame. "端だけではなくボスが横に32px移
+; 動毎に発射" (round9) - keeps re-arming and re-firing every
+; THUNDER_TRIGGER_DX px for the whole leg, not just once near the edge.
+; Since it's a single-instance effect, a trigger that lands while the
+; previous column is still animating (THUNDER_ACT!=0) is simply skipped
+; this frame - THUNDER_LEG_START_X is left untouched so the distance
+; keeps accumulating, and it fires (using whatever the boss's edge X is
+; AT THAT MOMENT, not the original 32px mark) the instant the previous
+; one finishes.
 CHECK_THUNDER_TRIGGER_LEFT:
     LD A,(THUNDER_PENDING)
     OR A
     RET Z
+    LD A,(THUNDER_ACT)
+    OR A
+    RET NZ                          ; previous column still animating
     LD A,(THUNDER_LEG_START_X) : LD B,A
     LD A,(BOSS_X) : LD C,A
     LD A,B : SUB C                  ; distance moved = start - current (X decreases moving left)
     CP THUNDER_TRIGGER_DX
     RET C
-    XOR A : LD (THUNDER_PENDING),A
+    LD A,(BOSS_X) : LD (THUNDER_LEG_START_X),A   ; re-arm baseline for the next THUNDER_TRIGGER_DX
     LD A,(BOSS_X) : ADD A,64        ; boss's own current right edge
     SRL A : SRL A : SRL A            ; X -> BG column
     CALL FIRE_THUNDER
@@ -7497,12 +7548,15 @@ CHECK_THUNDER_TRIGGER_RIGHT:
     LD A,(THUNDER_PENDING)
     OR A
     RET Z
+    LD A,(THUNDER_ACT)
+    OR A
+    RET NZ
     LD A,(BOSS_X) : LD B,A
     LD A,(THUNDER_LEG_START_X) : LD C,A
     LD A,B : SUB C                  ; distance moved = current - start
     CP THUNDER_TRIGGER_DX
     RET C
-    XOR A : LD (THUNDER_PENDING),A
+    LD A,(BOSS_X) : LD (THUNDER_LEG_START_X),A
     LD A,(BOSS_X)                    ; boss's own current left edge
     SRL A : SRL A : SRL A
     CALL FIRE_THUNDER

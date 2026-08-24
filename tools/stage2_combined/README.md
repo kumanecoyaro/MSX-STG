@@ -4724,6 +4724,34 @@ with no way to tell where.
   519/522, same 3 known GAME_TICK=840-boot-effect failures, no new
   regressions.
 
+- **Round 9: Thunder tuning - 1 cell longer, no step wait, fires every
+  32px (not just at the leg edge)**: "サンダーの表示開始位置はOk 終了
+  位置はあと１セル分長く 表示ウェイト不要 で、端だけではなくボスが横
+  に32px移動毎に発射". Added `THUNDER_EXTRA_ROW`(19) - one more single-
+  row step past the last full 2x2 block, drawn/erased with just the
+  bottom-half tiles (`DRAW_THUNDER_HALF`/`ERASE_THUNDER_HALF`, new) -
+  still `<20` so `ERASE_BULLET_CELL` can restore it (lands in the same
+  `TERRAIN_BLANK_CODE` band as rows17-18, not plain sky). `THUNDER_STEP_
+  INTERVAL` 4->0 (steps every frame, no pacing delay). The big change:
+  `CHECK_THUNDER_TRIGGER_LEFT`/`_RIGHT` no longer clear `THUNDER_PENDING`
+  after firing - they re-arm `THUNDER_LEG_START_X` to the boss's own
+  current X and keep re-checking for the REST of the leg (`THUNDER_
+  TRIGGER_DX` 16->32), gated on `THUNDER_ACT==0` so a trigger that lands
+  while the previous column is still animating (single instance) just
+  waits and fires at the CURRENT edge X the instant it's free, instead
+  of being lost. **Real cadence ends up ~40px, not exactly 32px** - a
+  full grow+shrink cycle is 20 raw frames even with no wait, which at
+  `BOSS_SPEED`(2px/frame) is 40px of travel; flagged for the user since
+  a literal 32px would need a faster cycle. Verified: `tests/
+  thunder_test.py` rewritten (172 checks - the extra half-row, the
+  now-deterministic 1-call-1-step timing, the busy-gate/re-arm/repeat
+  behavior including "fires again immediately once idle, at the current
+  edge, not the stale mark", and a real `MAINLOOP` sweep confirming
+  multiple correctly-positioned fires per leg with a hard >=32px-apart
+  invariant), plus 2 new rendered frames (column reaching the new extra
+  row, and a 2nd mid-leg fire at a new position). Full suite 558/561,
+  same 3 known GAME_TICK=840-boot-effect failures, no new regressions.
+
 ## Bugs found and fixed while building this
 
 - **Sand flickered between its own new color and Rock's, twice over**
