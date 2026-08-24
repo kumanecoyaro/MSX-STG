@@ -269,6 +269,33 @@ TANK_FLASH_TIMER EQU F12Ch
 ; will feed the same counter once they exist. See LIFE_DISPLAY.
 TANK_LIFE EQU F12Dh
 TANK_LIFE_INIT EQU 6
+; ---------- dash ("上下左右入力の下を入れたままジャンプのBボタンを押
+; すと今向いてる方向に倍速で64px移動") ----------
+; holding DOWN (JOY_DIR==5 - INFERRED as pure down only, not a down-
+; diagonal, since the instruction just says "下") and pressing jump (B,
+; same JOY_TRIGB/PREV_TRIGB edge-detected press UPDATE_JUMP itself uses)
+; fires a fixed 64px dash in the tank's own current TANK_FACING
+; direction, at DASH_SPEED(3px/frame - "倍速", literally double
+; TANK_SPEED_LO's own 1.5px/frame average) instead of a jump.
+; UPDATE_DASH runs BEFORE UPDATE_JUMP (see MAINLOOP) so a dash-starting
+; press can't ALSO start a jump the same frame (UPDATE_JUMP's own first
+; action is bailing out while DASH_ACTIVE) - mutually exclusive, not
+; simultaneous. UPDATE_TANK_XY also bails out while DASH_ACTIVE, so
+; ordinary joystick movement/facing input is fully suppressed for the
+; dash's own duration - "今向いてる方向に" only makes sense read as a
+; FROZEN direction, not one that could change mid-dash.
+DASH_ACTIVE     EQU F12Eh   ; 0=not dashing, 1=dashing
+DASH_DIR        EQU F12Fh   ; frozen TANK_FACING at dash-start (0=right,1=left)
+DASH_REMAINING  EQU F130h   ; px still left to travel this dash
+DASH_DIST EQU 64            ; "64px移動"
+DASH_SPEED EQU 3            ; px/frame, flat (double TANK_SPEED_LO's own 1.5px/frame average)
+; "自機スプライトの上部32x16のスプライトを下に5px下げる" - the tank's
+; own TL/TR quadrants (the top half of its 32x32 hw-sprite body - see
+; UPDATE_TANK_SPRITES) are pushed down 5px while dashing; BL/BR are left
+; alone, so the top visibly slides toward the bottom instead of the
+; whole body just moving down.
+DASH_SPRITE_Y_SHIFT EQU 5
+TANK_TOP_DRAW_Y EQU F131h   ; UPDATE_TANK_SPRITES scratch: TANK_DRAW_Y, +DASH_SPRITE_Y_SHIFT while dashing - TL/TR only, BL/BR stay at TANK_DRAW_Y+16 unshifted
 ; frames left before another shot can fire while A is held ("間欠連射
 ; ...1発打ったら1発空ける" - hold-to-auto-fire, but rate-limited
 ; rather than one every single frame) - see UPDATE_SHOT. Tunable;
@@ -520,6 +547,7 @@ BOSS_DIP_DIST EQU 8
 ; vertical above a fixed corner) - see STAGE_SBEAM's own line-drawing
 ; algorithm below.
 SBEAM_POSE_GATE EQU 2
+SBEAM_TRIP_COUNT EQU 2   ; "サンダービームは2往復に" - 2 full sweep+retract round trips per pose
 ; free hw sprite pattern code - group27/THUNDERS_CODE's own block is BG,
 ; not hw-sprite, so codes 252-255 (the last free block after PAT_FLYER's
 ; own 220-251) are still entirely untouched.
@@ -1571,14 +1599,31 @@ SBEAM_SPRITE_ATTRS EQU F314h   ; SBEAM_SLOT_COUNT*4 = 88 bytes (F314h-F36Bh)
 ; "複数本じゃなく1本だぞ", one real diagonal line from the fixed origin
 ; to the moving tip, not 2 fixed-shape arms) - all in 8px-grid units
 ; (columns/rows), recomputed fresh every frame, never read outside
-; STAGE_SBEAM itself.
-SBEAM_LINE_TX   EQU F36Ch   ; target (tip) column
-SBEAM_LINE_TY   EQU F36Dh   ; target (tip) row
-SBEAM_LINE_DX   EQU F36Eh   ; SBEAM_START_COL - TX (>=0)
-SBEAM_LINE_DY   EQU F36Fh   ; TY - SBEAM_START_ROW (>=0)
-SBEAM_LINE_ERR  EQU F370h   ; Bresenham error accumulator
-SBEAM_LINE_X    EQU F371h   ; walking cursor column (starts at the origin)
-SBEAM_LINE_Y    EQU F372h   ; walking cursor row (starts at the origin)
+; STAGE_SBEAM itself, EXCEPT SBEAM_TRIP (round4, must persist across
+; many frames - see its own comment).
+; round4 bug (real, found from a live report): these originally lived at
+; F36Ch-F373h, only 13 bytes below STACKTOP(F380h) - close enough that
+; ordinary deep CALL/PUSH nesting elsewhere in the game (Thunder's own
+; multi-level draw chain, unrelated to SBeam) silently overwrote them as
+; real stack usage. SBEAM_TRIP specifically needs to SURVIVE across many
+; unrelated frames (Thunder can easily fire in between), so it was
+; getting clobbered to garbage well before SBeam ever read it again -
+; confirmed by directly tracing writes to F373h in a real MAINLOOP run
+; and finding it repeatedly overwritten (with SBEAM_ACT=0 the whole
+; time, i.e. genuinely nothing SBeam-related running) while Thunder was
+; active. The other SBEAM_LINE_* scratch bytes are transient (written
+; and consumed within the same STAGE_SBEAM call, no other code runs
+; between the two, so proximity to the stack never actually mattered for
+; them) but moved along anyway for a uniform, comfortably-clear-of-the-
+; stack home in the TANK_LIFE/DASH block's own free gap instead.
+SBEAM_LINE_TX   EQU F132h   ; target (tip) column
+SBEAM_LINE_TY   EQU F133h   ; target (tip) row
+SBEAM_LINE_DX   EQU F134h   ; SBEAM_START_COL - TX (>=0)
+SBEAM_LINE_DY   EQU F135h   ; TY - SBEAM_START_ROW (>=0)
+SBEAM_LINE_ERR  EQU F136h   ; Bresenham error accumulator
+SBEAM_LINE_X    EQU F137h   ; walking cursor column (starts at the origin)
+SBEAM_LINE_Y    EQU F138h   ; walking cursor row (starts at the origin)
+SBEAM_TRIP      EQU F139h   ; how many full sweep+retract round trips completed so far this pose - see SBEAM_TRIP_COUNT
 
 ; "ボスに被らない位置の右上 今の発射位置の16px上あたり" - same X as
 ; before (still within the boss's own 64x64 box's own column range,
@@ -2153,6 +2198,7 @@ INIT_SPRATR_CLR:
     LD (TANK_ZUM_STANDING),A
     LD (JUMP_STAND_BASELINE),A
     LD (TANK_FLASH_TIMER),A
+    LD (DASH_ACTIVE),A
     LD A,PAT_TANKF : LD (CUR_POSE_PAT),A
     XOR A
     LD (SHOT_COOLDOWN),A
@@ -2568,6 +2614,7 @@ SKIP_ADVANCE:
     LD HL,NAMEBUF_T3 : LD DE,1AE0h : LD BC,32 : CALL LDIRVM
 
     CALL READ_INPUT
+    CALL UPDATE_DASH
     CALL UPDATE_TANK_XY
     CALL UPDATE_TERRAIN_COLLISION
     CALL UPDATE_JUMP
@@ -2641,6 +2688,12 @@ READ_INPUT:
 
 ; ---------- horizontal movement + aim-up flag ----------
 UPDATE_TANK_XY:
+    ; ordinary joystick movement/facing is fully suppressed while
+    ; dashing (UPDATE_DASH drives TANK_X directly) - see DASH_ACTIVE's
+    ; own comment.
+    LD A,(DASH_ACTIVE)
+    OR A
+    RET NZ
     XOR A
     LD (TANK_DX),A
     LD (TANK_AIMUP),A
@@ -2939,6 +2992,87 @@ TEY_DONE:
     LD A,B
     RET
 
+; ---------- dash (down + B button, edge-triggered, 64px straight run) ----------
+; "上下左右入力の下を入れたままジャンプのBボタンを押すと今向いてる方向
+; に倍速で64px移動" - called BEFORE UPDATE_JUMP so a dash-starting press
+; consumes this frame's "new B press" before UPDATE_JUMP's own edge-
+; detection ever sees it (UPDATE_JUMP's own first action bails out
+; while DASH_ACTIVE - see its own comment).
+UPDATE_DASH:
+    LD A,(DASH_ACTIVE)
+    OR A
+    JR NZ,UD_CONTINUE
+    LD A,(JOY_TRIGB)
+    LD HL,PREV_TRIGB
+    CP (HL)
+    RET Z                        ; no change - not a new press
+    OR A
+    RET Z                        ; released (0), not pressed - not a new press
+    LD A,(JOY_DIR)
+    CP 5                         ; "下を入れたまま" - INFERRED as pure down (5), not a down-diagonal
+    RET NZ
+    LD A,(JUMP_ACTIVE)
+    OR A
+    RET NZ                       ; already mid-jump - don't also start a dash
+    LD A,1 : LD (DASH_ACTIVE),A
+    LD A,(TANK_FACING) : LD (DASH_DIR),A
+    LD A,DASH_DIST : LD (DASH_REMAINING),A
+    RET
+UD_CONTINUE:
+    ; keep UPDATE_TERRAIN_COLLISION's own "actively steering" climb-
+    ; easing engaged for the dash's own duration too, matching DASH_DIR
+    ; (TANK_DX would otherwise sit stale at whatever it was the instant
+    ; before the dash started).
+    LD A,(DASH_DIR)
+    OR A
+    JR Z,UD_DX_RIGHT
+    LD A,0FFh : LD (TANK_DX),A
+    JR UD_DX_DONE
+UD_DX_RIGHT:
+    LD A,1 : LD (TANK_DX),A
+UD_DX_DONE:
+    LD A,(DASH_REMAINING) : LD B,A
+    LD A,DASH_SPEED
+    CP B
+    JR C,UD_STEP_PARTIAL          ; DASH_SPEED < remaining - a normal mid-dash step
+    ; final step - move exactly the remaining distance, then end
+    LD A,B
+    CALL UD_MOVE
+    XOR A : LD (DASH_ACTIVE),A
+    LD (TANK_DX),A
+    LD A,(JOY_TRIGB) : LD (PREV_TRIGB),A   ; resync - a still-held B mustn't phantom-trigger a jump
+    RET
+UD_STEP_PARTIAL:
+    LD A,DASH_SPEED
+    CALL UD_MOVE
+    LD A,(DASH_REMAINING) : SUB DASH_SPEED : LD (DASH_REMAINING),A
+    RET
+
+; A = px to move this step, DASH_DIR = direction. Clamps against the
+; same screen edges ordinary movement respects (UTX_DO_RIGHT/_LEFT's own
+; 224/underflow guards) so a dash can't run the tank off-screen.
+UD_MOVE:
+    LD B,A
+    LD A,(DASH_DIR)
+    OR A
+    JR NZ,UD_MOVE_LEFT
+    LD A,(TANK_X) : ADD A,B
+    CP 225
+    JR C,UD_MOVE_RIGHT_OK
+    LD A,224
+UD_MOVE_RIGHT_OK:
+    LD (TANK_X),A
+    RET
+UD_MOVE_LEFT:
+    LD A,(TANK_X)
+    CP B
+    JR NC,UD_MOVE_LEFT_OK
+    XOR A : LD (TANK_X),A
+    RET
+UD_MOVE_LEFT_OK:
+    SUB B : LD (TANK_X),A
+    RET
+
 ; ---------- jump (B button, edge-triggered, 24px half-sine arc) ----------
 ; "乗っかり中にジャンプできないんでオートジャンプ中でも出来るように" -
 ; a new press was always refused whenever JUMP_ACTIVE was already set,
@@ -2950,6 +3084,13 @@ TEY_DONE:
 ; ordinary *mid-air* jump (JUMP_ACTIVE set, not parked) still can't be
 ; re-triggered, unchanged.
 UPDATE_JUMP:
+    ; jump and dash are mutually exclusive - a dash-starting press must
+    ; never ALSO start a jump the same frame (UPDATE_DASH runs first and
+    ; sets DASH_ACTIVE before this routine's own edge-detection would
+    ; otherwise see the same press) - see DASH_ACTIVE's own comment.
+    LD A,(DASH_ACTIVE)
+    OR A
+    RET NZ
     LD A,(JOY_TRIGB)
     LD HL,PREV_TRIGB
     CP (HL)
@@ -3074,6 +3215,19 @@ UTS_GAP_OFFSET:
     LD A,(TANK_Y_CUR) : SUB TANK_GAP_ART_OFFSET
 UTS_DRAW_Y_SET:
     LD (TANK_DRAW_Y),A
+    ; "自機スプライトの上部32x16のスプライトを下に5px下げる" - TL/TR
+    ; only, while dashing; BL/BR keep using TANK_DRAW_Y+16 unshifted
+    ; below (see IX+8/IX+12) so the top visibly slides toward the
+    ; bottom instead of the whole body moving down.
+    LD A,(DASH_ACTIVE)
+    OR A
+    JR Z,UTS_TOPY_NORMAL
+    LD A,(TANK_DRAW_Y) : ADD A,DASH_SPRITE_Y_SHIFT
+    LD (TANK_TOP_DRAW_Y),A
+    JR UTS_TOPY_DONE
+UTS_TOPY_NORMAL:
+    LD A,(TANK_DRAW_Y) : LD (TANK_TOP_DRAW_Y),A
+UTS_TOPY_DONE:
 
     ; quadrant colors: facing left mirrors the PATTERN content (its
     ; own screen-left quadrant now holds what was originally drawn on
@@ -3110,12 +3264,12 @@ UTS_COLOR_DONE:
 UTS_FLASH_DONE:
 
     LD IX,SPRITE_ATTRS
-    LD A,(TANK_DRAW_Y) : LD (IX+0),A
+    LD A,(TANK_TOP_DRAW_Y) : LD (IX+0),A
     LD A,(TANK_X)     : LD (IX+1),A
     LD A,(CUR_POSE_PAT) : LD (IX+2),A
     LD A,(UTS_COLOR_0) : LD (IX+3),A
 
-    LD A,(TANK_DRAW_Y) : LD (IX+4),A
+    LD A,(TANK_TOP_DRAW_Y) : LD (IX+4),A
     LD A,(TANK_X) : ADD A,16 : LD (IX+5),A
     LD A,(CUR_POSE_PAT) : ADD A,4 : LD (IX+6),A
     LD A,(UTS_COLOR_1) : LD (IX+7),A
@@ -8698,6 +8852,7 @@ FIRE_SBEAM:
     LD A,1 : LD (SBEAM_ACT),A
     XOR A : LD (SBEAM_ROWS),A
     XOR A : LD (SBEAM_BLINK),A
+    XOR A : LD (SBEAM_TRIP),A
     LD A,SBEAM_START_COL
     CALL GET_TERRAIN_ROW_FOR_COL
     ADD A,A : ADD A,A : ADD A,A   ; row -> pixel Y (row*8)
@@ -8760,6 +8915,8 @@ US_DROP_STEP:
 ; STAGE_SBEAM's own single rendering formula (column>=SBEAM_FRONT_COL)
 ; serves both directions unchanged - only which way FRONT_COL itself
 ; moves differs.
+; "サンダービームは2往復に" - SBEAM_TRIP_COUNT full sweep+retract round
+; trips before actually finishing, not just 1.
 US_SWEEP_RETRACT:
     LD A,(SBEAM_ACT)
     CP 2
@@ -8767,6 +8924,13 @@ US_SWEEP_RETRACT:
     LD A,(SBEAM_FRONT_COL) : INC A : LD (SBEAM_FRONT_COL),A
     CP SBEAM_START_COL
     RET C                        ; still retracting
+    ; fully home - either start another round trip or actually finish
+    LD A,(SBEAM_TRIP) : INC A : LD (SBEAM_TRIP),A
+    CP SBEAM_TRIP_COUNT
+    JR NC,USR_ALL_TRIPS_DONE
+    LD A,2 : LD (SBEAM_ACT),A    ; another round trip
+    RET
+USR_ALL_TRIPS_DONE:
     XOR A : LD (SBEAM_ACT),A     ; back home - done
     RET
 USR_SWEEP:
@@ -8794,10 +8958,19 @@ USR_REVERSE:
 ; this round, only the RENDERING changed. All Bresenham work happens in
 ; 8px-grid units (columns/rows), converted to pixels only at the very
 ; last step (ADD A,A x3 = *8) when writing each slot.
+; "点滅表示は2フレ表示1フレ非表示に変更" - SBEAM_BLINK now cycles
+; 0,1,2,0,1,2,... (mod 3) instead of a plain 0/1 toggle; hidden only on
+; the 3rd value (2), visible on the other two - a 2-frames-on/1-frame-
+; off flicker instead of the old 1-on/1-off.
 STAGE_SBEAM:
-    LD A,(SBEAM_BLINK) : XOR 1 : LD (SBEAM_BLINK),A
-    AND 1
-    JP NZ,SS_ALL_HIDDEN
+    LD A,(SBEAM_BLINK) : INC A
+    CP 3
+    JR C,SS_BLINK_NOWRAP
+    XOR A
+SS_BLINK_NOWRAP:
+    LD (SBEAM_BLINK),A
+    CP 2
+    JP Z,SS_ALL_HIDDEN
     LD A,(SBEAM_ACT)
     OR A
     JP Z,SS_ALL_HIDDEN

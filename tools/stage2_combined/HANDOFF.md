@@ -1836,7 +1836,116 @@ the tearing got fixed.
   known failures expected, no new regressions (see this round's own
   commit for the exact pass/fail counts).
 
+## Round 16: SBeam tuning (2 round trips, 2-on/1-off blink) + a real stack-corruption bug + the tank's own new dash
+
+- User feedback (verbatim): "Ok ではサンダービームは2往復に で、点滅表
+  示は2フレ表示1フレ非表示に変更 次に自機にダッシュを追加 上下左右入
+  力の下を入れたままジャンプのBボタンを押すと今向いてる方向に倍速で
+  64px移動 その時は自機スプライトの上部32x16のスプライトを下に5px下
+  げるように ダッシュが終われば元の状態に". 3 independent asks - 2
+  SBeam tweaks plus a genuinely new tank feature.
+
+### SBeam: 2 round trips, 2-on/1-off blink
+
+- **2 round trips** ("サンダービームは2往復に"): new `SBEAM_TRIP`
+  counter, incremented in `US_SWEEP_RETRACT` every time a full sweep+
+  retract cycle finishes; if it hasn't reached `SBEAM_TRIP_COUNT`(2)
+  yet, the state machine goes back to sweeping (ACT=2) instead of
+  ending - the beam now visibly reaches the screen's left edge twice per
+  pose before actually finishing.
+- **Blink 2-visible/1-hidden** ("点滅表示は2フレ表示1フレ非表示に変
+  更"): `STAGE_SBEAM`'s own `SBEAM_BLINK` now cycles 0,1,2,0,1,2,...
+  (mod 3) instead of a plain 0/1 toggle, hidden only on the 3rd value -
+  a real period-3 pattern (2 frames on, 1 off), not the old 1-on/1-off.
+
+### A real bug found and fixed while building this: SBEAM_TRIP corrupted by ordinary gameplay
+
+While adding `SBEAM_TRIP` (which, unlike the rest of `STAGE_SBEAM`'s own
+scratch bytes, needs to SURVIVE across many unrelated frames rather than
+being fully recomputed every call), it landed at `F373h` - only 13 bytes
+below `STACKTOP`(`F380h`). That's close enough that ORDINARY deep
+CALL/PUSH nesting from code with nothing to do with SBeam (Thunder's own
+multi-level draw chain: `UPDATE_THUNDER`->`UPDATE_ONE_THUNDER`->
+`DRAW_ONE_THUNDER_ROW`/`WRITE_THUNDERS_CELL`->`NIGHT_ROW_ADDR`, plus
+whatever `PUSH`/`CALL` overhead those routines carry) reaches down far
+enough during real play to silently overwrite it as genuine stack usage.
+Found by directly tracing every write to that address across a real
+`MAINLOOP` run and seeing it repeatedly clobbered with garbage (106,
+242, ...) while `SBEAM_ACT` was 0 the entire time - i.e. nothing SBeam-
+related was running at all. Fixed by moving `SBEAM_TRIP` and the rest of
+`STAGE_SBEAM`'s own Bresenham scratch bytes (`SBEAM_LINE_TX/TY/DX/DY/
+ERR/X/Y`) to the free gap right after `TANK_LIFE`(`F132h`-`F139h`),
+comfortably clear of the stack. The other scratch bytes were never
+actually AT RISK in practice (fully written and consumed within a
+single `STAGE_SBEAM` call with nothing else running in between), but
+moved along anyway for one consistent, safely-away-from-the-stack home.
+New regression coverage: a direct sentinel test that sets `SBEAM_TRIP`
+and drives 2400 real frames of ordinary gameplay (including real
+Thunder activity) confirming it survives completely untouched.
+
+### New: tank dash (down + jump button, 64px straight run)
+
+- **Trigger** ("上下左右入力の下を入れたままジャンプのBボタンを押す
+  と"): `UPDATE_DASH`, a new routine called BEFORE `UPDATE_JUMP` from
+  `MAINLOOP`, edge-detects a fresh `JOY_TRIGB` press (same mechanism
+  `UPDATE_JUMP` itself already uses) while `JOY_DIR==5` - INFERRED as
+  pure down only, not a down-diagonal, since the instruction just says
+  "下". Also refuses to start while already mid-jump.
+- **Mutually exclusive with jump, same frame included**: since
+  `UPDATE_DASH` runs first and sets `DASH_ACTIVE` before `UPDATE_JUMP`
+  even reads `JOY_TRIGB`, and `UPDATE_JUMP`'s own very first action is
+  bailing out while `DASH_ACTIVE`, the SAME down+B press can never also
+  start a jump. `UPDATE_TANK_XY` gets the same `DASH_ACTIVE` guard, so
+  ordinary joystick movement/facing input is fully suppressed for the
+  dash's own duration.
+- **Fixed 64px, `DASH_SPEED`(3px/frame flat) run** ("今向いてる方向に
+  倍速で64px移動"): "倍速" read literally as double `TANK_SPEED_LO`'s
+  own 1.5px/frame average. `DASH_DIR` freezes `TANK_FACING` at the
+  instant the dash starts (matches "今向いてる方向に" - the direction
+  can't change mid-dash since normal input is suppressed anyway).
+  Clamped against the same screen edges (`TANK_X<=224`, no underflow)
+  ordinary movement already respects - not explicitly requested, but a
+  sensible default rather than letting the tank dash off-screen.
+- **Visual**: "自機スプライトの上部32x16のスプライトを下に5px下げるよ
+  うに" - `UPDATE_TANK_SPRITES` pushes just the TL/TR quadrants (the
+  tank's own top half, per its existing 4-quadrant 32x32 hw-sprite
+  layout) down by `DASH_SPRITE_Y_SHIFT`(5) while `DASH_ACTIVE`; BL/BR
+  are left completely alone, so the top visibly slides down toward/into
+  the bottom instead of the whole body moving. Reverts automatically
+  the instant `DASH_ACTIVE` clears - "ダッシュが終われば元の状態に".
+- No terrain-collision/obstacle checking during the dash itself (still
+  runs `UPDATE_TERRAIN_COLLISION` for vertical ground-following, just no
+  special horizontal-obstacle handling) - not requested, kept simple.
+- Verified: new `tests/dash_test.py` (28 checks - trigger gating
+  including "no down", "already jumping", "not a new press", the same-
+  frame jump-exclusion, the exact 64px/`DASH_SPEED` stepping in both
+  directions, the screen-edge clamps, `UPDATE_TANK_XY`/`UPDATE_JUMP`
+  both confirmed inert while dashing, the TL/TR-only sprite shift and
+  its reversion, and a real `MAINLOOP` sweep confirming an actual dash
+  happens end-to-end with the visual shift genuinely appearing on
+  screen). `tests/sbeam_test.py` extended to 51 checks (the 2-round-trip
+  state machine, the 2-on/1-off blink as a period-3 property check
+  rather than a fragile hardcoded sequence, and the `SBEAM_TRIP`
+  stack-safety regression test). Full regression suite: see this
+  round's own commit for the exact pass/fail counts - same 3
+  pre-existing known failures expected, no new regressions. Confirmed
+  visually via 2 rendered frames (the tank's own top half visibly
+  compressed down into the bottom half mid-dash vs. its normal pose).
+
 ## Open items / things to watch
+
+- **RAM addresses that need to persist across frames must stay clear of
+  `STACKTOP`(`F380h`)** - Round16's own real bug (see above): a scratch
+  byte at `F373h` (13 bytes below `STACKTOP`) got silently overwritten
+  by ordinary deep CALL/PUSH nesting from unrelated code during real
+  play. A byte that's fully written-then-read within one routine call
+  (nothing else runs in between) is safe regardless of proximity to the
+  stack; anything meant to survive across frames should live somewhere
+  with real headroom below `STACKTOP` instead - the `TANK_LIFE`/`DASH_*`
+  block's own free gap (`F132h`-`F13Fh`ish) has been a proven-safe
+  choice for that this round. Worth a deliberate proximity check
+  (`STACKTOP - address`) any time a NEW persistent RAM variable is added
+  near the high end of the `F3xx` range.
 
 - **SBeam's own 22-sprite hw cap** (16 from the boss's own dormant pose-
   time body + 6 genuinely free elsewhere - see Round13 above) now bounds

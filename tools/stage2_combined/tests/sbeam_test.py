@@ -179,28 +179,87 @@ for _ in range(SBEAM_START_COL + 2):
         break
 check("US_SWEEP_RETRACT increases SBEAM_FRONT_COL by 1/frame while retracting",
       retract_cols == list(range(1, SBEAM_START_COL + 1)))
-check("US_SWEEP_RETRACT finishes (ACT=0) exactly once FRONT_COL is back at SBEAM_START_COL",
-      cpu.mem[SBEAM_ACT] == 0)
+SBEAM_TRIP = sym["SBEAM_TRIP"]
+SBEAM_TRIP_COUNT = sym["SBEAM_TRIP_COUNT"]
+check("US_SWEEP_RETRACT: SBEAM_TRIP_COUNT is 2 - サンダービームは2往復に",
+      SBEAM_TRIP_COUNT == 2)
+check("US_SWEEP_RETRACT: after the FIRST round trip finishes, it starts sweeping AGAIN "
+      "(ACT=2) instead of ending - 2往復のうち1回目", cpu.mem[SBEAM_ACT] == 2)
+check("US_SWEEP_RETRACT: SBEAM_TRIP was incremented to 1 after the first round trip",
+      cpu.mem[SBEAM_TRIP] == 1)
+
+# drive through the SECOND full sweep+retract round trip and confirm it
+# actually ends (ACT=0) only after that
+for _ in range(SBEAM_START_COL * 2 + 4):
+    call_routine(cpu, "US_SWEEP_RETRACT")
+    if cpu.mem[SBEAM_ACT] == 0:
+        break
+check("US_SWEEP_RETRACT finishes (ACT=0) only after BOTH round trips complete - "
+      "サンダービームは2往復に", cpu.mem[SBEAM_ACT] == 0 and cpu.mem[SBEAM_TRIP] == SBEAM_TRIP_COUNT)
 
 
-# ---- STAGE_SBEAM: sprite-attr correctness per phase, plus the blink ----
+# ---- real bug caught this round: SBEAM_TRIP originally lived 13 bytes
+# below STACKTOP, close enough that ordinary deep CALL/PUSH nesting from
+# UNRELATED code (Thunder's own multi-level draw chain) silently
+# overwrote it as real stack usage - confirmed by tracing writes to that
+# address in a real MAINLOOP run and finding it repeatedly clobbered
+# while SBEAM_ACT was 0 the whole time (nothing SBeam-related running).
+# Directly guard against any scratch byte living too close to the stack
+# again: drive a bunch of real Thunder activity (deep, unrelated CALL
+# nesting) with SBEAM_TRIP set to a sentinel and confirm it survives
+# completely untouched. ----
+cpu = fresh_cpu()
+cpu.sim_dir = 0
+cpu.sim_trig_a = False
+cpu.sim_trig_b = False
+STACKTOP = sym["STACKTOP"]
+check("SBEAM_TRIP (and the rest of STAGE_SBEAM's own scratch) sit comfortably clear of "
+      "STACKTOP, not within a plausible real call-depth's own reach",
+      STACKTOP - sym["SBEAM_LINE_TX"] > 0x40)
+cpu.mem[SBEAM_TRIP] = 77   # sentinel - SBEAM_ACT stays 0 for this whole sweep (well before
+                           # BOSS_POSE_COUNT reaches SBEAM_POSE_GATE), so nothing legitimate
+                           # should ever touch SBEAM_TRIP during it
+for f in range(2400):      # comfortably covers real Thunder activity (fires well before
+                           # the boss's first pose even ends, per thunder_test.py's own timing)
+    step_frame(cpu)
+    if cpu.mem[SBEAM_ACT] != 0:
+        break
+check("SBEAM_TRIP survives 2400 real frames of unrelated gameplay (including real Thunder "
+      "activity) completely untouched, while SBeam itself never once ran",
+      cpu.mem[SBEAM_TRIP] == 77 and cpu.mem[SBEAM_ACT] == 0)
+
+
+# ---- STAGE_SBEAM: sprite-attr correctness per phase, plus the blink -
+# "点滅表示は2フレ表示1フレ非表示に変更" (round4): SBEAM_BLINK now
+# cycles 0,1,2,0,1,2,... (mod 3), hidden only on the 3rd value (2) - a
+# 2-visible/1-hidden pattern, not the old 1/1 toggle. ----
 cpu = fresh_cpu()
 set_terrain_flat(cpu, 0)
 call_routine(cpu, "FIRE_SBEAM")
 call_routine(cpu, "US_DROP_STEP")  # ROWS=1
 call_routine(cpu, "US_DROP_STEP")  # ROWS=2
+visibility_trace = []
+for _ in range(9):
+    call_routine(cpu, "STAGE_SBEAM")
+    visibility_trace.append(all(visible(cpu, i) for i in (0, 1, 2)))
+# exactly 1 hidden frame per 3 consecutive frames (a real period-3
+# pattern), and it's never 2 hidden in a row or all-visible for a whole
+# period - i.e. genuinely 2-visible/1-hidden, not the old 1/1 toggle.
+period3_ok = all(visibility_trace[i:i + 3].count(False) == 1 for i in range(0, 9, 3))
+check("STAGE_SBEAM's own blink is a real 2-visible/1-hidden repeating pattern (not a 1/1 "
+      "toggle) - 点滅表示は2フレ表示1フレ非表示に変更", period3_ok)
+
+cpu.mem[SBEAM_BLINK] = 1   # INC -> 2 -> the hidden tick
 call_routine(cpu, "STAGE_SBEAM")
-blink_after_1 = cpu.mem[SBEAM_BLINK]
 hidden_all_on_this_tick = all(not visible(cpu, i) for i in range(SBEAM_SLOT_COUNT))
-call_routine(cpu, "STAGE_SBEAM")
-blink_after_2 = cpu.mem[SBEAM_BLINK]
-check("STAGE_SBEAM actually toggles SBEAM_BLINK every call - 取り敢えず1フレ点滅で",
-      blink_after_1 != blink_after_2)
-check("on the 'off' blink tick every slot is forced hidden (Y=209) regardless of phase/ROWS",
+check("on the hidden blink tick every slot is forced hidden (Y=209) regardless of phase/ROWS",
       hidden_all_on_this_tick)
-check("on the 'on' blink tick the drop phase's own line (origin + 2 grown rows = 3 points, "
+
+cpu.mem[SBEAM_BLINK] = 0   # INC -> 1 -> a visible tick
+call_routine(cpu, "STAGE_SBEAM")
+check("on a visible blink tick the drop phase's own line (origin + 2 grown rows = 3 points, "
       "dy+1) is visible", visible(cpu, 0) and visible(cpu, 1) and visible(cpu, 2))
-check("on the 'on' blink tick segments beyond the line's own dy+1 points stay hidden",
+check("on a visible blink tick segments beyond the line's own dy+1 points stay hidden",
       not visible(cpu, 3))
 s0 = slot(cpu, 0)
 s1 = slot(cpu, 1)
@@ -233,7 +292,7 @@ SBEAM_START_ROW = SBEAM_START_Y // 8
 cpu = fresh_cpu()
 cpu.mem[SBEAM_ACT] = 1
 cpu.mem[SBEAM_ROWS] = 5
-cpu.mem[SBEAM_BLINK] = 1
+cpu.mem[SBEAM_BLINK] = 0   # INC -> 1 -> a visible tick
 call_routine(cpu, "STAGE_SBEAM")
 expect = [(SBEAM_START_COL, SBEAM_START_ROW + i) for i in range(6)]
 check("drop phase (dx=0): degenerates to a pure vertical line, one point per row, "
@@ -244,7 +303,7 @@ cpu = fresh_cpu()
 cpu.mem[SBEAM_ACT] = 2
 cpu.mem[SBEAM_FRONT_COL] = SBEAM_START_COL - 10
 cpu.mem[SBEAM_GROUND_Y] = (SBEAM_START_ROW + 10) * 8
-cpu.mem[SBEAM_BLINK] = 1
+cpu.mem[SBEAM_BLINK] = 0   # INC -> 1 -> a visible tick
 call_routine(cpu, "STAGE_SBEAM")
 expect = [(SBEAM_START_COL - i, SBEAM_START_ROW + i) for i in range(11)]
 check("sweep phase (dx==dy==10): a real 45-degree diagonal - the UPPER part of the "
@@ -256,7 +315,7 @@ cpu = fresh_cpu()
 cpu.mem[SBEAM_ACT] = 2
 cpu.mem[SBEAM_FRONT_COL] = SBEAM_START_COL - 20
 cpu.mem[SBEAM_GROUND_Y] = (SBEAM_START_ROW + 10) * 8
-cpu.mem[SBEAM_BLINK] = 1
+cpu.mem[SBEAM_BLINK] = 0   # INC -> 1 -> a visible tick
 call_routine(cpu, "STAGE_SBEAM")
 pts = visible_points(cpu)
 check("sweep phase (dx=20,dy=10): exactly dx+1=21 points, monotonically decreasing "
@@ -274,7 +333,7 @@ cpu = fresh_cpu()
 cpu.mem[SBEAM_ACT] = 2
 cpu.mem[SBEAM_FRONT_COL] = 0
 cpu.mem[SBEAM_GROUND_Y] = (SBEAM_START_ROW + 9) * 8
-cpu.mem[SBEAM_BLINK] = 1
+cpu.mem[SBEAM_BLINK] = 0   # INC -> 1 -> a visible tick
 call_routine(cpu, "STAGE_SBEAM")
 check("sweep phase hw cap: a full-width+deep-terrain line (needing 24 points) is "
       "capped at SBEAM_SLOT_COUNT(22) - flagged, not silently unbounded",
@@ -295,7 +354,7 @@ for dy in range(0, 13):
         cpu.mem[SBEAM_ACT] = 2
         cpu.mem[SBEAM_FRONT_COL] = tx
         cpu.mem[SBEAM_GROUND_Y] = (SBEAM_START_ROW + dy) * 8
-        cpu.mem[SBEAM_BLINK] = 1
+        cpu.mem[SBEAM_BLINK] = 0   # INC -> 1 -> a visible tick
         call_routine(cpu, "STAGE_SBEAM")   # would hang/crash before this round's fix
         dx = SBEAM_START_COL - tx
         expected = min(max(dx, dy) + 1, SBEAM_SLOT_COUNT)
@@ -314,7 +373,7 @@ cpu = fresh_cpu()
 cpu.mem[SBEAM_ACT] = 2
 cpu.mem[SBEAM_FRONT_COL] = 1
 cpu.mem[SBEAM_GROUND_Y] = (SBEAM_START_ROW + 9) * 8
-cpu.mem[SBEAM_BLINK] = 1
+cpu.mem[SBEAM_BLINK] = 0   # INC -> 1 -> a visible tick
 call_routine(cpu, "STAGE_SBEAM")
 check("the exact reported crash case (FRONT_COL=1, dx=SBEAM_SLOT_COUNT=22) returns "
       "normally and draws exactly SBEAM_SLOT_COUNT points",
@@ -373,6 +432,8 @@ saw_blink_off_while_active = False
 saw_blink_on_while_active = False
 saw_homing_during_sbeam = False
 saw_real_diagonal = False
+left_edge_visits = 0
+prev_at_left_edge = False
 for f in range(60000):
     step_frame(cpu)
     act = cpu.mem[SBEAM_ACT]
@@ -384,6 +445,10 @@ for f in range(60000):
         saw_sweep = True
         if cpu.mem[SBEAM_FRONT_COL] == 0:
             saw_reach_left_edge = True
+    at_left_edge = act in (2, 3) and cpu.mem[SBEAM_FRONT_COL] == 0
+    if at_left_edge and not prev_at_left_edge:
+        left_edge_visits += 1
+    prev_at_left_edge = at_left_edge
     if act == 3:
         saw_retract = True
     if act in (2, 3):
@@ -420,6 +485,9 @@ check("real MAINLOOP: a genuinely diagonal line (both X and Y varying across vis
       "not 2 fixed-shape arms glued at a corner", saw_real_diagonal)
 check("real MAINLOOP: no homing missile is ever active while SBeam is active - 当然サンダー"
       "ビーム中はホーミングも...撃たねえんだよ", not saw_homing_during_sbeam)
+check(f"real MAINLOOP: the beam genuinely reaches the screen's left edge SBEAM_TRIP_COUNT"
+      f"({SBEAM_TRIP_COUNT}) times in one full pose - サンダービームは2往復に",
+      left_edge_visits == SBEAM_TRIP_COUNT)
 
 # once the cycle above finished mid-game, keep running long enough to pass
 # through at least one more full pose entry/exit, and confirm the boss's
