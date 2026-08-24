@@ -950,6 +950,154 @@ the tearing got fixed.
   HORMING_WANDER_MAX_X` so the force triggers deterministically at the
   boundary itself, not past it.
 
+## Homing missile round 4: two real structural bugs fixed, plus a design correction and a new feature
+
+- The user reported a real, live bug and pushed back hard on two claims
+  from round 3's own documentation: "まずホーミングのスプライトが非表
+  示待機になってるからだろうが ボス上部が常に表示欠けしている で、
+  Flyerを流用だの言ってたが ホーミングスプライトは16x16だぞ 何を流用
+  したんだ 次に射出後のランダム水平移動が固定されてる お前は1度もま
+  ともにランダム扱えてないな 斜めに打ち出したら指定した範囲のランダム
+  X位置まで水平移動後ホーミング で、打ち出しの上向きキャラは要らない
+  そんな事は指定していない SLのままでいい もしそうするなら絵を用意し
+  てる".
+- **Confirmed root cause of the boss's own top-quadrant corruption**:
+  round 2/3's own reasoning ("boss's own hw sprite slots10-25 are free
+  for the entire time any missile can exist") was wrong the moment
+  round 3 gave missiles a flight lasting far longer than the pose itself
+  - a missile is routinely still alive/rendering AFTER the boss has
+  already resumed patrolling as a real hw sprite in slots10-25 again.
+  `UPDATE_HORMING_ALL` runs every `MAINLOOP` frame unconditionally and
+  always ends with a flush (even an all-hidden pool writes `Y=209` to
+  all 4 slots); since it's called AFTER `UPDATE_BOSS_ALL`, this made the
+  missile pool's own flush the LAST write to slots10-13 every frame,
+  permanently stomping the boss's own first 4 quadrants right after
+  `DRAW_BOSS`/`FLUSH_BOSS_SPRITES` drew them - exactly the ordering
+  invariant `BOSS_SPR_BASE_SLOT`'s own PRE-EXISTING comment already
+  documents ("safe as long as `UPDATE_BOSS_ALL` is called AFTER all 4 of
+  their own per-frame flushes...so the boss's own real data is always
+  the LAST write") being violated by a 5th, unaccounted-for writer.
+  **Fixed by moving the missile pool entirely off the boss's own body
+  range** - `HORMING_SPR_BASE_SLOT` 10->6, reusing `BULLET_U_SPR_BASE_
+  SLOT`'s own slots7-9 (unconditionally hidden the INSTANT `BOSS_ACT!=0`
+  - airtight, not a timing estimate, since U becomes BG-drawn during the
+  boss fight) plus `ENEMY_SPR_BASE_SLOT`'s own last slot(6) - same
+  already-trusted "spawning stopped well before boss-spawn" reasoning
+  `BOSS_SPR_BASE_SLOT`/`PAT_SASAPI` already rely on for reusing Zum/
+  BigZum/Flyer/Etank's own hw sprite slots. Also added a `BOSS_ACT=0`
+  guard to `UPDATE_HORMING_ALL` itself (RET Z immediately) - without it,
+  slots6-9 would be stomped by the missile system's own per-frame flush
+  even BEFORE the boss exists, while ZacoII/BulletU still genuinely need
+  them (a second instance of the exact same class of bug, this time
+  against the PRE-boss game).
+- **"何を流用したんだ" was a fair challenge - the round-2 explanation
+  was misleading, though the underlying mechanism turned out to be
+  sound**: Flyer is a real 32x32 sprite; `flyer_gen.py`'s own
+  `quadrants_from_bits`/`block16_bytes` genuinely fill all 32 of its own
+  pattern codes (16 per facing x2 facings) with real art - there was
+  never any "spare padding" sitting alongside it the way round 2's
+  wording implied. What's actually happening is a full TAKEOVER of
+  Flyer's entire block, exactly like `PAT_SASAPI`'s own takeover of
+  BigZum's block for the boss's own body - safe because Flyer (like
+  ZacoII/Zum) never spawns again once the boss fight starts, on the same
+  already-trusted `ENEMY_SPAWN_STOP_TICK`(950)-to-`BOSS_SPAWN_TICK`(999)
+  timing buffer `BOSS_SPR_BASE_SLOT`/`PAT_SASAPI` already rely on.
+  Verified empirically this round (not just reasoned about): a real
+  `MAINLOOP` sweep confirms no `FLYER_POOL` slot is ever active at the
+  exact frame the boss spawns.
+- **The "random" wander was a real, confirmed bug, and likely not the
+  first time**: every existing `GAME_RNG` consumer in this file
+  (`UOZ_PAUSE_ROLL` included) reads `GAME_RNG`, immediately `INC`s-and-
+  stores it back, then takes the low bit of what it just read. When
+  several consumers - or, in round 3's per-frame-coin-flip wander,
+  several missiles within the SAME frame - do that back to back, each
+  one just sees "whatever the previous reader left, +1": the low bit
+  toggles in a near-deterministic pattern rather than looking random at
+  all. Given the user's own "1度もまともにランダム扱えてない" (not once
+  properly handled), this pattern may have been silently degrading
+  `UOZ_PAUSE_ROLL`'s own Zum behavior too, just never called out before
+  the missile's own much more visible per-frame wander made it obvious.
+- **Redesigned per round4's own new spec**: "斜めに打ち出したら指定し
+  た範囲のランダムX位置まで水平移動後ホーミング" - state1 (wander) now
+  picks ONE random target X via `PICK_HORMING_TARGET_X`, called exactly
+  once at the state0->state1 transition (not every frame) - a pure READ
+  of `GAME_RNG` (never mutates it), mixed via XOR with `TICK` (a
+  separate free-running per-frame byte nothing else reads-and-mutates)
+  and the slot's own current Y (decorrelates missiles launching close
+  together, which the intermittent-fire timer makes common). Verified
+  this actually varies (not stuck on one value) both in a standalone
+  sweep and in a real `MAINLOOP` run.
+  **A second real bug this fix's own testing caught**: an ODD `TARGET_X`
+  can never be reached by a missile that only ever moves in `HORMING_
+  SPEED`(2)-px, always-even-parity steps - a plain "step by speed, check
+  exact equality" loop oscillates 1px short/over FOREVER, stuck in
+  state1 permanently (visible in a rendered frame, not caught by the
+  first pass of unit tests, none of which happened to exercise a
+  genuinely random - and therefore possibly odd - target). Fixed by
+  snapping exactly onto `TARGET_X` whenever the remaining distance is
+  `HORMING_SPEED` or less, instead of always stepping by a fixed amount.
+- **The pending question from round 3 (does "ホーミング" mean horizontal-
+  only or full 2D tracking) is now resolved - and the follow-up revealed
+  the horizontal-only version could barely ever hit a grounded tank at
+  all**, since the missile spawns near the very top of the screen (Y~16)
+  and horizontal-only movement never lets Y catch up to a tank down near
+  the ground. Restored the ORIGINAL 5-way `SL/DL/Down/DR/SR` distance-
+  bucket tracking (`RESOLVE_HORMING_FACING_IX`, deleted in round 3,
+  brought back verbatim) as state2 - real 2D pursuit, moving in both X
+  and Y each frame, until missile_Y reaches a THRESHOLD, then hands off
+  to state3 (locked horizontal, the old state2 body, renamed/unchanged).
+  **The threshold itself isn't the tank's own exact Y**: "自機狙い水平
+  移動の位置を8pxさげてくれ 水平打ちで撃ち落とせる高さ" - it's `TANK_
+  Y_CUR+HORMING_HOMING_Y_OFFSET`(8), the tank's own horizontal-shot
+  height, so the final horizontal approach happens at a height the
+  player can actually shoot the missile down at (see below) rather than
+  right in the tank's own face. **The comparison is `>=`, not exact
+  match**: "以上の意味が違う...完全一致では飛んだ時にY位置が飛び越え
+  てしまう場合があるからだ" - a `HORMING_SPEED`-px step can jump
+  straight over one exact value, the same lesson `PICK_HORMING_TARGET_X`'s
+  own parity bug already taught this round. Y is NOT re-snapped to the
+  exact threshold when it fires - whatever overshoot that frame's own 2D
+  step already produced is kept, by the same reasoning.
+- **New feature: missiles can now be shot down by the tank's own
+  bullets** - "今はミサイルに判定がないがショットで撃ち落とせるように".
+  `CHECK_BULLET_VS_HORMING` (called from `MAINLOOP` right after `CHECK_
+  BULLET_VS_BOSS`, same "IX=bullet, IY=pool, nested loop over 3 bullets
+  x4 missiles" shape as `CHECK_BULLET_VS_ZUM`) treats the missile as an
+  8x8 box (matches `UOH_COLLIDE`'s own sizing), no front/back
+  distinction needed (unlike Zum - a missile has no "safe side"). Both
+  bullet types (F and U) are BG-drawn cell-based during the boss fight
+  (`DRAW_BULLET_CELL`'s own comment), so `ERASE_BULLET_CELL` always
+  applies unconditionally here, unlike `CHECK_HIT_PAIR`'s own IX+1-gated
+  version written for the pre-boss hw-sprite-U case. On a hit: erases
+  the bullet's own cell, deactivates both the bullet and the missile,
+  plays `SOUND_DESTROY`, awards `SCORE_PER_KILL` - same feedback as
+  `CHECK_HIT_PAIR`'s own `CHP_DESTROY` path.
+- **"打ち出しの上向きキャラは要らない そんな事は指定していない SLのま
+  までいい"** - confirms round3's own inferred choice (show SL, the
+  closest available facing, cosmetically during the rise, since none of
+  the 5 uploaded sprites face upward) was correct as-is. No change
+  needed; the "flag for correction" hedge in the code comments was
+  removed since it's now confirmed, not speculative.
+- Verified: `tests/horming_test.py` extended again (155 checks - the
+  restored `RESOLVE_HORMING_FACING_IX` bucket boundaries, state2's own
+  real 2D movement per facing, the Y-threshold trigger (both "not yet"
+  and "exactly at" cases, confirming no re-snap), state3 unchanged
+  behavior, `CHECK_BULLET_VS_HORMING`'s own hit/miss/inactive-bullet
+  cases, a real `MAINLOOP` regression check that the boss's own top
+  quadrant is no longer hidden while patrolling, a real sweep confirming
+  no `FLYER_POOL` slot is alive at boss-spawn, `PICK_HORMING_TARGET_X`'s
+  own range/variance/no-mutation checks, the parity-snap fix, and a
+  real end-to-end sweep now extended long enough to observe the FULL
+  arc - state1 through state3 - and confirm `TANK_LIFE` actually
+  decreases, not just that the right states got visited) all pass.
+  Rendered real frames across a full pose: the boss's own body is fully
+  intact (no missing quadrants) both mid-pose and after returning to
+  patrol; a missile is clearly visible descending in 2D toward the tank
+  while later-launched missiles are still high up mid-wander, staggered
+  by the intermittent-fire timing; the tank's own hit-flash and life bar
+  (6->4 across one pose in this stationary no-dodge test) confirm real
+  hits landing via the restored 2D pursuit.
+
 ## Open items / things to watch
 
 - No known open bugs as of this handoff — the boss's own SPRPAT bug

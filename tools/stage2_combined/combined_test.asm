@@ -514,19 +514,31 @@ SASAPI_HAND_FLASH_COLORBYTE EQU 081h
 ; よ スプライト必須" - a REAL hw sprite after all, not BG (round-2
 ; correction of the previous round's BG-drawing decision - BG's own
 ; column-granular movement was too coarse for a fast, smooth-tracking
-; missile). Corrected budget count: once the boss is active, ZacoII/
-; Zum/Flyer never spawn again (same "オールフリー" principle the boss's
-; own body already relies on for BigZum's block) - their entire
-; pattern-code footprint is genuinely free for dynamic reuse, not just
-; BigZum's own. Reuses Flyer's own whole block (PAT_FLYER, 220-251, 32
-; codes - Flyer itself never appears again once the boss fight starts)
-; rather than a fresh permanent allocation - loaded dynamically at boss
-; spawn time (see UPDATE_BOSS_ALL's own spawn branch), the same "load
-; once when the reused owner is guaranteed gone for good" idiom LOAD_
-; SASAPI_PATTERNS already uses for the boss's own body. 5 facings x4
-; slots each (16x16-padded, TL/BL/TR/BR - same "VDP already in 16x16
-; mode" constraint as every other hw sprite here) = 20 of Flyer's own
-; 32 slots, 12 left spare.
+; missile).
+; "ホーミングスプライトは16x16だぞ 何を流用したんだ" - round-4
+; correction of round-2's own explanation: this is NOT reusing "spare
+; padding" inside Flyer's own block (there isn't any - Flyer is a real
+; 32x32 sprite, and flyer_gen.py's own quadrants_from_bits/block16_bytes
+; genuinely fill all 32 of its own codes, 16 for each of its 2 facings,
+; with real art). It's a full TAKEOVER of Flyer's entire block, exactly
+; like PAT_SASAPI's own takeover of BigZum's block for the boss's own
+; body a few lines below - once the boss fight starts, Flyer (like
+; ZacoII/Zum) never spawns again ("オールフリー"), so overwriting its
+; pattern data outright is fine, on the SAME already-trusted timing
+; precedent BOSS_SPR_BASE_SLOT/PAT_SASAPI already rely on: spawning for
+; all of ZacoII/Zum/BigZum/Flyer/Etank stops at ENEMY_SPAWN_STOP_TICK
+; (950), a full 49 GAME_TICKs before BOSS_SPAWN_TICK(999) - by the time
+; this load runs (UPDATE_BOSS_ALL's own spawn branch, the exact same
+; moment LOAD_SASAPI_PATTERNS also runs), any Flyer that could still be
+; airborne has had that same 49-tick head start to clear the screen,
+; same as every other reused pool here. Loaded dynamically at boss
+; spawn time, not INIT - Flyer needs its own real pattern data intact
+; for ordinary gameplay before that. 5 facings x4 codes each (16x16-
+; padded, TL/BL/TR/BR - same "VDP already in 16x16 mode" constraint as
+; every other hw sprite here) = 20 of Flyer's own 32 codes actually
+; written; the remaining 12 (Flyer_L's own tail) are untouched only
+; because nothing currently needs them, not because they were ever kept
+; separately reserved for Flyer itself.
 PAT_HORMING_SL   EQU PAT_FLYER+0
 PAT_HORMING_DL   EQU PAT_FLYER+4
 PAT_HORMING_DOWN EQU PAT_FLYER+8
@@ -536,16 +548,38 @@ PAT_HORMING_SR   EQU PAT_FLYER+16
 ; header exactly (a hw sprite's own color is a free per-instance SAT
 ; byte, no group/background constraint the way BG tiles have).
 HORMING_COLOR EQU 14
-; "同時に4発は欲しい そのために攻撃中はボスをBGにしてんの" - reuses
-; the boss's own hw sprite slots10-25 (guaranteed free for the entire
-; time any missile can exist - fired only at pose-entry, and a missile's
-; own full screen-crossing takes far less time than the pose lasts, so
-; the boss's own body, which those slots would otherwise hold, is
-; always still hidden/BG-drawn whenever a missile is alive). Only
-; slots10-13 used (4, one per missile) - slots14-25 stay spare for
-; whatever "まだ他にもスプライト使うが それは1パターン" / "更にファン
-; ネルもやるんで" ends up needing next.
-HORMING_SPR_BASE_SLOT EQU 10
+; round 4 fix: "ホーミングのスプライトが非表示待機になってるからだろ
+; うが ボス上部が常に表示欠けしている" - a real, confirmed bug. The
+; previous round's reasoning ("boss's own slots10-25 are free while any
+; missile can exist, since the pose empties them") was WRONG: missiles
+; now (round3) fly for far longer than the pose itself (rise+wander+
+; home can easily outlast BOSS_POSE_TICKS), so a missile is routinely
+; still alive/rendering AFTER the boss has already resumed patrolling as
+; a real hw sprite in slots10-25 again. UPDATE_HORMING_ALL runs every
+; MAINLOOP frame unconditionally and always ends by flushing (even an
+; all-hidden pool writes Y=209 to all 4 slots) - since it's called AFTER
+; UPDATE_BOSS_ALL, this made the missile pool's own flush the LAST write
+; to slots10-13 every single frame, permanently stomping the boss's own
+; first 4 quadrants right after DRAW_BOSS/FLUSH_BOSS_SPRITES drew them -
+; exactly BOSS_SPR_BASE_SLOT's own documented invariant ("safe as long
+; as UPDATE_BOSS_ALL is called AFTER all 4 of their own per-frame
+; flushes...so the boss's own real data is always the LAST write") being
+; violated by a 5th, unaccounted-for late writer.
+; Fixed by moving the missile pool OFF the boss's own body range
+; entirely - reuses BULLET_U_SPR_BASE_SLOT's own slots7-9 (UBUS_ONE
+; already unconditionally hides them the INSTANT BOSS_ACT!=0, since U
+; becomes BG-drawn during the boss fight - airtight, not a timing
+; estimate) plus ENEMY_SPR_BASE_SLOT's own LAST slot (6) - "自機以外は
+; もうスポーンしないんで オールフリー", same already-trusted "spawning
+; stopped well before boss-spawn, so by the time this is ever read the
+; pool is empty" reasoning BOSS_SPR_BASE_SLOT/PAT_SASAPI already rely on
+; for reusing Zum/BigZum/Flyer/Etank's own hw sprite slots10-25 (and
+; already proven out by every passing boss test). UPDATE_HORMING_ALL now
+; also RET Z's immediately whenever BOSS_ACT=0 (see its own comment) -
+; without that guard, slots6-9 would be stomped by the missile system's
+; own per-frame flush even BEFORE the boss exists, while ZacoII/BulletU
+; still genuinely need them.
+HORMING_SPR_BASE_SLOT EQU 6
 ; hw sprite slots10-25 (16 quadrants, one per 16x16 cell of the 4x4
 ; grid making up the 64x64 sprite) - reuses Zum/BigZum/Flyer/Etank's
 ; own ranges (10-11/12-19/20-23/24-25) rather than a fresh permanent
@@ -1359,11 +1393,11 @@ BOSS_POSE_END_TICK  EQU F2C0h  ; 2 bytes - GAME_TICK value the pose ends at (GAM
 ; 自機へホーミング". See UPDATE_ONE_HORMING's own comment for the full
 ; state machine.
 HORMING_SLOT_COUNT EQU 4
-HORMING_SLOT_SIZE  EQU 6   ; +0 ACT,+1 X,+2 Y,+3 FACING(cosmetic,eased 45 deg/step: 0=SL,1=DL,2=Down,3=DR,4=SR),+4 STATE(0=rise,1=wander,2=homing),+5 RISE_REMAIN
-HORMING_POOL EQU F2C2h   ; 4 slots x6 bytes = 24 bytes
-HORMING_SPRITE_ATTRS EQU F2DAh   ; 4 slots x4 bytes (Y,X,pattern,color), staged same as ENEMY_SPRITE_ATTRS
-HORMING_VOLLEY_COUNT EQU F2EAh   ; how many of this pose's 4 have launched so far - see UPDATE_HORMING_VOLLEY
-HORMING_VOLLEY_TIMER EQU F2EBh   ; raw frames remaining until the next intermittent launch
+HORMING_SLOT_SIZE  EQU 7   ; +0 ACT,+1 X,+2 Y,+3 FACING(cosmetic,eased 45 deg/step: 0=SL,1=DL,2=Down,3=DR,4=SR),+4 STATE(0=rise,1=wander,2=homing),+5 RISE_REMAIN,+6 TARGET_X (round4: the ONE random X picked at rise-completion - see PICK_HORMING_TARGET_X)
+HORMING_POOL EQU F2C2h   ; 4 slots x7 bytes = 28 bytes
+HORMING_SPRITE_ATTRS EQU F2DEh   ; 4 slots x4 bytes (Y,X,pattern,color), staged same as ENEMY_SPRITE_ATTRS
+HORMING_VOLLEY_COUNT EQU F2EEh   ; how many of this pose's 4 have launched so far - see UPDATE_HORMING_VOLLEY
+HORMING_VOLLEY_TIMER EQU F2EFh   ; raw frames remaining until the next intermittent launch
 
 ; "ボスに被らない位置の右上 今の発射位置の16px上あたり" - same X as
 ; before (still within the boss's own 64x64 box's own column range,
@@ -1388,9 +1422,10 @@ HORMING_RISE_DIST EQU 32
 ; reading was chosen. Flag for correction if this isn't what's meant.
 HORMING_WANDER_MIN_X EQU 64
 HORMING_WANDER_MAX_X EQU 184
-; off-screen/reached-the-ground bail-out (state1's own continuous
-; descent) - real hardware bound, not the phase-2 trigger itself (see
-; UOH_WANDER's own TANK_Y_CUR compare for that).
+; window width, used by PICK_HORMING_TARGET_X's own range-fold.
+HORMING_WANDER_WIDTH EQU HORMING_WANDER_MAX_X-HORMING_WANDER_MIN_X+1
+; off-screen/reached-the-ground bail-out - real hardware bound only
+; (state1 no longer descends at all - see UOH_WANDER's own comment).
 HORMING_MAXY EQU 184
 ; off-screen bail-out, X side - 256px-wide screen minus the sprite's own
 ; 8px width, same "screen_dim - 8" convention as HORMING_MAXY.
@@ -1403,6 +1438,23 @@ HORMING_COLLISION_SIZE EQU 32
 ; 24 spreads all 4 shots across the first third of it, leaving the rest
 ; of the pose for them to actually fly).
 HORMING_VOLLEY_INTERVAL EQU 24
+; round4: state2 (after the wander's own random-X arrival) is real 2D
+; pursuit again, restored from the very first spec message - "自機のX
+; との距離が自機幅より外にある時は斜めのミサイルへ Downは自機幅内に
+; 収まっている時 SL、SRは自機から64px以上Xが離れている時 自機より右方
+; 向に離れている時はSL、DL 左ならSR、DR" - the tank's own real sprite
+; width (tank_gen.py's poses are all 32x32).
+TANK_WIDTH EQU 32
+; "SL、SRは自機から64px以上Xが離れている時"
+HORMING_SIDE_DIST EQU 64
+; "自機狙い水平移動の位置を8pxさげてくれ 水平打ちで撃ち落とせる高さ" -
+; state2's own 2D pursuit locks onto pure horizontal movement (state3)
+; once missile_Y reaches TANK_Y_CUR+this, not exactly TANK_Y_CUR - so
+; the final horizontal approach happens at the tank's own horizontal-
+; shot height, giving the player a real window to shoot the missile
+; down before it ever reaches the tank itself (see CHECK_BULLET_VS_
+; HORMING). Magnitude given directly by the user, not inferred.
+HORMING_HOMING_Y_OFFSET EQU 8
 ETANK_SPR_BASE_SLOT EQU 24     ; hw sprite slots24-25 (BL/BR only x1 instance), right after Flyer's own 20-23
 ; "カラーはダークレッド" - NOT sprites/Etank.json's own fg, overridden
 ; directly here (same "override the JSON's own fg" precedent as
@@ -1951,9 +2003,9 @@ INIT_SPRATR_CLR:
     LD HL,840 : LD (GAME_TICK),HL
     XOR A
     LD (HORMING_POOL+0),A
-    LD (HORMING_POOL+6),A
-    LD (HORMING_POOL+12),A
-    LD (HORMING_POOL+18),A
+    LD (HORMING_POOL+7),A
+    LD (HORMING_POOL+14),A
+    LD (HORMING_POOL+21),A
     LD (SCORE),A : LD (SCORE+1),A : LD (SCORE+2),A
     LD A,0FFh : LD (GTD_LAST_H),A : LD (GTD_LAST_T),A : LD (GTD_LAST_O),A
     CALL SCORE_DISPLAY
@@ -2337,6 +2389,7 @@ SKIP_ZACO_ENEMY:
 SKIP_OTHER_ENEMIES:
     CALL UPDATE_BOSS_ALL
     CALL CHECK_BULLET_VS_BOSS
+    CALL CHECK_BULLET_VS_HORMING
     CALL UPDATE_HORMING_ALL
     CALL CLOUD_UPDATE_ALL
 
@@ -7245,7 +7298,7 @@ FOH_LOOP:
     LD A,(IX+0)
     OR A
     JR Z,FOH_SPAWN
-    INC IX : INC IX : INC IX : INC IX : INC IX : INC IX
+    INC IX : INC IX : INC IX : INC IX : INC IX : INC IX : INC IX
     DJNZ FOH_LOOP
     RET                          ; pool full - drop the attempt
 FOH_SPAWN:
@@ -7272,6 +7325,48 @@ RESOLVE_HORMING_PATTERN_IX:
 HORMING_PATTERN_TABLE:
     DB PAT_HORMING_SL,PAT_HORMING_DL,PAT_HORMING_DOWN,PAT_HORMING_DR,PAT_HORMING_SR
 
+; IX = slot base. Picks ONE random target X within [HORMING_WANDER_
+; MIN_X,HORMING_WANDER_MAX_X] and stores it at (IX+6) - called exactly
+; once, right when a missile's own rise completes (UOH_RISE's own state
+; transition), NOT re-rolled every frame.
+; Round-4 fix: "射出後のランダム水平移動が固定されてる お前は1度もまと
+; もにランダム扱えてないな". Every existing GAME_RNG consumer in this
+; file (UOZ_PAUSE_ROLL and this feature's own round-3 ancestor included)
+; reads GAME_RNG, immediately INCs-and-stores it back, then takes the
+; low bit of what it just read. When several consumers (or, in round
+; 3's case, several missiles within the SAME frame) do that back to
+; back, each one just sees "whatever the previous reader left, +1" - the
+; low bit ends up toggling in a near-deterministic pattern rather than
+; looking random at all, which is almost certainly why the wander read
+; as "fixed". Fixed two ways: (1) drawing ONCE per missile instead of
+; every frame removes nearly all opportunity for that correlation to
+; ever show up visually; (2) this draw is a pure READ of GAME_RNG - it
+; never mutates it - mixed via XOR with TICK (a separate free-running
+; per-frame byte nothing else reads-and-mutates the way GAME_RNG is) and
+; with this slot's own current Y (decorrelates missiles that launch
+; close together, which the intermittent-fire timer makes common).
+; HORMING_WANDER_WIDTH(121) isn't a power of 2, so there's no cheap
+; AND-mask that lands exactly in range - masks to 0-127 (the next power
+; of 2 above the window width) and folds anything >=121 back down by
+; subtracting 121 once (127-121=6 < 121, so one subtraction is always
+; enough, no loop needed).
+PICK_HORMING_TARGET_X:
+    LD A,(GAME_RNG)
+    LD B,A
+    LD A,(TICK)
+    XOR B
+    LD B,A
+    LD A,(IX+2)
+    XOR B
+    AND 7Fh
+    CP HORMING_WANDER_WIDTH
+    JP C,PHTX_OK
+    SUB HORMING_WANDER_WIDTH
+PHTX_OK:
+    ADD A,HORMING_WANDER_MIN_X
+    LD (IX+6),A
+    RET
+
 ; IX = slot base. B = desired facing (0-4, SL..SR). Eases (IX+3) toward
 ; B by at most 1 of the 5 discrete 45-degree steps - "方向を変える時は
 ; 45度まで" - never snaps directly across more than one step even if the
@@ -7290,33 +7385,53 @@ EHF_UP:
     RET
 
 ; IX = slot base. Runs one frame of movement + tank-collision for one
-; ACTIVE missile. 3-state flight, per the user's own spec:
+; ACTIVE missile. 4-state flight, per the user's own spec across all
+; rounds:
 ;   state0 (rise): "最初は左斜上に32px移動" - fixed diagonal, X and Y
 ;     both decrease HORMING_SPEED/frame until RISE_REMAIN(started at
-;     HORMING_RISE_DIST=32) reaches 0, then advances to state1. Facing
-;     is forced SL throughout (cosmetic only - see FIRE_ONE_HORMING's
-;     own comment on why there's no true "upward" sprite).
-;   state1 (wander): "Xは左端64pxから右72pxの範囲でランダムに水平移動"
-;     - X takes a random HORMING_SPEED step left or right each frame
-;     (GAME_RNG coin flip, same idiom as UOZ_PAUSE_ROLL), clamped inside
-;     [HORMING_WANDER_MIN_X,HORMING_WANDER_MAX_X] by forcing the step
-;     away from whichever edge it's at. Y keeps descending HORMING_SPEED
-;     /frame throughout this state (not stated explicitly by the user,
-;     but required for state2's own Y>=TANK_Y trigger to ever fire -
-;     inferred). The moment Y reaches/passes TANK_Y_CUR ("自機のY位置以
-;     上で一致したら"), advances to state2.
-;   state2 (homing): "水平に自機へホーミング" - purely horizontal now;
-;     Y is frozen, X steps HORMING_SPEED/frame toward TANK_X (stops
-;     exactly on an X match rather than oscillating past it).
+;     HORMING_RISE_DIST=32) reaches 0, then advances to state1 (and
+;     picks that state's own one-shot random target X - see
+;     PICK_HORMING_TARGET_X). Facing is forced SL throughout (cosmetic
+;     only - "打ち出しの上向きキャラは要らない...SLのままでいい" - no
+;     upward-facing art was ever requested, SL stays the shown facing
+;     the whole time the missile is actually moving up-left, confirmed
+;     correct as-is).
+;   state1 (wander): "斜めに打ち出したら指定した範囲のランダムX位置ま
+;     で水平移動後ホーミング" - picks ONE random target X inside
+;     [HORMING_WANDER_MIN_X,HORMING_WANDER_MAX_X] the instant state0
+;     completes (not re-rolled every frame - a per-frame coin-flip was
+;     round-3's own bug, see PICK_HORMING_TARGET_X's own comment for
+;     why), then steps HORMING_SPEED/frame straight toward it. Y is
+;     completely frozen throughout this state - "水平移動" is literal.
+;     The instant X reaches the target, advances to state2.
+;   state2 (2D pursuit/descend): round-4's own follow-up correction -
+;     "ホーミング" here means the ORIGINAL 5-way SL/DL/Down/DR/SR
+;     distance-bucket tracking from the very first spec message,
+;     restored via RESOLVE_HORMING_FACING_IX (moves in both X and Y
+;     each frame - the only way this missile, launched near the top of
+;     the screen, could ever actually reach a grounded tank). Every
+;     frame, also checks whether missile_Y has reached TANK_Y_CUR+
+;     HORMING_HOMING_Y_OFFSET(8) - NOT the tank's own exact Y - "自機
+;     狙い水平移動の位置を8pxさげてくれ 水平打ちで撃ち落とせる高さ":
+;     the final horizontal approach happens at the tank's own
+;     horizontal-shot height, so the player gets a real chance to shoot
+;     the missile down (CHECK_BULLET_VS_HORMING) before it ever reaches
+;     the tank. Uses >=, not exact equality - "完全一致では飛んだ時に
+;     Y位置が飛び越えてしまう場合があるからだ" (a HORMING_SPEED-px step
+;     can jump straight over one exact value - same lesson as PICK_
+;     HORMING_TARGET_X's own parity bug) - and does NOT re-snap Y to
+;     the exact threshold when it fires, keeping whatever overshoot
+;     that frame's own step already produced, by the same reasoning.
+;   state3 (locked horizontal): "水平に自機へホーミング" - once state2's
+;     own Y-threshold triggers, Y freezes at wherever it was and the
+;     missile continues purely horizontally toward TANK_X from then on.
 ; In every state, the sprite's own shown facing is a SEPARATE cosmetic
 ; value eased toward that state's "desired" facing via
-; EASE_HORMING_FACING_IX (state0=always SL; state1=DL/DR by which way
-; this frame's random step went; state2=SL/SR by which side the tank is
-; on) - decoupled from the actual movement math (which is hardcoded per
-; state, not table-driven off the eased facing) specifically so the
-; state1->state2 transition's own facing catch-up (still easing toward
-; SL/SR for a frame or two) can never reintroduce a stray vertical step
-; during state2, which is supposed to be Y-frozen.
+; EASE_HORMING_FACING_IX ("方向を変える時は45度まで") - decoupled from
+; the actual movement math (which is hardcoded/table-driven per state,
+; not derived FROM the eased facing) so a facing that's still catching
+; up after a state transition can never accidentally reintroduce a step
+; on an axis that state isn't supposed to move on.
 ; May clear (IX+0) to 0 on an off-screen bail-out or a tank hit; the
 ; caller (UPDATE_HORMING_ALL) re-checks that right after this returns,
 ; before drawing. Every early-exit/state-dispatch branch uses JP, not
@@ -7328,7 +7443,9 @@ UPDATE_ONE_HORMING:
     JP Z,UOH_RISE
     CP 1
     JP Z,UOH_WANDER
-    JP UOH_HOMING2
+    CP 2
+    JP Z,UOH_HOMING2
+    JP UOH_LOCKED
 
 UOH_RISE:
     XOR A : LD (IX+3),A            ; facing SL (cosmetic)
@@ -7343,43 +7460,172 @@ UOH_RISE:
     LD A,(IX+5) : SUB HORMING_SPEED : LD (IX+5),A
     JP NZ,UOH_COLLIDE              ; still rising
     LD A,1 : LD (IX+4),A           ; rise complete -> wander
+    CALL PICK_HORMING_TARGET_X     ; picks (IX+6) once, right at the transition
     JP UOH_COLLIDE
 
+; steps straight toward this slot's own one-shot TARGET_X(IX+6) - see
+; PICK_HORMING_TARGET_X. Y never changes here (state1 is purely
+; horizontal - "水平移動"). Transitions to state2 the instant X arrives.
+; Snaps exactly to TARGET_X (rather than always stepping by a fixed
+; HORMING_SPEED) whenever the remaining distance is HORMING_SPEED or
+; less - PICK_HORMING_TARGET_X's own random draw can land on either
+; parity, but the missile's own X only ever moves in HORMING_SPEED(2)
+; steps from an even starting point, so an exact-equality check alone
+; would let an odd TARGET_X be stepped past every frame without ever
+; landing on it exactly - a real bug this exact snap-when-close fix
+; closes (caught by inspecting a rendered frame, not by the unit tests -
+; none of them exercised a genuinely random, possibly-odd target).
 UOH_WANDER:
-    LD A,(IX+1)
-    CP HORMING_WANDER_MIN_X+1
-    JP C,UOH_W_STEP_RIGHT          ; at/below the window's left bound - force back in
-    CP HORMING_WANDER_MAX_X
-    JP NC,UOH_W_STEP_LEFT          ; at/above the window's right bound - force back in
-    LD A,(GAME_RNG) : INC A : LD (GAME_RNG),A
-    AND 1
-    JP Z,UOH_W_STEP_LEFT
-UOH_W_STEP_RIGHT:
-    LD A,(IX+1) : ADD A,HORMING_SPEED : LD (IX+1),A
-    LD B,3                         ; desired facing DR
+    LD A,(IX+1) : LD B,A            ; B = missile_X
+    LD A,(IX+6) : LD C,A            ; C = target_X
+    LD A,B : SUB C                   ; A = missile_X-target_X; CF=1 iff missile_X<target_X
+    JP NC,UOH_W_AT_OR_RIGHT          ; missile_X>=target_X - A already holds the exact distance
+    ; target is to the right - distance = target_X-missile_X
+    LD A,C : SUB B
+    CP HORMING_SPEED+1
+    JP C,UOH_W_SNAP
+    LD A,(IX+1) : ADD A,HORMING_SPEED
+    CP HORMING_MAXX
+    JP NC,UOH_DEACTIVATE
+    LD (IX+1),A
+    LD B,3                           ; desired facing DR
     JP UOH_W_EASE
-UOH_W_STEP_LEFT:
-    LD A,(IX+1) : SUB HORMING_SPEED : LD (IX+1),A
-    LD B,1                         ; desired facing DL
+UOH_W_AT_OR_RIGHT:
+    OR A
+    JP Z,UOH_W_ARRIVED               ; already an exact match
+    CP HORMING_SPEED+1
+    JP C,UOH_W_SNAP
+    LD A,(IX+1)
+    CP HORMING_SPEED
+    JP C,UOH_DEACTIVATE
+    SUB HORMING_SPEED : LD (IX+1),A
+    LD B,1                           ; desired facing DL
+    JP UOH_W_EASE
+UOH_W_SNAP:
+    LD A,(IX+6) : LD (IX+1),A        ; within reach - land on it exactly, this frame
+UOH_W_ARRIVED:
+    LD A,2 : LD (IX+4),A             ; target reached - switch to state2 (2D pursuit)
+    LD A,(IX+3) : LD B,A             ; hold this frame's own facing, EASE below is a no-op
 UOH_W_EASE:
     CALL EASE_HORMING_FACING_IX
-    ; --- continuous descent toward the tank's own Y (not stated
-    ; explicitly by the user, but required for the trigger below to ever
-    ; fire - inferred) ---
-    LD A,(IX+2) : ADD A,HORMING_SPEED
-    CP HORMING_MAXY
-    JP NC,UOH_DEACTIVATE           ; defensive bottom-of-screen bail-out
-    LD (IX+2),A
-    ; --- state2 trigger: missile_Y >= TANK_Y_CUR - "自機のY位置以上で
-    ; 一致したら水平に自機へホーミング" ---
-    LD A,(TANK_Y_CUR) : LD B,A      ; B = tank_Y
-    LD A,(IX+2)                     ; A = missile_Y (just stored above)
-    CP B                             ; CF=0 (NC) iff missile_Y >= tank_Y(B)
-    JP C,UOH_COLLIDE                 ; missile_Y < tank_Y - not yet, stay in state1
-    LD A,2 : LD (IX+4),A             ; missile_Y >= tank_Y - switch to state2 (homing)
     JP UOH_COLLIDE
 
+; IX = slot base. Sets FACING (0=SL,1=DL,2=Down,3=DR,4=SR) from the
+; CURRENT horizontal pixel distance to the tank - restored in round4
+; (deleted in round3, brought back now that state2 needs real 2D
+; pursuit again) - "自機のXとの距離が自機幅より外にある時は斜めのミサ
+; イルへ Downは自機幅内に収まっている時 SL、SRは自機から64px以上Xが
+; 離れている時 自機より右方向に離れている時はSL、DL 左ならSR、DR"
+; (from the very first spec message). Checked fresh every frame - "自
+; 機方向に追尾".
+RESOLVE_HORMING_FACING_IX:
+    LD A,(IX+1) : LD B,A        ; missile_X
+    LD A,(TANK_X) : LD C,A
+
+    LD A,B : SUB C
+    JR NC,RHFI_RIGHT     ; missile_X>=TANK_X, no borrow - missile is right of the tank
+    LD A,C : SUB B         ; TANK_X-missile_X - missile is LEFT of the tank
+    LD D,A
+    JR RHFI_LEFT_SIDE
+RHFI_RIGHT:
+    LD D,A                  ; A already = missile_X-TANK_X
+RHFI_RIGHT_SIDE:
+    LD A,D
+    CP TANK_WIDTH+1
+    JR C,RHFI_DOWN
+    CP HORMING_SIDE_DIST
+    JR NC,RHFI_SET_SL
+    LD A,1 : LD (IX+3),A    ; DL - missile right of tank, needs to head left
+    RET
+RHFI_SET_SL:
+    XOR A : LD (IX+3),A     ; SL
+    RET
+RHFI_LEFT_SIDE:
+    LD A,D
+    CP TANK_WIDTH+1
+    JR C,RHFI_DOWN
+    CP HORMING_SIDE_DIST
+    JR NC,RHFI_SET_SR
+    LD A,3 : LD (IX+3),A    ; DR - missile left of tank, needs to head right
+    RET
+RHFI_SET_SR:
+    LD A,4 : LD (IX+3),A    ; SR
+    RET
+RHFI_DOWN:
+    LD A,2 : LD (IX+3),A
+    RET
+
+; state2: real 2D pursuit toward the tank (both X and Y move together,
+; per RESOLVE_HORMING_FACING_IX's own 5-way facing) until missile_Y
+; reaches TANK_Y_CUR+HORMING_HOMING_Y_OFFSET, then hands off to state3
+; (locked horizontal) - see UPDATE_ONE_HORMING's own comment.
 UOH_HOMING2:
+    CALL RESOLVE_HORMING_FACING_IX
+    LD A,(IX+3)
+    OR A
+    JP Z,UOH_H2_STEP_SL
+    CP 1
+    JP Z,UOH_H2_STEP_DL
+    CP 2
+    JP Z,UOH_H2_STEP_DOWN
+    CP 3
+    JP Z,UOH_H2_STEP_DR
+    JP UOH_H2_STEP_SR
+
+UOH_H2_STEP_SL:
+    LD A,(IX+1)
+    CP HORMING_SPEED
+    JP C,UOH_DEACTIVATE
+    SUB HORMING_SPEED : LD (IX+1),A
+    JP UOH_H2_TRIGGER
+UOH_H2_STEP_SR:
+    LD A,(IX+1) : ADD A,HORMING_SPEED
+    CP HORMING_MAXX
+    JP NC,UOH_DEACTIVATE
+    LD (IX+1),A
+    JP UOH_H2_TRIGGER
+UOH_H2_STEP_DOWN:
+    LD A,(IX+2) : ADD A,HORMING_SPEED
+    CP HORMING_MAXY
+    JP NC,UOH_DEACTIVATE
+    LD (IX+2),A
+    JP UOH_H2_TRIGGER
+UOH_H2_STEP_DL:
+    LD A,(IX+1)
+    CP HORMING_SPEED
+    JP C,UOH_DEACTIVATE
+    LD A,(IX+2) : ADD A,HORMING_SPEED
+    CP HORMING_MAXY
+    JP NC,UOH_DEACTIVATE
+    LD (IX+2),A
+    LD A,(IX+1) : SUB HORMING_SPEED : LD (IX+1),A
+    JP UOH_H2_TRIGGER
+UOH_H2_STEP_DR:
+    LD A,(IX+1) : ADD A,HORMING_SPEED
+    CP HORMING_MAXX
+    JP NC,UOH_DEACTIVATE
+    LD B,A
+    LD A,(IX+2) : ADD A,HORMING_SPEED
+    CP HORMING_MAXY
+    JP NC,UOH_DEACTIVATE
+    LD (IX+2),A
+    LD A,B : LD (IX+1),A
+
+; --- trigger: missile_Y >= TANK_Y_CUR+HORMING_HOMING_Y_OFFSET - see
+; UPDATE_ONE_HORMING's own comment for why this is an inequality (not
+; exact match) and why it targets bullet height, not the tank itself ---
+UOH_H2_TRIGGER:
+    LD A,(TANK_Y_CUR) : ADD A,HORMING_HOMING_Y_OFFSET : LD B,A
+    LD A,(IX+2)
+    CP B
+    JP C,UOH_COLLIDE                  ; still above the threshold - stay in state2
+    LD A,3 : LD (IX+4),A              ; threshold reached/passed - lock horizontal (state3)
+    JP UOH_COLLIDE
+
+; state3: locked horizontal - Y stays exactly wherever state2's own
+; trigger left it, X steps toward TANK_X only - "水平に自機へホーミン
+; グ". Holds position/facing once aligned rather than oscillating.
+UOH_LOCKED:
     LD A,(IX+1) : LD B,A            ; missile_X
     LD A,(TANK_X)
     CP B
@@ -7432,16 +7678,80 @@ UOH_DEACTIVATE:
     XOR A : LD (IX+0),A
     RET
 
-; called every frame regardless of boss/pose state - a missile in flight
-; keeps flying even if the pose that fired it has already ended (crossing
-; the whole screen takes far less time than a pose lasts, so this is
-; mostly a defensive guarantee, not something that normally matters in
-; practice). Walks HORMING_POOL (IX, 6 bytes/slot) and HORMING_SPRITE_
-; ATTRS (HL, 4 bytes/slot) in lockstep - inactive slots are hidden
-; (Y=209), active ones updated then staged, then the whole 4-slot buffer
-; is flushed to hw sprite slots10-13 once at the end (not per-slot - same
-; "one flush after N stages" shape as FLUSH_ZUM_SPRITES's own callers).
+; "今はミサイルに判定がないがショットで撃ち落とせるように" - the
+; tank's own bullets (F or U - both are BG-drawn cell-based during the
+; boss fight, see DRAW_BULLET_CELL's own comment, so ERASE_BULLET_CELL
+; always applies here unconditionally, unlike CHECK_HIT_PAIR's own
+; IX+1-gated version written for the pre-boss hw-sprite-U case) can now
+; shoot a missile down - loops all 3 bullet slots against all 4 missile
+; slots, same "IX=bullet, IY=pool, nested loop" shape as CHECK_BULLET_
+; VS_ZUM. Missile is treated as an 8x8 box (matches UOH_COLLIDE's own
+; sizing), no front/back distinction needed (unlike Zum) since a
+; missile has no "safe side". On a hit: erase the bullet's own BG cell,
+; deactivate both the bullet and the missile, same destroy/score/sound
+; feedback as CHECK_HIT_PAIR's own CHP_DESTROY path.
+CHECK_BULLET_VS_HORMING:
+    LD IX,BULLET0_ACT : CALL CHECK_HIT_ONE_BULLET_HORMING
+    LD IX,BULLET1_ACT : CALL CHECK_HIT_ONE_BULLET_HORMING
+    LD IX,BULLET2_ACT : CALL CHECK_HIT_ONE_BULLET_HORMING
+    RET
+
+CHECK_HIT_ONE_BULLET_HORMING:
+    LD IY,HORMING_POOL
+    LD B,HORMING_SLOT_COUNT
+CHOBH_LOOP:
+    PUSH BC
+    CALL CHECK_HIT_PAIR_HORMING
+    POP BC
+    INC IY : INC IY : INC IY : INC IY : INC IY : INC IY : INC IY
+    DJNZ CHOBH_LOOP
+    RET
+
+CHECK_HIT_PAIR_HORMING:
+    LD A,(IX+0)
+    OR A
+    RET Z
+    LD A,(IY+0)
+    OR A
+    RET Z
+
+    LD A,(IX+2) : ADD A,A : ADD A,A : ADD A,A : LD B,A   ; bullet pixel X = COL*8
+    LD A,(IX+3) : ADD A,A : ADD A,A : ADD A,A : LD C,A   ; bullet pixel Y = ROW*8
+    LD A,(IY+1) : LD D,A     ; missile_X
+    LD A,(IY+2) : LD E,A     ; missile_Y
+
+    LD A,B : ADD A,7 : CP D : RET C
+    LD A,D : ADD A,7 : CP B : RET C
+    LD A,C : ADD A,7 : CP E : RET C
+    LD A,E : ADD A,7 : CP C : RET C
+
+    CALL ERASE_BULLET_CELL
+    XOR A : LD (IX+0),A
+    LD (IY+0),A
+    CALL SOUND_DESTROY
+    LD HL,SCORE_PER_KILL
+    CALL ADD_SCORE
+    RET
+
+; called every frame regardless of pose state (once the boss exists) - a
+; missile in flight keeps flying even if the pose that fired it has
+; already ended (see UPDATE_ONE_HORMING's own comment). Walks
+; HORMING_POOL (IX, 7 bytes/slot) and HORMING_SPRITE_ATTRS (HL, 4
+; bytes/slot) in lockstep - inactive slots are hidden (Y=209), active
+; ones updated then staged, then the whole 4-slot buffer is flushed to
+; hw sprite slots6-9 once at the end (not per-slot - same "one flush
+; after N stages" shape as FLUSH_ZUM_SPRITES's own callers).
+; RET Z's immediately while BOSS_ACT=0 - the missile pool can never have
+; anything active before the boss exists (nothing can fire), but slots
+; 6-9 still genuinely belong to ZacoII/BulletU pre-boss; touching VRAM
+; here at all before the boss spawns would stomp their own real data
+; every frame (see HORMING_SPR_BASE_SLOT's own comment for the related
+; bug this exact unconditional-flush shape caused against the boss's
+; own body).
 UPDATE_HORMING_ALL:
+    LD A,(BOSS_ACT)
+    OR A
+    RET Z
     LD IX,HORMING_POOL
     LD HL,HORMING_SPRITE_ATTRS
     LD B,HORMING_SLOT_COUNT
@@ -7476,7 +7786,7 @@ UHA_HIDE:
     XOR A : LD (HL),A : INC HL
     XOR A : LD (HL),A : INC HL
 UHA_NEXT:
-    INC IX : INC IX : INC IX : INC IX : INC IX : INC IX
+    INC IX : INC IX : INC IX : INC IX : INC IX : INC IX : INC IX
     POP BC
     DJNZ UHA_LOOP
     CALL FLUSH_HORMING_SPRITES
