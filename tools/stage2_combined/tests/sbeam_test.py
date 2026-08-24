@@ -558,14 +558,42 @@ cpu.mem[sym["SBEAM_LINE_TX"]] = 15
 cpu.mem[sym["SBEAM_LINE_TY"]] = 18
 cpu.mem[TANK_X] = 15 * 8
 cpu.mem[TANK_Y_CUR] = 18 * 8 - TANK_COLLISION_Y_OFFSET
+TANK_HAZARD_IFRAMES = sym["TANK_HAZARD_IFRAMES"]
+TANK_HAZARD_IFRAME_DURATION = sym["TANK_HAZARD_IFRAME_DURATION"]
 life0 = cpu.mem[TANK_LIFE]
 call_routine(cpu, "CHECK_SBEAM_VS_TANK")
 check("tank overlapping the tip takes damage", cpu.mem[TANK_LIFE] == life0 - 1)
-check("a hit sets TANK_FLASH_TIMER (post-hit immunity window)", cpu.mem[TANK_FLASH_TIMER] > 0)
+check("a hit sets TANK_FLASH_TIMER (visual flash)", cpu.mem[TANK_FLASH_TIMER] > 0)
+check(f"a hit sets TANK_HAZARD_IFRAMES to TANK_HAZARD_IFRAME_DURATION({TANK_HAZARD_IFRAME_DURATION}) - "
+      "サンダーやサンダービームで連続ダメージを受けてしまうんで自機に当たったら30フレ当たり判定を停止",
+      cpu.mem[TANK_HAZARD_IFRAMES] == TANK_HAZARD_IFRAME_DURATION)
 
 life1 = cpu.mem[TANK_LIFE]
 call_routine(cpu, "CHECK_SBEAM_VS_TANK")
-check("no repeat damage while TANK_FLASH_TIMER is still active", cpu.mem[TANK_LIFE] == life1)
+check("no repeat damage while TANK_HAZARD_IFRAMES is still active", cpu.mem[TANK_LIFE] == life1)
+
+# the iframe window really is 30 raw frames, not the much shorter
+# FLASH_DURATION(6)
+cpu = fresh_cpu()
+cpu.mem[SBEAM_ACT] = 2
+cpu.mem[sym["SBEAM_LINE_TX"]] = 15
+cpu.mem[sym["SBEAM_LINE_TY"]] = 18
+cpu.mem[TANK_X] = 15 * 8
+cpu.mem[TANK_Y_CUR] = 18 * 8 - TANK_COLLISION_Y_OFFSET
+call_routine(cpu, "CHECK_SBEAM_VS_TANK")
+life_after_first_hit = cpu.mem[TANK_LIFE]
+still_gated_through_29 = True
+for f in range(TANK_HAZARD_IFRAME_DURATION - 1):
+    call_routine(cpu, "UPDATE_TANK_SPRITES")
+    call_routine(cpu, "CHECK_SBEAM_VS_TANK")
+    if cpu.mem[TANK_LIFE] != life_after_first_hit:
+        still_gated_through_29 = False
+check(f"still refuses a hit through all {TANK_HAZARD_IFRAME_DURATION - 1} more frames of the "
+      "30-frame window", still_gated_through_29)
+call_routine(cpu, "UPDATE_TANK_SPRITES")
+call_routine(cpu, "CHECK_SBEAM_VS_TANK")
+check(f"a new hit is allowed again exactly TANK_HAZARD_IFRAME_DURATION({TANK_HAZARD_IFRAME_DURATION}) "
+      "raw frames after the previous one", cpu.mem[TANK_LIFE] == life_after_first_hit - 1)
 
 cpu = fresh_cpu()
 cpu.mem[SBEAM_ACT] = 0

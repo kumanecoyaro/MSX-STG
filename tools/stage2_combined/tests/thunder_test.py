@@ -541,6 +541,9 @@ def make_thunder(cpu, act, col, row, deep):
 TANK_COLLISION_Y_OFFSET = sym["TANK_COLLISION_Y_OFFSET"]
 
 # growing: tip = ROW-1
+TANK_HAZARD_IFRAMES = sym["TANK_HAZARD_IFRAMES"]
+TANK_HAZARD_IFRAME_DURATION = sym["TANK_HAZARD_IFRAME_DURATION"]
+
 cpu = fresh_cpu()
 make_thunder(cpu, 1, 10, 6, 0)   # tip row = 5
 cpu.mem[TANK_X] = 10 * 8
@@ -548,12 +551,38 @@ cpu.mem[TANK_Y_CUR] = 5 * 8 - TANK_COLLISION_Y_OFFSET
 life0 = cpu.mem[TANK_LIFE]
 call_routine(cpu, "CHECK_THUNDER_VS_TANK")
 check("growing bolt: tank overlapping the tip (ROW-1) takes damage", cpu.mem[TANK_LIFE] == life0 - 1)
-check("a hit sets TANK_FLASH_TIMER (post-hit immunity window)", cpu.mem[TANK_FLASH_TIMER] > 0)
+check("a hit sets TANK_FLASH_TIMER (visual flash)", cpu.mem[TANK_FLASH_TIMER] > 0)
+check(f"a hit sets TANK_HAZARD_IFRAMES to TANK_HAZARD_IFRAME_DURATION({TANK_HAZARD_IFRAME_DURATION}) - "
+      "サンダーやサンダービームで連続ダメージを受けてしまうんで自機に当たったら30フレ当たり判定を停止",
+      cpu.mem[TANK_HAZARD_IFRAMES] == TANK_HAZARD_IFRAME_DURATION)
 
-# same frame again - flash timer gates a 2nd hit
+# same frame again - the iframe timer gates a 2nd hit
 life1 = cpu.mem[TANK_LIFE]
 call_routine(cpu, "CHECK_THUNDER_VS_TANK")
-check("no repeat damage while TANK_FLASH_TIMER is still active", cpu.mem[TANK_LIFE] == life1)
+check("no repeat damage while TANK_HAZARD_IFRAMES is still active", cpu.mem[TANK_LIFE] == life1)
+
+# the iframe window really is TANK_HAZARD_IFRAME_DURATION(30) raw frames,
+# not the much shorter FLASH_DURATION(6) - drive it down via
+# UPDATE_TANK_SPRITES' own real per-frame countdown and confirm a hit is
+# refused for all 30 frames, then allowed again exactly on the 31st.
+cpu = fresh_cpu()
+make_thunder(cpu, 1, 10, 6, 0)
+cpu.mem[TANK_X] = 10 * 8
+cpu.mem[TANK_Y_CUR] = 5 * 8 - TANK_COLLISION_Y_OFFSET
+call_routine(cpu, "CHECK_THUNDER_VS_TANK")   # frame0: the first hit
+life_after_first_hit = cpu.mem[TANK_LIFE]
+still_gated_through_29 = True
+for f in range(TANK_HAZARD_IFRAME_DURATION - 1):
+    call_routine(cpu, "UPDATE_TANK_SPRITES")   # advances the iframe countdown by 1
+    call_routine(cpu, "CHECK_THUNDER_VS_TANK")
+    if cpu.mem[TANK_LIFE] != life_after_first_hit:
+        still_gated_through_29 = False
+check(f"still refuses a hit through all {TANK_HAZARD_IFRAME_DURATION - 1} more frames of the "
+      "30-frame window", still_gated_through_29)
+call_routine(cpu, "UPDATE_TANK_SPRITES")   # the 30th countdown step - window just expired
+call_routine(cpu, "CHECK_THUNDER_VS_TANK")
+check(f"a new hit is allowed again exactly TANK_HAZARD_IFRAME_DURATION({TANK_HAZARD_IFRAME_DURATION}) "
+      "raw frames after the previous one", cpu.mem[TANK_LIFE] == life_after_first_hit - 1)
 
 # tank under the TRAILING body (above the tip), not the tip itself - no hit
 cpu = fresh_cpu()

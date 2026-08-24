@@ -16,15 +16,20 @@ LIFE_CODE = sym["LIFE_CODE"]
 HUD_ROW_BLANK_CODE = sym["HUD_ROW_BLANK_CODE"]
 LIFE_BAR_ROW = sym["LIFE_BAR_ROW"]
 LIFE_BAR_COL0 = sym["LIFE_BAR_COL0"]
+TANK_LIFE_INIT = sym["TANK_LIFE_INIT"]
+LIFE_BAR_CELL_COUNT = sym["LIFE_BAR_CELL_COUNT"]
 NAMETAB = 0x1800
 
 def cell(row, col):
     return NAMETAB + row * 32 + col
 
-# Test 1: boot state - life = 6, all 6 cells filled
+# Test 1: boot state - "ライフ初期値を10に" (was 6) - all cells filled
 cpu = fresh_cpu()
-check("TANK_LIFE inits to 6", cpu.mem[TANK_LIFE] == sym["TANK_LIFE_INIT"] == 6)
-for i in range(6):
+check(f"TANK_LIFE inits to TANK_LIFE_INIT({TANK_LIFE_INIT})",
+      cpu.mem[TANK_LIFE] == TANK_LIFE_INIT == 10)
+check("LIFE_BAR_CELL_COUNT matches TANK_LIFE_INIT (the bar was a hardcoded 6-cell "
+      "loop before, now sized to the real life total)", LIFE_BAR_CELL_COUNT == TANK_LIFE_INIT)
+for i in range(LIFE_BAR_CELL_COUNT):
     check(f"life cell {i} shows LIFE_CODE at boot", cpu.vram[cell(LIFE_BAR_ROW, LIFE_BAR_COL0 + i)] == LIFE_CODE)
 
 # Test 2: old calibration-strip symbols are gone
@@ -36,19 +41,23 @@ check("row0 col20 (unused) is HUD_ROW_BLANK_CODE", cpu.vram[cell(0, 20)] == HUD_
 check("row0 col8 (the 1-cell gap after the score) is HUD_ROW_BLANK_CODE", cpu.vram[cell(0, 8)] == HUD_ROW_BLANK_CODE)
 
 # Test 4: APPLY_TANK_DAMAGE decrements life and depletes from the right
-cpu.mem[TANK_LIFE] = 6
+cpu.mem[TANK_LIFE] = TANK_LIFE_INIT
 call_routine(cpu, "APPLY_TANK_DAMAGE")
-check("life decremented to 5", cpu.mem[TANK_LIFE] == 5)
-check("cell 5 (rightmost) now blank", cpu.vram[cell(LIFE_BAR_ROW, LIFE_BAR_COL0 + 5)] == HUD_ROW_BLANK_CODE)
-for i in range(5):
+check("life decremented by 1", cpu.mem[TANK_LIFE] == TANK_LIFE_INIT - 1)
+check("rightmost cell now blank",
+      cpu.vram[cell(LIFE_BAR_ROW, LIFE_BAR_COL0 + TANK_LIFE_INIT - 1)] == HUD_ROW_BLANK_CODE)
+for i in range(TANK_LIFE_INIT - 1):
     check(f"cell {i} still filled after 1 hit", cpu.vram[cell(LIFE_BAR_ROW, LIFE_BAR_COL0 + i)] == LIFE_CODE)
 
 call_routine(cpu, "APPLY_TANK_DAMAGE")
 call_routine(cpu, "APPLY_TANK_DAMAGE")
-check("life decremented to 3 after 3 hits total", cpu.mem[TANK_LIFE] == 3)
-check("cell 3 now blank", cpu.vram[cell(LIFE_BAR_ROW, LIFE_BAR_COL0 + 3)] == HUD_ROW_BLANK_CODE)
-check("cell 4 now blank", cpu.vram[cell(LIFE_BAR_ROW, LIFE_BAR_COL0 + 4)] == HUD_ROW_BLANK_CODE)
-check("cell 2 still filled", cpu.vram[cell(LIFE_BAR_ROW, LIFE_BAR_COL0 + 2)] == LIFE_CODE)
+check("life decremented to TANK_LIFE_INIT-3 after 3 hits total", cpu.mem[TANK_LIFE] == TANK_LIFE_INIT - 3)
+check("cell TANK_LIFE_INIT-3 now blank",
+      cpu.vram[cell(LIFE_BAR_ROW, LIFE_BAR_COL0 + TANK_LIFE_INIT - 3)] == HUD_ROW_BLANK_CODE)
+check("cell TANK_LIFE_INIT-2 now blank",
+      cpu.vram[cell(LIFE_BAR_ROW, LIFE_BAR_COL0 + TANK_LIFE_INIT - 2)] == HUD_ROW_BLANK_CODE)
+check("cell TANK_LIFE_INIT-4 still filled",
+      cpu.vram[cell(LIFE_BAR_ROW, LIFE_BAR_COL0 + TANK_LIFE_INIT - 4)] == LIFE_CODE)
 
 # Test 5: floors at 0, no death handling - decrement all the way down
 # through a real sequence of hits (not poked directly) so the life bar
@@ -56,8 +65,8 @@ check("cell 2 still filled", cpu.vram[cell(LIFE_BAR_ROW, LIFE_BAR_COL0 + 2)] == 
 cpu.mem[TANK_LIFE] = 1
 call_routine(cpu, "APPLY_TANK_DAMAGE")
 check("life reaches 0 via a real decrement", cpu.mem[TANK_LIFE] == 0)
-for i in range(6):
-    check(f"all 6 cells blank at life=0 (cell {i})", cpu.vram[cell(LIFE_BAR_ROW, LIFE_BAR_COL0 + i)] == HUD_ROW_BLANK_CODE)
+for i in range(LIFE_BAR_CELL_COUNT):
+    check(f"all cells blank at life=0 (cell {i})", cpu.vram[cell(LIFE_BAR_ROW, LIFE_BAR_COL0 + i)] == HUD_ROW_BLANK_CODE)
 call_routine(cpu, "APPLY_TANK_DAMAGE")
 check("life floors at 0, does not underflow on a further hit", cpu.mem[TANK_LIFE] == 0)
 

@@ -60,8 +60,14 @@ check("the old fixed FLYER_CRUISE_Y constant is gone", "FLYER_CRUISE_Y" not in s
 FLYER_SPAWN_Y_MIN = sym["FLYER_SPAWN_Y_MIN"]
 FLYER_SPAWN_Y_SPAN = sym["FLYER_SPAWN_Y_SPAN"]
 check("FLYER_SPAWN_Y_MIN is screen-top+8px", FLYER_SPAWN_Y_MIN == 8)
-check("the span reaches exactly to SkySand's own top row pixel (row16*8=128), inclusive",
-      FLYER_SPAWN_Y_MIN + FLYER_SPAWN_Y_SPAN - 1 == 128)
+# round-2 fix: "Flyerの出現位置がSandskyに被ってる場合がある ランダム
+# 範囲を16px狭く" - span shrunk from 121 to 105 (16px narrower), pulling
+# the max top-left Y down from 128 (SkySand's own top row pixel - too
+# low once the sprite's real 32x32 body is accounted for) to 112.
+check("the span is 16px narrower than the original 121 - ランダム範囲を16px狭く",
+      FLYER_SPAWN_Y_SPAN == 105)
+check("the new max top-left Y (112) is comfortably clear of SkySand's own top row pixel (128)",
+      FLYER_SPAWN_Y_MIN + FLYER_SPAWN_Y_SPAN - 1 == 112)
 
 cpu = fresh_cpu()
 ys = []

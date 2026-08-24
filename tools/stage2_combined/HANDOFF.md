@@ -2077,6 +2077,51 @@ Thunder activity) confirming it survives completely untouched.
   commit for the exact pass/fail counts - expect 0 known failures now,
   genuinely 0/N rather than "N-3 known".
 
+## Round 20: 30-frame hazard invulnerability, Flyer/SkySand overlap, life 10
+
+- User feedback (verbatim): "Ok ズレは特に感じなかった 次にサンダーや
+  サンダービームで連続ダメージを受けてしまうんで自機に当たったら30フレ
+  当たり判定を停止 でFlyerの出現位置がSandskyに被ってる場合がある ラン
+  ダム範囲を16px狭く 帰還時もSandskyに被らないように ライフ初期値を10
+  に". First line confirms Round19's own `TANK_COLLISION_Y_OFFSET=14`
+  guess (up, not down) reads fine in practice - no flip needed.
+- **30-frame hazard invulnerability**: `TANK_FLASH_TIMER` alone
+  (`FLASH_DURATION`=6 frames) was too short a gate for Thunder/SBeam -
+  standing in one for consecutive frames still drained `TANK_LIFE`
+  roughly every 6 frames. New `TANK_HAZARD_IFRAMES` (dedicated RAM byte,
+  own once-per-frame countdown added to `UPDATE_TANK_SPRITES` right next
+  to `TANK_FLASH_TIMER`'s own) with `TANK_HAZARD_IFRAME_DURATION`=30 -
+  set alongside (not instead of) `TANK_FLASH_TIMER` on a hit, so the
+  visual flash keeps its own established short duration for every other
+  damage source (BigZum/Homing) while Thunder/SBeam specifically gate
+  repeat hits on the new, longer timer.
+- **Flyer/SkySand overlap ("Flyerの出現位置がSandskyに被ってる場合があ
+  る ランダム範囲を16px狭く")**: Round17's own spawn-Y range topped out
+  at 128 (SkySand's own top row pixel) for the sprite's TOP-LEFT corner,
+  letting the real 32x32 body reach well past SkySand at low rolls -
+  `FLYER_SPAWN_Y_SPAN` 121->105 (16px narrower, the user's own explicit
+  number), new max top-left Y=112. "帰還時も" (the exit phase too) needed
+  no separate fix: `UOFL_EXIT_MOVE` never touches Y at all (only X, see
+  its own comment) - the exit's own Y is always whatever the spawn or the
+  home/pursuit phase last left it at, and pursuit's own ascending ceiling
+  (`TANK_Y_CUR-FLYER_CLEAR_Y`, `TANK_Y_CUR` never below ~132 even at the
+  jump's own peak) already sits well under 112 - so the one spawn-range
+  fix covers both.
+- **Life 10** ("ライフ初期値を10に", was 6): `TANK_LIFE_INIT` 6->10.
+  `LIFE_DISPLAY`'s own bar was a hardcoded 6-cell loop - new `LIFE_BAR_
+  CELL_COUNT`(=`TANK_LIFE_INIT`) constant sizes it to the real life total
+  instead (cols9-18, still clear of `GAME_TICK_DISPLAY`'s own cols29-31).
+- Verified: `tests/thunder_test.py`/`tests/sbeam_test.py` each gained a
+  real 30-frame-countdown check (refused through all 29 intermediate
+  frames, allowed again exactly on the 30th) rather than just re-checking
+  "still gated somewhere". `tests/flyer_terrain_test.py` updated for the
+  new span/max. `tests/life_bar_test.py` rewritten to read `TANK_LIFE_
+  INIT`/`LIFE_BAR_CELL_COUNT` dynamically instead of hardcoding 6
+  anywhere, so a future life-total change won't silently desync the test
+  from the game again. Full regression suite: see this round's own commit
+  for the exact pass/fail counts - expect 0 failures, matching Round19's
+  now-genuinely-clean baseline.
+
 ## Open items / things to watch
 
 - **RAM addresses that need to persist across frames must stay clear of

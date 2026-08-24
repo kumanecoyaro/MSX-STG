@@ -268,7 +268,19 @@ TANK_FLASH_TIMER EQU F12Ch
 ; death/game-over handling yet - future enemy-bullet damage sources
 ; will feed the same counter once they exist. See LIFE_DISPLAY.
 TANK_LIFE EQU F12Dh
-TANK_LIFE_INIT EQU 6
+; "ライフ初期値を10に" (was 6).
+TANK_LIFE_INIT EQU 10
+; "サンダーやサンダービームで連続ダメージを受けてしまうんで自機に当た
+; ったら30フレ当たり判定を停止" - FLASH_DURATION(6, the shared visual-
+; flash length every entity's own hit-flash uses) was too short to
+; actually prevent repeat hits from an environmental hazard the tank can
+; just stand inside for many consecutive frames - a dedicated, longer
+; invulnerability window for Thunder/SBeam specifically (not the shared
+; flash timer, which stays FLASH_DURATION as before for every other hit
+; source - Homing/BigZum don't have this problem: Homing consumes itself
+; on hit, BigZum's punch already has its own real per-instance cooldown).
+TANK_HAZARD_IFRAMES EQU F13Ah
+TANK_HAZARD_IFRAME_DURATION EQU 30
 ; ---------- dash ("上下左右入力の下を入れたままジャンプのBボタンを押
 ; すと今向いてる方向に倍速で64px移動") ----------
 ; holding DOWN (JOY_DIR==5 - INFERRED as pure down only, not a down-
@@ -444,6 +456,10 @@ LIFE_CODE           EQU 128       ; group16 (128-135)
 LIFE_COLOR          EQU 031h
 LIFE_BAR_ROW        EQU 0
 LIFE_BAR_COL0       EQU 9         ; 1 blank cell past the score's own 8 (cols0-7) - "スコアから１セル空けた位置"
+; matches TANK_LIFE_INIT(10) - was a hardcoded 6-cell bar, now sized to
+; the real life total (cols9-18, still well clear of GAME_TICK_DISPLAY's
+; own cols29-31).
+LIFE_BAR_CELL_COUNT EQU TANK_LIFE_INIT
 ; "夜になっていく演出" - once GAME_TICK reaches NIGHT_START_TICK(850),
 ; every NIGHT_INTERVAL(8) further GAME_TICKs, one more sky row (top
 ; down, NIGHT_START_ROW(1, "スコアの下の行から" - the row right below
@@ -1405,10 +1421,21 @@ FLYER_SPAWNX   EQU 240
 ; PICK_FLYER_SPAWN_Y below), matching HORMING_WANDER's own established
 ; GAME_RNG idiom (read-only, XOR TICK + the slot's own address, masked
 ; and folded - HORMING_WANDER_WIDTH's own round4/5 fixes for why a plain
-; "read GAME_RNG and INC it" reads as fixed/correlated). Span = SkySand's
-; own top row pixel(16*8=128) minus 8, +1 inclusive of both ends.
+; "read GAME_RNG and INC it" reads as fixed/correlated).
+; Round-2 fix (verbatim): "Flyerの出現位置がSandskyに被ってる場合がある
+; ランダム範囲を16px狭く 帰還時もSandskyに被らないように" - the range's
+; own top-left-Y upper bound (128, SkySand's own top row pixel) let the
+; sprite's real 32x32 BODY reach well past SkySand at low rolls; span
+; shrunk by 16 (121->105) per the user's own explicit number, new max
+; top-left Y = 8+105-1=112. "帰還時" (the exit phase, PHASE=2) never
+; itself moves Y (see UOFL_EXIT_MOVE) - it only ever shows whatever Y the
+; spawn or the home/pursuit phase last left it at, and the pursuit's own
+; ascending ceiling (TANK_Y_CUR-FLYER_CLEAR_Y, TANK_Y_CUR never below
+; ~132 even at the jump's own peak) sits well under 112 already - so this
+; one range fix covers both spawn AND exit, no separate exit-side clamp
+; needed.
 FLYER_SPAWN_Y_MIN  EQU 8
-FLYER_SPAWN_Y_SPAN EQU 121
+FLYER_SPAWN_Y_SPAN EQU 105
 FLYER_SPEED    EQU 2    ; px/frame, both cruise and homing legs - "速度は2"
 FLYER_VY       EQU 1    ; px/frame vertical homing step, locked at reversal - untuned/inferred, no vertical speed was specified
 FLYER_CLEAR_Y  EQU 32   ; px vertical clearance from the tank before switching to exit - untuned/inferred, matches both sprites' own 32px height ("自機に被らない" read as "no longer overlapping" in that sense)
@@ -2225,6 +2252,7 @@ INIT_SPRATR_CLR:
     LD (TANK_ZUM_STANDING),A
     LD (JUMP_STAND_BASELINE),A
     LD (TANK_FLASH_TIMER),A
+    LD (TANK_HAZARD_IFRAMES),A
     LD (DASH_ACTIVE),A
     LD A,PAT_TANKF : LD (CUR_POSE_PAT),A
     XOR A
@@ -3296,6 +3324,13 @@ UTS_COLOR_DONE:
     LD (UTS_COLOR_2),A
     LD (UTS_COLOR_3),A
 UTS_FLASH_DONE:
+    ; TANK_HAZARD_IFRAMES' own once-per-frame countdown - see CHECK_
+    ; THUNDER_VS_TANK's own comment for what this gates.
+    LD A,(TANK_HAZARD_IFRAMES)
+    OR A
+    JR Z,UTS_HAZARD_DONE
+    DEC A : LD (TANK_HAZARD_IFRAMES),A
+UTS_HAZARD_DONE:
 
     LD IX,SPRITE_ATTRS
     LD A,(TANK_TOP_DRAW_Y) : LD (IX+0),A
@@ -3957,9 +3992,10 @@ SD_T_DONE:
     CALL WRITE_HUD_CELL
     RET
 
-; draws TANK_LIFE(0-6) at row LIFE_BAR_ROW, cols LIFE_BAR_COL0..+5 -
-; always redraws all 6 cells (same "just redraw everything" shape as
-; SCORE_DISPLAY, not an incremental diff like GAME_TICK_DISPLAY - life
+; draws TANK_LIFE(0-LIFE_BAR_CELL_COUNT) at row LIFE_BAR_ROW, cols
+; LIFE_BAR_COL0..+LIFE_BAR_CELL_COUNT-1 - always redraws all cells (same
+; "just redraw everything" shape as SCORE_DISPLAY, not an incremental
+; diff like GAME_TICK_DISPLAY - life
 ; only changes on a discrete hit, not every frame, so there's no
 ; per-frame cost to worry about). Filled cells are always the LEFTMOST
 ; `life` of the 6 - blank ones peel off from the right as life drops,
@@ -3979,7 +4015,7 @@ LFD_BLANK:
 LFD_SET:
     CALL WRITE_HUD_CELL
     INC C
-    LD A,C : CP 6
+    LD A,C : CP LIFE_BAR_CELL_COUNT
     JR C,LFD_LOOP
     RET
 
@@ -8238,12 +8274,16 @@ UT_LOOP:
 ; bolt's own deepest cell is the LAST thing to go). Same AABB shape as
 ; UOH_COLLIDE (tank's own real 32x32 box), 16px wide for the tip (the
 ; bolt is drawn 2 name-table columns wide - see DRAW_ONE_THUNDER_ROW).
-; TANK_FLASH_TIMER doubles as a brief post-hit immunity window here (not
-; just cosmetic) - without it, standing in a bolt/beam for consecutive
-; frames would drain TANK_LIFE by 1 EVERY frame, unlike every other
-; damage source in this file (BigZum's own punch has a real per-instance
-; cooldown; Homing simply consumes itself on hit) - reusing the flash
-; window is the simplest gate that doesn't need new per-slot state.
+; "サンダーやサンダービームで連続ダメージを受けてしまうんで自機に当た
+; ったら30フレ当たり判定を停止" (round-2 fix) - `TANK_FLASH_TIMER` alone
+; (`FLASH_DURATION`=6 frames) was too short a gate: standing in a bolt/
+; beam for consecutive frames still drained `TANK_LIFE` roughly every 6
+; frames, unlike every other damage source in this file (BigZum's own
+; punch has a real per-instance cooldown; Homing simply consumes itself
+; on hit). `TANK_HAZARD_IFRAMES` is a real, dedicated 30-frame
+; invulnerability window for exactly these two hazards - set alongside
+; (not instead of) `TANK_FLASH_TIMER`, which still only controls the
+; visual flash's own short duration.
 CHECK_THUNDER_VS_TANK:
     LD IX,THUNDER_POOL
     LD B,THUNDER_SLOT_COUNT
@@ -8259,7 +8299,7 @@ CHECK_ONE_THUNDER_VS_TANK:
     LD A,(IX+0)
     OR A
     RET Z
-    LD A,(TANK_FLASH_TIMER)
+    LD A,(TANK_HAZARD_IFRAMES)
     OR A
     RET NZ
     LD A,(IX+0)
@@ -8281,6 +8321,7 @@ CTVT_HAVE_ROW:
     LD A,E : ADD A,TANK_COLLISION_HEIGHT-1 : CP C : RET C
 
     LD A,FLASH_DURATION : LD (TANK_FLASH_TIMER),A
+    LD A,TANK_HAZARD_IFRAME_DURATION : LD (TANK_HAZARD_IFRAMES),A
     CALL APPLY_TANK_DAMAGE
     CALL SOUND_ZUM_DEFLECT
     RET
@@ -9022,12 +9063,13 @@ US_STAGE:
 ; the same frame (see MAINLOOP). Same AABB shape as CHECK_ONE_THUNDER_
 ; VS_TANK/UOH_COLLIDE (tank's own real 32x32 box), 8px wide/tall for the
 ; tip (SBeam's own lit art is a single 8x8 cell - see sbeam_gen.py).
-; TANK_FLASH_TIMER doubles as the same brief post-hit immunity window.
+; TANK_HAZARD_IFRAMES gates repeat hits (see CHECK_THUNDER_VS_TANK's own
+; comment for why the shared TANK_FLASH_TIMER alone wasn't long enough).
 CHECK_SBEAM_VS_TANK:
     LD A,(SBEAM_ACT)
     OR A
     RET Z
-    LD A,(TANK_FLASH_TIMER)
+    LD A,(TANK_HAZARD_IFRAMES)
     OR A
     RET NZ
     LD A,(SBEAM_LINE_TY) : ADD A,A : ADD A,A : ADD A,A : LD C,A   ; C = tip pixel Y
@@ -9041,6 +9083,7 @@ CHECK_SBEAM_VS_TANK:
     LD A,E : ADD A,TANK_COLLISION_HEIGHT-1 : CP C : RET C
 
     LD A,FLASH_DURATION : LD (TANK_FLASH_TIMER),A
+    LD A,TANK_HAZARD_IFRAME_DURATION : LD (TANK_HAZARD_IFRAMES),A
     CALL APPLY_TANK_DAMAGE
     CALL SOUND_ZUM_DEFLECT
     RET
