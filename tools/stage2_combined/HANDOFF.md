@@ -2274,6 +2274,46 @@ Thunder activity) confirming it survives completely untouched.
   Thunder implementation" before the RAM/stack hypothesis and the
   `THUNDER_POOL` boot-zero gap were found and confirmed by code audit.
 
+## Round 23: remove the Round22 diagnostic flicker + stop running boss-only systems before the boss exists
+
+- User feedback (verbatim, angry): "画面外が常時チカチカフラッシュして
+  てチェックできねえよ 人間は目で見てんだよ それになんで常時ボスの処理
+  走らせてんだよ 重くなったと思ったら Tick999まで1回も使われないだろう
+  が 速度無制限じゃねえぞボケ ボスはボス 道中は道中 不要な処理入れてん
+  じゃねえ". Two real complaints, both fair:
+  1. Round22's own border-color checkpoint diagnostic was left IN the
+     shipped ROM without warning - it cycles through colors every single
+     frame during ordinary play, a constant visible flicker that made
+     the ROM impossible to actually look at/play. Should have been
+     removed once 2 concrete root causes were found and fixed, not left
+     "just in case". Fully removed - `MAINLOOP`'s terrain-scroll-through-
+     `SOUND_UPDATE` section is back to its clean, pre-diagnostic form
+     (no per-frame `WRTVDP` calls at all).
+  2. A real, previously-unnoticed performance bug: `CHECK_BULLET_VS_
+     BOSS`/`CHECK_BULLET_VS_HORMING`/`UPDATE_HORMING_ALL`/`UPDATE_
+     THUNDER`/`CHECK_THUNDER_VS_TANK`/`UPDATE_SBEAM`/`CHECK_SBEAM_VS_
+     TANK` were ALL called unconditionally every single MAINLOOP frame,
+     even during the ~7992-raw-frame (`BOSS_SPAWN_TICK`(999)*8) journey
+     before the boss has ever spawned - real per-frame overhead (this
+     test harness's own "unlimited speed" CPU simulation never
+     surfaced the cost) for systems with nothing to do that whole time.
+     This test harness's own emulation speed never made the extra ~7-8
+     wasted `CALL`/`RET` pairs per frame visible; real hardware has a
+     genuine, fixed per-frame budget. Fixed: all 7 gated behind a new
+     `LD A,(BOSS_ACT) : OR A : JR Z,SKIP_BOSS_SUBSYSTEMS` check, mirror-
+     ing the EXISTING opposite-direction gate the pre-boss enemy systems
+     already had (`SKIP_ZACO_ENEMY`/`SKIP_OTHER_ENEMIES`, skip once the
+     boss HAS spawned) - "ボスはボス 道中は道中". `UPDATE_BOSS_ALL`
+     itself stays unconditional, deliberately - it's the only thing that
+     ever checks `GAME_TICK` against `BOSS_SPAWN_TICK` and performs the
+     actual spawn, so gating it on `BOSS_ACT` would be circular.
+- Verified: full regression (`tests/run_all.py`): 608 passed, 0 failed -
+  unchanged from Round22's own count (this round only removes/reorders
+  code, no new behavior to test; the existing boss/Thunder/SBeam/
+  Homing suites already only ever drive real MAINLOOP sweeps THROUGH a
+  real boss spawn, so the new gate never made any of them miss anything
+  they were actually checking).
+
 ## Open items / things to watch
 
 - **RAM addresses that need to persist across frames must stay clear of

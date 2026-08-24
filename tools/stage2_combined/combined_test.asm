@@ -2744,41 +2744,21 @@ SKIP_ADVANCE:
     LD HL,NAMEBUF_T2 : LD DE,1AC0h : LD BC,32 : CALL LDIRVM
     LD HL,NAMEBUF_T3 : LD DE,1AE0h : LD BC,32 : CALL LDIRVM
 
-    ; TEMPORARY real-hardware diagnostic ("実機で確認すると起動直後にブ
-    ; ラックアウトする...Tick0の段階...840のまま1Tickも動いてない" - the
-    ; freeze happens somewhere in MAINLOOP's own first few passes, before
-    ; GAME_TICK ever advances even once, and reproduces on real hardware/
-    ; BlueMSX but not in z80emu.py, which never fires interrupts at all -
-    ; a real blind spot in every "real MAINLOOP" test this whole
-    ; session). Same border-color-checkpoint idiom INIT already uses
-    ; (colors reused here since this is a totally separate later phase) -
-    ; MDBG checkpoints bracket every top-level CALL in one MAINLOOP pass,
-    ; so whichever color the border is frozen on says exactly which call
-    ; never returned. Cycles every frame in normal play (harmless
-    ; flicker) - REMOVE once the real freeze point is found, not meant to
-    ; ship.
-    LD B,2 : LD C,7 : CALL WRTVDP
     CALL READ_INPUT
-    LD B,3 : LD C,7 : CALL WRTVDP
     CALL UPDATE_DASH
     CALL UPDATE_TANK_XY
-    LD B,4 : LD C,7 : CALL WRTVDP
     CALL UPDATE_TERRAIN_COLLISION
     CALL UPDATE_JUMP
-    LD B,5 : LD C,7 : CALL WRTVDP
     CALL UPDATE_TANK_ZUM_STAND
     CALL UPDATE_TANK_BIGZUM_STAND
     CALL UPDATE_TANK_ETANK_STAND
-    LD B,6 : LD C,7 : CALL WRTVDP
     CALL UPDATE_POSE
     CALL UPDATE_TANK_SPRITES
-    LD B,7 : LD C,7 : CALL WRTVDP
     ; bullets advance before a new one can spawn, so a shot fired this
     ; frame gets drawn once (at the muzzle) instead of being advanced
     ; a 2nd time by this same frame's UPDATE_BULLETS sweep.
     CALL UPDATE_BULLETS
     CALL UPDATE_SHOT
-    LD B,8 : LD C,7 : CALL WRTVDP
     ; "使われない物を呼ぶのは無駄だし ボスはStage1でもそうだが それまでの
     ; 処理は捨ててボス専用 もうザコは出ないからな" - once the boss has
     ; spawned, every ordinary enemy type's own per-frame update+flush
@@ -2796,40 +2776,50 @@ SKIP_ADVANCE:
     CALL UPDATE_ENEMIES
     CALL CHECK_BULLET_VS_ENEMY
 SKIP_ZACO_ENEMY:
-    LD B,9 : LD C,7 : CALL WRTVDP
     CALL UPDATE_BULLET_U_SPRITES
     LD A,(BOSS_ACT) : OR A
     JR NZ,SKIP_OTHER_ENEMIES
-    LD B,10 : LD C,7 : CALL WRTVDP
     CALL UPDATE_ZUM_ALL
     CALL CHECK_BULLET_VS_ZUM
     CALL UPDATE_TANK_ZUM_PUSH
-    LD B,11 : LD C,7 : CALL WRTVDP
     CALL UPDATE_BIGZUM_ALL
     CALL CHECK_BULLET_VS_BIGZUM
     CALL UPDATE_TANK_BIGZUM_PUNCH
-    LD B,12 : LD C,7 : CALL WRTVDP
     CALL UPDATE_FLYER_ALL
     CALL CHECK_BULLET_VS_FLYER
-    LD B,13 : LD C,7 : CALL WRTVDP
     CALL UPDATE_ETANK_ALL
     CALL CHECK_BULLET_VS_ETANK
     CALL UPDATE_TANK_ETANK_PUSH
 SKIP_OTHER_ENEMIES:
-    LD B,14 : LD C,7 : CALL WRTVDP
+    ; UPDATE_BOSS_ALL itself must stay unconditional - it's the ONLY
+    ; thing that ever checks GAME_TICK against BOSS_SPAWN_TICK and
+    ; performs the actual spawn, so it can't be gated on BOSS_ACT (that
+    ; would be circular - nothing would ever set it nonzero). But
+    ; "それになんで常時ボスの処理走らせてんだよ...Tick999まで1回も使わ
+    ; れないだろうが 速度無制限じゃねえぞ ボスはボス 道中は道中" - every
+    ; OTHER boss-only subsystem (Homing/Thunder/SBeam and their own
+    ; tank-collision checks) has nothing to do until the boss has
+    ; actually spawned, and was being called every single frame of the
+    ; whole ~7992-raw-frame pre-spawn journey for no reason - real,
+    ; needless per-frame overhead on real hardware (this test harness's
+    ; own "unlimited speed" simulation never surfaced the cost). Same
+    ; "skip the whole group while not relevant" shape as SKIP_ZACO_ENEMY/
+    ; SKIP_OTHER_ENEMIES above, just gated the opposite way (skip while
+    ; BOSS_ACT==0, not while nonzero).
     CALL UPDATE_BOSS_ALL
+    LD A,(BOSS_ACT) : OR A
+    JR Z,SKIP_BOSS_SUBSYSTEMS
     CALL CHECK_BULLET_VS_BOSS
     CALL CHECK_BULLET_VS_HORMING
     CALL UPDATE_HORMING_ALL
-    LD B,15 : LD C,7 : CALL WRTVDP
     CALL UPDATE_THUNDER
     CALL CHECK_THUNDER_VS_TANK
     CALL UPDATE_SBEAM
     CALL CHECK_SBEAM_VS_TANK
+SKIP_BOSS_SUBSYSTEMS:
     CALL CLOUD_UPDATE_ALL
     CALL SOUND_UPDATE
 
-    LD B,1 : LD C,7 : CALL WRTVDP
     JP MAINLOOP
 
 ; ---------- input ----------
