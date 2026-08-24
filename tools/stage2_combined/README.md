@@ -4671,6 +4671,20 @@ with no way to tell where.
   how many frames to drive). 157 checks pass; full suite 386/389, same 3
   known GAME_TICK=840-boot-effect failures, no new regressions.
 
+- **Round 7: shorter attack pose, homing missile recolored light blue**:
+  "ポーズ停止時間を少し短く ホーミング弾の色をライトブルーに変更".
+  `BOSS_POSE_TICKS` 32->24 (~25% cut, exact amount inferred from "少し"
+  - flag for correction if a different magnitude was wanted); confirmed
+  via render the pose now lasts ~191 raw frames instead of ~256, with no
+  knock-on effect on the intermittent-fire volley (still finishes well
+  within the shortened window). `HORMING_COLOR` 14(gray)->5(light blue,
+  same palette index `NIGHT_COLOR`/`CLOUD_GROUP0_COLOR` already use) -
+  a hw sprite's own color is a free per-instance SAT byte, so this
+  doesn't touch the uploaded sprite art itself. Both existing test
+  suites (`horming_test.py`, `boss_pose_test.py`) are fully parametric
+  on these constants and needed no edits; full suite 386/389, same 3
+  known GAME_TICK=840-boot-effect failures, no new regressions.
+
 ## Bugs found and fixed while building this
 
 - **Sand flickered between its own new color and Rock's, twice over**

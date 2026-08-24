@@ -1203,6 +1203,30 @@ the tearing got fixed.
   own `TARGET_X` still genuinely distinct - 170/129/73/98 in one run -
   and `TANK_LIFE` dropping 6->5->3 across the same render window).
 
+## Round 7: shorter attack pose, homing missile recolored light blue
+
+- "ポーズ停止時間を少し短く ホーミング弾の色をライトブルーに変更".
+  Two small, independent tweaks, both simple constant changes.
+- `BOSS_POSE_TICKS` 32->24 (a ~25% cut - "少し" didn't specify an exact
+  amount, flag for correction if a different magnitude was wanted).
+  Confirmed via a real render: the pose now lasts ~191 raw frames
+  (24*8) instead of ~256 (32*8). No knock-on effects - the intermittent-
+  fire volley (4 shots, `HORMING_VOLLEY_INTERVAL`(24) raw frames apart,
+  ~72 raw frames to finish launching) still comfortably fits inside the
+  shortened pose.
+- `HORMING_COLOR` 14(gray, matching the uploaded JSON sprites' own
+  header)->5(light blue) - same palette index this file already uses
+  elsewhere for "light blue" (`NIGHT_COLOR`, `CLOUD_GROUP0_COLOR`). A hw
+  sprite's own color is a free per-instance SAT byte (no group/
+  background constraint the way BG tiles have), so this doesn't touch
+  the uploaded art itself, just how it's tinted on screen. Confirmed via
+  a rendered frame.
+- Verified: `tests/horming_test.py` (157 checks) and `tests/boss_pose_
+  test.py` (27 checks, all parametric on `BOSS_POSE_TICKS`/`HORMING_
+  COLOR` - not hardcoded, so no test edits were needed) both pass. Full
+  suite: 386/389, same 3 known GAME_TICK=840-boot-effect failures, no
+  new regressions.
+
 ## Open items / things to watch
 
 - No known open bugs as of this handoff — the boss's own SPRPAT bug

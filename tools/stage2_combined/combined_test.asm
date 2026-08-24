@@ -485,7 +485,10 @@ BOSS_FLASH_COLOR EQU 8
 ; 900/950/999 etc.), so this is a true 16-bit GAME_TICK duration, not a
 ; raw-frame countdown like FLASH_DURATION/EXPLOSION_DURATION - see
 ; BOSS_POSE_END_TICK's own comment.
-BOSS_POSE_TICKS EQU 32
+; "ポーズ停止時間を少し短く" (round7: was 32) - exact amount not
+; specified, a modest ~25% cut chosen as "少し" - flag for correction if
+; a different magnitude was wanted.
+BOSS_POSE_TICKS EQU 24
 ; the attack-pose hand art is drawn straight into the name table, not a
 ; hw sprite - needs its own 64 BG pattern codes (groups19-26, 152-215 -
 ; the next free block after group18/BULLETF's own night codes, per
@@ -544,10 +547,14 @@ PAT_HORMING_DL   EQU PAT_FLYER+4
 PAT_HORMING_DOWN EQU PAT_FLYER+8
 PAT_HORMING_DR   EQU PAT_FLYER+12
 PAT_HORMING_SR   EQU PAT_FLYER+16
-; fg14(gray) - matches every one of the 5 uploaded JSON sprites' own
-; header exactly (a hw sprite's own color is a free per-instance SAT
-; byte, no group/background constraint the way BG tiles have).
-HORMING_COLOR EQU 14
+; "ホーミング弾の色をライトブルーに変更" (round7: was fg14 gray,
+; matching the 5 uploaded JSON sprites' own header - a hw sprite's own
+; color is a free per-instance SAT byte, no group/background constraint
+; the way BG tiles have, so overriding it here doesn't touch the
+; uploaded art itself). fg5 light blue - same palette index this file
+; already uses elsewhere for "light blue" (NIGHT_COLOR, CLOUD_GROUP0_
+; COLOR).
+HORMING_COLOR EQU 5
 ; round 4 fix: "ホーミングのスプライトが非表示待機になってるからだろ
 ; うが ボス上部が常に表示欠けしている" - a real, confirmed bug. The
 ; previous round's reasoning ("boss's own slots10-25 are free while any
