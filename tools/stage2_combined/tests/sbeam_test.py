@@ -280,6 +280,46 @@ check("sweep phase hw cap: a full-width+deep-terrain line (needing 24 points) is
       "capped at SBEAM_SLOT_COUNT(22) - flagged, not silently unbounded",
       len(visible_points(cpu)) == SBEAM_SLOT_COUNT)
 
+# ---- real bug caught this round: "ビームが左端まで行くとリセットかか
+# った" - the cap check ("SLOT_COUNT+1:CP B:JR NC") treated B==SLOT_
+# COUNT+1 (i.e. dx==SLOT_COUNT, exactly 1 column short of the full left
+# edge) as "no cap needed" (CP never borrows on an exact match), so
+# SSL_HIDE_REST's own "SLOT_COUNT-C" underflowed to 255 and the hide
+# loop wrote ~1000 bytes past SBEAM_SPRITE_ATTRS, corrupting the stack.
+# Exhaustively sweep every (dx,dy) combination the real hw ever produces
+# and confirm the exact expected point count, with no hang/crash. ----
+all_dxdy_ok = True
+for dy in range(0, 13):
+    for tx in range(0, SBEAM_START_COL + 1):
+        cpu = fresh_cpu()
+        cpu.mem[SBEAM_ACT] = 2
+        cpu.mem[SBEAM_FRONT_COL] = tx
+        cpu.mem[SBEAM_GROUND_Y] = (SBEAM_START_ROW + dy) * 8
+        cpu.mem[SBEAM_BLINK] = 1
+        call_routine(cpu, "STAGE_SBEAM")   # would hang/crash before this round's fix
+        dx = SBEAM_START_COL - tx
+        expected = min(max(dx, dy) + 1, SBEAM_SLOT_COUNT)
+        actual = len(visible_points(cpu))
+        if actual != expected:
+            all_dxdy_ok = False
+check("STAGE_SBEAM never hangs/crashes and produces exactly the expected point count "
+      "for EVERY (dx,dy) combination real terrain+sweep can produce (dy=0-12, "
+      "tx=0-SBEAM_START_COL) - the exact real bug that caused a crash at the screen's "
+      "left edge, now covered by an exhaustive sweep, not just a couple of samples",
+      all_dxdy_ok)
+
+# the exact reported crash reproduction: dx=SLOT_COUNT (tx=1, one column
+# short of the left edge) at a shallow tier0 depth
+cpu = fresh_cpu()
+cpu.mem[SBEAM_ACT] = 2
+cpu.mem[SBEAM_FRONT_COL] = 1
+cpu.mem[SBEAM_GROUND_Y] = (SBEAM_START_ROW + 9) * 8
+cpu.mem[SBEAM_BLINK] = 1
+call_routine(cpu, "STAGE_SBEAM")
+check("the exact reported crash case (FRONT_COL=1, dx=SBEAM_SLOT_COUNT=22) returns "
+      "normally and draws exactly SBEAM_SLOT_COUNT points",
+      len(visible_points(cpu)) == SBEAM_SLOT_COUNT)
+
 
 # ---- SBeam and Homing are mutually exclusive per pose now - "当然サン
 # ダービーム中はホーミングもサンダーも撃たねえんだよ" ----

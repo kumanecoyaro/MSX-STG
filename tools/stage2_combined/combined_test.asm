@@ -8829,7 +8829,18 @@ SSL_X_BRANCH:
     LD A,(SBEAM_LINE_DX) : LD E,A          ; E = dx (loop-invariant)
     SRL A : LD (SBEAM_LINE_ERR),A          ; err = dx/2
     LD A,E : INC A : LD B,A                ; B = dx+1 (iteration count)
-    LD A,SBEAM_SLOT_COUNT+1 : CP B
+    ; cap B at SBEAM_SLOT_COUNT when it would otherwise exceed it - real
+    ; bug caught here (round4): "SBEAM_SLOT_COUNT+1:CP B:JR NC" treats
+    ; B==SLOT_COUNT+1 as "no carry" (CP never borrows on an EXACT match),
+    ; so the one case that most needed capping (dx=SLOT_COUNT, B=SLOT_
+    ; COUNT+1) slipped through uncapped - SSL_HIDE_REST's own "SLOT_
+    ; COUNT-C" then underflowed to 255, and the hide loop wrote ~1000
+    ; bytes past SBEAM_SPRITE_ATTRS, corrupting the stack - the real
+    ; cause of "ビームが左端まで行くとリセットかかった". Comparing
+    ; against SLOT_COUNT itself (not +1) and branching on the CARRY from
+    ; "SLOT_COUNT-B" (set exactly when B>SLOT_COUNT) covers B==SLOT_
+    ; COUNT+1 correctly too.
+    LD A,SBEAM_SLOT_COUNT : CP B
     JR NC,SSL_X_NOCAP
     LD B,SBEAM_SLOT_COUNT                  ; hw sprite budget cap - see SBEAM_SLOT_COUNT's own comment
 SSL_X_NOCAP:

@@ -1794,6 +1794,48 @@ the tearing got fixed.
   reference diagram, instead of the previous round's rigid right-angle
   L-shape.
 
+## Round 15: real crash fix - SBeam froze/reset the whole game at the screen's left edge
+
+- User feedback (verbatim): "サンダービームで左端まではOk しかしビーム
+  が左端まで行くとリセットかかった" - the beam's own diagonal-line
+  rendering (Round14) was correct up to the left edge, but reaching it
+  crashed the whole game (a hard reset, not a visual glitch).
+- **Root cause - a real off-by-one in `STAGE_SBEAM`'s own hw-sprite cap
+  check**: `SSL_X_BRANCH`'s cap logic was `LD A,SBEAM_SLOT_COUNT+1 : CP
+  B : JR NC,SSL_X_NOCAP` (B = dx+1, the line's own natural point count).
+  `CP` only sets CARRY on a strict borrow, so when B landed EXACTLY on
+  `SLOT_COUNT+1` (i.e. dx==SLOT_COUNT==22, one column short of the
+  screen's actual left edge) the subtraction `23-23` produced ZERO, not
+  a borrow - `JR NC` treated that as "no cap needed" and let B=23
+  through uncapped, one past the real budget. `SSL_HIDE_REST` then
+  computed `SLOT_COUNT-C` = `22-23` = -1, which as an unsigned byte is
+  255 - the "hide the rest" loop then ran 255 times instead of "0 or a
+  few", walking `IX` about 1000 bytes past `SBEAM_SPRITE_ATTRS`'s own
+  88-byte allocation and overwriting whatever real RAM sat there
+  (including, eventually, the stack) - a real, reproducible crash, not
+  a rare/theoretical one: `tests/banked_helpers.py`'s own `call_routine`
+  hit its 300000-step safety limit and asserted, confirming the routine
+  genuinely never returned once this exact case was hit directly.
+- **Fix**: compare against `SBEAM_SLOT_COUNT` itself (not `+1`) and
+  branch on the CARRY from `SLOT_COUNT-B` (set exactly when `B>SLOT_
+  COUNT`, covering the `B==SLOT_COUNT+1` case the old check missed).
+  `SSL_Y_BRANCH` never needed this cap (its own natural point count -
+  `dy+1` - tops out around 13, always well under `SBEAM_SLOT_COUNT`).
+- Verified: `tests/sbeam_test.py` gained an EXHAUSTIVE sweep over every
+  `(dx,dy)` combination the real terrain+sweep geometry can ever
+  produce (dy=0-12, tx=0-`SBEAM_START_COL`), checking both the exact
+  expected point count AND that `STAGE_SBEAM` actually returns (would
+  have hung/asserted before this fix), plus the EXACT reported crash
+  case (`FRONT_COL=1`, `dx=SBEAM_SLOT_COUNT`) as its own explicit check -
+  45 checks total, all passing. This is the kind of boundary bug a
+  couple of hand-picked sample values (what Round14's own tests used)
+  can hide entirely - worth remembering for any future per-frame
+  cap/clamp logic in this file: sweep the FULL input range, not just a
+  few representative points, especially right at the boundary itself.
+  Full regression suite re-run after this round - same 3 pre-existing
+  known failures expected, no new regressions (see this round's own
+  commit for the exact pass/fail counts).
+
 ## Open items / things to watch
 
 - **SBeam's own 22-sprite hw cap** (16 from the boss's own dormant pose-
