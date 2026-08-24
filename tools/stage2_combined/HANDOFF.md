@@ -628,6 +628,95 @@ the tearing got fixed.
   own `BOSS_FLASH_COLOR != FLASH_COLOR` assertion (now correctly
   expects them EQUAL, matching the new unified-red state).
 
+## Homing missile added (boss's own attack content - fired during the pose)
+
+- "ではボス続き 初期Tickを840に ホーミングミサイルを実装 ボスポーズで
+  ボス右上あたりから発射し X軸中央辺りまで水平打ち その後ホーミング動
+  作", with 5 attached JSON art assets (SL/DL/Down/DR/SR, "180度を5段
+  階45度ごと") and precise bucket rules for which facing to show/how to
+  move based on X-distance to the tank. `GAME_TICK` boots at 840 again
+  (diagnostic, reverted from last round's real-0 boot).
+- **Architecture decision, not obvious from the request alone: this is
+  a BG-drawn element, NOT a hw sprite**, even though 5 separate JSON
+  "sprites" were provided. Two hard reasons, both worth remembering for
+  any FUTURE new enemy/projectile: (1) the hw sprite PATTERN-code budget
+  (0-255, separate from BG codes) is **already at 0-251 used** (tank 0-
+  127, ZacoII 128-135, explosion 136-139, BulletU 140-147, Zum 148-155,
+  BigZum 156-219, Flyer 220-251) - only 4 free slots remained, nowhere
+  near the 20 a 5-facing hw sprite would need (16x16-padded, 4 codes/
+  facing - same "VDP already in 16x16 mode" constraint `BulletU` already
+  documents). **Check this budget before ever proposing a new hw sprite
+  again** - grep `combined_test.asm`/`*_gen.py` for `BASE_OFFSET`/`PAT_`
+  to see current usage. (2) BG-drawing sidesteps the exact per-scanline
+  hw-sprite-priority bug class that already forced `BulletU` to BG
+  during the boss fight specifically - a projectile flying near the
+  boss's own 4-sprites-per-scanline-band quadrants is exactly the kind
+  of thing that bug already bit once. New `horming_gen.py` converts the
+  5 raw 8x8 bit arrays into BG pattern data (not the TL/BL/TR/BR
+  sprite-quadrant order). New permanent codes `HORMING_CODE_BASE`(216,
+  group27 - the next free group after the hand's own 19-26) - fg14/bg1
+  matching every uploaded JSON's own header exactly.
+- **RAM layout deliberately mirrors the bullet pool's own field offsets
+  (ACT@0, COL@2, ROW@3, ADDR_LO@4, ADDR_HI@5)** so `ERASE_BULLET_CELL`
+  (fully generic - only ever reads those 4 fields) could be reused
+  as-is for the missile instead of writing a duplicate. Single slot
+  (not a pool) - a full patrol+pose cycle (~448 frames) is far longer
+  than the missile's own travel time, so the previous one is always
+  gone before the next pose could fire another (matches `TRY_SPAWN_
+  BULLET`'s own "drop the attempt if still active" idiom if this
+  assumption is ever wrong).
+- **Two-phase flight, exactly as specified**: phase0 fires from `HORMING_
+  SPAWN_COL/ROW`(29,8 - within the boss's own 64x64 box, its own upper-
+  right) always facing SL, moving 1 col/frame straight left (matching
+  bullets' own col/row-granular movement, not smooth sub-pixel motion)
+  until `HORMING_COL<=HORMING_CENTER_COL`(16, screen-center) - the phase
+  flip and that same frame's own movement resolve together in one
+  `UPDATE_HORMING` call (worth knowing if writing a test: by the time
+  `HORMING_PHASE` reads back as 1, `HORMING_COL` has already taken 1
+  more homing step past center, not frozen exactly at the threshold).
+  Phase1 (`RESOLVE_HORMING_FACING`) recomputes the facing FRESH every
+  frame from the current `TANK_X` distance - "自機方向に追尾" - not
+  just once at the phase transition: `|dx|<=TANK_WIDTH`(32) -> Down,
+  `32<|dx|<64` -> diagonal (DL if missile right of tank, DR if left),
+  `|dx|>=64` -> side (SL if missile right of tank, SR if left) - all 3
+  threshold boundaries and both L/R directions independently unit-
+  tested. Each facing has a fixed (dcol,drow) step (Down=(0,+1), DL/DR=
+  (∓1,+1), SL/SR=(∓1,0)) - discretized 45-degree steps, not real vector
+  math (no multiply/sqrt available cheaply on Z80, matches this file's
+  general approach everywhere else).
+  **Boundary quirk worth knowing**: facing SL exactly at col0 (or SR at
+  col31) can't be constructed from a STATIC tank position within the
+  valid 0-255 range (the math requires an impossible negative/>255
+  `TANK_X`) - but IS reachable in real play if the tank moves rapidly
+  away while the missile is mid-approach near an edge, so the col0/
+  col31 underflow/overflow guards in `UPDATE_HORMING` are real
+  defensive code, not dead code, even though a simple static-tank test
+  can't trigger them directly (see `tests/horming_test.py`'s own
+  comment - it calls the internal `UH_STEP_SL`/`UH_STEP_SR` labels
+  directly with `HORMING_FACING` pre-set to test this specific path).
+- **Collision with the tank uses `APPLY_TANK_DAMAGE`** - already
+  existed, already had its own comment anticipating exactly this
+  ("現在はBigZumのみだがいずれ敵弾実装予定"), no new damage/life-bar
+  mechanism needed. AABB vs the tank's real 32x32 box (`TANK_X`/`TANK_
+  Y_CUR`) - the missile's own Y actually matters here (unlike the
+  facing-selection logic above, which is X-only per the instruction) -
+  a hit also arms `TANK_FLASH_TIMER`(matching `FLASH_DURATION`) and
+  plays `SOUND_ZUM_DEFLECT`, same convention as every other tank-damage
+  source in this file.
+- Verified: new `tests/horming_test.py` (38 checks - fire/refire-while-
+  active, phase0 straight movement, the phase transition timing, all 6
+  bucket-boundary cases on both sides (12 checks), all 5 facings' own
+  movement deltas, both edge-underflow guards, a real hit decrementing
+  `TANK_LIFE`/arming the flash/deactivating the missile, a clean miss
+  registering nothing, and a real end-to-end `MAINLOOP` sweep firing
+  during a real pose and confirming real frame-to-frame movement) all
+  pass. Also rendered real frames (`render_full`) confirming the
+  missile visually appears near the boss's own head at spawn and mid-
+  flight during the straight phase - small at thumbnail scale, needed a
+  cropped/zoomed render to actually see clearly, but present and
+  correctly colored/shaped in both. Full suite: 267/270 pass, same 3
+  known GAME_TICK=840-boot-effect failures - no new regressions.
+
 ## Open items / things to watch
 
 - No known open bugs as of this handoff — the boss's own SPRPAT bug

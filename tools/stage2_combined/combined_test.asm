@@ -509,6 +509,18 @@ SASAPI_HAND_COLORBYTE EQU 091h
 ; BOSS_FLASH_COLOR(8) - fg8/bg1, not fg9(BOSS_COLOR)'s own light red -
 ; so it reads as the same flash, not a different color entirely.
 SASAPI_HAND_FLASH_COLORBYTE EQU 081h
+; homing missile's own 5 BG codes (group27, 216-223 - the next free
+; group after the hand's own 19-26/152-215) - see horming_gen.py's own
+; comment for why this is BG, not a hw sprite.
+HORMING_CODE_BASE  EQU 216
+HORMING_SL_CODE    EQU HORMING_CODE_BASE+0
+HORMING_DL_CODE    EQU HORMING_CODE_BASE+1
+HORMING_DOWN_CODE  EQU HORMING_CODE_BASE+2
+HORMING_DR_CODE    EQU HORMING_CODE_BASE+3
+HORMING_SR_CODE    EQU HORMING_CODE_BASE+4
+; fg14(gray)/bg1(black) - matches every one of the 5 uploaded JSON
+; sprites' own header exactly.
+HORMING_COLORBYTE  EQU 0E1h
 ; hw sprite slots10-25 (16 quadrants, one per 16x16 cell of the 4x4
 ; grid making up the 64x64 sprite) - reuses Zum/BigZum/Flyer/Etank's
 ; own ranges (10-11/12-19/20-23/24-25) rather than a fresh permanent
@@ -1302,6 +1314,49 @@ BOSS_FLASH_TIMER   EQU F2BDh   ; hit-flash countdown, same FLASH_DURATION-driven
 BOSS_DRAW_COLOR    EQU F2BEh   ; scratch byte, DRAW_BOSS's own resolved color (BOSS_COLOR or BOSS_FLASH_COLOR) - feeds all 16 quadrant writes so the timer only ticks down once per frame, not 16 times
 BOSS_PHASE          EQU F2BFh  ; 0=patrolling(hw sprite), 1=parked in the attack pose(BG art) - "移動中はスプライト 停止中はBGて切り替え"
 BOSS_POSE_END_TICK  EQU F2C0h  ; 2 bytes - GAME_TICK value the pose ends at (GAME_TICK+BOSS_POSE_TICKS, captured once at pose-entry), compared via true 16-bit SBC HL,DE every frame while BOSS_PHASE=1, same idiom as every other GAME_TICK threshold in this file (BOSS_SPAWN_TICK/NIGHT_START_TICK/etc.)
+
+; ---------- homing missile (fired once per attack pose) ----------
+; "ホーミングミサイルを実装 ボスポーズでボス右上あたりから発射し X軸
+; 中央辺りまで水平打ち その後ホーミング動作". Single slot (not a pool)
+; - a whole patrol+pose cycle (~448 frames) is far longer than the
+; missile's own travel time, so the previous one is always long gone
+; before the next pose could fire another; matches how bullets drop a
+; spawn attempt if the pool's full instead of anything fancier.
+; A BG-drawn element (see horming_gen.py's own comment for the full
+; reasoning: the hw sprite pattern-code budget is nearly exhausted, and
+; BG-drawing sidesteps the same per-scanline priority bug class that
+; already forced BulletU to BG during the boss fight). RAM layout
+; mirrors the bullet pool's own field offsets exactly (ACT@0, COL@2,
+; ROW@3, ADDR_LO@4, ADDR_HI@5) on purpose - ERASE_BULLET_CELL is fully
+; generic (only ever reads those 4 fields) and gets reused as-is below
+; rather than duplicating it.
+HORMING_ACT      EQU F2C2h
+HORMING_PHASE    EQU F2C3h   ; 0=straight horizontal (spawn - center), 1=homing (center - onward)
+HORMING_COL      EQU F2C4h
+HORMING_ROW      EQU F2C5h
+HORMING_ADDR_LO  EQU F2C6h
+HORMING_ADDR_HI  EQU F2C7h
+HORMING_FACING   EQU F2C8h   ; 0=SL,1=DL,2=Down,3=DR,4=SR - selects both the drawn code and the per-frame (dcol,drow)
+
+; "ボス右上あたりから発射し" - within the boss's own 64x64 box
+; (col24-31/row7-14), toward its own upper-right.
+HORMING_SPAWN_COL  EQU 29
+HORMING_SPAWN_ROW  EQU 8
+; "X軸中央辺りまで水平打ち" - 256px-wide screen, center = col16(128px).
+HORMING_CENTER_COL EQU 16
+; "自機のXとの距離が自機幅より外にある時" / "自機幅内に収まっている
+; 時" - the tank's own real sprite width (tank_gen.py's poses are all
+; 32x32).
+TANK_WIDTH EQU 32
+; "SL、SRは自機から64px以上Xが離れている時"
+HORMING_SIDE_DIST EQU 64
+; off-screen/reached-the-ground bail-out, same convention as
+; BULLET_MAXCOL/the rock-row band below.
+HORMING_MAXCOL EQU 31
+HORMING_MAXROW EQU 23
+; AABB vs the tank's own 32x32 box (TANK_X/TANK_Y_CUR) - missile is
+; 8x8.
+HORMING_COLLISION_SIZE EQU 32
 ETANK_SPR_BASE_SLOT EQU 24     ; hw sprite slots24-25 (BL/BR only x1 instance), right after Flyer's own 20-23
 ; "カラーはダークレッド" - NOT sprites/Etank.json's own fg, overridden
 ; directly here (same "override the JSON's own fg" precedent as
@@ -1669,6 +1724,18 @@ INIT_RESUME_AFTER_BANK_SELECT:
     EI
     LD HL,SASAPI_HAND_COLOR8 : LD DE,2000h+19 : LD BC,8 : CALL LDIRVM
 
+    ; homing missile's own 5 BG codes (see HORMING_CODE_BASE's own
+    ; comment) - 5 separate 8-byte loads (not one contiguous LDIRVM),
+    ; since each facing is its own independent 8x8 pattern, not a
+    ; multi-tile image like the hand's own 64-tile block.
+    LD HL,HORMING_SL_PATTERN   : LD DE,HORMING_SL_CODE*8   : LD BC,8 : CALL LDIRVM
+    LD HL,HORMING_DL_PATTERN   : LD DE,HORMING_DL_CODE*8   : LD BC,8 : CALL LDIRVM
+    LD HL,HORMING_DOWN_PATTERN : LD DE,HORMING_DOWN_CODE*8 : LD BC,8 : CALL LDIRVM
+    LD HL,HORMING_DR_PATTERN   : LD DE,HORMING_DR_CODE*8   : LD BC,8 : CALL LDIRVM
+    LD HL,HORMING_SR_PATTERN   : LD DE,HORMING_SR_CODE*8   : LD BC,8 : CALL LDIRVM
+    LD A,HORMING_COLORBYTE : LD (HUD_TEMP_BYTE),A
+    LD HL,HUD_TEMP_BYTE : LD DE,2000h+27 : LD BC,1 : CALL LDIRVM
+
     ; checkpoint 6: tank + bullet patterns loaded
     LD B,6 : LD C,7 : CALL WRTVDP
 
@@ -1836,11 +1903,12 @@ INIT_SPRATR_CLR:
     LD A,8 : OUT (PSG_ADDR),A
     XOR A : OUT (PSG_DATA),A
 
-    ; "Tickスキップを一旦戻して０に" - the GAME_TICK=840 fast-iteration
-    ; diagnostic (used since the terrain-freeze/boss-tearing rounds) is
-    ; reverted - real 0 boot again.
+    ; ⚠ DIAGNOSTIC: "初期Tickを840に" - back to the fast-iteration boot
+    ; for homing-missile testing (night starts almost immediately, boss
+    ; spawns shortly after). Revert to XOR A / 0 for a real shipped build.
+    LD HL,840 : LD (GAME_TICK),HL
     XOR A
-    LD (GAME_TICK),A : LD (GAME_TICK+1),A
+    LD (HORMING_ACT),A
     LD (SCORE),A : LD (SCORE+1),A : LD (SCORE+2),A
     LD A,0FFh : LD (GTD_LAST_H),A : LD (GTD_LAST_T),A : LD (GTD_LAST_O),A
     CALL SCORE_DISPLAY
@@ -2224,6 +2292,7 @@ SKIP_ZACO_ENEMY:
 SKIP_OTHER_ENEMIES:
     CALL UPDATE_BOSS_ALL
     CALL CHECK_BULLET_VS_BOSS
+    CALL UPDATE_HORMING
     CALL CLOUD_UPDATE_ALL
 
     CALL SOUND_UPDATE
@@ -6741,6 +6810,7 @@ UBA_MOVE_RIGHT:
     LD (BOSS_POSE_END_TICK),HL
     CALL HIDE_BOSS_SPRITES
     CALL DRAW_SASAPI_HAND
+    CALL FIRE_HORMING
     RET
 UBA_STEP_RIGHT:
     LD (BOSS_X),A
@@ -7067,6 +7137,233 @@ ERASE_SASAPI_HAND:
     LD HL,NIGHT_ROW_BLANK8 : LD DE,19B8h : LD BC,8 : CALL LDIRVM
     LD HL,NIGHT_ROW_BLANK8 : LD DE,19D8h : LD BC,8 : CALL LDIRVM
     EI
+    RET
+
+; ---------- homing missile ----------
+; fires the missile once per pose - "ボスポーズでボス右上あたりから
+; 発射し". Drops the attempt if the previous one somehow hasn't
+; deactivated yet (shouldn't normally happen - a full patrol+pose cycle
+; is far longer than the missile's own travel time) rather than
+; clobbering it mid-flight, same "screen limit, drop the shot" idiom
+; TRY_SPAWN_BULLET already uses.
+FIRE_HORMING:
+    LD A,(HORMING_ACT)
+    OR A
+    RET NZ
+    LD A,1 : LD (HORMING_ACT),A
+    XOR A : LD (HORMING_PHASE),A
+    LD A,HORMING_SPAWN_COL : LD (HORMING_COL),A
+    LD A,HORMING_SPAWN_ROW : LD (HORMING_ROW),A
+    XOR A : LD (HORMING_FACING),A   ; 0=SL - "X軸中央辺りまで水平打ち"
+    LD A,(HORMING_ROW) : LD E,A : LD D,0
+    LD HL,BULLET_ROWADDR_LO : ADD HL,DE : LD A,(HL) : LD (HORMING_ADDR_LO),A
+    LD HL,BULLET_ROWADDR_HI : ADD HL,DE : LD A,(HL) : LD (HORMING_ADDR_HI),A
+    LD IX,HORMING_ACT
+    CALL DRAW_HORMING_CELL
+    RET
+
+; IX = HORMING_ACT base. Picks the BG code by HORMING_FACING and writes
+; it at ADDR+COL - same "restore/draw at ADDR+COL" mechanics as
+; DRAW_BULLET_CELL, just a straight 5-way lookup instead of a
+; background-color-matching dance (the sky is already fully night-dark
+; by the time the boss can ever fire this - same reasoning as
+; SASAPI_HAND_COLORBYTE's own comment - no day/rock color variants
+; needed).
+DRAW_HORMING_CELL:
+    LD A,(IX+6)
+    OR A
+    JR Z,DHC_SL
+    CP 1
+    JR Z,DHC_DL
+    CP 2
+    JR Z,DHC_DOWN
+    CP 3
+    JR Z,DHC_DR
+    LD A,HORMING_SR_CODE
+    JR DHC_WRITE
+DHC_SL:
+    LD A,HORMING_SL_CODE
+    JR DHC_WRITE
+DHC_DL:
+    LD A,HORMING_DL_CODE
+    JR DHC_WRITE
+DHC_DOWN:
+    LD A,HORMING_DOWN_CODE
+    JR DHC_WRITE
+DHC_DR:
+    LD A,HORMING_DR_CODE
+DHC_WRITE:
+    LD (BULLET_TEMP_BYTE),A
+    LD L,(IX+4) : LD H,(IX+5)
+    LD E,(IX+2) : LD D,0
+    ADD HL,DE
+    CALL WRITE_BULLET_BYTE_HL
+    RET
+
+; sets HORMING_FACING (0=SL,1=DL,2=Down,3=DR,4=SR) from the CURRENT
+; horizontal distance to the tank - "自機のXとの距離が自機幅より外に
+; ある時は斜めのミサイルへ Downは自機幅内に収まっている時 SL、SRは
+; 自機から64px以上Xが離れている時 自機より右方向に離れている時はSL、
+; DL 左ならSR、DR". Checked fresh every frame during the homing phase
+; (RESOLVE_HORMING_FACING's own caller), not just once - the facing
+; genuinely tracks the tank as it moves, "自機方向に追尾".
+RESOLVE_HORMING_FACING:
+    LD A,(HORMING_COL) : ADD A,A : ADD A,A : ADD A,A : LD B,A   ; missile_X
+    LD A,(TANK_X) : LD C,A
+
+    LD A,B : SUB C
+    JR NC,RHF_RIGHT     ; missile_X>=TANK_X, no borrow - missile is right of the tank
+    LD A,C : SUB B        ; TANK_X-missile_X - missile is LEFT of the tank
+    LD D,A
+    JR RHF_LEFT_SIDE
+RHF_RIGHT:
+    LD D,A                 ; A already = missile_X-TANK_X
+RHF_RIGHT_SIDE:
+    LD A,D
+    CP TANK_WIDTH+1
+    JR C,RHF_DOWN
+    CP HORMING_SIDE_DIST
+    JR NC,RHF_SET_SL
+    LD A,1 : LD (HORMING_FACING),A    ; DL - missile right of tank, needs to head left
+    RET
+RHF_SET_SL:
+    XOR A : LD (HORMING_FACING),A     ; SL
+    RET
+RHF_LEFT_SIDE:
+    LD A,D
+    CP TANK_WIDTH+1
+    JR C,RHF_DOWN
+    CP HORMING_SIDE_DIST
+    JR NC,RHF_SET_SR
+    LD A,3 : LD (HORMING_FACING),A    ; DR - missile left of tank, needs to head right
+    RET
+RHF_SET_SR:
+    LD A,4 : LD (HORMING_FACING),A    ; SR
+    RET
+RHF_DOWN:
+    LD A,2 : LD (HORMING_FACING),A
+    RET
+
+; called every frame regardless of boss/pose state - a missile in
+; flight keeps flying even if the pose that fired it has already ended
+; (crossing the whole screen takes far less time than a pose lasts, so
+; this is mostly a defensive guarantee, not something that normally
+; matters in practice).
+UPDATE_HORMING:
+    LD A,(HORMING_ACT)
+    OR A
+    RET Z
+
+    ; "X軸中央辺りまで水平打ち その後ホーミング動作" - phase flips the
+    ; instant COL reaches screen-center, checked before this frame's own
+    ; movement so the transition and the homing facing/move are resolved
+    ; consistently in the same pass.
+    LD A,(HORMING_PHASE)
+    OR A
+    JR NZ,UH_PHASE_KNOWN
+    LD A,(HORMING_COL)
+    CP HORMING_CENTER_COL+1
+    JR NC,UH_PHASE_KNOWN
+    LD A,1 : LD (HORMING_PHASE),A
+UH_PHASE_KNOWN:
+
+    LD IX,HORMING_ACT
+    CALL ERASE_BULLET_CELL
+
+    LD A,(HORMING_PHASE)
+    OR A
+    JR NZ,UH_HOMING
+
+    ; --- phase0: straight left, always SL ---
+    XOR A : LD (HORMING_FACING),A
+    LD A,(HORMING_COL)
+    OR A
+    JP Z,UH_DEACTIVATE
+    DEC A : LD (HORMING_COL),A
+    JR UH_RECOMPUTE_ADDR
+
+UH_HOMING:
+    CALL RESOLVE_HORMING_FACING
+    LD A,(HORMING_FACING)
+    OR A
+    JR Z,UH_STEP_SL
+    CP 1
+    JR Z,UH_STEP_DL
+    CP 2
+    JR Z,UH_STEP_DOWN
+    CP 3
+    JR Z,UH_STEP_DR
+    JR UH_STEP_SR
+
+UH_STEP_SL:
+    LD A,(HORMING_COL)
+    OR A
+    JP Z,UH_DEACTIVATE
+    DEC A : LD (HORMING_COL),A
+    JR UH_RECOMPUTE_ADDR
+UH_STEP_SR:
+    LD A,(HORMING_COL)
+    CP HORMING_MAXCOL
+    JP NC,UH_DEACTIVATE
+    INC A : LD (HORMING_COL),A
+    JR UH_RECOMPUTE_ADDR
+UH_STEP_DOWN:
+    LD A,(HORMING_ROW)
+    CP HORMING_MAXROW
+    JP NC,UH_DEACTIVATE
+    INC A : LD (HORMING_ROW),A
+    JR UH_RECOMPUTE_ADDR
+UH_STEP_DL:
+    LD A,(HORMING_COL)
+    OR A
+    JP Z,UH_DEACTIVATE
+    LD A,(HORMING_ROW)
+    CP HORMING_MAXROW
+    JP NC,UH_DEACTIVATE
+    LD A,(HORMING_COL) : DEC A : LD (HORMING_COL),A
+    LD A,(HORMING_ROW) : INC A : LD (HORMING_ROW),A
+    JR UH_RECOMPUTE_ADDR
+UH_STEP_DR:
+    LD A,(HORMING_COL)
+    CP HORMING_MAXCOL
+    JP NC,UH_DEACTIVATE
+    LD A,(HORMING_ROW)
+    CP HORMING_MAXROW
+    JP NC,UH_DEACTIVATE
+    LD A,(HORMING_COL) : INC A : LD (HORMING_COL),A
+    LD A,(HORMING_ROW) : INC A : LD (HORMING_ROW),A
+
+UH_RECOMPUTE_ADDR:
+    LD A,(HORMING_ROW) : LD E,A : LD D,0
+    LD HL,BULLET_ROWADDR_LO : ADD HL,DE : LD A,(HL) : LD (HORMING_ADDR_LO),A
+    LD HL,BULLET_ROWADDR_HI : ADD HL,DE : LD A,(HL) : LD (HORMING_ADDR_HI),A
+
+    ; AABB vs the tank's own real 32x32 box - missile is 8x8.
+    LD A,(HORMING_COL) : ADD A,A : ADD A,A : ADD A,A : LD B,A
+    LD A,(HORMING_ROW) : ADD A,A : ADD A,A : ADD A,A : LD C,A
+    LD A,(TANK_X) : LD D,A
+    LD A,(TANK_Y_CUR) : LD E,A
+
+    LD A,B : ADD A,7 : CP D : JR C,UH_NO_HIT
+    LD A,D : ADD A,HORMING_COLLISION_SIZE-1 : CP B : JR C,UH_NO_HIT
+    LD A,C : ADD A,7 : CP E : JR C,UH_NO_HIT
+    LD A,E : ADD A,HORMING_COLLISION_SIZE-1 : CP C : JR C,UH_NO_HIT
+
+    ; hit - matches APPLY_TANK_DAMAGE's own documented future-use
+    ; comment ("いずれ敵弾実装予定") - this is exactly that.
+    LD A,FLASH_DURATION : LD (TANK_FLASH_TIMER),A
+    CALL APPLY_TANK_DAMAGE
+    CALL SOUND_ZUM_DEFLECT
+    XOR A : LD (HORMING_ACT),A
+    RET
+
+UH_NO_HIT:
+    LD IX,HORMING_ACT
+    CALL DRAW_HORMING_CELL
+    RET
+
+UH_DEACTIVATE:
+    XOR A : LD (HORMING_ACT),A
     RET
 
 CHECK_BULLET_VS_BOSS:

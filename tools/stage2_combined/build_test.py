@@ -37,6 +37,7 @@ import flyer_gen  # noqa: E402
 import etank_gen  # noqa: E402
 import sasapi_gen  # noqa: E402
 import sasapi_hand_gen  # noqa: E402
+import horming_gen  # noqa: E402
 from mini_z80asm import Assembler  # noqa: E402
 
 
@@ -46,7 +47,7 @@ def assemble():
               + "\n" + bullet_gen.emit_asm_tables() + "\n" + enemy_gen.emit_asm_tables()
               + "\n" + bigzum_gen.emit_asm_tables() + "\n" + flyer_gen.emit_asm_tables()
               + "\n" + etank_gen.emit_asm_tables() + "\n" + sasapi_gen.emit_asm_tables()
-              + "\n" + sasapi_hand_gen.emit_asm_tables())
+              + "\n" + sasapi_hand_gen.emit_asm_tables() + "\n" + horming_gen.emit_asm_tables())
     text = body + "\n" + tables + "\n"
     asm = Assembler(text)
     out = asm.assemble()

@@ -4351,6 +4351,80 @@ with no way to tell where.
   GAME_TICK=840 diagnostics began; the 3 boot-effect failures that
   showed up every round since are gone now that the boot value is real.
 
+- **Homing missile implemented - the boss's own actual attack content,
+  fired during the pose**: "ではボス続き 初期Tickを840に ホーミングミ
+  サイルを実装 ボスポーズでボス右上あたりから発射し X軸中央辺りまで
+  水平打ち その後ホーミング動作 この5枚の絵はSLが左向き DLが左斜め下
+  向き Downが下向き DRが右斜め下向き SRが右向き 180度を5段階45度ごと
+  自機方向に追尾 斜めミサイルへは自機のXとの距離が自機幅より外にある
+  時 Downは自機幅内に収まっている時 SL、SRは自機から64px以上Xが離れ
+  ている時 自機より右方向に離れている時はSL、DL 左ならSR、DR" (5
+  attached JSON sprites, `HormingSL/DL/Down/DR/SR_8x8.json`).
+  **Real architecture decision, not obvious from "5 sprite images" at
+  face value: implemented as a BG-drawn element, not a hw sprite.**
+  Checked the hw sprite pattern-code budget first (a separate 0-255
+  space from BG codes) and found only 4 free slots left - tank(0-127) +
+  ZacoII(128-135) + explosion(136-139) + BulletU(140-147) + Zum(148-
+  155) + BigZum(156-219) + Flyer(220-251) already account for 0-251,
+  nowhere near the 20 codes a 5-facing hw sprite would need (16x16-
+  padded per facing, same VDP-mode constraint `BulletU` already
+  documents - 4 codes/facing x 5 facings). Separately, BG-drawing also
+  sidesteps the exact per-scanline hw-sprite-priority bug class that
+  already forced `BulletU` to BG during the boss fight specifically -
+  a small projectile flying near the boss's own always-4-sprites-per-
+  scanline-band quadrants is exactly what that bug already bit once.
+  New `horming_gen.py` (raw 8x8 BG pattern data, not the sprite-
+  quadrant order) and a new permanent BG code block (`HORMING_CODE_
+  BASE`=216, group27 - fg14/bg1 matching every JSON's own header).
+  **RAM layout deliberately mirrors the bullet pool's own field offsets
+  (ACT@0, COL@2, ROW@3, ADDR_LO@4, ADDR_HI@5)**, letting `ERASE_BULLET_
+  CELL` (fully generic, only ever reads those 4 fields) get reused
+  as-is instead of duplicating it. Single slot, not a pool - a full
+  patrol+pose cycle (~448 frames) is far longer than the missile's own
+  travel time, so the previous one is always gone before the next pose
+  could fire another.
+  Two-phase flight exactly as specified: phase0 fires from the boss's
+  own upper-right (`HORMING_SPAWN_COL/ROW`=29,8) always facing SL,
+  stepping 1 col/frame straight left (same col/row-granular movement
+  bullets already use, not smooth sub-pixel motion) until reaching
+  screen-center (`HORMING_CENTER_COL`=16) - "X軸中央辺りまで水平打ち".
+  Phase1 (`RESOLVE_HORMING_FACING`) recomputes the facing FRESH every
+  single frame from the CURRENT distance to `TANK_X` - "自機方向に追
+  尾", not fixed once at the phase transition: `|dx|<=32`(`TANK_WIDTH`)
+  -> Down, `32<|dx|<64` -> diagonal (DL/DR by side), `|dx|>=64` -> side
+  (SL/SR by side) - matching all 3 thresholds and both L/R directions
+  exactly as specified. Each facing steps a fixed 45-degree (dcol,drow)
+  delta - discretized direction, not real vector/trig math (no cheap
+  multiply/sqrt on Z80, matches this file's approach everywhere else).
+  Collision with the tank reuses `APPLY_TANK_DAMAGE` - already existed
+  with its own comment anticipating exactly this ("現在はBigZumのみだ
+  がいずれ敵弾実装予定", "for now only BigZum, but enemy-bullet damage
+  is planned eventually") - no new damage/life-bar mechanism needed. A
+  real AABB vs the tank's own 32x32 box (`TANK_X`/`TANK_Y_CUR` - the
+  missile's own Y actually matters here, unlike the X-only facing
+  logic above), arming `TANK_FLASH_TIMER` and playing `SOUND_ZUM_
+  DEFLECT` on a hit, same convention as every other tank-damage source.
+  Verified: new `tests/horming_test.py` (38 checks - fire/refire-while-
+  active, phase0 movement, the phase-transition timing quirk (the
+  transition and that frame's own movement resolve together, so `HORMING_
+  COL` isn't frozen exactly at the threshold the instant `HORMING_PHASE`
+  reads back as 1), all 6 bucket-boundary cases on both sides (12
+  checks total), all 5 facings' own movement deltas, both edge-
+  underflow/overflow guards (tested by calling the internal step labels
+  directly with a pre-set facing, since a real hit at col0/col31 can't
+  be constructed from a static tank position - only from one moving
+  away rapidly mid-approach), a real hit decrementing `TANK_LIFE`/
+  arming the flash/deactivating the missile, a clean miss registering
+  nothing, and a real end-to-end `MAINLOOP` sweep firing during a real
+  pose and confirming genuine frame-to-frame movement) all pass. Also
+  rendered real frames confirming the missile visually appears near the
+  boss's own head at spawn and mid-flight during the straight phase -
+  small enough at thumbnail scale that a cropped/zoomed render was
+  needed to actually see it clearly, but present and correctly colored/
+  shaped both times. Full suite: 267/270 pass, same 3 known GAME_TICK=
+  840-boot-effect failures (expected now that the diagnostic boot is
+  back) - no new regressions.
+
 ## Bugs found and fixed while building this
 
 - **Sand flickered between its own new color and Rock's, twice over**
