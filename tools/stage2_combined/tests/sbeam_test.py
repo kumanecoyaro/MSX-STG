@@ -198,10 +198,10 @@ check("STAGE_SBEAM actually toggles SBEAM_BLINK every call - 取り敢えず1フ
       blink_after_1 != blink_after_2)
 check("on the 'off' blink tick every slot is forced hidden (Y=209) regardless of phase/ROWS",
       hidden_all_on_this_tick)
-check("on the 'on' blink tick the drop phase's own 2 grown segments are visible",
-      visible(cpu, 0) and visible(cpu, 1))
-check("on the 'on' blink tick segments beyond SBEAM_ROWS stay hidden",
-      not visible(cpu, 2))
+check("on the 'on' blink tick the drop phase's own line (origin + 2 grown rows = 3 points, "
+      "dy+1) is visible", visible(cpu, 0) and visible(cpu, 1) and visible(cpu, 2))
+check("on the 'on' blink tick segments beyond the line's own dy+1 points stay hidden",
+      not visible(cpu, 3))
 s0 = slot(cpu, 0)
 s1 = slot(cpu, 1)
 check("drop phase: segment0 sits at (SBEAM_START_COL*8, SBEAM_START_Y)",
@@ -212,51 +212,73 @@ check("drop phase: segments use SBEAM_CODE/SBEAM_COLOR",
       s0["pat"] == SBEAM_CODE and s0["color"] == SBEAM_COLOR)
 
 
-# ---- sweep/retract phase: L-shaped rendering - the vertical arm (ROWS
-# segments) MUST stay visible the whole time, alongside the growing/
-# shrinking horizontal arm - "発射基点は変えず...ラインを引いて元まで
-# 戻る" (round-2 fix: previously the vertical arm vanished entirely once
-# the horizontal sweep began) ----
+# ---- sweep/retract phase: a real Bresenham DIAGONAL line from the
+# fixed origin to the moving tip - "複数本じゃなく1本だぞ" (round3) -
+# not 2 fixed-shape arms glued at a 90-degree corner (round2's own
+# design, now superseded). Verify against hand-computed exact points for
+# a few slopes. ----
+def visible_points(cpu):
+    pts = []
+    for i in range(SBEAM_SLOT_COUNT):
+        s = slot(cpu, i)
+        if s["y"] != 209:
+            pts.append((s["x"] // 8, s["y"] // 8))   # back to grid units
+    return pts
+
+
+SBEAM_START_ROW = SBEAM_START_Y // 8
+
+# pure vertical (dx=0) while still dropping - degenerates cleanly to a
+# straight vertical line, same shape as before this round's own change.
 cpu = fresh_cpu()
-ROWS = 6
-cpu.mem[SBEAM_ACT] = 2
-cpu.mem[SBEAM_ROWS] = ROWS
-cpu.mem[SBEAM_FRONT_COL] = SBEAM_START_COL - 4   # mid-sweep: 4 horizontal cols revealed
-cpu.mem[SBEAM_GROUND_Y] = 152
-cpu.mem[SBEAM_BLINK] = 1   # next toggle -> 0 -> the visible pass
+cpu.mem[SBEAM_ACT] = 1
+cpu.mem[SBEAM_ROWS] = 5
+cpu.mem[SBEAM_BLINK] = 1
 call_routine(cpu, "STAGE_SBEAM")
+expect = [(SBEAM_START_COL, SBEAM_START_ROW + i) for i in range(6)]
+check("drop phase (dx=0): degenerates to a pure vertical line, one point per row, "
+      "column unchanged", visible_points(cpu) == expect)
 
-vertical_ok = True
-for i in range(ROWS):
-    s = slot(cpu, i)
-    if s["y"] != SBEAM_START_Y + i * 8 or s["x"] != SBEAM_START_COL * 8 or s["y"] == 209:
-        vertical_ok = False
-check("sweep phase: the vertical arm's own ROWS segments are ALL still visible at their "
-      "original (fixed origin column) positions while the horizontal arm is sweeping",
-      vertical_ok)
+# exact 45-degree diagonal (dx==dy==10): alternating X/Y steps every cell
+cpu = fresh_cpu()
+cpu.mem[SBEAM_ACT] = 2
+cpu.mem[SBEAM_FRONT_COL] = SBEAM_START_COL - 10
+cpu.mem[SBEAM_GROUND_Y] = (SBEAM_START_ROW + 10) * 8
+cpu.mem[SBEAM_BLINK] = 1
+call_routine(cpu, "STAGE_SBEAM")
+expect = [(SBEAM_START_COL - i, SBEAM_START_ROW + i) for i in range(11)]
+check("sweep phase (dx==dy==10): a real 45-degree diagonal - the UPPER part of the "
+      "line changes angle too, not a rigid vertical arm above a fixed corner "
+      "(round2's own L-shape mistake)", visible_points(cpu) == expect)
 
-horiz_ok = True
-horiz_budget = SBEAM_SLOT_COUNT - ROWS
-for j in range(horiz_budget):
-    col = SBEAM_START_COL - 1 - j
-    s = slot(cpu, ROWS + j)
-    expect_visible = col >= SBEAM_START_COL - 4
-    if expect_visible != (s["y"] != 209):
-        horiz_ok = False
-    if expect_visible and (s["x"] != col * 8 or s["y"] != 152):
-        horiz_ok = False
-check("sweep phase: the horizontal arm's own segments (slots ROWS..) exactly match the "
-      "column>=SBEAM_FRONT_COL formula, extending left from SBEAM_START_COL-1 (one column "
-      "outside the vertical arm's own corner cell - no wasted/duplicate slot)",
-      horiz_ok)
+# shallow diagonal (dx=20,dy=10): a real Bresenham staircase, exactly 21 points
+cpu = fresh_cpu()
+cpu.mem[SBEAM_ACT] = 2
+cpu.mem[SBEAM_FRONT_COL] = SBEAM_START_COL - 20
+cpu.mem[SBEAM_GROUND_Y] = (SBEAM_START_ROW + 10) * 8
+cpu.mem[SBEAM_BLINK] = 1
+call_routine(cpu, "STAGE_SBEAM")
+pts = visible_points(cpu)
+check("sweep phase (dx=20,dy=10): exactly dx+1=21 points, monotonically decreasing "
+      "column and non-decreasing row (a real shallow diagonal, no gaps/backtracking)",
+      len(pts) == 21 and pts[0] == (SBEAM_START_COL, SBEAM_START_ROW)
+      and pts[-1] == (SBEAM_START_COL - 20, SBEAM_START_ROW + 10)
+      and all(pts[i + 1][0] == pts[i][0] - 1 for i in range(len(pts) - 1))
+      and all(pts[i + 1][1] in (pts[i][1], pts[i][1] + 1) for i in range(len(pts) - 1)))
 
-# hw-cap check: with a real terrain-driven ROWS, the combined budget
-# (vertical+horizontal) still tops out at SBEAM_SLOT_COUNT - a flagged,
-# real hardware limit, not an unbounded line.
-check("sweep phase: the vertical+horizontal combined slot budget is capped at "
-      "SBEAM_SLOT_COUNT (22) - a genuine, flagged hw-sprite deviation from a literal "
-      "unbounded 'スプライトを足していく'",
-      ROWS + horiz_budget == SBEAM_SLOT_COUNT)
+# hw-cap: a full-width sweep (dx=23) plus deep terrain (dy=9) needs 24
+# points - more than SBEAM_SLOT_COUNT(22) - a genuine, flagged hw-sprite
+# deviation from a literal unbounded 'スプライトを足していく', same
+# caveat as before this round, just a different (single-line) shape.
+cpu = fresh_cpu()
+cpu.mem[SBEAM_ACT] = 2
+cpu.mem[SBEAM_FRONT_COL] = 0
+cpu.mem[SBEAM_GROUND_Y] = (SBEAM_START_ROW + 9) * 8
+cpu.mem[SBEAM_BLINK] = 1
+call_routine(cpu, "STAGE_SBEAM")
+check("sweep phase hw cap: a full-width+deep-terrain line (needing 24 points) is "
+      "capped at SBEAM_SLOT_COUNT(22) - flagged, not silently unbounded",
+      len(visible_points(cpu)) == SBEAM_SLOT_COUNT)
 
 
 # ---- SBeam and Homing are mutually exclusive per pose now - "当然サン
@@ -310,7 +332,7 @@ completed = False
 saw_blink_off_while_active = False
 saw_blink_on_while_active = False
 saw_homing_during_sbeam = False
-saw_vertical_and_horizontal_together = False
+saw_real_diagonal = False
 for f in range(60000):
     step_frame(cpu)
     act = cpu.mem[SBEAM_ACT]
@@ -325,9 +347,12 @@ for f in range(60000):
     if act == 3:
         saw_retract = True
     if act in (2, 3):
-        rows = cpu.mem[SBEAM_ROWS]
-        if rows > 0 and visible(cpu, 0) and any(visible(cpu, rows + k) for k in range(SBEAM_SLOT_COUNT - rows)):
-            saw_vertical_and_horizontal_together = True
+        pts = [(slot(cpu, i)["x"], slot(cpu, i)["y"]) for i in range(SBEAM_SLOT_COUNT)
+               if slot(cpu, i)["y"] != 209]
+        xs = {p[0] for p in pts}
+        ys = {p[1] for p in pts}
+        if len(xs) > 1 and len(ys) > 1:
+            saw_real_diagonal = True
     if act != 0:
         if all(not visible(cpu, i) for i in range(SBEAM_SLOT_COUNT)):
             saw_blink_off_while_active = True
@@ -350,9 +375,9 @@ check("real MAINLOOP: the whole drop/sweep/retract cycle actually completes with
       completed)
 check("real MAINLOOP: the blink genuinely alternates on/off while SBeam is active (not stuck "
       "one way)", saw_blink_off_while_active and saw_blink_on_while_active)
-check("real MAINLOOP: the vertical arm and horizontal arm are genuinely visible TOGETHER at "
-      "some point during the sweep/retract - a real connected L-shaped line, not one "
-      "replacing the other", saw_vertical_and_horizontal_together)
+check("real MAINLOOP: a genuinely diagonal line (both X and Y varying across visible slots "
+      "at once) appears at some point during the sweep/retract - 複数本じゃなく1本の直線, "
+      "not 2 fixed-shape arms glued at a corner", saw_real_diagonal)
 check("real MAINLOOP: no homing missile is ever active while SBeam is active - 当然サンダー"
       "ビーム中はホーミングも...撃たねえんだよ", not saw_homing_during_sbeam)
 

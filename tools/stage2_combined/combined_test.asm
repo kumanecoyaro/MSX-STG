@@ -488,17 +488,37 @@ BOSS_DIP_DIST EQU 8
 ; 左端まで移動しながらスプライトでラインを引いて元まで戻る 当然サン
 ; ダービーム中はホーミングもサンダーも撃たねえんだよ" - 3 real fixes:
 ; (1) the origin was wrong (see SBEAM_START_COL/_Y below); (2) the
-; vertical drop must stay ON SCREEN the whole time the horizontal sweep
-; is growing, not vanish the instant sweep begins - see STAGE_SBEAM's
-; own SS_SWEEP, now an L-shaped line (vertical arm + horizontal arm both
-; drawn every frame) instead of replacing one with the other; (3) SBeam
-; and Homing are now mutually exclusive per pose (see UBA_MOVE_RIGHT) -
-; Thunder already can't newly trigger during a pose (its own trigger
-; checks only run mid-patrol), so no separate change was needed there;
-; any Thunder bolt already mid-flight when the pose begins is left to
-; finish its own existing shrink animation rather than force-erased
-; (force-clearing the pool would leave orphaned BG cells behind with no
-; slot left to erase them - a worse bug than a few overlapping frames).
+; vertical drop must stay connected to the growing sweep, not vanish the
+; instant the sweep begins (round2's own L-shaped-line fix, superseded
+; by round3 below); (3) SBeam and Homing are now mutually exclusive per
+; pose (see UBA_MOVE_RIGHT) - Thunder already can't newly trigger during
+; a pose (its own trigger checks only run mid-patrol), so no separate
+; change was needed there; any Thunder bolt already mid-flight when the
+; pose begins is left to finish its own existing shrink animation rather
+; than force-erased (force-clearing the pool would leave orphaned BG
+; cells behind with no slot left to erase them - a worse bug than a few
+; overlapping frames).
+; Round-3 correction (verbatim, with a hand-drawn diagram - a fan of
+; lines all meeting at the boss's own hand, fanning out to different
+; points along the ground toward the tank): "取り敢えずは動いたな しか
+; し真下だけじゃなくそのまま左へスプライトのラインを描きながら左に先
+; 端を移動するんだよ で、左まで行ったら折り返して最初の真下を描いて
+; 終了 意味わからんか? 絵を描いたからこんな感じだ 青の線な 複数本じ
+; ゃなく1本だぞ" - round2's own L-shape (a RIGID vertical arm plus a
+; SEPARATE horizontal arm meeting at a 90-degree corner) was still
+; wrong: "複数本じゃなく1本" (one line, not several) plus the diagram's
+; own fan-of-diagonals (each one a straight shot from the SAME point
+; near the hand out to a DIFFERENT point along the ground) means this
+; is ONE straight line from the FIXED origin to a MOVING tip, not two
+; fixed-shape arms glued at a corner. The tip's own path is unchanged
+; from round1 (down to the ground, then left along it, then back), but
+; the LINE ITSELF is now the real straight (Bresenham) segment from the
+; origin to wherever the tip currently is - purely vertical while the
+; tip is still descending (dx=0 degenerates cleanly to the old vertical
+; rendering), then increasingly diagonal as the tip sweeps left (the
+; UPPER portion of the line changes angle too, not just staying rigidly
+; vertical above a fixed corner) - see STAGE_SBEAM's own line-drawing
+; algorithm below.
 SBEAM_POSE_GATE EQU 2
 ; free hw sprite pattern code - group27/THUNDERS_CODE's own block is BG,
 ; not hw-sprite, so codes 252-255 (the last free block after PAT_FLYER's
@@ -520,6 +540,7 @@ SBEAM_COLOR EQU 7
 ; own local y23-26 cluster (local y24 -> BOSS_SPAWN_Y+24).
 SBEAM_START_COL EQU 23
 SBEAM_START_Y EQU BOSS_SPAWN_Y+24
+SBEAM_START_ROW EQU SBEAM_START_Y/8   ; origin in 8px-row grid units, for STAGE_SBEAM's own line algorithm
 ; hw sprite slots: BOSS_SPR_BASE_SLOT(10)..+15 (the boss's own dormant
 ; pose-time body, see below) PLUS slots26-31, the only 6 hw sprite slots
 ; in the whole file that are NEVER claimed by ANY entity at all (tank0-3,
@@ -534,12 +555,11 @@ SBEAM_START_Y EQU BOSS_SPAWN_Y+24
 ; collide with the boss's own sprite resuming there once the pose
 ; actually ends. The extra 26-31 slots need no such care - nothing else
 ; ever touches them, pose or not.
-; 22 slots is still a real, honest hw-sprite-budget cap, now shared
-; between the vertical arm (SBEAM_ROWS, computed from the real terrain
-; depth at fire-time, typically 10-13 segments) and the horizontal arm
-; (whatever's left, roughly 9-12) - "スプライトを足していく" holds up to
-; this combined limit, not literally without bound (MSX1 has only 32 hw
-; sprite slots total). Flagged for the user, not silently reinterpreted.
+; 22 slots is a real, honest hw-sprite-budget cap on the line's own
+; maximum length (a straight line from the origin to the far left edge
+; can need up to ~24 8px cells) - "スプライトを足していく" holds up to
+; this limit, not literally without bound (MSX1 has only 32 hw sprite
+; slots total). Flagged for the user, not silently reinterpreted.
 SBEAM_SLOT_COUNT EQU 22
 SBEAM_SPR_BASE_SLOT EQU BOSS_SPR_BASE_SLOT
 BOSS_HP_INIT    EQU 255     ; "耐久値は255で"
@@ -1547,6 +1567,18 @@ SBEAM_BLINK     EQU F313h   ; toggled every frame - "点滅で表示で 取り�
 ; Y,X,pattern,color), same shape as HORMING_SPRITE_ATTRS - flushed via
 ; FLUSH_SBEAM_SPRITES.
 SBEAM_SPRITE_ATTRS EQU F314h   ; SBEAM_SLOT_COUNT*4 = 88 bytes (F314h-F36Bh)
+; scratch bytes for STAGE_SBEAM's own Bresenham line algorithm (round3 -
+; "複数本じゃなく1本だぞ", one real diagonal line from the fixed origin
+; to the moving tip, not 2 fixed-shape arms) - all in 8px-grid units
+; (columns/rows), recomputed fresh every frame, never read outside
+; STAGE_SBEAM itself.
+SBEAM_LINE_TX   EQU F36Ch   ; target (tip) column
+SBEAM_LINE_TY   EQU F36Dh   ; target (tip) row
+SBEAM_LINE_DX   EQU F36Eh   ; SBEAM_START_COL - TX (>=0)
+SBEAM_LINE_DY   EQU F36Fh   ; TY - SBEAM_START_ROW (>=0)
+SBEAM_LINE_ERR  EQU F370h   ; Bresenham error accumulator
+SBEAM_LINE_X    EQU F371h   ; walking cursor column (starts at the origin)
+SBEAM_LINE_Y    EQU F372h   ; walking cursor row (starts at the origin)
 
 ; "ボスに被らない位置の右上 今の発射位置の16px上あたり" - same X as
 ; before (still within the boss's own 64x64 box's own column range,
@@ -8747,34 +8779,112 @@ USR_REVERSE:
     LD A,3 : LD (SBEAM_ACT),A
     RET
 
-; fills SBEAM_SPRITE_ATTRS (SBEAM_SLOT_COUNT slots x4 bytes) for the
-; current phase - own hidden-slot idiom is IDENTICAL to STAGE_HORMING's
-; own (Y=209, rest 0). "点滅で表示で 取り敢えず1フレ点滅で" - a plain
-; 1-frame on/1-frame off toggle: on an "off" tick every slot is forced
-; hidden regardless of phase, same as ACT=0's own idle state.
-; Both DROP and SWEEP/RETRACT space consecutive segments 8px apart (one
-; BG column, or one Y-row) rather than the sprite's own full 16px box -
-; only the top-left 8x8 of SBEAM_SPRITE is ever lit (see sbeam_gen.py),
-; so 8px steps are exactly what's needed for the line to look continuous
-; ("ラインが途切れないように"); the unlit remainder of each 16x16 sprite
-; box harmlessly overlaps its neighbor (pattern 0 = transparent on the
-; TMS9918, same reasoning as bullet_gen.py's own 16x16-padded 8x8 art).
-; SS_SWEEP (used for both ACT=2 sweeping and ACT=3 retracting) draws an
-; L-SHAPED line: the vertical arm (SBEAM_ROWS segments, fixed once the
-; drop finishes) stays on screen the WHOLE time the horizontal arm grows/
-; shrinks - "発射基点は変えず...ラインを引いて元まで戻る" - the origin
-; end must stay visibly connected throughout, not vanish the instant the
-; sweep begins (round-2 fix - see the SBeam block comment above).
+; fills SBEAM_SPRITE_ATTRS (SBEAM_SLOT_COUNT slots x4 bytes) with a
+; single Bresenham line from the FIXED origin (SBEAM_START_COL,
+; SBEAM_START_ROW) to a MOVING tip - "複数本じゃなく1本だぞ" (round3) -
+; not 2 fixed-shape arms glued at a corner. Own hidden-slot idiom is
+; IDENTICAL to STAGE_HORMING's own (Y=209, rest 0). "点滅で表示で 取り
+; 敢えず1フレ点滅で" - a plain 1-frame on/1-frame off toggle: on an
+; "off" tick every slot is forced hidden regardless of phase, same as
+; ACT=0's own idle state.
+; The tip is (SBEAM_START_COL,SBEAM_GROUND_Y/8) while dropping (fixed
+; column, growing row - via SBEAM_ROWS) or (SBEAM_FRONT_COL,SBEAM_
+; GROUND_Y/8) while sweeping/retracting (fixed row, moving column) -
+; same state SBEAM_ACT/_ROWS/_FRONT_COL/_GROUND_Y already tracked before
+; this round, only the RENDERING changed. All Bresenham work happens in
+; 8px-grid units (columns/rows), converted to pixels only at the very
+; last step (ADD A,A x3 = *8) when writing each slot.
 STAGE_SBEAM:
     LD A,(SBEAM_BLINK) : XOR 1 : LD (SBEAM_BLINK),A
     AND 1
-    JR NZ,SS_ALL_HIDDEN
+    JP NZ,SS_ALL_HIDDEN
     LD A,(SBEAM_ACT)
     OR A
-    JR Z,SS_ALL_HIDDEN
+    JP Z,SS_ALL_HIDDEN
     CP 1
-    JR Z,SS_DROP
-    JR SS_SWEEP
+    JR Z,SSL_TARGET_DROP
+    LD A,(SBEAM_FRONT_COL) : LD (SBEAM_LINE_TX),A
+    LD A,(SBEAM_GROUND_Y) : SRL A : SRL A : SRL A : LD (SBEAM_LINE_TY),A
+    JR SSL_HAVE_TARGET
+SSL_TARGET_DROP:
+    LD A,SBEAM_START_COL : LD (SBEAM_LINE_TX),A
+    LD A,(SBEAM_ROWS) : ADD A,SBEAM_START_ROW : LD (SBEAM_LINE_TY),A
+SSL_HAVE_TARGET:
+    ; dx = SBEAM_START_COL - TX (>=0, TX never exceeds the origin column)
+    LD A,(SBEAM_LINE_TX) : LD B,A
+    LD A,SBEAM_START_COL : SUB B
+    LD (SBEAM_LINE_DX),A
+    ; dy = TY - SBEAM_START_ROW (>=0, TY never sits above the origin row)
+    LD A,(SBEAM_LINE_TY) : SUB SBEAM_START_ROW
+    LD (SBEAM_LINE_DY),A
+    LD A,SBEAM_START_COL : LD (SBEAM_LINE_X),A
+    LD A,SBEAM_START_ROW : LD (SBEAM_LINE_Y),A
+    ; branch on dx>=dy (shallow, step X every iter) vs dx<dy (steep, step Y every iter)
+    LD A,(SBEAM_LINE_DY) : LD B,A
+    LD A,(SBEAM_LINE_DX)
+    CP B
+    JR C,SSL_Y_BRANCH
+SSL_X_BRANCH:
+    LD A,(SBEAM_LINE_DY) : LD D,A          ; D = dy (loop-invariant)
+    LD A,(SBEAM_LINE_DX) : LD E,A          ; E = dx (loop-invariant)
+    SRL A : LD (SBEAM_LINE_ERR),A          ; err = dx/2
+    LD A,E : INC A : LD B,A                ; B = dx+1 (iteration count)
+    LD A,SBEAM_SLOT_COUNT+1 : CP B
+    JR NC,SSL_X_NOCAP
+    LD B,SBEAM_SLOT_COUNT                  ; hw sprite budget cap - see SBEAM_SLOT_COUNT's own comment
+SSL_X_NOCAP:
+    LD C,B
+    LD IX,SBEAM_SPRITE_ATTRS
+SSL_X_LOOP:
+    LD A,(SBEAM_LINE_Y) : ADD A,A : ADD A,A : ADD A,A : LD (IX+0),A
+    LD A,(SBEAM_LINE_X) : ADD A,A : ADD A,A : ADD A,A : LD (IX+1),A
+    LD A,SBEAM_CODE : LD (IX+2),A
+    LD A,SBEAM_COLOR : LD (IX+3),A
+    INC IX : INC IX : INC IX : INC IX
+    LD A,(SBEAM_LINE_ERR) : SUB D : LD (SBEAM_LINE_ERR),A
+    JP M,SSL_X_YSTEP
+    JR SSL_X_XSTEP
+SSL_X_YSTEP:
+    LD A,(SBEAM_LINE_Y) : INC A : LD (SBEAM_LINE_Y),A
+    LD A,(SBEAM_LINE_ERR) : ADD A,E : LD (SBEAM_LINE_ERR),A
+SSL_X_XSTEP:
+    LD A,(SBEAM_LINE_X) : DEC A : LD (SBEAM_LINE_X),A
+    DJNZ SSL_X_LOOP
+    JR SSL_HIDE_REST
+SSL_Y_BRANCH:
+    LD A,(SBEAM_LINE_DX) : LD E,A          ; E = dx (loop-invariant)
+    LD A,(SBEAM_LINE_DY) : LD D,A          ; D = dy (loop-invariant)
+    SRL A : LD (SBEAM_LINE_ERR),A          ; err = dy/2
+    LD A,D : INC A : LD B,A                ; B = dy+1 (iteration count, always <=SBEAM_SLOT_COUNT in practice)
+    LD C,B
+    LD IX,SBEAM_SPRITE_ATTRS
+SSL_Y_LOOP:
+    LD A,(SBEAM_LINE_Y) : ADD A,A : ADD A,A : ADD A,A : LD (IX+0),A
+    LD A,(SBEAM_LINE_X) : ADD A,A : ADD A,A : ADD A,A : LD (IX+1),A
+    LD A,SBEAM_CODE : LD (IX+2),A
+    LD A,SBEAM_COLOR : LD (IX+3),A
+    INC IX : INC IX : INC IX : INC IX
+    LD A,(SBEAM_LINE_ERR) : SUB E : LD (SBEAM_LINE_ERR),A
+    JP M,SSL_Y_XSTEP
+    JR SSL_Y_YSTEP
+SSL_Y_XSTEP:
+    LD A,(SBEAM_LINE_X) : DEC A : LD (SBEAM_LINE_X),A
+    LD A,(SBEAM_LINE_ERR) : ADD A,D : LD (SBEAM_LINE_ERR),A
+SSL_Y_YSTEP:
+    LD A,(SBEAM_LINE_Y) : INC A : LD (SBEAM_LINE_Y),A
+    DJNZ SSL_Y_LOOP
+SSL_HIDE_REST:
+    LD A,SBEAM_SLOT_COUNT : SUB C : LD B,A
+    LD A,B : OR A
+    RET Z                        ; the line already used the whole budget
+SSL_HIDE_LOOP:
+    LD A,209 : LD (IX+0),A
+    XOR A : LD (IX+1),A
+    XOR A : LD (IX+2),A
+    XOR A : LD (IX+3),A
+    INC IX : INC IX : INC IX : INC IX
+    DJNZ SSL_HIDE_LOOP
+    RET
 SS_ALL_HIDDEN:
     LD HL,SBEAM_SPRITE_ATTRS
     LD B,SBEAM_SLOT_COUNT
@@ -8784,76 +8894,6 @@ SSAH_LOOP:
     XOR A : LD (HL),A : INC HL
     XOR A : LD (HL),A : INC HL
     DJNZ SSAH_LOOP
-    RET
-SS_DROP:
-    LD HL,SBEAM_SPRITE_ATTRS
-    LD A,(SBEAM_ROWS) : LD C,A
-    LD E,0
-    LD B,SBEAM_SLOT_COUNT
-SSD_LOOP:
-    LD A,E : CP C
-    JR NC,SSD_HIDE
-    LD A,E : ADD A,A : ADD A,A : ADD A,A : ADD A,SBEAM_START_Y
-    LD (HL),A : INC HL                    ; Y
-    LD A,SBEAM_START_COL*8 : LD (HL),A : INC HL   ; X (fixed column)
-    LD A,SBEAM_CODE : LD (HL),A : INC HL
-    LD A,SBEAM_COLOR : LD (HL),A : INC HL
-    JR SSD_NEXT
-SSD_HIDE:
-    LD A,209 : LD (HL),A : INC HL
-    XOR A : LD (HL),A : INC HL
-    XOR A : LD (HL),A : INC HL
-    XOR A : LD (HL),A : INC HL
-SSD_NEXT:
-    INC E
-    DJNZ SSD_LOOP
-    RET
-; vertical arm first (slots0..ROWS-1, identical to SS_DROP's own visible
-; segments), THEN the horizontal arm fills whatever slots are left
-; (SBEAM_SLOT_COUNT-ROWS), extending left from SBEAM_START_COL-1 (one
-; column outside the vertical arm's own corner cell, so the two arms
-; don't waste a slot both drawing the same cell).
-SS_SWEEP:
-    LD HL,SBEAM_SPRITE_ATTRS
-    LD A,(SBEAM_ROWS) : LD C,A
-    LD E,0
-    LD B,SBEAM_SLOT_COUNT
-SSS_V_LOOP:
-    LD A,E : CP C
-    JR NC,SSS_V_DONE
-    LD A,E : ADD A,A : ADD A,A : ADD A,A : ADD A,SBEAM_START_Y
-    LD (HL),A : INC HL                    ; Y
-    LD A,SBEAM_START_COL*8 : LD (HL),A : INC HL   ; X (fixed origin column)
-    LD A,SBEAM_CODE : LD (HL),A : INC HL
-    LD A,SBEAM_COLOR : LD (HL),A : INC HL
-    INC E
-    DJNZ SSS_V_LOOP
-    RET                          ; ROWS should never reach SLOT_COUNT - safety only
-SSS_V_DONE:
-    ; B (DJNZ's own countdown) already holds SLOT_COUNT-ROWS here, since
-    ; we bailed out of the vertical loop before its own DJNZ could fire -
-    ; exactly the horizontal arm's own remaining slot budget.
-    LD A,(SBEAM_GROUND_Y) : LD E,A        ; E = fixed ground Y for every horizontal segment
-    LD A,(SBEAM_FRONT_COL) : LD C,A
-    LD D,0                                ; D = horizontal arm's own local index j=0..
-SSS_H_LOOP:
-    LD A,SBEAM_START_COL-1 : SUB D        ; A = column = START_COL-1-j
-    CP C
-    JR C,SSS_H_HIDE
-    LD A,E : LD (HL),A : INC HL           ; Y (fixed ground row)
-    LD A,SBEAM_START_COL-1 : SUB D : ADD A,A : ADD A,A : ADD A,A
-    LD (HL),A : INC HL                    ; X = column*8
-    LD A,SBEAM_CODE : LD (HL),A : INC HL
-    LD A,SBEAM_COLOR : LD (HL),A : INC HL
-    JR SSS_H_NEXT
-SSS_H_HIDE:
-    LD A,209 : LD (HL),A : INC HL
-    XOR A : LD (HL),A : INC HL
-    XOR A : LD (HL),A : INC HL
-    XOR A : LD (HL),A : INC HL
-SSS_H_NEXT:
-    INC D
-    DJNZ SSS_H_LOOP
     RET
 
 ; blasts SBEAM_SPRITE_ATTRS (SBEAM_SLOT_COUNT*4=88 bytes) to hw sprite

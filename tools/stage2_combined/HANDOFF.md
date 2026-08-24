@@ -1736,18 +1736,76 @@ the tearing got fixed.
   horizontal ground-hugging arm) simultaneously, not two disconnected
   blips.
 
+## Round 14: SBeam round-3 - a real diagonal line, not an L-shape
+
+- User feedback (verbatim, with a hand-drawn diagram - a fan of curved
+  lines all meeting near the boss's own hand, fanning out to different
+  points along the ground toward the tank): "取り敢えずは動いたな しか
+  し真下だけじゃなくそのまま左へスプライトのラインを描きながら左に先
+  端を移動するんだよ で、左まで行ったら折り返して最初の真下を描いて
+  終了 意味わからんか? 絵を描いたからこんな感じだ 青の線な 複数本じ
+  ゃなく1本だぞ". Round13's own L-shape (a rigid vertical arm plus a
+  separate horizontal arm meeting at a 90-degree corner) was itself
+  still wrong - "複数本じゃなく1本" (one line, not several) plus the
+  diagram's own fan-of-diagonals (each stroke a straight shot from the
+  SAME point near the hand to a DIFFERENT point along the ground) means
+  this is ONE real diagonal line from the fixed origin to a moving tip,
+  not two fixed-shape arms glued at a corner.
+- **Redesigned `STAGE_SBEAM` around a real Bresenham line algorithm**:
+  the tip's own PATH is unchanged from round12 (state-wise, still just
+  `SBEAM_ROWS` growing during the drop and `SBEAM_FRONT_COL` moving
+  during sweep/retract - `US_DROP_STEP`/`US_SWEEP_RETRACT` needed ZERO
+  changes this round), but the RENDERED LINE is now the real straight
+  segment from the fixed origin `(SBEAM_START_COL,SBEAM_START_ROW)` to
+  the tip's current grid position, computed fresh every frame via a
+  classic integer error-accumulator Bresenham walk (`SSL_X_BRANCH`/
+  `SSL_Y_BRANCH`, picked by whether `dx>=dy`) - all in 8px-grid units,
+  converted to pixels only when writing each slot. This degenerates
+  cleanly to a pure vertical line while `dx=0` (still dropping - same
+  visual as before), and becomes a genuine, increasingly-shallow
+  diagonal as the tip sweeps left (the UPPER portion of the line, near
+  the origin, changes angle too - it does NOT stay rigidly vertical
+  above a fixed corner the way round13's own L-shape did).
+- New RAM scratch bytes (`SBEAM_LINE_TX/_TY/_DX/_DY/_ERR/_X/_Y`,
+  F36Ch-F372h) hold the Bresenham state - all recomputed fresh every
+  `STAGE_SBEAM` call, never read anywhere else. `SBEAM_START_ROW`
+  (`SBEAM_START_Y/8`) is a new compile-time constant for the origin's
+  own grid-row.
+- Slot budget: the algorithm naturally produces `max(dx,dy)+1` points
+  for a line from the origin to the tip - up to 24 in the worst case
+  (full-width sweep at the deepest terrain), still capped at
+  `SBEAM_SLOT_COUNT`(22) exactly as before, same honest hw-sprite-budget
+  caveat, just applied to one line's own length instead of 2 arms'
+  combined length.
+- Verified: `tests/sbeam_test.py`'s own sweep/retract checks rewritten
+  around exact hand-computed Bresenham output (a pure-vertical dx=0
+  case, an exact 45-degree dx==dy==10 case with a fully-enumerated
+  expected point list, a shallow dx=20/dy=10 case checking monotonic
+  column/row progression, and the dx=23/dy=9 worst-case hw-cap check),
+  plus a real `MAINLOOP` sweep confirming a genuinely diagonal line
+  (both X and Y varying across the visible slots at once) actually
+  appears during real play. 43 checks, all passing. Full regression
+  suite re-run after this round - same 3 pre-existing known failures
+  expected, no new regressions (see this round's own commit for the
+  exact pass/fail counts). Confirmed visually via 4 re-rendered frames -
+  the sweep and retract frames in particular now show a single
+  unbroken diagonal line from the boss's own hand down to the ground and
+  out toward the tank, closely matching the user's own hand-drawn
+  reference diagram, instead of the previous round's rigid right-angle
+  L-shape.
+
 ## Open items / things to watch
 
 - **SBeam's own 22-sprite hw cap** (16 from the boss's own dormant pose-
-  time body + 6 genuinely free elsewhere - see Round13 above), now
-  shared between the vertical arm (`SBEAM_ROWS`, terrain-dependent,
-  10-13 in practice) and the horizontal arm (whatever's left). `SBEAM_
-  FRONT_COL` still tracks all the way to the screen's left edge for
-  timing even though the horizontal arm's own visible reach is capped
-  by the remaining budget - if a future instruction implies the beam
-  should visibly reach the FULL screen width, that needs a genuinely
-  different (front-anchored sliding-window) rendering scheme, not just
-  a slot-count bump - 22 is the real ceiling (32 hw sprites total minus
+  time body + 6 genuinely free elsewhere - see Round13 above) now bounds
+  ONE diagonal Bresenham line's own length (Round14) - `max(dx,dy)+1`
+  points, up to 24 in the worst case (full-width sweep, deepest
+  terrain), capped at 22. `SBEAM_FRONT_COL` still tracks all the way to
+  the screen's left edge for timing even though the line's own far end
+  may get truncated by the cap in that worst case - if a future
+  instruction implies the beam should visibly reach the FULL screen
+  width regardless of terrain depth, that needs more slots, not a
+  rendering change - 22 is the real ceiling (32 hw sprites total minus
   tank/enemy/bullet's own permanent 10).
 
 - No known open bugs as of this handoff — the boss's own SPRPAT bug
