@@ -2024,6 +2024,59 @@ Thunder activity) confirming it survives completely untouched.
   see this round's own commit for the exact pass/fail counts - same 3
   pre-existing known failures expected, no new regressions.
 
+## Round 19: real tank hitbox (16x16, Y+14) + a genuine Tick0 boot (fixed the 3 "known" failures for real)
+
+- User feedback (verbatim): "まず自機のコリジョンは32x32ではなく16x16px
+  に ただし絵の問題で左下16x16ではなくYが2pxオフセットされた16x16に変
+  更 多分地形や乗っかりでズレるんで再調整 でTick0に". Two separate
+  changes bundled in one message.
+- **Tank hitbox 32x32 -> 16x16, Y-offset**: every real AABB check against
+  the tank (`UOH_COLLIDE` for Homing, `CHECK_ONE_THUNDER_VS_TANK`,
+  `CHECK_SBEAM_VS_TANK` - added Round18) used the tank's own full 32x32
+  sprite box. New `TANK_COLLISION_WIDTH/_HEIGHT`(16/16) and `TANK_
+  COLLISION_X_OFFSET/_Y_OFFSET`(0/14) constants replace it everywhere -
+  `X_OFFSET=0` matches "左下" (left-aligned, unchanged). `Y_OFFSET` is a
+  genuine INFERENCE: "bottom-left" alone would be `32-16=16` (flush with
+  the sprite's own bottom edge), but the user explicitly said NOT that,
+  offset 2px instead, without saying which direction. Guessed UP
+  (`Y_OFFSET=14`, 2px shy of flush-bottom) since a hitbox sitting exactly
+  flush with the sprite's own bottom edge is the more common source of
+  the "地形や乗っかりでズレる" clipping the user is already anticipating
+  - flag/flip (`14`<->`18`) if it turns out backwards once actually
+  tested. `HORMING_COLLISION_SIZE`(the old 32-only constant) is gone,
+  replaced entirely by the new shared constants.
+- **"でTick0に"**: reverted the long-standing `LD HL,840:LD(GAME_TICK),HL`
+  "初期Tickを840に" fast-iteration diagnostic boot (present since early
+  in this file's own history, explicitly commented "Revert to XOR A / 0
+  for a real shipped build" but never actually reverted until now) to a
+  real `LD HL,0:LD(GAME_TICK),HL` boot. This was ALSO the real root cause
+  behind the 3 "known pre-existing failures" this session kept reporting
+  every single round (`boss_test.py`/`etank_gametick_gate_test.py`/
+  `night_effect_test.py`) - all 3 now pass for real, confirmed via a full
+  regression run. Not a coincidence: those tests were written assuming a
+  genuine 0 boot and were catching a real discrepancy the whole time,
+  just one that got waved off as "known" instead of fixed.
+- **Ripple effect, entirely expected and worked through methodically**:
+  removing the 840-tick head start means `BOSS_SPAWN_TICK`(999)*8=7992
+  raw frames are now genuinely needed before the boss ever spawns (vs.
+  needing only `(999-840)*8=1272` before) - several existing tests' own
+  real-`MAINLOOP` sweep frame budgets, sized around the old fast boot,
+  were no longer enough to observe the boss reaching its first pose at
+  all, which cascaded into every pose-dependent check in the same sweep
+  failing too. Bumped `horming_test.py`'s own 3 affected loops (6000/
+  6000/8000 -> 12000/9000/12000). Separately (and unrelated to Tick0),
+  every existing direct-hit collision unit test in `thunder_test.py`/
+  `sbeam_test.py`/`horming_test.py` that set `TANK_Y_CUR` to exactly
+  match a tip's own row assumed the OLD flush 32x32 box - genuinely
+  broke against the new 16x16/Y+14 box (a real, correct test failure,
+  not a false one) and needed `- TANK_COLLISION_Y_OFFSET` added to each.
+- Verified: all 3 previously-failing files fixed in place rather than
+  left as "known" (`horming_test.py` 157/157, `thunder_test.py` 77/77,
+  `sbeam_test.py` 58/58, each individually re-run to completion before
+  trusting the full suite). Full regression suite: see this round's own
+  commit for the exact pass/fail counts - expect 0 known failures now,
+  genuinely 0/N rather than "N-3 known".
+
 ## Open items / things to watch
 
 - **RAM addresses that need to persist across frames must stay clear of

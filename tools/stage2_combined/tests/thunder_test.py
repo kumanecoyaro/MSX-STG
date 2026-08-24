@@ -536,11 +536,15 @@ def make_thunder(cpu, act, col, row, deep):
     cpu.mem[THUNDER_POOL + 3] = deep
 
 
+# tank's own real hitbox is TANK_COLLISION_WIDTH/_HEIGHT offset by
+# TANK_COLLISION_Y_OFFSET from TANK_Y_CUR, not the full sprite box.
+TANK_COLLISION_Y_OFFSET = sym["TANK_COLLISION_Y_OFFSET"]
+
 # growing: tip = ROW-1
 cpu = fresh_cpu()
 make_thunder(cpu, 1, 10, 6, 0)   # tip row = 5
 cpu.mem[TANK_X] = 10 * 8
-cpu.mem[TANK_Y_CUR] = 5 * 8
+cpu.mem[TANK_Y_CUR] = 5 * 8 - TANK_COLLISION_Y_OFFSET
 life0 = cpu.mem[TANK_LIFE]
 call_routine(cpu, "CHECK_THUNDER_VS_TANK")
 check("growing bolt: tank overlapping the tip (ROW-1) takes damage", cpu.mem[TANK_LIFE] == life0 - 1)
@@ -575,7 +579,7 @@ check("far away horizontally - no damage", cpu.mem[TANK_LIFE] == life3)
 cpu = fresh_cpu()
 make_thunder(cpu, 2, 10, 3, 12)
 cpu.mem[TANK_X] = 10 * 8
-cpu.mem[TANK_Y_CUR] = 12 * 8
+cpu.mem[TANK_Y_CUR] = 12 * 8 - TANK_COLLISION_Y_OFFSET
 life4 = cpu.mem[TANK_LIFE]
 call_routine(cpu, "CHECK_THUNDER_VS_TANK")
 check("shrinking bolt: tank overlapping DEEP_ROW takes damage", cpu.mem[TANK_LIFE] == life4 - 1)
@@ -607,7 +611,7 @@ for f in range(40000):
         deep = cpu.mem[base + 3]
         row = cpu.mem[base + 2] - 1 if act == 1 else deep
         cpu.mem[TANK_X] = col * 8
-        cpu.mem[TANK_Y_CUR] = row * 8
+        cpu.mem[TANK_Y_CUR] = row * 8 - TANK_COLLISION_Y_OFFSET
         break
     step_frame(cpu)
     if cpu.mem[TANK_LIFE] < life_before:

@@ -549,12 +549,15 @@ check("real MAINLOOP: BOSS_POSE_COUNT cycles 0,1,2,0,1,2,... at each pose entry 
 # ---- "サンダーやサンダービームも自機が当たるとダメージ食らうように
 # 判定は先端部だけでいいだろう" - CHECK_SBEAM_VS_TANK only hits when the
 # tank overlaps SBeam's own current single-point tip ----
+# tank's own real hitbox is TANK_COLLISION_WIDTH/_HEIGHT offset by
+# TANK_COLLISION_Y_OFFSET from TANK_Y_CUR, not the full sprite box.
+TANK_COLLISION_Y_OFFSET = sym["TANK_COLLISION_Y_OFFSET"]
 cpu = fresh_cpu()
 cpu.mem[SBEAM_ACT] = 2
 cpu.mem[sym["SBEAM_LINE_TX"]] = 15
 cpu.mem[sym["SBEAM_LINE_TY"]] = 18
 cpu.mem[TANK_X] = 15 * 8
-cpu.mem[TANK_Y_CUR] = 18 * 8
+cpu.mem[TANK_Y_CUR] = 18 * 8 - TANK_COLLISION_Y_OFFSET
 life0 = cpu.mem[TANK_LIFE]
 call_routine(cpu, "CHECK_SBEAM_VS_TANK")
 check("tank overlapping the tip takes damage", cpu.mem[TANK_LIFE] == life0 - 1)
@@ -569,7 +572,7 @@ cpu.mem[SBEAM_ACT] = 0
 cpu.mem[sym["SBEAM_LINE_TX"]] = 15
 cpu.mem[sym["SBEAM_LINE_TY"]] = 18
 cpu.mem[TANK_X] = 15 * 8
-cpu.mem[TANK_Y_CUR] = 18 * 8
+cpu.mem[TANK_Y_CUR] = 18 * 8 - TANK_COLLISION_Y_OFFSET
 life2 = cpu.mem[TANK_LIFE]
 call_routine(cpu, "CHECK_SBEAM_VS_TANK")
 check("SBEAM_ACT=0 (inactive) never damages the tank", cpu.mem[TANK_LIFE] == life2)
@@ -594,7 +597,7 @@ saw_sbeam_damage = False
 for f in range(60000):
     if cpu.mem[SBEAM_ACT] != 0:
         cpu.mem[TANK_X] = cpu.mem[sym["SBEAM_LINE_TX"]] * 8
-        cpu.mem[TANK_Y_CUR] = cpu.mem[sym["SBEAM_LINE_TY"]] * 8
+        cpu.mem[TANK_Y_CUR] = cpu.mem[sym["SBEAM_LINE_TY"]] * 8 - TANK_COLLISION_Y_OFFSET
     step_frame(cpu)
     if cpu.mem[TANK_LIFE] < life_before:
         saw_sbeam_damage = True

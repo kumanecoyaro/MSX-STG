@@ -505,9 +505,13 @@ check("state3 deactivates instead of overflowing off the right edge", slot(cpu, 
 
 
 # ---- tank collision (applies in every state) ----
+# tank's own real hitbox is TANK_COLLISION_WIDTH/_HEIGHT (16x16) offset by
+# TANK_COLLISION_Y_OFFSET from TANK_Y_CUR, not the full 32x32 sprite box -
+# TANK_Y_CUR itself must be set so the box actually overlaps the missile.
+TANK_COLLISION_Y_OFFSET = sym["TANK_COLLISION_Y_OFFSET"]
 cpu = fresh_cpu()
 make_slot(cpu, 0, x=100, y=80, facing=0, state=3, tank_x=100)
-cpu.mem[TANK_Y_CUR] = 80  # same row - guaranteed overlap
+cpu.mem[TANK_Y_CUR] = 80 - TANK_COLLISION_Y_OFFSET  # box top lands exactly on the missile's own row
 cpu.mem[TANK_LIFE] = TANK_LIFE_INIT
 life_before = cpu.mem[TANK_LIFE]
 cpu.ix = slot_addr(0)
@@ -635,7 +639,11 @@ boss_spawned = False
 saw_pose = False
 saw_patrol_after_pose = False
 boss_quadrant_hidden_while_patrolling = False
-for f in range(6000):
+# BOSS_SPAWN_TICK(999)*8=7992 raw frames alone, now that GAME_TICK boots
+# at a real 0 ("でTick0に" - the old 840 fast-iteration diagnostic boot
+# is gone) - plus real patrol/pose time on top, so these budgets are all
+# well above the old ones that assumed the 840 head start.
+for f in range(12000):
     step_frame(cpu)
     if cpu.mem[BOSS_ACT] == 1:
         boss_spawned = True
@@ -664,7 +672,7 @@ cpu2.sim_trig_a = False
 cpu2.sim_trig_b = False
 prev_boss_act = 0
 flyer_alive_at_boss_spawn = None
-for f in range(6000):
+for f in range(9000):
     step_frame(cpu2)
     if cpu2.mem[BOSS_ACT] == 1 and prev_boss_act == 0:
         flyer_alive_at_boss_spawn = any(
@@ -692,7 +700,7 @@ target_xs = []
 life_before_sweep = cpu.mem[TANK_LIFE]
 prev_active = [0] * HORMING_SLOT_COUNT
 prev_state = [0] * HORMING_SLOT_COUNT
-for f in range(8000):
+for f in range(12000):
     step_frame(cpu)
     if cpu.mem[BOSS_PHASE] == 1 and pose_entered_at is None:
         pose_entered_at = f

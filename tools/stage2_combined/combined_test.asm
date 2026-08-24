@@ -1675,8 +1675,23 @@ HORMING_WANDER_WIDTH EQU HORMING_WANDER_MAX_X-HORMING_WANDER_MIN_X+1
 ; nothing else in this feature ever moves Y downward without also being
 ; bounded by UOH_H2_TRIGGER first.)
 HORMING_MAXX EQU 248
-; AABB vs the tank's own 32x32 box (TANK_X/TANK_Y_CUR) - missile is 8x8.
-HORMING_COLLISION_SIZE EQU 32
+; "まず自機のコリジョンは32x32ではなく16x16pxに ただし絵の問題で左下
+; 16x16ではなくYが2pxオフセットされた16x16に変更 多分地形や乗っかりで
+; ズレるんで再調整" - shrinks the tank's own real damage hitbox (used by
+; every enemy-vs-tank AABB check: Homing/Thunder/SBeam) from the full
+; 32x32 sprite box down to 16x16. Width/X unchanged from "左下" (left-
+; aligned, X_OFFSET=0); TANK_COLLISION_Y_OFFSET is a genuine INFERENCE -
+; "bottom-left" alone would put it flush at the sprite's own bottom edge
+; (32-16=16), but the user explicitly said NOT that, offset by 2px
+; instead, without saying which direction. Guessed UP (14, 2px shy of
+; flush-bottom) since a hitbox sitting exactly flush with the sprite's
+; own bottom edge is the more common source of "misaligned on terrain/
+; standing" clipping the user is already anticipating - flag/flip this
+; if it turns out backwards.
+TANK_COLLISION_WIDTH    EQU 16
+TANK_COLLISION_HEIGHT   EQU 16
+TANK_COLLISION_X_OFFSET EQU 0
+TANK_COLLISION_Y_OFFSET EQU 14
 ; "弾は4発同時発射ではなく間欠で4発発射" - raw frames between each of
 ; the 4 launches (magnitude not specified by the user - inferred/
 ; tunable; the whole pose lasts BOSS_POSE_TICKS(32)*8=256 raw frames, so
@@ -2281,10 +2296,15 @@ INIT_SPRATR_CLR:
     LD A,8 : OUT (PSG_ADDR),A
     XOR A : OUT (PSG_DATA),A
 
-    ; ⚠ DIAGNOSTIC: "初期Tickを840に" - back to the fast-iteration boot
-    ; for homing-missile testing (night starts almost immediately, boss
-    ; spawns shortly after). Revert to XOR A / 0 for a real shipped build.
-    LD HL,840 : LD (GAME_TICK),HL
+    ; "でTick0に" - reverting the old "初期Tickを840に" fast-iteration
+    ; diagnostic boot value back to a real 0 boot, exactly as this
+    ; comment's own note always said to do for a real shipped build. This
+    ; also removes the root cause behind the 3 long-standing known
+    ; regression failures (boss_test.py/etank_gametick_gate_test.py/
+    ; night_effect_test.py) that assumed a genuine GAME_TICK=0 boot -
+    ; those should now pass for real; if any genuinely doesn't, that's a
+    ; real bug worth its own look, not the same "known" excuse as before.
+    LD HL,0 : LD (GAME_TICK),HL
     XOR A
     LD (HORMING_POOL+0),A
     LD (HORMING_POOL+7),A
@@ -8252,13 +8272,13 @@ CTVT_GROWING:
 CTVT_HAVE_ROW:
     LD A,C : ADD A,A : ADD A,A : ADD A,A : LD C,A   ; C = tip pixel Y
     LD A,(IX+1) : ADD A,A : ADD A,A : ADD A,A : LD B,A  ; B = tip pixel X
-    LD A,(TANK_X) : LD D,A
-    LD A,(TANK_Y_CUR) : LD E,A
+    LD A,(TANK_X) : ADD A,TANK_COLLISION_X_OFFSET : LD D,A
+    LD A,(TANK_Y_CUR) : ADD A,TANK_COLLISION_Y_OFFSET : LD E,A
 
     LD A,B : ADD A,15 : CP D : RET C
-    LD A,D : ADD A,31 : CP B : RET C
+    LD A,D : ADD A,TANK_COLLISION_WIDTH-1 : CP B : RET C
     LD A,C : ADD A,7 : CP E : RET C
-    LD A,E : ADD A,31 : CP C : RET C
+    LD A,E : ADD A,TANK_COLLISION_HEIGHT-1 : CP C : RET C
 
     LD A,FLASH_DURATION : LD (TANK_FLASH_TIMER),A
     CALL APPLY_TANK_DAMAGE
@@ -8762,18 +8782,19 @@ UOH_H_EASE:
     CALL EASE_HORMING_FACING_IX
     JP UOH_COLLIDE
 
-; AABB vs the tank's own real 32x32 box - missile is 8x8. Same shape as
-; every other hit-pair test in this file (see CHECK_HIT_PAIR_BOSS).
+; AABB vs the tank's own real TANK_COLLISION_WIDTH x_HEIGHT box - missile
+; is 8x8. Same shape as every other hit-pair test in this file (see
+; CHECK_HIT_PAIR_BOSS).
 UOH_COLLIDE:
     LD A,(IX+1) : LD B,A        ; mx
     LD A,(IX+2) : LD C,A        ; my
-    LD A,(TANK_X) : LD D,A      ; tx
-    LD A,(TANK_Y_CUR) : LD E,A  ; ty
+    LD A,(TANK_X) : ADD A,TANK_COLLISION_X_OFFSET : LD D,A      ; tx
+    LD A,(TANK_Y_CUR) : ADD A,TANK_COLLISION_Y_OFFSET : LD E,A  ; ty
 
     LD A,B : ADD A,7 : CP D : JR C,UOH_NO_HIT
-    LD A,D : ADD A,HORMING_COLLISION_SIZE-1 : CP B : JR C,UOH_NO_HIT
+    LD A,D : ADD A,TANK_COLLISION_WIDTH-1 : CP B : JR C,UOH_NO_HIT
     LD A,C : ADD A,7 : CP E : JR C,UOH_NO_HIT
-    LD A,E : ADD A,HORMING_COLLISION_SIZE-1 : CP C : JR C,UOH_NO_HIT
+    LD A,E : ADD A,TANK_COLLISION_HEIGHT-1 : CP C : JR C,UOH_NO_HIT
 
     ; hit - matches APPLY_TANK_DAMAGE's own documented future-use comment
     ; ("いずれ敵弾実装予定") - this is exactly that.
@@ -9011,13 +9032,13 @@ CHECK_SBEAM_VS_TANK:
     RET NZ
     LD A,(SBEAM_LINE_TY) : ADD A,A : ADD A,A : ADD A,A : LD C,A   ; C = tip pixel Y
     LD A,(SBEAM_LINE_TX) : ADD A,A : ADD A,A : ADD A,A : LD B,A   ; B = tip pixel X
-    LD A,(TANK_X) : LD D,A
-    LD A,(TANK_Y_CUR) : LD E,A
+    LD A,(TANK_X) : ADD A,TANK_COLLISION_X_OFFSET : LD D,A
+    LD A,(TANK_Y_CUR) : ADD A,TANK_COLLISION_Y_OFFSET : LD E,A
 
     LD A,B : ADD A,7 : CP D : RET C
-    LD A,D : ADD A,31 : CP B : RET C
+    LD A,D : ADD A,TANK_COLLISION_WIDTH-1 : CP B : RET C
     LD A,C : ADD A,7 : CP E : RET C
-    LD A,E : ADD A,31 : CP C : RET C
+    LD A,E : ADD A,TANK_COLLISION_HEIGHT-1 : CP C : RET C
 
     LD A,FLASH_DURATION : LD (TANK_FLASH_TIMER),A
     CALL APPLY_TANK_DAMAGE
