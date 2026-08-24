@@ -1633,7 +1633,21 @@ SBEAM_BLINK     EQU F313h   ; toggled every frame - "点滅で表示で 取り�
 ; staging buffer for SBEAM_SLOT_COUNT*4 hw sprite slots (4 bytes each:
 ; Y,X,pattern,color), same shape as HORMING_SPRITE_ATTRS - flushed via
 ; FLUSH_SBEAM_SPRITES.
-SBEAM_SPRITE_ATTRS EQU F314h   ; SBEAM_SLOT_COUNT*4 = 88 bytes (F314h-F36Bh)
+; "スタックが溢れてないかチェック" - relocated away from F314h (only
+; 20 bytes below STACKTOP=F380h, F314h-F36Bh) after a direct per-
+; instruction SP trace (z80emu.py, active input, through boss spawn)
+; found real nested CALLs alone (no interrupts simulated) already
+; dipping SP to F36Ah - INSIDE this array's own last byte (F36Bh). This
+; is exactly the same class of bug an earlier round already fixed once
+; (see STACKTOP's own comment: "shifting every OTHER RAM address...
+; down by 100h...256+ bytes of genuinely free headroom") - SBeam's own
+; block was added later and never respected that same margin. Moved to
+; C000h, deep in the otherwise-completely-unused C000h-EEFFh region
+; (nothing else in this file uses any address below EF00h), well clear
+; of STACKTOP regardless of how much deeper a real interrupt handler's
+; own stack usage (never simulated by this test harness at all) might
+; push things beyond what could be measured here.
+SBEAM_SPRITE_ATTRS EQU 0C000h   ; SBEAM_SLOT_COUNT*4 = 88 bytes (C000h-C057h)
 ; scratch bytes for STAGE_SBEAM's own Bresenham line algorithm (round3 -
 ; "複数本じゃなく1本だぞ", one real diagonal line from the fixed origin
 ; to the moving tip, not 2 fixed-shape arms) - all in 8px-grid units
@@ -2351,6 +2365,50 @@ INIT_SPRATR_CLR:
     LD (HORMING_POOL+7),A
     LD (HORMING_POOL+14),A
     LD (HORMING_POOL+21),A
+    ; "サンダーの時点でTick840スタートでまだボスに到達してないのにサン
+    ; ダーが１回描画されてた" - a real bug, found by direct comparison
+    ; against every OTHER pool in this file (ENEMY/ZUM/BIGZUM/FLYER/
+    ; ETANK/CLOUD all get their own explicit zero-loop right here in
+    ; INIT; HORMING_POOL is the 4 lines just above): THUNDER_POOL was
+    ; the ONE pool with no boot-time zero at all - RESET_THUNDER_POOL
+    ; only ever runs once, at the boss's own first spawn (UPDATE_BOSS_
+    ; ALL's own BOSS_SPAWN_TICK branch), yet UPDATE_THUNDER reads/draws
+    ; every slot's own ACT byte unconditionally every MAINLOOP frame
+    ; regardless of boss state. On real hardware (genuinely random
+    ; power-on RAM, unlike this test harness's always-zeroed boot) any
+    ; nonzero garbage byte landing in THUNDER_POOL's own ACT field
+    ; before the boss ever spawns gets drawn as a real, active bolt
+    ; using whatever other garbage happens to sit in its COL/ROW/
+    ; DEEP_ROW fields too - exactly the "サンダーが１回描画されてた"
+    ; symptom, and a very plausible route to genuine VRAM corruption
+    ; (a garbage COL/ROW pair can compute a wildly out-of-range name-
+    ; table address) well before the boss or Thunder's own real trigger
+    ; logic ever runs.
+    LD (THUNDER_POOL+0),A
+    LD (THUNDER_POOL+4),A
+    LD (THUNDER_POOL+8),A
+    LD (THUNDER_POOL+12),A
+    LD (THUNDER_PENDING),A
+    LD (THUNDER_ELIGIBLE),A
+    ; same class of bug, more severe: UPDATE_BOSS_ALL is ALSO called
+    ; unconditionally every MAINLOOP frame regardless of whether the
+    ; boss has ever spawned, and its own very first check is `LD A,
+    ; (BOSS_ACT) : CP 2 : RET Z : OR A : JP NZ,UBA_ACTIVE` - any garbage
+    ; nonzero(and !=2) byte here at boot sends it straight into UBA_
+    ; ACTIVE's own patrol/pose logic, reading BOSS_X/BOSS_Y/BOSS_DIR/
+    ; BOSS_PHASE/BOSS_POSE_COUNT/BOSS_POSE_END_TICK - NONE of which have
+    ; ever been written yet (they're only set in the real spawn branch,
+    ; which this skips entirely) - and BOSS_PHASE garbage in particular
+    ; could route into the posing/Thunder-trigger branches with THUNDER_
+    ; PENDING/BOSS_X also still-undefined at that exact instant (this
+    ; INIT sequence, before this point), which would explain the "サン
+    ; ダーが１回描画されてた" report even better than THUNDER_POOL alone -
+    ; a real Thunder shot, armed and fired from garbage boss state,
+    ; before the real spawn condition (BOSS_SPAWN_TICK) was ever
+    ; reached. SBEAM_ACT has the identical exposure (UPDATE_SBEAM/
+    ; CHECK_SBEAM_VS_TANK are ALSO unconditional every frame).
+    LD (BOSS_ACT),A
+    LD (SBEAM_ACT),A
     LD (SCORE),A : LD (SCORE+1),A : LD (SCORE+2),A
     LD A,0FFh : LD (GTD_LAST_H),A : LD (GTD_LAST_T),A : LD (GTD_LAST_O),A
     CALL SCORE_DISPLAY
@@ -2686,21 +2744,41 @@ SKIP_ADVANCE:
     LD HL,NAMEBUF_T2 : LD DE,1AC0h : LD BC,32 : CALL LDIRVM
     LD HL,NAMEBUF_T3 : LD DE,1AE0h : LD BC,32 : CALL LDIRVM
 
+    ; TEMPORARY real-hardware diagnostic ("実機で確認すると起動直後にブ
+    ; ラックアウトする...Tick0の段階...840のまま1Tickも動いてない" - the
+    ; freeze happens somewhere in MAINLOOP's own first few passes, before
+    ; GAME_TICK ever advances even once, and reproduces on real hardware/
+    ; BlueMSX but not in z80emu.py, which never fires interrupts at all -
+    ; a real blind spot in every "real MAINLOOP" test this whole
+    ; session). Same border-color-checkpoint idiom INIT already uses
+    ; (colors reused here since this is a totally separate later phase) -
+    ; MDBG checkpoints bracket every top-level CALL in one MAINLOOP pass,
+    ; so whichever color the border is frozen on says exactly which call
+    ; never returned. Cycles every frame in normal play (harmless
+    ; flicker) - REMOVE once the real freeze point is found, not meant to
+    ; ship.
+    LD B,2 : LD C,7 : CALL WRTVDP
     CALL READ_INPUT
+    LD B,3 : LD C,7 : CALL WRTVDP
     CALL UPDATE_DASH
     CALL UPDATE_TANK_XY
+    LD B,4 : LD C,7 : CALL WRTVDP
     CALL UPDATE_TERRAIN_COLLISION
     CALL UPDATE_JUMP
+    LD B,5 : LD C,7 : CALL WRTVDP
     CALL UPDATE_TANK_ZUM_STAND
     CALL UPDATE_TANK_BIGZUM_STAND
     CALL UPDATE_TANK_ETANK_STAND
+    LD B,6 : LD C,7 : CALL WRTVDP
     CALL UPDATE_POSE
     CALL UPDATE_TANK_SPRITES
+    LD B,7 : LD C,7 : CALL WRTVDP
     ; bullets advance before a new one can spawn, so a shot fired this
     ; frame gets drawn once (at the muzzle) instead of being advanced
     ; a 2nd time by this same frame's UPDATE_BULLETS sweep.
     CALL UPDATE_BULLETS
     CALL UPDATE_SHOT
+    LD B,8 : LD C,7 : CALL WRTVDP
     ; "使われない物を呼ぶのは無駄だし ボスはStage1でもそうだが それまでの
     ; 処理は捨ててボス専用 もうザコは出ないからな" - once the boss has
     ; spawned, every ordinary enemy type's own per-frame update+flush
@@ -2718,33 +2796,40 @@ SKIP_ADVANCE:
     CALL UPDATE_ENEMIES
     CALL CHECK_BULLET_VS_ENEMY
 SKIP_ZACO_ENEMY:
+    LD B,9 : LD C,7 : CALL WRTVDP
     CALL UPDATE_BULLET_U_SPRITES
     LD A,(BOSS_ACT) : OR A
     JR NZ,SKIP_OTHER_ENEMIES
+    LD B,10 : LD C,7 : CALL WRTVDP
     CALL UPDATE_ZUM_ALL
     CALL CHECK_BULLET_VS_ZUM
     CALL UPDATE_TANK_ZUM_PUSH
+    LD B,11 : LD C,7 : CALL WRTVDP
     CALL UPDATE_BIGZUM_ALL
     CALL CHECK_BULLET_VS_BIGZUM
     CALL UPDATE_TANK_BIGZUM_PUNCH
+    LD B,12 : LD C,7 : CALL WRTVDP
     CALL UPDATE_FLYER_ALL
     CALL CHECK_BULLET_VS_FLYER
+    LD B,13 : LD C,7 : CALL WRTVDP
     CALL UPDATE_ETANK_ALL
     CALL CHECK_BULLET_VS_ETANK
     CALL UPDATE_TANK_ETANK_PUSH
 SKIP_OTHER_ENEMIES:
+    LD B,14 : LD C,7 : CALL WRTVDP
     CALL UPDATE_BOSS_ALL
     CALL CHECK_BULLET_VS_BOSS
     CALL CHECK_BULLET_VS_HORMING
     CALL UPDATE_HORMING_ALL
+    LD B,15 : LD C,7 : CALL WRTVDP
     CALL UPDATE_THUNDER
     CALL CHECK_THUNDER_VS_TANK
     CALL UPDATE_SBEAM
     CALL CHECK_SBEAM_VS_TANK
     CALL CLOUD_UPDATE_ALL
-
     CALL SOUND_UPDATE
 
+    LD B,1 : LD C,7 : CALL WRTVDP
     JP MAINLOOP
 
 ; ---------- input ----------

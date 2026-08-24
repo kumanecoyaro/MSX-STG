@@ -2187,6 +2187,93 @@ Thunder activity) confirming it survives completely untouched.
   (`tests/run_all.py` + every individual file): **592 passed, 0
   failed** - no regressions from Round20's own clean baseline.
 
+## Round 22: real-hardware-only freeze - 2 confirmed root causes (uninitialized boot state + a stack/array collision)
+
+- User report chain (verbatim, in order): "サンダーの問題は修正されたが
+  実機で確認すると起動直後にブラックアウトする WebMSXは動く BlueMSXは画
+  面右端のBG一列が乱れてた" → (after back-and-forth) "初期画面は描画さ
+  れたあと 全画面でブラックアウトしてフリーズしてるな そのコードが怪し
+  いかもな" → "だからボス関係ないって言ってんだろ 起動してステージ２の
+  頭 Tick0の段階でブラックアウト 何回いやわかんだよおまえ" → "このバグ
+  り方で怪しいのは RAM、スタック、バンクだな まあバンクはとっくに16KB
+  超えてたと思うが RAMが8KBに収まってるか スタックが溢れてないかチェッ
+  ク" → "多分原因はボスだな ホーミング、サンダー実装あたりまでは動いて
+  る ただサンダーの時点でTick840スタートでまだボスに到達してないのにサ
+  ンダーが１回描画されてた". Real hardware only - WebMSX unaffected; BlueMSX
+  showed a distinct rightmost-BG-column glitch.
+- **A whole-session blind spot found along the way**: `z80emu.py` (this
+  file's own test CPU) never fires interrupts at all - confirmed by
+  reading its own `step()` (only tracks the `iff1` flag for DI/EI, never
+  actually delivers one). Combined with this ROM's own deliberate "no
+  per-frame HALT, rely on H.TIMI" architecture, every "real MAINLOOP"
+  regression test this entire session (600+ checks) has been structurally
+  blind to any interrupt-timing bug. Flagged, not fixed (fixing the
+  emulator itself is a much bigger, separate undertaking) - worth
+  remembering next time a real-hardware-only bug shows up.
+- **Root cause 1, confirmed by direct code audit (not guessed)**:
+  `BOSS_ACT`, `SBEAM_ACT`, `THUNDER_PENDING`, `THUNDER_ELIGIBLE`, and all
+  4 `THUNDER_POOL` slot ACT bytes were NEVER zeroed at boot - the ONLY
+  such fields in the whole file that weren't. Every other pool (ENEMY/
+  ZUM/BIGZUM/FLYER/ETANK/CLOUD/HORMING) gets an explicit INIT-time zero;
+  Thunder only had `RESET_THUNDER_POOL`, called once, but only at the
+  boss's own real spawn (`BOSS_SPAWN_TICK`), not at boot. Yet
+  `UPDATE_BOSS_ALL`/`UPDATE_THUNDER`/`CHECK_THUNDER_VS_TANK`/
+  `UPDATE_SBEAM`/`CHECK_SBEAM_VS_TANK` are ALL called unconditionally
+  every single MAINLOOP frame from frame1, regardless of whether the
+  boss has ever spawned. This test harness always boots with RAM
+  zeroed, so the bug was invisible to every test all session; real
+  hardware boots with genuinely random RAM. A garbage nonzero
+  `BOSS_ACT` at boot sends `UPDATE_BOSS_ALL` straight into its own
+  "already active" branch, reading `BOSS_X/Y/DIR/PHASE/POSE_COUNT/
+  POSE_END_TICK` - none of which have ever been written - and a garbage
+  `BOSS_PHASE` could plausibly route into the patrol/Thunder-trigger
+  branches with equally-garbage `BOSS_X`, arming and firing a REAL
+  Thunder shot well before the boss's own real spawn condition, which
+  matches "Tick840スタートでまだボスに到達してないのにサンダーが１回
+  描画されてた" precisely. Fixed: `BOSS_ACT`/`SBEAM_ACT`/
+  `THUNDER_PENDING`/`THUNDER_ELIGIBLE`/all 4 `THUNDER_POOL` ACT bytes
+  now explicitly zeroed in `INIT`, matching every other pool's own
+  established convention.
+- **Root cause 2, confirmed empirically**: a direct per-instruction SP
+  trace (`z80emu.py`, active input - movement+firing - through boss
+  spawn, tracking `cpu.sp` on every single step, not just at frame
+  boundaries) found ordinary nested `CALL`s alone (no interrupts
+  involved, which this harness can't simulate anyway) dipping SP to
+  `F36Ah` - genuinely inside `SBEAM_SPRITE_ATTRS`'s own last byte
+  (`F36Bh`). `SBEAM_SPRITE_ATTRS` (88 bytes) sat at `F314h`, only 20
+  bytes below `STACKTOP`(`F380h`) - the exact same bug class an earlier
+  round already fixed once for `SBEAM_TRIP` alone (see STACKTOP's own
+  comment: "shifting every OTHER RAM address...down by 100h...256+
+  bytes of genuinely free headroom"), but SBeam's own sprite-attrs
+  block was added later and never got the same margin. Relocated to
+  `C000h`, deep in the otherwise-completely-unused `C000h`-`EEFFh`
+  region (confirmed nothing else in the file uses any address below
+  `EF00h`). `STACKTOP` itself was deliberately left untouched (per its
+  own comment, it's "the correct real BIOS boundary") - the fix moves
+  the colliding array away, not the stack.
+- **A temporary real-hardware diagnostic was also added**: border-color
+  checkpoints (`LD B,n : LD C,7 : CALL WRTVDP`) bracket every top-level
+  `CALL` in one `MAINLOOP` pass, reusing the same idiom `INIT` already
+  has for its own boot sequence. Left in for this round's ROM as a
+  safety net in case the 2 fixes above don't fully resolve the freeze -
+  whichever border color the screen is frozen on pinpoints exactly which
+  call never returned. Remove once real-hardware testing confirms the
+  freeze is gone (flagged in-source as "TEMPORARY...not meant to ship").
+- Verified: 2 new test files this round -
+  `tests/boot_init_test.py` (12 checks: every one of the newly-zeroed
+  fields, plus a regression guard confirming HORMING_POOL's own
+  already-correct zero stays that way) and `tests/stack_safety_test.py`
+  (4 checks: a static proximity margin for the highest-address RAM
+  variable, confirmation `SBEAM_SPRITE_ATTRS` is out of the old danger
+  zone, and 2 real per-instruction-SP-trace checks through a real boss-
+  spawn playthrough). Full regression (`tests/run_all.py`): 608 passed,
+  0 failed (up from 592 - the 16 new checks across both files).
+- 3 bisection ROMs were sent along the way to help localize this
+  (`A_before_thunder_fix`, `B_before_tick0_fix`, `C_before_sbeam`) -
+  the user's own testing narrowed it down to "works through Homing/
+  Thunder implementation" before the RAM/stack hypothesis and the
+  `THUNDER_POOL` boot-zero gap were found and confirmed by code audit.
+
 ## Open items / things to watch
 
 - **RAM addresses that need to persist across frames must stay clear of
