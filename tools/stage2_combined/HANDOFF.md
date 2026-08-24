@@ -1227,8 +1227,93 @@ the tearing got fixed.
   suite: 386/389, same 3 known GAME_TICK=840-boot-effect failures, no
   new regressions.
 
+## Round 8: Thunder (BG-drawn lightning column during patrol)
+
+- "サンダーの実装 ホーミング攻撃後左に移動中に添付のキャラを画面2行目
+  から下まで移動しながら埋める 埋め終わったら上から消す 発射位置とタ
+  イミングはボスの右のX位置でボスが16px移動したら発射 そのまま左まで
+  行き反転後はボスの左に発射 BGで描画" - a new attack, drawn straight
+  into the name table (not a hw sprite), fired during the boss's own
+  ordinary patrol movement rather than during a pose.
+- New art pipeline: `sprites/Thunder_16x16.json` -> `thunder_gen.py`
+  (same `tiles_row_major` shape as `sasapi_hand_gen.py`, just a 2x2 grid
+  instead of 8x8) -> `THUNDER_TILES`, wired into `build_test.py`'s own
+  `assemble()`. 4 new BG pattern codes, `THUNDER_CODE_BASE`=216 (group27
+  - the next free BG group after the hand art's own groups19-26; group31
+  is SkySand's own, so 27-30 were the only remaining free block).
+  `THUNDER_COLORBYTE`=071h (fg7/cyan, bg1/black, matching the uploaded
+  JSON's own header). Loaded once at `INIT`, same permanent-allocation
+  idiom as `SASAPI_HAND_TILES`/`SASAPI_HAND_COLOR8`.
+- Single-instance state machine (`THUNDER_ACT`/`THUNDER_COL`/
+  `THUNDER_ROW`/`THUNDER_TIMER`, F2F0h-F2F3h) - only ever one column
+  active at a time, one per boss movement leg. `FIRE_THUNDER` arms a
+  fresh grow cycle at a given column; `UPDATE_THUNDER` (called every
+  `MAINLOOP` frame) advances it `THUNDER_STEP_INTERVAL`(4, not specified
+  by the user - inferred/tunable) raw frames at a time: growing draws a
+  new 2x2 (16x16) block every step from `THUNDER_TOP_ROW` downward
+  WITHOUT erasing previous ones (accumulates - "埋める"); once fully
+  grown it flips to shrinking, which erases from `THUNDER_TOP_ROW` back
+  down in the same direction ("埋め終わったら上から消す").
+- **`THUNDER_TOP_ROW`** = `NIGHT_START_ROW`(1) - "画面2行目から" was read
+  as the same row `NIGHT_START_ROW` already anchors to (the row right
+  below the score/HUD row, the natural "2行目" in 1-indexed counting) -
+  INFERRED, flag if a literal different row was meant.
+- **`THUNDER_BOTTOM_ROW`** = 17, NOT the screen's near-bottom - a real
+  constraint, not a cosmetic rounding choice: Thunder's own erase reuses
+  `ERASE_BULLET_CELL` (the same background-aware single-cell restore
+  bullets already use, avoiding a duplicate branch tree), and that
+  routine itself gives up with no write at all once row>=
+  `BULLET_ROCK_ROW_MIN`+4(20) - real ground/rock terrain with no generic
+  BG restore path, the same boundary bullets themselves respect flying
+  through there. So the column only reaches row18 out of the screen's 24
+  rows (0-23); rows19-23 are deliberately left uncovered rather than
+  risk drawing Thunder tiles there that could never be cleaned back up.
+  **If the user wants Thunder to reach further down, that needs a new
+  restore path for that band - flag this explicitly, don't just raise
+  the constant.**
+- Firing/timing: `CHECK_THUNDER_TRIGGER_LEFT`/`_RIGHT`, called from
+  `UBA_STEP_LEFT`/`UBA_STEP_RIGHT` after `BOSS_X` updates each frame.
+  Gated by `THUNDER_PENDING` (armed once per leg) and fires once the
+  boss has moved `THUNDER_TRIGGER_DX`(16, `>=` not exact-match) px into
+  the leg, at the boss's own CURRENT edge X at that instant - right edge
+  (`BOSS_X+64`) on the leftward leg, left edge (`BOSS_X`) on the
+  rightward leg - converted to a BG column via `SRL A`x3 (`/8`).
+  `THUNDER_ELIGIBLE` (0 until the first attack pose ends, then
+  permanently 1) gates Thunder off entirely during the boss's very
+  first pre-pose patrol (spawn -> left -> reversal -> right -> first
+  pose) - "ホーミング攻撃後" means after an attack, not from the very
+  start. `THUNDER_LEG_START_X` is captured at `UBAP_END` (leftward leg,
+  = `BOSS_SPAWNX`) and at the left-edge reversal in `UBA_MOVE_LEFT`
+  (rightward leg, = 0).
+- Verified: `tests/thunder_test.py` (new, 133 checks) - `FIRE_THUNDER`/
+  `UPDATE_THUNDER` state transitions, `DRAW_THUNDER_BLOCK`/
+  `ERASE_THUNDER_BLOCK` unit-level cell checks, a full grow cycle
+  confirming blocks ACCUMULATE (earlier ones stay drawn as later ones
+  appear) rather than draw-and-immediately-erase, a full shrink cycle
+  confirming top-down erase order and zero leftover residue,
+  `CHECK_THUNDER_TRIGGER_LEFT`/`_RIGHT` threshold/column-calc checks,
+  and a real `MAINLOOP` sweep confirming Thunder stays completely silent
+  through the pre-first-pose legs, then fires exactly once per leg after
+  the first pose (leftward at the right edge, rightward at the left
+  edge) at the correct column each time. Also confirmed visually via 4
+  rendered frames (mid-grow, fully-grown/shrink-start, mid-shrink, and
+  the 2nd fire on the rightward leg at the left edge) - see chat.
+  Full regression suite: 519/522 passing - same 3 known
+  `GAME_TICK=840`-boot-effect failures (`boss_test.py`,
+  `etank_gametick_gate_test.py`, `night_effect_test.py`), no new
+  regressions.
+- `mini_z80asm.py`'s real `JR`/`DJNZ` range check bit again: several
+  pre-existing `JR UBA_DRAW`/`JR Z,UBA_DRAW` jumps inside
+  `UPDATE_BOSS_ALL` fell out of 8-bit signed-offset range once the new
+  Thunder wiring code was inserted between them and their own target -
+  converted to `JP` (established fix, same as prior rounds).
+
 ## Open items / things to watch
 
+- **Thunder's own column never reaches rows19-23** (the ground/rock
+  terrain band) - see Round8's own `THUNDER_BOTTOM_ROW` note above. Not
+  a bug, but worth confirming with the user whether "下まで" needs to
+  go further once they've seen it in motion.
 - No known open bugs as of this handoff — the boss's own SPRPAT bug
   (see above) was caught and fixed before shipping; the last several
   rounds before that were bug reports against the night effect and

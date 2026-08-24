@@ -1405,6 +1405,23 @@ HORMING_POOL EQU F2C2h   ; 4 slots x7 bytes = 28 bytes
 HORMING_SPRITE_ATTRS EQU F2DEh   ; 4 slots x4 bytes (Y,X,pattern,color), staged same as ENEMY_SPRITE_ATTRS
 HORMING_VOLLEY_COUNT EQU F2EEh   ; how many of this pose's 4 have launched so far - see UPDATE_HORMING_VOLLEY
 HORMING_VOLLEY_TIMER EQU F2EFh   ; raw frames remaining until the next intermittent launch
+; Thunder's own single-instance state (not a pool - only ever one
+; column active at a time).
+THUNDER_ACT   EQU F2F0h   ; 0=inactive,1=growing(filling down),2=shrinking(erasing from the top)
+THUNDER_COL   EQU F2F1h   ; fixed BG column (0-31) for the active instance
+THUNDER_ROW   EQU F2F2h   ; current leading-edge row being drawn(growing)/erased(shrinking)
+THUNDER_TIMER EQU F2F3h   ; raw frames until the next grow/shrink step
+; per-boss-leg trigger tracking - "ボスが16px移動したら発射".
+THUNDER_PENDING       EQU F2F4h   ; 1=armed, waiting for THUNDER_TRIGGER_DX to elapse this leg; 0=already fired (or not armed at all - see THUNDER_ELIGIBLE)
+THUNDER_ELIGIBLE      EQU F2F5h   ; 0 until the first attack pose ever completes, then permanently 1 - "ホーミング攻撃後" gates Thunder off entirely during the boss's own pre-first-pose patrol legs
+THUNDER_LEG_START_X   EQU F2F6h   ; BOSS_X captured at the start of the current leg (pose-end for the leftward leg, left-edge reversal for the rightward leg)
+; scratch record shaped to match ERASE_BULLET_CELL's own IX+2(COL)/+3
+; (ROW)/+4(ADDR_LO)/+5(ADDR_HI) field expectations, reused as-is so
+; Thunder's own erase gets the exact same background-aware restore
+; (sky/skysand/rock) bullets already have, instead of a hand-rolled
+; duplicate - see ERASE_THUNDER_BLOCK's own comment. +0/+1 unused
+; (ERASE_BULLET_CELL never reads them).
+THUNDER_ERASE_BASE    EQU F2F7h   ; +2=COL,+3=ROW,+4=ADDR_LO,+5=ADDR_HI (6 bytes, F2F7h-F2FCh)
 
 ; "ボスに被らない位置の右上 今の発射位置の16px上あたり" - same X as
 ; before (still within the boss's own 64x64 box's own column range,
@@ -1469,6 +1486,50 @@ HORMING_SIDE_DIST EQU 64
 ; down before it ever reaches the tank itself (see CHECK_BULLET_VS_
 ; HORMING). Magnitude given directly by the user, not inferred.
 HORMING_HOMING_Y_OFFSET EQU 8
+; ---------- Thunder (BG-drawn lightning column, fired during patrol) ----------
+; "サンダーの実装 ホーミング攻撃後左に移動中に添付のキャラを画面2行目
+; から下まで移動しながら埋める 埋め終わったら上から消す 発射位置とタ
+; イミングはボスの右のX位置でボスが16px移動したら発射 そのまま左まで
+; 行き反転後はボスの左に発射 BGで描画". A single-instance effect (not a
+; pool) - only ever one column active at a time, one per boss movement
+; leg between poses.
+; 4 new BG pattern codes (2x2 tile grid, group27 - the next free BG
+; group after SASAPI_HAND's own groups19-26, per HANDOFF's "groups19-30
+; still free" note - group31 is SkySand's own, so 27-30 were the
+; remaining candidates).
+THUNDER_CODE_BASE EQU 216
+; fg7(cyan)/bg1(black), matching the uploaded JSON's own header exactly.
+THUNDER_COLORBYTE EQU 071h
+; "画面2行目から" - INFERRED to mean the same row NIGHT_START_ROW(1)
+; already anchors to ("スコアの下の行から" - the row right below the
+; HUD/score row is the natural "2行目" in 1-indexed counting where row0
+; is "1行目") - reusing that landmark rather than a separate literal
+; row-index-2 reading, which would be one row further down than where
+; the sky itself is considered to start.
+THUNDER_TOP_ROW EQU NIGHT_START_ROW
+; 16px tall image = 2 tile-rows per grown/shrunk segment.
+THUNDER_ROW_STEP EQU 2
+; last START row for a 2-row block whose erase is actually restorable -
+; ERASE_BULLET_CELL (reused by ERASE_THUNDER_BLOCK below) itself gives
+; up on row>=BULLET_ROCK_ROW_MIN+4(20) - EBC_SKIP, no write at all -
+; since that band is real ground/rock terrain with no generic BG
+; restore path, the exact same boundary bullets themselves respect
+; flying through there. So the last row a 2-row block can safely BOTH
+; draw AND later erase is row18 (start row17, covering rows17-18, both
+; <20). This means the column only reaches row18 out of the screen's
+; 24 rows (0-23), NOT all the way to the literal bottom - rows19-23
+; (the ground/rock band) are left uncovered rather than risk drawing
+; Thunder tiles there that this file's own bullet-erase system could
+; never clean back up. Flagged as a real (not cosmetic) limitation:
+; extending further would need a genuine new restore path for that
+; band, out of scope unless asked for.
+THUNDER_BOTTOM_ROW EQU 17
+; "ボスが16px移動したら発射"
+THUNDER_TRIGGER_DX EQU 16
+; raw frames between each grow/shrink step - not specified by the user,
+; inferred/tunable (fast enough to read as a quick lightning flash, not
+; a slow crawl).
+THUNDER_STEP_INTERVAL EQU 4
 ETANK_SPR_BASE_SLOT EQU 24     ; hw sprite slots24-25 (BL/BR only x1 instance), right after Flyer's own 20-23
 ; "カラーはダークレッド" - NOT sprites/Etank.json's own fg, overridden
 ; directly here (same "override the JSON's own fg" precedent as
@@ -1835,6 +1896,14 @@ INIT_RESUME_AFTER_BANK_SELECT:
     LD HL,SASAPI_HAND_TILES : LD DE,SASAPI_HAND_CODE_BASE*8 : LD BC,64*8 : CALL LDIRVM
     EI
     LD HL,SASAPI_HAND_COLOR8 : LD DE,2000h+19 : LD BC,8 : CALL LDIRVM
+
+    ; Thunder's own BG art (group27, see THUNDER_CODE_BASE's own
+    ; comment) - same permanent-allocation idiom as the hand art above.
+    DI
+    LD HL,THUNDER_TILES : LD DE,THUNDER_CODE_BASE*8 : LD BC,4*8 : CALL LDIRVM
+    EI
+    LD A,THUNDER_COLORBYTE : LD (HUD_TEMP_BYTE),A
+    LD HL,HUD_TEMP_BYTE : LD DE,2000h+27 : LD BC,1 : CALL LDIRVM
 
     ; homing missile's own hw sprite patterns are NOT loaded here - round-
     ; 2 correction moved them to a dynamically-reused block (Flyer's own,
@@ -2405,6 +2474,7 @@ SKIP_OTHER_ENEMIES:
     CALL CHECK_BULLET_VS_BOSS
     CALL CHECK_BULLET_VS_HORMING
     CALL UPDATE_HORMING_ALL
+    CALL UPDATE_THUNDER
     CALL CLOUD_UPDATE_ALL
 
     CALL SOUND_UPDATE
@@ -6904,7 +6974,10 @@ UPDATE_BOSS_ALL:
     LD A,BOSS_HP_INIT : LD (BOSS_HP),A
     XOR A : LD (BOSS_FLASH_TIMER),A
     XOR A : LD (BOSS_PHASE),A  ; 0 = patrolling/sprite
-    JR UBA_DRAW
+    XOR A : LD (THUNDER_ACT),A
+    XOR A : LD (THUNDER_PENDING),A
+    XOR A : LD (THUNDER_ELIGIBLE),A   ; not eligible until the first pose ends - see UBAP_END
+    JP UBA_DRAW
 UBA_ACTIVE:
     LD A,(BOSS_PHASE)
     OR A
@@ -6919,10 +6992,20 @@ UBA_MOVE_LEFT:
     XOR A : LD (BOSS_X),A      ; clamp to the left edge
     LD A,1 : LD (BOSS_DIR),A   ; 反転 - now heads right
     LD HL,SASAPI_QUADS_L : CALL LOAD_SASAPI_PATTERNS
-    JR UBA_DRAW
+    ; arm this rightward leg's own Thunder trigger - "そのまま左まで行き
+    ; 反転後はボスの左に発射". Only once THUNDER_ELIGIBLE(set permanently
+    ; at the first UBAP_END) - not during the boss's very first pre-pose
+    ; patrol leg.
+    LD A,(THUNDER_ELIGIBLE)
+    OR A
+    JP Z,UBA_DRAW
+    XOR A : LD (THUNDER_LEG_START_X),A   ; BOSS_X is 0 here
+    LD A,1 : LD (THUNDER_PENDING),A
+    JP UBA_DRAW
 UBA_STEP_LEFT:
     SUB BOSS_SPEED : LD (BOSS_X),A
-    JR UBA_DRAW
+    CALL CHECK_THUNDER_TRIGGER_LEFT
+    JP UBA_DRAW
 UBA_MOVE_RIGHT:
     LD A,(BOSS_X) : ADD A,BOSS_SPEED
     CP BOSS_SPAWNX
@@ -6941,7 +7024,8 @@ UBA_MOVE_RIGHT:
     RET
 UBA_STEP_RIGHT:
     LD (BOSS_X),A
-    JR UBA_DRAW
+    CALL CHECK_THUNDER_TRIGGER_RIGHT
+    JP UBA_DRAW
 ; parked at the right edge, hand art on screen, sprite hidden - waits
 ; for BOSS_POSE_TICKS(32) GAME_TICKs (a true 16-bit SBC HL,DE compare
 ; against the target captured at pose-entry, same idiom as every other
@@ -6974,6 +7058,12 @@ UBAP_END:
     XOR A : LD (BOSS_DIR),A
     CALL ERASE_SASAPI_HAND
     LD HL,SASAPI_QUADS : CALL LOAD_SASAPI_PATTERNS
+    ; arm this leftward leg's own Thunder trigger - "ホーミング攻撃後左
+    ; に移動中に...ボスの右のX位置でボスが16px移動したら発射". BOSS_X is
+    ; BOSS_SPAWNX here (just reset to the right edge to resume patrol).
+    LD A,(BOSS_X) : LD (THUNDER_LEG_START_X),A
+    LD A,1 : LD (THUNDER_PENDING),A
+    LD A,1 : LD (THUNDER_ELIGIBLE),A   ; permanently true from here on
 UBA_DRAW:
     CALL DRAW_BOSS
     CALL FLUSH_BOSS_SPRITES
@@ -7265,6 +7355,157 @@ ERASE_SASAPI_HAND:
     LD HL,NIGHT_ROW_BLANK8 : LD DE,19B8h : LD BC,8 : CALL LDIRVM
     LD HL,NIGHT_ROW_BLANK8 : LD DE,19D8h : LD BC,8 : CALL LDIRVM
     EI
+    RET
+
+; ---------- Thunder (BG-drawn lightning column, single instance) ----------
+; the 4 Thunder codes, TL/TR/BL/BR - row-major, matching thunder_gen.py's
+; own tiles_row_major output order (top row first: TL,TR then BL,BR).
+THUNDER_NAME_CODES:
+    DB THUNDER_CODE_BASE+0,THUNDER_CODE_BASE+1,THUNDER_CODE_BASE+2,THUNDER_CODE_BASE+3
+
+; A = starting BG column (0-31, already resolved by the caller from the
+; boss's own current right/left edge). Arms a fresh grow cycle.
+FIRE_THUNDER:
+    LD (THUNDER_COL),A
+    LD A,1 : LD (THUNDER_ACT),A
+    LD A,THUNDER_TOP_ROW : LD (THUNDER_ROW),A
+    XOR A : LD (THUNDER_TIMER),A
+    RET
+
+; called every MAINLOOP frame regardless of boss state - once armed by
+; FIRE_THUNDER, runs its own grow-then-shrink cycle to completion
+; independently, same "keeps going even if the leg/pose that triggered
+; it has already ended" idea as the homing missile's own flight.
+UPDATE_THUNDER:
+    LD A,(THUNDER_ACT)
+    OR A
+    RET Z
+    LD A,(THUNDER_TIMER)
+    OR A
+    JR Z,UT_STEP
+    DEC A : LD (THUNDER_TIMER),A
+    RET
+UT_STEP:
+    LD A,THUNDER_STEP_INTERVAL : LD (THUNDER_TIMER),A
+    LD A,(THUNDER_ACT)
+    CP 1
+    JP Z,UT_GROW
+    JP UT_SHRINK
+
+UT_GROW:
+    CALL DRAW_THUNDER_BLOCK
+    LD A,(THUNDER_ROW) : ADD A,THUNDER_ROW_STEP
+    CP THUNDER_BOTTOM_ROW+1
+    JR NC,UT_GROW_DONE
+    LD (THUNDER_ROW),A
+    RET
+UT_GROW_DONE:
+    ; fully grown - "埋め終わったら上から消す" - start shrinking from the top
+    LD A,THUNDER_TOP_ROW : LD (THUNDER_ROW),A
+    LD A,2 : LD (THUNDER_ACT),A
+    RET
+
+UT_SHRINK:
+    CALL ERASE_THUNDER_BLOCK
+    LD A,(THUNDER_ROW) : ADD A,THUNDER_ROW_STEP
+    CP THUNDER_BOTTOM_ROW+1
+    JR NC,UT_SHRINK_DONE
+    LD (THUNDER_ROW),A
+    RET
+UT_SHRINK_DONE:
+    XOR A : LD (THUNDER_ACT),A
+    RET
+
+; writes the 4 Thunder codes as a 2x2 block at THUNDER_ROW/THUNDER_COL.
+; NIGHT_ROW_ADDR is re-called fresh for each row (rather than reusing a
+; stored DE across the two LDIRVM calls) since LDIRVM's own BIOS
+; implementation consumes/advances its HL/DE/BC arguments - a DE
+; computed before the first LDIRVM can't be safely chained into the
+; second.
+DRAW_THUNDER_BLOCK:
+    LD A,(THUNDER_ROW)
+    CALL NIGHT_ROW_ADDR              ; DE = top row's own base address
+    LD A,(THUNDER_COL) : LD L,A : LD H,0
+    ADD HL,DE
+    LD D,H : LD E,L
+    DI
+    LD HL,THUNDER_NAME_CODES+0 : LD BC,2 : CALL LDIRVM
+    EI
+    LD A,(THUNDER_ROW) : INC A
+    CALL NIGHT_ROW_ADDR              ; DE = bottom row's own base address
+    LD A,(THUNDER_COL) : LD L,A : LD H,0
+    ADD HL,DE
+    LD D,H : LD E,L
+    DI
+    LD HL,THUNDER_NAME_CODES+2 : LD BC,2 : CALL LDIRVM
+    EI
+    RET
+
+; erases the 2x2 block at THUNDER_ROW/THUNDER_COL - reuses ERASE_BULLET_
+; CELL's own background-aware single-cell restore (sky/skysand/rock, see
+; THUNDER_BOTTOM_ROW's own comment for why the column never reaches the
+; rows that restore can't handle) via THUNDER_ERASE_BASE, once per cell
+; (4 calls), instead of duplicating that whole branch tree here.
+ERASE_THUNDER_BLOCK:
+    LD A,(THUNDER_ROW) : LD C,A
+    LD A,(THUNDER_COL) : LD B,A
+    CALL THUNDER_ERASE_ONE_CELL      ; top-left
+    LD A,(THUNDER_COL) : INC A : LD B,A
+    CALL THUNDER_ERASE_ONE_CELL      ; top-right
+    LD A,(THUNDER_ROW) : INC A : LD C,A
+    LD A,(THUNDER_COL) : LD B,A
+    CALL THUNDER_ERASE_ONE_CELL      ; bottom-left
+    LD A,(THUNDER_COL) : INC A : LD B,A
+    CALL THUNDER_ERASE_ONE_CELL      ; bottom-right
+    RET
+
+; C=row, B=col. Erases one cell via ERASE_BULLET_CELL (IX+2=COL,+3=ROW,
+; +4/+5=ADDR_LO/HI of the row's own base address).
+THUNDER_ERASE_ONE_CELL:
+    LD A,C : LD (THUNDER_ERASE_BASE+3),A
+    LD A,B : LD (THUNDER_ERASE_BASE+2),A
+    LD A,C
+    CALL NIGHT_ROW_ADDR
+    LD A,E : LD (THUNDER_ERASE_BASE+4),A
+    LD A,D : LD (THUNDER_ERASE_BASE+5),A
+    LD IX,THUNDER_ERASE_BASE
+    CALL ERASE_BULLET_CELL
+    RET
+
+; checks whether the leftward leg's own 16px-moved trigger should fire
+; Thunder this frame - called from UBA_STEP_LEFT, after BOSS_X has
+; already been updated for this frame.
+CHECK_THUNDER_TRIGGER_LEFT:
+    LD A,(THUNDER_PENDING)
+    OR A
+    RET Z
+    LD A,(THUNDER_LEG_START_X) : LD B,A
+    LD A,(BOSS_X) : LD C,A
+    LD A,B : SUB C                  ; distance moved = start - current (X decreases moving left)
+    CP THUNDER_TRIGGER_DX
+    RET C
+    XOR A : LD (THUNDER_PENDING),A
+    LD A,(BOSS_X) : ADD A,64        ; boss's own current right edge
+    SRL A : SRL A : SRL A            ; X -> BG column
+    CALL FIRE_THUNDER
+    RET
+
+; same idea for the rightward leg (after the left-edge reversal) -
+; called from UBA_STEP_RIGHT, after BOSS_X has already been updated for
+; this frame.
+CHECK_THUNDER_TRIGGER_RIGHT:
+    LD A,(THUNDER_PENDING)
+    OR A
+    RET Z
+    LD A,(BOSS_X) : LD B,A
+    LD A,(THUNDER_LEG_START_X) : LD C,A
+    LD A,B : SUB C                  ; distance moved = current - start
+    CP THUNDER_TRIGGER_DX
+    RET C
+    XOR A : LD (THUNDER_PENDING),A
+    LD A,(BOSS_X)                    ; boss's own current left edge
+    SRL A : SRL A : SRL A
+    CALL FIRE_THUNDER
     RET
 
 ; ---------- homing missile (4-instance hw-sprite pool) ----------

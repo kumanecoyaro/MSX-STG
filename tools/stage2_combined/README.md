@@ -4685,6 +4685,45 @@ with no way to tell where.
   on these constants and needed no edits; full suite 386/389, same 3
   known GAME_TICK=840-boot-effect failures, no new regressions.
 
+- **Round 8: Thunder, a new BG-drawn lightning attack fired during
+  patrol (not during a pose)**: "サンダーの実装 ホーミング攻撃後左に移
+  動中に添付のキャラを画面2行目から下まで移動しながら埋める 埋め終わ
+  ったら上から消す 発射位置とタイミングはボスの右のX位置でボスが16px
+  移動したら発射 そのまま左まで行き反転後はボスの左に発射 BGで描画".
+  New art pipeline (`sprites/Thunder_16x16.json` -> `thunder_gen.py`,
+  same `tiles_row_major` shape as `sasapi_hand_gen.py` but a 2x2 grid)
+  claims 4 BG pattern codes at `THUNDER_CODE_BASE`=216 (group27, the
+  next free block after the hand art's own groups19-26). A single-
+  instance state machine (`FIRE_THUNDER`/`UPDATE_THUNDER`) grows a 2x2
+  (16x16) block downward every `THUNDER_STEP_INTERVAL`(4) raw frames
+  from `THUNDER_TOP_ROW`(=`NIGHT_START_ROW`, "画面2行目" - INFERRED to
+  mean the same row, flag if a literal different row was meant) WITHOUT
+  erasing previous blocks (accumulates - "埋める"), then once fully
+  grown flips to erasing from the top down in the same order ("埋め終
+  わったら上から消す"), reusing `ERASE_BULLET_CELL`'s own background-
+  aware restore instead of a duplicate branch tree. **Only reaches
+  row18, not the literal screen bottom**: `ERASE_BULLET_CELL` itself
+  gives up (no write at all) on row>=20 - real ground/rock terrain with
+  no generic restore path, the same boundary bullets already respect -
+  so extending Thunder further down would need a genuine new restore
+  path for that band, not just a bigger constant; flagged for the user.
+  Firing is timed off the boss's own patrol (`CHECK_THUNDER_TRIGGER_
+  LEFT`/`_RIGHT`, called from `UBA_STEP_LEFT`/`_RIGHT`): once armed for
+  the leg, fires after the boss has moved `THUNDER_TRIGGER_DX`(16px,
+  `>=`) into it, at the boss's own CURRENT edge X at that instant -
+  right edge on the leftward leg, left edge on the rightward leg.
+  `THUNDER_ELIGIBLE` keeps it off entirely during the boss's very first
+  pre-pose patrol (only arms starting the leg right after the first
+  attack pose ends - "ホーミング攻撃後"). Verified: new `tests/
+  thunder_test.py` (133 checks - state transitions, per-cell draw/erase,
+  full grow-accumulates/shrink-from-top cycles, trigger threshold/column
+  math, and a real `MAINLOOP` sweep confirming silence pre-first-pose
+  and exactly one correctly-positioned fire per leg afterward), plus 4
+  rendered frames (mid-grow, fully-grown, mid-shrink, and the 2nd fire
+  on the rightward leg at the boss's own left edge). Full suite
+  519/522, same 3 known GAME_TICK=840-boot-effect failures, no new
+  regressions.
+
 ## Bugs found and fixed while building this
 
 - **Sand flickered between its own new color and Rock's, twice over**
