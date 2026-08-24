@@ -1541,7 +1541,116 @@ the tearing got fixed.
   `etank_gametick_gate_test.py`, `night_effect_test.py`), no new
   regressions.
 
+## Round 12: SBeam (サンダービーム) - a new real hw-sprite attack, added after 2 completed poses
+
+- User feedback (verbatim, with attached `SBeam_8x8.json`): "Ok 次はサ
+  ンダービーム ホーミングとサンダー2セット終わったら 添付キャラをスプ
+  ライトで描画 ボスポーズで手の先からまず真下にライン上に並べる で地
+  上に到達したら左へラインのまま移動 左端まで行ったら元の位置まで同じ
+  ラインで描画 長さは伸びていくがその分スプライトを足していく ライン
+  が途切れないように 薙ぎ払いビームって感じで で、点滅で表示で 取り
+  敢えず1フレ点滅で".
+- **A brand-new attack, unlike Thunder**: a real hw sprite pool (not
+  BG-drawn), reusing `SBEAM_CODE`(252) - the last genuinely free hw
+  sprite pattern code (Thunder/ThunderS's own block is BG-only, so it
+  never touched this budget) - and `SBEAM_SPR_BASE_SLOT`=`BOSS_SPR_
+  BASE_SLOT`(10), i.e. the boss's own 16 body-quadrant hw sprite slots,
+  which `HIDE_BOSS_SPRITES` already guarantees sit parked off-screen
+  for the WHOLE pose (same "reuse a dormant owner's slots" idiom as
+  Homing's own reuse of ZacoII/BulletU) - `UBAP_END` now also forcibly
+  clears `SBEAM_ACT` before the boss's own body redraw reclaims those
+  slots, so a still-mid-animation beam can never fight the boss's real
+  body art for them.
+- **Trigger gate - INFERRED**: "ホーミングとサンダー2セット終わったら"
+  read as `BOSS_POSE_COUNT>=SBEAM_POSE_GATE(2)` at pose-ENTRY time (a
+  new counter, incremented in `UBAP_END` every time a pose actually
+  ends) - SBeam starts firing from the 3rd pose onward, alongside the
+  existing homing volley (not replacing it). Flag if "2セット" meant
+  something else (e.g. 2 successful Thunder shots specifically, rather
+  than 2 completed poses).
+- **Hand-tip anchor - INFERRED**: `SBEAM_START_COL`=28, derived from
+  `SasapiHand_64x64.json`'s own lowest lit row (columns22-49 of 64,
+  center~35), snapped to the nearest 8px tile column from the pose
+  box's own left edge (`BOSS_SPAWNX`=192->column24, +4=28).
+  `SBEAM_START_Y`=`BOSS_SPAWN_Y+64`(120, the pose box's own bottom
+  edge). Flag if a different point on the hand art was actually meant.
+- **3-phase state machine** (`SBEAM_ACT`: 1=drop, 2=sweep, 3=retract,
+  0=idle), driven every raw frame from `MAINLOOP` (`UPDATE_SBEAM`,
+  alongside `UPDATE_THUNDER`) - it deliberately does NOTHING to VRAM at
+  all while `SBEAM_ACT=0`, since it shares slots with the boss's own
+  real body art and must never touch them outside a pose:
+  - **Drop** (`US_DROP_STEP`): grows `SBEAM_ROWS` by one 8px segment/
+    frame straight down from the hand tip, using `GET_TERRAIN_ROW_FOR_
+    COL` (same terrain-cache walk Thunder's own `ALLOC_THUNDER_SLOT`
+    uses) to find the real ground pixel Y at `SBEAM_START_COL`, fixed
+    once at fire-time. Transitions to sweep the instant the ground is
+    reached.
+  - **Sweep** (`US_SWEEP_RETRACT`, ACT=2): "で地上に到達したら左へライ
+    ンのまま移動" - the vertical line is REPLACED by (not overlaid
+    with) a horizontal one at the fixed ground Y, growing left one 8px
+    column/frame via `SBEAM_FRONT_COL` decreasing, until it reaches the
+    screen's actual left edge (column0) - "左端まで行ったら".
+  - **Retract** (same routine, ACT=3): "元の位置まで同じラインで描画"
+    read as a SHRINK-back (not a symmetric regrow), `SBEAM_FRONT_COL`
+    increasing back toward `SBEAM_START_COL`; done (ACT=0) once home.
+    No vertical re-retraction on the way back - the user's own message
+    only describes a horizontal round trip.
+  - Both drop and sweep/retract space segments 8px apart (matching
+    `SBEAM_SPRITE`'s own top-left-8x8-lit convention from
+    `sbeam_gen.py` - the unlit 3/4 of each 16x16 sprite box harmlessly
+    overlaps its neighbor) so the line has no visible gaps -
+    "ラインが途切れないように".
+  - `STAGE_SBEAM`'s own rendering is a SINGLE unified formula for both
+    sweep and retract: segment `i` sits at column `SBEAM_START_COL-i`,
+    visible iff that column `>= SBEAM_FRONT_COL` - only the direction
+    `SBEAM_FRONT_COL` itself moves differs between the two phases.
+- **A real, deliberate hardware cap - flagged, not silently
+  reinterpreted**: MSX1 only has 32 hw sprite slots total, and only 16
+  of them (the boss's own dormant body slots) are ever safely reusable
+  here, so `SBEAM_SLOT_COUNT`=16. A full sweep needs up to 29 columns
+  (`SBEAM_START_COL`+1 down to 0); the unified rendering formula means
+  only the 16 columns closest to `SBEAM_START_COL` (28 down to 13) ever
+  actually get a sprite - `SBEAM_FRONT_COL` itself keeps tracking all
+  the way down to 0 for timing purposes, but columns 12 down to 0 never
+  visibly extend. This is a genuine deviation from a literal
+  "スプライトを足していく...ラインが途切れないように" (add sprites
+  without limit) - the beam's own visible reach is capped at 16 cells
+  (128px) from the hand's own column, not the full screen width.
+- **Blink**: "点滅で表示で 取り敢えず1フレ点滅で" - `STAGE_SBEAM` toggles
+  `SBEAM_BLINK` every call; on the "off" tick every slot is forced
+  hidden (Y=209) regardless of phase, a plain 1-frame-on/1-frame-off
+  flicker.
+- Verified: new `tests/sbeam_test.py` (36 checks - the pattern actually
+  loaded at boss-spawn time alongside Homing's own reuse of Flyer's
+  block, the `BOSS_POSE_COUNT` gate, `SBEAM_GROUND_Y` computed correctly
+  against all 4 terrain tiers, the drop's own exact per-frame growth and
+  drop->sweep transition, the sweep/retract's own exact `SBEAM_FRONT_
+  COL` stepping and both phase transitions, `STAGE_SBEAM`'s own sprite-
+  attr correctness for every phase including the blink toggle and the
+  hw-cap formula, and a real `MAINLOOP` sweep confirming SBeam stays
+  silent before the 3rd pose, actually fires from it, completes a full
+  drop/sweep/retract cycle in real play, and `SBEAM_ACT` is always back
+  to 0 whenever the boss is patrolling - i.e. it never fights the boss's
+  own body sprite for `SBEAM_SPR_BASE_SLOT..`). Full regression suite:
+  493/496 passing - same 3 known `GAME_TICK=840`-boot-effect failures
+  (`boss_test.py`, `etank_gametick_gate_test.py`, `night_effect_test.py`),
+  no new regressions. Also confirmed visually via 4 rendered frames (the
+  drop growing from the hand toward the ground next to 2 unrelated
+  Thunder bolts of the same color; the sweep as a horizontal line along
+  the ground; the sweep at the hw-cap's own full 16-sprite extent once
+  it reaches the left edge; the retract with its far/left end already
+  shrunk back while the near/origin end is still lit).
+
 ## Open items / things to watch
+
+- **SBeam's own 16-sprite hw cap** (see Round12 above) means the beam's
+  visible reach stops 16 cells from `SBEAM_START_COL` even though
+  `SBEAM_FRONT_COL` itself still tracks all the way to the screen's
+  left edge for timing - if a future instruction implies the beam
+  should visibly reach the FULL screen width, that needs a genuinely
+  different (front-anchored sliding-window) rendering scheme, not just
+  a slot-count bump - there aren't more than 16 safely-reusable slots
+  available during the pose.
 
 - No known open bugs as of this handoff — the boss's own SPRPAT bug
   (see above) was caught and fixed before shipping; the last several

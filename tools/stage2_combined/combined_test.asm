@@ -471,6 +471,49 @@ BOSS_SPEED      EQU 2       ; px/frame, flat (not the tank's 1.5px alternating t
 ; symmetrically rises back up over the FINAL 8px of the rightward leg,
 ; landing exactly back at BOSS_SPAWN_Y right as it re-enters the pose.
 BOSS_DIP_DIST EQU 8
+; ---------- SBeam ("サンダービーム", a real hw sprite this time -
+; unlike Thunder's own BG bolt) ----------
+; "ホーミングとサンダー2セット終わったら 添付キャラをスプライトで描画
+; ボスポーズで手の先からまず真下にライン上に並べる で地上に到達したら
+; 左へラインのまま移動 左端まで行ったら元の位置まで同じラインで描画
+; 長さは伸びていくがその分スプライトを足していく ラインが途切れない
+; ように 薙ぎ払いビームって感じで で、点滅で表示で 取り敢えず1フレ
+; 点滅で". "2セット" (2 completed pose cycles) - INFERRED as
+; BOSS_POSE_COUNT>=2 at pose-ENTRY time (see UBA_MOVE_RIGHT), i.e. SBeam
+; starts firing from the 3rd pose onward, alongside the existing homing
+; volley (not replacing it - nothing said to remove homing).
+SBEAM_POSE_GATE EQU 2
+; free hw sprite pattern code - group27/THUNDERS_CODE's own block is BG,
+; not hw-sprite, so codes 252-255 (the last free block after PAT_FLYER's
+; own 220-251) are still entirely untouched.
+SBEAM_CODE EQU 252
+; fg7(cyan), matching the uploaded JSON's own header.
+SBEAM_COLOR EQU 7
+; "手の先から" - INFERRED anchor: the lowest row of SasapiHand_64x64's
+; own art has "on" pixels spanning columns22-49 (of 64), center~35;
+; snapped to the nearest 8px tile column relative to the pose box's own
+; left edge (BOSS_SPAWNX, column24) - col24+4=28. Flag if a different
+; anchor point was actually meant.
+SBEAM_START_COL EQU 28
+SBEAM_START_Y EQU BOSS_SPAWN_Y+64   ; bottom edge of the 64x64 pose box
+; hw sprite slots reused from the boss's own dormant body (BOSS_SPR_
+; BASE_SLOT..+15) - safe ONLY while the pose is active (BOSS_PHASE=1),
+; the exact same window HIDE_BOSS_SPRITES already guarantees the boss's
+; own 16 quadrant sprites are parked off-screen and untouched until the
+; pose ends - same "reuse a dormant owner's slots" idiom as HORMING's
+; own reuse of ZacoII/BulletU. UBAP_END forcibly clears SBEAM_ACT so a
+; still-mid-animation beam can never collide with the boss's own sprite
+; resuming there once the pose actually ends (BOSS_POSE_TICKS(24 ticks=
+; 192 raw frames) comfortably outlasts SBeam's own full animation in
+; practice, but this is a hard guarantee, not just a timing hope).
+; 16 slots is also a real, honest hw-sprite-budget cap on how long the
+; beam can visibly be at once (columns beyond that from SBEAM_START_COL
+; just never get a sprite - "スプライトを足していく" holds up to this
+; limit, not literally without bound; MSX1 only has 32 total sprites and
+; the boss fight already spends 16(boss)+4(homing) of them) - flagged
+; for the user, not silently reinterpreted.
+SBEAM_SLOT_COUNT EQU 16
+SBEAM_SPR_BASE_SLOT EQU BOSS_SPR_BASE_SLOT
 BOSS_HP_INIT    EQU 255     ; "耐久値は255で"
 BOSS_COLOR      EQU 9       ; from sprites/Sasapi.json's own fg (light red)
 ; "ボスにコリジョン 見た目通り" - the boss's own real 64x64 visible
@@ -1461,6 +1504,21 @@ BOSS_LEFT_PAUSE_END_TICK EQU F30Bh
 ; BOSS_SPAWN_Y exactly at spawn and again the instant the diagonal rise
 ; completes (right before entering the pose).
 BOSS_Y EQU F30Dh
+; persists across the whole boss fight (only reset at spawn) - "ホーミ
+; ングとサンダー2セット終わったら" - counts completed pose cycles so
+; SBeam knows when it's eligible (see SBEAM_POSE_GATE).
+BOSS_POSE_COUNT EQU F30Eh
+; SBeam's own single-instance state (only one beam ever active at a
+; time - fired once per eligible pose).
+SBEAM_ACT       EQU F30Fh   ; 0=inactive,1=dropping(vertical, from the hand),2=sweeping left(horizontal),3=retracting(horizontal, back toward SBEAM_START_COL)
+SBEAM_ROWS      EQU F310h   ; drop phase: how many vertical segments drawn so far
+SBEAM_GROUND_Y  EQU F311h   ; drop phase target / sweep+retract's own fixed Y (pixel), computed once when the drop starts
+SBEAM_FRONT_COL EQU F312h   ; sweep/retract phase: the beam's own current leading-edge column (decreases while sweeping, increases while retracting)
+SBEAM_BLINK     EQU F313h   ; toggled every frame - "点滅で表示で 取り敢えず1フレ点滅で"
+; staging buffer for SBEAM_SLOT_COUNT*4 hw sprite slots (4 bytes each:
+; Y,X,pattern,color), same shape as HORMING_SPRITE_ATTRS - flushed via
+; FLUSH_SBEAM_SPRITES.
+SBEAM_SPRITE_ATTRS EQU F314h   ; SBEAM_SLOT_COUNT*4 = 64 bytes (F314h-F353h)
 
 ; "ボスに被らない位置の右上 今の発射位置の16px上あたり" - same X as
 ; before (still within the boss's own 64x64 box's own column range,
@@ -2500,6 +2558,7 @@ SKIP_OTHER_ENEMIES:
     CALL CHECK_BULLET_VS_HORMING
     CALL UPDATE_HORMING_ALL
     CALL UPDATE_THUNDER
+    CALL UPDATE_SBEAM
     CALL CLOUD_UPDATE_ALL
 
     CALL SOUND_UPDATE
@@ -6971,7 +7030,7 @@ UPDATE_BOSS_ALL:
     CP 2
     RET Z
     OR A
-    JR NZ,UBA_ACTIVE
+    JP NZ,UBA_ACTIVE
     LD HL,(GAME_TICK)
     LD DE,BOSS_SPAWN_TICK
     OR A
@@ -6992,6 +7051,11 @@ UPDATE_BOSS_ALL:
     LD HL,HORMING_DOWN_SPRITE : LD DE,PAT_HORMING_DOWN*8+SPRPAT : LD BC,32 : CALL LDIRVM
     LD HL,HORMING_DR_SPRITE   : LD DE,PAT_HORMING_DR*8+SPRPAT   : LD BC,32 : CALL LDIRVM
     LD HL,HORMING_SR_SPRITE   : LD DE,PAT_HORMING_SR*8+SPRPAT   : LD BC,32 : CALL LDIRVM
+    ; SBeam's own hw sprite art - SBEAM_CODE(252) is a genuinely free
+    ; pattern code (not reused from any other entity's own block), but
+    ; loaded here alongside HORMING's for the same one-time-at-spawn
+    ; convenience rather than a separate INIT-time block.
+    LD HL,SBEAM_SPRITE : LD DE,SBEAM_CODE*8+SPRPAT : LD BC,32 : CALL LDIRVM
     EI
     LD A,1 : LD (BOSS_ACT),A
     LD A,BOSS_SPAWNX : LD (BOSS_X),A
@@ -7003,6 +7067,8 @@ UPDATE_BOSS_ALL:
     CALL RESET_THUNDER_POOL
     XOR A : LD (THUNDER_PENDING),A
     XOR A : LD (THUNDER_ELIGIBLE),A   ; not eligible until the first pose ends - see UBAP_END
+    XOR A : LD (BOSS_POSE_COUNT),A
+    XOR A : LD (SBEAM_ACT),A
     JP UBA_DRAW
 UBA_ACTIVE:
     LD A,(BOSS_PHASE)
@@ -7090,6 +7156,7 @@ UBA_MOVE_RIGHT:
     CALL HIDE_BOSS_SPRITES
     CALL DRAW_SASAPI_HAND
     CALL ARM_HORMING_VOLLEY
+    CALL FIRE_SBEAM
     RET
 UBA_STEP_RIGHT_DIAG:
     LD (BOSS_X),A
@@ -7125,6 +7192,13 @@ UBA_POSE:
     CALL UPDATE_HORMING_VOLLEY
     RET                        ; still posing
 UBAP_END:
+    ; count this completed pose (SBeam's own SBEAM_POSE_GATE eligibility
+    ; check in FIRE_SBEAM), and forcibly clear any still-mid-animation
+    ; beam - UBA_DRAW below (DRAW_BOSS+FLUSH_BOSS_SPRITES) is about to
+    ; reclaim SBEAM_SPR_BASE_SLOT.. for the boss's own real body art
+    ; again, so SBeam must never touch those slots past this point.
+    LD A,(BOSS_POSE_COUNT) : INC A : LD (BOSS_POSE_COUNT),A
+    XOR A : LD (SBEAM_ACT),A
     ; "また巡回 BGは消してスプライトに戻す" - resume the patrol, moving
     ; left again from the right edge, exactly like the very first spawn.
     XOR A : LD (BOSS_PHASE),A
@@ -8532,6 +8606,226 @@ FHS_LOOP:
     NOP
     INC HL
     DJNZ FHS_LOOP
+    EI
+    RET
+
+; ---------- SBeam ("サンダービーム", real hw sprite pool reusing the
+; boss's own dormant pose-time body slots - see SBEAM_SPR_BASE_SLOT's
+; own comment) ----------
+; called once, at pose-entry, from UBA_MOVE_RIGHT (alongside ARM_HORMING_
+; VOLLEY) - silently does nothing until BOSS_POSE_COUNT reaches
+; SBEAM_POSE_GATE(2), i.e. starts on the 3rd pose onward. Arms the drop
+; phase (SBEAM_ACT=1) and pre-computes the ground pixel Y for the fixed
+; column SBEAM_START_COL via GET_TERRAIN_ROW_FOR_COL (same terrain-cache
+; walk Thunder's own ALLOC_THUNDER_SLOT uses) - row*8-8 so the drop's own
+; last 8x8-lit segment sits flush just above the terrain surface.
+FIRE_SBEAM:
+    LD A,(BOSS_POSE_COUNT)
+    CP SBEAM_POSE_GATE
+    RET C                        ; not yet eligible - drop the attempt
+    LD A,1 : LD (SBEAM_ACT),A
+    XOR A : LD (SBEAM_ROWS),A
+    XOR A : LD (SBEAM_BLINK),A
+    LD A,SBEAM_START_COL
+    CALL GET_TERRAIN_ROW_FOR_COL
+    ADD A,A : ADD A,A : ADD A,A   ; row -> pixel Y (row*8)
+    SUB 8
+    LD (SBEAM_GROUND_Y),A
+    RET
+
+; called every frame (from MAINLOOP, alongside UPDATE_THUNDER) - does
+; nothing while SBEAM_ACT=0 (no VRAM touch at all, since slots
+; SBEAM_SPR_BASE_SLOT.. are the boss's OWN body slots and must be left
+; alone whenever SBeam isn't actively using them - see SBEAM_SPR_BASE_
+; SLOT's own comment; UBAP_END's own DRAW_BOSS/FLUSH_BOSS_SPRITES already
+; reclaims/overwrites those slots with the real body art the instant the
+; pose ends, so no extra cleanup is needed here beyond UBAP_END forcibly
+; clearing SBEAM_ACT itself).
+UPDATE_SBEAM:
+    LD A,(SBEAM_ACT)
+    OR A
+    RET Z
+    CP 1
+    JR Z,US_STEP_DROP
+    CALL US_SWEEP_RETRACT
+    JR US_STAGE
+US_STEP_DROP:
+    CALL US_DROP_STEP
+US_STAGE:
+    CALL STAGE_SBEAM
+    CALL FLUSH_SBEAM_SPRITES
+    RET
+
+; drop phase (SBEAM_ACT=1): grows SBEAM_ROWS by one 8px-tall segment per
+; frame (matching the art's own top-left-8x8-lit convention - see
+; STAGE_SBEAM's own comment for why 8px steps, not 16px, avoid gaps),
+; from SBEAM_START_Y downward. Transitions to the sweep phase (ACT=2,
+; SBEAM_FRONT_COL reset to SBEAM_START_COL) the instant the newest
+; segment reaches SBEAM_GROUND_Y - all the real geometry here (max ~7
+; segments to the terrain) stays well under the SBEAM_SLOT_COUNT(16) hw
+; cap, but that cap is still checked first as a hard safety backstop.
+US_DROP_STEP:
+    LD A,(SBEAM_ROWS)
+    CP SBEAM_SLOT_COUNT
+    RET NC                       ; safety cap - never overrun the pool
+    LD B,A                       ; B = index of the segment about to be added
+    ADD A,A : ADD A,A : ADD A,A  ; A = index*8
+    ADD A,SBEAM_START_Y          ; A = this new segment's own Y
+    LD C,A
+    LD A,(SBEAM_GROUND_Y) : LD D,A
+    LD A,B : INC A : LD (SBEAM_ROWS),A   ; commit the new row count
+    LD A,C
+    CP D
+    RET C                        ; not at the ground yet - still growing
+    LD A,2 : LD (SBEAM_ACT),A    ; reached the ground - start the sweep
+    LD A,SBEAM_START_COL : LD (SBEAM_FRONT_COL),A
+    RET
+
+; sweep(ACT=2)/retract(ACT=3) phase step - SBEAM_FRONT_COL decreases
+; toward 0 while sweeping ("左端まで行ったら"), then, once it's actually
+; reached 0, flips to retracting and increases back toward SBEAM_START_
+; COL ("元の位置まで同じラインで描画"); done (ACT=0) once it's back home.
+; STAGE_SBEAM's own single rendering formula (column>=SBEAM_FRONT_COL)
+; serves both directions unchanged - only which way FRONT_COL itself
+; moves differs.
+US_SWEEP_RETRACT:
+    LD A,(SBEAM_ACT)
+    CP 2
+    JR Z,USR_SWEEP
+    LD A,(SBEAM_FRONT_COL) : INC A : LD (SBEAM_FRONT_COL),A
+    CP SBEAM_START_COL
+    RET C                        ; still retracting
+    XOR A : LD (SBEAM_ACT),A     ; back home - done
+    RET
+USR_SWEEP:
+    LD A,(SBEAM_FRONT_COL)
+    OR A
+    JR Z,USR_REVERSE             ; already at the screen's left edge
+    DEC A : LD (SBEAM_FRONT_COL),A
+    RET
+USR_REVERSE:
+    LD A,3 : LD (SBEAM_ACT),A
+    RET
+
+; fills SBEAM_SPRITE_ATTRS (SBEAM_SLOT_COUNT slots x4 bytes) for the
+; current phase - own hidden-slot idiom is IDENTICAL to STAGE_HORMING's
+; own (Y=209, rest 0). "点滅で表示で 取り敢えず1フレ点滅で" - a plain
+; 1-frame on/1-frame off toggle: on an "off" tick every slot is forced
+; hidden regardless of phase, same as ACT=0's own idle state.
+; Both DROP and SWEEP/RETRACT space consecutive segments 8px apart (one
+; BG column, or one Y-row) rather than the sprite's own full 16px box -
+; only the top-left 8x8 of SBEAM_SPRITE is ever lit (see sbeam_gen.py),
+; so 8px steps are exactly what's needed for the line to look continuous
+; ("ラインが途切れないように"); the unlit remainder of each 16x16 sprite
+; box harmlessly overlaps its neighbor (pattern 0 = transparent on the
+; TMS9918, same reasoning as bullet_gen.py's own 16x16-padded 8x8 art).
+STAGE_SBEAM:
+    LD A,(SBEAM_BLINK) : XOR 1 : LD (SBEAM_BLINK),A
+    AND 1
+    JR NZ,SS_ALL_HIDDEN
+    LD A,(SBEAM_ACT)
+    OR A
+    JR Z,SS_ALL_HIDDEN
+    CP 1
+    JR Z,SS_DROP
+    JR SS_SWEEP
+SS_ALL_HIDDEN:
+    LD HL,SBEAM_SPRITE_ATTRS
+    LD B,SBEAM_SLOT_COUNT
+SSAH_LOOP:
+    LD A,209 : LD (HL),A : INC HL
+    XOR A : LD (HL),A : INC HL
+    XOR A : LD (HL),A : INC HL
+    XOR A : LD (HL),A : INC HL
+    DJNZ SSAH_LOOP
+    RET
+SS_DROP:
+    LD HL,SBEAM_SPRITE_ATTRS
+    LD A,(SBEAM_ROWS) : LD C,A
+    LD E,0
+    LD B,SBEAM_SLOT_COUNT
+SSD_LOOP:
+    LD A,E : CP C
+    JR NC,SSD_HIDE
+    LD A,E : ADD A,A : ADD A,A : ADD A,A : ADD A,SBEAM_START_Y
+    LD (HL),A : INC HL                    ; Y
+    LD A,SBEAM_START_COL*8 : LD (HL),A : INC HL   ; X (fixed column)
+    LD A,SBEAM_CODE : LD (HL),A : INC HL
+    LD A,SBEAM_COLOR : LD (HL),A : INC HL
+    JR SSD_NEXT
+SSD_HIDE:
+    LD A,209 : LD (HL),A : INC HL
+    XOR A : LD (HL),A : INC HL
+    XOR A : LD (HL),A : INC HL
+    XOR A : LD (HL),A : INC HL
+SSD_NEXT:
+    INC E
+    DJNZ SSD_LOOP
+    RET
+SS_SWEEP:
+    LD HL,SBEAM_SPRITE_ATTRS
+    LD A,(SBEAM_FRONT_COL) : LD C,A
+    LD A,(SBEAM_GROUND_Y) : LD D,A
+    LD E,0
+    LD B,SBEAM_SLOT_COUNT
+SSS_LOOP:
+    LD A,SBEAM_START_COL : SUB E
+    CP C
+    JR C,SSS_HIDE
+    LD A,D : LD (HL),A : INC HL           ; Y (fixed ground row)
+    LD A,SBEAM_START_COL : SUB E : ADD A,A : ADD A,A : ADD A,A
+    LD (HL),A : INC HL                    ; X = column*8
+    LD A,SBEAM_CODE : LD (HL),A : INC HL
+    LD A,SBEAM_COLOR : LD (HL),A : INC HL
+    JR SSS_NEXT
+SSS_HIDE:
+    LD A,209 : LD (HL),A : INC HL
+    XOR A : LD (HL),A : INC HL
+    XOR A : LD (HL),A : INC HL
+    XOR A : LD (HL),A : INC HL
+SSS_NEXT:
+    INC E
+    DJNZ SSS_LOOP
+    RET
+
+; blasts SBEAM_SPRITE_ATTRS (SBEAM_SLOT_COUNT*4=64 bytes) to hw sprite
+; slots SBEAM_SPR_BASE_SLOT.. - same single DI/EI-wrapped raw OUT+8-NOP
+; idiom as FLUSH_HORMING_SPRITES, just B=64 instead of 16 (loop body
+; itself unchanged, so its own JR/DJNZ range is identical/known-good).
+FLUSH_SBEAM_SPRITES:
+    DI
+    LD A,SBEAM_SPR_BASE_SLOT*4 : OUT (99h),A
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    LD HL,SBEAM_SPRITE_ATTRS
+    LD B,64
+FSS_LOOP:
+    LD A,(HL) : OUT (98h),A
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    INC HL
+    DJNZ FSS_LOOP
     EI
     RET
 
