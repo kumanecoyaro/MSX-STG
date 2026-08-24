@@ -1405,9 +1405,11 @@ HORMING_VOLLEY_TIMER EQU F2EFh   ; raw frames remaining until the next intermitt
 ; box's own top edge (Y56) instead of spawning inside the hand art.
 HORMING_SPAWN_X EQU 232
 HORMING_SPAWN_Y EQU 48
-; px/frame, flat per-axis (not a normalized diagonal distance) - same
-; "速度は2" convention as BOSS_SPEED/FLYER_SPEED/ETANK_SPEED.
-HORMING_SPEED EQU 2
+; px/frame, flat per-axis (not a normalized diagonal distance) - "ミサ
+; イル速度2倍に" (round5: was 2, matching BOSS_SPEED/FLYER_SPEED/
+; ETANK_SPEED's own "速度は2" convention - the missile is the only one
+; of these doubled).
+HORMING_SPEED EQU 4
 ; "最初は左斜上に32px移動" - state0's own fixed diagonal rise, tracked
 ; as a per-slot countdown (RISE_REMAIN) rather than a fixed frame count,
 ; so it stays exact regardless of HORMING_SPEED.
@@ -1424,11 +1426,12 @@ HORMING_WANDER_MIN_X EQU 64
 HORMING_WANDER_MAX_X EQU 184
 ; window width, used by PICK_HORMING_TARGET_X's own range-fold.
 HORMING_WANDER_WIDTH EQU HORMING_WANDER_MAX_X-HORMING_WANDER_MIN_X+1
-; off-screen/reached-the-ground bail-out - real hardware bound only
-; (state1 no longer descends at all - see UOH_WANDER's own comment).
-HORMING_MAXY EQU 184
 ; off-screen bail-out, X side - 256px-wide screen minus the sprite's own
-; 8px width, same "screen_dim - 8" convention as HORMING_MAXY.
+; 8px width, same "screen_dim - 8" convention used elsewhere in this
+; file. (No Y-side equivalent any more - round5 removed state2's own
+; HORMING_MAXY bail-out entirely, see UOH_H2_STEP_DOWN's own comment;
+; nothing else in this feature ever moves Y downward without also being
+; bounded by UOH_H2_TRIGGER first.)
 HORMING_MAXX EQU 248
 ; AABB vs the tank's own 32x32 box (TANK_X/TANK_Y_CUR) - missile is 8x8.
 HORMING_COLLISION_SIZE EQU 32
@@ -7342,21 +7345,31 @@ HORMING_PATTERN_TABLE:
 ; every frame removes nearly all opportunity for that correlation to
 ; ever show up visually; (2) this draw is a pure READ of GAME_RNG - it
 ; never mutates it - mixed via XOR with TICK (a separate free-running
-; per-frame byte nothing else reads-and-mutates the way GAME_RNG is) and
-; with this slot's own current Y (decorrelates missiles that launch
-; close together, which the intermittent-fire timer makes common).
+; per-frame byte nothing else reads-and-mutates the way GAME_RNG is).
 ; HORMING_WANDER_WIDTH(121) isn't a power of 2, so there's no cheap
 ; AND-mask that lands exactly in range - masks to 0-127 (the next power
 ; of 2 above the window width) and folds anything >=121 back down by
 ; subtracting 121 once (127-121=6 < 121, so one subtraction is always
 ; enough, no loop needed).
+; Round-5 fix: "X位置ランダムはホーミング1発毎な 今は4発同じ位置になっ
+; てるように見える" - the round-4 version also mixed in (IX+2), this
+; slot's own current Y, intending to decorrelate missiles that launch
+; close together - but every missile fires from the identical HORMING_
+; SPAWN_Y and runs the identical rise trajectory, so (IX+2) is the SAME
+; value for every missile at the exact moment this runs (right when its
+; own rise completes) - it contributed nothing. Replaced with the low
+; byte of IX itself (this slot's own RAM address) - guaranteed different
+; for every concurrently-active slot (HORMING_SLOT_SIZE apart), unlike
+; Y which converges by construction.
 PICK_HORMING_TARGET_X:
     LD A,(GAME_RNG)
     LD B,A
     LD A,(TICK)
     XOR B
     LD B,A
-    LD A,(IX+2)
+    PUSH IX
+    POP HL
+    LD A,L
     XOR B
     AND 7Fh
     CP HORMING_WANDER_WIDTH
@@ -7504,8 +7517,23 @@ UOH_W_AT_OR_RIGHT:
 UOH_W_SNAP:
     LD A,(IX+6) : LD (IX+1),A        ; within reach - land on it exactly, this frame
 UOH_W_ARRIVED:
-    LD A,2 : LD (IX+4),A             ; target reached - switch to state2 (2D pursuit)
-    LD A,(IX+3) : LD B,A             ; hold this frame's own facing, EASE below is a no-op
+    ; "ホーミング開始直後は左斜下に1回だけ必ず移動 自機が右にいた場合に
+    ; 急激な曲がりを防ぐため" - one forced DL step, unconditional, the
+    ; instant state2 begins, before any real tracking happens - absorbs
+    ; whatever facing swing the tank's own position would otherwise
+    ; demand on the very first pursuit frame. Shown facing snaps to DL
+    ; immediately (not eased) - this one deliberate step is meant to be
+    ; seen, not gradually caught up to; every following frame's own real
+    ; RESOLVE_HORMING_FACING_IX/EASE_HORMING_FACING_IX pass then eases
+    ; from this DL baseline same as any other transition.
+    LD A,(IX+1)
+    CP HORMING_SPEED
+    JP C,UOH_DEACTIVATE
+    SUB HORMING_SPEED : LD (IX+1),A
+    LD A,(IX+2) : ADD A,HORMING_SPEED : LD (IX+2),A
+    LD A,1 : LD (IX+3),A             ; facing DL, shown immediately
+    LD A,2 : LD (IX+4),A             ; now in state2 (2D pursuit)
+    JP UOH_COLLIDE
 UOH_W_EASE:
     CALL EASE_HORMING_FACING_IX
     JP UOH_COLLIDE
@@ -7584,20 +7612,24 @@ UOH_H2_STEP_SR:
     JP NC,UOH_DEACTIVATE
     LD (IX+1),A
     JP UOH_H2_TRIGGER
+; "自機狙いY位置マッチ水平移動後はホーミングせずそのまま水平移動固定
+; で 仮に飛び越えた場合消えなくなるんで" - state2's own Y-moving
+; branches (Down/DL/DR) no longer bail out on HORMING_MAXY at all
+; (round5 fix) - TANK_Y_CUR is always a sane on-screen value and
+; UOH_H2_TRIGGER fires the very same frame Y reaches TANK_Y_CUR+
+; HORMING_HOMING_Y_OFFSET, so the old MAXY guard could only ever fire
+; BEFORE that trigger if the threshold itself sat past HORMING_MAXY(184)
+; - deactivating (vanishing) a missile that should instead have leveled
+; off into state3. X off-screen bail-outs (HORMING_MAXX) are unrelated
+; and stay.
 UOH_H2_STEP_DOWN:
-    LD A,(IX+2) : ADD A,HORMING_SPEED
-    CP HORMING_MAXY
-    JP NC,UOH_DEACTIVATE
-    LD (IX+2),A
+    LD A,(IX+2) : ADD A,HORMING_SPEED : LD (IX+2),A
     JP UOH_H2_TRIGGER
 UOH_H2_STEP_DL:
     LD A,(IX+1)
     CP HORMING_SPEED
     JP C,UOH_DEACTIVATE
-    LD A,(IX+2) : ADD A,HORMING_SPEED
-    CP HORMING_MAXY
-    JP NC,UOH_DEACTIVATE
-    LD (IX+2),A
+    LD A,(IX+2) : ADD A,HORMING_SPEED : LD (IX+2),A
     LD A,(IX+1) : SUB HORMING_SPEED : LD (IX+1),A
     JP UOH_H2_TRIGGER
 UOH_H2_STEP_DR:
@@ -7605,10 +7637,7 @@ UOH_H2_STEP_DR:
     CP HORMING_MAXX
     JP NC,UOH_DEACTIVATE
     LD B,A
-    LD A,(IX+2) : ADD A,HORMING_SPEED
-    CP HORMING_MAXY
-    JP NC,UOH_DEACTIVATE
-    LD (IX+2),A
+    LD A,(IX+2) : ADD A,HORMING_SPEED : LD (IX+2),A
     LD A,B : LD (IX+1),A
 
 ; --- trigger: missile_Y >= TANK_Y_CUR+HORMING_HOMING_Y_OFFSET - see

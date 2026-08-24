@@ -29,7 +29,6 @@ HORMING_MAXX = sym["HORMING_MAXX"]
 HORMING_HOMING_Y_OFFSET = sym["HORMING_HOMING_Y_OFFSET"]
 TANK_WIDTH = sym["TANK_WIDTH"]
 HORMING_SIDE_DIST = sym["HORMING_SIDE_DIST"]
-HORMING_MAXY = sym["HORMING_MAXY"]
 HORMING_COLOR = sym["HORMING_COLOR"]
 HORMING_SPR_BASE_SLOT = sym["HORMING_SPR_BASE_SLOT"]
 PAT_HORMING_SL = sym["PAT_HORMING_SL"]
@@ -251,30 +250,37 @@ s = slot(cpu, 0)
 check("state1 steps toward TARGET_X (target right -> steps right)", s["x"] == 100 + HORMING_SPEED)
 check("state1 never changes Y (target-right case too)", s["y"] == 42)
 
-# the instant X reaches TARGET_X, switches to state2 (homing) -
-# "指定した範囲のランダムX位置まで水平移動後ホーミング"
+# the instant X reaches TARGET_X, switches to state2 (2D pursuit) -
+# "指定した範囲のランダムX位置まで水平移動後ホーミング". round5: the
+# arrival frame itself now ALSO performs one forced DL step - "ホーミ
+# ング開始直後は左斜下に1回だけ必ず移動 自機が右にいた場合に急激な曲
+# がりを防ぐため" - so X/Y both move by HORMING_SPEED on this exact
+# frame, not held in place.
 cpu = fresh_cpu()
 make_slot(cpu, 0, x=100, y=42, facing=2, state=1, target_x=100)  # already exactly at the target
 cpu.ix = slot_addr(0)
 call_routine(cpu, "UPDATE_ONE_HORMING")
 s = slot(cpu, 0)
 check("state1->state2 transition happens the instant X reaches TARGET_X", s["state"] == 2)
-check("X doesn't move on the arrival frame itself", s["x"] == 100)
+check("the arrival frame's own forced DL step moves X left by HORMING_SPEED", s["x"] == 100 - HORMING_SPEED)
+check("the arrival frame's own forced DL step moves Y down by HORMING_SPEED", s["y"] == 42 + HORMING_SPEED)
+check("the arrival frame's own forced step shows facing DL(1) immediately, not eased", s["facing"] == 1)
 
 # real bug caught by inspecting a rendered frame, not the unit tests:
 # an ODD TARGET_X can never be reached by a missile that only ever moves
-# in HORMING_SPEED(2)-px, always-even-parity steps - a plain "step by
+# in HORMING_SPEED-px, always-even-parity steps - a plain "step by
 # HORMING_SPEED, check for exact equality" loop would oscillate 1px
 # short/over forever, stuck in state1 permanently. Verify the actual
 # snap-when-within-range fix: a 1px gap (well under HORMING_SPEED) lands
-# exactly on the target and transitions THIS frame, from both sides.
+# exactly on the target (before the arrival frame's own forced DL step
+# then moves it 1 more HORMING_SPEED from there), from both sides.
 cpu = fresh_cpu()
 make_slot(cpu, 0, x=101, y=42, facing=2, state=1, target_x=100)  # 1px right of an odd-parity-mismatched target
 cpu.ix = slot_addr(0)
 call_routine(cpu, "UPDATE_ONE_HORMING")
 s = slot(cpu, 0)
-check("a sub-HORMING_SPEED gap (missile right of target) snaps exactly onto TARGET_X, not past it",
-      s["x"] == 100)
+check("a sub-HORMING_SPEED gap (missile right of target) snaps onto TARGET_X then takes the forced DL step",
+      s["x"] == 100 - HORMING_SPEED)
 check("and transitions to state2 on that same snap frame (odd-parity target reachable at all)",
       s["state"] == 2)
 
@@ -283,8 +289,8 @@ make_slot(cpu, 0, x=99, y=42, facing=2, state=1, target_x=100)  # 1px left of th
 cpu.ix = slot_addr(0)
 call_routine(cpu, "UPDATE_ONE_HORMING")
 s = slot(cpu, 0)
-check("a sub-HORMING_SPEED gap (missile left of target) also snaps exactly onto TARGET_X",
-      s["x"] == 100)
+check("a sub-HORMING_SPEED gap (missile left of target) also snaps onto TARGET_X then takes the forced DL step",
+      s["x"] == 100 - HORMING_SPEED)
 check("and transitions to state2 on that same snap frame (left-side case too)",
       s["state"] == 2)
 
@@ -295,9 +301,9 @@ make_slot(cpu, 0, x=100 + HORMING_SPEED, y=42, facing=2, state=1, target_x=100)
 cpu.ix = slot_addr(0)
 call_routine(cpu, "UPDATE_ONE_HORMING")
 s = slot(cpu, 0)
-check("a gap of exactly HORMING_SPEED lands exactly on the target and transitions",
-      s["x"] == 100 and s["state"] == 2)
-check("Y still hasn't changed on the arrival frame", s["y"] == 42)
+check("a gap of exactly HORMING_SPEED lands on the target, then the forced DL step moves on from there",
+      s["x"] == 100 - HORMING_SPEED and s["state"] == 2)
+check("Y moves by the forced DL step's own HORMING_SPEED on the arrival frame", s["y"] == 42 + HORMING_SPEED)
 
 # the 45-degree-max-turn rule still applies during state1 (DL/DR steps
 # ease in, not snap) - "で方向を変える時は45度まで"
@@ -417,11 +423,16 @@ cpu.ix = slot_addr(0)
 call_routine(cpu, "UOH_H2_STEP_SR")
 check("state2 deactivates instead of overflowing off the right edge", slot(cpu, 0)["act"] == 0)
 
+# round5: state2's own Y-moving branches no longer bail out at all -
+# "仮に飛び越えた場合消えなくなるんで" - even deep near the bottom of
+# the screen, a Down step just keeps moving (UOH_H2_TRIGGER, not a
+# MAXY guard, is what ends vertical movement).
 cpu = fresh_cpu()
-make_slot(cpu, 0, x=100, y=HORMING_MAXY, facing=2, state=2, tank_x=100, tank_y=255)  # Down at the bottom
+make_slot(cpu, 0, x=100, y=180, facing=2, state=2, tank_x=100, tank_y=255)  # Down, deep near the bottom
 cpu.ix = slot_addr(0)
 call_routine(cpu, "UPDATE_ONE_HORMING")
-check("state2 deactivates instead of falling off the bottom of the screen", slot(cpu, 0)["act"] == 0)
+check("state2 no longer deactivates from a Down step near the bottom of the screen",
+      slot(cpu, 0)["act"] == 1)
 
 # --- state2->state3 trigger: missile_Y >= TANK_Y_CUR+HORMING_HOMING_Y_OFFSET
 # (not TANK_Y_CUR itself) - "自機狙い水平移動の位置を8pxさげてくれ 水平

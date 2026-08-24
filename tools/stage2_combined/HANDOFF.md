@@ -1098,6 +1098,75 @@ the tearing got fixed.
   (6->4 across one pose in this stationary no-dodge test) confirm real
   hits landing via the restored 2D pursuit.
 
+## Homing missile round 5: per-shot randomness actually fixed, forced initial turn, no more disappearing, 2x speed
+
+- "表示欠けは直った" - round4's boss-corruption fix confirmed working.
+  Everything else in this round is a follow-up correction: "で、X位置
+  ランダムはホーミング1発毎な 今は4発同じ位置になってるように見える
+  更にホーミング開始直後は左斜下に1回だけ必ず移動 自機が右にいた場合
+  に急激な曲がりを防ぐため で、自機狙いY位置マッチ水平移動後はホーミ
+  ングせずそのまま水平移動固定で 仮に飛び越えた場合消えなくなるんで
+  ミサイル速度2倍に".
+- **The per-shot randomness fix from round4 had a real remaining flaw**:
+  `PICK_HORMING_TARGET_X`'s own mixing included `(IX+2)`, the slot's
+  current Y, intending to decorrelate missiles that launch close
+  together - but every missile spawns at the identical `HORMING_SPAWN_Y`
+  and runs the identical rise trajectory, so `(IX+2)` is the SAME value
+  for every missile at the exact moment this runs (right when its own
+  rise completes) - it contributed nothing to the mix, which is exactly
+  why the user saw all 4 missiles converge to the same wander position.
+  Fixed by mixing in the low byte of `IX` itself (this slot's own RAM
+  address) instead - guaranteed different for every concurrently-active
+  slot (`HORMING_SLOT_SIZE` apart), unlike Y which converges by
+  construction. Confirmed via a rendered frame: 3 concurrent missiles'
+  own `TARGET_X` now read as genuinely distinct values (96/146/179 in
+  one real run) instead of clustering on one.
+- **"ホーミング開始直後は左斜下に1回だけ必ず移動 自機が右にいた場合に
+  急激な曲がりを防ぐため"**: the wander->state2 transition
+  (`UOH_W_ARRIVED`) now performs one unconditional, forced DL (down-
+  left) step - X and Y both move by `HORMING_SPEED`, and the shown
+  facing snaps directly to DL(1) rather than easing toward it - before
+  any real `RESOLVE_HORMING_FACING_IX`-driven tracking ever runs. This
+  absorbs whatever facing swing the tank's own position would otherwise
+  demand on the very first pursuit frame (e.g. a sudden DL->SR flip if
+  the tank happens to be far to the right right as homing begins).
+  Every later frame's own real tracking pass then eases from this DL
+  baseline the same as any other transition.
+- **"自機狙いY位置マッチ水平移動後はホーミングせずそのまま水平移動固
+  定で 仮に飛び越えた場合消えなくなるんで"**: this was a real latent
+  bug, not just reinforcement of already-correct behavior. State2's own
+  Y-moving branches (`UOH_H2_STEP_DOWN`/`DL`/`DR`) still carried a
+  `HORMING_MAXY`(184) bail-out from round3's own design (back when
+  state1 used to descend using this same bound); if `TANK_Y_CUR+
+  HORMING_HOMING_Y_OFFSET` (the state2->state3 trigger threshold) ever
+  sat past 184, that old bail-out would fire FIRST and deactivate
+  (vanish) the missile before it ever got a chance to level off into
+  state3. Fixed by removing the `HORMING_MAXY` check from state2
+  entirely (it's now a fully unused constant, deleted) - `TANK_Y_CUR` is
+  always a sane on-screen value and `UOH_H2_TRIGGER` already fires the
+  very same frame Y reaches the threshold, so nothing else needs to
+  guard Y in state2. `HORMING_MAXX` (X off-screen) is unrelated and
+  unaffected.
+- **"ミサイル速度2倍に"**: `HORMING_SPEED` 2->4 - the only entity in
+  this file with a doubled speed (`BOSS_SPEED`/`FLYER_SPEED`/
+  `ETANK_SPEED` all stay at their own "速度は2"). Affects every phase
+  uniformly (rise, wander, 2D pursuit, locked horizontal) since they all
+  share the one constant - `HORMING_RISE_DIST`'s own per-slot countdown
+  means the total rise distance stays exactly 32px regardless, just
+  covered in half as many frames now.
+- Verified: `tests/horming_test.py` updated for all of the above (157
+  checks, all passing) - the arrival-frame assertions now expect the
+  forced DL step's own X/Y/facing changes instead of "holds position";
+  a new check confirms state2 no longer deactivates from a Down step
+  deep near the bottom of the screen (the disappearing-missile fix).
+  Full suite: 386/389 pass, same 3 known GAME_TICK=840-boot-effect
+  failures, no new regressions. Rendered real frames confirming: 3
+  concurrently-wandering missiles now show 3 distinct `TARGET_X` values,
+  and the doubled speed visibly covers far more ground per rendered
+  interval than before (`TANK_LIFE` dropping 6->4->2 within the same
+  ~150-frame window this round's own render script uses, versus 6->4
+  over a similar window last round).
+
 ## Open items / things to watch
 
 - No known open bugs as of this handoff — the boss's own SPRPAT bug

@@ -4617,6 +4617,41 @@ with no way to tell where.
   tank while later-launched ones are still high up mid-wander; the
   tank's own life bar (6->4 across one pose) confirms real hits landing.
 
+- **Homing missile round 5: per-shot randomness actually fixed, forced
+  initial turn, no more disappearing, 2x speed**: "表示欠けは直った"
+  (round4's boss-corruption fix confirmed). Follow-up: "で、X位置ランダ
+  ムはホーミング1発毎な 今は4発同じ位置になってるように見える 更にホ
+  ーミング開始直後は左斜下に1回だけ必ず移動 自機が右にいた場合に急激
+  な曲がりを防ぐため で、自機狙いY位置マッチ水平移動後はホーミングせ
+  ずそのまま水平移動固定で 仮に飛び越えた場合消えなくなるんで ミサイ
+  ル速度2倍に".
+  Round4's `PICK_HORMING_TARGET_X` mixing included the slot's own
+  current Y intending to decorrelate concurrent missiles - but every
+  missile spawns at the identical Y and runs an identical rise, so that
+  term was always the same value, explaining why all 4 converged on one
+  wander position. Fixed by mixing in the low byte of the slot's own RAM
+  address instead (genuinely distinct per concurrently-active slot).
+  Added a forced, unconditional DL step on the wander->state2 transition
+  frame (X/Y both move, facing snaps to DL immediately, not eased) -
+  absorbs whatever facing swing the tank's own position would otherwise
+  demand on the very first pursuit frame. Found and fixed a real latent
+  bug behind the "disappearing missile" report: state2's own Y-moving
+  branches still carried a `HORMING_MAXY` bail-out inherited from
+  round3's design; if the state2->state3 trigger threshold ever sat past
+  that bound, the old bail-out fired first and deactivated the missile
+  instead of letting it level off - removed entirely (now-unused
+  constant deleted), since `UOH_H2_TRIGGER` already handles ending
+  vertical movement on its own. `HORMING_SPEED` doubled (2->4) per the
+  user's own explicit ask, affecting all 4 flight phases uniformly.
+  Verified: `tests/horming_test.py` updated (157 checks, all pass) -
+  arrival-frame assertions now expect the forced-step's own movement,
+  plus a new check confirming state2 survives a Down step deep near the
+  bottom of the screen. Full suite: 386/389 pass, same 3 known
+  GAME_TICK=840-boot-effect failures, no new regressions. Rendered real
+  frames: 3 concurrently-wandering missiles now show 3 genuinely
+  distinct target positions, and the doubled speed visibly covers more
+  ground per rendered interval than before.
+
 ## Bugs found and fixed while building this
 
 - **Sand flickered between its own new color and Rock's, twice over**
