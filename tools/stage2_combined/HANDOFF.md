@@ -1641,16 +1641,114 @@ the tearing got fixed.
   it reaches the left edge; the retract with its far/left end already
   shrunk back while the near/origin end is still lit).
 
+## Round 13: SBeam round-2 fixes - wrong origin, vanishing vertical arm, and Homing/Thunder exclusivity
+
+- User feedback (verbatim, after being sent a diagnostic build that fired
+  on the 1st pose in bright white to isolate whether the mechanism itself
+  ever renders): "なるほど 言っていた実装と全く違ってた訳だ 誰がボス
+  の直下でしかも1回だけ設置なんて指示したよ おまえほんの一瞬たった8px
+  しか描画されないのに見えるかよ どこが薙ぎ払いビームなんだ まず発射
+  起点はボスに被らない左がわ 伸ばした腕の先から 真下にラインをスプラ
+  イトで引き 発射基点は変えず左端まで移動しながらスプライトでライン
+  を引いて元まで戻る 当然サンダービーム中はホーミングもサンダーも撃
+  たねえんだよ". The diagnostic build confirmed the FIRE/render mechanism
+  itself was never broken - `FIRE_SBEAM` fired reliably from the 3rd pose
+  onward in every emulator sweep tried (deterministic, 15+ cycles, with
+  and without simulated player fire), so the earlier "発火しない" report
+  was real but wasn't a firing bug - the beam WAS firing, just badly
+  positioned and too short-lived to read as anything.
+- **Root cause 1 - wrong origin ("ボスの直下")**: round-1's anchor
+  (`SBEAM_START_COL=28`) was derived from `SasapiHand_64x64.json`'s own
+  LOWEST row, which turned out to be the boss's own legs, not the
+  reaching arm - and column28 sits INSIDE the pose box (`BOSS_SPAWNX`
+  column24 through 31), directly under/behind the boss's own large body
+  sprite. Re-examined the bitmap directly this round: the reaching hand/
+  fingers are the only feature that touches the sprite's own local
+  column0 (the box's left edge), at local rows23-26/33-34 - a clearly
+  separate shape from the body. `SBEAM_START_COL` moved to 23 (one full
+  column left of the box, genuinely clear of the boss's silhouette -
+  "ボスに被らない左がわ"), `SBEAM_START_Y` to `BOSS_SPAWN_Y+24`(80,
+  aligned with the hand's own vertical position - previously `BOSS_
+  SPAWN_Y+64`, the box's bottom edge, nowhere near the actual hand).
+- **Root cause 2 - the vertical arm vanished the instant the sweep began
+  ("1回だけ設置...たった8pxしか描画されない...どこが薙ぎ払いビームなん
+  だ")**: `STAGE_SBEAM`'s own `SS_SWEEP` branch REPLACED the drop's own
+  rendering entirely once `SBEAM_ACT` moved from 1(dropping) to 2
+  (sweeping) - the vertical line that took several frames to grow was
+  thrown away in a single frame, leaving only the horizontal line, which
+  itself started at zero length. From the player's own perspective this
+  reads as two separate, brief, disconnected blips rather than one
+  continuous sweeping beam. Fixed by rewriting `SS_SWEEP` to draw an
+  L-SHAPED line: the vertical arm (`SBEAM_ROWS` segments, fixed the
+  instant the drop finishes) stays on screen for the ENTIRE sweep AND
+  retract, while the horizontal arm grows/shrinks alongside it from a
+  SEPARATE pool of slots - "発射基点は変えず...ラインを引いて元まで戻
+  る" (the origin end must stay visibly connected the whole time, not
+  disappear).
+- **hw sprite budget, revisited**: splitting the existing 16-slot budget
+  between a now much taller vertical arm (10-13 segments, since the real
+  hand anchor is far higher up than the round-1 guess) and a horizontal
+  arm left almost no room for the sweep to read as a real "薙ぎ払い".
+  Re-audited the FULL 32-slot hw sprite table and found slots26-31 (6
+  slots) are the ONLY ones in the entire file NEVER claimed by anything -
+  contiguous right after the boss's own 16-slot block (10-25), making
+  `SBEAM_SPR_BASE_SLOT`(10) through 31 one 22-slot run. `SBEAM_SLOT_
+  COUNT` 16->22 - these 6 extra slots need no "only during the pose" care
+  the boss's own reused 16 need, since nothing else ever touches them.
+  The combined vertical+horizontal cap is still real and still flagged
+  (22 total, not literally unbounded), just less punishing than before.
+- **SBeam/Homing exclusivity ("当然サンダービーム中はホーミングもサン
+  ダーも撃たねえんだよ")**: `UBA_MOVE_RIGHT`'s pose-entry now BRANCHES
+  on the `SBEAM_POSE_GATE` check instead of calling both `ARM_HORMING_
+  VOLLEY` and `FIRE_SBEAM` unconditionally - below the gate, only Homing
+  arms (as before); at/above it, only SBeam arms, and Homing is skipped
+  entirely for that pose. `FIRE_SBEAM` itself lost its own internal gate
+  check (moved to the call site, since the call site now needs the same
+  answer to decide which routine to call). Thunder needed no separate
+  change: its own trigger checks (`CHECK_THUNDER_TRIGGER_LEFT`/`_RIGHT`)
+  only run from the patrol-leg code paths, never during a pose, so it
+  already can't newly fire "during" SBeam by construction. A Thunder bolt
+  already mid-flight from the JUST-FINISHED patrol leg is deliberately
+  left to finish its own existing shrink animation rather than force-
+  cleared - `RESET_THUNDER_POOL` only zeroes each slot's own ACT byte,
+  it does NOT erase whatever's already drawn on the BG name table, so
+  force-clearing mid-animation would leave orphaned lightning cells on
+  screen with no slot left to ever erase them - a strictly worse bug than
+  a few overlapping frames of an already-fading bolt.
+- Verified: `tests/sbeam_test.py` rewritten for the new design (42
+  checks) - the corrected origin position and its "left of the box"
+  invariant, `FIRE_SBEAM` now unconditional, the L-shaped rendering's own
+  exact per-slot correctness (vertical arm slots0..ROWS-1 unchanged
+  throughout, horizontal arm slotsROWS.. extending from `SBEAM_START_
+  COL-1`), the combined 22-slot cap, the new pose-entry branch (Homing
+  armed below the gate / SBeam at-or-above it, with `HORMING_VOLLEY_
+  COUNT` proven untouched via a sentinel value during an SBeam pose), and
+  a real `MAINLOOP` sweep confirming the vertical and horizontal arms are
+  genuinely visible TOGETHER at some point (not just sequentially) and
+  that no homing missile is ever active while SBeam is active anywhere in
+  a full real playthrough. Full regression suite re-run after this round
+  - see the actual pass/fail counts in this round's own commit/report,
+  same 3 pre-existing known failures expected, no new regressions.
+  Confirmed visually via 4 re-rendered frames at the corrected anchor -
+  the drop now clearly separate from the boss's own body (previously
+  overlapping it) and, most importantly, the sweep/retract frames now
+  show the full connected L-shape (vertical hand-to-ground arm PLUS
+  horizontal ground-hugging arm) simultaneously, not two disconnected
+  blips.
+
 ## Open items / things to watch
 
-- **SBeam's own 16-sprite hw cap** (see Round12 above) means the beam's
-  visible reach stops 16 cells from `SBEAM_START_COL` even though
-  `SBEAM_FRONT_COL` itself still tracks all the way to the screen's
-  left edge for timing - if a future instruction implies the beam
+- **SBeam's own 22-sprite hw cap** (16 from the boss's own dormant pose-
+  time body + 6 genuinely free elsewhere - see Round13 above), now
+  shared between the vertical arm (`SBEAM_ROWS`, terrain-dependent,
+  10-13 in practice) and the horizontal arm (whatever's left). `SBEAM_
+  FRONT_COL` still tracks all the way to the screen's left edge for
+  timing even though the horizontal arm's own visible reach is capped
+  by the remaining budget - if a future instruction implies the beam
   should visibly reach the FULL screen width, that needs a genuinely
   different (front-anchored sliding-window) rendering scheme, not just
-  a slot-count bump - there aren't more than 16 safely-reusable slots
-  available during the pose.
+  a slot-count bump - 22 is the real ceiling (32 hw sprites total minus
+  tank/enemy/bullet's own permanent 10).
 
 - No known open bugs as of this handoff — the boss's own SPRPAT bug
   (see above) was caught and fixed before shipping; the last several

@@ -480,8 +480,25 @@ BOSS_DIP_DIST EQU 8
 ; ように 薙ぎ払いビームって感じで で、点滅で表示で 取り敢えず1フレ
 ; 点滅で". "2セット" (2 completed pose cycles) - INFERRED as
 ; BOSS_POSE_COUNT>=2 at pose-ENTRY time (see UBA_MOVE_RIGHT), i.e. SBeam
-; starts firing from the 3rd pose onward, alongside the existing homing
-; volley (not replacing it - nothing said to remove homing).
+; starts firing from the 3rd pose onward.
+; Round-2 correction (verbatim): "誰がボスの直下でしかも1回だけ設置な
+; んて指示したよ おまえほんの一瞬たった8pxしか描画されないのに見える
+; かよ どこが薙ぎ払いビームなんだ まず発射起点はボスに被らない左がわ
+; 伸ばした腕の先から 真下にラインをスプライトで引き 発射基点は変えず
+; 左端まで移動しながらスプライトでラインを引いて元まで戻る 当然サン
+; ダービーム中はホーミングもサンダーも撃たねえんだよ" - 3 real fixes:
+; (1) the origin was wrong (see SBEAM_START_COL/_Y below); (2) the
+; vertical drop must stay ON SCREEN the whole time the horizontal sweep
+; is growing, not vanish the instant sweep begins - see STAGE_SBEAM's
+; own SS_SWEEP, now an L-shaped line (vertical arm + horizontal arm both
+; drawn every frame) instead of replacing one with the other; (3) SBeam
+; and Homing are now mutually exclusive per pose (see UBA_MOVE_RIGHT) -
+; Thunder already can't newly trigger during a pose (its own trigger
+; checks only run mid-patrol), so no separate change was needed there;
+; any Thunder bolt already mid-flight when the pose begins is left to
+; finish its own existing shrink animation rather than force-erased
+; (force-clearing the pool would leave orphaned BG cells behind with no
+; slot left to erase them - a worse bug than a few overlapping frames).
 SBEAM_POSE_GATE EQU 2
 ; free hw sprite pattern code - group27/THUNDERS_CODE's own block is BG,
 ; not hw-sprite, so codes 252-255 (the last free block after PAT_FLYER's
@@ -489,30 +506,41 @@ SBEAM_POSE_GATE EQU 2
 SBEAM_CODE EQU 252
 ; fg7(cyan), matching the uploaded JSON's own header.
 SBEAM_COLOR EQU 7
-; "手の先から" - INFERRED anchor: the lowest row of SasapiHand_64x64's
-; own art has "on" pixels spanning columns22-49 (of 64), center~35;
-; snapped to the nearest 8px tile column relative to the pose box's own
-; left edge (BOSS_SPAWNX, column24) - col24+4=28. Flag if a different
-; anchor point was actually meant.
-SBEAM_START_COL EQU 28
-SBEAM_START_Y EQU BOSS_SPAWN_Y+64   ; bottom edge of the 64x64 pose box
-; hw sprite slots reused from the boss's own dormant body (BOSS_SPR_
-; BASE_SLOT..+15) - safe ONLY while the pose is active (BOSS_PHASE=1),
-; the exact same window HIDE_BOSS_SPRITES already guarantees the boss's
-; own 16 quadrant sprites are parked off-screen and untouched until the
-; pose ends - same "reuse a dormant owner's slots" idiom as HORMING's
-; own reuse of ZacoII/BulletU. UBAP_END forcibly clears SBEAM_ACT so a
-; still-mid-animation beam can never collide with the boss's own sprite
-; resuming there once the pose actually ends (BOSS_POSE_TICKS(24 ticks=
-; 192 raw frames) comfortably outlasts SBeam's own full animation in
-; practice, but this is a hard guarantee, not just a timing hope).
-; 16 slots is also a real, honest hw-sprite-budget cap on how long the
-; beam can visibly be at once (columns beyond that from SBEAM_START_COL
-; just never get a sprite - "スプライトを足していく" holds up to this
-; limit, not literally without bound; MSX1 only has 32 total sprites and
-; the boss fight already spends 16(boss)+4(homing) of them) - flagged
-; for the user, not silently reinterpreted.
-SBEAM_SLOT_COUNT EQU 16
+; "伸ばした腕の先から...発射起点はボスに被らない左がわ" - re-examined
+; SasapiHand_64x64.json's own bitmap directly (not just its lowest row,
+; which was the round-1 mistake - that picked up the legs, not the
+; reaching arm): the reaching hand/fingers are the ONLY feature that
+; touches local column0 (the sprite box's own left edge), at local rows
+; 23-26 and 33-34 (of 64) - clearly a separate reaching-arm shape, not
+; the body. That puts the arm's own tip right at the pose box's left
+; edge (BOSS_SPAWNX, column24) - still technically ON the boss's own
+; box boundary, so the origin is placed 1 full column further left
+; (column23) to genuinely clear the boss's own silhouette, matching
+; "ボスに被らない". Y snapped to the nearest 8px row inside the hand's
+; own local y23-26 cluster (local y24 -> BOSS_SPAWN_Y+24).
+SBEAM_START_COL EQU 23
+SBEAM_START_Y EQU BOSS_SPAWN_Y+24
+; hw sprite slots: BOSS_SPR_BASE_SLOT(10)..+15 (the boss's own dormant
+; pose-time body, see below) PLUS slots26-31, the only 6 hw sprite slots
+; in the whole file that are NEVER claimed by ANY entity at all (tank0-3,
+; ZacoII/Homing4-9, boss/Zum/BigZum/Flyer/Etank all top out at 25) -
+; contiguous with the boss's own block, so 10-31 is one 22-slot run.
+; Reusing the boss's own slots is safe ONLY while the pose is active
+; (BOSS_PHASE=1), the exact same window HIDE_BOSS_SPRITES already
+; guarantees the boss's own 16 quadrant sprites are parked off-screen
+; and untouched until the pose ends - same "reuse a dormant owner's
+; slots" idiom as HORMING's own reuse of ZacoII/BulletU. UBAP_END
+; forcibly clears SBEAM_ACT so a still-mid-animation beam can never
+; collide with the boss's own sprite resuming there once the pose
+; actually ends. The extra 26-31 slots need no such care - nothing else
+; ever touches them, pose or not.
+; 22 slots is still a real, honest hw-sprite-budget cap, now shared
+; between the vertical arm (SBEAM_ROWS, computed from the real terrain
+; depth at fire-time, typically 10-13 segments) and the horizontal arm
+; (whatever's left, roughly 9-12) - "スプライトを足していく" holds up to
+; this combined limit, not literally without bound (MSX1 has only 32 hw
+; sprite slots total). Flagged for the user, not silently reinterpreted.
+SBEAM_SLOT_COUNT EQU 22
 SBEAM_SPR_BASE_SLOT EQU BOSS_SPR_BASE_SLOT
 BOSS_HP_INIT    EQU 255     ; "耐久値は255で"
 BOSS_COLOR      EQU 9       ; from sprites/Sasapi.json's own fg (light red)
@@ -1518,7 +1546,7 @@ SBEAM_BLINK     EQU F313h   ; toggled every frame - "点滅で表示で 取り�
 ; staging buffer for SBEAM_SLOT_COUNT*4 hw sprite slots (4 bytes each:
 ; Y,X,pattern,color), same shape as HORMING_SPRITE_ATTRS - flushed via
 ; FLUSH_SBEAM_SPRITES.
-SBEAM_SPRITE_ATTRS EQU F314h   ; SBEAM_SLOT_COUNT*4 = 64 bytes (F314h-F353h)
+SBEAM_SPRITE_ATTRS EQU F314h   ; SBEAM_SLOT_COUNT*4 = 88 bytes (F314h-F36Bh)
 
 ; "ボスに被らない位置の右上 今の発射位置の16px上あたり" - same X as
 ; before (still within the boss's own 64x64 box's own column range,
@@ -7155,8 +7183,20 @@ UBA_MOVE_RIGHT:
     LD (BOSS_POSE_END_TICK),HL
     CALL HIDE_BOSS_SPRITES
     CALL DRAW_SASAPI_HAND
-    CALL ARM_HORMING_VOLLEY
+    ; "当然サンダービーム中はホーミングもサンダーも撃たねえんだよ" -
+    ; SBeam and the homing volley are mutually exclusive per pose now,
+    ; not both armed together: once BOSS_POSE_COUNT reaches SBEAM_POSE_
+    ; GATE this pose fires SBeam ONLY (Thunder can't newly trigger
+    ; during a pose anyway - its own trigger checks only run mid-patrol,
+    ; see CHECK_THUNDER_TRIGGER_LEFT/_RIGHT's own callers).
+    LD A,(BOSS_POSE_COUNT)
+    CP SBEAM_POSE_GATE
+    JR C,UBAMR_ARM_HORMING
     CALL FIRE_SBEAM
+    JR UBAMR_POSE_ENTERED
+UBAMR_ARM_HORMING:
+    CALL ARM_HORMING_VOLLEY
+UBAMR_POSE_ENTERED:
     RET
 UBA_STEP_RIGHT_DIAG:
     LD (BOSS_X),A
@@ -8612,17 +8652,17 @@ FHS_LOOP:
 ; ---------- SBeam ("サンダービーム", real hw sprite pool reusing the
 ; boss's own dormant pose-time body slots - see SBEAM_SPR_BASE_SLOT's
 ; own comment) ----------
-; called once, at pose-entry, from UBA_MOVE_RIGHT (alongside ARM_HORMING_
-; VOLLEY) - silently does nothing until BOSS_POSE_COUNT reaches
-; SBEAM_POSE_GATE(2), i.e. starts on the 3rd pose onward. Arms the drop
-; phase (SBEAM_ACT=1) and pre-computes the ground pixel Y for the fixed
-; column SBEAM_START_COL via GET_TERRAIN_ROW_FOR_COL (same terrain-cache
-; walk Thunder's own ALLOC_THUNDER_SLOT uses) - row*8-8 so the drop's own
-; last 8x8-lit segment sits flush just above the terrain surface.
+; called once, at pose-entry, from UBA_MOVE_RIGHT, ONLY when the
+; SBEAM_POSE_GATE(2) eligibility check there already passed (UBA_MOVE_
+; RIGHT branches between this and ARM_HORMING_VOLLEY - "当然サンダー
+; ビーム中はホーミングも...撃たねえんだよ", the two are mutually
+; exclusive per pose, so the gate check lives at the call site, not
+; here). Arms the drop phase (SBEAM_ACT=1) and pre-computes the ground
+; pixel Y for the fixed column SBEAM_START_COL via GET_TERRAIN_ROW_FOR_
+; COL (same terrain-cache walk Thunder's own ALLOC_THUNDER_SLOT uses) -
+; row*8-8 so the drop's own last 8x8-lit segment sits flush just above
+; the terrain surface.
 FIRE_SBEAM:
-    LD A,(BOSS_POSE_COUNT)
-    CP SBEAM_POSE_GATE
-    RET C                        ; not yet eligible - drop the attempt
     LD A,1 : LD (SBEAM_ACT),A
     XOR A : LD (SBEAM_ROWS),A
     XOR A : LD (SBEAM_BLINK),A
@@ -8719,6 +8759,12 @@ USR_REVERSE:
 ; ("ラインが途切れないように"); the unlit remainder of each 16x16 sprite
 ; box harmlessly overlaps its neighbor (pattern 0 = transparent on the
 ; TMS9918, same reasoning as bullet_gen.py's own 16x16-padded 8x8 art).
+; SS_SWEEP (used for both ACT=2 sweeping and ACT=3 retracting) draws an
+; L-SHAPED line: the vertical arm (SBEAM_ROWS segments, fixed once the
+; drop finishes) stays on screen the WHOLE time the horizontal arm grows/
+; shrinks - "発射基点は変えず...ラインを引いて元まで戻る" - the origin
+; end must stay visibly connected throughout, not vanish the instant the
+; sweep begins (round-2 fix - see the SBeam block comment above).
 STAGE_SBEAM:
     LD A,(SBEAM_BLINK) : XOR 1 : LD (SBEAM_BLINK),A
     AND 1
@@ -8762,35 +8808,57 @@ SSD_NEXT:
     INC E
     DJNZ SSD_LOOP
     RET
+; vertical arm first (slots0..ROWS-1, identical to SS_DROP's own visible
+; segments), THEN the horizontal arm fills whatever slots are left
+; (SBEAM_SLOT_COUNT-ROWS), extending left from SBEAM_START_COL-1 (one
+; column outside the vertical arm's own corner cell, so the two arms
+; don't waste a slot both drawing the same cell).
 SS_SWEEP:
     LD HL,SBEAM_SPRITE_ATTRS
-    LD A,(SBEAM_FRONT_COL) : LD C,A
-    LD A,(SBEAM_GROUND_Y) : LD D,A
+    LD A,(SBEAM_ROWS) : LD C,A
     LD E,0
     LD B,SBEAM_SLOT_COUNT
-SSS_LOOP:
-    LD A,SBEAM_START_COL : SUB E
+SSS_V_LOOP:
+    LD A,E : CP C
+    JR NC,SSS_V_DONE
+    LD A,E : ADD A,A : ADD A,A : ADD A,A : ADD A,SBEAM_START_Y
+    LD (HL),A : INC HL                    ; Y
+    LD A,SBEAM_START_COL*8 : LD (HL),A : INC HL   ; X (fixed origin column)
+    LD A,SBEAM_CODE : LD (HL),A : INC HL
+    LD A,SBEAM_COLOR : LD (HL),A : INC HL
+    INC E
+    DJNZ SSS_V_LOOP
+    RET                          ; ROWS should never reach SLOT_COUNT - safety only
+SSS_V_DONE:
+    ; B (DJNZ's own countdown) already holds SLOT_COUNT-ROWS here, since
+    ; we bailed out of the vertical loop before its own DJNZ could fire -
+    ; exactly the horizontal arm's own remaining slot budget.
+    LD A,(SBEAM_GROUND_Y) : LD E,A        ; E = fixed ground Y for every horizontal segment
+    LD A,(SBEAM_FRONT_COL) : LD C,A
+    LD D,0                                ; D = horizontal arm's own local index j=0..
+SSS_H_LOOP:
+    LD A,SBEAM_START_COL-1 : SUB D        ; A = column = START_COL-1-j
     CP C
-    JR C,SSS_HIDE
-    LD A,D : LD (HL),A : INC HL           ; Y (fixed ground row)
-    LD A,SBEAM_START_COL : SUB E : ADD A,A : ADD A,A : ADD A,A
+    JR C,SSS_H_HIDE
+    LD A,E : LD (HL),A : INC HL           ; Y (fixed ground row)
+    LD A,SBEAM_START_COL-1 : SUB D : ADD A,A : ADD A,A : ADD A,A
     LD (HL),A : INC HL                    ; X = column*8
     LD A,SBEAM_CODE : LD (HL),A : INC HL
     LD A,SBEAM_COLOR : LD (HL),A : INC HL
-    JR SSS_NEXT
-SSS_HIDE:
+    JR SSS_H_NEXT
+SSS_H_HIDE:
     LD A,209 : LD (HL),A : INC HL
     XOR A : LD (HL),A : INC HL
     XOR A : LD (HL),A : INC HL
     XOR A : LD (HL),A : INC HL
-SSS_NEXT:
-    INC E
-    DJNZ SSS_LOOP
+SSS_H_NEXT:
+    INC D
+    DJNZ SSS_H_LOOP
     RET
 
-; blasts SBEAM_SPRITE_ATTRS (SBEAM_SLOT_COUNT*4=64 bytes) to hw sprite
+; blasts SBEAM_SPRITE_ATTRS (SBEAM_SLOT_COUNT*4=88 bytes) to hw sprite
 ; slots SBEAM_SPR_BASE_SLOT.. - same single DI/EI-wrapped raw OUT+8-NOP
-; idiom as FLUSH_HORMING_SPRITES, just B=64 instead of 16 (loop body
+; idiom as FLUSH_HORMING_SPRITES, just B=88 instead of 16 (loop body
 ; itself unchanged, so its own JR/DJNZ range is identical/known-good).
 FLUSH_SBEAM_SPRITES:
     DI
@@ -8813,7 +8881,7 @@ FLUSH_SBEAM_SPRITES:
     NOP
     NOP
     LD HL,SBEAM_SPRITE_ATTRS
-    LD B,64
+    LD B,SBEAM_SLOT_COUNT*4
 FSS_LOOP:
     LD A,(HL) : OUT (98h),A
     NOP
