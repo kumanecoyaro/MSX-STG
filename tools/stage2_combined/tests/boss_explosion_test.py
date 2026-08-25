@@ -61,7 +61,8 @@ STEP_FRAMES = sym["BOSS_EXPL_STEP_FRAMES"]
 BLINK_PERIOD = sym["BOSS_EXPL_BLINK_PERIOD"]
 FINAL_FLASH_FRAMES = sym["BOSS_EXPL_FINAL_FLASH_FRAMES"]
 WHITE_CODE = sym["BOSS_EXPL_WHITE_CODE"]
-SPARK_RANGE = sym["BOSS_EXPL_SPARK_RANGE"]
+ORIGIN_RANGE = sym["BOSS_EXPL_ORIGIN_RANGE"]
+FLIGHT_RANGE = sym["BOSS_EXPL_FLIGHT_RANGE"]
 SPARK_DURATION = sym["BOSS_EXPL_SPARK_DURATION"]
 SPARK_PER_FRAME = sym["BOSS_EXPL_SPARK_PER_FRAME"]
 SPARK_CODE_TL = sym["BOSS_EXPL_SPARK_CODE_TL"]
@@ -70,12 +71,11 @@ SPARK_CODE_TR = sym["BOSS_EXPL_SPARK_CODE_TR"]
 SPARK_CODE_BR = sym["BOSS_EXPL_SPARK_CODE_BR"]
 SPARK_CODES = {SPARK_CODE_TL, SPARK_CODE_BL, SPARK_CODE_TR, SPARK_CODE_BR}
 BOSS_SPRITE_HIDDEN_Y = 209
-# the erase/redraw box is 1 cell more generous than the spawn offset's
-# own -RANGE..+RANGE-1 window on every edge (see BOSS_EXPL_CLEAR_SPARK_
-# AREA's own comment) - a 16x16 spark anchored at the window's own max
-# offset still reaches 1 cell further out, so this is genuinely the
-# full set of cells a spark can ever touch, not just the anchor range.
-SPARK_BOX_MARGIN = SPARK_RANGE + 1
+# a spark's final position is origin(+/-ORIGIN_RANGE) + flight(+/-
+# FLIGHT_RANGE), two independent draws stacked - so the max possible
+# displacement from center on any one edge is ORIGIN_RANGE+FLIGHT_RANGE,
+# plus 1 more cell for a 16x16 spark's own spread beyond its anchor.
+SPARK_BOX_MARGIN = ORIGIN_RANGE + FLIGHT_RANGE + 1
 
 
 def run_spark_phase(cpu, cx, cy):
@@ -309,8 +309,10 @@ check(f"BOSS_EXPL_CY captured correctly ({expected_cy})", cpu.mem[BOSS_EXPL_CY] 
 check("BOSS_ACT=2 (destroyed)", cpu.mem[BOSS_ACT] == 2)
 check("state is SPARK immediately after destruction (burst plays before the circle)",
       cpu.mem[BOSS_EXPL_STATE] == STATE_SPARK)
-check("radius starts at 0 (just the center cell, used later once GROW begins)",
-      cpu.mem[BOSS_EXPL_RADIUS] == 0)
+check("BOSS_EXPL_RADIUS holds SPARK's own slot0-empty sentinel (0FFh) right after "
+      "destruction, not a real radius yet - it's reused as SPARK's own slot0 row "
+      "storage until GROW begins (see BOSS_EXPL_SPARK_SLOT0_ROW's own comment)",
+      cpu.mem[BOSS_EXPL_RADIUS] == 0xFF)
 check("circle not drawn yet - SPARK runs first",
       cpu.vram[cell_addr(expected_cx, expected_cy)] != WHITE_CODE)
 check("boss sprite still visible right at the start of SPARK (patrol-death case "
@@ -320,17 +322,21 @@ check("boss sprite still visible right at the start of SPARK (patrol-death case 
 CX, CY = expected_cx, expected_cy  # comfortably clear of every screen edge at max radius
 
 # ---------------------------------------------------------------------
-# 2b: SPARK burst itself - "ボスの中心の32x32の範囲でランダムに...爆発
-# キャラは8x8のほうではなく16x16のほうで ランダムで混ぜてもいいがな
-# ウェイトなしで派手に沢山 3秒くらい" - and the erase/redraw fix -
+# 2b: SPARK burst itself - "爆発範囲を元の64x64に てかこれはエフェクトが
+# 飛ぶ範囲ではなく原点だからな そこからランダム方向に4セル飛ぶんだぞ" -
+# origin (the boss's own 64x64 body) + an independent random flight (up
+# to 4 cells), not one flat box. Plus the earlier erase/redraw fix -
 # "ボックス範囲で消去もしてないから飛んでるかどうかもわからない ただ
-# 64x64がBGで埋まってるだけだ"
+# 64x64がBGで埋まってるだけだ" - and "爆発キャラは8x8のほうではなく
+# 16x16のほうで ランダムで混ぜてもいいがな ウェイトなしで派手に沢山
+# 3秒くらい".
 # ---------------------------------------------------------------------
 result = run_spark_phase(cpu, CX, CY)
 spark_seen = result["spark_seen"]
 per_frame_live_counts = result["per_frame_live_counts"]
 
 legal_spark_cells = set()
+origin_cells = set()
 for dy in range(-SPARK_BOX_MARGIN, SPARK_BOX_MARGIN + 1):
     row = CY + dy
     if not (0 <= row <= 23):
@@ -340,14 +346,20 @@ for dy in range(-SPARK_BOX_MARGIN, SPARK_BOX_MARGIN + 1):
         if not (0 <= col <= 31):
             continue
         legal_spark_cells.add((col, row))
+        if -ORIGIN_RANGE <= dx <= ORIGIN_RANGE and -ORIGIN_RANGE <= dy <= ORIGIN_RANGE:
+            origin_cells.add((col, row))
 
 check(f"every spark landed inside the CX/CY +/-{SPARK_BOX_MARGIN} scatter box "
-      "(the 32x32 range plus a 16x16 spark's own +1-cell reach), none outside it",
+      f"(origin's own +/-{ORIGIN_RANGE} plus flight's own +/-{FLIGHT_RANGE}, plus a "
+      "16x16 spark's own +1-cell reach), none outside it",
       spark_seen <= legal_spark_cells)
-check("sparks genuinely scattered across a meaningfully large portion of the "
-      f"(smaller, 32x32) box, not stuck on one or two cells "
-      f"({len(spark_seen)}/{len(legal_spark_cells)} cells ever hit)",
-      len(spark_seen) >= 8)
+check("sparks genuinely scattered across a meaningfully large portion of the box, "
+      f"not stuck on one or two cells ({len(spark_seen)}/{len(legal_spark_cells)} "
+      "cells ever hit)", len(spark_seen) >= 20)
+check("the boss's own 64x64 body (the origin area) sees plenty of hits too, not "
+      "just far-flung flight endpoints - confirms sparks genuinely originate from "
+      "within the body, not just from its edge",
+      len(spark_seen & origin_cells) >= 10)
 check("boss sprite was NEVER hidden during the whole SPARK burst - "
       "\"なぜ爆発エフェクト中にボス消してる 消さないでくれ BGでやってる意味がない\"",
       not result["boss_hidden_seen"])
@@ -368,10 +380,17 @@ check("the live spark count genuinely fluctuates frame to frame (real flicker, "
       "not a static picture)", len(set(per_frame_live_counts)) >= 3)
 check(f"SPARK phase lasts exactly {SPARK_DURATION} frames then hands off to GROW",
       cpu.mem[BOSS_EXPL_STATE] == STATE_GROW)
-check("the box is already clean (this frame's own erase already ran) right as "
-      "GROW begins - no leftover spark tiles",
+# scoped to spark_seen (cells that were EVER actually drawn as a spark at
+# some point) rather than the whole legal box: the new precise-tracking
+# design (BOSS_EXPL_SPARK_SLOT) only ever touches cells a spark actually
+# lands on, unlike the old blanket-sweep design - a cell nothing ever
+# happened to land on this particular random run is correctly left
+# exactly as it was before SPARK started, not necessarily "the real
+# background" the way a cell that WAS drawn-then-erased must be.
+check("every cell that was ever a spark is correctly restored to real "
+      "background by the time GROW begins - no leftover spark tiles",
       all(cpu.vram[cell_addr(c, r)] == expected_bg_code(r, NIGHT_END_ROW)
-          for (c, r) in legal_spark_cells if (c, r) != (CX, CY)))
+          for (c, r) in spark_seen if (c, r) != (CX, CY)))
 
 # ---------------------------------------------------------------------
 # 2c: SPARK has completed - the original GROW-entry geometry picks up

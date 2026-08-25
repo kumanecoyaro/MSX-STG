@@ -3451,6 +3451,87 @@ Thunder activity) confirming it survives completely untouched.
   clean `git diff` afterward) sent to the user. Not yet real-hardware/
   visual confirmed as of this entry.
 
+### Round 32 follow-up #2: 64x64 is the ORIGIN, not the flight range - precise per-spark erase tracking
+
+- User instruction (verbatim): "爆発範囲を元の６４ｘ６４に てかこれは
+  エフェクトが飛ぶ範囲ではなく原点だからな そこからランダム方向に4セル
+  飛ぶんだぞ" - correcting follow-up #1's own misreading: the 64x64
+  figure was never meant to be the total scatter extent, it's the
+  ORIGIN area (the boss's own body) each spark launches FROM; from there
+  it flies further, up to 4 cells, in a random direction.
+- **Redesign**: two independent random draws stacked instead of one flat
+  box - `BOSS_EXPL_ORIGIN_RANGE`(4, the boss's own 64x64/8-cell-wide
+  body, offset -4..+3) picks a random cell within the body, then
+  `BOSS_EXPL_FLIGHT_RANGE`(4) adds an independent random offset per axis
+  on top ("そこからランダム方向に4セル飛ぶんだぞ"). This naturally
+  clusters results near the boss body and thins out further away (a
+  convolution of two uniform windows), rather than a uniformly-likely
+  flat box - closer to how a real explosion's debris density falls off
+  with distance, and structurally the same idea as the "8方向ランダムに
+  移動" idiom this file already uses for enemy-death sprite drift, just
+  axis-independent instead of 8-compass.
+- **Performance concern this surfaced**: the total possible scatter
+  extent from this stacked design is much larger than follow-up #1's own
+  32x32 box - roughly -8..+7 cells on each axis (origin's own +/-4, plus
+  flight's own +/-4, plus a 16x16 spark's own +1-cell spread on the
+  positive side only, since `BOSS_EXPL_WRITE_SPARK_CELL`'s own quadrant
+  offsets are always +0/+1, never -1). Sweeping a box that size
+  (mathematically up to 19x19=361 cells) EVERY FRAME the way follow-up
+  #1's own `BOSS_EXPL_CLEAR_SPARK_AREA` did would cost roughly 361 VDP
+  writes/frame for 180 frames straight - a real T-state concern this
+  file has cared about before (see the Round27 VDP wait-state work),
+  especially since only up to `BOSS_EXPL_SPARK_PER_FRAME`(3)*4=12 cells
+  are ever actually live at once. Switched to PRECISE per-spark position
+  tracking instead of a blanket sweep:
+  - 3 "slots" (`BOSS_EXPL_SPARK_SLOT0/1/2_ROW/COL`, one per
+    `BOSS_EXPL_SPARK_PER_FRAME`), each remembering exactly where its own
+    currently-live spark sits (a row byte of `0FFh` = "nothing live yet"
+    sentinel). All 6 bytes are, once again, reused GROW/SHRINK-only ring-
+    walk scratch (`BOSS_EXPL_RADIUS`/`RING_MODE`/`RING_RADIUS`/
+    `RING_REMAIN`/`RING_PTR`) - genuinely idle throughout SPARK and
+    explicitly re-initialized for their own real GROW-phase meaning at
+    the SPARK->GROW handoff, strictly after SPARK is done reading them as
+    slot storage. No new persistent bytes needed, same discipline as
+    every other part of this feature.
+  - `BOSS_EXPL_SPARK_SLOT` (one call per slot, unrolled 3x in `UBE_SPARK`
+    - not a DJNZ loop, since each slot's storage is a distinct pair of
+    named bytes, not an indexable array): erases that slot's own OLD
+    spark (`BOSS_EXPL_ERASE_ONE_SPARK`, always a 4-cell erase regardless
+    of whether the old spark was actually 8x8 or 16x16 - safe/harmless
+    since every slot's erase happens before ANY slot's new spawn each
+    frame, so it can never clip a sibling slot's still-current spark),
+    then spawns a fresh one at a new origin+flight position and returns
+    its row/col for the caller to persist into that same slot for next
+    frame's erase.
+  - `UBE_SPARK` checks the countdown FIRST: on the very last frame, all
+    3 slots just erase their own last spark with nothing new spawned
+    (`UBS_LAST_FRAME`), leaving a clean board right before GROW's own
+    ring(0) draws - same handoff shape as before, just erase-only instead
+    of a final sweep.
+- **Test rewrite** (`boss_explosion_test.py`): `SPARK_BOX_MARGIN`
+  recomputed from `BOSS_EXPL_ORIGIN_RANGE`+`BOSS_EXPL_FLIGHT_RANGE`+1; a
+  new check that the origin area itself (the boss's own body) sees
+  plenty of hits too, not just far-flung flight endpoints - confirms the
+  two-stage draw is genuinely being used, not silently degenerating into
+  flight-only placement. The "board is clean at handoff" check was
+  narrowed to only the cells that were EVER actually a spark
+  (`spark_seen`), not the whole legal box - the sparse/precise-tracking
+  design only ever touches cells a spark actually lands on, so a cell
+  nothing happened to reach on a given random run is correctly left
+  exactly as it was before SPARK started (asserting the WHOLE box must
+  show "real background" was actually testing an artifact of the test
+  fixture's own limited VRAM painting - `setup_boss()` never paints rows
+  17-19 - not a real property of the new design; caught because the
+  larger box now reaches those rows for the first time). Also found and
+  fixed: `BOSS_EXPL_RADIUS`'s own "starts at 0" check no longer holds -
+  it's the sentinel (`0FFh`) right after death now, not `0`, since it
+  doubles as slot0's own row storage until GROW begins.
+- Full regression: **692 passed, 0 failed** (691 + 1 net new check).
+  New verification ROM (same temporary GAME_TICK=840/BOSS_HP_INIT=3
+  edit-build-send-revert procedure, confirmed reverted again with a
+  clean `git diff` afterward) sent to the user. Not yet real-hardware/
+  visual confirmed as of this entry.
+
 ## Open items / things to watch
 
 - **RAM addresses that need to persist across frames must stay clear of

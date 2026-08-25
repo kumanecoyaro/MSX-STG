@@ -655,24 +655,41 @@ BOSS_EXPL_WHITE_COLORBYTE EQU 0F1h   ; fg15 white/bg1 black - same convention as
 ; unit FLASH_DURATION/EXPLOSION_DURATION already use elsewhere), 3/frame
 ; is a judgment call for "沢山" (not specified numerically).
 ;
-; round32 follow-up fix: "そういう事じゃない ボックス範囲で消去もして
+; round32 follow-up fix #1: "そういう事じゃない ボックス範囲で消去もして
 ; ないから飛んでるかどうかもわからない ただ６４ｘ６４がBGで埋まってる
 ; だけだ じゃあボスの中心の３２ｘ３２の範囲でランダムに で、爆発キャラ
 ; は８ｘ８のほうではなく１６ｘ１６のほうで ランダムで混ぜてもいいがな" -
 ; the first version only ever ADDED sparks (never erased any until the
 ; whole phase ended), so once the small scatter area filled up it just
-; read as one static solid block, not "flying" sparks - and the scatter
-; area itself (+/-8 cells = 128x128px) was far bigger than intended. Two
-; fixes: (1) shrunk the box to a true 32x32px/4-cell scatter centered on
-; the boss (BOSS_EXPL_SPARK_RANGE now the box's own HALF-width in cells,
-; offsets run -RANGE..+RANGE-1, same generic AND/SUB shape as before,
-; just a smaller constant); (2) the box is now erased-then-repopulated
-; EVERY frame (see UBE_SPARK) instead of only once at the very end, so
-; individual sparks genuinely blink in and out from frame to frame
-; instead of accumulating.
-BOSS_EXPL_SPARK_RANGE EQU 2
+; read as one static solid block, not "flying" sparks.
+;
+; round32 follow-up fix #2 (correcting fix #1's own misreading of "32x32"):
+; "爆発範囲を元の６４ｘ６４に てかこれはエフェクトが飛ぶ範囲ではなく
+; 原点だからな そこからランダム方向に4セル飛ぶんだぞ" - the 64x64 figure
+; was never the TOTAL scatter extent, it's the ORIGIN area (the boss's own
+; body) each spark launches FROM; from that origin it then flies further,
+; up to BOSS_EXPL_FLIGHT_RANGE cells, in a random direction. Two
+; independent random draws (origin, then flight) stacked, not one flat
+; box - naturally denser near the boss body and thinner further out,
+; same shape as the "8方向ランダムに移動" idiom already established
+; elsewhere in this file for enemy-death sprites, just axis-independent
+; instead of 8-compass.
+;
+; Precise per-spark position tracking (not a blanket-sweep erase) is
+; what makes the EVERY-FRAME erase from fix #1 affordable at this larger
+; scale: with the scatter area now covering roughly +/-9 cells (the
+; origin's own +/-4 plus the flight's own +/-4 plus 1 more for a 16x16
+; spark's own spread) sweeping the WHOLE box every frame would be a
+; 19x19=361-cell VDP write every single frame for 180 frames straight -
+; a real T-state concern this file has cared about before (see the VDP
+; wait-state rounds). Instead, BOSS_EXPL_SPARK_SLOT remembers exactly
+; where each of the (BOSS_EXPL_SPARK_PER_FRAME) live sparks currently
+; sits and erases only THOSE cells before drawing a fresh one - at most
+; BOSS_EXPL_SPARK_PER_FRAME*4 cells/frame, not the whole box.
+BOSS_EXPL_ORIGIN_RANGE EQU 4   ; the boss's own 64x64 body, 8 cells wide - offsets -4..+3
+BOSS_EXPL_FLIGHT_RANGE EQU 4   ; "そこからランダム方向に4セル飛ぶんだぞ"
 BOSS_EXPL_SPARK_DURATION EQU 180
-BOSS_EXPL_SPARK_PER_FRAME EQU 3
+BOSS_EXPL_SPARK_PER_FRAME EQU 3   ; tied directly to the 3 hardcoded slots in UBE_SPARK - changing this needs matching slot blocks added/removed there, not just this constant
 ; another retired-hand-art code, group20 (160-167) - same safety
 ; argument as BOSS_EXPL_WHITE_CODE's own comment, just a different
 ; group so this can have its own distinct color. All 4 codes share this
@@ -683,7 +700,7 @@ BOSS_EXPL_SPARK_PER_FRAME EQU 3
 ; 4-quadrant version, TL/BL/TR/BR in the same plane order EXPLOSION_
 ; PATTERN's own data already uses. "ランダムで混ぜてもいいがな" - each
 ; spark independently rolls 8x8 (just the TL quadrant alone) vs the full
-; 16x16 (all 4) 50/50, see BOSS_EXPL_SPAWN_ONE_SPARK.
+; 16x16 (all 4) 50/50, see BOSS_EXPL_SPARK_SLOT.
 BOSS_EXPL_SPARK_CODE_TL EQU 160
 BOSS_EXPL_SPARK_CODE_BL EQU 161
 BOSS_EXPL_SPARK_CODE_TR EQU 162
@@ -1726,6 +1743,26 @@ BOSS_EXPL_RING_MODE   EQU F31Ch   ; BOSS_EXPL_APPLY_RING's own mode: 0=draw whit
 BOSS_EXPL_RING_RADIUS EQU F31Dh   ; which radius's own ring table entry to walk (0-6)
 BOSS_EXPL_RING_REMAIN EQU F31Eh   ; cells left to process in the current ring walk
 BOSS_EXPL_RING_PTR    EQU F31Fh   ; 2 bytes - current read position in BOSS_EXPL_RING_DATA
+; round32 follow-up #2: SPARK's own 3 live-spark "slots" (row,col pairs,
+; one per BOSS_EXPL_SPARK_PER_FRAME spark) - remembers exactly where each
+; currently-live spark sits so UBE_SPARK can erase precisely those cells
+; next frame instead of sweeping the whole scatter box (see BOSS_EXPL_
+; ORIGIN_RANGE's own comment for why that matters at this box size).
+; Reuses the SAME GROW/SHRINK-only ring-walk bytes above (RADIUS/RING_
+; MODE/RING_RADIUS/RING_REMAIN/RING_PTR) - all genuinely idle throughout
+; SPARK (GROW hasn't started yet), and every one gets explicitly
+; re-initialized for its OWN GROW-phase meaning at the SPARK->GROW
+; handoff (see UBS_LAST_FRAME), strictly AFTER this phase is done reading
+; them as slot storage - no new persistent bytes needed for this either.
+; A row byte of 0FFh is the "nothing live yet" sentinel (valid rows are
+; 0-23) - set once by INIT_BOSS_EXPLOSION so the very first frame doesn't
+; try to erase stale/garbage data from a previous fight.
+BOSS_EXPL_SPARK_SLOT0_ROW EQU BOSS_EXPL_RADIUS
+BOSS_EXPL_SPARK_SLOT0_COL EQU BOSS_EXPL_RING_MODE
+BOSS_EXPL_SPARK_SLOT1_ROW EQU BOSS_EXPL_RING_RADIUS
+BOSS_EXPL_SPARK_SLOT1_COL EQU BOSS_EXPL_RING_REMAIN
+BOSS_EXPL_SPARK_SLOT2_ROW EQU BOSS_EXPL_RING_PTR
+BOSS_EXPL_SPARK_SLOT2_COL EQU BOSS_EXPL_RING_PTR+1
 
 ; staging buffer for SBEAM_SLOT_COUNT*4 hw sprite slots (4 bytes each:
 ; Y,X,pattern,color), same shape as HORMING_SPRITE_ATTRS - flushed via
@@ -7915,13 +7952,21 @@ IBE_NO_HAND:
     LD A,BOSS_EXPL_SPARK_COLORBYTE : LD (HUD_TEMP_BYTE),A
     LD HL,HUD_TEMP_BYTE : LD DE,2000h+BOSS_EXPL_SPARK_GROUP : LD BC,1 : CALL LDIRVM
 
-    XOR A : LD (BOSS_EXPL_RADIUS),A
     ; SPARK runs first (see its own header comment) - GROW's own init
     ; (radius=0, ring(0) drawn) happens later, at the SPARK->GROW
-    ; transition (UBE_SPARK_DONE), not here.
+    ; transition (UBS_LAST_FRAME), not here - BOSS_EXPL_RADIUS itself is
+    ; reused as SLOT0's own row storage throughout SPARK (see BOSS_EXPL_
+    ; SPARK_SLOT0_ROW's own comment), not zeroed here.
     LD A,BOSS_EXPL_STATE_SPARK : LD (BOSS_EXPL_STATE),A
     LD A,BOSS_EXPL_SPARK_DURATION : LD (BOSS_EXPL_TIMER),A   ; reused as SPARK's own countdown - see its own comment
     XOR A : LD (BOSS_EXPL_BLINK),A   ; reused as SPARK's own decorrelation salt - see BOSS_EXPL_RANDOM_BYTE's own comment
+    ; all 3 slots start empty - "nothing live yet" sentinel (0FFh, see
+    ; the slot bytes' own comment) so frame 1 doesn't try to erase stale
+    ; data from a previous boss fight.
+    LD A,0FFh
+    LD (BOSS_EXPL_SPARK_SLOT0_ROW),A
+    LD (BOSS_EXPL_SPARK_SLOT1_ROW),A
+    LD (BOSS_EXPL_SPARK_SLOT2_ROW),A
     RET
 
 ; per-frame update for the death/explosion sequence, called from
@@ -7941,17 +7986,6 @@ UPDATE_BOSS_EXPLOSION:
     JP Z,UBE_SHRINK
     JP UBE_FLASH
 
-; Output: A = a pseudo-random offset in -BOSS_EXPL_SPARK_RANGE..
-; +BOSS_EXPL_SPARK_RANGE-1 (16 values, a plain AND+SUB since the range
-; is a power of 2 - no fold-back needed the way HORMING_WANDER_WIDTH's
-; own non-power-of-2 window did). Mixes GAME_RNG (a pure read - GAME_RNG
-; already gets its own real per-frame += TICK update elsewhere, so
-; nothing here needs to also mutate it) with TICK and BOSS_EXPL_BLINK
-; (repurposed here as a per-call salt, incremented every call - same
-; "PICK_HORMING_TARGET_X" idiom this file already established: reading
-; GAME_RNG back-to-back within the same frame without varying salt
-; leaves the low bits reading as fixed/correlated, "お前は1度もまともに
-; ランダム扱えてないな" was that exact bug). Trashes B.
 ; draws ONE mixed random byte (pure READ of GAME_RNG, XORed with TICK and
 ; an incrementing per-call salt - same PICK_HORMING_TARGET_X-style anti-
 ; correlation idiom used throughout this file). Round-1 fix: the original
@@ -7999,129 +8033,164 @@ BEWSC_OOB:
     POP AF
     RET
 
-; drops ONE spark at (BOSS_EXPL_CX+dx,BOSS_EXPL_CY+dy), dx/dy random
-; within BOSS_EXPL_SPARK_RANGE's own -RANGE..+RANGE-1 window (the 32x32
-; box "ボスの中心の32x32の範囲でランダムに"), 50/50 either the lone 8x8
-; TL tile or the full 16x16 (all 4 quadrants) - "爆発キャラは...16x16の
-; ほうで ランダムで混ぜてもいいがな". Both dx/dy (2 bits each, since
-; RANGE=2 means AND 3) and the size pick (a 3rd, independent bit) come
-; from ONE mixed random byte - same anti-correlation reasoning as
-; BOSS_EXPL_RANDOM_BYTE's own comment, just splitting 3 fields out of it
-; instead of 2. No per-spark persistence/timer: UBE_SPARK erases the
-; whole box fresh every frame before calling this, so there's nothing to
-; track or expire per-spark.
-BOSS_EXPL_SPAWN_ONE_SPARK:
-    CALL BOSS_EXPL_RANDOM_BYTE
-    LD D,A
-    AND BOSS_EXPL_SPARK_RANGE*2-1 : SUB BOSS_EXPL_SPARK_RANGE : LD C,A   ; dx
-    LD A,D
-    SRL A : SRL A
-    AND BOSS_EXPL_SPARK_RANGE*2-1 : SUB BOSS_EXPL_SPARK_RANGE : LD B,A  ; dy
-    LD A,(BOSS_EXPL_CY) : ADD A,B : LD (BOSS_EXPL_ROWTMP),A
-    LD A,(BOSS_EXPL_CX) : ADD A,C : LD (BOSS_EXPL_COLTMP),A
-    LD A,D
-    SRL A : SRL A : SRL A : SRL A
-    AND 1
-    LD (BOSS_EXPL_RING_MODE),A   ; reused: this spark's own size bit (0=8x8,1=16x16) - idle here, see BOSS_EXPL_CLEAR_SPARK_AREA's own comment
-
-    LD A,BOSS_EXPL_SPARK_CODE_TL : LD (BULLET_TEMP_BYTE),A
-    LD B,0 : LD C,0
-    CALL BOSS_EXPL_WRITE_SPARK_CELL
-
-    LD A,(BOSS_EXPL_RING_MODE)
-    OR A
+; in: A=old row (or 0FFh sentinel = nothing live to erase), C=old col.
+; erases that spark's 4-cell footprint, restoring the real per-row
+; background (BOSS_EXPL_BG_CODE_FOR_ROW - the SkySand/Sand fix from
+; earlier this same round, reused here). ALWAYS 4 cells regardless of
+; whether the actual spark there was 8x8 or 16x16 - the "extra" cells
+; for an 8x8 spark just restore already-correct background, harmless,
+; since every slot's own OLD spark is erased before ANY slot's NEW spark
+; is drawn each frame (see UBE_SPARK) - this can never clip a sibling
+; slot's still-current spark. Saves needing to persist which size the
+; old spark was, so 2 bytes/slot (row,col) is enough.
+BOSS_EXPL_ERASE_ONE_SPARK:
+    CP 0FFh
     RET Z
-
-    LD A,BOSS_EXPL_SPARK_CODE_BL : LD (BULLET_TEMP_BYTE),A
-    LD B,1 : LD C,0
-    CALL BOSS_EXPL_WRITE_SPARK_CELL
-    LD A,BOSS_EXPL_SPARK_CODE_TR : LD (BULLET_TEMP_BYTE),A
-    LD B,0 : LD C,1
-    CALL BOSS_EXPL_WRITE_SPARK_CELL
-    LD A,BOSS_EXPL_SPARK_CODE_BR : LD (BULLET_TEMP_BYTE),A
-    LD B,1 : LD C,1
-    CALL BOSS_EXPL_WRITE_SPARK_CELL
+    LD (BOSS_EXPL_ROWTMP),A
+    LD A,C : LD (BOSS_EXPL_COLTMP),A
+    LD B,0 : LD C,0 : CALL BOSS_EXPL_ERASE_SPARK_CELL
+    LD B,1 : LD C,0 : CALL BOSS_EXPL_ERASE_SPARK_CELL
+    LD B,0 : LD C,1 : CALL BOSS_EXPL_ERASE_SPARK_CELL
+    LD B,1 : LD C,1 : CALL BOSS_EXPL_ERASE_SPARK_CELL
     RET
 
-; wipes the scatter box (BOSS_EXPL_CX/CY +-2 cells, a 5x5 box - one cell
-; more generous than BOSS_EXPL_SPARK_RANGE's own -2..+1 spawn offset on
-; every edge, cheap insurance covering a 16x16 spark's own +1-cell
-; spread too) back to the real per-row background - "ボックス範囲で消去
-; もしてないから飛んでるかどうかもわからない ただ64x64がBGで埋まって
-; るだけだ" (round32 follow-up): the original version only ran this ONCE,
-; at the very end of the whole phase, so sparks just accumulated into a
-; static filled block instead of reading as individual flying sparks.
-; Now UBE_SPARK calls this EVERY frame, right before that frame's own
-; batch spawns - erase-then-redraw each frame is what actually makes
-; individual sparks blink in and out rather than pile up. Restores the
-; genuine row-aware content (BOSS_EXPL_BG_CODE_FOR_ROW - the SkySand/Sand
-; fix from earlier this same round, reused here) rather than a blanket
-; blank. Reuses BOSS_EXPL_RADIUS/BOSS_EXPL_RING_REMAIN as this loop's own
-; row/col counters - both genuinely idle throughout SPARK (RADIUS stays
-; 0 until GROW begins, REMAIN is dead in between ring walks) - and
-; BOSS_EXPL_SPAWN_ONE_SPARK's own reuse of BOSS_EXPL_RING_MODE (the
-; per-spark size bit) never overlaps with this call since the two never
-; run concurrently - this always runs to completion first, every frame,
-; before any spawning starts.
-BOSS_EXPL_CLEAR_SPARK_AREA:
-    LD A,5 : LD (BOSS_EXPL_RADIUS),A
-    LD A,(BOSS_EXPL_CY) : SUB 2 : LD (BOSS_EXPL_ROWTMP),A
-BECSA_ROWLOOP:
-    LD A,(BOSS_EXPL_ROWTMP)
+; same shape/inputs as BOSS_EXPL_WRITE_SPARK_CELL (B/C=0/1 offsets from
+; BOSS_EXPL_ROWTMP/COLTMP, same screen clip) but computes the real
+; per-row background itself instead of writing a fixed code.
+BOSS_EXPL_ERASE_SPARK_CELL:
+    LD A,(BOSS_EXPL_ROWTMP) : ADD A,B
     CP 24
-    JP NC,BECSA_ROW_SKIP
-
-    LD A,5 : LD (BOSS_EXPL_RING_REMAIN),A
-    LD A,(BOSS_EXPL_CX) : SUB 2 : LD (BOSS_EXPL_COLTMP),A
-BECSA_COLLOOP:
-    LD A,(BOSS_EXPL_COLTMP)
+    RET NC
+    PUSH AF
+    LD A,(BOSS_EXPL_COLTMP) : ADD A,C
+    LD C,A
     CP 32
-    JR NC,BECSA_COL_SKIP
-
-    LD A,(BOSS_EXPL_ROWTMP) : CALL BOSS_EXPL_BG_CODE_FOR_ROW
+    JR NC,BEESC_OOB
+    POP AF
+    PUSH AF
+    CALL BOSS_EXPL_BG_CODE_FOR_ROW
     LD (BULLET_TEMP_BYTE),A
-    LD A,(BOSS_EXPL_ROWTMP) : CALL NIGHT_ROW_ADDR
+    POP AF
+    CALL NIGHT_ROW_ADDR
     LD H,D : LD L,E
-    LD A,(BOSS_EXPL_COLTMP) : LD E,A : LD D,0
+    LD A,C : LD E,A : LD D,0
     ADD HL,DE
-    CALL WRITE_BULLET_BYTE_HL
+    JP WRITE_BULLET_BYTE_HL
+BEESC_OOB:
+    POP AF
+    RET
 
-BECSA_COL_SKIP:
-    LD A,(BOSS_EXPL_COLTMP) : INC A : LD (BOSS_EXPL_COLTMP),A
-    LD A,(BOSS_EXPL_RING_REMAIN) : DEC A : LD (BOSS_EXPL_RING_REMAIN),A
-    JR NZ,BECSA_COLLOOP
+; in: A=this slot's OLD row (or 0FFh sentinel), C=old col. out: A=new
+; row, C=new col (caller persists these into the slot's own bytes for
+; next frame's erase). Erases the old spark (BOSS_EXPL_ERASE_ONE_SPARK
+; above), then spawns a fresh one - "爆発範囲を元の64x64に てかこれは
+; エフェクトが飛ぶ範囲ではなく原点だからな そこからランダム方向に4セル
+; 飛ぶんだぞ": picks a random ORIGIN cell within the boss's own 64x64
+; body (BOSS_EXPL_ORIGIN_RANGE), then flies further by an independent
+; random amount per axis (BOSS_EXPL_FLIGHT_RANGE) - two stacked random
+; draws, not one flat box, so results naturally cluster near the boss
+; body and thin out further away. 50/50 lone 8x8 TL tile vs the full
+; 16x16 (all 4 quadrants) - "爆発キャラは...16x16のほうで ランダムで
+; 混ぜてもいいがな" - decided right after its own random draw and
+; branched on immediately (no need to preserve the choice across the
+; drawing calls that follow, unlike a value that would have to survive
+; in a register through them).
+BOSS_EXPL_SPARK_SLOT:
+    CALL BOSS_EXPL_ERASE_ONE_SPARK
 
-BECSA_ROW_SKIP:
-    LD A,(BOSS_EXPL_ROWTMP) : INC A : LD (BOSS_EXPL_ROWTMP),A
-    LD A,(BOSS_EXPL_RADIUS) : DEC A : LD (BOSS_EXPL_RADIUS),A
-    JP NZ,BECSA_ROWLOOP
+    ; --- origin: random cell within the boss's own 64x64 body ---
+    CALL BOSS_EXPL_RANDOM_BYTE
+    LD D,A
+    AND 7 : SUB BOSS_EXPL_ORIGIN_RANGE : LD C,A                ; origin dx
+    LD A,D
+    SRL A : SRL A : SRL A : SRL A
+    AND 7 : SUB BOSS_EXPL_ORIGIN_RANGE : LD B,A                ; origin dy
+    LD A,(BOSS_EXPL_CY) : ADD A,B : LD (BOSS_EXPL_ROWTMP),A
+    LD A,(BOSS_EXPL_CX) : ADD A,C : LD (BOSS_EXPL_COLTMP),A
+
+    ; --- flight: fly further, random direction, up to FLIGHT_RANGE cells ---
+    CALL BOSS_EXPL_RANDOM_BYTE
+    LD D,A
+    AND 7 : SUB BOSS_EXPL_FLIGHT_RANGE : LD C,A                ; flight dx
+    LD A,D
+    SRL A : SRL A : SRL A : SRL A
+    AND 7 : SUB BOSS_EXPL_FLIGHT_RANGE : LD B,A                ; flight dy
+    LD A,(BOSS_EXPL_ROWTMP) : ADD A,B : LD (BOSS_EXPL_ROWTMP),A
+    LD A,(BOSS_EXPL_COLTMP) : ADD A,C : LD (BOSS_EXPL_COLTMP),A
+
+    ; --- size: 8x8 or 16x16, then draw ---
+    CALL BOSS_EXPL_RANDOM_BYTE
+    AND 1
+    JR Z,BESS_DRAW_8
+
+BESS_DRAW_16:
+    LD A,BOSS_EXPL_SPARK_CODE_TL : LD (BULLET_TEMP_BYTE),A
+    LD B,0 : LD C,0 : CALL BOSS_EXPL_WRITE_SPARK_CELL
+    LD A,BOSS_EXPL_SPARK_CODE_BL : LD (BULLET_TEMP_BYTE),A
+    LD B,1 : LD C,0 : CALL BOSS_EXPL_WRITE_SPARK_CELL
+    LD A,BOSS_EXPL_SPARK_CODE_TR : LD (BULLET_TEMP_BYTE),A
+    LD B,0 : LD C,1 : CALL BOSS_EXPL_WRITE_SPARK_CELL
+    LD A,BOSS_EXPL_SPARK_CODE_BR : LD (BULLET_TEMP_BYTE),A
+    LD B,1 : LD C,1 : CALL BOSS_EXPL_WRITE_SPARK_CELL
+    JR BESS_DRAW_DONE
+
+BESS_DRAW_8:
+    LD A,BOSS_EXPL_SPARK_CODE_TL : LD (BULLET_TEMP_BYTE),A
+    LD B,0 : LD C,0 : CALL BOSS_EXPL_WRITE_SPARK_CELL
+
+BESS_DRAW_DONE:
+    LD A,(BOSS_EXPL_COLTMP) : LD C,A
+    LD A,(BOSS_EXPL_ROWTMP)
     RET
 
 ; "ウェイトなしで派手に沢山" - every single frame (no per-spark or
-; per-batch wait), erase the previous frame's own sparks first (see
-; BOSS_EXPL_CLEAR_SPARK_AREA's own comment for why that has to happen
-; every frame now, not just once at the end), then drop a fresh batch of
-; BOSS_EXPL_SPARK_PER_FRAME sparks. The countdown (BOSS_EXPL_TIMER,
-; reused - see INIT_BOSS_EXPLOSION's own comment) decrements after the
-; erase; once it reaches 0 the box is already clean (this frame's own
-; erase already ran) so the last frame simply skips spawning anything
-; new and falls straight into GROW's own ring(0).
+; per-batch wait), each of the BOSS_EXPL_SPARK_PER_FRAME(3) slots erases
+; its own previous spark and drops a fresh one (BOSS_EXPL_SPARK_SLOT).
+; Unrolled 3x (not a DJNZ loop) since each slot's own storage is a
+; distinct pair of reused RAM bytes, not an indexable array - see those
+; bytes' own comment. The countdown (BOSS_EXPL_TIMER) is checked FIRST:
+; once it reaches 0 every slot just erases its own last spark with
+; nothing new spawned (UBS_LAST_FRAME), leaving a clean board right
+; before GROW's own ring(0) draws.
 UBE_SPARK:
-    CALL BOSS_EXPL_CLEAR_SPARK_AREA
     LD A,(BOSS_EXPL_TIMER) : DEC A : LD (BOSS_EXPL_TIMER),A
-    JP Z,UBS_DONE
+    JP Z,UBS_LAST_FRAME
 
-    LD B,BOSS_EXPL_SPARK_PER_FRAME
-UBS_SPAWN_LOOP:
-    PUSH BC
-    CALL BOSS_EXPL_SPAWN_ONE_SPARK
-    POP BC
-    DJNZ UBS_SPAWN_LOOP
+    LD A,(BOSS_EXPL_SPARK_SLOT0_COL) : LD C,A
+    LD A,(BOSS_EXPL_SPARK_SLOT0_ROW)
+    CALL BOSS_EXPL_SPARK_SLOT
+    LD (BOSS_EXPL_SPARK_SLOT0_ROW),A
+    LD A,C : LD (BOSS_EXPL_SPARK_SLOT0_COL),A
+
+    LD A,(BOSS_EXPL_SPARK_SLOT1_COL) : LD C,A
+    LD A,(BOSS_EXPL_SPARK_SLOT1_ROW)
+    CALL BOSS_EXPL_SPARK_SLOT
+    LD (BOSS_EXPL_SPARK_SLOT1_ROW),A
+    LD A,C : LD (BOSS_EXPL_SPARK_SLOT1_COL),A
+
+    LD A,(BOSS_EXPL_SPARK_SLOT2_COL) : LD C,A
+    LD A,(BOSS_EXPL_SPARK_SLOT2_ROW)
+    CALL BOSS_EXPL_SPARK_SLOT
+    LD (BOSS_EXPL_SPARK_SLOT2_ROW),A
+    LD A,C : LD (BOSS_EXPL_SPARK_SLOT2_COL),A
     RET
 
-; phase over - start the circle sequence exactly as INIT_BOSS_EXPLOSION
-; used to start it directly (box is already erased-clean, see above).
-UBS_DONE:
+; phase over - erase whatever each slot last drew (no respawn), then
+; start the circle sequence exactly as INIT_BOSS_EXPLOSION used to start
+; it directly. Slot bytes are read here BEFORE BOSS_EXPL_RADIUS/RING_
+; MODE/etc. get reinitialized for their own real GROW-phase meaning just
+; below (same bytes - see the slot bytes' own comment).
+UBS_LAST_FRAME:
+    LD A,(BOSS_EXPL_SPARK_SLOT0_COL) : LD C,A
+    LD A,(BOSS_EXPL_SPARK_SLOT0_ROW)
+    CALL BOSS_EXPL_ERASE_ONE_SPARK
+    LD A,(BOSS_EXPL_SPARK_SLOT1_COL) : LD C,A
+    LD A,(BOSS_EXPL_SPARK_SLOT1_ROW)
+    CALL BOSS_EXPL_ERASE_ONE_SPARK
+    LD A,(BOSS_EXPL_SPARK_SLOT2_COL) : LD C,A
+    LD A,(BOSS_EXPL_SPARK_SLOT2_ROW)
+    CALL BOSS_EXPL_ERASE_ONE_SPARK
+
     XOR A : LD (BOSS_EXPL_RADIUS),A
     LD A,BOSS_EXPL_STATE_GROW : LD (BOSS_EXPL_STATE),A
     LD A,BOSS_EXPL_STEP_FRAMES : LD (BOSS_EXPL_TIMER),A
