@@ -2211,41 +2211,13 @@ INIT_RESUME_AFTER_BANK_SELECT:
 INIT_SPRATR_CLR:
     DI
     LD A,209 : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     XOR A : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     XOR A : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     XOR A : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     EI
     DJNZ INIT_SPRATR_CLR
 
@@ -3428,14 +3400,7 @@ UTS_HAZARD_DONE:
     LD B,16
 UTS_OUT_LOOP:
     LD A,(HL) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     INC HL
     DJNZ UTS_OUT_LOOP
     EI
@@ -3831,14 +3796,44 @@ DBC_CODE_SET:
 ; everywhere in this file (a real, if harmless, waste - every single
 ; raw VDP write anywhere in the game paid the data port's own stricter
 ; margin twice over for its own address-setup bytes too), trimmed the
-; 99h ones to 2 NOPs. 98h itself is untouched - still 8 NOPs, genuinely
-; needed. Same for both the active-display and blanking periods (no
-; separate rule for either), so no per-call branching needed - just a
-; flat NOP-count change, verified against a fixed T-state budget by
-; tests/vdp_wait_test.py (counts real NOPs per OUT, not just "does the
-; game still behave the same" - a wrong count here would be invisible
-; to every other test in this whole file, since none of them model VDP
-; access timing at all, only the actual byte written).
+; 99h ones to 2 NOPs. Same for both the active-display and blanking
+; periods (no separate rule for either), so no per-call branching
+; needed - just a flat NOP-count change, verified against a fixed
+; T-state budget by tests/vdp_wait_test.py (counts real NOPs per OUT,
+; not just "does the game still behave the same" - a wrong count here
+; would be invisible to every other test in this whole file, since none
+; of them model VDP access timing at all, only the actual byte written).
+;
+; The 98h data-port write itself still genuinely needs the full 29T,
+; but "現在Nopx8つだがこれをサイズの小さいダミー命令に置き換える...29T
+; に近くなる影響がほぼ無い命令の組み合わせで フラグ変化がある場合は周
+; 辺のチェック" (round27) - 8 NOPs is 8 bytes for 32T (already 3T more
+; than needed, by the user's own count). First attempt used `PUSH BC :
+; POP BC : INC HL : DEC HL` (11+10+6+6=33T) - correctly caught as an
+; actual regression ("33Tでは現状の32Tより遅くなるじゃねえか" - 33T is
+; SLOWER than the 32T it was replacing, missing the entire point of a
+; speed optimization even though it did shrink the byte count). Fixed:
+; `PUSH BC : POP BC : NOP : NOP` (11+10+4+4=29T EXACTLY - the true
+; minimum, 3T faster than the original 8-NOP version) - same 4 bytes,
+; now genuinely both smaller AND faster. None of these 4 opcodes touch
+; any flag on real Z80 (PUSH/POP never do; NOP obviously doesn't), and
+; PUSH BC/POP BC nets to an exactly restored BC value via the stack
+; round-trip - transparent to whatever the surrounding code holds in
+; either register, regardless of call site. PUSH/POP BC specifically
+; (not raw SP+-1) so a real NMI landing mid-sequence can't leave SP
+; pointing at a garbage slot - PUSH/POP always keeps the stack self-
+; consistent even if something interjects on top of it. `EX (SP),HL`
+; would have been an even denser single-opcode 19T/1-byte pair (2 of
+; them = 38T/2 bytes, though that's actually MORE T-states than this 4-
+; byte/29T solution, not fewer) but isn't implemented in this project's
+; own mini_z80asm.py/z80emu.py toolchain anyway, so moot either way.
+; Verified equivalence (T-state count AND that BC/HL/flags really do
+; come out identical to their pre-sequence values) by tests/
+; vdp_wait_test.py; the shrink from 8 to 4 bytes at every one of the 20
+; sites (80 bytes total) also lets the assembler naturally re-resolve
+; any JR/DJNZ that's now back in range where it wasn't before - see
+; mini_z80asm.py's own real 8-bit-signed-offset range check, which
+; would simply fail the build if anything drifted OUT of range instead.
 WRITE_BULLET_BYTE_HL:
     DI
     LD A,L : OUT (99h),A
@@ -3848,14 +3843,7 @@ WRITE_BULLET_BYTE_HL:
     NOP
     NOP
     LD A,(BULLET_TEMP_BYTE) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     EI
     RET
 
@@ -3883,14 +3871,7 @@ WHC_ROW_OK:
     NOP
     NOP
     LD A,(HUD_VAL) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     EI
     RET
 
@@ -4600,14 +4581,7 @@ FLUSH_ENEMY_SPRITES:
     LD B,12
 FES_LOOP:
     LD A,(HL) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     INC HL
     DJNZ FES_LOOP
     EI
@@ -5091,14 +5065,7 @@ FLUSH_ZUM_SPRITES:
     LD B,8
 FZS_LOOP:
     LD A,(HL) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     INC HL
     DJNZ FZS_LOOP
     EI
@@ -6167,14 +6134,7 @@ FLUSH_BIGZUM_SPRITES:
     LD B,BIGZUM_SLOT_COUNT*16
 FBZS_LOOP:
     LD A,(HL) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     INC HL
     DJNZ FBZS_LOOP
     EI
@@ -6755,14 +6715,7 @@ FLUSH_FLYER_SPRITES:
     LD B,FLYER_SLOT_COUNT*16
 FFLS_LOOP:
     LD A,(HL) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     INC HL
     DJNZ FFLS_LOOP
     EI
@@ -7047,14 +7000,7 @@ FLUSH_ETANK_SPRITES:
     LD B,ETANK_SLOT_COUNT*8
 FETS_LOOP:
     LD A,(HL) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     INC HL
     DJNZ FETS_LOOP
     EI
@@ -7224,14 +7170,7 @@ FLUSH_BULLET_U_SPRITES:
     LD B,12
 FBUS_LOOP:
     LD A,(HL) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     INC HL
     DJNZ FBUS_LOOP
     EI
@@ -7598,41 +7537,13 @@ FBOS_LOOP:
     NOP
     NOP
     LD A,(HL) : OUT (98h),A : INC HL
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,(HL) : OUT (98h),A : INC HL
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,(HL) : OUT (98h),A : INC HL
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,(HL) : OUT (98h),A : INC HL
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     EI
     LD A,C : ADD A,4 : LD C,A
     DJNZ FBOS_LOOP
@@ -7658,14 +7569,7 @@ HBOS_LOOP:
     NOP
     NOP
     LD A,209 : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     EI
     LD A,C : ADD A,4 : LD C,A
     DJNZ HBOS_LOOP
@@ -8935,14 +8839,7 @@ FLUSH_HORMING_SPRITES:
     LD B,16
 FHS_LOOP:
     LD A,(HL) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     INC HL
     DJNZ FHS_LOOP
     EI
@@ -9242,14 +9139,7 @@ FLUSH_SBEAM_SPRITES:
     LD B,SBEAM_SLOT_COUNT*4
 FSS_LOOP:
     LD A,(HL) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     INC HL
     DJNZ FSS_LOOP
     EI

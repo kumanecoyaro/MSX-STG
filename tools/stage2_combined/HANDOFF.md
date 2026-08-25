@@ -2481,6 +2481,54 @@ Thunder activity) confirming it survives completely untouched.
 - Verified: full regression (`tests/run_all.py`) - see this round's own
   commit for the exact pass/fail count (both fixes combined).
 
+## Round 27: 98h VDP wait-state shrunk to 4 bytes/29T (was 8 bytes/32T) - PORT TO STAGE1 TOO
+
+- User feedback chain (verbatim): "Ok 問題ないようだ かなり予算削れた
+  はず 次に98hアクセスウェイト 現在Nopx８つだが これをサイズの小さい
+  ダミー命令に置き換える 最も小リスクなキーボード読み出しで読み捨てる
+  などで29Tに近くなる影響がほぼ無い命令の組み合わせで フラグ変化があ
+  る場合は周辺のチェック これでコードサイズが小さくなれば相対ジャンプ
+  等に置きかえられる可能性が高い" then, after the FIRST attempt (`PUSH
+  BC : POP BC : INC HL : DEC HL`, 33T) shipped: "33Tでは現状の32Tより
+  遅くなるじゃねえか 32Tでも3T無駄があるのに 目的は高速化だぞ" - a real
+  catch: 33T > the original 8-NOP block's own 32T, an actual regression
+  even though it did shrink the byte count. **This entry exists
+  specifically so this fix can also be ported to src/CYBER SHMUP.asm
+  once confirmed good here (same as Round26's own 2 fixes)** - do that
+  when asked, don't do it unprompted.
+- **Final fix**: all 20 `OUT (98h),A` sites' own 8-NOP delay (8 bytes,
+  32T) replaced with `PUSH BC : POP BC : NOP : NOP` (11+10+4+4=**29T
+  EXACTLY** - the true minimum per the user's own spec, 3T faster than
+  the original) in the same 4 bytes as the rejected first attempt.
+  `EX (SP),HL` (a denser single-opcode 19T/1-byte swap, 2 of them =
+  38T/2 bytes) was considered but isn't implemented in this project's
+  own `mini_z80asm.py`/`z80emu.py` toolchain, and would have been MORE
+  T-states anyway (38 vs 29) - moot either way. None of the 4 chosen
+  opcodes touch any Z80 flag (`PUSH`/`POP` never do, `NOP` obviously
+  doesn't); `PUSH BC`/`POP BC` nets to an exactly-restored `BC` value
+  via the stack round-trip, transparent to whatever the surrounding
+  code holds in either register. `PUSH`/`POP` specifically (not raw
+  `INC SP`/`DEC SP`) so a real NMI landing mid-sequence can't leave `SP`
+  pointing at a garbage slot - `PUSH`/`POP` always keeps the stack self-
+  consistent even if something interjects on top of it.
+- Verified: `tests/vdp_wait_test.py` rewritten (6 checks) - reads the
+  source directly for the exact NOP/instruction sequence at every one
+  of the 28 `OUT (99h)`/20 `OUT (98h)` sites, AND runs the real
+  assembled delay sequence through the actual emulator across 5
+  different starting `BC`/`HL`/flag states (including all-1s and all-
+  0s), asserting both the exact 29T cost and that `BC`/`HL`/every flag
+  bit come back bit-for-bit identical. Full regression (`tests/
+  run_all.py`): 621 passed, 0 failed.
+- The 20-site byte shrink (8->4 bytes each, 80 bytes total this round;
+  256 bytes total across Round26+27 combined - some of that delta is
+  `ALIGN 256` padding shifting nonlinearly with the surrounding code
+  size, not purely the raw instruction-byte savings) may open up JR
+  opportunities the user flagged ("これでコードサイズが小さくなれば相
+  対ジャンプ等に置きかえられる可能性が高い") - not separately audited
+  this round; `mini_z80asm.py`'s own real 8-bit-signed-offset range
+  check would simply fail the build if anything needed a JR that's
+  still out of range, so nothing here is silently broken either way.
+
 ## Open items / things to watch
 
 - **RAM addresses that need to persist across frames must stay clear of
