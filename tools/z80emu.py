@@ -164,18 +164,56 @@ class Z80:
         self.instr_count += 1
         op = self.fetch()
         if op == 0x00: self.tstates += 4; self.tstates_nop += 4  # NOP
-        elif op == 0x76:  # HALT
-            self.tstates += 4
-            self.halted = True
+        elif 0x40 <= op <= 0x7F and op != 0x76:  # LD r,r'/  LD r,(HL) / LD (HL),r
+            dst=(op>>3)&7; src=op&7
+            if dst==6:  # LD (HL),r
+                self.wr(self.hl(), self.getr8(src)); self.tstates += 7
+            elif src==6:  # LD r,(HL)
+                self.setr8(dst, self.rd(self.hl())); self.tstates += 7
+            else:
+                self.setr8(dst, self.getr8(src)); self.tstates += 4
+        elif op == 0xDD:
+            self.step_dd()
             return
-        elif op == 0xF3: self.iff1=False; self.tstates += 4  # DI
-        elif op == 0xFB: self.iff1=True; self.tstates += 4   # EI
-        elif op == 0xC9:  # RET
-            self.pc = self.pop(); self.tstates += 10
-        elif op in (0xC0,0xC8,0xD0,0xD8,0xE0,0xE8,0xF0,0xF8):  # RET cc
-            cc = (op>>3)&7
-            if self.check_cc(cc): self.pc = self.pop(); self.tstates += 11
-            else: self.tstates += 5
+        elif op == 0x3A:  # LD A,(nn)
+            addr=self.fetch16(); self.a=self.rd(addr)
+            self.tstates += 13
+        elif op == 0x10:  # DJNZ
+            d=self.fetch()
+            if d>127: d-=256
+            self.b=(self.b-1)&0xFF
+            if self.b!=0:
+                self.pc=(self.pc+d)&0xFFFF
+                self.tstates += 13
+            else:
+                self.tstates += 8
+        elif (op & 0xC7) == 0x06:  # LD r,n / LD (HL),n
+            dst=(op>>3)&7
+            n=self.fetch()
+            if dst==6: self.wr(self.hl(), n); self.tstates += 10
+            else: self.setr8(dst,n); self.tstates += 7
+        elif op in (0x03,0x13,0x23,0x33):  # INC rr
+            if op==0x03: self.setbc((self.bc()+1)&0xFFFF)
+            elif op==0x13: self.setde((self.de()+1)&0xFFFF)
+            elif op==0x23: self.sethl((self.hl()+1)&0xFFFF)
+            elif op==0x33: self.sp=(self.sp+1)&0xFFFF
+            self.tstates += 6
+        elif op == 0x1A: self.a=self.rd(self.de()); self.tstates += 7
+        elif op == 0xFD:
+            self.step_fd()
+            return
+        elif 0x80<=op<=0x87:  # ADD A,r/(HL)
+            r=op&7
+            v = self.rd(self.hl()) if r==6 else self.getr8(r)
+            res=self.a+v
+            self.f = (0x01 if res>0xFF else 0)
+            self.a = res&0xFF; self.setZ(self.a); self.setS(self.a)
+            self.tstates += 7 if r==6 else 4
+        elif op == 0x32:  # LD (nn),A
+            addr=self.fetch16(); self.wr(addr,self.a)
+            self.tstates += 13
+        elif op == 0xC5: self.push(self.bc()); self.tstates += 11; self.tstates_pushpop += 11
+        elif op == 0xC1: self.setbc(self.pop()); self.tstates += 10; self.tstates_pushpop += 10
         elif op == 0xCD:  # CALL nn
             target = self.fetch16()
             self.tstates += 17
@@ -184,6 +222,71 @@ class Z80:
             else:
                 self.push(self.pc)
                 self.pc = target
+        elif 0xB0<=op<=0xB7:  # OR r
+            r=op&7
+            v = self.rd(self.hl()) if r==6 else self.getr8(r)
+            self.a |= v; self.f=0; self.setZ(self.a); self.setS(self.a)
+            self.tstates += 7 if r==6 else 4
+        elif op == 0xD3:  # OUT (n),A
+            n=self.fetch()
+            self.vdp_out(n, self.a) if n in (0x98,0x99) else None
+            self.tstates += 11
+        elif op == 0xC9:  # RET
+            self.pc = self.pop(); self.tstates += 10
+        elif op in (0x20,0x28,0x30,0x38):
+            cc = {0x20:'NZ',0x28:'Z',0x30:'NC',0x38:'C'}[op]
+            d=self.fetch()
+            if d>127: d-=256
+            take = {'NZ': not (self.f&0x40), 'Z': bool(self.f&0x40), 'NC': not(self.f&0x01), 'C': bool(self.f&0x01)}[cc]
+            if take:
+                self.pc=(self.pc+d)&0xFFFF
+                self.tstates += 12
+            else:
+                self.tstates += 7
+        elif op == 0xFE:
+            n=self.fetch(); res=self.a-n
+            self.f=(0x01 if res<0 else 0)|0x02
+            self.setZ(res&0xFF); self.setS(res&0xFF)
+            self.tstates += 7
+        elif op in (0xC0,0xC8,0xD0,0xD8,0xE0,0xE8,0xF0,0xF8):  # RET cc
+            cc = (op>>3)&7
+            if self.check_cc(cc): self.pc = self.pop(); self.tstates += 11
+            else: self.tstates += 5
+        elif op in (0x01,0x11,0x21,0x31):  # LD rr,nn
+            n=self.fetch16()
+            if op==0x01: self.setbc(n)
+            elif op==0x11: self.setde(n)
+            elif op==0x21: self.sethl(n)
+            elif op==0x31: self.sp=n
+            self.tstates += 10
+        elif op == 0xC6:  # ADD A,n
+            n=self.fetch(); res=self.a+n
+            self.f = (0x01 if res>0xFF else 0)
+            self.a=res&0xFF; self.setZ(self.a); self.setS(self.a)
+            self.tstates += 7
+        elif op in (0x09,0x19,0x29,0x39):  # ADD HL,rr
+            src = {0x09:self.bc(),0x19:self.de(),0x29:self.hl(),0x39:self.sp}[op]
+            res = self.hl()+src
+            if res>0xFFFF: self.f|=0x01
+            else: self.f&=~0x01
+            self.sethl(res&0xFFFF)
+            self.tstates += 11
+        elif op == 0x18:  # JR
+            d = self.fetch();
+            if d>127: d-=256
+            self.pc = (self.pc+d)&0xFFFF
+            self.tstates += 12
+        elif op == 0xF3: self.iff1=False; self.tstates += 4  # DI
+        elif op == 0xFB: self.iff1=True; self.tstates += 4   # EI
+        elif op in (0xC2,0xCA,0xD2,0xDA,0xE2,0xEA,0xF2,0xFA):
+            cc=(op>>3)&7
+            target=self.fetch16()
+            self.tstates += 10
+            if self.check_cc(cc): self.pc=target
+        elif op == 0x76:  # HALT
+            self.tstates += 4
+            self.halted = True
+            return
         elif op in (0xC4,0xCC,0xD4,0xDC,0xE4,0xEC,0xF4,0xFC):
             cc=(op>>3)&7
             target=self.fetch16()
@@ -195,48 +298,13 @@ class Z80:
             self.pc = self.fetch16(); self.tstates += 10
         elif op == 0xE9:  # JP (HL)
             self.pc = self.hl(); self.tstates += 4
-        elif op in (0xC2,0xCA,0xD2,0xDA,0xE2,0xEA,0xF2,0xFA):
-            cc=(op>>3)&7
-            target=self.fetch16()
-            self.tstates += 10
-            if self.check_cc(cc): self.pc=target
-        elif op == 0x18:  # JR
-            d = self.fetch();
-            if d>127: d-=256
-            self.pc = (self.pc+d)&0xFFFF
-            self.tstates += 12
-        elif op in (0x20,0x28,0x30,0x38):
-            cc = {0x20:'NZ',0x28:'Z',0x30:'NC',0x38:'C'}[op]
-            d=self.fetch()
-            if d>127: d-=256
-            take = {'NZ': not (self.f&0x40), 'Z': bool(self.f&0x40), 'NC': not(self.f&0x01), 'C': bool(self.f&0x01)}[cc]
-            if take:
-                self.pc=(self.pc+d)&0xFFFF
-                self.tstates += 12
-            else:
-                self.tstates += 7
-        elif op == 0x10:  # DJNZ
-            d=self.fetch()
-            if d>127: d-=256
-            self.b=(self.b-1)&0xFF
-            if self.b!=0:
-                self.pc=(self.pc+d)&0xFFFF
-                self.tstates += 13
-            else:
-                self.tstates += 8
-        elif op == 0xD3:  # OUT (n),A
-            n=self.fetch()
-            self.vdp_out(n, self.a) if n in (0x98,0x99) else None
-            self.tstates += 11
         elif op == 0xDB:  # IN A,(n)
             n=self.fetch()
             self.a = self.vdp_in(n) if n in (0x98,0x99) else 0xFF
             self.tstates += 11
-        elif op == 0xC5: self.push(self.bc()); self.tstates += 11; self.tstates_pushpop += 11
         elif op == 0xD5: self.push(self.de()); self.tstates += 11; self.tstates_pushpop += 11
         elif op == 0xE5: self.push(self.hl()); self.tstates += 11; self.tstates_pushpop += 11
         elif op == 0xF5: self.push((self.a<<8)|self.f); self.tstates += 11; self.tstates_pushpop += 11
-        elif op == 0xC1: self.setbc(self.pop()); self.tstates += 10; self.tstates_pushpop += 10
         elif op == 0xD1: self.setde(self.pop()); self.tstates += 10; self.tstates_pushpop += 10
         elif op == 0xE1: self.sethl(self.pop()); self.tstates += 10; self.tstates_pushpop += 10
         elif op == 0xF1:
@@ -244,38 +312,12 @@ class Z80:
             self.tstates += 10; self.tstates_pushpop += 10
         elif op == 0xD9:  # EXX (not swapping shadow - unused in this code presumably)
             self.tstates += 4
-        elif op == 0xDD:
-            self.step_dd()
-            return
-        elif op == 0xFD:
-            self.step_fd()
-            return
         elif op == 0xED:
             self.step_ed()
             return
         elif op == 0xCB:
             self.step_cb()
             return
-        elif 0x40 <= op <= 0x7F and op != 0x76:  # LD r,r'/  LD r,(HL) / LD (HL),r
-            dst=(op>>3)&7; src=op&7
-            if dst==6:  # LD (HL),r
-                self.wr(self.hl(), self.getr8(src)); self.tstates += 7
-            elif src==6:  # LD r,(HL)
-                self.setr8(dst, self.rd(self.hl())); self.tstates += 7
-            else:
-                self.setr8(dst, self.getr8(src)); self.tstates += 4
-        elif (op & 0xC7) == 0x06:  # LD r,n / LD (HL),n
-            dst=(op>>3)&7
-            n=self.fetch()
-            if dst==6: self.wr(self.hl(), n); self.tstates += 10
-            else: self.setr8(dst,n); self.tstates += 7
-        elif op in (0x01,0x11,0x21,0x31):  # LD rr,nn
-            n=self.fetch16()
-            if op==0x01: self.setbc(n)
-            elif op==0x11: self.setde(n)
-            elif op==0x21: self.sethl(n)
-            elif op==0x31: self.sp=n
-            self.tstates += 10
         elif op == 0x2A:  # LD HL,(nn)
             addr=self.fetch16()
             self.l=self.rd(addr); self.h=self.rd(addr+1)
@@ -284,16 +326,9 @@ class Z80:
             addr=self.fetch16()
             self.wr(addr,self.l); self.wr(addr+1,self.h)
             self.tstates += 16
-        elif op == 0x32:  # LD (nn),A
-            addr=self.fetch16(); self.wr(addr,self.a)
-            self.tstates += 13
-        elif op == 0x3A:  # LD A,(nn)
-            addr=self.fetch16(); self.a=self.rd(addr)
-            self.tstates += 13
         elif op == 0x02: self.wr(self.bc(), self.a); self.tstates += 7
         elif op == 0x12: self.wr(self.de(), self.a); self.tstates += 7
         elif op == 0x0A: self.a=self.rd(self.bc()); self.tstates += 7
-        elif op == 0x1A: self.a=self.rd(self.de()); self.tstates += 7
         elif op == 0xF9: self.sp=self.hl(); self.tstates += 6
         elif op in (0x04,0x0C,0x14,0x1C,0x24,0x2C,0x3C):  # INC r
             r=(op>>3)&7
@@ -311,37 +346,12 @@ class Z80:
         elif op == 0x35:
             v=(self.rd(self.hl())-1)&0xFF; self.wr(self.hl(),v); self.setZ(v); self.setS(v)
             self.tstates += 11
-        elif op in (0x03,0x13,0x23,0x33):  # INC rr
-            if op==0x03: self.setbc((self.bc()+1)&0xFFFF)
-            elif op==0x13: self.setde((self.de()+1)&0xFFFF)
-            elif op==0x23: self.sethl((self.hl()+1)&0xFFFF)
-            elif op==0x33: self.sp=(self.sp+1)&0xFFFF
-            self.tstates += 6
         elif op in (0x0B,0x1B,0x2B,0x3B):
             if op==0x0B: self.setbc((self.bc()-1)&0xFFFF)
             elif op==0x1B: self.setde((self.de()-1)&0xFFFF)
             elif op==0x2B: self.sethl((self.hl()-1)&0xFFFF)
             elif op==0x3B: self.sp=(self.sp-1)&0xFFFF
             self.tstates += 6
-        elif op in (0x09,0x19,0x29,0x39):  # ADD HL,rr
-            src = {0x09:self.bc(),0x19:self.de(),0x29:self.hl(),0x39:self.sp}[op]
-            res = self.hl()+src
-            if res>0xFFFF: self.f|=0x01
-            else: self.f&=~0x01
-            self.sethl(res&0xFFFF)
-            self.tstates += 11
-        elif 0x80<=op<=0x87:  # ADD A,r/(HL)
-            r=op&7
-            v = self.rd(self.hl()) if r==6 else self.getr8(r)
-            res=self.a+v
-            self.f = (0x01 if res>0xFF else 0)
-            self.a = res&0xFF; self.setZ(self.a); self.setS(self.a)
-            self.tstates += 7 if r==6 else 4
-        elif op == 0xC6:  # ADD A,n
-            n=self.fetch(); res=self.a+n
-            self.f = (0x01 if res>0xFF else 0)
-            self.a=res&0xFF; self.setZ(self.a); self.setS(self.a)
-            self.tstates += 7
         elif 0x90<=op<=0x97:  # SUB r
             r=op&7
             v = self.rd(self.hl()) if r==6 else self.getr8(r)
@@ -370,11 +380,6 @@ class Z80:
         elif op == 0xEE:
             n=self.fetch(); self.a ^= n; self.f=0; self.setZ(self.a); self.setS(self.a)
             self.tstates += 7
-        elif 0xB0<=op<=0xB7:  # OR r
-            r=op&7
-            v = self.rd(self.hl()) if r==6 else self.getr8(r)
-            self.a |= v; self.f=0; self.setZ(self.a); self.setS(self.a)
-            self.tstates += 7 if r==6 else 4
         elif op == 0xF6:
             n=self.fetch(); self.a |= n; self.f=0; self.setZ(self.a); self.setS(self.a)
             self.tstates += 7
@@ -385,11 +390,6 @@ class Z80:
             self.f=(0x01 if res<0 else 0)|0x02
             self.setZ(res&0xFF); self.setS(res&0xFF)
             self.tstates += 7 if r==6 else 4
-        elif op == 0xFE:
-            n=self.fetch(); res=self.a-n
-            self.f=(0x01 if res<0 else 0)|0x02
-            self.setZ(res&0xFF); self.setS(res&0xFF)
-            self.tstates += 7
         elif op == 0x98:  # SBC A,B (also handles A,r via 0x98+r)
             self.tstates += 4
         elif 0x98<=op<=0x9F:  # SBC A,r
