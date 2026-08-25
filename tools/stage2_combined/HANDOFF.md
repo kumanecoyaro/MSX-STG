@@ -2931,6 +2931,164 @@ Thunder activity) confirming it survives completely untouched.
   changes - ask before merging/pushing there, same as every other round
   (a prior round's separate "merge everything to main" request doesn't
   carry forward to new work automatically).
+- Follow-up, same session: "そうだな 区切りだしMainへマージしてくれ" -
+  this round's changes (real stage2 integration + the real-hardware
+  confirmation above) WERE subsequently merged into `main` and pushed
+  (`68a295c..6ec867b`), same shallow-clone-unshallow-then-merge
+  procedure as Round29's own merge, tree verified identical to this
+  branch afterward (same 1 harmless pre-existing `MSX-STG` blank-file
+  exception as last time), both ROMs and `verify_comb.py` re-confirmed
+  on the merged `main` before pushing. The "NOT yet been merged" note
+  directly above is now stale as of this addendum - superseded, kept
+  for the record rather than edited away.
+
+## Round 31: boss death/explosion sequence (concentric BG circle + full-width line + final flash)
+
+- User instruction (verbatim): "ではステージ2に戻ってボスの続き 撃破の
+  際の爆発処理 まずボスがBG描画される右端で倒された場合はスプライトに
+  戻す 倒した位置のボス中心から 1セルを１ｐｘと見做してBGでホワイトの
+  塗りつぶしの円を描く 小さい円から半径48ｐｘの円に段々で塗りつぶす
+  当然クリッピングして画面内のみ描画 この時当然BGはボスの後ろに隠れて
+  しまうんでボスは点滅表示 その後円中心から左右に画面幅のBGラインを
+  引いてボス表示は終了 円を小さくして行き1セルになったら画面幅のライン
+  を消す 最後の1セルを120フレ点滅させ消滅 確認のためStage2を840Tick
+  スタートで ボスの耐久値3で". First checked the actual current state
+  rather than trusting this file's own "Open items" note (which claimed
+  "no collision box, no death/explosion state" - stale, predating work
+  from an earlier round this file's own Round list never explicitly
+  titled): `CHECK_HIT_PAIR_BOSS`/`CHPBOSS_DESTROY` already existed and
+  correctly set `BOSS_ACT=2` + called `HIDE_BOSS_SPRITES` on HP reaching
+  0, but `UPDATE_BOSS_ALL` then just `RET Z`'d forever after that - the
+  boss simply froze in place with no explosion at all, exactly the gap
+  described.
+- **Design decisions made without an explicit spec (flagged, not just
+  silently assumed)**: "1セルを1ｐｘと見做して" + "半径48ｐｘ" together
+  read as "run the circle algorithm at CELL resolution, target radius =
+  48px/8=6 cells" (not 48 CELLS, which would be larger than the whole
+  32-col screen) - confirmed sensible in scale against the boss's own
+  64x64px/8x8-cell footprint. Per-radius-step frame duration (6),
+  blink-cycle length (16, 8-on/8-off) for both the grow-phase boss-blink
+  and the final-cell flash, and the exact filled-circle rasterization
+  (dx^2+dy^2<=radius^2 at cell resolution) were none of them specified
+  numerically - reasonable, clearly-commented judgment calls, revisit if
+  the pacing/look reads wrong once seen in motion.
+- **Implementation** (`combined_test.asm`, all new code placed right
+  after `HIDE_BOSS_SPRITES`):
+  - `INIT_BOSS_EXPLOSION` (called once from `CHPBOSS_DESTROY`): if
+    `BOSS_PHASE=1` (parked in the attack pose, BG hand art on screen -
+    "ボスがBG描画される右端で倒された場合はスプライトに戻す"), erases
+    the hand art (`ERASE_SASAPI_HAND`) and resets `BOSS_PHASE=0` first.
+    Captures the boss's own center CELL (`BOSS_X/Y`+32, then /8) into
+    `BOSS_EXPL_CX/CY` while they still mean something - nothing updates
+    `BOSS_X/Y` again after this. Repurposes the now-permanently-retired
+    hand-art code range (`SASAPI_HAND_CODE_BASE`/group19 - safe exactly
+    because nothing re-enters `BOSS_PHASE=1` once `BOSS_ACT=2`) as the
+    explosion's own solid-white fill tile: reloads that one code's
+    pattern to all-`0FFh` and its color group to white/black once.
+  - `UPDATE_BOSS_EXPLOSION` (called every frame from `UPDATE_BOSS_ALL`
+    in place of the old `RET Z` once `BOSS_ACT=2`): a 4-state machine
+    (`BOSS_EXPL_STATE_GROW/_SHRINK/_FLASH/_DONE`).
+    - GROW: every `BOSS_EXPL_STEP_FRAMES`(6) frames, radius steps 0->6,
+      redrawing the full circle each step (`BOSS_EXPL_DRAW_CIRCLE`,
+      below). Every frame (not just on steps), the boss's own last-drawn
+      sprite attrs (frozen since `DRAW_BOSS` never runs again post-
+      death) blink via `FLUSH_BOSS_SPRITES`/`HIDE_BOSS_SPRITES` toggling
+      - no redraw needed, just whether the existing attrs get flushed.
+    - GROW->SHRINK transition (once radius has been at 6 for one more
+      full step): `HIDE_BOSS_SPRITES` for good (no more blinking from
+      here on), `BOSS_EXPL_DRAW_LINE` (fills the WHOLE row, 32 cols, not
+      just the ±6 box), switch to SHRINK.
+    - SHRINK: same per-step redraw, radius stepping 6->0. Once back at
+      0, `BOSS_EXPL_ERASE_LINE` (also whole-row) then switches to FLASH.
+    - FLASH: the single center cell only, toggling white/blank on the
+      same blink cadence, for `BOSS_EXPL_FINAL_FLASH_FRAMES`(120) frames
+      exactly as given, then erased for good and state->DONE (a
+      permanent no-op from then on).
+  - `BOSS_EXPL_DRAW_CIRCLE`: redraws the WHOLE (13x13, ±`BOSS_EXPL_MAXR`)
+    bounding box every time it's called (grow AND shrink both use it,
+    only the radius param differs) rather than tracking incremental
+    rings - simpler to get right, and cheap enough since this only runs
+    once per radius STEP (not every frame) for a rare one-time event.
+    Per-row/per-column screen clipping ("当然クリッピングして画面内の
+    み") is a single unsigned `CP 24`/`CP 32` + `JP NC` check each -
+    catches BOTH a negative-wrapped byte AND a genuine >=24/>=32 value
+    in one comparison, since valid cells are exactly 0-23/0-31 and
+    anything else is invalid either direction. Filled-circle membership
+    uses 2 small hand-written lookup tables (`BOSS_EXPL_ABSDY_TABLE`:
+    |offset| for loop-index 0-12; `BOSS_EXPL_HALFWIDTH_TABLE`: 7x7,
+    per-radius per-|dy| half-width, `floor(sqrt(r^2-dy^2))`) rather than
+    a *_gen.py-generated table - only 28 real values, small/fixed enough
+    to just write out by hand.
+  - **A real stack-safety regression caught by the existing test suite,
+    not by hand**: the first version of the new `BOSS_EXPL_*` RAM block
+    (11 named vars + a few working-storage bytes: a separate `ady` byte,
+    a cached 2-byte row-base address, a separate line-fill scratch byte)
+    ran F314h-F322h, and `tests/stack_safety_test.py` failed - the
+    highest-address var must leave >=0x60 bytes of headroom below
+    `STACKTOP`(F380h, see Round16's own real-hardware bug this test
+    exists to catch), and F322h was 2 bytes short. Fixed by trimming,
+    not moving: `ady` now lives in register C for its own brief
+    lifetime instead of RAM (computed once, consumed immediately, never
+    needed again - the column loop's own `adx` is a fresh table lookup,
+    not a reuse), and the row-base VRAM address is recomputed fresh per
+    column (`NIGHT_ROW_ADDR`) instead of cached - this isn't a per-frame
+    hot path, the extra calls cost nothing that matters. Final block:
+    F314h-F31Eh (11 bytes), passes with exactly 0x62 (98) bytes of
+    headroom.
+  - `tools/stage2_combined/tests/boss_explosion_test.py` (new, 44
+    checks): verifies against a filled-circle membership computed
+    **independently in Python** (`dx^2+dy^2<=radius^2`, clipped),
+    deliberately NOT by re-reading the ASM's own half-width table (that
+    would only prove the 2 copies agree with each other, not that
+    either is correct) - covers the BG-pose-death sprite reversion,
+    center-cell capture, every GROW/SHRINK radius step's full 13x13 box
+    against the independent computation, the boss-sprite blink
+    (verified via `BOSS_SPRITE_ATTRS`, the RAM buffer `FLUSH_BOSS_
+    SPRITES` actually reads from - an early version of the test poked
+    `cpu.vram`'s OAM side directly instead, which got silently
+    overwritten by the very first flush and produced a false failure,
+    see below), the line draw/erase, the exact 120-frame flash count
+    and blink, the permanent DONE no-op, and clipping at both screen
+    edges (plus confirming the row just outside the clipped box stays
+    genuinely untouched - the regression shape a negative-column write
+    wrapping into the wrong row would produce).
+  - **A real second bug this test caught** (not the RAM-layout one
+    above): `UBE_SHRINK_DONE` called `BOSS_EXPL_ERASE_LINE` (blanks the
+    WHOLE row uniformly) and only THEN switched to FLASH state - but the
+    center cell's own white was drawn on a PRIOR step (when radius first
+    reached 0), so the line-erase silently wiped it back out on the same
+    frame the sequence was supposed to hand off a still-white center
+    cell to FLASH. Fixed: erase the line, then explicitly redraw just
+    the center cell white (`BOSS_EXPL_WRITE_CENTER_CELL`) - order
+    matters, not just "make sure it's drawn somewhere".
+  - Also fixed a genuine test-side bug while chasing the first test
+    failure (not an ASM bug): the test's own `setup_boss()` helper
+    originally poked a plausible sprite Y directly into `cpu.vram`'s OAM
+    region to give the grow-phase blink something real to show - but
+    `FLUSH_BOSS_SPRITES` reads FROM the `BOSS_SPRITE_ATTRS` RAM buffer
+    and writes it out to VRAM, so that poke was invisible and got
+    silently clobbered by the very first flush call, producing a false
+    "boss sprite was shown at least once" failure that was actually a
+    test setup bug, not a real one - fixed by poking `BOSS_SPRITE_ATTRS`
+    (RAM) instead.
+  - Full regression after all fixes: **673 passed, 0 failed** (629
+    pre-existing + 44 new).
+- Verification build (per "確認のためStage2を840Tickスタートで ボスの
+  耐久値3で"): temporarily edited `combined_test.asm` directly (`GAME_
+  TICK` boot init 0->840, `BOSS_HP_INIT` 255->3, both clearly commented
+  "TEMPORARY...revert before committing"), built `CyberS S2.ascii16k.
+  rom`, sent it to the user, then reverted BOTH edits back to their real
+  values and rebuilt/re-ran the full suite (673/0 again) before doing
+  anything else - this file has no separate build-time patch layer the
+  way `bankswitch_poc/build_full_rom.py` has for `src/CYBER SHMUP.asm`,
+  so a real (temporary) edit-and-revert of the tracked source was the
+  only way to produce a quick-to-test verification build without
+  permanently changing the real boot tick/boss HP for every future
+  build. Not yet real-hardware confirmed as of this entry - emulator-
+  verified only (both the dedicated test and this verification ROM's
+  own construction).
+- Not yet committed as of writing this entry - staged for commit next
+  in this same round. Not yet merged to `main` - ask first, as always.
 
 ## Open items / things to watch
 
@@ -2965,11 +3123,16 @@ Thunder activity) confirming it survives completely untouched.
   horizontal-shot coloring, all resolved and verified (see README's
   most recent entries). The per-scanline flicker (see above) is a real
   hardware limit, not something fixed in code.
-- **The boss (Sasapi) has spawn+patrol movement (both facings, reloaded
-  on direction change) only** — HP is stored (255) but nothing reads or
-  decrements it, no collision box, no death/explosion state. Deliberate
-  scope so far ("取り敢えず確認") — don't assume any of it exists until
-  asked to add it.
+- **STALE as of Round31 - kept for the record, not deleted, but do not
+  trust this bullet's own claim:** this used to say the boss had only
+  spawn+patrol movement with no HP/collision/death handling. That's no
+  longer true: `CHECK_HIT_PAIR_BOSS` decrements real HP and destroys the
+  boss at 0 (some earlier round after this note was written, never
+  itself titled in the Round list - found by reading the actual code,
+  not this note, when Round31 started), and Round31 itself added the
+  full death/explosion sequence (`INIT_BOSS_EXPLOSION`/`UPDATE_BOSS_
+  EXPLOSION` - concentric BG circle, full-width line, final flash). See
+  Round31's own entry for the real current state.
 - `BOSS_SPAWN_Y`(56) was read as "the sprite's own bottom edge sits 8px
   above SkySand's top row" - an interpretation, not confirmed by a
   screenshot yet. If a future instruction implies a different vertical

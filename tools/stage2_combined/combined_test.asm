@@ -615,6 +615,41 @@ BOSS_COLOR      EQU 9       ; from sprites/Sasapi.json's own fg (light red)
 ; footprint, full AABB against BOSS_X/BOSS_SPAWN_Y (see CHECK_HIT_PAIR_
 ; BOSS) - not a smaller hitbox.
 BOSS_COLLISION_SIZE EQU 64
+
+; death/explosion sequence (see INIT_BOSS_EXPLOSION/UPDATE_BOSS_EXPLOSION
+; below) - "倒した位置のボス中心から...半径48ｐｘの円に段々で塗りつぶす
+; ...円を小さくして行き1セルになったら...最後の1セルを120フレ点滅させ
+; 消滅". The circle is rasterized at CELL (8px) resolution, not real
+; pixels - "1セルを1ｐｘと見做して" - so the algorithm's own radius unit
+; is cells, and the requested 48px target becomes 48/8=6 cells.
+BOSS_EXPL_MAXR EQU 6
+; frames held per radius step (grow AND shrink both use this) - not
+; specified by the instruction, a judgment call: 6 frames/step over 7
+; steps each way (radius 0->6->0) is ~1.4s total for the whole grow+
+; shrink, a deliberately slow/readable "ta-da" pace for a boss kill
+; rather than a fast enemy-death blip. Revisit if it reads as too slow/
+; fast once seen in motion.
+BOSS_EXPL_STEP_FRAMES EQU 6
+; blink cycle length (half on/half off) for both the boss-sprite blink
+; during growth and the final single-cell blink - also a judgment call,
+; not specified; 16 frames (8 on/8 off) is slow enough to read clearly
+; as "blinking" rather than a flicker/strobe.
+BOSS_EXPL_BLINK_PERIOD EQU 16
+BOSS_EXPL_FINAL_FLASH_FRAMES EQU 120   ; "最後の1セルを120フレ点滅させ消滅" - exact, given
+BOSS_EXPL_NONE EQU 0FFh   ; sentinel: "no white cells this row" in BOSS_EXPL_DRAW_CIRCLE
+; the attack-pose hand art (SASAPI_HAND_CODE_BASE, group19) is retired
+; for good the instant the boss dies (INIT_BOSS_EXPLOSION erases it/
+; resets BOSS_PHASE if it was showing - "ボスがBG描画される右端で倒され
+; た場合はスプライトに戻す" - and nothing ever re-enters BOSS_PHASE=1
+; once BOSS_ACT=2), so its own code range is safe to repurpose as the
+; explosion's solid-white fill tile instead of allocating a fresh one.
+BOSS_EXPL_WHITE_CODE EQU SASAPI_HAND_CODE_BASE
+BOSS_EXPL_WHITE_GROUP EQU 19
+BOSS_EXPL_WHITE_COLORBYTE EQU 0F1h   ; fg15 white/bg1 black - same convention as HUD_DIGIT_COLORBYTE
+BOSS_EXPL_STATE_GROW   EQU 0
+BOSS_EXPL_STATE_SHRINK EQU 1
+BOSS_EXPL_STATE_FLASH  EQU 2
+BOSS_EXPL_STATE_DONE   EQU 3
 ; "フラッシュ処理はホワイトだと眩しいのでレッドに ボス戦だけな 通常は
 ; ホワイトのままでいじるな" - a BOSS-ONLY override of the hit-flash
 ; color; the shared global FLASH_COLOR(white) every other entity uses
@@ -1629,6 +1664,27 @@ SBEAM_ROWS      EQU F310h   ; drop phase: how many vertical segments drawn so fa
 SBEAM_GROUND_Y  EQU F311h   ; drop phase target / sweep+retract's own fixed Y (pixel), computed once when the drop starts
 SBEAM_FRONT_COL EQU F312h   ; sweep/retract phase: the beam's own current leading-edge column (decreases while sweeping, increases while retracting)
 SBEAM_BLINK     EQU F313h   ; toggled every frame - "点滅で表示で 取り敢えず1フレ点滅で"
+
+; boss death/explosion sequence state - F314h-F31Eh (11 bytes), the free
+; gap right after SBEAM_BLINK. Kept deliberately lean (ady/row-base kept
+; in registers or recomputed instead of stored - see BOSS_EXPL_DRAW_
+; CIRCLE's own comments) so the highest byte used (F31Eh) still leaves
+; the STACK_SAFETY_MARGIN(0x60) `tests/stack_safety_test.py` requires
+; below STACKTOP(F380h) - a first version storing everything (ady/a
+; cached row-base address/a separate line-fill scratch byte, F314h-
+; F322h) failed that exact regression check by 2 bytes.
+BOSS_EXPL_STATE   EQU F314h   ; BOSS_EXPL_STATE_GROW/_SHRINK/_FLASH/_DONE
+BOSS_EXPL_RADIUS  EQU F315h   ; current circle radius, cells (0=just the center cell .. BOSS_EXPL_MAXR)
+BOSS_EXPL_TIMER   EQU F316h   ; frames until the next radius step (grow/shrink) or the final-flash countdown
+BOSS_EXPL_CX      EQU F317h   ; center cell column, captured once at death (BOSS_X stops being meaningful once hidden)
+BOSS_EXPL_CY      EQU F318h   ; center cell row, captured once at death
+BOSS_EXPL_BLINK   EQU F319h   ; 0..BOSS_EXPL_BLINK_PERIOD-1 cycling counter, boss-sprite blink (grow) and final-cell blink (flash)
+BOSS_EXPL_ROWIDX  EQU F31Ah   ; BOSS_EXPL_DRAW_CIRCLE's own row-loop index, 0..12 (dy+MAXR)
+BOSS_EXPL_COLIDX  EQU F31Bh   ; BOSS_EXPL_DRAW_CIRCLE's own col-loop index, 0..12 (dx+MAXR)
+BOSS_EXPL_ROWTMP  EQU F31Ch   ; BOSS_EXPL_DRAW_CIRCLE's own current absolute row (CY-MAXR+ROWIDX), unsigned-wraps if negative (caught by the same CP 24/JP NC clip as a real >=24 row)
+BOSS_EXPL_COLTMP  EQU F31Dh   ; same, current absolute column
+BOSS_EXPL_HW      EQU F31Eh   ; this row's half-width for the current radius (BOSS_EXPL_NONE if the row has no white cells at all)
+
 ; staging buffer for SBEAM_SLOT_COUNT*4 hw sprite slots (4 bytes each:
 ; Y,X,pattern,color), same shape as HORMING_SPRITE_ATTRS - flushed via
 ; FLUSH_SBEAM_SPRITES.
@@ -7240,13 +7296,16 @@ LOAD_SASAPI_PATTERNS:
 ; pattern data (see LOAD_SASAPI_PATTERNS's own comment) at spawn and at
 ; each reversal, never mid-step.
 UPDATE_BOSS_ALL:
-    ; BOSS_ACT=2 = destroyed by CHECK_HIT_PAIR_BOSS (HP reached 0) -
-    ; permanently gone, nothing left to spawn/move/draw. Checked before
-    ; the ACT!=0 check below, which would otherwise treat 2 the same as
-    ; 1 (active) and keep drawing/re-spawning it forever.
+    ; BOSS_ACT=2 = destroyed by CHECK_HIT_PAIR_BOSS (HP reached 0) - the
+    ; boss itself never spawns/moves/draws again, but the death/explosion
+    ; sequence (INIT_BOSS_EXPLOSION/UPDATE_BOSS_EXPLOSION - a separate
+    ; state machine keyed off BOSS_EXPL_STATE, not BOSS_ACT/BOSS_PHASE)
+    ; still needs a frame update. Checked before the ACT!=0 check below,
+    ; which would otherwise treat 2 the same as 1 (active) and keep
+    ; drawing/re-spawning the boss itself forever.
     LD A,(BOSS_ACT)
     CP 2
-    RET Z
+    JP Z,UPDATE_BOSS_EXPLOSION
     OR A
     JP NZ,UBA_ACTIVE
     LD HL,(GAME_TICK)
@@ -7584,6 +7643,325 @@ HBOS_LOOP:
     EI
     LD A,C : ADD A,4 : LD C,A
     DJNZ HBOS_LOOP
+    RET
+
+; solid-fill 8x8 tile (all bits set - every row 0FFh) loaded once into
+; BOSS_EXPL_WHITE_CODE's own pattern-table entry by INIT_BOSS_EXPLOSION,
+; below - the explosion's entire circle/line/final-cell art is just this
+; ONE tile placed at different name-table cells (color, not pattern,
+; is what makes it "white" - see BOSS_EXPL_WHITE_COLORBYTE).
+BOSS_EXPL_WHITE_PATTERN:
+    DB 0FFh,0FFh,0FFh,0FFh,0FFh,0FFh,0FFh,0FFh
+
+; |dy| (or |dx| - same table, both loop axes use it) for loop index
+; 0..12 representing an offset of -BOSS_EXPL_MAXR..+BOSS_EXPL_MAXR from
+; center: 6,5,4,3,2,1,0,1,2,3,4,5,6.
+BOSS_EXPL_ABSDY_TABLE:
+    DB 6,5,4,3,2,1,0,1,2,3,4,5,6
+
+; filled-circle half-width per (radius,|dy|), radius 0-6 (rows) x |dy|
+; 0-6 (columns), 7x7 - BOSS_EXPL_HALFWIDTH_TABLE+radius*7+|dy|. Only
+; ever read when |dy|<=radius (BOSS_EXPL_DRAW_CIRCLE checks that first
+; and uses BOSS_EXPL_NONE otherwise), so the trailing zeros past each
+; row's own radius aren't meaningful - just padding to keep every row a
+; fixed 7 bytes for simple radius*7 indexing. Computed directly (dx=
+; floor(sqrt(radius^2-dy^2)) for each dy 0..radius), not by a *_gen.py
+; script - small and fixed enough (28 real values) to just write out.
+BOSS_EXPL_HALFWIDTH_TABLE:
+    DB 0,0,0,0,0,0,0      ; radius=0
+    DB 1,0,0,0,0,0,0      ; radius=1
+    DB 2,1,0,0,0,0,0      ; radius=2
+    DB 3,2,2,0,0,0,0      ; radius=3
+    DB 4,3,3,2,0,0,0      ; radius=4
+    DB 5,4,4,4,3,0,0      ; radius=5
+    DB 6,5,5,5,4,3,0      ; radius=6
+
+; called once, the instant the boss is destroyed (from CHPBOSS_DESTROY,
+; right after HIDE_BOSS_SPRITES) - sets up everything the death/
+; explosion sequence needs and draws its very first frame (a 1-cell
+; circle at the boss's own center).
+;
+; "まずボスがBG描画される右端で倒された場合はスプライトに戻す" - if the
+; kill happened while parked in the attack pose (BOSS_PHASE=1, hand art
+; on screen, real sprite already hidden), erase that BG art and reset
+; BOSS_PHASE back to 0 first - the explosion's own boss-blink (below)
+; re-shows/hides the boss as a real hw sprite via FLUSH_BOSS_SPRITES/
+; HIDE_BOSS_SPRITES, which only makes sense once it's not still
+; "supposed to be" BG art.
+INIT_BOSS_EXPLOSION:
+    LD A,(BOSS_PHASE)
+    CP 1
+    JR NZ,IBE_NO_HAND
+    CALL ERASE_SASAPI_HAND
+    XOR A : LD (BOSS_PHASE),A
+IBE_NO_HAND:
+    ; "倒した位置のボス中心から" - capture the center CELL now, once,
+    ; while BOSS_X/BOSS_Y still mean something (nothing updates them
+    ; again after this - the boss itself is done moving for good).
+    ; BOSS_X/BOSS_Y are the 64x64 box's own top-left pixel; center is
+    ; +32,+32; pixel->cell is /8 - a 32-then-/8 is just a plain +32/>>3.
+    LD A,(BOSS_X) : ADD A,32 : SRL A : SRL A : SRL A : LD (BOSS_EXPL_CX),A
+    LD A,(BOSS_Y) : ADD A,32 : SRL A : SRL A : SRL A : LD (BOSS_EXPL_CY),A
+
+    ; one-time repurpose of the (now permanently retired) hand-art code
+    ; range - see BOSS_EXPL_WHITE_CODE's own comment for why this is safe.
+    DI
+    LD HL,BOSS_EXPL_WHITE_PATTERN : LD DE,BOSS_EXPL_WHITE_CODE*8 : LD BC,8 : CALL LDIRVM
+    EI
+    LD A,BOSS_EXPL_WHITE_COLORBYTE : LD (HUD_TEMP_BYTE),A
+    LD HL,HUD_TEMP_BYTE : LD DE,2000h+BOSS_EXPL_WHITE_GROUP : LD BC,1 : CALL LDIRVM
+
+    XOR A : LD (BOSS_EXPL_RADIUS),A
+    LD A,BOSS_EXPL_STATE_GROW : LD (BOSS_EXPL_STATE),A
+    LD A,BOSS_EXPL_STEP_FRAMES : LD (BOSS_EXPL_TIMER),A
+    XOR A : LD (BOSS_EXPL_BLINK),A
+    CALL BOSS_EXPL_DRAW_CIRCLE   ; radius=0 - just the center cell, drawn immediately
+    RET
+
+; per-frame update for the death/explosion sequence, called from
+; UPDATE_BOSS_ALL in place of DRAW_BOSS/FLUSH_BOSS_SPRITES once
+; BOSS_ACT=2. 4 states (BOSS_EXPL_STATE_GROW/_SHRINK/_FLASH/_DONE) - see
+; each state's own block below for what it does; DONE is a permanent
+; no-op (the whole sequence only ever runs once per boss).
+UPDATE_BOSS_EXPLOSION:
+    LD A,(BOSS_EXPL_STATE)
+    CP BOSS_EXPL_STATE_DONE
+    RET Z
+    CP BOSS_EXPL_STATE_GROW
+    JP Z,UBE_GROW
+    CP BOSS_EXPL_STATE_SHRINK
+    JP Z,UBE_SHRINK
+    JP UBE_FLASH
+
+; "この時当然BGはボスの後ろに隠れてしまうんでボスは点滅表示" - while the
+; circle grows, the boss's own last-drawn sprite (BOSS_SPRITE_ATTRS,
+; frozen since DRAW_BOSS never runs again post-death) blinks on/off via
+; FLUSH_BOSS_SPRITES/HIDE_BOSS_SPRITES - no redraw needed, just toggling
+; whether the existing attrs get flushed to hw OAM or not.
+UBE_GROW:
+    LD A,(BOSS_EXPL_BLINK) : INC A
+    CP BOSS_EXPL_BLINK_PERIOD
+    JR C,UBE_G_BLINK_NOWRAP
+    XOR A
+UBE_G_BLINK_NOWRAP:
+    LD (BOSS_EXPL_BLINK),A
+    CP BOSS_EXPL_BLINK_PERIOD/2
+    JR NC,UBE_G_BLINK_HIDE
+    CALL FLUSH_BOSS_SPRITES
+    JR UBE_G_BLINK_DONE
+UBE_G_BLINK_HIDE:
+    CALL HIDE_BOSS_SPRITES
+UBE_G_BLINK_DONE:
+
+    LD A,(BOSS_EXPL_TIMER) : DEC A : LD (BOSS_EXPL_TIMER),A
+    RET NZ
+    LD A,BOSS_EXPL_STEP_FRAMES : LD (BOSS_EXPL_TIMER),A
+
+    LD A,(BOSS_EXPL_RADIUS)
+    CP BOSS_EXPL_MAXR
+    JR NC,UBE_GROW_DONE
+    INC A : LD (BOSS_EXPL_RADIUS),A
+    CALL BOSS_EXPL_DRAW_CIRCLE
+    RET
+; "その後円中心から左右に画面幅のBGラインを引いてボス表示は終了" -
+; growth just reached its max radius: draw the full-width line, hide the
+; boss sprite for good (no more blinking - the explosion continues
+; without it from here on), and switch to shrinking.
+UBE_GROW_DONE:
+    CALL HIDE_BOSS_SPRITES
+    CALL BOSS_EXPL_DRAW_LINE
+    LD A,BOSS_EXPL_STATE_SHRINK : LD (BOSS_EXPL_STATE),A
+    LD A,BOSS_EXPL_STEP_FRAMES : LD (BOSS_EXPL_TIMER),A
+    RET
+
+; "円を小さくして行き1セルになったら画面幅のラインを消す" - same
+; per-step redraw as growth, just decrementing instead of incrementing;
+; once radius reaches 0 (the single center cell), erase the line and
+; move on to the final flash.
+UBE_SHRINK:
+    LD A,(BOSS_EXPL_TIMER) : DEC A : LD (BOSS_EXPL_TIMER),A
+    RET NZ
+    LD A,BOSS_EXPL_STEP_FRAMES : LD (BOSS_EXPL_TIMER),A
+
+    LD A,(BOSS_EXPL_RADIUS)
+    OR A
+    JR Z,UBE_SHRINK_DONE
+    DEC A : LD (BOSS_EXPL_RADIUS),A
+    CALL BOSS_EXPL_DRAW_CIRCLE
+    LD A,(BOSS_EXPL_RADIUS)
+    OR A
+    RET NZ
+UBE_SHRINK_DONE:
+    ; BOSS_EXPL_ERASE_LINE blanks the WHOLE row uniformly, including the
+    ; center cell that's supposed to survive into the flash (radius=0's
+    ; own circle draw already put it there, but that happened on a PRIOR
+    ; step - the erase here would otherwise silently take it right back
+    ; out on this same frame). Restore it explicitly, after the erase.
+    CALL BOSS_EXPL_ERASE_LINE
+    LD A,BOSS_EXPL_WHITE_CODE : CALL BOSS_EXPL_WRITE_CENTER_CELL
+    LD A,BOSS_EXPL_STATE_FLASH : LD (BOSS_EXPL_STATE),A
+    LD A,BOSS_EXPL_FINAL_FLASH_FRAMES : LD (BOSS_EXPL_TIMER),A
+    XOR A : LD (BOSS_EXPL_BLINK),A
+    RET
+
+; "最後の1セルを120フレ点滅させ消滅" - just the center cell, toggling
+; white/blank on the same BOSS_EXPL_BLINK_PERIOD cadence as the boss's
+; own grow-phase blink, for BOSS_EXPL_FINAL_FLASH_FRAMES frames total,
+; then erased for good and the whole sequence marked done.
+UBE_FLASH:
+    LD A,(BOSS_EXPL_BLINK) : INC A
+    CP BOSS_EXPL_BLINK_PERIOD
+    JR C,UBE_F_BLINK_NOWRAP
+    XOR A
+UBE_F_BLINK_NOWRAP:
+    LD (BOSS_EXPL_BLINK),A
+    LD B,BOSS_EXPL_WHITE_CODE
+    CP BOSS_EXPL_BLINK_PERIOD/2
+    JR C,UBE_F_HAVE_CODE
+    LD B,HUD_ROW_BLANK_CODE
+UBE_F_HAVE_CODE:
+    LD A,B
+    CALL BOSS_EXPL_WRITE_CENTER_CELL
+
+    LD A,(BOSS_EXPL_TIMER) : DEC A : LD (BOSS_EXPL_TIMER),A
+    RET NZ
+    LD A,HUD_ROW_BLANK_CODE : CALL BOSS_EXPL_WRITE_CENTER_CELL
+    LD A,BOSS_EXPL_STATE_DONE : LD (BOSS_EXPL_STATE),A
+    RET
+
+; writes A (a name-table code) to the single cell at (BOSS_EXPL_CX,
+; BOSS_EXPL_CY) - the final flash's own single-cell toggle, and also
+; BOSS_EXPL_DRAW_CIRCLE's own radius=0 case draws just this one cell
+; (so no special-casing needed there either).
+BOSS_EXPL_WRITE_CENTER_CELL:
+    LD (BULLET_TEMP_BYTE),A
+    LD A,(BOSS_EXPL_CY) : CALL NIGHT_ROW_ADDR
+    LD H,D : LD L,E
+    LD A,(BOSS_EXPL_CX) : LD E,A : LD D,0
+    ADD HL,DE
+    JP WRITE_BULLET_BYTE_HL
+
+; fills the WHOLE row (all 32 columns, not just the ±MAXR box) at
+; BOSS_EXPL_CY with A (a name-table code) - BOSS_EXPL_DRAW_LINE/
+; _ERASE_LINE below just set A and fall through here; "画面幅の" already
+; means every column, so unlike BOSS_EXPL_DRAW_CIRCLE this needs no
+; per-column clipping (0-31 is the whole valid range already). A is
+; stashed straight into BULLET_TEMP_BYTE (not a dedicated scratch byte -
+; see the BOSS_EXPL_* RAM block's own comment on staying lean) - nothing
+; else touches it for the rest of this loop, only reads it.
+BOSS_EXPL_FILL_LINE:
+    LD (BULLET_TEMP_BYTE),A
+    LD A,(BOSS_EXPL_CY) : CALL NIGHT_ROW_ADDR
+    LD H,D : LD L,E
+    LD B,32
+BEFL_LOOP:
+    PUSH HL
+    PUSH BC
+    CALL WRITE_BULLET_BYTE_HL
+    POP BC
+    POP HL
+    INC HL
+    DJNZ BEFL_LOOP
+    RET
+
+BOSS_EXPL_DRAW_LINE:
+    LD A,BOSS_EXPL_WHITE_CODE
+    JP BOSS_EXPL_FILL_LINE
+BOSS_EXPL_ERASE_LINE:
+    LD A,HUD_ROW_BLANK_CODE
+    JP BOSS_EXPL_FILL_LINE
+
+; redraws the whole (BOSS_EXPL_MAXR*2+1)^2 box (13x13) around
+; (BOSS_EXPL_CX,BOSS_EXPL_CY) for the CURRENT BOSS_EXPL_RADIUS - white
+; inside the filled disk (dx^2+dy^2<=radius^2, via the half-width
+; table), blank outside, each row/column independently clipped to the
+; real screen (0-23 rows, 0-31 cols) - "当然クリッピングして画面内のみ
+; 描画". Called once per radius STEP (grow and shrink both call this,
+; never every single frame) - always redraws the full box rather than
+; just the newly-added/removed ring, since the box is small (<=169
+; cells) and this is a rare one-time event, not a per-frame hot path;
+; much simpler to get right than incremental ring-only updates.
+BOSS_EXPL_DRAW_CIRCLE:
+    XOR A : LD (BOSS_EXPL_ROWIDX),A
+    LD A,(BOSS_EXPL_CY) : SUB BOSS_EXPL_MAXR : LD (BOSS_EXPL_ROWTMP),A
+BEDC_ROWLOOP:
+    ; off-screen row - either wrapped negative (256-N, N=how far below 0)
+    ; or genuinely >=24; either way this single unsigned check catches
+    ; both directions of clipping at once.
+    LD A,(BOSS_EXPL_ROWTMP)
+    CP 24
+    JP NC,BEDC_ROW_SKIP
+
+    ; ady kept in C (register-only, no RAM byte) - read once here, used
+    ; immediately below for the hw lookup, never needed again afterward
+    ; (the column loop's own adx is a fresh lookup by COLIDX, not this).
+    LD HL,BOSS_EXPL_ABSDY_TABLE
+    LD A,(BOSS_EXPL_ROWIDX) : LD E,A : LD D,0
+    ADD HL,DE
+    LD A,(HL) : LD C,A
+
+    LD A,(BOSS_EXPL_RADIUS) : LD B,A
+    LD A,C
+    CP B
+    JR Z,BEDC_HW_OK
+    JR C,BEDC_HW_OK
+    LD A,BOSS_EXPL_NONE : LD (BOSS_EXPL_HW),A
+    JR BEDC_HW_DONE
+BEDC_HW_OK:
+    LD A,B : ADD A,A : ADD A,A : ADD A,A : SUB B   ; A = radius*7
+    LD E,A : LD D,0
+    LD HL,BOSS_EXPL_HALFWIDTH_TABLE
+    ADD HL,DE
+    LD A,C : LD E,A : LD D,0
+    ADD HL,DE
+    LD A,(HL) : LD (BOSS_EXPL_HW),A
+BEDC_HW_DONE:
+
+    XOR A : LD (BOSS_EXPL_COLIDX),A
+    LD A,(BOSS_EXPL_CX) : SUB BOSS_EXPL_MAXR : LD (BOSS_EXPL_COLTMP),A
+BEDC_COLLOOP:
+    LD A,(BOSS_EXPL_COLTMP)
+    CP 32
+    JR NC,BEDC_COL_SKIP
+
+    LD HL,BOSS_EXPL_ABSDY_TABLE
+    LD A,(BOSS_EXPL_COLIDX) : LD E,A : LD D,0
+    ADD HL,DE
+    LD A,(HL) : LD B,A
+
+    LD A,(BOSS_EXPL_HW)
+    CP BOSS_EXPL_NONE
+    JR Z,BEDC_COL_BLANK
+    CP B
+    JR C,BEDC_COL_BLANK
+    LD A,BOSS_EXPL_WHITE_CODE
+    JR BEDC_COL_GO
+BEDC_COL_BLANK:
+    LD A,HUD_ROW_BLANK_CODE
+BEDC_COL_GO:
+    ; recomputes the row's own base address fresh for every column
+    ; instead of caching it (see the BOSS_EXPL_* RAM block's own comment
+    ; on staying lean) - this isn't a per-frame hot path (called once per
+    ; radius step, not every frame), so the extra NIGHT_ROW_ADDR calls
+    ; cost nothing that matters.
+    LD (BULLET_TEMP_BYTE),A
+    LD A,(BOSS_EXPL_ROWTMP) : CALL NIGHT_ROW_ADDR
+    LD H,D : LD L,E
+    LD A,(BOSS_EXPL_COLTMP) : LD E,A : LD D,0
+    ADD HL,DE
+    CALL WRITE_BULLET_BYTE_HL
+
+BEDC_COL_SKIP:
+    LD A,(BOSS_EXPL_COLTMP) : INC A : LD (BOSS_EXPL_COLTMP),A
+    LD A,(BOSS_EXPL_COLIDX) : INC A : LD (BOSS_EXPL_COLIDX),A
+    CP 13
+    JP NZ,BEDC_COLLOOP
+
+BEDC_ROW_SKIP:
+    LD A,(BOSS_EXPL_ROWTMP) : INC A : LD (BOSS_EXPL_ROWTMP),A
+    LD A,(BOSS_EXPL_ROWIDX) : INC A : LD (BOSS_EXPL_ROWIDX),A
+    CP 13
+    JP NZ,BEDC_ROWLOOP
     RET
 
 ; the 8x8 grid of hand-art name-table codes (SASAPI_HAND_CODE_BASE..
@@ -9202,6 +9580,7 @@ CHECK_HIT_PAIR_BOSS:
 CHPBOSS_DESTROY:
     LD A,2 : LD (BOSS_ACT),A
     CALL HIDE_BOSS_SPRITES
+    CALL INIT_BOSS_EXPLOSION
     RET
 
 ; walks CLOUD_POOL (IX-indexed, 9x INC IX per slot - this assembler has
