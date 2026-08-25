@@ -3743,6 +3743,73 @@ Thunder activity) confirming it survives completely untouched.
   `git diff` afterward) sent to the user. Not yet real-hardware/audio
   confirmed as of this entry.
 
+### Round 32 follow-up #7: SPARK crackle to max volume + duty-cycle ported to Stage1 + first "Comb" delivery
+
+- User instruction (verbatim): "スパーク爆発も音量最大か? でなければ
+  最大に ステージ1もデューティ比操作を適用 ステージ2は一旦Tick0スタート
+  適用 その後 両方のROMくれ".
+- **SPARK crackle volume**: `SPARK_CRACKLE_PEAK` was 8, not the PSG's
+  real max (15, register8's own 4-bit volume field) - bumped to 15,
+  same fix shape as the circle boom's own earlier volume round. Decay
+  rate left untouched (only volume was in scope) - a peak-15/decay-3
+  crackle now takes ~5 steps to fully decay instead of ~3, so
+  consecutive crackles (every `SPARK_CRACKLE_PERIOD`=4 frames) overlap
+  slightly more than before; not a bug, just a busier texture.
+- **Stage1 port** (`src/CYBER SHMUP.asm`, first time this session
+  touches this file instead of `tools/stage2_combined/combined_test.
+  asm`) - "ステージ1もデューティ比操作を適用". Investigated first (see
+  the research agent's own report in this round's own session log if
+  needed): Stage1 wires the AY-3-8910 mixer ONCE at `INIT` (channel A =
+  noise-only forever, channels B/C = tone-only forever) - unlike
+  Stage2's shared/time-shared channel A, no sound here ever touches PSG
+  register 7 again, so a per-sound `SND_NOISE` flag isn't needed at
+  all: gating channel A's own R8 write is sufficient and automatically
+  covers every noise sound in this file (`SOUND_DESTROY`, and the
+  inline "engine rumble" effect that re-arms the same `SND_TIMER`/
+  channel A every frame while `PLAYER_FLYAWAY=1`). New `CALC_NOISE_
+  GATE_VOLUME` (same shape as Stage2's own `SOUND_CALC_NOISE_GATE_
+  VOLUME`, kept standalone/side-effect-free for testability) reads
+  Stage1's own `TICK` (a direct architectural twin of Stage2's `TICK` -
+  same idiom, different address, incremented unconditionally at the
+  very top of `MAINLOOP` every frame) for the toggle. Zero new RAM (no
+  flag byte needed, per above) - Stage1 has 423 free bytes below
+  `STACKTOP` regardless, no budget pressure the way Stage2's file has.
+  Channels B/C (`SOUND_SHOT`/`SOUND_POD_HIT`/`SOUND_POD_FIRE`, always
+  tone) untouched, same reasoning as Stage2 excluding its own tone-based
+  deflect ping.
+- Stage1 has no automated regression suite (unlike Stage2's 629+-check
+  `tests/run_all.py`) - just standalone `tools/verify_*.py` scripts, one
+  per historical fix, each independently assembling the real file and
+  running emulator-level checks. New `tools/verify_sound_duty_cycle.py`
+  (44 checks) added in that same style: `CALC_NOISE_GATE_VOLUME`
+  exercised directly across a `SND_TIMER`/`TICK` matrix against an
+  independently-derived expected table; confirms `SOUND_DESTROY`'s own
+  `SND_TIMER` still decays by exactly 1/frame through `SOUND_UPDATE`
+  regardless of the write-side gating; confirms channels B/C's own
+  `SND_TIMER_B`/`SND_TIMER_C` decay completely independently of `TICK`'s
+  parity, proving the gate really is scoped to channel A only. (One
+  pre-existing, unrelated `tools/verify_idcache_multiframe.py` failure
+  - `KeyError: 'ROWDATA1'` - confirmed via `git stash` to predate this
+  round's edits entirely; not investigated further, out of scope here.)
+- **First delivery of the real "Comb" build this round** (`rom/CyberS
+  Comb.ascii16k.rom`, via `tools/bankswitch_poc/build_full_rom.py` +
+  `verify_comb.py` - both passed clean) alongside the Stage2-only test
+  ROM - "その後 両方のROMくれ". The Stage2 ROM was rebuilt with NO
+  temporary debug overrides this time ("ステージ2は一旦Tick0スタート
+  適用" - `GAME_TICK` starts at its own real 0, `BOSS_HP_INIT` stays
+  255), unlike every prior verification ROM this whole feature's
+  development used a temporary 840/3 override for - since a `Comb` build
+  can't sensibly use Stage2-only debug overrides anyway (it boots
+  through the real Stage1 first), this ROM pair is the first time this
+  round shipped something closer to genuinely "production" state for
+  the user to actually play through, not just inspect a single forced
+  scenario.
+- Full Stage2 regression: **765 passed, 0 failed** (unchanged from the
+  previous round - `SPARK_CRACKLE_PEAK` reads its own new value
+  symbolically in every test, no test edits needed). Stage1's own new
+  `verify_sound_duty_cycle.py`: **44 passed, 0 failed**. Not yet real-
+  hardware/audio confirmed as of this entry.
+
 ## Open items / things to watch
 
 - **RAM addresses that need to persist across frames must stay clear of

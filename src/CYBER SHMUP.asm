@@ -2751,10 +2751,27 @@ WAC_SKIPBUF:
     RET
 
 ; PSG (AY-3-8910-compatible) sound effects: channel A = noise-only
-; (destroy "boom"), channel C = tone-only (shot "chun" blip), both
-; enabled once at INIT. SND_TIMER/SND_TIMER_C double as both the
-; frame countdown and that channel's volume (0-15), so each sound
-; fades out on its own as it counts down to 0.
+; (destroy "boom", and the engine rumble below), channel B = tone-only
+; (pod-fire "don"), channel C = tone-only (shot "chun" blip), all 3
+; fixed for good by ONE mixer write at INIT (0B1h) - no sound routine
+; here ever touches PSG register 7 again, unlike Stage2's own shared/
+; time-shared channel A. SND_TIMER/SND_TIMER_B/SND_TIMER_C double as
+; both the frame countdown and that channel's volume (0-15), so each
+; sound fades out on its own as it counts down to 0.
+;
+; round32 (ported from Stage2 - "ステージ1もデューティ比操作を適用"):
+; channel A's own R8 volume write in SOUND_UPDATE below alternates
+; every single frame between the current envelope and silence, using
+; TICK's own low bit (free-running, unconditionally incremented every
+; frame right at the top of MAINLOOP - see its own comment there) as
+; the toggle, same "デューティ比1:1で減衰しながらボリューム半分か
+; OFFをまぜてくれ そうすればブリブリって音になるはず" idea Stage2's
+; own SOUND_CALC_NOISE_GATE_VOLUME implements, just simpler here since
+; channel A is ALWAYS noise in this file (no per-sound "is this noise"
+; flag needed the way Stage2's shared channel required - see that
+; file's own SND_NOISE byte). Channels B/C (always tone) are
+; deliberately left ungated, same reasoning as Stage2 excluding its own
+; tone-based "kin-kin" deflect ping.
 SOUND_SHOT:
     LD A,4 : OUT (PSG_ADDR),A
     LD A,30 : OUT (PSG_DATA),A    ; channel C tone period -> bright "chun" pitch
@@ -2785,10 +2802,26 @@ SOUND_POD_FIRE:
     LD A,2 : OUT (PSG_DATA),A     ; coarse byte -> period=756, much lower "don"
     LD A,15 : LD (SND_TIMER_B),A
     RET
-SOUND_UPDATE:
+; out: A = this frame's channel-A output volume - duty-cycle gated
+; (silent if TICK's own low bit is set, else the raw SND_TIMER
+; envelope). Pure function, no side effects (doesn't touch the PSG or
+; step SND_TIMER itself) - kept standalone specifically so it's
+; directly testable without needing to observe an actual PSG register
+; write (z80emu.py has no PSG emulation at all, same reasoning as
+; Stage2's own SOUND_CALC_NOISE_GATE_VOLUME).
+CALC_NOISE_GATE_VOLUME:
+    LD A,(TICK) : AND 1
+    JR NZ,CNGV_SILENT
     LD A,(SND_TIMER)
+    RET
+CNGV_SILENT:
+    XOR A
+    RET
+
+SOUND_UPDATE:
+    CALL CALC_NOISE_GATE_VOLUME
     LD B,A
-    LD A,8 : OUT (PSG_ADDR),A     ; R8 = channel A volume
+    LD A,8 : OUT (PSG_ADDR),A     ; R8 = channel A volume (duty-cycle gated)
     LD A,B : OUT (PSG_DATA),A
     LD A,(SND_TIMER)
     OR A

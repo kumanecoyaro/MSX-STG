@@ -965,7 +965,7 @@ BOSS_BOOM_DECAY_PERIOD EQU 5
 ; the way the boom itself is.
 SPARK_CRACKLE_PERIOD EQU 4   ; must be a power of 2 - UBE_SPARK's own trigger check ANDs BOSS_EXPL_TIMER against this-1
 SPARK_CRACKLE_NOISE_PERIOD EQU 14
-SPARK_CRACKLE_PEAK EQU 8
+SPARK_CRACKLE_PEAK EQU 15   ; round32 follow-up: "スパーク爆発も音量最大か? でなければ最大に" - was 8, now the PSG's own real hardware max (register8's volume field is 4 bits/16 steps, same as every other sound's own peak here)
 SPARK_CRACKLE_DECAY EQU 3
 
 ; ---------- enemy (ZacoII) ----------
