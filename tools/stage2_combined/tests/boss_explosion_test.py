@@ -51,6 +51,7 @@ BOSS_EXPL_TIMER = sym["BOSS_EXPL_TIMER"]
 BOSS_EXPL_CX = sym["BOSS_EXPL_CX"]
 BOSS_EXPL_CY = sym["BOSS_EXPL_CY"]
 BOSS_EXPL_BLINK = sym["BOSS_EXPL_BLINK"]
+STATE_SPARK = sym["BOSS_EXPL_STATE_SPARK"]
 STATE_GROW = sym["BOSS_EXPL_STATE_GROW"]
 STATE_SHRINK = sym["BOSS_EXPL_STATE_SHRINK"]
 STATE_FLASH = sym["BOSS_EXPL_STATE_FLASH"]
@@ -60,6 +61,37 @@ STEP_FRAMES = sym["BOSS_EXPL_STEP_FRAMES"]
 BLINK_PERIOD = sym["BOSS_EXPL_BLINK_PERIOD"]
 FINAL_FLASH_FRAMES = sym["BOSS_EXPL_FINAL_FLASH_FRAMES"]
 WHITE_CODE = sym["BOSS_EXPL_WHITE_CODE"]
+SPARK_RANGE = sym["BOSS_EXPL_SPARK_RANGE"]
+SPARK_DURATION = sym["BOSS_EXPL_SPARK_DURATION"]
+SPARK_PER_FRAME = sym["BOSS_EXPL_SPARK_PER_FRAME"]
+SPARK_CODE = sym["BOSS_EXPL_SPARK_CODE"]
+
+
+def run_spark_phase(cpu, cx, cy):
+    """Fast-forwards through the whole SPARK phase ("ステージ1ボスのよう
+    な爆発エフェクトをボスの範囲でランダムに...3秒くらい") one frame at a
+    time, recording which cells (within the legal scatter box) ever showed
+    the spark tile - used both to verify the scatter itself and so callers
+    can resume testing the existing GROW/SHRINK/FLASH sequence afterward
+    exactly as before (SPARK now always runs first)."""
+    spark_seen = set()
+    per_frame_counts = []
+    for _ in range(SPARK_DURATION):
+        call_routine(cpu, "UPDATE_BOSS_EXPLOSION")
+        count = 0
+        for dy in range(-SPARK_RANGE, SPARK_RANGE):
+            row = cy + dy
+            if not (0 <= row <= 23):
+                continue
+            for dx in range(-SPARK_RANGE, SPARK_RANGE):
+                col = cx + dx
+                if not (0 <= col <= 31):
+                    continue
+                if cpu.vram[cell_addr(col, row)] == SPARK_CODE:
+                    count += 1
+                    spark_seen.add((col, row))
+        per_frame_counts.append(count)
+    return spark_seen, per_frame_counts
 
 SAT_BASE = 0x1B00
 NAME_BASE = 0x1800
@@ -203,8 +235,8 @@ check("BOSS_PHASE reverted to 0 (sprite mode) after dying mid-pose",
       cpu.mem[BOSS_PHASE] == 0)
 check("hand art erased (name-table cell back to HUD_ROW_BLANK_CODE)",
       cpu.vram[0x18F8] == HUD_ROW_BLANK_CODE)
-check("explosion sequence started (state=GROW) even from the BG-pose death",
-      cpu.mem[BOSS_EXPL_STATE] == STATE_GROW)
+check("explosion sequence started (state=SPARK) even from the BG-pose death",
+      cpu.mem[BOSS_EXPL_STATE] == STATE_SPARK)
 
 # ---------------------------------------------------------------------
 # 2: center-cell capture - "倒した位置のボス中心から"
@@ -217,10 +249,58 @@ expected_cy = (BOSS_SPAWN_Y + 32) // 8
 check(f"BOSS_EXPL_CX captured correctly ({expected_cx})", cpu.mem[BOSS_EXPL_CX] == expected_cx)
 check(f"BOSS_EXPL_CY captured correctly ({expected_cy})", cpu.mem[BOSS_EXPL_CY] == expected_cy)
 check("BOSS_ACT=2 (destroyed)", cpu.mem[BOSS_ACT] == 2)
-check("radius starts at 0 (just the center cell)", cpu.mem[BOSS_EXPL_RADIUS] == 0)
-check("initial 1-cell circle already drawn", cpu.vram[cell_addr(expected_cx, expected_cy)] == WHITE_CODE)
+check("state is SPARK immediately after destruction (burst plays before the circle)",
+      cpu.mem[BOSS_EXPL_STATE] == STATE_SPARK)
+check("radius starts at 0 (just the center cell, used later once GROW begins)",
+      cpu.mem[BOSS_EXPL_RADIUS] == 0)
+check("circle not drawn yet - SPARK runs first",
+      cpu.vram[cell_addr(expected_cx, expected_cy)] != WHITE_CODE)
 
 CX, CY = expected_cx, expected_cy  # comfortably clear of every screen edge at max radius
+
+# ---------------------------------------------------------------------
+# 2b: SPARK burst itself - "ステージ1ボスのような爆発エフェクトをボスの
+# 範囲でランダムに...ボスの範囲から外側に4セルランダムにエフェクトを飛ば
+# してくれ ウェイトなしで派手に沢山 3秒くらい"
+# ---------------------------------------------------------------------
+spark_seen, per_frame_counts = run_spark_phase(cpu, CX, CY)
+
+legal_spark_cells = set()
+for dy in range(-SPARK_RANGE, SPARK_RANGE):
+    row = CY + dy
+    if not (0 <= row <= 23):
+        continue
+    for dx in range(-SPARK_RANGE, SPARK_RANGE):
+        col = CX + dx
+        if not (0 <= col <= 31):
+            continue
+        legal_spark_cells.add((col, row))
+
+check(f"every spark landed inside the CX/CY +/-{SPARK_RANGE} scatter box "
+      "(boss range plus the outward reach), none outside it",
+      spark_seen <= legal_spark_cells)
+check("sparks genuinely scattered across a meaningfully large area (not stuck on "
+      "one or two cells)", len(spark_seen) >= 16)
+check(f"multiple sparks appear every frame with no gating wait "
+      f"({SPARK_PER_FRAME}/frame, none) - except the very last frame, where the "
+      "SPARK->GROW handoff legitimately wipes the scatter area clean before GROW's "
+      "own ring(0) draws",
+      all(c >= 1 for c in per_frame_counts[:-1]) and per_frame_counts[-1] == 0)
+check(f"SPARK phase lasts exactly {SPARK_DURATION} frames then hands off to GROW",
+      cpu.mem[BOSS_EXPL_STATE] == STATE_GROW)
+check("SPARK cleanup restored the whole scattered area to the correct real "
+      "background (no leftover spark tiles once GROW begins)",
+      all(cpu.vram[cell_addr(c, r)] == expected_bg_code(r, NIGHT_END_ROW)
+          for (c, r) in legal_spark_cells if (c, r) != (CX, CY)))
+
+# ---------------------------------------------------------------------
+# 2c: SPARK has completed - the original GROW-entry geometry picks up
+# exactly as before ("倒した位置のボス中心から...円を...")
+# ---------------------------------------------------------------------
+check("radius still at 0 right as GROW begins (just the center cell)",
+      cpu.mem[BOSS_EXPL_RADIUS] == 0)
+check("initial 1-cell circle already drawn now that GROW has begun",
+      cpu.vram[cell_addr(CX, CY)] == WHITE_CODE)
 
 
 # ---------------------------------------------------------------------
@@ -364,6 +444,9 @@ for edge_name, edge_x in (("left", 0), ("right", BOSS_SPAWNX)):
     setup_boss(cpu, x=edge_x, y=BOSS_SPAWN_Y, phase=0)
     call_routine(cpu, "CHPBOSS_DESTROY")
     cx, cy = cpu.mem[BOSS_EXPL_CX], cpu.mem[BOSS_EXPL_CY]
+    run_spark_phase(cpu, cx, cy)  # SPARK always runs first now; get past it to GROW
+    check(f"clip-{edge_name}: GROW reached after the SPARK burst",
+          cpu.mem[BOSS_EXPL_STATE] == STATE_GROW)
     # drive all the way to max radius - the widest clipping test - without
     # asserting on every intermediate step (already covered above).
     for _ in range(STEP_FRAMES * MAXR):

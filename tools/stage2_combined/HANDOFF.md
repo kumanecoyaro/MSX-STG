@@ -3236,6 +3236,128 @@ Thunder activity) confirming it survives completely untouched.
     build-send-revert procedure, confirmed reverted again afterward)
     sent to the user. Not yet real-hardware confirmed as of this entry.
 
+## Round 32: SPARK burst effect prepended to the boss explosion (Stage1-boss-style random scatter, BG-drawn)
+
+- User instruction (verbatim): "円描画中に変なブラックのパターンが見えて
+  るが 最終は変わらないんで大きな問題ではないが で今は描画にウェイト
+  入ってるのか? まあタイミングはこんなもんで良いんだが では今の処理の
+  前に ステージ1ボスのような爆発エフェクトを ボスの範囲でランダムに
+  ただスプライトで描画すると消えてしまうんでBGで 裏になるが近い色なので
+  見た目は気にならないはず で、ボスの範囲から外側に4セルランダムに
+  エフェクトを飛ばしてくれ ウェイトなしで派手に沢山 3秒くらい そのご
+  今の爆発に". The black-pattern flicker and the current per-step wait
+  were both explicitly flagged as non-issues by the user (informational
+  answer only, no fix requested) - not touched this round. The real ask:
+  a NEW phase, prepended before the existing circle/line sequence, that
+  scatters random spark tiles across the boss's own footprint plus a
+  4-cell outward margin, BG-drawn (not sprite - sprites vanish once the
+  boss's own sprite is hidden/blinking; a BG tile drawn "behind" reads
+  fine since Sasapi's own palette is close enough in color that the
+  layering isn't visually jarring), no per-spawn wait ("ウェイトなし"),
+  many at once ("派手に沢山"), for about 3 seconds (180 frames @ 60fps).
+- Investigated Stage1's own boss explosion (`src/CYBER SHMUP.asm`,
+  read-only reference) for the intended style: `BOSS_EXPL_*` there pops
+  one BOSS_MAP cell every 2 frames in a FIXED precomputed LUT order (not
+  random), each pop firing a small reused-pod-explosion SPRITE + a noise
+  SOUND_DESTROY. Stylistic inspiration only - Stage2's own version needed
+  BG (not sprite) and genuinely RANDOM (not fixed-order) placement per
+  the instruction above, so this was a fresh design, not a port.
+- **Design decisions without an explicit spec**: spawn count per frame
+  (3, "派手に沢山"), scatter box size (boss footprint +/-8 cells from
+  center, comfortably covering "ボスの範囲" + "外側に4セル" with margin),
+  spark tile art (`EXPLOSION_PATTERN`'s own top-left 8x8 quadrant, reused
+  rather than drawing new art), duration (180 frames = 3s @ 60fps, exact
+  per the instruction) - all reasonable, commented judgment calls.
+- **Implementation** (`combined_test.asm`) - deliberately added ZERO new
+  RAM bytes (stack-safety headroom below `STACKTOP` is already tight per
+  Round16/31's own history) by reusing `BOSS_EXPL_TIMER` as the SPARK
+  phase's own countdown and `BOSS_EXPL_BLINK` as its own decorrelation
+  salt - both are otherwise idle during the time window SPARK now
+  occupies (GROW/SHRINK haven't started yet):
+  - New state `BOSS_EXPL_STATE_SPARK`(4), checked FIRST in `UPDATE_BOSS_
+    EXPLOSION`'s dispatch.
+  - `INIT_BOSS_EXPLOSION` now uploads BOTH the white ring pattern/color
+    AND the spark pattern/color up front, and enters `STATE_SPARK` (not
+    `STATE_GROW` - `BOSS_EXPL_RADIUS` stays 0, ring(0) is NOT drawn here
+    anymore, deferred to the SPARK->GROW handoff).
+  - `BOSS_EXPL_RANDOM_BYTE`: pure READ of `GAME_RNG`, XORed with `TICK`
+    and an incrementing per-call salt (`BOSS_EXPL_BLINK`) - same anti-
+    correlation idiom `PICK_HORMING_TARGET_X` already established in
+    this file (comment block around line 8920: reading-and-mutating
+    `GAME_RNG` every draw makes back-to-back same-frame draws track each
+    other almost deterministically).
+  - `BOSS_EXPL_SPAWN_ONE_SPARK`: draws ONE `BOSS_EXPL_RANDOM_BYTE`, splits
+    it into independent nibbles for dx (low nibble - range) and dy (high
+    nibble - range, via 4x `SRL A` - this file's own custom assembler
+    doesn't support `RRCA`/`RLCA` at all, only `SRL`/CB-prefixed rotates,
+    caught immediately at assemble time), screen-clips both (unsigned CP
+    trick, same as `BOSS_EXPL_APPLY_RING`), writes the spark code via
+    `WRITE_BULLET_BYTE_HL`. No per-spark persistence/timer - later
+    sparks (same frame or a later one) just overwrite whatever's there,
+    and cleanup wipes the whole area in one pass at phase-end, so
+    there's nothing to track per-spark.
+  - `BOSS_EXPL_CLEAR_SPARK_AREA`: one-time 17x17 box sweep (CX/CY +/-8)
+    at the SPARK->GROW handoff, restoring every cell via `BOSS_EXPL_BG_
+    CODE_FOR_ROW` (the same row-aware real-background lookup Round31's
+    own SkySand/Sand fix introduced) - reuses `BOSS_EXPL_RADIUS`/`BOSS_
+    EXPL_RING_REMAIN` as its own row/col loop counters (also idle at
+    this point in the sequence).
+  - `UBE_SPARK`: spawns `BOSS_EXPL_SPARK_PER_FRAME`(3) sparks every
+    single frame unconditionally (no gating wait), decrements the reused
+    `BOSS_EXPL_TIMER`, and once it hits 0: calls `BOSS_EXPL_CLEAR_SPARK_
+    AREA`, resets radius to 0, re-arms the STEP_FRAMES timer, and enters
+    `STATE_GROW` by drawing ring(0) directly - the exact same GROW-entry
+    state Round31's own `INIT_BOSS_EXPLOSION` used to set up itself,
+    just relocated to fire after the burst instead of immediately.
+- **Bug found by the test itself, not eyeballing** (round-1 fix, see
+  `BOSS_EXPL_RANDOM_BYTE`'s own comment in the ASM): the FIRST version
+  called the offset-draw routine TWICE per spark (once for dx, once for
+  dy), each call only advancing the shared salt by 1. Since `GAME_RNG`/
+  `TICK` don't change within the same frame (nothing in this test-only
+  call path runs the full `MAINLOOP` that would normally update them),
+  dx and dy came out as literally consecutive integers (`dy = dx+1 mod
+  16`) - every spark landed on the SAME short diagonal line instead of
+  scattering in 2D. Caught by `boss_explosion_test.py`'s own new
+  "genuinely scattered" check (`len(spark_seen) >= 16`) failing outright
+  - not a test-only artifact either: the identical correlation exists in
+  real gameplay too (same-frame reads, same lack of an intervening
+  `GAME_RNG`/`TICK` update between the two draws), just partly masked
+  there by `GAME_RNG`/`TICK` actually changing frame-to-frame. Fixed by
+  drawing ONE random byte per spark and splitting it into independent
+  nibbles for dx/dy (see above) - this raster-sweeps the whole scatter
+  box far more evenly than two linearly-related draws ever could, and is
+  simpler code besides (one draw call instead of two).
+- **Test rewrite** (`tests/boss_explosion_test.py`): the whole file
+  assumed GROW started immediately after `CHPBOSS_DESTROY` - no longer
+  true now that SPARK runs first for 180 frames. Added a `run_spark_
+  phase()` helper (fast-forwards through the whole burst, recording
+  which cells within the legal scatter box ever showed the spark tile)
+  used at all 3 `CHPBOSS_DESTROY` call sites so the existing GROW/
+  SHRINK/FLASH/clip checks resume working unchanged once SPARK
+  completes. New SPARK-specific coverage: every spark lands inside the
+  independently-computed CX/CY+/-8 box (none outside it); the scatter
+  genuinely covers a meaningfully large area (>=16 unique cells, not
+  stuck on one or two); every frame shows sparks with no gating wait
+  EXCEPT the very last frame (where the SPARK->GROW handoff legitimately
+  wipes the area clean right before GROW's own ring(0) draws - a real
+  edge case, not a bug, so the test explicitly expects it rather than
+  asserting a blanket "every frame nonzero"); the phase lasts exactly
+  180 frames; cleanup restores the WHOLE scattered area to the correct
+  real per-row background (reusing `expected_bg_code`) before GROW's own
+  white cell overwrites the center.
+- Full regression: **686 passed, 0 failed** (676 + 10 net new checks).
+  New verification ROM (same temporary GAME_TICK=840/BOSS_HP_INIT=3
+  edit-build-send-revert procedure - note: the tick override target is
+  `GAME_TICK`(F166h, 2 bytes, the real gameplay timeline), NOT `TICK`(the
+  separate 1-byte free-running RNG-mixing counter used by `BOSS_EXPL_
+  RANDOM_BYTE`/`PICK_HORMING_TARGET_X` etc. - briefly mis-edited `TICK`
+  by name-confusion this round, caught before assembling by cross-
+  checking against Round31's own line reference, reverted immediately)
+  sent to the user, then confirmed reverted again with a clean `git
+  diff` (no `TEMPORARY`/`840`/stray `BOSS_HP_INIT` strings left) before
+  the final regression re-run. Not yet real-hardware/visual confirmed as
+  of this entry.
+
 ## Open items / things to watch
 
 - **RAM addresses that need to persist across frames must stay clear of
