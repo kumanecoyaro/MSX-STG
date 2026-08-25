@@ -3571,6 +3571,86 @@ Thunder activity) confirming it survives completely untouched.
   clean `git diff` afterward) sent to the user. Not yet real-hardware/
   visual confirmed as of this entry.
 
+### Round 32 follow-up #4: origin shrunk to boss-center 32x32 + circle-explosion boom sound
+
+- User instruction (verbatim): "今でも飛びすぎなんで やはり原点をボス
+  中心３２ｘ３２に 前はお前が勘違いしてたからな で、爆発音も追加 円の
+  爆発はノイズでどーーーーんって長いやつ で、素のノイズの減衰では
+  チャチなので デューティ比1:1で減衰しながらボリューム半分かOFFを
+  まぜてくれ そうすればブリブリって音になるはず".
+- **Origin shrink**: even with follow-up #3's own flight distance capped
+  at exactly 1-3 cells, the TOTAL reach (origin's own 64x64 body + up to
+  3 more cells) still read as too far. `BOSS_EXPL_ORIGIN_RANGE` changed
+  from 4 (64x64 body, offsets -4..+3) to 2 (boss-center 32x32, offsets
+  -2..+1) - same generic `AND RANGE*2-1 : SUB RANGE` shape as before,
+  just a smaller constant (and the origin dx/dy extraction shifted from
+  4x `SRL A` to 2x, matching the narrower 2-bit mask now needed). Flight
+  distance (1-3 cells, follow-up #3) is unchanged - only the origin area
+  was flagged this round.
+- **Boom sound** (`SOUND_BOSS_BOOM`/`SU_BOOM`/`BOSS_BOOM_CALC_VOLUME`),
+  triggered once at the SPARK->GROW handoff (`UBS_LAST_FRAME`) - right
+  as the circle itself starts growing, matching "円の爆発は" (the
+  CIRCLE's own explosion specifically, not the earlier SPARK burst):
+  - Channel A, noise, reusing the same shared `SND_TIMER`/`SND_DECAY`
+    envelope bytes every other sound in this file already uses (`SOUND_
+    SHOT`/`SOUND_DESTROY`/`SOUND_ZUM_DEFLECT`) - but that shared design
+    caps duration at 15 frames (`SND_TIMER` doubles as the 0-15 volume
+    AND the countdown, decrementing by `SND_DECAY` every single frame),
+    nowhere near "どーーーーん...長いやつ". Solved by treating `SND_
+    DECAY==0` as a boom-mode sentinel (no ordinary sound ever sets that
+    - `SHOT`/`DESTROY`/`DEFLECT` all use 1 or 2) that `SOUND_UPDATE`
+    branches on into its own `SU_BOOM` path: the envelope still only
+    ever has 15 steps, but now steps down just once every `BOSS_BOOM_
+    DECAY_PERIOD`(5) frames instead of every frame - a real 75-frame
+    decay (~1.25s @60fps), deliberately close to the circle's own
+    GROW+SHRINK length (`STEP_FRAMES*MAXR*2`=72 frames) without being
+    exactly synced to it (not specified that precisely).
+  - "素のノイズの減衰ではチャチなので デューティ比1:1で減衰しながら
+    ボリューム半分かOFFをまぜてくれ" - `BOSS_BOOM_CALC_VOLUME` (kept as
+    its own side-effect-free subroutine specifically so it's directly
+    testable without needing to observe an actual PSG write - z80emu.py
+    has NO PSG emulation at all, `OUT` only does anything for the VDP
+    ports) alternates between half the current envelope and silence
+    every single frame, using `TICK`'s own low bit as the toggle (a
+    free-running per-frame flip - no dedicated toggle byte needed).
+  - `BOSS_BOOM_NOISE_PERIOD` set to 31, the AY-3-8910's own lowest
+    noise-period value (5 bits, 0-31) for the deepest rumble the
+    hardware can produce - clearly distinct in pitch from the shot(8)/
+    regular-destroy(20) sounds.
+  - Reuses the existing `SND_EXPLODING` guard (already used by `SOUND_
+    DESTROY`) so an ordinary shot can't cut the boom off early.
+  - **RAM budget**: only ONE new persistent byte needed (`SND_BOOM_
+    DECAY_CTR`, the sub-frame counter between volume steps) - `SND_
+    EXPLODING`/`SND_TIMER`/`SND_DECAY` are all reused existing bytes,
+    "is boom active" is inferred from `SND_TIMER!=0`, and the duty-cycle
+    toggle comes free from `TICK`'s own low bit rather than a dedicated
+    byte. Even that one byte needed real searching - the topmost RAM
+    variable (`BOSS_EXPL_RING_PTR`, 2 bytes ending at `F320h`) already
+    sat EXACTLY at the `stack_safety_test.py` margin (`STACKTOP`-`F320h`
+    = `0x60` precisely, zero slack), so no new byte could go at the tail
+    end at all. Found a genuinely unclaimed gap instead - `F17Bh`-`F17Fh`
+    (5 bytes, between `SND_EXPLODING`(`F17Ah`) and `ENEMY_POOL`(`F180h`)
+    - confirmed via a full audit of every `EQU ...h` RAM address in the
+    file, not assumed) - and used just the first byte of it.
+- New test file `tests/boss_boom_sound_test.py` (56 checks): `BOSS_
+  BOOM_CALC_VOLUME` exercised directly across a matrix of `SND_TIMER`/
+  `TICK` combinations against an independently-derived expected table;
+  the full 75-frame decay envelope checked frame-by-frame against an
+  independently-derived formula (`15 - frame//BOSS_BOOM_DECAY_PERIOD`,
+  floored at 0); confirms the boom genuinely outlasts every other
+  sound's own 15-frame cap; confirms `SND_EXPLODING` clears exactly
+  when the envelope reaches 0, and that a normal sound (`SOUND_SHOT`)
+  works correctly again right after (the `SND_DECAY==0` sentinel
+  doesn't leak past the boom's own life); confirms a shot fired MID-boom
+  is correctly blocked (same guard `SOUND_DESTROY` already relies on);
+  confirms the trigger fires at exactly the SPARK->GROW handoff, not at
+  death itself (SPARK's own burst stays silent).
+- Full regression: **751 passed, 0 failed** (695 + 56 new checks). New
+  verification ROM (same temporary GAME_TICK=840/BOSS_HP_INIT=3 edit-
+  build-send-revert procedure, confirmed reverted again with a clean
+  `git diff` afterward) sent to the user. Not yet real-hardware/audio
+  confirmed as of this entry.
+
 ## Open items / things to watch
 
 - **RAM addresses that need to persist across frames must stay clear of

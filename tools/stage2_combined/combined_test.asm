@@ -431,6 +431,22 @@ GTD_LAST_O    EQU F179h
 ; (that one's still allowed to cut an explosion off, same as always -
 ; only the shot sound is singled out here).
 SND_EXPLODING EQU F17Ah
+; round32: "円の爆発はノイズでどーーーーんって長いやつ" - the boss's own
+; circle-explosion boom needs a MUCH longer envelope than the shared
+; SND_TIMER/SND_DECAY mechanism above can express on its own (SND_TIMER
+; doubles as the volume, 0-15, so a plain "decay by SND_DECAY every
+; frame" caps out at 15 frames total - nowhere near "long"). Reuses
+; SND_TIMER/SND_DECAY anyway rather than a fully separate envelope
+; (SOUND_UPDATE's own SU_BOOM branch, selected by SND_DECAY==0 - no
+; ordinary sound ever sets that, see SOUND_UPDATE's own comment) - this
+; one extra byte just counts frames between volume steps, stretching a
+; still-15-step decay out over many more real frames. The only genuinely
+; free gap left below STACKTOP (see STACK_SAFETY_MARGIN's own comment -
+; every other candidate spot is either actively used throughout the
+; whole boss fight or would need pushing the topmost variable even
+; closer to the required 0x60 headroom, which is already at its exact
+; limit) - F17Bh-F17Fh, right after this byte, before ENEMY_POOL(F180h).
+SND_BOOM_DECAY_CTR EQU F17Bh
 ; digit0 code; digitN = DIGIT_BASE+N for N=0-9 (score/counter, glyphs
 ; copied byte-for-byte from src/CYBER SHMUP.asm's own DIGIT_PATTERNS -
 ; "スコアの数字流用") - the old N=10-15=A-F hex-label glyphs (added for
@@ -693,7 +709,16 @@ BOSS_EXPL_WHITE_COLORBYTE EQU 0F1h   ; fg15 white/bg1 black - same convention as
 ; at runtime since Z80 has no multiply instruction) - "1から3セルランダ
 ; ムで" is now the flight's own EXACT distance range, never 0 and never
 ; more than 3 in any direction.
-BOSS_EXPL_ORIGIN_RANGE EQU 4      ; the boss's own 64x64 body, 8 cells wide - offsets -4..+3
+;
+; round32 follow-up fix #4: "今でも飛びすぎなんで やはり原点をボス中心
+; ３２ｘ３２に 前はお前が勘違いしてたからな" - even with the flight
+; distance capped at fix #3, the TOTAL reach (origin's own 64x64 body +
+; up to 3 more cells of flight) still read as too far. Shrunk the origin
+; itself from the boss's full 64x64 body down to a 32x32/4-cell box
+; centered on the boss (offsets -2..+1, same AND/SUB shape as the
+; flight-less single-box fix #1 originally used for the WHOLE scatter
+; area, now scoped to just the origin half of the two-stage draw).
+BOSS_EXPL_ORIGIN_RANGE EQU 2      ; boss-center 32x32/4-cell box - offsets -2..+1
 BOSS_EXPL_FLIGHT_MIN_DIST EQU 1   ; "1から3セルランダムで" - BOSS_EXPL_FLIGHT_TABLE below must match if this ever changes
 BOSS_EXPL_FLIGHT_MAX_DIST EQU 3
 BOSS_EXPL_SPARK_DURATION EQU 180
@@ -889,6 +914,23 @@ SHOT_NOISE_PERIOD EQU 8
 ; the gap, so the louder peak doesn't reopen that bug.
 SHOT_SND_PEAK  EQU 10
 SHOT_SND_DECAY EQU 2
+; "円の爆発はノイズでどーーーーんって長いやつ" - lowest noise period the
+; AY-3-8910 supports (0-31, 5 bits) for the deepest/most "boom"-like
+; rumble available, clearly distinct in pitch from the shot(8)/regular-
+; destroy(20) sounds. "で、素のノイズの減衰ではチャチなので デューティ
+; 比1:1で減衰しながらボリューム半分かOFFをまぜてくれ そうすればブリブ
+; リって音になるはず" - SOUND_UPDATE's own SU_BOOM branch alternates
+; between half-volume and silent every frame (TICK's own low bit - a
+; free-running per-frame flip, no dedicated toggle byte needed) as the
+; underlying envelope steps down, giving the buzzy/pulsing texture a
+; plain linear noise fade wouldn't have. Peak 15 stepping down 1 every
+; BOSS_BOOM_DECAY_PERIOD frames = a real 75-frame decay (15*5, ~1.25s
+; @60fps) - deliberately close to the circle explosion's own GROW+SHRINK
+; length (BOSS_EXPL_STEP_FRAMES*BOSS_EXPL_MAXR*2=72 frames) so the boom
+; roughly tracks the visual, not an exact sync (not specified that
+; precisely) - a judgment call, easy to retune via this one constant.
+BOSS_BOOM_NOISE_PERIOD EQU 31
+BOSS_BOOM_DECAY_PERIOD EQU 5
 
 ; ---------- enemy (ZacoII) ----------
 ; "では次敵の実装 スプライトで実装 右から左へスライド Skyのみのの
@@ -4362,12 +4404,38 @@ SOUND_ZUM_DEFLECT:
     XOR A : LD (SND_EXPLODING),A
     RET
 
+; "円の爆発はノイズでどーーーーんって長いやつ" - the boss's own circle-
+; explosion boom, triggered once at the SPARK->GROW handoff (see UBS_
+; LAST_FRAME) - right as the circle itself starts growing. Channel A,
+; noise, same shared-envelope bytes (SND_TIMER/SND_DECAY) every other
+; sound here uses, but SND_DECAY=0 is a sentinel no ordinary sound ever
+; sets (SHOT/DESTROY/DEFLECT all use 1 or 2) that switches SOUND_UPDATE
+; over to its own SU_BOOM branch - see that routine's own comment for
+; the actual long-decay/duty-cycle mechanism. Same SND_EXPLODING guard
+; as SOUND_DESTROY (blocks the shot sound from cutting it off early).
+SOUND_BOSS_BOOM:
+    LD A,7 : OUT (PSG_ADDR),A
+    LD A,MIXER_NOISE_A : OUT (PSG_DATA),A
+    LD A,6 : OUT (PSG_ADDR),A
+    LD A,BOSS_BOOM_NOISE_PERIOD : OUT (PSG_DATA),A
+    LD A,15 : LD (SND_TIMER),A
+    XOR A : LD (SND_DECAY),A
+    LD A,BOSS_BOOM_DECAY_PERIOD : LD (SND_BOOM_DECAY_CTR),A
+    LD A,1 : LD (SND_EXPLODING),A
+    RET
+
 ; single shared channel-A envelope for every sound above - writes
 ; SND_TIMER's own current value as the volume (register8, 0-15), then
 ; steps it toward 0 by SND_DECAY (clamped so it can't undershoot past
 ; 0 - see SOUND_SHOT/SOUND_DESTROY/SOUND_ZUM_DEFLECT for how each
-; sound picks its own peak/decay pair when triggered).
+; sound picks its own peak/decay pair when triggered). SND_DECAY==0
+; means "boom mode" instead (see SOUND_BOSS_BOOM's own comment) -
+; branches into SU_BOOM below rather than this linear path.
 SOUND_UPDATE:
+    LD A,(SND_DECAY)
+    OR A
+    JR Z,SU_BOOM
+
     LD A,(SND_TIMER)
     LD B,A
     LD A,8 : OUT (PSG_ADDR),A
@@ -4383,6 +4451,53 @@ SOUND_UPDATE:
     RET
 SU_STEP:
     SUB C : LD (SND_TIMER),A
+    OR A
+    RET NZ
+    LD (SND_EXPLODING),A
+    RET
+
+; out: A = this frame's boom output volume - "デューティ比1:1で減衰しな
+; がらボリューム半分かOFFをまぜてくれ そうすればブリブリって音になる
+; はず". 0 (the "off" half of the 1:1 duty cycle) if either the envelope
+; has already fully decayed (SND_TIMER=0) or this is an "off" frame per
+; TICK's own low bit (flips every single frame for free - no dedicated
+; toggle byte needed); otherwise half the current envelope (SND_TIMER
+; SRL'd once). A pure function of SND_TIMER/TICK only - no side effects,
+; doesn't touch the PSG or step the envelope itself (SU_BOOM below does
+; that separately) - kept standalone specifically so it's directly
+; testable without needing to observe an actual PSG register write.
+BOSS_BOOM_CALC_VOLUME:
+    LD A,(SND_TIMER)
+    OR A
+    RET Z
+    LD A,(TICK) : AND 1
+    JR NZ,BBCV_SILENT
+    LD A,(SND_TIMER)
+    SRL A
+    RET
+BBCV_SILENT:
+    XOR A
+    RET
+
+; boom-mode envelope (SND_DECAY==0, see SOUND_BOSS_BOOM's own comment) -
+; writes BOSS_BOOM_CALC_VOLUME's own output every frame, then steps the
+; underlying envelope down by 1 every BOSS_BOOM_DECAY_PERIOD frames (not
+; every frame, unlike the linear path above) - stretching a still-15-
+; step decay out over many more real frames - "長いやつ".
+SU_BOOM:
+    CALL BOSS_BOOM_CALC_VOLUME
+    LD B,A
+    LD A,8 : OUT (PSG_ADDR),A
+    LD A,B : OUT (PSG_DATA),A
+
+    LD A,(SND_TIMER)
+    OR A
+    RET Z
+
+    LD A,(SND_BOOM_DECAY_CTR) : DEC A : LD (SND_BOOM_DECAY_CTR),A
+    RET NZ
+    LD A,BOSS_BOOM_DECAY_PERIOD : LD (SND_BOOM_DECAY_CTR),A
+    LD A,(SND_TIMER) : DEC A : LD (SND_TIMER),A
     OR A
     RET NZ
     LD (SND_EXPLODING),A
@@ -8147,13 +8262,13 @@ BEPF_OK:
 BOSS_EXPL_SPARK_SLOT:
     CALL BOSS_EXPL_ERASE_ONE_SPARK
 
-    ; --- origin: random cell within the boss's own 64x64 body ---
+    ; --- origin: random cell within the boss-center 32x32 box ---
     CALL BOSS_EXPL_RANDOM_BYTE
     LD D,A
-    AND 7 : SUB BOSS_EXPL_ORIGIN_RANGE : LD C,A                ; origin dx
+    AND BOSS_EXPL_ORIGIN_RANGE*2-1 : SUB BOSS_EXPL_ORIGIN_RANGE : LD C,A   ; origin dx
     LD A,D
-    SRL A : SRL A : SRL A : SRL A
-    AND 7 : SUB BOSS_EXPL_ORIGIN_RANGE : LD B,A                ; origin dy
+    SRL A : SRL A
+    AND BOSS_EXPL_ORIGIN_RANGE*2-1 : SUB BOSS_EXPL_ORIGIN_RANGE : LD B,A   ; origin dy
     LD A,(BOSS_EXPL_CY) : ADD A,B : LD (BOSS_EXPL_ROWTMP),A
     LD A,(BOSS_EXPL_CX) : ADD A,C : LD (BOSS_EXPL_COLTMP),A
 
@@ -8241,6 +8356,7 @@ UBS_LAST_FRAME:
     XOR A : LD (BOSS_EXPL_BLINK),A
     XOR A : LD (BOSS_EXPL_RING_MODE),A
     XOR A : CALL BOSS_EXPL_APPLY_RING
+    CALL SOUND_BOSS_BOOM   ; "円の爆発はノイズでどーーーーんって長いやつ" - right as the circle itself starts growing
     RET
 
 ; "この時当然BGはボスの後ろに隠れてしまうんでボスは点滅表示" - while the
