@@ -2917,6 +2917,20 @@ Thunder activity) confirming it survives completely untouched.
   standalone and are kept as historical/reference material per this
   file's own general practice of not deleting working prior art
   without being asked to.
+- **Real-hardware confirmation (verbatim): "Ok 結果は良好だ 実機でステー
+  ジ１、２を通してみたが不具合なし 実装意図通りだった"** - the flashed
+  `CyberS Comb.ascii16k.rom` played through stage1 into the real stage2
+  (terrain/tank/enemies/Sasapi boss) on actual hardware with no issues,
+  confirming the emulator-only `verify_comb.py` check (bankB staying at
+  3 through stage2's own boot) held on real silicon too - the bank-index
+  retarget (`LD A,1`->`LD A,3`) this round's whole risk centered on is
+  now real-hardware-verified, not just emulator-verified. This is the
+  first real-hardware pass of the actual game content transition (stage1
+  -> real stage2), not just the bank-switch mechanism in isolation.
+  This branch has NOT yet been merged into `main` for this round's
+  changes - ask before merging/pushing there, same as every other round
+  (a prior round's separate "merge everything to main" request doesn't
+  carry forward to new work automatically).
 
 ## Open items / things to watch
 
