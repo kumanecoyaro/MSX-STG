@@ -1,8 +1,10 @@
 """Builds a real 64KB(x2=128KB) ASCII16 ROM embedding the actual game
-as stage 1 AND a full "stage 2 world" (see build_stage2_world.py) as
-stage 2, for a real-hardware test of the bank-switch mechanism against
-genuine, fully-playable content on both sides - not a static
-placeholder screen.
+as stage 1 AND the REAL stage 2 (tools/stage2_combined/combined_test.asm
+- terrain scroller, tank, full enemy roster, the Sasapi boss battle) as
+stage 2 - the "Comb" build ("では一度Stage1に実Stage2をマージしてみる...
+実Stage2に差し替えてみてくれ": bankswitch_poc's own throwaway simple-
+enemies-only placeholder stage2 world, see build_stage2_world.py, is
+retired from this script in favor of the real thing).
 
 This is now the primary/shipped build (the old flat 32KB single-bank
 ROM is retired - the game is ASCII16/64KB-based going forward).
@@ -14,7 +16,12 @@ source text at build time instead of being baked into the tracked
 source. This keeps the trampoline/switch mechanics all in one place
 here rather than scattered through the main source, and keeps the
 tracked .asm assemblable on its own (e.g. by tools/mini_z80asm.py
-directly) for debugging without ASCII16 entanglement.
+directly) for debugging without ASCII16 entanglement. Same treatment
+for tools/stage2_combined/combined_test.asm below (see
+assemble_real_stage2()) - it stays independently assemblable/testable
+via its own tools/stage2_combined/build_test.py and 629-test regression
+suite, unmodified; only an in-memory copy gets retargeted for embedding
+here.
 
 Layout (before the real-hardware-required 128KB doubling - see main()):
   bank0 (file 0x0000-0x3FFF) = the real game's page1 content
@@ -23,18 +30,31 @@ Layout (before the real-hardware-required 128KB doubling - see main()):
   bank1 (file 0x4000-0x7FFF) = the real game's page2 content
       (8000h-BFFFh), byte-for-byte what it has always been - normal
       stage-1 gameplay is completely unchanged.
-  bank2 (file 0x8000-0xBFFF) = stage2 world's page1 content (its own
-      INIT/MAINLOOP - same structure as bank0, simple-only enemies).
-  bank3 (file 0xC000-0xFFFF) = stage2 world's page2 content.
+  bank2 (file 0x8000-0xBFFF) = the real stage2's page1 content (its own
+      INIT/MAINLOOP - same structure as bank0).
+  bank3 (file 0xC000-0xFFFF) = the real stage2's page2 content.
 """
+import importlib.util
 import os
 import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.join(HERE, "..", "..")
 sys.path.insert(0, os.path.join(HERE, ".."))
 sys.path.insert(0, HERE)
+sys.path.insert(0, os.path.join(REPO, "tools", "stage2_terrain"))
+sys.path.insert(0, os.path.join(REPO, "tools", "stage2_tank"))
 from mini_z80asm import Assembler
-from build_stage2_world import assemble_stage2_world
+
+# tools/stage2_terrain, tools/stage2_tank AND tools/stage2_combined each have
+# their own unrelated "build_test.py" - a plain `import build_test` would
+# resolve to whichever one's directory happens to sort first on sys.path
+# rather than the one meant here, so load tools/stage2_combined's copy by
+# its exact file path instead of relying on module-name search order.
+_stage2_build_spec = importlib.util.spec_from_file_location(
+    "stage2_combined_build_test",
+    os.path.join(REPO, "tools", "stage2_combined", "build_test.py"))
+stage2_build = importlib.util.module_from_spec(_stage2_build_spec)
+_stage2_build_spec.loader.exec_module(stage2_build)
 
 INIT_ANCHOR = """    OUT (0A8h),A
 
@@ -82,16 +102,14 @@ MAINLOOP_ANCHOR = """MAINLOOP:
 
 MAINLOOP_PATCH = """MAINLOOP:
     ; --- [bankswitch_poc TEST PATCH, not in the tracked source] ---
-    ; --- TEMPORARY: once PLAYER_FLYAWAY reaches 2 (boss fully       ---
-    ; --- destroyed AND the player's exit/flyaway sequence has       ---
-    ; --- finished - off-screen/hidden), switch to the full stage2   ---
-    ; --- world (see build_stage2_world.py - an exact port of stage  ---
-    ; --- 1's own engine/graphics, just with a simple-only enemy      ---
-    ; --- roster and a permanent "STAGE2" HUD label) via a real       ---
-    ; --- re-init, not a static placeholder screen. This is the       ---
-    ; --- actual real transition point stage 2 will eventually use.  ---
-    ; --- Safe here because MAINLOOP always starts at a window-A      ---
-    ; --- address and every frame re-enters via "JP MAINLOOP".        ---
+    ; --- Once PLAYER_FLYAWAY reaches 2 (boss fully destroyed AND     ---
+    ; --- the player's exit/flyaway sequence has finished - off-      ---
+    ; --- screen/hidden), switch to the real stage2 (see              ---
+    ; --- tools/stage2_combined/combined_test.asm, assembled here via ---
+    ; --- assemble_real_stage2() as bank2/bank3) via a real re-init,  ---
+    ; --- not a static placeholder screen. Safe here because MAINLOOP ---
+    ; --- always starts at a window-A address and every frame         ---
+    ; --- re-enters via "JP MAINLOOP".                                 ---
     LD A,(PLAYER_FLYAWAY)
     CP 2
     JR NZ,MAINLOOP_NO_TEST_SWITCH
@@ -223,9 +241,45 @@ def assemble_game():
     return bank0, bank1, a.symtab
 
 
+# combined_test.asm assembles standalone (tools/stage2_combined/build_test.py)
+# as a self-contained 2-bank ASCII16 ROM: bank0=window A(page1)/bank1=window
+# B(page2) IN ITS OWN NUMBERING, so its own INIT hardcodes "select bank 1 for
+# window B" as part of its own one-time boot bank-select (see combined_test.asm
+# around BANKSWITCH_TRAMPOLINE_RAM). Embedded here, that content instead
+# occupies GLOBAL bank indices 2 (window A) and 3 (window B) - by the time
+# this file's own INIT runs, MAINLOOP_PATCH's own HOP1/HOP2 have already
+# selected window A=bank2/window B=bank3 to get here at all, so if this
+# file's own INIT went on to redundantly select "its own bank 1" for window
+# B, that would overwrite the correct selection with STAGE 1's page2 content
+# instead (global bank index 1) - silently breaking stage2 right at its own
+# boot. Retargeted to bank index 3 on an in-memory copy only, same as
+# build_full_rom.py's own game-source patching above; combined_test.asm
+# itself, and its own standalone build/tests, are untouched.
+STAGE2_BANKSELECT_ANCHOR = """    LD A,1
+    LD DE,7000h
+    LD HL,INIT_RESUME_AFTER_BANK_SELECT
+    JP BANKSWITCH_TRAMPOLINE_RAM"""
+
+STAGE2_BANKSELECT_PATCH = """    LD A,3
+    LD DE,7000h
+    LD HL,INIT_RESUME_AFTER_BANK_SELECT
+    JP BANKSWITCH_TRAMPOLINE_RAM"""
+
+
+def assemble_real_stage2():
+    text = stage2_build.combined_text()
+    assert text.count(STAGE2_BANKSELECT_ANCHOR) == 1, \
+        "stage2 bank-select anchor not found (or not unique) - combined_test.asm drifted"
+    text = text.replace(STAGE2_BANKSELECT_ANCHOR, STAGE2_BANKSELECT_PATCH, 1)
+    a = Assembler(text)
+    out = a.assemble()
+    bank2, bank3 = stage2_build.build_banks(out)
+    return bank2, bank3, a.symtab
+
+
 def main():
     bank0, bank1, game_sym = assemble_game()
-    bank2, bank3, stage2_sym, n_schedule = assemble_stage2_world()
+    bank2, bank3, stage2_sym = assemble_real_stage2()
 
     rom64 = bytes(bank0) + bytes(bank1) + bytes(bank2) + bytes(bank3)
     # --- Real-hardware finding: this specific flashcart mirrors a    ---
@@ -238,30 +292,26 @@ def main():
     # --- by this ROM's own code, so the duplicate second half is     ---
     # --- inert padding, not a second, different level.               ---
     rom = rom64 + rom64
-    # "ここで貼るROMファイル名を Stage1はCyberS S1.ascii16k.rom...として
-    # 出力" (round28) - renamed from "CYBER SHMUP [ASCII16].rom". Still
-    # contains "ascii16" as a substring for mapper auto-detection (see
-    # this file's own header comment on filename-based detection).
-    # NOTE: bank2/bank3 here are still bankswitch_poc's own separate,
-    # simple "stage2 world" (build_stage2_world.py, simple-only
-    # enemies) - NOT tools/stage2_combined's real boss-battle content.
-    # "後でやることだが Stage2を組み込んだビルドは CyberS Comb.ascii16k.
-    # romに" (round28) - the FUTURE build that properly embeds the real
-    # stage2_combined content in place of this POC stage2-world gets
-    # that name once that integration work happens; this one stays
-    # "S1" in the meantime since it's still fundamentally testing
-    # Stage1 (the real game)'s own bank-switch mechanism.
-    out_path = os.path.join(REPO, "rom", "CyberS S1.ascii16k.rom")
+    # "では一度Stage1に実Stage2をマージしてみる...実Stage2に差し替えて
+    # みてくれ" - bank2/bank3 are now the REAL tools/stage2_combined
+    # content (terrain/tank/full enemy roster/Sasapi boss), no longer
+    # bankswitch_poc's own simple-enemies-only placeholder world (see
+    # build_stage2_world.py, now unused by this script). Named "Comb"
+    # per the naming plan recorded back when this was still a future
+    # task (round28): "後でやることだが Stage2を組み込んだビルドは
+    # CyberS Comb.ascii16k.romに". "CyberS S1.ascii16k.rom" (the old
+    # name/placeholder-stage2 output) is retired.
+    out_path = os.path.join(REPO, "rom", "CyberS Comb.ascii16k.rom")
     with open(out_path, "wb") as f:
         f.write(rom)
 
     print(f"wrote {out_path}: {len(rom)} bytes (banks 0-3 real content, doubled to 128KB - see comment)")
     print(f"  bank0 (page1, real game + test patch): {len(bank0)}B, header {bytes(bank0[0:4]).hex()}")
     print(f"  bank1 (page2, real game, unpatched): {len(bank1)}B")
-    print(f"  bank2 (stage2 world page1): {len(bank2)}B, header {bytes(bank2[0:4]).hex()}")
-    print(f"  bank3 (stage2 world page2): {len(bank3)}B")
+    print(f"  bank2 (stage2 page1, real tools/stage2_combined content): {len(bank2)}B, header {bytes(bank2[0:4]).hex()}")
+    print(f"  bank3 (stage2 page2, real tools/stage2_combined content): {len(bank3)}B")
     print(f"game MAINLOOP={game_sym['MAINLOOP']:04x} GAME_TICK={game_sym['GAME_TICK']:04x}")
-    print(f"stage2 world INIT={stage2_sym['INIT']:04x} MAINLOOP={stage2_sym['MAINLOOP']:04x} schedule entries={n_schedule}")
+    print(f"stage2 (real) INIT={stage2_sym['INIT']:04x} MAINLOOP={stage2_sym['MAINLOOP']:04x}")
 
 
 if __name__ == "__main__":

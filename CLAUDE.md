@@ -21,9 +21,13 @@
 - Stage2テストROM: `cd tools/stage2_combined && python3 build_test.py`
   → 出力: `tools/stage2_combined/CyberS S2.ascii16k.rom`
   → 実測所要時間: **0.2秒**(アセンブル自体はボトルネックではない)
-- Stage1本番ROM: `cd tools/bankswitch_poc && python3 build_full_rom.py`
-  → 出力: `rom/CyberS S1.ascii16k.rom`
+- Stage1+実Stage2 統合ROM("Comb"ビルド): `cd tools/bankswitch_poc && python3 build_full_rom.py`
+  → 出力: `rom/CyberS Comb.ascii16k.rom`(旧`CyberS S1.ascii16k.rom`は廃止・git管理からも削除済み)
   → 実測所要時間: **0.5秒**
+  → bank2/bank3は2026-08-25より`tools/stage2_combined`の実コンテンツ(地形・戦車・敵・Sasapiボス戦)。
+    詳細は`tools/bankswitch_poc/README.md`の「Full-game integration test」参照。
+    検証: `cd tools/bankswitch_poc && python3 verify_comb.py`(エミュレータでStage1→実Stage2への
+    バンク切替を一通り確認、バンクインデックス退避のバグを主眼に検証)。
 
 ビルド(アセンブル)そのものは高速。「ビルドが遅い」と感じる場合、実際は次項の
 回帰テスト(Z80エミュレータでの命令実行)が重い。オブジェクトファイル分離・リンカ機能の
@@ -83,5 +87,6 @@
 
 ## 保留中タスク(指示なしに着手しない)
 
-- "Comb"ビルド: `build_full_rom.py`のstage2部分を、現状の`bankswitch_poc`簡易プレースホルダーから
-  本物の`stage2_combined`content に差し替える将来作業。明示的な指示があるまで着手しない。
+- (2026-08-25、着手・完了済み) "Comb"ビルド: `build_full_rom.py`のstage2部分を、`bankswitch_poc`の
+  簡易プレースホルダーから本物の`stage2_combined`contentに差し替え済み。詳細は上記「ビルドコマンド」
+  および`tools/stage2_combined/HANDOFF.md`のRound30を参照。現状、他に保留中タスクなし。
