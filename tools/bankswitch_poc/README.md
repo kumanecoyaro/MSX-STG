@@ -5,10 +5,11 @@ two-hop bank switch" mechanism for splitting CYBER SHMUP into
 per-stage ROM banks (`bank_a.asm`/`bank_b1.asm`/`build_rom.py`/
 `run_poc.py` below, kept for reference). That mechanism is now proven
 on real hardware and BlueMSX/WebMSX and is the real, permanent build:
-`build_full_rom.py` builds `rom/CYBER SHMUP [ASCII16].rom`, the
-game's one and only shipped ROM (the old flat 32KB single-bank ROM is
-retired). See "Full-game integration test" below for the real build;
-the standalone POC section further down is historical/lower-priority.
+`build_full_rom.py` builds `rom/CyberS S1.ascii16k.rom` (renamed from
+`CYBER SHMUP [ASCII16].rom` in round28), the game's one and only
+shipped ROM (the old flat 32KB single-bank ROM is retired). See
+"Full-game integration test" below for the real build; the standalone
+POC section further down is historical/lower-priority.
 
 ## What it does
 
@@ -208,7 +209,7 @@ switch window A as well as window B, not just window B like the old
 placeholder did.
 
 Run `python3 build_full_rom.py` to (re)build
-`../../rom/CYBER SHMUP [ASCII16].rom` from the current source (this also
+`../../rom/CyberS S1.ascii16k.rom` from the current source (this also
 calls into `build_stage2_world.py`). Run `python3 verify_full.py` to
 re-verify in the emulator: confirms normal gameplay never switches
 early, pokes PLAYER_FLYAWAY=2 directly (simulating a real boss kill,

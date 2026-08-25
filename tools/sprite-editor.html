@@ -1,6 +1,6 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>CYBER SHMUP — Sprite Editor</title>
+<title>CYBER_SUZUKA — Sprite Editor</title>
 <style>
   :root {
     --bg: #05080d;
@@ -37,11 +37,6 @@
   body {
     display: flex;
     flex-direction: row;
-    /* 100vh on mobile Chrome/Vivaldi is sized to the viewport with the
-       address bar HIDDEN, taller than what's actually visible whenever
-       the bar is showing. 100dvh tracks the actually-visible viewport
-       instead; the plain 100vh above is just the fallback for browsers
-       without dvh support. */
     height: 100vh;
     height: 100dvh;
   }
@@ -115,14 +110,14 @@
   /* サイズ切り替えボタンエリア */
   .size-selector {
     display: flex;
-    gap: 4px;
+    gap: 2px;
     width: 100%;
     justify-content: center;
   }
   .size-btn {
     flex: 1;
-    padding: 2px 6px;
-    font-size: 11px;
+    padding: 2px 2px;
+    font-size: 10px;
   }
   .size-btn.active {
     background: var(--accent);
@@ -155,18 +150,28 @@
     background: var(--surface);
   }
 
-  /* キャンバス外枠 */
-  .grid {
-    display: grid;
+  /* キャンバス表示領域とズーム対応ビューポート */
+  .grid-viewport {
     width: var(--grid-size, 300px);
     height: var(--grid-size, 300px);
     border: 2px solid var(--grid-line-strong);
+    margin-top: 2px;
+    margin-bottom: 12px;
+    overflow: hidden;
+    position: relative;
+    touch-action: none;
+    user-select: none;
+  }
+
+  .grid {
+    display: grid;
+    width: 100%;
+    height: 100%;
     touch-action: none;
     user-select: none;
     position: relative;
     box-sizing: border-box;
-    margin-top: 2px;
-    margin-bottom: 12px;
+    transform-origin: 0 0;
   }
   .cell {
     border: 1px solid var(--grid-line);
@@ -349,10 +354,6 @@
 
   @media (max-width: 760px) {
     body { flex-direction: column; }
-    /* height:auto, not a fixed vh - the square just needs to be as wide
-       as the screen (see fitGrid's STACKED_MQ branch), whatever height
-       that makes it. A vh cap here forced the square smaller than the
-       available width, leaving unwanted black margins on both sides. */
     .gridwrap { flex: 0 0 auto; height: auto; padding: 8px; }
     aside { flex: 1 1 auto; height: auto; border-left: none; border-top: 1px solid var(--line); }
   }
@@ -361,15 +362,18 @@
 <body>
   <div class="gridwrap">
     <div class="grid-panel">
-      <!-- サイズ切り替えボタンエリア -->
+      <!-- サイズ切り替えボタンエリア（5つ） -->
       <div class="size-selector" id="sizeSelector">
         <button class="size-btn" data-size="8">8x8</button>
         <button class="size-btn active" data-size="16">16x16</button>
         <button class="size-btn" data-size="24">24x24</button>
         <button class="size-btn" data-size="32">32x32</button>
+        <button class="size-btn" data-size="64">64x64</button>
       </div>
 
-      <div class="grid" id="grid"></div>
+      <div class="grid-viewport" id="gridViewport">
+        <div class="grid" id="grid"></div>
+      </div>
 
       <!-- フレーム切り替えボタンエリア（左右1234右の6列） -->
       <div class="frame-selector" id="frameSelector">
@@ -393,12 +397,12 @@
         <button id="btnPaste">Paste</button>
         <button id="btnUndo" disabled>Undo</button>
       </div>
-      <!-- 2行目: Save Json, Copy 0/1, Paste 0/1, All Clear (4列) -->
+      <!-- 2行目: Save Json, Copy 0/1, Paste 0/1, 4倍表示 (4列) -->
       <div class="btn-row-2">
         <button class="primary" id="btnSave">Save Json</button>
         <button id="btnCopyText">Copy 0/1</button>
         <button id="btnPasteText">Paste 0/1</button>
-        <button id="btnClear" style="background: var(--danger-ink); border-color: var(--danger); color: var(--danger);">All Clear</button>
+        <button id="btnZoom" disabled>4倍表示</button>
       </div>
     </div>
 
@@ -435,18 +439,6 @@
       <div class="overlay-actions">
         <button id="btnTextPasteCancel">Cancel</button>
         <button class="primary" id="btnTextPasteConfirm">OK</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- All Clear 確認用ウィンドウ -->
-  <div id="clearOverlay" class="overlay">
-    <div class="overlay-card">
-      <div class="overlay-title">All Clear</div>
-      <div style="font-size: 12px; color: var(--ink-dim);">現在のフレームをすべて消去しますか？</div>
-      <div class="overlay-actions" style="margin-top: 6px;">
-        <button id="btnClearCancel">Cancel</button>
-        <button id="btnClearConfirm" style="background: var(--danger); color: var(--danger-ink); border-color: var(--danger);">Clear</button>
       </div>
     </div>
   </div>
@@ -493,6 +485,11 @@
   var pasteData = null;      // 2D boolean array
   var pastePos = { r: 0, c: 0 }; // 貼り付け位置左上
 
+  // Zoom / Pan state
+  var isZoomed = false;
+  var panX = 0;
+  var panY = 0;
+
   function initBits(size) {
     var b = [];
     for (var ri = 0; ri < size; ri++) b.push(new Array(size).fill(false));
@@ -538,6 +535,16 @@
       var frameIdx = parseInt(btn.dataset.frame, 10);
       btn.classList.toggle("active", frameIdx === currentFrame);
     });
+  }
+
+  function updateZoomButtonState() {
+    var btnZoom = document.getElementById("btnZoom");
+    var canZoom = (GRID_N === 32 || GRID_N === 64);
+    if (!canZoom && isZoomed) {
+      resetZoom();
+    }
+    btnZoom.disabled = !canZoom;
+    btnZoom.classList.toggle("active-mode", isZoomed);
   }
 
   function colorHex(i) {
@@ -601,9 +608,50 @@
     }
   });
 
-  // ---------- grid DOM ----------
+  // ---------- grid DOM & Zoom / Pan ----------
   var gridEl = document.getElementById("grid");
+  var gridViewportEl = document.getElementById("gridViewport");
   var cellEls = [];
+
+  function updateTransform() {
+    if (isZoomed) {
+      var vpSize = gridViewportEl.clientWidth;
+      var maxPan = vpSize * 1; // 2x2（4倍）表示で食い出る移動上限
+      panX = Math.max(-maxPan, Math.min(0, panX));
+      panY = Math.max(-maxPan, Math.min(0, panY));
+      gridEl.style.transform = "translate(" + panX + "px, " + panY + "px) scale(2)";
+    } else {
+      panX = 0;
+      panY = 0;
+      gridEl.style.transform = "none";
+    }
+  }
+
+  function resetZoom() {
+    isZoomed = false;
+    panX = 0;
+    panY = 0;
+    updateTransform();
+    updateZoomButtonState();
+  }
+
+  function toggleZoom() {
+    if (GRID_N !== 32 && GRID_N !== 64) return;
+    isZoomed = !isZoomed;
+    if (isZoomed) {
+      // ズームON時は中央部分を初期表示にする
+      var vpSize = gridViewportEl.clientWidth;
+      panX = -vpSize * 0.5;
+      panY = -vpSize * 0.5;
+    } else {
+      panX = 0;
+      panY = 0;
+    }
+    updateTransform();
+    updateZoomButtonState();
+  }
+
+  document.getElementById("btnZoom").addEventListener("click", toggleZoom);
 
   function buildGridDOM() {
     gridEl.innerHTML = "";
@@ -624,6 +672,7 @@
         cellEls[r].push(cell);
       }
     }
+    updateTransform();
   }
 
   function changeSize(newSize) {
@@ -773,6 +822,7 @@
     updatePaletteHighlight();
     updateSizeButtonsState();
     updateFrameButtonsState();
+    updateZoomButtonState();
     
     btnCopy.classList.toggle("active-mode", currentMode === "copy_select");
     btnPaste.classList.toggle("active-mode", currentMode === "paste_preview");
@@ -825,10 +875,14 @@
     paletteEl.appendChild(sw);
   });
 
-  // ---------- drawing & drag pointer handlers ----------
+  // ---------- drawing & drag pointer / multi-touch pan handlers ----------
   var paintValue = null;
   var paintPointerId = null;
   var dragStartPos = null;
+  var activePointers = new Map();
+  var isPanning = false;
+  var cancelCurrentAction = false;
+  var lastPanCenter = null;
 
   function cellAtPoint(x, y) {
     var el = document.elementFromPoint(x, y);
@@ -844,11 +898,52 @@
     updateSizeButtonsState();
   }
 
-  gridEl.addEventListener("pointerdown", function (ev) {
+  function getPointersCenter() {
+    var pts = Array.from(activePointers.values());
+    if (pts.length < 2) return null;
+    return {
+      x: (pts[0].x + pts[1].x) / 2,
+      y: (pts[0].y + pts[1].y) / 2
+    };
+  }
+
+  function abortPaint() {
+    if (paintPointerId !== null && currentMode === "draw") {
+      // 2本指操作が入った瞬間に直前の1ピクセル打画履歴をロールバック
+      if (history.length > 0) {
+        var snap = history.pop();
+        frames = snap.frames;
+        fgIndices = snap.fgs;
+        bgIndices = snap.bgs;
+        btnUndo.disabled = history.length === 0;
+        renderAll();
+      }
+    }
+    paintPointerId = null;
+    paintValue = null;
+    dragStartPos = null;
+  }
+
+  gridViewportEl.addEventListener("pointerdown", function (ev) {
+    activePointers.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+
+    // 2本指以上のタッチ操作が入った場合、パンモードに移行
+    if (activePointers.size >= 2) {
+      if (!isPanning) {
+        isPanning = true;
+        cancelCurrentAction = true; // 2本指スワイプ中〜全指解放までは描画ガード
+        abortPaint();
+      }
+      lastPanCenter = getPointersCenter();
+      return;
+    }
+
+    if (cancelCurrentAction) return;
+
     var hit = cellAtPoint(ev.clientX, ev.clientY);
     if (!hit) return;
+
     paintPointerId = ev.pointerId;
-    gridEl.setPointerCapture(ev.pointerId);
 
     if (currentMode === "draw") {
       pushHistory();
@@ -863,8 +958,33 @@
     }
   });
 
-  gridEl.addEventListener("pointermove", function (ev) {
-    if (paintPointerId === null || ev.pointerId !== paintPointerId) return;
+  gridViewportEl.addEventListener("pointermove", function (ev) {
+    if (activePointers.has(ev.pointerId)) {
+      activePointers.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+    }
+
+    // 2本指以上でのパン処理（拡大表示時のみ追従移動）
+    if (activePointers.size >= 2) {
+      if (!isPanning) {
+        isPanning = true;
+        cancelCurrentAction = true;
+        abortPaint();
+      }
+      if (isZoomed) {
+        var center = getPointersCenter();
+        if (center && lastPanCenter) {
+          var dx = center.x - lastPanCenter.x;
+          var dy = center.y - lastPanCenter.y;
+          panX += dx;
+          panY += dy;
+          updateTransform();
+        }
+        lastPanCenter = center;
+      }
+      return;
+    }
+
+    if (cancelCurrentAction || paintPointerId === null || ev.pointerId !== paintPointerId) return;
     var hit = cellAtPoint(ev.clientX, ev.clientY);
     if (!hit) return;
 
@@ -884,13 +1004,27 @@
   });
 
   function endPointer(ev) {
-    if (paintPointerId === null || ev.pointerId !== paintPointerId) return;
-    paintPointerId = null;
-    paintValue = null;
-    dragStartPos = null;
+    activePointers.delete(ev.pointerId);
+
+    if (activePointers.size < 2) {
+      isPanning = false;
+      lastPanCenter = null;
+    }
+
+    // 画面から指がすべて離れたらガード解除
+    if (activePointers.size === 0) {
+      cancelCurrentAction = false;
+    }
+
+    if (paintPointerId === ev.pointerId) {
+      paintPointerId = null;
+      paintValue = null;
+      dragStartPos = null;
+    }
   }
-  gridEl.addEventListener("pointerup", endPointer);
-  gridEl.addEventListener("pointercancel", endPointer);
+
+  gridViewportEl.addEventListener("pointerup", endPointer);
+  gridViewportEl.addEventListener("pointercancel", endPointer);
 
   // ---------- Copy 0/1 ----------
   document.getElementById("btnCopyText").addEventListener("click", function () {
@@ -939,26 +1073,6 @@
   document.getElementById("btnTextPasteConfirm").addEventListener("click", doTextPaste);
   textPasteOverlay.addEventListener("click", function (ev) {
     if (ev.target === textPasteOverlay) textPasteOverlay.classList.remove("show");
-  });
-
-  // ---------- All Clear ----------
-  var clearOverlay = document.getElementById("clearOverlay");
-  document.getElementById("btnClear").addEventListener("click", function () {
-    exitSpecialModes();
-    clearOverlay.classList.add("show");
-  });
-  document.getElementById("btnClearCancel").addEventListener("click", function () {
-    clearOverlay.classList.remove("show");
-  });
-  document.getElementById("btnClearConfirm").addEventListener("click", function () {
-    pushHistory();
-    frames[currentFrame] = initBits(GRID_N);
-    clearOverlay.classList.remove("show");
-    renderAll();
-    flash("All Clear 完了しました");
-  });
-  clearOverlay.addEventListener("click", function (ev) {
-    if (ev.target === clearOverlay) clearOverlay.classList.remove("show");
   });
 
   // ---------- Copy ----------
@@ -1073,7 +1187,7 @@
 
     return JSON.stringify({
       version: 2,
-      game: "CYBER SHMUP",
+      game: "CYBER_SUZUKA",
       width: GRID_N,
       height: GRID_N,
       fg: fgIndices[currentFrame],
@@ -1101,14 +1215,9 @@
     }
   });
 
-  // Published Artifact: goes through window.claude.downloads (blob/<a download>
-  // is inert in that sandbox). Run locally (file:// or any plain static host,
-  // no Claude frame runtime): window.claude doesn't exist at all, so fall back
-  // to the classic Blob + <a download> click, which works fine outside the
-  // sandbox.
-  function doSaveViaBlobLink(filename) {
+  function doSaveViaBlobLink(filename, jsonStr) {
     try {
-      var blob = new Blob([currentJSON()], { type: "application/json" });
+      var blob = new Blob([jsonStr], { type: "application/json" });
       var url = URL.createObjectURL(blob);
       var a = document.createElement("a");
       a.href = url;
@@ -1125,13 +1234,8 @@
     }
   }
 
-  function doSave() {
-    var filename = saveFilenameInput.value.trim() || ("Sprite_" + GRID_N + "x" + GRID_N + ".json");
-    if (!window.claude || !window.claude.downloads) {
-      doSaveViaBlobLink(filename);
-      return;
-    }
-    window.claude.downloads.save({ filename: filename, data: currentJSON() }).then(
+  function doSaveViaDownloadsCapability(filename, jsonStr) {
+    window.claude.downloads.save({ filename: filename, data: jsonStr }).then(
       function () {
         saveOverlay.classList.remove("show");
         flash("saved " + filename);
@@ -1142,6 +1246,37 @@
         saveStatus.classList.remove("ok");
       }
     );
+  }
+
+  function doSaveViaDownloadOrBlob(filename, jsonStr) {
+    if (window.claude && window.claude.downloads) {
+      doSaveViaDownloadsCapability(filename, jsonStr);
+    } else {
+      doSaveViaBlobLink(filename, jsonStr);
+    }
+  }
+
+  function doSave() {
+    var filename = saveFilenameInput.value.trim() || ("Sprite_" + GRID_N + "x" + GRID_N + ".json");
+    var jsonStr = currentJSON();
+
+    var file = null;
+    try { file = new File([jsonStr], filename, { type: "application/json" }); } catch (e) {}
+    if (file && navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
+      navigator.share({ files: [file] }).then(
+        function () {
+          saveOverlay.classList.remove("show");
+          flash("saved " + filename);
+        },
+        function (err) {
+          if (err && err.name === "AbortError") { saveOverlay.classList.remove("show"); flash("save cancelled"); return; }
+          doSaveViaDownloadOrBlob(filename, jsonStr);
+        }
+      );
+      return;
+    }
+
+    doSaveViaDownloadOrBlob(filename, jsonStr);
   }
 
   document.getElementById("btnSaveCancel").addEventListener("click", function () {
@@ -1162,7 +1297,7 @@
   function importJSONText(text) {
     var data = JSON.parse(text);
     var size = data.width || 16;
-    if (![8, 16, 24, 32].includes(size)) throw new Error("unsupported size");
+    if (![8, 16, 24, 32, 64].includes(size)) throw new Error("unsupported size");
 
     var loadedTargetFrame = null;
     if (data.bits && Array.isArray(data.bits) && data.bits.length === size) {
@@ -1231,20 +1366,12 @@
     var padX = parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight);
     var padY = parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom);
 
-    // パネル内の余白やボタンの高さ分のみを考慮し、黒い外枠の余分なデッドスペースを限界まで削減
     var BORDERS_Y = 40;
     var BORDERS_X = 8;
 
     var availW = gridWrapEl.clientWidth - padX - BORDERS_X;
     var size;
     if (STACKED_MQ.matches) {
-      // Stacked (narrow/mobile) layout: .gridwrap is full-width and no
-      // longer has a fixed vh height (see its media-query rule) - it
-      // just wraps to whatever height the resulting square needs, same
-      // as every button below spans edge-to-edge. Sizing off
-      // clientHeight here used to fight that: the old fixed vh cap made
-      // the square smaller than the available width, leaving dead
-      // black margins on both sides instead of filling it.
       size = Math.floor(availW);
     } else {
       var availH = gridWrapEl.clientHeight - padY - BORDERS_Y;
@@ -1255,17 +1382,7 @@
     document.documentElement.style.setProperty("--grid-size", size + "px");
   }
   window.addEventListener("resize", fitGrid);
-  // A published Artifact runs inside an iframe the host resizes to fit
-  // content AFTER first paint (measuring scrollHeight, then applying that
-  // as the iframe's real height) - since .gridwrap's own size depends on
-  // that height (height:100vh), the very first fitGrid() call below can
-  // run against a stale/interim size and never get corrected, because
-  // that resize is a change to the iframe element from OUTSIDE and isn't
-  // guaranteed to fire this page's own `window` resize event. Opening the
-  // same file directly in a normal tab doesn't have this two-step sizing,
-  // which is why the gap only showed up in the hosted Artifact. A
-  // ResizeObserver on .gridwrap itself reacts to the box actually
-  // changing size regardless of what caused it, closing that gap.
+
   if (typeof ResizeObserver !== "undefined") {
     new ResizeObserver(fitGrid).observe(gridWrapEl);
   }

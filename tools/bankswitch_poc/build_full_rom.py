@@ -238,7 +238,20 @@ def main():
     # --- by this ROM's own code, so the duplicate second half is     ---
     # --- inert padding, not a second, different level.               ---
     rom = rom64 + rom64
-    out_path = os.path.join(REPO, "rom", "CYBER SHMUP [ASCII16].rom")
+    # "ここで貼るROMファイル名を Stage1はCyberS S1.ascii16k.rom...として
+    # 出力" (round28) - renamed from "CYBER SHMUP [ASCII16].rom". Still
+    # contains "ascii16" as a substring for mapper auto-detection (see
+    # this file's own header comment on filename-based detection).
+    # NOTE: bank2/bank3 here are still bankswitch_poc's own separate,
+    # simple "stage2 world" (build_stage2_world.py, simple-only
+    # enemies) - NOT tools/stage2_combined's real boss-battle content.
+    # "後でやることだが Stage2を組み込んだビルドは CyberS Comb.ascii16k.
+    # romに" (round28) - the FUTURE build that properly embeds the real
+    # stage2_combined content in place of this POC stage2-world gets
+    # that name once that integration work happens; this one stays
+    # "S1" in the meantime since it's still fundamentally testing
+    # Stage1 (the real game)'s own bank-switch mechanism.
+    out_path = os.path.join(REPO, "rom", "CyberS S1.ascii16k.rom")
     with open(out_path, "wb") as f:
         f.write(rom)
 
