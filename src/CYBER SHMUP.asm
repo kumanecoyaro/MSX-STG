@@ -49,6 +49,7 @@ PHASE_G4    EQU 0E006h
 PHASE_G2    EQU 0E007h
 PHASE_G1    EQU 0E008h
 ROWPHASE    EQU 0E009h
+PHASE_MINUS1 EQU 0E00Ah  ; CELL_LOOP_0/2/3/5's own scratch - ROWPHASE-1, precomputed once per row instead of every one of its 32 loop iterations (ported from tools/stage2_combined/combined_test.asm's own TERRAIN_RENDER_ROW fix, round26/27 there)
 NEXTID      EQU 0E00Bh
 
 ; Per-row cache of ROWDATAn[PXCHARgroup..PXCHARgroup+32] already translated
@@ -701,25 +702,7 @@ INIT:
     LD A,00h : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,58h : OUT (99h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     NOP
     NOP
     LD A,BLANKCODE
@@ -728,54 +711,21 @@ INIT:
 FILLBG_1:
     DI
     OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     EI
     DJNZ FILLBG_1
     LD B,00h
 FILLBG_2:
     DI
     OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     EI
     DJNZ FILLBG_2
     LD B,128
 FILLBG_3:
     DI
     OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     EI
     DJNZ FILLBG_3
 
@@ -913,19 +863,7 @@ E3INIT_ROW_LOOP:
     LD A,0 : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     NOP
     NOP
     LD B,32
@@ -933,41 +871,13 @@ E3INIT_ROW_LOOP:
 INIT_SPRATR_CLR:
     DI
     LD A,209 : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     XOR A : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     XOR A : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     XOR A : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     EI
     DJNZ INIT_SPRATR_CLR
 
@@ -1063,156 +973,32 @@ INIT_SPRATR_CLR:
     LD A,04h : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,5Bh : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,PLAYER_INITY : SUB 8 : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,PLAYER_INITX : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,PAT_SHIP   : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,SPR_RED    : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
 
     LD A,00h : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,5Bh : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,PLAYER_INITY : SUB 8 : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,PLAYER_INITX : ADD A,8 : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,PAT_ACCENT : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,SPR_WHITE  : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     ; --- dynamic sprite numbering means enemies can land on any slot ---
     ; --- 2-31 in any order, so the old "write a terminator right     ---
     ; --- after the last sequential write" trick no longer works.     ---
@@ -1229,49 +1015,13 @@ INIT_HIDE_SLOT_LOOP:
     LD A,C : ADD A,A : ADD A,A : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,5Bh : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,ENEMY_HIDE_Y : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,255 : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     INC C
     EI
     DJNZ INIT_HIDE_SLOT_LOOP
@@ -1358,6 +1108,33 @@ SKIP_G1:
     LD A,(PHASE_G1) : LD (ROWPHASE),A
     LD HL,IDCACHE0                       ; pre-translated ids - see IDCACHE0 comment
     LD IX,NAMEBUF+0
+    ; ROWPHASE is loop-invariant for the whole 32-cell row (set once just
+    ; above, never touched mid-row) - re-testing "ROWPHASE==0" (and, in
+    ; the nonzero case, re-reading ROWPHASE a SECOND time for the final
+    ; "-1" blend offset) on every one of the 32 iterations was pure
+    ; waste. Split into 2 loop bodies, selected ONCE here instead -
+    ; ported from tools/stage2_combined/combined_test.asm's own
+    ; TERRAIN_RENDER_ROW fix (round26/27 there: this exact code shape,
+    ; measured there at 43.57% of a whole frame's own T-state budget
+    ; before the fix). Pure loop-invariant code motion - output is bit-
+    ; for-bit identical to the old single-loop version for every input,
+    ; verified by tools/verify_cell_loop_hoist.py.
+    LD A,(ROWPHASE)
+    OR A
+    JR NZ,NONZERO_ENTRY_0
+    LD B,32
+    LD A,(HL) : LD C,A
+CELL_LOOP_ZERO_0:
+    INC HL
+    LD A,(HL) : LD (NEXTID),A
+    LD A,C : LD E,A : LD D,SOLOTAB/256 : LD A,(DE)
+    LD (IX+0),A
+    INC IX
+    LD A,(NEXTID) : LD C,A
+    DJNZ CELL_LOOP_ZERO_0
+    JR CELL_ROW_DONE_0
+NONZERO_ENTRY_0:
+    DEC A : LD (PHASE_MINUS1),A
     LD B,32
     ; --- prime C = curr_id for cell 0; each cell's "next" is the following---
     ; --- cell's "curr" (HL only advances by 1/cell), so C carries it       ---
@@ -1366,73 +1143,95 @@ SKIP_G1:
 CELL_LOOP_0:
     INC HL
     LD A,(HL) : LD (NEXTID),A
-    LD A,(ROWPHASE) : OR A
-    JR NZ,NONZERO_0
-    LD A,C : LD E,A : LD D,SOLOTAB/256 : LD A,(DE)
-    JR STORE_0
-NONZERO_0:
     LD A,C : LD E,A : LD D,MUL6/256 : LD A,(DE) : LD E,A  ; E = curr_id*6
     LD A,(NEXTID) : ADD A,E             ; A = pairid = curr_id*6+next_id
     LD E,A : LD D,PAIRBASE/256 : LD A,(DE)  ; A = PAIRBASE[pairid]
     LD E,A
-    LD A,(ROWPHASE) : DEC A : ADD A,E   ; + (phase-1)
+    LD A,(PHASE_MINUS1) : ADD A,E       ; + (phase-1), precomputed once
 STORE_0:
     LD (IX+0),A
     INC IX
     LD A,(NEXTID) : LD C,A              ; carry next_id forward as next cell's curr_id
     DJNZ CELL_LOOP_0
+CELL_ROW_DONE_0:
 
     ; --- row 2: screen row 21 (TIER3_DIAMOND), group PXCHAR_G2 ---
     ; --- (was screen row 20 - moved down 1 row, see GROUND_ROW0) ---
     LD A,(PHASE_G2) : LD (ROWPHASE),A
     LD HL,IDCACHE2
     LD IX,NAMEBUF+32
+    ; loop-invariant branch hoist - see CELL_LOOP_0's own comment above.
+    LD A,(ROWPHASE)
+    OR A
+    JR NZ,NONZERO_ENTRY_2
+    LD B,32
+    LD A,(HL) : LD C,A
+CELL_LOOP_ZERO_2:
+    INC HL
+    LD A,(HL) : LD (NEXTID),A
+    LD A,C : LD E,A : LD D,SOLOTAB/256 : LD A,(DE)
+    LD (IX+0),A
+    INC IX
+    LD A,(NEXTID) : LD C,A
+    DJNZ CELL_LOOP_ZERO_2
+    JR CELL_ROW_DONE_2
+NONZERO_ENTRY_2:
+    DEC A : LD (PHASE_MINUS1),A
     LD B,32
     LD A,(HL) : LD C,A
 CELL_LOOP_2:
     INC HL
     LD A,(HL) : LD (NEXTID),A
-    LD A,(ROWPHASE) : OR A
-    JR NZ,NONZERO_2
-    LD A,C : LD E,A : LD D,SOLOTAB/256 : LD A,(DE)
-    JR STORE_2
-NONZERO_2:
     LD A,C : LD E,A : LD D,MUL6/256 : LD A,(DE) : LD E,A  ; E = curr_id*6
     LD A,(NEXTID) : ADD A,E             ; A = pairid = curr_id*6+next_id
     LD E,A : LD D,PAIRBASE/256 : LD A,(DE)  ; A = PAIRBASE[pairid]
     LD E,A
-    LD A,(ROWPHASE) : DEC A : ADD A,E   ; + (phase-1)
+    LD A,(PHASE_MINUS1) : ADD A,E       ; + (phase-1), precomputed once
 STORE_2:
     LD (IX+0),A
     INC IX
     LD A,(NEXTID) : LD C,A              ; carry next_id forward as next cell's curr_id
     DJNZ CELL_LOOP_2
+CELL_ROW_DONE_2:
 
     ; --- row 3: screen row 22 (TIER4_SLASH), group PXCHAR_G4 ---
     ; --- (was screen row 21 - moved down 1 row, see GROUND_ROW0) ---
     LD A,(PHASE_G4) : LD (ROWPHASE),A
     LD HL,IDCACHE3
     LD IX,NAMEBUF+64
+    ; loop-invariant branch hoist - see CELL_LOOP_0's own comment above.
+    LD A,(ROWPHASE)
+    OR A
+    JR NZ,NONZERO_ENTRY_3
+    LD B,32
+    LD A,(HL) : LD C,A
+CELL_LOOP_ZERO_3:
+    INC HL
+    LD A,(HL) : LD (NEXTID),A
+    LD A,C : LD E,A : LD D,SOLOTAB/256 : LD A,(DE)
+    LD (IX+0),A
+    INC IX
+    LD A,(NEXTID) : LD C,A
+    DJNZ CELL_LOOP_ZERO_3
+    JR CELL_ROW_DONE_3
+NONZERO_ENTRY_3:
+    DEC A : LD (PHASE_MINUS1),A
     LD B,32
     LD A,(HL) : LD C,A
 CELL_LOOP_3:
     INC HL
     LD A,(HL) : LD (NEXTID),A
-    LD A,(ROWPHASE) : OR A
-    JR NZ,NONZERO_3
-    LD A,C : LD E,A : LD D,SOLOTAB/256 : LD A,(DE)
-    JR STORE_3
-NONZERO_3:
     LD A,C : LD E,A : LD D,MUL6/256 : LD A,(DE) : LD E,A  ; E = curr_id*6
     LD A,(NEXTID) : ADD A,E             ; A = pairid = curr_id*6+next_id
     LD E,A : LD D,PAIRBASE/256 : LD A,(DE)  ; A = PAIRBASE[pairid]
     LD E,A
-    LD A,(ROWPHASE) : DEC A : ADD A,E   ; + (phase-1)
+    LD A,(PHASE_MINUS1) : ADD A,E       ; + (phase-1), precomputed once
 STORE_3:
     LD (IX+0),A
     INC IX
     LD A,(NEXTID) : LD C,A              ; carry next_id forward as next cell's curr_id
     DJNZ CELL_LOOP_3
+CELL_ROW_DONE_3:
 
     ; --- row 5: screen row 23 (TIER6_WEDGE), group PXCHAR_G8 - ---
     ; --- stays fixed at the bottom of the screen; NAMEBUF slot ---
@@ -1441,26 +1240,39 @@ STORE_3:
     LD A,(PHASE_G8) : LD (ROWPHASE),A
     LD HL,IDCACHE5
     LD IX,NAMEBUF+96
+    ; loop-invariant branch hoist - see CELL_LOOP_0's own comment above.
+    LD A,(ROWPHASE)
+    OR A
+    JR NZ,NONZERO_ENTRY_5
+    LD B,32
+    LD A,(HL) : LD C,A
+CELL_LOOP_ZERO_5:
+    INC HL
+    LD A,(HL) : LD (NEXTID),A
+    LD A,C : LD E,A : LD D,SOLOTAB/256 : LD A,(DE)
+    LD (IX+0),A
+    INC IX
+    LD A,(NEXTID) : LD C,A
+    DJNZ CELL_LOOP_ZERO_5
+    JR CELL_ROW_DONE_5
+NONZERO_ENTRY_5:
+    DEC A : LD (PHASE_MINUS1),A
     LD B,32
     LD A,(HL) : LD C,A
 CELL_LOOP_5:
     INC HL
     LD A,(HL) : LD (NEXTID),A
-    LD A,(ROWPHASE) : OR A
-    JR NZ,NONZERO_5
-    LD A,C : LD E,A : LD D,SOLOTAB/256 : LD A,(DE)
-    JR STORE_5
-NONZERO_5:
     LD A,C : LD E,A : LD D,MUL6/256 : LD A,(DE) : LD E,A  ; E = curr_id*6
     LD A,(NEXTID) : ADD A,E             ; A = pairid = curr_id*6+next_id
     LD E,A : LD D,PAIRBASE/256 : LD A,(DE)  ; A = PAIRBASE[pairid]
     LD E,A
-    LD A,(ROWPHASE) : DEC A : ADD A,E   ; + (phase-1)
+    LD A,(PHASE_MINUS1) : ADD A,E       ; + (phase-1), precomputed once
 STORE_5:
     LD (IX+0),A
     INC IX
     LD A,(NEXTID) : LD C,A              ; carry next_id forward as next cell's curr_id
     DJNZ CELL_LOOP_5
+CELL_ROW_DONE_5:
 
     ; --- push each row to VRAM, skipping rows unchanged since last frame ---
     ; (Name table base is 1800h in SCREEN1 too, so these VRAM
@@ -1482,19 +1294,7 @@ DIFFERENT_0:
     LD A,80h : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,5Ah : OUT (99h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     NOP
     NOP
     LD C,98h
@@ -1503,14 +1303,7 @@ DIFFERENT_0:
 ROWXFER_0:
     DI
     LD A,(HL) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     INC HL : DEC B
     EI
     JP NZ,ROWXFER_0
@@ -1532,19 +1325,7 @@ DIFFERENT_2:
     LD A,A0h : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,5Ah : OUT (99h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     NOP
     NOP
     LD C,98h
@@ -1553,14 +1334,7 @@ DIFFERENT_2:
 ROWXFER_2:
     DI
     LD A,(HL) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     INC HL : DEC B
     EI
     JP NZ,ROWXFER_2
@@ -1582,19 +1356,7 @@ DIFFERENT_3:
     LD A,C0h : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,5Ah : OUT (99h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     NOP
     NOP
     LD C,98h
@@ -1603,14 +1365,7 @@ DIFFERENT_3:
 ROWXFER_3:
     DI
     LD A,(HL) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     INC HL : DEC B
     EI
     JP NZ,ROWXFER_3
@@ -1634,23 +1389,7 @@ DIFFERENT_5:
     LD A,E0h : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,5Ah : OUT (99h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     NOP
     NOP
     LD C,98h
@@ -1659,16 +1398,7 @@ DIFFERENT_5:
 ROWXFER_5:
     DI
     LD A,(HL) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     INC HL : DEC B
     EI
     JP NZ,ROWXFER_5
@@ -1853,112 +1583,32 @@ ACCFR_GOT:
     LD A,04h : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,5Bh : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,(PLAYERY) : SUB 8 : CALL PLAYER_DRAW_Y_ADJ : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,(PLAYERX) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,(PLAYER_SHIP_PAT) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,SPR_RED : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
 
     LD A,00h : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,5Bh : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,(PLAYERY) : SUB 8 : CALL PLAYER_DRAW_Y_ADJ : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,(PLAYERX) : ADD A,8 : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,(PLAYER_ACCENT_PAT) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,SPR_WHITE : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
 
     ; ============================================================
     ; --- fire: A button (joystick1 trigger1), up to 3 shots on  ---
@@ -2194,30 +1844,11 @@ BULLET0_HITERASE_GOT:
     LD A,L : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,H : OR 40h : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,(TEMP_ERASE_BYTE) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     XOR A : LD (BULLET0_ACT),A
     EI
     JP BULLET0_NEXT
@@ -2231,30 +1862,11 @@ BULLET0_ERASE_GOT:
     LD A,L : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,H : OR 40h : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,(TEMP_ERASE_BYTE) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,(BULLET0_COL) : INC A : LD (BULLET0_COL),A
     CP BULLET_MAXCOL+1
     EI
@@ -2265,30 +1877,11 @@ BULLET0_ERASE_GOT:
     LD A,L : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,H : OR 40h : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,(BULLET0_PAT) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     EI
     JP BULLET0_NEXT
 BULLET0_OFF:
@@ -2330,30 +1923,11 @@ BULLET1_HITERASE_GOT:
     LD A,L : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,H : OR 40h : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,(TEMP_ERASE_BYTE) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     XOR A : LD (BULLET1_ACT),A
     EI
     JP BULLET1_NEXT
@@ -2367,30 +1941,11 @@ BULLET1_ERASE_GOT:
     LD A,L : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,H : OR 40h : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,(TEMP_ERASE_BYTE) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,(BULLET1_COL) : INC A : LD (BULLET1_COL),A
     CP BULLET_MAXCOL+1
     EI
@@ -2401,30 +1956,11 @@ BULLET1_ERASE_GOT:
     LD A,L : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,H : OR 40h : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,(BULLET1_PAT) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     EI
     JP BULLET1_NEXT
 BULLET1_OFF:
@@ -2466,30 +2002,11 @@ BULLET2_HITERASE_GOT:
     LD A,L : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,H : OR 40h : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,(TEMP_ERASE_BYTE) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     XOR A : LD (BULLET2_ACT),A
     EI
     JP BULLET2_NEXT
@@ -2503,30 +2020,11 @@ BULLET2_ERASE_GOT:
     LD A,L : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,H : OR 40h : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,(TEMP_ERASE_BYTE) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,(BULLET2_COL) : INC A : LD (BULLET2_COL),A
     CP BULLET_MAXCOL+1
     EI
@@ -2537,30 +2035,11 @@ BULLET2_ERASE_GOT:
     LD A,L : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,H : OR 40h : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,(BULLET2_PAT) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     EI
     JP BULLET2_NEXT
 BULLET2_OFF:
@@ -2740,19 +2219,7 @@ PPF_LOOP:
     LD A,E : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     NOP
     NOP
 
@@ -2763,66 +2230,24 @@ PPF_LOOP:
     JR NZ,PPF_VISIBLE
     DI
     LD A,ENEMY_HIDE_Y : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,255 : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     EI
     JP PPF_SKIP
 PPF_VISIBLE:
     LD HL,PARTICLE_Y : LD D,0 : LD E,C : ADD HL,DE
     DI
     LD A,(HL) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD HL,PARTICLE_X : LD D,0 : LD E,C : ADD HL,DE
     LD A,(HL) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,PAT_PARTICLE : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD HL,PARTICLE_COL : LD D,0 : LD E,C : ADD HL,DE
     LD A,(HL) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     EI
 PPF_SKIP:
     INC C
@@ -2890,20 +2315,8 @@ REDRAW_UNIT_PATTERN:
     OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,H : OR 40h
     OUT (99h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     NOP
     NOP
     LD A,(DE)
@@ -2914,14 +2327,7 @@ REDRAW_UNIT_PATTERN:
 RU_TL_LOOP:
     DI
     LD A,(HL) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     EI
     INC HL : DJNZ RU_TL_LOOP
     JR RU_BL
@@ -2930,14 +2336,7 @@ RU_TL_BLANK:
 RU_TL_BLANK_LOOP:
     DI
     XOR A : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     EI
     DJNZ RU_TL_BLANK_LOOP
 RU_BL:
@@ -2945,28 +2344,14 @@ RU_BL:
 RU_BL_LOOP:
     DI
     XOR A : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     EI
     DJNZ RU_BL_LOOP
     LD B,8
 RU_TR_LOOP:
     DI
     XOR A : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     EI
     DJNZ RU_TR_LOOP
     LD A,(IX+0)
@@ -2976,14 +2361,7 @@ RU_TR_LOOP:
 RU_BR_LOOP:
     DI
     LD A,(HL) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     EI
     INC HL : DJNZ RU_BR_LOOP
     RET
@@ -2992,14 +2370,7 @@ RU_BR_BLANK:
 RU_BR_BLANK_LOOP:
     DI
     XOR A : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     EI
     DJNZ RU_BR_BLANK_LOOP
     RET
@@ -3371,30 +2742,11 @@ WAC_SKIPBUF:
     LD A,L : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,H : OR 40h : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,(ANIM_TMP_VAL) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     EI
     RET
 
@@ -4015,39 +3367,13 @@ ESC_COMPLEX_INIT_A:
     LD A,(E2A_TEMP_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,5Bh : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,ENEMY_HIDE_Y : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,255 : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     EI
     XOR A : LD (E2A_ANIM_SEQ),A : LD (E2A_ANIM_TIMER),A
     LD HL,ASTERISK_PATTERN : LD (REDRAW_SRC_PATTERN),HL
@@ -4067,111 +3393,33 @@ ESC_COMPLEX_INIT_A:
     LD A,(E2A_U1_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,5Bh : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,ENEMY_HIDE_Y : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,255 : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,(E2A_U2_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,5Bh : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,ENEMY_HIDE_Y : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,255 : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,(E2A_TEMP_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,5Bh : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,ENEMY_HIDE_Y : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,255 : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,1 : LD (E2A_ACTIVE),A
     EI
     RET
@@ -4201,39 +3449,13 @@ ESC_COMPLEX_INIT_B:
     LD A,(E2B_TEMP_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,5Bh : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,ENEMY_HIDE_Y : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,255 : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     EI
     XOR A : LD (E2B_ANIM_SEQ),A : LD (E2B_ANIM_TIMER),A
     LD HL,ASTERISK_PATTERN : LD (REDRAW_SRC_PATTERN),HL
@@ -4253,111 +3475,33 @@ ESC_COMPLEX_INIT_B:
     LD A,(E2B_U1_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,5Bh : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,ENEMY_HIDE_Y : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,255 : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,(E2B_U2_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,5Bh : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,ENEMY_HIDE_Y : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,255 : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,(E2B_TEMP_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,5Bh : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,ENEMY_HIDE_Y : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,255 : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,1 : LD (E2B_ACTIVE),A
     EI
     RET
@@ -4753,39 +3897,13 @@ BCDE_HIDE1:
     ADD A,A : ADD A,A : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,5Bh : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,ENEMY_HIDE_Y : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,255 : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     EI
     POP AF
     CALL FREE_SPRITE_NUM
@@ -4958,36 +4076,11 @@ BOSS_DRAW_CUR_TILE:
     LD A,E : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,D : OR 40h : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,(BOSS_TILETMP) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     EI
     CALL SOUND_POD_HIT
     RET
@@ -5003,102 +4096,27 @@ BOSS_SPR_SET_YXP:
     LD A,E : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     NOP
     NOP
     LD A,(BOSS_YTMP) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,E : ADD A,1 : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     NOP
     NOP
     LD A,(BOSS_XTMP) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,E : ADD A,2 : OUT (99h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     NOP
     NOP
     LD A,5Bh : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,BOSS_HEX_PATNUM : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     EI
     RET
 
@@ -5111,36 +4129,11 @@ BOSS_SPR_SET_COLOR:
     LD A,E : ADD A,3 : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,5Bh : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,(BOSS_CTMP) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     EI
     RET
 
@@ -5152,36 +4145,11 @@ BOSS_HIDE_SPRITE:
     LD A,E : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,5Bh : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,209 : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     EI
     RET
 
@@ -5258,111 +4226,35 @@ BOD_NORECOIL:
     LD A,E : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     NOP
     NOP
     LD A,(BOSS_ORBIT_YTMP) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,E : ADD A,1 : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     NOP
     NOP
     LD A,(BOSS_ORBIT_XTMP) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,E : ADD A,2 : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     NOP
     NOP
     LD A,BOSS_ORBIT_PATNUM : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,E : ADD A,3 : OUT (99h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     NOP
     NOP
     LD A,5Bh : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,(BOSS_ORBIT_CTMP) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     EI
 BOD_NEXT:
     INC B
@@ -5451,30 +4343,11 @@ CB0_ERASE:
     LD A,L : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,H : OR 40h : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,(TEMP_ERASE_BYTE) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     XOR A : LD (BULLET0_ACT),A
     EI
     RET
@@ -5491,30 +4364,11 @@ CB0_ERASE_FAST:
     LD A,L : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,H : OR 40h : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,BLANKCODE : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     XOR A : LD (BULLET0_ACT),A
     EI
     RET
@@ -5578,30 +4432,11 @@ CB1_ERASE:
     LD A,L : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,H : OR 40h : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,(TEMP_ERASE_BYTE) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     XOR A : LD (BULLET1_ACT),A
     EI
     RET
@@ -5618,30 +4453,11 @@ CB1_ERASE_FAST:
     LD A,L : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,H : OR 40h : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,BLANKCODE : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     XOR A : LD (BULLET1_ACT),A
     EI
     RET
@@ -5705,30 +4521,11 @@ CB2_ERASE:
     LD A,L : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,H : OR 40h : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,(TEMP_ERASE_BYTE) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     XOR A : LD (BULLET2_ACT),A
     EI
     RET
@@ -5745,30 +4542,11 @@ CB2_ERASE_FAST:
     LD A,L : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,H : OR 40h : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,BLANKCODE : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     XOR A : LD (BULLET2_ACT),A
     EI
     RET
@@ -5798,30 +4576,11 @@ POD_HIT_DESTROY:
     LD A,E : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,5Bh : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,209 : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD HL,POD_CUR_X : LD D,0 : LD E,B : ADD HL,DE
     LD A,(HL)
     LD HL,EXPLOSION_X : LD D,0 : LD E,B : ADD HL,DE
@@ -5873,111 +4632,35 @@ EXPLOSION_DRAW:
     LD A,E : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     NOP
     NOP
     LD A,(BOSS_ORBIT_YTMP) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,E : ADD A,1 : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     NOP
     NOP
     LD A,(BOSS_ORBIT_XTMP) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,E : ADD A,2 : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     NOP
     NOP
     LD A,EXPLOSION_PATNUM : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,E : ADD A,3 : OUT (99h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     NOP
     NOP
     LD A,5Bh : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,8 : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     EI
     RET
 
@@ -5989,30 +4672,11 @@ EXPLOSION_HIDE:
     LD A,E : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,5Bh : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,209 : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     EI
     RET
 
@@ -6159,30 +4823,11 @@ BEU_DECODE_DONE:
     LD A,L : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,H : OR 40h : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,BLANKCODE : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
 
     LD A,(BOSS_EXPL_ROW)
     ADD A,A : ADD A,A : ADD A,A
@@ -6440,111 +5085,35 @@ LAP_MARKER_DRAW:
     LD A,E : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     NOP
     NOP
     LD A,(BOSS_ORBIT_YTMP) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,E : ADD A,1 : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     NOP
     NOP
     LD A,(BOSS_ORBIT_XTMP) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,E : ADD A,2 : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     NOP
     NOP
     LD A,BOSS_HEX_PATNUM : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,E : ADD A,3 : OUT (99h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     NOP
     NOP
     LD A,5Bh : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,15 : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     EI
     RET
 
@@ -6554,30 +5123,11 @@ LAP_MARKER_HIDE:
     LD A,E : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,5Bh : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,209 : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     EI
     RET
 
@@ -6587,111 +5137,35 @@ LAP_MARKER_DRAW2:
     LD A,E : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     NOP
     NOP
     LD A,(BOSS_ORBIT_YTMP) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,E : ADD A,1 : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     NOP
     NOP
     LD A,(BOSS_ORBIT_XTMP) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,E : ADD A,2 : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     NOP
     NOP
     LD A,BOSS_HEX_PATNUM : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,E : ADD A,3 : OUT (99h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     NOP
     NOP
     LD A,5Bh : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,15 : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     EI
     RET
 
@@ -6701,30 +5175,11 @@ LAP_MARKER_HIDE2:
     LD A,E : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,5Bh : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,209 : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     EI
     RET
 
@@ -6890,111 +5345,35 @@ LAUNCH_DRAW:
     LD A,E : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     NOP
     NOP
     LD A,(BOSS_ORBIT_YTMP) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,E : ADD A,1 : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     NOP
     NOP
     LD A,(BOSS_ORBIT_XTMP) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,E : ADD A,2 : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     NOP
     NOP
     LD A,BOSS_ORBIT_PATNUM : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,E : ADD A,3 : OUT (99h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     NOP
     NOP
     LD A,5Bh : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,(POD_VOLLEY_COLOR_TEST) : AND 0Fh : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     EI
     RET
 
@@ -7032,111 +5411,35 @@ POD_BULLET_DRAW0:
     LD A,E : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     NOP
     NOP
     LD A,(POD_BULLET0_Y) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,E : ADD A,1 : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     NOP
     NOP
     LD A,(POD_BULLET0_X) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,E : ADD A,2 : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     NOP
     NOP
     LD A,BOSS_HEX_PATNUM : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,E : ADD A,3 : OUT (99h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     NOP
     NOP
     LD A,5Bh : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,15 : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     EI
     RET
 
@@ -7146,111 +5449,35 @@ POD_BULLET_DRAW1:
     LD A,E : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     NOP
     NOP
     LD A,(POD_BULLET1_Y) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,E : ADD A,1 : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     NOP
     NOP
     LD A,(POD_BULLET1_X) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,E : ADD A,2 : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     NOP
     NOP
     LD A,BOSS_HEX_PATNUM : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,E : ADD A,3 : OUT (99h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     NOP
     NOP
     LD A,5Bh : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,15 : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     EI
     RET
 
@@ -7260,30 +5487,11 @@ POD_BULLET_HIDE0:
     LD A,E : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,5Bh : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,209 : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     EI
     RET
 
@@ -7293,30 +5501,11 @@ POD_BULLET_HIDE1:
     LD A,E : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,5Bh : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,209 : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     EI
     RET
 
@@ -7366,30 +5555,11 @@ DEFLECT_BULLET0:
     LD A,L : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,H : OR 40h : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,BLANKCODE : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     XOR A : LD (BULLET0_ACT),A
     LD A,(BULLET0_COL) : ADD A,A : ADD A,A : ADD A,A
     LD (DFL0_X),A
@@ -7416,30 +5586,11 @@ DEFLECT_BULLET1:
     LD A,L : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,H : OR 40h : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,BLANKCODE : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     XOR A : LD (BULLET1_ACT),A
     LD A,(BULLET1_COL) : ADD A,A : ADD A,A : ADD A,A
     LD (DFL1_X),A
@@ -7466,30 +5617,11 @@ DEFLECT_BULLET2:
     LD A,L : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,H : OR 40h : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,BLANKCODE : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     XOR A : LD (BULLET2_ACT),A
     LD A,(BULLET2_COL) : ADD A,A : ADD A,A : ADD A,A
     LD (DFL2_X),A
@@ -7573,111 +5705,35 @@ DFL_DRAW0:
     LD A,E : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     NOP
     NOP
     LD A,(DFL0_Y) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,E : ADD A,1 : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     NOP
     NOP
     LD A,(DFL0_X) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,E : ADD A,2 : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     NOP
     NOP
     LD A,DFL_BULLET_PATNUM : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,E : ADD A,3 : OUT (99h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     NOP
     NOP
     LD A,5Bh : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,8 : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     EI
     RET
 
@@ -7687,111 +5743,35 @@ DFL_DRAW1:
     LD A,E : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     NOP
     NOP
     LD A,(DFL1_Y) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,E : ADD A,1 : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     NOP
     NOP
     LD A,(DFL1_X) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,E : ADD A,2 : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     NOP
     NOP
     LD A,DFL_BULLET_PATNUM : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,E : ADD A,3 : OUT (99h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     NOP
     NOP
     LD A,5Bh : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,8 : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     EI
     RET
 
@@ -7801,111 +5781,35 @@ DFL_DRAW2:
     LD A,E : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     NOP
     NOP
     LD A,(DFL2_Y) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,E : ADD A,1 : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     NOP
     NOP
     LD A,(DFL2_X) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,E : ADD A,2 : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     NOP
     NOP
     LD A,DFL_BULLET_PATNUM : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,E : ADD A,3 : OUT (99h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     NOP
     NOP
     LD A,5Bh : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,8 : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     EI
     RET
 
@@ -7915,30 +5819,11 @@ DFL_HIDE0:
     LD A,E : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,5Bh : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,209 : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     EI
     RET
 
@@ -7948,30 +5833,11 @@ DFL_HIDE1:
     LD A,E : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,5Bh : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,209 : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     EI
     RET
 
@@ -7981,30 +5847,11 @@ DFL_HIDE2:
     LD A,E : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,5Bh : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,209 : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     EI
     RET
 
@@ -8307,165 +6154,45 @@ ENEMY_DRAW_ALL_COMPLEX_A:
     LD A,(E2A_U0_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,5Bh : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,(E2A_Y) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,(E2A_U0_X) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,PAT_E2A0 : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,SPR_GRAY : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,(E2A_U1_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,5Bh : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,(E2A_Y) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,(E2A_U1_X) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,PAT_E2A1 : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,SPR_GRAY : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,(E2A_U2_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,5Bh : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,(E2A_Y) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,(E2A_U2_X) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,PAT_E2A2 : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,SPR_GRAY : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     EI
     RET
 
@@ -8504,165 +6231,45 @@ EDS_U2_SET_A:
     LD A,(E2A_U0_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     NOP
     NOP
     LD A,(E2A_EDS_Y0) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,(E2A_U0_X) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,PAT_E2A0 : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,SPR_GRAY : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,(E2A_U1_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     NOP
     NOP
     LD A,(E2A_EDS_Y1) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,(E2A_U1_X) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,PAT_E2A1 : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,SPR_GRAY : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,(E2A_U2_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     NOP
     NOP
     LD A,5Bh : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,(E2A_EDS_Y2) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,(E2A_U2_X) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,PAT_E2A2 : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,SPR_GRAY : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     EI
     RET
 
@@ -8708,57 +6315,17 @@ ECS_S0_DRAW_A:
     LD A,(E2A_U0_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,5Bh : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,(E2A_Y) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,(E2A_U0_X) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,PAT_E2A_TT : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,SPR_GRAY : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     EI
     RET
 
@@ -8779,93 +6346,27 @@ ECS_S1_ARRIVED_A:
     LD A,(E2A_U0_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     NOP
     NOP
     LD A,(E2A_Y) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,(E2A_U0_X) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,PAT_E2A0 : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,SPR_GRAY : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,(E2A_TEMP_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     NOP
     NOP
     LD A,5Bh : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,ENEMY_HIDE_Y : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,255 : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,2 : LD (E2A_SEQ_STATE),A
     LD A,ENEMY_SPAWNX : LD (E2A_U1_X),A
     EI
@@ -8875,57 +6376,17 @@ ECS_S1_DRAW_A:
     LD A,(E2A_TEMP_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,5Bh : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,(E2A_Y) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,(E2A_TEMP_X) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,PAT_E2A_TB : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,SPR_GRAY : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     EI
     RET
 
@@ -8948,57 +6409,17 @@ ECS_S2_DRAW_A:
     LD A,(E2A_U1_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,5Bh : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,(E2A_Y) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,(E2A_U1_X) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,PAT_E2A_TT : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,SPR_GRAY : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     EI
     RET
 
@@ -9019,93 +6440,27 @@ ECS_S3_ARRIVED_A:
     LD A,(E2A_U1_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     NOP
     NOP
     LD A,(E2A_Y) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,(E2A_U1_X) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,PAT_E2A1 : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,SPR_GRAY : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,(E2A_TEMP_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     NOP
     NOP
     LD A,5Bh : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,ENEMY_HIDE_Y : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,255 : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,4 : LD (E2A_SEQ_STATE),A
     LD A,ENEMY_SPAWNX : LD (E2A_U2_X),A
     EI
@@ -9115,57 +6470,17 @@ ECS_S3_DRAW_A:
     LD A,(E2A_TEMP_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,5Bh : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,(E2A_Y) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,(E2A_TEMP_X) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,PAT_E2A_TB : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,SPR_GRAY : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     EI
     RET
 
@@ -9188,57 +6503,17 @@ ECS_S4_DRAW_A:
     LD A,(E2A_U2_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,5Bh : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,(E2A_Y) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,(E2A_U2_X) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,PAT_E2A_TT : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,SPR_GRAY : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     EI
     RET
 
@@ -9259,93 +6534,27 @@ ECS_S5_ARRIVED_A:
     LD A,(E2A_U2_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     NOP
     NOP
     LD A,(E2A_Y) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,(E2A_U2_X) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,PAT_E2A2 : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,SPR_GRAY : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,(E2A_TEMP_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     NOP
     NOP
     LD A,5Bh : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,ENEMY_HIDE_Y : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,255 : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,TARGETX0 : LD (E2A_X),A
     XOR A : LD (E2A_PROGRESS),A
     LD A,6 : LD (E2A_SEQ_STATE),A
@@ -9356,57 +6565,17 @@ ECS_S5_DRAW_A:
     LD A,(E2A_TEMP_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,5Bh : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,(E2A_Y) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,(E2A_TEMP_X) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,PAT_E2A_TB : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,SPR_GRAY : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     EI
     RET
 
@@ -9596,147 +6765,43 @@ ENEMY_HIDE_ALL3_A:
     LD A,(E2A_U0_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,5Bh : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,ENEMY_HIDE_Y : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,255 : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,(E2A_U1_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,5Bh : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,ENEMY_HIDE_Y : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,255 : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,(E2A_U2_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,5Bh : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,ENEMY_HIDE_Y : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,255 : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,(E2A_TEMP_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,5Bh : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,ENEMY_HIDE_Y : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,255 : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     EI
     RET
 
@@ -9764,165 +6829,45 @@ ENEMY_DRAW_ALL_COMPLEX_B:
     LD A,(E2B_U0_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,5Bh : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,(E2B_Y) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,(E2B_U0_X) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,PAT_E2B0 : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,SPR_GRAY : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,(E2B_U1_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,5Bh : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,(E2B_Y) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,(E2B_U1_X) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,PAT_E2B1 : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,SPR_GRAY : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,(E2B_U2_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,5Bh : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,(E2B_Y) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,(E2B_U2_X) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,PAT_E2B2 : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,SPR_GRAY : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     EI
     RET
 
@@ -9961,165 +6906,45 @@ EDS_U2_SET_B:
     LD A,(E2B_U0_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     NOP
     NOP
     LD A,(E2B_EDS_Y0) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,(E2B_U0_X) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,PAT_E2B0 : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,SPR_GRAY : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,(E2B_U1_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     NOP
     NOP
     LD A,(E2B_EDS_Y1) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,(E2B_U1_X) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,PAT_E2B1 : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,SPR_GRAY : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,(E2B_U2_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     NOP
     NOP
     LD A,5Bh : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,(E2B_EDS_Y2) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,(E2B_U2_X) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,PAT_E2B2 : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,SPR_GRAY : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     EI
     RET
 
@@ -10165,57 +6990,17 @@ ECS_S0_DRAW_B:
     LD A,(E2B_U0_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,5Bh : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,(E2B_Y) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,(E2B_U0_X) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,PAT_E2B_TT : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,SPR_GRAY : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     EI
     RET
 
@@ -10236,93 +7021,27 @@ ECS_S1_ARRIVED_B:
     LD A,(E2B_U0_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     NOP
     NOP
     LD A,(E2B_Y) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,(E2B_U0_X) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,PAT_E2B0 : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,SPR_GRAY : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,(E2B_TEMP_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     NOP
     NOP
     LD A,5Bh : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,ENEMY_HIDE_Y : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,255 : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,2 : LD (E2B_SEQ_STATE),A
     LD A,ENEMY_SPAWNX : LD (E2B_U1_X),A
     EI
@@ -10332,57 +7051,17 @@ ECS_S1_DRAW_B:
     LD A,(E2B_TEMP_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,5Bh : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,(E2B_Y) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,(E2B_TEMP_X) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,PAT_E2B_TB : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,SPR_GRAY : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     EI
     RET
 
@@ -10405,57 +7084,17 @@ ECS_S2_DRAW_B:
     LD A,(E2B_U1_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,5Bh : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,(E2B_Y) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,(E2B_U1_X) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,PAT_E2B_TT : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,SPR_GRAY : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     EI
     RET
 
@@ -10476,93 +7115,27 @@ ECS_S3_ARRIVED_B:
     LD A,(E2B_U1_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     NOP
     NOP
     LD A,(E2B_Y) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,(E2B_U1_X) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,PAT_E2B1 : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,SPR_GRAY : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,(E2B_TEMP_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     NOP
     NOP
     LD A,5Bh : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,ENEMY_HIDE_Y : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,255 : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,4 : LD (E2B_SEQ_STATE),A
     LD A,ENEMY_SPAWNX : LD (E2B_U2_X),A
     EI
@@ -10572,57 +7145,17 @@ ECS_S3_DRAW_B:
     LD A,(E2B_TEMP_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,5Bh : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,(E2B_Y) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,(E2B_TEMP_X) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,PAT_E2B_TB : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,SPR_GRAY : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     EI
     RET
 
@@ -10645,57 +7178,17 @@ ECS_S4_DRAW_B:
     LD A,(E2B_U2_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,5Bh : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,(E2B_Y) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,(E2B_U2_X) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,PAT_E2B_TT : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,SPR_GRAY : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     EI
     RET
 
@@ -10716,93 +7209,27 @@ ECS_S5_ARRIVED_B:
     LD A,(E2B_U2_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     NOP
     NOP
     LD A,(E2B_Y) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,(E2B_U2_X) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,PAT_E2B2 : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,SPR_GRAY : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,(E2B_TEMP_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     NOP
     NOP
     LD A,5Bh : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,ENEMY_HIDE_Y : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,255 : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,TARGETX0 : LD (E2B_X),A
     XOR A : LD (E2B_PROGRESS),A
     LD A,6 : LD (E2B_SEQ_STATE),A
@@ -10813,57 +7240,17 @@ ECS_S5_DRAW_B:
     LD A,(E2B_TEMP_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,5Bh : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,(E2B_Y) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,(E2B_TEMP_X) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,PAT_E2B_TB : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,SPR_GRAY : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     EI
     RET
 
@@ -11043,147 +7430,43 @@ ENEMY_HIDE_ALL3_B:
     LD A,(E2B_U0_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,5Bh : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,ENEMY_HIDE_Y : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,255 : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,(E2B_U1_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,5Bh : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,ENEMY_HIDE_Y : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,255 : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,(E2B_U2_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,5Bh : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,ENEMY_HIDE_Y : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,255 : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,(E2B_TEMP_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,5Bh : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,ENEMY_HIDE_Y : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,255 : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     EI
     RET
 
@@ -11550,19 +7833,7 @@ EBSB_UPDATE:
     LD A,(IX+E_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     NOP
     NOP
 
@@ -11584,23 +7855,9 @@ EBSB_PHASEOK:
     ADD HL,DE
     DI
     LD A,(IX+E_PARAM0) : ADD A,(HL) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,(IX+E_X) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     EI
     ; Draws from this instance's own pattern slot (E_PARAM3), not a
     ; TYPE lookup - same reasoning as EBSD_DRAW's SIMPLE_PATTERN_NUM
@@ -11613,23 +7870,9 @@ EBSB_PHASEOK:
     LD A,(IX+E_PARAM3) : CALL SIMPLE_PATTERN_NUM
     DI
     OUT (98h),A                      ; pattern
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,SPR_GRAY : OUT (98h),A      ; color
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     EI
     RET
 
@@ -11642,45 +7885,17 @@ EBSB_PHASEOK:
 EBSB_EXIT_LEFT:
     DI
     LD A,ENEMY_HIDE_Y : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,255 : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     EI
     LD A,(IX+E_TYPE) : CALL ENEMY_TYPE_LOOKUP
     DI
     LD A,(HL) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     INC HL
     LD A,(HL) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     EI
     LD A,(IX+E_PARAM3) : CALL FREE_PATTERN_SLOT
     CALL FREE_ENEMY_SLOT
@@ -11770,39 +7985,13 @@ EBSD_DRAW:
     LD A,(IX+E_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,5Bh : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,(IX+E_Y) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,(IX+E_X) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     EI
     ; Pattern#/color are precomputed here, outside the DI-timed VDP
     ; write block below, since a TYPE_ENEMY4 branch inside it would
@@ -11823,23 +8012,9 @@ EBSD_DRAW_E4:
 EBSD_DRAW_GO:
     DI
     LD A,(EBSD_DRAW_PAT) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,(EBSD_DRAW_COLOR) : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     EI
     RET
 
@@ -11854,39 +8029,13 @@ EBSD_EXIT_LEFT:
     ADD A,A : ADD A,A : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,5Bh : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,ENEMY_HIDE_Y : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,255 : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     EI
     POP AF : CALL FREE_SPRITE_NUM
     ; TYPE_ENEMY4 never claimed a pattern slot (see EBSD_DRAW/
@@ -12076,39 +8225,13 @@ EBSD_HT_ENEMY4:
     LD A,(IX+E_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,5Bh : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,ENEMY_HIDE_Y : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     LD A,255 : OUT (98h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
+    PUSH BC : POP BC : NOP : NOP
     EI
     PUSH DE                     ; TRIGGER_EXPLOSION needs D,E = hit X,Y - the type/score
                                  ; lookup below (ENEMY_TYPE_LOOKUP, LD DE,ETT_SCORESEL) reuses DE
