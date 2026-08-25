@@ -2349,6 +2349,54 @@ Thunder activity) confirming it survives completely untouched.
   just coincidentally reading garbage harmlessly). 16/16 passed (up
   from 12). Full regression (`tests/run_all.py`): 612 passed, 0 failed.
 
+## Round 25: refactoring pass - dead code/data audit + Stage1 buffer-search optimization evaluated (not applied)
+
+- User requests (verbatim, 2 messages): "ここらでリファクタリングしとく
+  特に高速化 呼ばれないコードの残骸 使われてないデータの削除" then
+  "Stage1で行ったエネミーバッファサーチなどが適用されているか アルゴリ
+  ズムで高速か可能なものはないか 無駄なメインループ組み込みが無いか".
+- **Dead code audit**: systematically cross-referenced every one of the
+  668 label defs + 381 EQU defs against the whole file (whole-word
+  match, comments stripped so a symbol only ever mentioned in prose
+  doesn't count as real use). 14 candidates came back with <=1
+  reference; 12 of them turned out to be genuine fallthrough targets
+  (reached by sequential execution when the branch just above them
+  isn't taken, not by any explicit CALL/JP/JR) - verified each one by
+  hand, none are actually dead. Only 2 were real dead DATA:
+  `JUMP_PEAK`/`TANK_PUSH_WIDTH` (EQU constants referenced only in prose
+  comments, never in code or by the test suite) - removed. 3 other
+  "unreferenced by game code" constants (`HORMING_SLOT_SIZE`/
+  `SPRATR`/`THUNDER_SLOT_SIZE`) were deliberately kept - the test suite
+  itself reads them via `sym[...]` lookups, so removing them would
+  break `tests/horming_test.py`/`tests/thunder_test.py`/
+  `tests/boot_init_test.py`.
+- **Stage1's "buffer search" optimization (`ENEMY_POOL_UPDATE_ALL`'s
+  own `LD A,(HL):OR A:JR Z,...` gate before paying for `PUSH HL:POP IX`,
+  src/CYBER SHMUP.asm) is NOT present anywhere in this file** - every
+  pool-scan loop here (Enemy/Zum/BigZum/Flyer/Etank/Horming/Thunder/
+  Cloud) sets up `IX` directly and pays the full per-slot CALL/RET cost
+  even for inactive slots. Evaluated, not applied: Stage1's own comment
+  justifies the technique specifically because its `ENEMY_POOL` is 32
+  slots and "most slots are idle most of the time" - every pool in this
+  file is 1-4 slots (`ENEMY_SLOT_COUNT`=3, `HORMING_SLOT_COUNT`=4,
+  `THUNDER_SLOT_COUNT`=4, `CLOUD_SLOT_COUNT`=3, `BIGZUM`/`FLYER`/
+  `ETANK`=1 each), so the real saving is on the order of tens to a few
+  hundred T-states/frame - well under 1% of a ~59,660 T-state frame
+  budget - against real restructuring risk across 8+ core loops in a
+  mature, heavily-tested file. Asked the user directly (no strong
+  preference given back); went with the "skip" recommendation.
+  `SBEAM_SPRITE_ATTRS` (22 slots, closer to Stage1's own scale) doesn't
+  use this per-slot-ACT-scan shape at all - it writes exactly
+  `dx+1`(capped) sprite slots sequentially via the Bresenham loop and
+  hides the remainder, no per-slot branching to optimize away.
+- **"無駄なメインループ組み込み" (wasteful MAINLOOP embeds)**: Round23's
+  own `BOSS_ACT` gate already removed the one clear case (Homing/
+  Thunder/SBeam running unconditionally pre-spawn). Nothing further
+  found this round.
+- Verified: full regression (`tests/run_all.py`): 612 passed, 0 failed
+  (unchanged from Round24's own count - this round only removed 2 truly
+  unreferenced constants, no behavior changed).
+
 ## Open items / things to watch
 
 - **RAM addresses that need to persist across frames must stay clear of

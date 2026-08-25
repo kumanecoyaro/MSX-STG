@@ -78,7 +78,6 @@ TANK_CLIMB_CATCHUP_SPEED EQU 8  ; px/frame (no gate) once TANK_CLIMB_CATCHUP_THR
 ; 下りに戻ってるな") instead of only genuine multi-tier backlogs.
 ; Threshold must stay > 8 for the smooth slow pace to ever run at all.
 TANK_CLIMB_CATCHUP_THRESHOLD EQU 9  ; px
-JUMP_PEAK     EQU 24       ; px
 ; "違和感あるのがジャンプ ふわっと浮いて降りてるんよな...ジャンプLut
 ; のステップいじって速度の方をいじるしかないかもな" - felt slow/
 ; floaty; 49 frames (JUMP_OFFSET_TABLE below) cut to 33, same 24px
@@ -1102,7 +1101,6 @@ ZUM_Y_OFFSET EQU 12
 ; TANK_X>=Zum_X (see its own "already passed" fix), which alone
 ; guarantees Zum_X>TANK_X>=0 whenever it actually reaches that
 ; subtraction.
-TANK_PUSH_WIDTH EQU 32      ; tank's own collision width for the Zum push-block below
 ; "Zumのコリジョンは24x24 今のままだと飛び越えるのが困難 絵も24x24
 ; くらいになってるんで" - Zum's OWN collision footprint (distinct from
 ; TANK_PUSH_WIDTH above, which is the tank's own width) is now this
