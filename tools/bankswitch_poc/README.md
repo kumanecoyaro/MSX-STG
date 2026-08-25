@@ -5,11 +5,13 @@ two-hop bank switch" mechanism for splitting CYBER SHMUP into
 per-stage ROM banks (`bank_a.asm`/`bank_b1.asm`/`build_rom.py`/
 `run_poc.py` below, kept for reference). That mechanism is now proven
 on real hardware and BlueMSX/WebMSX and is the real, permanent build:
-`build_full_rom.py` builds `rom/CyberS S1.ascii16k.rom` (renamed from
-`CYBER SHMUP [ASCII16].rom` in round28), the game's one and only
-shipped ROM (the old flat 32KB single-bank ROM is retired). See
-"Full-game integration test" below for the real build; the standalone
-POC section further down is historical/lower-priority.
+`build_full_rom.py` builds `rom/CyberS Comb.ascii16k.rom` (renamed from
+`rom/CyberS S1.ascii16k.rom` once bank2/bank3 became the real
+tools/stage2_combined content instead of this directory's own
+simple-enemies-only placeholder - see "Full-game integration test"
+below), the game's one and only shipped ROM (the old flat 32KB
+single-bank ROM is retired). The standalone POC section further down
+is historical/lower-priority.
 
 ## What it does
 
@@ -145,7 +147,38 @@ Boots straight to a mostly-blank SCREEN1, "STAGE 2" text appears near
 the top-left almost immediately, and a single digit below it counts
 0-9 repeating, roughly twice a second.
 
-## Full-game integration test (stage2 world, not a placeholder)
+## Full-game integration test (real stage2, tools/stage2_combined)
+
+`build_full_rom.py` now embeds the REAL stage2 (`tools/stage2_combined/
+combined_test.asm` - terrain scroller, tank, full enemy roster, the
+Sasapi boss battle) as bank2/bank3, via `assemble_real_stage2()`. Per
+direct instruction once that content was far enough along: *"では一度
+Stage1に実Stage2をマージしてみる...実Stage2に差し替えてみてくれ"*.
+`combined_test.asm` itself is untouched (still independently buildable/
+testable via `tools/stage2_combined/build_test.py` and its own 629-test
+regression suite) - only an in-memory copy gets one small retarget
+before assembling here: `combined_test.asm`'s own INIT does its own
+one-time window-B bank-select as part of ITS OWN standalone 2-bank
+numbering (`LD A,1` = "my own second bank"), but embedded here that
+content actually occupies GLOBAL bank indices 2/3, not 0/1 - left
+unpatched, that select would clobber window B with STAGE 1's OWN page2
+content (global bank index 1) right at the start of stage2's boot.
+`assemble_real_stage2()`'s `STAGE2_BANKSELECT_ANCHOR`/`_PATCH` retarget
+that one `LD A,1` to `LD A,3`, the same anchor-and-replace technique
+`patched_game_text()` already uses for stage 1's own patches.
+
+Run `python3 verify_comb.py` to verify this in the emulator end to end:
+boots stage 1 to its own MAINLOOP, pokes `PLAYER_FLYAWAY=2`, confirms
+the two-hop switch lands exactly on real stage2's own INIT with both
+banks correctly selected (2/3), then single-steps through real stage2's
+OWN boot (where the retargeted bank-select actually executes) all the
+way to its own MAINLOOP while asserting window B never drifts away from
+bank3 - the exact failure mode an un-patched or mis-patched retarget
+would produce, and the whole reason this integration needed a bank-
+index fix instead of just being a drop-in file swap.
+
+<details>
+<summary>Historical: the earlier build_stage2_world.py placeholder (superseded, no longer called by build_full_rom.py)</summary>
 
 The static "STAGE 2 + counting digit" placeholder screen turned out to
 be the wrong shape of test - per direct feedback: *"Stage 1と全く同じ物
@@ -158,7 +191,8 @@ land on a **real re-init**, which naturally does all of that as a side
 effect of booting properly (exactly like stage 1's own boot already
 does, proven working).
 
-`build_stage2_world.py` builds a full second copy of the real game -
+`build_stage2_world.py` (kept in this directory but no longer called by
+`build_full_rom.py`) builds a full second copy of the real game -
 same terrain/engine/graphics/HUD, same boss fight at the end - but:
 - the enemy roster is trimmed to type=simple only (61 entries, filtered
   straight out of the real 253-entry schedule by tick/Y, same original
@@ -208,22 +242,26 @@ at 0xF200) now takes the mapper select port as a parameter too -
 switch window A as well as window B, not just window B like the old
 placeholder did.
 
-Run `python3 build_full_rom.py` to (re)build
-`../../rom/CyberS S1.ascii16k.rom` from the current source (this also
-calls into `build_stage2_world.py`). Run `python3 verify_full.py` to
-re-verify in the emulator: confirms normal gameplay never switches
-early, pokes PLAYER_FLYAWAY=2 directly (simulating a real boss kill,
-which isn't practical to step through in the emulator - actually
-playing stage 2's own simple-enemy gameplay through to a real boss
-kill would need simulated player input, so this isn't attempted either
-- see the script for the full reasoning), confirms the PSG-mute bytes
-are present (the emulator has no PSG model to observe at runtime, so
-this is a static byte check, not an execution trace), confirms the
-two-hop switch lands exactly on stage2 world's own INIT with both
-banks correctly selected, then runs that INIT through to stage2
-world's own MAINLOOP and confirms the "STAGE2" HUD label is drawn
-correctly - i.e. drawn via a real boot, not a placeholder's one-off
-VRAM poke.
+`build_full_rom.py` no longer builds this placeholder combination at
+all (see the real integration above) - `verify_full.py` still exercises
+it independently (its own local `assemble_game()`/`BankedMem`, importing
+`build_stage2_world.assemble_stage2_world()` directly rather than going
+through `build_full_rom.py`), kept as a still-passing historical
+reference for how this same two-hop mechanism was first proven out.
+Run `python3 verify_full.py` to re-run it: confirms normal gameplay
+never switches early, pokes PLAYER_FLYAWAY=2 directly (simulating a
+real boss kill, which isn't practical to step through in the emulator -
+actually playing stage 2's own simple-enemy gameplay through to a real
+boss kill would need simulated player input, so this isn't attempted
+either - see the script for the full reasoning), confirms the PSG-mute
+bytes are present (the emulator has no PSG model to observe at runtime,
+so this is a static byte check, not an execution trace), confirms the
+two-hop switch lands exactly on stage2 world's own INIT with both banks
+correctly selected, then runs that INIT through to stage2 world's own
+MAINLOOP and confirms the "STAGE2" HUD label is drawn correctly - i.e.
+drawn via a real boot, not a placeholder's one-off VRAM poke.
+
+</details>
 
 ### Expected on-screen result (full-game ROM)
 

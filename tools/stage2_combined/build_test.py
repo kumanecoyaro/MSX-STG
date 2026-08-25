@@ -43,7 +43,12 @@ import sbeam_gen  # noqa: E402
 from mini_z80asm import Assembler  # noqa: E402
 
 
-def assemble():
+def combined_text():
+    """The raw, unpatched source text (body + generated sprite/table
+    data) - split out from assemble() so build_full_rom.py's "Comb"
+    build can patch it (retargeting the bank-select embedded in this
+    file's own INIT, see that file) before assembling, without
+    duplicating the table-gen imports/concatenation here."""
     body = open(os.path.join(HERE, "combined_test.asm")).read()
     tables = (terrain_gen.emit_asm_tables() + "\n" + tank_gen.emit_asm_tables()
               + "\n" + bullet_gen.emit_asm_tables() + "\n" + enemy_gen.emit_asm_tables()
@@ -51,7 +56,11 @@ def assemble():
               + "\n" + etank_gen.emit_asm_tables() + "\n" + sasapi_gen.emit_asm_tables()
               + "\n" + sasapi_hand_gen.emit_asm_tables() + "\n" + horming_gen.emit_asm_tables()
               + "\n" + thunder_gen.emit_asm_tables() + "\n" + sbeam_gen.emit_asm_tables())
-    text = body + "\n" + tables + "\n"
+    return body + "\n" + tables + "\n"
+
+
+def assemble():
+    text = combined_text()
     asm = Assembler(text)
     out = asm.assemble()
     return out, asm.symtab, text

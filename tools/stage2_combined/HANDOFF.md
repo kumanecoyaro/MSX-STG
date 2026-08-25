@@ -2797,6 +2797,140 @@ Thunder activity) confirming it survives completely untouched.
     optimization history section gained PyPy as item 4, and the old
     "not implemented, needs the user's call" framing is gone since the
     user's call was made and acted on this round.
+- Separate follow-up, same session: "おおかた実装は終えてるのでマージ
+  してPushしといてくれ" - merged this work branch
+  (`claude/msx-stg-github-integration-cont-g3od47`) into `main` and
+  pushed. The repo was a shallow clone (both branches' histories cut
+  off at different points), so `git merge-base` initially found no
+  common ancestor at all - ran `git fetch --unshallow` first to get
+  real history before merging, rather than trusting the misleading
+  "unrelated histories" read. Merge was clean (no conflicts, `ort`
+  strategy) since `main` was already 2 merge-commits behind this
+  branch with no independent changes since; verified the merged tree
+  matched this branch's own tree exactly (one harmless exception: a
+  blank-line file literally named `MSX-STG` from the repo's very first
+  commit, present on `main`'s deep history but not on this branch -
+  left alone rather than deleted, out of scope for a merge). Rebuilt
+  both ROMs on the merged `main` to confirm nothing broke, then pushed
+  (`b8f4366..68a295c`) and switched back to this branch to continue
+  work here as usual.
+
+## Round 30: real stage2 (tools/stage2_combined) replaces the bankswitch_poc placeholder in the shipped Comb build
+
+- User instruction (verbatim): "では一度Stage1に実Stage2をマージして
+  みる 現在のCyber ShmupのStage2は仮実装でバンク動作を確認するために
+  Stage1をそのまま移植してある なので実Stage2に差し替えてみてくれ" -
+  the "Comb" task this file's own CLAUDE.md had been holding off on
+  since round28 pending explicit instruction. Confirmed against the
+  actual code that the premise matched exactly: `build_full_rom.py`'s
+  bank2/bank3 were `bankswitch_poc/build_stage2_world.py`'s own
+  placeholder (real game engine/graphics, simple-enemies-only roster,
+  built specifically as a disposable bank-switch test per an even
+  earlier instruction - "Stage 1と全く同じ物をStage 2に移植してくれ、
+  ただ敵はシンプルのみで、これは後で作り直すからテストだ").
+- **The integration risk, found by reading combined_test.asm's own
+  INIT before writing any code**: `combined_test.asm` assembles
+  standalone as its own self-contained 2-bank ASCII16 ROM (via its own
+  `tools/stage2_combined/build_test.py`), so its own INIT hardcodes
+  "select bank 1 for window B" (`LD A,1` right before its own
+  BANKSWITCH_TRAMPOLINE_RAM call) as part of ITS OWN one-time boot
+  bank-select, in ITS OWN standalone numbering. Embedded into the Comb
+  ROM, that same content occupies GLOBAL bank indices 2 (window A) and
+  3 (window B) instead - `build_full_rom.py`'s own MAINLOOP switch
+  logic (HOP1/HOP2) already correctly selects window A=bank2/window
+  B=bank3 before jumping into stage2's INIT, so if stage2's own INIT
+  went on to redundantly re-select "its own bank 1" for window B
+  un-retargeted, that would silently overwrite the correct selection
+  with STAGE 1's OWN page2 content (global bank index 1) right at the
+  start of stage2's own boot - not a crash, a silent wrong-bank-data
+  bug that would only surface once stage2 code started reading garbage
+  partway through its own INIT.
+- **Fix**: `tools/stage2_combined/build_test.py` refactored (pure
+  extract-function, zero behavior change) to split `assemble()` into a
+  new `combined_text()` (raw, unpatched source text) + `assemble()`
+  (unchanged signature/behavior, now just calls `combined_text()` then
+  assembles) - re-ran the full 629-test regression suite immediately
+  after this refactor alone, before touching build_full_rom.py at all,
+  to isolate this specific change: 629 passed/0 failed, confirming zero
+  behavioral impact. `build_full_rom.py` gained `assemble_real_stage2()`:
+  calls `stage2_build.combined_text()`, replaces the one 4-line
+  `LD A,1 / LD DE,7000h / LD HL,INIT_RESUME_AFTER_BANK_SELECT / JP
+  BANKSWITCH_TRAMPOLINE_RAM` block (verified unique via `LD DE,7000h`
+  alone appearing exactly once in the whole file) with the same block
+  but `LD A,3`, on an in-memory copy only - `combined_test.asm` itself,
+  and its own standalone build/tests, are completely untouched, same
+  "patch a copy, never the tracked source" discipline
+  `patched_game_text()` already established for stage 1's own patches.
+- Hit and fixed an unrelated, mechanical bug along the way: 3 different
+  directories (`stage2_terrain/`, `stage2_tank/`, `stage2_combined/`)
+  each have their own unrelated file literally named `build_test.py`.
+  A first attempt at `sys.path.insert(0, ...)` + plain `import
+  build_test` resolved to the WRONG one (whichever insert happened
+  last won the front-of-sys.path race - stage2_tank's, not
+  stage2_combined's), failing immediately with `AttributeError:
+  module 'build_test' has no attribute 'combined_text'` - loud and
+  obvious, not a silent wrong-module bug, but still worth avoiding for
+  good. Switched to `importlib.util.spec_from_file_location()` loading
+  `tools/stage2_combined/build_test.py` by its exact file path,
+  immune to sys.path ordering regardless of how many other
+  same-named modules exist elsewhere in the tree.
+- Wrote `tools/bankswitch_poc/verify_comb.py` (new - the OLD
+  `verify_full.py` stays as-is, still independently exercising the
+  now-unused placeholder path via its own local reimplementation, not
+  touched this round) - imports `assemble_game`/`assemble_real_stage2`
+  directly from `build_full_rom` (the REAL production functions, not a
+  reimplementation), boots stage1 to its own MAINLOOP (bankA=0/bankB=1
+  confirmed), pokes `PLAYER_FLYAWAY=2`, confirms the two-hop switch
+  lands on real stage2's own INIT with bankA=2/bankB=3, then - the
+  actual point of this test - single-steps through real stage2's OWN
+  boot (where the retargeted `LD A,3` actually executes) all the way to
+  its own MAINLOOP while asserting `bankB` never drifts away from 3 at
+  any step. Also asserts `BOSS_SPAWN_TICK` exists in stage2's symtab as
+  a cheap sanity check that this is genuinely the real content (the old
+  placeholder has no boss-spawn-tick symbol at all). Ran under `pypy3`:
+  1.09s wall time, all checks passed (stage1 boot 9447 steps, hop 30
+  steps, real stage2's own boot to its own MAINLOOP 4173 steps, bankB
+  confirmed staying at 3 throughout).
+- Output file renamed: `rom/CyberS S1.ascii16k.rom` (implied "still
+  fundamentally testing stage1's own mechanism, placeholder stage2")
+  retired in favor of `rom/CyberS Comb.ascii16k.rom`, the name reserved
+  for this exact moment back in round28 ("後でやることだが Stage2を
+  組み込んだビルドは CyberS Comb.ascii16k.romに"). Old ROM file removed
+  from git tracking (`git rm --cached`) since `build_full_rom.py` no
+  longer produces that filename at all - nothing regenerates it anymore.
+- Full 629-test regression suite re-confirmed green after ALL of the
+  above (not just the isolated build_test.py refactor check earlier).
+- Docs updated: `tools/bankswitch_poc/README.md`'s "Full-game
+  integration test" section rewritten for the real integration (new
+  content first), old build_stage2_world.py-specific description
+  demoted into a collapsed `<details>` historical block with its own
+  closing paragraph corrected (previously said running
+  `build_full_rom.py` calls into `build_stage2_world.py`, which is no
+  longer true - `verify_full.py` still exercises that old path
+  independently via its own direct import, unaffected by any of this
+  round's changes). `CLAUDE.md`'s build-command and pending-task
+  sections updated; the "Comb" pending-task entry is marked done
+  rather than deleted outright, so its own history/reasoning stays
+  visible instead of just vanishing.
+- Not done, not asked for this round: no attempt to delete
+  `build_stage2_world.py` itself or `verify_full.py` - both still work
+  standalone and are kept as historical/reference material per this
+  file's own general practice of not deleting working prior art
+  without being asked to.
+- **Real-hardware confirmation (verbatim): "Ok 結果は良好だ 実機でステー
+  ジ１、２を通してみたが不具合なし 実装意図通りだった"** - the flashed
+  `CyberS Comb.ascii16k.rom` played through stage1 into the real stage2
+  (terrain/tank/enemies/Sasapi boss) on actual hardware with no issues,
+  confirming the emulator-only `verify_comb.py` check (bankB staying at
+  3 through stage2's own boot) held on real silicon too - the bank-index
+  retarget (`LD A,1`->`LD A,3`) this round's whole risk centered on is
+  now real-hardware-verified, not just emulator-verified. This is the
+  first real-hardware pass of the actual game content transition (stage1
+  -> real stage2), not just the bank-switch mechanism in isolation.
+  This branch has NOT yet been merged into `main` for this round's
+  changes - ask before merging/pushing there, same as every other round
+  (a prior round's separate "merge everything to main" request doesn't
+  carry forward to new work automatically).
 
 ## Open items / things to watch
 
