@@ -25,6 +25,7 @@ TICK          EQU EF00h
 PXCHAR_T      EQU EF01h   ; word
 ROWPHASE_T    EQU EF03h
 TERRAIN_NEXTID EQU EF04h
+TRR_PHASE_MINUS1 EQU EF05h  ; TERRAIN_RENDER_ROW's own scratch - ROWPHASE_T-1, precomputed once per call instead of every one of its 32 loop iterations (see TERRAIN_RENDER_ROW's own comment)
 IDCACHE_T0    EQU EF10h
 IDCACHE_T1    EQU EF40h
 IDCACHE_T2    EQU EF70h
@@ -2187,7 +2188,7 @@ INIT_RESUME_AFTER_BANK_SELECT:
     ; --- entries x 4 bytes = 128 bytes) to a fully hidden, known      ---
     ; --- state (Y=209/0D1h - past the Y=208 stop-sentinel - X/pattern/---
     ; --- color=0), matching src/CYBER SHMUP.asm's own INIT_SPRATR_CLR ---
-    ; --- exactly (raw OUT, DI/EI + 8 NOPs around every single byte -  ---
+    ; --- exactly (raw OUT, DI/EI-wrapped NOP-padded OUT around every single byte (99h address-setup trimmed to 2 NOPs, 98h data write kept at 8 - see WRITE_BULLET_BYTE_HL's own comment for the real VDP timing this follows) -  ---
     ; --- LDIRVM has no such interrupt-safety margin, matching this   ---
     ; --- file's own UPDATE_TANK_SPRITES fix). The previous version of ---
     ; --- this only hid slot 4 (aliasing PAT_TANKF's own TL quadrant   ---
@@ -2202,19 +2203,7 @@ INIT_RESUME_AFTER_BANK_SELECT:
     LD A,0 : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     NOP
     NOP
     LD B,32
@@ -3432,19 +3421,7 @@ UTS_HAZARD_DONE:
     LD A,0 : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     NOP
     NOP
     LD HL,SPRITE_ATTRS
@@ -3843,28 +3820,31 @@ DBC_CODE_SET:
     JP WRITE_BULLET_BYTE_HL
 
 ; writes (BULLET_TEMP_BYTE) to VRAM address HL - raw DI-wrapped OUT
-; with 8 NOPs after every byte (same pattern as UPDATE_TANK_SPRITES/
-; INIT_SPRATR_CLR above), since this runs every frame with EI active
-; (no per-frame HALT - see MAINLOOP) and LDIRVM has no interrupt-
-; safety margin for that.
+; (same pattern as UPDATE_TANK_SPRITES/INIT_SPRATR_CLR above), since
+; this runs every frame with EI active (no per-frame HALT - see
+; MAINLOOP) and LDIRVM has no interrupt-safety margin for that.
+; "98hは表示中アクセスでは29T必要なのでNOPは8回 しかし99hは8Tで良いこ
+; とになってるのでNOPは2回で問題ない 表示期間非常時期間とも同一" -
+; real TMS9918 VDP timing: the 99h control-port writes (setting the
+; VRAM address, 2 bytes) only need 8T of recovery, not the 29T the 98h
+; data-port write itself needs - was uniformly 8 NOPs for both ports
+; everywhere in this file (a real, if harmless, waste - every single
+; raw VDP write anywhere in the game paid the data port's own stricter
+; margin twice over for its own address-setup bytes too), trimmed the
+; 99h ones to 2 NOPs. 98h itself is untouched - still 8 NOPs, genuinely
+; needed. Same for both the active-display and blanking periods (no
+; separate rule for either), so no per-call branching needed - just a
+; flat NOP-count change, verified against a fixed T-state budget by
+; tests/vdp_wait_test.py (counts real NOPs per OUT, not just "does the
+; game still behave the same" - a wrong count here would be invisible
+; to every other test in this whole file, since none of them model VDP
+; access timing at all, only the actual byte written).
 WRITE_BULLET_BYTE_HL:
     DI
     LD A,L : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,H : OR 40h : OUT (99h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     NOP
     NOP
     LD A,(BULLET_TEMP_BYTE) : OUT (98h),A
@@ -3882,7 +3862,7 @@ WRITE_BULLET_BYTE_HL:
 ; writes HUD_VAL to the name-table cell at (HUD_ROW,HUD_COL) - row0/1
 ; only, so unlike WRITE_ANIM_CELL in src/CYBER SHMUP.asm there's no
 ; NAMEBUF mirror to keep in sync (the ground scroller only ever
-; touches rows20-23). Same raw DI-wrapped OUT + 8-NOP pattern as
+; touches rows20-23). Same raw DI-wrapped NOP-padded OUT pattern as
 ; WRITE_BULLET_BYTE_HL above, for the same reason (runs every frame
 ; under EI, no per-frame HALT).
 WRITE_HUD_CELL:
@@ -3899,19 +3879,7 @@ WHC_ROW_OK:
     LD A,L : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,H : OR 40h : OUT (99h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     NOP
     NOP
     LD A,(HUD_VAL) : OUT (98h),A
@@ -4617,7 +4585,7 @@ UOE_HIDE:
 
 ; blasts ENEMY_SPRITE_ATTRS (12 bytes: Y,X,pat,col x3) to hw sprite
 ; slots ENEMY_SPR_BASE_SLOT..+2 (4-6) - same raw DI-wrapped OUT +
-; 8-NOP, auto-incrementing-VDP-pointer pattern as UPDATE_TANK_SPRITES'
+; NOP-padded, auto-incrementing-VDP-pointer pattern as UPDATE_TANK_SPRITES'
 ; own UTS_OUT_LOOP, just a different attribute-table address and slot
 ; count.
 FLUSH_ENEMY_SPRITES:
@@ -4625,19 +4593,7 @@ FLUSH_ENEMY_SPRITES:
     LD A,ENEMY_SPR_BASE_SLOT*4 : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     NOP
     NOP
     LD HL,ENEMY_SPRITE_ATTRS
@@ -5121,26 +5077,14 @@ UTF_TIER_SET:
     RET
 
 ; blasts ZUM_SPRITE_ATTRS (8 bytes) to hw sprite slots
-; ZUM_SPR_BASE_SLOT..+1 - same raw DI-wrapped OUT + 8-NOP pattern as
+; ZUM_SPR_BASE_SLOT..+1 - same raw DI-wrapped NOP-padded OUT pattern as
 ; FLUSH_ENEMY_SPRITES/FLUSH_BULLET_U_SPRITES.
 FLUSH_ZUM_SPRITES:
     DI
     LD A,ZUM_SPR_BASE_SLOT*4 : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     NOP
     NOP
     LD HL,ZUM_SPRITE_ATTRS
@@ -6209,26 +6153,14 @@ UOBZH_LOOP:
     RET
 
 ; blasts BIGZUM_SPRITE_ATTRS (32 bytes) to hw sprite slots
-; BIGZUM_SPR_BASE_SLOT..+7 - same raw DI-wrapped OUT + 8-NOP pattern
+; BIGZUM_SPR_BASE_SLOT..+7 - same raw DI-wrapped NOP-padded OUT pattern
 ; as FLUSH_ZUM_SPRITES.
 FLUSH_BIGZUM_SPRITES:
     DI
     LD A,BIGZUM_SPR_BASE_SLOT*4 : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     NOP
     NOP
     LD HL,BIGZUM_SPRITE_ATTRS
@@ -6809,26 +6741,14 @@ UOFLH_LOOP:
     RET
 
 ; blasts FLYER_SPRITE_ATTRS (FLYER_SLOT_COUNT*16 bytes) to hw sprite
-; slots FLYER_SPR_BASE_SLOT.. - same raw DI-wrapped OUT + 8-NOP pattern
+; slots FLYER_SPR_BASE_SLOT.. - same raw DI-wrapped NOP-padded OUT pattern
 ; as FLUSH_BIGZUM_SPRITES.
 FLUSH_FLYER_SPRITES:
     DI
     LD A,FLYER_SPR_BASE_SLOT*4 : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     NOP
     NOP
     LD HL,FLYER_SPRITE_ATTRS
@@ -7113,26 +7033,14 @@ UOET_HIDE:
     RET
 
 ; blasts ETANK_SPRITE_ATTRS (8 bytes) to hw sprite slots
-; ETANK_SPR_BASE_SLOT..+1 - same raw DI-wrapped OUT + 8-NOP pattern as
+; ETANK_SPR_BASE_SLOT..+1 - same raw DI-wrapped NOP-padded OUT pattern as
 ; FLUSH_FLYER_SPRITES.
 FLUSH_ETANK_SPRITES:
     DI
     LD A,ETANK_SPR_BASE_SLOT*4 : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     NOP
     NOP
     LD HL,ETANK_SPRITE_ATTRS
@@ -7302,26 +7210,14 @@ UBUS_HIDE:
     RET
 
 ; blasts BULLET_U_SPRITE_ATTRS (12 bytes) to hw sprite slots
-; BULLET_U_SPR_BASE_SLOT..+2 - same raw DI-wrapped OUT + 8-NOP,
+; BULLET_U_SPR_BASE_SLOT..+2 - same raw DI-wrapped NOP-padded,
 ; auto-incrementing-VDP-pointer pattern as FLUSH_ENEMY_SPRITES.
 FLUSH_BULLET_U_SPRITES:
     DI
     LD A,BULLET_U_SPR_BASE_SLOT*4 : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     NOP
     NOP
     LD HL,BULLET_U_SPRITE_ATTRS
@@ -7698,19 +7594,7 @@ FBOS_LOOP:
     LD A,C : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     NOP
     NOP
     LD A,(HL) : OUT (98h),A : INC HL
@@ -7770,19 +7654,7 @@ HBOS_LOOP:
     LD A,C : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     NOP
     NOP
     LD A,209 : OUT (98h),A
@@ -9049,26 +8921,14 @@ UHA_NEXT:
 
 ; blasts HORMING_SPRITE_ATTRS (4 slots x4 bytes = 16 bytes) to hw sprite
 ; slots HORMING_SPR_BASE_SLOT..+3 - same single DI/EI-wrapped raw OUT +
-; 8-NOP loop as FLUSH_ZUM_SPRITES/FLUSH_ENEMY_SPRITES (small enough for
+; NOP-padded loop as FLUSH_ZUM_SPRITES/FLUSH_ENEMY_SPRITES (small enough for
 ; one wrap, unlike FLUSH_BOSS_SPRITES's own per-quadrant DI/EI chunking).
 FLUSH_HORMING_SPRITES:
     DI
     LD A,HORMING_SPR_BASE_SLOT*4 : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     NOP
     NOP
     LD HL,HORMING_SPRITE_ATTRS
@@ -9367,7 +9227,7 @@ SSAH_LOOP:
     RET
 
 ; blasts SBEAM_SPRITE_ATTRS (SBEAM_SLOT_COUNT*4=88 bytes) to hw sprite
-; slots SBEAM_SPR_BASE_SLOT.. - same single DI/EI-wrapped raw OUT+8-NOP
+; slots SBEAM_SPR_BASE_SLOT.. - same single DI/EI-wrapped raw NOP-padded OUT
 ; idiom as FLUSH_HORMING_SPRITES, just B=88 instead of 16 (loop body
 ; itself unchanged, so its own JR/DJNZ range is identical/known-good).
 FLUSH_SBEAM_SPRITES:
@@ -9375,19 +9235,7 @@ FLUSH_SBEAM_SPRITES:
     LD A,SBEAM_SPR_BASE_SLOT*4 : OUT (99h),A
     NOP
     NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
     NOP
     NOP
     LD HL,SBEAM_SPRITE_ATTRS
@@ -9576,7 +9424,7 @@ UOC_DRAW_CELLS:
 ; write, IX = slot base (for its precomputed ROWADDR_LO/HI). Reuses
 ; WRITE_BULLET_BYTE_HL (a plain "write byte at VRAM address HL" raw
 ; DI/OUT primitive, not actually bullet-specific) instead of a 3rd copy
-; of the same DI-wrapped OUT+8-NOP block.
+; of the same DI-wrapped NOP-padded OUT block.
 UOC_WRITE_CELL:
     LD A,B
     CP 32
@@ -9619,27 +9467,54 @@ RIC_LOOP:
     DJNZ RIC_LOOP
     RET
 
+; ROWPHASE_T is loop-invariant for the whole 32-cell scan (it's set once
+; per frame in MAINLOOP, never touched mid-row) - the old single-loop
+; version re-tested "ROWPHASE_T==0" on every one of the 32 iterations
+; even though the outcome could never change within one call, and in
+; the nonzero case re-read ROWPHASE_T a SECOND time (for the "-1" used
+; in the final ADD) every iteration too. Real, measured cost (T-state
+; profiling this round, "処理が遅いんだよな...アルゴリズムで高速か可能
+; なものはないか"): TERRAIN_RENDER_ROW alone was 43.57% of a whole
+; frame's T-state budget, more than any other single routine in the
+; game. Splitting into 2 loop bodies - selected ONCE at entry instead
+; of every iteration - removes that per-iteration branch+re-read
+; entirely (~29-36 T-states/iteration depending on path, ~128
+; iterations/frame across all 4 tiers). Output is bit-for-bit identical
+; to the old single-loop version for every input - this is pure loop-
+; invariant code motion, not an algorithm change (see
+; tests/terrain_render_perf_test.py's own equivalence sweep against the
+; git HEAD-before-this-round version).
 TERRAIN_RENDER_ROW:
+    LD A,(ROWPHASE_T)
+    OR A
+    JR NZ,TRR_NONZERO_ENTRY
     LD B,32
     LD A,(HL) : LD C,A
-TRR_LOOP:
+TRR_LOOP_ZERO:
     INC HL
     LD A,(HL) : LD (TERRAIN_NEXTID),A
-    LD A,(ROWPHASE_T) : OR A
-    JR NZ,TRR_NONZERO
     LD A,C : LD E,A : LD D,TERRAIN_SOLOTAB/256 : LD A,(DE)
-    JR TRR_STORE
-TRR_NONZERO:
+    LD (IX+0),A
+    INC IX
+    LD A,(TERRAIN_NEXTID) : LD C,A
+    DJNZ TRR_LOOP_ZERO
+    RET
+TRR_NONZERO_ENTRY:
+    DEC A : LD (TRR_PHASE_MINUS1),A
+    LD B,32
+    LD A,(HL) : LD C,A
+TRR_LOOP_NONZERO:
+    INC HL
+    LD A,(HL) : LD (TERRAIN_NEXTID),A
     LD A,C : LD E,A : LD D,TERRAIN_MUL_N/256 : LD A,(DE) : LD E,A
     LD A,(TERRAIN_NEXTID) : ADD A,E
     LD E,A : LD D,TERRAIN_PAIRBASE/256 : LD A,(DE)
     LD E,A
-    LD A,(ROWPHASE_T) : DEC A : ADD A,E
-TRR_STORE:
+    LD A,(TRR_PHASE_MINUS1) : ADD A,E
     LD (IX+0),A
     INC IX
     LD A,(TERRAIN_NEXTID) : LD C,A
-    DJNZ TRR_LOOP
+    DJNZ TRR_LOOP_NONZERO
     RET
 
     ALIGN 256

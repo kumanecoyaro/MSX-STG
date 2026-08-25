@@ -2397,6 +2397,90 @@ Thunder activity) confirming it survives completely untouched.
   (unchanged from Round24's own count - this round only removed 2 truly
   unreferenced constants, no behavior changed).
 
+## Round 26: real T-state profiling finds and fixes 2 genuine speed bugs - PORT TO STAGE1 ONCE VERIFIED GOOD HERE
+
+- User feedback chain (verbatim): "にしては処理が遅いんだよな Stage2
+  Stage1より遥かに敵出現数は少ないのに" → (after the TERRAIN_RENDER_ROW
+  fix below) "てか思った通りIX、IY連打での速度低下は大きいな 見積もり
+  で6%は実装すれば10%だったなんてのは良くあるからな" → "ではVDPアクセ
+  スウェイトの削減をやってみる 98hは表示中アクセスでは29T必要なので
+  NOPは8回 しかし99hは8Tで良いことになってるのでNOPは2回で問題ない
+  表示期間非常時期間とも同一" → "で、リファクタリングがうまく行けば
+  Stage1にも適用するんでログに残しておいてくれ". **This entry exists
+  specifically so both fixes below can be ported to src/CYBER SHMUP.asm
+  once this round is confirmed good** - do that when asked, don't do it
+  unprompted (this file's own scope is stage2_combined only).
+- **Real T-state profiling** (z80emu.py tracks `self.tstates` per
+  instruction - confirmed `tools/profile_hotpaths.py` already does this
+  for Stage1's own hot paths, so this isn't a new technique, just newly
+  applied here): wrote a per-instruction breakpoint-based profiler
+  attributing T-states to whichever top-level MAINLOOP-called routine
+  was most recently entered. Found `TERRAIN_RENDER_ROW` alone consuming
+  **43.57% of an entire frame's T-state budget** (26,020 of 59,719 T,
+  frame1/idle) - by far the single biggest cost in the game, despite
+  Stage2 having far fewer concurrent enemies than Stage1
+  (`ENEMY_SLOT_COUNT`=3 vs Stage1's 32). NOTE: this profiler's numbers
+  UNDERSTATE the real cost - `z80emu.py`'s own `bios_call()` intercepts
+  `LDIRVM`/`WRTVDP` as pure Python memory copies with **zero T-state
+  cost**, so real VDP transfer time (genuinely expensive on real
+  hardware) is invisible to this measurement entirely; the true
+  percentages are higher than what's reported here.
+- **Fix 1 - loop-invariant branch hoist in `TERRAIN_RENDER_ROW`**:
+  `ROWPHASE_T` is set once per frame in `MAINLOOP` and never changes
+  during a single 32-cell row scan, but the old code re-tested
+  `ROWPHASE_T==0` on every one of the 32 iterations (and, in the
+  nonzero case, re-read `ROWPHASE_T` a SECOND time per iteration for
+  the final `-1` blend offset). Split into `TRR_LOOP_ZERO`/
+  `TRR_LOOP_NONZERO`, selected ONCE at routine entry instead of every
+  iteration; the nonzero variant precomputes `ROWPHASE_T-1` once into a
+  new scratch byte (`TRR_PHASE_MINUS1`, `EF05h` - the free gap right
+  after `TERRAIN_NEXTID`) instead of re-deriving it 32 times. Pure loop-
+  invariant code motion - **not** an algorithm change, output is bit-
+  for-bit identical to the old version for every input.
+  - Considered and explicitly REJECTED eliminating the `(IX+0)`/`INC
+    IX` output-pointer cost (19T+10T/cell vs a plain register pair's
+    7T+6T) via a register reshuffle: audited every register in the
+    loop body (`HL`=input walk, `DE`=table-lookup pointer, `B`=DJNZ
+    counter, `C`=carried previous-cell id, `A`=accumulator) and found
+    **zero spare register pairs** - every one is already load-bearing.
+    Every alternative considered (moving the carried id to memory,
+    replacing DJNZ with an end-address compare, EXX-based register-set
+    swapping) either nets out to roughly zero real gain or trades the
+    IX cost for a different, comparably-expensive one, for real added
+    complexity/risk. Doing this for real would require touching the
+    lookup-table architecture itself (not attempted this round -
+    explicitly declined when offered).
+  - Measured result: 26,020 -> 21,980 T-states for the 4-tier scan
+    (43.57% -> 36.81% of frame budget), a consistent ~6.8 percentage-
+    point reduction across every profiled phase (idle/active/boss-
+    heaviest). Verified via `tests/terrain_render_perf_test.py` -
+    assembles BOTH the pre-change (git HEAD) and post-change source,
+    calls the real `TERRAIN_RENDER_ROW` from each against 163
+    combinations (all 8 `ROWPHASE_T` values x random `IDCACHE` fills +
+    flat-terrain edge cases) and asserts byte-for-byte identical
+    `NAMEBUF` output - not a reimplementation, the actual assembled
+    routines from both versions.
+- **Fix 2 - VDP wait-state NOP counts corrected per real TMS9918 timing**
+  ("98hは表示中アクセスでは29T必要なのでNOPは8回 しかし99hは8Tで良い
+  ...表示期間非常時期間とも同一"): every raw DI-wrapped VDP write in
+  this file (28 separate `OUT (99h),A` sites for VRAM address setup, 20
+  separate `OUT (98h),A` sites for the actual data byte - `UPDATE_TANK_
+  SPRITES`, every `FLUSH_*_SPRITES`, `WRITE_BULLET_BYTE_HL`, `WRITE_
+  HUD_CELL`, `INIT_SPRATR_CLR`, etc.) padded BOTH ports uniformly with
+  8 NOPs. Real TMS9918 timing only requires 8T (2 NOPs) of recovery
+  after a control-port (99h) access; the stricter 29T (8 NOPs) is
+  specific to the data-port (98h) access during active display - same
+  rule during blanking, no separate case needed. Trimmed all 28 `OUT
+  (99h),A` sites from 8 to 2 NOPs; all 20 `OUT (98h),A` sites
+  untouched, still 8 NOPs (genuinely needed). Verified via `tests/
+  vdp_wait_test.py` - reads the source directly and asserts the exact
+  NOP count after every single OUT site (a wrong count here is
+  invisible to every other test in the file, since none of them model
+  VDP access timing - only the byte written, which doesn't change
+  either way).
+- Verified: full regression (`tests/run_all.py`) - see this round's own
+  commit for the exact pass/fail count (both fixes combined).
+
 ## Open items / things to watch
 
 - **RAM addresses that need to persist across frames must stay clear of
