@@ -3095,9 +3095,20 @@ UPDATE_DASH:
     RET Z                        ; no change - not a new press
     OR A
     RET Z                        ; released (0), not pressed - not a new press
+    ; "斜め下でもダッシュできるように 現在は真下のみなんで" (round28) -
+    ; widened from pure-down(5) only to also accept the 2 down-diagonals
+    ; (4=downright,6=downleft), matching JOY_DIR's own compass numbering
+    ; (0=none,1=up,2=upright,3=right,4=downright,5=down,6=downleft,
+    ; 7=left,8=upleft). The dash's own MOVEMENT direction still comes
+    ; from TANK_FACING below, unchanged - it's always a horizontal-only
+    ; 64px run regardless of which "down" variant triggered it, exactly
+    ; as before for pure-down.
     LD A,(JOY_DIR)
-    CP 5                         ; "下を入れたまま" - INFERRED as pure down (5), not a down-diagonal
-    RET NZ
+    CP 4 : JR Z,UD_DOWN_OK
+    CP 5 : JR Z,UD_DOWN_OK
+    CP 6 : JR Z,UD_DOWN_OK
+    RET
+UD_DOWN_OK:
     LD A,(JUMP_ACTIVE)
     OR A
     RET NZ                       ; already mid-jump - don't also start a dash

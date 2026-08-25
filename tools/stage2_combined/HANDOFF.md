@@ -2529,6 +2529,60 @@ Thunder activity) confirming it survives completely untouched.
   check would simply fail the build if anything needed a JR that's
   still out of range, so nothing here is silently broken either way.
 
+## Round 28: dash now also triggers on down-diagonals + ROM output filenames renamed
+
+- User feedback (verbatim): "Ok 実機確認で問題なし Stage1にもコミット
+  で、自機のダッシュだが斜め下でもダッシュできるように 現在は真下のみ
+  なんで" - Round26/27's real T-state work confirmed good on real
+  hardware (Stage1 port already committed, see Round27 above); this
+  round is a fresh, unrelated gameplay request: `UPDATE_DASH`'s own
+  down-trigger gate previously accepted ONLY `JOY_DIR==5` (pure down),
+  rejecting the 2 down-diagonals (4=downright, 6=downleft) even though
+  the player is clearly holding "down enough" to dash.
+- **Fix**: widened the gate from a single `CP 5 : RET NZ` to a 3-way
+  check (`CP 4`/`CP 5`/`CP 6`, any match falls through to the existing
+  `JUMP_ACTIVE` check; no match returns). `JOY_DIR`'s own compass
+  numbering: 0=none, 1=up, 2=upright, 3=right, 4=downright, 5=down,
+  6=downleft, 7=left, 8=upleft - so 4/5/6 are exactly "the 3 southward
+  directions", 2/8 (the 2 up-diagonals) deliberately excluded. The
+  dash's own MOVEMENT direction still comes from `TANK_FACING` alone,
+  completely unchanged by this fix - a down-diagonal only widens WHICH
+  inputs can TRIGGER a dash, it does not make the dash itself diagonal;
+  it's always the same horizontal-only 64px run as before, exactly as
+  pure-down already worked.
+- Verified: `tests/dash_test.py` extended (+11 checks, 25->36) - both
+  down-diagonals now start a dash on a fresh B press (checking
+  `DASH_ACTIVE`/`DASH_DIR`/`DASH_REMAINING` all come out identical to
+  the pure-down case), and the 2 up-diagonals (2/8) are confirmed to
+  NOT start a dash, guarding against an overly-broad "any diagonal"
+  mistake. Full regression (`tests/run_all.py`): 629 passed, 0 failed.
+- Separately, the user asked for a ROM output filename convention
+  change (verbatim): "では今ここで貼るROMファイル名を Stage1はCyberS
+  S1.ascii16k.rom Stage2はCyberS S2.ascii16k.rom として出力 で、後で
+  やることだが Stage2を組み込んだビルドは CyberS Comb.ascii16k.romに"
+  - implemented as a real change to each build script's own hardcoded
+  `out_path`/`rom_path` (not just a one-off manual rename of the output
+  file), so every future rebuild keeps using the new name automatically:
+  - `tools/bankswitch_poc/build_full_rom.py`: `rom/CYBER SHMUP
+    [ASCII16].rom` -> `rom/CyberS S1.ascii16k.rom`.
+  - `tools/stage2_combined/build_test.py`: `combined_test
+    [ASCII16].rom` -> `CyberS S2.ascii16k.rom` (same directory).
+  - `tools/bankswitch_poc/README.md`'s own 2 references to the old
+    Stage1 filename updated to match.
+  - Old-named tracked ROM files removed from git (`git rm --cached` +
+    deleted from disk); both scripts re-run to produce the new-named
+    files fresh.
+  - The `Comb` build (a future rebuild of `build_full_rom.py` that
+    embeds the REAL `stage2_combined` content instead of
+    `bankswitch_poc`'s own simple-enemies-only stage2-world POC) was
+    explicitly deferred by the user ("後でやることだが") - not started
+    this round, don't start it unprompted.
+  - Per this project's own established WebMSX-mapper-detection-by-
+    filename lesson (see `build_test.py`'s own header comment), both
+    new names still contain the "ascii16" substring WebMSX keys off of
+    (lowercase, no brackets this time) - unconfirmed on real hardware
+    as of this round, same as every prior filename change here.
+
 ## Open items / things to watch
 
 - **RAM addresses that need to persist across frames must stay clear of

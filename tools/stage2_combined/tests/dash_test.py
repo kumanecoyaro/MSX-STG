@@ -69,6 +69,34 @@ call_routine(cpu, "UPDATE_DASH")
 check("UPDATE_DASH does NOT start a dash without DOWN held (JOY_DIR!=5)",
       cpu.mem[DASH_ACTIVE] == 0)
 
+# ---- round28: "斜め下でもダッシュできるように 現在は真下のみなんで" -
+# widened to accept JOY_DIR 4(downright)/6(downleft) alongside the
+# existing 5(pure down); the dash's own movement direction still comes
+# from TANK_FACING, unchanged by which "down" variant triggered it ----
+for down_dir, name in ((4, "downright"), (6, "downleft")):
+    cpu = fresh_cpu()
+    cpu.mem[JOY_DIR] = down_dir
+    cpu.mem[TANK_FACING] = 1   # facing left
+    press_b(cpu)
+    call_routine(cpu, "UPDATE_DASH")
+    check(f"UPDATE_DASH starts a dash on a fresh B press while a down-diagonal "
+          f"(JOY_DIR={down_dir}, {name}) is held",
+          cpu.mem[DASH_ACTIVE] == 1)
+    check(f"UPDATE_DASH ({name}) still freezes DASH_DIR at TANK_FACING, not the "
+          "diagonal input itself", cpu.mem[DASH_DIR] == 1)
+    check(f"UPDATE_DASH ({name}) still arms DASH_REMAINING at DASH_DIST(64)",
+          cpu.mem[DASH_REMAINING] == DASH_DIST)
+
+# the 2 UP-diagonals must NOT trigger a dash - only the 3 down-ish
+# directions (4/5/6) do
+for up_dir in (2, 8):
+    cpu = fresh_cpu()
+    cpu.mem[JOY_DIR] = up_dir
+    press_b(cpu)
+    call_routine(cpu, "UPDATE_DASH")
+    check(f"UPDATE_DASH does NOT start a dash on an up-diagonal (JOY_DIR={up_dir})",
+          cpu.mem[DASH_ACTIVE] == 0)
+
 cpu = fresh_cpu()
 cpu.mem[JOY_DIR] = 5
 cpu.mem[JUMP_ACTIVE] = 1   # already mid-jump
