@@ -3532,6 +3532,45 @@ Thunder activity) confirming it survives completely untouched.
   clean `git diff` afterward) sent to the user. Not yet real-hardware/
   visual confirmed as of this entry.
 
+### Round 32 follow-up #3: flight distance tightened to exactly 1-3 cells
+
+- User instruction (verbatim): "悪くはないが飛びすぎたな 1から3セルラン
+  ダムで" - follow-up #2's own flight offset (independent per-axis
+  `AND 7 : SUB 4`, i.e. -4..+3 on EACH axis) let the actual flight
+  distance range anywhere from 0 (both axes land on 0 - no flight at
+  all) up to a diagonal ~5.7 cells (both axes near their own max
+  magnitude at once, e.g. dx=-4,dy=-4) - wider and less controlled than
+  "1から3セル" calls for.
+- **Fix**: replaced the two independent per-axis draws with a single
+  direction+distance draw via a new precomputed LUT, `BOSS_EXPL_FLIGHT_
+  TABLE` - 8 compass directions (same sign convention as this file's own
+  `EXPLODE_DIR_DX`/`DY`, used elsewhere for enemy-death sprite drift) x
+  distance 1/2/3, 24 (dx,dy) entries total, 2 bytes each. No runtime
+  multiply (Z80 doesn't have one) - the whole table is just data,
+  `BOSS_EXPL_PICK_FLIGHT` draws one random byte, folds it into 0-23 (AND
+  31, fold back once if >=24 - same `PICK_HORMING_TARGET_X`-style
+  non-power-of-2 fold-back idiom already established in this file), and
+  reads the 2-byte entry straight out of the table. `BOSS_EXPL_ORIGIN_
+  RANGE` (the boss's own 64x64 body) is unchanged - the user only
+  flagged the flight distance, not the origin area, as too far.
+- **Test coverage**: added a genuinely independent unit test for `BOSS_
+  EXPL_PICK_FLIGHT` itself - calls it directly 2000 times, reads the
+  returned dx/dy straight out of the emulator's own B/C registers
+  (`cpu.b`/`cpu.c`, converted from unsigned byte to signed), and checks
+  every draw is one of 24 independently-Python-recomputed (direction,
+  distance) vectors, distance is always 1-3 on every axis (never 0,
+  never >3), and all 24 vectors get hit at least once over the sample -
+  a direct, register-level check rather than trying to infer the flight
+  component alone from combined origin+flight landing positions (which
+  can't be cleanly separated after the fact). `SPARK_BOX_MARGIN` in the
+  broader burst tests recomputed from the new (smaller, exactly-3)
+  max flight distance instead of the old axis-independent range.
+- Full regression: **695 passed, 0 failed** (692 + 3 net new checks).
+  New verification ROM (same temporary GAME_TICK=840/BOSS_HP_INIT=3
+  edit-build-send-revert procedure, confirmed reverted again with a
+  clean `git diff` afterward) sent to the user. Not yet real-hardware/
+  visual confirmed as of this entry.
+
 ## Open items / things to watch
 
 - **RAM addresses that need to persist across frames must stay clear of

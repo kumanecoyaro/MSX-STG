@@ -62,7 +62,8 @@ BLINK_PERIOD = sym["BOSS_EXPL_BLINK_PERIOD"]
 FINAL_FLASH_FRAMES = sym["BOSS_EXPL_FINAL_FLASH_FRAMES"]
 WHITE_CODE = sym["BOSS_EXPL_WHITE_CODE"]
 ORIGIN_RANGE = sym["BOSS_EXPL_ORIGIN_RANGE"]
-FLIGHT_RANGE = sym["BOSS_EXPL_FLIGHT_RANGE"]
+FLIGHT_MIN_DIST = sym["BOSS_EXPL_FLIGHT_MIN_DIST"]
+FLIGHT_MAX_DIST = sym["BOSS_EXPL_FLIGHT_MAX_DIST"]
 SPARK_DURATION = sym["BOSS_EXPL_SPARK_DURATION"]
 SPARK_PER_FRAME = sym["BOSS_EXPL_SPARK_PER_FRAME"]
 SPARK_CODE_TL = sym["BOSS_EXPL_SPARK_CODE_TL"]
@@ -71,11 +72,21 @@ SPARK_CODE_TR = sym["BOSS_EXPL_SPARK_CODE_TR"]
 SPARK_CODE_BR = sym["BOSS_EXPL_SPARK_CODE_BR"]
 SPARK_CODES = {SPARK_CODE_TL, SPARK_CODE_BL, SPARK_CODE_TR, SPARK_CODE_BR}
 BOSS_SPRITE_HIDDEN_Y = 209
-# a spark's final position is origin(+/-ORIGIN_RANGE) + flight(+/-
-# FLIGHT_RANGE), two independent draws stacked - so the max possible
-# displacement from center on any one edge is ORIGIN_RANGE+FLIGHT_RANGE,
-# plus 1 more cell for a 16x16 spark's own spread beyond its anchor.
-SPARK_BOX_MARGIN = ORIGIN_RANGE + FLIGHT_RANGE + 1
+# 8 compass directions (dx,dy each in {-1,0,1}) x distance FLIGHT_MIN_
+# DIST..FLIGHT_MAX_DIST - independent Python re-derivation of BOSS_EXPL_
+# FLIGHT_TABLE's own 24 entries, NOT read from the ASM's own table, so
+# this genuinely cross-checks it rather than just restating it.
+FLIGHT_DIRS = [(0, -1), (1, -1), (1, 0), (1, 1), (0, 1), (-1, 1), (-1, 0), (-1, -1)]
+FLIGHT_VECTORS = {
+    (ddx * dist, ddy * dist)
+    for ddx, ddy in FLIGHT_DIRS
+    for dist in range(FLIGHT_MIN_DIST, FLIGHT_MAX_DIST + 1)
+}
+# a spark's final position is origin(+/-ORIGIN_RANGE) + flight(a vector
+# from FLIGHT_VECTORS, magnitude up to FLIGHT_MAX_DIST on any one axis) -
+# two stacked random draws, not one flat box - plus 1 more cell for a
+# 16x16 spark's own spread beyond its anchor.
+SPARK_BOX_MARGIN = ORIGIN_RANGE + FLIGHT_MAX_DIST + 1
 
 
 def run_spark_phase(cpu, cx, cy):
@@ -322,14 +333,41 @@ check("boss sprite still visible right at the start of SPARK (patrol-death case 
 CX, CY = expected_cx, expected_cy  # comfortably clear of every screen edge at max radius
 
 # ---------------------------------------------------------------------
+# 2a: BOSS_EXPL_PICK_FLIGHT itself, exercised directly (not just inferred
+# from combined origin+flight landing positions, which can't isolate the
+# flight component alone) - "悪くはないが飛びすぎたな 1から3セルランダ
+# ムで". Every returned (dx,dy) must be one of the 24 independently-
+# computed FLIGHT_VECTORS, distance always 1-3 (never 0, never >3 on any
+# axis), and a large enough sample should hit every one of the 24.
+# ---------------------------------------------------------------------
+def signed8(v):
+    return v - 256 if v >= 128 else v
+
+
+seen_vectors = set()
+for _ in range(2000):
+    call_routine(cpu, "BOSS_EXPL_PICK_FLIGHT")
+    dx, dy = signed8(cpu.c), signed8(cpu.b)
+    seen_vectors.add((dx, dy))
+
+check("every BOSS_EXPL_PICK_FLIGHT draw is one of the 24 valid (direction,distance) "
+      f"vectors ({len(seen_vectors)} distinct ones seen over 2000 draws)",
+      seen_vectors <= FLIGHT_VECTORS)
+check(f"flight distance is always in {FLIGHT_MIN_DIST}..{FLIGHT_MAX_DIST} cells on "
+      "every axis - never 0 (no-op flight) and never further than the max",
+      all(FLIGHT_MIN_DIST <= max(abs(dx), abs(dy)) <= FLIGHT_MAX_DIST for dx, dy in seen_vectors))
+check("all 24 valid vectors were actually reachable (full LUT coverage over 2000 draws)",
+      seen_vectors == FLIGHT_VECTORS)
+
+# ---------------------------------------------------------------------
 # 2b: SPARK burst itself - "爆発範囲を元の64x64に てかこれはエフェクトが
-# 飛ぶ範囲ではなく原点だからな そこからランダム方向に4セル飛ぶんだぞ" -
-# origin (the boss's own 64x64 body) + an independent random flight (up
-# to 4 cells), not one flat box. Plus the earlier erase/redraw fix -
-# "ボックス範囲で消去もしてないから飛んでるかどうかもわからない ただ
-# 64x64がBGで埋まってるだけだ" - and "爆発キャラは8x8のほうではなく
-# 16x16のほうで ランダムで混ぜてもいいがな ウェイトなしで派手に沢山
-# 3秒くらい".
+# 飛ぶ範囲ではなく原点だからな そこからランダム方向に1から3セル飛ぶんだ
+# ぞ" - origin (the boss's own 64x64 body) + an independent random flight
+# (1-3 cells, a random compass direction), not one flat box. Plus the
+# earlier erase/redraw fix - "ボックス範囲で消去もしてないから飛んでる
+# かどうかもわからない ただ64x64がBGで埋まってるだけだ" - and "爆発キャ
+# ラは8x8のほうではなく16x16のほうで ランダムで混ぜてもいいがな ウェイ
+# トなしで派手に沢山 3秒くらい".
 # ---------------------------------------------------------------------
 result = run_spark_phase(cpu, CX, CY)
 spark_seen = result["spark_seen"]
@@ -350,7 +388,7 @@ for dy in range(-SPARK_BOX_MARGIN, SPARK_BOX_MARGIN + 1):
             origin_cells.add((col, row))
 
 check(f"every spark landed inside the CX/CY +/-{SPARK_BOX_MARGIN} scatter box "
-      f"(origin's own +/-{ORIGIN_RANGE} plus flight's own +/-{FLIGHT_RANGE}, plus a "
+      f"(origin's own +/-{ORIGIN_RANGE} plus flight's own +/-{FLIGHT_MAX_DIST}, plus a "
       "16x16 spark's own +1-cell reach), none outside it",
       spark_seen <= legal_spark_cells)
 check("sparks genuinely scattered across a meaningfully large portion of the box, "

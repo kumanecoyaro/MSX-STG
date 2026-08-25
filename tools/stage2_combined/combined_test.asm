@@ -677,17 +677,25 @@ BOSS_EXPL_WHITE_COLORBYTE EQU 0F1h   ; fg15 white/bg1 black - same convention as
 ;
 ; Precise per-spark position tracking (not a blanket-sweep erase) is
 ; what makes the EVERY-FRAME erase from fix #1 affordable at this larger
-; scale: with the scatter area now covering roughly +/-9 cells (the
-; origin's own +/-4 plus the flight's own +/-4 plus 1 more for a 16x16
-; spark's own spread) sweeping the WHOLE box every frame would be a
-; 19x19=361-cell VDP write every single frame for 180 frames straight -
-; a real T-state concern this file has cared about before (see the VDP
-; wait-state rounds). Instead, BOSS_EXPL_SPARK_SLOT remembers exactly
-; where each of the (BOSS_EXPL_SPARK_PER_FRAME) live sparks currently
-; sits and erases only THOSE cells before drawing a fresh one - at most
-; BOSS_EXPL_SPARK_PER_FRAME*4 cells/frame, not the whole box.
-BOSS_EXPL_ORIGIN_RANGE EQU 4   ; the boss's own 64x64 body, 8 cells wide - offsets -4..+3
-BOSS_EXPL_FLIGHT_RANGE EQU 4   ; "そこからランダム方向に4セル飛ぶんだぞ"
+; scale - see BOSS_EXPL_SPARK_SLOT's own comment: sweeping the whole
+; possible box every frame would be far more VDP writes than are ever
+; actually live at once, a real T-state concern this file has cared
+; about before (see the VDP wait-state rounds).
+;
+; round32 follow-up fix #3: "悪くはないが飛びすぎたな 1から3セルランダ
+; ムで" - fix #2's own flight offset (independent per-axis -4..+3) let
+; the flight distance range anywhere from 0 (no flight at all) up to a
+; diagonal ~5.7 cells (both axes near their own max magnitude at once) -
+; wider and less controlled than intended. Replaced with an explicit
+; direction+distance draw via BOSS_EXPL_FLIGHT_TABLE (8 compass
+; directions - same convention as this file's own EXPLODE_DIR_DX/DY -
+; times distance 1-3, precomputed as a 24-entry LUT rather than computed
+; at runtime since Z80 has no multiply instruction) - "1から3セルランダ
+; ムで" is now the flight's own EXACT distance range, never 0 and never
+; more than 3 in any direction.
+BOSS_EXPL_ORIGIN_RANGE EQU 4      ; the boss's own 64x64 body, 8 cells wide - offsets -4..+3
+BOSS_EXPL_FLIGHT_MIN_DIST EQU 1   ; "1から3セルランダムで" - BOSS_EXPL_FLIGHT_TABLE below must match if this ever changes
+BOSS_EXPL_FLIGHT_MAX_DIST EQU 3
 BOSS_EXPL_SPARK_DURATION EQU 180
 BOSS_EXPL_SPARK_PER_FRAME EQU 3   ; tied directly to the 3 hardcoded slots in UBE_SPARK - changing this needs matching slot blocks added/removed there, not just this constant
 ; another retired-hand-art code, group20 (160-167) - same safety
@@ -7738,6 +7746,23 @@ BOSS_EXPL_WHITE_PATTERN:
 ; needed here anymore; INIT_BOSS_EXPLOSION uploads EXPLOSION_PATTERN's
 ; own 32 bytes directly to BOSS_EXPL_SPARK_CODE_TL*8).
 
+; flight LUT (round32 follow-up #3, "1から3セルランダムで") - 8 compass
+; directions (N,NE,E,SE,S,SW,W,NW, same order/sign convention as this
+; file's own EXPLODE_DIR_DX/DY) x distance 1-3, precomputed rather than
+; multiplied at runtime (Z80 has no multiply instruction) - 24 (dx,dy)
+; pairs, 2 bytes each. BOSS_EXPL_PICK_FLIGHT picks one entry uniformly at
+; random. Must stay in sync with BOSS_EXPL_FLIGHT_MIN_DIST/_MAX_DIST if
+; either ever changes.
+BOSS_EXPL_FLIGHT_TABLE:
+    DB 0,-1,  0,-2,  0,-3     ; N
+    DB 1,-1,  2,-2,  3,-3     ; NE
+    DB 1,0,   2,0,   3,0      ; E
+    DB 1,1,   2,2,   3,3      ; SE
+    DB 0,1,   0,2,   0,3      ; S
+    DB -1,1,  -2,2,  -3,3     ; SW
+    DB -1,0,  -2,0,  -3,0     ; W
+    DB -1,-1, -2,-2, -3,-3    ; NW
+
 ; "更に円の塗りつぶしは固定処理なのでLutでやってくれ たった半径6セルだ
 ; からわずかなサイズだろう 一々計算は不要 なので円の1周終了を1パターン
 ; として記録し 描画はそれらをアニメ処理すればよい" - the circle's own
@@ -8080,21 +8105,45 @@ BEESC_OOB:
     POP AF
     RET
 
+; picks one of the 24 (dx,dy) entries in BOSS_EXPL_FLIGHT_TABLE uniformly
+; at random - "1から3セルランダムで": distance is always exactly 1, 2, or
+; 3 cells in a random compass direction, never 0 and never further than
+; 3. 24 isn't a power of 2, so a plain AND can't land exactly in range -
+; masks to 0-31 (next power of 2 above 24) and folds anything >=24 back
+; down by subtracting 24 once (31-24=7<24, one subtraction is always
+; enough, same fold-back idiom PICK_HORMING_TARGET_X already established
+; for its own non-power-of-2 window). Out: C=dx, B=dy. Trashes A/D/E/H/L.
+BOSS_EXPL_PICK_FLIGHT:
+    CALL BOSS_EXPL_RANDOM_BYTE
+    AND 31
+    CP 24
+    JR C,BEPF_OK
+    SUB 24
+BEPF_OK:
+    ADD A,A                              ; *2 - 2 bytes/entry
+    LD L,A : LD H,0
+    LD DE,BOSS_EXPL_FLIGHT_TABLE
+    ADD HL,DE
+    LD A,(HL) : LD C,A
+    INC HL
+    LD A,(HL) : LD B,A
+    RET
+
 ; in: A=this slot's OLD row (or 0FFh sentinel), C=old col. out: A=new
 ; row, C=new col (caller persists these into the slot's own bytes for
 ; next frame's erase). Erases the old spark (BOSS_EXPL_ERASE_ONE_SPARK
 ; above), then spawns a fresh one - "爆発範囲を元の64x64に てかこれは
-; エフェクトが飛ぶ範囲ではなく原点だからな そこからランダム方向に4セル
-; 飛ぶんだぞ": picks a random ORIGIN cell within the boss's own 64x64
-; body (BOSS_EXPL_ORIGIN_RANGE), then flies further by an independent
-; random amount per axis (BOSS_EXPL_FLIGHT_RANGE) - two stacked random
-; draws, not one flat box, so results naturally cluster near the boss
-; body and thin out further away. 50/50 lone 8x8 TL tile vs the full
-; 16x16 (all 4 quadrants) - "爆発キャラは...16x16のほうで ランダムで
-; 混ぜてもいいがな" - decided right after its own random draw and
-; branched on immediately (no need to preserve the choice across the
-; drawing calls that follow, unlike a value that would have to survive
-; in a register through them).
+; エフェクトが飛ぶ範囲ではなく原点だからな そこからランダム方向に1から
+; 3セル飛ぶんだぞ": picks a random ORIGIN cell within the boss's own
+; 64x64 body (BOSS_EXPL_ORIGIN_RANGE), then flies further in a random
+; compass direction by a random 1-3 cell distance (BOSS_EXPL_PICK_
+; FLIGHT) - two stacked random draws, not one flat box, so results
+; naturally cluster near the boss body and thin out further away. 50/50
+; lone 8x8 TL tile vs the full 16x16 (all 4 quadrants) - "爆発キャラは
+; ...16x16のほうで ランダムで混ぜてもいいがな" - decided right after its
+; own random draw and branched on immediately (no need to preserve the
+; choice across the drawing calls that follow, unlike a value that would
+; have to survive in a register through them).
 BOSS_EXPL_SPARK_SLOT:
     CALL BOSS_EXPL_ERASE_ONE_SPARK
 
@@ -8108,13 +8157,8 @@ BOSS_EXPL_SPARK_SLOT:
     LD A,(BOSS_EXPL_CY) : ADD A,B : LD (BOSS_EXPL_ROWTMP),A
     LD A,(BOSS_EXPL_CX) : ADD A,C : LD (BOSS_EXPL_COLTMP),A
 
-    ; --- flight: fly further, random direction, up to FLIGHT_RANGE cells ---
-    CALL BOSS_EXPL_RANDOM_BYTE
-    LD D,A
-    AND 7 : SUB BOSS_EXPL_FLIGHT_RANGE : LD C,A                ; flight dx
-    LD A,D
-    SRL A : SRL A : SRL A : SRL A
-    AND 7 : SUB BOSS_EXPL_FLIGHT_RANGE : LD B,A                ; flight dy
+    ; --- flight: fly further, random compass direction, 1-3 cells ---
+    CALL BOSS_EXPL_PICK_FLIGHT
     LD A,(BOSS_EXPL_ROWTMP) : ADD A,B : LD (BOSS_EXPL_ROWTMP),A
     LD A,(BOSS_EXPL_COLTMP) : ADD A,C : LD (BOSS_EXPL_COLTMP),A
 
