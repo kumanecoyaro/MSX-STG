@@ -2314,6 +2314,41 @@ Thunder activity) confirming it survives completely untouched.
   real boss spawn, so the new gate never made any of them miss anything
   they were actually checking).
 
+## Round 24: remove redundant boot-time boss-state zeros - schedule-driven, not preemptive
+
+- User feedback (verbatim): "一応言っとくがな こう言ったゲームってのは
+  全てスケジュールで動くんだよ 発火条件はタイマーで時間になったら その
+  時不要なものは可能な限り走らせず メモリにしても必要になったら使う ボ
+  スは単騎戦だから ボス前とボススポーン後は完全に分けて 一切干渉しない
+  当然ボスまでは一切関連ルーチンも呼ばんし 最初にメモリを確保したりし
+  ない 逆もしかり ボスになったらそれまでのルーチンやメモリ、パターンは
+  全部捨てるし 初期化もボス用はボススポーン直前 これが無駄省き速度を稼
+  ぐ方法 肝に銘じとけ" - a general design principle, not a specific bug
+  report, but it directly applies to Round22's own boot-time zero-init
+  of `SBEAM_ACT`/`THUNDER_PENDING`/`THUNDER_ELIGIBLE`/`THUNDER_POOL`'s 4
+  slots: with Round23's own `SKIP_BOSS_SUBSYSTEMS` gate already in place
+  (nothing reads any of those fields at all while `BOSS_ACT==0`), and
+  the REAL spawn transition inside `UPDATE_BOSS_ALL` already resetting
+  every one of them atomically the instant it sets `BOSS_ACT=1`, that
+  boot-time zeroing had become pure redundancy - the exact "preemptive
+  init before it's needed" the user is describing. Removed.
+- `BOSS_ACT` itself stays zeroed at boot, as the one necessary exception:
+  `UPDATE_BOSS_ALL`'s own very first instruction reads it unconditionally
+  every frame to decide whether to even check `GAME_TICK` against
+  `BOSS_SPAWN_TICK` - that check can't itself be deferred to spawn time,
+  since it's what DETECTS spawn time in the first place. Flagged clearly
+  in-source as the deliberate exception, not an oversight.
+- Verified: `tests/boot_init_test.py` rewritten to test the ACTUAL
+  safety property this now relies on, not just "is it zero at boot" -
+  (a) poking deliberate garbage into every one of the no-longer-zeroed
+  fields, forcing a real spawn via `GAME_TICK`, and confirming the
+  spawn's own init overwrites all of it regardless of what was there
+  before; (b) a real single pre-spawn `MAINLOOP` frame with the same
+  garbage poked in, confirming it comes back COMPLETELY UNTOUCHED
+  (proving `SKIP_BOSS_SUBSYSTEMS` is actually skipping the calls, not
+  just coincidentally reading garbage harmlessly). 16/16 passed (up
+  from 12). Full regression (`tests/run_all.py`): 612 passed, 0 failed.
+
 ## Open items / things to watch
 
 - **RAM addresses that need to persist across frames must stay clear of

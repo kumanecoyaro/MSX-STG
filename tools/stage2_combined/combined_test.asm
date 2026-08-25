@@ -2365,50 +2365,28 @@ INIT_SPRATR_CLR:
     LD (HORMING_POOL+7),A
     LD (HORMING_POOL+14),A
     LD (HORMING_POOL+21),A
-    ; "サンダーの時点でTick840スタートでまだボスに到達してないのにサン
-    ; ダーが１回描画されてた" - a real bug, found by direct comparison
-    ; against every OTHER pool in this file (ENEMY/ZUM/BIGZUM/FLYER/
-    ; ETANK/CLOUD all get their own explicit zero-loop right here in
-    ; INIT; HORMING_POOL is the 4 lines just above): THUNDER_POOL was
-    ; the ONE pool with no boot-time zero at all - RESET_THUNDER_POOL
-    ; only ever runs once, at the boss's own first spawn (UPDATE_BOSS_
-    ; ALL's own BOSS_SPAWN_TICK branch), yet UPDATE_THUNDER reads/draws
-    ; every slot's own ACT byte unconditionally every MAINLOOP frame
-    ; regardless of boss state. On real hardware (genuinely random
-    ; power-on RAM, unlike this test harness's always-zeroed boot) any
-    ; nonzero garbage byte landing in THUNDER_POOL's own ACT field
-    ; before the boss ever spawns gets drawn as a real, active bolt
-    ; using whatever other garbage happens to sit in its COL/ROW/
-    ; DEEP_ROW fields too - exactly the "サンダーが１回描画されてた"
-    ; symptom, and a very plausible route to genuine VRAM corruption
-    ; (a garbage COL/ROW pair can compute a wildly out-of-range name-
-    ; table address) well before the boss or Thunder's own real trigger
-    ; logic ever runs.
-    LD (THUNDER_POOL+0),A
-    LD (THUNDER_POOL+4),A
-    LD (THUNDER_POOL+8),A
-    LD (THUNDER_POOL+12),A
-    LD (THUNDER_PENDING),A
-    LD (THUNDER_ELIGIBLE),A
-    ; same class of bug, more severe: UPDATE_BOSS_ALL is ALSO called
-    ; unconditionally every MAINLOOP frame regardless of whether the
-    ; boss has ever spawned, and its own very first check is `LD A,
-    ; (BOSS_ACT) : CP 2 : RET Z : OR A : JP NZ,UBA_ACTIVE` - any garbage
-    ; nonzero(and !=2) byte here at boot sends it straight into UBA_
-    ; ACTIVE's own patrol/pose logic, reading BOSS_X/BOSS_Y/BOSS_DIR/
-    ; BOSS_PHASE/BOSS_POSE_COUNT/BOSS_POSE_END_TICK - NONE of which have
-    ; ever been written yet (they're only set in the real spawn branch,
-    ; which this skips entirely) - and BOSS_PHASE garbage in particular
-    ; could route into the posing/Thunder-trigger branches with THUNDER_
-    ; PENDING/BOSS_X also still-undefined at that exact instant (this
-    ; INIT sequence, before this point), which would explain the "サン
-    ; ダーが１回描画されてた" report even better than THUNDER_POOL alone -
-    ; a real Thunder shot, armed and fired from garbage boss state,
-    ; before the real spawn condition (BOSS_SPAWN_TICK) was ever
-    ; reached. SBEAM_ACT has the identical exposure (UPDATE_SBEAM/
-    ; CHECK_SBEAM_VS_TANK are ALSO unconditional every frame).
+    ; "こう言ったゲームってのは全てスケジュールで動くんだよ...ボス前と
+    ; ボススポーン後は完全に分けて一切干渉しない 当然ボスまでは一切関連
+    ; ルーチンも呼ばんし最初にメモリを確保したりしない...初期化もボス用
+    ; はボススポーン直前" (round23) - BOSS_ACT is the ONE necessary
+    ; exception: UPDATE_BOSS_ALL's own very first instruction is `LD A,
+    ; (BOSS_ACT) : CP 2 : RET Z : OR A : JP NZ,UBA_ACTIVE`, and that call
+    ; itself can't be deferred to spawn time - it's the ONLY thing that
+    ; ever checks GAME_TICK against BOSS_SPAWN_TICK, so it has to run
+    ; every frame from boot. A garbage nonzero BOSS_ACT there would skip
+    ; the spawn check forever and jump straight into patrol/pose logic
+    ; reading entirely unset BOSS_X/Y/DIR/PHASE - the real round22 bug.
+    ; Every OTHER boss-only field (SBEAM_ACT, THUNDER_PENDING/ELIGIBLE,
+    ; THUNDER_POOL's own 4 slots) does NOT need a boot-time zero any
+    ; more: round23's own BOSS_ACT-gated SKIP_BOSS_SUBSYSTEMS means
+    ; UPDATE_THUNDER/CHECK_THUNDER_VS_TANK/UPDATE_SBEAM/CHECK_SBEAM_VS_
+    ; TANK are never even CALLED while BOSS_ACT==0 - and the real spawn
+    ; transition below (UBA_ACTIVE's own sibling branch) already zeroes
+    ; all of them itself, atomically, in the same instant it sets
+    ; BOSS_ACT=1, before anything downstream could ever read them. No
+    ; window for garbage to matter any more - removing the redundant
+    ; boot-time zeros for those, matching "道中は道中 ボスはボス".
     LD (BOSS_ACT),A
-    LD (SBEAM_ACT),A
     LD (SCORE),A : LD (SCORE+1),A : LD (SCORE+2),A
     LD A,0FFh : LD (GTD_LAST_H),A : LD (GTD_LAST_T),A : LD (GTD_LAST_O),A
     CALL SCORE_DISPLAY
