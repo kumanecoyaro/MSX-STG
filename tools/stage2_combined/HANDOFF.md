@@ -2656,9 +2656,88 @@ Thunder activity) confirming it survives completely untouched.
     `CLAUDE.md` itself so this class of bug (repo directory casing
     differing across sessions/environments) doesn't recur silently in
     some other script.
-- Not yet committed as of writing this entry: `CLAUDE.md` (2 edits) and
-  the `terrain_render_perf_test.py` path fix are staged for commit next
-  in this same round.
+- `CLAUDE.md` and the `terrain_render_perf_test.py` path fix were
+  committed and pushed (`ac7a113`).
+- User follow-up (verbatim, paraphrased): "1は効果が絶大だから実行 実際
+  かなり前から全パス終了に30分は掛かっていたんで 出来ることは全部やって
+  くれ。で、Pypy実行環境はこちらでセットアップするのか" - asked to
+  implement all the proposed speedups, not just parallelization, and
+  asked specifically whether they need to set up PyPy themselves.
+  Answered the PyPy question directly rather than just proceeding: this
+  session runs in a disposable container, so `apt install pypy3` here
+  would only last this session - persisting it needs either the
+  environment's own setup script to install it, or running tests on
+  the user's local machine instead. Left PyPy unimplemented pending
+  that decision; implemented the other 3 candidates:
+  1. **`run_all.py` parallelized** (`tests/run_all.py`) - each test
+     file is a fully independent subprocess (own Python interpreter,
+     own z80emu.py instance, no shared state), so switched from a
+     sequential loop to `ThreadPoolExecutor(max_workers=os.cpu_count())`
+     around the same `subprocess.run` call; `subprocess.run` blocks
+     with the GIL released while the child runs, so N worker threads
+     really do get N children on N cores. Output is still collected
+     and printed in the original sorted-by-filename order (via
+     `list(pool.map(...))` before printing) so the log stays diffable.
+  2. **`fresh_cpu()` boot-snapshot caching** (`tests/banked_helpers.py`)
+     - the real instruction-by-instruction boot trace (INIT -> MAINLOOP)
+     only needs to run once per process (deterministic given the same
+     assembled ROM); cached the resulting post-boot `Z80`/`BankedMem`
+     object once, and every subsequent `fresh_cpu()` call now returns
+     `copy.deepcopy()` of that cached object instead of re-stepping
+     through boot. Correct in isolation (confirmed via profiling that
+     `boss_test.py`'s own dominant cost was NOT its `fresh_cpu()` calls
+     but a single test case looping `step_frame()` ~8000 times - this
+     optimization mainly benefits OTHER test files that call
+     `fresh_cpu()` many times per file, not this specific one).
+  3. **`z80emu.py` `Z80.step()` opcode-dispatch reorder** - instrumented
+     `step()` to count real per-opcode call frequency while running
+     `boss_test.py` (42.6M `step()` calls total, dominated by its
+     8000-frame spawn-timing test case), then moved the highest-total-
+     frequency branches in the if/elif dispatch chain (LD r,r' block
+     ~8.8M combined, DD prefix ~4.8M, LD A,(nn) ~3.7M, DJNZ ~2.2M, LD
+     r,n block ~2.8M, INC rr block ~2.1M, LD A,(DE) ~2.1M, FD prefix
+     ~1.9M, ADD A,r block ~1.9M, LD (nn),A ~1.3M, and others down to
+     JP cc) to the front. Did this via a small Python script that
+     splits `step()`'s body into its 64 mutually-exclusive top-level
+     if/elif/else blocks by text and reassembles them in the new order
+     - a PURE reorder, zero lines of actual instruction-emulation logic
+     retyped by hand (every branch is exclusive on the `op` value with
+     no side effects in the condition itself, so order cannot change
+     behavior, only average dispatch cost). Verified this mechanically,
+     not just by eye: extracted all 64 blocks from both the pre-change
+     and post-change file as text and asserted the sorted list of block
+     texts is identical between them (same 64 blocks, none added,
+     removed, or edited) before ever running a test against it.
+  - Combined result: **19m53s -> 6m8s (~3.24x)**, confirmed via 2 full
+    `run_all.py` runs after each stage - **629 passed, 0 failed** the
+    whole way through, byte-identical to the pre-optimization baseline
+    (steps 1+2 alone already got 8m23s at 629/0; step 3 on top of that
+    got 6m8s at 629/0). Also re-ran both `build_test.py` and
+    `build_full_rom.py` after all 3 changes to confirm ROM output is
+    unaffected (`z80emu.py` is test/verification-only - the real
+    assembler is `mini_z80asm.py`, untouched this round).
+  - Found (not fixed, out of scope for this round - flagged only) a
+    pre-existing correctness bug in `z80emu.py`'s `step()` while
+    reading through it for the reorder: `elif op == 0x98:` (SBC A,B)
+    is checked BEFORE the general `elif 0x98<=op<=0x9F:` (SBC A,r)
+    block, so opcode 0x98 specifically only ever adds T-states (`+= 4`)
+    without performing the actual subtraction - the one SBC-A-with-
+    B-specifically case silently does nothing. Did not touch this: it
+    changes real (already-tstate-verified) behavior rather than just
+    reordering, is unrelated to the speed request, and opcode 0x98
+    didn't even appear in this round's own frequency measurement (very
+    rare in this codebase's actual code) - a fix would need its own
+    deliberate task with its own verification, not folded into a
+    "don't change behavior" reorder commit.
+  - Committed as `98e4487` (dispatch reorder) after `8efd7e0`
+    (parallelization + fresh_cpu caching, itself committed WIP before
+    its own full-suite verification had finished, per the project's
+    "don't leave uncommitted changes lying around across turns" stop-
+    hook expectation - both were verified green after the fact, so no
+    correction commit was needed).
+  - `CLAUDE.md`'s test-policy section rewritten with the new ~6min
+    number and this optimization history; the old "candidates, not yet
+    started" list is gone since 3 of 4 are now done.
 
 ## Open items / things to watch
 
