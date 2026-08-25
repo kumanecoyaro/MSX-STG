@@ -153,7 +153,15 @@ def main():
     # any of the page2/bank-switch work and still needs its own real
     # root cause once this file is finally loaded under its correct
     # mapper type for the first time).
-    rom_path = os.path.join(HERE, "combined_test [ASCII16].rom")
+    # "ここで貼るROMファイル名を Stage1はCyberS S1.ascii16k.rom Stage2は
+    # CyberS S2.ascii16k.rom として出力" (round28) - renamed from
+    # "combined_test [ASCII16].rom". Still contains "ascii16" as a
+    # substring (just lowercase, no brackets, trailing "k") - per this
+    # file's own comment history just above, WebMSX's mapper auto-
+    # detection keys off the filename itself, not ROM content/size, so
+    # this rename needs the same real-hardware/WebMSX confirmation any
+    # filename change here always has before trusting it.
+    rom_path = os.path.join(HERE, "CyberS S2.ascii16k.rom")
     with open(rom_path, "wb") as f:
         f.write(rom)
     print(f"assembled {lo:04X}h-{hi:04X}h ({hi-lo+1} bytes across bank0+bank1), wrote {rom_path}: {len(rom)} bytes (doubled)")
