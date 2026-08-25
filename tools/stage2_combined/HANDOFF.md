@@ -2738,6 +2738,65 @@ Thunder activity) confirming it survives completely untouched.
   - `CLAUDE.md`'s test-policy section rewritten with the new ~6min
     number and this optimization history; the old "candidates, not yet
     started" list is gone since 3 of 4 are now done.
+- Immediate follow-up in the same round (verbatim, paraphrased): "そっち
+  の実行環境で出来ないならPypyはいいわ かなり早くなると思うが GitのWork
+  spaceにインストールとかは出来ないか" - accepting that PyPy in THIS
+  session's own disposable container wasn't worth pursuing, but asking
+  whether it could be installed at the repo/environment level so it
+  persists for future sessions rather than needing to be redone here
+  each time. Used the `session-start-hook` skill (Claude Code on the
+  web SessionStart hooks) rather than guessing at a mechanism:
+  - Confirmed `pypy3` (7.3.15, matching Python 3.9 stdlib) is available
+    via `apt-get install pypy3` in this environment's package mirror -
+    installed it directly first to measure the real payoff before
+    committing to any permanent setup.
+  - **Measured result: `boss_test.py` alone 57.5s (CPython, post-
+    reorder) -> 5.4s under `pypy3` (~10.6x, 18 passed/0 failed
+    unchanged). Full suite: 6m8s -> 34.7s (~10.6x on top of the
+    already-3.24x-improved CPython baseline; ~34x vs the original
+    19m53s), 629 passed/0 failed unchanged.** By far the single
+    biggest lever of everything tried this round - bigger than
+    parallelization + caching + dispatch-reorder combined.
+  - `tests/run_all.py` changed to prefer `pypy3` for the actual test
+    subprocesses automatically: `TEST_PYTHON = shutil.which("pypy3") or
+    sys.executable`, used in place of the old hardcoded
+    `sys.executable` in `run_one()`'s `subprocess.run` call. Falls back
+    cleanly to whichever interpreter launched `run_all.py` when pypy3
+    isn't installed, so the documented command (`python3 run_all.py`)
+    keeps working everywhere, just faster once pypy3 exists. Committed
+    (`118bcc3`) together with the (unregistered-at-that-point) hook
+    script below.
+  - Created `.claude/hooks/session-start.sh`: only acts when
+    `CLAUDE_CODE_REMOTE=true` (a local/non-web checkout is left alone),
+    checks `command -v pypy3` and only runs `apt-get update -qq &&
+    apt-get install -y -qq pypy3` if it's actually missing - idempotent,
+    non-interactive, cheap on a cache hit (per the skill: web-session
+    container state gets cached after the hook completes, so repeat
+    sessions should skip straight past the `command -v` check).
+  - Registering it in `.claude/settings.json`'s own `SessionStart` hook
+    list was BLOCKED by the auto-mode permission classifier (hooks run
+    arbitrary commands on every session start, so editing this file is
+    treated as sensitive) - correctly stopped and asked the user rather
+    than working around it; the hook script itself and the `run_all.py`
+    change were committed first since they didn't need that permission.
+    User replied "認める" (approved) - added the `SessionStart` entry
+    pointing at `$CLAUDE_PROJECT_DIR/.claude/hooks/session-start.sh`,
+    validated the JSON parses and the script itself runs clean (exit 0,
+    skips the already-satisfied install) via `CLAUDE_CODE_REMOTE=true
+    ./.claude/hooks/session-start.sh`.
+  - Not yet confirmed: whether Claude Code on the web's own container-
+    state caching actually persists an apt-installed package across
+    session boundaries the way local dependency installs (npm/pip) do,
+    or whether the hook will genuinely re-run `apt-get install` (a few
+    seconds, not a real problem either way) every single session. Either
+    way this only takes effect once this branch's hook merges into the
+    repo's default branch - this branch's own future sessions on THIS
+    branch already benefit from it if the harness re-clones on the same
+    branch, but that's a harness behavior this round didn't verify.
+  - `CLAUDE.md` updated again: full-suite time now "~35秒", the
+    optimization history section gained PyPy as item 4, and the old
+    "not implemented, needs the user's call" framing is gone since the
+    user's call was made and acted on this round.
 
 ## Open items / things to watch
 
