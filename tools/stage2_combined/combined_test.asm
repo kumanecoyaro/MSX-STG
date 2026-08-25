@@ -649,26 +649,45 @@ BOSS_EXPL_WHITE_COLORBYTE EQU 0F1h   ; fg15 white/bg1 black - same convention as
 ; イトで描画すると消えてしまうんでBGで...ボスの範囲から外側に4セルラン
 ; ダムにエフェクトを飛ばしてくれ ウェイトなしで派手に沢山 3秒くらい"
 ; (round32) - a NEW phase (BOSS_EXPL_STATE_SPARK) that runs FIRST, before
-; the existing circle/line sequence: every frame, several random BG
-; "spark" tiles land within roughly the boss's own 8x8-cell footprint
-; plus another BOSS_EXPL_SPARK_RANGE-8 cells beyond its edge - not a
-; precise zoned split between "on the boss" and "beyond it", just one
-; uniform square scatter area big enough to cover both, since the ask
-; was chaos/density ("派手に沢山"), not precise geometry the way the
-; circle needed to be. No per-spark timer/duration tracking - see
-; UBE_SPARK's own comment for why that's fine here. 180 frames = 3
-; real seconds at this project's assumed 60fps (same "frames" unit
-; FLASH_DURATION/EXPLOSION_DURATION already use elsewhere), 3/frame is
-; a judgment call for "沢山" (not specified numerically).
-BOSS_EXPL_SPARK_RANGE EQU 8
+; the existing circle/line sequence. No per-spark timer/duration
+; tracking - see UBE_SPARK's own comment for why that's fine here. 180
+; frames = 3 real seconds at this project's assumed 60fps (same "frames"
+; unit FLASH_DURATION/EXPLOSION_DURATION already use elsewhere), 3/frame
+; is a judgment call for "沢山" (not specified numerically).
+;
+; round32 follow-up fix: "そういう事じゃない ボックス範囲で消去もして
+; ないから飛んでるかどうかもわからない ただ６４ｘ６４がBGで埋まってる
+; だけだ じゃあボスの中心の３２ｘ３２の範囲でランダムに で、爆発キャラ
+; は８ｘ８のほうではなく１６ｘ１６のほうで ランダムで混ぜてもいいがな" -
+; the first version only ever ADDED sparks (never erased any until the
+; whole phase ended), so once the small scatter area filled up it just
+; read as one static solid block, not "flying" sparks - and the scatter
+; area itself (+/-8 cells = 128x128px) was far bigger than intended. Two
+; fixes: (1) shrunk the box to a true 32x32px/4-cell scatter centered on
+; the boss (BOSS_EXPL_SPARK_RANGE now the box's own HALF-width in cells,
+; offsets run -RANGE..+RANGE-1, same generic AND/SUB shape as before,
+; just a smaller constant); (2) the box is now erased-then-repopulated
+; EVERY frame (see UBE_SPARK) instead of only once at the very end, so
+; individual sparks genuinely blink in and out from frame to frame
+; instead of accumulating.
+BOSS_EXPL_SPARK_RANGE EQU 2
 BOSS_EXPL_SPARK_DURATION EQU 180
 BOSS_EXPL_SPARK_PER_FRAME EQU 3
 ; another retired-hand-art code, group20 (160-167) - same safety
 ; argument as BOSS_EXPL_WHITE_CODE's own comment, just a different
-; group so this can have its own distinct color. Pattern is EXPLOSION_
-; PATTERN's own top-left 8x8 quadrant (already-established "explosion"
-; art elsewhere in this file, reused instead of drawing something new).
-BOSS_EXPL_SPARK_CODE EQU 160
+; group so this can have its own distinct color. All 4 codes share this
+; one group/color (no separate upload needed per quadrant). Pattern is
+; EXPLOSION_PATTERN in full (already-established "explosion" art
+; elsewhere in this file, reused instead of drawing something new) -
+; "爆発キャラは８ｘ８のほうではなく１６ｘ１６のほうで" - the 16x16
+; 4-quadrant version, TL/BL/TR/BR in the same plane order EXPLOSION_
+; PATTERN's own data already uses. "ランダムで混ぜてもいいがな" - each
+; spark independently rolls 8x8 (just the TL quadrant alone) vs the full
+; 16x16 (all 4) 50/50, see BOSS_EXPL_SPAWN_ONE_SPARK.
+BOSS_EXPL_SPARK_CODE_TL EQU 160
+BOSS_EXPL_SPARK_CODE_BL EQU 161
+BOSS_EXPL_SPARK_CODE_TR EQU 162
+BOSS_EXPL_SPARK_CODE_BR EQU 163
 BOSS_EXPL_SPARK_GROUP EQU 20
 BOSS_EXPL_SPARK_COLORBYTE EQU 081h   ; fg8(EXPLOSION_COLOR)/bg1 black - "近い色" to BOSS_COLOR(9), same value as SASAPI_HAND_FLASH_COLORBYTE (coincidental, not reused by name)
 BOSS_EXPL_STATE_SPARK  EQU 4
@@ -7676,13 +7695,11 @@ HBOS_LOOP:
 BOSS_EXPL_WHITE_PATTERN:
     DB 0FFh,0FFh,0FFh,0FFh,0FFh,0FFh,0FFh,0FFh
 
-; the spark phase's own single BG tile - EXPLOSION_PATTERN's own top-
-; left 8x8 quadrant (that pattern is a 16x16 sprite, 4 quadrants of 8
-; bytes each; reusing just one quadrant as a single BG tile is plenty
-; "explosion-y" for a chaotic scatter effect, not meant to read as one
-; coherent shape the way the sprite version does).
-BOSS_EXPL_SPARK_PATTERN:
-    DB 84h,48h,00h,02h,49h,84h,20h,03h
+; the spark phase's own BG tile art - EXPLOSION_PATTERN itself (see
+; BOSS_EXPL_SPARK_CODE_TL's own comment - round32 switched from just its
+; top-left 8x8 quadrant to the full 16x16, so no separate table is
+; needed here anymore; INIT_BOSS_EXPLOSION uploads EXPLOSION_PATTERN's
+; own 32 bytes directly to BOSS_EXPL_SPARK_CODE_TL*8).
 
 ; "更に円の塗りつぶしは固定処理なのでLutでやってくれ たった半径6セルだ
 ; からわずかなサイズだろう 一々計算は不要 なので円の1周終了を1パターン
@@ -7859,16 +7876,22 @@ BEAR_SKIP_CELL:
 ; "まずボスがBG描画される右端で倒された場合はスプライトに戻す" - if the
 ; kill happened while parked in the attack pose (BOSS_PHASE=1, hand art
 ; on screen, real sprite already hidden), erase that BG art and reset
-; BOSS_PHASE back to 0 first - the explosion's own boss-blink (below)
-; re-shows/hides the boss as a real hw sprite via FLUSH_BOSS_SPRITES/
-; HIDE_BOSS_SPRITES, which only makes sense once it's not still
-; "supposed to be" BG art.
+; BOSS_PHASE back to 0 first, then explicitly re-show the real sprite
+; (DRAW_BOSS/FLUSH_BOSS_SPRITES) right here - round32: SPARK now needs
+; the boss VISIBLE the instant it starts ("消さないでくれ BGでやってる
+; 意味がない"), not just "not still BG art"; the patrol-death case
+; already has a visible sprite from its own last real frame so it needs
+; no extra draw, but the pose-death case's own sprite was left hidden by
+; whatever put it into the pose to begin with (see BOSS_PHASE=1 entry,
+; its own HIDE_BOSS_SPRITES call) and nothing else would ever re-show it.
 INIT_BOSS_EXPLOSION:
     LD A,(BOSS_PHASE)
     CP 1
     JR NZ,IBE_NO_HAND
     CALL ERASE_SASAPI_HAND
     XOR A : LD (BOSS_PHASE),A
+    CALL DRAW_BOSS
+    CALL FLUSH_BOSS_SPRITES
 IBE_NO_HAND:
     ; "倒した位置のボス中心から" - capture the center CELL now, once,
     ; while BOSS_X/BOSS_Y still mean something (nothing updates them
@@ -7885,7 +7908,7 @@ IBE_NO_HAND:
     ; first - one DI/EI-wrapped burst instead of two smaller ones later.
     DI
     LD HL,BOSS_EXPL_WHITE_PATTERN : LD DE,BOSS_EXPL_WHITE_CODE*8 : LD BC,8 : CALL LDIRVM
-    LD HL,BOSS_EXPL_SPARK_PATTERN : LD DE,BOSS_EXPL_SPARK_CODE*8 : LD BC,8 : CALL LDIRVM
+    LD HL,EXPLOSION_PATTERN : LD DE,BOSS_EXPL_SPARK_CODE_TL*8 : LD BC,32 : CALL LDIRVM
     EI
     LD A,BOSS_EXPL_WHITE_COLORBYTE : LD (HUD_TEMP_BYTE),A
     LD HL,HUD_TEMP_BYTE : LD DE,2000h+BOSS_EXPL_WHITE_GROUP : LD BC,1 : CALL LDIRVM
@@ -7950,60 +7973,106 @@ BOSS_EXPL_RANDOM_BYTE:
     LD A,(TICK) : XOR B
     RET
 
-; drops ONE spark tile at (BOSS_EXPL_CX+dx,BOSS_EXPL_CY+dy) for a fresh
-; random (dx,dy) - screen-clipped (off-screen cells just RET, same
-; unsigned CP trick as BOSS_EXPL_APPLY_RING for both directions). No
-; per-spark persistence/timer: later sparks (this frame or a later one)
-; landing on the same cell just overwrite it, and BOSS_EXPL_CLEAR_SPARK_
-; AREA wipes the whole scatter area in one pass once the phase ends -
-; individual sparks don't need to "expire" on their own for that to work
-; cleanly, so there's nothing to track per-spark.
-BOSS_EXPL_SPAWN_ONE_SPARK:
-    CALL BOSS_EXPL_RANDOM_BYTE
-    LD D,A                                          ; D = full random byte
-    AND 0Fh : SUB BOSS_EXPL_SPARK_RANGE : LD C,A     ; dx = low nibble - range
-    LD A,D
-    SRL A : SRL A : SRL A : SRL A                     ; high nibble -> low nibble
-    SUB BOSS_EXPL_SPARK_RANGE : LD B,A               ; dy = high nibble - range
-    LD A,(BOSS_EXPL_CY) : ADD A,B : LD (BOSS_EXPL_ROWTMP),A
-    LD A,(BOSS_EXPL_CX) : ADD A,C : LD (BOSS_EXPL_COLTMP),A
-    LD A,(BOSS_EXPL_ROWTMP)
+; writes (BULLET_TEMP_BYTE) at (BOSS_EXPL_COLTMP+C, BOSS_EXPL_ROWTMP+B)
+; - B/C(in) are simple 0/1 cell offsets from that base, used to place
+; each of a 16x16 spark's 4 quadrants (or just (0,0) alone for an 8x8
+; one). Screen-clipped per cell (silently skips off-screen, same
+; unsigned CP trick as BOSS_EXPL_APPLY_RING). Clobbers A/D/E/H/L only -
+; B/C are read-only inputs, never written, so a caller can freely reuse
+; the same B or C across several calls without reloading it.
+BOSS_EXPL_WRITE_SPARK_CELL:
+    LD A,(BOSS_EXPL_ROWTMP) : ADD A,B
     CP 24
     RET NC
-    LD A,(BOSS_EXPL_COLTMP)
+    PUSH AF
+    LD A,(BOSS_EXPL_COLTMP) : ADD A,C
+    LD C,A
     CP 32
-    RET NC
-    LD A,BOSS_EXPL_SPARK_CODE : LD (BULLET_TEMP_BYTE),A
-    LD A,(BOSS_EXPL_ROWTMP) : CALL NIGHT_ROW_ADDR
+    JR NC,BEWSC_OOB
+    POP AF
+    CALL NIGHT_ROW_ADDR
     LD H,D : LD L,E
-    LD A,(BOSS_EXPL_COLTMP) : LD E,A : LD D,0
+    LD A,C : LD E,A : LD D,0
     ADD HL,DE
     JP WRITE_BULLET_BYTE_HL
+BEWSC_OOB:
+    POP AF
+    RET
 
-; wipes the WHOLE spark scatter area (BOSS_EXPL_CX/CY +-8, a 17x17 box -
-; a little more generous than BOSS_EXPL_SPARK_RANGE's own -8..+7 spawn
-; range, cheap insurance) back to the real per-row background, once, at
-; the SPARK->GROW handoff - "書き戻す"/"不要な書き込みはしない" apply
-; here the same as the circle's own ring-only writes do: rather than
-; tracking every disturbed cell individually, this is a single full
-; sweep of the area that COULD have been touched, restoring the genuine
-; row-aware content (BOSS_EXPL_BG_CODE_FOR_ROW - the exact fix from
-; earlier this same round, reused here) rather than a blanket blank -
-; same discipline, applied to the new phase. Reuses BOSS_EXPL_RADIUS/
-; BOSS_EXPL_RING_REMAIN as this loop's own row/col counters - both are
-; genuinely idle at this exact point (RADIUS hasn't been touched since
-; INIT's own XOR-A zero, and REMAIN is dead in between ring walks), so
-; no new persistent bytes were needed for this whole phase.
+; drops ONE spark at (BOSS_EXPL_CX+dx,BOSS_EXPL_CY+dy), dx/dy random
+; within BOSS_EXPL_SPARK_RANGE's own -RANGE..+RANGE-1 window (the 32x32
+; box "ボスの中心の32x32の範囲でランダムに"), 50/50 either the lone 8x8
+; TL tile or the full 16x16 (all 4 quadrants) - "爆発キャラは...16x16の
+; ほうで ランダムで混ぜてもいいがな". Both dx/dy (2 bits each, since
+; RANGE=2 means AND 3) and the size pick (a 3rd, independent bit) come
+; from ONE mixed random byte - same anti-correlation reasoning as
+; BOSS_EXPL_RANDOM_BYTE's own comment, just splitting 3 fields out of it
+; instead of 2. No per-spark persistence/timer: UBE_SPARK erases the
+; whole box fresh every frame before calling this, so there's nothing to
+; track or expire per-spark.
+BOSS_EXPL_SPAWN_ONE_SPARK:
+    CALL BOSS_EXPL_RANDOM_BYTE
+    LD D,A
+    AND BOSS_EXPL_SPARK_RANGE*2-1 : SUB BOSS_EXPL_SPARK_RANGE : LD C,A   ; dx
+    LD A,D
+    SRL A : SRL A
+    AND BOSS_EXPL_SPARK_RANGE*2-1 : SUB BOSS_EXPL_SPARK_RANGE : LD B,A  ; dy
+    LD A,(BOSS_EXPL_CY) : ADD A,B : LD (BOSS_EXPL_ROWTMP),A
+    LD A,(BOSS_EXPL_CX) : ADD A,C : LD (BOSS_EXPL_COLTMP),A
+    LD A,D
+    SRL A : SRL A : SRL A : SRL A
+    AND 1
+    LD (BOSS_EXPL_RING_MODE),A   ; reused: this spark's own size bit (0=8x8,1=16x16) - idle here, see BOSS_EXPL_CLEAR_SPARK_AREA's own comment
+
+    LD A,BOSS_EXPL_SPARK_CODE_TL : LD (BULLET_TEMP_BYTE),A
+    LD B,0 : LD C,0
+    CALL BOSS_EXPL_WRITE_SPARK_CELL
+
+    LD A,(BOSS_EXPL_RING_MODE)
+    OR A
+    RET Z
+
+    LD A,BOSS_EXPL_SPARK_CODE_BL : LD (BULLET_TEMP_BYTE),A
+    LD B,1 : LD C,0
+    CALL BOSS_EXPL_WRITE_SPARK_CELL
+    LD A,BOSS_EXPL_SPARK_CODE_TR : LD (BULLET_TEMP_BYTE),A
+    LD B,0 : LD C,1
+    CALL BOSS_EXPL_WRITE_SPARK_CELL
+    LD A,BOSS_EXPL_SPARK_CODE_BR : LD (BULLET_TEMP_BYTE),A
+    LD B,1 : LD C,1
+    CALL BOSS_EXPL_WRITE_SPARK_CELL
+    RET
+
+; wipes the scatter box (BOSS_EXPL_CX/CY +-2 cells, a 5x5 box - one cell
+; more generous than BOSS_EXPL_SPARK_RANGE's own -2..+1 spawn offset on
+; every edge, cheap insurance covering a 16x16 spark's own +1-cell
+; spread too) back to the real per-row background - "ボックス範囲で消去
+; もしてないから飛んでるかどうかもわからない ただ64x64がBGで埋まって
+; るだけだ" (round32 follow-up): the original version only ran this ONCE,
+; at the very end of the whole phase, so sparks just accumulated into a
+; static filled block instead of reading as individual flying sparks.
+; Now UBE_SPARK calls this EVERY frame, right before that frame's own
+; batch spawns - erase-then-redraw each frame is what actually makes
+; individual sparks blink in and out rather than pile up. Restores the
+; genuine row-aware content (BOSS_EXPL_BG_CODE_FOR_ROW - the SkySand/Sand
+; fix from earlier this same round, reused here) rather than a blanket
+; blank. Reuses BOSS_EXPL_RADIUS/BOSS_EXPL_RING_REMAIN as this loop's own
+; row/col counters - both genuinely idle throughout SPARK (RADIUS stays
+; 0 until GROW begins, REMAIN is dead in between ring walks) - and
+; BOSS_EXPL_SPAWN_ONE_SPARK's own reuse of BOSS_EXPL_RING_MODE (the
+; per-spark size bit) never overlaps with this call since the two never
+; run concurrently - this always runs to completion first, every frame,
+; before any spawning starts.
 BOSS_EXPL_CLEAR_SPARK_AREA:
-    LD A,17 : LD (BOSS_EXPL_RADIUS),A
-    LD A,(BOSS_EXPL_CY) : SUB 8 : LD (BOSS_EXPL_ROWTMP),A
+    LD A,5 : LD (BOSS_EXPL_RADIUS),A
+    LD A,(BOSS_EXPL_CY) : SUB 2 : LD (BOSS_EXPL_ROWTMP),A
 BECSA_ROWLOOP:
     LD A,(BOSS_EXPL_ROWTMP)
     CP 24
     JP NC,BECSA_ROW_SKIP
 
-    LD A,17 : LD (BOSS_EXPL_RING_REMAIN),A
-    LD A,(BOSS_EXPL_CX) : SUB 8 : LD (BOSS_EXPL_COLTMP),A
+    LD A,5 : LD (BOSS_EXPL_RING_REMAIN),A
+    LD A,(BOSS_EXPL_CX) : SUB 2 : LD (BOSS_EXPL_COLTMP),A
 BECSA_COLLOOP:
     LD A,(BOSS_EXPL_COLTMP)
     CP 32
@@ -8029,24 +8098,30 @@ BECSA_ROW_SKIP:
     RET
 
 ; "ウェイトなしで派手に沢山" - every single frame (no per-spark or
-; per-batch wait), drop BOSS_EXPL_SPARK_PER_FRAME sparks at once. The
-; countdown (BOSS_EXPL_TIMER, reused - see INIT_BOSS_EXPLOSION's own
-; comment) still decrements every frame regardless, same as the sparks
-; themselves aren't gated by it - it only controls when the WHOLE phase
-; ends, not the per-frame density.
+; per-batch wait), erase the previous frame's own sparks first (see
+; BOSS_EXPL_CLEAR_SPARK_AREA's own comment for why that has to happen
+; every frame now, not just once at the end), then drop a fresh batch of
+; BOSS_EXPL_SPARK_PER_FRAME sparks. The countdown (BOSS_EXPL_TIMER,
+; reused - see INIT_BOSS_EXPLOSION's own comment) decrements after the
+; erase; once it reaches 0 the box is already clean (this frame's own
+; erase already ran) so the last frame simply skips spawning anything
+; new and falls straight into GROW's own ring(0).
 UBE_SPARK:
+    CALL BOSS_EXPL_CLEAR_SPARK_AREA
+    LD A,(BOSS_EXPL_TIMER) : DEC A : LD (BOSS_EXPL_TIMER),A
+    JP Z,UBS_DONE
+
     LD B,BOSS_EXPL_SPARK_PER_FRAME
 UBS_SPAWN_LOOP:
     PUSH BC
     CALL BOSS_EXPL_SPAWN_ONE_SPARK
     POP BC
     DJNZ UBS_SPAWN_LOOP
+    RET
 
-    LD A,(BOSS_EXPL_TIMER) : DEC A : LD (BOSS_EXPL_TIMER),A
-    RET NZ
-; phase over - clean up the whole scatter area, then start the circle
-; sequence exactly as INIT_BOSS_EXPLOSION used to start it directly.
-    CALL BOSS_EXPL_CLEAR_SPARK_AREA
+; phase over - start the circle sequence exactly as INIT_BOSS_EXPLOSION
+; used to start it directly (box is already erased-clean, see above).
+UBS_DONE:
     XOR A : LD (BOSS_EXPL_RADIUS),A
     LD A,BOSS_EXPL_STATE_GROW : LD (BOSS_EXPL_STATE),A
     LD A,BOSS_EXPL_STEP_FRAMES : LD (BOSS_EXPL_TIMER),A
@@ -9815,9 +9890,19 @@ CHECK_HIT_PAIR_BOSS:
     LD A,FLASH_DURATION : LD (BOSS_FLASH_TIMER),A
     CALL SOUND_ZUM_DEFLECT
     RET
+; round32 fix: "なぜ爆発エフェクト中にボス消してる 消さないでくれ BGで
+; やってる意味がない" - this used to HIDE_BOSS_SPRITES immediately on
+; death, before the new SPARK burst even got a chance to run - the whole
+; point of drawing the burst in BG instead of as a sprite was for it to
+; sit "behind" a still-VISIBLE boss ("裏になるが近い色なので見た目は気に
+; ならないはず"), so hiding the boss the instant it dies defeated that
+; entirely. No longer hides here - the boss sprite simply stays exactly
+; as it last looked (DRAW_BOSS/FLUSH_BOSS_SPRITES never runs again once
+; BOSS_ACT=2, see UPDATE_BOSS_ALL) all the way through SPARK; GROW's own
+; existing blink logic (see UBE_GROW) is what starts actually toggling
+; it, unchanged from before.
 CHPBOSS_DESTROY:
     LD A,2 : LD (BOSS_ACT),A
-    CALL HIDE_BOSS_SPRITES
     CALL INIT_BOSS_EXPLOSION
     RET
 

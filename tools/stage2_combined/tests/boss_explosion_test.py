@@ -64,34 +64,79 @@ WHITE_CODE = sym["BOSS_EXPL_WHITE_CODE"]
 SPARK_RANGE = sym["BOSS_EXPL_SPARK_RANGE"]
 SPARK_DURATION = sym["BOSS_EXPL_SPARK_DURATION"]
 SPARK_PER_FRAME = sym["BOSS_EXPL_SPARK_PER_FRAME"]
-SPARK_CODE = sym["BOSS_EXPL_SPARK_CODE"]
+SPARK_CODE_TL = sym["BOSS_EXPL_SPARK_CODE_TL"]
+SPARK_CODE_BL = sym["BOSS_EXPL_SPARK_CODE_BL"]
+SPARK_CODE_TR = sym["BOSS_EXPL_SPARK_CODE_TR"]
+SPARK_CODE_BR = sym["BOSS_EXPL_SPARK_CODE_BR"]
+SPARK_CODES = {SPARK_CODE_TL, SPARK_CODE_BL, SPARK_CODE_TR, SPARK_CODE_BR}
+BOSS_SPRITE_HIDDEN_Y = 209
+# the erase/redraw box is 1 cell more generous than the spawn offset's
+# own -RANGE..+RANGE-1 window on every edge (see BOSS_EXPL_CLEAR_SPARK_
+# AREA's own comment) - a 16x16 spark anchored at the window's own max
+# offset still reaches 1 cell further out, so this is genuinely the
+# full set of cells a spark can ever touch, not just the anchor range.
+SPARK_BOX_MARGIN = SPARK_RANGE + 1
 
 
 def run_spark_phase(cpu, cx, cy):
-    """Fast-forwards through the whole SPARK phase ("ステージ1ボスのよう
-    な爆発エフェクトをボスの範囲でランダムに...3秒くらい") one frame at a
-    time, recording which cells (within the legal scatter box) ever showed
-    the spark tile - used both to verify the scatter itself and so callers
-    can resume testing the existing GROW/SHRINK/FLASH sequence afterward
-    exactly as before (SPARK now always runs first)."""
+    """Fast-forwards through the whole SPARK phase ("ボスの中心の32x32の
+    範囲でランダムに...ウェイトなしで派手に沢山 3秒くらい") one frame at a
+    time. Returns a dict:
+    - spark_seen: every cell (within the legal scatter box) that ever
+      showed ANY of the 4 spark quadrant codes across the whole burst
+    - per_frame_live_counts: how many spark cells are showing at the END
+      of each individual frame (bounded by the erase-then-redraw design -
+      see the "never accumulates" check below)
+    - boss_hidden_seen: True if the boss sprite was ever hidden (Y=209)
+      during the burst - it must NOT be, per round32's own follow-up fix
+      ("なぜ爆発エフェクト中にボス消してる 消さないでくれ BGでやってる
+      意味がない")
+    - saw_8x8/saw_16x16: whether a lone TL-only spark and a full 2x2
+      TL/BL/TR/BR quad were each independently observed at least once -
+      "爆発キャラは8x8のほうではなく16x16のほうで ランダムで混ぜてもいい
+      がな" (CX/CY are picked comfortably clear of every screen edge by
+      every caller, so a real quad is never partially clipped here -
+      this heuristic is reliable for the interior case this test uses).
+    """
     spark_seen = set()
-    per_frame_counts = []
+    per_frame_live_counts = []
+    boss_hidden_seen = False
+    saw_8x8 = saw_16x16 = False
     for _ in range(SPARK_DURATION):
         call_routine(cpu, "UPDATE_BOSS_EXPLOSION")
+        if boss_sat_y(cpu) == BOSS_SPRITE_HIDDEN_Y:
+            boss_hidden_seen = True
         count = 0
-        for dy in range(-SPARK_RANGE, SPARK_RANGE):
+        for dy in range(-SPARK_BOX_MARGIN, SPARK_BOX_MARGIN + 1):
             row = cy + dy
             if not (0 <= row <= 23):
                 continue
-            for dx in range(-SPARK_RANGE, SPARK_RANGE):
+            for dx in range(-SPARK_BOX_MARGIN, SPARK_BOX_MARGIN + 1):
                 col = cx + dx
                 if not (0 <= col <= 31):
                     continue
-                if cpu.vram[cell_addr(col, row)] == SPARK_CODE:
+                if cpu.vram[cell_addr(col, row)] in SPARK_CODES:
                     count += 1
                     spark_seen.add((col, row))
-        per_frame_counts.append(count)
-    return spark_seen, per_frame_counts
+                if cpu.vram[cell_addr(col, row)] == SPARK_CODE_TL:
+                    is_quad = (
+                        0 <= col + 1 <= 31 and 0 <= row + 1 <= 23
+                        and cpu.vram[cell_addr(col, row + 1)] == SPARK_CODE_BL
+                        and cpu.vram[cell_addr(col + 1, row)] == SPARK_CODE_TR
+                        and cpu.vram[cell_addr(col + 1, row + 1)] == SPARK_CODE_BR
+                    )
+                    if is_quad:
+                        saw_16x16 = True
+                    else:
+                        saw_8x8 = True
+        per_frame_live_counts.append(count)
+    return {
+        "spark_seen": spark_seen,
+        "per_frame_live_counts": per_frame_live_counts,
+        "boss_hidden_seen": boss_hidden_seen,
+        "saw_8x8": saw_8x8,
+        "saw_16x16": saw_16x16,
+    }
 
 SAT_BASE = 0x1B00
 NAME_BASE = 0x1800
@@ -218,6 +263,15 @@ def setup_boss(cpu, x, y=BOSS_SPAWN_Y, phase=0):
     # silently overwritten by the very first FLUSH_BOSS_SPRITES call.
     for q in range(16):
         cpu.mem[BOSS_SPRITE_ATTRS + q * 4] = y
+    # round32: actually FLUSH this to VRAM/OAM too, not just the RAM
+    # staging buffer - real gameplay keeps the SAT in sync every frame
+    # via the normal alive-boss update loop (DRAW_BOSS+FLUSH_BOSS_SPRITES)
+    # before a death can ever happen; skipping this here would leave the
+    # real OAM at its untouched fresh-boot state, making a "was the boss
+    # sprite ever hidden" check after death pass/fail for the wrong
+    # reason (same class of test-only inconsistency as the NIGHT_ROW fix
+    # above - not a real ASM bug either time).
+    call_routine(cpu, "FLUSH_BOSS_SPRITES")
 
 
 # ---------------------------------------------------------------------
@@ -237,6 +291,10 @@ check("hand art erased (name-table cell back to HUD_ROW_BLANK_CODE)",
       cpu.vram[0x18F8] == HUD_ROW_BLANK_CODE)
 check("explosion sequence started (state=SPARK) even from the BG-pose death",
       cpu.mem[BOSS_EXPL_STATE] == STATE_SPARK)
+check("boss sprite explicitly re-shown (not left hidden from the pose) so SPARK's "
+      "own BG sparks have a visible sprite to sit 'behind' - "
+      "\"消さないでくれ BGでやってる意味がない\"",
+      boss_sat_y(cpu) != BOSS_SPRITE_HIDDEN_Y)
 
 # ---------------------------------------------------------------------
 # 2: center-cell capture - "倒した位置のボス中心から"
@@ -255,41 +313,63 @@ check("radius starts at 0 (just the center cell, used later once GROW begins)",
       cpu.mem[BOSS_EXPL_RADIUS] == 0)
 check("circle not drawn yet - SPARK runs first",
       cpu.vram[cell_addr(expected_cx, expected_cy)] != WHITE_CODE)
+check("boss sprite still visible right at the start of SPARK (patrol-death case "
+      "never hides it in the first place) - \"消さないでくれ BGでやってる意味がない\"",
+      boss_sat_y(cpu) != BOSS_SPRITE_HIDDEN_Y)
 
 CX, CY = expected_cx, expected_cy  # comfortably clear of every screen edge at max radius
 
 # ---------------------------------------------------------------------
-# 2b: SPARK burst itself - "ステージ1ボスのような爆発エフェクトをボスの
-# 範囲でランダムに...ボスの範囲から外側に4セルランダムにエフェクトを飛ば
-# してくれ ウェイトなしで派手に沢山 3秒くらい"
+# 2b: SPARK burst itself - "ボスの中心の32x32の範囲でランダムに...爆発
+# キャラは8x8のほうではなく16x16のほうで ランダムで混ぜてもいいがな
+# ウェイトなしで派手に沢山 3秒くらい" - and the erase/redraw fix -
+# "ボックス範囲で消去もしてないから飛んでるかどうかもわからない ただ
+# 64x64がBGで埋まってるだけだ"
 # ---------------------------------------------------------------------
-spark_seen, per_frame_counts = run_spark_phase(cpu, CX, CY)
+result = run_spark_phase(cpu, CX, CY)
+spark_seen = result["spark_seen"]
+per_frame_live_counts = result["per_frame_live_counts"]
 
 legal_spark_cells = set()
-for dy in range(-SPARK_RANGE, SPARK_RANGE):
+for dy in range(-SPARK_BOX_MARGIN, SPARK_BOX_MARGIN + 1):
     row = CY + dy
     if not (0 <= row <= 23):
         continue
-    for dx in range(-SPARK_RANGE, SPARK_RANGE):
+    for dx in range(-SPARK_BOX_MARGIN, SPARK_BOX_MARGIN + 1):
         col = CX + dx
         if not (0 <= col <= 31):
             continue
         legal_spark_cells.add((col, row))
 
-check(f"every spark landed inside the CX/CY +/-{SPARK_RANGE} scatter box "
-      "(boss range plus the outward reach), none outside it",
+check(f"every spark landed inside the CX/CY +/-{SPARK_BOX_MARGIN} scatter box "
+      "(the 32x32 range plus a 16x16 spark's own +1-cell reach), none outside it",
       spark_seen <= legal_spark_cells)
-check("sparks genuinely scattered across a meaningfully large area (not stuck on "
-      "one or two cells)", len(spark_seen) >= 16)
-check(f"multiple sparks appear every frame with no gating wait "
-      f"({SPARK_PER_FRAME}/frame, none) - except the very last frame, where the "
-      "SPARK->GROW handoff legitimately wipes the scatter area clean before GROW's "
-      "own ring(0) draws",
-      all(c >= 1 for c in per_frame_counts[:-1]) and per_frame_counts[-1] == 0)
+check("sparks genuinely scattered across a meaningfully large portion of the "
+      f"(smaller, 32x32) box, not stuck on one or two cells "
+      f"({len(spark_seen)}/{len(legal_spark_cells)} cells ever hit)",
+      len(spark_seen) >= 8)
+check("boss sprite was NEVER hidden during the whole SPARK burst - "
+      "\"なぜ爆発エフェクト中にボス消してる 消さないでくれ BGでやってる意味がない\"",
+      not result["boss_hidden_seen"])
+check("both spark sizes were actually used - a lone 8x8 tile and a full 16x16 "
+      "(4-quadrant) tile were each independently observed at least once",
+      result["saw_8x8"] and result["saw_16x16"])
+# the direct regression guard for "ただ64x64がBGで埋まってるだけだ": if the
+# erase-before-spawn step were ever dropped again, live sparks would only
+# ever accumulate (monotonically non-decreasing, eventually filling the
+# whole box) instead of staying bounded by what THIS frame alone can add -
+# at most SPARK_PER_FRAME sparks, each at most 4 cells (16x16).
+max_possible_per_frame = SPARK_PER_FRAME * 4
+check(f"live spark count never exceeds what a single frame's own batch could "
+      f"draw ({max_possible_per_frame}) - confirms sparks are erased before each "
+      "frame's redraw, not just piling up into a solid block",
+      all(c <= max_possible_per_frame for c in per_frame_live_counts))
+check("the live spark count genuinely fluctuates frame to frame (real flicker, "
+      "not a static picture)", len(set(per_frame_live_counts)) >= 3)
 check(f"SPARK phase lasts exactly {SPARK_DURATION} frames then hands off to GROW",
       cpu.mem[BOSS_EXPL_STATE] == STATE_GROW)
-check("SPARK cleanup restored the whole scattered area to the correct real "
-      "background (no leftover spark tiles once GROW begins)",
+check("the box is already clean (this frame's own erase already ran) right as "
+      "GROW begins - no leftover spark tiles",
       all(cpu.vram[cell_addr(c, r)] == expected_bg_code(r, NIGHT_END_ROW)
           for (c, r) in legal_spark_cells if (c, r) != (CX, CY)))
 

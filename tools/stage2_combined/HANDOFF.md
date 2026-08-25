@@ -3358,6 +3358,99 @@ Thunder activity) confirming it survives completely untouched.
   the final regression re-run. Not yet real-hardware/visual confirmed as
   of this entry.
 
+### Round 32 follow-up: box too big/never erased + boss wrongly hidden during SPARK
+
+- Two separate pieces of user feedback on the verification ROM above:
+  1. (verbatim) "そういう事じゃない ボックス範囲で消去もしてないから
+     飛んでるかどうかもわからない ただ６４ｘ６４がBGで埋まってるだけだ
+     じゃあボスの中心の３２ｘ３２の範囲でランダムに で、爆発キャラは
+     ８ｘ８のほうではなく１６ｘ１６のほうで ランダムで混ぜてもいいがな"
+  2. (verbatim, sent while the fix for #1 was already in progress)
+     "あとなぜ爆発エフェクト中にボス消してる 消さないでくれ BGでやって
+     る意味がない"
+- **Bug #1 - sparks never erased, box too big**: the first SPARK version
+  only ever ADDED tiles (one cleanup pass at the very end), so the small
+  scatter area filled up almost immediately and just read as one static
+  solid block, not individual flying sparks - the whole point of the
+  effect was lost. The scatter box itself was also the old (pre-follow-
+  up) `BOSS_EXPL_SPARK_RANGE`(8) footprint-sized area (128x128px), far
+  bigger than the requested 32x32px. Fixed:
+  - `BOSS_EXPL_SPARK_RANGE` shrunk from 8 to **2** (a true 32x32px/4-cell
+    box, offsets -2..+1 - same generic `AND RANGE*2-1 : SUB RANGE` shape
+    as before, just a smaller constant).
+  - `BOSS_EXPL_CLEAR_SPARK_AREA` (5x5 cells, CX/CY+/-2, one cell more
+    generous than the spawn offset on every edge to also cover a 16x16
+    spark's own +1-cell reach) now runs **every single frame**, right
+    before that frame's own spawn batch, instead of once at the very
+    end - erase-then-redraw is what actually makes sparks blink in and
+    out rather than accumulate. `UBE_SPARK` restructured: erase first,
+    decrement the timer, and only spawn a fresh batch if the phase isn't
+    over yet - on the very last frame the box is already clean from that
+    frame's own erase, so it falls straight into GROW's ring(0) with
+    nothing left to clean up separately.
+  - Spark art switched from the 8x8 TL-quadrant-only tile to the full
+    16x16 (`EXPLOSION_PATTERN`'s own 4 quadrants, uploaded to 4
+    consecutive codes 160-163, same color group20 covers all 4 - no
+    extra color upload needed) - "爆発キャラは１６ｘ１６のほうで". Each
+    spark independently rolls 8x8-only vs full-16x16 50/50 ("ランダムで
+    混ぜてもいいがな") - both dx/dy AND the size pick now come from ONE
+    mixed random byte (2 bits each for dx/dy since RANGE=2, a 3rd
+    independent bit for size), same anti-correlation reasoning as
+    `BOSS_EXPL_RANDOM_BYTE`'s own comment, just 3 fields split out of it
+    instead of 2. New `BOSS_EXPL_WRITE_SPARK_CELL` helper places each of
+    a 16x16 spark's 4 quadrants (or just the lone 8x8 TL) independently
+    screen-clipped.
+- **Bug #2 - boss hidden the instant it died**: `CHPBOSS_DESTROY` used to
+  call `HIDE_BOSS_SPRITES` immediately on death, before SPARK even got a
+  chance to run - the entire justification for drawing the burst in BG
+  instead of as a sprite was for it to sit "behind" a still-VISIBLE boss
+  ("裏になるが近い色なので見た目は気にならないはず"), so hiding the boss
+  on the same frame it dies defeated that rationale completely. Fixed:
+  - Removed the `HIDE_BOSS_SPRITES` call from `CHPBOSS_DESTROY` - the
+    boss sprite simply stays exactly as it last looked (nothing ever
+    calls `DRAW_BOSS`/`FLUSH_BOSS_SPRITES` again once `BOSS_ACT=2`, see
+    `UPDATE_BOSS_ALL`'s own dispatch) all the way through SPARK; GROW's
+    pre-existing blink logic is what starts actually toggling it,
+    unchanged.
+  - The BG-pose death path (`BOSS_PHASE=1` at time of death) needed one
+    more fix on top: that case's own real sprite was ALREADY hidden (by
+    whatever put it into the pose in the first place) and, unlike the
+    patrol-death case, nothing else was ever going to re-show it once
+    `CHPBOSS_DESTROY` stopped doing so unconditionally. `INIT_BOSS_
+    EXPLOSION`'s own `BOSS_PHASE=1` branch now explicitly calls
+    `DRAW_BOSS`+`FLUSH_BOSS_SPRITES` right after erasing the hand art,
+    so this case also enters SPARK with a genuinely visible sprite.
+- **Test-only gap found while writing the regression check for this**:
+  `setup_boss()`'s own comment already said "`DRAW_BOSS` would normally
+  have set this" about the RAM staging buffer it pokes (`BOSS_SPRITE_
+  ATTRS`), but nothing ever actually flushed that buffer to the real
+  VRAM/OAM `boss_sat_y()` reads - in real gameplay the alive-boss update
+  loop keeps them in sync every frame, but this test jumps straight to
+  `CHPBOSS_DESTROY` without ever running that loop, so the "was the boss
+  ever hidden after death" check was initially failing for the wrong
+  reason (OAM still at its untouched fresh-boot state, not because
+  anything in the death path actually hid it). Same class of test-only
+  inconsistency as the `NIGHT_ROW` fix from Round31 - not a real ASM bug
+  either time. Fixed by having `setup_boss()` call `FLUSH_BOSS_SPRITES`
+  once after staging the attrs.
+- `boss_explosion_test.py` rewritten again for the new box size/erase
+  semantics: legal-cell box recomputed from the new (smaller)
+  `BOSS_EXPL_SPARK_RANGE`; a live-spark-count-per-frame bound check
+  (`<= SPARK_PER_FRAME*4`) is the direct regression guard against bug
+  #1 ever reappearing (if erase-before-spawn were dropped again, the
+  count would grow unbounded instead of staying capped at what one
+  frame's own batch could add); a "live count actually fluctuates"
+  check confirms real flicker rather than a static picture; independent
+  detection of both a lone-8x8 spark and a full 16x16 quad, each
+  observed at least once; a "boss sprite never hidden during SPARK"
+  check for bug #2, added at both `CHPBOSS_DESTROY` call sites (patrol-
+  death and BG-pose-death).
+- Full regression: **691 passed, 0 failed** (686 + 5 net new checks).
+  New verification ROM (same temporary GAME_TICK=840/BOSS_HP_INIT=3
+  edit-build-send-revert procedure, confirmed reverted again with a
+  clean `git diff` afterward) sent to the user. Not yet real-hardware/
+  visual confirmed as of this entry.
+
 ## Open items / things to watch
 
 - **RAM addresses that need to persist across frames must stay clear of
