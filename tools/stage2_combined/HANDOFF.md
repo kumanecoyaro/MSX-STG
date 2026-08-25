@@ -3699,6 +3699,50 @@ Thunder activity) confirming it survives completely untouched.
   clean `git diff` afterward) sent to the user. Not yet real-hardware/
   audio confirmed as of this entry.
 
+### Round 32 follow-up #6: 1:1 duty-cycle gating generalized to every noise SE
+
+- User instruction (verbatim): "ではノイズ使ってる全てのSEをデューティ
+  比の音量操作を適用してみて".
+- The on/off duty-cycle gating built for the boss's own boom (`SU_BOOM`)
+  was boom-specific (only reachable via the `SND_DECAY==0` sentinel).
+  Generalized to every noise-channel sound in this file:
+  - New `SND_NOISE` RAM byte (1 more byte in the same `F17Bh`-`F17Fh`
+    free gap the boom's own `SND_BOOM_DECAY_CTR` already uses - see that
+    byte's own comment) - each trigger routine sets it to 1 (noise,
+    gated) or 0 (tone, ungated) alongside its own peak/decay: `SOUND_
+    SHOT`/`SOUND_DESTROY`/`SOUND_SPARK_CRACKLE`/`SOUND_BOSS_BOOM` all
+    set 1; `SOUND_ZUM_DEFLECT` ("キンキン", channel A TONE not noise -
+    the one sound here that isn't noise-based) sets 0.
+  - `BOSS_BOOM_CALC_VOLUME` renamed to `SOUND_CALC_NOISE_GATE_VOLUME`
+    and now reads `SND_NOISE` too - tone sounds (`SND_NOISE=0`) always
+    return the raw envelope, ungated; noise sounds (`SND_NOISE=1`)
+    alternate every frame between the full envelope and silence via
+    `TICK`'s own low bit, exactly as the boom's own version already did.
+  - `SOUND_UPDATE`'s own normal (non-boom, `SND_DECAY!=0`) linear-decay
+    path now calls this shared routine too, instead of writing `SND_
+    TIMER` straight to the PSG unconditionally - so `SHOT`/`DESTROY`/
+    `SPARK_CRACKLE` (all still on their own normal fast per-frame decay
+    pace, unlike the boom's own much slower one) get the same buzzy
+    on/off texture. `SU_BOOM` itself unchanged in shape, just calls the
+    renamed routine.
+- New test file `tests/noise_duty_cycle_test.py` (8 checks): each
+  trigger routine's own `SND_NOISE` value checked directly; `SOUND_
+  SHOT`'s and `SOUND_SPARK_CRACKLE`'s own output through `SOUND_UPDATE`
+  checked frame-by-frame against an independently-derived gated-and-
+  decaying trace (calling the real `SOUND_CALC_NOISE_GATE_VOLUME` right
+  before `SOUND_UPDATE` each frame - a genuine ASM-computed value, not a
+  Python re-derivation of what should happen); `SOUND_ZUM_DEFLECT`'s own
+  output confirmed to always equal the raw, ungated `SND_TIMER`
+  regardless of `TICK`'s parity. `boss_boom_sound_test.py`'s own section
+  1 updated for the rename and now explicitly sets `SND_NOISE=1` before
+  calling the shared routine directly (the SND_NOISE=0/tone case and the
+  other noise SEs are covered in the new file instead, not duplicated).
+- Full regression: **765 passed, 0 failed** (757 + 8 new checks). New
+  verification ROM (same temporary GAME_TICK=840/BOSS_HP_INIT=3 edit-
+  build-send-revert procedure, confirmed reverted again with a clean
+  `git diff` afterward) sent to the user. Not yet real-hardware/audio
+  confirmed as of this entry.
+
 ## Open items / things to watch
 
 - **RAM addresses that need to persist across frames must stay clear of

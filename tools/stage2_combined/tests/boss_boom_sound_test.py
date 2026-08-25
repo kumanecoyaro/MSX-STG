@@ -1,19 +1,22 @@
 """Verifies the boss's own circle-explosion "boom" sound (SOUND_BOSS_
-BOOM/SU_BOOM/BOSS_BOOM_CALC_VOLUME) - z80emu.py has no PSG emulation at
-all (OUT only actually does anything for the VDP ports, 98h/99h - see
-its own vdp_out() special-case), so the actual byte written to the PSG
-can never be observed directly. What CAN be verified: the envelope
-state (SND_TIMER/SND_DECAY/SND_BOOM_DECAY_CTR/SND_EXPLODING) evolves
-exactly as intended over many simulated frames, and BOSS_BOOM_CALC_
-VOLUME (kept as its own side-effect-free subroutine specifically so it's
-testable this way) returns the right value for a given SND_TIMER/TICK
+BOOM/SU_BOOM) - z80emu.py has no PSG emulation at all (OUT only
+actually does anything for the VDP ports, 98h/99h - see its own
+vdp_out() special-case), so the actual byte written to the PSG can
+never be observed directly. What CAN be verified: the envelope state
+(SND_TIMER/SND_DECAY/SND_BOOM_DECAY_CTR/SND_EXPLODING) evolves exactly
+as intended over many simulated frames, and SOUND_CALC_NOISE_GATE_
+VOLUME (kept as its own side-effect-free subroutine specifically so
+it's testable this way - shared by every noise SE in this file, not
+boom-only, see noise_duty_cycle_test.py for that broader coverage)
+returns the right value for a given SND_TIMER/SND_NOISE/TICK
 combination, independently computed here rather than re-derived from
 the ASM's own logic.
 
 User's own spec (verbatim, paraphrased): the circle explosion needs a
 long noise "boom" ("どーーーーん"), too plain if just a linear noise
 decay ("チャチ"), so mix in a 1:1 duty-cycle modulation - half volume or
-OFF - while decaying, for a buzzy "ブリブリ" texture.
+OFF - while decaying, for a buzzy "ブリブリ" texture (later tightened to
+full volume instead of half, see below).
 """
 import os
 import sys
@@ -58,14 +61,20 @@ def cell_addr(col, row):
 
 
 # ---------------------------------------------------------------------
-# 1: BOSS_BOOM_CALC_VOLUME itself, exercised directly - a pure function
-# of SND_TIMER/TICK, independently re-derived (not read back from the
-# ASM's own logic).
+# 1: SOUND_CALC_NOISE_GATE_VOLUME itself, called with SND_NOISE=1 (the
+# boom is always noise) - a pure function of SND_TIMER/TICK once gated,
+# independently re-derived (not read back from the ASM's own logic).
+# The SND_NOISE=0 case and the other noise SEs are covered in their own
+# noise_duty_cycle_test.py, not duplicated here.
 # ---------------------------------------------------------------------
+SND_NOISE = sym["SND_NOISE"]
+
+
 def expected_boom_volume(timer, tick):
     # round32 follow-up: "円爆発はこれが音量最大か? かなり小さいが" -
     # "on" frames are now full-strength (not halved on top of the duty
-    # cycle's own silence, see BOSS_BOOM_CALC_VOLUME's own comment).
+    # cycle's own silence, see SOUND_CALC_NOISE_GATE_VOLUME's own
+    # comment).
     if timer == 0:
         return 0
     if tick & 1:
@@ -77,10 +86,12 @@ cpu = fresh_cpu()
 for timer in (0, 1, 2, 15, 14, 7):
     for tick in (0, 1, 2, 3, 254, 255):
         cpu.mem[SND_TIMER] = timer
+        cpu.mem[SND_NOISE] = 1
         cpu.mem[TICK] = tick
-        call_routine(cpu, "BOSS_BOOM_CALC_VOLUME")
+        call_routine(cpu, "SOUND_CALC_NOISE_GATE_VOLUME")
         expected = expected_boom_volume(timer, tick)
-        check(f"BOSS_BOOM_CALC_VOLUME(timer={timer},tick={tick}) == {expected} (got {cpu.a})",
+        check(f"SOUND_CALC_NOISE_GATE_VOLUME(timer={timer},noise=1,tick={tick}) == "
+              f"{expected} (got {cpu.a})",
               cpu.a == expected)
 
 # ---------------------------------------------------------------------

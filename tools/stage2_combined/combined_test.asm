@@ -447,6 +447,17 @@ SND_EXPLODING EQU F17Ah
 ; closer to the required 0x60 headroom, which is already at its exact
 ; limit) - F17Bh-F17Fh, right after this byte, before ENEMY_POOL(F180h).
 SND_BOOM_DECAY_CTR EQU F17Bh
+; round32 follow-up: "ではノイズ使ってる全てのSEをデューティ比の音量
+; 操作を適用してみて" - the 1:1 on/off duty-cycle gating originally built
+; just for the boom (see SOUND_CALC_NOISE_GATE_VOLUME below) is now
+; shared by every noise-channel sound in this file (SHOT/DESTROY/SPARK_
+; CRACKLE/BOSS_BOOM). SOUND_ZUM_DEFLECT is the one sound here that's
+; TONE, not noise ("キンキン" - a held ping reads wrong if gated on/off)
+; - this flag is how SOUND_UPDATE tells which behavior the CURRENTLY
+; playing sound wants: each trigger routine sets it (1=noise/gated,
+; 0=tone/ungated) alongside its own peak/decay. Next byte in the same
+; free gap as SND_BOOM_DECAY_CTR above.
+SND_NOISE EQU F17Ch
 ; digit0 code; digitN = DIGIT_BASE+N for N=0-9 (score/counter, glyphs
 ; copied byte-for-byte from src/CYBER SHMUP.asm's own DIGIT_PATTERNS -
 ; "スコアの数字流用") - the old N=10-15=A-F hex-label glyphs (added for
@@ -4389,6 +4400,7 @@ SOUND_SHOT:
     LD A,SHOT_NOISE_PERIOD : OUT (PSG_DATA),A
     LD A,SHOT_SND_PEAK : LD (SND_TIMER),A
     LD A,SHOT_SND_DECAY : LD (SND_DECAY),A
+    LD A,1 : LD (SND_NOISE),A
     RET
 
 ; short "crackle" blip for the SPARK burst - "爆発エフェクト中も爆発音
@@ -4403,6 +4415,7 @@ SOUND_SPARK_CRACKLE:
     LD A,SPARK_CRACKLE_NOISE_PERIOD : OUT (PSG_DATA),A
     LD A,SPARK_CRACKLE_PEAK : LD (SND_TIMER),A
     LD A,SPARK_CRACKLE_DECAY : LD (SND_DECAY),A
+    LD A,1 : LD (SND_NOISE),A
     RET
 
 ; explosion sound - channel A, noise-only, byte-for-byte the same
@@ -4420,6 +4433,7 @@ SOUND_DESTROY:
     LD A,15 : LD (SND_TIMER),A
     LD A,1 : LD (SND_DECAY),A
     LD A,1 : LD (SND_EXPLODING),A
+    LD A,1 : LD (SND_NOISE),A
     RET
 
 ; "キンキン" metallic ping for a bullet absorbed by Zum's own front
@@ -4430,7 +4444,11 @@ SOUND_DESTROY:
 ; rather than a dedicated C). Peak 15 (was 12, then 12 again - "キンキン
 ; 音量アップ" - now the PSG's own hardware max, register8's volume
 ; field only has 4 bits/16 steps so there's no higher to go), decays
-; 1/frame.
+; 1/frame. TONE, not noise - "ではノイズ使ってる全てのSEをデューティ比
+; の音量操作を適用してみて" (round32) explicitly scopes the on/off
+; gating to noise sounds; a held metallic ping reads wrong chopped up
+; on/off, so this is the one sound that sets SND_NOISE=0 (see that
+; byte's own comment).
 SOUND_ZUM_DEFLECT:
     LD A,7 : OUT (PSG_ADDR),A
     LD A,MIXER_TONE_A : OUT (PSG_DATA),A
@@ -4441,6 +4459,7 @@ SOUND_ZUM_DEFLECT:
     LD A,15 : LD (SND_TIMER),A
     LD A,1 : LD (SND_DECAY),A
     XOR A : LD (SND_EXPLODING),A
+    XOR A : LD (SND_NOISE),A
     RET
 
 ; "円の爆発はノイズでどーーーーんって長いやつ" - the boss's own circle-
@@ -4450,8 +4469,10 @@ SOUND_ZUM_DEFLECT:
 ; sound here uses, but SND_DECAY=0 is a sentinel no ordinary sound ever
 ; sets (SHOT/DESTROY/DEFLECT all use 1 or 2) that switches SOUND_UPDATE
 ; over to its own SU_BOOM branch - see that routine's own comment for
-; the actual long-decay/duty-cycle mechanism. Same SND_EXPLODING guard
-; as SOUND_DESTROY (blocks the shot sound from cutting it off early).
+; the actual long-decay mechanism (the duty-cycle gating itself is now
+; shared by every noise sound, see SOUND_CALC_NOISE_GATE_VOLUME below).
+; Same SND_EXPLODING guard as SOUND_DESTROY (blocks the shot sound from
+; cutting it off early).
 SOUND_BOSS_BOOM:
     LD A,7 : OUT (PSG_ADDR),A
     LD A,MIXER_NOISE_A : OUT (PSG_DATA),A
@@ -4461,21 +4482,22 @@ SOUND_BOSS_BOOM:
     XOR A : LD (SND_DECAY),A
     LD A,BOSS_BOOM_DECAY_PERIOD : LD (SND_BOOM_DECAY_CTR),A
     LD A,1 : LD (SND_EXPLODING),A
+    LD A,1 : LD (SND_NOISE),A
     RET
 
 ; single shared channel-A envelope for every sound above - writes
-; SND_TIMER's own current value as the volume (register8, 0-15), then
-; steps it toward 0 by SND_DECAY (clamped so it can't undershoot past
-; 0 - see SOUND_SHOT/SOUND_DESTROY/SOUND_ZUM_DEFLECT for how each
-; sound picks its own peak/decay pair when triggered). SND_DECAY==0
-; means "boom mode" instead (see SOUND_BOSS_BOOM's own comment) -
-; branches into SU_BOOM below rather than this linear path.
+; SOUND_CALC_NOISE_GATE_VOLUME's own output (register8, 0-15) every
+; frame, then steps SND_TIMER toward 0 by SND_DECAY (clamped so it can't
+; undershoot past 0 - see SOUND_SHOT/SOUND_DESTROY/SOUND_ZUM_DEFLECT for
+; how each sound picks its own peak/decay pair when triggered).
+; SND_DECAY==0 means "boom mode" instead (see SOUND_BOSS_BOOM's own
+; comment) - branches into SU_BOOM below rather than this linear path.
 SOUND_UPDATE:
     LD A,(SND_DECAY)
     OR A
     JR Z,SU_BOOM
 
-    LD A,(SND_TIMER)
+    CALL SOUND_CALC_NOISE_GATE_VOLUME
     LD B,A
     LD A,8 : OUT (PSG_ADDR),A
     LD A,B : OUT (PSG_DATA),A
@@ -4495,43 +4517,43 @@ SU_STEP:
     LD (SND_EXPLODING),A
     RET
 
-; out: A = this frame's boom output volume - "デューティ比1:1で減衰しな
-; がらボリューム半分かOFFをまぜてくれ そうすればブリブリって音になる
-; はず". 0 (the "off" half of the 1:1 duty cycle) if either the envelope
-; has already fully decayed (SND_TIMER=0) or this is an "off" frame per
-; TICK's own low bit (flips every single frame for free - no dedicated
-; toggle byte needed); otherwise the FULL current envelope, unhalved -
-; round32 follow-up: "円爆発はこれが音量最大か? かなり小さいが" - the
-; original version also halved the envelope on "on" frames (literally
-; "ボリューム半分"), but that stacked with the 1:1 duty cycle's own 50%
-; silent time meant the sound was never anywhere near the PSG's real
-; max (15) on any single frame, reading as too quiet overall. The 1:1
-; on/off alternation alone is what gives the buzzy "ブリブリ" texture -
-; keeping "on" frames at full strength makes the peaks themselves as
-; loud as the hardware allows, while the duty cycle still does the
-; texturing. A pure function of SND_TIMER/TICK only - no side effects,
-; doesn't touch the PSG or step the envelope itself (SU_BOOM below does
-; that separately) - kept standalone specifically so it's directly
-; testable without needing to observe an actual PSG register write.
-BOSS_BOOM_CALC_VOLUME:
-    LD A,(SND_TIMER)
+; out: A = this frame's output volume, gated by the 1:1 on/off duty
+; cycle if the CURRENTLY playing sound is noise (SND_NOISE=1), or just
+; the raw envelope if it's tone (SND_NOISE=0, SOUND_ZUM_DEFLECT only) -
+; "ではノイズ使ってる全てのSEをデューティ比の音量操作を適用してみて"
+; (round32) - originally boom-only (as BOSS_BOOM_CALC_VOLUME), now
+; shared by every noise sound in this file. "デューティ比1:1で減衰し
+; ながらボリューム半分かOFFをまぜてくれ そうすればブリブリって音になる
+; はず" - gated frames alternate every single frame between the FULL
+; current envelope and silence, using TICK's own low bit as the toggle
+; (a free-running per-frame flip - no dedicated toggle byte needed);
+; "半分" (half) was tried and dropped (round32 follow-up: "音量最大か?
+; かなり小さいが" - halving on top of the duty cycle's own 50% silent
+; time never reached the hardware's real max on any frame). A pure
+; function of SND_TIMER/SND_NOISE/TICK only - no side effects, doesn't
+; touch the PSG or step the envelope itself - kept standalone
+; specifically so it's directly testable without needing to observe an
+; actual PSG register write (z80emu.py has no PSG emulation at all).
+SOUND_CALC_NOISE_GATE_VOLUME:
+    LD A,(SND_NOISE)
     OR A
-    RET Z
+    JR Z,SCNGV_RAW
     LD A,(TICK) : AND 1
-    JR NZ,BBCV_SILENT
+    JR NZ,SCNGV_SILENT
+SCNGV_RAW:
     LD A,(SND_TIMER)
     RET
-BBCV_SILENT:
+SCNGV_SILENT:
     XOR A
     RET
 
 ; boom-mode envelope (SND_DECAY==0, see SOUND_BOSS_BOOM's own comment) -
-; writes BOSS_BOOM_CALC_VOLUME's own output every frame, then steps the
-; underlying envelope down by 1 every BOSS_BOOM_DECAY_PERIOD frames (not
-; every frame, unlike the linear path above) - stretching a still-15-
-; step decay out over many more real frames - "長いやつ".
+; writes SOUND_CALC_NOISE_GATE_VOLUME's own output every frame, then
+; steps the underlying envelope down by 1 every BOSS_BOOM_DECAY_PERIOD
+; frames (not every frame, unlike the linear path above) - stretching a
+; still-15-step decay out over many more real frames - "長いやつ".
 SU_BOOM:
-    CALL BOSS_BOOM_CALC_VOLUME
+    CALL SOUND_CALC_NOISE_GATE_VOLUME
     LD B,A
     LD A,8 : OUT (PSG_ADDR),A
     LD A,B : OUT (PSG_DATA),A
