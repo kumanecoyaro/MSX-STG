@@ -81,8 +81,21 @@ def expected_circle(cx, cy, radius):
     return white
 
 
-def assert_box_matches(cpu, cx, cy, radius, label):
+def assert_box_matches(cpu, cx, cy, radius, label, line_active=False):
+    """line_active=True (SHRINK, once the full-width line exists) means
+    the center row (dy=0) is the line's own row, not the circle's -
+    BOSS_EXPL_DRAW_CIRCLE now deliberately leaves it untouched during
+    SHRINK (see its own comment: this is the fix for "ラインが円の範囲
+    で消えてる" - the box redraw used to blank it same as any other row,
+    eating into the still-solid line well before the real erase-line
+    step), so every on-screen cell in that row is expected white
+    regardless of the circle's own current radius."""
     expected = expected_circle(cx, cy, radius)
+    if line_active:
+        for dx in range(-MAXR, MAXR + 1):
+            col = cx + dx
+            if 0 <= col <= 31:
+                expected.add((col, cy))
     mismatches = []
     for dy in range(-MAXR, MAXR + 1):
         row = cy + dy
@@ -206,13 +219,31 @@ check("boss sprite never re-shown once in SHRINK (blinking was GROW-only)",
 # ---------------------------------------------------------------------
 # radius is still MAXR (the SHRINK-entry redraw hasn't fired a step yet
 # after the settle-frames above re-armed the timer) - step through the
-# full shrink from here.
+# full shrink from here. Checks the FULL-WIDTH line every single frame
+# (not just at step boundaries) - this is the direct regression guard
+# for "円の描画とラインの描画順の問題でラインが円の範囲で消えてる": the
+# bug only showed up mid-step, between the box's own radius-step
+# redraws, so a step-boundary-only check would have missed it same as
+# the original version of this test did.
 frames_used = 0
+line_ate_into = []
 while cpu.mem[BOSS_EXPL_STATE] == STATE_SHRINK and frames_used < STEP_FRAMES * (MAXR + 2):
     call_routine(cpu, "UPDATE_BOSS_EXPLOSION")
     frames_used += 1
+    # the one legitimate exception: the exact frame SHRINK hands off to
+    # FLASH is when the line is SUPPOSED to go from solid to erased -
+    # only frames that are STILL mid-shrink afterward need the line
+    # untouched.
+    if cpu.mem[BOSS_EXPL_STATE] == STATE_SHRINK:
+        row_codes = [cpu.vram[cell_addr(c, CY)] for c in range(32)]
+        if not all(c == WHITE_CODE for c in row_codes):
+            line_ate_into.append((frames_used, row_codes))
     if frames_used % STEP_FRAMES == 0 and cpu.mem[BOSS_EXPL_STATE] == STATE_SHRINK:
-        assert_box_matches(cpu, CX, CY, cpu.mem[BOSS_EXPL_RADIUS], "SHRINK")
+        assert_box_matches(cpu, CX, CY, cpu.mem[BOSS_EXPL_RADIUS], "SHRINK", line_active=True)
+
+check(f"the full-width line stays completely solid white on EVERY frame throughout "
+      f"SHRINK, never partially erased by the shrinking circle ({len(line_ate_into)} "
+      f"bad frames)", not line_ate_into)
 
 check("SHRINK finished and advanced to FLASH", cpu.mem[BOSS_EXPL_STATE] == STATE_FLASH)
 row_codes = [cpu.vram[cell_addr(c, CY)] for c in range(32) if c != CX]

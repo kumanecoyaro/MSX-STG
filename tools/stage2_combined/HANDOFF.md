@@ -3087,8 +3087,56 @@ Thunder activity) confirming it survives completely untouched.
   build. Not yet real-hardware confirmed as of this entry - emulator-
   verified only (both the dedicated test and this verification ROM's
   own construction).
-- Not yet committed as of writing this entry - staged for commit next
-  in this same round. Not yet merged to `main` - ask first, as always.
+- Committed and pushed (`c84baca`). Not yet merged to `main` - ask
+  first, as always.
+- Real-hardware/user feedback (verbatim): "爆発処理で消えたBGが復帰し
+  てないな で円の描画とラインの描画順の問題でラインが円の範囲で消えて
+  る 動作は期待通り 要調整だが" - read as ONE bug described symptom-
+  then-cause (not two): during SHRINK, `BOSS_EXPL_DRAW_CIRCLE`'s own
+  full-box redraw touches the center row (dy=0) same as every other
+  row, blanking its own outside-current-radius cells on every shrink
+  step - but that row is the full-width line's own row from the grow-
+  >shrink transition onward, so this visibly ate into the middle of the
+  still-supposed-to-be-solid line well before `BOSS_EXPL_ERASE_LINE`
+  ever ran, instead of the line staying solid until that single clean
+  sweep. **Fix**: `BOSS_EXPL_DRAW_CIRCLE` now checks `BOSS_EXPL_STATE`
+  at the top of its own row loop and skips the center row entirely
+  whenever it's `BOSS_EXPL_STATE_SHRINK` (leaves those cells alone,
+  correctly still white from the line) - GROW is unaffected (no line
+  exists yet to protect, so the center row still draws normally there).
+  - `boss_explosion_test.py`'s own SHRINK-phase checks updated to match
+    the new (correct) behavior: `assert_box_matches` gained a
+    `line_active` flag that adds the whole on-screen center row to the
+    expected-white set instead of following the plain circle formula
+    there, and a NEW per-FRAME (not just per-step) check that the full
+    32-column line stays completely solid throughout SHRINK - the
+    original per-step-only checks would have missed this exact bug
+    (it only showed up BETWEEN step boundaries), so this is a real,
+    meaningfully stronger regression guard, not just updated numbers.
+    One care needed writing that check: the exact frame SHRINK hands
+    off to FLASH is when the line legitimately goes from solid to
+    (mostly) erased - the per-frame check only applies while state is
+    STILL `SHRINK` right after that frame's own update, not on the
+    transition frame itself (a first version flagged that frame as a
+    false failure).
+  - Verified via a fresh full regression run: **674 passed, 0 failed**
+    (629 pre-existing + 45, one more than the previous round's 44 - the
+    new per-frame line check). An EARLIER regression run showed 2
+    unrelated-looking failures (`etank_gametick_gate_test.py`, `night_
+    effect_test.py`) - traced to a self-inflicted race, not a real
+    regression: `run_all.py` was still running in the background when
+    the verification ROM's own temporary `GAME_TICK`=840/`BOSS_HP_INIT`
+    =3 edits were made to the SAME tracked source file, so a couple of
+    the still-in-flight test subprocesses picked up the temporary
+    tick840 boot instead of the intended tick0 one (`fresh_cpu()`
+    re-assembles from whatever's on disk at THAT subprocess's own start
+    time, not a snapshot) - exactly the failure signature Round29's own
+    comment about `GAME_TICK=0` boot dependencies would predict. Lesson
+    applied: don't edit `combined_test.asm` again until a background
+    `run_all.py` against it has actually finished.
+  - New verification ROM (same temporary edit-build-send-revert
+    procedure as before, both edits confirmed reverted again afterward)
+    sent to the user. Not yet real-hardware confirmed as of this entry.
 
 ## Open items / things to watch
 

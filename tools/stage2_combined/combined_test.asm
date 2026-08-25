@@ -7881,6 +7881,17 @@ BOSS_EXPL_ERASE_LINE:
 ; just the newly-added/removed ring, since the box is small (<=169
 ; cells) and this is a rare one-time event, not a per-frame hot path;
 ; much simpler to get right than incremental ring-only updates.
+;
+; "円の描画とラインの描画順の問題でラインが円の範囲で消えてる" - during
+; SHRINK, the full-width line (BOSS_EXPL_DRAW_LINE, drawn once at the
+; grow->shrink transition) shares the center row (dy=0) with this box.
+; The box redraw used to blank that row's own outside-current-radius
+; cells on every shrink step same as any other row, visibly eating into
+; the middle of the still-supposed-to-be-solid line well before the
+; real erase-line step ever ran, instead of the line staying solid until
+; BOSS_EXPL_ERASE_LINE's own single clean sweep. Fixed by skipping the
+; center row entirely whenever BOSS_EXPL_STATE=SHRINK (see BEDC_ROWLOOP
+; below) - GROW still draws it normally (there's no line yet to protect).
 BOSS_EXPL_DRAW_CIRCLE:
     XOR A : LD (BOSS_EXPL_ROWIDX),A
     LD A,(BOSS_EXPL_CY) : SUB BOSS_EXPL_MAXR : LD (BOSS_EXPL_ROWTMP),A
@@ -7891,6 +7902,17 @@ BEDC_ROWLOOP:
     LD A,(BOSS_EXPL_ROWTMP)
     CP 24
     JP NC,BEDC_ROW_SKIP
+
+    ; SHRINK + center row (dy=0, ROWIDX=MAXR) - leave it alone, it's the
+    ; line's own row until the real erase-line step (see this routine's
+    ; own header comment above).
+    LD A,(BOSS_EXPL_STATE)
+    CP BOSS_EXPL_STATE_SHRINK
+    JR NZ,BEDC_NOT_SHRINK_CENTER
+    LD A,(BOSS_EXPL_ROWIDX)
+    CP BOSS_EXPL_MAXR
+    JP Z,BEDC_ROW_SKIP
+BEDC_NOT_SHRINK_CENTER:
 
     ; ady kept in C (register-only, no RAM byte) - read once here, used
     ; immediately below for the hw lookup, never needed again afterward
