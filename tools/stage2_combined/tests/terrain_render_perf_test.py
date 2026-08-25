@@ -17,8 +17,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 STAGE2 = os.path.dirname(HERE)
 sys.path.insert(0, STAGE2)
 sys.path.insert(0, os.path.join(STAGE2, "..", ".."))
-sys.path.insert(0, os.path.join(STAGE2, "..", ".."))
-sys.path.insert(0, "/home/user/msx-stg/tools")
+sys.path.insert(0, os.path.join(STAGE2, ".."))
 
 from mini_z80asm import Assembler
 from z80emu import Z80

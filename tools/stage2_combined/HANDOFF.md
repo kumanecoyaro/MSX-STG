@@ -2583,6 +2583,83 @@ Thunder activity) confirming it survives completely untouched.
     (lowercase, no brackets this time) - unconfirmed on real hardware
     as of this round, same as every prior filename change here.
 
+## Round 29: CLAUDE.md added for session handoff + build/test speed investigation + terrain_render_perf_test.py path bug fix
+
+- Session continuity note: this round started from a fresh session
+  handed off mid-context from a prior one. The prior session's own
+  environment had cloned the repo to `/home/user/msx-stg` (lowercase);
+  this session's actual working directory is `/home/user/MSX-STG`
+  (uppercase) instead - no lowercase directory exists here at all. On
+  resume, a stale local branch ref (`3c837fe`, an old shallow-clone
+  snapshot 2 commits behind origin) was found already checked out;
+  reset to `origin/claude/msx-stg-github-integration-cont-g3od47`
+  (`585e1c3`, matching this file's own Round28 entry) rather than kept,
+  since it was just a shallow-clone artifact of the same branch, not
+  independent work.
+- User asked for all responses/logs in Japanese going forward, and for
+  that instruction to be written down in a repo-checked file so it
+  doesn't need repeating every session - the repo had no `CLAUDE.md` at
+  all until this round (project instructions were being given fresh
+  each session). Created `CLAUDE.md` at repo root with: Japanese-output
+  instruction, a pointer to this file's own tail for resume-context,
+  and (per explicit follow-up) an instruction that `CLAUDE.md` itself
+  must be kept up to date as work progresses, not left stale.
+- User asked (verbatim, paraphrased): "毎回ビルドにもかなり時間がかかる。
+  アセンブラのリンカのような機能と実装済みのルーチンを分離してオブジェ
+  クトファイルを作成し短縮できないか" - investigated with real
+  measurements rather than assuming the premise was correct:
+  - `build_test.py` (Stage2 test ROM): **0.19s**. `build_full_rom.py`
+    (Stage1 production ROM): **0.54s**. Assembly itself is not the
+    bottleneck at all - splitting it into a linker + object files
+    would save well under 1 second, not worth the engineering cost.
+  - The real cost is `tests/run_all.py`: **~20 minutes real time**
+    (629 tests, 626+3 after the fix below) for tiny output (36 lines/
+    1.5KB) - so token-cheap but wall-clock-expensive. Root cause:
+    `tests/banked_helpers.py`'s `fresh_cpu()`/`call_routine()` step
+    `z80emu.py` (a pure-Python Z80 instruction interpreter) up to
+    300000 times per call, and tests call `fresh_cpu()` once per test
+    case (e.g. `boss_test.py` alone: 18 cases, 70s). Assembly itself IS
+    already cached once per test file via `banked_helpers._OUT_CACHE`,
+    so there was no redundant re-assembly to eliminate either.
+  - Conclusion communicated to and left with the user: object-file/
+    linker separation is not a productive direction; real speedup
+    candidates (not started, only proposed) are test parallelization,
+    caching the post-boot `fresh_cpu()` state instead of re-booting per
+    test case, profiling+optimizing `z80emu.py`'s hot path, or running
+    under PyPy.
+- While running the full regression suite to get real numbers, found
+  `tests/terrain_render_perf_test.py` crashing with
+  `ModuleNotFoundError: No module named 'mini_z80asm'` - its own
+  `sys.path.insert(0, "/home/user/msx-stg/tools")` was a hardcoded
+  absolute path to the OLD (lowercase) session's directory, which
+  doesn't exist in this session. Its other 2 `sys.path.insert` calls
+  only add the repo root (redundantly, twice), never `tools/` itself,
+  so nothing else was covering for it. Because `run_all.py` doesn't
+  fail the whole suite on a crashed file (just logs "NO SUMMARY LINE"
+  and lists it under `FILES WITH FAILURES` without affecting the pass/
+  fail totals), this was a **silent coverage gap**: the printed total
+  read "626 passed, 0 failed" - looks clean at a glance, but 3 tests
+  worth of coverage (this file's own TERRAIN_RENDER_ROW hoist-
+  correctness check, the very thing Round25's refactor needed
+  verified) had dropped out entirely, neither passing nor failing.
+  - **Fix**: replaced the hardcoded lowercase absolute path with a
+    relative one matching the pattern every other script in this repo
+    already uses (`build_test.py`'s own `REPO = os.path.join(HERE,
+    "..", "..")`) - `sys.path.insert(0, os.path.join(STAGE2, ".."))`
+    resolves to `tools/` regardless of the repo's on-disk casing.
+  - Verified: ran the file standalone post-fix - 3 passed, 0 failed,
+    0.59s. Full regression re-tallied: 626 + 3 = 629 passed, 0 failed,
+    matching this file's own Round28 entry's last-known-good count
+    exactly - confirms the fix restored coverage without changing any
+    actual test outcome (this was a path bug, not a logic regression).
+  - Added a general "no environment-dependent hardcoded paths" note to
+    `CLAUDE.md` itself so this class of bug (repo directory casing
+    differing across sessions/environments) doesn't recur silently in
+    some other script.
+- Not yet committed as of writing this entry: `CLAUDE.md` (2 edits) and
+  the `terrain_render_perf_test.py` path fix are staged for commit next
+  in this same round.
+
 ## Open items / things to watch
 
 - **RAM addresses that need to persist across frames must stay clear of
