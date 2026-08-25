@@ -1,3 +1,4 @@
+import copy
 import os
 import sys
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # tools/stage2_combined
@@ -6,6 +7,7 @@ import build_test
 from z80emu import Z80
 
 _OUT_CACHE = None
+_BOOT_SNAPSHOT = None  # a real post-boot Z80/BankedMem, cloned (not re-booted) per fresh_cpu() call
 
 
 def get_out():
@@ -21,20 +23,34 @@ def fresh_cpu(assert_bank_switch=True):
     code, and only reaches MAINLOOP once bank1 has genuinely been
     selected for page2 - unlike a flat-memory model, this actually
     exercises (and can catch bugs in) the real boot-time bank-switch
-    itself, not just the game logic that runs after it."""
-    out, sym, text = get_out()
-    bank0, bank1 = build_test.build_banks(out)
-    mem = build_test.BankedMem(bank0, bank1)
-    cpu = Z80(mem)
-    cpu.pc = sym["INIT"]
-    mainloop = sym["MAINLOOP"]
-    steps = 0
-    while cpu.pc != mainloop and steps < 300000:
-        cpu.step()
-        steps += 1
-    assert steps < 300000, "never reached MAINLOOP"
+    itself, not just the game logic that runs after it.
+
+    The actual instruction-by-instruction boot only ever needs to run
+    ONCE per process (same assembled ROM -> same deterministic boot
+    trace every time) - every call after the first returns a fresh
+    deepcopy of that one real post-boot snapshot instead of re-running
+    tens of thousands of cpu.step() calls, which is what made tests
+    that call fresh_cpu() many times (e.g. boss_test.py, 18 cases) slow.
+    deepcopy, not a shared/reset object: each caller gets its own
+    independent mem.flat/vram/registers, so nothing a test does to its
+    cpu can leak into another test's."""
+    global _BOOT_SNAPSHOT
+    if _BOOT_SNAPSHOT is None:
+        out, sym, text = get_out()
+        bank0, bank1 = build_test.build_banks(out)
+        mem = build_test.BankedMem(bank0, bank1)
+        cpu = Z80(mem)
+        cpu.pc = sym["INIT"]
+        mainloop = sym["MAINLOOP"]
+        steps = 0
+        while cpu.pc != mainloop and steps < 300000:
+            cpu.step()
+            steps += 1
+        assert steps < 300000, "never reached MAINLOOP"
+        _BOOT_SNAPSHOT = cpu
+    cpu = copy.deepcopy(_BOOT_SNAPSHOT)
     if assert_bank_switch:
-        assert mem.bankB == 1, f"ASCII16 bank1 was never selected for page2 (bankB={mem.bankB})"
+        assert cpu.mem.bankB == 1, f"ASCII16 bank1 was never selected for page2 (bankB={cpu.mem.bankB})"
     return cpu
 
 
