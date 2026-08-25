@@ -3651,6 +3651,54 @@ Thunder activity) confirming it survives completely untouched.
   `git diff` afterward) sent to the user. Not yet real-hardware/audio
   confirmed as of this entry.
 
+### Round 32 follow-up #5: boom volume boosted to full strength + SPARK burst crackle sound
+
+- User instruction (verbatim): "爆発エフェクト中も爆発音追加 で、円爆発
+  はこれが音量最大か? かなり小さいが".
+- **Boom volume**: `BOSS_BOOM_CALC_VOLUME`'s own "on" half of the 1:1
+  duty cycle used to write `SND_TIMER SRL'd` (half the current
+  envelope) - on top of the duty cycle's own 50% silent time, that meant
+  the boom NEVER actually reached the PSG's real max volume (15) on any
+  single frame, reading as too quiet overall even at its own peak.
+  Changed to write the FULL current envelope on "on" frames instead -
+  the 1:1 on/off alternation alone already gives the buzzy "ブリブリ"
+  texture the user asked for; halving on top of it was never necessary
+  for that effect and just made everything quieter. `expected_boom_
+  volume()` in `boss_boom_sound_test.py` updated to match (`timer`
+  instead of `timer >> 1`).
+- **SPARK burst crackle** (`SOUND_SPARK_CRACKLE`, triggered from `UBE_
+  SPARK`): the burst itself (before the circle even starts) had no
+  sound at all - "爆発エフェクト中も爆発音追加". Not specified beyond
+  "add one", so a judgment call: a short, high-pitched (period 14,
+  distinct from shot(8)/regular-destroy(20)/boom(31)), fast-decaying
+  (peak 8, decay 3) noise blip, retriggered every `SPARK_CRACKLE_
+  PERIOD`(4) frames rather than every single frame - continuous
+  retriggering would just reset the same envelope into one steady drone,
+  not a "crackle" matching the burst's own "ウェイトなしで派手に沢山"
+  visual chaos. No new RAM: the trigger cadence reads straight off
+  `BOSS_EXPL_TIMER`'s own low bits (already counting down every SPARK
+  frame for an unrelated reason) via `AND SPARK_CRACKLE_PERIOD-1`, and
+  it shares the same `SND_TIMER`/`SND_DECAY` envelope bytes as every
+  other short sound - no `SND_EXPLODING` guard, same casual/frequent-
+  sound treatment `SOUND_SHOT` already gets (not "the important one"
+  the way the boom itself is).
+- New coverage in `boss_boom_sound_test.py` (now 62 checks): `BOSS_
+  BOOM_CALC_VOLUME`'s own expected-value matrix updated for the
+  unhalved "on" value; `SOUND_SPARK_CRACKLE`'s own trigger values
+  checked directly; a full run through the whole SPARK phase
+  (interleaving `UPDATE_BOSS_EXPLOSION` with `SOUND_UPDATE`, the same
+  order `MAINLOOP` itself uses each real frame) confirms the crackle
+  fires on exactly the independently-derived expected frame numbers -
+  every `SPARK_CRACKLE_PERIOD` frames, never on the very last frame
+  (which hands off to GROW instead), and genuinely decays to silence
+  between triggers (confirming real periodic retriggering, not one
+  continuous drone).
+- Full regression: **757 passed, 0 failed** (751 + 6 net new checks).
+  New verification ROM (same temporary GAME_TICK=840/BOSS_HP_INIT=3
+  edit-build-send-revert procedure, confirmed reverted again with a
+  clean `git diff` afterward) sent to the user. Not yet real-hardware/
+  audio confirmed as of this entry.
+
 ## Open items / things to watch
 
 - **RAM addresses that need to persist across frames must stay clear of

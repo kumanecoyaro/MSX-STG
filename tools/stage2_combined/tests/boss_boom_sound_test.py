@@ -63,11 +63,14 @@ def cell_addr(col, row):
 # ASM's own logic).
 # ---------------------------------------------------------------------
 def expected_boom_volume(timer, tick):
+    # round32 follow-up: "円爆発はこれが音量最大か? かなり小さいが" -
+    # "on" frames are now full-strength (not halved on top of the duty
+    # cycle's own silence, see BOSS_BOOM_CALC_VOLUME's own comment).
     if timer == 0:
         return 0
     if tick & 1:
         return 0
-    return timer >> 1
+    return timer
 
 
 cpu = fresh_cpu()
@@ -202,6 +205,76 @@ check("the boom is triggered exactly at the SPARK->GROW handoff (SND_TIMER=15)",
       cpu.mem[SND_TIMER] == 15)
 check("boom's own SND_DECAY sentinel (0) is set at the handoff", cpu.mem[SND_DECAY] == 0)
 check("boom's own SND_EXPLODING guard is set at the handoff", cpu.mem[SND_EXPLODING] == 1)
+
+
+# ---------------------------------------------------------------------
+# 7: SPARK burst crackle - "爆発エフェクト中も爆発音追加". Direct check
+# of SOUND_SPARK_CRACKLE's own trigger values, then a full run through
+# the whole SPARK phase (interleaving UPDATE_BOSS_EXPLOSION with
+# SOUND_UPDATE, same order MAINLOOP itself uses each real frame) to
+# confirm it actually fires periodically, not continuously.
+# ---------------------------------------------------------------------
+SPARK_CRACKLE_PEAK = sym["SPARK_CRACKLE_PEAK"]
+SPARK_CRACKLE_DECAY = sym["SPARK_CRACKLE_DECAY"]
+SPARK_CRACKLE_PERIOD = sym["SPARK_CRACKLE_PERIOD"]
+
+cpu = fresh_cpu()
+cpu.mem[SND_TIMER] = 0
+cpu.mem[SND_DECAY] = 0
+call_routine(cpu, "SOUND_SPARK_CRACKLE")
+check("SOUND_SPARK_CRACKLE sets SND_TIMER to its own peak",
+      cpu.mem[SND_TIMER] == SPARK_CRACKLE_PEAK)
+check("SOUND_SPARK_CRACKLE sets SND_DECAY to its own decay rate (a real linear "
+      "decay, NOT the boom's 0 sentinel)",
+      cpu.mem[SND_DECAY] == SPARK_CRACKLE_DECAY)
+
+cpu = fresh_cpu()
+setup_boss(cpu, x=96)
+call_routine(cpu, "CHPBOSS_DESTROY")
+trigger_frames = []
+for frame in range(1, SPARK_DURATION + 1):
+    call_routine(cpu, "UPDATE_BOSS_EXPLOSION")
+    if cpu.mem[SND_TIMER] == SPARK_CRACKLE_PEAK and cpu.mem[SND_DECAY] == SPARK_CRACKLE_DECAY:
+        trigger_frames.append(frame)
+    call_routine(cpu, "SOUND_UPDATE")
+
+# independently-derived expected trigger frames: UBE_SPARK checks
+# (SPARK_DURATION-frame) against SPARK_CRACKLE_PERIOD-1 AFTER its own
+# decrement, and never runs that check at all on the very last frame
+# (which branches straight to UBS_LAST_FRAME instead) - NOT read from
+# the ASM's own logic, a genuine cross-check.
+expected_triggers = [f for f in range(1, SPARK_DURATION)
+                      if (SPARK_DURATION - f) % SPARK_CRACKLE_PERIOD == 0]
+check(f"crackle fires on exactly the expected {len(expected_triggers)} frames over the "
+      f"whole {SPARK_DURATION}-frame burst (every {SPARK_CRACKLE_PERIOD} frames, not "
+      f"every single frame) - {trigger_frames == expected_triggers}",
+      trigger_frames == expected_triggers)
+check("crackle does NOT fire on the very last SPARK frame (that frame hands off "
+      "to GROW instead, see UBS_LAST_FRAME)",
+      SPARK_DURATION not in trigger_frames)
+
+# crackle sound must genuinely decay back toward silence between triggers
+# (not held continuously) - confirms a real periodic "crackle", not a
+# drone. Needs its own frame-by-frame SND_TIMER trace (interleaved with
+# SOUND_UPDATE, same order as above) to check.
+cpu = fresh_cpu()
+setup_boss(cpu, x=96)
+call_routine(cpu, "CHPBOSS_DESTROY")
+timer_trace = []
+for _ in range(SPARK_DURATION):
+    call_routine(cpu, "UPDATE_BOSS_EXPLOSION")
+    call_routine(cpu, "SOUND_UPDATE")
+    timer_trace.append(cpu.mem[SND_TIMER])
+check("SND_TIMER visits 0 (fully decayed) between crackle triggers at some point "
+      "during the burst - it doesn't stay perpetually loud",
+      0 in timer_trace)
+# each recorded value is already POST-decay (SOUND_UPDATE runs the same
+# "frame" right after the trigger, same order MAINLOOP itself uses), so
+# a trigger frame's own recorded value is PEAK-DECAY, not the raw PEAK.
+post_trigger_value = max(0, SPARK_CRACKLE_PEAK - SPARK_CRACKLE_DECAY)
+check(f"SND_TIMER reaches its crackle peak's own post-decay value ({post_trigger_value}) "
+      "at some point during the burst - confirms real retriggering, not a one-shot decay",
+      post_trigger_value in timer_trace)
 
 
 print()

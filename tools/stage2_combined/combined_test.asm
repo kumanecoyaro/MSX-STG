@@ -920,10 +920,14 @@ SHOT_SND_DECAY EQU 2
 ; destroy(20) sounds. "で、素のノイズの減衰ではチャチなので デューティ
 ; 比1:1で減衰しながらボリューム半分かOFFをまぜてくれ そうすればブリブ
 ; リって音になるはず" - SOUND_UPDATE's own SU_BOOM branch alternates
-; between half-volume and silent every frame (TICK's own low bit - a
+; between full-strength and silent every frame (TICK's own low bit - a
 ; free-running per-frame flip, no dedicated toggle byte needed) as the
 ; underlying envelope steps down, giving the buzzy/pulsing texture a
-; plain linear noise fade wouldn't have. Peak 15 stepping down 1 every
+; plain linear noise fade wouldn't have - see BOSS_BOOM_CALC_VOLUME's
+; own comment for why "on" frames are full-strength, not halved (round32
+; follow-up: "音量最大か? かなり小さいが" - halving on top of the 1:1
+; duty cycle's own silence made every frame quieter than the hardware's
+; real max). Peak 15 stepping down 1 every
 ; BOSS_BOOM_DECAY_PERIOD frames = a real 75-frame decay (15*5, ~1.25s
 ; @60fps) - deliberately close to the circle explosion's own GROW+SHRINK
 ; length (BOSS_EXPL_STEP_FRAMES*BOSS_EXPL_MAXR*2=72 frames) so the boom
@@ -931,6 +935,27 @@ SHOT_SND_DECAY EQU 2
 ; precisely) - a judgment call, easy to retune via this one constant.
 BOSS_BOOM_NOISE_PERIOD EQU 31
 BOSS_BOOM_DECAY_PERIOD EQU 5
+; "爆発エフェクト中も爆発音追加" (round32) - the SPARK burst itself
+; (before the circle even starts, see BOSS_EXPL_STATE_SPARK) had no
+; sound at all until now. Not specified beyond "add one" - a repeating
+; short, high-pitched "crackle" (distinct pitch from shot(8)/regular-
+; destroy(20)/boom(31)) matches the burst's own visual character
+; ("ウェイトなしで派手に沢山") better than one single sustained tone
+; would, so UBE_SPARK retriggers SOUND_SPARK_CRACKLE once every
+; SPARK_CRACKLE_PERIOD frames (a judgment call, easy to retune) rather
+; than every single frame (which would just reset the same envelope
+; over and over into a continuous drone, not a "crackle"). No new RAM -
+; the trigger cadence reads straight off BOSS_EXPL_TIMER's own low bits
+; (it's already counting down every SPARK frame for an unrelated
+; reason - see INIT_BOSS_EXPLOSION's own comment), and this shares the
+; same SND_TIMER/SND_DECAY envelope bytes as every other short sound in
+; this file - no SND_EXPLODING guard, same casual/frequent-sound
+; treatment SOUND_SHOT already gets, not treated as "the important one"
+; the way the boom itself is.
+SPARK_CRACKLE_PERIOD EQU 4   ; must be a power of 2 - UBE_SPARK's own trigger check ANDs BOSS_EXPL_TIMER against this-1
+SPARK_CRACKLE_NOISE_PERIOD EQU 14
+SPARK_CRACKLE_PEAK EQU 8
+SPARK_CRACKLE_DECAY EQU 3
 
 ; ---------- enemy (ZacoII) ----------
 ; "では次敵の実装 スプライトで実装 右から左へスライド Skyのみのの
@@ -4366,6 +4391,20 @@ SOUND_SHOT:
     LD A,SHOT_SND_DECAY : LD (SND_DECAY),A
     RET
 
+; short "crackle" blip for the SPARK burst - "爆発エフェクト中も爆発音
+; 追加" (see SPARK_CRACKLE_PERIOD's own comment). Same casual-sound
+; shape as SOUND_SHOT above (no SND_EXPLODING guard/set - this doesn't
+; protect itself from being cut off by anything, nor does it protect
+; anything else from being cut off by it).
+SOUND_SPARK_CRACKLE:
+    LD A,7 : OUT (PSG_ADDR),A
+    LD A,MIXER_NOISE_A : OUT (PSG_DATA),A
+    LD A,6 : OUT (PSG_ADDR),A
+    LD A,SPARK_CRACKLE_NOISE_PERIOD : OUT (PSG_DATA),A
+    LD A,SPARK_CRACKLE_PEAK : LD (SND_TIMER),A
+    LD A,SPARK_CRACKLE_DECAY : LD (SND_DECAY),A
+    RET
+
 ; explosion sound - channel A, noise-only, byte-for-byte the same
 ; period(20)/timer(15) src/CYBER SHMUP.asm's own SOUND_DESTROY uses -
 ; "爆発音追加 Stage1の爆発音流用". Decays 1/frame (15 frames) same as
@@ -4461,8 +4500,16 @@ SU_STEP:
 ; はず". 0 (the "off" half of the 1:1 duty cycle) if either the envelope
 ; has already fully decayed (SND_TIMER=0) or this is an "off" frame per
 ; TICK's own low bit (flips every single frame for free - no dedicated
-; toggle byte needed); otherwise half the current envelope (SND_TIMER
-; SRL'd once). A pure function of SND_TIMER/TICK only - no side effects,
+; toggle byte needed); otherwise the FULL current envelope, unhalved -
+; round32 follow-up: "円爆発はこれが音量最大か? かなり小さいが" - the
+; original version also halved the envelope on "on" frames (literally
+; "ボリューム半分"), but that stacked with the 1:1 duty cycle's own 50%
+; silent time meant the sound was never anywhere near the PSG's real
+; max (15) on any single frame, reading as too quiet overall. The 1:1
+; on/off alternation alone is what gives the buzzy "ブリブリ" texture -
+; keeping "on" frames at full strength makes the peaks themselves as
+; loud as the hardware allows, while the duty cycle still does the
+; texturing. A pure function of SND_TIMER/TICK only - no side effects,
 ; doesn't touch the PSG or step the envelope itself (SU_BOOM below does
 ; that separately) - kept standalone specifically so it's directly
 ; testable without needing to observe an actual PSG register write.
@@ -4473,7 +4520,6 @@ BOSS_BOOM_CALC_VOLUME:
     LD A,(TICK) : AND 1
     JR NZ,BBCV_SILENT
     LD A,(SND_TIMER)
-    SRL A
     RET
 BBCV_SILENT:
     XOR A
@@ -8314,6 +8360,12 @@ BESS_DRAW_DONE:
 UBE_SPARK:
     LD A,(BOSS_EXPL_TIMER) : DEC A : LD (BOSS_EXPL_TIMER),A
     JP Z,UBS_LAST_FRAME
+
+    ; "爆発エフェクト中も爆発音追加" - a crackle every SPARK_CRACKLE_
+    ; PERIOD frames, not every single frame - see that constant's own
+    ; comment for why.
+    AND SPARK_CRACKLE_PERIOD-1
+    CALL Z,SOUND_SPARK_CRACKLE
 
     LD A,(BOSS_EXPL_SPARK_SLOT0_COL) : LD C,A
     LD A,(BOSS_EXPL_SPARK_SLOT0_ROW)
