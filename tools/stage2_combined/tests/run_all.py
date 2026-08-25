@@ -15,6 +15,7 @@ diffable log - only the wall-clock execution is concurrent.
 import glob
 import os
 import re
+import shutil
 import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
@@ -24,9 +25,17 @@ SKIP = {"banked_helpers.py", "run_all.py", "night_visual_check.py"}
 
 WORKERS = os.cpu_count() or 4
 
+# Each test file spends nearly all its time inside z80emu.py's pure-Python
+# instruction interpreter, which PyPy's JIT speeds up by ~10x over CPython
+# (measured: boss_test.py 57s -> 5.4s). Prefer pypy3 for the actual test
+# subprocesses whenever it's installed (see .claude/hooks/session-start.sh),
+# regardless of which interpreter launched run_all.py itself - falls back to
+# the launching interpreter when pypy3 isn't present so this stays portable.
+TEST_PYTHON = shutil.which("pypy3") or sys.executable
+
 
 def run_one(path):
-    return subprocess.run([sys.executable, path], capture_output=True, text=True)
+    return subprocess.run([TEST_PYTHON, path], capture_output=True, text=True)
 
 
 paths = [
