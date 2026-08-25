@@ -636,7 +636,6 @@ BOSS_EXPL_STEP_FRAMES EQU 6
 ; as "blinking" rather than a flicker/strobe.
 BOSS_EXPL_BLINK_PERIOD EQU 16
 BOSS_EXPL_FINAL_FLASH_FRAMES EQU 120   ; "最後の1セルを120フレ点滅させ消滅" - exact, given
-BOSS_EXPL_NONE EQU 0FFh   ; sentinel: "no white cells this row" in BOSS_EXPL_DRAW_CIRCLE
 ; the attack-pose hand art (SASAPI_HAND_CODE_BASE, group19) is retired
 ; for good the instant the boss dies (INIT_BOSS_EXPLOSION erases it/
 ; resets BOSS_PHASE if it was showing - "ボスがBG描画される右端で倒され
@@ -1665,25 +1664,22 @@ SBEAM_GROUND_Y  EQU F311h   ; drop phase target / sweep+retract's own fixed Y (p
 SBEAM_FRONT_COL EQU F312h   ; sweep/retract phase: the beam's own current leading-edge column (decreases while sweeping, increases while retracting)
 SBEAM_BLINK     EQU F313h   ; toggled every frame - "点滅で表示で 取り敢えず1フレ点滅で"
 
-; boss death/explosion sequence state - F314h-F31Eh (11 bytes), the free
-; gap right after SBEAM_BLINK. Kept deliberately lean (ady/row-base kept
-; in registers or recomputed instead of stored - see BOSS_EXPL_DRAW_
-; CIRCLE's own comments) so the highest byte used (F31Eh) still leaves
-; the STACK_SAFETY_MARGIN(0x60) `tests/stack_safety_test.py` requires
-; below STACKTOP(F380h) - a first version storing everything (ady/a
-; cached row-base address/a separate line-fill scratch byte, F314h-
-; F322h) failed that exact regression check by 2 bytes.
+; boss death/explosion sequence state - F314h-F320h (13 bytes), the free
+; gap right after SBEAM_BLINK, kept deliberately lean so the highest
+; byte used still leaves the STACK_SAFETY_MARGIN(0x60)
+; `tests/stack_safety_test.py` requires below STACKTOP(F380h).
 BOSS_EXPL_STATE   EQU F314h   ; BOSS_EXPL_STATE_GROW/_SHRINK/_FLASH/_DONE
 BOSS_EXPL_RADIUS  EQU F315h   ; current circle radius, cells (0=just the center cell .. BOSS_EXPL_MAXR)
 BOSS_EXPL_TIMER   EQU F316h   ; frames until the next radius step (grow/shrink) or the final-flash countdown
 BOSS_EXPL_CX      EQU F317h   ; center cell column, captured once at death (BOSS_X stops being meaningful once hidden)
 BOSS_EXPL_CY      EQU F318h   ; center cell row, captured once at death
 BOSS_EXPL_BLINK   EQU F319h   ; 0..BOSS_EXPL_BLINK_PERIOD-1 cycling counter, boss-sprite blink (grow) and final-cell blink (flash)
-BOSS_EXPL_ROWIDX  EQU F31Ah   ; BOSS_EXPL_DRAW_CIRCLE's own row-loop index, 0..12 (dy+MAXR)
-BOSS_EXPL_COLIDX  EQU F31Bh   ; BOSS_EXPL_DRAW_CIRCLE's own col-loop index, 0..12 (dx+MAXR)
-BOSS_EXPL_ROWTMP  EQU F31Ch   ; BOSS_EXPL_DRAW_CIRCLE's own current absolute row (CY-MAXR+ROWIDX), unsigned-wraps if negative (caught by the same CP 24/JP NC clip as a real >=24 row)
-BOSS_EXPL_COLTMP  EQU F31Dh   ; same, current absolute column
-BOSS_EXPL_HW      EQU F31Eh   ; this row's half-width for the current radius (BOSS_EXPL_NONE if the row has no white cells at all)
+BOSS_EXPL_ROWTMP  EQU F31Ah   ; BOSS_EXPL_APPLY_RING's own current cell's absolute row, unsigned-wraps if negative (caught by the same CP 24/JP NC clip as a real >=24 row)
+BOSS_EXPL_COLTMP  EQU F31Bh   ; same, current absolute column
+BOSS_EXPL_RING_MODE   EQU F31Ch   ; BOSS_EXPL_APPLY_RING's own mode: 0=draw white(GROW), 1=restore true background(SHRINK)
+BOSS_EXPL_RING_RADIUS EQU F31Dh   ; which radius's own ring table entry to walk (0-6)
+BOSS_EXPL_RING_REMAIN EQU F31Eh   ; cells left to process in the current ring walk
+BOSS_EXPL_RING_PTR    EQU F31Fh   ; 2 bytes - current read position in BOSS_EXPL_RING_DATA
 
 ; staging buffer for SBEAM_SLOT_COUNT*4 hw sprite slots (4 bytes each:
 ; Y,X,pattern,color), same shape as HORMING_SPRITE_ATTRS - flushed via
@@ -7653,28 +7649,172 @@ HBOS_LOOP:
 BOSS_EXPL_WHITE_PATTERN:
     DB 0FFh,0FFh,0FFh,0FFh,0FFh,0FFh,0FFh,0FFh
 
-; |dy| (or |dx| - same table, both loop axes use it) for loop index
-; 0..12 representing an offset of -BOSS_EXPL_MAXR..+BOSS_EXPL_MAXR from
-; center: 6,5,4,3,2,1,0,1,2,3,4,5,6.
-BOSS_EXPL_ABSDY_TABLE:
-    DB 6,5,4,3,2,1,0,1,2,3,4,5,6
+; "更に円の塗りつぶしは固定処理なのでLutでやってくれ たった半径6セルだ
+; からわずかなサイズだろう 一々計算は不要 なので円の1周終了を1パターン
+; として記録し 描画はそれらをアニメ処理すればよい" - the circle's own
+; shape never changes (only its center does, a plain translation), so
+; instead of computing disk membership at runtime (the old dx^2+dy^2<=
+; radius^2 half-width-table approach - see git history), each radius's
+; own RING (the cells newly added growing from radius-1 to radius; the
+; same list is also exactly the cells removed shrinking radius back down
+; by 1) is precomputed once, offline, into a fixed table - "1周" (one
+; lap/step) = one fixed pattern, and GROW/SHRINK just walk it
+; (BOSS_EXPL_APPLY_RING below), same idea as animating through sprite
+; frames. Computed via a one-off Python script (disk(r)-disk(r-1) for
+; each dx^2+dy^2<=r^2), not by hand - 226 bytes total across all 7
+; radii, sorted by dx then dy, each cell as (dx+MAXR,dy+MAXR) so every
+; value is a plain 0-12 byte (no sign handling needed to embed the
+; table itself - the sign only matters again once it's added back to
+; the real center at draw time, in BOSS_EXPL_APPLY_RING).
+;
+; This also directly fixes "不要な書き込みはしないこと 円描画するセル
+; のみで": the old box-redraw approach touched every cell in the whole
+; 13x13 bounding box on every step, including ones that were never part
+; of the circle at all - which silently clobbered real background
+; (SkySand/terrain) sitting in the box's own corners with a blank tile
+; that then never got restored (see BOSS_EXPL_BG_CODE_FOR_ROW's own
+; comment for the real fix to THAT). Walking only the ring's own cells
+; means cells outside the circle are never touched in the first place -
+; nothing to restore there because nothing ever disturbed them.
+BOSS_EXPL_RING_OFFSETS:
+    DB 0,2,10,26,58,98,162
+BOSS_EXPL_RING_COUNT:
+    DB 1,4,8,16,20,32,32
+BOSS_EXPL_RING_DATA:
+    DB 6,6,5,6,6,5,6,7,7,6,4,6,5,5,5,7
+    DB 6,4,6,8,7,5,7,7,8,6,3,6,4,4,4,5
+    DB 4,7,4,8,5,4,5,8,6,3,6,9,7,4,7,8
+    DB 8,4,8,5,8,7,8,8,9,6,2,6,3,4,3,5
+    DB 3,7,3,8,4,3,4,9,5,3,5,9,6,2,6,10
+    DB 7,3,7,9,8,3,8,9,9,4,9,5,9,7,9,8
+    DB 10,6,1,6,2,3,2,4,2,5,2,7,2,8,2,9
+    DB 3,2,3,3,3,9,3,10,4,2,4,10,5,2,5,10
+    DB 6,1,6,11,7,2,7,10,8,2,8,10,9,2,9,3
+    DB 9,9,9,10,10,3,10,4,10,5,10,7,10,8,10,9
+    DB 11,6,0,6,1,3,1,4,1,5,1,7,1,8,1,9
+    DB 2,2,2,10,3,1,3,11,4,1,4,11,5,1,5,11
+    DB 6,0,6,12,7,1,7,11,8,1,8,11,9,1,9,11
+    DB 10,2,10,10,11,3,11,4,11,5,11,7,11,8,11,9
+    DB 12,6
 
-; filled-circle half-width per (radius,|dy|), radius 0-6 (rows) x |dy|
-; 0-6 (columns), 7x7 - BOSS_EXPL_HALFWIDTH_TABLE+radius*7+|dy|. Only
-; ever read when |dy|<=radius (BOSS_EXPL_DRAW_CIRCLE checks that first
-; and uses BOSS_EXPL_NONE otherwise), so the trailing zeros past each
-; row's own radius aren't meaningful - just padding to keep every row a
-; fixed 7 bytes for simple radius*7 indexing. Computed directly (dx=
-; floor(sqrt(radius^2-dy^2)) for each dy 0..radius), not by a *_gen.py
-; script - small and fixed enough (28 real values) to just write out.
-BOSS_EXPL_HALFWIDTH_TABLE:
-    DB 0,0,0,0,0,0,0      ; radius=0
-    DB 1,0,0,0,0,0,0      ; radius=1
-    DB 2,1,0,0,0,0,0      ; radius=2
-    DB 3,2,2,0,0,0,0      ; radius=3
-    DB 4,3,3,2,0,0,0      ; radius=4
-    DB 5,4,4,4,3,0,0      ; radius=5
-    DB 6,5,5,5,4,3,0      ; radius=6
+; row->true-background-code, matching ERASE_BULLET_CELL's own day/night-
+; aware restore rules exactly (row<16 sky, row==16 SkySand/NIGHT_CODE,
+; 17-19 TERRAIN_BLANK_CODE) - a separate copy rather than a shared call
+; site, since ERASE_BULLET_CELL is IX-indexed (bullet-slot shaped) and
+; this is plain row-in/code-out. "Sandskyとその下のラインは更新しない
+; 1度書きなので復元しないとスクショのように欠けてしまう" - real-hardware/
+; screenshot finding: the OLD box-redraw's blanket "everything outside
+; the circle is HUD_ROW_BLANK_CODE" assumption only held for pure sky
+; (rows0-15); SkySand(16) and the Sand band(17-19) are each drawn ONCE
+; at INIT and never redrawn per-frame the way sky/night is, so treating
+; them the same as sky left a permanent black hole exactly where they'd
+; been overwritten - the explosion's own box realistically DOES reach
+; that far (BOSS_SPAWN_Y=56 -> center row~11, +BOSS_EXPL_MAXR(6) ->
+; row17, squarely inside the Sand band). Row>=20 (the scrolling terrain,
+; self-healing every frame already) is out of realistic reach at
+; MAXR=6 from a center row around 11-12, but still falls back to
+; TERRAIN_BLANK_CODE defensively rather than being left undefined.
+BOSS_EXPL_BG_CODE_FOR_ROW:
+    CP BULLET_ROCK_ROW_MIN
+    JR C,BEBCFR_SKY
+    CP BULLET_ROCK_ROW_MIN+4
+    JR NC,BEBCFR_TERRAIN_BLANK
+    CP BULLET_ROCK_ROW_MIN
+    JR Z,BEBCFR_SKYSAND
+BEBCFR_TERRAIN_BLANK:
+    LD A,TERRAIN_BLANK_CODE
+    RET
+BEBCFR_SKYSAND:
+    LD A,(NIGHT_ROW)
+    CP NIGHT_END_ROW
+    JR C,BEBCFR_SKYSAND_DAY
+    LD A,NIGHT_CODE
+    RET
+BEBCFR_SKYSAND_DAY:
+    LD A,SKYSAND_CODE
+    RET
+BEBCFR_SKY:
+    LD B,A
+    LD A,(NIGHT_ROW)
+    CP B
+    JR C,BEBCFR_SKY_BLUE
+    LD A,HUD_ROW_BLANK_CODE
+    RET
+BEBCFR_SKY_BLUE:
+    LD A,SKY_BLANK_CODE
+    RET
+
+; walks the ring table for radius A, writing each on-screen cell -
+; (BOSS_EXPL_RING_MODE) selects what: 0=BOSS_EXPL_WHITE_CODE (GROW,
+; drawing a newly-grown ring), 1=the true per-row background via
+; BOSS_EXPL_BG_CODE_FOR_ROW (SHRINK, restoring a ring being removed -
+; NOT a blanket blank, see that routine's own comment on why).
+;
+; "円の描画とラインの描画順の問題でラインが円の範囲で消えてる" - during
+; SHRINK specifically, dy=0 cells (the ring's own points on the center
+; row) are skipped entirely rather than restored - that row belongs to
+; the still-solid full-width line (drawn once at the grow->shrink
+; transition) until BOSS_EXPL_ERASE_LINE's own single clean sweep;
+; restoring them mid-shrink would eat into the middle of the line early,
+; the exact bug reported. GROW draws dy=0 normally (no line exists yet).
+BOSS_EXPL_APPLY_RING:
+    LD (BOSS_EXPL_RING_RADIUS),A
+    LD HL,BOSS_EXPL_RING_COUNT : LD E,A : LD D,0 : ADD HL,DE
+    LD A,(HL) : LD (BOSS_EXPL_RING_REMAIN),A
+    OR A
+    RET Z
+    LD A,(BOSS_EXPL_RING_RADIUS)
+    LD HL,BOSS_EXPL_RING_OFFSETS : LD E,A : LD D,0 : ADD HL,DE
+    LD A,(HL)
+    LD HL,BOSS_EXPL_RING_DATA : LD E,A : LD D,0 : ADD HL,DE
+    LD (BOSS_EXPL_RING_PTR),HL
+BEAR_LOOP:
+    LD HL,(BOSS_EXPL_RING_PTR)
+    LD A,(HL) : SUB BOSS_EXPL_MAXR : LD B,A   ; B = dx (signed, 2's-complement wraparound)
+    INC HL
+    LD A,(HL) : SUB BOSS_EXPL_MAXR : LD C,A   ; C = dy
+    INC HL
+    LD (BOSS_EXPL_RING_PTR),HL
+
+    LD A,(BOSS_EXPL_RING_MODE)
+    OR A
+    JR Z,BEAR_ROW_OK
+    LD A,C
+    OR A
+    JP Z,BEAR_SKIP_CELL   ; SHRINK + dy=0 - the line's own row, leave it alone
+BEAR_ROW_OK:
+
+    LD A,(BOSS_EXPL_CY) : ADD A,C : LD (BOSS_EXPL_ROWTMP),A
+    LD A,(BOSS_EXPL_CX) : ADD A,B : LD (BOSS_EXPL_COLTMP),A
+
+    ; off-screen row/col - either wrapped negative or genuinely too big;
+    ; each single unsigned check catches both directions at once.
+    LD A,(BOSS_EXPL_ROWTMP)
+    CP 24
+    JP NC,BEAR_SKIP_CELL
+    LD A,(BOSS_EXPL_COLTMP)
+    CP 32
+    JP NC,BEAR_SKIP_CELL
+
+    LD A,(BOSS_EXPL_RING_MODE)
+    OR A
+    JR NZ,BEAR_RESTORE
+    LD A,BOSS_EXPL_WHITE_CODE
+    JR BEAR_GOT_CODE
+BEAR_RESTORE:
+    LD A,(BOSS_EXPL_ROWTMP) : CALL BOSS_EXPL_BG_CODE_FOR_ROW
+BEAR_GOT_CODE:
+    LD (BULLET_TEMP_BYTE),A
+    LD A,(BOSS_EXPL_ROWTMP) : CALL NIGHT_ROW_ADDR
+    LD H,D : LD L,E
+    LD A,(BOSS_EXPL_COLTMP) : LD E,A : LD D,0
+    ADD HL,DE
+    CALL WRITE_BULLET_BYTE_HL
+
+BEAR_SKIP_CELL:
+    LD A,(BOSS_EXPL_RING_REMAIN) : DEC A : LD (BOSS_EXPL_RING_REMAIN),A
+    JP NZ,BEAR_LOOP
+    RET
 
 ; called once, the instant the boss is destroyed (from CHPBOSS_DESTROY,
 ; right after HIDE_BOSS_SPRITES) - sets up everything the death/
@@ -7715,7 +7855,8 @@ IBE_NO_HAND:
     LD A,BOSS_EXPL_STATE_GROW : LD (BOSS_EXPL_STATE),A
     LD A,BOSS_EXPL_STEP_FRAMES : LD (BOSS_EXPL_TIMER),A
     XOR A : LD (BOSS_EXPL_BLINK),A
-    CALL BOSS_EXPL_DRAW_CIRCLE   ; radius=0 - just the center cell, drawn immediately
+    XOR A : LD (BOSS_EXPL_RING_MODE),A   ; 0=white
+    XOR A : CALL BOSS_EXPL_APPLY_RING    ; ring(0) - just the center cell, drawn immediately
     RET
 
 ; per-frame update for the death/explosion sequence, called from
@@ -7761,7 +7902,9 @@ UBE_G_BLINK_DONE:
     CP BOSS_EXPL_MAXR
     JR NC,UBE_GROW_DONE
     INC A : LD (BOSS_EXPL_RADIUS),A
-    CALL BOSS_EXPL_DRAW_CIRCLE
+    XOR A : LD (BOSS_EXPL_RING_MODE),A   ; 0=white (clobbers A - reload the radius after)
+    LD A,(BOSS_EXPL_RADIUS)
+    CALL BOSS_EXPL_APPLY_RING            ; draw just the newly-grown ring
     RET
 ; "その後円中心から左右に画面幅のBGラインを引いてボス表示は終了" -
 ; growth just reached its max radius: draw the full-width line, hide the
@@ -7786,9 +7929,13 @@ UBE_SHRINK:
     LD A,(BOSS_EXPL_RADIUS)
     OR A
     JR Z,UBE_SHRINK_DONE
-    DEC A : LD (BOSS_EXPL_RADIUS),A
-    CALL BOSS_EXPL_DRAW_CIRCLE
+    ; erase the CURRENT radius's own ring (the outermost shell about to
+    ; be removed) BEFORE decrementing - that ring IS the delta between
+    ; this radius and the next-smaller one.
+    LD A,1 : LD (BOSS_EXPL_RING_MODE),A   ; 1=restore true background
     LD A,(BOSS_EXPL_RADIUS)
+    CALL BOSS_EXPL_APPLY_RING
+    LD A,(BOSS_EXPL_RADIUS) : DEC A : LD (BOSS_EXPL_RADIUS),A
     OR A
     RET NZ
 UBE_SHRINK_DONE:
@@ -7867,124 +8014,12 @@ BEFL_LOOP:
 BOSS_EXPL_DRAW_LINE:
     LD A,BOSS_EXPL_WHITE_CODE
     JP BOSS_EXPL_FILL_LINE
+; row-aware restore (BOSS_EXPL_BG_CODE_FOR_ROW), not a hardcoded blank -
+; CY is realistically always pure sky in practice, but this stays
+; correct even if a future change ever moves the boss's own row.
 BOSS_EXPL_ERASE_LINE:
-    LD A,HUD_ROW_BLANK_CODE
+    LD A,(BOSS_EXPL_CY) : CALL BOSS_EXPL_BG_CODE_FOR_ROW
     JP BOSS_EXPL_FILL_LINE
-
-; redraws the whole (BOSS_EXPL_MAXR*2+1)^2 box (13x13) around
-; (BOSS_EXPL_CX,BOSS_EXPL_CY) for the CURRENT BOSS_EXPL_RADIUS - white
-; inside the filled disk (dx^2+dy^2<=radius^2, via the half-width
-; table), blank outside, each row/column independently clipped to the
-; real screen (0-23 rows, 0-31 cols) - "当然クリッピングして画面内のみ
-; 描画". Called once per radius STEP (grow and shrink both call this,
-; never every single frame) - always redraws the full box rather than
-; just the newly-added/removed ring, since the box is small (<=169
-; cells) and this is a rare one-time event, not a per-frame hot path;
-; much simpler to get right than incremental ring-only updates.
-;
-; "円の描画とラインの描画順の問題でラインが円の範囲で消えてる" - during
-; SHRINK, the full-width line (BOSS_EXPL_DRAW_LINE, drawn once at the
-; grow->shrink transition) shares the center row (dy=0) with this box.
-; The box redraw used to blank that row's own outside-current-radius
-; cells on every shrink step same as any other row, visibly eating into
-; the middle of the still-supposed-to-be-solid line well before the
-; real erase-line step ever ran, instead of the line staying solid until
-; BOSS_EXPL_ERASE_LINE's own single clean sweep. Fixed by skipping the
-; center row entirely whenever BOSS_EXPL_STATE=SHRINK (see BEDC_ROWLOOP
-; below) - GROW still draws it normally (there's no line yet to protect).
-BOSS_EXPL_DRAW_CIRCLE:
-    XOR A : LD (BOSS_EXPL_ROWIDX),A
-    LD A,(BOSS_EXPL_CY) : SUB BOSS_EXPL_MAXR : LD (BOSS_EXPL_ROWTMP),A
-BEDC_ROWLOOP:
-    ; off-screen row - either wrapped negative (256-N, N=how far below 0)
-    ; or genuinely >=24; either way this single unsigned check catches
-    ; both directions of clipping at once.
-    LD A,(BOSS_EXPL_ROWTMP)
-    CP 24
-    JP NC,BEDC_ROW_SKIP
-
-    ; SHRINK + center row (dy=0, ROWIDX=MAXR) - leave it alone, it's the
-    ; line's own row until the real erase-line step (see this routine's
-    ; own header comment above).
-    LD A,(BOSS_EXPL_STATE)
-    CP BOSS_EXPL_STATE_SHRINK
-    JR NZ,BEDC_NOT_SHRINK_CENTER
-    LD A,(BOSS_EXPL_ROWIDX)
-    CP BOSS_EXPL_MAXR
-    JP Z,BEDC_ROW_SKIP
-BEDC_NOT_SHRINK_CENTER:
-
-    ; ady kept in C (register-only, no RAM byte) - read once here, used
-    ; immediately below for the hw lookup, never needed again afterward
-    ; (the column loop's own adx is a fresh lookup by COLIDX, not this).
-    LD HL,BOSS_EXPL_ABSDY_TABLE
-    LD A,(BOSS_EXPL_ROWIDX) : LD E,A : LD D,0
-    ADD HL,DE
-    LD A,(HL) : LD C,A
-
-    LD A,(BOSS_EXPL_RADIUS) : LD B,A
-    LD A,C
-    CP B
-    JR Z,BEDC_HW_OK
-    JR C,BEDC_HW_OK
-    LD A,BOSS_EXPL_NONE : LD (BOSS_EXPL_HW),A
-    JR BEDC_HW_DONE
-BEDC_HW_OK:
-    LD A,B : ADD A,A : ADD A,A : ADD A,A : SUB B   ; A = radius*7
-    LD E,A : LD D,0
-    LD HL,BOSS_EXPL_HALFWIDTH_TABLE
-    ADD HL,DE
-    LD A,C : LD E,A : LD D,0
-    ADD HL,DE
-    LD A,(HL) : LD (BOSS_EXPL_HW),A
-BEDC_HW_DONE:
-
-    XOR A : LD (BOSS_EXPL_COLIDX),A
-    LD A,(BOSS_EXPL_CX) : SUB BOSS_EXPL_MAXR : LD (BOSS_EXPL_COLTMP),A
-BEDC_COLLOOP:
-    LD A,(BOSS_EXPL_COLTMP)
-    CP 32
-    JR NC,BEDC_COL_SKIP
-
-    LD HL,BOSS_EXPL_ABSDY_TABLE
-    LD A,(BOSS_EXPL_COLIDX) : LD E,A : LD D,0
-    ADD HL,DE
-    LD A,(HL) : LD B,A
-
-    LD A,(BOSS_EXPL_HW)
-    CP BOSS_EXPL_NONE
-    JR Z,BEDC_COL_BLANK
-    CP B
-    JR C,BEDC_COL_BLANK
-    LD A,BOSS_EXPL_WHITE_CODE
-    JR BEDC_COL_GO
-BEDC_COL_BLANK:
-    LD A,HUD_ROW_BLANK_CODE
-BEDC_COL_GO:
-    ; recomputes the row's own base address fresh for every column
-    ; instead of caching it (see the BOSS_EXPL_* RAM block's own comment
-    ; on staying lean) - this isn't a per-frame hot path (called once per
-    ; radius step, not every frame), so the extra NIGHT_ROW_ADDR calls
-    ; cost nothing that matters.
-    LD (BULLET_TEMP_BYTE),A
-    LD A,(BOSS_EXPL_ROWTMP) : CALL NIGHT_ROW_ADDR
-    LD H,D : LD L,E
-    LD A,(BOSS_EXPL_COLTMP) : LD E,A : LD D,0
-    ADD HL,DE
-    CALL WRITE_BULLET_BYTE_HL
-
-BEDC_COL_SKIP:
-    LD A,(BOSS_EXPL_COLTMP) : INC A : LD (BOSS_EXPL_COLTMP),A
-    LD A,(BOSS_EXPL_COLIDX) : INC A : LD (BOSS_EXPL_COLIDX),A
-    CP 13
-    JP NZ,BEDC_COLLOOP
-
-BEDC_ROW_SKIP:
-    LD A,(BOSS_EXPL_ROWTMP) : INC A : LD (BOSS_EXPL_ROWTMP),A
-    LD A,(BOSS_EXPL_ROWIDX) : INC A : LD (BOSS_EXPL_ROWIDX),A
-    CP 13
-    JP NZ,BEDC_ROWLOOP
-    RET
 
 ; the 8x8 grid of hand-art name-table codes (SASAPI_HAND_CODE_BASE..
 ; +63, sequential, row-major) - reused unmodified as DRAW_SASAPI_HAND's

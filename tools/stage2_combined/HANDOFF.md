@@ -3137,6 +3137,104 @@ Thunder activity) confirming it survives completely untouched.
   - New verification ROM (same temporary edit-build-send-revert
     procedure as before, both edits confirmed reverted again afterward)
     sent to the user. Not yet real-hardware confirmed as of this entry.
+- Real-hardware/screenshot feedback (verbatim, the corrected/complete
+  version after an interrupted first message): "こういう事だな Sandsky
+  とその下のラインは更新しない1度書きなので復元しないとスクショのよう
+  に欠けてしまう なので爆発中常に書き戻すのが早い 描画順の最初だな 爆
+  破処理の幅分のみ で、サークルはボックスで処理してるが 不要な書き込み
+  はしないこと 円描画するセルのみで 更に円の塗りつぶしは固定処理なので
+  Lutでやってくれ たった半径6セルだからわずかなサイズだろう 一々計算は
+  不要 なので円の1周終了を1パターンとして記録し 描画はそれらをアニメ
+  処理すればよい" - with a screenshot showing a real rectangular black
+  hole punched through the SkySand row and the Sand terrain just below
+  it, right where a boss had exploded.
+  - **Root cause found**: `BOSS_EXPL_BG_CODE_FOR_ROW` didn't exist yet -
+    the previous round's own "restore" value for every non-circle cell
+    in the box was a hardcoded `HUD_ROW_BLANK_CODE`, correct ONLY for
+    pure sky (rows0-15, always fully night-swept by `BOSS_SPAWN_TICK`).
+    SkySand(row16) and the Sand band(17-19) are each drawn exactly ONCE
+    at INIT and never redrawn per-frame - real math check: `BOSS_SPAWN_
+    Y`(56)/8=row7, center row realistically ~11 (Y dips up to +8px
+    during patrol), +`BOSS_EXPL_MAXR`(6) reaches row17 - squarely inside
+    the Sand band, not an edge case, a MAINLINE every-explosion overlap.
+    Blanking those rows and never restoring their real tile is exactly
+    the screenshot's hole.
+  - **Full rewrite, following the user's own 3-part design**:
+    1. *"爆破処理の幅分のみ...常に書き戻す"* + *"不要な書き込みはしない
+       こと 円描画するセルのみで"* - rather than restoring the whole box
+       every step (still touches cells that were never disturbed), the
+       new `BOSS_EXPL_APPLY_RING` only ever writes cells that are
+       ACTUALLY part of the circle's current ring - cells outside it are
+       never touched in the first place, so there's nothing to restore
+       there (this alone eliminates the class of bug, not just this one
+       instance of it). The one cell type still needing an explicit
+       restore is a ring cell being REMOVED during SHRINK - that gets
+       `BOSS_EXPL_BG_CODE_FOR_ROW`'s real row-aware code (day/night-
+       aware sky, SkySand-or-NIGHT_CODE, or `TERRAIN_BLANK_CODE` for
+       Sand - a direct port of `ERASE_BULLET_CELL`'s own already-correct
+       per-row rules, kept as its own copy since that routine is IX/
+       bullet-slot-shaped and this isn't), not a blanket blank.
+       `BOSS_EXPL_ERASE_LINE` (the line's own erase) got the same
+       treatment instead of its old hardcoded blank.
+    2. *"円の塗りつぶしは固定処理なのでLutでやってくれ...円の1周終了を
+       1パターンとして記録し 描画はそれらをアニメ処理すればよい"* - the
+       circle's own shape is fixed (only the center translates), so
+       runtime dx^2+dy^2 math (the old half-width-table approach) is
+       replaced by a precomputed table: for each radius 0-6, the RING
+       (cells newly added growing from radius-1, and - same set -
+       exactly the cells removed shrinking back down by 1) as a fixed
+       list of (dx,dy) offsets, generated once via a one-off Python
+       script (not by hand, not checked in as a separate file - just
+       the generated `DB` bytes pasted into the source, same spirit as
+       the earlier half-width table but now genuinely minimal: 226
+       bytes total across all 7 radii, no redundant interior cells).
+       GROW draws ring(new radius) white; SHRINK erases ring(old
+       radius) via `BOSS_EXPL_BG_CODE_FOR_ROW` per cell, skipping dy=0
+       cells specifically (still the fix for last round's "line eaten
+       by the shrinking circle" bug - the ring format made this an even
+       simpler single check: skip when mode=restore and dy=0).
+    3. Old `BOSS_EXPL_DRAW_CIRCLE`/`BOSS_EXPL_ABSDY_TABLE`/`BOSS_EXPL_
+       HALFWIDTH_TABLE`/`BOSS_EXPL_NONE` all deleted outright (not left
+       as dead code) - superseded entirely, nothing else referenced
+       them.
+  - **2 real bugs caught during this rewrite, both by the test suite
+    catching wrong behavior rather than by inspection**:
+    - `UBE_GROW`'s own call site set `BOSS_EXPL_RING_MODE` (via `XOR A`)
+      AFTER already loading the new radius into `A`, clobbering it back
+      to 0 before `CALL BOSS_EXPL_APPLY_RING` ever read it - every GROW
+      step silently redrew ring(0) (a single already-white cell)
+      regardless of the real radius, so nothing past the initial 1-cell
+      circle ever actually appeared. Caught immediately: radius>=1
+      geometry checks failed with a mismatch count matching the ring's
+      OWN size exactly (4, then cumulative 12, 28...) - a strong enough
+      signature to point straight at "the ring for radius>=1 is never
+      being drawn at all," not a subtler geometry error. Fixed by
+      re-loading the radius from RAM right before the call.
+    - The test itself, not the ASM: `assert_box_matches` was upgraded to
+      check the EXACT expected code per non-white cell too (not just
+      white-vs-not - otherwise this whole regression class would have
+      kept silently passing), which needed a NIGHT_ROW-consistent test
+      setup. Initially just poked `NIGHT_ROW=NIGHT_END_ROW` directly
+      (matching a prior round's own pattern from `bulletu_boss_bg_test.
+      py`) - but that only updates the STATE counter, not the VRAM
+      content a real `CHECK_NIGHT` sweep would have painted, so the
+      "already fully swept" claim and the actual SKY_BLANK_CODE/
+      SKYSAND_CODE(day) tiles still sitting in VRAM contradicted each
+      other, and every non-circle cell check failed for a reason that
+      had nothing to do with the ASM (155 mismatches even at radius=0,
+      before the ring code had touched anything beyond the initial
+      center cell). Fixed by having the test paint the SAME end-state
+      `CHECK_NIGHT` itself would leave (rows0-15 `HUD_ROW_BLANK_CODE`,
+      row16 `NIGHT_CODE`) directly, not just poking the counter.
+  - Added a direct regression test for the screenshot itself: after the
+    full sequence completes, row16 (SkySand) and row17 (Sand) within the
+    box are asserted back to `NIGHT_CODE`/`TERRAIN_BLANK_CODE` - the
+    exact spot and exact claim the screenshot showed as a black hole.
+  - Full regression: **676 passed, 0 failed** (629 + 47, 2 more checks
+    than the previous round's 45 - the new SkySand/Sand restoration
+    checks). New verification ROM (same temporary tick840/HP3 edit-
+    build-send-revert procedure, confirmed reverted again afterward)
+    sent to the user. Not yet real-hardware confirmed as of this entry.
 
 ## Open items / things to watch
 
