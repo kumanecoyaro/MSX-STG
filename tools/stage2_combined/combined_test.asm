@@ -1427,9 +1427,11 @@ BIGZUM_SLOT_SIZE  EQU 13   ; +0 ACT,+1 X,+2 Y,+3 TIMER(explosion/pause countdown
 BIGZUM_SLOT_COUNT EQU 1
 BIGZUM_POOL       EQU 0F207h  ; BIGZUM_SLOT_SIZE*BIGZUM_SLOT_COUNT = 24 bytes reserved (only the first 12 actually used now - see BIGZUM_SLOT_COUNT)
 ; round34: was BIGZUM_SPAWN_TIMER (random-interval countdown, now
-; removed). Repurposed as SPAWN2_STALL_COUNT - see SPAWN2_SCHEDULE_
-; CHECK's own comment.
-SPAWN2_STALL_COUNT EQU 0F21Fh
+; removed). round34-2 briefly repurposed 0F21Fh as SPAWN2_STALL_COUNT
+; for a retry-with-timeout spawn design; round34-3 replaced that design
+; entirely with Stage1's own unconditional-advance/drop-on-failure
+; SSC_FIRE model (see SPAWN2_SCHEDULE_CHECK's own comment), so this
+; byte is unused again - left unclaimed rather than repurposed further.
 ; staging buffer for BIGZUM_SLOT_COUNT*4 hw sprite slots (4 per
 ; instance - a 32x32 BigZum is 2x2 of 16x16 hw sprites, same quadrant
 ; convention as the tank's own SPRITE_ATTRS/UPDATE_TANK_SPRITES, just
@@ -2718,7 +2720,6 @@ IBZZ_LOOP:
     LD (HL),A
     INC HL
     DJNZ IBZZ_LOOP
-    LD (SPAWN2_STALL_COUNT),A
 
     LD HL,BIGZUM_POOL
     LD B,BIGZUM_SLOT_COUNT
@@ -4330,9 +4331,8 @@ APPLY_TANK_DAMAGE:
 ; but a plain MOD 1000 readout would visibly wrap the on-screen counter
 ; back to "000" and keep climbing again past that - exactly the "また
 ; スタートから出てきてしまってる" (looks like it started over) symptom
-; reported, since the boss's own drift (schedule entries retried/
-; skipped under contention - see SPAWN2_STALL_LIMIT's own comment) can
-; easily push the real tick past 1000 before the boss even appears.
+; reported, since GAME_TICK can push past 1000 well before the boss's
+; own late-schedule threshold is reached.
 ; Clamps the DISPLAY at 999 once GAME_TICK reaches/exceeds 1000 -
 ; "見た目上999で止まる" - purely cosmetic, the real counter and every
 ; tick-threshold comparison elsewhere are completely unaffected.
@@ -4648,29 +4648,35 @@ SU_BOOM:
 ; alongside it (MAINLOOP), same cadence Stage1's own SPAWN_SCHEDULE_
 ; CHECK uses.
 ;
-; SPAWN2_STALL_COUNT/SPAWN2_STALL_LIMIT: a safety valve found necessary
-; during this round's own verification - a real MAINLOOP playthrough
-; with no player fire input at all (same worst-case config boss_test.py
-; already used for its own end-to-end check) left a BigZum permanently
-; alive (STATE=2/punch, nothing ever shoots it), which blocked every
-; later Zum/Etank entry forever via their own ground-lane exclusion
-; (see ALLOC_ZUM_SLOT/ALLOC_ETANK_SLOT's own BIGZUM_POOL checks) -
-; and since every later index (including the boss, the very last entry)
-; only ever fires once every earlier one has, the boss would then never
-; appear either, an unbounded stall no realistic play could ever have
-; been guaranteed to avoid. Unlike Stage1's own SSC_BUSY_E2 (a one-off,
-; hand-picked wait for Enemy2's own 2 slots specifically), Stage2's
-; ground-lane exclusion is 3-way and this schedule's own content places
-; entries close enough together that any one of them staying occupied
-; too long can cascade into blocking everything after it - a general
-; problem needing a general safety net, not a per-index special case.
-; Counts consecutive GAME_TICKs an entry has been due-but-blocked
-; (reset to 0 the moment an entry isn't yet due, or the moment one
-; fires); once it reaches SPAWN2_STALL_LIMIT, that entry is skipped
-; outright (SSC2_ADVANCE without ever calling its own ALLOC_*_SLOT) so
-; the rest of the schedule - and the boss's own eventual arrival -
-; isn't held hostage by one enemy that never got destroyed.
-SPAWN2_STALL_LIMIT EQU 60   ; ~8 real seconds (60 GAME_TICKs * 8 frames / 60fps) - generous, but bounded
+; round34-3 (real-hardware feedback: "Tick500あたりから100Tick以上敵が
+; 出てこない/Bigzumが一度も出てこない/ボスも999になっても出ない/やって
+; ることはStage1と全く同じ処理だぞ"): the previous round's own
+; SPAWN2_STALL_LIMIT safety valve was the actual bug, not a fix - it was
+; built to solve a problem that a DIFFERENT round34-2 change (removing
+; the ground-lane exclusion) already made moot, but its own 60-tick
+; timeout turned out far too short for the terrain-gated types (Zum/
+; BigZum/Etank - see their own TERRAIN_OK checks), whose own flat-ground
+; window can legitimately take longer than 60 ticks to cycle back around
+; as the track scrolls. Every BigZum entry landing on an unlucky terrain
+; window got silently force-skipped before its own condition ever had a
+; real chance to become true - "BigZumが一度も出てこない" exactly, and 2
+; adjacent BigZum entries (this schedule's own tick487/500) each burning
+; the full 60-tick timeout accounts for the reported ~100-tick dead
+; stretch around tick500 too (nothing else in the schedule could fire
+; either, since SPAWN2_NEXT_INDEX was stuck on those 2 in turn).
+;
+; Correct fix, and the literal answer to "同じ処理をしろ": SSC2_FIRE now
+; matches Stage1's own SSC_FIRE byte-for-byte in shape - SPAWN2_NEXT_
+; INDEX advances UNCONDITIONALLY, before dispatch, every single time an
+; entry comes due, exactly like Stage1's own `INC A:LD(SPAWN_NEXT_
+; INDEX),A:DEC A` idiom. A spawn that can't happen this instant (pool
+; full/terrain not flat) is simply DROPPED, not retried - the schedule
+; itself never waits on anything, so nothing can ever stall it, and
+; nothing later (down to the boss, the very last entry) can ever be held
+; hostage by an earlier one. No timeout, no stall counter, no separate
+; "force skip" path needed - it's the same one unconditional advance
+; every time. This is strictly simpler than the previous 2 rounds' own
+; retry-until-success design, not just a bugfix.
 SPAWN2_SCHEDULE_CHECK:
     LD A,(SPAWN2_NEXT_INDEX)
     CP SPAWN2_COUNT
@@ -4683,42 +4689,35 @@ SPAWN2_SCHEDULE_CHECK:
     LD HL,(GAME_TICK)
     OR A
     SBC HL,DE
-    JR NC,SSC2_DUE
-    XOR A : LD (SPAWN2_STALL_COUNT),A   ; not due yet - keep the stall counter clear
-    RET
-SSC2_DUE:
-    LD A,(SPAWN2_STALL_COUNT)
-    CP SPAWN2_STALL_LIMIT
-    JR NC,SSC2_FORCE_SKIP
-    INC A : LD (SPAWN2_STALL_COUNT),A
+    RET C
     JP SSC2_FIRE
-SSC2_FORCE_SKIP:
-    XOR A : LD (SPAWN2_STALL_COUNT),A
-    JP SSC2_ADVANCE
 
-; stage this firing's own pixel Y before dispatch (harmless for the 3
-; ground types, which never read S2_SPAWN_Y), then dispatch on the
-; (pre-increment) index itself - SSC2_ADVANCE (below) is what actually
-; moves SPAWN2_NEXT_INDEX forward, and only once the fired routine
-; reports success (JP-tails into it) - a routine that can't spawn this
-; tick (pool full/terrain not flat/ground-lane excluded) just RETs
-; instead, leaving the index alone so this same entry is retried next
-; GAME_TICK. The very last entry (boss) needs no CP at all - once
-; every earlier index has fired, SPAWN2_NEXT_INDEX can only be
-; SPAWN2_COUNT-1, so dispatch just jumps unconditionally to S2_BOSS_
-; SPAWN at the end of the CP chain below, same convention as Stage1's
-; own SSC_FIRE/BOSS_SPAWN (there a physical fallthrough since BOSS_
-; SPAWN sits right after the CP chain in that file; here an explicit
-; JP, since S2_BOSS_SPAWN lives elsewhere, inside UPDATE_BOSS_ALL's
-; own section).
+; unconditionally advances SPAWN2_NEXT_INDEX (same "INC, dispatch on the
+; OLD value" idiom as Stage1's own SSC_FIRE), stages this firing's own
+; pixel Y before dispatch (harmless for the 3 ground types, which never
+; read S2_SPAWN_Y), then dispatches on the pre-increment index. Whatever
+; ALLOC_*_SLOT/SPAWN_S2_* is dispatched to just RETs when it's done,
+; success or not - the index has already moved on regardless, so there's
+; nothing left for it to signal. The very last entry (boss) needs no CP
+; at all - once every earlier index has fired (dropped or not), SPAWN2_
+; NEXT_INDEX can only be SPAWN2_COUNT-1 here, so dispatch just jumps
+; unconditionally to S2_BOSS_SPAWN at the end of the CP chain below,
+; same convention as Stage1's own SSC_FIRE/BOSS_SPAWN (there a physical
+; fallthrough since BOSS_SPAWN sits right after the CP chain in that
+; file; here an explicit JP, since S2_BOSS_SPAWN lives elsewhere, inside
+; UPDATE_BOSS_ALL's own section).
 SSC2_FIRE:
     LD A,(SPAWN2_NEXT_INDEX)
+    INC A
+    LD (SPAWN2_NEXT_INDEX),A
+    DEC A
     LD H,0 : LD L,A
     LD DE,SPAWN2_Y_TABLE
     ADD HL,DE
     LD A,(HL)
     LD (S2_SPAWN_Y),A
     LD A,(SPAWN2_NEXT_INDEX)
+    DEC A
 ; SSC2_FIRE dispatch chain body (excludes the last/boss entry, jumped
 ; to unconditionally at the end of this chain instead - see above)
     CP 0   : JP Z,SPAWN_S2_ZACOII
@@ -4880,16 +4879,6 @@ SSC2_FIRE:
     ; BOSS_SPAWN happens to sit right after SSC_FIRE's own CP chain).
     JP S2_BOSS_SPAWN
 
-; shared "this firing succeeded, advance to the next schedule entry"
-; tail - every ALLOC_*_SLOT/SPAWN_S2_* routine above tails into this
-; via JP on its own success path (or CALLs it via SSC2_ADVANCE for the
-; 2 that still branch on Carry - see ALLOC_ENEMY_SLOT's own wrappers).
-SSC2_ADVANCE:
-    LD A,(SPAWN2_NEXT_INDEX)
-    INC A
-    LD (SPAWN2_NEXT_INDEX),A
-    RET
-
 SPAWN2_COUNT EQU 152
 
 SPAWN2_THRESHOLDS:
@@ -4979,14 +4968,13 @@ UEUA_LOOP:
 ; never polled - round34 ("ランダムスポーンは廃止 全てスケジュール
 ; に"). On entry: S2_SPAWN_Y = this firing's own pixel Y (row*8, staged
 ; by SSC2_FIRE), S2_SPAWN_VARIANT = 0(green)/1(red), staged by
-; whichever wrapper jumped here. On success tails into SSC2_ADVANCE; if
-; all 3 slots are busy this just RETs (this assembler has no SCF, so
-; unlike ALLOC_ZUM_SLOT/etc above there's no plain-RET-vs-Carry
-; distinction needed here at all - both paths simply either JP SSC2_
-; ADVANCE or RET, exactly like every other ALLOC_*_SLOT), leaving
-; SPAWN2_NEXT_INDEX untouched so SPAWN2_SCHEDULE_CHECK retries this
-; same entry next GAME_TICK - same "retry, don't skip" idea as TRY_
-; SPAWN_BULLET's own pool-of-3.
+; whichever wrapper jumped here. round34-3 ("Stage1と全く同じ処理をし
+; ろ"): SSC2_FIRE already advanced SPAWN2_NEXT_INDEX unconditionally
+; before dispatching here (see its own comment) - if all 3 slots happen
+; to be busy this just RETs having done nothing, exactly like Stage1's
+; own ENEMY1_CLAIM_ANY "drops the spawn (rolling back any partial
+; claim) if either pool is full" - a dropped ZacoII simply doesn't
+; happen this time, the schedule itself never waits on it.
 ALLOC_ENEMY_SLOT:
     LD HL,ENEMY_POOL
     LD B,ENEMY_SLOT_COUNT
@@ -4996,7 +4984,7 @@ AES_LOOP:
     JR Z,AES_FOUND
     LD DE,ENEMY_SLOT_SIZE : ADD HL,DE
     DJNZ AES_LOOP
-    RET             ; no free slot - retry next GAME_TICK
+    RET             ; no free slot - this spawn is simply dropped
 AES_FOUND:
     PUSH HL
     POP IX
@@ -5030,7 +5018,7 @@ AES_FOUND:
     JR Z,AES_DONE
     LD A,ENEMY_RED_HP : LD (IX+E_DX),A
 AES_DONE:
-    JP SSC2_ADVANCE
+    RET
 
 ; SSC2_FIRE dispatch targets for s2_zacoii/s2_zacoii_red - stage the
 ; variant flag ALLOC_ENEMY_SLOT reads, then tail-jump into it (not
@@ -5425,12 +5413,14 @@ ZTO_FAIL:
 ; "赤ZakoIIが10体で終わったら" was purely about pacing the old random-
 ; timer spawner, superseded by the schedule's own explicit ordering):
 ; the terrain is currently flat at the spawn column (ZUM_TERRAIN_OK),
-; and a slot is free (pool of ZUM_SLOT_COUNT=2). Called only from
-; SSC2_FIRE - any failure leaves SPAWN2_NEXT_INDEX untouched, so
-; SPAWN2_SCHEDULE_CHECK just retries this same entry next GAME_TICK -
-; the terrain condition is transient (the track scrolls continuously)
-; so retrying every tick catches the next flat window as soon as it
-; appears, same idea the old polling-every-frame used to rely on.
+; and a slot is free (pool of ZUM_SLOT_COUNT=2). round34-3 ("Stage1と
+; 全く同じ処理をしろ"): SSC2_FIRE already advanced SPAWN2_NEXT_INDEX
+; unconditionally before dispatching here - any failure below (terrain
+; not flat right now, or both slots busy) just drops this one spawn
+; attempt, exactly like Stage1's own SPAWN_SIMPLE. A round34-2 attempt
+; at retrying instead of dropping (with a bounded timeout, so it
+; couldn't stall forever) turned out to actively cause the exact bug
+; being fixed here - see SPAWN2_SCHEDULE_CHECK's own comment for why.
 ;
 ; NOT gated on tank distance any more - "しかしスポーンキャンセルでは
 ; 自機が右端に居続けると永遠にスポーンできない 自機が右端にいたら
@@ -5474,10 +5464,10 @@ AZS_FOUND:
     LD A,(TANK_X)
     CP B
     JR NC,AZS_RESOLVE_PUSH   ; TANK_X >= target - resolve overlap
-    JP SSC2_ADVANCE          ; TANK_X already < target - nothing to resolve
+    RET                      ; TANK_X already < target - nothing to resolve
 AZS_RESOLVE_PUSH:
     LD A,B : LD (TANK_X),A
-    JP SSC2_ADVANCE
+    RET
 
 ; IX = slot base. E_ACT=1: probes the terrain under its own column and
 ; eases Z_Y toward the target tier, then advances Z_X - flat ZUM_SPEED_
@@ -6121,9 +6111,14 @@ BZTO_FAIL:
 ; anyway per explicit instruction; if this shows up as visible garbled
 ; sprite art, the real fix is giving Etank its own dedicated pattern
 ; codes instead of borrowing BigZum's, not re-adding this exclusion.
-; Called only from SSC2_FIRE - on success tails into SSC2_ADVANCE; any
-; failure just returns, leaving SPAWN2_NEXT_INDEX untouched so SPAWN2_
-; SCHEDULE_CHECK retries this same entry next GAME_TICK.
+; round34-3 ("Stage1と全く同じ処理をしろ"): SSC2_FIRE already advanced
+; SPAWN2_NEXT_INDEX unconditionally before dispatching here - any
+; failure below (terrain not flat right now, or the one slot busy)
+; just drops this spawn attempt, exactly like Stage1's own SPAWN_
+; SIMPLE. See SPAWN2_SCHEDULE_CHECK's own comment for why the previous
+; round's retry-with-timeout design was itself the actual bug
+; ("Bigzumが一度も出てこない" - its own terrain window legitimately
+; took longer than that timeout to come back around).
 ALLOC_BIGZUM_SLOT:
     CALL BIGZUM_TERRAIN_OK
     OR A
@@ -6170,10 +6165,10 @@ ABZS_FOUND:
     LD A,(TANK_X)
     CP B
     JR NC,ABZS_RESOLVE_PUSH
-    JP SSC2_ADVANCE
+    RET
 ABZS_RESOLVE_PUSH:
     LD A,B : LD (TANK_X),A
-    JP SSC2_ADVANCE
+    RET
 
 ; IX = slot base. ACT=2: same drift-then-hide explosion shape as
 ; UOZ_EXPLODING (reuses EXPLOSION_DURATION/PATTERN/COLOR/EXPLODE_DIR),
@@ -7085,12 +7080,15 @@ UFLAU_LOOP:
 ; airborne - no terrain gate at all, just a free slot. NOT gated
 ; against BigZum/Etank/Zum any more - "FlyerとBigZum、Flyerと
 ; Etankは同時存在して良い" (was excluded against BigZum bidirectionally
-; before; both halves removed). Called only from SSC2_FIRE - on success
-; tails into SSC2_ADVANCE; a full pool just returns, leaving SPAWN2_
-; NEXT_INDEX untouched so SPAWN2_SCHEDULE_CHECK retries this same entry
-; next GAME_TICK. round34: Y used to be PICK_FLYER_SPAWN_Y's own random
-; roll (now gone, see FLYER_SPAWNX's own comment) - comes straight from
-; S2_SPAWN_Y (the schedule's own row*8), staged by SSC2_FIRE.
+; before; both halves removed). Called only from SSC2_FIRE, which has
+; already advanced SPAWN2_NEXT_INDEX unconditionally BEFORE dispatching
+; here (round34-3, matching Stage1's real SSC_FIRE: "やってることは
+; Stage1と全く同じ処理だぞ") - a full pool just returns and the spawn is
+; simply dropped, exactly like Stage1's ENEMY1_CLAIM_ANY does when its
+; own pools are full. No retry, no stall counter. round34: Y used to be
+; PICK_FLYER_SPAWN_Y's own random roll (now gone, see FLYER_SPAWNX's own
+; comment) - comes straight from S2_SPAWN_Y (the schedule's own row*8),
+; staged by SSC2_FIRE.
 ALLOC_FLYER_SLOT:
     LD HL,FLYER_POOL
     LD B,FLYER_SLOT_COUNT
@@ -7115,7 +7113,7 @@ AFLS_FOUND:
     LD (IX+9),A
     LD (IX+10),A
     LD A,FLYER_HP_INIT : LD (IX+7),A
-    JP SSC2_ADVANCE
+    RET
 
 ; IX = slot base. ACT=2: same drift-then-hide explosion shape as every
 ; other exploding entity here. ACT=1: dispatches on PHASE(+8) - see
@@ -7477,9 +7475,17 @@ ETO_FAIL:
 ; per explicit instruction. Only remaining gates: the terrain-length
 ; check below, and a free slot - same shape as ALLOC_ZUM_SLOT/ALLOC_
 ; BIGZUM_SLOT, plus the same instant spawn-time overlap resolution.
-; Called only from SSC2_FIRE - on success tails into SSC2_ADVANCE; any
-; failure just returns, leaving SPAWN2_NEXT_INDEX untouched so SPAWN2_
-; SCHEDULE_CHECK retries this same entry next GAME_TICK.
+; Called only from SSC2_FIRE, which has already advanced SPAWN2_NEXT_
+; INDEX unconditionally BEFORE dispatching here (round34-3, matching
+; Stage1's real SSC_FIRE: "やってることはStage1と全く同じ処理だぞ") -
+; any failure here (bad terrain, full pool) just returns and the spawn
+; is simply dropped, no retry, no stall counter. This also fixes the
+; old retry-with-timeout design's own worst failure mode: a flat-ground
+; window that legitimately takes >60 ticks to cycle back around used to
+; force-skip the spawn AND stall every later schedule entry behind it
+; for up to 60 ticks each (the "Tick500あたりから100Tick以上敵が
+; 出てこない" dead zone) - now a blocked entry just drops instantly and
+; the schedule moves straight on to the next one.
 ALLOC_ETANK_SLOT:
     CALL ETANK_TERRAIN_OK
     OR A
@@ -7519,10 +7525,10 @@ AETS_FOUND:
     LD A,(TANK_X)
     CP B
     JR NC,AETS_RESOLVE_PUSH
-    JP SSC2_ADVANCE
+    RET
 AETS_RESOLVE_PUSH:
     LD A,B : LD (TANK_X),A
-    JP SSC2_ADVANCE
+    RET
 
 ; IX = slot base. ACT=1: fixed Y (never re-probed), advances X left at
 ; a flat ETANK_SPEED(2px/frame - "速度は2") every frame, straight-line,
@@ -7860,10 +7866,11 @@ UPDATE_BOSS_ALL:
 ; the one-shot spawn itself - SSC2_FIRE's own dispatch chain falls
 ; through to this directly once every earlier schedule entry has
 ; fired (same convention as Stage1's own SSC_FIRE/BOSS_SPAWN, src/
-; CYBER SHMUP.asm), so unlike every ALLOC_*_SLOT above this never
-; fails/retries - always succeeds, tailing into SSC2_ADVANCE mainly to
-; keep SPAWN2_NEXT_INDEX consistent (this is the schedule's own last
-; entry either way).
+; CYBER SHMUP.asm). round34-3: SSC2_FIRE already advanced SPAWN2_
+; NEXT_INDEX unconditionally BEFORE dispatching here (it's the last
+; entry either way), so unlike Stage1's own file this has no separate
+; advance call to make at all - no SSC2_ADVANCE routine exists any
+; more, the increment happens once, up front, in SSC2_FIRE itself.
 S2_BOSS_SPAWN:
     LD HL,SASAPI_QUADS : CALL LOAD_SASAPI_PATTERNS   ; DIR=0 facing below
     ; homing missile's own 5 facings, loaded once here (not at INIT) into
@@ -7898,7 +7905,6 @@ S2_BOSS_SPAWN:
     XOR A : LD (THUNDER_ELIGIBLE),A   ; not eligible until the first pose ends - see UBAP_END
     XOR A : LD (BOSS_POSE_COUNT),A
     XOR A : LD (SBEAM_ACT),A
-    CALL SSC2_ADVANCE
     JP UBA_DRAW
 UBA_ACTIVE:
     LD A,(BOSS_PHASE)

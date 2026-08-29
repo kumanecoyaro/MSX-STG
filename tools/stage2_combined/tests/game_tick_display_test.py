@@ -14,9 +14,9 @@ GAME_TICK reaches/exceeds 1000, instead of wrapping MOD 1000 back to
 "000" and counting up again - which is what "また0から始まってしまう"
 (looks like it started over from 0) actually was: not a real restart of
 anything (SPAWN2_NEXT_INDEX only ever moves forward, never resets), just
-a genuinely confusing display artifact once the schedule's own worst-
-case drift (see SPAWN2_STALL_LIMIT's own comment) pushed the real tick
-past 1000 before the boss even spawned.
+a genuinely confusing display artifact that could occur once GAME_TICK
+itself simply keeps counting past 1000 (it never stops, boss or no
+boss - see the real GAME_TICK increment's own comment).
 """
 import os
 import sys

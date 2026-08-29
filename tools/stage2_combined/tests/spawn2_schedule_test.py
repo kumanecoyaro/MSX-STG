@@ -5,6 +5,21 @@ SHMUP.asm's own SPAWN_THRESHOLDS/SPAWN_NEXT_INDEX/SSC_FIRE/SPAWN_
 SCHEDULE_CHECK), replacing what enemy_spawn_stop_test.py used to cover
 for the old interval-timer/ENEMY_SPAWN_STOP_TICK mechanism (deleted
 this round - that whole mechanism is gone).
+
+round34-3 (real-hardware feedback: "Tick500あたりから100Tick以上敵が
+出てこない/Bigzumが一度も出てこない/ボスも999になっても出ない/やって
+ることはStage1と全く同じ処理だぞ"): the retry-with-SPAWN2_STALL_LIMIT
+design this file used to cover (round34-2) was itself the bug - a
+blocked entry used to sit and retry the SAME index for up to 60 ticks
+before being force-skipped, which is both far too short for the
+terrain-gated types' own legitimate wait (silently dropping BigZum
+almost every time) and completely unlike Stage1's real SSC_FIRE. That
+whole stall-limit mechanism (SPAWN2_STALL_COUNT/SPAWN2_STALL_LIMIT) is
+gone now, and with it every symbol/test below that referenced it.
+SSC2_FIRE instead now matches Stage1's own SSC_FIRE byte-for-byte in
+shape: SPAWN2_NEXT_INDEX advances UNCONDITIONALLY, before dispatch,
+every single time an entry comes due; a spawn that can't happen right
+then (pool full / terrain not flat) is simply DROPPED, never retried.
 """
 import os
 import sys
@@ -23,8 +38,6 @@ GAME_TICK = sym["GAME_TICK"]
 SPAWN2_NEXT_INDEX = sym["SPAWN2_NEXT_INDEX"]
 SPAWN2_COUNT = sym["SPAWN2_COUNT"]
 SPAWN2_THRESHOLDS = sym["SPAWN2_THRESHOLDS"]
-SPAWN2_STALL_COUNT = sym["SPAWN2_STALL_COUNT"]
-SPAWN2_STALL_LIMIT = sym["SPAWN2_STALL_LIMIT"]
 ENEMY_POOL = sym["ENEMY_POOL"]
 ENEMY_SLOT_SIZE = sym["ENEMY_SLOT_SIZE"]
 ENEMY_SLOT_COUNT = sym["ENEMY_SLOT_COUNT"]
@@ -78,66 +91,53 @@ check("the spawned ZacoII lands at S2_SPAWN_Y (this entry's own row*8, staged be
       cpu.mem[ENEMY_POOL + E_Y] == cpu.mem[sym["S2_SPAWN_Y"]])
 
 # ---------------------------------------------------------------------
-# Test 4: blocked entry does NOT advance the index - retried next
-# GAME_TICK instead of being skipped. Fill the ENEMY_POOL first so
-# index0's own ALLOC_ENEMY_SLOT has nowhere to spawn.
+# Test 4 (round34-3, replaces the old "blocked entry retries" test):
+# a blocked entry (pool full) now advances SPAWN2_NEXT_INDEX anyway -
+# the spawn is dropped, not retried, exactly like Stage1's own
+# ENEMY1_CLAIM_ANY when its pools are full. This is the literal fix for
+# "Bigzumが一度も出てこない"/"Tick500あたりから100Tick以上敵が出てこない":
+# a blocked entry must never hold up anything behind it.
 # ---------------------------------------------------------------------
 cpu = fresh_cpu()
 for i in range(ENEMY_SLOT_COUNT):
     cpu.mem[ENEMY_POOL + i * ENEMY_SLOT_SIZE + E_ACT] = 1
 set_game_tick(cpu, t0)
 call_routine(cpu, "SPAWN2_SCHEDULE_CHECK")
-check("a blocked entry (pool full) does NOT advance SPAWN2_NEXT_INDEX",
-      cpu.mem[SPAWN2_NEXT_INDEX] == 0)
-
-# free a slot and retry - same index should now succeed
-cpu.mem[ENEMY_POOL + 0 * ENEMY_SLOT_SIZE + E_ACT] = 0
-call_routine(cpu, "SPAWN2_SCHEDULE_CHECK")
-check("retrying the same (still-due) entry once the pool frees up now succeeds",
+check("a blocked entry (pool full) advances SPAWN2_NEXT_INDEX anyway - dropped, not retried",
       cpu.mem[SPAWN2_NEXT_INDEX] == 1)
-
-# ---------------------------------------------------------------------
-# Test 5: the SPAWN2_STALL_LIMIT safety valve - found necessary this
-# round when a real no-player-fire-input playthrough left a ground
-# enemy permanently active, which would otherwise block every later
-# entry (including the boss, the very last one) forever. If an entry
-# stays due-but-blocked for SPAWN2_STALL_LIMIT consecutive GAME_TICKs,
-# it's force-skipped instead (SSC2_ADVANCE without ever spawning it).
-# ---------------------------------------------------------------------
-cpu = fresh_cpu()
-for i in range(ENEMY_SLOT_COUNT):
-    cpu.mem[ENEMY_POOL + i * ENEMY_SLOT_SIZE + E_ACT] = 1
-tick = t0
-for _ in range(SPAWN2_STALL_LIMIT):
-    set_game_tick(cpu, tick)
-    call_routine(cpu, "SPAWN2_SCHEDULE_CHECK")
-    tick += 1
-check(f"stays stuck at index0 for {SPAWN2_STALL_LIMIT} consecutive due-but-blocked GAME_TICKs",
-      cpu.mem[SPAWN2_NEXT_INDEX] == 0)
-set_game_tick(cpu, tick)
-call_routine(cpu, "SPAWN2_SCHEDULE_CHECK")
-check(f"force-skips (advances without spawning) once blocked for SPAWN2_STALL_LIMIT"
-      f"({SPAWN2_STALL_LIMIT}) GAME_TICKs in a row",
-      cpu.mem[SPAWN2_NEXT_INDEX] == 1)
-check("the force-skipped entry never actually spawned (pool still shows only the original 3 stuck slots)",
+check("the dropped entry never actually spawned (pool still shows only the original full slots)",
       all(cpu.mem[ENEMY_POOL + i * ENEMY_SLOT_SIZE + E_ACT] == 1 for i in range(ENEMY_SLOT_COUNT)))
-check("SPAWN2_STALL_COUNT resets to 0 after the force-skip",
-      cpu.mem[SPAWN2_STALL_COUNT] == 0)
 
-# a still-due entry that succeeds well within the limit must NOT carry
-# a stale stall count into the next entry.
+# ---------------------------------------------------------------------
+# Test 5 (round34-3, replaces the old SPAWN2_STALL_LIMIT test): with
+# every pool permanently full (so NOTHING can ever actually spawn),
+# jump GAME_TICK far past the whole schedule and call
+# SPAWN2_SCHEDULE_CHECK repeatedly (each call = one more due entry
+# getting checked/dispatched, same as one real GAME_TICK step) - every
+# single call must advance the index by exactly 1, with zero retries
+# and zero stalls, all the way to SPAWN2_COUNT. This is the direct
+# regression guard for "Tick500あたりから100Tick以上敵が出てこない": no
+# entry may ever cost more than one check to resolve, however many
+# entries in a row are blocked.
+# ---------------------------------------------------------------------
 cpu = fresh_cpu()
-set_game_tick(cpu, t0)
-for _ in range(5):
-    call_routine(cpu, "SPAWN2_SCHEDULE_CHECK")  # a few idle calls at the same not-yet-advanced tick
-check("SPAWN2_STALL_COUNT resets to 0 immediately after an ordinary successful fire too",
-      cpu.mem[SPAWN2_STALL_COUNT] == 0)
+for i in range(ENEMY_SLOT_COUNT):
+    cpu.mem[ENEMY_POOL + i * ENEMY_SLOT_SIZE + E_ACT] = 1
+set_game_tick(cpu, threshold(SPAWN2_COUNT - 1))
+for i in range(SPAWN2_COUNT):
+    call_routine(cpu, "SPAWN2_SCHEDULE_CHECK")
+    check(f"call {i+1}/{SPAWN2_COUNT} with every pool full advances SPAWN2_NEXT_INDEX to {i+1} "
+          f"(no stall, no retry)",
+          cpu.mem[SPAWN2_NEXT_INDEX] == i + 1)
 
 # ---------------------------------------------------------------------
 # Test 6: the boss - the very last entry (index SPAWN2_COUNT-1) needs
 # no CP of its own in SSC2_FIRE's dispatch chain; once every earlier
 # index has fired, dispatch jumps unconditionally to S2_BOSS_SPAWN
-# (same convention as Stage1's own SSC_FIRE/BOSS_SPAWN).
+# (same convention as Stage1's own SSC_FIRE/BOSS_SPAWN). SSC2_FIRE
+# advances SPAWN2_NEXT_INDEX before this dispatch too, same as every
+# other entry - no separate advance call happens inside S2_BOSS_SPAWN
+# itself any more (round34-3).
 # ---------------------------------------------------------------------
 cpu = fresh_cpu()
 cpu.mem[SPAWN2_NEXT_INDEX] = SPAWN2_COUNT - 1

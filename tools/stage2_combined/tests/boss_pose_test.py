@@ -196,13 +196,13 @@ pose_exited = False
 # BOSS_SPAWN_TICK*8 to reach spawn (GAME_TICK boots at real 0 again -
 # "Tickスキップを一旦戻して０に") + enough margin for a full patrol
 # cycle (left+right, ~192 frames) and the full pose duration
-# (BOSS_POSE_TICKS*8) afterward. round34 ("全てスケジュールに"): with
-# no player fire input at all (this test's own worst-case config), a
-# ground enemy can go permanently un-destroyed and stall later schedule
-# entries up to SPAWN2_STALL_LIMIT GAME_TICKs each before being skipped
-# - verified empirically (see boss_test.py's own Test12) this can push
-# the real spawn out to ~frame 10727 for this specific schedule's own
-# content, so the margin here is generous rather than tight.
+# (BOSS_POSE_TICKS*8) afterward. round34-3 ("全てスケジュールに", then
+# "Stage1と全く同じ処理だぞ"): with no player fire input at all (this
+# test's own worst-case config), a ground enemy can still go permanently
+# un-destroyed, but that no longer stalls anything downstream - a
+# blocked spawn is simply dropped (unconditional-advance SSC2_FIRE), so
+# the boss reliably spawns right at frame~7959 (tick995) - verified
+# empirically (see boss_test.py's own Test12) - well inside this margin.
 sweep_frames = 20000 + sym["BOSS_POSE_TICKS"] * 8 + 200
 for f in range(sweep_frames):
     step_frame(cpu)

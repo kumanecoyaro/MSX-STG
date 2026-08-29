@@ -46,10 +46,11 @@ ETANK_POOL = sym["ETANK_POOL"]
 # Worst case: no player fire input at all, same config every other
 # boss end-to-end test in this suite already uses for this exact
 # reason - nothing on screen ever gets shot down, so every pool has to
-# clear on its own (forced retreat for BigZum, natural lifecycle/
-# schedule margin for everything else) or via the SPAWN2_STALL_LIMIT
-# safety valve skipping a spawn outright rather than letting it block
-# forever - see SPAWN2_SCHEDULE_CHECK's own comment.
+# clear on its own (forced retreat for BigZum, natural lifecycle for
+# everything else) or the spawn is simply dropped rather than blocking
+# anything (round34-3's own unconditional-advance SSC2_FIRE - see
+# SPAWN2_SCHEDULE_CHECK's own comment; the old SPAWN2_STALL_LIMIT valve
+# this comment used to describe is gone).
 cpu = fresh_cpu()
 cpu.sim_dir = 0
 cpu.sim_trig_a = False
@@ -57,9 +58,9 @@ cpu.sim_trig_b = False
 
 boss_spawn_frame = None
 prev_act = 0
-# generous upper bound - verified empirically elsewhere in this suite
-# (see boss_test.py's own Test12) that the worst case for this specific
-# schedule's own content is ~frame 10727.
+# generous upper bound - round34-3 empirically spawns the boss right at
+# its own scheduled tick995 (frame~7959, GAME_TICK advancing once per 8
+# frames plus INIT's own boot overhead), far under this budget.
 for f in range(20000):
     step_frame(cpu)
     if cpu.mem[BOSS_ACT] == 1 and prev_act == 0:

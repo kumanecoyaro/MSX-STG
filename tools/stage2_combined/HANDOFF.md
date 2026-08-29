@@ -4300,3 +4300,133 @@ Thunder activity) confirming it survives completely untouched.
 ### ビルド・送付
 
 - Stage2テストROMのみ再ビルド・送付(①の方針転換によりComb ROMは今回送付せず)。
+
+## Round 34-3: スポーンディスパッチをStage1のSSC_FIREと完全に同一の構造(無条件advance・失敗時drop)に書き換え
+
+- User instruction (verbatim): "無茶苦茶だな まずTick500あたりから100Tick以上敵が出てこない
+  で、Bigzumが一度も出てこない ボスも999になっても出ない 以前の1300あたりで変わってない
+  やってることはStage1と全く同じ処理だぞ"
+  - Round34-2で送付したROM(排他制御削除・GAME_TICK表示クランプ後のもの)を実機で
+    試したユーザーからのフィードバック。4点の具体的な症状報告と、「Stage1と全く同じ
+    処理をしろ」という明確な設計方針の指示。
+
+### 根本原因の特定
+
+- Round34-2で追加した`SPAWN2_STALL_LIMIT=60`(達成条件がブロックされ続けた場合、
+  60 GAME_TICK後に強制スキップする安全弁)自体が今回の4症状すべての真因だった。
+  この仕組みは「retry-until-success」方式(スポーンがブロックされた場合、
+  `SPAWN2_NEXT_INDEX`を進めずに同じエントリを次のGAME_TICKで再試行し続け、
+  60Tick経っても成功しなければ強制的にスキップする)で、Round34-2で削除した
+  地上レーン排他制御が引き起こしていた「無期限ブロック」問題を解決するために
+  導入したものだった。しかし地形の平坦チェック(`ZUM_TERRAIN_OK`/
+  `BIGZUM_TERRAIN_OK`/`ETANK_TERRAIN_OK`)は、スクロールする地形トラックが
+  一周してちょうど良い平坦区間が巡ってくるまで、60Tick(480フレーム、
+  実測約8秒)を優に超えて待たされることが普通にあり得る、という点を見落として
+  いた。この結果:
+  - BigZumのスケジュールエントリ(特にtick487とtick500の隣接する2件)が、
+    それぞれ60Tickの猶予いっぱいまで「ブロックされたまま待機→強制スキップ」を
+    繰り返し、実際には一度もまともに条件が成立するチャンスを与えられないまま
+    毎回スキップされていた → "Bigzumが一度も出てこない"
+  - この2件が合計で約120Tickを浪費する間、`SPAWN2_NEXT_INDEX`はこの2件の
+    どちらかに固定されたままなので、その後ろに控えている他の全エントリ
+    (ZacoII等)も一切発火できなかった → "Tick500あたりから100Tick以上
+    敵が出てこない"
+  - 同様の停滞がスケジュール全体で複数回発生し、蓄積した結果、ボスの発火
+    (本来tick995)が大幅に後ろにずれ込んでいた → "ボスも999になっても出ない
+    /以前の1300あたりで変わってない"
+  - ユーザーの"やってることはStage1と全く同じ処理だぞ"という指摘は文字通り
+    正しかった: `src/CYBER SHMUP.asm`の実際の`SSC_FIRE`は、こうした
+    retry-until-success方式では一切なく、`SPAWN_NEXT_INDEX`を**毎回無条件に
+    先に進めてから**ディスパッチする(`LD A,(SPAWN_NEXT_INDEX):INC A:
+    LD(SPAWN_NEXT_INDEX),A:DEC A`というイディオムで、INCで実際に格納する値を
+    先に進め、DECで戻した値をディスパッチ用に使う)。スポーンできない場合
+    (プール満杯等)は`ENEMY1_CLAIM_ANY`のようなルーチンが単に「そのスポーンを
+    諦める(部分的に確保していれば巻き戻す)」だけで、リトライも待機も一切
+    しない。唯一の例外は`SSC_BUSY_E2`というEnemy2専用の事前チェックのみで、
+    これは`SSC_FIRE`自体の無条件advanceより前に置かれた特別扱い。今回のStage2
+    実装(Round34/34-2)は、この「無条件advance・失敗時drop」という核心部分を
+    間違えて「成功するまで同じインデックスをリトライ」という真逆の設計に
+    してしまっていた。
+
+### 修正内容
+
+- `SPAWN2_SCHEDULE_CHECK`/`SSC2_FIRE`をStage1の`SPAWN_SCHEDULE_CHECK`/
+  `SSC_FIRE`と完全に同型に書き換え:
+  - `SPAWN2_SCHEDULE_CHECK`は16-bit-safeなtick比較(`SBC HL,DE`)のみを行い、
+    達成していれば`JP SSC2_FIRE`。
+  - `SSC2_FIRE`は`SPAWN2_NEXT_INDEX`を`INC A:LD(...),A:DEC A`で無条件に
+    先へ進めてから(Stage1と同一イディオム)、この回のY座標を`S2_SPAWN_Y`に
+    ステージングし、旧インデックス(pre-increment)で152エントリのCP連鎖に
+    ディスパッチ、最後は`JP S2_BOSS_SPAWN`で締める。
+  - `SPAWN2_STALL_LIMIT`のEQUと、それを使っていた`SSC2_DUE`/`SSC2_FORCE_SKIP`
+    分岐、`SSC2_ADVANCE`ルーチン本体を全て削除。
+- `ALLOC_ENEMY_SLOT`(ZacoII)/`ALLOC_ZUM_SLOT`/`ALLOC_BIGZUM_SLOT`/
+  `ALLOC_FLYER_SLOT`/`ALLOC_ETANK_SLOT`: 成功時の末尾を`JP SSC2_ADVANCE`から
+  単純な`RET`に変更(呼び出し元の`SSC2_FIRE`が既に無条件advance済みのため、
+  もはや呼び出す必要がない)。失敗時のパス(プール満杯・地形不適合)は
+  元々`RET`のみだったので変更不要 - Stage1の"drops the spawn"に相当する
+  挙動に自然と一致していた。
+- `S2_BOSS_SPAWN`: 末尾にあった`CALL SSC2_ADVANCE`を削除(こちらも
+  `SSC2_FIRE`が既に無条件advance済みのため不要。ボスはスケジュール最後の
+  エントリなので、advance後の`SPAWN2_NEXT_INDEX`は`SPAWN2_COUNT`となり、
+  以後`SPAWN2_SCHEDULE_CHECK`は恒久的にno-opになる)。
+- Round34-2で追加した`SPAWN2_STALL_COUNT`(RAM `0F21Fh`、旧
+  `BIGZUM_SPAWN_TIMER`を再利用していたバイト)の初期化コード(`INIT`内、
+  BigZumプールゼロクリアループの後)を削除。EQU宣言自体は「今後何にも
+  再利用されていない未使用バイト」であることを明記するコメントに置き換えて
+  残した(アドレス自体を欠番にする必要はないため)。
+
+### 検証(エミュレータによる実測)
+
+- スケジュールJSON自体のtick間隔を実測: 隣接エントリ間の最大ギャップは
+  23Tick(tick464→487、ちょうど問題のBigZum直前)であり、スケジュール
+  データ自体には100Tickを超えるような不自然な間隔は存在しないことを確認
+  (=旧stall-limit機構が生み出していた見かけ上の遅延であって、スケジュール
+  設計自体の問題ではなかったことの裏付け)。
+- 自機が一切発砲しない最悪ケースのフルプレイスルーをエミュレータで実行し、
+  以下を確認:
+  - BigZumが実際にスポーンする(tick487で1回。以降950到達まで
+    `BIGZUM_RETREAT_TICK`で強制退避しないため、`BIGZUM_SLOT_COUNT=1`の
+    構造上、次のBigZumエントリは既存の1体が生き続ける間はブロックされて
+    drop される - これはBug ではなく「BigZumは1体のみ」という仕様通りの
+    挙動であり、"一度も出てこない"というバグ報告は完全に解消)。
+  - スポーンイベント間の最大ギャップは53Tick(tick777→830付近)で、
+    以前報告された"tick500あたりから100Tick以上"という規模の空白は
+    完全に解消。
+  - ボスは正確にtick995(frame=7959)でスポーンし、以前報告された
+    "tick1300程度"という遅延は完全に解消。プレイヤーが最も撃たない
+    ケースでも、Zum/BigZum/Flyer/Etankの4プールは全てボススポーン時点で
+    空(`boss_vram_safety_test.py`で確認、VRAM共有の安全性も引き続き
+    保たれている)。
+
+### テストの更新
+
+- `spawn2_schedule_test.py`: 旧stall-limit方式(リトライ・強制スキップ)を
+  検証していたTest4/5を全面的に書き換え。新Test4は「プール満杯でも
+  `SPAWN2_NEXT_INDEX`は即座に進む(dropされるだけでリトライしない)」ことを
+  検証。新Test5は「全プール満杯の状態で152エントリ全てを1呼び出し=1エントリ
+  ずつ、一切stallせずに歩き切れる」ことを検証(1呼び出しごとに
+  `SPAWN2_NEXT_INDEX`がちょうど1ずつ進むことを152回分アサート)。
+- `boss_vram_safety_test.py`/`boss_test.py`/`boss_pose_test.py`/
+  `boss_collision_test.py`/`bulletu_boss_bg_test.py`/`horming_test.py`/
+  `game_tick_display_test.py`: いずれも旧`SPAWN2_STALL_LIMIT`機構や
+  「最悪ケースでボススポーンがframe~10727まで遅延しうる」という前提に
+  言及していたコメントを、新設計の実測値(frame~7959、tick995)に基づく
+  記述に更新(アサーション自体のロジックは元々stall機構の有無に依存しない
+  作りだったため、コメントのみの修正で済んだ箇所がほとんど)。
+- `boss_test.py`のTest12で新規に1件の失敗を検出・修正: `expected_frame =
+  BOSS_SPAWN_TICK * 8`という下限チェックが、テストのフレームループ自体が
+  0-indexed(`f`は「(f+1)回目のstep_frame呼び出し」を表す)であることを
+  考慮しておらず、-1のオフセットが必要だった。旧設計では常にこの下限を
+  余裕を持って超えていたため表面化していなかったバグ(off-by-one)で、
+  今回のRound34-3の修正によりボスが「理論上最速のタイミングちょうど」で
+  スポーンするようになったことで初めて顕在化した。ASM側の不具合ではなく
+  テスト側の境界値の取り方の問題と判断し、コメントを添えて修正。
+- 全回帰: **921 passed, 0 failed**(Round34-2時点の774から147件増 -
+  `spawn2_schedule_test.py`のTest5を152件のループアサートに拡張した分が
+  大半)。
+
+### ビルド・送付
+
+- Stage2テストROMのみ再ビルド・送付(引き続きComb ROMは指示があるまで送付
+  しない方針)。

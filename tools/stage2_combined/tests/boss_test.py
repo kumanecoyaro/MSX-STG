@@ -153,17 +153,24 @@ check("returning to the right edge enters the attack pose (BOSS_PHASE=1) instead
       cpu.mem[BOSS_PHASE] == 1)
 
 # Test 12: real end-to-end - the boss can never spawn before GAME_TICK
-# reaches BOSS_SPAWN_TICK (every earlier schedule entry, including the
-# last non-boss one at tick979, has to fire or stall-skip first - see
-# SPAWN2_SCHEDULE_CHECK's own comment - so this lower bound still holds
-# exactly). round34 changed the UPPER bound though: with no player fire
-# input at all (this test's own worst-case config, unchanged from
-# before), a ground enemy can go permanently un-destroyed and stall
-# later entries up to SPAWN2_STALL_LIMIT GAME_TICKs each before being
-# skipped - verified empirically this can push the real spawn out to
-# ~frame 10727 (tick~1341) in the worst case for this specific
-# schedule's own content, well within a generous upper bound.
-expected_frame = BOSS_SPAWN_TICK * 8
+# reaches BOSS_SPAWN_TICK (SSC2_FIRE advances SPAWN2_NEXT_INDEX through
+# every earlier schedule entry unconditionally, one per due GAME_TICK -
+# see SPAWN2_SCHEDULE_CHECK's own comment - so this lower bound still
+# holds exactly). round34-3: with no player fire input at all (this
+# test's own worst-case config, unchanged from before), a ground enemy
+# can still go permanently un-destroyed, but that no longer delays
+# anything downstream any more - a blocked spawn is simply dropped, not
+# retried - so the boss reliably spawns right at its own scheduled
+# tick995 (frame~7959), verified empirically, well within this budget.
+# -1: this loop's own `f` is 0-indexed (the Nth step_frame call sets
+# f=N-1), so "GAME_TICK reaches BOSS_SPAWN_TICK on the (BOSS_SPAWN_TICK*8)th
+# call" observes as f==BOSS_SPAWN_TICK*8-1, not BOSS_SPAWN_TICK*8 itself.
+# round34-3 exposed this: the boss now spawns on the very same step_frame
+# call GAME_TICK first reaches its own threshold (verified directly - no
+# ASM-side delay at all any more), so this off-by-one, previously masked
+# by the old design's own multi-frame spawn delay, now has to be accounted
+# for explicitly instead of accidentally passing.
+expected_frame = BOSS_SPAWN_TICK * 8 - 1
 UPPER_BOUND_FRAME = 20000
 cpu = fresh_cpu()
 cpu.sim_dir = 0
@@ -178,7 +185,8 @@ for f in range(UPPER_BOUND_FRAME):
 check(f"real MAINLOOP: boss never spawns before frame {expected_frame} (its own earliest possible tick)",
       spawn_frame is not None and spawn_frame >= expected_frame)
 check(f"real MAINLOOP: boss does eventually spawn, even with no player fire input at all "
-      f"(within {UPPER_BOUND_FRAME} frames - the SPAWN2_STALL_LIMIT safety valve guarantees this)",
+      f"(within {UPPER_BOUND_FRAME} frames - unconditional-advance SSC2_FIRE guarantees this, "
+      f"since nothing can ever block the schedule from reaching its own last entry)",
       spawn_frame is not None)
 print(f"spawn_frame={spawn_frame}")
 
