@@ -1098,20 +1098,28 @@
         cv.style.height = cssSize + "px";
         var pctx = cv.getContext("2d");
         pctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-        // round33 bugfix ("下部の選択用アイコンがおかしい 16x16のキャラが大きく
-        // 32x32やタンクなどの大きいキャラが半分のサイズ"): this used to be
-        // `glyph.size === 16 ? 1 : 5` - a leftover from when Stage1's own
-        // roster only ever mixed size16 (most enemies) with size8 (enemy3's
-        // BG tile), where a bigger pad(5) on the smaller-native tile kept it
-        // from looking oversized next to the 16-size sprites' snug pad(1).
-        // Adding Stage2's size32 glyphs this round fell into that same
-        // "not 16" bucket and got the tile's tiny pad, shrinking every
-        // 32x32/BG-tile-composed icon (BigZum/Flyer/Etank) far below the
-        // 16x16 ones' box. A single constant pad makes every icon fill the
-        // same box regardless of its native pixel size, which is what a
-        // palette needs (uniform buttons, not "actual" relative scale).
+        pctx.imageSmoothingEnabled = false;
+        // round33 bugfix, 2nd pass ("32x32は実際の使用エリアは24x24 そのままでは
+        // 小さく表示されてんの 32x32の内左下24x24のエリアをアイコンに"): the
+        // first pass just evened out the padding, but that still scaled the
+        // FULL 32x32 canvas into the icon box - and BigZum/Flyer/Etank's own
+        // real art never uses the top 8 rows or right 8 columns of that
+        // canvas (checked against quadGroups.tl/tr's own all-zero inner
+        // quads - the drawn content is always exactly the bottom-left 24x24
+        // sub-square). Scaling the whole 32x32 box down made that real
+        // content occupy only 24/32 of the icon, i.e. visibly smaller than
+        // the 16x16 entries' snugly-fit icons. Fix: render the glyph once at
+        // native 1:1 resolution to an offscreen canvas, then crop+scale just
+        // its bottom-left min(24,size) square into the icon box - a no-op
+        // for size16/size8 glyphs (crop == full canvas there), and exactly
+        // the "left 24x24" 32-size glyphs actually use.
         var pad = 2;
-        drawGlyph(pctx, glyph, pad, pad, cssSize - pad * 2, cssSize - pad * 2);
+        var crop = Math.min(24, glyph.size);
+        var off = document.createElement("canvas");
+        off.width = glyph.size;
+        off.height = glyph.size;
+        drawGlyph(off.getContext("2d"), glyph, 0, 0, glyph.size, glyph.size);
+        pctx.drawImage(off, 0, glyph.size - crop, crop, crop, pad, pad, cssSize - pad * 2, cssSize - pad * 2);
         item.appendChild(cv);
       } else {
         item.textContent = t.name;
@@ -2220,21 +2228,29 @@
     saveFilenameInput.select();
   });
 
-  // round33 bugfix ("セーブが出来ない...Spriteeditorは出来てるのでそっちに
-  // 従ってくれ"): this used to try window.claude.downloads first (falling
-  // back to a Blob + <a download> click only when window.claude doesn't
-  // exist at all). Inside a published Artifact's own sandbox BOTH of those
-  // are inert - window.claude.downloads exists but this artifact never
-  // declared the `downloads` capability so every call gets rejected
-  // ("File downloads aren't available for this artifact"), and a
-  // script-driven <a download> click is blocked outright regardless of
-  // capability declarations. tools/sprite-editor.html's own doSave()
-  // already solved this by trying the Web Share API FIRST (navigator.
-  // share with a real File - works from inside the sandbox on a mobile
-  // browser, which is why it "just worked" there), THEN the downloads
-  // capability, THEN the classic Blob link as the last, most-compatible-
-  // outside-any-sandbox fallback (plain static host / file://, no Claude
-  // frame runtime at all). Ported verbatim rather than reinvented.
+  // round33 bugfix, 2nd pass ("セーブできねえよ"): the previous pass still
+  // failed because it read `window.claude.downloads` directly - that is
+  // NOT how the published-Artifact runtime actually exposes the downloads
+  // capability. Per the current contract (window.claude carries ONLY a
+  // `use()` method - no `.downloads`/`.db`/etc member is ever promised on
+  // it directly), the real call is `await claude.use("downloads")`, which
+  // resolves the namespace only once the viewer has answered - or `null`
+  // if this view can't run it at all. Reading `window.claude.downloads`
+  // synchronously is always `undefined` in this runtime, so the old code's
+  // `if (window.claude && window.claude.downloads)` check was always
+  // false and silently fell through to the Blob+<a download> link, which
+  // the Artifact viewer's own sandbox blocks outright (any download the
+  // page starts itself is inert there, with no visible error) - that's
+  // the actual root cause of "セーブできねえよ" with no error message at
+  // all. Fixed to call the real `claude.use("downloads")` API, with the
+  // `downloads` capability declared at publish time so it isn't rejected
+  // as ungranted. navigator.share is still tried first (works outside any
+  // sandbox, e.g. a plain mobile browser tab opening this file directly -
+  // that's very likely why sprite-editor.html "just worked" for the user,
+  // if it was being tested that way rather than through an Artifact URL);
+  // the classic Blob link stays as the last-resort fallback for a fully
+  // vanilla static host / file:// with neither Web Share nor
+  // window.claude at all.
   function doSaveViaBlobLink(filename, jsonStr) {
     try {
       var blob = new Blob([jsonStr], { type: "application/json" });
@@ -2254,26 +2270,33 @@
     }
   }
 
-  function doSaveViaDownloadsCapability(filename, jsonStr) {
-    window.claude.downloads.save({ filename: filename, data: jsonStr }).then(
-      function () {
-        saveOverlay.classList.remove("show");
-        flash("saved " + filename);
-      },
-      function (err) {
-        if (err && err.code === "declined") { saveOverlay.classList.remove("show"); flash("save cancelled"); return; }
-        saveStatus.textContent = "save failed";
-        saveStatus.classList.remove("ok");
-      }
-    );
+  // Memoized per claude.d.ts's own guidance ("every use('db') yields the
+  // same promise object") - only ever ask the viewer once per page load.
+  var downloadsCapabilityPromise = null;
+  function getDownloadsCapability() {
+    if (!downloadsCapabilityPromise) {
+      downloadsCapabilityPromise = (window.claude && window.claude.use)
+        ? window.claude.use("downloads").catch(function () { return null; })
+        : Promise.resolve(null);
+    }
+    return downloadsCapabilityPromise;
   }
 
-  function doSaveViaDownloadOrBlob(filename, jsonStr) {
-    if (window.claude && window.claude.downloads) {
-      doSaveViaDownloadsCapability(filename, jsonStr);
-    } else {
-      doSaveViaBlobLink(filename, jsonStr);
-    }
+  function doSaveViaDownloadsCapability(filename, jsonStr) {
+    getDownloadsCapability().then(function (downloads) {
+      if (!downloads) { doSaveViaBlobLink(filename, jsonStr); return; }
+      downloads.save({ filename: filename, data: jsonStr }).then(
+        function () {
+          saveOverlay.classList.remove("show");
+          flash("saved " + filename);
+        },
+        function (err) {
+          if (err && err.code === "declined") { saveOverlay.classList.remove("show"); flash("save cancelled"); return; }
+          saveStatus.textContent = "save failed" + (err && err.message ? ": " + err.message : "");
+          saveStatus.classList.remove("ok");
+        }
+      );
+    });
   }
 
   function doSave() {
@@ -2290,13 +2313,13 @@
         },
         function (err) {
           if (err && err.name === "AbortError") { saveOverlay.classList.remove("show"); flash("save cancelled"); return; }
-          doSaveViaDownloadOrBlob(filename, jsonStr);
+          doSaveViaDownloadsCapability(filename, jsonStr);
         }
       );
       return;
     }
 
-    doSaveViaDownloadOrBlob(filename, jsonStr);
+    doSaveViaDownloadsCapability(filename, jsonStr);
   }
 
   function copyToClipboard(text, successMsg) {

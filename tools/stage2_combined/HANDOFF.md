@@ -3982,3 +3982,52 @@ Thunder activity) confirming it survives completely untouched.
 - 検証: `<script>`部分を抽出して`node --check`で構文確認(`88143 bytes extracted`
   / `SYNTAX OK`)。実機での動作確認(navigator.shareの実際の成功可否)はユーザー
   側での再テストに委ねる。
+
+## Round 33-3: パレットアイコンの再修正(左下24x24クロップ)とセーブの根本原因修正(claude.use("downloads")への切り替え)
+
+- User instruction (verbatim、再度のスクリーンショット添付): "だから下のアイコンがおかしいって
+  16x16は全域に書かれてるが 32x32は実際の使用エリアは24x24 そのままでは小さく表示されてんの
+  32x32の内左下24x24のエリアをアイコンに で、セーブできねえよ"
+  - Round33-2の修正では不十分だったという再指摘。
+
+- **① パレットアイコン、再修正**: Round33-2の「pad統一」だけでは、32x32グリフを
+  「32x32キャンバス全体」としてそのまま縮小描画していたため、実際に絵が描かれて
+  いない領域(上8行・右8列)まで含めてスケーリングされ、結果的に実絵柄部分が
+  枠の24/32しか占めず小さく見える、という指摘通りの問題が残っていた。
+  `s2_bigzum`/`s2_flyer`/`s2_etank`の`quadGroups`データを実際に座標展開して
+  検証したところ、3種とも真に絵が描かれているのは常に「32x32キャンバスの
+  左下24x24」(x:0-24, y:8-32)に収まっており(Etankはそのうちさらにy:16-32の
+  みで、既存コメント通り「左下24x16ドット」)、ユーザーの指摘と完全に一致した。
+  修正: パレットアイコン描画をオフスクリーンcanvasでの等倍(1px=1px)描画→
+  `ctx.drawImage`によるクロップ+拡大の2段階に変更。クロップ矩形は
+  `crop = min(24, glyph.size)`、`sy = glyph.size - crop`で「常に左下min(24,size)
+  正方形」を切り出す一般式にし、size16/size8のStage1グリフには実質no-op
+  (クロップ矩形が丸ごとキャンバス全体と一致するため見た目は変化なし)、
+  size32のStage2グリフにのみ効く形にした。`imageSmoothingEnabled = false`も
+  明示し、ドット絵らしいクッキリした輪郭を維持。
+- **② セーブの根本原因**: Round33-2の`window.claude.downloads.save(...)`という
+  呼び出し自体が誤りだった。`artifact-capabilities`スキルで最新のランタイム
+  契約(0.2.31)を確認したところ、`window.claude`は`use()`メソッドのみを持ち、
+  `.downloads`のような直接プロパティは仕様上「絶対に存在しない」("no
+  `window.claude.db`, `.room`, or `.artifact` member is ever promised")。
+  正しい呼び出しは`await claude.use("downloads")`(このビューがcapabilityを
+  実行できない場合は`null`を返す非同期API)。旧コードの
+  `if (window.claude && window.claude.downloads)`は常にfalseとなり、
+  静かにBlob+`<a download>`リンクの経路に落ちていたが、Artifactビューアの
+  サンドボックスはページ自身が起動するダウンロードを無条件でブロックする
+  仕様のため、**エラーも出ずに何も起きない**という、ユーザーの「セーブ
+  できねえよ」という素っ気ない再報告と完全に一致する挙動だった。
+  `claude.use("downloads")`への置き換えに加え、Artifact公開時に
+  `capabilities: {downloads: true}`を明示宣言(未宣言だとcapability自体が
+  "ungranted"として拒否される)。`navigator.share`を最初に試す構成は維持
+  (プレーンなブラウザタブでファイルを直接開いた場合はサンドボックス外なので
+  そちらが機能する - sprite-editor.htmlがユーザー環境で「動いていた」のは
+  Artifact経由ではなくこの経路だった可能性が高い)。
+  なお`tools/sprite-editor.html`側にも全く同じ`window.claude.downloads`直接
+  参照の誤りが残っている(未修正、今回はユーザーから明示的な指摘・依頼が
+  無かったため着手せず、次回指示があれば同様の修正が必要)。
+
+- 検証: `<script>`部分を抽出して`node --check`(`89649 bytes extracted` /
+  `SYNTAX OK`)。Artifact再公開時に`capabilities: {downloads: true}`宣言が
+  正常に登録されたこと(「Stored — contract 0.2.31 · capabilities downloads」)
+  を確認。実機での動作確認はユーザー側での再テストに委ねる。
