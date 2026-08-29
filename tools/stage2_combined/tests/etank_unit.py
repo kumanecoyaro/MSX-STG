@@ -1,3 +1,12 @@
+"""round35 (real-hardware feedback, after seeing this session's own
+direct terrain-flatness instrumentation log: "スポーン条件も要らないぞ
+地形も仮実装だから平地条件いらない"): ETANK_TERRAIN_OK (and ETANK_
+SPAWN_COL, which only ever fed it) are gone entirely - the terrain
+system is still a placeholder, so gating Etank's spawn on it was never
+meaningful. Tests 1-2 below used to assert the OPPOSITE (refusal on
+blank/climb-marker terrain); now assert spawning is unaffected by
+terrain state at all, since a free slot is the only remaining gate.
+"""
 import os
 import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -20,38 +29,32 @@ TANK_X = sym["TANK_X"]
 IDCACHE_T0 = sym["IDCACHE_T0"]; IDCACHE_T1 = sym["IDCACHE_T1"]
 IDCACHE_T2 = sym["IDCACHE_T2"]; IDCACHE_T3 = sym["IDCACHE_T3"]
 
-def prime_apex_terrain(cpu):
-    col = sym["ETANK_SPAWN_COL"]
-    cpu.mem[IDCACHE_T0+col] = 1  # steady flat rock (apex)
-
 def set_game_tick(cpu, val):
     cpu.mem[sym["GAME_TICK"]] = val & 0xFF
     cpu.mem[sym["GAME_TICK"]+1] = (val >> 8) & 0xFF
 
-def spawn_etank(cpu, force_terrain=True):
+def spawn_etank(cpu):
     set_game_tick(cpu, 70)
-    if force_terrain:
-        prime_apex_terrain(cpu)
     call_routine(cpu, "ALLOC_ETANK_SLOT")
 
-# Test 1: does not spawn when apex terrain isn't present (T0 blank)
+# Test 1-2 (round35): terrain state no longer affects spawning at all -
+# blank terrain and a climb/descend marker both still spawn cleanly,
+# same as any other terrain state, since ETANK_TERRAIN_OK is gone.
 cpu = fresh_cpu()
 set_game_tick(cpu, 70)
-cpu.mem[IDCACHE_T0+sym["ETANK_SPAWN_COL"]] = 0
 call_routine(cpu, "ALLOC_ETANK_SLOT")
-check("does not spawn when apex terrain (IDCACHE_T0) is blank", cpu.mem[ETANK_POOL+0] == 0)
+check("spawns even with blank (all-zero) IDCACHE terrain - the gate is gone", cpu.mem[ETANK_POOL+0] == 1)
 
-# Test 2: does not spawn on a climb/descend marker (id>=3)
 cpu = fresh_cpu()
 set_game_tick(cpu, 70)
-cpu.mem[IDCACHE_T0+sym["ETANK_SPAWN_COL"]] = 3
+cpu.mem[IDCACHE_T0+50] = 3   # arbitrary column, climb/descend marker - irrelevant to spawning now
 call_routine(cpu, "ALLOC_ETANK_SLOT")
-check("does not spawn on a climb/descend marker (id 3)", cpu.mem[ETANK_POOL+0] == 0)
+check("spawns regardless of a climb/descend marker (id 3) anywhere in IDCACHE", cpu.mem[ETANK_POOL+0] == 1)
 
-# Test 3: spawns cleanly on steady apex flat terrain
+# Test 3: spawns cleanly
 cpu = fresh_cpu()
 spawn_etank(cpu)
-check("spawns on steady apex flat terrain", cpu.mem[ETANK_POOL+0] == 1)
+check("spawns cleanly", cpu.mem[ETANK_POOL+0] == 1)
 check("spawns at ETANK_SPAWNX (off the right edge)", cpu.mem[ETANK_POOL+1] == sym["ETANK_SPAWNX"])
 check("Y fixed from TANK_TIER_Y_TABLE index0 (apex) minus the tank-art-padding fudge",
       cpu.mem[ETANK_POOL+2] == cpu.mem[sym["TANK_TIER_Y_TABLE"]] - sym["ETANK_Y_OFFSET"])
@@ -74,8 +77,6 @@ check("Etank CAN now spawn while BigZum is active (exclusion removed)", cpu.mem[
 
 cpu = fresh_cpu()
 cpu.mem[ETANK_POOL+0] = 1
-col = sym["BIGZUM_SPAWN_COL"]
-cpu.mem[IDCACHE_T0+col]=0; cpu.mem[IDCACHE_T1+col]=0; cpu.mem[IDCACHE_T2+col]=0; cpu.mem[IDCACHE_T3+col]=1
 call_routine(cpu, "ALLOC_BIGZUM_SLOT")
 check("BigZum CAN now spawn while Etank is active (exclusion removed)", cpu.mem[BIGZUM_POOL+0] == 1)
 
@@ -86,8 +87,6 @@ check("Etank CAN now spawn while Zum slot0 is active (exclusion removed)", cpu.m
 
 cpu = fresh_cpu()
 cpu.mem[ETANK_POOL+0] = 1
-zcol = sym["ZUM_SPAWN_COL"]
-cpu.mem[IDCACHE_T0+zcol] = 1
 call_routine(cpu, "ALLOC_ZUM_SLOT")
 check("Zum CAN now spawn while Etank is active (exclusion removed)",
       cpu.mem[ZUM_POOL+0] == 1 or cpu.mem[ZUM_POOL+ZUM_SLOT_SIZE+0] == 1)
@@ -99,8 +98,6 @@ check("Flyer CAN spawn while BigZum is active (relaxed earlier this session)", c
 
 cpu = fresh_cpu()
 cpu.mem[FLYER_POOL+0] = 1
-col = sym["BIGZUM_SPAWN_COL"]
-cpu.mem[IDCACHE_T0+col]=0; cpu.mem[IDCACHE_T1+col]=0; cpu.mem[IDCACHE_T2+col]=0; cpu.mem[IDCACHE_T3+col]=1
 call_routine(cpu, "ALLOC_BIGZUM_SLOT")
 check("BigZum CAN spawn while Flyer is active (relaxed earlier this session)", cpu.mem[BIGZUM_POOL+0] == 1)
 

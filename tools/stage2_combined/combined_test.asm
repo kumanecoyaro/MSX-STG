@@ -527,6 +527,36 @@ NIGHT_COLOR      EQU 015h      ; "ブラックとブルーの文字色と背景�
 ; needs to be forced off-screen ahead of the boss's own spawn,
 ; independent of when it happened to spawn.
 BIGZUM_RETREAT_TICK EQU 950
+; round35 (real-hardware feedback: "Bigzumは4回以上スケジュールしてる
+; が1回しか出てない...恐らくEtankでスキップされてるな...排他制御はあく
+; まで仮実装の仕様 これはエディットでコントロールするんで要らない"):
+; direct investigation found NO Etank exclusion anywhere in the current
+; code (ALLOC_BIGZUM_SLOT/ALLOC_ETANK_SLOT don't check each other's
+; pool - see ALLOC_BIGZUM_SLOT's own comment; that check was genuinely
+; removed back in round34-2). The real cause, confirmed by direct
+; emulator instrumentation of a full worst-case playthrough: BIGZUM_
+; RETREAT_TICK used to be the ONLY thing that could ever clear a live
+; BigZum out of its own single slot (BIGZUM_SLOT_COUNT=1, "BigZumは１
+; 体のみ") - nothing in its own approach/pause/jump/punch state machine
+; naturally despawns it. So the FIRST BigZum to successfully spawn
+; occupied the only slot continuously for the rest of the game (up to
+; ~460 ticks in that playthrough), silently dropping every later
+; schedule entry as "pool full" regardless of terrain or anything else
+; - not a hardcoded exclusion against another enemy type, just this one
+; enemy blocking its own later spawns. Fixed by making the retreat
+; PER-INSTANCE (see BIGZUM_SLOT_SIZE's own +13/+14 field, computed once
+; at spawn in ALLOC_BIGZUM_SLOT) instead of one shared global tick, so
+; each BigZum clears out on its own after a bounded engagement window
+; and later schedule entries get a real chance - this constant now
+; serves only as the hard ceiling every instance's own retreat is
+; clamped to, guaranteeing the pre-boss safety net (boss_vram_safety_
+; test.py) still holds regardless of engagement duration.
+; untuned first guess, easy to retune - "スケジュール自体の実プレイでの
+; 難易度・ペーシング調整" is still an explicitly deferred/pending task
+; (see CLAUDE.md), this just makes the engagement window PER-INSTANCE
+; and finite instead of "forever until 950", the actual bug being fixed
+; here.
+BIGZUM_ENGAGEMENT_DURATION EQU 100
 ; ---------- boss (Sasapi): spawns once at BOSS_SPAWN_TICK, then ----------
 ; patrols left<->right forever - "Tick999でスポーン Skysandの８ｐｘ上
 ; あたり 右から出現し左へ 左端に着いたら反転 右端に 以降繰り返し 耐久
@@ -1217,11 +1247,14 @@ ZUM_SPAWNX EQU 240          ; off the right edge, same "fully offscreen at 16px"
 ; UOZ_TERRAIN_FOLLOW's own per-frame probe - "初期スポーン位置がおかし
 ; いか Zumの下がRockまたはRock225をチェックしてないってこと" traced to
 ; ZUM_SPAWN_COL being hand-typed as 30 while the runtime probe actually
-; used (Z_X+8)>>3 = 31 at X=240 - the spawn gate was checking one column
-; to the *left* of where Zum actually stands the instant it spawns, so
-; ZUM_TERRAIN_OK's "flat ground" check didn't match what UOZ_TERRAIN_
-; FOLLOW immediately probed for real. Named here and reused by both so
-; they can't drift apart again.
+; used (Z_X+8)>>3 = 31 at X=240 - the OLD spawn-time flat-ground gate
+; (ZUM_TERRAIN_OK, removed in round35 - "地形も仮実装だから平地条件
+; いらない" - terrain movement following itself is unaffected) was
+; checking one column to the *left* of where Zum actually stands the
+; instant it spawns, so it didn't match what UOZ_TERRAIN_FOLLOW
+; immediately probed for real. ZUM_SPAWN_COL is still shared with UOZ_
+; TERRAIN_FOLLOW's own per-frame probe below, so they can't drift apart
+; again even with the spawn-time gate itself gone.
 ZUM_PROBE_DX EQU 8
 ; the column Zum's own horizontal center lands on at spawn - derived,
 ; not hand-typed, so it always matches UOZ_TERRAIN_FOLLOW's own probe.
@@ -1373,9 +1406,11 @@ ZUM_PUSH_SPEED EQU 6
 ; は自機より高く32ｐｘ サインジャンプ 自機に設置したら連続ジャンプで
 ; 飛び越え 自機の後ろを取って地上に降りたら後ろからパンチ なので添付
 ; のデータは反転も生成 攻撃判定も同じで後ろしか当たらない 耐久5" -
-; same spawn gating as Zum (ENEMY_SPAWN_COUNT>=10, flat-ground probe at
-; its own spawn column, free-slot check - see BIGZUM_TERRAIN_OK/
-; ALLOC_BIGZUM_SLOT) and the same approach/decel/pause shape (reuses
+; same spawn gating as Zum (originally ENEMY_SPAWN_COUNT>=10 plus a
+; flat-ground probe at its own spawn column, both long since removed -
+; see ALLOC_BIGZUM_SLOT's own comment for the current, schedule-driven
+; gating: a free slot, nothing else) and the same approach/decel/pause
+; shape (reuses
 ; ZUM_DETECT_RANGE/ZUM_MID_RANGE/ZUM_SPEED_BASE/ZUM_ACCEL_TABLE/
 ; ZUM_DECEL_TABLE/ZUM_PAUSE_FRAMES outright - "アルゴリズムもほぼ同じ"
 ; means literally reusing those tables/constants, not re-deriving new
@@ -1412,12 +1447,13 @@ ZUM_PUSH_SPEED EQU 6
 ; comment for the full history) and only actually destroys it once that
 ; reaches 0.
 ; grew 12->13 for +12 FLASH_TIMER (hit-flash countdown - see FLASH_
-; DURATION's own comment) - still fits inside the original 24-byte
-; (BIGZUM_SLOT_SIZE(12, old)*BIGZUM_SLOT_COUNT(2, old)) RAM reservation
-; even at 13 bytes/slot, since only 1 slot is ever actually used now
-; (BIGZUM_SLOT_COUNT=1 below) - no address renumbering of anything
-; downstream of BIGZUM_POOL needed.
-BIGZUM_SLOT_SIZE  EQU 13   ; +0 ACT,+1 X,+2 Y,+3 TIMER(explosion/pause countdown/punch-pose-frames - all mutually exclusive across states),+4 SPRIDX,+5/+6 DX/DY(explosion drift while ACT=2; +6 doubles as the shake-off stand-timer while ACT=1 - see BIGZUM_SHAKE_STAND_FRAMES),+7 STATE(0=approach,3=pause,1=jump,2=punch),+8 HP,+9 FACING(0=normal facing left,1=flipped facing right),+10 JUMPFRAME,+11 PUNCH_COOLDOWN(STATE=2)/shake-off-jump marker(STATE=1),+12 FLASH_TIMER
+; DURATION's own comment), then 13->15 (round35) for +13/+14 OWN_
+; RETREAT_TICK (see BIGZUM_ENGAGEMENT_DURATION's own comment) - still
+; fits inside the original 24-byte (BIGZUM_SLOT_SIZE(12, old)*BIGZUM_
+; SLOT_COUNT(2, old)) RAM reservation even at 15 bytes/slot, since only
+; 1 slot is ever actually used now (BIGZUM_SLOT_COUNT=1 below) - no
+; address renumbering of anything downstream of BIGZUM_POOL needed.
+BIGZUM_SLOT_SIZE  EQU 15   ; +0 ACT,+1 X,+2 Y,+3 TIMER(explosion/pause countdown/punch-pose-frames - all mutually exclusive across states),+4 SPRIDX,+5/+6 DX/DY(explosion drift while ACT=2; +6 doubles as the shake-off stand-timer while ACT=1 - see BIGZUM_SHAKE_STAND_FRAMES),+7 STATE(0=approach,3=pause,1=jump,2=punch),+8 HP,+9 FACING(0=normal facing left,1=flipped facing right),+10 JUMPFRAME,+11 PUNCH_COOLDOWN(STATE=2)/shake-off-jump marker(STATE=1),+12 FLASH_TIMER,+13/+14 OWN_RETREAT_TICK(16-bit, this instance's own forced-retreat GAME_TICK, computed once at spawn - see BIGZUM_ENGAGEMENT_DURATION's own comment)
 ; "BigZumは１体のみ 横並びあるから" - was 2 (mistakenly assumed to
 ; match Zum's own concurrent limit just because "スポーン条件は同じ" -
 ; corrected: BigZum's own side-by-side limit is 1, distinct from
@@ -1439,7 +1475,14 @@ BIGZUM_POOL       EQU 0F207h  ; BIGZUM_SLOT_SIZE*BIGZUM_SLOT_COUNT = 24 bytes re
 BIGZUM_SPRITE_ATTRS EQU 0F220h   ; BIGZUM_SLOT_COUNT*16 = 32 bytes: (Y,X,pat,col)x4 per instance
 BIGZUM_DRAW_TEMP  EQU 0F240h     ; scratch byte, UOBZ_DRAW's own chosen pattern base
 BIGZUM_DRAW_COLOR EQU 0F241h     ; scratch byte, UOBZ_DRAW's own resolved color (BIGZUM_COLOR or FLASH_COLOR) - still well under the real 0F380h BIOS-work-area boundary (see STACKTOP's own comment)
-BIGZUM_SPR_BASE_SLOT EQU 12      ; hw sprite slots12-19 (2 instances x4), right after Zum's own 10-11
+; hw sprite slots12-19 reserved for 2 instances x4 (right after Zum's
+; own 10-11), but BIGZUM_SLOT_COUNT=1 means FLUSH_BIGZUM_SPRITES only
+; ever actually writes 12-15 - slots16-19 were genuinely dead space.
+; round35 ("FlyerのスロットをC2に"): FLYER_SPR_BASE_SLOT now claims
+; 16-19 as its own 2nd instance's hw slots (see its own comment) -
+; if BIGZUM_SLOT_COUNT is ever raised back to 2, THIS is the collision
+; to check first, not just "shrunk to save space".
+BIGZUM_SPR_BASE_SLOT EQU 12      ; hw sprite slots12-15 actually used (12-19 nominally reserved, but 16-19 now belongs to Flyer - see FLYER_SPR_BASE_SLOT's own comment)
 ; PAT_BIGZUM/PAT_BIGZUMP/_L (bigzum_gen.py) - BASE_OFFSET=156 there,
 ; right after Zum's own PAT_ZUM_FLIP(152-155); 2 poses x2 facings x4
 ; quadrant-groups x4 sub-patterns = 64 total codes, 156-219.
@@ -1495,8 +1538,11 @@ BIGZUM_COLLISION_SIZE   EQU 24   ; width
 BIGZUM_COLLISION_HEIGHT EQU 16   ; height - "コリジョンを24x16に"
 BIGZUM_COLLISION_Y_OFFSET EQU 32-BIGZUM_COLLISION_HEIGHT
 BIGZUM_SPAWNX     EQU ZUM_SPAWNX          ; same off-right-edge spawn X as Zum - "スポーン条件は同じ"
-BIGZUM_PROBE_DX   EQU 16                  ; horizontal-center probe offset for a 32px-wide sprite (vs Zum's 8, for its 16px width)
-BIGZUM_SPAWN_COL  EQU BIGZUM_SPAWNX+BIGZUM_PROBE_DX/8
+BIGZUM_PROBE_DX   EQU 16                  ; horizontal-center probe offset for a 32px-wide sprite (vs Zum's 8, for its 16px width) - still used by UOBZ_TERRAIN_FOLLOW's own per-frame probe
+; round35: BIGZUM_SPAWN_COL (BIGZUM_SPAWNX+BIGZUM_PROBE_DX/8) removed -
+; it only ever fed BIGZUM_TERRAIN_OK, itself removed the same round
+; ("地形も仮実装だから平地条件いらない"). Unlike ZUM_SPAWN_COL, nothing
+; else referenced it.
 BIGZUM_HP_INIT    EQU 5    ; "合わせてBigZum耐久値5に変更" (was 8, briefly; 5 before that)
 ; jump arc: same half-sine construction as the tank's own JUMP_OFFSET_
 ; TABLE (round(H*sin(pi*t/32)) for t=0..32), just H=32 instead of 24 -
@@ -1583,9 +1629,10 @@ BIGZUM_SHAKE_STAND_FRAMES EQU 60
 ; once) that kept surfacing new real-hardware-only bugs faster than
 ; they could be pinned down - "1つずつ実装し直す". At the time this
 ; block was written, Etank did not exist yet - deliberately skipped
-; that round ("3をスキップ") - only Flyer, singleton (FLYER_SLOT_COUNT=
-; 1) and with its own dedicated permanent pattern allocation (no VRAM-
-; sharing scheme, unlike Etank's own dynamic BigZum-pattern-sharing).
+; that round ("3をスキップ") - only Flyer, singleton at the time
+; (FLYER_SLOT_COUNT=1, since grown to 2 - see its own comment) and with
+; its own dedicated permanent pattern allocation (no VRAM-sharing
+; scheme, unlike Etank's own dynamic BigZum-pattern-sharing).
 ; Etank has since been reimplemented (see ETANK_SLOT_SIZE below), and
 ; BigZum itself restored after a diagnostic removal (see the BigZum
 ; entry above) once the real bug turned out to be unrelated to it.
@@ -1618,18 +1665,46 @@ BIGZUM_SHAKE_STAND_FRAMES EQU 60
 ; (exit): straight right only, ignoring the tank entirely, until off
 ; the right edge, then despawns.
 FLYER_SLOT_SIZE  EQU 11  ; +0 ACT,+1 X,+2 Y,+3 TIMER(explosion),+4 SPRIDX,+5 DX(explosion drift)/+6 DY(explosion drift while ACT=2, locked vertical homing step while ACT=1),+7 HP,+8 PHASE(0=cruise,1=home,2=exit),+9 FACING(0=left-facing,1=right-facing/flipped),+10 FLASH_TIMER
-FLYER_SLOT_COUNT EQU 1
-; strictly below the real 0F380h MSX BIOS-work-area boundary (see
-; STACKTOP's own comment - this exact mistake caused a real-hardware
-; freeze last round).
-FLYER_POOL         EQU F242h  ; FLYER_SLOT_SIZE*FLYER_SLOT_COUNT = 11 bytes
-FLYER_SPRITE_ATTRS EQU F24Dh  ; FLYER_SLOT_COUNT*16 = 16 bytes: (Y,X,pat,col)x4
-; round34: FLYER_SPAWN_TIMER(F25Dh) removed - random-interval spawning
-; is gone, this byte is simply unused now.
-FLYER_DRAW_TEMP  EQU F25Eh    ; scratch byte, UOFL_DRAW's own chosen pattern base
-FLYER_DRAW_COLOR EQU F25Fh    ; scratch byte, UOFL_DRAW's own resolved color (FLYER_COLOR or FLASH_COLOR)
-; ends at F25Fh - well clear of the 0F380h boundary.
-FLYER_SPR_BASE_SLOT EQU 20     ; hw sprite slots20-23 (1 instance x4), right after BigZum's own 12-19
+; round35 ("FlyerのスロットをC2に" - direct instruction, found while
+; investigating "全然スケジュールに従ってない"): was 1, now 2 - lets 2
+; Flyer instances be alive at once, same shape as Zum's own
+; FLYER_SLOT_COUNT-style pool. This means FLYER_POOL/FLYER_SPRITE_ATTRS
+; grow past their old single-instance size.
+FLYER_SLOT_COUNT EQU 2
+; round35: relocated off the tightly-packed F2xxh block entirely rather
+; than growing in place (which would have forced renumbering every
+; symbol after it, all the way down through BOSS_EXPL_*/STACKTOP's own
+; safety margin) - same "reuse the otherwise-completely-unused
+; C000h-EEFFh region" idiom SBEAM_SPRITE_ATTRS's own comment already
+; established, placed right after that block (C000h-C057h) so nothing
+; else needs to move. The old F242h-F25Dh addresses are simply retired,
+; not reused by anything.
+FLYER_POOL         EQU 0C058h  ; FLYER_SLOT_SIZE*FLYER_SLOT_COUNT = 22 bytes (C058h-C06Dh)
+FLYER_SPRITE_ATTRS EQU 0C06Eh  ; FLYER_SLOT_COUNT*16 = 32 bytes: (Y,X,pat,col)x4 per instance (C06Eh-C08Dh)
+; round34: FLYER_SPAWN_TIMER(F25Dh, the old pre-relocation address)
+; removed - random-interval spawning is gone. round35: FLYER_POOL/
+; FLYER_SPRITE_ATTRS moved away entirely (see their own comment above),
+; so this whole F242h-F25Dh range is now unclaimed, not just this byte.
+FLYER_DRAW_TEMP  EQU F25Eh    ; scratch byte, UOFL_DRAW's own chosen pattern base - stays put, shared scratch reused across both instances in the draw loop, doesn't need to scale with FLYER_SLOT_COUNT
+FLYER_DRAW_COLOR EQU F25Fh    ; scratch byte, UOFL_DRAW's own resolved color (FLYER_COLOR or FLASH_COLOR) - same, stays put
+; FLYER_DRAW_TEMP/_COLOR end at F25Fh - well clear of the 0F380h
+; boundary (FLYER_POOL/FLYER_SPRITE_ATTRS themselves live at C000h+
+; now, see their own comment).
+; round35: was 20 (hw sprite slots20-23, 1 instance x4). Growing to
+; FLYER_SLOT_COUNT=2 needs 8 contiguous hw slots - extending past 23
+; into 24-27 would collide with Etank's own 24-25, and past 25 would
+; eat into SBEAM_SLOT_COUNT's own hard-reserved 26-31 (see its own
+; comment: "the only 6 hw sprite slots in the whole file that are NEVER
+; claimed by ANY entity at all" - SBeam's line algorithm genuinely needs
+; all of them during the boss fight). Moved to 16 instead, reusing
+; BigZum's own reserved-but-never-actually-flushed 16-19 (see BIGZUM_
+; SPR_BASE_SLOT's own comment) - this keeps the boss's own 16-quadrant
+; reuse block (BOSS_SPR_BASE_SLOT(10)..+15, i.e. hw slots10-25) exactly
+; intact: Zum(2)+BigZum(4 actual)+Flyer(8)+Etank(2)=16, still summing to
+; the same 16 slots 10-25, still all guaranteed empty at boss spawn
+; (boss_vram_safety_test.py) - and leaves Etank untouched at 24-25 and
+; SBeam's own 26-31 untouched too.
+FLYER_SPR_BASE_SLOT EQU 16     ; hw sprite slots16-23 (2 instances x4) - slots16-19 reused from BigZum's own idle reserve, 20-23 unchanged from before
 FLYER_COLOR EQU 7              ; cyan - sprites/Flyer.json's own fg
 FLYER_SPAWNX   EQU 240
 ; round34 ("ランダムスポーンは廃止 全てスケジュールに"): Flyer's own Y
@@ -1672,14 +1747,17 @@ FLYER_COLLISION_SIZE EQU 32  ; full 32x32 canvas - no shrink specified
 ; Unlike Zum, Etank never follows terrain elevation at all: its own Y
 ; is set once at spawn (from TANK_TIER_Y_TABLE's own index0, the
 ; apex/highest tier) and never re-probed - straight horizontal line,
-; "坂の昇降はしない". Since it can't correct for a height change
-; mid-crossing, it only ever spawns while the apex tier is the CURRENT
-; surface (ETANK_TERRAIN_OK, checking IDCACHE_T0) - and that surface
-; has to stay the apex tier for the enemy's entire on-screen lifetime,
-; not just at the spawn instant, which is why terrain_gen.py's own
-; build_track() now carries a dedicated 150-tile-plus flat run at that
-; tier (ETANK_APEX_FLAT_RUN, see its own comment there) instead of the
-; ordinary 24-tile FLAT_RUN every other flat stretch uses.
+; "坂の昇降はしない". Originally it only ever spawned while the apex
+; tier was the CURRENT surface (ETANK_TERRAIN_OK, checking IDCACHE_T0) -
+; round35 removed that gate entirely ("地形も仮実装だから平地条件いらな
+; い", the terrain system itself being just a placeholder), so Etank can
+; now spawn regardless of what tier is actually current, and may
+; visually sit above/below the real (placeholder) ground for its whole
+; crossing if the apex tier isn't actually underneath it - accepted per
+; explicit instruction. terrain_gen.py's own dedicated 150-tile-plus
+; flat run at the apex tier (ETANK_APEX_FLAT_RUN, see its own comment
+; there) predates this and is no longer load-bearing for Etank's own
+; spawn gating, just still there as extra flat track.
 ;
 ; Collision is 24(W)x16(H), anchored at the bottom-left of the 32x32
 ; canvas ("キャラ位置は32x32の内左下24x16" - the raw art itself only
@@ -1703,11 +1781,19 @@ FLYER_COLLISION_SIZE EQU 32  ; full 32x32 canvas - no shrink specified
 ; Etank goes back to its ORIGINAL design: dynamically sharing BigZum's
 ; own PAT_BIGZUM BL/BR pattern-VRAM groups at spawn time (ALLOC_ETANK_
 ; SLOT), restored whenever BigZum itself next spawns (ALLOC_BIGZUM_
-; SLOT's own reload) - safe ONLY because the 2 are spawn-gated
-; bidirectionally exclusive (both ALLOC routines check the other's
-; pool - "EtankとBigZumは同時には存在しない", every enemy's own
-; registration must always go through its real spawn gate, no
-; exceptions).
+; SLOT's own reload). At the time this was written, that sharing was
+; safe ONLY because the 2 were spawn-gated bidirectionally exclusive
+; (both ALLOC routines checked the other's pool - "EtankとBigZumは同時
+; には存在しない"). **This is no longer true** - round34-2 ("排他制御
+; は削除") removed that mutual check per explicit instruction, and
+; round34-3 confirmed neither ALLOC_BIGZUM_SLOT nor ALLOC_ETANK_SLOT
+; references the other's pool any more. A BigZum and an Etank CAN be
+; alive at the same time now; if that ever visibly corrupts either
+; one's BL/BR quadrant art, the real fix is giving Etank its own
+; dedicated pattern codes instead of borrowing BigZum's, not re-adding
+; a hardcoded exclusion - pacing/spacing between them is the schedule
+; editor's own job now, not this file's ("排他制御はあくまで仮実装の
+; 仕様 これはエディットでコントロールするんで要らない").
 ;
 ; HP10 ("耐久値10"), omnidirectional bullet damage (no front/rear
 ; invulnerability rule like Zum - nothing about facing/direction was
@@ -2043,14 +2129,21 @@ THUNDER_TRIGGER_DX EQU 32
 ; full patrol that column2 truly was the minimum column ever allocated
 ; under the old single-threshold code.
 THUNDER_EDGE_TRIGGER_DX EQU 16
-ETANK_SPR_BASE_SLOT EQU 24     ; hw sprite slots24-25 (BL/BR only x1 instance), right after Flyer's own 20-23
+; round35: unchanged at 24 despite Flyer growing to 2 instances -
+; Flyer's new 2nd instance was placed at 16-19 (BigZum's own idle
+; reserve) specifically so it would NOT need to push into this range -
+; see FLYER_SPR_BASE_SLOT's own comment.
+ETANK_SPR_BASE_SLOT EQU 24     ; hw sprite slots24-25 (BL/BR only x1 instance)
 ; "カラーはダークレッド" - NOT sprites/Etank.json's own fg, overridden
 ; directly here (same "override the JSON's own fg" precedent as
 ; BULLET_U_COLOR/BULLET_SKY_COLORBYTE elsewhere in this file).
 ETANK_COLOR EQU 6
 ETANK_SPAWNX EQU 240           ; off the right edge, same convention as every other enemy's own spawn-X
-ETANK_PROBE_DX EQU 16          ; horizontal-center probe offset for a 32px-wide sprite
-ETANK_SPAWN_COL EQU ETANK_SPAWNX+ETANK_PROBE_DX/8
+; round35: ETANK_PROBE_DX/ETANK_SPAWN_COL removed - both only ever fed
+; ETANK_TERRAIN_OK, itself removed the same round ("地形も仮実装だから
+; 平地条件いらない"). Etank never re-probes terrain during movement
+; (straight horizontal line, no terrain-follow - see UPDATE_ONE_ETANK's
+; own comment), so nothing else referenced them.
 ETANK_SPEED EQU 2               ; px/frame, flat - "速度は2"
 ETANK_COLLISION_SIZE     EQU 24  ; width
 ETANK_COLLISION_HEIGHT   EQU 16  ; height - "キャラ位置は32x32の内左下24x16"
@@ -5368,59 +5461,26 @@ UZAU_LOOP:
     CALL FLUSH_ZUM_SPRITES
     RET
 
-; A=1 if the terrain at ZUM_SPAWN_COL is flat, steady ground at
-; WHICHEVER tier is actually on top there (the first non-BLANK id
-; found walking IDCACHE_T0->T1->T2->T3, same walk UPDATE_TERRAIN_
-; COLLISION/UOZ_TERRAIN_FOLLOW use), as long as that tier's own id is
-; a steady plain-rock one (not a Rock225 climb/descend marker), else
-; 0. "Zum制限緩和は地形が1番下にある時と言う部分をやめると言うこと" -
-; previously only accepted the terrain being flat specifically at the
-; very LOWEST tier (T0/T1/T2 all BLANK, i.e. nothing climbed above
-; tier3 yet anywhere on the visible track) - "上りがない地形最下部で
-; スポーン" - now any tier being the current flat/steady surface
-; qualifies, not just the lowest one.
-ZUM_TERRAIN_OK:
-    LD A,ZUM_SPAWN_COL : LD E,A : LD D,0
-    LD HL,IDCACHE_T0 : ADD HL,DE : LD A,(HL)
-    OR A
-    JR NZ,ZTO_CHECK_ID
-    LD A,ZUM_SPAWN_COL : LD E,A : LD D,0
-    LD HL,IDCACHE_T1 : ADD HL,DE : LD A,(HL)
-    OR A
-    JR NZ,ZTO_CHECK_ID
-    LD A,ZUM_SPAWN_COL : LD E,A : LD D,0
-    LD HL,IDCACHE_T2 : ADD HL,DE : LD A,(HL)
-    OR A
-    JR NZ,ZTO_CHECK_ID
-    LD A,ZUM_SPAWN_COL : LD E,A : LD D,0
-    LD HL,IDCACHE_T3 : ADD HL,DE : LD A,(HL)
-ZTO_CHECK_ID:
-    CP 3
-    JR NC,ZTO_FAIL
-    OR A
-    JR Z,ZTO_FAIL
-    LD A,1
-    RET
-ZTO_FAIL:
-    XOR A
-    RET
-
-; gated on 2 things now (round34-2, "排他制御は削除": the BigZum/Etank
-; ground-lane exclusion that used to sit here is gone - see ALLOC_
-; BIGZUM_SLOT/ALLOC_ETANK_SLOT's own matching comments for why, and for
-; the one exclusion that COULDN'T be removed the same way. round34
-; itself already dropped the older ENEMY_SPAWN_COUNT>=10 gate -
-; "赤ZakoIIが10体で終わったら" was purely about pacing the old random-
-; timer spawner, superseded by the schedule's own explicit ordering):
-; the terrain is currently flat at the spawn column (ZUM_TERRAIN_OK),
-; and a slot is free (pool of ZUM_SLOT_COUNT=2). round34-3 ("Stage1と
-; 全く同じ処理をしろ"): SSC2_FIRE already advanced SPAWN2_NEXT_INDEX
-; unconditionally before dispatching here - any failure below (terrain
-; not flat right now, or both slots busy) just drops this one spawn
-; attempt, exactly like Stage1's own SPAWN_SIMPLE. A round34-2 attempt
-; at retrying instead of dropping (with a bounded timeout, so it
-; couldn't stall forever) turned out to actively cause the exact bug
-; being fixed here - see SPAWN2_SCHEDULE_CHECK's own comment for why.
+; round35 (real-hardware feedback, after seeing the actual per-tick
+; terrain-flatness log: "スポーン条件も要らないぞ 地形も仮実装だから平地
+; 条件いらない"): the ZUM_TERRAIN_OK gate below is REMOVED - the terrain
+; system itself is still a placeholder implementation, not the real
+; thing, so gating a schedule-driven spawn on it was never meaningful in
+; the first place. Direct instrumentation this same round found this
+; gate was silently dropping the majority of BigZum's own schedule
+; entries at ticks where the (placeholder) terrain simply wasn't flat by
+; coincidence - same root class of problem here for Zum, just not yet
+; reported. Only remaining gate now: a free slot (pool of ZUM_SLOT_
+; COUNT=2). round34-2 ("排他制御は削除") already removed the BigZum/
+; Etank ground-lane exclusion that used to sit here too - see ALLOC_
+; BIGZUM_SLOT/ALLOC_ETANK_SLOT's own matching comments. round34 itself
+; already dropped the older ENEMY_SPAWN_COUNT>=10 gate - "赤ZakoIIが10
+; 体で終わったら" was purely about pacing the old random-timer spawner,
+; superseded by the schedule's own explicit ordering. round34-3 ("Stage1
+; と全く同じ処理をしろ"): SSC2_FIRE already advanced SPAWN2_NEXT_INDEX
+; unconditionally before dispatching here - a failure below (both slots
+; busy) just drops this one spawn attempt, exactly like Stage1's own
+; SPAWN_SIMPLE.
 ;
 ; NOT gated on tank distance any more - "しかしスポーンキャンセルでは
 ; 自機が右端に居続けると永遠にスポーンできない 自機が右端にいたら
@@ -5432,10 +5492,6 @@ ZTO_FAIL:
 ; type specifically. Replaced with AZS_FOUND's own instant overlap
 ; resolution below instead of refusing the spawn.
 ALLOC_ZUM_SLOT:
-    CALL ZUM_TERRAIN_OK
-    OR A
-    RET Z
-
     LD HL,ZUM_POOL
     LD B,ZUM_SLOT_COUNT
 AZS_LOOP:
@@ -6070,60 +6126,32 @@ UBZAU_LOOP:
     CALL FLUSH_BIGZUM_SPRITES
     RET
 
-; same flat-ground probe as ZUM_TERRAIN_OK, just at BigZum's own wider
-; (32px) spawn column.
-BIGZUM_TERRAIN_OK:
-    LD A,BIGZUM_SPAWN_COL : LD E,A : LD D,0
-    LD HL,IDCACHE_T0 : ADD HL,DE : LD A,(HL)
-    OR A
-    JR NZ,BZTO_FAIL
-    LD A,BIGZUM_SPAWN_COL : LD E,A : LD D,0
-    LD HL,IDCACHE_T1 : ADD HL,DE : LD A,(HL)
-    OR A
-    JR NZ,BZTO_FAIL
-    LD A,BIGZUM_SPAWN_COL : LD E,A : LD D,0
-    LD HL,IDCACHE_T2 : ADD HL,DE : LD A,(HL)
-    OR A
-    JR NZ,BZTO_FAIL
-    LD A,BIGZUM_SPAWN_COL : LD E,A : LD D,0
-    LD HL,IDCACHE_T3 : ADD HL,DE : LD A,(HL)
-    CP 3
-    JR NC,BZTO_FAIL
-    OR A
-    JR Z,BZTO_FAIL
-    LD A,1
-    RET
-BZTO_FAIL:
-    XOR A
-    RET
-
-; same gate as ALLOC_ZUM_SLOT (round34 dropped the old spawn-count
-; threshold - see its own comment - so just flat terrain + free slot
-; now) plus the same instant-overlap resolution at spawn - "スポーン
-; 条件は同じ". round34-2 ("排他制御は削除") removed the Etank exclusion
-; that used to sit here too - **this one is a real, known VRAM-sharing
-; risk, not just a design preference**: Etank dynamically overwrites
-; PAT_BIGZUM's own BL/BR quadrant pattern bytes with its own art (see
-; PAT_ETANK_BL's own comment / ALLOC_ETANK_SLOT's own LDIRVM call), so
-; a BigZum and an Etank genuinely alive at the same time WILL corrupt
-; whichever one spawned first's own BL/BR quadrant art - this is not
-; hypothetical, it was the whole reason this exclusion existed. Removed
-; anyway per explicit instruction; if this shows up as visible garbled
-; sprite art, the real fix is giving Etank its own dedicated pattern
-; codes instead of borrowing BigZum's, not re-adding this exclusion.
-; round34-3 ("Stage1と全く同じ処理をしろ"): SSC2_FIRE already advanced
-; SPAWN2_NEXT_INDEX unconditionally before dispatching here - any
-; failure below (terrain not flat right now, or the one slot busy)
-; just drops this spawn attempt, exactly like Stage1's own SPAWN_
-; SIMPLE. See SPAWN2_SCHEDULE_CHECK's own comment for why the previous
-; round's retry-with-timeout design was itself the actual bug
-; ("Bigzumが一度も出てこない" - its own terrain window legitimately
-; took longer than that timeout to come back around).
+; same gate as ALLOC_ZUM_SLOT plus the same instant-overlap resolution
+; at spawn - "スポーン条件は同じ". round34-2 ("排他制御は削除") removed
+; the Etank exclusion that used to sit here too - **this one is a real,
+; known VRAM-sharing risk, not just a design preference**: Etank
+; dynamically overwrites PAT_BIGZUM's own BL/BR quadrant pattern bytes
+; with its own art (see PAT_ETANK_BL's own comment / ALLOC_ETANK_SLOT's
+; own LDIRVM call), so a BigZum and an Etank genuinely alive at the same
+; time WILL corrupt whichever one spawned first's own BL/BR quadrant art
+; - this is not hypothetical, it was the whole reason this exclusion
+; existed. Removed anyway per explicit instruction; if this shows up as
+; visible garbled sprite art, the real fix is giving Etank its own
+; dedicated pattern codes instead of borrowing BigZum's, not re-adding
+; this exclusion. round34-3 ("Stage1と全く同じ処理をしろ"): SSC2_FIRE
+; already advanced SPAWN2_NEXT_INDEX unconditionally before dispatching
+; here - a failure below (the one slot busy) just drops this spawn
+; attempt, exactly like Stage1's own SPAWN_SIMPLE.
+; round35 (real-hardware feedback, direct instrumentation of the actual
+; per-tick terrain-flatness log: "スポーン条件も要らないぞ 地形も仮実装
+; だから平地条件いらない"): the BIGZUM_TERRAIN_OK gate that used to sit
+; here is REMOVED - it's what was ACTUALLY silently dropping most of
+; this schedule's own 6 BigZum entries even after round35's own
+; pool-occupancy fix (BIGZUM_ENGAGEMENT_DURATION) freed the slot back up
+; in time; the terrain system itself being only a placeholder means that
+; gate was never meaningful to begin with. Only remaining gate now: a
+; free slot.
 ALLOC_BIGZUM_SLOT:
-    CALL BIGZUM_TERRAIN_OK
-    OR A
-    RET Z
-
     LD HL,BIGZUM_POOL
     LD B,BIGZUM_SLOT_COUNT
 ABZS_LOOP:
@@ -6152,14 +6180,31 @@ ABZS_FOUND:
 
     ; restore BigZum's own real BL/BR pattern bytes - undoes whatever
     ; Etank's own dynamic VRAM-sharing may have left behind from an
-    ; earlier appearance (see ETANK_SLOT_SIZE's own comment). The
-    ; bidirectional exclusion above only prevents the 2 being active at
-    ; the SAME time, not stale bytes left over from an Etank that has
-    ; since despawned - this reload is what actually fixes that up,
-    ; every single BigZum spawn, not just when Etank happened to run
-    ; recently (cheap/harmless either way - same 128-byte LDIRVM INIT
-    ; already does once for this same pattern).
+    ; earlier appearance (see ETANK_SLOT_SIZE's own comment). No
+    ; exclusion prevents the 2 from being active at the same time any
+    ; more (round34-2, "排他制御は削除") - this reload runs every
+    ; single BigZum spawn regardless, so it fixes up stale bytes
+    ; whether Etank ran recently or not (cheap/harmless either way -
+    ; same 128-byte LDIRVM INIT already does once for this same
+    ; pattern).
     LD HL,BIGZUM_BIGZUM_TL : LD DE,PAT_BIGZUM*8+SPRPAT : LD BC,128 : CALL LDIRVM
+
+    ; round35: this instance's own forced-retreat tick, min(spawn tick +
+    ; BIGZUM_ENGAGEMENT_DURATION, BIGZUM_RETREAT_TICK) - see BIGZUM_
+    ; ENGAGEMENT_DURATION's own comment for why this is per-instance now
+    ; instead of one shared global tick.
+    LD HL,(GAME_TICK)
+    LD DE,BIGZUM_ENGAGEMENT_DURATION
+    ADD HL,DE                  ; HL = candidate retreat tick
+    PUSH HL
+    LD DE,BIGZUM_RETREAT_TICK
+    OR A
+    SBC HL,DE                  ; candidate - ceiling; C set iff candidate < ceiling
+    POP DE                     ; DE = candidate again
+    JR C,ABZS_RETREAT_TICK_SET ; candidate already under the ceiling - use it as-is
+    LD DE,BIGZUM_RETREAT_TICK  ; candidate would exceed the ceiling - clamp to it
+ABZS_RETREAT_TICK_SET:
+    LD (IX+13),E : LD (IX+14),D
 
     LD A,BIGZUM_SPAWNX-BIGZUM_COLLISION_SIZE : LD B,A
     LD A,(TANK_X)
@@ -6184,26 +6229,34 @@ UPDATE_ONE_BIGZUM:
     OR A
     RET Z
 
-    ; "Tick950でBigZumが居たら左へ撤退し消す" - once BIGZUM_RETREAT_
-    ; TICK is reached (a true 16-bit compare - same bug class as
-    ; CLOUD_UPDATE_ALL if this were an 8-bit CP), force any still-active
-    ; BigZum into a dedicated retreat state (5) that overrides whatever
-    ; it was doing (approach/pause/punch/jump/flip-pause alike), before
-    ; any of that logic below gets a chance to run. This is what makes
-    ; the boss's own reuse of BigZum's hw sprite slots/pattern VRAM (see
-    ; BOSS_SPR_BASE_SLOT/PAT_SASAPI's own comments) actually safe rather
-    ; than just an assumption - round34 ("全てスケジュールに"): this
-    ; check runs every single frame regardless of when GAME_TICK crossed
-    ; the threshold, so even a BigZum the schedule spawns AFTER
-    ; BIGZUM_RETREAT_TICK has already passed (this round's own schedule
-    ; has one at tick979, only 16 ticks before the boss's own tick995)
-    ; still gets forced into retreat from its very first live frame -
-    ; not just ones already on screen when the tick was crossed.
+    ; "Tick950でBigZumが居たら左へ撤退し消す" - originally BIGZUM_
+    ; RETREAT_TICK was ONE shared tick every BigZum retreated at,
+    ; whenever it spawned. round35 (real-hardware feedback: "Bigzumは4
+    ; 回以上スケジュールしてるが1回しか出てない") found that design let
+    ; the first successful spawn occupy the only slot for the rest of
+    ; the game, silently dropping every later schedule entry - fixed by
+    ; making this PER-INSTANCE (IX+13/+14, computed once at spawn - see
+    ; BIGZUM_ENGAGEMENT_DURATION's own comment), so each BigZum retreats
+    ; on its own bounded schedule instead of squatting until 950. Same
+    ; true 16-bit compare either way (same bug class as CLOUD_UPDATE_ALL
+    ; if this were an 8-bit CP), forcing any still-active BigZum into a
+    ; dedicated retreat state (5) that overrides whatever it was doing
+    ; (approach/pause/punch/jump/flip-pause alike), before any of that
+    ; logic below gets a chance to run - this is what makes the boss's
+    ; own reuse of BigZum's hw sprite slots/pattern VRAM (see BOSS_SPR_
+    ; BASE_SLOT/PAT_SASAPI's own comments) actually safe rather than
+    ; just an assumption. This check runs every single frame regardless
+    ; of when GAME_TICK crossed the threshold, so even a BigZum the
+    ; schedule spawns AFTER its own computed retreat tick has already
+    ; passed (its own spawn-time clamp to BIGZUM_RETREAT_TICK guarantees
+    ; that can only happen this close to the boss anyway) still gets
+    ; forced into retreat from its very first live frame - not just ones
+    ; already on screen when the tick was crossed.
     LD A,(IX+7)
     CP 5
     JP Z,UOBZ_RETREAT_MOVE      ; already retreating
     LD HL,(GAME_TICK)
-    LD DE,BIGZUM_RETREAT_TICK
+    LD E,(IX+13) : LD D,(IX+14)
     OR A
     SBC HL,DE
     JR C,UOBZ_NOT_RETREAT_TIME
@@ -7441,25 +7494,6 @@ UETAU_LOOP:
     CALL FLUSH_ETANK_SPRITES
     RET
 
-; A=1 only while the CURRENT surface at ETANK_SPAWN_COL is specifically
-; the apex tier (IDCACHE_T0, the topmost cache row) and steady (not a
-; climb/descend marker) - stricter than a "any flat tier" check, since
-; Etank never re-probes its own Y after spawn (see ETANK_SLOT_SIZE's
-; own comment) and needs the SAME height under it for its whole
-; crossing - see ETANK_APEX_FLAT_RUN in terrain_gen.py.
-ETANK_TERRAIN_OK:
-    LD A,ETANK_SPAWN_COL : LD E,A : LD D,0
-    LD HL,IDCACHE_T0 : ADD HL,DE : LD A,(HL)
-    CP 3
-    JR NC,ETO_FAIL
-    OR A
-    JR Z,ETO_FAIL
-    LD A,1
-    RET
-ETO_FAIL:
-    XOR A
-    RET
-
 ; round34 ("ランダムスポーンは廃止 全てスケジュールに") dropped the
 ; old GAME_TICK>=70 floor - itself only ever a safety margin for the
 ; old random-timer spawner, redundant now that the schedule's own
@@ -7472,25 +7506,24 @@ ETO_FAIL:
 ; the same time WILL corrupt whichever spawned first's own BL/BR
 ; quadrant art (see ALLOC_BIGZUM_SLOT's own matching comment - this
 ; exclusion used to be the only thing preventing that). Removed anyway
-; per explicit instruction. Only remaining gates: the terrain-length
-; check below, and a free slot - same shape as ALLOC_ZUM_SLOT/ALLOC_
-; BIGZUM_SLOT, plus the same instant spawn-time overlap resolution.
-; Called only from SSC2_FIRE, which has already advanced SPAWN2_NEXT_
-; INDEX unconditionally BEFORE dispatching here (round34-3, matching
-; Stage1's real SSC_FIRE: "やってることはStage1と全く同じ処理だぞ") -
-; any failure here (bad terrain, full pool) just returns and the spawn
-; is simply dropped, no retry, no stall counter. This also fixes the
-; old retry-with-timeout design's own worst failure mode: a flat-ground
-; window that legitimately takes >60 ticks to cycle back around used to
-; force-skip the spawn AND stall every later schedule entry behind it
-; for up to 60 ticks each (the "Tick500あたりから100Tick以上敵が
-; 出てこない" dead zone) - now a blocked entry just drops instantly and
-; the schedule moves straight on to the next one.
+; per explicit instruction. Called only from SSC2_FIRE, which has
+; already advanced SPAWN2_NEXT_INDEX unconditionally BEFORE dispatching
+; here (round34-3, matching Stage1's real SSC_FIRE: "やってることは
+; Stage1と全く同じ処理だぞ") - a failure here (full pool) just returns
+; and the spawn is simply dropped, no retry, no stall counter.
+; round35 (real-hardware feedback, direct instrumentation of the actual
+; per-tick terrain-flatness log: "スポーン条件も要らないぞ 地形も仮実装
+; だから平地条件いらない"): the ETANK_TERRAIN_OK gate that used to sit
+; here (checking the apex tier was the CURRENT surface - see ETANK_
+; SLOT_SIZE's own comment for why Etank cared, since it never re-probes
+; its own Y after spawn) is REMOVED. Only remaining gate now: a free
+; slot. Note this means Etank can now spawn while the terrain ISN'T at
+; the apex tier - since its own Y still comes unchanged from the apex
+; tier's fixed value regardless (see AETS_FOUND below), it can visually
+; sit above/below the actual (placeholder) ground until the real terrain
+; system replaces this one - accepted per explicit instruction, not an
+; oversight.
 ALLOC_ETANK_SLOT:
-    CALL ETANK_TERRAIN_OK
-    OR A
-    RET Z
-
     LD HL,ETANK_POOL
     LD B,ETANK_SLOT_COUNT
 AETS_LOOP:

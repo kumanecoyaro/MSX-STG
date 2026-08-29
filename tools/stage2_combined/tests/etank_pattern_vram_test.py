@@ -1,3 +1,8 @@
+"""round35: BIGZUM_TERRAIN_OK/ETANK_TERRAIN_OK (and the IDCACHE/terrain
+setup that used to gate spawning on them) are gone - "地形も仮実装だから
+平地条件いらない". Neither ALLOC_ETANK_SLOT nor ALLOC_BIGZUM_SLOT needs
+any terrain priming before spawning any more.
+"""
 import os
 import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -27,9 +32,6 @@ check("PAT_ETANK_BR is BigZum's own BR quadrant base (PAT_BIGZUM+12)", PAT_ETANK
 cpu = fresh_cpu()
 ETANK_POOL = sym["ETANK_POOL"]
 BIGZUM_POOL = sym["BIGZUM_POOL"]
-IDCACHE_T0 = sym["IDCACHE_T0"]
-col = sym["ETANK_SPAWN_COL"]
-cpu.mem[IDCACHE_T0 + col] = 1
 cpu.mem[sym["GAME_TICK"]] = 70
 cpu.mem[sym["GAME_TICK"] + 1] = 0
 
@@ -55,11 +57,8 @@ check("BR quadrant VRAM matches Etank's own real BR art (not a misaligned slice)
 
 # BigZum's own spawn must reload its real BL/BR bytes, undoing Etank's
 # borrow - the whole dynamic-sharing scheme is only safe because of this.
-bzcol = sym["BIGZUM_SPAWN_COL"]
-IDCACHE_T1 = sym["IDCACHE_T1"]; IDCACHE_T2 = sym["IDCACHE_T2"]; IDCACHE_T3 = sym["IDCACHE_T3"]
 cpu.mem[ETANK_POOL + 0] = 0  # despawn Etank first - not required by any exclusion any more
                              # (round34-2, "排他制御は削除"), just isolates this specific check
-cpu.mem[IDCACHE_T0+bzcol]=0; cpu.mem[IDCACHE_T1+bzcol]=0; cpu.mem[IDCACHE_T2+bzcol]=0; cpu.mem[IDCACHE_T3+bzcol]=1
 call_routine(cpu, "ALLOC_BIGZUM_SLOT")
 check("BigZum actually spawned", cpu.mem[BIGZUM_POOL + 0] == 1)
 bl_reloaded = list(cpu.vram[SPRPAT + (PAT_BIGZUM + 8) * 8: SPRPAT + (PAT_BIGZUM + 8) * 8 + 32])
