@@ -3872,3 +3872,70 @@ Thunder activity) confirming it survives completely untouched.
   over — only the durable, README-referenced regression suite was.
   If you need to re-run a specific historical investigation, it isn't
   here; you'd write a fresh one using `tests/banked_helpers.py`.
+
+## Round 33: schedule-editor.htmlをStage2エネミーに対応(Stage1/Stage2切り替え・相互登録禁止・出力分離)
+
+- User instruction (verbatim): "ではステージ2のステージ1同様にスポーンをスケージュール対応させる
+  まずエディタをステージ2エネミーに対応 切り替えボタンでも付けて 相互には登録できないように
+  1は1、2は2のエネミーのみ登録可能に 出力も別に分ける"
+  - Stage2の敵スポーンをStage1同様スケジュールテーブル駆動にする、という大きな目標の
+    「まず」の一手として、`tools/schedule-editor.html`(ブラウザ完結・ビルド不要の単一HTML
+    レベルデザインツール)をStage2エネミー対応に拡張する回。ASM側(`combined_test.asm`)を
+    実際にスケジュールテーブル駆動へ書き換える作業は、ユーザー自身の「まず」という言い回し
+    により明示的に別作業・未着手のまま(指示なしに着手しない)。
+
+- **編集対象は`tools/schedule-editor.html`のみ**(単一ファイル、ビルドステップなし)。
+  実施内容:
+  1. `GLYPHS`にStage2の5種のスプライトを追加: `s2_zacoii`(16x16 quads)、`s2_zum`
+     (16x16 quads)、`s2_bigzum`(32x32 quadGroups)、`s2_flyer`(32x32 quadGroups)、
+     `s2_etank`(32x32 quadGroups、上半分は空 - Etankは下2象限しか描画しない実仕様通り)。
+     バイトデータは`tools/stage2_combined/enemy_gen.py`/`bigzum_gen.py`/`flyer_gen.py`/
+     `etank_gen.py`を`python3 -c "import X_gen; print(X_gen.emit_asm_tables())"`で直接
+     実行し、生の出力から書き写して独立検証(エージェントの転記だけに頼らず)。
+     色はTMS9918ハードウェアパレット(0始まり、MSX BASIC COLORの1始まりとは別物)を、
+     コードベース内の既存hex値・コメント(`BOSS_BG`の`#5955e0`、`etank_gen.py`の
+     ドキュメント文字列内「MSX palette index 6」など)と突き合わせて再確認の上で使用。
+  2. `drawGlyph`に`quadGroups`(32x32 = 16x16象限を2x2配置)対応を追加(`paintQuads`
+     ヘルパーを新設し`rows`/`quads`/`quadGroups`の3形式を共通処理)。
+  3. **状態のStage別分割**: `TYPES`→`TYPES1`/`TYPES2`、`TYPE_BY_ID`→`TYPE_BY_ID1`/
+     `TYPE_BY_ID2`、`placements`→`placements1`/`placements2`、`history`→`history1`/
+     `history2`という「ペアの配列 + 現在アクティブな方を指す単一のむき出し変数
+     (`TYPES`/`TYPE_BY_ID`/`placements`/`history`)」という設計にし、既存コードの
+     大部分(読み取り・in-place変更のpush/splice/sort等)は無改修で動作するようにした。
+     `placements`をまるごと再代入する箇所だけ`setPlacements(arr)`という新ヘルパー経由に
+     統一(直接代入だと`placements1`/`placements2`のどちらに書き戻すべきか失われるため)。
+     `switchStage(n)`が4つのポインタを一括で付け替える。
+  4. **相互登録禁止**: Stage2側の全ID(`s2_zacoii`/`s2_zum`/`s2_bigzum`/`s2_flyer`/
+     `s2_etank`/`s2_boss`)にわざと`s2_`プレフィックスを付け、Stage1側の裸のID
+     (`boss`/`enemy2`等)と絶対に衝突しない名前空間にした。これにより、JSONロード
+     (`importJSONText`)・クリップボード貼り付け(`parseCopiedText`)双方に既にあった
+     `TYPE_BY_ID[p.type]`の妥当性フィルタが、アクティブなStageのTYPE_BY_IDでしか
+     ヒットしないため「相互には登録できない」が追加ロジックなしで自動的に満たされる。
+     さらにUX向上として`importJSONText`にJSONファイル自体の`data.stage`フィールドと
+     現在の`STAGE`が食い違う場合に明示エラーで弾くガードを追加(構造的な保証の上に、
+     わかりやすいエラーメッセージを足しただけ)。
+  5. **出力の分離**: `currentJSON()`が`stage: STAGE`フィールドを埋め込むようにし、
+     保存ダイアログのデフォルトファイル名も`Schedule.json`(Stage1)/`Schedule2.json`
+     (Stage2)で出し分け。stageフィールドの無い旧保存ファイルは後方互換で読み込み可能
+     (フィールド自体が無ければstageチェックをスキップ)。
+  6. **切り替えボタン**: サイドバーに「Stage 1」/「Stage 2」ボタンを追加、
+     `switchStage(n)`クリックハンドラで発火。切り替え時にパレット再構築
+     (`buildPalette()`、以前は起動時1回だけの即時実行だったのを関数化)・
+     armed状態解除・特殊モード終了・undo可否更新・再描画を行う。
+  7. Stage2のボス(Sasapi)は今回`s2_boss`というエントリ(`glyph: null`)として
+     編集対象に含めたが、実物の64x64ボディ(`SASAPI_QUADS`等、BigZumの絵柄を
+     4x4象限で再利用)は今回は転記せず、`drawS2BossPlaceholder`という
+     ラベル付きプレースホルダー矩形で代用(将来差し替え可能、`footprintOf`/
+     描画3箇所の呼び出し規約は本物のボディに差し替えても変更不要な設計)。
+
+- 検証: 手作業での大量編集のため、`<script>`部分を正規表現で抽出し
+  `node --check`で構文検証(`84872 bytes extracted` / `SYNTAX OK`)。加えて
+  `placements = `/`history = `の直接代入パターンを全数grepし、`setPlacements`
+  経由でない再代入が残っていないことを確認(初期宣言・`setPlacements`自身の中身・
+  `switchStage`の付け替えの5箇所のみが該当、それ以外は全て読み取り/in-place変更
+  であることを確認)。UIレベルの動作確認はArtifactとして公開しユーザー自身に
+  委ねる(Pure-JSレベルのテストスイートはこのツールには存在しない)。
+
+- ASM側(`combined_test.asm`のスポーン機構自体をスケジュールテーブル駆動に
+  書き換える作業)は今回のスコープ外・未着手。Stage1の`SPAWN_THRESHOLDS`/
+  `SSC_FIRE`/`GAME_TICK`方式を参考に、次回以降ユーザーの指示があり次第着手する。

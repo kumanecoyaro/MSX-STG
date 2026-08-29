@@ -89,4 +89,16 @@
 
 - (2026-08-25、着手・完了済み) "Comb"ビルド: `build_full_rom.py`のstage2部分を、`bankswitch_poc`の
   簡易プレースホルダーから本物の`stage2_combined`contentに差し替え済み。詳細は上記「ビルドコマンド」
-  および`tools/stage2_combined/HANDOFF.md`のRound30を参照。現状、他に保留中タスクなし。
+  および`tools/stage2_combined/HANDOFF.md`のRound30を参照。
+- **進行中の大目標**: Stage2の敵スポーンをStage1同様スケジュールテーブル駆動にする。
+  - (2026-08-29、着手・完了済み) 第一段階として`tools/schedule-editor.html`をStage2エネミー
+    (ZacoII/Zum/BigZum/Flyer/Etank/Boss)対応に拡張済み。Stage1/Stage2切り替えボタン、
+    相互登録禁止(`s2_`プレフィックスの名前空間分離)、出力ファイル分離(`stage`フィールド・
+    `Schedule.json`/`Schedule2.json`)を実装。詳細は`tools/stage2_combined/HANDOFF.md`の
+    Round33を参照。
+  - **次段階(未着手、指示なしに着手しない)**: `tools/stage2_combined/combined_test.asm`側の
+    実装。現状は`ENEMY_SPAWN_INTERVAL`等の個別インターバルタイマー方式(+ボスのみ
+    `BOSS_SPAWN_TICK`という単一定数によるtick閾値方式)。これをStage1の
+    `SPAWN_THRESHOLDS`/`SSC_FIRE`/`GAME_TICK`方式(tickテーブル駆動、`CP`連鎖で
+    ディスパッチ)に倣ってテーブル駆動化し、schedule-editorの出力(Stage2用JSON)を
+    実際に消費できるようにする作業。ユーザーからの明示的な指示があり次第着手する。

@@ -435,6 +435,10 @@
 
     <div class="side-actions">
       <div class="btn-row">
+        <button id="btnStage1" style="flex: 1 1 50%;">Stage 1</button>
+        <button id="btnStage2" style="flex: 1 1 50%;">Stage 2</button>
+      </div>
+      <div class="btn-row">
         <label class="btn-label" for="fileInput">Load JSON</label>
         <input type="file" id="fileInput" accept=".json" hidden>
         <button id="btnCopy">Copy</button>
@@ -560,6 +564,94 @@
       color: "#cccccc",
       bg: "#5955e0"
     },
+
+    // ---- Stage2 roster (round32, "エディタをステージ2エネミーに対応")
+    // ---- transcribed byte-for-byte from tools/stage2_combined's own
+    // ---- generator scripts (enemy_gen.py/bigzum_gen.py/flyer_gen.py/
+    // ---- etank_gen.py's own emit_asm_tables(), reproduced directly via
+    // ---- `python3 -c "import X_gen; print(X_gen.emit_asm_tables())"`
+    // ---- from tools/stage2_combined - NOT hand-transcribed from the ASM
+    // ---- like the Stage1 glyphs above, since Stage2's own pattern bytes
+    // ---- are themselves generated, not literal DB lines in combined_
+    // ---- test.asm. Colors are this game's own hardware TMS9918 palette
+    // ---- indices (0=transparent..15=white - confirmed against this
+    // ---- exact file's own already-used hex, e.g. BOSS_TILES' "#db6559"
+    // ---- red matches index8/medium-red exactly), not the differently-
+    // ---- ordered "BASIC COLOR 1-16" numbering.
+    // ZacoII (16x16, ENEMY_ZACOII) - light green, TMS9918 index3.
+    s2_zacoii: {
+      size: 16,
+      quads: {
+        tl: [6, 107, 206, 132, 49, 94, 237, 210],
+        bl: [141, 35, 121, 240, 224, 88, 60, 14],
+        tr: [48, 120, 60, 158, 71, 131, 97, 240],
+        br: [224, 64, 144, 60, 114, 44, 30, 6]
+      },
+      color: "#74d07d"
+    },
+    // Zum (16x16, ENEMY_ZUM) - magenta, TMS9918 index13.
+    s2_zum: {
+      size: 16,
+      quads: {
+        tl: [6, 43, 116, 176, 27, 47, 54, 105],
+        bl: [71, 11, 29, 28, 56, 104, 0, 0],
+        tr: [28, 190, 223, 217, 184, 86, 206, 236],
+        br: [232, 208, 184, 104, 76, 60, 30, 6]
+      },
+      color: "#b766b5"
+    },
+    // BigZum (32x32, BIGZUM_BIGZUM_TL/TR/BL/BR - default/walking pose,
+    // right-facing) - magenta, same as Zum. quadGroups.{tl,bl,tr,br} are
+    // the 4 real 16x16 hw sprites the body is built from, each itself a
+    // quads{tl,bl,tr,br} group - see drawGlyph's own comment.
+    s2_bigzum: {
+      size: 32,
+      quadGroups: {
+        tl: { tl: [0, 0, 0, 0, 0, 0, 0, 0], bl: [0, 7, 13, 27, 54, 29, 12, 2],
+              tr: [0, 0, 0, 0, 0, 0, 0, 0], br: [0, 96, 245, 58, 151, 79, 23, 232] },
+        tr: { tl: [0, 0, 0, 0, 0, 0, 0, 0], bl: [56, 92, 238, 119, 187, 222, 168, 112],
+              tr: [0, 0, 0, 0, 0, 0, 0, 0], br: [0, 0, 0, 0, 0, 0, 0, 0] },
+        bl: { tl: [5, 6, 27, 125, 94, 49, 2, 3], bl: [4, 15, 23, 31, 15, 4, 3, 7],
+              tr: [158, 125, 251, 231, 28, 73, 252, 255], br: [166, 89, 135, 227, 1, 224, 192, 128] },
+        br: { tl: [160, 176, 120, 120, 240, 96, 128, 32], bl: [112, 240, 252, 222, 174, 95, 31, 7],
+              tr: [0, 0, 0, 0, 0, 0, 0, 0], br: [0, 0, 0, 0, 0, 0, 0, 0] }
+      },
+      color: "#b766b5"
+    },
+    // Flyer (32x32, FLYER_TL/TR/BL/BR, right-facing) - cyan.
+    s2_flyer: {
+      size: 32,
+      quadGroups: {
+        tl: { tl: [0, 0, 0, 0, 0, 0, 0, 0], bl: [0, 0, 0, 0, 15, 0, 0, 0],
+              tr: [0, 0, 0, 0, 0, 0, 0, 0], br: [0, 0, 13, 119, 216, 247, 102, 189] },
+        tr: { tl: [0, 0, 0, 0, 0, 0, 0, 0], bl: [0, 0, 128, 240, 255, 64, 184, 220],
+              tr: [0, 0, 0, 0, 0, 0, 0, 0], br: [0, 0, 0, 0, 0, 0, 0, 0] },
+        bl: { tl: [0, 255, 132, 127, 0, 3, 0, 1], bl: [0, 0, 0, 0, 0, 0, 0, 0],
+              tr: [91, 167, 191, 62, 89, 102, 235, 247], br: [247, 91, 15, 28, 30, 4, 24, 48] },
+        br: { tl: [206, 176, 120, 240, 224, 192, 0, 192], bl: [224, 160, 48, 248, 252, 56, 22, 6],
+              tr: [0, 0, 0, 0, 0, 0, 0, 0], br: [0, 0, 0, 0, 0, 0, 0, 0] }
+      },
+      color: "#65dbef"
+    },
+    // Etank (32x32 canvas, but ETANK_BL/BR only - top half is always
+    // blank, "左下24x16ドット" per etank_gen.py's own docstring, real
+    // hw sprite footprint is just the bottom 2 of 4 quadrant slots) -
+    // dark red (ETANK_COLOR overrides the sprite JSON's own fg), TMS9918
+    // index6.
+    s2_etank: {
+      size: 32,
+      quadGroups: {
+        tl: { tl: [0, 0, 0, 0, 0, 0, 0, 0], bl: [0, 0, 0, 0, 0, 0, 0, 0],
+              tr: [0, 0, 0, 0, 0, 0, 0, 0], br: [0, 0, 0, 0, 0, 0, 0, 0] },
+        tr: { tl: [0, 0, 0, 0, 0, 0, 0, 0], bl: [0, 0, 0, 0, 0, 0, 0, 0],
+              tr: [0, 0, 0, 0, 0, 0, 0, 0], br: [0, 0, 0, 0, 0, 0, 0, 0] },
+        bl: { tl: [0, 0, 0, 63, 31, 0, 0, 1], bl: [31, 127, 227, 77, 85, 89, 35, 28],
+              tr: [0, 0, 0, 221, 226, 61, 111, 128], br: [123, 255, 140, 55, 85, 100, 143, 112] },
+        br: { tl: [8, 8, 12, 236, 24, 239, 125, 3], bl: [238, 255, 98, 77, 213, 89, 226, 28],
+              tr: [0, 0, 0, 0, 0, 0, 0, 0], br: [0, 0, 0, 0, 0, 0, 0, 0] }
+      },
+      color: "#b95e51"
+    },
   };
 
   // ---------- boss's real BG body (BOSS_PATTERNS/BOSS_MAP in the ASM) ----------
@@ -678,9 +770,36 @@
     }
   }
 
+  // Stage2's own boss (Sasapi) placeholder - round32 scope call (see
+  // s2_boss's own comment in TYPES2): Sasapi's real body is a 64x64
+  // (4x4-of-16x16 hw-sprite-quadrant) structure, considerably more
+  // transcription than the other 4 Stage2 entries needed, so this draws
+  // a plain labeled box at its real 8x8-cell/64x64px footprint instead
+  // of a pixel-perfect body - can be upgraded to the real body later the
+  // same way drawBossBody/BOSS_TILES/BOSS_MAP do for Stage1's boss,
+  // without needing to touch anything else here (footprintOf/drawGrid's
+  // own s2_boss branches only care about the 8x8-cell size, not how
+  // it's actually painted).
+  function drawS2BossPlaceholder(ctx, x, y, cell) {
+    var w = 8 * cell, h = 8 * cell;
+    ctx.fillStyle = "#3a1116";
+    ctx.fillRect(x, y, w, h);
+    ctx.strokeStyle = "#ff897d";
+    ctx.lineWidth = 2;
+    ctx.strokeRect(x + 1, y + 1, w - 2, h - 2);
+    ctx.fillStyle = "#ff897d";
+    ctx.font = "700 " + Math.max(10, Math.round(cell * 1.4)) + "px " + tok("--font-mono").split(",")[0] + ", monospace";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText("BOSS", x + w / 2, y + h / 2);
+  }
+
   // Draws a GLYPHS entry into ctx at (x,y), scaled to fill w x h. 8x8 "rows"
   // glyphs paint their bg first (opaque BG tile); 16x16 "quads" glyphs leave
-  // 0-bits untouched (transparent sprite, like the real hardware).
+  // 0-bits untouched (transparent sprite, like the real hardware); 32x32
+  // "quadGroups" (round32, Stage2's own BigZum/Flyer/Etank - each is 4
+  // real 16x16 hw sprites, not one bigger one) is just "quads" one level
+  // deeper - tl/bl/tr/br, each itself a full quads{tl,bl,tr,br} group.
   function drawGlyph(ctx, glyph, x, y, w, h) {
     var n = glyph.size, px = w / n, py = h / n;
     if (glyph.bg) { ctx.fillStyle = glyph.bg; ctx.fillRect(x, y, w, h); }
@@ -695,18 +814,42 @@
         }
       }
     }
+    function paintQuads(quads, offX, offY) {
+      paintRows(quads.tl, offX + 0, offY + 0);
+      paintRows(quads.bl, offX + 0, offY + 8);
+      paintRows(quads.tr, offX + 8, offY + 0);
+      paintRows(quads.br, offX + 8, offY + 8);
+    }
     if (glyph.rows) {
       paintRows(glyph.rows, 0, 0);
+    } else if (glyph.quadGroups) {
+      paintQuads(glyph.quadGroups.tl, 0, 0);
+      paintQuads(glyph.quadGroups.bl, 0, 16);
+      paintQuads(glyph.quadGroups.tr, 16, 0);
+      paintQuads(glyph.quadGroups.br, 16, 16);
     } else {
-      paintRows(glyph.quads.tl, 0, 0);
-      paintRows(glyph.quads.bl, 0, 8);
-      paintRows(glyph.quads.tr, 8, 0);
-      paintRows(glyph.quads.br, 8, 8);
+      paintQuads(glyph.quads, 0, 0);
     }
   }
 
   // ---------- enemy palette (matches the current CYBER SHMUP.asm schedule) ----------
-  var TYPES = [
+  // round32 ("エディタをステージ2エネミーに対応 切り替えボタンでも付けて
+  // 相互には登録できないように 1は1、2は2のエネミーのみ登録可能に 出力も
+  // 別に分ける"): TYPES/TYPE_BY_ID/placements/history are all now per-
+  // stage (the "1"/"2" suffixed variables below) with a "which one is
+  // active right now" pointer (TYPES/TYPE_BY_ID/placements/history
+  // themselves, reassigned wholesale by switchStage() - see its own
+  // comment) - existing code elsewhere in this file that reads/writes
+  // those bare names keeps working unmodified, it's just always looking
+  // at whichever stage is currently toggled on. Stage2 ids are all
+  // prefixed "s2_" (never bare "boss"/"enemy2"/etc, even where the
+  // concept overlaps by name) so the two id spaces can never collide -
+  // this is also what makes "相互には登録できない" hold structurally for
+  // FILE LOADS too, not just manual placement: importJSONText's own
+  // existing TYPE_BY_ID[p.type] validity filter already rejects every
+  // placement from the wrong stage's JSON on its own, no separate cross-
+  // stage guard needed (see importJSONText's own updated comment).
+  var TYPES1 = [
     { id: "simple",     name: "Simple (Enemy1)",  desc: "any row - dodge dir is decided from player Y at center", glyph: "asterisk16" },
     // e2a_top/e2a_bot/e2b_top/e2b_bot used to be 4 distinct placeable types -
     // A/B picked which of 2 independent RAM instances got claimed, Top/Bottom
@@ -722,8 +865,37 @@
     { id: "enemy6",      name: "Enemy6",           desc: "NEW - BG-tile spin (0/90/180/270°); placement staged here, not yet wired into SPAWN_THRESHOLDS/SSC_FIRE", glyph: "enemy6" },
     { id: "boss",       name: "Boss",             desc: "BOSS_SPAWN - fixed position, row/tick here are just for editing", glyph: null }
   ];
-  var TYPE_BY_ID = {};
-  TYPES.forEach(function (t) { TYPE_BY_ID[t.id] = t; });
+  // Stage2 roster - tools/stage2_combined/combined_test.asm. None of
+  // these are schedule-table-driven in the ASM yet (per round32's own
+  // research pass: Stage2 currently spawns ZacoII/Zum/BigZum/Flyer/Etank
+  // via independent per-type interval timers + random Y, not a tick-
+  // indexed table the way Stage1's SPAWN_THRESHOLDS/SSC_FIRE is) - this
+  // is the FIRST step ("まずエディタをステージ2エネミーに対応") toward
+  // that; wiring the ASM side up to actually consume placements made
+  // here is separate, later work. Horming/Thunder/SBeam are the boss's
+  // own attack patterns, not independent overworld spawns, so they have
+  // no placeable entry here (same reasoning Stage1's own roster already
+  // excludes anything that isn't a real "spawns from nothing" event).
+  // s2_boss (Sasapi) gets no small palette icon (glyph:null, same as
+  // Stage1's own boss entry) and a simple placeholder box on the grid
+  // rather than a pixel-perfect body - Sasapi's real body is a 64x64
+  // (4x4-of-16x16 hw sprite quadrants) structure, considerably more
+  // transcription than the other 4 entries here; a documented scope
+  // call for this round, see drawS2BossPlaceholder's own comment.
+  var TYPES2 = [
+    { id: "s2_zacoii", name: "ZacoII",  desc: "generic ground-spawned enemy, ALLOC_ENEMY_SLOT/ENEMY_POOL", glyph: "s2_zacoii" },
+    { id: "s2_zum",    name: "Zum",     desc: "ground enemy, front-invincible until deflected", glyph: "s2_zum" },
+    { id: "s2_bigzum", name: "BigZum",  desc: "large ground enemy, punch pose on approach", glyph: "s2_bigzum" },
+    { id: "s2_flyer",  name: "Flyer",   desc: "sky enemy, homing-missile-style pattern reused as its own sprite block", glyph: "s2_flyer" },
+    { id: "s2_etank",  name: "Etank",   desc: "ground enemy, half-sprite (bottom 2 quadrants only)", glyph: "s2_etank" },
+    { id: "s2_boss",   name: "Boss (Sasapi)", desc: "BOSS_SPAWN_TICK - fixed position, row/tick here are just for editing", glyph: null }
+  ];
+  var TYPE_BY_ID1 = {}, TYPE_BY_ID2 = {};
+  TYPES1.forEach(function (t) { TYPE_BY_ID1[t.id] = t; });
+  TYPES2.forEach(function (t) { TYPE_BY_ID2[t.id] = t; });
+  var STAGE = 1;
+  var TYPES = TYPES1;
+  var TYPE_BY_ID = TYPE_BY_ID1;
 
   // ---------- geometry ----------
   var ROWS = 24;
@@ -737,7 +909,22 @@
   function tok(name) { return css.getPropertyValue(name).trim(); }
 
   // ---------- state ----------
-  var placements = []; // {tick, row, type}
+  // Per-stage placement lists - "出力も別に分ける" applies to the live
+  // editing state too, not just the export, so switching stages never
+  // loses or merges the other stage's own work. `placements` (read/
+  // written all over this file, unchanged) always refers to whichever
+  // one is active; setPlacements() is the ONLY place that's allowed to
+  // reassign it wholesale (as opposed to mutating in place via push/
+  // splice/sort, which every existing call site already does and needs
+  // no changes for) so the per-stage array of record stays in sync -
+  // see its own comment.
+  var placements1 = []; // {tick, row, type}
+  var placements2 = [];
+  var placements = placements1;
+  function setPlacements(arr) {
+    placements = arr;
+    if (STAGE === 1) placements1 = arr; else placements2 = arr;
+  }
   var armedType = null;
   var eraseArmed = false;
 
@@ -759,8 +946,11 @@
   // Snapshotted before every mutation (place/erase/offset edit/JSON load),
   // not diffed - the schedule stays small enough that a full deep-copy per
   // action costs nothing, and it means undo can never drift from what
-  // actually happened.
-  var history = [];
+  // actually happened. Per-stage, same reasoning/mechanism as placements1/
+  // placements2 above - undoing in Stage2 mode must never touch Stage1's
+  // own history or vice versa.
+  var history1 = [], history2 = [];
+  var history = history1;
   var MAX_HISTORY = 50;
   var btnUndo = document.getElementById("btnUndo");
 
@@ -773,7 +963,7 @@
   function undo() {
     if (!history.length) return;
     exitSpecialModes();
-    placements = history.pop();
+    setPlacements(history.pop());
     btnUndo.disabled = history.length === 0;
     render();
     flash("undo");
@@ -804,9 +994,21 @@
     };
   }
 
+  // Same clamp idea for Stage2's own boss (Sasapi) - see s2_boss's own
+  // comment in TYPES2 for why this is a simple 8x8-cell (64x64px, its
+  // real body size) placeholder box rather than a pixel-perfect body.
+  function s2BossOrigin(tick, row) {
+    return {
+      tick: Math.max(0, Math.min(tick, MAX_TICK - 8)),
+      row: Math.max(0, Math.min(row, ROWS - 8))
+    };
+  }
+
   // Every placement's real footprint in cells - Enemy3's 8x8 BG tile is
-  // exactly 1 cell, every other sprite is 16x16 (2x2 cells), the boss is
-  // its full 5x16 body. Tapping/inspecting/erasing needs to hit-test the
+  // exactly 1 cell, every 16x16 sprite is 2x2 cells, every 32x32 sprite
+  // (round32: Stage2's own BigZum/Flyer/Etank) is 4x4 cells, Stage1's own
+  // boss is its full 5x16 body, Stage2's own boss (s2_boss) is an 8x8
+  // placeholder box. Tapping/inspecting/erasing needs to hit-test the
   // whole visible icon, not just its anchor cell, now that icons are drawn
   // at their real size instead of a uniform 1-cell swatch.
   function footprintOf(p) {
@@ -816,7 +1018,11 @@
       var o = bossOrigin(p.tick, p.row);
       return { t0: o.tick, t1: o.tick + 5, r0: o.row, r1: o.row + 16 };
     }
-    var span = GLYPHS[t.glyph].size === 16 ? 2 : 1;
+    if (p.type === "s2_boss") {
+      var o2 = s2BossOrigin(p.tick, p.row);
+      return { t0: o2.tick, t1: o2.tick + 8, r0: o2.row, r1: o2.row + 8 };
+    }
+    var span = Math.max(1, GLYPHS[t.glyph].size / 8);
     return { t0: p.tick, t1: p.tick + span, r0: p.row, r1: p.row + span };
   }
 
@@ -851,44 +1057,89 @@
   // purpose. Boss has no small icon of its own (its real graphic is the
   // full 5x16-cell body drawn on the grid, not something that shrinks to a
   // 26x26 swatch) so its palette entry is just its name.
+  //
+  // round32: rebuilt from scratch (not just appended to) every time the
+  // active stage changes - see switchStage() - so it always reflects
+  // TYPES/GLYPHS for whichever stage is currently toggled on, never a mix
+  // of both.
   var paletteEl = document.getElementById("palette");
-  TYPES.forEach(function (t) {
-    var item = document.createElement("button");
-    item.className = "pitem" + (t.id === "boss" ? " pitem-boss" : "");
-    item.dataset.type = t.id;
-    item.title = t.name + " — " + t.desc;
-    if (t.glyph) {
-      var glyph = GLYPHS[t.glyph];
-      var cv = document.createElement("canvas");
-      cv.className = "picon";
-      var cssSize = 26, dpr = Math.max(1, window.devicePixelRatio || 1);
-      cv.width = Math.round(cssSize * dpr);
-      cv.height = Math.round(cssSize * dpr);
-      cv.style.width = cssSize + "px";
-      cv.style.height = cssSize + "px";
-      var pctx = cv.getContext("2d");
-      pctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      var pad = glyph.size === 16 ? 1 : 5;
-      drawGlyph(pctx, glyph, pad, pad, cssSize - pad * 2, cssSize - pad * 2);
-      item.appendChild(cv);
-    } else {
-      item.textContent = t.name;
-    }
-    item.addEventListener("click", function () {
-      exitSpecialModes();
-      eraseArmed = false;
-      document.getElementById("btnErase").classList.remove("armed");
-      armedType = armedType === t.id ? null : t.id;
-      refreshPaletteArmed();
+  function buildPalette() {
+    paletteEl.innerHTML = "";
+    TYPES.forEach(function (t) {
+      var item = document.createElement("button");
+      item.className = "pitem" + (!t.glyph ? " pitem-boss" : "");
+      item.dataset.type = t.id;
+      item.title = t.name + " — " + t.desc;
+      if (t.glyph) {
+        var glyph = GLYPHS[t.glyph];
+        var cv = document.createElement("canvas");
+        cv.className = "picon";
+        var cssSize = 26, dpr = Math.max(1, window.devicePixelRatio || 1);
+        cv.width = Math.round(cssSize * dpr);
+        cv.height = Math.round(cssSize * dpr);
+        cv.style.width = cssSize + "px";
+        cv.style.height = cssSize + "px";
+        var pctx = cv.getContext("2d");
+        pctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        var pad = glyph.size === 16 ? 1 : 5;
+        drawGlyph(pctx, glyph, pad, pad, cssSize - pad * 2, cssSize - pad * 2);
+        item.appendChild(cv);
+      } else {
+        item.textContent = t.name;
+      }
+      item.addEventListener("click", function () {
+        exitSpecialModes();
+        eraseArmed = false;
+        document.getElementById("btnErase").classList.remove("armed");
+        armedType = armedType === t.id ? null : t.id;
+        refreshPaletteArmed();
+      });
+      paletteEl.appendChild(item);
     });
-    paletteEl.appendChild(item);
-  });
+  }
+  buildPalette();
 
   function refreshPaletteArmed() {
     Array.prototype.forEach.call(paletteEl.children, function (el) {
       el.classList.toggle("armed", el.dataset.type === armedType);
     });
   }
+
+  // ---------- stage toggle ----------
+  // round32: "切り替えボタンでも付けて 相互には登録できないように 1は1、
+  // 2は2のエネミーのみ登録可能に 出力も別に分ける". Switches which of
+  // the per-stage TYPES/TYPE_BY_ID/placements/history arrays every other
+  // function in this file (all written against the bare, unsuffixed
+  // names) is actually looking at - see each one's own comment. Anything
+  // armed from the old stage (a palette type, Erase, an in-progress
+  // copy/paste selection) is cleared, since none of it has any meaning
+  // once the roster underneath it changes.
+  function switchStage(n) {
+    if (n === STAGE) return;
+    exitSpecialModes();
+    armedType = null;
+    eraseArmed = false;
+    document.getElementById("btnErase").classList.remove("armed");
+    STAGE = n;
+    TYPES = (STAGE === 1) ? TYPES1 : TYPES2;
+    TYPE_BY_ID = (STAGE === 1) ? TYPE_BY_ID1 : TYPE_BY_ID2;
+    placements = (STAGE === 1) ? placements1 : placements2;
+    history = (STAGE === 1) ? history1 : history2;
+    btnUndo.disabled = history.length === 0;
+    buildPalette();
+    refreshPaletteArmed();
+    updateStageButtons();
+    render();
+    flash("Stage " + STAGE);
+  }
+
+  function updateStageButtons() {
+    document.getElementById("btnStage1").classList.toggle("active-mode", STAGE === 1);
+    document.getElementById("btnStage2").classList.toggle("active-mode", STAGE === 2);
+  }
+  document.getElementById("btnStage1").addEventListener("click", function () { switchStage(1); });
+  document.getElementById("btnStage2").addEventListener("click", function () { switchStage(2); });
+  updateStageButtons();
 
   document.getElementById("btnErase").addEventListener("click", function () {
     exitSpecialModes();
@@ -1115,8 +1366,13 @@
         ctx.drawImage(getBossCanvas(CELL), bo.tick * CELL - scrollX, bo.row * CELL, 5 * CELL, 16 * CELL);
         return;
       }
+      if (p.type === "s2_boss") {
+        var bo2 = s2BossOrigin(p.tick, p.row);
+        drawS2BossPlaceholder(ctx, bo2.tick * CELL - scrollX, bo2.row * CELL, CELL);
+        return;
+      }
       var glyph = GLYPHS[t.glyph];
-      var box = glyph.size === 16 ? CELL * 2 : CELL;
+      var box = CELL * (glyph.size / 8);
       ctx.drawImage(getGlyphCanvas(t.glyph, box), x, y, box, box);
     });
 
@@ -1345,8 +1601,13 @@
       dragOverlayCtx.drawImage(getBossCanvas(CELL), bo.tick * CELL - canvasScroll.scrollLeft, bo.row * CELL, 5 * CELL, 16 * CELL);
       return;
     }
+    if (obj.type === "s2_boss") {
+      var bo2 = s2BossOrigin(obj.tick, obj.row);
+      drawS2BossPlaceholder(dragOverlayCtx, bo2.tick * CELL - canvasScroll.scrollLeft, bo2.row * CELL, CELL);
+      return;
+    }
     var glyph = GLYPHS[t.glyph];
-    var box = glyph.size === 16 ? CELL * 2 : CELL;
+    var box = CELL * (glyph.size / 8);
     dragOverlayCtx.drawImage(getGlyphCanvas(t.glyph, box), obj.tick * CELL - canvasScroll.scrollLeft, obj.row * CELL, box, box);
   }
   function endDragOverlay() {
@@ -1566,7 +1827,7 @@
         // hold+release is a true no-op on the grid: the same result a
         // plain tap would have given (inspect only), not a bogus "moved to
         // tick X row Y" confirmation or an accidental re-place/erase.
-        placements = history.pop();
+        setPlacements(history.pop());
         btnUndo.disabled = history.length === 0;
         render();
         showCellInfo(placements[p.placementIdx]);
@@ -1645,7 +1906,7 @@
       // branch): pop the single history entry the hold pushed and restore
       // the full grid, so a cancelled gesture never leaves the placement
       // stuck at a half-dragged position or the overlay stuck on-screen.
-      placements = history.pop();
+      setPlacements(history.pop());
       btnUndo.disabled = history.length === 0;
       endDragOverlay();
       render();
@@ -1864,8 +2125,13 @@
         ctx.drawImage(getBossCanvas(CELL), bo.tick * CELL - canvasScroll.scrollLeft, bo.row * CELL, 5 * CELL, 16 * CELL);
         return;
       }
+      if (pd.type === "s2_boss") {
+        var bo2 = s2BossOrigin(tick, row);
+        drawS2BossPlaceholder(ctx, bo2.tick * CELL - canvasScroll.scrollLeft, bo2.row * CELL, CELL);
+        return;
+      }
       var glyph = GLYPHS[t.glyph];
-      var box = glyph.size === 16 ? CELL * 2 : CELL;
+      var box = CELL * (glyph.size / 8);
       ctx.drawImage(getGlyphCanvas(t.glyph, box), px, py, box, box);
     });
     ctx.globalAlpha = 1;
@@ -1898,10 +2164,15 @@
   });
 
   // ---------- save / load ----------
+  // round32: "出力も別に分ける" - the export carries which stage it's
+  // for (used by importJSONText's own mismatch check below), and the
+  // suggested filename defaults differently per stage so the two never
+  // collide/overwrite each other on disk by accident.
   function currentJSON() {
     return JSON.stringify({
       version: 1,
       game: "CYBER SHMUP",
+      stage: STAGE,
       maxTick: MAX_TICK,
       placements: placements.slice().sort(function (a, b) { return a.tick - b.tick || a.row - b.row; })
     }, null, 2);
@@ -1915,6 +2186,7 @@
     saveStatus.textContent = "";
     saveStatus.classList.remove("ok");
     saveOverlay.classList.add("show");
+    saveFilenameInput.value = STAGE === 1 ? "Schedule.json" : "Schedule2.json";
     saveFilenameInput.focus();
     saveFilenameInput.select();
   });
@@ -1944,7 +2216,7 @@
   }
 
   function doSave() {
-    var filename = saveFilenameInput.value.trim() || "Schedule.json";
+    var filename = saveFilenameInput.value.trim() || (STAGE === 1 ? "Schedule.json" : "Schedule2.json");
     if (!window.claude || !window.claude.downloads) {
       doSaveViaBlobLink(filename);
       return;
@@ -2024,6 +2296,20 @@
   function importJSONText(text) {
     var data = JSON.parse(text);
     if (!Array.isArray(data.placements)) throw new Error("no placements array");
+    // round32: "相互には登録できないように" - a file saved with a "stage"
+    // field (every export from this round on, see currentJSON) that
+    // doesn't match the currently active stage is rejected outright,
+    // with a clear reason, rather than silently loading 0 placements
+    // (which the id-namespacing below would ALSO naturally produce on
+    // its own, just with a much more confusing message - every Stage1
+    // id lookup fails against TYPE_BY_ID2 and vice versa, since Stage2
+    // ids are all "s2_"-prefixed and never collide with Stage1's own).
+    // Older files with no "stage" field (saved before this round) fall
+    // through to that same per-placement filter untouched, same
+    // backward-compat treatment LEGACY_TYPE_ALIASES already gets below.
+    if (Number.isInteger(data.stage) && data.stage !== STAGE) {
+      throw new Error("this file is for Stage " + data.stage + " (currently on Stage " + STAGE + " - switch stage first)");
+    }
     exitSpecialModes();
     var remapped = data.placements.map(function (p) {
       var alias = p && LEGACY_TYPE_ALIASES[p.type];
@@ -2032,7 +2318,7 @@
     var valid = remapped.filter(function (p) {
       return TYPE_BY_ID[p.type] && Number.isInteger(p.tick) && Number.isInteger(p.row);
     });
-    placements = valid;
+    setPlacements(valid);
     render();
     var skipped = data.placements.length - valid.length;
     return "loaded " + valid.length + " placements" + (skipped ? " (" + skipped + " skipped - bad type/tick/row)" : "");
