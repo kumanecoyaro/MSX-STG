@@ -57,7 +57,8 @@ check("BR quadrant VRAM matches Etank's own real BR art (not a misaligned slice)
 # borrow - the whole dynamic-sharing scheme is only safe because of this.
 bzcol = sym["BIGZUM_SPAWN_COL"]
 IDCACHE_T1 = sym["IDCACHE_T1"]; IDCACHE_T2 = sym["IDCACHE_T2"]; IDCACHE_T3 = sym["IDCACHE_T3"]
-cpu.mem[ETANK_POOL + 0] = 0  # despawn Etank first so ALLOC_BIGZUM_SLOT's own exclusion doesn't block it
+cpu.mem[ETANK_POOL + 0] = 0  # despawn Etank first - not required by any exclusion any more
+                             # (round34-2, "排他制御は削除"), just isolates this specific check
 cpu.mem[IDCACHE_T0+bzcol]=0; cpu.mem[IDCACHE_T1+bzcol]=0; cpu.mem[IDCACHE_T2+bzcol]=0; cpu.mem[IDCACHE_T3+bzcol]=1
 call_routine(cpu, "ALLOC_BIGZUM_SLOT")
 check("BigZum actually spawned", cpu.mem[BIGZUM_POOL + 0] == 1)

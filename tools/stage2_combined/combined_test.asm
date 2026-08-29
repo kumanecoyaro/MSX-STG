@@ -2904,6 +2904,25 @@ PXT_NOWRAP:
     ; unit Stage1's own schedule editor actually schedules events
     ; against, instead of a rate 8x too fast to mean anything as a
     ; scheduling unit.
+    ; round34-2 first attempt ("Tickは999終了で繰り返さない") capped the
+    ; real GAME_TICK counter itself here - wrong fix, reverted: the
+    ; boss's own internal timers (BOSS_LEFT_PAUSE_END_TICK/BOSS_POSE_
+    ; END_TICK, both "GAME_TICK+some small constant, armed at whatever
+    ; moment the boss happens to reach that state") need GAME_TICK to
+    ; keep advancing normally for as long as the boss fight is running -
+    ; freezing it here made both of those targets permanently
+    ; unreachable once the boss's own patrol first touched the left
+    ; edge or the pose-entry point AFTER the freeze had already kicked
+    ; in (which it reliably had, since the boss itself doesn't even
+    ; spawn until close to tick995), softlocking the whole fight
+    ; (BOSS_PHASE stuck at 2 forever - caught by boss_pose_test.py's own
+    ; real-MAINLOOP checks). GAME_TICK is a free-running 16-bit counter
+    ; again, same as always; what's actually capped now is only the
+    ; on-screen 3-digit readout (GAME_TICK_DISPLAY's own MOD1000
+    ; conversion, see its own comment) - the real "見た目上999で止まる、
+    ; 繰り返して見えない" (looks like it stops at 999, doesn't look like
+    ; it repeats) the user actually asked for, without breaking any
+    ; real timing math that depends on the true value still advancing.
     LD HL,(GAME_TICK) : INC HL : LD (GAME_TICK),HL
     CALL GAME_TICK_DISPLAY
     CALL CHECK_NIGHT
@@ -4301,18 +4320,33 @@ APPLY_TANK_DAMAGE:
     DEC A : LD (TANK_LIFE),A
     JP LIFE_DISPLAY
 
-; Converts GAME_TICK (mod 1000) to 3 decimal digits and draws them at
-; row0 cols29-31 - ported from src/CYBER SHMUP.asm's own
-; GAME_TICK_DISPLAY (called every frame there too, same as here).
+; Converts GAME_TICK to 3 decimal digits and draws them at row0
+; cols29-31 - ported from src/CYBER SHMUP.asm's own GAME_TICK_DISPLAY
+; (called every frame there too, same as here), but no longer a MOD
+; 1000 wrap once GAME_TICK exceeds 999. round34-2 ("Tickは999終了で
+; 繰り返さない"): the real GAME_TICK keeps counting normally past 999
+; forever (its own internal timing math - boss pause/pose end-ticks
+; etc - needs that, see the real GAME_TICK increment's own comment),
+; but a plain MOD 1000 readout would visibly wrap the on-screen counter
+; back to "000" and keep climbing again past that - exactly the "また
+; スタートから出てきてしまってる" (looks like it started over) symptom
+; reported, since the boss's own drift (schedule entries retried/
+; skipped under contention - see SPAWN2_STALL_LIMIT's own comment) can
+; easily push the real tick past 1000 before the boss even appears.
+; Clamps the DISPLAY at 999 once GAME_TICK reaches/exceeds 1000 -
+; "見た目上999で止まる" - purely cosmetic, the real counter and every
+; tick-threshold comparison elsewhere are completely unaffected.
 GAME_TICK_DISPLAY:
     LD HL,(GAME_TICK)
-GTD_MOD1000:
     LD DE,1000
     OR A
     SBC HL,DE
-    JR NC,GTD_MOD1000
-    ADD HL,DE
-
+    JR C,GTD_UNDER1000
+    LD HL,999
+    LD B,0
+    JR GTD_H100
+GTD_UNDER1000:
+    ADD HL,DE   ; undo the SBC above - HL was GAME_TICK-1000, +1000 restores GAME_TICK (0-999)
     LD B,0
 GTD_H100:
     LD DE,100
@@ -5383,15 +5417,16 @@ ZTO_FAIL:
     XOR A
     RET
 
-; gated on 2 things now, both must hold (round34 dropped the old
-; ENEMY_SPAWN_COUNT>=10 gate - "赤ZakoIIが10体で終わったら" was purely
-; about pacing the old random-timer spawner; the schedule's own tick
-; ordering already places Zum's own first entry well after enough
-; ZacoII placements, so no separate counter-gate is needed any more):
+; gated on 2 things now (round34-2, "排他制御は削除": the BigZum/Etank
+; ground-lane exclusion that used to sit here is gone - see ALLOC_
+; BIGZUM_SLOT/ALLOC_ETANK_SLOT's own matching comments for why, and for
+; the one exclusion that COULDN'T be removed the same way. round34
+; itself already dropped the older ENEMY_SPAWN_COUNT>=10 gate -
+; "赤ZakoIIが10体で終わったら" was purely about pacing the old random-
+; timer spawner, superseded by the schedule's own explicit ordering):
 ; the terrain is currently flat at the spawn column (ZUM_TERRAIN_OK),
-; and a slot is free (pool of ZUM_SLOT_COUNT=2 - "横並び制限"). Called
-; only from SSC2_FIRE - any failure (including BigZum/Etank's own
-; ground-lane exclusion below) leaves SPAWN2_NEXT_INDEX untouched, so
+; and a slot is free (pool of ZUM_SLOT_COUNT=2). Called only from
+; SSC2_FIRE - any failure leaves SPAWN2_NEXT_INDEX untouched, so
 ; SPAWN2_SCHEDULE_CHECK just retries this same entry next GAME_TICK -
 ; the terrain condition is transient (the track scrolls continuously)
 ; so retrying every tick catches the next flat window as soon as it
@@ -5406,20 +5441,7 @@ ZTO_FAIL:
 ; simply stayed near the right edge, a real softlock for this enemy
 ; type specifically. Replaced with AZS_FOUND's own instant overlap
 ; resolution below instead of refusing the spawn.
-; Returns Carry SET on a successful spawn, Carry CLEAR otherwise - same
-; convention as ALLOC_ENEMY_SLOT (see its own comment).
 ALLOC_ZUM_SLOT:
-    ; "BigZum出現中にZumは出さないでくれ キャラが消えてしまうしテスト
-    ; 出来ない"
-    LD A,(BIGZUM_POOL)
-    OR A
-    RET NZ
-    ; "Etank出現中はZumも出ないように 横並びでEtankが消える" - same
-    ; ground-lane exclusion as BigZum above (see ALLOC_ETANK_SLOT's own
-    ; matching check) - bidirectional.
-    LD A,(ETANK_POOL)
-    OR A
-    RET NZ
     CALL ZUM_TERRAIN_OK
     OR A
     RET Z
@@ -6088,21 +6110,21 @@ BZTO_FAIL:
 ; same gate as ALLOC_ZUM_SLOT (round34 dropped the old spawn-count
 ; threshold - see its own comment - so just flat terrain + free slot
 ; now) plus the same instant-overlap resolution at spawn - "スポーン
-; 条件は同じ" - plus a 4th: refuse while Etank is active, the other
-; half of Etank's OWN bidirectional exclusion (see PAT_ETANK_BL's own
-; comment - this one isn't just screen-clutter, the 2 actually share
-; pattern-VRAM bytes, so getting this gate wrong would corrupt what's
-; on screen, not just look busy). Flyer is airborne and NOT gated here
-; any more - "FlyerとBigZum、FlyerとEtankは同時存在して良い" (was
-; bidirectionally excluded before; that exclusion removed from both
-; ALLOC_FLYER_SLOT and here). Called only from SSC2_FIRE - on success
-; tails into SSC2_ADVANCE; any failure just returns, leaving
-; SPAWN2_NEXT_INDEX untouched so SPAWN2_SCHEDULE_CHECK retries this
-; same entry next GAME_TICK.
+; 条件は同じ". round34-2 ("排他制御は削除") removed the Etank exclusion
+; that used to sit here too - **this one is a real, known VRAM-sharing
+; risk, not just a design preference**: Etank dynamically overwrites
+; PAT_BIGZUM's own BL/BR quadrant pattern bytes with its own art (see
+; PAT_ETANK_BL's own comment / ALLOC_ETANK_SLOT's own LDIRVM call), so
+; a BigZum and an Etank genuinely alive at the same time WILL corrupt
+; whichever one spawned first's own BL/BR quadrant art - this is not
+; hypothetical, it was the whole reason this exclusion existed. Removed
+; anyway per explicit instruction; if this shows up as visible garbled
+; sprite art, the real fix is giving Etank its own dedicated pattern
+; codes instead of borrowing BigZum's, not re-adding this exclusion.
+; Called only from SSC2_FIRE - on success tails into SSC2_ADVANCE; any
+; failure just returns, leaving SPAWN2_NEXT_INDEX untouched so SPAWN2_
+; SCHEDULE_CHECK retries this same entry next GAME_TICK.
 ALLOC_BIGZUM_SLOT:
-    LD A,(ETANK_POOL)
-    OR A
-    RET NZ
     CALL BIGZUM_TERRAIN_OK
     OR A
     RET Z
@@ -7444,31 +7466,21 @@ ETO_FAIL:
 ; old GAME_TICK>=70 floor - itself only ever a safety margin for the
 ; old random-timer spawner, redundant now that the schedule's own
 ; first Etank entry has its own explicit, always->=70 tick anyway.
-; Remaining gates: BigZum currently active (mutual exclusion - both
-; directions, see ALLOC_BIGZUM_SLOT's own matching check and PAT_ETANK_
-; BL's own pattern-VRAM-sharing comment - a one-directional gate here
-; would be a real correctness bug, not just a design preference, since
-; the two actually share pattern-VRAM bytes), Zum currently active
-; ("Etank出現中はZumも出ないように 横並びでEtankが消える" - same
-; ground-lane exclusion as BigZum, checking both of ZUM_SLOT_COUNT=2's
-; own slots), the terrain-length gate below, and a free slot - same
-; shape as ALLOC_ZUM_SLOT/ALLOC_BIGZUM_SLOT, plus the same instant
-; spawn-time overlap resolution. Flyer is airborne and never gated
-; against any of these 3 ground enemies, nor they against it -
-; "FlyerとBigZum、FlyerとEtankは同時存在して良い". Called only from
-; SSC2_FIRE - on success tails into SSC2_ADVANCE; any failure just
-; returns, leaving SPAWN2_NEXT_INDEX untouched so SPAWN2_SCHEDULE_CHECK
-; retries this same entry next GAME_TICK.
+; round34-2 ("排他制御は削除") removed the BigZum/Zum ground-lane
+; exclusion that used to sit here too. **The BigZum half is a real,
+; known VRAM-sharing risk, not just a design preference** - Etank
+; dynamically overwrites PAT_BIGZUM's own BL/BR quadrant pattern bytes
+; below with its own art, so a BigZum and an Etank genuinely alive at
+; the same time WILL corrupt whichever spawned first's own BL/BR
+; quadrant art (see ALLOC_BIGZUM_SLOT's own matching comment - this
+; exclusion used to be the only thing preventing that). Removed anyway
+; per explicit instruction. Only remaining gates: the terrain-length
+; check below, and a free slot - same shape as ALLOC_ZUM_SLOT/ALLOC_
+; BIGZUM_SLOT, plus the same instant spawn-time overlap resolution.
+; Called only from SSC2_FIRE - on success tails into SSC2_ADVANCE; any
+; failure just returns, leaving SPAWN2_NEXT_INDEX untouched so SPAWN2_
+; SCHEDULE_CHECK retries this same entry next GAME_TICK.
 ALLOC_ETANK_SLOT:
-    LD A,(BIGZUM_POOL)
-    OR A
-    RET NZ
-    LD A,(ZUM_POOL)
-    OR A
-    RET NZ
-    LD A,(ZUM_POOL+ZUM_SLOT_SIZE)
-    OR A
-    RET NZ
     CALL ETANK_TERRAIN_OK
     OR A
     RET Z

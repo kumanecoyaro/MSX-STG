@@ -57,52 +57,52 @@ check("Y fixed from TANK_TIER_Y_TABLE index0 (apex) minus the tank-art-padding f
       cpu.mem[ETANK_POOL+2] == cpu.mem[sym["TANK_TIER_Y_TABLE"]] - sym["ETANK_Y_OFFSET"])
 check("HP initialized to 8", cpu.mem[ETANK_POOL+6] == sym["ETANK_HP_INIT"] == 8)
 
-# Test 4: does not spawn while BigZum is active (bidirectional exclusion)
+# round34-2 ("排他制御は削除"): the ground-lane mutual exclusion between
+# Zum/BigZum/Etank (and the earlier-relaxed Flyer exclusion) is gone
+# entirely now - every ALLOC_*_SLOT only checks its own terrain/slot
+# conditions, no cross-type pool checks at all. Tests 4/5/5b/5c below
+# used to assert the OPPOSITE (refusal while another type is active);
+# now assert all 4 types can freely coexist. NOTE: BigZum+Etank
+# specifically sharing pattern-VRAM bytes (see ALLOC_BIGZUM_SLOT's own
+# comment in combined_test.asm) means the two being simultaneously
+# alive is a genuine known visual-corruption risk now, not just
+# relaxed clutter - removed anyway per explicit instruction.
 cpu = fresh_cpu()
 cpu.mem[BIGZUM_POOL+0] = 1
 spawn_etank(cpu)
-check("refuses to spawn while BigZum is active", cpu.mem[ETANK_POOL+0] == 0)
+check("Etank CAN now spawn while BigZum is active (exclusion removed)", cpu.mem[ETANK_POOL+0] == 1)
 
-# Test 5: BigZum refuses to spawn while Etank is active (the OTHER direction)
 cpu = fresh_cpu()
 cpu.mem[ETANK_POOL+0] = 1
 col = sym["BIGZUM_SPAWN_COL"]
 cpu.mem[IDCACHE_T0+col]=0; cpu.mem[IDCACHE_T1+col]=0; cpu.mem[IDCACHE_T2+col]=0; cpu.mem[IDCACHE_T3+col]=1
 call_routine(cpu, "ALLOC_BIGZUM_SLOT")
-check("BigZum refuses to spawn while Etank is active (bidirectional)", cpu.mem[BIGZUM_POOL+0] == 0)
+check("BigZum CAN now spawn while Etank is active (exclusion removed)", cpu.mem[BIGZUM_POOL+0] == 1)
 
-# Test 5b: does not spawn while EITHER Zum slot is active (new bidirectional exclusion)
 cpu = fresh_cpu()
 cpu.mem[ZUM_POOL+0] = 1
 spawn_etank(cpu)
-check("refuses to spawn while Zum slot0 is active", cpu.mem[ETANK_POOL+0] == 0)
+check("Etank CAN now spawn while Zum slot0 is active (exclusion removed)", cpu.mem[ETANK_POOL+0] == 1)
 
-cpu = fresh_cpu()
-cpu.mem[ZUM_POOL+ZUM_SLOT_SIZE+0] = 1
-spawn_etank(cpu)
-check("refuses to spawn while Zum slot1 is active", cpu.mem[ETANK_POOL+0] == 0)
-
-# Test 5c: Zum refuses to spawn while Etank is active (the OTHER direction)
 cpu = fresh_cpu()
 cpu.mem[ETANK_POOL+0] = 1
 zcol = sym["ZUM_SPAWN_COL"]
 cpu.mem[IDCACHE_T0+zcol] = 1
 call_routine(cpu, "ALLOC_ZUM_SLOT")
-check("Zum refuses to spawn while Etank is active (bidirectional)",
-      cpu.mem[ZUM_POOL+0] == 0 and cpu.mem[ZUM_POOL+ZUM_SLOT_SIZE+0] == 0)
+check("Zum CAN now spawn while Etank is active (exclusion removed)",
+      cpu.mem[ZUM_POOL+0] == 1 or cpu.mem[ZUM_POOL+ZUM_SLOT_SIZE+0] == 1)
 
-# Test 5d: Flyer and BigZum/Etank may now coexist (exclusion relaxed)
 cpu = fresh_cpu()
 cpu.mem[BIGZUM_POOL+0] = 1
 call_routine(cpu, "ALLOC_FLYER_SLOT")
-check("Flyer CAN spawn while BigZum is active (relaxed)", cpu.mem[FLYER_POOL+0] == 1)
+check("Flyer CAN spawn while BigZum is active (relaxed earlier this session)", cpu.mem[FLYER_POOL+0] == 1)
 
 cpu = fresh_cpu()
 cpu.mem[FLYER_POOL+0] = 1
 col = sym["BIGZUM_SPAWN_COL"]
 cpu.mem[IDCACHE_T0+col]=0; cpu.mem[IDCACHE_T1+col]=0; cpu.mem[IDCACHE_T2+col]=0; cpu.mem[IDCACHE_T3+col]=1
 call_routine(cpu, "ALLOC_BIGZUM_SLOT")
-check("BigZum CAN spawn while Flyer is active (relaxed)", cpu.mem[BIGZUM_POOL+0] == 1)
+check("BigZum CAN spawn while Flyer is active (relaxed earlier this session)", cpu.mem[BIGZUM_POOL+0] == 1)
 
 # Test 6: straight-line movement at flat speed 2, no terrain following
 cpu = fresh_cpu()
