@@ -589,6 +589,22 @@
       },
       color: "#74d07d"
     },
+    // ZacoII red variant (same pattern/PAT_ZACO, E_VARIANT=1 - "10機出たら
+    // 色替えの赤いZakoII"/"ZakoIIはの赤は速度３で"/"ZakoII赤の耐久２") -
+    // 2-hit HP (ENEMY_RED_HP) and its own flat speed, unlike the green
+    // 1-hit default. Same quads as s2_zacoii, only ENEMY_RED_COLOR(9,
+    // light red) differs - reuses the same hex already used for BOSS_COLOR
+    // (also index9) elsewhere in this file.
+    s2_zacoii_red: {
+      size: 16,
+      quads: {
+        tl: [6, 107, 206, 132, 49, 94, 237, 210],
+        bl: [141, 35, 121, 240, 224, 88, 60, 14],
+        tr: [48, 120, 60, 158, 71, 131, 97, 240],
+        br: [224, 64, 144, 60, 114, 44, 30, 6]
+      },
+      color: "#ff897d"
+    },
     // Zum (16x16, ENEMY_ZUM) - magenta, TMS9918 index13.
     s2_zum: {
       size: 16,
@@ -884,6 +900,7 @@
   // call for this round, see drawS2BossPlaceholder's own comment.
   var TYPES2 = [
     { id: "s2_zacoii", name: "ZacoII",  desc: "generic ground-spawned enemy, ALLOC_ENEMY_SLOT/ENEMY_POOL", glyph: "s2_zacoii" },
+    { id: "s2_zacoii_red", name: "ZacoII (Red)", desc: "E_VARIANT=1 - 2-hit HP (ENEMY_RED_HP), flat ENEMY_SPEED_RED", glyph: "s2_zacoii_red" },
     { id: "s2_zum",    name: "Zum",     desc: "ground enemy, front-invincible until deflected", glyph: "s2_zum" },
     { id: "s2_bigzum", name: "BigZum",  desc: "large ground enemy, punch pose on approach", glyph: "s2_bigzum" },
     { id: "s2_flyer",  name: "Flyer",   desc: "sky enemy, homing-missile-style pattern reused as its own sprite block", glyph: "s2_flyer" },
@@ -1081,7 +1098,19 @@
         cv.style.height = cssSize + "px";
         var pctx = cv.getContext("2d");
         pctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-        var pad = glyph.size === 16 ? 1 : 5;
+        // round33 bugfix ("下部の選択用アイコンがおかしい 16x16のキャラが大きく
+        // 32x32やタンクなどの大きいキャラが半分のサイズ"): this used to be
+        // `glyph.size === 16 ? 1 : 5` - a leftover from when Stage1's own
+        // roster only ever mixed size16 (most enemies) with size8 (enemy3's
+        // BG tile), where a bigger pad(5) on the smaller-native tile kept it
+        // from looking oversized next to the 16-size sprites' snug pad(1).
+        // Adding Stage2's size32 glyphs this round fell into that same
+        // "not 16" bucket and got the tile's tiny pad, shrinking every
+        // 32x32/BG-tile-composed icon (BigZum/Flyer/Etank) far below the
+        // 16x16 ones' box. A single constant pad makes every icon fill the
+        // same box regardless of its native pixel size, which is what a
+        // palette needs (uniform buttons, not "actual" relative scale).
+        var pad = 2;
         drawGlyph(pctx, glyph, pad, pad, cssSize - pad * 2, cssSize - pad * 2);
         item.appendChild(cv);
       } else {
@@ -2191,14 +2220,24 @@
     saveFilenameInput.select();
   });
 
-  // Published Artifact: goes through window.claude.downloads (blob/<a download>
-  // is inert in that sandbox). Run locally (file:// or any plain static host,
-  // no Claude frame runtime): window.claude doesn't exist at all, so fall back
-  // to the classic Blob + <a download> click, which works fine outside the
-  // sandbox.
-  function doSaveViaBlobLink(filename) {
+  // round33 bugfix ("セーブが出来ない...Spriteeditorは出来てるのでそっちに
+  // 従ってくれ"): this used to try window.claude.downloads first (falling
+  // back to a Blob + <a download> click only when window.claude doesn't
+  // exist at all). Inside a published Artifact's own sandbox BOTH of those
+  // are inert - window.claude.downloads exists but this artifact never
+  // declared the `downloads` capability so every call gets rejected
+  // ("File downloads aren't available for this artifact"), and a
+  // script-driven <a download> click is blocked outright regardless of
+  // capability declarations. tools/sprite-editor.html's own doSave()
+  // already solved this by trying the Web Share API FIRST (navigator.
+  // share with a real File - works from inside the sandbox on a mobile
+  // browser, which is why it "just worked" there), THEN the downloads
+  // capability, THEN the classic Blob link as the last, most-compatible-
+  // outside-any-sandbox fallback (plain static host / file://, no Claude
+  // frame runtime at all). Ported verbatim rather than reinvented.
+  function doSaveViaBlobLink(filename, jsonStr) {
     try {
-      var blob = new Blob([currentJSON()], { type: "application/json" });
+      var blob = new Blob([jsonStr], { type: "application/json" });
       var url = URL.createObjectURL(blob);
       var a = document.createElement("a");
       a.href = url;
@@ -2215,13 +2254,8 @@
     }
   }
 
-  function doSave() {
-    var filename = saveFilenameInput.value.trim() || (STAGE === 1 ? "Schedule.json" : "Schedule2.json");
-    if (!window.claude || !window.claude.downloads) {
-      doSaveViaBlobLink(filename);
-      return;
-    }
-    window.claude.downloads.save({ filename: filename, data: currentJSON() }).then(
+  function doSaveViaDownloadsCapability(filename, jsonStr) {
+    window.claude.downloads.save({ filename: filename, data: jsonStr }).then(
       function () {
         saveOverlay.classList.remove("show");
         flash("saved " + filename);
@@ -2232,6 +2266,37 @@
         saveStatus.classList.remove("ok");
       }
     );
+  }
+
+  function doSaveViaDownloadOrBlob(filename, jsonStr) {
+    if (window.claude && window.claude.downloads) {
+      doSaveViaDownloadsCapability(filename, jsonStr);
+    } else {
+      doSaveViaBlobLink(filename, jsonStr);
+    }
+  }
+
+  function doSave() {
+    var filename = saveFilenameInput.value.trim() || (STAGE === 1 ? "Schedule.json" : "Schedule2.json");
+    var jsonStr = currentJSON();
+
+    var file = null;
+    try { file = new File([jsonStr], filename, { type: "application/json" }); } catch (e) {}
+    if (file && navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
+      navigator.share({ files: [file] }).then(
+        function () {
+          saveOverlay.classList.remove("show");
+          flash("saved " + filename);
+        },
+        function (err) {
+          if (err && err.name === "AbortError") { saveOverlay.classList.remove("show"); flash("save cancelled"); return; }
+          doSaveViaDownloadOrBlob(filename, jsonStr);
+        }
+      );
+      return;
+    }
+
+    doSaveViaDownloadOrBlob(filename, jsonStr);
   }
 
   function copyToClipboard(text, successMsg) {

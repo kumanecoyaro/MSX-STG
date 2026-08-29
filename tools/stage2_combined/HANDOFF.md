@@ -3939,3 +3939,46 @@ Thunder activity) confirming it survives completely untouched.
 - ASM側(`combined_test.asm`のスポーン機構自体をスケジュールテーブル駆動に
   書き換える作業)は今回のスコープ外・未着手。Stage1の`SPAWN_THRESHOLDS`/
   `SSC_FIRE`/`GAME_TICK`方式を参考に、次回以降ユーザーの指示があり次第着手する。
+
+## Round 33-2: schedule-editor.htmlのユーザー報告バグ3件を修正(パレットアイコンサイズ・ZacoII赤・セーブ不可)
+
+- User instruction (verbatim、スクリーンショット添付): "まず下部の選択用アイコンがおかしい
+  16x16のキャラが大きく 32x32やタンクなどの大きいキャラが半分のサイズ で 逆に で、ZakoII赤が
+  ない 次にセーブが出来ない セーブはブラウザが絡んでるがSpriteeditorは出来てるのでそっちに
+  従ってくれ"
+  - Round33で公開したArtifact(Stage2エネミー対応版schedule-editor.html)を実機(モバイル
+    ブラウザ)で試した際の不具合報告3件。
+
+- **① パレットアイコンのサイズ不一致**: `buildPalette()`のアイコン描画で
+  `var pad = glyph.size === 16 ? 1 : 5;` という古い分岐が原因。これはRound33以前、
+  Stage1の16x16スプライトと8x8 BGタイル(enemy3)の2種類しか無かった頃の名残りで、
+  「8x8タイルは16x16より大きめのpadで小さく描いて見た目を揃える」という意図だった。
+  Round33で追加したStage2の32x32(BigZum/Flyer/Etank)は`size !== 16`側に落ちて
+  8x8タイルと同じ小さいpad(5)を食らい、16x16勢(pad1、ほぼ枠いっぱい)に対して
+  相対的に「半分サイズ」に縮んで見えていた。全種別で`pad = 2`固定に変更し、
+  ネイティブサイズに関わらず全アイコンが同じ枠を占めるよう統一(パレットボタンは
+  実寸比較の場ではなく統一サイズが正しい)。
+- **② ZacoII赤バリアントが無い**: `combined_test.asm`を確認したところ、ZacoIIには
+  `E_VARIANT`(0=緑/1=赤)による色違いバリアントが実在した("10機出たら色替えの
+  赤いZakoII"/"ZakoIIはの赤は速度３で"/"ZakoII赤の耐久２" - `ENEMY_RED_COLOR EQU 9`
+  light red、`ENEMY_RED_HP EQU 2`で2発耐久、速度も専用定数)。同じスプライト
+  パターン(PAT_ZACO)を色だけ変えて使う実装だったため、`GLYPHS.s2_zacoii_red`
+  (同一quads、色だけ`#ff897d` = TMS9918 index9 light red、既存の`drawS2BossPlace
+  holder`で使っていたBOSS_COLOR(同じindex9)のhexを再利用)と`TYPES2`への
+  `s2_zacoii_red`エントリを追加。`s2_`プレフィックス規約は維持(相互登録禁止は
+  そのまま構造的に保証される)。
+- **③ セーブができない**: Artifactビューア上で「File downloads aren't available
+  for this artifact.」と表示される不具合。原因は`window.claude.downloads`
+  capabilityを宣言していないため呼び出しが拒否される一方、`<a download>`による
+  Blobリンクもこのビューアのサンドボックス内では機能しない(スクリプト起動の
+  ダウンロードは無効化される)ため。ユーザー指摘の通り`tools/sprite-editor.html`
+  の`doSave()`は既にこの問題を解決済みだったので、そちらの実装を移植: **Web Share
+  API(`navigator.share`+実ファイル)を最優先**で試行(モバイルブラウザのサンドボックス
+  内から機能する、ユーザーがsprite-editorで動作を確認できていた理由と一致) →
+  `window.claude.downloads` → 従来のBlob+`<a download>`、の3段フォールバックに
+  変更(`doSaveViaBlobLink`/`doSaveViaDownloadsCapability`/`doSaveViaDownloadOrBlob`
+  の3関数に分割、`doSave()`本体はまずFile+navigator.share/canShareを試す)。
+
+- 検証: `<script>`部分を抽出して`node --check`で構文確認(`88143 bytes extracted`
+  / `SYNTAX OK`)。実機での動作確認(navigator.shareの実際の成功可否)はユーザー
+  側での再テストに委ねる。
