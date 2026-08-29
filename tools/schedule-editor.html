@@ -18,6 +18,8 @@
     --danger-ink: #260607;
     --ok: #6bdc7c;
     --warn: #ffd166;
+    --terrain-rock: #8b5a2b;         /* matches ROCK_COLOR's own fg (medium red) closely enough as a placeholder block, warmer than the sky/blank fill below */
+    --terrain-sky: rgba(139, 90, 43, 0.12);
 
     --font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Hiragino Sans", "Noto Sans JP", sans-serif;
     --font-mono: ui-monospace, "SF Mono", "Cascadia Mono", "Consolas", "Roboto Mono", monospace;
@@ -449,6 +451,9 @@
         <button class="danger-btn" id="btnErase">Erase</button>
         <button id="btnDeselect">Deselect</button>
         <button id="btnUndo" disabled>Undo</button>
+      </div>
+      <div class="btn-row" id="terrainRow">
+        <button id="btnTerrain" style="flex: 1 1 100%;" title="Paint the ground height (tier0-3) directly on rows 20-23 - click/drag a cell to set that column's ground level">Terrain</button>
       </div>
       <div class="btn-row">
         <div class="cell-info" id="cellInfo" title="Tap a placed cell on the grid to identify it - several types share the same icon">
@@ -942,6 +947,85 @@
     placements = arr;
     if (STAGE === 1) placements1 = arr; else placements2 = arr;
   }
+
+  // round36 ("地形もエディット対象に"): Stage2-only terrain profile - one
+  // ground tier (0-3, 0=lowest, 3=apex - matches ground_i() in tools/
+  // stage2_terrain/terrain_gen.py exactly) per track column, painted
+  // directly onto rows 20-23 of the SAME grid placements already use
+  // (GAME_TICK and the terrain's own scroll index PXCHAR_T advance in
+  // perfect lockstep in combined_test.asm's own MAINLOOP - both gated on
+  // the identical "once per 8 raw frames" branch - so tick and terrain
+  // column really are the same axis, just modulo TERRAIN_LEN once the
+  // track loops). Stage1 has no such terrain system at all, so this is
+  // simply unused there (no terrain1 array - nothing reads it while
+  // STAGE===1).
+  //
+  // DEFAULT_TERRAIN2 is the CURRENT shipped test track (tools/
+  // stage2_terrain/terrain_gen.py's own DEFAULT_TIER_PROFILE), expanded
+  // to one tier value per column via tier_profile_to_columns() and
+  // transcribed here directly via `python3 -c "import terrain_gen;
+  // print(','.join(map(str, terrain_gen.tier_profile_to_columns(
+  // terrain_gen.DEFAULT_TIER_PROFILE))))"` from tools/stage2_terrain -
+  // NOT hand-typed, same "generated, not transcribed by eye" precedent
+  // as every other real-game-data array in this file (see the Stage2
+  // roster's own comment above). This array is intentionally SHORTER
+  // than the real in-game TRACK_LEN(516) - it has no separate footprint
+  // for the climb/descend transitions at all; terrain_gen.py's own
+  // build_track() inserts those 2 dedicated ramp columns automatically
+  // once this array is run-length-encoded back into a tier profile (see
+  // columns_to_tier_profile's own comment there) - so painting here
+  // always stays simple and length-preserving from the editor's own
+  // point of view, while the real compiled track naturally grows a
+  // little, same as it always has.
+  var DEFAULT_TERRAIN2 = [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0];
+  var terrain2 = DEFAULT_TERRAIN2.slice();
+  var terrainLen = terrain2.length;
+  function setTerrain2(arr) {
+    terrain2 = arr;
+    terrainLen = arr.length;
+  }
+  function tierFromRow(row) { return 23 - row; } // row20(top)->tier3(apex) .. row23(bottom)->tier0
+  function terrainColAt(tick) { return ((tick % terrainLen) + terrainLen) % terrainLen; }
+
+  // Whether this terrain-paint gesture (pointerdown..pointerup) has
+  // already pushed its own undo step - set on the first cell painted,
+  // checked by every subsequent cell the same drag touches, so a whole
+  // brush stroke undoes in one step (see the "terrain_paint" pointerdown
+  // branch's own comment).
+  var terrainPaintPushed = false;
+  // {tick,row} of the last cell actually painted this gesture, or null
+  // between gestures - paintTerrainCell interpolates from here to the
+  // newly hit cell on every call, since a fast real drag does NOT fire
+  // one pointermove per pixel/column crossed (confirmed directly: a
+  // single 3-column mouse.move in a headless-browser test painted only
+  // the start and end columns, leaving the ones between untouched) - a
+  // brush stroke would otherwise leave gaps depending on drag speed.
+  var terrainLastPaint = null;
+  function paintOneTerrainCell(tick, row) {
+    var col = terrainColAt(tick);
+    var tier = tierFromRow(row);
+    if (terrain2[col] === tier) return; // no-op repaint of the same cell - don't spam history
+    if (!terrainPaintPushed) {
+      pushHistory();
+      terrainPaintPushed = true;
+    }
+    terrain2[col] = tier;
+  }
+  function paintTerrainCell(hit) {
+    if (!hit || hit.row < 20 || hit.row > 23) return;
+    if (terrainLastPaint && hit.tick !== terrainLastPaint.tick) {
+      var step = hit.tick > terrainLastPaint.tick ? 1 : -1;
+      var span = Math.abs(hit.tick - terrainLastPaint.tick);
+      for (var i = 1; i < span; i++) {
+        var midTick = terrainLastPaint.tick + step * i;
+        var midRow = Math.round(terrainLastPaint.row + (hit.row - terrainLastPaint.row) * (i / span));
+        paintOneTerrainCell(midTick, Math.max(20, Math.min(23, midRow)));
+      }
+    }
+    paintOneTerrainCell(hit.tick, hit.row);
+    terrainLastPaint = { tick: hit.tick, row: hit.row };
+    render();
+  }
   var armedType = null;
   var eraseArmed = false;
 
@@ -971,16 +1055,28 @@
   var MAX_HISTORY = 50;
   var btnUndo = document.getElementById("btnUndo");
 
+  // round36: snapshots bundle terrain2 alongside placements now (one
+  // shared undo stack for both kinds of edit - painting terrain and
+  // placing/erasing enemies undo through the same Undo button, in
+  // whichever order they actually happened). restoreSnapshot() is the
+  // single place that unpacks one of these - every history.pop() site
+  // below goes through it instead of feeding the popped value straight
+  // to setPlacements() as a bare array.
   function pushHistory() {
-    history.push(JSON.parse(JSON.stringify(placements)));
+    history.push({ placements: JSON.parse(JSON.stringify(placements)), terrain: terrain2.slice() });
     if (history.length > MAX_HISTORY) history.shift();
     btnUndo.disabled = false;
+  }
+
+  function restoreSnapshot(snap) {
+    setPlacements(snap.placements);
+    setTerrain2(snap.terrain);
   }
 
   function undo() {
     if (!history.length) return;
     exitSpecialModes();
-    setPlacements(history.pop());
+    restoreSnapshot(history.pop());
     btnUndo.disabled = history.length === 0;
     render();
     flash("undo");
@@ -1173,6 +1269,11 @@
   function updateStageButtons() {
     document.getElementById("btnStage1").classList.toggle("active-mode", STAGE === 1);
     document.getElementById("btnStage2").classList.toggle("active-mode", STAGE === 2);
+    // round36: terrain painting only exists for Stage2 (Stage1 has no
+    // such scrolling terrain system at all) - hide the whole row rather
+    // than just disabling the button, so there's nothing Stage1-mode
+    // users need to puzzle over.
+    document.getElementById("terrainRow").style.display = (STAGE === 2) ? "" : "none";
   }
   document.getElementById("btnStage1").addEventListener("click", function () { switchStage(1); });
   document.getElementById("btnStage2").addEventListener("click", function () { switchStage(2); });
@@ -1184,6 +1285,27 @@
     eraseArmed = !eraseArmed;
     this.classList.toggle("armed", eraseArmed);
     refreshPaletteArmed();
+  });
+
+  // round36: terrain paint mode toggle - same on/off shape as Erase
+  // above, just switching currentMode instead of the eraseArmed flag
+  // (terrain painting bypasses the normal place/erase/pan gesture system
+  // entirely, same as copy_select/paste_preview already do - see the
+  // "terrain_paint" branches in the grid's own pointerdown/move/up/
+  // cancel handlers).
+  var btnTerrain = document.getElementById("btnTerrain");
+  btnTerrain.addEventListener("click", function () {
+    if (currentMode === "terrain_paint") {
+      exitSpecialModes();
+      return;
+    }
+    exitSpecialModes();
+    armedType = null;
+    eraseArmed = false;
+    document.getElementById("btnErase").classList.remove("armed");
+    refreshPaletteArmed();
+    currentMode = "terrain_paint";
+    render();
   });
 
   // Deselect: drop whatever's armed (a palette type, Erase, or the Copy/
@@ -1352,6 +1474,30 @@
 
     var firstTick = Math.max(0, Math.floor(scrollX / CELL) - 1);
     var lastTick = Math.min(MAX_TICK, Math.ceil((scrollX + w) / CELL) + 1);
+
+    // round36 ("地形もエディット対象に"): Stage2's own terrain profile,
+    // drawn as a simple color-block skyline in rows 20-23 - a placeholder
+    // representation (real rock/sand tile art, not attempted here) same
+    // spirit as drawS2BossPlaceholder's own plain rectangle. Drawn UNDER
+    // the grid lines/placement icons (before they're drawn below) so it
+    // reads as background, not on top of anything. tierFromRow/
+    // terrainColAt's own comments explain the row<->tier mapping and the
+    // tick<->terrain-column relationship (they're the same axis, modulo
+    // terrainLen once the track loops - exactly matching how GAME_TICK
+    // and the real terrain's own scroll index advance in lockstep).
+    if (STAGE === 2) {
+      var rockFill = tok("--terrain-rock") || "#8b5a2b";
+      var skyFill = tok("--terrain-sky") || "rgba(139,90,43,0.12)";
+      for (var tt = firstTick; tt <= lastTick; tt++) {
+        var tier = terrain2[terrainColAt(tt)];
+        var solidFromRow = 23 - tier; // row(s) below this, inclusive, are ground
+        var tx = tt * CELL - scrollX;
+        ctx.fillStyle = skyFill;
+        ctx.fillRect(tx, 20 * CELL, CELL, (solidFromRow - 20) * CELL);
+        ctx.fillStyle = rockFill;
+        ctx.fillRect(tx, solidFromRow * CELL, CELL, (24 - solidFromRow) * CELL);
+      }
+    }
 
     // 8px-equivalent cell grid, in blue, per spec. One stroke() call per
     // line color instead of one per line - each stroke() has real fixed
@@ -1745,6 +1891,24 @@
       return;
     }
 
+    // round36: terrain paint - same simple "no hold-to-drag, no momentum"
+    // shape as copy_select/paste_preview above (one continuous brush
+    // stroke per pointer gesture, painting every cell it crosses in
+    // pointermove below). terrainPaintPushed guards pushHistory() so a
+    // whole drag - however many cells it touches - is exactly ONE undo
+    // step, not one per cell.
+    if (currentMode === "terrain_paint") {
+      if (wasMomentumStop) return;
+      var tHit = cellFromEvent(ev);
+      if (!tHit || tHit.row < 20 || tHit.row > 23) return;
+      specialPointerId = ev.pointerId;
+      grid.setPointerCapture(ev.pointerId);
+      terrainPaintPushed = false;
+      terrainLastPaint = null;
+      paintTerrainCell(tHit);
+      return;
+    }
+
     var rect = grid.getBoundingClientRect();
     var offsetHit = enemy3OffsetHitTest(ev.clientX - rect.left + canvasScroll.scrollLeft, ev.clientY - rect.top);
     var c = cellFromEvent(ev);
@@ -1811,6 +1975,11 @@
       }
       return;
     }
+    if (currentMode === "terrain_paint") {
+      if (specialPointerId === null || ev.pointerId !== specialPointerId) return;
+      paintTerrainCell(cellFromEvent(ev));
+      return;
+    }
     if (!press || ev.pointerId !== press.pointerId) return;
     press.lastX = ev.clientX;
     press.lastY = ev.clientY;
@@ -1840,6 +2009,10 @@
       specialDragStart = null;
       return;
     }
+    if (currentMode === "terrain_paint") {
+      if (ev.pointerId === specialPointerId) specialPointerId = null;
+      return;
+    }
     if (!press || ev.pointerId !== press.pointerId) return;
     clearTimeout(press.holdTimer);
     var p = press;
@@ -1864,7 +2037,7 @@
         // hold+release is a true no-op on the grid: the same result a
         // plain tap would have given (inspect only), not a bogus "moved to
         // tick X row Y" confirmation or an accidental re-place/erase.
-        setPlacements(history.pop());
+        restoreSnapshot(history.pop());
         btnUndo.disabled = history.length === 0;
         render();
         showCellInfo(placements[p.placementIdx]);
@@ -1936,6 +2109,16 @@
       specialDragStart = null;
       return;
     }
+    if (currentMode === "terrain_paint") {
+      // Unlike a cancelled holdmove, an in-progress brush stroke has no
+      // preview-vs-committed distinction to unwind - every cell it
+      // touched was already committed straight into terrain2 (see
+      // paintTerrainCell), same as copy_select/paste_preview above have
+      // nothing to revert either. Leaving the strokes already painted in
+      // place (rather than popping history) matches that.
+      if (ev.pointerId === specialPointerId) specialPointerId = null;
+      return;
+    }
     if (!press || ev.pointerId !== press.pointerId) return;
     clearTimeout(press.holdTimer);
     if (press.resolved === "holdmove") {
@@ -1943,7 +2126,7 @@
       // branch): pop the single history entry the hold pushed and restore
       // the full grid, so a cancelled gesture never leaves the placement
       // stuck at a half-dragged position or the overlay stuck on-screen.
-      setPlacements(history.pop());
+      restoreSnapshot(history.pop());
       btnUndo.disabled = history.length === 0;
       endDragOverlay();
       render();
@@ -2206,13 +2389,20 @@
   // suggested filename defaults differently per stage so the two never
   // collide/overwrite each other on disk by accident.
   function currentJSON() {
-    return JSON.stringify({
+    var out = {
       version: 1,
       game: "CYBER SHMUP",
       stage: STAGE,
       maxTick: MAX_TICK,
       placements: placements.slice().sort(function (a, b) { return a.tick - b.tick || a.row - b.row; })
-    }, null, 2);
+    };
+    // round36 ("現在の地形データをJsonに含めて出力してくれ"): Stage2 only
+    // (Stage1 has no terrain system at all - see terrain2's own comment).
+    // Per-column tier array, NOT included for Stage1 exports at all
+    // (rather than an empty array) so old Stage1-only tooling/consumers
+    // never see a field they don't understand.
+    if (STAGE === 2) out.terrain = terrain2.slice();
+    return JSON.stringify(out, null, 2);
   }
 
   var saveOverlay = document.getElementById("saveOverlay");
@@ -2407,9 +2597,28 @@
       return TYPE_BY_ID[p.type] && Number.isInteger(p.tick) && Number.isInteger(p.row);
     });
     setPlacements(valid);
+    // round36: terrain, Stage2 only. A file with no "terrain" field at
+    // all (an older Stage2 export, or one that only ever touched
+    // placements) leaves whatever's currently loaded untouched, rather
+    // than silently reverting it to DEFAULT_TERRAIN2 - loading a
+    // placements-only file should never clobber terrain work already in
+    // progress. An actually-present-but-malformed terrain array (wrong
+    // type, empty, or any value outside 0-3) is rejected the same way,
+    // flagged in the returned status message rather than silently eaten.
+    var terrainNote = "";
+    if (STAGE === 2 && data.terrain !== undefined) {
+      var validTerrain = Array.isArray(data.terrain) && data.terrain.length > 0 &&
+        data.terrain.every(function (t) { return Number.isInteger(t) && t >= 0 && t <= 3; });
+      if (validTerrain) {
+        setTerrain2(data.terrain.slice());
+        terrainNote = ", terrain (" + terrain2.length + " cols)";
+      } else {
+        terrainNote = ", terrain field ignored (invalid)";
+      }
+    }
     render();
     var skipped = data.placements.length - valid.length;
-    return "loaded " + valid.length + " placements" + (skipped ? " (" + skipped + " skipped - bad type/tick/row)" : "");
+    return "loaded " + valid.length + " placements" + terrainNote + (skipped ? " (" + skipped + " skipped - bad type/tick/row)" : "");
   }
 
   document.getElementById("fileInput").addEventListener("change", function (ev) {
@@ -2444,6 +2653,7 @@
     drawModeOverlay();
     btnCopy.classList.toggle("active-mode", currentMode === "copy_select");
     btnPaste.classList.toggle("active-mode", currentMode === "paste_preview");
+    btnTerrain.classList.toggle("active-mode", currentMode === "terrain_paint");
   }
 
   // ---------- boot ----------

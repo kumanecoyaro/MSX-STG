@@ -115,10 +115,33 @@ R225_UL_ID, R225_UR_ID = 3, 4
 R225D_UL_ID, R225D_UR_ID = 5, 6
 
 
-# ---------- build the 4-row test track (climb, descend, loop) ----------
-def build_track():
+# ---------- build the 4-row track from a declarative tier profile ----------
+# round36 ("地形もエディット対象に"): refactored from a hardcoded call
+# sequence (emit_flat(24);emit_climb();emit_flat(24);emit_climb();...) into
+# a single data-driven build_track(tier_profile) that walks an explicit,
+# externally-editable/exportable list of (tier, flat_run_length) steps -
+# this is what schedule-editor.html's own terrain-paint tool now edits and
+# exports (see columns_to_tier_profile's own comment for the JSON shape).
+# tier is 0-3 (0=lowest ground, 3=apex - see ground_i() below); adjacent
+# steps must differ by exactly 1, the same physical constraint the R225
+# transition art always enforced (each 1-tier step needs its own dedicated
+# 2-column ramp tile, inserted automatically below regardless of the
+# step's own run length - even 0, for a fully chained climb/descend with
+# no flat plateau in between, exactly like the "rapid back-to-back climb"
+# stretch this test track already used).
+#
+# DEFAULT_TIER_PROFILE below reproduces the previous hardcoded test track
+# byte-for-byte (verified directly, all 4 rows, before this refactor
+# replaced it) - see HANDOFF.md's own round36 entry for the derivation.
+DEFAULT_TIER_PROFILE = [
+    (0, 24), (1, 24), (2, 24), (3, 174), (2, 24), (1, 24), (0, 24),
+    (1, 0), (2, 0), (3, 150), (2, 0), (1, 0), (0, 24),
+]
+
+
+def build_track(tier_profile=DEFAULT_TIER_PROFILE):
     rows = [[], [], [], []]  # row index 0=top(row20) .. 3=bottom(row23)
-    tier = 0
+    tier = None
 
     def ground_i(t):
         assert 0 <= t <= 3, f"tier {t} out of range - only 4 rows (20-23) exist, 3 climbs/descends max"
@@ -172,53 +195,71 @@ def build_track():
     # the bottom - or the bottom from the top - takes exactly 3 climb/
     # descend transitions, not 4 (a "4-tier slope" means 4 distinct
     # height LEVELS, i.e. 3 steps between them - the same off-by-one
-    # every staircase has). A 4th call used to silently try tier 4,
-    # which doesn't exist - ground_i() now asserts on that instead of
-    # quietly corrupting the row past that point.
-    FLAT_RUN = 24
-    # Etank (see ETANK_SLOT_SIZE's own comment in combined_test.asm)
-    # never follows terrain elevation - it moves in a straight
-    # horizontal line at whatever height was under it at spawn, so it
-    # needs the SAME terrain height under it for its entire on-screen
-    # crossing, not just at spawn. "速度は2 ... 128カウントで端から端
-    # まで行けるはずなので150の平地は欲しいな" (256px screen / 2px per
-    # frame = 128 frames edge-to-edge; 150 tiles requested for margin
-    # over that, also covering however far the terrain itself scrolls
-    # underneath meanwhile). ETANK_APEX_FLAT_RUN(150) replaces FLAT_RUN
-    # at both places tier reaches its highest point (apex) below -
-    # Etank's own spawn gate (ETANK_TERRAIN_OK) checks IDCACHE_T0 (the
-    # topmost screen row), which is only solid at this apex tier, and
-    # can't distinguish which of the 2 occurrences in the loop it's
-    # currently looking at, so both must satisfy the requirement (same
-    # "widen both occurrences" precedent as before the full rollback).
-    # Each merges with the following/preceding already-apex-tier
-    # emit_flat(FLAT_RUN) right next to it (no transition in between,
-    # so it's one continuous run) for extra margin - 150+24=174 total,
-    # well past 150.
-    ETANK_APEX_FLAT_RUN = 150
-    for _ in range(3):
-        emit_flat(FLAT_RUN)
-        emit_climb()
-    emit_flat(ETANK_APEX_FLAT_RUN)
-    for _ in range(3):
-        emit_flat(FLAT_RUN)
-        emit_descend()
-    emit_flat(FLAT_RUN)
+    # every staircase has). ground_i() asserts on an out-of-range tier
+    # instead of quietly corrupting the row past that point.
+    for idx, (t, run) in enumerate(tier_profile):
+        if tier is None:
+            tier = t
+        else:
+            assert abs(t - tier) == 1, (
+                f"tier_profile step {idx}: tier {tier}->{t} is not a single "
+                f"+-1 step (every transition needs its own dedicated 2-column "
+                f"ramp tile, physically impossible to skip a tier in one step)"
+            )
+            emit_climb() if t > tier else emit_descend()
+        emit_flat(run)
 
-    # Rapid back-to-back climb: all 3 transitions (0->1->2->3) chained
-    # with no flat run in between - this is the actual point of using a
-    # shallow 22.5-degree per-tier slope instead of a steep 45-degree
-    # one: chaining them directly still reads as one continuous
-    # climbable ramp instead of a sheer wall. Then the same going down.
-    for _ in range(3):
-        emit_climb()
-    emit_flat(ETANK_APEX_FLAT_RUN)
-    for _ in range(3):
-        emit_descend()
-    emit_flat(FLAT_RUN)
-
-    assert tier == 0
     return rows
+
+
+# ---------- editable per-column <-> declarative profile conversion ----------
+# schedule-editor.html's own terrain-paint tool edits a flat per-column
+# tier array (one entry per paintable column - simpler to click-and-set
+# than a run-length list, and the natural shape for a spatial "paint the
+# skyline" UI) rather than the (tier,run) profile build_track() itself
+# consumes. This array is intentionally a DIFFERENT (shorter) length than
+# the real compiled track - it has no separate footprint for transitions
+# at all, since build_track() inserts those 2 dedicated ramp columns per
+# step automatically once RLE-encoded - so editing/painting always stays
+# simple and length-preserving from the user's own perspective, while the
+# real in-game track (and TRACK_LEN) naturally grows by 2 columns for
+# every tier step it round-trips through, same as it always has.
+def tier_profile_to_columns(tier_profile):
+    """(tier,run) profile -> flat per-column tier array (run-length
+    expanded, e.g. [(0,3),(1,2)] -> [0,0,0,1,1])."""
+    cols = []
+    for t, run in tier_profile:
+        cols.extend([t] * run)
+    return cols
+
+
+def columns_to_tier_profile(cols):
+    """Inverse of tier_profile_to_columns - run-length-encodes a flat
+    per-column tier array (e.g. from an edited Terrain2.json) back into
+    the (tier,run) steps build_track() consumes. Raises if any adjacent
+    pair of columns differs by more than 1 tier (see build_track()'s own
+    assert - this validates the SAME constraint up front, with a message
+    naming the actual column index, before it ever reaches that assert)."""
+    if not cols:
+        return []
+    for i in range(1, len(cols)):
+        assert abs(cols[i] - cols[i - 1]) <= 1, (
+            f"terrain column {i}: tier {cols[i-1]}->{cols[i]} jumps more "
+            f"than 1 step - not physically renderable (see build_track()'s "
+            f"own comment)"
+        )
+    profile = []
+    cur = cols[0]
+    run = 0
+    for c in cols:
+        if c == cur:
+            run += 1
+        else:
+            profile.append((cur, run))
+            cur = c
+            run = 1
+    profile.append((cur, run))
+    return profile
 
 
 ROWS = build_track()
@@ -416,6 +457,15 @@ def emit_asm_tables():
     return "\n".join(out)
 
 
+def export_terrain_json(tier_profile=DEFAULT_TIER_PROFILE):
+    """The editor-facing per-column tier array, JSON-serialized - see
+    tier_profile_to_columns's own comment for why this is a different
+    (shorter) shape than the real compiled track. Matches schedule-
+    editor.html's own "terrain" field so it can be pasted straight in or
+    loaded via its file-import."""
+    return json.dumps({"terrain": tier_profile_to_columns(tier_profile)})
+
+
 if __name__ == "__main__":
     print(f"track length: {TRACK_LEN} cells")
     print(f"distinct (curr,next) pairs used: {len(PAIRS)}")
@@ -424,3 +474,14 @@ if __name__ == "__main__":
     with open(tables_path, "w") as f:
         f.write(emit_asm_tables())
     print("wrote", tables_path)
+
+    # round36 ("現在の地形データをJsonに含めて出力してくれ"): the
+    # current (hardcoded default) terrain profile, in the same per-
+    # column format schedule-editor.html's own terrain tool edits -
+    # a starting point for editing, same role Schedule2.json's own
+    # export played for enemy placements.
+    terrain_json_path = os.path.join(HERE, "Terrain2.json")
+    with open(terrain_json_path, "w") as f:
+        f.write(export_terrain_json())
+    print("wrote", terrain_json_path,
+          f"({len(tier_profile_to_columns(DEFAULT_TIER_PROFILE))} columns)")
