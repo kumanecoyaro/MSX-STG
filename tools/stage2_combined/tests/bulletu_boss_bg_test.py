@@ -96,7 +96,13 @@ fired = False
 u_codes = {BULLETU_NIGHT_CODE, BULLETU_L_NIGHT_CODE, BULLETU_ROCK_CODE, BULLETU_L_ROCK_CODE}
 saw_bg_code = False
 saw_hidden_sprite = True
-for f in range(9330):
+# round34 ("全てスケジュールに"): with no player fire input at all, a
+# ground enemy can go permanently un-destroyed and stall later schedule
+# entries up to SPAWN2_STALL_LIMIT GAME_TICKs each before being skipped
+# - verified empirically (see boss_test.py's own Test12) this can push
+# the real boss spawn out to ~frame 10727 for this specific schedule's
+# own content, so this bound is generous rather than tight.
+for f in range(20000):
     step_frame(cpu4)
     if cpu4.mem[BOSS_ACT] != 0:
         if boss_spawned_at is None:

@@ -59,11 +59,13 @@ cpu.mem[THUNDER_PENDING] = GARBAGE
 cpu.mem[THUNDER_ELIGIBLE] = GARBAGE
 for i in range(THUNDER_SLOT_COUNT):
     cpu.mem[THUNDER_POOL + i * THUNDER_SLOT_SIZE] = GARBAGE
-cpu.mem[GAME_TICK] = BOSS_SPAWN_TICK & 0xFF
-cpu.mem[GAME_TICK + 1] = (BOSS_SPAWN_TICK >> 8) & 0xFF
-call_routine(cpu, "UPDATE_BOSS_ALL")
+# round34 ("全てスケジュールに"): the spawn itself no longer has any
+# GAME_TICK check of its own (that moved to the shared SPAWN2_SCHEDULE_
+# CHECK/SSC2_FIRE dispatcher) - S2_BOSS_SPAWN always succeeds whenever
+# called, so calling it directly is the real "force a spawn" now.
+call_routine(cpu, "S2_BOSS_SPAWN")
 
-check("a real spawn (forced via GAME_TICK) actually happened despite the pre-spawn garbage",
+check("a real spawn (forced directly) actually happened despite the pre-spawn garbage",
       cpu.mem[BOSS_ACT] == 1)
 check("the spawn's own init resets SBEAM_ACT regardless of pre-spawn garbage",
       cpu.mem[SBEAM_ACT] == 0)

@@ -56,8 +56,6 @@ check("spawns at ETANK_SPAWNX (off the right edge)", cpu.mem[ETANK_POOL+1] == sy
 check("Y fixed from TANK_TIER_Y_TABLE index0 (apex) minus the tank-art-padding fudge",
       cpu.mem[ETANK_POOL+2] == cpu.mem[sym["TANK_TIER_Y_TABLE"]] - sym["ETANK_Y_OFFSET"])
 check("HP initialized to 8", cpu.mem[ETANK_POOL+6] == sym["ETANK_HP_INIT"] == 8)
-check("spawn interval is double Zum's own (halved frequency)",
-      sym["ETANK_SPAWN_INTERVAL"] == sym["ZUM_SPAWN_INTERVAL"] * 2)
 
 # Test 4: does not spawn while BigZum is active (bidirectional exclusion)
 cpu = fresh_cpu()
@@ -68,7 +66,6 @@ check("refuses to spawn while BigZum is active", cpu.mem[ETANK_POOL+0] == 0)
 # Test 5: BigZum refuses to spawn while Etank is active (the OTHER direction)
 cpu = fresh_cpu()
 cpu.mem[ETANK_POOL+0] = 1
-cpu.mem[sym["ENEMY_SPAWN_COUNT"]] = 10
 col = sym["BIGZUM_SPAWN_COL"]
 cpu.mem[IDCACHE_T0+col]=0; cpu.mem[IDCACHE_T1+col]=0; cpu.mem[IDCACHE_T2+col]=0; cpu.mem[IDCACHE_T3+col]=1
 call_routine(cpu, "ALLOC_BIGZUM_SLOT")
@@ -88,7 +85,6 @@ check("refuses to spawn while Zum slot1 is active", cpu.mem[ETANK_POOL+0] == 0)
 # Test 5c: Zum refuses to spawn while Etank is active (the OTHER direction)
 cpu = fresh_cpu()
 cpu.mem[ETANK_POOL+0] = 1
-cpu.mem[sym["ENEMY_SPAWN_COUNT"]] = 10
 zcol = sym["ZUM_SPAWN_COL"]
 cpu.mem[IDCACHE_T0+zcol] = 1
 call_routine(cpu, "ALLOC_ZUM_SLOT")
@@ -103,7 +99,6 @@ check("Flyer CAN spawn while BigZum is active (relaxed)", cpu.mem[FLYER_POOL+0] 
 
 cpu = fresh_cpu()
 cpu.mem[FLYER_POOL+0] = 1
-cpu.mem[sym["ENEMY_SPAWN_COUNT"]] = 10
 col = sym["BIGZUM_SPAWN_COL"]
 cpu.mem[IDCACHE_T0+col]=0; cpu.mem[IDCACHE_T1+col]=0; cpu.mem[IDCACHE_T2+col]=0; cpu.mem[IDCACHE_T3+col]=1
 call_routine(cpu, "ALLOC_BIGZUM_SLOT")

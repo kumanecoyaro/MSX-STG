@@ -461,8 +461,11 @@ BOSS_SPAWN_TICK = sym["BOSS_SPAWN_TICK"]
 
 
 def spawn_boss(cpu):
-    set_game_tick(cpu, BOSS_SPAWN_TICK)
-    call_routine(cpu, "UPDATE_BOSS_ALL")
+    # round34 ("全てスケジュールに"): S2_BOSS_SPAWN has no GAME_TICK
+    # check of its own any more (moved to the shared SPAWN2_SCHEDULE_
+    # CHECK/SSC2_FIRE dispatcher) - it always succeeds whenever called
+    # directly, so no GAME_TICK poke is needed here at all any more.
+    call_routine(cpu, "S2_BOSS_SPAWN")
 
 
 cpu = fresh_cpu()

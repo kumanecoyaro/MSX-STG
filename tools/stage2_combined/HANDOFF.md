@@ -4031,3 +4031,166 @@ Thunder activity) confirming it survives completely untouched.
   `SYNTAX OK`)。Artifact再公開時に`capabilities: {downloads: true}`宣言が
   正常に登録されたこと(「Stored — contract 0.2.31 · capabilities downloads」)
   を確認。実機での動作確認はユーザー側での再テストに委ねる。
+
+## Round 34: Stage2のスポーンを完全スケジュールテーブル駆動化(ランダムスポーン全廃止)
+
+- User instruction (verbatim、Schedule2_2.jsonの添付ファイル付き): "じゃあこれで実装してみてくれ
+  で、ランダムスポーンは廃止 全てスケジュールに"
+  - Round33で拡張したschedule-editor.htmlで実際に作成した152件のスケジュールJSON
+    (ZacoII×92、Flyer×23、Zum×17、ZacoII赤×7、Etank×6、BigZum×6、Boss×1)を使い、
+    Stage1の`SPAWN_THRESHOLDS`/`SPAWN_NEXT_INDEX`/`SSC_FIRE`/`SPAWN_SCHEDULE_CHECK`
+    方式に倣って`tools/stage2_combined/combined_test.asm`をテーブル駆動スポーンに
+    書き換える回。CLAUDE.mdの「進行中の大目標」の次段階そのもの。
+
+### 実装したテーブル駆動スポーン機構
+
+- `SPAWN2_THRESHOLDS`(DW、152エントリ、tick値)/`SPAWN2_Y_TABLE`(DB、152エントリ、
+  row*8の画素Y値)/`SPAWN2_NEXT_INDEX`(1バイト、0〜151を歩くポインタ)/
+  `SPAWN2_SCHEDULE_CHECK`(GAME_TICKの16-bit safeな閾値比較、Stage1と同じ「1tickに
+  1エントリだけ処理」方式)/`SSC2_FIRE`(152件のCP連鎖ディスパッチ、最後のボス
+  エントリだけはCP無しで`JP S2_BOSS_SPAWN`に無条件フォールスルー - Stage1では
+  物理的に隣接配置してるだけの暗黙フォールスルーだが、こちらはS2_BOSS_SPAWNが
+  離れた場所にあるため明示JP)。テーブル自体は添付JSONから
+  `python3 -c "..."`で機械的に生成(手打ちでの転記ミスを避けるため)。
+- 各エントリの実際の型→ルーチン対応: `s2_zacoii`→`SPAWN_S2_ZACOII`(variant=0を
+  `S2_SPAWN_VARIANT`にセットしてから`ALLOC_ENEMY_SLOT`へJP)、`s2_zacoii_red`→
+  `SPAWN_S2_ZACOII_RED`(variant=1)、`s2_zum`/`s2_bigzum`/`s2_flyer`/`s2_etank`は
+  各自の`ALLOC_*_SLOT`に直接ディスパッチ、`s2_boss`は`S2_BOSS_SPAWN`(旧
+  `UPDATE_BOSS_ALL`の「未スポーン→GAME_TICK比較→スポーン」ブランチをそのまま
+  切り出したもの、tickチェック自体は撤去 - タイミングは完全にスケジュール
+  ディスパッチ側の責務に)。
+- **成功/失敗の伝達規約**: このアセンブラ(`mini_z80asm.py`)は`SCF`命令を
+  サポートしていない(ビルドで発覚)ため、Carryフラグでの成否伝達は使わず、
+  各`ALLOC_*_SLOT`/`SPAWN_S2_*`が成功時は`JP SSC2_ADVANCE`(インデックスを
+  進めてRET)、失敗時は素の`RET`(インデックスは進めない)という直接分岐方式に
+  統一。失敗(プール満杯・地形が平坦でない・地上レーン排他)した場合は次の
+  GAME_TICKで同じインデックスを再試行する(Stage1のSSC_BUSY_E2と同じ「進めずに
+  待つ」思想だが、全タイプに一般化)。
+
+### 廃止したランダム要素
+
+- `ENEMY_SPAWN_TIMER`/`ZUM_SPAWN_TIMER`/`BIGZUM_SPAWN_TIMER`/`FLYER_SPAWN_TIMER`/
+  `ETANK_SPAWN_TIMER`(固定インターバルタイマー、いずれも90フレーム前後)を
+  全廃止。`UPDATE_ENEMIES`/`UPDATE_ZUM_ALL`/`UPDATE_BIGZUM_ALL`/`UPDATE_FLYER_ALL`/
+  `UPDATE_ETANK_ALL`の冒頭にあった「タイマーが0ならスポーン試行」ブランチを削除、
+  プール更新ループへ直行するだけに簡略化。
+- ZacoIIのY座標: `ENEMY_SKY_Y_MIN`/`ENEMY_SKY_Y_MASK`によるGAME_RNGマスク方式
+  (Y∈[24,88))を廃止、スケジュールの`row*8`をそのまま使用(`S2_SPAWN_Y`経由)。
+  結果としてスケジュールのrow範囲(2〜18)は旧ランダム範囲よりずっと広く、
+  画面のより広い高さにZacoIIが出現するようになった(意図的 - スケジュール
+  エディタで著者が自由に配置できることの帰結)。
+- ZacoIIのバリアント(緑/赤): `ENEMY_SPAWN_COUNT`(累計スポーン数、10以降は
+  GAME_RNGで50/50コイントス)を廃止、スケジュールの`s2_zacoii`/`s2_zacoii_red`
+  という型そのものが直接バリアントを指定する形に。
+  Zum/BigZumが持っていた「ENEMY_SPAWN_COUNT>=10まで待つ」ゲートも同じ理由で
+  削除(スケジュールの出現順そのものがペーシングを担うため冗長)。
+  Zum/BigZumがそれぞれ持っていた地形平坦チェック・地上レーン相互排他
+  (Zum⇔BigZum⇔Etank)は**そのまま維持**(これは「ランダム」ではなくゲーム
+  ロジック上の実制約のため)。
+  Flyerの`PICK_FLYER_SPAWN_Y`(GAME_RNGによるランダムY、`FLYER_SPAWN_Y_MIN`/
+  `_SPAN`)も全廃止、`S2_SPAWN_Y`を直接使用。
+  Etankの`GAME_TICK>=70`という早期スポーン防止フロアも削除(スケジュールの
+  最初のEtankは元々tick169なので冗長)。
+- `ENEMY_SPAWN_STOP_TICK`(950、全タイプ共通の「これ以降スポーン禁止」ゲート、
+  `SPAWN_STOPPED`ルーチン)を全廃止 - スケジュール自体が自然に終わるので
+  この種の一律ゲートは不要になった。ただしこの定数の**唯一の生き残った役割**
+  (BigZumがボスとhwスプライトスロット/パターンVRAMを共有しているため、ボス
+  スポーン前に強制的に画面外へ撤退させる安全機構、`UPDATE_ONE_BIGZUM`の
+  STATE=5強制遷移)はそのまま維持し、`BIGZUM_RETREAT_TICK`と改名して残した。
+  この撤退チェックは「そのtickに達した瞬間からずっと」ではなく「毎フレーム
+  無条件に」評価されるため、BigZumが`BIGZUM_RETREAT_TICK`(950)を過ぎてから
+  スポーンした場合でも生存1フレーム目から強制撤退に入る(=元から950以降の
+  スポーンが無かった旧設計と実質的に同じ安全性を保つ)。
+- `BOSS_SPAWN_TICK`は999→995に変更(添付スケジュールのボスエントリと一致する
+  値)。ボス自体はStage1同様、独立した定数比較ではなくスケジュールの最終
+  エントリとして完全にテーブル駆動化された(以前は`UPDATE_BOSS_ALL`が毎フレーム
+  自前でGAME_TICK比較していたが、その分岐は撤去し`RET`のみに)。
+
+### 発見した設計上の問題と対策(SPAWN2_STALL_LIMIT安全弁)
+
+- 実装後、実際のMAINLOOPを最後まで回す検証(自機が一切発砲しない最悪ケース、
+  boss_test.py等の既存テストが元々使っていた設定)を行ったところ、**ボスが
+  永遠にスポーンしない**という重大な問題を発見。原因: BigZumが誰にも撃たれず
+  永続的にSTATE=2(パンチ)のまま生き残り、`ALLOC_ZUM_SLOT`/`ALLOC_ETANK_SLOT`の
+  `BIGZUM_POOL`排他チェックが恒久的にブロックされ続けた結果、そのZumエントリの
+  `SPAWN2_NEXT_INDEX`が進まなくなり、それより後ろの全エントリ(ボスを含む)が
+  永久に発火しなくなっていた。旧設計ではボスのスポーンは他の敵の状態と完全に
+  独立していたため問題化しなかった潜在バグが、「全てを1本のシーケンシャル
+  インデックスに統合する」という今回の設計変更で新たに顕在化した形。
+  - 対策として`SPAWN2_STALL_COUNT`(1バイト、`BIGZUM_SPAWN_TIMER`跡地
+    `0F21Fh`を再利用)と`SPAWN2_STALL_LIMIT`(60、約8秒相当)を追加。
+    あるエントリが「発火条件は満たしている(tick到達済み)のにブロックされて
+    発火できない」状態が60GAME_TICK連続した場合、そのエントリはスポーンせずに
+    強制的にスキップ(`SSC2_ADVANCE`)する安全弁。Stage1の`SSC_BUSY_E2`
+    (Enemy2専用の手書きされた1回限りの待機ロジック)とは違い、Stage2の
+    地上レーン排他は3方向(Zum⇔BigZum⇔Etank)かつスケジュールの各エントリが
+    互いに近接しているため、汎用的な安全弁が必要と判断。
+  - 導入後、同じ最悪ケース(自機発砲なし)で実際にMAINLOOPをシミュレートし、
+    ボスがframe10727(tick1341、本来のtick995より346tick遅れ)で確実に
+    スポーンすることを確認。これは安全弁が機能した結果の「遅延」であり、
+    実際のプレイ(自機が敵を撃つ)では大幅に元のスケジュール通りのタイミング
+    (frame~7960付近)に収まることを`stack_safety_test.py`(アクティブ入力設定)
+    で確認済み。
+  - さらに、この最悪ケースにおいてもボススポーンの瞬間にZum/BigZum/Flyer/Etankの
+    全プールが本当に空になっている(=ボスとのhwスプライトスロット/パターン
+    VRAM共有が安全)ことを実機エミュレータで直接検証(新設
+    `tests/boss_vram_safety_test.py`参照)。BigZumは`BIGZUM_RETREAT_TICK`の
+    コード上の安全機構、他3種はスケジュール自体の余裕(最終スポーンからボスまで
+    Zum=28tick/224フレーム、ZacoII赤=53tick、Flyer=63tick、ZacoII=93tick、
+    Etank=180tick)+スタール安全弁の組み合わせで担保されている。
+
+### テストの更新
+
+- 削除: `enemy_spawn_stop_test.py`(`SPAWN_STOPPED`/`ENEMY_SPAWN_STOP_TICK`という
+  廃止済み機構をテストしていたファイル、丸ごと前提が崩れたため削除)、
+  `etank_gametick_gate_test.py`(同様に`GAME_TICK>=70`ゲートと旧タイマー方式の
+  end-to-endタイミングをテストしていたファイル)。
+- 新規: `spawn2_schedule_test.py`(新スケジュール機構自体のテスト - 16-bit safeな
+  tick比較、ディスパッチの正しさ、ブロック時の「進めずに再試行」、
+  `SPAWN2_STALL_LIMIT`安全弁、ボスへのフォールスルー、`SPAWN2_COUNT`到達後の
+  恒久的no-op化を検証、16件)、`boss_vram_safety_test.py`(上記のVRAM共有安全性を
+  実機エミュレータで直接検証、5件)。
+- 更新: `bigzum_retreat_test.py`(シンボル名`ENEMY_SPAWN_STOP_TICK`→
+  `BIGZUM_RETREAT_TICK`にリネームのみ、動作は無変更)、`etank_unit.py`/
+  `etank_pattern_vram_test.py`(廃止された`ENEMY_SPAWN_COUNT`ポークを削除)、
+  `flyer_terrain_test.py`(廃止されたランダムY関連の検証を、`S2_SPAWN_Y`を
+  直接指定してその通りにスポーンすることを確認する検証に置き換え)、
+  `zaco_flash_bug.py`は無変更で通過(variant/Yのデフォルト値がたまたま
+  テストの期待と一致するため)。
+  `boss_test.py`/`boss_pose_test.py`/`sbeam_test.py`/`thunder_test.py`/
+  `boss_collision_test.py`/`bulletu_boss_bg_test.py`/`horming_test.py`/
+  `boot_init_test.py`: ボスを直接トリガーする箇所を
+  `set_game_tick(...);call_routine(cpu,"UPDATE_BOSS_ALL")`から
+  `call_routine(cpu,"S2_BOSS_SPAWN")`(GAME_TICKチェック無し、常に成功)に
+  一括変更。また複数ファイルのend-to-end MAINLOOPループの上限フレーム数を、
+  上記の最悪ケース検証結果(frame10727)を踏まえて20000フレームまで拡大
+  (旧: 9330〜12000フレーム、当時は`BOSS_SPAWN_TICK`直結の固定タイミング
+  だったため短くても足りていた)。
+- 全回帰: **765 passed, 0 failed**(Round33時点の760から、削除2ファイル分の
+  テスト減少を新規2ファイル分の追加が上回った)。
+
+### RAMアドレスの再利用
+
+新規に必要になった3バイト(`SPAWN2_NEXT_INDEX`/`S2_SPAWN_Y`/`S2_SPAWN_VARIANT`/
+`SPAWN2_STALL_COUNT`の4バイト)は、廃止したタイマー変数の跡地
+(`ENEMY_SPAWN_TIMER`→`SPAWN2_NEXT_INDEX`(F19Bh)、`ENEMY_SPAWN_COUNT`→
+`S2_SPAWN_Y`(F19Ch)、`ZUM_SPAWN_TIMER`→`S2_SPAWN_VARIANT`(F204h)、
+`BIGZUM_SPAWN_TIMER`→`SPAWN2_STALL_COUNT`(F21Fh))を再利用する形で確保し、
+新規のSTACKTOP近接リスクを一切発生させていない(CLAUDE.mdの「環境依存パスに
+関する注意」と同種の、Round16由来のRAMアドレス配置ルールに準拠)。
+
+### ビルド・検証
+
+- Stage2テストROM(`build_test.py`)・"Comb"統合ROM(`build_full_rom.py`)
+  ともに正常ビルド。`verify_comb.py`(Stage1→実Stage2のバンク切替検証)も
+  ALL CHECKS PASSED。両ROMをユーザーに送付済み。
+- 今回はデバッグ用の一時的なtick/HPオーバーライドは一切使用せず(GAME_TICKは
+  真の0スタート、BOSS_HP_INITも255のまま)、"本番"に近い状態のROMをそのまま
+  ビルド・送付。
+
+### 次段階(未着手)
+
+- スケジュールの実際のバランス調整(現状は添付JSONをそのまま実装しただけで、
+  実プレイでの難易度・ペーシングの検証・調整は行っていない)。
+- Sasapiボスの実物64x64ボディをschedule-editor.htmlに転写する件は引き続き
+  未着手(Round33で明示的にスコープ外とした通り)。

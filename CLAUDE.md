@@ -36,7 +36,8 @@
 ## テストコマンド・実行方針
 
 - 全回帰テスト: `cd tools/stage2_combined/tests && python3 run_all.py`
-  - **実測所要時間: 約35秒**(629テスト。2026-08-25の高速化前は約20分だった - 経緯は下記)。
+  - **実測所要時間: 約35秒**(2026-08-29時点765テスト。テスト数は変更のたびに増減する、
+    629は2026-08-25の高速化計測当時の件数。2026-08-25の高速化前は約20分だった - 経緯は下記)。
   - この所要時間ならフォアグラウンドで待っても問題ないレベルだが、環境によりPyPyが
     無い(セッション開始hookが未実行/失敗した)場合は数分かかることもあるので、
     念のため引き続きバックグラウンド実行(`run_in_background`)を推奨。
@@ -90,15 +91,20 @@
 - (2026-08-25、着手・完了済み) "Comb"ビルド: `build_full_rom.py`のstage2部分を、`bankswitch_poc`の
   簡易プレースホルダーから本物の`stage2_combined`contentに差し替え済み。詳細は上記「ビルドコマンド」
   および`tools/stage2_combined/HANDOFF.md`のRound30を参照。
-- **進行中の大目標**: Stage2の敵スポーンをStage1同様スケジュールテーブル駆動にする。
-  - (2026-08-29、着手・完了済み) 第一段階として`tools/schedule-editor.html`をStage2エネミー
-    (ZacoII/Zum/BigZum/Flyer/Etank/Boss)対応に拡張済み。Stage1/Stage2切り替えボタン、
-    相互登録禁止(`s2_`プレフィックスの名前空間分離)、出力ファイル分離(`stage`フィールド・
-    `Schedule.json`/`Schedule2.json`)を実装。詳細は`tools/stage2_combined/HANDOFF.md`の
-    Round33を参照。
-  - **次段階(未着手、指示なしに着手しない)**: `tools/stage2_combined/combined_test.asm`側の
-    実装。現状は`ENEMY_SPAWN_INTERVAL`等の個別インターバルタイマー方式(+ボスのみ
-    `BOSS_SPAWN_TICK`という単一定数によるtick閾値方式)。これをStage1の
-    `SPAWN_THRESHOLDS`/`SSC_FIRE`/`GAME_TICK`方式(tickテーブル駆動、`CP`連鎖で
-    ディスパッチ)に倣ってテーブル駆動化し、schedule-editorの出力(Stage2用JSON)を
-    実際に消費できるようにする作業。ユーザーからの明示的な指示があり次第着手する。
+- **Stage2の敵スポーンをStage1同様スケジュールテーブル駆動にする件**: 完了済み(2026-08-29)。
+  - 第一段階(2026-08-29): `tools/schedule-editor.html`をStage2エネミー(ZacoII/Zum/BigZum/
+    Flyer/Etank/Boss)対応に拡張。Stage1/Stage2切り替えボタン、相互登録禁止(`s2_`プレフィックスの
+    名前空間分離)、出力ファイル分離(`stage`フィールド・`Schedule.json`/`Schedule2.json`)を実装。
+    詳細は`tools/stage2_combined/HANDOFF.md`のRound33を参照。
+  - 第二段階(2026-08-29、Round34): `tools/stage2_combined/combined_test.asm`側を実装。
+    ユーザーがschedule-editorで実際に作成した152件のスケジュールJSONを、Stage1の
+    `SPAWN_THRESHOLDS`/`SSC_FIRE`/`GAME_TICK`方式に倣ってテーブル駆動化
+    (`SPAWN2_THRESHOLDS`/`SPAWN2_NEXT_INDEX`/`SSC2_FIRE`/`SPAWN2_SCHEDULE_CHECK`)。
+    旧来のランダムスポーン(個別インターバルタイマー・ランダムY・ランダムバリアント・
+    `ENEMY_SPAWN_STOP_TICK`一律ゲート)は全廃止。実装中に発見した「全エントリを1本の
+    シーケンシャルインデックスに統合したことで、地上敵の排他制御が原因でボスが永久に
+    スポーンしなくなりうる」という設計上の問題には`SPAWN2_STALL_LIMIT`安全弁で対処済み。
+    詳細・技術的経緯は`tools/stage2_combined/HANDOFF.md`のRound34を参照。
+  - **保留中(指示なしに着手しない)**: スケジュール自体の実プレイでの難易度・ペーシング調整
+    (現状は添付JSONをそのまま実装しただけで未調整)。Sasapiボスの実物64x64ボディを
+    schedule-editor.htmlに転写する件(Round33で明示的にスコープ外とした通り、引き続き未着手)。

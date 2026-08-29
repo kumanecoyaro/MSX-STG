@@ -55,7 +55,6 @@ check("BR quadrant VRAM matches Etank's own real BR art (not a misaligned slice)
 
 # BigZum's own spawn must reload its real BL/BR bytes, undoing Etank's
 # borrow - the whole dynamic-sharing scheme is only safe because of this.
-cpu.mem[sym["ENEMY_SPAWN_COUNT"]] = 10
 bzcol = sym["BIGZUM_SPAWN_COL"]
 IDCACHE_T1 = sym["IDCACHE_T1"]; IDCACHE_T2 = sym["IDCACHE_T2"]; IDCACHE_T3 = sym["IDCACHE_T3"]
 cpu.mem[ETANK_POOL + 0] = 0  # despawn Etank first so ALLOC_BIGZUM_SLOT's own exclusion doesn't block it

@@ -12,7 +12,7 @@ def check(label, cond):
     print(("PASS " if cond else "FAIL "), label)
 
 GAME_TICK = sym["GAME_TICK"]
-ENEMY_SPAWN_STOP_TICK = sym["ENEMY_SPAWN_STOP_TICK"]
+BIGZUM_RETREAT_TICK = sym["BIGZUM_RETREAT_TICK"]
 BIGZUM_POOL = sym["BIGZUM_POOL"]
 BIGZUM_JUMP_XSPEED = sym["BIGZUM_JUMP_XSPEED"]
 BULLET0_ACT = sym["BULLET0_ACT"]
@@ -32,34 +32,34 @@ def spawn_bigzum(cpu, x=100, y=132, state=0):
     cpu.mem[BIGZUM_POOL + 9] = 1     # FACING=1 (flipped), so the transition to 0 is observable
 
 
-# Test 1: not yet forced into retreat before ENEMY_SPAWN_STOP_TICK.
+# Test 1: not yet forced into retreat before BIGZUM_RETREAT_TICK.
 cpu = fresh_cpu()
 spawn_bigzum(cpu, x=100, state=0)
-set_game_tick(cpu, ENEMY_SPAWN_STOP_TICK - 1)
+set_game_tick(cpu, BIGZUM_RETREAT_TICK - 1)
 cpu.ix = BIGZUM_POOL
 call_routine(cpu, "UPDATE_ONE_BIGZUM")
-check("STATE not forced to 5 just before ENEMY_SPAWN_STOP_TICK",
+check("STATE not forced to 5 just before BIGZUM_RETREAT_TICK",
       cpu.mem[BIGZUM_POOL + 7] != 5)
 
 # Test 2: does NOT force retreat at the truncated-8-bit low byte of
-# ENEMY_SPAWN_STOP_TICK - same regression shape as the cloud/enemy-spawn
+# BIGZUM_RETREAT_TICK - same regression shape as the cloud/enemy-spawn
 # fixes this same session.
 cpu = fresh_cpu()
 spawn_bigzum(cpu, x=100, state=0)
-set_game_tick(cpu, ENEMY_SPAWN_STOP_TICK & 0xFF)
+set_game_tick(cpu, BIGZUM_RETREAT_TICK & 0xFF)
 cpu.ix = BIGZUM_POOL
 call_routine(cpu, "UPDATE_ONE_BIGZUM")
-check("STATE not forced to 5 at the truncated-8-bit low byte of ENEMY_SPAWN_STOP_TICK",
+check("STATE not forced to 5 at the truncated-8-bit low byte of BIGZUM_RETREAT_TICK",
       cpu.mem[BIGZUM_POOL + 7] != 5)
 
-# Test 3-4: forced into STATE=5 at ENEMY_SPAWN_STOP_TICK, FACING reset
+# Test 3-4: forced into STATE=5 at BIGZUM_RETREAT_TICK, FACING reset
 # to 0 (normal, facing left), overriding an in-progress punch (STATE=2).
 cpu = fresh_cpu()
 spawn_bigzum(cpu, x=100, state=2)   # mid-punch
-set_game_tick(cpu, ENEMY_SPAWN_STOP_TICK)
+set_game_tick(cpu, BIGZUM_RETREAT_TICK)
 cpu.ix = BIGZUM_POOL
 call_routine(cpu, "UPDATE_ONE_BIGZUM")
-check("STATE forced to 5 (retreat) at ENEMY_SPAWN_STOP_TICK, overriding STATE=2 (punch)",
+check("STATE forced to 5 (retreat) at BIGZUM_RETREAT_TICK, overriding STATE=2 (punch)",
       cpu.mem[BIGZUM_POOL + 7] == 5)
 check("FACING reset to 0 (normal, facing left) on forced retreat",
       cpu.mem[BIGZUM_POOL + 9] == 0)
@@ -73,7 +73,7 @@ check("steps left by BIGZUM_JUMP_XSPEED per call while retreating",
 # Test 6: drives all the way off the left edge - deactivates and hides.
 cpu = fresh_cpu()
 spawn_bigzum(cpu, x=BIGZUM_JUMP_XSPEED * 3, state=0)
-set_game_tick(cpu, ENEMY_SPAWN_STOP_TICK)
+set_game_tick(cpu, BIGZUM_RETREAT_TICK)
 cpu.ix = BIGZUM_POOL
 steps = 0
 while cpu.mem[BIGZUM_POOL + 0] != 0 and steps < 50:

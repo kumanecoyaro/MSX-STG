@@ -511,22 +511,36 @@ NIGHT_START_ROW  EQU 1
 NIGHT_END_ROW    EQU 16
 NIGHT_CODE       EQU 136       ; group17 (136-143)
 NIGHT_COLOR      EQU 015h      ; "ブラックとブルーの文字色と背景色を逆に" - fg1 black / bg5 light blue (was fg5/bg1)
-; endgame GAME_TICK timeline (all 3 share this one clock, none re-derive
-; their own): night sweep starts at NIGHT_START_TICK(850) above: every
-; ordinary enemy (ZacoII/Zum/BigZum/Flyer/Etank) stops spawning at
-; ENEMY_SPAWN_STOP_TICK(950) - SPAWN_STOPPED (below) is the single
-; shared 16-bit-safe check every ALLOC_*_SLOT routine calls, rather than
-; each re-implementing its own GAME_TICK compare; the boss spawns once
-; at BOSS_SPAWN_TICK(999) - see its own comment further down.
-ENEMY_SPAWN_STOP_TICK EQU 950
-; ---------- boss (Sasapi): spawns once at BOSS_SPAWN_TICK(999), then ----------
+; endgame GAME_TICK timeline: night sweep starts at NIGHT_START_TICK
+; (850) above; the boss spawns once at BOSS_SPAWN_TICK - see its own
+; comment further down. round34 ("ランダムスポーンは廃止 全てスケジュ
+; ールに"): ordinary enemies (ZacoII/Zum/BigZum/Flyer/Etank) no longer
+; have a shared "stop spawning at tick X" gate at all - each one only
+; ever spawns when its own schedule entry fires (SPAWN2_THRESHOLDS),
+; and the schedule itself simply has no entries left after its own last
+; one, so there's nothing left to gate. The one surviving GAME_TICK
+; threshold from that old shared mechanism is BigZum's own forced-
+; retreat-before-boss safety net (below), renamed from ENEMY_SPAWN_
+; STOP_TICK to reflect its real, narrower remaining purpose - BigZum is
+; the only enemy that shares hw sprite slots/pattern VRAM with the boss
+; (see BOSS_SPR_BASE_SLOT/PAT_SASAPI's own comments), so it alone still
+; needs to be forced off-screen ahead of the boss's own spawn,
+; independent of when it happened to spawn.
+BIGZUM_RETREAT_TICK EQU 950
+; ---------- boss (Sasapi): spawns once at BOSS_SPAWN_TICK, then ----------
 ; patrols left<->right forever - "Tick999でスポーン Skysandの８ｐｘ上
 ; あたり 右から出現し左へ 左端に着いたら反転 右端に 以降繰り返し 耐久
 ; 値は255で 速度は2". No collision/HP-depletion wired yet - BOSS_HP is
 ; just stored, no spec given yet for what damages it or what happens at
 ; 0; no despawn either, matching "反転...以降繰り返し" describing an
-; unending patrol, not a one-shot pass.
-BOSS_SPAWN_TICK EQU 999
+; unending patrol, not a one-shot pass. round34: this used to be its own
+; independent EQU(999), checked directly inside UPDATE_BOSS_ALL every
+; frame; now it's just documentation matching the schedule's own final
+; SPAWN2_THRESHOLDS entry (995, "全てスケジュールに") - the actual
+; runtime trigger is SSC2_FIRE's own unconditional fallthrough to
+; S2_BOSS_SPAWN once every earlier entry has fired, same convention as
+; Stage1's own SSC_FIRE/BOSS_SPAWN (src/CYBER SHMUP.asm).
+BOSS_SPAWN_TICK EQU 995
 BOSS_SPAWNX     EQU 192     ; 256-64: off/at the right edge, sprite fully inside the screen the instant it spawns - same "screen_width - sprite_width" shape as ENEMY_SPAWNX(240=256-16), just for a 64px-wide sprite instead of 16px
 ; "Skysandの８ｐｘ上あたり" - read as the sprite's own BOTTOM edge
 ; sitting 8px above SkySand's top row (NIGHT_END_ROW=16, pixel row
@@ -821,14 +835,21 @@ SASAPI_HAND_FLASH_COLORBYTE EQU 081h
 ; body a few lines below - once the boss fight starts, Flyer (like
 ; ZacoII/Zum) never spawns again ("オールフリー"), so overwriting its
 ; pattern data outright is fine, on the SAME already-trusted timing
-; precedent BOSS_SPR_BASE_SLOT/PAT_SASAPI already rely on: spawning for
-; all of ZacoII/Zum/BigZum/Flyer/Etank stops at ENEMY_SPAWN_STOP_TICK
-; (950), a full 49 GAME_TICKs before BOSS_SPAWN_TICK(999) - by the time
-; this load runs (UPDATE_BOSS_ALL's own spawn branch, the exact same
-; moment LOAD_SASAPI_PATTERNS also runs), any Flyer that could still be
-; airborne has had that same 49-tick head start to clear the screen,
-; same as every other reused pool here. Loaded dynamically at boss
-; spawn time, not INIT - Flyer needs its own real pattern data intact
+; precedent BOSS_SPR_BASE_SLOT/PAT_SASAPI already rely on. round34
+; ("全てスケジュールに"): this used to be a code-level guarantee (a
+; shared ENEMY_SPAWN_STOP_TICK gate blocked every ALLOC_*_SLOT well
+; before the boss), now it's a property of the schedule's own content
+; instead - each type's own LAST scheduled spawn just needs enough of a
+; gap before the boss's own tick to naturally finish (explode/despawn)
+; first. BigZum is the one exception with an explicit code-level
+; safety net regardless of schedule content (BIGZUM_RETREAT_TICK forces
+; it off-screen - see UPDATE_ONE_BIGZUM's own comment); the other 4
+; types rely on the schedule author leaving a wide enough gap - see
+; tools/stage2_combined/HANDOFF.md's own round34 entry for this
+; specific schedule's own margins and how they were verified.
+;
+; Loaded dynamically at boss spawn time, not INIT - Flyer needs its own
+; real pattern data intact
 ; for ordinary gameplay before that. 5 facings x4 codes each (16x16-
 ; padded, TL/BL/TR/BR - same "VDP already in 16x16 mode" constraint as
 ; every other hw sprite here) = 20 of Flyer's own 32 codes actually
@@ -884,10 +905,12 @@ HORMING_SPR_BASE_SLOT EQU 6
 ; grid making up the 64x64 sprite) - reuses Zum/BigZum/Flyer/Etank's
 ; own ranges (10-11/12-19/20-23/24-25) rather than a fresh permanent
 ; allocation (would overflow the 32-slot budget outright) - "自機以外
-; はもうスポーンしないんで オールフリー": every one of those pools has
-; been refused new spawns since ENEMY_SPAWN_STOP_TICK(950), 49
-; GAME_TICKs before the boss can even appear, so by BOSS_SPAWN_TICK
-; none of them still hold anything real. Safe as long as UPDATE_BOSS_ALL
+; はもうスポーンしないんで オールフリー": round34 ("全てスケジュール
+; に") moved this from a code-level guarantee to a schedule-content
+; property - see PAT_HORMING_SL's own comment above for the full
+; explanation and BigZum's own remaining code-level exception. Safe as
+; long as the schedule's own last spawn of each type leaves enough of a
+; gap to naturally clear before the boss, and as long as UPDATE_BOSS_ALL
 ; is called AFTER all 4 of their own per-frame flushes in MAINLOOP (so
 ; the boss's own real data is always the last write to these slots each
 ; frame, not overwritten a moment later by an old, now-permanently-empty
@@ -1003,13 +1026,22 @@ E_DY      EQU 8
 ENEMY_SLOT_SIZE  EQU 9
 ENEMY_SLOT_COUNT EQU 3   ; same "3 concurrent" convention as the bullet pool
 ENEMY_POOL    EQU F180h   ; ENEMY_SLOT_SIZE*ENEMY_SLOT_COUNT = 27 bytes
-ENEMY_SPAWN_TIMER   EQU F19Bh
-; total enemies spawned so far (capped at 10, never decremented) -
-; "で、10機出たら色替えの赤いZakoII...アルゴリズムは同じ": once this
-; reaches 10, every spawn after is the red variant instead of green -
-; same movement/turn-back logic either way (ENEMY_GET_STEP is the only
-; place VARIANT changes behavior, for speed; UOE_DRAW picks the color).
-ENEMY_SPAWN_COUNT   EQU F19Ch
+; round34 ("ランダムスポーンは廃止 全てスケジュールに") repurposes this
+; byte: was ENEMY_SPAWN_TIMER (frame countdown to the next random-timer
+; spawn attempt), now the schedule's own walk pointer - see
+; SPAWN2_SCHEDULE_CHECK/SPAWN2_NEXT_INDEX's own comment further down.
+SPAWN2_NEXT_INDEX   EQU F19Bh
+; round34: was ENEMY_SPAWN_COUNT (total spawned so far, capped at 10,
+; drove the old "first 10 green, then 50/50 red/green" coinflip - see
+; ALLOC_ENEMY_SLOT's own history in git blame). The schedule now picks
+; green vs red explicitly per placement (s2_zacoii vs s2_zacoii_red), so
+; that whole counter/coinflip is gone; this byte is repurposed as
+; S2_SPAWN_Y - the CURRENT firing schedule entry's own pixel Y (row*8),
+; staged by SSC2_FIRE just before dispatch, consumed by whichever
+; ALLOC_*_SLOT the CP-chain calls (ignored by the 3 ground types, whose
+; own Y always comes from the terrain/tier logic instead - see each
+; ALLOC_*_SLOT's own comment).
+S2_SPAWN_Y   EQU F19Ch
 ; staging buffer for the 3 enemy hw sprite slots (4-6, right after the
 ; tank's own 0-3) - same "build in RAM, blast once" pattern as
 ; SPRITE_ATTRS/UTS_OUT_LOOP, just a separate buffer so the two flushes
@@ -1067,15 +1099,11 @@ ENEMY_TURNBACK_MARGIN EQU 64
 ; same flat/TICK-averaged cruise speed ENEMY_GET_STEP always gave, per
 ; "速度は今のままでいい".
 ENEMY_RAMP_RANGE EQU 32
-; "Skyのみのの位置に出現...現状はランダム" - Y confined to a band
-; safely inside the open sky (below the HUD rows0-1 at y0-15, well
-; above row19's ground top at y152) using a TICK-derived pseudo-random
-; low byte (AND with a power-of-2 span so it's a plain mask, no
-; divide) - a placeholder until terrain-aware spawning exists ("地形も
-; 合わせてスケジュールエディタで対応予定").
-ENEMY_SKY_Y_MIN   EQU 24
-ENEMY_SKY_Y_MASK  EQU 3Fh   ; span 64 -> Y in [24,88), sprite bottom never past y151
-ENEMY_SPAWN_INTERVAL EQU 90 ; frames between spawns while a slot is free - untuned
+; round34: was "Skyのみのの位置に出現...現状はランダム" - a TICK-derived
+; pseudo-random Y band (ENEMY_SKY_Y_MIN/MASK), explicitly a placeholder
+; ("地形も合わせてスケジュールエディタで対応予定"). Now superseded: Y
+; comes straight from the schedule's own row (S2_SPAWN_Y, row*8), no
+; random band needed - see ALLOC_ENEMY_SLOT.
 ENEMY_COLOR       EQU 3     ; light green - "ZakoIIの色をライトグリーンに" (was 12, dark green, sprites/ZacoII.json's own original fg)
 ENEMY_RED_COLOR   EQU 9     ; light red - "色替えの赤いZakoII" (kept distinct from the explosion's own medium red)
 ; PAT_ZACO/_FLIP (enemy_gen.py) and PAT_EXPLOSION (below) each need 4
@@ -1154,7 +1182,11 @@ ZUM_POOL       EQU F1ECh   ; ZUM_SLOT_SIZE*ZUM_SLOT_COUNT = 14 bytes
 ; from here through BANKSWITCH_TRAMPOLINE_RAM shifted +2 bytes to
 ; actually clear ZUM_POOL's real 16-byte span.
 ZUM_SPRITE_ATTRS EQU F1FCh ; 8 bytes: Y,X,pat,col x2 - same staging-buffer pattern as ENEMY_SPRITE_ATTRS
-ZUM_SPAWN_TIMER  EQU F204h
+; round34: was ZUM_SPAWN_TIMER (random-interval countdown, now removed -
+; "ランダムスポーンは廃止"). Repurposed as S2_SPAWN_VARIANT (0=green/
+; 1=red), staged by SPAWN_S2_ZACOII/SPAWN_S2_ZACOII_RED just before
+; calling the shared ALLOC_ENEMY_SLOT - see S2_SPAWN_Y's own comment.
+S2_SPAWN_VARIANT  EQU F204h
 ; "乗っかりから降りる時の速度が速すぎてワープにみえる" - set by
 ; UPDATE_TANK_ZUM_STAND (1 if it actually clamped TANK_Y_CUR against a
 ; Zum this call, else 0); read by UPDATE_JUMP the following frame to
@@ -1194,7 +1226,6 @@ ZUM_PROBE_DX EQU 8
 ; the column Zum's own horizontal center lands on at spawn - derived,
 ; not hand-typed, so it always matches UOZ_TERRAIN_FOLLOW's own probe.
 ZUM_SPAWN_COL EQU ZUM_SPAWNX+ZUM_PROBE_DX/8
-ZUM_SPAWN_INTERVAL EQU 90   ; same untuned-but-reasonable value as ENEMY_SPAWN_INTERVAL
 ; "Zumの加速は必要だぞ その前提で考えてるんだから ただロジック的に
 ; 両立出来ないんで 出現時速度３で右から出てきたら 80pxで自機を検知
 ; して速度1にサイン減速 減速終了で速度3までサイン加速して自機に突っ
@@ -1395,7 +1426,10 @@ BIGZUM_SLOT_SIZE  EQU 13   ; +0 ACT,+1 X,+2 Y,+3 TIMER(explosion/pause countdown
 ; never gets written/flushed once only 1 slot is ever iterated.
 BIGZUM_SLOT_COUNT EQU 1
 BIGZUM_POOL       EQU 0F207h  ; BIGZUM_SLOT_SIZE*BIGZUM_SLOT_COUNT = 24 bytes reserved (only the first 12 actually used now - see BIGZUM_SLOT_COUNT)
-BIGZUM_SPAWN_TIMER EQU 0F21Fh
+; round34: was BIGZUM_SPAWN_TIMER (random-interval countdown, now
+; removed). Repurposed as SPAWN2_STALL_COUNT - see SPAWN2_SCHEDULE_
+; CHECK's own comment.
+SPAWN2_STALL_COUNT EQU 0F21Fh
 ; staging buffer for BIGZUM_SLOT_COUNT*4 hw sprite slots (4 per
 ; instance - a 32x32 BigZum is 2x2 of 16x16 hw sprites, same quadrant
 ; convention as the tank's own SPRITE_ATTRS/UPDATE_TANK_SPRITES, just
@@ -1461,7 +1495,6 @@ BIGZUM_COLLISION_Y_OFFSET EQU 32-BIGZUM_COLLISION_HEIGHT
 BIGZUM_SPAWNX     EQU ZUM_SPAWNX          ; same off-right-edge spawn X as Zum - "スポーン条件は同じ"
 BIGZUM_PROBE_DX   EQU 16                  ; horizontal-center probe offset for a 32px-wide sprite (vs Zum's 8, for its 16px width)
 BIGZUM_SPAWN_COL  EQU BIGZUM_SPAWNX+BIGZUM_PROBE_DX/8
-BIGZUM_SPAWN_INTERVAL EQU ZUM_SPAWN_INTERVAL
 BIGZUM_HP_INIT    EQU 5    ; "合わせてBigZum耐久値5に変更" (was 8, briefly; 5 before that)
 ; jump arc: same half-sine construction as the tank's own JUMP_OFFSET_
 ; TABLE (round(H*sin(pi*t/32)) for t=0..32), just H=32 instead of 24 -
@@ -1589,35 +1622,24 @@ FLYER_SLOT_COUNT EQU 1
 ; freeze last round).
 FLYER_POOL         EQU F242h  ; FLYER_SLOT_SIZE*FLYER_SLOT_COUNT = 11 bytes
 FLYER_SPRITE_ATTRS EQU F24Dh  ; FLYER_SLOT_COUNT*16 = 16 bytes: (Y,X,pat,col)x4
-FLYER_SPAWN_TIMER  EQU F25Dh
+; round34: FLYER_SPAWN_TIMER(F25Dh) removed - random-interval spawning
+; is gone, this byte is simply unused now.
 FLYER_DRAW_TEMP  EQU F25Eh    ; scratch byte, UOFL_DRAW's own chosen pattern base
 FLYER_DRAW_COLOR EQU F25Fh    ; scratch byte, UOFL_DRAW's own resolved color (FLYER_COLOR or FLASH_COLOR)
-; ends at F25Dh - well clear of the 0F380h boundary.
+; ends at F25Fh - well clear of the 0F380h boundary.
 FLYER_SPR_BASE_SLOT EQU 20     ; hw sprite slots20-23 (1 instance x4), right after BigZum's own 12-19
 FLYER_COLOR EQU 7              ; cyan - sprites/Flyer.json's own fg
-FLYER_SPAWN_INTERVAL EQU ZUM_SPAWN_INTERVAL  ; same untuned-but-reasonable value as everything else's own spawn interval - not itself specified
 FLYER_SPAWNX   EQU 240
-; "Flyerのスポーン位置はランダムで指示してたはずだが固定されてしまって
-; る 画面上部8pxからSandsky上部までのランダムで" - was a fixed FLYER_
-; CRUISE_Y(64) constant; now a real per-spawn random pick (see
-; PICK_FLYER_SPAWN_Y below), matching HORMING_WANDER's own established
-; GAME_RNG idiom (read-only, XOR TICK + the slot's own address, masked
-; and folded - HORMING_WANDER_WIDTH's own round4/5 fixes for why a plain
-; "read GAME_RNG and INC it" reads as fixed/correlated).
-; Round-2 fix (verbatim): "Flyerの出現位置がSandskyに被ってる場合がある
-; ランダム範囲を16px狭く 帰還時もSandskyに被らないように" - the range's
-; own top-left-Y upper bound (128, SkySand's own top row pixel) let the
-; sprite's real 32x32 BODY reach well past SkySand at low rolls; span
-; shrunk by 16 (121->105) per the user's own explicit number, new max
-; top-left Y = 8+105-1=112. "帰還時" (the exit phase, PHASE=2) never
-; itself moves Y (see UOFL_EXIT_MOVE) - it only ever shows whatever Y the
-; spawn or the home/pursuit phase last left it at, and the pursuit's own
-; ascending ceiling (TANK_Y_CUR-FLYER_CLEAR_Y, TANK_Y_CUR never below
-; ~132 even at the jump's own peak) sits well under 112 already - so this
-; one range fix covers both spawn AND exit, no separate exit-side clamp
-; needed.
-FLYER_SPAWN_Y_MIN  EQU 8
-FLYER_SPAWN_Y_SPAN EQU 105
+; round34 ("ランダムスポーンは廃止 全てスケジュールに"): Flyer's own Y
+; used to be picked per-spawn via PICK_FLYER_SPAWN_Y (a real random roll
+; in [FLYER_SPAWN_Y_MIN, FLYER_SPAWN_Y_MIN+FLYER_SPAWN_Y_SPAN) - itself
+; a real bugfix earlier in this project's own history for a Y that had
+; gone fixed/stuck, see git log for that whole saga). Now it comes
+; straight from the schedule's own row (S2_SPAWN_Y, row*8) like every
+; other free-Y type - PICK_FLYER_SPAWN_Y and its own FLYER_SPAWN_Y_MIN/
+; SPAN range constants are gone; the sky/SkySand-clearance concerns
+; those constants existed for are the schedule author's own
+; responsibility now, same as ZacoII's own row.
 FLYER_SPEED    EQU 2    ; px/frame, both cruise and homing legs - "速度は2"
 FLYER_VY       EQU 1    ; px/frame vertical homing step, locked at reversal - untuned/inferred, no vertical speed was specified
 FLYER_CLEAR_Y  EQU 32   ; px vertical clearance from the tank before switching to exit - untuned/inferred, matches both sprites' own 32px height ("自機に被らない" read as "no longer overlapping" in that sense)
@@ -1698,7 +1720,8 @@ ETANK_SLOT_COUNT EQU 1
 ; STACKTOP's own comment).
 ETANK_POOL         EQU F260h  ; ETANK_SLOT_SIZE*ETANK_SLOT_COUNT = 8 bytes
 ETANK_SPRITE_ATTRS EQU F268h  ; ETANK_SLOT_COUNT*8 = 8 bytes: (Y,X,pat,col)x2 - BL/BR only, TL/TR always hidden
-ETANK_SPAWN_TIMER  EQU F270h
+; round34: ETANK_SPAWN_TIMER(F270h) removed - random-interval spawning
+; is gone, this byte is simply unused now.
 ; ASCII16 bank-switch RAM trampoline (see INIT's own comment) - 4 bytes
 ; ("LD (DE),A"=3, "JP (HL)"=1), same real-hardware-confirmed idea as
 ; bankswitch_poc's own F100h (SPRITE_ATTRS already owns that address
@@ -2026,7 +2049,6 @@ ETANK_COLOR EQU 6
 ETANK_SPAWNX EQU 240           ; off the right edge, same convention as every other enemy's own spawn-X
 ETANK_PROBE_DX EQU 16          ; horizontal-center probe offset for a 32px-wide sprite
 ETANK_SPAWN_COL EQU ETANK_SPAWNX+ETANK_PROBE_DX/8
-ETANK_SPAWN_INTERVAL EQU ZUM_SPAWN_INTERVAL*2  ; "出現頻度高すぎるんで半分くらいに" - doubled cooldown, half the frequency
 ETANK_SPEED EQU 2               ; px/frame, flat - "速度は2"
 ETANK_COLLISION_SIZE     EQU 24  ; width
 ETANK_COLLISION_HEIGHT   EQU 16  ; height - "キャラ位置は32x32の内左下24x16"
@@ -2610,8 +2632,8 @@ IEZ_LOOP:
     LD (HL),A
     INC HL
     DJNZ IEZ_LOOP
-    LD (ENEMY_SPAWN_TIMER),A
-    LD (ENEMY_SPAWN_COUNT),A
+    LD (SPAWN2_NEXT_INDEX),A
+    LD (S2_SPAWN_Y),A
 
     LD HL,ENEMY_POOL
     LD B,ENEMY_SLOT_COUNT
@@ -2662,7 +2684,7 @@ IZZ_LOOP:
     LD (HL),A
     INC HL
     DJNZ IZZ_LOOP
-    LD (ZUM_SPAWN_TIMER),A
+    LD (S2_SPAWN_VARIANT),A
 
     LD HL,ZUM_POOL
     LD B,ZUM_SLOT_COUNT
@@ -2696,7 +2718,7 @@ IBZZ_LOOP:
     LD (HL),A
     INC HL
     DJNZ IBZZ_LOOP
-    LD (BIGZUM_SPAWN_TIMER),A
+    LD (SPAWN2_STALL_COUNT),A
 
     LD HL,BIGZUM_POOL
     LD B,BIGZUM_SLOT_COUNT
@@ -2728,7 +2750,6 @@ IFLZ_LOOP:
     LD (HL),A
     INC HL
     DJNZ IFLZ_LOOP
-    LD (FLYER_SPAWN_TIMER),A
 
     LD HL,FLYER_POOL
     LD B,FLYER_SLOT_COUNT
@@ -2763,7 +2784,6 @@ IETZ_LOOP:
     LD (HL),A
     INC HL
     DJNZ IETZ_LOOP
-    LD (ETANK_SPAWN_TIMER),A
 
     LD HL,ETANK_SPRITE_ATTRS
     LD B,ETANK_SLOT_COUNT*2
@@ -2887,6 +2907,11 @@ PXT_NOWRAP:
     LD HL,(GAME_TICK) : INC HL : LD (GAME_TICK),HL
     CALL GAME_TICK_DISPLAY
     CALL CHECK_NIGHT
+    ; round34 ("ランダムスポーンは廃止 全てスケジュールに") - see
+    ; SPAWN2_SCHEDULE_CHECK's own comment. Same call-site convention as
+    ; src/CYBER SHMUP.asm's own SPAWN_SCHEDULE_CHECK: once per GAME_TICK
+    ; increment, right alongside it.
+    CALL SPAWN2_SCHEDULE_CHECK
 SKIP_ADVANCE:
     ; 地形スクロール停止テストは「表示が崩れる(復帰処理未実装)」で
     ; バグではないが今回はやめる、に戻す - always runs again, unconditional.
@@ -4571,16 +4596,313 @@ SU_BOOM:
     LD (SND_EXPLODING),A
     RET
 
-; ---------- enemy (ZacoII): spawn timer, then all 3 slots ----------
-UPDATE_ENEMIES:
-    LD A,(ENEMY_SPAWN_TIMER)
+; ---------- Stage2 spawn schedule (round34, "全てスケジュールに") ----------
+; table-driven spawning, ported from src/CYBER SHMUP.asm's own
+; SPAWN_THRESHOLDS/SPAWN_NEXT_INDEX/SSC_FIRE/SPAWN_SCHEDULE_CHECK
+; (Stage1). SPAWN2_THRESHOLDS/SPAWN2_Y_TABLE are transcribed directly,
+; index-for-index, from the schedule editor's own exported Stage2 JSON
+; (tools/schedule-editor.html, Schedule2.json - "Schedule2_2.json" as
+; supplied for this round), sorted by tick then row exactly like the
+; editor's own currentJSON() already sorts it. SPAWN2_Y_TABLE holds
+; each entry's own row*8 (pixel Y) - consumed by the 2 free-Y types
+; (ZacoII/Flyer, via S2_SPAWN_Y) and simply ignored by the 3 ground
+; types (Zum/BigZum/Etank, whose own Y always comes from the terrain/
+; tier-follow logic instead - see each ALLOC_*_SLOT's own comment).
+;
+; GAME_TICK only advances once per 8 raw frames (see its own INIT-area
+; comment) - SPAWN2_SCHEDULE_CHECK is called once there, right
+; alongside it (MAINLOOP), same cadence Stage1's own SPAWN_SCHEDULE_
+; CHECK uses.
+;
+; SPAWN2_STALL_COUNT/SPAWN2_STALL_LIMIT: a safety valve found necessary
+; during this round's own verification - a real MAINLOOP playthrough
+; with no player fire input at all (same worst-case config boss_test.py
+; already used for its own end-to-end check) left a BigZum permanently
+; alive (STATE=2/punch, nothing ever shoots it), which blocked every
+; later Zum/Etank entry forever via their own ground-lane exclusion
+; (see ALLOC_ZUM_SLOT/ALLOC_ETANK_SLOT's own BIGZUM_POOL checks) -
+; and since every later index (including the boss, the very last entry)
+; only ever fires once every earlier one has, the boss would then never
+; appear either, an unbounded stall no realistic play could ever have
+; been guaranteed to avoid. Unlike Stage1's own SSC_BUSY_E2 (a one-off,
+; hand-picked wait for Enemy2's own 2 slots specifically), Stage2's
+; ground-lane exclusion is 3-way and this schedule's own content places
+; entries close enough together that any one of them staying occupied
+; too long can cascade into blocking everything after it - a general
+; problem needing a general safety net, not a per-index special case.
+; Counts consecutive GAME_TICKs an entry has been due-but-blocked
+; (reset to 0 the moment an entry isn't yet due, or the moment one
+; fires); once it reaches SPAWN2_STALL_LIMIT, that entry is skipped
+; outright (SSC2_ADVANCE without ever calling its own ALLOC_*_SLOT) so
+; the rest of the schedule - and the boss's own eventual arrival -
+; isn't held hostage by one enemy that never got destroyed.
+SPAWN2_STALL_LIMIT EQU 60   ; ~8 real seconds (60 GAME_TICKs * 8 frames / 60fps) - generous, but bounded
+SPAWN2_SCHEDULE_CHECK:
+    LD A,(SPAWN2_NEXT_INDEX)
+    CP SPAWN2_COUNT
+    RET NC
+    LD H,0 : LD L,A
+    ADD HL,HL
+    LD DE,SPAWN2_THRESHOLDS
+    ADD HL,DE
+    LD E,(HL) : INC HL : LD D,(HL)
+    LD HL,(GAME_TICK)
     OR A
-    JR Z,UE_TRY_SPAWN
-    DEC A : LD (ENEMY_SPAWN_TIMER),A
-    JR UE_UPDATE_ALL
-UE_TRY_SPAWN:
-    CALL ALLOC_ENEMY_SLOT
+    SBC HL,DE
+    JR NC,SSC2_DUE
+    XOR A : LD (SPAWN2_STALL_COUNT),A   ; not due yet - keep the stall counter clear
+    RET
+SSC2_DUE:
+    LD A,(SPAWN2_STALL_COUNT)
+    CP SPAWN2_STALL_LIMIT
+    JR NC,SSC2_FORCE_SKIP
+    INC A : LD (SPAWN2_STALL_COUNT),A
+    JP SSC2_FIRE
+SSC2_FORCE_SKIP:
+    XOR A : LD (SPAWN2_STALL_COUNT),A
+    JP SSC2_ADVANCE
 
+; stage this firing's own pixel Y before dispatch (harmless for the 3
+; ground types, which never read S2_SPAWN_Y), then dispatch on the
+; (pre-increment) index itself - SSC2_ADVANCE (below) is what actually
+; moves SPAWN2_NEXT_INDEX forward, and only once the fired routine
+; reports success (JP-tails into it) - a routine that can't spawn this
+; tick (pool full/terrain not flat/ground-lane excluded) just RETs
+; instead, leaving the index alone so this same entry is retried next
+; GAME_TICK. The very last entry (boss) needs no CP at all - once
+; every earlier index has fired, SPAWN2_NEXT_INDEX can only be
+; SPAWN2_COUNT-1, so dispatch just jumps unconditionally to S2_BOSS_
+; SPAWN at the end of the CP chain below, same convention as Stage1's
+; own SSC_FIRE/BOSS_SPAWN (there a physical fallthrough since BOSS_
+; SPAWN sits right after the CP chain in that file; here an explicit
+; JP, since S2_BOSS_SPAWN lives elsewhere, inside UPDATE_BOSS_ALL's
+; own section).
+SSC2_FIRE:
+    LD A,(SPAWN2_NEXT_INDEX)
+    LD H,0 : LD L,A
+    LD DE,SPAWN2_Y_TABLE
+    ADD HL,DE
+    LD A,(HL)
+    LD (S2_SPAWN_Y),A
+    LD A,(SPAWN2_NEXT_INDEX)
+; SSC2_FIRE dispatch chain body (excludes the last/boss entry, jumped
+; to unconditionally at the end of this chain instead - see above)
+    CP 0   : JP Z,SPAWN_S2_ZACOII
+    CP 1   : JP Z,SPAWN_S2_ZACOII
+    CP 2   : JP Z,SPAWN_S2_ZACOII
+    CP 3   : JP Z,SPAWN_S2_ZACOII
+    CP 4   : JP Z,SPAWN_S2_ZACOII
+    CP 5   : JP Z,ALLOC_FLYER_SLOT
+    CP 6   : JP Z,ALLOC_FLYER_SLOT
+    CP 7   : JP Z,SPAWN_S2_ZACOII
+    CP 8   : JP Z,SPAWN_S2_ZACOII
+    CP 9   : JP Z,SPAWN_S2_ZACOII
+    CP 10  : JP Z,SPAWN_S2_ZACOII
+    CP 11  : JP Z,SPAWN_S2_ZACOII
+    CP 12  : JP Z,SPAWN_S2_ZACOII
+    CP 13  : JP Z,SPAWN_S2_ZACOII_RED
+    CP 14  : JP Z,ALLOC_ZUM_SLOT
+    CP 15  : JP Z,ALLOC_ZUM_SLOT
+    CP 16  : JP Z,ALLOC_FLYER_SLOT
+    CP 17  : JP Z,ALLOC_ZUM_SLOT
+    CP 18  : JP Z,SPAWN_S2_ZACOII
+    CP 19  : JP Z,SPAWN_S2_ZACOII
+    CP 20  : JP Z,SPAWN_S2_ZACOII
+    CP 21  : JP Z,ALLOC_ETANK_SLOT
+    CP 22  : JP Z,SPAWN_S2_ZACOII
+    CP 23  : JP Z,ALLOC_BIGZUM_SLOT
+    CP 24  : JP Z,SPAWN_S2_ZACOII
+    CP 25  : JP Z,ALLOC_FLYER_SLOT
+    CP 26  : JP Z,SPAWN_S2_ZACOII
+    CP 27  : JP Z,SPAWN_S2_ZACOII
+    CP 28  : JP Z,SPAWN_S2_ZACOII
+    CP 29  : JP Z,SPAWN_S2_ZACOII
+    CP 30  : JP Z,SPAWN_S2_ZACOII
+    CP 31  : JP Z,SPAWN_S2_ZACOII
+    CP 32  : JP Z,ALLOC_FLYER_SLOT
+    CP 33  : JP Z,ALLOC_FLYER_SLOT
+    CP 34  : JP Z,ALLOC_ZUM_SLOT
+    CP 35  : JP Z,SPAWN_S2_ZACOII_RED
+    CP 36  : JP Z,ALLOC_ZUM_SLOT
+    CP 37  : JP Z,ALLOC_ZUM_SLOT
+    CP 38  : JP Z,ALLOC_ETANK_SLOT
+    CP 39  : JP Z,SPAWN_S2_ZACOII
+    CP 40  : JP Z,SPAWN_S2_ZACOII
+    CP 41  : JP Z,SPAWN_S2_ZACOII
+    CP 42  : JP Z,SPAWN_S2_ZACOII
+    CP 43  : JP Z,SPAWN_S2_ZACOII
+    CP 44  : JP Z,SPAWN_S2_ZACOII
+    CP 45  : JP Z,SPAWN_S2_ZACOII
+    CP 46  : JP Z,SPAWN_S2_ZACOII
+    CP 47  : JP Z,ALLOC_FLYER_SLOT
+    CP 48  : JP Z,ALLOC_FLYER_SLOT
+    CP 49  : JP Z,SPAWN_S2_ZACOII
+    CP 50  : JP Z,SPAWN_S2_ZACOII
+    CP 51  : JP Z,SPAWN_S2_ZACOII
+    CP 52  : JP Z,SPAWN_S2_ZACOII
+    CP 53  : JP Z,SPAWN_S2_ZACOII
+    CP 54  : JP Z,SPAWN_S2_ZACOII
+    CP 55  : JP Z,SPAWN_S2_ZACOII
+    CP 56  : JP Z,SPAWN_S2_ZACOII
+    CP 57  : JP Z,SPAWN_S2_ZACOII
+    CP 58  : JP Z,SPAWN_S2_ZACOII_RED
+    CP 59  : JP Z,ALLOC_FLYER_SLOT
+    CP 60  : JP Z,SPAWN_S2_ZACOII
+    CP 61  : JP Z,SPAWN_S2_ZACOII
+    CP 62  : JP Z,SPAWN_S2_ZACOII
+    CP 63  : JP Z,SPAWN_S2_ZACOII
+    CP 64  : JP Z,SPAWN_S2_ZACOII
+    CP 65  : JP Z,SPAWN_S2_ZACOII
+    CP 66  : JP Z,SPAWN_S2_ZACOII
+    CP 67  : JP Z,ALLOC_ZUM_SLOT
+    CP 68  : JP Z,ALLOC_ZUM_SLOT
+    CP 69  : JP Z,ALLOC_ETANK_SLOT
+    CP 70  : JP Z,ALLOC_BIGZUM_SLOT
+    CP 71  : JP Z,ALLOC_BIGZUM_SLOT
+    CP 72  : JP Z,ALLOC_FLYER_SLOT
+    CP 73  : JP Z,ALLOC_FLYER_SLOT
+    CP 74  : JP Z,SPAWN_S2_ZACOII
+    CP 75  : JP Z,SPAWN_S2_ZACOII
+    CP 76  : JP Z,SPAWN_S2_ZACOII
+    CP 77  : JP Z,SPAWN_S2_ZACOII
+    CP 78  : JP Z,SPAWN_S2_ZACOII
+    CP 79  : JP Z,SPAWN_S2_ZACOII
+    CP 80  : JP Z,SPAWN_S2_ZACOII
+    CP 81  : JP Z,SPAWN_S2_ZACOII
+    CP 82  : JP Z,SPAWN_S2_ZACOII
+    CP 83  : JP Z,SPAWN_S2_ZACOII_RED
+    CP 84  : JP Z,ALLOC_FLYER_SLOT
+    CP 85  : JP Z,SPAWN_S2_ZACOII
+    CP 86  : JP Z,ALLOC_FLYER_SLOT
+    CP 87  : JP Z,SPAWN_S2_ZACOII
+    CP 88  : JP Z,SPAWN_S2_ZACOII
+    CP 89  : JP Z,SPAWN_S2_ZACOII
+    CP 90  : JP Z,SPAWN_S2_ZACOII
+    CP 91  : JP Z,SPAWN_S2_ZACOII
+    CP 92  : JP Z,SPAWN_S2_ZACOII
+    CP 93  : JP Z,SPAWN_S2_ZACOII
+    CP 94  : JP Z,ALLOC_ZUM_SLOT
+    CP 95  : JP Z,ALLOC_ZUM_SLOT
+    CP 96  : JP Z,ALLOC_ZUM_SLOT
+    CP 97  : JP Z,ALLOC_ETANK_SLOT
+    CP 98  : JP Z,ALLOC_BIGZUM_SLOT
+    CP 99  : JP Z,SPAWN_S2_ZACOII
+    CP 100 : JP Z,SPAWN_S2_ZACOII
+    CP 101 : JP Z,SPAWN_S2_ZACOII
+    CP 102 : JP Z,SPAWN_S2_ZACOII
+    CP 103 : JP Z,SPAWN_S2_ZACOII
+    CP 104 : JP Z,SPAWN_S2_ZACOII
+    CP 105 : JP Z,SPAWN_S2_ZACOII
+    CP 106 : JP Z,SPAWN_S2_ZACOII
+    CP 107 : JP Z,SPAWN_S2_ZACOII
+    CP 108 : JP Z,SPAWN_S2_ZACOII
+    CP 109 : JP Z,SPAWN_S2_ZACOII
+    CP 110 : JP Z,ALLOC_FLYER_SLOT
+    CP 111 : JP Z,ALLOC_FLYER_SLOT
+    CP 112 : JP Z,ALLOC_FLYER_SLOT
+    CP 113 : JP Z,ALLOC_FLYER_SLOT
+    CP 114 : JP Z,SPAWN_S2_ZACOII_RED
+    CP 115 : JP Z,SPAWN_S2_ZACOII
+    CP 116 : JP Z,SPAWN_S2_ZACOII
+    CP 117 : JP Z,SPAWN_S2_ZACOII
+    CP 118 : JP Z,SPAWN_S2_ZACOII
+    CP 119 : JP Z,SPAWN_S2_ZACOII
+    CP 120 : JP Z,SPAWN_S2_ZACOII
+    CP 121 : JP Z,SPAWN_S2_ZACOII
+    CP 122 : JP Z,SPAWN_S2_ZACOII
+    CP 123 : JP Z,SPAWN_S2_ZACOII
+    CP 124 : JP Z,ALLOC_ETANK_SLOT
+    CP 125 : JP Z,ALLOC_ETANK_SLOT
+    CP 126 : JP Z,ALLOC_ZUM_SLOT
+    CP 127 : JP Z,ALLOC_ZUM_SLOT
+    CP 128 : JP Z,ALLOC_ZUM_SLOT
+    CP 129 : JP Z,ALLOC_BIGZUM_SLOT
+    CP 130 : JP Z,ALLOC_FLYER_SLOT
+    CP 131 : JP Z,ALLOC_FLYER_SLOT
+    CP 132 : JP Z,SPAWN_S2_ZACOII
+    CP 133 : JP Z,SPAWN_S2_ZACOII
+    CP 134 : JP Z,SPAWN_S2_ZACOII
+    CP 135 : JP Z,SPAWN_S2_ZACOII
+    CP 136 : JP Z,SPAWN_S2_ZACOII
+    CP 137 : JP Z,SPAWN_S2_ZACOII
+    CP 138 : JP Z,SPAWN_S2_ZACOII
+    CP 139 : JP Z,SPAWN_S2_ZACOII
+    CP 140 : JP Z,SPAWN_S2_ZACOII
+    CP 141 : JP Z,SPAWN_S2_ZACOII_RED
+    CP 142 : JP Z,ALLOC_FLYER_SLOT
+    CP 143 : JP Z,ALLOC_FLYER_SLOT
+    CP 144 : JP Z,ALLOC_FLYER_SLOT
+    CP 145 : JP Z,ALLOC_FLYER_SLOT
+    CP 146 : JP Z,SPAWN_S2_ZACOII_RED
+    CP 147 : JP Z,ALLOC_ZUM_SLOT
+    CP 148 : JP Z,ALLOC_ZUM_SLOT
+    CP 149 : JP Z,ALLOC_ZUM_SLOT
+    CP 150 : JP Z,ALLOC_BIGZUM_SLOT
+    ; index151 (the last entry, boss) needs no CP of its own - by this
+    ; point SPAWN2_NEXT_INDEX can only be 151, same "falls through"
+    ; convention Stage1's own SSC_FIRE uses, just an explicit JP here
+    ; since S2_BOSS_SPAWN isn't physically adjacent in this file (it
+    ; lives inside UPDATE_BOSS_ALL's own section, unlike Stage1 where
+    ; BOSS_SPAWN happens to sit right after SSC_FIRE's own CP chain).
+    JP S2_BOSS_SPAWN
+
+; shared "this firing succeeded, advance to the next schedule entry"
+; tail - every ALLOC_*_SLOT/SPAWN_S2_* routine above tails into this
+; via JP on its own success path (or CALLs it via SSC2_ADVANCE for the
+; 2 that still branch on Carry - see ALLOC_ENEMY_SLOT's own wrappers).
+SSC2_ADVANCE:
+    LD A,(SPAWN2_NEXT_INDEX)
+    INC A
+    LD (SPAWN2_NEXT_INDEX),A
+    RET
+
+SPAWN2_COUNT EQU 152
+
+SPAWN2_THRESHOLDS:
+    DW 12,15,27,34,46,57,67,78
+    DW 80,84,95,98,100,110,124,139
+    DW 145,155,157,160,164,169,182,182
+    DW 185,196,207,209,209,220,221,225
+    DW 232,242,259,260,263,267,279,280
+    DW 284,292,295,298,307,309,310,316
+    DW 326,334,335,344,355,355,355,362
+    DW 363,363,372,386,395,397,401,403
+    DW 407,411,413,428,442,464,487,500
+    DW 517,524,535,535,539,546,546,550
+    DW 555,556,560,565,577,580,587,591
+    DW 597,604,604,604,613,613,624,628
+    DW 632,643,658,675,677,682,684,688
+    DW 691,693,697,700,701,705,712,725
+    DW 736,747,760,768,770,774,777,779
+    DW 783,784,786,789,799,815,830,835
+    DW 841,850,866,869,877,878,882,885
+    DW 887,890,897,898,902,908,915,920
+    DW 928,932,942,951,958,967,979,995
+
+SPAWN2_Y_TABLE:
+    DB 104,56,88,32,72,80,40,104,72,24,112,80
+    DB 40,72,136,120,48,128,88,64,24,128,72,120
+    DB 40,72,88,24,56,88,64,24,80,48,144,48
+    DB 144,144,136,88,56,96,64,24,104,72,32,72
+    DB 32,88,16,64,24,48,80,32,64,96,80,32
+    DB 80,24,104,64,16,96,48,136,128,128,128,128
+    DB 80,32,64,88,24,56,88,24,96,56,24,56
+    DB 88,32,32,104,56,24,72,112,40,80,128,128
+    DB 128,120,88,88,56,88,56,24,96,56,24,104
+    DB 64,32,80,24,88,40,64,104,72,32,104,64
+    DB 24,104,72,32,120,120,128,128,128,120,88,48
+    DB 104,72,40,112,80,40,120,88,40,72,88,32
+    DB 88,32,64,112,112,120,104,104
+
+
+; ---------- enemy (ZacoII): all 3 slots (spawning is schedule-driven - ----------
+; ---------- see SPAWN2_SCHEDULE_CHECK/SSC2_FIRE, not polled here) ----------
+; round34 ("ランダムスポーンは廃止 全てスケジュールに"): this used to
+; poll a fixed-interval countdown (ENEMY_SPAWN_TIMER) here every frame,
+; trying ALLOC_ENEMY_SLOT once it hit 0. That whole trigger is gone -
+; ALLOC_ENEMY_SLOT is only ever called from SSC2_FIRE now, when the
+; schedule's own next entry comes due.
+UPDATE_ENEMIES:
 ; walks ENEMY_POOL (HL-indexed, ENEMY_SLOT_SIZE stride, DJNZ over
 ; ENEMY_SLOT_COUNT) calling UPDATE_ONE_ENEMY on every slot - same idiom
 ; as src/CYBER SHMUP.asm's own ENEMY_POOL_UPDATE_ALL, not 3 individually
@@ -4614,29 +4936,24 @@ UEUA_LOOP:
     CALL FLUSH_ENEMY_SPRITES
     RET
 
-; shared by every ALLOC_*_SLOT below (ZacoII/Zum/BigZum/Flyer/Etank) -
-; "950で全ての敵のスポーンを停止". Returns with Carry set while spawning
-; is still allowed (GAME_TICK<ENEMY_SPAWN_STOP_TICK), Carry clear once
-; it's time to stop - callers just do `CALL SPAWN_STOPPED : RET NC`
-; before doing anything else, one shared 16-bit-safe GAME_TICK compare
-; instead of 5 separate ones (see the CLOUD_UPDATE_ALL bug this same
-; session for what happens when a GAME_TICK compare isn't genuinely
-; 16-bit).
-SPAWN_STOPPED:
-    LD HL,(GAME_TICK)
-    LD DE,ENEMY_SPAWN_STOP_TICK
-    OR A
-    SBC HL,DE
-    RET
-
-; scans ENEMY_POOL for the first E_ACT=0 slot and spawns into it -
-; named/shaped like src/CYBER SHMUP.asm's own ALLOC_ENEMY_SLOT (walks
-; the buffer, doesn't check 3 named slots by hand). If every slot is
-; already active, spawning is simply retried next frame (the timer is
-; only reset on an actual spawn) - same pool-of-3 idea as
-; TRY_SPAWN_BULLET.
+; scans ENEMY_POOL for the first E_ACT=0 slot and spawns a ZacoII into
+; it - named/shaped like src/CYBER SHMUP.asm's own ALLOC_ENEMY_SLOT
+; (walks the buffer, doesn't check 3 named slots by hand). Called only
+; from SSC2_FIRE (via the SPAWN_S2_ZACOII/SPAWN_S2_ZACOII_RED wrappers
+; below, both plain tail-jumps, not CALLs - the return address SSC2_
+; FIRE's own caller left on the stack stays valid all the way through),
+; never polled - round34 ("ランダムスポーンは廃止 全てスケジュール
+; に"). On entry: S2_SPAWN_Y = this firing's own pixel Y (row*8, staged
+; by SSC2_FIRE), S2_SPAWN_VARIANT = 0(green)/1(red), staged by
+; whichever wrapper jumped here. On success tails into SSC2_ADVANCE; if
+; all 3 slots are busy this just RETs (this assembler has no SCF, so
+; unlike ALLOC_ZUM_SLOT/etc above there's no plain-RET-vs-Carry
+; distinction needed here at all - both paths simply either JP SSC2_
+; ADVANCE or RET, exactly like every other ALLOC_*_SLOT), leaving
+; SPAWN2_NEXT_INDEX untouched so SPAWN2_SCHEDULE_CHECK retries this
+; same entry next GAME_TICK - same "retry, don't skip" idea as TRY_
+; SPAWN_BULLET's own pool-of-3.
 ALLOC_ENEMY_SLOT:
-    CALL SPAWN_STOPPED : RET NC
     LD HL,ENEMY_POOL
     LD B,ENEMY_SLOT_COUNT
 AES_LOOP:
@@ -4645,19 +4962,13 @@ AES_LOOP:
     JR Z,AES_FOUND
     LD DE,ENEMY_SLOT_SIZE : ADD HL,DE
     DJNZ AES_LOOP
-    RET   ; no free slot - try again next frame
+    RET             ; no free slot - retry next GAME_TICK
 AES_FOUND:
     PUSH HL
     POP IX
     LD A,1 : LD (IX+E_ACT),A
     LD A,ENEMY_SPAWNX : LD (IX+E_X),A
-    ; GAME_RNG instead of raw TICK - "ZakoIIの...ランダムパラメータ
-    ; 一定で固定されてるときがある" traced to TICK being sampled at a
-    ; perfectly regular phase (this spawn timer always reloads to the
-    ; same fixed ENEMY_SPAWN_INTERVAL), so its own masked low bits
-    ; cycled through the same short, fully predictable sequence every
-    ; time - see GAME_RNG's own comment.
-    LD A,(GAME_RNG) : AND ENEMY_SKY_Y_MASK : ADD A,ENEMY_SKY_Y_MIN : LD (IX+E_Y),A
+    LD A,(S2_SPAWN_Y) : LD (IX+E_Y),A
     ; "ZakoIIの変色バグ 多分フラッシュ処理実装で出たと思う どちらか分から
     ; んが最初からホワイトで出てくる場合がある" - E_DY (offset+8) doubles
     ; as the hit-flash countdown while alive (UOE_DRAW: nonzero -> render
@@ -4675,34 +4986,28 @@ AES_FOUND:
     ; spawn glitch reported. Zeroed here alongside E_RETREAT/E_TIMER.
     XOR A : LD (IX+E_RETREAT),A : LD (IX+E_TIMER),A : LD (IX+E_DY),A
 
-    ; "あとZakoIIが10機でたら(Zumと同じタイミング)あとは赤ZakoIIと緑
-    ; ZakoIIランダムで" - once the threshold is reached, every further
-    ; spawn is a 50/50 coin flip instead of permanently red.
-    LD A,(ENEMY_SPAWN_COUNT)
-    CP 10
-    JR C,AES_VARIANT_GREEN
-    LD A,(GAME_RNG) : INC A : LD (GAME_RNG),A
-    AND 1
-    JR AES_VARIANT_SET
-AES_VARIANT_GREEN:
-    XOR A
-AES_VARIANT_SET:
+    LD A,(S2_SPAWN_VARIANT)
     LD (IX+E_VARIANT),A
     ; red-only hit counter (E_DX, see ENEMY_RED_HP's own comment) -
-    ; green never reads this, so it's left at the 0 the earlier XOR A
-    ; already cleared it to.
+    ; green never reads this, so it's left alone (whatever the slot's
+    ; last occupant left there - harmless, matches this same field's own
+    ; established "don't bother clearing what's never read" precedent).
     OR A
-    JR Z,AES_HP_DONE
+    JR Z,AES_DONE
     LD A,ENEMY_RED_HP : LD (IX+E_DX),A
-AES_HP_DONE:
+AES_DONE:
+    JP SSC2_ADVANCE
 
-    LD A,(ENEMY_SPAWN_COUNT)
-    CP 10
-    JR NC,AES_COUNT_DONE
-    INC A : LD (ENEMY_SPAWN_COUNT),A
-AES_COUNT_DONE:
-    LD A,ENEMY_SPAWN_INTERVAL : LD (ENEMY_SPAWN_TIMER),A
-    RET
+; SSC2_FIRE dispatch targets for s2_zacoii/s2_zacoii_red - stage the
+; variant flag ALLOC_ENEMY_SLOT reads, then tail-jump into it (not
+; CALL - see ALLOC_ENEMY_SLOT's own comment for why that's safe here).
+SPAWN_S2_ZACOII:
+    XOR A : LD (S2_SPAWN_VARIANT),A
+    JP ALLOC_ENEMY_SLOT
+
+SPAWN_S2_ZACOII_RED:
+    LD A,1 : LD (S2_SPAWN_VARIANT),A
+    JP ALLOC_ENEMY_SLOT
 
 ; IX = slot base. Returns this frame's movement step in A: red variant
 ; (E_VARIANT=1) is a flat ENEMY_SPEED_RED - "ZakoIIはの赤は速度３で";
@@ -5026,14 +5331,10 @@ CHP_DESTROY:
 
 ; ---------- Zum: spawn timer, then all slots (see ZUM_SLOT_SIZE above) ----------
 UPDATE_ZUM_ALL:
-    LD A,(ZUM_SPAWN_TIMER)
-    OR A
-    JR Z,UZA_TRY_SPAWN
-    DEC A : LD (ZUM_SPAWN_TIMER),A
-    JR UZA_UPDATE_ALL
-UZA_TRY_SPAWN:
-    CALL ALLOC_ZUM_SLOT
-UZA_UPDATE_ALL:
+; round34 ("ランダムスポーンは廃止 全てスケジュールに"): spawning is
+; schedule-driven now (ALLOC_ZUM_SLOT is only ever called from
+; SSC2_FIRE), so this just walks the pool every frame - no more polled
+; interval timer here.
     LD IX,ZUM_POOL
     LD B,ZUM_SLOT_COUNT
 UZAU_LOOP:
@@ -5082,15 +5383,19 @@ ZTO_FAIL:
     XOR A
     RET
 
-; gated on 3 things, all must hold: the red-ZacoII threshold reached
-; ("赤ZakoIIが10体で終わったら" - reuses ENEMY_SPAWN_COUNT, ZacoII's
-; own spawning keeps running unaffected - "ZakoIIは継続"), the terrain
-; is currently flat at the spawn column (ZUM_TERRAIN_OK), and a slot
-; is free (pool of ZUM_SLOT_COUNT=2 - "横並び制限"). Any failure just
-; retries next frame (ZUM_SPAWN_TIMER stays 0) rather than waiting out
-; a fixed interval - the terrain condition is transient (the track
-; scrolls continuously) so polling every frame catches the next flat
-; window as soon as it appears.
+; gated on 2 things now, both must hold (round34 dropped the old
+; ENEMY_SPAWN_COUNT>=10 gate - "赤ZakoIIが10体で終わったら" was purely
+; about pacing the old random-timer spawner; the schedule's own tick
+; ordering already places Zum's own first entry well after enough
+; ZacoII placements, so no separate counter-gate is needed any more):
+; the terrain is currently flat at the spawn column (ZUM_TERRAIN_OK),
+; and a slot is free (pool of ZUM_SLOT_COUNT=2 - "横並び制限"). Called
+; only from SSC2_FIRE - any failure (including BigZum/Etank's own
+; ground-lane exclusion below) leaves SPAWN2_NEXT_INDEX untouched, so
+; SPAWN2_SCHEDULE_CHECK just retries this same entry next GAME_TICK -
+; the terrain condition is transient (the track scrolls continuously)
+; so retrying every tick catches the next flat window as soon as it
+; appears, same idea the old polling-every-frame used to rely on.
 ;
 ; NOT gated on tank distance any more - "しかしスポーンキャンセルでは
 ; 自機が右端に居続けると永遠にスポーンできない 自機が右端にいたら
@@ -5101,11 +5406,9 @@ ZTO_FAIL:
 ; simply stayed near the right edge, a real softlock for this enemy
 ; type specifically. Replaced with AZS_FOUND's own instant overlap
 ; resolution below instead of refusing the spawn.
+; Returns Carry SET on a successful spawn, Carry CLEAR otherwise - same
+; convention as ALLOC_ENEMY_SLOT (see its own comment).
 ALLOC_ZUM_SLOT:
-    CALL SPAWN_STOPPED : RET NC
-    LD A,(ENEMY_SPAWN_COUNT)
-    CP 10
-    RET C
     ; "BigZum出現中にZumは出さないでくれ キャラが消えてしまうしテスト
     ; 出来ない"
     LD A,(BIGZUM_POOL)
@@ -5137,7 +5440,6 @@ AZS_FOUND:
     LD A,ZUM_SPAWNX : LD (IX+1),A
     LD A,TANK_Y_BASE : ADD A,ZUM_Y_OFFSET : LD (IX+2),A   ; tier3's own Y, +12 for Zum's own ground-line math (see ZUM_Y_OFFSET)
     XOR A : LD (IX+3),A : LD (IX+7),A
-    LD A,ZUM_SPAWN_INTERVAL : LD (ZUM_SPAWN_TIMER),A
 
     ; "自機が右端にいたら押してスポーンするように" - if the tank is
     ; already within push range of this brand-new Zum, resolve the
@@ -5149,9 +5451,11 @@ AZS_FOUND:
     LD A,ZUM_SPAWNX-ZUM_COLLISION_SIZE : LD B,A   ; target TANK_X
     LD A,(TANK_X)
     CP B
-    RET C          ; TANK_X already < target - clear, nothing to resolve
+    JR NC,AZS_RESOLVE_PUSH   ; TANK_X >= target - resolve overlap
+    JP SSC2_ADVANCE          ; TANK_X already < target - nothing to resolve
+AZS_RESOLVE_PUSH:
     LD A,B : LD (TANK_X),A
-    RET
+    JP SSC2_ADVANCE
 
 ; IX = slot base. E_ACT=1: probes the terrain under its own column and
 ; eases Z_Y toward the target tier, then advances Z_X - flat ZUM_SPEED_
@@ -5738,14 +6042,10 @@ CHPZ_REAR_SKIP_ERASE:
 ; ---------- BigZum: spawn/update/draw (see BIGZUM_SLOT_SIZE's own ----------
 ; ---------- comment block for the state machine overview)           ----------
 UPDATE_BIGZUM_ALL:
-    LD A,(BIGZUM_SPAWN_TIMER)
-    OR A
-    JR Z,UBZA_TRY_SPAWN
-    DEC A : LD (BIGZUM_SPAWN_TIMER),A
-    JR UBZA_UPDATE_ALL
-UBZA_TRY_SPAWN:
-    CALL ALLOC_BIGZUM_SLOT
-UBZA_UPDATE_ALL:
+; round34 ("ランダムスポーンは廃止 全てスケジュールに"): spawning is
+; schedule-driven now (ALLOC_BIGZUM_SLOT is only ever called from
+; SSC2_FIRE), so this just walks the pool every frame - no more polled
+; interval timer here.
     LD IX,BIGZUM_POOL
     LD B,BIGZUM_SLOT_COUNT
 UBZAU_LOOP:
@@ -5785,21 +6085,21 @@ BZTO_FAIL:
     XOR A
     RET
 
-; same 3-condition gate as ALLOC_ZUM_SLOT (spawn-count threshold, flat
-; terrain, free slot) plus the same instant-overlap resolution at
-; spawn - "スポーン条件は同じ" - plus a 4th: refuse while Etank is
-; active, the other half of Etank's OWN bidirectional exclusion (see
-; PAT_ETANK_BL's own comment - this one isn't just screen-clutter, the
-; 2 actually share pattern-VRAM bytes, so getting this gate wrong would
-; corrupt what's on screen, not just look busy). Flyer is airborne and
-; NOT gated here any more - "FlyerとBigZum、FlyerとEtankは同時存在して
-; 良い" (was bidirectionally excluded before; that exclusion removed
-; from both ALLOC_FLYER_SLOT and here).
+; same gate as ALLOC_ZUM_SLOT (round34 dropped the old spawn-count
+; threshold - see its own comment - so just flat terrain + free slot
+; now) plus the same instant-overlap resolution at spawn - "スポーン
+; 条件は同じ" - plus a 4th: refuse while Etank is active, the other
+; half of Etank's OWN bidirectional exclusion (see PAT_ETANK_BL's own
+; comment - this one isn't just screen-clutter, the 2 actually share
+; pattern-VRAM bytes, so getting this gate wrong would corrupt what's
+; on screen, not just look busy). Flyer is airborne and NOT gated here
+; any more - "FlyerとBigZum、FlyerとEtankは同時存在して良い" (was
+; bidirectionally excluded before; that exclusion removed from both
+; ALLOC_FLYER_SLOT and here). Called only from SSC2_FIRE - on success
+; tails into SSC2_ADVANCE; any failure just returns, leaving
+; SPAWN2_NEXT_INDEX untouched so SPAWN2_SCHEDULE_CHECK retries this
+; same entry next GAME_TICK.
 ALLOC_BIGZUM_SLOT:
-    CALL SPAWN_STOPPED : RET NC
-    LD A,(ENEMY_SPAWN_COUNT)
-    CP 10
-    RET C
     LD A,(ETANK_POOL)
     OR A
     RET NZ
@@ -5832,7 +6132,6 @@ ABZS_FOUND:
     LD (IX+11),A
     LD (IX+12),A
     LD A,BIGZUM_HP_INIT : LD (IX+8),A
-    LD A,BIGZUM_SPAWN_INTERVAL : LD (BIGZUM_SPAWN_TIMER),A
 
     ; restore BigZum's own real BL/BR pattern bytes - undoes whatever
     ; Etank's own dynamic VRAM-sharing may have left behind from an
@@ -5848,9 +6147,11 @@ ABZS_FOUND:
     LD A,BIGZUM_SPAWNX-BIGZUM_COLLISION_SIZE : LD B,A
     LD A,(TANK_X)
     CP B
-    RET C
+    JR NC,ABZS_RESOLVE_PUSH
+    JP SSC2_ADVANCE
+ABZS_RESOLVE_PUSH:
     LD A,B : LD (TANK_X),A
-    RET
+    JP SSC2_ADVANCE
 
 ; IX = slot base. ACT=2: same drift-then-hide explosion shape as
 ; UOZ_EXPLODING (reuses EXPLOSION_DURATION/PATTERN/COLOR/EXPLODE_DIR),
@@ -5866,20 +6167,26 @@ UPDATE_ONE_BIGZUM:
     OR A
     RET Z
 
-    ; "Tick950でBigZumが居たら左へ撤退し消す" - once ordinary spawning
-    ; has stopped (ENEMY_SPAWN_STOP_TICK, a true 16-bit compare - same
-    ; bug class as CLOUD_UPDATE_ALL if this were an 8-bit CP), force any
-    ; still-active BigZum into a dedicated retreat state (5) that
-    ; overrides whatever it was doing (approach/pause/punch/jump/flip-
-    ; pause alike), before any of that logic below gets a chance to run.
-    ; This is what makes the boss's own reuse of BigZum's hw sprite
-    ; slots/pattern VRAM (see BOSS_SPR_BASE_SLOT/PAT_SASAPI's own
-    ; comments) actually safe rather than just an assumption.
+    ; "Tick950でBigZumが居たら左へ撤退し消す" - once BIGZUM_RETREAT_
+    ; TICK is reached (a true 16-bit compare - same bug class as
+    ; CLOUD_UPDATE_ALL if this were an 8-bit CP), force any still-active
+    ; BigZum into a dedicated retreat state (5) that overrides whatever
+    ; it was doing (approach/pause/punch/jump/flip-pause alike), before
+    ; any of that logic below gets a chance to run. This is what makes
+    ; the boss's own reuse of BigZum's hw sprite slots/pattern VRAM (see
+    ; BOSS_SPR_BASE_SLOT/PAT_SASAPI's own comments) actually safe rather
+    ; than just an assumption - round34 ("全てスケジュールに"): this
+    ; check runs every single frame regardless of when GAME_TICK crossed
+    ; the threshold, so even a BigZum the schedule spawns AFTER
+    ; BIGZUM_RETREAT_TICK has already passed (this round's own schedule
+    ; has one at tick979, only 16 ticks before the boss's own tick995)
+    ; still gets forced into retreat from its very first live frame -
+    ; not just ones already on screen when the tick was crossed.
     LD A,(IX+7)
     CP 5
     JP Z,UOBZ_RETREAT_MOVE      ; already retreating
     LD HL,(GAME_TICK)
-    LD DE,ENEMY_SPAWN_STOP_TICK
+    LD DE,BIGZUM_RETREAT_TICK
     OR A
     SBC HL,DE
     JR C,UOBZ_NOT_RETREAT_TIME
@@ -6735,14 +7042,10 @@ CHPBZ_DESTROY:
 ; ---------- Flyer: spawn/update/draw (see FLYER_SLOT_SIZE's own ----------
 ; ---------- comment block above for the full design rationale)   ----------
 UPDATE_FLYER_ALL:
-    LD A,(FLYER_SPAWN_TIMER)
-    OR A
-    JR Z,UFLA_TRY_SPAWN
-    DEC A : LD (FLYER_SPAWN_TIMER),A
-    JR UFLA_UPDATE_ALL
-UFLA_TRY_SPAWN:
-    CALL ALLOC_FLYER_SLOT
-UFLA_UPDATE_ALL:
+; round34 ("ランダムスポーンは廃止 全てスケジュールに"): spawning is
+; schedule-driven now (ALLOC_FLYER_SLOT is only ever called from
+; SSC2_FIRE), so this just walks the pool every frame - no more polled
+; interval timer here.
     LD IX,FLYER_POOL
     LD B,FLYER_SLOT_COUNT
 UFLAU_LOOP:
@@ -6757,36 +7060,16 @@ UFLAU_LOOP:
     CALL FLUSH_FLYER_SPRITES
     RET
 
-; IX = slot base (already the new slot, from ALLOC_FLYER_SLOT's own
-; AFLS_FOUND). Picks one random Y in [FLYER_SPAWN_Y_MIN, FLYER_SPAWN_Y_
-; MIN+FLYER_SPAWN_Y_SPAN) - same GAME_RNG idiom as PICK_HORMING_TARGET_X
-; (read-only, XOR TICK + this slot's own low address byte, AND 7Fh then
-; fold-subtract once since 121 isn't a power of 2 - see that routine's
-; own comment for why a naive "read-and-INC GAME_RNG" reads as fixed).
-PICK_FLYER_SPAWN_Y:
-    LD A,(GAME_RNG)
-    LD B,A
-    LD A,(TICK)
-    XOR B
-    LD B,A
-    PUSH IX
-    POP HL
-    LD A,L
-    XOR B
-    AND 7Fh
-    CP FLYER_SPAWN_Y_SPAN
-    JR C,PFSY_OK
-    SUB FLYER_SPAWN_Y_SPAN
-PFSY_OK:
-    ADD A,FLYER_SPAWN_Y_MIN
-    RET
-
 ; airborne - no terrain gate at all, just a free slot. NOT gated
 ; against BigZum/Etank/Zum any more - "FlyerとBigZum、Flyerと
 ; Etankは同時存在して良い" (was excluded against BigZum bidirectionally
-; before; both halves removed).
+; before; both halves removed). Called only from SSC2_FIRE - on success
+; tails into SSC2_ADVANCE; a full pool just returns, leaving SPAWN2_
+; NEXT_INDEX untouched so SPAWN2_SCHEDULE_CHECK retries this same entry
+; next GAME_TICK. round34: Y used to be PICK_FLYER_SPAWN_Y's own random
+; roll (now gone, see FLYER_SPAWNX's own comment) - comes straight from
+; S2_SPAWN_Y (the schedule's own row*8), staged by SSC2_FIRE.
 ALLOC_FLYER_SLOT:
-    CALL SPAWN_STOPPED : RET NC
     LD HL,FLYER_POOL
     LD B,FLYER_SLOT_COUNT
 AFLS_LOOP:
@@ -6801,7 +7084,7 @@ AFLS_FOUND:
     POP IX
     LD A,1 : LD (IX+0),A
     LD A,FLYER_SPAWNX : LD (IX+1),A
-    CALL PICK_FLYER_SPAWN_Y : LD (IX+2),A
+    LD A,(S2_SPAWN_Y) : LD (IX+2),A
     XOR A
     LD (IX+3),A
     LD (IX+5),A
@@ -6810,8 +7093,7 @@ AFLS_FOUND:
     LD (IX+9),A
     LD (IX+10),A
     LD A,FLYER_HP_INIT : LD (IX+7),A
-    LD A,FLYER_SPAWN_INTERVAL : LD (FLYER_SPAWN_TIMER),A
-    RET
+    JP SSC2_ADVANCE
 
 ; IX = slot base. ACT=2: same drift-then-hide explosion shape as every
 ; other exploding entity here. ACT=1: dispatches on PHASE(+8) - see
@@ -7124,14 +7406,10 @@ CHPFL_DESTROY:
 ; ---------- Etank ground enemy: spawn/update/draw (see ETANK_SLOT_ ----------
 ; ---------- SIZE's own comment block for the full design rationale) ----------
 UPDATE_ETANK_ALL:
-    LD A,(ETANK_SPAWN_TIMER)
-    OR A
-    JR Z,UETA_TRY_SPAWN
-    DEC A : LD (ETANK_SPAWN_TIMER),A
-    JR UETA_UPDATE_ALL
-UETA_TRY_SPAWN:
-    CALL ALLOC_ETANK_SLOT
-UETA_UPDATE_ALL:
+; round34 ("ランダムスポーンは廃止 全てスケジュールに"): spawning is
+; schedule-driven now (ALLOC_ETANK_SLOT is only ever called from
+; SSC2_FIRE), so this just walks the pool every frame - no more polled
+; interval timer here.
     LD IX,ETANK_POOL
     LD B,ETANK_SLOT_COUNT
 UETAU_LOOP:
@@ -7162,39 +7440,26 @@ ETO_FAIL:
     XOR A
     RET
 
-; "誰の事をフレームの事をカウンターって呼ぶんだよ このゲームの時間
-; 制御は特別な場合以外カウンター基準なんだよ" - 2nd correction: the
-; real "カウンター" is `GAME_TICK` (displayed top-right via
-; `GAME_TICK_DISPLAY`), but it does NOT increment every raw frame -
-; see its own INIT-area comment ("Stage1は地形書き換え8回に1回カウ
-; ントする作り すべての基準はこのカウント"): `GAME_TICK` only advances
-; once every 8 raw `TICK`s, the same unit every OTHER schedule in this
-; game is already built against. Gated on `GAME_TICK>=70` (~9.3 real
-; seconds at 60fps - human-scale, unlike raw frame counts), 16-bit
-; safe (`GAME_TICK` is a free-running 2-byte counter, never reset,
-; keeps counting long past the mod-1000 the on-screen display wraps
-; at). BigZum currently active (mutual exclusion - both directions,
-; see ALLOC_BIGZUM_SLOT's own matching check and PAT_ETANK_BL's own
-; pattern-VRAM-sharing comment - a one-directional gate here would be
-; a real correctness bug, not just a design preference, since the two
-; actually share pattern-VRAM bytes), Zum currently active ("Etank出現
-; 中はZumも出ないように 横並びでEtankが消える" - same ground-lane
-; exclusion as BigZum, checking both of ZUM_SLOT_COUNT=2's own slots),
-; the terrain-length gate below, and a free slot - same shape as
-; ALLOC_ZUM_SLOT/ALLOC_BIGZUM_SLOT, plus the same instant spawn-time
-; overlap resolution. Flyer is airborne and never gated against any of
-; these 3 ground enemies, nor they against it - "FlyerとBigZum、Flyer
-; とEtankは同時存在して良い".
+; round34 ("ランダムスポーンは廃止 全てスケジュールに") dropped the
+; old GAME_TICK>=70 floor - itself only ever a safety margin for the
+; old random-timer spawner, redundant now that the schedule's own
+; first Etank entry has its own explicit, always->=70 tick anyway.
+; Remaining gates: BigZum currently active (mutual exclusion - both
+; directions, see ALLOC_BIGZUM_SLOT's own matching check and PAT_ETANK_
+; BL's own pattern-VRAM-sharing comment - a one-directional gate here
+; would be a real correctness bug, not just a design preference, since
+; the two actually share pattern-VRAM bytes), Zum currently active
+; ("Etank出現中はZumも出ないように 横並びでEtankが消える" - same
+; ground-lane exclusion as BigZum, checking both of ZUM_SLOT_COUNT=2's
+; own slots), the terrain-length gate below, and a free slot - same
+; shape as ALLOC_ZUM_SLOT/ALLOC_BIGZUM_SLOT, plus the same instant
+; spawn-time overlap resolution. Flyer is airborne and never gated
+; against any of these 3 ground enemies, nor they against it -
+; "FlyerとBigZum、FlyerとEtankは同時存在して良い". Called only from
+; SSC2_FIRE - on success tails into SSC2_ADVANCE; any failure just
+; returns, leaving SPAWN2_NEXT_INDEX untouched so SPAWN2_SCHEDULE_CHECK
+; retries this same entry next GAME_TICK.
 ALLOC_ETANK_SLOT:
-    CALL SPAWN_STOPPED : RET NC
-    LD HL,(GAME_TICK)
-    LD A,H
-    OR A
-    JR NZ,AETS_COUNT_OK
-    LD A,L
-    CP 70
-    RET C
-AETS_COUNT_OK:
     LD A,(BIGZUM_POOL)
     OR A
     RET NZ
@@ -7229,7 +7494,6 @@ AETS_FOUND:
     LD (IX+5),A
     LD (IX+7),A
     LD A,ETANK_HP_INIT : LD (IX+6),A
-    LD A,ETANK_SPAWN_INTERVAL : LD (ETANK_SPAWN_TIMER),A
 
     ; dynamic pattern-VRAM share: overwrite BigZum's own BL/BR groups
     ; (PAT_BIGZUM+8/+12) with Etank's own art - safe only while BigZum
@@ -7242,9 +7506,11 @@ AETS_FOUND:
     LD A,ETANK_SPAWNX-ETANK_COLLISION_SIZE : LD B,A
     LD A,(TANK_X)
     CP B
-    RET C
+    JR NC,AETS_RESOLVE_PUSH
+    JP SSC2_ADVANCE
+AETS_RESOLVE_PUSH:
     LD A,B : LD (TANK_X),A
-    RET
+    JP SSC2_ADVANCE
 
 ; IX = slot base. ACT=1: fixed Y (never re-probed), advances X left at
 ; a flat ETANK_SPEED(2px/frame - "速度は2") every frame, straight-line,
@@ -7551,10 +7817,9 @@ LOAD_SASAPI_PATTERNS:
     EI
     RET
 
-; spawns once at BOSS_SPAWN_TICK (a true 16-bit SBC HL,DE compare, same
-; idiom as CHECK_NIGHT/SPAWN_STOPPED - see the CLOUD_UPDATE_ALL bug this
-; same session for why an 8-bit CP against a >255 constant is wrong),
-; then patrols X between 0 and BOSS_SPAWNX, reversing at the LEFT edge
+; spawns once via SSC2_FIRE's own unconditional fallthrough (the
+; schedule's own final entry - "全てスケジュールに", round34), then
+; patrols X between 0 and BOSS_SPAWNX, reversing at the LEFT edge
 ; same as always - "右から出現し左へ 左端に着いたら反転 右端に". Once
 ; back at the RIGHT edge, though (BOSS_SPAWNX), it no longer just
 ; reverses and keeps looping: "右から出て左に行き反転して右端に戻った
@@ -7578,11 +7843,16 @@ UPDATE_BOSS_ALL:
     JP Z,UPDATE_BOSS_EXPLOSION
     OR A
     JP NZ,UBA_ACTIVE
-    LD HL,(GAME_TICK)
-    LD DE,BOSS_SPAWN_TICK
-    OR A
-    SBC HL,DE
-    RET C                      ; not yet time
+    RET                        ; not yet spawned - SSC2_FIRE's job, not ours
+
+; the one-shot spawn itself - SSC2_FIRE's own dispatch chain falls
+; through to this directly once every earlier schedule entry has
+; fired (same convention as Stage1's own SSC_FIRE/BOSS_SPAWN, src/
+; CYBER SHMUP.asm), so unlike every ALLOC_*_SLOT above this never
+; fails/retries - always succeeds, tailing into SSC2_ADVANCE mainly to
+; keep SPAWN2_NEXT_INDEX consistent (this is the schedule's own last
+; entry either way).
+S2_BOSS_SPAWN:
     LD HL,SASAPI_QUADS : CALL LOAD_SASAPI_PATTERNS   ; DIR=0 facing below
     ; homing missile's own 5 facings, loaded once here (not at INIT) into
     ; Flyer's own now-permanently-dormant pattern block - "スプライトパ
@@ -7616,6 +7886,7 @@ UPDATE_BOSS_ALL:
     XOR A : LD (THUNDER_ELIGIBLE),A   ; not eligible until the first pose ends - see UBAP_END
     XOR A : LD (BOSS_POSE_COUNT),A
     XOR A : LD (SBEAM_ACT),A
+    CALL SSC2_ADVANCE
     JP UBA_DRAW
 UBA_ACTIVE:
     LD A,(BOSS_PHASE)

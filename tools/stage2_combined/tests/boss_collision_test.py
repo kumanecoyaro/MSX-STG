@@ -152,7 +152,14 @@ cpu.sim_dir = 0
 cpu.sim_trig_a = False
 cpu.sim_trig_b = False
 boss_spawned_at = None
-for f in range(9500):
+# round34 ("全てスケジュールに"): with no player fire input at all
+# (this test's own worst-case config), a ground enemy can go
+# permanently un-destroyed and stall later schedule entries up to
+# SPAWN2_STALL_LIMIT GAME_TICKs each before being skipped - verified
+# empirically (see boss_test.py's own Test12) this can push the real
+# spawn out to ~frame 10727 for this specific schedule's own content,
+# so this bound is generous rather than tight.
+for f in range(20000):
     step_frame(cpu)
     if cpu.mem[BOSS_ACT] == 1 and boss_spawned_at is None:
         boss_spawned_at = f

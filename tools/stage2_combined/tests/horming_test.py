@@ -639,11 +639,16 @@ boss_spawned = False
 saw_pose = False
 saw_patrol_after_pose = False
 boss_quadrant_hidden_while_patrolling = False
-# BOSS_SPAWN_TICK(999)*8=7992 raw frames alone, now that GAME_TICK boots
-# at a real 0 ("でTick0に" - the old 840 fast-iteration diagnostic boot
-# is gone) - plus real patrol/pose time on top, so these budgets are all
-# well above the old ones that assumed the 840 head start.
-for f in range(12000):
+# BOSS_SPAWN_TICK*8 raw frames alone, now that GAME_TICK boots at a
+# real 0 ("でTick0に" - the old 840 fast-iteration diagnostic boot is
+# gone) - plus real patrol/pose time on top. round34 ("全てスケジュー
+# ルに"): with no player fire input at all, a ground enemy can go
+# permanently un-destroyed and stall later schedule entries up to
+# SPAWN2_STALL_LIMIT GAME_TICKs each before being skipped - verified
+# empirically (see boss_test.py's own Test12) this can push the real
+# boss spawn out to ~frame 10727 for this specific schedule's own
+# content, so this budget is generous rather than tight.
+for f in range(20000):
     step_frame(cpu)
     if cpu.mem[BOSS_ACT] == 1:
         boss_spawned = True
@@ -672,7 +677,13 @@ cpu2.sim_trig_a = False
 cpu2.sim_trig_b = False
 prev_boss_act = 0
 flyer_alive_at_boss_spawn = None
-for f in range(9000):
+# round34 ("全てスケジュールに"): with no player fire input at all, a
+# ground enemy can go permanently un-destroyed and stall later schedule
+# entries up to SPAWN2_STALL_LIMIT GAME_TICKs each before being skipped
+# - verified empirically (see boss_test.py's own Test12) this can push
+# the real boss spawn out to ~frame 10727 for this specific schedule's
+# own content, so this bound is generous rather than tight.
+for f in range(20000):
     step_frame(cpu2)
     if cpu2.mem[BOSS_ACT] == 1 and prev_boss_act == 0:
         flyer_alive_at_boss_spawn = any(
@@ -700,7 +711,11 @@ target_xs = []
 life_before_sweep = cpu.mem[TANK_LIFE]
 prev_active = [0] * HORMING_SLOT_COUNT
 prev_state = [0] * HORMING_SLOT_COUNT
-for f in range(12000):
+# round34 ("全てスケジュールに"): boss spawn timing alone can now take
+# up to ~frame 10727 in the worst case (no player fire input - see the
+# other loops above in this same file) - budget generously for that
+# plus the pose/launch/flight sequence on top.
+for f in range(20000):
     step_frame(cpu)
     if cpu.mem[BOSS_PHASE] == 1 and pose_entered_at is None:
         pose_entered_at = f

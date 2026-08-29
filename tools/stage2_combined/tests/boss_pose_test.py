@@ -77,9 +77,11 @@ def all_sprites_hidden(cpu):
 
 
 # ---- spawn the boss ----
+# round34 ("全てスケジュールに"): S2_BOSS_SPAWN has no GAME_TICK check
+# of its own any more (that moved to the shared SPAWN2_SCHEDULE_CHECK/
+# SSC2_FIRE dispatcher) - it always succeeds whenever called directly.
 cpu = fresh_cpu()
-set_game_tick(cpu, 999)
-call_routine(cpu, "UPDATE_BOSS_ALL")
+call_routine(cpu, "S2_BOSS_SPAWN")
 check("boss spawns with BOSS_PHASE=0 (patrolling)", cpu.mem[BOSS_PHASE] == 0)
 check("boss spawns at BOSS_SPAWNX", cpu.mem[BOSS_X] == BOSS_SPAWNX)
 
@@ -194,8 +196,14 @@ pose_exited = False
 # BOSS_SPAWN_TICK*8 to reach spawn (GAME_TICK boots at real 0 again -
 # "Tickスキップを一旦戻して０に") + enough margin for a full patrol
 # cycle (left+right, ~192 frames) and the full pose duration
-# (BOSS_POSE_TICKS*8) afterward.
-sweep_frames = sym["BOSS_SPAWN_TICK"] * 8 + 200 + sym["BOSS_POSE_TICKS"] * 8 + 200
+# (BOSS_POSE_TICKS*8) afterward. round34 ("全てスケジュールに"): with
+# no player fire input at all (this test's own worst-case config), a
+# ground enemy can go permanently un-destroyed and stall later schedule
+# entries up to SPAWN2_STALL_LIMIT GAME_TICKs each before being skipped
+# - verified empirically (see boss_test.py's own Test12) this can push
+# the real spawn out to ~frame 10727 for this specific schedule's own
+# content, so the margin here is generous rather than tight.
+sweep_frames = 20000 + sym["BOSS_POSE_TICKS"] * 8 + 200
 for f in range(sweep_frames):
     step_frame(cpu)
     if cpu.mem[BOSS_ACT] == 1:

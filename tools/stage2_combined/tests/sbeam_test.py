@@ -97,9 +97,11 @@ set_terrain_flat(cpu, 0)
 
 
 def spawn_boss(cpu):
-    cpu.mem[GAME_TICK] = BOSS_SPAWN_TICK & 0xFF
-    cpu.mem[GAME_TICK + 1] = (BOSS_SPAWN_TICK >> 8) & 0xFF
-    call_routine(cpu, "UPDATE_BOSS_ALL")
+    # round34 ("全てスケジュールに"): S2_BOSS_SPAWN has no GAME_TICK
+    # check of its own any more (moved to the shared SPAWN2_SCHEDULE_
+    # CHECK/SSC2_FIRE dispatcher) - it always succeeds whenever called
+    # directly, so no GAME_TICK poke is needed here at all any more.
+    call_routine(cpu, "S2_BOSS_SPAWN")
 
 
 spawn_boss(cpu)
