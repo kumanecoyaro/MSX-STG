@@ -203,6 +203,71 @@ check("...and again for a different beam (slot3/beam4), not just the first one",
       cpu.mem[SND_TIMER] == 15)
 
 
+# ============================================================
+# round36-14 follow-up#5 real-hardware feedback: "ボス戦のみボスの
+# ダメージ音(キンキン音)カットで ボス攻撃音と被ってしまうんで" -
+# CHECK_HIT_PAIR_BOSS's own CHPBOSS_NORMAL_HIT no longer calls SOUND_
+# ZUM_DEFLECT on a non-lethal hit (it only ever ran while BOSS_ACT=1,
+# i.e. only during the boss fight anyway, exactly where it was now
+# competing with the 4 new attack SFX for the same shared channel).
+# BOSS_FLASH_TIMER (the visual hit-flash) is unaffected - audio only.
+# ============================================================
+BOSS_ACT = sym["BOSS_ACT"]
+BOSS_HP = sym["BOSS_HP"]
+BOSS_HP_INIT = sym["BOSS_HP_INIT"]
+BOSS_SPAWN_Y = sym["BOSS_SPAWN_Y"]
+BOSS_FLASH_TIMER = sym["BOSS_FLASH_TIMER"]
+FLASH_DURATION = sym["FLASH_DURATION"]
+BULLET0_ACT = sym["BULLET0_ACT"]
+
+
+def make_boss(cpu, x=100, hp=BOSS_HP_INIT):
+    cpu.mem[BOSS_ACT] = 1
+    cpu.mem[BOSS_X] = x
+    cpu.mem[BOSS_Y] = BOSS_SPAWN_Y
+    cpu.mem[BOSS_HP] = hp
+    cpu.mem[BOSS_FLASH_TIMER] = 0
+
+
+def make_bullet(cpu, col, row):
+    ix = BULLET0_ACT
+    cpu.mem[ix + 0] = 1
+    cpu.mem[ix + 1] = 0
+    cpu.mem[ix + 2] = col
+    cpu.mem[ix + 3] = row
+    row_addr = 0x1800 + row * 32
+    cpu.mem[ix + 4] = row_addr & 0xFF
+    cpu.mem[ix + 5] = (row_addr >> 8) & 0xFF
+    cpu.mem[ix + 6] = 0
+    cpu.ix = ix
+
+
+cpu = fresh_cpu()
+make_boss(cpu, x=100, hp=BOSS_HP_INIT)
+boss_row = BOSS_SPAWN_Y // 8
+make_bullet(cpu, col=100 // 8 + 1, row=boss_row + 1)
+arm_silence(cpu)
+cpu.mem[SND_TIMER] = 0  # arm_silence sets SND_EXPLODING=1 too - irrelevant here, but keep SND_TIMER explicitly 0
+call_routine(cpu, "CHECK_BULLET_VS_BOSS")
+check("a non-lethal hit on the boss still decrements HP (the hit itself is unaffected)",
+      cpu.mem[BOSS_HP] == BOSS_HP_INIT - 1)
+check("...and still arms the visual hit-flash (BOSS_FLASH_TIMER) - only the SOUND is cut",
+      cpu.mem[BOSS_FLASH_TIMER] == FLASH_DURATION)
+check("...but no longer plays SOUND_ZUM_DEFLECT's own 'キンキン' ping - SND_TIMER stays silent",
+      cpu.mem[SND_TIMER] == 0)
+
+# a LETHAL hit (HP->0, CHPBOSS_DESTROY, a totally different code path)
+# is untouched by this change - only confirms this test's own hit-on-
+# the-boss setup didn't accidentally also silence the death sequence.
+cpu2 = fresh_cpu()
+make_boss(cpu2, x=100, hp=1)
+make_bullet(cpu2, col=100 // 8 + 1, row=boss_row + 1)
+call_routine(cpu2, "CHECK_BULLET_VS_BOSS")
+check("a lethal hit still destroys the boss (BOSS_ACT=2) - CHPBOSS_DESTROY's own path, "
+      "untouched by the CHPBOSS_NORMAL_HIT-only sound cut",
+      cpu2.mem[BOSS_ACT] == 2)
+
+
 print()
 print(f"{len(ok)} passed, {len(fail)} failed")
 if fail:

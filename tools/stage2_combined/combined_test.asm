@@ -12252,7 +12252,20 @@ CHPB_SIZE_SET:
     CALL TRIGGER_BOSS_BROKEN_FORM
 CHPBOSS_NORMAL_HIT:
     LD A,FLASH_DURATION : LD (BOSS_FLASH_TIMER),A
-    CALL SOUND_ZUM_DEFLECT
+    ; round36-14 follow-up#5 real-hardware feedback ("ボス戦のみボスの
+    ; ダメージ音(キンキン音)カットで ボス攻撃音と被ってしまうんで") -
+    ; this CALL SOUND_ZUM_DEFLECT only ever runs while BOSS_ACT=1 (see
+    ; CHECK_HIT_PAIR_BOSS's own guard at its own top), i.e. only during
+    ; the boss fight - exactly the one context where SOUND_HORMING/
+    ; SOUND_THUNDER/SOUND_SBEAM/SOUND_SASAPI_LASER now also compete for
+    ; this same shared channel-A envelope, and the player hits the boss
+    ; far more often/rapidly than any other SOUND_ZUM_DEFLECT trigger
+    ; (Zum's own front-invincibility bounce, or the tank taking a hit) -
+    ; so it was constantly stomping the new attack SFX right as they
+    ; started. Dropped here only - every other SOUND_ZUM_DEFLECT call
+    ; site (Zum bounce, tank hit by Homing/Thunder/SBeam) is unchanged;
+    ; the boss's own hit-flash (BOSS_FLASH_TIMER, just above) still
+    ; fires normally, this is audio-only.
     RET
 ; round32 fix: "なぜ爆発エフェクト中にボス消してる 消さないでくれ BGで
 ; やってる意味がない" - this used to HIDE_BOSS_SPRITES immediately on

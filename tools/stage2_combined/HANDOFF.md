@@ -6061,3 +6061,34 @@ Thunder activity) confirming it survives completely untouched.
   1075 passed/0 failed(`terrain_render_perf_test.py`含め今回も一時的
   失敗なし)。Stage2単体のみ実施(Combビルドは指示なしに未実施)。
   実機での音量・音質の最終確認はユーザーによる実プレイ待ち。
+
+## Round 36-14 follow-up#5 実機フィードバック対応: ボスダメージ音(キンキン)をボス戦のみカット
+
+- User instruction(verbatim): "ボス戦のみボスのダメージ音(キンキン音)
+  カットで ボス攻撃音と被ってしまうんで"
+- 「ボスのダメージ音」= プレイヤーの弾がボスに命中した際の既存の
+  共通ヒットフィードバック音(`SOUND_ZUM_DEFLECT`、元は"Zumの前面無敵に
+  弾が当たったらキンキン"用に作られたものを複数箇所で流用)。
+  `CHECK_HIT_PAIR_BOSS`の`CHPBOSS_NORMAL_HIT`(非致死ヒット時)だけが
+  該当箇所と特定 - このコールパスは`CHECK_HIT_PAIR_BOSS`自身の冒頭で
+  `BOSS_ACT=1`をガードしているため、元々「ボス戦中にしか鳴らない」音
+  であり、今Round追加した4つの新規ボス攻撃音(ホーミング/サンダー/
+  サンダービーム/ササピーレーザー)と全く同じ共有チャンネルAを取り
+  合っていた。プレイヤーがボスへ連射する頻度は他のどの`SOUND_ZUM_
+  DEFLECT`呼び出し箇所(Zum前面無敵バウンド、自機被弾)よりずっと高い
+  ため、新しいボス攻撃音が鳴り始めた瞬間にほぼ確実に上書きされて
+  しまっていた。
+- **修正**: `CHPBOSS_NORMAL_HIT`から`CALL SOUND_ZUM_DEFLECT`のみを
+  削除(他の全ての`SOUND_ZUM_DEFLECT`呼び出し箇所 - Zumバウンド・
+  自機がホーミング/サンダー/サンダービームに被弾した際 - は無変更)。
+  `BOSS_FLASH_TIMER`(視覚的なヒットフラッシュ)自体は無変更、音声の
+  みカット。致死ヒット(`CHPBOSS_DESTROY`、HP0での破壊シーケンス)は
+  完全に別コードパスのため無関係・無変更。
+- **テスト**: `boss_attack_sfx_test.py`に4件追加(25→29件) - 非致死
+  ヒットでHP減少・BOSS_FLASH_TIMERは従来通り動作するがSND_TIMER(音の
+  エンベロープ)は無音のままであることの直接検証、および致死ヒットの
+  破壊シーケンス自体は今回の変更と無関係に動作することの確認。
+- **検証**: `python3 build_test.py`アセンブル成功。
+  `boss_attack_sfx_test.py` 29 passed/0 failed。全回帰`run_all.py`
+  1079 passed/0 failed(`terrain_render_perf_test.py`含め今回も一時的
+  失敗なし)。Stage2単体のみ実施(Combビルドは指示なしに未実施)。
