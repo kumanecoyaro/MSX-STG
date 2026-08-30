@@ -5785,6 +5785,60 @@ Thunder activity) confirming it survives completely untouched.
   はStage2単体のみ実施(Combビルドは未実施 - 指示なしに着手しない
   という標準方針の通り)。
 - **保留・未確定**: `BOSS_BROKEN_LAP_STEPS_MIN/_RANGE`(48-79フレーム
-  相当の周回長)・`BOSS_BROKEN_BEAM_INTERVAL`(20フレーム)・`BOSS_
-  BROKEN_BEAM_COLOR`(071h)は全て未調整の初期値。4本ビームの発射間隔
-  や周回長のバランス調整は実プレイでのフィードバック待ち。
+  相当の周回長)・`BOSS_BROKEN_BEAM_INTERVAL`(20フレーム)は全て未調整の
+  初期値。4本ビームの発射間隔や周回長のバランス調整は実プレイでの
+  フィードバック待ち。(`BOSS_BROKEN_BEAM_COLOR`は次のRound36-14
+  follow-up#4実機フィードバック対応で071h→07hへ修正済み)
+
+## Round 36-14 follow-up#4 実機フィードバック対応: ビーム描画が全く別物・色が黒・繋がった線描画は不要と判明、単発16x16スプライト方式へ全面書き直し
+
+- User instruction(verbatim、スクリーンショット添付 - ボス本体上に
+  ピンク色の塊状のノイズが表示され、ユーザー自身が緑色の手描き線で
+  「本来こうあるべき」という4方向の扇形を上書き注記したもの): "全然
+  えが違うな 色もブラックで渡したシアンではない で、繋げる必要はない
+  取り敢えず16x16で4本扇状に今の感じでいい スクショのような感じだな"
+- **根本原因1(絵が全く違う)**: 前Roundの`FIRE_BOSS_BROKEN_BEAM`は
+  `STAGE_SBEAM`と同じ「1タイルを反復してBresenham線を引く」方式を
+  そのまま流用していたが、添付4スプライトは元々「1本のビーム全体を
+  描いた完成された1枚の16x16絵」であり、タイル状に反復利用できる
+  素材ではなかった。同じ16x16の完成絵を対角線上に8pxずつずらして
+  何枚も重ね描きすることになり、結果として実機スクリーンショットの
+  ような重なり合った塊状のノイズになっていた。
+- **根本原因2(色が黒でシアンではない)**: `BOSS_BROKEN_BEAM_COLOR EQU
+  071h`は、BGパターンカラーテーブル用の「上位ニブル=fg/下位ニブル=bg」
+  という8ビットパック規約をhwスプライトのカラー属性バイトに誤って
+  適用したもの。hwスプライトのカラー属性バイトは実際には下位4bitが
+  単一のカラーインデックス(0-15)、bit6がEC(Early Clock、-32px相当の
+  X方向シフト)フラグという全く別の意味を持つ。0x71は下位ニブルが1=
+  黒(添付JSONのfg=7=シアンとは異なる)であることに加え、bit6(0x40)が
+  立っておりECフラグが意図せずONになっていた - これは「絵が全然違う」
+  問題にも寄与していた可能性がある(ビームが計算上の座標から32px
+  ズレて描画される)。`07h`(プレーンなカラー7=シアン、ECフラグなし)
+  へ修正。
+- **修正内容**: `FIRE_BOSS_BROKEN_BEAM`を全面書き直し - Bresenham線
+  描画・画面端バウンドチェック・`BOSS_BROKEN_BEAM_SLOT_COUNT`予算
+  キャップを完全に撤廃し、ボス本体近くに固定位置で単発の16x16
+  hwスプライトを1枚置くだけのシンプルな実装に変更(「繋げる必要は
+  ない」「取り敢えず16x16で4本扇状に今の感じでいい」)。X方向オフ
+  セット(beam1が中央から1セル左、beam4が1セル右、beam2/3は中央)の
+  レイアウト自体はユーザーが「今の感じでいい」と確認した通り維持。
+  `BOSS_BROKEN_BEAM_TABLE`は(XOFS,DXMAG,DYMAG,XDIR,CODE)の5バイト
+  エントリから(XOFS,CODE)の2バイトエントリへ縮小(角度は絵自体に
+  焼き込まれているため実行時計算不要に)。`BOSS_BROKEN_BEAM_SLOT_
+  COUNT`は18→1(常に単発のみ表示のため)、`CHECK_BOSS_BROKEN_BEAM_
+  VS_TANK`も「複数点をループしながら8x8判定」から「単一スプライトの
+  16x16 AABB判定」へ簡略化。旧Bresenhamカーソル用のスクラッチRAM
+  (`BBB_ORIGIN_X/Y`・`BBB_LINE_X/Y`・`BBB_DXMAG/DYMAG/XDIR/ERR/CODE`、
+  C0CDh-C0D5h)は削除(未使用化、番地は再利用せず放置 - 本ファイルの
+  既存の流儀通り)。
+- **テスト**: `boss_broken_form_test.py`のFIRE_BOSS_BROKEN_BEAM/
+  HIDE_BOSS_BROKEN_BEAM/CHECK_BOSS_BROKEN_BEAM_VS_TANK関連テストを
+  単発スプライト方式に合わせて全面書き直し(独立Bresenhamシミュレータ
+  との突合テストは新方式には不要なため撤去、代わりに単発スプライトの
+  X/Y/コード/カラーの直接検証・`BOSS_BROKEN_BEAM_COLOR`自体のECビット
+  非設定チェックを追加)。91→88件(Bresenham関連の一部テストが不要に
+  なり純減)。
+- **検証**: `python3 build_test.py`アセンブル成功。`boss_broken_form_
+  test.py` 88 passed/0 failed。全回帰`run_all.py` 1034 passed/0 failed
+  (`terrain_render_perf_test.py`含め今回も一時的失敗なし)。Stage2
+  単体のみ実施(Combビルドは指示なしに未実施)。

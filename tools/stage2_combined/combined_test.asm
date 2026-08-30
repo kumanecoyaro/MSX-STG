@@ -828,25 +828,39 @@ BOSS_BROKEN_PATH_HOLD_FRAMES EQU 4
 ; キャラデータ 1から4までの左方向斜め下に順の角度でビーム発射 角度は
 ; 絵から判断") - 4 fixed-angle diagonal beams, fired one at a time in
 ; sequence 1->4 (each replaces the previous - confirmed with the user:
-; "発射ごとに前のビームは消え、常に1本のみ表示", chosen specifically so
-; a single beam can use a real, honest hw-sprite budget similar to the
-; existing SBeam's own SBEAM_SLOT_COUNT, rather than 4 simultaneous
-; beams splitting a budget too thin to ever reach the screen edge - see
-; BOSS_BROKEN_BEAM_TABLE's own comment for the exhaustive worst-case
-; length calculation that ruled out "all 4 stay visible at once").
+; "発射ごとに前のビームは消え、常に1本のみ表示").
+; real-hardware feedback on the FIRST implementation ("全然絵が違うな
+; 色もブラックで渡したシアンではない で、繋げる必要はない 取り敢えず
+; 16x16で4本扇状に今の感じでいい スクショのような感じだな"): that first
+; attempt drew each beam as a Bresenham line, repeating the 16x16
+; pattern as a tileable unit all the way toward the screen edge (same
+; idiom as STAGE_SBEAM) - but the attached art is a single COMPLETE
+; picture of one whole beam, not a repeatable tile, so stacking copies
+; of it along a line produced a garbled overlapping blob, not 4 clean
+; rays. Redesigned to just place ONE hw sprite per beam at a fixed
+; position (no repetition, no reaching the screen edge - "繋げる必要は
+; ない"), keeping the same fan layout/feel the user confirmed was
+; already right ("今の感じでいい"). Only 1 hw sprite slot is needed now
+; (down from 18), right after the broken body's own 10-13 - genuinely
+; free at this point in the fight (old body/Homing/Thunder/old SBeam are
+; all retired the instant BOSS_FORM leaves 0).
 ; Angles read directly off the attached SBeam1-4_16x16.json pixel data
-; (centerline endpoint-to-endpoint, exact integer ratios - see
-; BOSS_BROKEN_BEAM_TABLE): beam1 dx:dy=-2:1 (shallow, down-left), beam2
-; -2:5 (steep, down-left), beam3 2:5 (steep, down-right), beam4 2:1
-; (shallow, down-right) - a symmetric fan skipping straight-down. Slots
-; 14-31 (18, contiguous, right after the broken body's own 10-13) -
-; genuinely free at this point in the fight (old body/Homing/Thunder/old
-; SBeam are all retired the instant BOSS_FORM leaves 0, and by the time
-; the first lap-stop can even happen - SPARK(180f)+RECENTERING+a partial
-; lap - any pre-transition Homing missile has long since expired).
-BOSS_BROKEN_BEAM_SLOT_COUNT    EQU 18
+; (centerline endpoint-to-endpoint, exact integer ratios - baked into
+; each beam's own art, not computed at runtime any more): beam1 dx:dy=
+; -2:1 (shallow, down-left), beam2 -2:5 (steep, down-left), beam3 2:5
+; (steep, down-right), beam4 2:1 (shallow, down-right) - a symmetric
+; fan skipping straight-down.
+BOSS_BROKEN_BEAM_SLOT_COUNT    EQU 1
 BOSS_BROKEN_BEAM_SPR_BASE_SLOT EQU 14
-BOSS_BROKEN_BEAM_COLOR         EQU 071h   ; fg7(from SBeam1-4's own JSON fg)/bg1 black
+; a hw sprite's own color attribute byte is NOT the BG-style packed
+; fg/bg nibble pair (unlike the BG pattern color table) - it's a plain
+; color index in bits0-3, with bit6 as the EC (early clock, -32px X
+; shift) flag. The first attempt wrongly copied the BG fg/bg convention
+; (071h = EC-shifted + color1/black), which explains BOTH real-hardware
+; complaints at once: the wrong (black, not cyan) color AND the beams
+; rendering 32px away from where they were actually positioned. Fixed
+; to a plain color 7 (cyan, matching the attached art's own fg), no EC.
+BOSS_BROKEN_BEAM_COLOR         EQU 07h
 ; raw frames between each beam firing in the 1->4 sequence, and between
 ; the 4th firing and hiding it/resuming movement - untuned placeholder.
 BOSS_BROKEN_BEAM_INTERVAL EQU 20
@@ -2205,29 +2219,28 @@ BOSS_BROKEN_STEPS_TO_STOP EQU 0C0C9h
 ; resumes movement.
 BOSS_BROKEN_BEAM_COUNT EQU 0C0CAh
 BOSS_BROKEN_BEAM_TIMER EQU 0C0CBh
-; how many hw sprite slots the CURRENTLY visible beam actually drew (0 =
-; no beam shown right now) - both the hide-tail's own "how many slots
-; are left to blank" count AND CHECK_BOSS_BROKEN_BEAM_VS_TANK's own "is
-; there anything to even check" gate/iteration count.
+; round36-14 follow-up#4 real-hardware feedback ("全然絵が違うな...で、
+; 繋げる必要はない 取り敢えず16x16で4本扇状に今の感じでいい"): the
+; first attempt drew each beam as a repeated-tile Bresenham line (same
+; idiom as STAGE_SBEAM) all the way to the screen edge - but the
+; attached art is a single COMPLETE 16x16 picture of one beam, not a
+; tileable unit, so tiling it produced a garbled overlapping blob
+; instead of 4 clean rays. Redesigned to just place ONE hw sprite per
+; beam (already-loaded pattern, no repetition) - BBB_ORIGIN_X/Y, BBB_
+; LINE_X/Y, BBB_DXMAG/DYMAG/XDIR/ERR/CODE (the old Bresenham-cursor
+; scratch bytes that used to live at C0CDh-C0D5h) are gone, unused by
+; the new single-sprite FIRE_BOSS_BROKEN_BEAM - that address range is
+; now dead/orphaned, not reclaimed, same precedent as BOSS_BROKEN_
+; PHASE_END_TICK's own removal earlier this round.
+; POINT_COUNT is now just a 0/1 "is a beam currently shown" flag (kept
+; as a byte, not a bool bit, purely so HIDE_BOSS_BROKEN_BEAM/CHECK_
+; BOSS_BROKEN_BEAM_VS_TANK's own "nothing to do" gates stay the same
+; shape as before).
 BOSS_BROKEN_BEAM_POINT_COUNT EQU 0C0CCh
-; FIRE_BOSS_BROKEN_BEAM's own scratch, same shape/purpose as STAGE_
-; SBEAM's own SBEAM_LINE_* bytes (see that routine's own comment) - a
-; walking Bresenham cursor (LINE_X/Y, starting at ORIGIN_X/Y), the fixed
-; per-beam ratio (DXMAG/DYMAG, magnitudes only - XDIR carries the sign
-; for X; Y always steps +1/down) and error accumulator, plus the
-; resolved pattern CODE for whichever beam is currently firing.
-BBB_ORIGIN_X EQU 0C0CDh
-BBB_ORIGIN_Y EQU 0C0CEh
-BBB_LINE_X   EQU 0C0CFh
-BBB_LINE_Y   EQU 0C0D0h
-BBB_DXMAG    EQU 0C0D1h
-BBB_DYMAG    EQU 0C0D2h
-BBB_XDIR     EQU 0C0D3h   ; +1 or -1 (twos complement) - added straight into LINE_X via ADD A,(HL)
-BBB_ERR      EQU 0C0D4h
-BBB_CODE     EQU 0C0D5h
-; hw sprite staging buffer for the currently-visible beam - see
-; BOSS_BROKEN_BEAM_SLOT_COUNT's own comment for the slot-count budget.
-BOSS_BROKEN_BEAM_SPRITE_ATTRS EQU 0C0D6h   ; BOSS_BROKEN_BEAM_SLOT_COUNT(18)*4 = 72 bytes (C0D6h-C11Dh)
+; hw sprite staging buffer for the single currently-visible beam sprite
+; (BOSS_BROKEN_BEAM_SLOT_COUNT(1)*4 = 4 bytes) - was 72 bytes (18
+; slots) under the old repeated-tile design, shrunk along with it.
+BOSS_BROKEN_BEAM_SPRITE_ATTRS EQU 0C0D6h
 ; Thunder's own state - a real POOL now (round9 fix: "いつからサンダー
 ; は1本しか出せない仕様に? そんな指示はしてねえぞ...BGを使ってるのは
 ; 表示制限がないからだろが" - BG has no hw-sprite-style display limit,
@@ -9139,31 +9152,27 @@ FBBS_LOOP:
 ; #4, "SasapiBrokenの停止はインフィニティ軌道の1周に１回何処かで停止
 ; で、停止中にビーム攻撃をする 添付がそのキャラデータ 1から4までの左方
 ; 向斜め下に順の角度でビーム発射") ----------
-; per-beam (XOFS,DXMAG,DYMAG,XDIR,CODE) - dispatched by BOSS_BROKEN_
-; BEAM_COUNT(0-3). XOFS is a signed CELL offset from the body's own
-; horizontal center (BOSS_X's own top-left +2 cells/16px) - "Sbeam2,3は
-; 中央から出ているが 1,4は発射位置が1は右上 4が左上になっているので
-; 1は2,3の左に4は右に8pxオフセットしたX位置になる" (2/3 fire from the
-; body's own center; 1 is 8px/1 cell left of it, 4 is 8px/1 cell right).
-; DXMAG/DYMAG are the unsigned magnitudes of each beam's own fixed
-; slope, read directly off the attached SBeam1-4_16x16.json centerline
-; pixels (endpoint-to-endpoint, exact integer ratios): beam1 -2:1
-; (shallow, down-left), beam2 -2:5 (steep, down-left), beam3 2:5 (steep,
-; down-right), beam4 2:1 (shallow, down-right) - only the magnitude (2,1
-; or 2,5) is stored here, XDIR carries the sign for X (Y always steps
-; +1/down for all 4, matching the art). CODE is the hw sprite pattern
-; each beam's own tile was loaded into (BOSS_BROKEN_BEAM_CODE1-4,
+; per-beam (XOFS,CODE) - dispatched by BOSS_BROKEN_BEAM_COUNT(0-3). XOFS
+; is a signed CELL offset from the body's own horizontal center (BOSS_X's
+; own top-left +2 cells/16px) - "Sbeam2,3は中央から出ているが 1,4は発射
+; 位置が1は右上 4が左上になっているので 1は2,3の左に4は右に8pxオフセッ
+; トしたX位置になる" (2/3 fire from the body's own center; 1 is 8px/1
+; cell left of it, 4 is 8px/1 cell right). CODE is the hw sprite pattern
+; each beam's own art was loaded into (BOSS_BROKEN_BEAM_CODE1-4,
 ; PAT_SASAPI+16..+19 - see that constant's own comment for why these
-; codes specifically, not old SBeam's own SBEAM_CODE).
+; codes specifically, not old SBeam's own SBEAM_CODE) - each beam is now
+; a single already-complete 16x16 picture (see FIRE_BOSS_BROKEN_BEAM's
+; own comment for why there's no longer a slope/direction to store here:
+; the angle is baked into the art itself, not computed at runtime).
 BOSS_BROKEN_BEAM_CODE1 EQU PAT_SASAPI+16
 BOSS_BROKEN_BEAM_CODE2 EQU PAT_SASAPI+17
 BOSS_BROKEN_BEAM_CODE3 EQU PAT_SASAPI+18
 BOSS_BROKEN_BEAM_CODE4 EQU PAT_SASAPI+19
 BOSS_BROKEN_BEAM_TABLE:
-    DB -1, 2, 1, -1, BOSS_BROKEN_BEAM_CODE1
-    DB  0, 2, 5, -1, BOSS_BROKEN_BEAM_CODE2
-    DB  0, 2, 5,  1, BOSS_BROKEN_BEAM_CODE3
-    DB  1, 2, 1,  1, BOSS_BROKEN_BEAM_CODE4
+    DB -1, BOSS_BROKEN_BEAM_CODE1
+    DB  0, BOSS_BROKEN_BEAM_CODE2
+    DB  0, BOSS_BROKEN_BEAM_CODE3
+    DB  1, BOSS_BROKEN_BEAM_CODE4
 
 ; zeroes the sequence's own count/timer - 0 timer fires beam1 on the
 ; very next UPDATE_BOSS_BROKEN_BEAM_SEQ tick, same "0=fire immediately"
@@ -9236,8 +9245,8 @@ HBBB_LOOP:
     DJNZ HBBB_LOOP
     RET
 
-; called once, at REVEAL_BOSS_BROKEN_FORM time - parks all 18 of the
-; new beam-attack's own hw sprite slots off-screen up front, so nothing
+; called once, at REVEAL_BOSS_BROKEN_FORM time - parks the beam-attack's
+; own hw sprite slot off-screen up front, so nothing
 ; stale (a previous game's own leftover state, or uninitialized RAM)
 ; could show before the first beam ever actually fires - same "explicit
 ; up-front init" precedent as every other hw sprite pool's own boot-time
@@ -9255,121 +9264,49 @@ HBBBA_LOOP:
     RET
 
 ; fires whichever of the 4 fixed-angle beams BOSS_BROKEN_BEAM_COUNT(0-3)
-; selects - same core Bresenham stepping (error accumulator, X-major/Y-
-; major split) as STAGE_SBEAM's own algorithm, generalized 2 ways that
-; routine didn't need: (1) the X step direction is a per-beam parameter
-; (BBB_XDIR, +-1) rather than always DEC, since beams1/2 go left and 3/4
-; go right; (2) since this beam's own true endpoint (the screen edge)
-; isn't known in advance the way old SBeam's own runtime tip always is,
-; each iteration bounds-checks the walking cursor itself (0<=col<=31,
-; row<=23) and stops the instant it would leave the screen, rather than
-; relying purely on a fixed iteration count - BOSS_BROKEN_BEAM_SLOT_
-; COUNT is still checked too, as the same kind of "real, honest hw-
-; sprite-budget cap" old SBeam's own SBEAM_SLOT_COUNT is (see that
-; constant's own comment) - a beam starting deep in a screen corner can
-; need more than 18 cells to reach the far edge and will visibly stop
-; short there, an accepted, disclosed compromise (confirmed exhaustively
-; via a real Bresenham simulation across the whole orbit box before
-; picking this budget/beam-replaces-beam design).
+; selects. round36-14 follow-up#4 real-hardware feedback ("全然絵が違う
+; な...で、繋げる必要はない 取り敢えず16x16で4本扇状に今の感じでいい"):
+; the first version of this routine walked a Bresenham line, repeating
+; the beam's own 16x16 pattern as if it were a tileable unit all the way
+; toward the screen edge (copying STAGE_SBEAM's own algorithm) - but the
+; attached art is a single COMPLETE picture of one whole beam, so tiling
+; it produced a garbled overlapping blob instead of a clean ray. Fixed
+; by dropping the line-walk entirely: just place ONE hw sprite (the
+; already-loaded pattern) at a fixed position near the body, in the same
+; fan layout the user confirmed was already right - no Bresenham, no
+; screen-edge reach, no per-beam slope table (the angle is baked into
+; the art itself).
 FIRE_BOSS_BROKEN_BEAM:
     LD A,(BOSS_BROKEN_BEAM_COUNT)
+    ADD A,A                                       ; *2 (2 bytes/entry: XOFS,CODE)
     LD E,A : LD D,0
-    LD HL,BOSS_BROKEN_BEAM_TABLE
-    ADD HL,DE : ADD HL,DE : ADD HL,DE : ADD HL,DE : ADD HL,DE   ; *5 (5 bytes/entry) via repeated add - no multiply instruction
+    LD HL,BOSS_BROKEN_BEAM_TABLE : ADD HL,DE
+    LD A,(HL) : INC HL : LD B,A                   ; XOFS (signed cells)
+    LD C,(HL)                                     ; this beam's own pattern code
 
-    LD A,(HL) : INC HL : LD B,A                  ; XOFS (signed)
     LD A,(BOSS_X) : SRL A : SRL A : SRL A         ; body's own top-left column
-    ADD A,2 : ADD A,B                             ; +2 cells (body's own horizontal center, 32px/2=16px=2 cells) + this beam's own XOFS
-    LD (BBB_ORIGIN_X),A
-    LD A,(HL) : INC HL : LD (BBB_DXMAG),A
-    LD A,(HL) : INC HL : LD (BBB_DYMAG),A
-    LD A,(HL) : INC HL : LD (BBB_XDIR),A
-    LD A,(HL) : LD (BBB_CODE),A
+    ADD A,2 : ADD A,B                             ; +2 cells (body's own horizontal center) + this beam's own XOFS
+    ADD A,A : ADD A,A : ADD A,A                   ; back to pixels - the CENTER column's own left edge
+    SUB 8                                          ; recenter: this sprite is 16px wide, so its own left edge sits 8px left of that column
+    LD (BOSS_BROKEN_BEAM_SPRITE_ATTRS+1),A         ; X
 
     LD A,(BOSS_Y) : SRL A : SRL A : SRL A
-    ADD A,2                                       ; body's own vertical center
-    LD (BBB_ORIGIN_Y),A
+    ADD A,2                                        ; body's own vertical center row
+    ADD A,A : ADD A,A : ADD A,A                    ; pixels - this beam's own top edge starts right at the body's vertical center
+    LD (BOSS_BROKEN_BEAM_SPRITE_ATTRS+0),A         ; Y
 
-    LD A,(BBB_ORIGIN_X) : LD (BBB_LINE_X),A
-    LD A,(BBB_ORIGIN_Y) : LD (BBB_LINE_Y),A
-    XOR A : LD (BOSS_BROKEN_BEAM_POINT_COUNT),A
-
-    LD A,(BBB_DYMAG) : LD B,A
-    LD A,(BBB_DXMAG)
-    CP B
-    JR C,FBBB_Y_BRANCH
-FBBB_X_BRANCH:
-    LD A,(BBB_DYMAG) : LD D,A
-    LD A,(BBB_DXMAG) : LD E,A
-    SRL A : LD (BBB_ERR),A
-    LD IX,BOSS_BROKEN_BEAM_SPRITE_ATTRS
-FBBB_X_LOOP:
-    LD A,(BBB_LINE_X) : CP 32 : JP NC,FBBB_DONE
-    LD A,(BBB_LINE_Y) : CP 24 : JP NC,FBBB_DONE
-    LD A,(BOSS_BROKEN_BEAM_POINT_COUNT) : CP BOSS_BROKEN_BEAM_SLOT_COUNT : JP NC,FBBB_DONE
-    LD A,(BBB_LINE_Y) : ADD A,A : ADD A,A : ADD A,A : LD (IX+0),A
-    LD A,(BBB_LINE_X) : ADD A,A : ADD A,A : ADD A,A : LD (IX+1),A
-    LD A,(BBB_CODE) : LD (IX+2),A
-    LD A,BOSS_BROKEN_BEAM_COLOR : LD (IX+3),A
-    INC IX : INC IX : INC IX : INC IX
-    LD HL,BOSS_BROKEN_BEAM_POINT_COUNT : INC (HL)
-    LD A,(BBB_ERR) : SUB D : LD (BBB_ERR),A
-    JP M,FBBB_X_YSTEP
-    JR FBBB_X_XSTEP
-FBBB_X_YSTEP:
-    LD A,(BBB_LINE_Y) : INC A : LD (BBB_LINE_Y),A
-    LD A,(BBB_ERR) : ADD A,E : LD (BBB_ERR),A
-FBBB_X_XSTEP:
-    LD A,(BBB_LINE_X) : LD HL,BBB_XDIR : ADD A,(HL) : LD (BBB_LINE_X),A
-    JR FBBB_X_LOOP
-FBBB_Y_BRANCH:
-    LD A,(BBB_DXMAG) : LD E,A
-    LD A,(BBB_DYMAG) : LD D,A
-    SRL A : LD (BBB_ERR),A
-    LD IX,BOSS_BROKEN_BEAM_SPRITE_ATTRS
-FBBB_Y_LOOP:
-    LD A,(BBB_LINE_X) : CP 32 : JP NC,FBBB_DONE
-    LD A,(BBB_LINE_Y) : CP 24 : JP NC,FBBB_DONE
-    LD A,(BOSS_BROKEN_BEAM_POINT_COUNT) : CP BOSS_BROKEN_BEAM_SLOT_COUNT : JP NC,FBBB_DONE
-    LD A,(BBB_LINE_Y) : ADD A,A : ADD A,A : ADD A,A : LD (IX+0),A
-    LD A,(BBB_LINE_X) : ADD A,A : ADD A,A : ADD A,A : LD (IX+1),A
-    LD A,(BBB_CODE) : LD (IX+2),A
-    LD A,BOSS_BROKEN_BEAM_COLOR : LD (IX+3),A
-    INC IX : INC IX : INC IX : INC IX
-    LD HL,BOSS_BROKEN_BEAM_POINT_COUNT : INC (HL)
-    LD A,(BBB_ERR) : SUB E : LD (BBB_ERR),A
-    JP M,FBBB_Y_XSTEP
-    JR FBBB_Y_YSTEP
-FBBB_Y_XSTEP:
-    LD A,(BBB_LINE_X) : LD HL,BBB_XDIR : ADD A,(HL) : LD (BBB_LINE_X),A
-    LD A,(BBB_ERR) : ADD A,D : LD (BBB_ERR),A
-FBBB_Y_YSTEP:
-    LD A,(BBB_LINE_Y) : INC A : LD (BBB_LINE_Y),A
-    JR FBBB_Y_LOOP
-FBBB_DONE:
-    ; hide whatever slots this beam's own walk didn't reach - same
-    ; SLOT_COUNT-minus-drawn shape as STAGE_SBEAM's own SSL_HIDE_REST.
-    LD A,BOSS_BROKEN_BEAM_SLOT_COUNT
-    LD HL,BOSS_BROKEN_BEAM_POINT_COUNT
-    SUB (HL)
-    LD B,A
-    RET Z
-FBBB_HIDE_LOOP:
-    LD (IX+0),209
-    LD (IX+1),0
-    LD (IX+2),0
-    LD (IX+3),0
-    INC IX : INC IX : INC IX : INC IX
-    DJNZ FBBB_HIDE_LOOP
+    LD A,C : LD (BOSS_BROKEN_BEAM_SPRITE_ATTRS+2),A
+    LD A,BOSS_BROKEN_BEAM_COLOR : LD (BOSS_BROKEN_BEAM_SPRITE_ATTRS+3),A
+    LD A,1 : LD (BOSS_BROKEN_BEAM_POINT_COUNT),A   ; "a beam is now visible" flag - see its own comment
     RET
 
-; blasts BOSS_BROKEN_BEAM_SPRITE_ATTRS (BOSS_BROKEN_BEAM_SLOT_COUNT*4=72
-; bytes) to hw sprite slots BOSS_BROKEN_BEAM_SPR_BASE_SLOT.. - same
-; single DI/EI-wrapped raw NOP-padded OUT idiom as FLUSH_SBEAM_SPRITES/
-; FLUSH_HORMING_SPRITES (a beam is only ever fired/hidden a handful of
-; times per stop, not every frame, so one long DI window here is fine -
-; unlike FLUSH_BOSS_SPRITES' own per-quadrant split, which specifically
-; exists because THAT one runs every single frame).
+; blasts BOSS_BROKEN_BEAM_SPRITE_ATTRS (BOSS_BROKEN_BEAM_SLOT_COUNT*4=4
+; bytes - just the 1 static beam sprite, since round36-14 follow-up#4's
+; real-hardware feedback) to hw sprite slot BOSS_BROKEN_BEAM_SPR_BASE_
+; SLOT - same single DI/EI-wrapped raw NOP-padded OUT idiom as FLUSH_
+; SBEAM_SPRITES/FLUSH_HORMING_SPRITES (a beam is only ever fired/hidden a
+; handful of times per stop, not every frame, so one long DI window here
+; is fine).
 FLUSH_BOSS_BROKEN_BEAM_SPRITES:
     DI
     LD A,BOSS_BROKEN_BEAM_SPR_BASE_SLOT*4 : OUT (99h),A
@@ -9388,16 +9325,13 @@ FBBBS_LOOP:
     EI
     RET
 
-; walks every point BOSS_BROKEN_BEAM_SPRITE_ATTRS actually holds right
-; now (BOSS_BROKEN_BEAM_POINT_COUNT, 0 = no beam currently shown - the
-; whole routine is then a no-op) and AABB-checks each one's own 8x8 box
+; AABB-checks the single currently-visible beam sprite's own 16x16 box
 ; against the tank - same 4-compare shape/i-frame gate as CHECK_SBEAM_
-; VS_TANK, just walking every drawn segment instead of a single tip:
-; these are static full-length beams, not SBeam's own moving-tip sweep,
-; so "判定は先端部だけでいい" doesn't apply here - any point along the
-; beam is a real hazard. Stops (RET) on the first hit rather than
-; checking the remaining segments, same "one hit per frame is enough"
-; shape as every other tank-hazard check in this file.
+; VS_TANK, just a 16x16 box instead of an 8x8 one (round36-14 follow-
+; up#4 real-hardware feedback shrunk this from "walk every point of a
+; multi-segment line" down to "check the one static sprite" once FIRE_
+; BOSS_BROKEN_BEAM itself stopped drawing an extending line - see that
+; routine's own comment).
 CHECK_BOSS_BROKEN_BEAM_VS_TANK:
     LD A,(BOSS_BROKEN_BEAM_POINT_COUNT)
     OR A
@@ -9405,25 +9339,18 @@ CHECK_BOSS_BROKEN_BEAM_VS_TANK:
     LD A,(TANK_HAZARD_IFRAMES)
     OR A
     RET NZ
-    LD A,(BOSS_BROKEN_BEAM_POINT_COUNT) : LD B,A
     LD A,(TANK_X) : ADD A,TANK_COLLISION_X_OFFSET : LD D,A
     LD A,(TANK_Y_CUR) : ADD A,TANK_COLLISION_Y_OFFSET : LD E,A
-    LD IX,BOSS_BROKEN_BEAM_SPRITE_ATTRS
-CBBBVT_LOOP:
-    LD A,(IX+1) : LD C,A
-    ADD A,7 : CP D : JR C,CBBBVT_MISS
-    LD A,D : ADD A,TANK_COLLISION_WIDTH-1 : CP C : JR C,CBBBVT_MISS
-    LD A,(IX+0) : LD C,A
-    ADD A,7 : CP E : JR C,CBBBVT_MISS
-    LD A,E : ADD A,TANK_COLLISION_HEIGHT-1 : CP C : JR C,CBBBVT_MISS
+    LD A,(BOSS_BROKEN_BEAM_SPRITE_ATTRS+1) : LD C,A
+    ADD A,15 : CP D : RET C
+    LD A,D : ADD A,TANK_COLLISION_WIDTH-1 : CP C : RET C
+    LD A,(BOSS_BROKEN_BEAM_SPRITE_ATTRS+0) : LD C,A
+    ADD A,15 : CP E : RET C
+    LD A,E : ADD A,TANK_COLLISION_HEIGHT-1 : CP C : RET C
     LD A,FLASH_DURATION : LD (TANK_FLASH_TIMER),A
     LD A,TANK_HAZARD_IFRAME_DURATION : LD (TANK_HAZARD_IFRAMES),A
     CALL APPLY_TANK_DAMAGE
     CALL SOUND_ZUM_DEFLECT
-    RET
-CBBBVT_MISS:
-    INC IX : INC IX : INC IX : INC IX
-    DJNZ CBBBVT_LOOP
     RET
 
 ; solid-fill 8x8 tile (all bits set - every row 0FFh) loaded once into

@@ -634,60 +634,21 @@ check(f"beam2 replaces beam1 exactly BOSS_BROKEN_BEAM_INTERVAL({BOSS_BROKEN_BEAM
       "after beam1 fired", current_beam_code(cpu) == BOSS_BROKEN_BEAM_CODE2)
 
 
-# ---- FIRE_BOSS_BROKEN_BEAM: exact geometry, verified against an
-# independent Python re-implementation of the same Bresenham algorithm
-# (8-bit wraparound arithmetic, matching the Z80 SUB/JP M semantics
-# exactly) rather than just spot-checking a handful of points - this is
-# the kind of thing that looks right from a quick glance at 2-3 points
-# but silently drifts off the true line further out. ----
-# per-beam (XOFS,DXMAG,DYMAG,XDIR) transcribed directly from
-# BOSS_BROKEN_BEAM_TABLE in combined_test.asm - angles read off the
-# attached SBeam1-4_16x16.json centerline pixels (endpoint-to-endpoint
-# exact integer ratios: beam1 -2:1, beam2 -2:5, beam3 2:5, beam4 2:1).
-# NOTE on the user's own rough estimate ("多分角度は 22、77、107、129かと
-# 思う 端数切捨てで"): this doesn't cleanly match any angle-measurement
-# convention against these exact pixel-derived ratios under any sign/axis
-# convention tried - the pixel data (reproducible, exact) was trusted
-# over the user's own explicitly-hedged estimate ("かと思う", "端数切捨て
-# で"); disclosed to the user rather than silently overridden.
-BOSS_BROKEN_BEAM_PARAMS = [
-    (-1, 2, 1, -1, BOSS_BROKEN_BEAM_CODE1),
-    (0, 2, 5, -1, BOSS_BROKEN_BEAM_CODE2),
-    (0, 2, 5, 1, BOSS_BROKEN_BEAM_CODE3),
-    (1, 2, 1, 1, BOSS_BROKEN_BEAM_CODE4),
-]
-
-
-def sim_fire_beam(origin_col, origin_row, dxmag, dymag, xdir, slot_count):
-    def u8(v):
-        return v & 0xFF
-
-    def is_neg(v):
-        return (v & 0x80) != 0
-
-    x, y = u8(origin_col), u8(origin_row)
-    points = []
-    if dxmag >= dymag:
-        # X-major: D=DYMAG, E=DXMAG, err=DXMAG>>1; X always steps, Y
-        # steps whenever err goes negative (then replenished by E).
-        err = u8(dxmag) >> 1
-        while not (x >= 32 or y >= 24 or len(points) >= slot_count):
-            points.append((x, y))
-            err = u8(err - dymag)
-            if is_neg(err):
-                y = u8(y + 1)
-                err = u8(err + dxmag)
-            x = u8(x + xdir)
-    else:
-        err = u8(dymag) >> 1
-        while not (x >= 32 or y >= 24 or len(points) >= slot_count):
-            points.append((x, y))
-            err = u8(err - dxmag)
-            if is_neg(err):
-                x = u8(x + xdir)
-                err = u8(err + dymag)
-            y = u8(y + 1)
-    return points
+# ---- FIRE_BOSS_BROKEN_BEAM: exact geometry ----
+# round36-14 follow-up#4 real-hardware feedback ("全然絵が違うな 色も
+# ブラックで渡したシアンではない で、繋げる必要はない 取り敢えず16x16
+# で4本扇状に今の感じでいい スクショのような感じだな"): the first
+# attempt drew each beam as a Bresenham line, repeating the 16x16 art as
+# if it were a tileable unit - but the art is a single COMPLETE picture
+# of one whole beam, so FIRE_BOSS_BROKEN_BEAM was rewritten to just place
+# ONE static 16x16 sprite per beam (no line-walk, no screen-edge reach -
+# these tests were rewritten to match). Per-beam XOFS transcribed
+# directly from BOSS_BROKEN_BEAM_TABLE in combined_test.asm - "Sbeam2,3は
+# 中央から出ているが 1,4は発射位置が1は右上 4が左上になっているので 1は
+# 2,3の左に4は右に8pxオフセットしたX位置になる".
+BOSS_BROKEN_BEAM_XOFS = [-1, 0, 0, 1]
+BOSS_BROKEN_BEAM_CODES = [BOSS_BROKEN_BEAM_CODE1, BOSS_BROKEN_BEAM_CODE2,
+                          BOSS_BROKEN_BEAM_CODE3, BOSS_BROKEN_BEAM_CODE4]
 
 
 def fire_beam_and_read(cpu, boss_x, boss_y, beam_idx):
@@ -695,83 +656,62 @@ def fire_beam_and_read(cpu, boss_x, boss_y, beam_idx):
     cpu.mem[BOSS_Y] = boss_y
     cpu.mem[BOSS_BROKEN_BEAM_COUNT] = beam_idx
     call_routine(cpu, "FIRE_BOSS_BROKEN_BEAM")
-    n = cpu.mem[BOSS_BROKEN_BEAM_POINT_COUNT]
-    pts = []
-    for i in range(n):
-        base = BOSS_BROKEN_BEAM_SPRITE_ATTRS + i * 4
-        pts.append((cpu.mem[base + 1] // 8, cpu.mem[base + 0] // 8))  # (col,row)
-    codes = {cpu.mem[BOSS_BROKEN_BEAM_SPRITE_ATTRS + i * 4 + 2] for i in range(n)}
-    colors = {cpu.mem[BOSS_BROKEN_BEAM_SPRITE_ATTRS + i * 4 + 3] for i in range(n)}
-    hidden_rest = all(cpu.mem[BOSS_BROKEN_BEAM_SPRITE_ATTRS + i * 4] == 209
-                       for i in range(n, BOSS_BROKEN_BEAM_SLOT_COUNT))
-    return pts, codes, colors, hidden_rest
+    base = BOSS_BROKEN_BEAM_SPRITE_ATTRS
+    return {
+        "y": cpu.mem[base + 0],
+        "x": cpu.mem[base + 1],
+        "code": cpu.mem[base + 2],
+        "color": cpu.mem[base + 3],
+        "active": cpu.mem[BOSS_BROKEN_BEAM_POINT_COUNT],
+    }
 
 
 cpu = fresh_cpu()
-all_geometry_ok = True
-all_codes_ok = True
-all_colors_ok = True
-all_hidden_rest_ok = True
+all_x_ok = True
+all_y_ok = True
+all_code_ok = True
+all_color_ok = True
+all_active_ok = True
 for boss_x, boss_y in [(96, 64), (200, 64), (96, 8), (8, 8), (200, 176), (8, 176)]:
-    for beam_idx, (xofs, dxmag, dymag, xdir, code) in enumerate(BOSS_BROKEN_BEAM_PARAMS):
-        origin_col = (boss_x >> 3) + 2 + xofs
-        origin_row = (boss_y >> 3) + 2
-        expected = sim_fire_beam(origin_col, origin_row, dxmag, dymag, xdir, BOSS_BROKEN_BEAM_SLOT_COUNT)
-        pts, codes, colors, hidden_rest = fire_beam_and_read(cpu, boss_x, boss_y, beam_idx)
-        if pts != expected:
-            all_geometry_ok = False
-        if codes and codes != {code}:
-            all_codes_ok = False
-        if colors and colors != {BOSS_BROKEN_BEAM_COLOR}:
-            all_colors_ok = False
-        if not hidden_rest:
-            all_hidden_rest_ok = False
-check("FIRE_BOSS_BROKEN_BEAM's drawn points exactly match an independent Python re-implementation "
-      "of the same Bresenham algorithm, for all 4 beams across 6 boss positions (center, both "
-      "horizontal edges, both vertical edges, and a corner) - covers the exact angle, the correct "
-      "X-major/Y-major branch selection per beam, per-beam XOFS, screen-edge early termination, "
-      "and the BOSS_BROKEN_BEAM_SLOT_COUNT cap all at once",
-      all_geometry_ok)
-check("every drawn point uses the firing beam's own pattern code (BOSS_BROKEN_BEAM_CODE1-4), "
-      "never a stale code from a previous beam", all_codes_ok)
-check("every drawn point uses BOSS_BROKEN_BEAM_COLOR", all_colors_ok)
-check("every slot beyond this beam's own POINT_COUNT is left hidden (Y=209)", all_hidden_rest_ok)
-
-# beam1 is offset 1 cell (8px) LEFT of body center, beam4 1 cell RIGHT,
-# beams2/3 exactly centered - "1は2,3の左に4は右に8pxオフセットしたX
-# 位置になる"
-cpu = fresh_cpu()
-pts0, _, _, _ = fire_beam_and_read(cpu, 96, 64, 0)
-pts1, _, _, _ = fire_beam_and_read(cpu, 96, 64, 1)
-pts2, _, _, _ = fire_beam_and_read(cpu, 96, 64, 2)
-pts3, _, _, _ = fire_beam_and_read(cpu, 96, 64, 3)
-center_col = (96 >> 3) + 2
-check("beam1's own starting column is exactly 1 cell (8px) LEFT of the body's horizontal center",
-      pts0[0][0] == center_col - 1)
-check("beam2's own starting column is exactly the body's horizontal center",
-      pts1[0][0] == center_col)
-check("beam3's own starting column is exactly the body's horizontal center too",
-      pts2[0][0] == center_col)
-check("beam4's own starting column is exactly 1 cell (8px) RIGHT of the body's horizontal center",
-      pts3[0][0] == center_col + 1)
-check("all 4 beams share the same starting row (the body's vertical center)",
-      pts0[0][1] == pts1[0][1] == pts2[0][1] == pts3[0][1])
-
-# a beam really can reach the full BOSS_BROKEN_BEAM_SLOT_COUNT cap when
-# it starts far from any screen edge (proves the cap is actually
-# exercised somewhere in the boss's real orbit box, not just a number
-# that never comes into play).
-cpu = fresh_cpu()
-capped_anywhere = False
-for boss_x, boss_y in [(96, 64), (120, 48), (80, 96)]:
+    center_col = (boss_x >> 3) + 2
+    center_row = (boss_y >> 3) + 2
     for beam_idx in range(4):
-        pts, _, _, _ = fire_beam_and_read(cpu, boss_x, boss_y, beam_idx)
-        if len(pts) == BOSS_BROKEN_BEAM_SLOT_COUNT:
-            capped_anywhere = True
-check(f"at least one beam/position combination actually reaches the full "
-      f"BOSS_BROKEN_BEAM_SLOT_COUNT({BOSS_BROKEN_BEAM_SLOT_COUNT}) cap - not merely a theoretical "
-      "ceiling that never triggers in practice",
-      capped_anywhere)
+        s = fire_beam_and_read(cpu, boss_x, boss_y, beam_idx)
+        expected_x = ((center_col + BOSS_BROKEN_BEAM_XOFS[beam_idx]) * 8 - 8) & 0xFF
+        expected_y = (center_row * 8) & 0xFF
+        if s["x"] != expected_x:
+            all_x_ok = False
+        if s["y"] != expected_y:
+            all_y_ok = False
+        if s["code"] != BOSS_BROKEN_BEAM_CODES[beam_idx]:
+            all_code_ok = False
+        if s["color"] != BOSS_BROKEN_BEAM_COLOR:
+            all_color_ok = False
+        if s["active"] != 1:
+            all_active_ok = False
+check("FIRE_BOSS_BROKEN_BEAM places the sprite's own X exactly 1 cell (8px) left of the body's "
+      "horizontal center for beam1, centered for beam2/3, 1 cell right for beam4 - across 6 boss "
+      "positions (center, both horizontal edges, both vertical edges, a corner) - "
+      "'1は2,3の左に4は右に8pxオフセットしたX位置になる'",
+      all_x_ok)
+check("FIRE_BOSS_BROKEN_BEAM places the sprite's own Y exactly at the body's vertical center, "
+      "for all 4 beams and all 6 positions", all_y_ok)
+check("each beam uses its own pattern code (BOSS_BROKEN_BEAM_CODE1-4), never a stale one",
+      all_code_ok)
+check("every beam uses plain color 7 (cyan, matching the attached art's own fg) - NOT the old "
+      "071h (which packed the BG-style fg/bg convention onto a hw sprite color byte, accidentally "
+      "setting the EC/early-clock flag too - real-hardware report: '色もブラックで渡したシアン "
+      "ではない')", all_color_ok)
+check("firing a beam always marks it active (BOSS_BROKEN_BEAM_POINT_COUNT=1)", all_active_ok)
+
+# BOSS_BROKEN_BEAM_COLOR itself must never have bit6 (EC/early-clock, a
+# -32px X shift on real hardware) set, and must be a plain 0-15 index -
+# this is the actual root cause of "全然絵が違うな" (EC silently
+# displaced every beam 32px from where FIRE_BOSS_BROKEN_BEAM computed).
+check("BOSS_BROKEN_BEAM_COLOR has the EC (early clock) bit clear",
+      (BOSS_BROKEN_BEAM_COLOR & 0x40) == 0)
+check("BOSS_BROKEN_BEAM_COLOR is a plain color index in [0,15] (color 7 = cyan)",
+      BOSS_BROKEN_BEAM_COLOR == 7)
 
 
 # ---- HIDE_BOSS_BROKEN_BEAM / HIDE_BOSS_BROKEN_BEAM_ALL ----
@@ -782,36 +722,31 @@ check("setup: beam1 is actually visible before testing HIDE_BOSS_BROKEN_BEAM",
 call_routine(cpu, "HIDE_BOSS_BROKEN_BEAM")
 check("HIDE_BOSS_BROKEN_BEAM resets BOSS_BROKEN_BEAM_POINT_COUNT to 0",
       cpu.mem[BOSS_BROKEN_BEAM_POINT_COUNT] == 0)
-check("HIDE_BOSS_BROKEN_BEAM hides every slot the beam had actually drawn into (Y=209)",
-      all(cpu.mem[BOSS_BROKEN_BEAM_SPRITE_ATTRS + i * 4] == 209
-          for i in range(BOSS_BROKEN_BEAM_SLOT_COUNT)))
+check("HIDE_BOSS_BROKEN_BEAM hides the beam's own single hw sprite slot (Y=209)",
+      cpu.mem[BOSS_BROKEN_BEAM_SPRITE_ATTRS] == 209)
 
 cpu = fresh_cpu()
-for i in range(BOSS_BROKEN_BEAM_SLOT_COUNT):
-    cpu.mem[BOSS_BROKEN_BEAM_SPRITE_ATTRS + i * 4] = 50  # garbage, simulating leftover/uninitialized RAM
+cpu.mem[BOSS_BROKEN_BEAM_SPRITE_ATTRS] = 50  # garbage, simulating leftover/uninitialized RAM
 call_routine(cpu, "HIDE_BOSS_BROKEN_BEAM_ALL")
-check("HIDE_BOSS_BROKEN_BEAM_ALL hides all 18 slots up front (boot-time-style init, called once "
-      "from REVEAL_BOSS_BROKEN_FORM)",
-      all(cpu.mem[BOSS_BROKEN_BEAM_SPRITE_ATTRS + i * 4] == 209
-          for i in range(BOSS_BROKEN_BEAM_SLOT_COUNT)))
+check("HIDE_BOSS_BROKEN_BEAM_ALL hides the beam's own slot up front (boot-time-style init, called "
+      "once from REVEAL_BOSS_BROKEN_FORM)",
+      cpu.mem[BOSS_BROKEN_BEAM_SPRITE_ATTRS] == 209)
 check("HIDE_BOSS_BROKEN_BEAM_ALL also resets BOSS_BROKEN_BEAM_POINT_COUNT to 0",
       cpu.mem[BOSS_BROKEN_BEAM_POINT_COUNT] == 0)
 
 
 # ---- CHECK_BOSS_BROKEN_BEAM_VS_TANK: real damage (confirmed with the
 # user: "本物の攻撃、既存SBeamのように画面端まで伸びる"), same AABB/
-# i-frame shape as CHECK_SBEAM_VS_TANK but walking every drawn segment
-# (a static full-length beam, not a moving single-point tip) ----
+# i-frame shape as CHECK_SBEAM_VS_TANK but a 16x16 box (the beam's own
+# real sprite size) instead of an 8x8 point ----
 cpu = fresh_cpu()
-pts, _, _, _ = fire_beam_and_read(cpu, 96, 64, 1)  # beam2, steep down-left - plenty of segments
-mid_col, mid_row = pts[len(pts) // 2]
-cpu.mem[TANK_X] = mid_col * 8 - TANK_COLLISION_X_OFFSET
-cpu.mem[TANK_Y_CUR] = mid_row * 8 - TANK_COLLISION_Y_OFFSET
+s = fire_beam_and_read(cpu, 96, 64, 1)  # beam2
+cpu.mem[TANK_X] = s["x"] - TANK_COLLISION_X_OFFSET
+cpu.mem[TANK_Y_CUR] = s["y"] - TANK_COLLISION_Y_OFFSET
 life0 = cpu.mem[TANK_LIFE]
 call_routine(cpu, "CHECK_BOSS_BROKEN_BEAM_VS_TANK")
-check("tank overlapping a MID-beam segment (not just the first point) takes damage - these are "
-      "static full-length beams, any point along them is a real hazard, unlike SBeam's own "
-      "tip-only check", cpu.mem[TANK_LIFE] == life0 - 1)
+check("tank overlapping the beam sprite's own box takes damage",
+      cpu.mem[TANK_LIFE] == life0 - 1)
 check("a hit sets TANK_FLASH_TIMER", cpu.mem[TANK_FLASH_TIMER] > 0)
 check(f"a hit sets TANK_HAZARD_IFRAMES to TANK_HAZARD_IFRAME_DURATION({TANK_HAZARD_IFRAME_DURATION})",
       cpu.mem[TANK_HAZARD_IFRAMES] == TANK_HAZARD_IFRAME_DURATION)
@@ -832,11 +767,11 @@ check("BOSS_BROKEN_BEAM_POINT_COUNT=0 (no beam currently shown) never damages th
 
 cpu3 = fresh_cpu()
 fire_beam_and_read(cpu3, 96, 64, 0)
-cpu3.mem[TANK_X] = 300  # far away, off the beam's own path entirely
+cpu3.mem[TANK_X] = 300  # far away, off the beam sprite's own box entirely
 cpu3.mem[TANK_Y_CUR] = 4
 life3 = cpu3.mem[TANK_LIFE]
 call_routine(cpu3, "CHECK_BOSS_BROKEN_BEAM_VS_TANK")
-check("a tank far from every drawn segment takes no damage", cpu3.mem[TANK_LIFE] == life3)
+check("a tank far from the beam sprite's own box takes no damage", cpu3.mem[TANK_LIFE] == life3)
 
 
 print()
