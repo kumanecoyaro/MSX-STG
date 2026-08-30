@@ -19,7 +19,6 @@ HORMING_POOL = sym["HORMING_POOL"]
 HORMING_BG_SLOT_COUNT = sym["HORMING_BG_SLOT_COUNT"]
 HORMING_BG_SLOT_SIZE = sym["HORMING_BG_SLOT_SIZE"]
 HORMING_BG_POOL = sym["HORMING_BG_POOL"]
-HORMING_TOTAL_COUNT = sym["HORMING_TOTAL_COUNT"]
 HORMING_BG_SL_CODE = sym["HORMING_BG_SL_CODE"]
 HORMING_BG_DL_CODE = sym["HORMING_BG_DL_CODE"]
 HORMING_BG_DOWN_CODE = sym["HORMING_BG_DOWN_CODE"]
@@ -194,30 +193,43 @@ check("drops the attempt once the whole pool is full (no crash, no state corrupt
       all(slot(cpu2, i)["act"] == 1 for i in range(HORMING_SLOT_COUNT)))
 
 
+def bg_active_count(cpu):
+    return sum(1 for i in range(HORMING_BG_SLOT_COUNT)
+               if cpu.mem[HORMING_BG_POOL + i * HORMING_BG_SLOT_SIZE + 0] == 1)
+
+
 # ---- ARM_HORMING_VOLLEY / UPDATE_HORMING_VOLLEY: intermittent fire ----
-# "弾は4発同時発射ではなく間欠で4発発射"
+# "弾は4発同時発射ではなく間欠で4発発射" (sprite pool's own original 4).
+# round36-13 ("BGとスプライト交互に発射 と言うか同時だな そうでなきゃ
+# BGやスプライトで分けてる意味がない"): each intermittent tick now fires
+# ONE INTO EACH POOL together (not the sprite pool's own 4 first, then
+# the BG pool's own 4 after) - see UPDATE_HORMING_VOLLEY's own comment.
 cpu = fresh_cpu()
 call_routine(cpu, "ARM_HORMING_VOLLEY")
 check("ARM resets the launch counter to 0", cpu.mem[HORMING_VOLLEY_COUNT] == 0)
 check("ARM resets the timer to 0 (fires the first shot on the very next check)",
       cpu.mem[HORMING_VOLLEY_TIMER] == 0)
 
-# does NOT fire all 4 at once - only 1 launches on the first tick
+# does NOT fire all 8 at once - only 1 PAIR (1 sprite + 1 BG) launches
+# on the first tick.
 call_routine(cpu, "UPDATE_HORMING_VOLLEY")
 active_count = sum(1 for i in range(HORMING_SLOT_COUNT) if slot(cpu, i)["act"] == 1)
-check("the first UPDATE_HORMING_VOLLEY tick launches exactly 1 missile, not 4 - 間欠で4発発射",
+check("the first UPDATE_HORMING_VOLLEY tick launches exactly 1 sprite missile, not 4 - 間欠で発射",
       active_count == 1)
-check("HORMING_VOLLEY_COUNT is now 1", cpu.mem[HORMING_VOLLEY_COUNT] == 1)
+check("the SAME tick also launches exactly 1 BG missile - 同時 (simultaneous), not a separate later block",
+      bg_active_count(cpu) == 1)
+check("HORMING_VOLLEY_COUNT is now 1 (counts PAIRS, not raw missiles)", cpu.mem[HORMING_VOLLEY_COUNT] == 1)
 check("the timer is reset to HORMING_VOLLEY_INTERVAL after a launch",
       cpu.mem[HORMING_VOLLEY_TIMER] == HORMING_VOLLEY_INTERVAL)
 
-# ticking again before the interval elapses does NOT fire another
+# ticking again before the interval elapses does NOT fire another pair
 call_routine(cpu, "UPDATE_HORMING_VOLLEY")
 active_count = sum(1 for i in range(HORMING_SLOT_COUNT) if slot(cpu, i)["act"] == 1)
-check("still only 1 active right after the interval-reset tick (timer hasn't reached 0 yet)",
+check("still only 1 sprite active right after the interval-reset tick (timer hasn't reached 0 yet)",
       active_count == 1)
+check("still only 1 BG active too", bg_active_count(cpu) == 1)
 
-# tick through the whole interval - a 2nd missile launches right on
+# tick through the whole interval - a 2nd pair launches right on
 # schedule. The "ticking again" call above already consumed 1 of the
 # INTERVAL decrements (timer went INTERVAL->INTERVAL-1); it takes
 # INTERVAL more calls from there for the timer to count down through 0
@@ -226,48 +238,23 @@ check("still only 1 active right after the interval-reset tick (timer hasn't rea
 for _ in range(HORMING_VOLLEY_INTERVAL):
     call_routine(cpu, "UPDATE_HORMING_VOLLEY")
 active_count = sum(1 for i in range(HORMING_SLOT_COUNT) if slot(cpu, i)["act"] == 1)
-check("a 2nd missile launches exactly HORMING_VOLLEY_INTERVAL ticks after the 1st",
+check("a 2nd sprite missile launches exactly HORMING_VOLLEY_INTERVAL ticks after the 1st",
       active_count == 2)
+check("a 2nd BG missile launches on that exact same tick too", bg_active_count(cpu) == 2)
 
-# drive it all the way through - round36-12: 8 total now (4 sprite+4 BG,
-# see below), so this needs enough ticks for all 8 fires, not just 4 -
-# widened from *6 to *11 accordingly.
+# drive it all the way through - 4 pairs (8 missiles total), never more
+# than either pool's own size, regardless of how many extra ticks pass.
 cpu2 = fresh_cpu()
 call_routine(cpu2, "ARM_HORMING_VOLLEY")
-for _ in range(HORMING_VOLLEY_INTERVAL * 11):
+for _ in range(HORMING_VOLLEY_INTERVAL * 6):
     call_routine(cpu2, "UPDATE_HORMING_VOLLEY")
 active_count = sum(1 for i in range(HORMING_SLOT_COUNT) if slot(cpu2, i)["act"] == 1)
-check("exactly 4 launch in total over enough ticks, never more than the pool size",
+check("exactly 4 sprite missiles launch in total over enough ticks, never more than the pool size",
       active_count == HORMING_SLOT_COUNT)
-
-# round36-12 ("弾数を増やす...4発追加"): the SAME volley also launches 4
-# more into the new BG pool, right after the sprite pool's own 4 (see
-# UPDATE_HORMING_VOLLEY's own comment) - 8 total, never more than either
-# pool's own size.
-bg_active_count = sum(
-    1 for i in range(HORMING_BG_SLOT_COUNT) if cpu2.mem[HORMING_BG_POOL + i * HORMING_BG_SLOT_SIZE + 0] == 1
-)
-check("the BG pool also gets exactly 4 launches (8 total across both pools)",
-      bg_active_count == HORMING_BG_SLOT_COUNT)
-check("HORMING_VOLLEY_COUNT stops advancing at 8 (HORMING_TOTAL_COUNT), not 4",
-      cpu2.mem[HORMING_VOLLEY_COUNT] == HORMING_TOTAL_COUNT)
-
-# and driving it exactly to the boundary (the 4th tick) fires into the
-# sprite pool for count 0-3, the 5th tick is the first that goes to the
-# BG pool instead.
-cpu3 = fresh_cpu()
-call_routine(cpu3, "ARM_HORMING_VOLLEY")
-for _ in range(4):
-    cpu3.mem[HORMING_VOLLEY_TIMER] = 0
-    call_routine(cpu3, "UPDATE_HORMING_VOLLEY")
-check("after exactly 4 launches, the sprite pool is full and the BG pool is still empty",
-      sum(1 for i in range(HORMING_SLOT_COUNT) if slot(cpu3, i)["act"] == 1) == HORMING_SLOT_COUNT
-      and sum(1 for i in range(HORMING_BG_SLOT_COUNT)
-              if cpu3.mem[HORMING_BG_POOL + i * HORMING_BG_SLOT_SIZE + 0] == 1) == 0)
-cpu3.mem[HORMING_VOLLEY_TIMER] = 0
-call_routine(cpu3, "UPDATE_HORMING_VOLLEY")
-check("the 5th launch (count==4) goes into the BG pool, not a 5th sprite",
-      cpu3.mem[HORMING_BG_POOL + 0] == 1)
+check("exactly 4 BG missiles launch in total too (8 total across both pools)",
+      bg_active_count(cpu2) == HORMING_BG_SLOT_COUNT)
+check("HORMING_VOLLEY_COUNT stops advancing at 4 (pairs), not 8",
+      cpu2.mem[HORMING_VOLLEY_COUNT] == HORMING_SLOT_COUNT)
 
 
 # ---- BG pool rendering: DRAW_HORMING_BG_CELL / ERASE_HORMING_BG_CELL /

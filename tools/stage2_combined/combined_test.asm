@@ -982,20 +982,18 @@ HORMING_COLOR EQU 5
 ; branching on the CODE itself - 8 free codes isn't enough for 5
 ; facings x2 backgrounds (would need 10, let alone x3 with night) - so
 ; every BG-drawn missile always paints with this ONE fixed color
-; regardless of what's actually behind it. Accepted, disclosed
-; compromise (confirmed with the user this round): looks correct over
-; sky (the color chosen, and where a missile spends most of its actual
-; flight time - rise+wander are both high up), shows as a color-
-; mismatched patch over Rock/Sand during the brief locked-horizontal
-; end-game approach. Colors reuse the exact same sky pairing bullets
-; use (BULLET_SKY_COLORBYTE) since sky is the dominant case either way.
+; regardless of what's actually behind it - an accepted, disclosed
+; compromise (confirmed with the user). Originally reused BULLET_SKY_
+; COLORBYTE (fg9/bg5 light blue), reasoning sky is the dominant case;
+; round36-13 correction ("BGホーミングの背景色をブラックに 今は
+; ブルーになってる") - changed to bg1 (black) instead, fg9 kept.
 HORMING_BG_SL_CODE   EQU 144
 HORMING_BG_DL_CODE   EQU 145
 HORMING_BG_DOWN_CODE EQU 146
 HORMING_BG_DR_CODE   EQU 147
 HORMING_BG_SR_CODE   EQU 148
 HORMING_BG_COLORADDR EQU 2012h   ; 2000h+group18
-HORMING_BG_COLORBYTE EQU 095h    ; same as BULLET_SKY_COLORBYTE (fg9 light red/bg5 light blue)
+HORMING_BG_COLORBYTE EQU 091h    ; fg9 light red / bg1 black (round36-13, was bg5 light blue)
 ; round 4 fix: "ホーミングのスプライトが非表示待機になってるからだろ
 ; うが ボス上部が常に表示欠けしている" - a real, confirmed bug. The
 ; previous round's reasoning ("boss's own slots10-25 are free while any
@@ -2015,10 +2013,11 @@ HORMING_VOLLEY_TIMER EQU F2EFh   ; raw frames remaining until the next intermitt
 HORMING_BG_SLOT_COUNT EQU 4
 HORMING_BG_SLOT_SIZE  EQU 7   ; same field layout as HORMING_SLOT_SIZE
 HORMING_BG_POOL EQU 0C093h   ; 4 slots x7 bytes = 28 bytes (C093h-C0AEh)
-; total launched per pose/volley - "4発追加" doubles it from 4 to 8,
-; same intermittent one-at-a-time firing cadence as before (see
-; UPDATE_HORMING_VOLLEY) - just twice as many before it stops.
-HORMING_TOTAL_COUNT EQU HORMING_SLOT_COUNT+HORMING_BG_SLOT_COUNT
+; "4発追加" doubles the total launched per pose/volley from 4 to 8 - one
+; missile into EACH pool (sprite+BG) per intermittent tick (round36-13,
+; see UPDATE_HORMING_VOLLEY's own comment for why simultaneous, not
+; sequential blocks) - 4 ticks x2 missiles = 8 total, same
+; HORMING_VOLLEY_INTERVAL cadence as before.
 ; Thunder's own state - a real POOL now (round9 fix: "いつからサンダー
 ; は1本しか出せない仕様に? そんな指示はしてねえぞ...BGを使ってるのは
 ; 表示制限がないからだろが" - BG has no hw-sprite-style display limit,
@@ -2528,14 +2527,13 @@ INIT_RESUME_AFTER_BANK_SELECT:
     ; rock-colored (11-30 - bullets/digits/swatch - get their own,
     ; unrelated colors patched in further down anyway, so touching
     ; them here or not makes no difference).
-    ; round36-12 ("Rockの背景色をダークレッドに てか文字色と同色かな
-    ; もしそうならブラックに"): bg was 11 (light yellow); the "同色か"
-    ; check turned out to matter for real - fg here is ALREADY 6 (dark
-    ; red, from the swap this same patch performs), so a dark-red(6) bg
-    ; would have collided with it (both nibbles identical -> the whole
-    ; glyph reads as one flat color, the Rock texture pattern vanishing
-    ; entirely). Used the instructed fallback instead: bg1 (black) -
-    ; see ROCK_COLOR_SWAPPED_PATCH's own comment for the exact byte.
+    ; round36-12 tried changing this byte's own bg (see git history);
+    ; round36-13 reverted it back to the original bg11 - "Rock225もイジ
+    ; ったな Rock225の背景色は前に戻せ" - this one patch colors Rock AND
+    ; every R225 variant identically (they share group1/the blend-pair
+    ; groups by construction), so it can't be changed for "just Rock"
+    ; without a much larger restructuring - see ROCK_COLOR_SWAPPED_
+    ; PATCH's own comment for the full reasoning.
     LD HL,ROCK_COLOR_SWAPPED_PATCH : LD DE,2001h : LD BC,1 : CALL LDIRVM
     LD HL,ROCK_COLOR_SWAPPED_PATCH : LD DE,2003h : LD BC,29 : CALL LDIRVM
 
@@ -9931,30 +9929,32 @@ ARM_HORMING_VOLLEY:
     LD (HORMING_VOLLEY_TIMER),A   ; 0 - fires the first shot on the very next check
     RET
 
-; round36-12: fires HORMING_TOTAL_COUNT(8) total now, not 4 - the first
-; HORMING_SLOT_COUNT(4) into the original hw-sprite pool exactly as
-; before, the next HORMING_BG_SLOT_COUNT(4) into the new BG pool - same
-; one-at-a-time intermittent cadence throughout (HORMING_VOLLEY_COUNT
-; simply counts higher before UPDATE_HORMING_VOLLEY's own early-RET
-; kicks in).
+; round36-12 first fired the BG pool's own 4 only after the sprite
+; pool's own 4 were already all out (sequential blocks) - round36-13
+; correction: "ホーミングはBGとスプライト交互に発射 と言うか同時だな
+; そうでなきゃBGやスプライトで分けてる意味がない" - sequential blocks
+; meant the BG pool never added any real concurrent capacity during the
+; first half of a volley, defeating the entire point of having 2 pools
+; (more missiles on screen AT ONCE than 4). Now fires one INTO EACH pool
+; on the very same tick - HORMING_VOLLEY_COUNT counts PAIRS (0-4, not
+; 0-8), capped at HORMING_SLOT_COUNT (both pools are the same size, so
+; either constant works as the pair cap - HORMING_SLOT_COUNT chosen
+; since it's the original, always-true-4 one). Still one intermittent
+; tick every HORMING_VOLLEY_INTERVAL frames - "間欠で4発発射" - just 2
+; missiles per tick now instead of 1, 4 ticks total instead of 8.
+; ARM_HORMING_VOLLEY resets this the same way regardless.
 UPDATE_HORMING_VOLLEY:
     LD A,(HORMING_VOLLEY_COUNT)
-    CP HORMING_TOTAL_COUNT
-    RET NC                      ; all 8 already launched this pose
+    CP HORMING_SLOT_COUNT
+    RET NC                      ; all 4 pairs (8 missiles) already launched this pose
     LD A,(HORMING_VOLLEY_TIMER)
     OR A
     JR Z,UHV_FIRE
     DEC A : LD (HORMING_VOLLEY_TIMER),A
     RET
 UHV_FIRE:
-    LD A,(HORMING_VOLLEY_COUNT)
-    CP HORMING_SLOT_COUNT
-    JR NC,UHV_FIRE_BG
     CALL FIRE_ONE_HORMING
-    JR UHV_FIRE_DONE
-UHV_FIRE_BG:
     CALL FIRE_ONE_HORMING_BG
-UHV_FIRE_DONE:
     LD A,(HORMING_VOLLEY_COUNT) : INC A : LD (HORMING_VOLLEY_COUNT),A
     LD A,HORMING_VOLLEY_INTERVAL : LD (HORMING_VOLLEY_TIMER),A
     RET
@@ -11483,14 +11483,30 @@ HUD_BLACKROW32:
 NIGHT_STRIPEROW32:
     DS 32,NIGHT_CODE
 
-; fg6 (dark red, was the tank's) / bg1 (black - round36-12, was bg11
-; light yellow: "Rockの背景色をダークレッドに てか文字色と同色かな
-; もしそうならブラックに" - dark red(6) would have collided with this
-; group's own fg(also 6, from the swap below), so black per the
-; instructed fallback instead - see the color-swap patch in INIT above
-; for the full reasoning) x31.
+; fg6 (dark red, was the tank's) / bg11 (light yellow - "カラーグルー
+; プ節約するから Rockも背景色ライトイエローにしろ Rock225と同じだ")
+; x31 - see the color-swap patch in INIT above.
+; round36-12 attempted bg1(black) here ("Rockの背景色をダークレッドに"),
+; then round36-13 reverted it back to bg11 - "まずRock225もイジったな
+; Rock225の背景色は前に戻せ": this ONE byte colors group1(codes8-15),
+; which is NOT just plain Rock - terrain_gen.py's own STEADY_BASE packs
+; ROCK_L/ROCK_R AND all 4 R225 climb/descend variants (R225_UL/UR/
+; R225D_UL/UR) into this exact same group (codes8-13, see STEADY_CODE),
+; and most of the blend/transition pair codes involving them share it
+; too (BLEND_BASE's own "every mixed pair stays in the ordinary rock-
+; colored pool" consolidation - ROCK_COLOR_SWAPPED_PATCH itself blankets
+; groups1,3-31, not just group1). Rock and Rock225 are not two
+; independently-colorable things in the current design - they are the
+; literal same VRAM color byte - so "change Rock's bg without touching
+; Rock225" is not achievable without relocating R225's own ids to a
+; separate group and re-deriving its own blend-pair coloring, a much
+; larger change than a byte tweak and one with real precedent for
+; reintroducing exactly the flicker/seam bugs this same consolidation
+; was built to fix ("まだチラついてる Rockの前後だけおかしい" et al. -
+; see terrain_gen.py's own SAND_GROUPS/BLEND_BASE comments for that
+; history). Not attempted here without being asked for it directly.
 ROCK_COLOR_SWAPPED_PATCH:
-    DS 31,061h
+    DS 31,06Bh
 
 ; explosion sprite (16x16), byte-for-byte from src/CYBER SHMUP.asm's
 ; own EXPLOSION_PATTERN (its pod-destroy-burst spark shape) - "弾が
