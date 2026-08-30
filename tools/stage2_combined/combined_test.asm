@@ -3638,7 +3638,27 @@ SKIP_OTHER_ENEMIES:
     ; UPDATE_BOSS_BROKEN_ACTIVE's own beam-sequence dispatch, called
     ; above), so only the tank-collision check needs its own call here -
     ; same split as UPDATE_SBEAM(draw)/CHECK_SBEAM_VS_TANK(collision).
+    ; round36-14 follow-up#5 real-hardware feedback ("かなり動作速度が
+    ; 遅くなったが 無駄な処理が無いか確認...逆にボスまでにボスのみの
+    ; 処理が回ってないか") - unlike Homing/Thunder/SBeam just above
+    ; (which can have an in-flight instance launched BEFORE the broken-
+    ; form transition that still needs updating afterward, so they can't
+    ; be gated on BOSS_FORM), BOSS_BROKEN_PROJ_ACTIVE can ONLY ever be
+    ; set by LAUNCH_BOSS_BROKEN_BEAM, which itself only ever runs from
+    ; inside UPDATE_BOSS_BROKEN_ACTIVE (already gated on BOSS_FORM=
+    ; ACTIVE, see UPDATE_BOSS_ALL's own dispatch) - so this call was
+    ; provably a guaranteed no-op (all 4 slots always inactive) for the
+    ; entire normal-form portion of the boss fight, same class of "運の
+    ; 悪い全域無駄ループ" this file's own SKIP_ZACO_ENEMY/SKIP_BOSS_
+    ; SUBSYSTEMS precedent already exists to eliminate - just gated the
+    ; wrong way (missing a 3rd, narrower tier: boss-active-but-not-yet-
+    ; broken). Skipping it here is a pure removal of dead work, not a
+    ; behavior change (real reasoning above, not just plausible).
+    LD A,(BOSS_FORM)
+    CP BOSS_FORM_ACTIVE
+    JR NZ,SKIP_BOSS_BROKEN_BEAM_CHECK
     CALL CHECK_BOSS_BROKEN_BEAM_VS_TANK
+SKIP_BOSS_BROKEN_BEAM_CHECK:
 SKIP_BOSS_SUBSYSTEMS:
     CALL CLOUD_UPDATE_ALL
     CALL SOUND_UPDATE

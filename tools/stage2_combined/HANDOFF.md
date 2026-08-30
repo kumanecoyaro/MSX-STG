@@ -6092,3 +6092,50 @@ Thunder activity) confirming it survives completely untouched.
   `boss_attack_sfx_test.py` 29 passed/0 failed。全回帰`run_all.py`
   1079 passed/0 failed(`terrain_render_perf_test.py`含め今回も一時的
   失敗なし)。Stage2単体のみ実施(Combビルドは指示なしに未実施)。
+
+## Round 36-14 follow-up#6: 動作速度低下の調査 - 無駄な処理の監査
+
+- User instruction(verbatim): "かなり動作速度が遅くなったが 無駄な処理が
+  無いか確認 ボス戦に入っているのに ボス以外の処理が回っていないか
+  逆にボスまでにボスのみの処理が回ってないか"
+- MAINLOOP自体の3層ガード構造を精査(第1層: `BOSS_ACT=0`ならザコ敵
+  ZacoII/Zum/BigZum/Flyer/Etankが動く・ボス専用サブシステムHoming/
+  Thunder/SBeam/形態変化ビームは`SKIP_BOSS_SUBSYSTEMS`でスキップ、
+  第2層: `BOSS_ACT!=0`ならザコ敵は`SKIP_ZACO_ENEMY`/`SKIP_OTHER_
+  ENEMIES`でスキップ・ボス専用サブシステムは動く - いずれも
+  ユーザー自身の過去ラウンドでの同種の指摘("それになんで常時ボスの
+  処理走らせてんだよ...道中は道中"/"使われない物を呼ぶのは無駄")で
+  既に実装済み・健全と確認)。
+- **発見した実バグ**: `CHECK_BOSS_BROKEN_BEAM_VS_TANK`(今Round追加した
+  形態変化後4方向ビームの自機衝突判定)だけが、ボス戦全体
+  (`BOSS_ACT!=0`)を通して毎フレーム無条件に呼ばれていた。しかしこの
+  ルーチン自身の`BOSS_BROKEN_PROJ_ACTIVE`フラグは`LAUNCH_BOSS_BROKEN_
+  BEAM`からしかセットされず、そのルーチン自体`UPDATE_BOSS_BROKEN_
+  ACTIVE`内(`BOSS_FORM=BOSS_FORM_ACTIVE`の場合のみ`UPDATE_BOSS_ALL`
+  から到達)からしか呼ばれない - つまり形態変化前(通常フォーム、
+  ボス戦の大部分を占める)は4スロット全て構造的に必ず非アクティブと
+  確定しているにも関わらず、この判定ループ(TANK座標計算・4スロット
+  ループ)を無駄に毎フレーム実行していた。Homing/Thunder/SBeamは
+  形態変化"前"に発射された個体が変化"後"も飛び続ける可能性があるため
+  `BOSS_FORM`ではガードできない(意図的に無条件のまま)のに対し、
+  この判定だけは`BOSS_FORM==BOSS_FORM_ACTIVE`で完全に安全にガード
+  できる非対称性がある。MAINLOOP側の呼び出し箇所に
+  `LD A,(BOSS_FORM):CP BOSS_FORM_ACTIVE:JR NZ,...`ガードを追加。
+- **テスト**: 新規`boss_perf_gate_test.py` - 自機の実座標にちょうど
+  重なる位置へ強制的にアクティブ化したビームスロットを仕込み、
+  `BOSS_FORM=0`では(本来ありえない状況でも)判定自体が走らず自機が
+  ダメージを受けないこと、`BOSS_FORM=BOSS_FORM_ACTIVE`では同じ設定で
+  実際にダメージを受けることを、実際の`step_frame`(MAINLOOP1周)経由
+  で直接検証(実装中、`UPDATE_BOSS_BROKEN_ACTIVE`自身も同じフレームで
+  動くため、初期化していない`BOSS_BROKEN_STEPS_TO_STOP`等がゼロ扱い
+  され意図せず新規ビーム発射が起きてテスト用の仕込みを上書きしてしまう
+  という罠に一度ハマったが、周回中の安全な状態を明示的に用意することで
+  解消)。
+- **検証**: `python3 build_test.py`アセンブル成功。
+  `boss_perf_gate_test.py` 2 passed/0 failed。全回帰`run_all.py`
+  1081 passed/0 failed(`terrain_render_perf_test.py`含め今回も一時的
+  失敗なし)。Stage2単体のみ実施(Combビルドは指示なしに未実施)。
+- **規模感の補足**: 見つかったのはこの1箇所(4スロット分のフラグ
+  チェック+自機座標計算、毎フレーム)で、体感できるほど大きな影響とは
+  考えにくい規模。「かなり」遅くなったという体感の全てをこれで説明
+  できるかは未確定 - 修正後も遅く感じる場合は追加調査が必要。
