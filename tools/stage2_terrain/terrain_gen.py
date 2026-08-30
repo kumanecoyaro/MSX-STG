@@ -130,12 +130,19 @@ R225D_UL_ID, R225D_UR_ID = 5, 6
 # no flat plateau in between, exactly like the "rapid back-to-back climb"
 # stretch this test track already used).
 #
-# DEFAULT_TIER_PROFILE below reproduces the previous hardcoded test track
-# byte-for-byte (verified directly, all 4 rows, before this refactor
-# replaced it) - see HANDOFF.md's own round36 entry for the derivation.
+# round36-9 ("これで組み込んでみてくれ"): DEFAULT_TIER_PROFILE below is
+# run-length-encoded (via columns_to_tier_profile) from the user's own
+# edited terrain, actually painted in schedule-editor.html and exported as
+# Schedule2_7.json's own "terrain" field (492 columns) - no longer the
+# original round36 hardcoded test track. One column (index36) was a
+# physically-impossible 2-tier drop (3->1, real steps are always +-1 - see
+# columns_to_tier_profile's own assert) and was clamped to 3->2->1 before
+# encoding - see HANDOFF.md's own round36-9 entry for exactly which cell
+# and why.
 DEFAULT_TIER_PROFILE = [
-    (0, 24), (1, 24), (2, 24), (3, 174), (2, 24), (1, 24), (0, 24),
-    (1, 0), (2, 0), (3, 150), (2, 0), (1, 0), (0, 24),
+    (0, 24), (1, 9), (2, 2), (3, 1), (2, 1), (1, 1), (2, 1),
+    (1, 9), (2, 24), (3, 174), (2, 24), (1, 24), (0, 20), (1, 1),
+    (2, 1), (3, 152), (2, 2), (1, 1), (2, 1), (1, 1), (0, 19),
 ]
 
 

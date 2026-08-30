@@ -254,5 +254,22 @@
   ステージクリア画面等の新規UI実装(現状は新規スポーンが構造的に発生しなくなるだけで、
   明示的な終了演出は未実装)。Etankが地形非依存でスポーンするようになったことで
   プレースホルダー地形の上下に浮いて見える可能性(実害未確認、実機報告待ち)。
-  **地形編集の実ゲームへの反映(`build_test.py`のTerrain2.json配線)は、ユーザーが
-  実際に地形を編集して結果を提供してから着手する(現時点では明示的な指示なし)。**
+- **(2026-08-30、Round36-9、完了済み)**: "これで組み込んでみてくれ"という指示で
+  ユーザー自身がschedule-editor.htmlで編集した`Schedule2_7.json`(placements150件+
+  terrain492列)を実際に本編(`tools/stage2_combined/combined_test.asm`)へ統合。
+  上記の「地形編集の実ゲームへの反映」保留はこれで解消。
+  - `terrain`配列に1箇所(列index36、tier3→1の物理的に不可能な2段ジャンプ)を発見。
+    ユーザーへの確認は行わず(ビルド自体をブロックする技術的制約 - `terrain_gen.py`の
+    `columns_to_tier_profile`がこの種のジャンプに対しassertで即座に失敗するため)、
+    最小限の訂正(3→2→1、index36を1から2に変更)を明示的に適用の上で統合。
+    詳細はHANDOFF.md Round36-9参照、ユーザーは結果を見て別の意図だった場合は
+    訂正可能。
+  - `terrain_gen.py`の`DEFAULT_TIER_PROFILE`を、上記terrain配列からRLE変換した
+    新プロファイル(21要素)に置き換え。`TERRAIN_TRACK_LEN`は516→532に変化
+    (遷移が増えたため自動的に伸長、想定通りの挙動)。
+  - `combined_test.asm`の`SPAWN2_COUNT`(152→150)/`SPAWN2_THRESHOLDS`/
+    `SPAWN2_Y_TABLE`/`SSC2_FIRE`のCPディスパッチチェーンを、新JSONから機械的に
+    再生成したテキストで丸ごと置換(手作業transcriptionではなくPythonスクリプトで
+    生成、`tools/schedule-editor.html`のtype→ハンドラ対応表を直接コード化)。
+  - `python3 build_test.py`でアセンブル成功、全回帰テスト926 passed/0 failed
+    (該当する`spawn2_schedule_test.py`161件含む)を確認済み。

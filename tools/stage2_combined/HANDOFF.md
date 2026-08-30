@@ -5069,3 +5069,46 @@ Thunder activity) confirming it survives completely untouched.
   (`Schedule2_current.json`、1段ずつの遷移のみ)を再読込し、Round36-7時点の
   スクリーンショットと完全に同一の見た目になる(＝1段遷移の挙動に
   リグレッションが無い)ことも確認済み。
+
+## Round 36-9: ユーザー編集済みSchedule2_7.jsonを本編(combined_test.asm)へ統合
+
+- User instruction(verbatim): "@\"...e94abbd3-Schedule2_7.json\" ではこれで
+  組み込んでみてくれ"
+  - ユーザーがschedule-editor.htmlで実際に編集したStage2の敵配置
+  (placements 150件)と地形(terrain 492列)を、`tools/stage2_combined/
+  combined_test.asm`(本編・Stage2テストROM)に実際に統合する初の作業。
+  従来「保留中タスク」に明記していた「地形編集の実ゲームへの反映は、
+  ユーザーが実際に地形を編集して結果を提供してから着手する」の条件が
+  満たされたと判断し着手。
+- **terrain配列の検証と1箇所の訂正**: `columns_to_tier_profile`相当の
+  検証(隣接列の差が常に±1以内か)をPythonで実施したところ、列index36
+  (0始まり)で`tier 3→1`という物理的に不可能な2段ジャンプを検出
+  (前後は`...33:2,34:2,35:3,36:1,37:1,38:2,39:1...`)。この1点を放置すると
+  `terrain_gen.py`の`columns_to_tier_profile`自身のassertでビルド全体が
+  即座に失敗するため、ユーザーへの個別確認は行わず(技術的にブロッキング
+  である以上、確認を待つより先に進める判断とした)、最小限の訂正
+  - index36を`1`から`2`に変更(`3→2→1`という自然な下り坂に変換、
+  隣接列に対する変更量が最小になる選択)を明示的に適用して統合した。
+  ユーザーが実際に意図していた値と異なる場合は、schedule-editor.html側で
+  該当列(tick36付近、row21)を編集し直して再度送付すれば上書き可能。
+- **`terrain_gen.py`**: `DEFAULT_TIER_PROFILE`を、上記で訂正したterrain
+  配列から`columns_to_tier_profile()`でRLE変換した新プロファイル(21要素、
+  従来の13要素から増加- ユーザーが多くの細かい高低差を追加したため)に
+  置き換え。`TERRAIN_TRACK_LEN`は516→532列に自動的に伸長(1段の遷移ごとに
+  2列の専用ランプが挿入されるため、遷移数が増えれば当然伸びる - 想定通りの
+  挙動)。`MAX_CODE`(パターンコード数)は93で、極端な増加ではないことを確認。
+- **`combined_test.asm`**: `SPAWN2_COUNT`(152→150)、`SPAWN2_THRESHOLDS`
+  (tick一覧)、`SPAWN2_Y_TABLE`(各エントリのrow*8)、`SSC2_FIRE`のCP
+  ディスパッチチェーン(type→ハンドラのCP分岐、149行、boss=最終エントリは
+  従来通りCPなしの無条件フォールスルー)を、新JSONから機械的に生成した
+  テキストで丸ごと置換。手作業transcriptionではなく使い捨てPythonスクリプト
+  (schedule-editor.htmlのpalette type→実際のハンドラ対応表を直接コード化:
+  s2_zacoii→SPAWN_S2_ZACOII、s2_zacoii_red→SPAWN_S2_ZACOII_RED、
+  s2_flyer→ALLOC_FLYER_SLOT、s2_zum→ALLOC_ZUM_SLOT、
+  s2_bigzum→ALLOC_BIGZUM_SLOT、s2_etank→ALLOC_ETANK_SLOT、
+  s2_boss→無条件フォールスルー)で生成・置換し、手書きミスを排除。
+- **検証**: `python3 build_test.py`でアセンブル成功(4000h-A31Ch、25373
+  bytes)。全回帰テスト`run_all.py`で926 passed/0 failed(該当する
+  `spawn2_schedule_test.py`161件含め、リグレッションなし)を確認済み。
+  なお本Roundでは(前回までの指示通り)Combビルドは行っていない
+  (指示があれば別途対応)。
