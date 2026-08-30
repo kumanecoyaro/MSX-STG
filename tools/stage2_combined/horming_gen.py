@@ -56,6 +56,23 @@ def horming_sprite(name):
 ALL_SPRITES = {name: horming_sprite(name) for name in FACINGS}
 
 
+def horming_bg_pattern(name):
+    """Flat, unpadded 8-byte BG (name-table) version of the same source
+    art the hw sprite pool uses - round36-12 ("弾数を増やす...BGも合わ
+    せて使用する 4発追加"): the extra 4 instances are BG-cell-drawn
+    (see combined_test.asm's own HORMING_BG_POOL comment for why - both
+    the hw sprite pattern-number budget and the sprite ATTRIBUTE slot
+    budget were confirmed fully exhausted during the boss fight). Same
+    8x8 source bits as horming_sprite() above, just not padded into a
+    16x16 sprite canvas - a BG tile is inherently 8x8 already."""
+    bits = load_bits(name)
+    tile = [row[0:8] for row in bits[0:8]]
+    return to_bytes(tile)
+
+
+ALL_BG_PATTERNS = {name: horming_bg_pattern(name) for name in FACINGS}
+
+
 def db_bytes(byte_list):
     return "    DB " + ",".join(f"{b}" for b in byte_list)
 
@@ -65,8 +82,12 @@ def emit_asm_tables():
     for name in FACINGS:
         out.append(f"HORMING_{name.upper()}_SPRITE:")
         out.append(db_bytes(ALL_SPRITES[name]))
+    for name in FACINGS:
+        out.append(f"HORMING_BG_{name.upper()}_PATTERN:")
+        out.append(db_bytes(ALL_BG_PATTERNS[name]))
     return "\n".join(out)
 
 
 if __name__ == "__main__":
     print(f"Horming missile: {len(FACINGS)} 16x16-padded hw sprite patterns converted")
+    print(f"Horming missile: {len(FACINGS)} flat 8x8 BG patterns converted (round36-12)")

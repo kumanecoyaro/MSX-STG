@@ -411,7 +411,20 @@ for pair in PAIRS:
 # both, an actual mistake, not a deliberate "blend into the ground"
 # choice).
 SKY_COLOR = 0x55           # fg=5,bg=5 (light blue)
-ROCK_COLOR = 0x8B          # fg=8 (medium red, unchanged), bg=11 (light yellow)
+# round36-12 ("Rockの背景色をダークレッドに"): attempted here first, then
+# reverted - this constant is only terrain_gen.py's own GENERIC default
+# for groups1/3-31, and combined_test.asm's own INIT unconditionally
+# overwrites every one of those groups again right after loading it
+# (ROCK_COLOR_SWAPPED_PATCH, "カラー変更 Rockの文字色レッドと自機のレ
+# ッドを入れ替えて" - an earlier round already swapped Rock's own fg to
+# 6/dark-red, keeping bg at 11) - so changing bg here alone is silently
+# inert for every group that patch touches, confirmed by direct VRAM
+# readback (byte stayed 06Bh regardless of this value). The real fix is
+# in combined_test.asm's own ROCK_COLOR_SWAPPED_PATCH literal instead -
+# see its own comment for why (this round's fg/bg-collision check
+# "文字色と同色かな" turned out to matter for real: fg is ALREADY 6, so
+# a bg of 6 too would have made the whole glyph one flat color).
+ROCK_COLOR = 0x8B          # fg=8 (medium red, unchanged), bg=11 (light yellow) - terrain_gen.py's own generic default, patched over for the real in-game color (see above)
 SAND_COLOR = 0xAB          # fg=10 (dark yellow), bg=11 (light yellow)
 N_COLOR_GROUPS = 32
 COLORDATA = [SKY_COLOR] + [ROCK_COLOR] * (N_COLOR_GROUPS - 1)

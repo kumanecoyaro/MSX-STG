@@ -972,6 +972,30 @@ PAT_HORMING_SR   EQU PAT_FLYER+16
 ; already uses elsewhere for "light blue" (NIGHT_COLOR, CLOUD_GROUP0_
 ; COLOR).
 HORMING_COLOR EQU 5
+; round36-12: BG pattern codes for the new BG-drawn 4-instance pool
+; (HORMING_BG_POOL) - group18 (144-151), freed up entirely by round36-
+; 11's own move of the bullet night-glyph codes off this group. Only 5
+; of its 8 codes used (one per facing, no separate _L/mirror - the 5
+; source sprites already cover every direction the missile actually
+; faces, unlike the tank's own bullets which need a true left/right
+; mirror). Unlike DRAW_BULLET_CELL there's no sky/rock (or night)
+; branching on the CODE itself - 8 free codes isn't enough for 5
+; facings x2 backgrounds (would need 10, let alone x3 with night) - so
+; every BG-drawn missile always paints with this ONE fixed color
+; regardless of what's actually behind it. Accepted, disclosed
+; compromise (confirmed with the user this round): looks correct over
+; sky (the color chosen, and where a missile spends most of its actual
+; flight time - rise+wander are both high up), shows as a color-
+; mismatched patch over Rock/Sand during the brief locked-horizontal
+; end-game approach. Colors reuse the exact same sky pairing bullets
+; use (BULLET_SKY_COLORBYTE) since sky is the dominant case either way.
+HORMING_BG_SL_CODE   EQU 144
+HORMING_BG_DL_CODE   EQU 145
+HORMING_BG_DOWN_CODE EQU 146
+HORMING_BG_DR_CODE   EQU 147
+HORMING_BG_SR_CODE   EQU 148
+HORMING_BG_COLORADDR EQU 2012h   ; 2000h+group18
+HORMING_BG_COLORBYTE EQU 095h    ; same as BULLET_SKY_COLORBYTE (fg9 light red/bg5 light blue)
 ; round 4 fix: "ホーミングのスプライトが非表示待機になってるからだろ
 ; うが ボス上部が常に表示欠けしている" - a real, confirmed bug. The
 ; previous round's reasoning ("boss's own slots10-25 are free while any
@@ -1965,6 +1989,36 @@ HORMING_POOL EQU F2C2h   ; 4 slots x7 bytes = 28 bytes
 HORMING_SPRITE_ATTRS EQU F2DEh   ; 4 slots x4 bytes (Y,X,pattern,color), staged same as ENEMY_SPRITE_ATTRS
 HORMING_VOLLEY_COUNT EQU F2EEh   ; how many of this pose's 4 have launched so far - see UPDATE_HORMING_VOLLEY
 HORMING_VOLLEY_TIMER EQU F2EFh   ; raw frames remaining until the next intermittent launch
+; round36-12 ("ホーミングは弾数を増やす 今はスプライトのみだがBGも合わ
+; せて使用する 4発追加"): a SECOND, parallel 4-instance pool, BG-cell
+; drawn instead of hw-sprite - not just "4 more of the same". Both hw
+; sprite pattern-code budget (PAT_HORMING_SL's own comment: reuses
+; Flyer's whole 32-code block, only 12 codes spare - not enough for a
+; 2nd full 5-facing set) AND hw sprite ATTRIBUTE slot budget (all 32
+; already accounted for during the boss fight: body16+SBeam's own hard
+; 26-31+tank/enemy-pool/bullet/current-Horming's shared 0-9 - confirmed
+; zero free slots) were audited and found fully exhausted - see
+; HANDOFF.md round36-12 for the numbers. This directly contradicts
+; horming_gen.py's own documented history ("BGでは...動きがガタガタで
+; 速すぎるんだよ スプライト必須" - BG was tried once, rejected, redone
+; as sprites) - confirmed directly with the user this round that the
+; NEW 4 should go BG anyway, given sprite capacity is genuinely gone;
+; the ORIGINAL 4 (HORMING_POOL/HORMING_SLOT_COUNT above) are completely
+; untouched, still hw-sprite, still smooth. Same 7-byte struct layout
+; as HORMING_POOL (UPDATE_ONE_HORMING itself is fully generic over IX,
+; reused as-is for both pools) but a SEPARATE array, not a grown
+; HORMING_POOL - the F2xxh region above is packed with zero slack
+; (HORMING_VOLLEY_TIMER sits immediately after with nothing spare), so
+; this lives in the C000h+ free region instead, same precedent as
+; round35's own FLYER_POOL relocation and round36-11's own BULLET0/1/2_
+; VARIANT bytes.
+HORMING_BG_SLOT_COUNT EQU 4
+HORMING_BG_SLOT_SIZE  EQU 7   ; same field layout as HORMING_SLOT_SIZE
+HORMING_BG_POOL EQU 0C093h   ; 4 slots x7 bytes = 28 bytes (C093h-C0AEh)
+; total launched per pose/volley - "4発追加" doubles it from 4 to 8,
+; same intermittent one-at-a-time firing cadence as before (see
+; UPDATE_HORMING_VOLLEY) - just twice as many before it stops.
+HORMING_TOTAL_COUNT EQU HORMING_SLOT_COUNT+HORMING_BG_SLOT_COUNT
 ; Thunder's own state - a real POOL now (round9 fix: "いつからサンダー
 ; は1本しか出せない仕様に? そんな指示はしてねえぞ...BGを使ってるのは
 ; 表示制限がないからだろが" - BG has no hw-sprite-style display limit,
@@ -2474,6 +2528,14 @@ INIT_RESUME_AFTER_BANK_SELECT:
     ; rock-colored (11-30 - bullets/digits/swatch - get their own,
     ; unrelated colors patched in further down anyway, so touching
     ; them here or not makes no difference).
+    ; round36-12 ("Rockの背景色をダークレッドに てか文字色と同色かな
+    ; もしそうならブラックに"): bg was 11 (light yellow); the "同色か"
+    ; check turned out to matter for real - fg here is ALREADY 6 (dark
+    ; red, from the swap this same patch performs), so a dark-red(6) bg
+    ; would have collided with it (both nibbles identical -> the whole
+    ; glyph reads as one flat color, the Rock texture pattern vanishing
+    ; entirely). Used the instructed fallback instead: bg1 (black) -
+    ; see ROCK_COLOR_SWAPPED_PATCH's own comment for the exact byte.
     LD HL,ROCK_COLOR_SWAPPED_PATCH : LD DE,2001h : LD BC,1 : CALL LDIRVM
     LD HL,ROCK_COLOR_SWAPPED_PATCH : LD DE,2003h : LD BC,29 : CALL LDIRVM
 
@@ -2605,6 +2667,21 @@ INIT_RESUME_AFTER_BANK_SELECT:
     LD HL,BULLET_U_SPRITE0 : LD DE,PAT_BULLETU*8+SPRPAT : LD BC,32 : CALL LDIRVM
     LD HL,BULLET_U_SPRITE0_L : LD DE,PAT_BULLETU_L*8+SPRPAT : LD BC,32 : CALL LDIRVM
     XOR A : LD (BULLETF_ROT_COUNTER),A : LD (BULLETU_ROT_COUNTER),A
+
+    ; round36-12: the new BG-drawn Horming pool's own 5 facing patterns
+    ; and single shared color group (group18, 144-151 - see HORMING_BG_
+    ; SL_CODE's own comment). Loaded once here at INIT, unlike the hw
+    ; sprite version's own patterns (which wait for boss-spawn time to
+    ; take over Flyer's still-in-use block) - nothing else in this game
+    ; ever needs codes144-151 at any point, so there's no "guaranteed
+    ; dead owner" timing dependency to wait for.
+    LD HL,HORMING_BG_SL_PATTERN   : LD DE,HORMING_BG_SL_CODE*8   : LD BC,8 : CALL LDIRVM
+    LD HL,HORMING_BG_DL_PATTERN   : LD DE,HORMING_BG_DL_CODE*8   : LD BC,8 : CALL LDIRVM
+    LD HL,HORMING_BG_DOWN_PATTERN : LD DE,HORMING_BG_DOWN_CODE*8 : LD BC,8 : CALL LDIRVM
+    LD HL,HORMING_BG_DR_PATTERN   : LD DE,HORMING_BG_DR_CODE*8   : LD BC,8 : CALL LDIRVM
+    LD HL,HORMING_BG_SR_PATTERN   : LD DE,HORMING_BG_SR_CODE*8   : LD BC,8 : CALL LDIRVM
+    LD A,HORMING_BG_COLORBYTE : LD (BULLET_TEMP_BYTE),A
+    LD HL,BULLET_TEMP_BYTE : LD DE,HORMING_BG_COLORADDR : LD BC,1 : CALL LDIRVM
 
     ; Sasapi's own attack-pose hand art (BG pattern, not a hw sprite -
     ; see SASAPI_HAND_CODE_BASE's own comment) - a permanent allocation
@@ -2780,6 +2857,10 @@ INIT_SPRATR_CLR:
     LD (HORMING_POOL+7),A
     LD (HORMING_POOL+14),A
     LD (HORMING_POOL+21),A
+    LD (HORMING_BG_POOL+0),A
+    LD (HORMING_BG_POOL+7),A
+    LD (HORMING_BG_POOL+14),A
+    LD (HORMING_BG_POOL+21),A
     ; "こう言ったゲームってのは全てスケジュールで動くんだよ...ボス前と
     ; ボススポーン後は完全に分けて一切干渉しない 当然ボスまでは一切関連
     ; ルーチンも呼ばんし最初にメモリを確保したりしない...初期化もボス用
@@ -3226,6 +3307,7 @@ SKIP_OTHER_ENEMIES:
     CALL CHECK_BULLET_VS_BOSS
     CALL CHECK_BULLET_VS_HORMING
     CALL UPDATE_HORMING_ALL
+    CALL UPDATE_HORMING_BG_ALL
     CALL UPDATE_THUNDER
     CALL CHECK_THUNDER_VS_TANK
     CALL UPDATE_SBEAM
@@ -9849,17 +9931,30 @@ ARM_HORMING_VOLLEY:
     LD (HORMING_VOLLEY_TIMER),A   ; 0 - fires the first shot on the very next check
     RET
 
+; round36-12: fires HORMING_TOTAL_COUNT(8) total now, not 4 - the first
+; HORMING_SLOT_COUNT(4) into the original hw-sprite pool exactly as
+; before, the next HORMING_BG_SLOT_COUNT(4) into the new BG pool - same
+; one-at-a-time intermittent cadence throughout (HORMING_VOLLEY_COUNT
+; simply counts higher before UPDATE_HORMING_VOLLEY's own early-RET
+; kicks in).
 UPDATE_HORMING_VOLLEY:
     LD A,(HORMING_VOLLEY_COUNT)
-    CP HORMING_SLOT_COUNT
-    RET NC                      ; all 4 already launched this pose
+    CP HORMING_TOTAL_COUNT
+    RET NC                      ; all 8 already launched this pose
     LD A,(HORMING_VOLLEY_TIMER)
     OR A
     JR Z,UHV_FIRE
     DEC A : LD (HORMING_VOLLEY_TIMER),A
     RET
 UHV_FIRE:
+    LD A,(HORMING_VOLLEY_COUNT)
+    CP HORMING_SLOT_COUNT
+    JR NC,UHV_FIRE_BG
     CALL FIRE_ONE_HORMING
+    JR UHV_FIRE_DONE
+UHV_FIRE_BG:
+    CALL FIRE_ONE_HORMING_BG
+UHV_FIRE_DONE:
     LD A,(HORMING_VOLLEY_COUNT) : INC A : LD (HORMING_VOLLEY_COUNT),A
     LD A,HORMING_VOLLEY_INTERVAL : LD (HORMING_VOLLEY_TIMER),A
     RET
@@ -9890,6 +9985,32 @@ FOH_SPAWN:
     XOR A
     LD (IX+3),A                  ; facing SL (cosmetic)
     LD (IX+4),A                  ; state 0 = rise
+    LD A,HORMING_RISE_DIST : LD (IX+5),A
+    RET
+
+; round36-12: mirrors FIRE_ONE_HORMING exactly, targeting HORMING_BG_
+; POOL/HORMING_BG_SLOT_COUNT instead. No separate "draw immediately at
+; spawn" step needed the way TRY_SPAWN_BULLET has for F-type bullets -
+; see ERASE_HORMING_BG_CELL's own comment for why the very next
+; UPDATE_HORMING_BG_ALL pass handles this slot's first real draw with
+; no special-casing required.
+FIRE_ONE_HORMING_BG:
+    LD B,HORMING_BG_SLOT_COUNT
+    LD IX,HORMING_BG_POOL
+FOHB_LOOP:
+    LD A,(IX+0)
+    OR A
+    JR Z,FOHB_SPAWN
+    INC IX : INC IX : INC IX : INC IX : INC IX : INC IX : INC IX
+    DJNZ FOHB_LOOP
+    RET
+FOHB_SPAWN:
+    LD A,1 : LD (IX+0),A
+    LD A,HORMING_SPAWN_X : LD (IX+1),A
+    LD A,HORMING_SPAWN_Y : LD (IX+2),A
+    XOR A
+    LD (IX+3),A
+    LD (IX+4),A
     LD A,HORMING_RISE_DIST : LD (IX+5),A
     RET
 
@@ -10245,11 +10366,29 @@ UOH_H2_STEP_DR:
     LD A,(IX+2) : ADD A,HORMING_SPEED : LD (IX+2),A
     LD A,B : LD (IX+1),A
 
-; --- trigger: missile_Y >= TANK_Y_CUR+HORMING_HOMING_Y_OFFSET - see
+; --- trigger: missile_Y >= TANK_GROUND_Y+HORMING_HOMING_Y_OFFSET - see
 ; UPDATE_ONE_HORMING's own comment for why this is an inequality (not
-; exact match) and why it targets bullet height, not the tank itself ---
+; exact match) and why it targets bullet height, not the tank itself.
+; round36-12 (実機フィードバック "ホーミングがたまに自機の上あたりに
+; 残る事がある 多分ジャンプしたとき"): uses TANK_GROUND_Y (the terrain-
+; tier-following resting Y, updated every frame regardless of jump
+; state - see its own comment) instead of TANK_Y_CUR (the actually-
+; drawn Y, which dips below TANK_GROUND_Y while JUMP_ACTIVE - see
+; UPDATE_JUMP's own "TANK_Y_CUR = TANK_GROUND_Y - JUMP_Y_OFFSET").
+; State3 is deliberately locked once triggered ("自機狙いY位置マッチ
+; 水平移動後はホーミングせずそのまま水平移動固定で" - round5's own
+; direct instruction, not something to relax) - the bug wasn't the lock
+; itself, it was locking in at whatever height the tank's OWN sprite
+; happened to be at that exact instant. If that instant landed mid-jump,
+; TANK_Y_CUR was transiently smaller (higher on screen) than the tank's
+; real resting height, so the missile locked in above where the tank
+; would be once it landed - and then just stayed there, since state3
+; never re-checks. TANK_GROUND_Y is immune to this because it tracks
+; the terrain-following resting height continuously, jump or not, so
+; the lock-in height no longer depends on whether the tank happened to
+; be airborne the instant the threshold was crossed.
 UOH_H2_TRIGGER:
-    LD A,(TANK_Y_CUR) : ADD A,HORMING_HOMING_Y_OFFSET : LD B,A
+    LD A,(TANK_GROUND_Y) : ADD A,HORMING_HOMING_Y_OFFSET : LD B,A
     LD A,(IX+2)
     CP B
     JP C,UOH_COLLIDE                  ; still above the threshold - stay in state2
@@ -10331,6 +10470,11 @@ CHECK_BULLET_VS_HORMING:
     LD IX,BULLET2_ACT : CALL CHECK_HIT_ONE_BULLET_HORMING
     RET
 
+; round36-12: also checks the new BG-drawn pool, right after the
+; original hw-sprite pool - a bullet can shoot down either kind of
+; missile equally (see CHECK_HIT_PAIR_HORMING_BG's own comment for the
+; one real difference: a BG-drawn kill also has to erase the missile's
+; own cell, not just deactivate it).
 CHECK_HIT_ONE_BULLET_HORMING:
     LD IY,HORMING_POOL
     LD B,HORMING_SLOT_COUNT
@@ -10340,6 +10484,14 @@ CHOBH_LOOP:
     POP BC
     INC IY : INC IY : INC IY : INC IY : INC IY : INC IY : INC IY
     DJNZ CHOBH_LOOP
+    LD IY,HORMING_BG_POOL
+    LD B,HORMING_BG_SLOT_COUNT
+CHOBH_BG_LOOP:
+    PUSH BC
+    CALL CHECK_HIT_PAIR_HORMING_BG
+    POP BC
+    INC IY : INC IY : INC IY : INC IY : INC IY : INC IY : INC IY
+    DJNZ CHOBH_BG_LOOP
     RET
 
 CHECK_HIT_PAIR_HORMING:
@@ -10361,6 +10513,47 @@ CHECK_HIT_PAIR_HORMING:
     LD A,E : ADD A,7 : CP C : RET C
 
     CALL ERASE_BULLET_CELL
+    XOR A : LD (IX+0),A
+    LD (IY+0),A
+    CALL SOUND_DESTROY
+    LD HL,SCORE_PER_KILL
+    CALL ADD_SCORE
+    RET
+
+; IX = bullet slot, IY = HORMING_BG_POOL slot - same AABB test as
+; CHECK_HIT_PAIR_HORMING, but a hit here must ALSO erase the missile's
+; OWN BG cell (ERASE_HORMING_BG_CELL takes IX=its own slot base, so IY's
+; value is swapped into IX via the stack - PUSH/POP through a register
+; pair is the standard way to move a value between the 2 index
+; registers, Z80 has no direct IX<->IY transfer) before just zeroing its
+; ACT byte - the sprite-pool version doesn't need this because
+; UPDATE_HORMING_ALL's own per-frame hide path (Y=209) already "erases"
+; a deactivated sprite for free; a BG cell has no such implicit erase,
+; so skipping this would leave the missile's last-drawn glyph frozen on
+; screen forever.
+CHECK_HIT_PAIR_HORMING_BG:
+    LD A,(IX+0)
+    OR A
+    RET Z
+    LD A,(IY+0)
+    OR A
+    RET Z
+
+    LD A,(IX+2) : ADD A,A : ADD A,A : ADD A,A : LD B,A   ; bullet pixel X = COL*8
+    LD A,(IX+3) : ADD A,A : ADD A,A : ADD A,A : LD C,A   ; bullet pixel Y = ROW*8
+    LD A,(IY+1) : LD D,A     ; missile_X
+    LD A,(IY+2) : LD E,A     ; missile_Y
+
+    LD A,B : ADD A,7 : CP D : RET C
+    LD A,D : ADD A,7 : CP B : RET C
+    LD A,C : ADD A,7 : CP E : RET C
+    LD A,E : ADD A,7 : CP C : RET C
+
+    CALL ERASE_BULLET_CELL
+    PUSH IX
+    PUSH IY : POP IX
+    CALL ERASE_HORMING_BG_CELL
+    POP IX
     XOR A : LD (IX+0),A
     LD (IY+0),A
     CALL SOUND_DESTROY
@@ -10447,6 +10640,128 @@ FHS_LOOP:
     INC HL
     DJNZ FHS_LOOP
     EI
+    RET
+
+; ---------- homing missile, BG-cell pool (round36-12, "弾数を増やす")
+; ---------- see HORMING_BG_POOL's own comment for why this exists as a
+; second, separate pool instead of just growing HORMING_SLOT_COUNT.
+; IX = HORMING_BG_POOL slot base (+1 X,+2 Y, pixel coords). Computes
+; this frame's own name-table VRAM address fresh from (IX+1)/(IX+2)
+; every time it's needed (COL=X>>3, ROW=Y>>3, address = BULLET_ROWADDR_
+; LO/HI[ROW]+COL - the same row-address tables TRY_SPAWN_BULLET/
+; UPDATE_ONE_BULLET already use, reused directly since they're pure
+; row->VRAM-address conversion, nothing bullet-specific about them).
+; Unlike the bullet pool, HORMING_BG_POOL has no spare struct field to
+; cache this in (same shape as HORMING_POOL, shared generically by
+; UPDATE_ONE_HORMING) - recomputing it is cheap and avoids growing the
+; struct at all. Returns the address in HL.
+HORMING_BG_CELL_ADDR:
+    LD A,(IX+2) : SRL A : SRL A : SRL A   ; ROW
+    LD E,A : LD D,0
+    LD HL,BULLET_ROWADDR_LO : ADD HL,DE : LD A,(HL) : LD C,A
+    LD HL,BULLET_ROWADDR_HI : ADD HL,DE : LD A,(HL) : LD B,A
+    LD A,(IX+1) : SRL A : SRL A : SRL A   ; COL
+    LD L,A : LD H,0
+    LD D,B : LD E,C
+    ADD HL,DE
+    RET
+
+; IX = HORMING_BG_POOL slot base, NOT yet advanced by this frame's own
+; UPDATE_ONE_HORMING call (so (IX+1)/(IX+2) still hold wherever this
+; slot was actually drawn last frame, or its spawn position on a brand
+; new slot's very first active frame). Restores the true background at
+; that cell - same row-threshold logic as ERASE_BULLET_CELL (sky/
+; skysand/sand/skip-entirely-once-inside-the-scrolling-terrain-band,
+; rows20-23 - "already got fully redrawn from NAMEBUF earlier this same
+; MAINLOOP iteration, so there's nothing to restore"), reused directly
+; since it describes screen geometry, not anything bullet-specific.
+; Safe to call even before this slot has ever actually been drawn -
+; erasing just repaints whatever the ONE true background already is
+; for that cell, a harmless no-op in that case rather than a special
+; case needing its own guard (unlike the sprite pool, which needs an
+; explicit hide/Y=209 step - a BG cell has no such concept, restoring
+; the real background already "un-shows" it).
+ERASE_HORMING_BG_CELL:
+    LD A,(IX+2) : SRL A : SRL A : SRL A   ; ROW
+    LD B,A
+    CP BULLET_ROCK_ROW_MIN
+    JR C,EHBC_SKY
+    CP BULLET_ROCK_ROW_MIN+4
+    JR NC,EHBC_SKIP
+    CP BULLET_ROCK_ROW_MIN
+    JR Z,EHBC_SKYSAND
+    LD A,TERRAIN_BLANK_CODE
+    JR EHBC_WRITE
+EHBC_SKYSAND:
+    LD A,(NIGHT_ROW)
+    CP NIGHT_END_ROW
+    JR C,EHBC_SKYSAND_DAY
+    LD A,NIGHT_CODE
+    JR EHBC_WRITE
+EHBC_SKYSAND_DAY:
+    LD A,SKYSAND_CODE
+    JR EHBC_WRITE
+EHBC_SKY:
+    LD A,(NIGHT_ROW)
+    CP B
+    JR C,EHBC_SKY_BLUE
+    LD A,HUD_ROW_BLANK_CODE
+    JR EHBC_WRITE
+EHBC_SKY_BLUE:
+    LD A,SKY_BLANK_CODE
+EHBC_WRITE:
+    LD (BULLET_TEMP_BYTE),A
+    CALL HORMING_BG_CELL_ADDR
+    CALL WRITE_BULLET_BYTE_HL
+EHBC_SKIP:
+    RET
+
+; IX = HORMING_BG_POOL slot base, already advanced to this frame's new
+; position by UPDATE_ONE_HORMING; (IX+3)=FACING(0-4). Single shared
+; color group regardless of actual background - see HORMING_BG_SL_
+; CODE's own comment for why (budget, disclosed compromise).
+DRAW_HORMING_BG_CELL:
+    LD A,(IX+3)
+    LD E,A : LD D,0
+    LD HL,HORMING_BG_PATTERN_TABLE
+    ADD HL,DE
+    LD A,(HL)
+    LD (BULLET_TEMP_BYTE),A
+    CALL HORMING_BG_CELL_ADDR
+    JP WRITE_BULLET_BYTE_HL
+HORMING_BG_PATTERN_TABLE:
+    DB HORMING_BG_SL_CODE,HORMING_BG_DL_CODE,HORMING_BG_DOWN_CODE,HORMING_BG_DR_CODE,HORMING_BG_SR_CODE
+
+; called every frame alongside UPDATE_HORMING_ALL (same BOSS_ACT guard
+; and "runs every frame once the boss exists, regardless of pose state"
+; reasoning - see UPDATE_HORMING_ALL's own comment). Erase-then-move-
+; then-draw per active slot, same per-frame shape UPDATE_ONE_BULLET
+; already uses for F-type bullets: erase happens BEFORE UPDATE_ONE_
+; HORMING moves X/Y (at wherever this slot was actually drawn last
+; frame), draw happens AFTER (at the new position), only if the slot is
+; still active (a frame that hits the tank or leaves the screen
+; deactivates it mid-call - already erased, nothing left to draw).
+UPDATE_HORMING_BG_ALL:
+    LD A,(BOSS_ACT)
+    OR A
+    RET Z
+    LD IX,HORMING_BG_POOL
+    LD B,HORMING_BG_SLOT_COUNT
+UHBGA_LOOP:
+    PUSH BC
+    LD A,(IX+0)
+    OR A
+    JR Z,UHBGA_NEXT
+    CALL ERASE_HORMING_BG_CELL
+    CALL UPDATE_ONE_HORMING
+    LD A,(IX+0)
+    OR A
+    JR Z,UHBGA_NEXT
+    CALL DRAW_HORMING_BG_CELL
+UHBGA_NEXT:
+    INC IX : INC IX : INC IX : INC IX : INC IX : INC IX : INC IX
+    POP BC
+    DJNZ UHBGA_LOOP
     RET
 
 ; ---------- SBeam ("サンダービーム", real hw sprite pool reusing the
@@ -11168,11 +11483,14 @@ HUD_BLACKROW32:
 NIGHT_STRIPEROW32:
     DS 32,NIGHT_CODE
 
-; fg6 (dark red, was the tank's) / bg11 (light yellow - "カラーグルー
-; プ節約するから Rockも背景色ライトイエローにしろ Rock225と同じだ")
-; x31 - see the color-swap patch in INIT above.
+; fg6 (dark red, was the tank's) / bg1 (black - round36-12, was bg11
+; light yellow: "Rockの背景色をダークレッドに てか文字色と同色かな
+; もしそうならブラックに" - dark red(6) would have collided with this
+; group's own fg(also 6, from the swap below), so black per the
+; instructed fallback instead - see the color-swap patch in INIT above
+; for the full reasoning) x31.
 ROCK_COLOR_SWAPPED_PATCH:
-    DS 31,06Bh
+    DS 31,061h
 
 ; explosion sprite (16x16), byte-for-byte from src/CYBER SHMUP.asm's
 ; own EXPLOSION_PATTERN (its pod-destroy-burst spark shape) - "弾が
