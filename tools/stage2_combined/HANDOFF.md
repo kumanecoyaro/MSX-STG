@@ -5425,3 +5425,132 @@ Thunder activity) confirming it survives completely untouched.
   (`BOSS_EXPL_SPARK_*`)の全体像を調査した上で着手する。「インフィニティ」
   移動パターンの具体的アルゴリズムは未確定 - 実装コストの高さを踏まえ、
   着手前にユーザーへ確認する可能性が高い。
+
+## Round 36-14 (Part C): ボス形態変化の実装(HP50でSasapiBrokenへ、インフィニティ軌道の移動/停止サイクル)
+
+- 事前調査(Explore agentへ委任): `UBA_ACTIVE`(ボスのパトロール/ポーズ/
+  左端停止の状態機械)、`CHECK_HIT_PAIR_BOSS`(HP減算・撃破判定)、既存の
+  `BOSS_EXPL_*`死亡スパーク演出一式、Horming/Thunder/SBeamそれぞれの
+  発射トリガー条件、`sasapi_gen.py`のクアドラント生成ロジック、ボス戦中の
+  hwスプライトATTRIBUTEスロット使用状況を全数調査。結論: Horming/Thunder/
+  SBeamの新規発射は全て`UBA_ACTIVE`ツリー内でのみアーム/発火しており、
+  `UPDATE_BOSS_ALL`が`UBA_ACTIVE`を二度と呼ばなくなるだけで自動的に新規
+  発射が止まる(個別ガードの追加不要)。既存の死亡スパーク(`BOSS_EXPL_
+  SPARK_DURATION`=180フレーム)はSPARK単体では独立して再利用可能な設計。
+- **仕様の中途訂正(ユーザー自身の発言)**: 実装着手直後、"なのでボス耐久
+  値が200、、、じゃないや 50になったらだった 50になったらスパーク爆発し
+  SasapiBrokenに変化して インフィニティ起動で回って ランダムタイミング
+  で停止し 少ししてまた回る これがシーケンスで で、0で最後の爆発で"との
+  訂正が入った。当初の3択質問(AskUserQuestion)への回答("SPARKフェーズ
+  のみ"/"8の字連続軌道"/"即座に強制停止")はそのまま有効、変更点は
+  (1)閾値200→50、(2)移動→停止が**一度きりの固定ではなく永久に繰り返す
+  サイクル**(移動→ランダム時間停止→少し停止→また移動...)、(3)HP0での
+  「最後の爆発」が明示的にシーケンスの一部として言及された(既存の
+  `CHECK_HIT_PAIR_BOSS`のHP0判定は元々`BOSS_FORM`と無関係に動作するため
+  自動的に成立するが、ボディサイズが64x64→32x32に変わったことに伴う
+  副作用の修正が別途必要と判明・対応、下記参照)。
+- **実装** (`combined_test.asm`):
+  - `BOSS_FORM`(新規RAM、`BOSS_ACT`/`BOSS_PHASE`とは独立): 0=通常、
+    1=SPARK遷移中(既存の`UPDATE_BOSS_EXPLOSION`のSPARKサブステートを
+    そのまま再利用、`BOSS_EXPL_REASON`で死亡時との分岐先を区別)、
+    2=形態変化後(新32x32ボディ、繰り返し移動/停止サイクル)。
+  - `CHECK_HIT_PAIR_BOSS`: HP減算後、`BOSS_BROKEN_HP_THRESHOLD`(50)以下
+    (境界含む inclusive - "50になったら")かつ`BOSS_FORM==0`の一撃のみ
+    `TRIGGER_BOSS_BROKEN_FORM`を呼ぶ(以降は再トリガーしない)。既存の
+    HP0判定(`JR Z,CHPBOSS_DESTROY`)はこの分岐より前にあり完全に無変更。
+  - `TRIGGER_BOSS_BROKEN_FORM`: ポーズ中(`BOSS_PHASE==1`)だったハンド
+    アートを消去、`BOSS_PHASE`を強制0に(後述の第2死亡時の安全対策も
+    兼ねる)、`ARM_BOSS_EXPL_SPARK`(`INIT_BOSS_EXPLOSION`から共通処理を
+    切り出した新規ルーチン)でSPARKサブステートを起動、`BOSS_EXPL_
+    REASON=1`をセット。
+  - `UBS_LAST_FRAME`(SPARK終了地点): `BOSS_EXPL_REASON`で分岐、0(実際の
+    死亡)なら従来通りGROWへ、1(形態変化)なら`REVEAL_BOSS_BROKEN_FORM`
+    へジャンプ(GROW/SHRINK/FLASHは一切実行しない)。
+  - `REVEAL_BOSS_BROKEN_FORM`: 旧64x64ボディの16クアドラント全スロット
+    を`HIDE_BOSS_SPRITES`で隠し、**さらにそのステージングバッファ
+    (`BOSS_SPRITE_ATTRS`)自体のYバイトも全て209へ書き換え**(後述の
+    死亡バグ対策)、新規32x32ボディのパターンをロード、移動状態を初期化
+    (`BOSS_BROKEN_MOVING=1`で開始時から既に移動中、`ROLL_BOSS_BROKEN_
+    MOVE_DUR`で最初の移動フェーズの持続時間をランダムに決定)、`BOSS_
+    FORM=ACTIVE`をセットした上で`UPDATE_BOSS_BROKEN_ACTIVE`へ直接
+    テイルコール(初回描画を1フレーム待たせない、`S2_BOSS_SPAWN`自身の
+    `JP UBA_DRAW`と同じ慣習)。
+  - `UPDATE_BOSS_BROKEN_ACTIVE`: 「これがシーケンスで」という指示通り、
+    移動中/停止中を永久に繰り返すサイクルとして実装。`BOSS_BROKEN_
+    PHASE_END_TICK`(現在のフェーズが終わるGAME_TICK値)を毎フェーズ
+    切り替わり時に再抽選(`ROLL_BOSS_BROKEN_MOVE_DUR`/`ROLL_BOSS_BROKEN_
+    STOP_DUR`、後者は「少しして」に対応する短めの窓)。8の字軌道は
+    `BOSS_BROKEN_PATH_INDEX`という明示的なインデックス(`BOSS_BROKEN_
+    PATH_HOLD_FRAMES`フレームごとに1歩、MOVING中のみ進む)で管理 -
+    GAME_TICK由来の値を直接使う設計だと停止→再開時に軌道上の位置が
+    連続しない問題があるため、明示カウンタ方式に変更(停止中は単に
+    インデックスが進まないだけで、再開時は停止した地点からそのまま
+    続く)。左右反転(`SASAPI_BROKEN_QUADS`/`_L`)は事前計算した`BOSS_
+    BROKEN_PATH_DIR`テーブル参照、facing変化時のみ128バイトを再ロード。
+  - `sasapi_gen.py`: `quadrants_from_bits`に`size`引数を追加(64→32対応)
+    し、添付`SasapiBroken_32x32.json`から`SASAPI_BROKEN_QUADS`/`_L`
+    (4クアドラント、128バイト)を生成。8の字(Gerono lemniscate)経路
+    LUT(`BOSS_BROKEN_PATH_X/_Y/_DIR`、64点、パワーオブツーなのでasm側
+    はGAME_TICKに対する単純AND演算で済む)も同ファイルで生成 - 画面上の
+    安全範囲(X16-208、Y36-124、HUD帯・地形スクロール帯を避ける)を
+    パラメータで確保。
+  - `DRAW_BOSS_BROKEN`/`FLUSH_BOSS_BROKEN_SPRITES`: `DRAW_BOSS`/
+    `FLUSH_BOSS_SPRITES`と同型、4クアドラント版。`BOSS_BROKEN_SPR_
+    BASE_SLOT`は旧ボディの先頭4スロット(10-13)をそのまま再利用(旧
+    ボディの残り12スロット(14-25)は`HIDE_BOSS_SPRITES`で永久に隠れた
+    まま二度と触られない)。
+- **HP0での最終爆発に伴う副作用と修正(ユーザー自身の"0で最後の爆発で"
+  発言により、当初のスコープ外扱いから対応必須に格上げ)**:
+  - `INIT_BOSS_EXPLOSION`の中心セル計算(`ADD A,32`)は旧64x64ボディ
+    前提の固定オフセットだったため、形態変化後(32x32、正しくは+16)に
+    死亡すると爆発の中心が実際のボディから16px大きくずれるバグを発見・
+    修正(`BOSS_FORM`を見てオフセットを16/32で切り替え)。
+  - `UBE_GROW`の点滅処理は`BOSS_SPRITE_ATTRS`(旧ボディのステージング
+    バッファ、`HIDE_BOSS_SPRITES`自体は触れない)を`FLUSH_BOSS_SPRITES`
+    で書き戻す設計のため、形態変化後に本当の死亡が起きた場合、点滅の
+    「表示」側でこの古いバッファがそのままフラッシュされ、既に引退した
+    旧64x64ボディが一瞬復活してしまう実害あるバグを発見・修正
+    (`REVEAL_BOSS_BROKEN_FORM`でステージングバッファ自体のYも209に
+    スタンプしておくことで、後年の無条件フラッシュを無害化)。
+- **テスト**: `boss_broken_form_test.py`を新規作成(41件) -
+  境界値(inclusive)でのトリガー、再トリガー防止、ポーズ中断時の
+  `BOSS_PHASE`強制リセット、SPARK持続時間ちょうどでの`REVEAL`、旧
+  ボディの隠蔽(再利用される4スロットとそれ以外12スロットを区別)、
+  新ボディの初期描画内容、経路LUTとの整合性(自己無矛盾チェック方式 -
+  内部呼び出し回数に依存する脆い期待値ではなく、毎フレーム`BOSS_X/Y`が
+  現在の`BOSS_BROKEN_PATH_INDEX`が指す値と一致し続けること、および
+  インデックスが1ずつしか進まないことを検証)、実MAINLOOP経由での
+  HPドレイン→遷移→移動/停止の両方を実際に観測(繰り返しサイクルである
+  ことの直接証拠)、遷移後にPOSE_COUNT/HORMING_VOLLEY_COUNT/SBEAM_ACT
+  が二度と動かないことの確認、形態変化後のHP0死亡での中心オフセット
+  修正の直接検証、を実施。
+  `vdp_wait_test.py`は`FLUSH_BOSS_BROKEN_SPRITES`が新規に追加した生の
+  `OUT (99h)/(98h)`サイト数(+2/+4)をハードコード値ごと更新。
+- **回帰テストのハーネス側バグを発見・修正(スコープ外だが必須の副次
+  修正)**: 実装完了後の全回帰で`sbeam_test.py`が10件新規失敗。原因調査
+  の結果、コード側のバグではなく`tests/banked_helpers.py`の`call_routine`
+  ヘルパー自身の脆弱性と判明: デフォルトの復帰番地センチネル(0x8000、
+  ページ2の先頭)が、今回の約400行の新規コード挿入でファイル全体の
+  レイアウトがシフトした結果、たまたま`STAGE_SBEAM`自身の2命令目の
+  実アドレスと一致してしまい、本物のRETではなく通常の直線的実行が
+  センチネルを「通過」しただけで「関数から戻った」と誤判定され、
+  ルーチンの実行がわずか1命令で打ち切られていた(呼び出し先のコード
+  自体は一切壊れていないことをバイト列の直接確認で立証済み)。
+  センチネルを、このビルドで実アセンブル済みコードが物理的に絶対
+  存在しない0x0000番地(`get_out()`の最小アドレスが0x4000であることを
+  確認済み)に変更して解消 - ファイルが今後どれだけ成長しても再発
+  しない、恒久的な修正。全テストファイル共通のヘルパーのため、影響を
+  受けていた可能性のある他のテストも含め全回帰で再検証。
+- **検証**: `python3 build_test.py`でアセンブル成功。`boss_broken_form_
+  test.py`41 passed/0 failed。全回帰`run_all.py`986 passed/0 failed
+  (Part A完了時945 + 新規boss_broken_form_test.py41)。本Roundもアセン
+  ブル・回帰テストはStage2単体のみ実施(Combビルドは未実施)。
+- **保留・未確定**: `BOSS_BROKEN_MOVE_MIN/RANGE_TICKS`(60/120)・
+  `BOSS_BROKEN_STOP_MIN/RANGE_TICKS`(15/30)・`BOSS_BROKEN_PATH_HOLD_
+  FRAMES`(4)は全て未調整の初期値(`BIGZUM_ENGAGEMENT_DURATION`と同様、
+  実プレイでのペーシング調整は別途)。8の字軌道の中心・振幅もエディタ
+  ではなくPython側の定数で決め打ち(未調整)。形態変化後にHPが本当に
+  0へ到達した場合の「最終爆発」自体は上記の副作用修正込みで動作する
+  ものの、爆発後に何が起きるか(ステージクリア演出等)は依然未実装 -
+  もともとの「ボスが終わったら終わり」の明示的な終了演出は今回も
+  スコープ外のまま(CLAUDE.mdの保留中タスク参照)。

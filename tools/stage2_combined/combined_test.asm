@@ -760,6 +760,63 @@ BOSS_COLOR      EQU 9       ; from sprites/Sasapi.json's own fg (light red)
 ; BOSS) - not a smaller hitbox.
 BOSS_COLLISION_SIZE EQU 64
 
+; round36-14 Part C ("ボス耐久値が50になったらスパーク爆発しSasapiBroken
+; に変化して インフィニティ起動で回って ランダムタイミングで停止し 少し
+; てまた回る これがシーケンスで で、0で最後の爆発で" - corrected mid-
+; round from an initial "200" misreading; HP is 255-based, threshold is
+; genuinely 50, not 200) - BOSS_FORM is orthogonal to BOSS_ACT/
+; BOSS_PHASE: 0=normal(old 64x64 body, existing UBA_ACTIVE patrol/pose/
+; attacks), 1=SPARK-only transition burst (reuses UPDATE_BOSS_
+; EXPLOSION's own SPARK sub-state machine - see BOSS_EXPL_REASON),
+; 2=broken form active (new 32x32 body, repeating figure-8-drift/random-
+; stop/resume cycle - see UPDATE_BOSS_BROKEN_ACTIVE). Once BOSS_FORM!=0,
+; UPDATE_BOSS_ALL never calls UBA_ACTIVE again (see its own dispatch) -
+; this alone is what permanently stops Horming/Thunder/SBeam from ever
+; arming a NEW attack again (every arm site - ARM_HORMING_VOLLEY/
+; FIRE_SBEAM/CHECK_THUNDER_TRIGGER_LEFT/_RIGHT - only exists inside the
+; UBA_ACTIVE tree), confirmed by direct code-path tracing rather than a
+; new guard added inside each of those routines. Already-launched
+; missiles/bolts/beam keep animating to their own natural end regardless
+; (UPDATE_HORMING_ALL/UPDATE_HORMING_BG_ALL/UPDATE_THUNDER/UPDATE_SBEAM
+; are called unconditionally from MAINLOOP whenever BOSS_ACT!=0, entirely
+; independent of BOSS_FORM/UBA_ACTIVE) - "既に発射済みの弾は飛び続ける
+; が、新規発射だけ止める", per direct confirmation this round. HP
+; reaching 0 (whether in the normal or the broken form) is unaffected by
+; any of this - CHECK_HIT_PAIR_BOSS's own JR Z,CHPBOSS_DESTROY runs
+; exactly as before regardless of BOSS_FORM ("0で最後の爆発で" - the
+; user's own words confirm this is the intended "final" explosion, not
+; an unwanted side effect) - see INIT_BOSS_EXPLOSION's own BOSS_FORM
+; check for the one adjustment a broken-form death still needs (the
+; smaller body's own center offset).
+BOSS_BROKEN_HP_THRESHOLD EQU 50
+BOSS_FORM_SPARK  EQU 1
+BOSS_FORM_ACTIVE EQU 2
+; the broken body only needs 4 quadrants (2x2, 32x32) vs the old body's
+; 16 (4x4, 64x64) - reuses the SAME 4 leading hw sprite slots the old
+; body's own first row already occupied (BOSS_SPR_BASE_SLOT..+3, i.e.
+; 10-13); HIDE_BOSS_SPRITES (called once on reveal) permanently parks
+; the other 12 old-body slots (14-25) off-screen, and they're never
+; touched again once BOSS_FORM=2 - see REVEAL_BOSS_BROKEN_FORM.
+BOSS_BROKEN_SPR_BASE_SLOT EQU BOSS_SPR_BASE_SLOT
+BOSS_BROKEN_QUAD_COUNT    EQU 4
+; "インフィニティ起動で回って ランダムタイミングで停止し 少ししてまた
+; 回る これがシーケンスで" - a REPEATING moving<->stopped cycle (not a
+; one-shot move-then-freeze-forever), each phase's own duration re-rolled
+; randomly every time it's entered (GAME_TICK units, 8 raw frames/tick,
+; same granularity as BOSS_POSE_TICKS) - see UPDATE_BOSS_BROKEN_ACTIVE's
+; own phase-flip logic. MOVE is the longer phase (actively drifting the
+; figure-8), STOP is the shorter "少しして" pause before resuming.
+; Untuned initial placeholder values, like BIGZUM_ENGAGEMENT_DURATION's
+; own comment - real pacing/difficulty tuning deferred.
+BOSS_BROKEN_MOVE_MIN_TICKS   EQU 60
+BOSS_BROKEN_MOVE_RANGE_TICKS EQU 120
+BOSS_BROKEN_STOP_MIN_TICKS   EQU 15
+BOSS_BROKEN_STOP_RANGE_TICKS EQU 30
+; how many raw frames the figure-8 path LUT holds each of its
+; BOSS_BROKEN_PATH_LEN(64) points for while MOVING - untuned placeholder,
+; same as the tick windows above.
+BOSS_BROKEN_PATH_HOLD_FRAMES EQU 4
+
 ; death/explosion sequence (see INIT_BOSS_EXPLOSION/UPDATE_BOSS_EXPLOSION
 ; below) - "倒した位置のボス中心から...半径48ｐｘの円に段々で塗りつぶす
 ; ...円を小さくして行き1セルになったら...最後の1セルを120フレ点滅させ
@@ -2037,6 +2094,27 @@ HORMING_BG_POOL EQU 0C093h   ; 4 slots x7 bytes = 28 bytes (C093h-C0AEh)
 ; see UPDATE_HORMING_VOLLEY's own comment for why simultaneous, not
 ; sequential blocks) - 4 ticks x2 missiles = 8 total, same
 ; HORMING_VOLLEY_INTERVAL cadence as before.
+; round36-14 Part C: boss form-change state - see BOSS_FORM's own EQU
+; comment. Lives here (C000h+) rather than the dedicated F314h-F320h
+; boss-explosion RAM block since that block is already sized to leave
+; exactly STACK_SAFETY_MARGIN below STACKTOP with nothing spare (see its
+; own comment) - same "pick the C000h+ free region instead of squeezing
+; the packed F2xx/F3xx block" precedent as HORMING_BG_POOL itself.
+BOSS_FORM EQU 0C0AFh
+; which sequence armed the shared SPARK sub-state machine (BOSS_EXPL_
+; STATE/_TIMER/_SLOTn) - 0=a real death (INIT_BOSS_EXPLOSION, chains into
+; GROW once the burst ends), 1=this round's HP<=200 transition
+; (TRIGGER_BOSS_BROKEN_FORM, chains into REVEAL_BOSS_BROKEN_FORM instead
+; - see UBS_LAST_FRAME). The two can never run concurrently (one is only
+; ever armed while BOSS_ACT=2, the other only while BOSS_ACT=1), so
+; sharing the same SPARK state bytes for both is safe.
+BOSS_EXPL_REASON EQU 0C0B0h
+BOSS_BROKEN_SPRITE_ATTRS EQU 0C0B1h   ; 4 quadrants x4 bytes (Y,X,pat,col) = 16 bytes (C0B1h-C0C0h), same staging-then-flush shape as BOSS_SPRITE_ATTRS
+BOSS_BROKEN_PHASE_END_TICK EQU 0C0C1h ; 2 bytes - GAME_TICK value the CURRENT moving/stopped phase ends at, re-picked every flip - see BOSS_BROKEN_MOVE_MIN_TICKS' own comment
+BOSS_BROKEN_DIR EQU 0C0C3h            ; last-loaded facing (0=SASAPI_BROKEN_QUADS,1=_L, same convention as BOSS_DIR) - reload the 128-byte pattern only when this actually changes, same "reload on change only" idiom as LOAD_SASAPI_PATTERNS itself. 0FFh sentinel forces the very first UPDATE_BOSS_BROKEN_ACTIVE frame to load regardless.
+BOSS_BROKEN_MOVING EQU 0C0C4h         ; 0=stopped(frozen at the current path point),1=drifting - see UPDATE_BOSS_BROKEN_ACTIVE
+BOSS_BROKEN_PATH_INDEX EQU 0C0C5h     ; 0..BOSS_BROKEN_PATH_LEN-1, only advances while MOVING - position/facing are always re-derived from this same index, so a stop-then-resume continues from exactly where it left off rather than jumping
+BOSS_BROKEN_FRAME_COUNTER EQU 0C0C6h  ; 0..BOSS_BROKEN_PATH_HOLD_FRAMES-1, counts raw frames between path-index steps while MOVING
 ; Thunder's own state - a real POOL now (round9 fix: "いつからサンダー
 ; は1本しか出せない仕様に? そんな指示はしてねえぞ...BGを使ってるのは
 ; 表示制限がないからだろが" - BG has no hw-sprite-style display limit,
@@ -8278,8 +8356,20 @@ UPDATE_BOSS_ALL:
     CP 2
     JP Z,UPDATE_BOSS_EXPLOSION
     OR A
-    JP NZ,UBA_ACTIVE
-    RET                        ; not yet spawned - SSC2_FIRE's job, not ours
+    RET Z                      ; not yet spawned - SSC2_FIRE's job, not ours
+    ; round36-14 Part C: BOSS_FORM dispatch, orthogonal to the ACT check
+    ; above - see BOSS_FORM's own EQU comment. FORM=0 is the overwhelming
+    ; majority of the boss fight (unchanged UBA_ACTIVE below); FORM=
+    ; SPARK reuses the SAME UPDATE_BOSS_EXPLOSION dispatcher a real death
+    ; uses (it dispatches purely off BOSS_EXPL_STATE, which TRIGGER_BOSS_
+    ; BROKEN_FORM already set to SPARK - no 2nd copy of the spark-frame
+    ; logic needed).
+    LD A,(BOSS_FORM)
+    OR A
+    JP Z,UBA_ACTIVE
+    CP BOSS_FORM_SPARK
+    JP Z,UPDATE_BOSS_EXPLOSION
+    JP UPDATE_BOSS_BROKEN_ACTIVE
 
 ; the one-shot spawn itself - SSC2_FIRE's own dispatch chain falls
 ; through to this directly once every earlier schedule entry has
@@ -8318,6 +8408,7 @@ S2_BOSS_SPAWN:
     LD A,BOSS_HP_INIT : LD (BOSS_HP),A
     XOR A : LD (BOSS_FLASH_TIMER),A
     XOR A : LD (BOSS_PHASE),A  ; 0 = patrolling/sprite
+    XOR A : LD (BOSS_FORM),A   ; round36-14: normal form (not yet broken)
     CALL RESET_THUNDER_POOL
     XOR A : LD (THUNDER_PENDING),A
     XOR A : LD (THUNDER_ELIGIBLE),A   ; not eligible until the first pose ends - see UBAP_END
@@ -8622,6 +8713,241 @@ HBOS_LOOP:
     DJNZ HBOS_LOOP
     RET
 
+; ---------- boss broken form (round36-14 Part C) ----------
+; per-quadrant (Y-delta,X-delta,pattern-delta) for the 2x2 grid of 16x16
+; quadrants making up the 32x32 broken body - same row-major "TL first,
+; then rightward, then down" walk as BOSS_QUAD_OFFSETS, just 4 entries
+; instead of 16 (sasapi_gen.py's own quadrants_from_bits, size=32).
+BOSS_BROKEN_QUAD_OFFSETS:
+    DB 0,0,0,   0,16,4
+    DB 16,0,8,  16,16,12
+
+; blasts HL (caller sets SASAPI_BROKEN_QUADS or SASAPI_BROKEN_QUADS_L,
+; both 128 bytes, sasapi_gen.py) into PAT_SASAPI's own VRAM slot range -
+; same base as the old 64x64 body (LOAD_SASAPI_PATTERNS), just the first
+; 4 of its 16 reused pattern groups, since the old body's own pattern
+; data is permanently retired the instant REVEAL_BOSS_BROKEN_FORM runs
+; (DRAW_BOSS/FLUSH_BOSS_SPRITES never run again once BOSS_FORM!=0 - see
+; UPDATE_BOSS_ALL's own dispatch) - "本体についても...予算は解放される".
+; DI/EI-wrapped for the same reason LOAD_SASAPI_PATTERNS itself is (see
+; its own comment) - only called on an actual facing change, not per
+; frame.
+LOAD_SASAPI_BROKEN_PATTERNS:
+    DI
+    LD DE,PAT_SASAPI*8+SPRPAT : LD BC,BOSS_BROKEN_QUAD_COUNT*32 : CALL LDIRVM
+    EI
+    RET
+
+; the SPARK->broken-form handoff (UBS_LAST_FRAME, once REASON=1) - the
+; board is already clean (all 3 sparks erased by the caller), so this
+; just needs to retire the old body for good and bring up the new one.
+REVEAL_BOSS_BROKEN_FORM:
+    CALL HIDE_BOSS_SPRITES          ; parks the old 16-quadrant body's own slots (10-25) off-screen for good - DRAW_BOSS/FLUSH_BOSS_SPRITES never run again once BOSS_FORM!=0, so nothing would otherwise ever refresh/hide them again
+    ; round36-14 follow-up ("で、0で最後の爆発で" - a death CAN still
+    ; happen after this, reusing the same real INIT_BOSS_EXPLOSION/UBE_
+    ; GROW path as any other death): UBE_GROW's own boss-sprite blink
+    ; toggles between FLUSH_BOSS_SPRITES and HIDE_BOSS_SPRITES using
+    ; BOSS_SPRITE_ATTRS' OWN staging buffer, which HIDE_BOSS_SPRITES
+    ; above never touches (it only writes the live hw SAT directly) - so
+    ; a later blink's own FLUSH_BOSS_SPRITES call would resurrect the
+    ; stale OLD 64x64 body from whatever it last held. Stomping every
+    ; quadrant's own Y byte to 209 in the STAGING buffer too makes that
+    ; later flush a harmless no-op (still hidden) instead of a visual bug.
+    LD HL,BOSS_SPRITE_ATTRS
+    LD B,16
+RBBF_HIDE_STAGE:
+    LD (HL),209 : INC HL : INC HL : INC HL : INC HL
+    DJNZ RBBF_HIDE_STAGE
+    LD A,BOSS_EXPL_STATE_DONE : LD (BOSS_EXPL_STATE),A   ; retire the shared SPARK/GROW/etc state machine - UPDATE_BOSS_ALL never dispatches to it again anyway once BOSS_FORM leaves SPARK, this just keeps it inert if anything ever reread it
+    LD HL,SASAPI_BROKEN_QUADS : CALL LOAD_SASAPI_BROKEN_PATTERNS
+    LD A,0FFh : LD (BOSS_BROKEN_DIR),A   ; sentinel - force the very first UPDATE_BOSS_BROKEN_ACTIVE frame to (re)confirm the facing regardless of which way the path LUT happens to start moving
+    XOR A
+    LD (BOSS_BROKEN_PATH_INDEX),A
+    LD (BOSS_BROKEN_FRAME_COUNTER),A
+    LD A,1 : LD (BOSS_BROKEN_MOVING),A   ; "起動で画面を移動" - starts already drifting, not parked
+    CALL ROLL_BOSS_BROKEN_MOVE_DUR       ; A = this first MOVING phase's own random duration
+    LD L,A : LD H,0
+    LD DE,(GAME_TICK) : ADD HL,DE
+    LD (BOSS_BROKEN_PHASE_END_TICK),HL
+    LD A,BOSS_FORM_ACTIVE : LD (BOSS_FORM),A
+    ; same "draw once immediately, don't wait a whole extra frame for the
+    ; very first real position/sprite" convention S2_BOSS_SPAWN's own
+    ; tail (JP UBA_DRAW) already uses - without this, slots 10-13 would
+    ; sit at their stale zeroed reset state for exactly 1 frame.
+    JP UPDATE_BOSS_BROKEN_ACTIVE
+
+; A = a random MOVE-phase duration (GAME_TICK units) - same mixing idiom
+; as PICK_HORMING_TARGET_X (GAME_RNG^TICK^a live position byte,
+; range-folded into BOSS_BROKEN_MOVE_RANGE_TICKS, offset by BOSS_BROKEN_
+; MOVE_MIN_TICKS). A leaf routine (only touches A/B), safe to CALL from
+; anywhere without saving other registers.
+ROLL_BOSS_BROKEN_MOVE_DUR:
+    LD A,(GAME_RNG) : LD B,A
+    LD A,(TICK) : XOR B : LD B,A
+    LD A,(BOSS_X) : XOR B
+    AND 7Fh
+    CP BOSS_BROKEN_MOVE_RANGE_TICKS
+    JR C,RBBMD_OK
+    SUB BOSS_BROKEN_MOVE_RANGE_TICKS
+RBBMD_OK:
+    ADD A,BOSS_BROKEN_MOVE_MIN_TICKS
+    RET
+
+; same idea, STOP-phase duration ("少しして" - deliberately the shorter
+; of the 2 windows, see BOSS_BROKEN_STOP_MIN/RANGE_TICKS' own comment) -
+; mixed against BOSS_Y instead of BOSS_X purely so back-to-back rolls
+; (a MOVE roll immediately followed by a STOP roll, or vice versa, both
+; within the same frame at a phase flip) don't draw from the exact same
+; GAME_RNG/TICK snapshot and risk correlating.
+ROLL_BOSS_BROKEN_STOP_DUR:
+    LD A,(GAME_RNG) : LD B,A
+    LD A,(TICK) : XOR B : LD B,A
+    LD A,(BOSS_Y) : XOR B
+    AND 7Fh
+    CP BOSS_BROKEN_STOP_RANGE_TICKS
+    JR C,RBBSD_OK
+    SUB BOSS_BROKEN_STOP_RANGE_TICKS
+RBBSD_OK:
+    ADD A,BOSS_BROKEN_STOP_MIN_TICKS
+    RET
+
+; round36-14 Part C's own per-frame update, dispatched from UPDATE_BOSS_
+; ALL once BOSS_FORM=ACTIVE(2) (in place of UBA_ACTIVE). "インフィニティ
+; の起動で画面を移動しランダムタイミングで停止し 少ししてまた回る これ
+; がシーケンスで" - a repeating MOVING<->stopped cycle, each phase's own
+; random duration re-rolled at the moment it's entered (compared every
+; frame via the same true-16-bit-SBC-HL,DE idiom as BOSS_POSE_END_TICK).
+; Walks a precomputed figure-8 (lemniscate) path LUT (BOSS_BROKEN_PATH_X/
+; _Y/_DIR, BOSS_BROKEN_PATH_LEN points, sasapi_gen.py) via an explicit
+; BOSS_BROKEN_PATH_INDEX that only advances while MOVING (one step every
+; BOSS_BROKEN_PATH_HOLD_FRAMES raw frames) - unlike a value derived
+; straight from GAME_TICK, an explicit index naturally freezes in place
+; while stopped and resumes from the exact same point once moving again,
+; with no separate "frozen index" bookkeeping needed (position/facing
+; are always just re-read from whatever the index currently is).
+UPDATE_BOSS_BROKEN_ACTIVE:
+    LD HL,(GAME_TICK)
+    LD DE,(BOSS_BROKEN_PHASE_END_TICK)
+    OR A : SBC HL,DE
+    JR C,UBBA_ADVANCE           ; GAME_TICK < PHASE_END_TICK - current phase not over yet
+    ; flip phase and roll a fresh duration for whichever phase we just
+    ; entered.
+    LD A,(BOSS_BROKEN_MOVING) : XOR 1 : LD (BOSS_BROKEN_MOVING),A
+    OR A
+    JR NZ,UBBA_ROLL_MOVE
+    CALL ROLL_BOSS_BROKEN_STOP_DUR
+    JR UBBA_SET_END_TICK
+UBBA_ROLL_MOVE:
+    CALL ROLL_BOSS_BROKEN_MOVE_DUR
+UBBA_SET_END_TICK:
+    LD L,A : LD H,0
+    LD DE,(GAME_TICK) : ADD HL,DE
+    LD (BOSS_BROKEN_PHASE_END_TICK),HL
+
+UBBA_ADVANCE:
+    LD A,(BOSS_BROKEN_MOVING)
+    OR A
+    JR Z,UBBA_POS
+    LD A,(BOSS_BROKEN_FRAME_COUNTER) : INC A
+    CP BOSS_BROKEN_PATH_HOLD_FRAMES
+    JR C,UBBA_FC_SAVE
+    XOR A
+    PUSH AF
+    LD A,(BOSS_BROKEN_PATH_INDEX) : INC A
+    AND BOSS_BROKEN_PATH_LEN-1
+    LD (BOSS_BROKEN_PATH_INDEX),A
+    POP AF
+UBBA_FC_SAVE:
+    LD (BOSS_BROKEN_FRAME_COUNTER),A
+
+UBBA_POS:
+    LD A,(BOSS_BROKEN_PATH_INDEX)
+    LD E,A : LD D,0
+    LD HL,BOSS_BROKEN_PATH_X : ADD HL,DE : LD A,(HL) : LD (BOSS_X),A
+    LD HL,BOSS_BROKEN_PATH_Y : ADD HL,DE : LD A,(HL) : LD (BOSS_Y),A
+    LD HL,BOSS_BROKEN_PATH_DIR : ADD HL,DE : LD A,(HL) : LD B,A
+
+    LD A,(BOSS_BROKEN_DIR)
+    CP B
+    JR Z,UBBA_DRAW
+    LD A,B : LD (BOSS_BROKEN_DIR),A
+    OR A
+    JR NZ,UBBA_LOAD_L
+    LD HL,SASAPI_BROKEN_QUADS : CALL LOAD_SASAPI_BROKEN_PATTERNS
+    JR UBBA_DRAW
+UBBA_LOAD_L:
+    LD HL,SASAPI_BROKEN_QUADS_L : CALL LOAD_SASAPI_BROKEN_PATTERNS
+UBBA_DRAW:
+    CALL DRAW_BOSS_BROKEN
+    CALL FLUSH_BOSS_BROKEN_SPRITES
+    RET
+
+; fills BOSS_BROKEN_SPRITE_ATTRS (4 quadrants x4 bytes) from BOSS_BROKEN_
+; QUAD_OFFSETS - same shape/hit-flash handling as DRAW_BOSS, just 4
+; quadrants instead of 16 (and reusing the exact same BOSS_FLASH_TIMER/
+; BOSS_DRAW_COLOR/BOSS_COLOR/BOSS_FLASH_COLOR the old body used - DRAW_
+; BOSS itself never runs again once BOSS_FORM!=0, so there's no risk of
+; the two decrementing BOSS_FLASH_TIMER twice in the same frame).
+DRAW_BOSS_BROKEN:
+    LD A,(BOSS_FLASH_TIMER)
+    OR A
+    JR Z,DRBB_COLOR_NORMAL
+    DEC A : LD (BOSS_FLASH_TIMER),A
+    LD A,BOSS_FLASH_COLOR
+    JR DRBB_COLOR_SET
+DRBB_COLOR_NORMAL:
+    LD A,BOSS_COLOR
+DRBB_COLOR_SET:
+    LD (BOSS_DRAW_COLOR),A
+
+    LD IX,BOSS_BROKEN_QUAD_OFFSETS
+    LD HL,BOSS_BROKEN_SPRITE_ATTRS
+    LD B,BOSS_BROKEN_QUAD_COUNT
+DRBB_LOOP:
+    LD A,(IX+0) : LD C,A
+    LD A,(BOSS_Y) : ADD A,C
+    LD (HL),A : INC HL
+    LD A,(IX+1) : LD C,A
+    LD A,(BOSS_X) : ADD A,C
+    LD (HL),A : INC HL
+    LD A,(IX+2) : LD C,A
+    LD A,PAT_SASAPI : ADD A,C
+    LD (HL),A : INC HL
+    LD A,(BOSS_DRAW_COLOR) : LD (HL),A : INC HL
+    INC IX : INC IX : INC IX
+    DJNZ DRBB_LOOP
+    RET
+
+; blasts BOSS_BROKEN_SPRITE_ATTRS (16 bytes) to hw sprite slots
+; BOSS_BROKEN_SPR_BASE_SLOT.. as 4 independent per-quadrant DI/EI-wrapped
+; mini-bursts - same shape/reasoning as FLUSH_BOSS_SPRITES's own comment
+; (many short interrupt-safe windows instead of one long one), just 4
+; quadrants instead of 16.
+FLUSH_BOSS_BROKEN_SPRITES:
+    LD HL,BOSS_BROKEN_SPRITE_ATTRS
+    LD C,BOSS_BROKEN_SPR_BASE_SLOT*4
+    LD B,BOSS_BROKEN_QUAD_COUNT
+FBBS_LOOP:
+    DI
+    LD A,C : OUT (99h),A
+    NOP
+    NOP
+    LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    LD A,(HL) : OUT (98h),A : INC HL
+    PUSH BC : POP BC : NOP : NOP
+    LD A,(HL) : OUT (98h),A : INC HL
+    PUSH BC : POP BC : NOP : NOP
+    LD A,(HL) : OUT (98h),A : INC HL
+    PUSH BC : POP BC : NOP : NOP
+    LD A,(HL) : OUT (98h),A : INC HL
+    PUSH BC : POP BC : NOP : NOP
+    EI
+    LD A,C : ADD A,4 : LD C,A
+    DJNZ FBBS_LOOP
+    RET
+
 ; solid-fill 8x8 tile (all bits set - every row 0FFh) loaded once into
 ; BOSS_EXPL_WHITE_CODE's own pattern-table entry by INIT_BOSS_EXPLOSION,
 ; below - the explosion's entire circle/line/final-cell art is just this
@@ -8848,10 +9174,20 @@ IBE_NO_HAND:
     ; "倒した位置のボス中心から" - capture the center CELL now, once,
     ; while BOSS_X/BOSS_Y still mean something (nothing updates them
     ; again after this - the boss itself is done moving for good).
-    ; BOSS_X/BOSS_Y are the 64x64 box's own top-left pixel; center is
-    ; +32,+32; pixel->cell is /8 - a 32-then-/8 is just a plain +32/>>3.
-    LD A,(BOSS_X) : ADD A,32 : SRL A : SRL A : SRL A : LD (BOSS_EXPL_CX),A
-    LD A,(BOSS_Y) : ADD A,32 : SRL A : SRL A : SRL A : LD (BOSS_EXPL_CY),A
+    ; BOSS_X/BOSS_Y are the sprite's own top-left pixel; center is half
+    ; its width/height; pixel->cell is /8. round36-14 ("で、0で最後の
+    ; 爆発で" - a death CAN now happen while BOSS_FORM=ACTIVE too): the
+    ; broken body is 32x32 (center offset +16), not the original 64x64
+    ; (+32) - using the wrong one here would center this whole sequence
+    ; 16px off from where the visible broken body actually is.
+    LD A,32 : LD B,A
+    LD A,(BOSS_FORM)
+    CP BOSS_FORM_ACTIVE
+    JR NZ,IBE_CENTER_OFS_SET
+    LD B,16
+IBE_CENTER_OFS_SET:
+    LD A,(BOSS_X) : ADD A,B : SRL A : SRL A : SRL A : LD (BOSS_EXPL_CX),A
+    LD A,(BOSS_Y) : ADD A,B : SRL A : SRL A : SRL A : LD (BOSS_EXPL_CY),A
 
     ; one-time repurpose of the (now permanently retired) hand-art code
     ; range - see BOSS_EXPL_WHITE_CODE's own comment for why this is safe.
@@ -8872,6 +9208,18 @@ IBE_NO_HAND:
     ; transition (UBS_LAST_FRAME), not here - BOSS_EXPL_RADIUS itself is
     ; reused as SLOT0's own row storage throughout SPARK (see BOSS_EXPL_
     ; SPARK_SLOT0_ROW's own comment), not zeroed here.
+    XOR A : LD (BOSS_EXPL_REASON),A   ; round36-14: a real death - see UBS_LAST_FRAME/TRIGGER_BOSS_BROKEN_FORM's own comments
+    CALL ARM_BOSS_EXPL_SPARK
+    RET
+
+; round36-14: the SPARK sub-state's own arm sequence (state/timer/blink/
+; live-spark-slot sentinels) - factored out of INIT_BOSS_EXPLOSION so
+; TRIGGER_BOSS_BROKEN_FORM can share it exactly rather than duplicating
+; these 3 writes a 2nd time (everything ABOVE this point in INIT_BOSS_
+; EXPLOSION - hand-art cleanup, center-cell capture, white/spark tile
+; upload - genuinely differs between the two callers, so only this
+; common tail is shared).
+ARM_BOSS_EXPL_SPARK:
     LD A,BOSS_EXPL_STATE_SPARK : LD (BOSS_EXPL_STATE),A
     LD A,BOSS_EXPL_SPARK_DURATION : LD (BOSS_EXPL_TIMER),A   ; reused as SPARK's own countdown - see its own comment
     XOR A : LD (BOSS_EXPL_BLINK),A   ; reused as SPARK's own decorrelation salt - see BOSS_EXPL_RANDOM_BYTE's own comment
@@ -9130,6 +9478,14 @@ UBS_LAST_FRAME:
     LD A,(BOSS_EXPL_SPARK_SLOT2_COL) : LD C,A
     LD A,(BOSS_EXPL_SPARK_SLOT2_ROW)
     CALL BOSS_EXPL_ERASE_ONE_SPARK
+
+    ; round36-14: REASON=1 (TRIGGER_BOSS_BROKEN_FORM's own transition
+    ; burst, not a real death) skips GROW/SHRINK/FLASH entirely - "スパ
+    ; ークフェーズのみ" (confirmed with the user) - and reveals the
+    ; broken form directly instead once the board above is clean.
+    LD A,(BOSS_EXPL_REASON)
+    OR A
+    JP NZ,REVEAL_BOSS_BROKEN_FORM
 
     XOR A : LD (BOSS_EXPL_RADIUS),A
     LD A,BOSS_EXPL_STATE_GROW : LD (BOSS_EXPL_STATE),A
@@ -11145,6 +11501,17 @@ CHECK_HIT_PAIR_BOSS:
 
     LD A,(BOSS_HP) : DEC A : LD (BOSS_HP),A
     JR Z,CHPBOSS_DESTROY
+    ; round36-14 Part C: HP<=200 triggers the form-change once (never
+    ; re-triggers - guarded on BOSS_FORM still being 0 - see TRIGGER_
+    ; BOSS_BROKEN_FORM's own comment). CP THRESHOLD+1 so this catches
+    ; the crossing hit itself (A==200 included), not just strictly below.
+    CP BOSS_BROKEN_HP_THRESHOLD+1
+    JR NC,CHPBOSS_NORMAL_HIT
+    LD A,(BOSS_FORM)
+    OR A
+    JR NZ,CHPBOSS_NORMAL_HIT
+    CALL TRIGGER_BOSS_BROKEN_FORM
+CHPBOSS_NORMAL_HIT:
     LD A,FLASH_DURATION : LD (BOSS_FLASH_TIMER),A
     CALL SOUND_ZUM_DEFLECT
     RET
@@ -11162,6 +11529,47 @@ CHECK_HIT_PAIR_BOSS:
 CHPBOSS_DESTROY:
     LD A,2 : LD (BOSS_ACT),A
     CALL INIT_BOSS_EXPLOSION
+    RET
+
+; round36-14 Part C: fires exactly once per boss fight, the instant HP
+; crosses BOSS_BROKEN_HP_THRESHOLD (200) - CHPBOSS_NORMAL_HIT's own
+; BOSS_FORM!=0 guard is what prevents a 2nd call on every subsequent hit.
+; "即座に強制停止" - interrupts whatever UBA_ACTIVE was doing this exact
+; frame (mid-patrol, mid-pose, mid-left-pause) unconditionally; nothing
+; here waits for the current attack/pose to finish first.
+TRIGGER_BOSS_BROKEN_FORM:
+    ; if a hand-art pose happened to be up at this exact instant, erase
+    ; it now - UBA_POSE (the only thing that ever redraws/erases it) can
+    ; never run again once BOSS_FORM!=0, so it would otherwise stay
+    ; corrupted-in-place under the spark burst about to run over the same
+    ; cells. XOR-to-0 the phase unconditionally afterward too (not just
+    ; on the branch that erased it) - a real 2nd death later, after the
+    ; broken form's own further HP loss, still routes through the SAME
+    ; INIT_BOSS_EXPLOSION as any other death (see BOSS_EXPL_REASON's own
+    ; comment - that path is deliberately left as-is, out of this round's
+    ; scope), and its own IBE_NO_HAND check needs BOSS_PHASE to genuinely
+    ; be 0 by then, not a stale 1 frozen from the moment of this
+    ; interruption.
+    LD A,(BOSS_PHASE)
+    CP 1
+    JR NZ,TBBF_NO_HAND
+    CALL ERASE_SASAPI_HAND
+TBBF_NO_HAND:
+    XOR A : LD (BOSS_PHASE),A
+    LD A,BOSS_FORM_SPARK : LD (BOSS_FORM),A
+    ; capture center cell + arm the spark burst - same setup INIT_BOSS_
+    ; EXPLOSION's own SPARK entry uses (see ARM_BOSS_EXPL_SPARK), minus
+    ; the white-fill tile/color upload - GROW/SHRINK/FLASH never run for
+    ; this REASON, so that tile is never needed here (see UBS_LAST_FRAME).
+    LD A,(BOSS_X) : ADD A,32 : SRL A : SRL A : SRL A : LD (BOSS_EXPL_CX),A
+    LD A,(BOSS_Y) : ADD A,32 : SRL A : SRL A : SRL A : LD (BOSS_EXPL_CY),A
+    DI
+    LD HL,EXPLOSION_PATTERN : LD DE,BOSS_EXPL_SPARK_CODE_TL*8 : LD BC,32 : CALL LDIRVM
+    EI
+    LD A,BOSS_EXPL_SPARK_COLORBYTE : LD (HUD_TEMP_BYTE),A
+    LD HL,HUD_TEMP_BYTE : LD DE,2000h+BOSS_EXPL_SPARK_GROUP : LD BC,1 : CALL LDIRVM
+    CALL ARM_BOSS_EXPL_SPARK
+    LD A,1 : LD (BOSS_EXPL_REASON),A
     RET
 
 ; walks CLOUD_POOL (IX-indexed, 9x INC IX per slot - this assembler has
