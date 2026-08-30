@@ -9516,11 +9516,20 @@ LBBB_DX_SET:
 ; visible screen area in any direction (all 4 beams point downward, so
 ; only the bottom edge, plus whichever horizontal edge XDIR sends it
 ; toward, are ever actually reached in practice).
-; always re-derives DE fresh from UBBBF_SLOT before every single PROJ_*
-; array access rather than mutating/reusing DE across steps - costs a
-; few extra bytes/cycles but sidesteps the class of register-tracking
-; mistakes that comes with reusing a scaled-vs-unscaled offset in the
-; same register across a long routine.
+; round36-14 follow-up#6 ("ロジックとして高速化出来そうとか アルゴリズム
+; を変更して高速化は出来ないか"): DE (=this slot's own index, used with
+; ADD HL,DE to index every PROJ_* array) is computed ONCE at the top of
+; each slot's iteration and kept live for the rest of that slot's own
+; body - nothing between here and UBBBF_NEXT ever writes D or E for any
+; other purpose (only A/B/C/HL do real work), so the previous round's
+; own "re-read UBBBF_SLOT from memory before every single field access"
+; style (9 reloads/slot in the worst case) was genuinely redundant, not
+; a real safety requirement - confirmed by re-running this file's own
+; existing boss_broken_form_test.py/boss_perf_gate_test.py unchanged
+; against this version (same behavior, fewer T-states). The one
+; exception is the final sprite-attrs write, which needs slot*4 instead
+; of slot*1 - computed from the SAME already-live E in place, since by
+; that point the unscaled value is no longer needed this iteration.
 UPDATE_BOSS_BROKEN_BEAM_FLIGHT:
     XOR A : LD (UBBBF_SLOT),A
 UBBBF_LOOP:
@@ -9534,7 +9543,6 @@ UBBBF_LOOP:
     ; beam moving left never wraps a small unsigned byte past 0 (which
     ; would make it look like it teleported to the right edge instead
     ; of vanishing) - same hazard, mirrored for the right edge too. ----
-    LD A,(UBBBF_SLOT) : LD E,A : LD D,0
     LD HL,BOSS_BROKEN_PROJ_DX : ADD HL,DE
     LD A,(HL)
     OR A
@@ -9542,7 +9550,6 @@ UBBBF_LOOP:
 UBBBF_X_RIGHT:
     LD B,A                                  ; B = DX (positive)
     LD A,239 : SUB B : LD C,A               ; threshold = 239-DX (255 - 16px sprite width - DX)
-    LD A,(UBBBF_SLOT) : LD E,A : LD D,0
     LD HL,BOSS_BROKEN_PROJ_X : ADD HL,DE
     LD A,(HL)
     CP C
@@ -9552,7 +9559,6 @@ UBBBF_X_RIGHT:
 UBBBF_X_LEFT:
     LD B,A                                  ; B = DX (negative, two's complement)
     XOR A : SUB B : LD C,A                  ; C = |DX|
-    LD A,(UBBBF_SLOT) : LD E,A : LD D,0
     LD HL,BOSS_BROKEN_PROJ_X : ADD HL,DE
     LD A,(HL)
     CP C
@@ -9562,11 +9568,9 @@ UBBBF_X_LEFT:
 UBBBF_Y:
     ; all 4 beams point down (DY always positive), so only the bottom
     ; edge is ever actually reached.
-    LD A,(UBBBF_SLOT) : LD E,A : LD D,0
     LD HL,BOSS_BROKEN_PROJ_DY : ADD HL,DE
     LD A,(HL) : LD B,A
     LD A,191 : SUB B : LD C,A                ; threshold = 191-DY (192-tall screen, 16px sprite height slack folded into the same margin as the X edges)
-    LD A,(UBBBF_SLOT) : LD E,A : LD D,0
     LD HL,BOSS_BROKEN_PROJ_Y : ADD HL,DE
     LD A,(HL)
     CP C
@@ -9575,14 +9579,11 @@ UBBBF_Y:
 
     ; ---- draw: blit this slot's own live X/Y/CODE into its own hw
     ; sprite staging entry ----
-    LD A,(UBBBF_SLOT) : LD E,A : LD D,0
     LD HL,BOSS_BROKEN_PROJ_Y : ADD HL,DE : LD A,(HL) : LD B,A     ; B = Y
-    LD A,(UBBBF_SLOT) : LD E,A : LD D,0
     LD HL,BOSS_BROKEN_PROJ_X : ADD HL,DE : LD A,(HL) : LD C,A     ; C = X
-    LD A,(UBBBF_SLOT) : LD E,A : LD D,0
     LD HL,BOSS_BROKEN_PROJ_CODE : ADD HL,DE : LD A,(HL)           ; A = CODE
     PUSH AF
-    LD A,(UBBBF_SLOT) : ADD A,A : ADD A,A : LD E,A : LD D,0       ; DE = slot*4 (BOSS_BROKEN_BEAM_SPRITE_ATTRS' own per-slot stride)
+    LD A,E : ADD A,A : ADD A,A : LD E,A                            ; DE = slot*4 now (D still 0 - slot<64, no carry) - BOSS_BROKEN_BEAM_SPRITE_ATTRS' own per-slot stride
     LD HL,BOSS_BROKEN_BEAM_SPRITE_ATTRS : ADD HL,DE
     LD (HL),B : INC HL
     LD (HL),C : INC HL
@@ -9592,11 +9593,15 @@ UBBBF_Y:
     JP UBBBF_NEXT
 
 UBBBF_OFFSCREEN:
-    LD A,(UBBBF_SLOT) : LD E,A : LD D,0
     XOR A
     LD HL,BOSS_BROKEN_PROJ_ACTIVE : ADD HL,DE : LD (HL),A
 UBBBF_HIDE_SLOT:
-    LD A,(UBBBF_SLOT) : ADD A,A : ADD A,A : LD E,A : LD D,0       ; DE = slot*4
+    ; DE holds the unscaled slot index at both entry points (fell
+    ; through from OFFSCREEN just above, unchanged since the top-of-
+    ; loop load; or jumped here directly from UBBBF_LOOP's own ACTIVE
+    ; check, also unchanged) - scale it to slot*4 in place, same as the
+    ; draw path above.
+    LD A,E : ADD A,A : ADD A,A : LD E,A
     LD HL,BOSS_BROKEN_BEAM_SPRITE_ATTRS : ADD HL,DE
     LD (HL),209 : INC HL
     XOR A
@@ -9647,13 +9652,21 @@ FBBBS_LOOP:
 ; beam's own slot, it keeps flying through/past the tank exactly like
 ; every other projectile in this game that isn't itself destroyed by
 ; contact.
+; round36-14 follow-up#6 ("ロジックとして高速化出来そうとか"): the first
+; version held the tank's own X+offset/Y+offset in D/E, permanently
+; fighting for that same register pair with the per-slot PROJ_* index
+; (also naturally a DE-indexed ADD HL,DE) - forcing 3 separate PUSH DE/
+; POP DE round-trips per active slot just to swap between the two
+; meanings. Holding the tank's own 2 values in B/C instead (stable for
+; the whole routine, never repurposed) frees D/E to stay the slot index
+; the entire time, exactly like UPDATE_BOSS_BROKEN_BEAM_FLIGHT's own
+; same-round tightening - no stack traffic needed at all now.
 CHECK_BOSS_BROKEN_BEAM_VS_TANK:
     LD A,(TANK_HAZARD_IFRAMES)
     OR A
     RET NZ
-    LD A,(TANK_X) : ADD A,TANK_COLLISION_X_OFFSET : LD D,A
-    LD A,(TANK_Y_CUR) : ADD A,TANK_COLLISION_Y_OFFSET : LD E,A
-    PUSH DE
+    LD A,(TANK_X) : ADD A,TANK_COLLISION_X_OFFSET : LD B,A   ; B = tank X+offset (stable all routine)
+    LD A,(TANK_Y_CUR) : ADD A,TANK_COLLISION_Y_OFFSET : LD C,A ; C = tank Y+offset (stable all routine)
     XOR A : LD (UBBBF_SLOT),A
 CBBBVT_LOOP:
     LD A,(UBBBF_SLOT) : LD E,A : LD D,0
@@ -9662,21 +9675,16 @@ CBBBVT_LOOP:
     OR A
     JP Z,CBBBVT_NEXT
 
-    LD A,(UBBBF_SLOT) : LD E,A : LD D,0
-    LD HL,BOSS_BROKEN_PROJ_X : ADD HL,DE : LD A,(HL) : LD C,A
-    POP DE
-    PUSH DE
-    ADD A,15 : CP D : JP C,CBBBVT_NEXT
-    LD A,D : ADD A,TANK_COLLISION_WIDTH-1 : CP C : JP C,CBBBVT_NEXT
+    LD HL,BOSS_BROKEN_PROJ_X : ADD HL,DE : LD A,(HL)
+    ADD A,15 : CP B : JP C,CBBBVT_NEXT
+    LD A,B : ADD A,TANK_COLLISION_WIDTH-1
+    LD HL,BOSS_BROKEN_PROJ_X : ADD HL,DE : CP (HL) : JP C,CBBBVT_NEXT
 
-    LD A,(UBBBF_SLOT) : LD E,A : LD D,0
-    LD HL,BOSS_BROKEN_PROJ_Y : ADD HL,DE : LD A,(HL) : LD C,A
-    POP DE
-    PUSH DE
-    ADD A,15 : CP E : JP C,CBBBVT_NEXT
-    LD A,E : ADD A,TANK_COLLISION_HEIGHT-1 : CP C : JP C,CBBBVT_NEXT
+    LD HL,BOSS_BROKEN_PROJ_Y : ADD HL,DE : LD A,(HL)
+    ADD A,15 : CP C : JP C,CBBBVT_NEXT
+    LD A,C : ADD A,TANK_COLLISION_HEIGHT-1
+    LD HL,BOSS_BROKEN_PROJ_Y : ADD HL,DE : CP (HL) : JP C,CBBBVT_NEXT
 
-    POP DE
     LD A,FLASH_DURATION : LD (TANK_FLASH_TIMER),A
     LD A,TANK_HAZARD_IFRAME_DURATION : LD (TANK_HAZARD_IFRAMES),A
     CALL APPLY_TANK_DAMAGE
@@ -9686,7 +9694,6 @@ CBBBVT_NEXT:
     LD A,(UBBBF_SLOT) : INC A : LD (UBBBF_SLOT),A
     CP BOSS_BROKEN_BEAM_SLOT_COUNT
     JP NZ,CBBBVT_LOOP
-    POP DE
     RET
 
 ; solid-fill 8x8 tile (all bits set - every row 0FFh) loaded once into
