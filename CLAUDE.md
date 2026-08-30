@@ -641,3 +641,27 @@
     予算。同種の展開を他のホットパス(`LAUNCH_BOSS_BROKEN_BEAM`等)に
     広げる余地はあるが、都度費用対効果を判断すべきで網羅的監査は
     未実施。
+- **(2026-08-30、Round36-14 follow-up#9、完了済み)**: "ボス以外での
+  効果的な改善はないか"の依頼でExploreエージェントによる非ボス系ホット
+  パス調査を実施、続けて"Update enemyに絞って実測してくれ"の指示で
+  `UPDATE_ENEMIES`(`UE_UPDATE_ALL`)/`CHECK_BULLET_VS_ENEMY`
+  (`CHECK_HIT_ONE_BULLET`)を対象に実装・実測。非ボス系にはボスと同種の
+  `ADD HL,DE`再計算は無い(元々`(IX+d)`直接アクセス)代わりに、
+  「スロット送りを`INC IX`×9(ENEMY_SLOT_SIZE分)+DJNZ+PUSH/POP BC」で
+  行うオーバーヘッドが判明。ENEMY_SLOT_COUNT=3固定を活かし、DJNZループ
+  を「`LD IX,ENEMY_POOL(+9)(+9)`→`CALL`」3回の明示展開に変更(呼び出し
+  先の`UPDATE_ONE_ENEMY`/`CHECK_HIT_PAIR`自体は複製せず共有のまま -
+  ボスの2ルーチンと違い「ループ展開特有の4倍コード」が発生しない)。
+  T-state実測: `UPDATE_ENEMIES`(3スロット稼働)3446T→3100T(-10.0%)、
+  `CHECK_BULLET_VS_ENEMY`(3x3全ミス)3259T→2221T(-31.9%)。**ROMコストは
+  むしろ-20バイト**(ラッパー自体が35→25/32→22バイトへ縮小、ボスの
+  時と違い速度とサイズのトレードオフが発生しない純粋な改善)。3スロット
+  全てが独立して正しく動作・命中判定されることをその場でテスト作成し
+  検証、全回帰1081 passed/0 failed。詳細はHANDOFF.md Round36-14
+  (follow-up#9)参照。
+  - **保留**: 同じ「固定小スロット数をDJNZ+INC IX/IYで歩く」パターンは
+    `UPDATE_ZUM_ALL`/`CHECK_BULLET_VS_ZUM`(ZUM_SLOT_COUNT=2)、
+    `UPDATE_FLYER_ALL`/`CHECK_BULLET_VS_FLYER`(FLYER_SLOT_SIZE=11)にも
+    存在する可能性が高い(Exploreエージェント調査による指摘、未着手)。
+    ROMコストゼロで速度改善という有利な性質のため優先度は上げてよいが、
+    今回の指示はUPDATE_ENEMYに限定されていたため未着手。

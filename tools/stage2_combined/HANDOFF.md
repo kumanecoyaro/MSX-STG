@@ -6290,3 +6290,69 @@ Thunder activity) confirming it survives completely untouched.
   等は未監査)、展開のたびにこの予算を消費する以上、次にどこを対象に
   するかは費用対効果(実行頻度・現在のT-state・展開後のバイト増分)を
   都度天秤にかけて判断すべき。
+
+## Round 36-14 follow-up#9: ボス以外のホットパス調査 - UPDATE_ENEMIES/CHECK_BULLET_VS_ENEMYの展開
+
+- User instruction(verbatim): "ボス以外での効果的な改善はないか" →
+  (Explore agentによる調査結果を提示) → "Update enemyに絞って実測して
+  くれ"
+- まずExploreエージェントでMAINLOOPから無条件に呼ばれる非ボス系ルーチン
+  を洗い出し、ボスと同種の`ADD HL,DE`による実行時インデックス再計算は
+  非ボス系にはほぼ存在しないと判明(ZacoII/Zum/Flyer等は元から
+  `LD IX,POOL`して`(IX+d)`直接アクセスする設計だった)。代わりに見つかった
+  無駄は「スロット送りを`INC IX`の連打(ENEMY_SLOT_SIZE=9回)で行っている」
+  という別種のもの - `INC IX`は1回10Tかかり、9回で90T、これに
+  `PUSH BC`(11T)+`CALL`(17T)+`POP BC`(10T)+`DJNZ`(13T/8T)という
+  ループ管理オーバーヘッド(計約61T)が加わる。このアセンブラには
+  `ADD IX,DE`/`ADD IX,n`が無い(既存コードのコメントで既知)ため、
+  スロット送りは1バイトずつのINC以外の手段が無かった。
+- ユーザー指示によりUPDATE_ENEMIES(`UE_UPDATE_ALL`)と、その内部から
+  弾ごとに3回呼ばれる`CHECK_HIT_ONE_BULLET`(ENEMY_POOLを再び同じ
+  INC IX×9パターンで歩く、対応する`CHECK_BULLET_VS_ENEMY`から見て
+  実質2重ループ)に絞って実測・改善。
+- **実施した変更**: ENEMY_SLOT_COUNT=3は固定値のため、`DJNZ`ループの
+  代わりに「`LD IX,ENEMY_POOL`→`CALL UPDATE_ONE_ENEMY`」を3回明示的に
+  書き下す形に変更(2回目以降は`ENEMY_POOL+ENEMY_SLOT_SIZE`/
+  `ENEMY_POOL+ENEMY_SLOT_SIZE+ENEMY_SLOT_SIZE`という単純な+の連続式 -
+  乗算を含まないためRound36-14follow-up#8で踏んだ演算子優先順位バグの
+  対象外と確認済み)。**ボスの2ルーチン(follow-up#8)との決定的な違い**:
+  `UPDATE_ONE_ENEMY`/`CHECK_HIT_PAIR`自体の本体は一切複製せず、
+  従来通り`CALL`で共有したまま(スロットごとに個別実装を持つのではなく、
+  「どのIXベースで呼ぶか」だけを3回書き分けるだけ)。そのため
+  ループ展開特有の「4倍のコード」というコスト自体が発生せず、
+  PUSH/POP BCとDJNZという純粋なオーバーヘッドを削るだけの変更になった。
+- **実測結果(fresh_cpu()+cpu.reset_stats()+call_routine()、既存の
+  boss系ルーチンと同じ手法)**:
+  - `UPDATE_ENEMIES`(=`UE_UPDATE_ALL`、3スロット全稼働): 3446T→
+    **3100T**(-10.0%)。0スロット稼働時: 1484T→**1138T**(-23.3%)。
+  - `CHECK_BULLET_VS_ENEMY`(弾3発×敵3体、全ミス): 3259T→**2221T**
+    (-31.9%)。0/0時: 1756T→**718T**(-59.1%)。ボス側より相対的な
+    改善幅が大きいのは、`CHECK_HIT_PAIR`自体の本体が`UPDATE_ONE_ENEMY`
+    より小さく、ラッパー自身の(今回削った)オーバーヘッドが呼び出し
+    コスト全体に占める割合が大きかったため。
+  - **ROMコスト**: `UE_UPDATE_ALL`単体35→**25バイト**(-10)、
+    `CHECK_HIT_ONE_BULLET`単体32→**22バイト**(-10)。合計**-20バイト**、
+    ROM全体でも28709バイトのまま変化なし(ラッパー自体が縮んだため、
+    follow-up#8のような`ALIGN 256`パディング量の相殺すら不要だった)。
+    ボス側の「速度とROMサイズのトレードオフ」とは異なり、**純粋な
+    無駄を削っただけの変更のため、コストゼロ(むしろ節約)で速度が
+    改善**した。
+- **検証**: 既存の`zaco_flash_bug.py`(6件、UPDATE_ONE_ENEMYを個別に
+  直接呼ぶ形式のためこの変更の影響範囲外だが念のため実行)に加え、
+  この変更が直接検証する新規テストをその場で作成・実行(3スロット全てが
+  独立して正しく移動・描画されること、`CHECK_BULLET_VS_ENEMY`が
+  スロット0/1/2それぞれを個別に正しく命中判定できること、アドレス
+  衝突が無いことを直接確認 - 6 passed/0 failed、恒久的なテストファイル
+  としては追加せず今回はその場限りの検証に留めた)。全回帰`run_all.py`
+  1081 passed/0 failed。Stage2単体のみ実施(Combビルドは指示なしに
+  未実施)。
+- **今後への申し送り**: 同じ「固定小スロット数(2-3)をDJNZ+INC IX/IYで
+  歩く」パターンは、Exploreエージェントの調査によれば`UPDATE_ZUM_ALL`/
+  `CHECK_BULLET_VS_ZUM`(ZUM_SLOT_COUNT=2、弾3×Zum2=6反復)、
+  `UPDATE_FLYER_ALL`/`CHECK_BULLET_VS_FLYER`(FLYER_SLOT_SIZE=11と
+  全エンティティ中最大)にも存在する可能性が高い(未着手・未検証)。
+  今回の変更が「ROMコストゼロで速度改善」という特に有利な性質を持つ
+  ことを踏まえると、費用対効果の面では他のホットパス最適化より
+  優先度を上げてよい候補だが、ユーザーからの明示的な指示は
+  UPDATE_ENEMYに限定されていたため、今回はスコープ外として着手して
+  いない。

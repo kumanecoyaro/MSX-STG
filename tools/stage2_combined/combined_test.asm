@@ -5814,15 +5814,31 @@ UPDATE_ENEMIES:
 ; buffer into unrelated RAM. This was the real freeze/corruption cause
 ; from the previous 2 rounds, not the push-HL-vs-direct-IX question -
 ; see the README bug entry.
+; round36-14 follow-up#9 ("Update enemyに絞って実測してくれ"): unrolled
+; the slot-walk itself (ENEMY_SLOT_COUNT=3, fixed) - UPDATE_ONE_ENEMY's
+; own body is untouched/still shared (called 3x via CALL, not
+; duplicated), so this costs nothing in extra ROM for the routine's own
+; logic, only for this thin wrapper. Removes, per slot: the PUSH BC/
+; POP BC pair (21T, only needed to protect DJNZ's own loop counter from
+; UPDATE_ONE_ENEMY's internal B/C scratch use - no counter, nothing to
+; protect), the 9x INC IX walk (90T - this assembler has no ADD IX,DE/
+; ADD IX,n, so advancing by ENEMY_SLOT_SIZE could only ever be done one
+; byte at a time; a compile-time-constant LD IX,ENEMY_POOL+9/+18 costs
+; the same 14T as the very first LD IX,ENEMY_POOL always did, instead
+; of paying incrementally), and DJNZ itself (13T taken/8T not). T-state
+; measured via fresh_cpu()+cpu.reset_stats()+call_routine(): 3446T->
+; 3100T(-10.0%, 3 active slots)/1484T->1138T(-23.3%, 0 active). Unlike
+; the SasapiBroken beam routines (round36-14 follow-up#8), this wrapper
+; actually got SMALLER too (35->25 bytes) - nothing here was duplicated
+; (UPDATE_ONE_ENEMY's own body is unchanged/still shared via CALL), so
+; there was no unroll-vs-size tradeoff to make, only pure waste to cut.
 UE_UPDATE_ALL:
     LD IX,ENEMY_POOL
-    LD B,ENEMY_SLOT_COUNT
-UEUA_LOOP:
-    PUSH BC
     CALL UPDATE_ONE_ENEMY
-    POP BC
-    INC IX : INC IX : INC IX : INC IX : INC IX : INC IX : INC IX : INC IX : INC IX
-    DJNZ UEUA_LOOP
+    LD IX,ENEMY_POOL+ENEMY_SLOT_SIZE
+    CALL UPDATE_ONE_ENEMY
+    LD IX,ENEMY_POOL+ENEMY_SLOT_SIZE+ENEMY_SLOT_SIZE
+    CALL UPDATE_ONE_ENEMY
     CALL FLUSH_ENEMY_SPRITES
     RET
 
@@ -6142,15 +6158,21 @@ CHECK_BULLET_VS_ENEMY:
 ; the same reason as UEUA_LOOP - CHECK_HIT_PAIR's own AABB math uses
 ; both B and C as scratch, which would otherwise corrupt this loop's
 ; DJNZ counter.
+; round36-14 follow-up#9: same unroll as UE_UPDATE_ALL above (see its
+; own comment) - CHECK_HIT_PAIR itself untouched/shared, only this
+; wrapper's slot-walk changes. T-state: 3259T->2221T(-31.9%, 3x3 all-
+; miss)/1756T->718T(-59.1%, 0 active) - a bigger relative win than
+; UE_UPDATE_ALL since CHECK_HIT_PAIR's own body is much smaller than
+; UPDATE_ONE_ENEMY's, so the wrapper's own now-removed overhead was a
+; larger fraction of the total per-call cost. Bytes: 32->22 (also
+; smaller, not bigger - see UE_UPDATE_ALL's own comment).
 CHECK_HIT_ONE_BULLET:
     LD IY,ENEMY_POOL
-    LD B,ENEMY_SLOT_COUNT
-CHOB_LOOP:
-    PUSH BC
     CALL CHECK_HIT_PAIR
-    POP BC
-    INC IY : INC IY : INC IY : INC IY : INC IY : INC IY : INC IY : INC IY : INC IY
-    DJNZ CHOB_LOOP
+    LD IY,ENEMY_POOL+ENEMY_SLOT_SIZE
+    CALL CHECK_HIT_PAIR
+    LD IY,ENEMY_POOL+ENEMY_SLOT_SIZE+ENEMY_SLOT_SIZE
+    CALL CHECK_HIT_PAIR
     RET
 
 ; IX = bullet slot base, IY = enemy slot base. AABB overlap test
