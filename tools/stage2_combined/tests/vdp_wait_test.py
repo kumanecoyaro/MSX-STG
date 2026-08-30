@@ -70,11 +70,16 @@ for i, line in enumerate(lines):
 # site, same shape as FLUSH_BOSS_SPRITES's own (2 OUT(99h),A address-
 # setup writes + 4 OUT(98h),A data writes per source occurrence, even
 # though it's a 4-quadrant DJNZ loop at runtime) - 28->30 / 20->24.
+# round36-14 follow-up #4: FLUSH_BOSS_BROKEN_BEAM_SPRITES (the new
+# 4-beam stop-attack's own flush) adds 1 more site, this time the
+# single-byte-per-DJNZ-iteration shape FLUSH_SBEAM_SPRITES/FLUSH_
+# HORMING_SPRITES already use (2 OUT(99h),A address-setup writes + only
+# 1 OUT(98h),A data write in source, looped at runtime) - 30->32 / 24->25.
 check(f"found the expected number of raw OUT (99h),A sites ({len(n99)} - update this "
       "count deliberately if a new one is added, don't just let the test drift)",
-      len(n99) == 30)
+      len(n99) == 32)
 check(f"found the expected number of raw OUT (98h),A sites ({len(n98_delay)})",
-      len(n98_delay) == 24)
+      len(n98_delay) == 25)
 
 bad99 = [(ln, n) for ln, n in n99 if n != 2]
 check("every OUT (99h),A (VRAM address setup) is padded with exactly 2 NOPs (8T)",
