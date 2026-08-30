@@ -162,10 +162,7 @@ SKY_BLANK_CODE    EQU 0         ; TERRAIN_BLANK_ROW's code - the permanent open-
 SKYSAND_CODE  EQU 248
 SKYSAND_COLOR EQU 05Bh   ; fg5/bg11
 
-; Bullet BG pattern codes - F (straight) only now, U moved to a hw
-; sprite (see PAT_BULLETU below): needs one code per background color
-; group it can appear over (SCREEN1 colors are fixed per 8-code group,
-; not per screen position - see bullet_gen.py's own comment).
+; Bullet BG pattern codes.
 ; round36-9 ("自機ショットらしきゴミ" reported next to a Rock225 descend
 ; edge): this used to sit at codes88/96 (groups11-12), "well past every
 ; real terrain code (0-87)" - but that terrain-code ceiling was never a
@@ -178,7 +175,7 @@ SKYSAND_COLOR EQU 05Bh   ; fg5/bg11
 ; upload / this bullet pattern upload ran later in INIT clobbered the
 ; other's VRAM pattern-generator data at those shared codes - showing
 ; the bullet's own glyph, in the bullet's own color, inside terrain
-; cells. Moved to codes224/232 (groups28-29) instead: verified free by
+; cells. Moved to codes224-247 (groups28-30) instead: verified free by
 ; grepping every EQU literal in that whole numeric range - nothing else
 ; in this file uses codes there (everything nearby that LOOKS like a
 ; pattern code is actually an unrelated 0-255 pixel X-coordinate
@@ -188,13 +185,43 @@ SKYSAND_COLOR EQU 05Bh   ; fg5/bg11
 ; adjacent to terrain's own budget at all any more, so normal further
 ; terrain edits (the whole point of schedule-editor.html's own terrain
 ; tool) can't silently collide with it again the way codes88-93 did.
-BULLETF_SKY_CODE  EQU 224
-BULLETF_ROCK_CODE EQU 232
-; left-facing (mirrored) shot pattern, same 2 color groups (color
-; doesn't depend on facing, only the pattern shape does) - "今の自機
-; と弾を左操作で左向きに...反転パターンはそっちで生成してくれ".
-BULLETF_L_SKY_CODE  EQU 226
-BULLETF_L_ROCK_CODE EQU 234
+;
+; round36-11 ("水平打ちを3パターンに分けてローテーション"): F (straight,
+; always BG) grew from 1 pose to 3 (BulletFU/FM/FL - see bullet_gen.py's
+; own VARIANT_NAMES_F). Each of sky/rock/night now needs 3 codes per
+; facing instead of 1: 3(variant)x2(facing)=6 codes per color, x3 colors
+; =18 codes - all 24 free codes were about to run out (18 for F alone,
+; +18 more if U's own BG-cell fallback below also rotated - 36 total
+; against a 24-code budget, 12 short - confirmed with the user directly:
+; "ショットパターンは今の6つと反転なので12パターンだろ" / "普段プレイも
+; 動的書き換えで妥協" settled it). Fit found: F rotates fully (18 codes),
+; U's own BG-cell fallback (used only while BOSS_ACT!=0 - a rare,
+; secondary path, see its own comment below) stays a SINGLE
+; non-rotating pose (6 codes) - 18+6=24, exactly the free budget, zero
+; waste. Each color now spans a WHOLE 8-code group on its own (6 F-slots
+; + 2 U-slots = 8, exactly one SCREEN1 color group) instead of F/U
+; interleaved 2-and-2 sharing 3 groups the way the single-pose version
+; did - group28=sky(224-231), group29=rock(232-239), group30=night
+; (240-247, moved off its old dedicated group18 - see BULLET_NIGHT_
+; COLORADDR below - freeing group18 back up entirely, unused for now).
+BULLETF_SKY_CODE0  EQU 224   ; BulletFU (1st shot)
+BULLETF_L_SKY_CODE0  EQU 225
+BULLETF_SKY_CODE1  EQU 226   ; BulletFM (2nd shot)
+BULLETF_L_SKY_CODE1  EQU 227
+BULLETF_SKY_CODE2  EQU 228   ; BulletFL (3rd shot, then back to FU)
+BULLETF_L_SKY_CODE2  EQU 229
+BULLETU_SKY_CODE    EQU 230  ; single non-rotating BG-cell pose (BulletUM) - boss fight only, see below
+BULLETU_L_SKY_CODE  EQU 231
+
+BULLETF_ROCK_CODE0  EQU 232
+BULLETF_L_ROCK_CODE0  EQU 233
+BULLETF_ROCK_CODE1  EQU 234
+BULLETF_L_ROCK_CODE1  EQU 235
+BULLETF_ROCK_CODE2  EQU 236
+BULLETF_L_ROCK_CODE2  EQU 237
+BULLETU_ROCK_CODE    EQU 238
+BULLETU_L_ROCK_CODE  EQU 239
+
 ; color table (VRAM 2000h+group, 1 byte/group, hi nibble=fg/lo=bg -
 ; see terrain_gen.py's own SKY_COLOR/ROCK_COLOR): group28 (codes
 ; 224-231) = fgE gray/bg5 light blue, matching the sky's own bg5;
@@ -214,8 +241,9 @@ BULLET_ROCK_COLORBYTE EQU 09Bh
 ; night-black variant of the sky glyph above - "スクロールしていない
 ; 行の弾の水平打ちの背景色がライトブルーのままになってる...ショット
 ; を夜に打った場合はショットの背景色をブラックに" - own dedicated
-; group18 (144-151, right after NIGHT_CODE's own group17) since
-; BULLETF_SKY_CODE/L_SKY_CODE's own group11 can't be conditionally
+; group (round36-11: group30, 240-247 - moved off the old group18 to
+; make room for F's own night rotation, see this section's own top
+; comment) since BULLETF_SKY_CODE*'s own group28 can't be conditionally
 ; recolored per-row (SCREEN1 color is per 8-code group, not per screen
 ; position - same constraint bullet_gen.py's own comment on
 ; BULLETF_SKY_CODE/ROCK_CODE already explains). Same fg9(light red) as
@@ -227,8 +255,15 @@ BULLET_ROCK_COLORBYTE EQU 09Bh
 ; SkySand itself was wrong - corrected here). rows17-19 (Sand) and
 ; 20-23 (scrolling terrain) are unaffected either way - the ground
 ; itself never darkens.
-BULLETF_NIGHT_CODE   EQU 144      ; group18 (144-151)
-BULLETF_L_NIGHT_CODE EQU 145
+BULLETF_NIGHT_CODE0  EQU 240
+BULLETF_L_NIGHT_CODE0  EQU 241
+BULLETF_NIGHT_CODE1  EQU 242
+BULLETF_L_NIGHT_CODE1  EQU 243
+BULLETF_NIGHT_CODE2  EQU 244
+BULLETF_L_NIGHT_CODE2  EQU 245
+BULLETU_NIGHT_CODE    EQU 246
+BULLETU_L_NIGHT_CODE  EQU 247
+BULLET_NIGHT_COLORADDR EQU 201Eh   ; group30 (240-247)
 BULLET_NIGHT_COLORBYTE EQU 091h   ; fg9 light red / bg1 black
 
 ; U's own BG-cell codes, used only while BOSS_ACT!=0 - "自機ショットで
@@ -236,20 +271,15 @@ BULLET_NIGHT_COLORBYTE EQU 091h   ; fg9 light red / bg1 black
 ; (U's own hw sprite slots7-9 were reported disappearing during the boss
 ; fight - switches back to the same BG-cell approach F always used,
 ; DRAW_BULLET_CELL/ERASE_BULLET_CELL, instead of a hw sprite, for this
-; specific window only; F itself is untouched). Same 3-groups-x-2-facings
-; shape as F's own codes above, placed in the SAME groups (28/29/18) F
-; already claimed and colored (round36-9: moved from 11/12 to 28/29
-; alongside F's own move - see BULLETF_SKY_CODE's own comment) -
-; group18(night)/group29(rock)/group28(sky) all still have free code
-; slots (F only uses 2 of each group's 8), so no new SCREEN1 color-table
-; writes are needed, just more pattern data loaded into already-colored
-; slots.
-BULLETU_SKY_CODE    EQU 225   ; group28 (224-231), same BULLET_SKY_COLORBYTE as F's own day-sky code
-BULLETU_L_SKY_CODE  EQU 227
-BULLETU_ROCK_CODE   EQU 235   ; group29 (232-239), same BULLET_ROCK_COLORBYTE as F's own rock code
-BULLETU_L_ROCK_CODE EQU 236
-BULLETU_NIGHT_CODE   EQU 146  ; group18 (144-151), same BULLET_NIGHT_COLORBYTE as F's own night code
-BULLETU_L_NIGHT_CODE EQU 147
+; specific window only; F itself is untouched). Placed in the SAME
+; groups (28/29/30) F's own rotation claimed and colored, using the 2
+; slots per group F's own 6-of-8 usage leaves free - no new SCREEN1
+; color-table writes needed, just more pattern data loaded into
+; already-colored slots. Does NOT rotate (round36-11, see this
+; section's own top comment for the exact budget math) - always the
+; single BulletUM pose (bullet_gen.py's own BOSS_BG_VARIANT), same
+; pattern data for every boss-fight shot regardless of the normal-play
+; rotation counter.
 
 ; ---------- diagonal/U shot, now a hardware sprite ----------
 ; "で、弾は斜のみスプライトに変更 水平は今のままで 伴って斜めうちの
@@ -265,7 +295,31 @@ BULLETU_L_NIGHT_CODE EQU 147
 ; case (and the whole sky/rock BG color-matching dance) unnecessary -
 ; it's simply gone now, not replaced by anything.
 BULLET_U_SPR_BASE_SLOT EQU 7    ; hw sprite slots7-9, right after the enemy pool's 4-6
-PAT_BULLETU    EQU 140          ; right after PAT_EXPLOSION(136-139)
+; round36-11 ("斜めもUU、UM、ULで切り替えてローテーション"): U grew from
+; 1 pose to 3 (BulletUU/UM/UL) the same way F did, but unlike F's own BG
+; codes (which had 24 free codes to grow into), the hw sprite pattern
+; table has ZERO free slots anywhere in the entire 0-255 range - every
+; single 4-slot (16x16) or wider block, from the tank at 0 through
+; SBeam's own 252-255, is already claimed with no gaps (confirmed by
+; auditing every generator file's own BASE_OFFSET/PAT_* constant, same
+; kind of full-budget audit as the BG side - see this file's own git
+; history). Carving out 4 more dedicated 4-slot blocks (3 variants x2
+; facings, minus the 1 pair already here) isn't possible without a
+; large renumbering across tank_gen.py/bigzum_gen.py/flyer_gen.py/etc,
+; each independently tuned over many earlier rounds - confirmed with
+; the user directly not worth the risk ("普段プレイも動的書き換えで妥
+; 協(推奨)"). PAT_BULLETU/PAT_BULLETU_L themselves stay exactly where
+; they always were (still just 1 pair, not 3) - what changes is that
+; TRY_SPAWN_BULLET now rewrites their VRAM pattern-generator bytes on
+; every new diagonal shot spawn (WRITE_BULLETU_SPRITE_VARIANT), instead
+; of the pattern being loaded once at INIT and left alone. This gives
+; the "3 pattern rotation" the user asked for, with one accepted visual
+; compromise: if 2+ diagonal shots are on screen at once, they all show
+; whichever variant was most recently written (the shared VRAM slot has
+; no way to hold more than 1 bitmap at a time) - no other sprite's
+; display is affected either way, this is purely a shot-vs-shot
+; distinctness tradeoff.
+PAT_BULLETU    EQU 140          ; right after PAT_EXPLOSION(136-139) - still just 1 pair, see above
 PAT_BULLETU_L  EQU 144
 BULLET_U_COLOR EQU 9            ; light red, same fg BulletF's BG version now uses - "バレットカラーをライトレッドに変更" (was gray/14)
 BULLET_U_SPRITE_ATTRS EQU F1E0h   ; 12 bytes: Y,X,pat,col x3, staged same as ENEMY_SPRITE_ATTRS
@@ -1700,6 +1754,28 @@ FLYER_SLOT_COUNT EQU 2
 ; not reused by anything.
 FLYER_POOL         EQU 0C058h  ; FLYER_SLOT_SIZE*FLYER_SLOT_COUNT = 22 bytes (C058h-C06Dh)
 FLYER_SPRITE_ATTRS EQU 0C06Eh  ; FLYER_SLOT_COUNT*16 = 32 bytes: (Y,X,pat,col)x4 per instance (C06Eh-C08Dh)
+; round36-11 ("ローテーションさせる"): each F-type bullet slot needs to
+; remember which of the 3 pattern variants it was drawn with, so a
+; frame that redraws it later (UPDATE_ONE_BULLET) picks the same code
+; instead of whatever the rotation counter has advanced to since spawn.
+; The 7-byte-per-slot BULLET0/1/2_ACT struct (BULLET0_ACT=F150h,
+; BULLET1_ACT=F157h - zero slack, BULLET_TEMP_BYTE sits immediately
+; after at F165h) has no room to grow without renumbering the whole
+; tightly-packed F1xxh RAM map that follows it, so this lives here in
+; the same C000h+ free region FLYER_POOL/FLYER_SPRITE_ATTRS already
+; established as the place to put new state instead - 3 standalone
+; bytes, looked up by GET_BULLET_VARIANT/SET_BULLET_VARIANT comparing
+; IX against BULLET0_ACT/1/2_ACT (see their own comments) rather than
+; IX-relative addressing into the struct itself.
+BULLET0_VARIANT EQU 0C08Eh
+BULLET1_VARIANT EQU 0C08Fh
+BULLET2_VARIANT EQU 0C090h
+; independent rotation counters (0-2, wrapping) for F-type and U-type
+; shots - "1発目水平撃ちBulletFU、2発目FM、3発目FL...斜めも同様に" reads
+; as each shot TYPE cycling on its own, not a single counter shared
+; between them.
+BULLETF_ROT_COUNTER EQU 0C091h
+BULLETU_ROT_COUNTER EQU 0C092h
 ; round34: FLYER_SPAWN_TIMER(F25Dh, the old pre-relocation address)
 ; removed - random-interval spawning is gone. round35: FLYER_POOL/
 ; FLYER_SPRITE_ATTRS moved away entirely (see their own comment above),
@@ -2470,13 +2546,23 @@ INIT_RESUME_AFTER_BANK_SELECT:
     LD HL,TANK_TANKFGAP_L_TL : LD DE,PAT_TANKFGAP_L*8+SPRPAT : LD BC,128 : CALL LDIRVM
     LD HL,TANK_TANKUGAP_L_TL : LD DE,PAT_TANKUGAP_L*8+SPRPAT : LD BC,128 : CALL LDIRVM
 
-    ; F's own BG pattern: loaded twice, once per background color group
-    ; it can appear over (see BULLETF_SKY_CODE etc. above), and the
-    ; mirrored (left-facing) shape the same way at its own codes.
-    LD HL,BULLET_F_PATTERN : LD DE,BULLETF_SKY_CODE*8  : LD BC,8 : CALL LDIRVM
-    LD HL,BULLET_F_PATTERN : LD DE,BULLETF_ROCK_CODE*8 : LD BC,8 : CALL LDIRVM
-    LD HL,BULLET_F_L_PATTERN : LD DE,BULLETF_L_SKY_CODE*8  : LD BC,8 : CALL LDIRVM
-    LD HL,BULLET_F_L_PATTERN : LD DE,BULLETF_L_ROCK_CODE*8 : LD BC,8 : CALL LDIRVM
+    ; F's own BG pattern: round36-11 grew from 1 pose to 3 (BulletFU/FM/
+    ; FL, bullet_gen.py's own BULLET_F_PATTERN0/1/2) - each loaded once
+    ; per background color group it can appear over (see BULLETF_SKY_
+    ; CODE0 etc. above), and the mirrored (left-facing) shape the same
+    ; way at its own codes.
+    LD HL,BULLET_F_PATTERN0 : LD DE,BULLETF_SKY_CODE0*8  : LD BC,8 : CALL LDIRVM
+    LD HL,BULLET_F_PATTERN1 : LD DE,BULLETF_SKY_CODE1*8  : LD BC,8 : CALL LDIRVM
+    LD HL,BULLET_F_PATTERN2 : LD DE,BULLETF_SKY_CODE2*8  : LD BC,8 : CALL LDIRVM
+    LD HL,BULLET_F_PATTERN0 : LD DE,BULLETF_ROCK_CODE0*8 : LD BC,8 : CALL LDIRVM
+    LD HL,BULLET_F_PATTERN1 : LD DE,BULLETF_ROCK_CODE1*8 : LD BC,8 : CALL LDIRVM
+    LD HL,BULLET_F_PATTERN2 : LD DE,BULLETF_ROCK_CODE2*8 : LD BC,8 : CALL LDIRVM
+    LD HL,BULLET_F_L_PATTERN0 : LD DE,BULLETF_L_SKY_CODE0*8  : LD BC,8 : CALL LDIRVM
+    LD HL,BULLET_F_L_PATTERN1 : LD DE,BULLETF_L_SKY_CODE1*8  : LD BC,8 : CALL LDIRVM
+    LD HL,BULLET_F_L_PATTERN2 : LD DE,BULLETF_L_SKY_CODE2*8  : LD BC,8 : CALL LDIRVM
+    LD HL,BULLET_F_L_PATTERN0 : LD DE,BULLETF_L_ROCK_CODE0*8 : LD BC,8 : CALL LDIRVM
+    LD HL,BULLET_F_L_PATTERN1 : LD DE,BULLETF_L_ROCK_CODE1*8 : LD BC,8 : CALL LDIRVM
+    LD HL,BULLET_F_L_PATTERN2 : LD DE,BULLETF_L_ROCK_CODE2*8 : LD BC,8 : CALL LDIRVM
 
     ; F's own bullet color groups: patch over terrain_gen.py's generic
     ; per-group defaults for the 2 groups its codes live in - see
@@ -2486,16 +2572,22 @@ INIT_RESUME_AFTER_BANK_SELECT:
     LD A,BULLET_ROCK_COLORBYTE : LD (BULLET_TEMP_BYTE),A
     LD HL,BULLET_TEMP_BYTE : LD DE,BULLET_ROCK_COLORADDR : LD BC,1 : CALL LDIRVM
 
-    ; F's own night-black glyph (see BULLETF_NIGHT_CODE's own comment) -
-    ; same shapes as the day glyph, own dedicated color group.
-    LD HL,BULLET_F_PATTERN   : LD DE,BULLETF_NIGHT_CODE*8   : LD BC,8 : CALL LDIRVM
-    LD HL,BULLET_F_L_PATTERN : LD DE,BULLETF_L_NIGHT_CODE*8 : LD BC,8 : CALL LDIRVM
+    ; F's own night-black glyph (see BULLETF_NIGHT_CODE0's own comment) -
+    ; same shapes as the day glyph, own dedicated color group (round36-11:
+    ; moved to group30, BULLET_NIGHT_COLORADDR, from the old fixed
+    ; "2000h+18" literal - see that EQU's own comment).
+    LD HL,BULLET_F_PATTERN0   : LD DE,BULLETF_NIGHT_CODE0*8   : LD BC,8 : CALL LDIRVM
+    LD HL,BULLET_F_PATTERN1   : LD DE,BULLETF_NIGHT_CODE1*8   : LD BC,8 : CALL LDIRVM
+    LD HL,BULLET_F_PATTERN2   : LD DE,BULLETF_NIGHT_CODE2*8   : LD BC,8 : CALL LDIRVM
+    LD HL,BULLET_F_L_PATTERN0 : LD DE,BULLETF_L_NIGHT_CODE0*8 : LD BC,8 : CALL LDIRVM
+    LD HL,BULLET_F_L_PATTERN1 : LD DE,BULLETF_L_NIGHT_CODE1*8 : LD BC,8 : CALL LDIRVM
+    LD HL,BULLET_F_L_PATTERN2 : LD DE,BULLETF_L_NIGHT_CODE2*8 : LD BC,8 : CALL LDIRVM
     LD A,BULLET_NIGHT_COLORBYTE : LD (HUD_TEMP_BYTE),A
-    LD HL,HUD_TEMP_BYTE : LD DE,2000h+18 : LD BC,1 : CALL LDIRVM
+    LD HL,HUD_TEMP_BYTE : LD DE,BULLET_NIGHT_COLORADDR : LD BC,1 : CALL LDIRVM
 
-    ; U's own BG-cell pattern (see BULLETU_SKY_CODE's own comment) -
-    ; loaded into F's already-colored groups11/12/18, no new color-table
-    ; writes needed.
+    ; U's own BG-cell pattern (see BULLETU_SKY_CODE's own comment) - a
+    ; single non-rotating pose (BulletUM), loaded into F's already-
+    ; colored groups28/29/30, no new color-table writes needed.
     LD HL,BULLET_U_PATTERN   : LD DE,BULLETU_SKY_CODE*8    : LD BC,8 : CALL LDIRVM
     LD HL,BULLET_U_L_PATTERN : LD DE,BULLETU_L_SKY_CODE*8  : LD BC,8 : CALL LDIRVM
     LD HL,BULLET_U_PATTERN   : LD DE,BULLETU_ROCK_CODE*8   : LD BC,8 : CALL LDIRVM
@@ -2503,9 +2595,16 @@ INIT_RESUME_AFTER_BANK_SELECT:
     LD HL,BULLET_U_PATTERN   : LD DE,BULLETU_NIGHT_CODE*8   : LD BC,8 : CALL LDIRVM
     LD HL,BULLET_U_L_PATTERN : LD DE,BULLETU_L_NIGHT_CODE*8 : LD BC,8 : CALL LDIRVM
 
-    ; U's own hw sprite pattern (16x16, right after PAT_EXPLOSION).
-    LD HL,BULLET_U_SPRITE : LD DE,PAT_BULLETU*8+SPRPAT : LD BC,32 : CALL LDIRVM
-    LD HL,BULLET_U_SPRITE_L : LD DE,PAT_BULLETU_L*8+SPRPAT : LD BC,32 : CALL LDIRVM
+    ; U's own hw sprite pattern (16x16, right after PAT_EXPLOSION) -
+    ; primed here with variant0 (BulletUU) purely as a sane INIT-time
+    ; default so the pattern slot never holds garbage before the first
+    ; shot; TRY_SPAWN_BULLET's own WRITE_BULLETU_SPRITE_VARIANT
+    ; overwrites this same slot with the correct rotating variant at
+    ; every actual diagonal shot spawn (see BULLET_U_SPR_BASE_SLOT's own
+    ; comment for why there's only ever 1 resident bitmap here).
+    LD HL,BULLET_U_SPRITE0 : LD DE,PAT_BULLETU*8+SPRPAT : LD BC,32 : CALL LDIRVM
+    LD HL,BULLET_U_SPRITE0_L : LD DE,PAT_BULLETU_L*8+SPRPAT : LD BC,32 : CALL LDIRVM
+    XOR A : LD (BULLETF_ROT_COUNTER),A : LD (BULLETU_ROT_COUNTER),A
 
     ; Sasapi's own attack-pose hand art (BG pattern, not a hw sprite -
     ; see SASAPI_HAND_CODE_BASE's own comment) - a permanent allocation
@@ -3842,6 +3941,34 @@ TSB_DO_SPAWN:
     LD A,(TANK_AIMUP) : LD (IX+1),A
     LD A,(TANK_FACING) : LD (IX+6),A
 
+    ; round36-11 ("1発目水平撃ちBulletFU、2発目FM、3発目FL...斜めも同様に
+    ; UU、UM、ULで切り替え"): F and U each advance their own independent
+    ; 0/1/2 rotation counter on every new shot of that type. F's variant
+    ; is remembered per-slot (BULLET0/1/2_VARIANT, via SET_BULLET_
+    ; VARIANT - DRAW_BULLET_CELL reads it back every time this slot
+    ; redraws, not just at spawn) since up to 3 F shots can be on screen
+    ; simultaneously, each showing its own distinct pose. U has no such
+    ; per-slot memory - see WRITE_BULLETU_SPRITE_VARIANT's own comment
+    ; for why (VRAM budget forced a single shared sprite pattern slot).
+    LD A,(IX+1)
+    OR A
+    JR NZ,TSB_ROT_U
+    LD A,(BULLETF_ROT_COUNTER)
+    CALL SET_BULLET_VARIANT
+    LD A,(BULLETF_ROT_COUNTER) : INC A : CP 3 : JR C,TSB_ROT_F_OK
+    XOR A
+TSB_ROT_F_OK:
+    LD (BULLETF_ROT_COUNTER),A
+    JR TSB_ROT_DONE
+TSB_ROT_U:
+    LD A,(BULLETU_ROT_COUNTER)
+    CALL WRITE_BULLETU_SPRITE_VARIANT
+    LD A,(BULLETU_ROT_COUNTER) : INC A : CP 3 : JR C,TSB_ROT_U_OK
+    XOR A
+TSB_ROT_U_OK:
+    LD (BULLETU_ROT_COUNTER),A
+TSB_ROT_DONE:
+
     ; ROW = TANK_Y_CUR >> 3 (name-table row), +2 more for a straight/F
     ; shot only - U (diagonal) keeps the un-shifted muzzle row. Was +1
     ; ("BulletFのセル表示を1セル下に"), widened to +2 to match the new
@@ -3907,6 +4034,95 @@ TSB_DRAW_F:
     CALL DRAW_BULLET_CELL
 TSB_SPAWN_U:
     CALL SOUND_SHOT
+    RET
+
+; IX = bullet slot base (BULLET0_ACT/BULLET1_ACT/BULLET2_ACT), A = this
+; slot's own F-rotation variant (0-2) to remember - see BULLET0_VARIANT's
+; own comment for why this is 3 standalone bytes instead of a 4th slot
+; field. IX is always exactly one of the 3 known constants here, so a
+; plain 2-way compare (falling through to "must be slot2" otherwise) is
+; enough - no general N-way dispatch needed.
+SET_BULLET_VARIANT:
+    PUSH HL
+    PUSH DE
+    PUSH IX : POP HL
+    LD DE,BULLET0_ACT
+    OR A : SBC HL,DE
+    JR Z,SBV_0
+    PUSH IX : POP HL
+    LD DE,BULLET1_ACT
+    OR A : SBC HL,DE
+    JR Z,SBV_1
+    LD (BULLET2_VARIANT),A
+    JR SBV_DONE
+SBV_0:
+    LD (BULLET0_VARIANT),A
+    JR SBV_DONE
+SBV_1:
+    LD (BULLET1_VARIANT),A
+SBV_DONE:
+    POP DE
+    POP HL
+    RET
+
+; IX = bullet slot base - returns this slot's own remembered F-rotation
+; variant (0-2) in A. Called every time DRAW_BULLET_CELL redraws an
+; F-type bullet (not just at spawn), so a shot keeps showing the same
+; pose for its whole flight instead of drifting onto whatever variant
+; the rotation counter has advanced to since it spawned.
+GET_BULLET_VARIANT:
+    PUSH HL
+    PUSH DE
+    PUSH IX : POP HL
+    LD DE,BULLET0_ACT
+    OR A : SBC HL,DE
+    JR Z,GBV_0
+    PUSH IX : POP HL
+    LD DE,BULLET1_ACT
+    OR A : SBC HL,DE
+    JR Z,GBV_1
+    LD A,(BULLET2_VARIANT)
+    JR GBV_DONE
+GBV_0:
+    LD A,(BULLET0_VARIANT)
+    JR GBV_DONE
+GBV_1:
+    LD A,(BULLET1_VARIANT)
+GBV_DONE:
+    POP DE
+    POP HL
+    RET
+
+; A = variant to make resident (0-2, BulletUU/UM/UL) - overwrites the
+; single shared PAT_BULLETU/PAT_BULLETU_L hw sprite pattern slot in
+; VRAM with that variant's 32-byte bitmap (both facings). See
+; BULLET_U_SPR_BASE_SLOT's own comment for why there's only ever 1
+; resident bitmap rather than 3 dedicated slots - this is what actually
+; makes U's rotation visible, called once per diagonal shot spawn (not
+; every frame), same DI/EI-wrapped LDIRVM-is-not-interrupt-safe
+; precaution as this file's own LOAD_SASAPI_PATTERNS (which reloads a
+; similarly shared/reused 64-slot range on boss facing changes).
+WRITE_BULLETU_SPRITE_VARIANT:
+    OR A
+    JR Z,WBSV_0
+    CP 1
+    JR Z,WBSV_1
+    DI
+    LD HL,BULLET_U_SPRITE2 : LD DE,PAT_BULLETU*8+SPRPAT : LD BC,32 : CALL LDIRVM
+    LD HL,BULLET_U_SPRITE2_L : LD DE,PAT_BULLETU_L*8+SPRPAT : LD BC,32 : CALL LDIRVM
+    EI
+    RET
+WBSV_0:
+    DI
+    LD HL,BULLET_U_SPRITE0 : LD DE,PAT_BULLETU*8+SPRPAT : LD BC,32 : CALL LDIRVM
+    LD HL,BULLET_U_SPRITE0_L : LD DE,PAT_BULLETU_L*8+SPRPAT : LD BC,32 : CALL LDIRVM
+    EI
+    RET
+WBSV_1:
+    DI
+    LD HL,BULLET_U_SPRITE1 : LD DE,PAT_BULLETU*8+SPRPAT : LD BC,32 : CALL LDIRVM
+    LD HL,BULLET_U_SPRITE1_L : LD DE,PAT_BULLETU_L*8+SPRPAT : LD BC,32 : CALL LDIRVM
+    EI
     RET
 
 ; ---------- shots: advance all 3 slots 1 column/frame ----------
@@ -4106,13 +4322,17 @@ DRAW_BULLET_CELL:
     LD A,(IX+1)
     OR A
     JR NZ,DBC_NIGHT_U
+    CALL GET_BULLET_VARIANT
+    LD B,A
     LD A,(IX+6)
     OR A
     JR NZ,DBC_NIGHT_LEFT
-    LD A,BULLETF_NIGHT_CODE
-    JR DBC_CODE_SET
+    LD HL,BULLETF_NIGHT_CODE_TABLE
+    JR DBC_NIGHT_PICK
 DBC_NIGHT_LEFT:
-    LD A,BULLETF_L_NIGHT_CODE
+    LD HL,BULLETF_L_NIGHT_CODE_TABLE
+DBC_NIGHT_PICK:
+    CALL PICK_VARIANT_CODE
     JR DBC_CODE_SET
 DBC_NIGHT_U:
     LD A,(IX+6)
@@ -4124,17 +4344,28 @@ DBC_NIGHT_U_LEFT:
     LD A,BULLETU_L_NIGHT_CODE
     JR DBC_CODE_SET
 
+; round36-11 ("ローテーションさせる"): F's own sky/rock code now depends
+; on which of the 3 rotation variants this slot was spawned with (see
+; GET_BULLET_VARIANT's own comment) - looked up via PICK_VARIANT_CODE
+; against a 3-byte table instead of a single fixed EQU. U's own BG-cell
+; fallback (used only while BOSS_ACT!=0) is unaffected - still a single
+; non-rotating code, same as before round36-11 - see BULLETU_SKY_CODE's
+; own comment for why.
 DBC_SKY:
     LD A,(IX+1)
     OR A
     JR NZ,DBC_SKY_U
+    CALL GET_BULLET_VARIANT
+    LD B,A
     LD A,(IX+6)
     OR A
     JR NZ,DBC_SKY_LEFT
-    LD A,BULLETF_SKY_CODE
-    JR DBC_CODE_SET
+    LD HL,BULLETF_SKY_CODE_TABLE
+    JR DBC_SKY_PICK
 DBC_SKY_LEFT:
-    LD A,BULLETF_L_SKY_CODE
+    LD HL,BULLETF_L_SKY_CODE_TABLE
+DBC_SKY_PICK:
+    CALL PICK_VARIANT_CODE
     JR DBC_CODE_SET
 DBC_SKY_U:
     LD A,(IX+6)
@@ -4150,13 +4381,17 @@ DBC_ROCK:
     LD A,(IX+1)
     OR A
     JR NZ,DBC_ROCK_U
+    CALL GET_BULLET_VARIANT
+    LD B,A
     LD A,(IX+6)
     OR A
     JR NZ,DBC_ROCK_LEFT
-    LD A,BULLETF_ROCK_CODE
-    JR DBC_CODE_SET
+    LD HL,BULLETF_ROCK_CODE_TABLE
+    JR DBC_ROCK_PICK
 DBC_ROCK_LEFT:
-    LD A,BULLETF_L_ROCK_CODE
+    LD HL,BULLETF_L_ROCK_CODE_TABLE
+DBC_ROCK_PICK:
+    CALL PICK_VARIANT_CODE
     JR DBC_CODE_SET
 DBC_ROCK_U:
     LD A,(IX+6)
@@ -4172,6 +4407,29 @@ DBC_CODE_SET:
     LD E,(IX+2) : LD D,0
     ADD HL,DE
     JP WRITE_BULLET_BYTE_HL
+
+; B = variant (0-2), HL = 3-byte code table base for this color+facing.
+; Returns the picked code in A. B is a plain 0-2 index (GET_BULLET_
+; VARIANT's own range), so a direct add is enough - no bounds check.
+PICK_VARIANT_CODE:
+    LD A,B
+    LD E,A : LD D,0
+    ADD HL,DE
+    LD A,(HL)
+    RET
+
+BULLETF_SKY_CODE_TABLE:
+    DB BULLETF_SKY_CODE0,BULLETF_SKY_CODE1,BULLETF_SKY_CODE2
+BULLETF_L_SKY_CODE_TABLE:
+    DB BULLETF_L_SKY_CODE0,BULLETF_L_SKY_CODE1,BULLETF_L_SKY_CODE2
+BULLETF_ROCK_CODE_TABLE:
+    DB BULLETF_ROCK_CODE0,BULLETF_ROCK_CODE1,BULLETF_ROCK_CODE2
+BULLETF_L_ROCK_CODE_TABLE:
+    DB BULLETF_L_ROCK_CODE0,BULLETF_L_ROCK_CODE1,BULLETF_L_ROCK_CODE2
+BULLETF_NIGHT_CODE_TABLE:
+    DB BULLETF_NIGHT_CODE0,BULLETF_NIGHT_CODE1,BULLETF_NIGHT_CODE2
+BULLETF_L_NIGHT_CODE_TABLE:
+    DB BULLETF_L_NIGHT_CODE0,BULLETF_L_NIGHT_CODE1,BULLETF_L_NIGHT_CODE2
 
 ; writes (BULLET_TEMP_BYTE) to VRAM address HL - raw DI-wrapped OUT
 ; (same pattern as UPDATE_TANK_SPRITES/INIT_SPRATR_CLR above), since

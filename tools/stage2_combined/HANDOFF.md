@@ -5162,3 +5162,82 @@ Thunder activity) confirming it survives completely untouched.
   管理する仕組みへの刷新は行っていない(スコープ外・指示なし)。仮に
   今後地形がさらに複雑化しMAX_CODEが224に近づくようなことがあれば、
   同種の調査・再配置が再度必要になる。
+
+## Round 36-11: Rockキャラ差し替え + 自機ショット3パターン・ローテーション化
+
+- User instruction(verbatim、Rock_16x16_2.json/BulletFU・FM・FL_8x8.json/
+  BulletUU・UM・UL_8x8.json添付): "キャラデータ差し替え まずRockのデータを
+  添付のものに で、それ以外は自機ショット 今までは前と斜め2パターン
+  だったが3つのデータにわけ1発目水平撃ちBulletFU、2発目FM、3発目FLと
+  切り替えてローテーションさせる 斜めも同様にUU、UM、ULで切り替え"
+- **Rock差し替え**: `tools/stage2_terrain/sprites/Rock.json`を添付データで
+  上書き。旧データ同様、上位16x8のみ使用(下位半分は未使用の慣例通り、
+  新データも下位が全ゼロで整合)。`terrain_gen.py`の`MAX_CODE`は79→93で
+  変化なし(内容差し替えのみ、コード数への影響なし)を確認。
+- **自機ショットの3パターン・ローテーション**: 従来は水平打ち(F、常時BG
+  描画)・斜め打ち(U、通常時はハードウェアスプライト、ボス戦中のみBG
+  描画に切り替え)ともに1ポーズ固定だったのを、3ポーズ(F:BulletFU→FM→FL、
+  U:BulletUU→UM→UL)を発射順に巡回させる仕様に変更。
+- **VRAM予算の全数調査と、ユーザーとの直接すり合わせ**: 実装着手前に
+  BGパターンコード・スプライトパターンの両予算を全数調査したところ、
+  深刻な制約が判明。
+  - BG側(水平Fは常時BG、斜めUはボス戦中のみBG代替描画): 空きは
+    round36-10で確保した224-247の24コードのみ。フルローテーション
+    (sky/rock/night×左右×3パターン×F/U両方)には最低36コード必要で
+    12コード不足。
+  - スプライト側(斜めUの通常時、ハードウェアスプライト): 0-255の
+    全256スロットが隙間なく完全に埋まっていた(戦車・Zaco・BigZum・
+    Flyer・BigZum・Sasapi・Thunder・SBeam等、全て連続で予約済み。
+    各`*_gen.py`のBASE_OFFSET/PAT_*定数を全数確認して検証)。新規
+    6パターン分(UU/UM/UL×左右)の空きスロットは0個。
+  - ユーザーに直接確認("普段プレイも動的書き換えで妙協(推奨)")の上、
+    以下の配分で決着:
+    - F(水平打ち): sky/rock/night×左右×3パターン、フルにローテーション
+      (18コード)。
+    - U(斜め・ボス戦中BGのみ): ローテーションなし、単一ポーズ据え置き
+      (BulletUM、6コード)。18+6=24でBG予算にちょうど収まる。
+    - U(斜め・通常時スプライト): 新規スロットは確保できないため、
+      既存の`PAT_BULLETU`/`PAT_BULLETU_L`(元々1ポーズ分)を発射の
+      たびにVRAM上で動的に書き換える方式に変更。3発以上の斜め弾が
+      同時に画面上にある場合、全弾が直近発射分と同じ絵になる
+      (最後に書き込んだビットマップしかVRAM上に存在しないため)という
+      見た目上の妥協を伴うが、他のキャラ表示には一切影響しない。
+      ユーザーからの念押し("当然だが現在のショットパターンを置き換え
+      ての話だよな なので実質はx3の予算ではなく...")に対しては、
+      variant0(BulletFU/BulletUU)が実際に旧来の単一ポーズと全く同じ
+      code/スロット位置(BULLETF_SKY_CODE0=224=旧BULLETF_SKY_CODE、
+      PAT_BULLETU=140=変更なし)を再利用している(=真に新規追加が
+      必要なのは残り2パターン分のみ)ことを具体的に示して確認済み。
+- **実装詳細**:
+  - `bullet_gen.py`: `VARIANT_NAMES_F`/`VARIANT_NAMES_U`で3ポーズの
+    ファイル名・順序を宣言。F側は`BULLET_F_PATTERN0/1/2`(+`_L`)を、
+    U側はスプライト用`BULLET_U_SPRITE0/1/2`(+`_L`、16x16パディング
+    済み32バイト)とBG単一ポーズ用`BULLET_U_PATTERN`(`BOSS_BG_VARIANT
+    =1`=BulletUM固定)を出力するよう全面書き換え。
+  - `combined_test.asm`: BG側コードを`BULLETF_SKY_CODE0/1/2`等に
+    改名・再配置(224-247、色ごとに8コードのグループを1つずつ独占する
+    形に整理 - 従来のF/U 2-and-2共有から変更、group18の夜間色は
+    group30に統合・移設しgroup18は丸ごと未使用に戻った)。新規RAM
+    (`BULLET0/1/2_VARIANT`・`BULLETF_ROT_COUNTER`・
+    `BULLETU_ROT_COUNTER`、C08Eh-C092h - 既存のBULLET0/1/2_ACT構造体
+    は7バイト単位で隙間ゼロのため、フィールド追加ではなくround35の
+    FLYER_POOL同様C000h+の空き領域に別途確保)、`GET_BULLET_VARIANT`/
+    `SET_BULLET_VARIANT`(IXがBULLET0/1/2_ACTのどれかを比較して該当
+    バイトを読み書き)、`PICK_VARIANT_CODE`+6本の3バイトテーブル
+    (`BULLETF_SKY_CODE_TABLE`等、DRAW_BULLET_CELLからの参照用)、
+    `WRITE_BULLETU_SPRITE_VARIANT`(スプライト側の動的VRAM書き換え、
+    `LOAD_SASAPI_PATTERNS`と同じDI/EI-wrapped LDIRVM方式)を追加。
+    `TRY_SPAWN_BULLET`の`TSB_DO_SPAWN`にTYPE判定直後、F/U独立の
+    ローテーションカウンタ進行ロジックを追加。
+- **検証**: `python3 build_test.py`でアセンブル成功。全回帰テスト
+  (`skysand_night_bullet_test.py`は旧`BULLETF_SKY_CODE`等のシンボル名
+  変更に伴い`*_CODE0`参照へ更新、他は無修正でパス)923 passed/0 failed
+  + `terrain_render_perf_test.py`はgit HEAD(旧シンボル名の
+  combined_test.asm)と現在のbullet_gen.py(新シンボル名)の組み合わせ
+  ミスマッチによる既知の一時的な失敗(コミット後にHEADが揃えば解消する
+  想定、TERRAIN_RENDER_ROW自体は本Roundで一切変更していない)。
+  加えてPythonエミュレータで直接VRAM/スプライトパターンテーブルを実測し、
+  (1) F側3コードそれぞれに正しいBulletFU/FM/FLのビットパターンが
+  格納されていること、(2) 斜め弾を3連続発射した際に共有VRAMスロットの
+  内容がUU→UM→UL→(UU)と正しく巡回すること、(3) ボス戦中BG版が固定で
+  BulletUMのビットパターンになることを直接確認済み。
