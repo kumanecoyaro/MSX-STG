@@ -978,15 +978,11 @@ HORMING_COLOR EQU 5
 ; of its 8 codes used (one per facing, no separate _L/mirror - the 5
 ; source sprites already cover every direction the missile actually
 ; faces, unlike the tank's own bullets which need a true left/right
-; mirror). Unlike DRAW_BULLET_CELL there's no sky/rock (or night)
-; branching on the CODE itself - 8 free codes isn't enough for 5
-; facings x2 backgrounds (would need 10, let alone x3 with night) - so
-; every BG-drawn missile always paints with this ONE fixed color
-; regardless of what's actually behind it - an accepted, disclosed
-; compromise (confirmed with the user). Originally reused BULLET_SKY_
-; COLORBYTE (fg9/bg5 light blue), reasoning sky is the dominant case;
-; round36-13 correction ("BGホーミングの背景色をブラックに 今は
-; ブルーになってる") - changed to bg1 (black) instead, fg9 kept.
+; mirror). This is the SKY-band table (rows above the terrain, same
+; range ERASE_HORMING_BG_CELL's own EHBC_SKY branch covers). Originally
+; reused BULLET_SKY_COLORBYTE (fg9/bg5 light blue), reasoning sky is the
+; dominant case; round36-13 correction ("BGホーミングの背景色をブラックに
+; 今はブルーになってる") - changed to bg1 (black) instead, fg9 kept.
 HORMING_BG_SL_CODE   EQU 144
 HORMING_BG_DL_CODE   EQU 145
 HORMING_BG_DOWN_CODE EQU 146
@@ -994,6 +990,29 @@ HORMING_BG_DR_CODE   EQU 147
 HORMING_BG_SR_CODE   EQU 148
 HORMING_BG_COLORADDR EQU 2012h   ; 2000h+group18
 HORMING_BG_COLORBYTE EQU 091h    ; fg9 light red / bg1 black (round36-13, was bg5 light blue)
+; round36-14 ("BGホーミングが地形に入ったときはSandの背景色になるように
+; ブラックのままだと目立つんで"): a second, terrain-band table for the
+; same 5 facings, picked by DRAW_HORMING_BG_CELL once the missile's own
+; row reaches BULLET_ROCK_ROW_MIN (16) - same threshold ERASE_HORMING_
+; BG_CELL already uses to leave EHBC_SKY. Placed in codes18-22 -
+; terrain_gen.py's own BLANK_CODE(16)/group2 has only 2 of its 8 codes
+; actually used by the terrain generator itself (16=Sand's steady tile,
+; 17=the (Sand,Sand) same-id blend pair; BLEND_BASE for every other pair
+; starts right after, at 24 - see terrain_gen.py's own BLEND_BASE
+; comment), leaving 18-23 permanently unused by terrain - 5 free codes
+; in exactly the group already colored Sand's own real color. No new
+; color group needed and no color byte to write here at all: group2's
+; VRAM color is already SAND_COLOR (0xABh) from TERRAIN_COLORDATA's own
+; bulk load at INIT (line ~2513, before this block runs), and unlike
+; group1/3-31 it is never touched by ROCK_COLOR_SWAPPED_PATCH (that
+; patch explicitly skips group2 - see its own comment) - so simply
+; loading these 5 patterns into 18-22 is enough; they inherit the
+; correct color for free.
+HORMING_BG_SAND_SL_CODE   EQU 18
+HORMING_BG_SAND_DL_CODE   EQU 19
+HORMING_BG_SAND_DOWN_CODE EQU 20
+HORMING_BG_SAND_DR_CODE   EQU 21
+HORMING_BG_SAND_SR_CODE   EQU 22
 ; round 4 fix: "ホーミングのスプライトが非表示待機になってるからだろ
 ; うが ボス上部が常に表示欠けしている" - a real, confirmed bug. The
 ; previous round's reasoning ("boss's own slots10-25 are free while any
@@ -2680,6 +2699,15 @@ INIT_RESUME_AFTER_BANK_SELECT:
     LD HL,HORMING_BG_SR_PATTERN   : LD DE,HORMING_BG_SR_CODE*8   : LD BC,8 : CALL LDIRVM
     LD A,HORMING_BG_COLORBYTE : LD (BULLET_TEMP_BYTE),A
     LD HL,BULLET_TEMP_BYTE : LD DE,HORMING_BG_COLORADDR : LD BC,1 : CALL LDIRVM
+
+    ; round36-14: same 5 facing bitmaps again, into the terrain-band
+    ; codes (18-22, group2/Sand's own already-correct color - see
+    ; HORMING_BG_SAND_SL_CODE's own comment) - no color write needed.
+    LD HL,HORMING_BG_SL_PATTERN   : LD DE,HORMING_BG_SAND_SL_CODE*8   : LD BC,8 : CALL LDIRVM
+    LD HL,HORMING_BG_DL_PATTERN   : LD DE,HORMING_BG_SAND_DL_CODE*8   : LD BC,8 : CALL LDIRVM
+    LD HL,HORMING_BG_DOWN_PATTERN : LD DE,HORMING_BG_SAND_DOWN_CODE*8 : LD BC,8 : CALL LDIRVM
+    LD HL,HORMING_BG_DR_PATTERN   : LD DE,HORMING_BG_SAND_DR_CODE*8   : LD BC,8 : CALL LDIRVM
+    LD HL,HORMING_BG_SR_PATTERN   : LD DE,HORMING_BG_SAND_SR_CODE*8   : LD BC,8 : CALL LDIRVM
 
     ; Sasapi's own attack-pose hand art (BG pattern, not a hw sprite -
     ; see SASAPI_HAND_CODE_BASE's own comment) - a permanent allocation
@@ -10717,13 +10745,24 @@ EHBC_SKIP:
     RET
 
 ; IX = HORMING_BG_POOL slot base, already advanced to this frame's new
-; position by UPDATE_ONE_HORMING; (IX+3)=FACING(0-4). Single shared
-; color group regardless of actual background - see HORMING_BG_SL_
-; CODE's own comment for why (budget, disclosed compromise).
+; position by UPDATE_ONE_HORMING; (IX+2)=Y, (IX+3)=FACING(0-4). round36-
+; 14 ("BGホーミングが地形に入ったときはSandの背景色になるように"): picks
+; between 2 color-group tables by row, same threshold ERASE_HORMING_BG_
+; CELL's own EHBC_SKY branch uses (BULLET_ROCK_ROW_MIN) - black/group18
+; above it (sky), Sand-colored/group2 at or below it (terrain) - see
+; HORMING_BG_SAND_SL_CODE's own comment for why group2 needs no explicit
+; color write of its own.
 DRAW_HORMING_BG_CELL:
+    LD A,(IX+2) : SRL A : SRL A : SRL A   ; ROW
+    CP BULLET_ROCK_ROW_MIN
+    JR NC,DHBC_SAND
+    LD HL,HORMING_BG_PATTERN_TABLE
+    JR DHBC_PICK
+DHBC_SAND:
+    LD HL,HORMING_BG_SAND_PATTERN_TABLE
+DHBC_PICK:
     LD A,(IX+3)
     LD E,A : LD D,0
-    LD HL,HORMING_BG_PATTERN_TABLE
     ADD HL,DE
     LD A,(HL)
     LD (BULLET_TEMP_BYTE),A
@@ -10731,6 +10770,8 @@ DRAW_HORMING_BG_CELL:
     JP WRITE_BULLET_BYTE_HL
 HORMING_BG_PATTERN_TABLE:
     DB HORMING_BG_SL_CODE,HORMING_BG_DL_CODE,HORMING_BG_DOWN_CODE,HORMING_BG_DR_CODE,HORMING_BG_SR_CODE
+HORMING_BG_SAND_PATTERN_TABLE:
+    DB HORMING_BG_SAND_SL_CODE,HORMING_BG_SAND_DL_CODE,HORMING_BG_SAND_DOWN_CODE,HORMING_BG_SAND_DR_CODE,HORMING_BG_SAND_SR_CODE
 
 ; called every frame alongside UPDATE_HORMING_ALL (same BOSS_ACT guard
 ; and "runs every frame once the boss exists, regardless of pose state"

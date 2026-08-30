@@ -333,3 +333,18 @@
   (0-4)に意味変更)。(3) BGホーミングの配色をブルー(bullet側sky配色の
   流用)からブラックへ変更。全回帰941 passed/0 failed。詳細はHANDOFF.md
   Round36-13参照。
+- **(2026-08-30、Round36-14 Part A、完了済み)**: "BGホーミングが地形に
+  入ったときはSandの背景色になるように ブラックのままだと目立つんで"に
+  対応。新規カラーグループは不要と判明 - `terrain_gen.py`のSand専用
+  group2(codes16-23)は地形生成器が実際に使うのは2コードのみで、
+  18-23の6コードが未使用のまま既にSand本来の色(0xABh)で着色済みだった
+  ため、そこへ黒版と同じ5枚のビットマップを複製ロードするだけで対応
+  (`HORMING_BG_SAND_SL/DL/DOWN/DR/SR_CODE`=18-22)。`DRAW_HORMING_BG_
+  CELL`をY座標由来の行と`BULLET_ROCK_ROW_MIN`(16)で比較し、`ERASE_
+  HORMING_BG_CELL`と同じ閾値で黒/Sandの2テーブルを切り替えるよう変更。
+  全回帰945 passed/0 failed。詳細はHANDOFF.md Round36-14参照。
+  - 同じユーザー発言のPart B(ボススポーン後は自機/ショット/地形以外
+    全リソース解放されているという恒常的な留意事項)・Part C(ボスHP
+    200以下でスパーク爆発→添付`SasapiBroken_32x32.json`へ形態変化、
+    旧攻撃・旧64x64ボディの予算解放、切り替え後「インフィニティ」移動)
+    は引き続き保留・調査中(次項参照)。

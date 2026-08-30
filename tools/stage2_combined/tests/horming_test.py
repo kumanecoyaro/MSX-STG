@@ -24,6 +24,15 @@ HORMING_BG_DL_CODE = sym["HORMING_BG_DL_CODE"]
 HORMING_BG_DOWN_CODE = sym["HORMING_BG_DOWN_CODE"]
 HORMING_BG_DR_CODE = sym["HORMING_BG_DR_CODE"]
 HORMING_BG_SR_CODE = sym["HORMING_BG_SR_CODE"]
+# round36-14 ("BGホーミングが地形に入ったときはSandの背景色になるように") -
+# terrain-band counterpart table/codes, see combined_test.asm's own
+# HORMING_BG_SAND_SL_CODE comment.
+HORMING_BG_SAND_SL_CODE = sym["HORMING_BG_SAND_SL_CODE"]
+HORMING_BG_SAND_DL_CODE = sym["HORMING_BG_SAND_DL_CODE"]
+HORMING_BG_SAND_DOWN_CODE = sym["HORMING_BG_SAND_DOWN_CODE"]
+HORMING_BG_SAND_DR_CODE = sym["HORMING_BG_SAND_DR_CODE"]
+HORMING_BG_SAND_SR_CODE = sym["HORMING_BG_SAND_SR_CODE"]
+BULLET_ROCK_ROW_MIN = sym["BULLET_ROCK_ROW_MIN"]
 SKY_BLANK_CODE = sym["SKY_BLANK_CODE"]
 BULLET0_ACT = sym["BULLET0_ACT"]
 HORMING_SPRITE_ATTRS = sym["HORMING_SPRITE_ATTRS"]
@@ -308,6 +317,36 @@ check("a bullet hit deactivates the BG missile", bg_slot(cpu, 0)["act"] == 0)
 check("a bullet hit deactivates the bullet too", cpu.mem[BULLET0_ACT + 0] == 0)
 check("a bullet hit erases the missile's own cell back to sky background - no stale glyph left behind",
       cpu.vram[addr] == SKY_BLANK_CODE)
+
+# round36-14: at/below BULLET_ROCK_ROW_MIN (terrain band, same threshold
+# ERASE_HORMING_BG_CELL's own EHBC_SKY branch uses) DRAW_HORMING_BG_CELL
+# switches to the Sand-colored code table instead of the sky/black one.
+cpu = fresh_cpu()
+cpu.mem[BOSS_ACT] = 1
+sand_y = BULLET_ROCK_ROW_MIN * 8       # exactly at the threshold - terrain band
+make_bg_slot(cpu, 0, x=80, y=sand_y, facing=2, state=3, tank_x=80)  # Down
+call_routine(cpu, "UPDATE_HORMING_BG_ALL")
+addr = name_table_addr(80, sand_y)
+check("at the terrain-row threshold, DRAW_HORMING_BG_CELL picks the Sand-colored code, not the sky one",
+      cpu.vram[addr] == HORMING_BG_SAND_DOWN_CODE)
+check("one row above the threshold still uses the ordinary sky/black code",
+      HORMING_BG_SAND_DOWN_CODE != HORMING_BG_DOWN_CODE)  # (sanity: distinct codes)
+
+cpu = fresh_cpu()
+cpu.mem[BOSS_ACT] = 1
+sky_y = (BULLET_ROCK_ROW_MIN - 1) * 8  # one row above the threshold - still sky
+make_bg_slot(cpu, 0, x=80, y=sky_y, facing=2, state=3, tank_x=80)  # Down
+call_routine(cpu, "UPDATE_HORMING_BG_ALL")
+addr = name_table_addr(80, sky_y)
+check("just above the terrain-row threshold, DRAW_HORMING_BG_CELL still picks the ordinary sky/black code",
+      cpu.vram[addr] == HORMING_BG_DOWN_CODE)
+
+# the Sand-band codes must actually inherit the real Sand color (group2,
+# VRAM 0x2002) rather than needing (or getting) any color write of their
+# own - see HORMING_BG_SAND_SL_CODE's own comment for why.
+cpu = fresh_cpu()
+check("group2 (Sand's own color group, VRAM 0x2002) is 0xAB - matches terrain_gen.py's SAND_COLOR exactly",
+      cpu.vram[0x2002] == 0xAB)
 
 
 # ---- state0 (rise): diagonal up-left, exactly HORMING_RISE_DIST total ----
