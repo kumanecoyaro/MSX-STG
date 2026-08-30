@@ -1480,13 +1480,24 @@
     //     Sand tile in-game, not open sky - filled with a real, visible
     //     sand tone instead of a near-invisible tint that read as "no
     //     terrain at all".
-    //  2. a 1-tier step between adjacent columns is drawn as a diagonal
-    //     ramp (matching Rock225's actual climb/descend art) spanning the
-    //     one column where the tier changes, instead of an abrupt vertical
-    //     cliff. (The real compiled track spends 2 dedicated columns per
-    //     step, growing TRACK_LEN - out of scope here on purpose: this is
-    //     a same-length visual approximation for the editor's own tick
-    //     axis, not a re-simulation of the real build.)
+    //  2. a step between adjacent columns is drawn as a diagonal ramp
+    //     (matching Rock225's actual climb/descend art) instead of an
+    //     abrupt vertical cliff, at a constant, readable "1 tier per
+    //     column" slope - the same rate a real single-tier step already
+    //     draws at. A column that's painted more than 1 tier away from
+    //     its neighbor (not physically buildable in-game - real steps are
+    //     always exactly +-1, see terrain_gen.py's own build_track/
+    //     columns_to_tier_profile asserts) would otherwise have to cram
+    //     that whole rise into one column's width, which reads as a
+    //     near-vertical wall rather than a slope ("いきなり4段分あがる
+    //     見た目では見て判断が難しい") - spreading it over multiple
+    //     columns at the same slope instead keeps every ramp legible by
+    //     eye, and visibly communicates just how big the jump is instead
+    //     of hiding it. (The real compiled track spends 2 dedicated
+    //     columns per 1-tier step, growing TRACK_LEN - out of scope here
+    //     on purpose, per direct instruction: this is a same-length
+    //     visual approximation for the editor's own tick axis, not a
+    //     re-simulation of the real build.)
     // Drawn UNDER the grid lines/placement icons (before they're drawn
     // below) so it reads as background, not on top of anything.
     // tierFromRow/terrainColAt's own comments explain the row<->tier
@@ -1503,7 +1514,26 @@
       ctx.fillStyle = sandFill;
       ctx.fillRect(xFirst, bandTop, xLast - xFirst, bandBottom - bandTop);
 
-      function rockTopY(tickIdx) { return (23 - terrain2[terrainColAt(tickIdx)]) * CELL; }
+      // Rate-limited (slew-limited) follower of the raw per-column tier,
+      // moving at most 1 tier per column toward the real value - this is
+      // what turns any jump bigger than 1 tier into a multi-column ramp
+      // instead of a 1-column wall. Recomputed from column 0 every call
+      // (cheap - at most MAX_TICK+1 integer steps, dwarfed by the actual
+      // canvas fill below) rather than cached, so the drawn slope is
+      // identical no matter where the view happens to be scrolled to -
+      // starting the follower at firstTick instead would make the same
+      // ramp look different (or seam/flicker) depending on scroll
+      // position, since it'd have no memory of the climb already under
+      // way before the visible edge.
+      var smoothTier = [];
+      var followTier = terrain2[terrainColAt(0)];
+      for (var k = 0; k <= lastTick + 1; k++) {
+        var raw = terrain2[terrainColAt(k)];
+        if (raw > followTier) followTier = Math.min(raw, followTier + 1);
+        else if (raw < followTier) followTier = Math.max(raw, followTier - 1);
+        smoothTier[k] = followTier;
+      }
+      function rockTopY(tickIdx) { return (23 - smoothTier[tickIdx]) * CELL; }
       ctx.beginPath();
       ctx.moveTo(xFirst, bandBottom);
       ctx.lineTo(xFirst, rockTopY(firstTick));
