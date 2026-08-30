@@ -2,6 +2,7 @@ import os
 import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from banked_helpers import get_out, fresh_cpu, call_routine, step_frame
+import sasapi_gen
 
 out, sym, text = get_out()
 
@@ -712,6 +713,44 @@ check("BOSS_BROKEN_BEAM_COLOR has the EC (early clock) bit clear",
       (BOSS_BROKEN_BEAM_COLOR & 0x40) == 0)
 check("BOSS_BROKEN_BEAM_COLOR is a plain color index in [0,15] (color 7 = cyan)",
       BOSS_BROKEN_BEAM_COLOR == 7)
+
+# ---- round36-14 follow-up#4 2nd real-hardware feedback ("全然違うぞ
+# ...グラフィックも壊れてる"): a single 16x16 hw sprite occupies 4
+# CONSECUTIVE pattern codes (TL/BL/TR/BR), not 1 - the first attempt
+# spaced the 4 beam codes only 1 apart (16,17,18,19), so each beam's own
+# 32-byte LDIRVM load silently overwrote 3 of the PREVIOUS beam's own
+# sub-pattern codes, corrupting VRAM regardless of which beam was
+# actually drawn - a real data-corruption bug, not a positioning or
+# color issue. Verified two ways: (1) the 4 codes are pairwise spaced
+# >=4 apart, and (2) a direct byte-for-byte VRAM comparison against
+# sasapi_gen.py's own re-computed expected pattern data, following this
+# project's standing "verify empirically, not by static code reading"
+# practice (see CLAUDE.md - the same lesson the Sand-pattern-corruption
+# bug established). ----
+check("BOSS_BROKEN_BEAM_CODE1-4 are pairwise spaced at least 4 codes apart (each 16x16 "
+      "sprite occupies 4 consecutive TL/BL/TR/BR sub-pattern codes - anything closer "
+      "silently corrupts a neighboring beam's own data)",
+      BOSS_BROKEN_BEAM_CODE2 - BOSS_BROKEN_BEAM_CODE1 >= 4
+      and BOSS_BROKEN_BEAM_CODE3 - BOSS_BROKEN_BEAM_CODE2 >= 4
+      and BOSS_BROKEN_BEAM_CODE4 - BOSS_BROKEN_BEAM_CODE3 >= 4)
+
+SPRPAT = sym["SPRPAT"]
+cpu = fresh_cpu()
+trigger_broken_form(cpu, x=100)
+all_vram_ok = True
+for n, code in enumerate([BOSS_BROKEN_BEAM_CODE1, BOSS_BROKEN_BEAM_CODE2,
+                          BOSS_BROKEN_BEAM_CODE3, BOSS_BROKEN_BEAM_CODE4], start=1):
+    expected = sasapi_gen.quadrants_from_bits(
+        sasapi_gen.load_bits(f"SBeam{n}_16x16"), size=16)[0]
+    base = code * 8 + SPRPAT
+    actual = [cpu.vram[base + i] for i in range(32)]
+    if actual != expected:
+        all_vram_ok = False
+check("each of the 4 beams' own pattern VRAM (SPRPAT+code*8, 32 bytes) exactly matches "
+      "sasapi_gen.py's own re-computed expected bytes for that beam, right after "
+      "REVEAL_BOSS_BROKEN_FORM loads all 4 - a direct byte comparison that would have "
+      "caught the code-overlap corruption bug immediately",
+      all_vram_ok)
 
 
 # ---- HIDE_BOSS_BROKEN_BEAM / HIDE_BOSS_BROKEN_BEAM_ALL ----

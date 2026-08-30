@@ -1182,6 +1182,34 @@ BOSS_SPR_BASE_SLOT EQU 10
 ; allocation. Loaded fresh into VRAM once, at boss-spawn time (not at
 ; INIT) - see LOAD_SASAPI_PATTERNS.
 PAT_SASAPI      EQU PAT_BIGZUM
+; round36-14 follow-up#4 ("停止中にビーム攻撃をする") - the 4 broken-
+; form beam sprites' own hw sprite pattern codes, PAT_SASAPI+16/+20/+24/
+; +28 (see BOSS_BROKEN_BEAM_TABLE's own comment for why these codes
+; specifically). Defined HERE, immediately after PAT_SASAPI itself,
+; rather than down near BOSS_BROKEN_BEAM_TABLE where they're actually
+; used (which is this assembler's normal convention) - round36-14
+; follow-up#4's 2nd real-hardware feedback ("全然違うぞ...グラフィック
+; も壊れてる") traced back to a genuine mini_z80asm.py forward-reference
+; bug: REVEAL_BOSS_BROKEN_FORM (far above BOSS_BROKEN_BEAM_TABLE in the
+; file) referenced these EQUs before their old definition point, and the
+; chained expression "BOSS_BROKEN_BEAM_CODE1*8+SPRPAT" silently resolved
+; PAT_SASAPI as 0 in that context - loading all 4 beams into codes
+; 16/20/24/28 relative to VRAM address 0 instead of PAT_SASAPI(156)+16/
+; 20/24/28, landing on top of the OLD 64x64 body's own still-resident
+; leftover pattern data (never overwritten by anything else, so it just
+; sat there as visual noise). Confirmed via direct emulator VRAM
+; inspection (per this project's own standing "verify empirically"
+; practice) that the beam codes' true destination addresses in the
+; assembled ROM did NOT match PAT_SASAPI+16/20/24/28 until moved here.
+; Moving the definition above the only other place in the file that
+; references these EQUs before their own (still-canonical, still used
+; by BOSS_BROKEN_BEAM_TABLE/FIRE_BOSS_BROKEN_BEAM below) definition
+; sidesteps the assembler bug entirely, without needing to fix the
+; assembler itself.
+BOSS_BROKEN_BEAM_CODE1 EQU PAT_SASAPI+16
+BOSS_BROKEN_BEAM_CODE2 EQU PAT_SASAPI+20
+BOSS_BROKEN_BEAM_CODE3 EQU PAT_SASAPI+24
+BOSS_BROKEN_BEAM_CODE4 EQU PAT_SASAPI+28
 PSG_ADDR         EQU 0A0h
 PSG_DATA         EQU 0A1h
 ; mixer (R7) values for channel A only - tone/noise B and C always
@@ -8902,8 +8930,9 @@ RBBF_HIDE_STAGE:
     ; 4 fixed beam-angle patterns once here too, same "load once when the
     ; reused owner is guaranteed gone for good" idiom as LOAD_SASAPI_
     ; BROKEN_PATTERNS itself - see BOSS_BROKEN_BEAM_TABLE's own comment
-    ; for why these 4 codes (PAT_SASAPI+16..+19) rather than reusing old
-    ; SBeam's own SBEAM_CODE.
+    ; for why these 4 codes (PAT_SASAPI+16/+20/+24/+28, each spanning 4
+    ; consecutive sub-pattern codes) rather than reusing old SBeam's own
+    ; SBEAM_CODE.
     DI
     LD HL,BOSS_BROKEN_BEAM1_SPRITE : LD DE,BOSS_BROKEN_BEAM_CODE1*8+SPRPAT : LD BC,32 : CALL LDIRVM
     LD HL,BOSS_BROKEN_BEAM2_SPRITE : LD DE,BOSS_BROKEN_BEAM_CODE2*8+SPRPAT : LD BC,32 : CALL LDIRVM
@@ -9159,15 +9188,25 @@ FBBS_LOOP:
 ; トしたX位置になる" (2/3 fire from the body's own center; 1 is 8px/1
 ; cell left of it, 4 is 8px/1 cell right). CODE is the hw sprite pattern
 ; each beam's own art was loaded into (BOSS_BROKEN_BEAM_CODE1-4,
-; PAT_SASAPI+16..+19 - see that constant's own comment for why these
-; codes specifically, not old SBeam's own SBEAM_CODE) - each beam is now
-; a single already-complete 16x16 picture (see FIRE_BOSS_BROKEN_BEAM's
-; own comment for why there's no longer a slope/direction to store here:
-; the angle is baked into the art itself, not computed at runtime).
-BOSS_BROKEN_BEAM_CODE1 EQU PAT_SASAPI+16
-BOSS_BROKEN_BEAM_CODE2 EQU PAT_SASAPI+17
-BOSS_BROKEN_BEAM_CODE3 EQU PAT_SASAPI+18
-BOSS_BROKEN_BEAM_CODE4 EQU PAT_SASAPI+19
+; PAT_SASAPI+16/+20/+24/+28 - see that constant's own comment for why
+; these codes specifically, not old SBeam's own SBEAM_CODE) - each beam
+; is now a single already-complete 16x16 picture (see FIRE_BOSS_BROKEN_
+; BEAM's own comment for why there's no longer a slope/direction to
+; store here: the angle is baked into the art itself, not computed at
+; runtime).
+; round36-14 follow-up#4 2nd real-hardware feedback ("全然違うぞ...
+; グラフィックも壊れてる"): a single 16x16 hw sprite occupies 4
+; CONSECUTIVE pattern codes (TL,BL,TR,BR - same convention BOSS_BROKEN_
+; QUAD_OFFSETS' own 0/4/8/12 deltas already use for the body), not 1 -
+; the first attempt spaced these 4 beam codes only 1 apart (16,17,18,19),
+; so each beam's own 32-byte LDIRVM load silently overwrote 3 of the
+; PREVIOUS beam's own 4 sub-pattern codes. Fixed by spacing them 4 apart
+; (16,20,24,28) - but that alone didn't fix the real-hardware symptom,
+; because a SEPARATE assembler forward-reference bug (see BOSS_BROKEN_
+; BEAM_CODE1's own comment, now up near PAT_SASAPI's own definition
+; where these EQUs actually live) meant REVEAL_BOSS_BROKEN_FORM's own
+; LDIRVM calls used the wrong destination addresses regardless of the
+; spacing fix. Both bugs are now fixed.
 BOSS_BROKEN_BEAM_TABLE:
     DB -1, BOSS_BROKEN_BEAM_CODE1
     DB  0, BOSS_BROKEN_BEAM_CODE2
