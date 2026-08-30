@@ -1285,6 +1285,47 @@ SPARK_CRACKLE_NOISE_PERIOD EQU 14
 SPARK_CRACKLE_PEAK EQU 15   ; round32 follow-up: "スパーク爆発も音量最大か? でなければ最大に" - was 8, now the PSG's own real hardware max (register8's volume field is 4 bits/16 steps, same as every other sound's own peak here)
 SPARK_CRACKLE_DECAY EQU 3
 
+; ---------- boss attack SFX (round36-14 follow-up#5, "ではボス攻撃に
+; サウンドを入れる ホーミング、サンダー、サンダービーム、ササピーレー
+; ザーそれぞれに") - chosen by the user out of 3 auditioned candidates
+; each, via a Web Audio prototype page built to model this exact same
+; PSG envelope/gating engine (period/peak/decay values below are
+; transcribed straight from that prototype's own reference numbers, not
+; re-derived) - "ホーミングはH2 サンダーはT3 サンダービームはS1
+; ササピーレーザーはL3で" then "それぞれ音量は最大で" (peak 15,
+; overriding whatever each candidate's own preview peak happened to be).
+; All 4 share the exact same channel-A envelope engine (SND_TIMER/
+; SND_DECAY/SND_NOISE/SOUND_UPDATE) every existing SFX in this file
+; already uses - no new engine code, same "shared channel, latest
+; trigger wins" tradeoff as SOUND_SHOT/SOUND_ZUM_DEFLECT.
+; ホーミング「バシュバシュ」(H2, ノイズ・ウィッシュ) - short, bright,
+; fast-decaying noise burst; SHOT_NOISE_PERIOD(8) より少し明るいピッチ。
+HORMING_NOISE_PERIOD EQU 6
+HORMING_SND_DECAY EQU 4
+; サンダー「雷鳴」(T3, 長い轟き) - SOUND_BOSS_BOOM と全く同じ「デューティ
+; ゲート+BOSS_BOOM_DECAY_PERIODで1段ずつゆっくり減衰」の仕組みをそのまま
+; 流用(新規メカニズム不要)、ピッチのみ別の定数で変える。「低すぎて聞こ
+; えない」というユーザーからのフィードバックを受けて当初案(31相当)より
+; 高いピッチに改訂済み。SND_EXPLODING は立てない - BOSS_BOOMやDESTROYの
+; ような一回性の演出と違い、戦闘中に何度も鳴る通常攻撃なので、自機ショッ
+; ト音を長時間ブロックしてしまうのは望ましくないという判断(SOUND_SHOT
+; 自身の"RET NZ"ガードの対象から外す)。
+THUNDER_NOISE_PERIOD EQU 18
+; サンダービーム「ビビビー」(S1, 速いトレモロトーン) - プロトタイプでは
+; 専用の2-on:1-offパターンを試作したが、60fps更新である以上「標準の1:1
+; デューティゲート(SND_NOISE=1)をノイズではなくトーンchに適用する」のが
+; 実質同じ「ブリブリ」感を最も安価に再現できると判断し、そちらを採用
+; (新規ゲートモード追加は不要)。トーンchへのデューティ適用はSOUND_
+; ZUM_DEFLECTの逆(あちらは意図的にデューティ無し)。
+SBEAM_SND_TONE_PERIOD EQU 20
+SBEAM_SND_DECAY EQU 1
+; ササピーレーザー(L3, デューティ版) - 指示通りsrc/CYBER SHMUP.asmの
+; SOUND_SHOTを流用、トーンピッチ(period30)はStage1の実値そのまま。L3の
+; 選定通りデューティゲートを追加(Stage1本来はゲート無し)、ピークは
+; "それぞれ音量は最大で"によりStage1の実値12から15へ引き上げ。
+SASAPI_LASER_TONE_PERIOD EQU 30
+SASAPI_LASER_SND_DECAY EQU 1
+
 ; ---------- enemy (ZacoII) ----------
 ; "では次敵の実装 スプライトで実装 右から左へスライド Skyのみのの
 ; 位置に出現 現状はランダム 地形も合わせてスケジュールエディタで
@@ -5368,6 +5409,74 @@ SU_BOOM:
     LD (SND_EXPLODING),A
     RET
 
+; ---------- boss attack SFX (round36-14 follow-up#5) ----------
+; ホーミング発射音「バシュ」- ノイズ、短く明るく、ゲート有り。
+; UPDATE_HORMING_VOLLEY's own UHV_FIRE calls this once per tick (a pair
+; of missiles launches together, sprite pool + BG pool), not once per
+; individual FIRE_ONE_HORMING/_BG call - calling it from both would just
+; re-arm the identical envelope twice on the same frame for no audible
+; difference, so the shared dispatch point is the cleaner call site.
+SOUND_HORMING:
+    LD A,7 : OUT (PSG_ADDR),A
+    LD A,MIXER_NOISE_A : OUT (PSG_DATA),A
+    LD A,6 : OUT (PSG_ADDR),A
+    LD A,HORMING_NOISE_PERIOD : OUT (PSG_DATA),A
+    LD A,15 : LD (SND_TIMER),A
+    LD A,HORMING_SND_DECAY : LD (SND_DECAY),A
+    XOR A : LD (SND_EXPLODING),A
+    LD A,1 : LD (SND_NOISE),A
+    RET
+
+; サンダー発射音「雷鳴」- SOUND_BOSS_BOOM と全く同じ「boomモード」
+; (SND_DECAY=0、BOSS_BOOM_DECAY_PERIODで1段ずつ減衰)を再利用、ノイズ
+; ピッチのみ差し替え。SND_EXPLODING は立てない(自身のコメント参照)。
+SOUND_THUNDER:
+    LD A,7 : OUT (PSG_ADDR),A
+    LD A,MIXER_NOISE_A : OUT (PSG_DATA),A
+    LD A,6 : OUT (PSG_ADDR),A
+    LD A,THUNDER_NOISE_PERIOD : OUT (PSG_DATA),A
+    LD A,15 : LD (SND_TIMER),A
+    XOR A : LD (SND_DECAY),A
+    LD A,BOSS_BOOM_DECAY_PERIOD : LD (SND_BOOM_DECAY_CTR),A
+    XOR A : LD (SND_EXPLODING),A
+    LD A,1 : LD (SND_NOISE),A
+    RET
+
+; サンダービーム発射音「ビビビー」- トーンch(SOUND_ZUM_DEFLECTと同じ
+; MIXER_TONE_A)に、通常はノイズ専用のデューティゲート(SND_NOISE=1)を
+; あえて適用 - 60fps更新の下で作れる最速の振幅変調がこの1:1ゲートその
+; ものなので、新規のゲートモードを増やさずそのまま流用するだけで
+; プロトタイプのS1が狙っていた「ビビビー」感を再現できる。
+SOUND_SBEAM:
+    LD A,7 : OUT (PSG_ADDR),A
+    LD A,MIXER_TONE_A : OUT (PSG_DATA),A
+    LD A,0 : OUT (PSG_ADDR),A
+    LD A,SBEAM_SND_TONE_PERIOD : OUT (PSG_DATA),A
+    LD A,1 : OUT (PSG_ADDR),A
+    XOR A : OUT (PSG_DATA),A
+    LD A,15 : LD (SND_TIMER),A
+    LD A,SBEAM_SND_DECAY : LD (SND_DECAY),A
+    XOR A : LD (SND_EXPLODING),A
+    LD A,1 : LD (SND_NOISE),A
+    RET
+
+; ササピーレーザー(SasapiBroken停止中4方向ビーム)発射音 - 指示通り
+; src/CYBER SHMUP.asmのSOUND_SHOTを流用、トーンピッチ(period30)は実値
+; そのまま。L3の選定通りデューティゲートを追加(Stage1本来は無し)、
+; ピークは"それぞれ音量は最大で"により15。
+SOUND_SASAPI_LASER:
+    LD A,7 : OUT (PSG_ADDR),A
+    LD A,MIXER_TONE_A : OUT (PSG_DATA),A
+    LD A,0 : OUT (PSG_ADDR),A
+    LD A,SASAPI_LASER_TONE_PERIOD : OUT (PSG_DATA),A
+    LD A,1 : OUT (PSG_ADDR),A
+    XOR A : OUT (PSG_DATA),A
+    LD A,15 : LD (SND_TIMER),A
+    LD A,SASAPI_LASER_SND_DECAY : LD (SND_DECAY),A
+    XOR A : LD (SND_EXPLODING),A
+    LD A,1 : LD (SND_NOISE),A
+    RET
+
 ; ---------- Stage2 spawn schedule (round34, "全てスケジュールに") ----------
 ; table-driven spawning, ported from src/CYBER SHMUP.asm's own
 ; SPAWN_THRESHOLDS/SPAWN_NEXT_INDEX/SSC_FIRE/SPAWN_SCHEDULE_CHECK
@@ -9373,6 +9482,7 @@ LBBB_DX_SET:
     LD HL,BOSS_BROKEN_PROJ_CODE : ADD HL,DE : LD (HL),A
     LD A,1
     LD HL,BOSS_BROKEN_PROJ_ACTIVE : ADD HL,DE : LD (HL),A
+    CALL SOUND_SASAPI_LASER
     RET
 
 ; per-frame update for all 4 potentially-in-flight beam projectiles -
@@ -10864,6 +10974,7 @@ CHECK_THUNDER_TRIGGER_LEFT:
     LD A,(BOSS_X) : ADD A,64        ; boss's own current right edge - trailing behind it as it moves left, no overlap
     SRL A : SRL A : SRL A            ; X -> BG column
     CALL ALLOC_THUNDER_SLOT
+    CALL SOUND_THUNDER
     RET
 
 ; same idea for the rightward leg (after the left-edge reversal) -
@@ -10908,6 +11019,7 @@ CTTR_FIRE:
     LD A,(BOSS_X) : SUB 16           ; boss's own current left edge, minus the bolt's own 16px width
     SRL A : SRL A : SRL A
     CALL ALLOC_THUNDER_SLOT
+    CALL SOUND_THUNDER
     RET
 
 ; ---------- homing missile (4-instance hw-sprite pool) ----------
@@ -10950,6 +11062,7 @@ UPDATE_HORMING_VOLLEY:
 UHV_FIRE:
     CALL FIRE_ONE_HORMING
     CALL FIRE_ONE_HORMING_BG
+    CALL SOUND_HORMING
     LD A,(HORMING_VOLLEY_COUNT) : INC A : LD (HORMING_VOLLEY_COUNT),A
     LD A,HORMING_VOLLEY_INTERVAL : LD (HORMING_VOLLEY_TIMER),A
     RET
@@ -11795,6 +11908,7 @@ FIRE_SBEAM:
     ADD A,A : ADD A,A : ADD A,A   ; row -> pixel Y (row*8)
     SUB 8
     LD (SBEAM_GROUND_Y),A
+    CALL SOUND_SBEAM
     RET
 
 ; called every frame (from MAINLOOP, alongside UPDATE_THUNDER) - does

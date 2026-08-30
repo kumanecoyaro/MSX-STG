@@ -5978,3 +5978,86 @@ Thunder activity) confirming it survives completely untouched.
   (~5.4px/frame)なる副作用がある。統一速度にすべきかは実プレイでの
   フィードバック待ち。画面外判定のマージン(左右239-DX、下191-DY)も
   未調整の初期値。
+
+## Round 36-14 follow-up#5: ボス攻撃サウンド追加(ホーミング/サンダー/サンダービーム/ササピーレーザー)
+
+- User instruction(verbatim): "ではボス攻撃にサウンドを入れる ホーミング、
+  サンダー、サンダービーム、ササピーレーザー(形態変化後の最後の攻撃、
+  今やったやつ)それぞれに ホーミングはバシュバシュ、サンダーは雷鳴、
+  サンダービームはビビビー、ササピーレーザーはStage1の自機ショット音
+  流用 こちらで検討するんで作って聞かせてくれ ここでHtml貼ってくれ
+  そこから選ぶ それぞれ3種作ってみて"
+- 従来、ホーミング/サンダー/サンダービームは発射時に無音(自機に命中
+  した時だけ既存の共通「キンキン」ping `SOUND_ZUM_DEFLECT` が鳴る
+  のみ)、ササピーレーザーもこのRoundまで完全に無音だったことを事前
+  調査で確認(既存の`SOUND_SHOT`/`SOUND_DESTROY`/`SOUND_ZUM_DEFLECT`/
+  `SOUND_BOSS_BOOM`が使う共有チャンネルA・共有エンベロープ機構
+  `SOUND_UPDATE`/`SOUND_CALC_NOISE_GATE_VOLUME`/`SU_BOOM`の実装を
+  精査、`src/CYBER SHMUP.asm`本家の`SOUND_SHOT`の実値(トーンch C、
+  period=30、peak12、decay1、ゲート無し)も直接読み取り)。
+- **試聴HTML**: Web Audioで実機PSGエンジン(1/60フレーム毎のエンベ
+  ロープ更新+ノイズ音源への1:1デューティゲート)と同じ仕組みを再現した
+  試聴ページをArtifactとして公開、4カテゴリ×3種=12候補を用意
+  (ホーミング: H1トーン下降チャープ/H2ノイズウィッシュ/H3ハイブリッド、
+  サンダー: T1低音ゴロゴロ/T2クラック+余韻/T3長い轟き(`SOUND_BOSS_
+  BOOM`と同じboom式減衰の流用)、サンダービーム: S1速いトレモロ
+  トーン/S2デューティ全開ノイズ/S3上昇ワープル、ササピーレーザー:
+  L1 Stage1そのまま/L2やや長め/L3デューティ版)。各カードにperiod/
+  peak/decayの参考値を表示し、選んだものをそのまま実装に転用できる
+  設計とした。
+  - フィードバック1: "サンダーは音が低すぎて聞こえてないな" - 3種とも
+    ローパス/バンドパスのカットオフ周波数を250-350Hz帯から850-1100Hz
+    帯へ大幅に引き上げた改訂版に差し替え、同じURLで再公開。
+  - 最終選定: "ホーミングはH2 サンダーは音が低すぎて聞こえてないな
+    サンダービームはS1 ササピーレーザーはL3で サンダーだけピッチを
+    上げてくれ 他は確定で" → "サンダーはT3で それぞれ音量は最大で"。
+- **実装**: 選定結果をそのまま`combined_test.asm`へ実装(新規エンジン
+  コード不要、既存の共有チャンネルA/エンベロープ機構を100%再利用):
+  - `SOUND_HORMING`(H2): ノイズ、period6(明るいピッチ)、peak15、
+    decay4、ゲート有り。`UPDATE_HORMING_VOLLEY`の`UHV_FIRE`(スプライト
+    +BG両プールへ同時発射する共有ディスパッチ点)から1回のみ呼び出し
+    (個別の`FIRE_ONE_HORMING`/`_BG`両方から呼ぶと同一フレームで二重
+    呼び出しになるため)。
+  - `SOUND_THUNDER`(T3): `SOUND_BOSS_BOOM`と全く同じ「boomモード」
+    (`SND_DECAY=0`、`BOSS_BOOM_DECAY_PERIOD`で1段ずつ減衰)を新規
+    メカニズム追加なしでそのまま流用、ノイズピッチのみperiod18
+    (改訂後の高いピッチ)に差し替え。**実装中に発見した実バグ**:
+    `CTTR_FIRE`という名前は`CHECK_THUNDER_TRIGGER_RIGHT`専用の内部
+    ラベルであり、`CHECK_THUNDER_TRIGGER_LEFT`は全く別の独立した発射
+    処理(自前のインライン発射末尾)を持っていた - 当初`CTTR_FIRE`
+    にのみ`CALL SOUND_THUNDER`を追加したため、左方向のサンダー発射が
+    無音のままになっていた。新規テスト`boss_attack_sfx_test.py`で
+    LEFT/RIGHT両方向を個別に検証したことで発見・修正(RIGHT側の
+    テストのみ書いていたら見逃していた)。`SND_EXPLODING`はあえて
+    立てない - `SOUND_BOSS_BOOM`/`SOUND_DESTROY`と違い、戦闘中に
+    繰り返し鳴る通常攻撃なので、自機ショット音を長時間ブロックして
+    しまうのは望ましくないという判断。
+  - `SOUND_SBEAM`(S1): プロトタイプでは専用の2-on:1-offパターンを
+    試作したが、60fps更新である以上「標準の1:1デューティゲート
+    (`SND_NOISE=1`)を(ノイズではなく)トーンchに適用する」のが同じ
+    「ブリブリ」感を最も安価に再現できると判断、新規ゲートモード
+    追加なしで採用(`SOUND_ZUM_DEFLECT`の逆 - あちらは意図的に
+    デューティ無し)。tone period20、peak15、decay1(長め持続)。
+  - `SOUND_SASAPI_LASER`(L3): `src/CYBER SHMUP.asm`本家`SOUND_SHOT`の
+    実値(tone period=30)をそのまま流用、デューティゲートを追加
+    (Stage1本来はゲート無し)、peakは"それぞれ音量は最大で"により
+    Stage1の実値12から15へ引き上げ。`LAUNCH_BOSS_BROKEN_BEAM`
+    (今Round実装した4方向ビーム発射)から呼び出し。
+  - 全4音とも新規RAMバイト・新規エンベロープ機構は一切追加せず、
+    既存の`SND_TIMER`/`SND_DECAY`/`SND_NOISE`/`SND_EXPLODING`/
+    `SND_BOOM_DECAY_CTR`をそのまま共有(4音同時に鳴ることはなく、
+    後着優先で上書きされる既存の設計を踏襲 - `SOUND_SHOT`等の
+    他の効果音とも同じチャンネルを取り合う)。
+- **テスト**: 新規`boss_attack_sfx_test.py`(25件) - 各`SOUND_*`
+  ルーチン単体のエンベロープ設定直接検証+実際のゲーム内発射経路
+  (`UPDATE_HORMING_VOLLEY`/`CHECK_THUNDER_TRIGGER_LEFT`/`_RIGHT`/
+  `FIRE_SBEAM`/`LAUNCH_BOSS_BROKEN_BEAM`)が実際に各`SOUND_*`を
+  呼び出すことの統合検証。z80emu.pyにPSGエミュレーションが無いため
+  (`boss_boom_sound_test.py`の既存の前例通り)、実際に書き込まれる
+  PSGレジスタ値ではなく、結果としてのエンベロープRAM状態を検証する
+  方式。
+- **検証**: `python3 build_test.py`アセンブル成功。
+  `boss_attack_sfx_test.py` 25 passed/0 failed。全回帰`run_all.py`
+  1075 passed/0 failed(`terrain_render_perf_test.py`含め今回も一時的
+  失敗なし)。Stage2単体のみ実施(Combビルドは指示なしに未実施)。
+  実機での音量・音質の最終確認はユーザーによる実プレイ待ち。
