@@ -364,7 +364,7 @@
     gap: 10px;
   }
   .overlay-title { font-size: 13px; font-weight: 600; }
-  #offsetInput, #saveFilenameInput, #loadTextInput {
+  #offsetInput, #saveFilenameInput {
     background: var(--surface-2);
     color: var(--ink);
     border: 1px solid var(--line);
@@ -372,13 +372,6 @@
     padding: 8px;
     font-family: var(--font-mono);
     font-size: 15px;
-  }
-  #loadTextInput {
-    width: 100%;
-    height: 40vh;
-    resize: vertical;
-    font-size: 12px;
-    white-space: pre;
   }
   .overlay-actions { display: flex; gap: 8px; justify-content: flex-end; }
   .overlay-actions button { padding: 8px 14px; }
@@ -450,9 +443,6 @@
       <div class="btn-row">
         <label class="btn-label" for="fileInput">Load JSON</label>
         <input type="file" id="fileInput" accept=".json" hidden>
-        <button id="btnLoadText">Load Text</button>
-      </div>
-      <div class="btn-row">
         <button id="btnCopy">Copy</button>
         <button id="btnPaste">Paste</button>
       </div>
@@ -500,29 +490,6 @@
     </div>
   </div>
 
-  <!-- round36-3 ("コンソールのアーティファクトではロードがファイル指定
-       ではなく決め打ちされてて...これでどうやって任意のファイルを読む
-       んだよ"): native <input type=file> file-picking can be unreliable
-       or entirely unavailable inside a sandboxed Artifact preview (this
-       page is very likely being viewed as exactly that, not opened
-       directly as a local file in an ordinary browser tab) - same class
-       of sandbox restriction the Save flow already had to work around
-       (see doSaveViaDownloadsCapability's own comment history). This is
-       a second, independent way IN that never depends on a native file
-       dialog at all: paste JSON text directly and load it, using only a
-       plain textarea + button - works identically whether this page is
-       a real file:// tab or an embedded Artifact iframe. -->
-  <div id="loadOverlay" class="overlay">
-    <div class="overlay-card" style="width: min(560px, 100%);">
-      <div class="overlay-title">Load from pasted JSON</div>
-      <textarea id="loadTextInput" placeholder="Paste a full Schedule/Schedule2 JSON export here"></textarea>
-      <div class="overlay-status" id="loadStatus"></div>
-      <div class="overlay-actions">
-        <button id="btnLoadTextCancel">Cancel</button>
-        <button class="primary" id="btnLoadTextConfirm">Load</button>
-      </div>
-    </div>
-  </div>
 
 <script>
 (function () {
@@ -2633,50 +2600,6 @@
     };
     reader.readAsText(file);
     ev.target.value = "";
-  });
-
-  // round36-3: "Load Text" - paste-JSON alternative to the file picker
-  // above (see loadOverlay's own HTML comment for why this exists at
-  // all). Status shown inline in the card, same reasoning as the Save
-  // overlay's own #saveStatus: a toast at the screen edge can end up
-  // hidden behind an on-screen keyboard right after pasting.
-  var loadOverlay = document.getElementById("loadOverlay");
-  var loadTextInput = document.getElementById("loadTextInput");
-  var loadStatus = document.getElementById("loadStatus");
-  document.getElementById("btnLoadText").addEventListener("click", function () {
-    loadStatus.textContent = "";
-    loadStatus.classList.remove("ok");
-    loadTextInput.value = "";
-    loadOverlay.classList.add("show");
-    loadTextInput.focus();
-  });
-  function closeLoadOverlay() {
-    loadOverlay.classList.remove("show");
-  }
-  document.getElementById("btnLoadTextCancel").addEventListener("click", closeLoadOverlay);
-  document.getElementById("btnLoadTextConfirm").addEventListener("click", function () {
-    var text = loadTextInput.value.trim();
-    if (!text) {
-      loadStatus.textContent = "paste some JSON first";
-      loadStatus.classList.remove("ok");
-      return;
-    }
-    try {
-      var msg = importJSONText(text);
-      loadStatus.textContent = msg;
-      loadStatus.classList.add("ok");
-      flash(msg);
-      closeLoadOverlay();
-    } catch (e) {
-      loadStatus.textContent = "could not load that: " + e.message;
-      loadStatus.classList.remove("ok");
-    }
-  });
-  loadTextInput.addEventListener("keydown", function (ev) {
-    if (ev.key === "Escape") closeLoadOverlay();
-  });
-  loadOverlay.addEventListener("click", function (ev) {
-    if (ev.target === loadOverlay) closeLoadOverlay();
   });
 
   // ---------- misc UI ----------
