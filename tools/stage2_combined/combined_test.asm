@@ -759,6 +759,10 @@ BOSS_COLOR      EQU 9       ; from sprites/Sasapi.json's own fg (light red)
 ; footprint, full AABB against BOSS_X/BOSS_SPAWN_Y (see CHECK_HIT_PAIR_
 ; BOSS) - not a smaller hitbox.
 BOSS_COLLISION_SIZE EQU 64
+; round36-14 follow-up #3: the broken form's own real 32x32 footprint -
+; see CHECK_HIT_PAIR_BOSS's own comment for how this gets picked at
+; runtime.
+BOSS_BROKEN_COLLISION_SIZE EQU 32
 
 ; round36-14 Part C ("ボス耐久値が50になったらスパーク爆発しSasapiBroken
 ; に変化して インフィニティ起動で回って ランダムタイミングで停止し 少し
@@ -2122,17 +2126,39 @@ BOSS_BROKEN_DIR EQU 0C0C3h            ; last-loaded facing (0=SASAPI_BROKEN_QUAD
 BOSS_BROKEN_MOVING EQU 0C0C4h         ; 0=stopped(frozen at the current path point),1=drifting - see UPDATE_BOSS_BROKEN_ACTIVE
 BOSS_BROKEN_PATH_INDEX EQU 0C0C5h     ; 0..BOSS_BROKEN_PATH_LEN-1, only advances while MOVING - position/facing are always re-derived from this same index, so a stop-then-resume continues from exactly where it left off rather than jumping
 BOSS_BROKEN_FRAME_COUNTER EQU 0C0C6h  ; 0..BOSS_BROKEN_PATH_HOLD_FRAMES-1, counts raw frames between path-index steps while MOVING
-; round36-14 follow-up (real-hardware report: "スパーク爆発後ボスの爆発
-; 位置に関係なく右から出てきてる 爆発位置からでなきゃおかしい") - the
-; figure-8 path LUT (BOSS_BROKEN_PATH_X/_Y) used to hold ABSOLUTE screen
-; coordinates, so index0 (a fixed point near the right edge) was always
-; where the broken body first appeared, regardless of where the old body
-; actually died. Fixed by making the LUT hold DX/DY OFFSETS from an
-; ORIGIN captured once at the moment of transformation (TRIGGER_BOSS_
-; BROKEN_FORM) instead - see BOSS_BROKEN_PATH_DX/_DY's own comment in
-; sasapi_gen.py for the matching generator-side change.
-BOSS_BROKEN_ORIGIN_X EQU 0C0C7h
-BOSS_BROKEN_ORIGIN_Y EQU 0C0C8h
+; round36-14 follow-up #2 ("インフィニティ軌道はその位置から始まるが一旦
+; 中央に寄せろ センタリングするかたちで 今だと端で倒すと画面半分の狭い
+; 起動で動いてしまってる") - round36-14 follow-up #1 had the figure-8
+; loop orbit around wherever the boss actually died (clamped so it never
+; left the screen), which is exactly what produced this complaint: dying
+; near an edge clamped the loop's own center near that edge too, so the
+; visible loop was lopsided/cramped against the edge instead of using the
+; screen's own full width. Fixed by splitting into 2 sub-phases instead:
+; 1) RECENTERING - the body appears exactly where the old one died (still
+; correct - "その位置から始まる"), then walks toward a FIXED screen-
+; center point (BOSS_BROKEN_CENTER_X/Y, sasapi_gen.py) at BOSS_BROKEN_
+; RECENTER_SPEED px/frame ("一旦中央に寄せろ センタリングするかたちで").
+; 2) once arrived, the orbit itself resumes being ABSOLUTE, centered on
+; that same fixed point (BOSS_BROKEN_PATH_X/_Y, back to sasapi_gen.py's
+; original absolute-coordinate table shape, just with a fixed center
+; instead of one derived from wherever the boss happened to die) - always
+; the same full-amplitude loop regardless of death position, never
+; clamped/narrowed. BOSS_BROKEN_RECENTERING=1 selects sub-phase 1;
+; UPDATE_BOSS_BROKEN_ACTIVE clears it exactly once, at the moment BOSS_X/
+; BOSS_Y both reach the center exactly, and starts the orbit at BOSS_
+; BROKEN_PATH_CROSS_INDEX (the loop's own (0,0)-offset crossing point,
+; sasapi_gen.py) so there's no visual jump at the handoff. No more per-
+; death ORIGIN capture/clamp needed - see TRIGGER_BOSS_BROKEN_FORM's own
+; comment for why BOSS_X/BOSS_Y already hold the right starting point for
+; free, with nothing new to capture.
+BOSS_BROKEN_RECENTERING EQU 0C0C7h    ; 1=still walking toward BOSS_BROKEN_CENTER_X/Y, 0=orbiting
+BOSS_BROKEN_RECENTER_SPEED EQU 2      ; px/frame while recentering, same pace as the old body's own BOSS_SPEED
+; round36-14 follow-up #3 ("形態変化後に64x64のコリジョンのままになって
+; る 32x32になるよう修正") - CHECK_HIT_PAIR_BOSS's own AABB half-width
+; needs to shrink to match the real 32x32 broken body; see that routine's
+; own comment for how (a runtime-computed scratch byte, since the size is
+; now conditional on BOSS_FORM rather than a single compile-time EQU).
+CHPB_SIZE_SCRATCH EQU 0C0C8h
 ; Thunder's own state - a real POOL now (round9 fix: "いつからサンダー
 ; は1本しか出せない仕様に? そんな指示はしてねえぞ...BGを使ってるのは
 ; 表示制限がないからだろが" - BG has no hw-sprite-style display limit,
@@ -8783,15 +8809,14 @@ RBBF_HIDE_STAGE:
     DJNZ RBBF_HIDE_STAGE
     LD A,BOSS_EXPL_STATE_DONE : LD (BOSS_EXPL_STATE),A   ; retire the shared SPARK/GROW/etc state machine - UPDATE_BOSS_ALL never dispatches to it again anyway once BOSS_FORM leaves SPARK, this just keeps it inert if anything ever reread it
     LD HL,SASAPI_BROKEN_QUADS : CALL LOAD_SASAPI_BROKEN_PATTERNS
-    LD A,0FFh : LD (BOSS_BROKEN_DIR),A   ; sentinel - force the very first UPDATE_BOSS_BROKEN_ACTIVE frame to (re)confirm the facing regardless of which way the path LUT happens to start moving
-    XOR A
-    LD (BOSS_BROKEN_PATH_INDEX),A
-    LD (BOSS_BROKEN_FRAME_COUNTER),A
-    LD A,1 : LD (BOSS_BROKEN_MOVING),A   ; "起動で画面を移動" - starts already drifting, not parked
-    CALL ROLL_BOSS_BROKEN_MOVE_DUR       ; A = this first MOVING phase's own random duration
-    LD L,A : LD H,0
-    LD DE,(GAME_TICK) : ADD HL,DE
-    LD (BOSS_BROKEN_PHASE_END_TICK),HL
+    XOR A : LD (BOSS_BROKEN_DIR),A   ; matches the unmirrored QUADS just loaded above - UPDATE_BOSS_BROKEN_ACTIVE's own RECENTERING branch corrects this on its very first frame if the real direction toward center differs
+    ; round36-14 follow-up #2 ("インフィニティ軌道はその位置から始まる
+    ; が一旦中央に寄せろ センタリングするかたちで") - appear right where
+    ; the old body died (BOSS_X/BOSS_Y already hold that, untouched since
+    ; TRIGGER_BOSS_BROKEN_FORM), then walk toward the fixed orbit center
+    ; before the figure-8 loop itself starts - see BOSS_BROKEN_
+    ; RECENTERING's own comment.
+    LD A,1 : LD (BOSS_BROKEN_RECENTERING),A
     LD A,BOSS_FORM_ACTIVE : LD (BOSS_FORM),A
     ; same "draw once immediately, don't wait a whole extra frame for the
     ; very first real position/sprite" convention S2_BOSS_SPAWN's own
@@ -8834,21 +8859,93 @@ RBBSD_OK:
     ADD A,BOSS_BROKEN_STOP_MIN_TICKS
     RET
 
+; A=current value, B=target, C=step size. Steps A by C toward B (up or
+; down, whichever direction is needed), clamped so it never overshoots
+; past B - repeated calls converge exactly onto B and stay there. A leaf
+; routine (only touches A/B/C), used by UPDATE_BOSS_BROKEN_ACTIVE's own
+; RECENTERING sub-phase for both axes.
+STEP_TOWARD:
+    CP B
+    RET Z
+    JR C,STW_UP
+    SUB C
+    CP B
+    RET NC
+    LD A,B
+    RET
+STW_UP:
+    ADD A,C
+    CP B
+    RET C
+    LD A,B
+    RET
+
 ; round36-14 Part C's own per-frame update, dispatched from UPDATE_BOSS_
-; ALL once BOSS_FORM=ACTIVE(2) (in place of UBA_ACTIVE). "インフィニティ
-; の起動で画面を移動しランダムタイミングで停止し 少ししてまた回る これ
-; がシーケンスで" - a repeating MOVING<->stopped cycle, each phase's own
-; random duration re-rolled at the moment it's entered (compared every
-; frame via the same true-16-bit-SBC-HL,DE idiom as BOSS_POSE_END_TICK).
-; Walks a precomputed figure-8 (lemniscate) path LUT (BOSS_BROKEN_PATH_X/
-; _Y/_DIR, BOSS_BROKEN_PATH_LEN points, sasapi_gen.py) via an explicit
-; BOSS_BROKEN_PATH_INDEX that only advances while MOVING (one step every
-; BOSS_BROKEN_PATH_HOLD_FRAMES raw frames) - unlike a value derived
-; straight from GAME_TICK, an explicit index naturally freezes in place
-; while stopped and resumes from the exact same point once moving again,
-; with no separate "frozen index" bookkeeping needed (position/facing
-; are always just re-read from whatever the index currently is).
+; ALL once BOSS_FORM=ACTIVE(2) (in place of UBA_ACTIVE). Two sub-phases -
+; see BOSS_BROKEN_RECENTERING's own comment for why: 1) RECENTERING (set
+; by REVEAL_BOSS_BROKEN_FORM) walks BOSS_X/BOSS_Y from wherever the old
+; body actually died toward the fixed BOSS_BROKEN_CENTER_X/Y point at
+; BOSS_BROKEN_RECENTER_SPEED px/frame; 2) once arrived, the orbit itself
+; runs - "インフィニティの起動で画面を移動しランダムタイミングで停止し
+; 少ししてまた回る これがシーケンスで" - a repeating MOVING<->stopped
+; cycle, each phase's own random duration re-rolled at the moment it's
+; entered (compared every frame via the same true-16-bit-SBC-HL,DE idiom
+; as BOSS_POSE_END_TICK), walking a precomputed figure-8 (lemniscate)
+; path LUT (BOSS_BROKEN_PATH_X/_Y/_DIR, BOSS_BROKEN_PATH_LEN points,
+; sasapi_gen.py, ABSOLUTE coordinates centered on that same fixed point)
+; via an explicit BOSS_BROKEN_PATH_INDEX that only advances while MOVING
+; (one step every BOSS_BROKEN_PATH_HOLD_FRAMES raw frames) - unlike a
+; value derived straight from GAME_TICK, an explicit index naturally
+; freezes in place while stopped and resumes from the exact same point
+; once moving again, with no separate "frozen index" bookkeeping needed.
 UPDATE_BOSS_BROKEN_ACTIVE:
+    LD A,(BOSS_BROKEN_RECENTERING)
+    OR A
+    JR Z,UBBA_ORBIT
+
+    ; --- sub-phase 1: RECENTERING ---
+    LD A,(BOSS_X) : LD B,BOSS_BROKEN_CENTER_X : LD C,BOSS_BROKEN_RECENTER_SPEED
+    CALL STEP_TOWARD
+    LD (BOSS_X),A
+    LD A,(BOSS_Y) : LD B,BOSS_BROKEN_CENTER_Y : LD C,BOSS_BROKEN_RECENTER_SPEED
+    CALL STEP_TOWARD
+    LD (BOSS_Y),A
+    ; face toward the center horizontally while still walking (same
+    ; BOSS_DIR convention as the orbit's own table: B=0 normal/left-
+    ; facing QUADS, B=1 mirrored/right-facing QUADS_L)
+    LD A,(BOSS_X)
+    CP BOSS_BROKEN_CENTER_X
+    JR Z,UBBA_RC_KEEPDIR
+    JR C,UBBA_RC_RIGHT
+    LD B,0
+    JR UBBA_RC_HAVE_DIR
+UBBA_RC_RIGHT:
+    LD B,1
+    JR UBBA_RC_HAVE_DIR
+UBBA_RC_KEEPDIR:
+    LD A,(BOSS_BROKEN_DIR) : LD B,A
+UBBA_RC_HAVE_DIR:
+    ; arrived at the center exactly on both axes? hand off to the orbit,
+    ; starting at the loop's own (0,0)-offset crossing point so there's
+    ; no visual jump at the handoff.
+    LD A,(BOSS_X) : CP BOSS_BROKEN_CENTER_X
+    JP NZ,UBBA_APPLY_DIR   ; JR range exceeded - ORBIT's own block sits between here and the shared tail
+    LD A,(BOSS_Y) : CP BOSS_BROKEN_CENTER_Y
+    JP NZ,UBBA_APPLY_DIR
+    XOR A : LD (BOSS_BROKEN_RECENTERING),A
+    LD A,BOSS_BROKEN_PATH_CROSS_INDEX : LD (BOSS_BROKEN_PATH_INDEX),A
+    XOR A : LD (BOSS_BROKEN_FRAME_COUNTER),A
+    LD A,1 : LD (BOSS_BROKEN_MOVING),A
+    PUSH BC
+    CALL ROLL_BOSS_BROKEN_MOVE_DUR
+    LD L,A : LD H,0
+    LD DE,(GAME_TICK) : ADD HL,DE
+    LD (BOSS_BROKEN_PHASE_END_TICK),HL
+    POP BC
+    JP UBBA_APPLY_DIR
+
+    ; --- sub-phase 2: ORBIT ---
+UBBA_ORBIT:
     LD HL,(GAME_TICK)
     LD DE,(BOSS_BROKEN_PHASE_END_TICK)
     OR A : SBC HL,DE
@@ -8884,19 +8981,13 @@ UBBA_FC_SAVE:
     LD (BOSS_BROKEN_FRAME_COUNTER),A
 
 UBBA_POS:
-    ; round36-14 follow-up ("爆発位置からでなきゃおかしい") - the LUT
-    ; holds signed DX/DY OFFSETS now, not absolute coordinates; add each
-    ; to the origin TRIGGER_BOSS_BROKEN_FORM captured (and clamped) at
-    ; the moment of transformation - see BOSS_BROKEN_ORIGIN_X's own
-    ; comment.
     LD A,(BOSS_BROKEN_PATH_INDEX)
     LD E,A : LD D,0
-    LD HL,BOSS_BROKEN_PATH_DX : ADD HL,DE : LD A,(HL) : LD B,A
-    LD A,(BOSS_BROKEN_ORIGIN_X) : ADD A,B : LD (BOSS_X),A
-    LD HL,BOSS_BROKEN_PATH_DY : ADD HL,DE : LD A,(HL) : LD B,A
-    LD A,(BOSS_BROKEN_ORIGIN_Y) : ADD A,B : LD (BOSS_Y),A
+    LD HL,BOSS_BROKEN_PATH_X : ADD HL,DE : LD A,(HL) : LD (BOSS_X),A
+    LD HL,BOSS_BROKEN_PATH_Y : ADD HL,DE : LD A,(HL) : LD (BOSS_Y),A
     LD HL,BOSS_BROKEN_PATH_DIR : ADD HL,DE : LD A,(HL) : LD B,A
 
+UBBA_APPLY_DIR:
     LD A,(BOSS_BROKEN_DIR)
     CP B
     JR Z,UBBA_DRAW
@@ -11497,17 +11588,23 @@ CHECK_BULLET_VS_BOSS:
     LD IX,BULLET2_ACT : CALL CHECK_HIT_PAIR_BOSS
     RET
 
-; IX = bullet slot base. AABB vs the boss's own real 64x64 footprint
-; (BOSS_X..+63, BOSS_SPAWN_Y..+63, BOSS_COLLISION_SIZE=64) - "ボスに
-; コリジョン 見た目通り" - same shape as CHECK_HIT_PAIR_FLYER/ETANK,
-; just with the boss's own fixed-Y/full-size box. Only ever matters
-; while BOSS_ACT=1 (checked first) - by that same point every ordinary
-; enemy has stopped spawning, and BOTH bullet types (F and U - see
-; DRAW_BULLET_CELL's own boss-only U-BG-drawing entry) are guaranteed
-; BG-drawn, not a hw sprite, so ERASE_BULLET_CELL is called
-; unconditionally on a hit here, with no IX+1(TYPE) branch needed
-; (unlike CHECK_HIT_PAIR_FLYER/ETANK, written back when U was always a
-; hw sprite outside this exact window).
+; IX = bullet slot base. AABB vs the boss's own real footprint (BOSS_X..
+; +size-1, BOSS_Y..+size-1) - "ボスにコリジョン 見た目通り" - same shape
+; as CHECK_HIT_PAIR_FLYER/ETANK, just with the boss's own fixed-Y/full-
+; size box. Only ever matters while BOSS_ACT=1 (checked first) - by that
+; same point every ordinary enemy has stopped spawning, and BOTH bullet
+; types (F and U - see DRAW_BULLET_CELL's own boss-only U-BG-drawing
+; entry) are guaranteed BG-drawn, not a hw sprite, so ERASE_BULLET_CELL
+; is called unconditionally on a hit here, with no IX+1(TYPE) branch
+; needed (unlike CHECK_HIT_PAIR_FLYER/ETANK, written back when U was
+; always a hw sprite outside this exact window).
+;
+; round36-14 follow-up #3 ("形態変化後に64x64のコリジョンのままになって
+; る 32x32になるよう修正") - size-1 (63 for the old 64x64 body, 31 for
+; the broken form's real 32x32 one) is no longer a single compile-time
+; literal: computed into CHPB_SIZE_SCRATCH once per call based on
+; BOSS_FORM, then added via ADD A,(HL) (this assembler has no ADD A,n+r8
+; form, only r8/mHL/imm sources - see mini_z80asm.py's own enc_alu_a).
 CHECK_HIT_PAIR_BOSS:
     LD A,(IX+0)
     OR A
@@ -11516,15 +11613,23 @@ CHECK_HIT_PAIR_BOSS:
     CP 1
     RET NZ
 
+    LD A,(BOSS_FORM)
+    CP BOSS_FORM_ACTIVE
+    LD A,BOSS_COLLISION_SIZE-1
+    JR NZ,CHPB_SIZE_SET
+    LD A,BOSS_BROKEN_COLLISION_SIZE-1
+CHPB_SIZE_SET:
+    LD (CHPB_SIZE_SCRATCH),A
+
     LD A,(IX+2) : ADD A,A : ADD A,A : ADD A,A : LD B,A
     LD A,(IX+3) : ADD A,A : ADD A,A : ADD A,A : LD C,A
     LD A,(BOSS_X) : LD D,A
     LD A,(BOSS_Y) : LD E,A
 
     LD A,B : ADD A,7 : CP D : RET C
-    LD A,D : ADD A,BOSS_COLLISION_SIZE-1 : CP B : RET C
+    LD A,D : LD HL,CHPB_SIZE_SCRATCH : ADD A,(HL) : CP B : RET C
     LD A,C : ADD A,7 : CP E : RET C
-    LD A,E : ADD A,BOSS_COLLISION_SIZE-1 : CP C : RET C
+    LD A,E : LD HL,CHPB_SIZE_SCRATCH : ADD A,(HL) : CP C : RET C
 
     CALL ERASE_BULLET_CELL
     XOR A : LD (IX+0),A
@@ -11569,23 +11674,37 @@ CHPBOSS_DESTROY:
 ; here waits for the current attack/pose to finish first.
 TRIGGER_BOSS_BROKEN_FORM:
     ; if a hand-art pose happened to be up at this exact instant, erase
-    ; it now - UBA_POSE (the only thing that ever redraws/erases it) can
-    ; never run again once BOSS_FORM!=0, so it would otherwise stay
-    ; corrupted-in-place under the spark burst about to run over the same
-    ; cells. XOR-to-0 the phase unconditionally afterward too (not just
-    ; on the branch that erased it) - a real 2nd death later, after the
-    ; broken form's own further HP loss, still routes through the SAME
-    ; INIT_BOSS_EXPLOSION as any other death (see BOSS_EXPL_REASON's own
-    ; comment - that path is deliberately left as-is, out of this round's
-    ; scope), and its own IBE_NO_HAND check needs BOSS_PHASE to genuinely
-    ; be 0 by then, not a stale 1 frozen from the moment of this
-    ; interruption.
+    ; it and bring the real body sprite back (matches INIT_BOSS_
+    ; EXPLOSION's own IBE_NO_HAND branch exactly - see its own comment
+    ; for why: pose-time hides the hw sprite entirely via HIDE_BOSS_
+    ; SPRITES at pose-entry, so without this the boss would just stay
+    ; invisible through the whole SPARK burst and straight into the
+    ; broken form reveal). round36-14 follow-up (real-hardware report:
+    ; "スパーク爆発で最初からボスが消えてる...消えてしまうことがある
+    ; 何らかの切り替えタイミングの問題だろう" - exactly this: the FIRST
+    ; version of this routine only erased the hand art and reset BOSS_
+    ; PHASE, but forgot the DRAW_BOSS/FLUSH_BOSS_SPRITES call INIT_BOSS_
+    ; EXPLOSION's own equivalent branch has, so a trigger that happened
+    ; to land mid-pose left the sprite hidden for the rest of the fight).
+    ; XOR-to-0 the phase unconditionally afterward too (not just on the
+    ; branch that erased it) - a real 2nd death later, after the broken
+    ; form's own further HP loss, still routes through the SAME INIT_
+    ; BOSS_EXPLOSION as any other death (see BOSS_EXPL_REASON's own
+    ; comment - that path is deliberately left as-is, out of this
+    ; round's scope), and its own IBE_NO_HAND check needs BOSS_PHASE to
+    ; genuinely be 0 by then, not a stale 1 frozen from the moment of
+    ; this interruption.
     LD A,(BOSS_PHASE)
     CP 1
     JR NZ,TBBF_NO_HAND
     CALL ERASE_SASAPI_HAND
+    XOR A : LD (BOSS_PHASE),A
+    CALL DRAW_BOSS
+    CALL FLUSH_BOSS_SPRITES
+    JR TBBF_PHASE_DONE
 TBBF_NO_HAND:
     XOR A : LD (BOSS_PHASE),A
+TBBF_PHASE_DONE:
     LD A,BOSS_FORM_SPARK : LD (BOSS_FORM),A
     ; capture center cell + arm the spark burst - same setup INIT_BOSS_
     ; EXPLOSION's own SPARK entry uses (see ARM_BOSS_EXPL_SPARK), minus
@@ -11593,36 +11712,15 @@ TBBF_NO_HAND:
     ; this REASON, so that tile is never needed here (see UBS_LAST_FRAME).
     LD A,(BOSS_X) : ADD A,32 : SRL A : SRL A : SRL A : LD (BOSS_EXPL_CX),A
     LD A,(BOSS_Y) : ADD A,32 : SRL A : SRL A : SRL A : LD (BOSS_EXPL_CY),A
-    ; round36-14 follow-up ("スパーク爆発後ボスの爆発位置に関係なく右か
-    ; ら出てきてる 爆発位置からでなきゃおかしい") - capture the broken
-    ; form's own future origin HERE too, from the same still-meaningful
-    ; BOSS_X/BOSS_Y (the old body is done moving for good the instant
-    ; this routine runs), clamped into the figure-8 path's own safe
-    ; on-screen box (BOSS_BROKEN_ORIGIN_X/Y_MIN/MAX, sasapi_gen.py) so
-    ; origin+delta can never leave the screen regardless of where the
-    ; boss actually died. REVEAL_BOSS_BROKEN_FORM/UPDATE_BOSS_BROKEN_
-    ; ACTIVE add the path LUT's own DX/DY to this every frame - see
-    ; BOSS_BROKEN_ORIGIN_X's own comment.
-    LD A,(BOSS_X)
-    CP BOSS_BROKEN_ORIGIN_X_MIN
-    JR NC,TBBF_OX_MIN_OK
-    LD A,BOSS_BROKEN_ORIGIN_X_MIN
-TBBF_OX_MIN_OK:
-    CP BOSS_BROKEN_ORIGIN_X_MAX+1
-    JR C,TBBF_OX_MAX_OK
-    LD A,BOSS_BROKEN_ORIGIN_X_MAX
-TBBF_OX_MAX_OK:
-    LD (BOSS_BROKEN_ORIGIN_X),A
-    LD A,(BOSS_Y)
-    CP BOSS_BROKEN_ORIGIN_Y_MIN
-    JR NC,TBBF_OY_MIN_OK
-    LD A,BOSS_BROKEN_ORIGIN_Y_MIN
-TBBF_OY_MIN_OK:
-    CP BOSS_BROKEN_ORIGIN_Y_MAX+1
-    JR C,TBBF_OY_MAX_OK
-    LD A,BOSS_BROKEN_ORIGIN_Y_MAX
-TBBF_OY_MAX_OK:
-    LD (BOSS_BROKEN_ORIGIN_Y),A
+    ; round36-14 follow-up #2 ("インフィニティ軌道はその位置から始まる
+    ; が一旦中央に寄せろ") - nothing to capture here any more: BOSS_X/
+    ; BOSS_Y already hold exactly the position the old body just died
+    ; at, untouched by anything from this point through REVEAL_BOSS_
+    ; BROKEN_FORM, so the broken form's own reveal naturally starts from
+    ; the right spot for free - REVEAL_BOSS_BROKEN_FORM/UPDATE_BOSS_
+    ; BROKEN_ACTIVE's own RECENTERING sub-phase is what walks it toward
+    ; the fixed screen-center orbit point from there (see BOSS_BROKEN_
+    ; RECENTERING's own comment).
     DI
     LD HL,EXPLOSION_PATTERN : LD DE,BOSS_EXPL_SPARK_CODE_TL*8 : LD BC,32 : CALL LDIRVM
     EI

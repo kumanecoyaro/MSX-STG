@@ -141,72 +141,80 @@ def emit_broken_asm_tables():
 
 
 # figure-8 (Gerono lemniscate) path LUT for the broken form's own
-# "インフィニティの起動で画面を移動" drift - dx(t)=AX*cos(t),
-# dy(t)=AY*sin(t)*cos(t) for t in [0,2*pi), BOSS_BROKEN_PATH_LEN samples.
-# A plain sin/cos parametric curve rather than any in-engine trig (Z80
-# has no FPU/multiply and this file has no existing sine table) -
-# precomputed once here, walked as a flat byte LUT at runtime (UPDATE_
-# BOSS_BROKEN_ACTIVE), same "generator script produces the table, hand-
-# written asm just walks it" split as every other LUT in this codebase
-# (BOSS_EXPL_FLIGHT_TABLE, BOSS_QUAD_OFFSETS, etc). BOSS_BROKEN_PATH_LEN
-# is a power of 2 (64) on purpose - the asm side derives its own table
-# index as a plain AND against GAME_TICK's own low byte, no division/
-# modulo needed.
+# "インフィニティの起動で画面を移動" drift - x(t)=CX+AX*cos(t),
+# y(t)=CY+AY*sin(t)*cos(t) for t in [0,2*pi), BOSS_BROKEN_PATH_LEN
+# samples. A plain sin/cos parametric curve rather than any in-engine
+# trig (Z80 has no FPU/multiply and this file has no existing sine
+# table) - precomputed once here, walked as a flat byte LUT at runtime
+# (UPDATE_BOSS_BROKEN_ACTIVE), same "generator script produces the
+# table, hand-written asm just walks it" split as every other LUT in
+# this codebase (BOSS_EXPL_FLIGHT_TABLE, BOSS_QUAD_OFFSETS, etc).
+# BOSS_BROKEN_PATH_LEN is a power of 2 (64) on purpose - the asm side
+# derives its own table index as a plain AND against GAME_TICK's own low
+# byte, no division/modulo needed.
 #
-# round36-14 follow-up (real-hardware report: "スパーク爆発後ボスの爆発
-# 位置に関係なく右から出てきてる 爆発位置からでなきゃおかしい") - this
-# used to be ABSOLUTE screen coordinates (a fixed CX/CY center), so the
-# broken body always first appeared at the same fixed point (near index0,
-# close to the right edge) no matter where the old body actually died.
-# Rewritten as signed DX/DY OFFSETS from an ORIGIN captured once at the
-# moment of transformation instead (TRIGGER_BOSS_BROKEN_FORM, see its own
-# BOSS_BROKEN_ORIGIN_X/_Y comment in combined_test.asm) - the asm side
-# clamps that captured origin into [AX,224-AX]x[AY,96] before storing it,
-# so origin+dx/origin+dy can never leave a safe on-screen box regardless
-# of amplitude, without needing any per-frame clamp logic. AX/AY shrunk
-# from the old absolute version's 96/88 to keep that safe box (screen
-# width/2 minus half the amplitude on each side) comfortably wide even
-# after the clamp. Untuned initial placeholder (like BOSS_BROKEN_MOVE_
-# MIN_TICKS' own comment) - shape/amplitude are not yet tuned against
-# real gameplay.
+# round36-14 follow-up #1 (real-hardware report: "スパーク爆発後ボスの
+# 爆発位置に関係なく右から出てきてる 爆発位置からでなきゃおかしい") -
+# briefly rewritten as offsets from a per-death origin instead of this
+# fixed center, but that produced a NEW complaint (follow-up #2:
+# "インフィニティ軌道はその位置から始まるが一旦中央に寄せろ センタリン
+# グするかたちで 今だと端で倒すと画面半分の狭い起動で動いてしまってる")
+# - clamping the origin near a screen edge made the visible loop lopsided
+# and cramped there. Settled design: the body still visibly APPEARS at
+# the real death position (combined_test.asm's own TRIGGER_BOSS_BROKEN_
+# FORM captures nothing new for this any more - BOSS_X/BOSS_Y already
+# hold it), then a new RECENTERING sub-phase (UPDATE_BOSS_BROKEN_ACTIVE)
+# walks it toward THIS fixed center before the loop itself starts - so
+# the loop table here goes back to being plain absolute coordinates
+# around one constant, always-safe center, same as the very first
+# attempt, just reached via a visible transition instead of instantly.
+# CX/CY/AX/AY chosen so the whole 32x32 sprite stays clear of the HUD
+# (top rows) and the terrain's own scrolling band (BULLET_ROCK_ROW_MIN*
+# 8=128) at every sample - X in [48,176], Y in [48,112], both
+# comfortably inside 0-223/0-191 for a 32px sprite on a 256x192 screen.
+# Untuned initial placeholder (like BOSS_BROKEN_MOVE_MIN_TICKS' own
+# comment) - pacing/shape is not yet tuned against real gameplay.
 BOSS_BROKEN_PATH_LEN = 64
-_PATH_AX, _PATH_AY = 48, 24
+_PATH_CX, _PATH_CY = 112, 80
+_PATH_AX, _PATH_AY = 64, 32
 
 
 def broken_path_samples():
-    dxs, dys = [], []
+    xs, ys = [], []
     for i in range(BOSS_BROKEN_PATH_LEN):
         t = 2 * math.pi * i / BOSS_BROKEN_PATH_LEN
-        dxs.append(int(round(_PATH_AX * math.cos(t))))
-        dys.append(int(round(_PATH_AY * math.sin(t) * math.cos(t))))
-    return dxs, dys
+        xs.append(int(round(_PATH_CX + _PATH_AX * math.cos(t))))
+        ys.append(int(round(_PATH_CY + _PATH_AY * math.sin(t) * math.cos(t))))
+    return xs, ys
 
 
 def emit_broken_path_tables():
-    """BOSS_BROKEN_PATH_DX/_DY (signed offsets from the runtime-captured
-    origin, stored as raw two's-complement bytes - Z80 ADD A,B does the
-    right thing with these regardless of sign) at each of the 64 points,
-    plus BOSS_BROKEN_PATH_DIR (1=this step's own DX is moving right vs
-    the next sample, 0=left - same BOSS_DIR convention UPDATE_BOSS_
-    BROKEN_ACTIVE picks SASAPI_BROKEN_QUADS/_L with), precomputed here
-    rather than derived from a live delta at runtime - one less runtime
+    """BOSS_BROKEN_PATH_X/_Y (the sampled ABSOLUTE position at each of
+    the 64 points, centered on the fixed BOSS_BROKEN_CENTER_X/Y) plus
+    BOSS_BROKEN_PATH_DIR (1=this step's own X is moving right vs the
+    next sample, 0=left - same BOSS_DIR convention UPDATE_BOSS_BROKEN_
+    ACTIVE picks SASAPI_BROKEN_QUADS/_L with), precomputed here rather
+    than derived from a live delta at runtime - one less runtime
     comparison, and avoids any ambiguity at the 2 stationary turning
-    points (ddx=0) since the LUT just states the intended facing
-    directly instead of inferring it from a delta that can legitimately
-    be exactly 0 there."""
-    dxs, dys = broken_path_samples()
-    dirs = [1 if dxs[(i + 1) % BOSS_BROKEN_PATH_LEN] >= dxs[i] else 0 for i in range(BOSS_BROKEN_PATH_LEN)]
+    points (dx=0) since the LUT just states the intended facing directly
+    instead of inferring it from a delta that can legitimately be
+    exactly 0 there. Also emits BOSS_BROKEN_PATH_CROSS_INDEX - the one
+    index where the loop passes exactly through its own center (t=pi/2,
+    a quarter of the way around) - UPDATE_BOSS_BROKEN_ACTIVE's own
+    RECENTERING sub-phase starts the orbit there so the hand-off from
+    "walked to the center" to "now orbiting" has no visible jump."""
+    xs, ys = broken_path_samples()
+    dirs = [1 if xs[(i + 1) % BOSS_BROKEN_PATH_LEN] >= xs[i] else 0 for i in range(BOSS_BROKEN_PATH_LEN)]
     out = [
         "; ===== Sasapi broken-form figure-8 path LUT: generated by sasapi_gen.py, do not hand-edit =====",
         f"BOSS_BROKEN_PATH_LEN EQU {BOSS_BROKEN_PATH_LEN}",
-        f"BOSS_BROKEN_ORIGIN_X_MIN EQU {_PATH_AX}",
-        f"BOSS_BROKEN_ORIGIN_X_MAX EQU {224 - _PATH_AX}",
-        f"BOSS_BROKEN_ORIGIN_Y_MIN EQU {_PATH_AY}",
-        f"BOSS_BROKEN_ORIGIN_Y_MAX EQU {96}",
-        "BOSS_BROKEN_PATH_DX:",
-        db_bytes([d & 0xFF for d in dxs]),
-        "BOSS_BROKEN_PATH_DY:",
-        db_bytes([d & 0xFF for d in dys]),
+        f"BOSS_BROKEN_CENTER_X EQU {_PATH_CX}",
+        f"BOSS_BROKEN_CENTER_Y EQU {_PATH_CY}",
+        f"BOSS_BROKEN_PATH_CROSS_INDEX EQU {BOSS_BROKEN_PATH_LEN // 4}",
+        "BOSS_BROKEN_PATH_X:",
+        db_bytes(xs),
+        "BOSS_BROKEN_PATH_Y:",
+        db_bytes(ys),
         "BOSS_BROKEN_PATH_DIR:",
         db_bytes(dirs),
     ]

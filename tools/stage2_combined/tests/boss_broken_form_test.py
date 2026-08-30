@@ -15,6 +15,7 @@ BOSS_ACT = sym["BOSS_ACT"]
 BOSS_X = sym["BOSS_X"]
 BOSS_Y = sym["BOSS_Y"]
 BOSS_SPAWN_Y = sym["BOSS_SPAWN_Y"]
+BOSS_SPAWNX = sym["BOSS_SPAWNX"]
 BOSS_HP = sym["BOSS_HP"]
 BOSS_HP_INIT = sym["BOSS_HP_INIT"]
 BOSS_PHASE = sym["BOSS_PHASE"]
@@ -22,9 +23,10 @@ BOSS_FORM = sym["BOSS_FORM"]
 BOSS_FORM_SPARK = sym["BOSS_FORM_SPARK"]
 BOSS_FORM_ACTIVE = sym["BOSS_FORM_ACTIVE"]
 BOSS_BROKEN_HP_THRESHOLD = sym["BOSS_BROKEN_HP_THRESHOLD"]
+BOSS_COLLISION_SIZE = sym["BOSS_COLLISION_SIZE"]
+BOSS_BROKEN_COLLISION_SIZE = sym["BOSS_BROKEN_COLLISION_SIZE"]
 BOSS_EXPL_STATE = sym["BOSS_EXPL_STATE"]
 BOSS_EXPL_STATE_SPARK = sym["BOSS_EXPL_STATE_SPARK"]
-BOSS_EXPL_STATE_GROW = sym["BOSS_EXPL_STATE_GROW"]
 BOSS_EXPL_STATE_DONE = sym["BOSS_EXPL_STATE_DONE"]
 BOSS_EXPL_REASON = sym["BOSS_EXPL_REASON"]
 BOSS_EXPL_SPARK_DURATION = sym["BOSS_EXPL_SPARK_DURATION"]
@@ -35,23 +37,23 @@ BOSS_BROKEN_SPR_BASE_SLOT = sym["BOSS_BROKEN_SPR_BASE_SLOT"]
 BOSS_BROKEN_QUAD_COUNT = sym["BOSS_BROKEN_QUAD_COUNT"]
 BOSS_BROKEN_DIR = sym["BOSS_BROKEN_DIR"]
 BOSS_BROKEN_MOVING = sym["BOSS_BROKEN_MOVING"]
+BOSS_BROKEN_RECENTERING = sym["BOSS_BROKEN_RECENTERING"]
+BOSS_BROKEN_RECENTER_SPEED = sym["BOSS_BROKEN_RECENTER_SPEED"]
+BOSS_BROKEN_CENTER_X = sym["BOSS_BROKEN_CENTER_X"]
+BOSS_BROKEN_CENTER_Y = sym["BOSS_BROKEN_CENTER_Y"]
+BOSS_BROKEN_PATH_CROSS_INDEX = sym["BOSS_BROKEN_PATH_CROSS_INDEX"]
 BOSS_BROKEN_PATH_INDEX = sym["BOSS_BROKEN_PATH_INDEX"]
 BOSS_BROKEN_FRAME_COUNTER = sym["BOSS_BROKEN_FRAME_COUNTER"]
 BOSS_BROKEN_PHASE_END_TICK = sym["BOSS_BROKEN_PHASE_END_TICK"]
 BOSS_BROKEN_PATH_HOLD_FRAMES = sym["BOSS_BROKEN_PATH_HOLD_FRAMES"]
 BOSS_BROKEN_PATH_LEN = sym["BOSS_BROKEN_PATH_LEN"]
-BOSS_BROKEN_PATH_DX = sym["BOSS_BROKEN_PATH_DX"]
-BOSS_BROKEN_PATH_DY = sym["BOSS_BROKEN_PATH_DY"]
-BOSS_BROKEN_ORIGIN_X = sym["BOSS_BROKEN_ORIGIN_X"]
-BOSS_BROKEN_ORIGIN_Y = sym["BOSS_BROKEN_ORIGIN_Y"]
-BOSS_BROKEN_ORIGIN_X_MIN = sym["BOSS_BROKEN_ORIGIN_X_MIN"]
-BOSS_BROKEN_ORIGIN_X_MAX = sym["BOSS_BROKEN_ORIGIN_X_MAX"]
-BOSS_BROKEN_ORIGIN_Y_MIN = sym["BOSS_BROKEN_ORIGIN_Y_MIN"]
-BOSS_BROKEN_ORIGIN_Y_MAX = sym["BOSS_BROKEN_ORIGIN_Y_MAX"]
+BOSS_BROKEN_PATH_X = sym["BOSS_BROKEN_PATH_X"]
+BOSS_BROKEN_PATH_Y = sym["BOSS_BROKEN_PATH_Y"]
 BOSS_SPR_BASE_SLOT = sym["BOSS_SPR_BASE_SLOT"]
 BOSS_SPRITE_ATTRS = sym["BOSS_SPRITE_ATTRS"]
 PAT_SASAPI = sym["PAT_SASAPI"]
 BOSS_COLOR = sym["BOSS_COLOR"]
+BOSS_FLASH_TIMER = sym["BOSS_FLASH_TIMER"]
 BOSS_POSE_COUNT = sym["BOSS_POSE_COUNT"]
 THUNDER_PENDING = sym["THUNDER_PENDING"]
 SBEAM_ACT = sym["SBEAM_ACT"]
@@ -90,12 +92,40 @@ def hit_boss(cpu, x):
     call_routine(cpu, "CHECK_BULLET_VS_BOSS")
 
 
+def step_toward(current, target, speed):
+    """Python mirror of the asm STEP_TOWARD helper - clamps on overshoot."""
+    if current == target:
+        return current
+    if current < target:
+        return min(current + speed, target)
+    return max(current - speed, target)
+
+
+def trigger_broken_form(cpu, x=100, phase=0):
+    """Drains HP to exactly the threshold (2 hits from threshold+2) and
+    runs the SPARK burst to completion, leaving BOSS_FORM=ACTIVE and the
+    RECENTERING sub-phase already 1 frame in (REVEAL_BOSS_BROKEN_FORM's
+    own tail-call into UPDATE_BOSS_BROKEN_ACTIVE)."""
+    make_boss(cpu, x=x, hp=BOSS_BROKEN_HP_THRESHOLD + 2, phase=phase)
+    death_x, death_y = cpu.mem[BOSS_X], cpu.mem[BOSS_Y]
+    hit_boss(cpu, x)
+    hit_boss(cpu, x)  # triggers
+    cpu.mem[BOSS_FLASH_TIMER] = 0  # isolate later color checks from the triggering hit's own flash
+    for _ in range(BOSS_EXPL_SPARK_DURATION):
+        call_routine(cpu, "UPDATE_BOSS_ALL")
+    return death_x, death_y
+
+
 check("BOSS_BROKEN_HP_THRESHOLD is 50 (corrected mid-round from an initial 200 misreading)",
       BOSS_BROKEN_HP_THRESHOLD == 50)
 check("BOSS_BROKEN_QUAD_COUNT is 4 (32x32 = 2x2 quadrants, vs the old body's 16)",
       BOSS_BROKEN_QUAD_COUNT == 4)
 check("BOSS_BROKEN_PATH_LEN is a power of 2 (the asm side ANDs GAME_TICK/an index against LEN-1)",
       BOSS_BROKEN_PATH_LEN & (BOSS_BROKEN_PATH_LEN - 1) == 0)
+check("BOSS_COLLISION_SIZE (the old body) is still 64, unaffected by this round",
+      BOSS_COLLISION_SIZE == 64)
+check("BOSS_BROKEN_COLLISION_SIZE (round36-14 follow-up #3, '32x32になるよう修正') is 32",
+      BOSS_BROKEN_COLLISION_SIZE == 32)
 
 # ---- trigger: "ボス耐久値が50になったら" - HP reaching the threshold
 # ITSELF triggers (inclusive: CP THRESHOLD+1 in CHECK_HIT_PAIR_BOSS - see
@@ -128,23 +158,36 @@ check("a further hit does not re-arm/reset the transition (BOSS_FORM unchanged)"
       cpu.mem[BOSS_FORM] == form_after_trigger)
 
 # ---- interrupting a mid-pose boss: hand art erased, BOSS_PHASE forced
-# back to 0 (round36-14's own "即座に強制停止" - wherever UBA_ACTIVE was,
-# this cuts in immediately) ----
+# back to 0, AND (round36-14 follow-up fix - real-hardware report:
+# "スパーク爆発で最初からボスが消えてる...消えてしまうことがある 何ら
+# かの切り替えタイミングの問題だろう") the real body sprite is brought
+# BACK (DRAW_BOSS+FLUSH_BOSS_SPRITES) - a pose hides the hw sprite
+# entirely (HIDE_BOSS_SPRITES at pose-entry), so a trigger landing mid-
+# pose would otherwise leave the boss invisible for the whole SPARK
+# burst; this exact scenario is actually the COMMON case, not an edge
+# case, since the player keeps shooting through poses too. ----
 cpu = fresh_cpu()
 make_boss(cpu, x=100, hp=BOSS_BROKEN_HP_THRESHOLD + 1, phase=1)
-call_routine(cpu, "DRAW_SASAPI_HAND")  # actually draw it so ERASE_SASAPI_HAND has something real to undo
+call_routine(cpu, "HIDE_BOSS_SPRITES")  # simulate the real pose-entry state (sprite hidden) before the trigger
+call_routine(cpu, "DRAW_SASAPI_HAND")   # actually draw it so ERASE_SASAPI_HAND has something real to undo
 hit_boss(cpu, 100)
 hit_boss(cpu, 100)
 check("triggering mid-pose (BOSS_PHASE=1) resets BOSS_PHASE back to 0",
       cpu.mem[BOSS_PHASE] == 0)
+old_body_visible = any(cpu.vram[SAT_BASE + (BOSS_SPR_BASE_SLOT + i) * 4] != 209 for i in range(16))
+check("triggering mid-pose brings the real body sprite back (not left hidden from the pose) - "
+      "the actual bug behind '最初からボスが消えてる'",
+      old_body_visible)
 
 # ---- the SPARK burst runs for exactly BOSS_EXPL_SPARK_DURATION frames,
-# then reveals the broken form ----
+# then reveals the broken form, starting the RECENTERING sub-phase
+# ("その位置から始まるが一旦中央に寄せろ") ----
 cpu = fresh_cpu()
 make_boss(cpu, x=100, hp=BOSS_BROKEN_HP_THRESHOLD + 2)
+death_x, death_y = cpu.mem[BOSS_X], cpu.mem[BOSS_Y]
 hit_boss(cpu, 100)
 hit_boss(cpu, 100)  # triggers - BOSS_FORM=SPARK
-cpu.mem[sym["BOSS_FLASH_TIMER"]] = 0  # isolate the reveal's own color from the triggering hit's own flash
+cpu.mem[BOSS_FLASH_TIMER] = 0  # isolate the reveal's own color from the triggering hit's own flash
 for _ in range(BOSS_EXPL_SPARK_DURATION - 1):
     call_routine(cpu, "UPDATE_BOSS_ALL")
 check("still SPARK 1 frame before the burst's own duration elapses",
@@ -154,6 +197,8 @@ check("BOSS_FORM becomes ACTIVE the instant the SPARK burst's own duration elaps
       cpu.mem[BOSS_FORM] == BOSS_FORM_ACTIVE)
 check("the shared explosion state machine is retired (DONE), not left mid-GROW",
       cpu.mem[BOSS_EXPL_STATE] == BOSS_EXPL_STATE_DONE)
+check("reveal starts the RECENTERING sub-phase, not the orbit directly",
+      cpu.mem[BOSS_BROKEN_RECENTERING] == 1)
 
 # the old 64x64 body's own hw sprite slots are hidden for good - except
 # the 4 leading ones (10-13), which the broken body immediately reuses
@@ -186,82 +231,106 @@ broken_slot_cols = [cpu.vram[SAT_BASE + (BOSS_BROKEN_SPR_BASE_SLOT + i) * 4 + 3]
 check("the broken body draws in BOSS_COLOR (no flash active right at reveal)",
       all(c == BOSS_COLOR for c in broken_slot_cols))
 
-# ---- origin capture: TRIGGER_BOSS_BROKEN_FORM captures+clamps BOSS_X/Y
-# into BOSS_BROKEN_ORIGIN_X/_Y at the moment of transformation - "爆発
-# 位置からでなきゃおかしい" (the broken form must appear near where the
-# old body actually died, not a fixed screen point) ----
-check("the origin's own X is within the path LUT's safe on-screen clamp range",
-      BOSS_BROKEN_ORIGIN_X_MIN <= cpu.mem[BOSS_BROKEN_ORIGIN_X] <= BOSS_BROKEN_ORIGIN_X_MAX)
-check("the origin's own Y is within the path LUT's safe on-screen clamp range",
-      BOSS_BROKEN_ORIGIN_Y_MIN <= cpu.mem[BOSS_BROKEN_ORIGIN_Y] <= BOSS_BROKEN_ORIGIN_Y_MAX)
-# x=100 (this test's own trigger position) is comfortably inside the
-# clamp range, so the origin should be the RAW trigger X, unclamped.
-check("the origin's own X matches the boss's real X at the moment of transformation "
-      "(x=100, within the clamp range so no clamping should have applied)",
-      cpu.mem[BOSS_BROKEN_ORIGIN_X] == 100)
+# ---- RECENTERING: appears at the real death position, then walks
+# toward the fixed BOSS_BROKEN_CENTER_X/Y point at BOSS_BROKEN_RECENTER_
+# SPEED px/frame - "その位置から始まるが一旦中央に寄せろ センタリング
+# するかたちで" ----
+expected_x = step_toward(death_x, BOSS_BROKEN_CENTER_X, BOSS_BROKEN_RECENTER_SPEED)
+expected_y = step_toward(death_y, BOSS_BROKEN_CENTER_Y, BOSS_BROKEN_RECENTER_SPEED)
+check("BOSS_X after reveal's own first frame has taken exactly one RECENTER_SPEED step from the "
+      "real death position toward the fixed center (not a jump to some other fixed point)",
+      cpu.mem[BOSS_X] == expected_x)
+check("BOSS_Y similarly takes exactly one RECENTER_SPEED step toward the fixed center",
+      cpu.mem[BOSS_Y] == expected_y)
 
-# ---- movement: BOSS_X/BOSS_Y follow origin + the precomputed DX/DY path
-# LUT, one step every BOSS_BROKEN_PATH_HOLD_FRAMES calls while MOVING
-# (BOSS_BROKEN_FRAME_COUNTER-driven, independent of the global GAME_TICK
-# not being advanced by these direct UPDATE_BOSS_ALL calls) ----
-check("starts already MOVING (round36-14: '起動で画面を移動' - not parked at reveal)",
+arrived = False
+for _ in range(200):
+    call_routine(cpu, "UPDATE_BOSS_ALL")
+    if cpu.mem[BOSS_BROKEN_RECENTERING] == 0:
+        arrived = True
+        break
+check("RECENTERING eventually clears - the body actually reaches the fixed center", arrived)
+check("BOSS_X sits exactly at BOSS_BROKEN_CENTER_X once RECENTERING clears",
+      cpu.mem[BOSS_X] == BOSS_BROKEN_CENTER_X)
+check("BOSS_Y sits exactly at BOSS_BROKEN_CENTER_Y once RECENTERING clears",
+      cpu.mem[BOSS_Y] == BOSS_BROKEN_CENTER_Y)
+check("the orbit starts at the loop's own (0,0)-offset crossing point - no visual jump at the "
+      "recentering->orbit handoff",
+      cpu.mem[BOSS_BROKEN_PATH_INDEX] == BOSS_BROKEN_PATH_CROSS_INDEX)
+check("the orbit starts already MOVING (not parked immediately on arrival)",
       cpu.mem[BOSS_BROKEN_MOVING] == 1)
-check("BOSS_X at reveal matches origin + the path LUT's own index-0 DX entry",
-      cpu.mem[BOSS_X] == (cpu.mem[BOSS_BROKEN_ORIGIN_X] + cpu.mem[BOSS_BROKEN_PATH_DX + 0]) & 0xFF)
-check("BOSS_Y at reveal matches origin + the path LUT's own index-0 DY entry",
-      cpu.mem[BOSS_Y] == (cpu.mem[BOSS_BROKEN_ORIGIN_Y] + cpu.mem[BOSS_BROKEN_PATH_DY + 0]) & 0xFF)
 
 # self-consistency over many frames, rather than hand-predicting an
-# exact call count (fragile against exactly how many "extra" internal
-# update calls a reveal/trigger happens to make) - every frame, BOSS_X/
-# BOSS_Y must equal origin+path[BOSS_BROKEN_PATH_INDEX] exactly, and
-# whenever the index itself changes it must advance by exactly 1
-# (wrapping at BOSS_BROKEN_PATH_LEN), never skip or jump.
-origin_x = cpu.mem[BOSS_BROKEN_ORIGIN_X]
-origin_y = cpu.mem[BOSS_BROKEN_ORIGIN_Y]
+# exact call count - every frame, BOSS_X/BOSS_Y must equal the ABSOLUTE
+# path[BOSS_BROKEN_PATH_INDEX] exactly (centered on the fixed point, not
+# per-death any more), and whenever the index itself changes it must
+# advance by exactly 1 (wrapping at BOSS_BROKEN_PATH_LEN), never skip.
 prev_index = cpu.mem[BOSS_BROKEN_PATH_INDEX]
 consistent = True
 advances = 0
 for _ in range(3 * BOSS_BROKEN_PATH_HOLD_FRAMES):
     call_routine(cpu, "UPDATE_BOSS_ALL")
     idx = cpu.mem[BOSS_BROKEN_PATH_INDEX]
-    if (cpu.mem[BOSS_X] != (origin_x + cpu.mem[BOSS_BROKEN_PATH_DX + idx]) & 0xFF
-            or cpu.mem[BOSS_Y] != (origin_y + cpu.mem[BOSS_BROKEN_PATH_DY + idx]) & 0xFF):
+    if (cpu.mem[BOSS_X] != cpu.mem[BOSS_BROKEN_PATH_X + idx]
+            or cpu.mem[BOSS_Y] != cpu.mem[BOSS_BROKEN_PATH_Y + idx]):
         consistent = False
     if idx != prev_index:
         advances += 1
         if idx != (prev_index + 1) % BOSS_BROKEN_PATH_LEN:
             consistent = False
     prev_index = idx
-check("BOSS_X/BOSS_Y always match path[BOSS_BROKEN_PATH_INDEX] exactly, every single frame "
-      f"across {3 * BOSS_BROKEN_PATH_HOLD_FRAMES} frames",
+check("BOSS_X/BOSS_Y always match the absolute path[BOSS_BROKEN_PATH_INDEX] exactly, every "
+      f"single frame across {3 * BOSS_BROKEN_PATH_HOLD_FRAMES} frames",
       consistent)
 check("the path index actually advances (not stuck) while MOVING, by exactly 1 step at a time",
       advances >= 2)
 
-# ---- origin clamping: a trigger position outside the safe box gets
-# clamped rather than pushing the path off-screen - "爆発位置から" still
-# needs to hold even for a death right at the patrol's own edges (X near
-# 0 or near BOSS_SPAWNX) ----
+# ---- a death near the screen's own edge still ends up orbiting the
+# SAME fixed center, full amplitude - "今だと端で倒すと画面半分の狭い
+# 起動で動いてしまってる" no longer applies since the orbit itself is no
+# longer derived from the death position at all. ----
 cpu = fresh_cpu()
-make_boss(cpu, x=0, hp=BOSS_BROKEN_HP_THRESHOLD + 2)  # far left of the clamp's own MIN
-hit_boss(cpu, 0)
-hit_boss(cpu, 0)  # triggers
-check("a trigger position left of the clamp range (X=0) is clamped up to ORIGIN_X_MIN, "
-      "not left to push the path off the left edge of the screen",
-      cpu.mem[BOSS_BROKEN_ORIGIN_X] == BOSS_BROKEN_ORIGIN_X_MIN)
+trigger_broken_form(cpu, x=0)  # far left edge of the boss's own real patrol range
+check("a death near the screen's left edge (X=0) still starts RECENTERING toward the SAME "
+      "fixed center as any other death position",
+      cpu.mem[BOSS_BROKEN_RECENTERING] == 1)
+arrived = False
+for _ in range(200):
+    call_routine(cpu, "UPDATE_BOSS_ALL")
+    if cpu.mem[BOSS_BROKEN_RECENTERING] == 0:
+        arrived = True
+        break
+check("...and actually arrives at the exact same fixed center regardless of death position",
+      arrived and cpu.mem[BOSS_X] == BOSS_BROKEN_CENTER_X and cpu.mem[BOSS_Y] == BOSS_BROKEN_CENTER_Y)
 
-BOSS_SPAWNX = sym["BOSS_SPAWNX"]
-right_x = BOSS_SPAWNX  # the boss's own real max X (192) - already right of
-                        # ORIGIN_X_MAX(176) without needing an unrealistic
-                        # value that would also break the (unrelated)
-                        # collision AABB math via 8-bit overflow
+# ---- collision box shrinks to the real 32x32 footprint once in the
+# broken form - "形態変化後に64x64のコリジョンのままになってる 32x32に
+# なるよう修正" ----
+boss_row = BOSS_SPAWN_Y // 8
 cpu = fresh_cpu()
-make_boss(cpu, x=right_x, hp=BOSS_BROKEN_HP_THRESHOLD + 2)
-hit_boss(cpu, right_x)
-hit_boss(cpu, right_x)  # triggers
-check("a trigger position right of the clamp range is clamped down to ORIGIN_X_MAX",
-      cpu.mem[BOSS_BROKEN_ORIGIN_X] == BOSS_BROKEN_ORIGIN_X_MAX)
+make_boss(cpu, x=100, hp=BOSS_HP_INIT)
+make_bullet(cpu, col=(100 + 63) // 8, row=boss_row)
+call_routine(cpu, "CHECK_BULLET_VS_BOSS")
+check("normal form: a bullet at the OLD body's own far/right edge (+63) still registers a hit "
+      "(64x64 box, unaffected by this round)",
+      cpu.mem[BOSS_HP] == BOSS_HP_INIT - 1)
+
+cpu = fresh_cpu()
+make_boss(cpu, x=100, hp=BOSS_HP_INIT)
+cpu.mem[BOSS_FORM] = BOSS_FORM_ACTIVE
+make_bullet(cpu, col=(100 + 63) // 8, row=boss_row)
+call_routine(cpu, "CHECK_BULLET_VS_BOSS")
+check("broken form: a bullet at the OLD body's own far/right edge (+63) no longer registers - "
+      "the box has genuinely shrunk to 32x32",
+      cpu.mem[BOSS_HP] == BOSS_HP_INIT)
+
+cpu = fresh_cpu()
+make_boss(cpu, x=100, hp=BOSS_HP_INIT)
+cpu.mem[BOSS_FORM] = BOSS_FORM_ACTIVE
+make_bullet(cpu, col=(100 + 31) // 8, row=boss_row)
+call_routine(cpu, "CHECK_BULLET_VS_BOSS")
+check("broken form: a bullet at the NEW body's own real right edge (+31) still registers a hit",
+      cpu.mem[BOSS_HP] == BOSS_HP_INIT - 1)
 
 
 # ---- real end-to-end: spawn, drain to the threshold, confirm the
@@ -306,18 +375,23 @@ cpu.pc = sym["MAINLOOP"]
 saw_moving = False
 saw_stopped = False
 saw_active_form = False
-for f in range(6000):
+saw_centered = False
+for f in range(8000):
     step_frame(cpu)
     if cpu.mem[BOSS_FORM] == BOSS_FORM_ACTIVE:
         saw_active_form = True
-        if cpu.mem[BOSS_BROKEN_MOVING]:
-            saw_moving = True
-        else:
-            saw_stopped = True
+        if cpu.mem[BOSS_BROKEN_RECENTERING] == 0:
+            saw_centered = True
+            if cpu.mem[BOSS_BROKEN_MOVING]:
+                saw_moving = True
+            else:
+                saw_stopped = True
     if saw_moving and saw_stopped:
         break
 check("real MAINLOOP: the SPARK burst really does complete and reveal the broken form (BOSS_FORM=ACTIVE)",
       saw_active_form)
+check("real MAINLOOP: the body actually finishes recentering and starts orbiting",
+      saw_centered)
 check("real MAINLOOP: the broken form is observed MOVING at some point",
       saw_moving)
 check("real MAINLOOP: the broken form is observed STOPPED at some point too - "
