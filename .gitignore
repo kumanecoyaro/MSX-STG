@@ -24,3 +24,7 @@ tools/stage2_combined/combined_check.png
 tools/stage2_combined/bullet_tables.inc.asm
 tools/stage2_combined/enemy_tables.inc.asm
 tools/stage2_combined/sasapi_tables.inc.asm
+# Schedule2_current.json (round36-5): current placements+terrain snapshot
+# handed to the user directly, same as Schedule2.json/Terrain2.json never
+# being committed either.
+tools/stage2_combined/Schedule2_current.json

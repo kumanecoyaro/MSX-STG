@@ -973,25 +973,15 @@
   // simply unused there (no terrain1 array - nothing reads it while
   // STAGE===1).
   //
-  // DEFAULT_TERRAIN2 is the CURRENT shipped test track (tools/
-  // stage2_terrain/terrain_gen.py's own DEFAULT_TIER_PROFILE), expanded
-  // to one tier value per column via tier_profile_to_columns() and
-  // transcribed here directly via `python3 -c "import terrain_gen;
-  // print(','.join(map(str, terrain_gen.tier_profile_to_columns(
-  // terrain_gen.DEFAULT_TIER_PROFILE))))"` from tools/stage2_terrain -
-  // NOT hand-typed, same "generated, not transcribed by eye" precedent
-  // as every other real-game-data array in this file (see the Stage2
-  // roster's own comment above). This array is intentionally SHORTER
-  // than the real in-game TRACK_LEN(516) - it has no separate footprint
-  // for the climb/descend transitions at all; terrain_gen.py's own
-  // build_track() inserts those 2 dedicated ramp columns automatically
-  // once this array is run-length-encoded back into a tier profile (see
-  // columns_to_tier_profile's own comment there) - so painting here
-  // always stays simple and length-preserving from the editor's own
-  // point of view, while the real compiled track naturally grows a
-  // little, same as it always has.
-  var DEFAULT_TERRAIN2 = [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0];
-  var terrain2 = DEFAULT_TERRAIN2.slice();
+  // round36-5 ("エディタ自身に地形埋め込んでんじゃねえ...汎用性や自由度
+  // 下がるだろうが"): this file must not bake in ANY of the current
+  // game's own specific data - current placements start as [] above for
+  // exactly this reason, and terrain follows the same rule now. Starts
+  // as a flat, all-tier0 array (a blank canvas, not real track data) -
+  // the actual current terrain (and the actual current enemy schedule)
+  // are handed over as a separate JSON file to load in via the existing
+  // Load JSON flow, same as every other schedule always has been.
+  var terrain2 = new Array(MAX_TICK + 1).fill(0);
   var terrainLen = terrain2.length;
   function setTerrain2(arr) {
     terrain2 = arr;
@@ -2569,11 +2559,12 @@
     // round36: terrain, Stage2 only. A file with no "terrain" field at
     // all (an older Stage2 export, or one that only ever touched
     // placements) leaves whatever's currently loaded untouched, rather
-    // than silently reverting it to DEFAULT_TERRAIN2 - loading a
-    // placements-only file should never clobber terrain work already in
-    // progress. An actually-present-but-malformed terrain array (wrong
-    // type, empty, or any value outside 0-3) is rejected the same way,
-    // flagged in the returned status message rather than silently eaten.
+    // than silently reverting it to the blank all-tier0 default -
+    // loading a placements-only file should never clobber terrain work
+    // already in progress. An actually-present-but-malformed terrain
+    // array (wrong type, empty, or any value outside 0-3) is rejected
+    // the same way, flagged in the returned status message rather than
+    // silently eaten.
     var terrainNote = "";
     if (STAGE === 2 && data.terrain !== undefined) {
       var validTerrain = Array.isArray(data.terrain) && data.terrain.length > 0 &&
