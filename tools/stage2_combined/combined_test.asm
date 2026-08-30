@@ -165,23 +165,40 @@ SKYSAND_COLOR EQU 05Bh   ; fg5/bg11
 ; Bullet BG pattern codes - F (straight) only now, U moved to a hw
 ; sprite (see PAT_BULLETU below): needs one code per background color
 ; group it can appear over (SCREEN1 colors are fixed per 8-code group,
-; not per screen position - see bullet_gen.py's own comment). Placed
-; at codes88/96 (groups11-12), well past every real terrain code
-; (0-87, groups0-10 - see terrain_gen.py's STEADY_BASE/BLEND_BASE) so
-; nothing else ever references them. Codes89/97 (ex-BULLETU_SKY/ROCK_
-; CODE) are simply unused now, not renumbered - no reason to renumber
-; F's own codes just because U vacated its neighbors.
-BULLETF_SKY_CODE  EQU 88
-BULLETF_ROCK_CODE EQU 96
+; not per screen position - see bullet_gen.py's own comment).
+; round36-9 ("自機ショットらしきゴミ" reported next to a Rock225 descend
+; edge): this used to sit at codes88/96 (groups11-12), "well past every
+; real terrain code (0-87)" - but that terrain-code ceiling was never a
+; hard guarantee, just whatever the CURRENT tier profile happened to
+; need at the time this comment was written. Once the user's own edited
+; terrain (Schedule2_7.json) grew terrain_gen.py's own MAX_CODE to 93
+; (more distinct climb/descend transitions -> more distinct blend-pair
+; code blocks - see terrain_gen.py's own PAIRS/PAIRBASE), it silently
+; started overlapping codes88-93, and whichever of terrain's own pattern
+; upload / this bullet pattern upload ran later in INIT clobbered the
+; other's VRAM pattern-generator data at those shared codes - showing
+; the bullet's own glyph, in the bullet's own color, inside terrain
+; cells. Moved to codes224/232 (groups28-29) instead: verified free by
+; grepping every EQU literal in that whole numeric range - nothing else
+; in this file uses codes there (everything nearby that LOOKS like a
+; pattern code is actually an unrelated 0-255 pixel X-coordinate
+; constant, e.g. BIGZUM_MAX_X/ENEMY_SPAWNX/HORMING_SPAWN_X, easy to
+; confuse with a code at a glance since both are small plain decimals -
+; see this file's own git history for the exact audit). This also isn't
+; adjacent to terrain's own budget at all any more, so normal further
+; terrain edits (the whole point of schedule-editor.html's own terrain
+; tool) can't silently collide with it again the way codes88-93 did.
+BULLETF_SKY_CODE  EQU 224
+BULLETF_ROCK_CODE EQU 232
 ; left-facing (mirrored) shot pattern, same 2 color groups (color
 ; doesn't depend on facing, only the pattern shape does) - "今の自機
 ; と弾を左操作で左向きに...反転パターンはそっちで生成してくれ".
-BULLETF_L_SKY_CODE  EQU 90
-BULLETF_L_ROCK_CODE EQU 98
+BULLETF_L_SKY_CODE  EQU 226
+BULLETF_L_ROCK_CODE EQU 234
 ; color table (VRAM 2000h+group, 1 byte/group, hi nibble=fg/lo=bg -
-; see terrain_gen.py's own SKY_COLOR/ROCK_COLOR): group11 (codes
-; 88-95) = fgE gray/bg5 light blue, matching the sky's own bg5;
-; group12 (codes 96-103) = fgE gray/bg11 light yellow, matching the
+; see terrain_gen.py's own SKY_COLOR/ROCK_COLOR): group28 (codes
+; 224-231) = fgE gray/bg5 light blue, matching the sky's own bg5;
+; group29 (codes 232-239) = fgE gray/bg11 light yellow, matching the
 ; rock tier's own bg (terrain_gen.py's ROCK_COLOR=0x8B) - both groups
 ; patched over terrain_gen.py's generic per-group defaults (unused by
 ; any real terrain code) rather than by changing that shared module.
@@ -190,8 +207,8 @@ BULLETF_L_ROCK_CODE EQU 98
 ; fixed alongside the row18/19 change below). fg was black(1), then
 ; gray(14/0xE) - "バレットUとFの変更 カラーもグレーに" - now light
 ; red(9) - "バレットカラーをライトレッドに変更".
-BULLET_SKY_COLORADDR  EQU 200Bh
-BULLET_ROCK_COLORADDR EQU 200Ch
+BULLET_SKY_COLORADDR  EQU 201Ch
+BULLET_ROCK_COLORADDR EQU 201Dh
 BULLET_SKY_COLORBYTE  EQU 095h
 BULLET_ROCK_COLORBYTE EQU 09Bh
 ; night-black variant of the sky glyph above - "スクロールしていない
@@ -220,15 +237,17 @@ BULLET_NIGHT_COLORBYTE EQU 091h   ; fg9 light red / bg1 black
 ; fight - switches back to the same BG-cell approach F always used,
 ; DRAW_BULLET_CELL/ERASE_BULLET_CELL, instead of a hw sprite, for this
 ; specific window only; F itself is untouched). Same 3-groups-x-2-facings
-; shape as F's own codes above, placed in the SAME groups (11/12/18) F
-; already claimed and colored - group18(night)/group12(rock)/group11(sky)
-; all still have free code slots (F only uses 2 of each group's 8), so no
-; new SCREEN1 color-table writes are needed, just more pattern data
-; loaded into already-colored slots.
-BULLETU_SKY_CODE    EQU 89    ; group11 (88-95), same BULLET_SKY_COLORBYTE as F's own day-sky code
-BULLETU_L_SKY_CODE  EQU 91
-BULLETU_ROCK_CODE   EQU 99    ; group12 (96-103), same BULLET_ROCK_COLORBYTE as F's own rock code
-BULLETU_L_ROCK_CODE EQU 100
+; shape as F's own codes above, placed in the SAME groups (28/29/18) F
+; already claimed and colored (round36-9: moved from 11/12 to 28/29
+; alongside F's own move - see BULLETF_SKY_CODE's own comment) -
+; group18(night)/group29(rock)/group28(sky) all still have free code
+; slots (F only uses 2 of each group's 8), so no new SCREEN1 color-table
+; writes are needed, just more pattern data loaded into already-colored
+; slots.
+BULLETU_SKY_CODE    EQU 225   ; group28 (224-231), same BULLET_SKY_COLORBYTE as F's own day-sky code
+BULLETU_L_SKY_CODE  EQU 227
+BULLETU_ROCK_CODE   EQU 235   ; group29 (232-239), same BULLET_ROCK_COLORBYTE as F's own rock code
+BULLETU_L_ROCK_CODE EQU 236
 BULLETU_NIGHT_CODE   EQU 146  ; group18 (144-151), same BULLET_NIGHT_COLORBYTE as F's own night code
 BULLETU_L_NIGHT_CODE EQU 147
 
