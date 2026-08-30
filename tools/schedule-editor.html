@@ -18,8 +18,8 @@
     --danger-ink: #260607;
     --ok: #6bdc7c;
     --warn: #ffd166;
-    --terrain-rock: #8b5a2b;         /* matches ROCK_COLOR's own fg (medium red) closely enough as a placeholder block, warmer than the sky/blank fill below */
-    --terrain-sky: rgba(139, 90, 43, 0.12);
+    --terrain-rock: #8b5a2b;         /* matches ROCK_COLOR's own fg (medium red) closely enough as a placeholder block, warmer than the sand fill below */
+    --terrain-sand: #a68a4a;         /* round36-6: the "not yet grown into rock" band is real Sand tile in-game (SAND_COLOR: dark-yellow-on-light-yellow), not open sky - a near-invisible tint here read as "no terrain at all" and was reported as not matching what actually renders */
 
     --font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Hiragino Sans", "Noto Sans JP", sans-serif;
     --font-mono: ui-monospace, "SF Mono", "Cascadia Mono", "Consolas", "Roboto Mono", monospace;
@@ -1470,28 +1470,50 @@
     var firstTick = Math.max(0, Math.floor(scrollX / CELL) - 1);
     var lastTick = Math.min(MAX_TICK, Math.ceil((scrollX + w) / CELL) + 1);
 
-    // round36 ("地形もエディット対象に"): Stage2's own terrain profile,
-    // drawn as a simple color-block skyline in rows 20-23 - a placeholder
-    // representation (real rock/sand tile art, not attempted here) same
-    // spirit as drawS2BossPlaceholder's own plain rectangle. Drawn UNDER
-    // the grid lines/placement icons (before they're drawn below) so it
-    // reads as background, not on top of anything. tierFromRow/
-    // terrainColAt's own comments explain the row<->tier mapping and the
-    // tick<->terrain-column relationship (they're the same axis, modulo
-    // terrainLen once the track loops - exactly matching how GAME_TICK
-    // and the real terrain's own scroll index advance in lockstep).
+    // round36 ("地形もエディット対象に"), round36-6 (実機フィードバック
+    // "こんな地形はない...Rock225もきちんと反映させろ"): Stage2's own
+    // terrain profile, drawn in rows 20-23. Two things changed from the
+    // original flat-color-block version per that feedback (editor-drawing
+    // fix only - terrain2's own data/column count is untouched, matching
+    // "エディタの描画の問題だけで 本編に影響はないはず"):
+    //  1. the "not yet grown into rock" band above ground level is real
+    //     Sand tile in-game, not open sky - filled with a real, visible
+    //     sand tone instead of a near-invisible tint that read as "no
+    //     terrain at all".
+    //  2. a 1-tier step between adjacent columns is drawn as a diagonal
+    //     ramp (matching Rock225's actual climb/descend art) spanning the
+    //     one column where the tier changes, instead of an abrupt vertical
+    //     cliff. (The real compiled track spends 2 dedicated columns per
+    //     step, growing TRACK_LEN - out of scope here on purpose: this is
+    //     a same-length visual approximation for the editor's own tick
+    //     axis, not a re-simulation of the real build.)
+    // Drawn UNDER the grid lines/placement icons (before they're drawn
+    // below) so it reads as background, not on top of anything.
+    // tierFromRow/terrainColAt's own comments explain the row<->tier
+    // mapping and the tick<->terrain-column relationship (they're the
+    // same axis, modulo terrainLen once the track loops - exactly
+    // matching how GAME_TICK and the real terrain's own scroll index
+    // advance in lockstep).
     if (STAGE === 2) {
       var rockFill = tok("--terrain-rock") || "#8b5a2b";
-      var skyFill = tok("--terrain-sky") || "rgba(139,90,43,0.12)";
+      var sandFill = tok("--terrain-sand") || "#a68a4a";
+      var bandTop = 20 * CELL, bandBottom = 24 * CELL;
+      var xFirst = firstTick * CELL - scrollX;
+      var xLast = (lastTick + 1) * CELL - scrollX;
+      ctx.fillStyle = sandFill;
+      ctx.fillRect(xFirst, bandTop, xLast - xFirst, bandBottom - bandTop);
+
+      function rockTopY(tickIdx) { return (23 - terrain2[terrainColAt(tickIdx)]) * CELL; }
+      ctx.beginPath();
+      ctx.moveTo(xFirst, bandBottom);
+      ctx.lineTo(xFirst, rockTopY(firstTick));
       for (var tt = firstTick; tt <= lastTick; tt++) {
-        var tier = terrain2[terrainColAt(tt)];
-        var solidFromRow = 23 - tier; // row(s) below this, inclusive, are ground
-        var tx = tt * CELL - scrollX;
-        ctx.fillStyle = skyFill;
-        ctx.fillRect(tx, 20 * CELL, CELL, (solidFromRow - 20) * CELL);
-        ctx.fillStyle = rockFill;
-        ctx.fillRect(tx, solidFromRow * CELL, CELL, (24 - solidFromRow) * CELL);
+        ctx.lineTo(tt * CELL - scrollX + CELL, rockTopY(tt + 1));
       }
+      ctx.lineTo(xLast, bandBottom);
+      ctx.closePath();
+      ctx.fillStyle = rockFill;
+      ctx.fill();
     }
 
     // 8px-equivalent cell grid, in blue, per spec. One stroke() call per
