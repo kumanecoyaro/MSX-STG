@@ -65,7 +65,12 @@ GAME_TICK = sym["GAME_TICK"]
 BULLET0_ACT = sym["BULLET0_ACT"]
 BOSS_BROKEN_BEAM_COUNT = sym["BOSS_BROKEN_BEAM_COUNT"]
 BOSS_BROKEN_BEAM_TIMER = sym["BOSS_BROKEN_BEAM_TIMER"]
-BOSS_BROKEN_BEAM_POINT_COUNT = sym["BOSS_BROKEN_BEAM_POINT_COUNT"]
+BOSS_BROKEN_PROJ_ACTIVE = sym["BOSS_BROKEN_PROJ_ACTIVE"]
+BOSS_BROKEN_PROJ_X = sym["BOSS_BROKEN_PROJ_X"]
+BOSS_BROKEN_PROJ_Y = sym["BOSS_BROKEN_PROJ_Y"]
+BOSS_BROKEN_PROJ_DX = sym["BOSS_BROKEN_PROJ_DX"]
+BOSS_BROKEN_PROJ_DY = sym["BOSS_BROKEN_PROJ_DY"]
+BOSS_BROKEN_PROJ_CODE = sym["BOSS_BROKEN_PROJ_CODE"]
 BOSS_BROKEN_BEAM_INTERVAL = sym["BOSS_BROKEN_BEAM_INTERVAL"]
 BOSS_BROKEN_BEAM_SLOT_COUNT = sym["BOSS_BROKEN_BEAM_SLOT_COUNT"]
 BOSS_BROKEN_BEAM_SPR_BASE_SLOT = sym["BOSS_BROKEN_BEAM_SPR_BASE_SLOT"]
@@ -562,171 +567,153 @@ check("the instant STEPS_TO_STOP reaches 0, MOVING flips to 0 (loop's own exit c
       and cpu.mem[BOSS_BROKEN_BEAM_TIMER] == 0)
 
 
-# ---- UPDATE_BOSS_BROKEN_BEAM_SEQ: fires beams 1->4 in order, each one
-# REPLACING the previous (confirmed with the user: "発射ごとに前の
-# ビームは消え、常に1本のみ表示"), BOSS_BROKEN_BEAM_INTERVAL frames
-# apart, then one more INTERVAL-length wait before hiding the 4th beam
-# and resuming movement (MOVING=1, a fresh lap re-rolled) ----
-def current_beam_code(cpu):
-    """the pattern code of whatever's currently drawn in beam slot 0, or
-    None if BOSS_BROKEN_BEAM_POINT_COUNT is 0 (no beam visible)."""
-    if cpu.mem[BOSS_BROKEN_BEAM_POINT_COUNT] == 0:
-        return None
-    return cpu.mem[BOSS_BROKEN_BEAM_SPRITE_ATTRS + 2]
-
+# ---- UPDATE_BOSS_BROKEN_BEAM_SEQ: launches beams 1->4 in order,
+# BOSS_BROKEN_BEAM_INTERVAL frames apart, into 4 SEPARATE slots that now
+# fly independently (round36-14 follow-up#4 3rd real-hardware feedback:
+# "ビームが飛んで来ないな...発射して飛ばすんだよ" - the 2nd attempt's
+# own "発射ごとに前のビームは消え、常に1本のみ表示" design is retired,
+# since a static sprite parked next to the body never actually attacked
+# anything; a real flying projectile needs its own persistent slot
+# instead, see LAUNCH_BOSS_BROKEN_BEAM/UPDATE_BOSS_BROKEN_BEAM_FLIGHT
+# below), then one more INTERVAL-length wait before resuming movement
+# (the beams themselves are NOT hidden at that point - whichever ones
+# are still mid-flight keep flying) ----
 cpu = fresh_cpu()
 cpu.mem[BOSS_X] = 96
 cpu.mem[BOSS_Y] = 64
 call_routine(cpu, "ARM_BOSS_BROKEN_BEAM_SEQ")
-seen_codes = []  # de-duplicated sequence of "currently visible beam code"
-never_two_at_once = True
+launch_order = []  # de-duplicated sequence of "which slot most recently went active"
 for _ in range(BOSS_BROKEN_BEAM_INTERVAL * 5 + 10):
     call_routine(cpu, "UPDATE_BOSS_BROKEN_BEAM_SEQ")
-    pc = cpu.mem[BOSS_BROKEN_BEAM_POINT_COUNT]
-    code = current_beam_code(cpu)
-    if code is not None and (not seen_codes or seen_codes[-1] != code):
-        seen_codes.append(code)
-    # "常に1本のみ表示" - every slot beyond POINT_COUNT must still be
-    # hidden (Y=209), i.e. no leftover points from a previous beam
-    # coexisting with the new one.
-    for i in range(pc, BOSS_BROKEN_BEAM_SLOT_COUNT):
-        if cpu.mem[BOSS_BROKEN_BEAM_SPRITE_ATTRS + i * 4] != 209:
-            never_two_at_once = False
+    for slot in range(4):
+        if cpu.mem[BOSS_BROKEN_PROJ_ACTIVE + slot] and (not launch_order or launch_order[-1] != slot):
+            if slot not in launch_order:
+                launch_order.append(slot)
     if cpu.mem[BOSS_BROKEN_MOVING] == 1:
         break
-check("UPDATE_BOSS_BROKEN_BEAM_SEQ fires the 4 beams in exactly the order 1->4 "
-      f"(codes {BOSS_BROKEN_BEAM_CODE1},{BOSS_BROKEN_BEAM_CODE2},{BOSS_BROKEN_BEAM_CODE3},"
-      f"{BOSS_BROKEN_BEAM_CODE4}), 添付キャラデータの1から4の順",
-      seen_codes == [BOSS_BROKEN_BEAM_CODE1, BOSS_BROKEN_BEAM_CODE2,
-                     BOSS_BROKEN_BEAM_CODE3, BOSS_BROKEN_BEAM_CODE4])
-check("at no point during the whole sequence do 2 beams' worth of points coexist - every slot "
-      "beyond the current beam's own POINT_COUNT stays hidden",
-      never_two_at_once)
-check("after the 4th beam's own hold time elapses, the sequence hides it and resumes movement "
-      "(MOVING=1)",
+check("UPDATE_BOSS_BROKEN_BEAM_SEQ launches into slots 0,1,2,3 in exactly that order "
+      "(matching beams 1->4, 添付キャラデータの1から4の順)",
+      launch_order == [0, 1, 2, 3])
+check("after the 4th beam's own hold time elapses, the sequence resumes movement (MOVING=1)",
       cpu.mem[BOSS_BROKEN_MOVING] == 1)
-check("...with no beam left visible once movement resumes",
-      cpu.mem[BOSS_BROKEN_BEAM_POINT_COUNT] == 0)
 check("...and a fresh lap length re-rolled into STEPS_TO_STOP (in range, not left at 0)",
       BOSS_BROKEN_LAP_STEPS_MIN <= cpu.mem[BOSS_BROKEN_STEPS_TO_STOP]
       <= BOSS_BROKEN_LAP_STEPS_MIN + BOSS_BROKEN_LAP_STEPS_RANGE - 1)
+check("resuming movement does NOT hide/deactivate beams still mid-flight - at least one of the "
+      "4 slots launched this sequence is still active once movement resumes (a real projectile "
+      "keeps flying, it isn't cut short by the boss's own stop/move cycle)",
+      any(cpu.mem[BOSS_BROKEN_PROJ_ACTIVE + i] for i in range(4)))
 
-# each beam stays up for exactly BOSS_BROKEN_BEAM_INTERVAL frames before
-# the next one replaces it (spot-check beam1 specifically).
+# beam2 launches exactly BOSS_BROKEN_BEAM_INTERVAL frames after beam1,
+# and beam1's own slot is untouched by beam2 launching (no more
+# "replaces the previous" - each beam type gets its own persistent slot).
 cpu = fresh_cpu()
 cpu.mem[BOSS_X] = 96
 cpu.mem[BOSS_Y] = 64
 call_routine(cpu, "ARM_BOSS_BROKEN_BEAM_SEQ")
-call_routine(cpu, "UPDATE_BOSS_BROKEN_BEAM_SEQ")  # fires beam1 immediately (TIMER was armed to 0)
-beam1_code = current_beam_code(cpu)
-check("beam1 is visible the instant the sequence starts (0=fire immediately, same idiom as "
-      "ARM_HORMING_VOLLEY)", beam1_code == BOSS_BROKEN_BEAM_CODE1)
-still_beam1 = True
+call_routine(cpu, "UPDATE_BOSS_BROKEN_BEAM_SEQ")  # launches beam1 (slot0) immediately (TIMER armed to 0)
+check("beam1 (slot0) launches the instant the sequence starts (0=fire immediately, same idiom "
+      "as ARM_HORMING_VOLLEY)", cpu.mem[BOSS_BROKEN_PROJ_ACTIVE + 0] == 1)
+check("slot1 (beam2) is not yet active", cpu.mem[BOSS_BROKEN_PROJ_ACTIVE + 1] == 0)
+still_only_slot0 = True
 for _ in range(BOSS_BROKEN_BEAM_INTERVAL):
     call_routine(cpu, "UPDATE_BOSS_BROKEN_BEAM_SEQ")
-    if current_beam_code(cpu) != BOSS_BROKEN_BEAM_CODE1:
-        still_beam1 = False
-check(f"beam1 stays the ONLY visible beam through all {BOSS_BROKEN_BEAM_INTERVAL} more frames "
-      "of its own BOSS_BROKEN_BEAM_INTERVAL window (TIMER armed to INTERVAL right after firing, "
-      "then checked-and-decremented once per tick, so it takes INTERVAL+1 total ticks - this one "
-      "plus the firing tick itself - before the next beam fires)", still_beam1)
+    if cpu.mem[BOSS_BROKEN_PROJ_ACTIVE + 1] != 0:
+        still_only_slot0 = False
+check(f"slot1 stays inactive through all {BOSS_BROKEN_BEAM_INTERVAL} more frames of beam1's own "
+      "BOSS_BROKEN_BEAM_INTERVAL window", still_only_slot0)
 call_routine(cpu, "UPDATE_BOSS_BROKEN_BEAM_SEQ")
-check(f"beam2 replaces beam1 exactly BOSS_BROKEN_BEAM_INTERVAL({BOSS_BROKEN_BEAM_INTERVAL}) frames "
-      "after beam1 fired", current_beam_code(cpu) == BOSS_BROKEN_BEAM_CODE2)
+check(f"beam2 (slot1) launches exactly BOSS_BROKEN_BEAM_INTERVAL({BOSS_BROKEN_BEAM_INTERVAL}) "
+      "frames after beam1", cpu.mem[BOSS_BROKEN_PROJ_ACTIVE + 1] == 1)
 
 
-# ---- FIRE_BOSS_BROKEN_BEAM: exact geometry ----
-# round36-14 follow-up#4 real-hardware feedback ("全然絵が違うな 色も
-# ブラックで渡したシアンではない で、繋げる必要はない 取り敢えず16x16
-# で4本扇状に今の感じでいい スクショのような感じだな"): the first
-# attempt drew each beam as a Bresenham line, repeating the 16x16 art as
-# if it were a tileable unit - but the art is a single COMPLETE picture
-# of one whole beam, so FIRE_BOSS_BROKEN_BEAM was rewritten to just place
-# ONE static 16x16 sprite per beam (no line-walk, no screen-edge reach -
-# these tests were rewritten to match). Per-beam XOFS transcribed
-# directly from BOSS_BROKEN_BEAM_TABLE in combined_test.asm - "Sbeam2,3は
-# 中央から出ているが 1,4は発射位置が1は右上 4が左上になっているので 1は
-# 2,3の左に4は右に8pxオフセットしたX位置になる".
+# ---- LAUNCH_BOSS_BROKEN_BEAM: exact starting position + velocity ----
+# round36-14 follow-up#4 3rd real-hardware feedback ("ビームが飛んで来
+# ないな...今はボスの上に表示されてるだけ それで何の攻撃になる 発射し
+# て飛ばすんだよ"): the 2nd attempt placed a single static sprite and
+# stopped there; LAUNCH_BOSS_BROKEN_BEAM now also gives it a real per-
+# frame pixel velocity (BOSS_BROKEN_PROJ_DX/DY), transcribed directly
+# from BOSS_BROKEN_BEAM_TABLE in combined_test.asm: XOFS=[-1,0,0,1],
+# DXMAG always 2, DYMAG=[1,5,5,1], XDIR=[-1,-1,1,1] - "Sbeam2,3は中央か
+# ら出ているが 1,4は発射位置が1は右上 4が左上になっているので 1は2,3の
+# 左に4は右に8pxオフセットしたX位置になる".
 BOSS_BROKEN_BEAM_XOFS = [-1, 0, 0, 1]
+BOSS_BROKEN_BEAM_DX = [-2, -2, 2, 2]
+BOSS_BROKEN_BEAM_DY = [1, 5, 5, 1]
 BOSS_BROKEN_BEAM_CODES = [BOSS_BROKEN_BEAM_CODE1, BOSS_BROKEN_BEAM_CODE2,
                           BOSS_BROKEN_BEAM_CODE3, BOSS_BROKEN_BEAM_CODE4]
 
 
-def fire_beam_and_read(cpu, boss_x, boss_y, beam_idx):
+def launch_beam_and_read(cpu, boss_x, boss_y, beam_idx):
     cpu.mem[BOSS_X] = boss_x
     cpu.mem[BOSS_Y] = boss_y
     cpu.mem[BOSS_BROKEN_BEAM_COUNT] = beam_idx
-    call_routine(cpu, "FIRE_BOSS_BROKEN_BEAM")
-    base = BOSS_BROKEN_BEAM_SPRITE_ATTRS
+    call_routine(cpu, "LAUNCH_BOSS_BROKEN_BEAM")
     return {
-        "y": cpu.mem[base + 0],
-        "x": cpu.mem[base + 1],
-        "code": cpu.mem[base + 2],
-        "color": cpu.mem[base + 3],
-        "active": cpu.mem[BOSS_BROKEN_BEAM_POINT_COUNT],
+        "active": cpu.mem[BOSS_BROKEN_PROJ_ACTIVE + beam_idx],
+        "x": cpu.mem[BOSS_BROKEN_PROJ_X + beam_idx],
+        "y": cpu.mem[BOSS_BROKEN_PROJ_Y + beam_idx],
+        "dx": cpu.mem[BOSS_BROKEN_PROJ_DX + beam_idx],
+        "dy": cpu.mem[BOSS_BROKEN_PROJ_DY + beam_idx],
+        "code": cpu.mem[BOSS_BROKEN_PROJ_CODE + beam_idx],
     }
 
 
 cpu = fresh_cpu()
 all_x_ok = True
 all_y_ok = True
+all_dx_ok = True
+all_dy_ok = True
 all_code_ok = True
-all_color_ok = True
 all_active_ok = True
 for boss_x, boss_y in [(96, 64), (200, 64), (96, 8), (8, 8), (200, 176), (8, 176)]:
     center_col = (boss_x >> 3) + 2
     center_row = (boss_y >> 3) + 2
     for beam_idx in range(4):
-        s = fire_beam_and_read(cpu, boss_x, boss_y, beam_idx)
+        s = launch_beam_and_read(cpu, boss_x, boss_y, beam_idx)
         expected_x = ((center_col + BOSS_BROKEN_BEAM_XOFS[beam_idx]) * 8 - 8) & 0xFF
         expected_y = (center_row * 8) & 0xFF
         if s["x"] != expected_x:
             all_x_ok = False
         if s["y"] != expected_y:
             all_y_ok = False
+        if s["dx"] != (BOSS_BROKEN_BEAM_DX[beam_idx] & 0xFF):
+            all_dx_ok = False
+        if s["dy"] != BOSS_BROKEN_BEAM_DY[beam_idx]:
+            all_dy_ok = False
         if s["code"] != BOSS_BROKEN_BEAM_CODES[beam_idx]:
             all_code_ok = False
-        if s["color"] != BOSS_BROKEN_BEAM_COLOR:
-            all_color_ok = False
         if s["active"] != 1:
             all_active_ok = False
-check("FIRE_BOSS_BROKEN_BEAM places the sprite's own X exactly 1 cell (8px) left of the body's "
-      "horizontal center for beam1, centered for beam2/3, 1 cell right for beam4 - across 6 boss "
-      "positions (center, both horizontal edges, both vertical edges, a corner) - "
+check("LAUNCH_BOSS_BROKEN_BEAM places the projectile's own starting X exactly 1 cell (8px) left "
+      "of the body's horizontal center for beam1, centered for beam2/3, 1 cell right for beam4 - "
+      "across 6 boss positions (center, both horizontal edges, both vertical edges, a corner) - "
       "'1は2,3の左に4は右に8pxオフセットしたX位置になる'",
       all_x_ok)
-check("FIRE_BOSS_BROKEN_BEAM places the sprite's own Y exactly at the body's vertical center, "
+check("LAUNCH_BOSS_BROKEN_BEAM places the starting Y exactly at the body's vertical center, "
       "for all 4 beams and all 6 positions", all_y_ok)
+check("each beam gets its own correct per-frame X velocity (signed, matching XDIR*DXMAG from "
+      "the table)", all_dx_ok)
+check("each beam gets its own correct per-frame Y velocity (DYMAG, always positive/down)",
+      all_dy_ok)
 check("each beam uses its own pattern code (BOSS_BROKEN_BEAM_CODE1-4), never a stale one",
       all_code_ok)
-check("every beam uses plain color 7 (cyan, matching the attached art's own fg) - NOT the old "
-      "071h (which packed the BG-style fg/bg convention onto a hw sprite color byte, accidentally "
-      "setting the EC/early-clock flag too - real-hardware report: '色もブラックで渡したシアン "
-      "ではない')", all_color_ok)
-check("firing a beam always marks it active (BOSS_BROKEN_BEAM_POINT_COUNT=1)", all_active_ok)
+check("launching a beam always marks its own slot active", all_active_ok)
 
 # BOSS_BROKEN_BEAM_COLOR itself must never have bit6 (EC/early-clock, a
 # -32px X shift on real hardware) set, and must be a plain 0-15 index -
-# this is the actual root cause of "全然絵が違うな" (EC silently
-# displaced every beam 32px from where FIRE_BOSS_BROKEN_BEAM computed).
+# carried over unchanged from the previous round's own fix.
 check("BOSS_BROKEN_BEAM_COLOR has the EC (early clock) bit clear",
       (BOSS_BROKEN_BEAM_COLOR & 0x40) == 0)
 check("BOSS_BROKEN_BEAM_COLOR is a plain color index in [0,15] (color 7 = cyan)",
       BOSS_BROKEN_BEAM_COLOR == 7)
 
-# ---- round36-14 follow-up#4 2nd real-hardware feedback ("全然違うぞ
-# ...グラフィックも壊れてる"): a single 16x16 hw sprite occupies 4
-# CONSECUTIVE pattern codes (TL/BL/TR/BR), not 1 - the first attempt
-# spaced the 4 beam codes only 1 apart (16,17,18,19), so each beam's own
-# 32-byte LDIRVM load silently overwrote 3 of the PREVIOUS beam's own
-# sub-pattern codes, corrupting VRAM regardless of which beam was
-# actually drawn - a real data-corruption bug, not a positioning or
-# color issue. Verified two ways: (1) the 4 codes are pairwise spaced
-# >=4 apart, and (2) a direct byte-for-byte VRAM comparison against
-# sasapi_gen.py's own re-computed expected pattern data, following this
-# project's standing "verify empirically, not by static code reading"
-# practice (see CLAUDE.md - the same lesson the Sand-pattern-corruption
-# bug established). ----
+# round36-14 follow-up#4 2nd real-hardware feedback ("全然違うぞ...
+# グラフィックも壊れてる"): a single 16x16 hw sprite occupies 4
+# CONSECUTIVE pattern codes (TL/BL/TR/BR), not 1 - carried over
+# unchanged from the previous round's own fix, still verified both ways
+# (pairwise spacing, and a direct byte-for-byte VRAM comparison against
+# sasapi_gen.py's own re-computed expected pattern data).
 check("BOSS_BROKEN_BEAM_CODE1-4 are pairwise spaced at least 4 codes apart (each 16x16 "
       "sprite occupies 4 consecutive TL/BL/TR/BR sub-pattern codes - anything closer "
       "silently corrupts a neighboring beam's own data)",
@@ -753,42 +740,115 @@ check("each of the 4 beams' own pattern VRAM (SPRPAT+code*8, 32 bytes) exactly m
       all_vram_ok)
 
 
-# ---- HIDE_BOSS_BROKEN_BEAM / HIDE_BOSS_BROKEN_BEAM_ALL ----
+# ---- UPDATE_BOSS_BROKEN_BEAM_FLIGHT: per-frame movement + off-screen
+# despawn, independently per slot ----
 cpu = fresh_cpu()
-fire_beam_and_read(cpu, 96, 64, 0)
-check("setup: beam1 is actually visible before testing HIDE_BOSS_BROKEN_BEAM",
-      cpu.mem[BOSS_BROKEN_BEAM_POINT_COUNT] > 0)
-call_routine(cpu, "HIDE_BOSS_BROKEN_BEAM")
-check("HIDE_BOSS_BROKEN_BEAM resets BOSS_BROKEN_BEAM_POINT_COUNT to 0",
-      cpu.mem[BOSS_BROKEN_BEAM_POINT_COUNT] == 0)
-check("HIDE_BOSS_BROKEN_BEAM hides the beam's own single hw sprite slot (Y=209)",
-      cpu.mem[BOSS_BROKEN_BEAM_SPRITE_ATTRS] == 209)
+launch_beam_and_read(cpu, 96, 64, 0)  # beam1: DX=-2,DY=1
+x0, y0 = cpu.mem[BOSS_BROKEN_PROJ_X + 0], cpu.mem[BOSS_BROKEN_PROJ_Y + 0]
+call_routine(cpu, "UPDATE_BOSS_BROKEN_BEAM_FLIGHT")
+check("a single frame of flight advances PROJ_X by exactly this beam's own DX (-2)",
+      cpu.mem[BOSS_BROKEN_PROJ_X + 0] == (x0 - 2) & 0xFF)
+check("...and PROJ_Y by exactly this beam's own DY (+1)",
+      cpu.mem[BOSS_BROKEN_PROJ_Y + 0] == (y0 + 1) & 0xFF)
+check("the slot stays active after a normal (non-edge) step",
+      cpu.mem[BOSS_BROKEN_PROJ_ACTIVE + 0] == 1)
+base0 = BOSS_BROKEN_BEAM_SPRITE_ATTRS
+check("the sprite staging entry is redrawn at the new position with the right code/color",
+      cpu.mem[base0 + 0] == cpu.mem[BOSS_BROKEN_PROJ_Y + 0]
+      and cpu.mem[base0 + 1] == cpu.mem[BOSS_BROKEN_PROJ_X + 0]
+      and cpu.mem[base0 + 2] == BOSS_BROKEN_BEAM_CODE1
+      and cpu.mem[base0 + 3] == BOSS_BROKEN_BEAM_COLOR)
 
+# a beam actually crosses the whole screen and despawns exactly once it
+# would go negative/off either horizontal edge or past the bottom -
+# never silently wraps around to look like it teleported (the actual
+# risk an 8-bit unsigned X/Y coordinate has without this routine's own
+# direction-aware bounds check).
+for beam_idx, edge_name in [(0, "left"), (2, "right")]:
+    cpu = fresh_cpu()
+    launch_beam_and_read(cpu, 96, 64, beam_idx)
+    seen_x = []
+    wrapped = False
+    steps = 0
+    while cpu.mem[BOSS_BROKEN_PROJ_ACTIVE + beam_idx] and steps < 300:
+        call_routine(cpu, "UPDATE_BOSS_BROKEN_BEAM_FLIGHT")
+        steps += 1
+        x = cpu.mem[BOSS_BROKEN_PROJ_X + beam_idx]
+        if seen_x and abs(x - seen_x[-1]) > 32:  # a real step is only ever 2px - a jump this big means it wrapped
+            wrapped = True
+        seen_x.append(x)
+    check(f"beam (slot{beam_idx}, heading {edge_name}) eventually despawns on its own "
+          f"(went inactive within 300 frames, not stuck flying forever)",
+          not cpu.mem[BOSS_BROKEN_PROJ_ACTIVE + beam_idx])
+    check(f"...and its own X coordinate never jumps/wraps while doing so (each step is only "
+          f"ever a small, monotonic +-2px move toward the {edge_name} edge)",
+          not wrapped)
+    check(f"...and the sprite is actually hidden (Y=209) once despawned",
+          cpu.mem[BOSS_BROKEN_BEAM_SPRITE_ATTRS + beam_idx * 4] == 209)
+
+# bottom-edge despawn (all 4 beams eventually fall off the bottom if
+# they don't exit a side first - beam2/3 are steep enough that this is
+# actually the common case).
 cpu = fresh_cpu()
-cpu.mem[BOSS_BROKEN_BEAM_SPRITE_ATTRS] = 50  # garbage, simulating leftover/uninitialized RAM
+launch_beam_and_read(cpu, 96, 64, 1)  # beam2: DX=-2,DY=5 (steep)
+steps = 0
+while cpu.mem[BOSS_BROKEN_PROJ_ACTIVE + 1] and steps < 300:
+    call_routine(cpu, "UPDATE_BOSS_BROKEN_BEAM_FLIGHT")
+    steps += 1
+check("a steep beam (large DY) despawns within a reasonable number of frames too",
+      not cpu.mem[BOSS_BROKEN_PROJ_ACTIVE + 1] and steps < 300)
+
+# multiple slots move independently and simultaneously - a real
+# consequence of "4方向にそれぞれ打ち出す" now that beams no longer
+# replace each other.
+cpu = fresh_cpu()
+launch_beam_and_read(cpu, 96, 64, 0)
+launch_beam_and_read(cpu, 96, 64, 3)  # beam4: DX=+2,DY=1 (opposite X direction from beam1)
+x0_before, x3_before = cpu.mem[BOSS_BROKEN_PROJ_X + 0], cpu.mem[BOSS_BROKEN_PROJ_X + 3]
+call_routine(cpu, "UPDATE_BOSS_BROKEN_BEAM_FLIGHT")
+check("slot0 (beam1) and slot3 (beam4) both move on the same UPDATE_BOSS_BROKEN_BEAM_FLIGHT "
+      "call, each along its own direction",
+      cpu.mem[BOSS_BROKEN_PROJ_X + 0] == (x0_before - 2) & 0xFF
+      and cpu.mem[BOSS_BROKEN_PROJ_X + 3] == (x3_before + 2) & 0xFF)
+check("slots 1 and 2 (never launched) stay inactive and hidden throughout",
+      cpu.mem[BOSS_BROKEN_PROJ_ACTIVE + 1] == 0 and cpu.mem[BOSS_BROKEN_PROJ_ACTIVE + 2] == 0
+      and cpu.mem[BOSS_BROKEN_BEAM_SPRITE_ATTRS + 1 * 4] == 209
+      and cpu.mem[BOSS_BROKEN_BEAM_SPRITE_ATTRS + 2 * 4] == 209)
+
+
+# ---- HIDE_BOSS_BROKEN_BEAM_ALL ----
+cpu = fresh_cpu()
+for i in range(4):
+    launch_beam_and_read(cpu, 96, 64, i)
+check("setup: all 4 slots are active before testing HIDE_BOSS_BROKEN_BEAM_ALL",
+      all(cpu.mem[BOSS_BROKEN_PROJ_ACTIVE + i] for i in range(4)))
 call_routine(cpu, "HIDE_BOSS_BROKEN_BEAM_ALL")
-check("HIDE_BOSS_BROKEN_BEAM_ALL hides the beam's own slot up front (boot-time-style init, called "
+check("HIDE_BOSS_BROKEN_BEAM_ALL deactivates all 4 slots at once (boot-time-style init, called "
       "once from REVEAL_BOSS_BROKEN_FORM)",
-      cpu.mem[BOSS_BROKEN_BEAM_SPRITE_ATTRS] == 209)
-check("HIDE_BOSS_BROKEN_BEAM_ALL also resets BOSS_BROKEN_BEAM_POINT_COUNT to 0",
-      cpu.mem[BOSS_BROKEN_BEAM_POINT_COUNT] == 0)
+      all(cpu.mem[BOSS_BROKEN_PROJ_ACTIVE + i] == 0 for i in range(4)))
+check("...and hides all 4 slots' own hw sprite staging entries (Y=209)",
+      all(cpu.mem[BOSS_BROKEN_BEAM_SPRITE_ATTRS + i * 4] == 209 for i in range(4)))
 
 
 # ---- CHECK_BOSS_BROKEN_BEAM_VS_TANK: real damage (confirmed with the
 # user: "本物の攻撃、既存SBeamのように画面端まで伸びる"), same AABB/
 # i-frame shape as CHECK_SBEAM_VS_TANK but a 16x16 box (the beam's own
-# real sprite size) instead of an 8x8 point ----
+# real sprite size) per active slot, walked in a loop now that up to 4
+# can be flying at once ----
 cpu = fresh_cpu()
-s = fire_beam_and_read(cpu, 96, 64, 1)  # beam2
+s = launch_beam_and_read(cpu, 96, 64, 1)  # beam2
 cpu.mem[TANK_X] = s["x"] - TANK_COLLISION_X_OFFSET
 cpu.mem[TANK_Y_CUR] = s["y"] - TANK_COLLISION_Y_OFFSET
 life0 = cpu.mem[TANK_LIFE]
 call_routine(cpu, "CHECK_BOSS_BROKEN_BEAM_VS_TANK")
-check("tank overlapping the beam sprite's own box takes damage",
+check("tank overlapping an in-flight beam's own box takes damage",
       cpu.mem[TANK_LIFE] == life0 - 1)
 check("a hit sets TANK_FLASH_TIMER", cpu.mem[TANK_FLASH_TIMER] > 0)
 check(f"a hit sets TANK_HAZARD_IFRAMES to TANK_HAZARD_IFRAME_DURATION({TANK_HAZARD_IFRAME_DURATION})",
       cpu.mem[TANK_HAZARD_IFRAMES] == TANK_HAZARD_IFRAME_DURATION)
+check("a hit does NOT deactivate the beam's own slot - it keeps flying through/past the tank, "
+      "same as every other projectile in this game that isn't itself destroyed by contact",
+      cpu.mem[BOSS_BROKEN_PROJ_ACTIVE + 1] == 1)
 
 life1 = cpu.mem[TANK_LIFE]
 call_routine(cpu, "CHECK_BOSS_BROKEN_BEAM_VS_TANK")
@@ -800,17 +860,31 @@ cpu2.mem[TANK_X] = 4
 cpu2.mem[TANK_Y_CUR] = 4
 life2 = cpu2.mem[TANK_LIFE]
 call_routine(cpu2, "CHECK_BOSS_BROKEN_BEAM_VS_TANK")
-check("BOSS_BROKEN_BEAM_POINT_COUNT=0 (no beam currently shown) never damages the tank - this is "
-      "the routine's own no-op gate, exercised every frame while the boss is orbiting/not stopped",
+check("no beam active in any slot never damages the tank - this is the routine's own no-op "
+      "case, exercised every frame while the boss is orbiting/not stopped",
       cpu2.mem[TANK_LIFE] == life2)
 
 cpu3 = fresh_cpu()
-fire_beam_and_read(cpu3, 96, 64, 0)
-cpu3.mem[TANK_X] = 300  # far away, off the beam sprite's own box entirely
+launch_beam_and_read(cpu3, 96, 64, 0)
+cpu3.mem[TANK_X] = 300  # far away, off every active beam's own box entirely
 cpu3.mem[TANK_Y_CUR] = 4
 life3 = cpu3.mem[TANK_LIFE]
 call_routine(cpu3, "CHECK_BOSS_BROKEN_BEAM_VS_TANK")
-check("a tank far from the beam sprite's own box takes no damage", cpu3.mem[TANK_LIFE] == life3)
+check("a tank far from every active beam's own box takes no damage", cpu3.mem[TANK_LIFE] == life3)
+
+# multiple simultaneous beams: only the one actually overlapping the
+# tank triggers, and an inactive/miss slot earlier in the loop doesn't
+# block detection of a hit in a later slot.
+cpu4 = fresh_cpu()
+launch_beam_and_read(cpu4, 96, 64, 0)  # slot0: far from the tank (set below)
+s3 = launch_beam_and_read(cpu4, 96, 64, 3)  # slot3: this one will overlap the tank
+cpu4.mem[TANK_X] = s3["x"] - TANK_COLLISION_X_OFFSET
+cpu4.mem[TANK_Y_CUR] = s3["y"] - TANK_COLLISION_Y_OFFSET
+life4 = cpu4.mem[TANK_LIFE]
+call_routine(cpu4, "CHECK_BOSS_BROKEN_BEAM_VS_TANK")
+check("with slot0 active-but-missing and slot3 active-and-overlapping, the tank still takes "
+      "damage from slot3 (an earlier active-but-missing slot doesn't short-circuit the loop)",
+      cpu4.mem[TANK_LIFE] == life4 - 1)
 
 
 print()
