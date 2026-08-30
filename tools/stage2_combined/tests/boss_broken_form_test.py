@@ -40,8 +40,14 @@ BOSS_BROKEN_FRAME_COUNTER = sym["BOSS_BROKEN_FRAME_COUNTER"]
 BOSS_BROKEN_PHASE_END_TICK = sym["BOSS_BROKEN_PHASE_END_TICK"]
 BOSS_BROKEN_PATH_HOLD_FRAMES = sym["BOSS_BROKEN_PATH_HOLD_FRAMES"]
 BOSS_BROKEN_PATH_LEN = sym["BOSS_BROKEN_PATH_LEN"]
-BOSS_BROKEN_PATH_X = sym["BOSS_BROKEN_PATH_X"]
-BOSS_BROKEN_PATH_Y = sym["BOSS_BROKEN_PATH_Y"]
+BOSS_BROKEN_PATH_DX = sym["BOSS_BROKEN_PATH_DX"]
+BOSS_BROKEN_PATH_DY = sym["BOSS_BROKEN_PATH_DY"]
+BOSS_BROKEN_ORIGIN_X = sym["BOSS_BROKEN_ORIGIN_X"]
+BOSS_BROKEN_ORIGIN_Y = sym["BOSS_BROKEN_ORIGIN_Y"]
+BOSS_BROKEN_ORIGIN_X_MIN = sym["BOSS_BROKEN_ORIGIN_X_MIN"]
+BOSS_BROKEN_ORIGIN_X_MAX = sym["BOSS_BROKEN_ORIGIN_X_MAX"]
+BOSS_BROKEN_ORIGIN_Y_MIN = sym["BOSS_BROKEN_ORIGIN_Y_MIN"]
+BOSS_BROKEN_ORIGIN_Y_MAX = sym["BOSS_BROKEN_ORIGIN_Y_MAX"]
 BOSS_SPR_BASE_SLOT = sym["BOSS_SPR_BASE_SLOT"]
 BOSS_SPRITE_ATTRS = sym["BOSS_SPRITE_ATTRS"]
 PAT_SASAPI = sym["PAT_SASAPI"]
@@ -180,31 +186,47 @@ broken_slot_cols = [cpu.vram[SAT_BASE + (BOSS_BROKEN_SPR_BASE_SLOT + i) * 4 + 3]
 check("the broken body draws in BOSS_COLOR (no flash active right at reveal)",
       all(c == BOSS_COLOR for c in broken_slot_cols))
 
-# ---- movement: BOSS_X/BOSS_Y follow the precomputed path LUT, one step
-# every BOSS_BROKEN_PATH_HOLD_FRAMES calls while MOVING (BOSS_BROKEN_
-# FRAME_COUNTER-driven, independent of the global GAME_TICK not being
-# advanced by these direct UPDATE_BOSS_ALL calls) ----
+# ---- origin capture: TRIGGER_BOSS_BROKEN_FORM captures+clamps BOSS_X/Y
+# into BOSS_BROKEN_ORIGIN_X/_Y at the moment of transformation - "爆発
+# 位置からでなきゃおかしい" (the broken form must appear near where the
+# old body actually died, not a fixed screen point) ----
+check("the origin's own X is within the path LUT's safe on-screen clamp range",
+      BOSS_BROKEN_ORIGIN_X_MIN <= cpu.mem[BOSS_BROKEN_ORIGIN_X] <= BOSS_BROKEN_ORIGIN_X_MAX)
+check("the origin's own Y is within the path LUT's safe on-screen clamp range",
+      BOSS_BROKEN_ORIGIN_Y_MIN <= cpu.mem[BOSS_BROKEN_ORIGIN_Y] <= BOSS_BROKEN_ORIGIN_Y_MAX)
+# x=100 (this test's own trigger position) is comfortably inside the
+# clamp range, so the origin should be the RAW trigger X, unclamped.
+check("the origin's own X matches the boss's real X at the moment of transformation "
+      "(x=100, within the clamp range so no clamping should have applied)",
+      cpu.mem[BOSS_BROKEN_ORIGIN_X] == 100)
+
+# ---- movement: BOSS_X/BOSS_Y follow origin + the precomputed DX/DY path
+# LUT, one step every BOSS_BROKEN_PATH_HOLD_FRAMES calls while MOVING
+# (BOSS_BROKEN_FRAME_COUNTER-driven, independent of the global GAME_TICK
+# not being advanced by these direct UPDATE_BOSS_ALL calls) ----
 check("starts already MOVING (round36-14: '起動で画面を移動' - not parked at reveal)",
       cpu.mem[BOSS_BROKEN_MOVING] == 1)
-check("BOSS_X at reveal matches the path LUT's own index-0 entry",
-      cpu.mem[BOSS_X] == cpu.mem[BOSS_BROKEN_PATH_X + 0])
-check("BOSS_Y at reveal matches the path LUT's own index-0 entry",
-      cpu.mem[BOSS_Y] == cpu.mem[BOSS_BROKEN_PATH_Y + 0])
+check("BOSS_X at reveal matches origin + the path LUT's own index-0 DX entry",
+      cpu.mem[BOSS_X] == (cpu.mem[BOSS_BROKEN_ORIGIN_X] + cpu.mem[BOSS_BROKEN_PATH_DX + 0]) & 0xFF)
+check("BOSS_Y at reveal matches origin + the path LUT's own index-0 DY entry",
+      cpu.mem[BOSS_Y] == (cpu.mem[BOSS_BROKEN_ORIGIN_Y] + cpu.mem[BOSS_BROKEN_PATH_DY + 0]) & 0xFF)
 
 # self-consistency over many frames, rather than hand-predicting an
 # exact call count (fragile against exactly how many "extra" internal
 # update calls a reveal/trigger happens to make) - every frame, BOSS_X/
-# BOSS_Y must equal path[BOSS_BROKEN_PATH_INDEX] exactly, and whenever
-# the index itself changes it must advance by exactly 1 (wrapping at
-# BOSS_BROKEN_PATH_LEN), never skip or jump.
+# BOSS_Y must equal origin+path[BOSS_BROKEN_PATH_INDEX] exactly, and
+# whenever the index itself changes it must advance by exactly 1
+# (wrapping at BOSS_BROKEN_PATH_LEN), never skip or jump.
+origin_x = cpu.mem[BOSS_BROKEN_ORIGIN_X]
+origin_y = cpu.mem[BOSS_BROKEN_ORIGIN_Y]
 prev_index = cpu.mem[BOSS_BROKEN_PATH_INDEX]
 consistent = True
 advances = 0
 for _ in range(3 * BOSS_BROKEN_PATH_HOLD_FRAMES):
     call_routine(cpu, "UPDATE_BOSS_ALL")
     idx = cpu.mem[BOSS_BROKEN_PATH_INDEX]
-    if (cpu.mem[BOSS_X] != cpu.mem[BOSS_BROKEN_PATH_X + idx]
-            or cpu.mem[BOSS_Y] != cpu.mem[BOSS_BROKEN_PATH_Y + idx]):
+    if (cpu.mem[BOSS_X] != (origin_x + cpu.mem[BOSS_BROKEN_PATH_DX + idx]) & 0xFF
+            or cpu.mem[BOSS_Y] != (origin_y + cpu.mem[BOSS_BROKEN_PATH_DY + idx]) & 0xFF):
         consistent = False
     if idx != prev_index:
         advances += 1
@@ -216,6 +238,30 @@ check("BOSS_X/BOSS_Y always match path[BOSS_BROKEN_PATH_INDEX] exactly, every si
       consistent)
 check("the path index actually advances (not stuck) while MOVING, by exactly 1 step at a time",
       advances >= 2)
+
+# ---- origin clamping: a trigger position outside the safe box gets
+# clamped rather than pushing the path off-screen - "爆発位置から" still
+# needs to hold even for a death right at the patrol's own edges (X near
+# 0 or near BOSS_SPAWNX) ----
+cpu = fresh_cpu()
+make_boss(cpu, x=0, hp=BOSS_BROKEN_HP_THRESHOLD + 2)  # far left of the clamp's own MIN
+hit_boss(cpu, 0)
+hit_boss(cpu, 0)  # triggers
+check("a trigger position left of the clamp range (X=0) is clamped up to ORIGIN_X_MIN, "
+      "not left to push the path off the left edge of the screen",
+      cpu.mem[BOSS_BROKEN_ORIGIN_X] == BOSS_BROKEN_ORIGIN_X_MIN)
+
+BOSS_SPAWNX = sym["BOSS_SPAWNX"]
+right_x = BOSS_SPAWNX  # the boss's own real max X (192) - already right of
+                        # ORIGIN_X_MAX(176) without needing an unrealistic
+                        # value that would also break the (unrelated)
+                        # collision AABB math via 8-bit overflow
+cpu = fresh_cpu()
+make_boss(cpu, x=right_x, hp=BOSS_BROKEN_HP_THRESHOLD + 2)
+hit_boss(cpu, right_x)
+hit_boss(cpu, right_x)  # triggers
+check("a trigger position right of the clamp range is clamped down to ORIGIN_X_MAX",
+      cpu.mem[BOSS_BROKEN_ORIGIN_X] == BOSS_BROKEN_ORIGIN_X_MAX)
 
 
 # ---- real end-to-end: spawn, drain to the threshold, confirm the

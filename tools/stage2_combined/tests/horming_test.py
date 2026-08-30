@@ -341,12 +341,42 @@ addr = name_table_addr(80, sky_y)
 check("just above the terrain-row threshold, DRAW_HORMING_BG_CELL still picks the ordinary sky/black code",
       cpu.vram[addr] == HORMING_BG_DOWN_CODE)
 
-# the Sand-band codes must actually inherit the real Sand color (group2,
-# VRAM 0x2002) rather than needing (or getting) any color write of their
-# own - see HORMING_BG_SAND_SL_CODE's own comment for why.
+# the Sand-band codes live in group12 (their own explicit color write -
+# see HORMING_BG_SAND_SL_CODE's own comment for why this group, unlike
+# the group2 attempt it replaced, needs one) and must actually carry the
+# real Sand color.
 cpu = fresh_cpu()
-check("group2 (Sand's own color group, VRAM 0x2002) is 0xAB - matches terrain_gen.py's SAND_COLOR exactly",
-      cpu.vram[0x2002] == 0xAB)
+check("group12 (Sand-variant Horming's own color group, VRAM 0x200C) is 0xAB - matches "
+      "terrain_gen.py's SAND_COLOR exactly",
+      cpu.vram[0x200C] == 0xAB)
+
+# round36-14 follow-up (real-hardware regression: "スクロールの地形の
+# Sandがほかのパターンに書き換わってる") - the FIRST attempt at this
+# feature placed the Sand-variant codes at 18-22, which turned out to be
+# real terrain data (the (Sand,Sand) same-id blend pair's own 7-frame
+# anti-flicker animation, codes17-23 - see terrain_gen.py's own
+# BLANK_PAIR_BASE comment). Direct regression guard: terrain's own real
+# pattern bytes for codes 16-23 (Sand's steady tile + all 7 blend
+# frames) must be byte-for-byte untouched by anything Horming-related -
+# recomputed independently here from terrain_gen.py itself, not just
+# "doesn't crash".
+import sys as _sys
+_TESTS_DIR = os.path.dirname(os.path.abspath(__file__))
+_sys.path.insert(0, os.path.join(_TESTS_DIR, "..", "..", "stage2_terrain"))
+import terrain_gen as _tg
+cpu = fresh_cpu()
+sand_patterns_intact = True
+for code in range(16, 24):
+    if code not in _tg.PATTERNS:
+        continue
+    expected = bytes(_tg.PATTERNS[code])
+    actual = bytes(cpu.vram[code * 8:code * 8 + 8])
+    if actual != expected:
+        sand_patterns_intact = False
+check("terrain's own real Sand pattern data (codes 16-23, including the (Sand,Sand) same-id "
+      "blend pair's 7 anti-flicker frames) is byte-for-byte untouched - Horming's own Sand-"
+      "variant codes must never collide with real terrain data again",
+      sand_patterns_intact)
 
 
 # ---- state0 (rise): diagonal up-left, exactly HORMING_RISE_DIST total ----

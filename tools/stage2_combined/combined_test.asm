@@ -1051,25 +1051,32 @@ HORMING_BG_COLORBYTE EQU 091h    ; fg9 light red / bg1 black (round36-13, was bg
 ; ブラックのままだと目立つんで"): a second, terrain-band table for the
 ; same 5 facings, picked by DRAW_HORMING_BG_CELL once the missile's own
 ; row reaches BULLET_ROCK_ROW_MIN (16) - same threshold ERASE_HORMING_
-; BG_CELL already uses to leave EHBC_SKY. Placed in codes18-22 -
-; terrain_gen.py's own BLANK_CODE(16)/group2 has only 2 of its 8 codes
-; actually used by the terrain generator itself (16=Sand's steady tile,
-; 17=the (Sand,Sand) same-id blend pair; BLEND_BASE for every other pair
-; starts right after, at 24 - see terrain_gen.py's own BLEND_BASE
-; comment), leaving 18-23 permanently unused by terrain - 5 free codes
-; in exactly the group already colored Sand's own real color. No new
-; color group needed and no color byte to write here at all: group2's
-; VRAM color is already SAND_COLOR (0xABh) from TERRAIN_COLORDATA's own
-; bulk load at INIT (line ~2513, before this block runs), and unlike
-; group1/3-31 it is never touched by ROCK_COLOR_SWAPPED_PATCH (that
-; patch explicitly skips group2 - see its own comment) - so simply
-; loading these 5 patterns into 18-22 is enough; they inherit the
-; correct color for free.
-HORMING_BG_SAND_SL_CODE   EQU 18
-HORMING_BG_SAND_DL_CODE   EQU 19
-HORMING_BG_SAND_DOWN_CODE EQU 20
-HORMING_BG_SAND_DR_CODE   EQU 21
-HORMING_BG_SAND_SR_CODE   EQU 22
+; BG_CELL already uses to leave EHBC_SKY.
+;
+; round36-14 follow-up (real-hardware report: "スクロールの地形のSandが
+; ほかのパターンに書き換わってる 前のROMでは正常だった") - the FIRST
+; attempt placed these in codes18-22, reasoning group2's BLEND_BASE(24)
+; meant only 2 of its 8 codes were "actually used". That reasoning missed
+; the SAME-ID (Sand,Sand) pair's own 7-frame blend block (terrain_gen.py's
+; own BLANK_PAIR_BASE comment literally says "7 blend phases" - codes
+; 17-23, not just 17 alone; every one of 16-23 is real, load-bearing
+; terrain animation data) - confirmed directly:
+; `python3 -c "import terrain_gen as tg; print([tg.pair_block_code(p)+k
+; for p in tg.PAIRS for k in range(7)])"` includes 18-23. Relocated to
+; codes96-100 (group12) instead, verified genuinely empty (all-zero
+; pattern bytes) both at boot AND ~2000 frames into a real boss fight via
+; direct emulator VRAM inspection - not a static-reasoning claim this
+; time. Group12 IS one of the groups ROCK_COLOR_SWAPPED_PATCH's own bulk
+; write covers (groups3-31), so - unlike the group2 attempt - this DOES
+; need its own explicit color write (HORMING_BG_SAND_COLORADDR/
+; COLORBYTE below), placed after that patch runs.
+HORMING_BG_SAND_SL_CODE   EQU 96
+HORMING_BG_SAND_DL_CODE   EQU 97
+HORMING_BG_SAND_DOWN_CODE EQU 98
+HORMING_BG_SAND_DR_CODE   EQU 99
+HORMING_BG_SAND_SR_CODE   EQU 100
+HORMING_BG_SAND_COLORADDR EQU 200Ch   ; 2000h+group12
+HORMING_BG_SAND_COLORBYTE EQU 0ABh    ; SAND_COLOR (fg10 dark yellow/bg11 light yellow) - matches terrain's real Sand color exactly
 ; round 4 fix: "ホーミングのスプライトが非表示待機になってるからだろ
 ; うが ボス上部が常に表示欠けしている" - a real, confirmed bug. The
 ; previous round's reasoning ("boss's own slots10-25 are free while any
@@ -2115,6 +2122,17 @@ BOSS_BROKEN_DIR EQU 0C0C3h            ; last-loaded facing (0=SASAPI_BROKEN_QUAD
 BOSS_BROKEN_MOVING EQU 0C0C4h         ; 0=stopped(frozen at the current path point),1=drifting - see UPDATE_BOSS_BROKEN_ACTIVE
 BOSS_BROKEN_PATH_INDEX EQU 0C0C5h     ; 0..BOSS_BROKEN_PATH_LEN-1, only advances while MOVING - position/facing are always re-derived from this same index, so a stop-then-resume continues from exactly where it left off rather than jumping
 BOSS_BROKEN_FRAME_COUNTER EQU 0C0C6h  ; 0..BOSS_BROKEN_PATH_HOLD_FRAMES-1, counts raw frames between path-index steps while MOVING
+; round36-14 follow-up (real-hardware report: "スパーク爆発後ボスの爆発
+; 位置に関係なく右から出てきてる 爆発位置からでなきゃおかしい") - the
+; figure-8 path LUT (BOSS_BROKEN_PATH_X/_Y) used to hold ABSOLUTE screen
+; coordinates, so index0 (a fixed point near the right edge) was always
+; where the broken body first appeared, regardless of where the old body
+; actually died. Fixed by making the LUT hold DX/DY OFFSETS from an
+; ORIGIN captured once at the moment of transformation (TRIGGER_BOSS_
+; BROKEN_FORM) instead - see BOSS_BROKEN_PATH_DX/_DY's own comment in
+; sasapi_gen.py for the matching generator-side change.
+BOSS_BROKEN_ORIGIN_X EQU 0C0C7h
+BOSS_BROKEN_ORIGIN_Y EQU 0C0C8h
 ; Thunder's own state - a real POOL now (round9 fix: "いつからサンダー
 ; は1本しか出せない仕様に? そんな指示はしてねえぞ...BGを使ってるのは
 ; 表示制限がないからだろが" - BG has no hw-sprite-style display limit,
@@ -2778,14 +2796,19 @@ INIT_RESUME_AFTER_BANK_SELECT:
     LD A,HORMING_BG_COLORBYTE : LD (BULLET_TEMP_BYTE),A
     LD HL,BULLET_TEMP_BYTE : LD DE,HORMING_BG_COLORADDR : LD BC,1 : CALL LDIRVM
 
-    ; round36-14: same 5 facing bitmaps again, into the terrain-band
-    ; codes (18-22, group2/Sand's own already-correct color - see
-    ; HORMING_BG_SAND_SL_CODE's own comment) - no color write needed.
+    ; round36-14 (relocated to group12/codes96-100 after the group2/
+    ; codes18-22 attempt turned out to collide with real terrain blend
+    ; data - see HORMING_BG_SAND_SL_CODE's own comment): same 5 facing
+    ; bitmaps again, plus this time a real, needed color write (group12
+    ; is NOT a group terrain leaves alone the way group2's SAND_GROUPS
+    ; carve-out is).
     LD HL,HORMING_BG_SL_PATTERN   : LD DE,HORMING_BG_SAND_SL_CODE*8   : LD BC,8 : CALL LDIRVM
     LD HL,HORMING_BG_DL_PATTERN   : LD DE,HORMING_BG_SAND_DL_CODE*8   : LD BC,8 : CALL LDIRVM
     LD HL,HORMING_BG_DOWN_PATTERN : LD DE,HORMING_BG_SAND_DOWN_CODE*8 : LD BC,8 : CALL LDIRVM
     LD HL,HORMING_BG_DR_PATTERN   : LD DE,HORMING_BG_SAND_DR_CODE*8   : LD BC,8 : CALL LDIRVM
     LD HL,HORMING_BG_SR_PATTERN   : LD DE,HORMING_BG_SAND_SR_CODE*8   : LD BC,8 : CALL LDIRVM
+    LD A,HORMING_BG_SAND_COLORBYTE : LD (BULLET_TEMP_BYTE),A
+    LD HL,BULLET_TEMP_BYTE : LD DE,HORMING_BG_SAND_COLORADDR : LD BC,1 : CALL LDIRVM
 
     ; Sasapi's own attack-pose hand art (BG pattern, not a hw sprite -
     ; see SASAPI_HAND_CODE_BASE's own comment) - a permanent allocation
@@ -8861,10 +8884,17 @@ UBBA_FC_SAVE:
     LD (BOSS_BROKEN_FRAME_COUNTER),A
 
 UBBA_POS:
+    ; round36-14 follow-up ("爆発位置からでなきゃおかしい") - the LUT
+    ; holds signed DX/DY OFFSETS now, not absolute coordinates; add each
+    ; to the origin TRIGGER_BOSS_BROKEN_FORM captured (and clamped) at
+    ; the moment of transformation - see BOSS_BROKEN_ORIGIN_X's own
+    ; comment.
     LD A,(BOSS_BROKEN_PATH_INDEX)
     LD E,A : LD D,0
-    LD HL,BOSS_BROKEN_PATH_X : ADD HL,DE : LD A,(HL) : LD (BOSS_X),A
-    LD HL,BOSS_BROKEN_PATH_Y : ADD HL,DE : LD A,(HL) : LD (BOSS_Y),A
+    LD HL,BOSS_BROKEN_PATH_DX : ADD HL,DE : LD A,(HL) : LD B,A
+    LD A,(BOSS_BROKEN_ORIGIN_X) : ADD A,B : LD (BOSS_X),A
+    LD HL,BOSS_BROKEN_PATH_DY : ADD HL,DE : LD A,(HL) : LD B,A
+    LD A,(BOSS_BROKEN_ORIGIN_Y) : ADD A,B : LD (BOSS_Y),A
     LD HL,BOSS_BROKEN_PATH_DIR : ADD HL,DE : LD A,(HL) : LD B,A
 
     LD A,(BOSS_BROKEN_DIR)
@@ -11105,9 +11135,9 @@ EHBC_SKIP:
 ; 14 ("BGホーミングが地形に入ったときはSandの背景色になるように"): picks
 ; between 2 color-group tables by row, same threshold ERASE_HORMING_BG_
 ; CELL's own EHBC_SKY branch uses (BULLET_ROCK_ROW_MIN) - black/group18
-; above it (sky), Sand-colored/group2 at or below it (terrain) - see
-; HORMING_BG_SAND_SL_CODE's own comment for why group2 needs no explicit
-; color write of its own.
+; above it (sky), Sand-colored/group12 at or below it (terrain) - see
+; HORMING_BG_SAND_SL_CODE's own comment for the group2->group12
+; relocation history.
 DRAW_HORMING_BG_CELL:
     LD A,(IX+2) : SRL A : SRL A : SRL A   ; ROW
     CP BULLET_ROCK_ROW_MIN
@@ -11532,8 +11562,8 @@ CHPBOSS_DESTROY:
     RET
 
 ; round36-14 Part C: fires exactly once per boss fight, the instant HP
-; crosses BOSS_BROKEN_HP_THRESHOLD (200) - CHPBOSS_NORMAL_HIT's own
-; BOSS_FORM!=0 guard is what prevents a 2nd call on every subsequent hit.
+; reaches BOSS_BROKEN_HP_THRESHOLD (50, inclusive) - CHPBOSS_NORMAL_HIT's
+; own BOSS_FORM!=0 guard is what prevents a 2nd call on every subsequent hit.
 ; "即座に強制停止" - interrupts whatever UBA_ACTIVE was doing this exact
 ; frame (mid-patrol, mid-pose, mid-left-pause) unconditionally; nothing
 ; here waits for the current attack/pose to finish first.
@@ -11563,6 +11593,36 @@ TBBF_NO_HAND:
     ; this REASON, so that tile is never needed here (see UBS_LAST_FRAME).
     LD A,(BOSS_X) : ADD A,32 : SRL A : SRL A : SRL A : LD (BOSS_EXPL_CX),A
     LD A,(BOSS_Y) : ADD A,32 : SRL A : SRL A : SRL A : LD (BOSS_EXPL_CY),A
+    ; round36-14 follow-up ("スパーク爆発後ボスの爆発位置に関係なく右か
+    ; ら出てきてる 爆発位置からでなきゃおかしい") - capture the broken
+    ; form's own future origin HERE too, from the same still-meaningful
+    ; BOSS_X/BOSS_Y (the old body is done moving for good the instant
+    ; this routine runs), clamped into the figure-8 path's own safe
+    ; on-screen box (BOSS_BROKEN_ORIGIN_X/Y_MIN/MAX, sasapi_gen.py) so
+    ; origin+delta can never leave the screen regardless of where the
+    ; boss actually died. REVEAL_BOSS_BROKEN_FORM/UPDATE_BOSS_BROKEN_
+    ; ACTIVE add the path LUT's own DX/DY to this every frame - see
+    ; BOSS_BROKEN_ORIGIN_X's own comment.
+    LD A,(BOSS_X)
+    CP BOSS_BROKEN_ORIGIN_X_MIN
+    JR NC,TBBF_OX_MIN_OK
+    LD A,BOSS_BROKEN_ORIGIN_X_MIN
+TBBF_OX_MIN_OK:
+    CP BOSS_BROKEN_ORIGIN_X_MAX+1
+    JR C,TBBF_OX_MAX_OK
+    LD A,BOSS_BROKEN_ORIGIN_X_MAX
+TBBF_OX_MAX_OK:
+    LD (BOSS_BROKEN_ORIGIN_X),A
+    LD A,(BOSS_Y)
+    CP BOSS_BROKEN_ORIGIN_Y_MIN
+    JR NC,TBBF_OY_MIN_OK
+    LD A,BOSS_BROKEN_ORIGIN_Y_MIN
+TBBF_OY_MIN_OK:
+    CP BOSS_BROKEN_ORIGIN_Y_MAX+1
+    JR C,TBBF_OY_MAX_OK
+    LD A,BOSS_BROKEN_ORIGIN_Y_MAX
+TBBF_OY_MAX_OK:
+    LD (BOSS_BROKEN_ORIGIN_Y),A
     DI
     LD HL,EXPLOSION_PATTERN : LD DE,BOSS_EXPL_SPARK_CODE_TL*8 : LD BC,32 : CALL LDIRVM
     EI
