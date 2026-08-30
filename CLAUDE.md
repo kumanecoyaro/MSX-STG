@@ -665,3 +665,21 @@
     存在する可能性が高い(Exploreエージェント調査による指摘、未着手)。
     ROMコストゼロで速度改善という有利な性質のため優先度は上げてよいが、
     今回の指示はUPDATE_ENEMYに限定されていたため未着手。
+- **(2026-08-30、Round36-14 follow-up#10、完了済み)**: "ではそれらも
+  検討し実測"の指示で、follow-up#9の申し送り通り`UPDATE_ZUM_ALL`/
+  `CHECK_BULLET_VS_ZUM`/`UPDATE_FLYER_ALL`/`CHECK_BULLET_VS_FLYER`
+  (いずれもスロット数2)に同じ展開(DJNZ+INC IX/IY+PUSH/POP BC→
+  固定スロット数ぶんの明示的CALL、呼び出し先本体は複製せず共有)を
+  適用。T-state実測: `UPDATE_ZUM_ALL` 3031T→2815T(-7.1%)、
+  `CHECK_BULLET_VS_ZUM` 2173T→1525T(-29.8%)、`UPDATE_FLYER_ALL`
+  4329T→4053T(-6.4%)、`CHECK_BULLET_VS_FLYER` 2353T→1525T
+  (-35.2%、4ルーチン中最大改善率)。ROMコストは4ルーチン合計で
+  むしろ-72バイト(follow-up#9と同じくラッパー自体が縮小)。開発中に
+  Zumの命中判定テストで2件失敗したが、原因はコード側バグではなく
+  「Zumは自機がZumより背後にいる場合のみ実際に破壊される(前面は
+  弾を無効化するだけ)」という既存仕様をテスト側が考慮していなかった
+  だけと判明、テスト条件を修正して解消。全回帰1081 passed/0 failed。
+  follow-up#9と合わせ、Exploreエージェントが指摘した非ボス系の
+  主要候補(ENEMY/ZUM/FLYERの計6ルーチン)への対応が完了(BigZum/
+  Etankはスロット数1でこのパターン自体が存在せず対象外)。詳細は
+  HANDOFF.md Round36-14(follow-up#10)参照。

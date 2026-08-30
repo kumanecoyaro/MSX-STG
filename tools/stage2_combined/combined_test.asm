@@ -6246,14 +6246,14 @@ UPDATE_ZUM_ALL:
 ; schedule-driven now (ALLOC_ZUM_SLOT is only ever called from
 ; SSC2_FIRE), so this just walks the pool every frame - no more polled
 ; interval timer here.
+; round36-14 follow-up#10 ("ではそれらも検討し実測", ZUM/Flyer): same
+; unrolled-slot-walk treatment as UE_UPDATE_ALL (round36-14 follow-up#9,
+; see its own comment for the general rationale) - ZUM_SLOT_COUNT=2 is
+; fixed, UPDATE_ONE_ZUM's own body untouched/shared via CALL.
     LD IX,ZUM_POOL
-    LD B,ZUM_SLOT_COUNT
-UZAU_LOOP:
-    PUSH BC
     CALL UPDATE_ONE_ZUM
-    POP BC
-    INC IX : INC IX : INC IX : INC IX : INC IX : INC IX : INC IX : INC IX
-    DJNZ UZAU_LOOP
+    LD IX,ZUM_POOL+ZUM_SLOT_SIZE
+    CALL UPDATE_ONE_ZUM
     CALL FLUSH_ZUM_SPRITES
     RET
 
@@ -6805,15 +6805,12 @@ CHECK_BULLET_VS_ZUM:
     LD IX,BULLET2_ACT : CALL CHECK_HIT_ONE_BULLET_ZUM
     RET
 
+; round36-14 follow-up#10: same unroll as above.
 CHECK_HIT_ONE_BULLET_ZUM:
     LD IY,ZUM_POOL
-    LD B,ZUM_SLOT_COUNT
-CHOBZ_LOOP:
-    PUSH BC
     CALL CHECK_HIT_PAIR_ZUM
-    POP BC
-    INC IY : INC IY : INC IY : INC IY : INC IY : INC IY : INC IY : INC IY
-    DJNZ CHOBZ_LOOP
+    LD IY,ZUM_POOL+ZUM_SLOT_SIZE
+    CALL CHECK_HIT_PAIR_ZUM
     RET
 
 CHECK_HIT_PAIR_ZUM:
@@ -7912,17 +7909,16 @@ UPDATE_FLYER_ALL:
 ; schedule-driven now (ALLOC_FLYER_SLOT is only ever called from
 ; SSC2_FIRE), so this just walks the pool every frame - no more polled
 ; interval timer here.
+; round36-14 follow-up#10: same unrolled-slot-walk treatment as
+; UE_UPDATE_ALL (round36-14 follow-up#9) - FLYER_SLOT_COUNT=2 fixed,
+; UPDATE_ONE_FLYER's own body untouched/shared via CALL. FLYER_SLOT_SIZE
+; (11) is the largest per-slot stride of any pool in this file, so the
+; INC IX walk this replaces was the most expensive of the 4 candidates
+; identified this round.
     LD IX,FLYER_POOL
-    LD B,FLYER_SLOT_COUNT
-UFLAU_LOOP:
-    PUSH BC
     CALL UPDATE_ONE_FLYER
-    POP BC
-    ; FLYER_SLOT_SIZE(11) worth of INC IX - this assembler has no ADD
-    ; IX,DE, same precedent as every other pool loop in this file.
-    INC IX : INC IX : INC IX : INC IX : INC IX : INC IX
-    INC IX : INC IX : INC IX : INC IX : INC IX
-    DJNZ UFLAU_LOOP
+    LD IX,FLYER_POOL+FLYER_SLOT_SIZE
+    CALL UPDATE_ONE_FLYER
     CALL FLUSH_FLYER_SPRITES
     RET
 
@@ -8217,16 +8213,12 @@ CHECK_BULLET_VS_FLYER:
     LD IX,BULLET2_ACT : CALL CHECK_HIT_ONE_BULLET_FLYER
     RET
 
+; round36-14 follow-up#10: same unroll as above.
 CHECK_HIT_ONE_BULLET_FLYER:
     LD IY,FLYER_POOL
-    LD B,FLYER_SLOT_COUNT
-CHOBFL_LOOP:
-    PUSH BC
     CALL CHECK_HIT_PAIR_FLYER
-    POP BC
-    INC IY : INC IY : INC IY : INC IY : INC IY : INC IY
-    INC IY : INC IY : INC IY : INC IY : INC IY
-    DJNZ CHOBFL_LOOP
+    LD IY,FLYER_POOL+FLYER_SLOT_SIZE
+    CALL CHECK_HIT_PAIR_FLYER
     RET
 
 CHECK_HIT_PAIR_FLYER:

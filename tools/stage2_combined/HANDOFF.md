@@ -6356,3 +6356,51 @@ Thunder activity) confirming it survives completely untouched.
   優先度を上げてよい候補だが、ユーザーからの明示的な指示は
   UPDATE_ENEMYに限定されていたため、今回はスコープ外として着手して
   いない。
+
+## Round 36-14 follow-up#10: Zum/Flyerも同様に展開・実測
+
+- User instruction(verbatim): "ではそれらも検討し実測"(follow-up#9の
+  申し送りで挙げた`UPDATE_ZUM_ALL`/`CHECK_BULLET_VS_ZUM`/
+  `UPDATE_FLYER_ALL`/`CHECK_BULLET_VS_FLYER`を指す)
+- follow-up#9と全く同じ手法(DJNZ+INC IX/IY+PUSH/POP BCのループを、
+  固定スロット数ぶんの明示的な`LD IX/IY,base`→`CALL`に展開、呼び出し先
+  本体(`UPDATE_ONE_ZUM`/`CHECK_HIT_PAIR_ZUM`/`UPDATE_ONE_FLYER`/
+  `CHECK_HIT_PAIR_FLYER`)は複製せず共有のまま)を、ZUM_SLOT_COUNT=2/
+  FLYER_SLOT_COUNT=2の4ルーチンに適用。
+- **実測結果**:
+  - `UPDATE_ZUM_ALL`(2スロット稼働): 3031T→**2815T**(-7.1%)。
+    0スロット: 1017T→**801T**(-21.2%)。
+  - `CHECK_BULLET_VS_ZUM`(弾3×Zum2、全ミス): 2173T→**1525T**
+    (-29.8%)。0/0: 1171T→**523T**(-55.3%)。
+  - `UPDATE_FLYER_ALL`(2スロット稼働): 4329T→**4053T**(-6.4%)。
+    0スロット: 2661T→**2385T**(-10.4%)。FLYER_SLOT_SIZE=11と
+    全エンティティ中最大のため、事前予想通りINC IX分のコストが
+    最も高かったが、`UPDATE_ONE_FLYER`自体の本体コストが相対的に
+    大きい(PHASE分岐等)ため改善率自体はENEMY/ZUM系より控えめ。
+  - `CHECK_BULLET_VS_FLYER`(弾3×Flyer2、全ミス): 2353T→**1525T**
+    (-35.2%、4ルーチン中最大の改善率)。0/0: 1351T→**523T**(-61.3%)。
+  - **ROMコスト**: 4ルーチンとも follow-up#9のUPDATE_ENEMIES同様、
+    ラッパー自体が縮小(`UPDATE_ZUM_ALL`33→18/`CHECK_HIT_ONE_BULLET_
+    ZUM`30→15/`UPDATE_FLYER_ALL`39→18/`CHECK_HIT_ONE_BULLET_FLYER`
+    36→15、いずれもバイト単位)。4ルーチン合計で**-72バイト**、
+    ROM全体では28709バイトのまま変化なし(follow-up#9と同じく、
+    ラッパー自体の縮小のみで完結)。
+- **検証**: 既存の`zaco_flash_bug.py`/`flyer_terrain_test.py`等の
+  関連テストに加え、follow-up#9同様その場でZum2スロット・Flyer2
+  スロットそれぞれの独立動作・命中判定を直接検証するテストを作成
+  (アドレス衝突が無いことを確認)。**開発中に見つけたのはコード側の
+  バグではなくテスト側の見落とし**: Zumの命中判定は弾の位置ではなく
+  「自機がZumより後ろにいるか(TANK_X>=Zum_X)」で前面(弾は無効化される
+  のみ)/背面(実際に破壊される)が決まる仕様("正面からは無敵で...
+  破壊条件は後ろから撃たれた場合のみ")のため、最初のテスト([TANK_X=20,
+  固定]のまま各Zumを右側に配置)では常に前面判定になりACTが変化せず
+  2件失敗 - Zum側のみ他と異なる追加チェックがあることを見落としていた。
+  TANK_XをZumより右(背後)に設定し直して解消、コード自体には一切
+  問題が無かったことを確認。全回帰`run_all.py` 1081 passed/0 failed。
+  Stage2単体のみ実施(Combビルドは指示なしに未実施)。
+- follow-up#9からの累計(UPDATE_ENEMIES/CHECK_BULLET_VS_ENEMY/
+  UPDATE_ZUM_ALL/CHECK_BULLET_VS_ZUM/UPDATE_FLYER_ALL/CHECK_BULLET_VS_
+  FLYERの6ルーチン)で、Exploreエージェントが指摘した「固定小スロット数
+  をDJNZ+INC IX/IYで歩く」パターンの主要な非ボス系候補は一通り対応
+  完了。BigZum/Etankはスロット数1でこのパターン自体が存在せず対象外
+  (follow-up#9時点で既に確認済み)。
