@@ -1312,6 +1312,7 @@
   var canvasScroll = document.getElementById("canvasScroll");
   var rulerScroll = document.querySelector(".ruler-scroll");
   var gridwrap = document.querySelector(".gridwrap");
+  var scrubRowEl = document.querySelector(".scrub-row");
 
   var DPR = Math.max(1, window.devicePixelRatio || 1);
 
@@ -1357,9 +1358,21 @@
   }
 
   function layout() {
-    // all 24 rows must fit in the vertical space left after the ruler - compute
-    // the cell size from the available height instead of a fixed pixel value.
-    var availH = gridwrap.clientHeight - RULER_H;
+    // all 24 rows must fit in the vertical space left after the ruler AND
+    // the scrub-row (both flex:0 0 auto siblings of .grid-row within
+    // .gridwrap) - measure their actual rendered height rather than only
+    // subtracting RULER_H, or the canvas gets sized taller than what
+    // .canvas-scroll (overflow-y:hidden, no vertical scroll fallback)
+    // actually receives from the flex layout, silently clipping the
+    // bottom row (row 23) with no way to reach it.
+    // rulerRowEl's own offsetHeight can't be used here: on the very first
+    // call #ruler hasn't been sized yet (sizeCanvas for it runs further
+    // below in this same function) and a bare <canvas> defaults to
+    // 300x150, which would inflate .ruler-row's measured height and starve
+    // the grid instead. RULER_H(+1 for its border-bottom) is what #ruler
+    // is deliberately kept at, so it's safe as a constant. .scrub-row has
+    // no canvas in it, so measuring it live is safe and self-adjusting.
+    var availH = gridwrap.clientHeight - (RULER_H + 1) - scrubRowEl.offsetHeight;
     CELL = Math.max(14, Math.min(30, Math.floor(availH / ROWS)));
 
     var gridW = MAX_TICK * CELL;

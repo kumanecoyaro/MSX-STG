@@ -4951,3 +4951,50 @@ Thunder activity) confirming it survives completely untouched.
   Terrain2.jsonと同じ扱い)。エディタで実際に読み込み、敵配置(ZacoII等の
   アイコン)と地形(階段状の高さプロファイル)の両方が正しく反映されることを
   Playwrightで直接確認済み。
+
+## Round 36-6: Row23がグリッド最下部で見切れて操作不能だったレイアウトバグの修正
+
+- User instruction(verbatim): "で、お前のスクショでもRow23が見切れてんじゃ
+  ねえかよ これじゃ23がタップできず 1段の地形が指定出来ねえだろうが"
+  - Round36-4で自分が送った検証スクリーンショット自体でRow23(地形tier0を
+    指定するのに必須の最下行)が見切れていたことへの指摘。Round36-4の
+    「サイドバーのボタン行削除」だけでは直っていなかった、別原因のバグ。
+- **調査**: Playwrightで`.gridwrap`/`.grid-row`/`#canvasScroll`/`#grid`/
+  `.ruler-row`/`.scrub-row`の`getBoundingClientRect()`を実測(ビューポート
+  1280x720)。`#canvasScroll`(`.grid-row`、`overflow-y:hidden`、縦スクロール
+  フォールバックなし)の実高さは664pxしかないのに、`#grid`キャンバス自体は
+  696pxで描画されており、差分32px(CELL≈29pxのほぼ1行分)が常時クリップされ
+  て存在すら不可能な状態だった。
+- **根本原因**: `layout()`内の`var availH = gridwrap.clientHeight - RULER_H;`
+  が、`.gridwrap`(縦方向flexコンテナ、子は`.ruler-row`/`.grid-row`/
+  `.scrub-row`)の中から`.ruler-row`の高さ(`RULER_H`定数)だけを差し引き、
+  同じくflex:0 0 autoの兄弟である`.scrub-row`(スクラブスライダー行、実測
+  33px)の高さを一切考慮していなかった。結果、CELLが本来より大きく計算され、
+  グリッドキャンバスが実際に確保できる高さより約1行分大きく描画され続けて
+  いた。恐らく長期間存在していた構造バグ(地形エディット機能がRow23タップを
+  要求して初めて表面化しただけで、Round36系列の変更が原因ではない)。
+- **修正**: `.scrub-row`の実高さは`document.querySelector(".scrub-row")`の
+  `offsetHeight`をlayout()内で直接測定するよう変更(スライダー行はcanvasを
+  含まないため測定に循環依存が無く安全)。一方`.ruler-row`側は当初同様に
+  `rulerRowEl.offsetHeight`で測定しようとしたところ、CELLが22に縮んでしまう
+  新たな不具合が発生 - 原因は、layout()の初回呼び出し時点では`#ruler`
+  キャンバスがまだ`sizeCanvas()`でリサイズされておらず、素の`<canvas>`要素の
+  既定サイズ(300x150)のままで、これが`.ruler-row`の測定高さを151pxまで
+  水増ししていたため(circular dependency)。対応として`.ruler-row`側は
+  引き続き`RULER_H`定数(+境界線1px)を使用し、`.scrub-row`側のみ実測に切替。
+  最終的に`availH = gridwrap.clientHeight - (RULER_H + 1) - scrubRowEl.offsetHeight`。
+- **検証**: Playwrightでデスクトップ幅(1280x720)・モバイル幅(390x844)の
+  両方で`#grid`の実描画高さが`#canvasScroll`の実高さ以下に収まり、Row23の
+  下端がスクラブ行の上端より上にあることをgetBoundingClientRect実測で確認。
+  スクリーンショットでもRow23が完全に画面内に収まっていることを目視確認。
+  さらにStage2で地形パレットアイコンをarmし、Row23(tick=2)をクリックして
+  実際に`terrain2[2]`にtier0が正しく設定される(`Terrain tier 0 → tick 2`の
+  トースト表示、行23全体が地形色で塗られる)ことも実際の操作で確認済み。
+- なお本Round着手中、ユーザーから新たに「地形描画自体がプレースホルダーの
+  単色ブロックで、実際のゲームのRock/Sand/R225(登り/下り斜面)タイル表現と
+  一致していない」という指摘(実機スクリーンショットで報告された謎の
+  チェッカーボード状ノイズも含む)があったが、これは本Roundの直接対象では
+  ないため着手していない(現在の`Schedule2_current.json`のterrain配列自体は
+  Python側で再検証済みで、報告されたチェッカーボードを再現できておらず、
+  実機側の古いキャッシュ由来の可能性が高い)。本件は次Round以降の課題として
+  「保留中タスク」に追記した。
