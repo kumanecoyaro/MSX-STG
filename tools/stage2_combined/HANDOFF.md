@@ -6620,3 +6620,114 @@ Thunder activity) confirming it survives completely untouched.
   数フレーム後の位置で確認)に、EtankBulletが新しい絵柄で正しく
   表示されることを視覚確認しユーザーへ送付。ROM容量29565バイトの
   まま変化なし(定数値・画像データの変更のみ)。
+
+## Round 36-14 follow-up#12: Flyerの動作変更(Mine投下・帰還Y位置-8px修正・FlyerLaser発射)
+
+- User instruction(verbatim、添付データ`Mine1_8x8.json`/`Mine2_8x8.json`/
+  `FlyerLaser_16x16.json`込み): "Flyerの動作変更 まずスポーンから32px
+  左に移動したら 添付データのMineを放物線で投下 着地や自機への被弾で
+  16x16ｐｘの爆発エフェクトとサウンド 右からしか出ないので左向き放物線
+  のみ Mine1と2のアニメで 取り敢えずスプライトだがBGに変更するかも
+  次に現在はFlyer帰還でSandskyに被ってしまってるので帰還時の右移動の
+  Y位置を8px上に 右斜め下移動の最終Y座標って事ね その後FlyerLaser発射
+  つまり右斜め下移動後に発射 自機は狙わず右方向水平撃ちのみ BG使用"
+- **Flyerの3フェーズ状態機械を精査**(`UPDATE_ONE_FLYER`/`UOFL_*`):
+  PHASE0=巡航(左移動、画面左端X=0で反転しPHASE1へ)、PHASE1=帰還
+  (右移動+ロック済み垂直方向、自機Yを一定以上クリアしたらPHASE2へ)、
+  PHASE2=退場(右移動のみ)。ユーザーの言う「右斜め下移動の最終Y座標」
+  はPHASE1(HOME)からPHASE2(EXIT)へ遷移する瞬間の(IX+2)Yそのもの
+  (PHASE2はY を二度と更新しないため、この遷移時点のYが退場飛行全体の
+  固定Yになる)。この重なりは降下方向(自機より下へ通過するケース)
+  でのみ発生する(上昇方向は空へ離れていくだけでSandSkyに重ならない)
+  ため、-8px修正とFlyerLaser発射は降下方向の出口2箇所(地形安全キャップ
+  `FLYER_DESCEND_LIMIT_Y`到達 / 自機基準クリア判定)のみに限定して
+  適用(新設`UOFL_HOME_DESCEND_EXIT`、共通の`UOFL_HOME_DO_EXIT`へ合流)。
+- **Mine投下トリガー**: `FLYER_SPAWNX`が全インスタイル共通の固定定数
+  (240)であることを`ALLOC_FLYER_SLOT`で確認済みのため、「スポーンから
+  32px移動」はインスタンス毎のスポーンX記録を新設せず、コンパイル時
+  定数`FLYER_SPAWNX-32`(208)との比較だけで判定可能。発射済みフラグは
+  PHASE0中は完全にアイドルな(IX+6)(反転時にロック済みDYとして
+  上書きされるまでの間)を「他用途で空いているフィールドを再利用する」
+  という既存の踏襲(E_DX/E_DYと同じ精神)で流用、新規フィールド追加
+  なし。
+- **VRAM予算の全数調査(今回の最重要作業)**: Mine実装着手前に、
+  この セッション自身が確立した「シンボルテーブル横断監査+実
+  エミュレータ起動時カラーテーブル確認」手法(EBullet/EtankBulletの
+  回で発見・確立)を今回も適用。実際のアセンブラの`symtab`から全
+  `PAT_*`/`*_CODE`系シンボルを解決し、全144箇所の`CALL LDIRVM`
+  呼び出し元(`LD DE,expr*8[+SPRPAT]`/`LD BC,n`)を機械的に横断
+  抽出して「スプライト空間(SPRPAT付き)」と「BG空間(付かない)」を
+  分離集計した結果:
+  - **スプライト空間(コード0-255)は実測で完全に100%専有済み、
+    空きゼロ**(地形と違い動的に増減しない固定16ブロック構成 - Tank
+    128個・ZacoII/Flip各4・Explosion4・BulletU/L各4・Zum/Flip各4・
+    BigZum/P(+L)各16・Flyer/L各16・EBullet/SBeam4 が隙間なく連続)。
+    唯一残っていたボス専用の再利用可能領域(PAT_FLYER/_L、
+    PAT_BIGZUMP経由のBOSS_BROKEN_BEAM、SBEAM_CODE)は**全て既に
+    二重・三重に再利用済み**で、かつBigZum/Flyerは通常プレイ中に
+    普通に同時生存しうる(排他制御は過去ラウンドで撤廃済み)ため、
+    Mine用に三重目の再利用を行うのは新規の視覚破損リスクとなり
+    不採用。結論として、ユーザー自身の「取り敢えずスプライトだが」
+    という暫定フレーミングにもかかわらず、**Mineは最初からBG
+    レンダリングで実装**(EtankBulletの時と同じ「実際に調べた結果
+    無理だった、判断してレンダリングで結果を見せる」という前例を
+    踏襲)。
+  - **BG空間**は地形生成器(`terrain_gen.py`)がコード0-93を動的に
+    占有(`TERRAIN_PATTERN_COUNT`=94、ユーザーの地形編集次第で増減
+    しうるため近傍は使用回避)。起動直後の実カラーテーブル
+    (`vram[0x2000+group]`)を全32グループぶん実測した結果、Mine
+    (`sprites/Mine1_8x8.json`/`Mine2_8x8.json`、fg1/bg5)は**group17
+    (NIGHT_CODEの own グループ、fg1/bg5)と完全一致**するコード137-138
+    を発見(色書き込み一切不要)。FlyerLaser(fg7/bg11)は完全一致
+    グループなし、3つの部分一致候補(group12 fg10/bg11・group27
+    fg7/bg1・group31 fg5/bg11)を比較。FlyerLaserの発射位置が
+    まさに今回-8px修正した降下帰還の終端(SandSky帯域)である
+    ことから、EtankBulletと全く同じgroup31(SkySand本来の色
+    fg5/bg11)を再利用するのが最も理にかなうと判断(bg完全一致、
+    fgは7→5に近似、EtankBulletと全く同じ妥協の前例)、コード250。
+- **Mine実装**: `MINE_SLOT_SIZE`=7(ACT/X/Y/VY/ANIM_TIMER/SPRIDX/
+  EXPL_TIMER)、`MINE_SLOT_COUNT`=2(Flyer instance毎に最大1個)。
+  落下はVX一定(左方向のみ)+VY毎フレーム`MINE_GRAVITY`ずつ加算という
+  素朴な等加速度("放物線")、着地判定は地形非依存の固定
+  `MINE_LANDING_Y`=152(tier0の`ground_line`160から自身の8px高さを
+  引いた値 - 深い地形へ絶対に沈まないという`FLYER_DESCEND_LIMIT_Y`と
+  同じ「地形も仮実装のため保守的な固定値」の踏襲)。着地・自機被弾の
+  いずれも共通の`TRIGGER_MINE_EXPLOSION`を経由し、既存の
+  `PAT_EXPLOSION`/`EXPLOSION_COLOR`/`SOUND_DESTROY`(ZacoII/BigZum/
+  Etank/Flyer自身の死亡演出と全く同じ資産)をそのまま再利用 -
+  新規16x16アートは作らず、Mine自身は落下中はBGセルとして
+  ATTRIBUTEスロットを一切消費しない代わりに、爆発中だけ専用の
+  hwスプライトATTRIBUTEスロット(`MINE_EXPL_SPR_BASE_SLOT`=30、
+  EBulletが既に26-29を専有した残り2枠にちょうど1-per-instanceで
+  収まる)を借用するという設計。
+- **FlyerLaser実装**: 自機を狙わない固定右方向水平弾
+  (`FLYER_LASER_SPEED`=3px/frame)、EtankBulletと全く同じ「erase-
+  then-move-then-draw」BGセル手法(`ERASE_HORMING_BG_CELL`/
+  `HORMING_BG_CELL_ADDR`/`WRITE_BULLET_BYTE_HL`を無変更で直接再利用、
+  ACT/X/Y同一フィールドレイアウト)。発射起点はFlyer自身の右端
+  (X+32)・Y+19オフセット(EBulletの発射起点修正と全く同じ規約)。
+  自機命中時は貫通(非消滅)、EtankBulletと同じ`SOUND_ZUM_DEFLECT`。
+- **検証**: 新規`mine_flyerlaser_test.py`(42件、パターンVRAM直接
+  比較・ALLOC/物理演算/着地/爆発演出/自機衝突・実Flyer統合(32px
+  トリガー・-8pxのY修正・PHASE遷移)・実MAINLOOP通しプレイでの
+  ドロップ/発射確認まで網羅)を追加。既存`terrain_render_perf_test.py`
+  (独自にテーブル結合ロジックを重複していたため、`mine_gen`/
+  `flyerlaser_gen`のインポート漏れで`undefined symbol`クラッシュ
+  していたのを発見・修正)と`vdp_wait_test.py`(生の`OUT`命令サイト数
+  ドリフトガード、`FLUSH_MINE_SPRITES`の新規追加分だけ34→36/26→27へ
+  意図的に更新)の2件を修正。全回帰`run_all.py` 1175 passed/0 failed。
+- ビルド前に`render_check.py`ベースの実VRAM→PNGレンダリングで
+  (1)落下中のMine(Flyer本体そばの小さな黒いアイコン)、(2)着地時の
+  爆発エフェクト(地形境界に既存の赤いスパーク)、(3)FlyerLaser
+  (SandSky帯域の小さな箱)の3シーンを実際にキャプチャし視覚確認
+  (ユーザーの既存の運用指示"レンダリングで確認したほうがいいな
+  ビルド前にレンダリングしたスクショくれ"を継続適用)。ROM容量
+  30357/32768バイト(残り2411バイト)。
+- **保留・未確定**: `MINE_GRAVITY`/`MINE_VX`/`MINE_ANIM_INTERVAL`/
+  `FLYER_LASER_SPEED`は全て未調整の初期値(実測では着地まで約16
+  フレームとかなり速め)。FlyerLaserの色(fg5、指定のfg7からの近似)・
+  Mineのレンダリング方式(ユーザー自身が「BGに変更するかも」と
+  述べている通り、スプライトではなくBGで実装したこと)は実機
+  フィードバック待ち。同一Flyerが2回目のMineを投下しない設計(1
+  インスタンスにつき最大1個)で仕様通りかは未確認(複数回投下の
+  要否について明示指示なし)。

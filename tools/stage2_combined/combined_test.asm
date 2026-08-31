@@ -2719,6 +2719,81 @@ ETANK_BULLET_FIRED EQU 0C11Fh   ; 0/1 - this Etank instance has already fired it
 ETANK_BULLET_SPEED EQU 3        ; px/frame, left-only
 ETANK_BULLET_PATTERN_CODE EQU 249   ; group31, verified free above
 
+; ---------- FlyerLaser (Flyer's own post-descent horizontal shot, BG
+; cell, right-only) ---------- round36-14 follow-up#12: "その後
+; FlyerLaser発射 つまり右斜め下移動後に発射 自機は狙わず右方向水平撃ち
+; のみ BG使用". Fired once, from UOFL_HOME_MOVE's own descending exit
+; (see its own comment for the full reasoning + the paired -8px Y fix),
+; not aimed - always straight right, same "flies through/past, no self-
+; deactivate on hit" tank-collision convention as EtankBullet's own
+; bullet. Same erase-then-move-then-draw BG-cell technique (ACT/X/Y at
+; +0/+1/+2, ERASE_HORMING_BG_CELL/HORMING_BG_CELL_ADDR/WRITE_BULLET_
+; BYTE_HL reused directly unchanged) - only 1 concurrent instance ever
+; needed (1 Flyer instance only ever reaches this exit once per spawn).
+; Pattern code250 (group31, SKYSAND_CODE/ETANK_BULLET_PATTERN_CODE's
+; own group, codes248-255) - see flyerlaser_gen.py's own comment for the
+; full color-reuse reasoning (bg11 exact match, fg approximated 7->5,
+; same precedent as EtankBullet's own group31 reuse).
+FLYER_LASER_ACT   EQU 0C121h
+FLYER_LASER_X     EQU 0C122h
+FLYER_LASER_Y     EQU 0C123h
+FLYER_LASER_SPEED EQU 3          ; px/frame, right-only - untuned initial value
+FLYER_LASER_DESPAWN_X EQU 248    ; last on-screen column (32 cols x8px=256) - off past this, despawn
+FLYER_LASER_PATTERN_CODE EQU 250 ; group31, see flyerlaser_gen.py's own comment
+
+; ---------- Mine (Flyer's own dropped landmine) ---------- round36-14
+; follow-up#12: "まずスポーンから32px左に移動したら 添付データのMineを
+; 放物線で投下 着地や自機への被弾で16x16ｐｘの爆発エフェクトとサウンド
+; 右からしか出ないので左向き放物線のみ Mine1と2のアニメで 取り敢えず
+; スプライトだがBGに変更するかも". A full sprite-space pattern-code
+; audit this round (same symbol-table cross-reference methodology as
+; EBullet/EtankBullet's own - every PAT_*/*_CODE EQU resolved via the
+; real assembler's own symbol table, cross-referenced against every
+; CALL LDIRVM site's own byte count) found sprite-space codes0-255
+; genuinely 100% claimed with NO safe temporal-reuse candidate left at
+; all (every boss-exclusive range - PAT_FLYER/_L's own HORMING reuse,
+; PAT_BIGZUMP's own BOSS_BROKEN_BEAM reuse, SBEAM_CODE's own EBullet
+; reuse - is already claimed at least once, and none of them are safe to
+; triple-claim: BigZum/Flyer/Mine can all legitimately coexist, unlike
+; the boss itself which is genuinely exclusive with every regular
+; enemy). So despite the user's own tentative sprite framing, Mine is
+; BG-rendered from the start here (flagged back to the user alongside
+; the pre-ship render, same "found a real conflict, made the call,
+; showed the result" precedent as EtankBullet's own BG decision earlier
+; this same session) - falling/animating as a BG cell exactly like
+; EtankBullet, only borrowing a real hw sprite ATTRIBUTE slot (see
+; MINE_EXPL_SPR_BASE_SLOT below) for its own brief death animation.
+MINE_SLOT_SIZE  EQU 7  ; +0 ACT(0=idle,1=falling,2=exploding),+1 X,+2 Y,+3 VY(signed, gravity-accumulated),+4 ANIM_TIMER,+5 SPRIDX(0/1, which hw ATTRIBUTE slot this instance's own explosion uses),+6 EXPL_TIMER
+MINE_SLOT_COUNT EQU 2   ; matches FLYER_SLOT_COUNT - at most 1 falling mine per live Flyer instance
+MINE_POOL         EQU 0C124h   ; MINE_SLOT_SIZE*MINE_SLOT_COUNT = 14 bytes (C124h-C131h)
+MINE_ORIGIN_X     EQU 0C132h   ; staging bytes the firer (Flyer) writes its own drop point into just before CALL ALLOC_MINE_SLOT - same convention as EBULLET_ORIGIN_X/Y
+MINE_ORIGIN_Y     EQU 0C133h
+MINE_SPRITE_ATTRS EQU 0C134h   ; MINE_SLOT_COUNT*4 = 8 bytes (Y,X,pat,col)x2 - explosion-only, see MINE_EXPL_SPR_BASE_SLOT
+MINE_GRAVITY EQU 1       ; px/frame^2, untuned initial value - "放物線" (parabolic drop): VX constant, VY accumulates
+MINE_VX      EQU 1       ; px/frame leftward drift, constant - untuned initial value ("右からしか出ないので左向き放物線のみ")
+MINE_ANIM_INTERVAL EQU 4 ; frames per animation pose - untuned initial value
+; fixed landing line, terrain-independent - same "hard cap regardless of
+; the tank's own current tier, never sink into terrain" precedent as
+; FLYER_DESCEND_LIMIT_Y (地形も仮実装のため, terrain per-column height
+; querying doesn't exist for arbitrary X - only the tank's own column
+; does, via TANK_GROUND_Y). tier0's own ground_line=(20+0)*8=160 is the
+; shallowest possible real terrain surface; landing at 160-8(this
+; entity's own 8px cell height)=152 means Mine's own bottom edge never
+; sinks below any real terrain, worst case floating slightly above a
+; deeper tier - same accepted approximation as Etank's own terrain-
+; independent spawn (see "保留中タスク" in CLAUDE.md).
+MINE_LANDING_Y EQU 152
+MINE1_CODE EQU 137   ; group17 (NIGHT_CODE=136's own group) - see mine_gen.py's own comment for the exact fg1/bg5 color match
+MINE2_CODE EQU 138
+; borrowed only during ACT=2 (exploding) - Mine itself is a pure BG
+; entity while falling, consuming zero ATTRIBUTE slots, so these are
+; free for the rest of Mine's own lifecycle. slots30-31 are the last 2
+; of the only 6 hw sprite ATTRIBUTE slots ever verified genuinely free
+; during normal (non-boss) play (see EBULLET_SPR_BASE_SLOT's own
+; comment - EBullet already claims 26-29, leaving exactly 30-31, a
+; perfect 1-per-instance fit for MINE_SLOT_COUNT=2).
+MINE_EXPL_SPR_BASE_SLOT EQU 30
+
 ; ---------- flowing background clouds (see CLOUD_UPDATE_ALL) ----------
 ; "Stage1でもやってる雲を上から3行目に4セルの雲をランダムタイミングで
 ; 4行目はから8行目まで2セルと4セル雲をランダムに各行で速度変化をつけて
@@ -2913,6 +2988,18 @@ INIT_RESUME_AFTER_BANK_SELECT:
     ; free tail, code249 - see ETANK_BULLET_PATTERN_CODE's own comment.
     ; No color write: reuses group31's own existing fg5/bg11 unchanged.
     LD HL,ETANK_BULLET_PATTERN : LD DE,ETANK_BULLET_PATTERN_CODE*8+0000h : LD BC,8 : CALL LDIRVM
+
+    ; FlyerLaser BG pattern (round36-14 follow-up#12) - group31's own
+    ; tail, code250 - see FLYER_LASER_PATTERN_CODE's own comment. No
+    ; color write: reuses group31's own existing fg5/bg11 unchanged.
+    LD HL,FLYER_LASER_PATTERN : LD DE,FLYER_LASER_PATTERN_CODE*8+0000h : LD BC,8 : CALL LDIRVM
+
+    ; Mine BG pattern, 2-frame anim (round36-14 follow-up#12) - group17's
+    ; own free tail, codes137-138 - see MINE1_CODE/MINE2_CODE's own
+    ; comment. No color write: reuses group17's own existing fg1/bg5
+    ; unchanged (exact match to both source images).
+    LD HL,MINE1_PATTERN : LD DE,MINE1_CODE*8+0000h : LD BC,8 : CALL LDIRVM
+    LD HL,MINE2_PATTERN : LD DE,MINE2_CODE*8+0000h : LD BC,8 : CALL LDIRVM
 
     ; "カラー変更 Rockの文字色レッドと自機のレッドを入れ替えて" - swap
     ; the rock's own fg color (terrain_gen.py's ROCK_COLOR, fg8 medium
@@ -3740,6 +3827,12 @@ SKIP_ZACO_ENEMY:
     CALL UPDATE_TANK_ETANK_PUSH
     CALL UPDATE_ETANK_BULLET_ALL
     CALL CHECK_ETANK_BULLET_VS_TANK
+    ; Mine/FlyerLaser (round36-14 follow-up#12) - both Flyer-sourced,
+    ; same BOSS_ACT gate as Flyer itself.
+    CALL UPDATE_MINE_ALL
+    CALL CHECK_MINE_VS_TANK
+    CALL UPDATE_FLYER_LASER_ALL
+    CALL CHECK_FLYER_LASER_VS_TANK
 SKIP_OTHER_ENEMIES:
     ; UPDATE_BOSS_ALL itself must stay unconditional - it's the ONLY
     ; thing that ever checks GAME_TICK against BOSS_SPAWN_TICK and
@@ -8499,8 +8592,33 @@ UOFL_LOCK_DY_ZERO:
 UOFL_LOCK_DY_SET:
     LD (IX+6),A
     JP UOFL_DRAW
+; round36-14 follow-up#12 ("まずスポーンから32px左に移動したら...Mineを
+; 放物線で投下"): FLYER_SPAWNX is a fixed constant for every instance
+; (see ALLOC_FLYER_SLOT's own "LD A,FLYER_SPAWNX : LD (IX+1),A"), so the
+; 32px-from-spawn threshold is just the compile-time constant FLYER_
+; SPAWNX-32 - no per-instance spawn-X tracking field needed. Guarded by
+; +6 (idle throughout PHASE=0 - only ever written once, at the reversal
+; into PHASE=1, by UOFL_LOCK_DY_SET above - same "repurpose an otherwise
+; -idle field" precedent as E_DX/E_DY) so the drop fires exactly once
+; per instance; +6 gets safely overwritten with the real locked DY value
+; moments later at the reversal, this guard's own job already done by
+; then.
 UOFL_CRUISE_STEP:
     LD A,(IX+1) : SUB FLYER_SPEED : LD (IX+1),A
+    LD A,(IX+6)
+    OR A
+    JR NZ,UOFLC_MINE_DONE
+    LD A,(IX+1)
+    CP FLYER_SPAWNX-32+1
+    JR NC,UOFLC_MINE_DONE
+    LD A,1 : LD (IX+6),A
+    ; drop origin: Flyer's own body center (32x32 canvas) - same "offset
+    ; from Flyer's own raw top-left X/Y to a real anchor point on its
+    ; body" idiom as EBULLET_ORIGIN_X/Y above.
+    LD A,(IX+1) : ADD A,16 : LD (MINE_ORIGIN_X),A
+    LD A,(IX+2) : ADD A,16 : LD (MINE_ORIGIN_Y),A
+    CALL ALLOC_MINE_SLOT
+UOFLC_MINE_DONE:
     JP UOFL_DRAW
 
 ; PHASE=1: fly a straight diagonal line - X always rightward at
@@ -8563,18 +8681,32 @@ UOFL_HOME_MOVE:
     CP FLYER_DESCEND_LIMIT_Y+1
     JR C,UOFL_HOME_CHECK_DOWN_TANK
     LD A,FLYER_DESCEND_LIMIT_Y : LD (IX+2),A
-    JR UOFL_HOME_DO_EXIT
+    JR UOFL_HOME_DESCEND_EXIT
 UOFL_HOME_CHECK_DOWN_TANK:
     LD A,(TANK_Y_CUR) : ADD A,FLYER_CLEAR_Y : LD D,A
     LD A,(IX+2)
     CP D
     JR C,UOFL_HOME_NO_EXIT        ; Flyer_Y still < Tank_Y+CLEAR - hasn't cleared below yet
-    JR UOFL_HOME_DO_EXIT
+    JR UOFL_HOME_DESCEND_EXIT
 UOFL_HOME_CHECK_UP:
     LD A,(TANK_Y_CUR) : SUB FLYER_CLEAR_Y : LD D,A
     LD A,(IX+2)
     CP D
     JR NC,UOFL_HOME_NO_EXIT       ; Flyer_Y still >= Tank_Y-CLEAR - hasn't cleared above yet
+    JR UOFL_HOME_DO_EXIT
+; round36-14 follow-up#12 ("現在はFlyer帰還でSandskyに被ってしまってる
+; ので帰還時の右移動のY位置を8px上に 右斜め下移動の最終Y座標って事ね
+; その後FlyerLaser発射 つまり右斜め下移動後に発射"): only the DESCENDING
+; leg ever visually overlaps SandSky (ascending moves away from the
+; ground, into open sky, never at any risk) - both descending exits
+; above (the hard sky-altitude cap AND the ordinary tank-relative clear)
+; land here instead of jumping straight to the shared UOFL_HOME_DO_EXIT,
+; so the -8px raise and the laser fire only ever happen on this leg, at
+; whatever Y this frame's own descent already landed on (its own
+; "final Y").
+UOFL_HOME_DESCEND_EXIT:
+    LD A,(IX+2) : SUB 8 : LD (IX+2),A
+    CALL LAUNCH_FLYER_LASER
 UOFL_HOME_DO_EXIT:
     LD A,2 : LD (IX+8),A
 UOFL_HOME_NO_EXIT:
@@ -9155,6 +9287,280 @@ CHECK_ETANK_BULLET_VS_TANK:
     LD A,TANK_HAZARD_IFRAME_DURATION : LD (TANK_HAZARD_IFRAMES),A
     CALL APPLY_TANK_DAMAGE
     CALL SOUND_ZUM_DEFLECT
+    RET
+
+; ---------- FlyerLaser: launch/update/draw/collision (see FLYER_LASER_
+; ACT's own comment for the full design rationale) ----------
+; called from UOFL_HOME_DESCEND_EXIT with IX still = the firing Flyer's
+; own FLYER_POOL slot base, untouched throughout - same "IX untouched by
+; it" convention as LAUNCH_EBULLET. Not aimed - always straight right
+; ("自機は狙わず右方向水平撃ちのみ").
+LAUNCH_FLYER_LASER:
+    LD A,1 : LD (FLYER_LASER_ACT),A
+    LD A,(IX+1) : ADD A,32 : LD (FLYER_LASER_X),A
+    LD A,(IX+2) : ADD A,19 : LD (FLYER_LASER_Y),A
+    RET
+
+; FLYER_LASER_ACT/X/Y sit at consecutive addresses (+0/+1/+2), the same
+; relative layout ERASE_HORMING_BG_CELL/HORMING_BG_CELL_ADDR already
+; expect - reused directly unchanged, same precedent as DRAW_ETANK_
+; BULLET_CELL above.
+DRAW_FLYER_LASER_CELL:
+    LD A,FLYER_LASER_PATTERN_CODE
+    LD (BULLET_TEMP_BYTE),A
+    CALL HORMING_BG_CELL_ADDR
+    JP WRITE_BULLET_BYTE_HL
+
+; erase-then-move-then-draw, same per-frame shape as UPDATE_ETANK_
+; BULLET_ALL. Only 1 concurrent instance ever needed (1 Flyer instance
+; only ever reaches UOFL_HOME_DESCEND_EXIT once per spawn).
+UPDATE_FLYER_LASER_ALL:
+    LD A,(FLYER_LASER_ACT)
+    OR A
+    RET Z
+    LD IX,FLYER_LASER_ACT
+    CALL ERASE_HORMING_BG_CELL
+    LD A,(FLYER_LASER_X) : ADD A,FLYER_LASER_SPEED
+    CP FLYER_LASER_DESPAWN_X+1
+    JR C,UFLA_MOVE_OK
+    XOR A : LD (FLYER_LASER_ACT),A   ; off the right edge - already erased above, nothing left to draw
+    RET
+UFLA_MOVE_OK:
+    LD (FLYER_LASER_X),A
+    CALL DRAW_FLYER_LASER_CELL
+    RET
+
+; AABB check (8x8 box, matching the laser's own single BG cell) - same
+; shared TANK_HAZARD_IFRAMES/APPLY_TANK_DAMAGE/SOUND_ZUM_DEFLECT hit
+; shape as CHECK_ETANK_BULLET_VS_TANK, including "flies through, doesn't
+; self-deactivate on hit".
+CHECK_FLYER_LASER_VS_TANK:
+    LD A,(FLYER_LASER_ACT)
+    OR A
+    RET Z
+    LD A,(TANK_HAZARD_IFRAMES)
+    OR A
+    RET NZ
+    LD A,(TANK_X) : ADD A,TANK_COLLISION_X_OFFSET : LD B,A
+    LD A,(TANK_Y_CUR) : ADD A,TANK_COLLISION_Y_OFFSET : LD C,A
+    LD A,(FLYER_LASER_X)
+    LD D,A
+    ADD A,7
+    CP B
+    RET C
+    LD A,B : ADD A,TANK_COLLISION_WIDTH-1
+    CP D
+    RET C
+    LD A,(FLYER_LASER_Y)
+    LD D,A
+    ADD A,7
+    CP C
+    RET C
+    LD A,C : ADD A,TANK_COLLISION_HEIGHT-1
+    CP D
+    RET C
+    LD A,FLASH_DURATION : LD (TANK_FLASH_TIMER),A
+    LD A,TANK_HAZARD_IFRAME_DURATION : LD (TANK_HAZARD_IFRAMES),A
+    CALL APPLY_TANK_DAMAGE
+    CALL SOUND_ZUM_DEFLECT
+    RET
+
+; ---------- Mine: alloc/update/draw/explode/collision (see MINE_SLOT_
+; SIZE's own comment for the full design rationale) ----------
+; called from UOFLC_MINE_DONE with MINE_ORIGIN_X/Y already staged - same
+; "stash origin in scratch bytes, consumed once inside ALLOC" convention
+; as EBULLET_ORIGIN_X/Y. A full pool just returns and the drop is
+; dropped, same "no retry, no stall counter" convention as ALLOC_FLYER_
+; SLOT.
+ALLOC_MINE_SLOT:
+    LD IX,MINE_POOL
+    LD A,(IX+0)
+    OR A
+    JR Z,AMS_FOUND
+    LD IX,MINE_POOL+MINE_SLOT_SIZE
+    LD A,(IX+0)
+    OR A
+    RET NZ
+    LD A,1 : LD (IX+5),A
+    JR AMS_INIT
+AMS_FOUND:
+    XOR A : LD (IX+5),A
+AMS_INIT:
+    LD A,1 : LD (IX+0),A
+    LD A,(MINE_ORIGIN_X) : LD (IX+1),A
+    LD A,(MINE_ORIGIN_Y) : LD (IX+2),A
+    XOR A
+    LD (IX+3),A
+    LD (IX+4),A
+    RET
+
+UPDATE_MINE_ALL:
+    LD IX,MINE_POOL
+    CALL UPDATE_ONE_MINE
+    LD IX,MINE_POOL+MINE_SLOT_SIZE
+    CALL UPDATE_ONE_MINE
+    RET
+
+DRAW_MINE_CELL:
+    LD A,MINE1_CODE : LD B,A
+    LD A,(IX+4)
+    CP MINE_ANIM_INTERVAL
+    JR C,DMC_SET
+    LD A,MINE2_CODE : LD B,A
+DMC_SET:
+    LD A,B
+    LD (BULLET_TEMP_BYTE),A
+    CALL HORMING_BG_CELL_ADDR
+    JP WRITE_BULLET_BYTE_HL
+
+; IX = MINE_POOL slot base, (IX+2) already at its final resting Y
+; (landing clamp, or wherever a tank hit caught it mid-air - either way,
+; "wherever it actually was" is the death spot, same convention as every
+; sprite-based entity's own explosion). Wipes the BG cell (no BG cell
+; exists during ACT=2) then arms the shared PAT_EXPLOSION/EXPLOSION_
+; COLOR hw sprite convention, same "16x16pxの爆発エフェクトとサウンド"
+; every other entity's own death animation already provides - reused
+; here rather than building new explosion art, only newly needing an
+; ATTRIBUTE slot assignment since Mine itself (a BG entity) doesn't
+; otherwise have one.
+TRIGGER_MINE_EXPLOSION:
+    CALL ERASE_HORMING_BG_CELL
+    LD A,2 : LD (IX+0),A
+    LD A,EXPLOSION_DURATION : LD (IX+6),A
+    CALL SOUND_DESTROY
+    RET
+
+; IX = MINE_POOL slot base. ACT=2: counts down (IX+6), drawing the
+; shared PAT_EXPLOSION sprite at this instance's own dedicated
+; ATTRIBUTE slot (MINE_EXPL_SPR_BASE_SLOT+SPRIDX, (IX+5)) every frame
+; until it reaches 0, then hides that slot (Y=209) and returns to idle.
+; No drift (EXPLODE_DIR_DX/DY) - a landmine's own impact point doesn't
+; move, unlike every other entity's own mid-air kill.
+UOM_EXPLODING:
+    LD A,(IX+6)
+    OR A
+    JR Z,UOM_EXPL_HIDE
+    DEC A : LD (IX+6),A
+    LD A,(IX+5) : ADD A,A : ADD A,A
+    LD C,A : LD B,0
+    LD HL,MINE_SPRITE_ATTRS : ADD HL,BC
+    LD A,(IX+2) : LD (HL),A : INC HL
+    LD A,(IX+1) : LD (HL),A : INC HL
+    LD A,PAT_EXPLOSION : LD (HL),A : INC HL
+    LD A,EXPLOSION_COLOR : LD (HL),A
+    CALL FLUSH_MINE_SPRITES
+    RET
+UOM_EXPL_HIDE:
+    XOR A : LD (IX+0),A
+    LD A,(IX+5) : ADD A,A : ADD A,A
+    LD C,A : LD B,0
+    LD HL,MINE_SPRITE_ATTRS : ADD HL,BC
+    LD A,209 : LD (HL),A
+    CALL FLUSH_MINE_SPRITES
+    RET
+
+; IX = MINE_POOL slot base. ACT=2: dispatches to the explosion phase
+; above. ACT=1: falls (VY accumulates by MINE_GRAVITY every frame -
+; "放物線で投下" - VX stays a constant leftward drift, "右からしか
+; 出ないので左向き放物線のみ"), animates between MINE1_CODE/MINE2_CODE,
+; and lands (fixed MINE_LANDING_Y - see its own comment) into an
+; explosion exactly like a tank hit does (TRIGGER_MINE_EXPLOSION).
+UPDATE_ONE_MINE:
+    LD A,(IX+0)
+    CP 2
+    JP Z,UOM_EXPLODING
+    OR A
+    RET Z
+
+    CALL ERASE_HORMING_BG_CELL
+    LD A,(IX+2) : LD D,A
+    LD A,(IX+3) : ADD A,MINE_GRAVITY : LD (IX+3),A
+    LD E,A
+    LD A,D : ADD A,E : LD (IX+2),A
+
+    LD A,(IX+2)
+    CP MINE_LANDING_Y+1
+    JR C,UOM_STILL_FALLING
+    LD A,MINE_LANDING_Y : LD (IX+2),A
+    CALL TRIGGER_MINE_EXPLOSION
+    RET
+UOM_STILL_FALLING:
+    LD A,(IX+1)
+    CP MINE_VX
+    JR NC,UOM_MOVE_OK
+    XOR A : LD (IX+0),A              ; off the left edge - already erased above, nothing left to draw
+    RET
+UOM_MOVE_OK:
+    SUB MINE_VX : LD (IX+1),A
+    LD A,(IX+4) : INC A
+    CP MINE_ANIM_INTERVAL*2
+    JR C,UOM_ANIM_SET
+    XOR A
+UOM_ANIM_SET:
+    LD (IX+4),A
+    CALL DRAW_MINE_CELL
+    RET
+
+; blasts MINE_SPRITE_ATTRS (8 bytes) to hw sprite slots MINE_EXPL_SPR_
+; BASE_SLOT..+1 - same raw DI-wrapped NOP-padded OUT pattern as FLUSH_
+; ETANK_SPRITES.
+FLUSH_MINE_SPRITES:
+    DI
+    LD A,MINE_EXPL_SPR_BASE_SLOT*4 : OUT (99h),A
+    NOP
+    NOP
+    LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    LD HL,MINE_SPRITE_ATTRS
+    LD B,MINE_SLOT_COUNT*4
+FMS_LOOP:
+    LD A,(HL) : OUT (98h),A
+    PUSH BC : POP BC : NOP : NOP
+    INC HL
+    DJNZ FMS_LOOP
+    EI
+    RET
+
+; AABB check (8x8 box) against a still-falling mine only (ACT=1) - a
+; hit TERMINATES it into the same explosion a landing would (unlike
+; every other tank hazard here, a landmine doesn't fly through).
+CHECK_ONE_MINE_VS_TANK:
+    LD A,(IX+0)
+    CP 1
+    RET NZ
+    LD A,(TANK_HAZARD_IFRAMES)
+    OR A
+    RET NZ
+    LD A,(TANK_X) : ADD A,TANK_COLLISION_X_OFFSET : LD B,A
+    LD A,(TANK_Y_CUR) : ADD A,TANK_COLLISION_Y_OFFSET : LD C,A
+    LD A,(IX+1)
+    LD D,A
+    ADD A,7
+    CP B
+    RET C
+    LD A,B : ADD A,TANK_COLLISION_WIDTH-1
+    CP D
+    RET C
+    LD A,(IX+2)
+    LD D,A
+    ADD A,7
+    CP C
+    RET C
+    LD A,C : ADD A,TANK_COLLISION_HEIGHT-1
+    CP D
+    RET C
+    LD A,FLASH_DURATION : LD (TANK_FLASH_TIMER),A
+    LD A,TANK_HAZARD_IFRAME_DURATION : LD (TANK_HAZARD_IFRAMES),A
+    CALL APPLY_TANK_DAMAGE
+    CALL TRIGGER_MINE_EXPLOSION
+    RET
+
+CHECK_MINE_VS_TANK:
+    LD IX,MINE_POOL
+    CALL CHECK_ONE_MINE_VS_TANK
+    LD IX,MINE_POOL+MINE_SLOT_SIZE
+    CALL CHECK_ONE_MINE_VS_TANK
     RET
 
 ; U's own hw sprite position: builds BULLET_U_SPRITE_ATTRS (3 slots x

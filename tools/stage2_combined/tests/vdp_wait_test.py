@@ -78,11 +78,17 @@ for i, line in enumerate(lines):
 # round36-14 follow-up #11 ("ザコ敵の弾発射実装"): FLUSH_EBULLET_SPRITES
 # (EBullet's own flush) adds 1 more site, same single-byte-per-DJNZ-
 # iteration shape as the round above - 32->34 / 25->26.
+# round36-14 follow-up #12 ("Mineを放物線で投下...着地や自機への被弾で
+# ...爆発エフェクト"): FLUSH_MINE_SPRITES (Mine's own explosion-only
+# flush, borrowing 2 ATTRIBUTE slots) adds 1 more site, same single-
+# byte-per-DJNZ-iteration shape as the round above - 34->36 / 26->27.
+# FlyerLaser itself adds no new raw OUT sites (BG cell, reuses the
+# existing shared WRITE_BULLET_BYTE_HL - same as EtankBullet's own).
 check(f"found the expected number of raw OUT (99h),A sites ({len(n99)} - update this "
       "count deliberately if a new one is added, don't just let the test drift)",
-      len(n99) == 34)
+      len(n99) == 36)
 check(f"found the expected number of raw OUT (98h),A sites ({len(n98_delay)})",
-      len(n98_delay) == 26)
+      len(n98_delay) == 27)
 
 bad99 = [(ln, n) for ln, n in n99 if n != 2]
 check("every OUT (99h),A (VRAM address setup) is padded with exactly 2 NOPs (8T)",

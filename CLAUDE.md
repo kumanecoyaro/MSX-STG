@@ -770,3 +770,37 @@
   する実フレームを特定してレンダリングし、両方とも正しく表示される
   ことを視覚確認しユーザーへ送付。詳細はHANDOFF.md Round36-14
   (follow-up#11実機フィードバック対応その2)参照。
+- **(2026-08-31、Round36-14 follow-up#12、完了済み)**: "Flyerの動作変更
+  まずスポーンから32px左に移動したら 添付データのMineを放物線で投下
+  着地や自機への被弾で16x16ｐｘの爆発エフェクトとサウンド...次に
+  現在はFlyer帰還でSandskyに被ってしまってるので帰還時の右移動のY位置を
+  8px上に 右斜め下移動の最終Y座標って事ね その後FlyerLaser発射...
+  自機は狙わず右方向水平撃ちのみ BG使用"の3件に対応。(1) Flyer自身の
+  PHASE1(帰還)→PHASE2(退場)遷移時のYを、SandSkyに重なる降下方向の
+  出口2箇所限定で-8px(新設`UOFL_HOME_DESCEND_EXIT`)。(2) Mine投下:
+  `FLYER_SPAWNX`が全インスタンス共通の固定定数と判明したため専用の
+  スポーンX記録は不要、32pxしきい値はコンパイル時定数比較のみで判定。
+  スプライト空間の全数監査(シンボルテーブル横断+実カラーテーブル
+  実測)により**コード0-255が完全に空きゼロ**(ボス専用の再利用可能
+  領域も全て二重・三重に専有済み、かつBigZum/Flyerは同時生存しうる
+  ため三重目の再利用は新規視覚破損リスク)と判明、ユーザーの「取り
+  敢えずスプライトだが」という暫定フレーミングにもかかわらず**Mineは
+  最初からBGレンダリングで実装**(EtankBulletと同じ判断)。着地・
+  自機被弾いずれも既存の`PAT_EXPLOSION`/`SOUND_DESTROY`(他エネミーの
+  死亡演出と同一資産)を再利用、爆発中のみ新規のhwスプライトATTRIBUTE
+  スロット(30-31、EBulletの残り)を借用。(3) FlyerLaser: EtankBulletと
+  同じerase-then-move-then-drawのBGセル手法をそのまま再利用、発射
+  起点はFlyer自身の右端+Y19オフセット(EBulletの発射起点修正と同一
+  規約)。色はgroup31(SkySand本来のfg5/bg11、EtankBulletと同じ再利用
+  グループ)を選択(降下帰還の終端=SandSky帯域が発射位置のため)。
+  新規`mine_flyerlaser_test.py`42件、`terrain_render_perf_test.py`
+  (独自のテーブル結合重複によるインポート漏れクラッシュ)と
+  `vdp_wait_test.py`(生OUT命令サイト数ドリフトガード)の2件を修正。
+  全回帰1175 passed/0 failed。ビルド前にVRAM→PNGレンダリングで
+  Mine落下・着地爆発・FlyerLaserの3シーンを視覚確認済み。ROM容量
+  30357/32768バイト(残り2411バイト)。詳細はHANDOFF.md Round36-14
+  (follow-up#12)参照。
+  - **保留**: `MINE_GRAVITY`/`MINE_VX`/`MINE_ANIM_INTERVAL`/
+    `FLYER_LASER_SPEED`は全て未調整の初期値。FlyerLaserの色(fg5、
+    指定fg7からの近似)・Mineのレンダリング方式(BGで実装したこと)は
+    実機フィードバック待ち。
