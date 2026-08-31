@@ -583,7 +583,23 @@ NIGHT_INTERVAL   EQU 8
 NIGHT_START_ROW  EQU 1
 NIGHT_END_ROW    EQU 16
 NIGHT_CODE       EQU 136       ; group17 (136-143)
-NIGHT_COLOR      EQU 015h      ; "ブラックとブルーの文字色と背景色を逆に" - fg1 black / bg5 light blue (was fg5/bg1)
+; 実機フィードバック対応(round36-14 follow-up#12その3、"じゃあホワイト
+; で ライトブルーにホワイトは使えるんだな"): group17 is also FlyerLaser's
+; own home now (see FLYER_LASER_PATTERN_CODE's own comment) - bg5(light
+; blue) matching a real laser's own fg15(white) is a combination that
+; DOES already exist elsewhere (group0, CLOUD_GROUP0_COLOR) but group0
+; itself has zero free codes (terrain's own dynamic 0-93 range owns all
+; of it), so the only way to actually deliver white-on-blue is to
+; repaint group17's own shared color to match it - fg1->fg15, bg5
+; unchanged. This DOES recolor NIGHT_CODE itself (this constant's own
+; previous value, 015h, was itself a direct earlier user correction -
+; "ブラックとブルーの文字色と背景色を逆に" - so night now reads white-
+; on-blue instead of black-on-blue) and MINE1_CODE/MINE2_CODE (Mine's
+; own black parts also become white) - both flagged directly to the
+; user alongside a render, same "found a real conflict, made the call,
+; showed the result" precedent as every other VRAM-reuse decision this
+; session.
+NIGHT_COLOR      EQU 0F5h      ; fg15 white / bg5 light blue (was fg1/bg5, see comment above)
 ; endgame GAME_TICK timeline: night sweep starts at NIGHT_START_TICK
 ; (850) above; the boss spawns once at BOSS_SPAWN_TICK - see its own
 ; comment further down. round34 ("ランダムスポーンは廃止 全てスケジュ
@@ -2730,30 +2746,22 @@ ETANK_BULLET_PATTERN_CODE EQU 249   ; group31, verified free above
 ; +0/+1/+2, ERASE_HORMING_BG_CELL/HORMING_BG_CELL_ADDR/WRITE_BULLET_
 ; BYTE_HL reused directly unchanged) - only 1 concurrent instance ever
 ; needed (1 Flyer instance only ever reaches this exit once per spawn).
-; 実機フィードバック対応 ("FlyerLaserのBG背景色がイエローになってる
-; 背景と同じくライトブルーだぞ レーザー自体はシアン"): group31(bg11
-; light yellow) was visibly wrong - the real background behind this
-; laser is open sky (bg5 light blue), not SandSky/Sand - moved to
-; group17(codes136-143, NIGHT_CODE/Mine's own group, bg5 exact match)
-; first, but that made the beam render fg1(black) - "流石にブラックは
-; レーザーに見えない" (no group anywhere combines fg7 cyan+bg5 - see
-; flyerlaser_gen.py's own comment for the full 32-group survey). Moved
-; again to group27(codes216-223, Thunder's own group) instead - fg7 is
-; an EXACT match here (the beam itself finally renders true cyan), at
-; the cost of bg1(black) instead of bg5 - a dark box around the beam
-; against open sky, same tradeoff shape as group17's own compromise
-; just on the opposite channel. Between "matches the sky but reads as a
-; solid black dash" and "doesn't match the sky but actually looks like
-; a laser bolt", chose the latter directly per "レーザー自体はシアン"
-; being the more specific, repeated ask - rendered both before deciding
-; (see HANDOFF.md's own entry for this round). Pattern code221 (right
-; after THUNDERS_CODE at 220).
+; 実機フィードバック対応の変遷 ("FlyerLaserのBG背景色がイエローに
+; なってる 背景と同じくライトブルーだぞ レーザー自体はシアン" →
+; "流石にブラックはレーザーに見えない" → "じゃあホワイトで ライト
+; ブルーにホワイトは使えるんだな"): group31(bg11 yellow, 1st)→
+; group27(fg7 cyan/bg1 black, 2nd)を経て、最終的にgroup17へ戻し
+; NIGHT_COLOR自体をfg15白/bg5に塗り替える方式に決着(NIGHT_COLOR's own
+; comment for the full reasoning) - group0が実際に持っているfg15/bg5
+; の組み合わせを、空きコードのあるgroup17に複製する形。背景(bg5)・
+; 文字色(fg15白)とも実在の組み合わせで、レーザーらしい白いビームが
+; 空の色に完全一致する背景の上に乗る。Pattern code139(Mine1/2の直後)。
 FLYER_LASER_ACT   EQU 0C121h
 FLYER_LASER_X     EQU 0C122h
 FLYER_LASER_Y     EQU 0C123h
 FLYER_LASER_SPEED EQU 3          ; px/frame, right-only - untuned initial value
 FLYER_LASER_DESPAWN_X EQU 248    ; last on-screen column (32 cols x8px=256) - off past this, despawn
-FLYER_LASER_PATTERN_CODE EQU 221 ; group27, see comment above
+FLYER_LASER_PATTERN_CODE EQU 139 ; group17, see NIGHT_COLOR's own comment
 
 ; ---------- Mine (Flyer's own dropped landmine) ---------- round36-14
 ; follow-up#12: "まずスポーンから32px左に移動したら 添付データのMineを

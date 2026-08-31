@@ -10,26 +10,28 @@ to_bytes/load_bits shape as etankbullet_gen.py) rather than treating it
 as a real 4-quadrant 16x16 sprite; the other 3 quadrants are entirely
 blank and simply never referenced.
 
-Placed at code221 (group27, codes216-223 - THUNDER_CODE_BASE=216-219/
-THUNDERS_CODE=220's own group, Thunder's boss-attack art). Two earlier
-homes, both corrected by real-hardware feedback:
-1. code250 (group31, bg11) - guessed the background would be SandSky
-   (Flyer fires this right at the end of its own diagonal-down-right
-   homing leg, the same low-altitude band the paired Y-8px fix
-   targets) - wrong, the real background is open sky (bg5).
-2. code139 (group17, bg5 - NIGHT_CODE/Mine's own group) - bg matched
-   exactly, but a full 32-group survey found no group anywhere
-   combining fg7(cyan, the source art's own fg)+bg5, so the beam
-   rendered fg1(black) - "流石にブラックはレーザーに見えない".
-Landed on group27 instead: fg7 is an EXACT match here (Thunder's own
-color, 0x71h), so the beam itself finally renders true cyan, at the
-cost of bg1(black) - a dark box against open sky instead of an
-invisible one. Chose "looks like a laser, imperfect background" over
-"perfect background, doesn't look like a laser" per the more specific,
-repeated ask ("レーザー自体はシアン"). Repainting group17 or group27
-themselves was ruled out both times - either would also recolor an
-already-shipped, already-tuned feature sharing that same group (Mine/
-NIGHT_CODE for group17, Thunder's own boss-attack visual for group27).
+Placed at code139 (group17, codes136-143 - NIGHT_CODE=136/MINE1_CODE=
+137/MINE2_CODE=138's own group). 3 homes total, each corrected by real-
+hardware feedback:
+1. code250 (group31, bg11) - guessed the background would be SandSky -
+   wrong, the real background is open sky (bg5).
+2. code139 (group17, bg5 exact match) - but group17's own color was
+   fixed at fg1(black)/bg5 at the time, so the beam itself rendered
+   black - "流石にブラックはレーザーに見えない".
+3. code221 (group27, fg7 cyan exact match/bg1 black) - the beam finally
+   looked like a laser, but now a dark box appeared against the sky
+   instead of an invisible one.
+Landed back on group17, but this time repainting its own shared color
+instead of just reusing it: "じゃあホワイトで ライトブルーにホワイト
+は使えるんだな" - fg15(white)/bg5(light blue) is a REAL combination
+that already exists elsewhere in this ROM (group0, CLOUD_GROUP0_COLOR)
+- group0 itself has zero free codes (terrain's own dynamic 0-93 range
+owns all of it), so NIGHT_COLOR (group17's own color EQU) is repainted
+to the same fg15/bg5 value instead, giving both the exact bg match AND
+a legible (white, not black) beam. This does recolor NIGHT_CODE itself
+(night now reads white-on-blue instead of black-on-blue) and Mine's
+own black parts too (see NIGHT_COLOR's own comment for the full
+reasoning) - flagged directly to the user alongside a render.
 """
 import json
 import os

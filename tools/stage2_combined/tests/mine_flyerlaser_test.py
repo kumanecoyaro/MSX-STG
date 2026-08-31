@@ -72,9 +72,13 @@ check("FlyerLaser's own BG pattern VRAM matches sprites/FlyerLaser_16x16.json's 
       [_cpu_pat.vram[FLYER_LASER_PATTERN_CODE*8+i] for i in range(8)] == list(_flg.FLYER_LASER_PATTERN))
 check("MINE1_CODE/MINE2_CODE sit in group17 (NIGHT_CODE's own group), not overlapping NIGHT_CODE itself",
       MINE1_CODE // 8 == sym["NIGHT_CODE"] // 8 and MINE1_CODE != sym["NIGHT_CODE"] and MINE2_CODE != sym["NIGHT_CODE"])
-check("FLYER_LASER_PATTERN_CODE sits in group27 alongside THUNDER_CODE_BASE/THUNDERS_CODE (fg7 cyan exact match), not overlapping either",
-      FLYER_LASER_PATTERN_CODE // 8 == sym["THUNDER_CODE_BASE"] // 8
-      and FLYER_LASER_PATTERN_CODE not in range(sym["THUNDER_CODE_BASE"], sym["THUNDERS_CODE"] + 1))
+check("FLYER_LASER_PATTERN_CODE sits in group17 alongside NIGHT_CODE/MINE1_CODE/MINE2_CODE, not overlapping any of them",
+      FLYER_LASER_PATTERN_CODE // 8 == sym["NIGHT_CODE"] // 8
+      and FLYER_LASER_PATTERN_CODE not in (sym["NIGHT_CODE"], MINE1_CODE, MINE2_CODE))
+check("実機フィードバック対応 (\"じゃあホワイトで\"): NIGHT_COLOR is now fg15(white)/bg5(light blue) - "
+      "the same real combination CLOUD_GROUP0_COLOR already uses elsewhere, replicated onto group17 "
+      "since group0 itself has zero free codes (terrain owns all of it)",
+      (sym["NIGHT_COLOR"] >> 4) == 15 and (sym["NIGHT_COLOR"] & 0xF) == 5)
 
 
 # ---------- ALLOC_MINE_SLOT ----------
