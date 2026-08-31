@@ -884,3 +884,10 @@
   経由で動的参照する実装だったため既存テストは無変更で通過。全回帰
   1180 passed/0 failed。詳細はHANDOFF.md Round36-14(follow-up#12
   その5)参照。
+- **(2026-08-31、Round36-14 follow-up#13、完了済み)**: "ボスの形態変化
+  が今はHP50だが100に変更 で、自機ショットが今は間欠発射だと思うが
+  ウェイトはいくつになってる"に対応。`BOSS_BROKEN_HP_THRESHOLD`を
+  50→100に変更(ボスHP初期値255の範囲内)。自機ショットのウェイトは
+  `SHOT_COOLDOWN_FRAMES EQU 8`(既存値、質問への回答のみでコード変更
+  なし)。全回帰1180 passed/0 failed。詳細はHANDOFF.md Round36-14
+  (follow-up#13)参照。

@@ -149,8 +149,8 @@ def trigger_broken_form(cpu, x=100, phase=0):
     return death_x, death_y
 
 
-check("BOSS_BROKEN_HP_THRESHOLD is 50 (corrected mid-round from an initial 200 misreading)",
-      BOSS_BROKEN_HP_THRESHOLD == 50)
+check("BOSS_BROKEN_HP_THRESHOLD is 100 (実機フィードバック対応 round36-14 follow-up#13: was 50, itself corrected mid-round from an initial 200 misreading)",
+      BOSS_BROKEN_HP_THRESHOLD == 100)
 check("BOSS_BROKEN_QUAD_COUNT is 4 (32x32 = 2x2 quadrants, vs the old body's 16)",
       BOSS_BROKEN_QUAD_COUNT == 4)
 check("BOSS_BROKEN_PATH_LEN is a power of 2 (the asm side ANDs GAME_TICK/an index against LEN-1)",

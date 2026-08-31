@@ -6923,3 +6923,17 @@ Thunder activity) confirming it survives completely untouched.
   投下されることのみ確認し、静止画レンダリングでの視覚確認は
   今回省略(位置・色・形状に変更がなく、速度差は静止画では
   判別できないため)。ROM容量は変化なし(30357/32768バイト)。
+
+## Round 36-14 follow-up#13: ボス形態変化のHP閾値を100に変更
+
+- User instruction(verbatim): "ボスの形態変化が今はHP50だが100に変更
+  で、自機ショットが今は間欠発射だと思うがウェイトはいくつになってる"
+- **HP閾値変更**: `BOSS_BROKEN_HP_THRESHOLD`を50→100に変更(ボスHP
+  初期値は255のため範囲内、問題なし)。関連する既存テストは全て
+  シンボルテーブル経由で動的参照する実装だったため、直接値を
+  ハードコードしていた1件のアサーション(`boss_broken_form_test.py`)
+  のみ更新。全回帰`run_all.py` 1180 passed/0 failed(該当する
+  `boss_broken_form_test.py` 104件含む)。
+- **自機ショットのウェイト値について(質問への回答)**: `SHOT_COOLDOWN_
+  FRAMES EQU 8`(コード変更なし、既存値を回答)。「1発打ったら1発
+  空ける」間欠連射のクールダウンフレーム数。

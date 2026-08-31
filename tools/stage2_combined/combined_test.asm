@@ -808,7 +808,9 @@ BOSS_BROKEN_COLLISION_SIZE EQU 32
 ; an unwanted side effect) - see INIT_BOSS_EXPLOSION's own BOSS_FORM
 ; check for the one adjustment a broken-form death still needs (the
 ; smaller body's own center offset).
-BOSS_BROKEN_HP_THRESHOLD EQU 50
+; 実機フィードバック対応(round36-14 follow-up#13、"ボスの形態変化が
+; 今はHP50だが100に変更"): was 50.
+BOSS_BROKEN_HP_THRESHOLD EQU 100
 BOSS_FORM_SPARK  EQU 1
 BOSS_FORM_ACTIVE EQU 2
 ; the broken body only needs 4 quadrants (2x2, 32x32) vs the old body's
