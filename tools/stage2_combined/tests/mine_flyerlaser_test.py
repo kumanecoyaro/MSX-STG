@@ -90,13 +90,12 @@ call_routine(cpu, "ALLOC_MINE_SLOT")
 check("ALLOC_MINE_SLOT fills the first free slot at the staged origin",
       cpu.mem[MINE_POOL+0] == 1 and cpu.mem[MINE_POOL+1] == 111 and cpu.mem[MINE_POOL+2] == 22)
 check("...VY starts at 0", cpu.mem[MINE_POOL+3] == 0)
-check("...SPRIDX=0 for the first slot", cpu.mem[MINE_POOL+5] == 0)
 
 cpu.mem[MINE_ORIGIN_X] = 222
 cpu.mem[MINE_ORIGIN_Y] = 33
 call_routine(cpu, "ALLOC_MINE_SLOT")
-check("a 2nd ALLOC finds the 2nd slot, SPRIDX=1",
-      cpu.mem[MINE_POOL+MINE_SLOT_SIZE+0] == 1 and cpu.mem[MINE_POOL+MINE_SLOT_SIZE+5] == 1
+check("a 2nd ALLOC finds the 2nd slot",
+      cpu.mem[MINE_POOL+MINE_SLOT_SIZE+0] == 1
       and cpu.mem[MINE_POOL+MINE_SLOT_SIZE+1] == 222)
 
 cpu.mem[MINE_ORIGIN_X] = 1
@@ -171,28 +170,30 @@ check("a falling mine's own BG cell alternates between both animation codes over
 
 
 # ---------- explosion phase: hw sprite draw + auto-hide ----------
+# 実機フィードバック対応 ("Mineは演出なのでMineを削ってくれ 2発同時は
+# まず起こらないんで"): both MINE_SLOT_COUNT instances now share a
+# single ATTRIBUTE slot (MINE_EXPL_SPR_BASE_SLOT) instead of 1-per-
+# instance - freed slot31 for the new 4th player-shot slot.
 cpu6 = fresh_cpu()
 cpu6.mem[MINE_POOL+0] = 2
 cpu6.mem[MINE_POOL+1] = 88
 cpu6.mem[MINE_POOL+2] = MINE_LANDING_Y
-cpu6.mem[MINE_POOL+5] = 0
 cpu6.mem[MINE_POOL+6] = EXPLOSION_DURATION
 cpu6.ix = MINE_POOL
 call_routine(cpu6, "UPDATE_ONE_MINE")
-check("exploding slot0 draws PAT_EXPLOSION/EXPLOSION_COLOR at its own dedicated ATTRIBUTE slot",
+check("an exploding mine draws PAT_EXPLOSION/EXPLOSION_COLOR at the shared ATTRIBUTE slot",
       cpu6.mem[MINE_SPRITE_ATTRS+2] == PAT_EXPLOSION and cpu6.mem[MINE_SPRITE_ATTRS+3] == EXPLOSION_COLOR
       and cpu6.mem[MINE_SPRITE_ATTRS+0] == MINE_LANDING_Y and cpu6.mem[MINE_SPRITE_ATTRS+1] == 88)
-check("...and it's actually flushed to hw sprite slot MINE_EXPL_SPR_BASE_SLOT+0",
+check("...and it's actually flushed to hw sprite slot MINE_EXPL_SPR_BASE_SLOT",
       cpu6.vram[0x1B00 + MINE_EXPL_SPR_BASE_SLOT*4 + 2] == PAT_EXPLOSION)
 
 cpu7 = fresh_cpu()
 cpu7.mem[MINE_POOL+0] = 2
-cpu7.mem[MINE_POOL+5] = 1
 cpu7.mem[MINE_POOL+6] = 0   # already counted down to 0 by a prior frame
 cpu7.ix = MINE_POOL
 call_routine(cpu7, "UPDATE_ONE_MINE")
-check("the frame after the timer reaches 0 hides slot1 and returns to idle",
-      cpu7.mem[MINE_POOL+0] == 0 and cpu7.vram[0x1B00 + (MINE_EXPL_SPR_BASE_SLOT+1)*4] == 209)
+check("the frame after the timer reaches 0 hides the shared slot and returns to idle",
+      cpu7.mem[MINE_POOL+0] == 0 and cpu7.vram[0x1B00 + MINE_EXPL_SPR_BASE_SLOT*4] == 209)
 
 
 # ---------- CHECK_MINE_VS_TANK ----------

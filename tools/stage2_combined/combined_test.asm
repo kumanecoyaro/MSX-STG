@@ -387,16 +387,33 @@ TANK_TOP_DRAW_Y EQU F131h   ; UPDATE_TANK_SPRITES scratch: TANK_DRAW_Y, +DASH_SP
 ; picked with no more precise spec than "leave a gap" ("ダメなら修正
 ; する" - happy to retune if this cadence isn't right).
 SHOT_COOLDOWN EQU F14Eh
-SHOT_COOLDOWN_FRAMES EQU 8
-; 3 shot slots, 7 bytes each: +0 ACT, +1 TYPE(0=F straight,1=U
+SHOT_COOLDOWN_FRAMES EQU 4  ; 実機フィードバック対応 ("4フレームにして"): was 8
+; 7 bytes each: +0 ACT, +1 TYPE(0=F straight,1=U
 ; diagonal), +2 COL, +3 ROW, +4 ADDR_LO, +5 ADDR_HI (name-table row
 ; base address, from BULLET_ROWADDR_LO/HI), +6 FACING(0=right,1=left,
-; copied from TANK_FACING at spawn) - same pool-of-3 design as
-; BULLET0/1/2 in src/CYBER SHMUP.asm ("Stage1と同様に制限数画面内3発").
+; copied from TANK_FACING at spawn) - same pool design as
+; BULLET0/1/2 in src/CYBER SHMUP.asm ("Stage1と同様に制限数画面内3発"),
+; now 4 slots (see BULLET3_ACT's own comment).
 BULLET0_ACT   EQU F150h
 BULLET1_ACT   EQU F157h
 BULLET2_ACT   EQU F15Eh
 BULLET_TEMP_BYTE EQU F165h
+; 実機フィードバック対応 (round36-14 follow-up#13, "3発制限を4発に変更"):
+; BULLET_TEMP_BYTE(F165h) sits directly against GAME_TICK(F166h) with
+; zero slack (see BULLET_TEMP_BYTE's own original comment) - the
+; tightly-packed F1xx block has no room to grow BULLET2_ACT's own
+; struct into a 4th slot in place without renumbering GAME_TICK and
+; everything after it. Relocated to the free C1xx region instead, same
+; "no slack in the old block, so it goes in C000h+" idiom as FLYER_POOL/
+; EBULLET_POOL/MINE_POOL's own comments. Also needed a real hw sprite
+; ATTRIBUTE slot of its own for its own diagonal(U)-type shots (unlike
+; F/straight shots, which are BG-drawn with no such limit) - freed from
+; Mine's own explosion budget (slot31, was 1-per-instance, now shared -
+; see MINE_EXPL_SPR_BASE_SLOT's own comment) per direct confirmation
+; ("Mineは演出なのでMineを削ってくれ 2発同時はまず起こらないんで").
+BULLET3_ACT     EQU 0C13Eh   ; 7 bytes (C13Eh-C144h)
+BULLET3_VARIANT EQU 0C145h   ; same role as BULLET0/1/2_VARIANT (F-rotation memory) - see SET_BULLET_VARIANT's own comment
+BULLET3_U_ATTRS EQU 0C146h   ; 4 bytes (Y,X,pat,col) - this slot's own U-type hw sprite staging entry, NOT contiguous with BULLET_U_SPRITE_ATTRS (flushed to hw sprite slot31 in a 2nd burst - see FLUSH_BULLET_U_SPRITES)
 
 ; ---------- terrain collision: ground-height following + slope       ----------
 ; ---------- (Rock225) detection - see UPDATE_TERRAIN_COLLISION below. ----------
@@ -2787,12 +2804,23 @@ FLYER_LASER_PATTERN_CODE EQU 139 ; group17, see NIGHT_COLOR's own comment
 ; this same session) - falling/animating as a BG cell exactly like
 ; EtankBullet, only borrowing a real hw sprite ATTRIBUTE slot (see
 ; MINE_EXPL_SPR_BASE_SLOT below) for its own brief death animation.
-MINE_SLOT_SIZE  EQU 8  ; +0 ACT(0=idle,1=falling,2=exploding),+1 X,+2 Y,+3 VY(signed, gravity-accumulated),+4 ANIM_TIMER,+5 SPRIDX(0/1, which hw ATTRIBUTE slot this instance's own explosion uses),+6 EXPL_TIMER,+7 GRAVITY_COUNTER(0..MINE_GRAVITY_INTERVAL-1, see its own comment)
+; +5 was SPRIDX (which hw ATTRIBUTE slot this instance's own explosion
+; used) - retired, unused, when both instances were made to share a
+; single ATTRIBUTE slot instead (see MINE_EXPL_SPR_BASE_SLOT's own
+; comment); left as a reserved byte rather than renumbering +6/+7.
+MINE_SLOT_SIZE  EQU 8  ; +0 ACT(0=idle,1=falling,2=exploding),+1 X,+2 Y,+3 VY(signed, gravity-accumulated),+4 ANIM_TIMER,+5 unused,+6 EXPL_TIMER,+7 GRAVITY_COUNTER(0..MINE_GRAVITY_INTERVAL-1, see its own comment)
 MINE_SLOT_COUNT EQU 2   ; matches FLYER_SLOT_COUNT - at most 1 falling mine per live Flyer instance
 MINE_POOL         EQU 0C124h   ; MINE_SLOT_SIZE*MINE_SLOT_COUNT = 16 bytes (C124h-C133h)
 MINE_ORIGIN_X     EQU 0C134h   ; staging bytes the firer (Flyer) writes its own drop point into just before CALL ALLOC_MINE_SLOT - same convention as EBULLET_ORIGIN_X/Y
 MINE_ORIGIN_Y     EQU 0C135h
-MINE_SPRITE_ATTRS EQU 0C136h   ; MINE_SLOT_COUNT*4 = 8 bytes (Y,X,pat,col)x2 - explosion-only, see MINE_EXPL_SPR_BASE_SLOT
+; 実機フィードバック対応 ("Mineは演出なのでMineを削ってくれ 2発同時は
+; まず起こらないんで" - freeing hw sprite ATTRIBUTE slot31 for the new
+; 4th player-shot slot, BULLET3_ACT's own comment): was 8 bytes
+; (MINE_SLOT_COUNT*4, 1-per-instance) - both mine instances now share
+; this single 4-byte staging entry, flushed to 1 shared ATTRIBUTE slot
+; instead of 2 (see UOM_EXPLODING's own comment for the accepted
+; "very rare simultaneous explosion" compromise this creates).
+MINE_SPRITE_ATTRS EQU 0C136h   ; 4 bytes (Y,X,pat,col), shared by both MINE_SLOT_COUNT instances
 ; 実機フィードバック対応 ("Mine投下速度が早すぎる...放物線も出てない"):
 ; the original "VY += MINE_GRAVITY every single frame" fell so fast
 ; (~11-15 frames from a typical altitude) that the leftward MINE_VX=1
@@ -2839,12 +2867,14 @@ MINE_LANDING_Y EQU 152
 MINE1_CODE EQU 137   ; group17 (NIGHT_CODE=136's own group) - see mine_gen.py's own comment for the exact fg1/bg5 color match
 MINE2_CODE EQU 138
 ; borrowed only during ACT=2 (exploding) - Mine itself is a pure BG
-; entity while falling, consuming zero ATTRIBUTE slots, so these are
-; free for the rest of Mine's own lifecycle. slots30-31 are the last 2
-; of the only 6 hw sprite ATTRIBUTE slots ever verified genuinely free
-; during normal (non-boss) play (see EBULLET_SPR_BASE_SLOT's own
-; comment - EBullet already claims 26-29, leaving exactly 30-31, a
-; perfect 1-per-instance fit for MINE_SLOT_COUNT=2).
+; entity while falling, consuming zero ATTRIBUTE slots, so this is free
+; for the rest of Mine's own lifecycle. Was 1-per-instance (slots30-31,
+; the last 2 of the only 6 hw sprite ATTRIBUTE slots ever verified
+; genuinely free during normal non-boss play - EBullet already claims
+; 26-29) until round36-14 follow-up#13 ("Mineは演出なのでMineを削って
+; くれ 2発同時はまず起こらないんで") gave slot31 to the new 4th player-
+; shot slot instead (see BULLET3_ACT's own comment) - both MINE_SLOT_
+; COUNT instances now share this single slot.
 MINE_EXPL_SPR_BASE_SLOT EQU 30
 
 ; ---------- flowing background clouds (see CLOUD_UPDATE_ALL) ----------
@@ -3333,6 +3363,7 @@ INIT_SPRATR_CLR:
     LD (BULLET0_ACT),A
     LD (BULLET1_ACT),A
     LD (BULLET2_ACT),A
+    LD (BULLET3_ACT),A
 
     ; overwrites slots 0-3 (the tank's own) with real data; slots 4-31
     ; stay hidden from the full clear above.
@@ -3551,6 +3582,16 @@ IBSA_LOOP:
     LD (HL),A : INC HL
     LD (HL),A : INC HL
     DJNZ IBSA_LOOP
+
+    ; same priming for BULLET3_U_ATTRS (hw sprite slot31, round36-14
+    ; follow-up#13's own 4th player-shot slot) - not contiguous with
+    ; BULLET_U_SPRITE_ATTRS, see BULLET3_ACT's own comment.
+    LD HL,BULLET3_U_ATTRS
+    LD A,209 : LD (HL),A : INC HL
+    XOR A
+    LD (HL),A : INC HL
+    LD (HL),A : INC HL
+    LD (HL),A
 
     ; Zum pool: same generic zero-then-assign-Z_SPRIDX shape as the
     ; enemy pool above, plus its own sprite-attrs priming.
@@ -4624,10 +4665,11 @@ US_CAN_FIRE:
     LD A,SHOT_COOLDOWN_FRAMES : LD (SHOT_COOLDOWN),A
     RET
 
-; claims the first inactive slot (BULLET0, else 1, else 2) and spawns
-; a shot there; if all 3 are already active, the new shot is dropped
-; (screen limit of 3, matching src/CYBER SHMUP.asm's own BULLET0/1/2
-; pool - "Stage1と同様に制限数画面内3発").
+; claims the first inactive slot (BULLET0, else 1, else 2, else 3) and
+; spawns a shot there; if all 4 are already active, the new shot is
+; dropped - screen limit was 3 (matching src/CYBER SHMUP.asm's own
+; BULLET0/1/2 pool, "Stage1と同様に制限数画面内3発"), now 4 per direct
+; instruction ("3発制限を4発に変更" - see BULLET3_ACT's own comment).
 TRY_SPAWN_BULLET:
     LD A,(BULLET0_ACT)
     OR A
@@ -4643,8 +4685,14 @@ TSB_TRY1:
 TSB_TRY2:
     LD A,(BULLET2_ACT)
     OR A
-    RET NZ
+    JR NZ,TSB_TRY3
     LD IX,BULLET2_ACT
+    JR TSB_DO_SPAWN
+TSB_TRY3:
+    LD A,(BULLET3_ACT)
+    OR A
+    RET NZ
+    LD IX,BULLET3_ACT
 TSB_DO_SPAWN:
     LD A,1 : LD (IX+0),A
     LD A,(TANK_AIMUP) : LD (IX+1),A
@@ -4745,12 +4793,13 @@ TSB_SPAWN_U:
     CALL SOUND_SHOT
     RET
 
-; IX = bullet slot base (BULLET0_ACT/BULLET1_ACT/BULLET2_ACT), A = this
-; slot's own F-rotation variant (0-2) to remember - see BULLET0_VARIANT's
-; own comment for why this is 3 standalone bytes instead of a 4th slot
-; field. IX is always exactly one of the 3 known constants here, so a
-; plain 2-way compare (falling through to "must be slot2" otherwise) is
-; enough - no general N-way dispatch needed.
+; IX = bullet slot base (BULLET0_ACT/BULLET1_ACT/BULLET2_ACT/
+; BULLET3_ACT), A = this slot's own F-rotation variant (0-2) to
+; remember - see BULLET0_VARIANT's own comment for why this is
+; standalone bytes instead of a slot field. IX is always exactly one of
+; the 4 known constants here, so a plain 3-way compare (falling through
+; to "must be slot3" otherwise) is enough - no general N-way dispatch
+; needed.
 SET_BULLET_VARIANT:
     PUSH HL
     PUSH DE
@@ -4762,13 +4811,20 @@ SET_BULLET_VARIANT:
     LD DE,BULLET1_ACT
     OR A : SBC HL,DE
     JR Z,SBV_1
-    LD (BULLET2_VARIANT),A
+    PUSH IX : POP HL
+    LD DE,BULLET2_ACT
+    OR A : SBC HL,DE
+    JR Z,SBV_2
+    LD (BULLET3_VARIANT),A
     JR SBV_DONE
 SBV_0:
     LD (BULLET0_VARIANT),A
     JR SBV_DONE
 SBV_1:
     LD (BULLET1_VARIANT),A
+    JR SBV_DONE
+SBV_2:
+    LD (BULLET2_VARIANT),A
 SBV_DONE:
     POP DE
     POP HL
@@ -4790,13 +4846,20 @@ GET_BULLET_VARIANT:
     LD DE,BULLET1_ACT
     OR A : SBC HL,DE
     JR Z,GBV_1
-    LD A,(BULLET2_VARIANT)
+    PUSH IX : POP HL
+    LD DE,BULLET2_ACT
+    OR A : SBC HL,DE
+    JR Z,GBV_2
+    LD A,(BULLET3_VARIANT)
     JR GBV_DONE
 GBV_0:
     LD A,(BULLET0_VARIANT)
     JR GBV_DONE
 GBV_1:
     LD A,(BULLET1_VARIANT)
+    JR GBV_DONE
+GBV_2:
+    LD A,(BULLET2_VARIANT)
 GBV_DONE:
     POP DE
     POP HL
@@ -4834,13 +4897,15 @@ WBSV_1:
     EI
     RET
 
-; ---------- shots: advance all 3 slots 1 column/frame ----------
+; ---------- shots: advance all 4 slots 1 column/frame ----------
 UPDATE_BULLETS:
     LD IX,BULLET0_ACT
     CALL UPDATE_ONE_BULLET
     LD IX,BULLET1_ACT
     CALL UPDATE_ONE_BULLET
     LD IX,BULLET2_ACT
+    CALL UPDATE_ONE_BULLET
+    LD IX,BULLET3_ACT
     CALL UPDATE_ONE_BULLET
     RET
 
@@ -6436,6 +6501,7 @@ CHECK_BULLET_VS_ENEMY:
     LD IX,BULLET0_ACT : CALL CHECK_HIT_ONE_BULLET
     LD IX,BULLET1_ACT : CALL CHECK_HIT_ONE_BULLET
     LD IX,BULLET2_ACT : CALL CHECK_HIT_ONE_BULLET
+    LD IX,BULLET3_ACT : CALL CHECK_HIT_ONE_BULLET
     RET
 
 ; IX = bullet slot base (untouched throughout - CHECK_HIT_PAIR only
@@ -7429,6 +7495,7 @@ CHECK_BULLET_VS_ZUM:
     LD IX,BULLET0_ACT : CALL CHECK_HIT_ONE_BULLET_ZUM
     LD IX,BULLET1_ACT : CALL CHECK_HIT_ONE_BULLET_ZUM
     LD IX,BULLET2_ACT : CALL CHECK_HIT_ONE_BULLET_ZUM
+    LD IX,BULLET3_ACT : CALL CHECK_HIT_ONE_BULLET_ZUM
     RET
 
 ; round36-14 follow-up#10: same unroll as above.
@@ -8422,6 +8489,7 @@ CHECK_BULLET_VS_BIGZUM:
     LD IX,BULLET0_ACT : CALL CHECK_HIT_ONE_BULLET_BIGZUM
     LD IX,BULLET1_ACT : CALL CHECK_HIT_ONE_BULLET_BIGZUM
     LD IX,BULLET2_ACT : CALL CHECK_HIT_ONE_BULLET_BIGZUM
+    LD IX,BULLET3_ACT : CALL CHECK_HIT_ONE_BULLET_BIGZUM
     RET
 
 CHECK_HIT_ONE_BULLET_BIGZUM:
@@ -8908,6 +8976,7 @@ CHECK_BULLET_VS_FLYER:
     LD IX,BULLET0_ACT : CALL CHECK_HIT_ONE_BULLET_FLYER
     LD IX,BULLET1_ACT : CALL CHECK_HIT_ONE_BULLET_FLYER
     LD IX,BULLET2_ACT : CALL CHECK_HIT_ONE_BULLET_FLYER
+    LD IX,BULLET3_ACT : CALL CHECK_HIT_ONE_BULLET_FLYER
     RET
 
 ; round36-14 follow-up#10: same unroll as above.
@@ -9212,6 +9281,7 @@ CHECK_BULLET_VS_ETANK:
     LD IX,BULLET0_ACT : CALL CHECK_HIT_ONE_BULLET_ETANK
     LD IX,BULLET1_ACT : CALL CHECK_HIT_ONE_BULLET_ETANK
     LD IX,BULLET2_ACT : CALL CHECK_HIT_ONE_BULLET_ETANK
+    LD IX,BULLET3_ACT : CALL CHECK_HIT_ONE_BULLET_ETANK
     RET
 
 CHECK_HIT_ONE_BULLET_ETANK:
@@ -9451,11 +9521,7 @@ ALLOC_MINE_SLOT:
     LD A,(IX+0)
     OR A
     RET NZ
-    LD A,1 : LD (IX+5),A
-    JR AMS_INIT
 AMS_FOUND:
-    XOR A : LD (IX+5),A
-AMS_INIT:
     LD A,1 : LD (IX+0),A
     LD A,(MINE_ORIGIN_X) : LD (IX+1),A
     LD A,(MINE_ORIGIN_Y) : LD (IX+2),A
@@ -9502,19 +9568,28 @@ TRIGGER_MINE_EXPLOSION:
     RET
 
 ; IX = MINE_POOL slot base. ACT=2: counts down (IX+6), drawing the
-; shared PAT_EXPLOSION sprite at this instance's own dedicated
-; ATTRIBUTE slot (MINE_EXPL_SPR_BASE_SLOT+SPRIDX, (IX+5)) every frame
-; until it reaches 0, then hides that slot (Y=209) and returns to idle.
-; No drift (EXPLODE_DIR_DX/DY) - a landmine's own impact point doesn't
-; move, unlike every other entity's own mid-air kill.
+; shared PAT_EXPLOSION sprite every frame until it reaches 0, then
+; hides that slot (Y=209) and returns to idle. No drift (EXPLODE_DIR_
+; DX/DY) - a landmine's own impact point doesn't move, unlike every
+; other entity's own mid-air kill.
+; 実機フィードバック対応 ("Mineは演出なのでMineを削ってくれ 2発同時は
+; まず起こらないんで" - freeing an ATTRIBUTE slot for the 4th player
+; shot slot, see BULLET3_ACT's own comment): both MINE_SLOT_COUNT
+; instances now share the SAME single ATTRIBUTE slot (MINE_EXPL_SPR_
+; BASE_SLOT, no more +SPRIDX offset - (IX+5) is no longer read here)
+; instead of 1-per-instance. If 2 mines somehow explode in the exact
+; same frame, whichever instance is processed 2nd (UPDATE_MINE_ALL
+; always does slot0 then slot1) simply overwrites slot0's own draw for
+; that frame - accepted, "まず起こらない". A narrower edge case (their
+; own explosions overlap but don't start on the same frame, so one
+; instance's own OWN hide fires while the other is still mid-explosion)
+; can flicker-hide the other for 1 frame - same accepted rarity.
 UOM_EXPLODING:
     LD A,(IX+6)
     OR A
     JR Z,UOM_EXPL_HIDE
     DEC A : LD (IX+6),A
-    LD A,(IX+5) : ADD A,A : ADD A,A
-    LD C,A : LD B,0
-    LD HL,MINE_SPRITE_ATTRS : ADD HL,BC
+    LD HL,MINE_SPRITE_ATTRS
     LD A,(IX+2) : LD (HL),A : INC HL
     LD A,(IX+1) : LD (HL),A : INC HL
     LD A,PAT_EXPLOSION : LD (HL),A : INC HL
@@ -9523,10 +9598,7 @@ UOM_EXPLODING:
     RET
 UOM_EXPL_HIDE:
     XOR A : LD (IX+0),A
-    LD A,(IX+5) : ADD A,A : ADD A,A
-    LD C,A : LD B,0
-    LD HL,MINE_SPRITE_ATTRS : ADD HL,BC
-    LD A,209 : LD (HL),A
+    LD A,209 : LD (MINE_SPRITE_ATTRS),A
     CALL FLUSH_MINE_SPRITES
     RET
 
@@ -9583,9 +9655,9 @@ UOM_ANIM_SET:
     CALL DRAW_MINE_CELL
     RET
 
-; blasts MINE_SPRITE_ATTRS (8 bytes) to hw sprite slots MINE_EXPL_SPR_
-; BASE_SLOT..+1 - same raw DI-wrapped NOP-padded OUT pattern as FLUSH_
-; ETANK_SPRITES.
+; blasts MINE_SPRITE_ATTRS (4 bytes, 1 shared slot - see UOM_EXPLODING's
+; own comment) to hw sprite slot MINE_EXPL_SPR_BASE_SLOT - same raw
+; DI-wrapped NOP-padded OUT pattern as FLUSH_ETANK_SPRITES.
 FLUSH_MINE_SPRITES:
     DI
     LD A,MINE_EXPL_SPR_BASE_SLOT*4 : OUT (99h),A
@@ -9595,7 +9667,7 @@ FLUSH_MINE_SPRITES:
     NOP
     NOP
     LD HL,MINE_SPRITE_ATTRS
-    LD B,MINE_SLOT_COUNT*4
+    LD B,4
 FMS_LOOP:
     LD A,(HL) : OUT (98h),A
     PUSH BC : POP BC : NOP : NOP
@@ -9652,21 +9724,28 @@ CHECK_MINE_VS_TANK:
 ; (7-9). Bullet side stays 3 individually-named CALLs, same "not part
 ; of this instruction" precedent as CHECK_BULLET_VS_ENEMY's own bullet
 ; loop - only the enemy/cloud pools are genuine buffer+loop here.
+; 実機フィードバック対応 ("3発制限を4発に変更"): BULLET3 fires into
+; BULLET3_U_ATTRS - a separate, non-contiguous staging entry (see its
+; own comment), not an offset within the fixed 3-slot BULLET_U_SPRITE_
+; ATTRS block - so UBUS_ONE now just takes the target address directly
+; in HL (caller-loaded) instead of a DE offset from a fixed base. Gets
+; its own separate flush burst to hw sprite slot31.
 UPDATE_BULLET_U_SPRITES:
-    LD IX,BULLET0_ACT : LD DE,0 : CALL UBUS_ONE
-    LD IX,BULLET1_ACT : LD DE,4 : CALL UBUS_ONE
-    LD IX,BULLET2_ACT : LD DE,8 : CALL UBUS_ONE
+    LD IX,BULLET0_ACT : LD HL,BULLET_U_SPRITE_ATTRS+0 : CALL UBUS_ONE
+    LD IX,BULLET1_ACT : LD HL,BULLET_U_SPRITE_ATTRS+4 : CALL UBUS_ONE
+    LD IX,BULLET2_ACT : LD HL,BULLET_U_SPRITE_ATTRS+8 : CALL UBUS_ONE
     CALL FLUSH_BULLET_U_SPRITES
+    LD IX,BULLET3_ACT : LD HL,BULLET3_U_ATTRS : CALL UBUS_ONE
+    CALL FLUSH_BULLET3_U_SPRITE
     RET
 
-; IX = bullet slot base, DE = byte offset into BULLET_U_SPRITE_ATTRS
-; (0/4/8). Hides the slot (Y=209, same convention as UOE_HIDE) unless
-; it's an active U-type shot - also hidden while BOSS_ACT!=0, since U
-; is BG-drawn instead during the boss fight (see DRAW_BULLET_CELL) and
-; the hw sprite would otherwise sit uselessly on top of it, still
-; costing a per-frame VDP write for nothing.
+; IX = bullet slot base, HL = this slot's own target 4-byte staging
+; entry (caller-loaded). Hides the slot (Y=209, same convention as
+; UOE_HIDE) unless it's an active U-type shot - also hidden while
+; BOSS_ACT!=0, since U is BG-drawn instead during the boss fight (see
+; DRAW_BULLET_CELL) and the hw sprite would otherwise sit uselessly on
+; top of it, still costing a per-frame VDP write for nothing.
 UBUS_ONE:
-    LD HL,BULLET_U_SPRITE_ATTRS : ADD HL,DE
     LD A,(IX+0)
     OR A
     JR Z,UBUS_HIDE
@@ -9711,6 +9790,28 @@ FBUS_LOOP:
     PUSH BC : POP BC : NOP : NOP
     INC HL
     DJNZ FBUS_LOOP
+    EI
+    RET
+
+; blasts BULLET3_U_ATTRS (4 bytes) to hw sprite slot31 - the 4th
+; player-shot slot's own U-type position, not contiguous with slots
+; 7-9 so it needs its own separate DI-wrapped burst (see BULLET3_ACT's
+; own comment).
+FLUSH_BULLET3_U_SPRITE:
+    DI
+    LD A,31*4 : OUT (99h),A
+    NOP
+    NOP
+    LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    LD HL,BULLET3_U_ATTRS
+    LD B,4
+FB3US_LOOP:
+    LD A,(HL) : OUT (98h),A
+    PUSH BC : POP BC : NOP : NOP
+    INC HL
+    DJNZ FB3US_LOOP
     EI
     RET
 
@@ -12944,6 +13045,7 @@ CHECK_BULLET_VS_HORMING:
     LD IX,BULLET0_ACT : CALL CHECK_HIT_ONE_BULLET_HORMING
     LD IX,BULLET1_ACT : CALL CHECK_HIT_ONE_BULLET_HORMING
     LD IX,BULLET2_ACT : CALL CHECK_HIT_ONE_BULLET_HORMING
+    LD IX,BULLET3_ACT : CALL CHECK_HIT_ONE_BULLET_HORMING
     RET
 
 ; round36-12: also checks the new BG-drawn pool, right after the
@@ -13558,6 +13660,7 @@ CHECK_BULLET_VS_BOSS:
     LD IX,BULLET0_ACT : CALL CHECK_HIT_PAIR_BOSS
     LD IX,BULLET1_ACT : CALL CHECK_HIT_PAIR_BOSS
     LD IX,BULLET2_ACT : CALL CHECK_HIT_PAIR_BOSS
+    LD IX,BULLET3_ACT : CALL CHECK_HIT_PAIR_BOSS
     RET
 
 ; IX = bullet slot base. AABB vs the boss's own real footprint (BOSS_X..

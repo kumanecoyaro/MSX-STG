@@ -6937,3 +6937,69 @@ Thunder activity) confirming it survives completely untouched.
 - **自機ショットのウェイト値について(質問への回答)**: `SHOT_COOLDOWN_
   FRAMES EQU 8`(コード変更なし、既存値を回答)。「1発打ったら1発
   空ける」間欠連射のクールダウンフレーム数。
+
+## Round 36-14 follow-up#13: 自機ショット4フレームクールダウン・4発化(Mineのスロット供出込み)
+
+- User instruction(verbatim、複数ターンにわたる): "4フレームにして3発
+  制限を4発に変更"(直前のやり取り: "自機ショットを3発→4発に拡張する際、
+  斜め弾用のHWスプライトATTRIBUTEスロットが枯渇する"問題を提示 →
+  ユーザー確認"なぜ斜めは3発に制限するのか" → 全32スロットが専有済みで
+  空きがないこと・唯一の現実的な回避策(Mineの爆発演出用スロットを
+  1個削って斜め弾4発目に回す)を提示 → "Mineは演出なのでMineを削って
+  くれ 2発同時はまず起こらないんで"で確定)。
+- **SHOT_COOLDOWN_FRAMES**: 8→4に変更(単純な定数変更)。
+- **自機ショットプール3→4発**: `BULLET0/1/2_ACT`(F1xxブロック内、
+  7バイトずつタイトに配置・直後の`BULLET_TEMP_BYTE`/`GAME_TICK`との
+  間に空きゼロ)を直接拡張する余地がなかったため、新設`BULLET3_ACT`は
+  FLYER_POOL/EBULLET_POOL/MINE_POOL等と同じ「空きのあるC1xx領域に
+  配置」という既存の踏襲パターンで対応。`TRY_SPAWN_BULLET`(空きスロット
+  探索・確保)・`SET/GET_BULLET_VARIANT`(F回転ポーズの per-slot 記憶)・
+  `UPDATE_BULLETS`(移動)・敵側の当たり判定8箇所全て(ZacoII/Zum/
+  BigZum/Flyer/Etank/Horming/Boss、それぞれ`LD IX,BULLETn_ACT : CALL
+  X`を3回→4回に)を機械的に拡張。
+- **斜め弾(U)4発目用HWスプライトスロット**: Mine爆発の2枠(30-31)を
+  1枠(30のみ、両インスタンスで共有)に削減して解放したスロット31を
+  BULLET3専用に割り当て。BULLET3の斜め弾は7-9(既存3発)と連続しない
+  ため、独立した4バイトステージングバッファ(`BULLET3_U_ATTRS`、
+  C1xx領域)+独立したDI/EIラップ済みフラッシュ(`FLUSH_BULLET3_U_
+  SPRITE`)を新設。`UBUS_ONE`自身は「DEオフセット+固定ベース」から
+  「呼び出し元がHLに直接ターゲットアドレスをロード」方式に変更
+  (BULLET0-2は`BULLET_U_SPRITE_ATTRS+0/4/8`、BULLET3は独立バッファを
+  直接指す)。
+- **Mine爆発の1スロット共有化**: `MINE_SPRITE_ATTRS`を8バイト
+  (1-per-instance)→4バイト(共有)に縮小、`UOM_EXPLODING`/`UOM_EXPL_
+  HIDE`から`(IX+5)`(旧SPRIDX、オフセット計算用)の参照を除去。同一
+  フレームに2つのMineが爆発すると、後から処理される方(`UPDATE_MINE_
+  ALL`は常にslot0→slot1の順)の描画で上書きされる、また稀に片方の
+  非表示化がもう片方を巻き込む可能性がある、という妥協を明記(ユーザー
+  自身が「2発同時はまず起こらない」と許容済み)。
+- **重要な副次的発見: テスト用Z80エミュレータ自体のバグを発見・修正**:
+  4発目のテストを書く過程で`SET_BULLET_VARIANT`/`GET_BULLET_VARIANT`
+  (IXが`BULLETn_ACT`のどれと一致するか`SBC HL,DE`+`JR Z`で判定する
+  実装、round36-11から存在)が常に最後の分岐(フォールバック)に落ちる
+  ことを発見。原因は`tools/z80emu.py`自身の`SBC HL,rr`実装
+  (`step_ed`内)がキャリー(C)とサブトラクト(N)フラグしか更新せず、
+  ゼロ(Z)・サイン(S)フラグを一切更新していなかったこと - 16bit結果が
+  実際に0でも`JR Z`が発火しない。**これは実機のZ80やこのROMが実際に
+  動く本物のエミュレータには一切影響しない、あくまでこのプロジェクト
+  自身のテストハーネス(Pure Python製z80emu.py)だけのバグ** -
+  実機では標準的なZ80の`SBC HL,rr`が正しくZ/Sフラグを更新するため、
+  過去のBULLET0/1/2の per-slot ポーズ記憶機能自体は実機上では正しく
+  動いていた可能性が高い(ただしこのバグにより「本当に正しく動いて
+  いるか」をこれまで一度も正確に検証できていなかった、という意味では
+  重大な発見)。`self.f`の計算に`masked==0`でZフラグ・`masked&0x8000`
+  でSフラグを追加して修正。修正後、全回帰1179件(修正前から存在した
+  既存テスト全て)が無変更で通過することを確認済み - 他のSBC HL,DE
+  用途(GAME_TICKの16bit閾値比較等、多数)は全てキャリーフラグのみに
+  依存しており、この見過ごされていたZフラグバグの影響を受けていな
+  かったと判明。
+- **検証**: 新規`player_shot_pool_test.py`(26件、TRY_SPAWN_BULLETの
+  4スロット確保順序・SET/GET_BULLET_VARIANTの4-way分岐・UPDATE_
+  BULLETSの4スロット更新・UBUS_ONE/FLUSH_BULLET3_U_SPRITEのスロット31
+  描画・ボス戦中BG切り替え・敵への命中判定・実MAINLOOP通しプレイで
+  実際に4発同時発射に到達することまで検証)。既存`mine_flyerlaser_
+  test.py`(Mine共有スロット仕様に合わせ2件更新)・`vdp_wait_test.py`
+  (生OUT命令サイト数ドリフトガード、36→38/27→28に更新)も修正。全回帰
+  `run_all.py` **1205 passed/0 failed**。ビルド前にVRAM→PNGレンダ
+  リングで水平弾4発・斜め弾4発(4発目もHWスプライトで正しく表示)の
+  両方を確認しユーザーへ送付。ROM容量は変化なし(30357/32768バイト)。

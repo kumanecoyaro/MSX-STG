@@ -891,3 +891,22 @@
   `SHOT_COOLDOWN_FRAMES EQU 8`(既存値、質問への回答のみでコード変更
   なし)。全回帰1180 passed/0 failed。詳細はHANDOFF.md Round36-14
   (follow-up#13)参照。
+- **(2026-08-31、Round36-14 follow-up#13、完了済み)**: 自機ショットの
+  ウェイト値(SHOT_COOLDOWN_FRAMES)を尋ねられた回答を受けて"4フレーム
+  にして 3発制限を4発に変更"に対応。自機ショットのHWスプライトATTRIBUTE
+  スロット枯渇問題(32個全て専有済み)をユーザーに提示し、"Mineは
+  演出なのでMineを削ってくれ 2発同時はまず起こらないんで"との確認を
+  得た上で、Mine爆発の2枠(30-31)を1枠(30のみ共有)に削減して解放
+  したスロット31を斜め弾4発目に割り当て。`SHOT_COOLDOWN_FRAMES`を
+  8→4、`BULLET0/1/2_ACT`(F1xxブロック、空きゼロ)を直接拡張できない
+  ため新設`BULLET3_ACT`はC1xx領域に配置、`TRY_SPAWN_BULLET`/`SET・
+  GET_BULLET_VARIANT`/`UPDATE_BULLETS`/敵側の当たり判定8箇所全てを
+  4スロット対応に拡張。**副次的発見**: `tools/z80emu.py`自身の
+  `SBC HL,rr`実装がZ/Sフラグを一切更新しないバグを発見・修正(実機の
+  本物のZ80やこのROMが動く実エミュレータには影響しない、あくまで
+  このプロジェクトのPythonテストハーネス自体のバグ - `SET/GET_
+  BULLET_VARIANT`の per-slot ポーズ記憶が常に最後の分岐にフォール
+  バックしていたのを発見)。新規`player_shot_pool_test.py`(26件)、
+  全回帰1205 passed/0 failed。VRAM→PNGレンダリングで水平弾4発・
+  斜め弾4発(4発目もHWスプライト正常表示)を確認しユーザーへ送付。
+  詳細はHANDOFF.md Round36-14(follow-up#13)参照。
