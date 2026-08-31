@@ -2730,16 +2730,26 @@ ETANK_BULLET_PATTERN_CODE EQU 249   ; group31, verified free above
 ; +0/+1/+2, ERASE_HORMING_BG_CELL/HORMING_BG_CELL_ADDR/WRITE_BULLET_
 ; BYTE_HL reused directly unchanged) - only 1 concurrent instance ever
 ; needed (1 Flyer instance only ever reaches this exit once per spawn).
-; Pattern code250 (group31, SKYSAND_CODE/ETANK_BULLET_PATTERN_CODE's
-; own group, codes248-255) - see flyerlaser_gen.py's own comment for the
-; full color-reuse reasoning (bg11 exact match, fg approximated 7->5,
-; same precedent as EtankBullet's own group31 reuse).
+; 実機フィードバック対応 ("FlyerLaserのBG背景色がイエローになってる
+; 背景と同じくライトブルーだぞ レーザー自体はシアン"): group31(bg11
+; light yellow) was visibly wrong - the real background behind this
+; laser is open sky (bg5 light blue), not SandSky/Sand. Moved to
+; group17(codes136-143, NIGHT_CODE/Mine's own group) - bg5 is an EXACT
+; match. fg7(cyan) has no home anywhere: a full 32-group survey (see
+; flyerlaser_gen.py's own comment) found zero groups combining fg7+bg5 -
+; group17 itself is fg1(black)/bg5, so this renders in black instead of
+; cyan (same "background match required, foreground approximated"
+; tradeoff EtankBullet's own group31 reuse already established, just
+; unable to land any closer on the fg axis this time - repainting
+; group17 itself was ruled out, it would also recolor Mine and
+; NIGHT_CODE's own already-tuned night palette, both sharing this same
+; group). Pattern code139 (right after Mine1/Mine2 at 137-138).
 FLYER_LASER_ACT   EQU 0C121h
 FLYER_LASER_X     EQU 0C122h
 FLYER_LASER_Y     EQU 0C123h
 FLYER_LASER_SPEED EQU 3          ; px/frame, right-only - untuned initial value
 FLYER_LASER_DESPAWN_X EQU 248    ; last on-screen column (32 cols x8px=256) - off past this, despawn
-FLYER_LASER_PATTERN_CODE EQU 250 ; group31, see flyerlaser_gen.py's own comment
+FLYER_LASER_PATTERN_CODE EQU 139 ; group17, see comment above
 
 ; ---------- Mine (Flyer's own dropped landmine) ---------- round36-14
 ; follow-up#12: "まずスポーンから32px左に移動したら 添付データのMineを
@@ -2763,14 +2773,26 @@ FLYER_LASER_PATTERN_CODE EQU 250 ; group31, see flyerlaser_gen.py's own comment
 ; this same session) - falling/animating as a BG cell exactly like
 ; EtankBullet, only borrowing a real hw sprite ATTRIBUTE slot (see
 ; MINE_EXPL_SPR_BASE_SLOT below) for its own brief death animation.
-MINE_SLOT_SIZE  EQU 7  ; +0 ACT(0=idle,1=falling,2=exploding),+1 X,+2 Y,+3 VY(signed, gravity-accumulated),+4 ANIM_TIMER,+5 SPRIDX(0/1, which hw ATTRIBUTE slot this instance's own explosion uses),+6 EXPL_TIMER
+MINE_SLOT_SIZE  EQU 8  ; +0 ACT(0=idle,1=falling,2=exploding),+1 X,+2 Y,+3 VY(signed, gravity-accumulated),+4 ANIM_TIMER,+5 SPRIDX(0/1, which hw ATTRIBUTE slot this instance's own explosion uses),+6 EXPL_TIMER,+7 GRAVITY_COUNTER(0..MINE_GRAVITY_INTERVAL-1, see its own comment)
 MINE_SLOT_COUNT EQU 2   ; matches FLYER_SLOT_COUNT - at most 1 falling mine per live Flyer instance
-MINE_POOL         EQU 0C124h   ; MINE_SLOT_SIZE*MINE_SLOT_COUNT = 14 bytes (C124h-C131h)
-MINE_ORIGIN_X     EQU 0C132h   ; staging bytes the firer (Flyer) writes its own drop point into just before CALL ALLOC_MINE_SLOT - same convention as EBULLET_ORIGIN_X/Y
-MINE_ORIGIN_Y     EQU 0C133h
-MINE_SPRITE_ATTRS EQU 0C134h   ; MINE_SLOT_COUNT*4 = 8 bytes (Y,X,pat,col)x2 - explosion-only, see MINE_EXPL_SPR_BASE_SLOT
-MINE_GRAVITY EQU 1       ; px/frame^2, untuned initial value - "放物線" (parabolic drop): VX constant, VY accumulates
-MINE_VX      EQU 1       ; px/frame leftward drift, constant - untuned initial value ("右からしか出ないので左向き放物線のみ")
+MINE_POOL         EQU 0C124h   ; MINE_SLOT_SIZE*MINE_SLOT_COUNT = 16 bytes (C124h-C133h)
+MINE_ORIGIN_X     EQU 0C134h   ; staging bytes the firer (Flyer) writes its own drop point into just before CALL ALLOC_MINE_SLOT - same convention as EBULLET_ORIGIN_X/Y
+MINE_ORIGIN_Y     EQU 0C135h
+MINE_SPRITE_ATTRS EQU 0C136h   ; MINE_SLOT_COUNT*4 = 8 bytes (Y,X,pat,col)x2 - explosion-only, see MINE_EXPL_SPR_BASE_SLOT
+; 実機フィードバック対応 ("Mine投下速度が早すぎる...放物線も出てない"):
+; the original "VY += MINE_GRAVITY every single frame" fell so fast
+; (~11-15 frames from a typical altitude) that the leftward MINE_VX=1
+; drift never accumulated enough px to read as a parabola - it just
+; looked like a straight vertical drop. Gravity now only actually
+; increments VY once every MINE_GRAVITY_INTERVAL frames (+7 counts up
+; to that, wraps and bumps VY) - same magnitude per bump, just spread
+; over ~3x more real frames - while VX (now doubled) keeps applying
+; every frame regardless, so the same total fall now covers roughly
+; 30-60px of visible leftward drift over ~15-30 frames instead of
+; 10-15px over ~10 frames. Still untuned initial values.
+MINE_GRAVITY EQU 1            ; px/frame^2 per bump - unchanged magnitude
+MINE_GRAVITY_INTERVAL EQU 4   ; frames between bumps - was implicitly 1
+MINE_VX      EQU 2       ; px/frame leftward drift, constant - untuned initial value ("右からしか出ないので左向き放物線のみ")
 MINE_ANIM_INTERVAL EQU 4 ; frames per animation pose - untuned initial value
 ; fixed landing line, terrain-independent - same "hard cap regardless of
 ; the tank's own current tier, never sink into terrain" precedent as
@@ -9392,6 +9414,7 @@ AMS_INIT:
     XOR A
     LD (IX+3),A
     LD (IX+4),A
+    LD (IX+7),A
     RET
 
 UPDATE_MINE_ALL:
@@ -9460,11 +9483,13 @@ UOM_EXPL_HIDE:
     RET
 
 ; IX = MINE_POOL slot base. ACT=2: dispatches to the explosion phase
-; above. ACT=1: falls (VY accumulates by MINE_GRAVITY every frame -
-; "放物線で投下" - VX stays a constant leftward drift, "右からしか
-; 出ないので左向き放物線のみ"), animates between MINE1_CODE/MINE2_CODE,
-; and lands (fixed MINE_LANDING_Y - see its own comment) into an
-; explosion exactly like a tank hit does (TRIGGER_MINE_EXPLOSION).
+; above. ACT=1: falls (VY accumulates by MINE_GRAVITY once every
+; MINE_GRAVITY_INTERVAL frames, see its own comment - "放物線で投下" -
+; VX applies every frame regardless, a constant leftward drift,
+; "右からしか出ないので左向き放物線のみ"), animates between MINE1_CODE/
+; MINE2_CODE, and lands (fixed MINE_LANDING_Y - see its own comment)
+; into an explosion exactly like a tank hit does (TRIGGER_MINE_
+; EXPLOSION).
 UPDATE_ONE_MINE:
     LD A,(IX+0)
     CP 2
@@ -9473,9 +9498,18 @@ UPDATE_ONE_MINE:
     RET Z
 
     CALL ERASE_HORMING_BG_CELL
-    LD A,(IX+2) : LD D,A
+    LD A,(IX+7) : INC A
+    CP MINE_GRAVITY_INTERVAL
+    JR C,UOM_GRAVITY_HOLD
+    XOR A
+    LD (IX+7),A
     LD A,(IX+3) : ADD A,MINE_GRAVITY : LD (IX+3),A
-    LD E,A
+    JR UOM_GRAVITY_DONE
+UOM_GRAVITY_HOLD:
+    LD (IX+7),A
+UOM_GRAVITY_DONE:
+    LD A,(IX+2) : LD D,A
+    LD A,(IX+3) : LD E,A
     LD A,D : ADD A,E : LD (IX+2),A
 
     LD A,(IX+2)

@@ -10,18 +10,22 @@ to_bytes/load_bits shape as etankbullet_gen.py) rather than treating it
 as a real 4-quadrant 16x16 sprite; the other 3 quadrants are entirely
 blank and simply never referenced.
 
-Placed at code250 (group31, codes248-255 - SKYSAND_CODE=248/
-ETANK_BULLET_PATTERN_CODE=249's own group). Chosen over the other
-free-but-unmatched BG gaps this round's own VRAM survey found because
-Flyer only ever fires this laser right at the very end of its own
-diagonal-down-right homing leg (see UOFL_HOME_MOVE's own comment) - the
-exact same low-altitude band the Y-8px SandSky-overlap fix in this same
-round targets - so the real background behind it is overwhelmingly
-likely to be SkySand, not open sky. group31's own shared color (0x5Bh =
-fg5 light blue/bg11 light yellow) is therefore reused unchanged, same
-"exact bg match, approximate fg" precedent EtankBullet already
-established for this identical group (source art wants fg7/bg11 - bg
-matches exactly, fg becomes 5 instead of 7).
+Placed at code139 (group17, codes136-143 - NIGHT_CODE=136/MINE1_CODE=
+137/MINE2_CODE=138's own group). First shipped at code250 (group31,
+reasoning: Flyer only ever fires this laser at the very end of its own
+diagonal-down-right homing leg, the same low-altitude SandSky band the
+paired Y-8px fix targets, so group31's bg11 seemed like the right
+match) - real-hardware feedback ("FlyerLaserのBG背景色がイエローに
+なってる 背景と同じくライトブルーだぞ") showed that guess was wrong:
+the actual background behind it is open sky (bg5 light blue), not
+SandSky. group17's own shared color (0x15h = fg1 black/bg5 light blue)
+is an EXACT match on bg; a full 32-group survey found no group anywhere
+combining fg7(cyan, the source art's own fg)+bg5, so fg renders as 1
+(black) instead - same "exact bg match, approximate fg" precedent
+EtankBullet's own group31 reuse already established, just unable to
+land as close on the fg axis this time (repainting group17 itself was
+ruled out - it would also recolor Mine and NIGHT_CODE's own already-
+tuned night palette, both sharing this same group).
 """
 import json
 import os

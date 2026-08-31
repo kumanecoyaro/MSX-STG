@@ -71,9 +71,9 @@ check("FlyerLaser's own BG pattern VRAM matches sprites/FlyerLaser_16x16.json's 
       [_cpu_pat.vram[FLYER_LASER_PATTERN_CODE*8+i] for i in range(8)] == list(_flg.FLYER_LASER_PATTERN))
 check("MINE1_CODE/MINE2_CODE sit in group17 (NIGHT_CODE's own group), not overlapping NIGHT_CODE itself",
       MINE1_CODE // 8 == sym["NIGHT_CODE"] // 8 and MINE1_CODE != sym["NIGHT_CODE"] and MINE2_CODE != sym["NIGHT_CODE"])
-check("FLYER_LASER_PATTERN_CODE sits in group31 alongside SKYSAND_CODE/ETANK_BULLET_PATTERN_CODE, not overlapping either",
-      FLYER_LASER_PATTERN_CODE // 8 == sym["SKYSAND_CODE"] // 8
-      and FLYER_LASER_PATTERN_CODE not in (sym["SKYSAND_CODE"], sym["ETANK_BULLET_PATTERN_CODE"]))
+check("FLYER_LASER_PATTERN_CODE sits in group17 alongside NIGHT_CODE/MINE1_CODE/MINE2_CODE, not overlapping any of them",
+      FLYER_LASER_PATTERN_CODE // 8 == sym["NIGHT_CODE"] // 8
+      and FLYER_LASER_PATTERN_CODE not in (sym["NIGHT_CODE"], MINE1_CODE, MINE2_CODE))
 
 
 # ---------- ALLOC_MINE_SLOT ----------
@@ -100,17 +100,32 @@ check("a 3rd ALLOC with both slots full is silently dropped (no crash, no 3rd sl
 
 
 # ---------- UPDATE_ONE_MINE: gravity accumulation ("放物線") ----------
+# 実機フィードバック対応 ("Mine投下速度が早すぎる...放物線も出てない"):
+# gravity now only actually bumps VY once every MINE_GRAVITY_INTERVAL
+# frames (+7 counts up to that) - VY (and Y) stay flat in between, X
+# keeps drifting left every frame regardless, same reasoning as
+# MINE_GRAVITY_INTERVAL's own comment.
+MINE_GRAVITY_INTERVAL = sym["MINE_GRAVITY_INTERVAL"]
 cpu2 = fresh_cpu()
 cpu2.mem[MINE_POOL+0] = 1
 cpu2.mem[MINE_POOL+1] = 200
 cpu2.mem[MINE_POOL+2] = 50
 cpu2.mem[MINE_POOL+3] = 0
+cpu2.mem[MINE_POOL+7] = 0
 cpu2.ix = MINE_POOL
+for _ in range(MINE_GRAVITY_INTERVAL - 1):
+    call_routine(cpu2, "UPDATE_ONE_MINE")
+check("VY (and Y) stay flat for the frames before the gravity counter wraps",
+      cpu2.mem[MINE_POOL+3] == 0 and cpu2.mem[MINE_POOL+2] == 50)
 call_routine(cpu2, "UPDATE_ONE_MINE")
-check("frame1: VY becomes MINE_GRAVITY, Y advances by that same amount", cpu2.mem[MINE_POOL+3] == MINE_GRAVITY and cpu2.mem[MINE_POOL+2] == 50+MINE_GRAVITY)
-check("frame1: X moves left by MINE_VX", cpu2.mem[MINE_POOL+1] == 200-MINE_VX)
-call_routine(cpu2, "UPDATE_ONE_MINE")
-check("frame2: VY accumulates further (quadratic fall, not linear)", cpu2.mem[MINE_POOL+3] == MINE_GRAVITY*2)
+check("the wrap frame: VY becomes MINE_GRAVITY, Y advances by that same amount",
+      cpu2.mem[MINE_POOL+3] == MINE_GRAVITY and cpu2.mem[MINE_POOL+2] == 50+MINE_GRAVITY)
+check("X has moved left by MINE_VX every one of those frames",
+      cpu2.mem[MINE_POOL+1] == 200 - MINE_VX*MINE_GRAVITY_INTERVAL)
+for _ in range(MINE_GRAVITY_INTERVAL):
+    call_routine(cpu2, "UPDATE_ONE_MINE")
+check("a 2nd full interval: VY accumulates further (quadratic fall, not linear)",
+      cpu2.mem[MINE_POOL+3] == MINE_GRAVITY*2)
 
 # lands exactly at MINE_LANDING_Y and triggers TRIGGER_MINE_EXPLOSION
 cpu3 = fresh_cpu()
