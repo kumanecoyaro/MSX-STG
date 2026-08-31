@@ -268,6 +268,35 @@ call_routine(cpu8, "CHECK_EBULLET_VS_TANK")
 check("no repeat damage while TANK_HAZARD_IFRAMES is still active", cpu8.mem[TANK_LIFE] == life0)
 
 
+# ---------- Flyer's own EBullet spawn position (実機フィードバック対応) ----------
+# "Flyerの弾の発射が反転後の左上になってる 定義は32x32になってるんで
+# 起点を0にするとダメ 必ず右向きになる 位置的にはFlyerの右にYオフセット
+# 19pxの位置": at the exact PHASE 0->1 (cruise->home) transition, Flyer's
+# own X has JUST been clamped to 0 (screen left edge) - using that raw 0
+# directly as the bullet's own spawn X put it at the screen's top-left
+# instead of near Flyer's real 32x32 body. Fixed spawn offset: always
+# X+32 (Flyer's own right edge) / Y+19.
+FLYER_POOL = sym["FLYER_POOL"]
+FLYER_SPEED = sym["FLYER_SPEED"]
+cpu_fl = fresh_cpu()
+clear_pool(cpu_fl)
+cpu_fl.mem[FLYER_POOL + 0] = 1
+cpu_fl.mem[FLYER_POOL + 1] = FLYER_SPEED - 1  # about to clamp to X=0 this frame
+cpu_fl.mem[FLYER_POOL + 2] = 50
+cpu_fl.mem[FLYER_POOL + 3] = 0
+cpu_fl.mem[FLYER_POOL + 4] = 0
+cpu_fl.mem[FLYER_POOL + 8] = 0  # PHASE=cruise
+cpu_fl.mem[TANK_Y_CUR] = 100
+cpu_fl.ix = FLYER_POOL
+call_routine(cpu_fl, "UPDATE_ONE_FLYER")
+check("Flyer's own X really did clamp to 0 at this transition (the scenario this bug needed)",
+      cpu_fl.mem[FLYER_POOL + 1] == 0 and cpu_fl.mem[FLYER_POOL + 8] == 1)
+check("EBullet spawns at Flyer's own right edge (X+32), not the screen's own left edge (raw X=0)",
+      cpu_fl.mem[EBULLET_POOL + 1] == 32)
+check("EBullet spawns 19px below Flyer's own Y",
+      cpu_fl.mem[EBULLET_POOL + 2] == 50 + 19)
+
+
 # ---------- real end-to-end: ZacoII/Flyer actually fire during real play ----------
 cpu9 = fresh_cpu()
 cpu9.sim_dir = 1

@@ -6588,3 +6588,35 @@ Thunder activity) confirming it survives completely untouched.
   非ゼロチェックに加えて、必ず全LDIRVM呼び出し元をシンボルテーブル
   ベースで横断的に洗い出し、実際のバイト数(コード範囲)ベースで
   「本当に何もロードしていないコード」を特定すること。
+
+## Round 36-14 follow-up#11 実機フィードバック対応その2: EtankBullet画像差し替え・Flyer発射位置の修正
+
+- User instruction(verbatim、修正版`EtankBullet_8x8_1.json`添付込み):
+  "まずEtankBulletを差し替え 1pxズレているがBGなので画像で修正 次に
+  Flyerの弾の発射が反転後の左上になってる 定義は32x32になってるんで
+  起点を0にするとダメ 必ず右向きになる 位置的にはFlyerの右にYオフ
+  セット19pxの位置"
+- **EtankBullet画像差し替え**: `sprites/EtankBullet_8x8.json`を添付の
+  修正版(絵柄が1行下、つまり1px下にシフトしたもの)に置き換え。BGセル
+  ベースのため、コード側でオフセット調整するのではなく画像自体を
+  修正するという指示通り、`etankbullet_gen.py`は無変更のまま新しい
+  JSONを再読込するだけで対応完了。
+- **Flyer発射位置のバグ**: `UPDATE_ONE_FLYER`のPHASE0→1遷移地点で、
+  `EBULLET_ORIGIN_X`に`(IX+1)`(Flyerの生X座標)をそのまま代入していた
+  が、この遷移はまさに「Flyerが画面左端X=0にクランプされた直後」の
+  1行で発生するため、常にX=0(画面の左上)を発射起点にしてしまって
+  いた("起点を0にするとダメ")。Flyerの実際のアートは32x32キャンバス
+  ("定義は32x32になってるんで")のため、正しい発射位置はFlyer自身の
+  右端(X+32)であるべきで、かつY方向にも+19pxのオフセットが必要
+  ("位置的にはFlyerの右にYオフセット19pxの位置")。`LD A,(IX+1):ADD
+  A,32`/`LD A,(IX+2):ADD A,19`に修正。
+- **検証**: `ebullet_test.py`に新規3件追加(Flyerが実際にX=0へ
+  クランプされる遷移シナリオを直接再現し、EBulletの発射座標が
+  期待通りX=32/Y=Flyer_Y+19になることを直接検証)、`etank_bullet_
+  test.py`に新規1件追加(BGパターンVRAMを新しいソース画像と直接
+  バイト比較)。全回帰`run_all.py` 1133 passed/0 failed。修正後、
+  実際にFlyerがPHASE遷移する実フレームを特定してレンダリングし、
+  EBulletがFlyer本体の右側(スポーン直後は重なって見えにくいため、
+  数フレーム後の位置で確認)に、EtankBulletが新しい絵柄で正しく
+  表示されることを視覚確認しユーザーへ送付。ROM容量29565バイトの
+  まま変化なし(定数値・画像データの変更のみ)。

@@ -41,6 +41,16 @@ TANK_LIFE = sym["TANK_LIFE"]
 check("ETANK_BULLET_PATTERN_CODE(249) sits in group31 alongside SKYSAND_CODE(248), NOT overlapping it",
       ETANK_BULLET_PATTERN_CODE // 8 == SKYSAND_CODE // 8 and ETANK_BULLET_PATTERN_CODE != SKYSAND_CODE)
 
+# 実機フィードバック対応: art replaced with a corrected source image
+# (1px lower than the original) - direct byte comparison against the
+# BG pattern-generator table right after boot, same "would have caught
+# this immediately" precedent as EBullet's own equivalent check.
+import etankbullet_gen as _etg
+_cpu_pat = fresh_cpu()
+_actual_pat = [_cpu_pat.vram[0x0000 + ETANK_BULLET_PATTERN_CODE * 8 + i] for i in range(8)]
+check("EtankBullet's own BG pattern VRAM exactly matches the corrected sprites/EtankBullet_8x8.json right after boot",
+      _actual_pat == list(_etg.ETANK_BULLET_PATTERN))
+
 
 # ---------- ALLOC_ETANK_SLOT: spawn-time priming ----------
 cpu = fresh_cpu()

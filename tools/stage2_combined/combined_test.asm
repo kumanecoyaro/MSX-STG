@@ -8473,8 +8473,16 @@ UOFL_CRUISE_MOVE:
     ; fires exactly once, right at this cruise->home reversal, aimed at
     ; the tank's own position this same instant - same LAUNCH_EBULLET
     ; call as ZacoII's own (see UPDATE_ONE_ENEMY), IX untouched by it.
-    LD A,(IX+1) : LD (EBULLET_ORIGIN_X),A
-    LD A,(IX+2) : LD (EBULLET_ORIGIN_Y),A
+    ; 実機フィードバック対応: Flyer's own art is a full 32x32 canvas
+    ; ("定義は32x32になってるんで"), but (IX+1) at this exact instant is
+    ; always 0 (just clamped to the left edge, 2 lines above) - using
+    ; the raw X directly ("起点を0にするとダメ") spawned the bullet at
+    ; the screen's own top-left instead of anywhere near Flyer's real
+    ; body. Fixed spawn offset instead: always Flyer's own right edge
+    ; (X+32) - "必ず右向きになる" - Y+19 ("位置的にはFlyerの右にYオフ
+    ; セット19pxの位置").
+    LD A,(IX+1) : ADD A,32 : LD (EBULLET_ORIGIN_X),A
+    LD A,(IX+2) : ADD A,19 : LD (EBULLET_ORIGIN_Y),A
     CALL LAUNCH_EBULLET
     LD A,(IX+2) : LD D,A
     LD A,(TANK_Y_CUR)
