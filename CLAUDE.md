@@ -876,3 +876,11 @@
   HP初期値テストを更新。全回帰1180 passed/0 failed。VRAM→PNGレンダ
   リングで自機64px手前での投下・拡大した放物線を確認しユーザーへ
   送付。詳細はHANDOFF.md Round36-14(follow-up#12その4)参照。
+- **(2026-08-31、Round36-14 follow-up#12 その5、完了済み)**: "Mine
+  投下速度を少しだけ下げて で ZakoII2種の弾も速度を下げて"に対応。
+  `MINE_GRAVITY_INTERVAL`を4→5(重力の加算頻度を下げ約15%緩やかに)、
+  `ebullet_gen.py`の`EBULLET_SPEED`を3→2に変更(16方向DX/DYテーブルは
+  自動生成のためコード変更不要)。両定数ともテストがシンボルテーブル
+  経由で動的参照する実装だったため既存テストは無変更で通過。全回帰
+  1180 passed/0 failed。詳細はHANDOFF.md Round36-14(follow-up#12
+  その5)参照。

@@ -108,7 +108,8 @@ def build_dir16_lut():
 
 DIR16_LUT = build_dir16_lut()
 
-EBULLET_SPEED = 3   # px/frame magnitude - similar order to other established bullet speeds (FLYER_SPEED=2, boss beams 2-5)
+# 実機フィードバック対応 ("ZakoII2種の弾も速度を下げて"): was 3.
+EBULLET_SPEED = 2   # px/frame magnitude - similar order to other established bullet speeds (FLYER_SPEED=2, boss beams 2-5)
 
 
 def build_step_tables(speed):

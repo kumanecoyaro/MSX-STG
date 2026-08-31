@@ -2803,7 +2803,11 @@ MINE_SPRITE_ATTRS EQU 0C136h   ; MINE_SLOT_COUNT*4 = 8 bytes (Y,X,pat,col)x2 - e
 ; 30-60px of visible leftward drift over ~15-30 frames instead of
 ; 10-15px over ~10 frames. Still untuned initial values.
 MINE_GRAVITY EQU 1            ; px/frame^2 per bump - unchanged magnitude
-MINE_GRAVITY_INTERVAL EQU 4   ; frames between bumps - was implicitly 1
+; 実機フィードバック対応 ("Mine投下速度を少しだけ下げて"): was 4 -
+; spreads the same per-bump magnitude over slightly more real frames,
+; a modest ~15% slower fall (Pythonsim: e.g. 23->26 frames from a
+; mid-altitude drop).
+MINE_GRAVITY_INTERVAL EQU 5   ; frames between bumps - was implicitly 1, then 4
 ; 実機フィードバック対応 ("Mine投下の放物線をもう少しX方向に広げて
 ; 前に投下するように"): was 2 - widened alongside the new MINE_DROP_
 ; LEAD_X-based trigger (see its own comment) so the drop's own X spread
