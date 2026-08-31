@@ -58,7 +58,8 @@ check("spawns cleanly", cpu.mem[ETANK_POOL+0] == 1)
 check("spawns at ETANK_SPAWNX (off the right edge)", cpu.mem[ETANK_POOL+1] == sym["ETANK_SPAWNX"])
 check("Y fixed from TANK_TIER_Y_TABLE index0 (apex) minus the tank-art-padding fudge",
       cpu.mem[ETANK_POOL+2] == cpu.mem[sym["TANK_TIER_Y_TABLE"]] - sym["ETANK_Y_OFFSET"])
-check("HP initialized to 8", cpu.mem[ETANK_POOL+6] == sym["ETANK_HP_INIT"] == 8)
+check("HP initialized to 7 (実機フィードバック対応: \"Etankの耐久値-1\", was 8)",
+      cpu.mem[ETANK_POOL+6] == sym["ETANK_HP_INIT"] == 7)
 
 # round34-2 ("排他制御は削除"): the ground-lane mutual exclusion between
 # Zum/BigZum/Etank (and the earlier-relaxed Flyer exclusion) is gone

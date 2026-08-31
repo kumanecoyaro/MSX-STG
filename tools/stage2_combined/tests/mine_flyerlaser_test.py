@@ -24,6 +24,7 @@ def check(label, cond):
 FLYER_POOL = sym["FLYER_POOL"]
 FLYER_SLOT_SIZE = sym["FLYER_SLOT_SIZE"]
 FLYER_SPAWNX = sym["FLYER_SPAWNX"]
+FLYER_SPEED = sym["FLYER_SPEED"]
 FLYER_DESCEND_LIMIT_Y = sym["FLYER_DESCEND_LIMIT_Y"]
 
 MINE_POOL = sym["MINE_POOL"]
@@ -275,8 +276,14 @@ check("an overlapping laser damages the tank", cpu15.mem[TANK_LIFE] == life0-1)
 check("...and keeps flying through (same convention as EtankBullet's own bullet)", cpu15.mem[FLYER_LASER_ACT] == 1)
 
 
-# ---------- real Flyer integration: mine-drop trigger + -8px Y fix + laser fire ----------
+# ---------- real Flyer integration: tank-relative mine-drop trigger + -8px Y fix + laser fire ----------
+# 実機フィードバック対応 ("自機位置を見て自機の64px手前に来たら投下"):
+# the drop trigger is TANK_X-relative now, not a fixed distance from
+# spawn.
+MINE_DROP_LEAD_X = sym["MINE_DROP_LEAD_X"]
+TANK_X = sym["TANK_X"]
 cpu16 = fresh_cpu()
+cpu16.mem[TANK_X] = 100
 call_routine(cpu16, "ALLOC_FLYER_SLOT")
 spawn_x = cpu16.mem[FLYER_POOL+1]
 mine_frame = None
@@ -284,20 +291,46 @@ flyer_x_at_drop = None
 mine_x_at_drop = None
 flyer_sprite_y_at_drop = None
 flyer_sprite_x_at_drop = None
-for f in range(60):
+for f in range(80):
     cpu16.ix = FLYER_POOL
     call_routine(cpu16, "UPDATE_ONE_FLYER")
     if cpu16.mem[MINE_POOL+0] != 0 and mine_frame is None:
         mine_frame = f
-        moved = spawn_x - cpu16.mem[FLYER_POOL+1]
         flyer_x_at_drop = cpu16.mem[FLYER_POOL+1]
         mine_x_at_drop = cpu16.mem[MINE_POOL+1]
         flyer_sprite_y_at_drop = cpu16.mem[FLYER_SPRITE_ATTRS+0]
         flyer_sprite_x_at_drop = cpu16.mem[FLYER_SPRITE_ATTRS+1]
-check("a real Flyer instance drops its own mine once it has moved >=32px from spawn",
-      mine_frame is not None and moved >= 32 and spawn_x == FLYER_SPAWNX)
+check("a real Flyer instance drops its own mine once its own X has closed to within MINE_DROP_LEAD_X of the tank's",
+      mine_frame is not None and spawn_x == FLYER_SPAWNX
+      and flyer_x_at_drop <= cpu16.mem[TANK_X] + MINE_DROP_LEAD_X
+      and flyer_x_at_drop + FLYER_SPEED > cpu16.mem[TANK_X] + MINE_DROP_LEAD_X)
 check("実機フィードバック対応: the drop origin is Flyer's own raw left-edge X (its body's own left), not the +16 center",
       mine_x_at_drop == flyer_x_at_drop)
+
+# tank-relative trigger really does move with the tank, not a fixed
+# spawn distance - a farther-away tank makes Flyer fly further before dropping.
+cpu16b = fresh_cpu()
+cpu16b.mem[TANK_X] = 10
+call_routine(cpu16b, "ALLOC_FLYER_SLOT")
+mine_frame_b = None
+for f in range(120):
+    cpu16b.ix = FLYER_POOL
+    call_routine(cpu16b, "UPDATE_ONE_FLYER")
+    if cpu16b.mem[MINE_POOL+0] != 0 and mine_frame_b is None:
+        mine_frame_b = f
+check("a farther tank (smaller TANK_X) makes the trigger fire later (Flyer flies further before dropping)",
+      mine_frame_b is not None and mine_frame_b > mine_frame)
+
+# TANK_X+MINE_DROP_LEAD_X+1 overflow safety: a very high TANK_X must not
+# wrap into a tiny, nonsense threshold that never gets satisfied - it
+# should fire immediately instead (JR C path).
+cpu16c = fresh_cpu()
+cpu16c.mem[TANK_X] = 250
+call_routine(cpu16c, "ALLOC_FLYER_SLOT")
+cpu16c.ix = FLYER_POOL
+call_routine(cpu16c, "UPDATE_ONE_FLYER")
+check("実機フィードバック対応: an overflowing TANK_X+lead threshold fires the drop immediately instead of never firing",
+      cpu16c.mem[MINE_POOL+0] != 0)
 check("実機フィードバック対応 (\"Mine投下直後か直前 一瞬違う位置にFlyerが表示されてる\"): "
       "on the exact drop frame itself, Flyer's own staged sprite position still reflects its own real "
       "X/Y (ALLOC_MINE_SLOT's own IX reassignment doesn't leak into UOFL_DRAW right after it)",

@@ -861,3 +861,18 @@
   `cloud_changes_test.py`のNIGHT_COLOR直接比較テストを更新、全回帰
   1178 passed/0 failed。詳細はHANDOFF.md Round36-14(follow-up#12
   その3)参照。
+- **(2026-08-31、Round36-14 follow-up#12 その4、完了済み)**: "了解
+  これでいい で、FlyerのMine投下の放物線をもう少しX方向に広げて前に
+  投下するように 合わせてタイミング変更 自機位置を見て自機の64px
+  手前に来たら投下 Etankの耐久値−1"の2件に対応。(1) Mine投下トリガー
+  を固定距離(スポーンから32px)から自機基準(`TANK_X+MINE_DROP_LEAD_X`
+  (64)px手前で発射、毎フレームTANK_Xを実読み)へ変更、`TANK_X`の
+  実測上限(~226)を踏まえ閾値の8bitオーバーフローをキャリーフラグで
+  検出し即時発射にフォールバックする安全策を実装。`MINE_VX`を2→3に
+  増加し、64pxのリード距離と着地までの水平ドリフト量がほぼ一致する
+  ようPythonで再シミュレーション。(2) `ETANK_HP_INIT`を8→7に変更。
+  `mine_flyerlaser_test.py`の実Flyer統合テストを新トリガーに合わせて
+  全面書き直し(オーバーフロー安全性テスト含む)、`etank_unit.py`の
+  HP初期値テストを更新。全回帰1180 passed/0 failed。VRAM→PNGレンダ
+  リングで自機64px手前での投下・拡大した放物線を確認しユーザーへ
+  送付。詳細はHANDOFF.md Round36-14(follow-up#12その4)参照。

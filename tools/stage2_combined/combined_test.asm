@@ -2621,7 +2621,7 @@ ETANK_SPEED EQU 2               ; px/frame, flat - "速度は2"
 ETANK_COLLISION_SIZE     EQU 24  ; width
 ETANK_COLLISION_HEIGHT   EQU 16  ; height - "キャラ位置は32x32の内左下24x16"
 ETANK_COLLISION_Y_OFFSET EQU 32-ETANK_COLLISION_HEIGHT  ; =16
-ETANK_HP_INIT EQU 8   ; "Etankの耐久値8" (was 10)
+ETANK_HP_INIT EQU 7   ; "Etankの耐久値-1" (was 10, then 8)
 ETANK_PUSH_SPEED EQU ZUM_PUSH_SPEED  ; "Zumと同じで接触で自機を押す" - same push mechanic/speed as Zum's own UPDATE_TANK_ZUM_PUSH
 ; "Etankの位置がおかしい また自機基準でオフセットしてねえだろうな
 ; 毎回同じミスしてる 自機だけジャンプの関係でやってるだけで特殊" - same
@@ -2804,7 +2804,20 @@ MINE_SPRITE_ATTRS EQU 0C136h   ; MINE_SLOT_COUNT*4 = 8 bytes (Y,X,pat,col)x2 - e
 ; 10-15px over ~10 frames. Still untuned initial values.
 MINE_GRAVITY EQU 1            ; px/frame^2 per bump - unchanged magnitude
 MINE_GRAVITY_INTERVAL EQU 4   ; frames between bumps - was implicitly 1
-MINE_VX      EQU 2       ; px/frame leftward drift, constant - untuned initial value ("右からしか出ないので左向き放物線のみ")
+; 実機フィードバック対応 ("Mine投下の放物線をもう少しX方向に広げて
+; 前に投下するように"): was 2 - widened alongside the new MINE_DROP_
+; LEAD_X-based trigger (see its own comment) so the drop's own X spread
+; roughly matches the 64px lead distance the trigger now fires at
+; (Pythonsim: ~45-93px of horizontal drift by landing, depending on
+; drop altitude - see this round's own HANDOFF.md entry).
+MINE_VX      EQU 3       ; px/frame leftward drift, constant - untuned initial value ("右からしか出ないので左向き放物線のみ")
+; 実機フィードバック対応 ("自機位置を見て自機の64px手前に来たら投下"):
+; the drop trigger is no longer a fixed "32px from spawn" distance (a
+; compile-time constant, tank-unaware) - it now reads TANK_X live every
+; frame (see UOFL_CRUISE_STEP) and fires once Flyer's own X has closed
+; to within this many px of the tank's own current X (Flyer approaches
+; from the right, so "手前" = still this far to the tank's own right).
+MINE_DROP_LEAD_X EQU 64
 MINE_ANIM_INTERVAL EQU 4 ; frames per animation pose - untuned initial value
 ; fixed landing line, terrain-independent - same "hard cap regardless of
 ; the tank's own current tier, never sink into terrain" precedent as
@@ -8628,14 +8641,27 @@ UOFL_LOCK_DY_SET:
 ; per instance; +6 gets safely overwritten with the real locked DY value
 ; moments later at the reversal, this guard's own job already done by
 ; then.
+; 実機フィードバック対応 ("自機位置を見て自機の64px手前に来たら投下"):
+; the fixed FLYER_SPAWNX-32 threshold this used originally is gone -
+; the trigger now reads TANK_X live every frame and fires once Flyer's
+; own X has closed to within MINE_DROP_LEAD_X of it. TANK_X can reach
+; up to ~226 (see UTX_DO_RIGHT's own "CP 224" cap) - TANK_X+
+; MINE_DROP_LEAD_X+1 can overflow past 255, which would otherwise wrap
+; into a tiny, nonsense threshold; JR C below catches that case and
+; fires immediately instead (an overflowed threshold means "every
+; reachable Flyer_X already satisfies it").
 UOFL_CRUISE_STEP:
     LD A,(IX+1) : SUB FLYER_SPEED : LD (IX+1),A
     LD A,(IX+6)
     OR A
     JR NZ,UOFLC_MINE_DONE
+    LD A,(TANK_X) : ADD A,MINE_DROP_LEAD_X+1
+    JR C,UOFLC_MINE_FIRE
+    LD B,A
     LD A,(IX+1)
-    CP FLYER_SPAWNX-32+1
+    CP B
     JR NC,UOFLC_MINE_DONE
+UOFLC_MINE_FIRE:
     LD A,1 : LD (IX+6),A
     ; 実機フィードバック対応 ("投下位置も本体の左に来てない"): drop
     ; origin is Flyer's own raw top-left X (its body's own LEFT edge,
