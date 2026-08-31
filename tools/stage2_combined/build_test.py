@@ -40,6 +40,8 @@ import sasapi_hand_gen  # noqa: E402
 import horming_gen  # noqa: E402
 import thunder_gen  # noqa: E402
 import sbeam_gen  # noqa: E402
+import ebullet_gen  # noqa: E402
+import etankbullet_gen  # noqa: E402
 from mini_z80asm import Assembler  # noqa: E402
 
 
@@ -55,7 +57,8 @@ def combined_text():
               + "\n" + bigzum_gen.emit_asm_tables() + "\n" + flyer_gen.emit_asm_tables()
               + "\n" + etank_gen.emit_asm_tables() + "\n" + sasapi_gen.emit_asm_tables()
               + "\n" + sasapi_hand_gen.emit_asm_tables() + "\n" + horming_gen.emit_asm_tables()
-              + "\n" + thunder_gen.emit_asm_tables() + "\n" + sbeam_gen.emit_asm_tables())
+              + "\n" + thunder_gen.emit_asm_tables() + "\n" + sbeam_gen.emit_asm_tables()
+              + "\n" + ebullet_gen.emit_asm_tables() + "\n" + etankbullet_gen.emit_asm_tables())
     return body + "\n" + tables + "\n"
 
 

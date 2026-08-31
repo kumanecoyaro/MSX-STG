@@ -2631,6 +2631,71 @@ ETANK_Y_OFFSET EQU 4
 PAT_ETANK_BL EQU PAT_BIGZUM+8
 PAT_ETANK_BR EQU PAT_BIGZUM+12
 
+; ---------- EBullet (ZacoII/Flyer enemy bullet, hw sprite, 16-direction
+; aim) ---------- round36-14 follow-up#11 ("ザコ敵の弾発射実装 ZakoII2種
+; は反転時に添付データEBullet発射 コリジョンは左上4x4ドット 発射タイミ
+; ングの瞬間の自機を狙って直進 発射は16方向 Flyerは画面左端まで行き反転
+; 後発射"): fired once by ZacoII at the exact frame it turns back
+; (E_RETREAT 0->1, both green/red variants - see UPDATE_ONE_ENEMY) and
+; once by Flyer at the exact frame it reaches the left edge and reverses
+; into homing (PHASE 0->1 - see UPDATE_ONE_FLYER), aimed at the tank's
+; own position at that exact instant then flying dead straight (not
+; homing) until off-screen.
+;
+; This round's own full empirical hw sprite budget survey (booted +
+; ~6000 pre-boss frames of real simulated play, checking every one of
+; the 256 sprite pattern codes' own VRAM bytes AND every one of the 32
+; ATTRIBUTE table slots for non-hidden/non-zero content - see this
+; round's own HANDOFF entry for the full methodology) found the earlier
+; "0 free, both budgets" belief (round36-11/36-12) was stale: normal
+; (non-boss) gameplay genuinely never touches ATTRIBUTE slots26-31 (6
+; slots) or pattern codes234-238/251-255 (2 runs of >=4 consecutive
+; codes) - a real reversal from what every earlier round assumed.
+EBULLET_SLOT_SIZE  EQU 5    ; +0 ACT,+1 X,+2 Y,+3 DX(signed px/frame),+4 DY(signed px/frame)
+EBULLET_SLOT_COUNT EQU 4
+EBULLET_POOL          EQU 0C0F5h   ; 4 slots x5 bytes = 20 bytes (C0F5h-C108h)
+EBULLET_SPRITE_ATTRS  EQU 0C109h   ; 4 slots x4 bytes (Y,X,pat,col) = 16 bytes (C109h-C118h)
+; staging bytes the firer writes its own (IX+E_X)/(IX+E_Y) (or Flyer's
+; own (IX+1)/(IX+2)) into just before CALL LAUNCH_EBULLET - LAUNCH_
+; EBULLET's own IX gets repurposed to walk EBULLET_POOL looking for a
+; free slot, so the firer's origin can't stay in IX/the firer's own
+; struct fields across that call.
+EBULLET_ORIGIN_X EQU 0C119h
+EBULLET_ORIGIN_Y EQU 0C11Ah
+EBULLET_CUR_SLOT EQU 0C120h   ; scratch: which of the 4 pool slots UPDATE_ONE_EBULLET is currently working on (0-3) - see UPDATE_EBULLET_ALL
+EBULLET_SPR_BASE_SLOT EQU 26   ; hw sprite slots26-29 (verified free above)
+PAT_EBULLET EQU 234            ; TL=234(real art)/BL=235/TR=236/BR=237(blank) - verified free above
+EBULLET_COLOR EQU 9             ; sprites/Ebullet_16x16.json's own fg (light red) - hw sprite color is a single index, no bg half like BG cells
+
+; ---------- EtankBullet (Etank's own bullet, BG cell, left-only) ----------
+; "Etankはスポーン後左へ32px移動したら発射し方向は左直進のみ 弾はBG使用
+; ファイルEtankBullet". Same erase-then-move-then-draw BG-cell technique
+; as HORMING_BG_POOL (see UPDATE_HORMING_BG_ALL/DRAW_HORMING_BG_CELL/
+; ERASE_HORMING_BG_CELL) - only ever 1 concurrent instance needed
+; (ETANK_SLOT_COUNT=1 itself, and this bullet only ever fires once per
+; Etank spawn), so flat globals instead of a real N-slot pool.
+;
+; Unlike EBullet, this round's own BG color-table survey (same
+; methodology, all 32 groups' own 1-shared-color-per-8-codes entries at
+; 0x2000+group) found every one of the 32 groups already color-claimed -
+; there is no fully free group left to assign EtankBullet's own source
+; art color (fg8/bg11) to without changing an actively-used group's
+; shared color. group31(codes248-255, SKYSAND_CODE=248's own group) has
+; 7 of its 8 codes genuinely pattern-free AND its own bg nibble(11,
+; light yellow) already matches the source art's own bg exactly - only
+; fg differs (art wants 8/medium red, group31 is fixed at 5/light blue).
+; Per direct user confirmation ("では背景色一致は必要なので文字色が近い
+; ものを使ってくれ" - bg match required, use whichever fg is close) this
+; bullet renders in group31's own existing fg5/bg11 unchanged - no new
+; color write at all, SKYSAND(248) itself is completely untouched.
+ETANK_BULLET_ACT   EQU 0C11Bh
+ETANK_BULLET_X     EQU 0C11Ch
+ETANK_BULLET_Y     EQU 0C11Dh
+ETANK_SPAWN_X      EQU 0C11Eh   ; this instance's own spawn-time X, captured once by ALLOC_ETANK_SLOT - lets UPDATE_ONE_ETANK detect "moved 32px" without needing a separate distance counter
+ETANK_BULLET_FIRED EQU 0C11Fh   ; 0/1 - this Etank instance has already fired its 1 shot (prevents refiring every frame once past the 32px threshold)
+ETANK_BULLET_SPEED EQU 3        ; px/frame, left-only
+ETANK_BULLET_PATTERN_CODE EQU 249   ; group31, verified free above
+
 ; ---------- flowing background clouds (see CLOUD_UPDATE_ALL) ----------
 ; "Stage1でもやってる雲を上から3行目に4セルの雲をランダムタイミングで
 ; 4行目はから8行目まで2セルと4セル雲をランダムに各行で速度変化をつけて
@@ -2820,6 +2885,11 @@ INIT_RESUME_AFTER_BANK_SELECT:
 
     LD HL,TERRAIN_PATTERNS : LD DE,0000h : LD BC,TERRAIN_PATTERN_COUNT*8 : CALL LDIRVM
     LD HL,TERRAIN_COLORDATA : LD DE,2000h : LD BC,32 : CALL LDIRVM
+
+    ; EtankBullet BG pattern (round36-14 follow-up#11) - group31's own
+    ; free tail, code249 - see ETANK_BULLET_PATTERN_CODE's own comment.
+    ; No color write: reuses group31's own existing fg5/bg11 unchanged.
+    LD HL,ETANK_BULLET_PATTERN : LD DE,ETANK_BULLET_PATTERN_CODE*8+0000h : LD BC,8 : CALL LDIRVM
 
     ; "カラー変更 Rockの文字色レッドと自機のレッドを入れ替えて" - swap
     ; the rock's own fg color (terrain_gen.py's ROCK_COLOR, fg8 medium
@@ -3218,6 +3288,35 @@ INIT_SPRATR_CLR:
     LD HL,ENEMY_ZACOII_FLIP : LD DE,PAT_ZACO_FLIP*8+SPRPAT : LD BC,32 : CALL LDIRVM
     LD HL,EXPLOSION_PATTERN : LD DE,PAT_EXPLOSION*8+SPRPAT : LD BC,32 : CALL LDIRVM
 
+    ; EBullet (ZacoII/Flyer enemy bullet - round36-14 follow-up#11) - own
+    ; verified-free 4-code group, see PAT_EBULLET's own comment.
+    LD HL,EBULLET_SPRITE : LD DE,PAT_EBULLET*8+SPRPAT : LD BC,32 : CALL LDIRVM
+    ; pool + RAM staging buffer both need priming, same 2-part reasoning
+    ; as ENEMY_SPRITE_ATTRS's own comment just above (IESA_LOOP) - the
+    ; real VRAM SAT is already hidden via the earlier full 32-slot clear,
+    ; but EBULLET_SPRITE_ATTRS itself starts blank (Y=0) and would show
+    ; garbage at the top of the screen on the very first FLUSH_EBULLET_
+    ; SPRITES call otherwise. Found and fixed via a direct fresh_cpu()
+    ; test this same round (boot-state SAT bytes for slots26-29 checked
+    ; before vs after a real MAINLOOP frame) - see this round's own
+    ; HANDOFF entry.
+    LD HL,EBULLET_POOL
+    LD B,EBULLET_SLOT_SIZE*EBULLET_SLOT_COUNT
+    XOR A
+IEBZ_LOOP:
+    LD (HL),A
+    INC HL
+    DJNZ IEBZ_LOOP
+    LD HL,EBULLET_SPRITE_ATTRS
+    LD B,EBULLET_SLOT_COUNT
+IEBSA_LOOP:
+    LD A,209 : LD (HL),A : INC HL
+    XOR A
+    LD (HL),A : INC HL
+    LD (HL),A : INC HL
+    LD (HL),A : INC HL
+    DJNZ IEBSA_LOOP
+
     ; Zum's own pattern (enemy_gen.py, generated alongside ZacoII's -
     ; no flip needed, it never reverses direction).
     LD HL,ENEMY_ZUM : LD DE,PAT_ZUM*8+SPRPAT : LD BC,32 : CALL LDIRVM
@@ -3591,6 +3690,16 @@ SKIP_ADVANCE:
     JR NZ,SKIP_ZACO_ENEMY
     CALL UPDATE_ENEMIES
     CALL CHECK_BULLET_VS_ENEMY
+    ; EBullet (round36-14 follow-up#11) - fired by both ZacoII (above)
+    ; and Flyer (SKIP_OTHER_ENEMIES block below), but updated/collision-
+    ; checked from just this one gate since both firers share the exact
+    ; same BOSS_ACT condition - an EBullet in flight when the boss spawns
+    ; (ZacoII/Flyer themselves stop firing new ones, per this same gate)
+    ; would freeze mid-flight rather than despawn, same known low-
+    ; probability edge case as EBULLET_SLOT_SIZE's own comment already
+    ; flags for the pattern-code/sprite-slot side of this feature.
+    CALL UPDATE_EBULLET_ALL
+    CALL CHECK_EBULLET_VS_TANK
 SKIP_ZACO_ENEMY:
     CALL UPDATE_BULLET_U_SPRITES
     LD A,(BOSS_ACT) : OR A
@@ -3606,6 +3715,8 @@ SKIP_ZACO_ENEMY:
     CALL UPDATE_ETANK_ALL
     CALL CHECK_BULLET_VS_ETANK
     CALL UPDATE_TANK_ETANK_PUSH
+    CALL UPDATE_ETANK_BULLET_ALL
+    CALL CHECK_ETANK_BULLET_VS_TANK
 SKIP_OTHER_ENEMIES:
     ; UPDATE_BOSS_ALL itself must stay unconditional - it's the ONLY
     ; thing that ever checks GAME_TICK against BOSS_SPAWN_TICK and
@@ -6014,7 +6125,7 @@ EGSR_FULL:
 UPDATE_ONE_ENEMY:
     LD A,(IX+E_ACT)
     CP 2
-    JR Z,UOE_EXPLODING
+    JP Z,UOE_EXPLODING
     OR A
     RET Z
 
@@ -6029,6 +6140,14 @@ UPDATE_ONE_ENEMY:
     CP B
     JR NC,UOE_DRAW
     LD A,1 : LD (IX+E_RETREAT),A
+    ; "ZakoII2種は反転時に添付データEBullet発射" - round36-14 follow-up
+    ; #11: fires exactly once, right at this transition, aimed at the
+    ; tank's own position this same instant. LAUNCH_EBULLET uses only
+    ; direct addressing (no IX), so IX (this ZacoII's own struct base)
+    ; survives the CALL untouched - no save/restore needed.
+    LD A,(IX+E_X) : LD (EBULLET_ORIGIN_X),A
+    LD A,(IX+E_Y) : LD (EBULLET_ORIGIN_Y),A
+    CALL LAUNCH_EBULLET
     JR UOE_DRAW
 
 UOE_RETREAT:
@@ -6238,6 +6357,344 @@ CHP_DESTROY:
 
     LD HL,SCORE_PER_KILL
     CALL ADD_SCORE
+    RET
+
+; ---------- EBullet (ZacoII/Flyer enemy bullet, hw sprite, 16-direction
+; aim - see EBULLET_SLOT_SIZE's own comment for the full spec/budget
+; background) ----------
+; D=dx(signed),E=dy(signed) on entry. Returns A=direction index(0-15).
+; Clobbers B,C,D,E,H,L. Folds (dx,dy) to the first 45-degree octant via
+; sign-strip(fx,fy)+conditional-swap(sw), picks the octant's own near-0
+; vs near-22.5-degree half via the cheap "2*minor>major" integer test
+; (no multiply/divide anywhere), then unfolds via a 16-entry LUT built by
+; ebullet_gen.py (see its own comment for why a lookup table beats
+; hand-derived reflection algebra here).
+EBULLET_DIR16:
+    LD C,0                          ; C accumulates the 4-bit fold code: bit3=fx,bit2=fy,bit1=sw,bit0=half
+    LD A,D
+    OR A
+    JP P,ED16_DX_POS
+    XOR A : SUB D : LD D,A          ; D = |dx|
+    LD A,C : ADD A,8 : LD C,A
+ED16_DX_POS:
+    LD A,E
+    OR A
+    JP P,ED16_DY_POS
+    XOR A : SUB E : LD E,A          ; E = |dy|
+    LD A,C : ADD A,4 : LD C,A
+ED16_DY_POS:
+    ; D=|dx|,E=|dy|
+    LD A,D
+    CP E
+    JP NC,ED16_NOSWAP                ; |dx|>=|dy| - already the dominant axis, no swap
+    LD A,D : LD B,A                  ; swap D,E
+    LD A,E : LD D,A
+    LD A,B : LD E,A
+    LD A,C : ADD A,2 : LD C,A
+ED16_NOSWAP:
+    ; D=major(ax),E=minor(ay), major>=minor. Threshold is 5*minor>major
+    ; (approximates tan(11.25deg), the true midpoint between the fold's
+    ; own 2 candidate directions - see ebullet_gen.py's own comment for
+    ; why this specific constant matters), computed as (minor<<2)+minor
+    ; with an overflow check (CF) after each step - if it ever overflows
+    ; past 255, 5*minor already exceeds every possible 8-bit major.
+    LD A,E
+    LD B,A                           ; B = minor, kept for the final +minor step
+    ADD A,A                          ; A=2*minor
+    JR C,ED16_HALF1
+    ADD A,A                          ; A=4*minor
+    JR C,ED16_HALF1
+    ADD A,B                          ; A=5*minor
+    JR C,ED16_HALF1
+    CP D
+    JR C,ED16_HALF0                  ; 5*minor < major
+    JR Z,ED16_HALF0                  ; 5*minor == major - not strictly greater, stays "half0" (matches the Python reference's own strict '>' test)
+ED16_HALF1:
+    LD A,C : ADD A,1 : LD C,A
+ED16_HALF0:
+    LD A,C
+    LD E,A : LD D,0
+    LD HL,EBULLET_DIR16_LUT : ADD HL,DE
+    LD A,(HL)
+    RET
+
+; scans EBULLET_POOL for a free slot; if found, aims from EBULLET_ORIGIN_X/
+; Y (set by the caller - see EBULLET_ORIGIN_X's own comment) toward the
+; tank's CURRENT position and launches. Silently drops the shot if the
+; pool is full (same "no retry, no stall" convention as every spawn in
+; this file - ALLOC_ENEMY_SLOT etc).
+LAUNCH_EBULLET:
+    LD A,(EBULLET_POOL+0)
+    OR A
+    JP Z,LEB_FOUND0
+    LD A,(EBULLET_POOL+5)
+    OR A
+    JP Z,LEB_FOUND1
+    LD A,(EBULLET_POOL+10)
+    OR A
+    JP Z,LEB_FOUND2
+    LD A,(EBULLET_POOL+15)
+    OR A
+    RET NZ                           ; all 4 slots busy - drop this shot
+    LD DE,15
+    JP LEB_LAUNCH
+LEB_FOUND0:
+    LD DE,0
+    JP LEB_LAUNCH
+LEB_FOUND1:
+    LD DE,5
+    JP LEB_LAUNCH
+LEB_FOUND2:
+    LD DE,10
+LEB_LAUNCH:
+    PUSH DE                          ; DE = this slot's own byte offset into EBULLET_POOL - saved across EBULLET_DIR16's own DE clobber
+    LD A,(TANK_X) : LD B,A
+    LD A,(EBULLET_ORIGIN_X) : LD C,A
+    LD A,B : SUB C : LD D,A          ; D = dx = TANK_X - origin_X
+    LD A,(TANK_Y_CUR) : LD B,A
+    LD A,(EBULLET_ORIGIN_Y) : LD C,A
+    LD A,B : SUB C : LD E,A          ; E = dy = TANK_Y_CUR - origin_Y
+    CALL EBULLET_DIR16               ; A = direction 0-15
+    LD E,A : LD D,0
+    LD HL,EBULLET_DX_TABLE : ADD HL,DE : LD A,(HL) : LD B,A   ; B = this shot's own DX
+    LD HL,EBULLET_DY_TABLE : ADD HL,DE : LD A,(HL) : LD C,A   ; C = this shot's own DY
+    POP DE                           ; DE = slot offset again
+    LD HL,EBULLET_POOL
+    ADD HL,DE
+    LD (HL),1 : INC HL                              ; ACT=1
+    LD A,(EBULLET_ORIGIN_X) : LD (HL),A : INC HL     ; X
+    LD A,(EBULLET_ORIGIN_Y) : LD (HL),A : INC HL     ; Y
+    LD (HL),B : INC HL                               ; DX
+    LD (HL),C                                        ; DY
+    RET
+
+; per-frame move for one active EBullet slot. IX=slot base, A=(EBULLET_
+; CUR_SLOT) already set by the caller (0-3, used only for the sprite-
+; attrs offset - EBULLET_POOL's own slot index isn't otherwise derivable
+; from IX alone without ADD IX,DE, which this assembler doesn't support).
+; Direction-aware X/Y bounds check before adding, same "check before you
+; wrap a small unsigned byte past 0" shape as UPDATE_BOSS_BROKEN_BEAM_
+; FLIGHT's own UBBBF_X_RIGHT/UBBBF_X_LEFT - extended here to BOTH axes
+; since (unlike the boss's own downward-only beams) an EBullet's own DY
+; can be negative too (aimed anywhere in a full 360-degree spread).
+UPDATE_ONE_EBULLET:
+    LD A,(IX+0)
+    OR A
+    RET Z                            ; inactive - already hidden from a previous frame, nothing to do
+
+    LD A,(IX+3)                      ; DX
+    OR A
+    JP M,UOEB_X_LEFT
+UOEB_X_RIGHT:
+    LD C,A
+    LD A,239 : SUB C : LD D,A
+    LD A,(IX+1)
+    CP D
+    JP NC,UOEB_OFFSCREEN
+    ADD A,C : LD (IX+1),A
+    JP UOEB_Y
+UOEB_X_LEFT:
+    LD C,A
+    XOR A : SUB C : LD D,A
+    LD A,(IX+1)
+    CP D
+    JP C,UOEB_OFFSCREEN
+    ADD A,C : LD (IX+1),A
+
+UOEB_Y:
+    LD A,(IX+4)                      ; DY
+    OR A
+    JP M,UOEB_Y_UP
+UOEB_Y_DOWN:
+    LD C,A
+    LD A,191 : SUB C : LD D,A
+    LD A,(IX+2)
+    CP D
+    JP NC,UOEB_OFFSCREEN
+    ADD A,C : LD (IX+2),A
+    JP UOEB_DRAW
+UOEB_Y_UP:
+    LD C,A
+    XOR A : SUB C : LD D,A
+    LD A,(IX+2)
+    CP D
+    JP C,UOEB_OFFSCREEN
+    ADD A,C : LD (IX+2),A
+
+UOEB_DRAW:
+    LD A,(EBULLET_CUR_SLOT) : ADD A,A : ADD A,A : LD E,A : LD D,0
+    LD HL,EBULLET_SPRITE_ATTRS : ADD HL,DE
+    LD A,(IX+2) : LD (HL),A : INC HL   ; Y
+    LD A,(IX+1) : LD (HL),A : INC HL   ; X
+    LD A,PAT_EBULLET : LD (HL),A : INC HL
+    LD A,EBULLET_COLOR : LD (HL),A
+    RET
+
+UOEB_OFFSCREEN:
+    XOR A
+    LD (IX+0),A
+    LD A,(EBULLET_CUR_SLOT) : ADD A,A : ADD A,A : LD E,A : LD D,0
+    LD HL,EBULLET_SPRITE_ATTRS : ADD HL,DE
+    LD (HL),209 : INC HL
+    XOR A
+    LD (HL),A : INC HL : LD (HL),A : INC HL : LD (HL),A
+    RET
+
+UPDATE_EBULLET_ALL:
+    XOR A : LD (EBULLET_CUR_SLOT),A
+    LD IX,EBULLET_POOL
+    CALL UPDATE_ONE_EBULLET
+    LD A,1 : LD (EBULLET_CUR_SLOT),A
+    LD IX,EBULLET_POOL+EBULLET_SLOT_SIZE
+    CALL UPDATE_ONE_EBULLET
+    LD A,2 : LD (EBULLET_CUR_SLOT),A
+    LD IX,EBULLET_POOL+EBULLET_SLOT_SIZE+EBULLET_SLOT_SIZE
+    CALL UPDATE_ONE_EBULLET
+    LD A,3 : LD (EBULLET_CUR_SLOT),A
+    LD IX,EBULLET_POOL+EBULLET_SLOT_SIZE+EBULLET_SLOT_SIZE+EBULLET_SLOT_SIZE
+    CALL UPDATE_ONE_EBULLET
+    CALL FLUSH_EBULLET_SPRITES
+    RET
+
+; blasts EBULLET_SPRITE_ATTRS (4 slots x4 bytes=16) to hw sprite slots
+; EBULLET_SPR_BASE_SLOT.. - same raw DI-wrapped NOP-padded OUT idiom as
+; every other FLUSH_*_SPRITES in this file.
+FLUSH_EBULLET_SPRITES:
+    DI
+    LD A,EBULLET_SPR_BASE_SLOT*4 : OUT (99h),A
+    NOP
+    NOP
+    LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    LD HL,EBULLET_SPRITE_ATTRS
+    LD B,16
+FEBS_LOOP:
+    LD A,(HL) : OUT (98h),A
+    PUSH BC : POP BC : NOP : NOP
+    INC HL
+    DJNZ FEBS_LOOP
+    EI
+    RET
+
+; AABB check, 4 slots fully unrolled with compile-time-constant addresses
+; from the start (same technique as CHECK_BOSS_BROKEN_BEAM_VS_TANK -
+; round36-14 follow-up#8/#9 - applied here directly rather than needing a
+; later round to retrofit it, since this check runs essentially every
+; frame throughout normal (non-boss) play once any ZacoII/Flyer exists).
+; "コリジョンは左上4x4ドット" - box is 4px wide/tall at the bullet's own
+; X,Y (its sprite's own top-left corner), same shared TANK_HAZARD_
+; IFRAMES/APPLY_TANK_DAMAGE/SOUND_ZUM_DEFLECT hit shape as every other
+; tank hazard in this file.
+CHECK_EBULLET_VS_TANK:
+    LD A,(TANK_HAZARD_IFRAMES)
+    OR A
+    RET NZ
+    LD A,(TANK_X) : ADD A,TANK_COLLISION_X_OFFSET : LD B,A
+    LD A,(TANK_Y_CUR) : ADD A,TANK_COLLISION_Y_OFFSET : LD C,A
+
+CEBVT_SLOT0:
+    LD A,(EBULLET_POOL+0)
+    OR A
+    JP Z,CEBVT_SLOT1
+    LD A,(EBULLET_POOL+1)
+    LD D,A
+    ADD A,3
+    CP B
+    JP C,CEBVT_SLOT1
+    LD A,B : ADD A,TANK_COLLISION_WIDTH-1
+    CP D
+    JP C,CEBVT_SLOT1
+    LD A,(EBULLET_POOL+2)
+    LD D,A
+    ADD A,3
+    CP C
+    JP C,CEBVT_SLOT1
+    LD A,C : ADD A,TANK_COLLISION_HEIGHT-1
+    CP D
+    JP C,CEBVT_SLOT1
+    LD A,FLASH_DURATION : LD (TANK_FLASH_TIMER),A
+    LD A,TANK_HAZARD_IFRAME_DURATION : LD (TANK_HAZARD_IFRAMES),A
+    CALL APPLY_TANK_DAMAGE
+    CALL SOUND_ZUM_DEFLECT
+    RET
+
+CEBVT_SLOT1:
+    LD A,(EBULLET_POOL+5)
+    OR A
+    JP Z,CEBVT_SLOT2
+    LD A,(EBULLET_POOL+6)
+    LD D,A
+    ADD A,3
+    CP B
+    JP C,CEBVT_SLOT2
+    LD A,B : ADD A,TANK_COLLISION_WIDTH-1
+    CP D
+    JP C,CEBVT_SLOT2
+    LD A,(EBULLET_POOL+7)
+    LD D,A
+    ADD A,3
+    CP C
+    JP C,CEBVT_SLOT2
+    LD A,C : ADD A,TANK_COLLISION_HEIGHT-1
+    CP D
+    JP C,CEBVT_SLOT2
+    LD A,FLASH_DURATION : LD (TANK_FLASH_TIMER),A
+    LD A,TANK_HAZARD_IFRAME_DURATION : LD (TANK_HAZARD_IFRAMES),A
+    CALL APPLY_TANK_DAMAGE
+    CALL SOUND_ZUM_DEFLECT
+    RET
+
+CEBVT_SLOT2:
+    LD A,(EBULLET_POOL+10)
+    OR A
+    JP Z,CEBVT_SLOT3
+    LD A,(EBULLET_POOL+11)
+    LD D,A
+    ADD A,3
+    CP B
+    JP C,CEBVT_SLOT3
+    LD A,B : ADD A,TANK_COLLISION_WIDTH-1
+    CP D
+    JP C,CEBVT_SLOT3
+    LD A,(EBULLET_POOL+12)
+    LD D,A
+    ADD A,3
+    CP C
+    JP C,CEBVT_SLOT3
+    LD A,C : ADD A,TANK_COLLISION_HEIGHT-1
+    CP D
+    JP C,CEBVT_SLOT3
+    LD A,FLASH_DURATION : LD (TANK_FLASH_TIMER),A
+    LD A,TANK_HAZARD_IFRAME_DURATION : LD (TANK_HAZARD_IFRAMES),A
+    CALL APPLY_TANK_DAMAGE
+    CALL SOUND_ZUM_DEFLECT
+    RET
+
+CEBVT_SLOT3:
+    LD A,(EBULLET_POOL+15)
+    OR A
+    RET Z
+    LD A,(EBULLET_POOL+16)
+    LD D,A
+    ADD A,3
+    CP B
+    RET C
+    LD A,B : ADD A,TANK_COLLISION_WIDTH-1
+    CP D
+    RET C
+    LD A,(EBULLET_POOL+17)
+    LD D,A
+    ADD A,3
+    CP C
+    RET C
+    LD A,C : ADD A,TANK_COLLISION_HEIGHT-1
+    CP D
+    RET C
+    LD A,FLASH_DURATION : LD (TANK_FLASH_TIMER),A
+    LD A,TANK_HAZARD_IFRAME_DURATION : LD (TANK_HAZARD_IFRAMES),A
+    CALL APPLY_TANK_DAMAGE
+    CALL SOUND_ZUM_DEFLECT
     RET
 
 ; ---------- Zum: spawn timer, then all slots (see ZUM_SLOT_SIZE above) ----------
@@ -7989,6 +8446,13 @@ UOFL_CRUISE_MOVE:
     JR NC,UOFL_CRUISE_STEP
     XOR A : LD (IX+1),A
     LD A,1 : LD (IX+8),A
+    ; "Flyerは画面左端まで行き反転後発射" - round36-14 follow-up#11:
+    ; fires exactly once, right at this cruise->home reversal, aimed at
+    ; the tank's own position this same instant - same LAUNCH_EBULLET
+    ; call as ZacoII's own (see UPDATE_ONE_ENEMY), IX untouched by it.
+    LD A,(IX+1) : LD (EBULLET_ORIGIN_X),A
+    LD A,(IX+2) : LD (EBULLET_ORIGIN_Y),A
+    CALL LAUNCH_EBULLET
     LD A,(IX+2) : LD D,A
     LD A,(TANK_Y_CUR)
     CP D
@@ -8334,6 +8798,14 @@ AETS_FOUND:
     LD (IX+7),A
     LD A,ETANK_HP_INIT : LD (IX+6),A
 
+    ; "スポーン後左へ32px移動したら発射" - round36-14 follow-up#11:
+    ; captures this instance's own spawn X (always ETANK_SPAWNX, a fixed
+    ; constant, but stored per-instance for a clear, self-contained
+    ; "moved 32px" test in UPDATE_ONE_ETANK rather than hardcoding the
+    ; same constant again there) and clears the one-shot fired flag.
+    LD A,ETANK_SPAWNX : LD (ETANK_SPAWN_X),A
+    XOR A : LD (ETANK_BULLET_FIRED),A
+
     ; dynamic pattern-VRAM share: overwrite BigZum's own BL/BR groups
     ; (PAT_BIGZUM+8/+12) with Etank's own art - safe only while BigZum
     ; is inactive (already gated above), restored whenever BigZum
@@ -8372,6 +8844,20 @@ UPDATE_ONE_ETANK:
     RET
 UOET_MOVE_OK:
     LD A,(IX+1) : SUB ETANK_SPEED : LD (IX+1),A
+
+    ; "スポーン後左へ32px移動したら発射し方向は左直進のみ" - round36-14
+    ; follow-up#11: one-shot, guarded by ETANK_BULLET_FIRED so later
+    ; frames (still well past the 32px line) don't refire.
+    LD A,(ETANK_BULLET_FIRED)
+    OR A
+    JR NZ,UOET_DRAW
+    LD A,(ETANK_SPAWN_X) : LD B,A
+    LD A,(IX+1) : LD C,A
+    LD A,B : SUB C            ; distance moved so far (spawn_x - current_x; Etank only ever moves left, so this never underflows)
+    CP 32
+    JR C,UOET_DRAW             ; not moved 32px yet
+    LD A,1 : LD (ETANK_BULLET_FIRED),A
+    CALL LAUNCH_ETANK_BULLET
 
 UOET_DRAW:
     ; hit-flash color resolve, once per draw call (see FLASH_DURATION's
@@ -8547,6 +9033,89 @@ CHPET_DESTROY:
     CALL SOUND_DESTROY
     LD HL,SCORE_PER_KILL
     CALL ADD_SCORE
+    RET
+
+; ---------- EtankBullet (Etank's own bullet, BG cell, left-only - see
+; ETANK_BULLET_ACT's own comment for the full spec/color-budget
+; background) ----------
+; IX = ETANK_POOL (the firing Etank's own struct - (IX+1)=X,(IX+2)=Y),
+; called from UPDATE_ONE_ETANK right at the 32px-moved transition.
+LAUNCH_ETANK_BULLET:
+    LD A,1 : LD (ETANK_BULLET_ACT),A
+    LD A,(IX+1) : LD (ETANK_BULLET_X),A
+    LD A,(IX+2) : LD (ETANK_BULLET_Y),A
+    RET
+
+; ETANK_BULLET_ACT/X/Y sit at consecutive addresses (+0/+1/+2), the same
+; relative layout ERASE_HORMING_BG_CELL/HORMING_BG_CELL_ADDR already
+; expect from their own IX - both are reused directly here unchanged
+; (IX=ETANK_BULLET_ACT for this call), rather than duplicating the same
+; row/col-address math and sky/skysand/sand/terrain-row restore logic a
+; 2nd time for a single-instance BG bullet that needs exactly the same
+; background-restoration behavior Horming's own BG bullets already have.
+DRAW_ETANK_BULLET_CELL:
+    LD A,ETANK_BULLET_PATTERN_CODE
+    LD (BULLET_TEMP_BYTE),A
+    CALL HORMING_BG_CELL_ADDR
+    JP WRITE_BULLET_BYTE_HL
+
+; erase-then-move-then-draw, same per-frame shape as UPDATE_HORMING_BG_
+; ALL - called every frame alongside UPDATE_ETANK_ALL (same BOSS_ACT
+; guard). Only 1 concurrent instance ever needed (ETANK_SLOT_COUNT=1
+; itself, and this bullet only ever fires once per Etank spawn), so a
+; flat single-instance routine instead of a real pool loop.
+UPDATE_ETANK_BULLET_ALL:
+    LD A,(ETANK_BULLET_ACT)
+    OR A
+    RET Z
+    LD IX,ETANK_BULLET_ACT
+    CALL ERASE_HORMING_BG_CELL
+    LD A,(ETANK_BULLET_X)
+    CP ETANK_BULLET_SPEED
+    JR NC,UEBA_MOVE_OK
+    XOR A : LD (ETANK_BULLET_ACT),A   ; off the left edge - already erased above, nothing left to draw
+    RET
+UEBA_MOVE_OK:
+    SUB ETANK_BULLET_SPEED
+    LD (ETANK_BULLET_X),A
+    CALL DRAW_ETANK_BULLET_CELL
+    RET
+
+; AABB check (8x8 box, matching the bullet's own single BG cell) - same
+; shared TANK_HAZARD_IFRAMES/APPLY_TANK_DAMAGE/SOUND_ZUM_DEFLECT hit
+; shape as every other tank hazard in this file. A hit does NOT
+; deactivate the bullet - it keeps flying through/past the tank, same
+; "one hit per frame is enough, hazard survives" convention as CHECK_
+; BOSS_BROKEN_BEAM_VS_TANK's own beams.
+CHECK_ETANK_BULLET_VS_TANK:
+    LD A,(ETANK_BULLET_ACT)
+    OR A
+    RET Z
+    LD A,(TANK_HAZARD_IFRAMES)
+    OR A
+    RET NZ
+    LD A,(TANK_X) : ADD A,TANK_COLLISION_X_OFFSET : LD B,A
+    LD A,(TANK_Y_CUR) : ADD A,TANK_COLLISION_Y_OFFSET : LD C,A
+    LD A,(ETANK_BULLET_X)
+    LD D,A
+    ADD A,7
+    CP B
+    RET C
+    LD A,B : ADD A,TANK_COLLISION_WIDTH-1
+    CP D
+    RET C
+    LD A,(ETANK_BULLET_Y)
+    LD D,A
+    ADD A,7
+    CP C
+    RET C
+    LD A,C : ADD A,TANK_COLLISION_HEIGHT-1
+    CP D
+    RET C
+    LD A,FLASH_DURATION : LD (TANK_FLASH_TIMER),A
+    LD A,TANK_HAZARD_IFRAME_DURATION : LD (TANK_HAZARD_IFRAMES),A
+    CALL APPLY_TANK_DAMAGE
+    CALL SOUND_ZUM_DEFLECT
     RET
 
 ; U's own hw sprite position: builds BULLET_U_SPRITE_ATTRS (3 slots x

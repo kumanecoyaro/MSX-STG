@@ -75,11 +75,14 @@ for i, line in enumerate(lines):
 # single-byte-per-DJNZ-iteration shape FLUSH_SBEAM_SPRITES/FLUSH_
 # HORMING_SPRITES already use (2 OUT(99h),A address-setup writes + only
 # 1 OUT(98h),A data write in source, looped at runtime) - 30->32 / 24->25.
+# round36-14 follow-up #11 ("ザコ敵の弾発射実装"): FLUSH_EBULLET_SPRITES
+# (EBullet's own flush) adds 1 more site, same single-byte-per-DJNZ-
+# iteration shape as the round above - 32->34 / 25->26.
 check(f"found the expected number of raw OUT (99h),A sites ({len(n99)} - update this "
       "count deliberately if a new one is added, don't just let the test drift)",
-      len(n99) == 32)
+      len(n99) == 34)
 check(f"found the expected number of raw OUT (98h),A sites ({len(n98_delay)})",
-      len(n98_delay) == 25)
+      len(n98_delay) == 26)
 
 bad99 = [(ln, n) for ln, n in n99 if n != 2]
 check("every OUT (99h),A (VRAM address setup) is padded with exactly 2 NOPs (8T)",
