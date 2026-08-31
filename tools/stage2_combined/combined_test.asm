@@ -3712,6 +3712,50 @@ IETSA_LOOP:
     LD (HL),A : INC HL
     DJNZ IETSA_LOOP
 
+    ; 実機フィードバック対応(round36-14 follow-up#13の直後、"地形スク
+    ; ロールが乱れてる...一つ前のビルドでも地形は乱れるが 実行してから
+    ; 最新を実行すると正しく動く どこかで初期化ミスしてるな" + "1回だけ
+    ; だがスタート直後にFlyerレーザーがいきなり飛んできた"): ETANK_
+    ; BULLET_ACT/MINE_POOL/FLYER_LASER_ACTはこの一連の実装
+    ; (follow-up#11/#12)を通じて一度も明示的にゼロクリアされていな
+    ; かった - fresh_cpu()のPythonテストハーネスはRAMを暗黙に全ゼロ
+    ; 初期化するため気づけなかったが、実機のRAMは電源投入直後不定値
+    ; (ゴミ)を含みうる。ACTが偶然ゴミの非ゼロ値だと、実際にはまだ何も
+    ; スポーンしていないのにUPDATE_ETANK_BULLET_ALL/UPDATE_MINE_ALL/
+    ; UPDATE_FLYER_LASER_ALLがゴミのX/Yをそのまま座標として扱い、
+    ; ERASE_HORMING_BG_CELL経由で地形のBGネームテーブルに不正な書き込み
+    ; をしてしまう(スクロールでその書き込みが流れて見えるため「地形
+    ; スクロールが乱れてる」)。FlyerLaserも同様にACTが偶然非ゼロだと
+    ; スタート直後に実体のない弾が飛んで見える。「1つ前のビルドを実行
+    ; してから最新を実行すると直る」は、電源を切らない再ロードでは
+    ; RAMの中身が前回起動時の(結果的にクリーンな)状態のまま残る
+    ; ため - まさに初期化漏れの典型症状。ENEMY_POOL/ZUM_POOL/BIGZUM_
+    ; POOL/FLYER_POOL/EBULLET_POOL/ETANK_POOL自身は全て同じ理由で
+    ; 明示的にゼロクリアされている(このINIT自身の既存パターン)のに、
+    ; この3つだけ後から追加した際にこの規約を踏襲し忘れていた。
+    XOR A
+    LD (ETANK_BULLET_ACT),A
+    LD (ETANK_BULLET_X),A
+    LD (ETANK_BULLET_Y),A
+    LD (ETANK_SPAWN_X),A
+    LD (ETANK_BULLET_FIRED),A
+    LD HL,MINE_POOL
+    LD B,MINE_SLOT_SIZE*MINE_SLOT_COUNT
+IMNZ_LOOP:
+    LD (HL),A
+    INC HL
+    DJNZ IMNZ_LOOP
+    LD HL,MINE_SPRITE_ATTRS
+    LD A,209 : LD (HL),A : INC HL
+    XOR A
+    LD (HL),A : INC HL
+    LD (HL),A : INC HL
+    LD (HL),A
+    XOR A
+    LD (FLYER_LASER_ACT),A
+    LD (FLYER_LASER_X),A
+    LD (FLYER_LASER_Y),A
+
     ; boss (Sasapi): just BOSS_ACT=0 (not spawned) plus the rest of its
     ; own state zeroed alongside it - no pattern-VRAM load and no hw
     ; sprite hide-init here either, same reasoning as Etank just above

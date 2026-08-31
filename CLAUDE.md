@@ -910,3 +910,37 @@
   全回帰1205 passed/0 failed。VRAM→PNGレンダリングで水平弾4発・
   斜め弾4発(4発目もHWスプライト正常表示)を確認しユーザーへ送付。
   詳細はHANDOFF.md Round36-14(follow-up#13)参照。
+- **(2026-08-31、Round36-14 follow-up#14、完了済み)**: "エミュレータは
+  問題ないのだが実機確認すると地形スクロールが乱れてる Rockのペアの
+  16x8の内左側8x8のみおかしい"、続けて"分かった 一つ前のビルドでも
+  地形は乱れるが実行してから最新を実行すると正しく動く どこかで初期化
+  ミスしてるな で、1回だけだがスタート直後にFlyerレーザーがいきなり
+  飛んできた"に対応。根本原因: `ETANK_BULLET_ACT`(follow-up#11)・
+  `MINE_POOL`(follow-up#12)・`FLYER_LASER_ACT`(follow-up#12)の3つが、
+  実装した一連のラウンドを通じて一度もINIT時に明示的にゼロクリアされ
+  ていなかった。`ENEMY_POOL`/`ZUM_POOL`/`BIGZUM_POOL`/`FLYER_POOL`/
+  `EBULLET_POOL`/`ETANK_POOL`自身は全て「バッファ全体を明示的にゼロで
+  埋める」という既存のINIT規約に律儀に従っていたのに、後から追加した
+  この3箇所だけ踏襲し忘れていた。このバグがテストで一度も検出されな
+  かった理由は、`tests/banked_helpers.py`の`fresh_cpu()`が使う
+  `BankedMem`の`self.flat`がPython標準の`bytearray(0x10000)`(常に
+  全ゼロ初期化)だったため - 「RAMは電源投入直後から全ゼロ」という、
+  実機では成り立たない前提をテストハーネス自体が暗黙に持っていた。
+  ACTがたまたまゴミの非ゼロ値だと、実際は何もスポーンしていないのに
+  各UPDATE系ルーチンがゴミのX/Yを座標として扱い、Mine/EtankBulletが
+  共有する`ERASE_HORMING_BG_CELL`経由で地形のBGネームテーブルに不正な
+  書き込みをしてしまう(スクロールでその誤書き込みが流れて見えるため
+  「地形スクロールが乱れている」ように見える)。"1つ前のビルドを実行
+  してから最新を実行すると直る"という報告は、電源を切らない再ロードで
+  はRAMが前回起動時の状態を引き継ぐという典型的な初期化漏れの症状と
+  整合。`ETANK_BULLET_ACT`/`ETANK_BULLET_X/Y`/`ETANK_SPAWN_X`/
+  `ETANK_BULLET_FIRED`・`MINE_POOL`全体+`MINE_SPRITE_ATTRS`(Y=209
+  プライミング)・`FLYER_LASER_ACT/X/Y`をINIT時に明示的にゼロクリア
+  する修正を追加。新規`init_ram_poison_test.py`(48件) - RAM全体を
+  0xFF/0xAA/0x55/0x01で汚染してから実際にINITトレースを1から実行し、
+  この3つだけでなく既存の全主要プールも横断的に「本当にゼロになるか」
+  を検証する回帰ガードを新設。開発中に自分自身のテストの誤り
+  (`FLYER_POOL`を「完全ゼロ」でアサートしたが、`ENEMY_POOL`と同じく
+  各スロット自身のSPRIDXを意図的に非ゼロ設定する仕様だったため誤検知)
+  を発見・修正。全回帰1253 passed/0 failed。詳細はHANDOFF.md
+  Round36-14(follow-up#14)参照。

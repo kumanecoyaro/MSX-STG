@@ -7003,3 +7003,73 @@ Thunder activity) confirming it survives completely untouched.
   `run_all.py` **1205 passed/0 failed**。ビルド前にVRAM→PNGレンダ
   リングで水平弾4発・斜め弾4発(4発目もHWスプライトで正しく表示)の
   両方を確認しユーザーへ送付。ROM容量は変化なし(30357/32768バイト)。
+
+## Round 36-14 follow-up#14: 実機の地形スクロール乱れ・スタート直後の幻のFlyerLaserを修正(INIT初期化漏れ)
+
+- User instruction(verbatim、複数ターン): "エミュレータは問題ないのだが
+  実機確認すると地形スクロールが乱れてる Rockのペアの16x8の内左側8x8
+  のみおかしい" → "分かった 一つ前のビルドでも地形は乱れるが 実行して
+  から最新を実行すると正しく動く どこかで初期化ミスしてるな で、1回
+  だけだがスタート直後にFlyerレーザーがいきなり飛んできた 恐らくそこ
+  らの処理の問題"
+- **根本原因**: `ETANK_BULLET_ACT`(follow-up#11)・`MINE_POOL`
+  (follow-up#12)・`FLYER_LASER_ACT`(follow-up#12)の3つが、実装した
+  一連のラウンドを通じて一度もINIT時に明示的にゼロクリアされていな
+  かった。この一方で`ENEMY_POOL`/`ZUM_POOL`/`BIGZUM_POOL`/`FLYER_
+  POOL`/`EBULLET_POOL`/`ETANK_POOL`自身は全て「バッファ全体を明示的に
+  ゼロで埋める」という既存のINIT規約に律儀に従っていた(このINIT自身
+  のコメントに"管理もバッファ経由だぞ 個別に適当にやるなよ"と明記
+  済み)。この規約を後から追加した3箇所だけ踏襲し忘れていた。
+  - このバグがこれまでのテストで一度も検出されなかった理由: `tests/
+    banked_helpers.py`の`fresh_cpu()`が使う`BankedMode`の`self.flat`
+    は`bytearray(0x10000)`というPythonの標準初期化で、これは常に
+    全ゼロから始まる。つまりこのプロジェクト自身のテストハーネスは
+    「RAMは電源投入直後から全ゼロ」という、実機では成り立たない
+    前提を暗黙に持っていた。実機のRAMは電源投入直後、不定値(その
+    時のメモリチップの物理状態に依存するゴミ)を含みうる。
+  - ACTフィールドがたまたまゴミの非ゼロ値だと、実際には何もスポーン
+    していないのに`UPDATE_ETANK_BULLET_ALL`/`UPDATE_MINE_ALL`/
+    `UPDATE_FLYER_LASER_ALL`がゴミのX/Yをそのまま座標として扱い、
+    Mine/EtankBulletが共有する`ERASE_HORMING_BG_CELL`経由で地形の
+    BGネームテーブル(スクロール地形が実際に描画されている領域)に
+    不正な値を書き込んでしまう - スクロールによってその1回限りの
+    誤書き込みが画面全体を流れていくため「地形スクロールが乱れて
+    いる」ように見える(Rockペアのどちらか片方の8x8セルだけがたまたま
+    上書きされた、というユーザーの報告とも整合)。FlyerLaserも同様の
+    理由で、ACTがたまたま非ゼロだとスタート直後に実体のない弾が
+    出現して見える。
+  - "1つ前のビルドを実行してから最新を実行すると直る"という報告は
+    この仮説を強く裏付ける - MSXの電源を切らずカートリッジだけ
+    差し替える(またはリセットボタンでの再起動)場合、RAM自体は
+    クリアされず前回起動時の状態を引き継ぐため、"クリーンな"状態を
+    残す旧ビルドを一度実行した直後だと問題が再現しない、という典型的
+    な初期化漏れの症状。
+- **修正**: `ETANK_BULLET_ACT`/`ETANK_BULLET_X`/`ETANK_BULLET_Y`/
+  `ETANK_SPAWN_X`/`ETANK_BULLET_FIRED`、`MINE_POOL`全体(`MINE_SLOT_
+  SIZE*MINE_SLOT_COUNT`バイト)+`MINE_SPRITE_ATTRS`(Y=209の非表示
+  プライミング、他の全`*_SPRITE_ATTRS`バッファと同じ規約)、
+  `FLYER_LASER_ACT`/`FLYER_LASER_X`/`FLYER_LASER_Y`を、既存の
+  `ETANK_POOL`ゼロクリア直後にINIT時明示的にゼロクリアするコードを
+  追加。
+- **検証**: 新規`init_ram_poison_test.py`(48件) - `fresh_cpu()`の
+  キャッシュ済みブートスナップショットを迂回し、`mem.flat`全体を
+  0xFF/0xAA/0x55/0x01の4パターンであらかじめ「汚染」した状態から
+  実際にINITトレースを1から実行し、ETANK_BULLET_ACT/MINE_POOL/
+  FLYER_LASER_ACTだけでなく、既に正しく実装されていた全ての主要
+  プール(EBULLET_POOL/ENEMY_POOL/FLYER_POOL/ZUM_POOL/BIGZUM_POOL/
+  ETANK_POOL/BULLET0-3_ACT/BOSS_ACT)についても横断的に「本当にゼロに
+  なるか」を実際に汚染RAMから検証する回帰ガードとして新設(今後
+  同種の初期化漏れが再発しても機械的に検出できる)。実行時間は
+  0.86秒(4回の完全なINITトレースにもかかわらず高速、キャッシュ
+  不要)。開発中に自分自身のテストの誤り(`FLYER_POOL`を「完全ゼロ」
+  でアサートしたが、`FLYER_POOL`は`ENEMY_POOL`と同じく各スロット
+  自身のSPRIDX(+4)をスロット番号自身の値に意図的に非ゼロ設定する
+  仕様だったため誤検知)を発見・修正、各スロットのACTのみを検証する
+  形に訂正。全回帰`run_all.py` **1253 passed/0 failed**。ROM容量は
+  変化なし(30357/32768バイト)。
+- **教訓**: 新規エンティティのRAM状態を追加する際は、既存プール
+  (ENEMY_POOL等)と同じ「INIT時に明示的にゼロクリアする」規約を
+  必ず踏襲すること。「テストハーネスのRAMは暗黙にゼロ初期化される
+  から大丈夫」という判断は、実機の本当の電源投入直後の状態を
+  代表していない - 今後は`init_ram_poison_test.py`のような汚染RAM
+  ベースの検証を新規状態追加のたびに拡張することが望ましい。
