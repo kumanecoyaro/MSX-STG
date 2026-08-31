@@ -1,11 +1,19 @@
 """round36-14 follow-up#11 ("ザコ敵の弾発射実装 ZakoII2種は反転時に添付
 データEBullet発射 コリジョンは左上4x4ドット 発射タイミングの瞬間の自機
 を狙って直進 発射は16方向 Flyerは画面左端まで行き反転後発射"): EBullet
-is the ZacoII/Flyer enemy bullet - a hw sprite (own verified-free
-pattern-code/ATTRIBUTE-slot budget, see EBULLET_SLOT_SIZE's own comment)
-that aims at the tank's own position at the exact instant it's fired,
-then flies dead straight in 1 of 16 quantized directions until off-
-screen.
+is the ZacoII/Flyer enemy bullet - a hw sprite that aims at the tank's
+own position at the exact instant it's fired, then flies dead straight
+in 1 of 16 quantized directions until off-screen.
+
+PAT_EBULLET reuses SBEAM_CODE(252-255) - a boss-exclusive pattern slot,
+safe because SBeam's own art isn't loaded until TRIGGER_BOSS time, well
+after ZacoII/Flyer (and so EBullet firing) have already stopped for
+good. This round's own real-hardware feedback ("EBulletが全く違う
+パターン") caught the FIRST version's own mistake: codes234-238/251-255
+had looked "free" in a VRAM-content survey, but were actually blank-but-
+reserved filler within PAT_FLYER/PAT_FLYER_L's own 16-code pose blocks -
+see EBULLET_SLOT_SIZE's own comment in combined_test.asm for the full
+account.
 """
 import math
 import os
@@ -40,6 +48,31 @@ SAT_BASE = 0x1B00
 
 check("EBULLET_SLOT_COUNT is 4 (matches PAT_EBULLET's own 4-code group and the 4 verified-free ATTRIBUTE slots)",
       COUNT == 4)
+
+PAT_EBULLET = sym["PAT_EBULLET"]
+SBEAM_CODE = sym["SBEAM_CODE"]
+check("PAT_EBULLET really is SBEAM_CODE (the boss-exclusive slot this round's real-hardware fix reuses)",
+      PAT_EBULLET == SBEAM_CODE)
+
+# direct byte comparison against the source art, right after boot - the
+# exact class of check that would have caught the original pattern-code
+# collision immediately (same "direct byte comparison" precedent as
+# BOSS_BROKEN_BEAM_CODE1-4's own verification).
+import ebullet_gen as _eg
+_cpu_pat = fresh_cpu()
+_SPRPAT = 0x3800
+_actual = [_cpu_pat.vram[_SPRPAT + PAT_EBULLET * 8 + i] for i in range(32)]
+check("EBullet's own pattern VRAM (SPRPAT+PAT_EBULLET*8, 32 bytes) exactly matches ebullet_gen.py's own source art right after boot",
+      _actual == list(_eg.EBULLET_SPRITE))
+
+# and confirm SBeam's own later (boss-trigger-time) load safely overwrites
+# it, proving the reuse ordering this round's fix depends on actually holds.
+_cpu_boss = fresh_cpu()
+_cpu_boss.mem[sym["BOSS_ACT"]] = 0
+call_routine(_cpu_boss, "S2_BOSS_SPAWN")
+_after_boss = [_cpu_boss.vram[_SPRPAT + PAT_EBULLET * 8 + i] for i in range(32)]
+check("once S2_BOSS_SPAWN runs, SBeam's own real art occupies the same codes (EBullet's own data is safely gone by then)",
+      _after_boss != list(_eg.EBULLET_SPRITE))
 
 
 # ---------- EBULLET_DIR16 (16-direction aim reduction) ----------

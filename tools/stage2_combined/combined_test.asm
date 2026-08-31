@@ -2642,15 +2642,38 @@ PAT_ETANK_BR EQU PAT_BIGZUM+12
 ; own position at that exact instant then flying dead straight (not
 ; homing) until off-screen.
 ;
-; This round's own full empirical hw sprite budget survey (booted +
+; This round's own first empirical hw sprite budget survey (booted +
 ; ~6000 pre-boss frames of real simulated play, checking every one of
-; the 256 sprite pattern codes' own VRAM bytes AND every one of the 32
-; ATTRIBUTE table slots for non-hidden/non-zero content - see this
-; round's own HANDOFF entry for the full methodology) found the earlier
-; "0 free, both budgets" belief (round36-11/36-12) was stale: normal
-; (non-boss) gameplay genuinely never touches ATTRIBUTE slots26-31 (6
-; slots) or pattern codes234-238/251-255 (2 runs of >=4 consecutive
-; codes) - a real reversal from what every earlier round assumed.
+; the 256 sprite pattern codes' own VRAM bytes for non-zero content)
+; found ATTRIBUTE slots26-31 (6 slots) genuinely never touched during
+; normal (non-boss) play - that part held up. But the SAME survey
+; wrongly read pattern codes234-238/251-255 as "free": a real-hardware
+; report ("EBulletが全く違うパターン") caught what the survey actually
+; missed - PAT_FLYER(220-235)/PAT_FLYER_L(236-251) each reserve a full
+; 16-code/128-byte block for multiple poses, but only SOME of those 16
+; codes have real (non-zero) art; the REST are legitimately blank-but-
+; RESERVED filler, indistinguishable from genuinely free codes by a
+; simple "is it non-zero" check (the same blind spot HUD_ROW_BLANK_
+; CODE's own all-zero-on-purpose tile already illustrates elsewhere in
+; this file - "空きに見える" isn't the same as "空き"). A full symbol-
+; table-driven audit (every PAT_*/*_CODE EQU cross-referenced against
+; its own real LDIRVM byte count, not just VRAM content) found codes
+; 0-255 have ZERO genuinely free space anywhere - the entire range is
+; claimed, with deliberate SAFE overlaps existing only between
+; temporally-exclusive systems (e.g. HORMING's own codes220-239 reuse
+; Flyer's, exactly like ATTRIBUTE slot reuse elsewhere in this file -
+; safe because Flyer is provably inactive whenever Horming's own boss-
+; only code runs).
+;
+; Fixed by reusing SBEAM_CODE(252-255) the same documented way - SBeam
+; ("サンダービーム") is itself a boss-exclusive attack, its own pattern
+; loaded once at TRIGGER_BOSS time, well after ZacoII/Flyer (and so
+; EBullet's own firing) have already stopped for good (same BOSS_ACT
+; gate - see SKIP_ZACO_ENEMY/SKIP_OTHER_ENEMIES). EBullet's own INIT-
+; time load holds this code safely for the whole non-boss game, then
+; SBeam's own later load simply overwrites it once the boss exists -
+; identical in spirit to HORMING_SPR_BASE_SLOT's own ATTRIBUTE-slot
+; reuse trick, just applied to pattern codes instead.
 EBULLET_SLOT_SIZE  EQU 5    ; +0 ACT,+1 X,+2 Y,+3 DX(signed px/frame),+4 DY(signed px/frame)
 EBULLET_SLOT_COUNT EQU 4
 EBULLET_POOL          EQU 0C0F5h   ; 4 slots x5 bytes = 20 bytes (C0F5h-C108h)
@@ -2663,8 +2686,8 @@ EBULLET_SPRITE_ATTRS  EQU 0C109h   ; 4 slots x4 bytes (Y,X,pat,col) = 16 bytes (
 EBULLET_ORIGIN_X EQU 0C119h
 EBULLET_ORIGIN_Y EQU 0C11Ah
 EBULLET_CUR_SLOT EQU 0C120h   ; scratch: which of the 4 pool slots UPDATE_ONE_EBULLET is currently working on (0-3) - see UPDATE_EBULLET_ALL
-EBULLET_SPR_BASE_SLOT EQU 26   ; hw sprite slots26-29 (verified free above)
-PAT_EBULLET EQU 234            ; TL=234(real art)/BL=235/TR=236/BR=237(blank) - verified free above
+EBULLET_SPR_BASE_SLOT EQU 26   ; hw sprite ATTRIBUTE slots26-29 (this part of the survey held up - see comment above)
+PAT_EBULLET EQU SBEAM_CODE      ; TL=252(real art)/BL=253/TR=254/BR=255(blank) - boss-exclusive reuse, see comment above
 EBULLET_COLOR EQU 9             ; sprites/Ebullet_16x16.json's own fg (light red) - hw sprite color is a single index, no bg half like BG cells
 
 ; ---------- EtankBullet (Etank's own bullet, BG cell, left-only) ----------
@@ -9040,10 +9063,18 @@ CHPET_DESTROY:
 ; background) ----------
 ; IX = ETANK_POOL (the firing Etank's own struct - (IX+1)=X,(IX+2)=Y),
 ; called from UPDATE_ONE_ETANK right at the 32px-moved transition.
+; round36-14 follow-up#11 実機フィードバック対応: (IX+2) is Etank's own
+; raw Y field, but Etank's real ART only occupies the BOTTOM half of a
+; hypothetical 32x32 canvas ("Etankはそもそも32x16しか使っていない" -
+; UOET_DRAW's own BL/BR quadrants are drawn at (IX+2)+16, TL/TR always
+; hidden - see ETANK_COLLISION_Y_OFFSET's own "=16" comment for the same
+; fact from the collision side). Using the raw (IX+2) here (as the first
+; version of this routine did) spawned the bullet 16px/2 cells above
+; where Etank is actually drawn.
 LAUNCH_ETANK_BULLET:
     LD A,1 : LD (ETANK_BULLET_ACT),A
     LD A,(IX+1) : LD (ETANK_BULLET_X),A
-    LD A,(IX+2) : LD (ETANK_BULLET_Y),A
+    LD A,(IX+2) : ADD A,16 : LD (ETANK_BULLET_Y),A
     RET
 
 ; ETANK_BULLET_ACT/X/Y sit at consecutive addresses (+0/+1/+2), the same

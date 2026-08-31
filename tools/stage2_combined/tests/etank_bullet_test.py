@@ -57,8 +57,13 @@ cpu2.mem[ETANK_POOL + 1] = 150
 cpu2.mem[ETANK_POOL + 2] = 80
 cpu2.ix = ETANK_POOL
 call_routine(cpu2, "LAUNCH_ETANK_BULLET")
-check("bullet activates at the firing Etank's own current position",
-      cpu2.mem[ETANK_BULLET_ACT] == 1 and cpu2.mem[ETANK_BULLET_X] == 150 and cpu2.mem[ETANK_BULLET_Y] == 80)
+# round36-14 follow-up#11 実機フィードバック対応: Etank's own (IX+2) is a
+# raw canvas-top Y, but its real art (UOET_DRAW's own BL/BR quadrants)
+# is only ever drawn at (IX+2)+16 - "Etankはそもそも32x16しか使って
+# いない" - so the bullet's own spawn Y must match that +16, not the raw
+# field, or it spawns 2 cells above where Etank is actually drawn.
+check("bullet activates at the firing Etank's own ACTUAL drawn position (Y offset +16, not the raw canvas-top field)",
+      cpu2.mem[ETANK_BULLET_ACT] == 1 and cpu2.mem[ETANK_BULLET_X] == 150 and cpu2.mem[ETANK_BULLET_Y] == 96)
 
 
 # ---------- UPDATE_ETANK_BULLET_ALL ----------
