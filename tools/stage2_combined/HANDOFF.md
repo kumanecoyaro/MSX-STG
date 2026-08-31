@@ -6778,3 +6778,53 @@ Thunder activity) confirming it survives completely untouched.
   場合はgroup17自体の塗り替え(Mine/NIGHT_CODEへの影響込みで再検討)
   も選択肢として残る。`MINE_GRAVITY`/`MINE_GRAVITY_INTERVAL`/
   `MINE_VX`は全て未調整の初期値。
+
+## Round 36-14 follow-up#12 実機フィードバック対応その2: Flyer位置バグ・Mine投下位置・反転時Bullet・レーザー色
+
+- User instruction(verbatim): "まずFlyer 色は置いておいてMine投下直後か
+  直前 一瞬違う位置にFlyerが表示されてる で投下位置も本体の左に来て
+  ない 次に反転時のBullet発射は削除 Flyerレーザーは別の色無いのか
+  流石にブラックはレーザーに見えない"
+- **Flyerが一瞬別の位置に表示されるバグ(実バグ)**: `UOFL_CRUISE_STEP`
+  のMine投下トリガーが`CALL ALLOC_MINE_SLOT`していたが、
+  `ALLOC_MINE_SLOT`自身が`LD IX,MINE_POOL`でIXを再利用(空きスロットを
+  探すため)しており、このCALLの直後に続く`JP UOFL_DRAW`(Flyer自身の
+  描画)がまだFlyerの元のIXを前提にしていた。結果、Mine投下が起きた
+  その1フレームだけ、UOFL_DRAWが`MINE_POOL`のデータをFlyerの位置・
+  向き・パターン等として誤って読み描画していた(=「一瞬違う位置に
+  表示される」)。同じ問題を回避するため元々`LAUNCH_EBULLET`はIXを
+  一切触らない実装になっていた(その旨コメントに明記済みだった)のに、
+  `ALLOC_MINE_SLOT`はその制約を踏襲していなかったのが根本原因。
+  呼び出し側で`PUSH IX`/`POP IX`を追加して解消。新規テストで
+  「投下フレームそのものでFlyer自身のステージング済みスプライト座標が
+  Flyer自身の実座標のままである」ことを直接検証。
+- **Mine投下位置**: 従来`(IX+1)+16`(Flyer本体の中心)を投下起点に
+  していたが、「本体の左」という指示通り`(IX+1)`(Flyer自身の生X、
+  つまり32x32キャンバスの左端)に変更。Y側(+16、垂直中心)は変更なし。
+- **反転時のBullet発射を削除**: `UOFL_CRUISE_MOVE`(PHASE0→1の反転
+  地点)に残っていたEBullet発射コード(follow-up#11で実装したもの)を
+  完全に削除。Flyerは今回のMine投下・FlyerLaserという2つの新しい
+  攻撃手段を持ったため、EBulletは不要と判断。ZacoII自身のEBullet
+  発射(`UPDATE_ONE_ENEMY`)は無変更。
+- **FlyerLaserの色を再度変更**: 前段(group17、fg1黒/bg5)は背景こそ
+  完全一致していたが、「流石にブラックはレーザーに見えない」との
+  指摘。全32グループを再確認しても fg7(シアン)+bg5(空色) の組み合わせ
+  を持つグループは存在しないため、group27(Thunderのグループ、
+  fg7/bg1)へ移設 - 今度はビーム自体の色(シアン)を完全一致させ、
+  背景(黒)側を妥協する方向に転換(コード221、THUNDERS_CODEの直後)。
+  group17/group27いずれの塗り替えも、それぞれMine・NIGHT_CODEの
+  夜間パレット/Thunderのボス攻撃演出という既にチューニング済みの
+  機能を巻き込むため見送り。レンダリングで「シアンのビームに黒い
+  箱」という見た目を確認、"レーザー自体はシアン"という具体的な要望を
+  優先する判断とした。
+- **検証**: `ebullet_test.py`のFlyer関連テストを「もうEBulletは発射
+  されない」ことを確認する内容に書き直し(32件)。`mine_flyerlaser_
+  test.py`にIXバグの直接再現テスト・投下位置がFlyer左端と一致する
+  テスト・新しいgroup27所属確認を追加(45件)。全回帰`run_all.py`
+  1177 passed/0 failed。ビルド前にVRAM→PNGレンダリングで(1)投下
+  瞬間のFlyer自身の位置が正しいまま・Mineが本体左に出現すること、
+  (2)シアン色のFlyerLaserを確認しユーザーへ送付。ROM容量は変化なし
+  (30357/32768バイト)。
+- **保留・未確定**: FlyerLaserの黒背景(シアンとのトレードオフ)への
+  追加フィードバック次第では、group17/group27自体の塗り替え(Mine/
+  Night/Thunderへの影響込みで再検討)も選択肢として残る。

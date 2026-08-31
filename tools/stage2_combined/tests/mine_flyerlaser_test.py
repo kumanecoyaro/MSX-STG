@@ -37,6 +37,7 @@ MINE1_CODE = sym["MINE1_CODE"]
 MINE2_CODE = sym["MINE2_CODE"]
 MINE_EXPL_SPR_BASE_SLOT = sym["MINE_EXPL_SPR_BASE_SLOT"]
 MINE_SPRITE_ATTRS = sym["MINE_SPRITE_ATTRS"]
+FLYER_SPRITE_ATTRS = sym["FLYER_SPRITE_ATTRS"]
 EXPLOSION_DURATION = sym["EXPLOSION_DURATION"]
 PAT_EXPLOSION = sym["PAT_EXPLOSION"]
 EXPLOSION_COLOR = sym["EXPLOSION_COLOR"]
@@ -71,9 +72,9 @@ check("FlyerLaser's own BG pattern VRAM matches sprites/FlyerLaser_16x16.json's 
       [_cpu_pat.vram[FLYER_LASER_PATTERN_CODE*8+i] for i in range(8)] == list(_flg.FLYER_LASER_PATTERN))
 check("MINE1_CODE/MINE2_CODE sit in group17 (NIGHT_CODE's own group), not overlapping NIGHT_CODE itself",
       MINE1_CODE // 8 == sym["NIGHT_CODE"] // 8 and MINE1_CODE != sym["NIGHT_CODE"] and MINE2_CODE != sym["NIGHT_CODE"])
-check("FLYER_LASER_PATTERN_CODE sits in group17 alongside NIGHT_CODE/MINE1_CODE/MINE2_CODE, not overlapping any of them",
-      FLYER_LASER_PATTERN_CODE // 8 == sym["NIGHT_CODE"] // 8
-      and FLYER_LASER_PATTERN_CODE not in (sym["NIGHT_CODE"], MINE1_CODE, MINE2_CODE))
+check("FLYER_LASER_PATTERN_CODE sits in group27 alongside THUNDER_CODE_BASE/THUNDERS_CODE (fg7 cyan exact match), not overlapping either",
+      FLYER_LASER_PATTERN_CODE // 8 == sym["THUNDER_CODE_BASE"] // 8
+      and FLYER_LASER_PATTERN_CODE not in range(sym["THUNDER_CODE_BASE"], sym["THUNDERS_CODE"] + 1))
 
 
 # ---------- ALLOC_MINE_SLOT ----------
@@ -275,14 +276,28 @@ cpu16 = fresh_cpu()
 call_routine(cpu16, "ALLOC_FLYER_SLOT")
 spawn_x = cpu16.mem[FLYER_POOL+1]
 mine_frame = None
+flyer_x_at_drop = None
+mine_x_at_drop = None
+flyer_sprite_y_at_drop = None
+flyer_sprite_x_at_drop = None
 for f in range(60):
     cpu16.ix = FLYER_POOL
     call_routine(cpu16, "UPDATE_ONE_FLYER")
     if cpu16.mem[MINE_POOL+0] != 0 and mine_frame is None:
         mine_frame = f
         moved = spawn_x - cpu16.mem[FLYER_POOL+1]
+        flyer_x_at_drop = cpu16.mem[FLYER_POOL+1]
+        mine_x_at_drop = cpu16.mem[MINE_POOL+1]
+        flyer_sprite_y_at_drop = cpu16.mem[FLYER_SPRITE_ATTRS+0]
+        flyer_sprite_x_at_drop = cpu16.mem[FLYER_SPRITE_ATTRS+1]
 check("a real Flyer instance drops its own mine once it has moved >=32px from spawn",
       mine_frame is not None and moved >= 32 and spawn_x == FLYER_SPAWNX)
+check("実機フィードバック対応: the drop origin is Flyer's own raw left-edge X (its body's own left), not the +16 center",
+      mine_x_at_drop == flyer_x_at_drop)
+check("実機フィードバック対応 (\"Mine投下直後か直前 一瞬違う位置にFlyerが表示されてる\"): "
+      "on the exact drop frame itself, Flyer's own staged sprite position still reflects its own real "
+      "X/Y (ALLOC_MINE_SLOT's own IX reassignment doesn't leak into UOFL_DRAW right after it)",
+      flyer_sprite_y_at_drop == cpu16.mem[FLYER_POOL+2] and flyer_sprite_x_at_drop == flyer_x_at_drop)
 check("the mine-drop guard (+6) prevents it from re-firing every subsequent frame",
       cpu16.mem[FLYER_POOL+6] in (0, 1) or True)  # +6 gets overwritten by the real locked DY at reversal - just confirm no crash/second mine
 before_second = cpu16.mem[MINE_POOL+MINE_SLOT_SIZE+0]

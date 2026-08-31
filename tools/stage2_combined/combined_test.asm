@@ -2733,23 +2733,27 @@ ETANK_BULLET_PATTERN_CODE EQU 249   ; group31, verified free above
 ; 実機フィードバック対応 ("FlyerLaserのBG背景色がイエローになってる
 ; 背景と同じくライトブルーだぞ レーザー自体はシアン"): group31(bg11
 ; light yellow) was visibly wrong - the real background behind this
-; laser is open sky (bg5 light blue), not SandSky/Sand. Moved to
-; group17(codes136-143, NIGHT_CODE/Mine's own group) - bg5 is an EXACT
-; match. fg7(cyan) has no home anywhere: a full 32-group survey (see
-; flyerlaser_gen.py's own comment) found zero groups combining fg7+bg5 -
-; group17 itself is fg1(black)/bg5, so this renders in black instead of
-; cyan (same "background match required, foreground approximated"
-; tradeoff EtankBullet's own group31 reuse already established, just
-; unable to land any closer on the fg axis this time - repainting
-; group17 itself was ruled out, it would also recolor Mine and
-; NIGHT_CODE's own already-tuned night palette, both sharing this same
-; group). Pattern code139 (right after Mine1/Mine2 at 137-138).
+; laser is open sky (bg5 light blue), not SandSky/Sand - moved to
+; group17(codes136-143, NIGHT_CODE/Mine's own group, bg5 exact match)
+; first, but that made the beam render fg1(black) - "流石にブラックは
+; レーザーに見えない" (no group anywhere combines fg7 cyan+bg5 - see
+; flyerlaser_gen.py's own comment for the full 32-group survey). Moved
+; again to group27(codes216-223, Thunder's own group) instead - fg7 is
+; an EXACT match here (the beam itself finally renders true cyan), at
+; the cost of bg1(black) instead of bg5 - a dark box around the beam
+; against open sky, same tradeoff shape as group17's own compromise
+; just on the opposite channel. Between "matches the sky but reads as a
+; solid black dash" and "doesn't match the sky but actually looks like
+; a laser bolt", chose the latter directly per "レーザー自体はシアン"
+; being the more specific, repeated ask - rendered both before deciding
+; (see HANDOFF.md's own entry for this round). Pattern code221 (right
+; after THUNDERS_CODE at 220).
 FLYER_LASER_ACT   EQU 0C121h
 FLYER_LASER_X     EQU 0C122h
 FLYER_LASER_Y     EQU 0C123h
 FLYER_LASER_SPEED EQU 3          ; px/frame, right-only - untuned initial value
 FLYER_LASER_DESPAWN_X EQU 248    ; last on-screen column (32 cols x8px=256) - off past this, despawn
-FLYER_LASER_PATTERN_CODE EQU 139 ; group17, see comment above
+FLYER_LASER_PATTERN_CODE EQU 221 ; group27, see comment above
 
 ; ---------- Mine (Flyer's own dropped landmine) ---------- round36-14
 ; follow-up#12: "まずスポーンから32px左に移動したら 添付データのMineを
@@ -8584,21 +8588,12 @@ UOFL_CRUISE_MOVE:
     JR NC,UOFL_CRUISE_STEP
     XOR A : LD (IX+1),A
     LD A,1 : LD (IX+8),A
-    ; "Flyerは画面左端まで行き反転後発射" - round36-14 follow-up#11:
-    ; fires exactly once, right at this cruise->home reversal, aimed at
-    ; the tank's own position this same instant - same LAUNCH_EBULLET
-    ; call as ZacoII's own (see UPDATE_ONE_ENEMY), IX untouched by it.
-    ; 実機フィードバック対応: Flyer's own art is a full 32x32 canvas
-    ; ("定義は32x32になってるんで"), but (IX+1) at this exact instant is
-    ; always 0 (just clamped to the left edge, 2 lines above) - using
-    ; the raw X directly ("起点を0にするとダメ") spawned the bullet at
-    ; the screen's own top-left instead of anywhere near Flyer's real
-    ; body. Fixed spawn offset instead: always Flyer's own right edge
-    ; (X+32) - "必ず右向きになる" - Y+19 ("位置的にはFlyerの右にYオフ
-    ; セット19pxの位置").
-    LD A,(IX+1) : ADD A,32 : LD (EBULLET_ORIGIN_X),A
-    LD A,(IX+2) : ADD A,19 : LD (EBULLET_ORIGIN_Y),A
-    CALL LAUNCH_EBULLET
+    ; round36-14 follow-up#11 originally fired an EBullet here, right at
+    ; this cruise->home reversal ("Flyerは画面左端まで行き反転後発射").
+    ; 実機フィードバック対応 (follow-up#12, "反転時のBullet発射は削除"):
+    ; removed now that Flyer has its own Mine-drop (UOFL_CRUISE_STEP)
+    ; and FlyerLaser (UOFL_HOME_DESCEND_EXIT) attacks instead - ZacoII's
+    ; own EBullet firing (UPDATE_ONE_ENEMY) is untouched.
     LD A,(IX+2) : LD D,A
     LD A,(TANK_Y_CUR)
     CP D
@@ -8634,12 +8629,25 @@ UOFL_CRUISE_STEP:
     CP FLYER_SPAWNX-32+1
     JR NC,UOFLC_MINE_DONE
     LD A,1 : LD (IX+6),A
-    ; drop origin: Flyer's own body center (32x32 canvas) - same "offset
-    ; from Flyer's own raw top-left X/Y to a real anchor point on its
-    ; body" idiom as EBULLET_ORIGIN_X/Y above.
-    LD A,(IX+1) : ADD A,16 : LD (MINE_ORIGIN_X),A
+    ; 実機フィードバック対応 ("投下位置も本体の左に来てない"): drop
+    ; origin is Flyer's own raw top-left X (its body's own LEFT edge,
+    ; not the +16 center this used originally) - Y stays centered
+    ; (+16). "本体の左"読み.
+    LD A,(IX+1) : LD (MINE_ORIGIN_X),A
     LD A,(IX+2) : ADD A,16 : LD (MINE_ORIGIN_Y),A
+    ; 実機フィードバック対応 ("Mine投下直後か直前 一瞬違う位置にFlyerが
+    ; 表示されてる"): ALLOC_MINE_SLOT itself loads IX (walks MINE_POOL
+    ; looking for a free slot, same as LAUNCH_EBULLET's own comment
+    ; warns about) - unlike LAUNCH_EBULLET, which was written to never
+    ; touch IX at all, ALLOC_MINE_SLOT does reassign it, so this firing
+    ; Flyer's own IX (still needed by UOFL_DRAW right below, for THIS
+    ; SAME frame) must be saved/restored around the call - the missing
+    ; PUSH/POP here was the exact bug: for 1 frame, UOFL_DRAW ran with
+    ; IX still pointing at MINE_POOL instead of FLYER_POOL, drawing
+    ; garbage position/pose data as if it were Flyer's own.
+    PUSH IX
     CALL ALLOC_MINE_SLOT
+    POP IX
 UOFLC_MINE_DONE:
     JP UOFL_DRAW
 

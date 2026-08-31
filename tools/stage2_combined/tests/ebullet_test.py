@@ -268,14 +268,13 @@ call_routine(cpu8, "CHECK_EBULLET_VS_TANK")
 check("no repeat damage while TANK_HAZARD_IFRAMES is still active", cpu8.mem[TANK_LIFE] == life0)
 
 
-# ---------- Flyer's own EBullet spawn position (実機フィードバック対応) ----------
-# "Flyerの弾の発射が反転後の左上になってる 定義は32x32になってるんで
-# 起点を0にするとダメ 必ず右向きになる 位置的にはFlyerの右にYオフセット
-# 19pxの位置": at the exact PHASE 0->1 (cruise->home) transition, Flyer's
-# own X has JUST been clamped to 0 (screen left edge) - using that raw 0
-# directly as the bullet's own spawn X put it at the screen's top-left
-# instead of near Flyer's real 32x32 body. Fixed spawn offset: always
-# X+32 (Flyer's own right edge) / Y+19.
+# ---------- Flyer no longer fires EBullet (実機フィードバック対応) ----------
+# round36-14 follow-up#11 originally had Flyer fire an EBullet at its
+# own cruise->home reversal ("Flyerは画面左端まで行き反転後発射").
+# follow-up#12 実機フィードバック対応 ("反転時のBullet発射は削除"):
+# removed now that Flyer has its own Mine-drop and FlyerLaser attacks
+# instead (see mine_flyerlaser_test.py) - confirm the reversal no
+# longer touches EBULLET_POOL at all.
 FLYER_POOL = sym["FLYER_POOL"]
 FLYER_SPEED = sym["FLYER_SPEED"]
 cpu_fl = fresh_cpu()
@@ -289,15 +288,13 @@ cpu_fl.mem[FLYER_POOL + 8] = 0  # PHASE=cruise
 cpu_fl.mem[TANK_Y_CUR] = 100
 cpu_fl.ix = FLYER_POOL
 call_routine(cpu_fl, "UPDATE_ONE_FLYER")
-check("Flyer's own X really did clamp to 0 at this transition (the scenario this bug needed)",
+check("Flyer's own X really did clamp to 0 at this transition (the scenario the old bug needed)",
       cpu_fl.mem[FLYER_POOL + 1] == 0 and cpu_fl.mem[FLYER_POOL + 8] == 1)
-check("EBullet spawns at Flyer's own right edge (X+32), not the screen's own left edge (raw X=0)",
-      cpu_fl.mem[EBULLET_POOL + 1] == 32)
-check("EBullet spawns 19px below Flyer's own Y",
-      cpu_fl.mem[EBULLET_POOL + 2] == 50 + 19)
+check("...and no EBullet gets allocated by Flyer's own reversal any more",
+      cpu_fl.mem[EBULLET_POOL + 0] == 0)
 
 
-# ---------- real end-to-end: ZacoII/Flyer actually fire during real play ----------
+# ---------- real end-to-end: ZacoII actually fires during real play ----------
 cpu9 = fresh_cpu()
 cpu9.sim_dir = 1
 cpu9.sim_trig_a = True
@@ -310,7 +307,7 @@ for f in range(8000):
     if any(cpu9.mem[EBULLET_POOL + i * SLOT + 0] == 1 for i in range(COUNT)):
         ever_fired = True
         break
-check("real MAINLOOP play: at least one EBullet actually fires (by ZacoII or Flyer) before the boss spawns",
+check("real MAINLOOP play: ZacoII's own EBullet actually fires before the boss spawns",
       ever_fired)
 
 

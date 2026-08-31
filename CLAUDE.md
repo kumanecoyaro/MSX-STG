@@ -825,3 +825,24 @@
   - **保留**: レーザーの黒色化(シアンからの近似)への追加フィードバック
     次第でgroup17自体の塗り替えも再検討の余地あり。落下物理定数は
     全て未調整の初期値。
+- **(2026-08-31、Round36-14 follow-up#12 実機フィードバック対応その2、
+  完了済み)**: "まずFlyer 色は置いておいてMine投下直後か直前 一瞬違う
+  位置にFlyerが表示されてる で投下位置も本体の左に来てない 次に反転時
+  のBullet発射は削除 Flyerレーザーは別の色無いのか 流石にブラックは
+  レーザーに見えない"の3件に対応。(1) **実バグ**: `ALLOC_MINE_SLOT`が
+  `LD IX,MINE_POOL`でIXを再利用するのに、呼び出し元`UOFL_CRUISE_STEP`
+  がCALL直後の`JP UOFL_DRAW`でFlyer自身のIXをまだ前提にしていたため、
+  Mine投下フレームだけFlyerがMINE_POOLのデータを誤って自分の座標として
+  描画していた(`PUSH IX`/`POP IX`で解消)。(2) Mine投下位置を本体中心
+  (+16)から本体左端(生X)に変更。(3) `UOFL_CRUISE_MOVE`(反転地点)に
+  残っていたEBullet発射コードを完全削除(Mine/FlyerLaserという新しい
+  攻撃手段があるため不要と判断)。(4) FlyerLaserの色をgroup17(fg1黒/
+  bg5、背景完全一致)からgroup27(fg7シアン/bg1、ビーム完全一致)へ
+  再移設 - 全32グループにfg7+bg5の組み合わせは存在しないため、
+  「レーザー自体はシアン」という要望を優先し背景(黒箱)を妥協。
+  `ebullet_test.py`/`mine_flyerlaser_test.py`を更新、全回帰1177
+  passed/0 failed。VRAM→PNGレンダリングで全て視覚確認済み。詳細は
+  HANDOFF.md Round36-14(follow-up#12実機フィードバック対応その2)
+  参照。
+  - **保留**: FlyerLaserの黒背景への追加フィードバック次第で
+    group17/group27自体の塗り替えも再検討の余地あり。
