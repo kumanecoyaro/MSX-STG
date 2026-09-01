@@ -654,6 +654,13 @@ BARRIER_HP    EQU 0F1F1h        ; player's barrier durability, 0-5; equipped fro
                                  ; No damage/collision exists yet - nothing decrements this
                                  ; today (see PLAYER_ACCENT_PAT selection, INIT).
 BARRIER_HP_INIT EQU 5
+GAME_OVER       EQU 0F1F2h  ; 0=playing, 1=game over (MAINLOOP freezes itself
+                             ; from the top once this is set - see MAINLOOP)
+BARRIER_IFRAMES EQU 0F1F3h  ; frames left of post-hit invulnerability, so one
+                             ; overlapping frame with an enemy/bullet can't
+                             ; drain more than 1 barrier HP before they
+                             ; separate again - untuned placeholder value
+BARRIER_IFRAMES_INIT EQU 60
 
     DB "AB"
     DW INIT
@@ -921,6 +928,7 @@ INIT_SPRATR_CLR:
     LD A,PAT_SHIP : LD (PLAYER_SHIP_PAT),A
     LD A,PAT_ACCENT : LD (PLAYER_ACCENT_PAT),A
     LD A,BARRIER_HP_INIT : LD (BARRIER_HP),A   ; barrier equipped from game start
+    XOR A : LD (GAME_OVER),A : LD (BARRIER_IFRAMES),A
     XOR A
     LD (BULLET0_ACT),A : LD (BULLET1_ACT),A : LD (BULLET2_ACT),A
     LD (JOY_TRIGB_PREV),A
@@ -1085,6 +1093,17 @@ MAINLOOP:
     ; --- NOP margins are what keep individual VDP OUT sequences safe    ---
     ; --- from an interrupt landing mid-sequence, not DI.                ---
     LD A,(TICK) : INC A : AND 3Fh : LD (TICK),A
+
+    ; game over: freeze everything from here (no more terrain scroll,
+    ; enemy/spawn/player updates, or VDP writes of any kind) - the
+    ; explosion PLAYER_TAKE_HIT drew just before setting GAME_OVER
+    ; stays on screen exactly as-is. There's no per-frame HALT to pace
+    ; this against (see the free-running note above), so this tight
+    ; loop just spins - harmless, since nothing further is ever drawn.
+    LD A,(GAME_OVER)
+    OR A
+    JP NZ,MAINLOOP
+
     LD A,(BOSS_STATE)
     CP 1
     CALL Z,BOSS_UPDATE_BODY
@@ -2100,6 +2119,8 @@ BULLET2_OFF:
     XOR A : LD (BULLET2_ACT),A
 BULLET2_NEXT:
 
+    CALL PLAYER_DAMAGE_CHECK
+
     JP MAINLOOP
 
 ; ============================================================
@@ -2336,6 +2357,57 @@ QUAD_HIT_TEST:
     LD A,1
     RET
 QUAD_HIT_NO:
+    XOR A
+    RET
+
+; Same 4-edge overlap shape as QUAD_HIT_TEST, but with the PLAYER's own
+; 16x16 hitbox ((PLAYERX,PLAYERY-8)-(+15,+15)) as the fixed box instead
+; of a *8-multiplied grid-aligned bullet - the player's own X/Y are
+; free-moving pixels, not grid-aligned, so it can't reuse QUAD_HIT_TEST
+; as-is. Input: D,E = the OTHER (enemy-side) box's top-left (pixel).
+; Output: A=1 if it overlaps the player, else 0. Trashes A,H,L only -
+; safe to CALL from inside a DJNZ B-counter scan loop without saving BC.
+PLAYER_HIT_BOX8:
+    LD A,(PLAYERX) : LD H,A
+    LD A,(PLAYERY) : SUB 8 : LD L,A
+    LD A,H : ADD A,15
+    CP D
+    JR C,PHB8_NO
+    LD A,D : ADD A,7
+    CP H
+    JR C,PHB8_NO
+    LD A,L : ADD A,15
+    CP E
+    JR C,PHB8_NO
+    LD A,E : ADD A,7
+    CP L
+    JR C,PHB8_NO
+    LD A,1
+    RET
+PHB8_NO:
+    XOR A
+    RET
+
+; Same as PLAYER_HIT_BOX8, but the other (enemy-side) box is 16x16
+; instead of 8x8 (e.g. Enemy6, EBULLET). Input/output/trashes: same.
+PLAYER_HIT_BOX16:
+    LD A,(PLAYERX) : LD H,A
+    LD A,(PLAYERY) : SUB 8 : LD L,A
+    LD A,H : ADD A,15
+    CP D
+    JR C,PHB16_NO
+    LD A,D : ADD A,15
+    CP H
+    JR C,PHB16_NO
+    LD A,L : ADD A,15
+    CP E
+    JR C,PHB16_NO
+    LD A,E : ADD A,15
+    CP L
+    JR C,PHB16_NO
+    LD A,1
+    RET
+PHB16_NO:
     XOR A
     RET
 
@@ -6216,6 +6288,328 @@ UEA_NEXT:
     DJNZ UEA_LOOP
     POP IX
     RET
+
+; ============================================================
+; --- player damage: contact with any enemy or enemy bullet  ---
+; --- costs 1 barrier HP; at 0 HP the next hit ends the game ---
+; --- (see PLAYER_DAMAGE_CHECK/PLAYER_TAKE_HIT below).       ---
+; ============================================================
+
+; Player-vs-ENEMY_POOL(Fighter/Wave) contact check. Output: A=1 if the
+; player's own hitbox overlaps ANY active instance's live hitbox
+; (TYPE_ENEMY4: single box8 at (E_X,E_Y+8), matching EBSD_HT_ENEMY4;
+; else TOP/BOT quadrant box8es at (E_X,E_Y)/(E_X+8,E_Y+8), matching
+; EBSB_HIT_TEST/EBSD_HIT_TEST) - same source-of-truth geometry as the
+; existing player-bullet-vs-enemy hit tests, just tested against the
+; player's own hitbox instead of a bullet's. Does NOT damage/destroy
+; the enemy - contact only costs the player a barrier HP (see
+; PLAYER_DAMAGE_CHECK), the enemy itself is untouched and keeps flying.
+PDC_CHECK_ENEMY_POOL:
+    LD HL,ENEMY_POOL
+    LD B,ENEMY_SLOT_COUNT
+PDCEP_LOOP:
+    LD A,(HL)
+    OR A
+    JR Z,PDCEP_SKIP
+    PUSH HL
+    PUSH HL : POP IX
+    LD A,(IX+E_TYPE)
+    CP TYPE_ENEMY4
+    JR Z,PDCEP_E4
+    LD A,(IX+E_TOP)
+    OR A
+    JR Z,PDCEP_CHECKBOT
+    LD A,(IX+E_X) : LD D,A
+    LD A,(IX+E_Y) : LD E,A
+    CALL PLAYER_HIT_BOX8
+    OR A
+    JR NZ,PDCEP_HIT
+PDCEP_CHECKBOT:
+    LD A,(IX+E_BOT)
+    OR A
+    JR Z,PDCEP_MISS
+    LD A,(IX+E_X) : ADD A,8 : LD D,A
+    LD A,(IX+E_Y) : ADD A,8 : LD E,A
+    CALL PLAYER_HIT_BOX8
+    OR A
+    JR Z,PDCEP_MISS
+    JR PDCEP_HIT
+PDCEP_E4:
+    LD A,(IX+E_X) : LD D,A
+    LD A,(IX+E_Y) : ADD A,8 : LD E,A
+    CALL PLAYER_HIT_BOX8
+    OR A
+    JR Z,PDCEP_MISS
+PDCEP_HIT:
+    POP HL
+    LD A,1
+    RET
+PDCEP_MISS:
+    POP HL
+PDCEP_SKIP:
+    LD DE,ENEMY_SLOT_SIZE
+    ADD HL,DE
+    DJNZ PDCEP_LOOP
+    XOR A
+    RET
+
+; Shared player-contact scan for one Enemy2 (Zigzag) formation - 3
+; units, each a STATE/X/Y/TOP/BOT quintet (E2A_U0_STATE.../E2B_U0_
+; STATE... share this exact 5-byte stride - see CHECK_BULLET_VS_
+; FORMATION_A/B). Input: HL = the formation's own U0_STATE address.
+; Output: A=1 on contact, else 0. Does not kill/redraw anything.
+PDC_CHECK_E2_FORMATION:
+    LD B,3
+PDCE2_LOOP:
+    PUSH HL
+    LD A,(HL) : CP 1
+    JR NZ,PDCE2_SKIP
+    INC HL : LD A,(HL) : LD D,A    ; X
+    INC HL : LD A,(HL) : LD E,A    ; Y
+    INC HL : LD A,(HL)             ; TOP
+    OR A
+    JR Z,PDCE2_CHECKBOT
+    PUSH DE
+    CALL PLAYER_HIT_BOX8
+    POP DE
+    OR A
+    JR NZ,PDCE2_HIT
+PDCE2_CHECKBOT:
+    INC HL : LD A,(HL)             ; BOT
+    OR A
+    JR Z,PDCE2_SKIP
+    LD A,D : ADD A,8 : LD D,A
+    LD A,E : ADD A,8 : LD E,A
+    CALL PLAYER_HIT_BOX8
+    OR A
+    JR Z,PDCE2_SKIP
+PDCE2_HIT:
+    POP HL
+    LD A,1
+    RET
+PDCE2_SKIP:
+    POP HL
+    LD DE,5
+    ADD HL,DE
+    DJNZ PDCE2_LOOP
+    XOR A
+    RET
+
+; Player-vs-ENEMY3(ground/BG enemy) contact check. Mirrors E3_HIT_
+; ONE_SLOT/CHECK_BULLET_VS_ENEMY3's own ACTIVE-count short-circuit and
+; COL/ROW*8 pixel-box geometry ((IX+5)=COL->X, (IX+4)=ROW->Y, box8).
+PDC_CHECK_ENEMY3:
+    LD A,(ENEMY3_ACTIVE_COUNT)
+    OR A
+    JR Z,PDCE3_NONE
+    LD HL,ENEMY3_POOL
+    LD B,ENEMY3_WAVE_SLOTS*ENEMY3_SLOTS
+PDCE3_LOOP:
+    LD A,(HL)
+    OR A
+    JR Z,PDCE3_SKIP
+    PUSH HL
+    PUSH HL : POP IX
+    LD A,(IX+5) : ADD A,A : ADD A,A : ADD A,A : LD D,A
+    LD A,(IX+4) : ADD A,A : ADD A,A : ADD A,A : LD E,A
+    CALL PLAYER_HIT_BOX8
+    POP HL
+    OR A
+    JR NZ,PDCE3_HIT
+PDCE3_SKIP:
+    LD DE,ENEMY3_STRUCT
+    ADD HL,DE
+    DJNZ PDCE3_LOOP
+PDCE3_NONE:
+    XOR A
+    RET
+PDCE3_HIT:
+    LD A,1
+    RET
+
+; Player-vs-ENEMY6(spin glyph) contact check. Mirrors ENEMY6_HIT_
+; ONE_SLOT's own geometry ((IX+2)=COL->X,(IX+1)=ROW->Y, box16 - Enemy6
+; is a 16x16 entity, unlike ENEMY3/ENEMY_POOL's 8x8 quads).
+PDC_CHECK_ENEMY6:
+    LD HL,ENEMY6_POOL
+    LD B,ENEMY6_SLOTS
+PDCE6_LOOP:
+    LD A,(HL)
+    OR A
+    JR Z,PDCE6_SKIP
+    PUSH HL
+    PUSH HL : POP IX
+    LD A,(IX+2) : ADD A,A : ADD A,A : ADD A,A : LD D,A
+    LD A,(IX+1) : ADD A,A : ADD A,A : ADD A,A : LD E,A
+    CALL PLAYER_HIT_BOX16
+    POP HL
+    OR A
+    JR NZ,PDCE6_HIT
+PDCE6_SKIP:
+    LD DE,ENEMY6_STRUCT
+    ADD HL,DE
+    DJNZ PDCE6_LOOP
+    XOR A
+    RET
+PDCE6_HIT:
+    LD A,1
+    RET
+
+; Player-vs-boss-pod contact check (only meaningful once the boss has
+; landed, BOSS_STATE==2 - same gate MAINLOOP already uses for POD_
+; COLLISION_UPDATE/POD_FIRE_UPDATE). Reuses POD_HP/POD_CUR_X/POD_CUR_Y
+; (each pod's own live position cache) and the exact same signed-
+; delta-window overlap test as CHECK_BULLET0_VS_PODS (SUB+128+range-
+; check), just against the player's own position instead of a
+; bullet's. Does NOT call POD_HIT - contact only costs the player, the
+; pod itself is untouched (mirrors the enemy-body checks above).
+PDC_CHECK_PODS:
+    LD A,(BOSS_STATE)
+    CP 2
+    JR NZ,PDCP_NONE
+    LD A,(PLAYERX)
+    LD (POD_XY_X),A
+    LD A,(PLAYERY) : SUB 8
+    LD (POD_XY_Y),A
+    LD B,0
+PDCP_LOOP:
+    PUSH BC
+    LD HL,POD_HP : LD D,0 : LD E,B : ADD HL,DE
+    LD A,(HL)
+    OR A
+    JR Z,PDCP_SKIP
+    LD HL,POD_CUR_X : LD D,0 : LD E,B : ADD HL,DE
+    LD A,(POD_XY_X)
+    SUB (HL)
+    ADD A,128
+    CP 116
+    JR C,PDCP_SKIP
+    CP 141
+    JR NC,PDCP_SKIP
+    LD HL,POD_CUR_Y : LD D,0 : LD E,B : ADD HL,DE
+    LD A,(POD_XY_Y)
+    SUB (HL)
+    ADD A,128
+    CP 116
+    JR C,PDCP_SKIP
+    CP 141
+    JR NC,PDCP_SKIP
+    POP BC
+    LD A,1
+    RET
+PDCP_SKIP:
+    POP BC
+    INC B
+    LD A,B
+    CP 8
+    JR NZ,PDCP_LOOP
+PDCP_NONE:
+    XOR A
+    RET
+
+; Player-vs-enemy-bullet contact check. Unlike the enemy-body checks
+; above, a bullet that touches the player IS consumed (deactivated +
+; hidden + its sprite number freed - mirrors UPDATE_EBULLET_ALL's own
+; exit-left-edge cleanup) so it doesn't linger or re-trigger next frame.
+PDC_CHECK_EBULLET:
+    LD HL,EBULLET_POOL
+    LD B,EBULLET_SLOTS
+PDCEB_LOOP:
+    LD A,(HL)
+    OR A
+    JR Z,PDCEB_SKIP
+    PUSH HL
+    PUSH HL : POP IX
+    LD A,(IX+1) : LD D,A
+    LD A,(IX+2) : LD E,A
+    CALL PLAYER_HIT_BOX16
+    OR A
+    JR Z,PDCEB_MISS
+    LD A,(IX+3)
+    DI
+    ADD A,A : ADD A,A : OUT (99h),A
+    NOP
+    NOP
+    LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    LD A,ENEMY_HIDE_Y : OUT (98h),A
+    PUSH BC : POP BC : NOP : NOP
+    LD A,255 : OUT (98h),A
+    PUSH BC : POP BC : NOP : NOP
+    EI
+    LD A,(IX+3) : CALL FREE_SPRITE_NUM
+    XOR A : LD (IX+0),A
+    POP HL
+    LD A,1
+    RET
+PDCEB_MISS:
+    POP HL
+PDCEB_SKIP:
+    LD DE,EBULLET_STRUCT
+    ADD HL,DE
+    DJNZ PDCEB_LOOP
+    XOR A
+    RET
+
+; Called once/frame from the tail of MAINLOOP (after all enemies/
+; bullets/player movement have updated for this frame). Tests the
+; player's own hitbox against every enemy-side entity currently in the
+; game (Fighter/Wave, both Zigzag formations, the ground enemy, the
+; spin-glyph enemy, boss pods, enemy bullets) in turn, stopping at the
+; first overlap found. On a hit: if the barrier still has HP, it
+; absorbs the hit (BARRIER_HP-1, then a short invulnerability window
+; starts - see BARRIER_IFRAMES - so one overlapping frame can't drain
+; more than 1 HP before the entity/player separate again); at 0 HP the
+; next hit ends the game (GAME_OVER=1 + an explosion at the player's
+; own position - MAINLOOP freezes itself from the very top on the next
+; iteration once GAME_OVER is set, so this frame's explosion glyph is
+; the last thing left on screen).
+; No collision check runs while GAME_OVER is already set, or during
+; the post-boss flyaway (PLAYER_FLYAWAY!=0 - the ship is leaving the
+; screen, not meaningfully "in" the playfield anymore).
+PLAYER_DAMAGE_CHECK:
+    LD A,(GAME_OVER)
+    OR A
+    RET NZ
+    LD A,(PLAYER_FLYAWAY)
+    OR A
+    RET NZ
+    LD A,(BARRIER_IFRAMES)
+    OR A
+    JR Z,PDC_GO
+    DEC A : LD (BARRIER_IFRAMES),A
+    RET
+PDC_GO:
+    CALL PDC_CHECK_ENEMY_POOL
+    OR A : JP NZ,PLAYER_TAKE_HIT
+    LD HL,E2A_U0_STATE : CALL PDC_CHECK_E2_FORMATION
+    OR A : JP NZ,PLAYER_TAKE_HIT
+    LD HL,E2B_U0_STATE : CALL PDC_CHECK_E2_FORMATION
+    OR A : JP NZ,PLAYER_TAKE_HIT
+    CALL PDC_CHECK_ENEMY3
+    OR A : JP NZ,PLAYER_TAKE_HIT
+    CALL PDC_CHECK_ENEMY6
+    OR A : JP NZ,PLAYER_TAKE_HIT
+    CALL PDC_CHECK_PODS
+    OR A : JP NZ,PLAYER_TAKE_HIT
+    CALL PDC_CHECK_EBULLET
+    OR A
+    RET Z
+    JP PLAYER_TAKE_HIT
+
+PLAYER_TAKE_HIT:
+    LD A,(BARRIER_HP)
+    OR A
+    JR Z,PTH_GAMEOVER
+    DEC A : LD (BARRIER_HP),A
+    LD A,BARRIER_IFRAMES_INIT : LD (BARRIER_IFRAMES),A
+    RET
+PTH_GAMEOVER:
+    LD A,1 : LD (GAME_OVER),A
+    LD A,(PLAYERX) : LD D,A
+    LD A,(PLAYERY) : SUB 8 : LD E,A
+    JP TRIGGER_EXPLOSION   ; also plays SOUND_DESTROY internally; tail call
 
 ; Clears every slot of the unified enemy buffer (ACTIVE=0) and resets
 ; both shared trail-channel write indices. Called once from INIT.

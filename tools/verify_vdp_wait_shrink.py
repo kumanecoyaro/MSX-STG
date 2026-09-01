@@ -58,8 +58,8 @@ for i, line in enumerate(lines):
         next_line = lines[i + 1].strip() if i + 1 < len(lines) else ""
         n98_delay.append((i + 1, next_line))
 
-check(f"found the expected number of raw OUT (99h),A sites ({len(n99)})", len(n99) == 294)
-check(f"found the expected number of raw OUT (98h),A sites ({len(n98_delay)})", len(n98_delay) == 304)
+check(f"found the expected number of raw OUT (99h),A sites ({len(n99)})", len(n99) == 296)
+check(f"found the expected number of raw OUT (98h),A sites ({len(n98_delay)})", len(n98_delay) == 306)
 
 bad99 = [(ln, n) for ln, n in n99 if n != 2]
 check("every OUT (99h),A site is padded with exactly 2 NOPs (8T), regardless of what "
