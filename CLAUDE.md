@@ -1124,3 +1124,23 @@
   `verify_enemy_bullets.py`にE_PARAM5参照への更新+回帰防止テスト2件を
   追加、全49件PASS(45→49件)。既存検証群も無退行。Comb ROM再ビルド・
   検証・送付。詳細はHANDOFF.md Round37 follow-up4参照。
+- **(2026-09-01、Round37 follow-up5、完了済み)**: 自機バリア装備を実装。
+  "装備中はどちらのパターンにも追加 右下の8x8ドットのエリアがバリアの
+  絵だからそれを未提出のアクセントに追記"に対応 - アップロード済み
+  `Acsent_16x16.json`の右下8x8のみが実際の絵柄と判明、既存の
+  `ACCENT_MID_PATTERN`/`ACCENT_DOWN_PATTERN`(両方ともBR象限が元々
+  空白)のBR象限だけをこの絵に差し替えた新規`ACCENT_MID_BARRIER_
+  PATTERN`/`ACCENT_DOWN_BARRIER_PATTERN`を追加。VRAM予算調査では
+  シンボル名検索だけでコード96-111を空きと誤認しかけたが(実際は
+  `BOSS_SPAWN`がリテラル数値で遅延ロードするボス専用パターンで
+  使用済み)、全LDIRVM呼び出し元をリテラル込みで横断的に再チェック+
+  エミュレータでの実VRAM実測の二重検証でコード128-255が真に空きと
+  確認、128/132を新規使用。`BARRIER_HP`(0F1F1h、耐久値5、EQU
+  `BARRIER_HP_INIT`)をINITで5にセットし初期状態で装備、既存の
+  アクセント選択ロジック(JOY_STICKによるMID/DOWN分岐)を拡張し
+  `BARRIER_HP>0`ならバリア版パターンを選択、0なら通常アクセントに
+  復帰。ダメージ/衝突/ゲームオーバーは指示通り一切未実装(現状Stage1
+  に自機被弾判定自体が存在しない)。新規`tools/verify_barrier.py`
+  (14件、VRAM内容をアップロードJSONから独立に再導出して照合、実
+  MAINLOOP1フレームでの表示切替も検証)、既存検証群も無退行。Comb
+  ROM再ビルド・検証・送付。詳細はHANDOFF.md Round37 follow-up5参照。

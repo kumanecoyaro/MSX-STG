@@ -83,6 +83,12 @@ PAT_ACCENT  EQU 16      ; 16x16 accent overlay, drawn at ship_X+8 (32 bytes at S
                         ; holds ACCENT_MID_PATTERN - see PLAYER_ACCENT_PAT
 PAT_ACCENT_DOWN EQU 20  ; ACCENT_DOWN_PATTERN, shown while diving (32 bytes at SPRPAT+160;
                         ; free range right after PAT_ACCENT's own 16-19)
+PAT_ACCENT_BARRIER      EQU 128 ; ACCENT_MID_BARRIER_PATTERN, shown instead of PAT_ACCENT
+                                ; while the barrier is equipped (32 bytes at SPRPAT+1024;
+                                ; codes128-255 confirmed genuinely free via emulator VRAM
+                                ; survey - nothing else in this file ever LDIRVMs there)
+PAT_ACCENT_DOWN_BARRIER EQU 132 ; ACCENT_DOWN_BARRIER_PATTERN, same idea for the DOWN pose
+                                 ; (32 bytes at SPRPAT+1056)
 PAT_SHIP_UP   EQU 112   ; SHIP_UP_PATTERN, shown while climbing (32 bytes at SPRPAT+896;
                         ; free range between EXPLOSION_PATNUM's 108-111 and PAT_PARTICLE's 120)
 PAT_SHIP_DOWN EQU 116   ; SHIP_DOWN_PATTERN, shown while diving (32 bytes at SPRPAT+928)
@@ -642,6 +648,12 @@ ENEMY6_STEP_TIMER   EQU 0F1D8h  ; shared countdown to the next 1-column step
 ; enemy-fired bullet pool (new) - genuinely free RAM right after
 ; ENEMY6_STEP_TIMER (nothing else claims F1D9h+ up to STACKTOP=F380h).
 EBULLET_POOL  EQU 0F1D9h        ; EBULLET_SLOTS*EBULLET_STRUCT = 24 bytes (F1D9h-F1F0h)
+BARRIER_HP    EQU 0F1F1h        ; player's barrier durability, 0-5; equipped from game
+                                 ; start (INIT sets 5); accent overlay shows the barrier
+                                 ; pattern while nonzero, reverts to the normal accent at 0.
+                                 ; No damage/collision exists yet - nothing decrements this
+                                 ; today (see PLAYER_ACCENT_PAT selection, INIT).
+BARRIER_HP_INIT EQU 5
 
     DB "AB"
     DW INIT
@@ -908,6 +920,7 @@ INIT_SPRATR_CLR:
     LD A,PLAYER_INITY : LD (PLAYERY),A
     LD A,PAT_SHIP : LD (PLAYER_SHIP_PAT),A
     LD A,PAT_ACCENT : LD (PLAYER_ACCENT_PAT),A
+    LD A,BARRIER_HP_INIT : LD (BARRIER_HP),A   ; barrier equipped from game start
     XOR A
     LD (BULLET0_ACT),A : LD (BULLET1_ACT),A : LD (BULLET2_ACT),A
     LD (JOY_TRIGB_PREV),A
@@ -944,6 +957,8 @@ INIT_SPRATR_CLR:
     LD HL,SHIP_DOWN_PATTERN : LD DE,PAT_SHIP_DOWN*8+SPRPAT : LD BC,32 : CALL LDIRVM
     LD HL,ACCENT_MID_PATTERN : LD DE,PAT_ACCENT*8+SPRPAT : LD BC,32 : CALL LDIRVM
     LD HL,ACCENT_DOWN_PATTERN : LD DE,PAT_ACCENT_DOWN*8+SPRPAT : LD BC,32 : CALL LDIRVM
+    LD HL,ACCENT_MID_BARRIER_PATTERN : LD DE,PAT_ACCENT_BARRIER*8+SPRPAT : LD BC,32 : CALL LDIRVM
+    LD HL,ACCENT_DOWN_BARRIER_PATTERN : LD DE,PAT_ACCENT_DOWN_BARRIER*8+SPRPAT : LD BC,32 : CALL LDIRVM
     LD HL,E1A_PATTERN : LD DE,PAT_ENEMY1*8+SPRPAT : LD BC,32 : CALL LDIRVM
     LD HL,PARTICLE_PATTERN : LD DE,PAT_PARTICLE*8+SPRPAT : LD BC,32 : CALL LDIRVM
     LD A,1 : LD (ENEMY1_LOOK_FLAGS),A : LD (ENEMY1_LOOK_FLAGS+1),A
@@ -1593,15 +1608,25 @@ SHIPFR_GOT:
     LD (PLAYER_SHIP_PAT),A
 
     ; same idea for the accent overlay, but it only has MID/DOWN -
-    ; climbing (and everything else) keeps MID.
+    ; climbing (and everything else) keeps MID. While the barrier is
+    ; equipped (BARRIER_HP>0), show the barrier-augmented variant of
+    ; whichever pose would normally show instead (see ACCENT_MID_
+    ; BARRIER_PATTERN/ACCENT_DOWN_BARRIER_PATTERN) - reverts to the
+    ; plain accent once BARRIER_HP reaches 0.
     LD A,(JOY_STICK)
     CP 4 : JR Z,ACCFR_DOWN
     CP 5 : JR Z,ACCFR_DOWN
     CP 6 : JR Z,ACCFR_DOWN
+    LD A,(BARRIER_HP) : OR A
     LD A,PAT_ACCENT
+    JR Z,ACCFR_GOT
+    LD A,PAT_ACCENT_BARRIER
     JR ACCFR_GOT
 ACCFR_DOWN:
+    LD A,(BARRIER_HP) : OR A
     LD A,PAT_ACCENT_DOWN
+    JR Z,ACCFR_GOT
+    LD A,PAT_ACCENT_DOWN_BARRIER
 ACCFR_GOT:
     LD (PLAYER_ACCENT_PAT),A
 
@@ -9496,6 +9521,26 @@ ACCENT_DOWN_PATTERN:
     DB 70h,38h,00h,00h,00h,00h,00h,00h   ; bottom-left
     DB 00h,00h,00h,00h,00h,00h,00h,00h   ; top-right (blank)
     DB 00h,00h,00h,00h,00h,00h,00h,00h   ; bottom-right (blank)
+
+; "装備中はどちらのパターンにも追加 / 右下の8x8ドットのエリアがバリア
+; の絵だからそれを未提出のアクセントに追記" - the barrier glyph is just
+; the bottom-right 8x8 quadrant of the uploaded Acsent_16x16.json (the
+; rest of that 16x16 canvas was blank); added into the BR quadrant of
+; BOTH accent poses (that quadrant was unused/blank in both originals),
+; leaving TL/BL/TR exactly as ACCENT_MID_PATTERN/ACCENT_DOWN_PATTERN
+; above. Selected instead of the plain accent while BARRIER_HP>0 - see
+; PLAYER_ACCENT_PAT's selection logic.
+ACCENT_MID_BARRIER_PATTERN:
+    DB 00h,00h,00h,00h,00h,00h,00h,00h   ; top-left (blank)
+    DB 30h,08h,00h,00h,00h,00h,00h,00h   ; bottom-left (same as ACCENT_MID_PATTERN)
+    DB 00h,00h,00h,00h,00h,00h,00h,00h   ; top-right (blank)
+    DB 0Ch,22h,55h,99h,99h,0AAh,44h,30h  ; bottom-right (barrier glyph)
+
+ACCENT_DOWN_BARRIER_PATTERN:
+    DB 00h,00h,00h,00h,00h,00h,00h,00h   ; top-left (blank)
+    DB 70h,38h,00h,00h,00h,00h,00h,00h   ; bottom-left (same as ACCENT_DOWN_PATTERN)
+    DB 00h,00h,00h,00h,00h,00h,00h,00h   ; top-right (blank)
+    DB 0Ch,22h,55h,99h,99h,0AAh,44h,30h  ; bottom-right (barrier glyph)
 
 ; 8x8 asterisk glyph: each enemy-formation quadrant that's still
 ; alive is drawn with this shape (not a solid fill). One asterisk
