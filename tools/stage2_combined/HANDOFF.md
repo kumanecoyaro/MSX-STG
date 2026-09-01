@@ -7451,3 +7451,59 @@ Comb自動送付方針・完了済み)
   `verify_enemy_pool_scan.py`の3件ミスマッチは既知の想定通りの差分
   (過去ラウンドから継続、バグではない)。Comb ROM再ビルド・
   `verify_comb.py`で健全性確認、送付。
+
+## Round 37 follow-up4(Waveキャラ破損バグ修正+Fighterアニメ一発化・完了済み)
+
+- **ユーザー報告**: "ウェーブのキャラが壊れてるな 2機一組で設計して
+  あるが 1機たおされたあとのキャラパターンが壊れてる さっきの動作
+  変更で壊したな"(followed by "つづけろ")。
+- **根本原因**: Round37 follow-up2で実装したWaveの頂点/下限LUT
+  フリーズ機構(`EBSB_UPDATE`)が、フリーズ残りフレーム数(0-16)の
+  カウントダウンを`E_PARAM4`に書き込んでいた。しかし`E_PARAM4`は
+  BEHAVIOR_SINE_BOB専用フィールドではなく、`SIMPLE_REDRAW`
+  (`SET_REDRAW_SRC_FROM_SEQ`経由、`EBSB_HIT_TEST`からも
+  `EBSD_HIT_TEST`からも共有で呼ばれる、象限撃破時のVRAMパターン
+  再描画ルーチン)が「0-3の範囲でなければならない
+  `ENEMY_ANIM_SEQ_TABLE`へのシーケンスindex」として読む、
+  BEHAVIOR横断で共有の既存フィールドだった。フリーズ中に象限が
+  1つ撃破されると、`E_PARAM4`に入っていた範囲外の値(最大16)が
+  そのままシーケンスindexとして使われ`REDRAW_SRC_PATTERN`が不正な
+  VRAMアドレスに書き換わり、`REDRAW_UNIT_PATTERN`がそこから
+  ガーベジをVRAMへコピーしてパターン破損を引き起こしていた。
+  自分自身が2ラウンド前に書いたコード自身のコメント("E_PARAM4
+  (otherwise unused by this BEHAVIOR...)")が誤りだったと判明。
+- **修正**: フリーズカウントダウンの保存先を`E_PARAM4`から
+  `E_PARAM5`へ変更(`EBSB_UPDATE`本体・`EBSB_ARM_FREEZE`・
+  `EBSB_MOVEOK_FROZEN`の3箇所)。`E_PARAM5`はBEHAVIOR_SIMPLE_
+  DRIFT_DODGE(Fighter/汎用ドッジ)側の象限アニメタイマーとしてのみ
+  使われており、BEHAVIOR_SINE_BOB(Wave)からは全く参照されない
+  ことを`E_PARAM5`の全参照箇所を横断的にgrepして確認した上で適用
+  (Wave自身が使う`E_PARAM4`はこの修正で一切触れなくなり、常に
+  `SIMPLE_REDRAW`が期待する有効な[0,3]範囲のシーケンスindexの
+  ままになる)。
+- **同時に対応: Fighterアニメの一発化**: "まずファイターのアニメは
+  上下移動に入ったら戻さない 今は繰り返しになってるな"に対応。
+  Round37 follow-up3で実装した`EBSD_DIAG_E4`のポーズ切替
+  (`E_PARAM1`を4フレーム毎のトグルタイマーとして`E_PARAM4`を
+  `XOR 1`で反転し続ける、無限に繰り返すアニメーション)を、
+  「`E4_ANIM_FRAME_LEN`フレーム経過後に1回だけPAT_ENEMY4→
+  PAT_ENEMY4_2へ切り替え、以後ダイブが続く限り永久にそのまま」
+  という一発切替方式へ書き直し(`E_PARAM4`が既に1なら毎フレーム
+  即座にブロック全体をスキップ、0の間だけ`E_PARAM1`を1回きりの
+  カウントダウンとして消費)。
+- **テスト**: `tools/verify_enemy_bullets.py`のWaveフリーズ
+  テスト区間を`E_PARAM5`参照に更新。新規に(1)`SIMPLE_REDRAW`を
+  直接呼び、フリーズ中(`E_PARAM5=16`)でも`E_PARAM4=0`が無傷なため
+  正しい`REDRAW_SRC_PATTERN`が得られることを検証、(2)実際の
+  `EBSB_HIT_TEST`経由でTOP象限を撃破し、フリーズ中でも破損しない
+  ことを直接検証、の2件(この種の回帰の再発防止ガード)を追加。
+  Fighterのポーズテストも「trueに2値が現れる」という旧アサーション
+  から「E4_ANIM_FRAME_LEN経過時点で正確に1回だけ0→1に切り替わり、
+  以後1のまま戻らない」という一発切替の直接検証に書き直し(この
+  過程で自分のテスト自身のswitch_atの期待値がオフバイワンだった
+  ことにも気付き修正)。全49件PASS(45→49件)。既存の`verify_*.py`
+  群(`verify_enemy_pool_scan.py`の3件ミスマッチのみ既知の
+  想定通りの差分、`verify_idcache_multiframe.py`/`verify_namebuf_
+  regen.py`の`KeyError: 'ROWDATA1'`のみ既知の無関係な既存問題)も
+  再確認、いずれも無退行。Comb ROM再ビルド・`verify_comb.py`で
+  健全性確認、送付。

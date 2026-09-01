@@ -8113,17 +8113,19 @@ EBSB_UPDATE:
     ; "サインの頂点と下限ではLut参照を停止して横に16px動き上下の動きは
     ; 無くすということ つまりサイン移動で頂点まで行き16pxドリフト
     ; その後サイン移動で下限まで行き16pxドリフト この繰り返し" -
-    ; E_PARAM4 (otherwise unused by this BEHAVIOR - see this routine's
-    ; own header comment) is a "frozen-drift frames remaining"
-    ; countdown, armed to 16 the instant E_STATE reaches the peak(7)/
-    ; trough(23) plateau in ENEMY4_SINE_LUT. While nonzero, E_STATE is
-    ; NOT advanced at all (so the LUT lookup - and therefore Y - stays
-    ; pinned exactly where it was: "Lut参照を停止") and X alone steps
-    ; 1px/frame instead of the normal ENEMY4_SPEED - exactly 16 frozen
-    ; frames = 16px purely horizontal, then normal sine-follow motion
-    ; resumes from that same state, continuing the curve away from the
-    ; extreme it just paused at.
-    LD A,(IX+E_PARAM4)
+    ; E_PARAM5 (genuinely unused by this BEHAVIOR - E_PARAM4 is NOT
+    ; free, it's shared with SIMPLE_REDRAW's glyph-sequence index for
+    ; this slot's quadrant-kill visuals, and must stay in [0,3] at all
+    ; times or a quadrant kill corrupts the drawn pattern) is a
+    ; "frozen-drift frames remaining" countdown, armed to 16 the instant
+    ; E_STATE reaches the peak(7)/trough(23) plateau in ENEMY4_SINE_LUT.
+    ; While nonzero, E_STATE is NOT advanced at all (so the LUT lookup -
+    ; and therefore Y - stays pinned exactly where it was: "Lut参照を
+    ; 停止") and X alone steps 1px/frame instead of the normal
+    ; ENEMY4_SPEED - exactly 16 frozen frames = 16px purely horizontal,
+    ; then normal sine-follow motion resumes from that same state,
+    ; continuing the curve away from the extreme it just paused at.
+    LD A,(IX+E_PARAM5)
     OR A
     JR NZ,EBSB_CHECK_FROZEN_EXIT
     LD A,(IX+E_X)
@@ -8150,13 +8152,13 @@ EBSB_PHASEOK:
     CP 23
     JR NZ,EBSB_DRAW_FROM_LUT
 EBSB_ARM_FREEZE:
-    LD A,16 : LD (IX+E_PARAM4),A
+    LD A,16 : LD (IX+E_PARAM5),A
     JR EBSB_DRAW_FROM_LUT
 EBSB_MOVEOK_FROZEN:
     ; A already holds E_X (loaded above, untouched by the OR A/JR) -
     ; the X!=0 check just above already guards against underflow here.
     DEC A : LD (IX+E_X),A
-    LD A,(IX+E_PARAM4) : DEC A : LD (IX+E_PARAM4),A
+    LD A,(IX+E_PARAM5) : DEC A : LD (IX+E_PARAM5),A
 EBSB_DRAW_FROM_LUT:
     LD A,(IX+E_STATE)
     LD E,A : LD D,0
@@ -8398,20 +8400,29 @@ EBSD_DIAG_E4:
     ADD A,B
     LD (IX+E_Y),A
 
-    ; "E4にアニメ追加 上下移動中に適用" - alternates PAT_ENEMY4/
-    ; PAT_ENEMY4_2 every E4_ANIM_FRAME_LEN frames for as long as it's
-    ; diving (forever, now that the dive itself never ends). E_PARAM1
-    ; doubles as this toggle timer (repurposed away from the old
-    ; "remaining px" countdown - see EBSD_ARM_E4_PARAM1); E_PARAM4
-    ; (0/1) selects the pose, read by EBSD_DRAW_E4.
+    ; "ファイターのアニメは上下移動に入ったら戻さない 今は繰り返しに
+    ; なってるな" - ONE-TIME pose switch, not a repeating toggle:
+    ; E4_ANIM_FRAME_LEN frames after the dive begins, flips from
+    ; PAT_ENEMY4 to PAT_ENEMY4_2 (E_PARAM4 0->1, read by EBSD_DRAW_E4)
+    ; and then stays there permanently for the rest of this dive.
+    ; E_PARAM1 is the one-shot countdown to that switch (repurposed
+    ; away from the old "remaining px" countdown - see EBSD_ARM_E4_
+    ; PARAM1); once E_PARAM4=1 this whole block is skipped every frame.
+    LD A,(IX+E_PARAM4)
+    OR A
+    JR NZ,EBSD_DRAW
     LD A,(IX+E_PARAM1)
     OR A
     JR NZ,EBSD_E4_ANIM_TICK
     LD A,E4_ANIM_FRAME_LEN : LD (IX+E_PARAM1),A
-    LD A,(IX+E_PARAM4) : XOR 1 : LD (IX+E_PARAM4),A
     JR EBSD_DRAW
 EBSD_E4_ANIM_TICK:
-    DEC A : LD (IX+E_PARAM1),A
+    DEC A
+    JR NZ,EBSD_E4_ANIM_STORE
+    LD A,1 : LD (IX+E_PARAM4),A
+    JR EBSD_DRAW
+EBSD_E4_ANIM_STORE:
+    LD (IX+E_PARAM1),A
 EBSD_DRAW:
     DI
     LD A,(IX+E_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A

@@ -157,8 +157,14 @@ check("Fighter's dodge is armed on the trigger frame (E_PARAM0=1)", z.rd(slot + 
 check("Fighter's Y keeps changing every single frame well past the old ENEMY_DODGE_DIST(16)px cap "
       "(no revert to horizontal-only drift)",
       all(ys[i] == ys[i - 1] + 1 for i in range(1, len(ys))))
-check("Fighter's pose (E_PARAM4) actually toggles between 0 and 1 while diving - a real animation, not a static swap",
-      len(set(param4s)) == 2)
+# "まずファイターのアニメは上下移動に入ったら戻さない 今は繰り返しに
+# なってるな" - pose is a ONE-TIME switch (0 for E4_ANIM_FRAME_LEN
+# frames, then 1 forever), never toggles back to 0.
+switch_at = next(i for i, v in enumerate(param4s) if v == 1)
+check("Fighter's pose (E_PARAM4) switches from 0 to 1 exactly once, E4_ANIM_FRAME_LEN frames into the dive",
+      switch_at == sym["E4_ANIM_FRAME_LEN"] and all(v == 0 for v in param4s[:switch_at]))
+check("...and never reverts to 0 afterward (one-time switch, not a repeating toggle)",
+      all(v == 1 for v in param4s[switch_at:]))
 
 # pre-trigger: pose must stay at 0 (PAT_ENEMY4) and Y must not move at all
 z2 = fresh(); boot(z2)
@@ -286,12 +292,12 @@ def signed(b):
 def read_lut_y(z, baseY):
     return baseY + signed(z.rd(LUT_ADDR + z.rd(slot + sym["E_STATE"])))
 
-xs, ys, states, param4s = [], [], [], []
+xs, ys, states, param5s = [], [], [], []
 for _ in range(60):
     call_routine(z, sym["EBSB_UPDATE"])
     xs.append(z.rd(slot + E_X))
     states.append(z.rd(slot + sym["E_STATE"]))
-    param4s.append(z.rd(slot + sym["E_PARAM4"]))
+    param5s.append(z.rd(slot + sym["E_PARAM5"]))
     ys.append(read_lut_y(z, 90))
 
 # xs[i]/states[i]/ys[i]/param4s[i] are all snapshots taken right after
@@ -313,6 +319,67 @@ check("Wave(E5) also freezes at the trough (state==23) for another 16 frames, sa
       states[39:55] == [23] * 16 and len(set(ys[39:55])) == 1 and all(deltas[i] == 1 for i in range(38, 54)))
 check("...and resumes normal motion afterward, heading back up toward the next peak",
       states[55] == 24 and deltas[54] == ENEMY4_SPEED)
+
+# "ウェーブのキャラが壊れてるな 2機一組で設計してあるが 1機たおされた
+# あとのキャラパターンが壊れてる さっきの動作変更で壊したな" - E_PARAM4
+# is NOT free for BEHAVIOR_SINE_BOB: SIMPLE_REDRAW (shared with
+# BEHAVIOR_SIMPLE_DRIFT_DODGE, called from EBSB_HIT_TEST on a quadrant
+# kill) reads (IX+E_PARAM4) as a glyph-sequence index that MUST stay in
+# [0,3]. The freeze-drift countdown (up to 16) must live in E_PARAM5
+# instead, or a quadrant kill mid-freeze corrupts REDRAW_SRC_PATTERN
+# and therefore the VRAM pattern this exact regression the user hit.
+ENEMY_ANIM_SEQ_TABLE = sym["ENEMY_ANIM_SEQ_TABLE"]
+REDRAW_SRC_PATTERN = sym["REDRAW_SRC_PATTERN"]
+
+
+def expected_seq_ptr(z, idx):
+    lo = z.rd(ENEMY_ANIM_SEQ_TABLE + idx * 2)
+    hi = z.rd(ENEMY_ANIM_SEQ_TABLE + idx * 2 + 1)
+    return lo | (hi << 8)
+
+
+z = fresh(); boot(z)
+slot = ENEMY_POOL
+z.wr(slot + E_ACTIVE, 1)
+z.wr(slot + E_TYPE, TYPE_ENEMY1_LOOK)
+z.wr(slot + E_BEHAVIOR, BEHAVIOR_SINE_BOB)
+z.wr(slot + sym["E_TOP"], 1)
+z.wr(slot + sym["E_BOT"], 1)
+z.wr(slot + E_PARAM3, 0)       # this slot's pattern-slot index
+z.wr(slot + E_PARAM4, 0)       # untouched by EBSB_UPDATE - stays a valid glyph seq index
+z.wr(slot + E_PARAM5, 16)      # simulate mid-freeze (the value that used to live in E_PARAM4)
+z.h = (slot >> 8) & 0xFF; z.l = slot & 0xFF
+z.a = 0
+call_routine(z, sym["SIMPLE_REDRAW"])
+got = z.rd(REDRAW_SRC_PATTERN) | (z.rd(REDRAW_SRC_PATTERN + 1) << 8)
+check("SIMPLE_REDRAW on a Wave slot mid-freeze (E_PARAM5=16) still resolves REDRAW_SRC_PATTERN from "
+      "E_PARAM4's untouched glyph index (0), not corrupted by the freeze counter",
+      got == expected_seq_ptr(z, 0))
+
+# same check via the real hit-test entry point (EBSB_HIT_TEST), bullet
+# placed to land on the TOP quadrant at (E_X,E_PARAM0+lut(state=0)=E_PARAM0)
+z = fresh(); boot(z)
+slot = ENEMY_POOL
+z.wr(slot + E_ACTIVE, 1)
+z.wr(slot + E_TYPE, TYPE_ENEMY1_LOOK)
+z.wr(slot + E_BEHAVIOR, BEHAVIOR_SINE_BOB)
+z.wr(slot + sym["E_TOP"], 1)
+z.wr(slot + sym["E_BOT"], 1)
+z.wr(slot + sym["E_STATE"], 0)
+z.wr(slot + E_PARAM0, 90)
+z.wr(slot + E_PARAM3, 0)
+z.wr(slot + E_PARAM4, 0)
+z.wr(slot + E_PARAM5, 16)      # mid-freeze, exactly as EBSB_ARM_FREEZE would leave it
+z.wr(slot + E_X, 100)
+z.ix = slot
+z.b = 100 // 8
+z.c = 90 // 8
+call_routine(z, sym["EBSB_HIT_TEST"])
+check("EBSB_HIT_TEST kills the TOP quadrant when the bullet lands on it, even mid-freeze",
+      z.rd(slot + sym["E_TOP"]) == 0)
+got = z.rd(REDRAW_SRC_PATTERN) | (z.rd(REDRAW_SRC_PATTERN + 1) << 8)
+check("...and redraws with the correct (uncorrupted) pattern - E_PARAM4 was never touched by the freeze",
+      got == expected_seq_ptr(z, 0))
 
 
 # ---------- (5) Enemy2 (A formation) fires once during the diagonal exit dive ----------
