@@ -907,8 +907,9 @@ BOSS_BROKEN_BEAM_SPR_BASE_SLOT EQU 14
 ; to a plain color 7 (cyan, matching the attached art's own fg), no EC.
 BOSS_BROKEN_BEAM_COLOR         EQU 07h
 ; raw frames between each beam firing in the 1->4 sequence, and between
-; the 4th firing and hiding it/resuming movement - untuned placeholder.
-BOSS_BROKEN_BEAM_INTERVAL EQU 20
+; the 4th firing and hiding it/resuming movement. "発射感覚が長すぎる
+; 半分くらいに" (実機フィードバック対応、follow-up#16) - 20→10。
+BOSS_BROKEN_BEAM_INTERVAL EQU 10
 
 ; death/explosion sequence (see INIT_BOSS_EXPLOSION/UPDATE_BOSS_EXPLOSION
 ; below) - "倒した位置のボス中心から...半径48ｐｘの円に段々で塗りつぶす
