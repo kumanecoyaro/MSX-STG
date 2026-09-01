@@ -7735,3 +7735,52 @@ Comb自動送付方針・完了済み)
   - **保留**: `PLAYER_EXPL_LIFE`(20)/`PLAYER_EXPL_SPAWN_INTERVAL`(8)/
     `PLAYER_EXPL_TOTAL_LEN`(120)/`SOUND_BARRIER_HIT`の音程(period=900)
     はいずれも未調整の初期値。実プレイでの調整は別途。
+
+## Round36-14 follow-up#17(Stage2、ササピービーム停止間隔半減+サンダー
+ビームSEループ化・完了済み)
+
+- **ユーザー指示**: "ステージ2のボスの形態変化後のササピービームで
+  インフィニティ軌道で停止の間隔が長いんで半分に これ以前に指示したが
+  変更されてなかった あとサンダービームのSEが1回のみだが 発射中はSEを
+  ループ 終わったら当然音も停止"。
+- **(1) 停止間隔半減**: follow-up#16で既に半減済みだった`BOSS_BROKEN_
+  BEAM_INTERVAL`(ビーム"発射"の間隔)とは別物 - 今回対象は`BOSS_BROKEN_
+  LAP_STEPS_MIN/_RANGE`(インフィニティ軌道の"移動→停止→また移動"サイクル
+  における、停止と停止の間隔=1回の移動区間の長さ)。48/32(平均64ステップ
+  =軌道1周ぶん)から24/16(平均32ステップ=半周ぶん、RANGEは2の冪のまま
+  維持)へ半減。"これ以前に指示したが変更されてなかった"という指摘通り、
+  過去のCLAUDE.md/HANDOFF.mdにこの具体的な指示の記録は見当たらず
+  (follow-up#16のBEAM_INTERVAL半減とは明確に別の定数)、今回が実質
+  初対応。`tools/stage2_combined/tests/boss_broken_form_test.py`に
+  実際の数値(24/16)を直接ピン留めする新規テスト2件を追加(既存の
+  ROLL_BOSS_BROKEN_LAP_STEPS検証はMIN/RANGEをシンボル経由で参照して
+  いたため、値そのものが変わっても内部無矛盾性チェックとしては通過
+  してしまい、実数値の回帰を検出できていなかった)。
+- **(2) サンダービームSEループ化**: "サンダービーム"はSOUND_SBEAM
+  (ドロップ→スイープ→リトラクトの多段階攻撃、STAGE_SBEAM)を指す
+  (「サンダー」単体=SOUND_THUNDERとは別)。従来はFIRE_SBEAM着火時に
+  一度SOUND_SBEAMを鳴らすだけで、以降SBEAM_ACT!=0の間も再着火せず
+  自然減衰に任せていた。`UPDATE_SBEAM`(毎フレーム呼び出し、SBEAM_ACT=0
+  なら即RET)の末尾、その回の状態遷移処理が終わった後に「まだ
+  SBEAM_ACT!=0ならSOUND_SBEAMを再度CALL」を追加(SND_TIMERが毎フレーム
+  15に再アームされ続けるため実質ループ再生になる)。停止は新規
+  `STOP_SBEAM_SOUND`(SND_TIMERを0にし、その場でR8ボリュームレジスタも
+  直接0書き込み - SND_TIMER=0だけだとSOUND_UPDATE側の次回書き込みまで
+  1フレーム分ボリュームが残ってしまうため)を、SBEAM_ACTが0になる
+  全経路(自然終了=US_SWEEP_RETRACTのUSR_ALL_TRIPS_DONE、ボスの
+  ポーズ強制終了=UBAP_END)に追加。UBAP_ENDは「毎ポーズ終了時に必ず
+  通る、SBeam以外のポーズでも通る」箇所のため、SBEAM_ACTが実際に
+  非ゼロだった場合のみSTOP_SBEAM_SOUNDを呼ぶようガード(無条件だと
+  他の攻撃音を誤って止めてしまうチャンネル共有由来のリスクを回避)。
+  新規`tools/stage2_combined/tests/sbeam_test.py`テスト5件(ループの
+  直接検証=SND_TIMERを毎フレーム強制的に0まで減衰させてもUPDATE_SBEAM
+  が15に再アームし続けることを確認、自然終了時にSND_TIMERが同一
+  フレームで0になることの検証、STOP_SBEAM_SOUND単体検証)を追加。
+- 全回帰`run_all.py` **1244 passed/0 failed**(1237→1244、新規7件)。
+  Comb ROM再ビルド・`verify_comb.py`で健全性確認、送付。詳細は
+  上記参照。
+  - **保留**: `BOSS_BROKEN_LAP_STEPS_MIN/_RANGE`の新値(24/16)は未調整。
+    停止"時間"自体(4方向ビームの発射シーケンスが完了するまでの実質的な
+    長さ)は独立した定数ではなく`BOSS_BROKEN_BEAM_INTERVAL`(follow-up#16
+    で20→10へ既に半減済み)依存のため今回は対象外。実プレイでの
+    バランス調整は別途。

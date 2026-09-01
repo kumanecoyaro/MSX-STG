@@ -1014,6 +1014,24 @@
   発射感覚が長すぎる 半分くらいに"に対応。`BOSS_BROKEN_BEAM_INTERVAL`
   を20→10へ半減。全回帰`run_all.py` **1237 passed/0 failed**。詳細は
   HANDOFF.md Round36-14(follow-up#16)参照。
+- **(2026-09-01、Round36-14 follow-up#17、完了済み)**: "ステージ2の
+  ボスの形態変化後のササピービームでインフィニティ軌道で停止の間隔が
+  長いんで半分に これ以前に指示したが変更されてなかった あとサンダー
+  ビームのSEが1回のみだが 発射中はSEをループ 終わったら当然音も停止"
+  に対応。(1) follow-up#16の`BOSS_BROKEN_BEAM_INTERVAL`(ビーム発射
+  間隔)とは別物の`BOSS_BROKEN_LAP_STEPS_MIN/_RANGE`(軌道の移動→停止
+  サイクルにおける停止と停止の間隔)を48/32→24/16へ半減(過去の記録に
+  この指示自体は見当たらず、今回が実質初対応)。(2) "サンダービーム"
+  =SOUND_SBEAM(STAGE_SBEAM、ドロップ→スイープ→リトラクト攻撃)のSEを
+  `UPDATE_SBEAM`の毎フレーム末尾でSBEAM_ACT!=0の間再着火するループ
+  方式に変更、新規`STOP_SBEAM_SOUND`(SND_TIMER=0+即時R8ボリューム
+  ゼロ書き込み)をSBEAM_ACTが0になる全経路(自然終了+ボスポーズ強制
+  終了、後者は他ポーズの音を誤って止めないようSBEAM_ACT実際に非ゼロ
+  だった場合のみ)に追加。新規テスト7件(`boss_broken_form_test.py`に
+  実数値ピン留め2件、`sbeam_test.py`にループ/即時停止検証5件)。全回帰
+  `run_all.py` **1244 passed/0 failed**。Comb ROM再ビルド・
+  `verify_comb.py`で健全性確認、送付。詳細はHANDOFF.md Round36-14
+  (follow-up#17)参照。
 - **(2026-09-01、Round37、完了済み)**: Stage2側の作業に続き、初めて
   Stage1本体(`src/CYBER SHMUP.asm`)へ機能追加。ユーザーの「エネミー7」
   「E1」呼称がコード上どのシンボルに対応するかAskUserQuestionで確認、

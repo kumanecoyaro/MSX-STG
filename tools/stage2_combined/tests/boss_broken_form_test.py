@@ -502,6 +502,16 @@ check(f"ROLL_BOSS_BROKEN_LAP_STEPS always lands in [{BOSS_BROKEN_LAP_STEPS_MIN},
 check("...and actually varies across different seeds, not stuck on one value",
       len(seen_lap_steps) >= 10)
 
+# "ササピービームでインフィニティ軌道で停止の間隔が長いんで半分に これ
+# 以前に指示したが変更されてなかった" - pins the actual halved values (the
+# checks above only verify internal consistency between MIN/RANGE and
+# ROLL's own output, so they'd pass unchanged even if MIN/RANGE quietly
+# drifted back - this is the only place the real numbers are asserted).
+check("BOSS_BROKEN_LAP_STEPS_MIN halved from 48 to 24 (average stop interval "
+      "now ~half a lap instead of ~1 full lap)", BOSS_BROKEN_LAP_STEPS_MIN == 24)
+check("BOSS_BROKEN_LAP_STEPS_RANGE halved from 32 to 16 (still a power of 2)",
+      BOSS_BROKEN_LAP_STEPS_RANGE == 16)
+
 # ---- ARM_BOSS_BROKEN_BEAM_SEQ: zeroes both COUNT and TIMER, arming
 # beam1 to fire on the very next UPDATE_BOSS_BROKEN_BEAM_SEQ tick (same
 # "0=fire immediately" idiom as ARM_HORMING_VOLLEY) ----

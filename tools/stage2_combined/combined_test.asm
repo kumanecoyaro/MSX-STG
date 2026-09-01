@@ -852,8 +852,11 @@ BOSS_BROKEN_QUAD_COUNT    EQU 4
 ; (見た目のランダム性を保つため、厳密に64固定にはしていない).
 ; Untuned initial placeholder values, like BIGZUM_ENGAGEMENT_DURATION's
 ; own comment - real pacing/difficulty tuning deferred.
-BOSS_BROKEN_LAP_STEPS_MIN   EQU 48
-BOSS_BROKEN_LAP_STEPS_RANGE EQU 32   ; power of 2 - AND 1Fh
+; "ササピービームでインフィニティ軌道で停止の間隔が長いんで半分に" -
+; halved from 48/32 (averaged to ~1 lap/stop) to 24/16 (averages to
+; ~half a lap/stop, twice as many stops per lap).
+BOSS_BROKEN_LAP_STEPS_MIN   EQU 24
+BOSS_BROKEN_LAP_STEPS_RANGE EQU 16   ; power of 2 - AND 0Fh
 ; how many raw frames the figure-8 path LUT holds each of its
 ; BOSS_BROKEN_PATH_LEN(64) points for while MOVING - untuned placeholder,
 ; same as the tick windows above.
@@ -5870,6 +5873,21 @@ SOUND_SBEAM:
     LD A,1 : LD (SND_NOISE),A
     RET
 
+; "サンダービームのSEが1回のみだが 発射中はSEをループ 終わったら当然
+; 音も停止" - UPDATE_SBEAM now re-CALLs SOUND_SBEAM above every single
+; frame SBEAM_ACT is active (re-arms SND_TIMER before it can decay to
+; 0, giving a sustained loop instead of one impulse), and every site
+; that clears SBEAM_ACT calls this immediately after to cut channel A
+; dead right away - SND_TIMER=0 alone would leave this frame's already-
+; written R8 volume stale until the next SOUND_UPDATE call, so this
+; also re-writes R8 directly (same shape as INIT's own boot-time
+; channel-A mute).
+STOP_SBEAM_SOUND:
+    XOR A : LD (SND_TIMER),A
+    LD A,8 : OUT (PSG_ADDR),A
+    XOR A : OUT (PSG_DATA),A
+    RET
+
 ; ササピーレーザー(SasapiBroken停止中4方向ビーム)発射音 - 指示通り
 ; src/CYBER SHMUP.asmのSOUND_SHOTを流用、トーンピッチ(period30)は実値
 ; そのまま。L3の選定通りデューティゲートを追加(Stage1本来は無し)、
@@ -10136,7 +10154,13 @@ UBAP_POSE_COUNT_DONE:
     ; forcibly clear any still-mid-animation beam - UBA_DRAW below
     ; (DRAW_BOSS+FLUSH_BOSS_SPRITES) is about to reclaim SBEAM_SPR_BASE_
     ; SLOT.. for the boss's own real body art again, so SBeam must never
-    ; touch those slots past this point.
+    ; touch those slots past this point. Only stop ITS OWN sound if it
+    ; was actually still active here (this fires at the end of EVERY
+    ; pose, not just SBeam's own - stopping unconditionally would cut
+    ; off some unrelated sound sharing the same channel).
+    LD A,(SBEAM_ACT)
+    OR A
+    CALL NZ,STOP_SBEAM_SOUND
     XOR A : LD (SBEAM_ACT),A
     ; "また巡回 BGは消してスプライトに戻す" - resume the patrol, moving
     ; left again from the right edge, exactly like the very first spawn.
@@ -13447,6 +13471,13 @@ US_STEP_DROP:
 US_STAGE:
     CALL STAGE_SBEAM
     CALL FLUSH_SBEAM_SPRITES
+    ; "発射中はSEをループ" - re-arm every frame it's still active after
+    ; this frame's own state transitions (so the very last frame, where
+    ; US_SWEEP_RETRACT just cleared SBEAM_ACT and STOP_SBEAM_SOUND
+    ; already silenced it, doesn't immediately re-trigger a fresh blip).
+    LD A,(SBEAM_ACT)
+    OR A
+    CALL NZ,SOUND_SBEAM
     RET
 
 ; "サンダーやサンダービームも自機が当たるとダメージ食らうように 判定
@@ -13531,6 +13562,7 @@ US_SWEEP_RETRACT:
     RET
 USR_ALL_TRIPS_DONE:
     XOR A : LD (SBEAM_ACT),A     ; back home - done
+    CALL STOP_SBEAM_SOUND        ; "終わったら当然音も停止"
     RET
 USR_SWEEP:
     LD A,(SBEAM_FRONT_COL)

@@ -635,6 +635,62 @@ for f in range(60000):
 check("real MAINLOOP: parking the tank on SBeam's own tip actually costs life",
       saw_sbeam_damage)
 
+
+# ============================================================
+# "サンダービームのSEが1回のみだが 発射中はSEをループ 終わったら当然
+# 音も停止" - UPDATE_SBEAM now re-arms SOUND_SBEAM every frame it's still
+# active (instead of firing once and letting it decay), and every site
+# that clears SBEAM_ACT calls STOP_SBEAM_SOUND to cut it immediately.
+# ============================================================
+SND_TIMER = sym["SND_TIMER"]
+SBEAM_TRIP = sym["SBEAM_TRIP"]
+SBEAM_TRIP_COUNT = sym["SBEAM_TRIP_COUNT"]
+
+# loop: drop-phase, forcibly decay the envelope between frames (as the
+# real SOUND_UPDATE would each frame) and confirm UPDATE_SBEAM keeps
+# re-arming it to full volume rather than letting it fade to silence.
+cpu = fresh_cpu()
+set_terrain_flat(cpu, 0)
+call_routine(cpu, "FIRE_SBEAM")
+check("FIRE_SBEAM's own initial SOUND_SBEAM call sets SND_TIMER to peak(15)",
+      cpu.mem[SND_TIMER] == 15)
+still_looping = True
+for _ in range(20):
+    cpu.mem[SND_TIMER] = 0   # simulate a frame of SOUND_UPDATE decaying it to silence
+    call_routine(cpu, "UPDATE_SBEAM")
+    if cpu.mem[SBEAM_ACT] == 0:
+        break   # naturally finished mid-loop (drop phase is short) - fine, checked separately below
+    if cpu.mem[SND_TIMER] != 15:
+        still_looping = False
+        break
+check("UPDATE_SBEAM re-arms SND_TIMER to 15 every single frame it's still active - a real "
+      "loop, not a one-shot blip that fades out on its own", still_looping)
+
+# stop: drive the full drop->sweep->retract (x SBEAM_TRIP_COUNT round
+# trips) sequence to its natural end via UPDATE_SBEAM alone, and confirm
+# the sound is cut dead (SND_TIMER=0) on the exact frame SBEAM_ACT
+# reaches 0 - not a gradual fade over subsequent frames.
+cpu = fresh_cpu()
+set_terrain_flat(cpu, 0)
+call_routine(cpu, "FIRE_SBEAM")
+finished_frame = None
+for i in range(SBEAM_START_COL * 4 + 40):
+    cpu.mem[SND_TIMER] = 7   # mid-volume sentinel - if STOP_SBEAM_SOUND didn't run, this survives
+    call_routine(cpu, "UPDATE_SBEAM")
+    if cpu.mem[SBEAM_ACT] == 0:
+        finished_frame = i
+        break
+check("the full sequence actually reaches natural completion (SBEAM_ACT back to 0) within "
+      "this test's own frame budget", finished_frame is not None)
+check("...and SND_TIMER is silenced (0) on that exact same frame - immediate stop, not a "
+      "lingering fade", cpu.mem[SND_TIMER] == 0)
+
+# STOP_SBEAM_SOUND itself: a direct, isolated unit check.
+cpu = fresh_cpu()
+cpu.mem[SND_TIMER] = 15
+call_routine(cpu, "STOP_SBEAM_SOUND")
+check("STOP_SBEAM_SOUND zeroes SND_TIMER", cpu.mem[SND_TIMER] == 0)
+
 print()
 print(f"{len(ok)} passed, {len(fail)} failed")
 if fail:
