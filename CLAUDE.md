@@ -1213,3 +1213,34 @@
   shrink.py`のOUT件数のみ296/306→300/312へ更新)。Comb ROM再ビルド・
   `verify_comb.py`で健全性確認、送付。詳細はHANDOFF.md Round37
   follow-up7参照。
+- **(2026-09-01、Round36-14 follow-up#18、完了済み)**: "ではボス登場前
+  に中身が空の透明のスプライトを4枚横に並べて ボス登場Y位置の上16px
+  からボス表示外の64pxまで高速移動 ボスが攻撃に入ったら消す こうする
+  事でボスを16px幅で消すことが出来るんで登場演出に Combではなく
+  Stage2のRomで Combはテストに時間がかかるんで"に対応。TMS9918実機の
+  「1走査線につき実際に描画されるのは属性テーブル先頭から最大4枚のみ」
+  という仕様を利用し、ボス本体(`BOSS_SPR_BASE_SLOT=10`)より若い
+  スロットに透明(color=0)ダミー4枚(`BOSS_WIPE_SPR_BASE_SLOT=4`、
+  `HORMING_SPR_BASE_SLOT`と同じ「ボススポーン時点で構造的に空」な
+  ENEMY_SPR_BASE_SLOT3枠+BULLET_U_SPR_BASE_SLOT1枠を再利用)を配置、
+  `BOSS_SPAWN_Y-16`から`BOSS_SPAWN_Y+64+64`までY方向に高速(4px/frame、
+  未調整の仮値)スイープさせ、ボス本体を16px幅×4本の帯で見かけ上
+  消去する演出を実装(`S2_BOSS_SPAWN`起点で発火、最初の攻撃ポーズ
+  `UBA_MOVE_RIGHT`で安全弁として強制非表示)。開発中に`stack_safety_
+  test.py`(STACKTOPまでの安全マージン)がFAILし、このファイルの
+  RAM安全マージンが本ラウンド着手前から既にゼロ(新規RAM確保の余地が
+  全く無い状態)だったと判明、新規`BOSS_WIPE_ACT`/`BOSS_WIPE_Y`を
+  ボス死亡演出専用の`BOSS_EXPL_CX`/`BOSS_EXPL_CY`へエイリアス(時間的
+  排他が保証済み)、16バイトのステージングバッファも完全に廃止して
+  新規RAM確保ゼロで解消。`init_ram_poison_test.py`のTier B救済判定
+  にシンボル別期待値の上書き機構を追加(`BOSS_WIPE_ACT`は実スポーン
+  時点で1が正、0固定という旧来の前提を拡張)。新規`tools/stage2_
+  combined/tests/boss_wipe_test.py`(19件)、`vdp_wait_test.py`の
+  ハードコードOUT件数更新(完全展開ルーチンのため99h側+2/98h側+16と
+  他の追加パターンと異なる特殊な増分)。全回帰`run_all.py`
+  **1267 passed/0 failed**(1244→1267)。**ユーザーの明示指示により
+  今回はComb ROM再ビルド・送付を行わずStage2単体ROMのみ送付**。
+  詳細はHANDOFF.md Round36-14 follow-up#18参照。
+  - **保留**: `BOSS_WIPE_SPEED`(4px/frame)は未調整の仮値。見た目の
+    実機/エミュレータでの視覚確認はまだ行っていない(送付ROM自体での
+    確認待ち)。

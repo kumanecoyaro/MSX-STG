@@ -2457,6 +2457,45 @@ BOSS_EXPL_SPARK_SLOT1_COL EQU BOSS_EXPL_RING_REMAIN
 BOSS_EXPL_SPARK_SLOT2_ROW EQU BOSS_EXPL_RING_PTR
 BOSS_EXPL_SPARK_SLOT2_COL EQU BOSS_EXPL_RING_PTR+1
 
+; "ボス登場前に中身が空の透明のスプライトを4枚横に並べて ボス登場Y位置
+; の上16pxからボス表示外の64pxまで高速移動 ボスが攻撃に入ったら消す
+; こうする事でボスを16px幅で消すことが出来るんで登場演出に" - a TMS9918
+; hardware trick: the VDP can only actually DRAW 4 sprites on any given
+; scanline, in ascending attribute-table-slot order (lower slot = higher
+; priority). 4 fully-transparent (color0) dummy sprites, placed at LOWER
+; slot numbers than the boss's own body (BOSS_SPR_BASE_SLOT=10..25), win
+; that priority on every scanline they occupy - silently pushing the
+; real body sprites on those same lines off the "first 4" budget, so
+; they don't render there at all. Sweeping the dummies vertically
+; through the boss's own body therefore erases it in a moving 64px-wide
+; (4x16px) band, even though the dummies themselves are invisible.
+; Slots4-7 (ENEMY_SPR_BASE_SLOT's own 3 + BULLET_U_SPR_BASE_SLOT's
+; first) are the same genuinely-idle-at-boss-spawn slots HORMING_SPR_
+; BASE_SLOT already reuses - see its own comment for why this is
+; airtight (BulletU force-hidden the instant BOSS_ACT!=0), not a timing
+; estimate.
+BOSS_WIPE_SPR_BASE_SLOT EQU 4
+BOSS_WIPE_SLOTS         EQU 4
+BOSS_WIPE_START_Y EQU BOSS_SPAWN_Y-16        ; 40
+BOSS_WIPE_END_Y   EQU BOSS_SPAWN_Y+64+64     ; 184 (64=the boss's own
+                                              ; 64x64 body height, +64
+                                              ; overshoot clear past it)
+BOSS_WIPE_SPEED EQU 4    ; px/frame - untuned "高速" placeholder
+; stack_safety_test.py's own tight margin below STACKTOP means there is
+; NO more genuinely free RAM left in this file at all (F320h was
+; already the exact ceiling before this feature) - so, same idiom as
+; BOSS_EXPL_SPARK_SLOT0_ROW above, these 2 bytes alias BOSS_EXPL_CX/CY
+; (the death/explosion sequence's own center-cell coords) instead of
+; claiming new addresses. Safe: that sequence only ever runs once the
+; boss actually dies, which can't happen during the entrance wipe
+; (still full HP, hasn't even started fighting yet) - guaranteed
+; mutually exclusive in time, exactly like the SPARK reuse. No RAM
+; staging buffer either (see WRITE_BOSS_WIPE_ALL) - X/pattern/color are
+; fixed per-slot compile-time constants, computed straight into
+; registers rather than stored.
+BOSS_WIPE_ACT   EQU BOSS_EXPL_CX   ; 0=inactive, 1=sweeping
+BOSS_WIPE_Y     EQU BOSS_EXPL_CY   ; current Y (shared - all 4 move together)
+
 ; staging buffer for SBEAM_SLOT_COUNT*4 hw sprite slots (4 bytes each:
 ; Y,X,pattern,color), same shape as HORMING_SPRITE_ATTRS - flushed via
 ; FLUSH_SBEAM_SPRITES.
@@ -3994,6 +4033,7 @@ SKIP_OTHER_ENEMIES:
     CALL UPDATE_BOSS_ALL
     LD A,(BOSS_ACT) : OR A
     JR Z,SKIP_BOSS_SUBSYSTEMS
+    CALL UPDATE_BOSS_WIPE
     CALL CHECK_BULLET_VS_BOSS
     CALL CHECK_BULLET_VS_HORMING
     CALL UPDATE_HORMING_ALL
@@ -9956,6 +9996,98 @@ UPDATE_BOSS_ALL:
     JP Z,UPDATE_BOSS_EXPLOSION
     JP UPDATE_BOSS_BROKEN_ACTIVE
 
+; ---------- boss entrance wipe (see BOSS_WIPE_SPR_BASE_SLOT's own
+; comment for the underlying VDP 4-sprites-per-scanline priority trick)
+; ----------
+; Kicks off the sweep - called once from S2_BOSS_SPAWN, right as the
+; boss's own body first appears.
+TRIGGER_BOSS_WIPE:
+    LD A,1 : LD (BOSS_WIPE_ACT),A
+    LD A,BOSS_WIPE_START_Y : LD (BOSS_WIPE_Y),A
+    RET
+
+; called every frame while BOSS_ACT!=0 (see MAINLOOP) - does nothing
+; once the sweep has already finished (BOSS_WIPE_ACT=0, whether from
+; reaching BOSS_WIPE_END_Y on its own or the pose-entry safety net -
+; see UBA_MOVE_RIGHT's own CALL HIDE_BOSS_WIPE_SPRITES).
+UPDATE_BOSS_WIPE:
+    LD A,(BOSS_WIPE_ACT)
+    OR A
+    RET Z
+    LD A,(BOSS_WIPE_Y) : ADD A,BOSS_WIPE_SPEED
+    LD (BOSS_WIPE_Y),A
+    CP BOSS_WIPE_END_Y
+    JR C,UBW_STILL_GOING
+    XOR A : LD (BOSS_WIPE_ACT),A
+    JP HIDE_BOSS_WIPE_SPRITES
+UBW_STILL_GOING:
+    JP DRAW_BOSS_WIPE_SPRITES
+
+DRAW_BOSS_WIPE_SPRITES:
+    LD A,(BOSS_WIPE_Y)
+    JP WRITE_BOSS_WIPE_ALL
+
+HIDE_BOSS_WIPE_SPRITES:
+    LD A,209
+    JP WRITE_BOSS_WIPE_ALL
+
+; writes all 4 dummy sprites with the SAME Y (A on entry) to hw sprite
+; slots BOSS_WIPE_SPR_BASE_SLOT..+3 (4-7) - shared by DRAW/HIDE above
+; (HIDE just passes Y=209). No RAM staging buffer (see BOSS_WIPE_ACT's
+; own comment on why there's no room left for one) - X is a fixed
+; per-slot compile-time constant (BOSS_SPAWNX+0/16/32/48), pattern/
+; color are always 0 (irrelevant/transparent), all written straight
+; from registers/literals. Y is kept in B (untouched by the PUSH BC:
+; POP BC timing-padding idiom, so it survives the whole sequence)
+; rather than re-reading it from RAM 4 times. Same raw DI-wrapped
+; OUT+NOP-padded pattern as every other direct sprite-attribute writer
+; in this file (e.g. FLUSH_ENEMY_SPRITES), just fully unrolled instead
+; of DJNZ'd since BC itself is needed for the Y value here, not free to
+; also serve as a loop counter.
+WRITE_BOSS_WIPE_ALL:
+    LD B,A
+    DI
+    LD A,BOSS_WIPE_SPR_BASE_SLOT*4 : OUT (99h),A
+    NOP
+    NOP
+    LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    LD A,B : OUT (98h),A
+    PUSH BC : POP BC : NOP : NOP
+    LD A,BOSS_SPAWNX : OUT (98h),A
+    PUSH BC : POP BC : NOP : NOP
+    XOR A : OUT (98h),A
+    PUSH BC : POP BC : NOP : NOP
+    OUT (98h),A
+    PUSH BC : POP BC : NOP : NOP
+    LD A,B : OUT (98h),A
+    PUSH BC : POP BC : NOP : NOP
+    LD A,BOSS_SPAWNX+16 : OUT (98h),A
+    PUSH BC : POP BC : NOP : NOP
+    XOR A : OUT (98h),A
+    PUSH BC : POP BC : NOP : NOP
+    OUT (98h),A
+    PUSH BC : POP BC : NOP : NOP
+    LD A,B : OUT (98h),A
+    PUSH BC : POP BC : NOP : NOP
+    LD A,BOSS_SPAWNX+32 : OUT (98h),A
+    PUSH BC : POP BC : NOP : NOP
+    XOR A : OUT (98h),A
+    PUSH BC : POP BC : NOP : NOP
+    OUT (98h),A
+    PUSH BC : POP BC : NOP : NOP
+    LD A,B : OUT (98h),A
+    PUSH BC : POP BC : NOP : NOP
+    LD A,BOSS_SPAWNX+48 : OUT (98h),A
+    PUSH BC : POP BC : NOP : NOP
+    XOR A : OUT (98h),A
+    PUSH BC : POP BC : NOP : NOP
+    OUT (98h),A
+    PUSH BC : POP BC : NOP : NOP
+    EI
+    RET
+
 ; the one-shot spawn itself - SSC2_FIRE's own dispatch chain falls
 ; through to this directly once every earlier schedule entry has
 ; fired (same convention as Stage1's own SSC_FIRE/BOSS_SPAWN, src/
@@ -9999,6 +10131,7 @@ S2_BOSS_SPAWN:
     XOR A : LD (THUNDER_ELIGIBLE),A   ; not eligible until the first pose ends - see UBAP_END
     XOR A : LD (BOSS_POSE_COUNT),A
     XOR A : LD (SBEAM_ACT),A
+    CALL TRIGGER_BOSS_WIPE
     JP UBA_DRAW
 UBA_ACTIVE:
     LD A,(BOSS_PHASE)
@@ -10083,6 +10216,11 @@ UBA_MOVE_RIGHT:
     LD A,1 : LD (BOSS_PHASE),A
     LD HL,(GAME_TICK) : LD DE,BOSS_POSE_TICKS : ADD HL,DE
     LD (BOSS_POSE_END_TICK),HL
+    ; "ボスが攻撃に入ったら消す" - safety net in case the entrance sweep
+    ; hasn't reached BOSS_WIPE_END_Y on its own by the time the very
+    ; first pose begins (it normally finishes well before this, during
+    ; the patrol leg, but this guarantees it's gone either way).
+    CALL HIDE_BOSS_WIPE_SPRITES
     CALL HIDE_BOSS_SPRITES
     CALL DRAW_SASAPI_HAND
     ; "当然サンダービーム中はホーミングもサンダーも撃たねえんだよ" -

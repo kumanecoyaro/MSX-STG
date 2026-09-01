@@ -188,16 +188,26 @@ check("BOSS_ACT is not a Tier-A failure (it has no legitimate deferred-init excu
 # that because SKIP_BOSS_SUBSYSTEMS gates every reader on BOSS_ACT!=0) -
 # it does not just trust the comment.
 real_bugs = set()
+# most Tier-A exceptions are "inactive" flags that get atomically zeroed
+# right at spawn (SBEAM_ACT/THUNDER_POOL - "cleared"). BOSS_WIPE_ACT
+# (see combined_test.asm's own TRIGGER_BOSS_WIPE) is the one legitimate
+# exception to THAT: the entrance-wipe sweep starts ACTIVE the instant
+# the boss spawns, so its deterministic post-spawn value is 1, not 0 -
+# still fully poison-independent (still safe), just not "0". Anything
+# not listed here defaults to the usual "0" expectation.
+EXPECTED_AT_SPAWN = {"BOSS_WIPE_ACT": 1}
 if tier_a_failures:
     for poison in POISONS:
         cpu = boot_with_poisoned_ram(poison)
         spawned = run_until_boss_spawned(cpu)
         for name, addr in sorted(tier_a_failures):
-            still_bad = (not spawned) or cpu.mem[addr] != 0
+            expected = EXPECTED_AT_SPAWN.get(name, 0)
+            still_bad = (not spawned) or cpu.mem[addr] != expected
             if still_bad:
                 real_bugs.add((name, addr))
             check(f"poison=0x{poison:02X}: {name} (0x{addr:04X}) failed the immediate Tier-A check, "
-                  f"so verifying it under Tier B instead (boss actually spawned={spawned}, now 0={cpu.mem[addr] == 0 if spawned else 'n/a'})",
+                  f"so verifying it under Tier B instead (boss actually spawned={spawned}, now "
+                  f"{expected}={cpu.mem[addr] == expected if spawned else 'n/a'})",
                   not still_bad)
 
 for name, addr in sorted(tier_a_failures):
