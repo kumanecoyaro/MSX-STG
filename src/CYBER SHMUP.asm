@@ -937,6 +937,7 @@ INIT_SPRATR_CLR:
     LD HL,E5_FIRE_COUNTDOWN : CALL RANDOM_3_5 : LD (HL),A
     LD HL,E2_FIRE_COUNTDOWN : CALL RANDOM_3_5 : LD (HL),A
     LD HL,ENEMY4_PATTERN : LD DE,PAT_ENEMY4*8+SPRPAT : LD BC,32 : CALL LDIRVM
+    LD HL,ENEMY4_PATTERN_2 : LD DE,PAT_ENEMY4_2*8+SPRPAT : LD BC,32 : CALL LDIRVM
     LD HL,EBULLET_PATTERN : LD DE,PAT_EBULLET*8+SPRPAT : LD BC,32 : CALL LDIRVM
     LD HL,SHIP_MID_PATTERN : LD DE,PAT_SHIP*8+SPRPAT : LD BC,32 : CALL LDIRVM
     LD HL,SHIP_UP_PATTERN : LD DE,PAT_SHIP_UP*8+SPRPAT : LD BC,32 : CALL LDIRVM
@@ -3202,6 +3203,11 @@ ENEMY4_SPAWNX  EQU 240
 ENEMY4_HP      EQU 2          ; hits to destroy - trial run of the durability system
 ENEMY4_LUT_LEN EQU 32
 PAT_ENEMY4     EQU 84         ; patterns84-87 (32 bytes at SPRPAT+672)
+; "E4にアニメ追加 上下移動中に適用" - 2nd pose, shown alternating with
+; PAT_ENEMY4 while diving (see EBSD_DIAG_E4/EBSD_DRAW_E4). Free code
+; range (92-95, confirmed unused elsewhere in this file).
+PAT_ENEMY4_2   EQU 92         ; patterns92-95 (32 bytes at SPRPAT+736)
+E4_ANIM_FRAME_LEN EQU 4       ; frames per pose toggle while diving - same pacing as ENEMY1_ANIM_FRAME_LEN
 PAT_PARTICLE   EQU 120        ; single-dot trail particle (32 bytes at SPRPAT+960)
 E4_SPAWN_BASEY EQU 0E709h ; scratch: this wave's base Y, set right before ENEMY4_CLAIM_ANY
 PAT_ENEMY1_LOOK EQU 88     ; test: Enemy1's asterisk look, static (32 bytes at SPRPAT+704),
@@ -8281,7 +8287,24 @@ EBSD_E4_FIRE_DONE:
     CP ENEMY_CENTER_X
     JR NC,EBSD_DIAG_SKIP_TRIGGER
     LD A,1 : LD (IX+E_PARAM0),A
+    ; "Eは一度上下移動に入ったらそのまま通常のドリフトには戻さず移動
+    ; して消えるように" - TYPE_ENEMY4 no longer uses PARAM1 as a
+    ; remaining-distance countdown (the dive never expires now - see
+    ; EBSD_DIAG_E4 below); it's repurposed as this type's own pose-
+    ; toggle animation timer instead, starting at 0 (toggle pose on
+    ; the very first diving frame). Any other type sharing this
+    ; trigger-arm block keeps the original ENEMY_DODGE_DIST countdown
+    ; (only TYPE_ENEMY4 uses this BEHAVIOR today - see ENEMY4_CLAIM_
+    ; ANY - but the branch is kept explicit for the same reason
+    ; EBSD_EXIT_LEFT/EBSD_DRAW already do).
+    LD A,(IX+E_TYPE)
+    CP TYPE_ENEMY4
+    JR Z,EBSD_ARM_E4_PARAM1
     LD A,ENEMY_DODGE_DIST : LD (IX+E_PARAM1),A   ; DIAG_REMAIN
+    JR EBSD_ARM_PARAM1_DONE
+EBSD_ARM_E4_PARAM1:
+    XOR A : LD (IX+E_PARAM1),A
+EBSD_ARM_PARAM1_DONE:
     LD A,(PLAYERY) : LD B,A
     LD A,(IX+E_Y)
     CP B
@@ -8310,6 +8333,10 @@ EBSD_E1_NOFIRE:
     POP HL
     XOR A : LD (IX+E_PARAM4),A : LD (IX+E_PARAM5),A  ; reset quadrant-anim seq/timer for this dodge
 EBSD_DIAG_SKIP_TRIGGER:
+    LD A,(IX+E_TYPE)
+    CP TYPE_ENEMY4
+    JR Z,EBSD_DIAG_E4
+
     LD A,(IX+E_PARAM1)
     OR A
     JR Z,EBSD_DRAW
@@ -8319,18 +8346,12 @@ EBSD_DIAG_SKIP_TRIGGER:
     ADD A,B
     LD (IX+E_Y),A
 
-    ; TYPE_ENEMY4 keeps its own static look (PAT_ENEMY4) instead of
-    ; the shared asterisk quadrants - see EBSD_DRAW - so it has no
-    ; frame to cycle through here.
-    LD A,(IX+E_TYPE)
-    CP TYPE_ENEMY4
-    JR Z,EBSD_DRAW
-
     ; quadrant-glyph animation (1,2,3,2 repeating - see ASTERISK_
     ; PATTERN/2/3, ENEMY_ANIM_SEQ_TABLE), advances once every
     ; ENEMY1_ANIM_FRAME_LEN frames while actively dodging, snaps
     ; back to the base frame (seq0/ASTERISK_PATTERN) the instant the
-    ; dodge ends.
+    ; dodge ends. TYPE_ENEMY4 no longer reaches this path at all - it
+    ; has its own permanent-dive/animation handling, EBSD_DIAG_E4.
     LD A,(IX+E_PARAM1)
     JR NZ,EBSD_ANIM_STEP
     LD A,(IX+E_PARAM4)
@@ -8354,6 +8375,43 @@ EBSD_ANIM_REDRAW:
     LD A,(IX+E_PARAM3)
     CALL SIMPLE_REDRAW
     POP IX
+    JR EBSD_DRAW
+
+; "Eは一度上下移動に入ったらそのまま通常のドリフトには戻さず移動して
+; 消えるように" - once triggered (E_PARAM0=1), TYPE_ENEMY4's dive
+; never expires: it just keeps drifting diagonally (X via the
+; unconditional ENEMY_SPEED drift already applied above, Y here) for
+; the rest of its life, until it exits off *some* edge via the
+; existing EBSD_EXIT_LEFT check (X reaching the left edge) - the
+; horizontal drift never stops regardless of this vertical motion, so
+; no separate off-screen check is needed for "moves until it
+; disappears".
+EBSD_DIAG_E4:
+    ; not diving yet (dodge never triggered this instance) - stay on
+    ; the static pose (E_PARAM4 untouched, still 0 from ALLOC_ENEMY_
+    ; SLOT's own zero-fill) and don't move Y at all.
+    LD A,(IX+E_PARAM0)
+    OR A
+    JR Z,EBSD_DRAW
+    LD A,(IX+E_PARAM2) : LD B,A
+    LD A,(IX+E_Y)
+    ADD A,B
+    LD (IX+E_Y),A
+
+    ; "E4にアニメ追加 上下移動中に適用" - alternates PAT_ENEMY4/
+    ; PAT_ENEMY4_2 every E4_ANIM_FRAME_LEN frames for as long as it's
+    ; diving (forever, now that the dive itself never ends). E_PARAM1
+    ; doubles as this toggle timer (repurposed away from the old
+    ; "remaining px" countdown - see EBSD_ARM_E4_PARAM1); E_PARAM4
+    ; (0/1) selects the pose, read by EBSD_DRAW_E4.
+    LD A,(IX+E_PARAM1)
+    OR A
+    JR NZ,EBSD_E4_ANIM_TICK
+    LD A,E4_ANIM_FRAME_LEN : LD (IX+E_PARAM1),A
+    LD A,(IX+E_PARAM4) : XOR 1 : LD (IX+E_PARAM4),A
+    JR EBSD_DRAW
+EBSD_E4_ANIM_TICK:
+    DEC A : LD (IX+E_PARAM1),A
 EBSD_DRAW:
     DI
     LD A,(IX+E_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
@@ -8379,7 +8437,18 @@ EBSD_DRAW:
     LD (EBSD_DRAW_COLOR),A
     JR EBSD_DRAW_GO
 EBSD_DRAW_E4:
+    ; "E4にアニメ追加 上下移動中に適用" - E_PARAM4(0/1) selects the
+    ; pose, toggled by EBSD_DIAG_E4 while diving; stays 0 (PAT_ENEMY4)
+    ; the rest of the time (E_PARAM4 is only ever touched inside
+    ; EBSD_DIAG_E4/the trigger-arm reset, both dive-only).
+    LD A,(IX+E_PARAM4)
+    OR A
+    JR Z,EBSD_DRAW_E4_POSE0
+    LD A,PAT_ENEMY4_2
+    JR EBSD_DRAW_E4_GOT
+EBSD_DRAW_E4_POSE0:
     LD A,PAT_ENEMY4
+EBSD_DRAW_E4_GOT:
     LD (EBSD_DRAW_PAT),A
     ; "エネミー7の色を変更 現在ブラックだがライトグリーンに"
     LD A,SPR_LIGHTGREEN
@@ -9432,6 +9501,15 @@ ENEMY4_PATTERN:
     DB 30h,64h,FFh,07h,01h,2Ah,15h,00h   ; bottom-left
     DB 00h,00h,00h,00h,00h,00h,00h,00h   ; top-right
     DB 01h,06h,9Ch,FFh,FEh,7Ch,0Eh,03h   ; bottom-right
+
+; "E4にアニメ追加 上下移動中に適用" - 2nd pose (user-supplied
+; E4_2_16x16.json, fg=3=SPR_LIGHTGREEN matching Fighter's own color),
+; alternated with ENEMY4_PATTERN while diving - see EBSD_DIAG_E4.
+ENEMY4_PATTERN_2:
+    DB 00h,00h,00h,00h,00h,00h,00h,00h   ; top-left
+    DB 00h,64h,0FFh,05h,2Ah,00h,00h,00h  ; bottom-left
+    DB 00h,00h,00h,00h,00h,00h,00h,00h   ; top-right
+    DB 00h,01h,9Ah,55h,0A8h,16h,01h,00h  ; bottom-right
 
 ; enemy-fired bullet (new) - "パターンはFlyerレーザーを流用". Stage2's
 ; own FlyerLaser art (tools/stage2_combined/flyerlaser_gen.py) is just

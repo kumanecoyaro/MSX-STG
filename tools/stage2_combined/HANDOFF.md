@@ -7403,3 +7403,51 @@ Stage2側の一連のRound36-14作業に続き、初めてStage1本体
   対応する、という対応関係を取り違えていた)。全40件PASS(37→40件、
   古いダッシュ用テスト3件を新仕様の6件に置換)。既存の`verify_*.py`
   群も無退行で再確認。ASM変更はWave用のみ。
+
+## Round 37 follow-up3(Fighter恒久ダイブ+アニメ、自機アクセント書き出し、
+Comb自動送付方針・完了済み)
+
+- **"Romくれ 確認のために毎回Romは出すように"**: 以後コード変更が
+  一区切りつくたびに毎回Comb ROMをビルド・`verify_comb.py`で検証し、
+  ユーザーの確認を待たず自動送付する方針に変更(CLAUDE.md本文にも
+  明記、2026-08-29の「指示がない限り不要」方針を明確に上書き)。
+- **自機アクセント(2枚目、ホワイト)のJSON書き出し**: "自機の2枚目の
+  現在ホワイトのスプライトをエディタで読めるJsonでくれ 自機の前に
+  バリアを設置するんで ドット打ってくるんで"に対応。自機は
+  PAT_SHIP(本体、slot1)+PAT_ACCENT(アクセントオーバーレイ、slot0、
+  ship_X+8に描画、SPR_WHITE)の2枚のhwスプライトで構成されていると
+  判明 - "2枚目"はこのACCENT。既存の`ACCENT_MID_PATTERN`(32バイト、
+  TL/BL/TR/BR)を`tools/sprite-editor.html`と同じJSON形式(version2、
+  16x16、flat bits配列)へ変換して送付(`fg=15`実際の描画色SPR_WHITE、
+  `bg=1`)。TL/BL/TR/BRの象限→bits配列変換規則は、デコードした
+  ACCENT_MID_PATTERNが小さな一貫した形(排気マークのような3ドット)に
+  なることで実際に検証済み。
+- **Fighter(TYPE_ENEMY4)にアニメ追加+恒久ダイブ化**: ユーザー添付
+  `E4_2_16x16.json`(fg=3=SPR_LIGHTGREEN、Fighter自身の色と一致)を
+  2枚目のポーズとして追加。"上下移動中に適用"の通り、ドッジ中のみ
+  `PAT_ENEMY4`/新規`PAT_ENEMY4_2`(コード92-95、事前調査済みの空き
+  範囲)を交互に表示するアニメーションを実装(`E4_ANIM_FRAME_LEN`=4
+  フレーム毎にトグル)。あわせて"Eは一度上下移動に入ったらそのまま
+  通常のドリフトには戻さず移動して消えるように"に対応 - 従来
+  `ENEMY_DODGE_DIST`(16px)で打ち切っていた斜めドッジを、一度発動
+  したら二度と水平ドリフトのみには戻らず、画面外に消えるまで
+  (既存の`EBSD_EXIT_LEFT`、X座標が左端に達した時点の判定を流用、
+  横方向のドリフト自体は縦移動と無関係に常に継続しているため追加の
+  画面外判定は不要)永久に斜め移動し続けるよう変更。実装は
+  `EBSD_DIAG_SKIP_TRIGGER`をTYPE_ENEMY4かどうかで早期に分岐する形に
+  再構成し、TYPE_ENEMY4専用の新規`EBSD_DIAG_E4`ブロックを追加
+  (他の仮想的な型が将来この挙動を共有する場合に備え、旧来の
+  `ENEMY_DODGE_DIST`満了方式パスはTYPE_ENEMY4以外向けに手を付けずに
+  温存)。`E_PARAM1`を「残り距離カウントダウン」から「ポーズ切替
+  タイマー」へ再定義、`E_PARAM4`(0/1)が現在のポーズを保持。
+  **開発中に実バグを発見・修正**: 新設した`EBSD_DIAG_E4`が
+  `E_PARAM0`(ドッジ発動済みフラグ)を確認せずに常時アニメーション
+  処理を実行してしまい、ドッジ未発動のインスタンスでもポーズが
+  意図せず切り替わる不具合をテストで検出、`E_PARAM0`チェックを
+  先頭に追加して解消。`tools/verify_enemy_bullets.py`に5件追加
+  (40→45件)、既存検証群(`verify_enemy3_erase.py`/`verify_enemy3_
+  init_safety_net.py`/`verify_cell_loop_hoist.py`/`verify_sound_
+  duty_cycle.py`/`verify_vdp_wait_shrink.py`)も無退行。
+  `verify_enemy_pool_scan.py`の3件ミスマッチは既知の想定通りの差分
+  (過去ラウンドから継続、バグではない)。Comb ROM再ビルド・
+  `verify_comb.py`で健全性確認、送付。

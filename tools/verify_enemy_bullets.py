@@ -133,6 +133,65 @@ call_routine(z, sym["EBSD_UPDATE"])
 check("...still aligned next frame, but cooldown blocks a 2nd shot", ebullet_active_count(z) == 1)
 
 
+# ---------- (2b) Fighter(E4/TYPE_ENEMY4): permanent dive + 2-pose animation ----------
+# "Eは一度上下移動に入ったらそのまま通常のドリフトには戻さず移動して
+# 消えるように" / "E4にアニメ追加 上下移動中に適用"
+z = fresh(); boot(z)
+slot = ENEMY_POOL
+z.wr(slot + E_ACTIVE, 1)
+z.wr(slot + E_TYPE, TYPE_ENEMY4)
+z.wr(slot + E_BEHAVIOR, BEHAVIOR_SIMPLE_DRIFT_DODGE)
+z.wr(slot + E_X, ENEMY_CENTER_X + sym["ENEMY_SPEED"] - 1)  # crosses center this exact frame -> dodge triggers
+z.wr(slot + E_Y, 100)
+z.wr(slot + E_PARAM0, 0)
+z.wr(slot + sym["E_PARAM3"], 0)
+z.wr(slot + E_SPRNUM, 5)
+z.wr(PLAYERY, 200)  # far below E_Y -> DIAG_DIR downward (Y increases)
+z.ix = slot
+ys, param4s = [], []
+for _ in range(24):
+    call_routine(z, sym["EBSD_UPDATE"])
+    ys.append(z.rd(slot + E_Y))
+    param4s.append(z.rd(slot + sym["E_PARAM4"]))
+check("Fighter's dodge is armed on the trigger frame (E_PARAM0=1)", z.rd(slot + E_PARAM0) == 1)
+check("Fighter's Y keeps changing every single frame well past the old ENEMY_DODGE_DIST(16)px cap "
+      "(no revert to horizontal-only drift)",
+      all(ys[i] == ys[i - 1] + 1 for i in range(1, len(ys))))
+check("Fighter's pose (E_PARAM4) actually toggles between 0 and 1 while diving - a real animation, not a static swap",
+      len(set(param4s)) == 2)
+
+# pre-trigger: pose must stay at 0 (PAT_ENEMY4) and Y must not move at all
+z2 = fresh(); boot(z2)
+slot = ENEMY_POOL
+z2.wr(slot + E_ACTIVE, 1)
+z2.wr(slot + E_TYPE, TYPE_ENEMY4)
+z2.wr(slot + E_BEHAVIOR, BEHAVIOR_SIMPLE_DRIFT_DODGE)
+z2.wr(slot + E_X, 240)  # far right of ENEMY_CENTER_X - no trigger yet
+z2.wr(slot + E_Y, 50)
+z2.wr(slot + E_PARAM0, 0)
+z2.wr(slot + sym["E_PARAM3"], 0)
+z2.wr(slot + E_SPRNUM, 5)
+z2.wr(PLAYERY, 200)
+z2.ix = slot
+call_routine(z2, sym["EBSD_UPDATE"])
+check("before the dodge triggers, Fighter's pose stays at 0 (PAT_ENEMY4, no animation) and Y doesn't move",
+      z2.rd(slot + sym["E_PARAM4"]) == 0 and z2.rd(slot + E_Y) == 50)
+
+# EBSD_DRAW_E4 actually selects PAT_ENEMY4_2 (not PAT_ENEMY4) when E_PARAM4=1
+z3 = fresh(); boot(z3)
+slot = ENEMY_POOL
+z3.wr(slot + E_ACTIVE, 1)
+z3.wr(slot + E_TYPE, TYPE_ENEMY4)
+z3.wr(slot + E_X, 100)
+z3.wr(slot + E_Y, 80)
+z3.wr(slot + sym["E_PARAM4"], 1)
+z3.wr(slot + E_SPRNUM, 6)
+z3.ix = slot
+call_routine(z3, sym["EBSD_DRAW"])
+check("EBSD_DRAW_E4 actually draws PAT_ENEMY4_2 (not PAT_ENEMY4) when E_PARAM4=1",
+      z3.vram[0x1B00 + 6 * 4 + 2] == sym["PAT_ENEMY4_2"])
+
+
 # ---------- (3) Enemy1(=same TYPE_ENEMY4 entity) diagonal-dodge random fire ----------
 z = fresh(); boot(z)
 z.wr(E1_FIRE_COUNTDOWN, 1)   # forces DECIDE_FIRE_SHOOTER to pick THIS spawn's dodge as the shooter

@@ -1091,3 +1091,19 @@
   全面書き直し(開発中にテスト自身のインデックスずれによる誤検知を
   発見・修正)、全40件PASS。既存検証群も無退行。詳細はHANDOFF.md
   Round37 follow-up2参照。
+- **(2026-09-01、Round37 follow-up3、完了済み)**: (1) 自機の2枚目
+  スプライト(ACCENT_MID_PATTERN、SPR_WHITE)を`tools/sprite-editor.
+  html`互換のJSONへ変換して送付(自機前方バリア用のドット絵作成の
+  ため)。(2) Fighter(TYPE_ENEMY4)にユーザー添付の2枚目ポーズ
+  (`PAT_ENEMY4_2`、コード92-95)を追加し、ドッジ中のみ`E4_ANIM_
+  FRAME_LEN`(4フレーム)毎に交互表示するアニメーションを実装。
+  (3) "Eは一度上下移動に入ったらそのまま通常のドリフトには戻さず
+  移動して消えるように"に対応 - 従来16px(`ENEMY_DODGE_DIST`)で
+  打ち切っていた斜めドッジを、発動後は画面外に消えるまで永久に
+  斜め移動し続けるよう変更(`EBSD_DIAG_SKIP_TRIGGER`をTYPE_ENEMY4か
+  で早期分岐、新規`EBSD_DIAG_E4`ブロック)。開発中に`EBSD_DIAG_E4`が
+  `E_PARAM0`(ドッジ発動済みか)を確認せず常時アニメ処理していた
+  実バグをテストで検出・修正。`tools/verify_enemy_bullets.py`に
+  5件追加(40→45件)、既存検証群も無退行。Comb ROM再ビルド・検証・
+  送付(以後毎回自動送付方針、下記参照)。詳細はHANDOFF.md Round37
+  follow-up3参照。
