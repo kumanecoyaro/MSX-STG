@@ -8117,6 +8117,39 @@ EBSB_MOVEOK:
     XOR A
 EBSB_PHASEOK:
     LD (IX+E_STATE),A
+    ; "サインウェーブの頂点と下限で16px左にドリフトするよう変更" -
+    ; extra 16px leftward dash, armed once at the START of each
+    ; plateau (state==7 peak / state==23 trough - both 3-frame
+    ; plateaus in ENEMY4_SINE_LUT; checking only the FIRST frame avoids
+    ; re-arming on all 3). Spread over 8 frames (2px/frame extra, on
+    ; top of the normal ENEMY4_SPEED(3)px/frame drift - so 5px/frame
+    ; total while dashing) rather than Enemy1's own 16-frame/1px dodge
+    ; pacing: since peak and trough are exactly 16 states apart, a
+    ; 16-frame dash would never fully finish before the next one arms,
+    ; making the "extra" speed permanent instead of a visible one-time
+    ; accent at each plateau (confirmed by directly tracing E_X over 2
+    ; full cycles before settling on this shorter duration) - 8 frames
+    ; leaves a real gap of plain-speed cruising between accents.
+    ; E_PARAM4 is otherwise unused by this BEHAVIOR (E_PARAM1/2 are the
+    ; wave-fire shooter/fired flags, E_PARAM0/E_STATE/E_PARAM3 drive
+    ; the base movement/draw - see this routine's own header comment).
+    CP 7
+    JR Z,EBSB_DASH_ARM
+    CP 23
+    JR NZ,EBSB_DASH_SKIP_ARM
+EBSB_DASH_ARM:
+    LD A,8 : LD (IX+E_PARAM4),A
+EBSB_DASH_SKIP_ARM:
+    LD A,(IX+E_PARAM4)
+    OR A
+    JR Z,EBSB_DASH_DONE
+    DEC A : LD (IX+E_PARAM4),A
+    LD A,(IX+E_X)
+    CP 2
+    JR C,EBSB_DASH_DONE   ; too close to the left edge - let the normal exit-check catch it next frame, don't underflow
+    DEC A : DEC A : LD (IX+E_X),A
+EBSB_DASH_DONE:
+    LD A,(IX+E_STATE)
     LD E,A : LD D,0
     LD HL,ENEMY4_SINE_LUT
     ADD HL,DE

@@ -203,6 +203,36 @@ call_routine(z, sym["EBSB_UPDATE"])
 check("...never fires", ebullet_active_count(z) == 0)
 
 
+# ---------- (4b) Wave(E5)'s own peak/trough dash ----------
+# "サインウェーブの頂点と下限で16px左にドリフトするよう変更"
+z = fresh(); boot(z)
+slot = ENEMY_POOL
+z.wr(slot + E_ACTIVE, 1)
+z.wr(slot + E_TYPE, TYPE_ENEMY1_LOOK)
+z.wr(slot + E_BEHAVIOR, BEHAVIOR_SINE_BOB)
+z.wr(slot + E_X, 250)
+z.wr(slot + sym["E_STATE"], 0)
+z.wr(slot + E_PARAM0, 90)
+z.wr(slot + sym["E_PARAM3"], 0)
+z.wr(slot + E_SPRNUM, 5)
+z.ix = slot
+xs = []
+for _ in range(40):
+    call_routine(z, sym["EBSB_UPDATE"])
+    xs.append(z.rd(slot + E_X))
+deltas = [xs[i - 1] - xs[i] for i in range(1, len(xs))]
+ENEMY4_SPEED = sym["ENEMY4_SPEED"]
+dash_frames = [i for i, d in enumerate(deltas) if d > ENEMY4_SPEED]
+cruise_frames = [i for i, d in enumerate(deltas) if d == ENEMY4_SPEED]
+check(f"Wave(E5) has both dash frames (>{ENEMY4_SPEED}px) and plain-cruise frames "
+      f"({ENEMY4_SPEED}px) - a real accent, not a permanent speed change",
+      len(dash_frames) > 0 and len(cruise_frames) > 0)
+check("...each dash moves exactly 5px/frame (3 base + 2 extra)",
+      all(deltas[i] == ENEMY4_SPEED + 2 for i in dash_frames))
+check("...one full 32-state cycle contains exactly 2 dash windows of 8 frames each (16 dash frames total)",
+      len([i for i in dash_frames if i < 32]) == 16)
+
+
 # ---------- (5) Enemy2 (A formation) fires once during the diagonal exit dive ----------
 z = fresh(); boot(z)
 z.wr(E2_FIRE_COUNTDOWN, 1)
