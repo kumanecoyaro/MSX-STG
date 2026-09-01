@@ -7209,3 +7209,107 @@ Thunder activity) confirming it survives completely untouched.
   レベルでは無い"との最終判断で、この件はここで一区切り。追加の
   スクロール高速化(4回のリフレッシュを複数フレームへ分散する等の
   より大きな再設計)は指示なしに着手しない。
+
+## Round 36-14 follow-up#16(ボスビーム間隔短縮・完了済み)
+
+- **ユーザー指示**: "ではボスの形態変化後の変更 現在はインフィニティ
+  軌道でレーザー撃ってるが発射感覚が長すぎる 半分くらいに"。
+- **対応**: `BOSS_BROKEN_BEAM_INTERVAL`(1→4番目のビーム発射間隔+最後の
+  発射から移動再開までの間隔)を20→10へ半減。`boss_broken_form_test.py`
+  はこの定数をシンボルテーブル経由で動的参照するため既存テストは
+  無変更で通過(104 passed/0 failed)。全回帰`run_all.py` **1237
+  passed/0 failed**。ASM1行のみの変更、ROM容量変化なし。
+
+## Round 37(Stage1本体への機能追加、完了済み)
+
+Stage2側の一連のRound36-14作業に続き、初めてStage1本体
+(`src/CYBER SHMUP.asm`)への機能追加を実施。
+
+- **命名の食い違いの解消**: ユーザーが「エネミー7」「E1」と呼ぶ対象が
+  コード上のどのシンボルに対応するか、AskUserQuestionで2往復確認。
+  結論: **「エネミー7」も「E1」も、コード上の同一個体
+  `TYPE_ENEMY4`(`BEHAVIOR_SIMPLE_DRIFT_DODGE`、直進+画面中央で一度
+  だけ斜めドッジ)を指す** - コード自身のコメント("BEHAVIOR_SIMPLE_
+  DRIFT_DODGE EQU 2 ; Enemy1-style"、"Enemy5 now competes with Enemy1
+  for the same 6-slot pool")がこの対応を裏付けていた。ユーザーからの
+  明示的指摘: "今の動作が意図したもの コメントがあるならそれは
+  まちがい 整合性のために動作の変更はするな" - 調査中に見つけた
+  コメントと実動作の食い違い(TYPE_ENEMY4=BEHAVIOR_SIMPLE_DRIFT_DODGE、
+  TYPE_ENEMY1_LOOK=BEHAVIOR_SINE_BOBという実際の対応が、一部の外部
+  コメントの想定と逆だった)について、実動作を正として一切変更しない
+  よう明確に指示された。
+- **(1) Enemy7(TYPE_ENEMY4)の色変更**: `EBSD_DRAW_E4`の描画色を
+  `SPR_BLACK`から新規`SPR_LIGHTGREEN`(03h、TMS9918パレットindex3)へ。
+  `ENEMY_TYPE_TABLE`側の未使用な色バイト(`ETT_COLOR`、実際には一度も
+  読まれない死んだフィールドと確認済み)はユーザーの「整合性のための
+  変更はするな」指示を踏まえ、あえて触れずそのままにした。
+- **(2) 敵弾システムを新規実装**: 汎用の敵弾は元々存在しなかった
+  (プレイヤー自身のショットはBG実装、ボスのポッド発射は専用機構で
+  汎用化されていない)ため、`EBULLET_POOL`(6スロット、hwスプライト)
+  を新規実装。"パターンはFlyerレーザーを流用"の指示通り、Stage2の
+  `flyerlaser_gen.py`が生成する8x8横棒ビットマップ(`00,00,FF,FF,00,
+  00,00,00`)を左右上段クアドラントに複製して16px幅の横棒として
+  Stage1側で独自に再定義(Stage1はStage2と完全に別バンク・別ビルド
+  のため、生バイトの共有はできず新規定義が必要 - ユーザー自身の
+  指示"バンクが違うので新たに定義"通り)。カラーは新規`SPR_LIGHTRED`
+  (09h)。パターンコードは事前調査で確認済みの空き範囲(92-103、
+  124-255)から124-127を使用。速度EBULLET_SPEED=6px/frame(未調整の
+  初期値)。プール枯渇・hwスプライト番号枯渇のどちらでも黙って
+  ドロップ(`ENEMY4_CLAIM_ANY`の既存パターンスロット枯渇と同じ
+  idiom)。
+- **(3) Enemy7のY軸一致発射**: `EBSD_UPDATE`内、TYPE_ENEMY4限定で
+  毎フレーム`(IX+E_Y)`と`PLAYERY`を比較、一致したら発射
+  (`E4_ALIGN_FIRE_COOLDOWN`=90フレームの再発射クールダウン付き、
+  未調整の初期値)。クールダウンの保存先には、TYPE_ENEMY4が
+  「パターンスロットを一度も確保しない」ため実質未使用と確認済みの
+  `E_PARAM3`を再利用。
+- **(4) E1/E2/E5の斜め移動中ランダム発射**: 全て新規`RANDOM_3_5`
+  (DFL_RNGベースの3-5一様乱数、CLOUD_RANDOM_WAITと同じidiom)+
+  `DECIDE_FIRE_SHOOTER`(共有カウントダウン方式、「何機おきに次が
+  射手か」を都度再抽選、外れた場合はカウントダウンのみ)という共通
+  部品で実装。
+  - **E1(=Enemy7と同一個体)**: 唯一の斜め移動フェーズである
+    ドッジ発動の瞬間(`EBSD_DIAG_DIR_SET`直後)に、その場で
+    `DECIDE_FIRE_SHOOTER`を呼び即座に発射するかどうかを決定
+    (永続フラグ不要、発動と判定が同一フレームで完結するため)。
+  - **E2(編隊A/B)**: フォーメーション出現時(`ENEMY_START_COMPLEX_A/
+    B`の末尾)に共有`E2_FIRE_COUNTDOWN`で射手判定し`E2A_FIRE_FLAG`/
+    `E2B_FIRE_FLAG`(0/1/2の3値)に記録、唯一の斜め移動フェーズである
+    退出ダイブ(`ECS_S7_A/B`のphase0)開始時に1回だけ発射・リーダー
+    ユニット(U0)自身の座標を発射起点として使用。この際`JR NZ,
+    ECS_S7_HORIZ_A/B`が挿入コードにより分岐範囲(±127バイト)を
+    超過したため`JP NZ,...`へ変更(挙動は同一、範囲制限のみ回避)。
+  - **E5(TYPE_ENEMY1_LOOK、BEHAVIOR_SINE_BOB)**: この挙動には離散的な
+    「斜めフェーズ」が存在しない(常時左ドリフト+サイン波ボブで
+    連続的に斜め移動している)ため、E1のドッジ発動閾値と同じ
+    `ENEMY_CENTER_X`を代替のトリガー地点として採用(3種間の一貫性を
+    意図した設計判断、実機フィードバック待ち)。射手判定は
+    `ENEMY4_CLAIM_ANY`のE4CA_SINEBOB分岐(スポーン時)で1回、
+    `E_PARAM1`(0/1)に記録、発射済みフラグは`E_PARAM2`。
+- **検証**: 新規`tools/verify_enemy_bullets.py`(34件、mini_z80asm.
+  Assemblerで直接アセンブル+センチネル0x0000方式のcall_routine、
+  `tools/verify_enemy_pool_scan.py`と同じ作法の一回性検証スクリプト) -
+  色変更・Y軸一致発射とその再発射クールダウン・E1/E2/E5それぞれの
+  射手/非射手ケース・弾のプール/hwスプライト枯渇時のドロップ・
+  `UPDATE_EBULLET_ALL`の移動/退出/hide/free・実MAINLOOPフレームでの
+  統合動作、全て確認。既存の`tools/verify_*.py`群を横断的に再実行し
+  退行の有無を確認: `verify_enemy3_erase.py`/`verify_enemy3_init_
+  safety_net.py`/`verify_cell_loop_hoist.py`/`verify_sound_duty_
+  cycle.py`は無変更で通過。`verify_idcache_multiframe.py`/`verify_
+  namebuf_regen.py`は`KeyError: 'ROWDATA1'`で失敗するが、`git stash`
+  で今回の変更を退避した状態でも同じ失敗を確認 - 今回の変更とは
+  無関係な既存の問題(古いラウンドで参照シンボル名が変わったまま
+  放置されたスクリプト)と判明、対応せず。`verify_enemy_pool_scan.py`
+  は3件のミスマッチが出るが、これは「過去のレジスタ最適化ラウンドが
+  新旧バイト完全一致の純粋リファクタだったか」を検証する専用スクリプト
+  であり、今回のように新しい発射ロジックを追加すれば新旧の出力が
+  一致しなくなるのは当然かつ想定通り(バグではない) - 対応せず。
+  `verify_vdp_wait_shrink.py`は新規追加したVDP書き込み箇所(生の
+  OUT(99h)/OUT(98h)サイト数の固定期待値)分だけ実際の件数が増えて
+  いたため290→294・298→304へ更新(新規コードのNOPパディングタイミング
+  自体は実測で正しいことを別のチェックで確認済み、Stage2側の
+  `vdp_wait_test.py`更新と同じ運用)。
+- **成果物**: `python3 tools/bankswitch_poc/build_full_rom.py`で
+  Comb ROM再ビルド、`verify_comb.py`でバンク切替の健全性を確認
+  (Stage1→実Stage2の遷移含め全チェックPASS)。ユーザーから明示的に
+  Comb ROMを求められたため("今回はComb Romもくれ")送付。

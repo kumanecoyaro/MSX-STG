@@ -1005,3 +1005,43 @@
     最終判断。**この件はここで一区切り** - 追加のスクロール高速化
     (4回のリフレッシュを複数フレームへ分散する等のより大きな再設計)
     は指示なしに着手しない。
+- **(2026-09-01、Round36-14 follow-up#16、完了済み)**: "ではボスの
+  形態変化後の変更 現在はインフィニティ軌道でレーザー撃ってるが
+  発射感覚が長すぎる 半分くらいに"に対応。`BOSS_BROKEN_BEAM_INTERVAL`
+  を20→10へ半減。全回帰`run_all.py` **1237 passed/0 failed**。詳細は
+  HANDOFF.md Round36-14(follow-up#16)参照。
+- **(2026-09-01、Round37、完了済み)**: Stage2側の作業に続き、初めて
+  Stage1本体(`src/CYBER SHMUP.asm`)へ機能追加。ユーザーの「エネミー7」
+  「E1」呼称がコード上どのシンボルに対応するかAskUserQuestionで確認、
+  **両方ともコード上の同一個体`TYPE_ENEMY4`(BEHAVIOR_SIMPLE_DRIFT_
+  DODGE)を指す**と判明(コード自身のコメントがこの対応を裏付け)。
+  ユーザーから明示的指摘: "今の動作が意図したもの コメントがあるなら
+  それはまちがい 整合性のために動作の変更はするな" - 調査中に見つけた
+  コメントと実動作の食い違いは実動作を正として一切変更しないよう
+  指示された。(1) Enemy7(TYPE_ENEMY4)の描画色をSPR_BLACKから新規
+  `SPR_LIGHTGREEN`(03h)へ。ENEMY_TYPE_TABLE側の未使用な色バイトは
+  「整合性のための変更はするな」を踏まえあえて触れず。(2) 汎用敵弾
+  システムを新規実装(`EBULLET_POOL`、6スロット、hwスプライト) -
+  Stage2の`flyerlaser_gen.py`が生成する8x8横棒ビットマップを流用しつつ、
+  Stage1は完全に別バンク・別ビルドのためバイトデータ自体は新規定義
+  (`EBULLET_PATTERN`)。カラーは新規`SPR_LIGHTRED`(09h)、パターン
+  コードは事前調査済みの空き範囲(124-127)を使用。(3) Enemy7は
+  `PLAYERY`と`(IX+E_Y)`が一致したら発射(再発射クールダウン付き、
+  TYPE_ENEMY4が実質未使用と確認済みの`E_PARAM3`を再利用)。
+  (4) E1(=Enemy7と同一個体)/E2(編隊A/B)/E5(TYPE_ENEMY1_LOOK)は
+  共有`RANDOM_3_5`+`DECIDE_FIRE_SHOOTER`(何機おきに次が射手か、
+  カウントダウン方式)で「ランダムに3〜5機に一度」を実装、各々の
+  「唯一の斜め移動フェーズ」(E1=ドッジ発動瞬間、E2=退出ダイブ
+  phase0、E5=離散フェーズが存在しないためEnemy1と同じENEMY_CENTER_X
+  を代替トリガーとして採用)で1回だけ発射。E2のECS_S7_A/Bで挿入
+  コードにより`JR`の分岐範囲(±127バイト)を超過したため`JP`へ変更
+  (挙動は同一)。新規`tools/verify_enemy_bullets.py`(34件)で検証、
+  既存の`tools/verify_*.py`群を横断的に再実行し退行なしを確認
+  (`verify_idcache_multiframe.py`/`verify_namebuf_regen.py`の
+  `KeyError: 'ROWDATA1'`は今回の変更と無関係な既存の問題とgit stash
+  で確認済み、`verify_enemy_pool_scan.py`のミスマッチは新規発射
+  ロジック追加により当然発生する想定通りの差分でバグではない)。
+  `verify_vdp_wait_shrink.py`のOUT件数固定期待値のみ290→294・
+  298→304へ更新。Comb ROM再ビルド・`verify_comb.py`でバンク切替
+  健全性確認、ユーザー明示指示("今回はComb Romもくれ")によりComb
+  ROM送付。詳細はHANDOFF.md Round37参照。

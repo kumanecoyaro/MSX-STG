@@ -90,6 +90,8 @@ PAT_SHIP_DOWN EQU 116   ; SHIP_DOWN_PATTERN, shown while diving (32 bytes at SPR
 SPR_RED     EQU 08h     ; sprite color: red
 SPR_WHITE   EQU 0Fh     ; sprite color: white
 SPR_BLACK   EQU 01h     ; sprite color: black
+SPR_LIGHTGREEN EQU 03h  ; sprite color: light green (TMS9918 index3)
+SPR_LIGHTRED   EQU 09h  ; sprite color: light red (TMS9918 index9)
 SPR_TERM_Y  EQU 208     ; special Y value: stop sprite processing here
 
 PLAYER_SPEED EQU 2     ; was raised to 4 to compensate for the (now-removed)
@@ -374,6 +376,23 @@ PARTICLE_SPAWN_COOLDOWN EQU 0E83Ah  ; frames until the next spawn is allowed
 ; --- E_PARAM1 (remain), E_PARAM2 (dir) on the unified ENEMY_POOL.   ---
 ENEMY_CENTER_X   EQU 128     ; screen-center X threshold for the dodge
 ENEMY_DODGE_DIST EQU 16      ; total px moved diagonally, 1px/frame, per flight
+
+; --- enemy-fired bullet (new): a small shared hw-sprite pool, fired  ---
+; --- by Enemy4/TYPE_ENEMY4(=Enemy7, Y-aligned) and by Enemy1(=the   ---
+; --- same TYPE_ENEMY4 entity, its own diagonal-dodge window)/Enemy2 ---
+; --- (diagonal exit-dive window)/Enemy5(TYPE_ENEMY1_LOOK, screen-   ---
+; --- center X as its own stand-in "diagonal" trigger point - see    ---
+; --- EBSB_UPDATE's own comment) - "パターンはFlyerレーザーを流用    ---
+; --- カラーはライトレッド". Pattern reused from Stage2's own        ---
+; --- FlyerLaser bitmap (tools/stage2_combined/flyerlaser_gen.py's   ---
+; --- own 8x8 horizontal-bar tile) - Stage1 is a completely separate ---
+; --- bank/build from Stage2, so the raw bitmap bytes are redefined  ---
+; --- here from scratch (EBULLET_PATTERN), not shared/imported.      ---
+EBULLET_SLOTS  EQU 6
+EBULLET_STRUCT EQU 4         ; +0 ACTIVE,+1 X,+2 Y,+3 SPRNUM
+EBULLET_SPEED  EQU 6         ; dots/frame, left (faster than any enemy's own drift)
+PAT_EBULLET    EQU 124       ; 4 patterns 124-127 (32 bytes at SPRPAT+992) - free range, see survey
+E4_ALIGN_FIRE_COOLDOWN EQU 90 ; frames between Enemy7's own re-fires once Y keeps matching - untuned placeholder
 ENEMY1_ANIM_FRAME_LEN EQU 4  ; frames per 1,2,3,2 quadrant-anim step while
                               ; dodging - 4 steps x 4 frames = the full
                               ; ENEMY_DODGE_DIST(16)-frame dodge, one cycle
@@ -620,6 +639,9 @@ ENEMY6_POOL   EQU 0F158h        ; ENEMY6_SLOTS*ENEMY6_STRUCT = 128 bytes (F158h-
 ENEMY6_SPAWN_COL    EQU 30      ; matches ENEMY_SPAWNX/ENEMY4_SPAWNX(240) = col30
 ENEMY6_STEP_FRAMES  EQU 1       ; frames held per 1-column step (1 = fastest possible: every frame)
 ENEMY6_STEP_TIMER   EQU 0F1D8h  ; shared countdown to the next 1-column step
+; enemy-fired bullet pool (new) - genuinely free RAM right after
+; ENEMY6_STEP_TIMER (nothing else claims F1D9h+ up to STACKTOP=F380h).
+EBULLET_POOL  EQU 0F1D9h        ; EBULLET_SLOTS*EBULLET_STRUCT = 24 bytes (F1D9h-F1F0h)
 
     DB "AB"
     DW INIT
@@ -910,7 +932,12 @@ INIT_SPRATR_CLR:
     LD HL,E2B_SEQ_STATE : LD (HL),A
     LD DE,E2B_SEQ_STATE+1 : LD BC,99 : LDIR   ; +2 to also clear E2B_ANIM_SEQ/TIMER
     CALL ENEMY_POOL_INIT
+    CALL EBULLET_POOL_INIT
+    LD HL,E1_FIRE_COUNTDOWN : CALL RANDOM_3_5 : LD (HL),A
+    LD HL,E5_FIRE_COUNTDOWN : CALL RANDOM_3_5 : LD (HL),A
+    LD HL,E2_FIRE_COUNTDOWN : CALL RANDOM_3_5 : LD (HL),A
     LD HL,ENEMY4_PATTERN : LD DE,PAT_ENEMY4*8+SPRPAT : LD BC,32 : CALL LDIRVM
+    LD HL,EBULLET_PATTERN : LD DE,PAT_EBULLET*8+SPRPAT : LD BC,32 : CALL LDIRVM
     LD HL,SHIP_MID_PATTERN : LD DE,PAT_SHIP*8+SPRPAT : LD BC,32 : CALL LDIRVM
     LD HL,SHIP_UP_PATTERN : LD DE,PAT_SHIP_UP*8+SPRPAT : LD BC,32 : CALL LDIRVM
     LD HL,SHIP_DOWN_PATTERN : LD DE,PAT_SHIP_DOWN*8+SPRPAT : LD BC,32 : CALL LDIRVM
@@ -1797,6 +1824,7 @@ ANIM2_DONE:
     ; --- unified sprite-enemy buffer: advance every active slot,   ---
     ; --- regardless of which movement algorithm (BEHAVIOR) it uses ---
     CALL ENEMY_POOL_UPDATE_ALL
+    CALL UPDATE_EBULLET_ALL
     CALL ENEMY5_ANIM_STEP
     CALL CLOUD_UPDATE_ALL
 
@@ -3110,6 +3138,19 @@ E2A_ACTIVE EQU 0E661h
 E2A_ANIM_SEQ EQU 0E662h    ; shared (all 3 units) 1,2,3,2 quadrant-anim index,
                            ; free RAM right after E2A_ACTIVE - see ECS_S7_A
 E2A_ANIM_TIMER EQU 0E663h
+; "E1,E2,E5はランダムに3から5機に一度発射 ただし斜め移動中のみ" -
+; per-type shared "how many more spawns until the next one is the
+; designated shooter" countdowns (seeded to a random 3-5 at INIT,
+; reseeded to a fresh random 3-5 by DECIDE_FIRE_SHOOTER every time it
+; picks a shooter - see that routine's own comment), plus Enemy2's own
+; per-formation-instance flag (0=not this spawn's shooter,1=shooter/
+; not yet fired,2=fired) since. E2A/E2B are 2 concurrent formations
+; and each needs its own flag. Free RAM right after E2A_ANIM_TIMER,
+; before E2B_SEQ_STATE (E664h-E67Fh unused until now).
+E1_FIRE_COUNTDOWN EQU 0E664h   ; TYPE_ENEMY4(=Enemy1=Enemy7) shared spawn counter
+E5_FIRE_COUNTDOWN EQU 0E665h   ; TYPE_ENEMY1_LOOK(Enemy5) shared spawn counter
+E2_FIRE_COUNTDOWN EQU 0E666h   ; Enemy2 A+B shared spawn counter
+E2A_FIRE_FLAG      EQU 0E667h
 E2B_SEQ_STATE EQU 0E680h
 E2B_EXIT_PHASE EQU 0E681h
 E2B_EXITTYPE EQU 0E682h
@@ -3147,6 +3188,7 @@ E2B_TEMP_SPRNUM EQU 0E6E0h
 E2B_ACTIVE EQU 0E6E1h
 E2B_ANIM_SEQ EQU 0E6E2h    ; same idea as E2A_ANIM_SEQ, free RAM after E2B_ACTIVE
 E2B_ANIM_TIMER EQU 0E6E3h
+E2B_FIRE_FLAG EQU 0E6E4h   ; B's own copy of E2A_FIRE_FLAG - see its own comment (free RAM after E2B_ANIM_TIMER)
 
 ; --- Enemy4: sine-wave vertical bob while moving left fast, using ---
 ; --- the same asterisk sprite look as Enemy1/2 (built at spawn    ---
@@ -3455,6 +3497,12 @@ ESC_COMPLEX_INIT_A:
     PUSH BC : POP BC : NOP : NOP
     LD A,1 : LD (E2A_ACTIVE),A
     EI
+    ; "E2はランダムに3から5機に一度発射" - decided once per formation
+    ; spawn, here (SPAWN_E2 dispatches to exactly one of A/B per spawn -
+    ; see its own comment). Checked/consumed in ECS_S7_A.
+    LD HL,E2_FIRE_COUNTDOWN
+    CALL DECIDE_FIRE_SHOOTER
+    LD (E2A_FIRE_FLAG),A
     RET
 
 ; See ENEMY_START_COMPLEX_A's comment - same idea, instance B.
@@ -3537,6 +3585,11 @@ ESC_COMPLEX_INIT_B:
     PUSH BC : POP BC : NOP : NOP
     LD A,1 : LD (E2B_ACTIVE),A
     EI
+    ; "E2はランダムに3から5機に一度発射" - see ENEMY_START_COMPLEX_A's
+    ; own comment. Checked/consumed in ECS_S7_B.
+    LD HL,E2_FIRE_COUNTDOWN
+    CALL DECIDE_FIRE_SHOOTER
+    LD (E2B_FIRE_FLAG),A
     RET
 
 ; Checked once per game tick (every 8 frames). Fires each scheduled
@@ -5984,6 +6037,155 @@ FREE_SPRITE_NUM:
     XOR A : LD (HL),A
     RET
 
+; Output: A = a pseudo-random value in 3-5 inclusive, off the shared
+; free-running counter (see DFL_RNG) - same "for now, plain range off
+; DFL_RNG" idiom as CLOUD_RANDOM_WAIT. AND 3 gives 0-3 (4 outcomes);
+; folding the rare 3 back to 0 keeps the result in {3,4,5} (a slight
+; bias toward 3, acceptable for a pseudo-random spawn-count gate, same
+; looseness this codebase already accepts elsewhere). Trashes A.
+RANDOM_3_5:
+    LD A,(DFL_RNG) : INC A : LD (DFL_RNG),A
+    AND 3
+    CP 3
+    JR NZ,R35_OK
+    XOR A
+R35_OK:
+    ADD A,3
+    RET
+
+; "E1,E2,E5はランダムに3から5機に一度発射" - shared "designated
+; shooter" gate. Input: HL = address of a per-type countdown byte
+; (pre-seeded to RANDOM_3_5 at INIT). Call once per new spawn of that
+; type. Output: A=1 if THIS spawn is the designated shooter (the
+; countdown just reached 0 and has been reseeded to a fresh random
+; 3-5), A=0 otherwise (countdown just decremented). Trashes A.
+DECIDE_FIRE_SHOOTER:
+    LD A,(HL)
+    DEC A
+    LD (HL),A
+    JR NZ,DFS_NO
+    CALL RANDOM_3_5
+    LD (HL),A
+    LD A,1
+    RET
+DFS_NO:
+    XOR A
+    RET
+
+; Zeroes every slot of the enemy-bullet pool (ACTIVE=0). Called once
+; from INIT, same idiom as ENEMY_POOL_INIT.
+EBULLET_POOL_INIT:
+    LD HL,EBULLET_POOL
+    LD DE,EBULLET_POOL+1
+    LD BC,EBULLET_SLOTS*EBULLET_STRUCT-1
+    LD (HL),0
+    LDIR
+    RET
+
+; Claims a free EBULLET_POOL slot and a free hw sprite number, then
+; arms it to fly. Input: D=X,E=Y (spawn position, sprite top-left).
+; If the pool is full or no hw sprite number is available, silently
+; drops the shot - same "pool exhaustion -> drop" idiom as
+; ENEMY4_CLAIM_ANY's own pattern-slot exhaustion handling. Preserves
+; the caller's own IX (used internally, restored before RET) so this
+; is safe to call from inside another entity's own IX-indexed update.
+; Trashes A,B,DE,HL.
+SPAWN_EBULLET:
+    PUSH IX
+    LD HL,EBULLET_POOL
+    LD B,EBULLET_SLOTS
+SEB_SCAN:
+    LD A,(HL)
+    OR A
+    JR Z,SEB_FOUND
+    PUSH DE
+    LD DE,EBULLET_STRUCT
+    ADD HL,DE
+    POP DE
+    DJNZ SEB_SCAN
+    POP IX
+    RET                      ; pool full - drop
+SEB_FOUND:
+    PUSH HL : POP IX
+    PUSH DE
+    CALL ALLOC_SPRITE_NUM
+    POP DE
+    OR A
+    JR Z,SEB_FAIL            ; no hw sprite available - drop
+    LD (IX+3),A              ; SPRNUM
+    LD (IX+1),D              ; X
+    LD (IX+2),E              ; Y
+    LD A,1 : LD (IX+0),A     ; ACTIVE
+SEB_FAIL:
+    POP IX
+    RET
+
+; Advances every active enemy-bullet slot left by EBULLET_SPEED,
+; hiding+freeing+deactivating on exit past the left edge, else
+; redrawing it (pattern/color are fixed - see PAT_EBULLET/SPR_
+; LIGHTRED). Same DI/EI-wrapped, fixed-NOP VDP-write idiom as every
+; other sprite draw in this file. Called once per frame from MAINLOOP,
+; alongside ENEMY_POOL_UPDATE_ALL. Preserves the caller's own IX.
+; Trashes A,B,DE,HL.
+UPDATE_EBULLET_ALL:
+    PUSH IX
+    LD HL,EBULLET_POOL
+    LD B,EBULLET_SLOTS
+UEA_LOOP:
+    PUSH HL
+    PUSH HL : POP IX
+    LD A,(IX+0)
+    OR A
+    JR Z,UEA_NEXT
+    LD A,(IX+1)
+    CP EBULLET_SPEED
+    JR NC,UEA_MOVEOK
+    ; exiting past the left edge: hide, free the sprite number, deactivate
+    LD A,(IX+3)
+    DI
+    ADD A,A : ADD A,A : OUT (99h),A
+    NOP
+    NOP
+    LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    LD A,ENEMY_HIDE_Y : OUT (98h),A
+    PUSH BC : POP BC : NOP : NOP
+    LD A,255 : OUT (98h),A
+    PUSH BC : POP BC : NOP : NOP
+    EI
+    LD A,(IX+3) : CALL FREE_SPRITE_NUM
+    XOR A : LD (IX+0),A
+    JR UEA_NEXT
+UEA_MOVEOK:
+    SUB EBULLET_SPEED
+    LD (IX+1),A
+    DI
+    LD A,(IX+3) : ADD A,A : ADD A,A : OUT (99h),A
+    NOP
+    NOP
+    LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    LD A,(IX+2) : OUT (98h),A
+    PUSH BC : POP BC : NOP : NOP
+    LD A,(IX+1) : OUT (98h),A
+    PUSH BC : POP BC : NOP : NOP
+    EI
+    DI
+    LD A,PAT_EBULLET : OUT (98h),A
+    PUSH BC : POP BC : NOP : NOP
+    LD A,SPR_LIGHTRED : OUT (98h),A
+    PUSH BC : POP BC : NOP : NOP
+    EI
+UEA_NEXT:
+    POP HL
+    LD DE,EBULLET_STRUCT
+    ADD HL,DE
+    DJNZ UEA_LOOP
+    POP IX
+    RET
+
 ; Clears every slot of the unified enemy buffer (ACTIVE=0) and resets
 ; both shared trail-channel write indices. Called once from INIT.
 ENEMY_POOL_INIT:
@@ -6673,7 +6875,22 @@ E2A_ANIM_REDRAW_ALL:
 ECS_S7_A:
     LD A,(E2A_EXIT_PHASE)
     OR A
-    JR NZ,ECS_S7_HORIZ_A
+    JP NZ,ECS_S7_HORIZ_A
+
+    ; "E2はランダムに3から5機に一度発射 ただし斜め移動中のみ" - phase0
+    ; (this branch) IS Enemy2's own one diagonal-movement window (climb/
+    ; dive before leveling to horizontal exit). E2A_FIRE_FLAG was
+    ; decided once at spawn (ENEMY_START_COMPLEX_A); 1=shooter/not yet
+    ; fired, fires exactly once then flips to 2 (fired). Uses U0's own
+    ; position (the formation leader) as the bullet's spawn origin.
+    LD A,(E2A_FIRE_FLAG)
+    CP 1
+    JR NZ,ECS_S7_A_FIRE_DONE
+    LD A,2 : LD (E2A_FIRE_FLAG),A
+    LD A,(E2A_U0_X) : LD D,A
+    LD A,(E2A_U0_Y) : LD E,A
+    CALL SPAWN_EBULLET
+ECS_S7_A_FIRE_DONE:
 
     ; quadrant-glyph animation (1,2,3,2 repeating), shared across all
     ; 3 units - see ECS_S7_RECORD_A's own trail-replay, they move
@@ -7348,7 +7565,17 @@ E2B_ANIM_REDRAW_ALL:
 ECS_S7_B:
     LD A,(E2B_EXIT_PHASE)
     OR A
-    JR NZ,ECS_S7_HORIZ_B
+    JP NZ,ECS_S7_HORIZ_B
+
+    ; see ECS_S7_A's own comment - same idea, instance B.
+    LD A,(E2B_FIRE_FLAG)
+    CP 1
+    JR NZ,ECS_S7_B_FIRE_DONE
+    LD A,2 : LD (E2B_FIRE_FLAG),A
+    LD A,(E2B_U0_X) : LD D,A
+    LD A,(E2B_U0_Y) : LD E,A
+    CALL SPAWN_EBULLET
+ECS_S7_B_FIRE_DONE:
 
     ; quadrant-glyph animation - see ECS_S7_A's own comment.
     LD A,(E2B_ANIM_TIMER)
@@ -7601,6 +7828,13 @@ E4CA_SB_GOTPAT:
     LD A,1 : LD (IX+E_TOP),A : LD (IX+E_BOT),A
     LD A,BEHAVIOR_SINE_BOB : LD (IX+E_BEHAVIOR),A
     LD A,(E4_SPAWN_BASEY) : LD (IX+E_PARAM0),A
+    ; "E5はランダムに3から5機に一度発射" - decided once per spawn, here.
+    ; See EBSB_UPDATE's own comment for E_PARAM1/2's use.
+    PUSH HL
+    LD HL,E5_FIRE_COUNTDOWN
+    CALL DECIDE_FIRE_SHOOTER
+    LD (IX+E_PARAM1),A
+    POP HL
 E4CA_COMMON:
     LD A,ENEMY_SPAWNX : LD (IX+E_X),A
     CALL ALLOC_SPRITE_NUM : LD (IX+E_SPRNUM),A
@@ -7907,6 +8141,36 @@ EBSB_PHASEOK:
     LD A,SPR_GRAY : OUT (98h),A      ; color
     PUSH BC : POP BC : NOP : NOP
     EI
+    ; "E1,E2,E5はランダムに3から5機に一度発射 ただし斜め移動中のみ" -
+    ; this BEHAVIOR (continuous left-drift + sine-wave bob) has no
+    ; discrete diagonal phase, unlike Enemy1's one-shot dodge or
+    ; Enemy2's exit dive - it's always moving on both axes at once. As
+    ; a stand-in "diagonal" trigger point, this uses the SAME screen-
+    ; center X threshold Enemy1's own dodge uses (ENEMY_CENTER_X), for
+    ; consistency across all 3 gated types. E_PARAM1 (shooter flag, set
+    ; once at spawn - see E4CA_SINEBOB)/E_PARAM2 (already fired, 0/1)
+    ; are both otherwise unused by this BEHAVIOR. Y is recomputed here
+    ; (baseY+LUT[state]) rather than read from E_Y, which this BEHAVIOR
+    ; never writes back (see the DI/EI block above - it's written
+    ; straight to the VDP, not stored).
+    LD A,(IX+E_PARAM1)
+    OR A
+    JR Z,EBSB_FIRE_DONE
+    LD A,(IX+E_PARAM2)
+    OR A
+    JR NZ,EBSB_FIRE_DONE
+    LD A,(IX+E_X)
+    CP ENEMY_CENTER_X
+    JR NC,EBSB_FIRE_DONE
+    LD A,1 : LD (IX+E_PARAM2),A
+    LD A,(IX+E_STATE) : LD L,A : LD H,0
+    LD DE,ENEMY4_SINE_LUT
+    ADD HL,DE
+    LD A,(IX+E_PARAM0) : ADD A,(HL)
+    LD E,A
+    LD A,(IX+E_X) : LD D,A
+    CALL SPAWN_EBULLET
+EBSB_FIRE_DONE:
     RET
 
 ; Drifted off the left edge: hide the sprite, restore its type's
@@ -7949,6 +8213,31 @@ EBSD_UPDATE:
 EBSD_MOVEOK:
     SUB ENEMY_SPEED
     LD (IX+E_X),A
+    ; "エネミー7はY軸が自機に合ったら発射" - TYPE_ENEMY4-only Y-aligned
+    ; fire, independent of (and can co-occur with) the diagonal-dodge
+    ; random fire below. E_PARAM3 is otherwise unused by TYPE_ENEMY4
+    ; (see EBSD_EXIT_LEFT's own "TYPE_ENEMY4 never claimed a pattern
+    ; slot" comment) - repurposed here as a per-instance re-fire
+    ; cooldown. Only TYPE_ENEMY4 currently runs this BEHAVIOR at all,
+    ; but the type check is kept explicit anyway, matching this same
+    ; routine's own existing EBSD_EXIT_LEFT/EBSD_DRAW precedent.
+    LD A,(IX+E_TYPE)
+    CP TYPE_ENEMY4
+    JR NZ,EBSD_E4_FIRE_DONE
+    LD A,(IX+E_PARAM3)
+    OR A
+    JR Z,EBSD_E4_TRY_ALIGN
+    DEC A : LD (IX+E_PARAM3),A
+    JR EBSD_E4_FIRE_DONE
+EBSD_E4_TRY_ALIGN:
+    LD A,(PLAYERY) : LD B,A
+    LD A,(IX+E_Y)
+    CP B
+    JR NZ,EBSD_E4_FIRE_DONE
+    LD A,E4_ALIGN_FIRE_COOLDOWN : LD (IX+E_PARAM3),A
+    LD D,(IX+E_X) : LD E,(IX+E_Y)
+    CALL SPAWN_EBULLET
+EBSD_E4_FIRE_DONE:
     LD A,(IX+E_PARAM0)          ; DIAG_DONE
     OR A
     JR NZ,EBSD_DIAG_SKIP_TRIGGER
@@ -7967,6 +8256,22 @@ EBSD_DIAG_DIR_UP:
     LD A,0FFh
 EBSD_DIAG_DIR_SET:
     LD (IX+E_PARAM2),A          ; DIAG_DIR
+    ; "E1,E2,E5はランダムに3から5機に一度発射 ただし斜め移動中のみ" -
+    ; this IS the "斜め移動中" trigger point for BEHAVIOR_SIMPLE_
+    ; DRIFT_DODGE (the one-shot diagonal dodge just armed above). Fires
+    ; immediately, synchronously, right here - no separate per-instance
+    ; "designated shooter" flag needed, since DECIDE_FIRE_SHOOTER is
+    ; called fresh at the exact moment each instance's own one dodge
+    ; begins.
+    PUSH HL
+    LD HL,E1_FIRE_COUNTDOWN
+    CALL DECIDE_FIRE_SHOOTER
+    OR A
+    JR Z,EBSD_E1_NOFIRE
+    LD D,(IX+E_X) : LD E,(IX+E_Y)
+    CALL SPAWN_EBULLET
+EBSD_E1_NOFIRE:
+    POP HL
     XOR A : LD (IX+E_PARAM4),A : LD (IX+E_PARAM5),A  ; reset quadrant-anim seq/timer for this dodge
 EBSD_DIAG_SKIP_TRIGGER:
     LD A,(IX+E_PARAM1)
@@ -8040,7 +8345,8 @@ EBSD_DRAW:
 EBSD_DRAW_E4:
     LD A,PAT_ENEMY4
     LD (EBSD_DRAW_PAT),A
-    LD A,SPR_BLACK
+    ; "エネミー7の色を変更 現在ブラックだがライトグリーンに"
+    LD A,SPR_LIGHTGREEN
     LD (EBSD_DRAW_COLOR),A
 EBSD_DRAW_GO:
     DI
@@ -9090,6 +9396,19 @@ ENEMY4_PATTERN:
     DB 30h,64h,FFh,07h,01h,2Ah,15h,00h   ; bottom-left
     DB 00h,00h,00h,00h,00h,00h,00h,00h   ; top-right
     DB 01h,06h,9Ch,FFh,FEh,7Ch,0Eh,03h   ; bottom-right
+
+; enemy-fired bullet (new) - "パターンはFlyerレーザーを流用". Stage2's
+; own FlyerLaser art (tools/stage2_combined/flyerlaser_gen.py) is just
+; an 8x8 horizontal bar across rows2-3 (bytes 00,00,FF,FF,00,00,00,00);
+; reused verbatim here in both left/right top quadrants to form a
+; 16px-wide bar across the sprite's own upper half (bottom-left/right
+; left blank) - Stage1 is a separate bank/build from Stage2, so these
+; bytes are redefined from scratch, not shared.
+EBULLET_PATTERN:
+    DB 00h,00h,0FFh,0FFh,00h,00h,00h,00h   ; top-left: the bar
+    DB 00h,00h,00h,00h,00h,00h,00h,00h     ; bottom-left: blank
+    DB 00h,00h,0FFh,0FFh,00h,00h,00h,00h   ; top-right: the bar
+    DB 00h,00h,00h,00h,00h,00h,00h,00h     ; bottom-right: blank
 
 ; 2x2 lit block, top-left corner of the 16x16 - the flyaway trail
 ; particle. Small but clearly visible, unlike a single dot.
