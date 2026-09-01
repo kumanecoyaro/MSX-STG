@@ -1167,3 +1167,31 @@
   player_damage.py`(41件)、既存検証群も無退行(`verify_vdp_wait_
   shrink.py`のOUT件数固定期待値のみ294/304→296/306へ更新)。Comb
   ROM再ビルド・検証・送付。詳細はHANDOFF.md Round37 follow-up6参照。
+- **(2026-09-01、Round37 follow-up7、実機フィードバック対応・
+  完了済み)**: follow-up6への5点フィードバックに対応。(1)自機
+  ヒットボックスを16x16→下側左8x8(PLAYERX,PLAYERY)-(+7,+7)に縮小
+  (`PDC_CHECK_PODS`だけ`PLAYER_HIT_BOX8/16`を経由しない独自実装
+  だったため個別修正が必要と判明)。(2)バリア吸収時のヒット
+  エフェクトを爆発→カラーチェンジ(ホワイト→パープル、`BARRIER_
+  IFRAMES`連動)+新規サウンド(`SOUND_BARRIER_HIT`、低音・8フレーム
+  中2フレームのみ最大音量=25%duty)に変更。(3)バリア枯渇後の被弾を
+  BG式`TRIGGER_EXPLOSION`ではなく新規16x16スプライト爆発バースト
+  (`PLAYER_EXPL_POOL`、自機起点±8pxランダム、白/赤点滅、約2秒)に
+  変更。(4)GAME_OVERフラグの記録は残しつつ、前回追加したMAINLOOP
+  凍結ゲートを完全削除(検証できないため)。(5)Fighter2枚目ポーズを
+  新添付データ(`E42_16x16.json`)へ差し替え。**開発中に3件の実バグを
+  自己発見・修正**: `SOUND_UPDATE_B`→`SOUND_UPDATE_C`の暗黙フォール
+  スルーの間に新規関数を割り込ませて破壊しかけた回帰、`ALLOC_SPRITE_
+  NUM`呼び出し前にHLをIXへ退避し忘れてスポーンが機能しなかった回帰
+  (SPAWN_EBULLETと同じ既知の罠)、そして最重要: 新規RAM
+  (`PLAYER_ACCENT_COLOR`〜`PLAYER_EXPL_POOL`)が、`src/CYBER SHMUP.
+  asm`自身のコメントには一切現れない`tools/bankswitch_poc/build_
+  full_rom.py`(Comb限定)のバンク切替トランポリン実行時コピー先
+  (0xF200-0xF201)を侵食し、`verify_comb.py`のボス撃破後バンク切替が
+  無限ループする形で発覚(生Stage1単体テストでは無症状)。新規RAM群を
+  0xF210〜へ後方シフトし、該当EQU直前に今後同じ罠を踏まないための
+  警告コメントを追加して解消。`tools/verify_player_damage.py`を
+  大幅書き換え、全55件PASS。既存検証群も無退行(`verify_vdp_wait_
+  shrink.py`のOUT件数のみ296/306→300/312へ更新)。Comb ROM再ビルド・
+  `verify_comb.py`で健全性確認、送付。詳細はHANDOFF.md Round37
+  follow-up7参照。

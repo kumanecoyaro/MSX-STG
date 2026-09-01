@@ -7650,3 +7650,88 @@ Comb自動送付方針・完了済み)
     なく、今回の変更はドット絵ではなくロジック主体のため、VRAM
     バイト単位でのテストで代替 - スクショでの確認が必要な場合は
     別途対応)。
+
+## Round37 follow-up7(follow-up6への実機フィードバック対応・完了済み)
+
+- **ユーザー指示**: (1) 自機ヒットボックスを下側左8x8に縮小(現在の
+  バリアの位置に合わせる)。(2) バリア吸収時のヒットエフェクトを
+  爆発ではなくカラーチェンジ(ホワイト→パープル)に、サウンドは
+  低音のブザーを2回・デューティ比25%・最大音量で。(3) バリア枯渇後の
+  被弾は16x16のスプライト爆発パターンで、自機起点に複数・派手に・
+  約2秒。(4) GAME_OVER自体の記録は残すが、ゲームは止めない(検証
+  できないため)。(5) Fighterの2枚目ポーズを添付データ(`E42_16x16.
+  json`)に差し替え。
+- **(1) ヒットボックス**: `PLAYER_HIT_BOX8/16`を(PLAYERX,PLAYERY-8)-
+  (+15,+15)の16x16から(PLAYERX,PLAYERY)-(+7,+7)の8x8(下側左)へ変更。
+  `PDC_CHECK_PODS`は`PLAYER_HIT_BOX8/16`を経由しない独自実装
+  (POD_XY_X/Yへ直接コピー)だったため、こちらも合わせて`PLAYERY-8`
+  →`PLAYERY`に個別修正(見落としかけたが、他のPDC_CHECK_*と挙動が
+  食い違う実バグになるところだった)。
+- **(2) カラーチェンジ+サウンド**: 新規`PLAYER_ACCENT_COLOR`(毎フレーム
+  再計算、`BARRIER_IFRAMES>0`ならSPR_PURPLE、それ以外はSPR_WHITE)を
+  既存のアクセント選択ロジックの直後に追加、DI区間の固定NOPタイミング
+  を崩さないよう区間の外で事前計算する既存の慣習(EBSD_DRAW_PAT等)を
+  踏襲。サウンドは新規`SOUND_BARRIER_HIT`(channel C、低音period=900)
+  +`SND_C_DUTY_TIMER`による8フレームウィンドウ中2フレームだけ
+  最大音量(counter値8と4)=2/8=25%duty、を実装。**開発中に実装上の
+  罠を2件発見**: (a) `SOUND_UPDATE_B`と`SOUND_UPDATE_C`が元々RET/JPを
+  挟まずフォールスルーで直結していたのを見落とし、間に新規
+  `CALC_DUTY_GATE_VOLUME`を挿入したことでSOUND_UPDATE_Bがそのまま
+  CALC_DUTY_GATE_VOLUME内のRETに落ちてSOUND_UPDATE_C本体に一切
+  到達しなくなる回帰を作り込みかけた(`verify_sound_duty_cycle.py`の
+  既存テストが検出、CALC_NOISE_GATE_VOLUMEと同じ「フォールスルー
+  チェーンの外に置く」位置へ移設して解消)。(b) このエミュレータは
+  PSG出力(OUT (0A0h)/(0A1h))を一切観測できない(`z80emu.py`はVDP
+  ポート98h/99hしかOUTを記録しない)ため、当初io_out_logでPSG書き込み
+  を検証しようとしたテストは原理的に成立しないと判明、既存の
+  `CALC_NOISE_GATE_VOLUME`と同じ「副作用なしの純粋関数として切り出し、
+  そちらを直接検証する」方式に合わせて設計し直した。
+- **(3) 爆発バースト**: 新規`PLAYER_EXPL_POOL`(4スロット、hwスプライト
+  16x16)+`PLAYER_EXPL_TRIGGER`/`PLAYER_EXPL_UPDATE_ALL`(毎フレーム
+  無条件呼び出し、GAME_OVERでゲート**しない** - 後述(4)と直結)を新設。
+  パターンは新しい絵を用意せず、既存のボス専用`EXPLOSION_PATTERN`
+  (遅延ロード、コード108-111)と同一ビットマップを、常時ロード済みの
+  独立コード(`PAT_PLAYER_EXPLOSION`、事前にエミュレータVRAM実測で
+  128-255が空きと確認済みの範囲から136-139を使用)として複製。
+  8フレームおきに自機起点±8pxのランダムオフセットで新規バースト
+  インスタンスを生成、各インスタンスは20フレーム生存(白/赤を交互点滅
+  = 派手に)、合計120フレーム(≒2秒)で自然終了。**開発中に実バグを
+  発見**: 新設`PEUA_TRY_SPAWN`が空きプールスロットを指すHLを保持した
+  まま`ALLOC_SPRITE_NUM`(HL/Bを内部で破壊する)を呼んでいたため、
+  スロットポインタが壊れた状態でフィールド書き込みが行われ何も
+  スポーンしなかった(`SPAWN_EBULLET`が同じ罠を「呼ぶ前にIXへ変換
+  しておく」で回避済みの既存パターンだったと気づき、同じ対処で解消)。
+- **(4) ゲームを止めない**: 前ラウンドで追加したMAINLOOP先頭の
+  `GAME_OVER`チェック+`JP MAINLOOP`(丸ごとスキップしてフリーズさせる
+  実装)を完全に削除。`GAME_OVER`フラグ自体・`PLAYER_DAMAGE_CHECK`の
+  「GAME_OVER後は判定しない」ゲートはそのまま維持(記録は残す)。
+- **(5) Fighter新ポーズ**: `E42_16x16.json`(fg=3、旧`E4_2_16x16.json`の
+  改訂版)から機械的に変換したバイト列で`ENEMY4_PATTERN_2`を差し替え。
+- **重大な実機不具合を作り込みかけ、テストで発見・解消**:
+  `tools/bankswitch_poc/build_full_rom.py`(Comb限定のバンク切替
+  トランポリン、tracked sourceの外)が、まさに「F1D9h+はSTACKTOP
+  まで自由」と信じていたこの空き領域の**0xF200-0xF201に2バイトの
+  トランポリンコードを実行時コピーしている**ことが判明(この事実は
+  `src/CYBER SHMUP.asm`自身のコメントには一切現れず、ビルドツール側
+  だけが知っている制約だった)。今回の新規RAM追加(`PLAYER_ACCENT_
+  COLOR`〜`PLAYER_EXPL_POOL`)がこの領域を跨いでしまい、`verify_comb.
+  py`がボス撃破後のバンク切替で無限ループに陥る形で検出
+  (`PLAYER_FLYAWAY=2`の生Stage1単体テストでは無症状 - トランポリンは
+  Comb限定のRAM書き込みのため、Stage2側の切り替えを経由して初めて
+  発現する回帰だった)。新規RAM群を全て0xF210〜へ後方シフトして解消、
+  該当EQUの直前にこの制約を明記するコメントを追加(今後の同種の
+  RAM追加でも0xF200-0xF201だけは絶対に踏まないよう注意喚起)。
+  全回帰・`verify_comb.py`とも健全性確認済み。
+- **テスト**: `tools/verify_player_damage.py`を今回の変更に合わせて
+  大幅書き換え(新ヒットボックス座標系への一括修正、`PDC_CHECK_PODS`
+  修正の検証、`CALC_DUTY_GATE_VOLUME`単体検証、カラーチェンジ検証、
+  `PLAYER_EXPL_*`のスポーン/アニメ/期限切れ/実MAINLOOPでの完走検証、
+  Fighter新ポーズのバイト直接比較)。開発中に自分のテスト自身の
+  オフバイワン(スポーン呼び出し自体が新規インスタンスのTIMERも
+  同時に1消費する点の見落とし)も発見・修正。全55件PASS。既存の
+  `verify_*.py`群(`verify_vdp_wait_shrink.py`のOUT件数固定期待値のみ
+  296/306→300/312へ更新)も無退行。Comb ROM再ビルド・`verify_comb.py`
+  で健全性確認、送付。
+  - **保留**: `PLAYER_EXPL_LIFE`(20)/`PLAYER_EXPL_SPAWN_INTERVAL`(8)/
+    `PLAYER_EXPL_TOTAL_LEN`(120)/`SOUND_BARRIER_HIT`の音程(period=900)
+    はいずれも未調整の初期値。実プレイでの調整は別途。
