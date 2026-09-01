@@ -8104,10 +8104,32 @@ EBSB_UPDATE:
     NOP
     NOP
 
+    ; "サインの頂点と下限ではLut参照を停止して横に16px動き上下の動きは
+    ; 無くすということ つまりサイン移動で頂点まで行き16pxドリフト
+    ; その後サイン移動で下限まで行き16pxドリフト この繰り返し" -
+    ; E_PARAM4 (otherwise unused by this BEHAVIOR - see this routine's
+    ; own header comment) is a "frozen-drift frames remaining"
+    ; countdown, armed to 16 the instant E_STATE reaches the peak(7)/
+    ; trough(23) plateau in ENEMY4_SINE_LUT. While nonzero, E_STATE is
+    ; NOT advanced at all (so the LUT lookup - and therefore Y - stays
+    ; pinned exactly where it was: "Lut参照を停止") and X alone steps
+    ; 1px/frame instead of the normal ENEMY4_SPEED - exactly 16 frozen
+    ; frames = 16px purely horizontal, then normal sine-follow motion
+    ; resumes from that same state, continuing the curve away from the
+    ; extreme it just paused at.
+    LD A,(IX+E_PARAM4)
+    OR A
+    JR NZ,EBSB_CHECK_FROZEN_EXIT
     LD A,(IX+E_X)
     CP ENEMY4_SPEED
     EI
     JR NC,EBSB_MOVEOK
+    JP EBSB_EXIT_LEFT
+EBSB_CHECK_FROZEN_EXIT:
+    LD A,(IX+E_X)
+    OR A
+    EI
+    JR NZ,EBSB_MOVEOK_FROZEN
     JP EBSB_EXIT_LEFT
 EBSB_MOVEOK:
     SUB ENEMY4_SPEED
@@ -8117,38 +8139,19 @@ EBSB_MOVEOK:
     XOR A
 EBSB_PHASEOK:
     LD (IX+E_STATE),A
-    ; "サインウェーブの頂点と下限で16px左にドリフトするよう変更" -
-    ; extra 16px leftward dash, armed once at the START of each
-    ; plateau (state==7 peak / state==23 trough - both 3-frame
-    ; plateaus in ENEMY4_SINE_LUT; checking only the FIRST frame avoids
-    ; re-arming on all 3). Spread over 8 frames (2px/frame extra, on
-    ; top of the normal ENEMY4_SPEED(3)px/frame drift - so 5px/frame
-    ; total while dashing) rather than Enemy1's own 16-frame/1px dodge
-    ; pacing: since peak and trough are exactly 16 states apart, a
-    ; 16-frame dash would never fully finish before the next one arms,
-    ; making the "extra" speed permanent instead of a visible one-time
-    ; accent at each plateau (confirmed by directly tracing E_X over 2
-    ; full cycles before settling on this shorter duration) - 8 frames
-    ; leaves a real gap of plain-speed cruising between accents.
-    ; E_PARAM4 is otherwise unused by this BEHAVIOR (E_PARAM1/2 are the
-    ; wave-fire shooter/fired flags, E_PARAM0/E_STATE/E_PARAM3 drive
-    ; the base movement/draw - see this routine's own header comment).
     CP 7
-    JR Z,EBSB_DASH_ARM
+    JR Z,EBSB_ARM_FREEZE
     CP 23
-    JR NZ,EBSB_DASH_SKIP_ARM
-EBSB_DASH_ARM:
-    LD A,8 : LD (IX+E_PARAM4),A
-EBSB_DASH_SKIP_ARM:
-    LD A,(IX+E_PARAM4)
-    OR A
-    JR Z,EBSB_DASH_DONE
-    DEC A : LD (IX+E_PARAM4),A
-    LD A,(IX+E_X)
-    CP 2
-    JR C,EBSB_DASH_DONE   ; too close to the left edge - let the normal exit-check catch it next frame, don't underflow
-    DEC A : DEC A : LD (IX+E_X),A
-EBSB_DASH_DONE:
+    JR NZ,EBSB_DRAW_FROM_LUT
+EBSB_ARM_FREEZE:
+    LD A,16 : LD (IX+E_PARAM4),A
+    JR EBSB_DRAW_FROM_LUT
+EBSB_MOVEOK_FROZEN:
+    ; A already holds E_X (loaded above, untouched by the OR A/JR) -
+    ; the X!=0 check just above already guards against underflow here.
+    DEC A : LD (IX+E_X),A
+    LD A,(IX+E_PARAM4) : DEC A : LD (IX+E_PARAM4),A
+EBSB_DRAW_FROM_LUT:
     LD A,(IX+E_STATE)
     LD E,A : LD D,0
     LD HL,ENEMY4_SINE_LUT

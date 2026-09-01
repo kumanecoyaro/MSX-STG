@@ -203,8 +203,10 @@ call_routine(z, sym["EBSB_UPDATE"])
 check("...never fires", ebullet_active_count(z) == 0)
 
 
-# ---------- (4b) Wave(E5)'s own peak/trough dash ----------
-# "サインウェーブの頂点と下限で16px左にドリフトするよう変更"
+# ---------- (4b) Wave(E5)'s own peak/trough LUT-freeze drift ----------
+# "サインの頂点と下限ではLut参照を停止して横に16px動き上下の動きは
+# 無くすということ つまりサイン移動で頂点まで行き16pxドリフト その後
+# サイン移動で下限まで行き16pxドリフト この繰り返し"
 z = fresh(); boot(z)
 slot = ENEMY_POOL
 z.wr(slot + E_ACTIVE, 1)
@@ -216,21 +218,42 @@ z.wr(slot + E_PARAM0, 90)
 z.wr(slot + sym["E_PARAM3"], 0)
 z.wr(slot + E_SPRNUM, 5)
 z.ix = slot
-xs = []
-for _ in range(40):
+ENEMY4_SPEED = sym["ENEMY4_SPEED"]
+LUT_ADDR = sym["ENEMY4_SINE_LUT"]
+
+def signed(b):
+    return b - 256 if b >= 128 else b
+
+def read_lut_y(z, baseY):
+    return baseY + signed(z.rd(LUT_ADDR + z.rd(slot + sym["E_STATE"])))
+
+xs, ys, states, param4s = [], [], [], []
+for _ in range(60):
     call_routine(z, sym["EBSB_UPDATE"])
     xs.append(z.rd(slot + E_X))
+    states.append(z.rd(slot + sym["E_STATE"]))
+    param4s.append(z.rd(slot + sym["E_PARAM4"]))
+    ys.append(read_lut_y(z, 90))
+
+# xs[i]/states[i]/ys[i]/param4s[i] are all snapshots taken right after
+# call i (0-indexed). deltas[k] = xs[k]-xs[k+1] is the X movement that
+# happened DURING call k+1, so it pairs with states[k+1]/ys[k+1] (NOT
+# states[k] - an earlier version of this test misaligned these and
+# false-failed on the "resume" checks; verified precisely by directly
+# tracing E_STATE/E_PARAM4 call-by-call before writing this).
 deltas = [xs[i - 1] - xs[i] for i in range(1, len(xs))]
-ENEMY4_SPEED = sym["ENEMY4_SPEED"]
-dash_frames = [i for i, d in enumerate(deltas) if d > ENEMY4_SPEED]
-cruise_frames = [i for i, d in enumerate(deltas) if d == ENEMY4_SPEED]
-check(f"Wave(E5) has both dash frames (>{ENEMY4_SPEED}px) and plain-cruise frames "
-      f"({ENEMY4_SPEED}px) - a real accent, not a permanent speed change",
-      len(dash_frames) > 0 and len(cruise_frames) > 0)
-check("...each dash moves exactly 5px/frame (3 base + 2 extra)",
-      all(deltas[i] == ENEMY4_SPEED + 2 for i in dash_frames))
-check("...one full 32-state cycle contains exactly 2 dash windows of 8 frames each (16 dash frames total)",
-      len([i for i in dash_frames if i < 32]) == 16)
+check("Wave(E5) freezes E_STATE (16 consecutive frames all at the same state) once it reaches the peak (state==7)",
+      states[7:23] == [7] * 16)
+check("...Y is completely constant (LUT frozen) throughout those 16 frozen frames",
+      len(set(ys[7:23])) == 1)
+check("...X still moves exactly 1px/frame during the freeze (16 frozen frames = 16px total)",
+      all(deltas[i] == 1 for i in range(6, 22)))
+check("...normal sine-follow motion (ENEMY4_SPEED px/frame, state advancing) resumes right after",
+      states[23] == 8 and deltas[22] == ENEMY4_SPEED)
+check("Wave(E5) also freezes at the trough (state==23) for another 16 frames, same pattern",
+      states[39:55] == [23] * 16 and len(set(ys[39:55])) == 1 and all(deltas[i] == 1 for i in range(38, 54)))
+check("...and resumes normal motion afterward, heading back up toward the next peak",
+      states[55] == 24 and deltas[54] == ENEMY4_SPEED)
 
 
 # ---------- (5) Enemy2 (A formation) fires once during the diagonal exit dive ----------
