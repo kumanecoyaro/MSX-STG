@@ -2480,7 +2480,12 @@ BOSS_WIPE_START_Y EQU BOSS_SPAWN_Y-16        ; 40
 BOSS_WIPE_END_Y   EQU BOSS_SPAWN_Y+64+64     ; 184 (64=the boss's own
                                               ; 64x64 body height, +64
                                               ; overshoot clear past it)
-BOSS_WIPE_SPEED EQU 4    ; px/frame - untuned "高速" placeholder
+; "もっと上下移動を早く 8px単位で全速で 現在はウェイト入れてるのか" -
+; there was never an artificial wait/frame-skip here: UPDATE_BOSS_WIPE
+; is already called unconditionally every single frame from MAINLOOP
+; (same cadence as everything else under the BOSS_ACT gate), so the
+; only thing throttling the sweep was this constant itself. 4->8px/frame.
+BOSS_WIPE_SPEED EQU 8    ; px/frame, "全速" - moves a full 8px every frame
 ; stack_safety_test.py's own tight margin below STACKTOP means there is
 ; NO more genuinely free RAM left in this file at all (F320h was
 ; already the exact ceiling before this feature) - so, same idiom as
@@ -10006,21 +10011,23 @@ TRIGGER_BOSS_WIPE:
     LD A,BOSS_WIPE_START_Y : LD (BOSS_WIPE_Y),A
     RET
 
-; called every frame while BOSS_ACT!=0 (see MAINLOOP) - does nothing
-; once the sweep has already finished (BOSS_WIPE_ACT=0, whether from
-; reaching BOSS_WIPE_END_Y on its own or the pose-entry safety net -
-; see UBA_MOVE_RIGHT's own CALL HIDE_BOSS_WIPE_SPRITES).
+; "1回だけではなく攻撃に移るまで継続してループだぞ" - called every frame
+; while BOSS_ACT!=0 (see MAINLOOP). Never stops itself: reaching
+; BOSS_WIPE_END_Y just wraps BOSS_WIPE_Y back to BOSS_WIPE_START_Y and
+; keeps sweeping, so the wipe repeats continuously for as long as the
+; boss stays in its pre-attack patrol. The only thing that actually
+; stops it for good is STOP_BOSS_WIPE, called once from UBA_MOVE_RIGHT
+; the instant the boss enters its first attack pose.
 UPDATE_BOSS_WIPE:
     LD A,(BOSS_WIPE_ACT)
     OR A
     RET Z
     LD A,(BOSS_WIPE_Y) : ADD A,BOSS_WIPE_SPEED
-    LD (BOSS_WIPE_Y),A
     CP BOSS_WIPE_END_Y
     JR C,UBW_STILL_GOING
-    XOR A : LD (BOSS_WIPE_ACT),A
-    JP HIDE_BOSS_WIPE_SPRITES
+    LD A,BOSS_WIPE_START_Y   ; wrap back to the top and keep looping
 UBW_STILL_GOING:
+    LD (BOSS_WIPE_Y),A
     JP DRAW_BOSS_WIPE_SPRITES
 
 DRAW_BOSS_WIPE_SPRITES:
@@ -10030,6 +10037,16 @@ DRAW_BOSS_WIPE_SPRITES:
 HIDE_BOSS_WIPE_SPRITES:
     LD A,209
     JP WRITE_BOSS_WIPE_ALL
+
+; stops the loop for good (see UBA_MOVE_RIGHT's own call site) - clears
+; BOSS_WIPE_ACT first so UPDATE_BOSS_WIPE's own gate stops calling
+; DRAW_BOSS_WIPE_SPRITES on the very next frame (otherwise it would just
+; redraw right over this routine's own HIDE_BOSS_WIPE_SPRITES the next
+; frame, since the loop no longer deactivates itself on its own), then
+; hides the 4 dummy sprites.
+STOP_BOSS_WIPE:
+    XOR A : LD (BOSS_WIPE_ACT),A
+    JP HIDE_BOSS_WIPE_SPRITES
 
 ; writes all 4 dummy sprites with the SAME Y (A on entry) to hw sprite
 ; slots BOSS_WIPE_SPR_BASE_SLOT..+3 (4-7) - shared by DRAW/HIDE above
@@ -10216,11 +10233,10 @@ UBA_MOVE_RIGHT:
     LD A,1 : LD (BOSS_PHASE),A
     LD HL,(GAME_TICK) : LD DE,BOSS_POSE_TICKS : ADD HL,DE
     LD (BOSS_POSE_END_TICK),HL
-    ; "ボスが攻撃に入ったら消す" - safety net in case the entrance sweep
-    ; hasn't reached BOSS_WIPE_END_Y on its own by the time the very
-    ; first pose begins (it normally finishes well before this, during
-    ; the patrol leg, but this guarantees it's gone either way).
-    CALL HIDE_BOSS_WIPE_SPRITES
+    ; "ボスが攻撃に入ったら消す" - the wipe now loops forever on its own
+    ; (see UPDATE_BOSS_WIPE's own comment), so this is the ONLY place
+    ; that ever stops it - not just a safety net for an edge case.
+    CALL STOP_BOSS_WIPE
     CALL HIDE_BOSS_SPRITES
     CALL DRAW_SASAPI_HAND
     ; "当然サンダービーム中はホーミングもサンダーも撃たねえんだよ" -

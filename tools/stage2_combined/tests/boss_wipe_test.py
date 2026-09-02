@@ -123,25 +123,42 @@ mid_slots_ok = all(
 check("UPDATE_BOSS_WIPE actually redraws all 4 slots to the new Y mid-sweep",
       mid_slots_ok)
 
-# ---- UPDATE_BOSS_WIPE: drive the full sweep to completion, confirm it
-# deactivates and hides exactly at BOSS_WIPE_END_Y, never overshooting
-# past a single extra step ----
+# ---- UPDATE_BOSS_WIPE: "1回だけではなく攻撃に移るまで継続してループ" -
+# drive one full sweep to BOSS_WIPE_END_Y and confirm it does NOT stop
+# there any more - it wraps back to BOSS_WIPE_START_Y and keeps
+# sweeping, staying active the whole time, for several full laps in a
+# row (nothing here ever clears BOSS_WIPE_ACT on its own) ----
 cpu = fresh_cpu()
 cpu.mem[BOSS_WIPE_ACT] = 1
 cpu.mem[BOSS_WIPE_Y] = BOSS_WIPE_START_Y & 0xFF
-steps = 0
-while cpu.mem[BOSS_WIPE_ACT] != 0 and steps < 200:
-    call_routine(cpu, "UPDATE_BOSS_WIPE")
-    steps += 1
-expected_steps = -(-(BOSS_WIPE_END_Y - BOSS_WIPE_START_Y) // BOSS_WIPE_SPEED)  # ceil div
-check(f"the full sweep from BOSS_WIPE_START_Y to BOSS_WIPE_END_Y takes the "
-      f"expected number of UPDATE_BOSS_WIPE calls ({expected_steps})",
-      steps == expected_steps)
-check("UPDATE_BOSS_WIPE deactivates itself (BOSS_WIPE_ACT=0) once BOSS_WIPE_Y "
-      "reaches BOSS_WIPE_END_Y", cpu.mem[BOSS_WIPE_ACT] == 0)
-final_hidden = all(slot_bytes(cpu, BOSS_WIPE_SPR_BASE_SLOT + i)[0] == 209 for i in range(4))
-check("UPDATE_BOSS_WIPE hides all 4 slots (Y=209) the instant it deactivates",
-      final_hidden)
+steps_per_lap = -(-(BOSS_WIPE_END_Y - BOSS_WIPE_START_Y) // BOSS_WIPE_SPEED)  # ceil div
+lap_ys = []
+for lap in range(3):
+    for _ in range(steps_per_lap):
+        call_routine(cpu, "UPDATE_BOSS_WIPE")
+    lap_ys.append(cpu.mem[BOSS_WIPE_Y])
+check(f"one full lap (BOSS_WIPE_START_Y to BOSS_WIPE_END_Y) takes the expected "
+      f"number of UPDATE_BOSS_WIPE calls ({steps_per_lap}) and wraps back to "
+      "BOSS_WIPE_START_Y instead of stopping",
+      all(y == BOSS_WIPE_START_Y & 0xFF for y in lap_ys))
+check("BOSS_WIPE_ACT is still 1 after 3 full laps - the loop never stops itself",
+      cpu.mem[BOSS_WIPE_ACT] == 1)
+still_visible = all(slot_bytes(cpu, BOSS_WIPE_SPR_BASE_SLOT + i)[0] == BOSS_WIPE_START_Y & 0xFF
+                     for i in range(4))
+check("the 4 dummy sprites are still being drawn (not hidden) after 3 laps",
+      still_visible)
+
+# ---- STOP_BOSS_WIPE: the only thing that actually ends the loop ----
+call_routine(cpu, "STOP_BOSS_WIPE")
+check("STOP_BOSS_WIPE clears BOSS_WIPE_ACT", cpu.mem[BOSS_WIPE_ACT] == 0)
+stopped_hidden = all(slot_bytes(cpu, BOSS_WIPE_SPR_BASE_SLOT + i)[0] == 209 for i in range(4))
+check("STOP_BOSS_WIPE hides all 4 slots (Y=209)", stopped_hidden)
+# and once stopped, UPDATE_BOSS_WIPE's own gate keeps it that way - it
+# must NOT redraw over the Y=209 hide on the next frame
+call_routine(cpu, "UPDATE_BOSS_WIPE")
+stays_hidden = all(slot_bytes(cpu, BOSS_WIPE_SPR_BASE_SLOT + i)[0] == 209 for i in range(4))
+check("UPDATE_BOSS_WIPE does not resurrect the sprites on the frame right "
+      "after STOP_BOSS_WIPE (BOSS_WIPE_ACT=0 gate holds)", stays_hidden)
 
 # ---- S2_BOSS_SPAWN triggers the wipe as part of the real spawn sequence ----
 cpu = fresh_cpu()
@@ -153,8 +170,11 @@ check("S2_BOSS_SPAWN's own boss-activation flag is also set, confirming this "
       "is really the real spawn routine and not some other path",
       cpu.mem[BOSS_ACT] == 1)
 
-# ---- UBA_MOVE_RIGHT (first-attack pose entry) force-hides the wipe as a
-# safety net, even if the sweep hadn't reached BOSS_WIPE_END_Y on its own ----
+# ---- UBA_MOVE_RIGHT (first-attack pose entry): now the ONLY thing that
+# stops the loop - since UPDATE_BOSS_WIPE never stops itself any more,
+# this must both hide the sprites AND clear BOSS_WIPE_ACT (via
+# STOP_BOSS_WIPE), or the loop would just resurrect them on the very
+# next frame ----
 cpu = fresh_cpu()
 call_routine(cpu, "S2_BOSS_SPAWN")
 cpu.mem[BOSS_WIPE_ACT] = 1
@@ -162,9 +182,15 @@ cpu.mem[BOSS_WIPE_Y] = 90  # mid-sweep, well short of BOSS_WIPE_END_Y
 call_routine(cpu, "DRAW_BOSS_WIPE_SPRITES")
 call_routine(cpu, "UBA_MOVE_RIGHT")
 safety_hidden = all(slot_bytes(cpu, BOSS_WIPE_SPR_BASE_SLOT + i)[0] == 209 for i in range(4))
-check("UBA_MOVE_RIGHT (the boss's first attack-pose entry point) force-hides "
-      "the 4 wipe dummy sprites even mid-sweep, so they can never survive "
-      "into the attack phase", safety_hidden)
+check("UBA_MOVE_RIGHT (the boss's first attack-pose entry point) hides the 4 "
+      "wipe dummy sprites even mid-sweep, so they can never survive into the "
+      "attack phase", safety_hidden)
+check("UBA_MOVE_RIGHT also clears BOSS_WIPE_ACT (not just a visual hide) so "
+      "the now-perpetual loop actually stops for good", cpu.mem[BOSS_WIPE_ACT] == 0)
+call_routine(cpu, "UPDATE_BOSS_WIPE")
+stays_hidden_after_pose = all(slot_bytes(cpu, BOSS_WIPE_SPR_BASE_SLOT + i)[0] == 209 for i in range(4))
+check("...and stays hidden on the following frame (the loop doesn't resurrect "
+      "it once the attack pose has begun)", stays_hidden_after_pose)
 
 print()
 print(f"{len(ok)} passed, {len(fail)} failed")
