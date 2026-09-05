@@ -1261,12 +1261,26 @@ BOSS_BROKEN_BEAM_CODE3 EQU PAT_SASAPI+24
 BOSS_BROKEN_BEAM_CODE4 EQU PAT_SASAPI+28
 PSG_ADDR         EQU 0A0h
 PSG_DATA         EQU 0A1h
-; mixer (R7) values for channel A only - tone/noise B and C always
-; off, leaving those 2 channels genuinely untouched for BGM. bit
-; layout: 0=tone A,1=tone B,2=tone C,3=noise A,4=noise B,5=noise C
-; (0=enabled,1=disabled), bits6-7 unused here (kept 1).
-MIXER_NOISE_A EQU 0F7h   ; noise A on, everything else off - shot/explosion
-MIXER_TONE_A  EQU 0FEh   ; tone A on, everything else off - "kin" deflect
+; mixer (R7) values for channel A only. bit layout: 0=tone A,1=tone B,
+; 2=tone C,3=noise A,4=noise B,5=noise C (0=enabled,1=disabled),
+; bits6-7 unused here (kept 1).
+; round40 実機フィードバック対応 ("恐らくステージ2のボススポーンの
+; サウンドとBGM被ってるだろ ChAになってるか"): 両定数ともbits1-2
+; (tone B/C)を元々"1"(disabled)にしていた - この2ビットは、BGM導入
+; (Round38)より前は「どうせ使っていないチャンネルだから無効化して
+; おく」という無害な選択だったが、BGM導入後はtone B/CがBGMの
+; 実チャンネルそのものになったため、この9箇所全ての呼び出し元
+; (SOUND_SHOT等、全てchannel Aのトーン/ノイズ設定用にR7を素の
+; blind writeで上書きしている)が発火するたびにBGMの2チャンネルを
+; 巻き込んで無効化していた(次の実H.TIMI呼び出し=最大1フレーム後の
+; BGM_TICK自身のread-modify-writeで復旧するが、SFXの発火頻度が高い
+; 通常のプレイ中は体感できる途切れになる - 特にボス出現演出は
+; `BOSS_MATERIALIZE_SND_RETRIGGER`ごとに`SOUND_BOSS_MATERIALIZE`が
+; 繰り返し発火するため目立ちやすい)。bits1-2を"0"(enabled)へ変更
+; (それ以外のビット・呼び出し元コードは無変更 - channel A自身の
+; 音には無関係な、元々"don't care"だったビットの値を変えるだけ)。
+MIXER_NOISE_A EQU 0F1h   ; noise A on, tone B/C left enabled for BGM
+MIXER_TONE_A  EQU 0F8h   ; tone A on, tone B/C left enabled for BGM
 ; short/high-pitched noise burst for a shot "pyu" - "ノイズｃｈで弾
 ; 発射音ぽいの" (noise channel, shot-sound-like); period/fade picked
 ; with no more precise spec than that, easy to retune.

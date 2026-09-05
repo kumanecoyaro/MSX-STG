@@ -355,6 +355,34 @@ saw, masked = scan_psg_out_iff1("BGM_TICK", {"BGM_B_TIMER": 0, "BGM_C_TIMER": 0}
 check("BGM_TICK: real PSG_ADDR/PSG_DATA OUTs found", saw)
 
 
+# ---- round40 実機フィードバック対応 ("恐らくステージ2のボススポーンの
+# サウンドとBGM被ってるだろ ChAになってるか"): every channel-A SFX
+# trigger does a BLIND (not read-modify-write) write to R7 to set its
+# own tone/noise mode - MIXER_NOISE_A/MIXER_TONE_A used to hardcode
+# bits1-2 (tone B/C enable) to "disabled" (a harmless leftover from
+# before BGM existed, when those channels were genuinely idle), which
+# silenced BGM's own 2 channels every single time ANY of these fired,
+# until the next real H.TIMI/BGM_TICK call (up to ~1 frame later)
+# restored them. Fixed by changing the 2 constants themselves so tone
+# B/C stay enabled - every one of these routines needs to keep
+# genuinely writing SOME value to R7 (channel A alternates between tone
+# and noise mode depending on which SFX just fired), so this checks the
+# ACTUAL resulting R7 value after each one fires, not just the constant.
+CHANNEL_A_MIXER_ROUTINES = [
+    "SOUND_SHOT", "SOUND_SPARK_CRACKLE", "SOUND_DESTROY", "SOUND_ZUM_DEFLECT",
+    "SOUND_BOSS_BOOM", "SOUND_HORMING", "SOUND_THUNDER", "SOUND_SBEAM",
+    "SOUND_SASAPI_LASER", "SOUND_BOSS_MATERIALIZE",
+]
+for name in CHANNEL_A_MIXER_ROUTINES:
+    cpu = fresh_cpu()
+    cpu.psg_regs[7] = 0xFF  # poison: if this routine doesn't touch R7 at all, this check would false-pass
+    call_routine(cpu, name)
+    r7 = cpu.psg_regs.get(7)
+    check(f"{name}: after firing, R7 leaves tone B/C enabled (bits1-2 clear) for BGM - "
+          f"R7={bin(r7) if r7 is not None else None}",
+          r7 is not None and (r7 & 0b110) == 0)
+
+
 print()
 print(f"{len(ok)} passed, {len(fail)} failed")
 if fail:
