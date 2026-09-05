@@ -133,16 +133,22 @@ R225D_UL_ID, R225D_UR_ID = 5, 6
 # round36-9 ("これで組み込んでみてくれ"): DEFAULT_TIER_PROFILE below is
 # run-length-encoded (via columns_to_tier_profile) from the user's own
 # edited terrain, actually painted in schedule-editor.html and exported as
-# Schedule2_7.json's own "terrain" field (492 columns) - no longer the
-# original round36 hardcoded test track. One column (index36) was a
-# physically-impossible 2-tier drop (3->1, real steps are always +-1 - see
-# columns_to_tier_profile's own assert) and was clamped to 3->2->1 before
-# encoding - see HANDOFF.md's own round36-9 entry for exactly which cell
-# and why.
+# Schedule2_10.json's own "terrain" field (492 columns, round38-2). Two
+# columns (index316, index454) were physically-impossible 2-tier jumps
+# (1->3 and 2->0 respectively, real steps are always +-1 - see
+# columns_to_tier_profile's own assert) and were clamped to 1->2->3 and
+# 2->1->0 before encoding - see HANDOFF.md's own round38-2 entry for
+# exactly which cells and why. (Previously this held Schedule2_7.json's
+# own terrain, round36-9 - fully replaced, not merged.)
 DEFAULT_TIER_PROFILE = [
-    (0, 24), (1, 9), (2, 2), (3, 1), (2, 1), (1, 1), (2, 1),
-    (1, 9), (2, 24), (3, 174), (2, 24), (1, 24), (0, 20), (1, 1),
-    (2, 1), (3, 152), (2, 2), (1, 1), (2, 1), (1, 1), (0, 19),
+    (0, 42), (1, 6), (2, 1), (3, 1), (2, 22), (3, 2), (2, 2), (1, 6),
+    (2, 1), (3, 18), (2, 1), (3, 3), (2, 9), (3, 61), (2, 2), (3, 1),
+    (2, 1), (3, 67), (2, 16), (1, 3), (2, 2), (3, 2), (2, 1), (1, 24),
+    (0, 12), (1, 1), (0, 3), (1, 2), (0, 2), (1, 2), (2, 1), (3, 16),
+    (2, 6), (3, 1), (2, 1), (3, 2), (2, 1), (3, 43), (2, 5), (3, 3),
+    (2, 1), (3, 14), (2, 1), (3, 1), (2, 3), (3, 15), (2, 2), (3, 1),
+    (2, 21), (1, 1), (0, 9), (1, 1), (2, 1), (3, 2), (2, 2), (1, 1),
+    (2, 1), (1, 1), (0, 19),
 ]
 
 

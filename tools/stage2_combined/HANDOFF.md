@@ -8420,3 +8420,29 @@ REST処理・ループマーク・R7 read-modify-write・DI/EI保護の実効性
 - タイトル/ED画面向けの新規バンクは今回未着手("間に合えば"の
   条件付きタスク、現時点で指示なし)。
 - 残りROM容量1778バイトは今後の全新機能と共有される予算。
+
+## Round38-2(Stage2、Schedule2_10.jsonへの差し替え・完了済み)
+
+ユーザーがschedule-editor.htmlで作成した新しいスケジュール
+`Schedule2_10.json`(placements166件+terrain492列)を本編へ機械的に統合。
+Round36-9と同じ手法(手作業transcriptionではなくPythonスクリプトで
+JSONから直接テキスト生成)。
+
+- terrain配列に2箇所の物理的に不可能な段差(index316: tier1→3、
+  index454: tier2→0、いずれも2段ジャンプ)を発見。Round36-9と同じ
+  判断基準(ビルド自体をブロックするassert制約のため、ユーザーへの
+  確認を待たず最小限の訂正を適用)で、該当列自身の値を中間値へ補正
+  (316を3→2、454を0→1)。往復変換(profile→columns)で補正後の
+  terrain配列と完全一致することを検証済み。
+- `terrain_gen.py`の`DEFAULT_TIER_PROFILE`を新プロファイル(59要素)へ
+  置き換え。`TERRAIN_TRACK_LEN`は532→608に変化(遷移数増加による
+  自動伸長、想定通り)。
+- `combined_test.asm`の`SPAWN2_COUNT`(150→166)/`SPAWN2_THRESHOLDS`/
+  `SPAWN2_Y_TABLE`/`SSC2_FIRE`のCPディスパッチチェーンを、新JSONから
+  機械的に再生成したテキストで丸ごと置換(row→Y変換は`Y=row*8`、
+  schedule-editor.htmlの24行×8pxグリッドと整合)。
+- `python3 build_test.py`でアセンブル成功(31550/32768バイト、残り
+  1218バイト)。全回帰`run_all.py` **1366 passed/0 failed**(1350→1366、
+  `spawn2_schedule_test.py`がplacements件数増加に応じて161→177件へ
+  自然増、他は無変更)。Stage2単体ROM・Comb ROM再ビルド・
+  `verify_comb.py`健全性確認の上、両ROM送付。

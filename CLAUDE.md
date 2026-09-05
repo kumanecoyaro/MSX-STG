@@ -1445,3 +1445,14 @@
     を発火しないため必須)は実機フィードバック待ち。Stage1側のBGM
     ドライバ実装は明示的にスコープ外(次回以降)。タイトル/ED用の
     新規バンクは今回未着手。
+
+## Stage2スケジュール差し替え(2026-09-05、Round38-2、完了済み)
+
+- ユーザー作成の新スケジュール`Schedule2_10.json`(placements166件+
+  terrain492列)を機械的に統合。Round36-9と同じPythonスクリプト生成
+  手法。terrain配列の物理的に不可能な段差2箇所(index316/454)を
+  Round36-9と同じ基準で最小補正(ユーザー確認は求めず、ビルドを
+  ブロックする制約のため)。`TERRAIN_TRACK_LEN`は532→608に変化。
+- 全回帰`run_all.py` **1366 passed/0 failed**(1350→1366)。Stage2単体
+  ROM(残り1218バイト)・Comb ROM再ビルド・送付済み。詳細は
+  `tools/stage2_combined/HANDOFF.md`のRound38-2参照。
