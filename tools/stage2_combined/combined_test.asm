@@ -2485,20 +2485,47 @@ BOSS_WIPE_END_Y   EQU BOSS_SPAWN_Y+64+64     ; 184 (64=the boss's own
 ; is already called unconditionally every single frame from MAINLOOP
 ; (same cadence as everything else under the BOSS_ACT gate), so the
 ; only thing throttling the sweep was this constant itself. 4->8px/frame.
-BOSS_WIPE_SPEED EQU 8    ; px/frame, "全速" - moves a full 8px every frame
+; follow-up#20 ("ブランクのワイプの移動速度が遅い"): still not fast
+; enough - 8->16px/frame.
+BOSS_WIPE_SPEED EQU 16    ; px/frame, "全速" - moves a full 16px every frame
+; follow-up#20 ("ワイプ中は初期停止状態のスプライトでワイプが終わるまで
+; 停止する") - the boss no longer patrols at all while the wipe is
+; running (see UBA_ACTIVE's own BOSS_WIPE_ACT freeze check), so the
+; wipe can no longer rely on "the boss reaches its first attack pose" to
+; ever stop itself (that can now never happen while frozen - it would
+; deadlock). BOSS_WIPE_ACT is repurposed from a plain 0/1 flag into a
+; remaining-laps counter instead: TRIGGER_BOSS_WIPE seeds it with
+; BOSS_WIPE_LAPS, UPDATE_BOSS_WIPE decrements it by 1 every time the
+; sweep wraps back to BOSS_WIPE_START_Y, and stops for good (same as
+; STOP_BOSS_WIPE) the moment it reaches 0 - "not just once" (follow-
+; up#19) is satisfied by this being >1, and it's still a real, finite
+; "until the wipe finishes" for UBA_ACTIVE's freeze to key off. Untuned
+; placeholder value.
+BOSS_WIPE_LAPS EQU 4
 ; stack_safety_test.py's own tight margin below STACKTOP means there is
 ; NO more genuinely free RAM left in this file at all (F320h was
 ; already the exact ceiling before this feature) - so, same idiom as
 ; BOSS_EXPL_SPARK_SLOT0_ROW above, these 2 bytes alias BOSS_EXPL_CX/CY
 ; (the death/explosion sequence's own center-cell coords) instead of
-; claiming new addresses. Safe: that sequence only ever runs once the
-; boss actually dies, which can't happen during the entrance wipe
-; (still full HP, hasn't even started fighting yet) - guaranteed
-; mutually exclusive in time, exactly like the SPARK reuse. No RAM
-; staging buffer either (see WRITE_BOSS_WIPE_ALL) - X/pattern/color are
-; fixed per-slot compile-time constants, computed straight into
-; registers rather than stored.
-BOSS_WIPE_ACT   EQU BOSS_EXPL_CX   ; 0=inactive, 1=sweeping
+; claiming new addresses. follow-up#20 real-hardware bug report ("爆発
+; のキャラが消えてる"): the "guaranteed mutually exclusive in time"
+; claim this comment used to make here was WRONG - CHECK_HIT_PAIR_BOSS
+; can trigger TRIGGER_BOSS_BROKEN_FORM (SPARK, HP threshold) or
+; INIT_BOSS_EXPLOSION (HP=0) on ANY hit while BOSS_ACT=1, with no regard
+; for BOSS_PHASE/patrol state - a lucky-shot player absolutely can drop
+; the boss to the broken-form threshold (or, with enough damage/luck,
+; straight to 0) WHILE the entrance wipe is still actively sweeping.
+; When that happened, UPDATE_BOSS_WIPE and the explosion trigger fought
+; over these same 2 bytes every frame - BOSS_EXPL_CY getting stomped by
+; the wipe's own raw pixel Y (up to 184, way past the valid 0-23 cell-
+; row range the explosion code expects) sent its BG cell writes to
+; garbage addresses, which read as "the explosion graphic just isn't
+; there" real hardware. Fixed by making TRIGGER_BOSS_BROKEN_FORM and
+; INIT_BOSS_EXPLOSION both force-stop the wipe (CALL STOP_BOSS_WIPE) as
+; the very first thing they do, before either one touches BOSS_EXPL_CX/
+; CY - true exclusivity is now enforced by these two call sites
+; themselves, not by "the wipe happens to always be over by then".
+BOSS_WIPE_ACT   EQU BOSS_EXPL_CX   ; 0=inactive, N=that many laps left
 BOSS_WIPE_Y     EQU BOSS_EXPL_CY   ; current Y (shared - all 4 move together)
 
 ; staging buffer for SBEAM_SLOT_COUNT*4 hw sprite slots (4 bytes each:
@@ -10005,26 +10032,57 @@ UPDATE_BOSS_ALL:
 ; comment for the underlying VDP 4-sprites-per-scanline priority trick)
 ; ----------
 ; Kicks off the sweep - called once from S2_BOSS_SPAWN, right as the
-; boss's own body first appears.
+; boss's own body first appears. Seeds BOSS_WIPE_ACT with the full lap
+; count (see its own EQU comment for why it's a countdown, not a flag).
 TRIGGER_BOSS_WIPE:
-    LD A,1 : LD (BOSS_WIPE_ACT),A
+    LD A,BOSS_WIPE_LAPS : LD (BOSS_WIPE_ACT),A
     LD A,BOSS_WIPE_START_Y : LD (BOSS_WIPE_Y),A
     RET
 
-; "1回だけではなく攻撃に移るまで継続してループだぞ" - called every frame
-; while BOSS_ACT!=0 (see MAINLOOP). Never stops itself: reaching
-; BOSS_WIPE_END_Y just wraps BOSS_WIPE_Y back to BOSS_WIPE_START_Y and
-; keeps sweeping, so the wipe repeats continuously for as long as the
-; boss stays in its pre-attack patrol. The only thing that actually
-; stops it for good is STOP_BOSS_WIPE, called once from UBA_MOVE_RIGHT
-; the instant the boss enters its first attack pose.
+; "1回だけではなく攻撃に移るまで継続してループだぞ" (follow-up#19) +
+; "ワイプ中は初期停止状態のスプライトでワイプが終わるまで停止すること"
+; (follow-up#20) - called every frame while BOSS_ACT!=0 (see MAINLOOP).
+; Reaching BOSS_WIPE_END_Y wraps BOSS_WIPE_Y back to BOSS_WIPE_START_Y
+; and keeps sweeping, decrementing the remaining-laps counter
+; (BOSS_WIPE_ACT) each time - once it hits 0, stops for good right here
+; (same hide as STOP_BOSS_WIPE, no separate call needed since ACT is
+; already 0). UBA_ACTIVE stays frozen (boss doesn't patrol/move at all)
+; for as long as BOSS_WIPE_ACT is nonzero, so this routine reaching 0 on
+; its own IS "the wipe finishing" for that freeze to key off - unlike
+; follow-up#19's design, this can no longer rely on the boss ever
+; reaching its first attack pose to stop itself (that's now unreachable
+; while frozen). STOP_BOSS_WIPE still exists for two other call sites
+; that need to force it off early: UBA_MOVE_RIGHT (attack pose entry,
+; now just a safety net for an edge case again) and TRIGGER_BOSS_BROKEN_
+; FORM/INIT_BOSS_EXPLOSION (a lucky/fast kill mid-wipe - see BOSS_WIPE_
+; ACT's own EQU comment for the real bug this fixed).
+; that STOP_BOSS_WIPE call alone isn't the whole fix, though: this
+; routine is still called unconditionally every frame while BOSS_ACT!=0
+; (see MAINLOOP), with NO regard for BOSS_FORM - so once TRIGGER_BOSS_
+; BROKEN_FORM/INIT_BOSS_EXPLOSION goes on to legitimately WRITE a real
+; (near-certainly nonzero) cell coordinate into BOSS_EXPL_CX right
+; after stopping the wipe, this routine would otherwise see that
+; nonzero byte on the very next frame and think the wipe was somehow
+; reactivated, then spend the rest of the fight stomping BOSS_EXPL_CY
+; with its own sweep values every frame - the exact same corruption,
+; just delayed by 1 frame instead of prevented. BOSS_FORM!=0 is the
+; same one-way, never-resets-to-0 gate UPDATE_BOSS_ALL itself already
+; uses to route away from the entrance-wipe-relevant UBA_ACTIVE, so
+; using it here too closes this off structurally instead of relying on
+; every call site remembering to STOP_BOSS_WIPE first.
 UPDATE_BOSS_WIPE:
+    LD A,(BOSS_FORM)
+    OR A
+    RET NZ
     LD A,(BOSS_WIPE_ACT)
     OR A
     RET Z
     LD A,(BOSS_WIPE_Y) : ADD A,BOSS_WIPE_SPEED
     CP BOSS_WIPE_END_Y
     JR C,UBW_STILL_GOING
+    ; one lap just finished - count it down; 0 means stop for good
+    LD A,(BOSS_WIPE_ACT) : DEC A : LD (BOSS_WIPE_ACT),A
+    JR Z,HIDE_BOSS_WIPE_SPRITES
     LD A,BOSS_WIPE_START_Y   ; wrap back to the top and keep looping
 UBW_STILL_GOING:
     LD (BOSS_WIPE_Y),A
@@ -10150,7 +10208,20 @@ S2_BOSS_SPAWN:
     XOR A : LD (SBEAM_ACT),A
     CALL TRIGGER_BOSS_WIPE
     JP UBA_DRAW
+; "ワイプ中は初期停止状態のスプライトでワイプが終わるまで停止すること"
+; (follow-up#20) - while the entrance wipe is still sweeping (BOSS_WIPE_
+; ACT!=0), skip the entire patrol/pose state machine below unconditio-
+; nally: BOSS_X/BOSS_Y/BOSS_PHASE/BOSS_DIR all stay exactly as
+; S2_BOSS_SPAWN set them (the boss's own initial stopped-state sprite,
+; already drawn once by S2_BOSS_SPAWN's own JP UBA_DRAW - nothing here
+; needs to re-flush it every frame since nothing about it changes while
+; frozen). UPDATE_BOSS_WIPE's own lap countdown is what eventually
+; clears BOSS_WIPE_ACT back to 0 on its own (see its own comment) and
+; lets the boss actually start patrolling from here on.
 UBA_ACTIVE:
+    LD A,(BOSS_WIPE_ACT)
+    OR A
+    RET NZ
     LD A,(BOSS_PHASE)
     CP 1
     JP Z,UBA_POSE
@@ -11575,7 +11646,13 @@ BEAR_SKIP_CELL:
 ; no extra draw, but the pose-death case's own sprite was left hidden by
 ; whatever put it into the pose to begin with (see BOSS_PHASE=1 entry,
 ; its own HIDE_BOSS_SPRITES call) and nothing else would ever re-show it.
+; follow-up#20 real-hardware bug fix ("爆発のキャラが消えてる") - this
+; routine is about to write BOSS_EXPL_CX/CY (a few lines below), which
+; alias BOSS_WIPE_ACT/BOSS_WIPE_Y (see that EQU's own comment for the
+; full story). A kill can land while the entrance wipe is still
+; sweeping, so force it off FIRST, before either byte gets repurposed.
 INIT_BOSS_EXPLOSION:
+    CALL STOP_BOSS_WIPE
     LD A,(BOSS_PHASE)
     CP 1
     JR NZ,IBE_NO_HAND
@@ -13992,6 +14069,13 @@ CHPBOSS_DESTROY:
 ; frame (mid-patrol, mid-pose, mid-left-pause) unconditionally; nothing
 ; here waits for the current attack/pose to finish first.
 TRIGGER_BOSS_BROKEN_FORM:
+    ; follow-up#20 real-hardware bug fix ("爆発のキャラが消えてる") -
+    ; this routine writes BOSS_EXPL_CX/CY a few lines below (aliased to
+    ; BOSS_WIPE_ACT/BOSS_WIPE_Y - see that EQU's own comment), and the
+    ; HP threshold that triggers this can be crossed on ANY hit while
+    ; BOSS_ACT=1, including while the entrance wipe is still sweeping.
+    ; Force it off FIRST so the two never fight over the same bytes.
+    CALL STOP_BOSS_WIPE
     ; if a hand-art pose happened to be up at this exact instant, erase
     ; it and bring the real body sprite back (matches INIT_BOSS_
     ; EXPLOSION's own IBE_NO_HAND branch exactly - see its own comment

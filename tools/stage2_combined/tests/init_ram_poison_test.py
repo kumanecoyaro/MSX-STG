@@ -192,10 +192,14 @@ real_bugs = set()
 # right at spawn (SBEAM_ACT/THUNDER_POOL - "cleared"). BOSS_WIPE_ACT
 # (see combined_test.asm's own TRIGGER_BOSS_WIPE) is the one legitimate
 # exception to THAT: the entrance-wipe sweep starts ACTIVE the instant
-# the boss spawns, so its deterministic post-spawn value is 1, not 0 -
-# still fully poison-independent (still safe), just not "0". Anything
+# the boss spawns, so its deterministic post-spawn value is BOSS_WIPE_
+# LAPS (follow-up#20: repurposed from a plain 0/1 flag into a remaining-
+# laps counter - see that EQU's own comment), not 0 - still fully
+# poison-independent (still safe), just not "0". Looked up from the
+# symbol table (not hardcoded) so a future retune of BOSS_WIPE_LAPS
+# can't silently desync this expectation from the real value. Anything
 # not listed here defaults to the usual "0" expectation.
-EXPECTED_AT_SPAWN = {"BOSS_WIPE_ACT": 1}
+EXPECTED_AT_SPAWN = {"BOSS_WIPE_ACT": sym["BOSS_WIPE_LAPS"]}
 if tier_a_failures:
     for poison in POISONS:
         cpu = boot_with_poisoned_ram(poison)

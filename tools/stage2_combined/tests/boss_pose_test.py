@@ -84,6 +84,14 @@ cpu = fresh_cpu()
 call_routine(cpu, "S2_BOSS_SPAWN")
 check("boss spawns with BOSS_PHASE=0 (patrolling)", cpu.mem[BOSS_PHASE] == 0)
 check("boss spawns at BOSS_SPAWNX", cpu.mem[BOSS_X] == BOSS_SPAWNX)
+# follow-up#20 ("ワイプ中は初期停止状態のスプライトでワイプが終わるまで
+# 停止すること"): UBA_ACTIVE now freezes all patrol/pose movement
+# entirely while the entrance wipe is active (BOSS_WIPE_ACT!=0, seeded
+# by S2_BOSS_SPAWN itself). This file tests the patrol/pose state
+# machine itself, unrelated to the wipe - bypass it here so the boss
+# actually moves like every test below already assumes (see
+# boss_wipe_test.py for the freeze's own dedicated coverage).
+cpu.mem[sym["BOSS_WIPE_ACT"]] = 0
 
 # ---- drive it to the left edge - now pauses briefly (BOSS_PHASE=2)
 # before reversing - "左端は2Tick停止してから反転発射に" (round10) ----
