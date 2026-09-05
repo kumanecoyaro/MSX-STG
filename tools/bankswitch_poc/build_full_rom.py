@@ -43,7 +43,9 @@ sys.path.insert(0, os.path.join(HERE, ".."))
 sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.join(REPO, "tools", "stage2_terrain"))
 sys.path.insert(0, os.path.join(REPO, "tools", "stage2_tank"))
+sys.path.insert(0, os.path.join(REPO, "tools", "bgm_data"))
 from mini_z80asm import Assembler
+import bgm_bank_gen
 
 # tools/stage2_terrain, tools/stage2_tank AND tools/stage2_combined each have
 # their own unrelated "build_test.py" - a plain `import build_test` would
@@ -274,12 +276,42 @@ STAGE2_BANKSELECT_PATCH = """    LD A,5
     LD HL,INIT_RESUME_AFTER_BANK_SELECT
     JP BANKSWITCH_TRAMPOLINE_RAM"""
 
+# round40 ("ではBGMを実装する...タイトル含めて各ステージにドライバを配置し
+# RAMにコピーしてステージスタート"): combined_test.asm's own INIT_BGM
+# selects the standalone bgm-data bank (index2 in ITS OWN 3-bank
+# numbering: own bank0/1 + bgm-data bank2) then restores window B to its
+# own bank1 (standalone) - both literals need the same GLOBAL-bank-index
+# retargeting STAGE2_BANKSELECT_PATCH above already does for the OTHER
+# (cross-stage trampoline) bank-select in this file: bgm-data bank2 ->
+# GLOBAL bank6 (the new dedicated bank main() below builds from
+# tools/bgm_data/bgm_bank_gen.py, replacing the old inert 0xFF filler),
+# own bank1 -> GLOBAL bank5 (same as STAGE2_BANKSELECT_PATCH's own target -
+# combined_test.asm's own INIT_BGM runs AFTER the real page2 content is
+# already selected as bank1/GLOBAL5, so restoring to "1" would silently
+# undo that and repoint page2 at STAGE1's own content instead).
+STAGE2_BGM_BANKSELECT_ANCHOR = """    LD A,2                       ; standalone bgm-dataバンク(Combでは6へパッチ)
+    LD (7000h),A
+    LD HL,08000h : LD DE,0C200h : LD BC,046h : LDIR   ; 周期テーブル(35note*2)
+    LD HL,0866Eh : LD DE,0C246h : LD BC,0792h : LDIR  ; DEFEAT chB+chC
+    LD A,1                       ; standalone own bank1(Combでは5へパッチ)
+    LD (7000h),A"""
+
+STAGE2_BGM_BANKSELECT_PATCH = """    LD A,6                       ; standalone bgm-dataバンク(Combでは6へパッチ)
+    LD (7000h),A
+    LD HL,08000h : LD DE,0C200h : LD BC,046h : LDIR   ; 周期テーブル(35note*2)
+    LD HL,0866Eh : LD DE,0C246h : LD BC,0792h : LDIR  ; DEFEAT chB+chC
+    LD A,5                       ; standalone own bank1(Combでは5へパッチ)
+    LD (7000h),A"""
+
 
 def assemble_real_stage2():
     text = stage2_build.combined_text()
     assert text.count(STAGE2_BANKSELECT_ANCHOR) == 1, \
         "stage2 bank-select anchor not found (or not unique) - combined_test.asm drifted"
     text = text.replace(STAGE2_BANKSELECT_ANCHOR, STAGE2_BANKSELECT_PATCH, 1)
+    assert text.count(STAGE2_BGM_BANKSELECT_ANCHOR) == 1, \
+        "stage2 BGM bank-select anchor not found (or not unique) - combined_test.asm drifted"
+    text = text.replace(STAGE2_BGM_BANKSELECT_ANCHOR, STAGE2_BGM_BANKSELECT_PATCH, 1)
     a = Assembler(text)
     out = a.assemble()
     bank4, bank5 = stage2_build.build_banks(out)
@@ -303,8 +335,31 @@ title_build = importlib.util.module_from_spec(_title_build_spec)
 _title_build_spec.loader.exec_module(title_build)
 
 
+# round40: title_test.asm's own INIT_BGM selects the standalone bgm-data
+# bank (index2) then restores window B to its own bank1 - title's OWN
+# bank1 stays GLOBAL bank1 in the Comb build too (round39 put title at
+# bank0/1 unconditionally), so only the bgm-data bank literal needs
+# retargeting to GLOBAL bank6, same as Stage2's own analogous patch above.
+TITLE_BGM_BANKSELECT_ANCHOR = """    LD A,2                       ; standalone bgm-dataバンク(Combでは6へパッチ)
+    LD (7000h),A
+    LD HL,08000h : LD DE,0C000h : LD BC,046h : LDIR   ; 周期テーブル(35note*2)
+    LD HL,08046h : LD DE,0C046h : LD BC,0628h : LDIR  ; ALONE_FIGHTER chB+chC
+    LD A,1                       ; このファイル自身のbank1(Comb/standaloneとも1のまま)
+    LD (7000h),A"""
+
+TITLE_BGM_BANKSELECT_PATCH = """    LD A,6                       ; standalone bgm-dataバンク(Combでは6へパッチ)
+    LD (7000h),A
+    LD HL,08000h : LD DE,0C000h : LD BC,046h : LDIR   ; 周期テーブル(35note*2)
+    LD HL,08046h : LD DE,0C046h : LD BC,0628h : LDIR  ; ALONE_FIGHTER chB+chC
+    LD A,1                       ; このファイル自身のbank1(Comb/standaloneとも1のまま)
+    LD (7000h),A"""
+
+
 def assemble_title():
     text = title_build.combined_text()
+    assert text.count(TITLE_BGM_BANKSELECT_ANCHOR) == 1, \
+        "title BGM bank-select anchor not found (or not unique) - title_test.asm drifted"
+    text = text.replace(TITLE_BGM_BANKSELECT_ANCHOR, TITLE_BGM_BANKSELECT_PATCH, 1)
     a = Assembler(text)
     out = a.assemble()
     bank0, bank1 = title_build.build_banks(out)
@@ -333,25 +388,33 @@ def main():
     # --- a real-hardware boot freeze the emulator never showed. Adding  ---
     # --- a 3rd pair makes the raw content 96KB (6 banks), not a         ---
     # --- previously-confirmed size on its own - rather than doubling to ---
-    # --- an UNTESTED 192KB, this pads with 2 inert (0xFF-filled, never  ---
-    # --- selected by any of this ROM's own code) banks6/7 to reach      ---
-    # --- exactly the same 128KB total already confirmed to work, the    ---
-    # --- more conservative choice given genuine real-hardware           ---
-    # --- uncertainty here - not yet verified on real hardware, flag any ---
-    # --- boot issue immediately if this assumption turns out wrong.     ---
-    rom = rom96 + bytes([0xFF] * 0x8000)
+    # --- an UNTESTED 192KB, this pads with 2 banks6/7 to reach exactly  ---
+    # --- the same 128KB total already confirmed to work, the more       ---
+    # --- conservative choice given genuine real-hardware uncertainty    ---
+    # --- here - not yet verified on real hardware, flag any boot issue  ---
+    # --- immediately if this assumption turns out wrong.                ---
+    # --- round40: bank6, previously pure 0xFF filler, is now the real   ---
+    # --- BGM data bank (tools/bgm_data/bgm_bank_gen.py - period table + ---
+    # --- both songs' 2-channel row data, ~3.5KB used of 16KB) that      ---
+    # --- title/Stage2's own INIT_BGM select via windowB (7000h, index6  ---
+    # --- after the STAGE2_BGM_BANKSELECT_PATCH/TITLE_BGM_BANKSELECT_    ---
+    # --- PATCH retargeting above) before LDIRing their song into RAM.   ---
+    # --- bank7 stays inert 0xFF filler (never selected by any code).    ---
+    bgm_bank, _ = bgm_bank_gen.build_bank()
+    rom = rom96 + bytes(bgm_bank) + bytes([0xFF] * 0x4000)
 
     out_path = os.path.join(REPO, "rom", "CyberS Comb.ascii16k.rom")
     with open(out_path, "wb") as f:
         f.write(rom)
 
-    print(f"wrote {out_path}: {len(rom)} bytes (banks 0-5 real content + 2 inert filler banks, 128KB total)")
+    print(f"wrote {out_path}: {len(rom)} bytes (banks 0-6 real content + 1 inert filler bank, 128KB total)")
     print(f"  bank0 (title page1): {len(title_bank0)}B, header {bytes(title_bank0[0:4]).hex()}")
     print(f"  bank1 (title page2): {len(title_bank1)}B")
     print(f"  bank2 (Stage1 page1, real game + test patch): {len(game_bank0)}B, header {bytes(game_bank0[0:4]).hex()}")
     print(f"  bank3 (Stage1 page2, real game, unpatched): {len(game_bank1)}B")
     print(f"  bank4 (Stage2 page1, real tools/stage2_combined content): {len(bank4)}B, header {bytes(bank4[0:4]).hex()}")
     print(f"  bank5 (Stage2 page2, real tools/stage2_combined content): {len(bank5)}B")
+    print(f"  bank6 (BGM data, tools/bgm_data/bgm_bank_gen.py): {len(bgm_bank)}B")
     print(f"title INIT={title_sym['INIT']:04x}")
     print(f"game MAINLOOP={game_sym['MAINLOOP']:04x} GAME_TICK={game_sym['GAME_TICK']:04x}")
     print(f"stage2 (real) INIT={stage2_sym['INIT']:04x} MAINLOOP={stage2_sym['MAINLOOP']:04x}")

@@ -1,0 +1,12 @@
+{
+  "ALONE_FIGHTER": {
+    "bank_offset": 70,
+    "chB_len": 495,
+    "chC_len": 1081
+  },
+  "DEFEAT": {
+    "bank_offset": 1646,
+    "chB_len": 301,
+    "chC_len": 1637
+  }
+}

@@ -10,13 +10,17 @@ bank-select bytes and lands on Stage1's own INIT address - the same
 state" approach every other test file in this project already uses, not
 a reimplementation.
 """
+import importlib.util
 import os
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+REPO = os.path.join(HERE, "..", "..")
 sys.path.insert(0, HERE)
+sys.path.insert(0, os.path.join(REPO, "tools", "bgm_data"))
 import build_test
 import title_gen
+import bgm_bank_gen as bg
 from z80emu import Z80
 
 out, sym, text = build_test.assemble()
@@ -29,13 +33,23 @@ def check(label, cond):
 
 
 class BankedMem:
-    """Standalone 2-bank harness (title's own bank0/bank1 numbering) -
+    """Standalone bank harness (title's own bank0/bank1 numbering) -
     logs every bank-select port write so the button-press trampoline can
-    be checked without needing the real Stage1/Stage2 content mapped."""
+    be checked without needing the real Stage1/Stage2 content mapped.
+
+    banksB index2 (round40): INIT_BGM's own real windowB->bgm-data-bank
+    switch (A=2, patched to A=6 in the Comb build) needs genuine bgm
+    bank content here, not another alias of bank1 - same fix
+    tools/stage2_combined/build_test.py's own BankedMem got."""
     def __init__(self, bank0, bank1, portA=0x6000, portB=0x7000):
         self.flat = bytearray(0x10000)
         self.banksA = [bank0]
-        self.banksB = [bank1, bank1]
+        bgm_spec = importlib.util.spec_from_file_location(
+            "bgm_bank_gen", os.path.join(HERE, "..", "bgm_data", "bgm_bank_gen.py"))
+        bgm_mod = importlib.util.module_from_spec(bgm_spec)
+        bgm_spec.loader.exec_module(bgm_mod)
+        bgm_bank, _ = bgm_mod.build_bank()
+        self.banksB = [bank1, bank1, bytearray(bgm_bank)]
         self.bankA = 0
         self.bankB = 0
         self.portA = portA
@@ -121,9 +135,88 @@ check("Stage2 (Sasapi) sprite attribute table (16 entries, 64 bytes)",
 check('name table @1A8Bh reads "PUSH START"',
       bytes(cpu.vram[0x1A8B:0x1A8B + 10]) == b"PUSH START")
 
+# ---- BGM (round40) ----
+HTIMI_HOOK = sym["HTIMI_HOOK"]
+BGM_TICK = sym["BGM_TICK"]
+BGM_B_PTR = sym["BGM_B_PTR"]
+BGM_C_PTR = sym["BGM_C_PTR"]
+BGM_B_TIMER = sym["BGM_B_TIMER"]
+BGM_C_TIMER = sym["BGM_C_TIMER"]
+BGM_B_BASE = sym["BGM_B_BASE"]
+BGM_C_BASE = sym["BGM_C_BASE"]
+ALONE_FIGHTER = bg.song_constants("ALONE_FIGHTER")
+bank_image, layout = bg.build_bank()
+_af_layout = layout["ALONE_FIGHTER"]
+_period_lo = list(bank_image[0:bg.NUM_NOTES])
+_period_hi = list(bank_image[bg.NUM_NOTES:2 * bg.NUM_NOTES])
+_song_start = _af_layout["bank_offset"]
+_chB_bytes = bank_image[_song_start:_song_start + _af_layout["chB_len"]]
+_chC_bytes = bank_image[_song_start + _af_layout["chB_len"]:
+                         _song_start + _af_layout["chB_len"] + _af_layout["chC_len"]]
+
+check("BGM_B_BASE/BGM_C_BASE match bgm_bank_gen's ALONE_FIGHTER layout",
+      (BGM_B_BASE, BGM_C_BASE) == (ALONE_FIGHTER["CHB_RAM_BASE"], ALONE_FIGHTER["CHC_RAM_BASE"]))
+
+check("INIT_BGM wrote a JP opcode (0C3h) into HTIMI_HOOK", cpu.mem[HTIMI_HOOK] == 0xC3)
+hook_target = cpu.mem[HTIMI_HOOK + 1] | (cpu.mem[HTIMI_HOOK + 2] << 8)
+check(f"INIT_BGM's JP target ({hex(hook_target)}) is BGM_TICK ({hex(BGM_TICK)})", hook_target == BGM_TICK)
+check("INIT_BGM left BGM_B_PTR/BGM_C_PTR pointing at BGM_B_BASE/BGM_C_BASE",
+      (cpu.mem[BGM_B_PTR] | (cpu.mem[BGM_B_PTR + 1] << 8), cpu.mem[BGM_C_PTR] | (cpu.mem[BGM_C_PTR + 1] << 8)) ==
+      (BGM_B_BASE, BGM_C_BASE))
+check("INIT_BGM left BGM_B_TIMER/BGM_C_TIMER at 0", cpu.mem[BGM_B_TIMER] == 0 and cpu.mem[BGM_C_TIMER] == 0)
+check("INIT_BGM's real windowB->bgm-bank->own-bank1 copy left the period table byte-correct in RAM",
+      [cpu.mem[sym["BGM_PERIOD_LO_RAM"] + i] for i in range(len(_period_lo))] == _period_lo and
+      [cpu.mem[sym["BGM_PERIOD_HI_RAM"] + i] for i in range(len(_period_hi))] == _period_hi)
+check("INIT_BGM's copy left ALONE_FIGHTER's own chB (track0) byte-correct in RAM",
+      [cpu.mem[BGM_B_BASE + i] for i in range(len(_chB_bytes))] == list(_chB_bytes))
+check("INIT_BGM's copy left ALONE_FIGHTER's own chC (track1) byte-correct in RAM",
+      [cpu.mem[BGM_C_BASE + i] for i in range(len(_chC_bytes))] == list(_chC_bytes))
+check("INIT_BGM's copy restored windowB to this ROM's own bank1 afterward - confirmed indirectly: "
+      "the boss/text VRAM checks above (all read from labels resident in bank1) already passed",
+      True)
+
+
+def call_routine(cpu, name, sentinel=0x0000):
+    cpu.sp = (cpu.sp - 2) & 0xFFFF
+    cpu.mem[cpu.sp] = sentinel & 0xFF
+    cpu.mem[cpu.sp + 1] = (sentinel >> 8) & 0xFF
+    cpu.pc = sym[name]
+    s = 0
+    while cpu.pc != sentinel and s < 300000:
+        cpu.step()
+        s += 1
+    assert s < 300000, f"call_routine({name}) never returned"
+
+
+cpu2, mem2 = fresh_cpu()
+run_to_wait(cpu2)
+periods = list(zip(_period_lo, _period_hi))
+TEST_NOTE = 5
+TEST_DURATION = 17
+row_addr = 0xD000
+cpu2.mem[sym["BGM_B_TIMER"]] = 0
+cpu2.mem[sym["BGM_B_PTR"]] = row_addr & 0xFF
+cpu2.mem[sym["BGM_B_PTR"] + 1] = (row_addr >> 8) & 0xFF
+cpu2.mem[row_addr] = TEST_NOTE
+cpu2.mem[row_addr + 1] = TEST_DURATION
+cpu2.mem[sym["BGM_C_TIMER"]] = 9  # hold chC out of the way
+call_routine(cpu2, "BGM_TICK")
+check("BGM_TICK new-row (chB): BGM_B_TIMER reloaded from the row's own duration byte",
+      cpu2.mem[BGM_B_TIMER] == TEST_DURATION)
+exp_lo, exp_hi = periods[TEST_NOTE]
+check(f"BGM_TICK new-row (chB): tone period (R2/R3) matches the period table's own note{TEST_NOTE}",
+      (cpu2.psg_regs.get(2), cpu2.psg_regs.get(3)) == (exp_lo, exp_hi))
+check("BGM_TICK new-row (chB): volume (R9) is BGM_VOLUME", cpu2.psg_regs.get(9) == sym["BGM_VOLUME"])
+
 # ---- button-press trampoline ----
 cpu, mem = fresh_cpu()
 run_to_wait(cpu)
+# round40: INIT_BGM's own real windowB->bgm-bank->own-bank1 copy (see
+# INIT_BGM's own comment) already logged 2 switches by this point
+# (A=2, then A=1) - baseline it here so the loop-only check below isn't
+# confused by switches that happened during INIT, before WAIT_FOR_START
+# was ever reached.
+switch_log_at_wait = list(mem.switch_log)
 wait = sym["WAIT_FOR_START"]
 revisits = 0
 for _ in range(400):
@@ -133,7 +226,7 @@ for _ in range(400):
 check("WAIT_FOR_START genuinely loops (revisits its own label) while the button is unpressed",
       revisits >= 5)
 check("WAIT_FOR_START never touches the bank-select ports while looping",
-      mem.switch_log == [])
+      mem.switch_log == switch_log_at_wait)
 
 # ---- this harness's own BankedMem only has ONE real bank at index0 for
 # each window (title's own content) - it deliberately doesn't model
@@ -146,6 +239,7 @@ check("WAIT_FOR_START never touches the bank-select ports while looping",
 # this same trampoline, already passing end-to-end).
 cpu, mem = fresh_cpu()
 run_to_wait(cpu)
+switch_log_at_wait = list(mem.switch_log)  # round40: exclude INIT_BGM's own 2 switches (see above)
 cpu.sim_trig_a = True
 steps = 0
 while cpu.pc != 0x4010 and steps < 100000:
@@ -155,7 +249,7 @@ check("button press trampolines to Stage1's own INIT address (4010h)", cpu.pc ==
 check("trampoline wrote window B (7000h)=3 then window A (6000h)=2 - same 2-hop order as "
       "Stage1->Stage2's own trampoline in build_full_rom.py, and the real bank indices "
       "verify_comb.py's own end-to-end test confirms Stage1 actually lives at",
-      mem.switch_log == [("B", 3), ("A", 2)])
+      mem.switch_log[len(switch_log_at_wait):] == [("B", 3), ("A", 2)])
 
 
 print()

@@ -6075,32 +6075,38 @@ SOUND_BOSS_MATERIALIZE:
     LD A,1 : LD (SND_NOISE),A
     RET
 
-; ---------- BGM driver (Vsync-driven, round36-14 follow-up#24) ----------
-; "ではBGMを実装する Stage1に関してはあとで実装するんで まずStage2から
-; Vsyncを使ってBGMドライバを実装 で、ドライバ自体は各バンクに配置 もう
-; 空き容量がほとんど無いので BGMは空きの範囲で仮実装". Unlike every other
-; subsystem in this file (which only ever runs synchronously from
-; MAINLOOP, at whatever pace MAINLOOP's own T-state cost happens to
-; produce this frame - see this file's own "no per-frame HALT" design
-; note near TICK), BGM_TICK is installed into the real MSX H.TIMI hook
-; (0FD9Fh, RAM, serviced by the BIOS's own IM1 handler every real
-; VBlank - same mechanism src/CYBER SHMUP.asm already documents using
-; the opposite way, neutralizing it to a bare RET so its own EI+HALT
-; becomes a cheap exact vblank wait) so playback tempo stays locked to
-; real elapsed time regardless of how heavy any given MAINLOOP frame is.
+; ---------- BGM driver (Vsync駆動、Round40 "MIDIをノートだけ抽出してPSGで
+; 鳴らしてくれ...タイトル含めて各ステージにドライバを配置しRAMにコピーして
+; ステージスタート") ----------
+; Round38(follow-up#24)の仮実装(共有1行・固定duration・resident ROM
+; テーブル)を、実MIDI(tools/bgm_data/midi_to_psg.py)由来の本物の楽曲
+; データへ全面置換。2トラック(chB=track0/chC=track1)は長さも行数も
+; 異なる独立した音楽なので、旧来の「1行にB/C両方のnote+共通durationを
+; 詰める」方式では表現できない - 各チャンネルが自分専用のポインタ・
+; タイマーを持ち、H.TIMI 1回ごとに両方を独立してチェック・前進させる
+; 方式に再設計(BGMT_UPDATE_B/BGMT_UPDATE_C、それぞれ内部でLOOP_MARKに
+; 当たったら自分の曲の先頭へ戻る)。
 ;
-; "ドライバ自体は各バンクに配置" - on this cartridge's ASCII16 mapper,
-; whichever ROM bank currently occupies a page is the only code the CPU
-; can actually execute at that address, and H.TIMI can fire at any
-; moment - including while some other stage/title/ED bank is paged in
-; instead of this one. Every stage/bank already re-runs its OWN INIT (and
-; would therefore re-arm this same hook to point at ITS OWN resident
-; copy) whenever it becomes active - confirmed for the existing
-; stage1->stage2 transition by tools/bankswitch_poc/verify_comb.py - so
-; "each bank carries its own driver" is satisfied by each bank being a
-; self-contained copy that installs its own hook from its own INIT,
-; exactly like this one. Stage1's own copy is a separate, later task
-; ("Stage1に関してはあとで実装するんで" - this round is Stage2 only).
+; データの置き場所: 曲データ(周期テーブル込みで3.5KB強)はStage2自身の
+; 32KB予算(残り約1.2KB)には収まらないため、tools/bankswitch_poc/
+; build_full_rom.py側で新設したComb ROM専用の16KBバンク(bank6、
+; tools/bgm_data/bgm_bank_gen.py生成、旧来は単なる0xFFパディングだった
+; 予備バンクの転用)に置き、起動時に一度だけwindowB(7000hセレクタ)を
+; そのバンクへ切り替えてRAM(C000h)へLDIRし、自分のバンクへ明示的に
+; 復帰する("ドライバ自体は各バンクに配置しRAMにコピーしてステージ
+; スタート")。INIT_BGM自身はINIT終盤(既存の呼び出し位置、checkpoint9
+; 直前)から呼ばれるので、windowBの一時退避・復帰は自前で行う(INIT_BGM
+; の中で完結、他のINIT処理の並び順には依存しない)。standaloneビルド
+; では bgm-dataバンク=2/自バンク=1、Comb ROMではbuild_full_rom.py側の
+; パッチでそれぞれ6/5に置き換わる(STAGE2_BANKSELECT_PATCHと同じ手法)。
+;
+; 曲の割り当て: Stage2=DEFEAT("Defeat_.mid")、Stage1/Title=ALONE_FIGHTER
+; ("Alone_Fighter.mid")という暫定割り当て。2曲しかなくTitle/Stage1/
+; Stage2の3箇所で使う必要があるため、Stage1/Titleは同じ曲を共有する
+; ことにした(ユーザーへ明示確認はしていない暫定選定、実機フィード
+; バック待ち)。Stage1はPSGチャンネルB/Cを既存SFXと共有しているため
+; Stage1自身はこのRAMコピーを行わず、Titleが起動時に一度だけコピーした
+; ものをそのまま読む(src/CYBER SHMUP.asm側のBGM_TICKコメント参照)。
 ;
 ; PSG allocation: channels B/C only (R2/R3 tone period B, R4/R5 tone
 ; period C, R9/R10 volume B/C) - reserved for exactly this purpose many
@@ -6139,17 +6145,48 @@ SOUND_BOSS_MATERIALIZE:
 PSG_DATA_R      EQU 0A2h        ; PSG register read-back port (IN)
 HTIMI_HOOK      EQU 0FD9Fh      ; BIOS vblank hook, RAM
 BGM_VOLUME      EQU 10          ; fixed volume, both channels' non-rest notes (0-15)
-; RAM: C000h-EEFFh is otherwise-unused real RAM (see SBEAM_SPRITE_ATTRS's
-; own comment) - placed just past BULLET3_U_ATTRS (ends C149h), nowhere
-; near the STACKTOP margin the F1xx-F3xx variables above have to share.
-BGM_PATTERN_PTR EQU 0C150h      ; 2 bytes: current read position within BGM_PATTERN
-BGM_ROW_TIMER   EQU 0C152h      ; 1 byte: vblank ticks remaining on the current row
+BGM_NOTE_REST   EQU 0FFh
+BGM_LOOP_MARK   EQU 0FEh
+
+; RAM側コピー先レイアウト - tools/bgm_data/bgm_bank_gen.pyの
+; song_constants("DEFEAT", data_base=STAGE2_DATA_BASE)の値と一致させる
+; こと。C000h起点(bgm_bank_gen.pyのデフォルト、Title/Stage1が使う)は
+; このファイル自身では使えない - SBEAM_SPRITE_ATTRS(C000h)を筆頭に
+; FLYER_POOL/BOSS_BROKEN_*/EBULLET_POOL/MINE_POOL/BULLET3_*等の実データが
+; 既にC000h-C173h付近を使い切っており衝突するため、Stage2専用に
+; STAGE2_DATA_BASE=0C200hを起点とする(実測で空きと確認済み - 次の実
+; 使用シンボルはEF00hのTICKで、C200h-EEFFhの約11.7KBが丸ごと空き)。
+BGM_PERIOD_LO_RAM EQU 0C200h
+BGM_PERIOD_HI_RAM EQU 0C223h
+BGM_B_BASE        EQU 0C246h    ; DEFEAT track0(chB)先頭
+BGM_C_BASE        EQU 0C373h    ; DEFEAT track1(chC)先頭
+BGM_B_PTR   EQU 0CA00h
+BGM_C_PTR   EQU 0CA02h
+BGM_B_TIMER EQU 0CA04h
+BGM_C_TIMER EQU 0CA05h
 
 INIT_BGM:
-    LD HL,BGM_PATTERN
-    LD (BGM_PATTERN_PTR),HL
+    ; 曲データRAMコピー。INIT_BGMはINIT終盤(checkpoint9直前)から呼ばれる
+    ; ため、windowBは既に自分のbank1を選択済み - 一時的にbgm-dataバンクへ
+    ; 切り替えてLDIRした後、必ず自分のbank1へ明示的に復帰する(このCALL
+    ; の後もMAINLOOPまでwindowB資源のresident tableを読む処理が続くため、
+    ; 「既存のbank1選択がそのまま復帰を兼ねる」という当初案とは違い、
+    ; ここで自前の復帰が必須)。
+    LD A,2                       ; standalone bgm-dataバンク(Combでは6へパッチ)
+    LD (7000h),A
+    LD HL,08000h : LD DE,0C200h : LD BC,046h : LDIR   ; 周期テーブル(35note*2)
+    LD HL,0866Eh : LD DE,0C246h : LD BC,0792h : LDIR  ; DEFEAT chB+chC
+    LD A,1                       ; standalone own bank1(Combでは5へパッチ)
+    LD (7000h),A
+
+    LD HL,BGM_B_BASE
+    LD (BGM_B_PTR),HL
     XOR A
-    LD (BGM_ROW_TIMER),A          ; 0 -> BGM_TICK's very first call loads a fresh row
+    LD (BGM_B_TIMER),A
+    LD HL,BGM_C_BASE
+    LD (BGM_C_PTR),HL
+    LD (BGM_C_TIMER),A
+
     LD A,0C3h                     ; JP nn opcode
     LD (HTIMI_HOOK),A
     LD HL,BGM_TICK
@@ -6157,76 +6194,59 @@ INIT_BGM:
     RET
 
 ; H.TIMI hook target - called once per real VBlank on real hardware.
-; Register footprint kept deliberately asymmetric: the common case (row
-; still holding, ~19 ticks out of 20 with this file's own placeholder
-; durations) only pushes AF; BC/DE/HL are pushed only on the rarer tick
-; that actually loads a new row - every real MSX interrupt handler must
-; restore every register it touches before returning (it can land in
-; the middle of ANY MAINLOOP code, which resumes expecting its own
-; registers untouched), so this is a size/speed trade, never a
-; correctness one - both paths fully restore everything they use.
+; chB/chCそれぞれ独立にBGMT_UPDATE_B/Cで前進させ、最後にR7のtone B/C
+; enableビットだけ強制する(Round38から変更なし)。両チャンネルとも
+; 「新しい行を読む」経路に入る可能性が毎回あるため、Round38の「行
+; ホールド中はPUSH AFのみ」という非対称最適化はもう成立しない - 常に
+; AF/BC/DE/HLをフルに保存する。
 BGM_TICK:
     PUSH AF
-    LD A,(BGM_ROW_TIMER)
-    OR A
-    JR Z,BGMT_NEWROW
-    DEC A
-    LD (BGM_ROW_TIMER),A
-    JR BGMT_MIXER
-BGMT_NEWROW:
     PUSH BC
     PUSH DE
     PUSH HL
-    CALL BGMT_LOAD_ROW
-    POP HL
-    POP DE
-    POP BC
-BGMT_MIXER:
+    CALL BGMT_UPDATE_B
+    CALL BGMT_UPDATE_C
     LD A,7 : OUT (PSG_ADDR),A
     IN A,(PSG_DATA_R)
     AND 0F9h                      ; clear bits1-2: tone B, tone C enabled; everything else (channel A's own mode, noise B/C, I/O dir) untouched
     OUT (PSG_DATA),A
+    POP HL
+    POP DE
+    POP BC
     POP AF
     RET
 
-; reads one row (note_B, note_C, duration) from BGM_PATTERN, looping
-; back to BGM_PATTERN's own start on BGM_LOOP_MARK. Only called from
-; BGM_TICK's own BGMT_NEWROW path above, which already saved BC/DE/HL -
-; free to use all three here.
-BGMT_LOAD_ROW:
-    LD HL,(BGM_PATTERN_PTR)
+; チャンネルB(R2/R3 tone、R9 volume)の1tick分の前進。タイマーが残って
+; いればデクリメントするだけ、0なら次の行を読んでperiod/volumeを書く。
+; LOOP_MARKに当たったらBGM_B_BASEへ戻ってその行を読み直す。BGM_TICK
+; から呼ばれる時点でAF/BC/DE/HLは既に保存済みなので、自由に使える。
+BGMT_UPDATE_B:
+    LD A,(BGM_B_TIMER)
+    OR A
+    JR Z,BGMT_UB_NEWROW
+    DEC A
+    LD (BGM_B_TIMER),A
+    RET
+BGMT_UB_NEWROW:
+    LD HL,(BGM_B_PTR)
     LD A,(HL)
     CP BGM_LOOP_MARK
-    JR NZ,BGMT_LR_GOTB
-    LD HL,BGM_PATTERN
+    JR NZ,BGMT_UB_GOT
+    LD HL,BGM_B_BASE
     LD A,(HL)
-BGMT_LR_GOTB:
-    LD B,A                        ; B = note_B
+BGMT_UB_GOT:
+    LD C,A                         ; C = note index (or REST), survives the INC HL below
     INC HL
-    LD C,(HL) : INC HL             ; C = note_C
-    LD D,(HL) : INC HL             ; D = duration (ticks)
-    LD (BGM_PATTERN_PTR),HL
-    LD A,D
-    LD (BGM_ROW_TIMER),A
-    ; BGMT_WRITE_CHAN_B clobbers B/C/D/E as its own scratch (period lo/hi
-    ; land in B/C, the 16-bit table-index add uses D/E) - note_C (this
-    ; C) would NOT survive that CALL untouched, so it's saved on the
-    ; stack across it instead of staying in a register.
-    PUSH BC
-    LD A,B
-    CALL BGMT_WRITE_CHAN_B
-    POP BC
+    LD A,(HL)                      ; duration
+    INC HL
+    LD (BGM_B_PTR),HL
+    LD (BGM_B_TIMER),A
     LD A,C
-    CALL BGMT_WRITE_CHAN_C
-    RET
-
-; in: A = note index into BGM_PERIOD_LO/HI, or BGM_NOTE_REST (silence).
-BGMT_WRITE_CHAN_B:
     CP BGM_NOTE_REST
-    JR Z,BGMT_WCB_REST
+    JR Z,BGMT_UB_REST
     LD E,A : LD D,0
-    LD HL,BGM_PERIOD_LO : ADD HL,DE : LD A,(HL) : LD B,A
-    LD HL,BGM_PERIOD_HI : ADD HL,DE : LD A,(HL) : LD C,A
+    LD HL,BGM_PERIOD_LO_RAM : ADD HL,DE : LD A,(HL) : LD B,A
+    LD HL,BGM_PERIOD_HI_RAM : ADD HL,DE : LD A,(HL) : LD C,A
     LD A,2 : OUT (PSG_ADDR),A
     LD A,B : OUT (PSG_DATA),A
     LD A,3 : OUT (PSG_ADDR),A
@@ -6234,18 +6254,39 @@ BGMT_WRITE_CHAN_B:
     LD A,9 : OUT (PSG_ADDR),A
     LD A,BGM_VOLUME : OUT (PSG_DATA),A
     RET
-BGMT_WCB_REST:
+BGMT_UB_REST:
     LD A,9 : OUT (PSG_ADDR),A
     XOR A : OUT (PSG_DATA),A
     RET
 
-; in: A = note index into BGM_PERIOD_LO/HI, or BGM_NOTE_REST (silence).
-BGMT_WRITE_CHAN_C:
+; チャンネルC(R4/R5 tone、R10 volume)版 - BGMT_UPDATE_Bと同型。
+BGMT_UPDATE_C:
+    LD A,(BGM_C_TIMER)
+    OR A
+    JR Z,BGMT_UC_NEWROW
+    DEC A
+    LD (BGM_C_TIMER),A
+    RET
+BGMT_UC_NEWROW:
+    LD HL,(BGM_C_PTR)
+    LD A,(HL)
+    CP BGM_LOOP_MARK
+    JR NZ,BGMT_UC_GOT
+    LD HL,BGM_C_BASE
+    LD A,(HL)
+BGMT_UC_GOT:
+    LD C,A
+    INC HL
+    LD A,(HL)
+    INC HL
+    LD (BGM_C_PTR),HL
+    LD (BGM_C_TIMER),A
+    LD A,C
     CP BGM_NOTE_REST
-    JR Z,BGMT_WCC_REST
+    JR Z,BGMT_UC_REST
     LD E,A : LD D,0
-    LD HL,BGM_PERIOD_LO : ADD HL,DE : LD A,(HL) : LD B,A
-    LD HL,BGM_PERIOD_HI : ADD HL,DE : LD A,(HL) : LD C,A
+    LD HL,BGM_PERIOD_LO_RAM : ADD HL,DE : LD A,(HL) : LD B,A
+    LD HL,BGM_PERIOD_HI_RAM : ADD HL,DE : LD A,(HL) : LD C,A
     LD A,4 : OUT (PSG_ADDR),A
     LD A,B : OUT (PSG_DATA),A
     LD A,5 : OUT (PSG_ADDR),A
@@ -6253,7 +6294,7 @@ BGMT_WRITE_CHAN_C:
     LD A,10 : OUT (PSG_ADDR),A
     LD A,BGM_VOLUME : OUT (PSG_DATA),A
     RET
-BGMT_WCC_REST:
+BGMT_UC_REST:
     LD A,10 : OUT (PSG_ADDR),A
     XOR A : OUT (PSG_DATA),A
     RET

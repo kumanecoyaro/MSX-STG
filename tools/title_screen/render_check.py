@@ -25,7 +25,12 @@ class BankedMem:
     def __init__(self, bank0, bank1, portA=0x6000, portB=0x7000):
         self.flat = bytearray(0x10000)
         self.banksA = [bank0]
-        self.banksB = [bank1, bank1]
+        _bgm_spec = importlib.util.spec_from_file_location(
+            "bgm_bank_gen", os.path.join(REPO, "tools", "bgm_data", "bgm_bank_gen.py"))
+        _bgm_mod = importlib.util.module_from_spec(_bgm_spec)
+        _bgm_spec.loader.exec_module(_bgm_mod)
+        bgm_bank, _ = _bgm_mod.build_bank()
+        self.banksB = [bank1, bank1, bytearray(bgm_bank)]
         self.bankA = 0
         self.bankB = 0
         self.portA = portA

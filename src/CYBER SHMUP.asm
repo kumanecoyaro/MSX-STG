@@ -1061,6 +1061,13 @@ INIT_SPRATR_CLR:
     LD A,7 : OUT (PSG_ADDR),A
     LD A,0B1h : OUT (PSG_DATA),A
 
+    ; --- BGM (round40, "タイトル含めて各ステージにドライバを配置しRAM
+    ; --- にコピーしてステージスタート") - see INIT_BGM's own long
+    ; --- comment (near SOUND_UPDATE below) for why this stage's own
+    ; --- INIT does no bank-switching or RAM copy of its own, unlike
+    ; --- title/Stage2.
+    CALL INIT_BGM
+
     ; --- sprite attribute table (VRAM 1B00h): ship body (16x16, slot1), ---
     ; --- accent overlay (16x16, slot0, drawn on top, at ship_X+8) ---
     DI
@@ -2955,26 +2962,40 @@ WAC_SKIPBUF:
 ; file's own SND_NOISE byte). Channels B/C (always tone) are
 ; deliberately left ungated, same reasoning as Stage2 excluding its own
 ; tone-based "kin-kin" deflect ping.
+; round40: every PSG_ADDR/PSG_DATA select+write pair below is now DI/EI-
+; wrapped, on top of the existing "protects against the BIOS's own
+; keyboard/joystick PSG scan" rationale above - BGM_TICK (installed
+; into H.TIMI this round) does its own PSG_ADDR-select/PSG_DATA-write
+; pairs on R2-R5/R9/R10 every real VBlank, so an H.TIMI interrupt
+; landing between either OUT here would leave the wrong PSG register
+; selected for whichever write resumes first, same race Stage2's own
+; Round38 BGM driver already documented and fixed this same way.
 SOUND_SHOT:
+    DI
     LD A,4 : OUT (PSG_ADDR),A
     LD A,30 : OUT (PSG_DATA),A    ; channel C tone period -> bright "chun" pitch
     LD A,5 : OUT (PSG_ADDR),A
     XOR A : OUT (PSG_DATA),A      ; coarse tune bits = 0
+    EI
     LD A,12 : LD (SND_TIMER_C),A
     RET
 SOUND_DESTROY:
+    DI
     LD A,6 : OUT (PSG_ADDR),A
     LD A,20 : OUT (PSG_DATA),A    ; low, coarse noise period = short "boom"
+    EI
     LD A,15 : LD (SND_TIMER),A
     RET
 ; metallic "kin" ping for a non-lethal pod hit - reuses channel C
 ; (same as the player's own shot) but at a much higher pitch so it
 ; reads as a distinct sound.
 SOUND_POD_HIT:
+    DI
     LD A,4 : OUT (PSG_ADDR),A
     LD A,10 : OUT (PSG_DATA),A
     LD A,5 : OUT (PSG_ADDR),A
     XOR A : OUT (PSG_DATA),A
+    EI
     LD A,10 : LD (SND_TIMER_C),A
     RET
 
@@ -2985,18 +3006,22 @@ SOUND_POD_HIT:
 ; an 8-frame window with exactly 2 full-volume(15) frames (at counter
 ; 8 and 4) = 2/8 = 25% duty, giving 2 short low buzzes.
 SOUND_BARRIER_HIT:
+    DI
     LD A,4 : OUT (PSG_ADDR),A
     LD A,132 : OUT (PSG_DATA),A   ; channel C tone period fine byte
     LD A,5 : OUT (PSG_ADDR),A
     LD A,3 : OUT (PSG_DATA),A     ; coarse byte -> period=900, deep low pitch
+    EI
     LD A,8 : LD (SND_C_DUTY_TIMER),A
     RET
 
 SOUND_POD_FIRE:
+    DI
     LD A,2 : OUT (PSG_ADDR),A
     LD A,244 : OUT (PSG_DATA),A   ; channel B tone period fine byte
     LD A,3 : OUT (PSG_ADDR),A
     LD A,2 : OUT (PSG_DATA),A     ; coarse byte -> period=756, much lower "don"
+    EI
     LD A,15 : LD (SND_TIMER_B),A
     RET
 ; out: A = this frame's channel-A output volume - duty-cycle gated
@@ -3038,11 +3063,28 @@ CDGV_ON:
     LD A,15
     RET
 
+; round40: SOUND_UPDATE_B/SUC_NORMAL now check their own timer BEFORE
+; writing anything (rather than writing the current value unconditionally,
+; then separately checking whether to decrement) - once that timer is
+; genuinely 0 (SFX fully decayed), this SFX system writes NOTHING at all
+; to R9/R10 that frame, instead of re-writing 0 every single frame
+; forever. That's the whole point: with BGM_TICK now also driving R9/R10
+; (see BGMT_UPDATE_B/C below, wired to yield right back whenever
+; SND_TIMER_B/SND_TIMER_C/SND_C_DUTY_TIMER is non-zero), an SFX write of
+; literal 0 every idle frame would permanently silence BGM on that
+; channel - channels B/C need to be genuinely left alone (not just
+; "written to 0") once idle, so BGM can own them the rest of the time.
+; This changes ZERO observable SFX behavior on its own (the value
+; written on the actually-decaying frames, and the decrement itself, are
+; both unchanged) - verified via boss_attack_sfx_test.py-style direct
+; PSG-write comparison in tools/verify_stage1_bgm.py.
 SOUND_UPDATE:
     CALL CALC_NOISE_GATE_VOLUME
     LD B,A
+    DI
     LD A,8 : OUT (PSG_ADDR),A     ; R8 = channel A volume (duty-cycle gated)
     LD A,B : OUT (PSG_DATA),A
+    EI
     LD A,(SND_TIMER)
     OR A
     JR Z,SOUND_UPDATE_B
@@ -3050,12 +3092,13 @@ SOUND_UPDATE:
     LD (SND_TIMER),A
 SOUND_UPDATE_B:
     LD A,(SND_TIMER_B)
+    OR A
+    JR Z,SOUND_UPDATE_C            ; idle - yield channel B to BGM entirely, nothing to write
     LD B,A
+    DI
     LD A,9 : OUT (PSG_ADDR),A     ; R9 = channel B volume
     LD A,B : OUT (PSG_DATA),A
-    LD A,(SND_TIMER_B)
-    OR A
-    JR Z,SOUND_UPDATE_C
+    EI
     DEC A
     LD (SND_TIMER_B),A
 SOUND_UPDATE_C:
@@ -3068,20 +3111,190 @@ SOUND_UPDATE_C:
     ; once this window ends).
     CALL CALC_DUTY_GATE_VOLUME
     LD B,A
+    DI
     LD A,10 : OUT (PSG_ADDR),A
     LD A,B : OUT (PSG_DATA),A
+    EI
     LD A,(SND_C_DUTY_TIMER) : DEC A : LD (SND_C_DUTY_TIMER),A
     RET
 SUC_NORMAL:
     LD A,(SND_TIMER_C)
+    OR A
+    RET Z                          ; idle - yield channel C to BGM entirely, nothing to write
     LD B,A
+    DI
     LD A,10 : OUT (PSG_ADDR),A    ; R10 = channel C volume
     LD A,B : OUT (PSG_DATA),A
-    LD A,(SND_TIMER_C)
-    OR A
-    RET Z
+    EI
     DEC A
     LD (SND_TIMER_C),A
+    RET
+
+; ---------- BGM driver (Vsync駆動、Round40 "タイトル含めて各ステージに
+; ドライバを配置しRAMにコピーしてステージスタート") ----------
+; tools/stage2_combined/combined_test.asmの同名ドライバと同型の設計
+; (chB/chC独立ポインタ・タイマー、H.TIMI(0FD9Fh)フック、詳細な設計理由は
+; そちらの長いコメント参照)。このファイル固有の違いはただ1つ: Stage2は
+; チャンネルB/CをBGM専用に確保できたが、このファイル(Stage1)は元々
+; チャンネルB(SOUND_POD_FIRE、"don")・チャンネルC(SOUND_SHOT/
+; SOUND_POD_HIT/SOUND_BARRIER_HIT)の両方を既存SFXが使っている(全3
+; チャンネルとも占有済みで空きが無いと判明済み - channel Aはmixerで
+; 恒久的にnoise専用に固定されておりtoneを乗せられないため選択肢にすら
+; ならない)。よって「SFXのタイマー(SND_TIMER_B/SND_TIMER_C/
+; SND_C_DUTY_TIMER)が非0の間、BGM側は該当チャンネルへの書き込みを
+; 完全に譲る」という優先方式で共存させる(BGMT_UPDATE_B/Cそれぞれの
+; 冒頭のチェック)。SFX終了直後にBGMが即座に(次のH.TIMI呼び出しで)
+; 再開できるよう、SOUND_UPDATE_B/SUC_NORMAL側も「アイドル中は何も
+; 書かない」よう合わせて変更済み(上記コメント参照) - どちらか
+; 片方だけ直しても共存は成立しない。
+;
+; 「ドライバ自体は各バンクに配置しRAMにコピーしてステージスタート」の
+; うち後半(バンク切替・RAMコピー)はこのファイルでは行わない: この
+; ファイルは元々ASCII16のバンク切替を一切必要としない単純な32KB
+; プログラムとして書かれており(Comb ROM内でのみbank2/3として存在、
+; 単体版ROMは廃止済み)、既存の大量の回帰テスト(tools/verify_*.py)が
+; フラットな64KBメモリ(バンク概念なし)でこのファイルを直接アセンブル・
+; 実行する前提になっている - このファイル自身に新規のバンク切替命令を
+; 追加すると、それらのテストのフラットメモリモデル上では「ROM領域への
+; 書き込みがそのままそのアドレスのコード/データを破壊する」という
+; 実機と異なる副作用を引き起こしかねない。そこで、Title(このファイルへ
+; トランポリンする直前に必ず一度だけ起動される)が起動時に一度だけ
+; ALONE_FIGHTERをRAM(BGM_B_BASE/BGM_C_BASE、tools/title_screen/
+; title_test.asmのINIT_BGMコメント参照)へコピー済みという前提のもと、
+; このファイルのINIT_BGMはそのRAMを読むだけにしてある。R7ミキサーは
+; 既にINIT側で0B1h(tone B/C enable)を書き済み(このファイル自身の
+; 恒久設定、SOUND_UPDATE同様1度だけ)なのでここでは触らない。
+HTIMI_HOOK        EQU 0FD9Fh
+BGM_VOLUME        EQU 10
+BGM_NOTE_REST     EQU 0FFh
+BGM_LOOP_MARK     EQU 0FEh
+BGM_PERIOD_LO_RAM EQU 0C000h
+BGM_PERIOD_HI_RAM EQU 0C023h
+BGM_B_BASE        EQU 0C046h    ; ALONE_FIGHTER track0(chB)先頭 - Titleが埋める
+BGM_C_BASE        EQU 0C235h    ; ALONE_FIGHTER track1(chC)先頭 - Titleが埋める
+BGM_B_PTR   EQU 0C800h
+BGM_C_PTR   EQU 0C802h
+BGM_B_TIMER EQU 0C804h
+BGM_C_TIMER EQU 0C805h
+
+INIT_BGM:
+    LD HL,BGM_B_BASE
+    LD (BGM_B_PTR),HL
+    XOR A
+    LD (BGM_B_TIMER),A
+    LD HL,BGM_C_BASE
+    LD (BGM_C_PTR),HL
+    LD (BGM_C_TIMER),A
+    LD A,0C3h                     ; JP nn opcode
+    LD (HTIMI_HOOK),A
+    LD HL,BGM_TICK
+    LD (HTIMI_HOOK+1),HL
+    RET
+
+BGM_TICK:
+    PUSH AF
+    PUSH BC
+    PUSH DE
+    PUSH HL
+    CALL BGMT_UPDATE_B
+    CALL BGMT_UPDATE_C
+    POP HL
+    POP DE
+    POP BC
+    POP AF
+    RET
+
+; チャンネルB(R2/R3 tone、R9 volume)。SOUND_POD_FIRE("don")と共有 -
+; SND_TIMER_Bが非0の間(SFX再生中)は一切書き込まず、自分自身の
+; BGM_B_TIMERも進めない(SFX終了直後、中断した箇所からそのまま再開)。
+BGMT_UPDATE_B:
+    LD A,(SND_TIMER_B)
+    OR A
+    RET NZ
+    LD A,(BGM_B_TIMER)
+    OR A
+    JR Z,BGMT_UB_NEWROW
+    DEC A
+    LD (BGM_B_TIMER),A
+    RET
+BGMT_UB_NEWROW:
+    LD HL,(BGM_B_PTR)
+    LD A,(HL)
+    CP BGM_LOOP_MARK
+    JR NZ,BGMT_UB_GOT
+    LD HL,BGM_B_BASE
+    LD A,(HL)
+BGMT_UB_GOT:
+    LD C,A                         ; C = note index (or REST), survives the INC HL below
+    INC HL
+    LD A,(HL)                      ; duration
+    INC HL
+    LD (BGM_B_PTR),HL
+    LD (BGM_B_TIMER),A
+    LD A,C
+    CP BGM_NOTE_REST
+    JR Z,BGMT_UB_REST
+    LD E,A : LD D,0
+    LD HL,BGM_PERIOD_LO_RAM : ADD HL,DE : LD A,(HL) : LD B,A
+    LD HL,BGM_PERIOD_HI_RAM : ADD HL,DE : LD A,(HL) : LD C,A
+    LD A,2 : OUT (PSG_ADDR),A
+    LD A,B : OUT (PSG_DATA),A
+    LD A,3 : OUT (PSG_ADDR),A
+    LD A,C : OUT (PSG_DATA),A
+    LD A,9 : OUT (PSG_ADDR),A
+    LD A,BGM_VOLUME : OUT (PSG_DATA),A
+    RET
+BGMT_UB_REST:
+    LD A,9 : OUT (PSG_ADDR),A
+    XOR A : OUT (PSG_DATA),A
+    RET
+
+; チャンネルC(R4/R5 tone、R10 volume)。SOUND_SHOT/SOUND_POD_HIT
+; (SND_TIMER_C)とSOUND_BARRIER_HIT(SND_C_DUTY_TIMER)の両方と共有 -
+; どちらか一方でも非0ならBGM側は完全に譲る。
+BGMT_UPDATE_C:
+    LD A,(SND_TIMER_C)
+    OR A
+    RET NZ
+    LD A,(SND_C_DUTY_TIMER)
+    OR A
+    RET NZ
+    LD A,(BGM_C_TIMER)
+    OR A
+    JR Z,BGMT_UC_NEWROW
+    DEC A
+    LD (BGM_C_TIMER),A
+    RET
+BGMT_UC_NEWROW:
+    LD HL,(BGM_C_PTR)
+    LD A,(HL)
+    CP BGM_LOOP_MARK
+    JR NZ,BGMT_UC_GOT
+    LD HL,BGM_C_BASE
+    LD A,(HL)
+BGMT_UC_GOT:
+    LD C,A
+    INC HL
+    LD A,(HL)
+    INC HL
+    LD (BGM_C_PTR),HL
+    LD (BGM_C_TIMER),A
+    LD A,C
+    CP BGM_NOTE_REST
+    JR Z,BGMT_UC_REST
+    LD E,A : LD D,0
+    LD HL,BGM_PERIOD_LO_RAM : ADD HL,DE : LD A,(HL) : LD B,A
+    LD HL,BGM_PERIOD_HI_RAM : ADD HL,DE : LD A,(HL) : LD C,A
+    LD A,4 : OUT (PSG_ADDR),A
+    LD A,B : OUT (PSG_DATA),A
+    LD A,5 : OUT (PSG_ADDR),A
+    LD A,C : OUT (PSG_DATA),A
+    LD A,10 : OUT (PSG_ADDR),A
+    LD A,BGM_VOLUME : OUT (PSG_DATA),A
+    RET
+BGMT_UC_REST:
+    LD A,10 : OUT (PSG_ADDR),A
+    XOR A : OUT (PSG_DATA),A
     RET
 
 ; Converts GAME_TICK (mod 1000) to 3 decimal digits and draws them

@@ -125,17 +125,20 @@ check(f"real MAINLOOP: the same measured low-water mark also leaves real headroo
 # footprint plus a documented (not measured - z80emu.py has no BIOS ROM
 # to execute) allowance for the BIOS's own interrupt-entry overhead?
 #
-# BGM_TICK's worst case is its BGMT_NEWROW path (PUSH BC/DE/HL + the
-# nested CALL BGMT_LOAD_ROW -> CALL BGMT_WRITE_CHAN_B/C return
-# addresses) - measured directly by forcing BGM_ROW_TIMER=0 and running
-# BGM_TICK to completion, the same "just execute it and watch SP" method
-# the empirical MAINLOOP trace above already uses.
+# round40: BGM_TICK's worst case is now BOTH channels taking their own
+# new-row path in the same tick (PUSH AF/BC/DE/HL, always - the old
+# "row-hold only pushes AF" asymmetric optimization no longer applies
+# now that either channel can independently need a fresh row every
+# tick - plus whichever of CALL BGMT_UPDATE_B/BGMT_UPDATE_C is
+# currently on the stack, 2 bytes; the two calls are sequential, not
+# nested, so only one adds its own return address at a time). A fresh
+# post-boot cpu already has both BGM_B_TIMER/BGM_C_TIMER at 0 (INIT_BGM
+# leaves them there so the very first real tick always loads a fresh
+# row) with real DEFEAT song data already copied into RAM, so no manual
+# poking is needed to exercise this worst case - same "just execute it
+# and watch SP" method the empirical MAINLOOP trace above already uses.
 cpu2 = fresh_cpu()
 cpu2.sp = STACKTOP
-cpu2.mem[sym["BGM_ROW_TIMER"]] = 0
-pat = sym["BGM_PATTERN"]
-cpu2.mem[sym["BGM_PATTERN_PTR"]] = pat & 0xFF
-cpu2.mem[sym["BGM_PATTERN_PTR"] + 1] = (pat >> 8) & 0xFF
 cpu2.sp -= 2
 cpu2.mem[cpu2.sp] = 0
 cpu2.mem[cpu2.sp + 1] = 0

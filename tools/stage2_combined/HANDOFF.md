@@ -8568,3 +8568,189 @@ z80emu.pyのINIT32がno-opのためレンダリング画像上は表示されな
   方式なら実質無制限に拡張可能)は済んでいるが、実際に新バンクへの
   BGMノートデータ配置・RAM転送方式の実装自体はまだ未着手(今回の
   タイトル画面バンクとは別の将来タスク)。
+
+## Round40(実MIDI楽曲をPSGへ・独立2chドライバへ全面再設計・完了済み)
+
+- ユーザー指示(実機確認"良好 バンク切り替えも実機で問題なく動いた"に
+  続けて): "では添付ファイルのMIDIをノートだけ抽出してPSGで鳴らして
+  くれ どちらも2ch分のデータになってるがMIDIなのでサイズが大きい で、
+  方法としては先ほどのRAM方式で転送 タイトル含めて各ステージに
+  ドライバを配置しRAMにコピーしてステージスタート"(添付:
+  `Alone_Fighter.mid`・`Defeat_.mid`)。前段(この直前のやり取り)で
+  ユーザーから"RAMページ3(C000h-FFFFh)は8KBでなくリニア16KB使える"
+  という仕様確認があり、"新バンクからRAMに転送する方法で考えてる"との
+  方針も既に共有済みだった。
+
+### MIDI解析・変換パイプライン(`tools/bgm_data/`、新設)
+
+- `mido`をpip installして解析: 両ファイルともSMF type1・
+  ticks_per_beat=120・テンポ変更イベント無し(一定120BPM)・2トラック
+  (=2ch)・両トラックとも別々のMIDIチャンネル・全4トラックとも
+  実測で真にモノフォニック(和音無し) - PSGの空き2ch(B/C)への1:1
+  マッピングが素直に成立すると確認。
+- `midi_to_psg.py`: MIDIノート番号を直接キーにした周期テーブル
+  (`note_freq`/`tone_period`、A4=MIDI69基準)を新設 - 旧`bgm_gen.py`の
+  ノート名(C3-B5)経由テーブルとは独立させ、間接参照による混乱を
+  避けた。両ファイル4トラックの実測ノート範囲はMIDI50-84(35音)。
+  MIDI tick→vblank tick変換は「1 vblank tick = 4 MIDI tick」
+  (120tpb・500000us/quarterのテンポで`mid.length`と正確に一致すると
+  事前検証済み)、絶対tick位置をfloor(pos/4)で境界変換してから差分を
+  取ることで端数の蓄積を防止。モノフォニック前提の単純な状態機械で
+  note_on/offから(note_or_REST, duration)区間列を作り、
+  duration>255は同一noteの複数行へ分割、隣接する255未満の同一note行は
+  結合(行数圧縮)。REST=0xFF、LOOP_MARK=0xFEはRound38の仮実装と同じ
+  sentinel値を踏襲。
+- `bgm_bank_gen.py`: 周期テーブル(35note*2byte)+両曲2ch分の行データを
+  1本の16KBバンクイメージへまとめる(実使用3584/16384バイト、残り
+  12800バイトは将来の楽曲追加等に転用可能)。**重要な設計変更**:
+  当初`build_bank()`が`mido`(生成時にのみ必要)を実行時にも呼んで
+  いたため、`tools/stage2_combined/build_test.py`のBankedMemが
+  `fresh_cpu()`のたびに(BGMと無関係な)ほぼ全Stage2回帰テストで
+  このモジュールを読み込む設計と衝突 - `run_all.py`がpypy3(mido未
+  インストール)でテストサブプロセスを起動するため、**BGMと無関係な
+  40本以上のテストファイルがModuleNotFoundErrorで軒並みクラッシュする
+  実際の事故が発生**。生成専用の`generate_and_cache()`
+  (`python3 bgm_bank_gen.py --generate`、mido使用)と実行時専用の
+  `build_bank()`(`bgm_bank.bin`/`bgm_layout.json`というgit管理された
+  キャッシュファイルを読むだけ、mido不要)に分離して解消 - 教訓として
+  ファイル冒頭に明記。
+- 曲の割り当て(ユーザーに確認せず暫定決定、実機フィードバック待ち):
+  **Stage2=DEFEAT("Defeat_.mid")、Title/Stage1=ALONE_FIGHTER
+  ("Alone_Fighter.mid")**。2曲しかなく3箇所(Title/Stage1/Stage2)で
+  必要なため、TitleとStage1が同じ曲を共有する形にした。
+
+### RAM配置とバンク切替方式
+
+- RAM配置は「周期テーブル(70byte)+その曲のchB+chC」を固定オフセット
+  (`BGM_DATA_BASE`起点、既定0xC000)へコピーする設計 - 曲ごとに
+  バンク内オフセットは違うが、コピー先アドレスは曲によらず固定なので
+  駆動側コード(BGM_TICK)は曲に依存しない共通コードのまま。
+- **Title/Stage2は自分自身でバンク切替+RAMコピーを行う**: 各ファイル
+  自身のINIT内で`LD A,<bgm-dataバンク番号> : LD (7000h),A`→
+  周期テーブル+曲データを2回のLDIRでRAMへ→
+  `LD A,<自分の本来のbank> : LD (7000h),A`で明示的に復帰、という
+  自己完結した手順(既存のASCII16トランポリン機構は使わず、windowB
+  のみの一時切替なので直接の`LD (7000h),A`で安全 - window A(この
+  コードが実行されている側)には一切影響しないため)。standalone
+  ビルドでは`bgm-dataバンク=2`/`自バンク=1`という番号を使い、
+  `build_full_rom.py`側で`STAGE2_BGM_BANKSELECT_ANCHOR/PATCH`・
+  `TITLE_BGM_BANKSELECT_ANCHOR/PATCH`(既存の`STAGE2_BANKSELECT_
+  PATCH`と同じ手法)がComb ROM用のグローバル番号(bgm-dataバンク=6、
+  Stage2の自バンクのみ5へ、Titleは0/1のまま変更無し)へ実アセンブル
+  前に書き換える。
+- **Stage2固有の落とし穴(自己発見・修正)**: 当初`BGM_DATA_BASE`を
+  他ファイルと同じ0xC000のまま実装したところ、`init_ram_poison_
+  test.py`以外の大量のテスト(`ebullet_test.py`/`horming_test.py`/
+  `mine_flyerlaser_test.py`等72件)が原因不明のFAILの雨になった。
+  調査の結果、`combined_test.asm`は既にC000h-C173h付近を
+  `SBEAM_SPRITE_ATTRS`/`FLYER_POOL`/`BOSS_BROKEN_*`/`EBULLET_POOL`/
+  `MINE_POOL`/`BULLET3_*`等の実データで使い切っており、新規BGM RAM
+  領域(周期テーブル+曲データ、約2KB)がそれら全てを踏み荒らしていた
+  と判明(Round38時点の「C000h-EEFFhは空き」というコメントは、その後
+  複数ラウンドにわたり追加された構造体群で既に古くなっていた)。
+  Stage2専用に`STAGE2_DATA_BASE=0xC200`(実測で空きと確認済み - 次の
+  実使用シンボルは0xEF00のTICKで、約11.7KBの空きがある)を新設、
+  `bgm_bank_gen.song_constants(song_key, data_base=...)`という
+  オーバーライド引数で対応。**教訓(この種の事故は本セッションで
+  何度も繰り返している構造的リスク)**: 「このアドレス範囲は空いて
+  いるはず」という過去のコメント・記憶を鵜呑みにせず、新規RAM配置の
+  たびに必ずその時点のシンボルテーブルを実際にダンプして確認する
+  こと。
+- **Stage1は自分ではバンク切替もRAMコピーも一切行わない**(意図的な
+  設計判断、ユーザーへの確認は行わず): (1)このファイルはComb ROM
+  内でのみ存在(単体版ROMは廃止済み)で元々ASCII16のバンク切替命令を
+  一切持たない単純な32KBプログラムとして書かれている、(2)
+  `tools/verify_*.py`群の大半がバンク概念の無いフラット64KBメモリで
+  このファイルを直接アセンブル・実行する前提になっており、この
+  ファイル自身に新規のバンク切替命令(`LD (7000h),A`)を追加すると、
+  それらのテストのフラットメモリモデル上では「ROM領域への書き込みが
+  そのままそのアドレスのコード/データを破壊する」という実機と異なる
+  副作用を引き起こしかねない、という2点のリスクを踏まえた判断。
+  代わりに、Stage1へトランポリンする直前に必ず一度だけ起動される
+  Titleが、起動時に一度だけALONE_FIGHTERをRAM(BGM_B_BASE/BGM_C_BASE、
+  0xC000起点)へコピー済みという前提のもと、Stage1自身のINIT_BGMは
+  そのRAMを読むだけ(ポインタ初期化+HTIMI_HOOKの再アーム)にした。
+  `tools/bankswitch_poc/verify_comb.py`でこの前提(Titleのコピー内容が
+  Stage1のMAINLOOP到達まで無傷で残っていること)を直接検証済み。
+
+### ドライバの再設計(共有1行→chB/chC独立ポインタ・タイマー)
+
+- Round38の仮実装は「1行にnote_B+note_C+共通durationを詰め、両
+  チャンネルが同じタイミングで次の行に進む」設計だったが、実際の
+  MIDI楽曲は2トラックの長さも各音符の長さも独立でバラバラなため、
+  この方式では表現できない。`BGM_TICK`を「`BGMT_UPDATE_B`と
+  `BGMT_UPDATE_C`をそれぞれ独立に毎tick呼ぶ」方式へ全面書き換え、
+  各チャンネルが自分専用のポインタ(`BGM_B_PTR`/`BGM_C_PTR`)・
+  タイマー(`BGM_B_TIMER`/`BGM_C_TIMER`)・LOOP時の復帰先
+  (`BGM_B_BASE`/`BGM_C_BASE`)を持つ設計に変更(Title/Stage2の
+  「自分でRAMコピーする」版、Stage1の「SFX優先方式」版、いずれも
+  同型)。この再設計により、Round38の「行ホールド中はPUSH AFのみ」
+  という非対称最適化(両チャンネルとも毎tickどちらか一方が新規行を
+  読む可能性があるため)は成立しなくなり、常にAF/BC/DE/HLをフルに
+  保存する方式に変更(正しさ優先、速度低下は無視できる規模と判断)。
+
+### Stage1固有の課題: PSGチャンネルB/Cの既存SFXとの共存
+
+- Stage2はBGM用にチャンネルB/Cを最初から確保していたが、**Stage1は
+  元々全3チャンネルを既存SFXで使い切っていた**と実装中に判明
+  (channel A=noise専用でtoneを乗せられずBGM候補にすらならない、
+  channel B=SOUND_POD_FIRE、channel C=SOUND_SHOT/SOUND_POD_HIT/
+  SOUND_BARRIER_HITの3種で共有)。ユーザーの指示には明記されていな
+  かった制約で、確認は求めず(実装を止めるほどの規模ではないと判断)
+  次の優先方式で自己解決: SFX側のタイマー(`SND_TIMER_B`/
+  `SND_TIMER_C`/`SND_C_DUTY_TIMER`)が非0の間、BGM側(`BGMT_UPDATE_B/
+  C`)は該当チャンネルへの書き込みを完全に譲り、自分自身のタイマーも
+  進めない(SFX終了直後、中断した箇所からそのまま再開 - BGMの
+  テンポがSFXの再生時間ぶん飛ばされることはない)。この方式が成立
+  するには反対側(SFX側)の協力も必要と判明: 既存の`SOUND_UPDATE_B`/
+  `SUC_NORMAL`(チャンネルC)が、SFXの音量が0まで減衰した後も**毎フレーム
+  律儀に0を書き続けていた**ため、これを放置するとBGMが二度と
+  その値を上書きする隙が無くなる。両ルーチンを「タイマーが既に0なら
+  何も書かない(先にチェック、書き込み自体をスキップ)」方式へ
+  再構成(SFX再生中の値・減衰そのものは一切変更なし、`tools/
+  verify_stage1_bgm.py`で新旧の書き込み系列を直接比較し無変化を
+  確認済み)。片方だけ直しても共存は成立しないため両方同時に対応。
+- 既存SFXルーチン(`SOUND_SHOT`/`SOUND_DESTROY`/`SOUND_POD_HIT`/
+  `SOUND_BARRIER_HIT`/`SOUND_POD_FIRE`)とSOUND_UPDATE内の3箇所の
+  PSGレジスタ選択+書き込みペアをDI/EIで保護(Round38がStage2の
+  既存SFXに対して行ったのと同じ理由 - 新規に本物の割り込みハンドラ
+  [BGM_TICK]が同じPSGレジスタを触るようになったため)。
+
+### 検証結果
+
+新規`tools/verify_stage1_bgm.py`(43件、Stage1固有: SFX優先方式の
+動作・SOUND_UPDATE_B/SUC_NORMALのアイドル時無書き込み・DI/EI保護の
+直接検証)、`tools/stage2_combined/tests/bgm_test.py`全面書き換え
+(61件、独立chB/chC・RAMコピーの実バイト比較)、
+`tools/title_screen/title_test.py`にBGM検証12件追加(35件)。
+`tools/stage2_combined/build_test.py`・`tools/title_screen/
+title_test.py`・`render_check.py`それぞれのBankedMemに実bgmバンク
+(index2)を追加(旧来は0xFFプレースホルダーの別名だった箇所)。
+`tools/bankswitch_poc/verify_comb.py`を全面改訂し、title→Stage1→
+Stage2の一気通貫ウォークスルーの中でRAM上のBGMデータをバイト単位で
+直接検証(title到達時点でALONE_FIGHTER全体、Stage1到達時点でRAMが
+無傷であること、Stage2到達時点でDEFEAT全体)、**全チェックPASS**。
+`tools/stage2_combined/tests/run_all.py`全回帰**1377 passed/0 failed**
+(1366→1377、うちbgm_test.py 50→61件)。`tools/verify_*.py`群も
+全て既存通過(`verify_idcache_multiframe.py`/`verify_namebuf_regen.py`
+は既知の無関係な既存問題、`verify_barrier.py`は本セッションに存在
+しない過去アップロードファイル参照の既知の無関係な問題、
+`verify_full.py`はround39以前の旧レイアウト前提の廃止済みスクリプトで
+本ラウンド以前から既に壊れていることをgit stashで確認済み)。
+Stage2単体ROM(残り1339バイト)・Title単体ROM・Comb ROM(bank6が旧来の
+純粋な0xFFパディングから実データ16384バイトへ、総サイズ128KB
+維持)を再ビルド・送付。
+
+**保留・未確定**:
+- プレースホルダーではなく本物の楽曲になったことで、実機での聞こえ方
+  (音量バランス・Stage1のSFXとの共存時の聞こえ方・ループ時の
+  繋がり方)は全て実機フィードバック待ち。
+- 曲の割り当て(Stage2=DEFEAT、Title/Stage1=ALONE_FIGHTER)は
+  ユーザーへ確認せずこちらで暫定決定した創作判断 - 実機で聞いた
+  ユーザーの意向次第で入れ替え等の変更があり得る。
+- Stage1のBGM音量(`BGM_VOLUME`固定10)・SFXとの共存時の聞こえ方
+  (SFX再生中はBGMが完全に途切れる設計)は未調整、実プレイでの
+  バランス調整は別途。
+- タイトル/EDへの言及(Round38での"間に合えばタイトルやEDも実装予定")
+  のうち今回はタイトル画面へのBGM実装のみ対応、ED画面自体は引き続き
+  未実装。

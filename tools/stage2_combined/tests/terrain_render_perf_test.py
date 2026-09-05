@@ -49,7 +49,7 @@ def build_source(git_ref=None):
         ).stdout
     import terrain_gen, tank_gen, bullet_gen, enemy_gen, bigzum_gen, flyer_gen
     import etank_gen, sasapi_gen, sasapi_hand_gen, horming_gen, thunder_gen, sbeam_gen
-    import ebullet_gen, etankbullet_gen, mine_gen, flyerlaser_gen, bgm_gen
+    import ebullet_gen, etankbullet_gen, mine_gen, flyerlaser_gen
     tables = (terrain_gen.emit_asm_tables() + "\n" + tank_gen.emit_asm_tables()
               + "\n" + bullet_gen.emit_asm_tables() + "\n" + enemy_gen.emit_asm_tables()
               + "\n" + bigzum_gen.emit_asm_tables() + "\n" + flyer_gen.emit_asm_tables()
@@ -57,8 +57,18 @@ def build_source(git_ref=None):
               + "\n" + sasapi_hand_gen.emit_asm_tables() + "\n" + horming_gen.emit_asm_tables()
               + "\n" + thunder_gen.emit_asm_tables() + "\n" + sbeam_gen.emit_asm_tables()
               + "\n" + ebullet_gen.emit_asm_tables() + "\n" + etankbullet_gen.emit_asm_tables()
-              + "\n" + mine_gen.emit_asm_tables() + "\n" + flyerlaser_gen.emit_asm_tables()
-              + "\n" + bgm_gen.emit_asm_tables())
+              + "\n" + mine_gen.emit_asm_tables() + "\n" + flyerlaser_gen.emit_asm_tables())
+    if git_ref is not None:
+        # round40: bgm_gen.py's own resident DB tables (BGM_PATTERN/
+        # BGM_PERIOD_LO/HI/BGM_NOTE_REST/BGM_LOOP_MARK) were retired from
+        # the current working tree (combined_test.asm now defines
+        # BGM_NOTE_REST/BGM_LOOP_MARK itself as EQU and reads real song
+        # data from RAM instead) - only the OLD (git_ref) body still
+        # references bgm_gen's own symbols, so only it still needs this
+        # table appended; appending it to the NEW body too would collide
+        # with combined_test.asm's own EQUs of the same names.
+        import bgm_gen
+        tables += "\n" + bgm_gen.emit_asm_tables()
     return body + "\n" + tables + "\n"
 
 

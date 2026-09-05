@@ -1490,3 +1490,66 @@
     (170,40)/(row2,col2)は"適当に"の暫定値、実機フィードバック待ち。
     新バンクへのBGMノートデータ配置・RAM転送方式自体は今回は
     未着手(将来タスク)。
+
+## 実MIDI楽曲のPSG再生・独立2chドライバへ全面再設計(2026-09-05、
+Round40、完了済み)
+
+- ユーザー指示(実機確認"良好 バンク切り替えも実機で問題なく動いた"に
+  続けて): "では添付ファイルのMIDIをノートだけ抽出してPSGで鳴らして
+  くれ どちらも2ch分のデータになってるがMIDIなのでサイズが大きい で、
+  方法としては先ほどのRAM方式で転送 タイトル含めて各ステージに
+  ドライバを配置しRAMにコピーしてステージスタート"(添付:
+  `Alone_Fighter.mid`・`Defeat_.mid`)。
+- 新設`tools/bgm_data/`: `midi_to_psg.py`(mido使用、MIDI→
+  (note,duration)行データ変換、MIDI50-84直接キーの周期テーブル)、
+  `bgm_bank_gen.py`(周期テーブル+両曲2ch分をComb ROM専用16KBバンクへ
+  まとめる。**実行時はmido不要**-生成結果は`bgm_bank.bin`/
+  `bgm_layout.json`としてgit管理されたキャッシュを読むだけ。
+  再生成は`python3 tools/bgm_data/bgm_bank_gen.py --generate`)。
+  曲の割り当て(ユーザー確認なしの暫定決定): **Stage2=DEFEAT、
+  Title/Stage1=ALONE_FIGHTER**(2曲を3箇所で使うためTitle/Stage1が
+  共有)。
+- BGMドライバをRound38の「chB/chC共有1行・固定duration」方式から
+  「各チャンネル独立ポインタ・タイマー」方式へ全面再設計(実MIDI
+  2トラックは長さも音符の長さもバラバラなため)。
+- **Title/Stage2は自分自身でwindowB一時切替+RAMコピー**(起動時に
+  bgm-dataバンク[Comb内bank6、旧来の0xFFパディングを実データ化]を
+  選択→周期テーブル+曲データをLDIRでRAM[既定0xC000起点]へ→自分の
+  本来のバンクへ復帰)。`build_full_rom.py`に`STAGE2_BGM_BANKSELECT_
+  ANCHOR/PATCH`・`TITLE_BGM_BANKSELECT_ANCHOR/PATCH`を追加し
+  standalone番号(bgm-data=2)をComb用グローバル番号(=6)へパッチ。
+  **Stage2固有の落とし穴(自己発見)**: 既定の0xC000起点は
+  `combined_test.asm`が既に`SBEAM_SPRITE_ATTRS`等の実データで使い
+  切っており全72件のテストが原因不明のFAILの雨になった - Stage2
+  専用に実測で空きと確認済みの`STAGE2_DATA_BASE=0xC200`を新設して
+  解消(教訓: 「ここは空いているはず」を過去のコメントで判断せず、
+  必ずその時点のシンボルテーブルを実際にダンプして確認すること)。
+- **Stage1は自分ではバンク切替もRAMコピーも一切行わない**(意図的判断、
+  ユーザーへの確認は行わず): 単体版ROM廃止済み+`tools/verify_*.py`
+  群がバンク概念の無いフラット64KBメモリ前提という2点のリスクを
+  踏まえ、Stage1へトランポリンする直前に必ず起動されるTitleが
+  一度だけコピーしたRAMを、Stage1のINIT_BGMはそのまま読むだけに
+  した。
+- **Stage1固有の課題(実装中に判明、ユーザー未確認で自己解決)**:
+  Stage2と違いStage1は元々PSGの全3チャンネルを既存SFXで使い切って
+  いた(channel Aはnoise専用でtone不可、channel B=SOUND_POD_FIRE、
+  channel C=SOUND_SHOT/SOUND_POD_HIT/SOUND_BARRIER_HIT)。「SFXの
+  タイマーが非0の間、BGM側は該当チャンネルへの書き込みを完全に譲る」
+  優先方式で共存させ、反対側の`SOUND_UPDATE_B`/`SUC_NORMAL`も
+  「タイマーが既に0なら何も書かない」よう合わせて修正(片方だけでは
+  共存が成立しないため)。SFX自体の音量・減衰・ピッチは一切無変更
+  (`tools/verify_stage1_bgm.py`で直接比較検証済み)。
+- 新規`tools/verify_stage1_bgm.py`(43件)、`bgm_test.py`全面書き換え
+  (61件)、`title_test.py`にBGM検証12件追加(35件)、
+  `verify_comb.py`全面改訂(title→Stage1→Stage2一気通貫でRAM上の
+  BGMデータをバイト単位で直接検証)。全回帰`run_all.py`
+  **1377 passed/0 failed**。Stage2単体ROM(残り1339バイト)・
+  Title単体ROM・Comb ROM(bank6が実データ16384バイトへ、総128KB
+  維持)を再ビルド・`verify_comb.py`で確認の上、送付。詳細・技術的
+  経緯は`tools/stage2_combined/HANDOFF.md`のRound40を参照。
+  - **保留**: プレースホルダーでなく本物の楽曲になったことで、実機
+    での聞こえ方(音量バランス・Stage1のSFXとの共存・ループの繋がり)
+    は全て実機フィードバック待ち。曲の割り当て(Stage2=DEFEAT、
+    Title/Stage1=ALONE_FIGHTER)はユーザー確認なしの暫定決定 -
+    実機で聞いた結果次第で入れ替え等の変更があり得る。ED画面自体は
+    引き続き未実装。

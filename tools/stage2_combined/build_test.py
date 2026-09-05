@@ -18,6 +18,7 @@ the main game's stage1->stage2 transition does - just needs more than
 once, at boot, and left selected permanently; unlike bankswitch_poc's
 own multi-bank build, there's no later mid-game switch to test.
 """
+import importlib.util
 import os
 import sys
 
@@ -44,7 +45,6 @@ import ebullet_gen  # noqa: E402
 import etankbullet_gen  # noqa: E402
 import mine_gen  # noqa: E402
 import flyerlaser_gen  # noqa: E402
-import bgm_gen  # noqa: E402
 from mini_z80asm import Assembler  # noqa: E402
 
 
@@ -62,8 +62,7 @@ def combined_text():
               + "\n" + sasapi_hand_gen.emit_asm_tables() + "\n" + horming_gen.emit_asm_tables()
               + "\n" + thunder_gen.emit_asm_tables() + "\n" + sbeam_gen.emit_asm_tables()
               + "\n" + ebullet_gen.emit_asm_tables() + "\n" + etankbullet_gen.emit_asm_tables()
-              + "\n" + mine_gen.emit_asm_tables() + "\n" + flyerlaser_gen.emit_asm_tables()
-              + "\n" + bgm_gen.emit_asm_tables())
+              + "\n" + mine_gen.emit_asm_tables() + "\n" + flyerlaser_gen.emit_asm_tables())
     return body + "\n" + tables + "\n"
 
 
@@ -112,7 +111,18 @@ class BankedMem:
     def __init__(self, bank0, bank1, portA=0x6000, portB=0x7000):
         self.flat = bytearray(0x10000)
         self.banksA = [bank0]
-        self.banksB = [bytearray([0xFF] * 0x4000), bank1]
+        # index2: real BGM data bank (round40, tools/bgm_data/bgm_bank_gen.py)
+        # - INIT_BGM selects A=2 for this standalone numbering (patched to
+        # A=6 in the Comb build, see build_full_rom.py) before copying the
+        # period table + this stage's song into RAM, so any test exercising
+        # a real INIT trace now needs genuine content here, not another
+        # 0xFF-filled placeholder.
+        bgm_spec = importlib.util.spec_from_file_location(
+            "bgm_bank_gen", os.path.join(REPO, "tools", "bgm_data", "bgm_bank_gen.py"))
+        bgm_mod = importlib.util.module_from_spec(bgm_spec)
+        bgm_spec.loader.exec_module(bgm_mod)
+        bgm_bank, _ = bgm_mod.build_bank()
+        self.banksB = [bytearray([0xFF] * 0x4000), bank1, bytearray(bgm_bank)]
         self.bankA = 0
         self.bankB = 0
         self.portA = portA
