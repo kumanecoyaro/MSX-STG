@@ -13,6 +13,30 @@ class Z80:
         self.vdp_latch=None
         self.vram_writes_log = []  # (addr,val,pc)
         self.io_out_log = []
+        # generic port I/O for anything that isn't VDP (0x98/0x99, see
+        # vdp_out/vdp_in below) - added for round36-14 follow-up#24's own
+        # BGM driver tests (these ports had NO emulation at all before
+        # this: OUT (n),A to a non-VDP port was a silent no-op, and
+        # IN A,(n) from one always returned a hardcoded 0FFh - see
+        # step()'s own 0xD3/0xDB handlers). io_out simply records the
+        # last byte written to each raw port number; io_in lets a test
+        # pre-seed what a subsequent IN from a port should return.
+        # Fully backward compatible: VDP ports are unaffected, and any
+        # other port a test never pre-seeds in io_in still reads back
+        # 0FFh, exactly as before this existed.
+        self.io_out = {}
+        self.io_in = {}
+        # PSG (AY-3-8910-compatible) register model: real MSX PSG access
+        # is address/data-latched, not per-register-ported - OUT to
+        # PSG_ADDR(0A0h) latches a register NUMBER, then OUT to
+        # PSG_DATA(0A1h) writes that LATCHED register, and IN from the
+        # read-back port (0A2h) reads it back. A flat io_out[port] dict
+        # can't represent this (every register write lands on the exact
+        # same 2 raw ports, 0A0h/0A1h) - psg_regs is indexed by the
+        # PSG's own register number (0-13), not by Z80 port number, and
+        # psg_latch is which register is currently selected.
+        self.psg_latch = 0
+        self.psg_regs = {}
         # --- T-state (cycle) accounting ---
         # self.tstates: running total, incremented by every step()/step_xx()
         # call with the real Z80 timing for the instruction just executed
@@ -229,7 +253,14 @@ class Z80:
             self.tstates += 7 if r==6 else 4
         elif op == 0xD3:  # OUT (n),A
             n=self.fetch()
-            self.vdp_out(n, self.a) if n in (0x98,0x99) else None
+            if n in (0x98,0x99):
+                self.vdp_out(n, self.a)
+            else:
+                self.io_out[n] = self.a
+                if n == 0xA0:
+                    self.psg_latch = self.a
+                elif n == 0xA1:
+                    self.psg_regs[self.psg_latch] = self.a
             self.tstates += 11
         elif op == 0xC9:  # RET
             self.pc = self.pop(); self.tstates += 10
@@ -300,7 +331,12 @@ class Z80:
             self.pc = self.hl(); self.tstates += 4
         elif op == 0xDB:  # IN A,(n)
             n=self.fetch()
-            self.a = self.vdp_in(n) if n in (0x98,0x99) else 0xFF
+            if n in (0x98,0x99):
+                self.a = self.vdp_in(n)
+            elif n == 0xA2:
+                self.a = self.psg_regs.get(self.psg_latch, self.io_in.get(n, 0xFF))
+            else:
+                self.a = self.io_in.get(n, 0xFF)
             self.tstates += 11
         elif op == 0xD5: self.push(self.de()); self.tstates += 11; self.tstates_pushpop += 11
         elif op == 0xE5: self.push(self.hl()); self.tstates += 11; self.tstates_pushpop += 11

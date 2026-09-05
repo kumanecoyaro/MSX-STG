@@ -40,7 +40,19 @@ with open(SRC_PATH) as f:
         if m:
             name, hx = m.groups()
             val = int(hx, 16)
-            if 0xC000 <= val <= 0xFFFF:
+            # strictly BELOW STACKTOP only - addresses at/above it (e.g.
+            # HTIMI_HOOK at 0FD9Fh, round36-14 follow-up#24's own BIOS
+            # vblank-hook RAM reference) are never at risk of a stack
+            # collision (the stack starts AT STACKTOP and only grows
+            # downward from there), so they don't belong in this "how
+            # close is the closest game variable to the stack" scan.
+            # Before HTIMI_HOOK, nothing in this file ever happened to
+            # sit above STACKTOP, so this bound was previously
+            # (accidentally) equivalent to "highest of everything below
+            # STACKTOP, found via addrs[-2] since addrs[-1] always
+            # happened to be STACKTOP itself" - that coincidence broke
+            # the moment a second above-STACKTOP symbol existed.
+            if 0xC000 <= val < STACKTOP:
                 addrs.append((val, name))
 addrs.sort()
 
@@ -50,7 +62,7 @@ addrs.sort()
 # headroom...comfortably past anything a real interrupt handler plus
 # our own deepest measured call nesting could plausibly need").
 STACK_SAFETY_MARGIN = 0x60
-highest_addr, highest_name = addrs[-2]  # addrs[-1] is STACKTOP itself
+highest_addr, highest_name = addrs[-1]
 check(f"the highest-address RAM variable below STACKTOP ({highest_name} at "
       f"{hex(highest_addr)}) leaves at least {hex(STACK_SAFETY_MARGIN)} bytes of "
       "headroom before STACKTOP",
@@ -100,6 +112,59 @@ check(f"real MAINLOOP: the same measured low-water mark also leaves real headroo
       "harness at all (z80emu.py never fires interrupts), so this number is a floor for "
       "catching further regressions, not proof of real-hardware safety",
       STACKTOP - min_sp >= 0x10)
+
+# ---- round36-14 follow-up#24: this file's first REAL interrupt handler
+# (BGM_TICK, installed into the H.TIMI hook) makes the above blind spot
+# concrete instead of theoretical - on real hardware, BGM_TICK's own
+# stack usage (measured below) plus the BIOS's own IM1 prologue land
+# ON TOP OF whatever min_sp already was at the exact instant the
+# interrupt fires, which could be this file's own measured worst case
+# above. This check is the arithmetic that blind spot needs: does the
+# real gap between "how deep MAINLOOP alone ever gets" and "the nearest
+# live game variable" comfortably cover BGM_TICK's own real, measured
+# footprint plus a documented (not measured - z80emu.py has no BIOS ROM
+# to execute) allowance for the BIOS's own interrupt-entry overhead?
+#
+# BGM_TICK's worst case is its BGMT_NEWROW path (PUSH BC/DE/HL + the
+# nested CALL BGMT_LOAD_ROW -> CALL BGMT_WRITE_CHAN_B/C return
+# addresses) - measured directly by forcing BGM_ROW_TIMER=0 and running
+# BGM_TICK to completion, the same "just execute it and watch SP" method
+# the empirical MAINLOOP trace above already uses.
+cpu2 = fresh_cpu()
+cpu2.sp = STACKTOP
+cpu2.mem[sym["BGM_ROW_TIMER"]] = 0
+pat = sym["BGM_PATTERN"]
+cpu2.mem[sym["BGM_PATTERN_PTR"]] = pat & 0xFF
+cpu2.mem[sym["BGM_PATTERN_PTR"] + 1] = (pat >> 8) & 0xFF
+cpu2.sp -= 2
+cpu2.mem[cpu2.sp] = 0
+cpu2.mem[cpu2.sp + 1] = 0
+cpu2.pc = sym["BGM_TICK"]
+bgm_min_sp = cpu2.sp
+bgm_steps = 0
+while cpu2.pc != 0 and bgm_steps < 5000:
+    cpu2.step()
+    if cpu2.sp < bgm_min_sp:
+        bgm_min_sp = cpu2.sp
+    bgm_steps += 1
+BGM_TICK_WORST_CASE = STACKTOP - bgm_min_sp  # excludes the 2-byte sentinel pushed above
+
+# BIOS IM1 prologue: not measurable at all here (z80emu.py has no real
+# BIOS ROM to execute - see this file's own top-of-file comment history
+# for the general "H.TIMI interrupt overhead this file's own test
+# harness cannot simulate" blind spot). Conservative published-shape
+# estimate: automatic PC push (2) + PUSH AF/BC/DE/HL/IX/IY (12) + a
+# margin of error on top of that shape (6) = 20 bytes.
+ASSUMED_BIOS_ISR_OVERHEAD = 20
+real_headroom = min_sp - highest_addr
+worst_case_needed = BGM_TICK_WORST_CASE + ASSUMED_BIOS_ISR_OVERHEAD
+check(f"BGM_TICK's own measured worst-case stack depth ({BGM_TICK_WORST_CASE} bytes) plus "
+      f"a conservative BIOS ISR-prologue allowance ({ASSUMED_BIOS_ISR_OVERHEAD} bytes, "
+      "unmeasurable here - no real BIOS ROM in this harness) fits inside the real gap "
+      f"between MAINLOOP's own measured low-water mark and the highest live variable "
+      f"({real_headroom} bytes) - i.e. an H.TIMI interrupt firing at MAINLOOP's own worst "
+      "real moment still can't reach a live variable",
+      real_headroom >= worst_case_needed)
 
 print()
 print(f"{len(ok)} passed, {len(fail)} failed")

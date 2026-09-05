@@ -3483,9 +3483,11 @@ INIT_SPRATR_CLR:
     ; PSG: everything (shot, explosion, "kin" deflect) lives on channel
     ; A only now - "サウンドはノイズｃｈ使用音は別にしなくていいぞ
     ; どうせ被れば消える PSGは3ch+ノイズ1chが仕様 2chはBGM用に常に空け
-    ; ておきたいしな" - channels B/C stay silent and completely untouched
-    ; from here on (volume 0, never written again) so they're free for
-    ; future BGM. Each SOUND_* routine sets mixer R7 itself when
+    ; ておきたいしな" - this just primes a silent boot default for
+    ; channels B/C (R9/R10=0); BGM_TICK (round36-14 follow-up#24, see its
+    ; own comment) is what actually drives them from here on, once
+    ; INIT_BGM arms the H.TIMI hook later in this same INIT. Each
+    ; SOUND_* routine sets mixer R7 itself when
     ; triggered (MIXER_NOISE_A for shot/explosion, MIXER_TONE_A for the
     ; deflect ping) since channel A now has to switch between noise and
     ; tone mode depending on which sound last fired; this just primes a
@@ -3885,6 +3887,16 @@ ICL_LOOP:
     LD DE,CLOUD_SLOT_SIZE : ADD HL,DE
     INC C
     DJNZ ICL_LOOP
+
+    ; BGM driver install (Vsync-driven, follow-up#24) - deliberately one
+    ; of the LAST things INIT does: INIT_BGM arms the H.TIMI hook, and
+    ; every earlier INIT step above (including its own PSG boot-mute
+    ; block, see SND_TIMER's own comment) runs with the hook still at
+    ; whatever the BIOS default is, so none of them need DI/EI
+    ; protection against OUR OWN handler - only code that runs AFTER
+    ; this point (i.e. everything in MAINLOOP and beyond) can actually
+    ; race against BGM_TICK.
+    CALL INIT_BGM
 
     ; checkpoint 9: enemy patterns + pool set up - about to enter MAINLOOP
     LD B,9 : LD C,7 : CALL WRTVDP
@@ -5715,10 +5727,20 @@ SOUND_SHOT:
     LD A,(SND_EXPLODING)
     OR A
     RET NZ
+    ; DI/EI-wrapped: BGM_TICK (Vsync-driven, follow-up#24) also does its
+    ; own PSG_ADDR-select/PSG_DATA-write pairs on R7/R2-5/R9/R10 every
+    ; frame - an H.TIMI interrupt landing between this OUT (PSG_ADDR)
+    ; and its own OUT (PSG_DATA) would leave BGM_TICK's own register
+    ; number selected when this resumes, sending this write to the
+    ; WRONG PSG register (same class of bug the existing VDP DI/EI
+    ; wraps already guard against, just newly real for PSG now that a
+    ; real interrupt handler touches it too).
+    DI
     LD A,7 : OUT (PSG_ADDR),A
     LD A,MIXER_NOISE_A : OUT (PSG_DATA),A
     LD A,6 : OUT (PSG_ADDR),A
     LD A,SHOT_NOISE_PERIOD : OUT (PSG_DATA),A
+    EI
     LD A,SHOT_SND_PEAK : LD (SND_TIMER),A
     LD A,SHOT_SND_DECAY : LD (SND_DECAY),A
     LD A,1 : LD (SND_NOISE),A
@@ -5730,10 +5752,14 @@ SOUND_SHOT:
 ; protect itself from being cut off by anything, nor does it protect
 ; anything else from being cut off by it).
 SOUND_SPARK_CRACKLE:
+    ; DI/EI-wrapped: see SOUND_SHOT's own comment (BGM_TICK PSG-register
+    ; select/write race, follow-up#24).
+    DI
     LD A,7 : OUT (PSG_ADDR),A
     LD A,MIXER_NOISE_A : OUT (PSG_DATA),A
     LD A,6 : OUT (PSG_ADDR),A
     LD A,SPARK_CRACKLE_NOISE_PERIOD : OUT (PSG_DATA),A
+    EI
     LD A,SPARK_CRACKLE_PEAK : LD (SND_TIMER),A
     LD A,SPARK_CRACKLE_DECAY : LD (SND_DECAY),A
     LD A,1 : LD (SND_NOISE),A
@@ -5747,10 +5773,14 @@ SOUND_SPARK_CRACKLE:
 ; matter, and overlapping with a shot/deflect sound is fine to just
 ; cut off per the shared-channel design above.
 SOUND_DESTROY:
+    ; DI/EI-wrapped: see SOUND_SHOT's own comment (BGM_TICK PSG-register
+    ; select/write race, follow-up#24).
+    DI
     LD A,7 : OUT (PSG_ADDR),A
     LD A,MIXER_NOISE_A : OUT (PSG_DATA),A
     LD A,6 : OUT (PSG_ADDR),A
     LD A,20 : OUT (PSG_DATA),A
+    EI
     LD A,15 : LD (SND_TIMER),A
     LD A,1 : LD (SND_DECAY),A
     LD A,1 : LD (SND_EXPLODING),A
@@ -5771,12 +5801,16 @@ SOUND_DESTROY:
 ; on/off, so this is the one sound that sets SND_NOISE=0 (see that
 ; byte's own comment).
 SOUND_ZUM_DEFLECT:
+    ; DI/EI-wrapped: see SOUND_SHOT's own comment (BGM_TICK PSG-register
+    ; select/write race, follow-up#24).
+    DI
     LD A,7 : OUT (PSG_ADDR),A
     LD A,MIXER_TONE_A : OUT (PSG_DATA),A
     LD A,0 : OUT (PSG_ADDR),A
     LD A,10 : OUT (PSG_DATA),A
     LD A,1 : OUT (PSG_ADDR),A
     XOR A : OUT (PSG_DATA),A
+    EI
     LD A,15 : LD (SND_TIMER),A
     LD A,1 : LD (SND_DECAY),A
     XOR A : LD (SND_EXPLODING),A
@@ -5795,10 +5829,14 @@ SOUND_ZUM_DEFLECT:
 ; Same SND_EXPLODING guard as SOUND_DESTROY (blocks the shot sound from
 ; cutting it off early).
 SOUND_BOSS_BOOM:
+    ; DI/EI-wrapped: see SOUND_SHOT's own comment (BGM_TICK PSG-register
+    ; select/write race, follow-up#24).
+    DI
     LD A,7 : OUT (PSG_ADDR),A
     LD A,MIXER_NOISE_A : OUT (PSG_DATA),A
     LD A,6 : OUT (PSG_ADDR),A
     LD A,BOSS_BOOM_NOISE_PERIOD : OUT (PSG_DATA),A
+    EI
     LD A,15 : LD (SND_TIMER),A
     XOR A : LD (SND_DECAY),A
     LD A,BOSS_BOOM_DECAY_PERIOD : LD (SND_BOOM_DECAY_CTR),A
@@ -5820,8 +5858,14 @@ SOUND_UPDATE:
 
     CALL SOUND_CALC_NOISE_GATE_VOLUME
     LD B,A
+    ; DI/EI-wrapped: see SOUND_SHOT's own comment (BGM_TICK PSG-register
+    ; select/write race, follow-up#24) - this pair is the highest-
+    ; exposure one of all (SOUND_UPDATE runs every single MAINLOOP
+    ; frame, not just on a rare SFX trigger).
+    DI
     LD A,8 : OUT (PSG_ADDR),A
     LD A,B : OUT (PSG_DATA),A
+    EI
     LD A,(SND_TIMER)
     OR A
     RET Z
@@ -5876,8 +5920,12 @@ SCNGV_SILENT:
 SU_BOOM:
     CALL SOUND_CALC_NOISE_GATE_VOLUME
     LD B,A
+    ; DI/EI-wrapped: see SOUND_SHOT's own comment (BGM_TICK PSG-register
+    ; select/write race, follow-up#24).
+    DI
     LD A,8 : OUT (PSG_ADDR),A
     LD A,B : OUT (PSG_DATA),A
+    EI
 
     LD A,(SND_TIMER)
     OR A
@@ -5900,10 +5948,14 @@ SU_BOOM:
 ; re-arm the identical envelope twice on the same frame for no audible
 ; difference, so the shared dispatch point is the cleaner call site.
 SOUND_HORMING:
+    ; DI/EI-wrapped: see SOUND_SHOT's own comment (BGM_TICK PSG-register
+    ; select/write race, follow-up#24).
+    DI
     LD A,7 : OUT (PSG_ADDR),A
     LD A,MIXER_NOISE_A : OUT (PSG_DATA),A
     LD A,6 : OUT (PSG_ADDR),A
     LD A,HORMING_NOISE_PERIOD : OUT (PSG_DATA),A
+    EI
     LD A,15 : LD (SND_TIMER),A
     LD A,HORMING_SND_DECAY : LD (SND_DECAY),A
     XOR A : LD (SND_EXPLODING),A
@@ -5914,10 +5966,14 @@ SOUND_HORMING:
 ; (SND_DECAY=0、BOSS_BOOM_DECAY_PERIODで1段ずつ減衰)を再利用、ノイズ
 ; ピッチのみ差し替え。SND_EXPLODING は立てない(自身のコメント参照)。
 SOUND_THUNDER:
+    ; DI/EI-wrapped: see SOUND_SHOT's own comment (BGM_TICK PSG-register
+    ; select/write race, follow-up#24).
+    DI
     LD A,7 : OUT (PSG_ADDR),A
     LD A,MIXER_NOISE_A : OUT (PSG_DATA),A
     LD A,6 : OUT (PSG_ADDR),A
     LD A,THUNDER_NOISE_PERIOD : OUT (PSG_DATA),A
+    EI
     LD A,15 : LD (SND_TIMER),A
     XOR A : LD (SND_DECAY),A
     LD A,BOSS_BOOM_DECAY_PERIOD : LD (SND_BOOM_DECAY_CTR),A
@@ -5931,12 +5987,16 @@ SOUND_THUNDER:
 ; ものなので、新規のゲートモードを増やさずそのまま流用するだけで
 ; プロトタイプのS1が狙っていた「ビビビー」感を再現できる。
 SOUND_SBEAM:
+    ; DI/EI-wrapped: see SOUND_SHOT's own comment (BGM_TICK PSG-register
+    ; select/write race, follow-up#24).
+    DI
     LD A,7 : OUT (PSG_ADDR),A
     LD A,MIXER_TONE_A : OUT (PSG_DATA),A
     LD A,0 : OUT (PSG_ADDR),A
     LD A,SBEAM_SND_TONE_PERIOD : OUT (PSG_DATA),A
     LD A,1 : OUT (PSG_ADDR),A
     XOR A : OUT (PSG_DATA),A
+    EI
     LD A,15 : LD (SND_TIMER),A
     LD A,SBEAM_SND_DECAY : LD (SND_DECAY),A
     XOR A : LD (SND_EXPLODING),A
@@ -5954,8 +6014,12 @@ SOUND_SBEAM:
 ; channel-A mute).
 STOP_SBEAM_SOUND:
     XOR A : LD (SND_TIMER),A
+    ; DI/EI-wrapped: see SOUND_SHOT's own comment (BGM_TICK PSG-register
+    ; select/write race, follow-up#24).
+    DI
     LD A,8 : OUT (PSG_ADDR),A
     XOR A : OUT (PSG_DATA),A
+    EI
     RET
 
 ; ササピーレーザー(SasapiBroken停止中4方向ビーム)発射音 - 指示通り
@@ -5963,12 +6027,16 @@ STOP_SBEAM_SOUND:
 ; そのまま。L3の選定通りデューティゲートを追加(Stage1本来は無し)、
 ; ピークは"それぞれ音量は最大で"により15。
 SOUND_SASAPI_LASER:
+    ; DI/EI-wrapped: see SOUND_SHOT's own comment (BGM_TICK PSG-register
+    ; select/write race, follow-up#24).
+    DI
     LD A,7 : OUT (PSG_ADDR),A
     LD A,MIXER_TONE_A : OUT (PSG_DATA),A
     LD A,0 : OUT (PSG_ADDR),A
     LD A,SASAPI_LASER_TONE_PERIOD : OUT (PSG_DATA),A
     LD A,1 : OUT (PSG_ADDR),A
     XOR A : OUT (PSG_DATA),A
+    EI
     LD A,15 : LD (SND_TIMER),A
     LD A,SASAPI_LASER_SND_DECAY : LD (SND_DECAY),A
     XOR A : LD (SND_EXPLODING),A
@@ -5990,17 +6058,204 @@ SOUND_SASAPI_LASER:
 ; 何度も再着火される「繰り返しトリガー」の音であり、一度きりの「爆発」
 ; ではないため)。
 SOUND_BOSS_MATERIALIZE:
+    ; DI/EI-wrapped: see SOUND_SHOT's own comment (BGM_TICK PSG-register
+    ; select/write race, follow-up#24).
+    DI
     LD A,7 : OUT (PSG_ADDR),A
     LD A,MIXER_TONE_A : OUT (PSG_DATA),A
     LD A,0 : OUT (PSG_ADDR),A
     LD A,124 : OUT (PSG_DATA),A
     LD A,1 : OUT (PSG_ADDR),A
     LD A,1 : OUT (PSG_DATA),A
+    EI
     LD A,15 : LD (SND_TIMER),A
     XOR A : LD (SND_DECAY),A
     LD A,BOSS_BOOM_DECAY_PERIOD : LD (SND_BOOM_DECAY_CTR),A
     XOR A : LD (SND_EXPLODING),A
     LD A,1 : LD (SND_NOISE),A
+    RET
+
+; ---------- BGM driver (Vsync-driven, round36-14 follow-up#24) ----------
+; "ではBGMを実装する Stage1に関してはあとで実装するんで まずStage2から
+; Vsyncを使ってBGMドライバを実装 で、ドライバ自体は各バンクに配置 もう
+; 空き容量がほとんど無いので BGMは空きの範囲で仮実装". Unlike every other
+; subsystem in this file (which only ever runs synchronously from
+; MAINLOOP, at whatever pace MAINLOOP's own T-state cost happens to
+; produce this frame - see this file's own "no per-frame HALT" design
+; note near TICK), BGM_TICK is installed into the real MSX H.TIMI hook
+; (0FD9Fh, RAM, serviced by the BIOS's own IM1 handler every real
+; VBlank - same mechanism src/CYBER SHMUP.asm already documents using
+; the opposite way, neutralizing it to a bare RET so its own EI+HALT
+; becomes a cheap exact vblank wait) so playback tempo stays locked to
+; real elapsed time regardless of how heavy any given MAINLOOP frame is.
+;
+; "ドライバ自体は各バンクに配置" - on this cartridge's ASCII16 mapper,
+; whichever ROM bank currently occupies a page is the only code the CPU
+; can actually execute at that address, and H.TIMI can fire at any
+; moment - including while some other stage/title/ED bank is paged in
+; instead of this one. Every stage/bank already re-runs its OWN INIT (and
+; would therefore re-arm this same hook to point at ITS OWN resident
+; copy) whenever it becomes active - confirmed for the existing
+; stage1->stage2 transition by tools/bankswitch_poc/verify_comb.py - so
+; "each bank carries its own driver" is satisfied by each bank being a
+; self-contained copy that installs its own hook from its own INIT,
+; exactly like this one. Stage1's own copy is a separate, later task
+; ("Stage1に関してはあとで実装するんで" - this round is Stage2 only).
+;
+; PSG allocation: channels B/C only (R2/R3 tone period B, R4/R5 tone
+; period C, R9/R10 volume B/C) - reserved for exactly this purpose many
+; rounds ago and never touched since (see SND_TIMER's own comment).
+; Channel A remains exclusively the SFX channel above, untouched by any
+; of this. R7 (mixer) is shared: BGM_TICK does a read-modify-write every
+; tick (IN from the PSG's own read-back port, 0A2h) that only ever
+; clears bits1-2 (tone B/tone C enable), leaving channel A's own noise/
+; tone bits - written by the SFX routines above - completely alone, so
+; the two subsystems never fight over the other's half of the same
+; register.
+;
+; Every SFX routine above that does its own PSG_ADDR-select/PSG_DATA-
+; write pair is now DI/EI-wrapped specifically because of this driver:
+; an H.TIMI interrupt firing between an SFX routine's own two OUTs would
+; leave BGM_TICK's last-selected register number in the PSG's address
+; latch when that SFX routine resumes, sending its pending data write to
+; the WRONG register. BGM_TICK's own writes need no such wrapping - by
+; definition it runs entirely inside one interrupt (further H.TIMI
+; activity is blocked by the Z80's own IFF1-on-accept plus the BIOS IM1
+; handler's own EI-at-the-very-end convention), so nothing can
+; interleave with its own address/data pairs.
+;
+; "仮実装" scope: BGM_PATTERN/BGM_PERIOD_LO/HI (bgm_gen.py) are a short
+; placeholder 2-voice loop, not composed music - this round only proves
+; the mechanism (real-vsync-timed row advance, independent of MAINLOOP's
+; own free-running pace).
+;
+; z80emu.py has no interrupt simulation at all (same documented blind
+; spot as every other H.TIMI-adjacent comment in this file) - BGM_TICK
+; is therefore verified the same way every other routine in this file's
+; own test suite already is, by direct CALL from bgm_test.py, not by
+; simulating a real vblank landing mid-MAINLOOP. INIT_BGM's own hook
+; installation is checked separately (byte-for-byte read of HTIMI_HOOK
+; after a real INIT trace).
+PSG_DATA_R      EQU 0A2h        ; PSG register read-back port (IN)
+HTIMI_HOOK      EQU 0FD9Fh      ; BIOS vblank hook, RAM
+BGM_VOLUME      EQU 10          ; fixed volume, both channels' non-rest notes (0-15)
+; RAM: C000h-EEFFh is otherwise-unused real RAM (see SBEAM_SPRITE_ATTRS's
+; own comment) - placed just past BULLET3_U_ATTRS (ends C149h), nowhere
+; near the STACKTOP margin the F1xx-F3xx variables above have to share.
+BGM_PATTERN_PTR EQU 0C150h      ; 2 bytes: current read position within BGM_PATTERN
+BGM_ROW_TIMER   EQU 0C152h      ; 1 byte: vblank ticks remaining on the current row
+
+INIT_BGM:
+    LD HL,BGM_PATTERN
+    LD (BGM_PATTERN_PTR),HL
+    XOR A
+    LD (BGM_ROW_TIMER),A          ; 0 -> BGM_TICK's very first call loads a fresh row
+    LD A,0C3h                     ; JP nn opcode
+    LD (HTIMI_HOOK),A
+    LD HL,BGM_TICK
+    LD (HTIMI_HOOK+1),HL
+    RET
+
+; H.TIMI hook target - called once per real VBlank on real hardware.
+; Register footprint kept deliberately asymmetric: the common case (row
+; still holding, ~19 ticks out of 20 with this file's own placeholder
+; durations) only pushes AF; BC/DE/HL are pushed only on the rarer tick
+; that actually loads a new row - every real MSX interrupt handler must
+; restore every register it touches before returning (it can land in
+; the middle of ANY MAINLOOP code, which resumes expecting its own
+; registers untouched), so this is a size/speed trade, never a
+; correctness one - both paths fully restore everything they use.
+BGM_TICK:
+    PUSH AF
+    LD A,(BGM_ROW_TIMER)
+    OR A
+    JR Z,BGMT_NEWROW
+    DEC A
+    LD (BGM_ROW_TIMER),A
+    JR BGMT_MIXER
+BGMT_NEWROW:
+    PUSH BC
+    PUSH DE
+    PUSH HL
+    CALL BGMT_LOAD_ROW
+    POP HL
+    POP DE
+    POP BC
+BGMT_MIXER:
+    LD A,7 : OUT (PSG_ADDR),A
+    IN A,(PSG_DATA_R)
+    AND 0F9h                      ; clear bits1-2: tone B, tone C enabled; everything else (channel A's own mode, noise B/C, I/O dir) untouched
+    OUT (PSG_DATA),A
+    POP AF
+    RET
+
+; reads one row (note_B, note_C, duration) from BGM_PATTERN, looping
+; back to BGM_PATTERN's own start on BGM_LOOP_MARK. Only called from
+; BGM_TICK's own BGMT_NEWROW path above, which already saved BC/DE/HL -
+; free to use all three here.
+BGMT_LOAD_ROW:
+    LD HL,(BGM_PATTERN_PTR)
+    LD A,(HL)
+    CP BGM_LOOP_MARK
+    JR NZ,BGMT_LR_GOTB
+    LD HL,BGM_PATTERN
+    LD A,(HL)
+BGMT_LR_GOTB:
+    LD B,A                        ; B = note_B
+    INC HL
+    LD C,(HL) : INC HL             ; C = note_C
+    LD D,(HL) : INC HL             ; D = duration (ticks)
+    LD (BGM_PATTERN_PTR),HL
+    LD A,D
+    LD (BGM_ROW_TIMER),A
+    ; BGMT_WRITE_CHAN_B clobbers B/C/D/E as its own scratch (period lo/hi
+    ; land in B/C, the 16-bit table-index add uses D/E) - note_C (this
+    ; C) would NOT survive that CALL untouched, so it's saved on the
+    ; stack across it instead of staying in a register.
+    PUSH BC
+    LD A,B
+    CALL BGMT_WRITE_CHAN_B
+    POP BC
+    LD A,C
+    CALL BGMT_WRITE_CHAN_C
+    RET
+
+; in: A = note index into BGM_PERIOD_LO/HI, or BGM_NOTE_REST (silence).
+BGMT_WRITE_CHAN_B:
+    CP BGM_NOTE_REST
+    JR Z,BGMT_WCB_REST
+    LD E,A : LD D,0
+    LD HL,BGM_PERIOD_LO : ADD HL,DE : LD A,(HL) : LD B,A
+    LD HL,BGM_PERIOD_HI : ADD HL,DE : LD A,(HL) : LD C,A
+    LD A,2 : OUT (PSG_ADDR),A
+    LD A,B : OUT (PSG_DATA),A
+    LD A,3 : OUT (PSG_ADDR),A
+    LD A,C : OUT (PSG_DATA),A
+    LD A,9 : OUT (PSG_ADDR),A
+    LD A,BGM_VOLUME : OUT (PSG_DATA),A
+    RET
+BGMT_WCB_REST:
+    LD A,9 : OUT (PSG_ADDR),A
+    XOR A : OUT (PSG_DATA),A
+    RET
+
+; in: A = note index into BGM_PERIOD_LO/HI, or BGM_NOTE_REST (silence).
+BGMT_WRITE_CHAN_C:
+    CP BGM_NOTE_REST
+    JR Z,BGMT_WCC_REST
+    LD E,A : LD D,0
+    LD HL,BGM_PERIOD_LO : ADD HL,DE : LD A,(HL) : LD B,A
+    LD HL,BGM_PERIOD_HI : ADD HL,DE : LD A,(HL) : LD C,A
+    LD A,4 : OUT (PSG_ADDR),A
+    LD A,B : OUT (PSG_DATA),A
+    LD A,5 : OUT (PSG_ADDR),A
+    LD A,C : OUT (PSG_DATA),A
+    LD A,10 : OUT (PSG_ADDR),A
+    LD A,BGM_VOLUME : OUT (PSG_DATA),A
+    RET
+BGMT_WCC_REST:
+    LD A,10 : OUT (PSG_ADDR),A
+    XOR A : OUT (PSG_DATA),A
     RET
 
 ; ---------- Stage2 spawn schedule (round34, "全てスケジュールに") ----------
