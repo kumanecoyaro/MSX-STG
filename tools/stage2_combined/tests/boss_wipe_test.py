@@ -23,17 +23,29 @@ def check(label, cond):
 # wipe effect.
 #
 # follow-up#20 ("次にワイプ中は初期停止状態のスプライトでワイプが終わる
-# まで停止すること"): the boss no longer patrols while the wipe sweeps -
-# BOSS_WIPE_ACT was repurposed from a plain 0/1 flag into a remaining-
-# laps counter (TRIGGER_BOSS_WIPE seeds it with BOSS_WIPE_LAPS,
-# UPDATE_BOSS_WIPE decrements it each time the sweep wraps back to
-# BOSS_WIPE_START_Y, and stops for good once it reaches 0) so the wipe
-# can finish on its own without ever needing the boss to reach its first
-# attack pose (which, now that the boss is frozen the whole time, can no
-# longer happen while the wipe is still running). This file verifies
-# TRIGGER/UPDATE/DRAW/HIDE_BOSS_WIPE_*, the freeze in UBA_ACTIVE, and
-# every call site (S2_BOSS_SPAWN, UBA_MOVE_RIGHT, TRIGGER_BOSS_BROKEN_
-# FORM, INIT_BOSS_EXPLOSION) directly.
+# まで停止すること"): the boss no longer patrols while the wipe sweeps
+# (UBA_ACTIVE freezes BOSS_X/Y/PHASE/DIR entirely while BOSS_WIPE_ACT!=0).
+#
+# follow-up#21 ("ボス出現時は5秒停止しワイプを繰り返すように変更"):
+# replaced follow-up#20's arbitrary "N laps" stop condition with an
+# explicit real-time duration after the boss's own fixed BOSS_SPAWN_TICK
+# (995). GAME_TICK is NOT a raw-frame counter, though - it only advances
+# once every 8 raw MAINLOOP frames (a separate byte, TICK, is the real
+# per-frame counter; GAME_TICK matches the schedule editor's own
+# scheduling granularity instead) - an earlier version of this feature
+# wrongly assumed GAME_TICK itself ran at 60fps and used 300 directly,
+# caught by this file's own real-MAINLOOP timing test actually measuring
+# the mismatch. Correct: 5 real seconds = 300 raw frames / 8 = 37.5,
+# rounded up to BOSS_WIPE_DURATION_TICKS=38 GAME_TICK units (>=5s, never
+# under). BOSS_WIPE_ACT reverted to a plain 0/1 flag; UPDATE_BOSS_WIPE
+# now compares the live GAME_TICK against the compile-time constant
+# BOSS_WIPE_END_TICK (995+38=1033) every frame, same true 16-bit
+# SBC HL,DE idiom as BOSS_POSE_END_TICK/NIGHT_START_TICK/etc. - no
+# runtime-captured end-tick RAM needed since the spawn tick is always
+# the same fixed schedule constant. This file verifies TRIGGER/UPDATE/
+# DRAW/HIDE_BOSS_WIPE_*, the freeze in UBA_ACTIVE, the real end-to-end
+# timing, and every call site (S2_BOSS_SPAWN, UBA_MOVE_RIGHT,
+# TRIGGER_BOSS_BROKEN_FORM, INIT_BOSS_EXPLOSION) directly.
 
 out, sym, text = get_out()
 SAT_BASE = 0x1B00
@@ -43,11 +55,13 @@ BOSS_WIPE_SLOTS = sym["BOSS_WIPE_SLOTS"]
 BOSS_WIPE_START_Y = sym["BOSS_WIPE_START_Y"]
 BOSS_WIPE_END_Y = sym["BOSS_WIPE_END_Y"]
 BOSS_WIPE_SPEED = sym["BOSS_WIPE_SPEED"]
-BOSS_WIPE_LAPS = sym["BOSS_WIPE_LAPS"]
+BOSS_WIPE_DURATION_TICKS = sym["BOSS_WIPE_DURATION_TICKS"]
+BOSS_WIPE_END_TICK = sym["BOSS_WIPE_END_TICK"]
 BOSS_WIPE_ACT = sym["BOSS_WIPE_ACT"]
 BOSS_WIPE_Y = sym["BOSS_WIPE_Y"]
 BOSS_SPAWNX = sym["BOSS_SPAWNX"]
 BOSS_SPAWN_Y = sym["BOSS_SPAWN_Y"]
+BOSS_SPAWN_TICK = sym["BOSS_SPAWN_TICK"]
 BOSS_ACT = sym["BOSS_ACT"]
 BOSS_X = sym["BOSS_X"]
 BOSS_Y = sym["BOSS_Y"]
@@ -56,8 +70,19 @@ BOSS_DIR = sym["BOSS_DIR"]
 BOSS_HP = sym["BOSS_HP"]
 BOSS_FORM = sym["BOSS_FORM"]
 BOSS_BROKEN_HP_THRESHOLD = sym["BOSS_BROKEN_HP_THRESHOLD"]
+GAME_TICK = sym["GAME_TICK"]
 
 STEPS_PER_LAP = -(-(BOSS_WIPE_END_Y - BOSS_WIPE_START_Y) // BOSS_WIPE_SPEED)  # ceil div
+
+
+def set_game_tick(cpu, val):
+    cpu.mem[GAME_TICK] = val & 0xFF
+    cpu.mem[GAME_TICK + 1] = (val >> 8) & 0xFF
+
+
+def get_game_tick(cpu):
+    return cpu.mem[GAME_TICK] | (cpu.mem[GAME_TICK + 1] << 8)
+
 
 check("BOSS_WIPE_SLOTS is 4 (one dummy per 16px band, matching the boss's "
       "own 64px-wide body)", BOSS_WIPE_SLOTS == 4)
@@ -65,8 +90,13 @@ check("BOSS_WIPE_START_Y is 16px above BOSS_SPAWN_Y",
       BOSS_WIPE_START_Y == BOSS_SPAWN_Y - 16)
 check("BOSS_WIPE_END_Y is past the boss's own 64px-tall body plus a further "
       "64px of clearance", BOSS_WIPE_END_Y == BOSS_SPAWN_Y + 64 + 64)
-check("BOSS_WIPE_LAPS is more than 1 (follow-up#19's \"1回だけではなく...\" "
-      "still holds under the new lap-counter design)", BOSS_WIPE_LAPS > 1)
+check("BOSS_WIPE_DURATION_TICKS is 38 GAME_TICK units (38*8=304 raw frames, "
+      ">=5 seconds @ this project's assumed 60fps and GAME_TICK's own real "
+      "1-per-8-raw-frames rate - NOT 300, which would assume GAME_TICK itself "
+      "ran at 60fps)", BOSS_WIPE_DURATION_TICKS == 38)
+check("BOSS_WIPE_END_TICK is exactly BOSS_SPAWN_TICK + BOSS_WIPE_DURATION_TICKS "
+      "(a compile-time constant, not a captured runtime value)",
+      BOSS_WIPE_END_TICK == BOSS_SPAWN_TICK + BOSS_WIPE_DURATION_TICKS)
 
 
 def slot_bytes(cpu, slot):
@@ -74,13 +104,12 @@ def slot_bytes(cpu, slot):
     return tuple(cpu.vram[base + i] for i in range(4))
 
 
-# ---- TRIGGER_BOSS_WIPE: seeds the lap counter, not just a flag ----
+# ---- TRIGGER_BOSS_WIPE: plain 0/1 flag again ----
 cpu = fresh_cpu()
 cpu.mem[BOSS_WIPE_ACT] = 0
 cpu.mem[BOSS_WIPE_Y] = 0
 call_routine(cpu, "TRIGGER_BOSS_WIPE")
-check("TRIGGER_BOSS_WIPE seeds BOSS_WIPE_ACT with BOSS_WIPE_LAPS",
-      cpu.mem[BOSS_WIPE_ACT] == BOSS_WIPE_LAPS)
+check("TRIGGER_BOSS_WIPE sets BOSS_WIPE_ACT=1", cpu.mem[BOSS_WIPE_ACT] == 1)
 check("TRIGGER_BOSS_WIPE resets BOSS_WIPE_Y to BOSS_WIPE_START_Y",
       cpu.mem[BOSS_WIPE_Y] == BOSS_WIPE_START_Y & 0xFF)
 
@@ -132,67 +161,74 @@ check("UPDATE_BOSS_WIPE does nothing while BOSS_WIPE_ACT=0 (Y untouched)",
       cpu.mem[BOSS_WIPE_Y] == 55)
 
 # ---- UPDATE_BOSS_WIPE: advances Y by BOSS_WIPE_SPEED and draws while
-# still short of BOSS_WIPE_END_Y, without touching the lap counter yet ----
+# still well within the 5-second window ----
 cpu = fresh_cpu()
-cpu.mem[BOSS_WIPE_ACT] = BOSS_WIPE_LAPS
+set_game_tick(cpu, BOSS_SPAWN_TICK)
+cpu.mem[BOSS_WIPE_ACT] = 1
 cpu.mem[BOSS_WIPE_Y] = BOSS_WIPE_START_Y & 0xFF
 call_routine(cpu, "UPDATE_BOSS_WIPE")
 check("UPDATE_BOSS_WIPE advances BOSS_WIPE_Y by BOSS_WIPE_SPEED while still "
-      "short of BOSS_WIPE_END_Y",
+      "well within the 5-second window",
       cpu.mem[BOSS_WIPE_Y] == (BOSS_WIPE_START_Y + BOSS_WIPE_SPEED) & 0xFF)
-check("UPDATE_BOSS_WIPE does not touch the lap counter mid-lap",
-      cpu.mem[BOSS_WIPE_ACT] == BOSS_WIPE_LAPS)
+check("UPDATE_BOSS_WIPE does not touch BOSS_WIPE_ACT while still active",
+      cpu.mem[BOSS_WIPE_ACT] == 1)
 mid_slots_ok = all(
     slot_bytes(cpu, BOSS_WIPE_SPR_BASE_SLOT + i)[0] == (BOSS_WIPE_START_Y + BOSS_WIPE_SPEED) & 0xFF
     for i in range(4))
 check("UPDATE_BOSS_WIPE actually redraws all 4 slots to the new Y mid-sweep",
       mid_slots_ok)
 
-# ---- UPDATE_BOSS_WIPE: each full lap decrements the counter by 1 and
-# wraps Y back to BOSS_WIPE_START_Y, for as many laps as BOSS_WIPE_LAPS
-# says - "1回だけではなく...継続してループ" (follow-up#19) still holds ----
+# ---- UPDATE_BOSS_WIPE: keeps wrapping back to BOSS_WIPE_START_Y for as
+# many laps as fit within the 5-second window - "1回だけではなく...継続
+# してループ" (follow-up#19) still holds under the duration-based design.
+# GAME_TICK must be advanced by hand between calls here (call_routine
+# alone never advances it - only real MAINLOOP/step_frame does) ----
 cpu = fresh_cpu()
-cpu.mem[BOSS_WIPE_ACT] = BOSS_WIPE_LAPS
+set_game_tick(cpu, BOSS_SPAWN_TICK)
+cpu.mem[BOSS_WIPE_ACT] = 1
 cpu.mem[BOSS_WIPE_Y] = BOSS_WIPE_START_Y & 0xFF
 lap_ys = []
-lap_acts = []
-for lap in range(BOSS_WIPE_LAPS - 1):
+for lap in range(3):
     for _ in range(STEPS_PER_LAP):
         call_routine(cpu, "UPDATE_BOSS_WIPE")
+        set_game_tick(cpu, get_game_tick(cpu) + 1)
     lap_ys.append(cpu.mem[BOSS_WIPE_Y])
-    lap_acts.append(cpu.mem[BOSS_WIPE_ACT])
-check(f"each of the first {BOSS_WIPE_LAPS - 1} laps takes the expected number "
-      f"of UPDATE_BOSS_WIPE calls ({STEPS_PER_LAP}) and wraps back to "
-      "BOSS_WIPE_START_Y instead of stopping",
+check(f"each of 3 laps takes the expected number of UPDATE_BOSS_WIPE calls "
+      f"({STEPS_PER_LAP}) and wraps back to BOSS_WIPE_START_Y instead of "
+      "stopping (well within the 5-second window so far)",
       all(y == BOSS_WIPE_START_Y & 0xFF for y in lap_ys))
-check("the remaining-laps counter (BOSS_WIPE_ACT) decrements by exactly 1 "
-      "per completed lap", lap_acts == list(range(BOSS_WIPE_LAPS - 1, 0, -1)))
+check("BOSS_WIPE_ACT is still 1 after 3 laps - the duration window, not lap "
+      "count, is what eventually stops this", cpu.mem[BOSS_WIPE_ACT] == 1)
 still_visible = all(slot_bytes(cpu, BOSS_WIPE_SPR_BASE_SLOT + i)[0] == BOSS_WIPE_START_Y & 0xFF
                      for i in range(4))
-check("the 4 dummy sprites are still being drawn (not hidden) with laps "
-      "still remaining", still_visible)
+check("the 4 dummy sprites are still being drawn (not hidden) mid-window",
+      still_visible)
 
-# ---- the FINAL lap: the counter reaches 0 and UPDATE_BOSS_WIPE stops
-# itself for good, with no separate STOP_BOSS_WIPE call needed ----
-for _ in range(STEPS_PER_LAP):
-    call_routine(cpu, "UPDATE_BOSS_WIPE")
-check("BOSS_WIPE_ACT reaches exactly 0 after BOSS_WIPE_LAPS total laps",
+# ---- once GAME_TICK reaches BOSS_WIPE_END_TICK, UPDATE_BOSS_WIPE stops
+# itself for good regardless of where in a lap it is - no separate
+# STOP_BOSS_WIPE call needed ----
+set_game_tick(cpu, BOSS_WIPE_END_TICK)
+call_routine(cpu, "UPDATE_BOSS_WIPE")
+check("BOSS_WIPE_ACT reaches exactly 0 once GAME_TICK reaches BOSS_WIPE_END_TICK",
       cpu.mem[BOSS_WIPE_ACT] == 0)
 final_hidden = all(slot_bytes(cpu, BOSS_WIPE_SPR_BASE_SLOT + i)[0] == 209 for i in range(4))
 check("UPDATE_BOSS_WIPE hides all 4 slots (Y=209) itself the instant the "
-      "lap counter reaches 0", final_hidden)
+      "5-second window elapses", final_hidden)
+set_game_tick(cpu, get_game_tick(cpu) + 1)
 call_routine(cpu, "UPDATE_BOSS_WIPE")
 stays_hidden = all(slot_bytes(cpu, BOSS_WIPE_SPR_BASE_SLOT + i)[0] == 209 for i in range(4))
-check("UPDATE_BOSS_WIPE does not resurrect the sprites on the frame after "
-      "the lap counter reaches 0 (BOSS_WIPE_ACT=0 gate holds)", stays_hidden)
+check("UPDATE_BOSS_WIPE does not resurrect the sprites on a later frame "
+      "(BOSS_WIPE_ACT=0 gate holds, GAME_TICK only ever increases so this "
+      "branch can never fire again either)", stays_hidden)
 
-# ---- STOP_BOSS_WIPE: force-stops early, regardless of remaining laps ----
+# ---- STOP_BOSS_WIPE: force-stops early, regardless of the duration window ----
 cpu = fresh_cpu()
-cpu.mem[BOSS_WIPE_ACT] = BOSS_WIPE_LAPS
+set_game_tick(cpu, BOSS_SPAWN_TICK)
+cpu.mem[BOSS_WIPE_ACT] = 1
 cpu.mem[BOSS_WIPE_Y] = 90
 call_routine(cpu, "DRAW_BOSS_WIPE_SPRITES")
 call_routine(cpu, "STOP_BOSS_WIPE")
-check("STOP_BOSS_WIPE clears BOSS_WIPE_ACT even with laps still remaining",
+check("STOP_BOSS_WIPE clears BOSS_WIPE_ACT even well within the 5-second window",
       cpu.mem[BOSS_WIPE_ACT] == 0)
 stopped_hidden = all(slot_bytes(cpu, BOSS_WIPE_SPR_BASE_SLOT + i)[0] == 209 for i in range(4))
 check("STOP_BOSS_WIPE hides all 4 slots (Y=209)", stopped_hidden)
@@ -201,8 +237,8 @@ check("STOP_BOSS_WIPE hides all 4 slots (Y=209)", stopped_hidden)
 cpu = fresh_cpu()
 cpu.mem[BOSS_WIPE_ACT] = 0
 call_routine(cpu, "S2_BOSS_SPAWN")
-check("S2_BOSS_SPAWN itself calls TRIGGER_BOSS_WIPE (BOSS_WIPE_ACT seeded to "
-      "BOSS_WIPE_LAPS right after spawning)", cpu.mem[BOSS_WIPE_ACT] == BOSS_WIPE_LAPS)
+check("S2_BOSS_SPAWN itself calls TRIGGER_BOSS_WIPE (BOSS_WIPE_ACT=1 right "
+      "after spawning)", cpu.mem[BOSS_WIPE_ACT] == 1)
 check("S2_BOSS_SPAWN's own boss-activation flag is also set, confirming this "
       "is really the real spawn routine and not some other path",
       cpu.mem[BOSS_ACT] == 1)
@@ -223,10 +259,10 @@ check("UBA_ACTIVE leaves BOSS_X/BOSS_Y/BOSS_PHASE/BOSS_DIR completely "
       "untouched across 50 calls while the wipe is still active (the boss "
       "stays parked in its initial spawn pose)", frozen_ok)
 check("BOSS_WIPE_ACT itself is untouched by UBA_ACTIVE (only UPDATE_BOSS_WIPE "
-      "advances it - UBA_ACTIVE only reads it)", cpu.mem[BOSS_WIPE_ACT] == BOSS_WIPE_LAPS)
+      "advances it - UBA_ACTIVE only reads it)", cpu.mem[BOSS_WIPE_ACT] == 1)
 
-# ---- once the wipe naturally finishes (lap counter reaches 0 on its own),
-# UBA_ACTIVE resumes normal patrol movement ----
+# ---- once the wipe naturally finishes (the 5-second window elapses on its
+# own), UBA_ACTIVE resumes normal patrol movement ----
 cpu = fresh_cpu()
 call_routine(cpu, "S2_BOSS_SPAWN")
 cpu.mem[BOSS_WIPE_ACT] = 0   # simulate the wipe having already finished
@@ -235,13 +271,52 @@ check("UBA_ACTIVE actually moves the boss once BOSS_WIPE_ACT is 0 (BOSS_X "
       "changes from its spawn value - patrol has resumed)",
       cpu.mem[BOSS_X] != BOSS_SPAWNX or cpu.mem[BOSS_Y] != BOSS_SPAWN_Y)
 
+# ---- end-to-end real-time confirmation: a real MAINLOOP run from spawn
+# through the full window, confirming the boss stays frozen for just
+# short of BOSS_WIPE_DURATION_TICKS*8 raw frames after spawning and has
+# resumed patrolling shortly after - the actual "5秒停止" claim measured
+# in real raw frames, not just the isolated GAME_TICK-level unit tests
+# above (this is exactly the kind of check that caught the original
+# GAME_TICK-isn't-a-raw-frame-counter bug - see BOSS_WIPE_DURATION_TICKS'
+# own comment). RAW_FRAMES_PER_GAME_TICK=8 matches MAINLOOP's own
+# `AND 07h` gate around its GAME_TICK advance. UBA_ACTIVE runs BEFORE
+# UPDATE_BOSS_WIPE in MAINLOOP's own call order, so BOSS_WIPE_ACT
+# clearing and BOSS_X actually starting to move land on two DIFFERENT
+# frames (confirmed empirically below), not the same one - the exact
+# unfreeze frame is a call-order detail, not part of the "5 seconds"
+# spec itself, so this checks "still frozen with margin to spare" and
+# "unfrozen with margin to spare" rather than one single exact frame. ----
+RAW_FRAMES_PER_GAME_TICK = 8
+EXPECTED_UNFREEZE_RAW_FRAMES = BOSS_WIPE_DURATION_TICKS * RAW_FRAMES_PER_GAME_TICK  # 304
+
+cpu = fresh_cpu()
+spawned_at = None
+for i in range(9000):
+    step_frame(cpu)
+    if cpu.mem[BOSS_ACT] == 1 and spawned_at is None:
+        spawned_at = i
+        x_at_spawn = cpu.mem[BOSS_X]
+        break
+check("real MAINLOOP: boss spawns", spawned_at is not None)
+for _ in range(EXPECTED_UNFREEZE_RAW_FRAMES - 1):
+    step_frame(cpu)
+check(f"real MAINLOOP: the boss is STILL frozen at its spawn X just short of "
+      f"the expected ~{EXPECTED_UNFREEZE_RAW_FRAMES}-raw-frame window "
+      "(BOSS_WIPE_ACT still nonzero)",
+      cpu.mem[BOSS_WIPE_ACT] != 0 and cpu.mem[BOSS_X] == x_at_spawn)
+for _ in range(3):
+    step_frame(cpu)
+check("real MAINLOOP: the boss has unfrozen and started patrolling (BOSS_X "
+      "has moved away from its spawn value) shortly after the expected "
+      "window elapses", cpu.mem[BOSS_WIPE_ACT] == 0 and cpu.mem[BOSS_X] != x_at_spawn)
+
 # ---- UBA_MOVE_RIGHT (first-attack pose entry) still force-stops the wipe
 # as a safety net - now normally redundant (the wipe finishes long before
 # the boss can ever reach this point while frozen), but still correct if
-# ever reached with laps remaining ----
+# ever reached with the window not yet elapsed ----
 cpu = fresh_cpu()
 call_routine(cpu, "S2_BOSS_SPAWN")
-cpu.mem[BOSS_WIPE_ACT] = BOSS_WIPE_LAPS
+cpu.mem[BOSS_WIPE_ACT] = 1
 cpu.mem[BOSS_WIPE_Y] = 90
 call_routine(cpu, "DRAW_BOSS_WIPE_SPRITES")
 call_routine(cpu, "UBA_MOVE_RIGHT")
@@ -270,7 +345,7 @@ assert BOSS_EXPL_CX == BOSS_WIPE_ACT and BOSS_EXPL_CY == BOSS_WIPE_Y, \
 # BOSS_EXPL_CX afterward is correct, not a regression.
 cpu = fresh_cpu()
 call_routine(cpu, "S2_BOSS_SPAWN")
-cpu.mem[BOSS_WIPE_ACT] = BOSS_WIPE_LAPS   # wipe still actively sweeping
+cpu.mem[BOSS_WIPE_ACT] = 1   # wipe still actively sweeping
 cpu.mem[BOSS_WIPE_Y] = 90
 call_routine(cpu, "DRAW_BOSS_WIPE_SPRITES")
 cpu.mem[BOSS_HP] = BOSS_BROKEN_HP_THRESHOLD  # about to cross the threshold
@@ -283,7 +358,7 @@ check("TRIGGER_BOSS_BROKEN_FORM force-stops the wipe before it repurposes "
 
 cpu = fresh_cpu()
 call_routine(cpu, "S2_BOSS_SPAWN")
-cpu.mem[BOSS_WIPE_ACT] = BOSS_WIPE_LAPS
+cpu.mem[BOSS_WIPE_ACT] = 1
 cpu.mem[BOSS_WIPE_Y] = 90
 call_routine(cpu, "DRAW_BOSS_WIPE_SPRITES")
 call_routine(cpu, "INIT_BOSS_EXPLOSION")
@@ -304,10 +379,9 @@ check("INIT_BOSS_EXPLOSION (the real-death path) also force-stops the wipe "
 # land at garbage addresses). Drive many real frames PAST the trigger
 # and confirm BOSS_EXPL_CY is never touched again by anything wipe-
 # related once BOSS_FORM has left 0. ----
-BOSS_FORM = sym["BOSS_FORM"]
 cpu = fresh_cpu()
 call_routine(cpu, "S2_BOSS_SPAWN")
-cpu.mem[BOSS_WIPE_ACT] = BOSS_WIPE_LAPS
+cpu.mem[BOSS_WIPE_ACT] = 1
 cpu.mem[BOSS_WIPE_Y] = 90
 cpu.mem[BOSS_HP] = BOSS_BROKEN_HP_THRESHOLD
 call_routine(cpu, "TRIGGER_BOSS_BROKEN_FORM")

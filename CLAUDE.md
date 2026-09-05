@@ -1311,3 +1311,31 @@
   follow-up#20参照。
   - **保留**: `BOSS_WIPE_SPEED`(16px/frame)・`BOSS_WIPE_LAPS`(4)は
     いずれも未調整の仮値、実機での見え方次第で再調整の可能性あり。
+- **(2026-09-05、Round36-14 follow-up#21、完了済み)**: "ボス出現時は
+  5秒停止しワイプを繰り返すように変更"に対応。follow-up#20の「残り
+  ラップ数(4)をカウントダウン」という間接的な停止条件を、「ボス出現
+  から5秒間」という明示的な実時間ベースの停止条件に再設計。ボスは
+  スケジュール駆動で必ず固定の`BOSS_SPAWN_TICK`(995)にしか出現しない
+  ことを利用し、終了時刻`BOSS_WIPE_END_TICK EQU BOSS_SPAWN_TICK+
+  BOSS_WIPE_DURATION_TICKS`をコンパイル時定数として計算、既存の
+  グローバル16bit`GAME_TICK`と毎フレーム比較(`BOSS_POSE_END_TICK`等と
+  同じ`SBC HL,DE`方式)する設計に変更 - 新規RAMを1バイトも使わずに
+  実時間ベースの終了判定を実現し、`BOSS_WIPE_ACT`もfollow-up#18/#19
+  当初と同じ単純な0/1フラグに戻せた。**開発中に自分の誤った前提による
+  実バグを発見・修正**: 当初`BOSS_WIPE_DURATION_TICKS=300`(60fps前提を
+  そのままGAME_TICKの単位に誤って適用)で実装したが、新規の実MAINLOOP
+  直接計測テストが「300フレーム進めてもGAME_TICKが37前後しか進んで
+  いない」という8倍のズレを検出 - `GAME_TICK`は実は生フレームカウンタ
+  ではなく、別の`TICK`変数(毎フレーム無条件)が真の生フレームカウンタで、
+  `GAME_TICK`自体は`AND 07h`ゲートにより8生フレームに1回しか進まない
+  (スケジュールエディタの単位に合わせるため)とMAINLOOP自身のコメントで
+  確認、正しい換算(5秒=300生フレーム÷8=37.5、切り上げ38)に修正。この
+  バグは単体テストだけでは検出できず、`step_frame()`で生フレームを
+  1個ずつ進める統合テストがあったからこそ発見できた。`boss_wipe_
+  test.py`を新設計に合わせ全面改訂(34→38件)。全回帰`run_all.py`
+  **1286 passed/0 failed**(1282→1286)。Comb ROM再ビルド・
+  `verify_comb.py`で健全性確認の上、Stage2単体ROM・Comb ROM両方送付。
+  詳細はHANDOFF.md Round36-14 follow-up#21参照。
+  - **保留**: `BOSS_WIPE_DURATION_TICKS`(38、"5秒"からの計算値だが
+    切り上げにより実際は約5.07秒)・`BOSS_WIPE_SPEED`(16px/frame)は
+    実機での見え方次第で再調整の可能性あり。

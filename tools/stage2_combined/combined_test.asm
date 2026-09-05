@@ -2493,15 +2493,34 @@ BOSS_WIPE_SPEED EQU 16    ; px/frame, "全速" - moves a full 16px every frame
 ; running (see UBA_ACTIVE's own BOSS_WIPE_ACT freeze check), so the
 ; wipe can no longer rely on "the boss reaches its first attack pose" to
 ; ever stop itself (that can now never happen while frozen - it would
-; deadlock). BOSS_WIPE_ACT is repurposed from a plain 0/1 flag into a
-; remaining-laps counter instead: TRIGGER_BOSS_WIPE seeds it with
-; BOSS_WIPE_LAPS, UPDATE_BOSS_WIPE decrements it by 1 every time the
-; sweep wraps back to BOSS_WIPE_START_Y, and stops for good (same as
-; STOP_BOSS_WIPE) the moment it reaches 0 - "not just once" (follow-
-; up#19) is satisfied by this being >1, and it's still a real, finite
-; "until the wipe finishes" for UBA_ACTIVE's freeze to key off. Untuned
-; placeholder value.
-BOSS_WIPE_LAPS EQU 4
+; deadlock). follow-up#20 handled this with an arbitrary "N laps" counter;
+; follow-up#21 ("ボス出現時は5秒停止しワイプを繰り返すように変更")
+; replaces that with an explicit, real-time duration instead - a much
+; more precise spec than "however many laps". This project assumes
+; 60fps for raw-frame countdowns (see FLASH_DURATION's own comment) -
+; but GAME_TICK is NOT a raw-frame counter: MAINLOOP's own TICK (a
+; separate byte, "every single frame, unconditionally") only advances
+; GAME_TICK once every 8 raw frames (`AND 07h : JR NZ,SKIP_ADVANCE`,
+; see MAINLOOP's own comment on why - matching the schedule editor's
+; own scheduling granularity). An early version of this comment wrongly
+; assumed GAME_TICK itself ticked at 60fps and used 300 here (a real
+; bug caught by a real-MAINLOOP test actually timing the freeze: it
+; measured GAME_TICK advancing only ~37 units over 300 raw frames, 8x
+; slower than assumed). Correct conversion: 5 real seconds = 300 raw
+; frames / 8 raw-frames-per-GAME_TICK = 37.5, rounded up to 38 so the
+; freeze always lasts at least the full 5 seconds (never slightly under).
+BOSS_WIPE_DURATION_TICKS EQU 38   ; >=5 seconds @ 60fps (38*8=304 raw frames = ~5.07s)
+; the boss only ever spawns at the one fixed, schedule-driven
+; BOSS_SPAWN_TICK (995) - never at a runtime-varying tick - so the
+; wipe's own end tick can be a compile-time constant too, with zero
+; extra RAM needed: just compare the ALREADY-EXISTING free-running
+; GAME_TICK global against this constant every frame, same true 16-bit
+; SBC HL,DE idiom as BOSS_POSE_END_TICK/NIGHT_START_TICK/etc. This is
+; what let BOSS_WIPE_ACT revert to being a plain 0/1 flag again instead
+; of follow-up#20's lap counter - no captured runtime end-tick byte(s)
+; needed at all, which matters since (see BOSS_WIPE_ACT's own comment
+; just below) there is no free RAM left to capture one in anyway.
+BOSS_WIPE_END_TICK EQU BOSS_SPAWN_TICK+BOSS_WIPE_DURATION_TICKS   ; 1295
 ; stack_safety_test.py's own tight margin below STACKTOP means there is
 ; NO more genuinely free RAM left in this file at all (F320h was
 ; already the exact ceiling before this feature) - so, same idiom as
@@ -2525,7 +2544,7 @@ BOSS_WIPE_LAPS EQU 4
 ; the very first thing they do, before either one touches BOSS_EXPL_CX/
 ; CY - true exclusivity is now enforced by these two call sites
 ; themselves, not by "the wipe happens to always be over by then".
-BOSS_WIPE_ACT   EQU BOSS_EXPL_CX   ; 0=inactive, N=that many laps left
+BOSS_WIPE_ACT   EQU BOSS_EXPL_CX   ; 0=inactive, 1=sweeping (plain flag again - see BOSS_WIPE_END_TICK's own comment for why follow-up#20's lap counter is no longer needed)
 BOSS_WIPE_Y     EQU BOSS_EXPL_CY   ; current Y (shared - all 4 move together)
 
 ; staging buffer for SBEAM_SLOT_COUNT*4 hw sprite slots (4 bytes each:
@@ -10032,30 +10051,34 @@ UPDATE_BOSS_ALL:
 ; comment for the underlying VDP 4-sprites-per-scanline priority trick)
 ; ----------
 ; Kicks off the sweep - called once from S2_BOSS_SPAWN, right as the
-; boss's own body first appears. Seeds BOSS_WIPE_ACT with the full lap
-; count (see its own EQU comment for why it's a countdown, not a flag).
+; boss's own body first appears. Just a plain 0/1 flag again (see
+; BOSS_WIPE_END_TICK's own comment) - the actual "how long" is entirely
+; GAME_TICK-vs-BOSS_WIPE_END_TICK, not anything captured here.
 TRIGGER_BOSS_WIPE:
-    LD A,BOSS_WIPE_LAPS : LD (BOSS_WIPE_ACT),A
+    LD A,1 : LD (BOSS_WIPE_ACT),A
     LD A,BOSS_WIPE_START_Y : LD (BOSS_WIPE_Y),A
     RET
 
 ; "1回だけではなく攻撃に移るまで継続してループだぞ" (follow-up#19) +
 ; "ワイプ中は初期停止状態のスプライトでワイプが終わるまで停止すること"
-; (follow-up#20) - called every frame while BOSS_ACT!=0 (see MAINLOOP).
-; Reaching BOSS_WIPE_END_Y wraps BOSS_WIPE_Y back to BOSS_WIPE_START_Y
-; and keeps sweeping, decrementing the remaining-laps counter
-; (BOSS_WIPE_ACT) each time - once it hits 0, stops for good right here
-; (same hide as STOP_BOSS_WIPE, no separate call needed since ACT is
-; already 0). UBA_ACTIVE stays frozen (boss doesn't patrol/move at all)
-; for as long as BOSS_WIPE_ACT is nonzero, so this routine reaching 0 on
-; its own IS "the wipe finishing" for that freeze to key off - unlike
-; follow-up#19's design, this can no longer rely on the boss ever
-; reaching its first attack pose to stop itself (that's now unreachable
-; while frozen). STOP_BOSS_WIPE still exists for two other call sites
-; that need to force it off early: UBA_MOVE_RIGHT (attack pose entry,
-; now just a safety net for an edge case again) and TRIGGER_BOSS_BROKEN_
-; FORM/INIT_BOSS_EXPLOSION (a lucky/fast kill mid-wipe - see BOSS_WIPE_
-; ACT's own EQU comment for the real bug this fixed).
+; (follow-up#20) + "ボス出現時は5秒停止しワイプを繰り返すように変更"
+; (follow-up#21) - called every frame while BOSS_ACT!=0 (see MAINLOOP).
+; Stops for good (same hide as STOP_BOSS_WIPE) the instant GAME_TICK
+; reaches BOSS_WIPE_END_TICK (995+38 - at least 5 real seconds after the
+; boss's own fixed spawn tick, see that EQU's own comment for the real
+; GAME_TICK-vs-raw-frame conversion); until then,
+; reaching BOSS_WIPE_END_Y just wraps BOSS_WIPE_Y back to BOSS_WIPE_
+; START_Y and keeps sweeping, satisfying follow-up#19's "not just once"
+; for as many laps as fit in the 5 seconds. UBA_ACTIVE stays frozen
+; (boss doesn't patrol/move at all) for as long as BOSS_WIPE_ACT is
+; nonzero, so this routine reaching 0 on its own IS "the wipe finishing"
+; for that freeze to key off - this can't rely on the boss ever reaching
+; its first attack pose to stop itself (unreachable while frozen).
+; STOP_BOSS_WIPE still exists for two other call sites that need to
+; force it off early: UBA_MOVE_RIGHT (attack pose entry, now just a
+; safety net for an edge case) and TRIGGER_BOSS_BROKEN_FORM/INIT_BOSS_
+; EXPLOSION (a lucky/fast kill mid-wipe - see BOSS_WIPE_ACT's own EQU
+; comment for the real bug this fixed).
 ; that STOP_BOSS_WIPE call alone isn't the whole fix, though: this
 ; routine is still called unconditionally every frame while BOSS_ACT!=0
 ; (see MAINLOOP), with NO regard for BOSS_FORM - so once TRIGGER_BOSS_
@@ -10077,16 +10100,29 @@ UPDATE_BOSS_WIPE:
     LD A,(BOSS_WIPE_ACT)
     OR A
     RET Z
+    ; the 5-second window itself - a true 16-bit compare against the
+    ; ALREADY free-running GAME_TICK, same idiom as BOSS_POSE_END_TICK/
+    ; NIGHT_START_TICK/etc. (see BOSS_WIPE_END_TICK's own comment)
+    LD HL,(GAME_TICK)
+    LD DE,BOSS_WIPE_END_TICK
+    OR A
+    SBC HL,DE
+    JR NC,UBW_DURATION_DONE   ; GAME_TICK>=END_TICK - the 5 seconds are up
     LD A,(BOSS_WIPE_Y) : ADD A,BOSS_WIPE_SPEED
     CP BOSS_WIPE_END_Y
     JR C,UBW_STILL_GOING
-    ; one lap just finished - count it down; 0 means stop for good
-    LD A,(BOSS_WIPE_ACT) : DEC A : LD (BOSS_WIPE_ACT),A
-    JR Z,HIDE_BOSS_WIPE_SPRITES
     LD A,BOSS_WIPE_START_Y   ; wrap back to the top and keep looping
 UBW_STILL_GOING:
     LD (BOSS_WIPE_Y),A
     JP DRAW_BOSS_WIPE_SPRITES
+UBW_DURATION_DONE:
+    ; must actually clear BOSS_WIPE_ACT here (not just hide the sprites) -
+    ; UBA_ACTIVE's own freeze check keys off this byte being nonzero, so
+    ; leaving it set would freeze the boss forever once the 5 seconds
+    ; elapse (GAME_TICK only ever increases, so every future frame would
+    ; keep taking this same branch without ever unfreezing anything).
+    XOR A : LD (BOSS_WIPE_ACT),A
+    JP HIDE_BOSS_WIPE_SPRITES
 
 DRAW_BOSS_WIPE_SPRITES:
     LD A,(BOSS_WIPE_Y)
