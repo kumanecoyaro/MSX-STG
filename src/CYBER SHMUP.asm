@@ -291,8 +291,16 @@ ANIM2_BROWN EQU 144
 PSG_ADDR EQU 0A0h
 PSG_DATA EQU 0A1h
 SND_TIMER EQU 0E427h
-SND_TIMER_C EQU 0E4D0h
-SND_TIMER_B EQU 0E739h
+; 実機フィードバック対応("そもそもchB、Cは空けてあってSE類はchAのみで
+; 鳴らすはず"): 従来チャンネルC/Bにそれぞれ分けていたSOUND_SHOT/
+; SOUND_POD_HIT(旧SND_TIMER_C)とSOUND_POD_FIRE(旧SND_TIMER_B)を、
+; 全てチャンネルA(トーン)へ統合したことに伴い1本のタイマーへ統合。
+; 3者とも元々「ゲート無しの単純な1フレーム1減衰」という同じ性質だった
+; ため(周期はトリガー時にR0/R1へ即書き込むので、この統合タイマーは
+; 音量エンベロープの長さにのみ影響)、統合しても個々の音色は一切変化
+; しない。複数が短時間に重なった場合は後着が上書きする形になるが、
+; 「SEの被りで上書きされるのは問題ない」とユーザー確認済み。
+SND_TONE_TIMER EQU 0E4D0h
 
 ; --- boss shield: while the boss is materializing (BOSS_STATE==1  ---
 ; --- only - not needed once landed, see below), any player shot   ---
@@ -681,10 +689,12 @@ BARRIER_IFRAMES EQU 0F212h  ; frames left of post-hit invulnerability, so one
 BARRIER_IFRAMES_INIT EQU 60
 PLAYER_ACCENT_COLOR EQU 0F213h ; this frame's accent color (SPR_WHITE/
                                  ; SPR_PURPLE, see the accent-select logic)
-SND_C_DUTY_TIMER EQU 0F214h    ; 0=normal channel-C playback (SOUND_SHOT/
-                                 ; SOUND_POD_HIT untouched); else counts
-                                 ; 8->1, duty-gated - see SOUND_BARRIER_HIT/
-                                 ; SOUND_UPDATE_C
+; 実機フィードバック対応でチャンネルC→チャンネルAへ移設(旧SND_C_DUTY_
+; TIMER、アドレスは同じ0F214hのまま・シンボル名のみ実態に合わせて改名)。
+SND_BARRIER_DUTY_TIMER EQU 0F214h ; 0=通常のchA再生(SOUND_SHOT/POD_HIT/
+                                 ; POD_FIRE=SND_TONE_TIMER側は無関係);
+                                 ; 非0なら8->1で減衰、デューティゲート -
+                                 ; SOUND_BARRIER_HIT/SOUND_UPDATE参照
 PLAYER_EXPL_SLOTS  EQU 4
 PLAYER_EXPL_STRUCT EQU 5        ; +0 ACTIVE,+1 X,+2 Y,+3 TIMER,+4 SPRNUM
 PLAYER_EXPL_POOL   EQU 0F215h   ; 4*5 = 20 bytes (F215h-F228h)
@@ -966,7 +976,7 @@ INIT_SPRATR_CLR:
     LD A,PAT_ACCENT : LD (PLAYER_ACCENT_PAT),A
     LD A,BARRIER_HP_INIT : LD (BARRIER_HP),A   ; barrier equipped from game start
     XOR A : LD (GAME_OVER),A : LD (BARRIER_IFRAMES),A
-    LD (SND_C_DUTY_TIMER),A
+    LD (SND_BARRIER_DUTY_TIMER),A
     LD HL,PLAYER_EXPL_POOL : LD (HL),A
     LD DE,PLAYER_EXPL_POOL+1 : LD BC,21 : LDIR   ; zeroes the pool +
                                                    ; PLAYER_EXPL_TOTAL_TIMER/
@@ -1044,12 +1054,19 @@ INIT_SPRATR_CLR:
     LD (ANIM_RR),A
     LD (ANIM_BASE+0),A : LD (ANIM_BASE+8),A : LD (ANIM_BASE+16),A
     LD (SND_TIMER),A
-    LD (SND_TIMER_C),A
-    LD (SND_TIMER_B),A
+    LD (SND_TONE_TIMER),A
     LD (SPAWN_NEXT_INDEX),A
 
-    ; --- PSG: channel A = noise-only (destroy), channel B = tone-only ---
-    ; --- (pod-fire "don"), channel C = tone-only (shot) ---
+    ; --- PSG: 実機フィードバック対応("そもそもchB、Cは空けてあってSE類は
+    ; --- chAのみで鳴らすはず") - 全SE(破壊音=ノイズ、ショット/ポッド
+    ; --- 発射/ポッドヒット/バリアヒット=トーン)をチャンネルAへ統合し、
+    ; --- チャンネルB/CはBGM専用に解放。AY-3-8910はチャンネルごとに
+    ; --- トーン/ノイズを独立した有効ビットで持ち、片方を有効にしても
+    ; --- もう片方が消えるわけではない(1chで最大4音同時合成のうちの
+    ; --- 1音扱い) - 旧来「チャンネルA=ノイズ専用」だった設定(0B1h)から
+    ; --- トーンAの有効ビット(bit0)だけを追加で立て、ノイズA/トーンB/
+    ; --- トーンC/ノイズB/ノイズCは全て従来のまま変更しない(0B1h→0B0h、
+    ; --- 差分はbit0の1ビットのみ)。
     ; --- R7's upper 2 bits MUST be '10' (portA=input,portB=output) - ---
     ; --- portB drives the joystick-port select strobe; leaving it as ---
     ; --- input (our old 0x33) floats that line and makes joystick    ---
@@ -1059,7 +1076,7 @@ INIT_SPRATR_CLR:
     ; --- selected, corrupting both this write and (since the BIOS's  ---
     ; --- keyboard/joystick scan also uses the PSG) joystick reads.   ---
     LD A,7 : OUT (PSG_ADDR),A
-    LD A,0B1h : OUT (PSG_DATA),A
+    LD A,0B0h : OUT (PSG_DATA),A
 
     ; --- BGM (round40, "タイトル含めて各ステージにドライバを配置しRAM
     ; --- にコピーしてステージスタート") - see INIT_BGM's own long
@@ -2940,28 +2957,31 @@ WAC_SKIPBUF:
     EI
     RET
 
-; PSG (AY-3-8910-compatible) sound effects: channel A = noise-only
-; (destroy "boom", and the engine rumble below), channel B = tone-only
-; (pod-fire "don"), channel C = tone-only (shot "chun" blip), all 3
-; fixed for good by ONE mixer write at INIT (0B1h) - no sound routine
-; here ever touches PSG register 7 again, unlike Stage2's own shared/
-; time-shared channel A. SND_TIMER/SND_TIMER_B/SND_TIMER_C double as
-; both the frame countdown and that channel's volume (0-15), so each
-; sound fades out on its own as it counts down to 0.
+; PSG (AY-3-8910-compatible) sound effects: 実機フィードバック対応
+; ("そもそもchB、Cは空けてあってSE類はchAのみで鳴らすはず"、確認:
+; "SEの被りで上書きされるのは問題ない BCはBGM専用 で、ノイズは別ch
+; PSGは4音同時に鳴らせる トーンでノイズは消えない") - 全SE(破壊音+
+; エンジン音=ノイズ、ショット/ポッド発射/ポッドヒット/バリアヒット=
+; トーン)をチャンネルAへ統合。AY-3-8910はチャンネルごとにトーン/
+; ノイズの有効ビットが独立している(INITのR7=0B0h参照)ため、同じ
+; チャンネルAでトーンとノイズを同時に有効化しても互いを消し合わない -
+; 「トーンでノイズは消えない」という前提通り。SND_TIMER(ノイズ側=
+; 破壊音+エンジン音)/SND_TONE_TIMER(トーン側=ショット/ポッド発射/
+; ポッドヒット、いずれも単純な1フレーム1減衰でゲート無し)/
+; SND_BARRIER_DUTY_TIMER(バリアヒット専用の2連バズ)の3本がそれぞれ
+; 独立に減衰しつつ、R8(チャンネルA音量)は毎フレームSOUND_UPDATEが
+; 優先順位(バリアの2連バズ>単純トーン>ノイズ)で1つだけ選んで書く -
+; 複数が同時に非0の場合、低優先度側はその瞬間R8には反映されないが
+; カウントダウン自体は止まらない(短時間の重なりは自然に上書き/
+; 減衰していく、"被りで上書きされるのは問題ない"を踏まえた設計)。
+; チャンネルB/CはこれでBGM_TICK以外一切書き込まなくなった(完全に
+; BGM専用)。
 ;
 ; round32 (ported from Stage2 - "ステージ1もデューティ比操作を適用"):
-; channel A's own R8 volume write in SOUND_UPDATE below alternates
-; every single frame between the current envelope and silence, using
-; TICK's own low bit (free-running, unconditionally incremented every
-; frame right at the top of MAINLOOP - see its own comment there) as
-; the toggle, same "デューティ比1:1で減衰しながらボリューム半分か
-; OFFをまぜてくれ そうすればブリブリって音になるはず" idea Stage2's
-; own SOUND_CALC_NOISE_GATE_VOLUME implements, just simpler here since
-; channel A is ALWAYS noise in this file (no per-sound "is this noise"
-; flag needed the way Stage2's shared channel required - see that
-; file's own SND_NOISE byte). Channels B/C (always tone) are
-; deliberately left ungated, same reasoning as Stage2 excluding its own
-; tone-based "kin-kin" deflect ping.
+; ノイズ側(SND_TIMER)の出力はTICK低位ビットで1:1デューティゲート
+; ("デューティ比1:1で減衰しながらボリューム半分かOFFをまぜてくれ
+; そうすればブリブリって音になるはず")。トーン側(SND_TONE_TIMER)は
+; 従来通りゲート無し(移設前の音色を一切変えないための選択)。
 ; round40: every PSG_ADDR/PSG_DATA select+write pair below is now DI/EI-
 ; wrapped, on top of the existing "protects against the BIOS's own
 ; keyboard/joystick PSG scan" rationale above - BGM_TICK (installed
@@ -2972,12 +2992,12 @@ WAC_SKIPBUF:
 ; Round38 BGM driver already documented and fixed this same way.
 SOUND_SHOT:
     DI
-    LD A,4 : OUT (PSG_ADDR),A
-    LD A,30 : OUT (PSG_DATA),A    ; channel C tone period -> bright "chun" pitch
-    LD A,5 : OUT (PSG_ADDR),A
+    LD A,0 : OUT (PSG_ADDR),A
+    LD A,30 : OUT (PSG_DATA),A    ; channel A tone period -> bright "chun" pitch
+    LD A,1 : OUT (PSG_ADDR),A
     XOR A : OUT (PSG_DATA),A      ; coarse tune bits = 0
     EI
-    LD A,12 : LD (SND_TIMER_C),A
+    LD A,12 : LD (SND_TONE_TIMER),A
     RET
 SOUND_DESTROY:
     DI
@@ -2986,46 +3006,47 @@ SOUND_DESTROY:
     EI
     LD A,15 : LD (SND_TIMER),A
     RET
-; metallic "kin" ping for a non-lethal pod hit - reuses channel C
-; (same as the player's own shot) but at a much higher pitch so it
-; reads as a distinct sound.
+; metallic "kin" ping for a non-lethal pod hit - reuses channel A's
+; tone generator (same as the player's own shot) but at a much higher
+; pitch so it reads as a distinct sound.
 SOUND_POD_HIT:
     DI
-    LD A,4 : OUT (PSG_ADDR),A
+    LD A,0 : OUT (PSG_ADDR),A
     LD A,10 : OUT (PSG_DATA),A
-    LD A,5 : OUT (PSG_ADDR),A
+    LD A,1 : OUT (PSG_ADDR),A
     XOR A : OUT (PSG_DATA),A
     EI
-    LD A,10 : LD (SND_TIMER_C),A
+    LD A,10 : LD (SND_TONE_TIMER),A
     RET
 
 ; "サウンドはブブって2回低音のデューティ比25％最大音量で" - reuses
-; channel C (shared with SOUND_SHOT/SOUND_POD_HIT, same "one sound at a
-; time per channel" tradeoff already accepted throughout this file) at
-; a low period, gated through SND_C_DUTY_TIMER (see SOUND_UPDATE_C):
-; an 8-frame window with exactly 2 full-volume(15) frames (at counter
-; 8 and 4) = 2/8 = 25% duty, giving 2 short low buzzes.
+; channel A's tone generator (shared with SOUND_SHOT/SOUND_POD_HIT/
+; SOUND_POD_FIRE, same "one sound at a time per generator" tradeoff
+; already accepted throughout this file) at a low period, gated through
+; SND_BARRIER_DUTY_TIMER (see SOUND_UPDATE): an 8-frame window with
+; exactly 2 full-volume(15) frames (at counter 8 and 4) = 2/8 = 25%
+; duty, giving 2 short low buzzes.
 SOUND_BARRIER_HIT:
     DI
-    LD A,4 : OUT (PSG_ADDR),A
-    LD A,132 : OUT (PSG_DATA),A   ; channel C tone period fine byte
-    LD A,5 : OUT (PSG_ADDR),A
+    LD A,0 : OUT (PSG_ADDR),A
+    LD A,132 : OUT (PSG_DATA),A   ; channel A tone period fine byte
+    LD A,1 : OUT (PSG_ADDR),A
     LD A,3 : OUT (PSG_DATA),A     ; coarse byte -> period=900, deep low pitch
     EI
-    LD A,8 : LD (SND_C_DUTY_TIMER),A
+    LD A,8 : LD (SND_BARRIER_DUTY_TIMER),A
     RET
 
 SOUND_POD_FIRE:
     DI
-    LD A,2 : OUT (PSG_ADDR),A
-    LD A,244 : OUT (PSG_DATA),A   ; channel B tone period fine byte
-    LD A,3 : OUT (PSG_ADDR),A
+    LD A,0 : OUT (PSG_ADDR),A
+    LD A,244 : OUT (PSG_DATA),A   ; channel A tone period fine byte
+    LD A,1 : OUT (PSG_ADDR),A
     LD A,2 : OUT (PSG_DATA),A     ; coarse byte -> period=756, much lower "don"
     EI
-    LD A,15 : LD (SND_TIMER_B),A
+    LD A,15 : LD (SND_TONE_TIMER),A
     RET
-; out: A = this frame's channel-A output volume - duty-cycle gated
-; (silent if TICK's own low bit is set, else the raw SND_TIMER
+; out: A = this frame's noise-side channel-A output volume - duty-cycle
+; gated (silent if TICK's own low bit is set, else the raw SND_TIMER
 ; envelope). Pure function, no side effects (doesn't touch the PSG or
 ; step SND_TIMER itself) - kept standalone specifically so it's
 ; directly testable without needing to observe an actual PSG register
@@ -3040,19 +3061,15 @@ CNGV_SILENT:
     XOR A
     RET
 
-; out: A = this frame's duty-gated channel-C volume while SND_C_DUTY_
-; TIMER is active (15 on the 2 "buzz" frames - counter values 8 and 4
-; out of the 8-frame window = 2/8 = 25% duty - else 0). Pure function,
-; no side effects (doesn't touch the PSG or SND_C_DUTY_TIMER itself) -
-; kept standalone specifically so it's directly testable without
-; needing to observe an actual PSG register write, same reasoning as
-; CALC_NOISE_GATE_VOLUME above. Deliberately placed here (not between
-; SOUND_UPDATE_B and SOUND_UPDATE_C) - those 2 fall straight into each
-; other with no RET/JP between them, so a routine dropped in between
-; would silently hijack that fallthrough (found and fixed via this
-; exact regression - see verify_sound_duty_cycle.py).
+; out: A = this frame's duty-gated channel-A volume while SND_BARRIER_
+; DUTY_TIMER is active (15 on the 2 "buzz" frames - counter values 8 and
+; 4 out of the 8-frame window = 2/8 = 25% duty - else 0). Pure function,
+; no side effects (doesn't touch the PSG or SND_BARRIER_DUTY_TIMER
+; itself) - kept standalone specifically so it's directly testable
+; without needing to observe an actual PSG register write, same
+; reasoning as CALC_NOISE_GATE_VOLUME above.
 CALC_DUTY_GATE_VOLUME:
-    LD A,(SND_C_DUTY_TIMER)
+    LD A,(SND_BARRIER_DUTY_TIMER)
     CP 8
     JR Z,CDGV_ON
     CP 4
@@ -3063,22 +3080,40 @@ CDGV_ON:
     LD A,15
     RET
 
-; round40: SOUND_UPDATE_B/SUC_NORMAL now check their own timer BEFORE
-; writing anything (rather than writing the current value unconditionally,
-; then separately checking whether to decrement) - once that timer is
-; genuinely 0 (SFX fully decayed), this SFX system writes NOTHING at all
-; to R9/R10 that frame, instead of re-writing 0 every single frame
-; forever. That's the whole point: with BGM_TICK now also driving R9/R10
-; (see BGMT_UPDATE_B/C below, wired to yield right back whenever
-; SND_TIMER_B/SND_TIMER_C/SND_C_DUTY_TIMER is non-zero), an SFX write of
-; literal 0 every idle frame would permanently silence BGM on that
-; channel - channels B/C need to be genuinely left alone (not just
-; "written to 0") once idle, so BGM can own them the rest of the time.
-; This changes ZERO observable SFX behavior on its own (the value
-; written on the actually-decaying frames, and the decrement itself, are
-; both unchanged) - verified via boss_attack_sfx_test.py-style direct
-; PSG-write comparison in tools/verify_stage1_bgm.py.
+; channel A now carries every SE this file has (see the long comment
+; above SOUND_SHOT) - R8 is written exactly once per frame, picking
+; whichever of the 3 independent envelopes (SND_BARRIER_DUTY_TIMER >
+; SND_TONE_TIMER > SND_TIMER, highest priority first) is currently
+; active; a timer left "masked" behind a higher-priority one keeps
+; counting down in the background regardless (same "one at a time,
+; collisions just resolve by priority/overwrite" tradeoff already
+; documented above). Channels B/C are now BGM_TICK's alone - this
+; routine never touches R9/R10 at all.
 SOUND_UPDATE:
+    LD A,(SND_BARRIER_DUTY_TIMER)
+    OR A
+    JR Z,SU_CHECK_TONE
+    CALL CALC_DUTY_GATE_VOLUME
+    LD B,A
+    DI
+    LD A,8 : OUT (PSG_ADDR),A
+    LD A,B : OUT (PSG_DATA),A
+    EI
+    LD A,(SND_BARRIER_DUTY_TIMER) : DEC A : LD (SND_BARRIER_DUTY_TIMER),A
+    RET
+SU_CHECK_TONE:
+    LD A,(SND_TONE_TIMER)
+    OR A
+    JR Z,SU_NOISE
+    LD B,A
+    DI
+    LD A,8 : OUT (PSG_ADDR),A
+    LD A,B : OUT (PSG_DATA),A
+    EI
+    DEC A
+    LD (SND_TONE_TIMER),A
+    RET
+SU_NOISE:
     CALL CALC_NOISE_GATE_VOLUME
     LD B,A
     DI
@@ -3087,66 +3122,22 @@ SOUND_UPDATE:
     EI
     LD A,(SND_TIMER)
     OR A
-    JR Z,SOUND_UPDATE_B
+    RET Z
     DEC A
     LD (SND_TIMER),A
-SOUND_UPDATE_B:
-    LD A,(SND_TIMER_B)
-    OR A
-    JR Z,SOUND_UPDATE_C            ; idle - yield channel B to BGM entirely, nothing to write
-    LD B,A
-    DI
-    LD A,9 : OUT (PSG_ADDR),A     ; R9 = channel B volume
-    LD A,B : OUT (PSG_DATA),A
-    EI
-    DEC A
-    LD (SND_TIMER_B),A
-SOUND_UPDATE_C:
-    LD A,(SND_C_DUTY_TIMER)
-    OR A
-    JR Z,SUC_NORMAL
-    ; duty-gated playback (SOUND_BARRIER_HIT) - see SND_C_DUTY_TIMER's
-    ; own comment. SND_TIMER_C itself is left alone here (untouched by
-    ; SOUND_BARRIER_HIT, so SUC_NORMAL's own write stays harmless/silent
-    ; once this window ends).
-    CALL CALC_DUTY_GATE_VOLUME
-    LD B,A
-    DI
-    LD A,10 : OUT (PSG_ADDR),A
-    LD A,B : OUT (PSG_DATA),A
-    EI
-    LD A,(SND_C_DUTY_TIMER) : DEC A : LD (SND_C_DUTY_TIMER),A
-    RET
-SUC_NORMAL:
-    LD A,(SND_TIMER_C)
-    OR A
-    RET Z                          ; idle - yield channel C to BGM entirely, nothing to write
-    LD B,A
-    DI
-    LD A,10 : OUT (PSG_ADDR),A    ; R10 = channel C volume
-    LD A,B : OUT (PSG_DATA),A
-    EI
-    DEC A
-    LD (SND_TIMER_C),A
     RET
 
 ; ---------- BGM driver (Vsync駆動、Round40 "タイトル含めて各ステージに
 ; ドライバを配置しRAMにコピーしてステージスタート") ----------
-; tools/stage2_combined/combined_test.asmの同名ドライバと同型の設計
+; tools/stage2_combined/combined_test.asmの同名ドライバと完全に同型
 ; (chB/chC独立ポインタ・タイマー、H.TIMI(0FD9Fh)フック、詳細な設計理由は
-; そちらの長いコメント参照)。このファイル固有の違いはただ1つ: Stage2は
-; チャンネルB/CをBGM専用に確保できたが、このファイル(Stage1)は元々
-; チャンネルB(SOUND_POD_FIRE、"don")・チャンネルC(SOUND_SHOT/
-; SOUND_POD_HIT/SOUND_BARRIER_HIT)の両方を既存SFXが使っている(全3
-; チャンネルとも占有済みで空きが無いと判明済み - channel Aはmixerで
-; 恒久的にnoise専用に固定されておりtoneを乗せられないため選択肢にすら
-; ならない)。よって「SFXのタイマー(SND_TIMER_B/SND_TIMER_C/
-; SND_C_DUTY_TIMER)が非0の間、BGM側は該当チャンネルへの書き込みを
-; 完全に譲る」という優先方式で共存させる(BGMT_UPDATE_B/Cそれぞれの
-; 冒頭のチェック)。SFX終了直後にBGMが即座に(次のH.TIMI呼び出しで)
-; 再開できるよう、SOUND_UPDATE_B/SUC_NORMAL側も「アイドル中は何も
-; 書かない」よう合わせて変更済み(上記コメント参照) - どちらか
-; 片方だけ直しても共存は成立しない。
+; そちらの長いコメント参照)。実機フィードバック対応("そもそもchB、Cは
+; 空けてあってSE類はchAのみで鳴らすはず")で全SEをチャンネルAへ統合
+; したことにより、このファイルがStage2と違って抱えていた「チャンネル
+; B/Cを既存SFXと共有している」という制約自体が解消済み - よって
+; BGMT_UPDATE_B/CはStage2/Titleと同じ「SFX優先の譲渡チェック無し、
+; 常にBGM側が無条件でR9/R10を書く」設計にできる(過去に存在した
+; SND_TIMER_B/SND_TIMER_C/SND_C_DUTY_TIMERへのチェックは全廃止)。
 ;
 ; 「ドライバ自体は各バンクに配置しRAMにコピーしてステージスタート」の
 ; うち後半(バンク切替・RAMコピー)はこのファイルでは行わない: この
@@ -3162,8 +3153,9 @@ SUC_NORMAL:
 ; ALONE_FIGHTERをRAM(BGM_B_BASE/BGM_C_BASE、tools/title_screen/
 ; title_test.asmのINIT_BGMコメント参照)へコピー済みという前提のもと、
 ; このファイルのINIT_BGMはそのRAMを読むだけにしてある。R7ミキサーは
-; 既にINIT側で0B1h(tone B/C enable)を書き済み(このファイル自身の
-; 恒久設定、SOUND_UPDATE同様1度だけ)なのでここでは触らない。
+; 既にINIT側で0B0h(tone A/B/C enable、noise A enable)を書き済み
+; (このファイル自身の恒久設定、SOUND_UPDATE同様1度だけ)なのでここでは
+; 触らない。
 HTIMI_HOOK        EQU 0FD9Fh
 BGM_VOLUME        EQU 10
 BGM_NOTE_REST     EQU 0FFh
@@ -3176,15 +3168,34 @@ BGM_B_PTR   EQU 0C800h
 BGM_C_PTR   EQU 0C802h
 BGM_B_TIMER EQU 0C804h
 BGM_C_TIMER EQU 0C805h
+BGM_B_REST  EQU 0C806h    ; 0=音符が鳴っている行/非0=休符行(デューティ
+BGM_C_REST  EQU 0C807h    ; ゲートを毎tick適用するか、常時無音にするか)
+BGM_B_PHASE EQU 0C808h    ; デューティ比のfree-runningフェーズカウンタ
+BGM_C_PHASE EQU 0C809h
+
+; 実機フィードバック"ドライバにデューティ比実装 6.25,12.5,25,50を実装
+; どちらの曲もパート1が25パート2が12.5" - tools/stage2_combined/
+; combined_test.asmの同じ定数と同型(全4種とも1/(2^n)なのでmask=
+; (2^n)-1のAND判定1発で表現できる、除算不要)。
+BGM_DUTY_50   EQU 1        ; 50%  = 1/2
+BGM_DUTY_25   EQU 3        ; 25%  = 1/4
+BGM_DUTY_12_5 EQU 7        ; 12.5% = 1/8
+BGM_DUTY_6_25 EQU 15       ; 6.25% = 1/16
+BGM_B_DUTY_MASK EQU BGM_DUTY_25    ; パート1(chB)
+BGM_C_DUTY_MASK EQU BGM_DUTY_12_5  ; パート2(chC)
 
 INIT_BGM:
     LD HL,BGM_B_BASE
     LD (BGM_B_PTR),HL
     XOR A
     LD (BGM_B_TIMER),A
+    LD (BGM_B_REST),A
+    LD (BGM_B_PHASE),A
     LD HL,BGM_C_BASE
     LD (BGM_C_PTR),HL
     LD (BGM_C_TIMER),A
+    LD (BGM_C_REST),A
+    LD (BGM_C_PHASE),A
     LD A,0C3h                     ; JP nn opcode
     LD (HTIMI_HOOK),A
     LD HL,BGM_TICK
@@ -3204,19 +3215,18 @@ BGM_TICK:
     POP AF
     RET
 
-; チャンネルB(R2/R3 tone、R9 volume)。SOUND_POD_FIRE("don")と共有 -
-; SND_TIMER_Bが非0の間(SFX再生中)は一切書き込まず、自分自身の
-; BGM_B_TIMERも進めない(SFX終了直後、中断した箇所からそのまま再開)。
+; チャンネルB(R2/R3 tone、R9 volume) - 実機フィードバック対応で全SEが
+; チャンネルAへ移設済みのため、このチャンネルはBGM専用(SFX優先の
+; 譲渡チェックは撤去済み)。音量(R9)は行の頭だけでなく毎tick、
+; BGMT_UB_GATEでデューティ比ゲートに従って書き直す(tools/stage2_
+; combined/combined_test.asmの同じ設計と完全に同型)。
 BGMT_UPDATE_B:
-    LD A,(SND_TIMER_B)
-    OR A
-    RET NZ
     LD A,(BGM_B_TIMER)
     OR A
     JR Z,BGMT_UB_NEWROW
     DEC A
     LD (BGM_B_TIMER),A
-    RET
+    JR BGMT_UB_GATE
 BGMT_UB_NEWROW:
     LD HL,(BGM_B_PTR)
     LD A,(HL)
@@ -3238,38 +3248,52 @@ BGMT_UB_GOT:
     LD (BGM_B_TIMER),A
     LD A,C
     CP BGM_NOTE_REST
-    JR Z,BGMT_UB_REST
-    LD E,A : LD D,0
+    JR Z,BGMT_UB_SETREST
+    XOR A
+    LD (BGM_B_REST),A
+    LD E,C : LD D,0
     LD HL,BGM_PERIOD_LO_RAM : ADD HL,DE : LD A,(HL) : LD B,A
     LD HL,BGM_PERIOD_HI_RAM : ADD HL,DE : LD A,(HL) : LD C,A
     LD A,2 : OUT (PSG_ADDR),A
     LD A,B : OUT (PSG_DATA),A
     LD A,3 : OUT (PSG_ADDR),A
     LD A,C : OUT (PSG_DATA),A
+    ; デューティ位相をリセット - 音符の頭は必ずONで鳴らす(BGMT_UB_GATE
+    ; 側は「INCしてからAND」の順なので、ここにmaskそのものを積んでおくと
+    ; 次のGATE呼び出しでINC後にAND=0となりONになる)。
+    LD A,BGM_B_DUTY_MASK
+    LD (BGM_B_PHASE),A
+    JR BGMT_UB_GATE
+BGMT_UB_SETREST:
+    LD A,1
+    LD (BGM_B_REST),A
+BGMT_UB_GATE:
+    LD A,(BGM_B_REST)
+    OR A
+    JR NZ,BGMT_UB_SILENT
+    LD A,(BGM_B_PHASE)
+    INC A
+    LD (BGM_B_PHASE),A
+    AND BGM_B_DUTY_MASK
+    JR NZ,BGMT_UB_SILENT
     LD A,9 : OUT (PSG_ADDR),A
     LD A,BGM_VOLUME : OUT (PSG_DATA),A
     RET
-BGMT_UB_REST:
+BGMT_UB_SILENT:
     LD A,9 : OUT (PSG_ADDR),A
     XOR A : OUT (PSG_DATA),A
     RET
 
-; チャンネルC(R4/R5 tone、R10 volume)。SOUND_SHOT/SOUND_POD_HIT
-; (SND_TIMER_C)とSOUND_BARRIER_HIT(SND_C_DUTY_TIMER)の両方と共有 -
-; どちらか一方でも非0ならBGM側は完全に譲る。
+; チャンネルC(R4/R5 tone、R10 volume) - チャンネルBと同じくBGM専用。
+; デューティゲートはBGMT_UPDATE_Bと同型(BGM_C_REST/BGM_C_PHASE/
+; BGM_C_DUTY_MASK)。
 BGMT_UPDATE_C:
-    LD A,(SND_TIMER_C)
-    OR A
-    RET NZ
-    LD A,(SND_C_DUTY_TIMER)
-    OR A
-    RET NZ
     LD A,(BGM_C_TIMER)
     OR A
     JR Z,BGMT_UC_NEWROW
     DEC A
     LD (BGM_C_TIMER),A
-    RET
+    JR BGMT_UC_GATE
 BGMT_UC_NEWROW:
     LD HL,(BGM_C_PTR)
     LD A,(HL)
@@ -3289,18 +3313,35 @@ BGMT_UC_GOT:
     LD (BGM_C_TIMER),A
     LD A,C
     CP BGM_NOTE_REST
-    JR Z,BGMT_UC_REST
-    LD E,A : LD D,0
+    JR Z,BGMT_UC_SETREST
+    XOR A
+    LD (BGM_C_REST),A
+    LD E,C : LD D,0
     LD HL,BGM_PERIOD_LO_RAM : ADD HL,DE : LD A,(HL) : LD B,A
     LD HL,BGM_PERIOD_HI_RAM : ADD HL,DE : LD A,(HL) : LD C,A
     LD A,4 : OUT (PSG_ADDR),A
     LD A,B : OUT (PSG_DATA),A
     LD A,5 : OUT (PSG_ADDR),A
     LD A,C : OUT (PSG_DATA),A
+    LD A,BGM_C_DUTY_MASK
+    LD (BGM_C_PHASE),A
+    JR BGMT_UC_GATE
+BGMT_UC_SETREST:
+    LD A,1
+    LD (BGM_C_REST),A
+BGMT_UC_GATE:
+    LD A,(BGM_C_REST)
+    OR A
+    JR NZ,BGMT_UC_SILENT
+    LD A,(BGM_C_PHASE)
+    INC A
+    LD (BGM_C_PHASE),A
+    AND BGM_C_DUTY_MASK
+    JR NZ,BGMT_UC_SILENT
     LD A,10 : OUT (PSG_ADDR),A
     LD A,BGM_VOLUME : OUT (PSG_DATA),A
     RET
-BGMT_UC_REST:
+BGMT_UC_SILENT:
     LD A,10 : OUT (PSG_ADDR),A
     XOR A : OUT (PSG_DATA),A
     RET
@@ -5309,7 +5350,7 @@ BOSS_EXPL_UPDATE:
     XOR A : LD (BOSS_EXPL_ACTIVE),A
     LD A,40 : LD (PLAYER_FLYAWAY_WAIT),A
     LD A,1 : LD (PLAYER_FLYAWAY_SPD),A
-    XOR A : LD (SND_TIMER_C),A
+    XOR A : LD (SND_TONE_TIMER),A
     RET
 BEU_FIRE:
     LD A,B

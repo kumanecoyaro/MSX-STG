@@ -215,6 +215,15 @@ check("BGM_TICK new-row (chB): volume (R9) is BGM_VOLUME", cpu2.psg_regs.get(9) 
 # 参照)。ALONE_FIGHTERの実行データで多tick連続シミュレートし、
 # 観測された音切り替わりtickの列が本物の行データと完全一致するかを
 # 検証する。
+#
+# 実機フィードバック"ドライバにデューティ比実装"対応: 音量(R9)は
+# デューティゲートにより同一行の中でも1tickおきに0へ落ちるため、もう
+# 「行が変わった」ことの判定材料に使えない(常時ON前提だった旧来の
+# volumeベースの変化検出は、デューティ導入後は行の途中のゲートOFF毎に
+# 誤検出してしまう)。トーン周期(R2/R3)+BGM_B_REST/BGM_C_REST RAMフラグ
+# (行の頭でのみ更新され、行の途中では一切変化しない)を組み合わせた
+# キーに変更 - この2つは音量とは独立にNEWROW時にしか動かないため、
+# デューティのON/OFF点滅の影響を受けない。
 
 
 def decode_rows(row_bytes):
@@ -226,15 +235,17 @@ def decode_rows(row_bytes):
     return rows
 
 
-def observed_note_change_ticks(cpu, ptr_sym, timer_sym, tone_lo_reg, tone_hi_reg, vol_reg, n_ticks):
+def observed_note_change_ticks(cpu, rest_sym, tone_lo_reg, tone_hi_reg, n_ticks):
     events = []
     last = None
     for tick in range(n_ticks):
         call_routine(cpu, "BGM_TICK")
-        key = (cpu.psg_regs.get(tone_lo_reg), cpu.psg_regs.get(tone_hi_reg), cpu.psg_regs.get(vol_reg))
+        resting = cpu.mem[rest_sym] != 0
+        tone = (cpu.psg_regs.get(tone_lo_reg), cpu.psg_regs.get(tone_hi_reg))
+        key = (tone, resting)
         if key != last:
-            note = None if key[2] == 0 else next(
-                (i for i, (lo_v, hi_v) in enumerate(periods) if (lo_v, hi_v) == key[:2]), None)
+            note = None if resting else next(
+                (i for i, (lo_v, hi_v) in enumerate(periods) if (lo_v, hi_v) == tone), None)
             events.append((tick, note))
             last = key
     return events
@@ -242,9 +253,11 @@ def observed_note_change_ticks(cpu, ptr_sym, timer_sym, tone_lo_reg, tone_hi_reg
 
 N_TICKS = 2000
 BGM_NOTE_REST = sym["BGM_NOTE_REST"]
+BGM_B_REST = sym["BGM_B_REST"]
+BGM_C_REST = sym["BGM_C_REST"]
 cpu3, _ = fresh_cpu()
 run_to_wait(cpu3)
-observed_b = observed_note_change_ticks(cpu3, BGM_B_PTR, BGM_B_TIMER, 2, 3, 9, N_TICKS)
+observed_b = observed_note_change_ticks(cpu3, BGM_B_REST, 2, 3, N_TICKS)
 expected_b = []
 cum = 0
 for note, dur in decode_rows(_chB_bytes):
@@ -255,6 +268,54 @@ for note, dur in decode_rows(_chB_bytes):
 check(f"round40 off-by-one regression: {len(expected_b)} real ALONE_FIGHTER chB note-change ticks "
       f"(over {N_TICKS} real BGM_TICK calls) match the real bgm_bank.bin row data EXACTLY",
       observed_b == expected_b)
+
+# ---- デューティ比ゲート(実機フィードバック"ドライバにデューティ比
+# 実装 6.25,12.5,25,50を実装 どちらの曲もパート1が25パート2が12.5")----
+# 25%(mask=3)なら4tickに1回だけON、12.5%(mask=7)なら8tickに1回だけON -
+# いずれも「音符の頭(NEWROWのtick)は必ずON」という設計(BGMT_UB/UC_
+# NEWROWがBGM_B/C_PHASEをmask値そのものにリセットしてからGATEへ落ちる
+# ため、GATE内のINC直後のANDが0になる)。
+
+
+def duty_gate_sequence(cpu, ptr_sym, timer_sym, phase_reset_sym, note, duration, vol_reg, n_ticks):
+    row_addr = 0xD000
+    cpu.mem[timer_sym] = 0
+    cpu.mem[ptr_sym] = row_addr & 0xFF
+    cpu.mem[ptr_sym + 1] = (row_addr >> 8) & 0xFF
+    cpu.mem[row_addr] = note
+    cpu.mem[row_addr + 1] = duration
+    seq = []
+    for _ in range(n_ticks):
+        call_routine(cpu, "BGM_TICK")
+        seq.append(cpu.psg_regs.get(vol_reg))
+    return seq
+
+
+BGM_VOLUME = sym["BGM_VOLUME"]
+BGM_B_DUTY_MASK = sym["BGM_B_DUTY_MASK"]
+BGM_C_DUTY_MASK = sym["BGM_C_DUTY_MASK"]
+check("BGM_B_DUTY_MASK is 25%デューティ(mask=3, パート1)", BGM_B_DUTY_MASK == 3)
+check("BGM_C_DUTY_MASK is 12.5%デューティ(mask=7, パート2)", BGM_C_DUTY_MASK == 7)
+
+cpu4, _ = fresh_cpu()
+run_to_wait(cpu4)
+seq_b = duty_gate_sequence(cpu4, BGM_B_PTR, BGM_B_TIMER, sym["BGM_B_PHASE"], TEST_NOTE, 40, 9, 16)
+expected_seq_b = [BGM_VOLUME if (t & BGM_B_DUTY_MASK) == 0 else 0 for t in range(16)]
+check("chB(パート1, 25%デューティ): R9のON/OFF列が4tickに1回ONのパターンと完全一致",
+      seq_b == expected_seq_b)
+
+cpu5, _ = fresh_cpu()
+run_to_wait(cpu5)
+seq_c = duty_gate_sequence(cpu5, BGM_C_PTR, BGM_C_TIMER, sym["BGM_C_PHASE"], TEST_NOTE, 40, 10, 16)
+expected_seq_c = [BGM_VOLUME if (t & BGM_C_DUTY_MASK) == 0 else 0 for t in range(16)]
+check("chC(パート2, 12.5%デューティ): R10のON/OFF列が8tickに1回ONのパターンと完全一致",
+      seq_c == expected_seq_c)
+
+cpu6, _ = fresh_cpu()
+run_to_wait(cpu6)
+seq_rest_b = duty_gate_sequence(cpu6, BGM_B_PTR, BGM_B_TIMER, sym["BGM_B_PHASE"], BGM_NOTE_REST, 20, 9, 16)
+check("chB休符行: デューティ位相に関係なくR9が常時0(常時無音)",
+      all(v == 0 for v in seq_rest_b))
 
 # ---- button-press trampoline ----
 cpu, mem = fresh_cpu()

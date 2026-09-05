@@ -3,14 +3,24 @@
 
 tools/verify_enemy_pool_scan.py等と同じ「mini_z80asm.Assemblerで直接
 アセンブル+call_routine(センチネル0x0000方式)」の一回性検証スクリプト
-の作法に倣う。Stage1はチャンネルB/Cを既存SFX(SOUND_POD_FIRE/SOUND_SHOT/
-SOUND_POD_HIT/SOUND_BARRIER_HIT)と共有しているため、Stage2/Titleの
-BGMドライバと違い「SFXタイマーが非0の間はBGM側が書き込みを完全に譲る」
-という優先方式が本体 - このスクリプトはその優先ロジックと、
-SOUND_UPDATE_B/SUC_NORMAL側の「アイドル中は何も書かない」変更の両方を
-直接検証する。Stage1自身はRAMコピーもバンク切替も行わない
-(Titleが起動時に一度だけコピーしたRAMをそのまま読むだけ)ため、その
-部分の検証はtools/title_screen/title_test.pyの側で行う。
+の作法に倣う。
+
+実機フィードバック対応("ステージ1の自機ショット音とBGMが被ってる 弾
+うつとベースのほうが聞こえてない 被らないはずだぞ"→"そもそもchB、Cは
+空けてあってSE類はchAのみで鳴らすはず"、確認: "SEの被りで上書きされる
+のは問題ない BCはBGM専用 で、ノイズは別ch PSGは4音同時に鳴らせる
+トーンでノイズは消えない"): 全SE(SOUND_SHOT/POD_HIT/POD_FIRE/
+BARRIER_HIT/DESTROY/エンジン音)をチャンネルAへ統合し、チャンネルB/Cを
+BGM専用にした。これにより従来Stage1だけが持っていた「SFXタイマーが
+非0の間はBGM側が書き込みを完全に譲る」という優先ロジック(SND_TIMER_B/
+SND_TIMER_C/SND_C_DUTY_TIMER)は完全に撤去され、BGMT_UPDATE_B/Cは
+Stage2/Titleと同じ無条件版になった - このスクリプトはその撤去(SE専用
+タイマーが何であってもBGMの書き込みに一切影響しない)を直接検証する。
+チャンネルA側のSE統合自体(R7=0B0h・3段優先度SOUND_UPDATE)の詳細検証は
+tools/verify_sound_duty_cycle.py/tools/verify_player_damage.pyが担当。
+Stage1自身はRAMコピーもバンク切替も行わない(Titleが起動時に一度だけ
+コピーしたRAMをそのまま読むだけ)ため、その部分の検証はtools/
+title_screen/title_test.pyの側で行う。
 """
 import sys, os
 sys.path.insert(0, os.path.dirname(__file__))
@@ -71,11 +81,18 @@ BGM_NOTE_REST = sym["BGM_NOTE_REST"]
 BGM_LOOP_MARK = sym["BGM_LOOP_MARK"]
 BGM_PERIOD_LO_RAM = sym["BGM_PERIOD_LO_RAM"]
 BGM_PERIOD_HI_RAM = sym["BGM_PERIOD_HI_RAM"]
-SND_TIMER_B = sym["SND_TIMER_B"]
-SND_TIMER_C = sym["SND_TIMER_C"]
-SND_C_DUTY_TIMER = sym["SND_C_DUTY_TIMER"]
+SND_TIMER = sym["SND_TIMER"]
+SND_TONE_TIMER = sym["SND_TONE_TIMER"]
+SND_BARRIER_DUTY_TIMER = sym["SND_BARRIER_DUTY_TIMER"]
 PSG_ADDR = sym["PSG_ADDR"]
 PSG_DATA = sym["PSG_DATA"]
+BGM_B_REST = sym["BGM_B_REST"]
+BGM_C_REST = sym["BGM_C_REST"]
+BGM_B_PHASE = sym["BGM_B_PHASE"]
+BGM_C_PHASE = sym["BGM_C_PHASE"]
+BGM_B_DUTY_MASK = sym["BGM_B_DUTY_MASK"]
+BGM_C_DUTY_MASK = sym["BGM_C_DUTY_MASK"]
+BGM_VOLUME = sym["BGM_VOLUME"]
 
 REPO = os.path.join(os.path.dirname(__file__), "..")
 sys.path.insert(0, os.path.join(REPO, "tools", "bgm_data"))
@@ -141,74 +158,65 @@ def poke_period_table(z):
         z.wr(BGM_PERIOD_HI_RAM + i, hi)
 
 
-# ---- normal playback (no SFX active): new-row load on each channel ----
+# ---- normal playback: new-row load on each channel ----
 z = fresh()
 poke_period_table(z)
 poke_channel(z, BGM_B_PTR, BGM_B_TIMER, ROW_B, TEST_NOTE_B, TEST_DUR_B, timer=0)
 poke_channel(z, BGM_C_PTR, BGM_C_TIMER, ROW_C, TEST_NOTE_C, TEST_DUR_C, timer=0)
-z.wr(SND_TIMER_B, 0)
-z.wr(SND_TIMER_C, 0)
-z.wr(SND_C_DUTY_TIMER, 0)
 call_routine(z, BGM_TICK)
-check("no SFX active: chB loads a fresh row (BGM_B_TIMER reloaded to duration-1, round40 "
+check("chB loads a fresh row (BGM_B_TIMER reloaded to duration-1, round40 "
       "off-by-one fix - the load tick itself already plays the note once)",
       z.rd(BGM_B_TIMER) == TEST_DUR_B - 1)
 exp_lo, exp_hi = periods[TEST_NOTE_B]
-check("no SFX active: chB tone period (R2/R3) matches the period table",
+check("chB tone period (R2/R3) matches the period table",
       (z.psg_regs.get(2), z.psg_regs.get(3)) == (exp_lo, exp_hi))
-check("no SFX active: chB volume (R9) is BGM_VOLUME", z.psg_regs.get(9) == sym["BGM_VOLUME"])
+check("chB volume (R9) is BGM_VOLUME", z.psg_regs.get(9) == sym["BGM_VOLUME"])
 exp_lo_c, exp_hi_c = periods[TEST_NOTE_C]
-check("no SFX active: chC loads a fresh row (BGM_C_TIMER reloaded to duration-1, round40 off-by-one fix)",
+check("chC loads a fresh row (BGM_C_TIMER reloaded to duration-1, round40 off-by-one fix)",
       z.rd(BGM_C_TIMER) == TEST_DUR_C - 1)
-check("no SFX active: chC tone period (R4/R5) matches the period table",
+check("chC tone period (R4/R5) matches the period table",
       (z.psg_regs.get(4), z.psg_regs.get(5)) == (exp_lo_c, exp_hi_c))
-check("no SFX active: chC volume (R10) is BGM_VOLUME", z.psg_regs.get(10) == sym["BGM_VOLUME"])
+check("chC volume (R10) is BGM_VOLUME", z.psg_regs.get(10) == sym["BGM_VOLUME"])
 
-# ---- SFX priority: SND_TIMER_B active -> BGM channel B completely
-# yields (no PSG writes at all, BGM_B_TIMER/BGM_B_PTR untouched) ----
+# ---- 実機フィードバック対応("そもそもchB、Cは空けてあってSE類は
+# chAのみで鳴らすはず"): 全SEがチャンネルAへ統合され、チャンネルB/Cは
+# BGM専用になったため、旧来存在した「SFXのタイマーが非0の間BGM側は
+# 該当チャンネルへの書き込みを完全に譲る」という優先ロジック自体が
+# 撤去された(SND_TIMER_B/SND_TIMER_C/SND_C_DUTY_TIMERはもう存在しない
+# - src/CYBER SHMUP.asm自身のBGMT_UPDATE_B/Cの新しいコメント参照)。
+# 以下はその撤去を直接検証する回帰ガード: チャンネルAのSE専用タイマー
+# (SND_TIMER/SND_TONE_TIMER/SND_BARRIER_DUTY_TIMER)をどう設定しても、
+# BGM_TICKの書き込み内容(BGM_B_PTR/BGM_B_TIMER/R2/R3/R9)は一切影響
+# されない。
 z = fresh()
+poke_period_table(z)
 poke_channel(z, BGM_B_PTR, BGM_B_TIMER, ROW_B, TEST_NOTE_B, TEST_DUR_B, timer=0)
-z.wr(SND_TIMER_B, 15)  # SOUND_POD_FIRE currently playing
-for reg in (2, 3, 9):
-    z.psg_regs.pop(reg, None)
-ptr_before = z.rd(BGM_B_PTR) | (z.rd(BGM_B_PTR + 1) << 8)
-timer_before = z.rd(BGM_B_TIMER)
+z.wr(SND_TIMER, 15)
+z.wr(SND_TONE_TIMER, 15)
+z.wr(SND_BARRIER_DUTY_TIMER, 8)
 call_routine(z, BGM_TICK)
-check("SND_TIMER_B active (SOUND_POD_FIRE playing): BGM writes NOTHING to R2/R3/R9",
-      all(r not in z.psg_regs for r in (2, 3, 9)))
-check("SND_TIMER_B active: BGM_B_PTR is completely untouched",
-      (z.rd(BGM_B_PTR) | (z.rd(BGM_B_PTR + 1) << 8)) == ptr_before)
-check("SND_TIMER_B active: BGM_B_TIMER is completely untouched (BGM's own timing pauses, doesn't skip ahead)",
-      z.rd(BGM_B_TIMER) == timer_before)
+exp_lo_b, exp_hi_b = periods[TEST_NOTE_B]
+check("SE専用タイマー(SND_TIMER/SND_TONE_TIMER/SND_BARRIER_DUTY_TIMER)が全て非0でも "
+      "BGM chBは無条件でR2/R3/R9へ書く(もう譲らない)",
+      (z.psg_regs.get(2), z.psg_regs.get(3), z.psg_regs.get(9)) ==
+      (exp_lo_b, exp_hi_b, sym["BGM_VOLUME"]))
+check("...BGM_B_TIMERも通常通り進む(SFXに凍結されない)", z.rd(BGM_B_TIMER) == TEST_DUR_B - 1)
 
-# ---- SFX priority: SND_TIMER_C active (SOUND_SHOT/SOUND_POD_HIT) ->
-# BGM channel C completely yields ----
 z = fresh()
+poke_period_table(z)
 poke_channel(z, BGM_C_PTR, BGM_C_TIMER, ROW_C, TEST_NOTE_C, TEST_DUR_C, timer=0)
-z.wr(SND_TIMER_C, 12)
-z.wr(SND_C_DUTY_TIMER, 0)
-for reg in (4, 5, 10):
-    z.psg_regs.pop(reg, None)
+z.wr(SND_TIMER, 15)
+z.wr(SND_TONE_TIMER, 15)
+z.wr(SND_BARRIER_DUTY_TIMER, 8)
 call_routine(z, BGM_TICK)
-check("SND_TIMER_C active (SOUND_SHOT/SOUND_POD_HIT playing): BGM writes NOTHING to R4/R5/R10",
-      all(r not in z.psg_regs for r in (4, 5, 10)))
-
-# ---- SFX priority: SND_C_DUTY_TIMER active (SOUND_BARRIER_HIT) ->
-# BGM channel C also completely yields (the OTHER channel-C SFX gate) ----
-z = fresh()
-poke_channel(z, BGM_C_PTR, BGM_C_TIMER, ROW_C, TEST_NOTE_C, TEST_DUR_C, timer=0)
-z.wr(SND_TIMER_C, 0)
-z.wr(SND_C_DUTY_TIMER, 8)
-for reg in (4, 5, 10):
-    z.psg_regs.pop(reg, None)
-call_routine(z, BGM_TICK)
-check("SND_C_DUTY_TIMER active (SOUND_BARRIER_HIT playing): BGM writes NOTHING to R4/R5/R10",
-      all(r not in z.psg_regs for r in (4, 5, 10)))
+exp_lo_c2, exp_hi_c2 = periods[TEST_NOTE_C]
+check("SE専用タイマーが全て非0でもBGM chCは無条件でR4/R5/R10へ書く(もう譲らない)",
+      (z.psg_regs.get(4), z.psg_regs.get(5), z.psg_regs.get(10)) ==
+      (exp_lo_c2, exp_hi_c2, sym["BGM_VOLUME"]))
 
 # ---- rest notes / loop marker (same shape as Stage2/Title's own driver) ----
 z = fresh()
 poke_channel(z, BGM_B_PTR, BGM_B_TIMER, ROW_B, BGM_NOTE_REST, 9, timer=0)
-z.wr(SND_TIMER_B, 0)
 for reg in (2, 3):
     z.psg_regs.pop(reg, None)
 call_routine(z, BGM_TICK)
@@ -228,7 +236,6 @@ z.wr(loop_addr, BGM_LOOP_MARK)
 z.wr(BGM_B_PTR, loop_addr & 0xFF)
 z.wr(BGM_B_PTR + 1, (loop_addr >> 8) & 0xFF)
 z.wr(BGM_B_TIMER, 0)
-z.wr(SND_TIMER_B, 0)
 first_note = z.rd(BGM_B_BASE)
 first_dur = z.rd(BGM_B_BASE + 1)
 call_routine(z, BGM_TICK)
@@ -253,15 +260,21 @@ def decode_rows(row_bytes):
     return rows
 
 
-def observed_note_change_ticks(z, tone_lo_reg, tone_hi_reg, vol_reg, n_ticks):
+def observed_note_change_ticks(z, rest_addr, tone_lo_reg, tone_hi_reg, n_ticks):
+    # 実機フィードバック"ドライバにデューティ比実装"対応: 音量レジスタは
+    # デューティゲートにより同一行の中でも周期的に0へ落ちるため、もう
+    # 「行が変わった」判定材料に使えない。トーン周期+BGM_B/C_REST RAM
+    # フラグ(行の頭でのみ更新される)を組み合わせたキーに変更。
     events = []
     last = None
     for tick in range(n_ticks):
         call_routine(z, BGM_TICK)
-        key = (z.psg_regs.get(tone_lo_reg), z.psg_regs.get(tone_hi_reg), z.psg_regs.get(vol_reg))
+        resting = z.rd(rest_addr) != 0
+        tone = (z.psg_regs.get(tone_lo_reg), z.psg_regs.get(tone_hi_reg))
+        key = (tone, resting)
         if key != last:
-            note = None if key[2] == 0 else next(
-                (i for i, (lo_v, hi_v) in enumerate(periods) if (lo_v, hi_v) == key[:2]), None)
+            note = None if resting else next(
+                (i for i, (lo_v, hi_v) in enumerate(periods) if (lo_v, hi_v) == tone), None)
             events.append((tick, note))
             last = key
     return events
@@ -279,10 +292,7 @@ for i, b in enumerate(chB_bytes):
 z.wr(BGM_B_PTR, BGM_B_BASE & 0xFF)
 z.wr(BGM_B_PTR + 1, (BGM_B_BASE >> 8) & 0xFF)
 z.wr(BGM_B_TIMER, 0)
-z.wr(SND_TIMER_B, 0)
-z.wr(SND_TIMER_C, 0)
-z.wr(SND_C_DUTY_TIMER, 0)
-observed_b = observed_note_change_ticks(z, 2, 3, 9, N_TICKS)
+observed_b = observed_note_change_ticks(z, BGM_B_REST, 2, 3, N_TICKS)
 expected_b = []
 cum = 0
 for note, dur in decode_rows(chB_bytes):
@@ -291,47 +301,41 @@ for note, dur in decode_rows(chB_bytes):
     expected_b.append((cum, None if note == BGM_NOTE_REST else note))
     cum += dur
 check(f"round40 off-by-one regression: {len(expected_b)} real ALONE_FIGHTER chB note-change ticks "
-      f"(over {N_TICKS} real BGM_TICK calls from a real boot, no SFX active throughout) match the "
+      f"(over {N_TICKS} real BGM_TICK calls from a real boot) match the "
       "real bgm_bank.bin row data EXACTLY",
       observed_b == expected_b)
 
 
-# ---- the other half of the fix: SOUND_UPDATE_B/SUC_NORMAL must write
-# NOTHING once idle (SND_TIMER_B/SND_TIMER_C == 0), so BGM can own the
-# channel right back - direct regression check for this round's change ----
-def call_sound_update(z, snd_timer=0, snd_timer_b=0, snd_timer_c=0, snd_c_duty=0, snd_noise=0):
-    z.wr(sym["SND_TIMER"], snd_timer)
-    z.wr(SND_TIMER_B, snd_timer_b)
-    z.wr(SND_TIMER_C, snd_timer_c)
-    z.wr(SND_C_DUTY_TIMER, snd_c_duty)
-    call_routine(z, sym["SOUND_UPDATE"])
+# ---- デューティ比ゲート(実機フィードバック"ドライバにデューティ比
+# 実装 6.25,12.5,25,50を実装 どちらの曲もパート1が25パート2が12.5")----
+# Stage1もStage2/Titleと全く同じmask方式・同じ割り当て(chB=25%/chC=
+# 12.5%)。チャンネルB/CはもうSEと無関係(SEは全てチャンネルAへ移設
+# 済み)なので、単純にBGM単独での通常デューティ列を確認するだけでよい。
+check("BGM_B_DUTY_MASK is 25%デューティ(mask=3, パート1)", BGM_B_DUTY_MASK == 3)
+check("BGM_C_DUTY_MASK is 12.5%デューティ(mask=7, パート2)", BGM_C_DUTY_MASK == 7)
+
+
+def duty_gate_sequence(z, ptr_addr, timer_addr, note, duration, vol_reg, n_ticks):
+    row_addr = 0xD400
+    poke_channel(z, ptr_addr, timer_addr, row_addr, note, duration, timer=0)
+    seq = []
+    for _ in range(n_ticks):
+        call_routine(z, BGM_TICK)
+        seq.append(z.psg_regs.get(vol_reg))
+    return seq
 
 
 z = fresh()
-for reg in (9,):
-    z.psg_regs.pop(reg, None)
-call_sound_update(z, snd_timer_b=0)
-check("SOUND_UPDATE_B idle (SND_TIMER_B=0): writes NOTHING to R9 (yields to BGM)", 9 not in z.psg_regs)
+seq_b = duty_gate_sequence(z, BGM_B_PTR, BGM_B_TIMER, TEST_NOTE_B, 40, 9, 16)
+expected_seq_b = [BGM_VOLUME if (t & BGM_B_DUTY_MASK) == 0 else 0 for t in range(16)]
+check("chB(パート1, 25%デューティ): R9のON/OFF列が4tickに1回ONのパターンと完全一致",
+      seq_b == expected_seq_b)
 
 z = fresh()
-z.psg_regs[9] = 0x99  # poison - if SOUND_UPDATE writes anything it won't be this
-call_sound_update(z, snd_timer_b=7)
-check("SOUND_UPDATE_B active (SND_TIMER_B=7): still writes the current value to R9 (unchanged real behavior)",
-      z.psg_regs.get(9) == 7)
-check("SOUND_UPDATE_B active: SND_TIMER_B decremented as before", z.rd(SND_TIMER_B) == 6)
-
-z = fresh()
-for reg in (10,):
-    z.psg_regs.pop(reg, None)
-call_sound_update(z, snd_timer_c=0, snd_c_duty=0)
-check("SUC_NORMAL idle (SND_TIMER_C=0): writes NOTHING to R10 (yields to BGM)", 10 not in z.psg_regs)
-
-z = fresh()
-z.psg_regs[10] = 0x99
-call_sound_update(z, snd_timer_c=9, snd_c_duty=0)
-check("SUC_NORMAL active (SND_TIMER_C=9): still writes the current value to R10 (unchanged real behavior)",
-      z.psg_regs.get(10) == 9)
-check("SUC_NORMAL active: SND_TIMER_C decremented as before", z.rd(SND_TIMER_C) == 8)
+seq_c = duty_gate_sequence(z, BGM_C_PTR, BGM_C_TIMER, TEST_NOTE_C, 40, 10, 16)
+expected_seq_c = [BGM_VOLUME if (t & BGM_C_DUTY_MASK) == 0 else 0 for t in range(16)]
+check("chC(パート2, 12.5%デューティ): R10のON/OFF列が8tickに1回ONのパターンと完全一致",
+      seq_c == expected_seq_c)
 
 
 # ---- DI/EI protection: every PSG_ADDR/PSG_DATA OUT pair this round
@@ -372,8 +376,8 @@ for name, presets in PROTECTED:
     check(f"{name}: every PSG_ADDR/PSG_DATA OUT executes with IFF1=False (DI in effect)", masked)
 
 for name, presets in [
-    ("SOUND_UPDATE", {sym["SND_TIMER"]: 5, SND_TIMER_B: 5, SND_TIMER_C: 5, SND_C_DUTY_TIMER: 0}),
-    ("SOUND_UPDATE", {sym["SND_TIMER"]: 5, SND_TIMER_B: 0, SND_TIMER_C: 0, SND_C_DUTY_TIMER: 8}),
+    ("SOUND_UPDATE", {SND_TIMER: 5, SND_TONE_TIMER: 5, SND_BARRIER_DUTY_TIMER: 0}),
+    ("SOUND_UPDATE", {SND_TIMER: 5, SND_TONE_TIMER: 0, SND_BARRIER_DUTY_TIMER: 8}),
 ]:
     saw, masked = scan_psg_out_iff1(sym[name], presets)
     check(f"{name}: real PSG_ADDR/PSG_DATA OUTs found", saw)
@@ -381,7 +385,7 @@ for name, presets in [
 
 # BGM_TICK itself needs no DI/EI wrapping (runs entirely inside one
 # interrupt, same reasoning as Stage2/Title's own driver).
-saw, masked = scan_psg_out_iff1(BGM_TICK, {BGM_B_TIMER: 0, BGM_C_TIMER: 0, SND_TIMER_B: 0, SND_TIMER_C: 0, SND_C_DUTY_TIMER: 0})
+saw, masked = scan_psg_out_iff1(BGM_TICK, {BGM_B_TIMER: 0, BGM_C_TIMER: 0})
 check("BGM_TICK: real PSG_ADDR/PSG_DATA OUTs found", saw)
 
 

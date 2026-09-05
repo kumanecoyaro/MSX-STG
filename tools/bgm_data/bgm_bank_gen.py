@@ -66,6 +66,18 @@ STAGE2_DATA_BASE = 0xC200
 CONTROL_OFFSET = 0x800  # データ本体からのオフセット(全曲共通、制御変数用)
 
 
+# デューティ比ゲート(実機フィードバック"ドライバにデューティ比実装
+# 6.25,12.5,25,50を実装 どちらの曲もパート1が25パート2が12.5"): 全4種
+# とも「1/(2^n)の1tickだけON、残りOFF」という形なので、mask=(2^n)-1の
+# AND判定1発で表現できる(除算不要)。
+DUTY_50 = 1        # 50%  = 1/2
+DUTY_25 = 3        # 25%  = 1/4
+DUTY_12_5 = 7      # 12.5% = 1/8
+DUTY_6_25 = 15     # 6.25% = 1/16
+BGM_B_DUTY_MASK = DUTY_25    # パート1(chB)
+BGM_C_DUTY_MASK = DUTY_12_5  # パート2(chC)
+
+
 def _ram_layout(data_base):
     period_lo = data_base
     period_hi = data_base + NUM_NOTES
@@ -79,6 +91,10 @@ def _ram_layout(data_base):
         "BGM_C_PTR": control_base + 2,
         "BGM_B_TIMER": control_base + 4,
         "BGM_C_TIMER": control_base + 5,
+        "BGM_B_REST": control_base + 6,
+        "BGM_C_REST": control_base + 7,
+        "BGM_B_PHASE": control_base + 8,
+        "BGM_C_PHASE": control_base + 9,
     }
 
 
@@ -92,6 +108,10 @@ BGM_B_PTR = _default["BGM_B_PTR"]
 BGM_C_PTR = _default["BGM_C_PTR"]
 BGM_B_TIMER = _default["BGM_B_TIMER"]
 BGM_C_TIMER = _default["BGM_C_TIMER"]
+BGM_B_REST = _default["BGM_B_REST"]
+BGM_C_REST = _default["BGM_C_REST"]
+BGM_B_PHASE = _default["BGM_B_PHASE"]
+BGM_C_PHASE = _default["BGM_C_PHASE"]
 
 
 def _generate():
@@ -172,6 +192,10 @@ def song_constants(song_key, data_base=BGM_DATA_BASE):
         "BGM_C_PTR": ram["BGM_C_PTR"],
         "BGM_B_TIMER": ram["BGM_B_TIMER"],
         "BGM_C_TIMER": ram["BGM_C_TIMER"],
+        "BGM_B_REST": ram["BGM_B_REST"],
+        "BGM_C_REST": ram["BGM_C_REST"],
+        "BGM_B_PHASE": ram["BGM_B_PHASE"],
+        "BGM_C_PHASE": ram["BGM_C_PHASE"],
     }
 
 

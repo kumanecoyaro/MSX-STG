@@ -3068,6 +3068,30 @@ STACKTOP      EQU 0F380h
 INIT:
     LD SP,STACKTOP
 
+    ; 実機フィードバック対応("ステージ1から2へBGM変わる時にまだ
+    ; ステージ2に切替わってないのに ステージ2のBGMがなってるんで
+    ; 初期描画終えてから演奏スタートな"): このINITはStage1(src/CYBER
+    ; SHMUP.asm)からのバンク切替トランポリン経由で呼ばれるが、Stage1
+    ; 側はMAINLOOPに入って以降ずっと割り込み許可(EI)状態のまま(この
+    ; ファイル自身のINIT_BGMコメント・Stage1のINIT自身の"interrupts
+    ; stay off for all of INIT's raw VDP/PSG port I/O"コメント参照)。
+    ; そのままこのINITへジャンプすると、Stage1が最後に設定した古い
+    ; H.TIMIフック(Stage1自身のBGM_TICKアドレスを指したまま)が、
+    ; このファイル自身のINIT_BGMで上書きされるまでの間、window Aの
+    ; 中身がStage2自身のコードに切り替わった後もバンク切替前の
+    ; アドレスへ毎垂直帰線ごとにJPし続けてしまう(Stage2の地形・
+    ; スケジュール等の初期描画が全て終わる前に、たまたまそこにある
+    ; コード/データを命令として実行してしまう未定義動作 - "初期描画
+    ; 終えてから演奏スタート"という要求を満たさない以前に、Stage1・
+    ; Stage2で共通の絶対RAMアドレスに置かれたBGM制御変数を経由して
+    ; 曲がそのまま鳴り続けてしまう遠因でもある)。Stage1自身のINIT・
+    ; title_test.asmのINITが両方とも採用済みの「INIT冒頭でDI、全ての
+    ; 描画が終わったINIT末尾(CALL INIT_BGMの直後)でEI」という既存の
+    ; 型をこのファイルにも適用し、Stage2自身の初期描画が完全に終わって
+    ; 自分自身のBGM_TICKが正しく設置されるまでの間、一切の割り込みを
+    ; 許可しないようにする。
+    DI
+
     ; checkpoint P1 (border color 11): INIT reached, SP set.
     LD B,11 : LD C,7 : CALL WRTVDP
 
@@ -3903,14 +3927,14 @@ ICL_LOOP:
     DJNZ ICL_LOOP
 
     ; BGM driver install (Vsync-driven, follow-up#24) - deliberately one
-    ; of the LAST things INIT does: INIT_BGM arms the H.TIMI hook, and
-    ; every earlier INIT step above (including its own PSG boot-mute
-    ; block, see SND_TIMER's own comment) runs with the hook still at
-    ; whatever the BIOS default is, so none of them need DI/EI
-    ; protection against OUR OWN handler - only code that runs AFTER
-    ; this point (i.e. everything in MAINLOOP and beyond) can actually
-    ; race against BGM_TICK.
+    ; of the LAST things INIT does: INIT_BGM arms the H.TIMI hook. INIT
+    ; 冒頭のDI(上記コメント参照)により、ここまでの全INIT処理は割り込み
+    ; 禁止状態で走っている(Stage1から切り替わった直後の古いH.TIMIフックが
+    ; 誤って発火する余地が無い)。この直後のEIで初めて割り込みを許可する -
+    ; その時点でBGM_TICKは既に自分自身の正しいアドレスを指しており、
+    ; 初期描画も全て完了済み。
     CALL INIT_BGM
+    EI
 
     ; checkpoint 9: enemy patterns + pool set up - about to enter MAINLOOP
     LD B,9 : LD C,7 : CALL WRTVDP
@@ -6178,6 +6202,24 @@ BGM_B_PTR   EQU 0CA00h
 BGM_C_PTR   EQU 0CA02h
 BGM_B_TIMER EQU 0CA04h
 BGM_C_TIMER EQU 0CA05h
+BGM_B_REST  EQU 0CA06h    ; 0=音符が鳴っている行/非0=休符行(デューティ
+BGM_C_REST  EQU 0CA07h    ; ゲートを毎tick適用するか、常時無音にするか)
+BGM_B_PHASE EQU 0CA08h    ; デューティ比のfree-runningフェーズカウンタ
+BGM_C_PHASE EQU 0CA09h
+
+; デューティ比(実機フィードバック"ドライバにデューティ比実装
+; 6.25,12.5,25,50を実装 どちらの曲もパート1が25パート2が12.5") - PSGの
+; トーンch自体はハード的に常に50%デューティの矩形波しか出せないため、
+; このファイル既存のSOUND_BARRIER_HIT/CALC_DUTY_GATE_VOLUME(src/CYBER
+; SHMUP.asm側)と同じ手法 - 短い周期でON/OFFをソフトウェア的に切り替える
+; 音量ゲート - をBGM側にも適用する。4種とも「1/(2^n)tickだけON、残りは
+; OFF」という形なのでmask=(2^n)-1のAND判定1発で表現できる(除算不要)。
+BGM_DUTY_50   EQU 1        ; 50%  = 1/2
+BGM_DUTY_25   EQU 3        ; 25%  = 1/4
+BGM_DUTY_12_5 EQU 7        ; 12.5% = 1/8
+BGM_DUTY_6_25 EQU 15       ; 6.25% = 1/16
+BGM_B_DUTY_MASK EQU BGM_DUTY_25    ; パート1(chB)
+BGM_C_DUTY_MASK EQU BGM_DUTY_12_5  ; パート2(chC)
 
 INIT_BGM:
     ; 曲データRAMコピー。INIT_BGMはINIT終盤(checkpoint9直前)から呼ばれる
@@ -6197,9 +6239,13 @@ INIT_BGM:
     LD (BGM_B_PTR),HL
     XOR A
     LD (BGM_B_TIMER),A
+    LD (BGM_B_REST),A
+    LD (BGM_B_PHASE),A
     LD HL,BGM_C_BASE
     LD (BGM_C_PTR),HL
     LD (BGM_C_TIMER),A
+    LD (BGM_C_REST),A
+    LD (BGM_C_PHASE),A
 
     LD A,0C3h                     ; JP nn opcode
     LD (HTIMI_HOOK),A
@@ -6231,16 +6277,20 @@ BGM_TICK:
     RET
 
 ; チャンネルB(R2/R3 tone、R9 volume)の1tick分の前進。タイマーが残って
-; いればデクリメントするだけ、0なら次の行を読んでperiod/volumeを書く。
+; いればデクリメントするだけ、0なら次の行を読んでトーン周期を書く。
 ; LOOP_MARKに当たったらBGM_B_BASEへ戻ってその行を読み直す。BGM_TICK
 ; から呼ばれる時点でAF/BC/DE/HLは既に保存済みなので、自由に使える。
+; 実機フィードバック"ドライバにデューティ比実装"対応: 音量(R9)は行の
+; 頭だけでなく毎tick、BGMT_UB_GATEでデューティ比ゲートに従って書き
+; 直す(旧来は行ロード時に1回書いたきり保持していただけで、ホールド中
+; は完全に無音化 - トーン自体は常時ONのままだった)。
 BGMT_UPDATE_B:
     LD A,(BGM_B_TIMER)
     OR A
     JR Z,BGMT_UB_NEWROW
     DEC A
     LD (BGM_B_TIMER),A
-    RET
+    JR BGMT_UB_GATE
 BGMT_UB_NEWROW:
     LD HL,(BGM_B_PTR)
     LD A,(HL)
@@ -6269,18 +6319,38 @@ BGMT_UB_GOT:
     LD (BGM_B_TIMER),A
     LD A,C
     CP BGM_NOTE_REST
-    JR Z,BGMT_UB_REST
-    LD E,A : LD D,0
+    JR Z,BGMT_UB_SETREST
+    XOR A
+    LD (BGM_B_REST),A
+    LD E,C : LD D,0
     LD HL,BGM_PERIOD_LO_RAM : ADD HL,DE : LD A,(HL) : LD B,A
     LD HL,BGM_PERIOD_HI_RAM : ADD HL,DE : LD A,(HL) : LD C,A
     LD A,2 : OUT (PSG_ADDR),A
     LD A,B : OUT (PSG_DATA),A
     LD A,3 : OUT (PSG_ADDR),A
     LD A,C : OUT (PSG_DATA),A
+    ; デューティ位相をリセット - 音符の頭は必ずONで鳴らす(BGMT_UB_GATE
+    ; 側は「INCしてからAND」の順なので、ここにmaskそのものを積んでおくと
+    ; 次のGATE呼び出しでINC後にAND=0となりONになる)。
+    LD A,BGM_B_DUTY_MASK
+    LD (BGM_B_PHASE),A
+    JR BGMT_UB_GATE
+BGMT_UB_SETREST:
+    LD A,1
+    LD (BGM_B_REST),A
+BGMT_UB_GATE:
+    LD A,(BGM_B_REST)
+    OR A
+    JR NZ,BGMT_UB_SILENT
+    LD A,(BGM_B_PHASE)
+    INC A
+    LD (BGM_B_PHASE),A
+    AND BGM_B_DUTY_MASK
+    JR NZ,BGMT_UB_SILENT
     LD A,9 : OUT (PSG_ADDR),A
     LD A,BGM_VOLUME : OUT (PSG_DATA),A
     RET
-BGMT_UB_REST:
+BGMT_UB_SILENT:
     LD A,9 : OUT (PSG_ADDR),A
     XOR A : OUT (PSG_DATA),A
     RET
@@ -6292,7 +6362,7 @@ BGMT_UPDATE_C:
     JR Z,BGMT_UC_NEWROW
     DEC A
     LD (BGM_C_TIMER),A
-    RET
+    JR BGMT_UC_GATE
 BGMT_UC_NEWROW:
     LD HL,(BGM_C_PTR)
     LD A,(HL)
@@ -6312,18 +6382,35 @@ BGMT_UC_GOT:
     LD (BGM_C_TIMER),A
     LD A,C
     CP BGM_NOTE_REST
-    JR Z,BGMT_UC_REST
-    LD E,A : LD D,0
+    JR Z,BGMT_UC_SETREST
+    XOR A
+    LD (BGM_C_REST),A
+    LD E,C : LD D,0
     LD HL,BGM_PERIOD_LO_RAM : ADD HL,DE : LD A,(HL) : LD B,A
     LD HL,BGM_PERIOD_HI_RAM : ADD HL,DE : LD A,(HL) : LD C,A
     LD A,4 : OUT (PSG_ADDR),A
     LD A,B : OUT (PSG_DATA),A
     LD A,5 : OUT (PSG_ADDR),A
     LD A,C : OUT (PSG_DATA),A
+    LD A,BGM_C_DUTY_MASK
+    LD (BGM_C_PHASE),A
+    JR BGMT_UC_GATE
+BGMT_UC_SETREST:
+    LD A,1
+    LD (BGM_C_REST),A
+BGMT_UC_GATE:
+    LD A,(BGM_C_REST)
+    OR A
+    JR NZ,BGMT_UC_SILENT
+    LD A,(BGM_C_PHASE)
+    INC A
+    LD (BGM_C_PHASE),A
+    AND BGM_C_DUTY_MASK
+    JR NZ,BGMT_UC_SILENT
     LD A,10 : OUT (PSG_ADDR),A
     LD A,BGM_VOLUME : OUT (PSG_DATA),A
     RET
-BGMT_UC_REST:
+BGMT_UC_SILENT:
     LD A,10 : OUT (PSG_ADDR),A
     XOR A : OUT (PSG_DATA),A
     RET

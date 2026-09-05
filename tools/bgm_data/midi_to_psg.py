@@ -19,6 +19,13 @@ tick変換: 1 vblank tick(H.TIMI呼び出し1回) = 4 MIDI tick(検証済み、
 周期テーブルはこの範囲をそのままindex0-34として直接カバーする
 (bgm_gen.py旧来のノート名テーブルとは独立、MIDI番号直接キー方式 - 名前
 テーブル経由の間接参照はもう不要なため、混乱を避けるためあえて別実装)。
+
+OCTAVE_SHIFT(実機フィードバック"ではどっちの曲もオクターブ下げてくれ"):
+生MIDIノート番号から`-OCTAVE_SEMITONES`(12半音=1オクターブ)した値を
+実際の周期テーブル参照キーとして使う。MIDI_MIN/MIDI_MAXはシフト後の
+範囲(50-84から-12した38-72)を表す - つまりテーブル自体・行データ
+双方ともシフト後の値で一貫して構築される(このモジュールの外から見て
+「もう1オクターブ低い音」以外の違いは無い)。
 """
 import os
 import mido
@@ -28,8 +35,11 @@ MIDI_DIR = os.path.join(HERE, "midi")
 
 PSG_CLOCK = 3579545 / 2  # 1789772.5Hz - MSX AY-3-8910互換PSGの入力クロック
 
-MIDI_MIN = 50
-MIDI_MAX = 84
+OCTAVE_SEMITONES = 12
+OCTAVE_SHIFT = -OCTAVE_SEMITONES  # 実機フィードバックで両曲とも1オクターブ下げ
+
+MIDI_MIN = 50 + OCTAVE_SHIFT  # 38
+MIDI_MAX = 84 + OCTAVE_SHIFT  # 72
 NUM_NOTES = MIDI_MAX - MIDI_MIN + 1  # 35
 
 NOTE_REST = 0xFF
@@ -75,10 +85,10 @@ def _track_segments(track):
         if msg.type == "note_on" and msg.velocity > 0:
             if cur_note is not None:
                 segments.append((cur_start, abs_time, cur_note))
-            cur_note = msg.note
+            cur_note = msg.note + OCTAVE_SHIFT
             cur_start = abs_time
         elif (msg.type == "note_off") or (msg.type == "note_on" and msg.velocity == 0):
-            if cur_note is not None and msg.note == cur_note:
+            if cur_note is not None and msg.note + OCTAVE_SHIFT == cur_note:
                 segments.append((cur_start, abs_time, cur_note))
                 cur_note = None
     if cur_note is not None:

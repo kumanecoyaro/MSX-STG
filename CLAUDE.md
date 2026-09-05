@@ -1607,3 +1607,60 @@ Round40、完了済み)
   バンク切替+RAMコピーの実装が必要(現在Stage1が自前でやっていない
   理由=単体版ROM廃止済み+`tools/verify_*.py`群のフラット64KBメモリ
   前提という制約も踏まえること、詳細はHANDOFF.md参照)。
+
+## Round41(BGM: オクターブ下げ+デューティ比ドライバ+Stage2初期化順序
+修正、続けてStage1: 全SEをchAへ統合・完了済み)(2026-09-05)
+
+- ユーザー指示: "おｋ ではどっちの曲もオクターブ下げてくれ で、
+  ドライバにデューティ比実装 6.25,12.5,25,50を実装 どちらの曲も
+  パート1が25パート2が12.5 で、ステージ1から2へBGM変わる時にまだ
+  ステージ2に切替わってないのにステージ2のBGMがなってるんで 初期
+  描画終えてから演奏スタートな"の3件に対応。(1)オクターブ下げ:
+  `tools/bgm_data/midi_to_psg.py`に`OCTAVE_SHIFT=-12`を追加、行データの
+  構造は不変。(2)デューティ比: Stage2/Title/Stage1の3ファイル全ての
+  BGMT_UPDATE_B/Cを「行の頭だけ音量を書く」方式から「毎tick、
+  free-runningな位相カウンタをANDマスクでゲート判定」方式へ全面書き
+  換え(全4種とも`1/(2^n)`のためAND1発で表現可能、除算不要)。
+  パート1(chB)=25%(mask=3)/パート2(chC)=12.5%(mask=7)。新規RAM4バイト/
+  チャンネル(`BGM_B/C_REST`・`BGM_B/C_PHASE`)。既存の音量ベースの
+  off-by-one回帰テスト判定がデューティゲートで誤検出するようになった
+  ため、判定キーをトーン周期+RESTフラグへ変更。(3)Stage2初期化順序:
+  Stage1・Titleは既に「INIT冒頭でDI、末尾でEI」のブラケットを持って
+  いたが、Stage2の`combined_test.asm`だけこれが無く、Stage1から
+  トランポリンで飛んできた時点で割り込みが有効なまま長い初期描画を
+  行っていた(Stage1の古いH.TIMIフックが、window Aの中身がStage2の
+  コードに切り替わった後もそのアドレスへJPし続ける未定義動作の
+  リスクがあった)。Stage1/Titleと同じブラケットをStage2にも追加し
+  解消。全回帰`run_all.py` **1394 passed/0 failed**。
+- 続けて実機再確認で"ステージ1の自機ショット音とBGMが被ってる 弾うつ
+  とベースのほうが聞こえてない 被らないはずだぞ"という報告。調査の
+  結果(`SOUND_SHOT`の12tick減衰 vs 4tick連射間隔ですきまが無くなる
+  ことが直接原因)を提示したところ、ユーザーから根本的な指摘:
+  **"そもそもchB、Cは空けてあってSE類はchAのみで鳴らすはず"**。
+  調査の結果これは素のStage1自体の原設計(R7=0B1h、コメント
+  "channel A=noise-only, B/C=tone-only")と食い違うと判明、事実関係を
+  提示した上でどう進めるか確認したところユーザーから明快な回答:
+  **"SEの被りで上書きされるのは問題ない BCはBGM専用 で、ノイズは
+  別ch PSGは4音同時に鳴らせる トーンでノイズは消えない"**。これを
+  受けて全SE(SOUND_SHOT/POD_HIT/POD_FIRE/BARRIER_HIT=トーン、
+  DESTROY+エンジン音=ノイズ)をチャンネルAへ統合する大掛かりな書き
+  換えを実施: R7ミキサーを`0B1h`→`0B0h`(トーンAの有効ビットを追加、
+  AY-3-8910はチャンネルごとにトーン/ノイズが独立ビットのため互いを
+  消し合わない)、旧`SND_TIMER_B`/`SND_TIMER_C`を`SND_TONE_TIMER`へ
+  統合(音色は完全無変更)、旧`SND_C_DUTY_TIMER`を`SND_BARRIER_DUTY_
+  TIMER`へ改名、`SOUND_UPDATE_B`/`SUC_NORMAL`を撤去し単一の
+  `SOUND_UPDATE`が3段優先度(バリア>トーン>ノイズ)でR8を1つだけ選ぶ
+  設計に統合、`BGMT_UPDATE_B/C`のSFX優先チェックを完全撤去(Stage2/
+  Titleと構造的に完全同型になった)。`tools/verify_sound_duty_
+  cycle.py`/`tools/verify_player_damage.py`/`tools/verify_stage1_
+  bgm.py`を新設計に合わせ改訂。全ての`tools/verify_*.py`を横断
+  再実行(`verify_idcache_multiframe.py`等の既知の無関係な既存問題
+  以外は全PASS)。全回帰`run_all.py` **1394 passed/0 failed**、
+  `verify_stage1_bgm.py` **40 passed**、`verify_sound_duty_cycle.py`
+  **46 passed**、`verify_player_damage.py` **55 passed**。3ROM
+  (Stage2単体・Title単体・Comb)再ビルド・`verify_comb.py`確認済み。
+  詳細・技術的経緯は`tools/stage2_combined/HANDOFF.md`のRound41を
+  参照。
+  - **保留**: チャンネルA統合後の複数SE同時発生時の優先度・個別の
+    減衰時間は未調整の初期値、実機での聞こえ方次第で再調整の可能性
+    あり。

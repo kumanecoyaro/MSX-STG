@@ -1,10 +1,17 @@
 """Verifies the round32 port of Stage2's noise-sound duty-cycle gating
 into src/CYBER SHMUP.asm (Stage1) - "ステージ1もデューティ比操作を適用"
-- channel A's own R8 volume write in SOUND_UPDATE now alternates every
-frame between the current envelope and silence, following TICK's own
-low bit, via the new CALC_NOISE_GATE_VOLUME helper. Channels B/C
-(always tone in this file, unlike Stage2's shared/time-shared channel
-A) are untouched.
+- channel A's own R8 volume write in SOUND_UPDATE alternates every frame
+between the current envelope and silence, following TICK's own low bit,
+via CALC_NOISE_GATE_VOLUME, for the NOISE-side envelope (SND_TIMER)
+only.
+
+実機フィードバック対応("そもそもchB、Cは空けてあってSE類はchAのみで
+鳴らすはず")で、従来チャンネルB/Cに分かれていたトーンSE(SOUND_SHOT/
+SOUND_POD_HIT/SOUND_POD_FIRE)も全てチャンネルAへ統合され、SND_TONE_
+TIMER(ゲート無し)/SND_BARRIER_DUTY_TIMER(専用の2連バズゲート)という
+別々の減衰タイマーを介して同じR8を奪い合うようになった。SOUND_UPDATEは
+優先順位(バリア>トーン>ノイズ)で1フレームにつき1つだけを実際にR8へ
+書く - このファイル自身のSOUND_UPDATEのコメント参照。
 
 z80emu.py has no PSG emulation at all (OUT only does anything for the
 VDP ports), so the actual byte written to the PSG can never be observed
@@ -15,9 +22,10 @@ standalone specifically so it's testable this way) for a matrix of
 SND_TIMER/TICK combinations, independently re-derived here rather than
 read back from the ASM's own logic; that SND_TIMER itself still decays
 normally through SOUND_UPDATE (the gating only affects what's WRITTEN,
-not the underlying envelope); and that channels B/C's own SND_TIMER_B/
-SND_TIMER_C decay completely unaffected by TICK, confirming the gate
-really is scoped to channel A only.
+not the underlying envelope); that SND_TONE_TIMER decays completely
+unaffected by TICK (still ungated, exactly the pre-migration character);
+and the 3-way priority order among SND_BARRIER_DUTY_TIMER/SND_TONE_
+TIMER/SND_TIMER when more than one is simultaneously active.
 
 Usage: python3 tools/verify_sound_duty_cycle.py
 """
@@ -46,8 +54,8 @@ sym = asm.symtab
 
 TICK = sym["TICK"]
 SND_TIMER = sym["SND_TIMER"]
-SND_TIMER_B = sym["SND_TIMER_B"]
-SND_TIMER_C = sym["SND_TIMER_C"]
+SND_TONE_TIMER = sym["SND_TONE_TIMER"]
+SND_BARRIER_DUTY_TIMER = sym["SND_BARRIER_DUTY_TIMER"]
 
 mem = bytearray(65536)
 for addr, val in out.items():
@@ -116,27 +124,58 @@ check("SND_TIMER reaches exactly 0 after 15 frames (its own real peak, unaffecte
       "the duty-cycle write gating)", timer_trace[14] == 0)
 
 # ---------------------------------------------------------------------
-# 3: channels B/C (always tone) decay completely independently of TICK -
-# confirms the gate is scoped to channel A only.
+# 3: SND_TONE_TIMER (SOUND_SHOT/SOUND_POD_HIT/SOUND_POD_FIRE, all merged
+# onto channel A's tone generator - "そもそもchB、Cは空けてあってSE類は
+# chAのみで鳴らすはず") decays completely independently of TICK -
+# confirms it stays ungated exactly like before the migration (only
+# SND_TIMER's own noise-side envelope gets the duty-cycle treatment).
 # ---------------------------------------------------------------------
 cpu = fresh_cpu()
-call_routine(cpu, sym["SOUND_POD_FIRE"])  # channel B
-call_routine(cpu, sym["SOUND_SHOT"])       # channel C
-check("SOUND_POD_FIRE sets SND_TIMER_B to its own peak (15)", cpu.rd(SND_TIMER_B) == 15)
-check("SOUND_SHOT sets SND_TIMER_C to its own peak (12)", cpu.rd(SND_TIMER_C) == 12)
-b_trace = []
-c_trace = []
+call_routine(cpu, sym["SOUND_SHOT"])
+check("SOUND_SHOT sets SND_TONE_TIMER to its own peak (12)", cpu.rd(SND_TONE_TIMER) == 12)
+tone_trace = []
 for frame in range(13):
-    cpu.wr(TICK, frame)  # alternates parity every frame - B/C must not care
+    cpu.wr(TICK, frame)  # alternates parity every frame - tone SE must not care
     call_routine(cpu, sym["SOUND_UPDATE"])
-    b_trace.append(cpu.rd(SND_TIMER_B))
-    c_trace.append(cpu.rd(SND_TIMER_C))
-expected_b = [max(0, 15 - f) for f in range(1, 14)]
-expected_c = [max(0, 12 - f) for f in range(1, 14)]
-check(f"SND_TIMER_B (channel B, tone) decays by exactly 1/frame regardless of TICK's "
-      f"own parity (expected {expected_b}, got {b_trace})", b_trace == expected_b)
-check(f"SND_TIMER_C (channel C, tone) decays by exactly 1/frame regardless of TICK's "
-      f"own parity (expected {expected_c}, got {c_trace})", c_trace == expected_c)
+    tone_trace.append(cpu.rd(SND_TONE_TIMER))
+expected_tone = [max(0, 12 - f) for f in range(1, 14)]
+check(f"SND_TONE_TIMER decays by exactly 1/frame regardless of TICK's own parity "
+      f"(expected {expected_tone}, got {tone_trace})", tone_trace == expected_tone)
+
+# "SEの被りで上書きされるのは問題ない" - firing 2 different tone SE in
+# the same frame collapses onto the one shared SND_TONE_TIMER, last
+# write wins (no crash, no attempt at mixing 2 values).
+cpu = fresh_cpu()
+call_routine(cpu, sym["SOUND_POD_FIRE"])  # sets SND_TONE_TIMER=15
+call_routine(cpu, sym["SOUND_SHOT"])       # then overwrites it to 12
+check("colliding tone SE (POD_FIRE then SHOT) - last one wins on the shared SND_TONE_TIMER",
+      cpu.rd(SND_TONE_TIMER) == 12)
+
+# ---------------------------------------------------------------------
+# 4: 3-way channel-A R8 priority (SND_BARRIER_DUTY_TIMER > SND_TONE_
+# TIMER > SND_TIMER) when more than one envelope is simultaneously
+# active - whichever wins the R8 write is the ONLY one SOUND_UPDATE
+# touches that frame (same "freeze the masked one(s), don't corrupt
+# state" precedent the pre-migration SOUND_UPDATE_C already had for
+# SND_TIMER_C while SND_C_DUTY_TIMER/SOUND_BARRIER_HIT was active -
+# see that routine's own old comment).
+# ---------------------------------------------------------------------
+cpu = fresh_cpu()
+call_routine(cpu, sym["SOUND_DESTROY"])        # SND_TIMER=15 (lowest priority)
+call_routine(cpu, sym["SOUND_SHOT"])            # SND_TONE_TIMER=12 (mid priority)
+call_routine(cpu, sym["SOUND_BARRIER_HIT"])     # SND_BARRIER_DUTY_TIMER=8 (highest)
+for frame in range(3):
+    cpu.wr(TICK, frame)
+    call_routine(cpu, sym["SOUND_UPDATE"])
+check("lower-priority envelopes are frozen (not decremented) while masked - SND_TIMER "
+      "(noise, lowest priority) stays at its own peak",
+      cpu.rd(SND_TIMER) == 15)
+check("lower-priority envelopes are frozen (not decremented) while masked - SND_TONE_TIMER "
+      "(mid priority) stays at its own peak",
+      cpu.rd(SND_TONE_TIMER) == 12)
+check("all 3 envelopes decay independently while masked - SND_BARRIER_DUTY_TIMER (highest, "
+      "actually reaching R8 each of these 3 frames)",
+      cpu.rd(SND_BARRIER_DUTY_TIMER) == 5)
 
 
 print()

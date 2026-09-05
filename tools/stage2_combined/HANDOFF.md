@@ -8863,3 +8863,178 @@ RAMコピーのバンク境界方式は保留)
   理由 - 単体版ROM廃止済み+`tools/verify_*.py`群がバンク概念の無い
   フラット64KBメモリ前提、という制約を踏まえた設計 - も参照した上で
   対応すること)。
+
+## Round41(BGM: オクターブ下げ+デューティ比ドライバ実装+Stage2初期化
+順序修正、続けてStage1: 全SEをチャンネルAへ統合・完了済み)
+
+- ユーザー指示: "こりゃ酷い 音はなってるがピーピー不協和音 多分休符も
+  無視してるな テンポも無茶苦茶だ 自分でドライバ実装してて仕様を
+  一致させられんのかお前は"という実機報告を受け(このRound着手前に
+  修正済み、詳細はRound40 実機フィードバック対応参照)、続けて"で、
+  2面分転送しなくていいからな...テストだからタイトルだけでいいわ
+  他いじってもトークンの無駄だ...あと恐らくステージ2のボススポーンの
+  サウンドとBGM被ってるだろ ChAになってるか"(こちらもRound40
+  実機フィードバック対応その2で対応済み)。今回はその続きとして
+  "おｋ ではどっちの曲もオクターブ下げてくれ で、ドライバにデューティ
+  比実装 6.25,12.5,25,50を実装 どちらの曲もパート1が25パート2が12.5
+  で、ステージ1から2へBGM変わる時にまだステージ2に切替わってないのに
+  ステージ2のBGMがなってるんで 初期描画終えてから演奏スタートな"の
+  3件、続けて実機再確認の中で"ステージ1の自機ショット音とBGMが被って
+  る 弾うつとベースのほうが聞こえてない 被らないはずだぞ"の1件、
+  計4件に対応。
+
+### (1) オクターブ下げ
+
+`tools/bgm_data/midi_to_psg.py`に`OCTAVE_SHIFT=-12`(1オクターブ)を
+追加、`_track_segments()`が生MIDIノート番号を周期テーブル参照キーへ
+変換する箇所(`cur_note = msg.note + OCTAVE_SHIFT`)に適用。MIDI範囲を
+50-84→38-72へシフトするだけで、行データの構造(音符数・duration)は
+一切変化しない(`bgm_bank_gen.py --generate`で再生成し、chB/chC長が
+シフト前と完全一致することを確認済み)。`bgm_bank.bin`/
+`bgm_layout.json`を再生成・再コミット。
+
+### (2) デューティ比ドライバ実装
+
+Stage2(`combined_test.asm`)・Title(`title_test.asm`)・Stage1(`src/
+CYBER SHMUP.asm`)の3ファイル全てのBGMT_UPDATE_B/Cを、「行の頭だけ
+音量(R9/R10)を書いて後は保持」という旧来方式から、「毎tick、
+free-runningなデューティ位相カウンタ(BGM_B_PHASE/BGM_C_PHASE)を
+`AND`マスクでゲート判定し、ON/OFFを繰り返し書き直す」方式へ全面
+書き換え。6.25/12.5/25/50%の4種は全て`1/(2^n)`の形なので、
+`mask=(2^n)-1`のAND判定1発(除算不要)で表現できる
+(`BGM_DUTY_50=1`/`_25=3`/`_12_5=7`/`_6_25=15`)。ユーザー指定通り
+パート1(chB)=25%(mask=3)・パート2(chC)=12.5%(mask=7)を両曲共通で
+適用。新規RAM4バイト/チャンネル: `BGM_B_REST`/`BGM_C_REST`(0=音符が
+鳴っている行/非0=休符行、休符行は位相に関係なく常時無音)、
+`BGM_B_PHASE`/`BGM_C_PHASE`(位相カウンタ、NEWROW時にmask値そのもの
+へリセットすることで「音符の頭は必ずON」を保証 - GATE側は「INCしてから
+AND」の順なので、mask値を積んでおくと次回のINC後にAND=0となりON
+になる)。3ファイルとも同一アドレスオフセット(control_base+6〜+9)に
+配置(Stage1/TitleはBGM_DATA_BASE=0xC000起点、Stage2のみ既存データと
+の衝突を避けるためSTAGE2_DATA_BASE=0xC200起点、いずれも
+`bgm_bank_gen.py`の`_ram_layout()`が一元計算)。
+
+Stage2で先に実装・`BGM_TICK`を2000回連続実行する直接シミュレーション
+で25%/12.5%それぞれのON/OFF列を検証してから、Title→Stage1の順に
+同一設計を機械的に複製。既存の「音量が変化したら行が変わった」という
+off-by-one回帰テストの判定ロジックが、デューティゲートによる同一行内
+での周期的な音量0化を「新しい行」と誤検出するようになったため、
+判定キーをトーン周期+`BGM_B/C_REST`RAMフラグ(行の頭でのみ更新される)
+の組み合わせへ変更(音量とは独立に判定できる)。3ファイルの回帰
+テスト(`bgm_test.py`/`title_test.py`/`verify_stage1_bgm.py`)に
+デューティ比の直接シーケンス検証を追加。全回帰`run_all.py`
+**1394 passed/0 failed**、`title_test.py` **41 passed**、
+`verify_stage1_bgm.py`は次項(3)の変更後で**40 passed**。
+
+### (3) Stage2: 初期描画完了前にBGMが鳴る問題の修正
+
+"ステージ1から2へBGM変わる時にまだステージ2に切替わってないのに
+ステージ2のBGMがなってるんで 初期描画終えてから演奏スタートな"に
+対応。調査の結果、Stage1(`src/CYBER SHMUP.asm`)・Title
+(`title_test.asm`)は共に「INIT冒頭でDI、全ての描画とINIT_BGMが終わった
+INIT末尾でEI」という既存のブラケットを持っていた(Stage1は元々BIOSの
+タイマー割り込みからIXを保護するため、Titleはこの1つ前のRoundで
+BGM用に導入)のに対し、Stage2(`combined_test.asm`)のINITだけがこの
+ブラケットを一切持たず、Stage1からのバンク切替トランポリンで
+ジャンプしてくる時点でIFF1(割り込み許可)がStage1のMAINLOOP実行時の
+まま(有効)引き継がれることが判明。この状態でStage2のINITが長い初期
+描画(地形・スケジュール・スプライトパターン等)を行っている間、
+Stage1が最後に設置した古いH.TIMIフック(Stage1自身のBGM_TICKの
+アドレスをそのまま指したまま)が、window Aの中身がStage2自身のコード
+に切り替わった後もそのアドレスへ毎垂直帰線ごとにJPし続けてしまう
+(Stage2の初期描画が終わる前に、たまたまそこにあるコード/データを
+命令として実行してしまう未定義動作)。Stage1/Titleと同じ「INIT冒頭で
+DI、`CALL INIT_BGM`(自分自身の正しいBGM_TICKを設置)の直後でEI」という
+ブラケットをStage2のINITにも追加して解消 - これにより、割り込みが
+許可される(=音が鳴り始めうる)のは必ずStage2自身の初期描画が完全に
+終わった後になる。全回帰`run_all.py` **1394 passed/0 failed**
+(件数増減なし、ASMのみの変更)。
+
+### (4) 実機フィードバック対応: Stage1の自機ショット音とBGMの衝突
+
+実機再確認で"ステージ1の自機ショット音とBGMが被ってる 弾うつと
+ベースのほうが聞こえてない 被らないはずだぞ"という報告を受け調査。
+
+原因調査の結果を提示: `SOUND_SHOT`は「タイマー値=そのまま音量」と
+いう実装で、発射のたび`SND_TIMER_C`が12にリセットされ12tickかけて
+減衰する。しかし連射間隔(`SHOT_COOLDOWN_FRAMES`=4)は4tickしかない
+ため、連射中は次の発射が来るたびに12へ再セットされ、`SND_TIMER_C`が
+0に落ちる(=BGMがチャンネルCを取り戻せる)瞬間が実質発生しない。これが
+チャンネルC(ベースパート)が連射中ずっと聞こえなくなる直接原因、と
+ユーザーへ提示・対応方針をAskUserQuestionで確認したところ、ユーザー
+から根本的な指摘: **"そもそもchB、Cは空けてあってSE類はchAのみで
+鳴らすはず"**。
+
+調査の結果、これはRound40のBGM実装より遥かに以前からの、素の
+Stage1自体の原設計だったコメント("channel A = noise-only (destroy),
+channel B = tone-only (pod-fire don), channel C = tone-only (shot
+chun)"、R7=0B1h)と食い違うと判明 - 事実関係をAskUserQuestionで提示し
+どう進めるか確認したところ、ユーザーから明快な回答: **"SEの被りで
+上書きされるのは問題ない BCはBGM専用 で、ノイズは別ch PSGは4音同時に
+鳴らせる トーンでノイズは消えない"**。
+
+この回答に基づき、全SE(SOUND_SHOT/SOUND_POD_HIT/SOUND_POD_FIRE/
+SOUND_BARRIER_HIT=トーン、SOUND_DESTROY+フライアウェイ中のエンジン
+音=ノイズ)をチャンネルAへ統合し、チャンネルB/CをBGM専用に解放する
+大掛かりな書き換えを実施:
+
+- **R7ミキサー**: `0B1h`→`0B0h`(トーンAの有効ビット(bit0)だけを
+  追加で立てる、ノイズA/トーンB/トーンC/ノイズB/ノイズCは全て従来の
+  まま)。AY-3-8910はチャンネルごとにトーン/ノイズの有効ビットが独立
+  しているため、同じチャンネルAでトーンとノイズを同時に有効化しても
+  互いを消し合わない(ユーザー確認"トーンでノイズは消えない"通り)。
+- **タイマー変数の統合**: 旧`SND_TIMER_C`(SHOT+POD_HIT共用)と旧
+  `SND_TIMER_B`(POD_FIRE)を`SND_TONE_TIMER`という1本の共有タイマーへ
+  統合(3者とも元々ゲート無しの単純な1フレーム1減衰という同じ性質
+  だったため、統合しても個々の音色は一切変化しない)。旧
+  `SND_C_DUTY_TIMER`(BARRIER_HITの2連バズ専用)は`SND_BARRIER_DUTY_
+  TIMER`へ改名(アドレスは同じ0F214hのまま)。
+- **SOUND_SHOT/POD_HIT/POD_FIRE/BARRIER_HIT**: 出力先をR2/R3(chB)or
+  R4/R5(chC)からR0/R1(chA)へ変更、それぞれ`SND_TONE_TIMER`または
+  `SND_BARRIER_DUTY_TIMER`をセット。周期値・音色は完全に無変更。
+- **SOUND_UPDATE**: `SOUND_UPDATE_B`/`SUC_NORMAL`(旧・チャンネルB/C
+  それぞれのSFX処理)を完全に削除、単一の`SOUND_UPDATE`へ統合。R8
+  (チャンネルA音量)は毎フレーム3段優先度(`SND_BARRIER_DUTY_TIMER`
+  (バリアの2連バズ)>`SND_TONE_TIMER`(単純トーン)>`SND_TIMER`
+  (ノイズ、`CALC_NOISE_GATE_VOLUME`で1:1デューティゲート済み))で
+  1つだけ選んで書く。低優先度側は書かれない間は完全に凍結
+  (デクリメントされない) - これは旧来の`SOUND_UPDATE_C`が
+  `SND_C_DUTY_TIMER`アクティブ中に`SND_TIMER_C`を凍結していた既存の
+  前例をそのまま踏襲した設計。「SEの被りで上書きされるのは問題ない」
+  との確認通り、複数のSEが同時に発生した場合は優先度の低い側が
+  一時的に聞こえなくなるだけで、クラッシュや状態破損は起きない。
+- **BGMT_UPDATE_B/C**: 冒頭にあった「SFXタイマーが非0の間は完全に
+  譲る」という優先チェック(`SND_TIMER_B`/`SND_TIMER_C`/
+  `SND_C_DUTY_TIMER`参照)を完全に撤去。これによりStage1のBGMT_
+  UPDATE_B/CはStage2/Titleと構造的に完全に同型になった(このRound
+  (2)で実装したデューティゲート部分は元々3ファイルで既に同型
+  だったため、実質的な差分はこの優先チェックの有無だけだった)。
+
+`tools/verify_sound_duty_cycle.py`(旧・チャンネルB/Cが常にTICKの
+影響を受けないことを検証していたテスト)を、新設計(`SND_TONE_TIMER`
+がゲート無しで独立に減衰すること、3段優先度で低優先度側が凍結される
+こと)に合わせて全面改訂。`tools/verify_player_damage.py`の
+`SOUND_BARRIER_HIT`関連アサーションをリネーム後のシンボルに更新。
+`tools/verify_stage1_bgm.py`から「SFXタイマー非0でBGMが完全に譲る」
+テスト群を削除し、代わりに「SE専用タイマーが何であってもBGMの書き込み
+に一切影響しない」ことを直接検証するテストへ置き換え。全ての
+`tools/verify_*.py`を横断的に再実行し、`verify_idcache_multiframe.py`
+/`verify_namebuf_regen.py`のKeyError(既知の無関係な既存問題、git
+stashで今回のセッション開始時点でも既に発生することを確認済み)・
+`verify_barrier.py`のFileNotFoundError(セッション固有の一時アップ
+ロードファイル不在、無関係)以外は全てPASSすることを確認。全回帰
+`run_all.py` **1394 passed/0 failed**(Stage2は今回無変更のため
+件数増減なし)、`verify_stage1_bgm.py` **40 passed**、
+`verify_sound_duty_cycle.py` **46 passed**、`verify_player_damage.py`
+**55 passed**。
+
+3ROM(Stage2単体・Title単体・Comb)を再ビルド、`verify_comb.py`で
+Title→Stage1→Stage2の一気通貫バンク切替・BGM RAM再配置の健全性を
+再確認、全チェックPASS。
+
+- **保留**: (4)のチャンネルA統合により、複数のSE(例: 連射中の破壊音+
+  ショット音)が同時に発生した場合の優先度(バリア>トーン>ノイズ)は
+  未調整の初期値 - 実機での聞こえ方次第で優先順位や個別の減衰時間の
+  再調整があり得る。フライアウェイ中のエンジン音(`SND_TIMER`使用)と
+  ショット音(`SND_TONE_TIMER`)が同時に発生するケース(通常は起こり
+  にくいが)の見え方も実機確認待ち。

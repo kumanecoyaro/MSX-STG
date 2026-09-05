@@ -64,7 +64,7 @@ BARRIER_IFRAMES = sym["BARRIER_IFRAMES"]; BARRIER_IFRAMES_INIT = sym["BARRIER_IF
 PLAYER_FLYAWAY = sym["PLAYER_FLYAWAY"]
 PLAYER_ACCENT_COLOR = sym["PLAYER_ACCENT_COLOR"]
 SPR_WHITE = sym["SPR_WHITE"]; SPR_PURPLE = sym["SPR_PURPLE"]; SPR_LIGHTRED = sym["SPR_LIGHTRED"]
-SND_C_DUTY_TIMER = sym["SND_C_DUTY_TIMER"]
+SND_BARRIER_DUTY_TIMER = sym["SND_BARRIER_DUTY_TIMER"]
 ENEMY_POOL = sym["ENEMY_POOL"]; ENEMY_SLOT_SIZE = sym["ENEMY_SLOT_SIZE"]
 E_ACTIVE = sym["E_ACTIVE"]; E_TYPE = sym["E_TYPE"]; E_X = sym["E_X"]; E_Y = sym["E_Y"]
 E_TOP = sym["E_TOP"]; E_BOT = sym["E_BOT"]
@@ -295,17 +295,19 @@ check("...does NOT trigger the sprite-explosion burst (that's only for the post-
 # "サウンドはブブって2回低音のデューティ比25％最大音量で" - SOUND_
 # BARRIER_HIT's actual PSG writes aren't observable (z80emu.py has no
 # PSG emulation - see CALC_NOISE_GATE_VOLUME's own comment), but the
-# duty-gate timer it arms IS observable, and drives SOUND_UPDATE_C's
+# duty-gate timer it arms IS observable, and drives SOUND_UPDATE's
 # actual playback (verified below via the pure CALC_DUTY_GATE_VOLUME).
+# 実機フィードバック対応でチャンネルAへ統合済み(旧SND_C_DUTY_TIMER→
+# SND_BARRIER_DUTY_TIMER、旧SOUND_UPDATE_C→SOUND_UPDATEへ統合)。
 check("...armed the duty-gate timer to 8 (2 on-pulses over 8 frames = 25% duty)",
-      z.rd(SND_C_DUTY_TIMER) == 8)
+      z.rd(SND_BARRIER_DUTY_TIMER) == 8)
 
 
 # ---------- (9) CALC_DUTY_GATE_VOLUME: exactly 2 full-volume(15) frames out of 8 ----------
 # Pure function (no PSG side effects, same "directly testable without
 # observing an actual PSG write" reasoning as CALC_NOISE_GATE_VOLUME).
 def duty_vol(z, timer_val):
-    z.wr(SND_C_DUTY_TIMER, timer_val)
+    z.wr(SND_BARRIER_DUTY_TIMER, timer_val)
     call_routine(z, sym["CALC_DUTY_GATE_VOLUME"])
     return z.a
 
@@ -316,21 +318,21 @@ check("CALC_DUTY_GATE_VOLUME: exactly 2 full-volume(15) frames out of the 8-fram
 check("...the 2 on-frames are at counter values 8 and 4 (evenly spread = a clean 25% duty, "
       "not clustered)", volumes[0] == 15 and volumes[4] == 15)
 
-# SOUND_UPDATE_C actually decrements SND_C_DUTY_TIMER 8->0 over 8 calls, then falls back to normal
+# SOUND_UPDATE actually decrements SND_BARRIER_DUTY_TIMER 8->0 over 8 calls, then falls back to normal
 z = fresh(); boot(z)
-z.wr(SND_C_DUTY_TIMER, 8)
+z.wr(SND_BARRIER_DUTY_TIMER, 8)
 for _ in range(8):
-    call_routine(z, sym["SOUND_UPDATE_C"])
-check("SOUND_UPDATE_C: SND_C_DUTY_TIMER counts down to 0 and the gate turns itself off after 8 calls",
-      z.rd(SND_C_DUTY_TIMER) == 0)
+    call_routine(z, sym["SOUND_UPDATE"])
+check("SOUND_UPDATE: SND_BARRIER_DUTY_TIMER counts down to 0 and the gate turns itself off after 8 calls",
+      z.rd(SND_BARRIER_DUTY_TIMER) == 0)
 
-# once SND_C_DUTY_TIMER is 0, SOUND_UPDATE_C falls back to plain SND_TIMER_C playback unaffected
+# once SND_BARRIER_DUTY_TIMER is 0, SOUND_UPDATE falls back to plain SND_TONE_TIMER playback unaffected
 z = fresh(); boot(z)
-z.wr(SND_C_DUTY_TIMER, 0)
-z.wr(sym["SND_TIMER_C"], 12)
-call_routine(z, sym["SOUND_UPDATE_C"])
-check("SOUND_UPDATE_C: with the duty gate inactive, SOUND_SHOT/SOUND_POD_HIT's own SND_TIMER_C "
-      "playback is completely unaffected", z.rd(sym["SND_TIMER_C"]) == 11)
+z.wr(SND_BARRIER_DUTY_TIMER, 0)
+z.wr(sym["SND_TONE_TIMER"], 12)
+call_routine(z, sym["SOUND_UPDATE"])
+check("SOUND_UPDATE: with the duty gate inactive, SOUND_SHOT/SOUND_POD_HIT/SOUND_POD_FIRE's own "
+      "SND_TONE_TIMER playback is completely unaffected", z.rd(sym["SND_TONE_TIMER"]) == 11)
 
 
 # ---------- (10) accent color: white normally, purple while BARRIER_IFRAMES>0 ----------
