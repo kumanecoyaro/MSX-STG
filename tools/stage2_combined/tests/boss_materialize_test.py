@@ -70,6 +70,10 @@ SND_BOOM_DECAY_CTR = sym["SND_BOOM_DECAY_CTR"]
 BOSS_BOOM_DECAY_PERIOD = sym["BOSS_BOOM_DECAY_PERIOD"]
 BOSS_EXPL_CX = sym["BOSS_EXPL_CX"]
 BOSS_EXPL_CY = sym["BOSS_EXPL_CY"]
+BOSS_PHASE = sym["BOSS_PHASE"]
+BOSS_POSE_TICKS = sym["BOSS_POSE_TICKS"]
+BOSS_POSE_END_TICK = sym["BOSS_POSE_END_TICK"]
+BULLET0_ACT = sym["BULLET0_ACT"]
 
 
 def set_game_tick(cpu, val):
@@ -376,6 +380,169 @@ check("real MAINLOOP: the effect finishes (BOSS_MATERIALIZE_ACT back to 0, "
 if returned_at is not None:
     check("real MAINLOOP: the boss is back exactly at BOSS_SPAWNX once the "
           "effect finishes", cpu.mem[BOSS_X] == BOSS_SPAWNX)
+
+# ---- follow-up#23 ("まずマテリアライズ中はボスコリジョン無効") - a
+# bullet that would normally hit the boss must NOT register while the
+# entrance materialize effect is still running, in either phase - BOSS_X
+# isn't the boss's real, stable footprint yet during that whole window,
+# it's being driven every frame by UPDATE_BOSS_MATERIALIZE itself. Follows
+# boss_collision_test.py's own make_boss/make_bullet + CHECK_BULLET_VS_
+# BOSS pattern.
+def make_boss(cpu, x=100, hp=None):
+    cpu.mem[BOSS_ACT] = 1
+    cpu.mem[BOSS_X] = x
+    cpu.mem[BOSS_Y] = BOSS_SPAWN_Y
+    cpu.mem[BOSS_HP] = hp if hp is not None else 255
+    cpu.mem[sym["BOSS_FLASH_TIMER"]] = 0
+    cpu.mem[BOSS_MATERIALIZE_ACT] = 0
+
+
+def make_bullet(cpu, col, row):
+    ix = BULLET0_ACT
+    cpu.mem[ix + 0] = 1
+    cpu.mem[ix + 1] = 0
+    cpu.mem[ix + 2] = col
+    cpu.mem[ix + 3] = row
+    row_addr = 0x1800 + row * 32
+    cpu.mem[ix + 4] = row_addr & 0xFF
+    cpu.mem[ix + 5] = (row_addr >> 8) & 0xFF
+    cpu.mem[ix + 6] = 0
+
+
+boss_row = BOSS_SPAWN_Y // 8
+
+# control: with the effect NOT running, the existing hit behavior is
+# unchanged (sanity check that make_boss/make_bullet here really do land
+# a hit, before trusting the "blocked" cases below).
+cpu = fresh_cpu()
+make_boss(cpu, x=100)
+hp_before = cpu.mem[BOSS_HP]
+make_bullet(cpu, col=100 // 8 + 1, row=boss_row + 1)
+call_routine(cpu, "CHECK_BULLET_VS_BOSS")
+check("control: a bullet inside the boss's box registers a hit when "
+      "BOSS_MATERIALIZE_ACT=0 (materialize not running)",
+      cpu.mem[BOSS_HP] == hp_before - 1 and cpu.mem[BULLET0_ACT] == 0)
+
+for act, phase_name in ((1, "phase 1 (converging)"), (2, "phase 2 (returning)")):
+    cpu = fresh_cpu()
+    make_boss(cpu, x=100)
+    cpu.mem[BOSS_MATERIALIZE_ACT] = act
+    hp_before = cpu.mem[BOSS_HP]
+    make_bullet(cpu, col=100 // 8 + 1, row=boss_row + 1)
+    call_routine(cpu, "CHECK_BULLET_VS_BOSS")
+    check(f"a bullet that would otherwise hit is ignored while "
+          f"BOSS_MATERIALIZE_ACT={act} ({phase_name}) - no HP loss, "
+          f"bullet stays active", cpu.mem[BOSS_HP] == hp_before and cpu.mem[BULLET0_ACT] == 1)
+
+# the gate doesn't leak once the effect actually ends - a hit right after
+# ACT drops back to 0 registers normally again.
+cpu = fresh_cpu()
+make_boss(cpu, x=100)
+cpu.mem[BOSS_MATERIALIZE_ACT] = 0
+hp_before = cpu.mem[BOSS_HP]
+make_bullet(cpu, col=100 // 8 + 1, row=boss_row + 1)
+call_routine(cpu, "CHECK_BULLET_VS_BOSS")
+check("the collision gate does not leak past materialize's own end - a "
+      "hit at ACT=0 registers normally", cpu.mem[BOSS_HP] == hp_before - 1)
+
+# regression guard: this exact scenario hung boss_collision_test.py's own
+# real end-to-end HP-drain test forever during development of this round
+# - once BOSS_FORM leaves 0 (SPARK/ACTIVE), TRIGGER_BOSS_BROKEN_FORM/
+# INIT_BOSS_EXPLOSION overwrite BOSS_EXPL_CX/CY (== BOSS_MATERIALIZE_ACT/
+# SND_CTR) with a REAL cell coordinate - almost always nonzero - and the
+# collision gate above must never mistake that for "materialize still
+# running" once that's happened. BOSS_X=100 here produces a genuinely
+# nonzero cell coordinate ((100+32)>>3 = 16) if this gate doesn't also
+# check BOSS_FORM first.
+for form_value, form_name in ((sym["BOSS_FORM_SPARK"], "SPARK"),
+                               (sym["BOSS_FORM_ACTIVE"], "ACTIVE")):
+    cpu = fresh_cpu()
+    make_boss(cpu, x=100)
+    cpu.mem[BOSS_FORM] = form_value
+    cpu.mem[BOSS_EXPL_CX] = 16   # a real, nonzero cell coordinate - NOT "materialize phase 1"
+    hp_before = cpu.mem[BOSS_HP]
+    make_bullet(cpu, col=100 // 8 + 1, row=boss_row + 1)
+    call_routine(cpu, "CHECK_BULLET_VS_BOSS")
+    check(f"a hit still registers once BOSS_FORM={form_name} even though "
+          f"BOSS_EXPL_CX (aliasing BOSS_MATERIALIZE_ACT) holds a real, "
+          f"nonzero cell coordinate - the collision gate must not confuse "
+          f"this with materialize still running",
+          cpu.mem[BOSS_HP] == hp_before - 1)
+
+
+# ---- follow-up#23 ("その後初期位置に戻ったら現在は左に行って往復するが
+# 往復はせず即攻撃に移るように") - the instant UPDATE_BOSS_MATERIALIZE's
+# own return leg (phase 2) reaches BOSS_SPAWNX, it must jump straight into
+# the attack pose (BOSS_PHASE=1, hand art armed) within that SAME call -
+# never leave BOSS_PHASE=0/BOSS_DIR=0 for UBA_ACTIVE to pick up and start
+# the ordinary left-edge patrol leg first.
+cpu = fresh_cpu()
+call_routine(cpu, "S2_BOSS_SPAWN")
+cpu.mem[BOSS_MATERIALIZE_ACT] = 2   # phase 2: returning
+cpu.mem[BOSS_X] = BOSS_SPAWNX - BOSS_SPEED  # one call away from arrival
+cpu.mem[BOSS_Y] = BOSS_SPAWN_Y
+tick_before = get_game_tick(cpu)
+call_routine(cpu, "UPDATE_BOSS_MATERIALIZE")
+check("the return leg's own completing UPDATE_BOSS_MATERIALIZE call lands "
+      "BOSS_X exactly on BOSS_SPAWNX", cpu.mem[BOSS_X] == BOSS_SPAWNX)
+check("...and clears BOSS_MATERIALIZE_ACT back to 0",
+      cpu.mem[BOSS_MATERIALIZE_ACT] == 0)
+check("...and enters the attack pose (BOSS_PHASE=1) immediately, within "
+      "that same call - no separate UBA_ACTIVE call needed, no ordinary "
+      "left-edge patrol leg first", cpu.mem[BOSS_PHASE] == 1)
+pose_end_tick = cpu.mem[BOSS_POSE_END_TICK] | (cpu.mem[BOSS_POSE_END_TICK + 1] << 8)
+check("...and arms BOSS_POSE_END_TICK the same way the ordinary right-edge "
+      "arrival does (GAME_TICK + BOSS_POSE_TICKS)",
+      pose_end_tick == (tick_before + BOSS_POSE_TICKS) & 0xFFFF)
+
+# a follow-up UBA_ACTIVE call while parked in this pose must stay in the
+# pose (UBA_POSE), never fall into UBA_MOVE_LEFT - i.e. BOSS_X must not
+# start decreasing back toward the left edge.
+x_in_pose = cpu.mem[BOSS_X]
+call_routine(cpu, "UBA_ACTIVE")
+check("a follow-up UBA_ACTIVE call while freshly posed stays parked at "
+      "BOSS_SPAWNX (still mid-pose, not starting the left-edge patrol leg)",
+      cpu.mem[BOSS_X] == x_in_pose == BOSS_SPAWNX)
+
+# end-to-end real-time confirmation: from the real MAINLOOP run, the
+# instant the effect finishes, BOSS_X must never subsequently drop below
+# BOSS_SPAWNX before the first attack pose actually ends (i.e. no round
+# trip to the left edge is ever taken first).
+cpu = fresh_cpu()
+for i in range(9000):
+    step_frame(cpu)
+    if cpu.mem[BOSS_ACT] == 1:
+        break
+for j in range(600):
+    step_frame(cpu)
+    if cpu.mem[BOSS_MATERIALIZE_ACT] == 0:
+        break
+check("real MAINLOOP: the boss is already in the attack pose (BOSS_PHASE=1) "
+      "the instant the materialize effect finishes",
+      cpu.mem[BOSS_PHASE] == 1)
+# BOSS_X must stay pinned exactly at BOSS_SPAWNX for as long as the pose
+# itself lasts (UBA_POSE never touches BOSS_X) - the old bug's own
+# symptom would be BOSS_X immediately decreasing here instead, since that
+# means the ordinary left-edge patrol leg fired first rather than this
+# pose. Stop watching the instant the pose itself ends (BOSS_PHASE
+# leaves 1) - patrolling left AFTER the first attack is normal, expected
+# behavior, not the round trip this test guards against.
+never_left_spawn = True
+pose_ended = False
+for k in range(BOSS_POSE_TICKS * 8 + 16):   # comfortably past BOSS_POSE_TICKS worth of raw frames
+    step_frame(cpu)
+    if cpu.mem[BOSS_PHASE] != 1:
+        pose_ended = True
+        break
+    if cpu.mem[BOSS_X] < BOSS_SPAWNX:
+        never_left_spawn = False
+        break
+check("real MAINLOOP: the pose actually ends within the expected window "
+      "(sanity check that this test observed a real pose, not a stall)",
+      pose_ended)
+check("real MAINLOOP: BOSS_X never drops below BOSS_SPAWNX for as long as "
+      "the first pose itself lasts - the old left-edge round trip never "
+      "happens before this first attack", never_left_spawn)
 
 print()
 print(f"{len(ok)} passed, {len(fail)} failed")

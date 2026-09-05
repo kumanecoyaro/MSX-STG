@@ -383,6 +383,12 @@ for f in range(20000):
 check("real MAINLOOP: boss spawns before the drain-to-threshold test",
       cpu.mem[BOSS_ACT] == 1)
 
+# follow-up#23 ("まずマテリアライズ中はボスコリジョン無効") - bypass the
+# entrance materialize effect's own hit-immunity window exactly like
+# boss_collision_test.py's own real-boss drain test does, or this loop
+# below spins forever (every hit ignored for ~4.27s post-spawn).
+cpu.mem[sym["BOSS_MATERIALIZE_ACT"]] = 0
+
 boss_x = cpu.mem[BOSS_X]
 boss_row = BOSS_SPAWN_Y // 8
 # stop 1 hit short of the (inclusive) threshold, so the "still form 0"

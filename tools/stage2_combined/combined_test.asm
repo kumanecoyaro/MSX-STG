@@ -10146,11 +10146,15 @@ UBM_RETURNING:
     CP BOSS_SPAWNX
     JR C,UBM_RETURN_STEP
     LD A,BOSS_SPAWNX : LD (BOSS_X),A
-    ; done - UBA_ACTIVE's own freeze check sees ACT=0 from the very next
-    ; frame and resumes ordinary patrol from here, exactly as if the
-    ; entrance effect had never run.
+    ; done - "その後初期位置までまた戻って攻撃に移る" (follow-up#22),
+    ; then follow-up#23 clarified this should go STRAIGHT into the attack
+    ; pose, not resume the ordinary left-edge patrol leg first ("初期位置
+    ; に戻ったら現在は左に行って往復するが往復はせず即攻撃に移るように").
+    ; BOSS_Y is already BOSS_SPAWN_Y (never touched throughout the whole
+    ; entrance effect), so ENTER_BOSS_ATTACK_POSE's precondition (X/Y
+    ; already clamped to spawn) holds without any extra write here.
     XOR A : LD (BOSS_MATERIALIZE_ACT),A
-    JP UBA_DRAW
+    JP ENTER_BOSS_ATTACK_POSE
 UBM_RETURN_STEP:
     LD (BOSS_X),A
     JP UBA_DRAW
@@ -10306,14 +10310,36 @@ UBA_MOVE_RIGHT:
     ; loop - "右端に戻ったら...BGに描画しスプライトは一旦消す". Not
     ; drawn/flushed as a sprite again until the pose ends (UBA_POSE
     ; below), so RET directly here rather than falling into UBA_DRAW.
+    ; Shared with UBM_RETURNING (follow-up#23 - "初期位置に戻ったら...
+    ; 往復はせず即攻撃に移るように") via ENTER_BOSS_ATTACK_POSE below.
+    JP ENTER_BOSS_ATTACK_POSE
+UBA_STEP_RIGHT_DIAG:
+    LD (BOSS_X),A
+    LD A,(BOSS_Y) : SUB BOSS_SPEED : LD (BOSS_Y),A
+    JP UBA_DRAW
+UBA_STEP_RIGHT_HORIZ:
+    LD A,(BOSS_X) : ADD A,BOSS_SPEED : LD (BOSS_X),A
+    CALL CHECK_THUNDER_TRIGGER_RIGHT
+    JP UBA_DRAW
+; enters the right-edge attack pose directly - BOSS_X/BOSS_Y must already
+; be clamped to BOSS_SPAWNX/BOSS_SPAWN_Y by the caller (UBA_MOVE_RIGHT's
+; own ordinary patrol arrival, or UBM_RETURNING once the materialize
+; effect glides the boss back home - follow-up#23: "初期位置に戻ったら
+; 現在は左に行って往復するが往復はせず即攻撃に移るように", i.e. skip the
+; usual first left-edge round trip entirely and go straight into the
+; attack pose the instant the entrance effect finishes).
+ENTER_BOSS_ATTACK_POSE:
     LD A,1 : LD (BOSS_PHASE),A
     LD HL,(GAME_TICK) : LD DE,BOSS_POSE_TICKS : ADD HL,DE
     LD (BOSS_POSE_END_TICK),HL
     ; the materialize effect (follow-up#22) unfreezes UBA_ACTIVE on its
-    ; own well before this point is ever reachable - see STOP_BOSS_
-    ; MATERIALIZE's own comment for why this call is expected dead code
-    ; in practice, kept only as the same defensive safety net the
-    ; previous entrance-effect designs all had here.
+    ; own well before this point is ever reachable via the ordinary patrol
+    ; leg (UBA_MOVE_RIGHT) - see STOP_BOSS_MATERIALIZE's own comment for
+    ; why this call is expected dead code in practice there, kept only as
+    ; the same defensive safety net the previous entrance-effect designs
+    ; all had here. UBM_RETURNING's own direct jump here already cleared
+    ; BOSS_MATERIALIZE_ACT itself just before, so this is a genuine no-op
+    ; on that path too.
     CALL STOP_BOSS_MATERIALIZE
     CALL HIDE_BOSS_SPRITES
     CALL DRAW_SASAPI_HAND
@@ -10332,14 +10358,6 @@ UBAMR_ARM_HORMING:
     CALL ARM_HORMING_VOLLEY
 UBAMR_POSE_ENTERED:
     RET
-UBA_STEP_RIGHT_DIAG:
-    LD (BOSS_X),A
-    LD A,(BOSS_Y) : SUB BOSS_SPEED : LD (BOSS_Y),A
-    JP UBA_DRAW
-UBA_STEP_RIGHT_HORIZ:
-    LD A,(BOSS_X) : ADD A,BOSS_SPEED : LD (BOSS_X),A
-    CALL CHECK_THUNDER_TRIGGER_RIGHT
-    JP UBA_DRAW
 ; parked at the right edge, hand art on screen, sprite hidden - waits
 ; for BOSS_POSE_TICKS(32) GAME_TICKs (a true 16-bit SBC HL,DE compare
 ; against the target captured at pose-entry, same idiom as every other
@@ -14003,6 +14021,32 @@ CHECK_HIT_PAIR_BOSS:
     LD A,(BOSS_ACT)
     CP 1
     RET NZ
+    ; follow-up#23 ("まずマテリアライズ中はボスコリジョン無効") - while
+    ; the entrance-materialize effect is still running (either phase 1
+    ; converging/flickering or phase 2 gliding back to BOSS_SPAWNX),
+    ; BOSS_X isn't the boss's real, stable hitbox position yet (it's
+    ; being driven every frame by UPDATE_BOSS_MATERIALIZE, alternating
+    ; between the left/right candidates), so no bullet can register a hit
+    ; until it clears back to 0.
+    ;
+    ; BOSS_MATERIALIZE_ACT/SND_CTR alias BOSS_EXPL_CX/CY (RAM headroom
+    ; constraint - see that EQU's own comment), and TRIGGER_BOSS_BROKEN_
+    ; FORM/INIT_BOSS_EXPLOSION overwrite those SAME bytes with a real
+    ; cell coordinate the instant BOSS_FORM leaves 0 - almost always
+    ; nonzero garbage from this gate's own point of view. Only consult
+    ; BOSS_MATERIALIZE_ACT while BOSS_FORM is still 0 (the materialize
+    ; effect only ever runs right after spawn, always before BOSS_FORM
+    ; can change), exactly the same precondition UPDATE_BOSS_MATERIALIZE
+    ; itself checks before touching these bytes - self-caught by
+    ; boss_collision_test.py's own real end-to-end HP-drain test hanging
+    ; forever once HP crossed BOSS_BROKEN_HP_THRESHOLD, before this fix.
+    LD A,(BOSS_FORM)
+    OR A
+    JR NZ,CHPB_MATERIALIZE_CHECK_DONE
+    LD A,(BOSS_MATERIALIZE_ACT)
+    OR A
+    RET NZ
+CHPB_MATERIALIZE_CHECK_DONE:
 
     LD A,(BOSS_FORM)
     CP BOSS_FORM_ACTIVE

@@ -1376,3 +1376,29 @@
     `BOSS_MATERIALIZE_TICKS`(32、≒4.27秒)・`BOSS_MATERIALIZE_SND_
     RETRIGGER`(96生フレーム≒1.6秒)はいずれも未調整の初期値、実機
     での見え方・音の聞こえ方次第で再調整の可能性あり。
+- **(2026-09-05、Round36-14 follow-up#23、完了済み)**: "まずマテリア
+  ライズ中はボスコリジョン無効\nその後初期位置に戻ったら現在は左に
+  行って往復するが往復はせず即攻撃に移るように"に対応。(1)
+  `CHECK_HIT_PAIR_BOSS`に`BOSS_MATERIALIZE_ACT!=0`なら即RETするガード
+  を追加、マテリアライズ中(収束・復帰いずれも)は被弾しない。(2)
+  復帰完了時に通常の左端パトロールを経由せず即攻撃ポーズへ入るよう、
+  `UBA_MOVE_RIGHT`の右端到達時の「攻撃ポーズ突入」処理を共有サブ
+  ルーチン`ENTER_BOSS_ATTACK_POSE`へ切り出し、`UBM_RETURNING`(復帰
+  完了)からもここへ直接ジャンプする設計に変更。**開発中に重大な
+  自己発見バグ**: (1)の新規ガードが`UPDATE_BOSS_MATERIALIZE`自身の
+  `BOSS_FORM!=0`ガードを踏襲していなかったため、`TRIGGER_BOSS_
+  BROKEN_FORM`がHP<=100到達でBOSS_FORMを1にした直後、`BOSS_
+  MATERIALIZE_ACT`のエイリアス先`BOSS_EXPL_CX`に書き込まれる本物の
+  セル座標(ほぼ確実に非ゼロ)を「実体化中」と誤読し、**以後ボスへの
+  被弾が永久に成立しなくなる**(実質無敵化)重大バグを`boss_
+  collision_test.py`/`boss_broken_form_test.py`の実HPドレイン統合
+  テストの無限ハングから発見・修正(`CHECK_HIT_PAIR_BOSS`にも
+  `BOSS_FORM==0`の間だけ判定する同じガードを追加)。両テストファイル
+  にスポーン直後の実体化バイパスも追加。`boss_materialize_test.py`に
+  5件追加(49→51件、上記重大バグの回帰ガード含む)、全ての新規ガード
+  について修正一時除去→FAIL確認→復元→PASS確認の自己検証を実施済み。
+  全回帰`run_all.py` **1299 passed/0 failed**。Comb ROM再ビルド・
+  `verify_comb.py`で健全性確認の上、Stage2単体ROM・Comb ROM両方
+  送付。詳細はHANDOFF.md Round36-14 follow-up#23参照。
+  - **保留**: 実機での見え方(マテリアライズ中の無敵状態が違和感を
+    生まないか)はフィードバック待ち。
