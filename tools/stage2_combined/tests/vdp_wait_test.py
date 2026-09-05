@@ -91,19 +91,24 @@ for i, line in enumerate(lines):
 # single-byte-per-DJNZ-iteration shape - 36->38 / 27->28.
 # round36-14 (boss entrance wipe, "ボス登場前に中身が空の透明のスプライ
 # トを4枚横に並べて..."): WRITE_BOSS_WIPE_ALL (the new 4-dummy-sprite
-# sweep's shared draw/hide writer) adds 1 more site, but a DIFFERENT
-# shape from every addition above - it's fully unrolled (not DJNZ'd,
-# since B holds the shared Y value instead of a loop counter), so its
-# single source occurrence contains all 4 slots' bytes literally: 2
-# OUT(99h),A address-setup writes (unchanged, one address-setup pair
-# covers all 4 contiguous slots) + 16 OUT(98h),A data writes (4 bytes
-# Y/X/pattern/color x 4 slots, all written out explicitly instead of
-# looping) - 38->40 / 28->44.
+# sweep's shared draw/hide writer) added 1 more site, fully unrolled (not
+# DJNZ'd, since B held the shared Y value instead of a loop counter), so
+# its single source occurrence contained all 4 slots' bytes literally: 2
+# OUT(99h),A address-setup writes (one address-setup pair covered all 4
+# contiguous slots) + 16 OUT(98h),A data writes (4 bytes Y/X/pattern/
+# color x 4 slots, all written out explicitly instead of looping) -
+# 38->40 / 28->44.
+# follow-up#22 ("ではワイプ処理はやめる..."): the entire wipe design
+# (WRITE_BOSS_WIPE_ALL included) is retired, replaced by a "materialize"
+# effect that just redraws the boss's own EXISTING body sprite at a
+# different X each frame (DRAW_BOSS/FLUSH_BOSS_SPRITES, already-existing
+# call sites, no new raw OUT sites of its own at all) - back down to the
+# pre-wipe baseline, 40->38 / 44->28.
 check(f"found the expected number of raw OUT (99h),A sites ({len(n99)} - update this "
       "count deliberately if a new one is added, don't just let the test drift)",
-      len(n99) == 40)
+      len(n99) == 38)
 check(f"found the expected number of raw OUT (98h),A sites ({len(n98_delay)})",
-      len(n98_delay) == 44)
+      len(n98_delay) == 28)
 
 bad99 = [(ln, n) for ln, n in n99 if n != 2]
 check("every OUT (99h),A (VRAM address setup) is padded with exactly 2 NOPs (8T)",

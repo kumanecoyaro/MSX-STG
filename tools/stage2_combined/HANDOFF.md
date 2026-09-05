@@ -8081,3 +8081,126 @@ Comb自動送付方針・完了済み)
   - **保留**: `BOSS_WIPE_DURATION_TICKS`(38、"5秒"からの計算値だが
     切り上げにより実際は約5.07秒)・`BOSS_WIPE_SPEED`(16px/frame)は
     実機での見え方次第で再調整の可能性あり。
+
+## Round36-14 follow-up#22(Stage2、ボス登場演出をワイプから左右交互
+点滅の「中央実体化」演出へ全面差し替え・完了済み)
+
+- **経緯**: follow-up#21までのボス登場ワイプ(透明スプライト4枚による
+  16px幅の消去帯)について、まずWeb Audio試聴Artifactでボス出現音の
+  候補を提示、ユーザーが候補G2を選んだ上で"G2でオクターブ下げて"と
+  指示 - Artifact側のG2カード(周期190)を1オクターブ下げ(周期380)に
+  変更して提示。続けてユーザーから同一メッセージ内で2件の指示:
+  "おｋ 音はそれで実装してくれ"(音の実装承認)、および
+  "ではワイプ処理はやめる 変わりに出現時の初期位置は今のままで
+  1フレームごとに左端、右端から交互に表示位置を変えながら中央まで
+  繰り返す 点滅しながら中央で実態化みたいな演出 その間5秒として
+  中央への移動量を割り出してくれ その後初期位置までまた戻って攻撃に
+  移る"(ワイプ演出の全面撤回+新演出への差し替え、移動量の算出は
+  こちら側の裁量に一任)。
+- **ワイプ機能の完全撤去**: follow-up#18-#21で実装した`BOSS_WIPE_*`
+  EQU一式(`BOSS_WIPE_SPR_BASE_SLOT`/`SLOTS`/`START_Y`/`END_Y`/`SPEED`/
+  `DURATION_TICKS`/`END_TICK`/`ACT`/`Y`)と全ルーチン(`TRIGGER_BOSS_
+  WIPE`/`UPDATE_BOSS_WIPE`/`DRAW_BOSS_WIPE_SPRITES`/`HIDE_BOSS_WIPE_
+  SPRITES`/`STOP_BOSS_WIPE`/`WRITE_BOSS_WIPE_ALL`)を削除、TMS9918の
+  「1走査線最大4スプライト」仕様を悪用した透明ダミースプライト方式
+  自体を廃止(借用していたhwスプライトスロット4本は完全に解放)。
+  `boss_wipe_test.py`(follow-up#21時点で38件)は削除し、新規
+  `boss_materialize_test.py`(37件)に置き換え。
+- **新演出の設計**: ボスの実体(`BOSS_X`/`BOSS_Y`、通常パトロール時と
+  同じ`DRAW_BOSS`/`FLUSH_BOSS_SPRITES`経由)自体を、毎フレーム
+  「中央へ収束していく左候補・右候補」のどちらかへ再描画することで
+  点滅させる方式(新規hwスプライトスロット消費ゼロ)。`BOSS_Y`は
+  一切変更しない("出現時の初期位置は今のままで"の通りX方向のみ)。
+  左右の切り替えは`TICK`(真の生フレームカウンタ)の最下位ビットで
+  1フレームごとに交互化。収束量の算出: `BOSS_MATERIALIZE_CENTER_X
+  EQU BOSS_SPAWNX/2`(=96、画面中央)を基準に、経過`GAME_TICK`数×
+  `BOSS_MATERIALIZE_STEP_PX`(3px)だけ中心からの距離を毎フレーム
+  縮め、左候補=中心-距離、右候補=中心+距離として`BOSS_X`に書き込む。
+  収束が完了(`BOSS_MATERIALIZE_TICKS`=32ゲームtick経過)したら
+  `BOSS_X`を中心にきっちり固定し、その後は`UBM_RETURNING`フェーズで
+  通常の`BOSS_SPEED`によるフリッカー無しの単純な滑走で`BOSS_SPAWNX`
+  まで戻り、通常の`UBA_ACTIVE`パトロールへ引き継ぐ。
+- **「5秒」の割り出し方**: このアセンブラ(`mini_z80asm.py`)には
+  乗算・除算命令が無いため、`STEP_PX*TICKS`が振幅`AMP_START`(96px)を
+  割り切れて余りゼロになる組み合わせをあえて選定 - `STEP_PX=3`・
+  `TICKS=32`(3×32=96)。これは32ゲームtick=256生フレーム(GAME_TICKは
+  follow-up#21で確定した通り8生フレームに1回しか進まない)≒4.27秒
+  相当となり、厳密な5.0秒ではなく意図的な近似値(follow-up#21自身の
+  38tick/約5.07秒という丸めと同種の、このプロジェクトで許容されている
+  誤差の範囲)である旨をコード内コメントで明記。乗除算ルーチンを新規に
+  実装する必要が一切無い点を優先した設計判断。
+- **RAM制約は今回も継続**: 「STACKTOPまでの安全マージンがゼロ」という
+  follow-up#18以来の制約は不変のため、新規状態`BOSS_MATERIALIZE_ACT`
+  (0=非活性/1=収束中(点滅)/2=復帰中)・`BOSS_MATERIALIZE_SND_CTR`
+  (効果音再トリガーカウントダウン)は、ワイプ機能と全く同じ
+  `BOSS_EXPL_CX`/`BOSS_EXPL_CY`(ボス死亡演出自身の中心セル座標
+  バイト)へのエイリアスを踏襲、新規RAM消費ゼロを維持。
+- **follow-up#20由来のRAM衝突バグ修正パターンを新演出にも最初から
+  踏襲**: このエイリアス方式そのものが抱える構造的リスク(`TRIGGER_
+  BOSS_BROKEN_FORM`のSPARK遷移や`INIT_BOSS_EXPLOSION`のHP0死亡演出が、
+  同じ2バイトを本来の中心セル座標として正当に上書きするタイミングと
+  ボス登場演出が実際にはまだ「進行中」のタイミングが重なりうる問題)を
+  忘れずに引き継ぎ: (1)`TRIGGER_BOSS_BROKEN_FORM`/`INIT_BOSS_
+  EXPLOSION`の冒頭で`CALL STOP_BOSS_MATERIALIZE`を最初に実行、
+  (2)`UPDATE_BOSS_MATERIALIZE`自身の先頭に`BOSS_FORM!=0`なら即RETする
+  一方向ゲート(`UPDATE_BOSS_ALL`と同じ変数を流用)を追加、の2点を
+  最初から実装した。
+- **サウンド実装(`SOUND_BOSS_MATERIALIZE`)**: G2(オクターブ下げ後の
+  周期380)を実際にPSGレジスタへ書き込む形で新規実装。380=0x17Cは
+  8bitのトーン周期レジスタ0(0-255)を超えるため、**このファイルで
+  初めて**レジスタ1(周期上位4bit)に非ゼロ値(1)を書き込む実装
+  (register0=124/register1=1)。envelope機構は`SOUND_THUNDER`/
+  `SOUND_SBEAM`と同じ既存の共有チャンネルAをそのまま再利用
+  (エンジン新規コード無し) - boom方式の緩やかな減衰
+  (`SND_DECAY=0`+`BOSS_BOOM_DECAY_PERIOD`)+デューティゲート
+  (`SND_NOISE=1`、`SOUND_SBEAM`が確立した「トーンchにデューティ
+  ゲートを使う」手法の踏襲)。`SND_EXPLODING`は立てない
+  (`SOUND_THUNDER`と同じ「繰り返しトリガー系サウンド」の規約 -
+  一発限りの爆発演出用ガードなので不要)。収束フェーズ中
+  `BOSS_MATERIALIZE_SND_RETRIGGER`(96生フレーム=約1.6秒)おきに
+  再トリガー。z80emu.pyはVDPポート以外の`OUT`を一切エミュレートしない
+  (PSGは既存の全サウンドテスト同様ノーオペ)ため、テストで検証できる
+  のはエンベロープ側のRAM状態のみ - レジスタ1への非ゼロ書き込み自体は
+  コードレビューと実機試聴でのみ確認可能な旨を`boss_materialize_
+  test.py`冒頭のコメントに明記。
+- **テスト自己検証(回帰ガードが本当に機能するかの直接確認)**: 新規
+  `BOSS_FORM!=0`ゲートの回帰テストを書いた後、このプロジェクトの
+  established な流儀(「本物の修正を一時的に外してテストが本当に
+  落ちるか確認してから戻す」)に従い、`UPDATE_BOSS_MATERIALIZE`から
+  ゲートを一時削除して再実行したところ、**37件全てPASSのままで
+  ゲート欠落を検出できないという、テスト自体の欠陥を発見**。原因は
+  当初のテストシナリオが「スポーン直後、`BOSS_X`がまだ`BOSS_SPAWNX`
+  (192)のまま」で`TRIGGER_BOSS_BROKEN_FORM`を発火していたこと -
+  ゲートが無い場合`BOSS_MATERIALIZE_ACT`(=`BOSS_EXPL_CX`のエイリアス)
+  には0/1/2以外の実セル座標値(このシナリオでは28)が入るが、
+  `UPDATE_BOSS_MATERIALIZE`のフェーズ分岐(`DEC A : JR NZ,UBM_
+  RETURNING`)はACT==1以外を全て「復帰中」として扱ってしまい、
+  たまたま`BOSS_X`(192)に`BOSS_SPEED`を足した値が即座に`BOSS_SPAWNX`
+  以上と判定されクランプ(実質no-op)された上で`ACT`が自己ゼロ化する
+  という偶然の自己補正が、最初の1回の呼び出しだけでテストが監視して
+  いた`BOSS_EXPL_CY`の食い違いを消してしまっていた。**修正**: (1)
+  `combined_test.asm`側に本物のゲートを復元(この時点で`build_test.py`
+  再アセンブル成功を確認済み)、(2)テストシナリオを`BOSS_X=50`
+  (`BOSS_SPAWNX`から遠い、真に収束途中の値)を発火前に強制セットする
+  形に書き換え、(3)監視対象を`BOSS_EXPL_CY`単独から`BOSS_EXPL_CX`/
+  `BOSS_EXPL_CY`/`BOSS_X`の3つ同時監視に拡大。修正後、再度ゲートを
+  一時削除して確認したところ**今度は正しく1件FAIL**(該当テストのみ)
+  することを確認、ゲートを復元・再アセンブルして最終的に**37件全て
+  PASS**に戻ることを確認済み。この一連の自己検証手順自体を
+  `boss_materialize_test.py`内のコメントに詳細に記録。
+- **その他更新**: `boss_pose_test.py`/`boss_test.py`/`thunder_test.py`
+  内の`BOSS_WIPE_ACT`直接参照を`BOSS_MATERIALIZE_ACT`へリネーム、
+  `init_ram_poison_test.py`のTier B期待値を`{"BOSS_WIPE_ACT": 1}`から
+  `{"BOSS_MATERIALIZE_ACT": 1}`へ変更、`vdp_wait_test.py`の生OUT件数
+  ハードコード期待値を`WRITE_BOSS_WIPE_ALL`削除分だけ40/44→38/28
+  (ワイプ機能導入前のベースラインへ正確に復帰、新演出は既存の
+  `DRAW_BOSS`/`FLUSH_BOSS_SPRITES`呼び出しを再利用するため新規の
+  生OUT命令サイトを一切追加しない)。
+- **検証結果**: 全回帰`run_all.py` **1285 passed/0 failed**。Stage2
+  単体ROM(`build_test.py`)再ビルド成功、Comb ROM
+  (`build_full_rom.py`)再ビルド・`verify_comb.py`で健全性確認済み
+  (バンク切替シーケンス正常)。Stage2単体ROM・Comb ROM両方送付。
+  - **保留**: `BOSS_MATERIALIZE_STEP_PX`(3px/game-tick)・
+    `BOSS_MATERIALIZE_TICKS`(32、≒4.27秒)・`BOSS_MATERIALIZE_SND_
+    RETRIGGER`(96生フレーム≒1.6秒)はいずれも未調整の初期値、実機
+    での見え方・音の聞こえ方次第で再調整の可能性あり。

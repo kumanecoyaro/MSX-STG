@@ -111,12 +111,12 @@ cpu = fresh_cpu()
 call_routine(cpu, "S2_BOSS_SPAWN")   # spawn frame
 # follow-up#20 ("ワイプ中は初期停止状態のスプライトでワイプが終わるまで
 # 停止すること"): UBA_ACTIVE now freezes all patrol movement entirely
-# while the entrance wipe is active (BOSS_WIPE_ACT!=0, seeded by
+# while the entrance materialize effect is active (BOSS_MATERIALIZE_ACT!=0, seeded by
 # S2_BOSS_SPAWN itself). This file's patrol tests below are unrelated to
 # the wipe - bypass it here so the boss actually moves like every test
 # below already assumes (see boss_wipe_test.py for the freeze's own
 # dedicated coverage).
-cpu.mem[sym["BOSS_WIPE_ACT"]] = 0
+cpu.mem[sym["BOSS_MATERIALIZE_ACT"]] = 0
 x0 = cpu.mem[BOSS_X]
 call_routine(cpu, "UPDATE_BOSS_ALL")   # 1 more frame, same tick (already spawned)
 check("steps left by BOSS_SPEED per call while DIR=0",

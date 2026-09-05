@@ -2457,95 +2457,74 @@ BOSS_EXPL_SPARK_SLOT1_COL EQU BOSS_EXPL_RING_REMAIN
 BOSS_EXPL_SPARK_SLOT2_ROW EQU BOSS_EXPL_RING_PTR
 BOSS_EXPL_SPARK_SLOT2_COL EQU BOSS_EXPL_RING_PTR+1
 
-; "ボス登場前に中身が空の透明のスプライトを4枚横に並べて ボス登場Y位置
-; の上16pxからボス表示外の64pxまで高速移動 ボスが攻撃に入ったら消す
-; こうする事でボスを16px幅で消すことが出来るんで登場演出に" - a TMS9918
-; hardware trick: the VDP can only actually DRAW 4 sprites on any given
-; scanline, in ascending attribute-table-slot order (lower slot = higher
-; priority). 4 fully-transparent (color0) dummy sprites, placed at LOWER
-; slot numbers than the boss's own body (BOSS_SPR_BASE_SLOT=10..25), win
-; that priority on every scanline they occupy - silently pushing the
-; real body sprites on those same lines off the "first 4" budget, so
-; they don't render there at all. Sweeping the dummies vertically
-; through the boss's own body therefore erases it in a moving 64px-wide
-; (4x16px) band, even though the dummies themselves are invisible.
-; Slots4-7 (ENEMY_SPR_BASE_SLOT's own 3 + BULLET_U_SPR_BASE_SLOT's
-; first) are the same genuinely-idle-at-boss-spawn slots HORMING_SPR_
-; BASE_SLOT already reuses - see its own comment for why this is
-; airtight (BulletU force-hidden the instant BOSS_ACT!=0), not a timing
-; estimate.
-BOSS_WIPE_SPR_BASE_SLOT EQU 4
-BOSS_WIPE_SLOTS         EQU 4
-BOSS_WIPE_START_Y EQU BOSS_SPAWN_Y-16        ; 40
-BOSS_WIPE_END_Y   EQU BOSS_SPAWN_Y+64+64     ; 184 (64=the boss's own
-                                              ; 64x64 body height, +64
-                                              ; overshoot clear past it)
-; "もっと上下移動を早く 8px単位で全速で 現在はウェイト入れてるのか" -
-; there was never an artificial wait/frame-skip here: UPDATE_BOSS_WIPE
-; is already called unconditionally every single frame from MAINLOOP
-; (same cadence as everything else under the BOSS_ACT gate), so the
-; only thing throttling the sweep was this constant itself. 4->8px/frame.
-; follow-up#20 ("ブランクのワイプの移動速度が遅い"): still not fast
-; enough - 8->16px/frame.
-BOSS_WIPE_SPEED EQU 16    ; px/frame, "全速" - moves a full 16px every frame
-; follow-up#20 ("ワイプ中は初期停止状態のスプライトでワイプが終わるまで
-; 停止する") - the boss no longer patrols at all while the wipe is
-; running (see UBA_ACTIVE's own BOSS_WIPE_ACT freeze check), so the
-; wipe can no longer rely on "the boss reaches its first attack pose" to
-; ever stop itself (that can now never happen while frozen - it would
-; deadlock). follow-up#20 handled this with an arbitrary "N laps" counter;
-; follow-up#21 ("ボス出現時は5秒停止しワイプを繰り返すように変更")
-; replaces that with an explicit, real-time duration instead - a much
-; more precise spec than "however many laps". This project assumes
-; 60fps for raw-frame countdowns (see FLASH_DURATION's own comment) -
-; but GAME_TICK is NOT a raw-frame counter: MAINLOOP's own TICK (a
-; separate byte, "every single frame, unconditionally") only advances
-; GAME_TICK once every 8 raw frames (`AND 07h : JR NZ,SKIP_ADVANCE`,
-; see MAINLOOP's own comment on why - matching the schedule editor's
-; own scheduling granularity). An early version of this comment wrongly
-; assumed GAME_TICK itself ticked at 60fps and used 300 here (a real
-; bug caught by a real-MAINLOOP test actually timing the freeze: it
-; measured GAME_TICK advancing only ~37 units over 300 raw frames, 8x
-; slower than assumed). Correct conversion: 5 real seconds = 300 raw
-; frames / 8 raw-frames-per-GAME_TICK = 37.5, rounded up to 38 so the
-; freeze always lasts at least the full 5 seconds (never slightly under).
-BOSS_WIPE_DURATION_TICKS EQU 38   ; >=5 seconds @ 60fps (38*8=304 raw frames = ~5.07s)
-; the boss only ever spawns at the one fixed, schedule-driven
-; BOSS_SPAWN_TICK (995) - never at a runtime-varying tick - so the
-; wipe's own end tick can be a compile-time constant too, with zero
-; extra RAM needed: just compare the ALREADY-EXISTING free-running
-; GAME_TICK global against this constant every frame, same true 16-bit
-; SBC HL,DE idiom as BOSS_POSE_END_TICK/NIGHT_START_TICK/etc. This is
-; what let BOSS_WIPE_ACT revert to being a plain 0/1 flag again instead
-; of follow-up#20's lap counter - no captured runtime end-tick byte(s)
-; needed at all, which matters since (see BOSS_WIPE_ACT's own comment
-; just below) there is no free RAM left to capture one in anyway.
-BOSS_WIPE_END_TICK EQU BOSS_SPAWN_TICK+BOSS_WIPE_DURATION_TICKS   ; 1295
-; stack_safety_test.py's own tight margin below STACKTOP means there is
-; NO more genuinely free RAM left in this file at all (F320h was
-; already the exact ceiling before this feature) - so, same idiom as
-; BOSS_EXPL_SPARK_SLOT0_ROW above, these 2 bytes alias BOSS_EXPL_CX/CY
-; (the death/explosion sequence's own center-cell coords) instead of
-; claiming new addresses. follow-up#20 real-hardware bug report ("爆発
-; のキャラが消えてる"): the "guaranteed mutually exclusive in time"
-; claim this comment used to make here was WRONG - CHECK_HIT_PAIR_BOSS
-; can trigger TRIGGER_BOSS_BROKEN_FORM (SPARK, HP threshold) or
-; INIT_BOSS_EXPLOSION (HP=0) on ANY hit while BOSS_ACT=1, with no regard
-; for BOSS_PHASE/patrol state - a lucky-shot player absolutely can drop
-; the boss to the broken-form threshold (or, with enough damage/luck,
-; straight to 0) WHILE the entrance wipe is still actively sweeping.
-; When that happened, UPDATE_BOSS_WIPE and the explosion trigger fought
-; over these same 2 bytes every frame - BOSS_EXPL_CY getting stomped by
-; the wipe's own raw pixel Y (up to 184, way past the valid 0-23 cell-
-; row range the explosion code expects) sent its BG cell writes to
-; garbage addresses, which read as "the explosion graphic just isn't
-; there" real hardware. Fixed by making TRIGGER_BOSS_BROKEN_FORM and
-; INIT_BOSS_EXPLOSION both force-stop the wipe (CALL STOP_BOSS_WIPE) as
-; the very first thing they do, before either one touches BOSS_EXPL_CX/
-; CY - true exclusivity is now enforced by these two call sites
-; themselves, not by "the wipe happens to always be over by then".
-BOSS_WIPE_ACT   EQU BOSS_EXPL_CX   ; 0=inactive, 1=sweeping (plain flag again - see BOSS_WIPE_END_TICK's own comment for why follow-up#20's lap counter is no longer needed)
-BOSS_WIPE_Y     EQU BOSS_EXPL_CY   ; current Y (shared - all 4 move together)
+; follow-up#22 ("ではワイプ処理はやめる 変わりに出現時の初期位置は今の
+; ままで 1フレームごとに左端、右端から交互に表示位置を変えながら中央
+; まで繰り返す 点滅しながら中央で実態化みたいな演出 その間5秒として
+; 中央への移動量を割り出してくれ その後初期位置までまた戻って攻撃に
+; 移る") - the transparent-sprite scanline-priority WIPE trick (follow-
+; up#18-#21, all comments/RAM/hw-sprite-slot usage below this point in
+; that lineage) is retired entirely. Replaced by a "materialize" entrance:
+; the boss's own real body (no dummy sprites needed at all - the 4
+; ENEMY/BULLET_U slots those used are fully free again) is redrawn every
+; single raw frame at ONE of two positions - a left-side X and a right-
+; side X, both converging toward BOSS_MATERIALIZE_CENTER_X - alternating
+; which one is shown each frame via TICK's own low bit (the same free-
+; running per-frame parity idiom SOUND_CALC_NOISE_GATE_VOLUME's duty
+; gate already uses), reading as a flicker that narrows in and settles
+; ("materializes") at center. BOSS_Y stays BOSS_SPAWN_Y throughout -
+; only X does this dance. Once centered, the boss glides back out to
+; BOSS_SPAWNX (the original spawn position, unchanged - "初期位置は今
+; のままで") at ordinary BOSS_SPEED, then hands off to normal UBA_ACTIVE
+; patrol ("攻撃に移る" - not literally the attack pose itself, just
+; resuming the same normal patrol->pose cycle every other entrance
+; scheme this fight has used ends up feeding into).
+BOSS_MATERIALIZE_CENTER_X EQU BOSS_SPAWNX/2   ; 96 - screen-centered X for
+                                               ; the 64px-wide body (BOSS_SPAWNX
+                                               ; is itself defined as screen_
+                                               ; width-body_width, so half of
+                                               ; it is exactly the centered X)
+BOSS_MATERIALIZE_AMP_START EQU BOSS_MATERIALIZE_CENTER_X   ; 96 - distance from
+                                               ; center to EITHER screen edge
+                                               ; (left edge is X=0), since the
+                                               ; left/right starting points are
+                                               ; the two screen edges themselves
+; "その間5秒として中央への移動量を割り出してくれ" - GAME_TICK is NOT a
+; raw-frame counter (see follow-up#21's own hard-learned lesson, still
+; true here): it only advances once every 8 raw frames. Rather than a
+; multiply/divide to hit exactly 300 raw frames (5.0s @ 60fps - this
+; project's own assumed rate), the offset steps down by a flat amount
+; once per GAME_TICK unit (cheap: no runtime multiply/divide needed at
+; all, just a 16-bit subtract already required for the GAME_TICK-vs-
+; BOSS_SPAWN_TICK compare below). 3px/tick * 32 ticks = 96px exactly
+; (AMP_START, zero remainder) - 32 ticks * 8 raw-frames/tick = 256 raw
+; frames = ~4.27s @ 60fps, the closest clean (zero-remainder) approx-
+; imation to "5秒として" reachable this way. The per-frame FLICKER
+; (which side is shown) still updates every single raw frame regardless
+; (see UPDATE_BOSS_MATERIALIZE) - only the convergence AMOUNT is
+; stepped once per GAME_TICK, not the alternation itself.
+BOSS_MATERIALIZE_STEP_PX EQU 3
+BOSS_MATERIALIZE_TICKS   EQU 32   ; AMP_START/STEP_PX, ~4.27s @ 60fps
+; sound retrigger cadence (see SOUND_BOSS_MATERIALIZE's own comment) -
+; this one genuinely is raw-frame-based (SOUND_UPDATE/TICK run at true
+; 60fps, unlike GAME_TICK), so no conversion needed here.
+BOSS_MATERIALIZE_SND_RETRIGGER EQU 96   ; raw frames (1.6s @ 60fps) between tolls
+; stack_safety_test.py's own tight margin below STACKTOP still means
+; there is NO genuinely free RAM left in this file - same idiom as
+; BOSS_EXPL_SPARK_SLOT0_ROW/the old BOSS_WIPE_ACT/Y above, these 2 bytes
+; alias BOSS_EXPL_CX/CY (the death/explosion sequence's own center-cell
+; coords) instead of claiming new addresses. follow-up#20's real-
+; hardware bug (SPARK/death legitimately touching these same 2 bytes
+; while the ENTRANCE effect was still using them, since a lucky/fast
+; kill can land at ANY point during BOSS_ACT=1 with no regard for
+; patrol/entrance state) is a real, structural risk for ANY entrance
+; effect reusing this alias, not specific to the old wipe design - so
+; the same 2-part fix carries forward unchanged: TRIGGER_BOSS_BROKEN_
+; FORM/INIT_BOSS_EXPLOSION both force-stop this effect (CALL STOP_BOSS_
+; MATERIALIZE) before touching BOSS_EXPL_CX/CY, AND UPDATE_BOSS_
+; MATERIALIZE itself gates on BOSS_FORM!=0 so it can never misread the
+; explosion sequence's own later legitimate writes as "still active".
+BOSS_MATERIALIZE_ACT     EQU BOSS_EXPL_CX   ; 0=inactive, 1=converging(flicker), 2=returning-to-spawn
+BOSS_MATERIALIZE_SND_CTR EQU BOSS_EXPL_CY   ; raw-frame countdown to the next toll retrigger (phase 1 only)
 
 ; staging buffer for SBEAM_SLOT_COUNT*4 hw sprite slots (4 bytes each:
 ; Y,X,pattern,color), same shape as HORMING_SPRITE_ATTRS - flushed via
@@ -4084,7 +4063,7 @@ SKIP_OTHER_ENEMIES:
     CALL UPDATE_BOSS_ALL
     LD A,(BOSS_ACT) : OR A
     JR Z,SKIP_BOSS_SUBSYSTEMS
-    CALL UPDATE_BOSS_WIPE
+    CALL UPDATE_BOSS_MATERIALIZE
     CALL CHECK_BULLET_VS_BOSS
     CALL CHECK_BULLET_VS_HORMING
     CALL UPDATE_HORMING_ALL
@@ -5992,6 +5971,34 @@ SOUND_SASAPI_LASER:
     XOR A : OUT (PSG_DATA),A
     LD A,15 : LD (SND_TIMER),A
     LD A,SASAPI_LASER_SND_DECAY : LD (SND_DECAY),A
+    XOR A : LD (SND_EXPLODING),A
+    LD A,1 : LD (SND_NOISE),A
+    RET
+
+; ボス登場「実体化」演出のトーン音(follow-up#22)- 試聴ページの候補G2
+; 「低音ぐわーん(デューティゲート)」を、ユーザー指示"G2でオクターブ
+; 下げて"通りオクターブ下げて(period190→380、周波数ちょうど半分)採用。
+; period380は8bitに収まらない(このファイルの他の全トーンSEはレジスタ1
+; を常に0で運用している唯一の理由がそれで、380は初めてレジスタ1側の
+; 桁上げが必要な値) - 380=0x17Ch: レジスタ0=0x7Ch(124)、レジスタ1=0x01。
+; ボスの死亡演出(SOUND_BOSS_BOOM)と同じ"boomモード"(SND_DECAY=0の
+; センチネル、BOSS_BOOM_DECAY_PERIODで1段ずつ減衰=75生フレームで1回分の
+; 「ぐわーん」)を再利用しつつ、SOUND_SBEAMと同じ「本来ノイズ専用の
+; デューティゲート(SND_NOISE=1)をあえてトーンchに適用」してブリブリした
+; 質感を追加。SND_EXPLODINGはセットしない(SOUND_THUNDERと同じ判断 - この
+; 音はUPDATE_BOSS_MATERIALIZE側でBOSS_MATERIALIZE_SND_RETRIGGERごとに
+; 何度も再着火される「繰り返しトリガー」の音であり、一度きりの「爆発」
+; ではないため)。
+SOUND_BOSS_MATERIALIZE:
+    LD A,7 : OUT (PSG_ADDR),A
+    LD A,MIXER_TONE_A : OUT (PSG_DATA),A
+    LD A,0 : OUT (PSG_ADDR),A
+    LD A,124 : OUT (PSG_DATA),A
+    LD A,1 : OUT (PSG_ADDR),A
+    LD A,1 : OUT (PSG_DATA),A
+    LD A,15 : LD (SND_TIMER),A
+    XOR A : LD (SND_DECAY),A
+    LD A,BOSS_BOOM_DECAY_PERIOD : LD (SND_BOOM_DECAY_CTR),A
     XOR A : LD (SND_EXPLODING),A
     LD A,1 : LD (SND_NOISE),A
     RET
@@ -10047,156 +10054,118 @@ UPDATE_BOSS_ALL:
     JP Z,UPDATE_BOSS_EXPLOSION
     JP UPDATE_BOSS_BROKEN_ACTIVE
 
-; ---------- boss entrance wipe (see BOSS_WIPE_SPR_BASE_SLOT's own
-; comment for the underlying VDP 4-sprites-per-scanline priority trick)
-; ----------
-; Kicks off the sweep - called once from S2_BOSS_SPAWN, right as the
-; boss's own body first appears. Just a plain 0/1 flag again (see
-; BOSS_WIPE_END_TICK's own comment) - the actual "how long" is entirely
-; GAME_TICK-vs-BOSS_WIPE_END_TICK, not anything captured here.
-TRIGGER_BOSS_WIPE:
-    LD A,1 : LD (BOSS_WIPE_ACT),A
-    LD A,BOSS_WIPE_START_Y : LD (BOSS_WIPE_Y),A
+; ---------- boss entrance "materialize" effect (follow-up#22 - see
+; BOSS_MATERIALIZE_CENTER_X's own comment for the full design) ----------
+; Kicks off the effect - called once from S2_BOSS_SPAWN, right as the
+; boss's own body first appears. SND_CTR=0 forces the very first
+; UPDATE_BOSS_MATERIALIZE call to retrigger the toll sound immediately.
+TRIGGER_BOSS_MATERIALIZE:
+    LD A,1 : LD (BOSS_MATERIALIZE_ACT),A
+    XOR A : LD (BOSS_MATERIALIZE_SND_CTR),A
     RET
 
-; "1回だけではなく攻撃に移るまで継続してループだぞ" (follow-up#19) +
-; "ワイプ中は初期停止状態のスプライトでワイプが終わるまで停止すること"
-; (follow-up#20) + "ボス出現時は5秒停止しワイプを繰り返すように変更"
-; (follow-up#21) - called every frame while BOSS_ACT!=0 (see MAINLOOP).
-; Stops for good (same hide as STOP_BOSS_WIPE) the instant GAME_TICK
-; reaches BOSS_WIPE_END_TICK (995+38 - at least 5 real seconds after the
-; boss's own fixed spawn tick, see that EQU's own comment for the real
-; GAME_TICK-vs-raw-frame conversion); until then,
-; reaching BOSS_WIPE_END_Y just wraps BOSS_WIPE_Y back to BOSS_WIPE_
-; START_Y and keeps sweeping, satisfying follow-up#19's "not just once"
-; for as many laps as fit in the 5 seconds. UBA_ACTIVE stays frozen
-; (boss doesn't patrol/move at all) for as long as BOSS_WIPE_ACT is
-; nonzero, so this routine reaching 0 on its own IS "the wipe finishing"
-; for that freeze to key off - this can't rely on the boss ever reaching
-; its first attack pose to stop itself (unreachable while frozen).
-; STOP_BOSS_WIPE still exists for two other call sites that need to
-; force it off early: UBA_MOVE_RIGHT (attack pose entry, now just a
-; safety net for an edge case) and TRIGGER_BOSS_BROKEN_FORM/INIT_BOSS_
-; EXPLOSION (a lucky/fast kill mid-wipe - see BOSS_WIPE_ACT's own EQU
-; comment for the real bug this fixed).
-; that STOP_BOSS_WIPE call alone isn't the whole fix, though: this
-; routine is still called unconditionally every frame while BOSS_ACT!=0
-; (see MAINLOOP), with NO regard for BOSS_FORM - so once TRIGGER_BOSS_
-; BROKEN_FORM/INIT_BOSS_EXPLOSION goes on to legitimately WRITE a real
-; (near-certainly nonzero) cell coordinate into BOSS_EXPL_CX right
-; after stopping the wipe, this routine would otherwise see that
-; nonzero byte on the very next frame and think the wipe was somehow
-; reactivated, then spend the rest of the fight stomping BOSS_EXPL_CY
-; with its own sweep values every frame - the exact same corruption,
-; just delayed by 1 frame instead of prevented. BOSS_FORM!=0 is the
-; same one-way, never-resets-to-0 gate UPDATE_BOSS_ALL itself already
-; uses to route away from the entrance-wipe-relevant UBA_ACTIVE, so
-; using it here too closes this off structurally instead of relying on
-; every call site remembering to STOP_BOSS_WIPE first.
-UPDATE_BOSS_WIPE:
+; called every frame while BOSS_ACT!=0 (see MAINLOOP). Same BOSS_FORM!=0
+; gate as the old wipe design's own hard-learned fix (see BOSS_MATERIALIZE_
+; ACT's own EQU comment) - this alias is just as exposed to TRIGGER_BOSS_
+; BROKEN_FORM/INIT_BOSS_EXPLOSION legitimately reusing the same 2 bytes
+; for BOSS_EXPL_CX/CY once BOSS_FORM leaves 0, and STOP_BOSS_MATERIALIZE
+; is called from those two entry points for the same reason the old
+; design needed it.
+UPDATE_BOSS_MATERIALIZE:
     LD A,(BOSS_FORM)
     OR A
     RET NZ
-    LD A,(BOSS_WIPE_ACT)
+    LD A,(BOSS_MATERIALIZE_ACT)
     OR A
     RET Z
-    ; the 5-second window itself - a true 16-bit compare against the
-    ; ALREADY free-running GAME_TICK, same idiom as BOSS_POSE_END_TICK/
-    ; NIGHT_START_TICK/etc. (see BOSS_WIPE_END_TICK's own comment)
+    DEC A
+    JR NZ,UBM_RETURNING   ; ACT==2 -> returning; ACT==1 falls through below
+; ---- phase 1: converging (the left/right flicker) ----
+    ; toll retrigger - genuinely raw-frame-paced (SOUND_UPDATE/TICK really
+    ; do run at 60fps, unlike GAME_TICK - see BOSS_MATERIALIZE_SND_
+    ; RETRIGGER's own comment), independent of the GAME_TICK-paced
+    ; convergence below.
+    LD A,(BOSS_MATERIALIZE_SND_CTR)
+    OR A
+    JR NZ,UBM_SND_CTR_DEC
+    CALL SOUND_BOSS_MATERIALIZE
+    LD A,BOSS_MATERIALIZE_SND_RETRIGGER-1 : LD (BOSS_MATERIALIZE_SND_CTR),A
+    JR UBM_CONVERGE
+UBM_SND_CTR_DEC:
+    DEC A : LD (BOSS_MATERIALIZE_SND_CTR),A
+UBM_CONVERGE:
+    ; ticks_elapsed = GAME_TICK-BOSS_SPAWN_TICK (true 16-bit subtract,
+    ; same idiom as every other GAME_TICK-threshold check in this file) -
+    ; the boss only ever spawns at the one fixed BOSS_SPAWN_TICK, so this
+    ; can't go negative. Only the low byte is ever checked below: this
+    ; phase always transitions to CONVERGE_DONE at ticks_elapsed==
+    ; BOSS_MATERIALIZE_TICKS(32), so the high byte can never actually
+    ; become nonzero while still in this phase - nothing to guard here.
     LD HL,(GAME_TICK)
-    LD DE,BOSS_WIPE_END_TICK
+    LD DE,BOSS_SPAWN_TICK
     OR A
     SBC HL,DE
-    JR NC,UBW_DURATION_DONE   ; GAME_TICK>=END_TICK - the 5 seconds are up
-    LD A,(BOSS_WIPE_Y) : ADD A,BOSS_WIPE_SPEED
-    CP BOSS_WIPE_END_Y
-    JR C,UBW_STILL_GOING
-    LD A,BOSS_WIPE_START_Y   ; wrap back to the top and keep looping
-UBW_STILL_GOING:
-    LD (BOSS_WIPE_Y),A
-    JP DRAW_BOSS_WIPE_SPRITES
-UBW_DURATION_DONE:
-    ; must actually clear BOSS_WIPE_ACT here (not just hide the sprites) -
-    ; UBA_ACTIVE's own freeze check keys off this byte being nonzero, so
-    ; leaving it set would freeze the boss forever once the 5 seconds
-    ; elapse (GAME_TICK only ever increases, so every future frame would
-    ; keep taking this same branch without ever unfreezing anything).
-    XOR A : LD (BOSS_WIPE_ACT),A
-    JP HIDE_BOSS_WIPE_SPRITES
-
-DRAW_BOSS_WIPE_SPRITES:
-    LD A,(BOSS_WIPE_Y)
-    JP WRITE_BOSS_WIPE_ALL
-
-HIDE_BOSS_WIPE_SPRITES:
-    LD A,209
-    JP WRITE_BOSS_WIPE_ALL
-
-; stops the loop for good (see UBA_MOVE_RIGHT's own call site) - clears
-; BOSS_WIPE_ACT first so UPDATE_BOSS_WIPE's own gate stops calling
-; DRAW_BOSS_WIPE_SPRITES on the very next frame (otherwise it would just
-; redraw right over this routine's own HIDE_BOSS_WIPE_SPRITES the next
-; frame, since the loop no longer deactivates itself on its own), then
-; hides the 4 dummy sprites.
-STOP_BOSS_WIPE:
-    XOR A : LD (BOSS_WIPE_ACT),A
-    JP HIDE_BOSS_WIPE_SPRITES
-
-; writes all 4 dummy sprites with the SAME Y (A on entry) to hw sprite
-; slots BOSS_WIPE_SPR_BASE_SLOT..+3 (4-7) - shared by DRAW/HIDE above
-; (HIDE just passes Y=209). No RAM staging buffer (see BOSS_WIPE_ACT's
-; own comment on why there's no room left for one) - X is a fixed
-; per-slot compile-time constant (BOSS_SPAWNX+0/16/32/48), pattern/
-; color are always 0 (irrelevant/transparent), all written straight
-; from registers/literals. Y is kept in B (untouched by the PUSH BC:
-; POP BC timing-padding idiom, so it survives the whole sequence)
-; rather than re-reading it from RAM 4 times. Same raw DI-wrapped
-; OUT+NOP-padded pattern as every other direct sprite-attribute writer
-; in this file (e.g. FLUSH_ENEMY_SPRITES), just fully unrolled instead
-; of DJNZ'd since BC itself is needed for the Y value here, not free to
-; also serve as a loop counter.
-WRITE_BOSS_WIPE_ALL:
+    LD A,L
+    CP BOSS_MATERIALIZE_TICKS
+    JR NC,UBM_CONVERGE_DONE
+    ; offset = AMP_START - STEP_PX*ticks_elapsed (ticks_elapsed<32, so
+    ; STEP_PX*ticks_elapsed<96 - fits a byte; *3 done as x+x+x, cheap,
+    ; no multiply routine needed for a factor this small)
+    LD B,A : ADD A,B : ADD A,B   ; A = ticks_elapsed*3
     LD B,A
-    DI
-    LD A,BOSS_WIPE_SPR_BASE_SLOT*4 : OUT (99h),A
-    NOP
-    NOP
-    LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
-    LD A,B : OUT (98h),A
-    PUSH BC : POP BC : NOP : NOP
-    LD A,BOSS_SPAWNX : OUT (98h),A
-    PUSH BC : POP BC : NOP : NOP
-    XOR A : OUT (98h),A
-    PUSH BC : POP BC : NOP : NOP
-    OUT (98h),A
-    PUSH BC : POP BC : NOP : NOP
-    LD A,B : OUT (98h),A
-    PUSH BC : POP BC : NOP : NOP
-    LD A,BOSS_SPAWNX+16 : OUT (98h),A
-    PUSH BC : POP BC : NOP : NOP
-    XOR A : OUT (98h),A
-    PUSH BC : POP BC : NOP : NOP
-    OUT (98h),A
-    PUSH BC : POP BC : NOP : NOP
-    LD A,B : OUT (98h),A
-    PUSH BC : POP BC : NOP : NOP
-    LD A,BOSS_SPAWNX+32 : OUT (98h),A
-    PUSH BC : POP BC : NOP : NOP
-    XOR A : OUT (98h),A
-    PUSH BC : POP BC : NOP : NOP
-    OUT (98h),A
-    PUSH BC : POP BC : NOP : NOP
-    LD A,B : OUT (98h),A
-    PUSH BC : POP BC : NOP : NOP
-    LD A,BOSS_SPAWNX+48 : OUT (98h),A
-    PUSH BC : POP BC : NOP : NOP
-    XOR A : OUT (98h),A
-    PUSH BC : POP BC : NOP : NOP
-    OUT (98h),A
-    PUSH BC : POP BC : NOP : NOP
-    EI
+    LD A,BOSS_MATERIALIZE_AMP_START : SUB B   ; A = offset (3-96)
+    LD B,A                                    ; B = offset
+    LD A,BOSS_MATERIALIZE_CENTER_X : SUB B    ; A = left candidate
+    LD C,A                                    ; C = left
+    LD A,BOSS_MATERIALIZE_CENTER_X : ADD A,B  ; A = right candidate
+    LD B,A                                    ; B = right
+    ; alternate which candidate is actually drawn every single raw frame
+    ; via TICK's own low bit - same free-running per-frame parity idiom
+    ; SOUND_CALC_NOISE_GATE_VOLUME's own duty gate already uses.
+    LD A,(TICK) : AND 1
+    JR Z,UBM_SHOW_LEFT
+    LD A,B
+    JR UBM_SET_X
+UBM_SHOW_LEFT:
+    LD A,C
+UBM_SET_X:
+    LD (BOSS_X),A
+    JP UBA_DRAW
+UBM_CONVERGE_DONE:
+    ; settle exactly at center (no leftover rounding - offset never
+    ; actually reaches 0 within this phase, see BOSS_MATERIALIZE_TICKS'
+    ; own comment) and hand off to the return leg.
+    LD A,BOSS_MATERIALIZE_CENTER_X : LD (BOSS_X),A
+    LD A,2 : LD (BOSS_MATERIALIZE_ACT),A
+    JP UBA_DRAW
+; ---- phase 2: plain glide back out to the original spawn position,
+; ordinary BOSS_SPEED, no flicker - "その後初期位置までまた戻って攻撃に
+; 移る" ----
+UBM_RETURNING:
+    LD A,(BOSS_X) : ADD A,BOSS_SPEED
+    CP BOSS_SPAWNX
+    JR C,UBM_RETURN_STEP
+    LD A,BOSS_SPAWNX : LD (BOSS_X),A
+    ; done - UBA_ACTIVE's own freeze check sees ACT=0 from the very next
+    ; frame and resumes ordinary patrol from here, exactly as if the
+    ; entrance effect had never run.
+    XOR A : LD (BOSS_MATERIALIZE_ACT),A
+    JP UBA_DRAW
+UBM_RETURN_STEP:
+    LD (BOSS_X),A
+    JP UBA_DRAW
+
+; force-stops the effect early (see TRIGGER_BOSS_BROKEN_FORM/INIT_BOSS_
+; EXPLOSION's own call sites, and UBA_MOVE_RIGHT's - the latter is
+; expected dead code in practice since UBA_MOVE_RIGHT can only run from
+; UBA_ACTIVE, which stays frozen for as long as this effect is active,
+; but kept as the same defensive safety net the old wipe design had).
+; Just clears the flag - the boss's own body stays exactly wherever it
+; last was (mid-flicker or mid-return), same as any other mid-patrol
+; death/form-change; nothing else needs undoing since no dummy sprites
+; are used any more.
+STOP_BOSS_MATERIALIZE:
+    XOR A : LD (BOSS_MATERIALIZE_ACT),A
     RET
 
 ; the one-shot spawn itself - SSC2_FIRE's own dispatch chain falls
@@ -10242,20 +10211,20 @@ S2_BOSS_SPAWN:
     XOR A : LD (THUNDER_ELIGIBLE),A   ; not eligible until the first pose ends - see UBAP_END
     XOR A : LD (BOSS_POSE_COUNT),A
     XOR A : LD (SBEAM_ACT),A
-    CALL TRIGGER_BOSS_WIPE
+    CALL TRIGGER_BOSS_MATERIALIZE
     JP UBA_DRAW
-; "ワイプ中は初期停止状態のスプライトでワイプが終わるまで停止すること"
-; (follow-up#20) - while the entrance wipe is still sweeping (BOSS_WIPE_
-; ACT!=0), skip the entire patrol/pose state machine below unconditio-
-; nally: BOSS_X/BOSS_Y/BOSS_PHASE/BOSS_DIR all stay exactly as
-; S2_BOSS_SPAWN set them (the boss's own initial stopped-state sprite,
-; already drawn once by S2_BOSS_SPAWN's own JP UBA_DRAW - nothing here
-; needs to re-flush it every frame since nothing about it changes while
-; frozen). UPDATE_BOSS_WIPE's own lap countdown is what eventually
-; clears BOSS_WIPE_ACT back to 0 on its own (see its own comment) and
-; lets the boss actually start patrolling from here on.
+; "出現時の初期位置は今のままで...点滅しながら中央で実態化みたいな演出
+; ...その後初期位置までまた戻って攻撃に移る" (follow-up#22) - while the
+; materialize effect is still running (BOSS_MATERIALIZE_ACT!=0, either
+; phase 1 converging or phase 2 returning), skip the entire ordinary
+; patrol/pose state machine below unconditionally - UPDATE_BOSS_
+; MATERIALIZE itself owns BOSS_X (and its own DRAW) for the whole
+; entrance sequence. Once it clears BOSS_MATERIALIZE_ACT back to 0 on
+; its own (having glided the boss back to BOSS_SPAWNX), this gate opens
+; and the boss starts patrolling from here exactly as if the effect had
+; never run.
 UBA_ACTIVE:
-    LD A,(BOSS_WIPE_ACT)
+    LD A,(BOSS_MATERIALIZE_ACT)
     OR A
     RET NZ
     LD A,(BOSS_PHASE)
@@ -10340,10 +10309,12 @@ UBA_MOVE_RIGHT:
     LD A,1 : LD (BOSS_PHASE),A
     LD HL,(GAME_TICK) : LD DE,BOSS_POSE_TICKS : ADD HL,DE
     LD (BOSS_POSE_END_TICK),HL
-    ; "ボスが攻撃に入ったら消す" - the wipe now loops forever on its own
-    ; (see UPDATE_BOSS_WIPE's own comment), so this is the ONLY place
-    ; that ever stops it - not just a safety net for an edge case.
-    CALL STOP_BOSS_WIPE
+    ; the materialize effect (follow-up#22) unfreezes UBA_ACTIVE on its
+    ; own well before this point is ever reachable - see STOP_BOSS_
+    ; MATERIALIZE's own comment for why this call is expected dead code
+    ; in practice, kept only as the same defensive safety net the
+    ; previous entrance-effect designs all had here.
+    CALL STOP_BOSS_MATERIALIZE
     CALL HIDE_BOSS_SPRITES
     CALL DRAW_SASAPI_HAND
     ; "当然サンダービーム中はホーミングもサンダーも撃たねえんだよ" -
@@ -11684,11 +11655,12 @@ BEAR_SKIP_CELL:
 ; its own HIDE_BOSS_SPRITES call) and nothing else would ever re-show it.
 ; follow-up#20 real-hardware bug fix ("爆発のキャラが消えてる") - this
 ; routine is about to write BOSS_EXPL_CX/CY (a few lines below), which
-; alias BOSS_WIPE_ACT/BOSS_WIPE_Y (see that EQU's own comment for the
-; full story). A kill can land while the entrance wipe is still
-; sweeping, so force it off FIRST, before either byte gets repurposed.
+; alias BOSS_MATERIALIZE_ACT/SND_CTR (follow-up#22 - see that EQU's own
+; comment for the full story, unchanged risk from the old wipe design).
+; A kill can land while the entrance effect is still running, so force
+; it off FIRST, before either byte gets repurposed.
 INIT_BOSS_EXPLOSION:
-    CALL STOP_BOSS_WIPE
+    CALL STOP_BOSS_MATERIALIZE
     LD A,(BOSS_PHASE)
     CP 1
     JR NZ,IBE_NO_HAND
@@ -14107,11 +14079,12 @@ CHPBOSS_DESTROY:
 TRIGGER_BOSS_BROKEN_FORM:
     ; follow-up#20 real-hardware bug fix ("爆発のキャラが消えてる") -
     ; this routine writes BOSS_EXPL_CX/CY a few lines below (aliased to
-    ; BOSS_WIPE_ACT/BOSS_WIPE_Y - see that EQU's own comment), and the
-    ; HP threshold that triggers this can be crossed on ANY hit while
-    ; BOSS_ACT=1, including while the entrance wipe is still sweeping.
-    ; Force it off FIRST so the two never fight over the same bytes.
-    CALL STOP_BOSS_WIPE
+    ; BOSS_MATERIALIZE_ACT/SND_CTR, follow-up#22 - see that EQU's own
+    ; comment), and the HP threshold that triggers this can be crossed
+    ; on ANY hit while BOSS_ACT=1, including while the entrance effect
+    ; is still running. Force it off FIRST so the two never fight over
+    ; the same bytes.
+    CALL STOP_BOSS_MATERIALIZE
     ; if a hand-art pose happened to be up at this exact instant, erase
     ; it and bring the real body sprite back (matches INIT_BOSS_
     ; EXPLOSION's own IBE_NO_HAND branch exactly - see its own comment

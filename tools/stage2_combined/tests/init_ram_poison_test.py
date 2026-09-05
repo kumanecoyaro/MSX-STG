@@ -189,17 +189,14 @@ check("BOSS_ACT is not a Tier-A failure (it has no legitimate deferred-init excu
 # it does not just trust the comment.
 real_bugs = set()
 # most Tier-A exceptions are "inactive" flags that get atomically zeroed
-# right at spawn (SBEAM_ACT/THUNDER_POOL - "cleared"). BOSS_WIPE_ACT
-# (see combined_test.asm's own TRIGGER_BOSS_WIPE) is the one legitimate
-# exception to THAT: the entrance-wipe sweep starts ACTIVE the instant
-# the boss spawns, so its deterministic post-spawn value is 1, not 0 -
-# still fully poison-independent (still safe), just not "0". (follow-
-# up#20 briefly made this a remaining-laps counter seeded with a
-# constant >1; follow-up#21 reverted it to a plain 0/1 flag once the
-# "how long" question moved to a GAME_TICK-vs-compile-time-constant
-# comparison instead - see BOSS_WIPE_END_TICK's own comment.) Anything
-# not listed here defaults to the usual "0" expectation.
-EXPECTED_AT_SPAWN = {"BOSS_WIPE_ACT": 1}
+# right at spawn (SBEAM_ACT/THUNDER_POOL - "cleared"). BOSS_MATERIALIZE_
+# ACT (see combined_test.asm's own TRIGGER_BOSS_MATERIALIZE, follow-
+# up#22 - the entrance-wipe design's direct successor) is the one
+# legitimate exception to THAT: the entrance effect starts ACTIVE the
+# instant the boss spawns, so its deterministic post-spawn value is 1,
+# not 0 - still fully poison-independent (still safe), just not "0".
+# Anything not listed here defaults to the usual "0" expectation.
+EXPECTED_AT_SPAWN = {"BOSS_MATERIALIZE_ACT": 1}
 if tier_a_failures:
     for poison in POISONS:
         cpu = boot_with_poisoned_ram(poison)
