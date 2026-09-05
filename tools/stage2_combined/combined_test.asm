@@ -6240,6 +6240,18 @@ BGMT_UB_GOT:
     LD A,(HL)                      ; duration
     INC HL
     LD (BGM_B_PTR),HL
+    ; round40 実機フィードバック対応: この行の読み込み自体が既に1tick
+    ; 分の再生になっている(この直後のPSG書き込みでその音が今tickから
+    ; 鳴る)ため、素のdurationをそのままTIMERへ積むと「今tick+その後
+    ; duration回のホールド」で合計duration+1tick鳴ってしまうoff-by-one
+    ; バグがあった(全チャンネル・全曲で毎行+1tick、行数が多いchC側で
+    ; 累積が大きく、chB/chC間のズレが曲が進むほど拡大して不協和音化して
+    ; いた根本原因 - "こりゃ酷い ピーピー不協和音 休符も無視してるな
+    ; テンポも無茶苦茶だ"という実機報告で発覚)。DEC Aで「今tickぶんを
+    ; 差し引いた残りホールド回数」に補正し、合計でちょうどduration回に
+    ; 一致させる(duration=1の行は補正後0になり、次tickで即座に次の行へ
+    ; 進む - 単発1tick行として正しい)。
+    DEC A
     LD (BGM_B_TIMER),A
     LD A,C
     CP BGM_NOTE_REST
@@ -6280,6 +6292,9 @@ BGMT_UC_GOT:
     LD A,(HL)
     INC HL
     LD (BGM_C_PTR),HL
+    ; round40 実機フィードバック対応: BGMT_UB_NEWROWの同じoff-by-one
+    ; 修正コメント参照。
+    DEC A
     LD (BGM_C_TIMER),A
     LD A,C
     CP BGM_NOTE_REST

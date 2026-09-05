@@ -3230,6 +3230,11 @@ BGMT_UB_GOT:
     LD A,(HL)                      ; duration
     INC HL
     LD (BGM_B_PTR),HL
+    ; round40 実機フィードバック対応: off-by-one修正(tools/stage2_
+    ; combined/combined_test.asmの同じ箇所の長いコメント参照) - 読み
+    ; 込みtick自体も1tick分の再生になるため、DEC Aで合計durationぴったり
+    ; に補正する。
+    DEC A
     LD (BGM_B_TIMER),A
     LD A,C
     CP BGM_NOTE_REST
@@ -3278,6 +3283,9 @@ BGMT_UC_GOT:
     LD A,(HL)
     INC HL
     LD (BGM_C_PTR),HL
+    ; round40 実機フィードバック対応: BGMT_UB_NEWROWの同じoff-by-one
+    ; 修正コメント参照。
+    DEC A
     LD (BGM_C_TIMER),A
     LD A,C
     CP BGM_NOTE_REST

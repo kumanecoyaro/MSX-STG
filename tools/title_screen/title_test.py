@@ -201,12 +201,60 @@ cpu2.mem[row_addr] = TEST_NOTE
 cpu2.mem[row_addr + 1] = TEST_DURATION
 cpu2.mem[sym["BGM_C_TIMER"]] = 9  # hold chC out of the way
 call_routine(cpu2, "BGM_TICK")
-check("BGM_TICK new-row (chB): BGM_B_TIMER reloaded from the row's own duration byte",
-      cpu2.mem[BGM_B_TIMER] == TEST_DURATION)
+check("BGM_TICK new-row (chB): BGM_B_TIMER reloaded from the row's own duration byte minus 1 "
+      "(round40 off-by-one fix - the load tick itself already plays the note once, so the timer "
+      "only needs to hold duration-1 MORE ticks to total exactly duration ticks for the row)",
+      cpu2.mem[BGM_B_TIMER] == TEST_DURATION - 1)
 exp_lo, exp_hi = periods[TEST_NOTE]
 check(f"BGM_TICK new-row (chB): tone period (R2/R3) matches the period table's own note{TEST_NOTE}",
       (cpu2.psg_regs.get(2), cpu2.psg_regs.get(3)) == (exp_lo, exp_hi))
 check("BGM_TICK new-row (chB): volume (R9) is BGM_VOLUME", cpu2.psg_regs.get(9) == sym["BGM_VOLUME"])
+
+# round40 実機フィードバック対応: off-by-oneの直接回帰ガード
+# (tools/stage2_combined/tests/bgm_test.pyの同じ検証の長いコメント
+# 参照)。ALONE_FIGHTERの実行データで多tick連続シミュレートし、
+# 観測された音切り替わりtickの列が本物の行データと完全一致するかを
+# 検証する。
+
+
+def decode_rows(row_bytes):
+    rows = []
+    i = 0
+    while i + 1 < len(row_bytes):
+        rows.append((row_bytes[i], row_bytes[i + 1]))
+        i += 2
+    return rows
+
+
+def observed_note_change_ticks(cpu, ptr_sym, timer_sym, tone_lo_reg, tone_hi_reg, vol_reg, n_ticks):
+    events = []
+    last = None
+    for tick in range(n_ticks):
+        call_routine(cpu, "BGM_TICK")
+        key = (cpu.psg_regs.get(tone_lo_reg), cpu.psg_regs.get(tone_hi_reg), cpu.psg_regs.get(vol_reg))
+        if key != last:
+            note = None if key[2] == 0 else next(
+                (i for i, (lo_v, hi_v) in enumerate(periods) if (lo_v, hi_v) == key[:2]), None)
+            events.append((tick, note))
+            last = key
+    return events
+
+
+N_TICKS = 2000
+BGM_NOTE_REST = sym["BGM_NOTE_REST"]
+cpu3, _ = fresh_cpu()
+run_to_wait(cpu3)
+observed_b = observed_note_change_ticks(cpu3, BGM_B_PTR, BGM_B_TIMER, 2, 3, 9, N_TICKS)
+expected_b = []
+cum = 0
+for note, dur in decode_rows(_chB_bytes):
+    if cum >= N_TICKS:
+        break
+    expected_b.append((cum, None if note == BGM_NOTE_REST else note))
+    cum += dur
+check(f"round40 off-by-one regression: {len(expected_b)} real ALONE_FIGHTER chB note-change ticks "
+      f"(over {N_TICKS} real BGM_TICK calls) match the real bgm_bank.bin row data EXACTLY",
+      observed_b == expected_b)
 
 # ---- button-press trampoline ----
 cpu, mem = fresh_cpu()

@@ -137,8 +137,11 @@ check("row-hold (chB): BGM_B_TIMER decrements by exactly 1 (5 -> 4)",
       cpu.mem[BGM_B_TIMER] == 4)
 check("row-hold (chB): BGM_B_PTR is untouched while holding",
       (cpu.mem[BGM_B_PTR] | (cpu.mem[BGM_B_PTR + 1] << 8)) == ptr_b_before)
-check("independent channels: chC (TIMER=0) loaded its own new row in the SAME tick chB held",
-      cpu.mem[BGM_C_TIMER] == TEST_DURATION_C)
+check("independent channels: chC (TIMER=0) loaded its own new row in the SAME tick chB held "
+      "(TIMER=duration-1, round40 off-by-one fix: this load tick itself already plays the note once, "
+      "so the timer holds duration-1 MORE ticks before the next new-row load, totaling exactly "
+      "duration ticks for the row)",
+      cpu.mem[BGM_C_TIMER] == TEST_DURATION_C - 1)
 exp_c_lo, exp_c_hi = periods[TEST_NOTE_C]
 check("independent channels: chC's new-row write (R4/R5) used chC's own note, unaffected by chB holding",
       (cpu.psg_regs.get(4), cpu.psg_regs.get(5)) == (exp_c_lo, exp_c_hi))
@@ -151,8 +154,9 @@ cpu = fresh_cpu()
 poke_channel(cpu, "BGM_B_PTR", "BGM_B_TIMER", ROW_ADDR_B, TEST_NOTE_B, TEST_DURATION_B, timer=0)
 poke_channel(cpu, "BGM_C_PTR", "BGM_C_TIMER", ROW_ADDR_C, BGM_NOTE_REST, 9, timer=1)  # hold chC out of the way
 call_routine(cpu, "BGM_TICK")
-check("new-row (chB): BGM_B_TIMER reloaded from the row's own duration byte",
-      cpu.mem[BGM_B_TIMER] == TEST_DURATION_B)
+check("new-row (chB): BGM_B_TIMER reloaded from the row's own duration byte minus 1 (round40 "
+      "off-by-one fix - see the independent-channels check above for why)",
+      cpu.mem[BGM_B_TIMER] == TEST_DURATION_B - 1)
 check("new-row (chB): BGM_B_PTR advanced by exactly 2 bytes (note+duration, no shared 3rd byte anymore)",
       (cpu.mem[BGM_B_PTR] | (cpu.mem[BGM_B_PTR + 1] << 8)) == ROW_ADDR_B + 2)
 exp_b_lo, exp_b_hi = periods[TEST_NOTE_B]
@@ -192,14 +196,86 @@ c_ptr_before = cpu.mem[BGM_C_PTR] | (cpu.mem[BGM_C_PTR + 1] << 8)
 call_routine(cpu, "BGM_TICK")
 check("loop mark (chB): BGM_B_PTR resets to BGM_B_BASE+2 (real DEFEAT chB's own first row, now consumed)",
       (cpu.mem[BGM_B_PTR] | (cpu.mem[BGM_B_PTR + 1] << 8)) == BGM_B_BASE + 2)
-check("loop mark (chB): reloaded BGM_B_TIMER matches DEFEAT chB's own real first-row duration",
-      cpu.mem[BGM_B_TIMER] == first_dur)
+check("loop mark (chB): reloaded BGM_B_TIMER matches DEFEAT chB's own real first-row duration "
+      "minus 1 (round40 off-by-one fix)",
+      cpu.mem[BGM_B_TIMER] == first_dur - 1)
 check("loop mark (chB): chC's own pointer is completely unaffected",
       (cpu.mem[BGM_C_PTR] | (cpu.mem[BGM_C_PTR + 1] << 8)) == c_ptr_before)
 if first_note != BGM_NOTE_REST:
     exp_lo, exp_hi = periods[first_note]
     check("loop mark (chB): tone period matches DEFEAT chB's own real first row",
           (cpu.psg_regs.get(2), cpu.psg_regs.get(3)) == (exp_lo, exp_hi))
+
+
+# ---- round40 実機フィードバック対応 ("こりゃ酷い ピーピー不協和音
+# 休符も無視してるな テンポも無茶苦茶だ 自分でドライバ実装してて
+# 仕様を一致させられんのかお前は"): off-by-oneの直接回帰ガード。
+# BGMT_UB/UC_NEWROWは新しい行を読み込んだそのtick自体で既に1tick分の
+# 再生を行っている(この直後のPSG書き込みで今tickからその音が鳴る)のに、
+# 素のduration値をそのままTIMERへ積んでいたため「今tick+その後duration
+# 回のホールド」で合計duration+1tick鳴ってしまっていた(DEC Aで修正
+# 済み、上の3件のcheckがTEST_DURATION-1へ更新されている理由もこれ)。
+# 単発の値比較だけでは「1行だけならズレに気づきにくい」ため、実際に
+# BGM_TICKを多数回連続で叩いて「観測された音切り替わりtickの列」を
+# tools/bgm_data/midi_to_psg.pyが計算する本物のDEFEAT chB/chC行データ
+# (曲によって行数が全く違う - chB150行/chC818行 - ため、off-by-oneが
+# 残っていれば2ch間のズレが曲が進むほど拡大し、これが実機報告の
+# 「不協和音」の直接の原因だった)と正確に一致するかを検証する -
+# 1行分の検証では検出できない類のバグを狙い撃つ回帰テスト。
+def observed_note_change_ticks(cpu, ptr_sym, timer_sym, tone_lo_reg, tone_hi_reg, vol_reg, n_ticks):
+    events = []
+    last = None
+    for tick in range(n_ticks):
+        call_routine(cpu, "BGM_TICK")
+        key = (cpu.psg_regs.get(tone_lo_reg), cpu.psg_regs.get(tone_hi_reg), cpu.psg_regs.get(vol_reg))
+        if key != last:
+            note = None if key[2] == 0 else next(
+                (i for i, (lo_v, hi_v) in enumerate(periods) if (lo_v, hi_v) == key[:2]), None)
+            events.append((tick, note))
+            last = key
+    return events
+
+
+def decode_rows(row_bytes):
+    """2byte/行(note,duration)+末尾1byte LOOP_MARKの実バイト列を
+    (note,duration)の列へ戻す - mido不要(このファイル自身がmidoに
+    依存しない設計、上のbg.build_bank()経由のコメント参照)。"""
+    rows = []
+    i = 0
+    while i + 1 < len(row_bytes):
+        rows.append((row_bytes[i], row_bytes[i + 1]))
+        i += 2
+    return rows
+
+
+N_TICKS = 2000
+cpu = fresh_cpu()
+observed_b = observed_note_change_ticks(cpu, BGM_B_PTR, BGM_B_TIMER, 2, 3, 9, N_TICKS)
+expected_b = []
+cum = 0
+for note, dur in decode_rows(chB_bytes):
+    if cum >= N_TICKS:
+        break
+    expected_b.append((cum, None if note == BGM_NOTE_REST else note))
+    cum += dur
+check(f"round40 off-by-one regression: {len(expected_b)} real DEFEAT chB note-change ticks "
+      f"(over {N_TICKS} real BGM_TICK calls from a fresh boot) match the real bgm_bank.bin row data "
+      "EXACTLY (tick position and note both) - this is what an accumulating +1-per-row "
+      "drift would break long before any single-row check would",
+      observed_b == expected_b)
+
+cpu = fresh_cpu()
+observed_c = observed_note_change_ticks(cpu, BGM_C_PTR, BGM_C_TIMER, 4, 5, 10, N_TICKS)
+expected_c = []
+cum = 0
+for note, dur in decode_rows(chC_bytes):
+    if cum >= N_TICKS:
+        break
+    expected_c.append((cum, None if note == BGM_NOTE_REST else note))
+    cum += dur
+check(f"round40 off-by-one regression: {len(expected_c)} real DEFEAT chC note-change ticks match "
+      "the real bgm_bank.bin row data EXACTLY",
+      observed_c == expected_c)
 
 
 # ---- R7 mixer read-modify-write: only bits1-2 (tone B/C enable) ever

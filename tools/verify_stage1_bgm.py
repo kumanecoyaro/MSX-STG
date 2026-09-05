@@ -87,6 +87,7 @@ _af = layout["ALONE_FIGHTER"]
 period_lo = list(bank_image[0:bg.NUM_NOTES])
 period_hi = list(bank_image[bg.NUM_NOTES:2 * bg.NUM_NOTES])
 periods = list(zip(period_lo, period_hi))
+chB_bytes = bank_image[_af["bank_offset"]:_af["bank_offset"] + _af["chB_len"]]
 
 
 # ---- constants agree with tools/bgm_data/bgm_bank_gen.py's ALONE_FIGHTER
@@ -149,13 +150,16 @@ z.wr(SND_TIMER_B, 0)
 z.wr(SND_TIMER_C, 0)
 z.wr(SND_C_DUTY_TIMER, 0)
 call_routine(z, BGM_TICK)
-check("no SFX active: chB loads a fresh row (BGM_B_TIMER reloaded)", z.rd(BGM_B_TIMER) == TEST_DUR_B)
+check("no SFX active: chB loads a fresh row (BGM_B_TIMER reloaded to duration-1, round40 "
+      "off-by-one fix - the load tick itself already plays the note once)",
+      z.rd(BGM_B_TIMER) == TEST_DUR_B - 1)
 exp_lo, exp_hi = periods[TEST_NOTE_B]
 check("no SFX active: chB tone period (R2/R3) matches the period table",
       (z.psg_regs.get(2), z.psg_regs.get(3)) == (exp_lo, exp_hi))
 check("no SFX active: chB volume (R9) is BGM_VOLUME", z.psg_regs.get(9) == sym["BGM_VOLUME"])
 exp_lo_c, exp_hi_c = periods[TEST_NOTE_C]
-check("no SFX active: chC loads a fresh row (BGM_C_TIMER reloaded)", z.rd(BGM_C_TIMER) == TEST_DUR_C)
+check("no SFX active: chC loads a fresh row (BGM_C_TIMER reloaded to duration-1, round40 off-by-one fix)",
+      z.rd(BGM_C_TIMER) == TEST_DUR_C - 1)
 check("no SFX active: chC tone period (R4/R5) matches the period table",
       (z.psg_regs.get(4), z.psg_regs.get(5)) == (exp_lo_c, exp_hi_c))
 check("no SFX active: chC volume (R10) is BGM_VOLUME", z.psg_regs.get(10) == sym["BGM_VOLUME"])
@@ -212,6 +216,13 @@ check("rest note (chB): period registers (R2/R3) are NOT written", 2 not in z.ps
 check("rest note (chB): volume (R9) is silenced to 0", z.psg_regs.get(9) == 0)
 
 z = fresh()
+# BGM_B_BASE自体にも本物のALONE_FIGHTER chBデータをpoke(Stage1自身は
+# 決してここへ書き込まない - Titleが起動時に一度だけコピーする前提。
+# これを省くと"first_dur"は常に未初期化RAMの0を読むだけになり、
+# このテスト自体が実質何も検証していないことになる - 実際today's fix
+# 前はそれで気づかれずに"通っていた"だけだった)。
+for i, b in enumerate(chB_bytes):
+    z.wr(BGM_B_BASE + i, b)
 loop_addr = 0xD200
 z.wr(loop_addr, BGM_LOOP_MARK)
 z.wr(BGM_B_PTR, loop_addr & 0xFF)
@@ -223,8 +234,66 @@ first_dur = z.rd(BGM_B_BASE + 1)
 call_routine(z, BGM_TICK)
 check("loop mark (chB): BGM_B_PTR resets to BGM_B_BASE+2 (ALONE_FIGHTER's own first row, now consumed)",
       (z.rd(BGM_B_PTR) | (z.rd(BGM_B_PTR + 1) << 8)) == BGM_B_BASE + 2)
-check("loop mark (chB): reloaded BGM_B_TIMER matches ALONE_FIGHTER chB's own real first-row duration",
-      z.rd(BGM_B_TIMER) == first_dur)
+check("loop mark (chB): reloaded BGM_B_TIMER matches ALONE_FIGHTER chB's own real first-row "
+      "duration minus 1 (round40 off-by-one fix)",
+      z.rd(BGM_B_TIMER) == first_dur - 1)
+
+
+# ---- round40 実機フィードバック対応 ("こりゃ酷い ピーピー不協和音
+# 休符も無視してるな テンポも無茶苦茶だ"): off-by-oneの直接回帰ガード。
+# 多tick連続シミュレートし、観測された音切り替わりtickの列が本物の
+# ALONE_FIGHTER行データと完全一致するかを検証する(1行だけの検証では
+# 検出できない、行数の多いチャンネルほど大きくなる累積ズレを狙い撃つ)。
+def decode_rows(row_bytes):
+    rows = []
+    i = 0
+    while i + 1 < len(row_bytes):
+        rows.append((row_bytes[i], row_bytes[i + 1]))
+        i += 2
+    return rows
+
+
+def observed_note_change_ticks(z, tone_lo_reg, tone_hi_reg, vol_reg, n_ticks):
+    events = []
+    last = None
+    for tick in range(n_ticks):
+        call_routine(z, BGM_TICK)
+        key = (z.psg_regs.get(tone_lo_reg), z.psg_regs.get(tone_hi_reg), z.psg_regs.get(vol_reg))
+        if key != last:
+            note = None if key[2] == 0 else next(
+                (i for i, (lo_v, hi_v) in enumerate(periods) if (lo_v, hi_v) == key[:2]), None)
+            events.append((tick, note))
+            last = key
+    return events
+
+
+N_TICKS = 2000
+z = fresh()
+boot(z)
+# Stage1自身はRAMコピーを行わない(Titleが起動時に一度だけコピーする
+# 前提 - このファイル自身のINIT_BGMコメント参照)ため、この検証でも
+# 同じ前提を再現してTitleの代わりに本物のデータを直接RAMへ書く。
+poke_period_table(z)
+for i, b in enumerate(chB_bytes):
+    z.wr(BGM_B_BASE + i, b)
+z.wr(BGM_B_PTR, BGM_B_BASE & 0xFF)
+z.wr(BGM_B_PTR + 1, (BGM_B_BASE >> 8) & 0xFF)
+z.wr(BGM_B_TIMER, 0)
+z.wr(SND_TIMER_B, 0)
+z.wr(SND_TIMER_C, 0)
+z.wr(SND_C_DUTY_TIMER, 0)
+observed_b = observed_note_change_ticks(z, 2, 3, 9, N_TICKS)
+expected_b = []
+cum = 0
+for note, dur in decode_rows(chB_bytes):
+    if cum >= N_TICKS:
+        break
+    expected_b.append((cum, None if note == BGM_NOTE_REST else note))
+    cum += dur
+check(f"round40 off-by-one regression: {len(expected_b)} real ALONE_FIGHTER chB note-change ticks "
+      f"(over {N_TICKS} real BGM_TICK calls from a real boot, no SFX active throughout) match the "
+      "real bgm_bank.bin row data EXACTLY",
+      observed_b == expected_b)
 
 
 # ---- the other half of the fix: SOUND_UPDATE_B/SUC_NORMAL must write
