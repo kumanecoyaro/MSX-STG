@@ -1456,3 +1456,37 @@
 - 全回帰`run_all.py` **1366 passed/0 failed**(1350→1366)。Stage2単体
   ROM(残り1218バイト)・Comb ROM再ビルド・送付済み。詳細は
   `tools/stage2_combined/HANDOFF.md`のRound38-2参照。
+
+## 新バンク:タイトル画面バンクテスト(2026-09-05、Round39、完了済み)
+
+- ユーザー指示: "ではバンクテストをしたいので 新バンクには必要な
+  初期化処理を実装した上で PUSH STARTと表示しStage1とStage2のボスを
+  適当に表示して ボタンが押されたらStage1へトランポリンするように"。
+  併せて「RAMページ3(C000h-FFFFh)は8KBでなく実際は16KBリニアで使える」
+  という仕様確認あり(BGMには影響なし)。
+- Stage1・Stage2に続く**3つ目のバンクペア(タイトル画面)**を新規実装
+  (`tools/title_screen/title_test.asm`+専用`build_test.py`)。ASCII16は
+  window Aが常にbank0から起動するため、新規タイトルバンクをbank0/1に
+  配置し、Stage1(旧0/1→2/3)・Stage2(旧2/3→4/5)を2バンクずつシフト。
+  ボスの絵は新規に描かず、Stage1の`BOSS_PATTERNS`/`BOSS_MAP`とStage2の
+  `sasapi_gen.py`のデータを実アセンブル結果から直接抜き出して再利用
+  (`tools/title_screen/title_gen.py`)。テキストはBIOSデフォルトフォント
+  をそのまま使用。
+- 自己発見・修正したバグ3件: (1)Stage1側トランポリンのバンク番号
+  シフト漏れ(重大、window Bが誤ったバンクのまま起動継続する)、
+  (2)`title_test.asm`自身のアセンブラ演算子優先順位バグ(既知の
+  "BASE+N*4"パターンの再発、テキストが一切描画されない原因)、
+  (3)`z80emu.py`にWRTVRM(単一バイトVRAM書き込み)シミュレーションが
+  無かった(新規追加、後方互換)。
+- `tools/bankswitch_poc/verify_comb.py`を新6バンク構成用に全面改訂、
+  title→Stage1→Stage2の一気通貫バンク切替を実際にエミュレータで検証、
+  全チェックPASS。新規`tools/title_screen/title_test.py`(23件)。
+  `run_all.py`全回帰**1366 passed/0 failed**(無変化)。Comb ROM総
+  サイズは128KB維持(96KBの実データ+0xFF埋め予備2バンクでパディング、
+  192KBへの単純倍化という未検証の選択より保守的な判断)。詳細は
+  `tools/stage2_combined/HANDOFF.md`のRound39参照。
+  - **保留**: Comb ROMの新レイアウト(128KB構成)自体が実機で正常に
+    ブートするかは未検証。"PUSH START"の実機表示・両ボスの配置座標
+    (170,40)/(row2,col2)は"適当に"の暫定値、実機フィードバック待ち。
+    新バンクへのBGMノートデータ配置・RAM転送方式自体は今回は
+    未着手(将来タスク)。

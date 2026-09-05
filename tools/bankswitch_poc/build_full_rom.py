@@ -79,19 +79,22 @@ INIT_PATCH = """    OUT (0A8h),A
     ; --- DIAGNOSTIC checkpoint: border color 3 = "trampoline copied". ---
     LD B,3 : LD C,7 : CALL WRTVDP
 
-    ; --- explicit ASCII16 bank select: bank 1 for window B        ---
-    ; --- (8000h-BFFFh), matching the page2 content this game has  ---
-    ; --- always had. Explicit rather than relying on the mapper's ---
-    ; --- power-on default, which isn't guaranteed the same across ---
-    ; --- every flashcart. The trampoline never returns via RET (it ---
-    ; --- just jumps to HL), so this sets HL to "come back here"   ---
-    ; --- and JPs to it, rather than CALLing it.                    ---
-    LD A,1
+    ; --- explicit ASCII16 bank select: bank 3 for window B (8000h-  ---
+    ; --- BFFFh), matching this game's own page2 content at its      ---
+    ; --- round39 GLOBAL bank index (was bank1 pre-round39, before a  ---
+    ; --- 3rd bank pair - the title screen, bank0/1 - was inserted    ---
+    ; --- ahead of this game's own pair, shifting it from 0/1 to      ---
+    ; --- 2/3). Explicit rather than relying on the mapper's power-on ---
+    ; --- default, which isn't guaranteed the same across every       ---
+    ; --- flashcart. The trampoline never returns via RET (it just    ---
+    ; --- jumps to HL), so this sets HL to "come back here" and JPs   ---
+    ; --- to it, rather than CALLing it.                              ---
+    LD A,3
     LD DE,7000h
     LD HL,INIT_RESUME_AFTER_BANK_SELECT
     JP 0F200h
 INIT_RESUME_AFTER_BANK_SELECT:
-    ; --- DIAGNOSTIC checkpoint: border color 4 = "bank1 select via  ---
+    ; --- DIAGNOSTIC checkpoint: border color 4 = "bank3 select via  ---
     ; --- RAM trampoline returned successfully".                     ---
     LD B,4 : LD C,7 : CALL WRTVDP
 
@@ -106,10 +109,13 @@ MAINLOOP_PATCH = """MAINLOOP:
     ; --- the player's exit/flyaway sequence has finished - off-      ---
     ; --- screen/hidden), switch to the real stage2 (see              ---
     ; --- tools/stage2_combined/combined_test.asm, assembled here via ---
-    ; --- assemble_real_stage2() as bank2/bank3) via a real re-init,  ---
-    ; --- not a static placeholder screen. Safe here because MAINLOOP ---
-    ; --- always starts at a window-A address and every frame         ---
-    ; --- re-enters via "JP MAINLOOP".                                 ---
+    ; --- assemble_real_stage2() as GLOBAL bank4/bank5 - round39 added ---
+    ; --- a 3rd bank pair (title screen, bank0/1) ahead of this game's ---
+    ; --- own bank2/3, shifting stage2 from 2/3 to 4/5, see main()'s   ---
+    ; --- own layout comment) via a real re-init, not a static         ---
+    ; --- placeholder screen. Safe here because MAINLOOP always starts ---
+    ; --- at a window-A address and every frame re-enters via          ---
+    ; --- "JP MAINLOOP".                                                ---
     LD A,(PLAYER_FLYAWAY)
     CP 2
     JR NZ,MAINLOOP_NO_TEST_SWITCH
@@ -131,25 +137,26 @@ MAINLOOP_PATCH = """MAINLOOP:
 
     ; --- hop 1 (through the RAM trampoline, so this is safe          ---
     ; --- regardless of which window issues it): switch window B      ---
-    ; --- (8000h-BFFFh) to bank3 (stage2 world's page2), then return   ---
-    ; --- to MAINLOOP_HOP2 - still window A, still bank0/stage1,       ---
+    ; --- (8000h-BFFFh) to bank5 (stage2 world's page2, GLOBAL index   ---
+    ; --- - see round39's own 3-pair layout comment in main()), then   ---
+    ; --- return to MAINLOOP_HOP2 - still window A, still bank2/stage1, ---
     ; --- completely unaffected by the window-B switch.                ---
-    LD A,3
+    LD A,5
     LD DE,7000h
     LD HL,MAINLOOP_HOP2
     JP 0F200h
 MAINLOOP_HOP2:
-    ; --- hop 2: switch window A (4000h-7FFFh) to bank2 (stage2       ---
-    ; --- world's page1) and jump straight to its own INIT (0x4010 -  ---
-    ; --- same relative address as this game's own INIT, since it's   ---
-    ; --- the identical ORG/layout). This is what makes it "just       ---
-    ; --- initialization" rather than a bespoke patchwork of screen-   ---
-    ; --- clear/color-table/sprite-hide fixes: stage2 world's INIT     ---
-    ; --- does the exact same full boot sequence stage 1's own INIT    ---
-    ; --- already does (BIOS SCREEN1 setup, pattern/color/digit loads, ---
-    ; --- RAM/sprite/schedule reset), which naturally clears and       ---
-    ; --- redraws everything from scratch.                             ---
-    LD A,2
+    ; --- hop 2: switch window A (4000h-7FFFh) to bank4 (stage2       ---
+    ; --- world's page1, GLOBAL index) and jump straight to its own    ---
+    ; --- INIT (0x4010 - same relative address as this game's own      ---
+    ; --- INIT, since it's the identical ORG/layout). This is what     ---
+    ; --- makes it "just initialization" rather than a bespoke         ---
+    ; --- patchwork of screen-clear/color-table/sprite-hide fixes:     ---
+    ; --- stage2 world's INIT does the exact same full boot sequence   ---
+    ; --- stage 1's own INIT already does (BIOS SCREEN1 setup,         ---
+    ; --- pattern/color/digit loads, RAM/sprite/schedule reset),       ---
+    ; --- which naturally clears and redraws everything from scratch.  ---
+    LD A,4
     LD DE,6000h
     LD HL,04010h
     JP 0F200h
@@ -246,21 +253,23 @@ def assemble_game():
 # B(page2) IN ITS OWN NUMBERING, so its own INIT hardcodes "select bank 1 for
 # window B" as part of its own one-time boot bank-select (see combined_test.asm
 # around BANKSWITCH_TRAMPOLINE_RAM). Embedded here, that content instead
-# occupies GLOBAL bank indices 2 (window A) and 3 (window B) - by the time
-# this file's own INIT runs, MAINLOOP_PATCH's own HOP1/HOP2 have already
-# selected window A=bank2/window B=bank3 to get here at all, so if this
-# file's own INIT went on to redundantly select "its own bank 1" for window
-# B, that would overwrite the correct selection with STAGE 1's page2 content
-# instead (global bank index 1) - silently breaking stage2 right at its own
-# boot. Retargeted to bank index 3 on an in-memory copy only, same as
-# build_full_rom.py's own game-source patching above; combined_test.asm
-# itself, and its own standalone build/tests, are untouched.
+# occupies GLOBAL bank indices 4 (window A) and 5 (window B) - round39 added a
+# 3rd bank pair (title screen) ahead of this game's own pair, so stage2 shifted
+# from 2/3 to 4/5 (see main()'s own layout comment) - by the time this file's
+# own INIT runs, MAINLOOP_PATCH's own HOP1/HOP2 have already selected window
+# A=bank4/window B=bank5 to get here at all, so if this file's own INIT went
+# on to redundantly select "its own bank 1" for window B, that would overwrite
+# the correct selection with STAGE 1's page2 content instead (global bank
+# index 3) - silently breaking stage2 right at its own boot. Retargeted to
+# bank index 5 on an in-memory copy only, same as build_full_rom.py's own
+# game-source patching above; combined_test.asm itself, and its own
+# standalone build/tests, are untouched.
 STAGE2_BANKSELECT_ANCHOR = """    LD A,1
     LD DE,7000h
     LD HL,INIT_RESUME_AFTER_BANK_SELECT
     JP BANKSWITCH_TRAMPOLINE_RAM"""
 
-STAGE2_BANKSELECT_PATCH = """    LD A,3
+STAGE2_BANKSELECT_PATCH = """    LD A,5
     LD DE,7000h
     LD HL,INIT_RESUME_AFTER_BANK_SELECT
     JP BANKSWITCH_TRAMPOLINE_RAM"""
@@ -273,43 +282,77 @@ def assemble_real_stage2():
     text = text.replace(STAGE2_BANKSELECT_ANCHOR, STAGE2_BANKSELECT_PATCH, 1)
     a = Assembler(text)
     out = a.assemble()
-    bank2, bank3 = stage2_build.build_banks(out)
-    return bank2, bank3, a.symtab
+    bank4, bank5 = stage2_build.build_banks(out)
+    return bank4, bank5, a.symtab
+
+
+# round39 ("ではバンクテストをしたいので...新バンクには必要な初期化処理を
+# 実装した上で PUSH STARTと表示しStage1とStage2のボスを適当に表示して
+# ボタンが押されたらStage1へトランポリンするように"): a genuinely new 3rd
+# bank pair, tools/title_screen/title_test.asm - self-contained/independently
+# assemblable/testable, same treatment as combined_test.asm above. Its own
+# INIT hardcodes "select bank2/window A, bank3/window B, jump to 0x4010" for
+# the button-press trampoline into Stage1 (see title_test.asm's own
+# STAGE1_BANK_A/STAGE1_BANK_B/STAGE1_INIT) - no in-memory patching needed
+# here, unlike Stage1/Stage2 above, since this file was written knowing its
+# own global bank numbers from the start.
+_title_build_spec = importlib.util.spec_from_file_location(
+    "title_screen_build_test",
+    os.path.join(REPO, "tools", "title_screen", "build_test.py"))
+title_build = importlib.util.module_from_spec(_title_build_spec)
+_title_build_spec.loader.exec_module(title_build)
+
+
+def assemble_title():
+    text = title_build.combined_text()
+    a = Assembler(text)
+    out = a.assemble()
+    bank0, bank1 = title_build.build_banks(out)
+    return bank0, bank1, a.symtab
 
 
 def main():
-    bank0, bank1, game_sym = assemble_game()
-    bank2, bank3, stage2_sym = assemble_real_stage2()
+    title_bank0, title_bank1, title_sym = assemble_title()
+    game_bank0, game_bank1, game_sym = assemble_game()
+    bank4, bank5, stage2_sym = assemble_real_stage2()
 
-    rom64 = bytes(bank0) + bytes(bank1) + bytes(bank2) + bytes(bank3)
-    # --- Real-hardware finding: this specific flashcart mirrors a    ---
-    # --- 64KB ASCII16 image instead of decoding it as 4 real banks   ---
-    # --- unless the file is a "regulation" size for its mapper       ---
-    # --- detection - doubling it to 128KB (banks 0-3 again at        ---
-    # --- 4-7, i.e. the whole 64KB image simply repeated once) fixed  ---
-    # --- a real-hardware boot freeze that the emulator never showed. ---
-    # --- Only banks 0-3 (the first half) are ever actually selected  ---
-    # --- by this ROM's own code, so the duplicate second half is     ---
-    # --- inert padding, not a second, different level.               ---
-    rom = rom64 + rom64
-    # "では一度Stage1に実Stage2をマージしてみる...実Stage2に差し替えて
-    # みてくれ" - bank2/bank3 are now the REAL tools/stage2_combined
-    # content (terrain/tank/full enemy roster/Sasapi boss), no longer
-    # bankswitch_poc's own simple-enemies-only placeholder world (see
-    # build_stage2_world.py, now unused by this script). Named "Comb"
-    # per the naming plan recorded back when this was still a future
-    # task (round28): "後でやることだが Stage2を組み込んだビルドは
-    # CyberS Comb.ascii16k.romに". "CyberS S1.ascii16k.rom" (the old
-    # name/placeholder-stage2 output) is retired.
+    # --- round39 layout: title(0,1) -> Stage1(2,3) -> Stage2(4,5). The   ---
+    # --- ASCII16 mapper always boots window A into bank0/window B into  ---
+    # --- bank1 by hardware convention (confirmed by this project's own  ---
+    # --- real-hardware testing - see combined_test.asm's own comment on ---
+    # --- window B's power-on default), so whichever content needs to    ---
+    # --- run FIRST must physically occupy bank0/1 - hence title moving  ---
+    # --- there and Stage1/Stage2 both shifting up by 2 banks each.      ---
+    rom96 = (bytes(title_bank0) + bytes(title_bank1)
+             + bytes(game_bank0) + bytes(game_bank1)
+             + bytes(bank4) + bytes(bank5))
+    # --- Real-hardware finding (pre-round39): this specific flashcart   ---
+    # --- mirrors a 64KB ASCII16 image instead of decoding it as 4 real  ---
+    # --- banks unless the file is a "regulation" size for its mapper    ---
+    # --- detection - doubling the old 4-bank/64KB image to 128KB fixed  ---
+    # --- a real-hardware boot freeze the emulator never showed. Adding  ---
+    # --- a 3rd pair makes the raw content 96KB (6 banks), not a         ---
+    # --- previously-confirmed size on its own - rather than doubling to ---
+    # --- an UNTESTED 192KB, this pads with 2 inert (0xFF-filled, never  ---
+    # --- selected by any of this ROM's own code) banks6/7 to reach      ---
+    # --- exactly the same 128KB total already confirmed to work, the    ---
+    # --- more conservative choice given genuine real-hardware           ---
+    # --- uncertainty here - not yet verified on real hardware, flag any ---
+    # --- boot issue immediately if this assumption turns out wrong.     ---
+    rom = rom96 + bytes([0xFF] * 0x8000)
+
     out_path = os.path.join(REPO, "rom", "CyberS Comb.ascii16k.rom")
     with open(out_path, "wb") as f:
         f.write(rom)
 
-    print(f"wrote {out_path}: {len(rom)} bytes (banks 0-3 real content, doubled to 128KB - see comment)")
-    print(f"  bank0 (page1, real game + test patch): {len(bank0)}B, header {bytes(bank0[0:4]).hex()}")
-    print(f"  bank1 (page2, real game, unpatched): {len(bank1)}B")
-    print(f"  bank2 (stage2 page1, real tools/stage2_combined content): {len(bank2)}B, header {bytes(bank2[0:4]).hex()}")
-    print(f"  bank3 (stage2 page2, real tools/stage2_combined content): {len(bank3)}B")
+    print(f"wrote {out_path}: {len(rom)} bytes (banks 0-5 real content + 2 inert filler banks, 128KB total)")
+    print(f"  bank0 (title page1): {len(title_bank0)}B, header {bytes(title_bank0[0:4]).hex()}")
+    print(f"  bank1 (title page2): {len(title_bank1)}B")
+    print(f"  bank2 (Stage1 page1, real game + test patch): {len(game_bank0)}B, header {bytes(game_bank0[0:4]).hex()}")
+    print(f"  bank3 (Stage1 page2, real game, unpatched): {len(game_bank1)}B")
+    print(f"  bank4 (Stage2 page1, real tools/stage2_combined content): {len(bank4)}B, header {bytes(bank4[0:4]).hex()}")
+    print(f"  bank5 (Stage2 page2, real tools/stage2_combined content): {len(bank5)}B")
+    print(f"title INIT={title_sym['INIT']:04x}")
     print(f"game MAINLOOP={game_sym['MAINLOOP']:04x} GAME_TICK={game_sym['GAME_TICK']:04x}")
     print(f"stage2 (real) INIT={stage2_sym['INIT']:04x} MAINLOOP={stage2_sym['MAINLOOP']:04x}")
 

@@ -90,6 +90,11 @@ class Z80:
             return True
         if target == 0x006F:  # INIT32: VDP mode setup, no-op for our tracing
             return True
+        if target == 0x004D:  # WRTVRM: HL=dest(VRAM), A=byte - single-byte write
+            vaddr = self.hl() & 0x3FFF
+            self.vram[vaddr] = self.a
+            self.vram_writes_log.append((vaddr, self.a, self.pc))
+            return True
         if target == 0x0047:  # WRTVDP: C=reg,B=data - no-op (register state not tracked)
             return True
         if target == 0x00D5:  # GTSTCK: A=id -> A=0-8 direction (simulated via sim_dir, default 0=centered)
