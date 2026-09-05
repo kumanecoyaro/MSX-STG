@@ -77,11 +77,21 @@ def all_sprites_hidden(cpu):
 
 
 # ---- spawn the boss ----
+# round34 ("全てスケジュールに"): S2_BOSS_SPAWN has no GAME_TICK check
+# of its own any more (that moved to the shared SPAWN2_SCHEDULE_CHECK/
+# SSC2_FIRE dispatcher) - it always succeeds whenever called directly.
 cpu = fresh_cpu()
-set_game_tick(cpu, 999)
-call_routine(cpu, "UPDATE_BOSS_ALL")
+call_routine(cpu, "S2_BOSS_SPAWN")
 check("boss spawns with BOSS_PHASE=0 (patrolling)", cpu.mem[BOSS_PHASE] == 0)
 check("boss spawns at BOSS_SPAWNX", cpu.mem[BOSS_X] == BOSS_SPAWNX)
+# follow-up#20 ("ワイプ中は初期停止状態のスプライトでワイプが終わるまで
+# 停止すること"): UBA_ACTIVE now freezes all patrol/pose movement
+# entirely while the entrance materialize effect is active (BOSS_MATERIALIZE_ACT!=0, seeded
+# by S2_BOSS_SPAWN itself). This file tests the patrol/pose state
+# machine itself, unrelated to the wipe - bypass it here so the boss
+# actually moves like every test below already assumes (see
+# boss_wipe_test.py for the freeze's own dedicated coverage).
+cpu.mem[sym["BOSS_MATERIALIZE_ACT"]] = 0
 
 # ---- drive it to the left edge - now pauses briefly (BOSS_PHASE=2)
 # before reversing - "左端は2Tick停止してから反転発射に" (round10) ----
@@ -194,8 +204,14 @@ pose_exited = False
 # BOSS_SPAWN_TICK*8 to reach spawn (GAME_TICK boots at real 0 again -
 # "Tickスキップを一旦戻して０に") + enough margin for a full patrol
 # cycle (left+right, ~192 frames) and the full pose duration
-# (BOSS_POSE_TICKS*8) afterward.
-sweep_frames = sym["BOSS_SPAWN_TICK"] * 8 + 200 + sym["BOSS_POSE_TICKS"] * 8 + 200
+# (BOSS_POSE_TICKS*8) afterward. round34-3 ("全てスケジュールに", then
+# "Stage1と全く同じ処理だぞ"): with no player fire input at all (this
+# test's own worst-case config), a ground enemy can still go permanently
+# un-destroyed, but that no longer stalls anything downstream - a
+# blocked spawn is simply dropped (unconditional-advance SSC2_FIRE), so
+# the boss reliably spawns right at frame~7959 (tick995) - verified
+# empirically (see boss_test.py's own Test12) - well inside this margin.
+sweep_frames = 20000 + sym["BOSS_POSE_TICKS"] * 8 + 200
 for f in range(sweep_frames):
     step_frame(cpu)
     if cpu.mem[BOSS_ACT] == 1:

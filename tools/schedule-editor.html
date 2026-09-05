@@ -18,6 +18,8 @@
     --danger-ink: #260607;
     --ok: #6bdc7c;
     --warn: #ffd166;
+    --terrain-rock: #8b5a2b;         /* matches ROCK_COLOR's own fg (medium red) closely enough as a placeholder block, warmer than the sand fill below */
+    --terrain-sand: #a68a4a;         /* round36-6: the "not yet grown into rock" band is real Sand tile in-game (SAND_COLOR: dark-yellow-on-light-yellow), not open sky - a near-invisible tint here read as "no terrain at all" and was reported as not matching what actually renders */
 
     --font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Hiragino Sans", "Noto Sans JP", sans-serif;
     --font-mono: ui-monospace, "SF Mono", "Cascadia Mono", "Consolas", "Roboto Mono", monospace;
@@ -435,6 +437,10 @@
 
     <div class="side-actions">
       <div class="btn-row">
+        <button id="btnStage1" style="flex: 1 1 50%;">Stage 1</button>
+        <button id="btnStage2" style="flex: 1 1 50%;">Stage 2</button>
+      </div>
+      <div class="btn-row">
         <label class="btn-label" for="fileInput">Load JSON</label>
         <input type="file" id="fileInput" accept=".json" hidden>
         <button id="btnCopy">Copy</button>
@@ -483,6 +489,7 @@
       </div>
     </div>
   </div>
+
 
 <script>
 (function () {
@@ -559,6 +566,110 @@
       },
       color: "#cccccc",
       bg: "#5955e0"
+    },
+
+    // ---- Stage2 roster (round32, "エディタをステージ2エネミーに対応")
+    // ---- transcribed byte-for-byte from tools/stage2_combined's own
+    // ---- generator scripts (enemy_gen.py/bigzum_gen.py/flyer_gen.py/
+    // ---- etank_gen.py's own emit_asm_tables(), reproduced directly via
+    // ---- `python3 -c "import X_gen; print(X_gen.emit_asm_tables())"`
+    // ---- from tools/stage2_combined - NOT hand-transcribed from the ASM
+    // ---- like the Stage1 glyphs above, since Stage2's own pattern bytes
+    // ---- are themselves generated, not literal DB lines in combined_
+    // ---- test.asm. Colors are this game's own hardware TMS9918 palette
+    // ---- indices (0=transparent..15=white - confirmed against this
+    // ---- exact file's own already-used hex, e.g. BOSS_TILES' "#db6559"
+    // ---- red matches index8/medium-red exactly), not the differently-
+    // ---- ordered "BASIC COLOR 1-16" numbering.
+    // ZacoII (16x16, ENEMY_ZACOII) - light green, TMS9918 index3.
+    s2_zacoii: {
+      size: 16,
+      quads: {
+        tl: [6, 107, 206, 132, 49, 94, 237, 210],
+        bl: [141, 35, 121, 240, 224, 88, 60, 14],
+        tr: [48, 120, 60, 158, 71, 131, 97, 240],
+        br: [224, 64, 144, 60, 114, 44, 30, 6]
+      },
+      color: "#74d07d"
+    },
+    // ZacoII red variant (same pattern/PAT_ZACO, E_VARIANT=1 - "10機出たら
+    // 色替えの赤いZakoII"/"ZakoIIはの赤は速度３で"/"ZakoII赤の耐久２") -
+    // 2-hit HP (ENEMY_RED_HP) and its own flat speed, unlike the green
+    // 1-hit default. Same quads as s2_zacoii, only ENEMY_RED_COLOR(9,
+    // light red) differs - reuses the same hex already used for BOSS_COLOR
+    // (also index9) elsewhere in this file.
+    s2_zacoii_red: {
+      size: 16,
+      quads: {
+        tl: [6, 107, 206, 132, 49, 94, 237, 210],
+        bl: [141, 35, 121, 240, 224, 88, 60, 14],
+        tr: [48, 120, 60, 158, 71, 131, 97, 240],
+        br: [224, 64, 144, 60, 114, 44, 30, 6]
+      },
+      color: "#ff897d"
+    },
+    // Zum (16x16, ENEMY_ZUM) - magenta, TMS9918 index13.
+    s2_zum: {
+      size: 16,
+      quads: {
+        tl: [6, 43, 116, 176, 27, 47, 54, 105],
+        bl: [71, 11, 29, 28, 56, 104, 0, 0],
+        tr: [28, 190, 223, 217, 184, 86, 206, 236],
+        br: [232, 208, 184, 104, 76, 60, 30, 6]
+      },
+      color: "#b766b5"
+    },
+    // BigZum (32x32, BIGZUM_BIGZUM_TL/TR/BL/BR - default/walking pose,
+    // right-facing) - magenta, same as Zum. quadGroups.{tl,bl,tr,br} are
+    // the 4 real 16x16 hw sprites the body is built from, each itself a
+    // quads{tl,bl,tr,br} group - see drawGlyph's own comment.
+    s2_bigzum: {
+      size: 32,
+      quadGroups: {
+        tl: { tl: [0, 0, 0, 0, 0, 0, 0, 0], bl: [0, 7, 13, 27, 54, 29, 12, 2],
+              tr: [0, 0, 0, 0, 0, 0, 0, 0], br: [0, 96, 245, 58, 151, 79, 23, 232] },
+        tr: { tl: [0, 0, 0, 0, 0, 0, 0, 0], bl: [56, 92, 238, 119, 187, 222, 168, 112],
+              tr: [0, 0, 0, 0, 0, 0, 0, 0], br: [0, 0, 0, 0, 0, 0, 0, 0] },
+        bl: { tl: [5, 6, 27, 125, 94, 49, 2, 3], bl: [4, 15, 23, 31, 15, 4, 3, 7],
+              tr: [158, 125, 251, 231, 28, 73, 252, 255], br: [166, 89, 135, 227, 1, 224, 192, 128] },
+        br: { tl: [160, 176, 120, 120, 240, 96, 128, 32], bl: [112, 240, 252, 222, 174, 95, 31, 7],
+              tr: [0, 0, 0, 0, 0, 0, 0, 0], br: [0, 0, 0, 0, 0, 0, 0, 0] }
+      },
+      color: "#b766b5"
+    },
+    // Flyer (32x32, FLYER_TL/TR/BL/BR, right-facing) - cyan.
+    s2_flyer: {
+      size: 32,
+      quadGroups: {
+        tl: { tl: [0, 0, 0, 0, 0, 0, 0, 0], bl: [0, 0, 0, 0, 15, 0, 0, 0],
+              tr: [0, 0, 0, 0, 0, 0, 0, 0], br: [0, 0, 13, 119, 216, 247, 102, 189] },
+        tr: { tl: [0, 0, 0, 0, 0, 0, 0, 0], bl: [0, 0, 128, 240, 255, 64, 184, 220],
+              tr: [0, 0, 0, 0, 0, 0, 0, 0], br: [0, 0, 0, 0, 0, 0, 0, 0] },
+        bl: { tl: [0, 255, 132, 127, 0, 3, 0, 1], bl: [0, 0, 0, 0, 0, 0, 0, 0],
+              tr: [91, 167, 191, 62, 89, 102, 235, 247], br: [247, 91, 15, 28, 30, 4, 24, 48] },
+        br: { tl: [206, 176, 120, 240, 224, 192, 0, 192], bl: [224, 160, 48, 248, 252, 56, 22, 6],
+              tr: [0, 0, 0, 0, 0, 0, 0, 0], br: [0, 0, 0, 0, 0, 0, 0, 0] }
+      },
+      color: "#65dbef"
+    },
+    // Etank (32x32 canvas, but ETANK_BL/BR only - top half is always
+    // blank, "左下24x16ドット" per etank_gen.py's own docstring, real
+    // hw sprite footprint is just the bottom 2 of 4 quadrant slots) -
+    // dark red (ETANK_COLOR overrides the sprite JSON's own fg), TMS9918
+    // index6.
+    s2_etank: {
+      size: 32,
+      quadGroups: {
+        tl: { tl: [0, 0, 0, 0, 0, 0, 0, 0], bl: [0, 0, 0, 0, 0, 0, 0, 0],
+              tr: [0, 0, 0, 0, 0, 0, 0, 0], br: [0, 0, 0, 0, 0, 0, 0, 0] },
+        tr: { tl: [0, 0, 0, 0, 0, 0, 0, 0], bl: [0, 0, 0, 0, 0, 0, 0, 0],
+              tr: [0, 0, 0, 0, 0, 0, 0, 0], br: [0, 0, 0, 0, 0, 0, 0, 0] },
+        bl: { tl: [0, 0, 0, 63, 31, 0, 0, 1], bl: [31, 127, 227, 77, 85, 89, 35, 28],
+              tr: [0, 0, 0, 221, 226, 61, 111, 128], br: [123, 255, 140, 55, 85, 100, 143, 112] },
+        br: { tl: [8, 8, 12, 236, 24, 239, 125, 3], bl: [238, 255, 98, 77, 213, 89, 226, 28],
+              tr: [0, 0, 0, 0, 0, 0, 0, 0], br: [0, 0, 0, 0, 0, 0, 0, 0] }
+      },
+      color: "#b95e51"
     },
   };
 
@@ -678,9 +789,36 @@
     }
   }
 
+  // Stage2's own boss (Sasapi) placeholder - round32 scope call (see
+  // s2_boss's own comment in TYPES2): Sasapi's real body is a 64x64
+  // (4x4-of-16x16 hw-sprite-quadrant) structure, considerably more
+  // transcription than the other 4 Stage2 entries needed, so this draws
+  // a plain labeled box at its real 8x8-cell/64x64px footprint instead
+  // of a pixel-perfect body - can be upgraded to the real body later the
+  // same way drawBossBody/BOSS_TILES/BOSS_MAP do for Stage1's boss,
+  // without needing to touch anything else here (footprintOf/drawGrid's
+  // own s2_boss branches only care about the 8x8-cell size, not how
+  // it's actually painted).
+  function drawS2BossPlaceholder(ctx, x, y, cell) {
+    var w = 8 * cell, h = 8 * cell;
+    ctx.fillStyle = "#3a1116";
+    ctx.fillRect(x, y, w, h);
+    ctx.strokeStyle = "#ff897d";
+    ctx.lineWidth = 2;
+    ctx.strokeRect(x + 1, y + 1, w - 2, h - 2);
+    ctx.fillStyle = "#ff897d";
+    ctx.font = "700 " + Math.max(10, Math.round(cell * 1.4)) + "px " + tok("--font-mono").split(",")[0] + ", monospace";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText("BOSS", x + w / 2, y + h / 2);
+  }
+
   // Draws a GLYPHS entry into ctx at (x,y), scaled to fill w x h. 8x8 "rows"
   // glyphs paint their bg first (opaque BG tile); 16x16 "quads" glyphs leave
-  // 0-bits untouched (transparent sprite, like the real hardware).
+  // 0-bits untouched (transparent sprite, like the real hardware); 32x32
+  // "quadGroups" (round32, Stage2's own BigZum/Flyer/Etank - each is 4
+  // real 16x16 hw sprites, not one bigger one) is just "quads" one level
+  // deeper - tl/bl/tr/br, each itself a full quads{tl,bl,tr,br} group.
   function drawGlyph(ctx, glyph, x, y, w, h) {
     var n = glyph.size, px = w / n, py = h / n;
     if (glyph.bg) { ctx.fillStyle = glyph.bg; ctx.fillRect(x, y, w, h); }
@@ -695,18 +833,42 @@
         }
       }
     }
+    function paintQuads(quads, offX, offY) {
+      paintRows(quads.tl, offX + 0, offY + 0);
+      paintRows(quads.bl, offX + 0, offY + 8);
+      paintRows(quads.tr, offX + 8, offY + 0);
+      paintRows(quads.br, offX + 8, offY + 8);
+    }
     if (glyph.rows) {
       paintRows(glyph.rows, 0, 0);
+    } else if (glyph.quadGroups) {
+      paintQuads(glyph.quadGroups.tl, 0, 0);
+      paintQuads(glyph.quadGroups.bl, 0, 16);
+      paintQuads(glyph.quadGroups.tr, 16, 0);
+      paintQuads(glyph.quadGroups.br, 16, 16);
     } else {
-      paintRows(glyph.quads.tl, 0, 0);
-      paintRows(glyph.quads.bl, 0, 8);
-      paintRows(glyph.quads.tr, 8, 0);
-      paintRows(glyph.quads.br, 8, 8);
+      paintQuads(glyph.quads, 0, 0);
     }
   }
 
   // ---------- enemy palette (matches the current CYBER SHMUP.asm schedule) ----------
-  var TYPES = [
+  // round32 ("エディタをステージ2エネミーに対応 切り替えボタンでも付けて
+  // 相互には登録できないように 1は1、2は2のエネミーのみ登録可能に 出力も
+  // 別に分ける"): TYPES/TYPE_BY_ID/placements/history are all now per-
+  // stage (the "1"/"2" suffixed variables below) with a "which one is
+  // active right now" pointer (TYPES/TYPE_BY_ID/placements/history
+  // themselves, reassigned wholesale by switchStage() - see its own
+  // comment) - existing code elsewhere in this file that reads/writes
+  // those bare names keeps working unmodified, it's just always looking
+  // at whichever stage is currently toggled on. Stage2 ids are all
+  // prefixed "s2_" (never bare "boss"/"enemy2"/etc, even where the
+  // concept overlaps by name) so the two id spaces can never collide -
+  // this is also what makes "相互には登録できない" hold structurally for
+  // FILE LOADS too, not just manual placement: importJSONText's own
+  // existing TYPE_BY_ID[p.type] validity filter already rejects every
+  // placement from the wrong stage's JSON on its own, no separate cross-
+  // stage guard needed (see importJSONText's own updated comment).
+  var TYPES1 = [
     { id: "simple",     name: "Simple (Enemy1)",  desc: "any row - dodge dir is decided from player Y at center", glyph: "asterisk16" },
     // e2a_top/e2a_bot/e2b_top/e2b_bot used to be 4 distinct placeable types -
     // A/B picked which of 2 independent RAM instances got claimed, Top/Bottom
@@ -722,8 +884,53 @@
     { id: "enemy6",      name: "Enemy6",           desc: "NEW - BG-tile spin (0/90/180/270°); placement staged here, not yet wired into SPAWN_THRESHOLDS/SSC_FIRE", glyph: "enemy6" },
     { id: "boss",       name: "Boss",             desc: "BOSS_SPAWN - fixed position, row/tick here are just for editing", glyph: null }
   ];
-  var TYPE_BY_ID = {};
-  TYPES.forEach(function (t) { TYPE_BY_ID[t.id] = t; });
+  // Stage2 roster - tools/stage2_combined/combined_test.asm. None of
+  // these are schedule-table-driven in the ASM yet (per round32's own
+  // research pass: Stage2 currently spawns ZacoII/Zum/BigZum/Flyer/Etank
+  // via independent per-type interval timers + random Y, not a tick-
+  // indexed table the way Stage1's SPAWN_THRESHOLDS/SSC_FIRE is) - this
+  // is the FIRST step ("まずエディタをステージ2エネミーに対応") toward
+  // that; wiring the ASM side up to actually consume placements made
+  // here is separate, later work. Horming/Thunder/SBeam are the boss's
+  // own attack patterns, not independent overworld spawns, so they have
+  // no placeable entry here (same reasoning Stage1's own roster already
+  // excludes anything that isn't a real "spawns from nothing" event).
+  // s2_boss (Sasapi) gets no small palette icon (glyph:null, same as
+  // Stage1's own boss entry) and a simple placeholder box on the grid
+  // rather than a pixel-perfect body - Sasapi's real body is a 64x64
+  // (4x4-of-16x16 hw sprite quadrants) structure, considerably more
+  // transcription than the other 4 entries here; a documented scope
+  // call for this round, see drawS2BossPlaceholder's own comment.
+  var TYPES2 = [
+    { id: "s2_zacoii", name: "ZacoII",  desc: "generic ground-spawned enemy, ALLOC_ENEMY_SLOT/ENEMY_POOL", glyph: "s2_zacoii" },
+    { id: "s2_zacoii_red", name: "ZacoII (Red)", desc: "E_VARIANT=1 - 2-hit HP (ENEMY_RED_HP), flat ENEMY_SPEED_RED", glyph: "s2_zacoii_red" },
+    { id: "s2_zum",    name: "Zum",     desc: "ground enemy, front-invincible until deflected", glyph: "s2_zum" },
+    { id: "s2_bigzum", name: "BigZum",  desc: "large ground enemy, punch pose on approach", glyph: "s2_bigzum" },
+    { id: "s2_flyer",  name: "Flyer",   desc: "sky enemy, homing-missile-style pattern reused as its own sprite block", glyph: "s2_flyer" },
+    { id: "s2_etank",  name: "Etank",   desc: "ground enemy, half-sprite (bottom 2 quadrants only)", glyph: "s2_etank" },
+    { id: "s2_boss",   name: "Boss (Sasapi)", desc: "BOSS_SPAWN_TICK - fixed position, row/tick here are just for editing", glyph: null },
+    // round36-2 ("地形の変なボタンはいらない 敵と同じでアイコンでいい 敵
+    // アイコンの隣に並べればよい で、その際は4行より上には置けないよう
+    // に制限"): replaces the earlier dedicated terrain-paint mode/toggle
+    // button entirely - terrain height is now just another palette entry,
+    // armed and tapped exactly like every enemy above (same click-to-set
+    // gesture, no drag-brush, no special mode). Tapping a cell with this
+    // armed writes directly into terrain2 (see its own comment) instead
+    // of creating a placements entry - it isn't a discrete spawned
+    // object, so it has no footprint/glyph drawn at the tapped cell the
+    // way an enemy would; the background terrain rendering already shows
+    // the result. row is clamped to 20-23 (see endPress's own "s2_terrain"
+    // branch) - the ONLY placeable type in this roster with that
+    // restriction, since it's tied to the terrain's own 4 physical rows,
+    // not an arbitrary spawn position.
+    { id: "s2_terrain", name: "Terrain", desc: "ground height (tier0-3) - tap rows 20-23 only; the row you tap IS the tier (row20=apex(3)..row23=lowest(0))", glyph: "s2_terrain" }
+  ];
+  var TYPE_BY_ID1 = {}, TYPE_BY_ID2 = {};
+  TYPES1.forEach(function (t) { TYPE_BY_ID1[t.id] = t; });
+  TYPES2.forEach(function (t) { TYPE_BY_ID2[t.id] = t; });
+  var STAGE = 1;
+  var TYPES = TYPES1;
+  var TYPE_BY_ID = TYPE_BY_ID1;
 
   // ---------- geometry ----------
   var ROWS = 24;
@@ -737,7 +944,75 @@
   function tok(name) { return css.getPropertyValue(name).trim(); }
 
   // ---------- state ----------
-  var placements = []; // {tick, row, type}
+  // Per-stage placement lists - "出力も別に分ける" applies to the live
+  // editing state too, not just the export, so switching stages never
+  // loses or merges the other stage's own work. `placements` (read/
+  // written all over this file, unchanged) always refers to whichever
+  // one is active; setPlacements() is the ONLY place that's allowed to
+  // reassign it wholesale (as opposed to mutating in place via push/
+  // splice/sort, which every existing call site already does and needs
+  // no changes for) so the per-stage array of record stays in sync -
+  // see its own comment.
+  var placements1 = []; // {tick, row, type}
+  var placements2 = [];
+  var placements = placements1;
+  function setPlacements(arr) {
+    placements = arr;
+    if (STAGE === 1) placements1 = arr; else placements2 = arr;
+  }
+
+  // round36 ("地形もエディット対象に"): Stage2-only terrain profile - one
+  // ground tier (0-3, 0=lowest, 3=apex - matches ground_i() in tools/
+  // stage2_terrain/terrain_gen.py exactly) per track column, painted
+  // directly onto rows 20-23 of the SAME grid placements already use
+  // (GAME_TICK and the terrain's own scroll index PXCHAR_T advance in
+  // perfect lockstep in combined_test.asm's own MAINLOOP - both gated on
+  // the identical "once per 8 raw frames" branch - so tick and terrain
+  // column really are the same axis, just modulo TERRAIN_LEN once the
+  // track loops). Stage1 has no such terrain system at all, so this is
+  // simply unused there (no terrain1 array - nothing reads it while
+  // STAGE===1).
+  //
+  // round36-5 ("エディタ自身に地形埋め込んでんじゃねえ...汎用性や自由度
+  // 下がるだろうが"): this file must not bake in ANY of the current
+  // game's own specific data - current placements start as [] above for
+  // exactly this reason, and terrain follows the same rule now. Starts
+  // as a flat, all-tier0 array (a blank canvas, not real track data) -
+  // the actual current terrain (and the actual current enemy schedule)
+  // are handed over as a separate JSON file to load in via the existing
+  // Load JSON flow, same as every other schedule always has been.
+  var terrain2 = new Array(MAX_TICK + 1).fill(0);
+  var terrainLen = terrain2.length;
+  function setTerrain2(arr) {
+    terrain2 = arr;
+    terrainLen = arr.length;
+  }
+  function tierFromRow(row) { return 23 - row; } // row20(top)->tier3(apex) .. row23(bottom)->tier0
+  function terrainColAt(tick) { return ((tick % terrainLen) + terrainLen) % terrainLen; }
+
+  // round36-2 ("地形の変なボタンはいらない 敵と同じでアイコンでいい"):
+  // replaces the earlier dedicated terrain-paint mode/brush entirely - a
+  // single tap via the "s2_terrain" palette entry (armed exactly like
+  // any enemy, see endPress's own armedType branch) sets ONE column's
+  // tier, no drag-brush/interpolation needed any more. Returns true if
+  // the tap was accepted (row in range) so the caller can flash/undo
+  // accordingly - false (with a flash of its own) if row was outside
+  // 20-23, the "4行より上には置けないように制限" restriction.
+  function placeTerrainAt(tick, row) {
+    if (row < 20 || row > 23) {
+      flash("terrain can only be placed on rows 20-23 (the ground itself)");
+      return false;
+    }
+    var col = terrainColAt(tick);
+    var tier = tierFromRow(row);
+    if (terrain2[col] !== tier) {
+      pushHistory();
+      terrain2[col] = tier;
+      render();
+    }
+    flash("Terrain tier " + tier + " → tick " + tick);
+    return true;
+  }
   var armedType = null;
   var eraseArmed = false;
 
@@ -759,21 +1034,36 @@
   // Snapshotted before every mutation (place/erase/offset edit/JSON load),
   // not diffed - the schedule stays small enough that a full deep-copy per
   // action costs nothing, and it means undo can never drift from what
-  // actually happened.
-  var history = [];
+  // actually happened. Per-stage, same reasoning/mechanism as placements1/
+  // placements2 above - undoing in Stage2 mode must never touch Stage1's
+  // own history or vice versa.
+  var history1 = [], history2 = [];
+  var history = history1;
   var MAX_HISTORY = 50;
   var btnUndo = document.getElementById("btnUndo");
 
+  // round36: snapshots bundle terrain2 alongside placements now (one
+  // shared undo stack for both kinds of edit - painting terrain and
+  // placing/erasing enemies undo through the same Undo button, in
+  // whichever order they actually happened). restoreSnapshot() is the
+  // single place that unpacks one of these - every history.pop() site
+  // below goes through it instead of feeding the popped value straight
+  // to setPlacements() as a bare array.
   function pushHistory() {
-    history.push(JSON.parse(JSON.stringify(placements)));
+    history.push({ placements: JSON.parse(JSON.stringify(placements)), terrain: terrain2.slice() });
     if (history.length > MAX_HISTORY) history.shift();
     btnUndo.disabled = false;
+  }
+
+  function restoreSnapshot(snap) {
+    setPlacements(snap.placements);
+    setTerrain2(snap.terrain);
   }
 
   function undo() {
     if (!history.length) return;
     exitSpecialModes();
-    placements = history.pop();
+    restoreSnapshot(history.pop());
     btnUndo.disabled = history.length === 0;
     render();
     flash("undo");
@@ -804,9 +1094,21 @@
     };
   }
 
+  // Same clamp idea for Stage2's own boss (Sasapi) - see s2_boss's own
+  // comment in TYPES2 for why this is a simple 8x8-cell (64x64px, its
+  // real body size) placeholder box rather than a pixel-perfect body.
+  function s2BossOrigin(tick, row) {
+    return {
+      tick: Math.max(0, Math.min(tick, MAX_TICK - 8)),
+      row: Math.max(0, Math.min(row, ROWS - 8))
+    };
+  }
+
   // Every placement's real footprint in cells - Enemy3's 8x8 BG tile is
-  // exactly 1 cell, every other sprite is 16x16 (2x2 cells), the boss is
-  // its full 5x16 body. Tapping/inspecting/erasing needs to hit-test the
+  // exactly 1 cell, every 16x16 sprite is 2x2 cells, every 32x32 sprite
+  // (round32: Stage2's own BigZum/Flyer/Etank) is 4x4 cells, Stage1's own
+  // boss is its full 5x16 body, Stage2's own boss (s2_boss) is an 8x8
+  // placeholder box. Tapping/inspecting/erasing needs to hit-test the
   // whole visible icon, not just its anchor cell, now that icons are drawn
   // at their real size instead of a uniform 1-cell swatch.
   function footprintOf(p) {
@@ -816,7 +1118,11 @@
       var o = bossOrigin(p.tick, p.row);
       return { t0: o.tick, t1: o.tick + 5, r0: o.row, r1: o.row + 16 };
     }
-    var span = GLYPHS[t.glyph].size === 16 ? 2 : 1;
+    if (p.type === "s2_boss") {
+      var o2 = s2BossOrigin(p.tick, p.row);
+      return { t0: o2.tick, t1: o2.tick + 8, r0: o2.row, r1: o2.row + 8 };
+    }
+    var span = Math.max(1, GLYPHS[t.glyph].size / 8);
     return { t0: p.tick, t1: p.tick + span, r0: p.row, r1: p.row + span };
   }
 
@@ -851,44 +1157,130 @@
   // purpose. Boss has no small icon of its own (its real graphic is the
   // full 5x16-cell body drawn on the grid, not something that shrinks to a
   // 26x26 swatch) so its palette entry is just its name.
+  //
+  // round32: rebuilt from scratch (not just appended to) every time the
+  // active stage changes - see switchStage() - so it always reflects
+  // TYPES/GLYPHS for whichever stage is currently toggled on, never a mix
+  // of both.
   var paletteEl = document.getElementById("palette");
-  TYPES.forEach(function (t) {
-    var item = document.createElement("button");
-    item.className = "pitem" + (t.id === "boss" ? " pitem-boss" : "");
-    item.dataset.type = t.id;
-    item.title = t.name + " — " + t.desc;
-    if (t.glyph) {
-      var glyph = GLYPHS[t.glyph];
-      var cv = document.createElement("canvas");
-      cv.className = "picon";
-      var cssSize = 26, dpr = Math.max(1, window.devicePixelRatio || 1);
-      cv.width = Math.round(cssSize * dpr);
-      cv.height = Math.round(cssSize * dpr);
-      cv.style.width = cssSize + "px";
-      cv.style.height = cssSize + "px";
-      var pctx = cv.getContext("2d");
-      pctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      var pad = glyph.size === 16 ? 1 : 5;
-      drawGlyph(pctx, glyph, pad, pad, cssSize - pad * 2, cssSize - pad * 2);
-      item.appendChild(cv);
-    } else {
-      item.textContent = t.name;
-    }
-    item.addEventListener("click", function () {
-      exitSpecialModes();
-      eraseArmed = false;
-      document.getElementById("btnErase").classList.remove("armed");
-      armedType = armedType === t.id ? null : t.id;
-      refreshPaletteArmed();
+  function buildPalette() {
+    paletteEl.innerHTML = "";
+    TYPES.forEach(function (t) {
+      var item = document.createElement("button");
+      item.className = "pitem" + (!t.glyph ? " pitem-boss" : "");
+      item.dataset.type = t.id;
+      item.title = t.name + " — " + t.desc;
+      if (t.id === "s2_terrain") {
+        // round36-2: not a real game sprite (GLYPHS has nothing for it),
+        // so a small hand-drawn staircase silhouette in the same rock
+        // color the terrain background itself uses - reads as "the same
+        // thing" at a glance rather than an unrelated new visual
+        // language, same spirit as every other icon here being drawn
+        // from real data instead of a generic placeholder.
+        var tcv = document.createElement("canvas");
+        tcv.className = "picon";
+        var tCssSize = 26, tDpr = Math.max(1, window.devicePixelRatio || 1);
+        tcv.width = Math.round(tCssSize * tDpr);
+        tcv.height = Math.round(tCssSize * tDpr);
+        tcv.style.width = tCssSize + "px";
+        tcv.style.height = tCssSize + "px";
+        var tctx = tcv.getContext("2d");
+        tctx.setTransform(tDpr, 0, 0, tDpr, 0, 0);
+        tctx.fillStyle = tok("--terrain-rock");
+        tctx.fillRect(0, 20, 8, 6);
+        tctx.fillRect(8, 13, 9, 13);
+        tctx.fillRect(17, 6, 9, 20);
+        item.appendChild(tcv);
+      } else if (t.glyph) {
+        var glyph = GLYPHS[t.glyph];
+        var cv = document.createElement("canvas");
+        cv.className = "picon";
+        var cssSize = 26, dpr = Math.max(1, window.devicePixelRatio || 1);
+        cv.width = Math.round(cssSize * dpr);
+        cv.height = Math.round(cssSize * dpr);
+        cv.style.width = cssSize + "px";
+        cv.style.height = cssSize + "px";
+        var pctx = cv.getContext("2d");
+        pctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        pctx.imageSmoothingEnabled = false;
+        // round33 bugfix, 2nd pass ("32x32は実際の使用エリアは24x24 そのままでは
+        // 小さく表示されてんの 32x32の内左下24x24のエリアをアイコンに"): the
+        // first pass just evened out the padding, but that still scaled the
+        // FULL 32x32 canvas into the icon box - and BigZum/Flyer/Etank's own
+        // real art never uses the top 8 rows or right 8 columns of that
+        // canvas (checked against quadGroups.tl/tr's own all-zero inner
+        // quads - the drawn content is always exactly the bottom-left 24x24
+        // sub-square). Scaling the whole 32x32 box down made that real
+        // content occupy only 24/32 of the icon, i.e. visibly smaller than
+        // the 16x16 entries' snugly-fit icons. Fix: render the glyph once at
+        // native 1:1 resolution to an offscreen canvas, then crop+scale just
+        // its bottom-left min(24,size) square into the icon box - a no-op
+        // for size16/size8 glyphs (crop == full canvas there), and exactly
+        // the "left 24x24" 32-size glyphs actually use.
+        var pad = 2;
+        var crop = Math.min(24, glyph.size);
+        var off = document.createElement("canvas");
+        off.width = glyph.size;
+        off.height = glyph.size;
+        drawGlyph(off.getContext("2d"), glyph, 0, 0, glyph.size, glyph.size);
+        pctx.drawImage(off, 0, glyph.size - crop, crop, crop, pad, pad, cssSize - pad * 2, cssSize - pad * 2);
+        item.appendChild(cv);
+      } else {
+        item.textContent = t.name;
+      }
+      item.addEventListener("click", function () {
+        exitSpecialModes();
+        eraseArmed = false;
+        document.getElementById("btnErase").classList.remove("armed");
+        armedType = armedType === t.id ? null : t.id;
+        refreshPaletteArmed();
+      });
+      paletteEl.appendChild(item);
     });
-    paletteEl.appendChild(item);
-  });
+  }
+  buildPalette();
 
   function refreshPaletteArmed() {
     Array.prototype.forEach.call(paletteEl.children, function (el) {
       el.classList.toggle("armed", el.dataset.type === armedType);
     });
   }
+
+  // ---------- stage toggle ----------
+  // round32: "切り替えボタンでも付けて 相互には登録できないように 1は1、
+  // 2は2のエネミーのみ登録可能に 出力も別に分ける". Switches which of
+  // the per-stage TYPES/TYPE_BY_ID/placements/history arrays every other
+  // function in this file (all written against the bare, unsuffixed
+  // names) is actually looking at - see each one's own comment. Anything
+  // armed from the old stage (a palette type, Erase, an in-progress
+  // copy/paste selection) is cleared, since none of it has any meaning
+  // once the roster underneath it changes.
+  function switchStage(n) {
+    if (n === STAGE) return;
+    exitSpecialModes();
+    armedType = null;
+    eraseArmed = false;
+    document.getElementById("btnErase").classList.remove("armed");
+    STAGE = n;
+    TYPES = (STAGE === 1) ? TYPES1 : TYPES2;
+    TYPE_BY_ID = (STAGE === 1) ? TYPE_BY_ID1 : TYPE_BY_ID2;
+    placements = (STAGE === 1) ? placements1 : placements2;
+    history = (STAGE === 1) ? history1 : history2;
+    btnUndo.disabled = history.length === 0;
+    buildPalette();
+    refreshPaletteArmed();
+    updateStageButtons();
+    render();
+    flash("Stage " + STAGE);
+  }
+
+  function updateStageButtons() {
+    document.getElementById("btnStage1").classList.toggle("active-mode", STAGE === 1);
+    document.getElementById("btnStage2").classList.toggle("active-mode", STAGE === 2);
+  }
+  document.getElementById("btnStage1").addEventListener("click", function () { switchStage(1); });
+  document.getElementById("btnStage2").addEventListener("click", function () { switchStage(2); });
+  updateStageButtons();
 
   document.getElementById("btnErase").addEventListener("click", function () {
     exitSpecialModes();
@@ -920,6 +1312,7 @@
   var canvasScroll = document.getElementById("canvasScroll");
   var rulerScroll = document.querySelector(".ruler-scroll");
   var gridwrap = document.querySelector(".gridwrap");
+  var scrubRowEl = document.querySelector(".scrub-row");
 
   var DPR = Math.max(1, window.devicePixelRatio || 1);
 
@@ -965,9 +1358,21 @@
   }
 
   function layout() {
-    // all 24 rows must fit in the vertical space left after the ruler - compute
-    // the cell size from the available height instead of a fixed pixel value.
-    var availH = gridwrap.clientHeight - RULER_H;
+    // all 24 rows must fit in the vertical space left after the ruler AND
+    // the scrub-row (both flex:0 0 auto siblings of .grid-row within
+    // .gridwrap) - measure their actual rendered height rather than only
+    // subtracting RULER_H, or the canvas gets sized taller than what
+    // .canvas-scroll (overflow-y:hidden, no vertical scroll fallback)
+    // actually receives from the flex layout, silently clipping the
+    // bottom row (row 23) with no way to reach it.
+    // rulerRowEl's own offsetHeight can't be used here: on the very first
+    // call #ruler hasn't been sized yet (sizeCanvas for it runs further
+    // below in this same function) and a bare <canvas> defaults to
+    // 300x150, which would inflate .ruler-row's measured height and starve
+    // the grid instead. RULER_H(+1 for its border-bottom) is what #ruler
+    // is deliberately kept at, so it's safe as a constant. .scrub-row has
+    // no canvas in it, so measuring it live is safe and self-adjusting.
+    var availH = gridwrap.clientHeight - (RULER_H + 1) - scrubRowEl.offsetHeight;
     CELL = Math.max(14, Math.min(30, Math.floor(availH / ROWS)));
 
     var gridW = MAX_TICK * CELL;
@@ -1065,6 +1470,82 @@
     var firstTick = Math.max(0, Math.floor(scrollX / CELL) - 1);
     var lastTick = Math.min(MAX_TICK, Math.ceil((scrollX + w) / CELL) + 1);
 
+    // round36 ("地形もエディット対象に"), round36-6 (実機フィードバック
+    // "こんな地形はない...Rock225もきちんと反映させろ"): Stage2's own
+    // terrain profile, drawn in rows 20-23. Two things changed from the
+    // original flat-color-block version per that feedback (editor-drawing
+    // fix only - terrain2's own data/column count is untouched, matching
+    // "エディタの描画の問題だけで 本編に影響はないはず"):
+    //  1. the "not yet grown into rock" band above ground level is real
+    //     Sand tile in-game, not open sky - filled with a real, visible
+    //     sand tone instead of a near-invisible tint that read as "no
+    //     terrain at all".
+    //  2. a step between adjacent columns is drawn as a diagonal ramp
+    //     (matching Rock225's actual climb/descend art) instead of an
+    //     abrupt vertical cliff, at a constant, readable "1 tier per
+    //     column" slope - the same rate a real single-tier step already
+    //     draws at. A column that's painted more than 1 tier away from
+    //     its neighbor (not physically buildable in-game - real steps are
+    //     always exactly +-1, see terrain_gen.py's own build_track/
+    //     columns_to_tier_profile asserts) would otherwise have to cram
+    //     that whole rise into one column's width, which reads as a
+    //     near-vertical wall rather than a slope ("いきなり4段分あがる
+    //     見た目では見て判断が難しい") - spreading it over multiple
+    //     columns at the same slope instead keeps every ramp legible by
+    //     eye, and visibly communicates just how big the jump is instead
+    //     of hiding it. (The real compiled track spends 2 dedicated
+    //     columns per 1-tier step, growing TRACK_LEN - out of scope here
+    //     on purpose, per direct instruction: this is a same-length
+    //     visual approximation for the editor's own tick axis, not a
+    //     re-simulation of the real build.)
+    // Drawn UNDER the grid lines/placement icons (before they're drawn
+    // below) so it reads as background, not on top of anything.
+    // tierFromRow/terrainColAt's own comments explain the row<->tier
+    // mapping and the tick<->terrain-column relationship (they're the
+    // same axis, modulo terrainLen once the track loops - exactly
+    // matching how GAME_TICK and the real terrain's own scroll index
+    // advance in lockstep).
+    if (STAGE === 2) {
+      var rockFill = tok("--terrain-rock") || "#8b5a2b";
+      var sandFill = tok("--terrain-sand") || "#a68a4a";
+      var bandTop = 20 * CELL, bandBottom = 24 * CELL;
+      var xFirst = firstTick * CELL - scrollX;
+      var xLast = (lastTick + 1) * CELL - scrollX;
+      ctx.fillStyle = sandFill;
+      ctx.fillRect(xFirst, bandTop, xLast - xFirst, bandBottom - bandTop);
+
+      // Rate-limited (slew-limited) follower of the raw per-column tier,
+      // moving at most 1 tier per column toward the real value - this is
+      // what turns any jump bigger than 1 tier into a multi-column ramp
+      // instead of a 1-column wall. Recomputed from column 0 every call
+      // (cheap - at most MAX_TICK+1 integer steps, dwarfed by the actual
+      // canvas fill below) rather than cached, so the drawn slope is
+      // identical no matter where the view happens to be scrolled to -
+      // starting the follower at firstTick instead would make the same
+      // ramp look different (or seam/flicker) depending on scroll
+      // position, since it'd have no memory of the climb already under
+      // way before the visible edge.
+      var smoothTier = [];
+      var followTier = terrain2[terrainColAt(0)];
+      for (var k = 0; k <= lastTick + 1; k++) {
+        var raw = terrain2[terrainColAt(k)];
+        if (raw > followTier) followTier = Math.min(raw, followTier + 1);
+        else if (raw < followTier) followTier = Math.max(raw, followTier - 1);
+        smoothTier[k] = followTier;
+      }
+      function rockTopY(tickIdx) { return (23 - smoothTier[tickIdx]) * CELL; }
+      ctx.beginPath();
+      ctx.moveTo(xFirst, bandBottom);
+      ctx.lineTo(xFirst, rockTopY(firstTick));
+      for (var tt = firstTick; tt <= lastTick; tt++) {
+        ctx.lineTo(tt * CELL - scrollX + CELL, rockTopY(tt + 1));
+      }
+      ctx.lineTo(xLast, bandBottom);
+      ctx.closePath();
+      ctx.fillStyle = rockFill;
+      ctx.fill();
+    }
+
     // 8px-equivalent cell grid, in blue, per spec. One stroke() call per
     // line color instead of one per line - each stroke() has real fixed
     // overhead regardless of line length, and this ran on every render().
@@ -1115,8 +1596,13 @@
         ctx.drawImage(getBossCanvas(CELL), bo.tick * CELL - scrollX, bo.row * CELL, 5 * CELL, 16 * CELL);
         return;
       }
+      if (p.type === "s2_boss") {
+        var bo2 = s2BossOrigin(p.tick, p.row);
+        drawS2BossPlaceholder(ctx, bo2.tick * CELL - scrollX, bo2.row * CELL, CELL);
+        return;
+      }
       var glyph = GLYPHS[t.glyph];
-      var box = glyph.size === 16 ? CELL * 2 : CELL;
+      var box = CELL * (glyph.size / 8);
       ctx.drawImage(getGlyphCanvas(t.glyph, box), x, y, box, box);
     });
 
@@ -1345,8 +1831,13 @@
       dragOverlayCtx.drawImage(getBossCanvas(CELL), bo.tick * CELL - canvasScroll.scrollLeft, bo.row * CELL, 5 * CELL, 16 * CELL);
       return;
     }
+    if (obj.type === "s2_boss") {
+      var bo2 = s2BossOrigin(obj.tick, obj.row);
+      drawS2BossPlaceholder(dragOverlayCtx, bo2.tick * CELL - canvasScroll.scrollLeft, bo2.row * CELL, CELL);
+      return;
+    }
     var glyph = GLYPHS[t.glyph];
-    var box = glyph.size === 16 ? CELL * 2 : CELL;
+    var box = CELL * (glyph.size / 8);
     dragOverlayCtx.drawImage(getGlyphCanvas(t.glyph, box), obj.tick * CELL - canvasScroll.scrollLeft, obj.row * CELL, box, box);
   }
   function endDragOverlay() {
@@ -1566,7 +2057,7 @@
         // hold+release is a true no-op on the grid: the same result a
         // plain tap would have given (inspect only), not a bogus "moved to
         // tick X row Y" confirmation or an accidental re-place/erase.
-        placements = history.pop();
+        restoreSnapshot(history.pop());
         btnUndo.disabled = history.length === 0;
         render();
         showCellInfo(placements[p.placementIdx]);
@@ -1611,6 +2102,14 @@
       render();
       return;
     }
+    if (armedType === "s2_terrain") {
+      // round36-2: not a placements entry - writes straight into
+      // terrain2 instead (see placeTerrainAt's own comment). No
+      // showCellInfo/setCell here since there's no placement object to
+      // inspect or store.
+      placeTerrainAt(c.tick, c.row);
+      return;
+    }
     if (armedType) {
       pushHistory();
       setCell(c.tick, c.row, armedType);
@@ -1645,7 +2144,7 @@
       // branch): pop the single history entry the hold pushed and restore
       // the full grid, so a cancelled gesture never leaves the placement
       // stuck at a half-dragged position or the overlay stuck on-screen.
-      placements = history.pop();
+      restoreSnapshot(history.pop());
       btnUndo.disabled = history.length === 0;
       endDragOverlay();
       render();
@@ -1864,8 +2363,13 @@
         ctx.drawImage(getBossCanvas(CELL), bo.tick * CELL - canvasScroll.scrollLeft, bo.row * CELL, 5 * CELL, 16 * CELL);
         return;
       }
+      if (pd.type === "s2_boss") {
+        var bo2 = s2BossOrigin(tick, row);
+        drawS2BossPlaceholder(ctx, bo2.tick * CELL - canvasScroll.scrollLeft, bo2.row * CELL, CELL);
+        return;
+      }
       var glyph = GLYPHS[t.glyph];
-      var box = glyph.size === 16 ? CELL * 2 : CELL;
+      var box = CELL * (glyph.size / 8);
       ctx.drawImage(getGlyphCanvas(t.glyph, box), px, py, box, box);
     });
     ctx.globalAlpha = 1;
@@ -1898,13 +2402,25 @@
   });
 
   // ---------- save / load ----------
+  // round32: "出力も別に分ける" - the export carries which stage it's
+  // for (used by importJSONText's own mismatch check below), and the
+  // suggested filename defaults differently per stage so the two never
+  // collide/overwrite each other on disk by accident.
   function currentJSON() {
-    return JSON.stringify({
+    var out = {
       version: 1,
       game: "CYBER SHMUP",
+      stage: STAGE,
       maxTick: MAX_TICK,
       placements: placements.slice().sort(function (a, b) { return a.tick - b.tick || a.row - b.row; })
-    }, null, 2);
+    };
+    // round36 ("現在の地形データをJsonに含めて出力してくれ"): Stage2 only
+    // (Stage1 has no terrain system at all - see terrain2's own comment).
+    // Per-column tier array, NOT included for Stage1 exports at all
+    // (rather than an empty array) so old Stage1-only tooling/consumers
+    // never see a field they don't understand.
+    if (STAGE === 2) out.terrain = terrain2.slice();
+    return JSON.stringify(out, null, 2);
   }
 
   var saveOverlay = document.getElementById("saveOverlay");
@@ -1915,18 +2431,37 @@
     saveStatus.textContent = "";
     saveStatus.classList.remove("ok");
     saveOverlay.classList.add("show");
+    saveFilenameInput.value = STAGE === 1 ? "Schedule.json" : "Schedule2.json";
     saveFilenameInput.focus();
     saveFilenameInput.select();
   });
 
-  // Published Artifact: goes through window.claude.downloads (blob/<a download>
-  // is inert in that sandbox). Run locally (file:// or any plain static host,
-  // no Claude frame runtime): window.claude doesn't exist at all, so fall back
-  // to the classic Blob + <a download> click, which works fine outside the
-  // sandbox.
-  function doSaveViaBlobLink(filename) {
+  // round33 bugfix, 2nd pass ("セーブできねえよ"): the previous pass still
+  // failed because it read `window.claude.downloads` directly - that is
+  // NOT how the published-Artifact runtime actually exposes the downloads
+  // capability. Per the current contract (window.claude carries ONLY a
+  // `use()` method - no `.downloads`/`.db`/etc member is ever promised on
+  // it directly), the real call is `await claude.use("downloads")`, which
+  // resolves the namespace only once the viewer has answered - or `null`
+  // if this view can't run it at all. Reading `window.claude.downloads`
+  // synchronously is always `undefined` in this runtime, so the old code's
+  // `if (window.claude && window.claude.downloads)` check was always
+  // false and silently fell through to the Blob+<a download> link, which
+  // the Artifact viewer's own sandbox blocks outright (any download the
+  // page starts itself is inert there, with no visible error) - that's
+  // the actual root cause of "セーブできねえよ" with no error message at
+  // all. Fixed to call the real `claude.use("downloads")` API, with the
+  // `downloads` capability declared at publish time so it isn't rejected
+  // as ungranted. navigator.share is still tried first (works outside any
+  // sandbox, e.g. a plain mobile browser tab opening this file directly -
+  // that's very likely why sprite-editor.html "just worked" for the user,
+  // if it was being tested that way rather than through an Artifact URL);
+  // the classic Blob link stays as the last-resort fallback for a fully
+  // vanilla static host / file:// with neither Web Share nor
+  // window.claude at all.
+  function doSaveViaBlobLink(filename, jsonStr) {
     try {
-      var blob = new Blob([currentJSON()], { type: "application/json" });
+      var blob = new Blob([jsonStr], { type: "application/json" });
       var url = URL.createObjectURL(blob);
       var a = document.createElement("a");
       a.href = url;
@@ -1943,23 +2478,56 @@
     }
   }
 
+  // Memoized per claude.d.ts's own guidance ("every use('db') yields the
+  // same promise object") - only ever ask the viewer once per page load.
+  var downloadsCapabilityPromise = null;
+  function getDownloadsCapability() {
+    if (!downloadsCapabilityPromise) {
+      downloadsCapabilityPromise = (window.claude && window.claude.use)
+        ? window.claude.use("downloads").catch(function () { return null; })
+        : Promise.resolve(null);
+    }
+    return downloadsCapabilityPromise;
+  }
+
+  function doSaveViaDownloadsCapability(filename, jsonStr) {
+    getDownloadsCapability().then(function (downloads) {
+      if (!downloads) { doSaveViaBlobLink(filename, jsonStr); return; }
+      downloads.save({ filename: filename, data: jsonStr }).then(
+        function () {
+          saveOverlay.classList.remove("show");
+          flash("saved " + filename);
+        },
+        function (err) {
+          if (err && err.code === "declined") { saveOverlay.classList.remove("show"); flash("save cancelled"); return; }
+          saveStatus.textContent = "save failed" + (err && err.message ? ": " + err.message : "");
+          saveStatus.classList.remove("ok");
+        }
+      );
+    });
+  }
+
   function doSave() {
-    var filename = saveFilenameInput.value.trim() || "Schedule.json";
-    if (!window.claude || !window.claude.downloads) {
-      doSaveViaBlobLink(filename);
+    var filename = saveFilenameInput.value.trim() || (STAGE === 1 ? "Schedule.json" : "Schedule2.json");
+    var jsonStr = currentJSON();
+
+    var file = null;
+    try { file = new File([jsonStr], filename, { type: "application/json" }); } catch (e) {}
+    if (file && navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
+      navigator.share({ files: [file] }).then(
+        function () {
+          saveOverlay.classList.remove("show");
+          flash("saved " + filename);
+        },
+        function (err) {
+          if (err && err.name === "AbortError") { saveOverlay.classList.remove("show"); flash("save cancelled"); return; }
+          doSaveViaDownloadsCapability(filename, jsonStr);
+        }
+      );
       return;
     }
-    window.claude.downloads.save({ filename: filename, data: currentJSON() }).then(
-      function () {
-        saveOverlay.classList.remove("show");
-        flash("saved " + filename);
-      },
-      function (err) {
-        if (err && err.code === "declined") { saveOverlay.classList.remove("show"); flash("save cancelled"); return; }
-        saveStatus.textContent = "save failed";
-        saveStatus.classList.remove("ok");
-      }
-    );
+
+    doSaveViaDownloadsCapability(filename, jsonStr);
   }
 
   function copyToClipboard(text, successMsg) {
@@ -2023,7 +2591,27 @@
   // your way back through a fresh load into whatever was there before.
   function importJSONText(text) {
     var data = JSON.parse(text);
-    if (!Array.isArray(data.placements)) throw new Error("no placements array");
+    // round36-2: tolerate a file with no (or a malformed) placements
+    // array - e.g. a terrain-only export from before terrain was folded
+    // into the normal palette/placement flow - instead of refusing the
+    // whole load outright. Treated as zero placements rather than an
+    // error, since a Stage2 file can still carry a perfectly good
+    // "terrain" field worth loading even with nothing else in it.
+    if (!Array.isArray(data.placements)) data.placements = [];
+    // round32: "相互には登録できないように" - a file saved with a "stage"
+    // field (every export from this round on, see currentJSON) that
+    // doesn't match the currently active stage is rejected outright,
+    // with a clear reason, rather than silently loading 0 placements
+    // (which the id-namespacing below would ALSO naturally produce on
+    // its own, just with a much more confusing message - every Stage1
+    // id lookup fails against TYPE_BY_ID2 and vice versa, since Stage2
+    // ids are all "s2_"-prefixed and never collide with Stage1's own).
+    // Older files with no "stage" field (saved before this round) fall
+    // through to that same per-placement filter untouched, same
+    // backward-compat treatment LEGACY_TYPE_ALIASES already gets below.
+    if (Number.isInteger(data.stage) && data.stage !== STAGE) {
+      throw new Error("this file is for Stage " + data.stage + " (currently on Stage " + STAGE + " - switch stage first)");
+    }
     exitSpecialModes();
     var remapped = data.placements.map(function (p) {
       var alias = p && LEGACY_TYPE_ALIASES[p.type];
@@ -2032,10 +2620,30 @@
     var valid = remapped.filter(function (p) {
       return TYPE_BY_ID[p.type] && Number.isInteger(p.tick) && Number.isInteger(p.row);
     });
-    placements = valid;
+    setPlacements(valid);
+    // round36: terrain, Stage2 only. A file with no "terrain" field at
+    // all (an older Stage2 export, or one that only ever touched
+    // placements) leaves whatever's currently loaded untouched, rather
+    // than silently reverting it to the blank all-tier0 default -
+    // loading a placements-only file should never clobber terrain work
+    // already in progress. An actually-present-but-malformed terrain
+    // array (wrong type, empty, or any value outside 0-3) is rejected
+    // the same way, flagged in the returned status message rather than
+    // silently eaten.
+    var terrainNote = "";
+    if (STAGE === 2 && data.terrain !== undefined) {
+      var validTerrain = Array.isArray(data.terrain) && data.terrain.length > 0 &&
+        data.terrain.every(function (t) { return Number.isInteger(t) && t >= 0 && t <= 3; });
+      if (validTerrain) {
+        setTerrain2(data.terrain.slice());
+        terrainNote = ", terrain (" + terrain2.length + " cols)";
+      } else {
+        terrainNote = ", terrain field ignored (invalid)";
+      }
+    }
     render();
     var skipped = data.placements.length - valid.length;
-    return "loaded " + valid.length + " placements" + (skipped ? " (" + skipped + " skipped - bad type/tick/row)" : "");
+    return "loaded " + valid.length + " placements" + terrainNote + (skipped ? " (" + skipped + " skipped - bad type/tick/row)" : "");
   }
 
   document.getElementById("fileInput").addEventListener("change", function (ev) {

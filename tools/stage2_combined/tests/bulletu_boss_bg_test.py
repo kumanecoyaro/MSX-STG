@@ -96,7 +96,14 @@ fired = False
 u_codes = {BULLETU_NIGHT_CODE, BULLETU_L_NIGHT_CODE, BULLETU_ROCK_CODE, BULLETU_L_ROCK_CODE}
 saw_bg_code = False
 saw_hidden_sprite = True
-for f in range(9330):
+# round34-3 ("全てスケジュールに", then "Stage1と全く同じ処理だぞ"):
+# with no player fire input at all, a ground enemy can still go
+# permanently un-destroyed, but that no longer stalls anything
+# downstream - a blocked spawn is simply dropped (unconditional-advance
+# SSC2_FIRE), so the boss reliably spawns right at frame~7959 (tick995)
+# - verified empirically (see boss_test.py's own Test12) - well within
+# this generous bound.
+for f in range(20000):
     step_frame(cpu4)
     if cpu4.mem[BOSS_ACT] != 0:
         if boss_spawned_at is None:

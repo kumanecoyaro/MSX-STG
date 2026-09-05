@@ -8,8 +8,11 @@ for the data port during active display, 3T faster than the original
 8-NOP/32T version this file used almost everywhere, and even more T-states
 faster than the 10/11/12-NOP outliers some sites here had).
 
-Checks the source directly (every one of the 290 OUT(99h)/298 OUT(98h)
-sites) AND runs a sample of the real assembled sequences through the
+Checks the source directly (every one of the 294 OUT(99h)/304 OUT(98h)
+sites - grew from 290/298 with round36-14-equivalent's own new enemy-
+bullet feature, UPDATE_EBULLET_ALL/SPAWN_EBULLET, following the same
+DI/EI-wrapped fixed-NOP idiom) AND runs a sample of the real assembled
+sequences through the
 actual emulator to prove BC/HL/every flag bit come back bit-for-bit
 identical - the same dual-verification shape as
 tools/stage2_combined/tests/vdp_wait_test.py.
@@ -55,8 +58,8 @@ for i, line in enumerate(lines):
         next_line = lines[i + 1].strip() if i + 1 < len(lines) else ""
         n98_delay.append((i + 1, next_line))
 
-check(f"found the expected number of raw OUT (99h),A sites ({len(n99)})", len(n99) == 290)
-check(f"found the expected number of raw OUT (98h),A sites ({len(n98_delay)})", len(n98_delay) == 298)
+check(f"found the expected number of raw OUT (99h),A sites ({len(n99)})", len(n99) == 300)
+check(f"found the expected number of raw OUT (98h),A sites ({len(n98_delay)})", len(n98_delay) == 312)
 
 bad99 = [(ln, n) for ln, n in n99 if n != 2]
 check("every OUT (99h),A site is padded with exactly 2 NOPs (8T), regardless of what "

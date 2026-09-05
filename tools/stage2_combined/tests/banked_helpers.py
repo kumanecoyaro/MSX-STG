@@ -54,7 +54,17 @@ def fresh_cpu(assert_bank_switch=True):
     return cpu
 
 
-def call_routine(cpu, name, sentinel=0x8000):
+# round36-14: the old default (0x8000, page2's own base) is a real,
+# reachable mid-routine address once the assembled program grows large
+# enough - confirmed by a real false-positive this round (STAGE_SBEAM's
+# OWN 2nd instruction landed exactly on 0x8000 after this round's new
+# boss-form-change code shifted everything after it, making this loop
+# mistake ordinary straight-line execution for a genuine RET and stop
+# after just 1 real instruction). 0x0000 is never assembled code in this
+# build (out of the real 0x4000h-0xBFFFh code range entirely - confirmed
+# via get_out()'s own min address) and stays that way regardless of how
+# large combined_test.asm grows, so it can't collide the same way again.
+def call_routine(cpu, name, sentinel=0x0000):
     out, sym, text = get_out()
     cpu.sp = (cpu.sp - 2) & 0xFFFF
     cpu.mem[cpu.sp] = sentinel & 0xFF

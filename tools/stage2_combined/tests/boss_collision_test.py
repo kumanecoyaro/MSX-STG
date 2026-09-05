@@ -152,7 +152,14 @@ cpu.sim_dir = 0
 cpu.sim_trig_a = False
 cpu.sim_trig_b = False
 boss_spawned_at = None
-for f in range(9500):
+# round34-3 ("全てスケジュールに", then "Stage1と全く同じ処理だぞ"):
+# with no player fire input at all (this test's own worst-case config),
+# a ground enemy can still go permanently un-destroyed, but that no
+# longer stalls anything downstream - a blocked spawn is simply dropped
+# (unconditional-advance SSC2_FIRE), so the boss reliably spawns right
+# at frame~7959 (tick995) - verified empirically (see boss_test.py's
+# own Test12) - well within this generous bound.
+for f in range(20000):
     step_frame(cpu)
     if cpu.mem[BOSS_ACT] == 1 and boss_spawned_at is None:
         boss_spawned_at = f
@@ -160,6 +167,14 @@ for f in range(9500):
         break
 check("real MAINLOOP: boss reaches ACT=1 (spawned) before the manual-HP-drain test",
       cpu.mem[BOSS_ACT] == 1)
+
+# follow-up#23 ("まずマテリアライズ中はボスコリジョン無効") - the boss
+# is deliberately unhittable for ~4.27s right after spawn while the
+# entrance materialize effect runs (CHECK_HIT_PAIR_BOSS's own new gate);
+# bypass it here exactly like boss_pose_test.py/boss_test.py/
+# thunder_test.py already do for their own unrelated patrol/pose tests,
+# or this manual-drain loop below would spin forever (every hit ignored).
+cpu.mem[sym["BOSS_MATERIALIZE_ACT"]] = 0
 
 # manually drain the rest of its HP via direct CHECK_HIT_PAIR_BOSS calls
 # (a real full 255-hit playthrough isn't practical here) and confirm

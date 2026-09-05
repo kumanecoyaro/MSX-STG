@@ -162,26 +162,70 @@ SKY_BLANK_CODE    EQU 0         ; TERRAIN_BLANK_ROW's code - the permanent open-
 SKYSAND_CODE  EQU 248
 SKYSAND_COLOR EQU 05Bh   ; fg5/bg11
 
-; Bullet BG pattern codes - F (straight) only now, U moved to a hw
-; sprite (see PAT_BULLETU below): needs one code per background color
-; group it can appear over (SCREEN1 colors are fixed per 8-code group,
-; not per screen position - see bullet_gen.py's own comment). Placed
-; at codes88/96 (groups11-12), well past every real terrain code
-; (0-87, groups0-10 - see terrain_gen.py's STEADY_BASE/BLEND_BASE) so
-; nothing else ever references them. Codes89/97 (ex-BULLETU_SKY/ROCK_
-; CODE) are simply unused now, not renumbered - no reason to renumber
-; F's own codes just because U vacated its neighbors.
-BULLETF_SKY_CODE  EQU 88
-BULLETF_ROCK_CODE EQU 96
-; left-facing (mirrored) shot pattern, same 2 color groups (color
-; doesn't depend on facing, only the pattern shape does) - "今の自機
-; と弾を左操作で左向きに...反転パターンはそっちで生成してくれ".
-BULLETF_L_SKY_CODE  EQU 90
-BULLETF_L_ROCK_CODE EQU 98
+; Bullet BG pattern codes.
+; round36-9 ("自機ショットらしきゴミ" reported next to a Rock225 descend
+; edge): this used to sit at codes88/96 (groups11-12), "well past every
+; real terrain code (0-87)" - but that terrain-code ceiling was never a
+; hard guarantee, just whatever the CURRENT tier profile happened to
+; need at the time this comment was written. Once the user's own edited
+; terrain (Schedule2_7.json) grew terrain_gen.py's own MAX_CODE to 93
+; (more distinct climb/descend transitions -> more distinct blend-pair
+; code blocks - see terrain_gen.py's own PAIRS/PAIRBASE), it silently
+; started overlapping codes88-93, and whichever of terrain's own pattern
+; upload / this bullet pattern upload ran later in INIT clobbered the
+; other's VRAM pattern-generator data at those shared codes - showing
+; the bullet's own glyph, in the bullet's own color, inside terrain
+; cells. Moved to codes224-247 (groups28-30) instead: verified free by
+; grepping every EQU literal in that whole numeric range - nothing else
+; in this file uses codes there (everything nearby that LOOKS like a
+; pattern code is actually an unrelated 0-255 pixel X-coordinate
+; constant, e.g. BIGZUM_MAX_X/ENEMY_SPAWNX/HORMING_SPAWN_X, easy to
+; confuse with a code at a glance since both are small plain decimals -
+; see this file's own git history for the exact audit). This also isn't
+; adjacent to terrain's own budget at all any more, so normal further
+; terrain edits (the whole point of schedule-editor.html's own terrain
+; tool) can't silently collide with it again the way codes88-93 did.
+;
+; round36-11 ("水平打ちを3パターンに分けてローテーション"): F (straight,
+; always BG) grew from 1 pose to 3 (BulletFU/FM/FL - see bullet_gen.py's
+; own VARIANT_NAMES_F). Each of sky/rock/night now needs 3 codes per
+; facing instead of 1: 3(variant)x2(facing)=6 codes per color, x3 colors
+; =18 codes - all 24 free codes were about to run out (18 for F alone,
+; +18 more if U's own BG-cell fallback below also rotated - 36 total
+; against a 24-code budget, 12 short - confirmed with the user directly:
+; "ショットパターンは今の6つと反転なので12パターンだろ" / "普段プレイも
+; 動的書き換えで妥協" settled it). Fit found: F rotates fully (18 codes),
+; U's own BG-cell fallback (used only while BOSS_ACT!=0 - a rare,
+; secondary path, see its own comment below) stays a SINGLE
+; non-rotating pose (6 codes) - 18+6=24, exactly the free budget, zero
+; waste. Each color now spans a WHOLE 8-code group on its own (6 F-slots
+; + 2 U-slots = 8, exactly one SCREEN1 color group) instead of F/U
+; interleaved 2-and-2 sharing 3 groups the way the single-pose version
+; did - group28=sky(224-231), group29=rock(232-239), group30=night
+; (240-247, moved off its old dedicated group18 - see BULLET_NIGHT_
+; COLORADDR below - freeing group18 back up entirely, unused for now).
+BULLETF_SKY_CODE0  EQU 224   ; BulletFU (1st shot)
+BULLETF_L_SKY_CODE0  EQU 225
+BULLETF_SKY_CODE1  EQU 226   ; BulletFM (2nd shot)
+BULLETF_L_SKY_CODE1  EQU 227
+BULLETF_SKY_CODE2  EQU 228   ; BulletFL (3rd shot, then back to FU)
+BULLETF_L_SKY_CODE2  EQU 229
+BULLETU_SKY_CODE    EQU 230  ; single non-rotating BG-cell pose (BulletUM) - boss fight only, see below
+BULLETU_L_SKY_CODE  EQU 231
+
+BULLETF_ROCK_CODE0  EQU 232
+BULLETF_L_ROCK_CODE0  EQU 233
+BULLETF_ROCK_CODE1  EQU 234
+BULLETF_L_ROCK_CODE1  EQU 235
+BULLETF_ROCK_CODE2  EQU 236
+BULLETF_L_ROCK_CODE2  EQU 237
+BULLETU_ROCK_CODE    EQU 238
+BULLETU_L_ROCK_CODE  EQU 239
+
 ; color table (VRAM 2000h+group, 1 byte/group, hi nibble=fg/lo=bg -
-; see terrain_gen.py's own SKY_COLOR/ROCK_COLOR): group11 (codes
-; 88-95) = fgE gray/bg5 light blue, matching the sky's own bg5;
-; group12 (codes 96-103) = fgE gray/bg11 light yellow, matching the
+; see terrain_gen.py's own SKY_COLOR/ROCK_COLOR): group28 (codes
+; 224-231) = fgE gray/bg5 light blue, matching the sky's own bg5;
+; group29 (codes 232-239) = fgE gray/bg11 light yellow, matching the
 ; rock tier's own bg (terrain_gen.py's ROCK_COLOR=0x8B) - both groups
 ; patched over terrain_gen.py's generic per-group defaults (unused by
 ; any real terrain code) rather than by changing that shared module.
@@ -190,15 +234,16 @@ BULLETF_L_ROCK_CODE EQU 98
 ; fixed alongside the row18/19 change below). fg was black(1), then
 ; gray(14/0xE) - "バレットUとFの変更 カラーもグレーに" - now light
 ; red(9) - "バレットカラーをライトレッドに変更".
-BULLET_SKY_COLORADDR  EQU 200Bh
-BULLET_ROCK_COLORADDR EQU 200Ch
+BULLET_SKY_COLORADDR  EQU 201Ch
+BULLET_ROCK_COLORADDR EQU 201Dh
 BULLET_SKY_COLORBYTE  EQU 095h
 BULLET_ROCK_COLORBYTE EQU 09Bh
 ; night-black variant of the sky glyph above - "スクロールしていない
 ; 行の弾の水平打ちの背景色がライトブルーのままになってる...ショット
 ; を夜に打った場合はショットの背景色をブラックに" - own dedicated
-; group18 (144-151, right after NIGHT_CODE's own group17) since
-; BULLETF_SKY_CODE/L_SKY_CODE's own group11 can't be conditionally
+; group (round36-11: group30, 240-247 - moved off the old group18 to
+; make room for F's own night rotation, see this section's own top
+; comment) since BULLETF_SKY_CODE*'s own group28 can't be conditionally
 ; recolored per-row (SCREEN1 color is per 8-code group, not per screen
 ; position - same constraint bullet_gen.py's own comment on
 ; BULLETF_SKY_CODE/ROCK_CODE already explains). Same fg9(light red) as
@@ -210,8 +255,15 @@ BULLET_ROCK_COLORBYTE EQU 09Bh
 ; SkySand itself was wrong - corrected here). rows17-19 (Sand) and
 ; 20-23 (scrolling terrain) are unaffected either way - the ground
 ; itself never darkens.
-BULLETF_NIGHT_CODE   EQU 144      ; group18 (144-151)
-BULLETF_L_NIGHT_CODE EQU 145
+BULLETF_NIGHT_CODE0  EQU 240
+BULLETF_L_NIGHT_CODE0  EQU 241
+BULLETF_NIGHT_CODE1  EQU 242
+BULLETF_L_NIGHT_CODE1  EQU 243
+BULLETF_NIGHT_CODE2  EQU 244
+BULLETF_L_NIGHT_CODE2  EQU 245
+BULLETU_NIGHT_CODE    EQU 246
+BULLETU_L_NIGHT_CODE  EQU 247
+BULLET_NIGHT_COLORADDR EQU 201Eh   ; group30 (240-247)
 BULLET_NIGHT_COLORBYTE EQU 091h   ; fg9 light red / bg1 black
 
 ; U's own BG-cell codes, used only while BOSS_ACT!=0 - "自機ショットで
@@ -219,18 +271,15 @@ BULLET_NIGHT_COLORBYTE EQU 091h   ; fg9 light red / bg1 black
 ; (U's own hw sprite slots7-9 were reported disappearing during the boss
 ; fight - switches back to the same BG-cell approach F always used,
 ; DRAW_BULLET_CELL/ERASE_BULLET_CELL, instead of a hw sprite, for this
-; specific window only; F itself is untouched). Same 3-groups-x-2-facings
-; shape as F's own codes above, placed in the SAME groups (11/12/18) F
-; already claimed and colored - group18(night)/group12(rock)/group11(sky)
-; all still have free code slots (F only uses 2 of each group's 8), so no
-; new SCREEN1 color-table writes are needed, just more pattern data
-; loaded into already-colored slots.
-BULLETU_SKY_CODE    EQU 89    ; group11 (88-95), same BULLET_SKY_COLORBYTE as F's own day-sky code
-BULLETU_L_SKY_CODE  EQU 91
-BULLETU_ROCK_CODE   EQU 99    ; group12 (96-103), same BULLET_ROCK_COLORBYTE as F's own rock code
-BULLETU_L_ROCK_CODE EQU 100
-BULLETU_NIGHT_CODE   EQU 146  ; group18 (144-151), same BULLET_NIGHT_COLORBYTE as F's own night code
-BULLETU_L_NIGHT_CODE EQU 147
+; specific window only; F itself is untouched). Placed in the SAME
+; groups (28/29/30) F's own rotation claimed and colored, using the 2
+; slots per group F's own 6-of-8 usage leaves free - no new SCREEN1
+; color-table writes needed, just more pattern data loaded into
+; already-colored slots. Does NOT rotate (round36-11, see this
+; section's own top comment for the exact budget math) - always the
+; single BulletUM pose (bullet_gen.py's own BOSS_BG_VARIANT), same
+; pattern data for every boss-fight shot regardless of the normal-play
+; rotation counter.
 
 ; ---------- diagonal/U shot, now a hardware sprite ----------
 ; "で、弾は斜のみスプライトに変更 水平は今のままで 伴って斜めうちの
@@ -246,7 +295,31 @@ BULLETU_L_NIGHT_CODE EQU 147
 ; case (and the whole sky/rock BG color-matching dance) unnecessary -
 ; it's simply gone now, not replaced by anything.
 BULLET_U_SPR_BASE_SLOT EQU 7    ; hw sprite slots7-9, right after the enemy pool's 4-6
-PAT_BULLETU    EQU 140          ; right after PAT_EXPLOSION(136-139)
+; round36-11 ("斜めもUU、UM、ULで切り替えてローテーション"): U grew from
+; 1 pose to 3 (BulletUU/UM/UL) the same way F did, but unlike F's own BG
+; codes (which had 24 free codes to grow into), the hw sprite pattern
+; table has ZERO free slots anywhere in the entire 0-255 range - every
+; single 4-slot (16x16) or wider block, from the tank at 0 through
+; SBeam's own 252-255, is already claimed with no gaps (confirmed by
+; auditing every generator file's own BASE_OFFSET/PAT_* constant, same
+; kind of full-budget audit as the BG side - see this file's own git
+; history). Carving out 4 more dedicated 4-slot blocks (3 variants x2
+; facings, minus the 1 pair already here) isn't possible without a
+; large renumbering across tank_gen.py/bigzum_gen.py/flyer_gen.py/etc,
+; each independently tuned over many earlier rounds - confirmed with
+; the user directly not worth the risk ("普段プレイも動的書き換えで妥
+; 協(推奨)"). PAT_BULLETU/PAT_BULLETU_L themselves stay exactly where
+; they always were (still just 1 pair, not 3) - what changes is that
+; TRY_SPAWN_BULLET now rewrites their VRAM pattern-generator bytes on
+; every new diagonal shot spawn (WRITE_BULLETU_SPRITE_VARIANT), instead
+; of the pattern being loaded once at INIT and left alone. This gives
+; the "3 pattern rotation" the user asked for, with one accepted visual
+; compromise: if 2+ diagonal shots are on screen at once, they all show
+; whichever variant was most recently written (the shared VRAM slot has
+; no way to hold more than 1 bitmap at a time) - no other sprite's
+; display is affected either way, this is purely a shot-vs-shot
+; distinctness tradeoff.
+PAT_BULLETU    EQU 140          ; right after PAT_EXPLOSION(136-139) - still just 1 pair, see above
 PAT_BULLETU_L  EQU 144
 BULLET_U_COLOR EQU 9            ; light red, same fg BulletF's BG version now uses - "バレットカラーをライトレッドに変更" (was gray/14)
 BULLET_U_SPRITE_ATTRS EQU F1E0h   ; 12 bytes: Y,X,pat,col x3, staged same as ENEMY_SPRITE_ATTRS
@@ -314,16 +387,33 @@ TANK_TOP_DRAW_Y EQU F131h   ; UPDATE_TANK_SPRITES scratch: TANK_DRAW_Y, +DASH_SP
 ; picked with no more precise spec than "leave a gap" ("ダメなら修正
 ; する" - happy to retune if this cadence isn't right).
 SHOT_COOLDOWN EQU F14Eh
-SHOT_COOLDOWN_FRAMES EQU 8
-; 3 shot slots, 7 bytes each: +0 ACT, +1 TYPE(0=F straight,1=U
+SHOT_COOLDOWN_FRAMES EQU 4  ; 実機フィードバック対応 ("4フレームにして"): was 8
+; 7 bytes each: +0 ACT, +1 TYPE(0=F straight,1=U
 ; diagonal), +2 COL, +3 ROW, +4 ADDR_LO, +5 ADDR_HI (name-table row
 ; base address, from BULLET_ROWADDR_LO/HI), +6 FACING(0=right,1=left,
-; copied from TANK_FACING at spawn) - same pool-of-3 design as
-; BULLET0/1/2 in src/CYBER SHMUP.asm ("Stage1と同様に制限数画面内3発").
+; copied from TANK_FACING at spawn) - same pool design as
+; BULLET0/1/2 in src/CYBER SHMUP.asm ("Stage1と同様に制限数画面内3発"),
+; now 4 slots (see BULLET3_ACT's own comment).
 BULLET0_ACT   EQU F150h
 BULLET1_ACT   EQU F157h
 BULLET2_ACT   EQU F15Eh
 BULLET_TEMP_BYTE EQU F165h
+; 実機フィードバック対応 (round36-14 follow-up#13, "3発制限を4発に変更"):
+; BULLET_TEMP_BYTE(F165h) sits directly against GAME_TICK(F166h) with
+; zero slack (see BULLET_TEMP_BYTE's own original comment) - the
+; tightly-packed F1xx block has no room to grow BULLET2_ACT's own
+; struct into a 4th slot in place without renumbering GAME_TICK and
+; everything after it. Relocated to the free C1xx region instead, same
+; "no slack in the old block, so it goes in C000h+" idiom as FLYER_POOL/
+; EBULLET_POOL/MINE_POOL's own comments. Also needed a real hw sprite
+; ATTRIBUTE slot of its own for its own diagonal(U)-type shots (unlike
+; F/straight shots, which are BG-drawn with no such limit) - freed from
+; Mine's own explosion budget (slot31, was 1-per-instance, now shared -
+; see MINE_EXPL_SPR_BASE_SLOT's own comment) per direct confirmation
+; ("Mineは演出なのでMineを削ってくれ 2発同時はまず起こらないんで").
+BULLET3_ACT     EQU 0C13Eh   ; 7 bytes (C13Eh-C144h)
+BULLET3_VARIANT EQU 0C145h   ; same role as BULLET0/1/2_VARIANT (F-rotation memory) - see SET_BULLET_VARIANT's own comment
+BULLET3_U_ATTRS EQU 0C146h   ; 4 bytes (Y,X,pat,col) - this slot's own U-type hw sprite staging entry, NOT contiguous with BULLET_U_SPRITE_ATTRS (flushed to hw sprite slot31 in a 2nd burst - see FLUSH_BULLET_U_SPRITES)
 
 ; ---------- terrain collision: ground-height following + slope       ----------
 ; ---------- (Rock225) detection - see UPDATE_TERRAIN_COLLISION below. ----------
@@ -431,6 +521,33 @@ GTD_LAST_O    EQU F179h
 ; (that one's still allowed to cut an explosion off, same as always -
 ; only the shot sound is singled out here).
 SND_EXPLODING EQU F17Ah
+; round32: "円の爆発はノイズでどーーーーんって長いやつ" - the boss's own
+; circle-explosion boom needs a MUCH longer envelope than the shared
+; SND_TIMER/SND_DECAY mechanism above can express on its own (SND_TIMER
+; doubles as the volume, 0-15, so a plain "decay by SND_DECAY every
+; frame" caps out at 15 frames total - nowhere near "long"). Reuses
+; SND_TIMER/SND_DECAY anyway rather than a fully separate envelope
+; (SOUND_UPDATE's own SU_BOOM branch, selected by SND_DECAY==0 - no
+; ordinary sound ever sets that, see SOUND_UPDATE's own comment) - this
+; one extra byte just counts frames between volume steps, stretching a
+; still-15-step decay out over many more real frames. The only genuinely
+; free gap left below STACKTOP (see STACK_SAFETY_MARGIN's own comment -
+; every other candidate spot is either actively used throughout the
+; whole boss fight or would need pushing the topmost variable even
+; closer to the required 0x60 headroom, which is already at its exact
+; limit) - F17Bh-F17Fh, right after this byte, before ENEMY_POOL(F180h).
+SND_BOOM_DECAY_CTR EQU F17Bh
+; round32 follow-up: "ではノイズ使ってる全てのSEをデューティ比の音量
+; 操作を適用してみて" - the 1:1 on/off duty-cycle gating originally built
+; just for the boom (see SOUND_CALC_NOISE_GATE_VOLUME below) is now
+; shared by every noise-channel sound in this file (SHOT/DESTROY/SPARK_
+; CRACKLE/BOSS_BOOM). SOUND_ZUM_DEFLECT is the one sound here that's
+; TONE, not noise ("キンキン" - a held ping reads wrong if gated on/off)
+; - this flag is how SOUND_UPDATE tells which behavior the CURRENTLY
+; playing sound wants: each trigger routine sets it (1=noise/gated,
+; 0=tone/ungated) alongside its own peak/decay. Next byte in the same
+; free gap as SND_BOOM_DECAY_CTR above.
+SND_NOISE EQU F17Ch
 ; digit0 code; digitN = DIGIT_BASE+N for N=0-9 (score/counter, glyphs
 ; copied byte-for-byte from src/CYBER SHMUP.asm's own DIGIT_PATTERNS -
 ; "スコアの数字流用") - the old N=10-15=A-F hex-label glyphs (added for
@@ -483,23 +600,83 @@ NIGHT_INTERVAL   EQU 8
 NIGHT_START_ROW  EQU 1
 NIGHT_END_ROW    EQU 16
 NIGHT_CODE       EQU 136       ; group17 (136-143)
-NIGHT_COLOR      EQU 015h      ; "ブラックとブルーの文字色と背景色を逆に" - fg1 black / bg5 light blue (was fg5/bg1)
-; endgame GAME_TICK timeline (all 3 share this one clock, none re-derive
-; their own): night sweep starts at NIGHT_START_TICK(850) above: every
-; ordinary enemy (ZacoII/Zum/BigZum/Flyer/Etank) stops spawning at
-; ENEMY_SPAWN_STOP_TICK(950) - SPAWN_STOPPED (below) is the single
-; shared 16-bit-safe check every ALLOC_*_SLOT routine calls, rather than
-; each re-implementing its own GAME_TICK compare; the boss spawns once
-; at BOSS_SPAWN_TICK(999) - see its own comment further down.
-ENEMY_SPAWN_STOP_TICK EQU 950
-; ---------- boss (Sasapi): spawns once at BOSS_SPAWN_TICK(999), then ----------
+; 実機フィードバック対応(round36-14 follow-up#12その3、"じゃあホワイト
+; で ライトブルーにホワイトは使えるんだな"): group17 is also FlyerLaser's
+; own home now (see FLYER_LASER_PATTERN_CODE's own comment) - bg5(light
+; blue) matching a real laser's own fg15(white) is a combination that
+; DOES already exist elsewhere (group0, CLOUD_GROUP0_COLOR) but group0
+; itself has zero free codes (terrain's own dynamic 0-93 range owns all
+; of it), so the only way to actually deliver white-on-blue is to
+; repaint group17's own shared color to match it - fg1->fg15, bg5
+; unchanged. This DOES recolor NIGHT_CODE itself (this constant's own
+; previous value, 015h, was itself a direct earlier user correction -
+; "ブラックとブルーの文字色と背景色を逆に" - so night now reads white-
+; on-blue instead of black-on-blue) and MINE1_CODE/MINE2_CODE (Mine's
+; own black parts also become white) - both flagged directly to the
+; user alongside a render, same "found a real conflict, made the call,
+; showed the result" precedent as every other VRAM-reuse decision this
+; session.
+NIGHT_COLOR      EQU 0F5h      ; fg15 white / bg5 light blue (was fg1/bg5, see comment above)
+; endgame GAME_TICK timeline: night sweep starts at NIGHT_START_TICK
+; (850) above; the boss spawns once at BOSS_SPAWN_TICK - see its own
+; comment further down. round34 ("ランダムスポーンは廃止 全てスケジュ
+; ールに"): ordinary enemies (ZacoII/Zum/BigZum/Flyer/Etank) no longer
+; have a shared "stop spawning at tick X" gate at all - each one only
+; ever spawns when its own schedule entry fires (SPAWN2_THRESHOLDS),
+; and the schedule itself simply has no entries left after its own last
+; one, so there's nothing left to gate. The one surviving GAME_TICK
+; threshold from that old shared mechanism is BigZum's own forced-
+; retreat-before-boss safety net (below), renamed from ENEMY_SPAWN_
+; STOP_TICK to reflect its real, narrower remaining purpose - BigZum is
+; the only enemy that shares hw sprite slots/pattern VRAM with the boss
+; (see BOSS_SPR_BASE_SLOT/PAT_SASAPI's own comments), so it alone still
+; needs to be forced off-screen ahead of the boss's own spawn,
+; independent of when it happened to spawn.
+BIGZUM_RETREAT_TICK EQU 950
+; round35 (real-hardware feedback: "Bigzumは4回以上スケジュールしてる
+; が1回しか出てない...恐らくEtankでスキップされてるな...排他制御はあく
+; まで仮実装の仕様 これはエディットでコントロールするんで要らない"):
+; direct investigation found NO Etank exclusion anywhere in the current
+; code (ALLOC_BIGZUM_SLOT/ALLOC_ETANK_SLOT don't check each other's
+; pool - see ALLOC_BIGZUM_SLOT's own comment; that check was genuinely
+; removed back in round34-2). The real cause, confirmed by direct
+; emulator instrumentation of a full worst-case playthrough: BIGZUM_
+; RETREAT_TICK used to be the ONLY thing that could ever clear a live
+; BigZum out of its own single slot (BIGZUM_SLOT_COUNT=1, "BigZumは１
+; 体のみ") - nothing in its own approach/pause/jump/punch state machine
+; naturally despawns it. So the FIRST BigZum to successfully spawn
+; occupied the only slot continuously for the rest of the game (up to
+; ~460 ticks in that playthrough), silently dropping every later
+; schedule entry as "pool full" regardless of terrain or anything else
+; - not a hardcoded exclusion against another enemy type, just this one
+; enemy blocking its own later spawns. Fixed by making the retreat
+; PER-INSTANCE (see BIGZUM_SLOT_SIZE's own +13/+14 field, computed once
+; at spawn in ALLOC_BIGZUM_SLOT) instead of one shared global tick, so
+; each BigZum clears out on its own after a bounded engagement window
+; and later schedule entries get a real chance - this constant now
+; serves only as the hard ceiling every instance's own retreat is
+; clamped to, guaranteeing the pre-boss safety net (boss_vram_safety_
+; test.py) still holds regardless of engagement duration.
+; untuned first guess, easy to retune - "スケジュール自体の実プレイでの
+; 難易度・ペーシング調整" is still an explicitly deferred/pending task
+; (see CLAUDE.md), this just makes the engagement window PER-INSTANCE
+; and finite instead of "forever until 950", the actual bug being fixed
+; here.
+BIGZUM_ENGAGEMENT_DURATION EQU 100
+; ---------- boss (Sasapi): spawns once at BOSS_SPAWN_TICK, then ----------
 ; patrols left<->right forever - "Tick999でスポーン Skysandの８ｐｘ上
 ; あたり 右から出現し左へ 左端に着いたら反転 右端に 以降繰り返し 耐久
 ; 値は255で 速度は2". No collision/HP-depletion wired yet - BOSS_HP is
 ; just stored, no spec given yet for what damages it or what happens at
 ; 0; no despawn either, matching "反転...以降繰り返し" describing an
-; unending patrol, not a one-shot pass.
-BOSS_SPAWN_TICK EQU 999
+; unending patrol, not a one-shot pass. round34: this used to be its own
+; independent EQU(999), checked directly inside UPDATE_BOSS_ALL every
+; frame; now it's just documentation matching the schedule's own final
+; SPAWN2_THRESHOLDS entry (995, "全てスケジュールに") - the actual
+; runtime trigger is SSC2_FIRE's own unconditional fallthrough to
+; S2_BOSS_SPAWN once every earlier entry has fired, same convention as
+; Stage1's own SSC_FIRE/BOSS_SPAWN (src/CYBER SHMUP.asm).
+BOSS_SPAWN_TICK EQU 995
 BOSS_SPAWNX     EQU 192     ; 256-64: off/at the right edge, sprite fully inside the screen the instant it spawns - same "screen_width - sprite_width" shape as ENEMY_SPAWNX(240=256-16), just for a 64px-wide sprite instead of 16px
 ; "Skysandの８ｐｘ上あたり" - read as the sprite's own BOTTOM edge
 ; sitting 8px above SkySand's top row (NIGHT_END_ROW=16, pixel row
@@ -615,6 +792,241 @@ BOSS_COLOR      EQU 9       ; from sprites/Sasapi.json's own fg (light red)
 ; footprint, full AABB against BOSS_X/BOSS_SPAWN_Y (see CHECK_HIT_PAIR_
 ; BOSS) - not a smaller hitbox.
 BOSS_COLLISION_SIZE EQU 64
+; round36-14 follow-up #3: the broken form's own real 32x32 footprint -
+; see CHECK_HIT_PAIR_BOSS's own comment for how this gets picked at
+; runtime.
+BOSS_BROKEN_COLLISION_SIZE EQU 32
+
+; round36-14 Part C ("ボス耐久値が50になったらスパーク爆発しSasapiBroken
+; に変化して インフィニティ起動で回って ランダムタイミングで停止し 少し
+; てまた回る これがシーケンスで で、0で最後の爆発で" - corrected mid-
+; round from an initial "200" misreading; HP is 255-based, threshold is
+; genuinely 50, not 200) - BOSS_FORM is orthogonal to BOSS_ACT/
+; BOSS_PHASE: 0=normal(old 64x64 body, existing UBA_ACTIVE patrol/pose/
+; attacks), 1=SPARK-only transition burst (reuses UPDATE_BOSS_
+; EXPLOSION's own SPARK sub-state machine - see BOSS_EXPL_REASON),
+; 2=broken form active (new 32x32 body, repeating figure-8-drift/random-
+; stop/resume cycle - see UPDATE_BOSS_BROKEN_ACTIVE). Once BOSS_FORM!=0,
+; UPDATE_BOSS_ALL never calls UBA_ACTIVE again (see its own dispatch) -
+; this alone is what permanently stops Horming/Thunder/SBeam from ever
+; arming a NEW attack again (every arm site - ARM_HORMING_VOLLEY/
+; FIRE_SBEAM/CHECK_THUNDER_TRIGGER_LEFT/_RIGHT - only exists inside the
+; UBA_ACTIVE tree), confirmed by direct code-path tracing rather than a
+; new guard added inside each of those routines. Already-launched
+; missiles/bolts/beam keep animating to their own natural end regardless
+; (UPDATE_HORMING_ALL/UPDATE_HORMING_BG_ALL/UPDATE_THUNDER/UPDATE_SBEAM
+; are called unconditionally from MAINLOOP whenever BOSS_ACT!=0, entirely
+; independent of BOSS_FORM/UBA_ACTIVE) - "既に発射済みの弾は飛び続ける
+; が、新規発射だけ止める", per direct confirmation this round. HP
+; reaching 0 (whether in the normal or the broken form) is unaffected by
+; any of this - CHECK_HIT_PAIR_BOSS's own JR Z,CHPBOSS_DESTROY runs
+; exactly as before regardless of BOSS_FORM ("0で最後の爆発で" - the
+; user's own words confirm this is the intended "final" explosion, not
+; an unwanted side effect) - see INIT_BOSS_EXPLOSION's own BOSS_FORM
+; check for the one adjustment a broken-form death still needs (the
+; smaller body's own center offset).
+; 実機フィードバック対応(round36-14 follow-up#13、"ボスの形態変化が
+; 今はHP50だが100に変更"): was 50.
+BOSS_BROKEN_HP_THRESHOLD EQU 100
+BOSS_FORM_SPARK  EQU 1
+BOSS_FORM_ACTIVE EQU 2
+; the broken body only needs 4 quadrants (2x2, 32x32) vs the old body's
+; 16 (4x4, 64x64) - reuses the SAME 4 leading hw sprite slots the old
+; body's own first row already occupied (BOSS_SPR_BASE_SLOT..+3, i.e.
+; 10-13); HIDE_BOSS_SPRITES (called once on reveal) permanently parks
+; the other 12 old-body slots (14-25) off-screen, and they're never
+; touched again once BOSS_FORM=2 - see REVEAL_BOSS_BROKEN_FORM.
+BOSS_BROKEN_SPR_BASE_SLOT EQU BOSS_SPR_BASE_SLOT
+BOSS_BROKEN_QUAD_COUNT    EQU 4
+; "インフィニティ起動で回って...これがシーケンスで" - a REPEATING
+; moving<->stopped cycle (not a one-shot move-then-freeze-forever).
+; round36-14 follow-up #4 ("SasapiBrokenの停止はインフィニティ軌道の1周
+; に１回何処かで停止") replaced the original GAME_TICK-random-duration
+; timing with a step-counted one tied to actual loop distance traveled -
+; see BOSS_BROKEN_STEPS_TO_STOP's own comment. BOSS_BROKEN_LAP_STEPS_MIN/
+; _RANGE is the window (in path-index steps) re-rolled every time
+; movement resumes; RANGE is a power of 2 so the asm side can fold it
+; with a plain AND, no reject-and-subtract needed. Centered on
+; BOSS_BROKEN_PATH_LEN(64) so it averages out to "about 1 lap" per stop,
+; matching "1周に１回" without being mechanically exact every single lap
+; (見た目のランダム性を保つため、厳密に64固定にはしていない).
+; Untuned initial placeholder values, like BIGZUM_ENGAGEMENT_DURATION's
+; own comment - real pacing/difficulty tuning deferred.
+; "ササピービームでインフィニティ軌道で停止の間隔が長いんで半分に" -
+; halved from 48/32 (averaged to ~1 lap/stop) to 24/16 (averages to
+; ~half a lap/stop, twice as many stops per lap).
+BOSS_BROKEN_LAP_STEPS_MIN   EQU 24
+BOSS_BROKEN_LAP_STEPS_RANGE EQU 16   ; power of 2 - AND 0Fh
+; how many raw frames the figure-8 path LUT holds each of its
+; BOSS_BROKEN_PATH_LEN(64) points for while MOVING - untuned placeholder,
+; same as the tick windows above.
+BOSS_BROKEN_PATH_HOLD_FRAMES EQU 4
+
+; round36-14 follow-up #4 ("で、停止中にビーム攻撃をする 添付がその
+; キャラデータ 1から4までの左方向斜め下に順の角度でビーム発射 角度は
+; 絵から判断") - 4 fixed-angle diagonal beams, fired one at a time in
+; sequence 1->4 (originally "each replaces the previous", but see the
+; 3rd real-hardware feedback below - each now flies independently once
+; launched, so up to all 4 can be in flight at once).
+; real-hardware feedback round 1 ("全然絵が違うな...で、繋げる必要は
+; ない 取り敢えず16x16で4本扇状に今の感じでいい"): the 1st attempt drew
+; each beam as a Bresenham line, repeating the 16x16 pattern as a
+; tileable unit toward the screen edge (STAGE_SBEAM's own idiom) - but
+; the attached art is a single COMPLETE picture of one whole beam, so
+; tiling it produced a garbled blob. Redesigned to a single hw sprite
+; per beam using the already-loaded pattern, no repetition.
+; real-hardware feedback round 2 ("ビームが飛んで来ないな...今はボスの
+; 上に表示されてるだけ それで何の攻撃になる 発射して飛ばすんだよ"):
+; the 2nd attempt over-corrected "繋げる必要はない" into "doesn't need
+; to move at all" and just parked one static sprite next to the body -
+; but the beam is still supposed to be a real projectile that travels
+; ("画面端まで伸びる" - confirmed earlier as a genuine, damaging attack,
+; not a decoration). Fixed by giving each fired beam real per-frame
+; velocity (BOSS_BROKEN_PROJ_DX/DY) so it actually flies off toward the
+; screen edge - see LAUNCH_BOSS_BROKEN_BEAM/UPDATE_BOSS_BROKEN_BEAM_
+; FLIGHT. 4 hw sprite slots now (1 per simultaneously-in-flight beam),
+; right after the broken body's own 10-13 - genuinely free at this
+; point in the fight (old body/Homing/Thunder/old SBeam are all retired
+; the instant BOSS_FORM leaves 0).
+; Angles read directly off the attached SBeam1-4_16x16.json pixel data
+; (centerline endpoint-to-endpoint, exact integer ratios - baked into
+; each beam's own art AND now doubling as its own per-frame velocity
+; ratio): beam1 dx:dy=-2:1 (shallow, down-left), beam2 -2:5 (steep,
+; down-left), beam3 2:5 (steep, down-right), beam4 2:1 (shallow,
+; down-right) - a symmetric fan skipping straight-down. The shallow
+; pair (beam1/4) therefore drifts noticeably slower (~2.2px/frame) than
+; the steep pair (beam2/3, ~5.4px/frame) - an untuned side effect of
+; reusing the art's own ratio directly as px/frame rather than
+; normalizing all 4 to one speed; left as-is pending real-play feedback.
+BOSS_BROKEN_BEAM_SLOT_COUNT    EQU 4
+BOSS_BROKEN_BEAM_SPR_BASE_SLOT EQU 14
+; a hw sprite's own color attribute byte is NOT the BG-style packed
+; fg/bg nibble pair (unlike the BG pattern color table) - it's a plain
+; color index in bits0-3, with bit6 as the EC (early clock, -32px X
+; shift) flag. The first attempt wrongly copied the BG fg/bg convention
+; (071h = EC-shifted + color1/black), which explains BOTH real-hardware
+; complaints at once: the wrong (black, not cyan) color AND the beams
+; rendering 32px away from where they were actually positioned. Fixed
+; to a plain color 7 (cyan, matching the attached art's own fg), no EC.
+BOSS_BROKEN_BEAM_COLOR         EQU 07h
+; raw frames between each beam firing in the 1->4 sequence, and between
+; the 4th firing and hiding it/resuming movement. "発射感覚が長すぎる
+; 半分くらいに" (実機フィードバック対応、follow-up#16) - 20→10。
+BOSS_BROKEN_BEAM_INTERVAL EQU 10
+
+; death/explosion sequence (see INIT_BOSS_EXPLOSION/UPDATE_BOSS_EXPLOSION
+; below) - "倒した位置のボス中心から...半径48ｐｘの円に段々で塗りつぶす
+; ...円を小さくして行き1セルになったら...最後の1セルを120フレ点滅させ
+; 消滅". The circle is rasterized at CELL (8px) resolution, not real
+; pixels - "1セルを1ｐｘと見做して" - so the algorithm's own radius unit
+; is cells, and the requested 48px target becomes 48/8=6 cells.
+BOSS_EXPL_MAXR EQU 6
+; frames held per radius step (grow AND shrink both use this) - not
+; specified by the instruction, a judgment call: 6 frames/step over 7
+; steps each way (radius 0->6->0) is ~1.4s total for the whole grow+
+; shrink, a deliberately slow/readable "ta-da" pace for a boss kill
+; rather than a fast enemy-death blip. Revisit if it reads as too slow/
+; fast once seen in motion.
+BOSS_EXPL_STEP_FRAMES EQU 6
+; blink cycle length (half on/half off) for both the boss-sprite blink
+; during growth and the final single-cell blink - also a judgment call,
+; not specified; 16 frames (8 on/8 off) is slow enough to read clearly
+; as "blinking" rather than a flicker/strobe.
+BOSS_EXPL_BLINK_PERIOD EQU 16
+BOSS_EXPL_FINAL_FLASH_FRAMES EQU 120   ; "最後の1セルを120フレ点滅させ消滅" - exact, given
+; the attack-pose hand art (SASAPI_HAND_CODE_BASE, group19) is retired
+; for good the instant the boss dies (INIT_BOSS_EXPLOSION erases it/
+; resets BOSS_PHASE if it was showing - "ボスがBG描画される右端で倒され
+; た場合はスプライトに戻す" - and nothing ever re-enters BOSS_PHASE=1
+; once BOSS_ACT=2), so its own code range is safe to repurpose as the
+; explosion's solid-white fill tile instead of allocating a fresh one.
+BOSS_EXPL_WHITE_CODE EQU SASAPI_HAND_CODE_BASE
+BOSS_EXPL_WHITE_GROUP EQU 19
+BOSS_EXPL_WHITE_COLORBYTE EQU 0F1h   ; fg15 white/bg1 black - same convention as HUD_DIGIT_COLORBYTE
+; "ステージ1ボスのような爆発エフェクトをボスの範囲でランダムに...スプラ
+; イトで描画すると消えてしまうんでBGで...ボスの範囲から外側に4セルラン
+; ダムにエフェクトを飛ばしてくれ ウェイトなしで派手に沢山 3秒くらい"
+; (round32) - a NEW phase (BOSS_EXPL_STATE_SPARK) that runs FIRST, before
+; the existing circle/line sequence. No per-spark timer/duration
+; tracking - see UBE_SPARK's own comment for why that's fine here. 180
+; frames = 3 real seconds at this project's assumed 60fps (same "frames"
+; unit FLASH_DURATION/EXPLOSION_DURATION already use elsewhere), 3/frame
+; is a judgment call for "沢山" (not specified numerically).
+;
+; round32 follow-up fix #1: "そういう事じゃない ボックス範囲で消去もして
+; ないから飛んでるかどうかもわからない ただ６４ｘ６４がBGで埋まってる
+; だけだ じゃあボスの中心の３２ｘ３２の範囲でランダムに で、爆発キャラ
+; は８ｘ８のほうではなく１６ｘ１６のほうで ランダムで混ぜてもいいがな" -
+; the first version only ever ADDED sparks (never erased any until the
+; whole phase ended), so once the small scatter area filled up it just
+; read as one static solid block, not "flying" sparks.
+;
+; round32 follow-up fix #2 (correcting fix #1's own misreading of "32x32"):
+; "爆発範囲を元の６４ｘ６４に てかこれはエフェクトが飛ぶ範囲ではなく
+; 原点だからな そこからランダム方向に4セル飛ぶんだぞ" - the 64x64 figure
+; was never the TOTAL scatter extent, it's the ORIGIN area (the boss's own
+; body) each spark launches FROM; from that origin it then flies further,
+; up to BOSS_EXPL_FLIGHT_RANGE cells, in a random direction. Two
+; independent random draws (origin, then flight) stacked, not one flat
+; box - naturally denser near the boss body and thinner further out,
+; same shape as the "8方向ランダムに移動" idiom already established
+; elsewhere in this file for enemy-death sprites, just axis-independent
+; instead of 8-compass.
+;
+; Precise per-spark position tracking (not a blanket-sweep erase) is
+; what makes the EVERY-FRAME erase from fix #1 affordable at this larger
+; scale - see BOSS_EXPL_SPARK_SLOT's own comment: sweeping the whole
+; possible box every frame would be far more VDP writes than are ever
+; actually live at once, a real T-state concern this file has cared
+; about before (see the VDP wait-state rounds).
+;
+; round32 follow-up fix #3: "悪くはないが飛びすぎたな 1から3セルランダ
+; ムで" - fix #2's own flight offset (independent per-axis -4..+3) let
+; the flight distance range anywhere from 0 (no flight at all) up to a
+; diagonal ~5.7 cells (both axes near their own max magnitude at once) -
+; wider and less controlled than intended. Replaced with an explicit
+; direction+distance draw via BOSS_EXPL_FLIGHT_TABLE (8 compass
+; directions - same convention as this file's own EXPLODE_DIR_DX/DY -
+; times distance 1-3, precomputed as a 24-entry LUT rather than computed
+; at runtime since Z80 has no multiply instruction) - "1から3セルランダ
+; ムで" is now the flight's own EXACT distance range, never 0 and never
+; more than 3 in any direction.
+;
+; round32 follow-up fix #4: "今でも飛びすぎなんで やはり原点をボス中心
+; ３２ｘ３２に 前はお前が勘違いしてたからな" - even with the flight
+; distance capped at fix #3, the TOTAL reach (origin's own 64x64 body +
+; up to 3 more cells of flight) still read as too far. Shrunk the origin
+; itself from the boss's full 64x64 body down to a 32x32/4-cell box
+; centered on the boss (offsets -2..+1, same AND/SUB shape as the
+; flight-less single-box fix #1 originally used for the WHOLE scatter
+; area, now scoped to just the origin half of the two-stage draw).
+BOSS_EXPL_ORIGIN_RANGE EQU 2      ; boss-center 32x32/4-cell box - offsets -2..+1
+BOSS_EXPL_FLIGHT_MIN_DIST EQU 1   ; "1から3セルランダムで" - BOSS_EXPL_FLIGHT_TABLE below must match if this ever changes
+BOSS_EXPL_FLIGHT_MAX_DIST EQU 3
+BOSS_EXPL_SPARK_DURATION EQU 180
+BOSS_EXPL_SPARK_PER_FRAME EQU 3   ; tied directly to the 3 hardcoded slots in UBE_SPARK - changing this needs matching slot blocks added/removed there, not just this constant
+; another retired-hand-art code, group20 (160-167) - same safety
+; argument as BOSS_EXPL_WHITE_CODE's own comment, just a different
+; group so this can have its own distinct color. All 4 codes share this
+; one group/color (no separate upload needed per quadrant). Pattern is
+; EXPLOSION_PATTERN in full (already-established "explosion" art
+; elsewhere in this file, reused instead of drawing something new) -
+; "爆発キャラは８ｘ８のほうではなく１６ｘ１６のほうで" - the 16x16
+; 4-quadrant version, TL/BL/TR/BR in the same plane order EXPLOSION_
+; PATTERN's own data already uses. "ランダムで混ぜてもいいがな" - each
+; spark independently rolls 8x8 (just the TL quadrant alone) vs the full
+; 16x16 (all 4) 50/50, see BOSS_EXPL_SPARK_SLOT.
+BOSS_EXPL_SPARK_CODE_TL EQU 160
+BOSS_EXPL_SPARK_CODE_BL EQU 161
+BOSS_EXPL_SPARK_CODE_TR EQU 162
+BOSS_EXPL_SPARK_CODE_BR EQU 163
+BOSS_EXPL_SPARK_GROUP EQU 20
+BOSS_EXPL_SPARK_COLORBYTE EQU 081h   ; fg8(EXPLOSION_COLOR)/bg1 black - "近い色" to BOSS_COLOR(9), same value as SASAPI_HAND_FLASH_COLORBYTE (coincidental, not reused by name)
+BOSS_EXPL_STATE_SPARK  EQU 4
+BOSS_EXPL_STATE_GROW   EQU 0
+BOSS_EXPL_STATE_SHRINK EQU 1
+BOSS_EXPL_STATE_FLASH  EQU 2
+BOSS_EXPL_STATE_DONE   EQU 3
 ; "フラッシュ処理はホワイトだと眩しいのでレッドに ボス戦だけな 通常は
 ; ホワイトのままでいじるな" - a BOSS-ONLY override of the hit-flash
 ; color; the shared global FLASH_COLOR(white) every other entity uses
@@ -680,14 +1092,21 @@ SASAPI_HAND_FLASH_COLORBYTE EQU 081h
 ; body a few lines below - once the boss fight starts, Flyer (like
 ; ZacoII/Zum) never spawns again ("オールフリー"), so overwriting its
 ; pattern data outright is fine, on the SAME already-trusted timing
-; precedent BOSS_SPR_BASE_SLOT/PAT_SASAPI already rely on: spawning for
-; all of ZacoII/Zum/BigZum/Flyer/Etank stops at ENEMY_SPAWN_STOP_TICK
-; (950), a full 49 GAME_TICKs before BOSS_SPAWN_TICK(999) - by the time
-; this load runs (UPDATE_BOSS_ALL's own spawn branch, the exact same
-; moment LOAD_SASAPI_PATTERNS also runs), any Flyer that could still be
-; airborne has had that same 49-tick head start to clear the screen,
-; same as every other reused pool here. Loaded dynamically at boss
-; spawn time, not INIT - Flyer needs its own real pattern data intact
+; precedent BOSS_SPR_BASE_SLOT/PAT_SASAPI already rely on. round34
+; ("全てスケジュールに"): this used to be a code-level guarantee (a
+; shared ENEMY_SPAWN_STOP_TICK gate blocked every ALLOC_*_SLOT well
+; before the boss), now it's a property of the schedule's own content
+; instead - each type's own LAST scheduled spawn just needs enough of a
+; gap before the boss's own tick to naturally finish (explode/despawn)
+; first. BigZum is the one exception with an explicit code-level
+; safety net regardless of schedule content (BIGZUM_RETREAT_TICK forces
+; it off-screen - see UPDATE_ONE_BIGZUM's own comment); the other 4
+; types rely on the schedule author leaving a wide enough gap - see
+; tools/stage2_combined/HANDOFF.md's own round34 entry for this
+; specific schedule's own margins and how they were verified.
+;
+; Loaded dynamically at boss spawn time, not INIT - Flyer needs its own
+; real pattern data intact
 ; for ordinary gameplay before that. 5 facings x4 codes each (16x16-
 ; padded, TL/BL/TR/BR - same "VDP already in 16x16 mode" constraint as
 ; every other hw sprite here) = 20 of Flyer's own 32 codes actually
@@ -707,6 +1126,54 @@ PAT_HORMING_SR   EQU PAT_FLYER+16
 ; already uses elsewhere for "light blue" (NIGHT_COLOR, CLOUD_GROUP0_
 ; COLOR).
 HORMING_COLOR EQU 5
+; round36-12: BG pattern codes for the new BG-drawn 4-instance pool
+; (HORMING_BG_POOL) - group18 (144-151), freed up entirely by round36-
+; 11's own move of the bullet night-glyph codes off this group. Only 5
+; of its 8 codes used (one per facing, no separate _L/mirror - the 5
+; source sprites already cover every direction the missile actually
+; faces, unlike the tank's own bullets which need a true left/right
+; mirror). This is the SKY-band table (rows above the terrain, same
+; range ERASE_HORMING_BG_CELL's own EHBC_SKY branch covers). Originally
+; reused BULLET_SKY_COLORBYTE (fg9/bg5 light blue), reasoning sky is the
+; dominant case; round36-13 correction ("BGホーミングの背景色をブラックに
+; 今はブルーになってる") - changed to bg1 (black) instead, fg9 kept.
+HORMING_BG_SL_CODE   EQU 144
+HORMING_BG_DL_CODE   EQU 145
+HORMING_BG_DOWN_CODE EQU 146
+HORMING_BG_DR_CODE   EQU 147
+HORMING_BG_SR_CODE   EQU 148
+HORMING_BG_COLORADDR EQU 2012h   ; 2000h+group18
+HORMING_BG_COLORBYTE EQU 091h    ; fg9 light red / bg1 black (round36-13, was bg5 light blue)
+; round36-14 ("BGホーミングが地形に入ったときはSandの背景色になるように
+; ブラックのままだと目立つんで"): a second, terrain-band table for the
+; same 5 facings, picked by DRAW_HORMING_BG_CELL once the missile's own
+; row reaches BULLET_ROCK_ROW_MIN (16) - same threshold ERASE_HORMING_
+; BG_CELL already uses to leave EHBC_SKY.
+;
+; round36-14 follow-up (real-hardware report: "スクロールの地形のSandが
+; ほかのパターンに書き換わってる 前のROMでは正常だった") - the FIRST
+; attempt placed these in codes18-22, reasoning group2's BLEND_BASE(24)
+; meant only 2 of its 8 codes were "actually used". That reasoning missed
+; the SAME-ID (Sand,Sand) pair's own 7-frame blend block (terrain_gen.py's
+; own BLANK_PAIR_BASE comment literally says "7 blend phases" - codes
+; 17-23, not just 17 alone; every one of 16-23 is real, load-bearing
+; terrain animation data) - confirmed directly:
+; `python3 -c "import terrain_gen as tg; print([tg.pair_block_code(p)+k
+; for p in tg.PAIRS for k in range(7)])"` includes 18-23. Relocated to
+; codes96-100 (group12) instead, verified genuinely empty (all-zero
+; pattern bytes) both at boot AND ~2000 frames into a real boss fight via
+; direct emulator VRAM inspection - not a static-reasoning claim this
+; time. Group12 IS one of the groups ROCK_COLOR_SWAPPED_PATCH's own bulk
+; write covers (groups3-31), so - unlike the group2 attempt - this DOES
+; need its own explicit color write (HORMING_BG_SAND_COLORADDR/
+; COLORBYTE below), placed after that patch runs.
+HORMING_BG_SAND_SL_CODE   EQU 96
+HORMING_BG_SAND_DL_CODE   EQU 97
+HORMING_BG_SAND_DOWN_CODE EQU 98
+HORMING_BG_SAND_DR_CODE   EQU 99
+HORMING_BG_SAND_SR_CODE   EQU 100
+HORMING_BG_SAND_COLORADDR EQU 200Ch   ; 2000h+group12
+HORMING_BG_SAND_COLORBYTE EQU 0ABh    ; SAND_COLOR (fg10 dark yellow/bg11 light yellow) - matches terrain's real Sand color exactly
 ; round 4 fix: "ホーミングのスプライトが非表示待機になってるからだろ
 ; うが ボス上部が常に表示欠けしている" - a real, confirmed bug. The
 ; previous round's reasoning ("boss's own slots10-25 are free while any
@@ -743,10 +1210,12 @@ HORMING_SPR_BASE_SLOT EQU 6
 ; grid making up the 64x64 sprite) - reuses Zum/BigZum/Flyer/Etank's
 ; own ranges (10-11/12-19/20-23/24-25) rather than a fresh permanent
 ; allocation (would overflow the 32-slot budget outright) - "自機以外
-; はもうスポーンしないんで オールフリー": every one of those pools has
-; been refused new spawns since ENEMY_SPAWN_STOP_TICK(950), 49
-; GAME_TICKs before the boss can even appear, so by BOSS_SPAWN_TICK
-; none of them still hold anything real. Safe as long as UPDATE_BOSS_ALL
+; はもうスポーンしないんで オールフリー": round34 ("全てスケジュール
+; に") moved this from a code-level guarantee to a schedule-content
+; property - see PAT_HORMING_SL's own comment above for the full
+; explanation and BigZum's own remaining code-level exception. Safe as
+; long as the schedule's own last spawn of each type leaves enough of a
+; gap to naturally clear before the boss, and as long as UPDATE_BOSS_ALL
 ; is called AFTER all 4 of their own per-frame flushes in MAINLOOP (so
 ; the boss's own real data is always the last write to these slots each
 ; frame, not overwritten a moment later by an old, now-permanently-empty
@@ -762,6 +1231,34 @@ BOSS_SPR_BASE_SLOT EQU 10
 ; allocation. Loaded fresh into VRAM once, at boss-spawn time (not at
 ; INIT) - see LOAD_SASAPI_PATTERNS.
 PAT_SASAPI      EQU PAT_BIGZUM
+; round36-14 follow-up#4 ("停止中にビーム攻撃をする") - the 4 broken-
+; form beam sprites' own hw sprite pattern codes, PAT_SASAPI+16/+20/+24/
+; +28 (see BOSS_BROKEN_BEAM_TABLE's own comment for why these codes
+; specifically). Defined HERE, immediately after PAT_SASAPI itself,
+; rather than down near BOSS_BROKEN_BEAM_TABLE where they're actually
+; used (which is this assembler's normal convention) - round36-14
+; follow-up#4's 2nd real-hardware feedback ("全然違うぞ...グラフィック
+; も壊れてる") traced back to a genuine mini_z80asm.py forward-reference
+; bug: REVEAL_BOSS_BROKEN_FORM (far above BOSS_BROKEN_BEAM_TABLE in the
+; file) referenced these EQUs before their old definition point, and the
+; chained expression "BOSS_BROKEN_BEAM_CODE1*8+SPRPAT" silently resolved
+; PAT_SASAPI as 0 in that context - loading all 4 beams into codes
+; 16/20/24/28 relative to VRAM address 0 instead of PAT_SASAPI(156)+16/
+; 20/24/28, landing on top of the OLD 64x64 body's own still-resident
+; leftover pattern data (never overwritten by anything else, so it just
+; sat there as visual noise). Confirmed via direct emulator VRAM
+; inspection (per this project's own standing "verify empirically"
+; practice) that the beam codes' true destination addresses in the
+; assembled ROM did NOT match PAT_SASAPI+16/20/24/28 until moved here.
+; Moving the definition above the only other place in the file that
+; references these EQUs before their own (still-canonical, still used
+; by BOSS_BROKEN_BEAM_TABLE/FIRE_BOSS_BROKEN_BEAM below) definition
+; sidesteps the assembler bug entirely, without needing to fix the
+; assembler itself.
+BOSS_BROKEN_BEAM_CODE1 EQU PAT_SASAPI+16
+BOSS_BROKEN_BEAM_CODE2 EQU PAT_SASAPI+20
+BOSS_BROKEN_BEAM_CODE3 EQU PAT_SASAPI+24
+BOSS_BROKEN_BEAM_CODE4 EQU PAT_SASAPI+28
 PSG_ADDR         EQU 0A0h
 PSG_DATA         EQU 0A1h
 ; mixer (R7) values for channel A only - tone/noise B and C always
@@ -784,6 +1281,89 @@ SHOT_NOISE_PERIOD EQU 8
 ; the gap, so the louder peak doesn't reopen that bug.
 SHOT_SND_PEAK  EQU 10
 SHOT_SND_DECAY EQU 2
+; "円の爆発はノイズでどーーーーんって長いやつ" - lowest noise period the
+; AY-3-8910 supports (0-31, 5 bits) for the deepest/most "boom"-like
+; rumble available, clearly distinct in pitch from the shot(8)/regular-
+; destroy(20) sounds. "で、素のノイズの減衰ではチャチなので デューティ
+; 比1:1で減衰しながらボリューム半分かOFFをまぜてくれ そうすればブリブ
+; リって音になるはず" - SOUND_UPDATE's own SU_BOOM branch alternates
+; between full-strength and silent every frame (TICK's own low bit - a
+; free-running per-frame flip, no dedicated toggle byte needed) as the
+; underlying envelope steps down, giving the buzzy/pulsing texture a
+; plain linear noise fade wouldn't have - see BOSS_BOOM_CALC_VOLUME's
+; own comment for why "on" frames are full-strength, not halved (round32
+; follow-up: "音量最大か? かなり小さいが" - halving on top of the 1:1
+; duty cycle's own silence made every frame quieter than the hardware's
+; real max). Peak 15 stepping down 1 every
+; BOSS_BOOM_DECAY_PERIOD frames = a real 75-frame decay (15*5, ~1.25s
+; @60fps) - deliberately close to the circle explosion's own GROW+SHRINK
+; length (BOSS_EXPL_STEP_FRAMES*BOSS_EXPL_MAXR*2=72 frames) so the boom
+; roughly tracks the visual, not an exact sync (not specified that
+; precisely) - a judgment call, easy to retune via this one constant.
+BOSS_BOOM_NOISE_PERIOD EQU 31
+BOSS_BOOM_DECAY_PERIOD EQU 5
+; "爆発エフェクト中も爆発音追加" (round32) - the SPARK burst itself
+; (before the circle even starts, see BOSS_EXPL_STATE_SPARK) had no
+; sound at all until now. Not specified beyond "add one" - a repeating
+; short, high-pitched "crackle" (distinct pitch from shot(8)/regular-
+; destroy(20)/boom(31)) matches the burst's own visual character
+; ("ウェイトなしで派手に沢山") better than one single sustained tone
+; would, so UBE_SPARK retriggers SOUND_SPARK_CRACKLE once every
+; SPARK_CRACKLE_PERIOD frames (a judgment call, easy to retune) rather
+; than every single frame (which would just reset the same envelope
+; over and over into a continuous drone, not a "crackle"). No new RAM -
+; the trigger cadence reads straight off BOSS_EXPL_TIMER's own low bits
+; (it's already counting down every SPARK frame for an unrelated
+; reason - see INIT_BOSS_EXPLOSION's own comment), and this shares the
+; same SND_TIMER/SND_DECAY envelope bytes as every other short sound in
+; this file - no SND_EXPLODING guard, same casual/frequent-sound
+; treatment SOUND_SHOT already gets, not treated as "the important one"
+; the way the boom itself is.
+SPARK_CRACKLE_PERIOD EQU 4   ; must be a power of 2 - UBE_SPARK's own trigger check ANDs BOSS_EXPL_TIMER against this-1
+SPARK_CRACKLE_NOISE_PERIOD EQU 14
+SPARK_CRACKLE_PEAK EQU 15   ; round32 follow-up: "スパーク爆発も音量最大か? でなければ最大に" - was 8, now the PSG's own real hardware max (register8's volume field is 4 bits/16 steps, same as every other sound's own peak here)
+SPARK_CRACKLE_DECAY EQU 3
+
+; ---------- boss attack SFX (round36-14 follow-up#5, "ではボス攻撃に
+; サウンドを入れる ホーミング、サンダー、サンダービーム、ササピーレー
+; ザーそれぞれに") - chosen by the user out of 3 auditioned candidates
+; each, via a Web Audio prototype page built to model this exact same
+; PSG envelope/gating engine (period/peak/decay values below are
+; transcribed straight from that prototype's own reference numbers, not
+; re-derived) - "ホーミングはH2 サンダーはT3 サンダービームはS1
+; ササピーレーザーはL3で" then "それぞれ音量は最大で" (peak 15,
+; overriding whatever each candidate's own preview peak happened to be).
+; All 4 share the exact same channel-A envelope engine (SND_TIMER/
+; SND_DECAY/SND_NOISE/SOUND_UPDATE) every existing SFX in this file
+; already uses - no new engine code, same "shared channel, latest
+; trigger wins" tradeoff as SOUND_SHOT/SOUND_ZUM_DEFLECT.
+; ホーミング「バシュバシュ」(H2, ノイズ・ウィッシュ) - short, bright,
+; fast-decaying noise burst; SHOT_NOISE_PERIOD(8) より少し明るいピッチ。
+HORMING_NOISE_PERIOD EQU 6
+HORMING_SND_DECAY EQU 4
+; サンダー「雷鳴」(T3, 長い轟き) - SOUND_BOSS_BOOM と全く同じ「デューティ
+; ゲート+BOSS_BOOM_DECAY_PERIODで1段ずつゆっくり減衰」の仕組みをそのまま
+; 流用(新規メカニズム不要)、ピッチのみ別の定数で変える。「低すぎて聞こ
+; えない」というユーザーからのフィードバックを受けて当初案(31相当)より
+; 高いピッチに改訂済み。SND_EXPLODING は立てない - BOSS_BOOMやDESTROYの
+; ような一回性の演出と違い、戦闘中に何度も鳴る通常攻撃なので、自機ショッ
+; ト音を長時間ブロックしてしまうのは望ましくないという判断(SOUND_SHOT
+; 自身の"RET NZ"ガードの対象から外す)。
+THUNDER_NOISE_PERIOD EQU 18
+; サンダービーム「ビビビー」(S1, 速いトレモロトーン) - プロトタイプでは
+; 専用の2-on:1-offパターンを試作したが、60fps更新である以上「標準の1:1
+; デューティゲート(SND_NOISE=1)をノイズではなくトーンchに適用する」のが
+; 実質同じ「ブリブリ」感を最も安価に再現できると判断し、そちらを採用
+; (新規ゲートモード追加は不要)。トーンchへのデューティ適用はSOUND_
+; ZUM_DEFLECTの逆(あちらは意図的にデューティ無し)。
+SBEAM_SND_TONE_PERIOD EQU 20
+SBEAM_SND_DECAY EQU 1
+; ササピーレーザー(L3, デューティ版) - 指示通りsrc/CYBER SHMUP.asmの
+; SOUND_SHOTを流用、トーンピッチ(period30)はStage1の実値そのまま。L3の
+; 選定通りデューティゲートを追加(Stage1本来はゲート無し)、ピークは
+; "それぞれ音量は最大で"によりStage1の実値12から15へ引き上げ。
+SASAPI_LASER_TONE_PERIOD EQU 30
+SASAPI_LASER_SND_DECAY EQU 1
 
 ; ---------- enemy (ZacoII) ----------
 ; "では次敵の実装 スプライトで実装 右から左へスライド Skyのみのの
@@ -820,13 +1400,22 @@ E_DY      EQU 8
 ENEMY_SLOT_SIZE  EQU 9
 ENEMY_SLOT_COUNT EQU 3   ; same "3 concurrent" convention as the bullet pool
 ENEMY_POOL    EQU F180h   ; ENEMY_SLOT_SIZE*ENEMY_SLOT_COUNT = 27 bytes
-ENEMY_SPAWN_TIMER   EQU F19Bh
-; total enemies spawned so far (capped at 10, never decremented) -
-; "で、10機出たら色替えの赤いZakoII...アルゴリズムは同じ": once this
-; reaches 10, every spawn after is the red variant instead of green -
-; same movement/turn-back logic either way (ENEMY_GET_STEP is the only
-; place VARIANT changes behavior, for speed; UOE_DRAW picks the color).
-ENEMY_SPAWN_COUNT   EQU F19Ch
+; round34 ("ランダムスポーンは廃止 全てスケジュールに") repurposes this
+; byte: was ENEMY_SPAWN_TIMER (frame countdown to the next random-timer
+; spawn attempt), now the schedule's own walk pointer - see
+; SPAWN2_SCHEDULE_CHECK/SPAWN2_NEXT_INDEX's own comment further down.
+SPAWN2_NEXT_INDEX   EQU F19Bh
+; round34: was ENEMY_SPAWN_COUNT (total spawned so far, capped at 10,
+; drove the old "first 10 green, then 50/50 red/green" coinflip - see
+; ALLOC_ENEMY_SLOT's own history in git blame). The schedule now picks
+; green vs red explicitly per placement (s2_zacoii vs s2_zacoii_red), so
+; that whole counter/coinflip is gone; this byte is repurposed as
+; S2_SPAWN_Y - the CURRENT firing schedule entry's own pixel Y (row*8),
+; staged by SSC2_FIRE just before dispatch, consumed by whichever
+; ALLOC_*_SLOT the CP-chain calls (ignored by the 3 ground types, whose
+; own Y always comes from the terrain/tier logic instead - see each
+; ALLOC_*_SLOT's own comment).
+S2_SPAWN_Y   EQU F19Ch
 ; staging buffer for the 3 enemy hw sprite slots (4-6, right after the
 ; tank's own 0-3) - same "build in RAM, blast once" pattern as
 ; SPRITE_ATTRS/UTS_OUT_LOOP, just a separate buffer so the two flushes
@@ -884,15 +1473,11 @@ ENEMY_TURNBACK_MARGIN EQU 64
 ; same flat/TICK-averaged cruise speed ENEMY_GET_STEP always gave, per
 ; "速度は今のままでいい".
 ENEMY_RAMP_RANGE EQU 32
-; "Skyのみのの位置に出現...現状はランダム" - Y confined to a band
-; safely inside the open sky (below the HUD rows0-1 at y0-15, well
-; above row19's ground top at y152) using a TICK-derived pseudo-random
-; low byte (AND with a power-of-2 span so it's a plain mask, no
-; divide) - a placeholder until terrain-aware spawning exists ("地形も
-; 合わせてスケジュールエディタで対応予定").
-ENEMY_SKY_Y_MIN   EQU 24
-ENEMY_SKY_Y_MASK  EQU 3Fh   ; span 64 -> Y in [24,88), sprite bottom never past y151
-ENEMY_SPAWN_INTERVAL EQU 90 ; frames between spawns while a slot is free - untuned
+; round34: was "Skyのみのの位置に出現...現状はランダム" - a TICK-derived
+; pseudo-random Y band (ENEMY_SKY_Y_MIN/MASK), explicitly a placeholder
+; ("地形も合わせてスケジュールエディタで対応予定"). Now superseded: Y
+; comes straight from the schedule's own row (S2_SPAWN_Y, row*8), no
+; random band needed - see ALLOC_ENEMY_SLOT.
 ENEMY_COLOR       EQU 3     ; light green - "ZakoIIの色をライトグリーンに" (was 12, dark green, sprites/ZacoII.json's own original fg)
 ENEMY_RED_COLOR   EQU 9     ; light red - "色替えの赤いZakoII" (kept distinct from the explosion's own medium red)
 ; PAT_ZACO/_FLIP (enemy_gen.py) and PAT_EXPLOSION (below) each need 4
@@ -971,7 +1556,11 @@ ZUM_POOL       EQU F1ECh   ; ZUM_SLOT_SIZE*ZUM_SLOT_COUNT = 14 bytes
 ; from here through BANKSWITCH_TRAMPOLINE_RAM shifted +2 bytes to
 ; actually clear ZUM_POOL's real 16-byte span.
 ZUM_SPRITE_ATTRS EQU F1FCh ; 8 bytes: Y,X,pat,col x2 - same staging-buffer pattern as ENEMY_SPRITE_ATTRS
-ZUM_SPAWN_TIMER  EQU F204h
+; round34: was ZUM_SPAWN_TIMER (random-interval countdown, now removed -
+; "ランダムスポーンは廃止"). Repurposed as S2_SPAWN_VARIANT (0=green/
+; 1=red), staged by SPAWN_S2_ZACOII/SPAWN_S2_ZACOII_RED just before
+; calling the shared ALLOC_ENEMY_SLOT - see S2_SPAWN_Y's own comment.
+S2_SPAWN_VARIANT  EQU F204h
 ; "乗っかりから降りる時の速度が速すぎてワープにみえる" - set by
 ; UPDATE_TANK_ZUM_STAND (1 if it actually clamped TANK_Y_CUR against a
 ; Zum this call, else 0); read by UPDATE_JUMP the following frame to
@@ -1002,16 +1591,18 @@ ZUM_SPAWNX EQU 240          ; off the right edge, same "fully offscreen at 16px"
 ; UOZ_TERRAIN_FOLLOW's own per-frame probe - "初期スポーン位置がおかし
 ; いか Zumの下がRockまたはRock225をチェックしてないってこと" traced to
 ; ZUM_SPAWN_COL being hand-typed as 30 while the runtime probe actually
-; used (Z_X+8)>>3 = 31 at X=240 - the spawn gate was checking one column
-; to the *left* of where Zum actually stands the instant it spawns, so
-; ZUM_TERRAIN_OK's "flat ground" check didn't match what UOZ_TERRAIN_
-; FOLLOW immediately probed for real. Named here and reused by both so
-; they can't drift apart again.
+; used (Z_X+8)>>3 = 31 at X=240 - the OLD spawn-time flat-ground gate
+; (ZUM_TERRAIN_OK, removed in round35 - "地形も仮実装だから平地条件
+; いらない" - terrain movement following itself is unaffected) was
+; checking one column to the *left* of where Zum actually stands the
+; instant it spawns, so it didn't match what UOZ_TERRAIN_FOLLOW
+; immediately probed for real. ZUM_SPAWN_COL is still shared with UOZ_
+; TERRAIN_FOLLOW's own per-frame probe below, so they can't drift apart
+; again even with the spawn-time gate itself gone.
 ZUM_PROBE_DX EQU 8
 ; the column Zum's own horizontal center lands on at spawn - derived,
 ; not hand-typed, so it always matches UOZ_TERRAIN_FOLLOW's own probe.
 ZUM_SPAWN_COL EQU ZUM_SPAWNX+ZUM_PROBE_DX/8
-ZUM_SPAWN_INTERVAL EQU 90   ; same untuned-but-reasonable value as ENEMY_SPAWN_INTERVAL
 ; "Zumの加速は必要だぞ その前提で考えてるんだから ただロジック的に
 ; 両立出来ないんで 出現時速度３で右から出てきたら 80pxで自機を検知
 ; して速度1にサイン減速 減速終了で速度3までサイン加速して自機に突っ
@@ -1159,9 +1750,11 @@ ZUM_PUSH_SPEED EQU 6
 ; は自機より高く32ｐｘ サインジャンプ 自機に設置したら連続ジャンプで
 ; 飛び越え 自機の後ろを取って地上に降りたら後ろからパンチ なので添付
 ; のデータは反転も生成 攻撃判定も同じで後ろしか当たらない 耐久5" -
-; same spawn gating as Zum (ENEMY_SPAWN_COUNT>=10, flat-ground probe at
-; its own spawn column, free-slot check - see BIGZUM_TERRAIN_OK/
-; ALLOC_BIGZUM_SLOT) and the same approach/decel/pause shape (reuses
+; same spawn gating as Zum (originally ENEMY_SPAWN_COUNT>=10 plus a
+; flat-ground probe at its own spawn column, both long since removed -
+; see ALLOC_BIGZUM_SLOT's own comment for the current, schedule-driven
+; gating: a free slot, nothing else) and the same approach/decel/pause
+; shape (reuses
 ; ZUM_DETECT_RANGE/ZUM_MID_RANGE/ZUM_SPEED_BASE/ZUM_ACCEL_TABLE/
 ; ZUM_DECEL_TABLE/ZUM_PAUSE_FRAMES outright - "アルゴリズムもほぼ同じ"
 ; means literally reusing those tables/constants, not re-deriving new
@@ -1198,12 +1791,13 @@ ZUM_PUSH_SPEED EQU 6
 ; comment for the full history) and only actually destroys it once that
 ; reaches 0.
 ; grew 12->13 for +12 FLASH_TIMER (hit-flash countdown - see FLASH_
-; DURATION's own comment) - still fits inside the original 24-byte
-; (BIGZUM_SLOT_SIZE(12, old)*BIGZUM_SLOT_COUNT(2, old)) RAM reservation
-; even at 13 bytes/slot, since only 1 slot is ever actually used now
-; (BIGZUM_SLOT_COUNT=1 below) - no address renumbering of anything
-; downstream of BIGZUM_POOL needed.
-BIGZUM_SLOT_SIZE  EQU 13   ; +0 ACT,+1 X,+2 Y,+3 TIMER(explosion/pause countdown/punch-pose-frames - all mutually exclusive across states),+4 SPRIDX,+5/+6 DX/DY(explosion drift while ACT=2; +6 doubles as the shake-off stand-timer while ACT=1 - see BIGZUM_SHAKE_STAND_FRAMES),+7 STATE(0=approach,3=pause,1=jump,2=punch),+8 HP,+9 FACING(0=normal facing left,1=flipped facing right),+10 JUMPFRAME,+11 PUNCH_COOLDOWN(STATE=2)/shake-off-jump marker(STATE=1),+12 FLASH_TIMER
+; DURATION's own comment), then 13->15 (round35) for +13/+14 OWN_
+; RETREAT_TICK (see BIGZUM_ENGAGEMENT_DURATION's own comment) - still
+; fits inside the original 24-byte (BIGZUM_SLOT_SIZE(12, old)*BIGZUM_
+; SLOT_COUNT(2, old)) RAM reservation even at 15 bytes/slot, since only
+; 1 slot is ever actually used now (BIGZUM_SLOT_COUNT=1 below) - no
+; address renumbering of anything downstream of BIGZUM_POOL needed.
+BIGZUM_SLOT_SIZE  EQU 15   ; +0 ACT,+1 X,+2 Y,+3 TIMER(explosion/pause countdown/punch-pose-frames - all mutually exclusive across states),+4 SPRIDX,+5/+6 DX/DY(explosion drift while ACT=2; +6 doubles as the shake-off stand-timer while ACT=1 - see BIGZUM_SHAKE_STAND_FRAMES),+7 STATE(0=approach,3=pause,1=jump,2=punch),+8 HP,+9 FACING(0=normal facing left,1=flipped facing right),+10 JUMPFRAME,+11 PUNCH_COOLDOWN(STATE=2)/shake-off-jump marker(STATE=1),+12 FLASH_TIMER,+13/+14 OWN_RETREAT_TICK(16-bit, this instance's own forced-retreat GAME_TICK, computed once at spawn - see BIGZUM_ENGAGEMENT_DURATION's own comment)
 ; "BigZumは１体のみ 横並びあるから" - was 2 (mistakenly assumed to
 ; match Zum's own concurrent limit just because "スポーン条件は同じ" -
 ; corrected: BigZum's own side-by-side limit is 1, distinct from
@@ -1212,7 +1806,12 @@ BIGZUM_SLOT_SIZE  EQU 13   ; +0 ACT,+1 X,+2 Y,+3 TIMER(explosion/pause countdown
 ; never gets written/flushed once only 1 slot is ever iterated.
 BIGZUM_SLOT_COUNT EQU 1
 BIGZUM_POOL       EQU 0F207h  ; BIGZUM_SLOT_SIZE*BIGZUM_SLOT_COUNT = 24 bytes reserved (only the first 12 actually used now - see BIGZUM_SLOT_COUNT)
-BIGZUM_SPAWN_TIMER EQU 0F21Fh
+; round34: was BIGZUM_SPAWN_TIMER (random-interval countdown, now
+; removed). round34-2 briefly repurposed 0F21Fh as SPAWN2_STALL_COUNT
+; for a retry-with-timeout spawn design; round34-3 replaced that design
+; entirely with Stage1's own unconditional-advance/drop-on-failure
+; SSC_FIRE model (see SPAWN2_SCHEDULE_CHECK's own comment), so this
+; byte is unused again - left unclaimed rather than repurposed further.
 ; staging buffer for BIGZUM_SLOT_COUNT*4 hw sprite slots (4 per
 ; instance - a 32x32 BigZum is 2x2 of 16x16 hw sprites, same quadrant
 ; convention as the tank's own SPRITE_ATTRS/UPDATE_TANK_SPRITES, just
@@ -1220,7 +1819,14 @@ BIGZUM_SPAWN_TIMER EQU 0F21Fh
 BIGZUM_SPRITE_ATTRS EQU 0F220h   ; BIGZUM_SLOT_COUNT*16 = 32 bytes: (Y,X,pat,col)x4 per instance
 BIGZUM_DRAW_TEMP  EQU 0F240h     ; scratch byte, UOBZ_DRAW's own chosen pattern base
 BIGZUM_DRAW_COLOR EQU 0F241h     ; scratch byte, UOBZ_DRAW's own resolved color (BIGZUM_COLOR or FLASH_COLOR) - still well under the real 0F380h BIOS-work-area boundary (see STACKTOP's own comment)
-BIGZUM_SPR_BASE_SLOT EQU 12      ; hw sprite slots12-19 (2 instances x4), right after Zum's own 10-11
+; hw sprite slots12-19 reserved for 2 instances x4 (right after Zum's
+; own 10-11), but BIGZUM_SLOT_COUNT=1 means FLUSH_BIGZUM_SPRITES only
+; ever actually writes 12-15 - slots16-19 were genuinely dead space.
+; round35 ("FlyerのスロットをC2に"): FLYER_SPR_BASE_SLOT now claims
+; 16-19 as its own 2nd instance's hw slots (see its own comment) -
+; if BIGZUM_SLOT_COUNT is ever raised back to 2, THIS is the collision
+; to check first, not just "shrunk to save space".
+BIGZUM_SPR_BASE_SLOT EQU 12      ; hw sprite slots12-15 actually used (12-19 nominally reserved, but 16-19 now belongs to Flyer - see FLYER_SPR_BASE_SLOT's own comment)
 ; PAT_BIGZUM/PAT_BIGZUMP/_L (bigzum_gen.py) - BASE_OFFSET=156 there,
 ; right after Zum's own PAT_ZUM_FLIP(152-155); 2 poses x2 facings x4
 ; quadrant-groups x4 sub-patterns = 64 total codes, 156-219.
@@ -1276,9 +1882,11 @@ BIGZUM_COLLISION_SIZE   EQU 24   ; width
 BIGZUM_COLLISION_HEIGHT EQU 16   ; height - "コリジョンを24x16に"
 BIGZUM_COLLISION_Y_OFFSET EQU 32-BIGZUM_COLLISION_HEIGHT
 BIGZUM_SPAWNX     EQU ZUM_SPAWNX          ; same off-right-edge spawn X as Zum - "スポーン条件は同じ"
-BIGZUM_PROBE_DX   EQU 16                  ; horizontal-center probe offset for a 32px-wide sprite (vs Zum's 8, for its 16px width)
-BIGZUM_SPAWN_COL  EQU BIGZUM_SPAWNX+BIGZUM_PROBE_DX/8
-BIGZUM_SPAWN_INTERVAL EQU ZUM_SPAWN_INTERVAL
+BIGZUM_PROBE_DX   EQU 16                  ; horizontal-center probe offset for a 32px-wide sprite (vs Zum's 8, for its 16px width) - still used by UOBZ_TERRAIN_FOLLOW's own per-frame probe
+; round35: BIGZUM_SPAWN_COL (BIGZUM_SPAWNX+BIGZUM_PROBE_DX/8) removed -
+; it only ever fed BIGZUM_TERRAIN_OK, itself removed the same round
+; ("地形も仮実装だから平地条件いらない"). Unlike ZUM_SPAWN_COL, nothing
+; else referenced it.
 BIGZUM_HP_INIT    EQU 5    ; "合わせてBigZum耐久値5に変更" (was 8, briefly; 5 before that)
 ; jump arc: same half-sine construction as the tank's own JUMP_OFFSET_
 ; TABLE (round(H*sin(pi*t/32)) for t=0..32), just H=32 instead of 24 -
@@ -1365,9 +1973,10 @@ BIGZUM_SHAKE_STAND_FRAMES EQU 60
 ; once) that kept surfacing new real-hardware-only bugs faster than
 ; they could be pinned down - "1つずつ実装し直す". At the time this
 ; block was written, Etank did not exist yet - deliberately skipped
-; that round ("3をスキップ") - only Flyer, singleton (FLYER_SLOT_COUNT=
-; 1) and with its own dedicated permanent pattern allocation (no VRAM-
-; sharing scheme, unlike Etank's own dynamic BigZum-pattern-sharing).
+; that round ("3をスキップ") - only Flyer, singleton at the time
+; (FLYER_SLOT_COUNT=1, since grown to 2 - see its own comment) and with
+; its own dedicated permanent pattern allocation (no VRAM-sharing
+; scheme, unlike Etank's own dynamic BigZum-pattern-sharing).
 ; Etank has since been reimplemented (see ETANK_SLOT_SIZE below), and
 ; BigZum itself restored after a diagnostic removal (see the BigZum
 ; entry above) once the real bug turned out to be unrelated to it.
@@ -1400,41 +2009,80 @@ BIGZUM_SHAKE_STAND_FRAMES EQU 60
 ; (exit): straight right only, ignoring the tank entirely, until off
 ; the right edge, then despawns.
 FLYER_SLOT_SIZE  EQU 11  ; +0 ACT,+1 X,+2 Y,+3 TIMER(explosion),+4 SPRIDX,+5 DX(explosion drift)/+6 DY(explosion drift while ACT=2, locked vertical homing step while ACT=1),+7 HP,+8 PHASE(0=cruise,1=home,2=exit),+9 FACING(0=left-facing,1=right-facing/flipped),+10 FLASH_TIMER
-FLYER_SLOT_COUNT EQU 1
-; strictly below the real 0F380h MSX BIOS-work-area boundary (see
-; STACKTOP's own comment - this exact mistake caused a real-hardware
-; freeze last round).
-FLYER_POOL         EQU F242h  ; FLYER_SLOT_SIZE*FLYER_SLOT_COUNT = 11 bytes
-FLYER_SPRITE_ATTRS EQU F24Dh  ; FLYER_SLOT_COUNT*16 = 16 bytes: (Y,X,pat,col)x4
-FLYER_SPAWN_TIMER  EQU F25Dh
-FLYER_DRAW_TEMP  EQU F25Eh    ; scratch byte, UOFL_DRAW's own chosen pattern base
-FLYER_DRAW_COLOR EQU F25Fh    ; scratch byte, UOFL_DRAW's own resolved color (FLYER_COLOR or FLASH_COLOR)
-; ends at F25Dh - well clear of the 0F380h boundary.
-FLYER_SPR_BASE_SLOT EQU 20     ; hw sprite slots20-23 (1 instance x4), right after BigZum's own 12-19
+; round35 ("FlyerのスロットをC2に" - direct instruction, found while
+; investigating "全然スケジュールに従ってない"): was 1, now 2 - lets 2
+; Flyer instances be alive at once, same shape as Zum's own
+; FLYER_SLOT_COUNT-style pool. This means FLYER_POOL/FLYER_SPRITE_ATTRS
+; grow past their old single-instance size.
+FLYER_SLOT_COUNT EQU 2
+; round35: relocated off the tightly-packed F2xxh block entirely rather
+; than growing in place (which would have forced renumbering every
+; symbol after it, all the way down through BOSS_EXPL_*/STACKTOP's own
+; safety margin) - same "reuse the otherwise-completely-unused
+; C000h-EEFFh region" idiom SBEAM_SPRITE_ATTRS's own comment already
+; established, placed right after that block (C000h-C057h) so nothing
+; else needs to move. The old F242h-F25Dh addresses are simply retired,
+; not reused by anything.
+FLYER_POOL         EQU 0C058h  ; FLYER_SLOT_SIZE*FLYER_SLOT_COUNT = 22 bytes (C058h-C06Dh)
+FLYER_SPRITE_ATTRS EQU 0C06Eh  ; FLYER_SLOT_COUNT*16 = 32 bytes: (Y,X,pat,col)x4 per instance (C06Eh-C08Dh)
+; round36-11 ("ローテーションさせる"): each F-type bullet slot needs to
+; remember which of the 3 pattern variants it was drawn with, so a
+; frame that redraws it later (UPDATE_ONE_BULLET) picks the same code
+; instead of whatever the rotation counter has advanced to since spawn.
+; The 7-byte-per-slot BULLET0/1/2_ACT struct (BULLET0_ACT=F150h,
+; BULLET1_ACT=F157h - zero slack, BULLET_TEMP_BYTE sits immediately
+; after at F165h) has no room to grow without renumbering the whole
+; tightly-packed F1xxh RAM map that follows it, so this lives here in
+; the same C000h+ free region FLYER_POOL/FLYER_SPRITE_ATTRS already
+; established as the place to put new state instead - 3 standalone
+; bytes, looked up by GET_BULLET_VARIANT/SET_BULLET_VARIANT comparing
+; IX against BULLET0_ACT/1/2_ACT (see their own comments) rather than
+; IX-relative addressing into the struct itself.
+BULLET0_VARIANT EQU 0C08Eh
+BULLET1_VARIANT EQU 0C08Fh
+BULLET2_VARIANT EQU 0C090h
+; independent rotation counters (0-2, wrapping) for F-type and U-type
+; shots - "1発目水平撃ちBulletFU、2発目FM、3発目FL...斜めも同様に" reads
+; as each shot TYPE cycling on its own, not a single counter shared
+; between them.
+BULLETF_ROT_COUNTER EQU 0C091h
+BULLETU_ROT_COUNTER EQU 0C092h
+; round34: FLYER_SPAWN_TIMER(F25Dh, the old pre-relocation address)
+; removed - random-interval spawning is gone. round35: FLYER_POOL/
+; FLYER_SPRITE_ATTRS moved away entirely (see their own comment above),
+; so this whole F242h-F25Dh range is now unclaimed, not just this byte.
+FLYER_DRAW_TEMP  EQU F25Eh    ; scratch byte, UOFL_DRAW's own chosen pattern base - stays put, shared scratch reused across both instances in the draw loop, doesn't need to scale with FLYER_SLOT_COUNT
+FLYER_DRAW_COLOR EQU F25Fh    ; scratch byte, UOFL_DRAW's own resolved color (FLYER_COLOR or FLASH_COLOR) - same, stays put
+; FLYER_DRAW_TEMP/_COLOR end at F25Fh - well clear of the 0F380h
+; boundary (FLYER_POOL/FLYER_SPRITE_ATTRS themselves live at C000h+
+; now, see their own comment).
+; round35: was 20 (hw sprite slots20-23, 1 instance x4). Growing to
+; FLYER_SLOT_COUNT=2 needs 8 contiguous hw slots - extending past 23
+; into 24-27 would collide with Etank's own 24-25, and past 25 would
+; eat into SBEAM_SLOT_COUNT's own hard-reserved 26-31 (see its own
+; comment: "the only 6 hw sprite slots in the whole file that are NEVER
+; claimed by ANY entity at all" - SBeam's line algorithm genuinely needs
+; all of them during the boss fight). Moved to 16 instead, reusing
+; BigZum's own reserved-but-never-actually-flushed 16-19 (see BIGZUM_
+; SPR_BASE_SLOT's own comment) - this keeps the boss's own 16-quadrant
+; reuse block (BOSS_SPR_BASE_SLOT(10)..+15, i.e. hw slots10-25) exactly
+; intact: Zum(2)+BigZum(4 actual)+Flyer(8)+Etank(2)=16, still summing to
+; the same 16 slots 10-25, still all guaranteed empty at boss spawn
+; (boss_vram_safety_test.py) - and leaves Etank untouched at 24-25 and
+; SBeam's own 26-31 untouched too.
+FLYER_SPR_BASE_SLOT EQU 16     ; hw sprite slots16-23 (2 instances x4) - slots16-19 reused from BigZum's own idle reserve, 20-23 unchanged from before
 FLYER_COLOR EQU 7              ; cyan - sprites/Flyer.json's own fg
-FLYER_SPAWN_INTERVAL EQU ZUM_SPAWN_INTERVAL  ; same untuned-but-reasonable value as everything else's own spawn interval - not itself specified
 FLYER_SPAWNX   EQU 240
-; "Flyerのスポーン位置はランダムで指示してたはずだが固定されてしまって
-; る 画面上部8pxからSandsky上部までのランダムで" - was a fixed FLYER_
-; CRUISE_Y(64) constant; now a real per-spawn random pick (see
-; PICK_FLYER_SPAWN_Y below), matching HORMING_WANDER's own established
-; GAME_RNG idiom (read-only, XOR TICK + the slot's own address, masked
-; and folded - HORMING_WANDER_WIDTH's own round4/5 fixes for why a plain
-; "read GAME_RNG and INC it" reads as fixed/correlated).
-; Round-2 fix (verbatim): "Flyerの出現位置がSandskyに被ってる場合がある
-; ランダム範囲を16px狭く 帰還時もSandskyに被らないように" - the range's
-; own top-left-Y upper bound (128, SkySand's own top row pixel) let the
-; sprite's real 32x32 BODY reach well past SkySand at low rolls; span
-; shrunk by 16 (121->105) per the user's own explicit number, new max
-; top-left Y = 8+105-1=112. "帰還時" (the exit phase, PHASE=2) never
-; itself moves Y (see UOFL_EXIT_MOVE) - it only ever shows whatever Y the
-; spawn or the home/pursuit phase last left it at, and the pursuit's own
-; ascending ceiling (TANK_Y_CUR-FLYER_CLEAR_Y, TANK_Y_CUR never below
-; ~132 even at the jump's own peak) sits well under 112 already - so this
-; one range fix covers both spawn AND exit, no separate exit-side clamp
-; needed.
-FLYER_SPAWN_Y_MIN  EQU 8
-FLYER_SPAWN_Y_SPAN EQU 105
+; round34 ("ランダムスポーンは廃止 全てスケジュールに"): Flyer's own Y
+; used to be picked per-spawn via PICK_FLYER_SPAWN_Y (a real random roll
+; in [FLYER_SPAWN_Y_MIN, FLYER_SPAWN_Y_MIN+FLYER_SPAWN_Y_SPAN) - itself
+; a real bugfix earlier in this project's own history for a Y that had
+; gone fixed/stuck, see git log for that whole saga). Now it comes
+; straight from the schedule's own row (S2_SPAWN_Y, row*8) like every
+; other free-Y type - PICK_FLYER_SPAWN_Y and its own FLYER_SPAWN_Y_MIN/
+; SPAN range constants are gone; the sky/SkySand-clearance concerns
+; those constants existed for are the schedule author's own
+; responsibility now, same as ZacoII's own row.
 FLYER_SPEED    EQU 2    ; px/frame, both cruise and homing legs - "速度は2"
 FLYER_VY       EQU 1    ; px/frame vertical homing step, locked at reversal - untuned/inferred, no vertical speed was specified
 FLYER_CLEAR_Y  EQU 32   ; px vertical clearance from the tank before switching to exit - untuned/inferred, matches both sprites' own 32px height ("自機に被らない" read as "no longer overlapping" in that sense)
@@ -1465,14 +2113,17 @@ FLYER_COLLISION_SIZE EQU 32  ; full 32x32 canvas - no shrink specified
 ; Unlike Zum, Etank never follows terrain elevation at all: its own Y
 ; is set once at spawn (from TANK_TIER_Y_TABLE's own index0, the
 ; apex/highest tier) and never re-probed - straight horizontal line,
-; "坂の昇降はしない". Since it can't correct for a height change
-; mid-crossing, it only ever spawns while the apex tier is the CURRENT
-; surface (ETANK_TERRAIN_OK, checking IDCACHE_T0) - and that surface
-; has to stay the apex tier for the enemy's entire on-screen lifetime,
-; not just at the spawn instant, which is why terrain_gen.py's own
-; build_track() now carries a dedicated 150-tile-plus flat run at that
-; tier (ETANK_APEX_FLAT_RUN, see its own comment there) instead of the
-; ordinary 24-tile FLAT_RUN every other flat stretch uses.
+; "坂の昇降はしない". Originally it only ever spawned while the apex
+; tier was the CURRENT surface (ETANK_TERRAIN_OK, checking IDCACHE_T0) -
+; round35 removed that gate entirely ("地形も仮実装だから平地条件いらな
+; い", the terrain system itself being just a placeholder), so Etank can
+; now spawn regardless of what tier is actually current, and may
+; visually sit above/below the real (placeholder) ground for its whole
+; crossing if the apex tier isn't actually underneath it - accepted per
+; explicit instruction. terrain_gen.py's own dedicated 150-tile-plus
+; flat run at the apex tier (ETANK_APEX_FLAT_RUN, see its own comment
+; there) predates this and is no longer load-bearing for Etank's own
+; spawn gating, just still there as extra flat track.
 ;
 ; Collision is 24(W)x16(H), anchored at the bottom-left of the 32x32
 ; canvas ("キャラ位置は32x32の内左下24x16" - the raw art itself only
@@ -1496,11 +2147,19 @@ FLYER_COLLISION_SIZE EQU 32  ; full 32x32 canvas - no shrink specified
 ; Etank goes back to its ORIGINAL design: dynamically sharing BigZum's
 ; own PAT_BIGZUM BL/BR pattern-VRAM groups at spawn time (ALLOC_ETANK_
 ; SLOT), restored whenever BigZum itself next spawns (ALLOC_BIGZUM_
-; SLOT's own reload) - safe ONLY because the 2 are spawn-gated
-; bidirectionally exclusive (both ALLOC routines check the other's
-; pool - "EtankとBigZumは同時には存在しない", every enemy's own
-; registration must always go through its real spawn gate, no
-; exceptions).
+; SLOT's own reload). At the time this was written, that sharing was
+; safe ONLY because the 2 were spawn-gated bidirectionally exclusive
+; (both ALLOC routines checked the other's pool - "EtankとBigZumは同時
+; には存在しない"). **This is no longer true** - round34-2 ("排他制御
+; は削除") removed that mutual check per explicit instruction, and
+; round34-3 confirmed neither ALLOC_BIGZUM_SLOT nor ALLOC_ETANK_SLOT
+; references the other's pool any more. A BigZum and an Etank CAN be
+; alive at the same time now; if that ever visibly corrupts either
+; one's BL/BR quadrant art, the real fix is giving Etank its own
+; dedicated pattern codes instead of borrowing BigZum's, not re-adding
+; a hardcoded exclusion - pacing/spacing between them is the schedule
+; editor's own job now, not this file's ("排他制御はあくまで仮実装の
+; 仕様 これはエディットでコントロールするんで要らない").
 ;
 ; HP10 ("耐久値10"), omnidirectional bullet damage (no front/rear
 ; invulnerability rule like Zum - nothing about facing/direction was
@@ -1515,7 +2174,8 @@ ETANK_SLOT_COUNT EQU 1
 ; STACKTOP's own comment).
 ETANK_POOL         EQU F260h  ; ETANK_SLOT_SIZE*ETANK_SLOT_COUNT = 8 bytes
 ETANK_SPRITE_ATTRS EQU F268h  ; ETANK_SLOT_COUNT*8 = 8 bytes: (Y,X,pat,col)x2 - BL/BR only, TL/TR always hidden
-ETANK_SPAWN_TIMER  EQU F270h
+; round34: ETANK_SPAWN_TIMER(F270h) removed - random-interval spawning
+; is gone, this byte is simply unused now.
 ; ASCII16 bank-switch RAM trampoline (see INIT's own comment) - 4 bytes
 ; ("LD (DE),A"=3, "JP (HL)"=1), same real-hardware-confirmed idea as
 ; bankswitch_poc's own F100h (SPRITE_ATTRS already owns that address
@@ -1576,6 +2236,136 @@ HORMING_POOL EQU F2C2h   ; 4 slots x7 bytes = 28 bytes
 HORMING_SPRITE_ATTRS EQU F2DEh   ; 4 slots x4 bytes (Y,X,pattern,color), staged same as ENEMY_SPRITE_ATTRS
 HORMING_VOLLEY_COUNT EQU F2EEh   ; how many of this pose's 4 have launched so far - see UPDATE_HORMING_VOLLEY
 HORMING_VOLLEY_TIMER EQU F2EFh   ; raw frames remaining until the next intermittent launch
+; round36-12 ("ホーミングは弾数を増やす 今はスプライトのみだがBGも合わ
+; せて使用する 4発追加"): a SECOND, parallel 4-instance pool, BG-cell
+; drawn instead of hw-sprite - not just "4 more of the same". Both hw
+; sprite pattern-code budget (PAT_HORMING_SL's own comment: reuses
+; Flyer's whole 32-code block, only 12 codes spare - not enough for a
+; 2nd full 5-facing set) AND hw sprite ATTRIBUTE slot budget (all 32
+; already accounted for during the boss fight: body16+SBeam's own hard
+; 26-31+tank/enemy-pool/bullet/current-Horming's shared 0-9 - confirmed
+; zero free slots) were audited and found fully exhausted - see
+; HANDOFF.md round36-12 for the numbers. This directly contradicts
+; horming_gen.py's own documented history ("BGでは...動きがガタガタで
+; 速すぎるんだよ スプライト必須" - BG was tried once, rejected, redone
+; as sprites) - confirmed directly with the user this round that the
+; NEW 4 should go BG anyway, given sprite capacity is genuinely gone;
+; the ORIGINAL 4 (HORMING_POOL/HORMING_SLOT_COUNT above) are completely
+; untouched, still hw-sprite, still smooth. Same 7-byte struct layout
+; as HORMING_POOL (UPDATE_ONE_HORMING itself is fully generic over IX,
+; reused as-is for both pools) but a SEPARATE array, not a grown
+; HORMING_POOL - the F2xxh region above is packed with zero slack
+; (HORMING_VOLLEY_TIMER sits immediately after with nothing spare), so
+; this lives in the C000h+ free region instead, same precedent as
+; round35's own FLYER_POOL relocation and round36-11's own BULLET0/1/2_
+; VARIANT bytes.
+HORMING_BG_SLOT_COUNT EQU 4
+HORMING_BG_SLOT_SIZE  EQU 7   ; same field layout as HORMING_SLOT_SIZE
+HORMING_BG_POOL EQU 0C093h   ; 4 slots x7 bytes = 28 bytes (C093h-C0AEh)
+; "4発追加" doubles the total launched per pose/volley from 4 to 8 - one
+; missile into EACH pool (sprite+BG) per intermittent tick (round36-13,
+; see UPDATE_HORMING_VOLLEY's own comment for why simultaneous, not
+; sequential blocks) - 4 ticks x2 missiles = 8 total, same
+; HORMING_VOLLEY_INTERVAL cadence as before.
+; round36-14 Part C: boss form-change state - see BOSS_FORM's own EQU
+; comment. Lives here (C000h+) rather than the dedicated F314h-F320h
+; boss-explosion RAM block since that block is already sized to leave
+; exactly STACK_SAFETY_MARGIN below STACKTOP with nothing spare (see its
+; own comment) - same "pick the C000h+ free region instead of squeezing
+; the packed F2xx/F3xx block" precedent as HORMING_BG_POOL itself.
+BOSS_FORM EQU 0C0AFh
+; which sequence armed the shared SPARK sub-state machine (BOSS_EXPL_
+; STATE/_TIMER/_SLOTn) - 0=a real death (INIT_BOSS_EXPLOSION, chains into
+; GROW once the burst ends), 1=this round's HP<=200 transition
+; (TRIGGER_BOSS_BROKEN_FORM, chains into REVEAL_BOSS_BROKEN_FORM instead
+; - see UBS_LAST_FRAME). The two can never run concurrently (one is only
+; ever armed while BOSS_ACT=2, the other only while BOSS_ACT=1), so
+; sharing the same SPARK state bytes for both is safe.
+BOSS_EXPL_REASON EQU 0C0B0h
+BOSS_BROKEN_SPRITE_ATTRS EQU 0C0B1h   ; 4 quadrants x4 bytes (Y,X,pat,col) = 16 bytes (C0B1h-C0C0h), same staging-then-flush shape as BOSS_SPRITE_ATTRS
+BOSS_BROKEN_DIR EQU 0C0C3h            ; last-loaded facing (0=SASAPI_BROKEN_QUADS,1=_L, same convention as BOSS_DIR) - reload the 128-byte pattern only when this actually changes, same "reload on change only" idiom as LOAD_SASAPI_PATTERNS itself. 0FFh sentinel forces the very first UPDATE_BOSS_BROKEN_ACTIVE frame to load regardless.
+BOSS_BROKEN_MOVING EQU 0C0C4h         ; 0=stopped(frozen at the current path point),1=drifting - see UPDATE_BOSS_BROKEN_ACTIVE
+BOSS_BROKEN_PATH_INDEX EQU 0C0C5h     ; 0..BOSS_BROKEN_PATH_LEN-1, only advances while MOVING - position/facing are always re-derived from this same index, so a stop-then-resume continues from exactly where it left off rather than jumping
+BOSS_BROKEN_FRAME_COUNTER EQU 0C0C6h  ; 0..BOSS_BROKEN_PATH_HOLD_FRAMES-1, counts raw frames between path-index steps while MOVING
+; round36-14 follow-up #2 ("インフィニティ軌道はその位置から始まるが一旦
+; 中央に寄せろ センタリングするかたちで 今だと端で倒すと画面半分の狭い
+; 起動で動いてしまってる") - round36-14 follow-up #1 had the figure-8
+; loop orbit around wherever the boss actually died (clamped so it never
+; left the screen), which is exactly what produced this complaint: dying
+; near an edge clamped the loop's own center near that edge too, so the
+; visible loop was lopsided/cramped against the edge instead of using the
+; screen's own full width. Fixed by splitting into 2 sub-phases instead:
+; 1) RECENTERING - the body appears exactly where the old one died (still
+; correct - "その位置から始まる"), then walks toward a FIXED screen-
+; center point (BOSS_BROKEN_CENTER_X/Y, sasapi_gen.py) at BOSS_BROKEN_
+; RECENTER_SPEED px/frame ("一旦中央に寄せろ センタリングするかたちで").
+; 2) once arrived, the orbit itself resumes being ABSOLUTE, centered on
+; that same fixed point (BOSS_BROKEN_PATH_X/_Y, back to sasapi_gen.py's
+; original absolute-coordinate table shape, just with a fixed center
+; instead of one derived from wherever the boss happened to die) - always
+; the same full-amplitude loop regardless of death position, never
+; clamped/narrowed. BOSS_BROKEN_RECENTERING=1 selects sub-phase 1;
+; UPDATE_BOSS_BROKEN_ACTIVE clears it exactly once, at the moment BOSS_X/
+; BOSS_Y both reach the center exactly, and starts the orbit at BOSS_
+; BROKEN_PATH_CROSS_INDEX (the loop's own (0,0)-offset crossing point,
+; sasapi_gen.py) so there's no visual jump at the handoff. No more per-
+; death ORIGIN capture/clamp needed - see TRIGGER_BOSS_BROKEN_FORM's own
+; comment for why BOSS_X/BOSS_Y already hold the right starting point for
+; free, with nothing new to capture.
+BOSS_BROKEN_RECENTERING EQU 0C0C7h    ; 1=still walking toward BOSS_BROKEN_CENTER_X/Y, 0=orbiting
+BOSS_BROKEN_RECENTER_SPEED EQU 2      ; px/frame while recentering, same pace as the old body's own BOSS_SPEED
+; round36-14 follow-up #3 ("形態変化後に64x64のコリジョンのままになって
+; る 32x32になるよう修正") - CHECK_HIT_PAIR_BOSS's own AABB half-width
+; needs to shrink to match the real 32x32 broken body; see that routine's
+; own comment for how (a runtime-computed scratch byte, since the size is
+; now conditional on BOSS_FORM rather than a single compile-time EQU).
+CHPB_SIZE_SCRATCH EQU 0C0C8h
+; round36-14 follow-up #4 ("SasapiBrokenの停止はインフィニティ軌道の1周
+; に１回何処かで停止 で、停止中にビーム攻撃をする") - replaces the old
+; GAME_TICK-random-duration MOVING/STOPPED cycle (BOSS_BROKEN_PHASE_
+; END_TICK, removed) with a step-counted one: BOSS_BROKEN_STEPS_TO_STOP
+; decrements once per path-index advance while MOVING (not per raw
+; frame), so "stop once per lap" is tied directly to how far around the
+; loop the body has actually traveled, not wall-clock time - reaching 0
+; stops it and arms the 4-beam sequence below. Re-rolled (see ROLL_
+; BOSS_BROKEN_LAP_STEPS) once the sequence finishes and movement resumes.
+BOSS_BROKEN_STEPS_TO_STOP EQU 0C0C9h
+; the 4-beam sequence itself, per-frame timer/counter idiom copied
+; directly from UPDATE_HORMING_VOLLEY's own COUNT/TIMER pair (see ARM_
+; BOSS_BROKEN_BEAM_SEQ/UPDATE_BOSS_BROKEN_BEAM_SEQ). COUNT reaching 4
+; (all fired) plus one more TIMER-gated wait is what ends the stop and
+; resumes movement.
+BOSS_BROKEN_BEAM_COUNT EQU 0C0CAh
+BOSS_BROKEN_BEAM_TIMER EQU 0C0CBh
+; round36-14 follow-up#4 3rd real-hardware feedback ("ビームが飛んで
+; 来ないな...今はボスの上に表示されてるだけ それで何の攻撃になる 発射
+; して飛ばすんだよ"): the 2nd attempt (a single static hw sprite parked
+; next to the body, "繋げる必要はない" mis-read as "doesn't need to
+; move") never actually traveled - fixed by making each fired beam a
+; genuine moving projectile (see BOSS_BROKEN_PROJ_* below and LAUNCH_
+; BOSS_BROKEN_BEAM/UPDATE_BOSS_BROKEN_BEAM_FLIGHT), independent of the
+; other 3 once launched. BOSS_BROKEN_BEAM_POINT_COUNT (the old single-
+; slot "is a beam shown" flag) is gone, unused now that each of the 4
+; slots tracks its own BOSS_BROKEN_PROJ_ACTIVE.
+; 4 independent in-flight projectile slots (struct-of-arrays: index i
+; is beam-type i's own instance, 0-3) - up to all 4 can be flying at
+; once, since the firing SEQUENCE (1->4, BOSS_BROKEN_BEAM_INTERVAL
+; apart) no longer waits for the previous one to finish before firing
+; the next ("発射タイミングは今でいいが" - kept unchanged).
+BOSS_BROKEN_PROJ_ACTIVE EQU 0C0CCh   ; 0/1 x4 (C0CCh-C0CFh)
+BOSS_BROKEN_PROJ_X      EQU 0C0D0h   ; pixel X (top-left of the 16x16 sprite) x4 (C0D0h-C0D3h)
+BOSS_BROKEN_PROJ_Y      EQU 0C0D4h   ; pixel Y x4 (C0D4h-C0D7h)
+BOSS_BROKEN_PROJ_DX     EQU 0C0D8h   ; signed per-frame X velocity (px/frame) x4 (C0D8h-C0DBh)
+BOSS_BROKEN_PROJ_DY     EQU 0C0DCh   ; per-frame Y velocity (px/frame, always positive - all 4 beams point down) x4 (C0DCh-C0DFh)
+BOSS_BROKEN_PROJ_CODE   EQU 0C0E0h   ; this instance's own hw sprite pattern code x4 (C0E0h-C0E3h)
+; hw sprite staging buffer, 1 per in-flight slot (BOSS_BROKEN_BEAM_
+; SLOT_COUNT(4)*4 = 16 bytes) - same staging-then-flush shape as every
+; other hw sprite pool in this file.
+BOSS_BROKEN_BEAM_SPRITE_ATTRS EQU 0C0E4h
+; UPDATE_BOSS_BROKEN_BEAM_FLIGHT's own loop-index scratch (0-3) - always
+; re-read fresh before every PROJ_* array access rather than mutated in
+; a register across the whole routine, see that routine's own comment.
+UBBBF_SLOT EQU 0C0F4h
 ; Thunder's own state - a real POOL now (round9 fix: "いつからサンダー
 ; は1本しか出せない仕様に? そんな指示はしてねえぞ...BGを使ってるのは
 ; 表示制限がないからだろが" - BG has no hw-sprite-style display limit,
@@ -1629,6 +2419,113 @@ SBEAM_ROWS      EQU F310h   ; drop phase: how many vertical segments drawn so fa
 SBEAM_GROUND_Y  EQU F311h   ; drop phase target / sweep+retract's own fixed Y (pixel), computed once when the drop starts
 SBEAM_FRONT_COL EQU F312h   ; sweep/retract phase: the beam's own current leading-edge column (decreases while sweeping, increases while retracting)
 SBEAM_BLINK     EQU F313h   ; toggled every frame - "点滅で表示で 取り敢えず1フレ点滅で"
+
+; boss death/explosion sequence state - F314h-F320h (13 bytes), the free
+; gap right after SBEAM_BLINK, kept deliberately lean so the highest
+; byte used still leaves the STACK_SAFETY_MARGIN(0x60)
+; `tests/stack_safety_test.py` requires below STACKTOP(F380h).
+BOSS_EXPL_STATE   EQU F314h   ; BOSS_EXPL_STATE_GROW/_SHRINK/_FLASH/_DONE
+BOSS_EXPL_RADIUS  EQU F315h   ; current circle radius, cells (0=just the center cell .. BOSS_EXPL_MAXR)
+BOSS_EXPL_TIMER   EQU F316h   ; frames until the next radius step (grow/shrink) or the final-flash countdown
+BOSS_EXPL_CX      EQU F317h   ; center cell column, captured once at death (BOSS_X stops being meaningful once hidden)
+BOSS_EXPL_CY      EQU F318h   ; center cell row, captured once at death
+BOSS_EXPL_BLINK   EQU F319h   ; 0..BOSS_EXPL_BLINK_PERIOD-1 cycling counter, boss-sprite blink (grow) and final-cell blink (flash)
+BOSS_EXPL_ROWTMP  EQU F31Ah   ; BOSS_EXPL_APPLY_RING's own current cell's absolute row, unsigned-wraps if negative (caught by the same CP 24/JP NC clip as a real >=24 row)
+BOSS_EXPL_COLTMP  EQU F31Bh   ; same, current absolute column
+BOSS_EXPL_RING_MODE   EQU F31Ch   ; BOSS_EXPL_APPLY_RING's own mode: 0=draw white(GROW), 1=restore true background(SHRINK)
+BOSS_EXPL_RING_RADIUS EQU F31Dh   ; which radius's own ring table entry to walk (0-6)
+BOSS_EXPL_RING_REMAIN EQU F31Eh   ; cells left to process in the current ring walk
+BOSS_EXPL_RING_PTR    EQU F31Fh   ; 2 bytes - current read position in BOSS_EXPL_RING_DATA
+; round32 follow-up #2: SPARK's own 3 live-spark "slots" (row,col pairs,
+; one per BOSS_EXPL_SPARK_PER_FRAME spark) - remembers exactly where each
+; currently-live spark sits so UBE_SPARK can erase precisely those cells
+; next frame instead of sweeping the whole scatter box (see BOSS_EXPL_
+; ORIGIN_RANGE's own comment for why that matters at this box size).
+; Reuses the SAME GROW/SHRINK-only ring-walk bytes above (RADIUS/RING_
+; MODE/RING_RADIUS/RING_REMAIN/RING_PTR) - all genuinely idle throughout
+; SPARK (GROW hasn't started yet), and every one gets explicitly
+; re-initialized for its OWN GROW-phase meaning at the SPARK->GROW
+; handoff (see UBS_LAST_FRAME), strictly AFTER this phase is done reading
+; them as slot storage - no new persistent bytes needed for this either.
+; A row byte of 0FFh is the "nothing live yet" sentinel (valid rows are
+; 0-23) - set once by INIT_BOSS_EXPLOSION so the very first frame doesn't
+; try to erase stale/garbage data from a previous fight.
+BOSS_EXPL_SPARK_SLOT0_ROW EQU BOSS_EXPL_RADIUS
+BOSS_EXPL_SPARK_SLOT0_COL EQU BOSS_EXPL_RING_MODE
+BOSS_EXPL_SPARK_SLOT1_ROW EQU BOSS_EXPL_RING_RADIUS
+BOSS_EXPL_SPARK_SLOT1_COL EQU BOSS_EXPL_RING_REMAIN
+BOSS_EXPL_SPARK_SLOT2_ROW EQU BOSS_EXPL_RING_PTR
+BOSS_EXPL_SPARK_SLOT2_COL EQU BOSS_EXPL_RING_PTR+1
+
+; follow-up#22 ("ではワイプ処理はやめる 変わりに出現時の初期位置は今の
+; ままで 1フレームごとに左端、右端から交互に表示位置を変えながら中央
+; まで繰り返す 点滅しながら中央で実態化みたいな演出 その間5秒として
+; 中央への移動量を割り出してくれ その後初期位置までまた戻って攻撃に
+; 移る") - the transparent-sprite scanline-priority WIPE trick (follow-
+; up#18-#21, all comments/RAM/hw-sprite-slot usage below this point in
+; that lineage) is retired entirely. Replaced by a "materialize" entrance:
+; the boss's own real body (no dummy sprites needed at all - the 4
+; ENEMY/BULLET_U slots those used are fully free again) is redrawn every
+; single raw frame at ONE of two positions - a left-side X and a right-
+; side X, both converging toward BOSS_MATERIALIZE_CENTER_X - alternating
+; which one is shown each frame via TICK's own low bit (the same free-
+; running per-frame parity idiom SOUND_CALC_NOISE_GATE_VOLUME's duty
+; gate already uses), reading as a flicker that narrows in and settles
+; ("materializes") at center. BOSS_Y stays BOSS_SPAWN_Y throughout -
+; only X does this dance. Once centered, the boss glides back out to
+; BOSS_SPAWNX (the original spawn position, unchanged - "初期位置は今
+; のままで") at ordinary BOSS_SPEED, then hands off to normal UBA_ACTIVE
+; patrol ("攻撃に移る" - not literally the attack pose itself, just
+; resuming the same normal patrol->pose cycle every other entrance
+; scheme this fight has used ends up feeding into).
+BOSS_MATERIALIZE_CENTER_X EQU BOSS_SPAWNX/2   ; 96 - screen-centered X for
+                                               ; the 64px-wide body (BOSS_SPAWNX
+                                               ; is itself defined as screen_
+                                               ; width-body_width, so half of
+                                               ; it is exactly the centered X)
+BOSS_MATERIALIZE_AMP_START EQU BOSS_MATERIALIZE_CENTER_X   ; 96 - distance from
+                                               ; center to EITHER screen edge
+                                               ; (left edge is X=0), since the
+                                               ; left/right starting points are
+                                               ; the two screen edges themselves
+; "その間5秒として中央への移動量を割り出してくれ" - GAME_TICK is NOT a
+; raw-frame counter (see follow-up#21's own hard-learned lesson, still
+; true here): it only advances once every 8 raw frames. Rather than a
+; multiply/divide to hit exactly 300 raw frames (5.0s @ 60fps - this
+; project's own assumed rate), the offset steps down by a flat amount
+; once per GAME_TICK unit (cheap: no runtime multiply/divide needed at
+; all, just a 16-bit subtract already required for the GAME_TICK-vs-
+; BOSS_SPAWN_TICK compare below). 3px/tick * 32 ticks = 96px exactly
+; (AMP_START, zero remainder) - 32 ticks * 8 raw-frames/tick = 256 raw
+; frames = ~4.27s @ 60fps, the closest clean (zero-remainder) approx-
+; imation to "5秒として" reachable this way. The per-frame FLICKER
+; (which side is shown) still updates every single raw frame regardless
+; (see UPDATE_BOSS_MATERIALIZE) - only the convergence AMOUNT is
+; stepped once per GAME_TICK, not the alternation itself.
+BOSS_MATERIALIZE_STEP_PX EQU 3
+BOSS_MATERIALIZE_TICKS   EQU 32   ; AMP_START/STEP_PX, ~4.27s @ 60fps
+; sound retrigger cadence (see SOUND_BOSS_MATERIALIZE's own comment) -
+; this one genuinely is raw-frame-based (SOUND_UPDATE/TICK run at true
+; 60fps, unlike GAME_TICK), so no conversion needed here.
+BOSS_MATERIALIZE_SND_RETRIGGER EQU 96   ; raw frames (1.6s @ 60fps) between tolls
+; stack_safety_test.py's own tight margin below STACKTOP still means
+; there is NO genuinely free RAM left in this file - same idiom as
+; BOSS_EXPL_SPARK_SLOT0_ROW/the old BOSS_WIPE_ACT/Y above, these 2 bytes
+; alias BOSS_EXPL_CX/CY (the death/explosion sequence's own center-cell
+; coords) instead of claiming new addresses. follow-up#20's real-
+; hardware bug (SPARK/death legitimately touching these same 2 bytes
+; while the ENTRANCE effect was still using them, since a lucky/fast
+; kill can land at ANY point during BOSS_ACT=1 with no regard for
+; patrol/entrance state) is a real, structural risk for ANY entrance
+; effect reusing this alias, not specific to the old wipe design - so
+; the same 2-part fix carries forward unchanged: TRIGGER_BOSS_BROKEN_
+; FORM/INIT_BOSS_EXPLOSION both force-stop this effect (CALL STOP_BOSS_
+; MATERIALIZE) before touching BOSS_EXPL_CX/CY, AND UPDATE_BOSS_
+; MATERIALIZE itself gates on BOSS_FORM!=0 so it can never misread the
+; explosion sequence's own later legitimate writes as "still active".
+BOSS_MATERIALIZE_ACT     EQU BOSS_EXPL_CX   ; 0=inactive, 1=converging(flicker), 2=returning-to-spawn
+BOSS_MATERIALIZE_SND_CTR EQU BOSS_EXPL_CY   ; raw-frame countdown to the next toll retrigger (phase 1 only)
+
 ; staging buffer for SBEAM_SLOT_COUNT*4 hw sprite slots (4 bytes each:
 ; Y,X,pattern,color), same shape as HORMING_SPRITE_ATTRS - flushed via
 ; FLUSH_SBEAM_SPRITES.
@@ -1797,20 +2694,26 @@ THUNDER_TRIGGER_DX EQU 32
 ; full patrol that column2 truly was the minimum column ever allocated
 ; under the old single-threshold code.
 THUNDER_EDGE_TRIGGER_DX EQU 16
-ETANK_SPR_BASE_SLOT EQU 24     ; hw sprite slots24-25 (BL/BR only x1 instance), right after Flyer's own 20-23
+; round35: unchanged at 24 despite Flyer growing to 2 instances -
+; Flyer's new 2nd instance was placed at 16-19 (BigZum's own idle
+; reserve) specifically so it would NOT need to push into this range -
+; see FLYER_SPR_BASE_SLOT's own comment.
+ETANK_SPR_BASE_SLOT EQU 24     ; hw sprite slots24-25 (BL/BR only x1 instance)
 ; "カラーはダークレッド" - NOT sprites/Etank.json's own fg, overridden
 ; directly here (same "override the JSON's own fg" precedent as
 ; BULLET_U_COLOR/BULLET_SKY_COLORBYTE elsewhere in this file).
 ETANK_COLOR EQU 6
 ETANK_SPAWNX EQU 240           ; off the right edge, same convention as every other enemy's own spawn-X
-ETANK_PROBE_DX EQU 16          ; horizontal-center probe offset for a 32px-wide sprite
-ETANK_SPAWN_COL EQU ETANK_SPAWNX+ETANK_PROBE_DX/8
-ETANK_SPAWN_INTERVAL EQU ZUM_SPAWN_INTERVAL*2  ; "出現頻度高すぎるんで半分くらいに" - doubled cooldown, half the frequency
+; round35: ETANK_PROBE_DX/ETANK_SPAWN_COL removed - both only ever fed
+; ETANK_TERRAIN_OK, itself removed the same round ("地形も仮実装だから
+; 平地条件いらない"). Etank never re-probes terrain during movement
+; (straight horizontal line, no terrain-follow - see UPDATE_ONE_ETANK's
+; own comment), so nothing else referenced them.
 ETANK_SPEED EQU 2               ; px/frame, flat - "速度は2"
 ETANK_COLLISION_SIZE     EQU 24  ; width
 ETANK_COLLISION_HEIGHT   EQU 16  ; height - "キャラ位置は32x32の内左下24x16"
 ETANK_COLLISION_Y_OFFSET EQU 32-ETANK_COLLISION_HEIGHT  ; =16
-ETANK_HP_INIT EQU 8   ; "Etankの耐久値8" (was 10)
+ETANK_HP_INIT EQU 7   ; "Etankの耐久値-1" (was 10, then 8)
 ETANK_PUSH_SPEED EQU ZUM_PUSH_SPEED  ; "Zumと同じで接触で自機を押す" - same push mechanic/speed as Zum's own UPDATE_TANK_ZUM_PUSH
 ; "Etankの位置がおかしい また自機基準でオフセットしてねえだろうな
 ; 毎回同じミスしてる 自機だけジャンプの関係でやってるだけで特殊" - same
@@ -1835,6 +2738,217 @@ ETANK_Y_OFFSET EQU 4
 ; PAT_BIGZUM+2/+3 mistake this was originally corrected from.
 PAT_ETANK_BL EQU PAT_BIGZUM+8
 PAT_ETANK_BR EQU PAT_BIGZUM+12
+
+; ---------- EBullet (ZacoII/Flyer enemy bullet, hw sprite, 16-direction
+; aim) ---------- round36-14 follow-up#11 ("ザコ敵の弾発射実装 ZakoII2種
+; は反転時に添付データEBullet発射 コリジョンは左上4x4ドット 発射タイミ
+; ングの瞬間の自機を狙って直進 発射は16方向 Flyerは画面左端まで行き反転
+; 後発射"): fired once by ZacoII at the exact frame it turns back
+; (E_RETREAT 0->1, both green/red variants - see UPDATE_ONE_ENEMY) and
+; once by Flyer at the exact frame it reaches the left edge and reverses
+; into homing (PHASE 0->1 - see UPDATE_ONE_FLYER), aimed at the tank's
+; own position at that exact instant then flying dead straight (not
+; homing) until off-screen.
+;
+; This round's own first empirical hw sprite budget survey (booted +
+; ~6000 pre-boss frames of real simulated play, checking every one of
+; the 256 sprite pattern codes' own VRAM bytes for non-zero content)
+; found ATTRIBUTE slots26-31 (6 slots) genuinely never touched during
+; normal (non-boss) play - that part held up. But the SAME survey
+; wrongly read pattern codes234-238/251-255 as "free": a real-hardware
+; report ("EBulletが全く違うパターン") caught what the survey actually
+; missed - PAT_FLYER(220-235)/PAT_FLYER_L(236-251) each reserve a full
+; 16-code/128-byte block for multiple poses, but only SOME of those 16
+; codes have real (non-zero) art; the REST are legitimately blank-but-
+; RESERVED filler, indistinguishable from genuinely free codes by a
+; simple "is it non-zero" check (the same blind spot HUD_ROW_BLANK_
+; CODE's own all-zero-on-purpose tile already illustrates elsewhere in
+; this file - "空きに見える" isn't the same as "空き"). A full symbol-
+; table-driven audit (every PAT_*/*_CODE EQU cross-referenced against
+; its own real LDIRVM byte count, not just VRAM content) found codes
+; 0-255 have ZERO genuinely free space anywhere - the entire range is
+; claimed, with deliberate SAFE overlaps existing only between
+; temporally-exclusive systems (e.g. HORMING's own codes220-239 reuse
+; Flyer's, exactly like ATTRIBUTE slot reuse elsewhere in this file -
+; safe because Flyer is provably inactive whenever Horming's own boss-
+; only code runs).
+;
+; Fixed by reusing SBEAM_CODE(252-255) the same documented way - SBeam
+; ("サンダービーム") is itself a boss-exclusive attack, its own pattern
+; loaded once at TRIGGER_BOSS time, well after ZacoII/Flyer (and so
+; EBullet's own firing) have already stopped for good (same BOSS_ACT
+; gate - see SKIP_ZACO_ENEMY/SKIP_OTHER_ENEMIES). EBullet's own INIT-
+; time load holds this code safely for the whole non-boss game, then
+; SBeam's own later load simply overwrites it once the boss exists -
+; identical in spirit to HORMING_SPR_BASE_SLOT's own ATTRIBUTE-slot
+; reuse trick, just applied to pattern codes instead.
+EBULLET_SLOT_SIZE  EQU 5    ; +0 ACT,+1 X,+2 Y,+3 DX(signed px/frame),+4 DY(signed px/frame)
+EBULLET_SLOT_COUNT EQU 4
+EBULLET_POOL          EQU 0C0F5h   ; 4 slots x5 bytes = 20 bytes (C0F5h-C108h)
+EBULLET_SPRITE_ATTRS  EQU 0C109h   ; 4 slots x4 bytes (Y,X,pat,col) = 16 bytes (C109h-C118h)
+; staging bytes the firer writes its own (IX+E_X)/(IX+E_Y) (or Flyer's
+; own (IX+1)/(IX+2)) into just before CALL LAUNCH_EBULLET - LAUNCH_
+; EBULLET's own IX gets repurposed to walk EBULLET_POOL looking for a
+; free slot, so the firer's origin can't stay in IX/the firer's own
+; struct fields across that call.
+EBULLET_ORIGIN_X EQU 0C119h
+EBULLET_ORIGIN_Y EQU 0C11Ah
+EBULLET_CUR_SLOT EQU 0C120h   ; scratch: which of the 4 pool slots UPDATE_ONE_EBULLET is currently working on (0-3) - see UPDATE_EBULLET_ALL
+EBULLET_SPR_BASE_SLOT EQU 26   ; hw sprite ATTRIBUTE slots26-29 (this part of the survey held up - see comment above)
+PAT_EBULLET EQU SBEAM_CODE      ; TL=252(real art)/BL=253/TR=254/BR=255(blank) - boss-exclusive reuse, see comment above
+EBULLET_COLOR EQU 9             ; sprites/Ebullet_16x16.json's own fg (light red) - hw sprite color is a single index, no bg half like BG cells
+
+; ---------- EtankBullet (Etank's own bullet, BG cell, left-only) ----------
+; "Etankはスポーン後左へ32px移動したら発射し方向は左直進のみ 弾はBG使用
+; ファイルEtankBullet". Same erase-then-move-then-draw BG-cell technique
+; as HORMING_BG_POOL (see UPDATE_HORMING_BG_ALL/DRAW_HORMING_BG_CELL/
+; ERASE_HORMING_BG_CELL) - only ever 1 concurrent instance needed
+; (ETANK_SLOT_COUNT=1 itself, and this bullet only ever fires once per
+; Etank spawn), so flat globals instead of a real N-slot pool.
+;
+; Unlike EBullet, this round's own BG color-table survey (same
+; methodology, all 32 groups' own 1-shared-color-per-8-codes entries at
+; 0x2000+group) found every one of the 32 groups already color-claimed -
+; there is no fully free group left to assign EtankBullet's own source
+; art color (fg8/bg11) to without changing an actively-used group's
+; shared color. group31(codes248-255, SKYSAND_CODE=248's own group) has
+; 7 of its 8 codes genuinely pattern-free AND its own bg nibble(11,
+; light yellow) already matches the source art's own bg exactly - only
+; fg differs (art wants 8/medium red, group31 is fixed at 5/light blue).
+; Per direct user confirmation ("では背景色一致は必要なので文字色が近い
+; ものを使ってくれ" - bg match required, use whichever fg is close) this
+; bullet renders in group31's own existing fg5/bg11 unchanged - no new
+; color write at all, SKYSAND(248) itself is completely untouched.
+ETANK_BULLET_ACT   EQU 0C11Bh
+ETANK_BULLET_X     EQU 0C11Ch
+ETANK_BULLET_Y     EQU 0C11Dh
+ETANK_SPAWN_X      EQU 0C11Eh   ; this instance's own spawn-time X, captured once by ALLOC_ETANK_SLOT - lets UPDATE_ONE_ETANK detect "moved 32px" without needing a separate distance counter
+ETANK_BULLET_FIRED EQU 0C11Fh   ; 0/1 - this Etank instance has already fired its 1 shot (prevents refiring every frame once past the 32px threshold)
+ETANK_BULLET_SPEED EQU 3        ; px/frame, left-only
+ETANK_BULLET_PATTERN_CODE EQU 249   ; group31, verified free above
+
+; ---------- FlyerLaser (Flyer's own post-descent horizontal shot, BG
+; cell, right-only) ---------- round36-14 follow-up#12: "その後
+; FlyerLaser発射 つまり右斜め下移動後に発射 自機は狙わず右方向水平撃ち
+; のみ BG使用". Fired once, from UOFL_HOME_MOVE's own descending exit
+; (see its own comment for the full reasoning + the paired -8px Y fix),
+; not aimed - always straight right, same "flies through/past, no self-
+; deactivate on hit" tank-collision convention as EtankBullet's own
+; bullet. Same erase-then-move-then-draw BG-cell technique (ACT/X/Y at
+; +0/+1/+2, ERASE_HORMING_BG_CELL/HORMING_BG_CELL_ADDR/WRITE_BULLET_
+; BYTE_HL reused directly unchanged) - only 1 concurrent instance ever
+; needed (1 Flyer instance only ever reaches this exit once per spawn).
+; 実機フィードバック対応の変遷 ("FlyerLaserのBG背景色がイエローに
+; なってる 背景と同じくライトブルーだぞ レーザー自体はシアン" →
+; "流石にブラックはレーザーに見えない" → "じゃあホワイトで ライト
+; ブルーにホワイトは使えるんだな"): group31(bg11 yellow, 1st)→
+; group27(fg7 cyan/bg1 black, 2nd)を経て、最終的にgroup17へ戻し
+; NIGHT_COLOR自体をfg15白/bg5に塗り替える方式に決着(NIGHT_COLOR's own
+; comment for the full reasoning) - group0が実際に持っているfg15/bg5
+; の組み合わせを、空きコードのあるgroup17に複製する形。背景(bg5)・
+; 文字色(fg15白)とも実在の組み合わせで、レーザーらしい白いビームが
+; 空の色に完全一致する背景の上に乗る。Pattern code139(Mine1/2の直後)。
+FLYER_LASER_ACT   EQU 0C121h
+FLYER_LASER_X     EQU 0C122h
+FLYER_LASER_Y     EQU 0C123h
+FLYER_LASER_SPEED EQU 3          ; px/frame, right-only - untuned initial value
+FLYER_LASER_DESPAWN_X EQU 248    ; last on-screen column (32 cols x8px=256) - off past this, despawn
+FLYER_LASER_PATTERN_CODE EQU 139 ; group17, see NIGHT_COLOR's own comment
+
+; ---------- Mine (Flyer's own dropped landmine) ---------- round36-14
+; follow-up#12: "まずスポーンから32px左に移動したら 添付データのMineを
+; 放物線で投下 着地や自機への被弾で16x16ｐｘの爆発エフェクトとサウンド
+; 右からしか出ないので左向き放物線のみ Mine1と2のアニメで 取り敢えず
+; スプライトだがBGに変更するかも". A full sprite-space pattern-code
+; audit this round (same symbol-table cross-reference methodology as
+; EBullet/EtankBullet's own - every PAT_*/*_CODE EQU resolved via the
+; real assembler's own symbol table, cross-referenced against every
+; CALL LDIRVM site's own byte count) found sprite-space codes0-255
+; genuinely 100% claimed with NO safe temporal-reuse candidate left at
+; all (every boss-exclusive range - PAT_FLYER/_L's own HORMING reuse,
+; PAT_BIGZUMP's own BOSS_BROKEN_BEAM reuse, SBEAM_CODE's own EBullet
+; reuse - is already claimed at least once, and none of them are safe to
+; triple-claim: BigZum/Flyer/Mine can all legitimately coexist, unlike
+; the boss itself which is genuinely exclusive with every regular
+; enemy). So despite the user's own tentative sprite framing, Mine is
+; BG-rendered from the start here (flagged back to the user alongside
+; the pre-ship render, same "found a real conflict, made the call,
+; showed the result" precedent as EtankBullet's own BG decision earlier
+; this same session) - falling/animating as a BG cell exactly like
+; EtankBullet, only borrowing a real hw sprite ATTRIBUTE slot (see
+; MINE_EXPL_SPR_BASE_SLOT below) for its own brief death animation.
+; +5 was SPRIDX (which hw ATTRIBUTE slot this instance's own explosion
+; used) - retired, unused, when both instances were made to share a
+; single ATTRIBUTE slot instead (see MINE_EXPL_SPR_BASE_SLOT's own
+; comment); left as a reserved byte rather than renumbering +6/+7.
+MINE_SLOT_SIZE  EQU 8  ; +0 ACT(0=idle,1=falling,2=exploding),+1 X,+2 Y,+3 VY(signed, gravity-accumulated),+4 ANIM_TIMER,+5 unused,+6 EXPL_TIMER,+7 GRAVITY_COUNTER(0..MINE_GRAVITY_INTERVAL-1, see its own comment)
+MINE_SLOT_COUNT EQU 2   ; matches FLYER_SLOT_COUNT - at most 1 falling mine per live Flyer instance
+MINE_POOL         EQU 0C124h   ; MINE_SLOT_SIZE*MINE_SLOT_COUNT = 16 bytes (C124h-C133h)
+MINE_ORIGIN_X     EQU 0C134h   ; staging bytes the firer (Flyer) writes its own drop point into just before CALL ALLOC_MINE_SLOT - same convention as EBULLET_ORIGIN_X/Y
+MINE_ORIGIN_Y     EQU 0C135h
+; 実機フィードバック対応 ("Mineは演出なのでMineを削ってくれ 2発同時は
+; まず起こらないんで" - freeing hw sprite ATTRIBUTE slot31 for the new
+; 4th player-shot slot, BULLET3_ACT's own comment): was 8 bytes
+; (MINE_SLOT_COUNT*4, 1-per-instance) - both mine instances now share
+; this single 4-byte staging entry, flushed to 1 shared ATTRIBUTE slot
+; instead of 2 (see UOM_EXPLODING's own comment for the accepted
+; "very rare simultaneous explosion" compromise this creates).
+MINE_SPRITE_ATTRS EQU 0C136h   ; 4 bytes (Y,X,pat,col), shared by both MINE_SLOT_COUNT instances
+; 実機フィードバック対応 ("Mine投下速度が早すぎる...放物線も出てない"):
+; the original "VY += MINE_GRAVITY every single frame" fell so fast
+; (~11-15 frames from a typical altitude) that the leftward MINE_VX=1
+; drift never accumulated enough px to read as a parabola - it just
+; looked like a straight vertical drop. Gravity now only actually
+; increments VY once every MINE_GRAVITY_INTERVAL frames (+7 counts up
+; to that, wraps and bumps VY) - same magnitude per bump, just spread
+; over ~3x more real frames - while VX (now doubled) keeps applying
+; every frame regardless, so the same total fall now covers roughly
+; 30-60px of visible leftward drift over ~15-30 frames instead of
+; 10-15px over ~10 frames. Still untuned initial values.
+MINE_GRAVITY EQU 1            ; px/frame^2 per bump - unchanged magnitude
+; 実機フィードバック対応 ("Mine投下速度を少しだけ下げて"): was 4 -
+; spreads the same per-bump magnitude over slightly more real frames,
+; a modest ~15% slower fall (Pythonsim: e.g. 23->26 frames from a
+; mid-altitude drop).
+MINE_GRAVITY_INTERVAL EQU 5   ; frames between bumps - was implicitly 1, then 4
+; 実機フィードバック対応 ("Mine投下の放物線をもう少しX方向に広げて
+; 前に投下するように"): was 2 - widened alongside the new MINE_DROP_
+; LEAD_X-based trigger (see its own comment) so the drop's own X spread
+; roughly matches the 64px lead distance the trigger now fires at
+; (Pythonsim: ~45-93px of horizontal drift by landing, depending on
+; drop altitude - see this round's own HANDOFF.md entry).
+MINE_VX      EQU 3       ; px/frame leftward drift, constant - untuned initial value ("右からしか出ないので左向き放物線のみ")
+; 実機フィードバック対応 ("自機位置を見て自機の64px手前に来たら投下"):
+; the drop trigger is no longer a fixed "32px from spawn" distance (a
+; compile-time constant, tank-unaware) - it now reads TANK_X live every
+; frame (see UOFL_CRUISE_STEP) and fires once Flyer's own X has closed
+; to within this many px of the tank's own current X (Flyer approaches
+; from the right, so "手前" = still this far to the tank's own right).
+MINE_DROP_LEAD_X EQU 64
+MINE_ANIM_INTERVAL EQU 4 ; frames per animation pose - untuned initial value
+; fixed landing line, terrain-independent - same "hard cap regardless of
+; the tank's own current tier, never sink into terrain" precedent as
+; FLYER_DESCEND_LIMIT_Y (地形も仮実装のため, terrain per-column height
+; querying doesn't exist for arbitrary X - only the tank's own column
+; does, via TANK_GROUND_Y). tier0's own ground_line=(20+0)*8=160 is the
+; shallowest possible real terrain surface; landing at 160-8(this
+; entity's own 8px cell height)=152 means Mine's own bottom edge never
+; sinks below any real terrain, worst case floating slightly above a
+; deeper tier - same accepted approximation as Etank's own terrain-
+; independent spawn (see "保留中タスク" in CLAUDE.md).
+MINE_LANDING_Y EQU 152
+MINE1_CODE EQU 137   ; group17 (NIGHT_CODE=136's own group) - see mine_gen.py's own comment for the exact fg1/bg5 color match
+MINE2_CODE EQU 138
+; borrowed only during ACT=2 (exploding) - Mine itself is a pure BG
+; entity while falling, consuming zero ATTRIBUTE slots, so this is free
+; for the rest of Mine's own lifecycle. Was 1-per-instance (slots30-31,
+; the last 2 of the only 6 hw sprite ATTRIBUTE slots ever verified
+; genuinely free during normal non-boss play - EBullet already claims
+; 26-29) until round36-14 follow-up#13 ("Mineは演出なのでMineを削って
+; くれ 2発同時はまず起こらないんで") gave slot31 to the new 4th player-
+; shot slot instead (see BULLET3_ACT's own comment) - both MINE_SLOT_
+; COUNT instances now share this single slot.
+MINE_EXPL_SPR_BASE_SLOT EQU 30
 
 ; ---------- flowing background clouds (see CLOUD_UPDATE_ALL) ----------
 ; "Stage1でもやってる雲を上から3行目に4セルの雲をランダムタイミングで
@@ -2026,6 +3140,23 @@ INIT_RESUME_AFTER_BANK_SELECT:
     LD HL,TERRAIN_PATTERNS : LD DE,0000h : LD BC,TERRAIN_PATTERN_COUNT*8 : CALL LDIRVM
     LD HL,TERRAIN_COLORDATA : LD DE,2000h : LD BC,32 : CALL LDIRVM
 
+    ; EtankBullet BG pattern (round36-14 follow-up#11) - group31's own
+    ; free tail, code249 - see ETANK_BULLET_PATTERN_CODE's own comment.
+    ; No color write: reuses group31's own existing fg5/bg11 unchanged.
+    LD HL,ETANK_BULLET_PATTERN : LD DE,ETANK_BULLET_PATTERN_CODE*8+0000h : LD BC,8 : CALL LDIRVM
+
+    ; FlyerLaser BG pattern (round36-14 follow-up#12) - group31's own
+    ; tail, code250 - see FLYER_LASER_PATTERN_CODE's own comment. No
+    ; color write: reuses group31's own existing fg5/bg11 unchanged.
+    LD HL,FLYER_LASER_PATTERN : LD DE,FLYER_LASER_PATTERN_CODE*8+0000h : LD BC,8 : CALL LDIRVM
+
+    ; Mine BG pattern, 2-frame anim (round36-14 follow-up#12) - group17's
+    ; own free tail, codes137-138 - see MINE1_CODE/MINE2_CODE's own
+    ; comment. No color write: reuses group17's own existing fg1/bg5
+    ; unchanged (exact match to both source images).
+    LD HL,MINE1_PATTERN : LD DE,MINE1_CODE*8+0000h : LD BC,8 : CALL LDIRVM
+    LD HL,MINE2_PATTERN : LD DE,MINE2_CODE*8+0000h : LD BC,8 : CALL LDIRVM
+
     ; "カラー変更 Rockの文字色レッドと自機のレッドを入れ替えて" - swap
     ; the rock's own fg color (terrain_gen.py's ROCK_COLOR, fg8 medium
     ; red) with the tank's TL/main-body color (TANK_COLOR_TL, fg6 dark
@@ -2041,6 +3172,13 @@ INIT_RESUME_AFTER_BANK_SELECT:
     ; rock-colored (11-30 - bullets/digits/swatch - get their own,
     ; unrelated colors patched in further down anyway, so touching
     ; them here or not makes no difference).
+    ; round36-12 tried changing this byte's own bg (see git history);
+    ; round36-13 reverted it back to the original bg11 - "Rock225もイジ
+    ; ったな Rock225の背景色は前に戻せ" - this one patch colors Rock AND
+    ; every R225 variant identically (they share group1/the blend-pair
+    ; groups by construction), so it can't be changed for "just Rock"
+    ; without a much larger restructuring - see ROCK_COLOR_SWAPPED_
+    ; PATCH's own comment for the full reasoning.
     LD HL,ROCK_COLOR_SWAPPED_PATCH : LD DE,2001h : LD BC,1 : CALL LDIRVM
     LD HL,ROCK_COLOR_SWAPPED_PATCH : LD DE,2003h : LD BC,29 : CALL LDIRVM
 
@@ -2113,13 +3251,23 @@ INIT_RESUME_AFTER_BANK_SELECT:
     LD HL,TANK_TANKFGAP_L_TL : LD DE,PAT_TANKFGAP_L*8+SPRPAT : LD BC,128 : CALL LDIRVM
     LD HL,TANK_TANKUGAP_L_TL : LD DE,PAT_TANKUGAP_L*8+SPRPAT : LD BC,128 : CALL LDIRVM
 
-    ; F's own BG pattern: loaded twice, once per background color group
-    ; it can appear over (see BULLETF_SKY_CODE etc. above), and the
-    ; mirrored (left-facing) shape the same way at its own codes.
-    LD HL,BULLET_F_PATTERN : LD DE,BULLETF_SKY_CODE*8  : LD BC,8 : CALL LDIRVM
-    LD HL,BULLET_F_PATTERN : LD DE,BULLETF_ROCK_CODE*8 : LD BC,8 : CALL LDIRVM
-    LD HL,BULLET_F_L_PATTERN : LD DE,BULLETF_L_SKY_CODE*8  : LD BC,8 : CALL LDIRVM
-    LD HL,BULLET_F_L_PATTERN : LD DE,BULLETF_L_ROCK_CODE*8 : LD BC,8 : CALL LDIRVM
+    ; F's own BG pattern: round36-11 grew from 1 pose to 3 (BulletFU/FM/
+    ; FL, bullet_gen.py's own BULLET_F_PATTERN0/1/2) - each loaded once
+    ; per background color group it can appear over (see BULLETF_SKY_
+    ; CODE0 etc. above), and the mirrored (left-facing) shape the same
+    ; way at its own codes.
+    LD HL,BULLET_F_PATTERN0 : LD DE,BULLETF_SKY_CODE0*8  : LD BC,8 : CALL LDIRVM
+    LD HL,BULLET_F_PATTERN1 : LD DE,BULLETF_SKY_CODE1*8  : LD BC,8 : CALL LDIRVM
+    LD HL,BULLET_F_PATTERN2 : LD DE,BULLETF_SKY_CODE2*8  : LD BC,8 : CALL LDIRVM
+    LD HL,BULLET_F_PATTERN0 : LD DE,BULLETF_ROCK_CODE0*8 : LD BC,8 : CALL LDIRVM
+    LD HL,BULLET_F_PATTERN1 : LD DE,BULLETF_ROCK_CODE1*8 : LD BC,8 : CALL LDIRVM
+    LD HL,BULLET_F_PATTERN2 : LD DE,BULLETF_ROCK_CODE2*8 : LD BC,8 : CALL LDIRVM
+    LD HL,BULLET_F_L_PATTERN0 : LD DE,BULLETF_L_SKY_CODE0*8  : LD BC,8 : CALL LDIRVM
+    LD HL,BULLET_F_L_PATTERN1 : LD DE,BULLETF_L_SKY_CODE1*8  : LD BC,8 : CALL LDIRVM
+    LD HL,BULLET_F_L_PATTERN2 : LD DE,BULLETF_L_SKY_CODE2*8  : LD BC,8 : CALL LDIRVM
+    LD HL,BULLET_F_L_PATTERN0 : LD DE,BULLETF_L_ROCK_CODE0*8 : LD BC,8 : CALL LDIRVM
+    LD HL,BULLET_F_L_PATTERN1 : LD DE,BULLETF_L_ROCK_CODE1*8 : LD BC,8 : CALL LDIRVM
+    LD HL,BULLET_F_L_PATTERN2 : LD DE,BULLETF_L_ROCK_CODE2*8 : LD BC,8 : CALL LDIRVM
 
     ; F's own bullet color groups: patch over terrain_gen.py's generic
     ; per-group defaults for the 2 groups its codes live in - see
@@ -2129,16 +3277,22 @@ INIT_RESUME_AFTER_BANK_SELECT:
     LD A,BULLET_ROCK_COLORBYTE : LD (BULLET_TEMP_BYTE),A
     LD HL,BULLET_TEMP_BYTE : LD DE,BULLET_ROCK_COLORADDR : LD BC,1 : CALL LDIRVM
 
-    ; F's own night-black glyph (see BULLETF_NIGHT_CODE's own comment) -
-    ; same shapes as the day glyph, own dedicated color group.
-    LD HL,BULLET_F_PATTERN   : LD DE,BULLETF_NIGHT_CODE*8   : LD BC,8 : CALL LDIRVM
-    LD HL,BULLET_F_L_PATTERN : LD DE,BULLETF_L_NIGHT_CODE*8 : LD BC,8 : CALL LDIRVM
+    ; F's own night-black glyph (see BULLETF_NIGHT_CODE0's own comment) -
+    ; same shapes as the day glyph, own dedicated color group (round36-11:
+    ; moved to group30, BULLET_NIGHT_COLORADDR, from the old fixed
+    ; "2000h+18" literal - see that EQU's own comment).
+    LD HL,BULLET_F_PATTERN0   : LD DE,BULLETF_NIGHT_CODE0*8   : LD BC,8 : CALL LDIRVM
+    LD HL,BULLET_F_PATTERN1   : LD DE,BULLETF_NIGHT_CODE1*8   : LD BC,8 : CALL LDIRVM
+    LD HL,BULLET_F_PATTERN2   : LD DE,BULLETF_NIGHT_CODE2*8   : LD BC,8 : CALL LDIRVM
+    LD HL,BULLET_F_L_PATTERN0 : LD DE,BULLETF_L_NIGHT_CODE0*8 : LD BC,8 : CALL LDIRVM
+    LD HL,BULLET_F_L_PATTERN1 : LD DE,BULLETF_L_NIGHT_CODE1*8 : LD BC,8 : CALL LDIRVM
+    LD HL,BULLET_F_L_PATTERN2 : LD DE,BULLETF_L_NIGHT_CODE2*8 : LD BC,8 : CALL LDIRVM
     LD A,BULLET_NIGHT_COLORBYTE : LD (HUD_TEMP_BYTE),A
-    LD HL,HUD_TEMP_BYTE : LD DE,2000h+18 : LD BC,1 : CALL LDIRVM
+    LD HL,HUD_TEMP_BYTE : LD DE,BULLET_NIGHT_COLORADDR : LD BC,1 : CALL LDIRVM
 
-    ; U's own BG-cell pattern (see BULLETU_SKY_CODE's own comment) -
-    ; loaded into F's already-colored groups11/12/18, no new color-table
-    ; writes needed.
+    ; U's own BG-cell pattern (see BULLETU_SKY_CODE's own comment) - a
+    ; single non-rotating pose (BulletUM), loaded into F's already-
+    ; colored groups28/29/30, no new color-table writes needed.
     LD HL,BULLET_U_PATTERN   : LD DE,BULLETU_SKY_CODE*8    : LD BC,8 : CALL LDIRVM
     LD HL,BULLET_U_L_PATTERN : LD DE,BULLETU_L_SKY_CODE*8  : LD BC,8 : CALL LDIRVM
     LD HL,BULLET_U_PATTERN   : LD DE,BULLETU_ROCK_CODE*8   : LD BC,8 : CALL LDIRVM
@@ -2146,9 +3300,45 @@ INIT_RESUME_AFTER_BANK_SELECT:
     LD HL,BULLET_U_PATTERN   : LD DE,BULLETU_NIGHT_CODE*8   : LD BC,8 : CALL LDIRVM
     LD HL,BULLET_U_L_PATTERN : LD DE,BULLETU_L_NIGHT_CODE*8 : LD BC,8 : CALL LDIRVM
 
-    ; U's own hw sprite pattern (16x16, right after PAT_EXPLOSION).
-    LD HL,BULLET_U_SPRITE : LD DE,PAT_BULLETU*8+SPRPAT : LD BC,32 : CALL LDIRVM
-    LD HL,BULLET_U_SPRITE_L : LD DE,PAT_BULLETU_L*8+SPRPAT : LD BC,32 : CALL LDIRVM
+    ; U's own hw sprite pattern (16x16, right after PAT_EXPLOSION) -
+    ; primed here with variant0 (BulletUU) purely as a sane INIT-time
+    ; default so the pattern slot never holds garbage before the first
+    ; shot; TRY_SPAWN_BULLET's own WRITE_BULLETU_SPRITE_VARIANT
+    ; overwrites this same slot with the correct rotating variant at
+    ; every actual diagonal shot spawn (see BULLET_U_SPR_BASE_SLOT's own
+    ; comment for why there's only ever 1 resident bitmap here).
+    LD HL,BULLET_U_SPRITE0 : LD DE,PAT_BULLETU*8+SPRPAT : LD BC,32 : CALL LDIRVM
+    LD HL,BULLET_U_SPRITE0_L : LD DE,PAT_BULLETU_L*8+SPRPAT : LD BC,32 : CALL LDIRVM
+    XOR A : LD (BULLETF_ROT_COUNTER),A : LD (BULLETU_ROT_COUNTER),A
+
+    ; round36-12: the new BG-drawn Horming pool's own 5 facing patterns
+    ; and single shared color group (group18, 144-151 - see HORMING_BG_
+    ; SL_CODE's own comment). Loaded once here at INIT, unlike the hw
+    ; sprite version's own patterns (which wait for boss-spawn time to
+    ; take over Flyer's still-in-use block) - nothing else in this game
+    ; ever needs codes144-151 at any point, so there's no "guaranteed
+    ; dead owner" timing dependency to wait for.
+    LD HL,HORMING_BG_SL_PATTERN   : LD DE,HORMING_BG_SL_CODE*8   : LD BC,8 : CALL LDIRVM
+    LD HL,HORMING_BG_DL_PATTERN   : LD DE,HORMING_BG_DL_CODE*8   : LD BC,8 : CALL LDIRVM
+    LD HL,HORMING_BG_DOWN_PATTERN : LD DE,HORMING_BG_DOWN_CODE*8 : LD BC,8 : CALL LDIRVM
+    LD HL,HORMING_BG_DR_PATTERN   : LD DE,HORMING_BG_DR_CODE*8   : LD BC,8 : CALL LDIRVM
+    LD HL,HORMING_BG_SR_PATTERN   : LD DE,HORMING_BG_SR_CODE*8   : LD BC,8 : CALL LDIRVM
+    LD A,HORMING_BG_COLORBYTE : LD (BULLET_TEMP_BYTE),A
+    LD HL,BULLET_TEMP_BYTE : LD DE,HORMING_BG_COLORADDR : LD BC,1 : CALL LDIRVM
+
+    ; round36-14 (relocated to group12/codes96-100 after the group2/
+    ; codes18-22 attempt turned out to collide with real terrain blend
+    ; data - see HORMING_BG_SAND_SL_CODE's own comment): same 5 facing
+    ; bitmaps again, plus this time a real, needed color write (group12
+    ; is NOT a group terrain leaves alone the way group2's SAND_GROUPS
+    ; carve-out is).
+    LD HL,HORMING_BG_SL_PATTERN   : LD DE,HORMING_BG_SAND_SL_CODE*8   : LD BC,8 : CALL LDIRVM
+    LD HL,HORMING_BG_DL_PATTERN   : LD DE,HORMING_BG_SAND_DL_CODE*8   : LD BC,8 : CALL LDIRVM
+    LD HL,HORMING_BG_DOWN_PATTERN : LD DE,HORMING_BG_SAND_DOWN_CODE*8 : LD BC,8 : CALL LDIRVM
+    LD HL,HORMING_BG_DR_PATTERN   : LD DE,HORMING_BG_SAND_DR_CODE*8   : LD BC,8 : CALL LDIRVM
+    LD HL,HORMING_BG_SR_PATTERN   : LD DE,HORMING_BG_SAND_SR_CODE*8   : LD BC,8 : CALL LDIRVM
+    LD A,HORMING_BG_SAND_COLORBYTE : LD (BULLET_TEMP_BYTE),A
+    LD HL,BULLET_TEMP_BYTE : LD DE,HORMING_BG_SAND_COLORADDR : LD BC,1 : CALL LDIRVM
 
     ; Sasapi's own attack-pose hand art (BG pattern, not a hw sprite -
     ; see SASAPI_HAND_CODE_BASE's own comment) - a permanent allocation
@@ -2246,6 +3436,7 @@ INIT_SPRATR_CLR:
     LD (BULLET0_ACT),A
     LD (BULLET1_ACT),A
     LD (BULLET2_ACT),A
+    LD (BULLET3_ACT),A
 
     ; overwrites slots 0-3 (the tank's own) with real data; slots 4-31
     ; stay hidden from the full clear above.
@@ -2324,6 +3515,10 @@ INIT_SPRATR_CLR:
     LD (HORMING_POOL+7),A
     LD (HORMING_POOL+14),A
     LD (HORMING_POOL+21),A
+    LD (HORMING_BG_POOL+0),A
+    LD (HORMING_BG_POOL+7),A
+    LD (HORMING_BG_POOL+14),A
+    LD (HORMING_BG_POOL+21),A
     ; "こう言ったゲームってのは全てスケジュールで動くんだよ...ボス前と
     ; ボススポーン後は完全に分けて一切干渉しない 当然ボスまでは一切関連
     ; ルーチンも呼ばんし最初にメモリを確保したりしない...初期化もボス用
@@ -2360,6 +3555,35 @@ INIT_SPRATR_CLR:
     LD HL,ENEMY_ZACOII_FLIP : LD DE,PAT_ZACO_FLIP*8+SPRPAT : LD BC,32 : CALL LDIRVM
     LD HL,EXPLOSION_PATTERN : LD DE,PAT_EXPLOSION*8+SPRPAT : LD BC,32 : CALL LDIRVM
 
+    ; EBullet (ZacoII/Flyer enemy bullet - round36-14 follow-up#11) - own
+    ; verified-free 4-code group, see PAT_EBULLET's own comment.
+    LD HL,EBULLET_SPRITE : LD DE,PAT_EBULLET*8+SPRPAT : LD BC,32 : CALL LDIRVM
+    ; pool + RAM staging buffer both need priming, same 2-part reasoning
+    ; as ENEMY_SPRITE_ATTRS's own comment just above (IESA_LOOP) - the
+    ; real VRAM SAT is already hidden via the earlier full 32-slot clear,
+    ; but EBULLET_SPRITE_ATTRS itself starts blank (Y=0) and would show
+    ; garbage at the top of the screen on the very first FLUSH_EBULLET_
+    ; SPRITES call otherwise. Found and fixed via a direct fresh_cpu()
+    ; test this same round (boot-state SAT bytes for slots26-29 checked
+    ; before vs after a real MAINLOOP frame) - see this round's own
+    ; HANDOFF entry.
+    LD HL,EBULLET_POOL
+    LD B,EBULLET_SLOT_SIZE*EBULLET_SLOT_COUNT
+    XOR A
+IEBZ_LOOP:
+    LD (HL),A
+    INC HL
+    DJNZ IEBZ_LOOP
+    LD HL,EBULLET_SPRITE_ATTRS
+    LD B,EBULLET_SLOT_COUNT
+IEBSA_LOOP:
+    LD A,209 : LD (HL),A : INC HL
+    XOR A
+    LD (HL),A : INC HL
+    LD (HL),A : INC HL
+    LD (HL),A : INC HL
+    DJNZ IEBSA_LOOP
+
     ; Zum's own pattern (enemy_gen.py, generated alongside ZacoII's -
     ; no flip needed, it never reverses direction).
     LD HL,ENEMY_ZUM : LD DE,PAT_ZUM*8+SPRPAT : LD BC,32 : CALL LDIRVM
@@ -2389,8 +3613,8 @@ IEZ_LOOP:
     LD (HL),A
     INC HL
     DJNZ IEZ_LOOP
-    LD (ENEMY_SPAWN_TIMER),A
-    LD (ENEMY_SPAWN_COUNT),A
+    LD (SPAWN2_NEXT_INDEX),A
+    LD (S2_SPAWN_Y),A
 
     LD HL,ENEMY_POOL
     LD B,ENEMY_SLOT_COUNT
@@ -2432,6 +3656,16 @@ IBSA_LOOP:
     LD (HL),A : INC HL
     DJNZ IBSA_LOOP
 
+    ; same priming for BULLET3_U_ATTRS (hw sprite slot31, round36-14
+    ; follow-up#13's own 4th player-shot slot) - not contiguous with
+    ; BULLET_U_SPRITE_ATTRS, see BULLET3_ACT's own comment.
+    LD HL,BULLET3_U_ATTRS
+    LD A,209 : LD (HL),A : INC HL
+    XOR A
+    LD (HL),A : INC HL
+    LD (HL),A : INC HL
+    LD (HL),A
+
     ; Zum pool: same generic zero-then-assign-Z_SPRIDX shape as the
     ; enemy pool above, plus its own sprite-attrs priming.
     LD HL,ZUM_POOL
@@ -2441,7 +3675,7 @@ IZZ_LOOP:
     LD (HL),A
     INC HL
     DJNZ IZZ_LOOP
-    LD (ZUM_SPAWN_TIMER),A
+    LD (S2_SPAWN_VARIANT),A
 
     LD HL,ZUM_POOL
     LD B,ZUM_SLOT_COUNT
@@ -2475,7 +3709,6 @@ IBZZ_LOOP:
     LD (HL),A
     INC HL
     DJNZ IBZZ_LOOP
-    LD (BIGZUM_SPAWN_TIMER),A
 
     LD HL,BIGZUM_POOL
     LD B,BIGZUM_SLOT_COUNT
@@ -2507,7 +3740,6 @@ IFLZ_LOOP:
     LD (HL),A
     INC HL
     DJNZ IFLZ_LOOP
-    LD (FLYER_SPAWN_TIMER),A
 
     LD HL,FLYER_POOL
     LD B,FLYER_SLOT_COUNT
@@ -2542,7 +3774,6 @@ IETZ_LOOP:
     LD (HL),A
     INC HL
     DJNZ IETZ_LOOP
-    LD (ETANK_SPAWN_TIMER),A
 
     LD HL,ETANK_SPRITE_ATTRS
     LD B,ETANK_SLOT_COUNT*2
@@ -2553,6 +3784,50 @@ IETSA_LOOP:
     LD (HL),A : INC HL
     LD (HL),A : INC HL
     DJNZ IETSA_LOOP
+
+    ; 実機フィードバック対応(round36-14 follow-up#13の直後、"地形スク
+    ; ロールが乱れてる...一つ前のビルドでも地形は乱れるが 実行してから
+    ; 最新を実行すると正しく動く どこかで初期化ミスしてるな" + "1回だけ
+    ; だがスタート直後にFlyerレーザーがいきなり飛んできた"): ETANK_
+    ; BULLET_ACT/MINE_POOL/FLYER_LASER_ACTはこの一連の実装
+    ; (follow-up#11/#12)を通じて一度も明示的にゼロクリアされていな
+    ; かった - fresh_cpu()のPythonテストハーネスはRAMを暗黙に全ゼロ
+    ; 初期化するため気づけなかったが、実機のRAMは電源投入直後不定値
+    ; (ゴミ)を含みうる。ACTが偶然ゴミの非ゼロ値だと、実際にはまだ何も
+    ; スポーンしていないのにUPDATE_ETANK_BULLET_ALL/UPDATE_MINE_ALL/
+    ; UPDATE_FLYER_LASER_ALLがゴミのX/Yをそのまま座標として扱い、
+    ; ERASE_HORMING_BG_CELL経由で地形のBGネームテーブルに不正な書き込み
+    ; をしてしまう(スクロールでその書き込みが流れて見えるため「地形
+    ; スクロールが乱れてる」)。FlyerLaserも同様にACTが偶然非ゼロだと
+    ; スタート直後に実体のない弾が飛んで見える。「1つ前のビルドを実行
+    ; してから最新を実行すると直る」は、電源を切らない再ロードでは
+    ; RAMの中身が前回起動時の(結果的にクリーンな)状態のまま残る
+    ; ため - まさに初期化漏れの典型症状。ENEMY_POOL/ZUM_POOL/BIGZUM_
+    ; POOL/FLYER_POOL/EBULLET_POOL/ETANK_POOL自身は全て同じ理由で
+    ; 明示的にゼロクリアされている(このINIT自身の既存パターン)のに、
+    ; この3つだけ後から追加した際にこの規約を踏襲し忘れていた。
+    XOR A
+    LD (ETANK_BULLET_ACT),A
+    LD (ETANK_BULLET_X),A
+    LD (ETANK_BULLET_Y),A
+    LD (ETANK_SPAWN_X),A
+    LD (ETANK_BULLET_FIRED),A
+    LD HL,MINE_POOL
+    LD B,MINE_SLOT_SIZE*MINE_SLOT_COUNT
+IMNZ_LOOP:
+    LD (HL),A
+    INC HL
+    DJNZ IMNZ_LOOP
+    LD HL,MINE_SPRITE_ATTRS
+    LD A,209 : LD (HL),A : INC HL
+    XOR A
+    LD (HL),A : INC HL
+    LD (HL),A : INC HL
+    LD (HL),A
+    XOR A
+    LD (FLYER_LASER_ACT),A
+    LD (FLYER_LASER_X),A
+    LD (FLYER_LASER_Y),A
 
     ; boss (Sasapi): just BOSS_ACT=0 (not spawned) plus the rest of its
     ; own state zeroed alongside it - no pattern-VRAM load and no hw
@@ -2663,9 +3938,33 @@ PXT_NOWRAP:
     ; unit Stage1's own schedule editor actually schedules events
     ; against, instead of a rate 8x too fast to mean anything as a
     ; scheduling unit.
+    ; round34-2 first attempt ("Tickは999終了で繰り返さない") capped the
+    ; real GAME_TICK counter itself here - wrong fix, reverted: the
+    ; boss's own internal timers (BOSS_LEFT_PAUSE_END_TICK/BOSS_POSE_
+    ; END_TICK, both "GAME_TICK+some small constant, armed at whatever
+    ; moment the boss happens to reach that state") need GAME_TICK to
+    ; keep advancing normally for as long as the boss fight is running -
+    ; freezing it here made both of those targets permanently
+    ; unreachable once the boss's own patrol first touched the left
+    ; edge or the pose-entry point AFTER the freeze had already kicked
+    ; in (which it reliably had, since the boss itself doesn't even
+    ; spawn until close to tick995), softlocking the whole fight
+    ; (BOSS_PHASE stuck at 2 forever - caught by boss_pose_test.py's own
+    ; real-MAINLOOP checks). GAME_TICK is a free-running 16-bit counter
+    ; again, same as always; what's actually capped now is only the
+    ; on-screen 3-digit readout (GAME_TICK_DISPLAY's own MOD1000
+    ; conversion, see its own comment) - the real "見た目上999で止まる、
+    ; 繰り返して見えない" (looks like it stops at 999, doesn't look like
+    ; it repeats) the user actually asked for, without breaking any
+    ; real timing math that depends on the true value still advancing.
     LD HL,(GAME_TICK) : INC HL : LD (GAME_TICK),HL
     CALL GAME_TICK_DISPLAY
     CALL CHECK_NIGHT
+    ; round34 ("ランダムスポーンは廃止 全てスケジュールに") - see
+    ; SPAWN2_SCHEDULE_CHECK's own comment. Same call-site convention as
+    ; src/CYBER SHMUP.asm's own SPAWN_SCHEDULE_CHECK: once per GAME_TICK
+    ; increment, right alongside it.
+    CALL SPAWN2_SCHEDULE_CHECK
 SKIP_ADVANCE:
     ; 地形スクロール停止テストは「表示が崩れる(復帰処理未実装)」で
     ; バグではないが今回はやめる、に戻す - always runs again, unconditional.
@@ -2712,6 +4011,16 @@ SKIP_ADVANCE:
     JR NZ,SKIP_ZACO_ENEMY
     CALL UPDATE_ENEMIES
     CALL CHECK_BULLET_VS_ENEMY
+    ; EBullet (round36-14 follow-up#11) - fired by both ZacoII (above)
+    ; and Flyer (SKIP_OTHER_ENEMIES block below), but updated/collision-
+    ; checked from just this one gate since both firers share the exact
+    ; same BOSS_ACT condition - an EBullet in flight when the boss spawns
+    ; (ZacoII/Flyer themselves stop firing new ones, per this same gate)
+    ; would freeze mid-flight rather than despawn, same known low-
+    ; probability edge case as EBULLET_SLOT_SIZE's own comment already
+    ; flags for the pattern-code/sprite-slot side of this feature.
+    CALL UPDATE_EBULLET_ALL
+    CALL CHECK_EBULLET_VS_TANK
 SKIP_ZACO_ENEMY:
     CALL UPDATE_BULLET_U_SPRITES
     LD A,(BOSS_ACT) : OR A
@@ -2727,6 +4036,14 @@ SKIP_ZACO_ENEMY:
     CALL UPDATE_ETANK_ALL
     CALL CHECK_BULLET_VS_ETANK
     CALL UPDATE_TANK_ETANK_PUSH
+    CALL UPDATE_ETANK_BULLET_ALL
+    CALL CHECK_ETANK_BULLET_VS_TANK
+    ; Mine/FlyerLaser (round36-14 follow-up#12) - both Flyer-sourced,
+    ; same BOSS_ACT gate as Flyer itself.
+    CALL UPDATE_MINE_ALL
+    CALL CHECK_MINE_VS_TANK
+    CALL UPDATE_FLYER_LASER_ALL
+    CALL CHECK_FLYER_LASER_VS_TANK
 SKIP_OTHER_ENEMIES:
     ; UPDATE_BOSS_ALL itself must stay unconditional - it's the ONLY
     ; thing that ever checks GAME_TICK against BOSS_SPAWN_TICK and
@@ -2746,13 +4063,41 @@ SKIP_OTHER_ENEMIES:
     CALL UPDATE_BOSS_ALL
     LD A,(BOSS_ACT) : OR A
     JR Z,SKIP_BOSS_SUBSYSTEMS
+    CALL UPDATE_BOSS_MATERIALIZE
     CALL CHECK_BULLET_VS_BOSS
     CALL CHECK_BULLET_VS_HORMING
     CALL UPDATE_HORMING_ALL
+    CALL UPDATE_HORMING_BG_ALL
     CALL UPDATE_THUNDER
     CALL CHECK_THUNDER_VS_TANK
     CALL UPDATE_SBEAM
     CALL CHECK_SBEAM_VS_TANK
+    ; round36-14 follow-up #4: the broken form's own 4-beam stop-attack.
+    ; Firing/hiding itself already happens inside UPDATE_BOSS_ALL (via
+    ; UPDATE_BOSS_BROKEN_ACTIVE's own beam-sequence dispatch, called
+    ; above), so only the tank-collision check needs its own call here -
+    ; same split as UPDATE_SBEAM(draw)/CHECK_SBEAM_VS_TANK(collision).
+    ; round36-14 follow-up#5 real-hardware feedback ("かなり動作速度が
+    ; 遅くなったが 無駄な処理が無いか確認...逆にボスまでにボスのみの
+    ; 処理が回ってないか") - unlike Homing/Thunder/SBeam just above
+    ; (which can have an in-flight instance launched BEFORE the broken-
+    ; form transition that still needs updating afterward, so they can't
+    ; be gated on BOSS_FORM), BOSS_BROKEN_PROJ_ACTIVE can ONLY ever be
+    ; set by LAUNCH_BOSS_BROKEN_BEAM, which itself only ever runs from
+    ; inside UPDATE_BOSS_BROKEN_ACTIVE (already gated on BOSS_FORM=
+    ; ACTIVE, see UPDATE_BOSS_ALL's own dispatch) - so this call was
+    ; provably a guaranteed no-op (all 4 slots always inactive) for the
+    ; entire normal-form portion of the boss fight, same class of "運の
+    ; 悪い全域無駄ループ" this file's own SKIP_ZACO_ENEMY/SKIP_BOSS_
+    ; SUBSYSTEMS precedent already exists to eliminate - just gated the
+    ; wrong way (missing a 3rd, narrower tier: boss-active-but-not-yet-
+    ; broken). Skipping it here is a pure removal of dead work, not a
+    ; behavior change (real reasoning above, not just plausible).
+    LD A,(BOSS_FORM)
+    CP BOSS_FORM_ACTIVE
+    JR NZ,SKIP_BOSS_BROKEN_BEAM_CHECK
+    CALL CHECK_BOSS_BROKEN_BEAM_VS_TANK
+SKIP_BOSS_BROKEN_BEAM_CHECK:
 SKIP_BOSS_SUBSYSTEMS:
     CALL CLOUD_UPDATE_ALL
     CALL SOUND_UPDATE
@@ -3438,10 +4783,11 @@ US_CAN_FIRE:
     LD A,SHOT_COOLDOWN_FRAMES : LD (SHOT_COOLDOWN),A
     RET
 
-; claims the first inactive slot (BULLET0, else 1, else 2) and spawns
-; a shot there; if all 3 are already active, the new shot is dropped
-; (screen limit of 3, matching src/CYBER SHMUP.asm's own BULLET0/1/2
-; pool - "Stage1と同様に制限数画面内3発").
+; claims the first inactive slot (BULLET0, else 1, else 2, else 3) and
+; spawns a shot there; if all 4 are already active, the new shot is
+; dropped - screen limit was 3 (matching src/CYBER SHMUP.asm's own
+; BULLET0/1/2 pool, "Stage1と同様に制限数画面内3発"), now 4 per direct
+; instruction ("3発制限を4発に変更" - see BULLET3_ACT's own comment).
 TRY_SPAWN_BULLET:
     LD A,(BULLET0_ACT)
     OR A
@@ -3457,12 +4803,46 @@ TSB_TRY1:
 TSB_TRY2:
     LD A,(BULLET2_ACT)
     OR A
-    RET NZ
+    JR NZ,TSB_TRY3
     LD IX,BULLET2_ACT
+    JR TSB_DO_SPAWN
+TSB_TRY3:
+    LD A,(BULLET3_ACT)
+    OR A
+    RET NZ
+    LD IX,BULLET3_ACT
 TSB_DO_SPAWN:
     LD A,1 : LD (IX+0),A
     LD A,(TANK_AIMUP) : LD (IX+1),A
     LD A,(TANK_FACING) : LD (IX+6),A
+
+    ; round36-11 ("1発目水平撃ちBulletFU、2発目FM、3発目FL...斜めも同様に
+    ; UU、UM、ULで切り替え"): F and U each advance their own independent
+    ; 0/1/2 rotation counter on every new shot of that type. F's variant
+    ; is remembered per-slot (BULLET0/1/2_VARIANT, via SET_BULLET_
+    ; VARIANT - DRAW_BULLET_CELL reads it back every time this slot
+    ; redraws, not just at spawn) since up to 3 F shots can be on screen
+    ; simultaneously, each showing its own distinct pose. U has no such
+    ; per-slot memory - see WRITE_BULLETU_SPRITE_VARIANT's own comment
+    ; for why (VRAM budget forced a single shared sprite pattern slot).
+    LD A,(IX+1)
+    OR A
+    JR NZ,TSB_ROT_U
+    LD A,(BULLETF_ROT_COUNTER)
+    CALL SET_BULLET_VARIANT
+    LD A,(BULLETF_ROT_COUNTER) : INC A : CP 3 : JR C,TSB_ROT_F_OK
+    XOR A
+TSB_ROT_F_OK:
+    LD (BULLETF_ROT_COUNTER),A
+    JR TSB_ROT_DONE
+TSB_ROT_U:
+    LD A,(BULLETU_ROT_COUNTER)
+    CALL WRITE_BULLETU_SPRITE_VARIANT
+    LD A,(BULLETU_ROT_COUNTER) : INC A : CP 3 : JR C,TSB_ROT_U_OK
+    XOR A
+TSB_ROT_U_OK:
+    LD (BULLETU_ROT_COUNTER),A
+TSB_ROT_DONE:
 
     ; ROW = TANK_Y_CUR >> 3 (name-table row), +2 more for a straight/F
     ; shot only - U (diagonal) keeps the un-shifted muzzle row. Was +1
@@ -3531,13 +4911,119 @@ TSB_SPAWN_U:
     CALL SOUND_SHOT
     RET
 
-; ---------- shots: advance all 3 slots 1 column/frame ----------
+; IX = bullet slot base (BULLET0_ACT/BULLET1_ACT/BULLET2_ACT/
+; BULLET3_ACT), A = this slot's own F-rotation variant (0-2) to
+; remember - see BULLET0_VARIANT's own comment for why this is
+; standalone bytes instead of a slot field. IX is always exactly one of
+; the 4 known constants here, so a plain 3-way compare (falling through
+; to "must be slot3" otherwise) is enough - no general N-way dispatch
+; needed.
+SET_BULLET_VARIANT:
+    PUSH HL
+    PUSH DE
+    PUSH IX : POP HL
+    LD DE,BULLET0_ACT
+    OR A : SBC HL,DE
+    JR Z,SBV_0
+    PUSH IX : POP HL
+    LD DE,BULLET1_ACT
+    OR A : SBC HL,DE
+    JR Z,SBV_1
+    PUSH IX : POP HL
+    LD DE,BULLET2_ACT
+    OR A : SBC HL,DE
+    JR Z,SBV_2
+    LD (BULLET3_VARIANT),A
+    JR SBV_DONE
+SBV_0:
+    LD (BULLET0_VARIANT),A
+    JR SBV_DONE
+SBV_1:
+    LD (BULLET1_VARIANT),A
+    JR SBV_DONE
+SBV_2:
+    LD (BULLET2_VARIANT),A
+SBV_DONE:
+    POP DE
+    POP HL
+    RET
+
+; IX = bullet slot base - returns this slot's own remembered F-rotation
+; variant (0-2) in A. Called every time DRAW_BULLET_CELL redraws an
+; F-type bullet (not just at spawn), so a shot keeps showing the same
+; pose for its whole flight instead of drifting onto whatever variant
+; the rotation counter has advanced to since it spawned.
+GET_BULLET_VARIANT:
+    PUSH HL
+    PUSH DE
+    PUSH IX : POP HL
+    LD DE,BULLET0_ACT
+    OR A : SBC HL,DE
+    JR Z,GBV_0
+    PUSH IX : POP HL
+    LD DE,BULLET1_ACT
+    OR A : SBC HL,DE
+    JR Z,GBV_1
+    PUSH IX : POP HL
+    LD DE,BULLET2_ACT
+    OR A : SBC HL,DE
+    JR Z,GBV_2
+    LD A,(BULLET3_VARIANT)
+    JR GBV_DONE
+GBV_0:
+    LD A,(BULLET0_VARIANT)
+    JR GBV_DONE
+GBV_1:
+    LD A,(BULLET1_VARIANT)
+    JR GBV_DONE
+GBV_2:
+    LD A,(BULLET2_VARIANT)
+GBV_DONE:
+    POP DE
+    POP HL
+    RET
+
+; A = variant to make resident (0-2, BulletUU/UM/UL) - overwrites the
+; single shared PAT_BULLETU/PAT_BULLETU_L hw sprite pattern slot in
+; VRAM with that variant's 32-byte bitmap (both facings). See
+; BULLET_U_SPR_BASE_SLOT's own comment for why there's only ever 1
+; resident bitmap rather than 3 dedicated slots - this is what actually
+; makes U's rotation visible, called once per diagonal shot spawn (not
+; every frame), same DI/EI-wrapped LDIRVM-is-not-interrupt-safe
+; precaution as this file's own LOAD_SASAPI_PATTERNS (which reloads a
+; similarly shared/reused 64-slot range on boss facing changes).
+WRITE_BULLETU_SPRITE_VARIANT:
+    OR A
+    JR Z,WBSV_0
+    CP 1
+    JR Z,WBSV_1
+    DI
+    LD HL,BULLET_U_SPRITE2 : LD DE,PAT_BULLETU*8+SPRPAT : LD BC,32 : CALL LDIRVM
+    LD HL,BULLET_U_SPRITE2_L : LD DE,PAT_BULLETU_L*8+SPRPAT : LD BC,32 : CALL LDIRVM
+    EI
+    RET
+WBSV_0:
+    DI
+    LD HL,BULLET_U_SPRITE0 : LD DE,PAT_BULLETU*8+SPRPAT : LD BC,32 : CALL LDIRVM
+    LD HL,BULLET_U_SPRITE0_L : LD DE,PAT_BULLETU_L*8+SPRPAT : LD BC,32 : CALL LDIRVM
+    EI
+    RET
+WBSV_1:
+    DI
+    LD HL,BULLET_U_SPRITE1 : LD DE,PAT_BULLETU*8+SPRPAT : LD BC,32 : CALL LDIRVM
+    LD HL,BULLET_U_SPRITE1_L : LD DE,PAT_BULLETU_L*8+SPRPAT : LD BC,32 : CALL LDIRVM
+    EI
+    RET
+
+; ---------- shots: advance all 4 slots 1 column/frame ----------
 UPDATE_BULLETS:
     LD IX,BULLET0_ACT
     CALL UPDATE_ONE_BULLET
     LD IX,BULLET1_ACT
     CALL UPDATE_ONE_BULLET
     LD IX,BULLET2_ACT
+    CALL UPDATE_ONE_BULLET
+    LD IX,BULLET3_ACT
     CALL UPDATE_ONE_BULLET
     RET
 
@@ -3728,13 +5214,17 @@ DRAW_BULLET_CELL:
     LD A,(IX+1)
     OR A
     JR NZ,DBC_NIGHT_U
+    CALL GET_BULLET_VARIANT
+    LD B,A
     LD A,(IX+6)
     OR A
     JR NZ,DBC_NIGHT_LEFT
-    LD A,BULLETF_NIGHT_CODE
-    JR DBC_CODE_SET
+    LD HL,BULLETF_NIGHT_CODE_TABLE
+    JR DBC_NIGHT_PICK
 DBC_NIGHT_LEFT:
-    LD A,BULLETF_L_NIGHT_CODE
+    LD HL,BULLETF_L_NIGHT_CODE_TABLE
+DBC_NIGHT_PICK:
+    CALL PICK_VARIANT_CODE
     JR DBC_CODE_SET
 DBC_NIGHT_U:
     LD A,(IX+6)
@@ -3746,17 +5236,28 @@ DBC_NIGHT_U_LEFT:
     LD A,BULLETU_L_NIGHT_CODE
     JR DBC_CODE_SET
 
+; round36-11 ("ローテーションさせる"): F's own sky/rock code now depends
+; on which of the 3 rotation variants this slot was spawned with (see
+; GET_BULLET_VARIANT's own comment) - looked up via PICK_VARIANT_CODE
+; against a 3-byte table instead of a single fixed EQU. U's own BG-cell
+; fallback (used only while BOSS_ACT!=0) is unaffected - still a single
+; non-rotating code, same as before round36-11 - see BULLETU_SKY_CODE's
+; own comment for why.
 DBC_SKY:
     LD A,(IX+1)
     OR A
     JR NZ,DBC_SKY_U
+    CALL GET_BULLET_VARIANT
+    LD B,A
     LD A,(IX+6)
     OR A
     JR NZ,DBC_SKY_LEFT
-    LD A,BULLETF_SKY_CODE
-    JR DBC_CODE_SET
+    LD HL,BULLETF_SKY_CODE_TABLE
+    JR DBC_SKY_PICK
 DBC_SKY_LEFT:
-    LD A,BULLETF_L_SKY_CODE
+    LD HL,BULLETF_L_SKY_CODE_TABLE
+DBC_SKY_PICK:
+    CALL PICK_VARIANT_CODE
     JR DBC_CODE_SET
 DBC_SKY_U:
     LD A,(IX+6)
@@ -3772,13 +5273,17 @@ DBC_ROCK:
     LD A,(IX+1)
     OR A
     JR NZ,DBC_ROCK_U
+    CALL GET_BULLET_VARIANT
+    LD B,A
     LD A,(IX+6)
     OR A
     JR NZ,DBC_ROCK_LEFT
-    LD A,BULLETF_ROCK_CODE
-    JR DBC_CODE_SET
+    LD HL,BULLETF_ROCK_CODE_TABLE
+    JR DBC_ROCK_PICK
 DBC_ROCK_LEFT:
-    LD A,BULLETF_L_ROCK_CODE
+    LD HL,BULLETF_L_ROCK_CODE_TABLE
+DBC_ROCK_PICK:
+    CALL PICK_VARIANT_CODE
     JR DBC_CODE_SET
 DBC_ROCK_U:
     LD A,(IX+6)
@@ -3794,6 +5299,29 @@ DBC_CODE_SET:
     LD E,(IX+2) : LD D,0
     ADD HL,DE
     JP WRITE_BULLET_BYTE_HL
+
+; B = variant (0-2), HL = 3-byte code table base for this color+facing.
+; Returns the picked code in A. B is a plain 0-2 index (GET_BULLET_
+; VARIANT's own range), so a direct add is enough - no bounds check.
+PICK_VARIANT_CODE:
+    LD A,B
+    LD E,A : LD D,0
+    ADD HL,DE
+    LD A,(HL)
+    RET
+
+BULLETF_SKY_CODE_TABLE:
+    DB BULLETF_SKY_CODE0,BULLETF_SKY_CODE1,BULLETF_SKY_CODE2
+BULLETF_L_SKY_CODE_TABLE:
+    DB BULLETF_L_SKY_CODE0,BULLETF_L_SKY_CODE1,BULLETF_L_SKY_CODE2
+BULLETF_ROCK_CODE_TABLE:
+    DB BULLETF_ROCK_CODE0,BULLETF_ROCK_CODE1,BULLETF_ROCK_CODE2
+BULLETF_L_ROCK_CODE_TABLE:
+    DB BULLETF_L_ROCK_CODE0,BULLETF_L_ROCK_CODE1,BULLETF_L_ROCK_CODE2
+BULLETF_NIGHT_CODE_TABLE:
+    DB BULLETF_NIGHT_CODE0,BULLETF_NIGHT_CODE1,BULLETF_NIGHT_CODE2
+BULLETF_L_NIGHT_CODE_TABLE:
+    DB BULLETF_L_NIGHT_CODE0,BULLETF_L_NIGHT_CODE1,BULLETF_L_NIGHT_CODE2
 
 ; writes (BULLET_TEMP_BYTE) to VRAM address HL - raw DI-wrapped OUT
 ; (same pattern as UPDATE_TANK_SPRITES/INIT_SPRATR_CLR above), since
@@ -4055,18 +5583,32 @@ APPLY_TANK_DAMAGE:
     DEC A : LD (TANK_LIFE),A
     JP LIFE_DISPLAY
 
-; Converts GAME_TICK (mod 1000) to 3 decimal digits and draws them at
-; row0 cols29-31 - ported from src/CYBER SHMUP.asm's own
-; GAME_TICK_DISPLAY (called every frame there too, same as here).
+; Converts GAME_TICK to 3 decimal digits and draws them at row0
+; cols29-31 - ported from src/CYBER SHMUP.asm's own GAME_TICK_DISPLAY
+; (called every frame there too, same as here), but no longer a MOD
+; 1000 wrap once GAME_TICK exceeds 999. round34-2 ("Tickは999終了で
+; 繰り返さない"): the real GAME_TICK keeps counting normally past 999
+; forever (its own internal timing math - boss pause/pose end-ticks
+; etc - needs that, see the real GAME_TICK increment's own comment),
+; but a plain MOD 1000 readout would visibly wrap the on-screen counter
+; back to "000" and keep climbing again past that - exactly the "また
+; スタートから出てきてしまってる" (looks like it started over) symptom
+; reported, since GAME_TICK can push past 1000 well before the boss's
+; own late-schedule threshold is reached.
+; Clamps the DISPLAY at 999 once GAME_TICK reaches/exceeds 1000 -
+; "見た目上999で止まる" - purely cosmetic, the real counter and every
+; tick-threshold comparison elsewhere are completely unaffected.
 GAME_TICK_DISPLAY:
     LD HL,(GAME_TICK)
-GTD_MOD1000:
     LD DE,1000
     OR A
     SBC HL,DE
-    JR NC,GTD_MOD1000
-    ADD HL,DE
-
+    JR C,GTD_UNDER1000
+    LD HL,999
+    LD B,0
+    JR GTD_H100
+GTD_UNDER1000:
+    ADD HL,DE   ; undo the SBC above - HL was GAME_TICK-1000, +1000 restores GAME_TICK (0-999)
     LD B,0
 GTD_H100:
     LD DE,100
@@ -4179,6 +5721,22 @@ SOUND_SHOT:
     LD A,SHOT_NOISE_PERIOD : OUT (PSG_DATA),A
     LD A,SHOT_SND_PEAK : LD (SND_TIMER),A
     LD A,SHOT_SND_DECAY : LD (SND_DECAY),A
+    LD A,1 : LD (SND_NOISE),A
+    RET
+
+; short "crackle" blip for the SPARK burst - "爆発エフェクト中も爆発音
+; 追加" (see SPARK_CRACKLE_PERIOD's own comment). Same casual-sound
+; shape as SOUND_SHOT above (no SND_EXPLODING guard/set - this doesn't
+; protect itself from being cut off by anything, nor does it protect
+; anything else from being cut off by it).
+SOUND_SPARK_CRACKLE:
+    LD A,7 : OUT (PSG_ADDR),A
+    LD A,MIXER_NOISE_A : OUT (PSG_DATA),A
+    LD A,6 : OUT (PSG_ADDR),A
+    LD A,SPARK_CRACKLE_NOISE_PERIOD : OUT (PSG_DATA),A
+    LD A,SPARK_CRACKLE_PEAK : LD (SND_TIMER),A
+    LD A,SPARK_CRACKLE_DECAY : LD (SND_DECAY),A
+    LD A,1 : LD (SND_NOISE),A
     RET
 
 ; explosion sound - channel A, noise-only, byte-for-byte the same
@@ -4196,6 +5754,7 @@ SOUND_DESTROY:
     LD A,15 : LD (SND_TIMER),A
     LD A,1 : LD (SND_DECAY),A
     LD A,1 : LD (SND_EXPLODING),A
+    LD A,1 : LD (SND_NOISE),A
     RET
 
 ; "キンキン" metallic ping for a bullet absorbed by Zum's own front
@@ -4206,7 +5765,11 @@ SOUND_DESTROY:
 ; rather than a dedicated C). Peak 15 (was 12, then 12 again - "キンキン
 ; 音量アップ" - now the PSG's own hardware max, register8's volume
 ; field only has 4 bits/16 steps so there's no higher to go), decays
-; 1/frame.
+; 1/frame. TONE, not noise - "ではノイズ使ってる全てのSEをデューティ比
+; の音量操作を適用してみて" (round32) explicitly scopes the on/off
+; gating to noise sounds; a held metallic ping reads wrong chopped up
+; on/off, so this is the one sound that sets SND_NOISE=0 (see that
+; byte's own comment).
 SOUND_ZUM_DEFLECT:
     LD A,7 : OUT (PSG_ADDR),A
     LD A,MIXER_TONE_A : OUT (PSG_DATA),A
@@ -4217,15 +5780,45 @@ SOUND_ZUM_DEFLECT:
     LD A,15 : LD (SND_TIMER),A
     LD A,1 : LD (SND_DECAY),A
     XOR A : LD (SND_EXPLODING),A
+    XOR A : LD (SND_NOISE),A
+    RET
+
+; "円の爆発はノイズでどーーーーんって長いやつ" - the boss's own circle-
+; explosion boom, triggered once at the SPARK->GROW handoff (see UBS_
+; LAST_FRAME) - right as the circle itself starts growing. Channel A,
+; noise, same shared-envelope bytes (SND_TIMER/SND_DECAY) every other
+; sound here uses, but SND_DECAY=0 is a sentinel no ordinary sound ever
+; sets (SHOT/DESTROY/DEFLECT all use 1 or 2) that switches SOUND_UPDATE
+; over to its own SU_BOOM branch - see that routine's own comment for
+; the actual long-decay mechanism (the duty-cycle gating itself is now
+; shared by every noise sound, see SOUND_CALC_NOISE_GATE_VOLUME below).
+; Same SND_EXPLODING guard as SOUND_DESTROY (blocks the shot sound from
+; cutting it off early).
+SOUND_BOSS_BOOM:
+    LD A,7 : OUT (PSG_ADDR),A
+    LD A,MIXER_NOISE_A : OUT (PSG_DATA),A
+    LD A,6 : OUT (PSG_ADDR),A
+    LD A,BOSS_BOOM_NOISE_PERIOD : OUT (PSG_DATA),A
+    LD A,15 : LD (SND_TIMER),A
+    XOR A : LD (SND_DECAY),A
+    LD A,BOSS_BOOM_DECAY_PERIOD : LD (SND_BOOM_DECAY_CTR),A
+    LD A,1 : LD (SND_EXPLODING),A
+    LD A,1 : LD (SND_NOISE),A
     RET
 
 ; single shared channel-A envelope for every sound above - writes
-; SND_TIMER's own current value as the volume (register8, 0-15), then
-; steps it toward 0 by SND_DECAY (clamped so it can't undershoot past
-; 0 - see SOUND_SHOT/SOUND_DESTROY/SOUND_ZUM_DEFLECT for how each
-; sound picks its own peak/decay pair when triggered).
+; SOUND_CALC_NOISE_GATE_VOLUME's own output (register8, 0-15) every
+; frame, then steps SND_TIMER toward 0 by SND_DECAY (clamped so it can't
+; undershoot past 0 - see SOUND_SHOT/SOUND_DESTROY/SOUND_ZUM_DEFLECT for
+; how each sound picks its own peak/decay pair when triggered).
+; SND_DECAY==0 means "boom mode" instead (see SOUND_BOSS_BOOM's own
+; comment) - branches into SU_BOOM below rather than this linear path.
 SOUND_UPDATE:
-    LD A,(SND_TIMER)
+    LD A,(SND_DECAY)
+    OR A
+    JR Z,SU_BOOM
+
+    CALL SOUND_CALC_NOISE_GATE_VOLUME
     LD B,A
     LD A,8 : OUT (PSG_ADDR),A
     LD A,B : OUT (PSG_DATA),A
@@ -4245,16 +5838,467 @@ SU_STEP:
     LD (SND_EXPLODING),A
     RET
 
-; ---------- enemy (ZacoII): spawn timer, then all 3 slots ----------
-UPDATE_ENEMIES:
-    LD A,(ENEMY_SPAWN_TIMER)
+; out: A = this frame's output volume, gated by the 1:1 on/off duty
+; cycle if the CURRENTLY playing sound is noise (SND_NOISE=1), or just
+; the raw envelope if it's tone (SND_NOISE=0, SOUND_ZUM_DEFLECT only) -
+; "ではノイズ使ってる全てのSEをデューティ比の音量操作を適用してみて"
+; (round32) - originally boom-only (as BOSS_BOOM_CALC_VOLUME), now
+; shared by every noise sound in this file. "デューティ比1:1で減衰し
+; ながらボリューム半分かOFFをまぜてくれ そうすればブリブリって音になる
+; はず" - gated frames alternate every single frame between the FULL
+; current envelope and silence, using TICK's own low bit as the toggle
+; (a free-running per-frame flip - no dedicated toggle byte needed);
+; "半分" (half) was tried and dropped (round32 follow-up: "音量最大か?
+; かなり小さいが" - halving on top of the duty cycle's own 50% silent
+; time never reached the hardware's real max on any frame). A pure
+; function of SND_TIMER/SND_NOISE/TICK only - no side effects, doesn't
+; touch the PSG or step the envelope itself - kept standalone
+; specifically so it's directly testable without needing to observe an
+; actual PSG register write (z80emu.py has no PSG emulation at all).
+SOUND_CALC_NOISE_GATE_VOLUME:
+    LD A,(SND_NOISE)
     OR A
-    JR Z,UE_TRY_SPAWN
-    DEC A : LD (ENEMY_SPAWN_TIMER),A
-    JR UE_UPDATE_ALL
-UE_TRY_SPAWN:
-    CALL ALLOC_ENEMY_SLOT
+    JR Z,SCNGV_RAW
+    LD A,(TICK) : AND 1
+    JR NZ,SCNGV_SILENT
+SCNGV_RAW:
+    LD A,(SND_TIMER)
+    RET
+SCNGV_SILENT:
+    XOR A
+    RET
 
+; boom-mode envelope (SND_DECAY==0, see SOUND_BOSS_BOOM's own comment) -
+; writes SOUND_CALC_NOISE_GATE_VOLUME's own output every frame, then
+; steps the underlying envelope down by 1 every BOSS_BOOM_DECAY_PERIOD
+; frames (not every frame, unlike the linear path above) - stretching a
+; still-15-step decay out over many more real frames - "長いやつ".
+SU_BOOM:
+    CALL SOUND_CALC_NOISE_GATE_VOLUME
+    LD B,A
+    LD A,8 : OUT (PSG_ADDR),A
+    LD A,B : OUT (PSG_DATA),A
+
+    LD A,(SND_TIMER)
+    OR A
+    RET Z
+
+    LD A,(SND_BOOM_DECAY_CTR) : DEC A : LD (SND_BOOM_DECAY_CTR),A
+    RET NZ
+    LD A,BOSS_BOOM_DECAY_PERIOD : LD (SND_BOOM_DECAY_CTR),A
+    LD A,(SND_TIMER) : DEC A : LD (SND_TIMER),A
+    OR A
+    RET NZ
+    LD (SND_EXPLODING),A
+    RET
+
+; ---------- boss attack SFX (round36-14 follow-up#5) ----------
+; ホーミング発射音「バシュ」- ノイズ、短く明るく、ゲート有り。
+; UPDATE_HORMING_VOLLEY's own UHV_FIRE calls this once per tick (a pair
+; of missiles launches together, sprite pool + BG pool), not once per
+; individual FIRE_ONE_HORMING/_BG call - calling it from both would just
+; re-arm the identical envelope twice on the same frame for no audible
+; difference, so the shared dispatch point is the cleaner call site.
+SOUND_HORMING:
+    LD A,7 : OUT (PSG_ADDR),A
+    LD A,MIXER_NOISE_A : OUT (PSG_DATA),A
+    LD A,6 : OUT (PSG_ADDR),A
+    LD A,HORMING_NOISE_PERIOD : OUT (PSG_DATA),A
+    LD A,15 : LD (SND_TIMER),A
+    LD A,HORMING_SND_DECAY : LD (SND_DECAY),A
+    XOR A : LD (SND_EXPLODING),A
+    LD A,1 : LD (SND_NOISE),A
+    RET
+
+; サンダー発射音「雷鳴」- SOUND_BOSS_BOOM と全く同じ「boomモード」
+; (SND_DECAY=0、BOSS_BOOM_DECAY_PERIODで1段ずつ減衰)を再利用、ノイズ
+; ピッチのみ差し替え。SND_EXPLODING は立てない(自身のコメント参照)。
+SOUND_THUNDER:
+    LD A,7 : OUT (PSG_ADDR),A
+    LD A,MIXER_NOISE_A : OUT (PSG_DATA),A
+    LD A,6 : OUT (PSG_ADDR),A
+    LD A,THUNDER_NOISE_PERIOD : OUT (PSG_DATA),A
+    LD A,15 : LD (SND_TIMER),A
+    XOR A : LD (SND_DECAY),A
+    LD A,BOSS_BOOM_DECAY_PERIOD : LD (SND_BOOM_DECAY_CTR),A
+    XOR A : LD (SND_EXPLODING),A
+    LD A,1 : LD (SND_NOISE),A
+    RET
+
+; サンダービーム発射音「ビビビー」- トーンch(SOUND_ZUM_DEFLECTと同じ
+; MIXER_TONE_A)に、通常はノイズ専用のデューティゲート(SND_NOISE=1)を
+; あえて適用 - 60fps更新の下で作れる最速の振幅変調がこの1:1ゲートその
+; ものなので、新規のゲートモードを増やさずそのまま流用するだけで
+; プロトタイプのS1が狙っていた「ビビビー」感を再現できる。
+SOUND_SBEAM:
+    LD A,7 : OUT (PSG_ADDR),A
+    LD A,MIXER_TONE_A : OUT (PSG_DATA),A
+    LD A,0 : OUT (PSG_ADDR),A
+    LD A,SBEAM_SND_TONE_PERIOD : OUT (PSG_DATA),A
+    LD A,1 : OUT (PSG_ADDR),A
+    XOR A : OUT (PSG_DATA),A
+    LD A,15 : LD (SND_TIMER),A
+    LD A,SBEAM_SND_DECAY : LD (SND_DECAY),A
+    XOR A : LD (SND_EXPLODING),A
+    LD A,1 : LD (SND_NOISE),A
+    RET
+
+; "サンダービームのSEが1回のみだが 発射中はSEをループ 終わったら当然
+; 音も停止" - UPDATE_SBEAM now re-CALLs SOUND_SBEAM above every single
+; frame SBEAM_ACT is active (re-arms SND_TIMER before it can decay to
+; 0, giving a sustained loop instead of one impulse), and every site
+; that clears SBEAM_ACT calls this immediately after to cut channel A
+; dead right away - SND_TIMER=0 alone would leave this frame's already-
+; written R8 volume stale until the next SOUND_UPDATE call, so this
+; also re-writes R8 directly (same shape as INIT's own boot-time
+; channel-A mute).
+STOP_SBEAM_SOUND:
+    XOR A : LD (SND_TIMER),A
+    LD A,8 : OUT (PSG_ADDR),A
+    XOR A : OUT (PSG_DATA),A
+    RET
+
+; ササピーレーザー(SasapiBroken停止中4方向ビーム)発射音 - 指示通り
+; src/CYBER SHMUP.asmのSOUND_SHOTを流用、トーンピッチ(period30)は実値
+; そのまま。L3の選定通りデューティゲートを追加(Stage1本来は無し)、
+; ピークは"それぞれ音量は最大で"により15。
+SOUND_SASAPI_LASER:
+    LD A,7 : OUT (PSG_ADDR),A
+    LD A,MIXER_TONE_A : OUT (PSG_DATA),A
+    LD A,0 : OUT (PSG_ADDR),A
+    LD A,SASAPI_LASER_TONE_PERIOD : OUT (PSG_DATA),A
+    LD A,1 : OUT (PSG_ADDR),A
+    XOR A : OUT (PSG_DATA),A
+    LD A,15 : LD (SND_TIMER),A
+    LD A,SASAPI_LASER_SND_DECAY : LD (SND_DECAY),A
+    XOR A : LD (SND_EXPLODING),A
+    LD A,1 : LD (SND_NOISE),A
+    RET
+
+; ボス登場「実体化」演出のトーン音(follow-up#22)- 試聴ページの候補G2
+; 「低音ぐわーん(デューティゲート)」を、ユーザー指示"G2でオクターブ
+; 下げて"通りオクターブ下げて(period190→380、周波数ちょうど半分)採用。
+; period380は8bitに収まらない(このファイルの他の全トーンSEはレジスタ1
+; を常に0で運用している唯一の理由がそれで、380は初めてレジスタ1側の
+; 桁上げが必要な値) - 380=0x17Ch: レジスタ0=0x7Ch(124)、レジスタ1=0x01。
+; ボスの死亡演出(SOUND_BOSS_BOOM)と同じ"boomモード"(SND_DECAY=0の
+; センチネル、BOSS_BOOM_DECAY_PERIODで1段ずつ減衰=75生フレームで1回分の
+; 「ぐわーん」)を再利用しつつ、SOUND_SBEAMと同じ「本来ノイズ専用の
+; デューティゲート(SND_NOISE=1)をあえてトーンchに適用」してブリブリした
+; 質感を追加。SND_EXPLODINGはセットしない(SOUND_THUNDERと同じ判断 - この
+; 音はUPDATE_BOSS_MATERIALIZE側でBOSS_MATERIALIZE_SND_RETRIGGERごとに
+; 何度も再着火される「繰り返しトリガー」の音であり、一度きりの「爆発」
+; ではないため)。
+SOUND_BOSS_MATERIALIZE:
+    LD A,7 : OUT (PSG_ADDR),A
+    LD A,MIXER_TONE_A : OUT (PSG_DATA),A
+    LD A,0 : OUT (PSG_ADDR),A
+    LD A,124 : OUT (PSG_DATA),A
+    LD A,1 : OUT (PSG_ADDR),A
+    LD A,1 : OUT (PSG_DATA),A
+    LD A,15 : LD (SND_TIMER),A
+    XOR A : LD (SND_DECAY),A
+    LD A,BOSS_BOOM_DECAY_PERIOD : LD (SND_BOOM_DECAY_CTR),A
+    XOR A : LD (SND_EXPLODING),A
+    LD A,1 : LD (SND_NOISE),A
+    RET
+
+; ---------- Stage2 spawn schedule (round34, "全てスケジュールに") ----------
+; table-driven spawning, ported from src/CYBER SHMUP.asm's own
+; SPAWN_THRESHOLDS/SPAWN_NEXT_INDEX/SSC_FIRE/SPAWN_SCHEDULE_CHECK
+; (Stage1). SPAWN2_THRESHOLDS/SPAWN2_Y_TABLE are transcribed directly,
+; index-for-index, from the schedule editor's own exported Stage2 JSON
+; (tools/schedule-editor.html, Schedule2.json - "Schedule2_7.json" as
+; supplied for round36-9, "これで組み込んでみてくれ" - the user's own
+; edited schedule+terrain, replacing round34-3's "Schedule2_2.json"),
+; sorted by tick then row exactly like the editor's own currentJSON()
+; already sorts it. SPAWN2_Y_TABLE holds
+; each entry's own row*8 (pixel Y) - consumed by the 2 free-Y types
+; (ZacoII/Flyer, via S2_SPAWN_Y) and simply ignored by the 3 ground
+; types (Zum/BigZum/Etank, whose own Y always comes from the terrain/
+; tier-follow logic instead - see each ALLOC_*_SLOT's own comment).
+;
+; GAME_TICK only advances once per 8 raw frames (see its own INIT-area
+; comment) - SPAWN2_SCHEDULE_CHECK is called once there, right
+; alongside it (MAINLOOP), same cadence Stage1's own SPAWN_SCHEDULE_
+; CHECK uses.
+;
+; round34-3 (real-hardware feedback: "Tick500あたりから100Tick以上敵が
+; 出てこない/Bigzumが一度も出てこない/ボスも999になっても出ない/やって
+; ることはStage1と全く同じ処理だぞ"): the previous round's own
+; SPAWN2_STALL_LIMIT safety valve was the actual bug, not a fix - it was
+; built to solve a problem that a DIFFERENT round34-2 change (removing
+; the ground-lane exclusion) already made moot, but its own 60-tick
+; timeout turned out far too short for the terrain-gated types (Zum/
+; BigZum/Etank - see their own TERRAIN_OK checks), whose own flat-ground
+; window can legitimately take longer than 60 ticks to cycle back around
+; as the track scrolls. Every BigZum entry landing on an unlucky terrain
+; window got silently force-skipped before its own condition ever had a
+; real chance to become true - "BigZumが一度も出てこない" exactly, and 2
+; adjacent BigZum entries (this schedule's own tick487/500) each burning
+; the full 60-tick timeout accounts for the reported ~100-tick dead
+; stretch around tick500 too (nothing else in the schedule could fire
+; either, since SPAWN2_NEXT_INDEX was stuck on those 2 in turn).
+;
+; Correct fix, and the literal answer to "同じ処理をしろ": SSC2_FIRE now
+; matches Stage1's own SSC_FIRE byte-for-byte in shape - SPAWN2_NEXT_
+; INDEX advances UNCONDITIONALLY, before dispatch, every single time an
+; entry comes due, exactly like Stage1's own `INC A:LD(SPAWN_NEXT_
+; INDEX),A:DEC A` idiom. A spawn that can't happen this instant (pool
+; full/terrain not flat) is simply DROPPED, not retried - the schedule
+; itself never waits on anything, so nothing can ever stall it, and
+; nothing later (down to the boss, the very last entry) can ever be held
+; hostage by an earlier one. No timeout, no stall counter, no separate
+; "force skip" path needed - it's the same one unconditional advance
+; every time. This is strictly simpler than the previous 2 rounds' own
+; retry-until-success design, not just a bugfix.
+SPAWN2_SCHEDULE_CHECK:
+    LD A,(SPAWN2_NEXT_INDEX)
+    CP SPAWN2_COUNT
+    RET NC
+    LD H,0 : LD L,A
+    ADD HL,HL
+    LD DE,SPAWN2_THRESHOLDS
+    ADD HL,DE
+    LD E,(HL) : INC HL : LD D,(HL)
+    LD HL,(GAME_TICK)
+    OR A
+    SBC HL,DE
+    RET C
+    JP SSC2_FIRE
+
+; unconditionally advances SPAWN2_NEXT_INDEX (same "INC, dispatch on the
+; OLD value" idiom as Stage1's own SSC_FIRE), stages this firing's own
+; pixel Y before dispatch (harmless for the 3 ground types, which never
+; read S2_SPAWN_Y), then dispatches on the pre-increment index. Whatever
+; ALLOC_*_SLOT/SPAWN_S2_* is dispatched to just RETs when it's done,
+; success or not - the index has already moved on regardless, so there's
+; nothing left for it to signal. The very last entry (boss) needs no CP
+; at all - once every earlier index has fired (dropped or not), SPAWN2_
+; NEXT_INDEX can only be SPAWN2_COUNT-1 here, so dispatch just jumps
+; unconditionally to S2_BOSS_SPAWN at the end of the CP chain below,
+; same convention as Stage1's own SSC_FIRE/BOSS_SPAWN (there a physical
+; fallthrough since BOSS_SPAWN sits right after the CP chain in that
+; file; here an explicit JP, since S2_BOSS_SPAWN lives elsewhere, inside
+; UPDATE_BOSS_ALL's own section).
+SSC2_FIRE:
+    LD A,(SPAWN2_NEXT_INDEX)
+    INC A
+    LD (SPAWN2_NEXT_INDEX),A
+    DEC A
+    LD H,0 : LD L,A
+    LD DE,SPAWN2_Y_TABLE
+    ADD HL,DE
+    LD A,(HL)
+    LD (S2_SPAWN_Y),A
+    LD A,(SPAWN2_NEXT_INDEX)
+    DEC A
+; SSC2_FIRE dispatch chain body (excludes the last/boss entry, jumped
+; to unconditionally at the end of this chain instead - see above)
+    CP 0   : JP Z,SPAWN_S2_ZACOII
+    CP 1   : JP Z,SPAWN_S2_ZACOII
+    CP 2   : JP Z,SPAWN_S2_ZACOII
+    CP 3   : JP Z,SPAWN_S2_ZACOII
+    CP 4   : JP Z,SPAWN_S2_ZACOII
+    CP 5   : JP Z,ALLOC_FLYER_SLOT
+    CP 6   : JP Z,ALLOC_FLYER_SLOT
+    CP 7   : JP Z,SPAWN_S2_ZACOII
+    CP 8   : JP Z,SPAWN_S2_ZACOII
+    CP 9   : JP Z,SPAWN_S2_ZACOII
+    CP 10  : JP Z,SPAWN_S2_ZACOII
+    CP 11  : JP Z,SPAWN_S2_ZACOII
+    CP 12  : JP Z,SPAWN_S2_ZACOII
+    CP 13  : JP Z,SPAWN_S2_ZACOII_RED
+    CP 14  : JP Z,ALLOC_ZUM_SLOT
+    CP 15  : JP Z,ALLOC_ZUM_SLOT
+    CP 16  : JP Z,ALLOC_FLYER_SLOT
+    CP 17  : JP Z,ALLOC_ZUM_SLOT
+    CP 18  : JP Z,SPAWN_S2_ZACOII
+    CP 19  : JP Z,SPAWN_S2_ZACOII
+    CP 20  : JP Z,SPAWN_S2_ZACOII
+    CP 21  : JP Z,ALLOC_ETANK_SLOT
+    CP 22  : JP Z,SPAWN_S2_ZACOII
+    CP 23  : JP Z,SPAWN_S2_ZACOII
+    CP 24  : JP Z,ALLOC_FLYER_SLOT
+    CP 25  : JP Z,SPAWN_S2_ZACOII
+    CP 26  : JP Z,SPAWN_S2_ZACOII
+    CP 27  : JP Z,SPAWN_S2_ZACOII
+    CP 28  : JP Z,ALLOC_BIGZUM_SLOT
+    CP 29  : JP Z,SPAWN_S2_ZACOII
+    CP 30  : JP Z,SPAWN_S2_ZACOII
+    CP 31  : JP Z,SPAWN_S2_ZACOII
+    CP 32  : JP Z,ALLOC_FLYER_SLOT
+    CP 33  : JP Z,ALLOC_FLYER_SLOT
+    CP 34  : JP Z,ALLOC_ZUM_SLOT
+    CP 35  : JP Z,SPAWN_S2_ZACOII_RED
+    CP 36  : JP Z,ALLOC_ZUM_SLOT
+    CP 37  : JP Z,ALLOC_ZUM_SLOT
+    CP 38  : JP Z,ALLOC_ETANK_SLOT
+    CP 39  : JP Z,SPAWN_S2_ZACOII
+    CP 40  : JP Z,SPAWN_S2_ZACOII
+    CP 41  : JP Z,SPAWN_S2_ZACOII
+    CP 42  : JP Z,SPAWN_S2_ZACOII
+    CP 43  : JP Z,SPAWN_S2_ZACOII
+    CP 44  : JP Z,SPAWN_S2_ZACOII
+    CP 45  : JP Z,SPAWN_S2_ZACOII
+    CP 46  : JP Z,SPAWN_S2_ZACOII
+    CP 47  : JP Z,ALLOC_FLYER_SLOT
+    CP 48  : JP Z,ALLOC_FLYER_SLOT
+    CP 49  : JP Z,ALLOC_BIGZUM_SLOT
+    CP 50  : JP Z,SPAWN_S2_ZACOII
+    CP 51  : JP Z,SPAWN_S2_ZACOII
+    CP 52  : JP Z,SPAWN_S2_ZACOII
+    CP 53  : JP Z,SPAWN_S2_ZACOII
+    CP 54  : JP Z,SPAWN_S2_ZACOII
+    CP 55  : JP Z,SPAWN_S2_ZACOII
+    CP 56  : JP Z,SPAWN_S2_ZACOII
+    CP 57  : JP Z,SPAWN_S2_ZACOII
+    CP 58  : JP Z,SPAWN_S2_ZACOII
+    CP 59  : JP Z,SPAWN_S2_ZACOII_RED
+    CP 60  : JP Z,ALLOC_FLYER_SLOT
+    CP 61  : JP Z,SPAWN_S2_ZACOII
+    CP 62  : JP Z,SPAWN_S2_ZACOII
+    CP 63  : JP Z,SPAWN_S2_ZACOII
+    CP 64  : JP Z,SPAWN_S2_ZACOII
+    CP 65  : JP Z,SPAWN_S2_ZACOII
+    CP 66  : JP Z,SPAWN_S2_ZACOII
+    CP 67  : JP Z,SPAWN_S2_ZACOII
+    CP 68  : JP Z,ALLOC_ZUM_SLOT
+    CP 69  : JP Z,ALLOC_ZUM_SLOT
+    CP 70  : JP Z,ALLOC_ETANK_SLOT
+    CP 71  : JP Z,ALLOC_BIGZUM_SLOT
+    CP 72  : JP Z,ALLOC_FLYER_SLOT
+    CP 73  : JP Z,ALLOC_FLYER_SLOT
+    CP 74  : JP Z,SPAWN_S2_ZACOII
+    CP 75  : JP Z,SPAWN_S2_ZACOII
+    CP 76  : JP Z,SPAWN_S2_ZACOII
+    CP 77  : JP Z,SPAWN_S2_ZACOII
+    CP 78  : JP Z,SPAWN_S2_ZACOII
+    CP 79  : JP Z,SPAWN_S2_ZACOII
+    CP 80  : JP Z,SPAWN_S2_ZACOII
+    CP 81  : JP Z,SPAWN_S2_ZACOII
+    CP 82  : JP Z,SPAWN_S2_ZACOII
+    CP 83  : JP Z,SPAWN_S2_ZACOII_RED
+    CP 84  : JP Z,ALLOC_FLYER_SLOT
+    CP 85  : JP Z,SPAWN_S2_ZACOII
+    CP 86  : JP Z,ALLOC_FLYER_SLOT
+    CP 87  : JP Z,SPAWN_S2_ZACOII
+    CP 88  : JP Z,SPAWN_S2_ZACOII
+    CP 89  : JP Z,SPAWN_S2_ZACOII
+    CP 90  : JP Z,SPAWN_S2_ZACOII
+    CP 91  : JP Z,SPAWN_S2_ZACOII
+    CP 92  : JP Z,SPAWN_S2_ZACOII
+    CP 93  : JP Z,SPAWN_S2_ZACOII
+    CP 94  : JP Z,ALLOC_ZUM_SLOT
+    CP 95  : JP Z,ALLOC_ZUM_SLOT
+    CP 96  : JP Z,ALLOC_ZUM_SLOT
+    CP 97  : JP Z,ALLOC_ETANK_SLOT
+    CP 98  : JP Z,SPAWN_S2_ZACOII
+    CP 99  : JP Z,SPAWN_S2_ZACOII
+    CP 100 : JP Z,SPAWN_S2_ZACOII
+    CP 101 : JP Z,SPAWN_S2_ZACOII
+    CP 102 : JP Z,SPAWN_S2_ZACOII
+    CP 103 : JP Z,SPAWN_S2_ZACOII
+    CP 104 : JP Z,SPAWN_S2_ZACOII
+    CP 105 : JP Z,SPAWN_S2_ZACOII
+    CP 106 : JP Z,SPAWN_S2_ZACOII
+    CP 107 : JP Z,SPAWN_S2_ZACOII
+    CP 108 : JP Z,SPAWN_S2_ZACOII
+    CP 109 : JP Z,ALLOC_FLYER_SLOT
+    CP 110 : JP Z,ALLOC_BIGZUM_SLOT
+    CP 111 : JP Z,ALLOC_FLYER_SLOT
+    CP 112 : JP Z,ALLOC_FLYER_SLOT
+    CP 113 : JP Z,ALLOC_FLYER_SLOT
+    CP 114 : JP Z,SPAWN_S2_ZACOII_RED
+    CP 115 : JP Z,SPAWN_S2_ZACOII
+    CP 116 : JP Z,SPAWN_S2_ZACOII
+    CP 117 : JP Z,SPAWN_S2_ZACOII
+    CP 118 : JP Z,SPAWN_S2_ZACOII
+    CP 119 : JP Z,SPAWN_S2_ZACOII
+    CP 120 : JP Z,SPAWN_S2_ZACOII
+    CP 121 : JP Z,SPAWN_S2_ZACOII
+    CP 122 : JP Z,SPAWN_S2_ZACOII
+    CP 123 : JP Z,SPAWN_S2_ZACOII
+    CP 124 : JP Z,ALLOC_ZUM_SLOT
+    CP 125 : JP Z,ALLOC_ZUM_SLOT
+    CP 126 : JP Z,ALLOC_ZUM_SLOT
+    CP 127 : JP Z,ALLOC_BIGZUM_SLOT
+    CP 128 : JP Z,ALLOC_FLYER_SLOT
+    CP 129 : JP Z,ALLOC_FLYER_SLOT
+    CP 130 : JP Z,SPAWN_S2_ZACOII
+    CP 131 : JP Z,SPAWN_S2_ZACOII
+    CP 132 : JP Z,SPAWN_S2_ZACOII
+    CP 133 : JP Z,SPAWN_S2_ZACOII
+    CP 134 : JP Z,SPAWN_S2_ZACOII
+    CP 135 : JP Z,SPAWN_S2_ZACOII
+    CP 136 : JP Z,SPAWN_S2_ZACOII
+    CP 137 : JP Z,SPAWN_S2_ZACOII
+    CP 138 : JP Z,SPAWN_S2_ZACOII
+    CP 139 : JP Z,SPAWN_S2_ZACOII_RED
+    CP 140 : JP Z,ALLOC_FLYER_SLOT
+    CP 141 : JP Z,ALLOC_FLYER_SLOT
+    CP 142 : JP Z,ALLOC_FLYER_SLOT
+    CP 143 : JP Z,ALLOC_FLYER_SLOT
+    CP 144 : JP Z,SPAWN_S2_ZACOII
+    CP 145 : JP Z,SPAWN_S2_ZACOII
+    CP 146 : JP Z,SPAWN_S2_ZACOII_RED
+    CP 147 : JP Z,SPAWN_S2_ZACOII
+    CP 148 : JP Z,SPAWN_S2_ZACOII
+    ; index149 (the last entry, boss) needs no CP of its own - by this
+    ; point SPAWN2_NEXT_INDEX can only be 149, same "falls through"
+    ; convention Stage1's own SSC_FIRE uses, just an explicit JP here
+    ; since S2_BOSS_SPAWN isn't physically adjacent in this file (it
+    ; lives inside UPDATE_BOSS_ALL's own section, unlike Stage1 where
+    ; BOSS_SPAWN happens to sit right after SSC_FIRE's own CP chain).
+    JP S2_BOSS_SPAWN
+
+SPAWN2_COUNT EQU 150
+
+SPAWN2_THRESHOLDS:
+    DW 12,15,27,34,46,57,67,78
+    DW 80,84,95,98,100,110,124,139
+    DW 145,155,157,160,164,169,182,185
+    DW 196,207,209,209,219,220,221,225
+    DW 232,242,259,260,263,267,279,280
+    DW 284,292,295,298,307,309,310,316
+    DW 326,330,334,335,344,355,355,355
+    DW 362,363,363,372,386,395,397,401
+    DW 403,407,411,413,428,442,464,500
+    DW 517,524,535,535,539,546,546,550
+    DW 555,556,560,565,577,580,587,591
+    DW 597,604,604,604,613,613,624,628
+    DW 632,659,675,677,682,684,688,691
+    DW 693,697,700,701,705,712,724,725
+    DW 736,747,760,768,770,774,777,779
+    DW 783,784,786,789,830,835,841,850
+    DW 866,869,877,878,882,885,887,890
+    DW 897,898,902,908,915,920,928,932
+    DW 938,940,942,947,947,995
+
+SPAWN2_Y_TABLE:
+    DB 104,56,88,32,72,80,40,104,72,24,112,80
+    DB 40,72,136,120,48,128,88,64,24,128,72,40
+    DB 72,88,24,56,136,88,64,24,80,48,144,48
+    DB 144,144,136,88,56,96,64,24,104,72,32,72
+    DB 32,144,88,16,64,24,48,80,32,64,96,80
+    DB 32,80,24,104,64,16,96,48,136,128,128,128
+    DB 80,32,64,88,24,56,88,24,96,56,24,56
+    DB 88,32,32,104,56,24,72,112,40,80,128,128
+    DB 128,128,88,56,88,56,24,96,56,24,104,64
+    DB 32,80,112,24,88,40,64,104,72,32,104,64
+    DB 24,104,72,32,128,128,128,120,88,48,104,72
+    DB 40,112,80,40,120,88,40,72,88,32,88,32
+    DB 112,40,64,8,96,104
+
+
+; ---------- enemy (ZacoII): all 3 slots (spawning is schedule-driven - ----------
+; ---------- see SPAWN2_SCHEDULE_CHECK/SSC2_FIRE, not polled here) ----------
+; round34 ("ランダムスポーンは廃止 全てスケジュールに"): this used to
+; poll a fixed-interval countdown (ENEMY_SPAWN_TIMER) here every frame,
+; trying ALLOC_ENEMY_SLOT once it hit 0. That whole trigger is gone -
+; ALLOC_ENEMY_SLOT is only ever called from SSC2_FIRE now, when the
+; schedule's own next entry comes due.
+UPDATE_ENEMIES:
 ; walks ENEMY_POOL (HL-indexed, ENEMY_SLOT_SIZE stride, DJNZ over
 ; ENEMY_SLOT_COUNT) calling UPDATE_ONE_ENEMY on every slot - same idiom
 ; as src/CYBER SHMUP.asm's own ENEMY_POOL_UPDATE_ALL, not 3 individually
@@ -4276,41 +6320,51 @@ UE_TRY_SPAWN:
 ; buffer into unrelated RAM. This was the real freeze/corruption cause
 ; from the previous 2 rounds, not the push-HL-vs-direct-IX question -
 ; see the README bug entry.
+; round36-14 follow-up#9 ("Update enemyに絞って実測してくれ"): unrolled
+; the slot-walk itself (ENEMY_SLOT_COUNT=3, fixed) - UPDATE_ONE_ENEMY's
+; own body is untouched/still shared (called 3x via CALL, not
+; duplicated), so this costs nothing in extra ROM for the routine's own
+; logic, only for this thin wrapper. Removes, per slot: the PUSH BC/
+; POP BC pair (21T, only needed to protect DJNZ's own loop counter from
+; UPDATE_ONE_ENEMY's internal B/C scratch use - no counter, nothing to
+; protect), the 9x INC IX walk (90T - this assembler has no ADD IX,DE/
+; ADD IX,n, so advancing by ENEMY_SLOT_SIZE could only ever be done one
+; byte at a time; a compile-time-constant LD IX,ENEMY_POOL+9/+18 costs
+; the same 14T as the very first LD IX,ENEMY_POOL always did, instead
+; of paying incrementally), and DJNZ itself (13T taken/8T not). T-state
+; measured via fresh_cpu()+cpu.reset_stats()+call_routine(): 3446T->
+; 3100T(-10.0%, 3 active slots)/1484T->1138T(-23.3%, 0 active). Unlike
+; the SasapiBroken beam routines (round36-14 follow-up#8), this wrapper
+; actually got SMALLER too (35->25 bytes) - nothing here was duplicated
+; (UPDATE_ONE_ENEMY's own body is unchanged/still shared via CALL), so
+; there was no unroll-vs-size tradeoff to make, only pure waste to cut.
 UE_UPDATE_ALL:
     LD IX,ENEMY_POOL
-    LD B,ENEMY_SLOT_COUNT
-UEUA_LOOP:
-    PUSH BC
     CALL UPDATE_ONE_ENEMY
-    POP BC
-    INC IX : INC IX : INC IX : INC IX : INC IX : INC IX : INC IX : INC IX : INC IX
-    DJNZ UEUA_LOOP
+    LD IX,ENEMY_POOL+ENEMY_SLOT_SIZE
+    CALL UPDATE_ONE_ENEMY
+    LD IX,ENEMY_POOL+ENEMY_SLOT_SIZE+ENEMY_SLOT_SIZE
+    CALL UPDATE_ONE_ENEMY
     CALL FLUSH_ENEMY_SPRITES
     RET
 
-; shared by every ALLOC_*_SLOT below (ZacoII/Zum/BigZum/Flyer/Etank) -
-; "950で全ての敵のスポーンを停止". Returns with Carry set while spawning
-; is still allowed (GAME_TICK<ENEMY_SPAWN_STOP_TICK), Carry clear once
-; it's time to stop - callers just do `CALL SPAWN_STOPPED : RET NC`
-; before doing anything else, one shared 16-bit-safe GAME_TICK compare
-; instead of 5 separate ones (see the CLOUD_UPDATE_ALL bug this same
-; session for what happens when a GAME_TICK compare isn't genuinely
-; 16-bit).
-SPAWN_STOPPED:
-    LD HL,(GAME_TICK)
-    LD DE,ENEMY_SPAWN_STOP_TICK
-    OR A
-    SBC HL,DE
-    RET
-
-; scans ENEMY_POOL for the first E_ACT=0 slot and spawns into it -
-; named/shaped like src/CYBER SHMUP.asm's own ALLOC_ENEMY_SLOT (walks
-; the buffer, doesn't check 3 named slots by hand). If every slot is
-; already active, spawning is simply retried next frame (the timer is
-; only reset on an actual spawn) - same pool-of-3 idea as
-; TRY_SPAWN_BULLET.
+; scans ENEMY_POOL for the first E_ACT=0 slot and spawns a ZacoII into
+; it - named/shaped like src/CYBER SHMUP.asm's own ALLOC_ENEMY_SLOT
+; (walks the buffer, doesn't check 3 named slots by hand). Called only
+; from SSC2_FIRE (via the SPAWN_S2_ZACOII/SPAWN_S2_ZACOII_RED wrappers
+; below, both plain tail-jumps, not CALLs - the return address SSC2_
+; FIRE's own caller left on the stack stays valid all the way through),
+; never polled - round34 ("ランダムスポーンは廃止 全てスケジュール
+; に"). On entry: S2_SPAWN_Y = this firing's own pixel Y (row*8, staged
+; by SSC2_FIRE), S2_SPAWN_VARIANT = 0(green)/1(red), staged by
+; whichever wrapper jumped here. round34-3 ("Stage1と全く同じ処理をし
+; ろ"): SSC2_FIRE already advanced SPAWN2_NEXT_INDEX unconditionally
+; before dispatching here (see its own comment) - if all 3 slots happen
+; to be busy this just RETs having done nothing, exactly like Stage1's
+; own ENEMY1_CLAIM_ANY "drops the spawn (rolling back any partial
+; claim) if either pool is full" - a dropped ZacoII simply doesn't
+; happen this time, the schedule itself never waits on it.
 ALLOC_ENEMY_SLOT:
-    CALL SPAWN_STOPPED : RET NC
     LD HL,ENEMY_POOL
     LD B,ENEMY_SLOT_COUNT
 AES_LOOP:
@@ -4319,19 +6373,13 @@ AES_LOOP:
     JR Z,AES_FOUND
     LD DE,ENEMY_SLOT_SIZE : ADD HL,DE
     DJNZ AES_LOOP
-    RET   ; no free slot - try again next frame
+    RET             ; no free slot - this spawn is simply dropped
 AES_FOUND:
     PUSH HL
     POP IX
     LD A,1 : LD (IX+E_ACT),A
     LD A,ENEMY_SPAWNX : LD (IX+E_X),A
-    ; GAME_RNG instead of raw TICK - "ZakoIIの...ランダムパラメータ
-    ; 一定で固定されてるときがある" traced to TICK being sampled at a
-    ; perfectly regular phase (this spawn timer always reloads to the
-    ; same fixed ENEMY_SPAWN_INTERVAL), so its own masked low bits
-    ; cycled through the same short, fully predictable sequence every
-    ; time - see GAME_RNG's own comment.
-    LD A,(GAME_RNG) : AND ENEMY_SKY_Y_MASK : ADD A,ENEMY_SKY_Y_MIN : LD (IX+E_Y),A
+    LD A,(S2_SPAWN_Y) : LD (IX+E_Y),A
     ; "ZakoIIの変色バグ 多分フラッシュ処理実装で出たと思う どちらか分から
     ; んが最初からホワイトで出てくる場合がある" - E_DY (offset+8) doubles
     ; as the hit-flash countdown while alive (UOE_DRAW: nonzero -> render
@@ -4349,34 +6397,28 @@ AES_FOUND:
     ; spawn glitch reported. Zeroed here alongside E_RETREAT/E_TIMER.
     XOR A : LD (IX+E_RETREAT),A : LD (IX+E_TIMER),A : LD (IX+E_DY),A
 
-    ; "あとZakoIIが10機でたら(Zumと同じタイミング)あとは赤ZakoIIと緑
-    ; ZakoIIランダムで" - once the threshold is reached, every further
-    ; spawn is a 50/50 coin flip instead of permanently red.
-    LD A,(ENEMY_SPAWN_COUNT)
-    CP 10
-    JR C,AES_VARIANT_GREEN
-    LD A,(GAME_RNG) : INC A : LD (GAME_RNG),A
-    AND 1
-    JR AES_VARIANT_SET
-AES_VARIANT_GREEN:
-    XOR A
-AES_VARIANT_SET:
+    LD A,(S2_SPAWN_VARIANT)
     LD (IX+E_VARIANT),A
     ; red-only hit counter (E_DX, see ENEMY_RED_HP's own comment) -
-    ; green never reads this, so it's left at the 0 the earlier XOR A
-    ; already cleared it to.
+    ; green never reads this, so it's left alone (whatever the slot's
+    ; last occupant left there - harmless, matches this same field's own
+    ; established "don't bother clearing what's never read" precedent).
     OR A
-    JR Z,AES_HP_DONE
+    JR Z,AES_DONE
     LD A,ENEMY_RED_HP : LD (IX+E_DX),A
-AES_HP_DONE:
-
-    LD A,(ENEMY_SPAWN_COUNT)
-    CP 10
-    JR NC,AES_COUNT_DONE
-    INC A : LD (ENEMY_SPAWN_COUNT),A
-AES_COUNT_DONE:
-    LD A,ENEMY_SPAWN_INTERVAL : LD (ENEMY_SPAWN_TIMER),A
+AES_DONE:
     RET
+
+; SSC2_FIRE dispatch targets for s2_zacoii/s2_zacoii_red - stage the
+; variant flag ALLOC_ENEMY_SLOT reads, then tail-jump into it (not
+; CALL - see ALLOC_ENEMY_SLOT's own comment for why that's safe here).
+SPAWN_S2_ZACOII:
+    XOR A : LD (S2_SPAWN_VARIANT),A
+    JP ALLOC_ENEMY_SLOT
+
+SPAWN_S2_ZACOII_RED:
+    LD A,1 : LD (S2_SPAWN_VARIANT),A
+    JP ALLOC_ENEMY_SLOT
 
 ; IX = slot base. Returns this frame's movement step in A: red variant
 ; (E_VARIANT=1) is a flat ENEMY_SPEED_RED - "ZakoIIはの赤は速度３で";
@@ -4478,7 +6520,7 @@ EGSR_FULL:
 UPDATE_ONE_ENEMY:
     LD A,(IX+E_ACT)
     CP 2
-    JR Z,UOE_EXPLODING
+    JP Z,UOE_EXPLODING
     OR A
     RET Z
 
@@ -4493,6 +6535,14 @@ UPDATE_ONE_ENEMY:
     CP B
     JR NC,UOE_DRAW
     LD A,1 : LD (IX+E_RETREAT),A
+    ; "ZakoII2種は反転時に添付データEBullet発射" - round36-14 follow-up
+    ; #11: fires exactly once, right at this transition, aimed at the
+    ; tank's own position this same instant. LAUNCH_EBULLET uses only
+    ; direct addressing (no IX), so IX (this ZacoII's own struct base)
+    ; survives the CALL untouched - no save/restore needed.
+    LD A,(IX+E_X) : LD (EBULLET_ORIGIN_X),A
+    LD A,(IX+E_Y) : LD (EBULLET_ORIGIN_Y),A
+    CALL LAUNCH_EBULLET
     JR UOE_DRAW
 
 UOE_RETREAT:
@@ -4612,6 +6662,7 @@ CHECK_BULLET_VS_ENEMY:
     LD IX,BULLET0_ACT : CALL CHECK_HIT_ONE_BULLET
     LD IX,BULLET1_ACT : CALL CHECK_HIT_ONE_BULLET
     LD IX,BULLET2_ACT : CALL CHECK_HIT_ONE_BULLET
+    LD IX,BULLET3_ACT : CALL CHECK_HIT_ONE_BULLET
     RET
 
 ; IX = bullet slot base (untouched throughout - CHECK_HIT_PAIR only
@@ -4622,15 +6673,21 @@ CHECK_BULLET_VS_ENEMY:
 ; the same reason as UEUA_LOOP - CHECK_HIT_PAIR's own AABB math uses
 ; both B and C as scratch, which would otherwise corrupt this loop's
 ; DJNZ counter.
+; round36-14 follow-up#9: same unroll as UE_UPDATE_ALL above (see its
+; own comment) - CHECK_HIT_PAIR itself untouched/shared, only this
+; wrapper's slot-walk changes. T-state: 3259T->2221T(-31.9%, 3x3 all-
+; miss)/1756T->718T(-59.1%, 0 active) - a bigger relative win than
+; UE_UPDATE_ALL since CHECK_HIT_PAIR's own body is much smaller than
+; UPDATE_ONE_ENEMY's, so the wrapper's own now-removed overhead was a
+; larger fraction of the total per-call cost. Bytes: 32->22 (also
+; smaller, not bigger - see UE_UPDATE_ALL's own comment).
 CHECK_HIT_ONE_BULLET:
     LD IY,ENEMY_POOL
-    LD B,ENEMY_SLOT_COUNT
-CHOB_LOOP:
-    PUSH BC
     CALL CHECK_HIT_PAIR
-    POP BC
-    INC IY : INC IY : INC IY : INC IY : INC IY : INC IY : INC IY : INC IY : INC IY
-    DJNZ CHOB_LOOP
+    LD IY,ENEMY_POOL+ENEMY_SLOT_SIZE
+    CALL CHECK_HIT_PAIR
+    LD IY,ENEMY_POOL+ENEMY_SLOT_SIZE+ENEMY_SLOT_SIZE
+    CALL CHECK_HIT_PAIR
     RET
 
 ; IX = bullet slot base, IY = enemy slot base. AABB overlap test
@@ -4698,73 +6755,381 @@ CHP_DESTROY:
     CALL ADD_SCORE
     RET
 
+; ---------- EBullet (ZacoII/Flyer enemy bullet, hw sprite, 16-direction
+; aim - see EBULLET_SLOT_SIZE's own comment for the full spec/budget
+; background) ----------
+; D=dx(signed),E=dy(signed) on entry. Returns A=direction index(0-15).
+; Clobbers B,C,D,E,H,L. Folds (dx,dy) to the first 45-degree octant via
+; sign-strip(fx,fy)+conditional-swap(sw), picks the octant's own near-0
+; vs near-22.5-degree half via the cheap "2*minor>major" integer test
+; (no multiply/divide anywhere), then unfolds via a 16-entry LUT built by
+; ebullet_gen.py (see its own comment for why a lookup table beats
+; hand-derived reflection algebra here).
+EBULLET_DIR16:
+    LD C,0                          ; C accumulates the 4-bit fold code: bit3=fx,bit2=fy,bit1=sw,bit0=half
+    LD A,D
+    OR A
+    JP P,ED16_DX_POS
+    XOR A : SUB D : LD D,A          ; D = |dx|
+    LD A,C : ADD A,8 : LD C,A
+ED16_DX_POS:
+    LD A,E
+    OR A
+    JP P,ED16_DY_POS
+    XOR A : SUB E : LD E,A          ; E = |dy|
+    LD A,C : ADD A,4 : LD C,A
+ED16_DY_POS:
+    ; D=|dx|,E=|dy|
+    LD A,D
+    CP E
+    JP NC,ED16_NOSWAP                ; |dx|>=|dy| - already the dominant axis, no swap
+    LD A,D : LD B,A                  ; swap D,E
+    LD A,E : LD D,A
+    LD A,B : LD E,A
+    LD A,C : ADD A,2 : LD C,A
+ED16_NOSWAP:
+    ; D=major(ax),E=minor(ay), major>=minor. Threshold is 5*minor>major
+    ; (approximates tan(11.25deg), the true midpoint between the fold's
+    ; own 2 candidate directions - see ebullet_gen.py's own comment for
+    ; why this specific constant matters), computed as (minor<<2)+minor
+    ; with an overflow check (CF) after each step - if it ever overflows
+    ; past 255, 5*minor already exceeds every possible 8-bit major.
+    LD A,E
+    LD B,A                           ; B = minor, kept for the final +minor step
+    ADD A,A                          ; A=2*minor
+    JR C,ED16_HALF1
+    ADD A,A                          ; A=4*minor
+    JR C,ED16_HALF1
+    ADD A,B                          ; A=5*minor
+    JR C,ED16_HALF1
+    CP D
+    JR C,ED16_HALF0                  ; 5*minor < major
+    JR Z,ED16_HALF0                  ; 5*minor == major - not strictly greater, stays "half0" (matches the Python reference's own strict '>' test)
+ED16_HALF1:
+    LD A,C : ADD A,1 : LD C,A
+ED16_HALF0:
+    LD A,C
+    LD E,A : LD D,0
+    LD HL,EBULLET_DIR16_LUT : ADD HL,DE
+    LD A,(HL)
+    RET
+
+; scans EBULLET_POOL for a free slot; if found, aims from EBULLET_ORIGIN_X/
+; Y (set by the caller - see EBULLET_ORIGIN_X's own comment) toward the
+; tank's CURRENT position and launches. Silently drops the shot if the
+; pool is full (same "no retry, no stall" convention as every spawn in
+; this file - ALLOC_ENEMY_SLOT etc).
+LAUNCH_EBULLET:
+    LD A,(EBULLET_POOL+0)
+    OR A
+    JP Z,LEB_FOUND0
+    LD A,(EBULLET_POOL+5)
+    OR A
+    JP Z,LEB_FOUND1
+    LD A,(EBULLET_POOL+10)
+    OR A
+    JP Z,LEB_FOUND2
+    LD A,(EBULLET_POOL+15)
+    OR A
+    RET NZ                           ; all 4 slots busy - drop this shot
+    LD DE,15
+    JP LEB_LAUNCH
+LEB_FOUND0:
+    LD DE,0
+    JP LEB_LAUNCH
+LEB_FOUND1:
+    LD DE,5
+    JP LEB_LAUNCH
+LEB_FOUND2:
+    LD DE,10
+LEB_LAUNCH:
+    PUSH DE                          ; DE = this slot's own byte offset into EBULLET_POOL - saved across EBULLET_DIR16's own DE clobber
+    LD A,(TANK_X) : LD B,A
+    LD A,(EBULLET_ORIGIN_X) : LD C,A
+    LD A,B : SUB C : LD D,A          ; D = dx = TANK_X - origin_X
+    LD A,(TANK_Y_CUR) : LD B,A
+    LD A,(EBULLET_ORIGIN_Y) : LD C,A
+    LD A,B : SUB C : LD E,A          ; E = dy = TANK_Y_CUR - origin_Y
+    CALL EBULLET_DIR16               ; A = direction 0-15
+    LD E,A : LD D,0
+    LD HL,EBULLET_DX_TABLE : ADD HL,DE : LD A,(HL) : LD B,A   ; B = this shot's own DX
+    LD HL,EBULLET_DY_TABLE : ADD HL,DE : LD A,(HL) : LD C,A   ; C = this shot's own DY
+    POP DE                           ; DE = slot offset again
+    LD HL,EBULLET_POOL
+    ADD HL,DE
+    LD (HL),1 : INC HL                              ; ACT=1
+    LD A,(EBULLET_ORIGIN_X) : LD (HL),A : INC HL     ; X
+    LD A,(EBULLET_ORIGIN_Y) : LD (HL),A : INC HL     ; Y
+    LD (HL),B : INC HL                               ; DX
+    LD (HL),C                                        ; DY
+    RET
+
+; per-frame move for one active EBullet slot. IX=slot base, A=(EBULLET_
+; CUR_SLOT) already set by the caller (0-3, used only for the sprite-
+; attrs offset - EBULLET_POOL's own slot index isn't otherwise derivable
+; from IX alone without ADD IX,DE, which this assembler doesn't support).
+; Direction-aware X/Y bounds check before adding, same "check before you
+; wrap a small unsigned byte past 0" shape as UPDATE_BOSS_BROKEN_BEAM_
+; FLIGHT's own UBBBF_X_RIGHT/UBBBF_X_LEFT - extended here to BOTH axes
+; since (unlike the boss's own downward-only beams) an EBullet's own DY
+; can be negative too (aimed anywhere in a full 360-degree spread).
+UPDATE_ONE_EBULLET:
+    LD A,(IX+0)
+    OR A
+    RET Z                            ; inactive - already hidden from a previous frame, nothing to do
+
+    LD A,(IX+3)                      ; DX
+    OR A
+    JP M,UOEB_X_LEFT
+UOEB_X_RIGHT:
+    LD C,A
+    LD A,239 : SUB C : LD D,A
+    LD A,(IX+1)
+    CP D
+    JP NC,UOEB_OFFSCREEN
+    ADD A,C : LD (IX+1),A
+    JP UOEB_Y
+UOEB_X_LEFT:
+    LD C,A
+    XOR A : SUB C : LD D,A
+    LD A,(IX+1)
+    CP D
+    JP C,UOEB_OFFSCREEN
+    ADD A,C : LD (IX+1),A
+
+UOEB_Y:
+    LD A,(IX+4)                      ; DY
+    OR A
+    JP M,UOEB_Y_UP
+UOEB_Y_DOWN:
+    LD C,A
+    LD A,191 : SUB C : LD D,A
+    LD A,(IX+2)
+    CP D
+    JP NC,UOEB_OFFSCREEN
+    ADD A,C : LD (IX+2),A
+    JP UOEB_DRAW
+UOEB_Y_UP:
+    LD C,A
+    XOR A : SUB C : LD D,A
+    LD A,(IX+2)
+    CP D
+    JP C,UOEB_OFFSCREEN
+    ADD A,C : LD (IX+2),A
+
+UOEB_DRAW:
+    LD A,(EBULLET_CUR_SLOT) : ADD A,A : ADD A,A : LD E,A : LD D,0
+    LD HL,EBULLET_SPRITE_ATTRS : ADD HL,DE
+    LD A,(IX+2) : LD (HL),A : INC HL   ; Y
+    LD A,(IX+1) : LD (HL),A : INC HL   ; X
+    LD A,PAT_EBULLET : LD (HL),A : INC HL
+    LD A,EBULLET_COLOR : LD (HL),A
+    RET
+
+UOEB_OFFSCREEN:
+    XOR A
+    LD (IX+0),A
+    LD A,(EBULLET_CUR_SLOT) : ADD A,A : ADD A,A : LD E,A : LD D,0
+    LD HL,EBULLET_SPRITE_ATTRS : ADD HL,DE
+    LD (HL),209 : INC HL
+    XOR A
+    LD (HL),A : INC HL : LD (HL),A : INC HL : LD (HL),A
+    RET
+
+UPDATE_EBULLET_ALL:
+    XOR A : LD (EBULLET_CUR_SLOT),A
+    LD IX,EBULLET_POOL
+    CALL UPDATE_ONE_EBULLET
+    LD A,1 : LD (EBULLET_CUR_SLOT),A
+    LD IX,EBULLET_POOL+EBULLET_SLOT_SIZE
+    CALL UPDATE_ONE_EBULLET
+    LD A,2 : LD (EBULLET_CUR_SLOT),A
+    LD IX,EBULLET_POOL+EBULLET_SLOT_SIZE+EBULLET_SLOT_SIZE
+    CALL UPDATE_ONE_EBULLET
+    LD A,3 : LD (EBULLET_CUR_SLOT),A
+    LD IX,EBULLET_POOL+EBULLET_SLOT_SIZE+EBULLET_SLOT_SIZE+EBULLET_SLOT_SIZE
+    CALL UPDATE_ONE_EBULLET
+    CALL FLUSH_EBULLET_SPRITES
+    RET
+
+; blasts EBULLET_SPRITE_ATTRS (4 slots x4 bytes=16) to hw sprite slots
+; EBULLET_SPR_BASE_SLOT.. - same raw DI-wrapped NOP-padded OUT idiom as
+; every other FLUSH_*_SPRITES in this file.
+FLUSH_EBULLET_SPRITES:
+    DI
+    LD A,EBULLET_SPR_BASE_SLOT*4 : OUT (99h),A
+    NOP
+    NOP
+    LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    LD HL,EBULLET_SPRITE_ATTRS
+    LD B,16
+FEBS_LOOP:
+    LD A,(HL) : OUT (98h),A
+    PUSH BC : POP BC : NOP : NOP
+    INC HL
+    DJNZ FEBS_LOOP
+    EI
+    RET
+
+; AABB check, 4 slots fully unrolled with compile-time-constant addresses
+; from the start (same technique as CHECK_BOSS_BROKEN_BEAM_VS_TANK -
+; round36-14 follow-up#8/#9 - applied here directly rather than needing a
+; later round to retrofit it, since this check runs essentially every
+; frame throughout normal (non-boss) play once any ZacoII/Flyer exists).
+; "コリジョンは左上4x4ドット" - box is 4px wide/tall at the bullet's own
+; X,Y (its sprite's own top-left corner), same shared TANK_HAZARD_
+; IFRAMES/APPLY_TANK_DAMAGE/SOUND_ZUM_DEFLECT hit shape as every other
+; tank hazard in this file.
+CHECK_EBULLET_VS_TANK:
+    LD A,(TANK_HAZARD_IFRAMES)
+    OR A
+    RET NZ
+    LD A,(TANK_X) : ADD A,TANK_COLLISION_X_OFFSET : LD B,A
+    LD A,(TANK_Y_CUR) : ADD A,TANK_COLLISION_Y_OFFSET : LD C,A
+
+CEBVT_SLOT0:
+    LD A,(EBULLET_POOL+0)
+    OR A
+    JP Z,CEBVT_SLOT1
+    LD A,(EBULLET_POOL+1)
+    LD D,A
+    ADD A,3
+    CP B
+    JP C,CEBVT_SLOT1
+    LD A,B : ADD A,TANK_COLLISION_WIDTH-1
+    CP D
+    JP C,CEBVT_SLOT1
+    LD A,(EBULLET_POOL+2)
+    LD D,A
+    ADD A,3
+    CP C
+    JP C,CEBVT_SLOT1
+    LD A,C : ADD A,TANK_COLLISION_HEIGHT-1
+    CP D
+    JP C,CEBVT_SLOT1
+    LD A,FLASH_DURATION : LD (TANK_FLASH_TIMER),A
+    LD A,TANK_HAZARD_IFRAME_DURATION : LD (TANK_HAZARD_IFRAMES),A
+    CALL APPLY_TANK_DAMAGE
+    CALL SOUND_ZUM_DEFLECT
+    RET
+
+CEBVT_SLOT1:
+    LD A,(EBULLET_POOL+5)
+    OR A
+    JP Z,CEBVT_SLOT2
+    LD A,(EBULLET_POOL+6)
+    LD D,A
+    ADD A,3
+    CP B
+    JP C,CEBVT_SLOT2
+    LD A,B : ADD A,TANK_COLLISION_WIDTH-1
+    CP D
+    JP C,CEBVT_SLOT2
+    LD A,(EBULLET_POOL+7)
+    LD D,A
+    ADD A,3
+    CP C
+    JP C,CEBVT_SLOT2
+    LD A,C : ADD A,TANK_COLLISION_HEIGHT-1
+    CP D
+    JP C,CEBVT_SLOT2
+    LD A,FLASH_DURATION : LD (TANK_FLASH_TIMER),A
+    LD A,TANK_HAZARD_IFRAME_DURATION : LD (TANK_HAZARD_IFRAMES),A
+    CALL APPLY_TANK_DAMAGE
+    CALL SOUND_ZUM_DEFLECT
+    RET
+
+CEBVT_SLOT2:
+    LD A,(EBULLET_POOL+10)
+    OR A
+    JP Z,CEBVT_SLOT3
+    LD A,(EBULLET_POOL+11)
+    LD D,A
+    ADD A,3
+    CP B
+    JP C,CEBVT_SLOT3
+    LD A,B : ADD A,TANK_COLLISION_WIDTH-1
+    CP D
+    JP C,CEBVT_SLOT3
+    LD A,(EBULLET_POOL+12)
+    LD D,A
+    ADD A,3
+    CP C
+    JP C,CEBVT_SLOT3
+    LD A,C : ADD A,TANK_COLLISION_HEIGHT-1
+    CP D
+    JP C,CEBVT_SLOT3
+    LD A,FLASH_DURATION : LD (TANK_FLASH_TIMER),A
+    LD A,TANK_HAZARD_IFRAME_DURATION : LD (TANK_HAZARD_IFRAMES),A
+    CALL APPLY_TANK_DAMAGE
+    CALL SOUND_ZUM_DEFLECT
+    RET
+
+CEBVT_SLOT3:
+    LD A,(EBULLET_POOL+15)
+    OR A
+    RET Z
+    LD A,(EBULLET_POOL+16)
+    LD D,A
+    ADD A,3
+    CP B
+    RET C
+    LD A,B : ADD A,TANK_COLLISION_WIDTH-1
+    CP D
+    RET C
+    LD A,(EBULLET_POOL+17)
+    LD D,A
+    ADD A,3
+    CP C
+    RET C
+    LD A,C : ADD A,TANK_COLLISION_HEIGHT-1
+    CP D
+    RET C
+    LD A,FLASH_DURATION : LD (TANK_FLASH_TIMER),A
+    LD A,TANK_HAZARD_IFRAME_DURATION : LD (TANK_HAZARD_IFRAMES),A
+    CALL APPLY_TANK_DAMAGE
+    CALL SOUND_ZUM_DEFLECT
+    RET
+
 ; ---------- Zum: spawn timer, then all slots (see ZUM_SLOT_SIZE above) ----------
 UPDATE_ZUM_ALL:
-    LD A,(ZUM_SPAWN_TIMER)
-    OR A
-    JR Z,UZA_TRY_SPAWN
-    DEC A : LD (ZUM_SPAWN_TIMER),A
-    JR UZA_UPDATE_ALL
-UZA_TRY_SPAWN:
-    CALL ALLOC_ZUM_SLOT
-UZA_UPDATE_ALL:
+; round34 ("ランダムスポーンは廃止 全てスケジュールに"): spawning is
+; schedule-driven now (ALLOC_ZUM_SLOT is only ever called from
+; SSC2_FIRE), so this just walks the pool every frame - no more polled
+; interval timer here.
+; round36-14 follow-up#10 ("ではそれらも検討し実測", ZUM/Flyer): same
+; unrolled-slot-walk treatment as UE_UPDATE_ALL (round36-14 follow-up#9,
+; see its own comment for the general rationale) - ZUM_SLOT_COUNT=2 is
+; fixed, UPDATE_ONE_ZUM's own body untouched/shared via CALL.
     LD IX,ZUM_POOL
-    LD B,ZUM_SLOT_COUNT
-UZAU_LOOP:
-    PUSH BC
     CALL UPDATE_ONE_ZUM
-    POP BC
-    INC IX : INC IX : INC IX : INC IX : INC IX : INC IX : INC IX : INC IX
-    DJNZ UZAU_LOOP
+    LD IX,ZUM_POOL+ZUM_SLOT_SIZE
+    CALL UPDATE_ONE_ZUM
     CALL FLUSH_ZUM_SPRITES
     RET
 
-; A=1 if the terrain at ZUM_SPAWN_COL is flat, steady ground at
-; WHICHEVER tier is actually on top there (the first non-BLANK id
-; found walking IDCACHE_T0->T1->T2->T3, same walk UPDATE_TERRAIN_
-; COLLISION/UOZ_TERRAIN_FOLLOW use), as long as that tier's own id is
-; a steady plain-rock one (not a Rock225 climb/descend marker), else
-; 0. "Zum制限緩和は地形が1番下にある時と言う部分をやめると言うこと" -
-; previously only accepted the terrain being flat specifically at the
-; very LOWEST tier (T0/T1/T2 all BLANK, i.e. nothing climbed above
-; tier3 yet anywhere on the visible track) - "上りがない地形最下部で
-; スポーン" - now any tier being the current flat/steady surface
-; qualifies, not just the lowest one.
-ZUM_TERRAIN_OK:
-    LD A,ZUM_SPAWN_COL : LD E,A : LD D,0
-    LD HL,IDCACHE_T0 : ADD HL,DE : LD A,(HL)
-    OR A
-    JR NZ,ZTO_CHECK_ID
-    LD A,ZUM_SPAWN_COL : LD E,A : LD D,0
-    LD HL,IDCACHE_T1 : ADD HL,DE : LD A,(HL)
-    OR A
-    JR NZ,ZTO_CHECK_ID
-    LD A,ZUM_SPAWN_COL : LD E,A : LD D,0
-    LD HL,IDCACHE_T2 : ADD HL,DE : LD A,(HL)
-    OR A
-    JR NZ,ZTO_CHECK_ID
-    LD A,ZUM_SPAWN_COL : LD E,A : LD D,0
-    LD HL,IDCACHE_T3 : ADD HL,DE : LD A,(HL)
-ZTO_CHECK_ID:
-    CP 3
-    JR NC,ZTO_FAIL
-    OR A
-    JR Z,ZTO_FAIL
-    LD A,1
-    RET
-ZTO_FAIL:
-    XOR A
-    RET
-
-; gated on 3 things, all must hold: the red-ZacoII threshold reached
-; ("赤ZakoIIが10体で終わったら" - reuses ENEMY_SPAWN_COUNT, ZacoII's
-; own spawning keeps running unaffected - "ZakoIIは継続"), the terrain
-; is currently flat at the spawn column (ZUM_TERRAIN_OK), and a slot
-; is free (pool of ZUM_SLOT_COUNT=2 - "横並び制限"). Any failure just
-; retries next frame (ZUM_SPAWN_TIMER stays 0) rather than waiting out
-; a fixed interval - the terrain condition is transient (the track
-; scrolls continuously) so polling every frame catches the next flat
-; window as soon as it appears.
+; round35 (real-hardware feedback, after seeing the actual per-tick
+; terrain-flatness log: "スポーン条件も要らないぞ 地形も仮実装だから平地
+; 条件いらない"): the ZUM_TERRAIN_OK gate below is REMOVED - the terrain
+; system itself is still a placeholder implementation, not the real
+; thing, so gating a schedule-driven spawn on it was never meaningful in
+; the first place. Direct instrumentation this same round found this
+; gate was silently dropping the majority of BigZum's own schedule
+; entries at ticks where the (placeholder) terrain simply wasn't flat by
+; coincidence - same root class of problem here for Zum, just not yet
+; reported. Only remaining gate now: a free slot (pool of ZUM_SLOT_
+; COUNT=2). round34-2 ("排他制御は削除") already removed the BigZum/
+; Etank ground-lane exclusion that used to sit here too - see ALLOC_
+; BIGZUM_SLOT/ALLOC_ETANK_SLOT's own matching comments. round34 itself
+; already dropped the older ENEMY_SPAWN_COUNT>=10 gate - "赤ZakoIIが10
+; 体で終わったら" was purely about pacing the old random-timer spawner,
+; superseded by the schedule's own explicit ordering. round34-3 ("Stage1
+; と全く同じ処理をしろ"): SSC2_FIRE already advanced SPAWN2_NEXT_INDEX
+; unconditionally before dispatching here - a failure below (both slots
+; busy) just drops this one spawn attempt, exactly like Stage1's own
+; SPAWN_SIMPLE.
 ;
 ; NOT gated on tank distance any more - "しかしスポーンキャンセルでは
 ; 自機が右端に居続けると永遠にスポーンできない 自機が右端にいたら
@@ -4776,25 +7141,6 @@ ZTO_FAIL:
 ; type specifically. Replaced with AZS_FOUND's own instant overlap
 ; resolution below instead of refusing the spawn.
 ALLOC_ZUM_SLOT:
-    CALL SPAWN_STOPPED : RET NC
-    LD A,(ENEMY_SPAWN_COUNT)
-    CP 10
-    RET C
-    ; "BigZum出現中にZumは出さないでくれ キャラが消えてしまうしテスト
-    ; 出来ない"
-    LD A,(BIGZUM_POOL)
-    OR A
-    RET NZ
-    ; "Etank出現中はZumも出ないように 横並びでEtankが消える" - same
-    ; ground-lane exclusion as BigZum above (see ALLOC_ETANK_SLOT's own
-    ; matching check) - bidirectional.
-    LD A,(ETANK_POOL)
-    OR A
-    RET NZ
-    CALL ZUM_TERRAIN_OK
-    OR A
-    RET Z
-
     LD HL,ZUM_POOL
     LD B,ZUM_SLOT_COUNT
 AZS_LOOP:
@@ -4811,7 +7157,6 @@ AZS_FOUND:
     LD A,ZUM_SPAWNX : LD (IX+1),A
     LD A,TANK_Y_BASE : ADD A,ZUM_Y_OFFSET : LD (IX+2),A   ; tier3's own Y, +12 for Zum's own ground-line math (see ZUM_Y_OFFSET)
     XOR A : LD (IX+3),A : LD (IX+7),A
-    LD A,ZUM_SPAWN_INTERVAL : LD (ZUM_SPAWN_TIMER),A
 
     ; "自機が右端にいたら押してスポーンするように" - if the tank is
     ; already within push range of this brand-new Zum, resolve the
@@ -4823,7 +7168,9 @@ AZS_FOUND:
     LD A,ZUM_SPAWNX-ZUM_COLLISION_SIZE : LD B,A   ; target TANK_X
     LD A,(TANK_X)
     CP B
-    RET C          ; TANK_X already < target - clear, nothing to resolve
+    JR NC,AZS_RESOLVE_PUSH   ; TANK_X >= target - resolve overlap
+    RET                      ; TANK_X already < target - nothing to resolve
+AZS_RESOLVE_PUSH:
     LD A,B : LD (TANK_X),A
     RET
 
@@ -5309,17 +7656,15 @@ CHECK_BULLET_VS_ZUM:
     LD IX,BULLET0_ACT : CALL CHECK_HIT_ONE_BULLET_ZUM
     LD IX,BULLET1_ACT : CALL CHECK_HIT_ONE_BULLET_ZUM
     LD IX,BULLET2_ACT : CALL CHECK_HIT_ONE_BULLET_ZUM
+    LD IX,BULLET3_ACT : CALL CHECK_HIT_ONE_BULLET_ZUM
     RET
 
+; round36-14 follow-up#10: same unroll as above.
 CHECK_HIT_ONE_BULLET_ZUM:
     LD IY,ZUM_POOL
-    LD B,ZUM_SLOT_COUNT
-CHOBZ_LOOP:
-    PUSH BC
     CALL CHECK_HIT_PAIR_ZUM
-    POP BC
-    INC IY : INC IY : INC IY : INC IY : INC IY : INC IY : INC IY : INC IY
-    DJNZ CHOBZ_LOOP
+    LD IY,ZUM_POOL+ZUM_SLOT_SIZE
+    CALL CHECK_HIT_PAIR_ZUM
     RET
 
 CHECK_HIT_PAIR_ZUM:
@@ -5412,14 +7757,10 @@ CHPZ_REAR_SKIP_ERASE:
 ; ---------- BigZum: spawn/update/draw (see BIGZUM_SLOT_SIZE's own ----------
 ; ---------- comment block for the state machine overview)           ----------
 UPDATE_BIGZUM_ALL:
-    LD A,(BIGZUM_SPAWN_TIMER)
-    OR A
-    JR Z,UBZA_TRY_SPAWN
-    DEC A : LD (BIGZUM_SPAWN_TIMER),A
-    JR UBZA_UPDATE_ALL
-UBZA_TRY_SPAWN:
-    CALL ALLOC_BIGZUM_SLOT
-UBZA_UPDATE_ALL:
+; round34 ("ランダムスポーンは廃止 全てスケジュールに"): spawning is
+; schedule-driven now (ALLOC_BIGZUM_SLOT is only ever called from
+; SSC2_FIRE), so this just walks the pool every frame - no more polled
+; interval timer here.
     LD IX,BIGZUM_POOL
     LD B,BIGZUM_SLOT_COUNT
 UBZAU_LOOP:
@@ -5432,55 +7773,32 @@ UBZAU_LOOP:
     CALL FLUSH_BIGZUM_SPRITES
     RET
 
-; same flat-ground probe as ZUM_TERRAIN_OK, just at BigZum's own wider
-; (32px) spawn column.
-BIGZUM_TERRAIN_OK:
-    LD A,BIGZUM_SPAWN_COL : LD E,A : LD D,0
-    LD HL,IDCACHE_T0 : ADD HL,DE : LD A,(HL)
-    OR A
-    JR NZ,BZTO_FAIL
-    LD A,BIGZUM_SPAWN_COL : LD E,A : LD D,0
-    LD HL,IDCACHE_T1 : ADD HL,DE : LD A,(HL)
-    OR A
-    JR NZ,BZTO_FAIL
-    LD A,BIGZUM_SPAWN_COL : LD E,A : LD D,0
-    LD HL,IDCACHE_T2 : ADD HL,DE : LD A,(HL)
-    OR A
-    JR NZ,BZTO_FAIL
-    LD A,BIGZUM_SPAWN_COL : LD E,A : LD D,0
-    LD HL,IDCACHE_T3 : ADD HL,DE : LD A,(HL)
-    CP 3
-    JR NC,BZTO_FAIL
-    OR A
-    JR Z,BZTO_FAIL
-    LD A,1
-    RET
-BZTO_FAIL:
-    XOR A
-    RET
-
-; same 3-condition gate as ALLOC_ZUM_SLOT (spawn-count threshold, flat
-; terrain, free slot) plus the same instant-overlap resolution at
-; spawn - "スポーン条件は同じ" - plus a 4th: refuse while Etank is
-; active, the other half of Etank's OWN bidirectional exclusion (see
-; PAT_ETANK_BL's own comment - this one isn't just screen-clutter, the
-; 2 actually share pattern-VRAM bytes, so getting this gate wrong would
-; corrupt what's on screen, not just look busy). Flyer is airborne and
-; NOT gated here any more - "FlyerとBigZum、FlyerとEtankは同時存在して
-; 良い" (was bidirectionally excluded before; that exclusion removed
-; from both ALLOC_FLYER_SLOT and here).
+; same gate as ALLOC_ZUM_SLOT plus the same instant-overlap resolution
+; at spawn - "スポーン条件は同じ". round34-2 ("排他制御は削除") removed
+; the Etank exclusion that used to sit here too - **this one is a real,
+; known VRAM-sharing risk, not just a design preference**: Etank
+; dynamically overwrites PAT_BIGZUM's own BL/BR quadrant pattern bytes
+; with its own art (see PAT_ETANK_BL's own comment / ALLOC_ETANK_SLOT's
+; own LDIRVM call), so a BigZum and an Etank genuinely alive at the same
+; time WILL corrupt whichever one spawned first's own BL/BR quadrant art
+; - this is not hypothetical, it was the whole reason this exclusion
+; existed. Removed anyway per explicit instruction; if this shows up as
+; visible garbled sprite art, the real fix is giving Etank its own
+; dedicated pattern codes instead of borrowing BigZum's, not re-adding
+; this exclusion. round34-3 ("Stage1と全く同じ処理をしろ"): SSC2_FIRE
+; already advanced SPAWN2_NEXT_INDEX unconditionally before dispatching
+; here - a failure below (the one slot busy) just drops this spawn
+; attempt, exactly like Stage1's own SPAWN_SIMPLE.
+; round35 (real-hardware feedback, direct instrumentation of the actual
+; per-tick terrain-flatness log: "スポーン条件も要らないぞ 地形も仮実装
+; だから平地条件いらない"): the BIGZUM_TERRAIN_OK gate that used to sit
+; here is REMOVED - it's what was ACTUALLY silently dropping most of
+; this schedule's own 6 BigZum entries even after round35's own
+; pool-occupancy fix (BIGZUM_ENGAGEMENT_DURATION) freed the slot back up
+; in time; the terrain system itself being only a placeholder means that
+; gate was never meaningful to begin with. Only remaining gate now: a
+; free slot.
 ALLOC_BIGZUM_SLOT:
-    CALL SPAWN_STOPPED : RET NC
-    LD A,(ENEMY_SPAWN_COUNT)
-    CP 10
-    RET C
-    LD A,(ETANK_POOL)
-    OR A
-    RET NZ
-    CALL BIGZUM_TERRAIN_OK
-    OR A
-    RET Z
-
     LD HL,BIGZUM_POOL
     LD B,BIGZUM_SLOT_COUNT
 ABZS_LOOP:
@@ -5506,23 +7824,41 @@ ABZS_FOUND:
     LD (IX+11),A
     LD (IX+12),A
     LD A,BIGZUM_HP_INIT : LD (IX+8),A
-    LD A,BIGZUM_SPAWN_INTERVAL : LD (BIGZUM_SPAWN_TIMER),A
 
     ; restore BigZum's own real BL/BR pattern bytes - undoes whatever
     ; Etank's own dynamic VRAM-sharing may have left behind from an
-    ; earlier appearance (see ETANK_SLOT_SIZE's own comment). The
-    ; bidirectional exclusion above only prevents the 2 being active at
-    ; the SAME time, not stale bytes left over from an Etank that has
-    ; since despawned - this reload is what actually fixes that up,
-    ; every single BigZum spawn, not just when Etank happened to run
-    ; recently (cheap/harmless either way - same 128-byte LDIRVM INIT
-    ; already does once for this same pattern).
+    ; earlier appearance (see ETANK_SLOT_SIZE's own comment). No
+    ; exclusion prevents the 2 from being active at the same time any
+    ; more (round34-2, "排他制御は削除") - this reload runs every
+    ; single BigZum spawn regardless, so it fixes up stale bytes
+    ; whether Etank ran recently or not (cheap/harmless either way -
+    ; same 128-byte LDIRVM INIT already does once for this same
+    ; pattern).
     LD HL,BIGZUM_BIGZUM_TL : LD DE,PAT_BIGZUM*8+SPRPAT : LD BC,128 : CALL LDIRVM
+
+    ; round35: this instance's own forced-retreat tick, min(spawn tick +
+    ; BIGZUM_ENGAGEMENT_DURATION, BIGZUM_RETREAT_TICK) - see BIGZUM_
+    ; ENGAGEMENT_DURATION's own comment for why this is per-instance now
+    ; instead of one shared global tick.
+    LD HL,(GAME_TICK)
+    LD DE,BIGZUM_ENGAGEMENT_DURATION
+    ADD HL,DE                  ; HL = candidate retreat tick
+    PUSH HL
+    LD DE,BIGZUM_RETREAT_TICK
+    OR A
+    SBC HL,DE                  ; candidate - ceiling; C set iff candidate < ceiling
+    POP DE                     ; DE = candidate again
+    JR C,ABZS_RETREAT_TICK_SET ; candidate already under the ceiling - use it as-is
+    LD DE,BIGZUM_RETREAT_TICK  ; candidate would exceed the ceiling - clamp to it
+ABZS_RETREAT_TICK_SET:
+    LD (IX+13),E : LD (IX+14),D
 
     LD A,BIGZUM_SPAWNX-BIGZUM_COLLISION_SIZE : LD B,A
     LD A,(TANK_X)
     CP B
-    RET C
+    JR NC,ABZS_RESOLVE_PUSH
+    RET
+ABZS_RESOLVE_PUSH:
     LD A,B : LD (TANK_X),A
     RET
 
@@ -5540,20 +7876,34 @@ UPDATE_ONE_BIGZUM:
     OR A
     RET Z
 
-    ; "Tick950でBigZumが居たら左へ撤退し消す" - once ordinary spawning
-    ; has stopped (ENEMY_SPAWN_STOP_TICK, a true 16-bit compare - same
-    ; bug class as CLOUD_UPDATE_ALL if this were an 8-bit CP), force any
-    ; still-active BigZum into a dedicated retreat state (5) that
-    ; overrides whatever it was doing (approach/pause/punch/jump/flip-
-    ; pause alike), before any of that logic below gets a chance to run.
-    ; This is what makes the boss's own reuse of BigZum's hw sprite
-    ; slots/pattern VRAM (see BOSS_SPR_BASE_SLOT/PAT_SASAPI's own
-    ; comments) actually safe rather than just an assumption.
+    ; "Tick950でBigZumが居たら左へ撤退し消す" - originally BIGZUM_
+    ; RETREAT_TICK was ONE shared tick every BigZum retreated at,
+    ; whenever it spawned. round35 (real-hardware feedback: "Bigzumは4
+    ; 回以上スケジュールしてるが1回しか出てない") found that design let
+    ; the first successful spawn occupy the only slot for the rest of
+    ; the game, silently dropping every later schedule entry - fixed by
+    ; making this PER-INSTANCE (IX+13/+14, computed once at spawn - see
+    ; BIGZUM_ENGAGEMENT_DURATION's own comment), so each BigZum retreats
+    ; on its own bounded schedule instead of squatting until 950. Same
+    ; true 16-bit compare either way (same bug class as CLOUD_UPDATE_ALL
+    ; if this were an 8-bit CP), forcing any still-active BigZum into a
+    ; dedicated retreat state (5) that overrides whatever it was doing
+    ; (approach/pause/punch/jump/flip-pause alike), before any of that
+    ; logic below gets a chance to run - this is what makes the boss's
+    ; own reuse of BigZum's hw sprite slots/pattern VRAM (see BOSS_SPR_
+    ; BASE_SLOT/PAT_SASAPI's own comments) actually safe rather than
+    ; just an assumption. This check runs every single frame regardless
+    ; of when GAME_TICK crossed the threshold, so even a BigZum the
+    ; schedule spawns AFTER its own computed retreat tick has already
+    ; passed (its own spawn-time clamp to BIGZUM_RETREAT_TICK guarantees
+    ; that can only happen this close to the boss anyway) still gets
+    ; forced into retreat from its very first live frame - not just ones
+    ; already on screen when the tick was crossed.
     LD A,(IX+7)
     CP 5
     JP Z,UOBZ_RETREAT_MOVE      ; already retreating
     LD HL,(GAME_TICK)
-    LD DE,ENEMY_SPAWN_STOP_TICK
+    LD E,(IX+13) : LD D,(IX+14)
     OR A
     SBC HL,DE
     JR C,UOBZ_NOT_RETREAT_TIME
@@ -6300,6 +8650,7 @@ CHECK_BULLET_VS_BIGZUM:
     LD IX,BULLET0_ACT : CALL CHECK_HIT_ONE_BULLET_BIGZUM
     LD IX,BULLET1_ACT : CALL CHECK_HIT_ONE_BULLET_BIGZUM
     LD IX,BULLET2_ACT : CALL CHECK_HIT_ONE_BULLET_BIGZUM
+    LD IX,BULLET3_ACT : CALL CHECK_HIT_ONE_BULLET_BIGZUM
     RET
 
 CHECK_HIT_ONE_BULLET_BIGZUM:
@@ -6409,58 +8760,36 @@ CHPBZ_DESTROY:
 ; ---------- Flyer: spawn/update/draw (see FLYER_SLOT_SIZE's own ----------
 ; ---------- comment block above for the full design rationale)   ----------
 UPDATE_FLYER_ALL:
-    LD A,(FLYER_SPAWN_TIMER)
-    OR A
-    JR Z,UFLA_TRY_SPAWN
-    DEC A : LD (FLYER_SPAWN_TIMER),A
-    JR UFLA_UPDATE_ALL
-UFLA_TRY_SPAWN:
-    CALL ALLOC_FLYER_SLOT
-UFLA_UPDATE_ALL:
+; round34 ("ランダムスポーンは廃止 全てスケジュールに"): spawning is
+; schedule-driven now (ALLOC_FLYER_SLOT is only ever called from
+; SSC2_FIRE), so this just walks the pool every frame - no more polled
+; interval timer here.
+; round36-14 follow-up#10: same unrolled-slot-walk treatment as
+; UE_UPDATE_ALL (round36-14 follow-up#9) - FLYER_SLOT_COUNT=2 fixed,
+; UPDATE_ONE_FLYER's own body untouched/shared via CALL. FLYER_SLOT_SIZE
+; (11) is the largest per-slot stride of any pool in this file, so the
+; INC IX walk this replaces was the most expensive of the 4 candidates
+; identified this round.
     LD IX,FLYER_POOL
-    LD B,FLYER_SLOT_COUNT
-UFLAU_LOOP:
-    PUSH BC
     CALL UPDATE_ONE_FLYER
-    POP BC
-    ; FLYER_SLOT_SIZE(11) worth of INC IX - this assembler has no ADD
-    ; IX,DE, same precedent as every other pool loop in this file.
-    INC IX : INC IX : INC IX : INC IX : INC IX : INC IX
-    INC IX : INC IX : INC IX : INC IX : INC IX
-    DJNZ UFLAU_LOOP
+    LD IX,FLYER_POOL+FLYER_SLOT_SIZE
+    CALL UPDATE_ONE_FLYER
     CALL FLUSH_FLYER_SPRITES
-    RET
-
-; IX = slot base (already the new slot, from ALLOC_FLYER_SLOT's own
-; AFLS_FOUND). Picks one random Y in [FLYER_SPAWN_Y_MIN, FLYER_SPAWN_Y_
-; MIN+FLYER_SPAWN_Y_SPAN) - same GAME_RNG idiom as PICK_HORMING_TARGET_X
-; (read-only, XOR TICK + this slot's own low address byte, AND 7Fh then
-; fold-subtract once since 121 isn't a power of 2 - see that routine's
-; own comment for why a naive "read-and-INC GAME_RNG" reads as fixed).
-PICK_FLYER_SPAWN_Y:
-    LD A,(GAME_RNG)
-    LD B,A
-    LD A,(TICK)
-    XOR B
-    LD B,A
-    PUSH IX
-    POP HL
-    LD A,L
-    XOR B
-    AND 7Fh
-    CP FLYER_SPAWN_Y_SPAN
-    JR C,PFSY_OK
-    SUB FLYER_SPAWN_Y_SPAN
-PFSY_OK:
-    ADD A,FLYER_SPAWN_Y_MIN
     RET
 
 ; airborne - no terrain gate at all, just a free slot. NOT gated
 ; against BigZum/Etank/Zum any more - "FlyerとBigZum、Flyerと
 ; Etankは同時存在して良い" (was excluded against BigZum bidirectionally
-; before; both halves removed).
+; before; both halves removed). Called only from SSC2_FIRE, which has
+; already advanced SPAWN2_NEXT_INDEX unconditionally BEFORE dispatching
+; here (round34-3, matching Stage1's real SSC_FIRE: "やってることは
+; Stage1と全く同じ処理だぞ") - a full pool just returns and the spawn is
+; simply dropped, exactly like Stage1's ENEMY1_CLAIM_ANY does when its
+; own pools are full. No retry, no stall counter. round34: Y used to be
+; PICK_FLYER_SPAWN_Y's own random roll (now gone, see FLYER_SPAWNX's own
+; comment) - comes straight from S2_SPAWN_Y (the schedule's own row*8),
+; staged by SSC2_FIRE.
 ALLOC_FLYER_SLOT:
-    CALL SPAWN_STOPPED : RET NC
     LD HL,FLYER_POOL
     LD B,FLYER_SLOT_COUNT
 AFLS_LOOP:
@@ -6475,7 +8804,7 @@ AFLS_FOUND:
     POP IX
     LD A,1 : LD (IX+0),A
     LD A,FLYER_SPAWNX : LD (IX+1),A
-    CALL PICK_FLYER_SPAWN_Y : LD (IX+2),A
+    LD A,(S2_SPAWN_Y) : LD (IX+2),A
     XOR A
     LD (IX+3),A
     LD (IX+5),A
@@ -6484,7 +8813,6 @@ AFLS_FOUND:
     LD (IX+9),A
     LD (IX+10),A
     LD A,FLYER_HP_INIT : LD (IX+7),A
-    LD A,FLYER_SPAWN_INTERVAL : LD (FLYER_SPAWN_TIMER),A
     RET
 
 ; IX = slot base. ACT=2: same drift-then-hide explosion shape as every
@@ -6516,6 +8844,12 @@ UOFL_CRUISE_MOVE:
     JR NC,UOFL_CRUISE_STEP
     XOR A : LD (IX+1),A
     LD A,1 : LD (IX+8),A
+    ; round36-14 follow-up#11 originally fired an EBullet here, right at
+    ; this cruise->home reversal ("Flyerは画面左端まで行き反転後発射").
+    ; 実機フィードバック対応 (follow-up#12, "反転時のBullet発射は削除"):
+    ; removed now that Flyer has its own Mine-drop (UOFL_CRUISE_STEP)
+    ; and FlyerLaser (UOFL_HOME_DESCEND_EXIT) attacks instead - ZacoII's
+    ; own EBullet firing (UPDATE_ONE_ENEMY) is untouched.
     LD A,(IX+2) : LD D,A
     LD A,(TANK_Y_CUR)
     CP D
@@ -6531,8 +8865,59 @@ UOFL_LOCK_DY_ZERO:
 UOFL_LOCK_DY_SET:
     LD (IX+6),A
     JP UOFL_DRAW
+; round36-14 follow-up#12 ("まずスポーンから32px左に移動したら...Mineを
+; 放物線で投下"): FLYER_SPAWNX is a fixed constant for every instance
+; (see ALLOC_FLYER_SLOT's own "LD A,FLYER_SPAWNX : LD (IX+1),A"), so the
+; 32px-from-spawn threshold is just the compile-time constant FLYER_
+; SPAWNX-32 - no per-instance spawn-X tracking field needed. Guarded by
+; +6 (idle throughout PHASE=0 - only ever written once, at the reversal
+; into PHASE=1, by UOFL_LOCK_DY_SET above - same "repurpose an otherwise
+; -idle field" precedent as E_DX/E_DY) so the drop fires exactly once
+; per instance; +6 gets safely overwritten with the real locked DY value
+; moments later at the reversal, this guard's own job already done by
+; then.
+; 実機フィードバック対応 ("自機位置を見て自機の64px手前に来たら投下"):
+; the fixed FLYER_SPAWNX-32 threshold this used originally is gone -
+; the trigger now reads TANK_X live every frame and fires once Flyer's
+; own X has closed to within MINE_DROP_LEAD_X of it. TANK_X can reach
+; up to ~226 (see UTX_DO_RIGHT's own "CP 224" cap) - TANK_X+
+; MINE_DROP_LEAD_X+1 can overflow past 255, which would otherwise wrap
+; into a tiny, nonsense threshold; JR C below catches that case and
+; fires immediately instead (an overflowed threshold means "every
+; reachable Flyer_X already satisfies it").
 UOFL_CRUISE_STEP:
     LD A,(IX+1) : SUB FLYER_SPEED : LD (IX+1),A
+    LD A,(IX+6)
+    OR A
+    JR NZ,UOFLC_MINE_DONE
+    LD A,(TANK_X) : ADD A,MINE_DROP_LEAD_X+1
+    JR C,UOFLC_MINE_FIRE
+    LD B,A
+    LD A,(IX+1)
+    CP B
+    JR NC,UOFLC_MINE_DONE
+UOFLC_MINE_FIRE:
+    LD A,1 : LD (IX+6),A
+    ; 実機フィードバック対応 ("投下位置も本体の左に来てない"): drop
+    ; origin is Flyer's own raw top-left X (its body's own LEFT edge,
+    ; not the +16 center this used originally) - Y stays centered
+    ; (+16). "本体の左"読み.
+    LD A,(IX+1) : LD (MINE_ORIGIN_X),A
+    LD A,(IX+2) : ADD A,16 : LD (MINE_ORIGIN_Y),A
+    ; 実機フィードバック対応 ("Mine投下直後か直前 一瞬違う位置にFlyerが
+    ; 表示されてる"): ALLOC_MINE_SLOT itself loads IX (walks MINE_POOL
+    ; looking for a free slot, same as LAUNCH_EBULLET's own comment
+    ; warns about) - unlike LAUNCH_EBULLET, which was written to never
+    ; touch IX at all, ALLOC_MINE_SLOT does reassign it, so this firing
+    ; Flyer's own IX (still needed by UOFL_DRAW right below, for THIS
+    ; SAME frame) must be saved/restored around the call - the missing
+    ; PUSH/POP here was the exact bug: for 1 frame, UOFL_DRAW ran with
+    ; IX still pointing at MINE_POOL instead of FLYER_POOL, drawing
+    ; garbage position/pose data as if it were Flyer's own.
+    PUSH IX
+    CALL ALLOC_MINE_SLOT
+    POP IX
+UOFLC_MINE_DONE:
     JP UOFL_DRAW
 
 ; PHASE=1: fly a straight diagonal line - X always rightward at
@@ -6595,18 +8980,32 @@ UOFL_HOME_MOVE:
     CP FLYER_DESCEND_LIMIT_Y+1
     JR C,UOFL_HOME_CHECK_DOWN_TANK
     LD A,FLYER_DESCEND_LIMIT_Y : LD (IX+2),A
-    JR UOFL_HOME_DO_EXIT
+    JR UOFL_HOME_DESCEND_EXIT
 UOFL_HOME_CHECK_DOWN_TANK:
     LD A,(TANK_Y_CUR) : ADD A,FLYER_CLEAR_Y : LD D,A
     LD A,(IX+2)
     CP D
     JR C,UOFL_HOME_NO_EXIT        ; Flyer_Y still < Tank_Y+CLEAR - hasn't cleared below yet
-    JR UOFL_HOME_DO_EXIT
+    JR UOFL_HOME_DESCEND_EXIT
 UOFL_HOME_CHECK_UP:
     LD A,(TANK_Y_CUR) : SUB FLYER_CLEAR_Y : LD D,A
     LD A,(IX+2)
     CP D
     JR NC,UOFL_HOME_NO_EXIT       ; Flyer_Y still >= Tank_Y-CLEAR - hasn't cleared above yet
+    JR UOFL_HOME_DO_EXIT
+; round36-14 follow-up#12 ("現在はFlyer帰還でSandskyに被ってしまってる
+; ので帰還時の右移動のY位置を8px上に 右斜め下移動の最終Y座標って事ね
+; その後FlyerLaser発射 つまり右斜め下移動後に発射"): only the DESCENDING
+; leg ever visually overlaps SandSky (ascending moves away from the
+; ground, into open sky, never at any risk) - both descending exits
+; above (the hard sky-altitude cap AND the ordinary tank-relative clear)
+; land here instead of jumping straight to the shared UOFL_HOME_DO_EXIT,
+; so the -8px raise and the laser fire only ever happen on this leg, at
+; whatever Y this frame's own descent already landed on (its own
+; "final Y").
+UOFL_HOME_DESCEND_EXIT:
+    LD A,(IX+2) : SUB 8 : LD (IX+2),A
+    CALL LAUNCH_FLYER_LASER
 UOFL_HOME_DO_EXIT:
     LD A,2 : LD (IX+8),A
 UOFL_HOME_NO_EXIT:
@@ -6738,18 +9137,15 @@ CHECK_BULLET_VS_FLYER:
     LD IX,BULLET0_ACT : CALL CHECK_HIT_ONE_BULLET_FLYER
     LD IX,BULLET1_ACT : CALL CHECK_HIT_ONE_BULLET_FLYER
     LD IX,BULLET2_ACT : CALL CHECK_HIT_ONE_BULLET_FLYER
+    LD IX,BULLET3_ACT : CALL CHECK_HIT_ONE_BULLET_FLYER
     RET
 
+; round36-14 follow-up#10: same unroll as above.
 CHECK_HIT_ONE_BULLET_FLYER:
     LD IY,FLYER_POOL
-    LD B,FLYER_SLOT_COUNT
-CHOBFL_LOOP:
-    PUSH BC
     CALL CHECK_HIT_PAIR_FLYER
-    POP BC
-    INC IY : INC IY : INC IY : INC IY : INC IY : INC IY
-    INC IY : INC IY : INC IY : INC IY : INC IY
-    DJNZ CHOBFL_LOOP
+    LD IY,FLYER_POOL+FLYER_SLOT_SIZE
+    CALL CHECK_HIT_PAIR_FLYER
     RET
 
 CHECK_HIT_PAIR_FLYER:
@@ -6798,14 +9194,10 @@ CHPFL_DESTROY:
 ; ---------- Etank ground enemy: spawn/update/draw (see ETANK_SLOT_ ----------
 ; ---------- SIZE's own comment block for the full design rationale) ----------
 UPDATE_ETANK_ALL:
-    LD A,(ETANK_SPAWN_TIMER)
-    OR A
-    JR Z,UETA_TRY_SPAWN
-    DEC A : LD (ETANK_SPAWN_TIMER),A
-    JR UETA_UPDATE_ALL
-UETA_TRY_SPAWN:
-    CALL ALLOC_ETANK_SLOT
-UETA_UPDATE_ALL:
+; round34 ("ランダムスポーンは廃止 全てスケジュールに"): spawning is
+; schedule-driven now (ALLOC_ETANK_SLOT is only ever called from
+; SSC2_FIRE), so this just walks the pool every frame - no more polled
+; interval timer here.
     LD IX,ETANK_POOL
     LD B,ETANK_SLOT_COUNT
 UETAU_LOOP:
@@ -6817,71 +9209,36 @@ UETAU_LOOP:
     CALL FLUSH_ETANK_SPRITES
     RET
 
-; A=1 only while the CURRENT surface at ETANK_SPAWN_COL is specifically
-; the apex tier (IDCACHE_T0, the topmost cache row) and steady (not a
-; climb/descend marker) - stricter than a "any flat tier" check, since
-; Etank never re-probes its own Y after spawn (see ETANK_SLOT_SIZE's
-; own comment) and needs the SAME height under it for its whole
-; crossing - see ETANK_APEX_FLAT_RUN in terrain_gen.py.
-ETANK_TERRAIN_OK:
-    LD A,ETANK_SPAWN_COL : LD E,A : LD D,0
-    LD HL,IDCACHE_T0 : ADD HL,DE : LD A,(HL)
-    CP 3
-    JR NC,ETO_FAIL
-    OR A
-    JR Z,ETO_FAIL
-    LD A,1
-    RET
-ETO_FAIL:
-    XOR A
-    RET
-
-; "誰の事をフレームの事をカウンターって呼ぶんだよ このゲームの時間
-; 制御は特別な場合以外カウンター基準なんだよ" - 2nd correction: the
-; real "カウンター" is `GAME_TICK` (displayed top-right via
-; `GAME_TICK_DISPLAY`), but it does NOT increment every raw frame -
-; see its own INIT-area comment ("Stage1は地形書き換え8回に1回カウ
-; ントする作り すべての基準はこのカウント"): `GAME_TICK` only advances
-; once every 8 raw `TICK`s, the same unit every OTHER schedule in this
-; game is already built against. Gated on `GAME_TICK>=70` (~9.3 real
-; seconds at 60fps - human-scale, unlike raw frame counts), 16-bit
-; safe (`GAME_TICK` is a free-running 2-byte counter, never reset,
-; keeps counting long past the mod-1000 the on-screen display wraps
-; at). BigZum currently active (mutual exclusion - both directions,
-; see ALLOC_BIGZUM_SLOT's own matching check and PAT_ETANK_BL's own
-; pattern-VRAM-sharing comment - a one-directional gate here would be
-; a real correctness bug, not just a design preference, since the two
-; actually share pattern-VRAM bytes), Zum currently active ("Etank出現
-; 中はZumも出ないように 横並びでEtankが消える" - same ground-lane
-; exclusion as BigZum, checking both of ZUM_SLOT_COUNT=2's own slots),
-; the terrain-length gate below, and a free slot - same shape as
-; ALLOC_ZUM_SLOT/ALLOC_BIGZUM_SLOT, plus the same instant spawn-time
-; overlap resolution. Flyer is airborne and never gated against any of
-; these 3 ground enemies, nor they against it - "FlyerとBigZum、Flyer
-; とEtankは同時存在して良い".
+; round34 ("ランダムスポーンは廃止 全てスケジュールに") dropped the
+; old GAME_TICK>=70 floor - itself only ever a safety margin for the
+; old random-timer spawner, redundant now that the schedule's own
+; first Etank entry has its own explicit, always->=70 tick anyway.
+; round34-2 ("排他制御は削除") removed the BigZum/Zum ground-lane
+; exclusion that used to sit here too. **The BigZum half is a real,
+; known VRAM-sharing risk, not just a design preference** - Etank
+; dynamically overwrites PAT_BIGZUM's own BL/BR quadrant pattern bytes
+; below with its own art, so a BigZum and an Etank genuinely alive at
+; the same time WILL corrupt whichever spawned first's own BL/BR
+; quadrant art (see ALLOC_BIGZUM_SLOT's own matching comment - this
+; exclusion used to be the only thing preventing that). Removed anyway
+; per explicit instruction. Called only from SSC2_FIRE, which has
+; already advanced SPAWN2_NEXT_INDEX unconditionally BEFORE dispatching
+; here (round34-3, matching Stage1's real SSC_FIRE: "やってることは
+; Stage1と全く同じ処理だぞ") - a failure here (full pool) just returns
+; and the spawn is simply dropped, no retry, no stall counter.
+; round35 (real-hardware feedback, direct instrumentation of the actual
+; per-tick terrain-flatness log: "スポーン条件も要らないぞ 地形も仮実装
+; だから平地条件いらない"): the ETANK_TERRAIN_OK gate that used to sit
+; here (checking the apex tier was the CURRENT surface - see ETANK_
+; SLOT_SIZE's own comment for why Etank cared, since it never re-probes
+; its own Y after spawn) is REMOVED. Only remaining gate now: a free
+; slot. Note this means Etank can now spawn while the terrain ISN'T at
+; the apex tier - since its own Y still comes unchanged from the apex
+; tier's fixed value regardless (see AETS_FOUND below), it can visually
+; sit above/below the actual (placeholder) ground until the real terrain
+; system replaces this one - accepted per explicit instruction, not an
+; oversight.
 ALLOC_ETANK_SLOT:
-    CALL SPAWN_STOPPED : RET NC
-    LD HL,(GAME_TICK)
-    LD A,H
-    OR A
-    JR NZ,AETS_COUNT_OK
-    LD A,L
-    CP 70
-    RET C
-AETS_COUNT_OK:
-    LD A,(BIGZUM_POOL)
-    OR A
-    RET NZ
-    LD A,(ZUM_POOL)
-    OR A
-    RET NZ
-    LD A,(ZUM_POOL+ZUM_SLOT_SIZE)
-    OR A
-    RET NZ
-    CALL ETANK_TERRAIN_OK
-    OR A
-    RET Z
-
     LD HL,ETANK_POOL
     LD B,ETANK_SLOT_COUNT
 AETS_LOOP:
@@ -6903,7 +9260,14 @@ AETS_FOUND:
     LD (IX+5),A
     LD (IX+7),A
     LD A,ETANK_HP_INIT : LD (IX+6),A
-    LD A,ETANK_SPAWN_INTERVAL : LD (ETANK_SPAWN_TIMER),A
+
+    ; "スポーン後左へ32px移動したら発射" - round36-14 follow-up#11:
+    ; captures this instance's own spawn X (always ETANK_SPAWNX, a fixed
+    ; constant, but stored per-instance for a clear, self-contained
+    ; "moved 32px" test in UPDATE_ONE_ETANK rather than hardcoding the
+    ; same constant again there) and clears the one-shot fired flag.
+    LD A,ETANK_SPAWNX : LD (ETANK_SPAWN_X),A
+    XOR A : LD (ETANK_BULLET_FIRED),A
 
     ; dynamic pattern-VRAM share: overwrite BigZum's own BL/BR groups
     ; (PAT_BIGZUM+8/+12) with Etank's own art - safe only while BigZum
@@ -6916,7 +9280,9 @@ AETS_FOUND:
     LD A,ETANK_SPAWNX-ETANK_COLLISION_SIZE : LD B,A
     LD A,(TANK_X)
     CP B
-    RET C
+    JR NC,AETS_RESOLVE_PUSH
+    RET
+AETS_RESOLVE_PUSH:
     LD A,B : LD (TANK_X),A
     RET
 
@@ -6941,6 +9307,20 @@ UPDATE_ONE_ETANK:
     RET
 UOET_MOVE_OK:
     LD A,(IX+1) : SUB ETANK_SPEED : LD (IX+1),A
+
+    ; "スポーン後左へ32px移動したら発射し方向は左直進のみ" - round36-14
+    ; follow-up#11: one-shot, guarded by ETANK_BULLET_FIRED so later
+    ; frames (still well past the 32px line) don't refire.
+    LD A,(ETANK_BULLET_FIRED)
+    OR A
+    JR NZ,UOET_DRAW
+    LD A,(ETANK_SPAWN_X) : LD B,A
+    LD A,(IX+1) : LD C,A
+    LD A,B : SUB C            ; distance moved so far (spawn_x - current_x; Etank only ever moves left, so this never underflows)
+    CP 32
+    JR C,UOET_DRAW             ; not moved 32px yet
+    LD A,1 : LD (ETANK_BULLET_FIRED),A
+    CALL LAUNCH_ETANK_BULLET
 
 UOET_DRAW:
     ; hit-flash color resolve, once per draw call (see FLASH_DURATION's
@@ -7062,6 +9442,7 @@ CHECK_BULLET_VS_ETANK:
     LD IX,BULLET0_ACT : CALL CHECK_HIT_ONE_BULLET_ETANK
     LD IX,BULLET1_ACT : CALL CHECK_HIT_ONE_BULLET_ETANK
     LD IX,BULLET2_ACT : CALL CHECK_HIT_ONE_BULLET_ETANK
+    LD IX,BULLET3_ACT : CALL CHECK_HIT_ONE_BULLET_ETANK
     RET
 
 CHECK_HIT_ONE_BULLET_ETANK:
@@ -7118,6 +9499,385 @@ CHPET_DESTROY:
     CALL ADD_SCORE
     RET
 
+; ---------- EtankBullet (Etank's own bullet, BG cell, left-only - see
+; ETANK_BULLET_ACT's own comment for the full spec/color-budget
+; background) ----------
+; IX = ETANK_POOL (the firing Etank's own struct - (IX+1)=X,(IX+2)=Y),
+; called from UPDATE_ONE_ETANK right at the 32px-moved transition.
+; round36-14 follow-up#11 実機フィードバック対応: (IX+2) is Etank's own
+; raw Y field, but Etank's real ART only occupies the BOTTOM half of a
+; hypothetical 32x32 canvas ("Etankはそもそも32x16しか使っていない" -
+; UOET_DRAW's own BL/BR quadrants are drawn at (IX+2)+16, TL/TR always
+; hidden - see ETANK_COLLISION_Y_OFFSET's own "=16" comment for the same
+; fact from the collision side). Using the raw (IX+2) here (as the first
+; version of this routine did) spawned the bullet 16px/2 cells above
+; where Etank is actually drawn.
+LAUNCH_ETANK_BULLET:
+    LD A,1 : LD (ETANK_BULLET_ACT),A
+    LD A,(IX+1) : LD (ETANK_BULLET_X),A
+    LD A,(IX+2) : ADD A,16 : LD (ETANK_BULLET_Y),A
+    RET
+
+; ETANK_BULLET_ACT/X/Y sit at consecutive addresses (+0/+1/+2), the same
+; relative layout ERASE_HORMING_BG_CELL/HORMING_BG_CELL_ADDR already
+; expect from their own IX - both are reused directly here unchanged
+; (IX=ETANK_BULLET_ACT for this call), rather than duplicating the same
+; row/col-address math and sky/skysand/sand/terrain-row restore logic a
+; 2nd time for a single-instance BG bullet that needs exactly the same
+; background-restoration behavior Horming's own BG bullets already have.
+DRAW_ETANK_BULLET_CELL:
+    LD A,ETANK_BULLET_PATTERN_CODE
+    LD (BULLET_TEMP_BYTE),A
+    CALL HORMING_BG_CELL_ADDR
+    JP WRITE_BULLET_BYTE_HL
+
+; erase-then-move-then-draw, same per-frame shape as UPDATE_HORMING_BG_
+; ALL - called every frame alongside UPDATE_ETANK_ALL (same BOSS_ACT
+; guard). Only 1 concurrent instance ever needed (ETANK_SLOT_COUNT=1
+; itself, and this bullet only ever fires once per Etank spawn), so a
+; flat single-instance routine instead of a real pool loop.
+UPDATE_ETANK_BULLET_ALL:
+    LD A,(ETANK_BULLET_ACT)
+    OR A
+    RET Z
+    LD IX,ETANK_BULLET_ACT
+    CALL ERASE_HORMING_BG_CELL
+    LD A,(ETANK_BULLET_X)
+    CP ETANK_BULLET_SPEED
+    JR NC,UEBA_MOVE_OK
+    XOR A : LD (ETANK_BULLET_ACT),A   ; off the left edge - already erased above, nothing left to draw
+    RET
+UEBA_MOVE_OK:
+    SUB ETANK_BULLET_SPEED
+    LD (ETANK_BULLET_X),A
+    CALL DRAW_ETANK_BULLET_CELL
+    RET
+
+; AABB check (8x8 box, matching the bullet's own single BG cell) - same
+; shared TANK_HAZARD_IFRAMES/APPLY_TANK_DAMAGE/SOUND_ZUM_DEFLECT hit
+; shape as every other tank hazard in this file. A hit does NOT
+; deactivate the bullet - it keeps flying through/past the tank, same
+; "one hit per frame is enough, hazard survives" convention as CHECK_
+; BOSS_BROKEN_BEAM_VS_TANK's own beams.
+CHECK_ETANK_BULLET_VS_TANK:
+    LD A,(ETANK_BULLET_ACT)
+    OR A
+    RET Z
+    LD A,(TANK_HAZARD_IFRAMES)
+    OR A
+    RET NZ
+    LD A,(TANK_X) : ADD A,TANK_COLLISION_X_OFFSET : LD B,A
+    LD A,(TANK_Y_CUR) : ADD A,TANK_COLLISION_Y_OFFSET : LD C,A
+    LD A,(ETANK_BULLET_X)
+    LD D,A
+    ADD A,7
+    CP B
+    RET C
+    LD A,B : ADD A,TANK_COLLISION_WIDTH-1
+    CP D
+    RET C
+    LD A,(ETANK_BULLET_Y)
+    LD D,A
+    ADD A,7
+    CP C
+    RET C
+    LD A,C : ADD A,TANK_COLLISION_HEIGHT-1
+    CP D
+    RET C
+    LD A,FLASH_DURATION : LD (TANK_FLASH_TIMER),A
+    LD A,TANK_HAZARD_IFRAME_DURATION : LD (TANK_HAZARD_IFRAMES),A
+    CALL APPLY_TANK_DAMAGE
+    CALL SOUND_ZUM_DEFLECT
+    RET
+
+; ---------- FlyerLaser: launch/update/draw/collision (see FLYER_LASER_
+; ACT's own comment for the full design rationale) ----------
+; called from UOFL_HOME_DESCEND_EXIT with IX still = the firing Flyer's
+; own FLYER_POOL slot base, untouched throughout - same "IX untouched by
+; it" convention as LAUNCH_EBULLET. Not aimed - always straight right
+; ("自機は狙わず右方向水平撃ちのみ").
+LAUNCH_FLYER_LASER:
+    LD A,1 : LD (FLYER_LASER_ACT),A
+    LD A,(IX+1) : ADD A,32 : LD (FLYER_LASER_X),A
+    LD A,(IX+2) : ADD A,19 : LD (FLYER_LASER_Y),A
+    RET
+
+; FLYER_LASER_ACT/X/Y sit at consecutive addresses (+0/+1/+2), the same
+; relative layout ERASE_HORMING_BG_CELL/HORMING_BG_CELL_ADDR already
+; expect - reused directly unchanged, same precedent as DRAW_ETANK_
+; BULLET_CELL above.
+DRAW_FLYER_LASER_CELL:
+    LD A,FLYER_LASER_PATTERN_CODE
+    LD (BULLET_TEMP_BYTE),A
+    CALL HORMING_BG_CELL_ADDR
+    JP WRITE_BULLET_BYTE_HL
+
+; erase-then-move-then-draw, same per-frame shape as UPDATE_ETANK_
+; BULLET_ALL. Only 1 concurrent instance ever needed (1 Flyer instance
+; only ever reaches UOFL_HOME_DESCEND_EXIT once per spawn).
+UPDATE_FLYER_LASER_ALL:
+    LD A,(FLYER_LASER_ACT)
+    OR A
+    RET Z
+    LD IX,FLYER_LASER_ACT
+    CALL ERASE_HORMING_BG_CELL
+    LD A,(FLYER_LASER_X) : ADD A,FLYER_LASER_SPEED
+    CP FLYER_LASER_DESPAWN_X+1
+    JR C,UFLA_MOVE_OK
+    XOR A : LD (FLYER_LASER_ACT),A   ; off the right edge - already erased above, nothing left to draw
+    RET
+UFLA_MOVE_OK:
+    LD (FLYER_LASER_X),A
+    CALL DRAW_FLYER_LASER_CELL
+    RET
+
+; AABB check (8x8 box, matching the laser's own single BG cell) - same
+; shared TANK_HAZARD_IFRAMES/APPLY_TANK_DAMAGE/SOUND_ZUM_DEFLECT hit
+; shape as CHECK_ETANK_BULLET_VS_TANK, including "flies through, doesn't
+; self-deactivate on hit".
+CHECK_FLYER_LASER_VS_TANK:
+    LD A,(FLYER_LASER_ACT)
+    OR A
+    RET Z
+    LD A,(TANK_HAZARD_IFRAMES)
+    OR A
+    RET NZ
+    LD A,(TANK_X) : ADD A,TANK_COLLISION_X_OFFSET : LD B,A
+    LD A,(TANK_Y_CUR) : ADD A,TANK_COLLISION_Y_OFFSET : LD C,A
+    LD A,(FLYER_LASER_X)
+    LD D,A
+    ADD A,7
+    CP B
+    RET C
+    LD A,B : ADD A,TANK_COLLISION_WIDTH-1
+    CP D
+    RET C
+    LD A,(FLYER_LASER_Y)
+    LD D,A
+    ADD A,7
+    CP C
+    RET C
+    LD A,C : ADD A,TANK_COLLISION_HEIGHT-1
+    CP D
+    RET C
+    LD A,FLASH_DURATION : LD (TANK_FLASH_TIMER),A
+    LD A,TANK_HAZARD_IFRAME_DURATION : LD (TANK_HAZARD_IFRAMES),A
+    CALL APPLY_TANK_DAMAGE
+    CALL SOUND_ZUM_DEFLECT
+    RET
+
+; ---------- Mine: alloc/update/draw/explode/collision (see MINE_SLOT_
+; SIZE's own comment for the full design rationale) ----------
+; called from UOFLC_MINE_DONE with MINE_ORIGIN_X/Y already staged - same
+; "stash origin in scratch bytes, consumed once inside ALLOC" convention
+; as EBULLET_ORIGIN_X/Y. A full pool just returns and the drop is
+; dropped, same "no retry, no stall counter" convention as ALLOC_FLYER_
+; SLOT.
+ALLOC_MINE_SLOT:
+    LD IX,MINE_POOL
+    LD A,(IX+0)
+    OR A
+    JR Z,AMS_FOUND
+    LD IX,MINE_POOL+MINE_SLOT_SIZE
+    LD A,(IX+0)
+    OR A
+    RET NZ
+AMS_FOUND:
+    LD A,1 : LD (IX+0),A
+    LD A,(MINE_ORIGIN_X) : LD (IX+1),A
+    LD A,(MINE_ORIGIN_Y) : LD (IX+2),A
+    XOR A
+    LD (IX+3),A
+    LD (IX+4),A
+    LD (IX+7),A
+    RET
+
+UPDATE_MINE_ALL:
+    LD IX,MINE_POOL
+    CALL UPDATE_ONE_MINE
+    LD IX,MINE_POOL+MINE_SLOT_SIZE
+    CALL UPDATE_ONE_MINE
+    RET
+
+DRAW_MINE_CELL:
+    LD A,MINE1_CODE : LD B,A
+    LD A,(IX+4)
+    CP MINE_ANIM_INTERVAL
+    JR C,DMC_SET
+    LD A,MINE2_CODE : LD B,A
+DMC_SET:
+    LD A,B
+    LD (BULLET_TEMP_BYTE),A
+    CALL HORMING_BG_CELL_ADDR
+    JP WRITE_BULLET_BYTE_HL
+
+; IX = MINE_POOL slot base, (IX+2) already at its final resting Y
+; (landing clamp, or wherever a tank hit caught it mid-air - either way,
+; "wherever it actually was" is the death spot, same convention as every
+; sprite-based entity's own explosion). Wipes the BG cell (no BG cell
+; exists during ACT=2) then arms the shared PAT_EXPLOSION/EXPLOSION_
+; COLOR hw sprite convention, same "16x16pxの爆発エフェクトとサウンド"
+; every other entity's own death animation already provides - reused
+; here rather than building new explosion art, only newly needing an
+; ATTRIBUTE slot assignment since Mine itself (a BG entity) doesn't
+; otherwise have one.
+TRIGGER_MINE_EXPLOSION:
+    CALL ERASE_HORMING_BG_CELL
+    LD A,2 : LD (IX+0),A
+    LD A,EXPLOSION_DURATION : LD (IX+6),A
+    CALL SOUND_DESTROY
+    RET
+
+; IX = MINE_POOL slot base. ACT=2: counts down (IX+6), drawing the
+; shared PAT_EXPLOSION sprite every frame until it reaches 0, then
+; hides that slot (Y=209) and returns to idle. No drift (EXPLODE_DIR_
+; DX/DY) - a landmine's own impact point doesn't move, unlike every
+; other entity's own mid-air kill.
+; 実機フィードバック対応 ("Mineは演出なのでMineを削ってくれ 2発同時は
+; まず起こらないんで" - freeing an ATTRIBUTE slot for the 4th player
+; shot slot, see BULLET3_ACT's own comment): both MINE_SLOT_COUNT
+; instances now share the SAME single ATTRIBUTE slot (MINE_EXPL_SPR_
+; BASE_SLOT, no more +SPRIDX offset - (IX+5) is no longer read here)
+; instead of 1-per-instance. If 2 mines somehow explode in the exact
+; same frame, whichever instance is processed 2nd (UPDATE_MINE_ALL
+; always does slot0 then slot1) simply overwrites slot0's own draw for
+; that frame - accepted, "まず起こらない". A narrower edge case (their
+; own explosions overlap but don't start on the same frame, so one
+; instance's own OWN hide fires while the other is still mid-explosion)
+; can flicker-hide the other for 1 frame - same accepted rarity.
+UOM_EXPLODING:
+    LD A,(IX+6)
+    OR A
+    JR Z,UOM_EXPL_HIDE
+    DEC A : LD (IX+6),A
+    LD HL,MINE_SPRITE_ATTRS
+    LD A,(IX+2) : LD (HL),A : INC HL
+    LD A,(IX+1) : LD (HL),A : INC HL
+    LD A,PAT_EXPLOSION : LD (HL),A : INC HL
+    LD A,EXPLOSION_COLOR : LD (HL),A
+    CALL FLUSH_MINE_SPRITES
+    RET
+UOM_EXPL_HIDE:
+    XOR A : LD (IX+0),A
+    LD A,209 : LD (MINE_SPRITE_ATTRS),A
+    CALL FLUSH_MINE_SPRITES
+    RET
+
+; IX = MINE_POOL slot base. ACT=2: dispatches to the explosion phase
+; above. ACT=1: falls (VY accumulates by MINE_GRAVITY once every
+; MINE_GRAVITY_INTERVAL frames, see its own comment - "放物線で投下" -
+; VX applies every frame regardless, a constant leftward drift,
+; "右からしか出ないので左向き放物線のみ"), animates between MINE1_CODE/
+; MINE2_CODE, and lands (fixed MINE_LANDING_Y - see its own comment)
+; into an explosion exactly like a tank hit does (TRIGGER_MINE_
+; EXPLOSION).
+UPDATE_ONE_MINE:
+    LD A,(IX+0)
+    CP 2
+    JP Z,UOM_EXPLODING
+    OR A
+    RET Z
+
+    CALL ERASE_HORMING_BG_CELL
+    LD A,(IX+7) : INC A
+    CP MINE_GRAVITY_INTERVAL
+    JR C,UOM_GRAVITY_HOLD
+    XOR A
+    LD (IX+7),A
+    LD A,(IX+3) : ADD A,MINE_GRAVITY : LD (IX+3),A
+    JR UOM_GRAVITY_DONE
+UOM_GRAVITY_HOLD:
+    LD (IX+7),A
+UOM_GRAVITY_DONE:
+    LD A,(IX+2) : LD D,A
+    LD A,(IX+3) : LD E,A
+    LD A,D : ADD A,E : LD (IX+2),A
+
+    LD A,(IX+2)
+    CP MINE_LANDING_Y+1
+    JR C,UOM_STILL_FALLING
+    LD A,MINE_LANDING_Y : LD (IX+2),A
+    CALL TRIGGER_MINE_EXPLOSION
+    RET
+UOM_STILL_FALLING:
+    LD A,(IX+1)
+    CP MINE_VX
+    JR NC,UOM_MOVE_OK
+    XOR A : LD (IX+0),A              ; off the left edge - already erased above, nothing left to draw
+    RET
+UOM_MOVE_OK:
+    SUB MINE_VX : LD (IX+1),A
+    LD A,(IX+4) : INC A
+    CP MINE_ANIM_INTERVAL*2
+    JR C,UOM_ANIM_SET
+    XOR A
+UOM_ANIM_SET:
+    LD (IX+4),A
+    CALL DRAW_MINE_CELL
+    RET
+
+; blasts MINE_SPRITE_ATTRS (4 bytes, 1 shared slot - see UOM_EXPLODING's
+; own comment) to hw sprite slot MINE_EXPL_SPR_BASE_SLOT - same raw
+; DI-wrapped NOP-padded OUT pattern as FLUSH_ETANK_SPRITES.
+FLUSH_MINE_SPRITES:
+    DI
+    LD A,MINE_EXPL_SPR_BASE_SLOT*4 : OUT (99h),A
+    NOP
+    NOP
+    LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    LD HL,MINE_SPRITE_ATTRS
+    LD B,4
+FMS_LOOP:
+    LD A,(HL) : OUT (98h),A
+    PUSH BC : POP BC : NOP : NOP
+    INC HL
+    DJNZ FMS_LOOP
+    EI
+    RET
+
+; AABB check (8x8 box) against a still-falling mine only (ACT=1) - a
+; hit TERMINATES it into the same explosion a landing would (unlike
+; every other tank hazard here, a landmine doesn't fly through).
+CHECK_ONE_MINE_VS_TANK:
+    LD A,(IX+0)
+    CP 1
+    RET NZ
+    LD A,(TANK_HAZARD_IFRAMES)
+    OR A
+    RET NZ
+    LD A,(TANK_X) : ADD A,TANK_COLLISION_X_OFFSET : LD B,A
+    LD A,(TANK_Y_CUR) : ADD A,TANK_COLLISION_Y_OFFSET : LD C,A
+    LD A,(IX+1)
+    LD D,A
+    ADD A,7
+    CP B
+    RET C
+    LD A,B : ADD A,TANK_COLLISION_WIDTH-1
+    CP D
+    RET C
+    LD A,(IX+2)
+    LD D,A
+    ADD A,7
+    CP C
+    RET C
+    LD A,C : ADD A,TANK_COLLISION_HEIGHT-1
+    CP D
+    RET C
+    LD A,FLASH_DURATION : LD (TANK_FLASH_TIMER),A
+    LD A,TANK_HAZARD_IFRAME_DURATION : LD (TANK_HAZARD_IFRAMES),A
+    CALL APPLY_TANK_DAMAGE
+    CALL TRIGGER_MINE_EXPLOSION
+    RET
+
+CHECK_MINE_VS_TANK:
+    LD IX,MINE_POOL
+    CALL CHECK_ONE_MINE_VS_TANK
+    LD IX,MINE_POOL+MINE_SLOT_SIZE
+    CALL CHECK_ONE_MINE_VS_TANK
+    RET
+
 ; U's own hw sprite position: builds BULLET_U_SPRITE_ATTRS (3 slots x
 ; 4 bytes: Y,X,pat,col) straight from the bullet pool's own ROW/COL
 ; (same row*8/col*8 anchor the old BG cell used - no new position math
@@ -7125,21 +9885,28 @@ CHPET_DESTROY:
 ; (7-9). Bullet side stays 3 individually-named CALLs, same "not part
 ; of this instruction" precedent as CHECK_BULLET_VS_ENEMY's own bullet
 ; loop - only the enemy/cloud pools are genuine buffer+loop here.
+; 実機フィードバック対応 ("3発制限を4発に変更"): BULLET3 fires into
+; BULLET3_U_ATTRS - a separate, non-contiguous staging entry (see its
+; own comment), not an offset within the fixed 3-slot BULLET_U_SPRITE_
+; ATTRS block - so UBUS_ONE now just takes the target address directly
+; in HL (caller-loaded) instead of a DE offset from a fixed base. Gets
+; its own separate flush burst to hw sprite slot31.
 UPDATE_BULLET_U_SPRITES:
-    LD IX,BULLET0_ACT : LD DE,0 : CALL UBUS_ONE
-    LD IX,BULLET1_ACT : LD DE,4 : CALL UBUS_ONE
-    LD IX,BULLET2_ACT : LD DE,8 : CALL UBUS_ONE
+    LD IX,BULLET0_ACT : LD HL,BULLET_U_SPRITE_ATTRS+0 : CALL UBUS_ONE
+    LD IX,BULLET1_ACT : LD HL,BULLET_U_SPRITE_ATTRS+4 : CALL UBUS_ONE
+    LD IX,BULLET2_ACT : LD HL,BULLET_U_SPRITE_ATTRS+8 : CALL UBUS_ONE
     CALL FLUSH_BULLET_U_SPRITES
+    LD IX,BULLET3_ACT : LD HL,BULLET3_U_ATTRS : CALL UBUS_ONE
+    CALL FLUSH_BULLET3_U_SPRITE
     RET
 
-; IX = bullet slot base, DE = byte offset into BULLET_U_SPRITE_ATTRS
-; (0/4/8). Hides the slot (Y=209, same convention as UOE_HIDE) unless
-; it's an active U-type shot - also hidden while BOSS_ACT!=0, since U
-; is BG-drawn instead during the boss fight (see DRAW_BULLET_CELL) and
-; the hw sprite would otherwise sit uselessly on top of it, still
-; costing a per-frame VDP write for nothing.
+; IX = bullet slot base, HL = this slot's own target 4-byte staging
+; entry (caller-loaded). Hides the slot (Y=209, same convention as
+; UOE_HIDE) unless it's an active U-type shot - also hidden while
+; BOSS_ACT!=0, since U is BG-drawn instead during the boss fight (see
+; DRAW_BULLET_CELL) and the hw sprite would otherwise sit uselessly on
+; top of it, still costing a per-frame VDP write for nothing.
 UBUS_ONE:
-    LD HL,BULLET_U_SPRITE_ATTRS : ADD HL,DE
     LD A,(IX+0)
     OR A
     JR Z,UBUS_HIDE
@@ -7187,6 +9954,28 @@ FBUS_LOOP:
     EI
     RET
 
+; blasts BULLET3_U_ATTRS (4 bytes) to hw sprite slot31 - the 4th
+; player-shot slot's own U-type position, not contiguous with slots
+; 7-9 so it needs its own separate DI-wrapped burst (see BULLET3_ACT's
+; own comment).
+FLUSH_BULLET3_U_SPRITE:
+    DI
+    LD A,31*4 : OUT (99h),A
+    NOP
+    NOP
+    LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    LD HL,BULLET3_U_ATTRS
+    LD B,4
+FB3US_LOOP:
+    LD A,(HL) : OUT (98h),A
+    PUSH BC : POP BC : NOP : NOP
+    INC HL
+    DJNZ FB3US_LOOP
+    EI
+    RET
+
 ; ---------- boss (Sasapi) ----------
 ; per-quadrant (Y-delta,X-delta,pattern-delta) for the 4x4 grid of
 ; 16x16 quadrants making up the 64x64 sprite, row-major (TL of the
@@ -7225,10 +10014,9 @@ LOAD_SASAPI_PATTERNS:
     EI
     RET
 
-; spawns once at BOSS_SPAWN_TICK (a true 16-bit SBC HL,DE compare, same
-; idiom as CHECK_NIGHT/SPAWN_STOPPED - see the CLOUD_UPDATE_ALL bug this
-; same session for why an 8-bit CP against a >255 constant is wrong),
-; then patrols X between 0 and BOSS_SPAWNX, reversing at the LEFT edge
+; spawns once via SSC2_FIRE's own unconditional fallthrough (the
+; schedule's own final entry - "全てスケジュールに", round34), then
+; patrols X between 0 and BOSS_SPAWNX, reversing at the LEFT edge
 ; same as always - "右から出現し左へ 左端に着いたら反転 右端に". Once
 ; back at the RIGHT edge, though (BOSS_SPAWNX), it no longer just
 ; reverses and keeps looping: "右から出て左に行き反転して右端に戻った
@@ -7240,20 +10028,159 @@ LOAD_SASAPI_PATTERNS:
 ; pattern data (see LOAD_SASAPI_PATTERNS's own comment) at spawn and at
 ; each reversal, never mid-step.
 UPDATE_BOSS_ALL:
-    ; BOSS_ACT=2 = destroyed by CHECK_HIT_PAIR_BOSS (HP reached 0) -
-    ; permanently gone, nothing left to spawn/move/draw. Checked before
-    ; the ACT!=0 check below, which would otherwise treat 2 the same as
-    ; 1 (active) and keep drawing/re-spawning it forever.
+    ; BOSS_ACT=2 = destroyed by CHECK_HIT_PAIR_BOSS (HP reached 0) - the
+    ; boss itself never spawns/moves/draws again, but the death/explosion
+    ; sequence (INIT_BOSS_EXPLOSION/UPDATE_BOSS_EXPLOSION - a separate
+    ; state machine keyed off BOSS_EXPL_STATE, not BOSS_ACT/BOSS_PHASE)
+    ; still needs a frame update. Checked before the ACT!=0 check below,
+    ; which would otherwise treat 2 the same as 1 (active) and keep
+    ; drawing/re-spawning the boss itself forever.
     LD A,(BOSS_ACT)
     CP 2
-    RET Z
+    JP Z,UPDATE_BOSS_EXPLOSION
     OR A
-    JP NZ,UBA_ACTIVE
+    RET Z                      ; not yet spawned - SSC2_FIRE's job, not ours
+    ; round36-14 Part C: BOSS_FORM dispatch, orthogonal to the ACT check
+    ; above - see BOSS_FORM's own EQU comment. FORM=0 is the overwhelming
+    ; majority of the boss fight (unchanged UBA_ACTIVE below); FORM=
+    ; SPARK reuses the SAME UPDATE_BOSS_EXPLOSION dispatcher a real death
+    ; uses (it dispatches purely off BOSS_EXPL_STATE, which TRIGGER_BOSS_
+    ; BROKEN_FORM already set to SPARK - no 2nd copy of the spark-frame
+    ; logic needed).
+    LD A,(BOSS_FORM)
+    OR A
+    JP Z,UBA_ACTIVE
+    CP BOSS_FORM_SPARK
+    JP Z,UPDATE_BOSS_EXPLOSION
+    JP UPDATE_BOSS_BROKEN_ACTIVE
+
+; ---------- boss entrance "materialize" effect (follow-up#22 - see
+; BOSS_MATERIALIZE_CENTER_X's own comment for the full design) ----------
+; Kicks off the effect - called once from S2_BOSS_SPAWN, right as the
+; boss's own body first appears. SND_CTR=0 forces the very first
+; UPDATE_BOSS_MATERIALIZE call to retrigger the toll sound immediately.
+TRIGGER_BOSS_MATERIALIZE:
+    LD A,1 : LD (BOSS_MATERIALIZE_ACT),A
+    XOR A : LD (BOSS_MATERIALIZE_SND_CTR),A
+    RET
+
+; called every frame while BOSS_ACT!=0 (see MAINLOOP). Same BOSS_FORM!=0
+; gate as the old wipe design's own hard-learned fix (see BOSS_MATERIALIZE_
+; ACT's own EQU comment) - this alias is just as exposed to TRIGGER_BOSS_
+; BROKEN_FORM/INIT_BOSS_EXPLOSION legitimately reusing the same 2 bytes
+; for BOSS_EXPL_CX/CY once BOSS_FORM leaves 0, and STOP_BOSS_MATERIALIZE
+; is called from those two entry points for the same reason the old
+; design needed it.
+UPDATE_BOSS_MATERIALIZE:
+    LD A,(BOSS_FORM)
+    OR A
+    RET NZ
+    LD A,(BOSS_MATERIALIZE_ACT)
+    OR A
+    RET Z
+    DEC A
+    JR NZ,UBM_RETURNING   ; ACT==2 -> returning; ACT==1 falls through below
+; ---- phase 1: converging (the left/right flicker) ----
+    ; toll retrigger - genuinely raw-frame-paced (SOUND_UPDATE/TICK really
+    ; do run at 60fps, unlike GAME_TICK - see BOSS_MATERIALIZE_SND_
+    ; RETRIGGER's own comment), independent of the GAME_TICK-paced
+    ; convergence below.
+    LD A,(BOSS_MATERIALIZE_SND_CTR)
+    OR A
+    JR NZ,UBM_SND_CTR_DEC
+    CALL SOUND_BOSS_MATERIALIZE
+    LD A,BOSS_MATERIALIZE_SND_RETRIGGER-1 : LD (BOSS_MATERIALIZE_SND_CTR),A
+    JR UBM_CONVERGE
+UBM_SND_CTR_DEC:
+    DEC A : LD (BOSS_MATERIALIZE_SND_CTR),A
+UBM_CONVERGE:
+    ; ticks_elapsed = GAME_TICK-BOSS_SPAWN_TICK (true 16-bit subtract,
+    ; same idiom as every other GAME_TICK-threshold check in this file) -
+    ; the boss only ever spawns at the one fixed BOSS_SPAWN_TICK, so this
+    ; can't go negative. Only the low byte is ever checked below: this
+    ; phase always transitions to CONVERGE_DONE at ticks_elapsed==
+    ; BOSS_MATERIALIZE_TICKS(32), so the high byte can never actually
+    ; become nonzero while still in this phase - nothing to guard here.
     LD HL,(GAME_TICK)
     LD DE,BOSS_SPAWN_TICK
     OR A
     SBC HL,DE
-    RET C                      ; not yet time
+    LD A,L
+    CP BOSS_MATERIALIZE_TICKS
+    JR NC,UBM_CONVERGE_DONE
+    ; offset = AMP_START - STEP_PX*ticks_elapsed (ticks_elapsed<32, so
+    ; STEP_PX*ticks_elapsed<96 - fits a byte; *3 done as x+x+x, cheap,
+    ; no multiply routine needed for a factor this small)
+    LD B,A : ADD A,B : ADD A,B   ; A = ticks_elapsed*3
+    LD B,A
+    LD A,BOSS_MATERIALIZE_AMP_START : SUB B   ; A = offset (3-96)
+    LD B,A                                    ; B = offset
+    LD A,BOSS_MATERIALIZE_CENTER_X : SUB B    ; A = left candidate
+    LD C,A                                    ; C = left
+    LD A,BOSS_MATERIALIZE_CENTER_X : ADD A,B  ; A = right candidate
+    LD B,A                                    ; B = right
+    ; alternate which candidate is actually drawn every single raw frame
+    ; via TICK's own low bit - same free-running per-frame parity idiom
+    ; SOUND_CALC_NOISE_GATE_VOLUME's own duty gate already uses.
+    LD A,(TICK) : AND 1
+    JR Z,UBM_SHOW_LEFT
+    LD A,B
+    JR UBM_SET_X
+UBM_SHOW_LEFT:
+    LD A,C
+UBM_SET_X:
+    LD (BOSS_X),A
+    JP UBA_DRAW
+UBM_CONVERGE_DONE:
+    ; settle exactly at center (no leftover rounding - offset never
+    ; actually reaches 0 within this phase, see BOSS_MATERIALIZE_TICKS'
+    ; own comment) and hand off to the return leg.
+    LD A,BOSS_MATERIALIZE_CENTER_X : LD (BOSS_X),A
+    LD A,2 : LD (BOSS_MATERIALIZE_ACT),A
+    JP UBA_DRAW
+; ---- phase 2: plain glide back out to the original spawn position,
+; ordinary BOSS_SPEED, no flicker - "その後初期位置までまた戻って攻撃に
+; 移る" ----
+UBM_RETURNING:
+    LD A,(BOSS_X) : ADD A,BOSS_SPEED
+    CP BOSS_SPAWNX
+    JR C,UBM_RETURN_STEP
+    LD A,BOSS_SPAWNX : LD (BOSS_X),A
+    ; done - "その後初期位置までまた戻って攻撃に移る" (follow-up#22),
+    ; then follow-up#23 clarified this should go STRAIGHT into the attack
+    ; pose, not resume the ordinary left-edge patrol leg first ("初期位置
+    ; に戻ったら現在は左に行って往復するが往復はせず即攻撃に移るように").
+    ; BOSS_Y is already BOSS_SPAWN_Y (never touched throughout the whole
+    ; entrance effect), so ENTER_BOSS_ATTACK_POSE's precondition (X/Y
+    ; already clamped to spawn) holds without any extra write here.
+    XOR A : LD (BOSS_MATERIALIZE_ACT),A
+    JP ENTER_BOSS_ATTACK_POSE
+UBM_RETURN_STEP:
+    LD (BOSS_X),A
+    JP UBA_DRAW
+
+; force-stops the effect early (see TRIGGER_BOSS_BROKEN_FORM/INIT_BOSS_
+; EXPLOSION's own call sites, and UBA_MOVE_RIGHT's - the latter is
+; expected dead code in practice since UBA_MOVE_RIGHT can only run from
+; UBA_ACTIVE, which stays frozen for as long as this effect is active,
+; but kept as the same defensive safety net the old wipe design had).
+; Just clears the flag - the boss's own body stays exactly wherever it
+; last was (mid-flicker or mid-return), same as any other mid-patrol
+; death/form-change; nothing else needs undoing since no dummy sprites
+; are used any more.
+STOP_BOSS_MATERIALIZE:
+    XOR A : LD (BOSS_MATERIALIZE_ACT),A
+    RET
+
+; the one-shot spawn itself - SSC2_FIRE's own dispatch chain falls
+; through to this directly once every earlier schedule entry has
+; fired (same convention as Stage1's own SSC_FIRE/BOSS_SPAWN, src/
+; CYBER SHMUP.asm). round34-3: SSC2_FIRE already advanced SPAWN2_
+; NEXT_INDEX unconditionally BEFORE dispatching here (it's the last
+; entry either way), so unlike Stage1's own file this has no separate
+; advance call to make at all - no SSC2_ADVANCE routine exists any
+; more, the increment happens once, up front, in SSC2_FIRE itself.
+S2_BOSS_SPAWN:
     LD HL,SASAPI_QUADS : CALL LOAD_SASAPI_PATTERNS   ; DIR=0 facing below
     ; homing missile's own 5 facings, loaded once here (not at INIT) into
     ; Flyer's own now-permanently-dormant pattern block - "スプライトパ
@@ -7282,13 +10209,28 @@ UPDATE_BOSS_ALL:
     LD A,BOSS_HP_INIT : LD (BOSS_HP),A
     XOR A : LD (BOSS_FLASH_TIMER),A
     XOR A : LD (BOSS_PHASE),A  ; 0 = patrolling/sprite
+    XOR A : LD (BOSS_FORM),A   ; round36-14: normal form (not yet broken)
     CALL RESET_THUNDER_POOL
     XOR A : LD (THUNDER_PENDING),A
     XOR A : LD (THUNDER_ELIGIBLE),A   ; not eligible until the first pose ends - see UBAP_END
     XOR A : LD (BOSS_POSE_COUNT),A
     XOR A : LD (SBEAM_ACT),A
+    CALL TRIGGER_BOSS_MATERIALIZE
     JP UBA_DRAW
+; "出現時の初期位置は今のままで...点滅しながら中央で実態化みたいな演出
+; ...その後初期位置までまた戻って攻撃に移る" (follow-up#22) - while the
+; materialize effect is still running (BOSS_MATERIALIZE_ACT!=0, either
+; phase 1 converging or phase 2 returning), skip the entire ordinary
+; patrol/pose state machine below unconditionally - UPDATE_BOSS_
+; MATERIALIZE itself owns BOSS_X (and its own DRAW) for the whole
+; entrance sequence. Once it clears BOSS_MATERIALIZE_ACT back to 0 on
+; its own (having glided the boss back to BOSS_SPAWNX), this gate opens
+; and the boss starts patrolling from here exactly as if the effect had
+; never run.
 UBA_ACTIVE:
+    LD A,(BOSS_MATERIALIZE_ACT)
+    OR A
+    RET NZ
     LD A,(BOSS_PHASE)
     CP 1
     JP Z,UBA_POSE
@@ -7368,9 +10310,37 @@ UBA_MOVE_RIGHT:
     ; loop - "右端に戻ったら...BGに描画しスプライトは一旦消す". Not
     ; drawn/flushed as a sprite again until the pose ends (UBA_POSE
     ; below), so RET directly here rather than falling into UBA_DRAW.
+    ; Shared with UBM_RETURNING (follow-up#23 - "初期位置に戻ったら...
+    ; 往復はせず即攻撃に移るように") via ENTER_BOSS_ATTACK_POSE below.
+    JP ENTER_BOSS_ATTACK_POSE
+UBA_STEP_RIGHT_DIAG:
+    LD (BOSS_X),A
+    LD A,(BOSS_Y) : SUB BOSS_SPEED : LD (BOSS_Y),A
+    JP UBA_DRAW
+UBA_STEP_RIGHT_HORIZ:
+    LD A,(BOSS_X) : ADD A,BOSS_SPEED : LD (BOSS_X),A
+    CALL CHECK_THUNDER_TRIGGER_RIGHT
+    JP UBA_DRAW
+; enters the right-edge attack pose directly - BOSS_X/BOSS_Y must already
+; be clamped to BOSS_SPAWNX/BOSS_SPAWN_Y by the caller (UBA_MOVE_RIGHT's
+; own ordinary patrol arrival, or UBM_RETURNING once the materialize
+; effect glides the boss back home - follow-up#23: "初期位置に戻ったら
+; 現在は左に行って往復するが往復はせず即攻撃に移るように", i.e. skip the
+; usual first left-edge round trip entirely and go straight into the
+; attack pose the instant the entrance effect finishes).
+ENTER_BOSS_ATTACK_POSE:
     LD A,1 : LD (BOSS_PHASE),A
     LD HL,(GAME_TICK) : LD DE,BOSS_POSE_TICKS : ADD HL,DE
     LD (BOSS_POSE_END_TICK),HL
+    ; the materialize effect (follow-up#22) unfreezes UBA_ACTIVE on its
+    ; own well before this point is ever reachable via the ordinary patrol
+    ; leg (UBA_MOVE_RIGHT) - see STOP_BOSS_MATERIALIZE's own comment for
+    ; why this call is expected dead code in practice there, kept only as
+    ; the same defensive safety net the previous entrance-effect designs
+    ; all had here. UBM_RETURNING's own direct jump here already cleared
+    ; BOSS_MATERIALIZE_ACT itself just before, so this is a genuine no-op
+    ; on that path too.
+    CALL STOP_BOSS_MATERIALIZE
     CALL HIDE_BOSS_SPRITES
     CALL DRAW_SASAPI_HAND
     ; "当然サンダービーム中はホーミングもサンダーも撃たねえんだよ" -
@@ -7388,14 +10358,6 @@ UBAMR_ARM_HORMING:
     CALL ARM_HORMING_VOLLEY
 UBAMR_POSE_ENTERED:
     RET
-UBA_STEP_RIGHT_DIAG:
-    LD (BOSS_X),A
-    LD A,(BOSS_Y) : SUB BOSS_SPEED : LD (BOSS_Y),A
-    JP UBA_DRAW
-UBA_STEP_RIGHT_HORIZ:
-    LD A,(BOSS_X) : ADD A,BOSS_SPEED : LD (BOSS_X),A
-    CALL CHECK_THUNDER_TRIGGER_RIGHT
-    JP UBA_DRAW
 ; parked at the right edge, hand art on screen, sprite hidden - waits
 ; for BOSS_POSE_TICKS(32) GAME_TICKs (a true 16-bit SBC HL,DE compare
 ; against the target captured at pose-entry, same idiom as every other
@@ -7442,7 +10404,13 @@ UBAP_POSE_COUNT_DONE:
     ; forcibly clear any still-mid-animation beam - UBA_DRAW below
     ; (DRAW_BOSS+FLUSH_BOSS_SPRITES) is about to reclaim SBEAM_SPR_BASE_
     ; SLOT.. for the boss's own real body art again, so SBeam must never
-    ; touch those slots past this point.
+    ; touch those slots past this point. Only stop ITS OWN sound if it
+    ; was actually still active here (this fires at the end of EVERY
+    ; pose, not just SBeam's own - stopping unconditionally would cut
+    ; off some unrelated sound sharing the same channel).
+    LD A,(SBEAM_ACT)
+    OR A
+    CALL NZ,STOP_SBEAM_SOUND
     XOR A : LD (SBEAM_ACT),A
     ; "また巡回 BGは消してスプライトに戻す" - resume the patrol, moving
     ; left again from the right edge, exactly like the very first spawn.
@@ -7585,6 +10553,1611 @@ HBOS_LOOP:
     LD A,C : ADD A,4 : LD C,A
     DJNZ HBOS_LOOP
     RET
+
+; ---------- boss broken form (round36-14 Part C) ----------
+; per-quadrant (Y-delta,X-delta,pattern-delta) for the 2x2 grid of 16x16
+; quadrants making up the 32x32 broken body - same row-major "TL first,
+; then rightward, then down" walk as BOSS_QUAD_OFFSETS, just 4 entries
+; instead of 16 (sasapi_gen.py's own quadrants_from_bits, size=32).
+BOSS_BROKEN_QUAD_OFFSETS:
+    DB 0,0,0,   0,16,4
+    DB 16,0,8,  16,16,12
+
+; blasts HL (caller sets SASAPI_BROKEN_QUADS or SASAPI_BROKEN_QUADS_L,
+; both 128 bytes, sasapi_gen.py) into PAT_SASAPI's own VRAM slot range -
+; same base as the old 64x64 body (LOAD_SASAPI_PATTERNS), just the first
+; 4 of its 16 reused pattern groups, since the old body's own pattern
+; data is permanently retired the instant REVEAL_BOSS_BROKEN_FORM runs
+; (DRAW_BOSS/FLUSH_BOSS_SPRITES never run again once BOSS_FORM!=0 - see
+; UPDATE_BOSS_ALL's own dispatch) - "本体についても...予算は解放される".
+; DI/EI-wrapped for the same reason LOAD_SASAPI_PATTERNS itself is (see
+; its own comment) - only called on an actual facing change, not per
+; frame.
+LOAD_SASAPI_BROKEN_PATTERNS:
+    DI
+    LD DE,PAT_SASAPI*8+SPRPAT : LD BC,BOSS_BROKEN_QUAD_COUNT*32 : CALL LDIRVM
+    EI
+    RET
+
+; the SPARK->broken-form handoff (UBS_LAST_FRAME, once REASON=1) - the
+; board is already clean (all 3 sparks erased by the caller), so this
+; just needs to retire the old body for good and bring up the new one.
+REVEAL_BOSS_BROKEN_FORM:
+    CALL HIDE_BOSS_SPRITES          ; parks the old 16-quadrant body's own slots (10-25) off-screen for good - DRAW_BOSS/FLUSH_BOSS_SPRITES never run again once BOSS_FORM!=0, so nothing would otherwise ever refresh/hide them again
+    ; round36-14 follow-up ("で、0で最後の爆発で" - a death CAN still
+    ; happen after this, reusing the same real INIT_BOSS_EXPLOSION/UBE_
+    ; GROW path as any other death): UBE_GROW's own boss-sprite blink
+    ; toggles between FLUSH_BOSS_SPRITES and HIDE_BOSS_SPRITES using
+    ; BOSS_SPRITE_ATTRS' OWN staging buffer, which HIDE_BOSS_SPRITES
+    ; above never touches (it only writes the live hw SAT directly) - so
+    ; a later blink's own FLUSH_BOSS_SPRITES call would resurrect the
+    ; stale OLD 64x64 body from whatever it last held. Stomping every
+    ; quadrant's own Y byte to 209 in the STAGING buffer too makes that
+    ; later flush a harmless no-op (still hidden) instead of a visual bug.
+    LD HL,BOSS_SPRITE_ATTRS
+    LD B,16
+RBBF_HIDE_STAGE:
+    LD (HL),209 : INC HL : INC HL : INC HL : INC HL
+    DJNZ RBBF_HIDE_STAGE
+    LD A,BOSS_EXPL_STATE_DONE : LD (BOSS_EXPL_STATE),A   ; retire the shared SPARK/GROW/etc state machine - UPDATE_BOSS_ALL never dispatches to it again anyway once BOSS_FORM leaves SPARK, this just keeps it inert if anything ever reread it
+    LD HL,SASAPI_BROKEN_QUADS : CALL LOAD_SASAPI_BROKEN_PATTERNS
+    XOR A : LD (BOSS_BROKEN_DIR),A   ; matches the unmirrored QUADS just loaded above - UPDATE_BOSS_BROKEN_ACTIVE's own RECENTERING branch corrects this on its very first frame if the real direction toward center differs
+    ; round36-14 follow-up #4 ("で、停止中にビーム攻撃をする"): load the
+    ; 4 fixed beam-angle patterns once here too, same "load once when the
+    ; reused owner is guaranteed gone for good" idiom as LOAD_SASAPI_
+    ; BROKEN_PATTERNS itself - see BOSS_BROKEN_BEAM_TABLE's own comment
+    ; for why these 4 codes (PAT_SASAPI+16/+20/+24/+28, each spanning 4
+    ; consecutive sub-pattern codes) rather than reusing old SBeam's own
+    ; SBEAM_CODE.
+    DI
+    LD HL,BOSS_BROKEN_BEAM1_SPRITE : LD DE,BOSS_BROKEN_BEAM_CODE1*8+SPRPAT : LD BC,32 : CALL LDIRVM
+    LD HL,BOSS_BROKEN_BEAM2_SPRITE : LD DE,BOSS_BROKEN_BEAM_CODE2*8+SPRPAT : LD BC,32 : CALL LDIRVM
+    LD HL,BOSS_BROKEN_BEAM3_SPRITE : LD DE,BOSS_BROKEN_BEAM_CODE3*8+SPRPAT : LD BC,32 : CALL LDIRVM
+    LD HL,BOSS_BROKEN_BEAM4_SPRITE : LD DE,BOSS_BROKEN_BEAM_CODE4*8+SPRPAT : LD BC,32 : CALL LDIRVM
+    EI
+    CALL HIDE_BOSS_BROKEN_BEAM_ALL
+    CALL FLUSH_BOSS_BROKEN_BEAM_SPRITES
+    ; round36-14 follow-up #2 ("インフィニティ軌道はその位置から始まる
+    ; が一旦中央に寄せろ センタリングするかたちで") - appear right where
+    ; the old body died (BOSS_X/BOSS_Y already hold that, untouched since
+    ; TRIGGER_BOSS_BROKEN_FORM), then walk toward the fixed orbit center
+    ; before the figure-8 loop itself starts - see BOSS_BROKEN_
+    ; RECENTERING's own comment.
+    LD A,1 : LD (BOSS_BROKEN_RECENTERING),A
+    LD A,BOSS_FORM_ACTIVE : LD (BOSS_FORM),A
+    ; same "draw once immediately, don't wait a whole extra frame for the
+    ; very first real position/sprite" convention S2_BOSS_SPAWN's own
+    ; tail (JP UBA_DRAW) already uses - without this, slots 10-13 would
+    ; sit at their stale zeroed reset state for exactly 1 frame.
+    JP UPDATE_BOSS_BROKEN_ACTIVE
+
+; A = a random "how many path-index steps until the next lap-stop" value
+; - see BOSS_BROKEN_LAP_STEPS_MIN/_RANGE's own comment. Same GAME_RNG^
+; TICK^live-position-byte mixing idiom as PICK_HORMING_TARGET_X; RANGE
+; is a power of 2 so a plain AND folds it, no reject-and-subtract
+; needed. A leaf routine (only touches A/B), safe to CALL from anywhere
+; without saving other registers.
+ROLL_BOSS_BROKEN_LAP_STEPS:
+    LD A,(GAME_RNG) : LD B,A
+    LD A,(TICK) : XOR B : LD B,A
+    LD A,(BOSS_BROKEN_PATH_INDEX) : XOR B
+    AND BOSS_BROKEN_LAP_STEPS_RANGE-1
+    ADD A,BOSS_BROKEN_LAP_STEPS_MIN
+    RET
+
+; A=current value, B=target, C=step size. Steps A by C toward B (up or
+; down, whichever direction is needed), clamped so it never overshoots
+; past B - repeated calls converge exactly onto B and stay there. A leaf
+; routine (only touches A/B/C), used by UPDATE_BOSS_BROKEN_ACTIVE's own
+; RECENTERING sub-phase for both axes.
+STEP_TOWARD:
+    CP B
+    RET Z
+    JR C,STW_UP
+    SUB C
+    CP B
+    RET NC
+    LD A,B
+    RET
+STW_UP:
+    ADD A,C
+    CP B
+    RET C
+    LD A,B
+    RET
+
+; round36-14 Part C's own per-frame update, dispatched from UPDATE_BOSS_
+; ALL once BOSS_FORM=ACTIVE(2) (in place of UBA_ACTIVE). Two sub-phases -
+; see BOSS_BROKEN_RECENTERING's own comment for why: 1) RECENTERING (set
+; by REVEAL_BOSS_BROKEN_FORM) walks BOSS_X/BOSS_Y from wherever the old
+; body actually died toward the fixed BOSS_BROKEN_CENTER_X/Y point at
+; BOSS_BROKEN_RECENTER_SPEED px/frame; 2) once arrived, the orbit itself
+; runs - "インフィニティの起動で画面を移動しランダムタイミングで停止し
+; 少ししてまた回る これがシーケンスで" - a repeating MOVING<->stopped
+; cycle, each phase's own random duration re-rolled at the moment it's
+; entered (compared every frame via the same true-16-bit-SBC-HL,DE idiom
+; as BOSS_POSE_END_TICK), walking a precomputed figure-8 (lemniscate)
+; path LUT (BOSS_BROKEN_PATH_X/_Y/_DIR, BOSS_BROKEN_PATH_LEN points,
+; sasapi_gen.py, ABSOLUTE coordinates centered on that same fixed point)
+; via an explicit BOSS_BROKEN_PATH_INDEX that only advances while MOVING
+; (one step every BOSS_BROKEN_PATH_HOLD_FRAMES raw frames) - unlike a
+; value derived straight from GAME_TICK, an explicit index naturally
+; freezes in place while stopped and resumes from the exact same point
+; once moving again, with no separate "frozen index" bookkeeping needed.
+UPDATE_BOSS_BROKEN_ACTIVE:
+    ; round36-14 follow-up#4 3rd real-hardware feedback ("ビームが飛んで
+    ; 来ないな...発射して飛ばすんだよ") - in-flight beam projectiles now
+    ; animate every single frame, independently of RECENTERING/MOVING/
+    ; STOPPED below (a beam launched right before the boss resumes
+    ; orbiting must keep flying, not freeze or vanish).
+    CALL UPDATE_BOSS_BROKEN_BEAM_FLIGHT
+    CALL FLUSH_BOSS_BROKEN_BEAM_SPRITES
+    LD A,(BOSS_BROKEN_RECENTERING)
+    OR A
+    JR Z,UBBA_ORBIT
+
+    ; --- sub-phase 1: RECENTERING ---
+    LD A,(BOSS_X) : LD B,BOSS_BROKEN_CENTER_X : LD C,BOSS_BROKEN_RECENTER_SPEED
+    CALL STEP_TOWARD
+    LD (BOSS_X),A
+    LD A,(BOSS_Y) : LD B,BOSS_BROKEN_CENTER_Y : LD C,BOSS_BROKEN_RECENTER_SPEED
+    CALL STEP_TOWARD
+    LD (BOSS_Y),A
+    ; face toward the center horizontally while still walking (same
+    ; BOSS_DIR convention as the orbit's own table: B=0 normal/left-
+    ; facing QUADS, B=1 mirrored/right-facing QUADS_L)
+    LD A,(BOSS_X)
+    CP BOSS_BROKEN_CENTER_X
+    JR Z,UBBA_RC_KEEPDIR
+    JR C,UBBA_RC_RIGHT
+    LD B,0
+    JR UBBA_RC_HAVE_DIR
+UBBA_RC_RIGHT:
+    LD B,1
+    JR UBBA_RC_HAVE_DIR
+UBBA_RC_KEEPDIR:
+    LD A,(BOSS_BROKEN_DIR) : LD B,A
+UBBA_RC_HAVE_DIR:
+    ; arrived at the center exactly on both axes? hand off to the orbit,
+    ; starting at the loop's own (0,0)-offset crossing point so there's
+    ; no visual jump at the handoff.
+    LD A,(BOSS_X) : CP BOSS_BROKEN_CENTER_X
+    JP NZ,UBBA_APPLY_DIR   ; JR range exceeded - ORBIT's own block sits between here and the shared tail
+    LD A,(BOSS_Y) : CP BOSS_BROKEN_CENTER_Y
+    JP NZ,UBBA_APPLY_DIR
+    XOR A : LD (BOSS_BROKEN_RECENTERING),A
+    LD A,BOSS_BROKEN_PATH_CROSS_INDEX : LD (BOSS_BROKEN_PATH_INDEX),A
+    XOR A : LD (BOSS_BROKEN_FRAME_COUNTER),A
+    LD A,1 : LD (BOSS_BROKEN_MOVING),A
+    PUSH BC
+    CALL ROLL_BOSS_BROKEN_LAP_STEPS
+    LD (BOSS_BROKEN_STEPS_TO_STOP),A
+    POP BC
+    JP UBBA_APPLY_DIR
+
+    ; --- sub-phase 2: ORBIT ---
+; round36-14 follow-up #4 ("SasapiBrokenの停止はインフィニティ軌道の1周
+; に１回何処かで停止 で、停止中にビーム攻撃をする") - MOVING=1 walks the
+; path index (as before); reaching 0 on BOSS_BROKEN_STEPS_TO_STOP (only
+; decremented on a REAL path-index advance, not every raw frame - see
+; its own comment) parks it and hands off to the 4-beam sequence
+; (UBBA_BEAM_SEQ/UPDATE_BOSS_BROKEN_BEAM_SEQ), which flips MOVING back
+; to 1 and re-rolls STEPS_TO_STOP once all 4 beams have fired and the
+; last one's own hold time elapses.
+UBBA_ORBIT:
+    LD A,(BOSS_BROKEN_MOVING)
+    OR A
+    JP Z,UBBA_BEAM_SEQ
+
+    LD A,(BOSS_BROKEN_FRAME_COUNTER) : INC A
+    CP BOSS_BROKEN_PATH_HOLD_FRAMES
+    JR C,UBBA_FC_SAVE
+    XOR A
+    PUSH AF
+    LD A,(BOSS_BROKEN_PATH_INDEX) : INC A
+    AND BOSS_BROKEN_PATH_LEN-1
+    LD (BOSS_BROKEN_PATH_INDEX),A
+    POP AF
+    ; a real step happened this frame - count it toward this lap's stop.
+    LD HL,BOSS_BROKEN_STEPS_TO_STOP
+    DEC (HL)
+    JR NZ,UBBA_FC_SAVE
+    XOR A : LD (BOSS_BROKEN_MOVING),A
+    CALL ARM_BOSS_BROKEN_BEAM_SEQ
+UBBA_FC_SAVE:
+    LD (BOSS_BROKEN_FRAME_COUNTER),A
+    JR UBBA_POS
+
+UBBA_BEAM_SEQ:
+    CALL UPDATE_BOSS_BROKEN_BEAM_SEQ
+
+UBBA_POS:
+    LD A,(BOSS_BROKEN_PATH_INDEX)
+    LD E,A : LD D,0
+    LD HL,BOSS_BROKEN_PATH_X : ADD HL,DE : LD A,(HL) : LD (BOSS_X),A
+    LD HL,BOSS_BROKEN_PATH_Y : ADD HL,DE : LD A,(HL) : LD (BOSS_Y),A
+    LD HL,BOSS_BROKEN_PATH_DIR : ADD HL,DE : LD A,(HL) : LD B,A
+
+UBBA_APPLY_DIR:
+    LD A,(BOSS_BROKEN_DIR)
+    CP B
+    JR Z,UBBA_DRAW
+    LD A,B : LD (BOSS_BROKEN_DIR),A
+    OR A
+    JR NZ,UBBA_LOAD_L
+    LD HL,SASAPI_BROKEN_QUADS : CALL LOAD_SASAPI_BROKEN_PATTERNS
+    JR UBBA_DRAW
+UBBA_LOAD_L:
+    LD HL,SASAPI_BROKEN_QUADS_L : CALL LOAD_SASAPI_BROKEN_PATTERNS
+UBBA_DRAW:
+    CALL DRAW_BOSS_BROKEN
+    CALL FLUSH_BOSS_BROKEN_SPRITES
+    RET
+
+; fills BOSS_BROKEN_SPRITE_ATTRS (4 quadrants x4 bytes) from BOSS_BROKEN_
+; QUAD_OFFSETS - same shape/hit-flash handling as DRAW_BOSS, just 4
+; quadrants instead of 16 (and reusing the exact same BOSS_FLASH_TIMER/
+; BOSS_DRAW_COLOR/BOSS_COLOR/BOSS_FLASH_COLOR the old body used - DRAW_
+; BOSS itself never runs again once BOSS_FORM!=0, so there's no risk of
+; the two decrementing BOSS_FLASH_TIMER twice in the same frame).
+DRAW_BOSS_BROKEN:
+    LD A,(BOSS_FLASH_TIMER)
+    OR A
+    JR Z,DRBB_COLOR_NORMAL
+    DEC A : LD (BOSS_FLASH_TIMER),A
+    LD A,BOSS_FLASH_COLOR
+    JR DRBB_COLOR_SET
+DRBB_COLOR_NORMAL:
+    LD A,BOSS_COLOR
+DRBB_COLOR_SET:
+    LD (BOSS_DRAW_COLOR),A
+
+    LD IX,BOSS_BROKEN_QUAD_OFFSETS
+    LD HL,BOSS_BROKEN_SPRITE_ATTRS
+    LD B,BOSS_BROKEN_QUAD_COUNT
+DRBB_LOOP:
+    LD A,(IX+0) : LD C,A
+    LD A,(BOSS_Y) : ADD A,C
+    LD (HL),A : INC HL
+    LD A,(IX+1) : LD C,A
+    LD A,(BOSS_X) : ADD A,C
+    LD (HL),A : INC HL
+    LD A,(IX+2) : LD C,A
+    LD A,PAT_SASAPI : ADD A,C
+    LD (HL),A : INC HL
+    LD A,(BOSS_DRAW_COLOR) : LD (HL),A : INC HL
+    INC IX : INC IX : INC IX
+    DJNZ DRBB_LOOP
+    RET
+
+; blasts BOSS_BROKEN_SPRITE_ATTRS (16 bytes) to hw sprite slots
+; BOSS_BROKEN_SPR_BASE_SLOT.. as 4 independent per-quadrant DI/EI-wrapped
+; mini-bursts - same shape/reasoning as FLUSH_BOSS_SPRITES's own comment
+; (many short interrupt-safe windows instead of one long one), just 4
+; quadrants instead of 16.
+FLUSH_BOSS_BROKEN_SPRITES:
+    LD HL,BOSS_BROKEN_SPRITE_ATTRS
+    LD C,BOSS_BROKEN_SPR_BASE_SLOT*4
+    LD B,BOSS_BROKEN_QUAD_COUNT
+FBBS_LOOP:
+    DI
+    LD A,C : OUT (99h),A
+    NOP
+    NOP
+    LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    LD A,(HL) : OUT (98h),A : INC HL
+    PUSH BC : POP BC : NOP : NOP
+    LD A,(HL) : OUT (98h),A : INC HL
+    PUSH BC : POP BC : NOP : NOP
+    LD A,(HL) : OUT (98h),A : INC HL
+    PUSH BC : POP BC : NOP : NOP
+    LD A,(HL) : OUT (98h),A : INC HL
+    PUSH BC : POP BC : NOP : NOP
+    EI
+    LD A,C : ADD A,4 : LD C,A
+    DJNZ FBBS_LOOP
+    RET
+
+; ---------- boss broken form: 4-beam stop-attack (round36-14 follow-up
+; #4, "SasapiBrokenの停止はインフィニティ軌道の1周に１回何処かで停止
+; で、停止中にビーム攻撃をする 添付がそのキャラデータ 1から4までの左方
+; 向斜め下に順の角度でビーム発射") ----------
+; per-beam (XOFS,CODE) - dispatched by BOSS_BROKEN_BEAM_COUNT(0-3). XOFS
+; is a signed CELL offset from the body's own horizontal center (BOSS_X's
+; own top-left +2 cells/16px) - "Sbeam2,3は中央から出ているが 1,4は発射
+; 位置が1は右上 4が左上になっているので 1は2,3の左に4は右に8pxオフセッ
+; トしたX位置になる" (2/3 fire from the body's own center; 1 is 8px/1
+; cell left of it, 4 is 8px/1 cell right). CODE is the hw sprite pattern
+; each beam's own art was loaded into (BOSS_BROKEN_BEAM_CODE1-4,
+; PAT_SASAPI+16/+20/+24/+28 - see that constant's own comment for why
+; these codes specifically, not old SBeam's own SBEAM_CODE) - each beam
+; is now a single already-complete 16x16 picture (see FIRE_BOSS_BROKEN_
+; BEAM's own comment for why there's no longer a slope/direction to
+; store here: the angle is baked into the art itself, not computed at
+; runtime).
+; round36-14 follow-up#4 2nd real-hardware feedback ("全然違うぞ...
+; グラフィックも壊れてる"): a single 16x16 hw sprite occupies 4
+; CONSECUTIVE pattern codes (TL,BL,TR,BR - same convention BOSS_BROKEN_
+; QUAD_OFFSETS' own 0/4/8/12 deltas already use for the body), not 1 -
+; the first attempt spaced these 4 beam codes only 1 apart (16,17,18,19),
+; so each beam's own 32-byte LDIRVM load silently overwrote 3 of the
+; PREVIOUS beam's own 4 sub-pattern codes. Fixed by spacing them 4 apart
+; (16,20,24,28) - but that alone didn't fix the real-hardware symptom,
+; because a SEPARATE assembler forward-reference bug (see BOSS_BROKEN_
+; BEAM_CODE1's own comment, now up near PAT_SASAPI's own definition
+; where these EQUs actually live) meant REVEAL_BOSS_BROKEN_FORM's own
+; LDIRVM calls used the wrong destination addresses regardless of the
+; spacing fix. Both bugs are now fixed.
+; per-beam (XOFS,DXMAG,DYMAG,XDIR,CODE), 5 bytes/entry - restored from
+; the 1st attempt's own table shape (round36-14 follow-up#4 3rd real-
+; hardware feedback: a static single sprite isn't a real projectile,
+; see LAUNCH_BOSS_BROKEN_BEAM's own comment). XOFS is a signed CELL
+; offset from the body's own horizontal center (only used at launch, to
+; place the projectile's own starting point); DXMAG/DYMAG/XDIR are now
+; each beam's own per-frame PIXEL velocity (not a Bresenham-line-draw
+; ratio any more - see BOSS_BROKEN_BEAM_SLOT_COUNT's own comment for
+; the resulting per-beam speed difference).
+BOSS_BROKEN_BEAM_TABLE:
+    DB -1, 2, 1, -1, BOSS_BROKEN_BEAM_CODE1
+    DB  0, 2, 5, -1, BOSS_BROKEN_BEAM_CODE2
+    DB  0, 2, 5,  1, BOSS_BROKEN_BEAM_CODE3
+    DB  1, 2, 1,  1, BOSS_BROKEN_BEAM_CODE4
+
+; zeroes the sequence's own count/timer - 0 timer fires beam1 on the
+; very next UPDATE_BOSS_BROKEN_BEAM_SEQ tick, same "0=fire immediately"
+; idiom as ARM_HORMING_VOLLEY.
+ARM_BOSS_BROKEN_BEAM_SEQ:
+    XOR A
+    LD (BOSS_BROKEN_BEAM_COUNT),A
+    LD (BOSS_BROKEN_BEAM_TIMER),A
+    RET
+
+; per-frame tick while BOSS_BROKEN_MOVING=0 (stopped) - same COUNT/TIMER
+; countdown idiom as UPDATE_HORMING_VOLLEY, unchanged ("発射タイミングは
+; 今でいいが" - the 1->4 firing order and BOSS_BROKEN_BEAM_INTERVAL
+; spacing between shots stayed exactly as before). What changed (round
+; 36-14 follow-up#4 3rd real-hardware feedback, "ビームが飛んで来ない
+; な...発射して飛ばすんだよ") is what "fire" actually does: each shot
+; now LAUNCHes an independent flying projectile (LAUNCH_BOSS_BROKEN_
+; BEAM) into its own slot instead of replacing a single static sprite -
+; so firing beam2 no longer hides beam1, and the final wait before
+; resuming movement no longer hides whichever beam is still mid-flight
+; (UPDATE_BOSS_BROKEN_BEAM_FLIGHT, called every frame regardless of
+; BOSS_BROKEN_MOVING, keeps animating/colliding all in-flight beams
+; independently of this sequencer and of the orbit's own stop/move
+; cycle).
+UPDATE_BOSS_BROKEN_BEAM_SEQ:
+    LD A,(BOSS_BROKEN_BEAM_COUNT)
+    CP 4
+    JR NZ,UBBBS_FIRING
+    LD A,(BOSS_BROKEN_BEAM_TIMER)
+    OR A
+    JR Z,UBBBS_RESUME
+    DEC A : LD (BOSS_BROKEN_BEAM_TIMER),A
+    RET
+UBBBS_RESUME:
+    LD A,1 : LD (BOSS_BROKEN_MOVING),A
+    CALL ROLL_BOSS_BROKEN_LAP_STEPS
+    LD (BOSS_BROKEN_STEPS_TO_STOP),A
+    RET
+UBBBS_FIRING:
+    LD A,(BOSS_BROKEN_BEAM_TIMER)
+    OR A
+    JR Z,UBBBS_FIRE
+    DEC A : LD (BOSS_BROKEN_BEAM_TIMER),A
+    RET
+UBBBS_FIRE:
+    CALL LAUNCH_BOSS_BROKEN_BEAM
+    LD A,(BOSS_BROKEN_BEAM_COUNT) : INC A : LD (BOSS_BROKEN_BEAM_COUNT),A
+    LD A,BOSS_BROKEN_BEAM_INTERVAL : LD (BOSS_BROKEN_BEAM_TIMER),A
+    RET
+
+; called once, at REVEAL_BOSS_BROKEN_FORM time - parks all 4 of the
+; beam-attack's own hw sprite slots off-screen up front AND clears every
+; slot's own BOSS_BROKEN_PROJ_ACTIVE flag, so nothing stale (a previous
+; game's own leftover state, or uninitialized RAM) could show/fly before
+; the first beam is ever actually launched - same "explicit up-front
+; init" precedent as every other hw sprite pool's own boot-time hide.
+HIDE_BOSS_BROKEN_BEAM_ALL:
+    LD HL,BOSS_BROKEN_BEAM_SPRITE_ATTRS
+    LD B,BOSS_BROKEN_BEAM_SLOT_COUNT
+HBBBA_LOOP:
+    LD (HL),209 : INC HL
+    XOR A : LD (HL),A : INC HL
+    XOR A : LD (HL),A : INC HL
+    XOR A : LD (HL),A : INC HL
+    DJNZ HBBBA_LOOP
+    LD HL,BOSS_BROKEN_PROJ_ACTIVE
+    LD B,BOSS_BROKEN_BEAM_SLOT_COUNT
+HBBBA_ACT_LOOP:
+    XOR A : LD (HL),A : INC HL
+    DJNZ HBBBA_ACT_LOOP
+    RET
+
+; launches whichever of the 4 fixed-angle beams BOSS_BROKEN_BEAM_COUNT
+; (0-3) selects as an independent flying projectile - its own slot
+; (same index as BOSS_BROKEN_BEAM_COUNT, since each of the 4 beam types
+; only ever launches once per stop-sequence) gets a starting position
+; (body's own center cell +XOFS, same placement math as the 2nd
+; attempt's static sprite) and a per-frame pixel velocity (DXMAG/DYMAG
+; from the table, signed by XDIR) - UPDATE_BOSS_BROKEN_BEAM_FLIGHT then
+; advances and redraws it every frame from here on, independently of
+; this routine and of the other 3 beams' own slots. round36-14 follow-
+; up#4 3rd real-hardware feedback ("ビームが飛んで来ないな...発射して
+; 飛ばすんだよ") - the previous version stopped here (a single static
+; placement); this one hands off to an ongoing per-frame update instead.
+LAUNCH_BOSS_BROKEN_BEAM:
+    LD A,(BOSS_BROKEN_BEAM_COUNT)
+    LD E,A : LD D,0                                ; DE = this beam's own slot index (0-3) - also used to index the PROJ_* arrays below, unaffected by ADD HL,DE
+    LD HL,BOSS_BROKEN_BEAM_TABLE
+    ADD HL,DE : ADD HL,DE : ADD HL,DE : ADD HL,DE : ADD HL,DE   ; HL = this beam's own 5-byte table entry (*5 via repeated add - no multiply instruction)
+
+    LD A,(HL) : INC HL : LD B,A                    ; XOFS (signed cells)
+    LD A,(BOSS_X) : SRL A : SRL A : SRL A           ; body's own top-left column
+    ADD A,2 : ADD A,B                               ; +2 cells (body's own horizontal center) + this beam's own XOFS
+    ADD A,A : ADD A,A : ADD A,A                     ; back to pixels - the CENTER column's own left edge
+    SUB 8                                            ; recenter: the sprite is 16px wide, so its own left edge sits 8px left of that column
+    PUSH HL                                          ; save the table cursor (now pointing at DXMAG) - HL is about to be reused
+    LD HL,BOSS_BROKEN_PROJ_X : ADD HL,DE : LD (HL),A
+    POP HL
+
+    LD A,(BOSS_Y) : SRL A : SRL A : SRL A
+    ADD A,2                                          ; body's own vertical center row
+    ADD A,A : ADD A,A : ADD A,A                      ; pixels - this beam's own starting top edge
+    PUSH HL
+    LD HL,BOSS_BROKEN_PROJ_Y : ADD HL,DE : LD (HL),A
+    POP HL
+
+    LD A,(HL) : INC HL : LD B,A                     ; DXMAG (unsigned magnitude)
+    LD A,(HL) : INC HL : LD C,A                     ; DYMAG (unsigned, always applied as +down)
+    LD A,(HL) : INC HL                              ; XDIR (+1 or -1)
+    OR A
+    JP P,LBBB_DX_POS
+    XOR A : SUB B                                    ; A = -DXMAG (XDIR was negative)
+    JR LBBB_DX_SET
+LBBB_DX_POS:
+    LD A,B
+LBBB_DX_SET:
+    PUSH HL
+    LD HL,BOSS_BROKEN_PROJ_DX : ADD HL,DE : LD (HL),A
+    POP HL
+    LD A,C
+    PUSH HL
+    LD HL,BOSS_BROKEN_PROJ_DY : ADD HL,DE : LD (HL),A
+    POP HL
+
+    LD A,(HL)                                        ; CODE (5th and last field)
+    LD HL,BOSS_BROKEN_PROJ_CODE : ADD HL,DE : LD (HL),A
+    LD A,1
+    LD HL,BOSS_BROKEN_PROJ_ACTIVE : ADD HL,DE : LD (HL),A
+    CALL SOUND_SASAPI_LASER
+    RET
+
+; per-frame update for all 4 potentially-in-flight beam projectiles -
+; called unconditionally from UPDATE_BOSS_BROKEN_ACTIVE (every frame
+; while BOSS_FORM=ACTIVE, regardless of RECENTERING/MOVING/STOPPED sub-
+; phase), independently of the firing sequencer above. Each active slot
+; steps by its own BOSS_BROKEN_PROJ_DX/DY (signed 8-bit add - a real Z80
+; ADD A,r, so this only works correctly because DX/DY are always small
+; enough that wraparound never legitimately occurs before the bounds
+; check below catches it) and is deactivated the instant it leaves the
+; visible screen area in any direction (all 4 beams point downward, so
+; only the bottom edge, plus whichever horizontal edge XDIR sends it
+; toward, are ever actually reached in practice).
+; round36-14 follow-up#8 ("ではループ展開を検討"): fully loop-unrolled
+; (4 straight-line copies, one per slot, BOSS_BROKEN_PROJ_*+0..+3 baked
+; in as compile-time constant addresses) - the previous round
+; (follow-up#7) had already tightened the shared 4-iteration loop body
+; to compute its own DE-index once per slot instead of re-deriving it
+; per field access, but every field access still paid for a runtime
+; ADD HL,DE (11T) on top of the LD HL,nn/LD A,(HL) pair. With the slot
+; known at compile time, that whole indexing step disappears - a single
+; read becomes a plain LD A,(nn) (13T, replacing LD HL,nn+ADD HL,DE+
+; LD A,(HL) = 28T), and a read-modify-write pair (very common in this
+; routine - X/Y bounds-check-then-move) drops from 53T to 44T at the
+; SAME byte count, because Z80's JP cc,nn costs a fixed 10T whether
+; taken or not (unlike the register-shuffling this saves elsewhere).
+; The 4 slots' own control flow (X_RIGHT/X_LEFT/OFFSCREEN/HIDE_SLOT
+; branches) is necessarily duplicated 4x now instead of shared via the
+; loop - the real cost of unrolling - but this assembler's `LD A,(nn)`/
+; `LD (nn),A` direct-addressing forms turned out cheap enough per-access
+; that the net ROM cost for this routine was only +277 bytes (158->435).
+; T-state win measured via the same fresh_cpu()+cpu.reset_stats()+
+; call_routine() methodology as follow-up#7: 4-active 2227T->1292T
+; (-42%), 0-active 839T->370T(-56%). See CHECK_BOSS_BROKEN_BEAM_VS_TANK
+; below for the same treatment applied to the tank-collision check.
+; NOTE for future edits to either unrolled routine: this assembler's
+; eval_expr has NO operator precedence (left-to-right only) - an
+; expression like `BASE+N*4` parses as `(BASE+N)*4`, not `BASE+(N*4)`;
+; any per-slot multiply (e.g. BOSS_BROKEN_BEAM_SPRITE_ATTRS+N*4) MUST
+; be written as a single already-multiplied literal (`+0`/`+4`/`+8`/
+; `+12`) - this bug was actually hit and caught by boss_broken_form_
+; test.py during development (4 failures, all sprite-attrs-related)
+; before being fixed this same round.
+UPDATE_BOSS_BROKEN_BEAM_FLIGHT:
+    LD A,(BOSS_BROKEN_PROJ_ACTIVE+0)
+    OR A
+    JP Z,UBBBF_HIDE0
+
+    LD A,(BOSS_BROKEN_PROJ_DX+0)
+    OR A
+    JP M,UBBBF_XL0
+UBBBF_XR0:
+    LD B,A
+    LD A,239 : SUB B : LD C,A
+    LD A,(BOSS_BROKEN_PROJ_X+0)
+    CP C
+    JP NC,UBBBF_OFFS0
+    ADD A,B
+    LD (BOSS_BROKEN_PROJ_X+0),A
+    JP UBBBF_Y0
+UBBBF_XL0:
+    LD B,A
+    XOR A : SUB B : LD C,A
+    LD A,(BOSS_BROKEN_PROJ_X+0)
+    CP C
+    JP C,UBBBF_OFFS0
+    ADD A,B
+    LD (BOSS_BROKEN_PROJ_X+0),A
+
+UBBBF_Y0:
+    LD A,(BOSS_BROKEN_PROJ_DY+0) : LD B,A
+    LD A,191 : SUB B : LD C,A
+    LD A,(BOSS_BROKEN_PROJ_Y+0)
+    CP C
+    JP NC,UBBBF_OFFS0
+    ADD A,B
+    LD (BOSS_BROKEN_PROJ_Y+0),A
+
+    LD A,(BOSS_BROKEN_PROJ_Y+0) : LD B,A
+    LD A,(BOSS_BROKEN_PROJ_X+0) : LD C,A
+    LD A,(BOSS_BROKEN_PROJ_CODE+0)
+    LD HL,BOSS_BROKEN_BEAM_SPRITE_ATTRS+0
+    LD (HL),B : INC HL
+    LD (HL),C : INC HL
+    LD (HL),A : INC HL
+    LD A,BOSS_BROKEN_BEAM_COLOR : LD (HL),A
+    JP UBBBF_SLOT1
+
+UBBBF_OFFS0:
+    XOR A
+    LD (BOSS_BROKEN_PROJ_ACTIVE+0),A
+UBBBF_HIDE0:
+    LD HL,BOSS_BROKEN_BEAM_SPRITE_ATTRS+0
+    LD (HL),209 : INC HL
+    XOR A
+    LD (HL),A : INC HL
+    LD (HL),A : INC HL
+    LD (HL),A
+
+UBBBF_SLOT1:
+    LD A,(BOSS_BROKEN_PROJ_ACTIVE+1)
+    OR A
+    JP Z,UBBBF_HIDE1
+
+    LD A,(BOSS_BROKEN_PROJ_DX+1)
+    OR A
+    JP M,UBBBF_XL1
+UBBBF_XR1:
+    LD B,A
+    LD A,239 : SUB B : LD C,A
+    LD A,(BOSS_BROKEN_PROJ_X+1)
+    CP C
+    JP NC,UBBBF_OFFS1
+    ADD A,B
+    LD (BOSS_BROKEN_PROJ_X+1),A
+    JP UBBBF_Y1
+UBBBF_XL1:
+    LD B,A
+    XOR A : SUB B : LD C,A
+    LD A,(BOSS_BROKEN_PROJ_X+1)
+    CP C
+    JP C,UBBBF_OFFS1
+    ADD A,B
+    LD (BOSS_BROKEN_PROJ_X+1),A
+
+UBBBF_Y1:
+    LD A,(BOSS_BROKEN_PROJ_DY+1) : LD B,A
+    LD A,191 : SUB B : LD C,A
+    LD A,(BOSS_BROKEN_PROJ_Y+1)
+    CP C
+    JP NC,UBBBF_OFFS1
+    ADD A,B
+    LD (BOSS_BROKEN_PROJ_Y+1),A
+
+    LD A,(BOSS_BROKEN_PROJ_Y+1) : LD B,A
+    LD A,(BOSS_BROKEN_PROJ_X+1) : LD C,A
+    LD A,(BOSS_BROKEN_PROJ_CODE+1)
+    LD HL,BOSS_BROKEN_BEAM_SPRITE_ATTRS+4
+    LD (HL),B : INC HL
+    LD (HL),C : INC HL
+    LD (HL),A : INC HL
+    LD A,BOSS_BROKEN_BEAM_COLOR : LD (HL),A
+    JP UBBBF_SLOT2
+
+UBBBF_OFFS1:
+    XOR A
+    LD (BOSS_BROKEN_PROJ_ACTIVE+1),A
+UBBBF_HIDE1:
+    LD HL,BOSS_BROKEN_BEAM_SPRITE_ATTRS+4
+    LD (HL),209 : INC HL
+    XOR A
+    LD (HL),A : INC HL
+    LD (HL),A : INC HL
+    LD (HL),A
+
+UBBBF_SLOT2:
+    LD A,(BOSS_BROKEN_PROJ_ACTIVE+2)
+    OR A
+    JP Z,UBBBF_HIDE2
+
+    LD A,(BOSS_BROKEN_PROJ_DX+2)
+    OR A
+    JP M,UBBBF_XL2
+UBBBF_XR2:
+    LD B,A
+    LD A,239 : SUB B : LD C,A
+    LD A,(BOSS_BROKEN_PROJ_X+2)
+    CP C
+    JP NC,UBBBF_OFFS2
+    ADD A,B
+    LD (BOSS_BROKEN_PROJ_X+2),A
+    JP UBBBF_Y2
+UBBBF_XL2:
+    LD B,A
+    XOR A : SUB B : LD C,A
+    LD A,(BOSS_BROKEN_PROJ_X+2)
+    CP C
+    JP C,UBBBF_OFFS2
+    ADD A,B
+    LD (BOSS_BROKEN_PROJ_X+2),A
+
+UBBBF_Y2:
+    LD A,(BOSS_BROKEN_PROJ_DY+2) : LD B,A
+    LD A,191 : SUB B : LD C,A
+    LD A,(BOSS_BROKEN_PROJ_Y+2)
+    CP C
+    JP NC,UBBBF_OFFS2
+    ADD A,B
+    LD (BOSS_BROKEN_PROJ_Y+2),A
+
+    LD A,(BOSS_BROKEN_PROJ_Y+2) : LD B,A
+    LD A,(BOSS_BROKEN_PROJ_X+2) : LD C,A
+    LD A,(BOSS_BROKEN_PROJ_CODE+2)
+    LD HL,BOSS_BROKEN_BEAM_SPRITE_ATTRS+8
+    LD (HL),B : INC HL
+    LD (HL),C : INC HL
+    LD (HL),A : INC HL
+    LD A,BOSS_BROKEN_BEAM_COLOR : LD (HL),A
+    JP UBBBF_SLOT3
+
+UBBBF_OFFS2:
+    XOR A
+    LD (BOSS_BROKEN_PROJ_ACTIVE+2),A
+UBBBF_HIDE2:
+    LD HL,BOSS_BROKEN_BEAM_SPRITE_ATTRS+8
+    LD (HL),209 : INC HL
+    XOR A
+    LD (HL),A : INC HL
+    LD (HL),A : INC HL
+    LD (HL),A
+
+UBBBF_SLOT3:
+    LD A,(BOSS_BROKEN_PROJ_ACTIVE+3)
+    OR A
+    JP Z,UBBBF_HIDE3
+
+    LD A,(BOSS_BROKEN_PROJ_DX+3)
+    OR A
+    JP M,UBBBF_XL3
+UBBBF_XR3:
+    LD B,A
+    LD A,239 : SUB B : LD C,A
+    LD A,(BOSS_BROKEN_PROJ_X+3)
+    CP C
+    JP NC,UBBBF_OFFS3
+    ADD A,B
+    LD (BOSS_BROKEN_PROJ_X+3),A
+    JP UBBBF_Y3
+UBBBF_XL3:
+    LD B,A
+    XOR A : SUB B : LD C,A
+    LD A,(BOSS_BROKEN_PROJ_X+3)
+    CP C
+    JP C,UBBBF_OFFS3
+    ADD A,B
+    LD (BOSS_BROKEN_PROJ_X+3),A
+
+UBBBF_Y3:
+    LD A,(BOSS_BROKEN_PROJ_DY+3) : LD B,A
+    LD A,191 : SUB B : LD C,A
+    LD A,(BOSS_BROKEN_PROJ_Y+3)
+    CP C
+    JP NC,UBBBF_OFFS3
+    ADD A,B
+    LD (BOSS_BROKEN_PROJ_Y+3),A
+
+    LD A,(BOSS_BROKEN_PROJ_Y+3) : LD B,A
+    LD A,(BOSS_BROKEN_PROJ_X+3) : LD C,A
+    LD A,(BOSS_BROKEN_PROJ_CODE+3)
+    LD HL,BOSS_BROKEN_BEAM_SPRITE_ATTRS+12
+    LD (HL),B : INC HL
+    LD (HL),C : INC HL
+    LD (HL),A : INC HL
+    LD A,BOSS_BROKEN_BEAM_COLOR : LD (HL),A
+    RET
+
+UBBBF_OFFS3:
+    XOR A
+    LD (BOSS_BROKEN_PROJ_ACTIVE+3),A
+UBBBF_HIDE3:
+    LD HL,BOSS_BROKEN_BEAM_SPRITE_ATTRS+12
+    LD (HL),209 : INC HL
+    XOR A
+    LD (HL),A : INC HL
+    LD (HL),A : INC HL
+    LD (HL),A
+    RET
+
+FLUSH_BOSS_BROKEN_BEAM_SPRITES:
+    DI
+    LD A,BOSS_BROKEN_BEAM_SPR_BASE_SLOT*4 : OUT (99h),A
+    NOP
+    NOP
+    LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    LD HL,BOSS_BROKEN_BEAM_SPRITE_ATTRS
+    LD B,BOSS_BROKEN_BEAM_SLOT_COUNT*4
+FBBBS_LOOP:
+    LD A,(HL) : OUT (98h),A
+    PUSH BC : POP BC : NOP : NOP
+    INC HL
+    DJNZ FBBBS_LOOP
+    EI
+    RET
+
+; AABB-checks each of the up to 4 in-flight beam projectiles' own 16x16
+; box against the tank - same 4-compare shape/i-frame gate as CHECK_
+; SBEAM_VS_TANK, walking every ACTIVE slot (round36-14 follow-up#4 3rd
+; real-hardware feedback: beams are real moving projectiles now, not a
+; single static sprite - see UPDATE_BOSS_BROKEN_BEAM_FLIGHT's own
+; comment). Stops (RET) on the first hit rather than checking the
+; remaining slots, same "one hit per frame is enough" shape as every
+; other tank-hazard check in this file - a hit does NOT deactivate that
+; beam's own slot, it keeps flying through/past the tank exactly like
+; every other projectile in this game that isn't itself destroyed by
+; contact.
+; round36-14 follow-up#8 ("ではループ展開を検討"): fully loop-unrolled,
+; same treatment as UPDATE_BOSS_BROKEN_BEAM_FLIGHT above (see that
+; routine's own comment for the general rationale/assembler gotcha).
+; The tank's own X+offset/Y+offset stay in B/C for the whole routine
+; (unchanged from follow-up#6/#7's own tightening - still true and
+; still useful even unrolled, since D is now free to hold a per-slot
+; scratch value instead). One extra wrinkle specific to this routine:
+; `CP (HL)` (comparing A against an indexed projectile field) has no
+; direct-addressing equivalent (`CP (nn)` doesn't exist on real Z80,
+; and this assembler's `LD r,(nn)` only supports r=A) - so each of the
+; 2 read-modify-compare pairs (X-vs-tank-right, Y-vs-tank-bottom) now
+; does `LD A,(PROJ_field+N):LD D,A` first to stash the projectile's own
+; value in D, computes the tank-edge value into A as before, then
+; `CP D`. Slots fall straight through into the next slot's own label on
+; a miss (no shared NEXT/loop-back), and the last slot (3) uses RET
+; directly instead of a trailing JP+fallthrough. T-state win (same
+; measurement methodology as follow-up#7): 4-active-miss 745T->326T
+; (-56%), 0-active 549T->179T(-67%) - a bigger relative win than the
+; flight routine, because this routine's checks are almost entirely
+; single-field reads/compares (the case direct addressing helps most)
+; rather than read-modify-writes. ROM cost: +129 bytes (110->239).
+CHECK_BOSS_BROKEN_BEAM_VS_TANK:
+    LD A,(TANK_HAZARD_IFRAMES)
+    OR A
+    RET NZ
+    LD A,(TANK_X) : ADD A,TANK_COLLISION_X_OFFSET : LD B,A   ; B = tank X+offset (stable all routine)
+    LD A,(TANK_Y_CUR) : ADD A,TANK_COLLISION_Y_OFFSET : LD C,A ; C = tank Y+offset (stable all routine)
+
+CBBBVT_SLOT0:
+    LD A,(BOSS_BROKEN_PROJ_ACTIVE+0)
+    OR A
+    JP Z,CBBBVT_SLOT1
+    LD A,(BOSS_BROKEN_PROJ_X+0)
+    LD D,A
+    ADD A,15
+    CP B
+    JP C,CBBBVT_SLOT1
+    LD A,B : ADD A,TANK_COLLISION_WIDTH-1
+    CP D
+    JP C,CBBBVT_SLOT1
+    LD A,(BOSS_BROKEN_PROJ_Y+0)
+    LD D,A
+    ADD A,15
+    CP C
+    JP C,CBBBVT_SLOT1
+    LD A,C : ADD A,TANK_COLLISION_HEIGHT-1
+    CP D
+    JP C,CBBBVT_SLOT1
+    LD A,FLASH_DURATION : LD (TANK_FLASH_TIMER),A
+    LD A,TANK_HAZARD_IFRAME_DURATION : LD (TANK_HAZARD_IFRAMES),A
+    CALL APPLY_TANK_DAMAGE
+    CALL SOUND_ZUM_DEFLECT
+    RET
+
+CBBBVT_SLOT1:
+    LD A,(BOSS_BROKEN_PROJ_ACTIVE+1)
+    OR A
+    JP Z,CBBBVT_SLOT2
+    LD A,(BOSS_BROKEN_PROJ_X+1)
+    LD D,A
+    ADD A,15
+    CP B
+    JP C,CBBBVT_SLOT2
+    LD A,B : ADD A,TANK_COLLISION_WIDTH-1
+    CP D
+    JP C,CBBBVT_SLOT2
+    LD A,(BOSS_BROKEN_PROJ_Y+1)
+    LD D,A
+    ADD A,15
+    CP C
+    JP C,CBBBVT_SLOT2
+    LD A,C : ADD A,TANK_COLLISION_HEIGHT-1
+    CP D
+    JP C,CBBBVT_SLOT2
+    LD A,FLASH_DURATION : LD (TANK_FLASH_TIMER),A
+    LD A,TANK_HAZARD_IFRAME_DURATION : LD (TANK_HAZARD_IFRAMES),A
+    CALL APPLY_TANK_DAMAGE
+    CALL SOUND_ZUM_DEFLECT
+    RET
+
+CBBBVT_SLOT2:
+    LD A,(BOSS_BROKEN_PROJ_ACTIVE+2)
+    OR A
+    JP Z,CBBBVT_SLOT3
+    LD A,(BOSS_BROKEN_PROJ_X+2)
+    LD D,A
+    ADD A,15
+    CP B
+    JP C,CBBBVT_SLOT3
+    LD A,B : ADD A,TANK_COLLISION_WIDTH-1
+    CP D
+    JP C,CBBBVT_SLOT3
+    LD A,(BOSS_BROKEN_PROJ_Y+2)
+    LD D,A
+    ADD A,15
+    CP C
+    JP C,CBBBVT_SLOT3
+    LD A,C : ADD A,TANK_COLLISION_HEIGHT-1
+    CP D
+    JP C,CBBBVT_SLOT3
+    LD A,FLASH_DURATION : LD (TANK_FLASH_TIMER),A
+    LD A,TANK_HAZARD_IFRAME_DURATION : LD (TANK_HAZARD_IFRAMES),A
+    CALL APPLY_TANK_DAMAGE
+    CALL SOUND_ZUM_DEFLECT
+    RET
+
+CBBBVT_SLOT3:
+    LD A,(BOSS_BROKEN_PROJ_ACTIVE+3)
+    OR A
+    RET Z
+    LD A,(BOSS_BROKEN_PROJ_X+3)
+    LD D,A
+    ADD A,15
+    CP B
+    RET C
+    LD A,B : ADD A,TANK_COLLISION_WIDTH-1
+    CP D
+    RET C
+    LD A,(BOSS_BROKEN_PROJ_Y+3)
+    LD D,A
+    ADD A,15
+    CP C
+    RET C
+    LD A,C : ADD A,TANK_COLLISION_HEIGHT-1
+    CP D
+    RET C
+    LD A,FLASH_DURATION : LD (TANK_FLASH_TIMER),A
+    LD A,TANK_HAZARD_IFRAME_DURATION : LD (TANK_HAZARD_IFRAMES),A
+    CALL APPLY_TANK_DAMAGE
+    CALL SOUND_ZUM_DEFLECT
+    RET
+
+BOSS_EXPL_WHITE_PATTERN:
+    DB 0FFh,0FFh,0FFh,0FFh,0FFh,0FFh,0FFh,0FFh
+
+; the spark phase's own BG tile art - EXPLOSION_PATTERN itself (see
+; BOSS_EXPL_SPARK_CODE_TL's own comment - round32 switched from just its
+; top-left 8x8 quadrant to the full 16x16, so no separate table is
+; needed here anymore; INIT_BOSS_EXPLOSION uploads EXPLOSION_PATTERN's
+; own 32 bytes directly to BOSS_EXPL_SPARK_CODE_TL*8).
+
+; flight LUT (round32 follow-up #3, "1から3セルランダムで") - 8 compass
+; directions (N,NE,E,SE,S,SW,W,NW, same order/sign convention as this
+; file's own EXPLODE_DIR_DX/DY) x distance 1-3, precomputed rather than
+; multiplied at runtime (Z80 has no multiply instruction) - 24 (dx,dy)
+; pairs, 2 bytes each. BOSS_EXPL_PICK_FLIGHT picks one entry uniformly at
+; random. Must stay in sync with BOSS_EXPL_FLIGHT_MIN_DIST/_MAX_DIST if
+; either ever changes.
+BOSS_EXPL_FLIGHT_TABLE:
+    DB 0,-1,  0,-2,  0,-3     ; N
+    DB 1,-1,  2,-2,  3,-3     ; NE
+    DB 1,0,   2,0,   3,0      ; E
+    DB 1,1,   2,2,   3,3      ; SE
+    DB 0,1,   0,2,   0,3      ; S
+    DB -1,1,  -2,2,  -3,3     ; SW
+    DB -1,0,  -2,0,  -3,0     ; W
+    DB -1,-1, -2,-2, -3,-3    ; NW
+
+; "更に円の塗りつぶしは固定処理なのでLutでやってくれ たった半径6セルだ
+; からわずかなサイズだろう 一々計算は不要 なので円の1周終了を1パターン
+; として記録し 描画はそれらをアニメ処理すればよい" - the circle's own
+; shape never changes (only its center does, a plain translation), so
+; instead of computing disk membership at runtime (the old dx^2+dy^2<=
+; radius^2 half-width-table approach - see git history), each radius's
+; own RING (the cells newly added growing from radius-1 to radius; the
+; same list is also exactly the cells removed shrinking radius back down
+; by 1) is precomputed once, offline, into a fixed table - "1周" (one
+; lap/step) = one fixed pattern, and GROW/SHRINK just walk it
+; (BOSS_EXPL_APPLY_RING below), same idea as animating through sprite
+; frames. Computed via a one-off Python script (disk(r)-disk(r-1) for
+; each dx^2+dy^2<=r^2), not by hand - 226 bytes total across all 7
+; radii, sorted by dx then dy, each cell as (dx+MAXR,dy+MAXR) so every
+; value is a plain 0-12 byte (no sign handling needed to embed the
+; table itself - the sign only matters again once it's added back to
+; the real center at draw time, in BOSS_EXPL_APPLY_RING).
+;
+; This also directly fixes "不要な書き込みはしないこと 円描画するセル
+; のみで": the old box-redraw approach touched every cell in the whole
+; 13x13 bounding box on every step, including ones that were never part
+; of the circle at all - which silently clobbered real background
+; (SkySand/terrain) sitting in the box's own corners with a blank tile
+; that then never got restored (see BOSS_EXPL_BG_CODE_FOR_ROW's own
+; comment for the real fix to THAT). Walking only the ring's own cells
+; means cells outside the circle are never touched in the first place -
+; nothing to restore there because nothing ever disturbed them.
+BOSS_EXPL_RING_OFFSETS:
+    DB 0,2,10,26,58,98,162
+BOSS_EXPL_RING_COUNT:
+    DB 1,4,8,16,20,32,32
+BOSS_EXPL_RING_DATA:
+    DB 6,6,5,6,6,5,6,7,7,6,4,6,5,5,5,7
+    DB 6,4,6,8,7,5,7,7,8,6,3,6,4,4,4,5
+    DB 4,7,4,8,5,4,5,8,6,3,6,9,7,4,7,8
+    DB 8,4,8,5,8,7,8,8,9,6,2,6,3,4,3,5
+    DB 3,7,3,8,4,3,4,9,5,3,5,9,6,2,6,10
+    DB 7,3,7,9,8,3,8,9,9,4,9,5,9,7,9,8
+    DB 10,6,1,6,2,3,2,4,2,5,2,7,2,8,2,9
+    DB 3,2,3,3,3,9,3,10,4,2,4,10,5,2,5,10
+    DB 6,1,6,11,7,2,7,10,8,2,8,10,9,2,9,3
+    DB 9,9,9,10,10,3,10,4,10,5,10,7,10,8,10,9
+    DB 11,6,0,6,1,3,1,4,1,5,1,7,1,8,1,9
+    DB 2,2,2,10,3,1,3,11,4,1,4,11,5,1,5,11
+    DB 6,0,6,12,7,1,7,11,8,1,8,11,9,1,9,11
+    DB 10,2,10,10,11,3,11,4,11,5,11,7,11,8,11,9
+    DB 12,6
+
+; row->true-background-code, matching ERASE_BULLET_CELL's own day/night-
+; aware restore rules exactly (row<16 sky, row==16 SkySand/NIGHT_CODE,
+; 17-19 TERRAIN_BLANK_CODE) - a separate copy rather than a shared call
+; site, since ERASE_BULLET_CELL is IX-indexed (bullet-slot shaped) and
+; this is plain row-in/code-out. "Sandskyとその下のラインは更新しない
+; 1度書きなので復元しないとスクショのように欠けてしまう" - real-hardware/
+; screenshot finding: the OLD box-redraw's blanket "everything outside
+; the circle is HUD_ROW_BLANK_CODE" assumption only held for pure sky
+; (rows0-15); SkySand(16) and the Sand band(17-19) are each drawn ONCE
+; at INIT and never redrawn per-frame the way sky/night is, so treating
+; them the same as sky left a permanent black hole exactly where they'd
+; been overwritten - the explosion's own box realistically DOES reach
+; that far (BOSS_SPAWN_Y=56 -> center row~11, +BOSS_EXPL_MAXR(6) ->
+; row17, squarely inside the Sand band). Row>=20 (the scrolling terrain,
+; self-healing every frame already) is out of realistic reach at
+; MAXR=6 from a center row around 11-12, but still falls back to
+; TERRAIN_BLANK_CODE defensively rather than being left undefined.
+BOSS_EXPL_BG_CODE_FOR_ROW:
+    CP BULLET_ROCK_ROW_MIN
+    JR C,BEBCFR_SKY
+    CP BULLET_ROCK_ROW_MIN+4
+    JR NC,BEBCFR_TERRAIN_BLANK
+    CP BULLET_ROCK_ROW_MIN
+    JR Z,BEBCFR_SKYSAND
+BEBCFR_TERRAIN_BLANK:
+    LD A,TERRAIN_BLANK_CODE
+    RET
+BEBCFR_SKYSAND:
+    LD A,(NIGHT_ROW)
+    CP NIGHT_END_ROW
+    JR C,BEBCFR_SKYSAND_DAY
+    LD A,NIGHT_CODE
+    RET
+BEBCFR_SKYSAND_DAY:
+    LD A,SKYSAND_CODE
+    RET
+BEBCFR_SKY:
+    LD B,A
+    LD A,(NIGHT_ROW)
+    CP B
+    JR C,BEBCFR_SKY_BLUE
+    LD A,HUD_ROW_BLANK_CODE
+    RET
+BEBCFR_SKY_BLUE:
+    LD A,SKY_BLANK_CODE
+    RET
+
+; walks the ring table for radius A, writing each on-screen cell -
+; (BOSS_EXPL_RING_MODE) selects what: 0=BOSS_EXPL_WHITE_CODE (GROW,
+; drawing a newly-grown ring), 1=the true per-row background via
+; BOSS_EXPL_BG_CODE_FOR_ROW (SHRINK, restoring a ring being removed -
+; NOT a blanket blank, see that routine's own comment on why).
+;
+; "円の描画とラインの描画順の問題でラインが円の範囲で消えてる" - during
+; SHRINK specifically, dy=0 cells (the ring's own points on the center
+; row) are skipped entirely rather than restored - that row belongs to
+; the still-solid full-width line (drawn once at the grow->shrink
+; transition) until BOSS_EXPL_ERASE_LINE's own single clean sweep;
+; restoring them mid-shrink would eat into the middle of the line early,
+; the exact bug reported. GROW draws dy=0 normally (no line exists yet).
+BOSS_EXPL_APPLY_RING:
+    LD (BOSS_EXPL_RING_RADIUS),A
+    LD HL,BOSS_EXPL_RING_COUNT : LD E,A : LD D,0 : ADD HL,DE
+    LD A,(HL) : LD (BOSS_EXPL_RING_REMAIN),A
+    OR A
+    RET Z
+    LD A,(BOSS_EXPL_RING_RADIUS)
+    LD HL,BOSS_EXPL_RING_OFFSETS : LD E,A : LD D,0 : ADD HL,DE
+    LD A,(HL)
+    LD HL,BOSS_EXPL_RING_DATA : LD E,A : LD D,0 : ADD HL,DE
+    LD (BOSS_EXPL_RING_PTR),HL
+BEAR_LOOP:
+    LD HL,(BOSS_EXPL_RING_PTR)
+    LD A,(HL) : SUB BOSS_EXPL_MAXR : LD B,A   ; B = dx (signed, 2's-complement wraparound)
+    INC HL
+    LD A,(HL) : SUB BOSS_EXPL_MAXR : LD C,A   ; C = dy
+    INC HL
+    LD (BOSS_EXPL_RING_PTR),HL
+
+    LD A,(BOSS_EXPL_RING_MODE)
+    OR A
+    JR Z,BEAR_ROW_OK
+    LD A,C
+    OR A
+    JP Z,BEAR_SKIP_CELL   ; SHRINK + dy=0 - the line's own row, leave it alone
+BEAR_ROW_OK:
+
+    LD A,(BOSS_EXPL_CY) : ADD A,C : LD (BOSS_EXPL_ROWTMP),A
+    LD A,(BOSS_EXPL_CX) : ADD A,B : LD (BOSS_EXPL_COLTMP),A
+
+    ; off-screen row/col - either wrapped negative or genuinely too big;
+    ; each single unsigned check catches both directions at once.
+    LD A,(BOSS_EXPL_ROWTMP)
+    CP 24
+    JP NC,BEAR_SKIP_CELL
+    LD A,(BOSS_EXPL_COLTMP)
+    CP 32
+    JP NC,BEAR_SKIP_CELL
+
+    LD A,(BOSS_EXPL_RING_MODE)
+    OR A
+    JR NZ,BEAR_RESTORE
+    LD A,BOSS_EXPL_WHITE_CODE
+    JR BEAR_GOT_CODE
+BEAR_RESTORE:
+    LD A,(BOSS_EXPL_ROWTMP) : CALL BOSS_EXPL_BG_CODE_FOR_ROW
+BEAR_GOT_CODE:
+    LD (BULLET_TEMP_BYTE),A
+    LD A,(BOSS_EXPL_ROWTMP) : CALL NIGHT_ROW_ADDR
+    LD H,D : LD L,E
+    LD A,(BOSS_EXPL_COLTMP) : LD E,A : LD D,0
+    ADD HL,DE
+    CALL WRITE_BULLET_BYTE_HL
+
+BEAR_SKIP_CELL:
+    LD A,(BOSS_EXPL_RING_REMAIN) : DEC A : LD (BOSS_EXPL_RING_REMAIN),A
+    JP NZ,BEAR_LOOP
+    RET
+
+; called once, the instant the boss is destroyed (from CHPBOSS_DESTROY,
+; right after HIDE_BOSS_SPRITES) - sets up everything the death/
+; explosion sequence needs and draws its very first frame (a 1-cell
+; circle at the boss's own center).
+;
+; "まずボスがBG描画される右端で倒された場合はスプライトに戻す" - if the
+; kill happened while parked in the attack pose (BOSS_PHASE=1, hand art
+; on screen, real sprite already hidden), erase that BG art and reset
+; BOSS_PHASE back to 0 first, then explicitly re-show the real sprite
+; (DRAW_BOSS/FLUSH_BOSS_SPRITES) right here - round32: SPARK now needs
+; the boss VISIBLE the instant it starts ("消さないでくれ BGでやってる
+; 意味がない"), not just "not still BG art"; the patrol-death case
+; already has a visible sprite from its own last real frame so it needs
+; no extra draw, but the pose-death case's own sprite was left hidden by
+; whatever put it into the pose to begin with (see BOSS_PHASE=1 entry,
+; its own HIDE_BOSS_SPRITES call) and nothing else would ever re-show it.
+; follow-up#20 real-hardware bug fix ("爆発のキャラが消えてる") - this
+; routine is about to write BOSS_EXPL_CX/CY (a few lines below), which
+; alias BOSS_MATERIALIZE_ACT/SND_CTR (follow-up#22 - see that EQU's own
+; comment for the full story, unchanged risk from the old wipe design).
+; A kill can land while the entrance effect is still running, so force
+; it off FIRST, before either byte gets repurposed.
+INIT_BOSS_EXPLOSION:
+    CALL STOP_BOSS_MATERIALIZE
+    LD A,(BOSS_PHASE)
+    CP 1
+    JR NZ,IBE_NO_HAND
+    CALL ERASE_SASAPI_HAND
+    XOR A : LD (BOSS_PHASE),A
+    CALL DRAW_BOSS
+    CALL FLUSH_BOSS_SPRITES
+IBE_NO_HAND:
+    ; "倒した位置のボス中心から" - capture the center CELL now, once,
+    ; while BOSS_X/BOSS_Y still mean something (nothing updates them
+    ; again after this - the boss itself is done moving for good).
+    ; BOSS_X/BOSS_Y are the sprite's own top-left pixel; center is half
+    ; its width/height; pixel->cell is /8. round36-14 ("で、0で最後の
+    ; 爆発で" - a death CAN now happen while BOSS_FORM=ACTIVE too): the
+    ; broken body is 32x32 (center offset +16), not the original 64x64
+    ; (+32) - using the wrong one here would center this whole sequence
+    ; 16px off from where the visible broken body actually is.
+    LD A,32 : LD B,A
+    LD A,(BOSS_FORM)
+    CP BOSS_FORM_ACTIVE
+    JR NZ,IBE_CENTER_OFS_SET
+    LD B,16
+IBE_CENTER_OFS_SET:
+    LD A,(BOSS_X) : ADD A,B : SRL A : SRL A : SRL A : LD (BOSS_EXPL_CX),A
+    LD A,(BOSS_Y) : ADD A,B : SRL A : SRL A : SRL A : LD (BOSS_EXPL_CY),A
+
+    ; one-time repurpose of the (now permanently retired) hand-art code
+    ; range - see BOSS_EXPL_WHITE_CODE's own comment for why this is safe.
+    ; Both the circle's own white tile and the spark phase's own tile are
+    ; prepared here upfront, not deferred to whichever phase needs them
+    ; first - one DI/EI-wrapped burst instead of two smaller ones later.
+    DI
+    LD HL,BOSS_EXPL_WHITE_PATTERN : LD DE,BOSS_EXPL_WHITE_CODE*8 : LD BC,8 : CALL LDIRVM
+    LD HL,EXPLOSION_PATTERN : LD DE,BOSS_EXPL_SPARK_CODE_TL*8 : LD BC,32 : CALL LDIRVM
+    EI
+    LD A,BOSS_EXPL_WHITE_COLORBYTE : LD (HUD_TEMP_BYTE),A
+    LD HL,HUD_TEMP_BYTE : LD DE,2000h+BOSS_EXPL_WHITE_GROUP : LD BC,1 : CALL LDIRVM
+    LD A,BOSS_EXPL_SPARK_COLORBYTE : LD (HUD_TEMP_BYTE),A
+    LD HL,HUD_TEMP_BYTE : LD DE,2000h+BOSS_EXPL_SPARK_GROUP : LD BC,1 : CALL LDIRVM
+
+    ; SPARK runs first (see its own header comment) - GROW's own init
+    ; (radius=0, ring(0) drawn) happens later, at the SPARK->GROW
+    ; transition (UBS_LAST_FRAME), not here - BOSS_EXPL_RADIUS itself is
+    ; reused as SLOT0's own row storage throughout SPARK (see BOSS_EXPL_
+    ; SPARK_SLOT0_ROW's own comment), not zeroed here.
+    XOR A : LD (BOSS_EXPL_REASON),A   ; round36-14: a real death - see UBS_LAST_FRAME/TRIGGER_BOSS_BROKEN_FORM's own comments
+    CALL ARM_BOSS_EXPL_SPARK
+    RET
+
+; round36-14: the SPARK sub-state's own arm sequence (state/timer/blink/
+; live-spark-slot sentinels) - factored out of INIT_BOSS_EXPLOSION so
+; TRIGGER_BOSS_BROKEN_FORM can share it exactly rather than duplicating
+; these 3 writes a 2nd time (everything ABOVE this point in INIT_BOSS_
+; EXPLOSION - hand-art cleanup, center-cell capture, white/spark tile
+; upload - genuinely differs between the two callers, so only this
+; common tail is shared).
+ARM_BOSS_EXPL_SPARK:
+    LD A,BOSS_EXPL_STATE_SPARK : LD (BOSS_EXPL_STATE),A
+    LD A,BOSS_EXPL_SPARK_DURATION : LD (BOSS_EXPL_TIMER),A   ; reused as SPARK's own countdown - see its own comment
+    XOR A : LD (BOSS_EXPL_BLINK),A   ; reused as SPARK's own decorrelation salt - see BOSS_EXPL_RANDOM_BYTE's own comment
+    ; all 3 slots start empty - "nothing live yet" sentinel (0FFh, see
+    ; the slot bytes' own comment) so frame 1 doesn't try to erase stale
+    ; data from a previous boss fight.
+    LD A,0FFh
+    LD (BOSS_EXPL_SPARK_SLOT0_ROW),A
+    LD (BOSS_EXPL_SPARK_SLOT1_ROW),A
+    LD (BOSS_EXPL_SPARK_SLOT2_ROW),A
+    RET
+
+; per-frame update for the death/explosion sequence, called from
+; UPDATE_BOSS_ALL in place of DRAW_BOSS/FLUSH_BOSS_SPRITES once
+; BOSS_ACT=2. 4 states (BOSS_EXPL_STATE_GROW/_SHRINK/_FLASH/_DONE) - see
+; each state's own block below for what it does; DONE is a permanent
+; no-op (the whole sequence only ever runs once per boss).
+UPDATE_BOSS_EXPLOSION:
+    LD A,(BOSS_EXPL_STATE)
+    CP BOSS_EXPL_STATE_DONE
+    RET Z
+    CP BOSS_EXPL_STATE_SPARK
+    JP Z,UBE_SPARK
+    CP BOSS_EXPL_STATE_GROW
+    JP Z,UBE_GROW
+    CP BOSS_EXPL_STATE_SHRINK
+    JP Z,UBE_SHRINK
+    JP UBE_FLASH
+
+; draws ONE mixed random byte (pure READ of GAME_RNG, XORed with TICK and
+; an incrementing per-call salt - same PICK_HORMING_TARGET_X-style anti-
+; correlation idiom used throughout this file). Round-1 fix: the original
+; version called this TWICE per spark (once for dx, once for dy), each
+; call only advancing the salt by 1 - with GAME_RNG/TICK unchanged within
+; the same frame, that made dx and dy literally consecutive integers
+; (dy=dx+1 mod 16), so every spark landed on the SAME short diagonal line
+; instead of scattering in 2D (caught by boss_explosion_test.py's own
+; "genuinely scattered" check, not just a test-only artifact - the exact
+; same correlation exists in real gameplay too, just partly masked by
+; GAME_RNG/TICK actually changing frame to frame there). Fixed by drawing
+; ONE byte per spark and splitting it into independent nibbles for dx/dy
+; below - a raster-style sweep (low nibble cycles every draw, high nibble
+; only advances on nibble-carry) that covers the whole box far more
+; evenly than a single shared linear counter ever could.
+BOSS_EXPL_RANDOM_BYTE:
+    LD A,(BOSS_EXPL_BLINK) : INC A : LD (BOSS_EXPL_BLINK),A : LD B,A
+    LD A,(GAME_RNG) : XOR B : LD B,A
+    LD A,(TICK) : XOR B
+    RET
+
+; writes (BULLET_TEMP_BYTE) at (BOSS_EXPL_COLTMP+C, BOSS_EXPL_ROWTMP+B)
+; - B/C(in) are simple 0/1 cell offsets from that base, used to place
+; each of a 16x16 spark's 4 quadrants (or just (0,0) alone for an 8x8
+; one). Screen-clipped per cell (silently skips off-screen, same
+; unsigned CP trick as BOSS_EXPL_APPLY_RING). Clobbers A/D/E/H/L only -
+; B/C are read-only inputs, never written, so a caller can freely reuse
+; the same B or C across several calls without reloading it.
+BOSS_EXPL_WRITE_SPARK_CELL:
+    LD A,(BOSS_EXPL_ROWTMP) : ADD A,B
+    CP 24
+    RET NC
+    PUSH AF
+    LD A,(BOSS_EXPL_COLTMP) : ADD A,C
+    LD C,A
+    CP 32
+    JR NC,BEWSC_OOB
+    POP AF
+    CALL NIGHT_ROW_ADDR
+    LD H,D : LD L,E
+    LD A,C : LD E,A : LD D,0
+    ADD HL,DE
+    JP WRITE_BULLET_BYTE_HL
+BEWSC_OOB:
+    POP AF
+    RET
+
+; in: A=old row (or 0FFh sentinel = nothing live to erase), C=old col.
+; erases that spark's 4-cell footprint, restoring the real per-row
+; background (BOSS_EXPL_BG_CODE_FOR_ROW - the SkySand/Sand fix from
+; earlier this same round, reused here). ALWAYS 4 cells regardless of
+; whether the actual spark there was 8x8 or 16x16 - the "extra" cells
+; for an 8x8 spark just restore already-correct background, harmless,
+; since every slot's own OLD spark is erased before ANY slot's NEW spark
+; is drawn each frame (see UBE_SPARK) - this can never clip a sibling
+; slot's still-current spark. Saves needing to persist which size the
+; old spark was, so 2 bytes/slot (row,col) is enough.
+BOSS_EXPL_ERASE_ONE_SPARK:
+    CP 0FFh
+    RET Z
+    LD (BOSS_EXPL_ROWTMP),A
+    LD A,C : LD (BOSS_EXPL_COLTMP),A
+    LD B,0 : LD C,0 : CALL BOSS_EXPL_ERASE_SPARK_CELL
+    LD B,1 : LD C,0 : CALL BOSS_EXPL_ERASE_SPARK_CELL
+    LD B,0 : LD C,1 : CALL BOSS_EXPL_ERASE_SPARK_CELL
+    LD B,1 : LD C,1 : CALL BOSS_EXPL_ERASE_SPARK_CELL
+    RET
+
+; same shape/inputs as BOSS_EXPL_WRITE_SPARK_CELL (B/C=0/1 offsets from
+; BOSS_EXPL_ROWTMP/COLTMP, same screen clip) but computes the real
+; per-row background itself instead of writing a fixed code.
+BOSS_EXPL_ERASE_SPARK_CELL:
+    LD A,(BOSS_EXPL_ROWTMP) : ADD A,B
+    CP 24
+    RET NC
+    PUSH AF
+    LD A,(BOSS_EXPL_COLTMP) : ADD A,C
+    LD C,A
+    CP 32
+    JR NC,BEESC_OOB
+    POP AF
+    PUSH AF
+    CALL BOSS_EXPL_BG_CODE_FOR_ROW
+    LD (BULLET_TEMP_BYTE),A
+    POP AF
+    CALL NIGHT_ROW_ADDR
+    LD H,D : LD L,E
+    LD A,C : LD E,A : LD D,0
+    ADD HL,DE
+    JP WRITE_BULLET_BYTE_HL
+BEESC_OOB:
+    POP AF
+    RET
+
+; picks one of the 24 (dx,dy) entries in BOSS_EXPL_FLIGHT_TABLE uniformly
+; at random - "1から3セルランダムで": distance is always exactly 1, 2, or
+; 3 cells in a random compass direction, never 0 and never further than
+; 3. 24 isn't a power of 2, so a plain AND can't land exactly in range -
+; masks to 0-31 (next power of 2 above 24) and folds anything >=24 back
+; down by subtracting 24 once (31-24=7<24, one subtraction is always
+; enough, same fold-back idiom PICK_HORMING_TARGET_X already established
+; for its own non-power-of-2 window). Out: C=dx, B=dy. Trashes A/D/E/H/L.
+BOSS_EXPL_PICK_FLIGHT:
+    CALL BOSS_EXPL_RANDOM_BYTE
+    AND 31
+    CP 24
+    JR C,BEPF_OK
+    SUB 24
+BEPF_OK:
+    ADD A,A                              ; *2 - 2 bytes/entry
+    LD L,A : LD H,0
+    LD DE,BOSS_EXPL_FLIGHT_TABLE
+    ADD HL,DE
+    LD A,(HL) : LD C,A
+    INC HL
+    LD A,(HL) : LD B,A
+    RET
+
+; in: A=this slot's OLD row (or 0FFh sentinel), C=old col. out: A=new
+; row, C=new col (caller persists these into the slot's own bytes for
+; next frame's erase). Erases the old spark (BOSS_EXPL_ERASE_ONE_SPARK
+; above), then spawns a fresh one - "爆発範囲を元の64x64に てかこれは
+; エフェクトが飛ぶ範囲ではなく原点だからな そこからランダム方向に1から
+; 3セル飛ぶんだぞ": picks a random ORIGIN cell within the boss's own
+; 64x64 body (BOSS_EXPL_ORIGIN_RANGE), then flies further in a random
+; compass direction by a random 1-3 cell distance (BOSS_EXPL_PICK_
+; FLIGHT) - two stacked random draws, not one flat box, so results
+; naturally cluster near the boss body and thin out further away. 50/50
+; lone 8x8 TL tile vs the full 16x16 (all 4 quadrants) - "爆発キャラは
+; ...16x16のほうで ランダムで混ぜてもいいがな" - decided right after its
+; own random draw and branched on immediately (no need to preserve the
+; choice across the drawing calls that follow, unlike a value that would
+; have to survive in a register through them).
+BOSS_EXPL_SPARK_SLOT:
+    CALL BOSS_EXPL_ERASE_ONE_SPARK
+
+    ; --- origin: random cell within the boss-center 32x32 box ---
+    CALL BOSS_EXPL_RANDOM_BYTE
+    LD D,A
+    AND BOSS_EXPL_ORIGIN_RANGE*2-1 : SUB BOSS_EXPL_ORIGIN_RANGE : LD C,A   ; origin dx
+    LD A,D
+    SRL A : SRL A
+    AND BOSS_EXPL_ORIGIN_RANGE*2-1 : SUB BOSS_EXPL_ORIGIN_RANGE : LD B,A   ; origin dy
+    LD A,(BOSS_EXPL_CY) : ADD A,B : LD (BOSS_EXPL_ROWTMP),A
+    LD A,(BOSS_EXPL_CX) : ADD A,C : LD (BOSS_EXPL_COLTMP),A
+
+    ; --- flight: fly further, random compass direction, 1-3 cells ---
+    CALL BOSS_EXPL_PICK_FLIGHT
+    LD A,(BOSS_EXPL_ROWTMP) : ADD A,B : LD (BOSS_EXPL_ROWTMP),A
+    LD A,(BOSS_EXPL_COLTMP) : ADD A,C : LD (BOSS_EXPL_COLTMP),A
+
+    ; --- size: 8x8 or 16x16, then draw ---
+    CALL BOSS_EXPL_RANDOM_BYTE
+    AND 1
+    JR Z,BESS_DRAW_8
+
+BESS_DRAW_16:
+    LD A,BOSS_EXPL_SPARK_CODE_TL : LD (BULLET_TEMP_BYTE),A
+    LD B,0 : LD C,0 : CALL BOSS_EXPL_WRITE_SPARK_CELL
+    LD A,BOSS_EXPL_SPARK_CODE_BL : LD (BULLET_TEMP_BYTE),A
+    LD B,1 : LD C,0 : CALL BOSS_EXPL_WRITE_SPARK_CELL
+    LD A,BOSS_EXPL_SPARK_CODE_TR : LD (BULLET_TEMP_BYTE),A
+    LD B,0 : LD C,1 : CALL BOSS_EXPL_WRITE_SPARK_CELL
+    LD A,BOSS_EXPL_SPARK_CODE_BR : LD (BULLET_TEMP_BYTE),A
+    LD B,1 : LD C,1 : CALL BOSS_EXPL_WRITE_SPARK_CELL
+    JR BESS_DRAW_DONE
+
+BESS_DRAW_8:
+    LD A,BOSS_EXPL_SPARK_CODE_TL : LD (BULLET_TEMP_BYTE),A
+    LD B,0 : LD C,0 : CALL BOSS_EXPL_WRITE_SPARK_CELL
+
+BESS_DRAW_DONE:
+    LD A,(BOSS_EXPL_COLTMP) : LD C,A
+    LD A,(BOSS_EXPL_ROWTMP)
+    RET
+
+; "ウェイトなしで派手に沢山" - every single frame (no per-spark or
+; per-batch wait), each of the BOSS_EXPL_SPARK_PER_FRAME(3) slots erases
+; its own previous spark and drops a fresh one (BOSS_EXPL_SPARK_SLOT).
+; Unrolled 3x (not a DJNZ loop) since each slot's own storage is a
+; distinct pair of reused RAM bytes, not an indexable array - see those
+; bytes' own comment. The countdown (BOSS_EXPL_TIMER) is checked FIRST:
+; once it reaches 0 every slot just erases its own last spark with
+; nothing new spawned (UBS_LAST_FRAME), leaving a clean board right
+; before GROW's own ring(0) draws.
+UBE_SPARK:
+    LD A,(BOSS_EXPL_TIMER) : DEC A : LD (BOSS_EXPL_TIMER),A
+    JP Z,UBS_LAST_FRAME
+
+    ; "爆発エフェクト中も爆発音追加" - a crackle every SPARK_CRACKLE_
+    ; PERIOD frames, not every single frame - see that constant's own
+    ; comment for why.
+    AND SPARK_CRACKLE_PERIOD-1
+    CALL Z,SOUND_SPARK_CRACKLE
+
+    LD A,(BOSS_EXPL_SPARK_SLOT0_COL) : LD C,A
+    LD A,(BOSS_EXPL_SPARK_SLOT0_ROW)
+    CALL BOSS_EXPL_SPARK_SLOT
+    LD (BOSS_EXPL_SPARK_SLOT0_ROW),A
+    LD A,C : LD (BOSS_EXPL_SPARK_SLOT0_COL),A
+
+    LD A,(BOSS_EXPL_SPARK_SLOT1_COL) : LD C,A
+    LD A,(BOSS_EXPL_SPARK_SLOT1_ROW)
+    CALL BOSS_EXPL_SPARK_SLOT
+    LD (BOSS_EXPL_SPARK_SLOT1_ROW),A
+    LD A,C : LD (BOSS_EXPL_SPARK_SLOT1_COL),A
+
+    LD A,(BOSS_EXPL_SPARK_SLOT2_COL) : LD C,A
+    LD A,(BOSS_EXPL_SPARK_SLOT2_ROW)
+    CALL BOSS_EXPL_SPARK_SLOT
+    LD (BOSS_EXPL_SPARK_SLOT2_ROW),A
+    LD A,C : LD (BOSS_EXPL_SPARK_SLOT2_COL),A
+    RET
+
+; phase over - erase whatever each slot last drew (no respawn), then
+; start the circle sequence exactly as INIT_BOSS_EXPLOSION used to start
+; it directly. Slot bytes are read here BEFORE BOSS_EXPL_RADIUS/RING_
+; MODE/etc. get reinitialized for their own real GROW-phase meaning just
+; below (same bytes - see the slot bytes' own comment).
+UBS_LAST_FRAME:
+    LD A,(BOSS_EXPL_SPARK_SLOT0_COL) : LD C,A
+    LD A,(BOSS_EXPL_SPARK_SLOT0_ROW)
+    CALL BOSS_EXPL_ERASE_ONE_SPARK
+    LD A,(BOSS_EXPL_SPARK_SLOT1_COL) : LD C,A
+    LD A,(BOSS_EXPL_SPARK_SLOT1_ROW)
+    CALL BOSS_EXPL_ERASE_ONE_SPARK
+    LD A,(BOSS_EXPL_SPARK_SLOT2_COL) : LD C,A
+    LD A,(BOSS_EXPL_SPARK_SLOT2_ROW)
+    CALL BOSS_EXPL_ERASE_ONE_SPARK
+
+    ; round36-14: REASON=1 (TRIGGER_BOSS_BROKEN_FORM's own transition
+    ; burst, not a real death) skips GROW/SHRINK/FLASH entirely - "スパ
+    ; ークフェーズのみ" (confirmed with the user) - and reveals the
+    ; broken form directly instead once the board above is clean.
+    LD A,(BOSS_EXPL_REASON)
+    OR A
+    JP NZ,REVEAL_BOSS_BROKEN_FORM
+
+    XOR A : LD (BOSS_EXPL_RADIUS),A
+    LD A,BOSS_EXPL_STATE_GROW : LD (BOSS_EXPL_STATE),A
+    LD A,BOSS_EXPL_STEP_FRAMES : LD (BOSS_EXPL_TIMER),A
+    XOR A : LD (BOSS_EXPL_BLINK),A
+    XOR A : LD (BOSS_EXPL_RING_MODE),A
+    XOR A : CALL BOSS_EXPL_APPLY_RING
+    CALL SOUND_BOSS_BOOM   ; "円の爆発はノイズでどーーーーんって長いやつ" - right as the circle itself starts growing
+    RET
+
+; "この時当然BGはボスの後ろに隠れてしまうんでボスは点滅表示" - while the
+; circle grows, the boss's own last-drawn sprite (BOSS_SPRITE_ATTRS,
+; frozen since DRAW_BOSS never runs again post-death) blinks on/off via
+; FLUSH_BOSS_SPRITES/HIDE_BOSS_SPRITES - no redraw needed, just toggling
+; whether the existing attrs get flushed to hw OAM or not.
+UBE_GROW:
+    LD A,(BOSS_EXPL_BLINK) : INC A
+    CP BOSS_EXPL_BLINK_PERIOD
+    JR C,UBE_G_BLINK_NOWRAP
+    XOR A
+UBE_G_BLINK_NOWRAP:
+    LD (BOSS_EXPL_BLINK),A
+    CP BOSS_EXPL_BLINK_PERIOD/2
+    JR NC,UBE_G_BLINK_HIDE
+    CALL FLUSH_BOSS_SPRITES
+    JR UBE_G_BLINK_DONE
+UBE_G_BLINK_HIDE:
+    CALL HIDE_BOSS_SPRITES
+UBE_G_BLINK_DONE:
+
+    LD A,(BOSS_EXPL_TIMER) : DEC A : LD (BOSS_EXPL_TIMER),A
+    RET NZ
+    LD A,BOSS_EXPL_STEP_FRAMES : LD (BOSS_EXPL_TIMER),A
+
+    LD A,(BOSS_EXPL_RADIUS)
+    CP BOSS_EXPL_MAXR
+    JR NC,UBE_GROW_DONE
+    INC A : LD (BOSS_EXPL_RADIUS),A
+    XOR A : LD (BOSS_EXPL_RING_MODE),A   ; 0=white (clobbers A - reload the radius after)
+    LD A,(BOSS_EXPL_RADIUS)
+    CALL BOSS_EXPL_APPLY_RING            ; draw just the newly-grown ring
+    RET
+; "その後円中心から左右に画面幅のBGラインを引いてボス表示は終了" -
+; growth just reached its max radius: draw the full-width line, hide the
+; boss sprite for good (no more blinking - the explosion continues
+; without it from here on), and switch to shrinking.
+UBE_GROW_DONE:
+    CALL HIDE_BOSS_SPRITES
+    CALL BOSS_EXPL_DRAW_LINE
+    LD A,BOSS_EXPL_STATE_SHRINK : LD (BOSS_EXPL_STATE),A
+    LD A,BOSS_EXPL_STEP_FRAMES : LD (BOSS_EXPL_TIMER),A
+    RET
+
+; "円を小さくして行き1セルになったら画面幅のラインを消す" - same
+; per-step redraw as growth, just decrementing instead of incrementing;
+; once radius reaches 0 (the single center cell), erase the line and
+; move on to the final flash.
+UBE_SHRINK:
+    LD A,(BOSS_EXPL_TIMER) : DEC A : LD (BOSS_EXPL_TIMER),A
+    RET NZ
+    LD A,BOSS_EXPL_STEP_FRAMES : LD (BOSS_EXPL_TIMER),A
+
+    LD A,(BOSS_EXPL_RADIUS)
+    OR A
+    JR Z,UBE_SHRINK_DONE
+    ; erase the CURRENT radius's own ring (the outermost shell about to
+    ; be removed) BEFORE decrementing - that ring IS the delta between
+    ; this radius and the next-smaller one.
+    LD A,1 : LD (BOSS_EXPL_RING_MODE),A   ; 1=restore true background
+    LD A,(BOSS_EXPL_RADIUS)
+    CALL BOSS_EXPL_APPLY_RING
+    LD A,(BOSS_EXPL_RADIUS) : DEC A : LD (BOSS_EXPL_RADIUS),A
+    OR A
+    RET NZ
+UBE_SHRINK_DONE:
+    ; BOSS_EXPL_ERASE_LINE blanks the WHOLE row uniformly, including the
+    ; center cell that's supposed to survive into the flash (radius=0's
+    ; own circle draw already put it there, but that happened on a PRIOR
+    ; step - the erase here would otherwise silently take it right back
+    ; out on this same frame). Restore it explicitly, after the erase.
+    CALL BOSS_EXPL_ERASE_LINE
+    LD A,BOSS_EXPL_WHITE_CODE : CALL BOSS_EXPL_WRITE_CENTER_CELL
+    LD A,BOSS_EXPL_STATE_FLASH : LD (BOSS_EXPL_STATE),A
+    LD A,BOSS_EXPL_FINAL_FLASH_FRAMES : LD (BOSS_EXPL_TIMER),A
+    XOR A : LD (BOSS_EXPL_BLINK),A
+    RET
+
+; "最後の1セルを120フレ点滅させ消滅" - just the center cell, toggling
+; white/blank on the same BOSS_EXPL_BLINK_PERIOD cadence as the boss's
+; own grow-phase blink, for BOSS_EXPL_FINAL_FLASH_FRAMES frames total,
+; then erased for good and the whole sequence marked done.
+UBE_FLASH:
+    LD A,(BOSS_EXPL_BLINK) : INC A
+    CP BOSS_EXPL_BLINK_PERIOD
+    JR C,UBE_F_BLINK_NOWRAP
+    XOR A
+UBE_F_BLINK_NOWRAP:
+    LD (BOSS_EXPL_BLINK),A
+    LD B,BOSS_EXPL_WHITE_CODE
+    CP BOSS_EXPL_BLINK_PERIOD/2
+    JR C,UBE_F_HAVE_CODE
+    LD B,HUD_ROW_BLANK_CODE
+UBE_F_HAVE_CODE:
+    LD A,B
+    CALL BOSS_EXPL_WRITE_CENTER_CELL
+
+    LD A,(BOSS_EXPL_TIMER) : DEC A : LD (BOSS_EXPL_TIMER),A
+    RET NZ
+    LD A,HUD_ROW_BLANK_CODE : CALL BOSS_EXPL_WRITE_CENTER_CELL
+    LD A,BOSS_EXPL_STATE_DONE : LD (BOSS_EXPL_STATE),A
+    RET
+
+; writes A (a name-table code) to the single cell at (BOSS_EXPL_CX,
+; BOSS_EXPL_CY) - the final flash's own single-cell toggle, and also
+; BOSS_EXPL_DRAW_CIRCLE's own radius=0 case draws just this one cell
+; (so no special-casing needed there either).
+BOSS_EXPL_WRITE_CENTER_CELL:
+    LD (BULLET_TEMP_BYTE),A
+    LD A,(BOSS_EXPL_CY) : CALL NIGHT_ROW_ADDR
+    LD H,D : LD L,E
+    LD A,(BOSS_EXPL_CX) : LD E,A : LD D,0
+    ADD HL,DE
+    JP WRITE_BULLET_BYTE_HL
+
+; fills the WHOLE row (all 32 columns, not just the ±MAXR box) at
+; BOSS_EXPL_CY with A (a name-table code) - BOSS_EXPL_DRAW_LINE/
+; _ERASE_LINE below just set A and fall through here; "画面幅の" already
+; means every column, so unlike BOSS_EXPL_DRAW_CIRCLE this needs no
+; per-column clipping (0-31 is the whole valid range already). A is
+; stashed straight into BULLET_TEMP_BYTE (not a dedicated scratch byte -
+; see the BOSS_EXPL_* RAM block's own comment on staying lean) - nothing
+; else touches it for the rest of this loop, only reads it.
+BOSS_EXPL_FILL_LINE:
+    LD (BULLET_TEMP_BYTE),A
+    LD A,(BOSS_EXPL_CY) : CALL NIGHT_ROW_ADDR
+    LD H,D : LD L,E
+    LD B,32
+BEFL_LOOP:
+    PUSH HL
+    PUSH BC
+    CALL WRITE_BULLET_BYTE_HL
+    POP BC
+    POP HL
+    INC HL
+    DJNZ BEFL_LOOP
+    RET
+
+BOSS_EXPL_DRAW_LINE:
+    LD A,BOSS_EXPL_WHITE_CODE
+    JP BOSS_EXPL_FILL_LINE
+; row-aware restore (BOSS_EXPL_BG_CODE_FOR_ROW), not a hardcoded blank -
+; CY is realistically always pure sky in practice, but this stays
+; correct even if a future change ever moves the boss's own row.
+BOSS_EXPL_ERASE_LINE:
+    LD A,(BOSS_EXPL_CY) : CALL BOSS_EXPL_BG_CODE_FOR_ROW
+    JP BOSS_EXPL_FILL_LINE
 
 ; the 8x8 grid of hand-art name-table codes (SASAPI_HAND_CODE_BASE..
 ; +63, sequential, row-major) - reused unmodified as DRAW_SASAPI_HAND's
@@ -8196,6 +12769,7 @@ CHECK_THUNDER_TRIGGER_LEFT:
     LD A,(BOSS_X) : ADD A,64        ; boss's own current right edge - trailing behind it as it moves left, no overlap
     SRL A : SRL A : SRL A            ; X -> BG column
     CALL ALLOC_THUNDER_SLOT
+    CALL SOUND_THUNDER
     RET
 
 ; same idea for the rightward leg (after the left-edge reversal) -
@@ -8240,6 +12814,7 @@ CTTR_FIRE:
     LD A,(BOSS_X) : SUB 16           ; boss's own current left edge, minus the bolt's own 16px width
     SRL A : SRL A : SRL A
     CALL ALLOC_THUNDER_SLOT
+    CALL SOUND_THUNDER
     RET
 
 ; ---------- homing missile (4-instance hw-sprite pool) ----------
@@ -8256,10 +12831,24 @@ ARM_HORMING_VOLLEY:
     LD (HORMING_VOLLEY_TIMER),A   ; 0 - fires the first shot on the very next check
     RET
 
+; round36-12 first fired the BG pool's own 4 only after the sprite
+; pool's own 4 were already all out (sequential blocks) - round36-13
+; correction: "ホーミングはBGとスプライト交互に発射 と言うか同時だな
+; そうでなきゃBGやスプライトで分けてる意味がない" - sequential blocks
+; meant the BG pool never added any real concurrent capacity during the
+; first half of a volley, defeating the entire point of having 2 pools
+; (more missiles on screen AT ONCE than 4). Now fires one INTO EACH pool
+; on the very same tick - HORMING_VOLLEY_COUNT counts PAIRS (0-4, not
+; 0-8), capped at HORMING_SLOT_COUNT (both pools are the same size, so
+; either constant works as the pair cap - HORMING_SLOT_COUNT chosen
+; since it's the original, always-true-4 one). Still one intermittent
+; tick every HORMING_VOLLEY_INTERVAL frames - "間欠で4発発射" - just 2
+; missiles per tick now instead of 1, 4 ticks total instead of 8.
+; ARM_HORMING_VOLLEY resets this the same way regardless.
 UPDATE_HORMING_VOLLEY:
     LD A,(HORMING_VOLLEY_COUNT)
     CP HORMING_SLOT_COUNT
-    RET NC                      ; all 4 already launched this pose
+    RET NC                      ; all 4 pairs (8 missiles) already launched this pose
     LD A,(HORMING_VOLLEY_TIMER)
     OR A
     JR Z,UHV_FIRE
@@ -8267,6 +12856,8 @@ UPDATE_HORMING_VOLLEY:
     RET
 UHV_FIRE:
     CALL FIRE_ONE_HORMING
+    CALL FIRE_ONE_HORMING_BG
+    CALL SOUND_HORMING
     LD A,(HORMING_VOLLEY_COUNT) : INC A : LD (HORMING_VOLLEY_COUNT),A
     LD A,HORMING_VOLLEY_INTERVAL : LD (HORMING_VOLLEY_TIMER),A
     RET
@@ -8297,6 +12888,32 @@ FOH_SPAWN:
     XOR A
     LD (IX+3),A                  ; facing SL (cosmetic)
     LD (IX+4),A                  ; state 0 = rise
+    LD A,HORMING_RISE_DIST : LD (IX+5),A
+    RET
+
+; round36-12: mirrors FIRE_ONE_HORMING exactly, targeting HORMING_BG_
+; POOL/HORMING_BG_SLOT_COUNT instead. No separate "draw immediately at
+; spawn" step needed the way TRY_SPAWN_BULLET has for F-type bullets -
+; see ERASE_HORMING_BG_CELL's own comment for why the very next
+; UPDATE_HORMING_BG_ALL pass handles this slot's first real draw with
+; no special-casing required.
+FIRE_ONE_HORMING_BG:
+    LD B,HORMING_BG_SLOT_COUNT
+    LD IX,HORMING_BG_POOL
+FOHB_LOOP:
+    LD A,(IX+0)
+    OR A
+    JR Z,FOHB_SPAWN
+    INC IX : INC IX : INC IX : INC IX : INC IX : INC IX : INC IX
+    DJNZ FOHB_LOOP
+    RET
+FOHB_SPAWN:
+    LD A,1 : LD (IX+0),A
+    LD A,HORMING_SPAWN_X : LD (IX+1),A
+    LD A,HORMING_SPAWN_Y : LD (IX+2),A
+    XOR A
+    LD (IX+3),A
+    LD (IX+4),A
     LD A,HORMING_RISE_DIST : LD (IX+5),A
     RET
 
@@ -8652,11 +13269,29 @@ UOH_H2_STEP_DR:
     LD A,(IX+2) : ADD A,HORMING_SPEED : LD (IX+2),A
     LD A,B : LD (IX+1),A
 
-; --- trigger: missile_Y >= TANK_Y_CUR+HORMING_HOMING_Y_OFFSET - see
+; --- trigger: missile_Y >= TANK_GROUND_Y+HORMING_HOMING_Y_OFFSET - see
 ; UPDATE_ONE_HORMING's own comment for why this is an inequality (not
-; exact match) and why it targets bullet height, not the tank itself ---
+; exact match) and why it targets bullet height, not the tank itself.
+; round36-12 (実機フィードバック "ホーミングがたまに自機の上あたりに
+; 残る事がある 多分ジャンプしたとき"): uses TANK_GROUND_Y (the terrain-
+; tier-following resting Y, updated every frame regardless of jump
+; state - see its own comment) instead of TANK_Y_CUR (the actually-
+; drawn Y, which dips below TANK_GROUND_Y while JUMP_ACTIVE - see
+; UPDATE_JUMP's own "TANK_Y_CUR = TANK_GROUND_Y - JUMP_Y_OFFSET").
+; State3 is deliberately locked once triggered ("自機狙いY位置マッチ
+; 水平移動後はホーミングせずそのまま水平移動固定で" - round5's own
+; direct instruction, not something to relax) - the bug wasn't the lock
+; itself, it was locking in at whatever height the tank's OWN sprite
+; happened to be at that exact instant. If that instant landed mid-jump,
+; TANK_Y_CUR was transiently smaller (higher on screen) than the tank's
+; real resting height, so the missile locked in above where the tank
+; would be once it landed - and then just stayed there, since state3
+; never re-checks. TANK_GROUND_Y is immune to this because it tracks
+; the terrain-following resting height continuously, jump or not, so
+; the lock-in height no longer depends on whether the tank happened to
+; be airborne the instant the threshold was crossed.
 UOH_H2_TRIGGER:
-    LD A,(TANK_Y_CUR) : ADD A,HORMING_HOMING_Y_OFFSET : LD B,A
+    LD A,(TANK_GROUND_Y) : ADD A,HORMING_HOMING_Y_OFFSET : LD B,A
     LD A,(IX+2)
     CP B
     JP C,UOH_COLLIDE                  ; still above the threshold - stay in state2
@@ -8736,8 +13371,14 @@ CHECK_BULLET_VS_HORMING:
     LD IX,BULLET0_ACT : CALL CHECK_HIT_ONE_BULLET_HORMING
     LD IX,BULLET1_ACT : CALL CHECK_HIT_ONE_BULLET_HORMING
     LD IX,BULLET2_ACT : CALL CHECK_HIT_ONE_BULLET_HORMING
+    LD IX,BULLET3_ACT : CALL CHECK_HIT_ONE_BULLET_HORMING
     RET
 
+; round36-12: also checks the new BG-drawn pool, right after the
+; original hw-sprite pool - a bullet can shoot down either kind of
+; missile equally (see CHECK_HIT_PAIR_HORMING_BG's own comment for the
+; one real difference: a BG-drawn kill also has to erase the missile's
+; own cell, not just deactivate it).
 CHECK_HIT_ONE_BULLET_HORMING:
     LD IY,HORMING_POOL
     LD B,HORMING_SLOT_COUNT
@@ -8747,6 +13388,14 @@ CHOBH_LOOP:
     POP BC
     INC IY : INC IY : INC IY : INC IY : INC IY : INC IY : INC IY
     DJNZ CHOBH_LOOP
+    LD IY,HORMING_BG_POOL
+    LD B,HORMING_BG_SLOT_COUNT
+CHOBH_BG_LOOP:
+    PUSH BC
+    CALL CHECK_HIT_PAIR_HORMING_BG
+    POP BC
+    INC IY : INC IY : INC IY : INC IY : INC IY : INC IY : INC IY
+    DJNZ CHOBH_BG_LOOP
     RET
 
 CHECK_HIT_PAIR_HORMING:
@@ -8768,6 +13417,47 @@ CHECK_HIT_PAIR_HORMING:
     LD A,E : ADD A,7 : CP C : RET C
 
     CALL ERASE_BULLET_CELL
+    XOR A : LD (IX+0),A
+    LD (IY+0),A
+    CALL SOUND_DESTROY
+    LD HL,SCORE_PER_KILL
+    CALL ADD_SCORE
+    RET
+
+; IX = bullet slot, IY = HORMING_BG_POOL slot - same AABB test as
+; CHECK_HIT_PAIR_HORMING, but a hit here must ALSO erase the missile's
+; OWN BG cell (ERASE_HORMING_BG_CELL takes IX=its own slot base, so IY's
+; value is swapped into IX via the stack - PUSH/POP through a register
+; pair is the standard way to move a value between the 2 index
+; registers, Z80 has no direct IX<->IY transfer) before just zeroing its
+; ACT byte - the sprite-pool version doesn't need this because
+; UPDATE_HORMING_ALL's own per-frame hide path (Y=209) already "erases"
+; a deactivated sprite for free; a BG cell has no such implicit erase,
+; so skipping this would leave the missile's last-drawn glyph frozen on
+; screen forever.
+CHECK_HIT_PAIR_HORMING_BG:
+    LD A,(IX+0)
+    OR A
+    RET Z
+    LD A,(IY+0)
+    OR A
+    RET Z
+
+    LD A,(IX+2) : ADD A,A : ADD A,A : ADD A,A : LD B,A   ; bullet pixel X = COL*8
+    LD A,(IX+3) : ADD A,A : ADD A,A : ADD A,A : LD C,A   ; bullet pixel Y = ROW*8
+    LD A,(IY+1) : LD D,A     ; missile_X
+    LD A,(IY+2) : LD E,A     ; missile_Y
+
+    LD A,B : ADD A,7 : CP D : RET C
+    LD A,D : ADD A,7 : CP B : RET C
+    LD A,C : ADD A,7 : CP E : RET C
+    LD A,E : ADD A,7 : CP C : RET C
+
+    CALL ERASE_BULLET_CELL
+    PUSH IX
+    PUSH IY : POP IX
+    CALL ERASE_HORMING_BG_CELL
+    POP IX
     XOR A : LD (IX+0),A
     LD (IY+0),A
     CALL SOUND_DESTROY
@@ -8856,6 +13546,141 @@ FHS_LOOP:
     EI
     RET
 
+; ---------- homing missile, BG-cell pool (round36-12, "弾数を増やす")
+; ---------- see HORMING_BG_POOL's own comment for why this exists as a
+; second, separate pool instead of just growing HORMING_SLOT_COUNT.
+; IX = HORMING_BG_POOL slot base (+1 X,+2 Y, pixel coords). Computes
+; this frame's own name-table VRAM address fresh from (IX+1)/(IX+2)
+; every time it's needed (COL=X>>3, ROW=Y>>3, address = BULLET_ROWADDR_
+; LO/HI[ROW]+COL - the same row-address tables TRY_SPAWN_BULLET/
+; UPDATE_ONE_BULLET already use, reused directly since they're pure
+; row->VRAM-address conversion, nothing bullet-specific about them).
+; Unlike the bullet pool, HORMING_BG_POOL has no spare struct field to
+; cache this in (same shape as HORMING_POOL, shared generically by
+; UPDATE_ONE_HORMING) - recomputing it is cheap and avoids growing the
+; struct at all. Returns the address in HL.
+HORMING_BG_CELL_ADDR:
+    LD A,(IX+2) : SRL A : SRL A : SRL A   ; ROW
+    LD E,A : LD D,0
+    LD HL,BULLET_ROWADDR_LO : ADD HL,DE : LD A,(HL) : LD C,A
+    LD HL,BULLET_ROWADDR_HI : ADD HL,DE : LD A,(HL) : LD B,A
+    LD A,(IX+1) : SRL A : SRL A : SRL A   ; COL
+    LD L,A : LD H,0
+    LD D,B : LD E,C
+    ADD HL,DE
+    RET
+
+; IX = HORMING_BG_POOL slot base, NOT yet advanced by this frame's own
+; UPDATE_ONE_HORMING call (so (IX+1)/(IX+2) still hold wherever this
+; slot was actually drawn last frame, or its spawn position on a brand
+; new slot's very first active frame). Restores the true background at
+; that cell - same row-threshold logic as ERASE_BULLET_CELL (sky/
+; skysand/sand/skip-entirely-once-inside-the-scrolling-terrain-band,
+; rows20-23 - "already got fully redrawn from NAMEBUF earlier this same
+; MAINLOOP iteration, so there's nothing to restore"), reused directly
+; since it describes screen geometry, not anything bullet-specific.
+; Safe to call even before this slot has ever actually been drawn -
+; erasing just repaints whatever the ONE true background already is
+; for that cell, a harmless no-op in that case rather than a special
+; case needing its own guard (unlike the sprite pool, which needs an
+; explicit hide/Y=209 step - a BG cell has no such concept, restoring
+; the real background already "un-shows" it).
+ERASE_HORMING_BG_CELL:
+    LD A,(IX+2) : SRL A : SRL A : SRL A   ; ROW
+    LD B,A
+    CP BULLET_ROCK_ROW_MIN
+    JR C,EHBC_SKY
+    CP BULLET_ROCK_ROW_MIN+4
+    JR NC,EHBC_SKIP
+    CP BULLET_ROCK_ROW_MIN
+    JR Z,EHBC_SKYSAND
+    LD A,TERRAIN_BLANK_CODE
+    JR EHBC_WRITE
+EHBC_SKYSAND:
+    LD A,(NIGHT_ROW)
+    CP NIGHT_END_ROW
+    JR C,EHBC_SKYSAND_DAY
+    LD A,NIGHT_CODE
+    JR EHBC_WRITE
+EHBC_SKYSAND_DAY:
+    LD A,SKYSAND_CODE
+    JR EHBC_WRITE
+EHBC_SKY:
+    LD A,(NIGHT_ROW)
+    CP B
+    JR C,EHBC_SKY_BLUE
+    LD A,HUD_ROW_BLANK_CODE
+    JR EHBC_WRITE
+EHBC_SKY_BLUE:
+    LD A,SKY_BLANK_CODE
+EHBC_WRITE:
+    LD (BULLET_TEMP_BYTE),A
+    CALL HORMING_BG_CELL_ADDR
+    CALL WRITE_BULLET_BYTE_HL
+EHBC_SKIP:
+    RET
+
+; IX = HORMING_BG_POOL slot base, already advanced to this frame's new
+; position by UPDATE_ONE_HORMING; (IX+2)=Y, (IX+3)=FACING(0-4). round36-
+; 14 ("BGホーミングが地形に入ったときはSandの背景色になるように"): picks
+; between 2 color-group tables by row, same threshold ERASE_HORMING_BG_
+; CELL's own EHBC_SKY branch uses (BULLET_ROCK_ROW_MIN) - black/group18
+; above it (sky), Sand-colored/group12 at or below it (terrain) - see
+; HORMING_BG_SAND_SL_CODE's own comment for the group2->group12
+; relocation history.
+DRAW_HORMING_BG_CELL:
+    LD A,(IX+2) : SRL A : SRL A : SRL A   ; ROW
+    CP BULLET_ROCK_ROW_MIN
+    JR NC,DHBC_SAND
+    LD HL,HORMING_BG_PATTERN_TABLE
+    JR DHBC_PICK
+DHBC_SAND:
+    LD HL,HORMING_BG_SAND_PATTERN_TABLE
+DHBC_PICK:
+    LD A,(IX+3)
+    LD E,A : LD D,0
+    ADD HL,DE
+    LD A,(HL)
+    LD (BULLET_TEMP_BYTE),A
+    CALL HORMING_BG_CELL_ADDR
+    JP WRITE_BULLET_BYTE_HL
+HORMING_BG_PATTERN_TABLE:
+    DB HORMING_BG_SL_CODE,HORMING_BG_DL_CODE,HORMING_BG_DOWN_CODE,HORMING_BG_DR_CODE,HORMING_BG_SR_CODE
+HORMING_BG_SAND_PATTERN_TABLE:
+    DB HORMING_BG_SAND_SL_CODE,HORMING_BG_SAND_DL_CODE,HORMING_BG_SAND_DOWN_CODE,HORMING_BG_SAND_DR_CODE,HORMING_BG_SAND_SR_CODE
+
+; called every frame alongside UPDATE_HORMING_ALL (same BOSS_ACT guard
+; and "runs every frame once the boss exists, regardless of pose state"
+; reasoning - see UPDATE_HORMING_ALL's own comment). Erase-then-move-
+; then-draw per active slot, same per-frame shape UPDATE_ONE_BULLET
+; already uses for F-type bullets: erase happens BEFORE UPDATE_ONE_
+; HORMING moves X/Y (at wherever this slot was actually drawn last
+; frame), draw happens AFTER (at the new position), only if the slot is
+; still active (a frame that hits the tank or leaves the screen
+; deactivates it mid-call - already erased, nothing left to draw).
+UPDATE_HORMING_BG_ALL:
+    LD A,(BOSS_ACT)
+    OR A
+    RET Z
+    LD IX,HORMING_BG_POOL
+    LD B,HORMING_BG_SLOT_COUNT
+UHBGA_LOOP:
+    PUSH BC
+    LD A,(IX+0)
+    OR A
+    JR Z,UHBGA_NEXT
+    CALL ERASE_HORMING_BG_CELL
+    CALL UPDATE_ONE_HORMING
+    LD A,(IX+0)
+    OR A
+    JR Z,UHBGA_NEXT
+    CALL DRAW_HORMING_BG_CELL
+UHBGA_NEXT:
+    INC IX : INC IX : INC IX : INC IX : INC IX : INC IX : INC IX
+    POP BC
+    DJNZ UHBGA_LOOP
+    RET
+
 ; ---------- SBeam ("サンダービーム", real hw sprite pool reusing the
 ; boss's own dormant pose-time body slots - see SBEAM_SPR_BASE_SLOT's
 ; own comment) ----------
@@ -8879,6 +13704,7 @@ FIRE_SBEAM:
     ADD A,A : ADD A,A : ADD A,A   ; row -> pixel Y (row*8)
     SUB 8
     LD (SBEAM_GROUND_Y),A
+    CALL SOUND_SBEAM
     RET
 
 ; called every frame (from MAINLOOP, alongside UPDATE_THUNDER) - does
@@ -8902,6 +13728,13 @@ US_STEP_DROP:
 US_STAGE:
     CALL STAGE_SBEAM
     CALL FLUSH_SBEAM_SPRITES
+    ; "発射中はSEをループ" - re-arm every frame it's still active after
+    ; this frame's own state transitions (so the very last frame, where
+    ; US_SWEEP_RETRACT just cleared SBEAM_ACT and STOP_SBEAM_SOUND
+    ; already silenced it, doesn't immediately re-trigger a fresh blip).
+    LD A,(SBEAM_ACT)
+    OR A
+    CALL NZ,SOUND_SBEAM
     RET
 
 ; "サンダーやサンダービームも自機が当たるとダメージ食らうように 判定
@@ -8986,6 +13819,7 @@ US_SWEEP_RETRACT:
     RET
 USR_ALL_TRIPS_DONE:
     XOR A : LD (SBEAM_ACT),A     ; back home - done
+    CALL STOP_SBEAM_SOUND        ; "終わったら当然音も停止"
     RET
 USR_SWEEP:
     LD A,(SBEAM_FRONT_COL)
@@ -9160,19 +13994,26 @@ CHECK_BULLET_VS_BOSS:
     LD IX,BULLET0_ACT : CALL CHECK_HIT_PAIR_BOSS
     LD IX,BULLET1_ACT : CALL CHECK_HIT_PAIR_BOSS
     LD IX,BULLET2_ACT : CALL CHECK_HIT_PAIR_BOSS
+    LD IX,BULLET3_ACT : CALL CHECK_HIT_PAIR_BOSS
     RET
 
-; IX = bullet slot base. AABB vs the boss's own real 64x64 footprint
-; (BOSS_X..+63, BOSS_SPAWN_Y..+63, BOSS_COLLISION_SIZE=64) - "ボスに
-; コリジョン 見た目通り" - same shape as CHECK_HIT_PAIR_FLYER/ETANK,
-; just with the boss's own fixed-Y/full-size box. Only ever matters
-; while BOSS_ACT=1 (checked first) - by that same point every ordinary
-; enemy has stopped spawning, and BOTH bullet types (F and U - see
-; DRAW_BULLET_CELL's own boss-only U-BG-drawing entry) are guaranteed
-; BG-drawn, not a hw sprite, so ERASE_BULLET_CELL is called
-; unconditionally on a hit here, with no IX+1(TYPE) branch needed
-; (unlike CHECK_HIT_PAIR_FLYER/ETANK, written back when U was always a
-; hw sprite outside this exact window).
+; IX = bullet slot base. AABB vs the boss's own real footprint (BOSS_X..
+; +size-1, BOSS_Y..+size-1) - "ボスにコリジョン 見た目通り" - same shape
+; as CHECK_HIT_PAIR_FLYER/ETANK, just with the boss's own fixed-Y/full-
+; size box. Only ever matters while BOSS_ACT=1 (checked first) - by that
+; same point every ordinary enemy has stopped spawning, and BOTH bullet
+; types (F and U - see DRAW_BULLET_CELL's own boss-only U-BG-drawing
+; entry) are guaranteed BG-drawn, not a hw sprite, so ERASE_BULLET_CELL
+; is called unconditionally on a hit here, with no IX+1(TYPE) branch
+; needed (unlike CHECK_HIT_PAIR_FLYER/ETANK, written back when U was
+; always a hw sprite outside this exact window).
+;
+; round36-14 follow-up #3 ("形態変化後に64x64のコリジョンのままになって
+; る 32x32になるよう修正") - size-1 (63 for the old 64x64 body, 31 for
+; the broken form's real 32x32 one) is no longer a single compile-time
+; literal: computed into CHPB_SIZE_SCRATCH once per call based on
+; BOSS_FORM, then added via ADD A,(HL) (this assembler has no ADD A,n+r8
+; form, only r8/mHL/imm sources - see mini_z80asm.py's own enc_alu_a).
 CHECK_HIT_PAIR_BOSS:
     LD A,(IX+0)
     OR A
@@ -9180,6 +14021,40 @@ CHECK_HIT_PAIR_BOSS:
     LD A,(BOSS_ACT)
     CP 1
     RET NZ
+    ; follow-up#23 ("まずマテリアライズ中はボスコリジョン無効") - while
+    ; the entrance-materialize effect is still running (either phase 1
+    ; converging/flickering or phase 2 gliding back to BOSS_SPAWNX),
+    ; BOSS_X isn't the boss's real, stable hitbox position yet (it's
+    ; being driven every frame by UPDATE_BOSS_MATERIALIZE, alternating
+    ; between the left/right candidates), so no bullet can register a hit
+    ; until it clears back to 0.
+    ;
+    ; BOSS_MATERIALIZE_ACT/SND_CTR alias BOSS_EXPL_CX/CY (RAM headroom
+    ; constraint - see that EQU's own comment), and TRIGGER_BOSS_BROKEN_
+    ; FORM/INIT_BOSS_EXPLOSION overwrite those SAME bytes with a real
+    ; cell coordinate the instant BOSS_FORM leaves 0 - almost always
+    ; nonzero garbage from this gate's own point of view. Only consult
+    ; BOSS_MATERIALIZE_ACT while BOSS_FORM is still 0 (the materialize
+    ; effect only ever runs right after spawn, always before BOSS_FORM
+    ; can change), exactly the same precondition UPDATE_BOSS_MATERIALIZE
+    ; itself checks before touching these bytes - self-caught by
+    ; boss_collision_test.py's own real end-to-end HP-drain test hanging
+    ; forever once HP crossed BOSS_BROKEN_HP_THRESHOLD, before this fix.
+    LD A,(BOSS_FORM)
+    OR A
+    JR NZ,CHPB_MATERIALIZE_CHECK_DONE
+    LD A,(BOSS_MATERIALIZE_ACT)
+    OR A
+    RET NZ
+CHPB_MATERIALIZE_CHECK_DONE:
+
+    LD A,(BOSS_FORM)
+    CP BOSS_FORM_ACTIVE
+    LD A,BOSS_COLLISION_SIZE-1
+    JR NZ,CHPB_SIZE_SET
+    LD A,BOSS_BROKEN_COLLISION_SIZE-1
+CHPB_SIZE_SET:
+    LD (CHPB_SIZE_SCRATCH),A
 
     LD A,(IX+2) : ADD A,A : ADD A,A : ADD A,A : LD B,A
     LD A,(IX+3) : ADD A,A : ADD A,A : ADD A,A : LD C,A
@@ -9187,21 +14062,128 @@ CHECK_HIT_PAIR_BOSS:
     LD A,(BOSS_Y) : LD E,A
 
     LD A,B : ADD A,7 : CP D : RET C
-    LD A,D : ADD A,BOSS_COLLISION_SIZE-1 : CP B : RET C
+    LD A,D : LD HL,CHPB_SIZE_SCRATCH : ADD A,(HL) : CP B : RET C
     LD A,C : ADD A,7 : CP E : RET C
-    LD A,E : ADD A,BOSS_COLLISION_SIZE-1 : CP C : RET C
+    LD A,E : LD HL,CHPB_SIZE_SCRATCH : ADD A,(HL) : CP C : RET C
 
     CALL ERASE_BULLET_CELL
     XOR A : LD (IX+0),A
 
     LD A,(BOSS_HP) : DEC A : LD (BOSS_HP),A
     JR Z,CHPBOSS_DESTROY
+    ; round36-14 Part C: HP<=200 triggers the form-change once (never
+    ; re-triggers - guarded on BOSS_FORM still being 0 - see TRIGGER_
+    ; BOSS_BROKEN_FORM's own comment). CP THRESHOLD+1 so this catches
+    ; the crossing hit itself (A==200 included), not just strictly below.
+    CP BOSS_BROKEN_HP_THRESHOLD+1
+    JR NC,CHPBOSS_NORMAL_HIT
+    LD A,(BOSS_FORM)
+    OR A
+    JR NZ,CHPBOSS_NORMAL_HIT
+    CALL TRIGGER_BOSS_BROKEN_FORM
+CHPBOSS_NORMAL_HIT:
     LD A,FLASH_DURATION : LD (BOSS_FLASH_TIMER),A
-    CALL SOUND_ZUM_DEFLECT
+    ; round36-14 follow-up#5 real-hardware feedback ("ボス戦のみボスの
+    ; ダメージ音(キンキン音)カットで ボス攻撃音と被ってしまうんで") -
+    ; this CALL SOUND_ZUM_DEFLECT only ever runs while BOSS_ACT=1 (see
+    ; CHECK_HIT_PAIR_BOSS's own guard at its own top), i.e. only during
+    ; the boss fight - exactly the one context where SOUND_HORMING/
+    ; SOUND_THUNDER/SOUND_SBEAM/SOUND_SASAPI_LASER now also compete for
+    ; this same shared channel-A envelope, and the player hits the boss
+    ; far more often/rapidly than any other SOUND_ZUM_DEFLECT trigger
+    ; (Zum's own front-invincibility bounce, or the tank taking a hit) -
+    ; so it was constantly stomping the new attack SFX right as they
+    ; started. Dropped here only - every other SOUND_ZUM_DEFLECT call
+    ; site (Zum bounce, tank hit by Homing/Thunder/SBeam) is unchanged;
+    ; the boss's own hit-flash (BOSS_FLASH_TIMER, just above) still
+    ; fires normally, this is audio-only.
     RET
+; round32 fix: "なぜ爆発エフェクト中にボス消してる 消さないでくれ BGで
+; やってる意味がない" - this used to HIDE_BOSS_SPRITES immediately on
+; death, before the new SPARK burst even got a chance to run - the whole
+; point of drawing the burst in BG instead of as a sprite was for it to
+; sit "behind" a still-VISIBLE boss ("裏になるが近い色なので見た目は気に
+; ならないはず"), so hiding the boss the instant it dies defeated that
+; entirely. No longer hides here - the boss sprite simply stays exactly
+; as it last looked (DRAW_BOSS/FLUSH_BOSS_SPRITES never runs again once
+; BOSS_ACT=2, see UPDATE_BOSS_ALL) all the way through SPARK; GROW's own
+; existing blink logic (see UBE_GROW) is what starts actually toggling
+; it, unchanged from before.
 CHPBOSS_DESTROY:
     LD A,2 : LD (BOSS_ACT),A
-    CALL HIDE_BOSS_SPRITES
+    CALL INIT_BOSS_EXPLOSION
+    RET
+
+; round36-14 Part C: fires exactly once per boss fight, the instant HP
+; reaches BOSS_BROKEN_HP_THRESHOLD (50, inclusive) - CHPBOSS_NORMAL_HIT's
+; own BOSS_FORM!=0 guard is what prevents a 2nd call on every subsequent hit.
+; "即座に強制停止" - interrupts whatever UBA_ACTIVE was doing this exact
+; frame (mid-patrol, mid-pose, mid-left-pause) unconditionally; nothing
+; here waits for the current attack/pose to finish first.
+TRIGGER_BOSS_BROKEN_FORM:
+    ; follow-up#20 real-hardware bug fix ("爆発のキャラが消えてる") -
+    ; this routine writes BOSS_EXPL_CX/CY a few lines below (aliased to
+    ; BOSS_MATERIALIZE_ACT/SND_CTR, follow-up#22 - see that EQU's own
+    ; comment), and the HP threshold that triggers this can be crossed
+    ; on ANY hit while BOSS_ACT=1, including while the entrance effect
+    ; is still running. Force it off FIRST so the two never fight over
+    ; the same bytes.
+    CALL STOP_BOSS_MATERIALIZE
+    ; if a hand-art pose happened to be up at this exact instant, erase
+    ; it and bring the real body sprite back (matches INIT_BOSS_
+    ; EXPLOSION's own IBE_NO_HAND branch exactly - see its own comment
+    ; for why: pose-time hides the hw sprite entirely via HIDE_BOSS_
+    ; SPRITES at pose-entry, so without this the boss would just stay
+    ; invisible through the whole SPARK burst and straight into the
+    ; broken form reveal). round36-14 follow-up (real-hardware report:
+    ; "スパーク爆発で最初からボスが消えてる...消えてしまうことがある
+    ; 何らかの切り替えタイミングの問題だろう" - exactly this: the FIRST
+    ; version of this routine only erased the hand art and reset BOSS_
+    ; PHASE, but forgot the DRAW_BOSS/FLUSH_BOSS_SPRITES call INIT_BOSS_
+    ; EXPLOSION's own equivalent branch has, so a trigger that happened
+    ; to land mid-pose left the sprite hidden for the rest of the fight).
+    ; XOR-to-0 the phase unconditionally afterward too (not just on the
+    ; branch that erased it) - a real 2nd death later, after the broken
+    ; form's own further HP loss, still routes through the SAME INIT_
+    ; BOSS_EXPLOSION as any other death (see BOSS_EXPL_REASON's own
+    ; comment - that path is deliberately left as-is, out of this
+    ; round's scope), and its own IBE_NO_HAND check needs BOSS_PHASE to
+    ; genuinely be 0 by then, not a stale 1 frozen from the moment of
+    ; this interruption.
+    LD A,(BOSS_PHASE)
+    CP 1
+    JR NZ,TBBF_NO_HAND
+    CALL ERASE_SASAPI_HAND
+    XOR A : LD (BOSS_PHASE),A
+    CALL DRAW_BOSS
+    CALL FLUSH_BOSS_SPRITES
+    JR TBBF_PHASE_DONE
+TBBF_NO_HAND:
+    XOR A : LD (BOSS_PHASE),A
+TBBF_PHASE_DONE:
+    LD A,BOSS_FORM_SPARK : LD (BOSS_FORM),A
+    ; capture center cell + arm the spark burst - same setup INIT_BOSS_
+    ; EXPLOSION's own SPARK entry uses (see ARM_BOSS_EXPL_SPARK), minus
+    ; the white-fill tile/color upload - GROW/SHRINK/FLASH never run for
+    ; this REASON, so that tile is never needed here (see UBS_LAST_FRAME).
+    LD A,(BOSS_X) : ADD A,32 : SRL A : SRL A : SRL A : LD (BOSS_EXPL_CX),A
+    LD A,(BOSS_Y) : ADD A,32 : SRL A : SRL A : SRL A : LD (BOSS_EXPL_CY),A
+    ; round36-14 follow-up #2 ("インフィニティ軌道はその位置から始まる
+    ; が一旦中央に寄せろ") - nothing to capture here any more: BOSS_X/
+    ; BOSS_Y already hold exactly the position the old body just died
+    ; at, untouched by anything from this point through REVEAL_BOSS_
+    ; BROKEN_FORM, so the broken form's own reveal naturally starts from
+    ; the right spot for free - REVEAL_BOSS_BROKEN_FORM/UPDATE_BOSS_
+    ; BROKEN_ACTIVE's own RECENTERING sub-phase is what walks it toward
+    ; the fixed screen-center orbit point from there (see BOSS_BROKEN_
+    ; RECENTERING's own comment).
+    DI
+    LD HL,EXPLOSION_PATTERN : LD DE,BOSS_EXPL_SPARK_CODE_TL*8 : LD BC,32 : CALL LDIRVM
+    EI
+    LD A,BOSS_EXPL_SPARK_COLORBYTE : LD (HUD_TEMP_BYTE),A
+    LD HL,HUD_TEMP_BYTE : LD DE,2000h+BOSS_EXPL_SPARK_GROUP : LD BC,1 : CALL LDIRVM
+    CALL ARM_BOSS_EXPL_SPARK
+    LD A,1 : LD (BOSS_EXPL_REASON),A
     RET
 
 ; walks CLOUD_POOL (IX-indexed, 9x INC IX per slot - this assembler has
@@ -9358,10 +14340,34 @@ CRW_2:
     LD A,2
     RET
 
+; 実機フィードバック対応 ("地形スクロールがカクカクしてる...周期的に
+; 一瞬止まってる スクロール処理で不均一な部分があるはず ループがおか
+; しいとか"): このROMはHALT/vsync同期を一切持たない設計("no per-frame
+; HALT" - GTD_LAST_H等の自己解説コメント参照)のため、1フレームあたりの
+; T-state消費量がそのまま実時間ペースに直結する。実測の結果、TICK%8==0
+; の8フレームに1回だけ実行されるブロック(PXCHAR_T前進+地形IDキャッシュ
+; 4回更新)は他の7フレームよりT-stateコストが約5%重く、その差のほぼ
+; 全て(546T中9684T、実に95%以上)がこのREFRESH_IDCACHE_33の4回呼び出し
+; そのものだった - ユーザー自身の疑い通り、このループが周期的な不均一の
+; 実際の発生源だったことをT-stateプロファイリングで直接確認した。
+; `LD D,TERRAIN_LUT/256`はループ全体で不変(Dは一度も変化しない)にも
+; かかわらず33回のイテレーション毎に再実行されていた古典的なループ不変
+; コード(loop-invariant code)- TERRAIN_RENDER_ROWで既に使われている
+; 同じ手法(そちらの自己解説コメント参照)でループの外に引き上げる。
+; 1回あたり33バイト×7T=231T削減、REFRESH_IDCACHE_33は1回のPXCHAR_T
+; 前進につき4回呼ばれるので924T削減(出力は旧版とビット単位で同一 - 純粋
+; なコード移動で挙動は一切変えていない)。なお比較のため旧コミット
+; (e4e134a、Round36-14着手前)でも同じ相対スパイク比率(スパイク/基準
+; ≒1.052)を確認済みで、この周期的な重さ自体は今回のセッションで新しく
+; 生まれた退行ではなく元からこのROMの設計に内在するもの - 完全な解消
+; (4回のリフレッシュを複数フレームに分散する等)は地形描画の行間で
+; ROWPHASE_TとIDCACHEの整合性が一時的に崩れる視覚的リスクを伴う、より
+; 大きな再設計が必要なため今回はスコープ外。
 REFRESH_IDCACHE_33:
     LD B,33
+    LD D,TERRAIN_LUT/256
 RIC_LOOP:
-    LD A,(HL) : LD E,A : LD D,TERRAIN_LUT/256 : LD A,(DE)
+    LD A,(HL) : LD E,A : LD A,(DE)
     LD (IX+0),A
     INC HL
     INC IX
@@ -9567,6 +14573,25 @@ NIGHT_STRIPEROW32:
 ; fg6 (dark red, was the tank's) / bg11 (light yellow - "カラーグルー
 ; プ節約するから Rockも背景色ライトイエローにしろ Rock225と同じだ")
 ; x31 - see the color-swap patch in INIT above.
+; round36-12 attempted bg1(black) here ("Rockの背景色をダークレッドに"),
+; then round36-13 reverted it back to bg11 - "まずRock225もイジったな
+; Rock225の背景色は前に戻せ": this ONE byte colors group1(codes8-15),
+; which is NOT just plain Rock - terrain_gen.py's own STEADY_BASE packs
+; ROCK_L/ROCK_R AND all 4 R225 climb/descend variants (R225_UL/UR/
+; R225D_UL/UR) into this exact same group (codes8-13, see STEADY_CODE),
+; and most of the blend/transition pair codes involving them share it
+; too (BLEND_BASE's own "every mixed pair stays in the ordinary rock-
+; colored pool" consolidation - ROCK_COLOR_SWAPPED_PATCH itself blankets
+; groups1,3-31, not just group1). Rock and Rock225 are not two
+; independently-colorable things in the current design - they are the
+; literal same VRAM color byte - so "change Rock's bg without touching
+; Rock225" is not achievable without relocating R225's own ids to a
+; separate group and re-deriving its own blend-pair coloring, a much
+; larger change than a byte tweak and one with real precedent for
+; reintroducing exactly the flicker/seam bugs this same consolidation
+; was built to fix ("まだチラついてる Rockの前後だけおかしい" et al. -
+; see terrain_gen.py's own SAND_GROUPS/BLEND_BASE comments for that
+; history). Not attempted here without being asked for it directly.
 ROCK_COLOR_SWAPPED_PATCH:
     DS 31,06Bh
 

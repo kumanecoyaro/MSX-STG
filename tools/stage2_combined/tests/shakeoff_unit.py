@@ -1,3 +1,14 @@
+"""round35: BIGZUM_POOL grew a +13/+14 field (OWN_RETREAT_TICK, this
+instance's own forced-retreat GAME_TICK - see BIGZUM_ENGAGEMENT_
+DURATION's own comment in combined_test.asm). UPDATE_ONE_BIGZUM's own
+retreat check now reads it instead of the old shared BIGZUM_RETREAT_
+TICK constant - a manual BIGZUM_POOL poke that leaves it at 0 (fresh_
+cpu()'s own boot-state default) makes GAME_TICK(anything>=0) - 0 never
+carry, so UPDATE_ONE_BIGZUM would force STATE=5 (retreat) on literally
+every call, overriding whatever STATE this file is trying to test.
+never_retreat() below stamps a maximally-future retreat tick so that
+never actually fires within these tests' own scope.
+"""
 import os
 import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -15,6 +26,11 @@ BIGZUM_POOL = sym["BIGZUM_POOL"]
 TANK_ZUM_STANDING = sym["TANK_ZUM_STANDING"]
 FRAMES = sym["BIGZUM_SHAKE_STAND_FRAMES"]
 
+
+def never_retreat(cpu):
+    cpu.mem[BIGZUM_POOL+13] = 0xFF
+    cpu.mem[BIGZUM_POOL+14] = 0xFF
+
 # Test 1: counter (+6) increments while standing, regardless of STATE=2 (punch)
 cpu = fresh_cpu()
 cpu.mem[BIGZUM_POOL+0] = 1
@@ -28,6 +44,7 @@ call_routine(cpu, "UOBZ_PUNCH_MOVE")
 # instead call UPDATE_ONE_BIGZUM to exercise the real path
 cpu = fresh_cpu()
 cpu.mem[BIGZUM_POOL+0] = 1
+never_retreat(cpu)
 cpu.mem[BIGZUM_POOL+7] = 2   # STATE=2 punch
 cpu.mem[BIGZUM_POOL+6] = 0
 cpu.mem[BIGZUM_POOL+11] = 5
@@ -43,6 +60,7 @@ check("STATE stays 2 (not yet triggered - threshold now 60, not 1)", cpu.mem[BIG
 # NOT trigger - "即発火は速すぎて飛び越えも出来なくなってるから60フレくらいで"
 cpu = fresh_cpu()
 cpu.mem[BIGZUM_POOL+0] = 1
+never_retreat(cpu)
 cpu.mem[BIGZUM_POOL+7] = 2   # pin STATE=2 (punch, stuck) to avoid approach-state confounds
 cpu.mem[BIGZUM_POOL+11] = 5
 cpu.mem[BIGZUM_POOL+1] = 60
@@ -56,6 +74,7 @@ check("a brief (10-frame) touch does not trigger shake-off", cpu.mem[BIGZUM_POOL
 # Test 2: counter resets to 0 when not standing
 cpu = fresh_cpu()
 cpu.mem[BIGZUM_POOL+0] = 1
+never_retreat(cpu)
 cpu.mem[BIGZUM_POOL+7] = 2
 cpu.mem[BIGZUM_POOL+6] = 40
 cpu.mem[BIGZUM_POOL+1] = 60
@@ -68,6 +87,7 @@ check("counter (+6) resets to 0 when not standing", cpu.mem[BIGZUM_POOL+6] == 0)
 # Test 3: reaching threshold triggers shake-off jump, from STATE=2 (the actual bug scenario)
 cpu = fresh_cpu()
 cpu.mem[BIGZUM_POOL+0] = 1
+never_retreat(cpu)
 cpu.mem[BIGZUM_POOL+7] = 2   # STATE=2 punch, stuck
 cpu.mem[BIGZUM_POOL+6] = FRAMES - 1
 cpu.mem[BIGZUM_POOL+11] = 5  # PUNCH_COOLDOWN value (irrelevant, about to be overwritten)
@@ -85,6 +105,7 @@ check("JUMPFRAME (+10) advances to 1 (reset to 0 then UOBZ_JUMP_MOVE ran once sa
 # Test 4: while STATE=1 (already jumping), the check is skipped entirely -- counter untouched
 cpu = fresh_cpu()
 cpu.mem[BIGZUM_POOL+0] = 1
+never_retreat(cpu)
 cpu.mem[BIGZUM_POOL+7] = 1  # STATE=1 jumping
 cpu.mem[BIGZUM_POOL+6] = 77  # arbitrary, must remain untouched (jump uses DY elsewhere only via ACT=2)
 cpu.mem[BIGZUM_POOL+11] = 0  # not a shake jump

@@ -47,25 +47,20 @@ def set_game_tick(cpu, val):
 cpu = fresh_cpu()
 check("BOSS_ACT is 0 at boot", cpu.mem[BOSS_ACT] == 0)
 
-# Test 2-3: refuses to spawn before BOSS_SPAWN_TICK, including at the
-# old-bug-class truncated-8-bit low byte of BOSS_SPAWN_TICK (999&0xFF)
-# - same regression shape as cloud_changes_test.py/enemy_spawn_stop_test.py.
+# round34 ("全てスケジュールに"): the old Test 2-3 here directly poked
+# GAME_TICK and called UPDATE_BOSS_ALL to prove it refused to spawn too
+# early, including the truncated-8-bit-low-byte regression shape. That
+# gate has moved to SPAWN2_SCHEDULE_CHECK now (shared by every schedule
+# entry, not boss-specific) - see spawn2_schedule_test.py for the same
+# regression check against the real dispatcher. S2_BOSS_SPAWN itself
+# (the routine SSC2_FIRE's dispatch chain actually jumps to) has no
+# tick check of its own at all any more - it always succeeds whenever
+# called, exactly like Stage1's own BOSS_SPAWN.
+#
+# Test: spawns with the right initial state when S2_BOSS_SPAWN fires.
 cpu = fresh_cpu()
-set_game_tick(cpu, BOSS_SPAWN_TICK - 1)
-call_routine(cpu, "UPDATE_BOSS_ALL")
-check("does not spawn just before BOSS_SPAWN_TICK", cpu.mem[BOSS_ACT] == 0)
-
-cpu = fresh_cpu()
-set_game_tick(cpu, BOSS_SPAWN_TICK & 0xFF)
-call_routine(cpu, "UPDATE_BOSS_ALL")
-check("does not spawn at the truncated-8-bit low byte of BOSS_SPAWN_TICK",
-      cpu.mem[BOSS_ACT] == 0)
-
-# Test 4: spawns at BOSS_SPAWN_TICK with the right initial state.
-cpu = fresh_cpu()
-set_game_tick(cpu, BOSS_SPAWN_TICK)
-call_routine(cpu, "UPDATE_BOSS_ALL")
-check("BOSS_ACT becomes 1 at BOSS_SPAWN_TICK", cpu.mem[BOSS_ACT] == 1)
+call_routine(cpu, "S2_BOSS_SPAWN")
+check("BOSS_ACT becomes 1", cpu.mem[BOSS_ACT] == 1)
 check("BOSS_X starts at BOSS_SPAWNX", cpu.mem[BOSS_X] == BOSS_SPAWNX)
 check("BOSS_DIR starts at 0 (moving left) - 右から出現し左へ",
       cpu.mem[BOSS_DIR] == 0)
@@ -113,8 +108,15 @@ check("hw sprite table (0x1B00+slot*4) matches the staged attrs for all 16 slots
 # and reverses at X=0, steps right back, clamps and reverses again at
 # X=BOSS_SPAWNX - "左端に着いたら反転 右端に 以降繰り返し".
 cpu = fresh_cpu()
-set_game_tick(cpu, BOSS_SPAWN_TICK)
-call_routine(cpu, "UPDATE_BOSS_ALL")   # spawn frame
+call_routine(cpu, "S2_BOSS_SPAWN")   # spawn frame
+# follow-up#20 ("ワイプ中は初期停止状態のスプライトでワイプが終わるまで
+# 停止すること"): UBA_ACTIVE now freezes all patrol movement entirely
+# while the entrance materialize effect is active (BOSS_MATERIALIZE_ACT!=0, seeded by
+# S2_BOSS_SPAWN itself). This file's patrol tests below are unrelated to
+# the wipe - bypass it here so the boss actually moves like every test
+# below already assumes (see boss_wipe_test.py for the freeze's own
+# dedicated coverage).
+cpu.mem[sym["BOSS_MATERIALIZE_ACT"]] = 0
 x0 = cpu.mem[BOSS_X]
 call_routine(cpu, "UPDATE_BOSS_ALL")   # 1 more frame, same tick (already spawned)
 check("steps left by BOSS_SPEED per call while DIR=0",
@@ -158,20 +160,42 @@ call_routine(cpu, "UPDATE_BOSS_ALL")
 check("returning to the right edge enters the attack pose (BOSS_PHASE=1) instead of reversing immediately",
       cpu.mem[BOSS_PHASE] == 1)
 
-# Test 12: real end-to-end - spawns at the real frame BOSS_SPAWN_TICK*8,
-# not before (GAME_TICK advances once per 8 raw frames).
-expected_frame = BOSS_SPAWN_TICK * 8
+# Test 12: real end-to-end - the boss can never spawn before GAME_TICK
+# reaches BOSS_SPAWN_TICK (SSC2_FIRE advances SPAWN2_NEXT_INDEX through
+# every earlier schedule entry unconditionally, one per due GAME_TICK -
+# see SPAWN2_SCHEDULE_CHECK's own comment - so this lower bound still
+# holds exactly). round34-3: with no player fire input at all (this
+# test's own worst-case config, unchanged from before), a ground enemy
+# can still go permanently un-destroyed, but that no longer delays
+# anything downstream any more - a blocked spawn is simply dropped, not
+# retried - so the boss reliably spawns right at its own scheduled
+# tick995 (frame~7959), verified empirically, well within this budget.
+# -1: this loop's own `f` is 0-indexed (the Nth step_frame call sets
+# f=N-1), so "GAME_TICK reaches BOSS_SPAWN_TICK on the (BOSS_SPAWN_TICK*8)th
+# call" observes as f==BOSS_SPAWN_TICK*8-1, not BOSS_SPAWN_TICK*8 itself.
+# round34-3 exposed this: the boss now spawns on the very same step_frame
+# call GAME_TICK first reaches its own threshold (verified directly - no
+# ASM-side delay at all any more), so this off-by-one, previously masked
+# by the old design's own multi-frame spawn delay, now has to be accounted
+# for explicitly instead of accidentally passing.
+expected_frame = BOSS_SPAWN_TICK * 8 - 1
+UPPER_BOUND_FRAME = 20000
 cpu = fresh_cpu()
 cpu.sim_dir = 0
 cpu.sim_trig_a = False
 cpu.sim_trig_b = False
 spawn_frame = None
-for f in range(expected_frame + 50):
+for f in range(UPPER_BOUND_FRAME):
     step_frame(cpu)
     if cpu.mem[BOSS_ACT] != 0 and spawn_frame is None:
         spawn_frame = f
-check(f"real MAINLOOP: boss spawns at frame ~{expected_frame}, not earlier",
-      spawn_frame is not None and expected_frame - 8 <= spawn_frame <= expected_frame)
+        break
+check(f"real MAINLOOP: boss never spawns before frame {expected_frame} (its own earliest possible tick)",
+      spawn_frame is not None and spawn_frame >= expected_frame)
+check(f"real MAINLOOP: boss does eventually spawn, even with no player fire input at all "
+      f"(within {UPPER_BOUND_FRAME} frames - unconditional-advance SSC2_FIRE guarantees this, "
+      f"since nothing can ever block the schedule from reaching its own last entry)",
+      spawn_frame is not None)
 print(f"spawn_frame={spawn_frame}")
 
 print()

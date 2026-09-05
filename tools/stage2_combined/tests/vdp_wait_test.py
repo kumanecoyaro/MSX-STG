@@ -65,11 +65,50 @@ for i, line in enumerate(lines):
         next_line = lines[i + 1].strip() if i + 1 < len(lines) else ""
         n98_delay.append((i + 1, next_line))
 
+# round36-14 Part C: FLUSH_BOSS_BROKEN_SPRITES (the new 32x32 broken-
+# form body's own flush routine) adds 1 more raw DI/EI-wrapped mini-burst
+# site, same shape as FLUSH_BOSS_SPRITES's own (2 OUT(99h),A address-
+# setup writes + 4 OUT(98h),A data writes per source occurrence, even
+# though it's a 4-quadrant DJNZ loop at runtime) - 28->30 / 20->24.
+# round36-14 follow-up #4: FLUSH_BOSS_BROKEN_BEAM_SPRITES (the new
+# 4-beam stop-attack's own flush) adds 1 more site, this time the
+# single-byte-per-DJNZ-iteration shape FLUSH_SBEAM_SPRITES/FLUSH_
+# HORMING_SPRITES already use (2 OUT(99h),A address-setup writes + only
+# 1 OUT(98h),A data write in source, looped at runtime) - 30->32 / 24->25.
+# round36-14 follow-up #11 ("ザコ敵の弾発射実装"): FLUSH_EBULLET_SPRITES
+# (EBullet's own flush) adds 1 more site, same single-byte-per-DJNZ-
+# iteration shape as the round above - 32->34 / 25->26.
+# round36-14 follow-up #12 ("Mineを放物線で投下...着地や自機への被弾で
+# ...爆発エフェクト"): FLUSH_MINE_SPRITES (Mine's own explosion-only
+# flush, borrowing 2 ATTRIBUTE slots) adds 1 more site, same single-
+# byte-per-DJNZ-iteration shape as the round above - 34->36 / 26->27.
+# FlyerLaser itself adds no new raw OUT sites (BG cell, reuses the
+# existing shared WRITE_BULLET_BYTE_HL - same as EtankBullet's own).
+# round36-14 follow-up #13 ("3発制限を4発に変更"): FLUSH_BULLET3_U_
+# SPRITE (the new 4th player-shot slot's own U-type flush, to the
+# ATTRIBUTE slot freed from Mine's own explosion budget - see
+# MINE_EXPL_SPR_BASE_SLOT's own comment) adds 1 more site, same
+# single-byte-per-DJNZ-iteration shape - 36->38 / 27->28.
+# round36-14 (boss entrance wipe, "ボス登場前に中身が空の透明のスプライ
+# トを4枚横に並べて..."): WRITE_BOSS_WIPE_ALL (the new 4-dummy-sprite
+# sweep's shared draw/hide writer) added 1 more site, fully unrolled (not
+# DJNZ'd, since B held the shared Y value instead of a loop counter), so
+# its single source occurrence contained all 4 slots' bytes literally: 2
+# OUT(99h),A address-setup writes (one address-setup pair covered all 4
+# contiguous slots) + 16 OUT(98h),A data writes (4 bytes Y/X/pattern/
+# color x 4 slots, all written out explicitly instead of looping) -
+# 38->40 / 28->44.
+# follow-up#22 ("ではワイプ処理はやめる..."): the entire wipe design
+# (WRITE_BOSS_WIPE_ALL included) is retired, replaced by a "materialize"
+# effect that just redraws the boss's own EXISTING body sprite at a
+# different X each frame (DRAW_BOSS/FLUSH_BOSS_SPRITES, already-existing
+# call sites, no new raw OUT sites of its own at all) - back down to the
+# pre-wipe baseline, 40->38 / 44->28.
 check(f"found the expected number of raw OUT (99h),A sites ({len(n99)} - update this "
       "count deliberately if a new one is added, don't just let the test drift)",
-      len(n99) == 28)
+      len(n99) == 38)
 check(f"found the expected number of raw OUT (98h),A sites ({len(n98_delay)})",
-      len(n98_delay) == 20)
+      len(n98_delay) == 28)
 
 bad99 = [(ln, n) for ln, n in n99 if n != 2]
 check("every OUT (99h),A (VRAM address setup) is padded with exactly 2 NOPs (8T)",

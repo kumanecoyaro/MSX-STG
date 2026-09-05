@@ -14,6 +14,27 @@ def check(label, cond):
 HORMING_SLOT_COUNT = sym["HORMING_SLOT_COUNT"]
 HORMING_SLOT_SIZE = sym["HORMING_SLOT_SIZE"]
 HORMING_POOL = sym["HORMING_POOL"]
+# round36-12: 2nd, BG-drawn pool ("弾数を増やす...4発追加") - see
+# combined_test.asm's own HORMING_BG_POOL comment.
+HORMING_BG_SLOT_COUNT = sym["HORMING_BG_SLOT_COUNT"]
+HORMING_BG_SLOT_SIZE = sym["HORMING_BG_SLOT_SIZE"]
+HORMING_BG_POOL = sym["HORMING_BG_POOL"]
+HORMING_BG_SL_CODE = sym["HORMING_BG_SL_CODE"]
+HORMING_BG_DL_CODE = sym["HORMING_BG_DL_CODE"]
+HORMING_BG_DOWN_CODE = sym["HORMING_BG_DOWN_CODE"]
+HORMING_BG_DR_CODE = sym["HORMING_BG_DR_CODE"]
+HORMING_BG_SR_CODE = sym["HORMING_BG_SR_CODE"]
+# round36-14 ("BGホーミングが地形に入ったときはSandの背景色になるように") -
+# terrain-band counterpart table/codes, see combined_test.asm's own
+# HORMING_BG_SAND_SL_CODE comment.
+HORMING_BG_SAND_SL_CODE = sym["HORMING_BG_SAND_SL_CODE"]
+HORMING_BG_SAND_DL_CODE = sym["HORMING_BG_SAND_DL_CODE"]
+HORMING_BG_SAND_DOWN_CODE = sym["HORMING_BG_SAND_DOWN_CODE"]
+HORMING_BG_SAND_DR_CODE = sym["HORMING_BG_SAND_DR_CODE"]
+HORMING_BG_SAND_SR_CODE = sym["HORMING_BG_SAND_SR_CODE"]
+BULLET_ROCK_ROW_MIN = sym["BULLET_ROCK_ROW_MIN"]
+SKY_BLANK_CODE = sym["SKY_BLANK_CODE"]
+BULLET0_ACT = sym["BULLET0_ACT"]
 HORMING_SPRITE_ATTRS = sym["HORMING_SPRITE_ATTRS"]
 HORMING_VOLLEY_COUNT = sym["HORMING_VOLLEY_COUNT"]
 HORMING_VOLLEY_TIMER = sym["HORMING_VOLLEY_TIMER"]
@@ -38,6 +59,7 @@ PAT_HORMING_DR = sym["PAT_HORMING_DR"]
 PAT_HORMING_SR = sym["PAT_HORMING_SR"]
 TANK_X = sym["TANK_X"]
 TANK_Y_CUR = sym["TANK_Y_CUR"]
+TANK_GROUND_Y = sym["TANK_GROUND_Y"]
 TANK_LIFE = sym["TANK_LIFE"]
 TANK_LIFE_INIT = sym["TANK_LIFE_INIT"]
 TANK_FLASH_TIMER = sym["TANK_FLASH_TIMER"]
@@ -72,6 +94,48 @@ def slot(cpu, i):
     }
 
 
+# round36-12: same 7-byte layout as the sprite pool, just a separate
+# array (HORMING_BG_POOL) - see combined_test.asm's own comment.
+def bg_slot_addr(i):
+    return HORMING_BG_POOL + i * HORMING_BG_SLOT_SIZE
+
+
+def bg_slot(cpu, i):
+    base = bg_slot_addr(i)
+    return {
+        "act": cpu.mem[base + 0],
+        "x": cpu.mem[base + 1],
+        "y": cpu.mem[base + 2],
+        "facing": cpu.mem[base + 3],
+        "state": cpu.mem[base + 4],
+        "rise_remain": cpu.mem[base + 5],
+        "target_x": cpu.mem[base + 6],
+    }
+
+
+def make_bg_slot(cpu, slot_i, x, y, facing=0, state=2, rise_remain=0, target_x=0, tank_x=None, tank_y=None,
+                  tank_ground_y=None):
+    base = bg_slot_addr(slot_i)
+    cpu.mem[base + 0] = 1
+    cpu.mem[base + 1] = x
+    cpu.mem[base + 2] = y
+    cpu.mem[base + 3] = facing
+    cpu.mem[base + 4] = state
+    cpu.mem[base + 5] = rise_remain
+    cpu.mem[base + 6] = target_x
+    if tank_x is not None:
+        cpu.mem[TANK_X] = tank_x
+    if tank_y is not None:
+        cpu.mem[TANK_Y_CUR] = tank_y
+        cpu.mem[TANK_GROUND_Y] = tank_y
+    if tank_ground_y is not None:
+        cpu.mem[TANK_GROUND_Y] = tank_ground_y
+
+
+def name_table_addr(x, y):
+    return 0x1800 + (y // 8) * 32 + (x // 8)
+
+
 def sat_entry(cpu, hw_slot):
     # SPRATR is a VRAM address (the hw Sprite Attribute Table), not RAM -
     # FLUSH_HORMING_SPRITES writes it via VDP OUT ports.
@@ -84,7 +148,8 @@ def sat_entry(cpu, hw_slot):
     }
 
 
-def make_slot(cpu, slot_i, x, y, facing=0, state=2, rise_remain=0, target_x=0, tank_x=None, tank_y=None):
+def make_slot(cpu, slot_i, x, y, facing=0, state=2, rise_remain=0, target_x=0, tank_x=None, tank_y=None,
+              tank_ground_y=None):
     base = slot_addr(slot_i)
     cpu.mem[base + 0] = 1
     cpu.mem[base + 1] = x
@@ -97,6 +162,15 @@ def make_slot(cpu, slot_i, x, y, facing=0, state=2, rise_remain=0, target_x=0, t
         cpu.mem[TANK_X] = tank_x
     if tank_y is not None:
         cpu.mem[TANK_Y_CUR] = tank_y
+        # round36-12: UOH_H2_TRIGGER now keys off TANK_GROUND_Y, not
+        # TANK_Y_CUR (see combined_test.asm's own comment) - every
+        # existing call site here means "tank standing still at this Y"
+        # (TANK_Y_CUR==TANK_GROUND_Y, not mid-jump), so default
+        # tank_ground_y to the same value unless a test explicitly wants
+        # to simulate a jump-induced mismatch between the two.
+        cpu.mem[TANK_GROUND_Y] = tank_y
+    if tank_ground_y is not None:
+        cpu.mem[TANK_GROUND_Y] = tank_ground_y
 
 
 # ---- FIRE_ONE_HORMING: spawns into the first inactive slot ----
@@ -128,30 +202,43 @@ check("drops the attempt once the whole pool is full (no crash, no state corrupt
       all(slot(cpu2, i)["act"] == 1 for i in range(HORMING_SLOT_COUNT)))
 
 
+def bg_active_count(cpu):
+    return sum(1 for i in range(HORMING_BG_SLOT_COUNT)
+               if cpu.mem[HORMING_BG_POOL + i * HORMING_BG_SLOT_SIZE + 0] == 1)
+
+
 # ---- ARM_HORMING_VOLLEY / UPDATE_HORMING_VOLLEY: intermittent fire ----
-# "弾は4発同時発射ではなく間欠で4発発射"
+# "弾は4発同時発射ではなく間欠で4発発射" (sprite pool's own original 4).
+# round36-13 ("BGとスプライト交互に発射 と言うか同時だな そうでなきゃ
+# BGやスプライトで分けてる意味がない"): each intermittent tick now fires
+# ONE INTO EACH POOL together (not the sprite pool's own 4 first, then
+# the BG pool's own 4 after) - see UPDATE_HORMING_VOLLEY's own comment.
 cpu = fresh_cpu()
 call_routine(cpu, "ARM_HORMING_VOLLEY")
 check("ARM resets the launch counter to 0", cpu.mem[HORMING_VOLLEY_COUNT] == 0)
 check("ARM resets the timer to 0 (fires the first shot on the very next check)",
       cpu.mem[HORMING_VOLLEY_TIMER] == 0)
 
-# does NOT fire all 4 at once - only 1 launches on the first tick
+# does NOT fire all 8 at once - only 1 PAIR (1 sprite + 1 BG) launches
+# on the first tick.
 call_routine(cpu, "UPDATE_HORMING_VOLLEY")
 active_count = sum(1 for i in range(HORMING_SLOT_COUNT) if slot(cpu, i)["act"] == 1)
-check("the first UPDATE_HORMING_VOLLEY tick launches exactly 1 missile, not 4 - 間欠で4発発射",
+check("the first UPDATE_HORMING_VOLLEY tick launches exactly 1 sprite missile, not 4 - 間欠で発射",
       active_count == 1)
-check("HORMING_VOLLEY_COUNT is now 1", cpu.mem[HORMING_VOLLEY_COUNT] == 1)
+check("the SAME tick also launches exactly 1 BG missile - 同時 (simultaneous), not a separate later block",
+      bg_active_count(cpu) == 1)
+check("HORMING_VOLLEY_COUNT is now 1 (counts PAIRS, not raw missiles)", cpu.mem[HORMING_VOLLEY_COUNT] == 1)
 check("the timer is reset to HORMING_VOLLEY_INTERVAL after a launch",
       cpu.mem[HORMING_VOLLEY_TIMER] == HORMING_VOLLEY_INTERVAL)
 
-# ticking again before the interval elapses does NOT fire another
+# ticking again before the interval elapses does NOT fire another pair
 call_routine(cpu, "UPDATE_HORMING_VOLLEY")
 active_count = sum(1 for i in range(HORMING_SLOT_COUNT) if slot(cpu, i)["act"] == 1)
-check("still only 1 active right after the interval-reset tick (timer hasn't reached 0 yet)",
+check("still only 1 sprite active right after the interval-reset tick (timer hasn't reached 0 yet)",
       active_count == 1)
+check("still only 1 BG active too", bg_active_count(cpu) == 1)
 
-# tick through the whole interval - a 2nd missile launches right on
+# tick through the whole interval - a 2nd pair launches right on
 # schedule. The "ticking again" call above already consumed 1 of the
 # INTERVAL decrements (timer went INTERVAL->INTERVAL-1); it takes
 # INTERVAL more calls from there for the timer to count down through 0
@@ -160,17 +247,136 @@ check("still only 1 active right after the interval-reset tick (timer hasn't rea
 for _ in range(HORMING_VOLLEY_INTERVAL):
     call_routine(cpu, "UPDATE_HORMING_VOLLEY")
 active_count = sum(1 for i in range(HORMING_SLOT_COUNT) if slot(cpu, i)["act"] == 1)
-check("a 2nd missile launches exactly HORMING_VOLLEY_INTERVAL ticks after the 1st",
+check("a 2nd sprite missile launches exactly HORMING_VOLLEY_INTERVAL ticks after the 1st",
       active_count == 2)
+check("a 2nd BG missile launches on that exact same tick too", bg_active_count(cpu) == 2)
 
-# drive it all the way through - exactly 4 launch total, never more
+# drive it all the way through - 4 pairs (8 missiles total), never more
+# than either pool's own size, regardless of how many extra ticks pass.
 cpu2 = fresh_cpu()
 call_routine(cpu2, "ARM_HORMING_VOLLEY")
 for _ in range(HORMING_VOLLEY_INTERVAL * 6):
     call_routine(cpu2, "UPDATE_HORMING_VOLLEY")
 active_count = sum(1 for i in range(HORMING_SLOT_COUNT) if slot(cpu2, i)["act"] == 1)
-check("exactly 4 launch in total over enough ticks, never more than the pool size",
+check("exactly 4 sprite missiles launch in total over enough ticks, never more than the pool size",
       active_count == HORMING_SLOT_COUNT)
+check("exactly 4 BG missiles launch in total too (8 total across both pools)",
+      bg_active_count(cpu2) == HORMING_BG_SLOT_COUNT)
+check("HORMING_VOLLEY_COUNT stops advancing at 4 (pairs), not 8",
+      cpu2.mem[HORMING_VOLLEY_COUNT] == HORMING_SLOT_COUNT)
+
+
+# ---- BG pool rendering: DRAW_HORMING_BG_CELL / ERASE_HORMING_BG_CELL /
+# UPDATE_HORMING_BG_ALL ----
+# a stationary (state3, tank_x==missile_x -> UOH_LOCKED's "aligned"
+# branch, no X drift) slot draws its own facing's code at the right
+# name-table cell, over the sky.
+cpu = fresh_cpu()
+cpu.mem[BOSS_ACT] = 1
+make_bg_slot(cpu, 0, x=80, y=40, facing=2, state=3, tank_x=80)  # Down, high up (sky)
+call_routine(cpu, "UPDATE_HORMING_BG_ALL")
+addr = name_table_addr(80, 40)
+check("DRAW_HORMING_BG_CELL writes the right facing's own code (Down) at the right cell",
+      cpu.vram[addr] == HORMING_BG_DOWN_CODE)
+
+# moving to a new cell erases the old one (restores true sky background)
+# and draws at the new position - same erase-before-move-draw-after
+# shape as UPDATE_ONE_BULLET.
+cpu = fresh_cpu()
+cpu.mem[BOSS_ACT] = 1
+make_bg_slot(cpu, 0, x=80, y=40, facing=4, state=2, tank_x=80 + 100, tank_y=200)  # SR, real 2D pursuit
+old_addr = name_table_addr(80, 40)
+for _ in range(6):  # enough HORMING_SPEED steps to cross an 8px cell boundary
+    call_routine(cpu, "UPDATE_HORMING_BG_ALL")
+s = bg_slot(cpu, 0)
+new_addr = name_table_addr(s["x"], s["y"])
+check("BG missile actually moved to a new cell over these frames", new_addr != old_addr)
+check("the OLD cell was erased back to true sky background (SKY_BLANK_CODE), not left with a stale glyph",
+      cpu.vram[old_addr] == SKY_BLANK_CODE)
+check("the NEW cell shows the current facing's own code",
+      cpu.vram[new_addr] == HORMING_BG_SR_CODE)
+
+# a bullet shooting down a BG-pool missile must ALSO erase its own cell
+# (unlike the sprite pool, whose own per-frame hide path does that for
+# free) - "残る事がある" is exactly the class of bug this guards against.
+cpu = fresh_cpu()
+cpu.mem[BOSS_ACT] = 1
+make_bg_slot(cpu, 0, x=80, y=40, facing=2, state=3, tank_x=80)
+call_routine(cpu, "UPDATE_HORMING_BG_ALL")   # draw it once
+addr = name_table_addr(80, 40)
+check("(setup) missile's own cell is drawn before the kill", cpu.vram[addr] == HORMING_BG_DOWN_CODE)
+col, row = 80 // 8, 40 // 8
+cpu.mem[BULLET0_ACT + 0] = 1
+cpu.mem[BULLET0_ACT + 1] = 0   # TYPE=F
+cpu.mem[BULLET0_ACT + 2] = col
+cpu.mem[BULLET0_ACT + 3] = row
+cpu.mem[BULLET0_ACT + 6] = 0
+cpu.ix = BULLET0_ACT
+call_routine(cpu, "CHECK_BULLET_VS_HORMING")
+check("a bullet hit deactivates the BG missile", bg_slot(cpu, 0)["act"] == 0)
+check("a bullet hit deactivates the bullet too", cpu.mem[BULLET0_ACT + 0] == 0)
+check("a bullet hit erases the missile's own cell back to sky background - no stale glyph left behind",
+      cpu.vram[addr] == SKY_BLANK_CODE)
+
+# round36-14: at/below BULLET_ROCK_ROW_MIN (terrain band, same threshold
+# ERASE_HORMING_BG_CELL's own EHBC_SKY branch uses) DRAW_HORMING_BG_CELL
+# switches to the Sand-colored code table instead of the sky/black one.
+cpu = fresh_cpu()
+cpu.mem[BOSS_ACT] = 1
+sand_y = BULLET_ROCK_ROW_MIN * 8       # exactly at the threshold - terrain band
+make_bg_slot(cpu, 0, x=80, y=sand_y, facing=2, state=3, tank_x=80)  # Down
+call_routine(cpu, "UPDATE_HORMING_BG_ALL")
+addr = name_table_addr(80, sand_y)
+check("at the terrain-row threshold, DRAW_HORMING_BG_CELL picks the Sand-colored code, not the sky one",
+      cpu.vram[addr] == HORMING_BG_SAND_DOWN_CODE)
+check("one row above the threshold still uses the ordinary sky/black code",
+      HORMING_BG_SAND_DOWN_CODE != HORMING_BG_DOWN_CODE)  # (sanity: distinct codes)
+
+cpu = fresh_cpu()
+cpu.mem[BOSS_ACT] = 1
+sky_y = (BULLET_ROCK_ROW_MIN - 1) * 8  # one row above the threshold - still sky
+make_bg_slot(cpu, 0, x=80, y=sky_y, facing=2, state=3, tank_x=80)  # Down
+call_routine(cpu, "UPDATE_HORMING_BG_ALL")
+addr = name_table_addr(80, sky_y)
+check("just above the terrain-row threshold, DRAW_HORMING_BG_CELL still picks the ordinary sky/black code",
+      cpu.vram[addr] == HORMING_BG_DOWN_CODE)
+
+# the Sand-band codes live in group12 (their own explicit color write -
+# see HORMING_BG_SAND_SL_CODE's own comment for why this group, unlike
+# the group2 attempt it replaced, needs one) and must actually carry the
+# real Sand color.
+cpu = fresh_cpu()
+check("group12 (Sand-variant Horming's own color group, VRAM 0x200C) is 0xAB - matches "
+      "terrain_gen.py's SAND_COLOR exactly",
+      cpu.vram[0x200C] == 0xAB)
+
+# round36-14 follow-up (real-hardware regression: "スクロールの地形の
+# Sandがほかのパターンに書き換わってる") - the FIRST attempt at this
+# feature placed the Sand-variant codes at 18-22, which turned out to be
+# real terrain data (the (Sand,Sand) same-id blend pair's own 7-frame
+# anti-flicker animation, codes17-23 - see terrain_gen.py's own
+# BLANK_PAIR_BASE comment). Direct regression guard: terrain's own real
+# pattern bytes for codes 16-23 (Sand's steady tile + all 7 blend
+# frames) must be byte-for-byte untouched by anything Horming-related -
+# recomputed independently here from terrain_gen.py itself, not just
+# "doesn't crash".
+import sys as _sys
+_TESTS_DIR = os.path.dirname(os.path.abspath(__file__))
+_sys.path.insert(0, os.path.join(_TESTS_DIR, "..", "..", "stage2_terrain"))
+import terrain_gen as _tg
+cpu = fresh_cpu()
+sand_patterns_intact = True
+for code in range(16, 24):
+    if code not in _tg.PATTERNS:
+        continue
+    expected = bytes(_tg.PATTERNS[code])
+    actual = bytes(cpu.vram[code * 8:code * 8 + 8])
+    if actual != expected:
+        sand_patterns_intact = False
+check("terrain's own real Sand pattern data (codes 16-23, including the (Sand,Sand) same-id "
+      "blend pair's 7 anti-flicker frames) is byte-for-byte untouched - Horming's own Sand-"
+      "variant codes must never collide with real terrain data again",
+      sand_patterns_intact)
 
 
 # ---- state0 (rise): diagonal up-left, exactly HORMING_RISE_DIST total ----
@@ -463,6 +669,35 @@ check("switches to state3 (locked horizontal) once missile_Y >= TANK_Y_CUR+HORMI
 check("Y is NOT re-snapped to the exact threshold - keeps whatever this frame's own step produced",
       s["y"] == 100 + HORMING_HOMING_Y_OFFSET)
 
+# round36-12 (実機フィードバック "ホーミングがたまに自機の上あたりに残る
+# 事がある 多分ジャンプしたとき"): the trigger must key off TANK_GROUND_Y
+# (the terrain-following resting height), not TANK_Y_CUR (which dips
+# below TANK_GROUND_Y while airborne) - otherwise a missile that happens
+# to cross the threshold during a jump locks in at the tank's transient
+# mid-air height, then stays there even after the tank lands.
+cpu = fresh_cpu()
+# tank mid-jump: TANK_Y_CUR is 20px ABOVE (smaller than) its real resting
+# TANK_GROUND_Y. If the trigger used TANK_Y_CUR here it would fire
+# (missile_Y >= 100+HORMING_HOMING_Y_OFFSET), locking in above the
+# tank's real ground height; using TANK_GROUND_Y it must NOT fire yet
+# (100 < 120+HORMING_HOMING_Y_OFFSET).
+make_slot(cpu, 0, x=100, y=100, facing=2, state=2, tank_x=100, tank_y=100 - 20, tank_ground_y=120)
+cpu.ix = slot_addr(0)
+call_routine(cpu, "UPDATE_ONE_HORMING")
+check("mid-jump: stays in state2 (uses TANK_GROUND_Y, not the transiently-higher TANK_Y_CUR)",
+      slot(cpu, 0)["state"] == 2)
+
+cpu = fresh_cpu()
+# same mid-jump gap, but missile_Y has now actually reached
+# TANK_GROUND_Y+HORMING_HOMING_Y_OFFSET - should trigger regardless of
+# how far below TANK_Y_CUR currently sits.
+make_slot(cpu, 0, x=100, y=120 + HORMING_HOMING_Y_OFFSET, facing=2, state=2,
+          tank_x=100, tank_y=100 - 20, tank_ground_y=120)
+cpu.ix = slot_addr(0)
+call_routine(cpu, "UPDATE_ONE_HORMING")
+check("mid-jump: triggers state3 once missile_Y reaches TANK_GROUND_Y+HORMING_HOMING_Y_OFFSET",
+      slot(cpu, 0)["state"] == 3)
+
 
 # ---- state3 (locked horizontal): purely horizontal, Y frozen ----
 cpu = fresh_cpu()
@@ -639,11 +874,16 @@ boss_spawned = False
 saw_pose = False
 saw_patrol_after_pose = False
 boss_quadrant_hidden_while_patrolling = False
-# BOSS_SPAWN_TICK(999)*8=7992 raw frames alone, now that GAME_TICK boots
-# at a real 0 ("でTick0に" - the old 840 fast-iteration diagnostic boot
-# is gone) - plus real patrol/pose time on top, so these budgets are all
-# well above the old ones that assumed the 840 head start.
-for f in range(12000):
+# BOSS_SPAWN_TICK*8 raw frames alone, now that GAME_TICK boots at a
+# real 0 ("でTick0に" - the old 840 fast-iteration diagnostic boot is
+# gone) - plus real patrol/pose time on top. round34-3 ("全てスケジュー
+# ルに", then "Stage1と全く同じ処理だぞ"): with no player fire input at
+# all, a ground enemy can still go permanently un-destroyed, but that no
+# longer stalls anything downstream - a blocked spawn is simply dropped
+# (unconditional-advance SSC2_FIRE), so the boss reliably spawns right
+# at frame~7959 (tick995) - verified empirically (see boss_test.py's
+# own Test12) - well within this generous budget.
+for f in range(20000):
     step_frame(cpu)
     if cpu.mem[BOSS_ACT] == 1:
         boss_spawned = True
@@ -672,7 +912,14 @@ cpu2.sim_trig_a = False
 cpu2.sim_trig_b = False
 prev_boss_act = 0
 flyer_alive_at_boss_spawn = None
-for f in range(9000):
+# round34-3 ("全てスケジュールに", then "Stage1と全く同じ処理だぞ"):
+# with no player fire input at all, a ground enemy can still go
+# permanently un-destroyed, but that no longer stalls anything
+# downstream - a blocked spawn is simply dropped (unconditional-advance
+# SSC2_FIRE), so the boss reliably spawns right at frame~7959 (tick995)
+# - verified empirically (see boss_test.py's own Test12) - well within
+# this generous bound.
+for f in range(20000):
     step_frame(cpu2)
     if cpu2.mem[BOSS_ACT] == 1 and prev_boss_act == 0:
         flyer_alive_at_boss_spawn = any(
@@ -700,7 +947,11 @@ target_xs = []
 life_before_sweep = cpu.mem[TANK_LIFE]
 prev_active = [0] * HORMING_SLOT_COUNT
 prev_state = [0] * HORMING_SLOT_COUNT
-for f in range(12000):
+# round34-3 ("全てスケジュールに"): boss spawn timing itself reliably
+# lands at frame~7959 (tick995) even in the worst case (no player fire
+# input - see the other loops above in this same file) - budget
+# generously for that plus the pose/launch/flight sequence on top.
+for f in range(20000):
     step_frame(cpu)
     if cpu.mem[BOSS_PHASE] == 1 and pose_entered_at is None:
         pose_entered_at = f

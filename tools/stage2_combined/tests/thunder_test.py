@@ -461,8 +461,18 @@ BOSS_SPAWN_TICK = sym["BOSS_SPAWN_TICK"]
 
 
 def spawn_boss(cpu):
-    set_game_tick(cpu, BOSS_SPAWN_TICK)
-    call_routine(cpu, "UPDATE_BOSS_ALL")
+    # round34 ("全てスケジュールに"): S2_BOSS_SPAWN has no GAME_TICK
+    # check of its own any more (moved to the shared SPAWN2_SCHEDULE_
+    # CHECK/SSC2_FIRE dispatcher) - it always succeeds whenever called
+    # directly, so no GAME_TICK poke is needed here at all any more.
+    call_routine(cpu, "S2_BOSS_SPAWN")
+    # follow-up#20 ("ワイプ中は初期停止状態のスプライトでワイプが終わる
+    # まで停止すること"): UBA_ACTIVE now freezes all patrol movement
+    # entirely while the entrance materialize effect is active (BOSS_MATERIALIZE_ACT!=0, seeded
+    # by S2_BOSS_SPAWN itself). This file tests the Thunder trigger's own
+    # patrol logic, unrelated to the wipe - bypass it here so the boss
+    # actually moves like every test below already assumes.
+    cpu.mem[sym["BOSS_MATERIALIZE_ACT"]] = 0
 
 
 cpu = fresh_cpu()

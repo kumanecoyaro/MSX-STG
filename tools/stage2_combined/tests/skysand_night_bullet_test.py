@@ -15,11 +15,17 @@ NIGHT_ROW = sym["NIGHT_ROW"]
 NIGHT_END_ROW = sym["NIGHT_END_ROW"]
 NIGHT_CODE = sym["NIGHT_CODE"]
 SKYSAND_CODE = sym["SKYSAND_CODE"]
-BULLETF_SKY_CODE = sym["BULLETF_SKY_CODE"]
-BULLETF_L_SKY_CODE = sym["BULLETF_L_SKY_CODE"]
-BULLETF_ROCK_CODE = sym["BULLETF_ROCK_CODE"]
-BULLETF_NIGHT_CODE = sym["BULLETF_NIGHT_CODE"]
-BULLETF_L_NIGHT_CODE = sym["BULLETF_L_NIGHT_CODE"]
+# round36-11: F grew from 1 pose to 3 rotating variants (BULLETF_SKY_
+# CODE0/1/2 etc.) - a freshly-booted bullet slot (never actually spawned
+# through TRY_SPAWN_BULLET/SET_BULLET_VARIANT, as these tests poke
+# BULLET0_ACT directly) reads variant0 from its own zeroed BULLET0_
+# VARIANT byte, so these tests check against the *_CODE0 constants,
+# same numeric values the old single-pose *_CODE constants used to be.
+BULLETF_SKY_CODE = sym["BULLETF_SKY_CODE0"]
+BULLETF_L_SKY_CODE = sym["BULLETF_L_SKY_CODE0"]
+BULLETF_ROCK_CODE = sym["BULLETF_ROCK_CODE0"]
+BULLETF_NIGHT_CODE = sym["BULLETF_NIGHT_CODE0"]
+BULLETF_L_NIGHT_CODE = sym["BULLETF_L_NIGHT_CODE0"]
 BULLET0_ACT = sym["BULLET0_ACT"]
 BULLET_TEMP_BYTE = sym["BULLET_TEMP_BYTE"]
 BULLET_ROCK_COLOR_ROW_MIN_F = sym["BULLET_ROCK_COLOR_ROW_MIN_F"]

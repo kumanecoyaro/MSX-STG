@@ -23,9 +23,13 @@ def set_game_tick(cpu, val):
     cpu.mem[GAME_TICK + 1] = (val >> 8) & 0xFF
 
 
-# Test 1: NIGHT_COLOR is fg1(black)/bg5(light blue), swapped from the
-# original fg5/bg1.
-check("NIGHT_COLOR is 0x15 (fg1 black / bg5 light blue)", NIGHT_COLOR == 0x15)
+# Test 1: NIGHT_COLOR was fg1(black)/bg5(light blue) (swapped from the
+# original fg5/bg1), then round36-14 follow-up#12(その3) 実機フィード
+# バック対応 ("じゃあホワイトで") repainted it again to fg15(white)/bg5
+# (light blue) - group17 is also FlyerLaser's own home now, and white-
+# on-blue is the only way to give the laser a real, already-used-
+# elsewhere color combination (see NIGHT_COLOR's own comment).
+check("NIGHT_COLOR is 0xF5 (fg15 white / bg5 light blue)", NIGHT_COLOR == 0xF5)
 
 # Test 2: the 3 cloud slots get distinct, well-spread initial WAIT
 # values at boot (not the old near-identical 31/32/33 from calling

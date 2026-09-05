@@ -542,8 +542,11 @@ class Z80:
             src={0:self.bc(),1:self.de(),2:self.hl(),3:self.sp}[rr]
             carry=self.f&0x01
             res=self.hl()-src-carry
+            masked=res&0xFFFF
             self.f=(0x01 if res<0 else 0)|0x02
-            self.sethl(res&0xFFFF)
+            if masked==0: self.f|=0x40
+            if masked&0x8000: self.f|=0x80
+            self.sethl(masked)
             self.tstates += 15
         else:
             raise Exception(f"unhandled ED op {op:02X} at {self.pc-2:04X}")

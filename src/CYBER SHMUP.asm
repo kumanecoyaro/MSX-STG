@@ -83,6 +83,18 @@ PAT_ACCENT  EQU 16      ; 16x16 accent overlay, drawn at ship_X+8 (32 bytes at S
                         ; holds ACCENT_MID_PATTERN - see PLAYER_ACCENT_PAT
 PAT_ACCENT_DOWN EQU 20  ; ACCENT_DOWN_PATTERN, shown while diving (32 bytes at SPRPAT+160;
                         ; free range right after PAT_ACCENT's own 16-19)
+PAT_ACCENT_BARRIER      EQU 128 ; ACCENT_MID_BARRIER_PATTERN, shown instead of PAT_ACCENT
+                                ; while the barrier is equipped (32 bytes at SPRPAT+1024;
+                                ; codes128-255 confirmed genuinely free via emulator VRAM
+                                ; survey - nothing else in this file ever LDIRVMs there)
+PAT_ACCENT_DOWN_BARRIER EQU 132 ; ACCENT_DOWN_BARRIER_PATTERN, same idea for the DOWN pose
+PAT_PLAYER_EXPLOSION EQU 136    ; PLAYER_EXPL_PATTERN (16x16 hw-sprite burst
+                                 ; glyph for PLAYER_EXPL_UPDATE_ALL), always
+                                 ; loaded at INIT unlike the boss's own lazy-
+                                 ; loaded EXPLOSION_PATTERN (codes108-111,
+                                 ; boss-only) - codes136-139 confirmed
+                                 ; genuinely free via emulator VRAM survey
+                                 ; (32 bytes at SPRPAT+1056)
 PAT_SHIP_UP   EQU 112   ; SHIP_UP_PATTERN, shown while climbing (32 bytes at SPRPAT+896;
                         ; free range between EXPLOSION_PATNUM's 108-111 and PAT_PARTICLE's 120)
 PAT_SHIP_DOWN EQU 116   ; SHIP_DOWN_PATTERN, shown while diving (32 bytes at SPRPAT+928)
@@ -90,6 +102,9 @@ PAT_SHIP_DOWN EQU 116   ; SHIP_DOWN_PATTERN, shown while diving (32 bytes at SPR
 SPR_RED     EQU 08h     ; sprite color: red
 SPR_WHITE   EQU 0Fh     ; sprite color: white
 SPR_BLACK   EQU 01h     ; sprite color: black
+SPR_LIGHTGREEN EQU 03h  ; sprite color: light green (TMS9918 index3)
+SPR_LIGHTRED   EQU 09h  ; sprite color: light red (TMS9918 index9)
+SPR_PURPLE     EQU 0Dh  ; sprite color: dark magenta/purple (TMS9918 index13)
 SPR_TERM_Y  EQU 208     ; special Y value: stop sprite processing here
 
 PLAYER_SPEED EQU 2     ; was raised to 4 to compensate for the (now-removed)
@@ -374,6 +389,23 @@ PARTICLE_SPAWN_COOLDOWN EQU 0E83Ah  ; frames until the next spawn is allowed
 ; --- E_PARAM1 (remain), E_PARAM2 (dir) on the unified ENEMY_POOL.   ---
 ENEMY_CENTER_X   EQU 128     ; screen-center X threshold for the dodge
 ENEMY_DODGE_DIST EQU 16      ; total px moved diagonally, 1px/frame, per flight
+
+; --- enemy-fired bullet (new): a small shared hw-sprite pool, fired  ---
+; --- by Enemy4/TYPE_ENEMY4(=Enemy7, Y-aligned) and by Enemy1(=the   ---
+; --- same TYPE_ENEMY4 entity, its own diagonal-dodge window)/Enemy2 ---
+; --- (diagonal exit-dive window)/Enemy5(TYPE_ENEMY1_LOOK, screen-   ---
+; --- center X as its own stand-in "diagonal" trigger point - see    ---
+; --- EBSB_UPDATE's own comment) - "パターンはFlyerレーザーを流用    ---
+; --- カラーはライトレッド". Pattern reused from Stage2's own        ---
+; --- FlyerLaser bitmap (tools/stage2_combined/flyerlaser_gen.py's   ---
+; --- own 8x8 horizontal-bar tile) - Stage1 is a completely separate ---
+; --- bank/build from Stage2, so the raw bitmap bytes are redefined  ---
+; --- here from scratch (EBULLET_PATTERN), not shared/imported.      ---
+EBULLET_SLOTS  EQU 6
+EBULLET_STRUCT EQU 4         ; +0 ACTIVE,+1 X,+2 Y,+3 SPRNUM
+EBULLET_SPEED  EQU 6         ; dots/frame, left (faster than any enemy's own drift)
+PAT_EBULLET    EQU 124       ; 4 patterns 124-127 (32 bytes at SPRPAT+992) - free range, see survey
+E4_ALIGN_FIRE_COOLDOWN EQU 90 ; frames between Enemy7's own re-fires once Y keeps matching - untuned placeholder
 ENEMY1_ANIM_FRAME_LEN EQU 4  ; frames per 1,2,3,2 quadrant-anim step while
                               ; dodging - 4 steps x 4 frames = the full
                               ; ENEMY_DODGE_DIST(16)-frame dodge, one cycle
@@ -620,6 +652,52 @@ ENEMY6_POOL   EQU 0F158h        ; ENEMY6_SLOTS*ENEMY6_STRUCT = 128 bytes (F158h-
 ENEMY6_SPAWN_COL    EQU 30      ; matches ENEMY_SPAWNX/ENEMY4_SPAWNX(240) = col30
 ENEMY6_STEP_FRAMES  EQU 1       ; frames held per 1-column step (1 = fastest possible: every frame)
 ENEMY6_STEP_TIMER   EQU 0F1D8h  ; shared countdown to the next 1-column step
+; enemy-fired bullet pool (new) - genuinely free RAM right after
+; ENEMY6_STEP_TIMER (nothing else claims F1D9h+ up to STACKTOP=F380h).
+EBULLET_POOL  EQU 0F1D9h        ; EBULLET_SLOTS*EBULLET_STRUCT = 24 bytes (F1D9h-F1F0h)
+; --- IMPORTANT: 0F200h-0F201h is NOT free, despite being inside this  ---
+; --- same "F1D9h+ up to STACKTOP" gap - tools/bankswitch_poc/         ---
+; --- build_full_rom.py's Comb-build-only patch copies a 2-byte bank-  ---
+; --- switch trampoline there at runtime (RAM, not part of this        ---
+; --- tracked source, so it's invisible from in here). Everything      ---
+; --- below was found silently corrupting it once it grew past F1F8h,  ---
+; --- hanging the Comb build's boss->stage2 bank switch (verify_comb.py---
+; --- caught it: stuck spinning, never reached stage2's own INIT) -    ---
+; --- so new RAM here starts at F210h instead, well clear of it.       ---
+BARRIER_HP    EQU 0F210h        ; player's barrier durability, 0-5; equipped from game
+                                 ; start (INIT sets 5); accent overlay shows the barrier
+                                 ; pattern while nonzero, reverts to the normal accent at 0.
+                                 ; No damage/collision exists yet - nothing decrements this
+                                 ; today (see PLAYER_ACCENT_PAT selection, INIT).
+BARRIER_HP_INIT EQU 5
+GAME_OVER       EQU 0F211h  ; 0=playing, 1=game over. "現状ゲームオーバー
+                             ; 処理は残しておくが ゲームは止めないでくれ" -
+                             ; MAINLOOP does NOT freeze on this (tracked
+                             ; only; see PLAYER_DAMAGE_CHECK/PTH_GAMEOVER).
+BARRIER_IFRAMES EQU 0F212h  ; frames left of post-hit invulnerability, so one
+                             ; overlapping frame with an enemy/bullet can't
+                             ; drain more than 1 barrier HP before they
+                             ; separate again - untuned placeholder value
+BARRIER_IFRAMES_INIT EQU 60
+PLAYER_ACCENT_COLOR EQU 0F213h ; this frame's accent color (SPR_WHITE/
+                                 ; SPR_PURPLE, see the accent-select logic)
+SND_C_DUTY_TIMER EQU 0F214h    ; 0=normal channel-C playback (SOUND_SHOT/
+                                 ; SOUND_POD_HIT untouched); else counts
+                                 ; 8->1, duty-gated - see SOUND_BARRIER_HIT/
+                                 ; SOUND_UPDATE_C
+PLAYER_EXPL_SLOTS  EQU 4
+PLAYER_EXPL_STRUCT EQU 5        ; +0 ACTIVE,+1 X,+2 Y,+3 TIMER,+4 SPRNUM
+PLAYER_EXPL_POOL   EQU 0F215h   ; 4*5 = 20 bytes (F215h-F228h)
+PLAYER_EXPL_TOTAL_TIMER EQU 0F229h  ; frames left in the whole ~2s burst
+                                     ; sequence (0=inactive)
+PLAYER_EXPL_SPAWN_TIMER EQU 0F22Ah  ; frames until the next single-instance
+                                     ; spawn attempt
+PLAYER_EXPL_LIFE EQU 20             ; frames each burst instance lives -
+                                     ; untuned placeholder
+PLAYER_EXPL_SPAWN_INTERVAL EQU 8    ; frames between spawn attempts -
+                                     ; untuned placeholder (~15 bursts over
+                                     ; the full ~2s sequence)
+PLAYER_EXPL_TOTAL_LEN EQU 120       ; ~2 seconds at 60fps - untuned placeholder
 
     DB "AB"
     DW INIT
@@ -886,6 +964,13 @@ INIT_SPRATR_CLR:
     LD A,PLAYER_INITY : LD (PLAYERY),A
     LD A,PAT_SHIP : LD (PLAYER_SHIP_PAT),A
     LD A,PAT_ACCENT : LD (PLAYER_ACCENT_PAT),A
+    LD A,BARRIER_HP_INIT : LD (BARRIER_HP),A   ; barrier equipped from game start
+    XOR A : LD (GAME_OVER),A : LD (BARRIER_IFRAMES),A
+    LD (SND_C_DUTY_TIMER),A
+    LD HL,PLAYER_EXPL_POOL : LD (HL),A
+    LD DE,PLAYER_EXPL_POOL+1 : LD BC,21 : LDIR   ; zeroes the pool +
+                                                   ; PLAYER_EXPL_TOTAL_TIMER/
+                                                   ; SPAWN_TIMER (all 3 contiguous)
     XOR A
     LD (BULLET0_ACT),A : LD (BULLET1_ACT),A : LD (BULLET2_ACT),A
     LD (JOY_TRIGB_PREV),A
@@ -910,12 +995,21 @@ INIT_SPRATR_CLR:
     LD HL,E2B_SEQ_STATE : LD (HL),A
     LD DE,E2B_SEQ_STATE+1 : LD BC,99 : LDIR   ; +2 to also clear E2B_ANIM_SEQ/TIMER
     CALL ENEMY_POOL_INIT
+    CALL EBULLET_POOL_INIT
+    LD HL,E1_FIRE_COUNTDOWN : CALL RANDOM_3_5 : LD (HL),A
+    LD HL,E5_FIRE_COUNTDOWN : CALL RANDOM_3_5 : LD (HL),A
+    LD HL,E2_FIRE_COUNTDOWN : CALL RANDOM_3_5 : LD (HL),A
     LD HL,ENEMY4_PATTERN : LD DE,PAT_ENEMY4*8+SPRPAT : LD BC,32 : CALL LDIRVM
+    LD HL,ENEMY4_PATTERN_2 : LD DE,PAT_ENEMY4_2*8+SPRPAT : LD BC,32 : CALL LDIRVM
+    LD HL,EBULLET_PATTERN : LD DE,PAT_EBULLET*8+SPRPAT : LD BC,32 : CALL LDIRVM
     LD HL,SHIP_MID_PATTERN : LD DE,PAT_SHIP*8+SPRPAT : LD BC,32 : CALL LDIRVM
     LD HL,SHIP_UP_PATTERN : LD DE,PAT_SHIP_UP*8+SPRPAT : LD BC,32 : CALL LDIRVM
     LD HL,SHIP_DOWN_PATTERN : LD DE,PAT_SHIP_DOWN*8+SPRPAT : LD BC,32 : CALL LDIRVM
     LD HL,ACCENT_MID_PATTERN : LD DE,PAT_ACCENT*8+SPRPAT : LD BC,32 : CALL LDIRVM
     LD HL,ACCENT_DOWN_PATTERN : LD DE,PAT_ACCENT_DOWN*8+SPRPAT : LD BC,32 : CALL LDIRVM
+    LD HL,ACCENT_MID_BARRIER_PATTERN : LD DE,PAT_ACCENT_BARRIER*8+SPRPAT : LD BC,32 : CALL LDIRVM
+    LD HL,ACCENT_DOWN_BARRIER_PATTERN : LD DE,PAT_ACCENT_DOWN_BARRIER*8+SPRPAT : LD BC,32 : CALL LDIRVM
+    LD HL,PLAYER_EXPL_PATTERN : LD DE,PAT_PLAYER_EXPLOSION*8+SPRPAT : LD BC,32 : CALL LDIRVM
     LD HL,E1A_PATTERN : LD DE,PAT_ENEMY1*8+SPRPAT : LD BC,32 : CALL LDIRVM
     LD HL,PARTICLE_PATTERN : LD DE,PAT_PARTICLE*8+SPRPAT : LD BC,32 : CALL LDIRVM
     LD A,1 : LD (ENEMY1_LOOK_FLAGS),A : LD (ENEMY1_LOOK_FLAGS+1),A
@@ -1042,6 +1136,14 @@ MAINLOOP:
     ; --- NOP margins are what keep individual VDP OUT sequences safe    ---
     ; --- from an interrupt landing mid-sequence, not DI.                ---
     LD A,(TICK) : INC A : AND 3Fh : LD (TICK),A
+
+    ; "現状ゲームオーバー処理は残しておくが ゲームは止めないでくれ
+    ; チェックできないからな" - GAME_OVER itself is still tracked
+    ; (PLAYER_TAKE_HIT still sets it) but MAINLOOP no longer freezes
+    ; on it - play continues so the feature can actually be tested.
+    ; (Previous round's freeze-the-whole-loop gate lived right here;
+    ; deliberately removed, not just disabled, per this instruction.)
+
     LD A,(BOSS_STATE)
     CP 1
     CALL Z,BOSS_UPDATE_BODY
@@ -1565,17 +1667,40 @@ SHIPFR_GOT:
     LD (PLAYER_SHIP_PAT),A
 
     ; same idea for the accent overlay, but it only has MID/DOWN -
-    ; climbing (and everything else) keeps MID.
+    ; climbing (and everything else) keeps MID. While the barrier is
+    ; equipped (BARRIER_HP>0), show the barrier-augmented variant of
+    ; whichever pose would normally show instead (see ACCENT_MID_
+    ; BARRIER_PATTERN/ACCENT_DOWN_BARRIER_PATTERN) - reverts to the
+    ; plain accent once BARRIER_HP reaches 0.
     LD A,(JOY_STICK)
     CP 4 : JR Z,ACCFR_DOWN
     CP 5 : JR Z,ACCFR_DOWN
     CP 6 : JR Z,ACCFR_DOWN
+    LD A,(BARRIER_HP) : OR A
     LD A,PAT_ACCENT
+    JR Z,ACCFR_GOT
+    LD A,PAT_ACCENT_BARRIER
     JR ACCFR_GOT
 ACCFR_DOWN:
+    LD A,(BARRIER_HP) : OR A
     LD A,PAT_ACCENT_DOWN
+    JR Z,ACCFR_GOT
+    LD A,PAT_ACCENT_DOWN_BARRIER
 ACCFR_GOT:
     LD (PLAYER_ACCENT_PAT),A
+
+    ; "被弾時はバリア色のホワイトをパープルに" - flashes purple for the
+    ; same window as BARRIER_IFRAMES (the post-hit invulnerability
+    ; timer already tracks exactly "just got hit"), white otherwise.
+    ; Precomputed here (outside the DI-timed VDP write block below) so
+    ; that block's own fixed NOP spacing stays undisturbed - same
+    ; reasoning as EBSD_DRAW_PAT/EBSD_DRAW_COLOR.
+    LD A,(BARRIER_IFRAMES) : OR A
+    LD A,SPR_WHITE
+    JR Z,ACC_COLOR_GOT
+    LD A,SPR_PURPLE
+ACC_COLOR_GOT:
+    LD (PLAYER_ACCENT_COLOR),A
 
     ; redraw ship: slot1=body, slot0=accent overlay (priority above ---
     ; body, drawn at PLAYERX+8, PLAYERY)
@@ -1607,7 +1732,7 @@ ACCFR_GOT:
     PUSH BC : POP BC : NOP : NOP
     LD A,(PLAYER_ACCENT_PAT) : OUT (98h),A
     PUSH BC : POP BC : NOP : NOP
-    LD A,SPR_WHITE : OUT (98h),A
+    LD A,(PLAYER_ACCENT_COLOR) : OUT (98h),A
     PUSH BC : POP BC : NOP : NOP
 
     ; ============================================================
@@ -1797,6 +1922,7 @@ ANIM2_DONE:
     ; --- unified sprite-enemy buffer: advance every active slot,   ---
     ; --- regardless of which movement algorithm (BEHAVIOR) it uses ---
     CALL ENEMY_POOL_UPDATE_ALL
+    CALL UPDATE_EBULLET_ALL
     CALL ENEMY5_ANIM_STEP
     CALL CLOUD_UPDATE_ALL
 
@@ -2046,6 +2172,9 @@ BULLET2_OFF:
     XOR A : LD (BULLET2_ACT),A
 BULLET2_NEXT:
 
+    CALL PLAYER_DAMAGE_CHECK
+    CALL PLAYER_EXPL_UPDATE_ALL
+
     JP MAINLOOP
 
 ; ============================================================
@@ -2282,6 +2411,60 @@ QUAD_HIT_TEST:
     LD A,1
     RET
 QUAD_HIT_NO:
+    XOR A
+    RET
+
+; Same 4-edge overlap shape as QUAD_HIT_TEST, but with the PLAYER's own
+; hitbox as the fixed box instead of a *8-multiplied grid-aligned
+; bullet - the player's own X/Y are free-moving pixels, not grid-
+; aligned, so it can't reuse QUAD_HIT_TEST as-is.
+; "自機のヒットボックスは下側8x8に 今のバリア左だな" - shrunk from the
+; full 16x16 ship body down to just its own bottom-left 8x8 quadrant:
+; (PLAYERX,PLAYERY)-(+7,+7) (was (PLAYERX,PLAYERY-8)-(+15,+15)).
+; Input: D,E = the OTHER (enemy-side) box's top-left (pixel). Output:
+; A=1 if it overlaps the player, else 0. Trashes A,H,L only - safe to
+; CALL from inside a DJNZ B-counter scan loop without saving BC.
+PLAYER_HIT_BOX8:
+    LD A,(PLAYERX) : LD H,A
+    LD A,(PLAYERY) : LD L,A
+    LD A,H : ADD A,7
+    CP D
+    JR C,PHB8_NO
+    LD A,D : ADD A,7
+    CP H
+    JR C,PHB8_NO
+    LD A,L : ADD A,7
+    CP E
+    JR C,PHB8_NO
+    LD A,E : ADD A,7
+    CP L
+    JR C,PHB8_NO
+    LD A,1
+    RET
+PHB8_NO:
+    XOR A
+    RET
+
+; Same as PLAYER_HIT_BOX8, but the other (enemy-side) box is 16x16
+; instead of 8x8 (e.g. Enemy6, EBULLET). Input/output/trashes: same.
+PLAYER_HIT_BOX16:
+    LD A,(PLAYERX) : LD H,A
+    LD A,(PLAYERY) : LD L,A
+    LD A,H : ADD A,7
+    CP D
+    JR C,PHB16_NO
+    LD A,D : ADD A,15
+    CP H
+    JR C,PHB16_NO
+    LD A,L : ADD A,7
+    CP E
+    JR C,PHB16_NO
+    LD A,E : ADD A,15
+    CP L
+    JR C,PHB16_NO
+    LD A,1
+    RET
+PHB16_NO:
     XOR A
     RET
 
@@ -2751,10 +2934,27 @@ WAC_SKIPBUF:
     RET
 
 ; PSG (AY-3-8910-compatible) sound effects: channel A = noise-only
-; (destroy "boom"), channel C = tone-only (shot "chun" blip), both
-; enabled once at INIT. SND_TIMER/SND_TIMER_C double as both the
-; frame countdown and that channel's volume (0-15), so each sound
-; fades out on its own as it counts down to 0.
+; (destroy "boom", and the engine rumble below), channel B = tone-only
+; (pod-fire "don"), channel C = tone-only (shot "chun" blip), all 3
+; fixed for good by ONE mixer write at INIT (0B1h) - no sound routine
+; here ever touches PSG register 7 again, unlike Stage2's own shared/
+; time-shared channel A. SND_TIMER/SND_TIMER_B/SND_TIMER_C double as
+; both the frame countdown and that channel's volume (0-15), so each
+; sound fades out on its own as it counts down to 0.
+;
+; round32 (ported from Stage2 - "ステージ1もデューティ比操作を適用"):
+; channel A's own R8 volume write in SOUND_UPDATE below alternates
+; every single frame between the current envelope and silence, using
+; TICK's own low bit (free-running, unconditionally incremented every
+; frame right at the top of MAINLOOP - see its own comment there) as
+; the toggle, same "デューティ比1:1で減衰しながらボリューム半分か
+; OFFをまぜてくれ そうすればブリブリって音になるはず" idea Stage2's
+; own SOUND_CALC_NOISE_GATE_VOLUME implements, just simpler here since
+; channel A is ALWAYS noise in this file (no per-sound "is this noise"
+; flag needed the way Stage2's shared channel required - see that
+; file's own SND_NOISE byte). Channels B/C (always tone) are
+; deliberately left ungated, same reasoning as Stage2 excluding its own
+; tone-based "kin-kin" deflect ping.
 SOUND_SHOT:
     LD A,4 : OUT (PSG_ADDR),A
     LD A,30 : OUT (PSG_DATA),A    ; channel C tone period -> bright "chun" pitch
@@ -2778,6 +2978,20 @@ SOUND_POD_HIT:
     LD A,10 : LD (SND_TIMER_C),A
     RET
 
+; "サウンドはブブって2回低音のデューティ比25％最大音量で" - reuses
+; channel C (shared with SOUND_SHOT/SOUND_POD_HIT, same "one sound at a
+; time per channel" tradeoff already accepted throughout this file) at
+; a low period, gated through SND_C_DUTY_TIMER (see SOUND_UPDATE_C):
+; an 8-frame window with exactly 2 full-volume(15) frames (at counter
+; 8 and 4) = 2/8 = 25% duty, giving 2 short low buzzes.
+SOUND_BARRIER_HIT:
+    LD A,4 : OUT (PSG_ADDR),A
+    LD A,132 : OUT (PSG_DATA),A   ; channel C tone period fine byte
+    LD A,5 : OUT (PSG_ADDR),A
+    LD A,3 : OUT (PSG_DATA),A     ; coarse byte -> period=900, deep low pitch
+    LD A,8 : LD (SND_C_DUTY_TIMER),A
+    RET
+
 SOUND_POD_FIRE:
     LD A,2 : OUT (PSG_ADDR),A
     LD A,244 : OUT (PSG_DATA),A   ; channel B tone period fine byte
@@ -2785,10 +2999,49 @@ SOUND_POD_FIRE:
     LD A,2 : OUT (PSG_DATA),A     ; coarse byte -> period=756, much lower "don"
     LD A,15 : LD (SND_TIMER_B),A
     RET
-SOUND_UPDATE:
+; out: A = this frame's channel-A output volume - duty-cycle gated
+; (silent if TICK's own low bit is set, else the raw SND_TIMER
+; envelope). Pure function, no side effects (doesn't touch the PSG or
+; step SND_TIMER itself) - kept standalone specifically so it's
+; directly testable without needing to observe an actual PSG register
+; write (z80emu.py has no PSG emulation at all, same reasoning as
+; Stage2's own SOUND_CALC_NOISE_GATE_VOLUME).
+CALC_NOISE_GATE_VOLUME:
+    LD A,(TICK) : AND 1
+    JR NZ,CNGV_SILENT
     LD A,(SND_TIMER)
+    RET
+CNGV_SILENT:
+    XOR A
+    RET
+
+; out: A = this frame's duty-gated channel-C volume while SND_C_DUTY_
+; TIMER is active (15 on the 2 "buzz" frames - counter values 8 and 4
+; out of the 8-frame window = 2/8 = 25% duty - else 0). Pure function,
+; no side effects (doesn't touch the PSG or SND_C_DUTY_TIMER itself) -
+; kept standalone specifically so it's directly testable without
+; needing to observe an actual PSG register write, same reasoning as
+; CALC_NOISE_GATE_VOLUME above. Deliberately placed here (not between
+; SOUND_UPDATE_B and SOUND_UPDATE_C) - those 2 fall straight into each
+; other with no RET/JP between them, so a routine dropped in between
+; would silently hijack that fallthrough (found and fixed via this
+; exact regression - see verify_sound_duty_cycle.py).
+CALC_DUTY_GATE_VOLUME:
+    LD A,(SND_C_DUTY_TIMER)
+    CP 8
+    JR Z,CDGV_ON
+    CP 4
+    JR Z,CDGV_ON
+    XOR A
+    RET
+CDGV_ON:
+    LD A,15
+    RET
+
+SOUND_UPDATE:
+    CALL CALC_NOISE_GATE_VOLUME
     LD B,A
-    LD A,8 : OUT (PSG_ADDR),A     ; R8 = channel A volume
+    LD A,8 : OUT (PSG_ADDR),A     ; R8 = channel A volume (duty-cycle gated)
     LD A,B : OUT (PSG_DATA),A
     LD A,(SND_TIMER)
     OR A
@@ -2806,6 +3059,20 @@ SOUND_UPDATE_B:
     DEC A
     LD (SND_TIMER_B),A
 SOUND_UPDATE_C:
+    LD A,(SND_C_DUTY_TIMER)
+    OR A
+    JR Z,SUC_NORMAL
+    ; duty-gated playback (SOUND_BARRIER_HIT) - see SND_C_DUTY_TIMER's
+    ; own comment. SND_TIMER_C itself is left alone here (untouched by
+    ; SOUND_BARRIER_HIT, so SUC_NORMAL's own write stays harmless/silent
+    ; once this window ends).
+    CALL CALC_DUTY_GATE_VOLUME
+    LD B,A
+    LD A,10 : OUT (PSG_ADDR),A
+    LD A,B : OUT (PSG_DATA),A
+    LD A,(SND_C_DUTY_TIMER) : DEC A : LD (SND_C_DUTY_TIMER),A
+    RET
+SUC_NORMAL:
     LD A,(SND_TIMER_C)
     LD B,A
     LD A,10 : OUT (PSG_ADDR),A    ; R10 = channel C volume
@@ -3077,6 +3344,19 @@ E2A_ACTIVE EQU 0E661h
 E2A_ANIM_SEQ EQU 0E662h    ; shared (all 3 units) 1,2,3,2 quadrant-anim index,
                            ; free RAM right after E2A_ACTIVE - see ECS_S7_A
 E2A_ANIM_TIMER EQU 0E663h
+; "E1,E2,E5はランダムに3から5機に一度発射 ただし斜め移動中のみ" -
+; per-type shared "how many more spawns until the next one is the
+; designated shooter" countdowns (seeded to a random 3-5 at INIT,
+; reseeded to a fresh random 3-5 by DECIDE_FIRE_SHOOTER every time it
+; picks a shooter - see that routine's own comment), plus Enemy2's own
+; per-formation-instance flag (0=not this spawn's shooter,1=shooter/
+; not yet fired,2=fired) since. E2A/E2B are 2 concurrent formations
+; and each needs its own flag. Free RAM right after E2A_ANIM_TIMER,
+; before E2B_SEQ_STATE (E664h-E67Fh unused until now).
+E1_FIRE_COUNTDOWN EQU 0E664h   ; TYPE_ENEMY4(=Enemy1=Enemy7) shared spawn counter
+E5_FIRE_COUNTDOWN EQU 0E665h   ; TYPE_ENEMY1_LOOK(Enemy5) shared spawn counter
+E2_FIRE_COUNTDOWN EQU 0E666h   ; Enemy2 A+B shared spawn counter
+E2A_FIRE_FLAG      EQU 0E667h
 E2B_SEQ_STATE EQU 0E680h
 E2B_EXIT_PHASE EQU 0E681h
 E2B_EXITTYPE EQU 0E682h
@@ -3114,6 +3394,7 @@ E2B_TEMP_SPRNUM EQU 0E6E0h
 E2B_ACTIVE EQU 0E6E1h
 E2B_ANIM_SEQ EQU 0E6E2h    ; same idea as E2A_ANIM_SEQ, free RAM after E2B_ACTIVE
 E2B_ANIM_TIMER EQU 0E6E3h
+E2B_FIRE_FLAG EQU 0E6E4h   ; B's own copy of E2A_FIRE_FLAG - see its own comment (free RAM after E2B_ANIM_TIMER)
 
 ; --- Enemy4: sine-wave vertical bob while moving left fast, using ---
 ; --- the same asterisk sprite look as Enemy1/2 (built at spawn    ---
@@ -3127,6 +3408,11 @@ ENEMY4_SPAWNX  EQU 240
 ENEMY4_HP      EQU 2          ; hits to destroy - trial run of the durability system
 ENEMY4_LUT_LEN EQU 32
 PAT_ENEMY4     EQU 84         ; patterns84-87 (32 bytes at SPRPAT+672)
+; "E4にアニメ追加 上下移動中に適用" - 2nd pose, shown alternating with
+; PAT_ENEMY4 while diving (see EBSD_DIAG_E4/EBSD_DRAW_E4). Free code
+; range (92-95, confirmed unused elsewhere in this file).
+PAT_ENEMY4_2   EQU 92         ; patterns92-95 (32 bytes at SPRPAT+736)
+E4_ANIM_FRAME_LEN EQU 4       ; frames per pose toggle while diving - same pacing as ENEMY1_ANIM_FRAME_LEN
 PAT_PARTICLE   EQU 120        ; single-dot trail particle (32 bytes at SPRPAT+960)
 E4_SPAWN_BASEY EQU 0E709h ; scratch: this wave's base Y, set right before ENEMY4_CLAIM_ANY
 PAT_ENEMY1_LOOK EQU 88     ; test: Enemy1's asterisk look, static (32 bytes at SPRPAT+704),
@@ -3422,6 +3708,12 @@ ESC_COMPLEX_INIT_A:
     PUSH BC : POP BC : NOP : NOP
     LD A,1 : LD (E2A_ACTIVE),A
     EI
+    ; "E2はランダムに3から5機に一度発射" - decided once per formation
+    ; spawn, here (SPAWN_E2 dispatches to exactly one of A/B per spawn -
+    ; see its own comment). Checked/consumed in ECS_S7_A.
+    LD HL,E2_FIRE_COUNTDOWN
+    CALL DECIDE_FIRE_SHOOTER
+    LD (E2A_FIRE_FLAG),A
     RET
 
 ; See ENEMY_START_COMPLEX_A's comment - same idea, instance B.
@@ -3504,6 +3796,11 @@ ESC_COMPLEX_INIT_B:
     PUSH BC : POP BC : NOP : NOP
     LD A,1 : LD (E2B_ACTIVE),A
     EI
+    ; "E2はランダムに3から5機に一度発射" - see ENEMY_START_COMPLEX_A's
+    ; own comment. Checked/consumed in ECS_S7_B.
+    LD HL,E2_FIRE_COUNTDOWN
+    CALL DECIDE_FIRE_SHOOTER
+    LD (E2B_FIRE_FLAG),A
     RET
 
 ; Checked once per game tick (every 8 frames). Fires each scheduled
@@ -5951,6 +6248,622 @@ FREE_SPRITE_NUM:
     XOR A : LD (HL),A
     RET
 
+; Output: A = a pseudo-random value in 3-5 inclusive, off the shared
+; free-running counter (see DFL_RNG) - same "for now, plain range off
+; DFL_RNG" idiom as CLOUD_RANDOM_WAIT. AND 3 gives 0-3 (4 outcomes);
+; folding the rare 3 back to 0 keeps the result in {3,4,5} (a slight
+; bias toward 3, acceptable for a pseudo-random spawn-count gate, same
+; looseness this codebase already accepts elsewhere). Trashes A.
+RANDOM_3_5:
+    LD A,(DFL_RNG) : INC A : LD (DFL_RNG),A
+    AND 3
+    CP 3
+    JR NZ,R35_OK
+    XOR A
+R35_OK:
+    ADD A,3
+    RET
+
+; "E1,E2,E5はランダムに3から5機に一度発射" - shared "designated
+; shooter" gate. Input: HL = address of a per-type countdown byte
+; (pre-seeded to RANDOM_3_5 at INIT). Call once per new spawn of that
+; type. Output: A=1 if THIS spawn is the designated shooter (the
+; countdown just reached 0 and has been reseeded to a fresh random
+; 3-5), A=0 otherwise (countdown just decremented). Trashes A.
+DECIDE_FIRE_SHOOTER:
+    LD A,(HL)
+    DEC A
+    LD (HL),A
+    JR NZ,DFS_NO
+    CALL RANDOM_3_5
+    LD (HL),A
+    LD A,1
+    RET
+DFS_NO:
+    XOR A
+    RET
+
+; Zeroes every slot of the enemy-bullet pool (ACTIVE=0). Called once
+; from INIT, same idiom as ENEMY_POOL_INIT.
+EBULLET_POOL_INIT:
+    LD HL,EBULLET_POOL
+    LD DE,EBULLET_POOL+1
+    LD BC,EBULLET_SLOTS*EBULLET_STRUCT-1
+    LD (HL),0
+    LDIR
+    RET
+
+; Claims a free EBULLET_POOL slot and a free hw sprite number, then
+; arms it to fly. Input: D=X,E=Y (spawn position, sprite top-left).
+; If the pool is full or no hw sprite number is available, silently
+; drops the shot - same "pool exhaustion -> drop" idiom as
+; ENEMY4_CLAIM_ANY's own pattern-slot exhaustion handling. Preserves
+; the caller's own IX (used internally, restored before RET) so this
+; is safe to call from inside another entity's own IX-indexed update.
+; Trashes A,B,DE,HL.
+SPAWN_EBULLET:
+    PUSH IX
+    LD HL,EBULLET_POOL
+    LD B,EBULLET_SLOTS
+SEB_SCAN:
+    LD A,(HL)
+    OR A
+    JR Z,SEB_FOUND
+    PUSH DE
+    LD DE,EBULLET_STRUCT
+    ADD HL,DE
+    POP DE
+    DJNZ SEB_SCAN
+    POP IX
+    RET                      ; pool full - drop
+SEB_FOUND:
+    PUSH HL : POP IX
+    PUSH DE
+    CALL ALLOC_SPRITE_NUM
+    POP DE
+    OR A
+    JR Z,SEB_FAIL            ; no hw sprite available - drop
+    LD (IX+3),A              ; SPRNUM
+    LD (IX+1),D              ; X
+    LD (IX+2),E              ; Y
+    LD A,1 : LD (IX+0),A     ; ACTIVE
+SEB_FAIL:
+    POP IX
+    RET
+
+; Advances every active enemy-bullet slot left by EBULLET_SPEED,
+; hiding+freeing+deactivating on exit past the left edge, else
+; redrawing it (pattern/color are fixed - see PAT_EBULLET/SPR_
+; LIGHTRED). Same DI/EI-wrapped, fixed-NOP VDP-write idiom as every
+; other sprite draw in this file. Called once per frame from MAINLOOP,
+; alongside ENEMY_POOL_UPDATE_ALL. Preserves the caller's own IX.
+; Trashes A,B,DE,HL.
+UPDATE_EBULLET_ALL:
+    PUSH IX
+    LD HL,EBULLET_POOL
+    LD B,EBULLET_SLOTS
+UEA_LOOP:
+    PUSH HL
+    PUSH HL : POP IX
+    LD A,(IX+0)
+    OR A
+    JR Z,UEA_NEXT
+    LD A,(IX+1)
+    CP EBULLET_SPEED
+    JR NC,UEA_MOVEOK
+    ; exiting past the left edge: hide, free the sprite number, deactivate
+    LD A,(IX+3)
+    DI
+    ADD A,A : ADD A,A : OUT (99h),A
+    NOP
+    NOP
+    LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    LD A,ENEMY_HIDE_Y : OUT (98h),A
+    PUSH BC : POP BC : NOP : NOP
+    LD A,255 : OUT (98h),A
+    PUSH BC : POP BC : NOP : NOP
+    EI
+    LD A,(IX+3) : CALL FREE_SPRITE_NUM
+    XOR A : LD (IX+0),A
+    JR UEA_NEXT
+UEA_MOVEOK:
+    SUB EBULLET_SPEED
+    LD (IX+1),A
+    DI
+    LD A,(IX+3) : ADD A,A : ADD A,A : OUT (99h),A
+    NOP
+    NOP
+    LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    LD A,(IX+2) : OUT (98h),A
+    PUSH BC : POP BC : NOP : NOP
+    LD A,(IX+1) : OUT (98h),A
+    PUSH BC : POP BC : NOP : NOP
+    EI
+    DI
+    LD A,PAT_EBULLET : OUT (98h),A
+    PUSH BC : POP BC : NOP : NOP
+    LD A,SPR_LIGHTRED : OUT (98h),A
+    PUSH BC : POP BC : NOP : NOP
+    EI
+UEA_NEXT:
+    POP HL
+    LD DE,EBULLET_STRUCT
+    ADD HL,DE
+    DJNZ UEA_LOOP
+    POP IX
+    RET
+
+; ============================================================
+; --- player damage: contact with any enemy or enemy bullet  ---
+; --- costs 1 barrier HP; at 0 HP the next hit ends the game ---
+; --- (see PLAYER_DAMAGE_CHECK/PLAYER_TAKE_HIT below).       ---
+; ============================================================
+
+; Player-vs-ENEMY_POOL(Fighter/Wave) contact check. Output: A=1 if the
+; player's own hitbox overlaps ANY active instance's live hitbox
+; (TYPE_ENEMY4: single box8 at (E_X,E_Y+8), matching EBSD_HT_ENEMY4;
+; else TOP/BOT quadrant box8es at (E_X,E_Y)/(E_X+8,E_Y+8), matching
+; EBSB_HIT_TEST/EBSD_HIT_TEST) - same source-of-truth geometry as the
+; existing player-bullet-vs-enemy hit tests, just tested against the
+; player's own hitbox instead of a bullet's. Does NOT damage/destroy
+; the enemy - contact only costs the player a barrier HP (see
+; PLAYER_DAMAGE_CHECK), the enemy itself is untouched and keeps flying.
+PDC_CHECK_ENEMY_POOL:
+    LD HL,ENEMY_POOL
+    LD B,ENEMY_SLOT_COUNT
+PDCEP_LOOP:
+    LD A,(HL)
+    OR A
+    JR Z,PDCEP_SKIP
+    PUSH HL
+    PUSH HL : POP IX
+    LD A,(IX+E_TYPE)
+    CP TYPE_ENEMY4
+    JR Z,PDCEP_E4
+    LD A,(IX+E_TOP)
+    OR A
+    JR Z,PDCEP_CHECKBOT
+    LD A,(IX+E_X) : LD D,A
+    LD A,(IX+E_Y) : LD E,A
+    CALL PLAYER_HIT_BOX8
+    OR A
+    JR NZ,PDCEP_HIT
+PDCEP_CHECKBOT:
+    LD A,(IX+E_BOT)
+    OR A
+    JR Z,PDCEP_MISS
+    LD A,(IX+E_X) : ADD A,8 : LD D,A
+    LD A,(IX+E_Y) : ADD A,8 : LD E,A
+    CALL PLAYER_HIT_BOX8
+    OR A
+    JR Z,PDCEP_MISS
+    JR PDCEP_HIT
+PDCEP_E4:
+    LD A,(IX+E_X) : LD D,A
+    LD A,(IX+E_Y) : ADD A,8 : LD E,A
+    CALL PLAYER_HIT_BOX8
+    OR A
+    JR Z,PDCEP_MISS
+PDCEP_HIT:
+    POP HL
+    LD A,1
+    RET
+PDCEP_MISS:
+    POP HL
+PDCEP_SKIP:
+    LD DE,ENEMY_SLOT_SIZE
+    ADD HL,DE
+    DJNZ PDCEP_LOOP
+    XOR A
+    RET
+
+; Shared player-contact scan for one Enemy2 (Zigzag) formation - 3
+; units, each a STATE/X/Y/TOP/BOT quintet (E2A_U0_STATE.../E2B_U0_
+; STATE... share this exact 5-byte stride - see CHECK_BULLET_VS_
+; FORMATION_A/B). Input: HL = the formation's own U0_STATE address.
+; Output: A=1 on contact, else 0. Does not kill/redraw anything.
+PDC_CHECK_E2_FORMATION:
+    LD B,3
+PDCE2_LOOP:
+    PUSH HL
+    LD A,(HL) : CP 1
+    JR NZ,PDCE2_SKIP
+    INC HL : LD A,(HL) : LD D,A    ; X
+    INC HL : LD A,(HL) : LD E,A    ; Y
+    INC HL : LD A,(HL)             ; TOP
+    OR A
+    JR Z,PDCE2_CHECKBOT
+    PUSH DE
+    CALL PLAYER_HIT_BOX8
+    POP DE
+    OR A
+    JR NZ,PDCE2_HIT
+PDCE2_CHECKBOT:
+    INC HL : LD A,(HL)             ; BOT
+    OR A
+    JR Z,PDCE2_SKIP
+    LD A,D : ADD A,8 : LD D,A
+    LD A,E : ADD A,8 : LD E,A
+    CALL PLAYER_HIT_BOX8
+    OR A
+    JR Z,PDCE2_SKIP
+PDCE2_HIT:
+    POP HL
+    LD A,1
+    RET
+PDCE2_SKIP:
+    POP HL
+    LD DE,5
+    ADD HL,DE
+    DJNZ PDCE2_LOOP
+    XOR A
+    RET
+
+; Player-vs-ENEMY3(ground/BG enemy) contact check. Mirrors E3_HIT_
+; ONE_SLOT/CHECK_BULLET_VS_ENEMY3's own ACTIVE-count short-circuit and
+; COL/ROW*8 pixel-box geometry ((IX+5)=COL->X, (IX+4)=ROW->Y, box8).
+PDC_CHECK_ENEMY3:
+    LD A,(ENEMY3_ACTIVE_COUNT)
+    OR A
+    JR Z,PDCE3_NONE
+    LD HL,ENEMY3_POOL
+    LD B,ENEMY3_WAVE_SLOTS*ENEMY3_SLOTS
+PDCE3_LOOP:
+    LD A,(HL)
+    OR A
+    JR Z,PDCE3_SKIP
+    PUSH HL
+    PUSH HL : POP IX
+    LD A,(IX+5) : ADD A,A : ADD A,A : ADD A,A : LD D,A
+    LD A,(IX+4) : ADD A,A : ADD A,A : ADD A,A : LD E,A
+    CALL PLAYER_HIT_BOX8
+    POP HL
+    OR A
+    JR NZ,PDCE3_HIT
+PDCE3_SKIP:
+    LD DE,ENEMY3_STRUCT
+    ADD HL,DE
+    DJNZ PDCE3_LOOP
+PDCE3_NONE:
+    XOR A
+    RET
+PDCE3_HIT:
+    LD A,1
+    RET
+
+; Player-vs-ENEMY6(spin glyph) contact check. Mirrors ENEMY6_HIT_
+; ONE_SLOT's own geometry ((IX+2)=COL->X,(IX+1)=ROW->Y, box16 - Enemy6
+; is a 16x16 entity, unlike ENEMY3/ENEMY_POOL's 8x8 quads).
+PDC_CHECK_ENEMY6:
+    LD HL,ENEMY6_POOL
+    LD B,ENEMY6_SLOTS
+PDCE6_LOOP:
+    LD A,(HL)
+    OR A
+    JR Z,PDCE6_SKIP
+    PUSH HL
+    PUSH HL : POP IX
+    LD A,(IX+2) : ADD A,A : ADD A,A : ADD A,A : LD D,A
+    LD A,(IX+1) : ADD A,A : ADD A,A : ADD A,A : LD E,A
+    CALL PLAYER_HIT_BOX16
+    POP HL
+    OR A
+    JR NZ,PDCE6_HIT
+PDCE6_SKIP:
+    LD DE,ENEMY6_STRUCT
+    ADD HL,DE
+    DJNZ PDCE6_LOOP
+    XOR A
+    RET
+PDCE6_HIT:
+    LD A,1
+    RET
+
+; Player-vs-boss-pod contact check (only meaningful once the boss has
+; landed, BOSS_STATE==2 - same gate MAINLOOP already uses for POD_
+; COLLISION_UPDATE/POD_FIRE_UPDATE). Reuses POD_HP/POD_CUR_X/POD_CUR_Y
+; (each pod's own live position cache) and the exact same signed-
+; delta-window overlap test as CHECK_BULLET0_VS_PODS (SUB+128+range-
+; check), just against the player's own position instead of a
+; bullet's. Does NOT call POD_HIT - contact only costs the player, the
+; pod itself is untouched (mirrors the enemy-body checks above).
+PDC_CHECK_PODS:
+    LD A,(BOSS_STATE)
+    CP 2
+    JR NZ,PDCP_NONE
+    LD A,(PLAYERX)
+    LD (POD_XY_X),A
+    LD A,(PLAYERY)
+    LD (POD_XY_Y),A
+    LD B,0
+PDCP_LOOP:
+    PUSH BC
+    LD HL,POD_HP : LD D,0 : LD E,B : ADD HL,DE
+    LD A,(HL)
+    OR A
+    JR Z,PDCP_SKIP
+    LD HL,POD_CUR_X : LD D,0 : LD E,B : ADD HL,DE
+    LD A,(POD_XY_X)
+    SUB (HL)
+    ADD A,128
+    CP 116
+    JR C,PDCP_SKIP
+    CP 141
+    JR NC,PDCP_SKIP
+    LD HL,POD_CUR_Y : LD D,0 : LD E,B : ADD HL,DE
+    LD A,(POD_XY_Y)
+    SUB (HL)
+    ADD A,128
+    CP 116
+    JR C,PDCP_SKIP
+    CP 141
+    JR NC,PDCP_SKIP
+    POP BC
+    LD A,1
+    RET
+PDCP_SKIP:
+    POP BC
+    INC B
+    LD A,B
+    CP 8
+    JR NZ,PDCP_LOOP
+PDCP_NONE:
+    XOR A
+    RET
+
+; Player-vs-enemy-bullet contact check. Unlike the enemy-body checks
+; above, a bullet that touches the player IS consumed (deactivated +
+; hidden + its sprite number freed - mirrors UPDATE_EBULLET_ALL's own
+; exit-left-edge cleanup) so it doesn't linger or re-trigger next frame.
+PDC_CHECK_EBULLET:
+    LD HL,EBULLET_POOL
+    LD B,EBULLET_SLOTS
+PDCEB_LOOP:
+    LD A,(HL)
+    OR A
+    JR Z,PDCEB_SKIP
+    PUSH HL
+    PUSH HL : POP IX
+    LD A,(IX+1) : LD D,A
+    LD A,(IX+2) : LD E,A
+    CALL PLAYER_HIT_BOX16
+    OR A
+    JR Z,PDCEB_MISS
+    LD A,(IX+3)
+    DI
+    ADD A,A : ADD A,A : OUT (99h),A
+    NOP
+    NOP
+    LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    LD A,ENEMY_HIDE_Y : OUT (98h),A
+    PUSH BC : POP BC : NOP : NOP
+    LD A,255 : OUT (98h),A
+    PUSH BC : POP BC : NOP : NOP
+    EI
+    LD A,(IX+3) : CALL FREE_SPRITE_NUM
+    XOR A : LD (IX+0),A
+    POP HL
+    LD A,1
+    RET
+PDCEB_MISS:
+    POP HL
+PDCEB_SKIP:
+    LD DE,EBULLET_STRUCT
+    ADD HL,DE
+    DJNZ PDCEB_LOOP
+    XOR A
+    RET
+
+; Called once/frame from the tail of MAINLOOP (after all enemies/
+; bullets/player movement have updated for this frame). Tests the
+; player's own hitbox against every enemy-side entity currently in the
+; game (Fighter/Wave, both Zigzag formations, the ground enemy, the
+; spin-glyph enemy, boss pods, enemy bullets) in turn, stopping at the
+; first overlap found. On a hit: if the barrier still has HP, it
+; absorbs the hit (BARRIER_HP-1, then a short invulnerability window
+; starts - see BARRIER_IFRAMES - so one overlapping frame can't drain
+; more than 1 HP before the entity/player separate again); at 0 HP the
+; next hit ends the game (GAME_OVER=1 + an explosion at the player's
+; own position - MAINLOOP freezes itself from the very top on the next
+; iteration once GAME_OVER is set, so this frame's explosion glyph is
+; the last thing left on screen).
+; No collision check runs while GAME_OVER is already set, or during
+; the post-boss flyaway (PLAYER_FLYAWAY!=0 - the ship is leaving the
+; screen, not meaningfully "in" the playfield anymore).
+PLAYER_DAMAGE_CHECK:
+    LD A,(GAME_OVER)
+    OR A
+    RET NZ
+    LD A,(PLAYER_FLYAWAY)
+    OR A
+    RET NZ
+    LD A,(BARRIER_IFRAMES)
+    OR A
+    JR Z,PDC_GO
+    DEC A : LD (BARRIER_IFRAMES),A
+    RET
+PDC_GO:
+    CALL PDC_CHECK_ENEMY_POOL
+    OR A : JP NZ,PLAYER_TAKE_HIT
+    LD HL,E2A_U0_STATE : CALL PDC_CHECK_E2_FORMATION
+    OR A : JP NZ,PLAYER_TAKE_HIT
+    LD HL,E2B_U0_STATE : CALL PDC_CHECK_E2_FORMATION
+    OR A : JP NZ,PLAYER_TAKE_HIT
+    CALL PDC_CHECK_ENEMY3
+    OR A : JP NZ,PLAYER_TAKE_HIT
+    CALL PDC_CHECK_ENEMY6
+    OR A : JP NZ,PLAYER_TAKE_HIT
+    CALL PDC_CHECK_PODS
+    OR A : JP NZ,PLAYER_TAKE_HIT
+    CALL PDC_CHECK_EBULLET
+    OR A
+    RET Z
+    JP PLAYER_TAKE_HIT
+
+PLAYER_TAKE_HIT:
+    LD A,(BARRIER_HP)
+    OR A
+    JR Z,PTH_GAMEOVER
+    DEC A : LD (BARRIER_HP),A
+    LD A,BARRIER_IFRAMES_INIT : LD (BARRIER_IFRAMES),A
+    ; "次にヒットエフェクトは爆発ではなくカラーチェンジで / 被弾時は
+    ; バリア色のホワイトをパープルに / サウンドはブブって2回..." - the
+    ; purple flash itself is driven by BARRIER_IFRAMES (just armed
+    ; above) in the accent-color-select logic; here just the sound.
+    JP SOUND_BARRIER_HIT   ; tail call
+PTH_GAMEOVER:
+    LD A,1 : LD (GAME_OVER),A
+    ; "バリアが無くなったあとの被弾は 16x16のスプライトの爆発パターン
+    ; で 自機を起点に複数派手に2秒ほど" - NOT the BG-based TRIGGER_
+    ; EXPLOSION (still used for regular enemy kills) - see PLAYER_
+    ; EXPL_TRIGGER/PLAYER_EXPL_UPDATE_ALL.
+    CALL PLAYER_EXPL_TRIGGER
+    JP SOUND_DESTROY   ; tail call - same "boom" as everything else that dies
+
+; Kicks off the ~2s player-death burst sequence (see PLAYER_EXPL_
+; UPDATE_ALL). Just arms the 2 master timers - the pool itself starts
+; genuinely empty (INIT already zeroed it) and gets populated by
+; PEUA_TRY_SPAWN as the sequence runs.
+PLAYER_EXPL_TRIGGER:
+    LD A,PLAYER_EXPL_TOTAL_LEN : LD (PLAYER_EXPL_TOTAL_TIMER),A
+    XOR A : LD (PLAYER_EXPL_SPAWN_TIMER),A   ; spawn the first burst right away
+    RET
+
+; Called unconditionally every frame from MAINLOOP's own tail -
+; deliberately NOT gated on GAME_OVER, since "ゲームは止めないでくれ
+; チェックできないからな" means play continues normally after death, so
+; this has to keep animating on its own regardless of what else is
+; happening. A no-op every frame once PLAYER_EXPL_TOTAL_TIMER reaches 0
+; and every instance has expired.
+;
+; Two independent halves: (1) while the master timer is running, spawn
+; a new burst instance every PLAYER_EXPL_SPAWN_INTERVAL frames at a
+; small pseudo-random offset from the player's own position ("自機を
+; 起点に"); (2) unconditionally tick/redraw/expire every already-
+; active instance (so already-spawned bursts keep animating even after
+; the master timer itself reaches 0 and stops spawning new ones).
+; Colors alternate white/light-red by each instance's own timer parity
+; for a "派手に" strobing look.
+PLAYER_EXPL_UPDATE_ALL:
+    LD A,(PLAYER_EXPL_TOTAL_TIMER)
+    OR A
+    JR Z,PEUA_INSTANCES
+    DEC A : LD (PLAYER_EXPL_TOTAL_TIMER),A
+    LD A,(PLAYER_EXPL_SPAWN_TIMER)
+    OR A
+    JR NZ,PEUA_SPAWN_TICK
+    LD A,PLAYER_EXPL_SPAWN_INTERVAL : LD (PLAYER_EXPL_SPAWN_TIMER),A
+    CALL PEUA_TRY_SPAWN
+    JR PEUA_INSTANCES
+PEUA_SPAWN_TICK:
+    DEC A : LD (PLAYER_EXPL_SPAWN_TIMER),A
+PEUA_INSTANCES:
+    LD HL,PLAYER_EXPL_POOL
+    LD B,PLAYER_EXPL_SLOTS
+PEUA_LOOP:
+    LD A,(HL)
+    OR A
+    JR Z,PEUA_NEXT
+    PUSH HL
+    PUSH HL : POP IX
+    LD A,(IX+3) : DEC A
+    JR NZ,PEUA_STILL_ALIVE
+    ; expired: hide, free the sprite number, deactivate (mirrors
+    ; UPDATE_EBULLET_ALL's own exit cleanup)
+    LD A,(IX+4)
+    DI
+    ADD A,A : ADD A,A : OUT (99h),A
+    NOP
+    NOP
+    LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    LD A,ENEMY_HIDE_Y : OUT (98h),A
+    PUSH BC : POP BC : NOP : NOP
+    LD A,255 : OUT (98h),A
+    PUSH BC : POP BC : NOP : NOP
+    EI
+    LD A,(IX+4) : CALL FREE_SPRITE_NUM
+    XOR A : LD (IX+0),A
+    JR PEUA_POP_NEXT
+PEUA_STILL_ALIVE:
+    LD (IX+3),A
+    DI
+    LD A,(IX+4) : ADD A,A : ADD A,A : OUT (99h),A
+    NOP
+    NOP
+    LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    LD A,(IX+2) : OUT (98h),A
+    PUSH BC : POP BC : NOP : NOP
+    LD A,(IX+1) : OUT (98h),A
+    PUSH BC : POP BC : NOP : NOP
+    EI
+    DI
+    LD A,PAT_PLAYER_EXPLOSION : OUT (98h),A
+    PUSH BC : POP BC : NOP : NOP
+    LD A,(IX+3) : AND 1
+    LD A,SPR_WHITE
+    JR Z,PEUA_COLOR_GOT
+    LD A,SPR_LIGHTRED
+PEUA_COLOR_GOT:
+    OUT (98h),A
+    PUSH BC : POP BC : NOP : NOP
+    EI
+PEUA_POP_NEXT:
+    POP HL
+PEUA_NEXT:
+    LD DE,PLAYER_EXPL_STRUCT
+    ADD HL,DE
+    DEC B                    ; DJNZ itself can't reach PEUA_LOOP (loop
+    JP NZ,PEUA_LOOP           ; body >127 bytes) - same effect via DEC+JP
+    RET
+
+; Finds a free pool slot + a free hw sprite number and spawns one new
+; burst instance there; silently does nothing if either is unavailable
+; (matches SPAWN_EBULLET's own "pool/sprite exhaustion -> drop" idiom -
+; the game keeps running post-death, so other systems can still be
+; actively using sprite slots concurrently). Trashes A,B,D,E,H,L,IX.
+PEUA_TRY_SPAWN:
+    LD HL,PLAYER_EXPL_POOL
+    LD B,PLAYER_EXPL_SLOTS
+PETS_LOOP:
+    LD A,(HL)
+    OR A
+    JR Z,PETS_FOUND
+    LD DE,PLAYER_EXPL_STRUCT
+    ADD HL,DE
+    DJNZ PETS_LOOP
+    RET
+PETS_FOUND:
+    ; convert to IX BEFORE calling ALLOC_SPRITE_NUM - it trashes HL/B
+    ; itself (scans SPRITE_USED with its own loop), so our own scan
+    ; pointer has to survive the call some other way (mirrors
+    ; SPAWN_EBULLET's own PUSH HL:POP IX before this exact call).
+    PUSH HL : POP IX
+    CALL ALLOC_SPRITE_NUM
+    OR A
+    RET Z
+    LD (IX+4),A
+    LD A,(DFL_RNG) : INC A : LD (DFL_RNG),A
+    AND 0Fh : SUB 8 : LD B,A          ; -8..+7 pseudo-random X jitter
+    LD A,(PLAYERX) : ADD A,B
+    LD (IX+1),A
+    LD A,(DFL_RNG) : INC A : LD (DFL_RNG),A
+    AND 0Fh : SUB 8 : LD B,A          ; -8..+7 pseudo-random Y jitter
+    LD A,(PLAYERY) : SUB 8 : ADD A,B
+    LD (IX+2),A
+    LD A,PLAYER_EXPL_LIFE : LD (IX+3),A
+    LD A,1 : LD (IX+0),A
+    RET
+
 ; Clears every slot of the unified enemy buffer (ACTIVE=0) and resets
 ; both shared trail-channel write indices. Called once from INIT.
 ENEMY_POOL_INIT:
@@ -6640,7 +7553,22 @@ E2A_ANIM_REDRAW_ALL:
 ECS_S7_A:
     LD A,(E2A_EXIT_PHASE)
     OR A
-    JR NZ,ECS_S7_HORIZ_A
+    JP NZ,ECS_S7_HORIZ_A
+
+    ; "E2はランダムに3から5機に一度発射 ただし斜め移動中のみ" - phase0
+    ; (this branch) IS Enemy2's own one diagonal-movement window (climb/
+    ; dive before leveling to horizontal exit). E2A_FIRE_FLAG was
+    ; decided once at spawn (ENEMY_START_COMPLEX_A); 1=shooter/not yet
+    ; fired, fires exactly once then flips to 2 (fired). Uses U0's own
+    ; position (the formation leader) as the bullet's spawn origin.
+    LD A,(E2A_FIRE_FLAG)
+    CP 1
+    JR NZ,ECS_S7_A_FIRE_DONE
+    LD A,2 : LD (E2A_FIRE_FLAG),A
+    LD A,(E2A_U0_X) : LD D,A
+    LD A,(E2A_U0_Y) : LD E,A
+    CALL SPAWN_EBULLET
+ECS_S7_A_FIRE_DONE:
 
     ; quadrant-glyph animation (1,2,3,2 repeating), shared across all
     ; 3 units - see ECS_S7_RECORD_A's own trail-replay, they move
@@ -7315,7 +8243,17 @@ E2B_ANIM_REDRAW_ALL:
 ECS_S7_B:
     LD A,(E2B_EXIT_PHASE)
     OR A
-    JR NZ,ECS_S7_HORIZ_B
+    JP NZ,ECS_S7_HORIZ_B
+
+    ; see ECS_S7_A's own comment - same idea, instance B.
+    LD A,(E2B_FIRE_FLAG)
+    CP 1
+    JR NZ,ECS_S7_B_FIRE_DONE
+    LD A,2 : LD (E2B_FIRE_FLAG),A
+    LD A,(E2B_U0_X) : LD D,A
+    LD A,(E2B_U0_Y) : LD E,A
+    CALL SPAWN_EBULLET
+ECS_S7_B_FIRE_DONE:
 
     ; quadrant-glyph animation - see ECS_S7_A's own comment.
     LD A,(E2B_ANIM_TIMER)
@@ -7568,6 +8506,13 @@ E4CA_SB_GOTPAT:
     LD A,1 : LD (IX+E_TOP),A : LD (IX+E_BOT),A
     LD A,BEHAVIOR_SINE_BOB : LD (IX+E_BEHAVIOR),A
     LD A,(E4_SPAWN_BASEY) : LD (IX+E_PARAM0),A
+    ; "E5はランダムに3から5機に一度発射" - decided once per spawn, here.
+    ; See EBSB_UPDATE's own comment for E_PARAM1/2's use.
+    PUSH HL
+    LD HL,E5_FIRE_COUNTDOWN
+    CALL DECIDE_FIRE_SHOOTER
+    LD (IX+E_PARAM1),A
+    POP HL
 E4CA_COMMON:
     LD A,ENEMY_SPAWNX : LD (IX+E_X),A
     CALL ALLOC_SPRITE_NUM : LD (IX+E_SPRNUM),A
@@ -7837,10 +8782,34 @@ EBSB_UPDATE:
     NOP
     NOP
 
+    ; "サインの頂点と下限ではLut参照を停止して横に16px動き上下の動きは
+    ; 無くすということ つまりサイン移動で頂点まで行き16pxドリフト
+    ; その後サイン移動で下限まで行き16pxドリフト この繰り返し" -
+    ; E_PARAM5 (genuinely unused by this BEHAVIOR - E_PARAM4 is NOT
+    ; free, it's shared with SIMPLE_REDRAW's glyph-sequence index for
+    ; this slot's quadrant-kill visuals, and must stay in [0,3] at all
+    ; times or a quadrant kill corrupts the drawn pattern) is a
+    ; "frozen-drift frames remaining" countdown, armed to 16 the instant
+    ; E_STATE reaches the peak(7)/trough(23) plateau in ENEMY4_SINE_LUT.
+    ; While nonzero, E_STATE is NOT advanced at all (so the LUT lookup -
+    ; and therefore Y - stays pinned exactly where it was: "Lut参照を
+    ; 停止") and X alone steps 1px/frame instead of the normal
+    ; ENEMY4_SPEED - exactly 16 frozen frames = 16px purely horizontal,
+    ; then normal sine-follow motion resumes from that same state,
+    ; continuing the curve away from the extreme it just paused at.
+    LD A,(IX+E_PARAM5)
+    OR A
+    JR NZ,EBSB_CHECK_FROZEN_EXIT
     LD A,(IX+E_X)
     CP ENEMY4_SPEED
     EI
     JR NC,EBSB_MOVEOK
+    JP EBSB_EXIT_LEFT
+EBSB_CHECK_FROZEN_EXIT:
+    LD A,(IX+E_X)
+    OR A
+    EI
+    JR NZ,EBSB_MOVEOK_FROZEN
     JP EBSB_EXIT_LEFT
 EBSB_MOVEOK:
     SUB ENEMY4_SPEED
@@ -7850,6 +8819,20 @@ EBSB_MOVEOK:
     XOR A
 EBSB_PHASEOK:
     LD (IX+E_STATE),A
+    CP 7
+    JR Z,EBSB_ARM_FREEZE
+    CP 23
+    JR NZ,EBSB_DRAW_FROM_LUT
+EBSB_ARM_FREEZE:
+    LD A,16 : LD (IX+E_PARAM5),A
+    JR EBSB_DRAW_FROM_LUT
+EBSB_MOVEOK_FROZEN:
+    ; A already holds E_X (loaded above, untouched by the OR A/JR) -
+    ; the X!=0 check just above already guards against underflow here.
+    DEC A : LD (IX+E_X),A
+    LD A,(IX+E_PARAM5) : DEC A : LD (IX+E_PARAM5),A
+EBSB_DRAW_FROM_LUT:
+    LD A,(IX+E_STATE)
     LD E,A : LD D,0
     LD HL,ENEMY4_SINE_LUT
     ADD HL,DE
@@ -7874,6 +8857,36 @@ EBSB_PHASEOK:
     LD A,SPR_GRAY : OUT (98h),A      ; color
     PUSH BC : POP BC : NOP : NOP
     EI
+    ; "E1,E2,E5はランダムに3から5機に一度発射 ただし斜め移動中のみ" -
+    ; this BEHAVIOR (continuous left-drift + sine-wave bob) has no
+    ; discrete diagonal phase, unlike Enemy1's one-shot dodge or
+    ; Enemy2's exit dive - it's always moving on both axes at once. As
+    ; a stand-in "diagonal" trigger point, this uses the SAME screen-
+    ; center X threshold Enemy1's own dodge uses (ENEMY_CENTER_X), for
+    ; consistency across all 3 gated types. E_PARAM1 (shooter flag, set
+    ; once at spawn - see E4CA_SINEBOB)/E_PARAM2 (already fired, 0/1)
+    ; are both otherwise unused by this BEHAVIOR. Y is recomputed here
+    ; (baseY+LUT[state]) rather than read from E_Y, which this BEHAVIOR
+    ; never writes back (see the DI/EI block above - it's written
+    ; straight to the VDP, not stored).
+    LD A,(IX+E_PARAM1)
+    OR A
+    JR Z,EBSB_FIRE_DONE
+    LD A,(IX+E_PARAM2)
+    OR A
+    JR NZ,EBSB_FIRE_DONE
+    LD A,(IX+E_X)
+    CP ENEMY_CENTER_X
+    JR NC,EBSB_FIRE_DONE
+    LD A,1 : LD (IX+E_PARAM2),A
+    LD A,(IX+E_STATE) : LD L,A : LD H,0
+    LD DE,ENEMY4_SINE_LUT
+    ADD HL,DE
+    LD A,(IX+E_PARAM0) : ADD A,(HL)
+    LD E,A
+    LD A,(IX+E_X) : LD D,A
+    CALL SPAWN_EBULLET
+EBSB_FIRE_DONE:
     RET
 
 ; Drifted off the left edge: hide the sprite, restore its type's
@@ -7916,6 +8929,31 @@ EBSD_UPDATE:
 EBSD_MOVEOK:
     SUB ENEMY_SPEED
     LD (IX+E_X),A
+    ; "エネミー7はY軸が自機に合ったら発射" - TYPE_ENEMY4-only Y-aligned
+    ; fire, independent of (and can co-occur with) the diagonal-dodge
+    ; random fire below. E_PARAM3 is otherwise unused by TYPE_ENEMY4
+    ; (see EBSD_EXIT_LEFT's own "TYPE_ENEMY4 never claimed a pattern
+    ; slot" comment) - repurposed here as a per-instance re-fire
+    ; cooldown. Only TYPE_ENEMY4 currently runs this BEHAVIOR at all,
+    ; but the type check is kept explicit anyway, matching this same
+    ; routine's own existing EBSD_EXIT_LEFT/EBSD_DRAW precedent.
+    LD A,(IX+E_TYPE)
+    CP TYPE_ENEMY4
+    JR NZ,EBSD_E4_FIRE_DONE
+    LD A,(IX+E_PARAM3)
+    OR A
+    JR Z,EBSD_E4_TRY_ALIGN
+    DEC A : LD (IX+E_PARAM3),A
+    JR EBSD_E4_FIRE_DONE
+EBSD_E4_TRY_ALIGN:
+    LD A,(PLAYERY) : LD B,A
+    LD A,(IX+E_Y)
+    CP B
+    JR NZ,EBSD_E4_FIRE_DONE
+    LD A,E4_ALIGN_FIRE_COOLDOWN : LD (IX+E_PARAM3),A
+    LD D,(IX+E_X) : LD E,(IX+E_Y)
+    CALL SPAWN_EBULLET
+EBSD_E4_FIRE_DONE:
     LD A,(IX+E_PARAM0)          ; DIAG_DONE
     OR A
     JR NZ,EBSD_DIAG_SKIP_TRIGGER
@@ -7923,7 +8961,24 @@ EBSD_MOVEOK:
     CP ENEMY_CENTER_X
     JR NC,EBSD_DIAG_SKIP_TRIGGER
     LD A,1 : LD (IX+E_PARAM0),A
+    ; "Eは一度上下移動に入ったらそのまま通常のドリフトには戻さず移動
+    ; して消えるように" - TYPE_ENEMY4 no longer uses PARAM1 as a
+    ; remaining-distance countdown (the dive never expires now - see
+    ; EBSD_DIAG_E4 below); it's repurposed as this type's own pose-
+    ; toggle animation timer instead, starting at 0 (toggle pose on
+    ; the very first diving frame). Any other type sharing this
+    ; trigger-arm block keeps the original ENEMY_DODGE_DIST countdown
+    ; (only TYPE_ENEMY4 uses this BEHAVIOR today - see ENEMY4_CLAIM_
+    ; ANY - but the branch is kept explicit for the same reason
+    ; EBSD_EXIT_LEFT/EBSD_DRAW already do).
+    LD A,(IX+E_TYPE)
+    CP TYPE_ENEMY4
+    JR Z,EBSD_ARM_E4_PARAM1
     LD A,ENEMY_DODGE_DIST : LD (IX+E_PARAM1),A   ; DIAG_REMAIN
+    JR EBSD_ARM_PARAM1_DONE
+EBSD_ARM_E4_PARAM1:
+    XOR A : LD (IX+E_PARAM1),A
+EBSD_ARM_PARAM1_DONE:
     LD A,(PLAYERY) : LD B,A
     LD A,(IX+E_Y)
     CP B
@@ -7934,8 +8989,28 @@ EBSD_DIAG_DIR_UP:
     LD A,0FFh
 EBSD_DIAG_DIR_SET:
     LD (IX+E_PARAM2),A          ; DIAG_DIR
+    ; "E1,E2,E5はランダムに3から5機に一度発射 ただし斜め移動中のみ" -
+    ; this IS the "斜め移動中" trigger point for BEHAVIOR_SIMPLE_
+    ; DRIFT_DODGE (the one-shot diagonal dodge just armed above). Fires
+    ; immediately, synchronously, right here - no separate per-instance
+    ; "designated shooter" flag needed, since DECIDE_FIRE_SHOOTER is
+    ; called fresh at the exact moment each instance's own one dodge
+    ; begins.
+    PUSH HL
+    LD HL,E1_FIRE_COUNTDOWN
+    CALL DECIDE_FIRE_SHOOTER
+    OR A
+    JR Z,EBSD_E1_NOFIRE
+    LD D,(IX+E_X) : LD E,(IX+E_Y)
+    CALL SPAWN_EBULLET
+EBSD_E1_NOFIRE:
+    POP HL
     XOR A : LD (IX+E_PARAM4),A : LD (IX+E_PARAM5),A  ; reset quadrant-anim seq/timer for this dodge
 EBSD_DIAG_SKIP_TRIGGER:
+    LD A,(IX+E_TYPE)
+    CP TYPE_ENEMY4
+    JR Z,EBSD_DIAG_E4
+
     LD A,(IX+E_PARAM1)
     OR A
     JR Z,EBSD_DRAW
@@ -7945,18 +9020,12 @@ EBSD_DIAG_SKIP_TRIGGER:
     ADD A,B
     LD (IX+E_Y),A
 
-    ; TYPE_ENEMY4 keeps its own static look (PAT_ENEMY4) instead of
-    ; the shared asterisk quadrants - see EBSD_DRAW - so it has no
-    ; frame to cycle through here.
-    LD A,(IX+E_TYPE)
-    CP TYPE_ENEMY4
-    JR Z,EBSD_DRAW
-
     ; quadrant-glyph animation (1,2,3,2 repeating - see ASTERISK_
     ; PATTERN/2/3, ENEMY_ANIM_SEQ_TABLE), advances once every
     ; ENEMY1_ANIM_FRAME_LEN frames while actively dodging, snaps
     ; back to the base frame (seq0/ASTERISK_PATTERN) the instant the
-    ; dodge ends.
+    ; dodge ends. TYPE_ENEMY4 no longer reaches this path at all - it
+    ; has its own permanent-dive/animation handling, EBSD_DIAG_E4.
     LD A,(IX+E_PARAM1)
     JR NZ,EBSD_ANIM_STEP
     LD A,(IX+E_PARAM4)
@@ -7980,6 +9049,52 @@ EBSD_ANIM_REDRAW:
     LD A,(IX+E_PARAM3)
     CALL SIMPLE_REDRAW
     POP IX
+    JR EBSD_DRAW
+
+; "Eは一度上下移動に入ったらそのまま通常のドリフトには戻さず移動して
+; 消えるように" - once triggered (E_PARAM0=1), TYPE_ENEMY4's dive
+; never expires: it just keeps drifting diagonally (X via the
+; unconditional ENEMY_SPEED drift already applied above, Y here) for
+; the rest of its life, until it exits off *some* edge via the
+; existing EBSD_EXIT_LEFT check (X reaching the left edge) - the
+; horizontal drift never stops regardless of this vertical motion, so
+; no separate off-screen check is needed for "moves until it
+; disappears".
+EBSD_DIAG_E4:
+    ; not diving yet (dodge never triggered this instance) - stay on
+    ; the static pose (E_PARAM4 untouched, still 0 from ALLOC_ENEMY_
+    ; SLOT's own zero-fill) and don't move Y at all.
+    LD A,(IX+E_PARAM0)
+    OR A
+    JR Z,EBSD_DRAW
+    LD A,(IX+E_PARAM2) : LD B,A
+    LD A,(IX+E_Y)
+    ADD A,B
+    LD (IX+E_Y),A
+
+    ; "ファイターのアニメは上下移動に入ったら戻さない 今は繰り返しに
+    ; なってるな" - ONE-TIME pose switch, not a repeating toggle:
+    ; E4_ANIM_FRAME_LEN frames after the dive begins, flips from
+    ; PAT_ENEMY4 to PAT_ENEMY4_2 (E_PARAM4 0->1, read by EBSD_DRAW_E4)
+    ; and then stays there permanently for the rest of this dive.
+    ; E_PARAM1 is the one-shot countdown to that switch (repurposed
+    ; away from the old "remaining px" countdown - see EBSD_ARM_E4_
+    ; PARAM1); once E_PARAM4=1 this whole block is skipped every frame.
+    LD A,(IX+E_PARAM4)
+    OR A
+    JR NZ,EBSD_DRAW
+    LD A,(IX+E_PARAM1)
+    OR A
+    JR NZ,EBSD_E4_ANIM_TICK
+    LD A,E4_ANIM_FRAME_LEN : LD (IX+E_PARAM1),A
+    JR EBSD_DRAW
+EBSD_E4_ANIM_TICK:
+    DEC A
+    JR NZ,EBSD_E4_ANIM_STORE
+    LD A,1 : LD (IX+E_PARAM4),A
+    JR EBSD_DRAW
+EBSD_E4_ANIM_STORE:
+    LD (IX+E_PARAM1),A
 EBSD_DRAW:
     DI
     LD A,(IX+E_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
@@ -8005,9 +9120,21 @@ EBSD_DRAW:
     LD (EBSD_DRAW_COLOR),A
     JR EBSD_DRAW_GO
 EBSD_DRAW_E4:
+    ; "E4にアニメ追加 上下移動中に適用" - E_PARAM4(0/1) selects the
+    ; pose, toggled by EBSD_DIAG_E4 while diving; stays 0 (PAT_ENEMY4)
+    ; the rest of the time (E_PARAM4 is only ever touched inside
+    ; EBSD_DIAG_E4/the trigger-arm reset, both dive-only).
+    LD A,(IX+E_PARAM4)
+    OR A
+    JR Z,EBSD_DRAW_E4_POSE0
+    LD A,PAT_ENEMY4_2
+    JR EBSD_DRAW_E4_GOT
+EBSD_DRAW_E4_POSE0:
     LD A,PAT_ENEMY4
+EBSD_DRAW_E4_GOT:
     LD (EBSD_DRAW_PAT),A
-    LD A,SPR_BLACK
+    ; "エネミー7の色を変更 現在ブラックだがライトグリーンに"
+    LD A,SPR_LIGHTGREEN
     LD (EBSD_DRAW_COLOR),A
 EBSD_DRAW_GO:
     DI
@@ -9042,6 +10169,26 @@ ACCENT_DOWN_PATTERN:
     DB 00h,00h,00h,00h,00h,00h,00h,00h   ; top-right (blank)
     DB 00h,00h,00h,00h,00h,00h,00h,00h   ; bottom-right (blank)
 
+; "装備中はどちらのパターンにも追加 / 右下の8x8ドットのエリアがバリア
+; の絵だからそれを未提出のアクセントに追記" - the barrier glyph is just
+; the bottom-right 8x8 quadrant of the uploaded Acsent_16x16.json (the
+; rest of that 16x16 canvas was blank); added into the BR quadrant of
+; BOTH accent poses (that quadrant was unused/blank in both originals),
+; leaving TL/BL/TR exactly as ACCENT_MID_PATTERN/ACCENT_DOWN_PATTERN
+; above. Selected instead of the plain accent while BARRIER_HP>0 - see
+; PLAYER_ACCENT_PAT's selection logic.
+ACCENT_MID_BARRIER_PATTERN:
+    DB 00h,00h,00h,00h,00h,00h,00h,00h   ; top-left (blank)
+    DB 30h,08h,00h,00h,00h,00h,00h,00h   ; bottom-left (same as ACCENT_MID_PATTERN)
+    DB 00h,00h,00h,00h,00h,00h,00h,00h   ; top-right (blank)
+    DB 0Ch,22h,55h,99h,99h,0AAh,44h,30h  ; bottom-right (barrier glyph)
+
+ACCENT_DOWN_BARRIER_PATTERN:
+    DB 00h,00h,00h,00h,00h,00h,00h,00h   ; top-left (blank)
+    DB 70h,38h,00h,00h,00h,00h,00h,00h   ; bottom-left (same as ACCENT_DOWN_PATTERN)
+    DB 00h,00h,00h,00h,00h,00h,00h,00h   ; top-right (blank)
+    DB 0Ch,22h,55h,99h,99h,0AAh,44h,30h  ; bottom-right (barrier glyph)
+
 ; 8x8 asterisk glyph: each enemy-formation quadrant that's still
 ; alive is drawn with this shape (not a solid fill). One asterisk
 ; = one enemy; each unit's 16x16 pattern is built at runtime by
@@ -9057,6 +10204,29 @@ ENEMY4_PATTERN:
     DB 30h,64h,FFh,07h,01h,2Ah,15h,00h   ; bottom-left
     DB 00h,00h,00h,00h,00h,00h,00h,00h   ; top-right
     DB 01h,06h,9Ch,FFh,FEh,7Ch,0Eh,03h   ; bottom-right
+
+; "E4にアニメ追加 上下移動中に適用" - 2nd pose (user-supplied
+; E42_16x16.json, fg=3=SPR_LIGHTGREEN matching Fighter's own color;
+; replaces the earlier E4_2_16x16.json revision), switched to (once,
+; permanently) with ENEMY4_PATTERN while diving - see EBSD_DIAG_E4.
+ENEMY4_PATTERN_2:
+    DB 00h,00h,00h,00h,00h,00h,00h,00h   ; top-left
+    DB 00h,7Ch,0FFh,07h,00h,2Ah,00h,00h  ; bottom-left
+    DB 00h,00h,00h,00h,00h,00h,00h,00h   ; top-right
+    DB 01h,06h,9Eh,0F5h,0AAh,54h,0Ah,01h ; bottom-right
+
+; enemy-fired bullet (new) - "パターンはFlyerレーザーを流用". Stage2's
+; own FlyerLaser art (tools/stage2_combined/flyerlaser_gen.py) is just
+; an 8x8 horizontal bar across rows2-3 (bytes 00,00,FF,FF,00,00,00,00);
+; reused verbatim here in both left/right top quadrants to form a
+; 16px-wide bar across the sprite's own upper half (bottom-left/right
+; left blank) - Stage1 is a separate bank/build from Stage2, so these
+; bytes are redefined from scratch, not shared.
+EBULLET_PATTERN:
+    DB 00h,00h,0FFh,0FFh,00h,00h,00h,00h   ; top-left: the bar
+    DB 00h,00h,00h,00h,00h,00h,00h,00h     ; bottom-left: blank
+    DB 00h,00h,0FFh,0FFh,00h,00h,00h,00h   ; top-right: the bar
+    DB 00h,00h,00h,00h,00h,00h,00h,00h     ; bottom-right: blank
 
 ; 2x2 lit block, top-left corner of the 16x16 - the flyaway trail
 ; particle. Small but clearly visible, unlike a single dot.
@@ -9404,6 +10574,18 @@ DFL_BULLET_PATTERN:
 ; --- (08h,42h,24h,80h,01h,24h,42h,10h), scattered at overlapping,  ---
 ; --- non-grid-aligned offsets across the full 16x16 area.          ---
 EXPLOSION_PATTERN:
+    DB 84h,48h,00h,02h,49h,84h,20h,03h     ; top-left
+    DB 13h,09h,20h,00h,09h,10h,04h,00h     ; bottom-left
+    DB 00h,00h,40h,10h,20h,10h,8Ch,68h     ; top-right
+    DB 90h,82h,48h,0C4h,20h,80h,00h,00h    ; bottom-right
+
+; Same scattered-spark burst glyph as EXPLOSION_PATTERN above (no new
+; art was supplied for this - reusing the existing "explosion" visual
+; language rather than inventing a new one), just loaded permanently
+; at INIT under its own always-available code (PAT_PLAYER_EXPLOSION)
+; instead of EXPLOSION_PATTERN's own lazy/boss-only loading - see
+; PLAYER_EXPL_UPDATE_ALL.
+PLAYER_EXPL_PATTERN:
     DB 84h,48h,00h,02h,49h,84h,20h,03h     ; top-left
     DB 13h,09h,20h,00h,09h,10h,04h,00h     ; bottom-left
     DB 00h,00h,40h,10h,20h,10h,8Ch,68h     ; top-right
