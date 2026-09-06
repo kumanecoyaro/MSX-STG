@@ -221,8 +221,22 @@ DTB_LOOP:
     AND 7Fh
     INC A
     LD B,A
-    LD C,VDP_DATA
-    OTIR                            ; (HL)からB byteをport Cへ連続転送、HLも自動前進
+; 実機フィードバック対応("実機ではグリッチ状態 TMS9918のスクリーン2に
+; 設定されてるか確認"): openMSX(C-BIOS_MSX1)での実バイト単位トレース
+; 調査により、原因はスクリーン2設定ではなくこの直下(旧OTIR使用箇所)の
+; リテラルセグメント転送だったと特定。OTIRはこのアセンブラ・エミュレータ
+; 環境(z80emu.py)では正しく動作するが、実機のVDPデータポート(98h)へ
+; ブロック転送する用途ではバスタイミングがVDPの要求と合わず信頼できない
+; というMSXでよく知られたハードウェア制約に該当し(z80emu.pyはこの制約を
+; 一切再現しない)、実機では書き込みが実質無効化され後続の全セグメントが
+; 累積的にズレて画面全体が乱れる形で顕在化した。反復セグメント側
+; (下のDTB_RUN_LOOP、元々OTIRを使わずDJNZ+通常のOUTだった箇所)は
+; 実機でも正しく動作していたため、リテラル側もOTIRをやめて同じ
+; DJNZ+通常OUTの手動ループへ統一して解消。
+DTB_LIT_LOOP:
+    LD A,(HL) : INC HL
+    OUT (VDP_DATA),A
+    DJNZ DTB_LIT_LOOP
     JR DTB_NEXT
 DTB_RUN:
     AND 7Fh
