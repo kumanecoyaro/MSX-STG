@@ -2321,5 +2321,45 @@ Stage1 MISSION1/MISSION2導入・クリア演出(2026-09-06、完了済み・
     `PLAYER_RETREAT_SPEED`(2px/frame)・`MISSION_SCREEN_TICKS`
     (180、3秒@60Hz)はいずれも未調整の近似値。ボス形態変化後レーザーの
     1px近似(左右の厳密な先端補正なし)も見え方次第で再検討の余地あり。
+
+## Round54: 実機フィードバック対応(MISSION1導入演出の3件のバグ修正)
+(2026-09-06、完了済み・実機フィードバック待ち)
+
+- ユーザー報告(実機/WebMSXスクリーンショット添付): "まずMission1、2
+  表示でビーって音が鳴ってる でMission1スタートで初期画面が描画され
+  てない そして異様に重くなってる Mission2は問題ない"。
+- **根本原因1(最重要)**: `DRAW_MISSION_SCREEN`が画面全体(row0-23)を
+  生VDP OUT命令で直接黒埋めしていたが、row20-23はStage1自身の「4-row
+  ground scroller」専用領域で、`NAMEBUF`/`PREVBUF`という2つのRAM
+  ミラーの差分比較でしか再描画されない設計だった。生書き込みはこの
+  ミラーを経由しないため「差分なし」と誤判定され、以後この4行は
+  正しい地形データが二度と再描画されなくなっていた(スクリーン
+  ショットの地形風ノイズ帯の正体、体感速度劣化にも波及した可能性)。
+  修正: 黒埋め範囲をrow0-19(640byte)に縮小し、ground scrollerには
+  一切触れないよう変更。
+- **根本原因2(ビー音)**: PSGチャンネルB/C(BGM)はMUTE_BGMで無音化
+  していたが、チャンネルA(SE)は無音化していなかった - MISSION1は
+  Title切替直後の残留PSG状態、MISSION2は自機flyaway中のエンジン音が
+  SOUND_UPDATE停止と同時に凍結して鳴り続けていたのが正体。DRAW_
+  MISSION_SCREEN冒頭でR8(チャンネルA音量)へ明示的に0を書き込み解消。
+- **バグ3(MISSION1固有、文字が消えない)**: "3秒表示してから消える"
+  设計意図だったが、実際には文字を消す処理が無く永久に残り続けていた
+  (スクリーンショットで実ゲームプレイと同時に見えていた原因)。新規
+  `ERASE_MISSION_TEXT`をMISSION_DELAY_3SEC直後に追加して解消
+  (MISSION2はStage2への実バンク切替で自動的に消えるため対応不要)。
+- 3件とも一時的に修正を取り消してテストがFAILすることを確認した上で
+  復元・再PASSを確認済み。`tools/verify_stage1_mission_screens.py`を
+  6件更新・5件追加(31→36件)。全回帰: Stage2側`run_all.py`
+  **1447 passed/0 failed**(無変化)。Stage1側`verify_player_damage.py`
+  58/`verify_stage1_bgm.py` 70/`verify_enemy_bullets.py` 49/
+  `verify_stage1_mission_screens.py` 36、全てPASS。3ROM再ビルド・
+  `verify_comb.py`健全性確認の上、標準方針によりComb ROMのみ送付。
+  詳細はHANDOFF.mdのRound54参照。
+  - **教訓**: 画面全体を生VRAM書き込みで一括初期化する新規演出を
+    追加する際は、既存の描画がNAMEBUF/PREVBUF等のRAMミラー経由の
+    差分描画キャッシュを使っている領域が無いか、必ず事前に確認する
+    こと。
+  - **保留・実機フィードバック待ち**: 上記3件の修正が実機で実際に
+    解消するかは引き続き実機フィードバック待ち。
 - **保留・実機フィードバック待ち**: 8pxという下げ幅・2px高のコリジョン
   境界は実機での見え方次第で再調整の可能性あり。

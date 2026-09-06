@@ -1071,6 +1071,7 @@ INIT_SPRATR_CLR:
           ; already valid - but re-DI here keeps INIT silent/deterministic
           ; through the delay below, matching the surrounding DI bracket)
     CALL MISSION_DELAY_3SEC
+    CALL ERASE_MISSION_TEXT
 
     ; --- player initial state ---
     LD A,PLAYER_INITX : LD (PLAYERX),A
@@ -3629,16 +3630,38 @@ UNMUTE_BGM:
     RET
 
 ; (2026-09-06、"MISSION 1"導入演出・"MISSION 2"ステージクリア演出の
-; 共有描画ルーチン): 画面全体をSPACEグリフ(MISSION_FONT_BASE+5、全ドット
-; 消灯、group8=白文字/黒背景0F1h)で埋めて黒画面にし、HLが指す9byteの
-; メッセージ(row12/col11、32x24画面の中央)を描画、念のためスプライトも
-; 全て隠す(Y=209は"この枠以降の全スプライトを隠す"というMSX標準の
-; センチネル、この直前のINIT_SPRATR_CLRと同じ手法)。VDPへの連続転送は
+; 共有描画ルーチン): 画面上部20行(row0-19、640byte)をSPACEグリフ
+; (MISSION_FONT_BASE+5、全ドット消灯、group8=白文字/黒背景0F1h)で
+; 埋めて黒画面にし、HLが指す9byteのメッセージ(row12/col11、画面中央)を
+; 描画、念のためスプライトも全て隠す(Y=209は"この枠以降の全スプライトを
+; 隠す"というMSX標準のセンチネル、この直前のINIT_SPRATR_CLRと同じ手法)、
+; 加えてPSGチャンネルA(SE)も明示的に無音化(下記参照)。VDPへの連続転送は
 ; 手動のOUT+DJNZループのみ(CLAUDE.md「実機ハードウェア制約」の恒久
 ; ルール通り、`OTIR`等のブロックI/O命令は絶対に使わない)。
+; (2026-09-06、実機フィードバック"Mission1スタートで初期画面が描画
+; されてない そして異様に重くなってる"対応): 当初はrow0-23(768byte)
+; 全体を埋めていたが、row20-23はWRITE_ANIM_CELL自身のコメントが明言する
+; 「4-row ground scroller」(GROUND_ROW0=20)専用領域で、この4行だけは
+; 生VRAM書き込みではなくNAMEBUF/PREVBUFミラー(0E200h/0E300h)経由の
+; 差分検出で毎フレーム再描画されるキャッシュ管理下にある。この領域を
+; 生VRAM書き込みで直接埋めると、NAMEBUF/PREVBUF側は無変更のまま実VRAM
+; だけが書き換わるため「差分なし」と誤判定されて二度と正しい地形が
+; 再描画されない(画面が壊れたまま固まる、または一部だけ偶然更新されて
+; まだら状のノイズに見える)実害があった - row0-19だけに範囲を縮小し、
+; ground scroller自身の4行には一切触れないことで解消。
+; (2026-09-06、実機フィードバック"Mission1、2表示でビーって音が鳴って
+; る"対応): PSGチャンネルB/C(BGM)はMUTE_BGMで無音化済みだが、チャンネル
+; A(SE)は無音化していなかったため、この画面に入る直前にたまたま鳴って
+; いたSE(MISSION1側はBIOSキークリック音等の残留、MISSION2側は自機
+; flyaway中の"エンジン音"がSOUND_UPDATE停止と同時に鳴りっぱなしで
+; 固まる)がこの間ずっと鳴り続けていた。R8(チャンネルA音量)を明示的に
+; 0へ書き込むことで解消。
 ; Input: HL=9byteメッセージへのポインタ。Trashes: AF,BC,DE,HL。
 DRAW_MISSION_SCREEN:
     DI
+    LD A,8 : OUT (PSG_ADDR),A
+    XOR A : OUT (PSG_DATA),A   ; channel A (SE) volume=0, kill any stuck tone/noise
+
     LD A,0 : OUT (99h),A
     NOP
     NOP
@@ -3646,7 +3669,7 @@ DRAW_MISSION_SCREEN:
     NOP
     NOP
     LD A,MISSION_FONT_BASE+5    ; SPACE glyph(全ドット消灯) - 黒埋め用
-    LD C,3
+    LD C,2
 DMS_FILL_OUTER:
     LD B,0
 DMS_FILL_INNER:
@@ -3654,6 +3677,10 @@ DMS_FILL_INNER:
     DJNZ DMS_FILL_INNER
     DEC C
     JR NZ,DMS_FILL_OUTER
+    LD B,128                    ; 2*256+128 = 640 = GROUND_ROW0(20)*32 - stop
+DMS_FILL_TAIL:                  ; short of the 4-row ground scroller (row20-23)
+    OUT (98h),A
+    DJNZ DMS_FILL_TAIL
 
     LD A,08Bh : OUT (99h),A
     NOP
@@ -3674,6 +3701,31 @@ DMS_MSG_LOOP:
     NOP
     NOP
     LD A,209 : OUT (98h),A
+    EI
+    RET
+
+; MISSION1導入演出の終了時に呼ばれる - DRAW_MISSION_SCREENが書いた
+; 9byteのメッセージ領域(row12/col11)だけをSPACEグリフへ戻す
+; ("MISSION 1"は3秒間だけ表示し、その後は消えて通常のゲーム画面へ"
+; という意図通りの終了処理。MISSION2はこの直後にStage2への実バンク
+; 切替が起きるため、Stage2自身のINITが画面を丸ごと描き直す=自動的に
+; 消える。MISSION1はバンク切替を伴わずそのままStage1のMAINLOOPへ
+; 続くため、明示的にこの後始末が必要)。row0-19の残り(実際のゲーム
+; 背景)は、この後に続くINIT自身の通常描画がそのまま担当する。
+; Trashes: AF,BC,HL(呼び出し元はHLの値に依存しないこと)。
+ERASE_MISSION_TEXT:
+    DI
+    LD A,08Bh : OUT (99h),A
+    NOP
+    NOP
+    LD A,59h : OUT (99h),A      ; write address = 198Bh (row12,col11)
+    NOP
+    NOP
+    LD A,MISSION_FONT_BASE+5    ; SPACE glyph
+    LD B,9
+EMT_LOOP:
+    OUT (98h),A
+    DJNZ EMT_LOOP
     EI
     RET
 

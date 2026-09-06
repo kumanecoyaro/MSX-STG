@@ -86,6 +86,17 @@ BOSS_EXPL_INDEX = sym["BOSS_EXPL_INDEX"]
 BOSS_EXPL_COUNT = sym["BOSS_EXPL_COUNT"]
 SND_TONE_TIMER = sym["SND_TONE_TIMER"]
 
+# ---- real boot: MISSION1 shows then is cleaned up before MAINLOOP starts ----
+# 実機フィードバック"Mission1スタートで初期画面が描画されてない"対応の
+# 実効性を、単体呼び出しだけでなく本物のboot()経由でも確認する。
+z = fresh()
+boot(z)
+nametable_at_boot = [z.vram[0x1800 + i] for i in range(768)]
+msg_region_at_boot = nametable_at_boot[12 * 32 + 11: 12 * 32 + 11 + 9]
+check("real boot: by the time MAINLOOP is reached, the MISSION1 text region has already "
+      "been erased back to the SPACE glyph (ERASE_MISSION_TEXT ran)",
+      all(b == 64 + 5 for b in msg_region_at_boot))
+
 # ---- boot-time VRAM load: font pattern + color ----
 z = fresh()
 boot(z)
@@ -131,16 +142,43 @@ z.vram[0x1B00] = 0x00
 z.wr(0xF000 + 100, MISSION1_MSG & 0xFF)  # scratch, unused
 z.sethl(MISSION1_MSG)
 call_routine(z, DRAW_MISSION_SCREEN)
+GROUND_ROW0 = sym["GROUND_ROW0"]
 nametable = [z.vram[0x1800 + i] for i in range(768)]
 msg_region = nametable[12 * 32 + 11: 12 * 32 + 11 + 9]
+ground_start = GROUND_ROW0 * 32
+# 実機フィードバック"Mission1スタートで初期画面が描画されてない
+# そして異様に重くなってる"対応: row20-23(4-row ground scroller、
+# NAMEBUF/PREVBUFミラー管理下)は生VRAM書き込みで触れてはならない
+# (触れるとキャッシュと実VRAMが food乖離し、二度と正しく再描画されない)。
 rest_is_black = all(b == MISSION_FONT_BASE + 5 for i, b in enumerate(nametable)
-                     if not (12 * 32 + 11 <= i < 12 * 32 + 11 + 9))
-check("DRAW_MISSION_SCREEN: entire 768-byte name table filled with the SPACE glyph "
+                     if not (12 * 32 + 11 <= i < 12 * 32 + 11 + 9) and i < ground_start)
+check("DRAW_MISSION_SCREEN: row0-19 (640byte) filled with the SPACE glyph "
       "(MISSION_FONT_BASE+5) except the message region", rest_is_black)
 check("DRAW_MISSION_SCREEN: message region (row12,col11..19) matches MISSION1_MSG",
       msg_region == read_msg(MISSION1_MSG))
 check("DRAW_MISSION_SCREEN: sprite attribute table's first Y forced to 209 (hides all sprites)",
       z.vram[0x1B00] == 209)
+check("DRAW_MISSION_SCREEN: does NOT touch the 4-row ground scroller (row20-23) at all - "
+      "poisoned bytes there must survive untouched",
+      all(b == 0x55 for b in nametable[ground_start:]))
+check("DRAW_MISSION_SCREEN: silences PSG channel A (SE) volume to kill any stuck tone/noise",
+      z.psg_regs.get(8) == 0)
+
+# ---- ERASE_MISSION_TEXT: MISSION1-only cleanup after the delay - restores just ----
+# ---- the 9-byte message region back to SPACE, leaves everything else alone    ----
+z = fresh()
+boot(z)
+for i in range(768):
+    z.vram[0x1800 + i] = 0x77
+call_routine(z, sym["ERASE_MISSION_TEXT"])
+nametable = [z.vram[0x1800 + i] for i in range(768)]
+msg_region = nametable[12 * 32 + 11: 12 * 32 + 11 + 9]
+rest_untouched = all(b == 0x77 for i, b in enumerate(nametable)
+                     if not (12 * 32 + 11 <= i < 12 * 32 + 11 + 9))
+check("ERASE_MISSION_TEXT: message region (row12,col11..19) restored to the SPACE glyph",
+      all(b == MISSION_FONT_BASE + 5 for b in msg_region))
+check("ERASE_MISSION_TEXT: leaves every other byte (including the ground scroller) untouched",
+      rest_untouched)
 
 # ---- UPDATE_STAGE_CLEAR: 4-state machine (0/1/2/3) ----
 z = fresh()
