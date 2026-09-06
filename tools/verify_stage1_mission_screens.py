@@ -86,16 +86,64 @@ BOSS_EXPL_INDEX = sym["BOSS_EXPL_INDEX"]
 BOSS_EXPL_COUNT = sym["BOSS_EXPL_COUNT"]
 SND_TONE_TIMER = sym["SND_TONE_TIMER"]
 
-# ---- real boot: MISSION1 shows then is cleaned up before MAINLOOP starts ----
-# 実機フィードバック"Mission1スタートで初期画面が描画されてない"対応の
-# 実効性を、単体呼び出しだけでなく本物のboot()経由でも確認する。
+# ---- real boot: MISSION1 shows then the real stage background is drawn ----
+# ---- fresh afterward, as its own separate phase - before MAINLOOP starts ----
+# 実機フィードバック"Mission表示して同時にステージスタートさせてんだ"
+# 対応: MISSION1は今やCALL INIT32の直後、ステージ本編の背景描画
+# (FILLBG_1/2/3、rows0-19)より前の独立フェーズとして表示される。その
+# 背景描画はMission1の消去後に初めて走るため、MAINLOOP到達時点の
+# メッセージ領域(row12はrows0-19の範囲内)はSPACEグリフ(黒画面のまま)
+# ではなく、実際の背景(BLANKCODE)で上書きされているはずー単体呼び出し
+# だけでなく本物のboot()経由でも確認する。
+BLANKCODE = sym["BLANKCODE"]
 z = fresh()
 boot(z)
 nametable_at_boot = [z.vram[0x1800 + i] for i in range(768)]
 msg_region_at_boot = nametable_at_boot[12 * 32 + 11: 12 * 32 + 11 + 9]
-check("real boot: by the time MAINLOOP is reached, the MISSION1 text region has already "
-      "been erased back to the SPACE glyph (ERASE_MISSION_TEXT ran)",
-      all(b == 64 + 5 for b in msg_region_at_boot))
+check("real boot: by the time MAINLOOP is reached, the real stage background (BLANKCODE) "
+      "has been freshly redrawn over the MISSION1 text region as its own separate phase "
+      "AFTER Mission1 finished (not left showing the SPACE glyph / stale blackout)",
+      all(b == BLANKCODE for b in msg_region_at_boot))
+
+# ---- 実機フィードバック対応("だからまだ設定前のPSGが解放されて       ----
+# ---- ノイズ状態の音がなってんだろうが 3秒待たされてんだからよ"):       ----
+# ---- INIT_BGM is expected to start BGM_MUTED (muted), and only the    ----
+# ---- very last thing INIT does (right before EI/HALT/JP MAINLOOP)     ----
+# ---- unmutes it - so nothing can make chB/chC noise while the game is ----
+# ---- still mid-setup (including throughout the whole Mission1 phase). ----
+INIT_BGM = sym["INIT_BGM"]
+UNMUTE_BGM = sym["UNMUTE_BGM"]
+z = fresh()
+call_routine(z, INIT_BGM)
+check("INIT_BGM leaves BGM_MUTED=1 (muted) - BGM_TICK cannot write chB/chC PSG data until "
+      "INIT explicitly calls UNMUTE_BGM at the very end",
+      z.rd(BGM_MUTED) == 1)
+
+z = fresh()
+boot(z)
+check("real boot: by the time MAINLOOP is reached, BGM_MUTED is back to 0 (unmuted) - "
+      "INIT's own UNMUTE_BGM ran, right after all stage setup (background/sprites/enemy "
+      "pools/PSG R7 mixer) finished and right before the real hardware-mute risk window "
+      "(the whole earlier Mission1-plus-setup phase) closed",
+      z.rd(BGM_MUTED) == 0)
+
+# raw instruction trace: confirm BGM_MUTED is ALREADY 1 by the moment DRAW_MISSION_SCREEN
+# (Mission1's own display routine) starts running - i.e. muting genuinely happens before
+# Mission1, not merely by coincidence of final state. Catches a future reordering mistake
+# that would silently put DRAW_MISSION_SCREEN before INIT_BGM/before the BGM_MUTED=1 write.
+DRAW_MISSION_SCREEN_ADDR = sym["DRAW_MISSION_SCREEN"]
+z = fresh()
+z.pc = sym["INIT"]
+for _ in range(500_000):
+    if z.pc == DRAW_MISSION_SCREEN_ADDR:
+        break
+    z.step()
+else:
+    raise RuntimeError("never reached DRAW_MISSION_SCREEN from INIT")
+check("raw trace: BGM_MUTED is already 1 by the instant DRAW_MISSION_SCREEN (Mission1's own "
+      "display routine) starts executing - muting genuinely precedes Mission1, not just the "
+      "final boot() snapshot",
+      z.rd(BGM_MUTED) == 1)
 
 # ---- boot-time VRAM load: font pattern + color ----
 z = fresh()

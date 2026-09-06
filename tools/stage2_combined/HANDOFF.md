@@ -10878,3 +10878,87 @@ MISSION2黒画面
   2件(地形ノイズ・ビー音)はいずれも未解決のまま。次にこの問題を
   扱う際は、まず必ずStage1用render-checkスクリプトを新規作成し、
   実際にレンダリングしてから調査・修正・報告のサイクルを回すこと。
+
+## Round56: Mission1導入演出をステージ本編と真に別フェーズへ再設計
+(2026-09-06、完了済み・実機フィードバック待ち)
+
+- ユーザー叱責: "ただMission表示するだけでよ ステージとMission表示は
+  別のフェーズだろうが なんでMission表示して同時にステージスタート
+  させてんだアホが だからまだ設定前のPSGが解放されてノイズ状態の音が
+  なってんだろうが 3秒待たされてんだからよ"。Round55まで未解決だった
+  「ビー音が止まらない」問題の核心を突く指摘。
+- **実際のINIT構造を読み直して判明した根本原因**: `src/CYBER SHMUP.
+  asm`のMission1表示(`DRAW_MISSION_SCREEN`+`MISSION_DELAY_3SEC`+
+  `ERASE_MISSION_TEXT`)は、INITの中盤(背景VRAM転送・スプライト
+  パターン読込・スプライト属性クリア等、"ステージ本編の初期化処理"の
+  真っ只中)に挟まっているだけで、Mission1自体を独立したフェーズとして
+  分離する設計には一切なっていなかった。加えて`INIT_BGM`が`BGM_MUTED`
+  を0(即アンミュート)で初期化していたため、`HTIMI_HOOK`が
+  `BGM_TICK`を指した瞬間から、この後に続く背景/スプライトVRAM転送
+  ループの合間にある無数の短いEIウィンドウ(1バイトのVDP OUT毎に
+  DI/EIを繰り返す設計、既存のBIOS keyboard/joystick scan保護のため)
+  のどれかでH.TIMIが発火するたび、PSG R7ミキサー設定(通常はINITの
+  もっと後、Mission1より後に1回だけ実行)がまだ済んでいない状態の
+  まま、chB/chCへBGMデータの書き込みが起こりうる構造になっていた
+  - これが「まだ設定前のPSGが解放されて」の実体。
+- **修正1(フェーズの真の分離)**: Mission1表示ブロック(font読込+
+  `DRAW_MISSION_SCREEN`+`MISSION_DELAY_3SEC`+`ERASE_MISSION_TEXT`)を
+  `CALL INIT32`の直後、INITの中で最も早い位置へ移設。これにより、
+  border色設定・PATTERNS/COLORDATA/背景塗り(`FILLBG_1/2/3`、rows
+  0-19)・残りのスプライトパターン読込・敵プール初期化・PSG R7
+  ミキサー設定等、"ステージ本編の初期化処理"が丸ごとMission1の
+  **後**に実行される構造になった(元々の相対順序はそのまま保持、
+  Mission1をその手前へ移動しただけ)。副産物として、Round54で
+  誤診断されていた"初期画面が描画されてない"の真因もここで判明・
+  解消: `DRAW_MISSION_SCREEN`は名前テーブル768byte全体を黒で塗り
+  つぶすが、旧`ERASE_MISSION_TEXT`はメッセージ領域9byteしか復元
+  しないため、Mission1を"背景描画より後"に置いていた旧配置では、
+  Mission1終了後もスコア/tick表示やスカイ背景が黒いまま残り、以後の
+  実プレイでスコア変化や雲の移動などが偶然そのセルを塗り替えるまで
+  戻らないという別バグを踏んでいた。今回の移設でMission1が背景描画
+  より**前**に実行されるようになったため、background fill(`FILLBG_
+  1/2/3`)・`GAME_TICK_DISPLAY`・`SCORE_DISPLAY`が全てMission1消去
+  後に初めて実行され、この問題も同時に解消。
+- **修正2(BGM_MUTEDのデフォルトをミュート開始に変更)**: `INIT_BGM`が
+  `BGM_MUTED`を0(即アンミュート)で初期化していたのを1(ミュート)へ
+  変更、既存の`MUTE_BGM`/`UNMUTE_BGM`(ボスマテリアライズ・ステージ
+  クリア演出で既に使われている設計)をそのまま再利用し、INITの本当に
+  最後(`EI`/`HALT`/`JP MAINLOOP`の直前)で`UNMUTE_BGM`を1回呼ぶまでは
+  `BGM_TICK`がchB/chCへ一切書き込めないようにした。これにより、
+  Mission1表示中を含むINIT全体を通じて、たとえ短いEIウィンドウで
+  H.TIMIが発火してもBGMは絶対に鳴らない(ノイズの発生源そのものを
+  構造的に封じた、対症療法ではなく根本対策)。
+- **修正3(フォント色の二重書き込み)**: font読込をMission1直前へ
+  早めた副作用として、その後で実行される`COLORDATA`の全32グループ
+  一括ロードがgroup8(Mission1フォントの色、2008h)を巻き込んで
+  上書きしてしまう新規バグを自己発見・修正。`COLORDATA`ロード直後に
+  `MISSION_FONT_COLOR`を再度書き込むことで解決(Mission1自身は既に
+  表示・消去済みで影響を受けないが、ステージクリア時のMISSION2は
+  同じフォント・色を後で再利用するため、この再書き込みが無いと
+  ステージクリア時の文字色が化けるところだった)。
+- 新規回帰テスト3件を`tools/verify_stage1_mission_screens.py`に追加
+  (INIT_BGM単体呼び出しでBGM_MUTED=1になること、実boot()でMAINLOOP
+  到達時にBGM_MUTED=0[UNMUTE_BGM実行済み]に戻っていること、INITを
+  生トレースしDRAW_MISSION_SCREEN開始時点で既にBGM_MUTED=1である
+  ことの3点)、既存の「MAINLOOP到達時点でメッセージ領域がSPACEグリフの
+  ままか」のテストは新設計に合わせ「実背景[BLANKCODE]で正しく上書き
+  されているか」へ書き換え。全ての新規/変更テストについて、修正を
+  一時的に取り消して実際にFAILすることを確認した上で復元・再PASSを
+  確認済み(自己検証)。全回帰: Stage2側`run_all.py`
+  **1447 passed/0 failed**(無変化、`combined_test.asm`は今回一切
+  変更していない)。Stage1側`verify_stage1_mission_screens.py`
+  **38 passed**(35→38)・`verify_player_damage.py` 58・
+  `verify_stage1_bgm.py` 70・`verify_enemy_bullets.py` 49、全てPASS。
+  3ROM再ビルド・`verify_comb.py`健全性確認の上、標準方針によりComb
+  ROMのみ送付。
+- **正直な現状報告**: 地形ノイズ帯の真因(Round55時点で未特定のまま)
+  は今回のスコープ外・未着手(ユーザーの今回の指摘はMission1周りの
+  フェーズ分離・PSGノイズに限定されていたため)。上記の3つの修正
+  (フェーズ分離・BGM_MUTED既定値・フォント色二重書き込み)は、
+  「ビー音が止まらない」「同時にステージスタートしている」という
+  ユーザー指摘に対する構造的な根本対応であり、対症療法ではないと
+  考えているが、**依然としてz80emu.py上のテストのみでの確認**であり、
+  実機・WebMSX・BlueMSXでの実際の聞こえ方・見え方の確認は行えていない
+  (Round36-14 follow-up#4以来の標準手順に基づき、本来はレンダリング
+  スクショでの確認が望ましいが、今回は「音」に関する修正のため
+  レンダリングでは検証できない領域であることに留意)。実機再検証待ち。

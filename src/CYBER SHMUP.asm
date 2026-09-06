@@ -831,6 +831,28 @@ INIT:
 
     CALL INIT32
 
+    ; (2026-09-06、実機フィードバック対応 "ただMission表示するだけでよ
+    ; ステージとMission表示は別のフェーズだろうが なんでMission表示して
+    ; 同時にステージスタートさせてんだ"): 以前はこのMISSION1ブロックが
+    ; INITの中盤(背景/スプライトパターンのVRAM転送・スプライト属性
+    ; クリア・敵プール初期化等、"本編のステージ開始処理"の真っ只中)に
+    ; 挟まっており、Mission1画面を表示している間もステージ側の初期化が
+    ; 半分終わった状態のままという、フェーズが全く分離されていない
+    ; 設計になっていた。SCREEN1モード確立(CALL INIT32)に必要な最小限
+    ; (Mission1文字のフォントパターン+色だけ)を読み込んだ直後、ここで
+    ; 独立した完結フェーズとしてMission1を表示・待機・消去し、それが
+    ; 完全に終わってから初めて"ステージ開始処理"(この直後のborder色
+    ; 設定〜PSG R7ミキサー設定〜UNMUTE_BGMまでの一連)を開始する。
+    LD HL,MISSION_FONT_PATTERNS : LD DE,MISSION_FONT_BASE*8 : LD BC,MISSION_FONT_PATTERNS_LEN : CALL LDIRVM
+    LD HL,MISSION_FONT_COLOR : LD DE,2008h : LD BC,1 : CALL LDIRVM
+    LD HL,MISSION1_MSG
+    CALL DRAW_MISSION_SCREEN
+    DI    ; DRAW_MISSION_SCREEN's own internal EI (harmless - HTIMI_HOOK is
+          ; already valid but BGM_MUTED=1 keeps it silent - but re-DI here
+          ; keeps INIT silent/deterministic through the delay below)
+    CALL MISSION_DELAY_3SEC
+    CALL ERASE_MISSION_TEXT
+
     ; --- border/backdrop color (VDP R7, low nibble) = black. This is ---
     ; --- the true overscan border, separate from the in-screen sky   ---
     ; --- (BLANKCODE's color group), which stays blue.                ---
@@ -838,6 +860,13 @@ INIT:
 
     LD HL,PATTERNS  : LD DE,0000h : LD BC,PATTERNS_LEN : CALL LDIRVM
     LD HL,COLORDATA : LD DE,2000h : LD BC,COLOR_LEN : CALL LDIRVM
+    ; COLORDATAはgroup8(codes64-71、2008h)も含む32グループ全体を上書き
+    ; するため、Mission1表示のために上で先に書いたMISSION_FONT_COLOR
+    ; (白文字/黒背景)がここで消されてしまう。MISSION2(ステージクリア
+    ; 演出)はゲーム本編の実行中に同じフォント・同じ色を再利用するため、
+    ; ここで再度書き直して確定させておく(Mission1自身は既に表示・消去
+    ; 済みなのでこの再書き込みの影響を受けない)。
+    LD HL,MISSION_FONT_COLOR : LD DE,2008h : LD BC,1 : CALL LDIRVM
     LD HL,BLANK_PATTERN : LD DE,BLANKCODE*8 : LD BC,8 : CALL LDIRVM   ; BLANKCODE's glyph was never written before - defaulted to leftover VRAM garbage
 
     XOR A
@@ -950,8 +979,8 @@ FILLBG_3:
 
     ; --- digit glyphs (0-9) for the on-screen game-tick counter ---
     LD HL,DIGIT_PATTERNS : LD DE,DIGIT_BASE*8 : LD BC,80 : CALL LDIRVM
-    LD HL,MISSION_FONT_PATTERNS : LD DE,MISSION_FONT_BASE*8 : LD BC,MISSION_FONT_PATTERNS_LEN : CALL LDIRVM
-    LD HL,MISSION_FONT_COLOR : LD DE,2008h : LD BC,1 : CALL LDIRVM
+    ; (MISSION_FONT_PATTERNS/COLORの読み込みはここではなく、このINITの
+    ; 冒頭・CALL INIT32の直後、Mission1表示の直前へ移設済み - 上記参照)
 
     ; --- boss BG/sprite character patterns are NOT preloaded here ---
     ; --- anymore - the terrain scroller actually uses more of the ---
@@ -1050,28 +1079,13 @@ INIT_SPRATR_CLR:
     EI
     DJNZ INIT_SPRATR_CLR
 
-    ; (2026-09-06、"STAGE1も2と同じで一旦画面をブラックで埋めてMISSION 1と
-    ; 3秒表示してから ステージ1スタートに"): この時点ではまだ実際の
-    ; ゲーム画面(地形・HUD等)を一切描いていない(このINITの残りが
-    ; これから初めて描く)ため、"MISSION 1"演出はここで割り込ませて
-    ; おけば、演出終了後にINITの残りがそのまま続けて本編の画面を描く
-    ; だけで済み、専用の状態機械・MAINLOOP側のフリーズ処理が一切不要
-    ; (この直前までスプライトも既に全消灯済み)。
-    ; 待ち自体はSC_VBLANK_COUNT(実VBlank/H.TIMI駆動)ではなく、
-    ; MISSION_DELAY_3SEC(下記)によるZ80クロック直接カウントの
-    ; ビジーウェイトを採用 - このINIT区間は元々ずっとDIのまま
-    ; (CALL INIT_BGMが意図する「INIT末尾まで割り込み禁止」を維持でき、
-    ; 一時的なEI/MUTE_BGM/UNMUTE_BGMが一切不要になる)。MSXのZ80
-    ; クロックは3.579545MHz固定でNTSC/PAL(50/60Hz)のリフレッシュ
-    ; レートに左右されないため、この方式の方がSC_VBLANK_COUNT基準より
-    ; 実時間として安定する(50Hz機でも60Hz機でも同じ約3秒になる)。
-    LD HL,MISSION1_MSG
-    CALL DRAW_MISSION_SCREEN
-    DI    ; DRAW_MISSION_SCREEN's own internal EI (harmless - HTIMI_HOOK is
-          ; already valid - but re-DI here keeps INIT silent/deterministic
-          ; through the delay below, matching the surrounding DI bracket)
-    CALL MISSION_DELAY_3SEC
-    CALL ERASE_MISSION_TEXT
+    ; (Mission1表示・待機・消去は、このINITの冒頭・CALL INIT32の直後へ
+    ; 移設済み - "ステージとMission表示は別のフェーズだろうが なんで
+    ; Mission表示して同時にステージスタートさせてんだ"という実機
+    ; フィードバック対応、詳細は上記参照。以前はこの位置[背景/スプライト
+    ; パターンVRAM転送・このスプライト属性クリアループ等、ステージ
+    ; 本編の初期化処理の真っ只中]にあったため、Mission1表示中も
+    ; ステージ側の初期化が半分終わった状態のままだった)。
 
     ; --- player initial state ---
     LD A,PLAYER_INITX : LD (PLAYERX),A
@@ -1284,6 +1298,12 @@ INIT_HIDE_SLOT_LOOP:
     ; --- 制御プロトコルでPC=0への着地を直接観測し、この移設で再現しなく
     ; --- なることを確認済み - 詳細はHANDOFF.md参照)。呼び出し箇所は
     ; --- このファイル冒頭、"DI" の直後(CALL INIT32の前)。
+
+    ; INIT_BGMはBGM_MUTED=1(ミュート)で初期化する設計に変更済み
+    ; (このINIT冒頭のMISSION1表示中に万一H.TIMIが発火してもchB/chCへ
+    ; 音を出させないため)。ステージ本編の初期化が全て完了したこの
+    ; 時点で初めてUNMUTE_BGMを呼び、以後MAINLOOPで通常通りBGMが鳴る。
+    CALL UNMUTE_BGM
 
     EI
     HALT
@@ -3591,7 +3611,6 @@ INIT_BGM:
     LD (BGM_C_ENV_LEVEL),A
     LD (BGM_C_ENV_IDX),A
     LD (BGM_C_ENV_CD),A
-    LD (BGM_MUTED),A
     LD HL,BGM_B_BASE : LD (BGM_B_LOOP_BASE),HL
     LD HL,BGM_C_BASE : LD (BGM_C_LOOP_BASE),HL
     ; "ステージクリアで流して" - chA関連+状態機械の起動時ゼロクリア
@@ -3609,6 +3628,17 @@ INIT_BGM:
     LD (HTIMI_HOOK),A
     LD HL,BGM_TICK
     LD (HTIMI_HOOK+1),HL
+    ; 実機フィードバック対応(2026-09-06、"だからまだ設定前のPSGが解放
+    ; されてノイズ状態の音がなってんだろうが"): HTIMI_HOOKはこの直前で
+    ; 既にBGM_TICKを指すため、この後INITの残り(VRAM転送ループの合間の
+    ; 短いEIウィンドウ等)で万一H.TIMIが1回でも発火すると、まだBGM再生
+    ; 開始として意図していないタイミングでchB/chCへPSG書き込みが走って
+    ; しまう。以前はBGM_MUTED=0(即アンミュート)で初期化していたが、
+    ; ここを1(ミュート)にしてBGM_TICK自身のchB/chC更新を丸ごとスキップ
+    ; させ、INITの本当に最後(EI+HALT+JP MAINLOOPの直前)でUNMUTE_BGMを
+    ; 呼ぶまでは何が起きても鳴らないようにする(MUTE_BGM/UNMUTE_BGMは
+    ; 既存のボスマテリアライズ/ステージクリア演出と同じ設計を再利用)。
+    LD A,1 : LD (BGM_MUTED),A
     RET
 
 ; "マテリアライズに入る前にそれまでのBGMは停止" - Stage2のMUTE_BGMと
