@@ -63,6 +63,7 @@ BGM_C_ENV_IDX = sym["BGM_C_ENV_IDX"]
 BGM_C_ENV_CD = sym["BGM_C_ENV_CD"]
 BGM_ENV_BELL_TABLE = sym["BGM_ENV_BELL_TABLE"]
 BGM_ENV_LINEAR_TABLE = sym["BGM_ENV_LINEAR_TABLE"]
+BGM_VOL_ATTEN = sym["BGM_VOL_ATTEN"]
 
 
 def read_env_table(cpu, addr, n_entries=BGM_ENV_LAST_INDEX + 1):
@@ -72,12 +73,16 @@ def read_env_table(cpu, addr, n_entries=BGM_ENV_LAST_INDEX + 1):
     return [(cpu.mem[addr + i * 2], cpu.mem[addr + i * 2 + 1]) for i in range(n_entries)]
 
 
-def sim_envelope_sequence(table, duty_mask, n_ticks):
+def sim_envelope_sequence(table, duty_mask, n_ticks, atten=BGM_VOL_ATTEN):
     """ASM側のBGMT_U[BC]_ENV_STEP/ADVANCE/WRITEと同じロジックをPythonで
     再現した独立リファレンス実装。table[0]はNEWROWそのtickに、以降は
     ENV_STEP(継続tick)のロジックに従う。duty_mask=0ならデューティ
     ゲート無し(chC)、非0なら音符の頭でphase=duty_maskから開始し、
-    WRITE段で毎tick(INC A: AND mask)を評価する(chB)。"""
+    WRITE段で毎tick(INC A: AND mask)を評価する(chB)。実機フィード
+    バック"BGM音量を下げたいが現在は最大か?"対応: 可聴tickのみ、R9/
+    R10へ書く直前に一律でatten(BGM_VOL_ATTEN)だけ減算(0未満はクランプ、
+    ASM側のSUB+JR NC+XOR Aと同じ)。デューティで無音のtickは元々0の
+    ため、そこへ減算しても結果は変わらない。"""
     idx = 0
     level, dur0 = table[0]
     cd = dur0 - 1
@@ -97,7 +102,7 @@ def sim_envelope_sequence(table, duty_mask, n_ticks):
             audible = (phase & duty_mask) == 0
         else:
             audible = True
-        out.append(level if audible else 0)
+        out.append(max(0, level - atten) if audible else 0)
     return out
 
 
@@ -250,8 +255,9 @@ check(f"new-row (chC): tone period (R4/R5) matches the period table's own note{T
 check("new-row (chC): envelope retriggered to LINEAR table index0 (level/countdown/index)",
       (cpu.mem[BGM_C_ENV_LEVEL], cpu.mem[BGM_C_ENV_IDX], cpu.mem[BGM_C_ENV_CD]) ==
       (linear_table[0][0], 0, linear_table[0][1] - 1))
-check("new-row (chC): R10 is written unconditionally with the raw envelope level (no duty overlay)",
-      cpu.psg_regs.get(10) == linear_table[0][0])
+check("new-row (chC): R10 is written unconditionally with the attenuated envelope level "
+      "(no duty overlay, but BGM_VOL_ATTEN still applies)",
+      cpu.psg_regs.get(10) == max(0, linear_table[0][0] - BGM_VOL_ATTEN))
 
 
 # ---- 実機フィードバック対応その3("BGMが1chしかなってない...HWエンベ

@@ -99,15 +99,19 @@ BGM_C_ENV_IDX = sym["BGM_C_ENV_IDX"]
 BGM_C_ENV_CD = sym["BGM_C_ENV_CD"]
 BGM_ENV_BELL_TABLE = sym["BGM_ENV_BELL_TABLE"]
 BGM_ENV_LINEAR_TABLE = sym["BGM_ENV_LINEAR_TABLE"]
+BGM_VOL_ATTEN = sym["BGM_VOL_ATTEN"]
 
 
 def read_env_table(z, addr, n_entries=BGM_ENV_LAST_INDEX + 1):
     return [(z.rd(addr + i * 2), z.rd(addr + i * 2 + 1)) for i in range(n_entries)]
 
 
-def sim_envelope_sequence(table, duty_mask, n_ticks):
+def sim_envelope_sequence(table, duty_mask, n_ticks, atten=BGM_VOL_ATTEN):
     """tools/stage2_combined/tests/bgm_test.pyの同名関数と同一ロジック
-    (ASM側BGMT_U[BC]_ENV_STEP/ADVANCE/WRITEの独立Pythonリファレンス)。"""
+    (ASM側BGMT_U[BC]_ENV_STEP/ADVANCE/WRITEの独立Pythonリファレンス)。
+    実機フィードバック"BGM音量を下げたいが現在は最大か?"対応: 可聴
+    tickのみR9/R10へ書く直前にatten(BGM_VOL_ATTEN)だけ減算(0未満は
+    クランプ)。"""
     idx = 0
     level, dur0 = table[0]
     cd = dur0 - 1
@@ -127,7 +131,7 @@ def sim_envelope_sequence(table, duty_mask, n_ticks):
             audible = (phase & duty_mask) == 0
         else:
             audible = True
-        out.append(level if audible else 0)
+        out.append(max(0, level - atten) if audible else 0)
     return out
 
 
@@ -230,8 +234,9 @@ check("chC tone period (R4/R5) matches the period table",
 check("chC envelope retriggered to LINEAR table index0 (level/countdown/index)",
       (z.rd(BGM_C_ENV_LEVEL), z.rd(BGM_C_ENV_IDX), z.rd(BGM_C_ENV_CD)) ==
       (linear_table[0][0], 0, linear_table[0][1] - 1))
-check("chC: R10 is written unconditionally with the raw envelope level (no duty overlay)",
-      z.psg_regs.get(10) == linear_table[0][0])
+check("chC: R10 is written unconditionally with the attenuated envelope level "
+      "(no duty overlay, but BGM_VOL_ATTEN still applies)",
+      z.psg_regs.get(10) == max(0, linear_table[0][0] - BGM_VOL_ATTEN))
 
 # ---- 実機フィードバック対応("そもそもchB、Cは空けてあってSE類は
 # chAのみで鳴らすはず"): 全SEがチャンネルAへ統合され、チャンネルB/Cは
@@ -268,7 +273,7 @@ call_routine(z, BGM_TICK)
 exp_lo_c2, exp_hi_c2 = periods[TEST_NOTE_C]
 check("SE専用タイマーが全て非0でもBGM chCは無条件でR4/R5/R10へ書く(もう譲らない)",
       (z.psg_regs.get(4), z.psg_regs.get(5), z.psg_regs.get(10)) ==
-      (exp_lo_c2, exp_hi_c2, linear_table[0][0]))
+      (exp_lo_c2, exp_hi_c2, max(0, linear_table[0][0] - BGM_VOL_ATTEN)))
 
 # ---- rest notes / loop marker (same shape as Stage2/Title's own driver) ----
 z = fresh()

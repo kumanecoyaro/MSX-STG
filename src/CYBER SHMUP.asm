@@ -3325,6 +3325,9 @@ BGM_C_REST  EQU 0C807h
 ; 遠慮なくR9/R10へ書いてよい。
 BGM_ENV_LAST_INDEX EQU 15     ; テーブルは0-15の16エントリ、15番目が番兵(hold forever)
 BGM_B_DUTY_MASK    EQU 1      ; パート1: デューティ比50%(1/2、位相の下位1bitでON/OFF)
+; 実機フィードバック"BGM音量を下げたいが現在は最大か?"→"中程度下げる
+; (-4、ピーク11)": R9/R10へ書く直前に一律で減算(0未満はクランプ)。
+BGM_VOL_ATTEN      EQU 4
 BGM_B_ENV_LEVEL  EQU 0C808h
 BGM_B_ENV_IDX    EQU 0C809h
 BGM_B_ENV_CD     EQU 0C80Ah
@@ -3471,6 +3474,10 @@ BGMT_UB_ENV_WRITE:
     LD B,0
     JR NZ,BGMT_UB_ENV_OUT
     LD A,(BGM_B_ENV_LEVEL)
+    SUB BGM_VOL_ATTEN
+    JR NC,BGMT_UB_ATTEN_OK
+    XOR A                            ; 減算でアンダーフローしたら0にクランプ
+BGMT_UB_ATTEN_OK:
     LD B,A
 BGMT_UB_ENV_OUT:
     LD A,9 : OUT (PSG_ADDR),A
@@ -3555,7 +3562,12 @@ BGMT_UC_ENV_ADVANCE:
     LD (BGM_C_ENV_CD),A
 BGMT_UC_ENV_WRITE:
     LD A,10 : OUT (PSG_ADDR),A
-    LD A,(BGM_C_ENV_LEVEL) : OUT (PSG_DATA),A
+    LD A,(BGM_C_ENV_LEVEL)
+    SUB BGM_VOL_ATTEN
+    JR NC,BGMT_UC_ATTEN_OK
+    XOR A                            ; 減算でアンダーフローしたら0にクランプ
+BGMT_UC_ATTEN_OK:
+    OUT (PSG_DATA),A
     RET
 
 ; Converts GAME_TICK (mod 1000) to 3 decimal digits and draws them

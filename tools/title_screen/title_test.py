@@ -226,15 +226,19 @@ BGM_C_ENV_IDX = sym["BGM_C_ENV_IDX"]
 BGM_C_ENV_CD = sym["BGM_C_ENV_CD"]
 BGM_ENV_BELL_TABLE = sym["BGM_ENV_BELL_TABLE"]
 BGM_ENV_LINEAR_TABLE = sym["BGM_ENV_LINEAR_TABLE"]
+BGM_VOL_ATTEN = sym["BGM_VOL_ATTEN"]
 
 
 def read_env_table(cpu, addr, n_entries=BGM_ENV_LAST_INDEX + 1):
     return [(cpu.mem[addr + i * 2], cpu.mem[addr + i * 2 + 1]) for i in range(n_entries)]
 
 
-def sim_envelope_sequence(table, duty_mask, n_ticks):
+def sim_envelope_sequence(table, duty_mask, n_ticks, atten=BGM_VOL_ATTEN):
     """tools/stage2_combined/tests/bgm_test.pyの同名関数と同一ロジック
-    (ASM側BGMT_U[BC]_ENV_STEP/ADVANCE/WRITEの独立Pythonリファレンス)。"""
+    (ASM側BGMT_U[BC]_ENV_STEP/ADVANCE/WRITEの独立Pythonリファレンス)。
+    実機フィードバック"BGM音量を下げたいが現在は最大か?"対応: 可聴
+    tickのみR9/R10へ書く直前にatten(BGM_VOL_ATTEN)だけ減算(0未満は
+    クランプ)。"""
     idx = 0
     level, dur0 = table[0]
     cd = dur0 - 1
@@ -254,7 +258,7 @@ def sim_envelope_sequence(table, duty_mask, n_ticks):
             audible = (phase & duty_mask) == 0
         else:
             audible = True
-        out.append(level if audible else 0)
+        out.append(max(0, level - atten) if audible else 0)
     return out
 
 
