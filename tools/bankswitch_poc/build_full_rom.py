@@ -122,6 +122,19 @@ MAINLOOP_PATCH = """MAINLOOP:
     CP 2
     JR NZ,MAINLOOP_NO_TEST_SWITCH
 
+    ; --- 実機フィードバック対応("バンク切り替えに失敗してる タイトルで  ---
+    ; --- ボタンを押すとフリーズ", title_test.asm's own WAIT_FOR_START     ---
+    ; --- fix has the full rationale): same class of race exists here -    ---
+    ; --- interrupts stay enabled (BGM_TICK armed via H.TIMI) all the way   ---
+    ; --- through hop1/hop2 and however many instructions run before        ---
+    ; --- Stage2's own INIT gets to its own early DI, during which the      ---
+    ; --- stale hook (this file's own BGM_TICK address) could fire over     ---
+    ; --- whatever bytes now occupy window A (Stage2's code, not this       ---
+    ; --- file's). DI here on the sending side closes the whole gap         ---
+    ; --- regardless of how much runs on the receiving side before its      ---
+    ; --- own DI.                                                            ---
+    DI
+
     ; --- DIAGNOSTIC checkpoint: border color 7 = "about to switch". ---
     LD B,7 : LD C,7 : CALL WRTVDP
 

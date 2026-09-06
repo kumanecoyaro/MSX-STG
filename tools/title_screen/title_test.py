@@ -355,6 +355,17 @@ while cpu.pc != 0x4010 and steps < 100000:
     cpu.step()
     steps += 1
 check("button press trampolines to Stage1's own INIT address (4010h)", cpu.pc == 0x4010)
+# 実機フィードバック対応("バンク切り替えに失敗してる タイトルでボタンを
+# 押すとフリーズ"): hop1/hop2実行中〜Stage1自身のDIが効くまでの間、
+# 割り込みが許可されたままだとBGM_TICKの古いH.TIMIフックがwindow Aの
+# 中身(既にStage1のコードに切り替わっている)を誤実行してしまう未定義
+# 動作が起こり得た。WAIT_FOR_STARTのhop1直前に追加したDIにより、この
+# 時点(Stage1のINITへ着地した直後)では既に割り込みが禁止されている
+# はず - 直接検証する回帰ガード。
+check("button press: interrupts are already disabled (IFF1=False) by the time the trampoline "
+      "lands in Stage1's own INIT - closes the hop1/hop2 H.TIMI race that could execute "
+      "garbage over window A's freshly-switched Stage1 content",
+      cpu.iff1 is False)
 check("trampoline wrote window B (7000h)=3 then window A (6000h)=2 - same 2-hop order as "
       "Stage1->Stage2's own trampoline in build_full_rom.py, and the real bank indices "
       "verify_comb.py's own end-to-end test confirms Stage1 actually lives at",

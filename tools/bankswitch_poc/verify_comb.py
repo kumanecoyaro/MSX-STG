@@ -156,6 +156,13 @@ while steps0b < 2_000_000:
     steps0b += 1
 assert switched0, "title screen never trampolined into Stage1's INIT (bank2) within step budget"
 assert mem.bankA == 2 and mem.bankB == 3, "banks not switched to Stage1 (2,3) on entry to its INIT"
+# 実機フィードバック対応("バンク切り替えに失敗してる タイトルでボタンを
+# 押すとフリーズ"): title_test.asm's own WAIT_FOR_START fix - interrupts
+# must already be disabled by the moment the trampoline lands here, or
+# a stale H.TIMI hook could fire over window A's freshly-switched Stage1
+# content before Stage1's own DI ever runs.
+assert cpu.iff1 is False, \
+    "interrupts still enabled on entry to Stage1's INIT - the hop1/hop2 H.TIMI race is back"
 print(f"title -> Stage1 trampoline: after {steps0b} more steps, pc={cpu.pc:04x} bankA={mem.bankA} bankB={mem.bankB}")
 
 # ---- stage 1: Stage1's own real boot (unchanged from pre-round39, ----
@@ -201,6 +208,10 @@ while steps2 < 2_000_000:
 print(f"after {steps2} more steps: pc={cpu.pc:04x} bankA={mem.bankA} bankB={mem.bankB}")
 assert switched, "never reached real stage2's INIT (bank4) within step budget"
 assert mem.bankA == 4 and mem.bankB == 5, "banks not switched to real stage2 (4,5) on entry to its INIT"
+# same class of race as title->Stage1 above, now guarded on the
+# Stage1->Stage2 (MAINLOOP_PATCH) trampoline too - see its own DI comment.
+assert cpu.iff1 is False, \
+    "interrupts still enabled on entry to Stage2's INIT - the hop1/hop2 H.TIMI race is back"
 
 # Now run stage2's OWN boot (combined_test.asm's INIT does its own
 # one-time window-B bank-select as part of booting standalone - this is
