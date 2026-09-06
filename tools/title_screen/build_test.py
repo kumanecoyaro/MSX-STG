@@ -11,18 +11,13 @@ REPO = os.path.join(HERE, "..", "..")
 sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.join(REPO, "tools"))
 
-import title_gen  # noqa: E402
+import title_bg_gen  # noqa: E402
 from mini_z80asm import Assembler  # noqa: E402
-
-DRAW_LOOP_PLACEHOLDER = "; ===== TITLE_BOSS1_DRAW_LOOP placeholder, filled in by build_test.py ====="
 
 
 def combined_text():
     body = open(os.path.join(HERE, "title_test.asm")).read()
-    assert body.count(DRAW_LOOP_PLACEHOLDER) == 1, "draw-loop placeholder not found (or not unique) - source drifted"
-    draw_loop = title_gen.emit_boss1_draw_loop(namtbl=0x1800, start_row=2, start_col=2)
-    body = body.replace(DRAW_LOOP_PLACEHOLDER, draw_loop, 1)
-    return body + "\n" + title_gen.emit_asm_tables() + "\n"
+    return body + "\n" + title_bg_gen.emit_asm_tables() + "\n"
 
 
 def assemble():

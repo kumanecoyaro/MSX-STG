@@ -90,6 +90,11 @@ class Z80:
             return True
         if target == 0x006F:  # INIT32: VDP mode setup, no-op for our tracing
             return True
+        if target == 0x0072:  # INIGRP: SCREEN2 mode setup, no-op for our tracing
+            # (title_bg_gen.pyのタイトル画面SC2アート差し替え - INIT32と
+            # 同じ理由でBIOS内部のVDPレジスタ設定は追跡不要、この
+            # テスト環境はcpu.vram[addr]への直接アクセスだけで検証する)
+            return True
         if target == 0x004D:  # WRTVRM: HL=dest(VRAM), A=byte - single-byte write
             vaddr = self.hl() & 0x3FFF
             self.vram[vaddr] = self.a

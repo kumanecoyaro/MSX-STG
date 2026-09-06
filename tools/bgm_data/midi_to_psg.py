@@ -47,6 +47,16 @@ LOOP_MARK = 0xFE
 
 MIDI_TICKS_PER_VBLANK = 4
 
+# 実機フィードバック"Stage1のBGMのテンポを少し速く"対応: Stage1(および
+# タイトルが起動時に同じデータをコピーするだけの)ALONE_FIGHTERだけ、
+# 曲固有のテンポ倍率でMIDI_TICKS_PER_VBLANKを底上げする(1 vblank tickに
+# 詰め込むMIDI tick数が増える=同じ音符が短い実時間で終わる=速くなる)。
+# DEFEAT(Stage2)は今回のスコープ外のため1.0のまま無変更。
+TEMPO_SCALE = {
+    "ALONE_FIGHTER": 1.1,
+    "DEFEAT": 1.0,
+}
+
 SONGS = {
     "ALONE_FIGHTER": "Alone_Fighter.mid",
     "DEFEAT": "Defeat_.mid",
@@ -97,11 +107,16 @@ def _track_segments(track):
     return segments, total_ticks
 
 
-def _rows_from_segments(segments, total_ticks):
+def _rows_from_segments(segments, total_ticks, ticks_per_vblank=MIDI_TICKS_PER_VBLANK):
     """segments(重複無し、モノフォニック前提)+トラック全長から、
     無音区間も含めた完全な(note_or_rest, start_tick, end_tick)区間列を
     作り、MIDI tick境界をvblank tick境界へfloor変換した上で
-    (note_index_or_REST, duration_vblank_ticks)行へ変換する。"""
+    (note_index_or_REST, duration_vblank_ticks)行へ変換する。
+    ticks_per_vblank(既定はグローバルのMIDI_TICKS_PER_VBLANK)を曲ごとに
+    大きくすると、同じMIDI tick差分がより少ないvblank tickへ丸められる
+    - つまり同じ音楽的な長さがより短い実時間で再生される(テンポが
+    速くなる)。絶対MIDI tick位置をfloorしてから差分を取る方式のため、
+    非整数の値を渡しても端数が後続行へ累積することはない。"""
     intervals = []
     cursor = 0
     for (s, e, note) in segments:
@@ -114,8 +129,8 @@ def _rows_from_segments(segments, total_ticks):
 
     rows = []
     for (note, s, e) in intervals:
-        vb_s = s // MIDI_TICKS_PER_VBLANK
-        vb_e = e // MIDI_TICKS_PER_VBLANK
+        vb_s = int(s // ticks_per_vblank)
+        vb_e = int(e // ticks_per_vblank)
         dur = vb_e - vb_s
         if dur <= 0:
             continue  # 丸めで消えた極短区間(次の区間へ吸収される)
@@ -148,10 +163,11 @@ def load_song_tracks(song_key):
     path = os.path.join(MIDI_DIR, SONGS[song_key])
     mid = mido.MidiFile(path)
     assert mid.type == 1 and len(mid.tracks) == 2, (song_key, mid.type, len(mid.tracks))
+    ticks_per_vblank = MIDI_TICKS_PER_VBLANK * TEMPO_SCALE.get(song_key, 1.0)
     result = []
     for track in mid.tracks:
         segments, total_ticks = _track_segments(track)
-        rows = _rows_from_segments(segments, total_ticks)
+        rows = _rows_from_segments(segments, total_ticks, ticks_per_vblank)
         result.append(rows)
     return result[0], result[1]
 

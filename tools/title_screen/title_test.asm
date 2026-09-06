@@ -11,22 +11,29 @@
 ; combined_test.asm - this file never needs Stage1/Stage2's own source
 ; touched, and vice versa.
 ;
-; Boss art is NOT hand-drawn here - tools/title_screen/title_gen.py
-; pulls Stage1's real BOSS_PATTERNS/BOSS_MAP (a live assemble of
-; src/CYBER SHMUP.asm) and Stage2's real Sasapi hw-sprite quadrants
-; (tools/stage2_combined/sasapi_gen.py) directly, so "適当に表示して"
-; (display them casually) still shows the genuine shipped art, just
-; positioned without any of the real games' own animation/materialize
-; sequencing - a static, one-time INIT-time draw.
+; round43("添付ファイルはスクリーン2用のSC2ファイル これをタイトル画面に
+; 変更 但し簡単な圧縮をかけてくれ MSXでも使える程度のデコードが軽い物"):
+; round39の"適当な"SCREEN1プレースホルダー(Stage1/Stage2ボスの静止
+; 表示+PUSH STARTテキスト)を完全に置き換え、ユーザー提供の本物の
+; SCREEN2タイトルアート(tools/title_screen/assets/Title.SC2、BSAVE形式
+; VRAMダンプ)をSCREEN2モードへ切り替えた上でそのまま表示する。
+; アート自体はtools/title_screen/title_bg_gen.pyが自前のRLE(詳細は
+; そのファイル自身のコメント参照)で圧縮してASMへ埋め込み、ここでは
+; そのRLEストリームをVRAMへ直接ストリーム展開するだけ(展開先アドレス
+; はVDPのオートインクリメントに任せ、CPU側でVRAMアドレスを個別に
+; 管理する必要が無い設計)。
     ORG 4000h
 
 INIT32   EQU 006Fh
+INIGRP   EQU 0072h
 LDIRVM   EQU 005Ch
 WRTVRM   EQU 004Dh
 WRTVDP   EQU 0047h
 GTTRIG   EQU 00D8h
 PSG_ADDR EQU 0A0h
 PSG_DATA EQU 0A1h
+VDP_ADDR EQU 099h
+VDP_DATA EQU 098h
 
     DB "AB"
     DW INIT
@@ -35,9 +42,10 @@ PSG_DATA EQU 0A1h
 
 STACKTOP EQU 0F380h
 
-; standard SCREEN1 VRAM layout - these are INIT32's own BIOS defaults
-; (not chosen by this file), matching the exact same constants Stage1/
-; Stage2 already rely on.
+; SCREEN1/SCREEN2共通のBIOSデフォルトVRAMベースアドレス(両モードとも
+; 同じ基準アドレスを使い、SCREEN2はパターン/カラーの各テーブルが
+; 単に大きくなる[各6144バイト、3分割]だけ - Stage1/Stage2が使う値と
+; 同一)。
 NAMTBL EQU 1800h
 COLTBL EQU 2000h
 SPRATR EQU 1B00h
@@ -77,10 +85,13 @@ INIT:
     OUT (0A8h),A
 
     DI
-    CALL INIT32
+    CALL INIGRP
 
-    ; 16x16 sprites + VDP interrupt enable - same R1 value Stage2 uses
-    ; (0E2h: 16K VRAM, display on, IE on, 16x16 sprite size).
+    ; 16x16 sprites + VDP interrupt enable - same R1 value Stage1/Stage2
+    ; use (0E2h: 16K VRAM, display on, IE on, 16x16 sprite size). M1/M2
+    ; (bits4/3, both 0 here) match SCREEN2's own mode requirement, so
+    ; this is safe to write unconditionally after INIGRP already set R0's
+    ; own mode bit.
     LD B,0E2h : LD C,1 : CALL WRTVDP
 
     ; border/backdrop black
@@ -109,46 +120,20 @@ INIT:
     ; でもbank0/1のまま)へ明示的に復帰してから続行する。
     CALL INIT_BGM
 
-    ; ---------- Stage1 boss (BG, 5x16 tiles @ codes192-255 + code48) ----------
-    LD HL,TITLE_STAGE1_BOSS_PATTERNS : LD DE,192*8 : LD BC,512 : CALL LDIRVM
-    LD HL,TITLE_STAGE1_BLANK48_PATTERN : LD DE,48*8 : LD BC,8 : CALL LDIRVM
+    ; ---------- title background art (SC2, RLE-compressed) ----------
+    ; VRAM 0000h-37FFh(パターンジェネレータ+ネームテーブル/スプライト
+    ; 属性/隙間+カラーテーブル)を丸ごと1本のストリームとして展開する
+    ; ため、CALL 1回で完結する。
+    CALL DECOMPRESS_TITLE_BG
 
-    ; color: groups24-31 (codes192-255) and group6 (code48) - white on
-    ; black (0F1h), a plain readable placeholder ("適当に").
-    LD HL,TITLE_BOSS_COLOR : LD DE,COLTBL+24 : LD BC,8 : CALL LDIRVM
-    LD A,0F1h : LD HL,COLTBL+6 : CALL WRTVRM
-
-    ; draw BOSS_MAP (5 cols x16 rows) into the name table starting at
-    ; row2/col2 - 16 unrolled 5-byte LDIRVMs (source is contiguous, dest
-    ; jumps by 32 bytes/row, so one big block copy can't do this).
-    ; Addresses are computed in Python (title_gen.py's own
-    ; emit_boss1_draw_loop) rather than via in-ASM multiplication - see
-    ; that function's own comment for why.
-; ===== TITLE_BOSS1_DRAW_LOOP placeholder, filled in by build_test.py =====
-
-    ; ---------- Stage2 boss (Sasapi, 64x64 hw sprite, 16x16x16 quadrants) ----------
-    LD HL,TITLE_STAGE2_BOSS_QUADS : LD DE,SPRPAT : LD BC,512 : CALL LDIRVM
-    LD HL,TITLE_STAGE2_BOSS_SPRITE_ATTRS : LD DE,SPRATR : LD BC,64 : CALL LDIRVM
-
-    ; ---------- "PUSH START" text ----------
-    ; SCREEN1's default font (loaded by INIT32 itself, untouched here -
-    ; this file never redefines codes32-95) already covers plain ASCII,
-    ; so this is a literal ASCII string, not custom glyph data.
-    LD A,0F1h
-    LD HL,COLTBL+4 : CALL WRTVRM    ; group4 (codes32-39, space)
-    LD HL,COLTBL+8 : CALL WRTVRM    ; group8 (codes64-71, incl. 'A')
-    LD HL,COLTBL+9 : CALL WRTVRM    ; group9 (codes72-79, incl. 'H')
-    LD HL,COLTBL+10 : CALL WRTVRM   ; group10 (codes80-87, incl. P/R/S/T/U)
-    ; dest = NAMTBL(1800h)+20*32+11 = 1A8Bh - written as a literal, not
-    ; "NAMTBL+20*32+11", because this project's own assembler
-    ; (mini_z80asm.py) evaluates expressions strictly left-to-right with
-    ; no operator precedence (see title_gen.py's own emit_boss1_draw_
-    ; loop comment for the same class of bug this file caught once
-    ; already, round36-14 follow-up#8's "BASE+N*4" precedent).
-    LD HL,TITLE_PUSH_START_TEXT
-    LD DE,01A8Bh
-    LD BC,10
-    CALL LDIRVM
+    ; 展開したVRAM 1B00h-1B7Fh(スプライト属性テーブル)は元のSC2
+    ; ダンプの生バイトをそのまま含んでいる(アート制作ツールがスプライト
+    ; を意図的に使っていない保証は無い)ため、先頭エントリのYへ停止
+    ; マーカー(0D1h)を明示的に上書きし、この画面ではスプライトを一切
+    ; 表示しないことを保証する(このタイトル画面自体はスプライト
+    ; パターンデータを持たない=SPRPAT以降が未定義のため、うっかり
+    ; 何か表示されると内容不明のゴミになる)。
+    LD A,0D1h : LD HL,SPRATR : CALL WRTVRM
 
     EI
 
@@ -208,11 +193,50 @@ BANKSWITCH_TRAMPOLINE_SRC:
     JP (HL)
 BANKSWITCH_TRAMPOLINE_LEN EQU $ - BANKSWITCH_TRAMPOLINE_SRC
 
-TITLE_BOSS_COLOR:
-    DB 0F1h,0F1h,0F1h,0F1h,0F1h,0F1h,0F1h,0F1h
-
-TITLE_PUSH_START_TEXT:
-    DB "PUSH START"
+; ---------- title background decompressor (round43) ----------
+; 自前の対称RLE(制御バイトbit7=0:リテラル/1:反復、下位7bitは長さ-1、
+; 詳細はtools/title_screen/title_bg_gen.pyの長いコメント参照)を、VRAM
+; 0000hから始まるVDPのオートインクリメント書き込みへ直接ストリーム
+; 展開する。展開先アドレスを個別に管理する必要が無いのが利点 - VDPの
+; アドレスレジスタへ一度だけ0000h+書き込みモードを設定すれば、以後は
+; ポート98hへ書くたびに自動的に次のアドレスへ進む(実機・BIOS標準の
+; 挙動)。
+;
+; セグメント数(TITLE_BG_RLE_SEGMENTS、Python側で生成時に確定する定数)
+; を16bitのdown-counterとして使い、1セグメント処理するたびにDEを
+; 1減算してゼロになったら終了 - 圧縮ストリーム自体に終端マーカーを
+; 持たせない設計(セグメント数の方を信頼できる唯一の終端条件にする
+; ことで、ストリームの読み過ぎ/読み足りなさが起きても即座に検出できる
+; ようにするため、というほど厳密な意図ではなく、単に「制御バイト+
+; データの組が何個あるか」を素直にdown-counterにしただけ)。
+DECOMPRESS_TITLE_BG:
+    XOR A : OUT (VDP_ADDR),A
+    LD A,40h : OUT (VDP_ADDR),A     ; VRAM書き込みアドレス=0000h、以後オートインクリメント
+    LD HL,TITLE_BG_RLE
+    LD DE,TITLE_BG_RLE_SEGMENTS
+DTB_LOOP:
+    LD A,(HL) : INC HL
+    OR A
+    JP M,DTB_RUN                    ; bit7=1(符号ビット) -> 反復セグメント
+    AND 7Fh
+    INC A
+    LD B,A
+    LD C,VDP_DATA
+    OTIR                            ; (HL)からB byteをport Cへ連続転送、HLも自動前進
+    JR DTB_NEXT
+DTB_RUN:
+    AND 7Fh
+    INC A
+    LD B,A
+    LD A,(HL) : INC HL
+DTB_RUN_LOOP:
+    OUT (VDP_DATA),A
+    DJNZ DTB_RUN_LOOP
+DTB_NEXT:
+    DEC DE
+    LD A,D : OR E
+    JR NZ,DTB_LOOP
+    RET
 
 ; ---------- BGM driver (Round40) ----------
 ; tools/stage2_combined/combined_test.asmの同名ドライバと同型(chB/chC

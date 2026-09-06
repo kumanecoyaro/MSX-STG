@@ -1,14 +1,16 @@
 """round39 ("ではバンクテストをしたいので...新バンクには必要な初期化処理を
 実装した上で PUSH STARTと表示しStage1とStage2のボスを適当に表示して
-ボタンが押されたらStage1へトランポリンするように"): regression coverage
-for the new title-screen bank (tools/title_screen/title_test.asm).
+ボタンが押されたらStage1へトランポリンするように")+round43("添付ファイル
+はスクリーン2用のSC2ファイル これをタイトル画面に変更 但し簡単な圧縮を
+かけてくれ"): regression coverage for the title-screen bank
+(tools/title_screen/title_test.asm).
 
-Verifies the real VRAM content INIT actually produces (boss art, sprite
-attrs, text) and that the button-press trampoline writes the correct
-bank-select bytes and lands on Stage1's own INIT address - the same
-"assemble the real production source, run it, inspect real VRAM/port
-state" approach every other test file in this project already uses, not
-a reimplementation.
+Verifies the real VRAM content INIT actually produces (the RLE-compressed
+SCREEN2 title art, decompressed byte-for-byte) and that the button-press
+trampoline writes the correct bank-select bytes and lands on Stage1's own
+INIT address - the same "assemble the real production source, run it,
+inspect real VRAM/port state" approach every other test file in this
+project already uses, not a reimplementation.
 """
 import importlib.util
 import os
@@ -19,7 +21,7 @@ REPO = os.path.join(HERE, "..", "..")
 sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.join(REPO, "tools", "bgm_data"))
 import build_test
-import title_gen
+import title_bg_gen
 import bgm_bank_gen as bg
 from z80emu import Z80
 
@@ -99,41 +101,39 @@ def run_to_wait(cpu, limit=300000):
     return steps
 
 
-# ---- INIT-time VRAM content ----
+# ---- INIT-time VRAM content (round43: real SC2 title art, RLE-decompressed) ----
 cpu, mem = fresh_cpu()
 run_to_wait(cpu)
 
-boss1_patterns = title_gen.stage1_boss_patterns()
-check("Stage1 boss BG patterns loaded at codes192-255 (512 bytes)",
-      list(cpu.vram[192 * 8:192 * 8 + 512]) == boss1_patterns)
+_title_bg_payload = title_bg_gen.load_sc2_payload()
+# 比較はSPRATR先頭1バイト(0x1B00)だけ除外する - この1バイトはINIT自身が
+# 展開直後に意図的に0D1h(スプライト停止マーカー)へ上書きするため、生の
+# SC2ペイロードとは食い違って当然(下の別チェックで検証する)。
+_vram_bg = bytes(cpu.vram[0:title_bg_gen.PAYLOAD_LEN])
+_payload_minus_sprattr0 = _title_bg_payload[:0x1B00] + bytes([_vram_bg[0x1B00]]) + _title_bg_payload[0x1B01:]
+check(f"title background: VRAM 0000h-{title_bg_gen.PAYLOAD_LEN-1:04X}h "
+      f"({title_bg_gen.PAYLOAD_LEN} bytes: pattern generator + name table/sprite attrs/gap + "
+      "color table) matches the real Title.SC2 payload EXACTLY after RLE decompression "
+      "(except SPRATR's own first byte, intentionally patched - see the next check)",
+      _vram_bg == _payload_minus_sprattr0)
 
-blank48 = title_gen.stage1_blank48_pattern()
-check("Stage1's own code48 (blank) pattern loaded",
-      list(cpu.vram[48 * 8:48 * 8 + 8]) == blank48)
+check("title background: sprite attribute table's first Y byte is forced to 0D1h (stop marker) "
+      "so no sprites render (this title bank has no sprite pattern data of its own - SPRPAT "
+      "onward is undefined, and the raw SC2 dump's own sprite-attribute-table bytes are not "
+      "trustworthy to display as-is)",
+      cpu.vram[0x1B00] == 0xD1)
 
-boss_map = title_gen.stage1_boss_map()
-name_table_ok = True
-for row in range(16):
-    dest = 0x1800 + (2 + row) * 32 + 2
-    if list(cpu.vram[dest:dest + 5]) != boss_map[row * 5:row * 5 + 5]:
-        name_table_ok = False
-        break
-check("Stage1 BOSS_MAP drawn into the name table at row2/col2 (5x16)", name_table_ok)
-
-for group in (4, 6, 8, 9, 10, 24, 25, 26, 27, 28, 29, 30, 31):
-    check(f"color group{group} set to 0F1h (white on black)",
-          cpu.vram[0x2000 + group] == 0xF1)
-
-boss2_quads = title_gen.stage2_boss_quads()
-check("Stage2 (Sasapi) hw sprite patterns loaded at SPRPAT (512 bytes)",
-      list(cpu.vram[0x3800:0x3800 + 512]) == boss2_quads)
-
-boss2_attrs = title_gen.stage2_boss_sprite_attrs(base_y=40, base_x=170, base_code=0, color=15)
-check("Stage2 (Sasapi) sprite attribute table (16 entries, 64 bytes)",
-      list(cpu.vram[0x1B00:0x1B00 + 64]) == boss2_attrs)
-
-check('name table @1A8Bh reads "PUSH START"',
-      bytes(cpu.vram[0x1A8B:0x1A8B + 10]) == b"PUSH START")
+# ---- RLE codec self-consistency (independent of the ASM decoder above) ----
+_compressed, _segments = title_bg_gen.rle_encode(_title_bg_payload)
+check("TITLE_BG_RLE_SEGMENTS matches the real encoder's own segment count",
+      sym["TITLE_BG_RLE_SEGMENTS"] == _segments)
+check("title_bg_gen.rle_decode(rle_encode(payload)) round-trips byte-for-byte "
+      "(independent Python reference, not just the ASM decoder)",
+      title_bg_gen.rle_decode(_compressed, _segments) == _title_bg_payload)
+check(f"RLE compression: {title_bg_gen.PAYLOAD_LEN} -> {len(_compressed)} bytes "
+      f"({100*len(_compressed)/title_bg_gen.PAYLOAD_LEN:.1f}%, saved "
+      f"{title_bg_gen.PAYLOAD_LEN-len(_compressed)} bytes)",
+      len(_compressed) < title_bg_gen.PAYLOAD_LEN)
 
 # ---- BGM (round40) ----
 HTIMI_HOOK = sym["HTIMI_HOOK"]
