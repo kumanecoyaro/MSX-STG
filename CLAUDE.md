@@ -2174,3 +2174,55 @@ RLE圧縮実装(2026-09-06、完了済み・実機フィードバック待ち)
   報告は、実MAINLOOP+ランダムタイミング割り込み注入(96,713回)による
   徹底的な検証でも再現・特定できず、根本原因未特定のまま継続保留。
   実機での再現条件(タイミング・操作相関等)の追加情報待ち。
+
+## Round51: スコア引き継ぎ実装+ステージクリアジングル(StageClear.mid)
+実装(2026-09-06、完了済み・実機フィードバック待ち)
+
+- ユーザー指示: "ではステージ1と2のスコアを加算して 今は別になってる
+  んでステージで引き継ぐ様に これをステージクリアで流して 3音使って
+  良いんで"(添付: Galaxy Force用「Stage Clear」ジングルMIDI)。
+- **スコア引き継ぎ**: Stage1(0xE4D5)・Stage2(0xF168)のSCOREは別
+  アドレスの独立3byteカウンタ(同一フォーマット)。RAM(0xC000-0xFFFF)が
+  バンク切替を跨いで物理的に共有されるフラットな領域であることを
+  利用し、Stage2のINIT側(`combined_test.asm`、SCOREを0クリアした
+  直後)に`STAGE1_SCORE EQU 0E4D5h`という他ファイルRAMアドレスの
+  直接リテラル参照(GFEnding方式と同じ)を追加、単純に上書きコピー
+  するだけで実装(Stage1側は無変更)。
+- **ステージクリアジングル**: トリガーはStage1→Stage2遷移(ボス撃破+
+  flyaway完了)のみ(Stage2ボス撃破は既存のGFEnding「MISSION
+  COMPLETED」で別途カバー済みのため対象外)。MIDI(type1・12トラック・
+  8.56秒)から3パート抽出: MELODY=track4"Stage Clear"、HARMONY=
+  track2"by Sega 1988"、BASS=track1"Galaxy Force"(装飾的な短い重複
+  ノートを含む2パートは新設のtop-note化ヘルパーでモノフォニック化、
+  BASSは最低音が周期テーブル下限を割るため+1オクターブシフト、
+  GM打楽器チャンネルtrack5は不採用)。**曲固有のtick変換係数の
+  自己発見バグ**: このMIDIのticks_per_beat(480)が既存2曲(120)と
+  異なり、グローバル定数をそのまま使うと曲が4倍遅くなるところを
+  発見・修正(汎用の`ticks_per_beat/(tempo/1e6*60)`式に変更)。
+  LOOP_MARK方式(END_MARKではなく、外部の実時間タイマーが曲の総長
+  ちょうどでバンク切替へ進むため)を採用し、Stage1既存の`BGMT_
+  UPDATE_B/C`をそのまま再利用(新規EN_MARK対応コード不要)。Stage1に
+  新規`STAGE_CLEAR_ACT`(0/1/2)状態機械・`SC_VBLANK_COUNT`実時間
+  クロック・chA(harmony)インフラを追加、`TRIGGER_STAGE_CLEAR`
+  (`PLAYER_FLYAWAY`が最初に2に達した瞬間に1回)/`UPDATE_STAGE_CLEAR`
+  (以後毎フレーム、`STAGE_CLEAR_TOTAL_TICKS`(500)経過でACT=2)/
+  `BGMT_UPDATE_SC_A`(GFEndingの`BGMT_UPDATE_ENDING_A`と同型)を新設。
+  `SOUND_UPDATE`はACT==1の間スキップ(GFEndingのENDING_ACTと同じ
+  考え方、"3音使って良い")。Titleが起動時にジングルの3パートを
+  Stage1用の別RAMアドレスへ事前コピー(TryZと同じ設計)。Comb限定の
+  バンク切替トリガー(`build_full_rom.py`のMAINLOOP_PATCH)を
+  `PLAYER_FLYAWAY==2`直接判定から`STAGE_CLEAR_ACT==2`判定へ変更
+  (ジングル再生完了を待ってからStage2へ切替)。
+- `tools/verify_stage1_bgm.py`に14件追加(69 passed)、
+  `verify_comb.py`にスコア引き継ぎ・StageClearのRAMコピー検証を追加
+  (ジングル自身の実時間待ちはSTAGE_CLEAR_ACTを直接pokeしてバイパス、
+  検証環境が実際のH.TIMI割り込みを一切シミュレートしないため)。全回帰
+  `run_all.py` **1442 passed/0 failed**(無変化)、`title_test.py`
+  **25 passed**(無変化)。Stage2 ROM容量32671/32768byte(残り97byte)。
+  Comb ROM再ビルド・`verify_comb.py`健全性確認の上、標準方針により
+  Comb ROMのみ送付。詳細はHANDOFF.mdのRound51参照。
+- **保留・実機フィードバック待ち**: `STAGE_CLEAR_TOTAL_TICKS`(500)・
+  BASSパートの+1オクターブシフトは未調整の概算値。ステージクリア中は
+  音周り(BGM/SE)のみ制御しており、敵・地形スクロール等それ以外の
+  ゲームロジックは明示的に停止していない(音以外のフリーズ指示は
+  無かったため)。

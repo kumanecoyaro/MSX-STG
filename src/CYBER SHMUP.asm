@@ -1636,7 +1636,19 @@ ROWDONE_5:
     CP 1
     JR Z,PFA_MOVING
     CP 2
-    JP Z,DIR_DONE
+    JR NZ,PFA_FLYAWAY_IDLE
+    ; "ステージクリアで流して" - PLAYER_FLYAWAY==2に到達した最初の
+    ; フレームでのみジングルを起動(STAGE_CLEAR_ACT==0のガード)、以後は
+    ; 曲の総再生時間経過をUPDATE_STAGE_CLEARが監視する。
+    LD A,(STAGE_CLEAR_ACT)
+    OR A
+    JR NZ,PFA_SC_ALREADY_TRIGGERED
+    CALL TRIGGER_STAGE_CLEAR
+    JP DIR_DONE
+PFA_SC_ALREADY_TRIGGERED:
+    CALL UPDATE_STAGE_CLEAR
+    JP DIR_DONE
+PFA_FLYAWAY_IDLE:
     LD A,(PLAYER_FLYAWAY_WAIT)
     OR A
     JR Z,PFA_NORMAL_INPUT
@@ -2021,7 +2033,13 @@ ANIM2_WRITE:
     CALL WRITE_ANIM_CELL
 ANIM2_DONE:
 
-    CALL SOUND_UPDATE
+    ; "これは3音使って良い" - ステージクリアジングル再生中(STAGE_CLEAR_
+    ; ACT==1)はchAをBGMT_UPDATE_SC_A(BGM_TICK内)が専有するため、通常の
+    ; SEドライバ(SOUND_UPDATE)自体を丸ごとスキップする(GFEnding[Stage2]
+    ; のENDING_ACTと全く同じ考え方)。
+    LD A,(STAGE_CLEAR_ACT)
+    CP 1
+    CALL NZ,SOUND_UPDATE
     LD A,(PLAYER_FLYAWAY)
     OR A
     CALL NZ,PLAYER_PARTICLE_FADE
@@ -3371,6 +3389,48 @@ BGM_TRYZ_CHC_BASE EQU 0CBF5h    ; Titleが埋める(chC bass, 73byte) - 0xC910+7
 BGM_B_LOOP_BASE   EQU 0CC3Eh
 BGM_C_LOOP_BASE   EQU 0CC40h
 
+; (2026-09-06、"ではステージ1と2のスコアを加算して...これをステージ
+; クリアで流して 3音使って良いんで"): StageClear.mid(Galaxy Force、
+; Stage Clearジングル、約8.27秒)から3パート抽出(melody=chB/bass=chC/
+; harmony=chA、tools/bgm_data/midi_to_psg.load_stage_clear_parts()参照)。
+; TryZと全く同じ理由・同じ設計(Stage1は自前でバンク切替をしない制約 -
+; 上記BGM_TRYZ_CHB/CHC_BASE自身のコメント参照)でTitleが起動時に別
+; アドレスへコピー済みという前提。LOOP_MARK方式(chB/Cの既存実装
+; BGMT_UPDATE_B/Cをそのまま再利用でき、新規のEND_MARK対応コードが
+; 不要になる)だが、下記STAGE_CLEAR_ACT/SC_VBLANK_COUNTの実時間タイマー
+; が曲の総長ちょうどでStage2へのバンク切替へ進むため、実際にループ端
+; へ到達することはまず無い設計。
+STAGE_CLEAR_CHB_BASE EQU 0CC42h  ; Titleが埋める(chB melody, 71byte)
+STAGE_CLEAR_CHC_BASE EQU 0CC89h  ; Titleが埋める(chC bass, 121byte) - 0xCC42+71
+STAGE_CLEAR_CHA_BASE EQU 0CD02h  ; Titleが埋める(chA harmony, 81byte) - 0xCC89+121
+
+; chA(harmony、3声目)はStage1にとって完全に新規のBGM専用制御フィールド
+; ("これは3音使って良い" - GFEnding[Stage2]と同じ考え方、下記
+; STAGE_CLEAR_ACTが1の間だけ通常のSEドライバ[SOUND_UPDATE]自体を
+; MAINLOOP側で丸ごとスキップするため競合しない - 自機は既にflyaway
+; 完了・画面外でSEが鳴る場面自体が無い)。envelopeはLINEAR形状を流用
+; (chCと同型、デューティ無し)。
+BGM_A_PTR       EQU 0CD53h
+BGM_A_TIMER     EQU 0CD55h
+BGM_A_REST      EQU 0CD56h
+BGM_A_ENV_LEVEL EQU 0CD57h
+BGM_A_ENV_IDX   EQU 0CD58h
+BGM_A_ENV_CD    EQU 0CD59h
+
+; ステージクリア演出の状態機械: 0=未発生/1=ジングル再生中/2=完了
+; (build_full_rom.pyのMAINLOOP_PATCH参照 - Comb限定でStage1→Stage2の
+; バンク切替トリガーをPLAYER_FLYAWAY==2から下記STAGE_CLEAR_ACT==2へ
+; 差し替える)。実時間クロックはSC_VBLANK_COUNT(BGM_TICK内、実VBlank
+; 駆動 - MAINLOOPのTICKはfree-running設計で実時間に対応しない、
+; GFEnding[Stage2]のVBLANK_COUNTと全く同じ考え方)。
+STAGE_CLEAR_ACT         EQU 0CD5Ah
+SC_VBLANK_COUNT         EQU 0CD5Bh  ; 2 bytes
+SC_START_TICK           EQU 0CD5Dh  ; 2 bytes
+; tools/bgm_data/midi_to_psg.load_stage_clear_parts()の全パート共通
+; total_ticks実測値(melody489/bass496/harmony496)の最大値に少し余裕を
+; 持たせた値。
+STAGE_CLEAR_TOTAL_TICKS EQU 500
+
 ; BELL: 半減期45tickの指数減衰(15*0.5^(t/45)を4bit丸め、以後この
 ; カーブが完全に0へ収束するまでをRLE圧縮)。試聴ツール(#3 BELL)と
 ; 同一パラメータ。
@@ -3401,6 +3461,17 @@ INIT_BGM:
     LD (BGM_MUTED),A
     LD HL,BGM_B_BASE : LD (BGM_B_LOOP_BASE),HL
     LD HL,BGM_C_BASE : LD (BGM_C_LOOP_BASE),HL
+    ; "ステージクリアで流して" - chA関連+状態機械の起動時ゼロクリア
+    ; (init_ram_poison_test.py型の教訓 - 新規RAMは必ずここで明示的に
+    ; ゼロ初期化する)。
+    LD (BGM_A_TIMER),A
+    LD (BGM_A_REST),A
+    LD (BGM_A_ENV_LEVEL),A
+    LD (BGM_A_ENV_IDX),A
+    LD (BGM_A_ENV_CD),A
+    LD (STAGE_CLEAR_ACT),A
+    LD (SC_VBLANK_COUNT),A : LD (SC_VBLANK_COUNT+1),A
+    LD (SC_START_TICK),A : LD (SC_START_TICK+1),A
     LD A,0C3h                     ; JP nn opcode
     LD (HTIMI_HOOK),A
     LD HL,BGM_TICK
@@ -3457,17 +3528,84 @@ SWITCH_BGM_TO_TRYZ:
     CALL UNMUTE_BGM
     RET
 
+; "ではステージ1と2のスコアを加算して...これをステージクリアで流して
+; 3音使って良いんで" - PLAYER_FLYAWAYがちょうど2に到達した最初の
+; フレームで1回だけ呼ばれる(下のPFA_FLYAWAY_IDLE周りの分岐参照)。
+; SWITCH_BGM_TO_TRYZと同じくDI/EIで全体を保護しつつchB/chCを差し替え、
+; 加えてchA(harmony)も新規に起動する。
+TRIGGER_STAGE_CLEAR:
+    LD A,1 : LD (STAGE_CLEAR_ACT),A
+    LD HL,(SC_VBLANK_COUNT) : LD (SC_START_TICK),HL
+    DI
+    LD HL,STAGE_CLEAR_CHB_BASE
+    LD (BGM_B_PTR),HL
+    LD (BGM_B_LOOP_BASE),HL
+    XOR A
+    LD (BGM_B_TIMER),A
+    LD (BGM_B_REST),A
+    LD (BGM_B_ENV_LEVEL),A
+    LD (BGM_B_ENV_IDX),A
+    LD (BGM_B_ENV_CD),A
+    LD (BGM_B_DUTY_PHASE),A
+    LD HL,STAGE_CLEAR_CHC_BASE
+    LD (BGM_C_PTR),HL
+    LD (BGM_C_LOOP_BASE),HL
+    LD (BGM_C_TIMER),A
+    LD (BGM_C_REST),A
+    LD (BGM_C_ENV_LEVEL),A
+    LD (BGM_C_ENV_IDX),A
+    LD (BGM_C_ENV_CD),A
+    LD HL,STAGE_CLEAR_CHA_BASE
+    LD (BGM_A_PTR),HL
+    LD (BGM_A_TIMER),A
+    LD (BGM_A_REST),A
+    LD (BGM_A_ENV_LEVEL),A
+    LD (BGM_A_ENV_IDX),A
+    LD (BGM_A_ENV_CD),A
+    EI
+    CALL UNMUTE_BGM
+    RET
+
+; PLAYER_FLYAWAY==2の間、毎フレーム呼ばれる(下のPFA_FLYAWAY_IDLE周り
+; 参照)。ジングルの総再生時間(STAGE_CLEAR_TOTAL_TICKS、実時間クロック
+; SC_VBLANK_COUNT基準)が経過した瞬間に1回だけSTAGE_CLEAR_ACTを2へ
+; 進める - build_full_rom.pyのMAINLOOP_PATCH(Comb限定)がこれを見て
+; Stage2へのバンク切替へ進む(このファイル自身はバンク切替を一切
+; 行わない設計、上記BGM_TRYZ_CHB/CHC_BASE自身のコメント参照)。
+UPDATE_STAGE_CLEAR:
+    LD A,(STAGE_CLEAR_ACT)
+    CP 1
+    RET NZ
+    LD HL,(SC_VBLANK_COUNT)
+    LD DE,(SC_START_TICK)
+    OR A : SBC HL,DE
+    LD DE,STAGE_CLEAR_TOTAL_TICKS
+    OR A : SBC HL,DE
+    RET C
+    LD A,2 : LD (STAGE_CLEAR_ACT),A
+    RET
+
 BGM_TICK:
     PUSH AF
     PUSH BC
     PUSH DE
     PUSH HL
+    ; ステージクリアジングル用の実時間クロック("ステージクリアで
+    ; 流して" - 曲の総再生時間を実時間で判定する必要があるため。
+    ; H.TIMIは実VBlank駆動の本物の割り込みなので、MAINLOOPのTICK
+    ; (free-running、実時間との対応が無い)とは違いこれ自体が実時間の
+    ; 基準になる。GFEnding[Stage2]のVBLANK_COUNTと全く同じ考え方。
+    ; 16bit、オーバーフローは現実的な猶予時間内では発生しないため無視。
+    LD HL,(SC_VBLANK_COUNT) : INC HL : LD (SC_VBLANK_COUNT),HL
     LD A,(BGM_MUTED)
     OR A
     JR NZ,BGMT_SKIP_BC
     CALL BGMT_UPDATE_B
     CALL BGMT_UPDATE_C
 BGMT_SKIP_BC:
+    LD A,(STAGE_CLEAR_ACT)
+    CP 1
+    CALL Z,BGMT_UPDATE_SC_A
     POP HL
     POP DE
     POP BC
@@ -3659,6 +3797,99 @@ BGMT_UC_ENV_WRITE:
     JR NC,BGMT_UC_ATTEN_OK
     XOR A                            ; 減算でアンダーフローしたら0にクランプ
 BGMT_UC_ATTEN_OK:
+    OUT (PSG_DATA),A
+    RET
+
+; チャンネルA(R0/R1 tone、R8 volume、LINEAR形状+デューティOFF、chCと
+; 同型) - ステージクリアジングルの3声目("これは3音使って良い" -
+; STAGE_CLEAR_ACT==1の間だけ呼ばれる、通常ゲーム中のSEドライバ
+; [SOUND_UPDATE]とは競合しない、MAINLOOP側もSTAGE_CLEAR_ACT==1の間は
+; CALL SOUND_UPDATE自体を丸ごとスキップする)。R7は既にINITでtone A
+; 有効(0B0h)のまま変更不要(Stage2のENDING_ACTと違い、Stage1のchAは
+; 元々常時tone A有効設計 - "そもそもchB、Cは空けてあってSE類はchA
+; のみで鳴らすはず"のRound41統合以来)。LOOP_MARK方式だが、外部の
+; STAGE_CLEAR_ACT/SC_VBLANK_COUNTタイマーが曲の総長ちょうどでバンク
+; 切替へ進むため実際にループ端へ到達することはまず無い。
+BGMT_UPDATE_SC_A:
+    LD A,(BGM_A_TIMER)
+    OR A
+    JR Z,BGMT_USCA_NEWROW
+    DEC A
+    LD (BGM_A_TIMER),A
+    JR BGMT_USCA_ENV_STEP
+BGMT_USCA_NEWROW:
+    LD HL,(BGM_A_PTR)
+    LD A,(HL)
+    CP BGM_LOOP_MARK
+    JR NZ,BGMT_USCA_GOT
+    LD HL,STAGE_CLEAR_CHA_BASE
+    LD A,(HL)
+BGMT_USCA_GOT:
+    LD C,A
+    INC HL
+    LD A,(HL)
+    INC HL
+    LD (BGM_A_PTR),HL
+    DEC A
+    LD (BGM_A_TIMER),A
+    LD A,C
+    CP BGM_NOTE_REST
+    JR Z,BGMT_USCA_SETREST
+    XOR A
+    LD (BGM_A_REST),A
+    LD E,C : LD D,0
+    LD HL,BGM_PERIOD_LO_RAM : ADD HL,DE : LD A,(HL) : LD B,A
+    LD HL,BGM_PERIOD_HI_RAM : ADD HL,DE : LD A,(HL) : LD C,A
+    LD A,0 : OUT (PSG_ADDR),A
+    LD A,B : OUT (PSG_DATA),A
+    LD A,1 : OUT (PSG_ADDR),A
+    LD A,C : OUT (PSG_DATA),A
+    LD HL,BGM_ENV_LINEAR_TABLE
+    LD A,(HL) : LD (BGM_A_ENV_LEVEL),A
+    INC HL
+    LD A,(HL) : DEC A : LD (BGM_A_ENV_CD),A
+    XOR A : LD (BGM_A_ENV_IDX),A
+    JR BGMT_USCA_ENV_WRITE
+BGMT_USCA_SETREST:
+    LD A,1
+    LD (BGM_A_REST),A
+    LD A,8 : OUT (PSG_ADDR),A
+    XOR A : OUT (PSG_DATA),A
+    RET
+BGMT_USCA_ENV_STEP:
+    LD A,(BGM_A_REST)
+    OR A
+    RET NZ
+    LD A,(BGM_A_ENV_CD)
+    OR A
+    JR Z,BGMT_USCA_ENV_ADVANCE
+    DEC A
+    LD (BGM_A_ENV_CD),A
+    JR BGMT_USCA_ENV_WRITE
+BGMT_USCA_ENV_ADVANCE:
+    LD A,(BGM_A_ENV_IDX)
+    CP BGM_ENV_LAST_INDEX
+    JR Z,BGMT_USCA_ENV_WRITE
+    INC A
+    LD (BGM_A_ENV_IDX),A
+    LD L,A : LD H,0
+    ADD HL,HL
+    LD DE,BGM_ENV_LINEAR_TABLE
+    ADD HL,DE
+    LD A,(HL) : LD (BGM_A_ENV_LEVEL),A
+    INC HL
+    LD A,(HL)
+    OR A
+    JR Z,BGMT_USCA_ENV_WRITE
+    DEC A
+    LD (BGM_A_ENV_CD),A
+BGMT_USCA_ENV_WRITE:
+    LD A,8 : OUT (PSG_ADDR),A
+    LD A,(BGM_A_ENV_LEVEL)
+    SUB BGM_VOL_ATTEN
+    JR NC,BGMT_USCA_ATTEN_OK
+    XOR A
+BGMT_USCA_ATTEN_OK:
     OUT (PSG_DATA),A
     RET
 

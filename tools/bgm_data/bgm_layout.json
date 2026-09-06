@@ -19,5 +19,11 @@
     "chA_len": 69,
     "chB_len": 253,
     "chC_len": 121
+  },
+  "STAGE_CLEAR": {
+    "bank_offset": 4891,
+    "chA_len": 81,
+    "chB_len": 71,
+    "chC_len": 121
   }
 }

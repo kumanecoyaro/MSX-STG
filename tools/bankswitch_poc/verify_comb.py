@@ -162,6 +162,27 @@ assert [mem.flat[_tryz_chC_ram + i] for i in range(len(_tryz_chC))] == list(_try
     "title's own BGM RAM copy: TryZ chC mismatch (Stage1 boss BGM)"
 print("title's own BGM RAM copy of TryZ (Stage1 boss theme) verified byte-correct")
 
+# (2026-09-06、"ではステージ1と2のスコアを加算して...これをステージ
+# クリアで流して 3音使って良いんで"): TitleはStage1のステージクリア
+# ジングル用にStageClearの3パート(melody=chB/bass=chC/harmony=chA)も
+# TryZと同じ要領で別アドレスへ一度だけコピーする。
+_sc = bgm_layout["STAGE_CLEAR"]
+_sc_start = _sc["bank_offset"]
+_sc_chB = bgm_bank[_sc_start:_sc_start + _sc["chB_len"]]
+_sc_chC = bgm_bank[_sc_start + _sc["chB_len"]:_sc_start + _sc["chB_len"] + _sc["chC_len"]]
+_sc_chA = bgm_bank[_sc_start + _sc["chB_len"] + _sc["chC_len"]:
+                    _sc_start + _sc["chB_len"] + _sc["chC_len"] + _sc["chA_len"]]
+_sc_chB_ram = gsym["STAGE_CLEAR_CHB_BASE"]
+_sc_chC_ram = gsym["STAGE_CLEAR_CHC_BASE"]
+_sc_chA_ram = gsym["STAGE_CLEAR_CHA_BASE"]
+assert [mem.flat[_sc_chB_ram + i] for i in range(len(_sc_chB))] == list(_sc_chB), \
+    "title's own BGM RAM copy: StageClear chB mismatch (Stage1 stage-clear jingle)"
+assert [mem.flat[_sc_chC_ram + i] for i in range(len(_sc_chC))] == list(_sc_chC), \
+    "title's own BGM RAM copy: StageClear chC mismatch (Stage1 stage-clear jingle)"
+assert [mem.flat[_sc_chA_ram + i] for i in range(len(_sc_chA))] == list(_sc_chA), \
+    "title's own BGM RAM copy: StageClear chA mismatch (Stage1 stage-clear jingle)"
+print("title's own BGM RAM copy of StageClear (Stage1 stage-clear jingle) verified byte-correct")
+
 cpu.sim_trig_a = True
 print("simulated PUSH START (sim_trig_a=True)")
 
@@ -216,6 +237,57 @@ print("Stage1's own INIT_BGM re-armed HTIMI_HOOK to its own BGM_TICK; title's ea
 mem.flat[PLAYER_FLYAWAY] = 2
 print("poked PLAYER_FLYAWAY=2 (simulating boss-destroyed + flyaway-complete)")
 
+# (2026-09-06、"ではステージ1と2のスコアを加算して...ステージで
+# 引き継ぐ様に"): poke a known, distinctive Stage1 SCORE value now (RAM
+# is flat/shared across bank switches, so this survives untouched all the
+# way through to Stage2's own INIT further below) and confirm Stage2's
+# own SCORE reads back the same value once its INIT has run.
+STAGE1_SCORE = gsym["SCORE"]
+_score_test_value = 0x123456
+mem.flat[STAGE1_SCORE] = _score_test_value & 0xFF
+mem.flat[STAGE1_SCORE + 1] = (_score_test_value >> 8) & 0xFF
+mem.flat[STAGE1_SCORE + 2] = (_score_test_value >> 16) & 0xFF
+print(f"poked Stage1 SCORE=0x{_score_test_value:06x} to verify stage-clear carryover into Stage2")
+
+# (2026-09-06、"これをステージクリアで流して"): the switch trigger is no
+# longer PLAYER_FLYAWAY==2 directly - TRIGGER_STAGE_CLEAR now arms first
+# (STAGE_CLEAR_ACT=1) and repoints BGM_B/C/A_PTR at the StageClear jingle,
+# then UPDATE_STAGE_CLEAR only advances to STAGE_CLEAR_ACT=2 once its own
+# real-time clock (SC_VBLANK_COUNT, incremented from BGM_TICK - itself
+# only ever fired by an actual H.TIMI interrupt, which this raw
+# instruction-stepping harness never simulates, same as every other real
+# vblank-driven timer in this script) reaches the jingle's total duration.
+# Verifying that real-time wait would need ~500 simulated vblank
+# interrupts; this script's scope is the bank-switch mechanics, not the
+# jingle's own timing (that has its own coverage in tools/verify_
+# stage1_bgm.py), so after confirming TRIGGER_STAGE_CLEAR actually fired
+# and repointed the BGM channels, STAGE_CLEAR_ACT is poked directly to 2
+# to exercise the rest of the trampoline exactly as before.
+STAGE_CLEAR_ACT = gsym["STAGE_CLEAR_ACT"]
+steps1b = 0
+while mem.flat[STAGE_CLEAR_ACT] != 1 and steps1b < 2_000_000:
+    cpu.step()
+    steps1b += 1
+assert mem.flat[STAGE_CLEAR_ACT] == 1, "TRIGGER_STAGE_CLEAR never fired (STAGE_CLEAR_ACT stuck at 0)"
+# TRIGGER_STAGE_CLEAR sets STAGE_CLEAR_ACT=1 as its very FIRST instruction
+# (before the DI/EI block that actually repoints BGM_B/C/A_PTR), so the
+# loop above breaks mid-routine - run a short, generous fixed margin of
+# extra steps to let the rest of the routine (and the JP DIR_DONE right
+# after it) finish before checking the pointers it sets.
+for _ in range(200):
+    cpu.step()
+BGM_B_PTR, BGM_C_PTR, BGM_A_PTR = gsym["BGM_B_PTR"], gsym["BGM_C_PTR"], gsym["BGM_A_PTR"]
+_got_b = mem.flat[BGM_B_PTR] | (mem.flat[BGM_B_PTR + 1] << 8)
+_got_c = mem.flat[BGM_C_PTR] | (mem.flat[BGM_C_PTR + 1] << 8)
+_got_a = mem.flat[BGM_A_PTR] | (mem.flat[BGM_A_PTR + 1] << 8)
+assert _got_b == gsym["STAGE_CLEAR_CHB_BASE"], "TRIGGER_STAGE_CLEAR did not repoint BGM_B_PTR at the jingle"
+assert _got_c == gsym["STAGE_CLEAR_CHC_BASE"], "TRIGGER_STAGE_CLEAR did not repoint BGM_C_PTR at the jingle"
+assert _got_a == gsym["STAGE_CLEAR_CHA_BASE"], "TRIGGER_STAGE_CLEAR did not repoint BGM_A_PTR at the jingle"
+print(f"StageClear jingle triggered after {steps1b} steps (STAGE_CLEAR_ACT=1, "
+      f"BGM_B/C/A_PTR repointed at the jingle's 3 parts)")
+mem.flat[STAGE_CLEAR_ACT] = 2
+print("poked STAGE_CLEAR_ACT=2 (bypassing the jingle's own real-time wait, see comment above)")
+
 STAGE2_INIT = s2sym["INIT"]
 switched = False
 steps2 = 0
@@ -261,6 +333,17 @@ assert saw_bank6, "stage2's own INIT_BGM never selected bank6 (BGM data bank) - 
 assert mem.bankB == 5, f"stage2 reached its own MAINLOOP with bankB={mem.bankB}, expected 5"
 print(f"real stage2 reached its own MAINLOOP after {steps3} more steps, bankB visited 6 (BGM copy) then settled back on 5")
 assert cpu.pc == s2sym["MAINLOOP"]
+
+# confirm the score-carryover poked above actually landed in Stage2's own
+# SCORE by the time its INIT finished (see the poke's own comment above).
+STAGE2_SCORE = s2sym["SCORE"]
+_got_score = (mem.flat[STAGE2_SCORE] | (mem.flat[STAGE2_SCORE + 1] << 8)
+              | (mem.flat[STAGE2_SCORE + 2] << 16))
+assert _got_score == _score_test_value, (
+    f"Stage2's own SCORE (0x{_got_score:06x}) does not match the Stage1 SCORE carried over "
+    f"(expected 0x{_score_test_value:06x}) - Stage2's INIT-time STAGE1_SCORE carryover copy is broken"
+)
+print(f"score carryover verified: Stage2's own SCORE == Stage1's SCORE (0x{_got_score:06x})")
 
 # round40: confirm Stage2's own independent BGM copy (DEFEAT, at its own
 # STAGE2_DATA_BASE=0xC200 - a different address range than title/Stage1's

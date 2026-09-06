@@ -48,6 +48,9 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 BANK_SIZE = 0x4000  # ASCII16の1バンク=16KB
 # (2026-09-06、TryZ/GFEnding追加に伴い35→60へ拡張、
 # tools/bgm_data/midi_to_psg.pyのMIDI_MIN/MAX[32,91]自身のコメント参照)
+# StageClear追加時(同日)はテーブル自体は拡張せず、範囲外に落ちる
+# ベースパートだけ+1オクターブシフトして収める方針にしたため60のまま
+# 変化なし(load_stage_clear_parts()自身のコメント参照)。
 NUM_NOTES = 60       # tools/bgm_data/midi_to_psg.py参照 - キャッシュ済み
                       # 生成結果と独立に固定; 生成時にmidi_to_psg.NUM_NOTESと
                       # 一致することをアサートする。
@@ -190,6 +193,32 @@ def _generate():
     blob += bb
     blob += bh
     layout["ENDING_GFENDING"] = {
+        "bank_offset": song_offset,
+        "chB_len": len(bm),
+        "chC_len": len(bb),
+        "chA_len": len(bh),
+    }
+
+    # STAGE_CLEAR(2026-09-06、"ステージ1と2のスコアを加算して...これを
+    # ステージクリアで流して 3音使って良いんで"): 3パート(melody=chB/
+    # bass=chC/harmony=chA)構成はENDING_GFENDINGと同型だが、こちらは
+    # END_MARKではなくLOOP_MARK(ループ)を使う - GFEndingと違い「曲の
+    # 自然な終わりを検出してから何かする」設計ではなく、外部の実時間
+    # タイマー(Stage1側のSTAGE_CLEAR_ACT/STAGE_CLEAR_START)が曲の総
+    # 長さちょうどで問答無用にStage2へのバンク切替へ進むため、ループ
+    # 端に達しても実際に一巡することはまず無く(達したとしても頭に
+    # 戻るだけで無音にはならない)、Stage1既存のBGMT_UPDATE_B/C
+    # (ALONE_FIGHTER/TryZと同じLOOP_MARK専用実装)をそのまま再利用
+    # でき、新規のEND_MARK対応コードが不要になる。
+    tm, tb, th = mp.load_stage_clear_parts()
+    bm, bb, bh = (mp.rows_to_bytes(tm, terminator=mp.LOOP_MARK),
+                  mp.rows_to_bytes(tb, terminator=mp.LOOP_MARK),
+                  mp.rows_to_bytes(th, terminator=mp.LOOP_MARK))
+    song_offset = len(blob)
+    blob += bm
+    blob += bb
+    blob += bh
+    layout["STAGE_CLEAR"] = {
         "bank_offset": song_offset,
         "chB_len": len(bm),
         "chC_len": len(bb),

@@ -10358,3 +10358,146 @@ Round49の調査(2ループ分の音程・音量完全一致、RAM衝突無し)�
 - `CHECK_FLYER_LASER_VS_TANK`/`CHECK_ONE_MINE_VS_TANK`は依然として
   8x8の生座標判定のまま(Round49で指摘した通り、理論上は同じクラスの
   問題を抱えている可能性があるが、指示なしに拡張していない)。
+
+## Round51(スコア引き継ぎ実装+ステージクリアジングル[StageClear.mid]実装・
+完了済み・実機フィードバック待ち)(2026-09-06)
+
+- ユーザー指示: "ではステージ1と2のスコアを加算して 今は別になってる
+  んでステージで引き継ぐ様に これをステージクリアで流して 3音使って
+  良いんで"(添付: `Galaxy_Force_Stage_Clear.mid`、Sega 1988、
+  Galaxy Force用アーケードBGM「Stage Clear」ジングル、type1・
+  12トラック・8.56秒)。
+
+### (1) スコア引き継ぎ
+
+Stage1(`SCORE EQU 0E4D5h`)・Stage2(`SCORE EQU F168h`)は元々完全に
+独立した3byte(`real_score = SCORE*100`)カウンタで、両者に一切
+データの受け渡しが無かった。RAM(0xC000-0xFFFF)はバンク切替を跨いで
+物理的に共有されるフラットな領域(Round40〜48のBGM実装で繰り返し
+確認済みの前提)であることを利用し、Stage2のINIT側(SCOREを0クリア
+した直後、`combined_test.asm`)に`STAGE1_SCORE EQU 0E4D5h`という
+リテラル参照(GFEndingが他ファイルのRAMアドレスを直接ハードコード
+したのと同じ手法 - 別アセンブル単位のシンボルは直接importできない
+ため)を追加し、単純に上書きコピーするだけで実装(0+Stage1分=
+Stage1分の「加算」)。Stage1側には一切コードを追加していない
+(Stage1が最後に書いたSCOREの生バイトが、Stage2のINITがそこへ来た
+時点でもそのまま残っているという前提のみに依存)。
+
+`tools/bankswitch_poc/verify_comb.py`に新規検証を追加: Stage1の
+SCOREへ既知の値(0x123456)を直接poke → Stage1→Stage2のバンク切替を
+最後まで実行 → Stage2自身のSCOREが同じ値になっていることを確認。
+
+### (2) ステージクリアジングル(StageClear)
+
+- **トリガー地点**: Stage1→Stage2への遷移(Stage1ボス撃破+flyaway
+  完了)のみに実装。Stage2ボス撃破は既にRound48のGFEnding「MISSION
+  COMPLETED」(ゲーム全体の終了演出)でカバー済みのため対象外と判断
+  (ユーザー確認は行わず、既存設計との一貫性から妥当と判断)。
+- **MIDI解析**(`tools/bgm_data/midi_to_psg.py`): type1・12トラック、
+  実際に音符を持つのは5トラック(track1"Galaxy Force"=chan0、
+  track2"by Sega 1988"=chan1、track3"CPU: Arcade..."=chan2、
+  track4"Stage Clear"=chan3、track5"Originally composed by"=chan9)。
+  chan9はGM標準ドラムチャンネル(観測ノート38-48はスネア/ハイハット/
+  タムに典型的な番号)のため不採用(TryZのGM打楽器チャンネル除外と
+  同じ判断)。3パート抽出: **MELODY=track4**(最も活発に動く声部、
+  短い装飾的な重複ノート[グレースノート・アルペジオ的三和音断片]を
+  含むため新設の`_track_segments_top_note()`[GFEnding抽出時の
+  `_segments_for_channel(top_note_only=True)`をトラック単位に
+  一般化したもの]でモノフォニック化)、**HARMONY=track2**(track3と
+  ほぼ同一リズムで並行3度/6度移動する対の声部のうち片方、真に
+  モノフォニック、3音の予算内に収めるためtrack3は不採用 - GFEnding
+  抽出時の重複声部間引きと同じ判断)、**BASS=track1**(同じく
+  top-note化)。BASSの最低音MIDI26が既存の周期テーブル範囲[32,91]の
+  下限を割り込むため、この曲専用に+12(1オクターブ)シフト(38-64)を
+  適用 - テーブル自体は拡張せず、既存4曲・GFEndingの全RAM/ROM
+  アドレスへの波及を回避(オクターブ単位のシフトのため他パートとの
+  調和関係は保たれる)。**曲固有のtick変換係数の発見**: このMIDIは
+  ticks_per_beat=480(ALONE_FIGHTER/DEFEATの120とは異なる)のため、
+  既存のグローバル定数`MIDI_TICKS_PER_VBLANK=4`をそのまま使うと
+  曲が4倍遅くなるバグになるところだった(実際に33秒相当のデータが
+  生成されて発覚) - `ticks_per_beat/(tempo/1e6*60)`で都度算出する
+  方式に修正し、正しく約8.15-8.27秒(実測mid.length=8.558秒と整合)の
+  データを得た。3パート合計295→273byte(LOOP_MARK採用で1byte減、
+  下記参照)。
+- **LOOP_MARK採用(END_MARKではなく)**: GFEndingと同じ3パート構成
+  だが、こちらは「曲の自然な終わりを検出してから何かする」設計では
+  なく、外部の実時間タイマー(下記STAGE_CLEAR_ACT/SC_VBLANK_COUNT)が
+  曲の総長ちょうどで問答無用にStage2へのバンク切替へ進むため、
+  ループ端に達しても実害が無い(達したとしても頭に戻るだけ、切替の
+  瞬間には無関係)。これにより既存のStage1 `BGMT_UPDATE_B/C`
+  (ALONE_FIGHTER/TryZと同じLOOP_MARK専用実装)をそのまま再利用でき、
+  新規のEND_MARK対応コードが不要になった(chBとchCは1バイトの
+  コード追加も無し)。
+- **`tools/bgm_data/bgm_bank_gen.py`**: `STAGE_CLEAR`エントリを新設
+  (bank_offset=4891、chB=71/chC=121/chA=81byte、合計273byte)。
+  bank使用量4891→5164byte(16384byte中、依然11220byte空き)。
+- **Stage1実装**(`src/CYBER SHMUP.asm`、新規シンボル一式):
+  `STAGE_CLEAR_CHB/CHC/CHA_BASE`(0xCC42/0xCC89/0xCD02、TryZの直後の
+  空き領域)、`BGM_A_PTR/TIMER/REST/ENV_LEVEL/ENV_IDX/ENV_CD`
+  (Stage1にとって完全に新規のchA[harmony]インフラ、LINEAR形状流用)、
+  `STAGE_CLEAR_ACT`(0=未発生/1=再生中/2=完了)、`SC_VBLANK_COUNT`
+  (実VBlank駆動の実時間クロック、GFEndingの`VBLANK_COUNT`と同じ
+  考え方)、`SC_START_TICK`、`STAGE_CLEAR_TOTAL_TICKS EQU 500`
+  (曲の実測total_ticks最大値496に余裕を持たせた値)。新規ルーチン:
+  `TRIGGER_STAGE_CLEAR`(`PLAYER_FLYAWAY`が最初に2へ到達したフレームで
+  1回だけ、`STAGE_CLEAR_ACT`をガードに`SWITCH_BGM_TO_TRYZ`と同型の
+  DI/EI保護でchB/C/Aを一括repoint)、`UPDATE_STAGE_CLEAR`(以後毎フレーム
+  呼ばれ、`SC_VBLANK_COUNT`が`STAGE_CLEAR_TOTAL_TICKS`分経過した瞬間に
+  `STAGE_CLEAR_ACT`を2へ)、`BGMT_UPDATE_SC_A`(chA駆動、GFEndingの
+  `BGMT_UPDATE_ENDING_A`とほぼ同型だがLOOP_MARK版)。既存の
+  `PLAYER_FLYAWAY==2`分岐(`JP Z,DIR_DONE`だった箇所)を`PFA_FLYAWAY_
+  IDLE`ラベルで置き換え、`STAGE_CLEAR_ACT`のガードで`TRIGGER_STAGE_
+  CLEAR`(初回)/`UPDATE_STAGE_CLEAR`(以降)を呼び分ける形に変更。
+  `SOUND_UPDATE`(既存の`CALL SOUND_UPDATE`)を`STAGE_CLEAR_ACT==1`の
+  間スキップするガードを追加(GFEndingの`ENDING_ACT==2`ガードと同じ
+  考え方 - "これは3音使って良い"、自機は既にflyaway完了・画面外で
+  SEが鳴る場面自体が無いため安全に明け渡せる)。R7は無変更で対応
+  (Stage1のchAは元々Round41統合以来常時tone A有効設計のため)。
+- **Title側**(`tools/title_screen/title_test.asm`): StageClearの
+  3パート(0x931B、273byte)を`STAGE_CLEAR_CHB_BASE`(0xCC42)へLDIRで
+  一括コピーする1行を`INIT_BGM`に追加(TryZと全く同じ要領)。
+  `tools/bankswitch_poc/build_full_rom.py`の`TITLE_BGM_BANKSELECT_
+  ANCHOR/PATCH`(exact-matchテキストブロック)にも同じ行を追加。
+- **Comb限定のバンク切替トリガー変更**
+  (`tools/bankswitch_poc/build_full_rom.py`の`MAINLOOP_PATCH`、
+  in-memoryパッチのみ・追跡ソース無変更): 従来の`PLAYER_FLYAWAY==2`
+  直接判定を`STAGE_CLEAR_ACT==2`判定へ変更(ジングルが自身の実時間
+  長さぶん再生し終わってから初めてStage2へ切り替わる、間接が1段
+  増えただけで根底のイベント[ボス撃破+flyaway完了]自体は同一)。
+- **`tools/bankswitch_poc/verify_comb.py`更新**: (a)StageClearの
+  Title RAMコピーをTryZと同じ要領でバイト単位検証。(b)スコア
+  引き継ぎ検証(上記(1)参照)。(c)バンク切替トリガーの変更に対応 -
+  `PLAYER_FLYAWAY=2`poke後、`STAGE_CLEAR_ACT`が1になる(=`TRIGGER_
+  STAGE_CLEAR`が実際に発火しBGM_B/C/A_PTRがジングルの3パートを指す)
+  ことを確認した上で、ジングル自身の実時間待ち(約500実VBlank分、
+  この検証環境は実際のH.TIMI割り込みを一切シミュレートしないため
+  検証不可能)は`STAGE_CLEAR_ACT`を直接2へpokeしてバイパスし、以降の
+  トランポリン機構自体の検証は従来通り実施(ジングル自体の時間経過
+  ロジックは`tools/verify_stage1_bgm.py`側が別途カバー)。
+- **新規回帰テスト**(`tools/verify_stage1_bgm.py`、14件追加、
+  69 passed/0 failed): `TRIGGER_STAGE_CLEAR`の直接呼び出し検証
+  (`STAGE_CLEAR_ACT`/`SC_START_TICK`/`BGM_MUTED`/BGM_B/C/A_PTRの
+  repoint/TIMER・RESTのゼロリセット、TryZ用テストと同型)、
+  `BGMT_UPDATE_SC_A`が実際にStageClearの実データ(先頭行)を正しく
+  再生することの検証、`UPDATE_STAGE_CLEAR`の実時間カットオフ
+  (`STAGE_CLEAR_TOTAL_TICKS`の1tick手前ではまだACT=1、ちょうどで
+  ACT=2、ACT=0の間は無処理、ACT=2の間も無処理)。`UPDATE_STAGE_CLEAR`
+  の閾値判定(`RET C`)を一時的に`RET NC`へ破壊して新規テスト2件が
+  正しくFAILすることを自己検証済み(その後復元、69 passed確認)。
+- 全回帰`run_all.py` **1442 passed/0 failed**(無変化、Stage2側の
+  変更[SCORE引き継ぎ]は既存テストの前提を一切崩さない加算のみ)、
+  `tools/verify_stage1_bgm.py` **69 passed**(55→69)、
+  `tools/title_screen/title_test.py` **25 passed**(無変化、
+  `INIT_BGM`のLDIR追加のみで既存アサーションに影響なし)、
+  `tools/bankswitch_poc/verify_comb.py`全チェックPASS。Stage2 ROM
+  容量32671/32768byte(残り97byte、SCORE引き継ぎで+12byte消費も
+  依然ギリギリ収まる)。Comb ROM再ビルド・検証の上、標準方針により
+  Comb ROMのみ送付。詳細は本セクション参照。
+  - **保留・実機フィードバック待ち**: `STAGE_CLEAR_TOTAL_TICKS`
+    (500、"約8.27秒"からの概算)・BASSパートの+1オクターブシフトは
+    実機での聞こえ方次第で再調整の可能性あり。ステージクリア中は
+    自機が既にflyaway完了・画面外という前提のみで、敵・地形スクロール
+    等それ以外のゲームロジック自体は明示的に止めていない(ユーザー
+    からは「3音使って良い」という音周りの許可のみで、画面全体の
+    フリーズ等の指示は無かったため、指示なしに追加のフリーズ機構は
+    実装していない)。

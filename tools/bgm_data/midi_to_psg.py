@@ -374,6 +374,104 @@ def load_ending_gfending_parts():
     return melody_rows, bass_rows, harmony_rows
 
 
+# ===== StageClear(ステージクリアジングル) - Round(2026-09-06)追加 =====
+STAGE_CLEAR_FILE = "StageClear.mid"
+
+
+def _track_segments_top_note(track, octave_shift=0):
+    """1トラック内で複数ノートが重なる(和音)場合、重なっている区間は
+    常に「その瞬間の最高音」だけを採用してモノフォニック化する
+    (GFEnding抽出時の_segments_for_channel(top_note_only=True)と同じ
+    考え方をトラック単位に適用したもの)。StageClear.midのtrack1
+    ("Galaxy Force"、ベースパート)・track4("Stage Clear"、メロディ
+    パート)はいずれも元データの装飾的な短い重複ノート(グレースノート・
+    アルペジオ的な三和音断片、GYM2MID書き出し由来の冗長なnote_on
+    重複を含む)を持つため、真のモノフォニック仮定の_track_segments
+    ではなくこちらを使う。"""
+    active = set()
+    cur_note = None
+    cur_start = None
+    segments = []
+    abs_time = 0
+    for msg in track:
+        abs_time += msg.time
+        if msg.type == "note_on" and msg.velocity > 0:
+            prev_top = max(active) if active else None
+            active.add(msg.note + octave_shift)
+            new_top = max(active)
+        elif msg.type == "note_off" or (msg.type == "note_on" and msg.velocity == 0):
+            prev_top = max(active) if active else None
+            active.discard(msg.note + octave_shift)
+            new_top = max(active) if active else None
+        else:
+            continue
+        if new_top != prev_top:
+            if cur_note is not None:
+                segments.append((cur_start, abs_time, cur_note))
+            cur_note = new_top
+            cur_start = abs_time
+    if cur_note is not None:
+        segments.append((cur_start, abs_time, cur_note))
+    return segments, abs_time
+
+
+def load_stage_clear_parts():
+    """StageClear.mid(type1、12トラック、8.56秒の短いワンショット
+    ジングル)から3パート抽出(ユーザー:「3音使って良いんで」-
+    GFEndingと同じくゲーム中chAもSE用途と競合しないため3ch使用可):
+
+    - MELODY: track4("\" Stage Clear \""、channel3、MIDI57-69、曲を
+      通して最も活発に動く声部で空白区間が無い、装飾的な短い重複
+      ノートを含むためtop-note化)を採用。
+    - HARMONY: track2("by Sega 1988"、channel1、MIDI57-76、真に
+      モノフォニック)を採用。track3("CPU: Arcade..."、channel2、
+      MIDI47-64)はtrack2とほぼ同一リズムで3度/6度並行移動する
+      対の声部だが、3音の予算内(メロディ+ベース+ハーモニー)に
+      収まらないため不採用(GFEnding抽出時の重複声部間引きと
+      同じ判断)。
+    - BASS: track1("Galaxy Force"、channel0、MIDI26-52)を採用。
+      三和音の短いアルペジオ的断片・装飾的な短い重複ノートを含む
+      ためtop-note化。最低音26が既存の周期テーブル範囲[32,91]の
+      下限を割り込むため、この曲専用に+12(1オクターブ)シフトを
+      掛けて38-64にする(オクターブ単位のシフトなので他パートとの
+      調和関係[コード構成音の相対関係]自体は保たれる - 既存の
+      ALONE_FIGHTER/DEFEAT全体への一律OCTAVE_SHIFT適用と同じ考え方を
+      1パートだけに限定適用したもの。テーブル自体[MIDI_MIN/MAX]を
+      拡張しない判断のため、既存3曲[ALONE_FIGHTER/DEFEAT/TryZ]・
+      GFEndingが使う全RAM/ROMアドレスへの波及を避けられる)。
+
+    track5("Originally composed by"、channel9)はGM標準のドラム
+    チャンネル(観測ノート38-48はスネア/ハイハット/タムに典型的な
+    ノート番号)のため不採用(TryZ抽出時のGM打楽器チャンネル除外と
+    同じ判断)。メロディ・ハーモニーはオクターブシフト無し(生MIDI
+    ノート57-76は周期テーブル範囲[32,91]にそのまま収まる)。"""
+    path = os.path.join(MIDI_DIR, STAGE_CLEAR_FILE)
+    mid = mido.MidiFile(path)
+    assert mid.type == 1 and len(mid.tracks) == 12, (mid.type, len(mid.tracks))
+    # ALONE_FIGHTER/DEFEATと違い、このファイルはticks_per_beat=480・
+    # テンポ500000us/beat(120BPM)固定 - グローバルなMIDI_TICKS_PER_VBLANK
+    # (=4)は「120 ticks/beat」の2曲専用に検証済みの値であり、この
+    # ファイル(480 ticks/beat、4倍細かい)にそのまま使うと生成される
+    # durationが4倍長く(=曲が4倍遅く)なってしまう。1 vblank tick=1/60秒・
+    # 1 MIDI tick=tempo[us]/1e6/ticks_per_beat秒という定義から毎回
+    # 汎用的に算出する: 480/(500000/1e6*60)=16。mid.length(8.5583秒)と
+    # 実測ノート総和が一致することをコード側アサートで検証。
+    assert mid.ticks_per_beat == 480
+    tempo = 500000
+    for track in mid.tracks:
+        for msg in track:
+            if msg.type == "set_tempo":
+                tempo = msg.tempo
+    ticks_per_vblank = mid.ticks_per_beat / (tempo / 1e6 * 60)
+    melody_seg, melody_total = _track_segments_top_note(mid.tracks[4])
+    harmony_seg, harmony_total = _track_segments(mid.tracks[2], octave_shift=0)
+    bass_seg, bass_total = _track_segments_top_note(mid.tracks[1], octave_shift=12)
+    melody_rows = _rows_from_segments(melody_seg, melody_total, ticks_per_vblank)
+    harmony_rows = _rows_from_segments(harmony_seg, harmony_total, ticks_per_vblank)
+    bass_rows = _rows_from_segments(bass_seg, bass_total, ticks_per_vblank)
+    return melody_rows, bass_rows, harmony_rows
+
+
 if __name__ == "__main__":
     lo, hi = build_period_table()
     print(f"period table: {len(lo)} notes (MIDI {MIDI_MIN}-{MIDI_MAX})")

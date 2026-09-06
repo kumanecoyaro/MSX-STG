@@ -581,8 +581,137 @@ call_routine(z, sym["SOUND_SHOT"])
 check("...and also fires normally once BOSS_STATE==2 (boss landed, materialize long done)",
       z.rd(SND_TONE_TIMER) != 0)
 
+# ---- (2026-09-06、"ではステージ1と2のスコアを加算して...これをステージ
+# クリアで流して 3音使って良いんで") StageClearジングル(3パート:
+# melody=chB/bass=chC/harmony=chA、LOOP_MARK方式)。TRIGGER_STAGE_CLEAR
+# はPLAYER_FLYAWAYがちょうど2に到達した最初のフレームで1回だけ呼ばれ、
+# UPDATE_STAGE_CLEARは以後毎フレーム呼ばれて実時間(SC_VBLANK_COUNT)を
+# 監視し、STAGE_CLEAR_TOTAL_TICKS経過でSTAGE_CLEAR_ACTを2へ進める
+# (build_full_rom.pyのMAINLOOP_PATCHがこれを見てStage2へバンク切替) ----
+STAGE_CLEAR_ACT = sym["STAGE_CLEAR_ACT"]
+SC_VBLANK_COUNT = sym["SC_VBLANK_COUNT"]
+SC_START_TICK = sym["SC_START_TICK"]
+STAGE_CLEAR_TOTAL_TICKS = sym["STAGE_CLEAR_TOTAL_TICKS"]
+STAGE_CLEAR_CHB_BASE = sym["STAGE_CLEAR_CHB_BASE"]
+STAGE_CLEAR_CHC_BASE = sym["STAGE_CLEAR_CHC_BASE"]
+STAGE_CLEAR_CHA_BASE = sym["STAGE_CLEAR_CHA_BASE"]
+BGM_A_PTR = sym["BGM_A_PTR"]
+BGM_A_TIMER = sym["BGM_A_TIMER"]
+BGM_A_REST = sym["BGM_A_REST"]
+BGM_A_ENV_LEVEL = sym["BGM_A_ENV_LEVEL"]
+BGM_A_ENV_IDX = sym["BGM_A_ENV_IDX"]
+BGM_A_ENV_CD = sym["BGM_A_ENV_CD"]
+PLAYER_FLYAWAY = sym["PLAYER_FLYAWAY"]
 
-print()
+_sc_layout = layout["STAGE_CLEAR"]
+_sc_start = _sc_layout["bank_offset"]
+sc_chB_bytes = bank_image[_sc_start:_sc_start + _sc_layout["chB_len"]]
+sc_chC_bytes = bank_image[_sc_start + _sc_layout["chB_len"]:
+                           _sc_start + _sc_layout["chB_len"] + _sc_layout["chC_len"]]
+sc_chA_bytes = bank_image[_sc_start + _sc_layout["chB_len"] + _sc_layout["chC_len"]:
+                           _sc_start + _sc_layout["chB_len"] + _sc_layout["chC_len"] + _sc_layout["chA_len"]]
+
+check("STAGE_CLEAR_CHC_BASE = STAGE_CLEAR_CHB_BASE + StageClear's own real chB length",
+      STAGE_CLEAR_CHC_BASE == STAGE_CLEAR_CHB_BASE + _sc_layout["chB_len"])
+check("STAGE_CLEAR_CHA_BASE = STAGE_CLEAR_CHC_BASE + StageClear's own real chC length",
+      STAGE_CLEAR_CHA_BASE == STAGE_CLEAR_CHC_BASE + _sc_layout["chC_len"])
+
+z = fresh()
+for i, b in enumerate(sc_chB_bytes):
+    z.wr(STAGE_CLEAR_CHB_BASE + i, b)
+for i, b in enumerate(sc_chC_bytes):
+    z.wr(STAGE_CLEAR_CHC_BASE + i, b)
+for i, b in enumerate(sc_chA_bytes):
+    z.wr(STAGE_CLEAR_CHA_BASE + i, b)
+for addr in (BGM_B_PTR, BGM_B_PTR + 1, BGM_C_PTR, BGM_C_PTR + 1,
+             BGM_A_PTR, BGM_A_PTR + 1,
+             BGM_B_TIMER, BGM_C_TIMER, BGM_A_TIMER,
+             BGM_B_REST, BGM_C_REST, BGM_A_REST,
+             BGM_B_LOOP_BASE, BGM_B_LOOP_BASE + 1,
+             BGM_C_LOOP_BASE, BGM_C_LOOP_BASE + 1,
+             SC_START_TICK, SC_START_TICK + 1):
+    z.wr(addr, 0xAA)  # poison first, same style as SWITCH_BGM_TO_TRYZ's own test above
+z.wr(BGM_MUTED, 1)
+z.wr(STAGE_CLEAR_ACT, 0)
+z.wr(SC_VBLANK_COUNT, 0x34); z.wr(SC_VBLANK_COUNT + 1, 0x12)   # a distinctive non-zero "current real time"
+call_routine(z, sym["TRIGGER_STAGE_CLEAR"])
+check("TRIGGER_STAGE_CLEAR sets STAGE_CLEAR_ACT=1", z.rd(STAGE_CLEAR_ACT) == 1)
+check("TRIGGER_STAGE_CLEAR snapshots SC_VBLANK_COUNT into SC_START_TICK",
+      (z.rd(SC_START_TICK) | (z.rd(SC_START_TICK + 1) << 8)) == 0x1234)
+check("TRIGGER_STAGE_CLEAR clears BGM_MUTED", z.rd(BGM_MUTED) == 0)
+check("TRIGGER_STAGE_CLEAR points BGM_B_PTR/BGM_B_LOOP_BASE at StageClear's own chB(melody) start",
+      (z.rd(BGM_B_PTR) | (z.rd(BGM_B_PTR + 1) << 8)) == STAGE_CLEAR_CHB_BASE and
+      (z.rd(BGM_B_LOOP_BASE) | (z.rd(BGM_B_LOOP_BASE + 1) << 8)) == STAGE_CLEAR_CHB_BASE)
+check("TRIGGER_STAGE_CLEAR points BGM_C_PTR/BGM_C_LOOP_BASE at StageClear's own chC(bass) start",
+      (z.rd(BGM_C_PTR) | (z.rd(BGM_C_PTR + 1) << 8)) == STAGE_CLEAR_CHC_BASE and
+      (z.rd(BGM_C_LOOP_BASE) | (z.rd(BGM_C_LOOP_BASE + 1) << 8)) == STAGE_CLEAR_CHC_BASE)
+check("TRIGGER_STAGE_CLEAR points BGM_A_PTR at StageClear's own chA(harmony) start "
+      "(chA is entirely new to Stage1 - only ever used for this jingle)",
+      (z.rd(BGM_A_PTR) | (z.rd(BGM_A_PTR + 1) << 8)) == STAGE_CLEAR_CHA_BASE)
+check("TRIGGER_STAGE_CLEAR resets BGM_B/C/A_TIMER and BGM_B/C/A_REST to 0",
+      z.rd(BGM_B_TIMER) == 0 and z.rd(BGM_C_TIMER) == 0 and z.rd(BGM_A_TIMER) == 0 and
+      z.rd(BGM_B_REST) == 0 and z.rd(BGM_C_REST) == 0 and z.rd(BGM_A_REST) == 0)
+
+# ---- BGMT_UPDATE_SC_A (chA driver) actually plays StageClear's real chA
+# data once armed - mirrors the TryZ chB REST-vs-note branch above ----
+call_routine(z, BGM_TICK)
+if sc_chA_bytes[0] == BGM_NOTE_REST:
+    check("after TRIGGER_STAGE_CLEAR, the very next BGM_TICK correctly reads StageClear's own "
+          "real first chA(harmony) row as a REST (BGM_A_REST=1, R8 silenced)",
+          z.rd(BGM_A_REST) == 1 and z.psg_regs.get(8) == 0)
+else:
+    exp_lo, exp_hi = periods[sc_chA_bytes[0]]
+    check("after TRIGGER_STAGE_CLEAR, the very next BGM_TICK plays StageClear's own real first "
+          "chA(harmony) note",
+          (z.psg_regs.get(0), z.psg_regs.get(1)) == (exp_lo, exp_hi))
+
+# ---- UPDATE_STAGE_CLEAR's own real-time cutoff ----
+z = fresh()
+z.wr(STAGE_CLEAR_ACT, 1)
+z.wr(SC_START_TICK, 100); z.wr(SC_START_TICK + 1, 0)
+z.wr(SC_VBLANK_COUNT, (100 + STAGE_CLEAR_TOTAL_TICKS - 1) & 0xFF)
+z.wr(SC_VBLANK_COUNT + 1, (100 + STAGE_CLEAR_TOTAL_TICKS - 1) >> 8)
+call_routine(z, sym["UPDATE_STAGE_CLEAR"])
+check(f"UPDATE_STAGE_CLEAR: still STAGE_CLEAR_ACT=1 one tick before "
+      f"STAGE_CLEAR_TOTAL_TICKS({STAGE_CLEAR_TOTAL_TICKS}) elapses",
+      z.rd(STAGE_CLEAR_ACT) == 1)
+
+z = fresh()
+z.wr(STAGE_CLEAR_ACT, 1)
+z.wr(SC_START_TICK, 100); z.wr(SC_START_TICK + 1, 0)
+z.wr(SC_VBLANK_COUNT, (100 + STAGE_CLEAR_TOTAL_TICKS) & 0xFF)
+z.wr(SC_VBLANK_COUNT + 1, (100 + STAGE_CLEAR_TOTAL_TICKS) >> 8)
+call_routine(z, sym["UPDATE_STAGE_CLEAR"])
+check("UPDATE_STAGE_CLEAR: advances to STAGE_CLEAR_ACT=2 exactly when "
+      "STAGE_CLEAR_TOTAL_TICKS elapses",
+      z.rd(STAGE_CLEAR_ACT) == 2)
+
+z = fresh()
+z.wr(STAGE_CLEAR_ACT, 0)   # not yet triggered - must be a no-op
+z.wr(SC_START_TICK, 0); z.wr(SC_START_TICK + 1, 0)
+z.wr(SC_VBLANK_COUNT, 0xFF); z.wr(SC_VBLANK_COUNT + 1, 0xFF)
+call_routine(z, sym["UPDATE_STAGE_CLEAR"])
+check("UPDATE_STAGE_CLEAR is a no-op while STAGE_CLEAR_ACT==0 (not yet triggered)",
+      z.rd(STAGE_CLEAR_ACT) == 0)
+
+z = fresh()
+z.wr(STAGE_CLEAR_ACT, 2)   # already done - must stay done, not somehow retrigger
+z.wr(SC_START_TICK, 0); z.wr(SC_START_TICK + 1, 0)
+z.wr(SC_VBLANK_COUNT, 0); z.wr(SC_VBLANK_COUNT + 1, 0)
+call_routine(z, sym["UPDATE_STAGE_CLEAR"])
+check("UPDATE_STAGE_CLEAR is a no-op once STAGE_CLEAR_ACT==2 (already done)",
+      z.rd(STAGE_CLEAR_ACT) == 2)
+
+# ---- "これは3音使って良い" - ステージクリアジングル再生中(STAGE_CLEAR_
+# ACT==1)は通常のSEドライバ(SOUND_UPDATE)自体がMAINLOOP側でスキップ
+# される設計だが、SOUND_UPDATE自身はSTAGE_CLEAR_ACTを一切見ない(ゲート
+# はMAINLOOP側の`CP 1:CALL NZ,SOUND_UPDATE`という1行のみ、GFEnding
+# [Stage2]のENDING_ACT==2ゲートと同型) - SOUND_UPDATE自体を直接呼んでも
+# 問題なく動作すること自体は確認できるが、MAINLOOP側のゲート判定
+# そのものはcall_routine方式では検証できない独立したinline分岐のため、
+# ここでは対象外(TRIGGER_STAGE_CLEAR/UPDATE_STAGE_CLEARという実際の
+# 状態遷移ロジック自体は上記で直接検証済み)。
+
 print(f"{len(ok)} passed, {len(fail)} failed")
 if fail:
     print("FAILURES:", fail)

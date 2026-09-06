@@ -479,6 +479,18 @@ UTS_COLOR_3   EQU F14Dh
 GAME_TICK     EQU F166h   ; 2 bytes
 SCORE         EQU F168h   ; 3 bytes: low word at +0, high byte at +2 (real score = SCORE*100)
 SCORE_DIGITS  EQU F16Bh   ; 6 bytes
+; (2026-09-06、"ではステージ1と2のスコアを加算して 今は別になってる
+; んでステージで引き継ぐ様に") - src/CYBER SHMUP.asm(別アセンブル
+; 単位)自身のSCORE、フォーマットは同一(3byte、real_score=SCORE*100)。
+; RAM(0xC000-0xFFFF)はバンク切替を跨いで物理的に共有されるフラットな
+; 領域(過去のRound[ENDING_GFENDING 3ch対応時のRAM衝突調査等]で
+; 繰り返し確認済み)なので、Stage1から明示的なコピーコードを一切
+; 追加しなくても、Stage1が最後に書いたSCOREの生バイトはStage2の
+; INITがここへ来た時点でもそのまま残っている。別アセンブル単位の
+; シンボルはここから直接importできないため、GFEndingの3ch対応時に
+; 他ファイルのRAMアドレスを直接ハードコードしたのと同じ手法で
+; リテラルアドレスを直接書く。
+STAGE1_SCORE  EQU 0E4D5h  ; src/CYBER SHMUP.asmのSCORE、同フォーマット
 HUD_ROW       EQU F171h   ; WRITE_HUD_CELL scratch
 HUD_COL       EQU F172h
 HUD_VAL       EQU F173h
@@ -3582,6 +3594,11 @@ INIT_SPRATR_CLR:
     ; boot-time zeros for those, matching "道中は道中 ボスはボス".
     LD (BOSS_ACT),A
     LD (SCORE),A : LD (SCORE+1),A : LD (SCORE+2),A
+    ; "ステージ1と2のスコアを加算して...ステージで引き継ぐ様に" -
+    ; STAGE1_SCORE自身のコメント参照。上でSCOREを0クリアした直後
+    ; なので、単純に上書きコピーするだけで「0+Stage1分の加算」になる。
+    LD HL,(STAGE1_SCORE) : LD (SCORE),HL
+    LD A,(STAGE1_SCORE+2) : LD (SCORE+2),A
     LD A,0FFh : LD (GTD_LAST_H),A : LD (GTD_LAST_T),A : LD (GTD_LAST_O),A
     CALL SCORE_DISPLAY
     CALL GAME_TICK_DISPLAY
