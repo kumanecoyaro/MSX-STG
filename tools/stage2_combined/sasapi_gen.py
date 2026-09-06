@@ -193,8 +193,12 @@ def emit_broken_beam_asm_tables():
 # comfortably inside 0-223/0-191 for a 32px sprite on a 256x192 screen.
 # Untuned initial placeholder (like BOSS_BROKEN_MOVE_MIN_TICKS' own
 # comment) - pacing/shape is not yet tuned against real gameplay.
+# (2026-09-06、実機フィードバック対応: "位置が低いので16Px上に戻るように"
+# -元々のCY=80から16px上のCY=64へ変更。振幅AY=32は無変更のためY範囲は
+# [48,112]→[32,96]へ平行移動するだけで、HUD帯(row0)・地形スクロール帯
+# (row16以降=128px)双方から引き続き十分に離れている。)
 BOSS_BROKEN_PATH_LEN = 64
-_PATH_CX, _PATH_CY = 112, 80
+_PATH_CX, _PATH_CY = 112, 64
 _PATH_AX, _PATH_AY = 64, 32
 
 

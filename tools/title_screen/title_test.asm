@@ -266,16 +266,22 @@ DTB_NEXT:
 HTIMI_HOOK      EQU 0FD9Fh
 BGM_NOTE_REST   EQU 0FFh
 BGM_LOOP_MARK   EQU 0FEh
+; (2026-09-06、TryZ/GFEnding追加でNUM_NOTES35→60へ拡張、周期テーブルが
+; 伸びた分だけ以下のRAMオフセットが後方へシフト - tools/bgm_data/
+; bgm_bank_gen.pyの`python3 bgm_bank_gen.py`出力値と一致させること)
 BGM_PERIOD_LO_RAM EQU 0C000h
-BGM_PERIOD_HI_RAM EQU 0C023h
-BGM_B_BASE        EQU 0C046h    ; ALONE_FIGHTER track0(chB)先頭
-BGM_C_BASE        EQU 0C235h    ; ALONE_FIGHTER track1(chC)先頭
-BGM_B_PTR   EQU 0C800h
-BGM_C_PTR   EQU 0C802h
-BGM_B_TIMER EQU 0C804h
-BGM_C_TIMER EQU 0C805h
-BGM_B_REST  EQU 0C806h
-BGM_C_REST  EQU 0C807h
+BGM_PERIOD_HI_RAM EQU 0C03Ch
+BGM_B_BASE        EQU 0C078h    ; ALONE_FIGHTER track0(chB)先頭
+BGM_C_BASE        EQU 0C267h    ; ALONE_FIGHTER track1(chC)先頭
+; (2026-09-06、CONTROL_OFFSET拡張0x800→0x900に伴い0xC800→0xC900へ
+; シフト - bgm_bank_gen.pyのCONTROL_OFFSET自身のコメント[自己発見RAM
+; 衝突バグの経緯]参照)
+BGM_B_PTR   EQU 0C900h
+BGM_C_PTR   EQU 0C902h
+BGM_B_TIMER EQU 0C904h
+BGM_C_TIMER EQU 0C905h
+BGM_B_REST  EQU 0C906h
+BGM_C_REST  EQU 0C907h
 
 ; 実機フィードバック対応その3("BGMが1chしかなってないと言うか 恐らく
 ; エンベロープの影響で発音できてないな HWエンベロープはコントロール
@@ -290,13 +296,13 @@ BGM_B_DUTY_MASK    EQU 1
 ; 実機フィードバック"BGM音量を下げたいが現在は最大か?"→"中程度下げる
 ; (-4、ピーク11)": R9/R10へ書く直前に一律で減算(0未満はクランプ)。
 BGM_VOL_ATTEN      EQU 4
-BGM_B_ENV_LEVEL  EQU 0C808h
-BGM_B_ENV_IDX    EQU 0C809h
-BGM_B_ENV_CD     EQU 0C80Ah
-BGM_B_DUTY_PHASE EQU 0C80Bh
-BGM_C_ENV_LEVEL  EQU 0C80Ch
-BGM_C_ENV_IDX    EQU 0C80Dh
-BGM_C_ENV_CD     EQU 0C80Eh
+BGM_B_ENV_LEVEL  EQU 0C908h
+BGM_B_ENV_IDX    EQU 0C909h
+BGM_B_ENV_CD     EQU 0C90Ah
+BGM_B_DUTY_PHASE EQU 0C90Bh
+BGM_C_ENV_LEVEL  EQU 0C90Ch
+BGM_C_ENV_IDX    EQU 0C90Dh
+BGM_C_ENV_CD     EQU 0C90Eh
 
 BGM_ENV_BELL_TABLE:
     DB 15,3,14,4,13,5,12,6,11,6,10,6,9,7,8,9,7,9,6,11,5,13,4,16,3,22,2,33,1,71,0,0
@@ -306,8 +312,8 @@ BGM_ENV_LINEAR_TABLE:
 INIT_BGM:
     LD A,2                       ; standalone bgm-dataバンク(Combでは6へパッチ)
     LD (7000h),A
-    LD HL,08000h : LD DE,0C000h : LD BC,046h : LDIR   ; 周期テーブル(35note*2)
-    LD HL,08046h : LD DE,0C046h : LD BC,0628h : LDIR  ; ALONE_FIGHTER chB+chC
+    LD HL,08000h : LD DE,0C000h : LD BC,078h : LDIR   ; 周期テーブル(60note*2)
+    LD HL,08078h : LD DE,0C078h : LD BC,0628h : LDIR  ; ALONE_FIGHTER chB+chC
     LD A,1                       ; このファイル自身のbank1(Comb/standaloneとも1のまま)
     LD (7000h),A
 

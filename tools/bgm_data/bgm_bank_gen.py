@@ -46,7 +46,9 @@ import os
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 BANK_SIZE = 0x4000  # ASCII16の1バンク=16KB
-NUM_NOTES = 35       # MIDI 50-84 (tools/bgm_data/midi_to_psg.py参照) - キャッシュ済み
+# (2026-09-06、TryZ/GFEnding追加に伴い35→60へ拡張、
+# tools/bgm_data/midi_to_psg.pyのMIDI_MIN/MAX[32,91]自身のコメント参照)
+NUM_NOTES = 60       # tools/bgm_data/midi_to_psg.py参照 - キャッシュ済み
                       # 生成結果と独立に固定; 生成時にmidi_to_psg.NUM_NOTESと
                       # 一致することをアサートする。
 
@@ -63,7 +65,18 @@ LAYOUT_JSON_PATH = os.path.join(HERE, "bgm_layout.json")
 # 指定してsong_constants()を呼ぶこと。
 BGM_DATA_BASE = 0xC000
 STAGE2_DATA_BASE = 0xC200
-CONTROL_OFFSET = 0x800  # データ本体からのオフセット(全曲共通、制御変数用)
+# (2026-09-06、TryZ/GFEnding追加時に0x800→0x900へ拡張・自己発見バグ修正)
+# 周期テーブルをNUM_NOTES35→60へ拡張した際、旧CONTROL_OFFSET=0x800
+# (2048)のままだと「2*NUM_NOTES(120)+最長曲DEFEATの総データ長(1938)=
+# 2058」が2048を10byte超過し、曲データの末尾がBGM_B_PTR等の制御変数
+# 領域と物理的に重なる(=曲データの終端がその瞬間だけ制御変数を
+# 破壊するが、INIT_BGM側がその直後に制御変数を明示的に再初期化する
+# ため実害としては顕在化しない一方、回帰テストの「コピー直後の内容が
+# バイト単位で一致するか」という検証では確実に検出される)という
+# RAM衝突を実際に踏んだ - 新規テスト(bgm_test.py)のFAILで発覚・
+# 自己修正。0x900(2304)なら現状の最長曲(DEFEAT、2058byte)に対し
+# 246byteの余裕があり、当面の曲追加程度では再発しない。
+CONTROL_OFFSET = 0x900  # データ本体からのオフセット(全曲共通、制御変数用)
 
 
 # 実機フィードバック対応("BGMが1chしかなってない...HWエンベロープは
@@ -96,6 +109,17 @@ def _ram_layout(data_base):
         "BGM_C_TIMER": control_base + 5,
         "BGM_B_REST": control_base + 6,
         "BGM_C_REST": control_base + 7,
+        # control_base+8~+14(7byte)はchB/chCそれぞれのエンベロープ状態
+        # (BGM_B/C_ENV_LEVEL/IDX/CD・BGM_B_DUTY_PHASE)が既に占有している
+        # - これらはこの_ram_layout()の管理外(各ステージのASM側に直接
+        # ハードコードされた固定オフセット、bgm_bank_gen.py側では元々
+        # 追跡していない、上のBGM_ENV_*_TABLEのコメント参照)。そのため
+        # 新規のchA(harmony、3声目)関連フィールドは+15以降に置く
+        # (+19~+21のENV_LEVEL/IDX/CDも同じ理由でASM側で直接ハード
+        # コードし、ここでは管理しない)。
+        "BGM_A_PTR": control_base + 15,
+        "BGM_A_TIMER": control_base + 17,
+        "BGM_A_REST": control_base + 18,
     }
 
 
@@ -139,6 +163,39 @@ def _generate():
             "chB_len": len(b0),
             "chC_len": len(b1),
         }
+
+    # BOSS_TRYZ(2026-09-06、"ではTryZをボス曲に...メロディ1パートベース
+    # 1パートを抜き出して"): 通常のゲームBGMと同じ2パート・LOOP_MARK
+    # (ループ再生)方式 - ボス出現時にDEFEATの代わりにこちらへ切り替える。
+    t0, t1 = mp.load_boss_tryz_parts()
+    b0, b1 = mp.rows_to_bytes(t0), mp.rows_to_bytes(t1)
+    song_offset = len(blob)
+    blob += b0
+    blob += b1
+    layout["BOSS_TRYZ"] = {
+        "bank_offset": song_offset,
+        "chB_len": len(b0),
+        "chC_len": len(b1),
+    }
+
+    # ENDING_GFENDING(2026-09-06、"GFEndingを...再生 これは3音使って良い"):
+    # 3パート(メロディ/ベース/ハーモニー=chB/chC/chA)・END_MARK(一度きり、
+    # ループしない)方式。
+    tm, tb, th = mp.load_ending_gfending_parts()
+    bm, bb, bh = (mp.rows_to_bytes(tm, terminator=mp.END_MARK),
+                  mp.rows_to_bytes(tb, terminator=mp.END_MARK),
+                  mp.rows_to_bytes(th, terminator=mp.END_MARK))
+    song_offset = len(blob)
+    blob += bm
+    blob += bb
+    blob += bh
+    layout["ENDING_GFENDING"] = {
+        "bank_offset": song_offset,
+        "chB_len": len(bm),
+        "chC_len": len(bb),
+        "chA_len": len(bh),
+    }
+
     assert len(blob) <= BANK_SIZE, f"BGM data ({len(blob)} bytes) exceeds one 16KB bank"
     bank = bytes(blob) + bytes([0xFF] * (BANK_SIZE - len(blob)))
     return bank, layout
@@ -178,13 +235,14 @@ def song_constants(song_key, data_base=BGM_DATA_BASE):
     entry = layout[song_key]
     bank_src_base = 0x8000  # windowB(7000hセレクタ)にマップされた時の先頭アドレス
     ram = _ram_layout(data_base)
-    return {
+    song_len = entry["chB_len"] + entry["chC_len"] + entry.get("chA_len", 0)
+    out = {
         "PERIOD_SRC": bank_src_base,
         "PERIOD_LEN": 2 * NUM_NOTES,
         "PERIOD_LO_RAM": ram["PERIOD_LO_RAM"],
         "PERIOD_HI_RAM": ram["PERIOD_HI_RAM"],
         "SONG_SRC": bank_src_base + entry["bank_offset"],
-        "SONG_LEN": entry["chB_len"] + entry["chC_len"],
+        "SONG_LEN": song_len,
         "CHB_RAM_BASE": ram["SONG_DATA_RAM"],
         "CHC_RAM_BASE": ram["SONG_DATA_RAM"] + entry["chB_len"],
         "BGM_B_PTR": ram["BGM_B_PTR"],
@@ -194,6 +252,14 @@ def song_constants(song_key, data_base=BGM_DATA_BASE):
         "BGM_B_REST": ram["BGM_B_REST"],
         "BGM_C_REST": ram["BGM_C_REST"],
     }
+    if "chA_len" in entry:
+        # 3パート曲(現状ENDING_GFENDINGのみ) - chA(harmony)はchB/chCの
+        # 直後に続けて配置。
+        out["CHA_RAM_BASE"] = ram["SONG_DATA_RAM"] + entry["chB_len"] + entry["chC_len"]
+        out["BGM_A_PTR"] = ram["BGM_A_PTR"]
+        out["BGM_A_TIMER"] = ram["BGM_A_TIMER"]
+        out["BGM_A_REST"] = ram["BGM_A_REST"]
+    return out
 
 
 if __name__ == "__main__":

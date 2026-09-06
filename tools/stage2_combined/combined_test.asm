@@ -4150,7 +4150,14 @@ SKIP_OTHER_ENEMIES:
 SKIP_BOSS_BROKEN_BEAM_CHECK:
 SKIP_BOSS_SUBSYSTEMS:
     CALL CLOUD_UPDATE_ALL
-    CALL SOUND_UPDATE
+    CALL UPDATE_ENDING
+    ; エンディング曲再生中(ENDING_ACT==2)はchAをBGMT_UPDATE_ENDING_A
+    ; (BGM_TICK内)が専有するため、通常のSEドライバ(SOUND_UPDATE)自体を
+    ; 丸ごとスキップする("これは3音使って良い" - ゲーム中と違いchAが
+    ; SEと競合しないのは、この期間SOUND_UPDATE自体を止めているから)。
+    LD A,(ENDING_ACT)
+    CP 2
+    CALL NZ,SOUND_UPDATE
 
     JP MAINLOOP
 
@@ -4160,12 +4167,142 @@ SKIP_BOSS_SUBSYSTEMS:
 ; (jump) -> JOY_TRIGB (0/FFh); port1 trigger A (shot) -> JOY_TRIGA
 ; (0/FFh).
 READ_INPUT:
+    ; "倒してから10秒ほど経過したら再生し 操作無効に" - エンディング曲
+    ; 再生開始(ENDING_ACT=2)以降は実ハードウェアを読まず、常に無入力を
+    ; 強制する(UPDATE_TANK_XY等の下流処理には一切手を入れず、入力
+    ; ソース自体をここで断つ設計 - 既存の移動/発射ロジックを無変更の
+    ; まま安全に無効化できる)。
+    LD A,(ENDING_ACT)
+    CP 2
+    JR C,RI_REAL_READ
+    XOR A
+    LD (JOY_DIR),A
+    LD (JOY_TRIGB),A
+    LD (JOY_TRIGA),A
+    RET
+RI_REAL_READ:
     LD A,1 : CALL GTSTCK
     LD (JOY_DIR),A
     LD A,3 : CALL GTTRIG
     LD (JOY_TRIGB),A
     LD A,1 : CALL GTTRIG
     LD (JOY_TRIGA),A
+    RET
+
+; ===== エンディングシーケンス =====
+; ("GFEndingを2ボス倒した後に再生 これは3音使って良い 倒してから10秒
+; ほど経過したら再生し 操作無効に Produced by Kumanecoyarou と画面中央
+; に表示 曲が終わったら音を停止 Mission Cmpletedと表示 全部大文字で")
+;
+; 実時間クロックはVBLANK_COUNT(BGM_TICK内、実VBlank駆動なので本物の
+; 実時間基準 - MAINLOOPのTICKはHALT/vsync同期の無いfree-running設計
+; なので実時間には対応しない、GAME_TICKに至っては8フレームに1回しか
+; 進まない別の単位)。ENDING_ACT自身の状態遷移はUPDATE_ENDING(MAINLOOP
+; から毎フレーム呼ばれる)が管理する:
+;   0(未発生) -> [UBE_FLASH自身が本当の死亡完了の瞬間に1へ] ->
+;   1(待機中、ENDING_WAIT_TICKS経過待ち) -> [ここでENDING_START_
+;   PLAYBACK] -> 2(曲再生中、ENDING_SONG_TOTAL_TICKS経過待ち) ->
+;   [ここでENDING_FINISH] -> 3(完了、以後何もしない)
+;
+; 操作無効化はREAD_INPUT自身(ENDING_ACT>=2で無条件に無入力を返す、
+; このコメントの少し上参照)で完結しており、UPDATE_TANK_XY等の下流には
+; 一切手を入れていない。
+UPDATE_ENDING:
+    LD A,(ENDING_ACT)
+    CP 1
+    JR Z,UE_WAITING
+    CP 2
+    JR Z,UE_PLAYING
+    RET
+UE_WAITING:
+    LD HL,(VBLANK_COUNT)
+    LD DE,(ENDING_WAIT_START)
+    OR A : SBC HL,DE
+    LD DE,ENDING_WAIT_TICKS
+    OR A : SBC HL,DE
+    RET C
+    JP ENDING_START_PLAYBACK
+UE_PLAYING:
+    LD HL,(VBLANK_COUNT)
+    LD DE,(ENDING_SONG_START)
+    OR A : SBC HL,DE
+    LD DE,ENDING_SONG_TOTAL_TICKS
+    OR A : SBC HL,DE
+    RET C
+    JP ENDING_FINISH
+
+; 10秒の待機が明けた瞬間に1回だけ呼ばれる: GFEndingの3パート
+; (melody=chB/bass=chC/harmony=chA)を一括ロードし、両チャンネルの
+; ポインタ/タイマー/REST/エンベロープ状態を先頭から再生されるよう
+; リセット、文字パターン+カラーテーブルをロードして"PRODUCED BY
+; KUMANECOYAROU"を描画する。3パートはbgm-dataバンク内・RAM転送先の
+; 両方でchB→chC→chAの順に連続配置されている(tools/bgm_data/
+; bgm_bank_gen.pyのsong_constants("ENDING_GFENDING")参照)ため、
+; SWITCH_BGM_TO_TRYZ同様1回のBGM_LOAD_SONG呼び出しで3パート全てを
+; 転送できる。
+ENDING_START_PLAYBACK:
+    LD A,2 : LD (ENDING_ACT),A
+    LD HL,(VBLANK_COUNT) : LD (ENDING_SONG_START),HL
+
+    LD HL,09160h : LD DE,0C278h : LD BC,01BBh : CALL BGM_LOAD_SONG  ; GFEnding chB+chC+chA
+
+    LD HL,BGM_B_BASE
+    LD (BGM_B_PTR),HL
+    XOR A
+    LD (BGM_B_TIMER),A
+    LD (BGM_B_REST),A
+    LD (BGM_B_ENV_LEVEL),A
+    LD (BGM_B_ENV_IDX),A
+    LD (BGM_B_ENV_CD),A
+    LD (BGM_B_DUTY_PHASE),A
+    LD HL,0C375h                  ; GFEnding chC先頭(CHC_RAM_BASE、DEFEAT/TryZとは別アドレス)
+    LD (BGM_C_PTR),HL
+    LD (BGM_C_LOOP_BASE),HL       ; GFEndingはEND_MARK専用でループしないため実際には未使用だが念のため整合させる
+    LD (BGM_C_TIMER),A
+    LD (BGM_C_REST),A
+    LD (BGM_C_ENV_LEVEL),A
+    LD (BGM_C_ENV_IDX),A
+    LD (BGM_C_ENV_CD),A
+    LD HL,0C3EEh                  ; GFEnding chA先頭(CHA_RAM_BASE)
+    LD (BGM_A_PTR),HL
+    LD (BGM_A_TIMER),A
+    LD (BGM_A_REST),A
+    LD (BGM_A_ENV_LEVEL),A
+    LD (BGM_A_ENV_IDX),A
+    LD (BGM_A_ENV_CD),A
+
+    CALL ENDING_LOAD_FONT
+    LD HL,ENDING_MSG_CREDIT : LD DE,01963h : LD BC,ENDING_MSG_CREDIT_LEN : CALL LDIRVM  ; row11 col3(25文字中央寄せ)
+    RET
+
+; 文字パターン(3ブロック、96-103/144-151/152-153 - いずれもボス戦専用
+; でボス撃破後は二度と描画されないと確認済みのコード範囲、詳細は
+; ending_text_gen.py自身のCODE_MAP周辺コメント参照)+カラーテーブル
+; (該当3グループを白文字/黒背景へ)を一度だけロードする。
+ENDING_LOAD_FONT:
+    DI
+    LD HL,ENDING_FONT_BLOCK0 : LD DE,ENDING_FONT_BLOCK0_CODE*8+0000h : LD BC,ENDING_FONT_BLOCK0_LEN : CALL LDIRVM
+    LD HL,ENDING_FONT_BLOCK1 : LD DE,ENDING_FONT_BLOCK1_CODE*8+0000h : LD BC,ENDING_FONT_BLOCK1_LEN : CALL LDIRVM
+    LD HL,ENDING_FONT_BLOCK2 : LD DE,ENDING_FONT_BLOCK2_CODE*8+0000h : LD BC,ENDING_FONT_BLOCK2_LEN : CALL LDIRVM
+    LD A,HUD_DIGIT_COLORBYTE : LD (HUD_TEMP_BYTE),A
+    LD HL,HUD_TEMP_BYTE : LD DE,200Ch : LD BC,1 : CALL LDIRVM   ; group12(96-103)
+    LD HL,HUD_TEMP_BYTE : LD DE,2012h : LD BC,1 : CALL LDIRVM   ; group18(144-151)
+    LD HL,HUD_TEMP_BYTE : LD DE,2013h : LD BC,1 : CALL LDIRVM   ; group19(152-159)
+    EI
+    RET
+
+; 曲の全長("ENDING_SONG_TOTAL_TICKS")が経過した瞬間に1回だけ呼ばれる:
+; chAの音量を明示的に0へ(chB/chCはEND_MARKに達し続ける限りSETRESTが
+; 毎tick0を書き続けるため無変更でよい)、"PRODUCED BY..."の行を全幅
+; ブランクしてから"MISSION COMPLETED"を中央寄せで上書きする。
+ENDING_FINISH:
+    LD A,3 : LD (ENDING_ACT),A
+    DI
+    LD A,8 : OUT (PSG_ADDR),A
+    XOR A : OUT (PSG_DATA),A
+    EI
+    LD HL,ENDING_BLANK_ROW32 : LD DE,01960h : LD BC,32 : CALL LDIRVM
+    LD HL,ENDING_MSG_COMPLETE : LD DE,01967h : LD BC,ENDING_MSG_COMPLETE_LEN : CALL LDIRVM  ; row11 col7(17文字中央寄せ)
     RET
 
 ; ---------- horizontal movement + aim-up flag ----------
@@ -6184,6 +6321,11 @@ PSG_DATA_R      EQU 0A2h        ; PSG register read-back port (IN)
 HTIMI_HOOK      EQU 0FD9Fh      ; BIOS vblank hook, RAM
 BGM_NOTE_REST   EQU 0FFh
 BGM_LOOP_MARK   EQU 0FEh
+; (2026-09-06、エンディング曲GFEnding用に追加) 一度きりの曲(ループしない)
+; の終端マーク。LOOP_MARKと違いPTRを一切進めず、以後毎tickこのバイトを
+; 読み直して無音(REST)を保持し続けるだけ - 曲を止めたい時にBGM_TICK側の
+; 特別なガードを増やさずに済む(既存のREST処理をそのまま再利用できる)。
+BGM_END_MARK    EQU 0FDh
 
 ; RAM側コピー先レイアウト - tools/bgm_data/bgm_bank_gen.pyの
 ; song_constants("DEFEAT", data_base=STAGE2_DATA_BASE)の値と一致させる
@@ -6193,16 +6335,22 @@ BGM_LOOP_MARK   EQU 0FEh
 ; 既にC000h-C173h付近を使い切っており衝突するため、Stage2専用に
 ; STAGE2_DATA_BASE=0C200hを起点とする(実測で空きと確認済み - 次の実
 ; 使用シンボルはEF00hのTICKで、C200h-EEFFhの約11.7KBが丸ごと空き)。
+; (2026-09-06、TryZ/GFEnding追加でNUM_NOTES35→60へ拡張、周期テーブルが
+; 伸びた分だけ以下のRAMオフセットが後方へシフト - tools/bgm_data/
+; bgm_bank_gen.pyの`python3 bgm_bank_gen.py`出力値と一致させること)
 BGM_PERIOD_LO_RAM EQU 0C200h
-BGM_PERIOD_HI_RAM EQU 0C223h
-BGM_B_BASE        EQU 0C246h    ; DEFEAT track0(chB)先頭
-BGM_C_BASE        EQU 0C373h    ; DEFEAT track1(chC)先頭
-BGM_B_PTR   EQU 0CA00h
-BGM_C_PTR   EQU 0CA02h
-BGM_B_TIMER EQU 0CA04h
-BGM_C_TIMER EQU 0CA05h
-BGM_B_REST  EQU 0CA06h    ; 0=音符が鳴っている行/非0=休符行
-BGM_C_REST  EQU 0CA07h
+BGM_PERIOD_HI_RAM EQU 0C23Ch
+BGM_B_BASE        EQU 0C278h    ; DEFEAT track0(chB)先頭
+BGM_C_BASE        EQU 0C3A5h    ; DEFEAT track1(chC)先頭
+; (2026-09-06、CONTROL_OFFSET拡張0x800→0x900に伴い0xCA00→0xCB00へ
+; シフト - bgm_bank_gen.pyのCONTROL_OFFSET自身のコメント[自己発見RAM
+; 衝突バグの経緯]参照)
+BGM_B_PTR   EQU 0CB00h
+BGM_C_PTR   EQU 0CB02h
+BGM_B_TIMER EQU 0CB04h
+BGM_C_TIMER EQU 0CB05h
+BGM_B_REST  EQU 0CB06h    ; 0=音符が鳴っている行/非0=休符行
+BGM_C_REST  EQU 0CB07h
 
 ; 実機フィードバック対応その3("BGMが1chしかなってないと言うか 恐らく
 ; エンベロープの影響で発音できてないな HWエンベロープはコントロール
@@ -6243,13 +6391,45 @@ BGM_B_DUTY_MASK    EQU 1      ; パート1: デューティ比50%(1/2、位相�
 ; (-4、ピーク11)": テーブル自体は変更せず、R9/R10へ書く直前に一律で
 ; この値だけ減算(0未満にはならないようクランプ)。両チャンネル共通。
 BGM_VOL_ATTEN      EQU 4
-BGM_B_ENV_LEVEL  EQU 0CA08h
-BGM_B_ENV_IDX    EQU 0CA09h
-BGM_B_ENV_CD     EQU 0CA0Ah
-BGM_B_DUTY_PHASE EQU 0CA0Bh
-BGM_C_ENV_LEVEL  EQU 0CA0Ch
-BGM_C_ENV_IDX    EQU 0CA0Dh
-BGM_C_ENV_CD     EQU 0CA0Eh
+BGM_B_ENV_LEVEL  EQU 0CB08h
+BGM_B_ENV_IDX    EQU 0CB09h
+BGM_B_ENV_CD     EQU 0CB0Ah
+BGM_B_DUTY_PHASE EQU 0CB0Bh
+BGM_C_ENV_LEVEL  EQU 0CB0Ch
+BGM_C_ENV_IDX    EQU 0CB0Dh
+BGM_C_ENV_CD     EQU 0CB0Eh
+; (2026-09-06、エンディング曲GFEnding用に追加) chA相当の3声目
+; ("これは3音使って良い" - ゲーム中と違いchAがSEと競合しない)。
+; エンディング専用でゲーム中は一切使わない(BGM_A_PTR=0の間は
+; UPDATE_BGM_ENDING_A自体を呼ばないゲート、後述)。envelopeはLINEAR
+; 形状を流用(デューティは無し、chCと同型)。tools/bgm_data/
+; bgm_bank_gen.pyのsong_constants("ENDING_GFENDING")のBGM_A_PTR等と
+; 一致させること。
+BGM_A_PTR    EQU 0CB0Fh
+BGM_A_TIMER  EQU 0CB11h
+BGM_A_REST   EQU 0CB12h
+BGM_A_ENV_LEVEL EQU 0CB13h
+BGM_A_ENV_IDX   EQU 0CB14h
+BGM_A_ENV_CD    EQU 0CB15h
+; (2026-09-06、TryZボス曲切替用に追加) chCのLOOP_MARK復帰先アドレスを
+; 曲ごとに書き換え可能にするためのRAM変数(SWITCH_BGM_TO_TRYZ自身の
+; 長いコメント参照 - DEFEAT/TryZでchCの実開始アドレスが異なるため、
+; 固定EQU[BGM_C_BASE]の即値ロードのままではループ時に誤ったアドレス
+; へ戻ってしまう)。
+BGM_C_LOOP_BASE EQU 0CB16h
+
+; ===== エンディングシーケンス(2026-09-06、"GFEndingを2ボス倒した後に
+; 再生...倒してから10秒ほど経過したら再生し 操作無効に...Produced by
+; Kumanecoyarou と画面中央に表示...曲が終わったら音を停止 Mission
+; Cmpletedと表示 全部大文字で") - 実装詳細はUPDATE_ENDING自身の長い
+; コメント参照。RAMはBGM_C_LOOP_BASEの直後(0xCB18〜、シンボルテーブル
+; 実測でこの先0xCC00まで空きと確認済み)に配置。
+VBLANK_COUNT       EQU 0CB18h   ; 実VBlank毎に+1(BGM_TICK内、H.TIMI駆動=真の実時間クロック)
+ENDING_ACT         EQU 0CB1Ah   ; 0=未発生/1=ボス撃破後の待機中/2=曲再生中/3=完了
+ENDING_WAIT_START  EQU 0CB1Bh   ; ENDING_ACT=1になった瞬間のVBLANK_COUNTスナップショット
+ENDING_SONG_START  EQU 0CB1Dh   ; ENDING_ACT=2になった瞬間のVBLANK_COUNTスナップショット
+ENDING_WAIT_TICKS       EQU 600   ; "10秒ほど" - 60Hz想定の近似値(未確定、実機フィードバック待ち)
+ENDING_SONG_TOTAL_TICKS EQU 1630  ; tools/bgm_data/midi_to_psg.load_ending_gfending_parts()の全パート共通total_ticks
 
 ; BELL: 半減期45tickの指数減衰(15*0.5^(t/45)を4bit丸め、以後この
 ; カーブが完全に0へ収束するまでをRLE圧縮)。試聴ツール(#3 BELL)と
@@ -6261,19 +6441,34 @@ BGM_ENV_BELL_TABLE:
 BGM_ENV_LINEAR_TABLE:
     DB 15,2,14,3,13,2,12,3,11,2,10,3,9,3,8,3,7,2,6,3,5,3,4,2,3,3,2,2,1,3,0,0
 
-INIT_BGM:
-    ; 曲データRAMコピー。INIT_BGMはINIT終盤(checkpoint9直前)から呼ばれる
-    ; ため、windowBは既に自分のbank1を選択済み - 一時的にbgm-dataバンクへ
-    ; 切り替えてLDIRした後、必ず自分のbank1へ明示的に復帰する(このCALL
-    ; の後もMAINLOOPまでwindowB資源のresident tableを読む処理が続くため、
-    ; 「既存のbank1選択がそのまま復帰を兼ねる」という当初案とは違い、
-    ; ここで自前の復帰が必須)。
+; 汎用ローダ: HL=bgm-dataバンク内の転送元(windowBに8000hでマップされた
+; 状態でのアドレス)、DE=転送先RAM、BC=転送バイト数を渡してCALLすると、
+; 一時的にbgm-dataバンクへ切り替えてLDIRし、必ずこのファイル自身の
+; bank1へ復帰してから戻る。INIT_BGM(起動時のDEFEAT読み込み)と
+; SWITCH_BGM_TO_TRYZ(ボス出現時の曲切替、後述)の両方から共有 - 元々は
+; INIT_BGM内に個別にインライン展開されていたが、呼び出し箇所が増える
+; ことを見越してここへ切り出した(build_full_rom.pyのComb用バンク
+; 番号パッチ[standalone bgm-data=2→6、own bank1=1→5]もこの1箇所だけ
+; 書き換えれば済むようになる利点もある)。
+BGM_LOAD_SONG:
+    PUSH AF
     LD A,2                       ; standalone bgm-dataバンク(Combでは6へパッチ)
     LD (7000h),A
-    LD HL,08000h : LD DE,0C200h : LD BC,046h : LDIR   ; 周期テーブル(35note*2)
-    LD HL,0866Eh : LD DE,0C246h : LD BC,0792h : LDIR  ; DEFEAT chB+chC
+    LDIR
     LD A,1                       ; standalone own bank1(Combでは5へパッチ)
     LD (7000h),A
+    POP AF
+    RET
+
+INIT_BGM:
+    ; 曲データRAMコピー。INIT_BGMはINIT終盤(checkpoint9直前)から呼ばれる
+    ; ため、windowBは既に自分のbank1を選択済み - BGM_LOAD_SONGが一時的に
+    ; bgm-dataバンクへ切り替えてLDIRした後、必ず自分のbank1へ明示的に
+    ; 復帰する(このCALLの後もMAINLOOPまでwindowB資源のresident table
+    ; を読む処理が続くため、「既存のbank1選択がそのまま復帰を兼ねる」
+    ; という当初案とは違い、ここで自前の復帰が必須)。
+    LD HL,08000h : LD DE,0C200h : LD BC,078h : CALL BGM_LOAD_SONG   ; 周期テーブル(60note*2)
+    LD HL,086A0h : LD DE,0C278h : LD BC,0792h : CALL BGM_LOAD_SONG  ; DEFEAT chB+chC
 
     LD HL,BGM_B_BASE
     LD (BGM_B_PTR),HL
@@ -6286,16 +6481,72 @@ INIT_BGM:
     LD (BGM_B_DUTY_PHASE),A
     LD HL,BGM_C_BASE
     LD (BGM_C_PTR),HL
+    LD (BGM_C_LOOP_BASE),HL       ; このRAMコピーがDEFEATの前提だという記録 - SWITCH_BGM_TO_TRYZ参照
     LD (BGM_C_TIMER),A
     LD (BGM_C_REST),A
     LD (BGM_C_ENV_LEVEL),A
     LD (BGM_C_ENV_IDX),A
     LD (BGM_C_ENV_CD),A
 
+    ; エンディング関連RAMのゼロ初期化(follow-up#14の教訓: 新規RAMは
+    ; 必ず起動時に明示的にゼロクリアすること)。
+    LD (VBLANK_COUNT),A
+    LD (VBLANK_COUNT+1),A
+    LD (ENDING_ACT),A
+    LD (ENDING_WAIT_START),A
+    LD (ENDING_WAIT_START+1),A
+    LD (ENDING_SONG_START),A
+    LD (ENDING_SONG_START+1),A
+    LD (BGM_A_PTR),A
+    LD (BGM_A_PTR+1),A
+    LD (BGM_A_TIMER),A
+    LD (BGM_A_REST),A
+    LD (BGM_A_ENV_LEVEL),A
+    LD (BGM_A_ENV_IDX),A
+    LD (BGM_A_ENV_CD),A
+
     LD A,0C3h                     ; JP nn opcode
     LD (HTIMI_HOOK),A
     LD HL,BGM_TICK
     LD (HTIMI_HOOK+1),HL
+    RET
+
+; ボスBGM切替("ではTryZをボス曲に...メロディ1パートベース1パートを
+; 抜き出して") - S2_BOSS_SPAWNから1回だけ呼ばれる。DEFEATと全く同じ
+; chB/chC RAM位置(CHB_RAM_BASE固定)へTryZの2パートを上書きし、
+; ポインタ/タイマー/REST/エンベロープ状態を全てリセットして先頭から
+; 即座に再生させる。
+;
+; **重要**: TryZのchB(メロディ、741byte)はDEFEATのchB(301byte)より
+; 長いため、chCの実際の開始アドレス(CHC_RAM_BASE)はDEFEATとTryZとで
+; 異なる(tools/bgm_data/bgm_bank_gen.pyの`python3 bgm_bank_gen.py`
+; 出力値参照)。旧来のBGM_C_BASE(EQU定数、DEFEAT固定値)を`LD HL,
+; BGM_C_BASE`のような即値ロードでループ復帰先に使うと、曲によって
+; 実際のchC開始位置が変わることに対応できず、TryZのループ時に
+; DEFEATの固定アドレスへ誤って戻ってしまう(=TryZのchBデータの
+; 途中を読み出す実害バグになる)。これを避けるため、ループ復帰先は
+; 常にRAM変数BGM_C_LOOP_BASEから間接読み込みする方式に変更済み
+; (BGMT_UC_NEWROW参照) - 曲を切り替える側(INIT_BGM/ここ)が毎回
+; 自分の曲の実際のchC開始アドレスをこの変数へ書き込む。
+SWITCH_BGM_TO_TRYZ:
+    LD HL,08E32h : LD DE,0C278h : LD BC,032Eh : CALL BGM_LOAD_SONG  ; TRYZ chB+chC
+    LD HL,BGM_B_BASE
+    LD (BGM_B_PTR),HL
+    XOR A
+    LD (BGM_B_TIMER),A
+    LD (BGM_B_REST),A
+    LD (BGM_B_ENV_LEVEL),A
+    LD (BGM_B_ENV_IDX),A
+    LD (BGM_B_ENV_CD),A
+    LD (BGM_B_DUTY_PHASE),A
+    LD HL,0C55Dh                  ; TRYZ chC先頭(CHC_RAM_BASE、DEFEATとは異なる)
+    LD (BGM_C_PTR),HL
+    LD (BGM_C_LOOP_BASE),HL
+    LD (BGM_C_TIMER),A
+    LD (BGM_C_REST),A
+    LD (BGM_C_ENV_LEVEL),A
+    LD (BGM_C_ENV_IDX),A
+    LD (BGM_C_ENV_CD),A
     RET
 
 ; H.TIMI hook target - called once per real VBlank on real hardware.
@@ -6309,8 +6560,17 @@ BGM_TICK:
     PUSH BC
     PUSH DE
     PUSH HL
+    ; エンディング用の実時間クロック("倒してから10秒ほど経過したら")。
+    ; H.TIMIは実VBlank駆動の本物の割り込みなので、MAINLOOPのTICK(free-
+    ; running、実時間との対応が無い)とは違いこれ自体が実時間の基準に
+    ; なる。16bit、オーバーフローは現実的な猶予時間内(約1092秒=18分強)
+    ; では発生しないため無視。
+    LD HL,(VBLANK_COUNT) : INC HL : LD (VBLANK_COUNT),HL
     CALL BGMT_UPDATE_B
     CALL BGMT_UPDATE_C
+    LD A,(ENDING_ACT)
+    CP 2
+    CALL Z,BGMT_UPDATE_ENDING_A
     LD A,7 : OUT (PSG_ADDR),A
     IN A,(PSG_DATA_R)
     AND 0F9h                      ; clear bits1-2: tone B, tone C enabled; everything else (channel A's own mode, noise B/C, I/O dir) untouched
@@ -6337,6 +6597,8 @@ BGMT_UPDATE_B:
 BGMT_UB_NEWROW:
     LD HL,(BGM_B_PTR)
     LD A,(HL)
+    CP BGM_END_MARK
+    JR Z,BGMT_UB_SETREST    ; 一度きり曲の終了 - PTRを進めず無音を保持し続ける
     CP BGM_LOOP_MARK
     JR NZ,BGMT_UB_GOT
     LD HL,BGM_B_BASE
@@ -6439,9 +6701,14 @@ BGMT_UPDATE_C:
 BGMT_UC_NEWROW:
     LD HL,(BGM_C_PTR)
     LD A,(HL)
+    CP BGM_END_MARK
+    JR Z,BGMT_UC_SETREST    ; 一度きり曲の終了 - PTRを進めず無音を保持し続ける
     CP BGM_LOOP_MARK
     JR NZ,BGMT_UC_GOT
-    LD HL,BGM_C_BASE
+    ; round(2026-09-06、TryZ追加): 曲によってchCの実開始アドレスが違う
+    ; (SWITCH_BGM_TO_TRYZ自身の長いコメント参照)ため、固定EQUの即値
+    ; ロードではなく、曲切替側が都度更新するRAM変数から間接ロードする。
+    LD HL,(BGM_C_LOOP_BASE)
     LD A,(HL)
 BGMT_UC_GOT:
     LD C,A
@@ -6509,6 +6776,94 @@ BGMT_UC_ENV_WRITE:
     JR NC,BGMT_UC_ATTEN_OK
     XOR A                            ; 減算でアンダーフローしたら0にクランプ
 BGMT_UC_ATTEN_OK:
+    OUT (PSG_DATA),A
+    RET
+
+; チャンネルA(R0/R1 tone、R8 volume、LINEAR形状+デューティOFF、chCと
+; 同型)版のエンディング専用3声目("これは3音使って良い") - BGM_TICKから
+; ENDING_ACT==2の間だけ呼ばれる(通常ゲーム中は一切呼ばれないため、
+; SOUND_UPDATE[SEドライバ]のchA使用と競合しない - MAINLOOP側もENDING_ACT
+; ==2の間はCALL SOUND_UPDATE自体を丸ごとスキップする、UPDATE_ENDING参照)。
+; chB/chCと違いLOOP_MARKへの対応は無い - GFEndingの全パートは曲一度
+; きり(END_MARK)専用のデータとして生成されており、ループする必要が
+; そもそも無い。
+BGMT_UPDATE_ENDING_A:
+    LD A,(BGM_A_TIMER)
+    OR A
+    JR Z,BGMT_UEA_NEWROW
+    DEC A
+    LD (BGM_A_TIMER),A
+    JR BGMT_UEA_ENV_STEP
+BGMT_UEA_NEWROW:
+    LD HL,(BGM_A_PTR)
+    LD A,(HL)
+    CP BGM_END_MARK
+    JR Z,BGMT_UEA_SETREST    ; 一度きり曲の終了 - PTRを進めず無音を保持し続ける
+    LD C,A
+    INC HL
+    LD A,(HL)
+    INC HL
+    LD (BGM_A_PTR),HL
+    DEC A
+    LD (BGM_A_TIMER),A
+    LD A,C
+    CP BGM_NOTE_REST
+    JR Z,BGMT_UEA_SETREST
+    XOR A
+    LD (BGM_A_REST),A
+    LD E,C : LD D,0
+    LD HL,BGM_PERIOD_LO_RAM : ADD HL,DE : LD A,(HL) : LD B,A
+    LD HL,BGM_PERIOD_HI_RAM : ADD HL,DE : LD A,(HL) : LD C,A
+    LD A,0 : OUT (PSG_ADDR),A
+    LD A,B : OUT (PSG_DATA),A
+    LD A,1 : OUT (PSG_ADDR),A
+    LD A,C : OUT (PSG_DATA),A
+    LD HL,BGM_ENV_LINEAR_TABLE
+    LD A,(HL) : LD (BGM_A_ENV_LEVEL),A
+    INC HL
+    LD A,(HL) : DEC A : LD (BGM_A_ENV_CD),A
+    XOR A : LD (BGM_A_ENV_IDX),A
+    JR BGMT_UEA_ENV_WRITE
+BGMT_UEA_SETREST:
+    LD A,1
+    LD (BGM_A_REST),A
+    LD A,8 : OUT (PSG_ADDR),A
+    XOR A : OUT (PSG_DATA),A
+    RET
+BGMT_UEA_ENV_STEP:
+    LD A,(BGM_A_REST)
+    OR A
+    RET NZ
+    LD A,(BGM_A_ENV_CD)
+    OR A
+    JR Z,BGMT_UEA_ENV_ADVANCE
+    DEC A
+    LD (BGM_A_ENV_CD),A
+    JR BGMT_UEA_ENV_WRITE
+BGMT_UEA_ENV_ADVANCE:
+    LD A,(BGM_A_ENV_IDX)
+    CP BGM_ENV_LAST_INDEX
+    JR Z,BGMT_UEA_ENV_WRITE
+    INC A
+    LD (BGM_A_ENV_IDX),A
+    LD L,A : LD H,0
+    ADD HL,HL
+    LD DE,BGM_ENV_LINEAR_TABLE
+    ADD HL,DE
+    LD A,(HL) : LD (BGM_A_ENV_LEVEL),A
+    INC HL
+    LD A,(HL)
+    OR A
+    JR Z,BGMT_UEA_ENV_WRITE
+    DEC A
+    LD (BGM_A_ENV_CD),A
+BGMT_UEA_ENV_WRITE:
+    LD A,8 : OUT (PSG_ADDR),A
+    LD A,(BGM_A_ENV_LEVEL)
+    SUB BGM_VOL_ATTEN
+    JR NC,BGMT_UEA_ATTEN_OK
+    XOR A
+BGMT_UEA_ATTEN_OK:
     OUT (PSG_DATA),A
     RET
 
@@ -10743,6 +11098,7 @@ S2_BOSS_SPAWN:
     XOR A : LD (THUNDER_ELIGIBLE),A   ; not eligible until the first pose ends - see UBAP_END
     XOR A : LD (BOSS_POSE_COUNT),A
     XOR A : LD (SBEAM_ACT),A
+    CALL SWITCH_BGM_TO_TRYZ   ; "ではTryZをボス曲に"
     CALL TRIGGER_BOSS_MATERIALIZE
     JP UBA_DRAW
 ; "出現時の初期位置は今のままで...点滅しながら中央で実態化みたいな演出
@@ -12640,6 +12996,14 @@ UBE_F_HAVE_CODE:
     RET NZ
     LD A,HUD_ROW_BLANK_CODE : CALL BOSS_EXPL_WRITE_CENTER_CELL
     LD A,BOSS_EXPL_STATE_DONE : LD (BOSS_EXPL_STATE),A
+    ; エンディング起動("GFEndingを2ボス倒した後に再生...倒してから10秒
+    ; ほど経過したら再生"): ここに来るのは実際の死亡(REASON=0)の場合の
+    ; みで、形態変化トリガー(REASON=1)はUBS_LAST_FRAME自身の分岐で
+    ; REVEAL_BOSS_BROKEN_FORMへ逸れるためここへは絶対に来ない
+    ; (UBS_LAST_FRAME自身のコメント参照) - つまりこの行に到達すること
+    ; 自体が「ボスを本当に倒した」の確定シグナルとして安全に使える。
+    LD A,1 : LD (ENDING_ACT),A
+    LD HL,(VBLANK_COUNT) : LD (ENDING_WAIT_START),HL
     RET
 
 ; writes A (a name-table code) to the single cell at (BOSS_EXPL_CX,

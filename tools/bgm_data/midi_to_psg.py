@@ -38,12 +38,23 @@ PSG_CLOCK = 3579545 / 2  # 1789772.5Hz - MSX AY-3-8910互換PSGの入力クロ�
 OCTAVE_SEMITONES = 12
 OCTAVE_SHIFT = -OCTAVE_SEMITONES  # 実機フィードバックで両曲とも1オクターブ下げ
 
-MIDI_MIN = 50 + OCTAVE_SHIFT  # 38
-MIDI_MAX = 84 + OCTAVE_SHIFT  # 72
-NUM_NOTES = MIDI_MAX - MIDI_MIN + 1  # 35
+# (2026-09-06、TryZ/GFEnding追加時に拡張): 元々はALONE_FIGHTER/DEFEATの
+# 2曲だけ(共にOCTAVE_SHIFT適用後38-72)を想定した範囲だったが、新曲2曲
+# (ボス曲TryZ・エンディングGFEnding)はオクターブシフトを掛けずに生の
+# MIDIノートをそのままインデックスに使う設計にしたため、実測した4曲
+# 全体の和集合(TryZの2パート、GFEndingの3パート、共にシフト無し)を
+# 素直にカバーできるよう32-91へ拡張した。テーブルは全曲共通の1個の
+# ため、コストは2byte/note(今回+50byte)で全曲に波及するが、既存2曲は
+# 生成のたびに新しい範囲に合わせて丸ごと再計算されるため後方互換の
+# 心配は無い(手書きの固定データではなく、毎回mido経由で再生成する
+# キャッシュのため)。
+MIDI_MIN = 32
+MIDI_MAX = 91
+NUM_NOTES = MIDI_MAX - MIDI_MIN + 1  # 60
 
 NOTE_REST = 0xFF
 LOOP_MARK = 0xFE
+END_MARK = 0xFD  # エンディング専用: ループせず、以後この行を無音のまま保持する終端マーク
 
 MIDI_TICKS_PER_VBLANK = 4
 
@@ -82,10 +93,13 @@ def build_period_table():
     return lo, hi
 
 
-def _track_segments(track):
+def _track_segments(track, octave_shift=OCTAVE_SHIFT):
     """1トラック分のnote_on/offを歩いて(start_tick, end_tick, note)の
     列を作る。真にモノフォニックであることは事前確認済みなので、常に
-    「前のノートを閉じてから次を開く」の単純な状態機械で足りる。"""
+    「前のノートを閉じてから次を開く」の単純な状態機械で足りる。
+    octave_shift: 呼び出し元が明示的に0を渡せば無変換(TryZ/GFEnding用、
+    生MIDIノートをそのままインデックスキーに使う設計)。省略時は
+    ALONE_FIGHTER/DEFEAT向けの既定値(-12)のまま。"""
     segments = []
     abs_time = 0
     cur_note = None
@@ -95,10 +109,10 @@ def _track_segments(track):
         if msg.type == "note_on" and msg.velocity > 0:
             if cur_note is not None:
                 segments.append((cur_start, abs_time, cur_note))
-            cur_note = msg.note + OCTAVE_SHIFT
+            cur_note = msg.note + octave_shift
             cur_start = abs_time
         elif (msg.type == "note_off") or (msg.type == "note_on" and msg.velocity == 0):
-            if cur_note is not None and msg.note + OCTAVE_SHIFT == cur_note:
+            if cur_note is not None and msg.note + octave_shift == cur_note:
                 segments.append((cur_start, abs_time, cur_note))
                 cur_note = None
     if cur_note is not None:
@@ -172,15 +186,192 @@ def load_song_tracks(song_key):
     return result[0], result[1]
 
 
-def rows_to_bytes(rows):
-    """(note,duration)行の列 -> 2byte/行のバイト列 + 末尾LOOP_MARK(1byte)。"""
+def rows_to_bytes(rows, terminator=LOOP_MARK):
+    """(note,duration)行の列 -> 2byte/行のバイト列 + 末尾ターミネータ
+    (1byte)。terminator=LOOP_MARK(既定、ゲームBGM用、先頭へループ)/
+    END_MARK(エンディング用、以後ループせず無音のまま保持)。"""
     out = bytearray()
     for note, dur in rows:
         assert 0 <= dur <= 255
         out.append(note & 0xFF)
         out.append(dur & 0xFF)
-    out.append(LOOP_MARK)
+    out.append(terminator)
     return bytes(out)
+
+
+# ===== TryZ(ボス曲)・GFEnding(エンディング曲) - Round(2026-09-06)追加 =====
+# どちらもALONE_FIGHTER/DEFEATと違い「type1・ちょうど2トラック」という
+# 単純な形をしていない(TryZは6トラック中3トラックが実際に鳴っている
+# 楽器パート、GFEndingはtype0の単一トラックに12チャンネル分が混在)ため、
+# SONGS辞書経由の汎用loaderには乗らない。個別に手作業でパート(メロディ/
+# ベース/ハーモニー)を選び出す専用関数を用意する。
+
+BOSS_TRYZ_FILE = "TryZ.mid"
+ENDING_GFENDING_FILE = "GFEnding.mid"
+
+
+def load_boss_tryz_parts():
+    """TryZ.mid(type1、6トラック)から2パート抽出:
+    - track2(channel1、"Sequenced by..."、57-72、326note、曲を通して
+      最も活発に動く旋律)をメロディ(chB相当)に、
+    - track3(channel2、67-71、32note、track1[channel0、76-78]と対を
+      成す持続和音の低い方の声部)をベース(chC相当)に採用。
+    track1(channel0、76-78)はtrack3より高い側の声部で、曲全体を通じて
+    3.2秒に1回しか動かない(32note)ため今回は不採用(ユーザー指示は
+    「メロディ1パートベース1パートを抜き出して」の2パートのみ)。
+    track4(channel9)はGM打楽器チャンネルのためドラムであり音程パートで
+    はない(不採用)。オクターブシフトは掛けない(生MIDIノートのままで
+    既存の周期テーブル範囲[32,91]に収まる)。"""
+    path = os.path.join(MIDI_DIR, BOSS_TRYZ_FILE)
+    mid = mido.MidiFile(path)
+    assert mid.type == 1 and len(mid.tracks) == 6, (mid.type, len(mid.tracks))
+    melody_seg, melody_total = _track_segments(mid.tracks[2], octave_shift=0)
+    bass_seg, bass_total = _track_segments(mid.tracks[3], octave_shift=0)
+    melody_rows = _rows_from_segments(melody_seg, melody_total)
+    bass_rows = _rows_from_segments(bass_seg, bass_total)
+    return melody_rows, bass_rows
+
+
+def _channel_events(mid):
+    """mid(type0/1どちらでも可)の全トラックを、それぞれ自分のトラック
+    内相対時間で絶対tickへ復元しつつ1つの(abs_tick, is_on, channel,
+    note)列にまとめる。type1でトラックが複数でも各トラックの絶対時間は
+    0始まりで揃っているため、そのまま合算してよい。"""
+    events = []
+    for track in mid.tracks:
+        t = 0
+        for msg in track:
+            t += msg.time
+            if msg.type == "note_on" and msg.velocity > 0:
+                events.append((t, True, msg.channel, msg.note))
+            elif msg.type == "note_off" or (msg.type == "note_on" and msg.velocity == 0):
+                events.append((t, False, msg.channel, msg.note))
+    # 同一tickではoff→onの順に処理(次の音が同tickで始まる場合に、直前の
+    # 音を確実に閉じてから開けるようにする)。
+    events.sort(key=lambda e: (e[0], 0 if not e[1] else 1))
+    return events
+
+
+def _segments_for_channel(events, channel, top_note_only=False):
+    """1チャンネル分の(start,end,note)区間列。top_note_only=Trueの場合、
+    同一チャンネル内で複数ノートが重なっている(和音)区間は「その瞬間に
+    鳴っている最高音」だけを採用するモノフォニック化を行う(GFEndingの
+    chan0のような、1チャンネルに和音が積まれた区間の再現に使用)。
+    top_note_only=Falseの場合はそのチャンネルが真にモノフォニックである
+    ことを前提とする単純な状態機械(_track_segmentsと同型)。"""
+    ch_events = [e for e in events if e[2] == channel]
+    segments = []
+    if not top_note_only:
+        cur_note = None
+        cur_start = None
+        for (t, is_on, ch, note) in ch_events:
+            if is_on:
+                if cur_note is not None:
+                    segments.append((cur_start, t, cur_note))
+                cur_note = note
+                cur_start = t
+            else:
+                if cur_note == note:
+                    segments.append((cur_start, t, cur_note))
+                    cur_note = None
+        return segments
+    active = set()
+    cur_note = None
+    cur_start = None
+    for (t, is_on, ch, note) in ch_events:
+        prev_top = max(active) if active else None
+        if is_on:
+            active.add(note)
+        else:
+            active.discard(note)
+        new_top = max(active) if active else None
+        if new_top != prev_top:
+            if cur_note is not None:
+                segments.append((cur_start, t, cur_note))
+            cur_note = new_top
+            cur_start = t
+    return segments
+
+
+def _merge_parts(parts):
+    """parts: [(segments, window_start, window_end), ...] - 各ソースを
+    自分のwindowでクリップしてから連結・時刻順に整列し、隣接ソース間で
+    重複が無いことを検証する(重複があれば、そもそものパート分割設計が
+    間違っている証拠なのでAssertionErrorで早期に発覚させる)。"""
+    combined = []
+    for segments, w_start, w_end in parts:
+        for (s, e, note) in segments:
+            cs, ce = max(s, w_start), min(e, w_end)
+            if ce > cs:
+                combined.append((cs, ce, note))
+    combined.sort()
+    for i in range(1, len(combined)):
+        assert combined[i][0] >= combined[i - 1][1], (
+            f"GFEnding part overlap at {combined[i-1]} vs {combined[i]}"
+        )
+    return combined
+
+
+def load_ending_gfending_parts():
+    """GFEnding.mid(type0、単一トラックに12チャンネル混在)から3パート
+    抽出(ユーザー: "これは3音使って良い" - ゲーム中と違いchAもSE用途と
+    競合しないため3ch使用可):
+
+    - MELODY: chan11(Electric Piano2、74-91、112note、2.4-20.1秒、
+      曲中最も活発で音域も最も高い=主旋律)を軸に、そのあとの静寂の
+      コーダ部分をchan0の和音の最高音(top-note化、23.18-24.52秒)→
+      chan1(単声、24.75-26.09秒)の順に継ぎ足して曲の終わりまで途切れず
+      続くメロディラインを構成。
+    - BASS: chan12(Fretless Bass、32-45、2.4-12.61秒までの前半)→
+      chan9(Piano、36-57、12.61-26.09秒の後半、実測でchan12停止直後
+      から始まっており重複なし)の順に繋いだ低音パート。
+    - HARMONY(3声目、chA相当): chan6(Electric Guitar和音スタックの
+      うち1チャンネル分、55-77、2.4-20.55秒) - chan6/7/8/10はほぼ同一
+      内容を0.2-0.4秒ずつずらして4chに重ねた和音の各声部(元々の
+      General MIDI書き出し時のポリフォニー都合による分割)なので、
+      代表して1本だけ採用(残り3本は捨てる、単音のPSGでは元々4声を
+      完全再現できないため妥当な単純化)。
+
+    いずれもオクターブシフトは掛けない(生MIDIノートのまま、既存の
+    周期テーブル範囲[32,91]で全パートの全ノートをカバー済み)。"""
+    path = os.path.join(MIDI_DIR, ENDING_GFENDING_FILE)
+    mid = mido.MidiFile(path)
+    assert mid.type == 0 and len(mid.tracks) == 1, (mid.type, len(mid.tracks))
+    events = _channel_events(mid)
+    total_ticks = max(t for (t, _, _, _) in events)
+
+    chan11 = _segments_for_channel(events, 11)
+    chan0_top = _segments_for_channel(events, 0, top_note_only=True)
+    chan1 = _segments_for_channel(events, 1)
+    melody_seg = _merge_parts([
+        (chan11, 0, total_ticks),
+        (chan0_top, 0, total_ticks),
+        (chan1, 0, total_ticks),
+    ])
+
+    # chan12(Fretless Bass、2.4-20.27秒に疎らな8note、前半の低音パッド)と
+    # chan9(Piano、12.61-26.09秒に連続的に動く後半の主ベースライン)は、
+    # 単純に全区間(0,total_ticks)ずつで重ねると和音の音価が実際には
+    # chan9開始後も鳴り続けている箇所でtick単位の重複を起こす
+    # (実測で確認済み)。chan9の最初の発音開始tickを境界にして前後で
+    # 明確に分担させる(chan12は境界より前だけ、chan9は境界以降だけ)。
+    chan12 = _segments_for_channel(events, 12)
+    chan9 = _segments_for_channel(events, 9)
+    chan9_first_start = min(s for (s, e, n) in chan9)
+    bass_seg = _merge_parts([
+        (chan12, 0, chan9_first_start),
+        (chan9, chan9_first_start, total_ticks),
+    ])
+
+    chan6 = _segments_for_channel(events, 6)
+    harmony_seg = _merge_parts([
+        (chan6, 0, total_ticks),
+    ])
+
+    melody_rows = _rows_from_segments(melody_seg, total_ticks)
+    bass_rows = _rows_from_segments(bass_seg, total_ticks)
+    harmony_rows = _rows_from_segments(harmony_seg, total_ticks)
+    return melody_rows, bass_rows, harmony_rows
 
 
 if __name__ == "__main__":

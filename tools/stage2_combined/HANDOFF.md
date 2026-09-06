@@ -9943,3 +9943,182 @@ RLE圧縮実装・完了済み)(2026-09-06)
   の直後)に独立した恒久セクション「実機ハードウェア制約(絶対厳守)」
   として新設し、以後Round番号に関わらず必ず最初に目に入る場所で管理する
   よう変更した。詳細は`CLAUDE.md`本文参照。
+
+## Round48(TryZボス曲+GFEndingエンディングシーケンス実装・ボス中央復帰
+位置修正・完了済み)(2026-09-06)
+
+- ユーザー指示: "Ok\nタイトル表示できた\nではTryZをボス曲に\nこの内メロディ
+  1パートベース1パートを抜き出して変換して取り込み\nGFEndingを2ボス倒した
+  後に再生\nこれは3音使って良い\n倒してから10秒ほど経過したら再生し\n操作
+  無効に\nProduced by Kumanecoyarou\nと画面中央に表示\n曲が終わったら音を
+  停止\nMission Cmpletedと表示\n全部大文字で\n\nで、ステージ2ボスの形態
+  変化後の中央に戻る動作だが\n位置が低いので16Px上に戻るように\nそこから
+  インフィニティ軌道へ"(添付: `tryz_1.mid`=Galaxy Force - Try Z、
+  `GFEnding.mid`=ギャラクシーフォースII「Take Back」)。
+
+### (1) ボス中央復帰位置を16px上へ(小規模・独立修正)
+
+- `tools/stage2_combined/sasapi_gen.py`の`_PATH_CY`(8の字軌道の中心Y)を
+  80→64に変更。振幅`_PATH_AY`(32)は無変更のためY範囲は[48,112]→
+  [32,96]へ平行移動するだけで、HUD帯(row0)・地形スクロール帯(row16以降
+  =128px)双方から引き続き十分に離れている。既存`boss_broken_form_test.py`
+  はBOSS_BROKEN_CENTER_Yをシンボルテーブル経由で動的参照する設計だった
+  ため無改修で106件全てPASS。
+
+### (2) TryZ抽出・ボス曲切替
+
+- `tools/bgm_data/midi_to_psg.py`にTryZ.mid(type1、6トラック)専用の
+  `load_boss_tryz_parts()`を追加。メロディ=track2(channel1、"Sequenced
+  by..."、57-72、326note、曲を通して最も活発)、ベース=track3
+  (channel2、67-71、32note、track1[channel0、76-78]と対を成す持続和音の
+  低い方の声部)を採用、track1(より高い側の声部)・track4(GM打楽器
+  channel9)は不採用(ユーザー指示は2パートのみ)。オクターブシフトは
+  掛けない(生MIDIノートのまま既存周期テーブル範囲に収まる)。
+- 周期テーブルの範囲(MIDI_MIN/MAX)を、TryZ・GFEnding全パートの和集合
+  (32-91)をカバーするよう35note(38-72)→60note(32-91)へ拡張。既存
+  ALONE_FIGHTER/DEFEATは`--generate`のたびに新しい範囲で丸ごと再計算
+  される設計のため後方互換の心配は無い。
+- **自己発見RAM衝突バグ**: 周期テーブル拡張(+50byte)によりCHB_RAM_
+  BASEが後方へシフトし、DEFEATの総データ長(1938byte)を足すと旧
+  CONTROL_OFFSET(0x800=2048)を10byte超過、曲データの末尾が
+  BGM_B_PTR等の制御変数領域と物理的に重なるバグを`bgm_test.py`の
+  「コピー直後の内容がバイト単位で一致するか」検証で検出・自己修正
+  (INIT_BGM側がその直後に制御変数を再初期化するため実害は顕在化しない
+  が、テストは正しく検出した)。`tools/bgm_data/bgm_bank_gen.py`の
+  `CONTROL_OFFSET`を0x800→0x900へ拡張(246byteの余裕)して解消、
+  Stage2/Title/Stage1の3ファイル全ての`BGM_PERIOD_HI_RAM`/`BGM_B_BASE`/
+  `BGM_C_BASE`/`BGM_B/C_PTR`等関連EQU、`build_full_rom.py`の
+  `STAGE2_BGM_BANKSELECT_ANCHOR/PATCH`・`TITLE_BGM_BANKSELECT_ANCHOR/
+  PATCH`を新しい値に合わせて更新。
+- `combined_test.asm`のINIT_BGMを「一時的にbgm-dataバンクへ切り替えて
+  LDIRし自分のbank1へ復帰する」処理を`BGM_LOAD_SONG`という共有
+  サブルーチン(HL=転送元/DE=転送先/BC=長さを渡してCALL)へリファクタ -
+  INIT_BGM(起動時のDEFEAT読み込み)と新設`SWITCH_BGM_TO_TRYZ`(ボス
+  出現時の曲切替、`S2_BOSS_SPAWN`から1回だけ呼ばれる)の両方から共有
+  することで、build_full_rom.pyのComb用バンク番号パッチ箇所が1つで
+  済むようにした。
+- **もう1つの自己発見バグ(TryZ固有)**: TryZのchB(メロディ、741byte)は
+  DEFEATのchB(301byte)より長いため、chCの実際の開始アドレス
+  (CHC_RAM_BASE)はDEFEAT/TryZで異なる。旧来`BGMT_UC_NEWROW`のLOOP_MARK
+  復帰処理が`BGM_C_BASE`という固定EQU(DEFEAT値)への即値ロードだった
+  ため、TryZ再生中にループするとDEFEATの固定アドレス(=TryZ自身のchB
+  データの途中)へ誤って戻ってしまう実害バグになるところだった。新設
+  RAM変数`BGM_C_LOOP_BASE`(曲切替側が都度自分の曲の実chC開始アドレス
+  を書き込む)へ間接参照するよう変更して解消。新規
+  `boss_bgm_switch_test.py`(10件)- 自己検証として一時的に修正を
+  戻し、最初に書いたテストの「同じ周期の音が2回出現するか」という
+  弱い判定では検出できなかった(第1周目だけで偶然2回出現しうる)ことを
+  発見、`BGM_C_PTR`がループ後もTryZ自身の実際のchC範囲内に留まって
+  いるかを直接検証する判定に書き直して初めて正しく検出できることを
+  確認。
+- 全回帰`run_all.py` **1407 passed/0 failed**。
+
+### (3) GFEndingエンディングシーケンス
+
+- `midi_to_psg.py`にGFEnding.mid(type0、単一トラックに12チャンネル
+  混在)から3パート抽出する`load_ending_gfending_parts()`を追加
+  (ユーザー: "これは3音使って良い" - ゲーム中と違いchAがSEと競合
+  しないため3ch使用可)。
+  - MELODY: chan11(Electric Piano2、74-91、112note、2.4-20.1秒、
+    曲中最も活発・音域も最高=主旋律)を軸に、コーダ部分をchan0の和音
+    最高音(top-note化、23.18-24.52秒)→chan1(単声、24.75-26.09秒)の
+    順に継ぎ足して曲の終わりまで途切れず続くメロディラインを構成。
+  - BASS: chan12(Fretless Bass、2.4-12.61秒の前半)→chan9(Piano、
+    12.61-26.09秒の後半)の順に繋いだ低音パート。chan9の実際の発音
+    開始tickを境界に前後で明確に分担させる形で重複を回避(最初は
+    単純に両者を(0,total)の全区間で重ねたところ実測で重複を検出、
+    自己修正)。
+  - HARMONY(chA相当): chan6(Electric Guitar和音スタックのうち1
+    チャンネル分) - chan6/7/8/10は元々ほぼ同一内容を0.2-0.4秒ずつ
+    ずらして4chに重ねた和音の各声部(General MIDI書き出し都合による
+    分割)なので、代表して1本だけ採用。
+  - いずれもオクターブシフト無し、終端は`LOOP_MARK`ではなく新設
+    `END_MARK`(0xFD) - 一度きりの曲で、以後ループせずPTRを進めず
+    無音を保持し続ける("曲が終わったら音を停止"用の設計)。
+- `bgm_bank_gen.py`にBOSS_TRYZ(2パート)・ENDING_GFENDING(3パート、
+  `chA_len`フィールド追加)をバンクへパック、`song_constants()`を3
+  パート対応に拡張(`CHA_RAM_BASE`/`BGM_A_PTR`/`BGM_A_TIMER`/
+  `BGM_A_REST`)。chA(harmony)用のRAM制御ブロックはchB/chCのエンベロープ
+  状態(control_base+8~+14、Python側では追跡していない既存の非対称
+  領域)と衝突しないよう+15以降に配置。
+- `combined_test.asm`に新設:
+  - `VBLANK_COUNT`(BGM_TICK内でinc、実VBlank駆動=本物の実時間クロック
+    - MAINLOOPのTICKはHALT/vsync同期の無いfree-running設計のため実時間
+    には対応せず、GAME_TICKも8フレームに1回しか進まない別の単位、
+    どちらも「10秒」の基準には使えないため新設)。
+  - `ENDING_ACT`(0=未発生/1=待機中/2=再生中/3=完了)の状態機械
+    `UPDATE_ENDING`(MAINLOOPから毎フレーム呼び出し)。
+  - `UBE_FLASH`(死亡演出の最終フェーズ)がBOSS_EXPL_STATE_DONEを
+    セットする箇所(REASON=0の実際の死亡時のみ到達 - REASON=1の形態
+    変化トリガーはUBS_LAST_FRAME自身の分岐でREVEAL_BOSS_BROKEN_FORMへ
+    逸れるため絶対に来ない)に、ENDING_ACT=1+VBLANK_COUNTスナップ
+    ショットを追加。
+  - `ENDING_START_PLAYBACK`(10秒経過で発火): GFEndingの3パートを
+    `BGM_LOAD_SONG`1回で一括ロード(chB/chC/chAはbgm-dataバンク内・
+    RAM転送先の両方で連続配置のため)、各チャンネルのポインタ/
+    タイマー/REST/エンベロープをリセット、文字パターン+カラー
+    テーブルをロードして"PRODUCED BY KUMANECOYAROU"を描画。
+  - `BGMT_UPDATE_ENDING_A`(chA用、R0/R1 tone・R8 volume、LINEAR形状・
+    デューティ無し、chCと同型) - `BGM_TICK`から`ENDING_ACT==2`の間
+    だけ呼ばれる、通常ゲーム中は一切呼ばれないためSOUND_UPDATE(SE
+    ドライバ)のchA使用と競合しない。
+  - `READ_INPUT`: `ENDING_ACT>=2`の間は実ハードウェアを読まず常に
+    無入力を強制("操作無効に") - 既存のUPDATE_TANK_XY等下流処理は
+    無変更のまま安全に無効化。
+  - MAINLOOP: `ENDING_ACT==2`の間は`CALL SOUND_UPDATE`自体を丸ごと
+    スキップ(chAをBGMT_UPDATE_ENDING_Aが専有するため)。
+  - `ENDING_FINISH`(曲の全長経過で発火): chAの音量を明示的に0へ
+    (chB/chCはEND_MARKに達し続ける限りSETRESTが毎tick0を書き続ける
+    ため無変更でよい)、行を全幅ブランクしてから"MISSION COMPLETED"
+    を中央寄せで上書き。
+- **フォント**: 両メッセージの和集合17文字(A,B,C,D,E,I,K,L,M,N,O,P,
+  R,S,T,U,Y)+スペース=18グリフを新規`tools/stage2_combined/
+  ending_text_gen.py`でオリジナルの5x7ドットブロック体として描き
+  起こし(実在フォントの複製ではない)。配置先パターンコードは
+  エミュレータでの実死亡シーケンス実行後のVRAM全256コード走査により
+  「ボス戦専用・ボス撃破後は二度と描画されない」と確認済みの3グループ
+  (group12=96-103[HORMING_BG_SAND]、group18=144-151[HORMING_BG]、
+  group19の152-153[BOSS_EXPL_WHITE_CODE/SASAPI_HAND、既に偶然fg15白/
+  bg1黒])へ分散配置、該当3グループのカラーテーブルを白文字/黒背景
+  (0F1h)へ統一。単純な「現在VRAM上で全0か」だけでなく、シンボル的に
+  「ボスが倒された以上二度と使われない」と裏付けが取れる範囲だけを
+  選定(follow-up#11の教訓 - 全0チェックだけでは意図的なブランク
+  埋め草と真の空きを区別できない、を踏まえた判断)。
+- Stage2 ROM容量: 31685→32671byte(残りわずか**97byte**、この
+  ファイルの実質的な容量上限に極めて近い)。
+- 新規`ending_sequence_test.py`(21件) - ボス実死亡→10秒待機境界→
+  再生開始→3パートRAMロード・ポインタリセット→フォント/カラー
+  テーブル・クレジット文字列描画→入力無効化→曲終了境界→音声停止・
+  MISSION COMPLETED描画・行のブランク処理→完了後の非再発火、を
+  一気通貫で検証。入力無効化の検証で自己発見: 当初`cpu.mem[JOY_DIR]`
+  を直接汚染して判定していたが、z80emu.pyのGTSTCKスタブ自体が既定で
+  0を返すため「実読み込みされた」ケースと「強制無入力」ケースを
+  区別できず、ゲートを一時的に外しても検出できない不備を発見・
+  `cpu.sim_dir`(スタブの返り値そのもの)を非ゼロにする方式へ修正して
+  正しく検出できることを確認。`terrain_render_perf_test.py`独自の
+  テーブル結合リストへの`ending_text_gen`追加漏れ(過去に繰り返し
+  発生している既知の構造的リスク)も発見・修正。全回帰`run_all.py`
+  **1428 passed/0 failed**。
+- VRAM→PNGレンダリングで"PRODUCED BY KUMANECOYAROU"(黒背景/白文字、
+  行中央寄せ)・"MISSION COMPLETED"(同、前のメッセージの残骸無し)
+  の両方を視覚確認済み。
+- Comb ROM再ビルド・`verify_comb.py`で健全性確認の上、標準方針により
+  Comb ROMのみ送付。詳細な技術的経緯は上記参照。
+
+### 保留・実機フィードバック待ち
+
+- `ENDING_WAIT_TICKS`(600、"10秒ほど"からの60Hz想定近似値)・
+  `ENDING_SONG_TOTAL_TICKS`(1630、GFEndingの実測総tick数)はいずれも
+  ロジック上は正確(VBLANK_COUNTが本物の実VBlank駆動のため)だが、
+  実機のリフレッシュレート(60Hz NTSC想定)が実際と異なる場合は待機
+  秒数がずれる可能性がある。
+- 文字表示位置(row11、両メッセージともこの行に中央寄せ)・フォント
+  の見た目(オリジナルの5x7ブロック体)はユーザー未確認、実機
+  フィードバック待ち。
+- GFEndingのパート割り当て(メロディ/ベース/ハーモニーの選定、特に
+  4声重複していたchan6/7/8/10から1本だけ採用した点)・TryZのパート
+  選定(track1[76-78高音域]を不採用とした点)はユーザー確認なしの
+  判断、実際に聞いた結果次第で変更の可能性あり。
+- Stage2 ROM残り97byteは今後の全新機能と共有される極めて厳しい予算 -
+  次に何か追加するには既存コードの縮小(ループ展開の巻き戻し等)が
+  必要になる可能性が高い。

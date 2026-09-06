@@ -3280,16 +3280,23 @@ SU_NOISE:
 HTIMI_HOOK        EQU 0FD9Fh
 BGM_NOTE_REST     EQU 0FFh
 BGM_LOOP_MARK     EQU 0FEh
+; (2026-09-06、TryZ/GFEnding追加でNUM_NOTES35→60へ拡張、周期テーブルが
+; 伸びた分だけ以下のRAMオフセットが後方へシフト - Titleが書き込む
+; アドレスと一致させること、tools/title_screen/title_test.asmの同名
+; EQU参照)
 BGM_PERIOD_LO_RAM EQU 0C000h
-BGM_PERIOD_HI_RAM EQU 0C023h
-BGM_B_BASE        EQU 0C046h    ; ALONE_FIGHTER track0(chB)先頭 - Titleが埋める
-BGM_C_BASE        EQU 0C235h    ; ALONE_FIGHTER track1(chC)先頭 - Titleが埋める
-BGM_B_PTR   EQU 0C800h
-BGM_C_PTR   EQU 0C802h
-BGM_B_TIMER EQU 0C804h
-BGM_C_TIMER EQU 0C805h
-BGM_B_REST  EQU 0C806h    ; 0=音符が鳴っている行/非0=休符行
-BGM_C_REST  EQU 0C807h
+BGM_PERIOD_HI_RAM EQU 0C03Ch
+BGM_B_BASE        EQU 0C078h    ; ALONE_FIGHTER track0(chB)先頭 - Titleが埋める
+BGM_C_BASE        EQU 0C267h    ; ALONE_FIGHTER track1(chC)先頭 - Titleが埋める
+; (2026-09-06、CONTROL_OFFSET拡張0x800→0x900に伴い0xC800→0xC900へ
+; シフト - bgm_bank_gen.pyのCONTROL_OFFSET自身のコメント[自己発見RAM
+; 衝突バグの経緯]参照。Titleが書き込むアドレスと一致させること)
+BGM_B_PTR   EQU 0C900h
+BGM_C_PTR   EQU 0C902h
+BGM_B_TIMER EQU 0C904h
+BGM_C_TIMER EQU 0C905h
+BGM_B_REST  EQU 0C906h    ; 0=音符が鳴っている行/非0=休符行
+BGM_C_REST  EQU 0C907h
 
 ; 実機フィードバック対応その3("BGMが1chしかなってないと言うか 恐らく
 ; エンベロープの影響で発音できてないな HWエンベロープはコントロール
@@ -3328,13 +3335,13 @@ BGM_B_DUTY_MASK    EQU 1      ; パート1: デューティ比50%(1/2、位相�
 ; 実機フィードバック"BGM音量を下げたいが現在は最大か?"→"中程度下げる
 ; (-4、ピーク11)": R9/R10へ書く直前に一律で減算(0未満はクランプ)。
 BGM_VOL_ATTEN      EQU 4
-BGM_B_ENV_LEVEL  EQU 0C808h
-BGM_B_ENV_IDX    EQU 0C809h
-BGM_B_ENV_CD     EQU 0C80Ah
-BGM_B_DUTY_PHASE EQU 0C80Bh
-BGM_C_ENV_LEVEL  EQU 0C80Ch
-BGM_C_ENV_IDX    EQU 0C80Dh
-BGM_C_ENV_CD     EQU 0C80Eh
+BGM_B_ENV_LEVEL  EQU 0C908h
+BGM_B_ENV_IDX    EQU 0C909h
+BGM_B_ENV_CD     EQU 0C90Ah
+BGM_B_DUTY_PHASE EQU 0C90Bh
+BGM_C_ENV_LEVEL  EQU 0C90Ch
+BGM_C_ENV_IDX    EQU 0C90Dh
+BGM_C_ENV_CD     EQU 0C90Eh
 
 ; BELL: 半減期45tickの指数減衰(15*0.5^(t/45)を4bit丸め、以後この
 ; カーブが完全に0へ収束するまでをRLE圧縮)。試聴ツール(#3 BELL)と

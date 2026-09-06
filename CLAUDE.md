@@ -2072,3 +2072,43 @@ RLE圧縮実装(2026-09-06、完了済み・実機フィードバック待ち)
   実機・高精度エミュレータ(openMSX等)での検証が必須。今後VRAM/PSG等
   ハードウェアポートへブロックI/O命令(OTIR等)を使う実装を検討する
   際は、必ずこの教訓を踏まえること。
+
+## Round48: TryZボス曲+GFEndingエンディングシーケンス実装・ボス中央復帰
+位置修正(2026-09-06、完了済み・実機フィードバック待ち)
+
+- ユーザー指示3点: (1) ステージ2ボスの形態変化後の中央復帰Y座標を16px
+  上へ(`sasapi_gen.py`の`_PATH_CY`80→64)。(2) TryZ(Galaxy Force -
+  Try Z)のメロディ+ベース2パートを抽出しボス戦BGMに(DEFEATから
+  `S2_BOSS_SPAWN`時に切替)。(3) GFEnding(Take Back)をボス撃破10秒後
+  に再生、操作無効化、"PRODUCED BY KUMANECOYAROU"を画面中央表示、
+  3ch(melody/bass/harmony)使用可、曲終了で音停止・"MISSION COMPLETED"
+  表示(全て大文字)。
+- 周期テーブルをNUM_NOTES35→60へ拡張する過程で、DEFEATの曲データ末尾が
+  BGM_B_PTR等の制御変数領域と重なる**RAM衝突を自己発見・修正**
+  (`bgm_bank_gen.py`のCONTROL_OFFSET 0x800→0x900)。TryZ固有の**もう
+  1つの自己発見バグ**: chB長がDEFEATと異なるためchC開始アドレスも
+  異なり、旧来の固定EQU即値ロードのままではループ時に誤ったアドレス
+  (TryZ自身のchB途中)へ戻る実害バグになるところだった - 新設RAM変数
+  `BGM_C_LOOP_BASE`で解消。
+- GFEndingは`END_MARK`(0xFD、一度きり・無音保持)という新終端方式、
+  chA(harmony)専用の新規ドライバ`BGMT_UPDATE_ENDING_A`を追加
+  (`ENDING_ACT==2`の間だけ`BGM_TICK`から呼ばれ、通常ゲーム中の
+  SOUND_UPDATEとは競合しない設計)。実時間10秒判定には新設
+  `VBLANK_COUNT`(BGM_TICK内でinc、実VBlank駆動の本物の実時間クロック
+  - MAINLOOPのTICKはfree-runningで実時間に対応せず使えない)を導入。
+  テキスト表示は新規`ending_text_gen.py`が5x7ドットの独自フォント18
+  グリフを生成、配置先パターンコードはエミュレータでの実死亡
+  シーケンス実行後のVRAM走査で「ボス戦専用・撃破後は二度と描画され
+  ない」と確認済みの3グループ(96-103/144-151/152-153)へ配置。
+- Stage2 ROM容量: 31685→32671byte(**残りわずか97byte**、今後の追加
+  機能はほぼ余地が無い)。新規テスト`boss_bgm_switch_test.py`(10件)・
+  `ending_sequence_test.py`(21件)、全回帰`run_all.py`
+  **1428 passed/0 failed**。VRAM→PNGレンダリングで両メッセージの
+  表示を視覚確認済み。Comb ROM再ビルド・`verify_comb.py`健全性確認の
+  上、標準方針によりComb ROMのみ送付。詳細はHANDOFF.mdのRound48参照。
+- **保留・実機フィードバック待ち**: `ENDING_WAIT_TICKS`(600、60Hz
+  想定)・`ENDING_SONG_TOTAL_TICKS`(1630)は実機リフレッシュレート
+  次第でずれる可能性。文字表示位置・フォントの見た目・GFEnding/TryZ
+  それぞれのパート選定(4声重複していたGFEndingのハーモニー等)は
+  ユーザー未確認。ROM残り97byteは今後の全新機能と共有される極めて
+  厳しい予算。

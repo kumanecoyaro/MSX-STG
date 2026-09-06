@@ -1,12 +1,23 @@
 {
   "ALONE_FIGHTER": {
-    "bank_offset": 70,
+    "bank_offset": 120,
     "chB_len": 495,
     "chC_len": 1081
   },
+  "BOSS_TRYZ": {
+    "bank_offset": 3634,
+    "chB_len": 741,
+    "chC_len": 73
+  },
   "DEFEAT": {
-    "bank_offset": 1646,
+    "bank_offset": 1696,
     "chB_len": 301,
     "chC_len": 1637
+  },
+  "ENDING_GFENDING": {
+    "bank_offset": 4448,
+    "chA_len": 69,
+    "chB_len": 253,
+    "chC_len": 121
   }
 }

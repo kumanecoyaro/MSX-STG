@@ -300,17 +300,21 @@ STAGE2_BANKSELECT_PATCH = """    LD A,5
 # combined_test.asm's own INIT_BGM runs AFTER the real page2 content is
 # already selected as bank1/GLOBAL5, so restoring to "1" would silently
 # undo that and repoint page2 at STAGE1's own content instead).
+# (2026-09-06、TryZボス曲切替追加時にBGM_LOAD_SONGという共有サブルーチン
+# へリファクタ済み - 元々INIT_BGM内に個別インライン展開されていた
+# バンク選択コードが、ここ1箇所[BGM_LOAD_SONG本体]だけになったため、
+# アンカーもその本体だけを対象にすればよくなった。呼び出し側[INIT_BGM/
+# SWITCH_BGM_TO_TRYZ]は転送元/転送先/長さが違うだけでバンク番号を
+# 直接埋め込んでいないため、パッチはこの1箇所で全呼び出し元に効く)。
 STAGE2_BGM_BANKSELECT_ANCHOR = """    LD A,2                       ; standalone bgm-dataバンク(Combでは6へパッチ)
     LD (7000h),A
-    LD HL,08000h : LD DE,0C200h : LD BC,046h : LDIR   ; 周期テーブル(35note*2)
-    LD HL,0866Eh : LD DE,0C246h : LD BC,0792h : LDIR  ; DEFEAT chB+chC
+    LDIR
     LD A,1                       ; standalone own bank1(Combでは5へパッチ)
     LD (7000h),A"""
 
 STAGE2_BGM_BANKSELECT_PATCH = """    LD A,6                       ; standalone bgm-dataバンク(Combでは6へパッチ)
     LD (7000h),A
-    LD HL,08000h : LD DE,0C200h : LD BC,046h : LDIR   ; 周期テーブル(35note*2)
-    LD HL,0866Eh : LD DE,0C246h : LD BC,0792h : LDIR  ; DEFEAT chB+chC
+    LDIR
     LD A,5                       ; standalone own bank1(Combでは5へパッチ)
     LD (7000h),A"""
 
@@ -353,15 +357,15 @@ _title_build_spec.loader.exec_module(title_build)
 # retargeting to GLOBAL bank6, same as Stage2's own analogous patch above.
 TITLE_BGM_BANKSELECT_ANCHOR = """    LD A,2                       ; standalone bgm-dataバンク(Combでは6へパッチ)
     LD (7000h),A
-    LD HL,08000h : LD DE,0C000h : LD BC,046h : LDIR   ; 周期テーブル(35note*2)
-    LD HL,08046h : LD DE,0C046h : LD BC,0628h : LDIR  ; ALONE_FIGHTER chB+chC
+    LD HL,08000h : LD DE,0C000h : LD BC,078h : LDIR   ; 周期テーブル(60note*2)
+    LD HL,08078h : LD DE,0C078h : LD BC,0628h : LDIR  ; ALONE_FIGHTER chB+chC
     LD A,1                       ; このファイル自身のbank1(Comb/standaloneとも1のまま)
     LD (7000h),A"""
 
 TITLE_BGM_BANKSELECT_PATCH = """    LD A,6                       ; standalone bgm-dataバンク(Combでは6へパッチ)
     LD (7000h),A
-    LD HL,08000h : LD DE,0C000h : LD BC,046h : LDIR   ; 周期テーブル(35note*2)
-    LD HL,08046h : LD DE,0C046h : LD BC,0628h : LDIR  ; ALONE_FIGHTER chB+chC
+    LD HL,08000h : LD DE,0C000h : LD BC,078h : LDIR   ; 周期テーブル(60note*2)
+    LD HL,08078h : LD DE,0C078h : LD BC,0628h : LDIR  ; ALONE_FIGHTER chB+chC
     LD A,1                       ; このファイル自身のbank1(Comb/standaloneとも1のまま)
     LD (7000h),A"""
 
