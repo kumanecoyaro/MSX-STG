@@ -501,7 +501,21 @@ NEXT_SPRITE_NUM EQU 0E507h     ; rotating sprite attribute slot allocator (1-31,
 ; --- top-left (row0, cols0-7): 6 real digits (cols0-5) then a fixed   ---
 ; --- "00" (cols6-7, the two low decimal digits that are always zero). ---
 SCORE        EQU 0E4D5h   ; 3 bytes: low word at +0, high byte at +2
-SCORE_DIGITS EQU 0E4D8h   ; 6 bytes (hundred-thousands..ones, of SCORE - i.e. real score/100)
+; 実機フィードバック対応("WebMSXでフリーズやリセットがかかる これは実機
+; も同様"の調査中にopenMSX上で発見・修正): 元は0E4D8hに置かれていたが、
+; この付近(0E400h台、SND_TIMER/GAME_TICK/ANIM_*と同じクラスタ)は通常時は
+; 安全でも、BGM_TICK(H.TIMI経由の割り込みハンドラ)がINIT完了直後の
+; まだ不安定な期間に何度も発火する特定の状況下でSPが一時的にここまで
+; 深く落ち込みうることをopenMSXでの実機再現で確認した(スタック上の
+; リターンアドレスとSCORE_DIGITSが物理的に同じ番地を指してしまい、
+; SCORE_DISPLAY自身の書き込みが自分自身の戻り先を破壊してPC=0への
+; 暴走ジャンプ・疑似リセットを引き起こした)。深いSP低下そのものの
+; 根本原因(何が毎割り込みごとに約24バイトずつ消費しているか)は未解明
+; だが、この6バイトのスクラッチバッファ自体をSTACKTOP(0F380h)近くの
+; 安全な未使用領域(0F22Bh-0F37Fh、PLAYER_EXPL_SPAWN_TIMERの直後、
+; 341バイトの空き)へ移設することで、この特定の衝突経路は原理的に
+; 発生しなくなる(SPがここまで浅い341バイト以内に収まる限り安全)。
+SCORE_DIGITS EQU 0F22Bh   ; 6 bytes (hundred-thousands..ones, of SCORE - i.e. real score/100)
 
 ; --- direct/raw PSG joystick read (BIOS GTTRIG's trigger B never  ---
 ; --- worked on real hardware; a raw PSG read was confirmed correct---
@@ -750,7 +764,40 @@ INIT:
     ; --- interrupt land mid-sequence while IX holds one of our      ---
     ; --- pointers would silently corrupt it.                        ---
     DI
+
     CALL INIT32
+
+    ; --- BGM (round40) - 実機フィードバック対応("WebMSXでフリーズや
+    ; --- リセットがかかる これは実機も同様"): CALL INIT32(BIOSの画面
+    ; --- モード初期化, INIGRP相当)の直後、INITの中でできるだけ早い
+    ; --- 位置で呼ぶ。理由: Title→Stage1のバンク切替トランポリンで着地
+    ; --- した直後のH.TIMIフックには、直前のTitle自身が設置した「Title
+    ; --- 自身のBGM_TICKアドレスを指す古いフック」がまだ生きたまま残って
+    ; --- いる。この後に続くINIT本体には、WRITE_ANIM_CELL(GAME_TICK_
+    ; --- DISPLAY/SCORE_DISPLAY経由)やスプライトアトリビュート設定・
+    ; --- 30スロット非表示ループなど、ローカルなDI/EIペアを使う箇所が
+    ; --- 複数あり、それらのEIは今のDIを無条件に解除してしまう(DI/EIは
+    ; --- ネストカウンタではない単純なフラグのため)。そこで一瞬でも
+    ; --- H.TIMIが実際に発火すると、window Aの中身は既にこのステージの
+    ; --- コードに切り替わっているのに、フックはTitleのバンク内アドレス
+    ; --- のままJPしてしまい、たまたまそこにあるバイト列を命令として
+    ; --- 誤実行する(実害はPC=0への暴走ジャンプ→MSXの起動ロゴが再表示
+    ; --- される疑似リセットとして観測された - openMSXの外部制御
+    ; --- プロトコルで実際にPC=0への着地を直接観測して特定)。
+    ; --- **CALL INIT32より前に置いてはいけない**: 実機挙動として、BIOSの
+    ; --- 画面モード初期化(INIGRP/CHGMOD相当)自体がH.TIMI含む複数の
+    ; --- システムフック領域を無条件にデフォルト値(RET)へ巻き戻すため
+    ; --- (このプロジェクトのz80emu.pyもこの実機挙動を再現しており、
+    ; --- 一度INIT32より前に置いて試したところverify_comb.pyがまさに
+    ; --- この巻き戻しを検出してFAILした - 自己発見・修正済み)、INIT32
+    ; --- より後に置く必要がある。INIT_BGM自体はBGM_B/C_PTR等のRAM変数
+    ; --- 初期化とH.TIMIフックの上書きのみで、それ以外のVDP/VRAM初期化
+    ; --- 前でも安全に呼べるため、CALL INIT32の直後(=この後に続く全ての
+    ; --- ローカルEIより前)へ上書き済みにしておくことで、この競合を
+    ; --- 完全に閉じる(以前は逆にINITの最後、この直前のEIの直前へ
+    ; --- 置いていたが、それより前に1つでもローカルEIが残っていれば
+    ; --- 同じ問題が起きるため不十分だった)。詳細はHANDOFF.md参照。
+    CALL INIT_BGM
 
     ; --- border/backdrop color (VDP R7, low nibble) = black. This is ---
     ; --- the true overscan border, separate from the in-screen sky   ---
@@ -1039,12 +1086,28 @@ INIT_SPRATR_CLR:
     XOR A
     LD (FIRE_COOLDOWN),A
 
-    ; --- force the BIOS vblank hook (H.TIMI, RAM) to a bare RET. MSX's ---
-    ; --- only interrupt source is the VDP, so this makes EI+HALT below ---
-    ; --- a cheap, exact vblank wait instead of polling VDP status: the ---
-    ; --- IM1 handler still runs its own short prologue/epilogue, but   ---
-    ; --- does nothing else before HALT resumes right after vblank.    ---
-    LD A,0C9h : LD (0FD9Fh),A
+    ; --- round40以前はここで強制的にH.TIMI(BIOSのvblankフック、RAM)を
+    ; --- bare RETへ書き換えていた(「MSXの唯一の割り込み源はVDPなので、
+    ; --- 下のEI+HALTがVDPステータスをポーリングするより安価・正確な
+    ; --- vblank待ちになる」という理由)。実機フィードバック対応
+    ; --- ("WebMSXでフリーズやリセットがかかる これは実機も同様"、
+    ; --- openMSXで実際にH.TIMI経由のPC=0への暴走ジャンプを再現・特定):
+    ; --- round40のBGM_TICK導入後、この行がINIT_BGM(このINITの先頭
+    ; --- 付近、CALL INIT32の直後に移動済み - 上記コメント参照)が設置
+    ; --- したフックをここで無条件に踏み潰してしまい、この行より後に
+    ; --- 実行される全てのローカルEI(WRITE_ANIM_CELL等)がH.TIMIを
+    ; --- 発火させるたび、Stage2/TitleのBGM_TICKと違い"BIOSデフォルトの
+    ; --- 無害なRET"のつもりが実際には毎回この行が書き込んだbare RETで
+    ; --- 上書かれ続け一見無害に見えたが、Title→Stage1の切替直後は逆に
+    ; --- (この行が実行される前の一瞬)Titleの古いフックがまだ生きて
+    ; --- いる区間があり、そこでH.TIMIが発火すると暴走した。Stage2/
+    ; --- Titleは元々この種の行を持たない(HTIMI_HOOKはINIT_BGMでのみ
+    ; --- 書く)ため、この行自体を完全に削除しStage2/Titleと同型に統一。
+    ; --- 削除後は直前のCALL INIT_BGMが設置したBGM_TICKが最後まで有効な
+    ; --- ままになり、下のEI+HALTは(BGM再生中なので)vblankごとに本物の
+    ; --- 音楽ドライバ処理を経由してから続行する - 元のコメントが言う
+    ; --- "cheap, exact vblank wait"では無くなるが、INITからMAINLOOPへの
+    ; --- 移行点で一度きりのHALTなので実害は無い。
 
     ; --- enemy formation initial state: SPAWN_SCHEDULE_CHECK handles ---
     ; --- every spawn (including the first) from index0 onward.       ---
@@ -1077,13 +1140,6 @@ INIT_SPRATR_CLR:
     ; --- keyboard/joystick scan also uses the PSG) joystick reads.   ---
     LD A,7 : OUT (PSG_ADDR),A
     LD A,0B0h : OUT (PSG_DATA),A
-
-    ; --- BGM (round40, "タイトル含めて各ステージにドライバを配置しRAM
-    ; --- にコピーしてステージスタート") - see INIT_BGM's own long
-    ; --- comment (near SOUND_UPDATE below) for why this stage's own
-    ; --- INIT does no bank-switching or RAM copy of its own, unlike
-    ; --- title/Stage2.
-    CALL INIT_BGM
 
     ; --- sprite attribute table (VRAM 1B00h): ship body (16x16, slot1), ---
     ; --- accent overlay (16x16, slot0, drawn on top, at ship_X+8) ---
@@ -1144,6 +1200,31 @@ INIT_HIDE_SLOT_LOOP:
     EI
     DJNZ INIT_HIDE_SLOT_LOOP
     NOP
+
+    ; --- BGM (round40) - INIT_BGM自体はもうここでは呼ばない。以前は
+    ; --- ここ(INITの本当に最後、この直前のEIの直前)へ移設していたが、
+    ; --- それは「H.TIMIフックはBGM_TICKが設置されるまでBIOSデフォルトの
+    ; --- 無害なRETのまま」という誤った前提に基づいていた - 実際には
+    ; --- Title→Stage1(またはStage1→Stage2)のバンク切替トランポリンで
+    ; --- 着地した直後のH.TIMIフックは、直前のステージが最後に設置した
+    ; --- 「そのステージ自身のBGM_TICKアドレスを指す古いフック」がまだ
+    ; --- 生きたまま残っている。このINITの先頭付近にある複数のローカルな
+    ; --- DI/EIペア(このEIを含む、上のスプライトアトリビュート設定・
+    ; --- 30スロット非表示ループ・WRITE_ANIM_CELL経由のSCORE_DISPLAY等)
+    ; --- 自身のEIが、INIT_BGMがこのファイル自身のBGM_TICKへフックを
+    ; --- 上書きするより前に一瞬だけ割り込みを再許可してしまうと、window
+    ; --- Aの中身が既に切り替わった後のこのステージのコード空間へ、前の
+    ; --- ステージのバンク内アドレスのままH.TIMIがJPしてしまい、たまたま
+    ; --- そこにあるバイト列を命令として誤実行する(実害はPC=0への
+    ; --- 暴走ジャンプ→MSXの起動ロゴが再表示される疑似リセットとして
+    ; --- 観測された)。「移設先をどこにずらしても、それより前に1つでも
+    ; --- ローカルEIが残っていれば同じ問題が起きる」ため、根本的には
+    ; --- 逆に「このINITの先頭、最初のDIの直後」へ移設し、以後に続く
+    ; --- 全てのローカルEIが発生する前にH.TIMIフックを自分自身の正しい
+    ; --- BGM_TICKへ上書き済みにしておくことで解消した(openMSXの外部
+    ; --- 制御プロトコルでPC=0への着地を直接観測し、この移設で再現しなく
+    ; --- なることを確認済み - 詳細はHANDOFF.md参照)。呼び出し箇所は
+    ; --- このファイル冒頭、"DI" の直後(CALL INIT32の前)。
 
     EI
     HALT

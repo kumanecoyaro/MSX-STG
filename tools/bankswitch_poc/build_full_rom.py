@@ -216,8 +216,7 @@ def patch_trampoline_src(text):
 
 
 POSTINIT32_ANCHOR = """    CALL INIT32
-
-    ; --- border/backdrop color"""
+"""
 
 POSTINIT32_PATCH = """    CALL INIT32
 
@@ -227,8 +226,7 @@ POSTINIT32_PATCH = """    CALL INIT32
     ; --- overwritten by the game's own border color=1 write right   ---
     ; --- below - only visible if execution froze exactly here.      ---
     LD B,6 : LD C,7 : CALL WRTVDP
-
-    ; --- border/backdrop color"""
+"""
 
 
 def patch_postinit32(text):
