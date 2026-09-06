@@ -171,7 +171,7 @@ check("chB tone period (R2/R3) matches the period table",
       (z.psg_regs.get(2), z.psg_regs.get(3)) == (exp_lo, exp_hi))
 check("chB envelope period (R11/R12) retriggered to BGM_ENV_PERIOD_LO/HI",
       (z.psg_regs.get(11), z.psg_regs.get(12)) == (BGM_ENV_PERIOD_LO, BGM_ENV_PERIOD_HI))
-check("chB envelope shape (R13) retriggered to BGM_ENV_SHAPE (#5, saw-down)",
+check("chB envelope shape (R13) retriggered to BGM_ENV_SHAPE (#1, decay-hold0)",
       z.psg_regs.get(13) == BGM_ENV_SHAPE)
 check("chB volume mode (R9) selects the shared envelope (BGM_VOL_ENV)", z.psg_regs.get(9) == BGM_VOL_ENV)
 exp_lo_c, exp_hi_c = periods[TEST_NOTE_C]

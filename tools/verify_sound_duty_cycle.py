@@ -170,6 +170,41 @@ check("a shot fired after the SE has fully decayed (timer==0) fires normally",
 check("SND_TONE_IS_SE is cleared once the shot successfully claims the timer",
       cpu.rd(SND_TONE_IS_SE) == 0)
 
+# 実機フィードバック対応("SEがほぼ鳴らずショット音が残る"): 実バグの
+# 回帰ガード。SOUND_BARRIER_HIT(SND_BARRIER_DUTY_TIMERで管理、SOUND_
+# UPDATEで最優先のSE)はSOUND_SHOT/POD_HIT/POD_FIREと全く同じチャンネル
+# Aトーン周期レジスタ(R0/R1)を書くが、独立したタイマー(SND_TONE_TIMER
+# ではない)のため当初のSND_TONE_IS_SEチェックだけでは検出できなかった -
+# バリアヒットの減衰中でもショット要求がR0/R1を横取りして上書きして
+# しまい、SOUND_UPDATEは変わらずバリアの音量エンベロープ(最優先)を
+# 出力し続けるため「バリアのリズムでショットの音程が鳴る」という壊れた
+# 合成音になっていた。SOUND_SHOTがSND_BARRIER_DUTY_TIMERも見るよう
+# 修正済み - ここではPSG_ADDR=0/1(R0/R1、トーン周期)がバリアヒット後の
+# ショット要求で一切書き換わらないことを直接確認する。
+SND_BARRIER_DUTY_TIMER_SYM = sym["SND_BARRIER_DUTY_TIMER"]
+cpu = fresh_cpu()
+call_routine(cpu, sym["SOUND_BARRIER_HIT"])  # R0=132,R1=3 (deep low pitch), SND_BARRIER_DUTY_TIMER=8
+psg_before = dict(cpu.psg_regs)
+call_routine(cpu, sym["SOUND_SHOT"])  # must be dropped entirely while barrier SE is still decaying
+check("a shot fired while SOUND_BARRIER_HIT (top-priority SE) is still decaying makes ZERO PSG "
+      "writes - barrier's own tone period (R0/R1) is never clobbered",
+      cpu.psg_regs == psg_before)
+check("SND_TONE_TIMER stays untouched (0) - the shot request never reached SS_FIRE",
+      cpu.rd(SND_TONE_TIMER) == 0)
+check("SND_BARRIER_DUTY_TIMER itself is untouched by the dropped shot request",
+      cpu.rd(SND_BARRIER_DUTY_TIMER_SYM) == 8)
+
+# once the barrier SE has fully decayed, a shot goes through normally again.
+cpu = fresh_cpu()
+call_routine(cpu, sym["SOUND_BARRIER_HIT"])
+cpu.wr(SND_BARRIER_DUTY_TIMER_SYM, 0)  # simulate full decay
+call_routine(cpu, sym["SOUND_SHOT"])
+check("a shot fired after SOUND_BARRIER_HIT has fully decayed (timer==0) fires normally",
+      cpu.rd(SND_TONE_TIMER) == 12)
+exp_lo, exp_hi = 30, 0  # SOUND_SHOT's own tone period constants
+check("...and correctly reclaims R0/R1 with the shot's own pitch",
+      (cpu.psg_regs.get(0), cpu.psg_regs.get(1)) == (exp_lo, exp_hi))
+
 # ---------------------------------------------------------------------
 # 4: 3-way channel-A R8 priority (SND_BARRIER_DUTY_TIMER > SND_TONE_
 # TIMER > SND_TIMER) when more than one envelope is simultaneously

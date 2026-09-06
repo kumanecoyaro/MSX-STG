@@ -210,7 +210,7 @@ check(f"BGM_TICK new-row (chB): tone period (R2/R3) matches the period table's o
       (cpu2.psg_regs.get(2), cpu2.psg_regs.get(3)) == (exp_lo, exp_hi))
 check("BGM_TICK new-row (chB): envelope period (R11/R12) retriggered to BGM_ENV_PERIOD_LO/HI",
       (cpu2.psg_regs.get(11), cpu2.psg_regs.get(12)) == (sym["BGM_ENV_PERIOD_LO"], sym["BGM_ENV_PERIOD_HI"]))
-check("BGM_TICK new-row (chB): envelope shape (R13) retriggered to BGM_ENV_SHAPE (#5, saw-down)",
+check("BGM_TICK new-row (chB): envelope shape (R13) retriggered to BGM_ENV_SHAPE (#1, decay-hold0)",
       cpu2.psg_regs.get(13) == sym["BGM_ENV_SHAPE"])
 check("BGM_TICK new-row (chB): volume mode (R9) selects the shared envelope (BGM_VOL_ENV)",
       cpu2.psg_regs.get(9) == sym["BGM_VOL_ENV"])

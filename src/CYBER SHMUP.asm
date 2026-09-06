@@ -3085,7 +3085,23 @@ WAC_SKIPBUF:
 ; SND_TONE_IS_SE参照(EQU直前のコメント参照)。POD_HIT/POD_FIREがまだ
 ; 減衰しきっていない間はショット要求そのものを無視する(PSG・タイマー
 ; いずれにも触れない、SEの減衰は妨げない)。
+;
+; 実機フィードバック対応("SEがほぼ鳴らずショット音が残る"): 当初の
+; SND_TONE_IS_SEチェックだけでは不十分だった実バグを発見・修正。
+; SOUND_BARRIER_HIT(バリアヒット、SND_BARRIER_DUTY_TIMERで管理・
+; SOUND_UPDATEで最優先のSE)はSHOT/POD_HIT/POD_FIREと全く同じ
+; チャンネルAトーン周期レジスタ(R0/R1、PSG_ADDR=0/1)を直接書く - この
+; ガードがSND_TONE_TIMER/SND_TONE_IS_SEしか見ていなかったため、
+; バリアヒットの減衰中(SND_BARRIER_DUTY_TIMER!=0)でも無関係な
+; ショット要求がR0/R1を横取りして上書きしてしまい、SOUND_UPDATE側は
+; 変わらずバリアの音量エンベロープ(最優先)を出力し続けるため
+; 「バリアのリズムでショットの音程が鳴る」という壊れた合成音になって
+; いた(ユーザー報告の"SEが鳴らずショットが残る"の実体)。修正:
+; SND_BARRIER_DUTY_TIMERが非0の間もショット要求を握りつぶす。
 SOUND_SHOT:
+    LD A,(SND_BARRIER_DUTY_TIMER)
+    OR A
+    RET NZ                     ; barrier-hit SE (top priority) still decaying -> drop
     LD A,(SND_TONE_TIMER)
     OR A
     JR Z,SS_FIRE               ; timer idle -> always OK to fire
@@ -3281,8 +3297,13 @@ BGM_C_REST  EQU 0C807h
 ; デューティゲートは撤去し、AY-3-8910本来のエンベロープジェネレータ
 ; (R11-13、R8-10のbit4)へ置き換える。共有ジェネレータの制約・chB駆動/
 ; chC追従という非対称設計の理由はtools/stage2_combined/combined_test.
-; asmの同名定数の長いコメント参照(#5=R13=8h、EP=600は3ファイルで統一)。
-BGM_ENV_SHAPE     EQU 08h
+; asmの同名定数の長いコメント参照。
+; 実機フィードバック対応その2("HWエンベロープも期待した音になってない
+; テストプログラムと全く違ったサウンド なので一番無難な1番に変更 それで
+; ダメならソフトウェアにする"): #5(繰り返し減衰のこぎり波、8h)から
+; #1(9h、CONT=1/ATT=0/ALT=0/HOLD=1=一度だけ減衰して0で停止)へ変更。
+; 3ファイルで統一(EP=600は変更なし)。
+BGM_ENV_SHAPE     EQU 09h
 BGM_ENV_PERIOD_LO EQU 88
 BGM_ENV_PERIOD_HI EQU 2
 BGM_VOL_ENV       EQU 010h

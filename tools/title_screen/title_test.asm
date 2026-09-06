@@ -243,7 +243,12 @@ BGM_C_REST  EQU 0C807h
 ; 撤去、AY-3-8910本来のHWエンベロープへ置き換え - 詳細・共有ジェネレータ
 ; の制約・chB駆動/chC追従という非対称設計の理由はcombined_test.asmの
 ; 同名定数の長いコメント参照)。
-BGM_ENV_SHAPE     EQU 08h   ; #5: CONT=1 ATT=0 ALT=0 HOLD=0(繰り返し減衰のこぎり波)
+; 実機フィードバック対応その2("HWエンベロープも期待した音になってない
+; テストプログラムと全く違ったサウンド なので一番無難な1番に変更 それで
+; ダメならソフトウェアにする"): #5(8h)から#1(9h、一度だけ減衰して0で
+; 停止)へ変更(3ファイルで統一、注意点はcombined_test.asmの同名定数の
+; コメント参照)。
+BGM_ENV_SHAPE     EQU 09h   ; #1: CONT=1 ATT=0 ALT=0 HOLD=1(一度だけ減衰して0で停止)
 BGM_ENV_PERIOD_LO EQU 88
 BGM_ENV_PERIOD_HI EQU 2     ; EP=600 - 未調整の初期値
 BGM_VOL_ENV       EQU 010h  ; R8-10のbit4=1: 固定音量の代わりに共有エンベロープを使う

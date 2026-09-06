@@ -174,7 +174,7 @@ check(f"new-row (chB): tone period (R2/R3) matches the period table's own note{T
       (cpu.psg_regs.get(2), cpu.psg_regs.get(3)) == (exp_b_lo, exp_b_hi))
 check("new-row (chB): envelope period (R11/R12) retriggered to BGM_ENV_PERIOD_LO/HI",
       (cpu.psg_regs.get(11), cpu.psg_regs.get(12)) == (BGM_ENV_PERIOD_LO, BGM_ENV_PERIOD_HI))
-check("new-row (chB): envelope shape (R13) retriggered to BGM_ENV_SHAPE (#5, saw-down)",
+check("new-row (chB): envelope shape (R13) retriggered to BGM_ENV_SHAPE (#1, decay-hold0)",
       cpu.psg_regs.get(13) == BGM_ENV_SHAPE)
 check("new-row (chB): volume mode (R9) selects the shared envelope (BGM_VOL_ENV)",
       cpu.psg_regs.get(9) == BGM_VOL_ENV)
