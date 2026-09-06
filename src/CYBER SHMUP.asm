@@ -2579,7 +2579,7 @@ PHB8_NO:
     RET
 
 ; Same as PLAYER_HIT_BOX8, but the other (enemy-side) box is 16x16
-; instead of 8x8 (e.g. Enemy6, EBULLET). Input/output/trashes: same.
+; instead of 8x8 (e.g. Enemy6). Input/output/trashes: same.
 PLAYER_HIT_BOX16:
     LD A,(PLAYERX) : LD H,A
     LD A,(PLAYERY) : LD L,A
@@ -2598,6 +2598,38 @@ PLAYER_HIT_BOX16:
     LD A,1
     RET
 PHB16_NO:
+    XOR A
+    RET
+
+; 実機フィードバック"判定も大きい様に感じる 多分上下2pxしか無いはず
+; だけど コリジョンはそうなってるか?" - EBULLET_PATTERN自身のコメント
+; の通り、EBULLETの16x16スプライトのうち実際に絵が描かれているのは
+; 上半分の2行(row2-3)だけの横16px幅バーで、下半分8px+上部2px+下部4px
+; は完全な空白。PLAYER_HIT_BOX16(16x16フル)をそのまま使うとこの
+; 空白部分まで判定に含まれ「判定が大きい」体感になっていた。X方向は
+; 16px幅のまま(バーは左右両クアドラントにまたがる)、Y方向だけ実際の
+; 絵の位置(スプライト原点+2)・高さ(2px)に合わせて絞る。
+; Input/output/trashes: PLAYER_HIT_BOX16と同じ(D,E=EBULLETのスプライト
+; 原点、そのまま渡してよい - 内部でYへ+2する)。
+PLAYER_HIT_BOX_EBULLET:
+    LD A,E : ADD A,2 : LD E,A
+    LD A,(PLAYERX) : LD H,A
+    LD A,(PLAYERY) : LD L,A
+    LD A,H : ADD A,7
+    CP D
+    JR C,PHBEB_NO
+    LD A,D : ADD A,15
+    CP H
+    JR C,PHBEB_NO
+    LD A,L : ADD A,7
+    CP E
+    JR C,PHBEB_NO
+    LD A,E : ADD A,1
+    CP L
+    JR C,PHBEB_NO
+    LD A,1
+    RET
+PHBEB_NO:
     XOR A
     RET
 
@@ -3400,9 +3432,15 @@ BGM_C_LOOP_BASE   EQU 0CC40h
 ; 不要になる)だが、下記STAGE_CLEAR_ACT/SC_VBLANK_COUNTの実時間タイマー
 ; が曲の総長ちょうどでStage2へのバンク切替へ進むため、実際にループ端
 ; へ到達することはまず無い設計。
+; (2026-09-06、実機フィードバック"クリアBGMの最初の方って多分無音に
+; なってると思うんで発音までの無音部分をカットして"対応): 3パート
+;共通の先頭無音(頭出し前の無音区間、3パートの最小値)をPython側で
+; トリムした結果、chC(bass)/chA(harmony)がそれぞれ2byte(先頭REST行
+; 1行分)短縮された(chBは先頭REST行の長さが縮んだだけで行自体は残る
+; ため無変化) - 以下のアドレスは全てこの新しいサイズに基づく。
 STAGE_CLEAR_CHB_BASE EQU 0CC42h  ; Titleが埋める(chB melody, 71byte)
-STAGE_CLEAR_CHC_BASE EQU 0CC89h  ; Titleが埋める(chC bass, 121byte) - 0xCC42+71
-STAGE_CLEAR_CHA_BASE EQU 0CD02h  ; Titleが埋める(chA harmony, 81byte) - 0xCC89+121
+STAGE_CLEAR_CHC_BASE EQU 0CC89h  ; Titleが埋める(chC bass, 119byte) - 0xCC42+71
+STAGE_CLEAR_CHA_BASE EQU 0CD00h  ; Titleが埋める(chA harmony, 79byte) - 0xCC89+119
 
 ; chA(harmony、3声目)はStage1にとって完全に新規のBGM専用制御フィールド
 ; ("これは3音使って良い" - GFEnding[Stage2]と同じ考え方、下記
@@ -3410,12 +3448,12 @@ STAGE_CLEAR_CHA_BASE EQU 0CD02h  ; Titleが埋める(chA harmony, 81byte) - 0xCC
 ; MAINLOOP側で丸ごとスキップするため競合しない - 自機は既にflyaway
 ; 完了・画面外でSEが鳴る場面自体が無い)。envelopeはLINEAR形状を流用
 ; (chCと同型、デューティ無し)。
-BGM_A_PTR       EQU 0CD53h
-BGM_A_TIMER     EQU 0CD55h
-BGM_A_REST      EQU 0CD56h
-BGM_A_ENV_LEVEL EQU 0CD57h
-BGM_A_ENV_IDX   EQU 0CD58h
-BGM_A_ENV_CD    EQU 0CD59h
+BGM_A_PTR       EQU 0CD4Fh
+BGM_A_TIMER     EQU 0CD51h
+BGM_A_REST      EQU 0CD52h
+BGM_A_ENV_LEVEL EQU 0CD53h
+BGM_A_ENV_IDX   EQU 0CD54h
+BGM_A_ENV_CD    EQU 0CD55h
 
 ; ステージクリア演出の状態機械: 0=未発生/1=ジングル再生中/2=完了
 ; (build_full_rom.pyのMAINLOOP_PATCH参照 - Comb限定でStage1→Stage2の
@@ -3423,13 +3461,13 @@ BGM_A_ENV_CD    EQU 0CD59h
 ; 差し替える)。実時間クロックはSC_VBLANK_COUNT(BGM_TICK内、実VBlank
 ; 駆動 - MAINLOOPのTICKはfree-running設計で実時間に対応しない、
 ; GFEnding[Stage2]のVBLANK_COUNTと全く同じ考え方)。
-STAGE_CLEAR_ACT         EQU 0CD5Ah
-SC_VBLANK_COUNT         EQU 0CD5Bh  ; 2 bytes
-SC_START_TICK           EQU 0CD5Dh  ; 2 bytes
+STAGE_CLEAR_ACT         EQU 0CD56h
+SC_VBLANK_COUNT         EQU 0CD57h  ; 2 bytes
+SC_START_TICK           EQU 0CD59h  ; 2 bytes
 ; tools/bgm_data/midi_to_psg.load_stage_clear_parts()の全パート共通
-; total_ticks実測値(melody489/bass496/harmony496)の最大値に少し余裕を
-; 持たせた値。
-STAGE_CLEAR_TOTAL_TICKS EQU 500
+; total_ticks実測値(先頭無音トリム後: melody309/bass316/harmony316)の
+; 最大値に少し余裕を持たせた値。
+STAGE_CLEAR_TOTAL_TICKS EQU 320
 
 ; BELL: 半減期45tickの指数減衰(15*0.5^(t/45)を4bit丸め、以後この
 ; カーブが完全に0へ収束するまでをRLE圧縮)。試聴ツール(#3 BELL)と
@@ -7136,6 +7174,11 @@ SEB_FOUND:
     JR Z,SEB_FAIL            ; no hw sprite available - drop
     LD (IX+3),A              ; SPRNUM
     LD (IX+1),D              ; X
+    ; 実機フィードバック"敵弾(横棒レーザー)が敵との位置が上すぎるんで
+    ; 8px下げて" - 全呼び出し元が発射元エネミーの生Y座標をそのまま
+    ; 渡しているため、ここ1箇所で+8することで全パターン(Fighter/E1
+    ; 整列撃ち・E2編隊・E5サインボブ・E1斜めドッジ)に一括で効く。
+    LD A,E : ADD A,8 : LD E,A
     LD (IX+2),E              ; Y
     LD A,1 : LD (IX+0),A     ; ACTIVE
 SEB_FAIL:
@@ -7441,7 +7484,7 @@ PDCEB_LOOP:
     PUSH HL : POP IX
     LD A,(IX+1) : LD D,A
     LD A,(IX+2) : LD E,A
-    CALL PLAYER_HIT_BOX16
+    CALL PLAYER_HIT_BOX_EBULLET
     OR A
     JR Z,PDCEB_MISS
     LD A,(IX+3)

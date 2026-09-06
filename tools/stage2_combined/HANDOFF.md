@@ -10501,3 +10501,67 @@ SCOREへ既知の値(0x123456)を直接poke → Stage1→Stage2のバンク切�
     からは「3音使って良い」という音周りの許可のみで、画面全体の
     フリーズ等の指示は無かったため、指示なしに追加のフリーズ機構は
     実装していない)。
+
+## Round52(実機フィードバック対応: StageClear先頭無音カット+Stage1
+EBULLET位置/コリジョン修正・完了済み)(2026-09-06)
+
+- ユーザー発言3件: (1)"クリアBGMの最初の方って多分無音になってると
+  思うんで発音までの無音部分をカットして"、(2)"ステージ1の敵弾(横棒
+  レーザー)が敵との位置が上すぎるんで8px下げて"、(3)"で、判定も大きい
+  様に感じる 多分上下2pxしか無いはずだけど コリジョンはそうなってる
+  か?"。
+
+### (1) StageClearジングルの先頭無音カット
+
+`load_stage_clear_parts()`の生データは3パートとも先頭行がREST
+(melody193tick/bass・harmony180tick、頭出し前の無音)だった。3パート
+間の相対タイミング(メロディがbass/harmonyより13tick遅れて入る、という
+編曲上の関係)を保ったまま、3パート共通の「頭から必ず鳴っていない」
+無音長(=3パートの先頭REST長の最小値、180tick)だけを全パートから
+一律に削るロジックを追加。0tickになったパート(bass/harmony、ちょうど
+180tickだったため丸ごと消える)は先頭行自体を削除(durationが0の行を
+残すとBGM_x_TIMERへ書く際のDEC Aで0xFFへアンダーフローし約256tickの
+誤ったREST行になるため)。結果: melody(先頭REST13tickに短縮、行自体は
+残る)/bass・harmony(先頭REST行が消え、いきなり実音から始まる)。
+chC(bass)/chA(harmony)がそれぞれ2byte(REST行1行分)短縮されたため、
+Stage1側の`STAGE_CLEAR_CHA_BASE`(0xCD02→0xCD00)・`BGM_A_PTR`以降の
+制御ブロック一式・`STAGE_CLEAR_ACT`/`SC_VBLANK_COUNT`/`SC_START_TICK`
+の全アドレスを再計算して更新(chBは無変化)。`STAGE_CLEAR_TOTAL_TICKS`
+も新しい実測total_ticks(トリム後: melody309/bass316/harmony316)に
+合わせて500→320へ更新。Title側のLDIR転送長(0111h→010Dh)も
+`title_test.asm`・`build_full_rom.py`の両方で更新。
+
+### (2) Stage1 EBULLET(敵弾/横棒レーザー)発射位置を8px下げ
+
+`SPAWN_EBULLET`の全5呼び出し元(Enemy7/E1整列撃ち・E2A/E2B編隊・E5
+サインボブ・E1斜めドッジ)が発射元エネミーの生Y座標をそのまま渡して
+いた。1箇所(`SPAWN_EBULLET`自身、格納直前)に`LD A,E:ADD A,8:LD E,A`
+を追加するだけで全呼び出し元に一括で効く設計に。
+
+### (3) EBULLETコリジョンを16x16→16幅x2高へ縮小
+
+`EBULLET_PATTERN`自身の既存コメント(round37由来)通り、16x16スプライト
+のうち実際に絵が描かれているのは上半分の2行(row2-3)だけの横16px幅
+バーで、残りは完全な空白。従来`PDC_CHECK_EBULLET`は`PLAYER_HIT_BOX16`
+(フル16x16)を使っており、この空白部分まで判定に含まれ「判定が大きい」
+体感の直接原因だった。新規`PLAYER_HIT_BOX_EBULLET`(X方向は16px幅の
+まま、Y方向だけ内部で+2してから2px高で判定)を追加し、`PDC_CHECK_
+EBULLET`をこちらへ差し替え。
+
+自己検証: (1)は3パートの先頭REST行を実際に確認して意図通りトリム
+されていることを確認、(2)(3)は共に一時的にASMを元へ戻して新規回帰
+テストが正しくFAILすることを確認した上で復元・再PASSを確認済み。
+`tools/verify_enemy_bullets.py`の既存Y期待値3箇所を+8へ更新、
+`tools/verify_player_damage.py`に「旧16x16なら誤ヒットするが新16x2
+なら正しくミスする」ケースと「新2px帯のギリギリでも正しくヒットする」
+ケースの新規2件を追加(57 passed)。`tools/verify_stage1_bgm.py`に
+追加していたStageClear関連の1件が(トリムでharmonyの先頭行がREST
+でなくなったため)period_table未pokeで見かけ落ちしていたのを発見・
+修正(既存の`poke_period_table(z)`呼び出し漏れ、テスト自体の不備で
+コード側バグではない)、69 passed。全回帰`run_all.py`
+**1442 passed/0 failed**(無変化)。Stage2側は無変更。3ROM再ビルド・
+`verify_comb.py`健全性確認(StageClearの新RAMアドレス・新データ長
+双方を自動的に再検証)の上、標準方針によりComb ROMのみ送付。
+  - **保留・実機フィードバック待ち**: 8pxという下げ幅・2px高の
+    コリジョン境界は今回の実機報告に基づく値だが、実際に送付した
+    ROMでの見え方次第で追加調整の可能性あり。

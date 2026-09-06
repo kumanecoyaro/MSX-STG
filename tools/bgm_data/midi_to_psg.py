@@ -469,6 +469,31 @@ def load_stage_clear_parts():
     melody_rows = _rows_from_segments(melody_seg, melody_total, ticks_per_vblank)
     harmony_rows = _rows_from_segments(harmony_seg, harmony_total, ticks_per_vblank)
     bass_rows = _rows_from_segments(bass_seg, bass_total, ticks_per_vblank)
+
+    # (2026-09-06、実機フィードバック"クリアBGMの最初の方って多分無音に
+    # なってると思うんで発音までの無音部分をカットして"): 全パートとも
+    # 先頭行は実際にREST(元のMIDIで頭出し前の無音区間)で、しかも
+    # メロディ(193tick)だけbass/harmony(180tick)よりわずかに遅れて
+    # 入る - 3パート間の相対タイミング(メロディがbass/harmonyの13tick
+    # 後に入る、という編曲上の関係)は保ったまま、3パート共通の
+    # 「頭から必ず鳴っていない」無音長(=3パートの先頭REST長の最小値)
+    # だけを全パートから一律に削る。0tickになったパートは先頭行自体を
+    # 削除(durationが0の行はBGM_x_TIMERへ書く際にDEC Aで0xFFへ
+    # アンダーフローし約256tickの誤ったREST行として再生されてしまう
+    # ため、0まで削ったら行ごと除去する必要がある)。
+    all_rows = [melody_rows, harmony_rows, bass_rows]
+    common_lead_rest = min(rows[0][1] for rows in all_rows if rows and rows[0][0] == NOTE_REST)
+    trimmed = []
+    for rows in all_rows:
+        rows = list(rows)
+        if rows and rows[0][0] == NOTE_REST:
+            new_dur = rows[0][1] - common_lead_rest
+            if new_dur > 0:
+                rows[0] = (NOTE_REST, new_dur)
+            else:
+                rows = rows[1:]
+        trimmed.append(rows)
+    melody_rows, harmony_rows, bass_rows = trimmed
     return melody_rows, bass_rows, harmony_rows
 
 

@@ -279,6 +279,30 @@ z.wr(EBULLET_POOL + 3, 5)
 call_routine(z, sym["PDC_CHECK_EBULLET"])
 check("PDC_CHECK_EBULLET: a bullet far away misses and stays active", z.a == 0 and z.rd(EBULLET_POOL + 0) == 1)
 
+# 実機フィードバック"判定も大きい様に感じる 多分上下2pxしか無いはず
+# だけど" - EBULLETの実際の絵(横棒バー)はスプライト原点+2〜+3行の
+# 2pxのみ(EBULLET_PATTERN自身のコメント参照)。PLAYER_HIT_BOX16の
+# フル16x16のままなら判定するはずだが、PLAYER_HIT_BOX_EBULLETの
+# 2px帯では判定しないはずのY位置で実際に検証する。
+z = fresh()
+z.wr(PLAYERX, PX); z.wr(PLAYERY, PY)   # player hitbox Y band: [PY, PY+7] = [108,115]
+z.wr(EBULLET_POOL + 0, 1); z.wr(EBULLET_POOL + 1, PX); z.wr(EBULLET_POOL + 2, PY - 6)  # bullet origin Y=102, bar band=[104,105]
+z.wr(EBULLET_POOL + 3, 5)
+call_routine(z, sym["PDC_CHECK_EBULLET"])
+check("PDC_CHECK_EBULLET: bullet whose 16x16 sprite box overlaps the player but whose real "
+      "2px bar (origin+2/+3) does NOT reach the player's own hitbox correctly misses "
+      "(old full-16x16 PLAYER_HIT_BOX16 would have wrongly hit here)",
+      z.a == 0 and z.rd(EBULLET_POOL + 0) == 1)
+
+z = fresh()
+z.wr(PLAYERX, PX); z.wr(PLAYERY, PY)
+z.wr(EBULLET_POOL + 0, 1); z.wr(EBULLET_POOL + 1, PX); z.wr(EBULLET_POOL + 2, PY - 2)  # bullet origin Y=106, bar band=[108,109]
+z.wr(EBULLET_POOL + 3, 5)
+z.wr(SPRITE_USED + 5, 1)
+call_routine(z, sym["PDC_CHECK_EBULLET"])
+check("PDC_CHECK_EBULLET: bullet whose real 2px bar band just touches the top of the "
+      "player's own hitbox still correctly hits", z.a == 1 and z.rd(EBULLET_POOL + 0) == 0)
+
 
 # ---------- (8) PLAYER_DAMAGE_CHECK / PLAYER_TAKE_HIT - barrier-absorbed hit ----------
 z = fresh(); boot(z)

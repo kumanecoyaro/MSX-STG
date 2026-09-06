@@ -125,7 +125,9 @@ check("Enemy7 fires a bullet the instant its Y matches PLAYERY",
       ebullet_active_count(z) == 1)
 b = ebullet_slots(z)
 fired = [s for s in b if s[0] == 1][0]
-check("...spawned at Enemy7's own (post-move) X,Y", fired[1] == 200 - sym["ENEMY_SPEED"] and fired[2] == 90)
+check("...spawned at Enemy7's own (post-move) X, Y+8 "
+      "(実機フィードバック: 敵弾が敵との位置が上すぎるんで8px下げて)",
+      fired[1] == 200 - sym["ENEMY_SPEED"] and fired[2] == 90 + 8)
 check("...cooldown (E_PARAM3) armed to E4_ALIGN_FIRE_COOLDOWN", z.rd(slot + E_PARAM3) == E4_ALIGN_FIRE_COOLDOWN)
 
 # still aligned next frame - cooldown must block a 2nd shot
@@ -395,7 +397,7 @@ z.wr(E2A_U0_Y, 77)
 call_routine(z, sym["ECS_S7_A"])
 check("Enemy2-A shooter fires once during the diagonal dive (phase0)", ebullet_active_count(z) == 1)
 fired = [s for s in ebullet_slots(z) if s[0] == 1][0]
-check("...spawned at U0's own position (111,77)", (fired[1], fired[2]) == (111, 77))
+check("...spawned at U0's own position, Y+8 (111,85)", (fired[1], fired[2]) == (111, 77 + 8))
 check("...E2A_FIRE_FLAG now 2 (fired)", z.rd(E2A_FIRE_FLAG) == 2)
 before = ebullet_active_count(z)
 call_routine(z, sym["ECS_S7_A"])
@@ -416,11 +418,15 @@ check("...never fires", ebullet_active_count(z) == 0)
 
 
 # ---------- (6) UPDATE_EBULLET_ALL: movement, exit, hide+free ----------
+# 実機フィードバック"敵弾(横棒レーザー)が敵との位置が上すぎるんで8px
+# 下げて" - SPAWN_EBULLETが入力Eへ+8してから格納するようになったため、
+# 期待値もE(33)+8=41に更新。
 z = fresh(); boot(z)
 z.d = 40; z.e = 33
 call_routine(z, sym["SPAWN_EBULLET"])
 active = [s for s in ebullet_slots(z) if s[0] == 1]
-check("SPAWN_EBULLET claims a free slot with the given X,Y", len(active) == 1 and (active[0][1], active[0][2]) == (40, 33))
+check("SPAWN_EBULLET claims a free slot with the given X, Y+8 (見た目の位置合わせ)",
+      len(active) == 1 and (active[0][1], active[0][2]) == (40, 41))
 sprnum = active[0][3]
 check("...allocated a real hw sprite number (>=2)", sprnum >= 2)
 check("...drawn nowhere yet (X,Y only written by UPDATE_EBULLET_ALL)", True)

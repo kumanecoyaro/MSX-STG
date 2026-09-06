@@ -322,7 +322,7 @@ INIT_BGM:
     LD HL,08000h : LD DE,0C000h : LD BC,078h : LDIR   ; 周期テーブル(60note*2)
     LD HL,08078h : LD DE,0C078h : LD BC,0628h : LDIR  ; ALONE_FIGHTER chB+chC
     LD HL,08E32h : LD DE,0C910h : LD BC,032Eh : LDIR  ; TryZ chB+chC(Stage1ボス用)
-    LD HL,0931Bh : LD DE,0CC42h : LD BC,0111h : LDIR  ; StageClear chB+chC+chA(Stage1ステージクリア用)
+    LD HL,0931Bh : LD DE,0CC42h : LD BC,010Dh : LDIR  ; StageClear chB+chC+chA(Stage1ステージクリア用)
     LD A,1                       ; このファイル自身のbank1(Comb/standaloneとも1のまま)
     LD (7000h),A
 

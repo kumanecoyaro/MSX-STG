@@ -617,6 +617,7 @@ check("STAGE_CLEAR_CHA_BASE = STAGE_CLEAR_CHC_BASE + StageClear's own real chC l
       STAGE_CLEAR_CHA_BASE == STAGE_CLEAR_CHC_BASE + _sc_layout["chC_len"])
 
 z = fresh()
+poke_period_table(z)
 for i, b in enumerate(sc_chB_bytes):
     z.wr(STAGE_CLEAR_CHB_BASE + i, b)
 for i, b in enumerate(sc_chC_bytes):
