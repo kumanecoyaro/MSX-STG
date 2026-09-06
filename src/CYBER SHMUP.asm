@@ -3099,6 +3099,12 @@ WAC_SKIPBUF:
 ; いた(ユーザー報告の"SEが鳴らずショットが残る"の実体)。修正:
 ; SND_BARRIER_DUTY_TIMERが非0の間もショット要求を握りつぶす。
 SOUND_SHOT:
+    ; "マテリアライズ中は自機ショット音は停止" - BOSS_STATE==1の間だけ
+    ; 抑制(ボス本体の点滅タイル演出中、Stage2のBOSS_MATERIALIZE_ACT
+    ; ガードと同じ考え方)。
+    LD A,(BOSS_STATE)
+    CP 1
+    RET Z
     LD A,(SND_BARRIER_DUTY_TIMER)
     OR A
     RET NZ                     ; barrier-hit SE (top priority) still decaying -> drop
@@ -3343,6 +3349,28 @@ BGM_C_ENV_LEVEL  EQU 0C90Ch
 BGM_C_ENV_IDX    EQU 0C90Dh
 BGM_C_ENV_CD     EQU 0C90Eh
 
+; 実機フィードバック対応("ステージ1ボスもBGMをTryZに マテリアライズ
+; 終了後に再生...マテリアライズに入る前にそれまでのBGMは停止"):
+; Stage1はStage2と違いバンク切替を自前で一切行わない設計(単体版ROM
+; 廃止済み+tools/verify_*.py群がバンク概念の無いフラット64KBメモリ
+; 前提という制約 - src/CYBER SHMUP.asm自身のBGM設計の元々のコメント
+; 参照)。この制約を維持したまま2曲目(TryZ)を追加するため、TryZの
+; chB/chC生データもTitleが起動時に一度だけ(ALONE_FIGHTERと同じ要領で)
+; RAMへコピーしておき、Stage1側はアドレスを差し替えるだけで済むように
+; した - 新規バンク切替コードはStage1に一切追加していない。
+; RAM配置: 制御ブロック(0xC900-0xC90E)の直後、シンボルテーブル実測で
+; 0xE000(TICK)まで空きと確認済みの領域(BGM_MUTED 1byte+TryZ chB/chC
+; 814byte+ループ復帰先2ch分)。
+BGM_MUTED         EQU 0C90Fh
+BGM_TRYZ_CHB_BASE EQU 0C910h    ; Titleが埋める(chB melody, 741byte)
+BGM_TRYZ_CHC_BASE EQU 0CBF5h    ; Titleが埋める(chC bass, 73byte) - 0xC910+741
+; Stage2のBGM_C_LOOP_BASEと全く同じ理由(TryZのchB長がALONE_FIGHTERとは
+; 違うため、chCのループ復帰先アドレスも曲によって異なる) - ただしStage1
+; はTryZをALONE_FIGHTERと別アドレスに置く設計(上書きしない)ため、chB
+; 側もループ復帰先が曲によって変わる。両方ともRAM変数化する。
+BGM_B_LOOP_BASE   EQU 0CC3Eh
+BGM_C_LOOP_BASE   EQU 0CC40h
+
 ; BELL: 半減期45tickの指数減衰(15*0.5^(t/45)を4bit丸め、以後この
 ; カーブが完全に0へ収束するまでをRLE圧縮)。試聴ツール(#3 BELL)と
 ; 同一パラメータ。
@@ -3370,10 +3398,63 @@ INIT_BGM:
     LD (BGM_C_ENV_LEVEL),A
     LD (BGM_C_ENV_IDX),A
     LD (BGM_C_ENV_CD),A
+    LD (BGM_MUTED),A
+    LD HL,BGM_B_BASE : LD (BGM_B_LOOP_BASE),HL
+    LD HL,BGM_C_BASE : LD (BGM_C_LOOP_BASE),HL
     LD A,0C3h                     ; JP nn opcode
     LD (HTIMI_HOOK),A
     LD HL,BGM_TICK
     LD (HTIMI_HOOK+1),HL
+    RET
+
+; "マテリアライズに入る前にそれまでのBGMは停止" - Stage2のMUTE_BGMと
+; 全く同じ設計(BGM_B/C_PTR等の内部状態には一切触れず、BGM_TICK自身の
+; chB/chC更新をBGM_MUTEDフラグ1本で丸ごとスキップさせつつ、今鳴って
+; いる音を即座に切るためR9/R10を明示的に0へ)。
+MUTE_BGM:
+    LD A,1 : LD (BGM_MUTED),A
+    DI
+    LD A,9 : OUT (PSG_ADDR),A
+    XOR A : OUT (PSG_DATA),A
+    LD A,10 : OUT (PSG_ADDR),A
+    XOR A : OUT (PSG_DATA),A
+    EI
+    RET
+
+UNMUTE_BGM:
+    XOR A : LD (BGM_MUTED),A
+    RET
+
+; "ではTryZをボス曲に...マテリアライズ終了後に再生" - BOSS_UPDATE_BODY
+; がBOSS_STATE=2(マテリアライズ完了)へ遷移する直前に1回だけ呼ばれる。
+; Stage2と違いバンク切替は一切行わない(このファイル自身の設計制約 -
+; 上記BGM_TRYZ_CHB/CHC_BASEの自身のコメント参照) - TryZの生データは
+; Titleが起動時に別アドレスへ既にコピー済みという前提のもと、単に
+; BGM_B/C_PTR等をそちらへ差し替えるだけで済む。DI/EIで全体を保護
+; (Stage2のSWITCH_BGM_TO_TRYZと同じ理由 - 複数命令にまたがる状態遷移
+; の途中でH.TIMI[BGM_TICK]に割り込まれるのを防ぐ)。
+SWITCH_BGM_TO_TRYZ:
+    DI
+    LD HL,BGM_TRYZ_CHB_BASE
+    LD (BGM_B_PTR),HL
+    LD (BGM_B_LOOP_BASE),HL
+    XOR A
+    LD (BGM_B_TIMER),A
+    LD (BGM_B_REST),A
+    LD (BGM_B_ENV_LEVEL),A
+    LD (BGM_B_ENV_IDX),A
+    LD (BGM_B_ENV_CD),A
+    LD (BGM_B_DUTY_PHASE),A
+    LD HL,BGM_TRYZ_CHC_BASE
+    LD (BGM_C_PTR),HL
+    LD (BGM_C_LOOP_BASE),HL
+    LD (BGM_C_TIMER),A
+    LD (BGM_C_REST),A
+    LD (BGM_C_ENV_LEVEL),A
+    LD (BGM_C_ENV_IDX),A
+    LD (BGM_C_ENV_CD),A
+    EI
+    CALL UNMUTE_BGM
     RET
 
 BGM_TICK:
@@ -3381,8 +3462,12 @@ BGM_TICK:
     PUSH BC
     PUSH DE
     PUSH HL
+    LD A,(BGM_MUTED)
+    OR A
+    JR NZ,BGMT_SKIP_BC
     CALL BGMT_UPDATE_B
     CALL BGMT_UPDATE_C
+BGMT_SKIP_BC:
     POP HL
     POP DE
     POP BC
@@ -3404,7 +3489,7 @@ BGMT_UB_NEWROW:
     LD A,(HL)
     CP BGM_LOOP_MARK
     JR NZ,BGMT_UB_GOT
-    LD HL,BGM_B_BASE
+    LD HL,(BGM_B_LOOP_BASE)   ; ALONE_FIGHTER/TryZどちらの曲でも正しい復帰先(BGM_B_LOOP_BASE参照)
     LD A,(HL)
 BGMT_UB_GOT:
     LD C,A                         ; C = note index (or REST), survives the INC HL below
@@ -3504,7 +3589,7 @@ BGMT_UC_NEWROW:
     LD A,(HL)
     CP BGM_LOOP_MARK
     JR NZ,BGMT_UC_GOT
-    LD HL,BGM_C_BASE
+    LD HL,(BGM_C_LOOP_BASE)   ; ALONE_FIGHTER/TryZどちらの曲でも正しい復帰先(BGM_C_LOOP_BASE参照)
     LD A,(HL)
 BGMT_UC_GOT:
     LD C,A
@@ -4741,6 +4826,7 @@ BOSS_SPAWN:
     XOR A : LD (BOSS_COL),A
     LD A,1 : LD (BOSS_PHASE),A
     LD A,1 : LD (BOSS_STATE),A
+    CALL MUTE_BGM   ; "マテリアライズに入る前にそれまでのBGMは停止"
     CALL BOSS_SETUP_TILE_SPRITE
     RET
 
@@ -4763,6 +4849,7 @@ BOSS_UPDATE_BODY:
     JP NZ,BOSS_ADV_NEXTTILE
     CALL BOSS_HIDE_SPRITE
     LD A,2 : LD (BOSS_STATE),A
+    CALL SWITCH_BGM_TO_TRYZ   ; "ではTryZをボス曲に...マテリアライズ終了後に再生"
     ; --- boss has landed - repoint the 6 dispatch vectors at the  ---
     ; --- BOSS_MAP-aware routines instead of BLANKCODE. Just a     ---
     ; --- 2-byte pointer write each, once, here - not on every     ---

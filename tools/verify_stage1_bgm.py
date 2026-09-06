@@ -77,6 +77,8 @@ BGM_B_TIMER = sym["BGM_B_TIMER"]
 BGM_C_TIMER = sym["BGM_C_TIMER"]
 BGM_B_BASE = sym["BGM_B_BASE"]
 BGM_C_BASE = sym["BGM_C_BASE"]
+BGM_B_LOOP_BASE = sym["BGM_B_LOOP_BASE"]
+BGM_C_LOOP_BASE = sym["BGM_C_LOOP_BASE"]
 BGM_NOTE_REST = sym["BGM_NOTE_REST"]
 BGM_LOOP_MARK = sym["BGM_LOOP_MARK"]
 BGM_PERIOD_LO_RAM = sym["BGM_PERIOD_LO_RAM"]
@@ -297,6 +299,13 @@ z.wr(loop_addr, BGM_LOOP_MARK)
 z.wr(BGM_B_PTR, loop_addr & 0xFF)
 z.wr(BGM_B_PTR + 1, (loop_addr >> 8) & 0xFF)
 z.wr(BGM_B_TIMER, 0)
+# 実機フィードバック対応("ステージ1ボスもBGMをTryZに"): BGMT_UB_NEWROWの
+# LOOP_MARK復帰先はもう固定EQU(BGM_B_BASE)の即値ロードではなく、RAM変数
+# BGM_B_LOOP_BASEからの間接読み込みになった(TryZ切替時に曲ごとの実際の
+# 復帰先へ差し替えるため)。このテストはINIT_BGMを経由しない生メモリの
+# ためBGM_B_LOOP_BASEは自分でALONE_FIGHTER基準にpokeしておく必要がある。
+z.wr(BGM_B_LOOP_BASE, BGM_B_BASE & 0xFF)
+z.wr(BGM_B_LOOP_BASE + 1, (BGM_B_BASE >> 8) & 0xFF)
 first_note = z.rd(BGM_B_BASE)
 first_dur = z.rd(BGM_B_BASE + 1)
 call_routine(z, BGM_TICK)
@@ -444,6 +453,133 @@ for name, presets in [
 # interrupt, same reasoning as Stage2/Title's own driver).
 saw, masked = scan_psg_out_iff1(BGM_TICK, {BGM_B_TIMER: 0, BGM_C_TIMER: 0})
 check("BGM_TICK: real PSG_ADDR/PSG_DATA OUTs found", saw)
+
+
+# ---- 実機フィードバック対応("ステージ1ボスもBGMをTryZに マテリアライズ
+# 終了後に再生...どちらもマテリアライズ中は自機ショット音は停止 同様に
+# マテリアライズに入る前にそれまでのBGMは停止"): BOSS_SPAWN now calls
+# MUTE_BGM (silences ALONE_FIGHTER immediately, leaves its RAM state
+# untouched), and BOSS_UPDATE_BODY's own BOSS_STATE 1->2 transition (the
+# entrance tile-reveal finishing) calls SWITCH_BGM_TO_TRYZ, which repoints
+# BGM_B/C_PTR at TryZ's own RAM copy (Title pre-loads it - see
+# BGM_TRYZ_CHB/CHC_BASE's own comment, no bank-switch of Stage1's own) and
+# clears BGM_MUTED again. ----
+BGM_MUTED = sym["BGM_MUTED"]
+BGM_TRYZ_CHB_BASE = sym["BGM_TRYZ_CHB_BASE"]
+BGM_TRYZ_CHC_BASE = sym["BGM_TRYZ_CHC_BASE"]
+BOSS_STATE = sym["BOSS_STATE"]
+
+_tryz_layout = layout["BOSS_TRYZ"]
+_tryz_start = _tryz_layout["bank_offset"]
+tryz_chB_bytes = bank_image[_tryz_start:_tryz_start + _tryz_layout["chB_len"]]
+tryz_chC_bytes = bank_image[_tryz_start + _tryz_layout["chB_len"]:
+                             _tryz_start + _tryz_layout["chB_len"] + _tryz_layout["chC_len"]]
+
+check("BGM_TRYZ_CHC_BASE = BGM_TRYZ_CHB_BASE + TryZ's own real chB length "
+      "(this file's own manual layout must still match the real data)",
+      BGM_TRYZ_CHC_BASE == BGM_TRYZ_CHB_BASE + _tryz_layout["chB_len"])
+
+z = fresh()
+call_routine(z, sym["BOSS_SPAWN"])
+check("BOSS_SPAWN mutes BGM immediately (BGM_MUTED=1)", z.rd(BGM_MUTED) == 1)
+check("BOSS_SPAWN's own MUTE_BGM silenced R9/R10 immediately",
+      z.psg_regs.get(9) == 0 and z.psg_regs.get(10) == 0)
+check("BOSS_SPAWN enters BOSS_STATE=1 (materializing)", z.rd(BOSS_STATE) == 1)
+
+z = fresh()
+# poke TryZ's own real chB/chC bytes at the fixed addresses Title pre-loads
+# them into (this standalone test has no Title of its own - same
+# established convention as the ALONE_FIGHTER poke above)
+for i, b in enumerate(tryz_chB_bytes):
+    z.wr(BGM_TRYZ_CHB_BASE + i, b)
+for i, b in enumerate(tryz_chC_bytes):
+    z.wr(BGM_TRYZ_CHC_BASE + i, b)
+for addr in (BGM_B_PTR, BGM_B_PTR + 1, BGM_C_PTR, BGM_C_PTR + 1,
+             BGM_B_TIMER, BGM_C_TIMER, BGM_B_REST, BGM_C_REST,
+             BGM_B_LOOP_BASE, BGM_B_LOOP_BASE + 1,
+             BGM_C_LOOP_BASE, BGM_C_LOOP_BASE + 1,
+             BGM_B_ENV_IDX, BGM_C_ENV_IDX, BGM_B_DUTY_PHASE):
+    z.wr(addr, 0xAA)  # poison first, same style as combined_test.asm's own boss_bgm_switch_test.py
+z.wr(BGM_MUTED, 1)
+call_routine(z, sym["SWITCH_BGM_TO_TRYZ"])
+check("SWITCH_BGM_TO_TRYZ clears BGM_MUTED", z.rd(BGM_MUTED) == 0)
+check("SWITCH_BGM_TO_TRYZ points BGM_B_PTR/BGM_B_LOOP_BASE at TryZ's own chB start",
+      (z.rd(BGM_B_PTR) | (z.rd(BGM_B_PTR + 1) << 8)) == BGM_TRYZ_CHB_BASE and
+      (z.rd(BGM_B_LOOP_BASE) | (z.rd(BGM_B_LOOP_BASE + 1) << 8)) == BGM_TRYZ_CHB_BASE)
+check("SWITCH_BGM_TO_TRYZ points BGM_C_PTR/BGM_C_LOOP_BASE at TryZ's own chC start "
+      "(a genuinely different address than ALONE_FIGHTER's own chC - Stage1 places TryZ "
+      "in its own separate RAM region rather than overwriting ALONE_FIGHTER)",
+      (z.rd(BGM_C_PTR) | (z.rd(BGM_C_PTR + 1) << 8)) == BGM_TRYZ_CHC_BASE and
+      (z.rd(BGM_C_LOOP_BASE) | (z.rd(BGM_C_LOOP_BASE + 1) << 8)) == BGM_TRYZ_CHC_BASE and
+      BGM_TRYZ_CHC_BASE != BGM_C_BASE)
+check("SWITCH_BGM_TO_TRYZ resets BGM_B/C_TIMER and BGM_B/C_REST to 0",
+      z.rd(BGM_B_TIMER) == 0 and z.rd(BGM_C_TIMER) == 0 and
+      z.rd(BGM_B_REST) == 0 and z.rd(BGM_C_REST) == 0)
+
+# ---- drive BGM_TICK once past TryZ's own chB start and confirm it reads
+# TryZ's own real first row correctly - TryZ's chB actually opens with a
+# REST row (the melody instrument doesn't start at tick 0 in the source
+# MIDI), so the meaningful check is BGM_B_REST getting set, not a tone
+# period (SETREST never touches R2/R3 at all) ----
+call_routine(z, BGM_TICK)
+if tryz_chB_bytes[0] == BGM_NOTE_REST:
+    check("after SWITCH_BGM_TO_TRYZ, the very next BGM_TICK correctly reads TryZ's own "
+          "real first chB row as a REST (BGM_B_REST=1, R9 silenced)",
+          z.rd(BGM_B_REST) == 1 and z.psg_regs.get(9) == 0)
+else:
+    exp_lo, exp_hi = periods[tryz_chB_bytes[0]]
+    check("after SWITCH_BGM_TO_TRYZ, the very next BGM_TICK plays TryZ's own real first chB note",
+          (z.psg_regs.get(2), z.psg_regs.get(3)) == (exp_lo, exp_hi))
+
+# ---- BOSS_UPDATE_BODY's own BOSS_STATE 1->2 transition (materialize
+# finishing) is the real trigger site - drive it through a full real
+# tile-reveal sequence and confirm SWITCH_BGM_TO_TRYZ actually fires
+# there, not just when called directly above ----
+z = fresh()
+for i, b in enumerate(tryz_chB_bytes):
+    z.wr(BGM_TRYZ_CHB_BASE + i, b)
+for i, b in enumerate(tryz_chC_bytes):
+    z.wr(BGM_TRYZ_CHC_BASE + i, b)
+call_routine(z, sym["BOSS_SPAWN"])
+check("real BOSS_SPAWN: BGM_MUTED=1 right after spawn (materialize just started)",
+      z.rd(BGM_MUTED) == 1)
+for _ in range(200):   # 5 rows x 16 cols = 80 tiles, each tile takes a few BOSS_UPDATE_BODY calls
+    call_routine(z, sym["BOSS_UPDATE_BODY"])
+    if z.rd(BOSS_STATE) == 2:
+        break
+else:
+    raise AssertionError("BOSS_STATE never reached 2 (materialize never finished) within 200 calls")
+check("real BOSS_UPDATE_BODY: BGM_MUTED cleared once BOSS_STATE reaches 2 (materialize finished)",
+      z.rd(BGM_MUTED) == 0)
+check("real BOSS_UPDATE_BODY: TryZ's own chB data is actually loaded (BGM_B_PTR points at it) "
+      "once BOSS_STATE reaches 2 - the real trigger site, not a direct call, actually fired",
+      (z.rd(BGM_B_PTR) | (z.rd(BGM_B_PTR + 1) << 8)) == BGM_TRYZ_CHB_BASE)
+
+# ---- "マテリアライズ中は自機ショット音は停止" ----
+z = fresh()
+z.wr(BOSS_STATE, 1)
+z.wr(SND_TONE_TIMER, 0)
+z.wr(SND_BARRIER_DUTY_TIMER, 0)
+z.wr(sym["SND_TONE_IS_SE"], 0)
+call_routine(z, sym["SOUND_SHOT"])
+check("SOUND_SHOT is silenced while BOSS_STATE==1 (materializing)", z.rd(SND_TONE_TIMER) == 0)
+
+z = fresh()
+z.wr(BOSS_STATE, 0)
+z.wr(SND_TONE_TIMER, 0)
+z.wr(SND_BARRIER_DUTY_TIMER, 0)
+z.wr(sym["SND_TONE_IS_SE"], 0)
+call_routine(z, sym["SOUND_SHOT"])
+check("...but fires normally once BOSS_STATE!=1 (not materializing)", z.rd(SND_TONE_TIMER) != 0)
+
+z = fresh()
+z.wr(BOSS_STATE, 2)   # boss fully landed and fighting - must not be silenced
+z.wr(SND_TONE_TIMER, 0)
+z.wr(SND_BARRIER_DUTY_TIMER, 0)
+z.wr(sym["SND_TONE_IS_SE"], 0)
+call_routine(z, sym["SOUND_SHOT"])
+check("...and also fires normally once BOSS_STATE==2 (boss landed, materialize long done)",
+      z.rd(SND_TONE_TIMER) != 0)
 
 
 print()

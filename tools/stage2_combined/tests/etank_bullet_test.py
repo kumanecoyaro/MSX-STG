@@ -181,12 +181,14 @@ for f in range(8000):
 check("real MAINLOOP play: EtankBullet actually fires before the boss spawns", ever_fired)
 
 
-# ---------- 実機フィードバック対応("表示は当たってない様に見えるが
-# 当たる"): CHECK_ETANK_BULLET_VS_TANK は生のETANK_BULLET_X/Yを
-# そのまま使わず、DRAW_ETANK_BULLET_CELL/HORMING_BG_CELL_ADDR が実際に
-# 描画するのと同じ8px境界(AND 0F8h)へ判定側の原点も揃えるよう修正
-# 済み。以下は「見た目のBGセルからは最大7px先(自機に近い側)まで判定が
-# はみ出す」という旧バグを直接再現し、修正後は発生しないことを検証する。
+# ---------- 実機フィードバック対応その2("戦車の弾はコリジョンが
+# セル間の移動はちゃんとpx単位で移動してるか?...ちゃんとドット単位で
+# コリジョンも動いてるなら表示のズレがあるってことだ...ETankの弾の
+# コリジョンを縮めれば良いってことだな コリジョンは1pxでいいや"):
+# 前ラウンドの「表示と同じAND 0F8hへ判定側を量子化する」修正を撤回し、
+# 判定サイズ自体を1x1pxへ縮小(生の連続座標そのまま、量子化なし)。
+# 生の1点は定義上必ずその瞬間の表示セル内に収まるため、8px境界問題
+# そのものが原理的に発生しなくなる。
 def hit_registers(bullet_x, bullet_y, tank_x, tank_y):
     cpu = fresh_cpu()
     cpu.mem[ETANK_BULLET_ACT] = 1
@@ -199,40 +201,34 @@ def hit_registers(bullet_x, bullet_y, tank_x, tank_y):
     call_routine(cpu, "CHECK_ETANK_BULLET_VS_TANK")
     return cpu.mem[TANK_LIFE] != life0
 
-# bullet_x=45 -> displayed BG cell starts at floor(45/8)*8=40 (covers
-# 40-47 on screen). Old code additionally reached out to 45-52 (the raw
-# value), so a tank positioned just past the VISIBLE cell's right edge
-# (at 48, i.e. immediately touching where the sprite visually ends)
-# still took a hit under the old raw-X box even though nothing overlapped
-# on screen - exactly "見た目は当たってない様に見えるが当たる".
+# a tank positioned 1px to the right of the bullet's exact dot must NOT
+# be hit (this would have been a false-positive under the old 8x8 box -
+# even the BG-cell-aligned 8x8 fix from the previous round would still
+# have flagged this as a hit, since both bullet_x and bullet_x+1 usually
+# share the same floor(x/8)*8 cell).
 BULLET_X = 45
-DISPLAYED_CELL_START = BULLET_X & 0xF8  # 40
 TANK_Y_CUR_FIXED = 100
-BULLET_Y = TANK_Y_CUR_FIXED + TANK_COLLISION_Y_OFFSET  # lands inside the tank's own Y box, only X matters below
-tank_x_just_past_display = DISPLAYED_CELL_START + 8 - TANK_COLLISION_X_OFFSET  # tank's own left edge right at the visible cell's right edge+1
-check("a tank positioned right where the VISIBLE BG cell already ends (no on-screen overlap) "
-      "no longer takes phantom damage from the old raw-X 7px overreach",
-      not hit_registers(BULLET_X, BULLET_Y, tank_x_just_past_display, TANK_Y_CUR_FIXED))
+BULLET_Y = TANK_Y_CUR_FIXED + TANK_COLLISION_Y_OFFSET
+tank_x_one_past = BULLET_X + 1 - TANK_COLLISION_X_OFFSET
+check("a tank positioned just 1px to the right of the bullet's own dot is NOT hit "
+      "(1px hitbox, not an 8px box)",
+      not hit_registers(BULLET_X, BULLET_Y, tank_x_one_past, TANK_Y_CUR_FIXED))
 
-# sanity: a tank genuinely overlapping the VISIBLE cell still takes damage
-# (the fix must not have made the hitbox disappear entirely)
-tank_x_on_display = DISPLAYED_CELL_START - TANK_COLLISION_X_OFFSET
-check("...but a tank actually overlapping the displayed cell still gets hit normally",
-      hit_registers(BULLET_X, BULLET_Y, tank_x_on_display, TANK_Y_CUR_FIXED))
+# sanity: a tank whose box exactly touches the bullet's own dot still
+# takes damage (the fix must not have made the hitbox disappear entirely)
+tank_x_on_dot = BULLET_X - TANK_COLLISION_X_OFFSET
+check("...but a tank whose box exactly overlaps the bullet's own dot still gets hit normally",
+      hit_registers(BULLET_X, BULLET_Y, tank_x_on_dot, TANK_Y_CUR_FIXED))
 
 # full sweep, all 8 BG-cell phases of bullet_x, cross-checked against a
-# hitbox model that snaps the bullet's own origin down to the same 8px
-# boundary DRAW_ETANK_BULLET_CELL renders at (not the raw continuous X).
-def expected_hit_cell_aligned(tank_x, tank_y, bullet_x, bullet_y):
+# pure 1x1px hitbox model at the bullet's own raw (continuous) X/Y -
+# no BG-cell quantization anywhere in the reference model either.
+def expected_hit_1px(tank_x, tank_y, bullet_x, bullet_y):
     tx0 = tank_x + TANK_COLLISION_X_OFFSET
     tx1 = tx0 + TANK_COLLISION_WIDTH - 1
     ty0 = tank_y + TANK_COLLISION_Y_OFFSET
     ty1 = ty0 + TANK_COLLISION_HEIGHT - 1
-    bx0 = bullet_x & 0xF8
-    bx1 = bx0 + 7
-    by0 = bullet_y & 0xF8
-    by1 = by0 + 7
-    return not (bx1 < tx0 or tx1 < bx0 or by1 < ty0 or ty1 < by0)
+    return not (bullet_x < tx0 or tx1 < bullet_x or bullet_y < ty0 or ty1 < bullet_y)
 
 mismatches = 0
 total = 0
@@ -241,12 +237,12 @@ SWEEP_BULLET_Y = SWEEP_TANK_Y_CUR + TANK_COLLISION_Y_OFFSET
 for bullet_x in range(0, 200, 3):
     for tank_x in range(max(0, bullet_x - 24), bullet_x + 24, 2):
         got = hit_registers(bullet_x, SWEEP_BULLET_Y, tank_x, SWEEP_TANK_Y_CUR)
-        exp = expected_hit_cell_aligned(tank_x, SWEEP_TANK_Y_CUR, bullet_x, SWEEP_BULLET_Y)
+        exp = expected_hit_1px(tank_x, SWEEP_TANK_Y_CUR, bullet_x, SWEEP_BULLET_Y)
         total += 1
         if got != exp:
             mismatches += 1
-check(f"CHECK_ETANK_BULLET_VS_TANK matches a BG-cell-aligned (AND 0F8h) hitbox model exactly "
-      f"across {total} bullet/tank X positions spanning every BG-cell boundary phase",
+check(f"CHECK_ETANK_BULLET_VS_TANK matches a pure 1x1px hitbox model (raw, unquantized X/Y) "
+      f"exactly across {total} bullet/tank X positions spanning every BG-cell boundary phase",
       mismatches == 0)
 
 

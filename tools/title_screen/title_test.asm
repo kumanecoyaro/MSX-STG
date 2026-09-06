@@ -309,11 +309,19 @@ BGM_ENV_BELL_TABLE:
 BGM_ENV_LINEAR_TABLE:
     DB 15,2,14,3,13,2,12,3,11,2,10,3,9,3,8,3,7,2,6,3,5,3,4,2,3,3,2,2,1,3,0,0
 
+; 実機フィードバック対応("ステージ1ボスもBGMをTryZに"): Stage1は自前の
+; バンク切替を一切行わない設計を維持するため(src/CYBER SHMUP.asmの
+; BGM_TRYZ_CHB/CHC_BASE自身のコメント参照)、TryZの生データもここで
+; ALONE_FIGHTERと同様に一度だけRAMへコピーしておく。chB(741byte)+
+; chC(73byte)はbgm-dataバンク内で連続しているため1回のLDIRで両方
+; 転送できる(コピー先0xC910+741=0xCBF5にchCが自動的に来る - src/
+; CYBER SHMUP.asmのBGM_TRYZ_CHC_BASEと一致させること)。
 INIT_BGM:
     LD A,2                       ; standalone bgm-dataバンク(Combでは6へパッチ)
     LD (7000h),A
     LD HL,08000h : LD DE,0C000h : LD BC,078h : LDIR   ; 周期テーブル(60note*2)
     LD HL,08078h : LD DE,0C078h : LD BC,0628h : LDIR  ; ALONE_FIGHTER chB+chC
+    LD HL,08E32h : LD DE,0C910h : LD BC,032Eh : LDIR  ; TryZ chB+chC(Stage1ボス用)
     LD A,1                       ; このファイル自身のbank1(Comb/standaloneとも1のまま)
     LD (7000h),A
 

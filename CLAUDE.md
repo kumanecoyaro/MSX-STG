@@ -2141,3 +2141,36 @@ RLE圧縮実装(2026-09-06、完了済み・実機フィードバック待ち)
   `CHECK_ONE_MINE_VS_TANK`も同型のBGセル量子化描画+生座標判定のため
   理論上同じクラスの不具合を抱えている可能性が高いが、今回は明示的に
   指摘のあったEtankBulletのみ対応(指示なしに他へ拡張せず)。
+
+## Round50: EtankBullet当たり判定1px再修正+ボスBGM切替タイミング変更
+(Stage1/Stage2両方)(2026-09-06)
+
+- ユーザー発言3件: (1)"ステージ2BGMは...鳴らなくなるのはパート2の
+  ベースch"、(2)"ステージ1ボスもBGMをTryZに マテリアライズ終了後に
+  再生...マテリアライズに入る前にそれまでのBGMは停止...マテリアライズ
+  中は自機ショット音は停止"、(3)"ETankの弾のコリジョンを縮めれば
+  良いってことだな コリジョンは1pxでいいや"。
+- **EtankBullet**: Round49のAND 0F8h量子化(8x8のまま)を撤回、判定
+  サイズ自体を1x1pxへ縮小(生の連続座標そのまま)。
+- **ボスBGM切替(Stage2)**: `S2_BOSS_SPAWN`は`MUTE_BGM`(新設、即座に
+  R9/R10を0へ)のみ呼び、実際の`SWITCH_BGM_TO_TRYZ`(+`UNMUTE_BGM`)は
+  マテリアライズ完了時(`UBM_RETURNING`→`ENTER_BOSS_ATTACK_POSE`直前)
+  へ移設。`SWITCH_BGM_TO_TRYZ`自体にDI/EI保護が無かった実バグを副次的に
+  発見・修正(H.TIMI割り込みとの状態遷移レース、DEFEAT自体の途切れとは
+  無関係と判断)。`SOUND_SHOT`に materialize 中の抑制ガードを追加。
+- **ボスBGM切替(Stage1、実質初対応)**: Stage1は自前バンク切替をしない
+  設計を維持するため、TryZの生データをTitleが起動時にALONE_FIGHTERとは
+  別アドレス(`BGM_TRYZ_CHB_BASE`=0xC910/`CHC_BASE`=0xCBF5)へ事前コピー。
+  既存の`BOSS_STATE==1`("materializing"、コード内の既存呼称を採用)の
+  タイル点滅演出を使い、`BOSS_SPAWN`でMUTE、`BOSS_UPDATE_BODY`の
+  STATE1→2遷移でSWITCH+UNMUTE。`BGM_B/C_LOOP_BASE`をStage1にも新設
+  (Stage2と違いB/C両方のアドレスが曲で変わるため)。`SOUND_SHOT`に
+  `BOSS_STATE==1`ガード追加。
+- 全回帰`run_all.py` **1442 passed/0 failed**(1431→1442)、
+  `tools/verify_stage1_bgm.py` **55 passed**。3ROM再ビルド・
+  `verify_comb.py`健全性確認(TryZのTitleコピーも新規検証)の上、標準
+  方針によりComb ROMのみ送付。詳細はHANDOFF.mdのRound50参照。
+- **保留**: Stage2通常BGM(DEFEAT)の「途中でベースchが鳴らなくなる」
+  報告は、実MAINLOOP+ランダムタイミング割り込み注入(96,713回)による
+  徹底的な検証でも再現・特定できず、根本原因未特定のまま継続保留。
+  実機での再現条件(タイミング・操作相関等)の追加情報待ち。

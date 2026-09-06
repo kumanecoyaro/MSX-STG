@@ -10219,3 +10219,142 @@ BG境界での一瞬の切り替え時に16x8の判定になってしまう"の2
   判定の最大7pxズレ」を抱えている可能性が高いが、**今回はユーザーが
   明示的に指摘したEtankBulletのみに対応**(指示なしに他へ拡張せず)。
   同様の報告があれば同じ`AND 0F8h`パターンで対応可能。
+
+## Round50(実機フィードバック対応: EtankBullet当たり判定を1pxへ再修正+
+ボスBGM切替のタイミング変更+Stage1へのTryZボス曲導入・完了済み、Stage2
+通常BGM「壊れてる」は引き続き未解決)(2026-09-06)
+
+ユーザー発言(Round49のComb ROM送付後、複数件まとめて):
+"ステージ2BGMは途中までは鳴ってる で、鳴らなくなるのはパート2のベース
+ch 多分SEと干渉してノートがOFFになったりしてるんでは / ステージ1
+ボスもBGMをTryZに マテリアライズ終了後に再生 ステージ2ボスもマテリ
+アライズ後に再生 で、どちらもマテリアライズ中は自機ショット音は停止
+同様にマテリアライズに入る前にそれまでのBGMは停止 / で、戦車の弾は
+コリジョンがセル間の移動はちゃんとpx単位で移動してるか? さっきも
+言ったがセル単位で8px移動すればその瞬間は16x8のコリジョンと同じだぞ
+ちゃんとドット単位でコリジョンも動いてるなら表示のズレがあるって
+ことだ 地上はではジャンプで避ける都合 そのセル移動の瞬間に当たって
+るように見えるって事 と言うことはETankの弾のコリジョンを縮めれば
+良いってことだな コリジョンは1pxでいいや"
+
+### (1) EtankBulletの当たり判定を8x8→1x1pxへ再修正
+
+Round49で実装した「表示と同じAND 0F8hへ判定側を量子化する」修正
+(8x8のまま、原点だけ表示セルに揃える)をユーザー自身が再診断: 判定
+自体は元々連続ピクセル単位で正確に動いていたので(ETANK_BULLET_Xは
+毎フレーム3pxずつ減算される生の値)、真の問題は「判定サイズが8x8も
+ある」こと自体だった - ユーザーの結論は「コリジョンを1pxに縮める」。
+`CHECK_ETANK_BULLET_VS_TANK`のAND 0F8h(量子化)を撤回し、代わりに
+X/YともADD A,7を削除して判定サイズそのものを1x1pxへ縮小(原点は
+生のETANK_BULLET_X/Yのまま、量子化不要 - 1点は定義上必ずその瞬間の
+表示セル内に収まるため)。`etank_bullet_test.py`のBGセル境界関連
+テストを1px専用の検証(1px右にずれたら当たらない、BGセル境界8
+フェーズ×1556通りの座標を1x1px判定モデルと総当たり照合)へ全面
+書き換え。自己検証(修正を一時的に8x8へ戻して該当2件が実際にFAIL
+することを確認→復元)済み。
+
+### (2) ボスBGM切替: マテリアライズ完了後に再生+マテリアライズ前に
+即ミュート+マテリアライズ中は自機ショット音停止(Stage2・Stage1
+両方)
+
+- **Stage2**: 新設`BGM_MUTED`フラグ(0xCB1F)を`BGM_TICK`のchB/chC
+  更新の直前でチェックし、立っていれば丸ごとスキップ(BGM_B/C_PTR等の
+  内部状態は一切変更しない設計)。新設`MUTE_BGM`(フラグを立て、
+  R9/R10を即座に0へ)/`UNMUTE_BGM`(フラグを下ろすだけ)。
+  `S2_BOSS_SPAWN`は`CALL SWITCH_BGM_TO_TRYZ`ではなく`CALL MUTE_BGM`
+  を呼ぶよう変更(マテリアライズ開始と同時にDEFEATを即座に沈黙)。
+  実際のTryZ切替は`UBM_RETURNING`(マテリアライズのphase2「初期位置
+  まで戻る」完了、`ENTER_BOSS_ATTACK_POSE`へ入る直前)へ移設 -
+  `SWITCH_BGM_TO_TRYZ`自身の末尾に`CALL UNMUTE_BGM`を追加。
+  **副次的に発見した実バグ**: `SWITCH_BGM_TO_TRYZ`自体が元々DI/EIで
+  保護されていなかった - BGM_B/C_PTR等複数のRAM変数にまたがる状態
+  遷移の途中でH.TIMI(BGM_TICK)に割り込まれると、新PTR+旧TIMER/ENVの
+  ような一貫性の無い組み合わせで1tick分処理されうる潜在的なレース
+  コンディションだった(Stage2 BGMの「途中で鳴らなくなる」報告の
+  直接的な説明にはならない一過性の問題と判断したが、他の全PSG書き込み
+  関数と同じ防御を機械的に適用し解消)。`SOUND_SHOT`にも
+  `BOSS_FORM==0 かつ BOSS_MATERIALIZE_ACT!=0`の間だけ抑制するガードを
+  追加(BOSS_FORM!=0後はBOSS_MATERIALIZE_ACTがBOSS_EXPL_CXへエイリアス
+  される既存の罠を踏まないよう、Stage2の他の同種ガードと同じ2段
+  チェックを踏襲)。
+- **Stage1**: これまでボス戦中もBGM切替が一切無かった(ALONE_FIGHTER
+  のまま)ため、今回が実質初対応。Stage1は自前のバンク切替を一切
+  行わない設計(単体版ROM廃止済み+`tools/verify_*.py`群がバンク概念の
+  無いフラット64KBメモリ前提という制約、既存のBGM設計コメントに明記
+  済み)を維持するため、TryZの生データを**Titleが起動時に一度だけ
+  ALONE_FIGHTERとは別の固定RAMアドレス(`BGM_TRYZ_CHB_BASE`=0xC910/
+  `BGM_TRYZ_CHC_BASE`=0xCBF5、シンボルテーブル実測で0xE000[TICK]まで
+  空きと確認済みの領域)へコピー**しておき、Stage1側は曲切替時に
+  BGM_B/C_PTR等をそちらへ差し替えるだけで済むようにした(新規バンク
+  切替コードはStage1に一切追加していない)。ALONE_FIGHTER/TryZで
+  chB/chCどちらも実アドレスが異なる設計のため、Stage2のBGM_C_LOOP_
+  BASEと同じ理由で`BGM_B_LOOP_BASE`/`BGM_C_LOOP_BASE`をStage1にも
+  新設(Stage2はchB側のアドレスが曲によらず不変なためC側のみだったが、
+  Stage1はB/C両方が曲ごとに変わるため両方必要)。Stage1既存の`BOSS_
+  STATE==1`("materializing"、コード内に既存のこの呼称を発見・
+  再利用)というボス本体の点滅タイル演出を「マテリアライズ」として
+  採用 - `BOSS_SPAWN`(演出開始)で`CALL MUTE_BGM`、`BOSS_UPDATE_BODY`
+  のBOSS_STATE 1→2遷移(演出完了)で`CALL SWITCH_BGM_TO_TRYZ`。
+  `SOUND_SHOT`に`BOSS_STATE==1`の間だけ抑制するガードを追加。
+  `title_test.asm`のINIT_BGMにTryZ chB+chC(814byte、1回のLDIRで
+  連続コピー)を追加、`build_full_rom.py`のTITLE_BGM_BANKSELECT_
+  ANCHOR/PATCHを新しい行に合わせて更新。
+- 新規回帰テスト: Stage2側`boss_bgm_switch_test.py`に11件追加
+  (MUTE_BGM即座の沈黙・SWITCH_BGM_TO_TRYZが正しくUNMUTEすること・
+  実MAINLOOPでマテリアライズ全体を通してミュートが維持されること・
+  攻撃ポーズ到達と同時にTryZが鳴り始めること・マテリアライズ中/後の
+  自機ショット音)。Stage1側`tools/verify_stage1_bgm.py`に15件追加
+  (同種の検証、実BOSS_SPAWN→実BOSS_UPDATE_BODYを80タイル分実際に
+  回してBOSS_STATE=2到達を確認する統合テスト含む)、既存のchB LOOP_
+  MARKテスト1箇所がBGM_B_LOOP_BASE未初期化により失敗したため修正
+  (このテストはINIT_BGMを経由しない生メモリ方式のため、新設RAM変数は
+  テスト側で明示的にpokeする必要がある)。全て自己検証(修正を一時的に
+  取り消してFAILを確認→復元)済み。
+- 全回帰`run_all.py` **1442 passed/0 failed**(1431→1442)、
+  `tools/verify_stage1_bgm.py` **55 passed**、他の`tools/verify_*.py`
+  群も横断的に再実行し無退行を確認(`verify_barrier.py`は無関係な
+  アップロードファイル欠落、`verify_idcache_multiframe.py`/
+  `verify_namebuf_regen.py`のROWDATA1 KeyErrorは既知の無関係な既存
+  問題、いずれも今回のセッションより前から存在)。`title_test.py`
+  **25 passed**(無改修で全PASS)。3ROM(Stage2単体・Title単体・Comb)
+  再ビルド・`verify_comb.py`健全性確認(TryZのTitleコピーも新規検証
+  項目として追加)の上、標準方針によりComb ROMのみ送付。
+
+### (3) Stage2通常BGM「壊れてる」(パート2ベースchが途中で鳴らなく
+なる) - 徹底調査を継続したが根本原因は依然未特定
+
+Round49の調査(2ループ分の音程・音量完全一致、RAM衝突無し)に加え、
+今回さらに実施:
+- **前方参照バグの再確認**: 今回追加した`BGM_MUTED`/`BGM_TRYZ_CHB/
+  CHC_BASE`等の新規EQUは全て単純な16進リテラルのため該当せず。
+- **リアルタイム割り込み競合の直接シミュレーション**(新規手法):
+  z80emu.pyは本物の非同期割り込みを一切発火しないため、実際のH.TIMI
+  発火をエミュレートする自作フレームワークを構築 - 実MAINLOOP(戦闘
+  込み、4000フレーム・約2300万命令ステップ)を1命令ずつ進めながら、
+  `cpu.iff1`(DI/EI状態)を尊重した上でランダムな間隔(50-400命令毎)で
+  BGM_TICKを「割り込みとして」注入(現在のPCをリターンアドレスとして
+  スタックへPUSHしBGM_TICKへ跳ぶ、実際のZ80の割り込み受付と同じ
+  「命令境界でのみ受理」規則に厳密に従う)。96,713回の割り込み注入を
+  通じてBGM_B_PTR/BGM_C_PTRが常に正当な曲データ範囲内に留まることを
+  確認 - 不整合0件。この手法により、DI/EIで保護されていない`SWITCH_
+  BGM_TO_TRYZ`の実バグ(上記(2)参照)を実際に発見できたが、DEFEAT
+  (通常BGM)自体の再生には無関係と判明。
+- **結論: エミュレータレベルで実現可能な検証を全て尽くしたが、通常
+  プレイ中(ボス前)のDEFEAT chC途切れの再現・特定には至っていない。**
+  ユーザーへ具体的症状を確認したが明確な回答は得られていない
+  ("[No preference]")。**この件は根本原因未特定のまま保留とする -
+  次に再開する際は、実機での再現条件(発生タイミング・BGM開始から
+  何秒/何分後か・特定の操作と相関があるか等)についてさらに情報を
+  求めることを推奨。** Round47のOTIR教訓(z80emu.pyでは検出不可能な
+  実機専用バグの前例)を踏まえ、この可能性も排除しない。
+
+### 保留・継続調査
+
+- **Stage2 BGM「壊れてる」は根本原因未特定のまま。**
+- `BGM_MUTED`ガードは`BGMT_UPDATE_ENDING_A`(GFEnding再生用のchA
+  ドライバ)には適用していない(マテリアライズとエンディングは時間的に
+  絶対に重ならないため設計上問題ないが、明示的な相互排他は無い点は
+  留意)。
+- `CHECK_FLYER_LASER_VS_TANK`/`CHECK_ONE_MINE_VS_TANK`は依然として
+  8x8の生座標判定のまま(Round49で指摘した通り、理論上は同じクラスの
+  問題を抱えている可能性があるが、指示なしに拡張していない)。

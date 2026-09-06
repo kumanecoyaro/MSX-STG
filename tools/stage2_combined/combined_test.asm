@@ -5902,6 +5902,18 @@ SOUND_SHOT:
     LD A,(SND_EXPLODING)
     OR A
     RET NZ
+    ; "マテリアライズ中は自機ショット音は停止" - BOSS_FORM==0の間だけ
+    ; 有効な判定にする(BOSS_MATERIALIZE_ACTはBOSS_FORM!=0になった後は
+    ; BOSS_EXPL_CX/CYとしてボス死亡演出専用に再利用される既存のエイリ
+    ; アスのため、そちらを実体化中と誤読しないためのガードが必要 -
+    ; UPDATE_BOSS_MATERIALIZE自身のBOSS_FORM!=0即RETゲートと同じ理屈)。
+    LD A,(BOSS_FORM)
+    OR A
+    JR NZ,SS_NOT_MATERIALIZING
+    LD A,(BOSS_MATERIALIZE_ACT)
+    OR A
+    RET NZ
+SS_NOT_MATERIALIZING:
     ; DI/EI-wrapped: BGM_TICK (Vsync-driven, follow-up#24) also does its
     ; own PSG_ADDR-select/PSG_DATA-write pairs on R7/R2-5/R9/R10 every
     ; frame - an H.TIMI interrupt landing between this OUT (PSG_ADDR)
@@ -6431,6 +6443,13 @@ ENDING_SONG_START  EQU 0CB1Dh   ; ENDING_ACT=2になった瞬間のVBLANK_COUNT�
 ENDING_WAIT_TICKS       EQU 600   ; "10秒ほど" - 60Hz想定の近似値(未確定、実機フィードバック待ち)
 ENDING_SONG_TOTAL_TICKS EQU 1630  ; tools/bgm_data/midi_to_psg.load_ending_gfending_parts()の全パート共通total_ticks
 
+; "マテリアライズに入る前にそれまでのBGMは停止" 対応(ENDING_SONG_START
+; の直後、シンボルテーブル実測で0xCC00まで空きと確認済みの領域)。
+; BGM_TICK自身のchB/chC更新をこのフラグ1本で丸ごとスキップさせる -
+; BGM_B/C_PTR等の内部状態は一切いじらないため、MUTE中もSWITCH_BGM_TO_
+; TRYZ等が安全に状態を差し替えてからUNMUTEすれば続きから正しく鳴らせる。
+BGM_MUTED EQU 0CB1Fh
+
 ; BELL: 半減期45tickの指数減衰(15*0.5^(t/45)を4bit丸め、以後この
 ; カーブが完全に0へ収束するまでをRLE圧縮)。試聴ツール(#3 BELL)と
 ; 同一パラメータ。
@@ -6504,6 +6523,7 @@ INIT_BGM:
     LD (BGM_A_ENV_LEVEL),A
     LD (BGM_A_ENV_IDX),A
     LD (BGM_A_ENV_CD),A
+    LD (BGM_MUTED),A
 
     LD A,0C3h                     ; JP nn opcode
     LD (HTIMI_HOOK),A
@@ -6511,11 +6531,42 @@ INIT_BGM:
     LD (HTIMI_HOOK+1),HL
     RET
 
+; "マテリアライズに入る前にそれまでのBGMは停止" - BGM_TICK自身の状態
+; (BGM_B/C_PTR等)には一切触れず、BGM_MUTEDを立てて以後のBGM_TICKの
+; chB/chC更新を丸ごとスキップさせつつ、今鳴っている音を即座に切る
+; ためR9/R10を明示的に0へ(BGM_TICKが次に来るまで待つと1tick分
+; 音が残ってしまうため)。DI/EIはSOUND_SHOT等と同じ理由(BGM_TICK自身
+; とのPSGレジスタ選択競合を避ける)。
+MUTE_BGM:
+    LD A,1 : LD (BGM_MUTED),A
+    DI
+    LD A,9 : OUT (PSG_ADDR),A
+    XOR A : OUT (PSG_DATA),A
+    LD A,10 : OUT (PSG_ADDR),A
+    XOR A : OUT (PSG_DATA),A
+    EI
+    RET
+
+; ミュート解除 - 呼び出し側(SWITCH_BGM_TO_TRYZ等)が先にBGM_B/C_PTR等を
+; 新しい曲の先頭へ揃えてから呼ぶことを前提とする単純なフラグクリア
+; (1バイト書き込みのみのためDI/EI不要)。
+UNMUTE_BGM:
+    XOR A : LD (BGM_MUTED),A
+    RET
+
 ; ボスBGM切替("ではTryZをボス曲に...メロディ1パートベース1パートを
-; 抜き出して") - S2_BOSS_SPAWNから1回だけ呼ばれる。DEFEATと全く同じ
-; chB/chC RAM位置(CHB_RAM_BASE固定)へTryZの2パートを上書きし、
+; 抜き出して") - マテリアライズ完了時(UBM_RETURNING、ENTER_BOSS_
+; ATTACK_POSEへ入る直前)に1回だけ呼ばれる("マテリアライズ終了後に
+; 再生" - follow-up以前はS2_BOSS_SPAWN自身から呼んでいたが、マテリ
+; アライズ開始と同時にTryZが鳴ってしまっていたため移設)。DEFEATと
+; 全く同じchB/chC RAM位置(CHB_RAM_BASE固定)へTryZの2パートを上書きし、
 ; ポインタ/タイマー/REST/エンベロープ状態を全てリセットして先頭から
 ; 即座に再生させる。
+; DI/EIで全体を保護(実機フィードバック調査中に自己発見: 個々のLD
+; (nn),HL/Aは全てアトミックだが、この一連の複数命令にまたがる状態
+; 遷移の途中でH.TIMI[BGM_TICK]が割り込むと、新PTR+旧TIMER/ENVのような
+; 一貫性の無い組み合わせで1tick分処理される瞬間が生じうる - 実害は
+; 未確認だが、他の全PSG書き込み関数と同じ防御を機械的に適用しておく)。
 ;
 ; **重要**: TryZのchB(メロディ、741byte)はDEFEATのchB(301byte)より
 ; 長いため、chCの実際の開始アドレス(CHC_RAM_BASE)はDEFEATとTryZとで
@@ -6529,6 +6580,7 @@ INIT_BGM:
 ; (BGMT_UC_NEWROW参照) - 曲を切り替える側(INIT_BGM/ここ)が毎回
 ; 自分の曲の実際のchC開始アドレスをこの変数へ書き込む。
 SWITCH_BGM_TO_TRYZ:
+    DI
     LD HL,08E32h : LD DE,0C278h : LD BC,032Eh : CALL BGM_LOAD_SONG  ; TRYZ chB+chC
     LD HL,BGM_B_BASE
     LD (BGM_B_PTR),HL
@@ -6547,6 +6599,8 @@ SWITCH_BGM_TO_TRYZ:
     LD (BGM_C_ENV_LEVEL),A
     LD (BGM_C_ENV_IDX),A
     LD (BGM_C_ENV_CD),A
+    EI
+    CALL UNMUTE_BGM   ; "マテリアライズ終了後に再生" - MUTE_BGM(S2_BOSS_SPAWN)からの解除
     RET
 
 ; H.TIMI hook target - called once per real VBlank on real hardware.
@@ -6566,8 +6620,12 @@ BGM_TICK:
     ; なる。16bit、オーバーフローは現実的な猶予時間内(約1092秒=18分強)
     ; では発生しないため無視。
     LD HL,(VBLANK_COUNT) : INC HL : LD (VBLANK_COUNT),HL
+    LD A,(BGM_MUTED)
+    OR A
+    JR NZ,BGMT_SKIP_BC   ; "マテリアライズに入る前にそれまでのBGMは停止" - MUTE_BGM参照
     CALL BGMT_UPDATE_B
     CALL BGMT_UPDATE_C
+BGMT_SKIP_BC:
     LD A,(ENDING_ACT)
     CP 2
     CALL Z,BGMT_UPDATE_ENDING_A
@@ -10436,24 +10494,25 @@ UEBA_MOVE_OK:
     CALL DRAW_ETANK_BULLET_CELL
     RET
 
-; AABB check (8x8 box, matching the bullet's own single BG cell) - same
+; AABB check against a 1x1px point at ETANK_BULLET_X/Y (the bullet's
+; own true, continuous, per-pixel position - NOT the 8px-quantized BG
+; cell DRAW_ETANK_BULLET_CELL happens to render it at this frame). Same
 ; shared TANK_HAZARD_IFRAMES/APPLY_TANK_DAMAGE/SOUND_ZUM_DEFLECT hit
 ; shape as every other tank hazard in this file. A hit does NOT
 ; deactivate the bullet - it keeps flying through/past the tank, same
 ; "one hit per frame is enough, hazard survives" convention as CHECK_
 ; BOSS_BROKEN_BEAM_VS_TANK's own beams.
-; 実機フィードバック対応("表示は当たってない様に見えるが当たる"):
-; ETANK_BULLET_X/Yは連続ピクセル値(毎フレーム3pxずつ動く)だが、実際に
-; 画面に描画される位置はDRAW_ETANK_BULLET_CELL経由のHORMING_BG_CELL_
-; ADDRがX>>3/Y>>3で8px単位に切り捨てた側のBGセルでしかない - 見た目の
-; セルは常にAND 0F8hした値以下(=進行方向の後ろ側)にしか描かれないため、
-; そのまま生のETANK_BULLET_X/Yで8x8判定を組むと、見た目のセルより最大
-; 7px分だけ判定側が自機に近い側(セルの右端側)へはみ出し、画面上は
-; 重なって見えないのに命中する食い違いが起きていた。表示と完全に同じ
-; 8px境界(AND 0F8h)へ判定側の原点も揃えることで解消- 「BGは表示だけ、
-; コリジョンは別ロジック」を、判定側を表示と同じ量子化に合わせる形で
-; 実現している(表示のみに使うわけではなく、表示と一致させることで
-; 見た目と一致しない当たり判定を無くす)。
+; 実機フィードバック対応("表示は当たってない様に見えるが当たる" ->
+; ユーザー自身の再診断: "戦車の弾はコリジョンがセル間の移動はちゃんと
+; px単位で移動してるか?...ちゃんとドット単位でコリジョンも動いてる
+; なら表示のズレがあるってことだ...ETankの弾のコリジョンを縮めれば
+; 良いってことだな コリジョンは1pxでいいや"): ETANK_BULLET_X/Yは
+; 元々ドット単位(3px/frame)で連続移動しており、これ自体は表示側の
+; 8px量子化とは独立して常に正確。以前の修正(表示と同じAND 0F8hへ
+; 判定側も量子化)を撤回し、代わりに判定サイズそのものを1x1pxへ
+; 縮小 - 生の連続座標X(1点)は定義上、必ずその瞬間の表示セル
+; [floor(X/8)*8, +7]の内側に収まる(floor(X/8)*8<=X<=floor(X/8)*8+7)
+; ため、量子化の要否そのものが問題にならなくなる。
 CHECK_ETANK_BULLET_VS_TANK:
     LD A,(ETANK_BULLET_ACT)
     OR A
@@ -10464,18 +10523,14 @@ CHECK_ETANK_BULLET_VS_TANK:
     LD A,(TANK_X) : ADD A,TANK_COLLISION_X_OFFSET : LD B,A
     LD A,(TANK_Y_CUR) : ADD A,TANK_COLLISION_Y_OFFSET : LD C,A
     LD A,(ETANK_BULLET_X)
-    AND 0F8h
     LD D,A
-    ADD A,7
     CP B
     RET C
     LD A,B : ADD A,TANK_COLLISION_WIDTH-1
     CP D
     RET C
     LD A,(ETANK_BULLET_Y)
-    AND 0F8h
     LD D,A
-    ADD A,7
     CP C
     RET C
     LD A,C : ADD A,TANK_COLLISION_HEIGHT-1
@@ -11051,6 +11106,7 @@ UBM_RETURNING:
     ; entrance effect), so ENTER_BOSS_ATTACK_POSE's precondition (X/Y
     ; already clamped to spawn) holds without any extra write here.
     XOR A : LD (BOSS_MATERIALIZE_ACT),A
+    CALL SWITCH_BGM_TO_TRYZ   ; "ではTryZをボス曲に...マテリアライズ終了後に再生"
     JP ENTER_BOSS_ATTACK_POSE
 UBM_RETURN_STEP:
     LD (BOSS_X),A
@@ -11112,7 +11168,7 @@ S2_BOSS_SPAWN:
     XOR A : LD (THUNDER_ELIGIBLE),A   ; not eligible until the first pose ends - see UBAP_END
     XOR A : LD (BOSS_POSE_COUNT),A
     XOR A : LD (SBEAM_ACT),A
-    CALL SWITCH_BGM_TO_TRYZ   ; "ではTryZをボス曲に"
+    CALL MUTE_BGM             ; "マテリアライズに入る前にそれまでのBGMは停止"
     CALL TRIGGER_BOSS_MATERIALIZE
     JP UBA_DRAW
 ; "出現時の初期位置は今のままで...点滅しながら中央で実態化みたいな演出

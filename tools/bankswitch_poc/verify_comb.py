@@ -146,6 +146,22 @@ assert mem.flat[tsym["HTIMI_HOOK"]] == 0x00, \
 print("title's own BGM RAM copy (period table + ALONE_FIGHTER chB/chC) verified byte-correct, "
       "HTIMI_HOOK intentionally left unarmed (title BGM disabled)")
 
+# 実機フィードバック対応("ステージ1ボスもBGMをTryZに"): TitleはStage1の
+# ボス曲用にTryZのchB+chCも(ALONE_FIGHTERと同じ要領で)別アドレスへ
+# 一度だけコピーする。Stage1側の固定アドレス(src/CYBER SHMUP.asmの
+# BGM_TRYZ_CHB/CHC_BASE)と一致することを確認。
+_tryz = bgm_layout["BOSS_TRYZ"]
+_tryz_start = _tryz["bank_offset"]
+_tryz_chB = bgm_bank[_tryz_start:_tryz_start + _tryz["chB_len"]]
+_tryz_chC = bgm_bank[_tryz_start + _tryz["chB_len"]:_tryz_start + _tryz["chB_len"] + _tryz["chC_len"]]
+_tryz_chB_ram = gsym["BGM_TRYZ_CHB_BASE"]
+_tryz_chC_ram = gsym["BGM_TRYZ_CHC_BASE"]
+assert [mem.flat[_tryz_chB_ram + i] for i in range(len(_tryz_chB))] == list(_tryz_chB), \
+    "title's own BGM RAM copy: TryZ chB mismatch (Stage1 boss BGM)"
+assert [mem.flat[_tryz_chC_ram + i] for i in range(len(_tryz_chC))] == list(_tryz_chC), \
+    "title's own BGM RAM copy: TryZ chC mismatch (Stage1 boss BGM)"
+print("title's own BGM RAM copy of TryZ (Stage1 boss theme) verified byte-correct")
+
 cpu.sim_trig_a = True
 print("simulated PUSH START (sim_trig_a=True)")
 
