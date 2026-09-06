@@ -137,10 +137,14 @@ assert [mem.flat[_chB_ram + i] for i in range(len(_chB))] == list(_chB), \
     "title's own BGM RAM copy: ALONE_FIGHTER chB mismatch"
 assert [mem.flat[_chC_ram + i] for i in range(len(_chC))] == list(_chC), \
     "title's own BGM RAM copy: ALONE_FIGHTER chC mismatch"
-assert mem.flat[tsym["HTIMI_HOOK"]] == 0xC3 and \
-    (mem.flat[tsym["HTIMI_HOOK"] + 1] | (mem.flat[tsym["HTIMI_HOOK"] + 2] << 8)) == tsym["BGM_TICK"], \
-    "title's own INIT_BGM did not arm HTIMI_HOOK -> its own BGM_TICK"
-print("title's own BGM RAM copy (period table + ALONE_FIGHTER chB/chC) verified byte-correct, HTIMI_HOOK armed")
+# ユーザー指示("タイトルBGMも停止 まともになるまでCombのみで"):
+# RAMコピー自体はStage1用に維持するが、title自身のHTIMI_HOOK設置は
+# 意図的にスキップするよう変更済み(タイトル画面自身は無音)。よって
+# HTIMI_HOOKはtitleのINIT_BGM通過時点で一切書き換わっていないはず。
+assert mem.flat[tsym["HTIMI_HOOK"]] == 0x00, \
+    "title's own INIT_BGM should NOT arm HTIMI_HOOK anymore (title BGM intentionally disabled)"
+print("title's own BGM RAM copy (period table + ALONE_FIGHTER chB/chC) verified byte-correct, "
+      "HTIMI_HOOK intentionally left unarmed (title BGM disabled)")
 
 cpu.sim_trig_a = True
 print("simulated PUSH START (sim_trig_a=True)")

@@ -274,10 +274,16 @@ INIT_BGM:
     LD A,7 : OUT (PSG_ADDR),A
     LD A,0B1h : OUT (PSG_DATA),A  ; tone B/C enable, tone A + noise B/C disable, portA=in/portB=out
 
-    LD A,0C3h
-    LD (HTIMI_HOOK),A
-    LD HL,BGM_TICK
-    LD (HTIMI_HOOK+1),HL
+    ; ユーザー指示("タイトルBGMも停止 まともになるまでCombのみで"):
+    ; Stage1側の音楽再生(RAM上のALONE_FIGHTER周期テーブル+曲データ)は
+    ; 上のLDIRで既にコピー済みのため無変更(Stage1のCALL INIT_BGMが
+    ; 起動時にそのRAMを読むだけ、というStage1側の既存設計を維持)。ここで
+    ; 意図的にスキップしているのはHTIMI_HOOKの設置(=このファイル自身の
+    ; BGM_TICKをH.TIMI経由で毎VBlank起動する部分)だけ - これによりタイトル
+    ; 画面自身は音楽を全く再生しない(HTIMI_HOOKは実機BIOSのデフォルトの
+    ; ままRET、このファイルは一度も書き換えない)。BGM_TICK自身のコードは
+    ; 削除せず残す(将来再度有効化する可能性に備え、title_test.pyの既存
+    ; テストも引き続きBGM_TICKを直接CALLして検証可能)。
     RET
 
 BGM_TICK:

@@ -157,9 +157,16 @@ _chC_bytes = bank_image[_song_start + _af_layout["chB_len"]:
 check("BGM_B_BASE/BGM_C_BASE match bgm_bank_gen's ALONE_FIGHTER layout",
       (BGM_B_BASE, BGM_C_BASE) == (ALONE_FIGHTER["CHB_RAM_BASE"], ALONE_FIGHTER["CHC_RAM_BASE"]))
 
-check("INIT_BGM wrote a JP opcode (0C3h) into HTIMI_HOOK", cpu.mem[HTIMI_HOOK] == 0xC3)
-hook_target = cpu.mem[HTIMI_HOOK + 1] | (cpu.mem[HTIMI_HOOK + 2] << 8)
-check(f"INIT_BGM's JP target ({hex(hook_target)}) is BGM_TICK ({hex(BGM_TICK)})", hook_target == BGM_TICK)
+# ユーザー指示("タイトルBGMも停止 まともになるまでCombのみで"):
+# INIT_BGMはRAMコピー(周期テーブル+ALONE_FIGHTER曲データ、Stage1が
+# 起動後にそのまま読む)はこれまで通り行うが、HTIMI_HOOKの設置(=この
+# ファイル自身のBGM_TICKをH.TIMI経由で駆動する部分)は意図的にスキップ
+# するよう変更済み - タイトル画面自身は音楽を再生しない。よってHTIMI_
+# HOOKは一切書き換えられないはず(z80emu.pyのfresh_cpu()は全RAM0初期化
+# のため、触られていなければ0x00のまま)。
+check("INIT_BGM does NOT install HTIMI_HOOK (title screen itself stays silent, "
+      "per user instruction to stop title BGM until things stabilize)",
+      cpu.mem[HTIMI_HOOK] == 0x00)
 check("INIT_BGM left BGM_B_PTR/BGM_C_PTR pointing at BGM_B_BASE/BGM_C_BASE",
       (cpu.mem[BGM_B_PTR] | (cpu.mem[BGM_B_PTR + 1] << 8), cpu.mem[BGM_C_PTR] | (cpu.mem[BGM_C_PTR + 1] << 8)) ==
       (BGM_B_BASE, BGM_C_BASE))

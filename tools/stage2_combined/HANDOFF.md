@@ -9555,3 +9555,39 @@ Titleの3ファイル全ての`BGM_ENV_SHAPE`定数のみを08h→09hへ変更(E
   への回帰を検討する。
 - SEショット優先の修正後の聞こえ方(バリアヒット・POD_HIT・POD_FIRE
   いずれも)も引き続き実機フィードバック待ち。
+
+## Round42 タイトルBGM停止+送付スコープ縮小(2026-09-06、完了済み)
+
+- ユーザー指示: "あとタイトルのみのROMはもういらない タイトルBGMも停止
+  Stage2も当面不要 まともになるまでCombのみで"。
+- **タイトルBGM停止**: `tools/title_screen/title_test.asm`の`INIT_BGM`
+  から、H.TIMIフック設置(`LD A,0C3h:LD(HTIMI_HOOK),A:LD HL,BGM_TICK:
+  LD(HTIMI_HOOK+1),HL`)の4行を削除。Stage1が起動後に読むRAMコピー
+  (周期テーブル+ALONE_FIGHTER曲データ)自体は変更なし - Titleは
+  引き続きこのコピーを行うが、自分自身では二度と音楽を再生しなく
+  なった(HTIMI_HOOKは実機BIOSのデフォルトのまま、Titleは一度も
+  書き換えない)。`BGM_TICK`ルーチン自体は削除せず残置(将来の再有効化
+  に備え、`title_test.py`から直接CALLして単体検証を継続できるように
+  するため)。
+- `title_test.py`の該当アサーションを更新: 「INIT_BGMがHTIMI_HOOKに
+  JPを書き込む」検証を「INIT_BGMはHTIMI_HOOKに一切触れない(0x00の
+  まま)」検証へ反転。`tools/bankswitch_poc/verify_comb.py`も同様に
+  更新(titleのHTIMI_HOOKチェックを「意図的に未設置のまま」の検証へ
+  変更、Stage1/Stage2側の「自分自身のBGM_TICKへ再設置する」検証は
+  無変更 - Stage1起動後は引き続き同じ曲がStage1自身のBGM_TICK経由で
+  再生される)。
+- **送付スコープの縮小**: BGM周り(SEショット優先・HWエンベロープ)が
+  まだ安定しない現状を踏まえ、以後「まともになった」とユーザーから
+  明示されるまで、Title単体ROM・Stage2単体ROMはビルドはしてもよいが
+  **送付はしない**方針に変更(CLAUDE.md「ビルドコマンド」節に記載済み)。
+  送付するROMはComb ROMのみ。
+- `title_test.py` 41 passed(42→41、HTIMI_HOOKアサーション1件を
+  反転したのみで純増減なし)、`tools/bankswitch_poc/verify_comb.py`
+  全チェックPASS、全回帰`run_all.py` **1398 passed/0 failed**
+  (無変化、このファイルはtitle/Combに影響されない)。Comb ROMのみ
+  再ビルド・検証・送付(Title単体ROM・Stage2単体ROMは今回よりビルドは
+  したが送付しない)。
+- **保留**: 「まともになる」の判断基準はユーザーの実機フィードバック
+  待ち(SEショット優先・BGMエンベロープが安定して聞こえるようになった
+  時点で、Title/Stage2単体ROMの送付再開・タイトルBGMの再有効化を
+  検討する)。
