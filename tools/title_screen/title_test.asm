@@ -239,19 +239,28 @@ BGM_C_TIMER EQU 0C805h
 BGM_B_REST  EQU 0C806h
 BGM_C_REST  EQU 0C807h
 
-; 実機フィードバック対応(デューティ比ゲートは"50%が断続音になる"問題で
-; 撤去、AY-3-8910本来のHWエンベロープへ置き換え - 詳細・共有ジェネレータ
-; の制約・chB駆動/chC追従という非対称設計の理由はcombined_test.asmの
-; 同名定数の長いコメント参照)。
-; 実機フィードバック対応その2("HWエンベロープも期待した音になってない
-; テストプログラムと全く違ったサウンド なので一番無難な1番に変更 それで
-; ダメならソフトウェアにする"): #5(8h)から#1(9h、一度だけ減衰して0で
-; 停止)へ変更(3ファイルで統一、注意点はcombined_test.asmの同名定数の
-; コメント参照)。
-BGM_ENV_SHAPE     EQU 09h   ; #1: CONT=1 ATT=0 ALT=0 HOLD=1(一度だけ減衰して0で停止)
-BGM_ENV_PERIOD_LO EQU 88
-BGM_ENV_PERIOD_HI EQU 2     ; EP=600 - 未調整の初期値
-BGM_VOL_ENV       EQU 010h  ; R8-10のbit4=1: 固定音量の代わりに共有エンベロープを使う
+; 実機フィードバック対応その3("BGMが1chしかなってないと言うか 恐らく
+; エンベロープの影響で発音できてないな HWエンベロープはコントロール
+; 不能と判断 ソフトに切り替える...試聴ツールで決める これなら
+; デューティ比にも対応できるからな"): 完全にソフトウェア側でエンベロープ
+; を実現する方式に切り替え(詳細な設計理由・番兵エントリの扱いは
+; combined_test.asmの同名定数の長いコメント参照)。試聴ツール(PSG BGM
+; Bench)でユーザーが選定: **パート1(chB)=BELL形状+デューティ比50%、
+; パート2(chC)=LINEAR形状+デューティOFF**。
+BGM_ENV_LAST_INDEX EQU 15
+BGM_B_DUTY_MASK    EQU 1
+BGM_B_ENV_LEVEL  EQU 0C808h
+BGM_B_ENV_IDX    EQU 0C809h
+BGM_B_ENV_CD     EQU 0C80Ah
+BGM_B_DUTY_PHASE EQU 0C80Bh
+BGM_C_ENV_LEVEL  EQU 0C80Ch
+BGM_C_ENV_IDX    EQU 0C80Dh
+BGM_C_ENV_CD     EQU 0C80Eh
+
+BGM_ENV_BELL_TABLE:
+    DB 15,3,14,4,13,5,12,6,11,6,10,6,9,7,8,9,7,9,6,11,5,13,4,16,3,22,2,33,1,71,0,0
+BGM_ENV_LINEAR_TABLE:
+    DB 15,2,14,3,13,2,12,3,11,2,10,3,9,3,8,3,7,2,6,3,5,3,4,2,3,3,2,2,1,3,0,0
 
 INIT_BGM:
     LD A,2                       ; standalone bgm-dataバンク(Combでは6へパッチ)
@@ -266,10 +275,17 @@ INIT_BGM:
     XOR A
     LD (BGM_B_TIMER),A
     LD (BGM_B_REST),A
+    LD (BGM_B_ENV_LEVEL),A
+    LD (BGM_B_ENV_IDX),A
+    LD (BGM_B_ENV_CD),A
+    LD (BGM_B_DUTY_PHASE),A
     LD HL,BGM_C_BASE
     LD (BGM_C_PTR),HL
     LD (BGM_C_TIMER),A
     LD (BGM_C_REST),A
+    LD (BGM_C_ENV_LEVEL),A
+    LD (BGM_C_ENV_IDX),A
+    LD (BGM_C_ENV_CD),A
 
     LD A,7 : OUT (PSG_ADDR),A
     LD A,0B1h : OUT (PSG_DATA),A  ; tone B/C enable, tone A + noise B/C disable, portA=in/portB=out
@@ -299,16 +315,16 @@ BGM_TICK:
     POP AF
     RET
 
-; chB=共有エンベロープジェネレータの駆動側。継続tickはPSGへ一切
-; 書き込まず即RET(リトリガー厳禁 - combined_test.asmの長いコメント
-; 参照)。
+; chB=BELL形状+デューティ50%。継続tickも毎回テーブルを1段進めてR9へ
+; 書く(HWエンベロープと違い共有ジェネレータの制約が無いため、休符
+; 以外は常にPSGへ書いてよい)。
 BGMT_UPDATE_B:
     LD A,(BGM_B_TIMER)
     OR A
     JR Z,BGMT_UB_NEWROW
     DEC A
     LD (BGM_B_TIMER),A
-    RET
+    JR BGMT_UB_ENV_STEP
 BGMT_UB_NEWROW:
     LD HL,(BGM_B_PTR)
     LD A,(HL)
@@ -339,31 +355,69 @@ BGMT_UB_GOT:
     LD A,B : OUT (PSG_DATA),A
     LD A,3 : OUT (PSG_ADDR),A
     LD A,C : OUT (PSG_DATA),A
-    LD A,11 : OUT (PSG_ADDR),A
-    LD A,BGM_ENV_PERIOD_LO : OUT (PSG_DATA),A
-    LD A,12 : OUT (PSG_ADDR),A
-    LD A,BGM_ENV_PERIOD_HI : OUT (PSG_DATA),A
-    LD A,13 : OUT (PSG_ADDR),A
-    LD A,BGM_ENV_SHAPE : OUT (PSG_DATA),A
-    LD A,9 : OUT (PSG_ADDR),A
-    LD A,BGM_VOL_ENV : OUT (PSG_DATA),A
-    RET
+    LD HL,BGM_ENV_BELL_TABLE
+    LD A,(HL) : LD (BGM_B_ENV_LEVEL),A
+    INC HL
+    LD A,(HL) : DEC A : LD (BGM_B_ENV_CD),A
+    XOR A : LD (BGM_B_ENV_IDX),A
+    LD A,BGM_B_DUTY_MASK : LD (BGM_B_DUTY_PHASE),A
+    JR BGMT_UB_ENV_WRITE
 BGMT_UB_SETREST:
     LD A,1
     LD (BGM_B_REST),A
     LD A,9 : OUT (PSG_ADDR),A
     XOR A : OUT (PSG_DATA),A
     RET
+BGMT_UB_ENV_STEP:
+    LD A,(BGM_B_REST)
+    OR A
+    RET NZ
+    LD A,(BGM_B_ENV_CD)
+    OR A
+    JR Z,BGMT_UB_ENV_ADVANCE
+    DEC A
+    LD (BGM_B_ENV_CD),A
+    JR BGMT_UB_ENV_WRITE
+BGMT_UB_ENV_ADVANCE:
+    LD A,(BGM_B_ENV_IDX)
+    CP BGM_ENV_LAST_INDEX
+    JR Z,BGMT_UB_ENV_WRITE
+    INC A
+    LD (BGM_B_ENV_IDX),A
+    LD L,A : LD H,0
+    ADD HL,HL
+    LD DE,BGM_ENV_BELL_TABLE
+    ADD HL,DE
+    LD A,(HL) : LD (BGM_B_ENV_LEVEL),A
+    INC HL
+    LD A,(HL)
+    OR A
+    JR Z,BGMT_UB_ENV_WRITE
+    DEC A
+    LD (BGM_B_ENV_CD),A
+BGMT_UB_ENV_WRITE:
+    LD A,(BGM_B_DUTY_PHASE)
+    INC A
+    LD (BGM_B_DUTY_PHASE),A
+    AND BGM_B_DUTY_MASK
+    LD B,0
+    JR NZ,BGMT_UB_ENV_OUT
+    LD A,(BGM_B_ENV_LEVEL)
+    LD B,A
+BGMT_UB_ENV_OUT:
+    LD A,9 : OUT (PSG_ADDR),A
+    LD A,B : OUT (PSG_DATA),A
+    RET
 
-; chC=トーン周期は自分で持つが、エンベロープ本体(R11-13)は書かない -
-; chBが最後にリトリガーした共有エンベロープへR10のbit4だけ立てて追従。
+; chC=LINEAR形状+デューティOFF。構造はchBと同型だが、デューティ
+; ゲートを持たず毎tick常にエンベロープ値をそのままR10へ書く。
 BGMT_UPDATE_C:
     LD A,(BGM_C_TIMER)
     OR A
     JR Z,BGMT_UC_NEWROW
     DEC A
     LD (BGM_C_TIMER),A
-    RET
+    JR BGMT_UC_ENV_STEP
 BGMT_UC_NEWROW:
     LD HL,(BGM_C_PTR)
     LD A,(HL)
@@ -393,14 +447,48 @@ BGMT_UC_GOT:
     LD A,B : OUT (PSG_DATA),A
     LD A,5 : OUT (PSG_ADDR),A
     LD A,C : OUT (PSG_DATA),A
-    LD A,10 : OUT (PSG_ADDR),A
-    LD A,BGM_VOL_ENV : OUT (PSG_DATA),A
-    RET
+    LD HL,BGM_ENV_LINEAR_TABLE
+    LD A,(HL) : LD (BGM_C_ENV_LEVEL),A
+    INC HL
+    LD A,(HL) : DEC A : LD (BGM_C_ENV_CD),A
+    XOR A : LD (BGM_C_ENV_IDX),A
+    JR BGMT_UC_ENV_WRITE
 BGMT_UC_SETREST:
     LD A,1
     LD (BGM_C_REST),A
     LD A,10 : OUT (PSG_ADDR),A
     XOR A : OUT (PSG_DATA),A
+    RET
+BGMT_UC_ENV_STEP:
+    LD A,(BGM_C_REST)
+    OR A
+    RET NZ
+    LD A,(BGM_C_ENV_CD)
+    OR A
+    JR Z,BGMT_UC_ENV_ADVANCE
+    DEC A
+    LD (BGM_C_ENV_CD),A
+    JR BGMT_UC_ENV_WRITE
+BGMT_UC_ENV_ADVANCE:
+    LD A,(BGM_C_ENV_IDX)
+    CP BGM_ENV_LAST_INDEX
+    JR Z,BGMT_UC_ENV_WRITE
+    INC A
+    LD (BGM_C_ENV_IDX),A
+    LD L,A : LD H,0
+    ADD HL,HL
+    LD DE,BGM_ENV_LINEAR_TABLE
+    ADD HL,DE
+    LD A,(HL) : LD (BGM_C_ENV_LEVEL),A
+    INC HL
+    LD A,(HL)
+    OR A
+    JR Z,BGMT_UC_ENV_WRITE
+    DEC A
+    LD (BGM_C_ENV_CD),A
+BGMT_UC_ENV_WRITE:
+    LD A,10 : OUT (PSG_ADDR),A
+    LD A,(BGM_C_ENV_LEVEL) : OUT (PSG_DATA),A
     RET
 
 ; ===== boss art tables, generated by title_gen.py - see that file =====

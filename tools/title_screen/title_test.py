@@ -215,12 +215,57 @@ check("BGM_TICK new-row (chB): BGM_B_TIMER reloaded from the row's own duration 
 exp_lo, exp_hi = periods[TEST_NOTE]
 check(f"BGM_TICK new-row (chB): tone period (R2/R3) matches the period table's own note{TEST_NOTE}",
       (cpu2.psg_regs.get(2), cpu2.psg_regs.get(3)) == (exp_lo, exp_hi))
-check("BGM_TICK new-row (chB): envelope period (R11/R12) retriggered to BGM_ENV_PERIOD_LO/HI",
-      (cpu2.psg_regs.get(11), cpu2.psg_regs.get(12)) == (sym["BGM_ENV_PERIOD_LO"], sym["BGM_ENV_PERIOD_HI"]))
-check("BGM_TICK new-row (chB): envelope shape (R13) retriggered to BGM_ENV_SHAPE (#1, decay-hold0)",
-      cpu2.psg_regs.get(13) == sym["BGM_ENV_SHAPE"])
-check("BGM_TICK new-row (chB): volume mode (R9) selects the shared envelope (BGM_VOL_ENV)",
-      cpu2.psg_regs.get(9) == sym["BGM_VOL_ENV"])
+BGM_ENV_LAST_INDEX = sym["BGM_ENV_LAST_INDEX"]
+BGM_B_DUTY_MASK = sym["BGM_B_DUTY_MASK"]
+BGM_B_ENV_LEVEL = sym["BGM_B_ENV_LEVEL"]
+BGM_B_ENV_IDX = sym["BGM_B_ENV_IDX"]
+BGM_B_ENV_CD = sym["BGM_B_ENV_CD"]
+BGM_B_DUTY_PHASE = sym["BGM_B_DUTY_PHASE"]
+BGM_C_ENV_LEVEL = sym["BGM_C_ENV_LEVEL"]
+BGM_C_ENV_IDX = sym["BGM_C_ENV_IDX"]
+BGM_C_ENV_CD = sym["BGM_C_ENV_CD"]
+BGM_ENV_BELL_TABLE = sym["BGM_ENV_BELL_TABLE"]
+BGM_ENV_LINEAR_TABLE = sym["BGM_ENV_LINEAR_TABLE"]
+
+
+def read_env_table(cpu, addr, n_entries=BGM_ENV_LAST_INDEX + 1):
+    return [(cpu.mem[addr + i * 2], cpu.mem[addr + i * 2 + 1]) for i in range(n_entries)]
+
+
+def sim_envelope_sequence(table, duty_mask, n_ticks):
+    """tools/stage2_combined/tests/bgm_test.pyの同名関数と同一ロジック
+    (ASM側BGMT_U[BC]_ENV_STEP/ADVANCE/WRITEの独立Pythonリファレンス)。"""
+    idx = 0
+    level, dur0 = table[0]
+    cd = dur0 - 1
+    phase = duty_mask
+    out = []
+    for tick in range(n_ticks):
+        if tick > 0:
+            if cd > 0:
+                cd -= 1
+            elif idx < len(table) - 1:
+                idx += 1
+                level, dur = table[idx]
+                if dur != 0:
+                    cd = dur - 1
+        if duty_mask:
+            phase = (phase + 1) & 0xFF
+            audible = (phase & duty_mask) == 0
+        else:
+            audible = True
+        out.append(level if audible else 0)
+    return out
+
+
+bell_table = read_env_table(cpu2, BGM_ENV_BELL_TABLE)
+check("BGM_TICK new-row (chB): envelope retriggered to BELL table index0 (level/countdown/index)",
+      (cpu2.mem[BGM_B_ENV_LEVEL], cpu2.mem[BGM_B_ENV_IDX], cpu2.mem[BGM_B_ENV_CD]) ==
+      (bell_table[0][0], 0, bell_table[0][1] - 1))
+exp_write_b = sim_envelope_sequence(bell_table, BGM_B_DUTY_MASK, 1)[0]
+check("BGM_TICK new-row (chB): R9 written this very tick already reflects the duty-gated "
+      f"envelope level (expected {exp_write_b})",
+      cpu2.psg_regs.get(9) == exp_write_b)
 
 # round40 実機フィードバック対応: off-by-oneの直接回帰ガード
 # (tools/stage2_combined/tests/bgm_test.pyの同じ検証の長いコメント
@@ -281,62 +326,57 @@ check(f"round40 off-by-one regression: {len(expected_b)} real ALONE_FIGHTER chB 
       f"(over {N_TICKS} real BGM_TICK calls) match the real bgm_bank.bin row data EXACTLY",
       observed_b == expected_b)
 
-# ---- HWエンベロープ移行(実機フィードバック"本来デューティ比50%は基本
-# の矩形波で音は変わらないはずだが断続音になってる...一旦デューティ比
-# 実装はおいておいて HWエンベロープにする"、tools/stage2_combined/
-# tests/bgm_test.pyの同じ検証の長いコメント参照): ソフトウェア
-# デューティゲートは撤去済み。行の頭(NEWROW)以外は一切PSGへ書き込まない
-# (エンベロープのリトリガー回避)ため、1行分を通してBGM_TICKし続けても
-# PSG書き込みが起きるのは最初の1tickだけであることを直接確認する。
+# ---- 実機フィードバック対応その3("BGMが1chしかなってない...HWエンベ
+# ロープはコントロール不能と判断 ソフトに切り替える"、tools/
+# stage2_combined/tests/bgm_test.pyの同じ検証の長いコメント参照):
+# HWエンベロープ時代とは真逆に、ソフトウェアエンベロープは休符でない限り
+# 毎tick必ずR9/R10へ書く(ソフトウェアが音量そのものを完全に管理する
+# ため、HWエンベロープ特有の「毎フレーム書くとアタックが繰り返される」
+# 罠がそもそも存在しない)。多tick分の実出力列を、ASM本体と全く同じ
+# ロジックを独立実装したPythonリファレンス(sim_envelope_sequence)と
+# 直接突き合わせ、BELL+デューティ50%(chB)・LINEAR単体(chC)それぞれが
+# 番兵(テーブル終端の0値保持)まで到達する様子を含めて検証する。
 
 
-def hold_through_row(cpu, ptr_sym, timer_sym, note, duration, n_ticks):
-    row_addr = 0xD000
-    cpu.mem[timer_sym] = 0
-    cpu.mem[ptr_sym] = row_addr & 0xFF
-    cpu.mem[ptr_sym + 1] = (row_addr >> 8) & 0xFF
-    cpu.mem[row_addr] = note
-    cpu.mem[row_addr + 1] = duration
-    writes = []
+def observed_channel_sequence(cpu, vol_reg, n_ticks):
+    seq = []
     for _ in range(n_ticks):
-        before = dict(cpu.psg_regs)
         call_routine(cpu, "BGM_TICK")
-        if cpu.psg_regs != before:
-            writes.append(dict(cpu.psg_regs))
-    return writes
+        seq.append(cpu.psg_regs.get(vol_reg))
+    return seq
 
+
+N_ENV_TICKS = 120
+row_addr = 0xD000
 
 cpu4, _ = fresh_cpu()
 run_to_wait(cpu4)
-cpu4.mem[BGM_C_TIMER] = 99  # hold chC out of the way while probing chB
-writes_b = hold_through_row(cpu4, BGM_B_PTR, BGM_B_TIMER, TEST_NOTE, 16, 16)
-check("chB: a single row's worth of BGM_TICK calls produces PSG writes on ONLY the very first "
-      f"tick (the NEWROW itself) - no periodic re-gating (observed {len(writes_b)} write-tick(s))",
-      len(writes_b) == 1)
+cpu4.mem[BGM_B_TIMER] = 0
+cpu4.mem[BGM_B_PTR] = row_addr & 0xFF
+cpu4.mem[BGM_B_PTR + 1] = (row_addr >> 8) & 0xFF
+cpu4.mem[row_addr] = TEST_NOTE
+cpu4.mem[row_addr + 1] = 200
+cpu4.mem[BGM_C_TIMER] = 250  # hold chC out of the way while probing chB in isolation
+observed_b_env = observed_channel_sequence(cpu4, 9, N_ENV_TICKS)
+expected_b_env = sim_envelope_sequence(bell_table, BGM_B_DUTY_MASK, N_ENV_TICKS)
+check(f"chB over {N_ENV_TICKS} ticks: R9 sequence (BELL + 50% duty) matches the independent "
+      "Python reference exactly, including reaching the terminal (silent) entry",
+      observed_b_env == expected_b_env)
 
 cpu5, _ = fresh_cpu()
 run_to_wait(cpu5)
-cpu5.mem[BGM_B_TIMER] = 99  # hold chB out of the way while probing chC
-writes_c = hold_through_row(cpu5, BGM_C_PTR, BGM_C_TIMER, TEST_NOTE, 16, 16)
-check("chC: a single row's worth of BGM_TICK calls produces PSG writes on ONLY the very first "
-      f"tick (the NEWROW itself) - no periodic re-gating (observed {len(writes_c)} write-tick(s))",
-      len(writes_c) == 1)
-
-# chC never retriggers the shared envelope (R11/R12/R13) - only chB may.
-cpu6, _ = fresh_cpu()
-run_to_wait(cpu6)
-cpu6.mem[BGM_B_TIMER] = 99
-row_addr = 0xD000
-cpu6.mem[BGM_C_TIMER] = 0
-cpu6.mem[BGM_C_PTR] = row_addr & 0xFF
-cpu6.mem[BGM_C_PTR + 1] = (row_addr >> 8) & 0xFF
-cpu6.mem[row_addr] = TEST_NOTE
-cpu6.mem[row_addr + 1] = 20
-for poison_reg in (11, 12, 13):
-    cpu6.psg_regs.pop(poison_reg, None)
-call_routine(cpu6, "BGM_TICK")
-check("chC NEVER retriggers the shared envelope (R11/R12/R13 untouched)",
-      11 not in cpu6.psg_regs and 12 not in cpu6.psg_regs and 13 not in cpu6.psg_regs)
+linear_table = read_env_table(cpu5, BGM_ENV_LINEAR_TABLE)
+cpu5.mem[BGM_C_TIMER] = 0
+cpu5.mem[BGM_C_PTR] = row_addr & 0xFF
+cpu5.mem[BGM_C_PTR + 1] = (row_addr >> 8) & 0xFF
+cpu5.mem[row_addr] = TEST_NOTE
+cpu5.mem[row_addr + 1] = 200
+cpu5.mem[BGM_B_TIMER] = 250  # hold chB out of the way while probing chC in isolation
+observed_c_env = observed_channel_sequence(cpu5, 10, N_ENV_TICKS)
+expected_c_env = sim_envelope_sequence(linear_table, 0, N_ENV_TICKS)
+check(f"chC over {N_ENV_TICKS} ticks: R10 sequence (LINEAR, no duty) matches the independent "
+      "Python reference exactly, including reaching the terminal (silent) entry",
+      observed_c_env == expected_c_env)
 
 # ---- button-press trampoline ----
 cpu, mem = fresh_cpu()

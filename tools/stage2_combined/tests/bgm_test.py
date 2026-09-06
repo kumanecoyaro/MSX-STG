@@ -52,10 +52,61 @@ PSG_ADDR = sym["PSG_ADDR"]
 PSG_DATA = sym["PSG_DATA"]
 BGM_B_REST = sym["BGM_B_REST"]
 BGM_C_REST = sym["BGM_C_REST"]
-BGM_ENV_SHAPE = sym["BGM_ENV_SHAPE"]
-BGM_ENV_PERIOD_LO = sym["BGM_ENV_PERIOD_LO"]
-BGM_ENV_PERIOD_HI = sym["BGM_ENV_PERIOD_HI"]
-BGM_VOL_ENV = sym["BGM_VOL_ENV"]
+BGM_ENV_LAST_INDEX = sym["BGM_ENV_LAST_INDEX"]
+BGM_B_DUTY_MASK = sym["BGM_B_DUTY_MASK"]
+BGM_B_ENV_LEVEL = sym["BGM_B_ENV_LEVEL"]
+BGM_B_ENV_IDX = sym["BGM_B_ENV_IDX"]
+BGM_B_ENV_CD = sym["BGM_B_ENV_CD"]
+BGM_B_DUTY_PHASE = sym["BGM_B_DUTY_PHASE"]
+BGM_C_ENV_LEVEL = sym["BGM_C_ENV_LEVEL"]
+BGM_C_ENV_IDX = sym["BGM_C_ENV_IDX"]
+BGM_C_ENV_CD = sym["BGM_C_ENV_CD"]
+BGM_ENV_BELL_TABLE = sym["BGM_ENV_BELL_TABLE"]
+BGM_ENV_LINEAR_TABLE = sym["BGM_ENV_LINEAR_TABLE"]
+
+
+def read_env_table(cpu, addr, n_entries=BGM_ENV_LAST_INDEX + 1):
+    """(level,duration)の16エントリを実アセンブル結果から直接読む -
+    ハードコードした期待値ではなく、DB定義そのものを単一の真実として
+    テストする(値を変更した場合もテスト側の書き換えが不要)。"""
+    return [(cpu.mem[addr + i * 2], cpu.mem[addr + i * 2 + 1]) for i in range(n_entries)]
+
+
+def sim_envelope_sequence(table, duty_mask, n_ticks):
+    """ASM側のBGMT_U[BC]_ENV_STEP/ADVANCE/WRITEと同じロジックをPythonで
+    再現した独立リファレンス実装。table[0]はNEWROWそのtickに、以降は
+    ENV_STEP(継続tick)のロジックに従う。duty_mask=0ならデューティ
+    ゲート無し(chC)、非0なら音符の頭でphase=duty_maskから開始し、
+    WRITE段で毎tick(INC A: AND mask)を評価する(chB)。"""
+    idx = 0
+    level, dur0 = table[0]
+    cd = dur0 - 1
+    phase = duty_mask
+    out = []
+    for tick in range(n_ticks):
+        if tick > 0:
+            if cd > 0:
+                cd -= 1
+            elif idx < len(table) - 1:
+                idx += 1
+                level, dur = table[idx]
+                if dur != 0:
+                    cd = dur - 1
+        if duty_mask:
+            phase = (phase + 1) & 0xFF
+            audible = (phase & duty_mask) == 0
+        else:
+            audible = True
+        out.append(level if audible else 0)
+    return out
+
+
+def observed_channel_sequence(cpu, vol_reg, n_ticks):
+    seq = []
+    for _ in range(n_ticks):
+        call_routine(cpu, "BGM_TICK")
+        seq.append(cpu.psg_regs.get(vol_reg))
+    return seq
 
 DEFEAT = bg.song_constants("DEFEAT", data_base=bg.STAGE2_DATA_BASE)
 bank_image, layout = bg.build_bank()
@@ -154,12 +205,12 @@ check("independent channels: chC's new-row write (R4/R5) used chC's own note, un
 
 
 # ---- new-row path (chB): TIMER==0 loads the next row, writes the
-# looked-up period (R2/R3), (re)triggers the shared envelope generator
-# (R11/R12/R13 - chB is the "drive" channel, see the long design comment
-# above INIT_BGM in combined_test.asm) and selects envelope-driven volume
-# mode (R9=BGM_VOL_ENV), advances the pointer by 2 bytes, reloads TIMER
-# from the row's own duration byte ----
+# looked-up period (R2/R3), retriggers the software BELL envelope from
+# table index0, and applies the 50% duty overlay - advances the pointer
+# by 2 bytes, reloads TIMER from the row's own duration byte ----
 cpu = fresh_cpu()
+bell_table = read_env_table(cpu, BGM_ENV_BELL_TABLE)
+linear_table = read_env_table(cpu, BGM_ENV_LINEAR_TABLE)
 poke_channel(cpu, "BGM_B_PTR", "BGM_B_TIMER", ROW_ADDR_B, TEST_NOTE_B, TEST_DURATION_B, timer=0)
 poke_channel(cpu, "BGM_C_PTR", "BGM_C_TIMER", ROW_ADDR_C, BGM_NOTE_REST, 9, timer=1)  # hold chC out of the way
 call_routine(cpu, "BGM_TICK")
@@ -172,54 +223,75 @@ exp_b_lo, exp_b_hi = periods[TEST_NOTE_B]
 check(f"new-row (chB): tone period (R2/R3) matches the period table's own note{TEST_NOTE_B} "
       f"({exp_b_lo},{exp_b_hi})",
       (cpu.psg_regs.get(2), cpu.psg_regs.get(3)) == (exp_b_lo, exp_b_hi))
-check("new-row (chB): envelope period (R11/R12) retriggered to BGM_ENV_PERIOD_LO/HI",
-      (cpu.psg_regs.get(11), cpu.psg_regs.get(12)) == (BGM_ENV_PERIOD_LO, BGM_ENV_PERIOD_HI))
-check("new-row (chB): envelope shape (R13) retriggered to BGM_ENV_SHAPE (#1, decay-hold0)",
-      cpu.psg_regs.get(13) == BGM_ENV_SHAPE)
-check("new-row (chB): volume mode (R9) selects the shared envelope (BGM_VOL_ENV)",
-      cpu.psg_regs.get(9) == BGM_VOL_ENV)
+check("new-row (chB): envelope retriggered to BELL table index0 (level/countdown/index)",
+      (cpu.mem[BGM_B_ENV_LEVEL], cpu.mem[BGM_B_ENV_IDX], cpu.mem[BGM_B_ENV_CD]) ==
+      (bell_table[0][0], 0, bell_table[0][1] - 1))
+check("new-row (chB): duty phase reset to BGM_B_DUTY_MASK then incremented once by this tick's "
+      "own WRITE stage (BGM_B_DUTY_MASK+1)",
+      cpu.mem[BGM_B_DUTY_PHASE] == (BGM_B_DUTY_MASK + 1) & 0xFF)
+exp_write_b = sim_envelope_sequence(bell_table, BGM_B_DUTY_MASK, 1)[0]
+check(f"new-row (chB): R9 written this very tick already reflects the duty-gated envelope "
+      f"level (expected {exp_write_b})",
+      cpu.psg_regs.get(9) == exp_write_b)
 
 
-# ---- new-row path (chC): the single shared AY-3-8910 envelope generator
-# means only ONE channel may ever retrigger it (writing R13 resets its
-# internal counter) - chC is the "follow" channel: it writes its own tone
-# period (R4/R5) and selects envelope-driven volume (R10=BGM_VOL_ENV), but
-# must NEVER touch R11/R12/R13 itself (that would fight chB for control of
-# the one shared curve). See the design comment above INIT_BGM.
+# ---- new-row path (chC): writes its own tone period (R4/R5) and
+# retriggers the software LINEAR envelope from table index0, with NO
+# duty overlay (always audible at the raw envelope level). Fully
+# independent from chB - no shared hardware resource to coordinate. ----
 cpu = fresh_cpu()
 poke_channel(cpu, "BGM_B_PTR", "BGM_B_TIMER", ROW_ADDR_B, BGM_NOTE_REST, 9, timer=1)  # hold chB out of the way
 poke_channel(cpu, "BGM_C_PTR", "BGM_C_TIMER", ROW_ADDR_C, TEST_NOTE_C, TEST_DURATION_C, timer=0)
-for poison_reg in (11, 12, 13):
-    cpu.psg_regs.pop(poison_reg, None)
 call_routine(cpu, "BGM_TICK")
 exp_c_lo, exp_c_hi = periods[TEST_NOTE_C]
 check(f"new-row (chC): tone period (R4/R5) matches the period table's own note{TEST_NOTE_C} "
       f"({exp_c_lo},{exp_c_hi})",
       (cpu.psg_regs.get(4), cpu.psg_regs.get(5)) == (exp_c_lo, exp_c_hi))
-check("new-row (chC): volume mode (R10) selects the shared envelope (BGM_VOL_ENV)",
-      cpu.psg_regs.get(10) == BGM_VOL_ENV)
-check("new-row (chC): NEVER retriggers the shared envelope (R11/R12/R13 untouched - chC only "
-      "'follows' whatever curve chB is currently driving)",
-      11 not in cpu.psg_regs and 12 not in cpu.psg_regs and 13 not in cpu.psg_regs)
+check("new-row (chC): envelope retriggered to LINEAR table index0 (level/countdown/index)",
+      (cpu.mem[BGM_C_ENV_LEVEL], cpu.mem[BGM_C_ENV_IDX], cpu.mem[BGM_C_ENV_CD]) ==
+      (linear_table[0][0], 0, linear_table[0][1] - 1))
+check("new-row (chC): R10 is written unconditionally with the raw envelope level (no duty overlay)",
+      cpu.psg_regs.get(10) == linear_table[0][0])
 
 
-# ---- ユーザー設計上の警告への直接的な回帰ガード ("毎フレームPSGに書き
-# 込むとHWがアタックだけ繰り返される") - 継続tick(TIMER!=0、"row-hold")
-# の間は、チャンネルB/Cどちらも文字通り1バイトもPSGへ書き込んではいけない
-# (R9/R10のON/OFFすら含め一切書かない - 実チップのエンベロープジェネレー
-# タは完全に自律進行するので、休符やトーン変更が無い限り触れる必要が
-# そもそも無い)。psg_regsのスナップショットを丸ごと比較し、キーの追加・
-# 値の変化のどちらも検出する。
+# ---- 実機フィードバック対応その3("BGMが1chしかなってない...HWエンベ
+# ロープはコントロール不能と判断 ソフトに切り替える"): HWエンベロープ
+# 時代とは真逆に、ソフトウェアエンベロープは"継続tickでもPSGへ一切
+# 書き込まない"わけではなく、**休符でない限り毎tick必ずR9/R10へ書く**
+# のが正しい設計(ソフトウェアが音量そのものを完全に管理するため、
+# HWエンベロープ特有の「毎フレーム書くとアタックが繰り返される」罠が
+# そもそも存在しない)。多tick分の実出力列を、ASM本体と全く同じロジックを
+# 独立実装したPythonリファレンス(sim_envelope_sequence)と直接突き合わせ、
+# BELL+デューティ50%(chB)・LINEAR単体(chC)それぞれが番兵(テーブル終端の
+# 0値保持)まで到達する様子を含めて検証する。
+cpu = fresh_cpu()
+poke_channel(cpu, "BGM_B_PTR", "BGM_B_TIMER", ROW_ADDR_B, TEST_NOTE_B, 200, timer=0)
+cpu.mem[BGM_C_TIMER] = 250  # hold chC out of the way while probing chB in isolation
+N_ENV_TICKS = 120
+observed_b_env = observed_channel_sequence(cpu, 9, N_ENV_TICKS)
+expected_b_env = sim_envelope_sequence(bell_table, BGM_B_DUTY_MASK, N_ENV_TICKS)
+check(f"chB over {N_ENV_TICKS} ticks: R9 sequence (BELL + 50% duty) matches the independent "
+      "Python reference exactly, including reaching the terminal (silent) entry",
+      observed_b_env == expected_b_env)
+
+cpu = fresh_cpu()
+poke_channel(cpu, "BGM_C_PTR", "BGM_C_TIMER", ROW_ADDR_C, TEST_NOTE_C, 200, timer=0)
+cpu.mem[BGM_B_TIMER] = 250  # hold chB out of the way while probing chC in isolation
+observed_c_env = observed_channel_sequence(cpu, 10, N_ENV_TICKS)
+expected_c_env = sim_envelope_sequence(linear_table, 0, N_ENV_TICKS)
+check(f"chC over {N_ENV_TICKS} ticks: R10 sequence (LINEAR, no duty) matches the independent "
+      "Python reference exactly, including reaching the terminal (silent) entry",
+      observed_c_env == expected_c_env)
+
+# ---- row-hold: BGM_B_TIMER/BGM_C_TIMER still decrement normally even
+# while the envelope is independently stepping every tick (the two
+# mechanisms - note-row duration and envelope-table position - are
+# unrelated counters that both advance every tick). ----
 cpu = fresh_cpu()
 poke_channel(cpu, "BGM_B_PTR", "BGM_B_TIMER", ROW_ADDR_B, TEST_NOTE_B, TEST_DURATION_B, timer=7)
 poke_channel(cpu, "BGM_C_PTR", "BGM_C_TIMER", ROW_ADDR_C, TEST_NOTE_C, TEST_DURATION_C, timer=9)
-before = dict(cpu.psg_regs)
 call_routine(cpu, "BGM_TICK")
-check("row-hold (both channels): BGM_TICK makes ZERO PSG register writes while both timers are "
-      "non-zero (no envelope retrigger risk) - psg_regs snapshot completely unchanged",
-      cpu.psg_regs == before)
-check("row-hold (both channels): BGM_B_TIMER/BGM_C_TIMER still decrement normally even though "
-      "no PSG write happened",
+check("row-hold (both channels): BGM_B_TIMER/BGM_C_TIMER decrement normally on a continuing tick",
       cpu.mem[BGM_B_TIMER] == 6 and cpu.mem[BGM_C_TIMER] == 8)
 
 
@@ -343,44 +415,6 @@ for note, dur in decode_rows(chC_bytes):
 check(f"round40 off-by-one regression: {len(expected_c)} real DEFEAT chC note-change ticks match "
       "the real bgm_bank.bin row data EXACTLY",
       observed_c == expected_c)
-
-
-# ---- HWエンベロープ移行(実機フィードバック"本来デューティ比50%は基本
-# の矩形波で音は変わらないはずだが断続音になってる...一旦デューティ比
-# 実装はおいておいて HWエンベロープにする"): ソフトウェアデューティ
-# ゲート(毎tick位相カウンタをAND判定してR9/R10のON/OFFを切り替える方式)
-# は完全に撤去済み。R9/R10はNEWROWで一度BGM_VOL_ENVを書いたら、その行の
-# 残りtick(row-hold中)はPSGに一切触れない(上の「row-hold: ZERO PSG
-# writes」テストが既にこれを保証している)ため、明滅は起きない -
-# ここでは「音符1行分を通しでBGM_TICKし続けても、R9/R10というキー自体が
-# psg_regsへ一度も新規に触れられない(=常に最初のNEWROWで書いた値の
-# ままで、実チップのエンベロープジェネレータが自律的に音量を変化させる
-# のに任せている)」ことを直接確認する。
-def hold_through_row(cpu, ptr_sym, timer_sym, note, duration, vol_reg, n_ticks):
-    row_addr = 0xD400
-    poke_channel(cpu, ptr_sym, timer_sym, row_addr, note, duration, timer=0)
-    writes = []
-    for _ in range(n_ticks):
-        before = dict(cpu.psg_regs)
-        call_routine(cpu, "BGM_TICK")
-        if cpu.psg_regs != before:
-            writes.append(dict(cpu.psg_regs))
-    return writes
-
-
-cpu = fresh_cpu()
-cpu.mem[BGM_C_TIMER] = 99  # hold chC out of the way while probing chB
-writes_b = hold_through_row(cpu, "BGM_B_PTR", "BGM_B_TIMER", TEST_NOTE_B, 16, 9, 16)
-check("chB: a single row's worth of BGM_TICK calls produces PSG writes on ONLY the very first "
-      f"tick (the NEWROW itself) - no periodic re-gating (observed {len(writes_b)} write-tick(s))",
-      len(writes_b) == 1)
-
-cpu = fresh_cpu()
-cpu.mem[BGM_B_TIMER] = 99  # hold chB out of the way while probing chC
-writes_c = hold_through_row(cpu, "BGM_C_PTR", "BGM_C_TIMER", TEST_NOTE_C, 16, 10, 16)
-check("chC: a single row's worth of BGM_TICK calls produces PSG writes on ONLY the very first "
-      f"tick (the NEWROW itself) - no periodic re-gating (observed {len(writes_c)} write-tick(s))",
-      len(writes_c) == 1)
 
 
 # ---- R7 mixer read-modify-write: only bits1-2 (tone B/C enable) ever

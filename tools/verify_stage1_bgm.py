@@ -88,10 +88,55 @@ PSG_ADDR = sym["PSG_ADDR"]
 PSG_DATA = sym["PSG_DATA"]
 BGM_B_REST = sym["BGM_B_REST"]
 BGM_C_REST = sym["BGM_C_REST"]
-BGM_ENV_SHAPE = sym["BGM_ENV_SHAPE"]
-BGM_ENV_PERIOD_LO = sym["BGM_ENV_PERIOD_LO"]
-BGM_ENV_PERIOD_HI = sym["BGM_ENV_PERIOD_HI"]
-BGM_VOL_ENV = sym["BGM_VOL_ENV"]
+BGM_ENV_LAST_INDEX = sym["BGM_ENV_LAST_INDEX"]
+BGM_B_DUTY_MASK = sym["BGM_B_DUTY_MASK"]
+BGM_B_ENV_LEVEL = sym["BGM_B_ENV_LEVEL"]
+BGM_B_ENV_IDX = sym["BGM_B_ENV_IDX"]
+BGM_B_ENV_CD = sym["BGM_B_ENV_CD"]
+BGM_B_DUTY_PHASE = sym["BGM_B_DUTY_PHASE"]
+BGM_C_ENV_LEVEL = sym["BGM_C_ENV_LEVEL"]
+BGM_C_ENV_IDX = sym["BGM_C_ENV_IDX"]
+BGM_C_ENV_CD = sym["BGM_C_ENV_CD"]
+BGM_ENV_BELL_TABLE = sym["BGM_ENV_BELL_TABLE"]
+BGM_ENV_LINEAR_TABLE = sym["BGM_ENV_LINEAR_TABLE"]
+
+
+def read_env_table(z, addr, n_entries=BGM_ENV_LAST_INDEX + 1):
+    return [(z.rd(addr + i * 2), z.rd(addr + i * 2 + 1)) for i in range(n_entries)]
+
+
+def sim_envelope_sequence(table, duty_mask, n_ticks):
+    """tools/stage2_combined/tests/bgm_test.pyの同名関数と同一ロジック
+    (ASM側BGMT_U[BC]_ENV_STEP/ADVANCE/WRITEの独立Pythonリファレンス)。"""
+    idx = 0
+    level, dur0 = table[0]
+    cd = dur0 - 1
+    phase = duty_mask
+    out = []
+    for tick in range(n_ticks):
+        if tick > 0:
+            if cd > 0:
+                cd -= 1
+            elif idx < len(table) - 1:
+                idx += 1
+                level, dur = table[idx]
+                if dur != 0:
+                    cd = dur - 1
+        if duty_mask:
+            phase = (phase + 1) & 0xFF
+            audible = (phase & duty_mask) == 0
+        else:
+            audible = True
+        out.append(level if audible else 0)
+    return out
+
+
+def observed_channel_sequence(z, vol_reg, n_ticks):
+    seq = []
+    for _ in range(n_ticks):
+        call_routine(z, BGM_TICK)
+        seq.append(z.psg_regs.get(vol_reg))
+    return seq
 
 REPO = os.path.join(os.path.dirname(__file__), "..")
 sys.path.insert(0, os.path.join(REPO, "tools", "bgm_data"))
@@ -160,6 +205,8 @@ def poke_period_table(z):
 # ---- normal playback: new-row load on each channel ----
 z = fresh()
 poke_period_table(z)
+bell_table = read_env_table(z, BGM_ENV_BELL_TABLE)
+linear_table = read_env_table(z, BGM_ENV_LINEAR_TABLE)
 poke_channel(z, BGM_B_PTR, BGM_B_TIMER, ROW_B, TEST_NOTE_B, TEST_DUR_B, timer=0)
 poke_channel(z, BGM_C_PTR, BGM_C_TIMER, ROW_C, TEST_NOTE_C, TEST_DUR_C, timer=0)
 call_routine(z, BGM_TICK)
@@ -169,31 +216,22 @@ check("chB loads a fresh row (BGM_B_TIMER reloaded to duration-1, round40 "
 exp_lo, exp_hi = periods[TEST_NOTE_B]
 check("chB tone period (R2/R3) matches the period table",
       (z.psg_regs.get(2), z.psg_regs.get(3)) == (exp_lo, exp_hi))
-check("chB envelope period (R11/R12) retriggered to BGM_ENV_PERIOD_LO/HI",
-      (z.psg_regs.get(11), z.psg_regs.get(12)) == (BGM_ENV_PERIOD_LO, BGM_ENV_PERIOD_HI))
-check("chB envelope shape (R13) retriggered to BGM_ENV_SHAPE (#1, decay-hold0)",
-      z.psg_regs.get(13) == BGM_ENV_SHAPE)
-check("chB volume mode (R9) selects the shared envelope (BGM_VOL_ENV)", z.psg_regs.get(9) == BGM_VOL_ENV)
+check("chB envelope retriggered to BELL table index0 (level/countdown/index)",
+      (z.rd(BGM_B_ENV_LEVEL), z.rd(BGM_B_ENV_IDX), z.rd(BGM_B_ENV_CD)) ==
+      (bell_table[0][0], 0, bell_table[0][1] - 1))
+exp_write_b = sim_envelope_sequence(bell_table, BGM_B_DUTY_MASK, 1)[0]
+check(f"chB: R9 written this very tick already reflects the duty-gated envelope level (expected {exp_write_b})",
+      z.psg_regs.get(9) == exp_write_b)
 exp_lo_c, exp_hi_c = periods[TEST_NOTE_C]
 check("chC loads a fresh row (BGM_C_TIMER reloaded to duration-1, round40 off-by-one fix)",
       z.rd(BGM_C_TIMER) == TEST_DUR_C - 1)
 check("chC tone period (R4/R5) matches the period table",
       (z.psg_regs.get(4), z.psg_regs.get(5)) == (exp_lo_c, exp_hi_c))
-check("chC volume mode (R10) selects the shared envelope (BGM_VOL_ENV)", z.psg_regs.get(10) == BGM_VOL_ENV)
-
-# isolate chC's own new-row load (chB held out of the way) to confirm chC
-# NEVER retriggers the single shared envelope generator - only chB may
-# (writing R13 resets its internal counter; see combined_test.asm's own
-# design comment above INIT_BGM for the full "chB drives / chC follows"
-# rationale, identical here since this file's BGMT_UPDATE_B/C are the
-# same design).
-z = fresh()
-poke_period_table(z)
-poke_channel(z, BGM_B_PTR, BGM_B_TIMER, ROW_B, TEST_NOTE_B, TEST_DUR_B, timer=99)  # hold chB out of the way
-poke_channel(z, BGM_C_PTR, BGM_C_TIMER, ROW_C, TEST_NOTE_C, TEST_DUR_C, timer=0)
-call_routine(z, BGM_TICK)
-check("chC NEVER retriggers the shared envelope (R11/R12/R13 untouched by chC's own new-row load)",
-      11 not in z.psg_regs and 12 not in z.psg_regs and 13 not in z.psg_regs)
+check("chC envelope retriggered to LINEAR table index0 (level/countdown/index)",
+      (z.rd(BGM_C_ENV_LEVEL), z.rd(BGM_C_ENV_IDX), z.rd(BGM_C_ENV_CD)) ==
+      (linear_table[0][0], 0, linear_table[0][1] - 1))
+check("chC: R10 is written unconditionally with the raw envelope level (no duty overlay)",
+      z.psg_regs.get(10) == linear_table[0][0])
 
 # ---- 実機フィードバック対応("そもそもchB、Cは空けてあってSE類は
 # chAのみで鳴らすはず"): 全SEがチャンネルAへ統合され、チャンネルB/Cは
@@ -213,10 +251,11 @@ z.wr(SND_TONE_TIMER, 15)
 z.wr(SND_BARRIER_DUTY_TIMER, 8)
 call_routine(z, BGM_TICK)
 exp_lo_b, exp_hi_b = periods[TEST_NOTE_B]
+exp_write_b2 = sim_envelope_sequence(bell_table, BGM_B_DUTY_MASK, 1)[0]
 check("SE専用タイマー(SND_TIMER/SND_TONE_TIMER/SND_BARRIER_DUTY_TIMER)が全て非0でも "
       "BGM chBは無条件でR2/R3/R9へ書く(もう譲らない)",
       (z.psg_regs.get(2), z.psg_regs.get(3), z.psg_regs.get(9)) ==
-      (exp_lo_b, exp_hi_b, BGM_VOL_ENV))
+      (exp_lo_b, exp_hi_b, exp_write_b2))
 check("...BGM_B_TIMERも通常通り進む(SFXに凍結されない)", z.rd(BGM_B_TIMER) == TEST_DUR_B - 1)
 
 z = fresh()
@@ -229,7 +268,7 @@ call_routine(z, BGM_TICK)
 exp_lo_c2, exp_hi_c2 = periods[TEST_NOTE_C]
 check("SE専用タイマーが全て非0でもBGM chCは無条件でR4/R5/R10へ書く(もう譲らない)",
       (z.psg_regs.get(4), z.psg_regs.get(5), z.psg_regs.get(10)) ==
-      (exp_lo_c2, exp_hi_c2, BGM_VOL_ENV))
+      (exp_lo_c2, exp_hi_c2, linear_table[0][0]))
 
 # ---- rest notes / loop marker (same shape as Stage2/Title's own driver) ----
 z = fresh()
@@ -323,37 +362,32 @@ check(f"round40 off-by-one regression: {len(expected_b)} real ALONE_FIGHTER chB 
       observed_b == expected_b)
 
 
-# ---- HWエンベロープ移行(実機フィードバック"本来デューティ比50%は
-# 基本の矩形波で音は変わらないはずだが断続音になってる...一旦デューティ
-# 比実装はおいておいて HWエンベロープにする")----
-# Stage1もStage2/Titleと全く同じ設計(chB駆動/chC追従、行の頭以外は
-# PSGへ一切書き込まない)。チャンネルB/CはもうSEと無関係(SEは全て
-# チャンネルAへ移設済み)なので、単純にBGM単独で確認するだけでよい。
-def hold_through_row(z, ptr_addr, timer_addr, note, duration, n_ticks):
-    row_addr = 0xD400
-    poke_channel(z, ptr_addr, timer_addr, row_addr, note, duration, timer=0)
-    writes = []
-    for _ in range(n_ticks):
-        before = dict(z.psg_regs)
-        call_routine(z, BGM_TICK)
-        if z.psg_regs != before:
-            writes.append(dict(z.psg_regs))
-    return writes
-
+# ---- 実機フィードバック対応その3("BGMが1chしかなってない...HWエンベ
+# ロープはコントロール不能と判断 ソフトに切り替える")----
+# Stage1もStage2/Titleと全く同じ設計: 休符でない限り毎tick必ずR9/R10へ
+# ソフトウェア計算済みの音量を書く(HWエンベロープ特有の「毎フレーム
+# 書くとアタックが繰り返される」罠が存在しないため、リトリガー回避の
+# ための「行の頭以外は書かない」制約自体がもう無い)。チャンネルB/Cは
+# もうSEと無関係(SEは全てチャンネルAへ移設済み)なので、単純にBGM単独で
+# 多tick分の実出力列をPythonリファレンスと突き合わせるだけでよい。
+z = fresh()
+poke_channel(z, BGM_B_PTR, BGM_B_TIMER, 0xD400, TEST_NOTE_B, 200, timer=0)
+z.wr(BGM_C_TIMER, 250)  # hold chC out of the way while probing chB in isolation
+N_ENV_TICKS = 120
+observed_b_env = observed_channel_sequence(z, 9, N_ENV_TICKS)
+expected_b_env = sim_envelope_sequence(bell_table, BGM_B_DUTY_MASK, N_ENV_TICKS)
+check(f"chB over {N_ENV_TICKS} ticks: R9 sequence (BELL + 50% duty) matches the independent "
+      "Python reference exactly, including reaching the terminal (silent) entry",
+      observed_b_env == expected_b_env)
 
 z = fresh()
-z.wr(BGM_C_TIMER, 99)  # hold chC out of the way while probing chB
-writes_b = hold_through_row(z, BGM_B_PTR, BGM_B_TIMER, TEST_NOTE_B, 16, 16)
-check("chB: a single row's worth of BGM_TICK calls produces PSG writes on ONLY the very first "
-      f"tick (the NEWROW itself) - no periodic re-gating (observed {len(writes_b)} write-tick(s))",
-      len(writes_b) == 1)
-
-z = fresh()
-z.wr(BGM_B_TIMER, 99)  # hold chB out of the way while probing chC
-writes_c = hold_through_row(z, BGM_C_PTR, BGM_C_TIMER, TEST_NOTE_C, 16, 16)
-check("chC: a single row's worth of BGM_TICK calls produces PSG writes on ONLY the very first "
-      f"tick (the NEWROW itself) - no periodic re-gating (observed {len(writes_c)} write-tick(s))",
-      len(writes_c) == 1)
+poke_channel(z, BGM_C_PTR, BGM_C_TIMER, 0xD400, TEST_NOTE_C, 200, timer=0)
+z.wr(BGM_B_TIMER, 250)  # hold chB out of the way while probing chC in isolation
+observed_c_env = observed_channel_sequence(z, 10, N_ENV_TICKS)
+expected_c_env = sim_envelope_sequence(linear_table, 0, N_ENV_TICKS)
+check(f"chC over {N_ENV_TICKS} ticks: R10 sequence (LINEAR, no duty) matches the independent "
+      "Python reference exactly, including reaching the terminal (silent) entry",
+      observed_c_env == expected_c_env)
 
 
 # ---- DI/EI protection: every PSG_ADDR/PSG_DATA OUT pair this round

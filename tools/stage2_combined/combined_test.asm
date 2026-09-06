@@ -6204,51 +6204,58 @@ BGM_C_TIMER EQU 0CA05h
 BGM_B_REST  EQU 0CA06h    ; 0=音符が鳴っている行/非0=休符行
 BGM_C_REST  EQU 0CA07h
 
-; 実機フィードバック対応("デューティ比の実装がおかしい 本来デューティ比
-; 50%は通常トーンと同じでピーッという継続音だが今の実装は断続音になって
-; る...一旦デューティ比実装はおいておいて HWエンベロープにする"):
-; ソフトウェアデューティゲート(BGM_DUTY_*、毎tick位相カウンタをAND判定
-; してR9/R10のON/OFFを切り替える方式)は撤去し、AY-3-8910本来のハード
-; ウェア機能であるエンベロープジェネレータ(R11-13、R8-10のbit4)に
-; 置き換える。試聴ツールでの選定は#5(R13=8h、CONT=1/ATT=0/ALT=0/
-; HOLD=0 - 減衰を繰り返すのこぎり波、"HWエンベロープ5番で")。
+; 実機フィードバック対応その3("BGMが1chしかなってないと言うか 恐らく
+; エンベロープの影響で発音できてないな HWエンベロープはコントロール
+; 不能と判断 ソフトに切り替える...試聴ツールで決める これなら
+; デューティ比にも対応できるからな"): AY-3-8910本来のHWエンベロープ
+; ジェネレータ(R11-13)はチップ全体で1個しか無い共有リソースのため、
+; chB/chCが独立した形・速度を同時に持てなかった(実機で「1chしか
+; 鳴っていない」結果になった実体、前段の"chB駆動/chC追従"非対称設計は
+; この制約への苦肉の策だった)。ここからは完全にソフトウェア側
+; (BGM_TICK自身が毎tickテーブルを読んでR9/R10へ書く)でエンベロープを
+; 実現する方式に切り替え、チャンネルごとに完全に独立した形・速度を
+; 持てるようにした。試聴ツール(PSG BGM Bench)でユーザーが選定:
+; **パート1(chB)=BELL形状+デューティ比50%、パート2(chC)=LINEAR形状+
+; デューティOFF**。
 ;
-; 重要な制約: AY-3-8910のエンベロープジェネレータはチップ全体で1個
-; しかない共有リソース(R11-13はチャンネル別ではない) - R8-10のbit4は
-; 各チャンネルが「その1個の共有エンベロープに従うか、固定音量にするか」
-; を選ぶだけで、chB/chCが同時に別々の形・速度のエンベロープを鳴らす
-; ことはハード上不可能。両チャンネルとも音符の変わり目の頻度が違う曲を
-; 鳴らす以上、両方が独立にR13を書き換えると互いのエンベロープを毎回
-; リトリガーし合って収拾がつかなくなる。そこで**パート1(chB)だけが
-; 音符の頭(NEWROW)でR11-13を書いてエンベロープを駆動し、パート2(chC)
-; はR10のbit4だけ立てて同じ共有エンベロープに"追従"するだけ(自分では
-; R11-13を一切書かない)**という非対称設計にした - chCは自分自身の
-; アタック位置ではなく、chBが最後にリトリガーした位置からのエンベロープ
-; 値をそのまま共有する(想定内の近似、実機で聞いた結果次第でソフトウェア
-; デューティ比方式へ戻す想定 - "ダメならソフトウェアに変える")。
+; 各形状は「音符の頭(NEWROW)からの経過tick数」だけを見るテーブル
+; ルックアップとして実装(音符自身の長さには依存しない、ピアノや
+; 弦楽器が実際の物理時間で減衰するのと同じ考え方) - BGM_ENV_*_TABLE
+; は(level,duration)の2byteエントリを16個並べたRLE(run-length
+; encoding)形式。この行の再生自体が1tick分の消費になるという
+; round40以来の慣習(BGMT_UB/UC_NEWROWのoff-by-one修正と同じ考え方)
+; を各エントリの読み込みでも踏襲し、durationフィールドは「このtick
+; 自体を含めた合計保持tick数」として格納・DEC Aしてから保持カウンタへ
+; 積む。最終(16番目)のエントリは(level=0,duration=0)の番兵で、
+; インデックスがここに達したら以後は永久にこの値を保持し続ける
+; (durationを一切減算しない特別扱い)。
 ;
-; 設計上の注意(ユーザー指摘"毎フレームPSGに書き込むとHWがアタックだけ
-; 繰り返される"): R13(シェイプ)への書き込みは内部カウンタを0へ戻す
-; (リトリガーする)ため、音符の頭(NEWROW)でしか書いてはいけない。
-; 継続tick(BGM_B/C_TIMER != 0)ではPSGに一切書き込まず即RETする - 実
-; チップのエンベロープジェネレータは完全に自律進行するため、これで
-; 休符やトーン変更が無い限り鳴りっぱなしのまま自然に変化し続ける。
-;
-; 実機フィードバック対応その2("HWエンベロープも期待した音になってない
-; テストプログラムと全く違ったサウンド なので一番無難な1番に変更 それで
-; ダメならソフトウェアにする"): #5(繰り返し減衰のこぎり波、8h)から
-; #1(9h、CONT=1/ATT=0/ALT=0/HOLD=1=一度だけ減衰して0で停止)へ変更。
-; **注意点(ユーザーには提示済み・指示通り一旦このまま)**: #1は
-; 「1回減衰しきったら音符の残りtickは無音のまま」という性質のため、
-; EP(周期)を変えない限り約86ms(下記コメント)より長い音符は本来の
-; 長さより早く無音になる - リズムを刻み続ける#5と違い、音符の長さと
-; エンベロープ形状が根本的にトレードオフの関係にある。それでも
-; 望んだ音にならない場合は"ソフトウェアに変える"という撤退条件が
-; 既に与えられている。
-BGM_ENV_SHAPE     EQU 09h   ; #1: CONT=1 ATT=0 ALT=0 HOLD=1(一度だけ減衰して0で停止)
-BGM_ENV_PERIOD_LO EQU 88
-BGM_ENV_PERIOD_HI EQU 2     ; EP=600、16段の1ラウンド≒86ms(≒11.6Hz) - 未調整の初期値
-BGM_VOL_ENV       EQU 010h  ; R8-10のbit4=1: 固定音量の代わりに共有エンベロープを使う
+; HWエンベロープと違い、共有ジェネレータの制約自体が存在しないため
+; 「chB駆動/chC追従」のような非対称設計は不要 - 両チャンネルとも
+; 全く同じ構造の独立したロジックを持つ(唯一の違いはchBだけデューティ
+; ゲートを重ねる点)。この設計はまた「毎フレームPSGに書き込むとHWが
+; アタックだけ繰り返される」というHWエンベロープ特有の罠からも
+; 無縁 - 音量そのものをソフトウェアが完全に管理しているため、毎tick
+; 遠慮なくR9/R10へ書いてよい。
+BGM_ENV_LAST_INDEX EQU 15     ; テーブルは0-15の16エントリ、15番目が番兵(hold forever)
+BGM_B_DUTY_MASK    EQU 1      ; パート1: デューティ比50%(1/2、位相の下位1bitでON/OFF)
+BGM_B_ENV_LEVEL  EQU 0CA08h
+BGM_B_ENV_IDX    EQU 0CA09h
+BGM_B_ENV_CD     EQU 0CA0Ah
+BGM_B_DUTY_PHASE EQU 0CA0Bh
+BGM_C_ENV_LEVEL  EQU 0CA0Ch
+BGM_C_ENV_IDX    EQU 0CA0Dh
+BGM_C_ENV_CD     EQU 0CA0Eh
+
+; BELL: 半減期45tickの指数減衰(15*0.5^(t/45)を4bit丸め、以後この
+; カーブが完全に0へ収束するまでをRLE圧縮)。試聴ツール(#3 BELL)と
+; 同一パラメータ。
+BGM_ENV_BELL_TABLE:
+    DB 15,3,14,4,13,5,12,6,11,6,10,6,9,7,8,9,7,9,6,11,5,13,4,16,3,22,2,33,1,71,0,0
+; LINEAR: 40tickで直線的に0まで減衰(15*max(0,1-t/40))。試聴ツール
+; (#5 LINEAR)と同一パラメータ。
+BGM_ENV_LINEAR_TABLE:
+    DB 15,2,14,3,13,2,12,3,11,2,10,3,9,3,8,3,7,2,6,3,5,3,4,2,3,3,2,2,1,3,0,0
 
 INIT_BGM:
     ; 曲データRAMコピー。INIT_BGMはINIT終盤(checkpoint9直前)から呼ばれる
@@ -6269,10 +6276,17 @@ INIT_BGM:
     XOR A
     LD (BGM_B_TIMER),A
     LD (BGM_B_REST),A
+    LD (BGM_B_ENV_LEVEL),A
+    LD (BGM_B_ENV_IDX),A
+    LD (BGM_B_ENV_CD),A
+    LD (BGM_B_DUTY_PHASE),A
     LD HL,BGM_C_BASE
     LD (BGM_C_PTR),HL
     LD (BGM_C_TIMER),A
     LD (BGM_C_REST),A
+    LD (BGM_C_ENV_LEVEL),A
+    LD (BGM_C_ENV_IDX),A
+    LD (BGM_C_ENV_CD),A
 
     LD A,0C3h                     ; JP nn opcode
     LD (HTIMI_HOOK),A
@@ -6303,20 +6317,19 @@ BGM_TICK:
     POP AF
     RET
 
-; チャンネルB(R2/R3 tone、R9 volume、共有エンベロープジェネレータの
-; "駆動側")の1tick分の前進。タイマーが残っていればデクリメントする
-; だけでPSGには一切書き込まず即RET(エンベロープをリトリガーしない
-; ため、上記コメント参照)。0なら次の行を読んでトーン周期+エンベロープ
-; (R11-13)+音量モード(R9=envelope)を書く。LOOP_MARKに当たったら
-; BGM_B_BASEへ戻ってその行を読み直す。BGM_TICKから呼ばれる時点で
-; AF/BC/DE/HLは既に保存済みなので、自由に使える。
+; チャンネルB(R2/R3 tone、R9 volume、BELL形状+デューティ50%)の1tick
+; 分の前進。音符の頭(NEWROW)でテーブルをindex0からリトリガー、継続
+; tickは毎回テーブルを1段ずつ前進させてR9へ書く(HWエンベロープと違い
+; 共有ジェネレータの制約が無いため、休符以外は常にPSGへ書いてよい)。
+; LOOP_MARKに当たったらBGM_B_BASEへ戻ってその行を読み直す。BGM_TICKから
+; 呼ばれる時点でAF/BC/DE/HLは既に保存済みなので、自由に使える。
 BGMT_UPDATE_B:
     LD A,(BGM_B_TIMER)
     OR A
     JR Z,BGMT_UB_NEWROW
     DEC A
     LD (BGM_B_TIMER),A
-    RET
+    JR BGMT_UB_ENV_STEP
 BGMT_UB_NEWROW:
     LD HL,(BGM_B_PTR)
     LD A,(HL)
@@ -6348,35 +6361,73 @@ BGMT_UB_GOT:
     LD A,B : OUT (PSG_DATA),A
     LD A,3 : OUT (PSG_ADDR),A
     LD A,C : OUT (PSG_DATA),A
-    ; エンベロープは音符の頭でだけリトリガー(R13書き込みが内部カウンタを
-    ; 0へ戻す唯一のきっかけ)。chBがこの共有エンベロープの"駆動側"。
-    LD A,11 : OUT (PSG_ADDR),A
-    LD A,BGM_ENV_PERIOD_LO : OUT (PSG_DATA),A
-    LD A,12 : OUT (PSG_ADDR),A
-    LD A,BGM_ENV_PERIOD_HI : OUT (PSG_DATA),A
-    LD A,13 : OUT (PSG_ADDR),A
-    LD A,BGM_ENV_SHAPE : OUT (PSG_DATA),A
-    LD A,9 : OUT (PSG_ADDR),A
-    LD A,BGM_VOL_ENV : OUT (PSG_DATA),A
-    RET
+    ; エンベロープをテーブル先頭(index0)からリトリガー - この行の
+    ; エントリ自体が今tick分の再生になるため、durationはDEC Aしてから
+    ; カウントダウンへ積む(音符行のoff-by-one修正と同じ考え方)。
+    LD HL,BGM_ENV_BELL_TABLE
+    LD A,(HL) : LD (BGM_B_ENV_LEVEL),A
+    INC HL
+    LD A,(HL) : DEC A : LD (BGM_B_ENV_CD),A
+    XOR A : LD (BGM_B_ENV_IDX),A
+    LD A,BGM_B_DUTY_MASK : LD (BGM_B_DUTY_PHASE),A
+    JR BGMT_UB_ENV_WRITE
 BGMT_UB_SETREST:
     LD A,1
     LD (BGM_B_REST),A
     LD A,9 : OUT (PSG_ADDR),A
     XOR A : OUT (PSG_DATA),A
     RET
+BGMT_UB_ENV_STEP:
+    LD A,(BGM_B_REST)
+    OR A
+    RET NZ                          ; 休符中は何もしない(R9は既にSETRESTで0)
+    LD A,(BGM_B_ENV_CD)
+    OR A
+    JR Z,BGMT_UB_ENV_ADVANCE
+    DEC A
+    LD (BGM_B_ENV_CD),A
+    JR BGMT_UB_ENV_WRITE
+BGMT_UB_ENV_ADVANCE:
+    LD A,(BGM_B_ENV_IDX)
+    CP BGM_ENV_LAST_INDEX
+    JR Z,BGMT_UB_ENV_WRITE           ; 番兵に到達済み - 以後は永久にこの値を保持
+    INC A
+    LD (BGM_B_ENV_IDX),A
+    LD L,A : LD H,0
+    ADD HL,HL                        ; インデックス*2 = テーブルオフセット(2byte/エントリ)
+    LD DE,BGM_ENV_BELL_TABLE
+    ADD HL,DE
+    LD A,(HL) : LD (BGM_B_ENV_LEVEL),A
+    INC HL
+    LD A,(HL)
+    OR A
+    JR Z,BGMT_UB_ENV_WRITE            ; duration=0(番兵)- CDは0のまま(=永久保持)
+    DEC A
+    LD (BGM_B_ENV_CD),A
+BGMT_UB_ENV_WRITE:
+    LD A,(BGM_B_DUTY_PHASE)
+    INC A
+    LD (BGM_B_DUTY_PHASE),A
+    AND BGM_B_DUTY_MASK
+    LD B,0
+    JR NZ,BGMT_UB_ENV_OUT
+    LD A,(BGM_B_ENV_LEVEL)
+    LD B,A
+BGMT_UB_ENV_OUT:
+    LD A,9 : OUT (PSG_ADDR),A
+    LD A,B : OUT (PSG_DATA),A
+    RET
 
-; チャンネルC(R4/R5 tone、R10 volume)版 - トーン周期は自分で持つが、
-; エンベロープ本体(R11-13)は一切書かない - chBが最後にリトリガーした
-; 共有エンベロープへR10のbit4だけ立てて"追従"するだけ(上記の設計上の
-; 制約コメント参照)。
+; チャンネルC(R4/R5 tone、R10 volume、LINEAR形状+デューティOFF)版 -
+; 構造はchBと同型だが、デューティゲートを持たず毎tick常にエンベロープ
+; 値をそのままR10へ書く。
 BGMT_UPDATE_C:
     LD A,(BGM_C_TIMER)
     OR A
     JR Z,BGMT_UC_NEWROW
     DEC A
     LD (BGM_C_TIMER),A
-    RET
+    JR BGMT_UC_ENV_STEP
 BGMT_UC_NEWROW:
     LD HL,(BGM_C_PTR)
     LD A,(HL)
@@ -6404,14 +6455,48 @@ BGMT_UC_GOT:
     LD A,B : OUT (PSG_DATA),A
     LD A,5 : OUT (PSG_ADDR),A
     LD A,C : OUT (PSG_DATA),A
-    LD A,10 : OUT (PSG_ADDR),A
-    LD A,BGM_VOL_ENV : OUT (PSG_DATA),A
-    RET
+    LD HL,BGM_ENV_LINEAR_TABLE
+    LD A,(HL) : LD (BGM_C_ENV_LEVEL),A
+    INC HL
+    LD A,(HL) : DEC A : LD (BGM_C_ENV_CD),A
+    XOR A : LD (BGM_C_ENV_IDX),A
+    JR BGMT_UC_ENV_WRITE
 BGMT_UC_SETREST:
     LD A,1
     LD (BGM_C_REST),A
     LD A,10 : OUT (PSG_ADDR),A
     XOR A : OUT (PSG_DATA),A
+    RET
+BGMT_UC_ENV_STEP:
+    LD A,(BGM_C_REST)
+    OR A
+    RET NZ
+    LD A,(BGM_C_ENV_CD)
+    OR A
+    JR Z,BGMT_UC_ENV_ADVANCE
+    DEC A
+    LD (BGM_C_ENV_CD),A
+    JR BGMT_UC_ENV_WRITE
+BGMT_UC_ENV_ADVANCE:
+    LD A,(BGM_C_ENV_IDX)
+    CP BGM_ENV_LAST_INDEX
+    JR Z,BGMT_UC_ENV_WRITE
+    INC A
+    LD (BGM_C_ENV_IDX),A
+    LD L,A : LD H,0
+    ADD HL,HL
+    LD DE,BGM_ENV_LINEAR_TABLE
+    ADD HL,DE
+    LD A,(HL) : LD (BGM_C_ENV_LEVEL),A
+    INC HL
+    LD A,(HL)
+    OR A
+    JR Z,BGMT_UC_ENV_WRITE
+    DEC A
+    LD (BGM_C_ENV_CD),A
+BGMT_UC_ENV_WRITE:
+    LD A,10 : OUT (PSG_ADDR),A
+    LD A,(BGM_C_ENV_LEVEL) : OUT (PSG_DATA),A
     RET
 
 ; ---------- Stage2 spawn schedule (round34, "全てスケジュールに") ----------
