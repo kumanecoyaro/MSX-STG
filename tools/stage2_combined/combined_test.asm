@@ -10442,6 +10442,18 @@ UEBA_MOVE_OK:
 ; deactivate the bullet - it keeps flying through/past the tank, same
 ; "one hit per frame is enough, hazard survives" convention as CHECK_
 ; BOSS_BROKEN_BEAM_VS_TANK's own beams.
+; 実機フィードバック対応("表示は当たってない様に見えるが当たる"):
+; ETANK_BULLET_X/Yは連続ピクセル値(毎フレーム3pxずつ動く)だが、実際に
+; 画面に描画される位置はDRAW_ETANK_BULLET_CELL経由のHORMING_BG_CELL_
+; ADDRがX>>3/Y>>3で8px単位に切り捨てた側のBGセルでしかない - 見た目の
+; セルは常にAND 0F8hした値以下(=進行方向の後ろ側)にしか描かれないため、
+; そのまま生のETANK_BULLET_X/Yで8x8判定を組むと、見た目のセルより最大
+; 7px分だけ判定側が自機に近い側(セルの右端側)へはみ出し、画面上は
+; 重なって見えないのに命中する食い違いが起きていた。表示と完全に同じ
+; 8px境界(AND 0F8h)へ判定側の原点も揃えることで解消- 「BGは表示だけ、
+; コリジョンは別ロジック」を、判定側を表示と同じ量子化に合わせる形で
+; 実現している(表示のみに使うわけではなく、表示と一致させることで
+; 見た目と一致しない当たり判定を無くす)。
 CHECK_ETANK_BULLET_VS_TANK:
     LD A,(ETANK_BULLET_ACT)
     OR A
@@ -10452,6 +10464,7 @@ CHECK_ETANK_BULLET_VS_TANK:
     LD A,(TANK_X) : ADD A,TANK_COLLISION_X_OFFSET : LD B,A
     LD A,(TANK_Y_CUR) : ADD A,TANK_COLLISION_Y_OFFSET : LD C,A
     LD A,(ETANK_BULLET_X)
+    AND 0F8h
     LD D,A
     ADD A,7
     CP B
@@ -10460,6 +10473,7 @@ CHECK_ETANK_BULLET_VS_TANK:
     CP D
     RET C
     LD A,(ETANK_BULLET_Y)
+    AND 0F8h
     LD D,A
     ADD A,7
     CP C

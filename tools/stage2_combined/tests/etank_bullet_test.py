@@ -35,6 +35,8 @@ TANK_X = sym["TANK_X"]
 TANK_Y_CUR = sym["TANK_Y_CUR"]
 TANK_COLLISION_X_OFFSET = sym["TANK_COLLISION_X_OFFSET"]
 TANK_COLLISION_Y_OFFSET = sym["TANK_COLLISION_Y_OFFSET"]
+TANK_COLLISION_WIDTH = sym["TANK_COLLISION_WIDTH"]
+TANK_COLLISION_HEIGHT = sym["TANK_COLLISION_HEIGHT"]
 TANK_HAZARD_IFRAMES = sym["TANK_HAZARD_IFRAMES"]
 TANK_LIFE = sym["TANK_LIFE"]
 
@@ -177,6 +179,75 @@ for f in range(8000):
         ever_fired = True
         break
 check("real MAINLOOP play: EtankBullet actually fires before the boss spawns", ever_fired)
+
+
+# ---------- 実機フィードバック対応("表示は当たってない様に見えるが
+# 当たる"): CHECK_ETANK_BULLET_VS_TANK は生のETANK_BULLET_X/Yを
+# そのまま使わず、DRAW_ETANK_BULLET_CELL/HORMING_BG_CELL_ADDR が実際に
+# 描画するのと同じ8px境界(AND 0F8h)へ判定側の原点も揃えるよう修正
+# 済み。以下は「見た目のBGセルからは最大7px先(自機に近い側)まで判定が
+# はみ出す」という旧バグを直接再現し、修正後は発生しないことを検証する。
+def hit_registers(bullet_x, bullet_y, tank_x, tank_y):
+    cpu = fresh_cpu()
+    cpu.mem[ETANK_BULLET_ACT] = 1
+    cpu.mem[ETANK_BULLET_X] = bullet_x & 0xFF
+    cpu.mem[ETANK_BULLET_Y] = bullet_y & 0xFF
+    cpu.mem[TANK_X] = tank_x & 0xFF
+    cpu.mem[TANK_Y_CUR] = tank_y & 0xFF
+    cpu.mem[TANK_HAZARD_IFRAMES] = 0
+    life0 = cpu.mem[TANK_LIFE]
+    call_routine(cpu, "CHECK_ETANK_BULLET_VS_TANK")
+    return cpu.mem[TANK_LIFE] != life0
+
+# bullet_x=45 -> displayed BG cell starts at floor(45/8)*8=40 (covers
+# 40-47 on screen). Old code additionally reached out to 45-52 (the raw
+# value), so a tank positioned just past the VISIBLE cell's right edge
+# (at 48, i.e. immediately touching where the sprite visually ends)
+# still took a hit under the old raw-X box even though nothing overlapped
+# on screen - exactly "見た目は当たってない様に見えるが当たる".
+BULLET_X = 45
+DISPLAYED_CELL_START = BULLET_X & 0xF8  # 40
+TANK_Y_CUR_FIXED = 100
+BULLET_Y = TANK_Y_CUR_FIXED + TANK_COLLISION_Y_OFFSET  # lands inside the tank's own Y box, only X matters below
+tank_x_just_past_display = DISPLAYED_CELL_START + 8 - TANK_COLLISION_X_OFFSET  # tank's own left edge right at the visible cell's right edge+1
+check("a tank positioned right where the VISIBLE BG cell already ends (no on-screen overlap) "
+      "no longer takes phantom damage from the old raw-X 7px overreach",
+      not hit_registers(BULLET_X, BULLET_Y, tank_x_just_past_display, TANK_Y_CUR_FIXED))
+
+# sanity: a tank genuinely overlapping the VISIBLE cell still takes damage
+# (the fix must not have made the hitbox disappear entirely)
+tank_x_on_display = DISPLAYED_CELL_START - TANK_COLLISION_X_OFFSET
+check("...but a tank actually overlapping the displayed cell still gets hit normally",
+      hit_registers(BULLET_X, BULLET_Y, tank_x_on_display, TANK_Y_CUR_FIXED))
+
+# full sweep, all 8 BG-cell phases of bullet_x, cross-checked against a
+# hitbox model that snaps the bullet's own origin down to the same 8px
+# boundary DRAW_ETANK_BULLET_CELL renders at (not the raw continuous X).
+def expected_hit_cell_aligned(tank_x, tank_y, bullet_x, bullet_y):
+    tx0 = tank_x + TANK_COLLISION_X_OFFSET
+    tx1 = tx0 + TANK_COLLISION_WIDTH - 1
+    ty0 = tank_y + TANK_COLLISION_Y_OFFSET
+    ty1 = ty0 + TANK_COLLISION_HEIGHT - 1
+    bx0 = bullet_x & 0xF8
+    bx1 = bx0 + 7
+    by0 = bullet_y & 0xF8
+    by1 = by0 + 7
+    return not (bx1 < tx0 or tx1 < bx0 or by1 < ty0 or ty1 < by0)
+
+mismatches = 0
+total = 0
+SWEEP_TANK_Y_CUR = 100
+SWEEP_BULLET_Y = SWEEP_TANK_Y_CUR + TANK_COLLISION_Y_OFFSET
+for bullet_x in range(0, 200, 3):
+    for tank_x in range(max(0, bullet_x - 24), bullet_x + 24, 2):
+        got = hit_registers(bullet_x, SWEEP_BULLET_Y, tank_x, SWEEP_TANK_Y_CUR)
+        exp = expected_hit_cell_aligned(tank_x, SWEEP_TANK_Y_CUR, bullet_x, SWEEP_BULLET_Y)
+        total += 1
+        if got != exp:
+            mismatches += 1
+check(f"CHECK_ETANK_BULLET_VS_TANK matches a BG-cell-aligned (AND 0F8h) hitbox model exactly "
+      f"across {total} bullet/tank X positions spanning every BG-cell boundary phase",
+      mismatches == 0)
 
 
 print()
