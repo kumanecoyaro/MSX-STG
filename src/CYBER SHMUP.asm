@@ -3630,7 +3630,7 @@ UNMUTE_BGM:
     RET
 
 ; (2026-09-06、"MISSION 1"導入演出・"MISSION 2"ステージクリア演出の
-; 共有描画ルーチン): 画面上部20行(row0-19、640byte)をSPACEグリフ
+; 共有描画ルーチン): 画面全体(row0-23、768byte)をSPACEグリフ
 ; (MISSION_FONT_BASE+5、全ドット消灯、group8=白文字/黒背景0F1h)で
 ; 埋めて黒画面にし、HLが指す9byteのメッセージ(row12/col11、画面中央)を
 ; 描画、念のためスプライトも全て隠す(Y=209は"この枠以降の全スプライトを
@@ -3638,24 +3638,31 @@ UNMUTE_BGM:
 ; 加えてPSGチャンネルA(SE)も明示的に無音化(下記参照)。VDPへの連続転送は
 ; 手動のOUT+DJNZループのみ(CLAUDE.md「実機ハードウェア制約」の恒久
 ; ルール通り、`OTIR`等のブロックI/O命令は絶対に使わない)。
-; (2026-09-06、実機フィードバック"Mission1スタートで初期画面が描画
-; されてない そして異様に重くなってる"対応): 当初はrow0-23(768byte)
-; 全体を埋めていたが、row20-23はWRITE_ANIM_CELL自身のコメントが明言する
-; 「4-row ground scroller」(GROUND_ROW0=20)専用領域で、この4行だけは
-; 生VRAM書き込みではなくNAMEBUF/PREVBUFミラー(0E200h/0E300h)経由の
-; 差分検出で毎フレーム再描画されるキャッシュ管理下にある。この領域を
-; 生VRAM書き込みで直接埋めると、NAMEBUF/PREVBUF側は無変更のまま実VRAM
-; だけが書き換わるため「差分なし」と誤判定されて二度と正しい地形が
-; 再描画されない(画面が壊れたまま固まる、または一部だけ偶然更新されて
-; まだら状のノイズに見える)実害があった - row0-19だけに範囲を縮小し、
-; ground scroller自身の4行には一切触れないことで解消。
+; (2026-09-06、実機フィードバック対応の顛末 - 撤回済み): 一時期row20-23
+; (「4-row ground scroller」、GROUND_ROW0=20、NAMEBUF/PREVBUFミラー
+; 0E200h/0E300h経由の差分描画キャッシュ管理下)を「生VRAM書き込みで
+; 触れるとキャッシュと不整合を起こす」という仮説のもと避ける実装
+; (row0-19の640byteのみ埋める)にしていたが、**この仮説は誤りだったと
+; 判明**(ユーザー指摘"なんでスクロールを避ける必要がある Mission2は
+; その手順で問題なく動いてるだろうが"、および自己検証: NAMEBUF+0/32/
+; 64/96は毎フレーム無条件にPHASE_G1〜G4とIDCACHE0/2/3/5から再計算
+; される設計[固定値ではなく地形の実位置に応じて変化]なので、たとえ
+; 一時的にVRAMだけ書き換えてもNAMEBUFとの差分は次の実フレームで
+; 正しく検出され自然に復旧する。実際に旧コミット(row0-19縮小版)と
+; 現コミットの両方でエミュレータ上2500フレーム分のVRAM内容を比較した
+; ところ完全に同一で、この仮説はエミュレータ上では一切裏付けられ
+; なかった)。Mission2の実装(Stage2への実バンク切替を伴う)と全く同型の
+; シンプルな768byte全埋めへ復元。実機で報告されているscroller帯の
+; ノイズ自体は本ラウンドの変更と無関係な別要因(実機/H.TIMI割り込み
+; タイミング等、z80emu.pyでは検出不能な種類)である可能性が高く、
+; 引き続き別途調査が必要(下記コメント・HANDOFF.md参照)。
 ; (2026-09-06、実機フィードバック"Mission1、2表示でビーって音が鳴って
 ; る"対応): PSGチャンネルB/C(BGM)はMUTE_BGMで無音化済みだが、チャンネル
 ; A(SE)は無音化していなかったため、この画面に入る直前にたまたま鳴って
 ; いたSE(MISSION1側はBIOSキークリック音等の残留、MISSION2側は自機
 ; flyaway中の"エンジン音"がSOUND_UPDATE停止と同時に鳴りっぱなしで
 ; 固まる)がこの間ずっと鳴り続けていた。R8(チャンネルA音量)を明示的に
-; 0へ書き込むことで解消。
+; 0へ書き込むことで解消(実機再検証待ち)。
 ; Input: HL=9byteメッセージへのポインタ。Trashes: AF,BC,DE,HL。
 DRAW_MISSION_SCREEN:
     DI
@@ -3669,7 +3676,7 @@ DRAW_MISSION_SCREEN:
     NOP
     NOP
     LD A,MISSION_FONT_BASE+5    ; SPACE glyph(全ドット消灯) - 黒埋め用
-    LD C,2
+    LD C,3
 DMS_FILL_OUTER:
     LD B,0
 DMS_FILL_INNER:
@@ -3677,10 +3684,6 @@ DMS_FILL_INNER:
     DJNZ DMS_FILL_INNER
     DEC C
     JR NZ,DMS_FILL_OUTER
-    LD B,128                    ; 2*256+128 = 640 = GROUND_ROW0(20)*32 - stop
-DMS_FILL_TAIL:                  ; short of the 4-row ground scroller (row20-23)
-    OUT (98h),A
-    DJNZ DMS_FILL_TAIL
 
     LD A,08Bh : OUT (99h),A
     NOP

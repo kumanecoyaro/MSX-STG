@@ -142,25 +142,21 @@ z.vram[0x1B00] = 0x00
 z.wr(0xF000 + 100, MISSION1_MSG & 0xFF)  # scratch, unused
 z.sethl(MISSION1_MSG)
 call_routine(z, DRAW_MISSION_SCREEN)
-GROUND_ROW0 = sym["GROUND_ROW0"]
 nametable = [z.vram[0x1800 + i] for i in range(768)]
 msg_region = nametable[12 * 32 + 11: 12 * 32 + 11 + 9]
-ground_start = GROUND_ROW0 * 32
-# 実機フィードバック"Mission1スタートで初期画面が描画されてない
-# そして異様に重くなってる"対応: row20-23(4-row ground scroller、
-# NAMEBUF/PREVBUFミラー管理下)は生VRAM書き込みで触れてはならない
-# (触れるとキャッシュと実VRAMが food乖離し、二度と正しく再描画されない)。
+# 実機フィードバック"全く修正されてねえよ...なんでスクロールを避ける必要が
+# ある Mission2はその手順で問題なく動いてるだろうが"対応: row20-23
+# (4-row ground scroller)を避ける版はA/Bエミュレータ比較(現行コード vs
+# round53着手前コミット)で地形スクロールの出力に一切差が無いと判明し
+# 誤った理論と確定、Mission2と同じ全768byte一括塗りつぶしに戻した。
 rest_is_black = all(b == MISSION_FONT_BASE + 5 for i, b in enumerate(nametable)
-                     if not (12 * 32 + 11 <= i < 12 * 32 + 11 + 9) and i < ground_start)
-check("DRAW_MISSION_SCREEN: row0-19 (640byte) filled with the SPACE glyph "
+                     if not (12 * 32 + 11 <= i < 12 * 32 + 11 + 9))
+check("DRAW_MISSION_SCREEN: entire 768byte name table filled with the SPACE glyph "
       "(MISSION_FONT_BASE+5) except the message region", rest_is_black)
 check("DRAW_MISSION_SCREEN: message region (row12,col11..19) matches MISSION1_MSG",
       msg_region == read_msg(MISSION1_MSG))
 check("DRAW_MISSION_SCREEN: sprite attribute table's first Y forced to 209 (hides all sprites)",
       z.vram[0x1B00] == 209)
-check("DRAW_MISSION_SCREEN: does NOT touch the 4-row ground scroller (row20-23) at all - "
-      "poisoned bytes there must survive untouched",
-      all(b == 0x55 for b in nametable[ground_start:]))
 check("DRAW_MISSION_SCREEN: silences PSG channel A (SE) volume to kill any stuck tone/noise",
       z.psg_regs.get(8) == 0)
 
