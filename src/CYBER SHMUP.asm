@@ -517,6 +517,19 @@ SCORE        EQU 0E4D5h   ; 3 bytes: low word at +0, high byte at +2
 ; 発生しなくなる(SPがここまで浅い341バイト以内に収まる限り安全)。
 SCORE_DIGITS EQU 0F22Bh   ; 6 bytes (hundred-thousands..ones, of SCORE - i.e. real score/100)
 
+; "SE優先でショットは消す仕様に SE発声中はショット音は鳴らない" -
+; SND_TONE_TIMERはSOUND_SHOT/SOUND_POD_HIT/SOUND_POD_FIREの3者が共有する
+; 単一のデコイタイマー(round32以降の統合)なので、単に非0かどうかだけでは
+; 「今鳴っているのはショット自身の減衰か、それとも優先されるべきSEの
+; 減衰か」を区別できない。このフラグで「現在SND_TONE_TIMERを保持して
+; いるのはSE(POD_HIT/POD_FIRE)側である」ことだけを記録し、SOUND_SHOT側は
+; (SND_TONE_TIMER!=0 かつ このフラグ!=0)の間だけ発射自体を握りつぶす
+; (PSGにもタイマーにも一切触れない)。SND_TONE_TIMERが0まで減衰すれば
+; このフラグの値に関わらず次のショットは通る(フラグの明示クリアは
+; 不要、SOUND_SHOT成功時に0へ戻すのみ)。SCORE_DIGITSの直後(0F22Bh-
+; 0F37Fhの341バイトの空き領域内)に配置。
+SND_TONE_IS_SE EQU 0F231h
+
 ; --- direct/raw PSG joystick read (BIOS GTTRIG's trigger B never  ---
 ; --- worked on real hardware; a raw PSG read was confirmed correct---
 ; --- there, so joystick input now goes through this instead of    ---
@@ -1114,6 +1127,7 @@ INIT_SPRATR_CLR:
     LD (ANIM_BASE+0),A : LD (ANIM_BASE+8),A : LD (ANIM_BASE+16),A
     LD (SND_TIMER),A
     LD (SND_TONE_TIMER),A
+    LD (SND_TONE_IS_SE),A
     LD (SPAWN_NEXT_INDEX),A
 
     ; --- PSG: 実機フィードバック対応("そもそもchB、Cは空けてあってSE類は
@@ -3067,7 +3081,18 @@ WAC_SKIPBUF:
 ; landing between either OUT here would leave the wrong PSG register
 ; selected for whichever write resumes first, same race Stage2's own
 ; Round38 BGM driver already documented and fixed this same way.
+; "SE優先でショットは消す仕様に SE発声中はショット音は鳴らない" -
+; SND_TONE_IS_SE参照(EQU直前のコメント参照)。POD_HIT/POD_FIREがまだ
+; 減衰しきっていない間はショット要求そのものを無視する(PSG・タイマー
+; いずれにも触れない、SEの減衰は妨げない)。
 SOUND_SHOT:
+    LD A,(SND_TONE_TIMER)
+    OR A
+    JR Z,SS_FIRE               ; timer idle -> always OK to fire
+    LD A,(SND_TONE_IS_SE)
+    OR A
+    RET NZ                     ; SE still decaying -> drop the shot request
+SS_FIRE:
     DI
     LD A,0 : OUT (PSG_ADDR),A
     LD A,30 : OUT (PSG_DATA),A    ; channel A tone period -> bright "chun" pitch
@@ -3075,6 +3100,7 @@ SOUND_SHOT:
     XOR A : OUT (PSG_DATA),A      ; coarse tune bits = 0
     EI
     LD A,12 : LD (SND_TONE_TIMER),A
+    XOR A : LD (SND_TONE_IS_SE),A
     RET
 SOUND_DESTROY:
     DI
@@ -3094,6 +3120,7 @@ SOUND_POD_HIT:
     XOR A : OUT (PSG_DATA),A
     EI
     LD A,10 : LD (SND_TONE_TIMER),A
+    LD A,1 : LD (SND_TONE_IS_SE),A  ; SE優先: これが減衰しきるまでSOUND_SHOTは無視される
     RET
 
 ; "サウンドはブブって2回低音のデューティ比25％最大音量で" - reuses
@@ -3121,6 +3148,7 @@ SOUND_POD_FIRE:
     LD A,2 : OUT (PSG_DATA),A     ; coarse byte -> period=756, much lower "don"
     EI
     LD A,15 : LD (SND_TONE_TIMER),A
+    LD A,1 : LD (SND_TONE_IS_SE),A  ; SE優先: これが減衰しきるまでSOUND_SHOTは無視される
     RET
 ; out: A = this frame's noise-side channel-A output volume - duty-cycle
 ; gated (silent if TICK's own low bit is set, else the raw SND_TIMER
@@ -3234,7 +3262,6 @@ SU_NOISE:
 ; (このファイル自身の恒久設定、SOUND_UPDATE同様1度だけ)なのでここでは
 ; 触らない。
 HTIMI_HOOK        EQU 0FD9Fh
-BGM_VOLUME        EQU 10
 BGM_NOTE_REST     EQU 0FFh
 BGM_LOOP_MARK     EQU 0FEh
 BGM_PERIOD_LO_RAM EQU 0C000h
@@ -3245,21 +3272,20 @@ BGM_B_PTR   EQU 0C800h
 BGM_C_PTR   EQU 0C802h
 BGM_B_TIMER EQU 0C804h
 BGM_C_TIMER EQU 0C805h
-BGM_B_REST  EQU 0C806h    ; 0=音符が鳴っている行/非0=休符行(デューティ
-BGM_C_REST  EQU 0C807h    ; ゲートを毎tick適用するか、常時無音にするか)
-BGM_B_PHASE EQU 0C808h    ; デューティ比のfree-runningフェーズカウンタ
-BGM_C_PHASE EQU 0C809h
+BGM_B_REST  EQU 0C806h    ; 0=音符が鳴っている行/非0=休符行
+BGM_C_REST  EQU 0C807h
 
-; 実機フィードバック"ドライバにデューティ比実装 6.25,12.5,25,50を実装
-; どちらの曲もパート1が25パート2が12.5" - tools/stage2_combined/
-; combined_test.asmの同じ定数と同型(全4種とも1/(2^n)なのでmask=
-; (2^n)-1のAND判定1発で表現できる、除算不要)。
-BGM_DUTY_50   EQU 1        ; 50%  = 1/2
-BGM_DUTY_25   EQU 3        ; 25%  = 1/4
-BGM_DUTY_12_5 EQU 7        ; 12.5% = 1/8
-BGM_DUTY_6_25 EQU 15       ; 6.25% = 1/16
-BGM_B_DUTY_MASK EQU BGM_DUTY_25    ; パート1(chB)
-BGM_C_DUTY_MASK EQU BGM_DUTY_12_5  ; パート2(chC)
+; 実機フィードバック対応("デューティ比の実装がおかしい 本来デューティ比
+; 50%は通常トーンと同じでピーッという継続音だが今の実装は断続音になって
+; る デューティ比は元から50%...HWエンベロープにする"): ソフトウェア
+; デューティゲートは撤去し、AY-3-8910本来のエンベロープジェネレータ
+; (R11-13、R8-10のbit4)へ置き換える。共有ジェネレータの制約・chB駆動/
+; chC追従という非対称設計の理由はtools/stage2_combined/combined_test.
+; asmの同名定数の長いコメント参照(#5=R13=8h、EP=600は3ファイルで統一)。
+BGM_ENV_SHAPE     EQU 08h
+BGM_ENV_PERIOD_LO EQU 88
+BGM_ENV_PERIOD_HI EQU 2
+BGM_VOL_ENV       EQU 010h
 
 INIT_BGM:
     LD HL,BGM_B_BASE
@@ -3267,12 +3293,10 @@ INIT_BGM:
     XOR A
     LD (BGM_B_TIMER),A
     LD (BGM_B_REST),A
-    LD (BGM_B_PHASE),A
     LD HL,BGM_C_BASE
     LD (BGM_C_PTR),HL
     LD (BGM_C_TIMER),A
     LD (BGM_C_REST),A
-    LD (BGM_C_PHASE),A
     LD A,0C3h                     ; JP nn opcode
     LD (HTIMI_HOOK),A
     LD HL,BGM_TICK
@@ -3293,17 +3317,17 @@ BGM_TICK:
     RET
 
 ; チャンネルB(R2/R3 tone、R9 volume) - 実機フィードバック対応で全SEが
-; チャンネルAへ移設済みのため、このチャンネルはBGM専用(SFX優先の
-; 譲渡チェックは撤去済み)。音量(R9)は行の頭だけでなく毎tick、
-; BGMT_UB_GATEでデューティ比ゲートに従って書き直す(tools/stage2_
-; combined/combined_test.asmの同じ設計と完全に同型)。
+; チャンネルAへ移設済みのため、このチャンネルはBGM専用。共有エンベロープ
+; ジェネレータの駆動側(音符の頭=NEWROWでだけR11-13をリトリガー、継続
+; tickはPSGへ一切書き込まず即RET - tools/stage2_combined/combined_test.
+; asmの同じ設計と完全に同型)。
 BGMT_UPDATE_B:
     LD A,(BGM_B_TIMER)
     OR A
     JR Z,BGMT_UB_NEWROW
     DEC A
     LD (BGM_B_TIMER),A
-    JR BGMT_UB_GATE
+    RET
 BGMT_UB_NEWROW:
     LD HL,(BGM_B_PTR)
     LD A,(HL)
@@ -3335,42 +3359,32 @@ BGMT_UB_GOT:
     LD A,B : OUT (PSG_DATA),A
     LD A,3 : OUT (PSG_ADDR),A
     LD A,C : OUT (PSG_DATA),A
-    ; デューティ位相をリセット - 音符の頭は必ずONで鳴らす(BGMT_UB_GATE
-    ; 側は「INCしてからAND」の順なので、ここにmaskそのものを積んでおくと
-    ; 次のGATE呼び出しでINC後にAND=0となりONになる)。
-    LD A,BGM_B_DUTY_MASK
-    LD (BGM_B_PHASE),A
-    JR BGMT_UB_GATE
+    LD A,11 : OUT (PSG_ADDR),A
+    LD A,BGM_ENV_PERIOD_LO : OUT (PSG_DATA),A
+    LD A,12 : OUT (PSG_ADDR),A
+    LD A,BGM_ENV_PERIOD_HI : OUT (PSG_DATA),A
+    LD A,13 : OUT (PSG_ADDR),A
+    LD A,BGM_ENV_SHAPE : OUT (PSG_DATA),A
+    LD A,9 : OUT (PSG_ADDR),A
+    LD A,BGM_VOL_ENV : OUT (PSG_DATA),A
+    RET
 BGMT_UB_SETREST:
     LD A,1
     LD (BGM_B_REST),A
-BGMT_UB_GATE:
-    LD A,(BGM_B_REST)
-    OR A
-    JR NZ,BGMT_UB_SILENT
-    LD A,(BGM_B_PHASE)
-    INC A
-    LD (BGM_B_PHASE),A
-    AND BGM_B_DUTY_MASK
-    JR NZ,BGMT_UB_SILENT
-    LD A,9 : OUT (PSG_ADDR),A
-    LD A,BGM_VOLUME : OUT (PSG_DATA),A
-    RET
-BGMT_UB_SILENT:
     LD A,9 : OUT (PSG_ADDR),A
     XOR A : OUT (PSG_DATA),A
     RET
 
-; チャンネルC(R4/R5 tone、R10 volume) - チャンネルBと同じくBGM専用。
-; デューティゲートはBGMT_UPDATE_Bと同型(BGM_C_REST/BGM_C_PHASE/
-; BGM_C_DUTY_MASK)。
+; チャンネルC(R4/R5 tone、R10 volume) - トーン周期は自分で持つが、
+; エンベロープ本体(R11-13)は書かない(chBが最後にリトリガーした共有
+; エンベロープへR10のbit4だけ立てて追従)。
 BGMT_UPDATE_C:
     LD A,(BGM_C_TIMER)
     OR A
     JR Z,BGMT_UC_NEWROW
     DEC A
     LD (BGM_C_TIMER),A
-    JR BGMT_UC_GATE
+    RET
 BGMT_UC_NEWROW:
     LD HL,(BGM_C_PTR)
     LD A,(HL)
@@ -3400,25 +3414,12 @@ BGMT_UC_GOT:
     LD A,B : OUT (PSG_DATA),A
     LD A,5 : OUT (PSG_ADDR),A
     LD A,C : OUT (PSG_DATA),A
-    LD A,BGM_C_DUTY_MASK
-    LD (BGM_C_PHASE),A
-    JR BGMT_UC_GATE
+    LD A,10 : OUT (PSG_ADDR),A
+    LD A,BGM_VOL_ENV : OUT (PSG_DATA),A
+    RET
 BGMT_UC_SETREST:
     LD A,1
     LD (BGM_C_REST),A
-BGMT_UC_GATE:
-    LD A,(BGM_C_REST)
-    OR A
-    JR NZ,BGMT_UC_SILENT
-    LD A,(BGM_C_PHASE)
-    INC A
-    LD (BGM_C_PHASE),A
-    AND BGM_C_DUTY_MASK
-    JR NZ,BGMT_UC_SILENT
-    LD A,10 : OUT (PSG_ADDR),A
-    LD A,BGM_VOLUME : OUT (PSG_DATA),A
-    RET
-BGMT_UC_SILENT:
     LD A,10 : OUT (PSG_ADDR),A
     XOR A : OUT (PSG_DATA),A
     RET

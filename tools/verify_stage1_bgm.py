@@ -88,11 +88,10 @@ PSG_ADDR = sym["PSG_ADDR"]
 PSG_DATA = sym["PSG_DATA"]
 BGM_B_REST = sym["BGM_B_REST"]
 BGM_C_REST = sym["BGM_C_REST"]
-BGM_B_PHASE = sym["BGM_B_PHASE"]
-BGM_C_PHASE = sym["BGM_C_PHASE"]
-BGM_B_DUTY_MASK = sym["BGM_B_DUTY_MASK"]
-BGM_C_DUTY_MASK = sym["BGM_C_DUTY_MASK"]
-BGM_VOLUME = sym["BGM_VOLUME"]
+BGM_ENV_SHAPE = sym["BGM_ENV_SHAPE"]
+BGM_ENV_PERIOD_LO = sym["BGM_ENV_PERIOD_LO"]
+BGM_ENV_PERIOD_HI = sym["BGM_ENV_PERIOD_HI"]
+BGM_VOL_ENV = sym["BGM_VOL_ENV"]
 
 REPO = os.path.join(os.path.dirname(__file__), "..")
 sys.path.insert(0, os.path.join(REPO, "tools", "bgm_data"))
@@ -170,13 +169,31 @@ check("chB loads a fresh row (BGM_B_TIMER reloaded to duration-1, round40 "
 exp_lo, exp_hi = periods[TEST_NOTE_B]
 check("chB tone period (R2/R3) matches the period table",
       (z.psg_regs.get(2), z.psg_regs.get(3)) == (exp_lo, exp_hi))
-check("chB volume (R9) is BGM_VOLUME", z.psg_regs.get(9) == sym["BGM_VOLUME"])
+check("chB envelope period (R11/R12) retriggered to BGM_ENV_PERIOD_LO/HI",
+      (z.psg_regs.get(11), z.psg_regs.get(12)) == (BGM_ENV_PERIOD_LO, BGM_ENV_PERIOD_HI))
+check("chB envelope shape (R13) retriggered to BGM_ENV_SHAPE (#5, saw-down)",
+      z.psg_regs.get(13) == BGM_ENV_SHAPE)
+check("chB volume mode (R9) selects the shared envelope (BGM_VOL_ENV)", z.psg_regs.get(9) == BGM_VOL_ENV)
 exp_lo_c, exp_hi_c = periods[TEST_NOTE_C]
 check("chC loads a fresh row (BGM_C_TIMER reloaded to duration-1, round40 off-by-one fix)",
       z.rd(BGM_C_TIMER) == TEST_DUR_C - 1)
 check("chC tone period (R4/R5) matches the period table",
       (z.psg_regs.get(4), z.psg_regs.get(5)) == (exp_lo_c, exp_hi_c))
-check("chC volume (R10) is BGM_VOLUME", z.psg_regs.get(10) == sym["BGM_VOLUME"])
+check("chC volume mode (R10) selects the shared envelope (BGM_VOL_ENV)", z.psg_regs.get(10) == BGM_VOL_ENV)
+
+# isolate chC's own new-row load (chB held out of the way) to confirm chC
+# NEVER retriggers the single shared envelope generator - only chB may
+# (writing R13 resets its internal counter; see combined_test.asm's own
+# design comment above INIT_BGM for the full "chB drives / chC follows"
+# rationale, identical here since this file's BGMT_UPDATE_B/C are the
+# same design).
+z = fresh()
+poke_period_table(z)
+poke_channel(z, BGM_B_PTR, BGM_B_TIMER, ROW_B, TEST_NOTE_B, TEST_DUR_B, timer=99)  # hold chB out of the way
+poke_channel(z, BGM_C_PTR, BGM_C_TIMER, ROW_C, TEST_NOTE_C, TEST_DUR_C, timer=0)
+call_routine(z, BGM_TICK)
+check("chC NEVER retriggers the shared envelope (R11/R12/R13 untouched by chC's own new-row load)",
+      11 not in z.psg_regs and 12 not in z.psg_regs and 13 not in z.psg_regs)
 
 # ---- 実機フィードバック対応("そもそもchB、Cは空けてあってSE類は
 # chAのみで鳴らすはず"): 全SEがチャンネルAへ統合され、チャンネルB/Cは
@@ -199,7 +216,7 @@ exp_lo_b, exp_hi_b = periods[TEST_NOTE_B]
 check("SE専用タイマー(SND_TIMER/SND_TONE_TIMER/SND_BARRIER_DUTY_TIMER)が全て非0でも "
       "BGM chBは無条件でR2/R3/R9へ書く(もう譲らない)",
       (z.psg_regs.get(2), z.psg_regs.get(3), z.psg_regs.get(9)) ==
-      (exp_lo_b, exp_hi_b, sym["BGM_VOLUME"]))
+      (exp_lo_b, exp_hi_b, BGM_VOL_ENV))
 check("...BGM_B_TIMERも通常通り進む(SFXに凍結されない)", z.rd(BGM_B_TIMER) == TEST_DUR_B - 1)
 
 z = fresh()
@@ -212,7 +229,7 @@ call_routine(z, BGM_TICK)
 exp_lo_c2, exp_hi_c2 = periods[TEST_NOTE_C]
 check("SE専用タイマーが全て非0でもBGM chCは無条件でR4/R5/R10へ書く(もう譲らない)",
       (z.psg_regs.get(4), z.psg_regs.get(5), z.psg_regs.get(10)) ==
-      (exp_lo_c2, exp_hi_c2, sym["BGM_VOLUME"]))
+      (exp_lo_c2, exp_hi_c2, BGM_VOL_ENV))
 
 # ---- rest notes / loop marker (same shape as Stage2/Title's own driver) ----
 z = fresh()
@@ -306,36 +323,37 @@ check(f"round40 off-by-one regression: {len(expected_b)} real ALONE_FIGHTER chB 
       observed_b == expected_b)
 
 
-# ---- デューティ比ゲート(実機フィードバック"ドライバにデューティ比
-# 実装 6.25,12.5,25,50を実装 どちらの曲もパート1が25パート2が12.5")----
-# Stage1もStage2/Titleと全く同じmask方式・同じ割り当て(chB=25%/chC=
-# 12.5%)。チャンネルB/CはもうSEと無関係(SEは全てチャンネルAへ移設
-# 済み)なので、単純にBGM単独での通常デューティ列を確認するだけでよい。
-check("BGM_B_DUTY_MASK is 25%デューティ(mask=3, パート1)", BGM_B_DUTY_MASK == 3)
-check("BGM_C_DUTY_MASK is 12.5%デューティ(mask=7, パート2)", BGM_C_DUTY_MASK == 7)
-
-
-def duty_gate_sequence(z, ptr_addr, timer_addr, note, duration, vol_reg, n_ticks):
+# ---- HWエンベロープ移行(実機フィードバック"本来デューティ比50%は
+# 基本の矩形波で音は変わらないはずだが断続音になってる...一旦デューティ
+# 比実装はおいておいて HWエンベロープにする")----
+# Stage1もStage2/Titleと全く同じ設計(chB駆動/chC追従、行の頭以外は
+# PSGへ一切書き込まない)。チャンネルB/CはもうSEと無関係(SEは全て
+# チャンネルAへ移設済み)なので、単純にBGM単独で確認するだけでよい。
+def hold_through_row(z, ptr_addr, timer_addr, note, duration, n_ticks):
     row_addr = 0xD400
     poke_channel(z, ptr_addr, timer_addr, row_addr, note, duration, timer=0)
-    seq = []
+    writes = []
     for _ in range(n_ticks):
+        before = dict(z.psg_regs)
         call_routine(z, BGM_TICK)
-        seq.append(z.psg_regs.get(vol_reg))
-    return seq
+        if z.psg_regs != before:
+            writes.append(dict(z.psg_regs))
+    return writes
 
 
 z = fresh()
-seq_b = duty_gate_sequence(z, BGM_B_PTR, BGM_B_TIMER, TEST_NOTE_B, 40, 9, 16)
-expected_seq_b = [BGM_VOLUME if (t & BGM_B_DUTY_MASK) == 0 else 0 for t in range(16)]
-check("chB(パート1, 25%デューティ): R9のON/OFF列が4tickに1回ONのパターンと完全一致",
-      seq_b == expected_seq_b)
+z.wr(BGM_C_TIMER, 99)  # hold chC out of the way while probing chB
+writes_b = hold_through_row(z, BGM_B_PTR, BGM_B_TIMER, TEST_NOTE_B, 16, 16)
+check("chB: a single row's worth of BGM_TICK calls produces PSG writes on ONLY the very first "
+      f"tick (the NEWROW itself) - no periodic re-gating (observed {len(writes_b)} write-tick(s))",
+      len(writes_b) == 1)
 
 z = fresh()
-seq_c = duty_gate_sequence(z, BGM_C_PTR, BGM_C_TIMER, TEST_NOTE_C, 40, 10, 16)
-expected_seq_c = [BGM_VOLUME if (t & BGM_C_DUTY_MASK) == 0 else 0 for t in range(16)]
-check("chC(パート2, 12.5%デューティ): R10のON/OFF列が8tickに1回ONのパターンと完全一致",
-      seq_c == expected_seq_c)
+z.wr(BGM_B_TIMER, 99)  # hold chB out of the way while probing chC
+writes_c = hold_through_row(z, BGM_C_PTR, BGM_C_TIMER, TEST_NOTE_C, 16, 16)
+check("chC: a single row's worth of BGM_TICK calls produces PSG writes on ONLY the very first "
+      f"tick (the NEWROW itself) - no periodic re-gating (observed {len(writes_c)} write-tick(s))",
+      len(writes_c) == 1)
 
 
 # ---- DI/EI protection: every PSG_ADDR/PSG_DATA OUT pair this round

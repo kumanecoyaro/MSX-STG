@@ -6182,7 +6182,6 @@ SOUND_BOSS_MATERIALIZE:
 ; after a real INIT trace).
 PSG_DATA_R      EQU 0A2h        ; PSG register read-back port (IN)
 HTIMI_HOOK      EQU 0FD9Fh      ; BIOS vblank hook, RAM
-BGM_VOLUME      EQU 10          ; fixed volume, both channels' non-rest notes (0-15)
 BGM_NOTE_REST   EQU 0FFh
 BGM_LOOP_MARK   EQU 0FEh
 
@@ -6202,24 +6201,42 @@ BGM_B_PTR   EQU 0CA00h
 BGM_C_PTR   EQU 0CA02h
 BGM_B_TIMER EQU 0CA04h
 BGM_C_TIMER EQU 0CA05h
-BGM_B_REST  EQU 0CA06h    ; 0=音符が鳴っている行/非0=休符行(デューティ
-BGM_C_REST  EQU 0CA07h    ; ゲートを毎tick適用するか、常時無音にするか)
-BGM_B_PHASE EQU 0CA08h    ; デューティ比のfree-runningフェーズカウンタ
-BGM_C_PHASE EQU 0CA09h
+BGM_B_REST  EQU 0CA06h    ; 0=音符が鳴っている行/非0=休符行
+BGM_C_REST  EQU 0CA07h
 
-; デューティ比(実機フィードバック"ドライバにデューティ比実装
-; 6.25,12.5,25,50を実装 どちらの曲もパート1が25パート2が12.5") - PSGの
-; トーンch自体はハード的に常に50%デューティの矩形波しか出せないため、
-; このファイル既存のSOUND_BARRIER_HIT/CALC_DUTY_GATE_VOLUME(src/CYBER
-; SHMUP.asm側)と同じ手法 - 短い周期でON/OFFをソフトウェア的に切り替える
-; 音量ゲート - をBGM側にも適用する。4種とも「1/(2^n)tickだけON、残りは
-; OFF」という形なのでmask=(2^n)-1のAND判定1発で表現できる(除算不要)。
-BGM_DUTY_50   EQU 1        ; 50%  = 1/2
-BGM_DUTY_25   EQU 3        ; 25%  = 1/4
-BGM_DUTY_12_5 EQU 7        ; 12.5% = 1/8
-BGM_DUTY_6_25 EQU 15       ; 6.25% = 1/16
-BGM_B_DUTY_MASK EQU BGM_DUTY_25    ; パート1(chB)
-BGM_C_DUTY_MASK EQU BGM_DUTY_12_5  ; パート2(chC)
+; 実機フィードバック対応("デューティ比の実装がおかしい 本来デューティ比
+; 50%は通常トーンと同じでピーッという継続音だが今の実装は断続音になって
+; る...一旦デューティ比実装はおいておいて HWエンベロープにする"):
+; ソフトウェアデューティゲート(BGM_DUTY_*、毎tick位相カウンタをAND判定
+; してR9/R10のON/OFFを切り替える方式)は撤去し、AY-3-8910本来のハード
+; ウェア機能であるエンベロープジェネレータ(R11-13、R8-10のbit4)に
+; 置き換える。試聴ツールでの選定は#5(R13=8h、CONT=1/ATT=0/ALT=0/
+; HOLD=0 - 減衰を繰り返すのこぎり波、"HWエンベロープ5番で")。
+;
+; 重要な制約: AY-3-8910のエンベロープジェネレータはチップ全体で1個
+; しかない共有リソース(R11-13はチャンネル別ではない) - R8-10のbit4は
+; 各チャンネルが「その1個の共有エンベロープに従うか、固定音量にするか」
+; を選ぶだけで、chB/chCが同時に別々の形・速度のエンベロープを鳴らす
+; ことはハード上不可能。両チャンネルとも音符の変わり目の頻度が違う曲を
+; 鳴らす以上、両方が独立にR13を書き換えると互いのエンベロープを毎回
+; リトリガーし合って収拾がつかなくなる。そこで**パート1(chB)だけが
+; 音符の頭(NEWROW)でR11-13を書いてエンベロープを駆動し、パート2(chC)
+; はR10のbit4だけ立てて同じ共有エンベロープに"追従"するだけ(自分では
+; R11-13を一切書かない)**という非対称設計にした - chCは自分自身の
+; アタック位置ではなく、chBが最後にリトリガーした位置からのエンベロープ
+; 値をそのまま共有する(想定内の近似、実機で聞いた結果次第でソフトウェア
+; デューティ比方式へ戻す想定 - "ダメならソフトウェアに変える")。
+;
+; 設計上の注意(ユーザー指摘"毎フレームPSGに書き込むとHWがアタックだけ
+; 繰り返される"): R13(シェイプ)への書き込みは内部カウンタを0へ戻す
+; (リトリガーする)ため、音符の頭(NEWROW)でしか書いてはいけない。
+; 継続tick(BGM_B/C_TIMER != 0)ではPSGに一切書き込まず即RETする - 実
+; チップのエンベロープジェネレータは完全に自律進行するため、これで
+; 休符やトーン変更が無い限り鳴りっぱなしのまま自然に変化し続ける。
+BGM_ENV_SHAPE     EQU 08h   ; #5: CONT=1 ATT=0 ALT=0 HOLD=0(繰り返し減衰のこぎり波)
+BGM_ENV_PERIOD_LO EQU 88
+BGM_ENV_PERIOD_HI EQU 2     ; EP=600、16段の1ラウンド≒86ms(≒11.6Hz) - 未調整の初期値
+BGM_VOL_ENV       EQU 010h  ; R8-10のbit4=1: 固定音量の代わりに共有エンベロープを使う
 
 INIT_BGM:
     ; 曲データRAMコピー。INIT_BGMはINIT終盤(checkpoint9直前)から呼ばれる
@@ -6240,12 +6257,10 @@ INIT_BGM:
     XOR A
     LD (BGM_B_TIMER),A
     LD (BGM_B_REST),A
-    LD (BGM_B_PHASE),A
     LD HL,BGM_C_BASE
     LD (BGM_C_PTR),HL
     LD (BGM_C_TIMER),A
     LD (BGM_C_REST),A
-    LD (BGM_C_PHASE),A
 
     LD A,0C3h                     ; JP nn opcode
     LD (HTIMI_HOOK),A
@@ -6276,21 +6291,20 @@ BGM_TICK:
     POP AF
     RET
 
-; チャンネルB(R2/R3 tone、R9 volume)の1tick分の前進。タイマーが残って
-; いればデクリメントするだけ、0なら次の行を読んでトーン周期を書く。
-; LOOP_MARKに当たったらBGM_B_BASEへ戻ってその行を読み直す。BGM_TICK
-; から呼ばれる時点でAF/BC/DE/HLは既に保存済みなので、自由に使える。
-; 実機フィードバック"ドライバにデューティ比実装"対応: 音量(R9)は行の
-; 頭だけでなく毎tick、BGMT_UB_GATEでデューティ比ゲートに従って書き
-; 直す(旧来は行ロード時に1回書いたきり保持していただけで、ホールド中
-; は完全に無音化 - トーン自体は常時ONのままだった)。
+; チャンネルB(R2/R3 tone、R9 volume、共有エンベロープジェネレータの
+; "駆動側")の1tick分の前進。タイマーが残っていればデクリメントする
+; だけでPSGには一切書き込まず即RET(エンベロープをリトリガーしない
+; ため、上記コメント参照)。0なら次の行を読んでトーン周期+エンベロープ
+; (R11-13)+音量モード(R9=envelope)を書く。LOOP_MARKに当たったら
+; BGM_B_BASEへ戻ってその行を読み直す。BGM_TICKから呼ばれる時点で
+; AF/BC/DE/HLは既に保存済みなので、自由に使える。
 BGMT_UPDATE_B:
     LD A,(BGM_B_TIMER)
     OR A
     JR Z,BGMT_UB_NEWROW
     DEC A
     LD (BGM_B_TIMER),A
-    JR BGMT_UB_GATE
+    RET
 BGMT_UB_NEWROW:
     LD HL,(BGM_B_PTR)
     LD A,(HL)
@@ -6306,15 +6320,8 @@ BGMT_UB_GOT:
     LD (BGM_B_PTR),HL
     ; round40 実機フィードバック対応: この行の読み込み自体が既に1tick
     ; 分の再生になっている(この直後のPSG書き込みでその音が今tickから
-    ; 鳴る)ため、素のdurationをそのままTIMERへ積むと「今tick+その後
-    ; duration回のホールド」で合計duration+1tick鳴ってしまうoff-by-one
-    ; バグがあった(全チャンネル・全曲で毎行+1tick、行数が多いchC側で
-    ; 累積が大きく、chB/chC間のズレが曲が進むほど拡大して不協和音化して
-    ; いた根本原因 - "こりゃ酷い ピーピー不協和音 休符も無視してるな
-    ; テンポも無茶苦茶だ"という実機報告で発覚)。DEC Aで「今tickぶんを
-    ; 差し引いた残りホールド回数」に補正し、合計でちょうどduration回に
-    ; 一致させる(duration=1の行は補正後0になり、次tickで即座に次の行へ
-    ; 進む - 単発1tick行として正しい)。
+    ; 鳴る)ため、素のdurationをそのままTIMERへ積むと合計duration+1tick
+    ; 鳴ってしまうoff-by-oneバグがあった。DEC Aで補正する。
     DEC A
     LD (BGM_B_TIMER),A
     LD A,C
@@ -6329,40 +6336,35 @@ BGMT_UB_GOT:
     LD A,B : OUT (PSG_DATA),A
     LD A,3 : OUT (PSG_ADDR),A
     LD A,C : OUT (PSG_DATA),A
-    ; デューティ位相をリセット - 音符の頭は必ずONで鳴らす(BGMT_UB_GATE
-    ; 側は「INCしてからAND」の順なので、ここにmaskそのものを積んでおくと
-    ; 次のGATE呼び出しでINC後にAND=0となりONになる)。
-    LD A,BGM_B_DUTY_MASK
-    LD (BGM_B_PHASE),A
-    JR BGMT_UB_GATE
+    ; エンベロープは音符の頭でだけリトリガー(R13書き込みが内部カウンタを
+    ; 0へ戻す唯一のきっかけ)。chBがこの共有エンベロープの"駆動側"。
+    LD A,11 : OUT (PSG_ADDR),A
+    LD A,BGM_ENV_PERIOD_LO : OUT (PSG_DATA),A
+    LD A,12 : OUT (PSG_ADDR),A
+    LD A,BGM_ENV_PERIOD_HI : OUT (PSG_DATA),A
+    LD A,13 : OUT (PSG_ADDR),A
+    LD A,BGM_ENV_SHAPE : OUT (PSG_DATA),A
+    LD A,9 : OUT (PSG_ADDR),A
+    LD A,BGM_VOL_ENV : OUT (PSG_DATA),A
+    RET
 BGMT_UB_SETREST:
     LD A,1
     LD (BGM_B_REST),A
-BGMT_UB_GATE:
-    LD A,(BGM_B_REST)
-    OR A
-    JR NZ,BGMT_UB_SILENT
-    LD A,(BGM_B_PHASE)
-    INC A
-    LD (BGM_B_PHASE),A
-    AND BGM_B_DUTY_MASK
-    JR NZ,BGMT_UB_SILENT
-    LD A,9 : OUT (PSG_ADDR),A
-    LD A,BGM_VOLUME : OUT (PSG_DATA),A
-    RET
-BGMT_UB_SILENT:
     LD A,9 : OUT (PSG_ADDR),A
     XOR A : OUT (PSG_DATA),A
     RET
 
-; チャンネルC(R4/R5 tone、R10 volume)版 - BGMT_UPDATE_Bと同型。
+; チャンネルC(R4/R5 tone、R10 volume)版 - トーン周期は自分で持つが、
+; エンベロープ本体(R11-13)は一切書かない - chBが最後にリトリガーした
+; 共有エンベロープへR10のbit4だけ立てて"追従"するだけ(上記の設計上の
+; 制約コメント参照)。
 BGMT_UPDATE_C:
     LD A,(BGM_C_TIMER)
     OR A
     JR Z,BGMT_UC_NEWROW
     DEC A
     LD (BGM_C_TIMER),A
-    JR BGMT_UC_GATE
+    RET
 BGMT_UC_NEWROW:
     LD HL,(BGM_C_PTR)
     LD A,(HL)
@@ -6376,8 +6378,6 @@ BGMT_UC_GOT:
     LD A,(HL)
     INC HL
     LD (BGM_C_PTR),HL
-    ; round40 実機フィードバック対応: BGMT_UB_NEWROWの同じoff-by-one
-    ; 修正コメント参照。
     DEC A
     LD (BGM_C_TIMER),A
     LD A,C
@@ -6392,25 +6392,12 @@ BGMT_UC_GOT:
     LD A,B : OUT (PSG_DATA),A
     LD A,5 : OUT (PSG_ADDR),A
     LD A,C : OUT (PSG_DATA),A
-    LD A,BGM_C_DUTY_MASK
-    LD (BGM_C_PHASE),A
-    JR BGMT_UC_GATE
+    LD A,10 : OUT (PSG_ADDR),A
+    LD A,BGM_VOL_ENV : OUT (PSG_DATA),A
+    RET
 BGMT_UC_SETREST:
     LD A,1
     LD (BGM_C_REST),A
-BGMT_UC_GATE:
-    LD A,(BGM_C_REST)
-    OR A
-    JR NZ,BGMT_UC_SILENT
-    LD A,(BGM_C_PHASE)
-    INC A
-    LD (BGM_C_PHASE),A
-    AND BGM_C_DUTY_MASK
-    JR NZ,BGMT_UC_SILENT
-    LD A,10 : OUT (PSG_ADDR),A
-    LD A,BGM_VOLUME : OUT (PSG_DATA),A
-    RET
-BGMT_UC_SILENT:
     LD A,10 : OUT (PSG_ADDR),A
     XOR A : OUT (PSG_DATA),A
     RET

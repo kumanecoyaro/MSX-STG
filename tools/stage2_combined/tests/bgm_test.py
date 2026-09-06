@@ -52,11 +52,10 @@ PSG_ADDR = sym["PSG_ADDR"]
 PSG_DATA = sym["PSG_DATA"]
 BGM_B_REST = sym["BGM_B_REST"]
 BGM_C_REST = sym["BGM_C_REST"]
-BGM_B_PHASE = sym["BGM_B_PHASE"]
-BGM_C_PHASE = sym["BGM_C_PHASE"]
-BGM_B_DUTY_MASK = sym["BGM_B_DUTY_MASK"]
-BGM_C_DUTY_MASK = sym["BGM_C_DUTY_MASK"]
-BGM_VOLUME = sym["BGM_VOLUME"]
+BGM_ENV_SHAPE = sym["BGM_ENV_SHAPE"]
+BGM_ENV_PERIOD_LO = sym["BGM_ENV_PERIOD_LO"]
+BGM_ENV_PERIOD_HI = sym["BGM_ENV_PERIOD_HI"]
+BGM_VOL_ENV = sym["BGM_VOL_ENV"]
 
 DEFEAT = bg.song_constants("DEFEAT", data_base=bg.STAGE2_DATA_BASE)
 bank_image, layout = bg.build_bank()
@@ -155,8 +154,11 @@ check("independent channels: chC's new-row write (R4/R5) used chC's own note, un
 
 
 # ---- new-row path (chB): TIMER==0 loads the next row, writes the
-# looked-up period (R2/R3) + BGM_VOLUME (R9), advances the pointer by 2
-# bytes, reloads TIMER from the row's own duration byte ----
+# looked-up period (R2/R3), (re)triggers the shared envelope generator
+# (R11/R12/R13 - chB is the "drive" channel, see the long design comment
+# above INIT_BGM in combined_test.asm) and selects envelope-driven volume
+# mode (R9=BGM_VOL_ENV), advances the pointer by 2 bytes, reloads TIMER
+# from the row's own duration byte ----
 cpu = fresh_cpu()
 poke_channel(cpu, "BGM_B_PTR", "BGM_B_TIMER", ROW_ADDR_B, TEST_NOTE_B, TEST_DURATION_B, timer=0)
 poke_channel(cpu, "BGM_C_PTR", "BGM_C_TIMER", ROW_ADDR_C, BGM_NOTE_REST, 9, timer=1)  # hold chC out of the way
@@ -170,7 +172,55 @@ exp_b_lo, exp_b_hi = periods[TEST_NOTE_B]
 check(f"new-row (chB): tone period (R2/R3) matches the period table's own note{TEST_NOTE_B} "
       f"({exp_b_lo},{exp_b_hi})",
       (cpu.psg_regs.get(2), cpu.psg_regs.get(3)) == (exp_b_lo, exp_b_hi))
-check("new-row (chB): volume (R9) is BGM_VOLUME", cpu.psg_regs.get(9) == sym["BGM_VOLUME"])
+check("new-row (chB): envelope period (R11/R12) retriggered to BGM_ENV_PERIOD_LO/HI",
+      (cpu.psg_regs.get(11), cpu.psg_regs.get(12)) == (BGM_ENV_PERIOD_LO, BGM_ENV_PERIOD_HI))
+check("new-row (chB): envelope shape (R13) retriggered to BGM_ENV_SHAPE (#5, saw-down)",
+      cpu.psg_regs.get(13) == BGM_ENV_SHAPE)
+check("new-row (chB): volume mode (R9) selects the shared envelope (BGM_VOL_ENV)",
+      cpu.psg_regs.get(9) == BGM_VOL_ENV)
+
+
+# ---- new-row path (chC): the single shared AY-3-8910 envelope generator
+# means only ONE channel may ever retrigger it (writing R13 resets its
+# internal counter) - chC is the "follow" channel: it writes its own tone
+# period (R4/R5) and selects envelope-driven volume (R10=BGM_VOL_ENV), but
+# must NEVER touch R11/R12/R13 itself (that would fight chB for control of
+# the one shared curve). See the design comment above INIT_BGM.
+cpu = fresh_cpu()
+poke_channel(cpu, "BGM_B_PTR", "BGM_B_TIMER", ROW_ADDR_B, BGM_NOTE_REST, 9, timer=1)  # hold chB out of the way
+poke_channel(cpu, "BGM_C_PTR", "BGM_C_TIMER", ROW_ADDR_C, TEST_NOTE_C, TEST_DURATION_C, timer=0)
+for poison_reg in (11, 12, 13):
+    cpu.psg_regs.pop(poison_reg, None)
+call_routine(cpu, "BGM_TICK")
+exp_c_lo, exp_c_hi = periods[TEST_NOTE_C]
+check(f"new-row (chC): tone period (R4/R5) matches the period table's own note{TEST_NOTE_C} "
+      f"({exp_c_lo},{exp_c_hi})",
+      (cpu.psg_regs.get(4), cpu.psg_regs.get(5)) == (exp_c_lo, exp_c_hi))
+check("new-row (chC): volume mode (R10) selects the shared envelope (BGM_VOL_ENV)",
+      cpu.psg_regs.get(10) == BGM_VOL_ENV)
+check("new-row (chC): NEVER retriggers the shared envelope (R11/R12/R13 untouched - chC only "
+      "'follows' whatever curve chB is currently driving)",
+      11 not in cpu.psg_regs and 12 not in cpu.psg_regs and 13 not in cpu.psg_regs)
+
+
+# ---- ユーザー設計上の警告への直接的な回帰ガード ("毎フレームPSGに書き
+# 込むとHWがアタックだけ繰り返される") - 継続tick(TIMER!=0、"row-hold")
+# の間は、チャンネルB/Cどちらも文字通り1バイトもPSGへ書き込んではいけない
+# (R9/R10のON/OFFすら含め一切書かない - 実チップのエンベロープジェネレー
+# タは完全に自律進行するので、休符やトーン変更が無い限り触れる必要が
+# そもそも無い)。psg_regsのスナップショットを丸ごと比較し、キーの追加・
+# 値の変化のどちらも検出する。
+cpu = fresh_cpu()
+poke_channel(cpu, "BGM_B_PTR", "BGM_B_TIMER", ROW_ADDR_B, TEST_NOTE_B, TEST_DURATION_B, timer=7)
+poke_channel(cpu, "BGM_C_PTR", "BGM_C_TIMER", ROW_ADDR_C, TEST_NOTE_C, TEST_DURATION_C, timer=9)
+before = dict(cpu.psg_regs)
+call_routine(cpu, "BGM_TICK")
+check("row-hold (both channels): BGM_TICK makes ZERO PSG register writes while both timers are "
+      "non-zero (no envelope retrigger risk) - psg_regs snapshot completely unchanged",
+      cpu.psg_regs == before)
+check("row-hold (both channels): BGM_B_TIMER/BGM_C_TIMER still decrement normally even though "
+      "no PSG write happened",
+      cpu.mem[BGM_B_TIMER] == 6 and cpu.mem[BGM_C_TIMER] == 8)
 
 
 # ---- rest notes: BGM_NOTE_REST silences that channel's volume register
@@ -295,45 +345,42 @@ check(f"round40 off-by-one regression: {len(expected_c)} real DEFEAT chC note-ch
       observed_c == expected_c)
 
 
-# ---- デューティ比ゲート(実機フィードバック"ドライバにデューティ比
-# 実装 6.25,12.5,25,50を実装 どちらの曲もパート1が25パート2が12.5")----
-# 25%(mask=3)なら4tickに1回だけON、12.5%(mask=7)なら8tickに1回だけON -
-# いずれも「音符の頭(NEWROWのtick)は必ずON」という設計(BGMT_UB/UC_
-# NEWROWがBGM_B/C_PHASEをmask値そのものにリセットしてからGATEへ落ちる
-# ため、GATE内のINC直後のANDが0になる)。
-check("BGM_B_DUTY_MASK is 25%デューティ(mask=3, パート1)", BGM_B_DUTY_MASK == 3)
-check("BGM_C_DUTY_MASK is 12.5%デューティ(mask=7, パート2)", BGM_C_DUTY_MASK == 7)
-
-
-def duty_gate_sequence(cpu, ptr_sym, timer_sym, note, duration, vol_reg, n_ticks):
+# ---- HWエンベロープ移行(実機フィードバック"本来デューティ比50%は基本
+# の矩形波で音は変わらないはずだが断続音になってる...一旦デューティ比
+# 実装はおいておいて HWエンベロープにする"): ソフトウェアデューティ
+# ゲート(毎tick位相カウンタをAND判定してR9/R10のON/OFFを切り替える方式)
+# は完全に撤去済み。R9/R10はNEWROWで一度BGM_VOL_ENVを書いたら、その行の
+# 残りtick(row-hold中)はPSGに一切触れない(上の「row-hold: ZERO PSG
+# writes」テストが既にこれを保証している)ため、明滅は起きない -
+# ここでは「音符1行分を通しでBGM_TICKし続けても、R9/R10というキー自体が
+# psg_regsへ一度も新規に触れられない(=常に最初のNEWROWで書いた値の
+# ままで、実チップのエンベロープジェネレータが自律的に音量を変化させる
+# のに任せている)」ことを直接確認する。
+def hold_through_row(cpu, ptr_sym, timer_sym, note, duration, vol_reg, n_ticks):
     row_addr = 0xD400
     poke_channel(cpu, ptr_sym, timer_sym, row_addr, note, duration, timer=0)
-    seq = []
+    writes = []
     for _ in range(n_ticks):
+        before = dict(cpu.psg_regs)
         call_routine(cpu, "BGM_TICK")
-        seq.append(cpu.psg_regs.get(vol_reg))
-    return seq
+        if cpu.psg_regs != before:
+            writes.append(dict(cpu.psg_regs))
+    return writes
 
 
 cpu = fresh_cpu()
 cpu.mem[BGM_C_TIMER] = 99  # hold chC out of the way while probing chB
-seq_b = duty_gate_sequence(cpu, "BGM_B_PTR", "BGM_B_TIMER", TEST_NOTE_B, 40, 9, 16)
-expected_seq_b = [BGM_VOLUME if (t & BGM_B_DUTY_MASK) == 0 else 0 for t in range(16)]
-check("chB(パート1, 25%デューティ): R9のON/OFF列が4tickに1回ONのパターンと完全一致",
-      seq_b == expected_seq_b)
+writes_b = hold_through_row(cpu, "BGM_B_PTR", "BGM_B_TIMER", TEST_NOTE_B, 16, 9, 16)
+check("chB: a single row's worth of BGM_TICK calls produces PSG writes on ONLY the very first "
+      f"tick (the NEWROW itself) - no periodic re-gating (observed {len(writes_b)} write-tick(s))",
+      len(writes_b) == 1)
 
 cpu = fresh_cpu()
 cpu.mem[BGM_B_TIMER] = 99  # hold chB out of the way while probing chC
-seq_c = duty_gate_sequence(cpu, "BGM_C_PTR", "BGM_C_TIMER", TEST_NOTE_C, 40, 10, 16)
-expected_seq_c = [BGM_VOLUME if (t & BGM_C_DUTY_MASK) == 0 else 0 for t in range(16)]
-check("chC(パート2, 12.5%デューティ): R10のON/OFF列が8tickに1回ONのパターンと完全一致",
-      seq_c == expected_seq_c)
-
-cpu = fresh_cpu()
-cpu.mem[BGM_C_TIMER] = 99
-seq_rest_b = duty_gate_sequence(cpu, "BGM_B_PTR", "BGM_B_TIMER", BGM_NOTE_REST, 20, 9, 16)
-check("chB休符行: デューティ位相に関係なくR9が常時0(常時無音)",
-      all(v == 0 for v in seq_rest_b))
+writes_c = hold_through_row(cpu, "BGM_C_PTR", "BGM_C_TIMER", TEST_NOTE_C, 16, 10, 16)
+check("chC: a single row's worth of BGM_TICK calls produces PSG writes on ONLY the very first "
+      f"tick (the NEWROW itself) - no periodic re-gating (observed {len(writes_c)} write-tick(s))",
+      len(writes_c) == 1)
 
 
 # ---- R7 mixer read-modify-write: only bits1-2 (tone B/C enable) ever

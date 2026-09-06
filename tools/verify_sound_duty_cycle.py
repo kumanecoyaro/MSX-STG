@@ -142,14 +142,33 @@ expected_tone = [max(0, 12 - f) for f in range(1, 14)]
 check(f"SND_TONE_TIMER decays by exactly 1/frame regardless of TICK's own parity "
       f"(expected {expected_tone}, got {tone_trace})", tone_trace == expected_tone)
 
-# "SEの被りで上書きされるのは問題ない" - firing 2 different tone SE in
-# the same frame collapses onto the one shared SND_TONE_TIMER, last
-# write wins (no crash, no attempt at mixing 2 values).
+# "SE優先でショットは消す仕様に SE発声中はショット音は鳴らない" - firing
+# an SE (POD_FIRE) then a shot while the SE's decay is still active no
+# longer collapses onto "last write wins": the shot request is dropped
+# entirely (SND_TONE_IS_SE gates it), leaving the SE's own timer/period
+# completely untouched. See tools/verify_player_damage.py (or a future
+# dedicated script) for the RAM-flag-level unit tests of SND_TONE_IS_SE
+# itself; this is the end-to-end confirmation via the real SOUND_* entry
+# points.
+SND_TONE_IS_SE = sym["SND_TONE_IS_SE"]
 cpu = fresh_cpu()
-call_routine(cpu, sym["SOUND_POD_FIRE"])  # sets SND_TONE_TIMER=15
-call_routine(cpu, sym["SOUND_SHOT"])       # then overwrites it to 12
-check("colliding tone SE (POD_FIRE then SHOT) - last one wins on the shared SND_TONE_TIMER",
+call_routine(cpu, sym["SOUND_POD_FIRE"])  # sets SND_TONE_TIMER=15, SND_TONE_IS_SE=1
+call_routine(cpu, sym["SOUND_SHOT"])       # SE still decaying -> dropped, not overwritten
+check("a shot fired while an SE (POD_FIRE) is still decaying is dropped, not overwritten",
+      cpu.rd(SND_TONE_TIMER) == 15)
+check("SND_TONE_IS_SE stays set (still the SE's decay, not the shot's)",
+      cpu.rd(SND_TONE_IS_SE) == 1)
+
+# once the SE's timer has fully decayed to 0, a subsequent shot goes
+# through normally (and reclaims the timer as "not SE" for itself).
+cpu = fresh_cpu()
+call_routine(cpu, sym["SOUND_POD_HIT"])  # sets SND_TONE_TIMER=10, SND_TONE_IS_SE=1
+cpu.wr(SND_TONE_TIMER, 0)  # simulate full decay (SOUND_UPDATE ticking it down to 0)
+call_routine(cpu, sym["SOUND_SHOT"])
+check("a shot fired after the SE has fully decayed (timer==0) fires normally",
       cpu.rd(SND_TONE_TIMER) == 12)
+check("SND_TONE_IS_SE is cleared once the shot successfully claims the timer",
+      cpu.rd(SND_TONE_IS_SE) == 0)
 
 # ---------------------------------------------------------------------
 # 4: 3-way channel-A R8 priority (SND_BARRIER_DUTY_TIMER > SND_TONE_

@@ -208,7 +208,12 @@ check("BGM_TICK new-row (chB): BGM_B_TIMER reloaded from the row's own duration 
 exp_lo, exp_hi = periods[TEST_NOTE]
 check(f"BGM_TICK new-row (chB): tone period (R2/R3) matches the period table's own note{TEST_NOTE}",
       (cpu2.psg_regs.get(2), cpu2.psg_regs.get(3)) == (exp_lo, exp_hi))
-check("BGM_TICK new-row (chB): volume (R9) is BGM_VOLUME", cpu2.psg_regs.get(9) == sym["BGM_VOLUME"])
+check("BGM_TICK new-row (chB): envelope period (R11/R12) retriggered to BGM_ENV_PERIOD_LO/HI",
+      (cpu2.psg_regs.get(11), cpu2.psg_regs.get(12)) == (sym["BGM_ENV_PERIOD_LO"], sym["BGM_ENV_PERIOD_HI"]))
+check("BGM_TICK new-row (chB): envelope shape (R13) retriggered to BGM_ENV_SHAPE (#5, saw-down)",
+      cpu2.psg_regs.get(13) == sym["BGM_ENV_SHAPE"])
+check("BGM_TICK new-row (chB): volume mode (R9) selects the shared envelope (BGM_VOL_ENV)",
+      cpu2.psg_regs.get(9) == sym["BGM_VOL_ENV"])
 
 # round40 実機フィードバック対応: off-by-oneの直接回帰ガード
 # (tools/stage2_combined/tests/bgm_test.pyの同じ検証の長いコメント
@@ -269,53 +274,62 @@ check(f"round40 off-by-one regression: {len(expected_b)} real ALONE_FIGHTER chB 
       f"(over {N_TICKS} real BGM_TICK calls) match the real bgm_bank.bin row data EXACTLY",
       observed_b == expected_b)
 
-# ---- デューティ比ゲート(実機フィードバック"ドライバにデューティ比
-# 実装 6.25,12.5,25,50を実装 どちらの曲もパート1が25パート2が12.5")----
-# 25%(mask=3)なら4tickに1回だけON、12.5%(mask=7)なら8tickに1回だけON -
-# いずれも「音符の頭(NEWROWのtick)は必ずON」という設計(BGMT_UB/UC_
-# NEWROWがBGM_B/C_PHASEをmask値そのものにリセットしてからGATEへ落ちる
-# ため、GATE内のINC直後のANDが0になる)。
+# ---- HWエンベロープ移行(実機フィードバック"本来デューティ比50%は基本
+# の矩形波で音は変わらないはずだが断続音になってる...一旦デューティ比
+# 実装はおいておいて HWエンベロープにする"、tools/stage2_combined/
+# tests/bgm_test.pyの同じ検証の長いコメント参照): ソフトウェア
+# デューティゲートは撤去済み。行の頭(NEWROW)以外は一切PSGへ書き込まない
+# (エンベロープのリトリガー回避)ため、1行分を通してBGM_TICKし続けても
+# PSG書き込みが起きるのは最初の1tickだけであることを直接確認する。
 
 
-def duty_gate_sequence(cpu, ptr_sym, timer_sym, phase_reset_sym, note, duration, vol_reg, n_ticks):
+def hold_through_row(cpu, ptr_sym, timer_sym, note, duration, n_ticks):
     row_addr = 0xD000
     cpu.mem[timer_sym] = 0
     cpu.mem[ptr_sym] = row_addr & 0xFF
     cpu.mem[ptr_sym + 1] = (row_addr >> 8) & 0xFF
     cpu.mem[row_addr] = note
     cpu.mem[row_addr + 1] = duration
-    seq = []
+    writes = []
     for _ in range(n_ticks):
+        before = dict(cpu.psg_regs)
         call_routine(cpu, "BGM_TICK")
-        seq.append(cpu.psg_regs.get(vol_reg))
-    return seq
+        if cpu.psg_regs != before:
+            writes.append(dict(cpu.psg_regs))
+    return writes
 
-
-BGM_VOLUME = sym["BGM_VOLUME"]
-BGM_B_DUTY_MASK = sym["BGM_B_DUTY_MASK"]
-BGM_C_DUTY_MASK = sym["BGM_C_DUTY_MASK"]
-check("BGM_B_DUTY_MASK is 25%デューティ(mask=3, パート1)", BGM_B_DUTY_MASK == 3)
-check("BGM_C_DUTY_MASK is 12.5%デューティ(mask=7, パート2)", BGM_C_DUTY_MASK == 7)
 
 cpu4, _ = fresh_cpu()
 run_to_wait(cpu4)
-seq_b = duty_gate_sequence(cpu4, BGM_B_PTR, BGM_B_TIMER, sym["BGM_B_PHASE"], TEST_NOTE, 40, 9, 16)
-expected_seq_b = [BGM_VOLUME if (t & BGM_B_DUTY_MASK) == 0 else 0 for t in range(16)]
-check("chB(パート1, 25%デューティ): R9のON/OFF列が4tickに1回ONのパターンと完全一致",
-      seq_b == expected_seq_b)
+cpu4.mem[BGM_C_TIMER] = 99  # hold chC out of the way while probing chB
+writes_b = hold_through_row(cpu4, BGM_B_PTR, BGM_B_TIMER, TEST_NOTE, 16, 16)
+check("chB: a single row's worth of BGM_TICK calls produces PSG writes on ONLY the very first "
+      f"tick (the NEWROW itself) - no periodic re-gating (observed {len(writes_b)} write-tick(s))",
+      len(writes_b) == 1)
 
 cpu5, _ = fresh_cpu()
 run_to_wait(cpu5)
-seq_c = duty_gate_sequence(cpu5, BGM_C_PTR, BGM_C_TIMER, sym["BGM_C_PHASE"], TEST_NOTE, 40, 10, 16)
-expected_seq_c = [BGM_VOLUME if (t & BGM_C_DUTY_MASK) == 0 else 0 for t in range(16)]
-check("chC(パート2, 12.5%デューティ): R10のON/OFF列が8tickに1回ONのパターンと完全一致",
-      seq_c == expected_seq_c)
+cpu5.mem[BGM_B_TIMER] = 99  # hold chB out of the way while probing chC
+writes_c = hold_through_row(cpu5, BGM_C_PTR, BGM_C_TIMER, TEST_NOTE, 16, 16)
+check("chC: a single row's worth of BGM_TICK calls produces PSG writes on ONLY the very first "
+      f"tick (the NEWROW itself) - no periodic re-gating (observed {len(writes_c)} write-tick(s))",
+      len(writes_c) == 1)
 
+# chC never retriggers the shared envelope (R11/R12/R13) - only chB may.
 cpu6, _ = fresh_cpu()
 run_to_wait(cpu6)
-seq_rest_b = duty_gate_sequence(cpu6, BGM_B_PTR, BGM_B_TIMER, sym["BGM_B_PHASE"], BGM_NOTE_REST, 20, 9, 16)
-check("chB休符行: デューティ位相に関係なくR9が常時0(常時無音)",
-      all(v == 0 for v in seq_rest_b))
+cpu6.mem[BGM_B_TIMER] = 99
+row_addr = 0xD000
+cpu6.mem[BGM_C_TIMER] = 0
+cpu6.mem[BGM_C_PTR] = row_addr & 0xFF
+cpu6.mem[BGM_C_PTR + 1] = (row_addr >> 8) & 0xFF
+cpu6.mem[row_addr] = TEST_NOTE
+cpu6.mem[row_addr + 1] = 20
+for poison_reg in (11, 12, 13):
+    cpu6.psg_regs.pop(poison_reg, None)
+call_routine(cpu6, "BGM_TICK")
+check("chC NEVER retriggers the shared envelope (R11/R12/R13 untouched)",
+      11 not in cpu6.psg_regs and 12 not in cpu6.psg_regs and 13 not in cpu6.psg_regs)
 
 # ---- button-press trampoline ----
 cpu, mem = fresh_cpu()
