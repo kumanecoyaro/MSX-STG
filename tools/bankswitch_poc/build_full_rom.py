@@ -120,15 +120,19 @@ MAINLOOP_PATCH = """MAINLOOP:
     ; --- "JP MAINLOOP".                                                ---
     ; --- (2026-09-06、"これをステージクリアで流して") the actual switch ---
     ; --- trigger moved from PLAYER_FLYAWAY==2 directly to STAGE_CLEAR_ ---
-    ; --- ACT==2 - the tracked source's own TRIGGER_STAGE_CLEAR/        ---
+    ; --- ACT==3 - the tracked source's own TRIGGER_STAGE_CLEAR/        ---
     ; --- UPDATE_STAGE_CLEAR (armed the instant PLAYER_FLYAWAY hits 2)  ---
     ; --- now plays the StageClear jingle for its own fixed real-time   ---
-    ; --- duration first and only then advances STAGE_CLEAR_ACT to 2 -  ---
-    ; --- so this patch's own condition is one indirection later than   ---
+    ; --- duration, then shows a black screen + "MISSION 2" for its own ---
+    ; --- fixed real-time duration (2026-09-06, "画面をブラックで埋めて ---
+    ; --- MISSION 2とセンターに表示 3秒でいいかな" - STAGE_CLEAR_ACT     ---
+    ; --- extended from 2 states to 4: 0=idle/1=jingle/2=MISSION2 black ---
+    ; --- screen/3=done), and only then advances STAGE_CLEAR_ACT to 3 - ---
+    ; --- so this patch's own condition is two indirections later than  ---
     ; --- before, but otherwise unchanged (still gates the exact same   ---
     ; --- underlying event: boss defeated + flyaway finished).          ---
     LD A,(STAGE_CLEAR_ACT)
-    CP 2
+    CP 3
     JR NZ,MAINLOOP_NO_TEST_SWITCH
 
     ; --- 実機フィードバック対応("バンク切り替えに失敗してる タイトルで  ---

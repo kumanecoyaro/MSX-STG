@@ -2257,5 +2257,69 @@ EBULLET位置/コリジョン修正)(2026-09-06、完了済み・実機フィー
   **1442 passed/0 failed**(無変化)。3ROM再ビルド・`verify_comb.py`
   健全性確認の上、標準方針によりComb ROMのみ送付。詳細はHANDOFF.mdの
   Round52参照。
+
+## Round53: 全弾コリジョン1px化+Stage2実機フリーズ根本原因修正+
+Stage1 MISSION1/MISSION2導入・クリア演出(2026-09-06、完了済み・
+実機フィードバック待ち)
+
+- ユーザー発言2件: (1)"それも先端の1pxで良いかな...ステージ2の空中敵の
+  弾(赤丸弾)も全部1pxで良いわ Flyerのレーザーも さらにステージ2ボスの
+  形態変化後のレーザーも先端1pxだけでいい で、ステージ1クリア時に
+  自機が飛び去る演出...一旦左端まで下がってから飛び去る様に変更 で
+  画面をブラックで埋めてMISSION 2とセンターに表示 3秒でいいかな"、
+  (2)作業途中の割り込みで"ステージ1クリア後にフリーズした で、STAGE1
+  も2と同じで一旦画面をブラックで埋めてMISSION 1と3秒表示してから
+  ステージ1スタートに"。
+- **弾コリジョン1px化(4箇所)**: Stage1`PLAYER_HIT_BOX_EBULLET`
+  (16x2→1点)、Stage2`CHECK_EBULLET_VS_TANK`(4x4→1点、4スロット)、
+  `CHECK_FLYER_LASER_VS_TANK`(8x8→1点)、`CHECK_BOSS_BROKEN_BEAM_
+  VS_TANK`(16x16→X=生座標/Y=+15の1点、4スロット)。既存テストは全て
+  「弾の点が的の角に厳密一致」する座標しか使わず新旧を区別できな
+  かったため、4箇所とも新規discriminatingテストを追加し、一時的に
+  ASMを戻してFAILを確認した上で復元・再PASS済み。
+- **Stage2実機フリーズ("ステージ1クリア後にフリーズした")の根本原因
+  特定・修正**: `combined_test.asm`のINIT冒頭「DI: CALL INIT32: EI」
+  というCALL INIT32だけを囲む狭いブロックのEIが、INIT冒頭のDIが
+  約束する「INIT末尾のCALL INIT_BGM直後まで割り込み禁止」を数千命令
+  早く破っていた実バグ(CALL INIT32は実機ではBIOS内部でEI+HALTの
+  vblank待ちを行うため、Stage1から切り替わった直後の古いH.TIMIフック
+  がここで発火すると暴走 - round41で確立した教訓と同型、z80emu.pyは
+  この内部動作を再現しないため検出不能)。`CALL INIT_BGM`をINIT冒頭
+  DIの直後(CALL INIT32より前)へ移動、問題のEIを削除して解消。新規
+  `init_interrupt_safety_test.py`(2件、「最初にiff1がTrueになる瞬間
+  には既にHTIMI_HOOKが自分自身のBGM_TICKを指している」ことを直接
+  検証)、一時的に旧配置を再現してFAILを確認した上で復元・再PASS済み。
+- **Stage1 MISSION1導入演出(新規)**: Title→Stage1起動直後、INIT内で
+  実際のゲーム画面描画開始前に割り込ませ、黒画面+"MISSION 1"を表示。
+  当初SC_VBLANK_COUNT(H.TIMI駆動)+EIによる3秒待ちを実装したが、
+  **これだと`tools/verify_*.py`の共通`boot()`ヘルパー(割り込みを
+  自動発火しないz80emu.py前提)が全て永久にスタックする重大な設計
+  ミスと自己発見** - Z80クロックを直接カウントする純粋ビジーウェイト
+  (`MISSION_DELAY_3SEC`、割り込み非依存、実測約2.94秒)へ全面設計
+  変更して解消。影響した5つのStage1 `verify_*.py`全てに、実ROMは
+  無変更のまま`mem0`側だけディレイを短縮する1行パッチを追加。
+- **Stage1 MISSION2黒画面+左端退避(既存ステージクリア演出の拡張)**:
+  ボス撃破時、新規`PLAYER_RETREAT_ACT`で自機をX=0まで退避させてから
+  従来のflyawayへ引き継ぐ設計に変更。`STAGE_CLEAR_ACT`を2状態から
+  4状態(0/1/2=MISSION2黒画面表示中/3=完了・Comb限定バンク切替
+  トリガー)へ拡張、`build_full_rom.py`のバンク切替条件も`==2`→`==3`
+  へ更新。MAINLOOP側に`STAGE_CLEAR_ACT>=2`以後の新規フリーズ機構
+  (DRAW_MISSION_SCREENの生VRAM書き込みが地形スクロールに上書きされ
+  ないようにするため)を追加。共有`DRAW_MISSION_SCREEN`ルーチンは
+  `OTIR`等のブロックI/O命令を一切使わず手動OUT+DJNZループのみで実装
+  (CLAUDE.md恒久ルール厳守)。新規フォント(M/I/S/O/N/space、
+  codes64-69・group8、実VRAM調査で空き確認済み)+既存digit0-9グリフ
+  の再利用で"MISSION 1"/"MISSION 2"を構成。
+- 新規`tools/verify_stage1_mission_screens.py`(31件)、
+  `verify_stage1_bgm.py`のRound51由来スタルテストも修正(70 passed)。
+  全回帰: Stage2側`run_all.py` **1447 passed/0 failed**。Stage1側
+  `verify_player_damage.py` 58/`verify_stage1_bgm.py` 70/
+  `verify_enemy_bullets.py` 49/`verify_stage1_mission_screens.py`
+  31、全てPASS。3ROM再ビルド・`verify_comb.py`健全性確認の上、標準
+  方針によりComb ROMのみ送付。詳細はHANDOFF.mdのRound53参照。
+  - **保留・実機フィードバック待ち**: `MISSION_DELAY_3SEC`(約2.94秒)・
+    `PLAYER_RETREAT_SPEED`(2px/frame)・`MISSION_SCREEN_TICKS`
+    (180、3秒@60Hz)はいずれも未調整の近似値。ボス形態変化後レーザーの
+    1px近似(左右の厳密な先端補正なし)も見え方次第で再検討の余地あり。
 - **保留・実機フィードバック待ち**: 8pxという下げ幅・2px高のコリジョン
   境界は実機での見え方次第で再調整の可能性あり。

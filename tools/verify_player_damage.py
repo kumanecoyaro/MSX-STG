@@ -22,6 +22,14 @@ mem0 = bytearray(65536)
 for addr, val in out.items():
     mem0[addr & 0xFFFF] = val & 0xFF
 
+# (2026-09-06、MISSION 1導入演出): INIT内のMISSION_DELAY_3SEC(実機では
+# 約3秒のZ80クロック直接カウントのビジーウェイト、LD D,10で約130万
+# 命令)がこのファイルのboot()呼び出し全てに乗ってしまい、既存の
+# run_until_pc/call_routineの命令数上限を軽く超えてしまう。実ROMは
+# 変更せず、このテストプロセス内でのみLD D,10の即値(MISSION_DELAY_
+# 3SEC+1)を1へ縮小(約13万命令、既存の上限内に収まる)。
+mem0[sym["MISSION_DELAY_3SEC"] + 1] = 1
+
 ok = []
 fail = []
 def check(label, cond):
@@ -302,6 +310,24 @@ z.wr(SPRITE_USED + 5, 1)
 call_routine(z, sym["PDC_CHECK_EBULLET"])
 check("PDC_CHECK_EBULLET: bullet whose real 2px bar band just touches the top of the "
       "player's own hitbox still correctly hits", z.a == 1 and z.rd(EBULLET_POOL + 0) == 0)
+
+# 実機フィードバック"それも先端の1pxで良いかな その方が少しは速いし" -
+# 2px帯(origin+2/+3)からさらに単一ピクセル(origin+2のみ)へ縮小。
+# origin+3行だけが自機ヒットボックスに触れ、origin+2行は触れない位置を
+# 作り、旧2px帯なら命中していたはずのケースが新1px判定では外れることを
+# 直接確認する(revert self-check: 一時的にADD A,2をADD A,3へ戻すと
+# このテストがFAILすることを確認済み)。
+z = fresh()
+z.wr(PLAYERX, PX); z.wr(PLAYERY, PY)   # player hitbox Y band: [PY, PY+7]
+z.wr(EBULLET_POOL + 0, 1); z.wr(EBULLET_POOL + 1, PX); z.wr(EBULLET_POOL + 2, PY - 3)
+# origin+2 = PY-1 (just above the player's hitbox, must miss), origin+3 = PY
+# (would have been inside the old 2px band's hit range)
+z.wr(EBULLET_POOL + 3, 5)
+call_routine(z, sym["PDC_CHECK_EBULLET"])
+check("PDC_CHECK_EBULLET: 1px-tip judged strictly at origin+2 - a bullet whose old-style "
+      "origin+3 row would have grazed the player, but whose true origin+2 tip sits one row "
+      "above it, now correctly misses",
+      z.a == 0 and z.rd(EBULLET_POOL + 0) == 1)
 
 
 # ---------- (8) PLAYER_DAMAGE_CHECK / PLAYER_TAKE_HIT - barrier-absorbed hit ----------

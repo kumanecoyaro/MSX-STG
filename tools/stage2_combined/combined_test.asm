@@ -3098,11 +3098,33 @@ INIT:
     ; Stage2で共通の絶対RAMアドレスに置かれたBGM制御変数を経由して
     ; 曲がそのまま鳴り続けてしまう遠因でもある)。Stage1自身のINIT・
     ; title_test.asmのINITが両方とも採用済みの「INIT冒頭でDI、全ての
-    ; 描画が終わったINIT末尾(CALL INIT_BGMの直後)でEI」という既存の
-    ; 型をこのファイルにも適用し、Stage2自身の初期描画が完全に終わって
-    ; 自分自身のBGM_TICKが正しく設置されるまでの間、一切の割り込みを
+    ; 描画が終わったINIT末尾でEI」という既存の型をこのファイルにも
+    ; 適用し、Stage2自身の初期描画が完全に終わるまで一切の割り込みを
     ; 許可しないようにする。
+    ; (2026-09-06、実機フィードバック"ステージ1クリア後にフリーズ
+    ; した"対応): 上記コメントの意図(このDIの直後にCALL INIT_BGMして
+    ; H.TIMIフックを即座に自分自身の正しいアドレスへ上書きする)は
+    ; コードとして一度も実装されておらず、実際のCALL INIT_BGMは
+    ; このファイル末尾(旧position、初期描画が全て終わった後)のまま
+    ; 放置されていた実バグを発見。さらに致命的だったのは、この直後の
+    ; 「DI:CALL INIT32:EI」(次のブロック)というCALL INIT32だけを
+    ; 囲む狭いDI/EI - このEIが、上記コメントが約束する「INIT末尾まで
+    ; 割り込み禁止」を数千命令分も早く破ってしまっていた(Stage1自身の
+    ; INIT・round41 follow-up#3のコメントが詳述する通り、CALL INIT32
+    ; [BIOS SCREEN1初期化]は内部でEI+HALTによるvblank待ちを行うため、
+    ; ここで割り込みが1回でも発火すると、window Aの中身が既にStage2の
+    ; コードに切り替わっているにも関わらずStage1の古いH.TIMIフック
+    ; アドレスへJPしてしまう - Stage1でボスを倒しステージクリア
+    ; ジングルを聞き切ってからStage2へバンク切替する、という経路を
+    ; 実際に最後まで通しでプレイして初めて実機で踏める経路だったため、
+    ; これまで検出されなかったと考えられる)。Stage1自身の検証済み
+    ; パターン(CALL INIT_BGMをCALL INIT32より前、DIの直後という
+    ; 最も早い位置に置く)に合わせ、CALL INIT_BGMをこのDIの直後へ
+    ; 移動(旧位置の重複呼び出しは削除)、かつ次のブロックの誤った
+    ; EIを削除し、真にINIT末尾(旧CALL INIT_BGM呼び出し跡、下記
+    ; 参照)まで割り込み禁止を継続する設計に修正。
     DI
+    CALL INIT_BGM
 
     ; checkpoint P1 (border color 11): INIT reached, SP set.
     LD B,11 : LD C,7 : CALL WRTVDP
@@ -3179,9 +3201,12 @@ INIT_RESUME_AFTER_BANK_SELECT:
     ; ROM's own real bank1 content.
     LD B,14 : LD C,7 : CALL WRTVDP
 
-    DI
+    ; DIは既に有効(冒頭のDI+CALL INIT_BGM参照、H.TIMIフックは既に
+    ; このファイル自身の正しいアドレスを指している) - このEIを削除
+    ; したのが上記"ステージ1クリア後にフリーズした"バグ修正の本体
+    ; (旧実装は無条件にここでEIしてしまい、INIT末尾までの割り込み
+    ; 禁止という設計意図を自ら破っていた)。
     CALL INIT32
-    EI
 
     ; checkpoint 1: INIT started, SP set, ASCII16 bank1 selected for
     ; page2, BIOS SCREEN1 setup done
@@ -3943,14 +3968,13 @@ ICL_LOOP:
     INC C
     DJNZ ICL_LOOP
 
-    ; BGM driver install (Vsync-driven, follow-up#24) - deliberately one
-    ; of the LAST things INIT does: INIT_BGM arms the H.TIMI hook. INIT
-    ; 冒頭のDI(上記コメント参照)により、ここまでの全INIT処理は割り込み
-    ; 禁止状態で走っている(Stage1から切り替わった直後の古いH.TIMIフックが
-    ; 誤って発火する余地が無い)。この直後のEIで初めて割り込みを許可する -
-    ; その時点でBGM_TICKは既に自分自身の正しいアドレスを指しており、
-    ; 初期描画も全て完了済み。
-    CALL INIT_BGM
+    ; BGM driver (Vsync-driven, follow-up#24): H.TIMIフックの設置自体は
+    ; INIT冒頭(DIの直後、CALL INIT32より前)へ移動済み(上記"ステージ1
+    ; クリア後にフリーズした"バグ修正参照) - ここでは音を実際に鳴らし
+    ; 始める最後のEIのみ行う。ここまでの全INIT処理はDIから一貫して
+    ; 割り込み禁止状態で走っている(途中で誤ってEIしていた実バグは
+    ; 修正済み)ため、この時点でBGM_TICKは既に自分自身の正しい
+    ; アドレスを指した状態のまま、初期描画も全て完了済み。
     EI
 
     ; checkpoint 9: enemy patterns + pool set up - about to enter MAINLOOP
@@ -7931,15 +7955,11 @@ FEBS_LOOP:
     EI
     RET
 
-; AABB check, 4 slots fully unrolled with compile-time-constant addresses
-; from the start (same technique as CHECK_BOSS_BROKEN_BEAM_VS_TANK -
-; round36-14 follow-up#8/#9 - applied here directly rather than needing a
-; later round to retrofit it, since this check runs essentially every
-; frame throughout normal (non-boss) play once any ZacoII/Flyer exists).
-; "コリジョンは左上4x4ドット" - box is 4px wide/tall at the bullet's own
-; X,Y (its sprite's own top-left corner), same shared TANK_HAZARD_
-; IFRAMES/APPLY_TANK_DAMAGE/SOUND_ZUM_DEFLECT hit shape as every other
-; tank hazard in this file.
+; 実機フィードバック"ステージ2の空中敵の弾(赤丸弾)も全部1pxで良いわ
+; その方が少しは速いし" - 従来の4x4ボックス(bullet側ADD A,3による
+; 幅・高さの拡張)を撤廃し、弾側は幅・高さ0の単一ピクセル(生の
+; EBULLET_X/Y、オフセット無し)による点内包判定に変更。4スロット
+; 完全展開のまま(round36-14 follow-up#8/#9と同じ技法)。
 CHECK_EBULLET_VS_TANK:
     LD A,(TANK_HAZARD_IFRAMES)
     OR A
@@ -7953,7 +7973,6 @@ CEBVT_SLOT0:
     JP Z,CEBVT_SLOT1
     LD A,(EBULLET_POOL+1)
     LD D,A
-    ADD A,3
     CP B
     JP C,CEBVT_SLOT1
     LD A,B : ADD A,TANK_COLLISION_WIDTH-1
@@ -7961,7 +7980,6 @@ CEBVT_SLOT0:
     JP C,CEBVT_SLOT1
     LD A,(EBULLET_POOL+2)
     LD D,A
-    ADD A,3
     CP C
     JP C,CEBVT_SLOT1
     LD A,C : ADD A,TANK_COLLISION_HEIGHT-1
@@ -7979,7 +7997,6 @@ CEBVT_SLOT1:
     JP Z,CEBVT_SLOT2
     LD A,(EBULLET_POOL+6)
     LD D,A
-    ADD A,3
     CP B
     JP C,CEBVT_SLOT2
     LD A,B : ADD A,TANK_COLLISION_WIDTH-1
@@ -7987,7 +8004,6 @@ CEBVT_SLOT1:
     JP C,CEBVT_SLOT2
     LD A,(EBULLET_POOL+7)
     LD D,A
-    ADD A,3
     CP C
     JP C,CEBVT_SLOT2
     LD A,C : ADD A,TANK_COLLISION_HEIGHT-1
@@ -8005,7 +8021,6 @@ CEBVT_SLOT2:
     JP Z,CEBVT_SLOT3
     LD A,(EBULLET_POOL+11)
     LD D,A
-    ADD A,3
     CP B
     JP C,CEBVT_SLOT3
     LD A,B : ADD A,TANK_COLLISION_WIDTH-1
@@ -8013,7 +8028,6 @@ CEBVT_SLOT2:
     JP C,CEBVT_SLOT3
     LD A,(EBULLET_POOL+12)
     LD D,A
-    ADD A,3
     CP C
     JP C,CEBVT_SLOT3
     LD A,C : ADD A,TANK_COLLISION_HEIGHT-1
@@ -8031,7 +8045,6 @@ CEBVT_SLOT3:
     RET Z
     LD A,(EBULLET_POOL+16)
     LD D,A
-    ADD A,3
     CP B
     RET C
     LD A,B : ADD A,TANK_COLLISION_WIDTH-1
@@ -8039,7 +8052,6 @@ CEBVT_SLOT3:
     RET C
     LD A,(EBULLET_POOL+17)
     LD D,A
-    ADD A,3
     CP C
     RET C
     LD A,C : ADD A,TANK_COLLISION_HEIGHT-1
@@ -10600,10 +10612,11 @@ UFLA_MOVE_OK:
     CALL DRAW_FLYER_LASER_CELL
     RET
 
-; AABB check (8x8 box, matching the laser's own single BG cell) - same
-; shared TANK_HAZARD_IFRAMES/APPLY_TANK_DAMAGE/SOUND_ZUM_DEFLECT hit
-; shape as CHECK_ETANK_BULLET_VS_TANK, including "flies through, doesn't
-; self-deactivate on hit".
+; 実機フィードバック"Flyerのレーザーも1pxで良いわ" - 従来の8x8ボックス
+; (laser側ADD A,7による幅・高さの拡張)を撤廃し、生のFLYER_LASER_X/Y
+; (オフセット無し)による単一ピクセル点内包判定に変更。共有TANK_
+; HAZARD_IFRAMES/APPLY_TANK_DAMAGE/SOUND_ZUM_DEFLECT hit shapeは不変
+; ("flies through, doesn't self-deactivate on hit"も不変)。
 CHECK_FLYER_LASER_VS_TANK:
     LD A,(FLYER_LASER_ACT)
     OR A
@@ -10615,7 +10628,6 @@ CHECK_FLYER_LASER_VS_TANK:
     LD A,(TANK_Y_CUR) : ADD A,TANK_COLLISION_Y_OFFSET : LD C,A
     LD A,(FLYER_LASER_X)
     LD D,A
-    ADD A,7
     CP B
     RET C
     LD A,B : ADD A,TANK_COLLISION_WIDTH-1
@@ -10623,7 +10635,6 @@ CHECK_FLYER_LASER_VS_TANK:
     RET C
     LD A,(FLYER_LASER_Y)
     LD D,A
-    ADD A,7
     CP C
     RET C
     LD A,C : ADD A,TANK_COLLISION_HEIGHT-1
@@ -12329,21 +12340,26 @@ CHECK_BOSS_BROKEN_BEAM_VS_TANK:
     LD A,(TANK_X) : ADD A,TANK_COLLISION_X_OFFSET : LD B,A   ; B = tank X+offset (stable all routine)
     LD A,(TANK_Y_CUR) : ADD A,TANK_COLLISION_Y_OFFSET : LD C,A ; C = tank Y+offset (stable all routine)
 
+; 実機フィードバック"ステージ2ボスの形態変化後のレーザーも先端1pxだけ
+; でいい" - 従来の16x16フルボックスを撤廃。X側は幅0の単一列(生の
+; PROJ_X、オフセット無し)、Y側はPROJ_X+15(スプライト下端の1行)を
+; 単一の点として使う - 4本のビームは全てDYMAGが正(常に下方向へ移動)
+; なので、下端が進行方向の"先端"にあたる(左右どちら向きの斜めビーム
+; かによる左右方向の厳密な先端補正[X+0 or X+15]までは行わない簡易
+; 近似、ユーザーの"先端1pxだけでいい"という簡略化要望の範囲内と判断)。
 CBBBVT_SLOT0:
     LD A,(BOSS_BROKEN_PROJ_ACTIVE+0)
     OR A
     JP Z,CBBBVT_SLOT1
     LD A,(BOSS_BROKEN_PROJ_X+0)
     LD D,A
-    ADD A,15
     CP B
     JP C,CBBBVT_SLOT1
     LD A,B : ADD A,TANK_COLLISION_WIDTH-1
     CP D
     JP C,CBBBVT_SLOT1
-    LD A,(BOSS_BROKEN_PROJ_Y+0)
+    LD A,(BOSS_BROKEN_PROJ_Y+0) : ADD A,15
     LD D,A
-    ADD A,15
     CP C
     JP C,CBBBVT_SLOT1
     LD A,C : ADD A,TANK_COLLISION_HEIGHT-1
@@ -12361,15 +12377,13 @@ CBBBVT_SLOT1:
     JP Z,CBBBVT_SLOT2
     LD A,(BOSS_BROKEN_PROJ_X+1)
     LD D,A
-    ADD A,15
     CP B
     JP C,CBBBVT_SLOT2
     LD A,B : ADD A,TANK_COLLISION_WIDTH-1
     CP D
     JP C,CBBBVT_SLOT2
-    LD A,(BOSS_BROKEN_PROJ_Y+1)
+    LD A,(BOSS_BROKEN_PROJ_Y+1) : ADD A,15
     LD D,A
-    ADD A,15
     CP C
     JP C,CBBBVT_SLOT2
     LD A,C : ADD A,TANK_COLLISION_HEIGHT-1
@@ -12387,15 +12401,13 @@ CBBBVT_SLOT2:
     JP Z,CBBBVT_SLOT3
     LD A,(BOSS_BROKEN_PROJ_X+2)
     LD D,A
-    ADD A,15
     CP B
     JP C,CBBBVT_SLOT3
     LD A,B : ADD A,TANK_COLLISION_WIDTH-1
     CP D
     JP C,CBBBVT_SLOT3
-    LD A,(BOSS_BROKEN_PROJ_Y+2)
+    LD A,(BOSS_BROKEN_PROJ_Y+2) : ADD A,15
     LD D,A
-    ADD A,15
     CP C
     JP C,CBBBVT_SLOT3
     LD A,C : ADD A,TANK_COLLISION_HEIGHT-1
@@ -12413,15 +12425,13 @@ CBBBVT_SLOT3:
     RET Z
     LD A,(BOSS_BROKEN_PROJ_X+3)
     LD D,A
-    ADD A,15
     CP B
     RET C
     LD A,B : ADD A,TANK_COLLISION_WIDTH-1
     CP D
     RET C
-    LD A,(BOSS_BROKEN_PROJ_Y+3)
+    LD A,(BOSS_BROKEN_PROJ_Y+3) : ADD A,15
     LD D,A
-    ADD A,15
     CP C
     RET C
     LD A,C : ADD A,TANK_COLLISION_HEIGHT-1

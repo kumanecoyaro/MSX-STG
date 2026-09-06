@@ -267,6 +267,25 @@ life0 = cpu8.mem[TANK_LIFE]
 call_routine(cpu8, "CHECK_EBULLET_VS_TANK")
 check("no repeat damage while TANK_HAZARD_IFRAMES is still active", cpu8.mem[TANK_LIFE] == life0)
 
+# 実機フィードバック"ステージ2の空中敵の弾(赤丸弾)も全部1pxで良いわ" -
+# 従来の4x4ボックス(bullet側ADD A,3による幅・高さの拡張)を撤廃した
+# ことを直接確認する。弾を戦車の左端から3px外側(tx-3,ty)に置くと、
+# 旧4x4ボックスなら右端(bx+3=tx)が戦車の左端に触れて命中していたが、
+# 新1px判定では生の点(tx-3)がそのまま戦車の外なので外れるはず
+# (revert self-check: 一時的にADD A,3を戻すとFAILすることを確認済み)。
+cpu9 = fresh_cpu()
+tx = cpu9.mem[TANK_X] + TANK_COLLISION_X_OFFSET
+ty = cpu9.mem[TANK_Y_CUR] + TANK_COLLISION_Y_OFFSET
+cpu9.mem[TANK_HAZARD_IFRAMES] = 0
+cpu9.mem[EBULLET_POOL + 0] = 1
+cpu9.mem[EBULLET_POOL + 1] = tx - 3
+cpu9.mem[EBULLET_POOL + 2] = ty
+life0 = cpu9.mem[TANK_LIFE]
+call_routine(cpu9, "CHECK_EBULLET_VS_TANK")
+check("1px point judged strictly at the bullet's own raw (X,Y) - a bullet 3px left of the "
+      "tank whose old 4x4-widened far edge would have just touched the tank's left edge "
+      "now correctly misses", cpu9.mem[TANK_LIFE] == life0)
+
 
 # ---------- Flyer no longer fires EBullet (実機フィードバック対応) ----------
 # round36-14 follow-up#11 originally had Flyer fire an EBullet at its

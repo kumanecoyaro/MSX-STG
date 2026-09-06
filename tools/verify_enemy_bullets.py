@@ -19,6 +19,14 @@ mem0 = bytearray(65536)
 for addr, val in out.items():
     mem0[addr & 0xFFFF] = val & 0xFF
 
+# (2026-09-06、MISSION 1導入演出): INIT内のMISSION_DELAY_3SEC(実機では
+# 約3秒のZ80クロック直接カウントのビジーウェイト、LD D,10で約130万
+# 命令)がこのファイルのboot()呼び出し全てに乗ってしまい、既存の
+# run_until_pc/call_routineの命令数上限を軽く超えてしまう。実ROMは
+# 変更せず、このテストプロセス内でのみLD D,10の即値(MISSION_DELAY_
+# 3SEC+1)を1へ縮小(約13万命令、既存の上限内に収まる)。
+mem0[sym["MISSION_DELAY_3SEC"] + 1] = 1
+
 ok = []
 fail = []
 def check(label, cond):

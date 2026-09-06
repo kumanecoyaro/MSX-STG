@@ -902,6 +902,27 @@ check("with slot0 active-but-missing and slot3 active-and-overlapping, the tank 
       "damage from slot3 (an earlier active-but-missing slot doesn't short-circuit the loop)",
       cpu4.mem[TANK_LIFE] == life4 - 1)
 
+# 実機フィードバック"ステージ2ボスの形態変化後のレーザーも先端1pxだけ
+# でいい" - 従来の16x16フルボックスを撤廃したことを直接確認する。
+# X=生のPROJ_X(オフセット無し)、Y=PROJ_Y+15(下端)という単一の点のみを
+# 判定に使う。ビームを戦車の左端から15px外側(tx-15,ty-15)に置くと、
+# 旧16x16ボックスなら右端(bx+15=tx)・下端(by+15=ty)が戦車の左上角に
+# 触れて命中していたが、新1px判定では生のX点(tx-15)が戦車の外なので
+# 外れるはず(revert self-check: 一時的にX側にADD A,15を戻すとFAILする
+# ことを確認済み)。
+cpu5 = fresh_cpu()
+tx = cpu5.mem[TANK_X] + TANK_COLLISION_X_OFFSET
+ty = cpu5.mem[TANK_Y_CUR] + TANK_COLLISION_Y_OFFSET
+cpu5.mem[TANK_HAZARD_IFRAMES] = 0
+cpu5.mem[BOSS_BROKEN_PROJ_ACTIVE + 0] = 1
+cpu5.mem[BOSS_BROKEN_PROJ_X + 0] = (tx - 15) & 0xFF
+cpu5.mem[BOSS_BROKEN_PROJ_Y + 0] = (ty - 15) & 0xFF
+life5 = cpu5.mem[TANK_LIFE]
+call_routine(cpu5, "CHECK_BOSS_BROKEN_BEAM_VS_TANK")
+check("1px point judged strictly at the beam's own raw X (no offset) - a beam whose old "
+      "16x16-widened far-right edge would have just touched the tank's top-left corner now "
+      "correctly misses", cpu5.mem[TANK_LIFE] == life5)
+
 
 print()
 print(f"{len(ok)} passed, {len(fail)} failed")

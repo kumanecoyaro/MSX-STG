@@ -38,6 +38,14 @@ mem0 = bytearray(65536)
 for addr, val in out.items():
     mem0[addr & 0xFFFF] = val & 0xFF
 
+# (2026-09-06、MISSION 1導入演出): INIT内のMISSION_DELAY_3SEC(実機では
+# 約3秒のZ80クロック直接カウントのビジーウェイト、LD D,10で約130万
+# 命令)がこのファイルのboot()呼び出し全てに乗ってしまい、既存の
+# call_routine/boot()の命令数上限を軽く超えてしまう。実ROMは変更せず、
+# このテストプロセス内でのみLD D,10の即値(MISSION_DELAY_3SEC+1)を
+# 1へ縮小(約13万命令、既存の上限内に収まる)。
+mem0[sym["MISSION_DELAY_3SEC"] + 1] = 1
+
 ok = []
 fail = []
 def check(label, cond):
@@ -695,13 +703,29 @@ call_routine(z, sym["UPDATE_STAGE_CLEAR"])
 check("UPDATE_STAGE_CLEAR is a no-op while STAGE_CLEAR_ACT==0 (not yet triggered)",
       z.rd(STAGE_CLEAR_ACT) == 0)
 
+# (2026-09-06、"画面をブラックで埋めてMISSION 2とセンターに表示 3秒
+# でいいかな"): STAGE_CLEAR_ACTを2状態(0/1)から4状態(0/1/2/3)へ拡張。
+# ACT==2はもはや「完了」ではなく「MISSION2黒画面表示中、実時間3秒待ち」
+# の新設フェーズ - 詳しい全状態遷移のテストはtools/verify_stage1_
+# mission_screens.pyへ集約済み、ここでは2つだけ確認: (1)経過時間ゼロ
+# ならACT==2のままであること(まだMISSION_SCREEN_TICKS未経過)、
+# (2)真の終端状態ACT==3が二度と再トリガーされないno-opであること。
 z = fresh()
-z.wr(STAGE_CLEAR_ACT, 2)   # already done - must stay done, not somehow retrigger
+z.wr(STAGE_CLEAR_ACT, 2)
 z.wr(SC_START_TICK, 0); z.wr(SC_START_TICK + 1, 0)
 z.wr(SC_VBLANK_COUNT, 0); z.wr(SC_VBLANK_COUNT + 1, 0)
 call_routine(z, sym["UPDATE_STAGE_CLEAR"])
-check("UPDATE_STAGE_CLEAR is a no-op once STAGE_CLEAR_ACT==2 (already done)",
+check("UPDATE_STAGE_CLEAR: stays STAGE_CLEAR_ACT=2 with zero elapsed time "
+      "(MISSION_SCREEN_TICKS not yet reached)",
       z.rd(STAGE_CLEAR_ACT) == 2)
+
+z = fresh()
+z.wr(STAGE_CLEAR_ACT, 3)   # terminal - must stay done, not somehow retrigger
+z.wr(SC_START_TICK, 0); z.wr(SC_START_TICK + 1, 0)
+z.wr(SC_VBLANK_COUNT, 0xFFFF & 0xFF); z.wr(SC_VBLANK_COUNT + 1, 0xFFFF >> 8)
+call_routine(z, sym["UPDATE_STAGE_CLEAR"])
+check("UPDATE_STAGE_CLEAR is a no-op once STAGE_CLEAR_ACT==3 (terminal, Comb's own "
+      "bank-switch trigger)", z.rd(STAGE_CLEAR_ACT) == 3)
 
 # ---- "これは3音使って良い" - ステージクリアジングル再生中(STAGE_CLEAR_
 # ACT==1)は通常のSEドライバ(SOUND_UPDATE)自体がMAINLOOP側でスキップ

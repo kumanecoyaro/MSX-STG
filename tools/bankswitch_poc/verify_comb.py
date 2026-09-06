@@ -249,20 +249,26 @@ mem.flat[STAGE1_SCORE + 1] = (_score_test_value >> 8) & 0xFF
 mem.flat[STAGE1_SCORE + 2] = (_score_test_value >> 16) & 0xFF
 print(f"poked Stage1 SCORE=0x{_score_test_value:06x} to verify stage-clear carryover into Stage2")
 
-# (2026-09-06、"これをステージクリアで流して"): the switch trigger is no
-# longer PLAYER_FLYAWAY==2 directly - TRIGGER_STAGE_CLEAR now arms first
-# (STAGE_CLEAR_ACT=1) and repoints BGM_B/C/A_PTR at the StageClear jingle,
-# then UPDATE_STAGE_CLEAR only advances to STAGE_CLEAR_ACT=2 once its own
-# real-time clock (SC_VBLANK_COUNT, incremented from BGM_TICK - itself
-# only ever fired by an actual H.TIMI interrupt, which this raw
-# instruction-stepping harness never simulates, same as every other real
-# vblank-driven timer in this script) reaches the jingle's total duration.
-# Verifying that real-time wait would need ~500 simulated vblank
-# interrupts; this script's scope is the bank-switch mechanics, not the
-# jingle's own timing (that has its own coverage in tools/verify_
-# stage1_bgm.py), so after confirming TRIGGER_STAGE_CLEAR actually fired
-# and repointed the BGM channels, STAGE_CLEAR_ACT is poked directly to 2
-# to exercise the rest of the trampoline exactly as before.
+# (2026-09-06、"これをステージクリアで流して"、続けて"画面をブラックで
+# 埋めてMISSION 2とセンターに表示 3秒でいいかな"): the switch trigger is
+# no longer PLAYER_FLYAWAY==2 directly - TRIGGER_STAGE_CLEAR now arms
+# first (STAGE_CLEAR_ACT=1) and repoints BGM_B/C/A_PTR at the StageClear
+# jingle; UPDATE_STAGE_CLEAR then advances 1->2 (drawing the MISSION2
+# black screen + muting BGM) once its own real-time clock reaches the
+# jingle's total duration, and 2->3 (the Comb-only bank-switch trigger,
+# see build_full_rom.py's MAINLOOP_PATCH) once a second real-time window
+# (MISSION_SCREEN_TICKS) elapses. Both windows are driven by SC_VBLANK_
+# COUNT (incremented from BGM_TICK - itself only ever fired by an actual
+# H.TIMI interrupt, which this raw instruction-stepping harness never
+# simulates, same as every other real vblank-driven timer in this
+# script). Verifying those real-time waits would need hundreds of
+# simulated vblank interrupts; this script's scope is the bank-switch
+# mechanics, not the jingle/MISSION2 timing (that has its own coverage in
+# tools/verify_stage1_bgm.py and tools/verify_stage1_mission_screens.py),
+# so after confirming TRIGGER_STAGE_CLEAR actually fired and repointed
+# the BGM channels, STAGE_CLEAR_ACT is poked directly to 3 (the final,
+# switch-triggering state) to exercise the rest of the trampoline exactly
+# as before.
 STAGE_CLEAR_ACT = gsym["STAGE_CLEAR_ACT"]
 steps1b = 0
 while mem.flat[STAGE_CLEAR_ACT] != 1 and steps1b < 2_000_000:
@@ -285,8 +291,9 @@ assert _got_c == gsym["STAGE_CLEAR_CHC_BASE"], "TRIGGER_STAGE_CLEAR did not repo
 assert _got_a == gsym["STAGE_CLEAR_CHA_BASE"], "TRIGGER_STAGE_CLEAR did not repoint BGM_A_PTR at the jingle"
 print(f"StageClear jingle triggered after {steps1b} steps (STAGE_CLEAR_ACT=1, "
       f"BGM_B/C/A_PTR repointed at the jingle's 3 parts)")
-mem.flat[STAGE_CLEAR_ACT] = 2
-print("poked STAGE_CLEAR_ACT=2 (bypassing the jingle's own real-time wait, see comment above)")
+mem.flat[STAGE_CLEAR_ACT] = 3
+print("poked STAGE_CLEAR_ACT=3 (bypassing the jingle's + MISSION2 screen's own real-time "
+      "waits, see comment above)")
 
 STAGE2_INIT = s2sym["INIT"]
 switched = False

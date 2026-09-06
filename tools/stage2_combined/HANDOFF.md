@@ -10565,3 +10565,163 @@ EBULLET`をこちらへ差し替え。
   - **保留・実機フィードバック待ち**: 8pxという下げ幅・2px高の
     コリジョン境界は今回の実機報告に基づく値だが、実際に送付した
     ROMでの見え方次第で追加調整の可能性あり。
+
+## Round53(全弾コリジョンを1px化+Stage2実機フリーズ根本原因修正+
+Stage1 MISSION1/MISSION2導入・クリア演出、完了済み・実機フィードバック
+待ち)(2026-09-06)
+
+- ユーザー発言2件が並行: (1)「んーそれも先端の1pxで良いかな その方が
+  少しは速いし で、ステージ2の空中敵の弾(赤丸弾)も全部1pxで良いわ
+  Flyerのレーザーも さらにステージ2ボスの形態変化後のレーザーも先端
+  1pxだけでいい で、ステージ1クリア時に自機が飛び去る演出 今は自機
+  位置そのまま飛び去るが 一旦左端まで下がってから飛び去る様に変更
+  で画面をブラックで埋めてMISSION 2とセンターに表示 3秒でいいかな
+  その後ステージ2へ」、(2)作業中に割り込みで「ステージ1クリア後に
+  フリーズした で、STAGE1も2と同じで一旦画面をブラックで埋めて
+  MISSION 1と3秒表示してから ステージ1スタートに」。
+
+### (1) 全弾コリジョンをさらに1pxへ縮小(4箇所)
+
+Round52のStage1 EBULLET(16x16→16x2)への追加フィードバックを受け、
+「弾側の当たり判定を広げる`ADD A,n`(自機/戦車の幅・高さは変更しない)」
+を除去する形で以下4箇所を単一ピクセル点判定へ縮小:
+  - Stage1 `PLAYER_HIT_BOX_EBULLET`: 16幅x2高→(D,E+2)の1点
+    (Dはスプライト原点Xそのもの=左移動する弾の先端、E+2はEBULLET_
+    PATTERNの実絵柄行)。
+  - Stage2 `CHECK_EBULLET_VS_TANK`(4スロット完全展開): 4x4ボックス→
+    生のEBULLET_X/Yそのままの点(4スロットとも同型)。
+  - Stage2 `CHECK_FLYER_LASER_VS_TANK`: 8x8ボックス→生のFLYER_LASER_
+    X/Yそのままの点。
+  - Stage2 `CHECK_BOSS_BROKEN_BEAM_VS_TANK`(4スロット完全展開):
+    16x16ボックス→X=生のPROJ_X(オフセット無し)、Y=PROJ_Y+15(4本とも
+    DYMAGが正=常に下方向へ移動するため、下端が進行方向の"先端"に
+    あたる近似、左右の厳密な先端補正までは行わない簡易化)。
+  いずれも既存テストが偶然「弾の点が戦車/自機の角に厳密一致する」
+  座標しか使っておらず新旧どちらでも同じ結果になる(=変更を検出
+  できない)ケースしか無かったため、4箇所とも「旧の拡張ボックスなら
+  ギリギリ命中するが新しい点判定では外れる」座標を明示的に選んだ新規
+  discriminatingテストを追加(`verify_player_damage.py`+1件、
+  `ebullet_test.py`+1件、`mine_flyerlaser_test.py`+1件、
+  `boss_broken_form_test.py`+1件)。4箇所とも一時的にASMを元へ戻して
+  新規テストが実際にFAILすることを確認した上で復元・再PASSを確認済み
+  (プロジェクト標準の自己検証手順)。
+
+### (2) Stage2実機フリーズの根本原因特定・修正("ステージ1クリア後に
+フリーズした")
+
+StageClear演出(Round51)がRound52まで一度も実機で最後まで(ジングル
+再生→Stage2へのバンク切替)通しでテストされていなかったため、今回
+初めて顕在化した実機専用バグ。`combined_test.asm`のINITは冒頭の
+DI(「INIT末尾のCALL INIT_BGM直後までは一切割り込みを許可しない」と
+自ら宣言するコメント付き)の直後に「DI: CALL INIT32: EI」という、
+CALL INIT32(BIOS SCREEN1初期化)だけを囲む狭いブロックが存在し、この
+EIが冒頭のDIブロックの約束を数千命令分も早く破っていた。CALL INIT32は
+実機では内部でEI+HALTによるvblank待ちを行う(z80emu.pyは完全にno-op
+スタブ化しておりこの内部動作を再現しない、round41で確立済みの教訓と
+同型)ため、Stage1から切り替わった直後にまだ生きている古いH.TIMI
+フック(window Aの中身は既にStage2のコードに切り替わっている)が
+ここで1回でも発火すると暴走する。この時点でこのファイル自身の
+`CALL INIT_BGM`(H.TIMIフックの上書き)はまだ実行されておらず(旧位置は
+INIT末尾、初期描画完了後)、フックは無効なまま。修正: `CALL INIT_BGM`
+をINIT冒頭のDIの直後(CALL INIT32より前)へ移動、問題の狭いEIを完全に
+削除(INIT末尾の`CALL INIT_BGM`直後のEIまで、一貫して割り込み禁止の
+まま)。新規`init_interrupt_safety_test.py`(2件、INITを生トレースし
+「最初にiff1がTrueになる瞬間には既にHTIMI_HOOKが自分自身のBGM_TICKを
+指している」ことを直接検証) - 一時的に修正前の状態(CALL INIT_BGMを
+末尾へ戻し、狭いEIを復元)を再現して実際にFAILすることを確認した上で
+復元・再PASSを確認済み。
+
+### (3) Stage1: MISSION1導入演出+ステージクリア演出の左端退避+
+MISSION2黒画面
+
+- **MISSION1(新規、Title→Stage1起動時)**: INIT内、スプライト全消灯
+  直後・実際のゲーム画面描画開始前に割り込ませる形で実装 - この位置
+  ならではの利点は、画面を黒で埋めても何も本編の描画を破壊しない
+  (まだ何も描いていないので復元の必要が無い)こと。当初はSC_VBLANK_
+  COUNT(H.TIMI駆動の実VBlankクロック)を使った3秒待ちをEI経由で実装
+  しようとしたが、**この方式だと`tools/verify_*.py`のほぼ全ファイルが
+  使う共通の`boot()`ヘルパー(INITをMAINLOOPまでraw実行するだけで、
+  z80emu.pyは割り込みを一切自動発火しない)がMISSION1待ちループの
+  中で永久にスタックする**(既存4ファイル・自分の新規ファイル
+  あわせて計95箇所の`boot()`/`fresh()`呼び出し全てが影響を受ける、
+  テストスイート全体を壊しかねない重大な設計ミスと自己発見・訂正)。
+  設計を全面変更し、**Z80クロックを直接カウントする純粋なビジー
+  ウェイト**(`MISSION_DELAY_3SEC`、割り込み非依存)を新規実装 -
+  MSXのZ80クロックは3.579545MHz固定でNTSC/PAL(50/60Hz)のリフレッシュ
+  レートに左右されないため、この方式の方がSC_VBLANK_COUNT基準より
+  実時間として安定するという副次的な利点もある。3重ネストループ
+  (D=10, B/C=256x256のDEC+JR NZ)で実測10,524,352 T-state(約2.94秒、
+  エミュレータで直接計測)。DI状態のまま実行するためBGM/MUTE_BGMも
+  一切不要になった(EI版より単純)。**テスト側の対応**:
+  `verify_player_damage.py`/`verify_stage1_bgm.py`/`verify_enemy_
+  bullets.py`/`verify_barrier.py`/新規`verify_stage1_mission_
+  screens.py`の5ファイル全てで、アセンブル後の`mem0`に対し
+  `mem0[sym["MISSION_DELAY_3SEC"]+1] = 1`という1行パッチ(`LD D,10`の
+  即値を1に縮小、実ROM本体は無変更)を追加、これにより実機は約3秒
+  待つが各テストファイルの命令数上限(300000〜500000)には収まる
+  (約13万命令)よう対応。
+- **MISSION2 + 左端退避(既存ステージクリア演出の拡張)**: ボス撃破の
+  瞬間、従来は直接`PLAYER_FLYAWAY_WAIT`を起動していたのを、新規
+  `PLAYER_RETREAT_ACT`(1byte、空きアドレス0xE823 - シンボルテーブル
+  全体で他に一切参照が無いことを確認済み)を先に起動する方式に変更。
+  自機ショット/ジョイスティック処理の先頭で`PLAYER_RETREAT_ACT!=0`を
+  チェックし、`PLAYER_RETREAT_SPEED`(2px/frame)ずつX=0へ近づけ、
+  到達したら初めて従来の`PLAYER_FLYAWAY_WAIT=40`/`SPD=1`を起動する
+  (以降のflyawayロジック自体は完全に無変更)。`STAGE_CLEAR_ACT`を
+  2状態(0/1)から4状態(0=未発生/1=ジングル再生中/2=MISSION2黒画面
+  表示中・実時間3秒待ち/3=完了・Comb限定バンク切替トリガー)へ拡張 -
+  `UPDATE_STAGE_CLEAR`のACT1→2遷移で新たに`MUTE_BGM`+`DRAW_MISSION_
+  SCREEN`(MISSION2_MSG)を実行し`SC_START_TICK`を再スナップショット、
+  ACT2→3遷移は同じ実時間クロックの2つ目の窓(`MISSION_SCREEN_TICKS`=
+  180、3秒@60Hz)で判定。`build_full_rom.py`のMAINLOOP_PATCHもバンク
+  切替条件を`STAGE_CLEAR_ACT==2`→`==3`へ更新。**MAINLOOP側の新規
+  フリーズ機構**: `STAGE_CLEAR_ACT>=2`になった以後はTICK加算の直後で
+  `UPDATE_STAGE_CLEAR`だけ呼んで即座に`JP MAINLOOP`(地形スクロール・
+  敵更新・HUD再描画等を丸ごとスキップ) - 理由はDRAW_MISSION_SCREENが
+  NAMEBUF/PREVBUFキャッシュを経由しない生VRAM書き込みのため、素通し
+  で通常のMAINLOOPを続けさせると地形スクロールが黒画面の上に地形を
+  再描画してしまいMISSION2表示が一瞬で壊れるため(Round37 follow-up7
+  で撤去した`GAME_OVER`フリーズとは別種の判断- あちらは「実機で検証
+  できないから」フリーズさせない、こちらは「実時間3秒で必ず終わる」
+  という明確なcutscene用の一時停止)。
+- **共有`DRAW_MISSION_SCREEN`ルーチン**: 画面全体(768byte、name
+  table全域)をMISSION_FONT_BASE+5(SPACEグリフ、全ドット消灯)で
+  埋めてから、HLが指す9byteメッセージ(row12/col11、画面中央)を描画、
+  念のためスプライトも全消灯(Y=209センチネル)。VDPへの連続転送は
+  **全て手動のOUT+DJNZループのみ**(CLAUDE.md「実機ハードウェア制約」
+  の絶対恒久ルール通り、`OTIR`等のブロックI/O命令は一切使用せず)。
+  MISSION1_MSG/MISSION2_MSGはいずれも"MISSION"+space+digit(9byte)で
+  数字部分だけが異なる(DIGIT_BASE+1/+2、既存の得点表示用digit0-9
+  グリフをそのまま再利用、新規グリフ不要)。
+- **新規フォント**: M/I/S/O/N/space(5x7ドット、tools/stage2_combined/
+  ending_text_gen.pyと全く同じオリジナル書体・エンコード方式)を
+  codes64-69(group8)へ配置。この範囲は元々"shot-green"/"shot-white"/
+  "shot-brown"という自機弾バリアント用に色だけ予約されビットマップが
+  一度も実装されなかった空き領域(COLORDATA自身のコメント参照) -
+  今回も「静的推論だけで空き判定しない」というfollow-up#11由来の教訓
+  通り、全LDIRVM/WRTVRM呼び出し元の横断的な洗い出しに加え、エミュ
+  レータでの実VRAM調査(boot直後・6000フレーム実プレイ後の両方で
+  codes64-87が全バイト0)の二重検証で確認した上で使用。group8の色を
+  白文字/黒背景(0F1h)へ新規上書き。
+- 新規`tools/verify_stage1_mission_screens.py`(31件、フォント/色の
+  VRAM内容・DRAW_MISSION_SCREENの生バイト比較・UPDATE_STAGE_CLEARの
+  4状態遷移・MAINLOOPフリーズの実効性・退避シーケンス・境界ケース
+  (開始時X=0)・boss-death trigger配線・RAM初期化を横断的に検証)。
+  `verify_stage1_bgm.py`のRound51由来の古い「ACT==2は完了」という
+  スタルテスト(2つ目の状態拡張を反映していなかった)を発見・修正
+  (70 passed)。
+- 全回帰: Stage2側`run_all.py` **1447 passed/0 failed**(1442→1447、
+  ebullet_test.py+1/mine_flyerlaser_test.py+1/boss_broken_form_
+  test.py+1/init_interrupt_safety_test.py新規2件)。Stage1側
+  `verify_player_damage.py` **58 passed**、`verify_stage1_bgm.py`
+  **70 passed**、`verify_enemy_bullets.py` **49 passed**、
+  `verify_stage1_mission_screens.py` **31 passed**。3ROM再ビルド・
+  `verify_comb.py`健全性確認(STAGE_CLEAR_ACTのポーク値を新終端状態
+  3へ更新)の上、標準方針によりComb ROMのみ送付。
+  - **保留・実機フィードバック待ち**: `MISSION_DELAY_3SEC`(約2.94秒、
+    "3秒でいいかな"からの近似)・`PLAYER_RETREAT_SPEED`(2px/frame、
+    未調整の初期値)・`MISSION_SCREEN_TICKS`(180、3秒@60Hz)はいずれも
+    実機での見え方次第で再調整の可能性あり。ボス形態変化後レーザーの
+    1px近似(左右の厳密な先端補正なし、Y=PROJ_Y+15固定)は"先端1pxだけ
+    でいい"という簡略化要望の範囲内と判断したが、見え方次第で再検討
+    の余地あり。

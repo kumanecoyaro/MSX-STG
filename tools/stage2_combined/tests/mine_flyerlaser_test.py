@@ -276,6 +276,25 @@ call_routine(cpu15, "CHECK_FLYER_LASER_VS_TANK")
 check("an overlapping laser damages the tank", cpu15.mem[TANK_LIFE] == life0-1)
 check("...and keeps flying through (same convention as EtankBullet's own bullet)", cpu15.mem[FLYER_LASER_ACT] == 1)
 
+# 実機フィードバック"Flyerのレーザーも1pxで良いわ" - 従来の8x8ボックス
+# (laser側ADD A,7による幅・高さの拡張)を撤廃したことを直接確認する。
+# レーザーを戦車の左端から7px外側(tx-7,ty)に置くと、旧8x8ボックスなら
+# 右端(bx+7=tx)が戦車の左端に触れて命中していたが、新1px判定では
+# 生の点(tx-7)がそのまま戦車の外なので外れるはず(revert self-check:
+# 一時的にADD A,7を戻すとFAILすることを確認済み)。
+cpu16 = fresh_cpu()
+tx = cpu16.mem[TANK_X] + TANK_COLLISION_X_OFFSET
+ty = cpu16.mem[TANK_Y_CUR] + TANK_COLLISION_Y_OFFSET
+cpu16.mem[TANK_HAZARD_IFRAMES] = 0
+cpu16.mem[FLYER_LASER_ACT] = 1
+cpu16.mem[FLYER_LASER_X] = tx - 7
+cpu16.mem[FLYER_LASER_Y] = ty
+life0 = cpu16.mem[TANK_LIFE]
+call_routine(cpu16, "CHECK_FLYER_LASER_VS_TANK")
+check("1px point judged strictly at the laser's own raw (X,Y) - a laser 7px left of the "
+      "tank whose old 8x8-widened far edge would have just touched the tank's left edge "
+      "now correctly misses", cpu16.mem[TANK_LIFE] == life0)
+
 
 # ---------- real Flyer integration: tank-relative mine-drop trigger + -8px Y fix + laser fire ----------
 # 実機フィードバック対応 ("自機位置を見て自機の64px手前に来たら投下"):

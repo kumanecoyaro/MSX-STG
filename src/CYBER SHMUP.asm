@@ -385,11 +385,18 @@ BOSS_EXPL_ACTIVE    EQU 0E81Fh   ; 1 while the pop sequence is running
 BOSS_EXPL_STARTED   EQU 0E820h   ; latches so the sequence only ever triggers once
 BOSS_EXPL_TIMER     EQU 0E821h   ; frames until the next pop
 BOSS_EXPL_SPRIDX    EQU 0E822h   ; round-robin 0-7 into the now-unused pod explosion sprite slots
+; (2026-09-06、"一旦左端まで下がってから飛び去る様に変更"): ボス撃破直後、
+; 従来は直接PLAYER_FLYAWAY_WAITを起動していたが、その前に自機を画面
+; 左端(X=0)まで後退させる新規サブフェーズを追加。0E823hは空きバイト
+; 確認済み(直前のBOSS_EXPL_SPRIDX・直後のBOSS_EXPL_ROWいずれも別用途の
+; 1byteスカラーで隣接利用のみ、シンボルテーブル上でも他に一切参照なし)。
+PLAYER_RETREAT_ACT  EQU 0E823h   ; 0=inactive, 1=retreating to X=0 before flyaway
 BOSS_EXPL_ROW       EQU 0E824h   ; scratch: this pop's boss-map row
 BOSS_EXPL_COL       EQU 0E825h   ; scratch: this pop's boss-map col
 PLAYER_FLYAWAY      EQU 0E828h   ; 0=normal control, 1=auto-flying right, 2=off-screen/hidden
 PLAYER_FLYAWAY_SPD  EQU 0E82Ah   ; current flyaway speed
 PLAYER_FLYAWAY_DIST EQU 0E839h   ; total px traveled since flyaway started (accel curve)
+PLAYER_RETREAT_SPEED EQU 2       ; px/frame while retreating to X=0 (constant, no RAM)
 PARTICLE_SPAWN_COOLDOWN EQU 0E83Ah  ; frames until the next spawn is allowed
 
 ; --- Enemy1: one-time diagonal dodge toward the player when     ---
@@ -480,6 +487,22 @@ POD_HIT_RANGE EQU 12       ; px - how close a shot needs to be to register a hit
 ; --- on-screen game-tick counter (3 decimal digits, top-right) ---
 DIGIT_BASE EQU 176   ; digit0 code; digitN = DIGIT_BASE+N (groups22-23)
 GTD_ONES_TMP EQU 0E4D3h
+
+; (2026-09-06、"STAGE1も2と同じで一旦画面をブラックで埋めてMISSION 1と
+; 3秒表示してから"、"画面をブラックで埋めてMISSION 2とセンターに表示
+; 3秒でいいかな"): "MISSION 1"/"MISSION 2"共有の5x7ドット文字("M","I",
+; "S","O","N",space)専用パターンコード。コード64-87(group8-10、"shot-
+; green"/"shot-white"/"shot-brown"用に色だけ予約されビットマップは
+; 一度も実装されなかった、COLORDATA自身のコメント参照)がLDIRVM/WRTVRM
+; 全呼び出し元の横断的な洗い出し+エミュレータでの実VRAM調査(boot直後・
+; 6000フレーム実プレイ後の両方でcodes64-87が全バイト0のまま)の両方で
+; 実際に空きと確認済み - 今回は先頭6コード(64-69)のみ使用。数字の"1"/
+; "2"は新規グリフを起こさず、既存のDIGIT_BASE+1/+2(既に白文字/黒背景
+; 0F1hで着色済み)をそのまま再利用する。
+MISSION_FONT_BASE EQU 64   ; M=64,I=65,S=66,O=67,N=68,space=69 (group8内)
+; 3秒 @ 60Hz real vblank(SC_VBLANK_COUNT基準、GFEnding[Stage2]の
+; ENDING_WAIT_TICKS=600[10秒@60Hz]と同じ換算)。
+MISSION_SCREEN_TICKS EQU 180
 
 ; --- tick-based enemy spawn schedule: measured roughly every 30    ---
 ; --- ticks in order enemy1,enemy1,enemy2,enemy2,enemy3 (enemy3     ---
@@ -927,6 +950,8 @@ FILLBG_3:
 
     ; --- digit glyphs (0-9) for the on-screen game-tick counter ---
     LD HL,DIGIT_PATTERNS : LD DE,DIGIT_BASE*8 : LD BC,80 : CALL LDIRVM
+    LD HL,MISSION_FONT_PATTERNS : LD DE,MISSION_FONT_BASE*8 : LD BC,MISSION_FONT_PATTERNS_LEN : CALL LDIRVM
+    LD HL,MISSION_FONT_COLOR : LD DE,2008h : LD BC,1 : CALL LDIRVM
 
     ; --- boss BG/sprite character patterns are NOT preloaded here ---
     ; --- anymore - the terrain scroller actually uses more of the ---
@@ -1025,6 +1050,28 @@ INIT_SPRATR_CLR:
     EI
     DJNZ INIT_SPRATR_CLR
 
+    ; (2026-09-06、"STAGE1も2と同じで一旦画面をブラックで埋めてMISSION 1と
+    ; 3秒表示してから ステージ1スタートに"): この時点ではまだ実際の
+    ; ゲーム画面(地形・HUD等)を一切描いていない(このINITの残りが
+    ; これから初めて描く)ため、"MISSION 1"演出はここで割り込ませて
+    ; おけば、演出終了後にINITの残りがそのまま続けて本編の画面を描く
+    ; だけで済み、専用の状態機械・MAINLOOP側のフリーズ処理が一切不要
+    ; (この直前までスプライトも既に全消灯済み)。
+    ; 待ち自体はSC_VBLANK_COUNT(実VBlank/H.TIMI駆動)ではなく、
+    ; MISSION_DELAY_3SEC(下記)によるZ80クロック直接カウントの
+    ; ビジーウェイトを採用 - このINIT区間は元々ずっとDIのまま
+    ; (CALL INIT_BGMが意図する「INIT末尾まで割り込み禁止」を維持でき、
+    ; 一時的なEI/MUTE_BGM/UNMUTE_BGMが一切不要になる)。MSXのZ80
+    ; クロックは3.579545MHz固定でNTSC/PAL(50/60Hz)のリフレッシュ
+    ; レートに左右されないため、この方式の方がSC_VBLANK_COUNT基準より
+    ; 実時間として安定する(50Hz機でも60Hz機でも同じ約3秒になる)。
+    LD HL,MISSION1_MSG
+    CALL DRAW_MISSION_SCREEN
+    DI    ; DRAW_MISSION_SCREEN's own internal EI (harmless - HTIMI_HOOK is
+          ; already valid - but re-DI here keeps INIT silent/deterministic
+          ; through the delay below, matching the surrounding DI bracket)
+    CALL MISSION_DELAY_3SEC
+
     ; --- player initial state ---
     LD A,PLAYER_INITX : LD (PLAYERX),A
     LD A,PLAYER_INITY : LD (PLAYERY),A
@@ -1086,6 +1133,7 @@ INIT_SPRATR_CLR:
     XOR A : LD (BOSS_EXPL_ACTIVE),A
     XOR A : LD (BOSS_EXPL_STARTED),A
     XOR A : LD (PLAYER_FLYAWAY),A
+    XOR A : LD (PLAYER_RETREAT_ACT),A
     XOR A : LD (PLAYER_FLYAWAY_WAIT),A
     XOR A : LD (PLAYER_FLYAWAY_DIST),A
     XOR A : LD (PARTICLE_SPAWN_COOLDOWN),A
@@ -1251,6 +1299,26 @@ MAINLOOP:
     ; --- NOP margins are what keep individual VDP OUT sequences safe    ---
     ; --- from an interrupt landing mid-sequence, not DI.                ---
     LD A,(TICK) : INC A : AND 3Fh : LD (TICK),A
+
+    ; (2026-09-06、"画面をブラックで埋めてMISSION 2とセンターに表示
+    ; 3秒でいいかな"): STAGE_CLEAR_ACTが2(MISSION2黒画面表示中)以上に
+    ; なった以後は、地形スクロール・敵更新・HUD再描画等、通常フレームの
+    ; 処理を丸ごとスキップする。理由: DRAW_MISSION_SCREENは生VRAM書き
+    ; 込みでNAMEBUF/PREVBUFの内部キャッシュを経由しないため、これらを
+    ; 素通りしたまま通常のMAINLOOPを続行させると、地形スクロールが
+    ; 毎フレームのNAMEBUF/PREVBUF差分検出経由で黒画面の上に地形を
+    ; 再描画してしまい、MISSION2表示が一瞬で破壊される(この直前の
+    ; GAME_OVERを止めない方針とは別種の判断 - あちらは「実機で検証
+    ; できないから」フリーズさせない、こちらは「ユーザーから明示的に
+    ; 依頼された、実時間3秒で必ず終わる」cutscene用の一時停止)。
+    ; UPDATE_STAGE_CLEAR自身は毎フレーム呼び続ける必要がある
+    ; (ACT==2→3への実時間3秒判定を進めるため)。
+    LD A,(STAGE_CLEAR_ACT)
+    CP 2
+    JR C,STAGE_CLEAR_NOT_FROZEN
+    CALL UPDATE_STAGE_CLEAR
+    JP MAINLOOP
+STAGE_CLEAR_NOT_FROZEN:
 
     ; "現状ゲームオーバー処理は残しておくが ゲームは止めないでくれ
     ; チェックできないからな" - GAME_OVER itself is still tracked
@@ -1627,6 +1695,34 @@ ROWDONE_5:
     ; --- protection wasn't enough to stop VDP/sprite corruption,   ---
     ; --- so BC/DE/HL/IX/IY are all preserved this time.            ---
     ; ============================================================
+    ; (2026-09-06、"一旦左端まで下がってから飛び去る様に変更"): 通常の
+    ; flyawayシーケンスより前にチェックする新規サブフェーズ - ボス撃破の
+    ; 瞬間にPLAYER_RETREAT_ACT=1が立ち、ここでPLAYERXをPLAYER_RETREAT_
+    ; SPEEDずつ0へ近づける(ジョイスティック入力は無視)。X=0へ到達したら
+    ; 従来通りPLAYER_FLYAWAY_WAIT/SPDを起動して普通のflyawayへ引き継ぐ
+    ; (PFA_MOVING以降のロジックは完全に無変更)。
+    LD A,(PLAYER_RETREAT_ACT)
+    OR A
+    JR Z,PFA_NO_RETREAT
+    LD A,(PLAYERX)
+    OR A
+    JR Z,PFA_RETREAT_DONE
+    CP PLAYER_RETREAT_SPEED
+    JR NC,PFA_RETREAT_STEP
+    XOR A
+    JR PFA_RETREAT_SET
+PFA_RETREAT_STEP:
+    SUB PLAYER_RETREAT_SPEED
+PFA_RETREAT_SET:
+    LD (PLAYERX),A
+    JP DIR_DONE
+PFA_RETREAT_DONE:
+    XOR A : LD (PLAYER_RETREAT_ACT),A
+    LD A,40 : LD (PLAYER_FLYAWAY_WAIT),A
+    LD A,1 : LD (PLAYER_FLYAWAY_SPD),A
+    JP DIR_DONE
+PFA_NO_RETREAT:
+
     ; --- post-boss flyaway: once the BG-destruction sequence      ---
     ; --- finishes, there's a short beat (PLAYER_FLYAWAY_WAIT) where---
     ; --- the ship just sits still, then it auto-flies right,      ---
@@ -2601,16 +2697,14 @@ PHB16_NO:
     XOR A
     RET
 
-; 実機フィードバック"判定も大きい様に感じる 多分上下2pxしか無いはず
-; だけど コリジョンはそうなってるか?" - EBULLET_PATTERN自身のコメント
-; の通り、EBULLETの16x16スプライトのうち実際に絵が描かれているのは
-; 上半分の2行(row2-3)だけの横16px幅バーで、下半分8px+上部2px+下部4px
-; は完全な空白。PLAYER_HIT_BOX16(16x16フル)をそのまま使うとこの
-; 空白部分まで判定に含まれ「判定が大きい」体感になっていた。X方向は
-; 16px幅のまま(バーは左右両クアドラントにまたがる)、Y方向だけ実際の
-; 絵の位置(スプライト原点+2)・高さ(2px)に合わせて絞る。
-; Input/output/trashes: PLAYER_HIT_BOX16と同じ(D,E=EBULLETのスプライト
-; 原点、そのまま渡してよい - 内部でYへ+2する)。
+; 実機フィードバック"それも先端の1pxで良いかな その方が少しは速いし"
+; (直前の16幅x2高判定へのさらなる追加フィードバック) - 幅・高さとも
+; 撤廃し、真の単一ピクセル点内包判定へ縮小。点はEBULLETの進行方向
+; (常に左)における先端、かつ実際の絵(EBULLET_PATTERN、スプライト
+; 原点+2行目)に合わせた(D, E+2) - Dはスプライト原点Xそのもの
+; (左へ移動するため原点Xが既に先端)。
+; Input/output/trashes: 従来と同じ(D,E=EBULLETのスプライト原点、その
+; まま渡してよい - 内部でYへ+2する)。
 PLAYER_HIT_BOX_EBULLET:
     LD A,E : ADD A,2 : LD E,A
     LD A,(PLAYERX) : LD H,A
@@ -2618,13 +2712,13 @@ PLAYER_HIT_BOX_EBULLET:
     LD A,H : ADD A,7
     CP D
     JR C,PHBEB_NO
-    LD A,D : ADD A,15
+    LD A,D
     CP H
     JR C,PHBEB_NO
     LD A,L : ADD A,7
     CP E
     JR C,PHBEB_NO
-    LD A,E : ADD A,1
+    LD A,E
     CP L
     JR C,PHBEB_NO
     LD A,1
@@ -3534,6 +3628,77 @@ UNMUTE_BGM:
     XOR A : LD (BGM_MUTED),A
     RET
 
+; (2026-09-06、"MISSION 1"導入演出・"MISSION 2"ステージクリア演出の
+; 共有描画ルーチン): 画面全体をSPACEグリフ(MISSION_FONT_BASE+5、全ドット
+; 消灯、group8=白文字/黒背景0F1h)で埋めて黒画面にし、HLが指す9byteの
+; メッセージ(row12/col11、32x24画面の中央)を描画、念のためスプライトも
+; 全て隠す(Y=209は"この枠以降の全スプライトを隠す"というMSX標準の
+; センチネル、この直前のINIT_SPRATR_CLRと同じ手法)。VDPへの連続転送は
+; 手動のOUT+DJNZループのみ(CLAUDE.md「実機ハードウェア制約」の恒久
+; ルール通り、`OTIR`等のブロックI/O命令は絶対に使わない)。
+; Input: HL=9byteメッセージへのポインタ。Trashes: AF,BC,DE,HL。
+DRAW_MISSION_SCREEN:
+    DI
+    LD A,0 : OUT (99h),A
+    NOP
+    NOP
+    LD A,58h : OUT (99h),A      ; write address = 1800h (name table top-left)
+    NOP
+    NOP
+    LD A,MISSION_FONT_BASE+5    ; SPACE glyph(全ドット消灯) - 黒埋め用
+    LD C,3
+DMS_FILL_OUTER:
+    LD B,0
+DMS_FILL_INNER:
+    OUT (98h),A
+    DJNZ DMS_FILL_INNER
+    DEC C
+    JR NZ,DMS_FILL_OUTER
+
+    LD A,08Bh : OUT (99h),A
+    NOP
+    NOP
+    LD A,59h : OUT (99h),A      ; write address = 198Bh (row12,col11 - screen center)
+    NOP
+    NOP
+    LD B,9
+DMS_MSG_LOOP:
+    LD A,(HL) : OUT (98h),A
+    INC HL
+    DJNZ DMS_MSG_LOOP
+
+    LD A,0 : OUT (99h),A
+    NOP
+    NOP
+    LD A,5Bh : OUT (99h),A      ; write address = SPRATR(1B00h)
+    NOP
+    NOP
+    LD A,209 : OUT (98h),A
+    EI
+    RET
+
+; "MISSION 1"導入演出専用: 約3秒間のZ80クロック直接カウントによる
+; ビジーウェイト(H.TIMI/SC_VBLANK_COUNTには依存しない - この時点では
+; まだBIOSのINIT32[SCREEN1初期化]すら呼ばれておらず、割り込みに頼れる
+; 保証が無いため)。MSXのZ80クロックは3.579545MHz固定(NTSC/PALの
+; リフレッシュレートに非依存)、目標T-state数10,738,635(=3.579545M*3)に
+; 対しD=10回のB×C(256×256)ネストループ(約10,524,340T-state、
+; 約2.94秒)で近似 - "3秒でいいかな"という要望自体が厳密さを求めて
+; いないため、これで十分と判断。Trashes: AF,BC,DE.
+MISSION_DELAY_3SEC:
+    LD D,10
+MISSION_DELAY_OUTER:
+    LD B,0
+MISSION_DELAY_MID:
+    LD C,0
+MISSION_DELAY_INNER:
+    DEC C
+    JR NZ,MISSION_DELAY_INNER
+    DJNZ MISSION_DELAY_MID
+    DEC D
+    JR NZ,MISSION_DELAY_OUTER
+    RET
+
 ; "ではTryZをボス曲に...マテリアライズ終了後に再生" - BOSS_UPDATE_BODY
 ; がBOSS_STATE=2(マテリアライズ完了)へ遷移する直前に1回だけ呼ばれる。
 ; Stage2と違いバンク切替は一切行わない(このファイル自身の設計制約 -
@@ -3610,17 +3775,43 @@ TRIGGER_STAGE_CLEAR:
 ; 進める - build_full_rom.pyのMAINLOOP_PATCH(Comb限定)がこれを見て
 ; Stage2へのバンク切替へ進む(このファイル自身はバンク切替を一切
 ; 行わない設計、上記BGM_TRYZ_CHB/CHC_BASE自身のコメント参照)。
+; (2026-09-06、"画面をブラックで埋めてMISSION 2とセンターに表示
+; 3秒でいいかな"): STAGE_CLEAR_ACTを2状態から4状態(0=未発生/1=ジングル
+; 再生中/2=MISSION2黒画面表示中、実時間3秒待ち/3=完了、Comb限定の
+; MAINLOOP_PATCHがこれを見てStage2へのバンク切替へ進む)へ拡張。
+; ACT==1→2の遷移で新たにMUTE_BGM+DRAW_MISSION_SCREEN(MISSION2_MSG)を
+; 行い、SC_START_TICKを再スナップショットして3秒タイマーを再利用する
+; (GFEnding[Stage2]のVBLANK_COUNTと同じ「同じ実時間クロックを複数の
+; フェーズで使い回す」設計)。
 UPDATE_STAGE_CLEAR:
     LD A,(STAGE_CLEAR_ACT)
     CP 1
-    RET NZ
+    JR Z,USC_CHECK_JINGLE
+    CP 2
+    JR Z,USC_CHECK_MISSION2
+    RET
+USC_CHECK_JINGLE:
     LD HL,(SC_VBLANK_COUNT)
     LD DE,(SC_START_TICK)
     OR A : SBC HL,DE
     LD DE,STAGE_CLEAR_TOTAL_TICKS
     OR A : SBC HL,DE
     RET C
+    CALL MUTE_BGM
+    LD HL,MISSION2_MSG
+    CALL DRAW_MISSION_SCREEN
+    LD HL,(SC_VBLANK_COUNT)
+    LD (SC_START_TICK),HL
     LD A,2 : LD (STAGE_CLEAR_ACT),A
+    RET
+USC_CHECK_MISSION2:
+    LD HL,(SC_VBLANK_COUNT)
+    LD DE,(SC_START_TICK)
+    OR A : SBC HL,DE
+    LD DE,MISSION_SCREEN_TICKS
+    OR A : SBC HL,DE
+    RET C
+    LD A,3 : LD (STAGE_CLEAR_ACT),A
     RET
 
 BGM_TICK:
@@ -5935,8 +6126,12 @@ BOSS_EXPL_UPDATE:
     CP B
     JR NZ,BEU_FIRE
     XOR A : LD (BOSS_EXPL_ACTIVE),A
-    LD A,40 : LD (PLAYER_FLYAWAY_WAIT),A
-    LD A,1 : LD (PLAYER_FLYAWAY_SPD),A
+    ; (2026-09-06、"一旦左端まで下がってから飛び去る様に変更"): 従来は
+    ; ここで直接PLAYER_FLYAWAY_WAITを起動していたが、その前に自機を
+    ; 画面左端(X=0)まで後退させる(PLAYER_RETREAT_ACT、下のPFA_NO_
+    ; RETREAT周り参照) - PLAYER_FLYAWAY_WAIT/SPDの起動自体はPFA_
+    ; RETREAT_DONEへ移動、ここでは起動しない。
+    LD A,1 : LD (PLAYER_RETREAT_ACT),A
     XOR A : LD (SND_TONE_TIMER),A
     RET
 BEU_FIRE:
@@ -11715,6 +11910,38 @@ DIGIT_PATTERNS:
     DB 7Eh,06h,0Ch,18h,30h,30h,30h,00h   ; 7
     DB 3Ch,66h,66h,3Ch,66h,66h,3Ch,00h   ; 8
     DB 3Ch,66h,66h,3Eh,06h,0Ch,38h,00h   ; 9
+
+; "MISSION 1"/"MISSION 2"共有フォント(5x7ドット、8x8セルの上1行分だけ
+; 空白パディング - tools/stage2_combined/ending_text_gen.pyの_GLYPHS_5X7/
+; _glyph_bytes()と全く同じオリジナル書体・同じエンコード方式、
+; python3 -c "...ending_text_gen._glyph_bytes(ch)..."で計算した値を
+; そのまま転記)。codes64-69=M,I,S,O,N,space。数字は既存DIGIT_PATTERNSの
+; DIGIT_BASE+1/+2を再利用するため、この文字セットには含めない。
+MISSION_FONT_PATTERNS:
+    DB 0,130,198,170,146,130,130,130    ; M (code64)
+    DB 0,248,32,32,32,32,32,248         ; I (code65)
+    DB 0,120,132,128,120,2,132,120      ; S (code66)
+    DB 0,120,132,132,132,132,132,120    ; O (code67)
+    DB 0,132,196,164,148,140,132,132    ; N (code68)
+    DB 0,0,0,0,0,0,0,0                  ; space (code69) - 全画面黒埋め用にも使う
+MISSION_FONT_PATTERNS_LEN EQU $ - MISSION_FONT_PATTERNS
+
+; group8(codes64-71)の色を白文字/黒背景(0F1h)へ上書き - 元は"shot-green"
+; 用に予約されただけで実際のビットマップが一度も無かった色(0D3h)。
+MISSION_FONT_COLOR:
+    DB 0F1h
+
+; "MISSION 1"/"MISSION 2" - M,I,S,S,I,O,N,space,digit(9byte、row12/col11
+; center)。digitはDIGIT_BASE+1/+2(白/黒0F1hで既に着色済み、フォント色と
+; 一致)。
+MISSION1_MSG:
+    DB MISSION_FONT_BASE+0,MISSION_FONT_BASE+1,MISSION_FONT_BASE+2,MISSION_FONT_BASE+2
+    DB MISSION_FONT_BASE+1,MISSION_FONT_BASE+3,MISSION_FONT_BASE+4,MISSION_FONT_BASE+5
+    DB DIGIT_BASE+1
+MISSION2_MSG:
+    DB MISSION_FONT_BASE+0,MISSION_FONT_BASE+1,MISSION_FONT_BASE+2,MISSION_FONT_BASE+2
+    DB MISSION_FONT_BASE+1,MISSION_FONT_BASE+3,MISSION_FONT_BASE+4,MISSION_FONT_BASE+5
+    DB DIGIT_BASE+2
 
 ; enemy3's orbit: 24-point radius-24 circle around (0,0), as signed
 ; (dx,dy) byte pairs, counter-clockwise on-screen. Position for LUT
