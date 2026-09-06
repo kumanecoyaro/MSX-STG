@@ -765,39 +765,35 @@ INIT:
     ; --- pointers would silently corrupt it.                        ---
     DI
 
-    CALL INIT32
-
     ; --- BGM (round40) - 実機フィードバック対応("WebMSXでフリーズや
-    ; --- リセットがかかる これは実機も同様"): CALL INIT32(BIOSの画面
-    ; --- モード初期化, INIGRP相当)の直後、INITの中でできるだけ早い
-    ; --- 位置で呼ぶ。理由: Title→Stage1のバンク切替トランポリンで着地
-    ; --- した直後のH.TIMIフックには、直前のTitle自身が設置した「Title
-    ; --- 自身のBGM_TICKアドレスを指す古いフック」がまだ生きたまま残って
-    ; --- いる。この後に続くINIT本体には、WRITE_ANIM_CELL(GAME_TICK_
-    ; --- DISPLAY/SCORE_DISPLAY経由)やスプライトアトリビュート設定・
-    ; --- 30スロット非表示ループなど、ローカルなDI/EIペアを使う箇所が
-    ; --- 複数あり、それらのEIは今のDIを無条件に解除してしまう(DI/EIは
-    ; --- ネストカウンタではない単純なフラグのため)。そこで一瞬でも
-    ; --- H.TIMIが実際に発火すると、window Aの中身は既にこのステージの
-    ; --- コードに切り替わっているのに、フックはTitleのバンク内アドレス
-    ; --- のままJPしてしまい、たまたまそこにあるバイト列を命令として
-    ; --- 誤実行する(実害はPC=0への暴走ジャンプ→MSXの起動ロゴが再表示
-    ; --- される疑似リセットとして観測された - openMSXの外部制御
-    ; --- プロトコルで実際にPC=0への着地を直接観測して特定)。
-    ; --- **CALL INIT32より前に置いてはいけない**: 実機挙動として、BIOSの
-    ; --- 画面モード初期化(INIGRP/CHGMOD相当)自体がH.TIMI含む複数の
-    ; --- システムフック領域を無条件にデフォルト値(RET)へ巻き戻すため
-    ; --- (このプロジェクトのz80emu.pyもこの実機挙動を再現しており、
-    ; --- 一度INIT32より前に置いて試したところverify_comb.pyがまさに
-    ; --- この巻き戻しを検出してFAILした - 自己発見・修正済み)、INIT32
-    ; --- より後に置く必要がある。INIT_BGM自体はBGM_B/C_PTR等のRAM変数
-    ; --- 初期化とH.TIMIフックの上書きのみで、それ以外のVDP/VRAM初期化
-    ; --- 前でも安全に呼べるため、CALL INIT32の直後(=この後に続く全ての
-    ; --- ローカルEIより前)へ上書き済みにしておくことで、この競合を
-    ; --- 完全に閉じる(以前は逆にINITの最後、この直前のEIの直前へ
-    ; --- 置いていたが、それより前に1つでもローカルEIが残っていれば
-    ; --- 同じ問題が起きるため不十分だった)。詳細はHANDOFF.md参照。
+    ; --- リセットがかかる これは実機も同様"、続けて"実機、WebMSX、
+    ; --- BlueMSX全てでタイトルでボタン押下後フリーズ"): このDIの直後、
+    ; --- INITの中で一番最初に呼ぶ。**一度は「CALL INIT32の直後」へ
+    ; --- 動かして試したが、それは誤診断だった**: `tools/z80emu.py`の
+    ; --- `bios_call()`はINIT32(target==0x006F)を単純に"return True"
+    ; --- する完全なno-opとして扱っており(WRTVDP等も同様)、実際の
+    ; --- BIOSがSCREEN1初期化(INIGRP/CHGMOD相当)の中で内部的に行う
+    ; --- vblank待ち(実機のBIOSがEI+HALTでVDPの垂直帰線を待つ、この
+    ; --- 種の画面モード変更では一般的な実装)を一切シミュレートしない -
+    ; --- つまりこのファイルのテスト環境(z80emu.py・それを使う
+    ; --- verify_comb.py)は、INIT32の前後どちらにCALL INIT_BGMを
+    ; --- 置いても「INIT32自体が原因で壊れるかどうか」を検証できて
+    ; --- いなかった。当時verify_comb.pyがFAILしたのは別の原因
+    ; --- (round40より前からの遺物1行がH.TIMIフックを踏み潰していた -
+    ; --- 該当箇所は完全に削除済み、下記HANDOFF.md参照)で、INIT32の
+    ; --- せいではなかったと判明。むしろ逆に、CALL INIT32を実機で
+    ; --- 呼んだ時点でTitleの自身が設置した古いH.TIMIフック(window A
+    ; --- の中身は既にStage1のコードに切り替わっている)がまだ生きた
+    ; --- ままだと、INIT32内部のvblank待ちで割り込みが1回でも発火した
+    ; --- 瞬間に暴走する - これが実機・WebMSX・BlueMSXで再現していた
+    ; --- 真因である可能性が高いと考え直し、CALL INIT_BGM(BGM_B/C_PTR
+    ; --- 等のRAM変数初期化+H.TIMIフックの上書きのみで、VDP/VRAM初期化
+    ; --- 前でも安全に呼べる)をCALL INIT32より**前**、このDIの直後
+    ; --- という最も早い位置へ戻した。詳細・検証状況はHANDOFF.md参照
+    ; --- (この時点でまだ実機・WebMSX・BlueMSXでの再検証待ち)。
     CALL INIT_BGM
+
+    CALL INIT32
 
     ; --- border/backdrop color (VDP R7, low nibble) = black. This is ---
     ; --- the true overscan border, separate from the in-screen sky   ---
