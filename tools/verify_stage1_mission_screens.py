@@ -360,6 +360,7 @@ check("PTH_GAMEOVER: does NOT draw GAME_OVER_MSG yet (deferred until the death-f
 check("PTH_GAMEOVER: does NOT arm GAME_OVER_SEQ yet (deferred until the death-fall finishes)",
       z.rd(GAME_OVER_SEQ) == 0)
 
+GAME_OVER = sym["GAME_OVER"]
 x0 = z.rd(PLAYERX)
 y0 = z.rd(PLAYERY)
 z.pc = sym["MAINLOOP"]
@@ -367,12 +368,18 @@ for i in range(PLAYER_DEATH_FALL_DURATION):
     step_frame(z)
     if i < PLAYER_DEATH_FALL_DURATION - 1:
         assert z.rd(GAME_OVER_SEQ) == 0, f"GAME_OVER_SEQ armed early, at frame {i}"
+        # (2026-09-07、"落下したら自機は画面外に消えるように") mid-fall,
+        # before the final frame, the ship must still be somewhere on the
+        # visible playfield (not yet at the hide corner) - otherwise it
+        # would just vanish immediately instead of visibly falling.
+        assert not (z.rd(PLAYERX) == 255 and z.rd(PLAYERY) == 199), \
+            f"ship reached the hide corner too early, at frame {i}"
 nametable = [z.vram[0x1800 + i] for i in range(768)]
 msg_region = nametable[12 * 32 + 9: 12 * 32 + 9 + GAME_OVER_MSG_LEN]
-check("death-fall: PLAYERX/PLAYERY both advanced by PLAYER_DEATH_FALL_SPEED*PLAYER_DEATH_FALL_DURATION "
-      "(falls diagonally down-right, ignoring joystick input throughout)",
-      z.rd(PLAYERX) == (x0 + PLAYER_DEATH_FALL_SPEED * PLAYER_DEATH_FALL_DURATION) & 0xFF
-      and z.rd(PLAYERY) == (y0 + PLAYER_DEATH_FALL_SPEED * PLAYER_DEATH_FALL_DURATION) & 0xFF)
+check("death-fall completion: PLAYERX/PLAYERY land exactly on the (255,199) hide corner "
+      "(drawn Y = 199-8 = 191 = ENEMY_HIDE_Y, the same off-screen convention used everywhere "
+      "else in this file - '落下したら自機は画面外に消えるように')",
+      z.rd(PLAYERX) == 255 and z.rd(PLAYERY) == 199)
 check("death-fall: clears its own ACT flag once the fall finishes",
       z.rd(PLAYER_DEATH_FALL_ACT) == 0)
 check("death-fall completion: NOW draws GAME_OVER_MSG at the screen-center message region",
@@ -380,18 +387,63 @@ check("death-fall completion: NOW draws GAME_OVER_MSG at the screen-center messa
 check("death-fall completion: NOW arms GAME_OVER_SEQ=1 (3-second display phase)",
       z.rd(GAME_OVER_SEQ) == 1)
 
+# (2026-09-07、"操作無効" persists forever after death, not just during the
+# 45-frame fall itself): GAME_OVER now gates the whole movement chain, so
+# once the fall finishes the ship must stay pinned at the hide corner and
+# never fall through to the normal joystick-input branch again, no matter
+# how many more frames run.
+for _ in range(5):
+    step_frame(z)
+    assert z.rd(PLAYERX) == 255 and z.rd(PLAYERY) == 199, \
+        "ship left the hide corner after the fall finished (input should stay disabled forever)"
+check("post-death: the ship stays pinned at the hide corner across further frames "
+      "(input permanently ignored once GAME_OVER is set, not just during the fall)",
+      z.rd(PLAYERX) == 255 and z.rd(PLAYERY) == 199)
+
+# (2026-09-07、"Mission Failed表示は毎フレーム表示 BG系の処理が入ると
+# 上書きで消えてしまうため"): simulate some other BG write clobbering the
+# message region (exactly the failure mode described), then confirm the
+# very next frame's UPDATE_GAME_OVER_SEQUENCE call redraws it unprompted.
+for i in range(12 * 32 + 9, 12 * 32 + 9 + GAME_OVER_MSG_LEN):
+    z.vram[0x1800 + i] = 0x33
+nametable = [z.vram[0x1800 + i] for i in range(768)]
+msg_region = nametable[12 * 32 + 9: 12 * 32 + 9 + GAME_OVER_MSG_LEN]
+check("(setup) message region really is clobbered before the next frame",
+      all(b == 0x33 for b in msg_region))
+step_frame(z)
+nametable = [z.vram[0x1800 + i] for i in range(768)]
+msg_region = nametable[12 * 32 + 9: 12 * 32 + 9 + GAME_OVER_MSG_LEN]
+check("MISSION FAILED text: redrawn every frame while GAME_OVER_SEQ is 1 or 2, so it "
+      "self-heals the very next frame after any other BG write clobbers it",
+      msg_region == read_msg(GAME_OVER_MSG, GAME_OVER_MSG_LEN))
+
 # regression guard: starting near the right/bottom edge must clamp at 255 instead of
 # wrapping around to 0 (which would look like the ship teleporting to the top-left).
 z = fresh()
 boot(z)
 z.wr(PLAYERX, 254)
 z.wr(PLAYERY, 254)
+z.wr(GAME_OVER, 1)
 z.wr(PLAYER_DEATH_FALL_ACT, 1)
 z.wr(PLAYER_DEATH_FALL_TIMER, PLAYER_DEATH_FALL_DURATION)
 z.pc = sym["MAINLOOP"]
 step_frame(z)
 check("death-fall: PLAYERX/PLAYERY clamp at 255 on overflow instead of wrapping to a low value",
       z.rd(PLAYERX) == 255 and z.rd(PLAYERY) == 255)
+
+# regression guard: UPDATE_GAME_OVER_SEQUENCE must NOT redraw once SEQ==3
+# (terminal - about to bank-switch away in the real Comb build; drawing
+# there would just be wasted work, and this also confirms the CP 3 guard
+# added alongside the redraw-every-frame change is wired correctly).
+z = fresh()
+boot(z)
+z.wr(GAME_OVER_SEQ, 3)
+for i in range(768):
+    z.vram[0x1800 + i] = 0x33
+call_routine(z, sym["UPDATE_GAME_OVER_SEQUENCE"])
+nametable = [z.vram[0x1800 + i] for i in range(768)]
+check("UPDATE_GAME_OVER_SEQUENCE: does NOT redraw the text once SEQ==3 (terminal state)",
+      all(b == 0x33 for b in nametable))
 
 # ---- UPDATE_STAGE_CLEAR: 4-state machine (0/1/2/3) ----
 z = fresh()

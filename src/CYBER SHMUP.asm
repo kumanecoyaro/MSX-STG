@@ -1826,25 +1826,46 @@ ROWDONE_5:
     ; --- so BC/DE/HL/IX/IY are all preserved this time.            ---
     ; ============================================================
     ; (2026-09-07、"ステージ1の自機爆発演出追加 操作無効の上爆発しながら
-    ; 右斜め下に落下しMission Failed表示に"): 上記のPLAYER_RETREAT_ACT
-    ; (ステージクリア専用)より更に手前でチェックする新規サブフェーズ -
-    ; PTH_GAMEOVER(バリア枯渇後の被弾)の瞬間にPLAYER_DEATH_FALL_ACT=1が
-    ; 立ち、以後PLAYER_DEATH_FALL_DURATIONフレームの間ジョイスティック
+    ; 右斜め下に落下しMission Failed表示に"、続けて"落下したら自機は
+    ; 画面外に消えるように"): 上記のPLAYER_RETREAT_ACT(ステージクリア
+    ; 専用)より更に手前でチェックする新規サブフェーズ - GAME_OVERを
+    ; マスターゲートとして使う(PTH_GAMEOVERが唯一の書き込み元で、
+    ; 必ず同時にPLAYER_DEATH_FALL_TRIGGERも呼ぶため、GAME_OVER=1は
+    ; 「まだ落下中」か「落下完了後、画面外に隠れたまま」のどちらか
+    ; しかありえない)。GAME_OVER=1の間は以後二度と(このゲームが
+    ; 続く限り永久に)PFA_NO_DEATH_FALL以降の通常入力チェーンへ落ちない
+    ; - 単に「45フレーム落下が終わったらまた操作可能に戻ってしまう」
+    ; という旧実装の抜け漏れも同時に解消している。
+    LD A,(GAME_OVER)
+    OR A
+    JR Z,PFA_NO_DEATH_FALL
+    LD A,(PLAYER_DEATH_FALL_ACT)
+    OR A
+    JR NZ,PFA_DEATH_FALL_STEP
+    ; 落下完了後: 毎フレーム、ENEMY_HIDE_Yと全く同じ「(255,191)の
+    ; 右下コーナー」慣習(このファイル全体で確立済みの非表示トリック)
+    ; へPLAYERX/PLAYERYを強制し続ける - 自機スプライトは実際にPLAYERY
+    ; -8した値を描画するため、ここでは199を書いて実際の描画Yが191に
+    ; なるよう逆算している。ジョイスティック入力は一切読まない。
+    LD A,255 : LD (PLAYERX),A
+    LD A,199 : LD (PLAYERY),A
+    JP DIR_DONE
+PFA_DEATH_FALL_STEP:
+    ; まだ落下中: PLAYER_DEATH_FALL_DURATIONフレームの間ジョイスティック
     ; 入力を完全に無視してPLAYERX/PLAYERYを両方PLAYER_DEATH_FALL_SPEED
     ; ずつ加算し続ける(右斜め下への等速落下、8bitオーバーフローで
     ; ラップして左端へワープしないようキャリーで255クランプ)。この間も
     ; 既存のPLAYER_EXPL_UPDATE_ALL(PEUA_TRY_SPAWNが毎回PLAYERX/PLAYERY
     ; を直接読む設計)がそのまま自機の新しい位置に追従して爆発バーストを
     ; 継続するため、爆発しながら落下する見た目になる。タイマーが0に
-    ; 達した瞬間だけ、従来PTH_GAMEOVERが直接行っていたMISSION FAILED
-    ; テキスト描画・GAME_OVER_SEQ状態機械の起動をここで行う(以後は
-    ; 二度とPLAYER_DEATH_FALL_ACTが1にならないため生涯で1回だけ)。
-    LD A,(PLAYER_DEATH_FALL_ACT)
-    OR A
-    JR Z,PFA_NO_DEATH_FALL
+    ; 達した瞬間だけ、座標更新はスキップして直接上記の非表示コーナーへ
+    ; 飛ばし、従来PTH_GAMEOVERが直接行っていたMISSION FAILEDテキスト
+    ; 描画・GAME_OVER_SEQ状態機械の起動をここで行う(以後は二度と
+    ; PLAYER_DEATH_FALL_ACTが1にならないため生涯で1回だけ)。
     LD A,(PLAYER_DEATH_FALL_TIMER)
     DEC A
     LD (PLAYER_DEATH_FALL_TIMER),A
+    JR Z,PDF_FINISH
     LD A,(PLAYERX) : ADD A,PLAYER_DEATH_FALL_SPEED
     JR NC,PDF_X_OK
     LD A,255
@@ -1855,10 +1876,11 @@ PDF_X_OK:
     LD A,255
 PDF_Y_OK:
     LD (PLAYERY),A
-    LD A,(PLAYER_DEATH_FALL_TIMER)
-    OR A
-    JP NZ,DIR_DONE
+    JP DIR_DONE
+PDF_FINISH:
     XOR A : LD (PLAYER_DEATH_FALL_ACT),A
+    LD A,255 : LD (PLAYERX),A
+    LD A,199 : LD (PLAYERY),A
     CALL DRAW_GAMEOVER_TEXT
     LD A,1 : LD (GAME_OVER_SEQ),A
     LD HL,(SC_VBLANK_COUNT) : LD (GAME_OVER_START_TICK),HL
@@ -4088,7 +4110,23 @@ USC_CHECK_MISSION2:
 ;   最大10秒) -> 3(タイトルへ戻る準備完了、build_full_rom.pyのComb限定
 ;   MAINLOOP_PATCHがこれを見てタイトルへのバンク切替へ進む、このファイル
 ;   自身はバンク切替を一切行わない)
+; (2026-09-07、"Mission Failed表示は毎フレーム表示 BG系の処理が入ると
+; 上書きで消えてしまうため"): DRAW_GAMEOVER_TEXTは元々死亡演出完了の
+; 瞬間に1回だけ描画していたが、"テキストのみオーバーレイ"方式(背景の
+; 上に直接描くだけで保護機構は無い)のため、地形スクロール等の他のBG
+; 書き込みが同じVRAM名前テーブル領域を後から上書きすると消えてしまう。
+; GAME_OVER_SEQが1か2の間(=タイトルへ切り替わる直前まで)、この
+; UPDATE_GAME_OVER_SEQUENCE自体が毎フレーム無条件に呼ばれる性質を
+; 利用し、毎フレーム無条件に描き直すことで、他の何に上書きされても
+; 次のフレームで必ず復元されるようにする。
 UPDATE_GAME_OVER_SEQUENCE:
+    LD A,(GAME_OVER_SEQ)
+    OR A
+    RET Z
+    CP 3
+    JR NC,UGOS_DISPATCH
+    CALL DRAW_GAMEOVER_TEXT
+UGOS_DISPATCH:
     LD A,(GAME_OVER_SEQ)
     CP 1
     JR Z,UGOS_CHECK_TEXT_TIMER
