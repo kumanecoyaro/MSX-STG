@@ -246,6 +246,90 @@ check("a non-shooter instance's dodge does NOT fire", ebullet_active_count(z) ==
 check("...countdown just decremented (3->2)", z.rd(E1_FIRE_COUNTDOWN) == 2)
 
 
+# ---------- (3b) 実機フィードバック対応("敵弾のレーザーが1回の自機への ----------
+# ---------- 被弾で複数回ダメージ食らってる場合がある"): Y軸一致発射    ----------
+# ---------- (align-fire)と斜めドッジ発動時のランダム発射(dodge-fire)が ----------
+# ---------- 同一フレームで両方トリガーされても、完全に同一座標へ2発   ----------
+# ---------- 同時発射されてはならない                                  ----------
+E4_FIRED_THIS_FRAME = sym["E4_FIRED_THIS_FRAME"]
+
+z = fresh(); boot(z)
+z.wr(E1_FIRE_COUNTDOWN, 1)   # forces dodge-fire's DECIDE_FIRE_SHOOTER to pick this spawn
+slot = ENEMY_POOL
+z.wr(slot + E_ACTIVE, 1)
+z.wr(slot + E_TYPE, TYPE_ENEMY4)
+z.wr(slot + E_BEHAVIOR, BEHAVIOR_SIMPLE_DRIFT_DODGE)
+z.wr(slot + E_X, ENEMY_CENTER_X + sym["ENEMY_SPEED"] - 1)  # crosses center this exact frame (dodge-fire)
+z.wr(slot + E_Y, 90)
+z.wr(slot + E_SPRNUM, 8)
+z.wr(slot + E_PARAM0, 0)
+z.wr(slot + E_PARAM3, 0)   # align-fire cooldown ready
+z.wr(PLAYERY, 90)          # exact Y match too (align-fire)
+z.ix = slot
+call_routine(z, sym["EBSD_UPDATE"])
+check("align-fire and dodge-fire triggering in the SAME frame spawns only 1 EBULLET, "
+      "not 2 stacked at the exact same (X,Y)",
+      ebullet_active_count(z) == 1)
+check("...the dive itself still armed normally (E_PARAM0=1) - the guard only blocks the "
+      "redundant SPAWN_EBULLET call, not the dodge movement/animation trigger",
+      z.rd(slot + E_PARAM0) == 1)
+check("...the align-fire cooldown still armed (E4_ALIGN_FIRE_COOLDOWN) - align-fire itself "
+      "still actually fired, it's the dodge-fire side that stood down",
+      z.rd(slot + E_PARAM3) == E4_ALIGN_FIRE_COOLDOWN)
+check("...E1_FIRE_COUNTDOWN still reseeded to a fresh 3-5 - DECIDE_FIRE_SHOOTER's own "
+      "cadence-consuming call still runs unconditionally, only the resulting SPAWN_EBULLET "
+      "is what gets skipped",
+      3 <= z.rd(E1_FIRE_COUNTDOWN) <= 5)
+
+# self-check: temporarily disable the guard (poke E4_FIRED_THIS_FRAME=0 right before the
+# dodge-fire branch would run) is impractical from Python, so instead prove the guard is
+# load-bearing by re-running the exact same setup and confirming the flag was actually
+# observed as set at the moment dodge-fire's own gate is reached - i.e. align-fire really
+# did run first and really did leave the flag=1 (not just "0 anyway by coincidence").
+z2 = fresh(); boot(z2)
+z2.wr(E1_FIRE_COUNTDOWN, 1)
+slot = ENEMY_POOL
+z2.wr(slot + E_ACTIVE, 1)
+z2.wr(slot + E_TYPE, TYPE_ENEMY4)
+z2.wr(slot + E_BEHAVIOR, BEHAVIOR_SIMPLE_DRIFT_DODGE)
+z2.wr(slot + E_X, ENEMY_CENTER_X + sym["ENEMY_SPEED"] - 1)
+z2.wr(slot + E_Y, 90)
+z2.wr(slot + E_SPRNUM, 8)
+z2.wr(slot + E_PARAM0, 0)
+z2.wr(slot + E_PARAM3, 0)
+z2.wr(PLAYERY, 90)
+z2.wr(E4_FIRED_THIS_FRAME, 0xAA)  # poison it beforehand - EBSD_UPDATE must clear it itself
+z2.ix = slot
+call_routine(z2, sym["EBSD_UPDATE"])
+check("E4_FIRED_THIS_FRAME is genuinely re-derived within this same EBSD_UPDATE call "
+      "(cleared at entry, set by align-fire) - not just coincidentally already correct",
+      z2.rd(E4_FIRED_THIS_FRAME) == 1 and ebullet_active_count(z2) == 1)
+
+# the flag must NOT carry over frame-to-frame: a dodge-fire trigger on a LATER, separate
+# frame (no align-fire this time) must still fire normally.
+z3 = fresh(); boot(z3)
+slot = ENEMY_POOL
+z3.wr(slot + E_ACTIVE, 1)
+z3.wr(slot + E_TYPE, TYPE_ENEMY4)
+z3.wr(slot + E_BEHAVIOR, BEHAVIOR_SIMPLE_DRIFT_DODGE)
+z3.wr(slot + E_X, 200)   # far from center, no dodge trigger yet
+z3.wr(slot + E_Y, 90)
+z3.wr(slot + E_SPRNUM, 8)
+z3.wr(slot + E_PARAM0, 0)
+z3.wr(slot + E_PARAM3, 0)
+z3.wr(PLAYERY, 90)   # align-fire fires THIS frame only
+z3.ix = slot
+call_routine(z3, sym["EBSD_UPDATE"])
+check("frame1: align-fire alone still fires 1 bullet as before", ebullet_active_count(z3) == 1)
+z3.wr(E1_FIRE_COUNTDOWN, 1)
+z3.wr(slot + E_X, ENEMY_CENTER_X + sym["ENEMY_SPEED"] - 1)  # crosses center on THIS later frame
+z3.wr(PLAYERY, 250)   # misaligned now, so align-fire's own cooldown/mismatch doesn't refire
+call_routine(z3, sym["EBSD_UPDATE"])
+check("frame2 (separate frame, no align-fire this time): dodge-fire still fires normally - "
+      "the guard flag from frame1 did not leak across frames",
+      ebullet_active_count(z3) == 2)
+
+
 # ---------- (4) Enemy5 (TYPE_ENEMY1_LOOK) shooter fires once, at ENEMY_CENTER_X ----------
 z = fresh(); boot(z)
 z.wr(E5_FIRE_COUNTDOWN, 1)

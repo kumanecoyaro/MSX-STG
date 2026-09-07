@@ -1133,6 +1133,7 @@ INIT_SPRATR_CLR:
     LD HL,E1_FIRE_COUNTDOWN : CALL RANDOM_3_5 : LD (HL),A
     LD HL,E5_FIRE_COUNTDOWN : CALL RANDOM_3_5 : LD (HL),A
     LD HL,E2_FIRE_COUNTDOWN : CALL RANDOM_3_5 : LD (HL),A
+    XOR A : LD (E4_FIRED_THIS_FRAME),A
     LD HL,ENEMY4_PATTERN : LD DE,PAT_ENEMY4*8+SPRPAT : LD BC,32 : CALL LDIRVM
     LD HL,ENEMY4_PATTERN_2 : LD DE,PAT_ENEMY4_2*8+SPRPAT : LD BC,32 : CALL LDIRVM
     LD HL,EBULLET_PATTERN : LD DE,PAT_EBULLET*8+SPRPAT : LD BC,32 : CALL LDIRVM
@@ -4486,6 +4487,24 @@ E1_FIRE_COUNTDOWN EQU 0E664h   ; TYPE_ENEMY4(=Enemy1=Enemy7) shared spawn counte
 E5_FIRE_COUNTDOWN EQU 0E665h   ; TYPE_ENEMY1_LOOK(Enemy5) shared spawn counter
 E2_FIRE_COUNTDOWN EQU 0E666h   ; Enemy2 A+B shared spawn counter
 E2A_FIRE_FLAG      EQU 0E667h
+; 実機フィードバック対応(2026-09-07、"敵弾のレーザーが1回の自機への
+; 被弾で複数回ダメージ食らってる場合がある"): EBSD_UPDATE自身の既存
+; コメントが明言する通り、TYPE_ENEMY4の"Y軸一致発射"(EBSD_E4_TRY_
+; ALIGN)と"斜めドッジ発動時のランダム発射"(EBSD_DIAG_DIR_SET)は
+; 互いに独立してトリガーされ、同一フレームで両方の条件を満たすと
+; co-occur(同時発生)しうる設計だった - 実際に両方が発火すると、
+; どちらも同じ(IX+E_X),(IX+E_Y)(このフレームの移動後の敵本体
+; 座標、ダイブによるY変化はこの後で起こるため両方とも未変化)を
+; そのままSPAWN_EBULLETへ渡すため、完全に同一座標から2発の
+; EBULLETが同時に発射されてしまう(シミュレーションで再現・確認
+; 済み)。この1バイトは「このフレーム、このTYPE_ENEMY4インスタンス
+; は既にEBULLETを発射したか」を一時的に記録するフラグ - EBSD_
+; UPDATE冒頭で毎回0クリアし、align-fire発火時に1を立て、
+; dodge-fire側はSPAWN_EBULLET呼び出し直前にこれを見て、既に
+; 発射済みならスキップする(DECIDE_FIRE_SHOOTER自体は通常通り
+; 呼ぶので"3-5機に1回"のカウントダウン消費・斜めドッジの動き
+; 自体には一切影響しない、弾の二重発射だけを防ぐ)。
+E4_FIRED_THIS_FRAME EQU 0E668h
 E2B_SEQ_STATE EQU 0E680h
 E2B_EXIT_PHASE EQU 0E681h
 E2B_EXITTYPE EQU 0E682h
@@ -10070,13 +10089,16 @@ EBSD_MOVEOK:
     SUB ENEMY_SPEED
     LD (IX+E_X),A
     ; "エネミー7はY軸が自機に合ったら発射" - TYPE_ENEMY4-only Y-aligned
-    ; fire, independent of (and can co-occur with) the diagonal-dodge
-    ; random fire below. E_PARAM3 is otherwise unused by TYPE_ENEMY4
-    ; (see EBSD_EXIT_LEFT's own "TYPE_ENEMY4 never claimed a pattern
-    ; slot" comment) - repurposed here as a per-instance re-fire
-    ; cooldown. Only TYPE_ENEMY4 currently runs this BEHAVIOR at all,
-    ; but the type check is kept explicit anyway, matching this same
-    ; routine's own existing EBSD_EXIT_LEFT/EBSD_DRAW precedent.
+    ; fire, independent of the diagonal-dodge random fire below (still
+    ; can co-occur in the same frame - E4_FIRED_THIS_FRAME below is
+    ; what prevents that from becoming a double-spawn - see its own
+    ; comment). E_PARAM3 is otherwise unused by TYPE_ENEMY4 (see
+    ; EBSD_EXIT_LEFT's own "TYPE_ENEMY4 never claimed a pattern slot"
+    ; comment) - repurposed here as a per-instance re-fire cooldown.
+    ; Only TYPE_ENEMY4 currently runs this BEHAVIOR at all, but the
+    ; type check is kept explicit anyway, matching this same routine's
+    ; own existing EBSD_EXIT_LEFT/EBSD_DRAW precedent.
+    XOR A : LD (E4_FIRED_THIS_FRAME),A
     LD A,(IX+E_TYPE)
     CP TYPE_ENEMY4
     JR NZ,EBSD_E4_FIRE_DONE
@@ -10093,6 +10115,7 @@ EBSD_E4_TRY_ALIGN:
     LD A,E4_ALIGN_FIRE_COOLDOWN : LD (IX+E_PARAM3),A
     LD D,(IX+E_X) : LD E,(IX+E_Y)
     CALL SPAWN_EBULLET
+    LD A,1 : LD (E4_FIRED_THIS_FRAME),A
 EBSD_E4_FIRE_DONE:
     LD A,(IX+E_PARAM0)          ; DIAG_DONE
     OR A
@@ -10135,12 +10158,21 @@ EBSD_DIAG_DIR_SET:
     ; immediately, synchronously, right here - no separate per-instance
     ; "designated shooter" flag needed, since DECIDE_FIRE_SHOOTER is
     ; called fresh at the exact moment each instance's own one dodge
-    ; begins.
+    ; begins. DECIDE_FIRE_SHOOTER's own countdown is always consumed
+    ; here regardless (so the "3-5機に1回" cadence isn't disturbed) -
+    ; only the actual SPAWN_EBULLET call below is guarded by
+    ; E4_FIRED_THIS_FRAME, to avoid a same-frame double-spawn with the
+    ; Y-aligned fire above (see that flag's own comment - this used to
+    ; let a single EBULLET-firing trigger spawn 2 bullets stacked at
+    ; the exact same (X,Y), reported as "1回の被弾で複数回ダメージ").
     PUSH HL
     LD HL,E1_FIRE_COUNTDOWN
     CALL DECIDE_FIRE_SHOOTER
     OR A
     JR Z,EBSD_E1_NOFIRE
+    LD A,(E4_FIRED_THIS_FRAME)
+    OR A
+    JR NZ,EBSD_E1_NOFIRE
     LD D,(IX+E_X) : LD E,(IX+E_Y)
     CALL SPAWN_EBULLET
 EBSD_E1_NOFIRE:
