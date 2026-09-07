@@ -5594,6 +5594,16 @@ BSPAWN_CLEAREXPL:
     LD A,1 : LD (BOSS_ORBIT_SPEED_CUR),A
     LD A,POD_FIRE_INTERVAL : LD (POD_FIRE_INTERVAL_CUR),A
     XOR A : LD (POD_LAP_ACTIVE),A
+    ; (2026-09-07、Round60系の再起動時RAM初期化漏れ監査で併せて発見):
+    ; DFL0-2_ACT(ボス偏向弾3スロット)もこのボス専用サブシステム群の
+    ; 一員でありながら、この一括初期化ブロックに含まれていなかった。
+    ; 直前のプレイ(ゲームオーバーで中断された場合)がボス戦中に終了
+    ; していれば、次のボス出現時に前回の偏向弾の残骸がそのまま復活
+    ; しうる潜在バグ。他のPOD_*と同じくボススポーン時点で毎回
+    ; アトミックにゼロクリアする設計に合わせる。
+    XOR A : LD (DFL0_ACT),A
+    LD (DFL1_ACT),A
+    LD (DFL2_ACT),A
     LD HL,(GAME_TICK)
     LD DE,POD_FIRE_DELAY_TICKS
     ADD HL,DE
