@@ -57,6 +57,10 @@ BOOM_NOISE_PERIOD EQU 20
 SPR_WHITE_COLOR    EQU 0Fh
 SPR_LIGHTRED_COLOR EQU 09h
 
+; combined_test.asmと同じ値(group15、fg1/bg1の純黒ブランクタイル、
+; "Mission Failedの行はブランクブラックで埋めてくれ"対応で使用)。
+HUD_ROW_BLANK_CODE EQU 120
+
 ; "一度4つほどエフェクトが出るがその状態で停止しててStage1の様な連続
 ; 爆発しない"(2026-09-07、実機フィードバック対応): 4隅を同じ位置に
 ; 10回点滅させるだけだったため「同じ絵が点滅しているだけ」に見えて
@@ -85,6 +89,35 @@ GO_PX2 EQU 0F1A0h
 GO_PY2 EQU 0F1A1h
 GO_PX3 EQU 0F1A2h
 GO_PY3 EQU 0F1A3h
+
+; (2026-09-07、実機フィードバック対応"爆破処理での爆破スプライトの
+; 動きがすごく遅い ボス撃破の様に連続でバンバン飛び散るイメージで
+; ほぼ処理的にはステージ2の敵を倒したときのパーティクル爆発 それの
+; 複数スプライト版 今はふわ～っと飛び散って気持ち悪い"): 上のRound67
+; 版(毎フレーム-1..+2の小さな乱数ジッターを蓄積するだけ)を全面撤回。
+; combined_test.asm自身の通常の敵撃破演出(UOE_EXPLODING)と同じモデル
+; - 8方位固定ベクトル(EXPLODE_DIR_DX/DY、2px/frame一定・ジッター無し)
+; で直進し8フレームで16px移動して消える - を、4パーティクル同時×
+; 「消えたら即座に自機中心へ戻り新しい方向でまた飛ぶ」の繰り返しへ
+; 再設計。この「戻って再度飛ぶ」の連続がボスの71連続ポップ演出と同種の
+; 「連続でバンバン」感を作る。追加のスクラッチ(GO_PY3のすぐ後、GO_RNG
+; と全く同じ理由でGO_PX0-3/PY0-3同様に安全 - このアドレス帯は
+; combined_test.asm側のENEMY_SPRITE_ATTRS/CLOUD_POOLと物理的に重なる
+; がStage2本編は二度と実行されないため無害)。
+GO_BURST_CTR EQU 0F1A4h  ; 残りバースト数(NUM_BURSTSからカウントダウン)
+GO_FRAME_CTR EQU 0F1A5h  ; 現在のバースト内の残りフレーム数
+GO_CUR_COLOR EQU 0F1A6h  ; このバーストの色選択(0=白/1=ライトレッド)
+GO_DIR0X EQU 0F1A7h
+GO_DIR0Y EQU 0F1A8h
+GO_DIR1X EQU 0F1A9h
+GO_DIR1Y EQU 0F1AAh
+GO_DIR2X EQU 0F1ABh
+GO_DIR2Y EQU 0F1ACh
+GO_DIR3X EQU 0F1ADh
+GO_DIR3Y EQU 0F1AEh
+
+NUM_BURSTS   EQU 20   ; 未調整の初期値、実機での見え方次第で再調整
+BURST_FRAMES EQU 8    ; combined_test.asm自身のEXPLOSION_DURATIONと同じ
 
 ; --- Comb globalバンク番号。standaloneでは0/1は無意味(単独バンクの ---
 ; --- ためtitleへは戻れない、テストは戻る直前のGOTO_TITLE_HOP2到達  ---
@@ -132,32 +165,10 @@ INIT:
     ; "自機爆発はサウンドも欲しい"への対応 - 点滅演出の前に1回だけ鳴らす。
     CALL GO_PLAY_BOOM_SOUND
 
-    ; 自機の最終位置(TANK_X/TANK_Y_CUR)を中心に、4つの独立したパーティ
-    ; クル(斜め4方向、それぞれ乱数ジッター込みで加速しながら飛び散る)
-    ; がPAT_EXPLOSIONスプライトとして実際に画面上を移動していく
-    ; (10回、表示->ウェイト->非表示->ウェイト、1回あたり約0.3秒 -
-    ; 合計約3秒、"3秒表示"に対応)。全パーティクルはGO_PX0-3/GO_PY0-3
-    ; へ(0,0)で初期化(自機中心からスタート)。色はループカウンタの
-    ; 偶奇で白/ライトレッドを交互に(Stage1のPLAYER_EXPL_UPDATE_ALLと
-    ; 同じ考え方)。
-    XOR A
-    LD (GO_PX0),A : LD (GO_PY0),A
-    LD (GO_PX1),A : LD (GO_PY1),A
-    LD (GO_PX2),A : LD (GO_PY2),A
-    LD (GO_PX3),A : LD (GO_PY3),A
-
-    LD B,10
-GO_BLINK_LOOP:
-    PUSH BC
-    CALL GO_ADVANCE_PARTICLES
-    ; 色はループカウンタ(B、DJNZの残り回数)の偶奇で交互に選ぶ。
-    LD A,B : AND 1 : LD C,A
-    CALL GO_DRAW_PARTICLES
-    CALL GO_DELAY_SHORT
-    CALL GO_HIDE_EXPLOSION
-    CALL GO_DELAY_SHORT
-    POP BC
-    DJNZ GO_BLINK_LOOP
+    ; 自機の最終位置(TANK_X/TANK_Y_CUR)を中心に、20バースト×4パーティ
+    ; クルが「消えたら即座に自機中心へ戻り新しい方向でまた飛ぶ」を
+    ; 繰り返す(詳細はGO_EXPLOSION_SEQUENCE自身のコメント参照)。
+    CALL GO_EXPLOSION_SEQUENCE
 
     ; "で爆発エフェクトが消えずのこったまま Mission Failedになってる
     ; で爆発エフェクトは消してくれ その後にMission Failed表示"
@@ -167,19 +178,27 @@ GO_BLINK_LOOP:
     ; テキスト描画へ進む。
     CALL GO_HIDE_EXPLOSION
 
-    ; "MISSION FAILED"メッセージを画面中央(row12,col9、14byte - 画面幅
-    ; 32セルの中央に14byteを置くには(32-14)/2=9列目から)へ描画
-    ; (DRAW_MISSION_SCREEN/DRAW_GAMEOVER_TEXTと同じ位置 - テキストのみ
-    ; オーバーレイ、画面全体の黒塗りはしない)。CLAUDE.md「実機ハード
-    ; ウェア制約」の恒久ルール通り、VDPへの連続転送はOTIR等を使わず
-    ; 手動OUT+NOPループのみ。
+    ; "Mission Failedの行はブランクブラックで埋めてくれ"(2026-09-07、
+    ; 実機フィードバック対応): 従来はrow12の中央14セルへメッセージを
+    ; 上書きするだけで、その左右(col0-8/col23-31)には死亡直前の地形・
+    ; 背景がそのまま残っていた。まずrow12を左端(col0)から32セル分
+    ; HUD_ROW_BLANK_CODE(combined_test.asm自身のライフバー背景消去と
+    ; 同じ、fg1/bg1の純黒タイル)で埋めてから、その中央にメッセージを
+    ; 上書きする(合計32回のOUT、col0-8[9セル]blank→14セルメッセージ→
+    ; col23-31[9セル]blank)。CLAUDE.md「実機ハードウェア制約」の恒久
+    ; ルール通り、VDPへの連続転送はOTIR等を使わず手動OUT+NOPループのみ。
     DI
-    LD A,089h : OUT (99h),A
+    LD A,080h : OUT (99h),A
     NOP
     NOP
-    LD A,59h : OUT (99h),A      ; write address = 1989h (row12,col9)
+    LD A,59h : OUT (99h),A      ; write address = 1980h (row12,col0)
     NOP
     NOP
+    LD B,9
+GO_MSG_PRE_BLANK:
+    LD A,HUD_ROW_BLANK_CODE : OUT (98h),A
+    PUSH BC : POP BC : NOP : NOP
+    DJNZ GO_MSG_PRE_BLANK
     LD HL,GAMEOVER2_MSG
     LD B,GAMEOVER2_MSG_LEN
 GO_MSG_LOOP:
@@ -187,6 +206,11 @@ GO_MSG_LOOP:
     PUSH BC : POP BC : NOP : NOP
     INC HL
     DJNZ GO_MSG_LOOP
+    LD B,9
+GO_MSG_POST_BLANK:
+    LD A,HUD_ROW_BLANK_CODE : OUT (98h),A
+    PUSH BC : POP BC : NOP : NOP
+    DJNZ GO_MSG_POST_BLANK
     EI
 
     ; "ボタンが押されるか10秒経過でタイトル画面に" - GO_DELAY_SHORT
@@ -228,50 +252,100 @@ GOTO_TITLE_HOP2:
 ; いる)。
 BANKSWITCH_TRAMPOLINE_RAM EQU 0F271h
 
-; (2026-09-07、実機フィードバック対応"もっとエフェクトが飛び散る形に
-; 地味すぎる 自機中心からエフェクトが飛びランダムに散る様に"): 旧
-; GO_DRAW_EXPLOSIONは自機中心の4隅(TL/TR/BL/BR)へ全く同じオフセットを
-; 適用し「1つの32x32ボディ」として点滅させるだけだった。GO_ADVANCE_
-; PARTICLES/GO_DRAW_PARTICLES/GO_DRAW_ONE_PARTICLEの3ルーチンへ置き
-; 換え、4つの独立したパーティクル(それぞれ固定の斜め方向+乱数
-; ジッターで加速しながら自機中心から飛び散っていく)として描画する。
+; (2026-09-07、実機フィードバック対応その2"爆破処理での爆破スプライト
+; の動きがすごく遅い ボス撃破の様に連続でバンバン飛び散るイメージで
+; ほぼ処理的にはステージ2の敵を倒したときのパーティクル爆発 それの
+; 複数スプライト版 今はふわ～っと飛び散って気持ち悪い"): 直前の
+; ジッター蓄積方式(1回の点滅あたり約0.3秒、微小な乱数ジッターだけが
+; 積み上がる)を全面撤回。combined_test.asm自身の通常の敵撃破演出
+; (UOE_EXPLODING)がまさに実装しているモデル - 8方位固定ベクトル
+; (EXPLODE_DIR_DX/DY、2px/frame一定・ジッター無し)で直進しBURST_
+; FRAMES(8)フレームで16px移動して消える - をそのまま踏襲し、4つの
+; パーティクルへ"複数スプライト版"として同時展開する。1バーストが
+; 終わるたびに自機中心へ即座に戻り、新しいランダム方向でまた飛び
+;始める(GO_EXPLOSION_SEQUENCE)ことで、ボスの71連続ポップ演出と同種の
+; 「連続でバンバン」感を作る。
 
-; 全4パーティクルの累積(dx,dy)オフセット(GO_PX0-3/GO_PY0-3)を、各
-; パーティクル固有の斜め方向の固定ステップ+小さな乱数ジッターぶんだけ
-; 前進させる("ランダムに散る"演出、Stage1 PEUA_TRY_SPAWNの-8..+7
-; ジッターより小さいレンジ-1..+2を採用 - 毎フレーム蓄積されるため
-; 大きすぎると数フレームで画面外へ出てしまう)。Trashes: AF.
-GO_ADVANCE_PARTICLES:
-    ; particle0: 左上方向(-3,-2)
-    LD A,(GO_RNG) : ADD A,61 : LD (GO_RNG),A : AND 3 : SUB 1 : LD H,A
-    LD A,(GO_PX0) : ADD A,-3 : ADD A,H : LD (GO_PX0),A
-    LD A,(GO_RNG) : ADD A,97 : LD (GO_RNG),A : AND 3 : SUB 1 : LD H,A
-    LD A,(GO_PY0) : ADD A,-2 : ADD A,H : LD (GO_PY0),A
-    ; particle1: 右上方向(+3,-2)
-    LD A,(GO_RNG) : ADD A,131 : LD (GO_RNG),A : AND 3 : SUB 1 : LD H,A
-    LD A,(GO_PX1) : ADD A,3 : ADD A,H : LD (GO_PX1),A
-    LD A,(GO_RNG) : ADD A,167 : LD (GO_RNG),A : AND 3 : SUB 1 : LD H,A
-    LD A,(GO_PY1) : ADD A,-2 : ADD A,H : LD (GO_PY1),A
-    ; particle2: 左下方向(-2,+3)
-    LD A,(GO_RNG) : ADD A,193 : LD (GO_RNG),A : AND 3 : SUB 1 : LD H,A
-    LD A,(GO_PX2) : ADD A,-2 : ADD A,H : LD (GO_PX2),A
-    LD A,(GO_RNG) : ADD A,229 : LD (GO_RNG),A : AND 3 : SUB 1 : LD H,A
-    LD A,(GO_PY2) : ADD A,3 : ADD A,H : LD (GO_PY2),A
-    ; particle3: 右下方向(+2,+3)
-    LD A,(GO_RNG) : ADD A,251 : LD (GO_RNG),A : AND 3 : SUB 1 : LD H,A
-    LD A,(GO_PX3) : ADD A,2 : ADD A,H : LD (GO_PX3),A
-    LD A,(GO_RNG) : ADD A,7 : LD (GO_RNG),A : AND 3 : SUB 1 : LD H,A
-    LD A,(GO_PY3) : ADD A,3 : ADD A,H : LD (GO_PY3),A
-    ; 上記8回の"AND 3"ジッター抽出の加算定数の合計(61+97+131+167+193+
-    ; 229+251+7=1136)がたまたま4の倍数のため、GO_RNGのmod4位相は1回の
-    ; GO_ADVANCE_PARTICLES呼び出し全体を通じて変化しない - 特定のシード
-    ; では、この関数内の8箇所それぞれが呼び出しのたびに"全く同じ"
-    ; ジッター値を返し続けてしまう(実際に自己検証テストで、ある種の
-    ; シードだとparticle0のY方向ジッターが常に+2に固定され、固定step
-    ; (-2)と完全に相殺してY方向の正味移動が毎回ゼロになる退行を発見)。
-    ; 4の倍数でない追加の攪拌(+3、mod4=3)をここに1回加えることで、
-    ; 呼び出しをまたいでmod4位相が確実に変化するようにする。
-    LD A,(GO_RNG) : ADD A,3 : LD (GO_RNG),A
+; 8方位固定ベクトル(combined_test.asm自身のEXPLODE_DIR_DX/DYと同じ
+; 値、"ステージ2の敵を倒したときのパーティクル爆発それの複数スプライト
+; 版"に対応するため値を直接転記)。N,NE,E,SE,S,SW,W,NW。
+GO_DIR_DX:
+    DB 0,2,2,2,0,-2,-2,-2
+GO_DIR_DY:
+    DB -2,-2,0,2,2,2,0,-2
+
+; 8方位固定ベクトルから1つをGO_RNGで抽選する。返り値: A=dx、H=dy
+; (BCは呼び出し元で意図的に温存 - 呼び出し元GO_NEW_BURSTがdx/dy
+; テーブルどちらも同じindexで引くため)。Trashes: AF,HL。
+GO_PICK_DIR:
+    LD A,(GO_RNG) : ADD A,53 : LD (GO_RNG),A
+    AND 7
+    LD C,A : LD B,0
+    LD HL,GO_DIR_DY : ADD HL,BC : LD A,(HL) : LD D,A   ; D = dy(スタッシュ) - 直後の
+                                                          ; "LD HL,GO_DIR_DX"がHL全体を
+                                                          ; 再ロードしHをも上書きするため、
+                                                          ; Hに直接保持しても意味が無い
+                                                          ; (実際に自己検証テストで
+                                                          ; 発見した実バグ、当初はLD H,A
+                                                          ; で直接保持しようとしていた)。
+    LD HL,GO_DIR_DX : ADD HL,BC : LD A,(HL)              ; A = dx
+    LD H,D                                                ; H = dy (Dから復元)
+    RET
+
+; 新しいバーストを開始する: 4パーティクル全ての累積オフセット(GO_PX0-3/
+; GO_PY0-3)を0(自機中心)へ戻し、各パーティクルへ独立に新しい8方位
+; ベクトルを抽選してGO_DIR0X-3Y へセットする。Trashes: AF,BC,HL。
+GO_NEW_BURST:
+    XOR A
+    LD (GO_PX0),A : LD (GO_PY0),A
+    LD (GO_PX1),A : LD (GO_PY1),A
+    LD (GO_PX2),A : LD (GO_PY2),A
+    LD (GO_PX3),A : LD (GO_PY3),A
+    CALL GO_PICK_DIR : LD (GO_DIR0X),A : LD C,H : LD A,C : LD (GO_DIR0Y),A
+    CALL GO_PICK_DIR : LD (GO_DIR1X),A : LD C,H : LD A,C : LD (GO_DIR1Y),A
+    CALL GO_PICK_DIR : LD (GO_DIR2X),A : LD C,H : LD A,C : LD (GO_DIR2Y),A
+    CALL GO_PICK_DIR : LD (GO_DIR3X),A : LD C,H : LD A,C : LD (GO_DIR3Y),A
+    RET
+
+; 4パーティクル全ての累積オフセット(GO_PX0-3/GO_PY0-3)を、そのバースト
+; で選ばれた固定方向(GO_DIR0X-3Y)だけ1フレーム分前進させる(ジッター
+; 無し、EXPLODE_DIR_DX/DYと同じ一定速度の直進)。Trashes: AF,H。
+GO_STEP_PARTICLES:
+    LD A,(GO_PX0) : LD H,A : LD A,(GO_DIR0X) : ADD A,H : LD (GO_PX0),A
+    LD A,(GO_PY0) : LD H,A : LD A,(GO_DIR0Y) : ADD A,H : LD (GO_PY0),A
+    LD A,(GO_PX1) : LD H,A : LD A,(GO_DIR1X) : ADD A,H : LD (GO_PX1),A
+    LD A,(GO_PY1) : LD H,A : LD A,(GO_DIR1Y) : ADD A,H : LD (GO_PY1),A
+    LD A,(GO_PX2) : LD H,A : LD A,(GO_DIR2X) : ADD A,H : LD (GO_PX2),A
+    LD A,(GO_PY2) : LD H,A : LD A,(GO_DIR2Y) : ADD A,H : LD (GO_PY2),A
+    LD A,(GO_PX3) : LD H,A : LD A,(GO_DIR3X) : ADD A,H : LD (GO_PX3),A
+    LD A,(GO_PY3) : LD H,A : LD A,(GO_DIR3Y) : ADD A,H : LD (GO_PY3),A
+    RET
+
+; NUM_BURSTS回、各回BURST_FRAMESフレームぶん、4パーティクルを新しい
+; ランダム方向へ直進させながら描画し続ける("連続でバンバン")。ループ
+; 制御は全てメモリ上のカウンタ(GO_BURST_CTR/GO_FRAME_CTR)で行い、B/Cを
+; GO_DRAW_PARTICLES(色選択・BC/DE/HL破壊)呼び出しをまたいで温存する
+; 手間を避ける。色はバースト単位で白/ライトレッドを交互に(Stage1の
+; PLAYER_EXPL_UPDATE_ALLと同じ考え方)。フレーム間のウェイトはGO_DELAY_
+; TINY(約0.0186秒、実機の1フレーム[約1/60秒]に近い) - EXPLODE_DIR_DX/
+; DYの"2px/frame"という値は本来60fps基準の量なので、待ち時間もそれに
+; 近づけて初めて「ほぼ処理的には...それの複数スプライト版」という
+; 見た目になる。Trashes: AF,BC,DE,HL。
+GO_EXPLOSION_SEQUENCE:
+    LD A,NUM_BURSTS : LD (GO_BURST_CTR),A
+GO_BURST_LOOP:
+    CALL GO_NEW_BURST
+    LD A,(GO_BURST_CTR) : AND 1 : LD (GO_CUR_COLOR),A
+    LD A,BURST_FRAMES : LD (GO_FRAME_CTR),A
+GO_BURST_FRAME_LOOP:
+    CALL GO_STEP_PARTICLES
+    LD A,(GO_CUR_COLOR) : LD C,A
+    CALL GO_DRAW_PARTICLES
+    CALL GO_DELAY_TINY
+    LD A,(GO_FRAME_CTR) : DEC A : LD (GO_FRAME_CTR),A
+    JR NZ,GO_BURST_FRAME_LOOP
+    LD A,(GO_BURST_CTR) : DEC A : LD (GO_BURST_CTR),A
+    JR NZ,GO_BURST_LOOP
     RET
 
 ; 4パーティクル全てを、それぞれの累積オフセット(GO_PX0-3/GO_PY0-3)で

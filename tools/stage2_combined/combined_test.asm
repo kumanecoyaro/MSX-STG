@@ -5849,11 +5849,21 @@ APPLY_TANK_DAMAGE:
     RET Z
     DEC A : LD (TANK_LIFE),A
     JR NZ,ATD_LIFE_DISPLAY
+    ; (2026-09-07、実機フィードバック対応"Mission2の自機爆発でHPメーター
+    ; が減る前に処理に入ってるんで1つ残ったままだな"): TANK_LIFEが0に
+    ; 達した直後、TRIGGER_GAME_OVER(この先DIしたままバンク切替し二度と
+    ; 戻らない)へ飛ぶ前に、まずLIFE_DISPLAYを1回呼んで空になったHP
+    ; メーターを実際に描画しておく。旧実装はここでLIFE_DISPLAYを経由
+    ; せず直接TRIGGER_GAME_OVERへJPしていたため、TANK_LIFEが0になった
+    ; まさにそのフレームのHUD表示は「まだ1個分残っている」状態のまま
+    ; 凍結していた。
+    CALL LIFE_DISPLAY
     ; (2026-09-07、"Bボタンならゲームオーバー無しに"): GAMEOVER_ENABLED
-    ; ==0の間はTANK_LIFEが0のまま止まるだけ(旧"死なない"挙動)。
+    ; ==0の間はTANK_LIFEが0のまま止まるだけ(旧"死なない"挙動)。HPバー
+    ; は上のCALL LIFE_DISPLAYで既に空表示済みなのでここでは何もしない。
     LD A,(GAMEOVER_ENABLED)
     OR A
-    JR Z,ATD_LIFE_DISPLAY
+    RET Z
     JP TRIGGER_GAME_OVER   ; tail call - never returns (see its own comment)
 ATD_LIFE_DISPLAY:
     JP LIFE_DISPLAY

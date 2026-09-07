@@ -58,7 +58,7 @@ FONT_CHARS = ["M", "I", "S", "O", "N", " ", "F", "A", "L", "E", "D"]
 FONT_CODES = [96, 97, 98, 99, 100, 101, 102, 103, 144, 145, 146]
 z = fresh()
 z.pc = sym["INIT"]
-run_until_pc(z, sym["GO_BLINK_LOOP"])
+run_until_pc(z, sym["GO_EXPLOSION_SEQUENCE"])
 font_ok = True
 for ch, code in zip(FONT_CHARS, FONT_CODES):
     expected = pixel_font_8x8.glyph_bytes(ch)
@@ -91,6 +91,24 @@ nametable = [z.vram[0x1800 + i] for i in range(768)]
 msg_region = nametable[12 * 32 + 9: 12 * 32 + 9 + GAMEOVER2_MSG_LEN]
 check("MISSION FAILED text is drawn at row12/col9 by the time GO_WAIT_LOOP is reached",
       msg_region == expected_msg)
+
+# (2026-09-07、実機フィードバック対応"Mission Failedの行はブランクブラック
+# で埋めてくれ"): row12全体(32セル)がcols0-8/cols23-31含めHUD_ROW_BLANK_
+# CODE(黒)で埋まっていること - 旧実装はメッセージの14セル以外は死亡直前の
+# 地形・背景がそのまま透けて見えていた(0x33の汚染マーカーが残ってしまう)。
+HUD_ROW_BLANK_CODE = sym["HUD_ROW_BLANK_CODE"]
+check("HUD_ROW_BLANK_CODE matches combined_test.asm's own value (120, group15 "
+      "pure-black blank tile)", HUD_ROW_BLANK_CODE == 120)
+row12 = nametable[12 * 32: 12 * 32 + 32]
+check("row12's left margin (cols0-8, before the message) is blanked to "
+      "HUD_ROW_BLANK_CODE, not left showing the pre-death terrain/background",
+      row12[0:9] == [HUD_ROW_BLANK_CODE] * 9)
+check("row12's right margin (cols23-31, after the message) is blanked to "
+      "HUD_ROW_BLANK_CODE, not left showing the pre-death terrain/background",
+      row12[23:32] == [HUD_ROW_BLANK_CODE] * 9)
+check("no leftover 0x33 poison bytes remain anywhere in row12 (fully "
+      "overwritten - blank margins + message, nothing untouched)",
+      0x33 not in row12)
 
 # ---- particle-scatter explosion (2026-09-07、実機フィードバック対応 ----
 # ---- "もっとエフェクトが飛び散る形に 地味すぎる 自機中心から           ----
@@ -156,77 +174,197 @@ check("GO_DRAW_PARTICLES applies each particle's own independent offset "
           80 + 5, 50 + 3, PAT_EXPLOSION, SPR_WHITE_COLOR,
       ])
 
-# ---- GO_ADVANCE_PARTICLES: each particle's accumulator moves in its own ----
-# ---- fixed diagonal direction (away from center) every call, plus a     ----
-# ---- small jitter - confirm the SIGN of net movement over many calls     ----
-# ---- matches each particle's documented outward direction (up-left/     ----
-# ---- up-right/down-left/down-right), i.e. they really do fly apart      ----
-# ---- rather than just jittering in place.                                ----
 def signed(v):
     return v - 256 if v >= 128 else v
 
 
-z = fresh()
-z.wr(TANK_X, 1)  # seeds GO_RNG (INIT does this; here we poke it directly)
-z.wr(sym["GO_RNG"], 1)
-for addr in GO_PX + GO_PY:
-    z.wr(addr, 0)
-z.sp = 0xF000
-z.wr(0xF000, 0x00); z.wr(0xF001, 0x00)
-for _ in range(10):
-    z.pc = sym["GO_ADVANCE_PARTICLES"]
-    run_until_pc(z, 0x0000, 300000)
+# ---- Round68 (2026-09-07、実機フィードバック対応その2"爆破処理での
+# ---- 爆破スプライトの動きがすごく遅い ボス撃破の様に連続でバンバン
+# ---- 飛び散るイメージで ほぼ処理的にはステージ2の敵を倒したときの
+# ---- パーティクル爆発 それの複数スプライト版 今はふわ～っと飛び散って
+# ---- 気持ち悪い"): GO_ADVANCE_PARTICLES(毎フレーム小さな乱数ジッター
+# ---- を蓄積するだけ)を全面撤回し、combined_test.asm自身のEXPLODE_
+# ---- DIR_DX/DYと同じ8方位固定ベクトルモデル(GO_PICK_DIR/GO_NEW_BURST/
+# ---- GO_STEP_PARTICLES/GO_EXPLOSION_SEQUENCE)へ置き換えた。ジッター
+# ---- 無しの直進(EXPLODE_DIR_DX/DYと完全に同じ値)を複数バースト
+# ---- (NUM_BURSTS回)繰り返すことで「連続でバンバン」を実現する。
+VALID_DIRS = {
+    (0, -2), (2, -2), (2, 0), (2, 2), (0, 2), (-2, 2), (-2, 0), (-2, -2),
+}
+GO_DIR_DX = sym["GO_DIR_DX"]
+GO_DIR_DY = sym["GO_DIR_DY"]
+table_dx = [signed(mem0[GO_DIR_DX + i]) for i in range(8)]
+table_dy = [signed(mem0[GO_DIR_DY + i]) for i in range(8)]
+check("GO_DIR_DX/DY table matches combined_test.asm's own EXPLODE_DIR_DX/DY "
+      "verbatim (the exact model being 'multiplied' into 4 particles)",
+      set(zip(table_dx, table_dy)) == VALID_DIRS)
+
+GO_DIR = [
+    (sym["GO_DIR0X"], sym["GO_DIR0Y"]),
+    (sym["GO_DIR1X"], sym["GO_DIR1Y"]),
+    (sym["GO_DIR2X"], sym["GO_DIR2Y"]),
+    (sym["GO_DIR3X"], sym["GO_DIR3Y"]),
+]
+
+
+def call_ret(z, target, max_instr=300000):
     z.sp = 0xF000
     z.wr(0xF000, 0x00); z.wr(0xF001, 0x00)
-final = [(signed(z.rd(GO_PX[i])), signed(z.rd(GO_PY[i]))) for i in range(4)]
-check("particle0 (documented up-left) net-moved left (dx<0) and up (dy<0) after "
-      "10 advances", final[0][0] < 0 and final[0][1] < 0)
-check("particle1 (documented up-right) net-moved right (dx>0) and up (dy<0) after "
-      "10 advances", final[1][0] > 0 and final[1][1] < 0)
-check("particle2 (documented down-left) net-moved left (dx<0) and down (dy>0) after "
-      "10 advances", final[2][0] < 0 and final[2][1] > 0)
-check("particle3 (documented down-right) net-moved right (dx>0) and down (dy>0) after "
-      "10 advances", final[3][0] > 0 and final[3][1] > 0)
+    z.pc = target
+    run_until_pc(z, 0x0000, max_instr)
 
-# ---- GO_BLINK_LOOP: particles must actually be moving frame to frame ----
-# ---- (not just jittering in place) - this is the direct regression   ----
-# ---- guard for "地味すぎる...もっとエフェクトが飛び散る形に".         ----
+
+# GO_PICK_DIR itself: across many seeds, the (dx,dy) it returns must always
+# be one of the 8 table entries (never garbage from a misaligned lookup).
+picked = set()
+z = fresh()
+for seed in range(0, 256, 3):
+    z.wr(sym["GO_RNG"], seed)
+    z.a = 0
+    z.sp = 0xF000
+    z.wr(0xF000, 0x00); z.wr(0xF001, 0x00)
+    z.pc = sym["GO_PICK_DIR"]
+    run_until_pc(z, 0x0000, 300000)
+    picked.add((signed(z.a), signed(z.h)))
+check("GO_PICK_DIR only ever returns one of the 8 valid EXPLODE_DIR-style "
+      "vectors across many RNG seeds (no misaligned table lookup)",
+      picked <= VALID_DIRS)
+check("GO_PICK_DIR actually exercises more than one direction across many "
+      "seeds (genuinely randomized, not stuck on a single entry)",
+      len(picked) > 1)
+
+# GO_NEW_BURST: resets all 4 accumulated offsets to 0 (particles snap back
+# to the player's own center - "自機中心から...連続で" popping again) and
+# assigns each of the 4 particles its OWN independently-picked direction.
+z = fresh()
+for addr in GO_PX + GO_PY:
+    z.wr(addr, 0x7F)  # poison so a real reset is actually verified
+z.wr(sym["GO_RNG"], 17)
+call_ret(z, sym["GO_NEW_BURST"])
+offsets_after = [z.rd(a) for a in GO_PX + GO_PY]
+check("GO_NEW_BURST resets all 4 particles' accumulated (dx,dy) offset back "
+      "to 0 (poisoned 0x7F values actually get cleared)",
+      offsets_after == [0] * 8)
+dirs_after = [(signed(z.rd(dx)), signed(z.rd(dy))) for dx, dy in GO_DIR]
+check("GO_NEW_BURST assigns each of the 4 particles a valid 8-way direction",
+      all(d in VALID_DIRS for d in dirs_after))
+check("GO_NEW_BURST's 4 particles don't all get pushed through the exact "
+      "same RNG draw pattern in lockstep (at least 2 distinct directions "
+      "typically appear among 4 independent picks with a non-degenerate seed)",
+      len(set(dirs_after)) >= 2)
+
+# GO_STEP_PARTICLES: adds each particle's own fixed direction (as set by
+# GO_NEW_BURST) to its accumulator by exactly 1 step - constant-velocity
+# straight-line motion, no jitter (the direct fix for "ふわ～っと").
+z = fresh()
+test_dirs = [(2, -2), (-2, 0), (0, 2), (-2, -2)]
+for (dxa, dya), (dx, dy) in zip(GO_DIR, test_dirs):
+    z.wr(dxa, dx & 0xFF)
+    z.wr(dya, dy & 0xFF)
+for addr in GO_PX + GO_PY:
+    z.wr(addr, 0)
+call_ret(z, sym["GO_STEP_PARTICLES"])
+# note: GO_PX + GO_PY is [PX0,PX1,PX2,PX3, PY0,PY1,PY2,PY3] - NOT interleaved
+# per-particle - the expected values below follow that same grouping.
+step1 = [signed(z.rd(a)) for a in GO_PX + GO_PY]
+check("GO_STEP_PARTICLES advances all 4 particles by exactly their own "
+      "fixed direction in one call (straight-line step, matching "
+      "EXPLODE_DIR_DX/DY's own constant 2px/frame magnitude)",
+      step1 == [2, -2, 0, -2, -2, 0, 2, -2])
+call_ret(z, sym["GO_STEP_PARTICLES"])
+step2 = [signed(z.rd(a)) for a in GO_PX + GO_PY]
+check("a second GO_STEP_PARTICLES call advances by the SAME fixed amount "
+      "again (constant velocity, not jitter that varies call to call)",
+      step2 == [4, -4, 0, -4, -4, 0, 4, -4])
+
+# ---- GO_EXPLOSION_SEQUENCE: the full "連続でバンバン" burst-repeat loop ----
+NUM_BURSTS = sym["NUM_BURSTS"]
+BURST_FRAMES = sym["BURST_FRAMES"]
+z = fresh()
+z.wr(TANK_X, 120)
+z.wr(TANK_Y_CUR, 90)
+z.wr(sym["GO_RNG"], 5)
+seen_frames = []
+GO_DRAW_PARTICLES = sym["GO_DRAW_PARTICLES"]
+call_ret_target = sym["GO_EXPLOSION_SEQUENCE"]
+z.sp = 0xF000
+z.wr(0xF000, 0x00); z.wr(0xF001, 0x00)
+z.pc = call_ret_target
+steps = 0
+while z.pc != 0x0000 and steps < 5_000_000:
+    if z.pc == GO_DRAW_PARTICLES:
+        seen_frames.append(tuple(signed(z.rd(a)) for a in GO_PX + GO_PY))
+    z.step()
+    steps += 1
+check(f"GO_EXPLOSION_SEQUENCE calls GO_DRAW_PARTICLES exactly NUM_BURSTS*"
+      f"BURST_FRAMES ({NUM_BURSTS}*{BURST_FRAMES}={NUM_BURSTS * BURST_FRAMES}) times",
+      len(seen_frames) == NUM_BURSTS * BURST_FRAMES)
+# every BURST_FRAMES-th draw is the 1st frame of a fresh burst - particle0's
+# offset there must be exactly its own per-frame step (not 0, since the
+# frame is drawn AFTER stepping once) and every burst boundary before that
+# must show the particles having traveled outward, then snapping back to a
+# small first-step offset for the next burst - i.e. genuine repeated bursts,
+# not one continuous unbounded drift.
+burst_starts = seen_frames[0::BURST_FRAMES]
+burst_ends = seen_frames[BURST_FRAMES - 1::BURST_FRAMES]
+check("each burst's LAST frame has traveled further from center than its "
+      "FIRST frame (a real outward flight within every burst, not a static "
+      "pose)",
+      all(sum(abs(v) for v in end) > sum(abs(v) for v in start)
+          for start, end in zip(burst_starts, burst_ends)))
+check("each burst's first frame is much closer to center than the PREVIOUS "
+      "burst's last frame (particles genuinely snap back near the player's "
+      "own center at the start of every new burst - the 'pop back and fly "
+      "again' that makes it read as continuous bursts rather than one "
+      "particle wandering off forever)",
+      all(sum(abs(v) for v in burst_starts[i]) < sum(abs(v) for v in burst_ends[i - 1]) / 2
+          for i in range(1, len(burst_starts))))
+check("bursts are not all identical (different random directions are "
+      "picked burst to burst)",
+      len(set(burst_ends)) > 1)
+# within a single burst, consecutive frames must move by a CONSTANT vector
+# per particle (straight-line, matching EXPLODE_DIR_DX/DY's fixed 2px/frame
+# magnitude) - this is the literal fix for "ふわ～っと飛び散って気持ち悪い"
+# (the old design accumulated a varying -1..+2 jitter every frame instead).
+first_burst = seen_frames[0:BURST_FRAMES]
+per_particle_deltas_constant = True
+for p in range(4):
+    deltas = set()
+    prev = (0, 0)
+    for frame in first_burst:
+        cur = (frame[p * 2], frame[p * 2 + 1])
+        deltas.add((cur[0] - prev[0], cur[1] - prev[1]))
+        prev = cur
+    if len(deltas) != 1 or next(iter(deltas)) not in VALID_DIRS:
+        per_particle_deltas_constant = False
+check("within a single burst, each particle's per-frame delta is constant "
+      "and matches one of the 8 fixed EXPLODE_DIR-style vectors (no jitter, "
+      "a true straight-line flight)",
+      per_particle_deltas_constant)
+
+GO_HIDE_EXPLOSION = sym["GO_HIDE_EXPLOSION"]
+GO_WAIT_LOOP = sym["GO_WAIT_LOOP"]
 z = fresh()
 z.wr(TANK_X, 120)
 z.wr(TANK_Y_CUR, 90)
 z.pc = sym["INIT"]
-seen_frames = []
-GO_DRAW_PARTICLES = sym["GO_DRAW_PARTICLES"]
-GO_HIDE_EXPLOSION = sym["GO_HIDE_EXPLOSION"]
-GO_WAIT_LOOP = sym["GO_WAIT_LOOP"]
 hide_calls_before_text = 0
 steps = 0
-while z.pc != GO_WAIT_LOOP and steps < 3_000_000:
-    if z.pc == GO_DRAW_PARTICLES:
-        seen_frames.append(tuple(z.rd(a) for a in GO_PX + GO_PY))
+while z.pc != GO_WAIT_LOOP and steps < 5_000_000:
     if z.pc == GO_HIDE_EXPLOSION:
         hide_calls_before_text += 1
     z.step()
     steps += 1
-check("GO_BLINK_LOOP calls GO_DRAW_PARTICLES 10 times (once per blink iteration) "
-      "before reaching GO_WAIT_LOOP",
-      len(seen_frames) == 10)
-check("GO_BLINK_LOOP's 10 draws show genuinely different particle positions each "
-      "time (the particles are really flying outward, not stuck jittering in place)",
-      len(set(seen_frames)) == 10)
-check("the particles' distance from center (sum of |offset|) grows over the "
-      "sequence (a real outward flight, not a random walk that stays near 0)",
-      sum(abs(signed(v)) for v in seen_frames[-1]) > sum(abs(signed(v)) for v in seen_frames[0]))
 # (2026-09-07、実機フィードバック対応"爆発エフェクトが消えずのこったまま
-# Mission Failedになってる で爆発エフェクトは消してくれ"): GO_HIDE_
-# EXPLOSIONはループの各反復内で毎回呼ばれる(点滅の非表示側)のに加え、
-# ループを抜けた直後にも明示的にもう1回呼ばれ、その後で初めてテキストを
-# 描画する設計に変更した - 10回(ループ内)+1回(ループ後、テキストより
-# 前)=11回になっているはず。
-check("GO_HIDE_EXPLOSION is called 11 times before GO_WAIT_LOOP (10 blink-hides + "
-      "1 final explicit hide before the MISSION FAILED text is drawn) - the fix for "
-      "the explosion sprites being left visible under the text",
-      hide_calls_before_text == 11)
+# Mission Failedになってる で爆発エフェクトは消してくれ"): 新設計では
+# バースト間の点滅ギャップを廃止した(新バーストは即座に自機中心へ戻り
+# 継続して飛ぶ)ため、GO_HIDE_EXPLOSIONはもう全バーストの内部では呼ばれず、
+# 全バースト完了後・テキスト描画直前の明示的な1回だけになった。
+check("GO_HIDE_EXPLOSION is called exactly once before GO_WAIT_LOOP (the "
+      "single explicit hide after all bursts finish, right before the "
+      "MISSION FAILED text is drawn) - the fix for the explosion sprites "
+      "being left visible under the text",
+      hide_calls_before_text == 1)
 
 # confirm the sprite attribute table is really left in the "all hidden" state at
 # the moment GO_WAIT_LOOP (i.e. after the text has already been drawn) is reached -

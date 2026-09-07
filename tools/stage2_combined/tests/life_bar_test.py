@@ -95,6 +95,34 @@ check("LIFE_COLOR's own bg nibble is 1 (black)", (LIFE_COLOR & 0x0F) == 1)
 check("INIT actually writes LIFE_COLOR into LIFE_CODE's own color-table group",
       cpu.vram[0x2000 + (LIFE_CODE // 8)] == LIFE_COLOR)
 
+# Test 8 (2026-09-07、実機フィードバック対応"Mission2の自機爆発でHP
+# メーターが減る前に処理に入ってるんで1つ残ったままだな"): TANK_LIFEが
+# 0に達しGAMEOVER_ENABLED=1でTRIGGER_GAME_OVER(DI+片道バンク切替、
+# 二度と戻らない)へ実際に分岐する経路でも、その分岐の前に必ずLIFE_
+# DISPLAYが呼ばれ空になったHPバーが実際にVRAMへ描画されていることを
+# 確認する。TRIGGER_GAME_OVERは戻ってこないためcall_routine()は使えず、
+# 実際にPCがTRIGGER_GAME_OVERへ到達するまで手動でステップ実行する。
+cpu = fresh_cpu()
+GAMEOVER_ENABLED = sym["GAMEOVER_ENABLED"]
+TRIGGER_GAME_OVER = sym["TRIGGER_GAME_OVER"]
+cpu.mem[TANK_LIFE] = 1
+cpu.mem[GAMEOVER_ENABLED] = 1
+for i in range(LIFE_BAR_CELL_COUNT):
+    cpu.vram[cell(LIFE_BAR_ROW, LIFE_BAR_COL0 + i)] = LIFE_CODE  # simulate "1 life left" display
+cpu.pc = sym["APPLY_TANK_DAMAGE"]
+steps = 0
+while cpu.pc != TRIGGER_GAME_OVER and steps < 300000:
+    cpu.step()
+    steps += 1
+assert steps < 300000, "APPLY_TANK_DAMAGE never reached TRIGGER_GAME_OVER"
+check("TANK_LIFE reached 0 on the way to TRIGGER_GAME_OVER", cpu.mem[TANK_LIFE] == 0)
+check("the life bar is ALREADY fully blanked (LIFE_DISPLAY already ran) by "
+      "the moment execution reaches TRIGGER_GAME_OVER - not left showing "
+      "the previous frame's 'still 1 cell filled' state, which is what the "
+      "real-hardware report described",
+      all(cpu.vram[cell(LIFE_BAR_ROW, LIFE_BAR_COL0 + i)] == HUD_ROW_BLANK_CODE
+          for i in range(LIFE_BAR_CELL_COUNT)))
+
 print()
 print(f"{len(ok)} passed, {len(fail)} failed")
 if fail:

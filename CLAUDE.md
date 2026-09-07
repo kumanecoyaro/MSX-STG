@@ -2949,3 +2949,49 @@ FAILEDの毎フレーム再描画(完了済み・実機フィードバック待�
 - **保留**: 墜落速度・粒子のステップ幅/ジッター範囲は未調整の初期値。
   Round66から持ち越しの「MISSION FAILED画面破損」の根本原因は依然
   未確定(今回未言及のため追加調査は未実施)。
+
+## Round68: HPメーター描画タイミング修正+Stage2自機爆発を本物の連続
+バースト方式へ再々設計+MISSION FAILED行の黒埋め+タイトル確認音を
+ワーニング系候補で試聴提示(完了済み・実機フィードバック待ち)
+(2026-09-07)
+
+- ユーザー指示4点: (1)"Mission2の自機爆発でHPメーターが減る前に処理に
+  入ってるんで1つ残ったままだな"、(2)"爆破処理での爆破スプライトの
+  動きがすごく遅い ボス撃破の様に連続でバンバン飛び散るイメージで
+  ほぼ処理的にはステージ2の敵を倒したときのパーティクル爆発 それの
+  複数スプライト版 今はふわ～っと飛び散って気持ち悪い"、(3)"Mission
+  Failedの行はブランクブラックで埋めてくれ"、(4)"タイトルでボタン
+  押したときの確認音をワーニング的なやつにいくつか作って聞かせてくれ
+  そこから選ぶんで"。
+- (1) `combined_test.asm`の`APPLY_TANK_DAMAGE`がTANK_LIFE=0到達時に
+  `LIFE_DISPLAY`を経由せず直接`TRIGGER_GAME_OVER`(片道バンク切替)
+  へ飛んでいた実バグを修正、分岐前に`CALL LIFE_DISPLAY`を追加。
+  `life_bar_test.py`に2件追加(46→48件)。
+- (2) Round67の「毎フレーム小さな乱数ジッターを蓄積」方式を全面撤回、
+  `combined_test.asm`自身の敵撃破演出(`UOE_EXPLODING`、8方位固定
+  ベクトル・2px/frame一定・ジッター無し)と同じモデルを4パーティクル
+  同時×20バースト連続繰り返しへ再設計(`GO_DIR_DX/DY`/`GO_PICK_DIR`/
+  `GO_NEW_BURST`/`GO_STEP_PARTICLES`/`GO_EXPLOSION_SEQUENCE`)、
+  フレーム間隔も実機1フレームに近い間隔へ短縮。**自己発見バグ**:
+  `GO_PICK_DIR`が`LD H,A`でdyを保持した直後`LD HL,GO_DIR_DX`でHごと
+  再ロードし即座に上書きする実バグを自己検証で発見・修正(Dへ一時
+  退避)。`gameover_bank_test.py`を23→33件へ拡張。VRAM→PNGレンダ
+  リングで4パーティクルの飛散を視覚確認(その過程でcombined_test.asm
+  [2バンクROM]を素朴なflat bytearrayで模擬し全黒レンダリングになる
+  遠回りが発生、`build_test.build_banks()`+`BankedMem`を使う正しい
+  方法へ修正して解消)。
+- (3) MISSION FAILED行(row12)全体をHUD_ROW_BLANK_CODE(120、combined_
+  test.asm自身のライフバー背景消去と共通の純黒タイル)で埋めてから
+  中央にメッセージを上書きする方式に変更(従来はメッセージ14セル
+  以外に死亡直前の背景が残っていた)。gameover_bank_test.pyに3件
+  追加、VRAM→PNGレンダリングで確認。
+- (4) 実機PSGエンジンと同じAY-3-8910トーン周波数変換・16段対数音量
+  テーブルを再現したWeb Audio試聴ページ「Warning Beep Bench」を
+  Artifactで公開、5候補(二音サイレン/3連ビープ/下降ブザー/上昇
+  チャープ/高低2音チャープ)を提示。ユーザー選定・title_test.asmへの
+  実装差し替えは次回対応(未着手)。
+- 全回帰: Stage2側`run_all.py` **1477 passed/0 failed**(1465→1477)。
+  Stage1側は今回変更なし。3ROM再ビルド・`verify_comb.py`健全性確認の
+  上、標準方針によりComb ROMのみ送付。詳細はHANDOFF.mdのRound68参照。
+- **保留**: NUM_BURSTS(20)・BURST_FRAMES(8)・フレーム間隔は未調整の
+  初期値。タイトル確認音はユーザー選定待ち。
