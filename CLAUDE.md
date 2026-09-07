@@ -2536,3 +2536,136 @@ Stage1 MISSION1/MISSION2導入・クリア演出(2026-09-06、完了済み・
   が表示するコンテンツが依存する全てのアセット(今回はfont+digitの
   2種類の異なるアセット群)を漏れなく一緒に前倒ししないと、一部だけ
   古い/未初期化のVRAM内容のまま表示されてしまう。
+
+## Round59: ゲームオーバー処理(MISSION FAILED)実装+新バンク追加+
+A/Bボタン分岐(2026-09-07、完了済み・実機フィードバック待ち)
+
+- ユーザー指示(添付Font_24x24_1.json[CYBER_SUZUKA、M/I/S/O/N/1/2の
+  8x8グリフ]+視覚参考画像付き): "ゲームオーバー処理を追加 まず
+  ステージ2もステージ1同様にHPが無くなったら爆発処理を ゲームオーバー
+  は画面中央にGAME OVERと表示 Mission表示のフォントは添付ファイルで
+  ...GAME OVERフォントやステージ2クリア後の表示フォントは添付ファイル
+  を参考に 実装前にレンダリングで見せてくれ"。作業中に追加指示:
+  "ステージ2クリア後は10秒でタイトル画面に ゲームオーバー表示は3秒
+  表示してボタンが押されるか10秒経過でタイトル画面に で、表示もGAME
+  OVERではなくMISSION FAILEDに変更 で、タイトル画面でAボタンスタート
+  ならゲームオーバーあり、Bボタンならゲームオーバー無しに これはテスト
+  用なので BはあとAと同様にゲームオーバー有りにする"。
+- **共通フォント基盤**: `tools/pixel_font_8x8.py`を新規作成。添付
+  JSONから機械抽出したM,I,S,O,N,1,2の7グリフに、同じ書体スタイル
+  (太め2px幅の線・右端1列基本空白・丸めた四隅)でG,A,E,V,R,C,P,L,T,D,F
+  の11文字を新規に描き起こして追加(実在フォントの複製ではなく
+  オリジナル、ending_text_gen.py等このプロジェクトの既存資産と同じ
+  方針)。Stage1・Stage2・GAME_OVERバンクの全てがこの1モジュールを
+  共有する。
+- **Stage1**: MISSION_FONT_PATTERNS(M,I,S,O,N,space、旧5x7)を添付
+  データの8x8版(M,I,S,O,N,space,1,2の8グリフ)へ差し替え、旧来の
+  DIGIT_BASE+1/+2(既存の数字フォント)への依存を解消。GAMEOVER_FONT_
+  PATTERNS(G,A,E,V,R+後にF,L,D追加、group9の8コードを使い切る)を
+  新設。GAME_OVER表示は当初"GAME OVER"(9byte)で実装したが、追加指示
+  で"MISSION FAILED"(14byte、row12/col9中央寄せ)へ変更。新規状態機械
+  `GAME_OVER_SEQ`(1=3秒表示中/2=ボタンorタイムアウト待ち/3=タイトルへ
+  戻る準備完了)を`UPDATE_GAME_OVER_SEQUENCE`(MAINLOOP冒頭から毎フレーム
+  無条件に呼ぶ、既存のUPDATE_STAGE_CLEARと同じパターン)で実装、
+  build_full_rom.pyのMAINLOOP_PATCHにSEQ==3検出時のtitleへの2ホップ
+  トランポリンを追加。これは「ゲームオーバー処理は残しておくがゲーム
+  は止めないでくれ」というRound37 follow-up7の旧方針からの明示的な
+  方針転換(ユーザー自身の新指示による上書き)。
+- **Stage2**: ROM残り容量がわずか97byte(2026-09-07時点)しかなく、
+  Stage1同等の「16x16スプライトが自機周辺に複数回ランダムに派手に
+  発生し続ける2秒間のバースト演出」を移植する余地が無いと判明、
+  AskUserQuestionでユーザーに相談し「新バンクを追加」を選択。
+  `tools/gameover_bank/gameover_bank.asm`を新規作成(standalone local
+  bank index3、Combではglobal bank7 - これまで完全な0xFF空きフィラー
+  だった枠を実データ化)。TANK_LIFE=0検出(`APPLY_TANK_DAMAGE`)で
+  `TRIGGER_GAME_OVER`(DI+PSG全チャンネル無音化+window Aのみ1ホップで
+  bank7へ)を起動、「GAME OVER後は完全に停止(以後Stage2本編へ二度と
+  戻らない)」という設計をAskUserQuestionでユーザー確認済み(Stage1の
+  「死んでも止めない」とは異なる方針、新バンクのコードを本編と毎フレーム
+  共存させる実装の複雑化を避けるための選択)。自機の最終位置(TANK_X/
+  TANK_Y_CUR、バンク切替後もRAM上にそのまま残る)を起点に、自機自身が
+  使っていたhwスプライトスロット0-3(新規スロット確保不要)へPAT_
+  EXPLOSION(既存の敵爆発パターン)を10回点滅表示、その後MISSION FAILED
+  表示、GTTRIGポーリング(約0.15秒間隔)でボタン押下か10秒相当のタイム
+  アウトでtitleへ2ホップトランポリン。
+  - **自己発見・修正した重大バグ**: 当初GAME OVERフォントをパターン
+    コード0-10(先頭)へ無条件ロードする設計だったが、自己レンダリング
+    確認(ユーザー指示"実装前にレンダリングで見せてくれ"を実践)で
+    「地形システム自体がまさにcode0-93[terrain_gen.pyのMAX_CODE=93]
+    を使っており、GAME OVERの瞬間に画面全体の地形/背景が全てMISSION
+    FAILEDフォントの絵柄へ化ける」事故を発見。「Stage2本編は二度と
+    実行されないのでコードを自由に上書きしてよい」という判断はコード
+    自体の再利用には正しいが、name table(どのマスがどのコードを
+    表示するか)はGAME OVERの瞬間の最後のフレームのまま固定される、
+    という点を見落としていた。ending_text_gen.py(GFEnding)が実VRAM
+    調査で確認済みの「ボス戦専用、地形のcode0-93と重ならない安全な
+    領域」であるgroup12(96-103)+group18先頭3つ(144-146)へ再配置して
+    解消、再レンダリングで地形が正常なまま"MISSION FAILED"がオーバー
+    レイ表示されることを確認。
+- **Stage2クリア後(GFEnding)**: "ステージ2クリア後は10秒でタイトル
+  画面に"に対応、`ENDING_ACT`を3(完了・MISSION COMPLETED表示中)から
+  4(タイトルへ戻る準備完了)へ拡張、新規`ENDING_FINISH_START`
+  (VBLANK_COUNTスナップショット)+`ENDING_RETURN_WAIT_TICKS`(600、
+  10秒)で判定。build_full_rom.pyのassemble_real_stage2()にMAINLOOP末尾
+  アンカー/パッチ(standaloneでは素通りのダミーJR、Combのみ実際の
+  title2ホップトランポリンへ置換)を追加。
+- **ステージ2クリア後の表示フォント差し替え**: "MISSION COMPLETED"
+  表示のみ(CREDIT"PRODUCED BY..."は指示になかったため既存5x7フォント
+  のまま維持)を新8x8フォントへ差し替え。新規コード領域は確保せず、
+  ENDING_FINISH(CREDIT表示が全幅ブランクされ二度と参照されなくなる
+  瞬間)にCREDIT用フォントと全く同じcode96-103+144-147を新フォントで
+  上書きロードする「時間的共有」設計 - 新規空きコード探索が不要。
+  自己レンダリング確認で当初「フォントロード前提条件(色設定)が満たされ
+  ないテストスクリプト」由来の見せかけの不具合(LETEDの部分だけ旧色/
+  旧絵柄に見えた)を発見したが、実際のゲームフロー(ENDING_START_
+  PLAYBACK→ENDING_FINISHの順)を通せば正しく動作することを確認 -
+  テストスクリプト側の前提不足であってコード自体のバグではなかった。
+- **タイトルA/Bボタン分岐**: `tools/title_screen/title_test.asm`の
+  WAIT_FOR_STARTをトリガー1(ボタンA)優先チェック→トリガー0(ボタンB)
+  チェックの順に拡張、新規共有RAM`GAMEOVER_ENABLED`(0F235h、Stage1・
+  Stage2・Title全ファイルが同じ物理アドレスを直接参照、GFEnding方式の
+  STAGE1_SCORE直接参照と同じ手法)へA=1/B=0を書き込む。Stage1の
+  `PLAYER_TAKE_HIT`・Stage2の`APPLY_TANK_DAMAGE`双方に、バリア/HPが
+  尽きた瞬間このフラグをチェックし0なら何もしない(round37時点の
+  「0になっても死なない」旧挙動)ガードを追加。
+- **RAM初期化漏れの再発防止**(Round36-14 follow-up#14の教訓を踏襲):
+  Stage1の新規`GAME_OVER_SEQ`/`GAME_OVER_START_TICK`はINIT時に明示的
+  ゼロクリア、`GAMEOVER_ENABLED`は意図的にクリアしない(Titleが設定
+  した値を保持する必要があるため)ことをコメントで明記+新規回帰テスト
+  で両方向とも検証。Stage2側`init_ram_poison_test.py`のTier B救済判定
+  ループが、汚染RAM経由でTANK_LIFEが偶然尽きTRIGGER_GAME_OVERへ分岐
+  すると、standaloneのBankedMem(window Aバンクを1つしか持たない)では
+  この切替を正しくシミュレートできず0x4000番地[ROMヘッダ]を命令として
+  誤実行してCPUが暴走する、というstandalone環境固有の制約を発見・
+  対応(Tier B検証直前にGAMEOVER_ENABLEDを明示的に0へ上書きしTRIGGER_
+  GAME_OVERへの分岐自体を回避、GAMEOVER_ENABLED自体は"_ACT"/"_POOL"
+  命名規則に該当せずこのテストの検証対象外なので安全)。
+- 新規回帰テスト: `tools/gameover_bank/gameover_bank.asm`用に
+  `tools/stage2_combined/tests/gameover_bank_test.py`(8件)新設、
+  `ending_sequence_test.py`に9件追加(21→25件)、`verify_stage1_
+  mission_screens.py`に大幅追加(45→65件)。全回帰: Stage2側
+  `run_all.py` **1459 passed/0 failed**。Stage1側`verify_stage1_
+  mission_screens.py` 65/`verify_player_damage.py` 58/`verify_
+  stage1_bgm.py` 70/`verify_enemy_bullets.py` 56、全てPASS。3ROM
+  再ビルド・`verify_comb.py`全チェックPASS(Title→Stage1→Stage2の
+  バンク切替一気通貫)の上、標準方針によりComb ROMを送付。詳細な
+  実装経緯は本セッションの会話ログ参照(HANDOFF.md未反映、次回作業
+  再開時に転記すること)。
+- **重要・要注意: Stage2 ROM残り容量が実質ゼロ(1byte)に到達**。
+  今回のMISSION COMPLETED新フォント追加で32767/32768byteまで到達した
+  - 今後Stage2本編(bank4/5、`combined_test.asm`)に何か新機能を追加
+  する余地はほぼ皆無。新機能が必要な場合は、今回のGAME_OVERバンクと
+  同様に新規バンク(bank8以降、現在Combは128KB[8バンク]を使い切って
+  いるため、192KBへの拡張[未検証]も含めた検討が必要になる)への切り
+  出しを最初から前提にすること。
+- **保留・実機フィードバック待ち**: `GAME_OVER_TEXT_TICKS`(180、3秒)・
+  `GAME_OVER_TIMEOUT_TICKS`(600、10秒)・GAME_OVERバンクの点滅間隔
+  (`GO_DELAY_SHORT`、約0.15秒近似)・`ENDING_RETURN_WAIT_TICKS`(600、
+  10秒)はいずれも未調整の近似値。GAME_OVERバンクのフォント色配置
+  (group12/18、HORMING_BG_SANDと共用領域)が、自機ホーミング弾のBG版が
+  地形上に表示されている最中にGAME OVERが発生した場合どう見えるかは
+  未検証(レンダリング確認では実害なしだったが、この特定の重なりまでは
+  検証できていない)。「Bボタンならゲームオーバー無しに...これは
+  テスト用なので後でAと同様にゲームオーバー有りにする」という明示的な
+  暫定合意により、Bボタン分岐(GAMEOVER_ENABLED=0)は指示があるまで
+  維持する(指示なしに統合しない)。

@@ -243,12 +243,53 @@ check("row 11 no longer shows any leftover \"PRODUCED BY...\" characters "
 check("\"MISSION COMPLETED\" is drawn centered on row 11 (col 7)",
       [cpu2.vram[ROW11_2 + complete_col + i] for i in range(len(complete_codes))] == complete_codes)
 
-# ---- once done (ENDING_ACT==3), further ticks/UPDATE_ENDING calls are inert ----
+# ---- (2026-09-07、"GAME OVERフォントやステージ2クリア後の表示フォントは ----
+# ---- 添付ファイルを参考に"): "MISSION COMPLETED"は新8x8フォント(tools/  ----
+# ---- pixel_font_8x8.py)へ差し替え済み - 実バイトパターンをそのまま     ----
+# ---- 突き合わせて確認する(コード列の一致だけでは中身が正しいかまでは  ----
+# ---- 保証できない)。                                                    ----
+import pixel_font_8x8  # noqa: E402
+COMPLETE_TEXT_CHARS = "MISSION COMPLETED"
+complete_font_ok = True
+for ch, code in zip(COMPLETE_TEXT_CHARS, complete_codes):
+    expected = pixel_font_8x8.glyph_bytes(ch)
+    got = [cpu2.vram[code * 8 + i] for i in range(8)]
+    if got != expected:
+        complete_font_ok = False
+check("\"MISSION COMPLETED\" glyphs are byte-correct against tools/pixel_font_8x8.py "
+      "(new 8x8 attached-font style, not the old 5x7 CREDIT font)", complete_font_ok)
+
+# ---- once done (ENDING_ACT==3), stays there until ENDING_RETURN_WAIT_TICKS ----
+# ---- elapses ("ステージ2クリア後は10秒でタイトル画面に") ----
+ENDING_FINISH_START = sym["ENDING_FINISH_START"]
+ENDING_RETURN_WAIT_TICKS = sym["ENDING_RETURN_WAIT_TICKS"]
+for _ in range(ENDING_RETURN_WAIT_TICKS - 1):
+    call_routine(cpu2, "BGM_TICK")
+call_routine(cpu2, "UPDATE_ENDING")
+check(f"stays ENDING_ACT=3 one tick before ENDING_RETURN_WAIT_TICKS"
+      f"({ENDING_RETURN_WAIT_TICKS}) elapses since MISSION COMPLETED was shown",
+      cpu2.mem[ENDING_ACT] == 3)
+
+call_routine(cpu2, "BGM_TICK")
+call_routine(cpu2, "UPDATE_ENDING")
+check("ENDING_ACT becomes 4 (ready to return to title) exactly when "
+      "ENDING_RETURN_WAIT_TICKS elapses (build_full_rom.py's Comb-only "
+      "MAINLOOP patch watches for this to trampoline back to title)",
+      cpu2.mem[ENDING_ACT] == 4)
+
 for _ in range(500):
     call_routine(cpu2, "BGM_TICK")
 call_routine(cpu2, "UPDATE_ENDING")
-check("ENDING_ACT stays at 3 (done) permanently - no re-triggering",
-      cpu2.mem[ENDING_ACT] == 3)
+check("ENDING_ACT stays at 4 permanently - no re-triggering",
+      cpu2.mem[ENDING_ACT] == 4)
+
+# ---- ENDING_ACT==0/1/2 with no matching branch are all no-ops (guards ----
+# ---- against UE_RETURN_WAIT accidentally firing early) ----
+cpu3 = fresh_cpu()
+cpu3.mem[ENDING_ACT] = 0
+call_routine(cpu3, "UPDATE_ENDING")
+check("UPDATE_ENDING is a no-op while ENDING_ACT==0 (not yet triggered)",
+      cpu3.mem[ENDING_ACT] == 0)
 
 
 print()

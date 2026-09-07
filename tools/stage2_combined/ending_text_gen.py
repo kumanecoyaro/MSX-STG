@@ -18,7 +18,23 @@ ENDING_FONT_BASE(パターンコード先頭、呼び出し側が指定する既
 コード列、既にENDING_FONT_BASEを加算済み)をそのままLDIRVMで書き込む
 だけでよい - 実行時のASCII→パターンコード変換ロジックは一切不要
 (この生成スクリプト自身がPython側で一度だけ計算するため)。
+
+(2026-09-07、"GAME OVERフォントやステージ2クリア後の表示フォントは
+添付ファイルを参考に"): "MISSION COMPLETED"表示のみ、tools/pixel_
+font_8x8.py(ユーザー添付Font_24x24_1.jsonベースの8x8フォント)へ差し
+替え。"PRODUCED BY KUMANECOYAROU"(CREDIT)は指示になかったため既存の
+5x7フォントのまま維持。新規コード領域は確保せず、ENDING_FINISH
+(CREDIT表示が完全にブランク書き換えされ二度と参照されなくなる瞬間)で
+CREDIT用フォントと全く同じcode96-103+144-147を新フォントで上書き
+ロードする「時間的共有」設計 - combined_test.asm側で新規に空きコード
+探索をする必要がない。
 """
+import os
+import sys
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+import pixel_font_8x8
 
 # 5x7ドット(8x8セル内、上1行・右1列余白 - 実際は左詰め5列+右3列空白、
 # 上1行空白+下0行、visually centered enough for a small HUD-like label)
@@ -213,6 +229,40 @@ CODE_BLOCKS = [
 CREDIT_TEXT = "PRODUCED BY KUMANECOYAROU"
 COMPLETE_TEXT = "MISSION COMPLETED"
 
+# (2026-09-07、"ステージ2クリア後の表示フォントは添付ファイルを参考に"):
+# "MISSION COMPLETED"専用、tools/pixel_font_8x8.py(添付Font_24x24_
+# 1.jsonベース)の12グリフ(M,I,S,O,N,space,C,P,L,T,D,E)。上のCODE_MAP
+# (CREDIT用5x7フォント)と全く同じcode96-103+144-147を再利用する -
+# ENDING_FINISHの時点でCREDIT表示は全幅ブランクされ二度と参照されない
+# ため、新規コード領域なしで安全に上書きできる(モジュール冒頭コメント
+# 参照)。
+COMPLETE_CODE_MAP = {
+    "M": 96, "I": 97, "S": 98, "O": 99, "N": 100, " ": 101, "C": 102, "P": 103,
+    "L": 144, "T": 145, "D": 146, "E": 147,
+}
+assert set(COMPLETE_CODE_MAP) == set(COMPLETE_TEXT.replace(" ", "") + " ")
+
+COMPLETE_CODE_BLOCKS = [
+    (96, list("MISON CP")),
+    (144, list("LTDE")),
+]
+
+
+def complete_font_bitmaps():
+    """COMPLETE_CODE_BLOCKS各ブロックごとのビットマップ(8byte/グリフ)を
+    [(先頭コード, バイト列), ...]として返す。"""
+    out = []
+    for base, chars in COMPLETE_CODE_BLOCKS:
+        blob = []
+        for ch in chars:
+            blob.extend(pixel_font_8x8.glyph_bytes(ch))
+        out.append((base, blob))
+    return out
+
+
+def complete_message_codes():
+    return [COMPLETE_CODE_MAP[ch] for ch in COMPLETE_TEXT]
+
 
 def _glyph_bytes(ch):
     rows = _GLYPHS_5X7[ch]
@@ -247,8 +297,10 @@ def _codes_for(text):
 
 def message_codes():
     """(credit_codes, complete_codes) - 実際のパターンコード列。呼び出し側は
-    これをそのままネームテーブルへLDIRVMするだけでよい。"""
-    return _codes_for(CREDIT_TEXT), _codes_for(COMPLETE_TEXT)
+    これをそのままネームテーブルへLDIRVMするだけでよい。complete_codesは
+    COMPLETE_CODE_MAP(新8x8フォント、complete_font_bitmaps()がロードする
+    のと同じcode)を使う - CREDIT用の旧5x7フォントとは別物。"""
+    return _codes_for(CREDIT_TEXT), complete_message_codes()
 
 
 def db_bytes(values, per_line=16):
@@ -287,6 +339,15 @@ def emit_asm_tables():
     # 値はcombined_test.asm本体のHUD_ROW_BLANK_CODEと一致させること。
     lines.append("ENDING_BLANK_ROW32:")
     lines.append(db_bytes([120] * 32))
+    # "MISSION COMPLETED"専用の新8x8フォント(2ブロック、ENDING_FINISHが
+    # CREDIT表示消去と同じタイミングでロードする - モジュール冒頭コメント
+    # 参照)。
+    complete_blocks = complete_font_bitmaps()
+    for i, (base, blob) in enumerate(complete_blocks):
+        lines.append(f"ENDING_COMPLETE_FONT_BLOCK{i}_CODE EQU {base}")
+        lines.append(f"ENDING_COMPLETE_FONT_BLOCK{i}_LEN EQU {len(blob)}")
+        lines.append(f"ENDING_COMPLETE_FONT_BLOCK{i}:")
+        lines.append(db_bytes(blob))
     return "\n".join(lines)
 
 
