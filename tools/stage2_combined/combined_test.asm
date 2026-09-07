@@ -511,18 +511,6 @@ HUD_TEMP_BYTE EQU F174h
 ; SOUND_UPDATE handles every sound's own pacing.
 SND_TIMER     EQU F175h
 SND_DECAY     EQU F176h
-; last-drawn hundreds/tens/ones digit for GAME_TICK_DISPLAY - unlike
-; src/CYBER SHMUP.asm (which can afford an unconditional redraw every
-; frame), this ROM has no vsync/HALT frame sync at all, so every extra
-; per-frame VRAM write directly slows the whole game's real-time pace
-; down (more T-states/iteration = fewer iterations/second = everything
-; TICK-paced runs slower) - redrawing 3 cells every single frame when
-; usually only the ones digit actually changed was real, avoidable
-; cost. Init to 0FFh (never a real digit) so the very first call still
-; draws all 3 - see GAME_TICK_DISPLAY.
-GTD_LAST_H    EQU F177h
-GTD_LAST_T    EQU F178h
-GTD_LAST_O    EQU F179h
 ; "爆発音はショット音で消えるとまずいんで爆発音は鳴り終わるまで継続
 ; しショット音で消えないように" - the shared-channel-A design lets any
 ; sound cut off whatever's currently playing, but an explosion in
@@ -3624,9 +3612,7 @@ INIT_SPRATR_CLR:
     ; なので、単純に上書きコピーするだけで「0+Stage1分の加算」になる。
     LD HL,(STAGE1_SCORE) : LD (SCORE),HL
     LD A,(STAGE1_SCORE+2) : LD (SCORE+2),A
-    LD A,0FFh : LD (GTD_LAST_H),A : LD (GTD_LAST_T),A : LD (GTD_LAST_O),A
     CALL SCORE_DISPLAY
-    CALL GAME_TICK_DISPLAY
 
     ; checkpoint 8: HUD (score/counter/calibration strip) + PSG set up
     LD B,8 : LD C,7 : CALL WRTVDP
@@ -4042,14 +4028,13 @@ PXT_NOWRAP:
     ; spawn until close to tick995), softlocking the whole fight
     ; (BOSS_PHASE stuck at 2 forever - caught by boss_pose_test.py's own
     ; real-MAINLOOP checks). GAME_TICK is a free-running 16-bit counter
-    ; again, same as always; what's actually capped now is only the
-    ; on-screen 3-digit readout (GAME_TICK_DISPLAY's own MOD1000
-    ; conversion, see its own comment) - the real "見た目上999で止まる、
-    ; 繰り返して見えない" (looks like it stops at 999, doesn't look like
-    ; it repeats) the user actually asked for, without breaking any
-    ; real timing math that depends on the true value still advancing.
+    ; again, same as always - every timing check elsewhere in this file
+    ; still reads the true, uncapped value.
+    ; (2026-09-07、"もうTickカウンター表示は要らないんで そこ削っても
+    ; いい"): 上記の「見た目上999で止まる」表示専用ロジック(GAME_TICK_
+    ; DISPLAY、画面右上のデバッグ用3桁カウンター)自体をユーザー許可の
+    ; 上で完全削除。GAME_TICK自身の増加ロジックは無変更。
     LD HL,(GAME_TICK) : INC HL : LD (GAME_TICK),HL
-    CALL GAME_TICK_DISPLAY
     CALL CHECK_NIGHT
     ; round34 ("ランダムスポーンは廃止 全てスケジュールに") - see
     ; SPAWN2_SCHEDULE_CHECK's own comment. Same call-site convention as
@@ -5887,82 +5872,14 @@ TRIGGER_GAME_OVER:
     LD HL,04000h                  ; tools/gameover_bank/gameover_bank.asmのINIT(ORG直後、ROMヘッダ無し)
     JP BANKSWITCH_TRAMPOLINE_RAM
 
-; Converts GAME_TICK to 3 decimal digits and draws them at row0
-; cols29-31 - ported from src/CYBER SHMUP.asm's own GAME_TICK_DISPLAY
-; (called every frame there too, same as here), but no longer a MOD
-; 1000 wrap once GAME_TICK exceeds 999. round34-2 ("Tickは999終了で
-; 繰り返さない"): the real GAME_TICK keeps counting normally past 999
-; forever (its own internal timing math - boss pause/pose end-ticks
-; etc - needs that, see the real GAME_TICK increment's own comment),
-; but a plain MOD 1000 readout would visibly wrap the on-screen counter
-; back to "000" and keep climbing again past that - exactly the "また
-; スタートから出てきてしまってる" (looks like it started over) symptom
-; reported, since GAME_TICK can push past 1000 well before the boss's
-; own late-schedule threshold is reached.
-; Clamps the DISPLAY at 999 once GAME_TICK reaches/exceeds 1000 -
-; "見た目上999で止まる" - purely cosmetic, the real counter and every
-; tick-threshold comparison elsewhere are completely unaffected.
-GAME_TICK_DISPLAY:
-    LD HL,(GAME_TICK)
-    LD DE,1000
-    OR A
-    SBC HL,DE
-    JR C,GTD_UNDER1000
-    LD HL,999
-    LD B,0
-    JR GTD_H100
-GTD_UNDER1000:
-    ADD HL,DE   ; undo the SBC above - HL was GAME_TICK-1000, +1000 restores GAME_TICK (0-999)
-    LD B,0
-GTD_H100:
-    LD DE,100
-    OR A
-    SBC HL,DE
-    JR C,GTD_H100_DONE
-    INC B
-    JR GTD_H100
-GTD_H100_DONE:
-    ADD HL,DE
-
-    LD C,0
-GTD_T10:
-    LD DE,10
-    OR A
-    SBC HL,DE
-    JR C,GTD_T10_DONE
-    INC C
-    JR GTD_T10
-GTD_T10_DONE:
-    ADD HL,DE
-    LD A,L : LD (HUD_TEMP_BYTE),A
-
-    LD A,B : LD HL,GTD_LAST_H : CP (HL) : JR Z,GTD_SKIP_H
-    LD (HL),A
-    XOR A : LD (HUD_ROW),A
-    LD A,29 : LD (HUD_COL),A
-    LD A,B : ADD A,DIGIT_BASE : LD (HUD_VAL),A
-    CALL WRITE_HUD_CELL
-GTD_SKIP_H:
-    LD A,C : LD HL,GTD_LAST_T : CP (HL) : JR Z,GTD_SKIP_T
-    LD (HL),A
-    XOR A : LD (HUD_ROW),A
-    LD A,30 : LD (HUD_COL),A
-    LD A,C : ADD A,DIGIT_BASE : LD (HUD_VAL),A
-    CALL WRITE_HUD_CELL
-GTD_SKIP_T:
-    LD A,(HUD_TEMP_BYTE) : LD HL,GTD_LAST_O : CP (HL) : JR Z,GTD_SKIP_O
-    LD (HL),A
-    XOR A : LD (HUD_ROW),A
-    LD A,31 : LD (HUD_COL),A
-    LD A,(HUD_TEMP_BYTE) : ADD A,DIGIT_BASE : LD (HUD_VAL),A
-    CALL WRITE_HUD_CELL
-GTD_SKIP_O:
-    RET
-
 ; advances the night-transition by at most 1 row per call - called
-; once every 8 raw frames alongside GAME_TICK_DISPLAY itself (same
-; cadence GAME_TICK advances on), so it can never skip a 16-tick
-; boundary. See NIGHT_START_TICK's own comment for the full design.
+; once every 8 raw frames (the same AND 07h-gated block GAME_TICK
+; itself advances on - see that increment's own call site), so it can
+; never skip a 16-tick boundary. See NIGHT_START_TICK's own comment for
+; the full design.
+; (2026-09-07、"もうTickカウンター表示は要らないんで そこ削っても
+; いい"): このコメントが以前参照していた画面右上のデバッグ用3桁
+; カウンター表示(GAME_TICK_DISPLAY)はユーザー許可の上で完全削除済み。
 CHECK_NIGHT:
     LD A,(NIGHT_ROW)
     CP NIGHT_END_ROW

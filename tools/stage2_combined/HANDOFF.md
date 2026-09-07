@@ -11079,3 +11079,205 @@ MISSION2黒画面
   ダメージが入るシナリオそのものは再現できなかった。実機で修正後も
   同じ症状が続くようであれば、EBULLET以外の被弾経路(敵本体との
   接触判定PDC_CHECK_ENEMY_POOL等)も含め追加調査が必要。
+
+## Round59: ゲームオーバー処理(MISSION FAILED)実装+新バンク追加+
+A/Bボタン分岐(2026-09-07、完了済み・実機フィードバック待ち→Round60で
+複数バグ修正)
+
+(前回のセッションでCLAUDE.mdには詳細記録済みだったがHANDOFF.mdへの
+転記が漏れていたため、Round60着手時に遡って転記。詳細な実装経緯は
+CLAUDE.mdの「Round59」セクションを参照、ここでは要点のみ。)
+
+- ユーザー指示: ゲームオーバー処理を追加。Stage2もStage1同様にHPが
+  無くなったら爆発処理を、ゲームオーバーは画面中央にMISSION FAILEDと
+  表示。3秒表示してボタンが押されるか10秒経過でタイトル画面に戻る。
+  タイトル画面でAボタンスタートならゲームオーバーあり、Bボタンなら
+  ゲームオーバー無し(テスト用の暫定措置)。
+- **Stage1**: `GAME_OVER_SEQ`状態機械(1=MISSION FAILED表示中3秒/
+  2=ボタンorタイムアウト待ち最大10秒/3=タイトルへ戻る準備完了)を
+  新設、`UPDATE_GAME_OVER_SEQUENCE`をMAINLOOP冒頭から毎フレーム
+  無条件に呼ぶ(UPDATE_STAGE_CLEARと同じ「フリーズしていても呼び
+  続ける」設計)。`PLAYER_TAKE_HIT`のバリア枯渇後被弾がPTH_GAMEOVER
+  (GAME_OVER=1・PLAYER_EXPL_TRIGGER・DRAW_GAMEOVER_TEXT・GAME_OVER_
+  SEQ=1)へ分岐。build_full_rom.pyのMAINLOOP_PATCHにGAME_OVER_SEQ==3
+  検出時のtitleへの2ホップトランポリンを追加(DI+PSG無音化+window B→
+  window Aの順、既存のSTAGE_CLEAR_ACT==3トランポリンと同型)。
+- **Stage2**: ROM残り容量がほぼゼロだったため、新規バンク
+  (`tools/gameover_bank/gameover_bank.asm`、standaloneローカル
+  bank3・Comb global bank7、window Aのみの片方向切替)を新設。
+  `TRIGGER_GAME_OVER`(TANK_LIFE==0でAPPLY_TANK_DAMAGEから分岐)が
+  DI+PSG無音化した上でこのバンクへ1ホップ切替。バンク側は自機の
+  最終位置(TANK_X/TANK_Y_CUR)へPAT_EXPLOSIONを4隅・10回点滅表示
+  →MISSION FAILEDテキスト描画→GTTRIGポーリング(約0.15秒間隔・
+  最大10秒相当)→titleへ2ホップトランポリンで復帰、という流れ。
+  MISSION FAILEDフォントは地形が使うcode0-93と衝突しないgroup12
+  (96-103)+group18先頭3つ(144-146、ending_text_gen.pyのGFEnding
+  フォントと同じ「ボス戦専用・安全」領域)へ配置(自己レンダリング
+  確認で地形破損事故を発見・修正した経緯あり)。
+- **Stage2クリア後(GFEnding)**: `ENDING_ACT`を3(MISSION COMPLETED
+  表示中)から4(タイトルへ戻る準備完了)へ拡張、実時間10秒
+  (`ENDING_RETURN_WAIT_TICKS`)経過でtitleへ2ホップトランポリン。
+  MISSION COMPLETED表示自体も添付フォントスタイルへ差し替え。
+- **タイトルA/Bボタン分岐**: `title_test.asm`のWAIT_FOR_STARTを
+  トリガーA優先→トリガーB(この時点ではGTTRIG id=0を使っていた、
+  Round60で発覚するバグの原因)の順にチェック、共有RAM
+  `GAMEOVER_ENABLED`(0F235h)へA=1/B=0を書き込み。Stage1/Stage2の
+  被弾処理はこのフラグが0の間はゲームオーバーへ分岐しない(round37
+  時点の「0になっても死なない」旧挙動)。
+- 新規回帰テスト: `gameover_bank_test.py`(8件)・`ending_sequence_
+  test.py`+9件・`verify_stage1_mission_screens.py`+20件。全回帰
+  Stage2側`run_all.py` **1459 passed/0 failed**(この時点では
+  1447)。Stage1側`verify_stage1_mission_screens.py` 65等。3ROM
+  再ビルド・`verify_comb.py`全チェックPASS(ただし当時のverify_
+  comb.pyはGAME_OVER関連トランポリンを一切検証していなかった -
+  Round60でこの欠落を発見・解消)の上、Comb ROM送付。
+- **重要**: この時点でStage2 ROM(`combined_test.asm`)は32767/
+  32768byte(残り1byte)まで到達。
+
+## Round60: 実機フィードバック対応(Bボタン起動不可・Mission1後に
+タイトル復帰しない・Stage2自機爆発の改善・爆発音追加・GAME_TICK_
+DISPLAY削除)(2026-09-07、完了済み・実機フィードバック待ち)
+
+- ユーザー報告(原文): "まずMission1でゲームオーバー処理のあとタイトルに
+  遷移しない Mission2は問題ない でタイトル画面でBボタンスタートが出来
+  ない 次にスタート2の自機爆発処理がおかしい 一度4つほどエフェクトが
+  出るがその状態で停止しててStage1の様な連続爆発しない で、自機爆発は
+  サウンドも欲しい ステージ2の空きはもうないが空きが本当に無いかチェック
+  してくれ もうTickカウンター表示は要らないんで そこ削ってもいい"。
+  6件に分解して対応。
+
+### (1) タイトル画面でBボタンスタートができない(実バグ・修正済み)
+
+- **根本原因**: `title_test.asm`のWAIT_FOR_STARTが、ボタンBの判定に
+  `GTTRIG`の`A=0`を使っていたが、このプロジェクト全体で確立している
+  GTTRIGのid規約(`src/CYBER SHMUP.asm`のREAD_INPUT・`combined_
+  test.asm`のREAD_INPUTが両方とも一貫して使う、`tools/z80emu.py`の
+  スタブ実装にも明記されている規約)は「id=1がトリガーA、id=3が
+  トリガーB」であり、**id=0はどちらのボタンにも対応しない**(z80emu.py
+  のスタブではid=0は常にA=0=「押されていない」を返す設計)。Round59で
+  この規約を踏まえずid=0を実装してしまっていたのが直接原因。
+- **修正**: `LD A,0 : CALL GTTRIG`を`LD A,3 : CALL GTTRIG`へ変更、
+  該当コメントも規約の説明込みで更新。
+- 回帰テスト: 既存の`title_test.py`は元々このバグを検出できていな
+  かった(具体的なボタン判定の正しさまでは検証していなかった)。
+
+### (2) Mission1(Stage1のゲームオーバー)後にタイトルへ遷移しない
+(実バグの可能性が高い箇所を特定・修正済み、ただし完全な確証はなし)
+
+- 調査手順: まずStage1側のGAME_OVER_SEQ状態機械・build_full_rom.pyの
+  トランポリン自体を静的に精査したが、STAGE_CLEAR_ACT==3の既に実績
+  ある(何度も実機確認済みの)トランポリンと構造的に同一で、明確な
+  バグは見当たらなかった。次に実際にComb構成でTitle→Stage1→
+  (BARRIER_HP=0でPLAYER_TAKE_HIT呼び出し)→GAME_OVER_SEQ状態遷移→
+  タイトル復帰、という一連の流れをスクリプトで直接トレースしたところ
+  (H.TIMI割り込みをBGM_TICK呼び出しとして手動注入する、Round49の
+  「実MAINLOOP+ランダムタイミング割り込み注入」と同じ手法)、実時間
+  ベースで約13秒(3秒表示+10秒タイムアウト)後に正しくtitleのINITへ
+  到達することを確認 - この部分自体にバグは見つからなかった。
+- **真因と推測される箇所を発見**: `title_test.asm`のINIT_BGMは、
+  「タイトル画面自身はBGM再生しない」という設計(Round31)のため
+  **HTIMI_HOOKを意図的に一切書き換えない**。つまりStage1/Stage2から
+  「タイトルへ戻る」トランポリン経由でtitleのINITへ再入したとき、
+  HTIMI_HOOKは送り手側自身のBGM_TICKアドレスを指したまま残り続ける
+  (このバンクへ切り替わった今、そのアドレスは無関係なコードを指す)。
+  Round53で発見・確立した教訓(`CALL INIT32`はBIOS内部でEI+HALT+DIに
+  よるvblank待ちを行う可能性があり、z80emu.pyはこの内部動作を一切
+  再現しない)と同型のリスクが、titleのINIT冒頭の`CALL INIGRP`
+  (SCREEN2初期化、INIT32のSCREEN2版)にも当てはまる - 冷起動時は
+  HTIMI_HOOKがBIOSデフォルトの安全なbare RETのはずなので実害が
+  出にくいが、トランポリン再入時だけ古い(今は無意味な)フックが
+  生きたままCALL INIGRP内部の隠れたEIで発火しうる、という非対称な
+  バグだったと推測される。
+- **修正**: titleのINIT冒頭、DIの直後・CALL INIGRPより前に、
+  `LD A,0C9h : LD (HTIMI_HOOK),A`を追加(bare RETへ明示的にリセット)。
+  WAIT_FOR_STARTが送り手側で既に行っている同種の防御策(Round41
+  follow-up#4由来)と対になる、受け手側での防御。
+- 新規回帰テスト: `title_test.py`に(a)通常ブート時もHTIMI_HOOKが
+  0xC9になることの確認、(b)HTIMI_HOOKを意図的に汚染(0xCD34 12)して
+  から起動し、「最初にiff1がTrueになる瞬間には既にHTIMI_HOOKが
+  0xC9になっている」ことを直接検証する回帰ガード(init_interrupt_
+  safety_test.pyと同じ手法)を追加。`verify_comb.py`のHTIMI_HOOK
+  アサーションを0x00(未初期化)期待から0xC9(明示的リセット済み)
+  期待へ更新。
+- **さらに`verify_comb.py`の重大な検証漏れを発見**: このファイルは
+  Title→Stage1→Stage2の一気通貫チェーンしか検証しておらず、
+  Round59で新規追加したGAME_OVER_SEQ==3→title復帰トランポリン、
+  およびStage2のTANK_LIFE==0→GAME_OVERバンク→title復帰トランポリン
+  の**どちらも一度も検証されていなかった**(Round59の送付はこの
+  欠落に気づかないまま行われていた)。今回、独立した2周目・3周目の
+  Title→Stage1(→Stage2)シーケンスを追加し、両トランポリンを実際に
+  最後まで駆動して検証する形にverify_comb.py自体を拡張した(banksA
+  リストにbank7[GAME_OVERバンク]が欠けていた点も発見・追加 - 8要素
+  未満のリストのままbank7を選択すると`val % len(banksA)`により
+  黙ってbank0にラップし、テスト自体が偽陽性になる潜在バグだった)。
+- **保留・未確証**: 上記の「CALL INIGRP内部の隠れたEI」説は、
+  Round53の「CALL INIT32」の前例から類推した最も有力な仮説だが、
+  z80emu.py/このセッションの検証環境では原理的に確証できない
+  (実機・openMSX等の高精度エミュレータでの再検証が必要)。この
+  修正で実機のフリーズ/復帰不能が解消するかは実機フィードバック待ち。
+
+### (3)(4) Stage2自機爆発の改善+爆発音追加(実装済み)
+
+- **(3) 「4つほどで停止して見える」への対応**: `gameover_bank.asm`の
+  `GO_BLINK_LOOP`(自機の4隅に同じ位置でPAT_EXPLOSIONを10回点滅表示
+  するだけだった)を、毎回位置をジッターさせ(`GO_RNG`という新設1byte
+  RAM - combined_test.asm自身のSPAWN2_NEXT_INDEX[GAME OVER以後は
+  Stage2本編が二度と実行されないため確実に不要な既存のdeadなRAM]を
+  再利用、`src/CYBER SHMUP.asm`のPEUA_TRY_SPAWNと同じ-8..+7レンジの
+  疑似乱数ジッター)、色を白/ライトレッドで交互にする(PLAYER_EXPL_
+  UPDATE_ALLの「タイマー奇偶で色を交互に」と同じ考え方)よう変更 -
+  「自機を起点に複数派手に」というStage1の演出意図に近づけた。最後の
+  静止フレームはジッター無し・白のニュートラルなポーズ。
+- **(4) 爆発音**: 新規`GO_PLAY_BOOM_SOUND`(`src/CYBER SHMUP.asm`・
+  `combined_test.asm`双方のSOUND_DESTROYと同じノイズchA・周期20・
+  音量15スタートの音作りを、per-frame SOUND_UPDATEの自動減衰に頼れない
+  この単発バンクの中で16段の手動減衰ループとして再現、新規`GO_DELAY_
+  TINY`[GO_DELAY_SHORTの約1/8]で減衰間隔~0.3秒に調整)を新設、点滅
+  演出の直前に1回鳴らす。CLAUDE.md「実機ハードウェア制約」の恒久ルール
+  通り、ブロック転送命令は使わずOUT+DJNZの手動ループのみ。
+- `gameover_bank_test.py`に10件追加(8→18件) - ジッター・色選択の
+  直接検証、GO_BLINK_LOOP自身が実際に11回(10点滅+最終静止)呼ばれ
+  10点滅が全て同一でないことの回帰ガード、GO_PLAY_BOOM_SOUNDのPSG
+  R6/R7/R8書き込み列の直接検証。`verify_comb.py`にもStage2の実際の
+  TANK_LIFE==0死亡→GAME_OVERバンク→title復帰の一気通貫統合テストを
+  新規追加(上記(2)の検証漏れ発見箇所と同じ拡張の一部)、この中で
+  改善後の爆発演出・サウンドが実際に最後まで正常動作することも
+  間接的に確認済み。
+
+### (5) Stage2 ROM空き容量の再チェック(調査完了、正確な数値を確認)
+
+- `combined_test.asm`の実アセンブル結果を直接調べた結果、**残り
+  容量は正確に1byte**(32767/32768byte使用)と確認 - 「もう空きが
+  ほぼ無い」という前回の認識(Round48で97byte・Round59で1byte)は
+  正しかった。
+
+### (6) GAME_TICK_DISPLAY削除(完了、ただしROM容量は増えず)
+
+- ユーザー許可("もうTickカウンター表示は要らないんで そこ削っても
+  いい")を受け、画面右上(row0 cols29-31)の3桁tickカウンター表示
+  ルーチン`GAME_TICK_DISPLAY`(GTD_LAST_H/T/O含む)を完全削除。
+  呼び出し元2箇所(INIT・MAINLOOPのGAME_TICKインクリメント直後)も
+  削除。専用テスト`game_tick_display_test.py`も削除。
+- **重要な発見**: このルーチンを削除しても**ROM空き容量は1byteの
+  ままで変化しなかった**(削除前後どちらも`combined_test.asm`単体で
+  32767/32768byte、変更差分ゼロ)。原因はGAME_TICK_DISPLAYの直後に
+  ある`ALIGN 256`(TERRAIN_LUT用)がパディング量を自動調整するため、
+  削除で浮いた実バイト数がそのままALIGNのパディング増加に吸収されて
+  しまう(Round36-14 follow-up#8で発見した「ALIGN 256パディング量の
+  偶然の相殺」と全く同じ現象)。削除自体は無駄ではない(実行時の
+  T-stateコスト削減にはなる)が、**新機能を追加する余地が生まれた
+  わけではない**という点をユーザーへ正直に報告する必要がある。
+- 新機能の実装余地が必要な場合、今回のGAME_OVERバンクと同様、
+  新規バンク(bank8以降)への切り出しが引き続き唯一の現実的な選択肢。
+
+- 全回帰: Stage2側`run_all.py` **1459 passed/0 failed**(1447→1459、
+  gameover_bank_test.py+10・game_tick_display_test.py削除で-9相殺)。
+  Stage1側`verify_stage1_bgm.py` 70・`verify_player_damage.py` 58・
+  `verify_enemy_bullets.py` 56・`verify_stage1_mission_screens.py`
+  65、全てPASS。`title_test.py` 27 passed(25→27)。3ROM再ビルド・
+  `verify_comb.py`全チェックPASS(GAME_OVER関連の新規統合テスト
+  2本含む)の上、標準方針によりComb ROMのみ送付。
+- **保留・実機フィードバック待ち**: (2)のCALL INIGRP隠れEI仮説は
+  未確証、実機での再検証が必要。ジッターの振れ幅・爆発音の音量/
+  減衰時間はいずれも未調整の初期値。Stage2 ROMは実質満杯(残り
+  1byte)のため、今後の新機能追加は新規バンク切り出しが前提。

@@ -31,7 +31,7 @@ sys.path.insert(0, os.path.join(REPO, "tools"))
 sys.path.insert(0, os.path.join(REPO, "tools", "bgm_data"))
 sys.path.insert(0, HERE)
 import z80emu
-from build_full_rom import assemble_title, assemble_game, assemble_real_stage2
+from build_full_rom import assemble_title, assemble_game, assemble_real_stage2, assemble_gameover_bank
 import bgm_bank_gen as bg
 
 
@@ -77,24 +77,29 @@ class BankedMem:
 title_bank0, title_bank1, tsym = assemble_title()
 game_bank0, game_bank1, gsym = assemble_game()
 bank4, bank5, s2sym = assemble_real_stage2()
+gameover_bank, gosym = assemble_gameover_bank()
 
 assert "BOSS_SPAWN_TICK" in s2sym, "stage2 symtab missing BOSS_SPAWN_TICK - not the real stage2_combined content?"
 print("confirmed: bank4/bank5 are the real stage2_combined content (BOSS_SPAWN_TICK present)")
 
-# Both lists are indexed by GLOBAL bank number (0-6), matching the real
+# Both lists are indexed by GLOBAL bank number (0-7), matching the real
 # ROM's own file layout (build_full_rom.py's rom96 concatenation order):
-# window A only ever actually selects 0/2/4 (title/Stage1/Stage2 page1),
-# window B only ever actually selects 1/3/5 (title/Stage1/Stage2 page2)
-# AND, round40, 6 (the new BGM data bank - title/Stage2's own INIT_BGM
-# each temporarily select it for windowB before restoring their own real
-# page2 bank) - the other indices in each list are never read by this
-# test's own code paths and are filled with dummy placeholders purely so
-# the % modulo in __setitem__ has a dense list to index into.
+# window A only ever actually selects 0/2/4/7 (title/Stage1/Stage2 page1/
+# GAME_OVER bank), window B only ever actually selects 1/3/5 (title/
+# Stage1/Stage2 page2) AND, round40, 6 (the new BGM data bank -
+# title/Stage2's own INIT_BGM each temporarily select it for windowB
+# before restoring their own real page2 bank) - the other indices in each
+# list are never read by this test's own code paths and are filled with
+# dummy placeholders purely so the % modulo in __setitem__ has a dense
+# list to index into. bank7 (window A only, GAME_OVER bank) is real
+# content in banksA but stays a dummy in banksB (it never selects
+# window B itself, matching gameover_bank.asm's own "window A only"
+# design - see combined_test.asm's TRIGGER_GAME_OVER).
 bgm_bank, bgm_layout = bg.build_bank()
 dummy = bytearray([0xFF] * 0x4000)
 mem = BankedMem(
-    banksA=[title_bank0, dummy, game_bank0, dummy, bank4, dummy, dummy],
-    banksB=[dummy, title_bank1, dummy, game_bank1, dummy, bank5, bytearray(bgm_bank)],
+    banksA=[title_bank0, dummy, game_bank0, dummy, bank4, dummy, dummy, gameover_bank],
+    banksB=[dummy, title_bank1, dummy, game_bank1, dummy, bank5, bytearray(bgm_bank), dummy],
 )
 cpu = z80emu.Z80(mem)
 cpu.pc = tsym["INIT"]
@@ -138,13 +143,22 @@ assert [mem.flat[_chB_ram + i] for i in range(len(_chB))] == list(_chB), \
 assert [mem.flat[_chC_ram + i] for i in range(len(_chC))] == list(_chC), \
     "title's own BGM RAM copy: ALONE_FIGHTER chC mismatch"
 # ユーザー指示("タイトルBGMも停止 まともになるまでCombのみで"):
-# RAMコピー自体はStage1用に維持するが、title自身のHTIMI_HOOK設置は
-# 意図的にスキップするよう変更済み(タイトル画面自身は無音)。よって
-# HTIMI_HOOKはtitleのINIT_BGM通過時点で一切書き換わっていないはず。
-assert mem.flat[tsym["HTIMI_HOOK"]] == 0x00, \
-    "title's own INIT_BGM should NOT arm HTIMI_HOOK anymore (title BGM intentionally disabled)"
+# RAMコピー自体はStage1用に維持するが、title自身のINIT_BGMはHTIMI_HOOK
+# の設置(=BGM_TICKを実際にH.TIMI駆動する部分)は意図的にスキップする
+# (タイトル画面自身は無音のまま)。
+# (2026-09-07、実機フィードバック対応"Mission1でゲームオーバー処理の
+# あとタイトルに遷移しない"): ただしtitleのINIT冒頭(INIT_BGMより前、
+# DI直後・CALL INIGRPより前)は、Stage1/Stage2からの"タイトルへ戻る"
+# トランポリン再入時に残るかもしれない古いHTIMI_HOOK(送り手側自身の
+# BGM_TICKアドレス、このバンクに切り替わった今は無関係なコードを指す)
+# への防御として、明示的にbare RET(0C9h)へリセットするよう変更した
+# (INIT_BGM自身が設置する訳ではない点は変わらない)。よってHTIMI_HOOKは
+# 0x00(未初期化)ではなく0xC9になっているはず。
+assert mem.flat[tsym["HTIMI_HOOK"]] == 0xC9, \
+    "title's own INIT should have defensively reset HTIMI_HOOK to a bare RET (0xC9) right " \
+    "after DI (INIT_BGM itself still never arms it - title BGM stays intentionally disabled)"
 print("title's own BGM RAM copy (period table + ALONE_FIGHTER chB/chC) verified byte-correct, "
-      "HTIMI_HOOK intentionally left unarmed (title BGM disabled)")
+      "HTIMI_HOOK defensively reset to bare RET (title BGM itself still disabled)")
 
 # 実機フィードバック対応("ステージ1ボスもBGMをTryZに"): TitleはStage1の
 # ボス曲用にTryZのchB+chCも(ALONE_FIGHTERと同じ要領で)別アドレスへ
@@ -373,6 +387,238 @@ assert mem.flat[s2sym["HTIMI_HOOK"]] == 0xC3 and \
 assert len({tsym["BGM_TICK"], gsym["BGM_TICK"], s2sym["BGM_TICK"]}) == 3, \
     "sanity: title/Stage1/Stage2 should all have distinct BGM_TICK addresses (3 separate assemblies)"
 print("Stage2's own independent BGM RAM copy (DEFEAT) verified byte-correct, HTIMI_HOOK armed to its own BGM_TICK")
+
+# (2026-09-07、実機フィードバック対応"Mission1でゲームオーバー処理の
+# あとタイトルに遷移しない"): 上のメインチェーンはTitle->Stage1->Stage2
+# しか辿らず、Stage1のGAME_OVER_SEQ==3->title復帰トランポリン(round59で
+# 新規追加、build_full_rom.pyのMAINLOOP_PATCH参照)は一度もこのファイルで
+# 検証されていなかった - この欠落自体がバグを見逃す一因だった。独立した
+# 2周目のTitle->Stage1シーケンスを新たに走らせ、実際にBARRIER_HP=0の
+# 状態でPLAYER_TAKE_HITを呼び、GAME_OVER_SEQが1(MISSION FAILED表示)に
+# 上がることを確認した上で、実時間の3秒/10秒待ち自体は他の実時間タイマー
+# 同様このハーネスでは検証しない(H.TIMI割り込みを一切発生させないため -
+# UPDATE_GAME_OVER_SEQUENCE自身の単体ロジックはtools/verify_stage1_
+# mission_screens.pyで別途カバー済み)方針を踏襲しつつ、GAME_OVER_SEQを
+# 直接2へポークしてボタン押下(sim_trig_a)を模擬し、実際にtitleのINITへ
+# 正しく2ホップトランポリンで戻ることを確認する。
+print()
+print("---- Stage1 GAME_OVER_SEQ==3 -> title trampoline (round59, previously untested here) ----")
+mem2 = BankedMem(
+    banksA=[title_bank0, dummy, game_bank0, dummy, bank4, dummy, dummy],
+    banksB=[dummy, title_bank1, dummy, game_bank1, dummy, bank5, bytearray(bgm_bank)],
+)
+cpu2 = z80emu.Z80(mem2)
+cpu2.pc = tsym["INIT"]
+cpu2.sp = 0xF380
+
+steps_g0 = 0
+while cpu2.pc != WAIT_FOR_START and steps_g0 < 2_000_000:
+    cpu2.step()
+    steps_g0 += 1
+assert cpu2.pc == WAIT_FOR_START, "title screen (2nd run) never reached WAIT_FOR_START"
+
+cpu2.sim_trig_a = True
+steps_g1 = 0
+switched_g1 = False
+while steps_g1 < 2_000_000:
+    if cpu2.pc == GAME_INIT and mem2.bankA == 2:
+        switched_g1 = True
+        break
+    cpu2.step()
+    steps_g1 += 1
+assert switched_g1, "title -> Stage1 (2nd run, for the game-over scenario) never trampolined"
+cpu2.sim_trig_a = False
+
+steps_g2 = 0
+while cpu2.pc != MAINLOOP and steps_g2 < 2_000_000:
+    cpu2.step()
+    steps_g2 += 1
+assert cpu2.pc == MAINLOOP, "Stage1 (2nd run) never reached its own MAINLOOP"
+
+BARRIER_HP = gsym["BARRIER_HP"]
+GAME_OVER_SEQ = gsym["GAME_OVER_SEQ"]
+mem2.flat[BARRIER_HP] = 0
+PLAYER_TAKE_HIT = gsym["PLAYER_TAKE_HIT"]
+cpu2.sp -= 2
+mem2.flat[cpu2.sp] = 0x00
+mem2.flat[cpu2.sp + 1] = 0x00
+cpu2.pc = PLAYER_TAKE_HIT
+steps_g3 = 0
+while cpu2.pc != 0x0000 and steps_g3 < 300000:
+    cpu2.step()
+    steps_g3 += 1
+assert mem2.flat[GAME_OVER_SEQ] == 1, \
+    "PLAYER_TAKE_HIT with BARRIER_HP=0 did not arm GAME_OVER_SEQ=1 (MISSION FAILED display)"
+cpu2.pc = MAINLOOP
+print("Stage1 (2nd run): real PLAYER_TAKE_HIT with BARRIER_HP=0 armed GAME_OVER_SEQ=1, as on real hardware")
+
+# bypass the real-time 3s-text/10s-timeout waits (this harness never fires
+# H.TIMI on its own, same limitation noted throughout this file for every
+# other real-time state - see e.g. the STAGE_CLEAR_ACT poke above) and
+# simulate a button press to move 2->3, matching UPDATE_GAME_OVER_
+# SEQUENCE's own unit-tested transition (tools/verify_stage1_mission_
+# screens.py already covers that transition's logic in isolation).
+mem2.flat[GAME_OVER_SEQ] = 2
+cpu2.sim_trig_a = True
+
+TITLE_INIT = tsym["INIT"]
+steps_g4 = 0
+switched_back = False
+while steps_g4 < 2_000_000:
+    if cpu2.pc == TITLE_INIT and mem2.bankA == 0:
+        switched_back = True
+        break
+    cpu2.step()
+    steps_g4 += 1
+assert switched_back, "Stage1's GAME_OVER_SEQ==3 trampoline never reached title's own INIT (bank0)"
+assert mem2.bankA == 0 and mem2.bankB == 1, "banks not switched back to title (0,1) on game-over return"
+assert cpu2.iff1 is False, \
+    "interrupts still enabled on entry to title's INIT via the game-over trampoline - " \
+    "the hop1/hop2 H.TIMI race is back"
+print(f"Stage1 -> title (game-over trampoline) verified: bankA={mem2.bankA} bankB={mem2.bankB}, "
+      f"interrupts correctly disabled on landing")
+
+# the actual bug this round's investigation found: title's own INIT used
+# to leave a STALE HTIMI_HOOK (still pointing at Stage1's own BGM_TICK,
+# an address that's now meaningless once window A is re-mapped to title)
+# untouched all the way to its own first EI, since title's INIT_BGM
+# intentionally never arms/clears the hook itself (title stays silent).
+# Confirm the defensive reset (added this round, right after INIT's own
+# DI and before CALL INIGRP) actually landed by running a few more steps
+# past the trampoline and checking the hook value.
+for _ in range(300):
+    cpu2.step()
+assert mem2.flat[tsym["HTIMI_HOOK"]] == 0xC9, \
+    "title's own INIT did not reset the stale HTIMI_HOOK (left over from Stage1's own BGM_TICK) " \
+    "to a safe bare RET after being re-entered via the game-over trampoline"
+print("title's own INIT correctly reset the stale HTIMI_HOOK (inherited from Stage1) to a safe bare RET")
+
+# (2026-09-07、実機フィードバック対応"次にスタート2の自機爆発処理が
+# おかしい"): Stage2自身のTANK_LIFE==0 -> TRIGGER_GAME_OVER ->
+# GAME_OVERバンク(global bank7)ワンホップ切替 -> GO_TO_TITLEでtitleへ
+# 2ホップ復帰、という一連の流れもこのファイルでは一度も検証されて
+# いなかった(gameover_bank_test.pyはこのバンク単体のみ、combined_
+# test.asm側のTRIGGER_GAME_OVER自体との統合は未検証だった)。3周目の
+# 独立したTitle->Stage1->Stage2シーケンスを新たに走らせ、実際に
+# TANK_LIFE=0でAPPLY_TANK_DAMAGEを呼んでGAME_OVERバンクへ切り替わる
+# ことを確認した上で、GO_WAIT_LOOPのボタン待ちだけsim_trig_aで即座に
+# 通過させ(GO_DELAY_SHORT/TINYはH.TIMI非依存の純粋なビジーウェイトの
+# ため、原理上は最後まで実ステップ実行で通しきれるが、10秒分のCPU
+# ステップは非現実的に重いため)、最終的にtitleのINITへ戻ることまで
+# 一気通貫で確認する。
+print()
+print("---- Stage2 TANK_LIFE==0 -> GAME_OVER bank -> title trampoline (round59/round42, "
+      "previously untested here) ----")
+mem3 = BankedMem(
+    banksA=[title_bank0, dummy, game_bank0, dummy, bank4, dummy, dummy, gameover_bank],
+    banksB=[dummy, title_bank1, dummy, game_bank1, dummy, bank5, bytearray(bgm_bank), dummy],
+)
+cpu3 = z80emu.Z80(mem3)
+cpu3.pc = tsym["INIT"]
+cpu3.sp = 0xF380
+
+steps_s2g0 = 0
+while cpu3.pc != WAIT_FOR_START and steps_s2g0 < 2_000_000:
+    cpu3.step()
+    steps_s2g0 += 1
+assert cpu3.pc == WAIT_FOR_START, "title screen (3rd run) never reached WAIT_FOR_START"
+
+cpu3.sim_trig_a = True
+steps_s2g1 = 0
+switched_s2g1 = False
+while steps_s2g1 < 2_000_000:
+    if cpu3.pc == GAME_INIT and mem3.bankA == 2:
+        switched_s2g1 = True
+        break
+    cpu3.step()
+    steps_s2g1 += 1
+assert switched_s2g1, "title -> Stage1 (3rd run, for the Stage2 game-over scenario) never trampolined"
+
+steps_s2g2 = 0
+while cpu3.pc != MAINLOOP and steps_s2g2 < 2_000_000:
+    cpu3.step()
+    steps_s2g2 += 1
+assert cpu3.pc == MAINLOOP, "Stage1 (3rd run) never reached its own MAINLOOP"
+
+mem3.flat[PLAYER_FLYAWAY] = 2
+mem3.flat[STAGE_CLEAR_ACT] = 3
+cpu3.sim_trig_a = False
+
+steps_s2g3 = 0
+switched_s2g3 = False
+while steps_s2g3 < 2_000_000:
+    if cpu3.pc == STAGE2_INIT and mem3.bankA == 4:
+        switched_s2g3 = True
+        break
+    cpu3.step()
+    steps_s2g3 += 1
+assert switched_s2g3, "Stage1 -> real Stage2 (3rd run) never trampolined"
+
+steps_s2g4 = 0
+while cpu3.pc != s2sym["MAINLOOP"] and steps_s2g4 < 2_000_000:
+    cpu3.step()
+    steps_s2g4 += 1
+assert cpu3.pc == s2sym["MAINLOOP"], "Stage2 (3rd run) never reached its own MAINLOOP"
+print("Stage2 (3rd run): reached its own MAINLOOP, ready to drive a real TANK_LIFE==0 death")
+
+TANK_LIFE = s2sym["TANK_LIFE"]
+APPLY_TANK_DAMAGE = s2sym["APPLY_TANK_DAMAGE"]
+mem3.flat[TANK_LIFE] = 1
+cpu3.sp -= 2
+mem3.flat[cpu3.sp] = 0x00
+mem3.flat[cpu3.sp + 1] = 0x00
+cpu3.pc = APPLY_TANK_DAMAGE
+GAMEOVER_INIT = gosym["INIT"]
+steps_s2g5 = 0
+switched_s2g5 = False
+while steps_s2g5 < 2_000_000:
+    if cpu3.pc == GAMEOVER_INIT and mem3.bankA == 7:
+        switched_s2g5 = True
+        break
+    cpu3.step()
+    steps_s2g5 += 1
+assert switched_s2g5, "APPLY_TANK_DAMAGE with TANK_LIFE=1 never trampolined into the GAME_OVER bank (bank7)"
+assert mem3.bankB == 5, "window B should be untouched (still Stage2's own page2) by the GAME_OVER bank's one-way windowA-only switch"
+assert cpu3.iff1 is False, \
+    "interrupts still enabled on entry to the GAME_OVER bank's own INIT - the windowA-only switch race is back"
+print(f"Stage2 -> GAME_OVER bank trampoline verified: bankA={mem3.bankA} bankB={mem3.bankB} "
+      f"(window B correctly left untouched), interrupts correctly disabled on landing")
+
+# skip the real ~10s button-or-timeout wait via sim_trig_a, same technique
+# as every other real-time wait in this file - GO_WAIT_LOOP itself is a
+# pure Z80-clock busy-wait (no H.TIMI dependency, unlike Stage1/Stage2's
+# own GAME_OVER_SEQ/STAGE_CLEAR_ACT), so in principle it COULD be driven
+# to completion with real steps, but 10 real seconds' worth of busy-wait
+# instructions is prohibitively slow for a test.
+GO_WAIT_LOOP = gosym["GO_WAIT_LOOP"]
+steps_s2g6 = 0
+while cpu3.pc != GO_WAIT_LOOP and steps_s2g6 < 3_000_000:
+    cpu3.step()
+    steps_s2g6 += 1
+assert cpu3.pc == GO_WAIT_LOOP, "GAME_OVER bank never reached its own GO_WAIT_LOOP (blink sequence + text draw stuck?)"
+cpu3.sim_trig_a = True
+steps_s2g7 = 0
+switched_s2g7 = False
+while steps_s2g7 < 2_000_000:
+    if cpu3.pc == TITLE_INIT and mem3.bankA == 0:
+        switched_s2g7 = True
+        break
+    cpu3.step()
+    steps_s2g7 += 1
+assert switched_s2g7, "GAME_OVER bank's GO_TO_TITLE trampoline never reached title's own INIT (bank0)"
+assert mem3.bankA == 0 and mem3.bankB == 1, "banks not switched back to title (0,1) on Stage2 game-over return"
+assert cpu3.iff1 is False, \
+    "interrupts still enabled on entry to title's INIT via the GAME_OVER bank's own trampoline"
+print(f"GAME_OVER bank -> title trampoline verified: bankA={mem3.bankA} bankB={mem3.bankB}, "
+      f"interrupts correctly disabled on landing")
+
+for _ in range(300):
+    cpu3.step()
+assert mem3.flat[tsym["HTIMI_HOOK"]] == 0xC9, \
+    "title's own INIT did not reset the stale HTIMI_HOOK after being re-entered via the " \
+    "GAME_OVER bank's own trampoline"
+print("title's own INIT correctly reset the stale HTIMI_HOOK (inherited from the GAME_OVER bank) "
+      "to a safe bare RET")
 
 print()
 print("COMB BUILD (TITLE -> STAGE1 -> REAL STAGE2) BANK-SWITCH INTEGRATION: ALL CHECKS PASSED")

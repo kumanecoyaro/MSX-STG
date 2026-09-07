@@ -2669,3 +2669,64 @@ A/Bボタン分岐(2026-09-07、完了済み・実機フィードバック待ち
   テスト用なので後でAと同様にゲームオーバー有りにする」という明示的な
   暫定合意により、Bボタン分岐(GAMEOVER_ENABLED=0)は指示があるまで
   維持する(指示なしに統合しない)。
+
+## Round60: 実機フィードバック対応(Bボタン起動不可・Mission1後に
+タイトル復帰しない・Stage2自機爆発の改善・爆発音追加・GAME_TICK_
+DISPLAY削除)(2026-09-07、完了済み・実機フィードバック待ち)
+
+- ユーザー報告6件に対応(詳細・技術的経緯はHANDOFF.mdのRound60参照)。
+- **(1) タイトルBボタン起動不可(実バグ・修正済み)**: `title_test.asm`
+  のWAIT_FOR_STARTがボタンBの判定にGTTRIG id=0を使っていたが、
+  このプロジェクト全体の規約(id=1がトリガーA・id=3がトリガーB、
+  `src/CYBER SHMUP.asm`/`combined_test.asm`のREAD_INPUT・
+  `tools/z80emu.py`のスタブ実装で一貫)ではid=0はどちらのボタンにも
+  対応しない。`LD A,3 : CALL GTTRIG`へ修正。
+- **(2) Mission1(Stage1ゲームオーバー)後にタイトルへ遷移しない
+  (有力な原因を特定・修正、完全な確証はなし)**: `title_test.asm`の
+  INIT_BGMは「タイトル画面自身はBGM再生しない」設計のためHTIMI_HOOKを
+  意図的に一切書き換えない - Stage1/Stage2から「タイトルへ戻る」
+  トランポリン経由でtitleのINITへ再入した際、HTIMI_HOOKは送り手側
+  自身のBGM_TICKアドレス(このバンクへ切り替わった今は無関係)を
+  指したまま残る。Round53で確立した「CALL INIT32はBIOS内部でEI+
+  HALT+DIのvblank待ちをする可能性がありz80emu.pyでは再現不可」と
+  同型のリスクがtitleのINIT冒頭`CALL INIGRP`(SCREEN2版のINIT32)にも
+  当てはまり、冷起動では実害が出にくい(BIOSデフォルトが安全な
+  bare RETのため)がトランポリン再入時だけ古いフックが隠れたEIで
+  発火しうる非対称バグと推測。DIの直後・CALL INIGRPより前に
+  `LD A,0C9h : LD (HTIMI_HOOK),A`を追加して対応。**この仮説は実機・
+  高精度エミュレータでの再検証が必要、未確証**。
+  - 副次的発見: `verify_comb.py`がGAME_OVER関連の2つのトランポリン
+    (Stage1 GAME_OVER_SEQ==3→title、Stage2 TANK_LIFE==0→GAME_OVER
+    バンク→title)を一度も検証していなかった(Round59はこの欠落に
+    気づかないまま送付されていた)。両方とも新規に一気通貫統合テスト
+    を追加、bank7[GAME_OVERバンク]がbanksAリストから欠けていた
+    (8要素未満のまま`% len(banksA)`で黙ってbank0にラップする潜在
+    バグ)ことも発見・修正。
+- **(3)(4) Stage2自機爆発の改善+爆発音追加**: `gameover_bank.asm`の
+  GO_BLINK_LOOP(4隅を同じ位置に10回点滅するだけだった)を、毎回
+  位置をジッター(-8..+7、`src/CYBER SHMUP.asm`のPEUA_TRY_SPAWNと
+  同じレンジ、種はcombined_test.asm自身の既存dead RAM[SPAWN2_NEXT_
+  INDEX]を再利用)・色を白/ライトレッドで交互にするよう変更(Stage1
+  のPLAYER_EXPL_UPDATE_ALLと同じ考え方)。新規`GO_PLAY_BOOM_SOUND`
+  (SOUND_DESTROYと同じノイズchA・周期20・音量15スタートを16段の
+  手動減衰ループで再現)を点滅前に鳴らす。CLAUDE.md恒久ルール通り
+  ブロックI/O命令は不使用。`gameover_bank_test.py`に10件追加。
+- **(5) Stage2 ROM空き容量の再チェック**: 正確に**残り1byte**
+  (32767/32768byte)と確認、前回の認識通り。
+- **(6) GAME_TICK_DISPLAY削除**: ユーザー許可により画面右上の3桁tick
+  カウンター表示を完全削除。**ただし直後の`ALIGN 256`(TERRAIN_LUT用)
+  がパディング量を自動調整するため、削除で浮いたバイト数がそのまま
+  ALIGNパディングの増加に吸収され、ROM空き容量は1byteのまま変化
+  しなかった**(Round36-14 follow-up#8と同じ「ALIGN相殺」現象)。
+  実行時のT-stateコスト削減にはなるが新規機能の余地は生まれていない。
+- 全回帰: Stage2側`run_all.py` **1459 passed/0 failed**。Stage1側
+  `verify_stage1_bgm.py` 70・`verify_player_damage.py` 58・
+  `verify_enemy_bullets.py` 56・`verify_stage1_mission_screens.py`
+  65、全てPASS。`title_test.py` **27 passed**(25→27)。3ROM再ビルド・
+  `verify_comb.py`全チェックPASS(GAME_OVER関連の新規統合テスト2本
+  含む)の上、標準方針によりComb ROMのみ送付。詳細はHANDOFF.mdの
+  Round60参照。
+- **保留・実機フィードバック待ち**: (2)のCALL INIGRP隠れEI仮説は
+  未確証。ジッター振れ幅・爆発音の音量/減衰時間は未調整の初期値。
+  Stage2 ROMは実質満杯(残り1byte)のため、今後の新機能追加は新規
+  バンク(bank8以降)への切り出しが前提。

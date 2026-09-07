@@ -40,12 +40,35 @@ TANK_X          EQU 0F120h
 TANK_Y_CUR      EQU 0F121h
 SPRATR          EQU 1B00h
 PAT_EXPLOSION   EQU 136
-EXPLOSION_COLOR EQU 8
 PSG_ADDR        EQU 0A0h
 PSG_DATA        EQU 0A1h
 LDIRVM          EQU 005Ch
 GTTRIG          EQU 00D8h
 HTIMI_HOOK      EQU 0FD9Fh
+
+; "自機爆発はサウンドも欲しい"(2026-09-07): 実機フィードバック対応で
+; 追加。src/CYBER SHMUP.asmのSOUND_DESTROY/combined_test.asmのSOUND_
+; DESTROYと同じ「ノイズch A、周期20、音量15から手動で減衰」構成を、
+; このバンク自身の中で完結する形で再実装(このバンクは他ファイルを
+; CALLできない独立バンクのため、既存ルーチンの呼び出しではなく値だけ
+; 再利用)。
+MIXER_NOISE_A     EQU 0F1h  ; combined_test.asmと同じ値(noise A on, tone B/C enabled)
+BOOM_NOISE_PERIOD EQU 20
+SPR_WHITE_COLOR    EQU 0Fh
+SPR_LIGHTRED_COLOR EQU 09h
+
+; "一度4つほどエフェクトが出るがその状態で停止しててStage1の様な連続
+; 爆発しない"(2026-09-07、実機フィードバック対応): 4隅を同じ位置に
+; 10回点滅させるだけだったため「同じ絵が点滅しているだけ」に見えて
+; いた。src/CYBER SHMUP.asmのPLAYER_EXPL_UPDATE_ALL(自機を起点に
+; ランダムオフセット・色を白/ライトレッドで交互に、を繰り返す)と同じ
+; 考え方を、このバンクの単純な直列ループの中に持ち込む - 毎回の点滅で
+; 位置をジッターさせ、色を交互にする。RNGの種はcombined_test.asm自身の
+; スケジューリング用ワーク領域SPAWN2_NEXT_INDEX(GAME OVER以後は
+; Stage2本編が二度と実行されないため確実に不要、この点はこのファイル
+; 冒頭のコメント「RAM...は物理的に共有されているため...再利用する」の
+; 方針と同じ)を再利用する。
+GO_RNG EQU 0F19Bh
 
 ; --- Comb globalバンク番号。standaloneでは0/1は無意味(単独バンクの ---
 ; --- ためtitleへは戻れない、テストは戻る直前のGOTO_TITLE_HOP2到達  ---
@@ -86,13 +109,31 @@ INIT:
     LD HL,GAMEOVER2_FONT_COLOR : LD DE,200Ch : LD BC,1 : CALL LDIRVM   ; group12(96-103)
     LD HL,GAMEOVER2_FONT_COLOR+1 : LD DE,2012h : LD BC,1 : CALL LDIRVM ; group18(144-151)
 
+    ; RNGの種を自機の最終X座標から取る(プレイごとに変わる値、GO_RNG自身の
+    ; 説明は上のEQU参照)。
+    LD A,(TANK_X) : LD (GO_RNG),A
+
+    ; "自機爆発はサウンドも欲しい"への対応 - 点滅演出の前に1回だけ鳴らす。
+    CALL GO_PLAY_BOOM_SOUND
+
     ; 自機の最終位置(TANK_X/TANK_Y_CUR)を起点に、既存のUPDATE_TANK_
     ; SPRITESと同じ4隅オフセット(+0/+16)へPAT_EXPLOSIONスプライトを
     ; 点滅表示する(10回、表示->ウェイト->非表示->ウェイト、1回あたり
-    ; 約0.3秒 - 合計約3秒、"3秒表示"に対応)。
+    ; 約0.3秒 - 合計約3秒、"3秒表示"に対応)。"一度4つほどエフェクトが
+    ; 出るがその状態で停止してて"への対応で、毎回位置をジッターさせ・
+    ; 色を白/ライトレッドで交互にし、Stage1のPLAYER_EXPL_UPDATE_ALLと
+    ; 同じ「自機を起点に複数派手に」見た目に近づけた。
     LD B,10
 GO_BLINK_LOOP:
     PUSH BC
+    ; XJit = ((GO_RNG += 61) AND 0Fh) - 8, YJit = ((GO_RNG += 97) AND 0Fh) - 8
+    ; (Stage1 PEUA_TRY_SPAWNと同じ -8..+7レンジのジッター)。
+    LD A,(GO_RNG) : ADD A,61 : LD (GO_RNG),A
+    AND 0Fh : SUB 8 : LD D,A
+    LD A,(GO_RNG) : ADD A,97 : LD (GO_RNG),A
+    AND 0Fh : SUB 8 : LD E,A
+    ; 色はループカウンタ(B、DJNZの残り回数)の偶奇で交互に選ぶ。
+    LD A,B : AND 1 : LD C,A
     CALL GO_DRAW_EXPLOSION
     CALL GO_DELAY_SHORT
     CALL GO_HIDE_EXPLOSION
@@ -100,7 +141,9 @@ GO_BLINK_LOOP:
     POP BC
     DJNZ GO_BLINK_LOOP
 
-    ; 最後は表示したまま静止させる。
+    ; 最後は表示したまま静止させる(ジッター無し・白で、自機本来の
+    ; 位置がわかるニュートラルな最終ポーズ)。
+    LD D,0 : LD E,0 : LD C,0
     CALL GO_DRAW_EXPLOSION
 
     ; "MISSION FAILED"メッセージを画面中央(row12,col9、14byte - 画面幅
@@ -165,12 +208,23 @@ GOTO_TITLE_HOP2:
 BANKSWITCH_TRAMPOLINE_RAM EQU 0F271h
 
 ; 自機の最終位置(TANK_X/TANK_Y_CUR)を中心に4隅(TL/TR/BL/BR、既存の
-; UPDATE_TANK_SPRITESと同じ+0/+16オフセット)へPAT_EXPLOSION+
-; EXPLOSION_COLORを書く。VDPアドレスは一度だけ設定し、以後は自動
-; インクリメントに任せて16byte連続で書く(スロット0-3、SPRATR先頭 -
-; 自機自身がこれまで使っていたスロットをそのまま転用、新規スロット
-; 確保は不要)。Trashes: AF,BC,HL.
+; UPDATE_TANK_SPRITESと同じ+0/+16オフセット)へPAT_EXPLOSIONスプライトを
+; 書く。VDPアドレスは一度だけ設定し、以後は自動インクリメントに任せて
+; 16byte連続で書く(スロット0-3、SPRATR先頭 - 自機自身がこれまで使って
+; いたスロットをそのまま転用、新規スロット確保は不要)。
+; 入力(2026-09-07、実機フィードバック対応で追加): D=Xジッター(符号付き
+; -8..+7)、E=Yジッター(同)、C=色選択(0=SPR_WHITE_COLOR/それ以外=
+; SPR_LIGHTRED_COLOR) - 4隅とも同じジッター量・同じ色を使う(呼び出し
+; 元GO_BLINK_LOOPが毎回別の値を渡すことで「複数派手に」を演出)。
+; Trashes: AF,BC,HL.
 GO_DRAW_EXPLOSION:
+    LD A,C
+    OR A
+    LD A,SPR_WHITE_COLOR
+    JR Z,GDE_COLOR_RESOLVED
+    LD A,SPR_LIGHTRED_COLOR
+GDE_COLOR_RESOLVED:
+    LD C,A                          ; C now holds the actual color byte
     DI
     LD A,0 : OUT (99h),A
     NOP
@@ -178,37 +232,37 @@ GO_DRAW_EXPLOSION:
     LD A,5Bh : OUT (99h),A
     NOP
     NOP
-    LD A,(TANK_Y_CUR) : OUT (98h),A
+    LD A,(TANK_Y_CUR) : ADD A,E : OUT (98h),A
     PUSH BC : POP BC : NOP : NOP
-    LD A,(TANK_X) : OUT (98h),A
-    PUSH BC : POP BC : NOP : NOP
-    LD A,PAT_EXPLOSION : OUT (98h),A
-    PUSH BC : POP BC : NOP : NOP
-    LD A,EXPLOSION_COLOR : OUT (98h),A
-    PUSH BC : POP BC : NOP : NOP
-    LD A,(TANK_Y_CUR) : OUT (98h),A
-    PUSH BC : POP BC : NOP : NOP
-    LD A,(TANK_X) : ADD A,16 : OUT (98h),A
+    LD A,(TANK_X) : ADD A,D : OUT (98h),A
     PUSH BC : POP BC : NOP : NOP
     LD A,PAT_EXPLOSION : OUT (98h),A
     PUSH BC : POP BC : NOP : NOP
-    LD A,EXPLOSION_COLOR : OUT (98h),A
+    LD A,C : OUT (98h),A
     PUSH BC : POP BC : NOP : NOP
-    LD A,(TANK_Y_CUR) : ADD A,16 : OUT (98h),A
+    LD A,(TANK_Y_CUR) : ADD A,E : OUT (98h),A
     PUSH BC : POP BC : NOP : NOP
-    LD A,(TANK_X) : OUT (98h),A
-    PUSH BC : POP BC : NOP : NOP
-    LD A,PAT_EXPLOSION : OUT (98h),A
-    PUSH BC : POP BC : NOP : NOP
-    LD A,EXPLOSION_COLOR : OUT (98h),A
-    PUSH BC : POP BC : NOP : NOP
-    LD A,(TANK_Y_CUR) : ADD A,16 : OUT (98h),A
-    PUSH BC : POP BC : NOP : NOP
-    LD A,(TANK_X) : ADD A,16 : OUT (98h),A
+    LD A,(TANK_X) : ADD A,16 : ADD A,D : OUT (98h),A
     PUSH BC : POP BC : NOP : NOP
     LD A,PAT_EXPLOSION : OUT (98h),A
     PUSH BC : POP BC : NOP : NOP
-    LD A,EXPLOSION_COLOR : OUT (98h),A
+    LD A,C : OUT (98h),A
+    PUSH BC : POP BC : NOP : NOP
+    LD A,(TANK_Y_CUR) : ADD A,16 : ADD A,E : OUT (98h),A
+    PUSH BC : POP BC : NOP : NOP
+    LD A,(TANK_X) : ADD A,D : OUT (98h),A
+    PUSH BC : POP BC : NOP : NOP
+    LD A,PAT_EXPLOSION : OUT (98h),A
+    PUSH BC : POP BC : NOP : NOP
+    LD A,C : OUT (98h),A
+    PUSH BC : POP BC : NOP : NOP
+    LD A,(TANK_Y_CUR) : ADD A,16 : ADD A,E : OUT (98h),A
+    PUSH BC : POP BC : NOP : NOP
+    LD A,(TANK_X) : ADD A,16 : ADD A,D : OUT (98h),A
+    PUSH BC : POP BC : NOP : NOP
+    LD A,PAT_EXPLOSION : OUT (98h),A
+    PUSH BC : POP BC : NOP : NOP
+    LD A,C : OUT (98h),A
     EI
     RET
 
@@ -251,6 +305,50 @@ GO_DELAY_INNER:
     DEC C
     JR NZ,GO_DELAY_INNER
     DJNZ GO_DELAY_OUTER
+    RET
+
+; GO_DELAY_SHORTの約1/8の短さ(~0.0186秒)。GO_PLAY_BOOM_SOUND自身の
+; 手動減衰ステップ間隔専用 - GO_DELAY_SHORTをそのまま使うと16段の減衰
+; だけで2秒を超えてしまい、爆発音が間延びしてしまうため専用に用意した。
+; Trashes: AF,BC.
+GO_DELAY_TINY:
+    LD B,20
+GO_DELAY_TINY_OUTER:
+    LD C,0
+GO_DELAY_TINY_INNER:
+    DEC C
+    JR NZ,GO_DELAY_TINY_INNER
+    DJNZ GO_DELAY_TINY_OUTER
+    RET
+
+; "自機爆発はサウンドも欲しい"(2026-09-07、実機フィードバック対応):
+; src/CYBER SHMUP.asm・combined_test.asm双方のSOUND_DESTROY(ノイズ
+; channel A、周期20、音量15スタート)と同じ音作りを、per-frame
+; SOUND_UPDATEの自動減衰に頼れないこの単発ルーチンの中で、音量15から
+; 0まで16段を手動ループで減衰させる形で再現する(このバンクは他
+; ファイルをCALLできない独立バンクのため値だけ再利用、既存ルーチンの
+; 呼び出しではない)。CLAUDE.md「実機ハードウェア制約」の恒久ルール
+; 通り、ブロック転送命令は使わずOUT+DJNZの手動ループのみ。
+; Trashes: AF,BC.
+GO_PLAY_BOOM_SOUND:
+    DI
+    LD A,7 : OUT (PSG_ADDR),A
+    LD A,MIXER_NOISE_A : OUT (PSG_DATA),A
+    LD A,6 : OUT (PSG_ADDR),A
+    LD A,BOOM_NOISE_PERIOD : OUT (PSG_DATA),A
+    EI
+    LD B,16
+    LD C,15
+GO_BOOM_DECAY_LOOP:
+    PUSH BC
+    DI
+    LD A,8 : OUT (PSG_ADDR),A
+    LD A,C : OUT (PSG_DATA),A
+    EI
+    CALL GO_DELAY_TINY
+    POP BC
+    DEC C
+    DJNZ GO_BOOM_DECAY_LOOP
     RET
 
 ; "MISSION FAILED"フォント(M,I,S,O,N,space,F,A,L,E,D、11グリフ、

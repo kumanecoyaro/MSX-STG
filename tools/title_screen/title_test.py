@@ -161,12 +161,58 @@ check("BGM_B_BASE/BGM_C_BASE match bgm_bank_gen's ALONE_FIGHTER layout",
 # INIT_BGMはRAMコピー(周期テーブル+ALONE_FIGHTER曲データ、Stage1が
 # 起動後にそのまま読む)はこれまで通り行うが、HTIMI_HOOKの設置(=この
 # ファイル自身のBGM_TICKをH.TIMI経由で駆動する部分)は意図的にスキップ
-# するよう変更済み - タイトル画面自身は音楽を再生しない。よってHTIMI_
-# HOOKは一切書き換えられないはず(z80emu.pyのfresh_cpu()は全RAM0初期化
-# のため、触られていなければ0x00のまま)。
-check("INIT_BGM does NOT install HTIMI_HOOK (title screen itself stays silent, "
-      "per user instruction to stop title BGM until things stabilize)",
-      cpu.mem[HTIMI_HOOK] == 0x00)
+# するよう変更済み - タイトル画面自身は音楽を再生しない。
+# (2026-09-07、実機フィードバック対応"Mission1でゲームオーバー処理の
+# あとタイトルに遷移しない"): このINITはStage1/Stage2からの"タイトルへ
+# 戻る"トランポリンの着地先としても使われる共通エントリポイントであり、
+# その場合HTIMI_HOOKは送り手側自身のBGM_TICKアドレスを指したまま残って
+# いる(このバンクに切り替わった今、そのアドレスはもう無関係なコードを
+# 指す)。INIT_BGM自身は意図的にHTIMI_HOOKを一切書き換えないため、DIの
+# 直後・CALL INIGRP(round53のCALL INIT32と同型、実機では内部でEI+HALT+
+# DIするBIOSルーチンの可能性がありz80emu.pyでは検出不能)より前に明示的に
+# bare RET(0C9h)へリセットする防御を追加した。よってHTIMI_HOOKは0x00
+# (未初期化)ではなく0C9hになるはず。
+check("INIT explicitly resets HTIMI_HOOK to a safe bare RET (0C9h) right after DI, "
+      "before CALL INIGRP - defends against a stale hook left by whichever stage "
+      "trampolined back into this INIT (title itself still never arms its own hook)",
+      cpu.mem[HTIMI_HOOK] == 0xC9)
+# regression guard for the exact scenario the bug fixed above targets:
+# a stale HTIMI_HOOK left by whichever stage trampolined back into this
+# INIT (simulated here by poisoning it to a bogus non-zero address before
+# boot, mirroring init_interrupt_safety_test.py's own poisoned-RAM
+# approach in tools/stage2_combined/tests/) must be overwritten with the
+# safe bare RET before INIGRP (the round53-class hidden-EI risk) is ever
+# reached - not merely "eventually" by the time INIT finishes.
+_cpu2, _mem2 = fresh_cpu()
+_mem2.flat[HTIMI_HOOK] = 0xCD
+_mem2.flat[HTIMI_HOOK + 1] = 0x34
+_mem2.flat[HTIMI_HOOK + 2] = 0x12
+_steps2 = 0
+_first_ei_hook_value = None
+while _steps2 < 300000:
+    if _cpu2.iff1 and _first_ei_hook_value is None:
+        # same technique as tools/stage2_combined/tests/
+        # init_interrupt_safety_test.py: the FIRST moment interrupts are
+        # ever re-enabled (iff1 becomes True) is the earliest point a
+        # stale hook could actually be invoked - HTIMI_HOOK must already
+        # be safe by then, not merely "eventually" before INIT finishes.
+        # Checked BEFORE the pc==WAIT_FOR_START break below, since the
+        # EI that guards WAIT_FOR_START's own loop can land iff1=True on
+        # the exact same step pc first reaches WAIT_FOR_START.
+        _first_ei_hook_value = _mem2.flat[HTIMI_HOOK]
+    if _cpu2.pc == sym["WAIT_FOR_START"]:
+        break
+    _cpu2.step()
+    _steps2 += 1
+check("INIT actually re-enables interrupts at least once before WAIT_FOR_START (sanity check - "
+      "otherwise the next check would trivially pass by never exercising the bug at all)",
+      _first_ei_hook_value is not None)
+check("a stale/poisoned HTIMI_HOOK is already reset to bare RET (0C9h) the FIRST time "
+      "interrupts are re-enabled anywhere in INIT - not just by the time INIT finishes - "
+      "closing the exact window a hidden internal EI inside INIGRP (same class as round53's "
+      "CALL INIT32) could otherwise exploit",
+      _first_ei_hook_value == 0xC9)
+
 check("INIT_BGM left BGM_B_PTR/BGM_C_PTR pointing at BGM_B_BASE/BGM_C_BASE",
       (cpu.mem[BGM_B_PTR] | (cpu.mem[BGM_B_PTR + 1] << 8), cpu.mem[BGM_C_PTR] | (cpu.mem[BGM_C_PTR + 1] << 8)) ==
       (BGM_B_BASE, BGM_C_BASE))
