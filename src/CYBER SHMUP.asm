@@ -105,6 +105,8 @@ SPR_BLACK   EQU 01h     ; sprite color: black
 SPR_LIGHTGREEN EQU 03h  ; sprite color: light green (TMS9918 index3)
 SPR_LIGHTRED   EQU 09h  ; sprite color: light red (TMS9918 index9)
 SPR_PURPLE     EQU 0Dh  ; sprite color: dark magenta/purple (TMS9918 index13)
+SPR_YELLOW     EQU 0Bh  ; sprite color: light yellow (TMS9918 index11) -
+                         ; round64追加分、"自機爆発にイエロー加えた爆発に"
 SPR_TERM_Y  EQU 208     ; special Y value: stop sprite processing here
 
 PLAYER_SPEED EQU 2     ; was raised to 4 to compensate for the (now-removed)
@@ -804,12 +806,17 @@ GAMEOVER_ENABLED EQU 0F235h  ; 0=ゲームオーバー無効(バリア0後の被
 ; 落下で動く自機の位置に自動的に追従する)させ、この演出が終わって
 ; 初めてMISSION FAILEDを表示する2段階へ変更。GAMEOVER_ENABLEDの
 ; すぐ後、同じ実測済みの空き帯に配置。
-PLAYER_DEATH_FALL_ACT   EQU 0F236h  ; 0=非活性/1=落下中
-PLAYER_DEATH_FALL_TIMER EQU 0F237h  ; 残りフレーム数(0になった瞬間に
-                                     ; MISSION FAILED表示へ進む)
+; (2026-09-07追記、"斜め下に落下したらそのまま画面外に消えるように
+; 変更"): 固定フレーム数(旧PLAYER_DEATH_FALL_TIMER/DURATION、45フレーム
+; で強制的に非表示コーナーへテレポートしていた)を廃止し、PLAYERY自身が
+; 実際に画面外(199 = ENEMY_HIDE_Yの逆算値、このファイル全体で確立済みの
+; 非表示コーナー)へ達するまで等速で落下し続ける方式へ変更。開始位置が
+; 画面上のどこであっても、実際に画面外へ落ちきった瞬間が完了条件になる
+; (近ければ短く・遠ければ長く、時間ではなく距離で終了が決まる)。
+PLAYER_DEATH_FALL_ACT   EQU 0F236h  ; 0=非活性/1=落下中(PLAYERYが199に
+                                     ; 達した瞬間に自動的に0へ戻る)
 PLAYER_DEATH_FALL_SPEED    EQU 2    ; px/frame、斜め45度(X,Yとも同値) -
                                      ; PLAYER_RETREAT_SPEEDと同じ考え方
-PLAYER_DEATH_FALL_DURATION EQU 45   ; 約0.75秒@60fps - 未調整の初期値
 
     DB "AB"
     DW INIT
@@ -1171,7 +1178,7 @@ INIT_SPRATR_CLR:
     ; 値をそのまま保持する必要があるため、上記EQU自身のコメント参照)。
     LD (GAME_OVER_SEQ),A
     LD (GAME_OVER_START_TICK),A : LD (GAME_OVER_START_TICK+1),A
-    LD (PLAYER_DEATH_FALL_ACT),A : LD (PLAYER_DEATH_FALL_TIMER),A
+    LD (PLAYER_DEATH_FALL_ACT),A
     LD HL,PLAYER_EXPL_POOL : LD (HL),A
     LD DE,PLAYER_EXPL_POOL+1 : LD BC,21 : LDIR   ; zeroes the pool +
                                                    ; PLAYER_EXPL_TOTAL_TIMER/
@@ -1827,15 +1834,14 @@ ROWDONE_5:
     ; ============================================================
     ; (2026-09-07、"ステージ1の自機爆発演出追加 操作無効の上爆発しながら
     ; 右斜め下に落下しMission Failed表示に"、続けて"落下したら自機は
-    ; 画面外に消えるように"): 上記のPLAYER_RETREAT_ACT(ステージクリア
-    ; 専用)より更に手前でチェックする新規サブフェーズ - GAME_OVERを
-    ; マスターゲートとして使う(PTH_GAMEOVERが唯一の書き込み元で、
-    ; 必ず同時にPLAYER_DEATH_FALL_TRIGGERも呼ぶため、GAME_OVER=1は
-    ; 「まだ落下中」か「落下完了後、画面外に隠れたまま」のどちらか
-    ; しかありえない)。GAME_OVER=1の間は以後二度と(このゲームが
-    ; 続く限り永久に)PFA_NO_DEATH_FALL以降の通常入力チェーンへ落ちない
-    ; - 単に「45フレーム落下が終わったらまた操作可能に戻ってしまう」
-    ; という旧実装の抜け漏れも同時に解消している。
+    ; 画面外に消えるように"、さらに"斜め下に落下したらそのまま画面外に
+    ; 消えるように変更"): 上記のPLAYER_RETREAT_ACT(ステージクリア専用)
+    ; より更に手前でチェックする新規サブフェーズ - GAME_OVERをマスター
+    ; ゲートとして使う(PTH_GAMEOVERが唯一の書き込み元で、必ず同時に
+    ; PLAYER_DEATH_FALL_TRIGGERも呼ぶため、GAME_OVER=1は「まだ落下中」か
+    ; 「落下完了後、画面外に隠れたまま」のどちらかしかありえない)。
+    ; GAME_OVER=1の間は以後二度と(このゲームが続く限り永久に)
+    ; PFA_NO_DEATH_FALL以降の通常入力チェーンへ落ちない。
     LD A,(GAME_OVER)
     OR A
     JR Z,PFA_NO_DEATH_FALL
@@ -1851,39 +1857,41 @@ ROWDONE_5:
     LD A,199 : LD (PLAYERY),A
     JP DIR_DONE
 PFA_DEATH_FALL_STEP:
-    ; まだ落下中: PLAYER_DEATH_FALL_DURATIONフレームの間ジョイスティック
-    ; 入力を完全に無視してPLAYERX/PLAYERYを両方PLAYER_DEATH_FALL_SPEED
-    ; ずつ加算し続ける(右斜め下への等速落下、8bitオーバーフローで
-    ; ラップして左端へワープしないようキャリーで255クランプ)。この間も
-    ; 既存のPLAYER_EXPL_UPDATE_ALL(PEUA_TRY_SPAWNが毎回PLAYERX/PLAYERY
-    ; を直接読む設計)がそのまま自機の新しい位置に追従して爆発バーストを
-    ; 継続するため、爆発しながら落下する見た目になる。タイマーが0に
-    ; 達した瞬間だけ、座標更新はスキップして直接上記の非表示コーナーへ
-    ; 飛ばし、従来PTH_GAMEOVERが直接行っていたMISSION FAILEDテキスト
-    ; 描画・GAME_OVER_SEQ状態機械の起動をここで行う(以後は二度と
-    ; PLAYER_DEATH_FALL_ACTが1にならないため生涯で1回だけ)。
-    LD A,(PLAYER_DEATH_FALL_TIMER)
-    DEC A
-    LD (PLAYER_DEATH_FALL_TIMER),A
-    JR Z,PDF_FINISH
+    ; まだ落下中: ジョイスティック入力を完全に無視してPLAYERX/PLAYERYを
+    ; 両方PLAYER_DEATH_FALL_SPEEDずつ加算し続ける(右斜め下への等速落下、
+    ; 8bitオーバーフローでラップして左端へワープしないようキャリーで
+    ; 255クランプ)。この間も既存のPLAYER_EXPL_UPDATE_ALL(PEUA_TRY_
+    ; SPAWNが毎回PLAYERX/PLAYERYを直接読む設計)がそのまま自機の新しい
+    ; 位置に追従して爆発バーストを継続するため、爆発しながら落下する
+    ; 見た目になる。固定フレーム数のタイマーは持たず、PLAYERYが実際に
+    ; 画面外の値(199、非表示コーナーの逆算値)へ達した瞬間だけ完了
+    ; 処理(MISSION FAILEDテキスト描画・GAME_OVER_SEQ起動)を行う -
+    ; 開始位置からの距離がそのまま落下時間になる、自然な連続落下。
     LD A,(PLAYERX) : ADD A,PLAYER_DEATH_FALL_SPEED
     JR NC,PDF_X_OK
     LD A,255
 PDF_X_OK:
     LD (PLAYERX),A
     LD A,(PLAYERY) : ADD A,PLAYER_DEATH_FALL_SPEED
-    JR NC,PDF_Y_OK
-    LD A,255
-PDF_Y_OK:
+    JR NC,PDF_Y_ADDED
+    LD A,255                 ; オーバーフロー: 画面外へ到達したのと同じ扱い
+PDF_Y_ADDED:
+    CP 199
+    JR C,PDF_STORE_Y          ; 199未満ならまだ画面内、そのまま格納
+    LD A,199                  ; 199以上/オーバーフロー -> 199へクランプ
+PDF_STORE_Y:
     LD (PLAYERY),A
-    JP DIR_DONE
-PDF_FINISH:
+    CP 199
+    JR NZ,PDF_NOT_DONE         ; まだ199未満 = 落下継続中
+    ; 今回のフレームで初めて199(画面外)へ到達 - 以後PLAYER_DEATH_
+    ; FALL_ACTが再び1になることは無い(生涯で1回だけここを通る)。
     XOR A : LD (PLAYER_DEATH_FALL_ACT),A
     LD A,255 : LD (PLAYERX),A
-    LD A,199 : LD (PLAYERY),A
     CALL DRAW_GAMEOVER_TEXT
     LD A,1 : LD (GAME_OVER_SEQ),A
     LD HL,(SC_VBLANK_COUNT) : LD (GAME_OVER_START_TICK),HL
+    JP DIR_DONE
+PDF_NOT_DONE:
     JP DIR_DONE
 PFA_NO_DEATH_FALL:
 
@@ -8164,12 +8172,13 @@ PTH_GAMEOVER:
     CALL PLAYER_DEATH_FALL_TRIGGER
     JP SOUND_DESTROY   ; tail call - same "boom" as everything else that dies
 
-; Arms the death-fall sequence (see UPDATE_PLAYER_DEATH_FALL, called
-; from the player-input block every frame) - just sets the 2 flags,
-; the actual per-frame movement/completion logic lives there.
+; Arms the death-fall sequence (see the player-input block's own
+; PFA_DEATH_FALL_STEP, called every frame) - just sets the flag, the
+; actual per-frame movement/completion logic lives there. Completion
+; is now driven purely by PLAYERY reaching the off-screen threshold
+; (199), not a separate frame-count timer.
 PLAYER_DEATH_FALL_TRIGGER:
     LD A,1 : LD (PLAYER_DEATH_FALL_ACT),A
-    LD A,PLAYER_DEATH_FALL_DURATION : LD (PLAYER_DEATH_FALL_TIMER),A
     RET
 
 ; Kicks off the ~2s player-death burst sequence (see PLAYER_EXPL_
@@ -8215,7 +8224,10 @@ PEUA_INSTANCES:
 PEUA_LOOP:
     LD A,(HL)
     OR A
-    JR Z,PEUA_NEXT
+    JP Z,PEUA_NEXT           ; JR out of range now that the color-cycle
+                              ; branch logic below made the loop body
+                              ; longer (same JP-instead-of-JR fix as
+                              ; PEUA_LOOP's own tail jump uses)
     PUSH HL
     PUSH HL : POP IX
     LD A,(IX+3) : DEC A
@@ -8255,9 +8267,24 @@ PEUA_STILL_ALIVE:
     DI
     LD A,PAT_PLAYER_EXPLOSION : OUT (98h),A
     PUSH BC : POP BC : NOP : NOP
-    LD A,(IX+3) : AND 1
+    ; (2026-09-07、"ステージ1と同じようにイエローを加えた爆発に"):
+    ; 従来の白/ライトレッド2色(タイマーの最下位ビットで交互)から、
+    ; タイマー下位2bit(0-3)で白/ライトレッド/イエローの3色サイクルへ
+    ; 拡張(2は正確な周期ではないが、視覚的な色サイクル効果自体には
+    ; 厳密な均等割りは不要と判断)。値の算出は次のOUT(98h)より前に
+    ; 完結するため、既存のVDP書き込み間タイミング(PUSH BC:POP BC:
+    ; NOP:NOP、OUT同士の間隔)には一切影響しない。
+    LD A,(IX+3) : AND 3
+    OR A
+    JR Z,PEUA_COLOR_WHITE
+    DEC A
+    JR Z,PEUA_COLOR_LIGHTRED
+    LD A,SPR_YELLOW
+    JR PEUA_COLOR_GOT
+PEUA_COLOR_WHITE:
     LD A,SPR_WHITE
-    JR Z,PEUA_COLOR_GOT
+    JR PEUA_COLOR_GOT
+PEUA_COLOR_LIGHTRED:
     LD A,SPR_LIGHTRED
 PEUA_COLOR_GOT:
     OUT (98h),A

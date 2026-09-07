@@ -331,18 +331,17 @@ check("DRAW_GAMEOVER_TEXT: does NOT touch PSG channel A volume (SE keeps playing
 # ---- PTH_GAMEOVER wiring: reaching GAME_OVER=1 via a barrier-exhausted hit ----
 # ---- actually draws GAME_OVER_MSG on screen (not just sets the flag)       ----
 # (2026-09-07、"操作無効の上爆発しながら右斜め下に落下しMission Failed
-# 表示に"): PTH_GAMEOVER自身はもうテキスト描画・GAME_OVER_SEQ起動を
-# 即座には行わない - 代わりにPLAYER_DEATH_FALL_ACTを起動するだけで、
-# 実際のテキスト表示/SEQ起動はPLAYER_DEATH_FALL_DURATIONフレーム分の
-# 落下演出が実MAINLOOPを通じて完了した瞬間まで先送りされる(下記
+# 表示に"、続けて"斜め下に落下したらそのまま画面外に消えるように変更"):
+# PTH_GAMEOVER自身はもうテキスト描画・GAME_OVER_SEQ起動を即座には行わない
+# - 代わりにPLAYER_DEATH_FALL_ACTを起動するだけで、実際のテキスト表示/
+# SEQ起動はPLAYERYが実際に画面外(199)へ到達した瞬間まで先送りされる
+# (固定フレーム数ではなく、開始位置からの距離に応じた可変長、下記
 # step_frame連打で検証)。
 BARRIER_HP = sym["BARRIER_HP"]
 GAME_OVER = sym["GAME_OVER"]
 GAME_OVER_SEQ = sym["GAME_OVER_SEQ"]
 PLAYER_DEATH_FALL_ACT = sym["PLAYER_DEATH_FALL_ACT"]
-PLAYER_DEATH_FALL_TIMER = sym["PLAYER_DEATH_FALL_TIMER"]
 PLAYER_DEATH_FALL_SPEED = sym["PLAYER_DEATH_FALL_SPEED"]
-PLAYER_DEATH_FALL_DURATION = sym["PLAYER_DEATH_FALL_DURATION"]
 PLAYERY = sym["PLAYERY"]
 z = fresh()
 boot(z)
@@ -352,33 +351,43 @@ for i in range(768):
 call_routine(z, sym["PTH_GAMEOVER"])
 nametable = [z.vram[0x1800 + i] for i in range(768)]
 check("PTH_GAMEOVER: sets GAME_OVER=1", z.rd(GAME_OVER) == 1)
-check("PTH_GAMEOVER: arms the death-fall sequence (PLAYER_DEATH_FALL_ACT=1, "
-      "TIMER=PLAYER_DEATH_FALL_DURATION) instead of drawing text immediately",
-      z.rd(PLAYER_DEATH_FALL_ACT) == 1 and z.rd(PLAYER_DEATH_FALL_TIMER) == PLAYER_DEATH_FALL_DURATION)
+check("PTH_GAMEOVER: arms the death-fall sequence (PLAYER_DEATH_FALL_ACT=1) "
+      "instead of drawing text immediately",
+      z.rd(PLAYER_DEATH_FALL_ACT) == 1)
 check("PTH_GAMEOVER: does NOT draw GAME_OVER_MSG yet (deferred until the death-fall finishes)",
       all(b == 0x33 for b in nametable))
 check("PTH_GAMEOVER: does NOT arm GAME_OVER_SEQ yet (deferred until the death-fall finishes)",
       z.rd(GAME_OVER_SEQ) == 0)
 
 GAME_OVER = sym["GAME_OVER"]
-x0 = z.rd(PLAYERX)
 y0 = z.rd(PLAYERY)
+# (2026-09-07、"斜め下に落下したらそのまま画面外に消えるように変更"):
+# completion is now driven purely by PLAYERY reaching 199 (2px/frame),
+# so the expected frame count is derived from the actual starting Y
+# rather than a fixed duration constant (which no longer exists).
+expected_frames = -(-(199 - y0) // PLAYER_DEATH_FALL_SPEED)  # ceil division
 z.pc = sym["MAINLOOP"]
-for i in range(PLAYER_DEATH_FALL_DURATION):
+for i in range(expected_frames):
     step_frame(z)
-    if i < PLAYER_DEATH_FALL_DURATION - 1:
+    if i < expected_frames - 1:
         assert z.rd(GAME_OVER_SEQ) == 0, f"GAME_OVER_SEQ armed early, at frame {i}"
-        # (2026-09-07、"落下したら自機は画面外に消えるように") mid-fall,
-        # before the final frame, the ship must still be somewhere on the
-        # visible playfield (not yet at the hide corner) - otherwise it
-        # would just vanish immediately instead of visibly falling.
+        # mid-fall, before the final frame, the ship must still be
+        # somewhere on the visible playfield (not yet at the hide
+        # corner) - otherwise it would just vanish immediately instead
+        # of visibly falling continuously toward the edge.
         assert not (z.rd(PLAYERX) == 255 and z.rd(PLAYERY) == 199), \
             f"ship reached the hide corner too early, at frame {i}"
+        # the fall must be a genuine continuous diagonal descent, not a
+        # jump straight to the end - PLAYERY should still be climbing
+        # toward (but not yet at) the off-screen threshold each frame.
+        assert z.rd(PLAYERY) < 199, \
+            f"PLAYERY reached/exceeded the off-screen threshold before the expected frame, at frame {i}"
 nametable = [z.vram[0x1800 + i] for i in range(768)]
 msg_region = nametable[12 * 32 + 9: 12 * 32 + 9 + GAME_OVER_MSG_LEN]
 check("death-fall completion: PLAYERX/PLAYERY land exactly on the (255,199) hide corner "
       "(drawn Y = 199-8 = 191 = ENEMY_HIDE_Y, the same off-screen convention used everywhere "
-      "else in this file - '落下したら自機は画面外に消えるように')",
+      "else in this file - falls naturally until it actually reaches this off-screen value, "
+      "'斜め下に落下したらそのまま画面外に消えるように')",
       z.rd(PLAYERX) == 255 and z.rd(PLAYERY) == 199)
 check("death-fall: clears its own ACT flag once the fall finishes",
       z.rd(PLAYER_DEATH_FALL_ACT) == 0)
@@ -386,6 +395,29 @@ check("death-fall completion: NOW draws GAME_OVER_MSG at the screen-center messa
       msg_region == read_msg(GAME_OVER_MSG, GAME_OVER_MSG_LEN))
 check("death-fall completion: NOW arms GAME_OVER_SEQ=1 (3-second display phase)",
       z.rd(GAME_OVER_SEQ) == 1)
+
+# regression guard: the fall's duration is genuinely tied to the starting
+# distance from the off-screen threshold, not a fixed frame count - dying
+# already close to the bottom must finish in fewer frames than dying near
+# the top (this is the entire point of "そのまま画面外に消えるように" -
+# a real continuous fall, not a fixed-length animation regardless of
+# where death occurred).
+z = fresh()
+boot(z)
+z.wr(PLAYERY, 190)  # already very close to the 199 threshold
+z.wr(GAME_OVER, 1)
+z.wr(PLAYER_DEATH_FALL_ACT, 1)
+z.pc = sym["MAINLOOP"]
+near_bottom_frames = 0
+for _ in range(30):
+    step_frame(z)
+    near_bottom_frames += 1
+    if z.rd(GAME_OVER_SEQ) == 1:
+        break
+check("death-fall duration scales with starting distance from the off-screen "
+      "threshold (dying near the bottom finishes in far fewer frames than the "
+      "far-from-bottom case above, not a fixed duration)",
+      z.rd(GAME_OVER_SEQ) == 1 and near_bottom_frames < expected_frames)
 
 # (2026-09-07、"操作無効" persists forever after death, not just during the
 # 45-frame fall itself): GAME_OVER now gates the whole movement chain, so
@@ -417,19 +449,25 @@ check("MISSION FAILED text: redrawn every frame while GAME_OVER_SEQ is 1 or 2, s
       "self-heals the very next frame after any other BG write clobbers it",
       msg_region == read_msg(GAME_OVER_MSG, GAME_OVER_MSG_LEN))
 
-# regression guard: starting near the right/bottom edge must clamp at 255 instead of
-# wrapping around to 0 (which would look like the ship teleporting to the top-left).
+# regression guard: PLAYERX overflow clamps at 255 instead of wrapping to a
+# low value (would look like the ship teleporting to the top-left); PLAYERY
+# overflow is treated the same as legitimately reaching the off-screen
+# threshold (clamped to 199, completing the fall immediately) rather than
+# wrapping to a tiny value that would look like the ship reappearing near
+# the top of the screen.
 z = fresh()
 boot(z)
 z.wr(PLAYERX, 254)
 z.wr(PLAYERY, 254)
 z.wr(GAME_OVER, 1)
 z.wr(PLAYER_DEATH_FALL_ACT, 1)
-z.wr(PLAYER_DEATH_FALL_TIMER, PLAYER_DEATH_FALL_DURATION)
 z.pc = sym["MAINLOOP"]
 step_frame(z)
-check("death-fall: PLAYERX/PLAYERY clamp at 255 on overflow instead of wrapping to a low value",
-      z.rd(PLAYERX) == 255 and z.rd(PLAYERY) == 255)
+check("death-fall: PLAYERX clamps at 255 on overflow instead of wrapping to a low value",
+      z.rd(PLAYERX) == 255)
+check("death-fall: PLAYERY overflow is treated as reaching the off-screen threshold "
+      "(clamped to 199, fall completes) instead of wrapping to a low on-screen value",
+      z.rd(PLAYERY) == 199 and z.rd(PLAYER_DEATH_FALL_ACT) == 0 and z.rd(GAME_OVER_SEQ) == 1)
 
 # regression guard: UPDATE_GAME_OVER_SEQUENCE must NOT redraw once SEQ==3
 # (terminal - about to bank-switch away in the real Comb build; drawing
