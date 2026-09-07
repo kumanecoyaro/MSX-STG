@@ -2456,3 +2456,45 @@ Stage1 MISSION1/MISSION2導入・クリア演出(2026-09-06、完了済み・
   未着手。今回の3つの修正の実機での実際の効果(音が止まったか)は
   実機・WebMSX・BlueMSXでの再検証待ち(音に関する修正のためレンダリング
   スクショでは検証不可)。
+
+## Round57: 実機フィードバック対応("Mission 1の1のフォントがアに
+化けてた")+ Stage1用render-checkスクリプト新規作成(2026-09-07、
+完了済み)
+
+- ユーザー報告: "Mission 1の1のフォントがアに化けてた"。
+- **根本原因**: Round56で「Mission1表示ブロックをCALL INIT32直後、
+  ステージ本編の初期化処理より前へ移設する」対応をした際、
+  MISSION1_MSG/MISSION2_MSGの末尾1文字が再利用する`DIGIT_BASE+1/+2`
+  (digit"1"/"2")のビットマップ本体(`DIGIT_PATTERNS`)・色
+  (COLORDATAのgroup22)のロードを一緒に前倒しし忘れていた。
+  MISSION_FONT_PATTERNS/COLORはfont読込として前倒し済みだったが、
+  DIGIT_PATTERNS自体はステージ本編初期化側の元の位置(Mission1表示
+  より後)に取り残されており、Mission1が実際に「1」を描画する時点
+  ではまだVRAM上に正しいビットマップが存在せず、前のステージ
+  (Title)がその領域に残していた別のグリフがそのまま透けて見えて
+  いた。
+- **修正**: `DIGIT_PATTERNS`(digit0-9)のLDIRVMと、group22の色の
+  1byte書き込み(新規`DIGIT_COLOR_GROUP22`定数)を、Mission1のfont
+  読込ブロックへ一緒に移設。元の位置のロード呼び出しは削除。
+  COLORDATA本体のロード(Mission1より後)がgroup22も上書きするが
+  値が同一(0F1h)のため実害なし、PATTERNS本体のロードも
+  DIGIT_PATTERNSのVRAM領域には届かないことを確認済み。
+- **Stage1用render-checkスクリプト新規作成**: Round55/56で保留に
+  なっていた課題に対応、`tools/stage1_render_check.py`を新規作成
+  (`tools/stage2_combined/render_check.py`のロジックをStage1の
+  フラット64KBメモリモデル向けに移植)。今回、送付前に実際に
+  MISSION1/MISSION2画面をレンダリングして「1」「2」が正しい数字
+  グリフで表示されていることを視覚確認した上で送付(Round54/55の
+  教訓の実践)。
+- 新規回帰テスト3件を`tools/verify_stage1_mission_screens.py`に追加、
+  自己検証(修正一時取消→FAIL確認→復元→PASS確認)済み。全回帰:
+  Stage2側`run_all.py` **1447 passed/0 failed**(無変化)。Stage1側
+  `verify_stage1_mission_screens.py` **41 passed**(38→41)・
+  `verify_player_damage.py` 58・`verify_stage1_bgm.py` 70・
+  `verify_enemy_bullets.py` 49、全てPASS。3ROM再ビルド・
+  `verify_comb.py`健全性確認の上、標準方針によりComb ROMのみ送付。
+  詳細はHANDOFF.mdのRound57参照。
+- **教訓**: 表示フェーズを前倒しする類の変更を行う際は、そのフェーズ
+  が表示するコンテンツが依存する全てのアセット(今回はfont+digitの
+  2種類の異なるアセット群)を漏れなく一緒に前倒ししないと、一部だけ
+  古い/未初期化のVRAM内容のまま表示されてしまう。

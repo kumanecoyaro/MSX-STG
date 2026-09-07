@@ -10962,3 +10962,59 @@ MISSION2黒画面
   (Round36-14 follow-up#4以来の標準手順に基づき、本来はレンダリング
   スクショでの確認が望ましいが、今回は「音」に関する修正のため
   レンダリングでは検証できない領域であることに留意)。実機再検証待ち。
+
+## Round57: 実機フィードバック対応("Mission 1の1のフォントがアに
+化けてた")+ Stage1用render-checkスクリプト新規作成(2026-09-07、
+完了済み)
+
+- ユーザー報告: "Mission 1の1のフォントがアに化けてた"。
+- **根本原因**: Round56で「Mission1表示ブロックをCALL INIT32直後、
+  ステージ本編の初期化処理より前へ移設する」対応を行った際、
+  MISSION1_MSG/MISSION2_MSGの末尾1文字が再利用する`DIGIT_BASE+1/+2`
+  (digit"1"/"2")のビットマップ本体(`DIGIT_PATTERNS`)・色
+  (COLORDATAのgroup22)のロードだけを一緒に前倒しし忘れていた
+  - MISSION_FONT_PATTERNS/COLORはfont読込として前倒し済みだった
+  ものの、DIGIT_PATTERNS自体はステージ本編初期化側の元の位置
+  (Mission1表示より後)に取り残されており、Mission1が実際に
+  「1」を描画する時点ではまだVRAM上に正しいビットマップが存在
+  せず、前のステージ(Title)がその領域に残していた別のグリフの
+  絵柄がそのまま透けて見えていた(色[group22]も同様にCOLORDATA
+  ロード前で未確定だったが、たまたま最終値[0F1h]と同じだった
+  ため色自体は問題にならなかった)。
+- **修正**: `DIGIT_PATTERNS`(digit0-9、80byte)のLDIRVMと、
+  group22(digits0-7の色)の1byte書き込みを、Mission1のfont読込
+  ブロックへ一緒に移設(新規`DIGIT_COLOR_GROUP22`定数、COLORDATA
+  内のgroup22と同値0F1h)。元のステージ本編初期化側にあった
+  DIGIT_PATTERNSのLDIRVM呼び出しは削除(移設済みの旨コメント化)。
+  COLORDATA本体のロード(border色設定と一緒、Mission1より後)は
+  group22も含む32グループ全体を上書きするが、値が同一(0F1h)の
+  ため実害なし、DIGIT_PATTERNSのパターンデータ自体もPATTERNS本体
+  のLDIRVM(PATTERNS_LEN=384byte、DIGIT_BASE=176のVRAMオフセット
+  176*8=1408byteには届かない)と衝突しないことを確認済み。
+- **Stage1用render-checkスクリプト新規作成**: Round55/56で保留に
+  なっていた「Stage1用VRAM→PNGレンダリングスクリプトが無い」問題に
+  ここで対応、`tools/stage1_render_check.py`を新規作成(`tools/
+  stage2_combined/render_check.py`のrender_full()をStage1のフラット
+  64KBメモリモデル向けに移植)。今回、送付前に実際にMISSION1/MISSION2
+  画面をレンダリングして「1」「2」が正しい数字グリフで表示されている
+  ことを視覚確認した上で送付する運用を徹底(Round54/55の教訓の実践)。
+- 新規回帰テスト3件を`tools/verify_stage1_mission_screens.py`に追加
+  (DIGIT_PATTERNS[digit0/1/2]がboot()後に正しいビットマップである
+  こと、group22の色が0F1hであること、生トレースでDRAW_MISSION_SCREEN
+  開始時点で既にdigit"1"の実ビットマップがロード済みであること)。
+  修正を一時的に取り消して新規テスト2件が実際にFAILすることを確認
+  した上で復元・再PASSを確認済み(自己検証)。全回帰: Stage2側
+  `run_all.py` **1447 passed/0 failed**(無変化、`combined_test.asm`
+  は今回無編集)。Stage1側`verify_stage1_mission_screens.py`
+  **41 passed**(38→41)・`verify_player_damage.py` 58・
+  `verify_stage1_bgm.py` 70・`verify_enemy_bullets.py` 49、全てPASS。
+  3ROM再ビルド・`verify_comb.py`健全性確認の上、標準方針によりComb
+  ROMのみ送付。
+- **教訓**: Round56のように「表示フェーズを前倒しする」類の変更を
+  行う際は、そのフェーズが表示するコンテンツ(フォント・文字列)が
+  依存する**全ての**アセット(パターン+色)を漏れなく一緒に前倒し
+  しないと、今回のように一部だけが古い/未初期化のVRAM内容のまま
+  表示されてしまう。MISSION1_MSG/MISSION2_MSGはフォント(6グリフ)+
+  digit(1グリフ)の2つの異なるアセット群から構成されている複合
+  メッセージだったため、片方(font)だけ移設して他方(digit)を
+  見落とすという典型的な抜け漏れを踏んだ。

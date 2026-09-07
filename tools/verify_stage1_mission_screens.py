@@ -167,6 +167,47 @@ check("boot: MISSION_FONT_PATTERNS (M,I,S,O,N,space) loaded byte-correct at "
 check("boot: group8 (codes64-71) color byte at VRAM 2008h patched to white/black (0F1h)",
       z.vram[0x2008] == 0xF1)
 
+# ---- 実機フィードバック対応("Mission 1の1のフォントがアに化けてた"): ----
+# ---- MISSION1_MSG/MISSION2_MSGの末尾1文字が再利用するDIGIT_BASE+1/+2 ----
+# ---- (digit"1"/"2")のビットマップ・色も、Mission1が表示するより前に ----
+# ---- 実際にVRAMへロード済みでなければならない                        ----
+DIGIT_PATTERNS_EXPECTED = {
+    0: [0x3C, 0x66, 0x6E, 0x76, 0x66, 0x66, 0x3C, 0x00],
+    1: [0x18, 0x38, 0x58, 0x18, 0x18, 0x18, 0x7E, 0x00],
+    2: [0x3C, 0x66, 0x06, 0x0C, 0x30, 0x60, 0x7E, 0x00],
+}
+digit_ok = True
+for n, bytes_ in DIGIT_PATTERNS_EXPECTED.items():
+    code = DIGIT_BASE + n
+    got = [z.vram[code * 8 + i] for i in range(8)]
+    if got != bytes_:
+        digit_ok = False
+check("boot: DIGIT_PATTERNS (digit 0/1/2, used by MISSION1_MSG/MISSION2_MSG's own last "
+      "character) loaded byte-correct at DIGIT_BASE(176)+N in the pattern generator table "
+      "- NOT left as stale/garbage VRAM from the previous stage (Title)",
+      digit_ok)
+check("boot: group22 (codes176-183, digits0-7) color byte at VRAM 2016h is white/black "
+      "(0F1h), matching COLORDATA's own eventual value for this group",
+      z.vram[0x2000 + 22] == 0xF1)
+
+# raw instruction trace: confirm DIGIT_PATTERNS is ALREADY loaded (not stale Title VRAM) by
+# the moment DRAW_MISSION_SCREEN itself starts running - catches a future reordering mistake
+# that would silently put DRAW_MISSION_SCREEN before the DIGIT_PATTERNS LDIRVM again.
+z = fresh()
+z.pc = sym["INIT"]
+for _ in range(500_000):
+    if z.pc == DRAW_MISSION_SCREEN_ADDR:
+        break
+    z.step()
+else:
+    raise RuntimeError("never reached DRAW_MISSION_SCREEN from INIT")
+digit1_code = DIGIT_BASE + 1
+digit1_at_draw = [z.vram[digit1_code * 8 + i] for i in range(8)]
+check("raw trace: digit '1' (DIGIT_BASE+1, the glyph MISSION1_MSG actually displays) is "
+      "already the real bitmap - not stale VRAM - by the instant DRAW_MISSION_SCREEN starts "
+      "executing",
+      digit1_at_draw == DIGIT_PATTERNS_EXPECTED[1])
+
 # ---- MISSION1_MSG / MISSION2_MSG content ----
 def read_msg(addr):
     return [mem0[addr + i] for i in range(9)]

@@ -845,6 +845,13 @@ INIT:
     ; 設定〜PSG R7ミキサー設定〜UNMUTE_BGMまでの一連)を開始する。
     LD HL,MISSION_FONT_PATTERNS : LD DE,MISSION_FONT_BASE*8 : LD BC,MISSION_FONT_PATTERNS_LEN : CALL LDIRVM
     LD HL,MISSION_FONT_COLOR : LD DE,2008h : LD BC,1 : CALL LDIRVM
+    ; MISSION1_MSG/MISSION2_MSGの末尾1文字が再利用するdigitグリフ
+    ; (DIGIT_BASE+1/+2)自体のビットマップ+色も、Mission1が実際に
+    ; 表示する前にここで読み込んでおく必要がある(前述の"1がアに
+    ; 化けた"実機フィードバック対応、詳細はDIGIT_COLOR_GROUP22の
+    ; コメント参照)。
+    LD HL,DIGIT_PATTERNS : LD DE,DIGIT_BASE*8 : LD BC,80 : CALL LDIRVM
+    LD HL,DIGIT_COLOR_GROUP22 : LD DE,2000h+22 : LD BC,1 : CALL LDIRVM
     LD HL,MISSION1_MSG
     CALL DRAW_MISSION_SCREEN
     DI    ; DRAW_MISSION_SCREEN's own internal EI (harmless - HTIMI_HOOK is
@@ -977,10 +984,9 @@ FILLBG_3:
     LD HL,NEWENEMY_PATTERN270_BL : LD DE,NEWENEMY_CODE270_BL*8 : LD BC,8 : CALL LDIRVM
     LD HL,NEWENEMY_PATTERN270_BR : LD DE,NEWENEMY_CODE270_BR*8 : LD BC,8 : CALL LDIRVM
 
-    ; --- digit glyphs (0-9) for the on-screen game-tick counter ---
-    LD HL,DIGIT_PATTERNS : LD DE,DIGIT_BASE*8 : LD BC,80 : CALL LDIRVM
-    ; (MISSION_FONT_PATTERNS/COLORの読み込みはここではなく、このINITの
-    ; 冒頭・CALL INIT32の直後、Mission1表示の直前へ移設済み - 上記参照)
+    ; (DIGIT_PATTERNS[digit glyphs 0-9]/MISSION_FONT_PATTERNS・COLORの
+    ; 読み込みはここではなく、このINITの冒頭・CALL INIT32の直後、
+    ; Mission1表示の直前へ移設済み - 上記参照)
 
     ; --- boss BG/sprite character patterns are NOT preloaded here ---
     ; --- anymore - the terrain scroller actually uses more of the ---
@@ -12015,6 +12021,20 @@ MISSION_FONT_PATTERNS_LEN EQU $ - MISSION_FONT_PATTERNS
 ; 用に予約されただけで実際のビットマップが一度も無かった色(0D3h)。
 MISSION_FONT_COLOR:
     DB 0F1h
+
+; (2026-09-07、実機フィードバック対応"Mission 1の1のフォントがアに
+; 化けてた"): MISSION1_MSG/MISSION2_MSGの末尾1文字はDIGIT_BASE+1/+2
+; (digit"1"/"2")を再利用する設計だが、そのビットマップ本体
+; (DIGIT_PATTERNS)・色(COLORDATAのgroup22、DIGIT_BASE=176は
+; codes176-183=group22に属する)は元々ステージ本編初期化の一部として
+; ロードされており、Round56でMission1表示をCALL INIT32直後へ移設した
+; 結果、Mission1がまだこのパターン・色を読み込んでいない段階で描画
+; されるようになっていた(絵柄は前ステージ[Title]の残留VRAMのまま、
+; 色も未確定)。DIGIT_PATTERNS自体はMission1表示直前へ一緒に移設した
+; 上で、この1バイトでgroup22の色(COLORDATAの値と同一の0F1h)も
+; Mission1表示前に先出しする。
+DIGIT_COLOR_GROUP22:
+    DB 0F1h    ; COLORDATAのgroup22(digits0-7、white/black)と同値
 
 ; "MISSION 1"/"MISSION 2" - M,I,S,S,I,O,N,space,digit(9byte、row12/col11
 ; center)。digitはDIGIT_BASE+1/+2(白/黒0F1hで既に着色済み、フォント色と
