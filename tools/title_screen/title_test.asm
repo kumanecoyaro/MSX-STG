@@ -255,40 +255,146 @@ BANKSWITCH_TRAMPOLINE_SRC:
     JP (HL)
 BANKSWITCH_TRAMPOLINE_LEN EQU $ - BANKSWITCH_TRAMPOLINE_SRC
 
-; (2026-09-07、"タイトル画面でボタン押下でサウンド追加") 短い確認ビープ
-; (channel B、単純な直線減衰、割り込み非依存のZ80クロック直接カウントに
-; よるディレイ - MISSION_DELAY_3SEC[src/CYBER SHMUP.asm]と同じ考え方)。
-; 12ステップ、各ステップの間に800回のDEカウントダウン(約20,800T-state)、
-; 合計約249,600T-state(3.579545MHzで約70ms)のウェイトで音量12から1まで
-; 直線的に下げてから明示的にミュート - ゲームの確認音として十分な短さで、
-; かつこのファイルの各種z80emu.pyベースの回帰テスト(WAIT_FOR_START→
-; ボタン押下のトランポリンをmax_instr内でシミュレートする箇所)を圧迫
-; しない命令数(合計約38,400ステップ)に収まる値を選んだ。R7は一切
-; 変更しない(チャンネルBは元々INIT_BGMが常時トーン有効のまま用意している
-; 遊休チャンネル)。Trashes: AF,BC,DE.
+; (2026-09-07、Round69 follow-up、"タイトル音はそれで良い ただし
+; オクターブ下げてデューティ比50%で") ユーザーがWeb Audio試聴ツール
+; 「Warning Beep Bench」で選定したv3候補("Rising alert chirp"→
+; "Descending buzzer"の2候補をそのまま繋げてオクターブ下げ、2回再生)を
+; そのまま実機PSGへ実装。旧版(round63、単純な単一トーン12ステップ
+; 直線減衰)を全面置き換え。
+;
+; データ駆動(CONFIRM_STEPS、5byte/行×53行): 各行=(周期fine,周期coarse,
+; 音量,半区間ウェイトlo,半区間ウェイトhi)。内訳: チャープ上昇スイープ
+; 10行(周期520→180、Web版sweep(260,90,...)の全周期を2倍=オクターブ
+; 下げ)+ホールド1行(周期180)+チャープfadeout14行(周期180、音量14→1)
+; +ブザー下降スイープ14行(周期140→440、Web版sweep(70,220,...)の2倍)+
+; ブザーfadeout14行(周期440、音量14→1)。ウェイト定数は既存の
+; PCB_DELAY方式(1ループ=DEC DE+LD A,D+OR E+JR NZ=26T-state、
+; MISSION_DELAY_3SEC等と同じ「Z80クロック直接カウント」の考え方)を
+; 踏襲、Web版の各ステップのms値をN=ms*3579.545/26で換算。
+;
+; デューティ比50%の実装: 「そのままの塊で音量を書いて待つ」単一区間を
+; 半分ずつの2区間に分割し、前半だけ実音量を書き、後半は明示的に音量0を
+; 書く(PCB_ROW_ON_WAIT/PCB_ROW_OFF_WAIT) - 1行あたりの実質的な発音時間が
+; 常にちょうど半分になる、Round43のBGMソフトウェアデューティ(位相
+; カウンタ+ANDマスク)と同じ「音の長さの半分だけ鳴らす」考え方を、
+; tick駆動ではなくこの短いSFX自身の同期busy-waitループの中で再現した
+; もの。R2/R3(チャンネルBトーン周期)・R9(チャンネルB音量)のみを操作、
+; R7は一切変更しない(チャンネルBは元々INIT_BGMが常時トーン有効のまま
+; 用意している遊休チャンネル)。53行×2回(短い無音ギャップを挟む)で
+; 全体の合成音を構成する。Trashes: AF,BC,DE,HL。
+CONFIRM_STEP_COUNT EQU 53
+CONFIRM_GAP_DELAY  EQU 15150
+
 PLAY_CONFIRM_BEEP:
-    DI
-    LD A,2 : OUT (PSG_ADDR),A : LD A,150 : OUT (PSG_DATA),A  ; ch B tone period fine (~1491Hz)
-    LD A,3 : OUT (PSG_ADDR),A : XOR A : OUT (PSG_DATA),A     ; ch B tone period coarse = 0
-    EI
-    LD B,12
-PCB_STEP:
-    DI
-    LD A,9 : OUT (PSG_ADDR),A
-    LD A,B : OUT (PSG_DATA),A
-    EI
-    PUSH BC
-    LD DE,800
-PCB_DELAY:
+    CALL PCB_PLAY_TABLE
+    LD DE,CONFIRM_GAP_DELAY
+PCB_GAP_WAIT:
     DEC DE
     LD A,D : OR E
-    JR NZ,PCB_DELAY
-    POP BC
-    DJNZ PCB_STEP
-    DI
-    LD A,9 : OUT (PSG_ADDR),A : XOR A : OUT (PSG_DATA),A
-    EI
+    JR NZ,PCB_GAP_WAIT
+    CALL PCB_PLAY_TABLE
     RET
+
+PCB_PLAY_TABLE:
+    LD HL,CONFIRM_STEPS
+    LD B,CONFIRM_STEP_COUNT
+PCB_ROW_LOOP:
+    PUSH BC
+    CALL PCB_PLAY_ONE_ROW
+    POP BC
+    DJNZ PCB_ROW_LOOP
+    RET
+
+; HLが指す5byte行を1行分再生し、HLを+5だけ進めて戻る。
+; 行フォーマット: (周期fine,周期coarse,音量,半区間ウェイトlo,ウェイトhi)
+PCB_PLAY_ONE_ROW:
+    DI
+    LD A,2 : OUT (PSG_ADDR),A
+    LD A,(HL) : OUT (PSG_DATA),A   ; ch B tone period fine
+    INC HL
+    LD A,3 : OUT (PSG_ADDR),A
+    LD A,(HL) : OUT (PSG_DATA),A   ; ch B tone period coarse
+    INC HL
+    LD A,9 : OUT (PSG_ADDR),A
+    LD A,(HL) : OUT (PSG_DATA),A   ; ch B volume (duty ON half)
+    INC HL
+    EI
+    LD E,(HL) : INC HL
+    LD D,(HL) : INC HL
+    PUSH DE
+PCB_ROW_ON_WAIT:
+    DEC DE
+    LD A,D : OR E
+    JR NZ,PCB_ROW_ON_WAIT
+    DI
+    LD A,9 : OUT (PSG_ADDR),A : XOR A : OUT (PSG_DATA),A  ; duty OFF half (silence)
+    EI
+    POP DE
+PCB_ROW_OFF_WAIT:
+    DEC DE
+    LD A,D : OR E
+    JR NZ,PCB_ROW_OFF_WAIT
+    RET
+
+; --- チャープ上昇スイープ(周期520->180、10行、オクターブ下げ済み) ---
+CONFIRM_STEPS:
+    DB   8,2,14,108,2
+    DB 226,1,14,108,2
+    DB 188,1,14,108,2
+    DB 151,1,14,108,2
+    DB 113,1,14,108,2
+    DB  75,1,14,108,2
+    DB  37,1,14,108,2
+    DB   0,1,14,108,2
+    DB 218,0,14,108,2
+    DB 180,0,14,108,2
+; --- ホールド(周期180、1行) ---
+    DB 180,0,14, 34,16
+; --- チャープfadeout(周期180、音量14->1、14行) ---
+    DB 180,0,14, 57,3
+    DB 180,0,13, 57,3
+    DB 180,0,12, 57,3
+    DB 180,0,11, 57,3
+    DB 180,0,10, 57,3
+    DB 180,0, 9, 57,3
+    DB 180,0, 8, 57,3
+    DB 180,0, 7, 57,3
+    DB 180,0, 6, 57,3
+    DB 180,0, 5, 57,3
+    DB 180,0, 4, 57,3
+    DB 180,0, 3, 57,3
+    DB 180,0, 2, 57,3
+    DB 180,0, 1, 57,3
+; --- ブザー下降スイープ(周期140->440、14行、オクターブ下げ済み) ---
+    DB 140,0,14,217,3
+    DB 163,0,14,217,3
+    DB 186,0,14,217,3
+    DB 209,0,14,217,3
+    DB 232,0,14,217,3
+    DB 255,0,14,217,3
+    DB  22,1,14,217,3
+    DB  46,1,14,217,3
+    DB  69,1,14,217,3
+    DB  92,1,14,217,3
+    DB 115,1,14,217,3
+    DB 138,1,14,217,3
+    DB 161,1,14,217,3
+    DB 184,1,14,217,3
+; --- ブザーfadeout(周期440、音量14->1、14行) ---
+    DB 184,1,14, 57,3
+    DB 184,1,13, 57,3
+    DB 184,1,12, 57,3
+    DB 184,1,11, 57,3
+    DB 184,1,10, 57,3
+    DB 184,1, 9, 57,3
+    DB 184,1, 8, 57,3
+    DB 184,1, 7, 57,3
+    DB 184,1, 6, 57,3
+    DB 184,1, 5, 57,3
+    DB 184,1, 4, 57,3
+    DB 184,1, 3, 57,3
+    DB 184,1, 2, 57,3
+    DB 184,1, 1, 57,3
 
 ; ---------- title background decompressor (round43) ----------
 ; 自前の対称RLE(制御バイトbit7=0:リテラル/1:反復、下位7bitは長さ-1、

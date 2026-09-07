@@ -462,7 +462,12 @@ run_to_wait(cpu)
 switch_log_at_wait = list(mem.switch_log)  # round40: exclude INIT_BGM's own 2 switches (see above)
 cpu.sim_trig_a = True
 steps = 0
-while cpu.pc != 0x4010 and steps < 100000:
+# Round69 follow-up: PLAY_CONFIRM_BEEP now plays the much longer
+# "Rising alert chirp"->"Descending buzzer" v3 sequence (53 rows x2,
+# ~800K Z80 instruction-steps) before the trampoline hops even begin -
+# the old 100,000-step budget (sized for round63's short 12-step beep)
+# is no longer enough to reach the trampoline at all.
+while cpu.pc != 0x4010 and steps < 2_000_000:
     cpu.step()
     steps += 1
 check("button press trampolines to Stage1's own INIT address (4010h)", cpu.pc == 0x4010)
@@ -483,40 +488,77 @@ check("trampoline wrote window B (7000h)=3 then window A (6000h)=2 - same 2-hop 
       mem.switch_log[len(switch_log_at_wait):] == [("B", 3), ("A", 2)])
 
 
-# ---- 実機フィードバック対応("タイトル画面でボタン押下でサウンド
-# 追加"): PLAY_CONFIRM_BEEPを直接呼び、チャンネルBのトーン周期(R2/R3)・
-# 音量(R9)の12->1直線減衰+明示ミュートの実際の書き込み列を検証する。
-# call_routine(単発呼び出しで戻り値だけ見る既存ヘルパー)は内部で12回
-# ループする本ルーチンの中間状態を捉えられないため、ここだけは自前で
-# 1命令ずつステップしながらR9への書き込みが変化するたびに記録する。
+# ---- Round69 follow-up("タイトル音はそれで良い ただしオクターブ下げて
+# デューティ比50%で"): PLAY_CONFIRM_BEEPが、ユーザーが「Warning Beep
+# Bench」で選定したv3候補("Rising alert chirp"→"Descending buzzer"を
+# そのまま繋げオクターブ下げ、2回再生)を実際にPSGへ書き出しているかを、
+# title_test.asm自身のCONFIRM_STEPSテーブルと独立に再導出したPython
+# 参照実装との完全一致で検証する。デューティ比50%(各行の実質発音時間を
+# 半分にし残り半分は明示的にミュートする設計)により、1行あたり
+# (R2書き込み,R3書き込み,R9=音量,R9=0)の4回書き込みが必ず起こる -
+# これをpsg_regsへの全書き込みを漏れなく記録するロギング用dictで捕捉し、
+# 53行×2回(計424回)の書き込み列がPython側の計算結果と1バイトも
+# 違わず一致することを検証する。
+def sim_sweep(a, b, n):
+    return [round(a + (b - a) * i / (n - 1)) for i in range(n)]
+
+_HALF = {"RISE": (108, 2), "HOLD": (34, 16), "FADE": (57, 3), "BUZZ": (217, 3)}
+_rise = sim_sweep(520, 180, 10)
+_buzz = sim_sweep(140, 440, 14)
+_rows = []
+for p in _rise:
+    _rows.append((p, 14, "RISE"))
+_rows.append((180, 14, "HOLD"))
+for v in range(14, 0, -1):
+    _rows.append((180, v, "FADE"))
+for p in _buzz:
+    _rows.append((p, 14, "BUZZ"))
+for v in range(14, 0, -1):
+    _rows.append((440, v, "FADE"))
+assert len(_rows) == 53
+
+expected_writes_one_pass = []
+for p, v, _tag in _rows:
+    expected_writes_one_pass.append((2, p & 0xFF))
+    expected_writes_one_pass.append((3, p >> 8))
+    expected_writes_one_pass.append((9, v))
+    expected_writes_one_pass.append((9, 0))
+expected_writes = expected_writes_one_pass * 2  # played twice
+
+class LoggingPsgRegs(dict):
+    def __init__(self, initial, log):
+        dict.__init__(self, initial)
+        self._log = log
+    def __setitem__(self, k, v):
+        self._log.append((k, v))
+        dict.__setitem__(self, k, v)
+
 cpu5, mem5 = fresh_cpu()
 run_to_wait(cpu5)
 cpu5.sp = (cpu5.sp - 2) & 0xFFFF
 cpu5.mem[cpu5.sp] = 0
 cpu5.mem[cpu5.sp + 1] = 0
 cpu5.pc = sym["PLAY_CONFIRM_BEEP"]
-vol_seq = []
-last_vol = cpu5.psg_regs.get(9)  # whatever steady-state value precedes the call - not itself a "change"
+write_log = []
+cpu5.psg_regs = LoggingPsgRegs(dict(cpu5.psg_regs), write_log)
 s = 0
-while cpu5.pc != 0x0000 and s < 300000:
+while cpu5.pc != 0x0000 and s < 2_000_000:
     cpu5.step()
     s += 1
-    v = cpu5.psg_regs.get(9)
-    if v != last_vol:
-        vol_seq.append(v)
-        last_vol = v
-assert s < 300000, "PLAY_CONFIRM_BEEP never returned"
+assert s < 2_000_000, "PLAY_CONFIRM_BEEP never returned"
 
-check("PLAY_CONFIRM_BEEP: channel B tone period set to 150/0 (fine/coarse, ~1491Hz)",
-      (cpu5.psg_regs.get(2), cpu5.psg_regs.get(3)) == (150, 0))
-check("PLAY_CONFIRM_BEEP: channel B volume (R9) steps through a linear decay 12->1 then an "
-      "explicit final mute write (0) - not just left to whatever the last nonzero step wrote",
-      vol_seq == list(range(12, 0, -1)) + [0])
+check(f"PLAY_CONFIRM_BEEP: emits exactly {len(expected_writes)} PSG register writes "
+      "(53 rows x [R2,R3,R9=vol,R9=0] x 2 repeats)",
+      len(write_log) == len(expected_writes))
+check("PLAY_CONFIRM_BEEP: the full R2/R3/R9 write sequence byte-for-byte matches the "
+      "'Rising alert chirp'->'Descending buzzer' v3 design (octave-down periods, 53-row "
+      "table, played twice) re-derived independently in Python",
+      write_log == expected_writes)
 check("PLAY_CONFIRM_BEEP: leaves the beep muted (R9=0) on return",
       cpu5.psg_regs.get(9) == 0)
 check("PLAY_CONFIRM_BEEP never touches R7 (mixer) - channel B was already tone-enabled by "
       "INIT_BGM's own one-time 0B1h write, reused as-is rather than re-derived here",
-      cpu5.psg_regs.get(7) == 0xB1)
+      cpu5.psg_regs.get(7) == 0xB1 and all(k != 7 for k, _v in write_log))
 
 
 print()

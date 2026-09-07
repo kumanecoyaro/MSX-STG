@@ -272,7 +272,18 @@ PAT_E1U5      EQU 80         ; unit5: patterns80-83 (32 bytes at SPRPAT+640)
 SPR_GRAY      EQU 0Eh
 
 ; --- destroyed-quadrant explosion (background-character animation) ---
-; 3 slots (round-robin), 8 bytes each: ACTIVE,PHASE,TIMER,ROW,COL,SAVED,CODE1,CODE2
+; 3 slots (round-robin), 8 bytes each: ACTIVE,FRAME,TIMER,ROW,COL,
+; SAVED_C,SAVED_Cm1,SAVED_Cm2 (round69 follow-up: FRAME replaces the
+; old 2-phase PHASE field with a 1/2/3 frame counter; SAVED_Cm1/Cm2
+; repurpose what used to be the old per-slot CODE1/CODE2 color-select
+; bytes - no longer needed now that the new animation always uses one
+; fixed color group [see EXP_CODE_THIN/THICK below] - to instead hold
+; the pre-explosion background of the 2 nearest columns the wider
+; frame2/frame3 footprints touch. The 4th column [C-3] doesn't fit in
+; this 8-byte stride without shifting ANIM_RR/ANIM_TMP_*/SND_TIMER/... -
+; a cascade of otherwise-unrelated fixed RAM addresses this project has
+; been burned by before - so it lives in its own small EXPLOSION_SAVED_
+; CM3 array instead (see its own EQU comment).
 ANIM_BASE       EQU 0E409h
 ANIM_RR         EQU 0E421h
 ANIM_TMP_ROW    EQU 0E422h
@@ -280,14 +291,32 @@ ANIM_TMP_COL    EQU 0E423h
 ANIM_TMP_VAL    EQU 0E424h
 ANIM_ADDR_TMP   EQU 0E425h   ; 2 bytes
 ANIM_FRAME_LEN  EQU 8
-ANIM1_BLUE  EQU 88
-ANIM1_WHITE EQU 96
-ANIM1_GREEN EQU 104
-ANIM1_BROWN EQU 112
-ANIM2_BLUE  EQU 120
-ANIM2_WHITE EQU 128
-ANIM2_GREEN EQU 136
-ANIM2_BROWN EQU 144
+; round69 follow-up ("爆発処理の変更...元の爆発パターンは削除して空きに"):
+; the old 8-color-class ANIM1_x/ANIM2_x flicker (2 phases x 4 row-based
+; colors) is gone. The new 3-frame/multi-cell animation uses exactly 2
+; distinct 8x8 tiles, ALWAYS in the same fixed color group - reusing
+; the OLD explosion's own "anim2-blue" group (group15, codes120-127,
+; COLORDATA byte 084h = fg8/bg4, decoded straight from COLORDATA's own
+; comment: "group15=anim2-blue(red/blue)") completely unchanged, per
+; the user's own confirmation this group should be directly reusable.
+; Ground-row kills intentionally get the exact same blue-background
+; tiles as sky kills now (no more per-row white/green/brown branching) -
+; same simplification this file's own player-shot BG glyph already
+; makes ("shot character patterns...blue only").
+EXP_CODE_THIN  EQU 120   ; 2-row bar (frame1's only tile; frame2/3's side tiles)
+EXP_CODE_THICK EQU 121   ; 4-row bar (frame2's own center tile only)
+; 4th saved-background byte per anim slot (background originally at
+; column C-3, only ever touched by frame3) - kept in its own small
+; array rather than extending ANIM_BASE's 8-byte stride, since that
+; would force ANIM_RR/ANIM_TMP_*/SND_TIMER/ENEMY_MODE/... (all
+; contiguous fixed literal addresses laid out by hand, not computed
+; relative to each other) to all shift too - the exact kind of RAM-
+; collision cascade this project has hit (and documented at length)
+; multiple times before. This tail-of-RAM region (right after
+; PLAYER_DEATH_FALL_ACT, ~330 bytes clear of STACKTOP) is the same
+; pocket several earlier rounds already used for exactly this kind of
+; small standalone addition.
+EXPLOSION_SAVED_CM3 EQU 0F237h   ; 3 bytes, one per anim slot
 
 ; --- PSG (noise channel) shot/destroy sound effects ---
 PSG_ADDR EQU 0A0h
@@ -1015,8 +1044,10 @@ FILLBG_3:
     ; --- shot character patterns (8 vertical phases, blue only), VRAM 0000h+56*8 ---
     LD HL,BULLET_PATTERNS : LD DE,1C0h : LD BC,64 : CALL LDIRVM  ; 1C0h = BULLET_PAT_BLUE(56)*8
 
-    ; --- destroy-animation character patterns, VRAM 2C0h = ANIM1_BLUE(88)*8 ---
-    LD HL,ANIM_PATTERNS : LD DE,2C0h : LD BC,512 : CALL LDIRVM
+    ; --- destroy-animation character patterns (round69 follow-up, 2 ---
+    ; --- tiles only - see EXP_CODE_THIN/THICK's own comment), VRAM  ---
+    ; --- 3C0h = EXP_CODE_THIN(120)*8 ---
+    LD HL,EXPLOSION_TILES : LD DE,EXP_CODE_THIN*8 : LD BC,16 : CALL LDIRVM
 
     ; --- temp assembly-sprite patterns, VRAM SPRPAT+C0h = PAT_TEMP_TOP(24)*8 ---
     LD HL,TEMP_SPRITE_PATTERNS : LD DE,SPRPAT+0C0h : LD BC,64 : CALL LDIRVM
@@ -1300,6 +1331,7 @@ INIT_SPRATR_CLR:
     LD (ENEMY_MODE),A
     LD (ANIM_RR),A
     LD (ANIM_BASE+0),A : LD (ANIM_BASE+8),A : LD (ANIM_BASE+16),A
+    LD (EXPLOSION_SAVED_CM3),A : LD (EXPLOSION_SAVED_CM3+1),A : LD (EXPLOSION_SAVED_CM3+2),A
     LD (SND_TIMER),A
     LD (SND_TONE_TIMER),A
     LD (SND_TONE_IS_SE),A
@@ -2261,75 +2293,15 @@ FIRE_DONE:
     CALL ENEMY_COMPLEX_STEP_B
 ENEMY_SECTION_DONE:
 
-    ; --- destroy-animation (3 slots) and sound fade, once per frame ---
-    LD A,(ANIM_BASE+0)
-    OR A
-    JP Z,ANIM0_DONE
-    LD A,(ANIM_BASE+2)
-    DEC A
-    LD (ANIM_BASE+2),A
-    JP NZ,ANIM0_DONE
-    LD A,(ANIM_BASE+1)
-    CP 1
-    JR NZ,ANIM0_FINISH
-    LD A,2 : LD (ANIM_BASE+1),A
-    LD A,ANIM_FRAME_LEN : LD (ANIM_BASE+2),A
-    LD A,(ANIM_BASE+7) : LD (ANIM_TMP_VAL),A
-    JR ANIM0_WRITE
-ANIM0_FINISH:
-    LD A,(ANIM_BASE+5) : LD (ANIM_TMP_VAL),A
-    XOR A : LD (ANIM_BASE+0),A
-ANIM0_WRITE:
-    LD A,(ANIM_BASE+3) : LD (ANIM_TMP_ROW),A
-    LD A,(ANIM_BASE+4) : LD (ANIM_TMP_COL),A
-    CALL WRITE_ANIM_CELL
-ANIM0_DONE:
-
-    LD A,(ANIM_BASE+8)
-    OR A
-    JP Z,ANIM1_DONE
-    LD A,(ANIM_BASE+10)
-    DEC A
-    LD (ANIM_BASE+10),A
-    JP NZ,ANIM1_DONE
-    LD A,(ANIM_BASE+9)
-    CP 1
-    JR NZ,ANIM1_FINISH
-    LD A,2 : LD (ANIM_BASE+9),A
-    LD A,ANIM_FRAME_LEN : LD (ANIM_BASE+10),A
-    LD A,(ANIM_BASE+15) : LD (ANIM_TMP_VAL),A
-    JR ANIM1_WRITE
-ANIM1_FINISH:
-    LD A,(ANIM_BASE+13) : LD (ANIM_TMP_VAL),A
-    XOR A : LD (ANIM_BASE+8),A
-ANIM1_WRITE:
-    LD A,(ANIM_BASE+11) : LD (ANIM_TMP_ROW),A
-    LD A,(ANIM_BASE+12) : LD (ANIM_TMP_COL),A
-    CALL WRITE_ANIM_CELL
-ANIM1_DONE:
-
-    LD A,(ANIM_BASE+16)
-    OR A
-    JP Z,ANIM2_DONE
-    LD A,(ANIM_BASE+18)
-    DEC A
-    LD (ANIM_BASE+18),A
-    JP NZ,ANIM2_DONE
-    LD A,(ANIM_BASE+17)
-    CP 1
-    JR NZ,ANIM2_FINISH
-    LD A,2 : LD (ANIM_BASE+17),A
-    LD A,ANIM_FRAME_LEN : LD (ANIM_BASE+18),A
-    LD A,(ANIM_BASE+23) : LD (ANIM_TMP_VAL),A
-    JR ANIM2_WRITE
-ANIM2_FINISH:
-    LD A,(ANIM_BASE+21) : LD (ANIM_TMP_VAL),A
-    XOR A : LD (ANIM_BASE+16),A
-ANIM2_WRITE:
-    LD A,(ANIM_BASE+19) : LD (ANIM_TMP_ROW),A
-    LD A,(ANIM_BASE+20) : LD (ANIM_TMP_COL),A
-    CALL WRITE_ANIM_CELL
-ANIM2_DONE:
+    ; --- destroy-animation (3 slots), once per frame - see             ---
+    ; --- UPDATE_ONE_EXPLOSION's own comment for the 3-frame/multi-cell ---
+    ; --- design (round69 follow-up, ExpAnim_24x24.json). B carries the ---
+    ; --- slot index (0-2) so the routine can address this slot's own  ---
+    ; --- 4th saved-background byte in the separate EXPLOSION_SAVED_   ---
+    ; --- CM3 array.                                                   ---
+    LD IX,ANIM_BASE    : LD B,0 : CALL UPDATE_ONE_EXPLOSION
+    LD IX,ANIM_BASE+8  : LD B,1 : CALL UPDATE_ONE_EXPLOSION
+    LD IX,ANIM_BASE+16 : LD B,2 : CALL UPDATE_ONE_EXPLOSION
 
     ; "これは3音使って良い" - ステージクリアジングル再生中(STAGE_CLEAR_
     ; ACT==1)はchAをBGMT_UPDATE_SC_A(BGM_TICK内)が専有するため、通常の
@@ -3266,6 +3238,65 @@ CBF_MISS_B:
 ; among 3), snapshots what's currently at that nametable cell (so it
 ; can be restored later), resolves the yellow/red x row-color codes,
 ; shows frame 1, and plays the destroy sound.
+; --- round69 follow-up: sets ANIM_TMP_ROW/ANIM_TMP_COL for this slot's ---
+; --- row (IX+3) and column (IX+4) minus a fixed compile-time offset   ---
+; --- (0/1/2/3, one entry point each), clamped at 0 rather than        ---
+; --- wrapping - the only 4 offsets the 3-frame animation ever needs   ---
+; --- (frame1=C only, frame2=C-2..C, frame3=C-3..C-1). Clobbers A.     ---
+EXP_POS0:
+    LD A,(IX+3) : LD (ANIM_TMP_ROW),A
+    LD A,(IX+4) : LD (ANIM_TMP_COL),A
+    RET
+EXP_POS1:
+    LD A,(IX+3) : LD (ANIM_TMP_ROW),A
+    LD A,(IX+4) : OR A : JR Z,EP1_Z : DEC A
+EP1_Z:
+    LD (ANIM_TMP_COL),A
+    RET
+EXP_POS2:
+    LD A,(IX+3) : LD (ANIM_TMP_ROW),A
+    LD A,(IX+4) : CP 2 : JR NC,EP2_S : XOR A : JR EP2_D
+EP2_S:
+    SUB 2
+EP2_D:
+    LD (ANIM_TMP_COL),A
+    RET
+EXP_POS3:
+    LD A,(IX+3) : LD (ANIM_TMP_ROW),A
+    LD A,(IX+4) : CP 3 : JR NC,EP3_S : XOR A : JR EP3_D
+EP3_S:
+    SUB 3
+EP3_D:
+    LD (ANIM_TMP_COL),A
+    RET
+
+; Returns in A the background that should show at (ANIM_TMP_ROW,
+; ANIM_TMP_COL) right now - BLANKCODE if above the 4-row ground
+; scroller, else the NAMEBUF mirror (same rule WRITE_ANIM_CELL itself
+; uses to decide whether a cell needs its NAMEBUF mirror updated too).
+; Clobbers H,L,DE (not A - the return value).
+EXP_READ_BG:
+    LD A,(ANIM_TMP_ROW) : CP GROUND_ROW0
+    JR C,ERB_SKY
+    SUB GROUND_ROW0
+    ADD A,A : ADD A,A : ADD A,A : ADD A,A : ADD A,A
+    LD L,A : LD H,0
+    LD DE,NAMEBUF
+    ADD HL,DE
+    LD A,(ANIM_TMP_COL) : LD E,A : LD D,0 : ADD HL,DE
+    LD A,(HL)
+    RET
+ERB_SKY:
+    LD A,BLANKCODE
+    RET
+
+; Input: D,E = destroyed quadrant's X,Y (pixel). Picks the next
+; explosion-animation slot (round robin among 3, B=its index 0-2),
+; snapshots the background at all 4 columns [C..C-3] the animation
+; will ever touch (frame1 only ever draws column C; frame2 widens to
+; C-2..C; frame3 shifts to C-3..C-1 - see UPDATE_ONE_EXPLOSION), shows
+; frame1, and plays the destroy sound. Ground-row kills get the exact
+; same tiles/color as sky kills now (see EXP_CODE_THIN's own comment).
 TRIGGER_EXPLOSION:
     LD A,(ANIM_BASE+0)
     OR A
@@ -3283,13 +3314,13 @@ TRIGGER_EXPLOSION:
     JR Z,TE_PICK1
     JR TE_PICK2
 TE_PICK0:
-    LD IX,ANIM_BASE
+    LD IX,ANIM_BASE : LD B,0
     JR TE_ADVANCE_RR
 TE_PICK1:
-    LD IX,ANIM_BASE+8
+    LD IX,ANIM_BASE+8 : LD B,1
     JR TE_ADVANCE_RR
 TE_PICK2:
-    LD IX,ANIM_BASE+16
+    LD IX,ANIM_BASE+16 : LD B,2
 TE_ADVANCE_RR:
     LD A,(ANIM_RR)
     INC A
@@ -3299,76 +3330,111 @@ TE_ADVANCE_RR:
 TE_RR_OK:
     LD (ANIM_RR),A
 
-    ; if the chosen slot was still mid-animation, restore its old
-    ; cell now (using its still-intact old ROW/COL/SAVED) before we
-    ; overwrite it below - otherwise that cell would be left showing
-    ; a stale anim frame forever.
+    ; if the chosen slot was still mid-animation, restore ALL 4 of its
+    ; old columns now (using its still-intact old ROW/COL/SAVED*
+    ; fields) before we overwrite it below - simpler than figuring out
+    ; exactly which columns its current frame still has drawn, and
+    ; just as correct (a column already showing its own background
+    ; gets a harmless no-op rewrite).
     LD A,(IX+0)
     OR A
     JR Z,TE_NORESTORE
     PUSH DE
-    LD A,(IX+3) : LD (ANIM_TMP_ROW),A
-    LD A,(IX+4) : LD (ANIM_TMP_COL),A
-    LD A,(IX+5) : LD (ANIM_TMP_VAL),A
+    CALL EXP_POS0 : LD A,(IX+5) : LD (ANIM_TMP_VAL),A : CALL WRITE_ANIM_CELL
+    CALL EXP_POS1 : LD A,(IX+6) : LD (ANIM_TMP_VAL),A : CALL WRITE_ANIM_CELL
+    CALL EXP_POS2 : LD A,(IX+7) : LD (ANIM_TMP_VAL),A : CALL WRITE_ANIM_CELL
+    CALL EXP_POS3
+    LD A,B : LD E,A : LD D,0
+    LD HL,EXPLOSION_SAVED_CM3
+    ADD HL,DE
+    LD A,(HL) : LD (ANIM_TMP_VAL),A
     CALL WRITE_ANIM_CELL
     POP DE
 TE_NORESTORE:
 
     LD A,E : SRL A : SRL A : SRL A : LD (IX+3),A   ; ROW
-    LD A,D : SRL A : SRL A : SRL A : LD (IX+4),A   ; COL
+    LD A,D : SRL A : SRL A : SRL A : LD (IX+4),A   ; COL (=C)
 
-    ; SAVED = current value at that cell (BLANKCODE if above the
-    ; 4-row ground scroller, else the NAMEBUF mirror)
-    LD A,(IX+3) : CP GROUND_ROW0
-    JR C,TE_SAVE_SKY
-    SUB GROUND_ROW0
-    ADD A,A : ADD A,A : ADD A,A : ADD A,A : ADD A,A
-    LD L,A : LD H,0
-    LD DE,NAMEBUF
+    CALL EXP_POS0 : CALL EXP_READ_BG : LD (IX+5),A
+    CALL EXP_POS1 : CALL EXP_READ_BG : LD (IX+6),A
+    CALL EXP_POS2 : CALL EXP_READ_BG : LD (IX+7),A
+    CALL EXP_POS3 : CALL EXP_READ_BG
+    PUSH AF
+    LD A,B : LD E,A : LD D,0
+    LD HL,EXPLOSION_SAVED_CM3
     ADD HL,DE
-    LD A,(IX+4) : LD E,A : LD D,0 : ADD HL,DE
-    LD A,(HL)
-    JR TE_SAVE_GOT
-TE_SAVE_SKY:
-    LD A,BLANKCODE
-TE_SAVE_GOT:
-    LD (IX+5),A
+    POP AF
+    LD (HL),A
 
-    ; resolve CODE1/CODE2 from the row's color class (same split as shots)
-    LD A,(IX+3) : CP GROUND_ROW0
-    JR C,TE_BLUE
-    JR Z,TE_WHITE
-    CP GROUND_ROW0+3
-    JR Z,TE_BROWN
-    JR C,TE_GREEN
-    JR TE_BLUE
-TE_GREEN:
-    LD A,ANIM1_GREEN : LD (IX+6),A
-    LD A,ANIM2_GREEN : LD (IX+7),A
-    JR TE_GOTCOLOR
-TE_WHITE:
-    LD A,ANIM1_WHITE : LD (IX+6),A
-    LD A,ANIM2_WHITE : LD (IX+7),A
-    JR TE_GOTCOLOR
-TE_BROWN:
-    LD A,ANIM1_BROWN : LD (IX+6),A
-    LD A,ANIM2_BROWN : LD (IX+7),A
-    JR TE_GOTCOLOR
-TE_BLUE:
-    LD A,ANIM1_BLUE : LD (IX+6),A
-    LD A,ANIM2_BLUE : LD (IX+7),A
-TE_GOTCOLOR:
-    LD A,1 : LD (IX+1),A                ; PHASE=1
-    LD A,ANIM_FRAME_LEN : LD (IX+2),A    ; TIMER (halved back down from ANIM_FRAME_LEN*2)
+    LD A,1 : LD (IX+1),A                ; FRAME=1
+    LD A,ANIM_FRAME_LEN : LD (IX+2),A   ; TIMER
     LD A,1 : LD (IX+0),A                ; ACTIVE=1
 
-    LD A,(IX+3) : LD (ANIM_TMP_ROW),A
-    LD A,(IX+4) : LD (ANIM_TMP_COL),A
-    LD A,(IX+6) : LD (ANIM_TMP_VAL),A
+    CALL EXP_POS0
+    LD A,EXP_CODE_THIN : LD (ANIM_TMP_VAL),A
     CALL WRITE_ANIM_CELL
 
     CALL SOUND_DESTROY
     RET
+
+; Advances one frame of the explosion animation at IX (slot base),
+; using B=this slot's index (0-2, for addressing EXPLOSION_SAVED_CM3).
+; Frame layout (see ExpAnim_24x24.json / the GIF preview shown before
+; implementing): frame1 draws EXP_CODE_THIN at column C only; frame2
+; widens to 3 columns (C-2,C-1,C) = THIN,THICK,THIN; frame3 shifts to
+; (C-3,C-2,C-1) but only draws THIN at the 2 outer ones, leaving its
+; own middle column blank (restored to background) - frames are shown
+; one at a time, never composited. Called once per frame from MAINLOOP
+; for each of the 3 slots; no-ops immediately if this slot is inactive.
+UPDATE_ONE_EXPLOSION:
+    LD A,(IX+0)
+    OR A
+    RET Z
+    LD A,(IX+2)
+    DEC A
+    LD (IX+2),A
+    RET NZ
+    LD A,(IX+1)
+    CP 1
+    JR Z,UOE_ENTER_FRAME2
+    CP 2
+    JR Z,UOE_ENTER_FRAME3
+    ; FRAME==3 just finished -> restore all 4 columns, deactivate
+    CALL UOE_RESTORE_ALL
+    XOR A : LD (IX+0),A
+    RET
+UOE_ENTER_FRAME2:
+    LD A,2 : LD (IX+1),A
+    LD A,ANIM_FRAME_LEN : LD (IX+2),A
+    CALL EXP_POS2 : LD A,EXP_CODE_THIN  : LD (ANIM_TMP_VAL),A : CALL WRITE_ANIM_CELL
+    CALL EXP_POS1 : LD A,EXP_CODE_THICK : LD (ANIM_TMP_VAL),A : CALL WRITE_ANIM_CELL
+    CALL EXP_POS0 : LD A,EXP_CODE_THIN  : LD (ANIM_TMP_VAL),A : CALL WRITE_ANIM_CELL
+    RET
+UOE_ENTER_FRAME3:
+    LD A,3 : LD (IX+1),A
+    LD A,ANIM_FRAME_LEN : LD (IX+2),A
+    ; column C (offset0) was drawn by frame2 but frame3 doesn't touch it
+    CALL EXP_POS0 : LD A,(IX+5) : LD (ANIM_TMP_VAL),A : CALL WRITE_ANIM_CELL
+    ; column C-2 (offset2) was frame2's own THICK center - frame3's own
+    ; middle column stays blank, so restore it
+    CALL EXP_POS2 : LD A,(IX+7) : LD (ANIM_TMP_VAL),A : CALL WRITE_ANIM_CELL
+    ; frame3's own 2 outer tiles
+    CALL EXP_POS3 : LD A,EXP_CODE_THIN : LD (ANIM_TMP_VAL),A : CALL WRITE_ANIM_CELL
+    CALL EXP_POS1 : LD A,EXP_CODE_THIN : LD (ANIM_TMP_VAL),A : CALL WRITE_ANIM_CELL
+    RET
+
+; Restores all 4 columns (C,C-1,C-2,C-3) to their pre-explosion
+; background - called once when frame3's own duration expires.
+UOE_RESTORE_ALL:
+    CALL EXP_POS0 : LD A,(IX+5) : LD (ANIM_TMP_VAL),A : CALL WRITE_ANIM_CELL
+    CALL EXP_POS1 : LD A,(IX+6) : LD (ANIM_TMP_VAL),A : CALL WRITE_ANIM_CELL
+    CALL EXP_POS2 : LD A,(IX+7) : LD (ANIM_TMP_VAL),A : CALL WRITE_ANIM_CELL
+    CALL EXP_POS3
+    LD A,B : LD E,A : LD D,0
+    LD HL,EXPLOSION_SAVED_CM3
+    ADD HL,DE
+    LD A,(HL) : LD (ANIM_TMP_VAL),A
+    JP WRITE_ANIM_CELL
 
 ; Writes ANIM_TMP_VAL to the nametable cell at (ANIM_TMP_ROW,
 ; ANIM_TMP_COL): updates the NAMEBUF mirror too if that row is
@@ -11834,31 +11900,17 @@ SHIP_DOWN_PATTERN:
     DB 00h,00h,00h,00h,00h,00h,00h,C0h   ; top-right
     DB 88h,C4h,FEh,FFh,01h,00h,00h,00h   ; bottom-right
 
-; Destroyed-quadrant explosion: 2 static 8x8 frames (anim1 then
-; anim2), each replicated into 4 character-code groups so its
-; background color can match whichever of the 4-row scroller's
-; terrain types (or sky) it lands over - same idea as the shot's
-; blue/white/green/brown variants. Only the group's first code is
-; actually used; the other 7 slots in each 8-code group are unused.
-ANIM_PATTERNS:
-    ; anim1 (yellow), blue/white/green/brown backgrounds
-    DB 00h,00h,10h,04h,20h,08h,00h,00h
-    DS 56,0
-    DB 00h,00h,10h,04h,20h,08h,00h,00h
-    DS 56,0
-    DB 00h,00h,10h,04h,20h,08h,00h,00h
-    DS 56,0
-    DB 00h,00h,10h,04h,20h,08h,00h,00h
-    DS 56,0
-    ; anim2 (red), blue/white/green/brown backgrounds
-    DB 08h,42h,24h,80h,01h,24h,42h,10h
-    DS 56,0
-    DB 08h,42h,24h,80h,01h,24h,42h,10h
-    DS 56,0
-    DB 08h,42h,24h,80h,01h,24h,42h,10h
-    DS 56,0
-    DB 08h,42h,24h,80h,01h,24h,42h,10h
-    DS 56,0
+; Destroyed-quadrant explosion (round69 follow-up, ExpAnim_24x24.json):
+; 2 distinct 8x8 tiles only, reused across all 3 sequential frames -
+; see EXP_CODE_THIN/THICK's own EQU comment for the color-group reuse
+; rationale, and TRIGGER_EXPLOSION/UPDATE_ONE_EXPLOSION for the frame
+; layout. Loaded at EXP_CODE_THIN(120)*8 - the old ANIM_PATTERNS
+; 512-byte/64-code blob this replaced only ever used its own 8 group-
+; leader codes (the other 56 were always-zero unused padding), so this
+; frees the remaining 6 codes (122-127) of the same group15 too.
+EXPLOSION_TILES:
+    DB 00h,00h,00h,0FFh,0FFh,00h,00h,00h   ; EXP_CODE_THIN  (2-row bar)
+    DB 00h,00h,0FFh,0FFh,0FFh,0FFh,00h,00h ; EXP_CODE_THICK (4-row bar)
 
 ; Static sprite patterns used only while a quadrant is "flying in"
 ; during formation assembly: PAT_TEMP_TOP shows just the top-left
