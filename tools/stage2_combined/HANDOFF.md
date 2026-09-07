@@ -11348,3 +11348,75 @@ DISPLAY削除)(2026-09-07、完了済み・実機フィードバック待ち)
   からより具体的な再現条件(正確なtick数or経過時間、何回目の
   ゲームオーバー後か、Aボタン/Bボタンいずれで再開したか等)の追加
   情報が得られれば、次の調査の足がかりになる。
+
+## Round62: "Tick250あたりからのジグザグが出てない"の真因確定・修正
+(2026-09-07、完了済み・実機フィードバック待ち)
+
+- ユーザーから追加の具体的情報: "正確なTickなんて分からんが スケジュール
+  上でみれば235から304まで エネミー4までの敵がリスタートでは出ない
+  普通に考えてリスタートでの初期化ミスだろ"。
+- Round61で否定したE2A_ACTIVE/E2B_ACTIVE理論に代わり、この新情報を手掛かりに
+  再調査。SPAWN_THRESHOLDSのtick235-304はindex51-69に対応し、この区間の
+  CPディスパッチを確認したところ**SPAWN_E2(Zigzag)を一切含まず、
+  SPAWN_E4B(TYPE_ENEMY1_LOOK="Wave")とSPAWN_SIMPLEのみ**と判明 - Round61の
+  SSC_BUSY_E2永久停止理論ではこの特定区間だけが欠落する現象を説明できない
+  (対象indexは17,18,19,74,75,82,83,90,92,118,119,153,154,155,156のみで
+  51-69は含まれない)。実際にComb構成でSPAWN_NEXT_INDEXの逐次進行を1周目・
+  2周目(ゲームオーバー直後の即再スタート)で比較したところ、tick320まで
+  完全に一致(=スケジュール自体は正しく進む)と確認 - 「スケジュールは進む
+  のに個々のスポーンだけ静かに失敗する」経路を疑って調査を継続。
+- **真因確定**: `SIMPLE_PATTERN_USED`(0xEB52、6バイト) - `BEHAVIOR_
+  SIMPLE_DRIFT_DODGE`(Enemy1/Enemy5/Enemy4B[TYPE_ENEMY1_LOOK]が共有する、
+  たった6枠の物理VRAMパターンプール、`ALLOC_PATTERN_SLOT`/`FREE_PATTERN_
+  SLOT`が管理)が、直前の`SPRITE_USED`(32バイト、同じ"free-list"方式)と
+  同型の設計でありながら**INITで一度も明示的にクリアされていなかった**
+  実バグと判明。ゲームオーバーがこの6枠のいずれかを使用中のEnemy1/E5/
+  Enemy4Bが画面上に残っている瞬間に発生すると、その枠を解放する
+  `FREE_PATTERN_SLOT`(通常は画面外退出・撃破時にしか呼ばれない)が
+  一度も呼ばれないままゲームが停止するため、対応バイトが1(使用中)の
+  まま残留する。次の周回のINITはこれを一度もクリアしないため、6枠の
+  うち残留した分だけプールが目減りしたまま再スタートし、tick235-304に
+  **13件も密集する**SPAWN_E4Bのバーストが、この目減りしたプールへ
+  `ALLOC_PATTERN_SLOT`失敗で次々ドロップされていた(`ENEMY4_CLAIM_ANY`/
+  `E4CA_SB_GOTPAT`の既存コメント通り、失敗時はスケジュール自体は正常に
+  進みつつスポーンだけ静かにdropされる設計のため、`SPAWN_NEXT_INDEX`の
+  進行だけを見ても異常が一切見えなかった)。
+- **発見手法**: この`_USED`という命名サフィックスはRound36-14
+  follow-up#14で確立した「`_ACT`/`_POOL`終わりのシンボルをシンボル
+  テーブルから自動列挙してpoisoned-RAM boot検証する」手法の対象パターン
+  に含まれていなかった(Stage1にはこの種の監査テスト自体が存在しな
+  かった)。今回`_ACT`/`_ACTIVE`/`_POOL`/`_FLAG`/`_STATE`で自動列挙する
+  Stage1版の即席監査を実施したところ`SIMPLE_PATTERN_USED`自体は
+  ヒットしなかったが、この監査の副産物として「ボス専用サブシステム
+  (`POD_FIRE_ACTIVE`等)はボススポーン時に遅延クリアされる設計で
+  正常」という既知パターンを再確認する過程で、Enemy2周辺の構造体
+  レイアウトを精査していて`SIMPLE_PATTERN_USED`(名前が`_USED`終わりで
+  自動列挙の正規表現から漏れていた)の存在に気づいた。
+- **修正**: `SPRITE_USED`のゼロクリアブロック直後に、`SIMPLE_PATTERN_
+  USED`(`SIMPLE_PATTERN_SLOTS`=6バイト)の同型の明示的ゼロクリアを
+  追加(`src/CYBER SHMUP.asm`のINIT冒頭)。
+- 新規回帰テスト4件を`tools/verify_spawn_schedule_restart.py`に追加
+  (poisoned-RAM boot検証・stale claimからの回復検証・実際に6回連続
+  `ALLOC_PATTERN_SLOT`が成功することを検証する完全なend-to-endテスト)、
+  修正を一時的に取り消して新規4件が正しくFAILすることを確認した上で
+  復元・再PASSを確認済み(8→12件)。全回帰: Stage2側`run_all.py`
+  **1459 passed/0 failed**(無変化、`combined_test.asm`は今回無編集)。
+  Stage1側`verify_player_damage.py` 58・`verify_enemy_bullets.py` 56・
+  `verify_stage1_bgm.py` 70・`verify_stage1_mission_screens.py` 65・
+  `verify_spawn_schedule_restart.py` 12、全てPASS。3ROM再ビルド・
+  `verify_comb.py`健全性確認の上、標準方針によりComb ROMのみ送付。
+- **教訓(自己発見バグの発見手法として重要)**: 「RAM初期化漏れ」を
+  横断監査する際、シンボル名のサフィックスパターン(`_ACT`/`_POOL`
+  など)による自動列挙は強力だが網羅的ではない - 今回のように
+  `_USED`という、既存の確立された監査対象パターンに含まれない
+  別名の"free-list"実装が存在しうる。今後この種の監査を行う際は、
+  対象パターンを`_ACT`/`_POOL`/`_FLAG`/`_STATE`/`_ACTIVE`だけでなく
+  `_USED`/`_CLAIMED`/`_BUSY`等、"生存・占有を表すあらゆる語彙"に
+  広げて実施すること。
+- **保留・実機フィードバック待ち**: この修正が実際に実機での
+  "Tick250あたりからのジグザグが出てない"症状(ユーザーの最初の報告は
+  Zigzagだったが、Zigzag自体はSPAWN_E2でありSIMPLE_PATTERN_USEDの
+  対象[Enemy1/E5/E4B]には含まれない - 今回のバグはユーザーの2回目の
+  より正確な報告"235から304まで エネミー4までの敵"の方に対応する
+  別の症状だった可能性が高い)を解消するかは実機再検証待ち。もし
+  Zigzag自体の消失が別途再現するようであれば、追加調査が必要。

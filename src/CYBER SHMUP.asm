@@ -1171,6 +1171,31 @@ INIT_SPRATR_CLR:
     LD DE,SPRITE_USED+1 : LD BC,31 : LDIR
     LD A,1 : LD (NEXT_SPRITE_NUM),A
 
+    ; --- 実機フィードバック対応(2026-09-07、"スケジュール上でみれば
+    ; --- 235から304までエネミー4までの敵がリスタートでは出ない 普通に
+    ; --- 考えてリスタートでの初期化ミスだろ"): SIMPLE_PATTERN_USED
+    ; --- (BEHAVIOR_SIMPLE_DRIFT_DODGE/Enemy5用の6枠だけの共有VRAM
+    ; --- パターンプール、ALLOC_PATTERN_SLOT/FREE_PATTERN_SLOTが管理)
+    ; --- が、SPRITE_USEDと同じ"free-list"方式でありながらINITで一度も
+    ; --- 明示的にクリアされていなかった実バグ。ゲームオーバーが
+    ; --- Enemy1/Enemy5/Enemy4B(TYPE_ENEMY1_LOOK)のいずれかが画面上に
+    ; --- 残っている瞬間に発生すると、その枠を解放するFREE_PATTERN_SLOT
+    ; --- (通常は画面外退出・撃破時に呼ばれる)が一度も呼ばれないまま
+    ; --- ゲームが停止するため、SIMPLE_PATTERN_USEDの対応バイトが1
+    ; --- (使用中)のまま残留する - RAMは電源投入直後こそ不定値だが、
+    ; --- 一度でも完走した後は必ずこの残留が起こりうる。次の周回の
+    ; --- INITはこれを一度もクリアしないため、6枠のうち残留した分だけ
+    ; --- プールが目減りしたまま再スタートし、tick235-304に密集する
+    ; --- SPAWN_E4B(TYPE_ENEMY1_LOOK)のバーストがALLOC_PATTERN_SLOT
+    ; --- 失敗で次々ドロップされていた(ENEMY4_CLAIM_ANY/E4CA_SB_GOTPAT
+    ; --- のコメント通り、失敗時はスケジュール自体は正常に進みつつ
+    ; --- スポーンだけ静かにdropされる設計のため、SPAWN_NEXT_INDEXの
+    ; --- 進行だけを見ても異常が見えなかった)。SPRITE_USEDと同型の
+    ; --- 明示的ゼロクリアを追加して解消。
+    XOR A
+    LD HL,SIMPLE_PATTERN_USED : LD (HL),A
+    LD DE,SIMPLE_PATTERN_USED+1 : LD BC,SIMPLE_PATTERN_SLOTS-1 : LDIR
+
     ; --- fully clear E2A/E2B's entire state blocks (98 bytes each),  ---
     ; --- not just ACTIVE. CHECK_BULLET_VS_FORMATION_A/B gates on     ---
     ; --- U0/1/2_STATE (not ACTIVE), so any stale non-zero STATE left ---
