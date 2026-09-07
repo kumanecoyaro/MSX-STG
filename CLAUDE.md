@@ -2995,3 +2995,45 @@ FAILEDの毎フレーム再描画(完了済み・実機フィードバック待�
   上、標準方針によりComb ROMのみ送付。詳細はHANDOFF.mdのRound68参照。
 - **保留**: NUM_BURSTS(20)・BURST_FRAMES(8)・フレーム間隔は未調整の
   初期値。タイトル確認音はユーザー選定待ち。
+
+## Round69: Stage1 Mission Failed行の黒埋め+爆発音をパーティクル回数分
+再生(Stage1/Stage2両方)+タイトル確認音の再設計(完了済み・実機
+フィードバック待ち)(2026-09-07)
+
+- (1) Stage1`DRAW_GAMEOVER_TEXT`をStage2の`gameover_bank.asm`と同じ
+  「row12全体を黒でブランク埋め→中央にメッセージ上書き」方式へ変更
+  (従来はメッセージ14セル以外に死亡直前の背景が透けていた)。
+- (2) 爆発音をパーティクルの回数分鳴らす: Stage1の`PEUA_TRY_SPAWN`は
+  Round37 follow-up7で既に「スポーン成功のたび毎回SOUND_DESTROY」を
+  満たしていたと判明(コード変更なし、回帰テストのみ追加)。Stage2の
+  `gameover_bank.asm`は全シーケンス1回だけの単発音だったため、
+  `GO_ARM_BOOM`(バースト開始ごとに音量15で撃ち直し)+
+  `GO_STEP_BOOM_DECAY`(既存のフレームループ内で毎回2段減衰、追加
+  ウェイト無し)へ分割し20バースト全てで再発火するよう変更(飛散演出
+  自体の所要時間は変わらない設計)。
+- (3) タイトル確認音「Rising sweep→buzzer」候補をv1(周期線形補間+
+  高速ゲートブザー)→v2(Hz線形スイープ+低音2パルスゲート)と2回
+  ユーザーに却下された。**根本原因はブザー音を独自に新規設計して
+  いたこと** - 正しい要求は既存の「Rising alert chirp」「Descending
+  buzzer」の2候補(ブザーはゲート無しの滑らかな下降スイープ)を
+  そのまま繋げてオクターブ下げ、2回再生するというもの。`warning_
+  beep_bench.html`のcandidate06をv3(両候補の既存ジェネレータを
+  literal reuseし周期を2倍化して連結)へ書き換え、同一URLへ再公開
+  済み。ユーザーの再試聴・選定は次回以降。
+- 全回帰: Stage2側`run_all.py` **1482 passed/0 failed**。Stage1側
+  `verify_stage1_mission_screens.py` 84・`verify_player_damage.py`
+  60・`verify_stage1_bgm.py` 70・`verify_enemy_bullets.py` 56、全て
+  PASS。`verify_comb.py`全チェックPASS。3ROM再ビルド・標準方針により
+  Comb ROMのみ送付。詳細はHANDOFF.mdのRound69・Round69 follow-up参照。
+- **新規要求受領・未着手**: 添付`ExpAnim_24x24.json`(fg=8赤/bg=5青)を
+  使い、Stage1の敵撃破爆発(`TRIGGER_EXPLOSION`)を3フレーム左シフト
+  アニメーションへ差し替える依頼。実装前にプレビューGIF
+  (`preview_explosion_anim.py`)を作成しユーザーへ提示、認識確認待ち
+  (ユーザー指示で「実装前にGIFで見せてくれ」)。**この機能はまだ
+  一切ASMへ実装していない** - パターンコードの再利用元(エネミー3の
+  パターン2・3)、カラーグループの整合性(自機ショットと同じグループ
+  流用)、地上敵の水平打ち破壊時への統一適用は、ユーザーからのGIF
+  確認回答を得てから着手すること。
+- **保留・実機フィードバック待ち**: 上記(1)(2)の実機での見え方・
+  聞こえ方、タイトル確認音v3の実際の聞こえ方はいずれも次回フィード
+  バック待ち。

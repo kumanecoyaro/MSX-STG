@@ -467,6 +467,30 @@ check("...expires exactly at PLAYER_EXPL_LIFE and frees its hw sprite",
 check("...hidden off-screen at the attribute table on expiry",
       z.vram[ATTR + sprnum * 4] == sym["ENEMY_HIDE_Y"] and z.vram[ATTR + sprnum * 4 + 1] == 255)
 
+# (2026-09-07、実機フィードバック対応"爆発音はステージ1、2ともに
+# パーティクルの回数鳴らすんだよ"): PEUA_TRY_SPAWN(round37 follow-up7で
+# 追加)はスポーンが成功するたびに毎回SOUND_DESTROYをCALLしているはず -
+# 直接PEUA_TRY_SPAWNを複数回呼び、成功スポーンのたびにPSG R6(ノイズ
+# 周期)/SND_TIMERが再設定されることを確認する(=1回だけでなく「パー
+# ティクルの回数」鳴っている、という要求の直接検証)。
+SND_TIMER = sym["SND_TIMER"]
+z = fresh(); boot(z)
+z.wr(PLAYERX, PX); z.wr(PLAYERY, PY)
+r6_snapshots = []
+sndtimer_snapshots = []
+for i in range(3):
+    z.psg_regs[6] = 0        # poison before each spawn - a real re-fire must overwrite this
+    z.wr(SND_TIMER, 0)       # poison - a real re-fire must set this back to 15
+    call_routine(z, sym["PEUA_TRY_SPAWN"])
+    r6_snapshots.append(z.psg_regs.get(6))
+    sndtimer_snapshots.append(z.rd(SND_TIMER))
+check("PEUA_TRY_SPAWN calls SOUND_DESTROY on EVERY successful spawn (PSG R6/noise period "
+      "reset to 20 each of 3 separate spawn calls, not just the first)",
+      r6_snapshots == [20, 20, 20])
+check("PEUA_TRY_SPAWN calls SOUND_DESTROY on EVERY successful spawn (SND_TIMER reset to "
+      "15 each of 3 separate spawn calls, not just the first)",
+      sndtimer_snapshots == [15, 15, 15])
+
 # a real MAINLOOP run: game keeps playing after death (no freeze), and the
 # burst sequence actually runs to completion inside real gameplay frames
 z = fresh(); boot(z)

@@ -116,6 +116,11 @@ GO_DIR2Y EQU 0F1ACh
 GO_DIR3X EQU 0F1ADh
 GO_DIR3Y EQU 0F1AEh
 
+; (2026-09-07、実機フィードバック対応"爆発音はステージ1、2ともに
+; パーティクルの回数鳴らすんだよ"): バーストごとの現在音量。GO_DIR3Yの
+; すぐ後、同じ理由(Stage2本編は二度と実行されない)で安全に再利用できる。
+GO_BOOM_VOL EQU 0F1AFh
+
 NUM_BURSTS   EQU 20   ; 未調整の初期値、実機での見え方次第で再調整
 BURST_FRAMES EQU 8    ; combined_test.asm自身のEXPLOSION_DURATIONと同じ
 
@@ -161,9 +166,6 @@ INIT:
     ; RNGの種を自機の最終X座標から取る(プレイごとに変わる値、GO_RNG自身の
     ; 説明は上のEQU参照)。
     LD A,(TANK_X) : LD (GO_RNG),A
-
-    ; "自機爆発はサウンドも欲しい"への対応 - 点滅演出の前に1回だけ鳴らす。
-    CALL GO_PLAY_BOOM_SOUND
 
     ; 自機の最終位置(TANK_X/TANK_Y_CUR)を中心に、20バースト×4パーティ
     ; クルが「消えたら即座に自機中心へ戻り新しい方向でまた飛ぶ」を
@@ -330,17 +332,28 @@ GO_STEP_PARTICLES:
 ; TINY(約0.0186秒、実機の1フレーム[約1/60秒]に近い) - EXPLODE_DIR_DX/
 ; DYの"2px/frame"という値は本来60fps基準の量なので、待ち時間もそれに
 ; 近づけて初めて「ほぼ処理的には...それの複数スプライト版」という
-; 見た目になる。Trashes: AF,BC,DE,HL。
+; 見た目になる。
+; (2026-09-07、実機フィードバック対応"爆発音はステージ1、2ともに
+; パーティクルの回数鳴らすんだよ"): 各バースト開始時にGO_ARM_BOOMで
+; 効果音を撃ち直し(音量15)、その後のBURST_FRAMESフレームループの中で
+; GO_STEP_BOOM_DECAYを毎回呼んで1段ずつ減衰させる - 専用の追加ウェイトを
+; 挟まず既存のフレームループ自身の時間経過だけで減衰が完結するため、
+; 20バースト分毎回鳴らしても全体の所要時間は変わらない(Stage1の
+; PEUA_TRY_SPAWNが「spawnごとに毎回SOUND_DESTROY」なのと同じ「パーティ
+; クル[バースト]の数だけ鳴らす」設計)。
+; Trashes: AF,BC,DE,HL。
 GO_EXPLOSION_SEQUENCE:
     LD A,NUM_BURSTS : LD (GO_BURST_CTR),A
 GO_BURST_LOOP:
     CALL GO_NEW_BURST
+    CALL GO_ARM_BOOM
     LD A,(GO_BURST_CTR) : AND 1 : LD (GO_CUR_COLOR),A
     LD A,BURST_FRAMES : LD (GO_FRAME_CTR),A
 GO_BURST_FRAME_LOOP:
     CALL GO_STEP_PARTICLES
     LD A,(GO_CUR_COLOR) : LD C,A
     CALL GO_DRAW_PARTICLES
+    CALL GO_STEP_BOOM_DECAY
     CALL GO_DELAY_TINY
     LD A,(GO_FRAME_CTR) : DEC A : LD (GO_FRAME_CTR),A
     JR NZ,GO_BURST_FRAME_LOOP
@@ -454,34 +467,52 @@ GO_DELAY_TINY_INNER:
     DJNZ GO_DELAY_TINY_OUTER
     RET
 
-; "自機爆発はサウンドも欲しい"(2026-09-07、実機フィードバック対応):
-; src/CYBER SHMUP.asm・combined_test.asm双方のSOUND_DESTROY(ノイズ
-; channel A、周期20、音量15スタート)と同じ音作りを、per-frame
-; SOUND_UPDATEの自動減衰に頼れないこの単発ルーチンの中で、音量15から
-; 0まで16段を手動ループで減衰させる形で再現する(このバンクは他
-; ファイルをCALLできない独立バンクのため値だけ再利用、既存ルーチンの
-; 呼び出しではない)。CLAUDE.md「実機ハードウェア制約」の恒久ルール
-; 通り、ブロック転送命令は使わずOUT+DJNZの手動ループのみ。
-; Trashes: AF,BC.
-GO_PLAY_BOOM_SOUND:
+; "自機爆発はサウンドも欲しい"(2026-09-07、実機フィードバック対応)、
+; 続けて"爆発音はステージ1、2ともにパーティクルの回数鳴らすんだよ"
+; (2026-09-07、実機フィードバック対応その2): src/CYBER SHMUP.asm・
+; combined_test.asm双方のSOUND_DESTROY(ノイズchannel A、周期20、音量15
+; スタート)と同じ音作りを、このバンク自身の中で完結する形で再実装
+; (このバンクは他ファイルをCALLできない独立バンクのため値だけ再利用、
+; 既存ルーチンの呼び出しではない)。旧実装は全シーケンス開始時に1回
+; だけ、専用の16段手動減衰ループ(~0.3秒)で完結する単発の効果音
+; だったが、Stage1のPEUA_TRY_SPAWN(スポーンのたびに毎回SOUND_DESTROY)
+; と同じ「パーティクル[バースト]の数だけ毎回鳴らす」設計に合わせて
+; GO_ARM_BOOM(バースト開始時に音量15で撃ち直す)+GO_STEP_BOOM_DECAY
+; (その後のBURST_FRAMESフレームループの中で毎回1段ずつ減衰させる、
+; 専用の追加ウェイト無し)の2ルーチンへ分割。CLAUDE.md「実機ハード
+; ウェア制約」の恒久ルール通り、ブロック転送命令は使わずOUT+DJNZの
+; 手動ループのみ。
+; Trashes: AF.
+GO_ARM_BOOM:
     DI
     LD A,7 : OUT (PSG_ADDR),A
     LD A,MIXER_NOISE_A : OUT (PSG_DATA),A
     LD A,6 : OUT (PSG_ADDR),A
     LD A,BOOM_NOISE_PERIOD : OUT (PSG_DATA),A
+    LD A,15
+    LD (GO_BOOM_VOL),A
+    LD A,8 : OUT (PSG_ADDR),A
+    LD A,15 : OUT (PSG_DATA),A
     EI
-    LD B,16
-    LD C,15
-GO_BOOM_DECAY_LOOP:
-    PUSH BC
+    RET
+
+; GO_ARM_BOOMで撃ち直した音量(15)を、呼ばれるたびに2段ずつ0まで減衰
+; させる(BURST_FRAMES=8回呼ばれる想定、15,13,11,9,7,5,3,1,(以後0)で
+; ほぼバーストの飛翔と同じ時間で鳴り止む)。0に達した後は無音のまま
+; 何もしない。Trashes: AF.
+GO_STEP_BOOM_DECAY:
+    LD A,(GO_BOOM_VOL)
+    OR A
+    RET Z
+    SUB 2
+    JR NC,GBD_STORE
+    XOR A
+GBD_STORE:
+    LD (GO_BOOM_VOL),A
     DI
     LD A,8 : OUT (PSG_ADDR),A
-    LD A,C : OUT (PSG_DATA),A
+    LD A,(GO_BOOM_VOL) : OUT (PSG_DATA),A
     EI
-    CALL GO_DELAY_TINY
-    POP BC
-    DEC C
-    DJNZ GO_BOOM_DECAY_LOOP
     RET
 
 ; "MISSION FAILED"フォント(M,I,S,O,N,space,F,A,L,E,D、11グリフ、

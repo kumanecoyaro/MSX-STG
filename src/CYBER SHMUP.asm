@@ -3957,20 +3957,39 @@ EMT_LOOP:
 
 ; (2026-09-07、"ゲームオーバーは画面中央にGAME OVERと表示"、直後に
 ; "表示もGAME OVERではなくMISSION FAILEDに変更"): PTH_GAMEOVERから
-; 1回だけ呼ばれる。DRAW_MISSION_SCREENと違い、画面全体の黒塗り・
-; スプライト全消去・PSG無音化は一切行わない - 死亡直後もゲーム画面は
-; 普通に動き続けるため(下記UPDATE_GAMEOVER_SEQUENCE参照)、
-; GAME_OVER_MSG(14byte、row12/col9 center)だけを既存の背景の上に
-; 上書きするオーバーレイ表示に留める(ユーザー確認済み: "テキストのみ
-; オーバーレイ")。row12はground scroller(row20-23、NAMEBUF/PREVBUF
-; 差分描画キャッシュ管理下)の範囲外かつ、row0-19自体もBLANKCODEで
-; 塗った固定背景(敵/弾は全てスプライトレイヤーで描画されBGネーム
-; テーブル自体は動的に書き換わらない)なので、以後何かに上書きされて
-; 消える心配はない。CLAUDE.md「実機ハードウェア制約」の恒久ルール通り、
-; VDPへの連続転送はOTIR等を使わず手動OUT+DJNZループのみ。
+; 1回だけ呼ばれる。DRAW_MISSION_SCREENと違い、スプライト全消去・PSG
+; 無音化は一切行わない - 死亡直後もゲーム画面は普通に動き続けるため
+; (下記UPDATE_GAMEOVER_SEQUENCE参照)。row12はground scroller
+; (row20-23、NAMEBUF/PREVBUF差分描画キャッシュ管理下)の範囲外かつ、
+; row0-19自体もBLANKCODEで塗った固定背景(敵/弾は全てスプライト
+; レイヤーで描画されBGネームテーブル自体は動的に書き換わらない)
+; なので、以後何かに上書きされて消える心配はない。CLAUDE.md
+; 「実機ハードウェア制約」の恒久ルール通り、VDPへの連続転送はOTIR等を
+; 使わず手動OUT+DJNZループのみ。
+; (2026-09-07、実機フィードバック対応"ステージ1のMission Failedも
+; ステージ2と同じで行をブラックで埋める"): 当初(直上の削除済みコメント
+; 参照)はメッセージの14セル以外は死亡直前の背景をそのまま透けさせる
+; "テキストのみオーバーレイ"方式だったが、Stage2のgameover_bank.asm
+; 側で先に対応した「MISSION FAILEDの行全体を黒でブランク埋めしてから
+; 表示」と統一するようユーザーから指示 - row12全体(32セル)をMISSION_
+; FONT_BASE+5(SPACE、全ドット消灯、group8=白文字/黒背景0F1hなので
+; 黒く塗りつぶされる、DRAW_MISSION_SCREEN自身の黒埋めと同じグリフ)で
+; 先に埋めてから、その中央にメッセージを上書きする2パス方式に変更。
 ; Trashes: AF,BC,HL.
 DRAW_GAMEOVER_TEXT:
     DI
+    LD A,080h : OUT (99h),A
+    NOP
+    NOP
+    LD A,59h : OUT (99h),A      ; write address = 1980h (row12,col0)
+    NOP
+    NOP
+    LD A,MISSION_FONT_BASE+5   ; SPACE glyph(全ドット消灯) - 黒埋め用
+    LD B,32
+DGT_BLANK_LOOP:
+    OUT (98h),A
+    DJNZ DGT_BLANK_LOOP
+
     LD A,089h : OUT (99h),A
     NOP
     NOP

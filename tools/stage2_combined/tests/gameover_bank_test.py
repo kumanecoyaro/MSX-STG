@@ -374,38 +374,78 @@ check("by the time MISSION FAILED text is on screen (GO_WAIT_LOOP reached), all 
       "explosion particle sprite slots are hidden (Y=209), not left visible under it",
       hidden_attrs == [209, 0, 0, 0] * 4)
 
-# ---- "自機爆発はサウンドも欲しい"(2026-09-07、実機フィードバック対応): ----
-# ---- GO_PLAY_BOOM_SOUND arms noise channel A (same R6/R7 values as     ----
-# ---- src/CYBER SHMUP.asm's own SOUND_DESTROY) then manually decays R8  ----
-# ---- from 15 down to 0 over 16 steps (no per-frame SOUND_UPDATE to     ----
-# ---- rely on in this standalone routine).                              ----
+# ---- "自機爆発はサウンドも欲しい"、続けて"爆発音はステージ1、2ともに ----
+# ---- パーティクルの回数鳴らすんだよ"(2026-09-07、実機フィードバック  ----
+# ---- 対応その2): 旧GO_PLAY_BOOM_SOUND(全シーケンス開始時に1回だけ、   ----
+# ---- 専用の16段減衰ループで完結)を全面撤回、GO_ARM_BOOM(バースト開始 ----
+# ---- 時に音量15で撃ち直す)+GO_STEP_BOOM_DECAY(その後のフレーム      ----
+# ---- ループの中で毎回1段ずつ減衰、専用の追加ウェイト無し)へ分割し、  ----
+# ---- Stage1のPEUA_TRY_SPAWN(spawnごとに毎回SOUND_DESTROY)と同じ      ----
+# ---- 「パーティクル[バースト]の数だけ毎回鳴らす」設計にした。         ----
 MIXER_NOISE_A = sym["MIXER_NOISE_A"]
 BOOM_NOISE_PERIOD = sym["BOOM_NOISE_PERIOD"]
+GO_BOOM_VOL = sym["GO_BOOM_VOL"]
 z = fresh()
+call_ret(z, sym["GO_ARM_BOOM"])
+check("GO_ARM_BOOM selects PSG R7 (mixer) = MIXER_NOISE_A (noise channel A on, "
+      "tone B/C stay enabled for BGM - matches Stage1/Stage2's own SOUND_DESTROY)",
+      z.psg_regs.get(7) == MIXER_NOISE_A)
+check("GO_ARM_BOOM sets PSG R6 (noise period) = BOOM_NOISE_PERIOD (20, same as "
+      "Stage1/Stage2's own SOUND_DESTROY)",
+      z.psg_regs.get(6) == BOOM_NOISE_PERIOD)
+check("GO_ARM_BOOM sets PSG R8 (channel A volume) to 15 (full volume retrigger)",
+      z.psg_regs.get(8) == 15)
+check("GO_ARM_BOOM sets GO_BOOM_VOL to 15 (the per-frame decay countdown)",
+      z.rd(GO_BOOM_VOL) == 15)
+
+# GO_STEP_BOOM_DECAY: called once per animation frame (BURST_FRAMES=8 times
+# per burst) - decays by 2 each call, floored at 0, and stays silent once
+# it reaches 0 (no further decrement past the floor).
+z = fresh()
+z.wr(GO_BOOM_VOL, 15)
+r8_writes = []
+for _ in range(10):
+    call_ret(z, sym["GO_STEP_BOOM_DECAY"])
+    r8_writes.append(z.psg_regs.get(8))
+check("GO_STEP_BOOM_DECAY decays R8 by 2 each call, floored at 0 once it "
+      "would go negative, and stays silent afterward (never re-increments)",
+      r8_writes == [13, 11, 9, 7, 5, 3, 1, 0, 0, 0])
+check("GO_STEP_BOOM_DECAY leaves GO_BOOM_VOL at 0 once fully decayed",
+      z.rd(GO_BOOM_VOL) == 0)
+
+# GO_EXPLOSION_SEQUENCE itself: each of the NUM_BURSTS bursts must re-arm
+# the boom (R8 back up near 15) at its own start - this is the literal
+# fix for "パーティクルの回数鳴らすんだよ" (a boom retrigger per burst,
+# not one boom for the whole sequence).
+z = fresh()
+z.wr(TANK_X, 120)
+z.wr(TANK_Y_CUR, 90)
+z.wr(sym["GO_RNG"], 9)
+GO_NEW_BURST_PC = sym["GO_NEW_BURST"]
+seen_r8_near_burst_start = []
 z.sp = 0xF000
 z.wr(0xF000, 0x00); z.wr(0xF001, 0x00)
-z.pc = sym["GO_PLAY_BOOM_SOUND"]
-r8_writes = []
-GO_BOOM_DECAY_LOOP = sym["GO_BOOM_DECAY_LOOP"]
+z.pc = sym["GO_EXPLOSION_SEQUENCE"]
 steps = 0
 _prev_pc = None
-while z.pc != 0x0000 and steps < 2_000_000:
-    if z.pc == GO_BOOM_DECAY_LOOP and _prev_pc != GO_BOOM_DECAY_LOOP:
-        r8_writes.append(z.c)
+while z.pc != 0x0000 and steps < 5_000_000:
+    if z.pc == GO_NEW_BURST_PC and _prev_pc != GO_NEW_BURST_PC:
+        seen_r8_near_burst_start.append(z.psg_regs.get(8))
     _prev_pc = z.pc
     z.step()
     steps += 1
-check("GO_PLAY_BOOM_SOUND selects PSG R7 (mixer) = MIXER_NOISE_A (noise channel A on, "
-      "tone B/C stay enabled for BGM - matches Stage1/Stage2's own SOUND_DESTROY)",
-      z.psg_regs.get(7) == MIXER_NOISE_A)
-check("GO_PLAY_BOOM_SOUND sets PSG R6 (noise period) = BOOM_NOISE_PERIOD (20, same as "
-      "Stage1/Stage2's own SOUND_DESTROY)",
-      z.psg_regs.get(6) == BOOM_NOISE_PERIOD)
-check("GO_PLAY_BOOM_SOUND's decay loop steps R8 (channel A volume) through all 16 values "
-      "15 down to 0, ending fully silent",
-      r8_writes == list(range(15, -1, -1)))
-check("GO_PLAY_BOOM_SOUND leaves PSG R8 at 0 (silent) once the decay finishes",
-      z.psg_regs.get(8) == 0)
+NUM_BURSTS_VAL = sym["NUM_BURSTS"]
+check(f"GO_EXPLOSION_SEQUENCE starts all {NUM_BURSTS_VAL} bursts (GO_NEW_BURST reached "
+      f"{NUM_BURSTS_VAL} times)",
+      len(seen_r8_near_burst_start) == NUM_BURSTS_VAL)
+check("every burst but the very first one begins with the PREVIOUS burst's boom already "
+      "decayed low/silent (R8 low) right before GO_ARM_BOOM re-triggers it back to 15 - "
+      "i.e. the boom genuinely re-fires once per burst instead of firing once for the "
+      "whole sequence and staying silent thereafter",
+      all((v or 0) <= 1 for v in seen_r8_near_burst_start[1:]))
+check("GO_ARM_BOOM is actually reached at all (R8 gets set to something at least once - "
+      "guards against a regression where the boom is dropped from the burst loop entirely)",
+      any(v is not None for v in seen_r8_near_burst_start))
 
 z2 = fresh()
 z2.vram[0x1B00:0x1B10] = bytes([1] * 16)

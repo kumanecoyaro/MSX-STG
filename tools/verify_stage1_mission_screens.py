@@ -302,12 +302,13 @@ check("ERASE_MISSION_TEXT: leaves every other byte (including the ground scrolle
       rest_untouched)
 
 # ---- DRAW_GAMEOVER_TEXT (2026-09-07 "ゲームオーバーは画面中央にMISSION ----
-# ---- FAILEDと表示" - user picked "text-only overlay, background stays  ----
-# ---- visible" over the Mission-screen full-blackout style). 14-byte    ----
-# ---- message centered at row12/col9 ((32-14)/2=9) - unlike             ----
-# ---- DRAW_MISSION_SCREEN, the rest of the name table, sprite table and ----
-# ---- PSG channel A are left completely alone so gameplay keeps         ----
-# ---- rendering underneath.                                              ----
+# ---- FAILEDと表示" -> 実機フィードバック対応"ステージ1のMission        ----
+# ---- Failedもステージ2と同じで行をブラックで埋める": row12全体(32セル) ----
+# ---- を黒でブランク埋めしてから14byteメッセージをその中央(col9)へ      ----
+# ---- 上書きする2パス方式(gameover_bank.asm[Stage2]と統一)。row12以外 ----
+# ---- の名前テーブル・スプライト属性テーブル・PSG channel Aは           ----
+# ---- DRAW_MISSION_SCREENと違い引き続き無変更(死亡直後もゲーム画面は   ----
+# ---- 普通に動き続ける設計自体は維持)。                                  ----
 z = fresh()
 boot(z)
 for i in range(768):
@@ -317,12 +318,21 @@ z.psg_regs[8] = 0x0F
 call_routine(z, sym["DRAW_GAMEOVER_TEXT"])
 nametable = [z.vram[0x1800 + i] for i in range(768)]
 msg_region = nametable[12 * 32 + 9: 12 * 32 + 9 + GAME_OVER_MSG_LEN]
-rest_untouched = all(b == 0x33 for i, b in enumerate(nametable)
-                     if not (12 * 32 + 9 <= i < 12 * 32 + 9 + GAME_OVER_MSG_LEN))
+row12 = nametable[12 * 32: 12 * 32 + 32]
+rest_untouched = all(b == 0x33 for i, b in enumerate(nametable) if not (12 * 32 <= i < 13 * 32))
+MISSION_FONT_BASE = sym["MISSION_FONT_BASE"]
 check("DRAW_GAMEOVER_TEXT: message region (row12,col9..) matches GAME_OVER_MSG",
       msg_region == read_msg(GAME_OVER_MSG, GAME_OVER_MSG_LEN))
-check("DRAW_GAMEOVER_TEXT: leaves every other name-table byte untouched (no full blackout, "
-      "background/gameplay keeps showing through)", rest_untouched)
+check("DRAW_GAMEOVER_TEXT: row12's left margin (cols0-8, before the message) is blanked to "
+      "the SPACE glyph (black), not left showing the pre-death background",
+      row12[0:9] == [MISSION_FONT_BASE + 5] * 9)
+check("DRAW_GAMEOVER_TEXT: row12's right margin (cols23-31, after the message) is blanked to "
+      "the SPACE glyph (black), not left showing the pre-death background",
+      row12[23:32] == [MISSION_FONT_BASE + 5] * 9)
+check("DRAW_GAMEOVER_TEXT: no leftover 0x33 poison bytes remain anywhere in row12 (fully "
+      "overwritten - blank margins + message, nothing untouched)", 0x33 not in row12)
+check("DRAW_GAMEOVER_TEXT: leaves every OTHER name-table row untouched (only row12 is "
+      "touched, unlike DRAW_MISSION_SCREEN's full-screen blackout)", rest_untouched)
 check("DRAW_GAMEOVER_TEXT: does NOT touch the sprite attribute table (sprites stay visible, "
       "unlike DRAW_MISSION_SCREEN's hide-all)", z.vram[0x1B00] == 0x42)
 check("DRAW_GAMEOVER_TEXT: does NOT touch PSG channel A volume (SE keeps playing normally)",
