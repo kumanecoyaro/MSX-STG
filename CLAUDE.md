@@ -2839,3 +2839,28 @@ FAILEDの毎フレーム再描画(完了済み・実機フィードバック待�
   3ROM再ビルド・verify_comb確認の上、標準方針によりComb ROMのみ送付。
   詳細はHANDOFF.mdのRound63(実機フィードバック対応)参照。
 - **保留**: 落下速度・時間は依然未調整の初期値。
+
+## Round64: Sasapiキャラクター定義データを共有バンクへ移設(完了済み・
+実機フィードバック待ち)(2026-09-07)
+
+- ユーザー指示: "ステージ2スタートでキャラクター定義データを他のバンクに
+  逃がしてしまえばかなり開くだろう ボスだけでもかなり空くのでは 64x64
+  のデータが4枚分あるはず これをボス前に他のバンクからロードすれば
+  良いはず"。Stage2 ROM残り1byte(Round59時点)の実質満杯を解消するため、
+  ボス通常フォーム(64x64x2枚)・形態変化後(32x32x2枚)・手(64x64x1枚、
+  実際は反転データが独立DBされておらずユーザー推測の4枚ではなく計
+  1792byte分)を`tools/bgm_data/bgm_bank_gen.py`の共有バンク(Comb
+  bank6)へ移設。新設`SWITCH_TO_CHARDATA_BANK`/`RESTORE_OWN_BANK_B`
+  (round40のBGM_LOAD_SONGと同型のwindowB一時切替パターン)で`LOAD_
+  SASAPI_PATTERNS`/`LOAD_SASAPI_BROKEN_PATTERNS`/INITのSASAPI_HAND_
+  TILESロードの3箇所をラップ。`build_full_rom.py`に新規ANCHOR/PATCH
+  ペア(`STAGE2_CHARDATA_BANKSELECT_*`)を追加しComb向けバンク番号
+  (2→6・1→5)へリターゲット(既存のBGM用アンカーとは別テキストブロック
+  のため新規ペアが必要だった)。standaloneアセンブル結果32767→
+  **30975byte**(1792byte削減)、Stage2 ROM残り容量は**1793byte**へ
+  改善。既存`boss_test.py`/`boss_pose_test.py`のROM直接読み取りを
+  共有バンク直接参照方式へ修正。全回帰`run_all.py` **1459 passed/
+  0 failed**(無変化)。Comb ROM再ビルド・`verify_comb.py`健全性確認の
+  上、標準方針によりComb ROMのみ送付。詳細はHANDOFF.mdのRound64参照。
+- **保留**: 次のRoundでボス攻撃・形態変化パターン(SBeam・Thunder等)の
+  追加移設を予定。実機での視覚確認は引き続きフィードバック待ち。

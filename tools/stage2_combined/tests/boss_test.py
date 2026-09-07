@@ -1,9 +1,18 @@
 import os
 import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "bgm_data"))
 from banked_helpers import get_out, fresh_cpu, call_routine, step_frame
+import bgm_bank_gen as bg  # noqa: E402 - no mido dependency, reads the cached bgm_bank.bin
 
 out, sym, text = get_out()
+# (2026-09-07、round64、"キャラクター定義データを他のバンクに逃がして
+# しまえばかなり開くだろう"): SASAPI_QUADS/_L等はもうこのファイル自身の
+# ROM(out)には実データとして存在しない(EQUオフセットのみ) - 実データは
+# 共有bgm-data/chardataバンク(tools/bgm_data/bgm_bank_gen.py)側にあり、
+# LOAD_SASAPI_PATTERNSがボス出現/反転時にそこから読む。参照データも
+# 同じ場所(_CHARDATA_BANK)から読む必要がある。
+_CHARDATA_BANK, _ = bg.build_bank()
 
 ok = []
 fail = []
@@ -32,9 +41,9 @@ SPRPAT = sym["SPRPAT"]
 BOSS_PHASE = sym["BOSS_PHASE"]
 
 
-def sprpat_matches(cpu, rom_label):
+def sprpat_matches(cpu, chardata_offset):
     base = SPRPAT + PAT_SASAPI * 8
-    rom_bytes = [out[rom_label + i] for i in range(16 * 32)]
+    rom_bytes = list(_CHARDATA_BANK[chardata_offset: chardata_offset + 16 * 32])
     return rom_bytes == list(cpu.vram[base: base + 16 * 32])
 
 
@@ -72,7 +81,7 @@ check("BOSS_HP starts at BOSS_HP_INIT(255)", cpu.mem[BOSS_HP] == BOSS_HP_INIT)
 # space instead, a real bug caught by rendering the boss and seeing
 # garbage/leftover BigZum patterns instead of Sasapi's own art).
 sprpat_base = SPRPAT + PAT_SASAPI * 8
-rom_quads = [out[SASAPI_QUADS + i] for i in range(16 * 32)]
+rom_quads = list(_CHARDATA_BANK[SASAPI_QUADS: SASAPI_QUADS + 16 * 32])
 vram_quads = list(cpu.vram[sprpat_base: sprpat_base + 16 * 32])
 check("SASAPI_QUADS pattern data loaded into the real sprite pattern table (SPRPAT+PAT_SASAPI*8)",
       rom_quads == vram_quads)

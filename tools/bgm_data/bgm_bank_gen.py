@@ -3,6 +3,15 @@
 予備バンクを流用、tools/bankswitch_poc/build_full_rom.py側でbank6として
 差し込む)1本のバイトイメージへまとめる。
 
+(2026-09-07、round64追記) このバンクはBGM専用ではなくなった - 曲データ
+だけでは16KB中5割以上が未使用のまま余っていたため、Stage2ボス(Sasapi)の
+64x64/32x32本体パターンデータ(tools/stage2_combined/sasapi_gen.py/
+sasapi_hand_gen.py、合計1792byte)もこのバンクへ相乗りさせている
+(`layout["SASAPI_CHARDATA"]`、下記の曲データのすぐ後ろに追記)。
+combined_test.asm側は曲データと全く同じ「必要な瞬間だけwindowBを一時的に
+このバンクへ切替てLDIRVM」方式でボス出現直前にだけロードする
+(SWITCH_TO_CHARDATA_BANK/RESTORE_OWN_BANK_B参照)。
+
 レイアウト(バンク先頭からのオフセット、全てPython側で確定させ、各
 ステージのASM側にはリテラル値として埋め込む - このアセンブラ
 [mini_z80asm.py]は演算子優先順位を持たず式は左から右へ逐次評価される
@@ -225,6 +234,36 @@ def _generate():
         "chA_len": len(bh),
     }
 
+    # (2026-09-07、"ステージ2スタートでキャラクター定義データを他の
+    # バンクに逃がしてしまえばかなり開くだろう ボスだけでもかなり空くの
+    # では"): この時点でblobはまだ16KB中の一部しか使っていない(曲データ
+    # 合計は5桁byte未満)。Sasapi(Stage2ボス)の64x64/32x32本体パターン
+    # データ(tools/stage2_combined/sasapi_gen.py/sasapi_hand_gen.pyが
+    # 生成、合計1792byte)は元々combined_test.asm自身に直接DB展開されて
+    # いたが、Stage2 ROMの空き容量が実質枯渇していた(残り1byte)ため
+    # このバンクの空き領域(BGM本体だけでは16KB中11KB以上が空き)へ
+    # 相乗りさせる。ボス出現/形態変化/向き反転の瞬間にだけ必要な
+    # データのため、曲データと全く同じ「必要な瞬間だけwindowBを一時的に
+    # このバンクへ切替てLDIRVM」方式がそのまま使える(combined_test.asm
+    # 側のSWITCH_TO_CHARDATA_BANK/RESTORE_OWN_BANK_B参照)。
+    sys.path.insert(0, os.path.join(HERE, "..", "stage2_combined"))
+    import sasapi_gen as sg
+    import sasapi_hand_gen as shg
+
+    chardata_layout = {}
+    quads, quads_l = sg.sasapi_quads_raw()
+    for key, data in [("SASAPI_QUADS", quads), ("SASAPI_QUADS_L", quads_l)]:
+        chardata_layout[key] = len(blob)
+        blob += data
+    bquads, bquads_l = sg.sasapi_broken_quads_raw()
+    for key, data in [("SASAPI_BROKEN_QUADS", bquads), ("SASAPI_BROKEN_QUADS_L", bquads_l)]:
+        chardata_layout[key] = len(blob)
+        blob += data
+    hand_bytes = bytes(b for tile in shg.SASAPI_HAND_TILES for b in tile)
+    chardata_layout["SASAPI_HAND_TILES"] = len(blob)
+    blob += hand_bytes
+    layout["SASAPI_CHARDATA"] = chardata_layout
+
     assert len(blob) <= BANK_SIZE, f"BGM data ({len(blob)} bytes) exceeds one 16KB bank"
     bank = bytes(blob) + bytes([0xFF] * (BANK_SIZE - len(blob)))
     return bank, layout
@@ -304,4 +343,5 @@ if __name__ == "__main__":
     print(f"bank image: {len(bank)} bytes total, {used} bytes actually used, {len(bank)-used} bytes free")
     for key, info in layout.items():
         print(key, info)
-        print("  constants:", song_constants(key))
+        if key != "SASAPI_CHARDATA":  # not a song - song_constants() doesn't apply
+            print("  constants:", song_constants(key))

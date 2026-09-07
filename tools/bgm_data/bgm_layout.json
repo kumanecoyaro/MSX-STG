@@ -20,6 +20,13 @@
     "chB_len": 253,
     "chC_len": 121
   },
+  "SASAPI_CHARDATA": {
+    "SASAPI_BROKEN_QUADS": 6184,
+    "SASAPI_BROKEN_QUADS_L": 6312,
+    "SASAPI_HAND_TILES": 6440,
+    "SASAPI_QUADS": 5160,
+    "SASAPI_QUADS_L": 5672
+  },
   "STAGE_CLEAR": {
     "bank_offset": 4891,
     "chA_len": 79,

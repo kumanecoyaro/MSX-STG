@@ -3412,8 +3412,18 @@ INIT_RESUME_AFTER_BANK_SELECT:
     ; own 512-byte load - not a per-frame write, so a single wrap
     ; (rather than FLUSH_BOSS_SPRITES's own per-quadrant chunking) is
     ; enough.
+    ; (2026-09-07、round64) SASAPI_HAND_TILES自体も共有bgm-data/
+    ; chardataバンクへ移設済み(LOAD_SASAPI_PATTERNSの同ラウンドコメント
+    ; 参照) - このINIT自身もwindowA(bank4)常駐なので同じSWITCH_TO_
+    ; CHARDATA_BANK/RESTORE_OWN_BANK_Bが安全に使える。SASAPI_HAND_
+    ; COLOR8(8byte、DRAW_SASAPI_HANDが毎フレーム参照する小さな色
+    ; テーブル)は移設対象外(引き続きこのファイル自身にDB展開されて
+    ; いる)なので、windowBを本来のバンクへ戻した後で読む。
     DI
-    LD HL,SASAPI_HAND_TILES : LD DE,SASAPI_HAND_CODE_BASE*8 : LD BC,64*8 : CALL LDIRVM
+    LD HL,SASAPI_HAND_TILES : LD DE,8000h : ADD HL,DE
+    CALL SWITCH_TO_CHARDATA_BANK
+    LD DE,SASAPI_HAND_CODE_BASE*8 : LD BC,64*8 : CALL LDIRVM
+    CALL RESTORE_OWN_BANK_B
     EI
     LD HL,SASAPI_HAND_COLOR8 : LD DE,2000h+19 : LD BC,8 : CALL LDIRVM
 
@@ -10988,9 +10998,39 @@ BOSS_QUAD_OFFSETS:
 ; frame, unlike FLUSH_BOSS_SPRITES), so a plain DI/EI wrap around the
 ; whole call is enough here - no need to chunk it into smaller pieces
 ; the way a genuinely per-frame write would.
+;
+; (2026-09-07、round64、"キャラクター定義データを他のバンクに逃がして
+; しまえばかなり開くだろう ボスだけでもかなり空くのでは"): SASAPI_
+; QUADS/_L・SASAPI_BROKEN_QUADS/_L・SASAPI_HAND_TILES(合計1792byte)は
+; もうこのファイル自身には実データとして存在しない - tools/bgm_data/
+; bgm_bank_gen.pyが管理する共有"bgm-data"バンク(BGM本体だけでは16KB
+; 中11KB以上が空いていた)へ移設済み(sasapi_gen.py/sasapi_hand_gen.py
+; 自身のコメント参照)。SASAPI_QUADS等のEQUは、もう実アドレスではなく
+; その共有バンク内でのバイトオフセットを指す。SWITCH_TO_CHARDATA_BANK/
+; RESTORE_OWN_BANK_Bは、tools/bgm_data/bgm_bank_gen.py自身のBGM_LOAD_
+; SONGが確立した「windowB[8000h-BFFFh]を一時的に共有バンクへ切り替えて
+; 必要なデータだけコピーし、すぐ自分の本来のバンクへ戻す」パターンを
+; そのまま再利用(標準/Comb向けのバンク番号2/6・1/5もBGM_LOAD_SONGと
+; 全く同じ値)。この2つの小さな共有ルーチン、およびLOAD_SASAPI_
+; PATTERNS/LOAD_SASAPI_BROKEN_PATTERNS/INITのSASAPI_HAND_TILESロード
+; 箇所は全てwindowA(bank4)常駐 - windowBが切り替わっている間も安全に
+; 実行し続けられる(BGM_LOAD_SONG自身も同じ理由でwindowA常駐、という
+; 既存の安全条件をそのまま踏襲)。
+SWITCH_TO_CHARDATA_BANK:
+    LD A,2                       ; standalone bgm-data/chardataバンク(Combでは6へパッチ)
+    LD (7000h),A
+    RET
+RESTORE_OWN_BANK_B:
+    LD A,1                       ; standalone own bank1(Combでは5へパッチ)
+    LD (7000h),A
+    RET
+
 LOAD_SASAPI_PATTERNS:
     DI
+    LD DE,8000h : ADD HL,DE      ; HL: bgm-data/chardataバンク内オフセット -> windowBアドレス
+    CALL SWITCH_TO_CHARDATA_BANK
     LD DE,PAT_SASAPI*8+SPRPAT : LD BC,16*32 : CALL LDIRVM
+    CALL RESTORE_OWN_BANK_B
     EI
     RET
 
@@ -11555,9 +11595,14 @@ BOSS_BROKEN_QUAD_OFFSETS:
 ; DI/EI-wrapped for the same reason LOAD_SASAPI_PATTERNS itself is (see
 ; its own comment) - only called on an actual facing change, not per
 ; frame.
+; (2026-09-07、round64) SASAPI_BROKEN_QUADS/_Lも共有bgm-data/chardata
+; バンクへ移設済み - LOAD_SASAPI_PATTERNS自身のround64コメント参照。
 LOAD_SASAPI_BROKEN_PATTERNS:
     DI
+    LD DE,8000h : ADD HL,DE
+    CALL SWITCH_TO_CHARDATA_BANK
     LD DE,PAT_SASAPI*8+SPRPAT : LD BC,BOSS_BROKEN_QUAD_COUNT*32 : CALL LDIRVM
+    CALL RESTORE_OWN_BANK_B
     EI
     RET
 

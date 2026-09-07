@@ -1,9 +1,14 @@
 import os
 import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "bgm_data"))
 from banked_helpers import get_out, fresh_cpu, call_routine, step_frame
+import bgm_bank_gen as bg  # noqa: E402 - no mido dependency, reads the cached bgm_bank.bin
 
 out, sym, text = get_out()
+# (2026-09-07、round64) SASAPI_QUADS/_L等の実データはもう共有bgm-data/
+# chardataバンク側にある - boss_test.pyの同じコメント参照。
+_CHARDATA_BANK, _ = bg.build_bank()
 
 ok = []
 fail = []
@@ -50,9 +55,9 @@ def get_game_tick(cpu):
     return cpu.mem[GAME_TICK] | (cpu.mem[GAME_TICK + 1] << 8)
 
 
-def sprpat_matches(cpu, rom_label):
+def sprpat_matches(cpu, chardata_offset):
     base = SPRPAT + PAT_SASAPI * 8
-    rom_bytes = [out[rom_label + i] for i in range(16 * 32)]
+    rom_bytes = list(_CHARDATA_BANK[chardata_offset: chardata_offset + 16 * 32])
     return rom_bytes == list(cpu.vram[base: base + 16 * 32])
 
 

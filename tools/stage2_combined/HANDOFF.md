@@ -11567,3 +11567,66 @@ FAILEDの毎フレーム再描画(2026-09-07、完了済み・実機フィード
 - **保留・実機フィードバック待ち**: `PLAYER_DEATH_FALL_SPEED`(2px/
   frame)・`PLAYER_DEATH_FALL_DURATION`(45フレーム≒0.75秒)は依然
   未調整の初期値。
+
+## Round64: Sasapiキャラクター定義データ(64x64x3枚+32x32x2枚)を共有
+バンクへ移設(完了済み・実機フィードバック待ち)(2026-09-07)
+
+- ユーザー指示: "ステージ2スタートでキャラクター定義データを他のバンクに
+  逃がしてしまえばかなり開くだろう ボスだけでもかなり空くのでは 64x64
+  のデータが4枚分あるはず もしかするとBGの反転データはないかもなんで
+  3枚分 これをボス前に他のバンクからロードすれば良いはず"。
+- Stage2 ROM残り容量は前Round時点で1byteという実質満杯状態(Round59で
+  到達)だったため、大きな塊のデータをROM本体から追い出せないかを検討。
+  ボス本体の通常フォーム(64x64、L/R反転の2枚 - ユーザーの「4枚」推測は
+  外れ、`sasapi_gen.py`は反転データを別途DBせず単一のQUADS配列を反転
+  ロードで使い回す設計のため実際は2枚分)・形態変化後(32x32、L/R同じく
+  2枚)・手(64x64、1枚)の計5データブロック、合計1792byteを対象に選定。
+- **実装方式**: round40のBGM_LOAD_SONGが確立した「windowB(8000h-
+  BFFFh)を一時的に共有バンクへ切り替えてLDIRVMし、すぐ自分の本来の
+  バンクへ戻す」パターンをそのまま再利用。共有ルーチン`SWITCH_TO_
+  CHARDATA_BANK`/`RESTORE_OWN_BANK_B`を新設(standaloneバンク番号2/1、
+  Combではbuild_full_rom.pyが6/5へパッチ)、`LOAD_SASAPI_PATTERNS`/
+  `LOAD_SASAPI_BROKEN_PATTERNS`/INITのSASAPI_HAND_TILESロード箇所の
+  3呼び出し元全てをこれでラップ。3箇所ともwindowA(bank4)常駐コードの
+  ため、windowBが一時的に切り替わっている間も安全に実行を継続できる
+  (BGM_LOAD_SONG自身と同じ安全条件)。
+- **データの実体はtools/bgm_data/bgm_bank_gen.pyの共有バンク
+  (standalone2、Comb bank6)へ移設**: `sasapi_gen.py`/`sasapi_hand_
+  gen.py`にバイト列だけを返す関数(`sasapi_quads_raw()`/
+  `sasapi_broken_quads_raw()`等)を追加し、`bgm_bank_gen.py`の
+  `_generate()`がこれらをインポートしてブロブ末尾に追記、オフセットを
+  `layout["SASAPI_CHARDATA"]`として記録。`sasapi_gen.py`/`sasapi_hand_
+  gen.py`側の`emit_asm_tables()`は、従来のインラインDB展開から
+  `SASAPI_QUADS EQU {offset}`のような定数EQU出力に変更(実データは
+  もう`combined_test.asm`自身のROMに存在しない)。
+- **combined_test.asm側の変更**: `LOAD_SASAPI_PATTERNS`/`LOAD_SASAPI_
+  BROKEN_PATTERNS`はHLをバンクオフセットからwindowBアドレス
+  (`ADD HL,8000h`)へ変換した上でLDIRVM、INITのSASAPI_HAND_TILESロード
+  箇所も同様にラップ(直後のSASAPI_HAND_COLOR8[8byte、色テーブル]は
+  移設対象外、windowB復帰後に読む)。
+- **build_full_rom.pyへの追加対応**: 新設の`SWITCH_TO_CHARDATA_BANK`/
+  `RESTORE_OWN_BANK_B`ルーチン本体自身が持つ`LD A,2`/`LD A,1`リテラルは、
+  既存の`STAGE2_BGM_BANKSELECT_ANCHOR`(BGM_LOAD_SONG本体、LDIRを含む
+  別のテキストブロック)ではカバーされない新規の出現箇所だったため、
+  同じ値(2→6・1→5)への新規`STAGE2_CHARDATA_BANKSELECT_ANCHOR/PATCH`
+  ペアを追加。これを見落とすとComb ROM内でstandaloneのバンク番号
+  (2/1)のままロードを試み、ボスパターンデータが盛大に化ける実害バグに
+  なるところだった(assert text.count(...)==1の一意性チェックで機械的
+  に検出できる設計のため、次回この種のリテラルを追加する際も同じ
+  パターンで安全に拡張できる)。
+- **結果**: standalone Stage2アセンブル結果は32767byte→**30975byte**
+  (1792byte削減、予測通り)。`tools/bgm_data/bgm_bank_gen.py`の共有
+  バンク自身は6952/16384byte使用(BGM2曲+StageClearジングル+今回の
+  SASAPI_CHARDATAで合計)、まだ余裕あり。
+- 既存の`boss_test.py`/`boss_pose_test.py`が直接ROM(`out`辞書)から
+  Sasapiパターンバイトを読んで期待値と比較する方式だったため、移設後は
+  `KeyError`でクラッシュ - `bgm_bank_gen`を直接importして共有バンクの
+  実バイト列(`_CHARDATA_BANK`)から読む方式に修正して解消。
+- 全回帰`run_all.py` **1459 passed/0 failed**(無変化)。Comb ROM再
+  ビルド・`verify_comb.py`健全性確認(Title→Stage1→Stage2一気通貫の
+  バンク切替、ボス関連の全チェック含め全てPASS)の上、標準方針により
+  Comb ROMのみ送付。
+- **保留**: Stage2 ROM残り容量は32767byte→**30975byte**(残り
+  **1793byte**)へ改善、次のRound(攻撃・形態変化パターンの追加移設)
+  でさらに拡大予定。実機での視覚確認(ボスパターンが正しくロードされる
+  か)は引き続き実機フィードバック待ち。

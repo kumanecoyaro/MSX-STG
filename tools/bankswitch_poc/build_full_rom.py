@@ -358,6 +358,32 @@ STAGE2_BGM_BANKSELECT_PATCH = """    LD A,6                       ; standalone b
     LD A,5                       ; standalone own bank1(Combでは5へパッチ)
     LD (7000h),A"""
 
+# (2026-09-07、"ステージ2スタートでキャラクター定義データを他のバンクに
+# 逃がしてしまえばかなり開くだろう"): Sasapiの64x64/32x32ボディデータを
+# bgm-data/chardata共有バンクへ移設した際に新設したSWITCH_TO_CHARDATA_
+# BANK/RESTORE_OWN_BANK_Bの本体(呼び出し元は複数あるが、バンク番号の
+# リテラル自体はこの1箇所[ルーチン本体]にしか存在しない)。上のSTAGE2_
+# BGM_BANKSELECT_ANCHORと全く同じ標準/Comb向けバンク番号(2/6・1/5)だが、
+# BGM_LOAD_SONG本体とは別のテキストブロック(LDIRを含まずRETで終わる)
+# のため独立したアンカーが必要。
+STAGE2_CHARDATA_BANKSELECT_ANCHOR = """SWITCH_TO_CHARDATA_BANK:
+    LD A,2                       ; standalone bgm-data/chardataバンク(Combでは6へパッチ)
+    LD (7000h),A
+    RET
+RESTORE_OWN_BANK_B:
+    LD A,1                       ; standalone own bank1(Combでは5へパッチ)
+    LD (7000h),A
+    RET"""
+
+STAGE2_CHARDATA_BANKSELECT_PATCH = """SWITCH_TO_CHARDATA_BANK:
+    LD A,6                       ; standalone bgm-data/chardataバンク(Combでは6へパッチ)
+    LD (7000h),A
+    RET
+RESTORE_OWN_BANK_B:
+    LD A,5                       ; standalone own bank1(Combでは5へパッチ)
+    LD (7000h),A
+    RET"""
+
 # (2026-09-07、"まずステージ2もステージ1同様にHPが無くなったら爆発処理を
 # ゲームオーバーは画面中央にGAME OVERと表示"): TANK_LIFE枯渇時、
 # combined_test.asm自身のTRIGGER_GAME_OVERがwindow Aだけを専用の
@@ -419,6 +445,9 @@ def assemble_real_stage2():
     assert text.count(STAGE2_BGM_BANKSELECT_ANCHOR) == 1, \
         "stage2 BGM bank-select anchor not found (or not unique) - combined_test.asm drifted"
     text = text.replace(STAGE2_BGM_BANKSELECT_ANCHOR, STAGE2_BGM_BANKSELECT_PATCH, 1)
+    assert text.count(STAGE2_CHARDATA_BANKSELECT_ANCHOR) == 1, \
+        "stage2 chardata bank-select anchor not found (or not unique) - combined_test.asm drifted"
+    text = text.replace(STAGE2_CHARDATA_BANKSELECT_ANCHOR, STAGE2_CHARDATA_BANKSELECT_PATCH, 1)
     assert text.count(STAGE2_GAMEOVER_BANKSELECT_ANCHOR) == 1, \
         "stage2 GAME_OVER bank-select anchor not found (or not unique) - combined_test.asm drifted"
     text = text.replace(STAGE2_GAMEOVER_BANKSELECT_ANCHOR, STAGE2_GAMEOVER_BANKSELECT_PATCH, 1)
