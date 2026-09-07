@@ -190,6 +190,33 @@ MAINLOOP_HOP2:
     JP 0F200h
 MAINLOOP_NO_TEST_SWITCH:
 
+    ; --- (2026-09-07、"ゲームオーバー表示は3秒表示してボタンが押される ---
+    ; --- か10秒経過でタイトル画面に"): GAME_OVER_SEQ==3(タイトルへ戻る ---
+    ; --- 準備完了、src/CYBER SHMUP.asm自身のUPDATE_GAME_OVER_SEQUENCE  ---
+    ; --- が実時間3秒+ボタンorタイムアウトの経過を見て一度だけ進める)を ---
+    ; --- 検出したら、上のSTAGE_CLEAR_ACT==3と全く同じ手法(DI+PSG全     ---
+    ; --- チャンネル無音化+2ホップトランポリン)でtitle(GLOBAL bank0/1、 ---
+    ; --- 起動時と同じ番号)へ戻る。                                      ---
+    LD A,(GAME_OVER_SEQ)
+    CP 3
+    JR NZ,MAINLOOP_NO_GAMEOVER_SWITCH
+
+    DI
+    LD A,8 : OUT (PSG_ADDR),A : XOR A : OUT (PSG_DATA),A
+    LD A,9 : OUT (PSG_ADDR),A : XOR A : OUT (PSG_DATA),A
+    LD A,10 : OUT (PSG_ADDR),A : XOR A : OUT (PSG_DATA),A
+
+    LD A,1
+    LD DE,7000h
+    LD HL,MAINLOOP_GAMEOVER_HOP2
+    JP 0F200h
+MAINLOOP_GAMEOVER_HOP2:
+    LD A,0
+    LD DE,6000h
+    LD HL,04010h
+    JP 0F200h
+MAINLOOP_NO_GAMEOVER_SWITCH:
+
     ; --- free-running: no per-frame DI/EI/HALT. The vblank-gated DI/    ---"""
 
 TRAMPOLINE_ANCHOR = "INIT:\n    LD SP,STACKTOP"
@@ -331,6 +358,58 @@ STAGE2_BGM_BANKSELECT_PATCH = """    LD A,6                       ; standalone b
     LD A,5                       ; standalone own bank1(Combでは5へパッチ)
     LD (7000h),A"""
 
+# (2026-09-07、"まずステージ2もステージ1同様にHPが無くなったら爆発処理を
+# ゲームオーバーは画面中央にGAME OVERと表示"): TANK_LIFE枯渇時、
+# combined_test.asm自身のTRIGGER_GAME_OVERがwindow Aだけを専用の
+# GAME_OVERバンク(tools/gameover_bank/gameover_bank.asm)へ一方通行で
+# 切り替える(window Bはstage2自身のbank1のまま一切触れない)。standalone
+# ローカル番号3(own bank0/1+bgm-data bank2の次)->Comb globalではbank7
+# (これまで完全な0xFF空きフィラーだった枠)へリターゲット、他のバンク
+# 選択パッチと全く同じ手法。
+STAGE2_GAMEOVER_BANKSELECT_ANCHOR = """    LD A,3                        ; standalone game-overバンク(Combでは7へパッチ)
+    LD DE,6000h
+    LD HL,04000h                  ; tools/gameover_bank/gameover_bank.asmのINIT(ORG直後、ROMヘッダ無し)
+    JP BANKSWITCH_TRAMPOLINE_RAM"""
+
+STAGE2_GAMEOVER_BANKSELECT_PATCH = """    LD A,7                        ; standalone game-overバンク(Combでは7へパッチ)
+    LD DE,6000h
+    LD HL,04000h                  ; tools/gameover_bank/gameover_bank.asmのINIT(ORG直後、ROMヘッダ無し)
+    JP BANKSWITCH_TRAMPOLINE_RAM"""
+
+# (2026-09-07、"ステージ2クリア後は10秒でタイトル画面に"): ENDING_ACT==4
+# (GFEnding "MISSION COMPLETED"表示から実時間10秒経過、UPDATE_ENDING
+# 自身が一度だけ進める)検出時にtitle(GLOBAL bank0/1)へ2ホップトランポリン
+# で戻る。combined_test.asm自身はバンク切替を一切行わない設計のため、
+# standaloneのソース中はただの状態チェック(JR NZで素通り)になっている
+# アンカーブロックを丸ごと実際のトランポリンコードへ置き換える。
+STAGE2_ENDING_RETURN_ANCHOR = """    LD A,(ENDING_ACT)
+    CP 4
+    JR NZ,ENDING_NO_TITLE_RETURN
+ENDING_NO_TITLE_RETURN:
+
+    JP MAINLOOP"""
+
+STAGE2_ENDING_RETURN_PATCH = """    LD A,(ENDING_ACT)
+    CP 4
+    JR NZ,ENDING_NO_TITLE_RETURN
+
+    DI
+    LD A,8 : OUT (PSG_ADDR),A : XOR A : OUT (PSG_DATA),A
+    LD A,9 : OUT (PSG_ADDR),A : XOR A : OUT (PSG_DATA),A
+    LD A,10 : OUT (PSG_ADDR),A : XOR A : OUT (PSG_DATA),A
+    LD A,1
+    LD DE,7000h
+    LD HL,ENDING_RETURN_HOP2
+    JP BANKSWITCH_TRAMPOLINE_RAM
+ENDING_RETURN_HOP2:
+    LD A,0
+    LD DE,6000h
+    LD HL,04010h
+    JP BANKSWITCH_TRAMPOLINE_RAM
+ENDING_NO_TITLE_RETURN:
+
+    JP MAINLOOP"""
+
 
 def assemble_real_stage2():
     text = stage2_build.combined_text()
@@ -340,10 +419,38 @@ def assemble_real_stage2():
     assert text.count(STAGE2_BGM_BANKSELECT_ANCHOR) == 1, \
         "stage2 BGM bank-select anchor not found (or not unique) - combined_test.asm drifted"
     text = text.replace(STAGE2_BGM_BANKSELECT_ANCHOR, STAGE2_BGM_BANKSELECT_PATCH, 1)
+    assert text.count(STAGE2_GAMEOVER_BANKSELECT_ANCHOR) == 1, \
+        "stage2 GAME_OVER bank-select anchor not found (or not unique) - combined_test.asm drifted"
+    text = text.replace(STAGE2_GAMEOVER_BANKSELECT_ANCHOR, STAGE2_GAMEOVER_BANKSELECT_PATCH, 1)
+    assert text.count(STAGE2_ENDING_RETURN_ANCHOR) == 1, \
+        "stage2 ending-return anchor not found (or not unique) - combined_test.asm drifted"
+    text = text.replace(STAGE2_ENDING_RETURN_ANCHOR, STAGE2_ENDING_RETURN_PATCH, 1)
     a = Assembler(text)
     out = a.assemble()
     bank4, bank5 = stage2_build.build_banks(out)
     return bank4, bank5, a.symtab
+
+
+# (2026-09-07): tools/gameover_bank/gameover_bank.asm - a genuinely new,
+# standalone, single-16KB-bank (window A only, no window B/page2 content)
+# ROM assembled independently, same treatment as title_test.asm/
+# combined_test.asm above. No in-memory patching needed - the file was
+# written knowing its own standalone local bank index (3) and Comb's own
+# global bank index (7) from the start (see gameover_bank.asm's own header
+# comment and combined_test.asm's own STAGE2_GAMEOVER_BANKSELECT_PATCH
+# above).
+def assemble_gameover_bank():
+    path = os.path.join(REPO, "tools", "gameover_bank", "gameover_bank.asm")
+    text = open(path, encoding="utf-8").read()
+    a = Assembler(text)
+    out = a.assemble()
+    bank = bytearray([0xFF] * 0x4000)
+    for addr, val in out.items():
+        if 0x4000 <= addr <= 0x7FFF:
+            bank[addr - 0x4000] = val
+        else:
+            raise Exception(f"gameover_bank byte at unexpected address {addr:04x} (window A/4000h-7FFFh only)")
+    return bank, a.symtab
 
 
 # round39 ("ではバンクテストをしたいので...新バンクには必要な初期化処理を
@@ -431,15 +538,20 @@ def main():
     # --- title/Stage2's own INIT_BGM select via windowB (7000h, index6  ---
     # --- after the STAGE2_BGM_BANKSELECT_PATCH/TITLE_BGM_BANKSELECT_    ---
     # --- PATCH retargeting above) before LDIRing their song into RAM.   ---
-    # --- bank7 stays inert 0xFF filler (never selected by any code).    ---
+    # --- round42 (2026-09-07): bank7, previously pure 0xFF filler, is now ---
+    # --- the real GAME_OVER bank (tools/gameover_bank/gameover_bank.asm - ---
+    # --- Stage2's TANK_LIFE-exhausted death screen, window A only) that   ---
+    # --- combined_test.asm's own TRIGGER_GAME_OVER selects via windowA    ---
+    # --- (6000h, index7 after STAGE2_GAMEOVER_BANKSELECT_PATCH above).    ---
     bgm_bank, _ = bgm_bank_gen.build_bank()
-    rom = rom96 + bytes(bgm_bank) + bytes([0xFF] * 0x4000)
+    gameover_bank, gameover_sym = assemble_gameover_bank()
+    rom = rom96 + bytes(bgm_bank) + bytes(gameover_bank)
 
     out_path = os.path.join(REPO, "rom", "CyberS Comb.ascii16k.rom")
     with open(out_path, "wb") as f:
         f.write(rom)
 
-    print(f"wrote {out_path}: {len(rom)} bytes (banks 0-6 real content + 1 inert filler bank, 128KB total)")
+    print(f"wrote {out_path}: {len(rom)} bytes (banks 0-7 all real content, 128KB total)")
     print(f"  bank0 (title page1): {len(title_bank0)}B, header {bytes(title_bank0[0:4]).hex()}")
     print(f"  bank1 (title page2): {len(title_bank1)}B")
     print(f"  bank2 (Stage1 page1, real game + test patch): {len(game_bank0)}B, header {bytes(game_bank0[0:4]).hex()}")
@@ -447,9 +559,11 @@ def main():
     print(f"  bank4 (Stage2 page1, real tools/stage2_combined content): {len(bank4)}B, header {bytes(bank4[0:4]).hex()}")
     print(f"  bank5 (Stage2 page2, real tools/stage2_combined content): {len(bank5)}B")
     print(f"  bank6 (BGM data, tools/bgm_data/bgm_bank_gen.py): {len(bgm_bank)}B")
+    print(f"  bank7 (GAME_OVER, tools/gameover_bank/gameover_bank.asm): {len(gameover_bank)}B")
     print(f"title INIT={title_sym['INIT']:04x}")
     print(f"game MAINLOOP={game_sym['MAINLOOP']:04x} GAME_TICK={game_sym['GAME_TICK']:04x}")
     print(f"stage2 (real) INIT={stage2_sym['INIT']:04x} MAINLOOP={stage2_sym['MAINLOOP']:04x}")
+    print(f"gameover bank INIT={gameover_sym['INIT']:04x}")
 
 
 if __name__ == "__main__":

@@ -67,6 +67,15 @@ STAGE1_BANK_A EQU 2
 STAGE1_BANK_B EQU 3
 STAGE1_INIT   EQU 04010h
 
+; (2026-09-07、"タイトル画面でAボタンスタートならゲームオーバーあり、
+; Bボタンならゲームオーバー無しに これはテスト用なのでBはあとAと同様に
+; ゲームオーバー有りにする"): src/CYBER SHMUP.asmのGAMEOVER_ENABLED
+; (同じ物理アドレス、値は必ず一致させること)。RAM(0xC000-0xFFFF)は
+; バンク切替を跨いで物理的に共有されるフラットな領域であることを
+; 利用し、Stage1・Stage2両方がこの1バイトを直接参照する
+; (GFEnding[Stage2]方式でのSTAGE1_SCORE直接参照と同じ手法)。
+GAMEOVER_ENABLED EQU 0F235h
+
 INIT:
     LD SP,STACKTOP
 
@@ -140,11 +149,27 @@ INIT:
 ; idle until the trigger button is pressed, then trampoline into
 ; Stage1 (bank2/3) - same 2-hop RAM-trampoline mechanism build_full_
 ; rom.py's own MAINLOOP_PATCH already uses for Stage1->Stage2.
+; (2026-09-07、"タイトル画面でAボタンスタートならゲームオーバーあり、
+; Bボタンならゲームオーバー無しに"): トリガー1(ボタンA)を優先チェック
+; し、押されていればGAMEOVER_ENABLED=1でスタート。押されていなければ
+; トリガー0(ボタンB)をチェックし、押されていればGAMEOVER_ENABLED=0で
+; スタート("これはテスト用なのでBはあとAと同様にゲームオーバー有りに
+; する" - 現時点では明示的にBだけ0にする)。どちらも押されていなければ
+; 待機継続。
 WAIT_FOR_START:
     LD A,1
     CALL GTTRIG
     OR A
+    JR NZ,WFS_BUTTON_A
+    LD A,0
+    CALL GTTRIG
+    OR A
     JR Z,WAIT_FOR_START
+    XOR A : LD (GAMEOVER_ENABLED),A
+    JR WFS_PROCEED
+WFS_BUTTON_A:
+    LD A,1 : LD (GAMEOVER_ENABLED),A
+WFS_PROCEED:
 
     ; 実機フィードバック対応("バンク切り替えに失敗してる タイトルで
     ; ボタンを押すとフリーズ"): ここまでは割り込み許可(EI済み、BGM_TICK

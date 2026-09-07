@@ -145,16 +145,26 @@ check("raw trace: BGM_MUTED is already 1 by the instant DRAW_MISSION_SCREEN (Mis
       "final boot() snapshot",
       z.rd(BGM_MUTED) == 1)
 
-# ---- boot-time VRAM load: font pattern + color ----
+# ---- boot-time VRAM load: font pattern + color (2026-09-07 "Mission表示の ----
+# ---- フォントは添付ファイルで": M,I,S,O,N,space,1,2 の8グリフへ拡張,   ----
+# ---- tools/pixel_font_8x8.pyのバイト列と同一)                          ----
+import importlib.util
+_pf_spec = importlib.util.spec_from_file_location(
+    "pixel_font_8x8", os.path.join(REPO_ROOT, "tools", "pixel_font_8x8.py"))
+pixel_font_8x8 = importlib.util.module_from_spec(_pf_spec)
+_pf_spec.loader.exec_module(pixel_font_8x8)
+
 z = fresh()
 boot(z)
 expected_font = {
-    0: [0, 130, 198, 170, 146, 130, 130, 130],
-    1: [0, 248, 32, 32, 32, 32, 32, 248],
-    2: [0, 120, 132, 128, 120, 2, 132, 120],
-    3: [0, 120, 132, 132, 132, 132, 132, 120],
-    4: [0, 132, 196, 164, 148, 140, 132, 132],
-    5: [0, 0, 0, 0, 0, 0, 0, 0],
+    0: pixel_font_8x8.glyph_bytes("M"),
+    1: pixel_font_8x8.glyph_bytes("I"),
+    2: pixel_font_8x8.glyph_bytes("S"),
+    3: pixel_font_8x8.glyph_bytes("O"),
+    4: pixel_font_8x8.glyph_bytes("N"),
+    5: pixel_font_8x8.glyph_bytes(" "),
+    6: pixel_font_8x8.glyph_bytes("1"),
+    7: pixel_font_8x8.glyph_bytes("2"),
 }
 font_ok = True
 for offset, bytes_ in expected_font.items():
@@ -162,15 +172,35 @@ for offset, bytes_ in expected_font.items():
     got = [z.vram[code * 8 + i] for i in range(8)]
     if got != bytes_:
         font_ok = False
-check("boot: MISSION_FONT_PATTERNS (M,I,S,O,N,space) loaded byte-correct at "
-      "MISSION_FONT_BASE(64)..+5 in the pattern generator table", font_ok)
+check("boot: MISSION_FONT_PATTERNS (M,I,S,O,N,space,1,2 - attached Font_24x24_1.json) "
+      "loaded byte-correct at MISSION_FONT_BASE(64)..+7 in the pattern generator table",
+      font_ok)
 check("boot: group8 (codes64-71) color byte at VRAM 2008h patched to white/black (0F1h)",
       z.vram[0x2008] == 0xF1)
 
-# ---- 実機フィードバック対応("Mission 1の1のフォントがアに化けてた"): ----
-# ---- MISSION1_MSG/MISSION2_MSGの末尾1文字が再利用するDIGIT_BASE+1/+2 ----
-# ---- (digit"1"/"2")のビットマップ・色も、Mission1が表示するより前に ----
-# ---- 実際にVRAMへロード済みでなければならない                        ----
+# ---- GAME OVER font (G,A,E,V,R, group9 codes72-76) ----
+GAMEOVER_FONT_BASE = sym["GAMEOVER_FONT_BASE"]
+GAME_OVER_MSG = sym["GAME_OVER_MSG"]
+expected_gameover_font = {
+    0: pixel_font_8x8.glyph_bytes("G"),
+    1: pixel_font_8x8.glyph_bytes("A"),
+    2: pixel_font_8x8.glyph_bytes("E"),
+    3: pixel_font_8x8.glyph_bytes("V"),
+    4: pixel_font_8x8.glyph_bytes("R"),
+}
+gameover_font_ok = True
+for offset, bytes_ in expected_gameover_font.items():
+    code = GAMEOVER_FONT_BASE + offset
+    got = [z.vram[code * 8 + i] for i in range(8)]
+    if got != bytes_:
+        gameover_font_ok = False
+check("boot: GAMEOVER_FONT_PATTERNS (G,A,E,V,R) loaded byte-correct at "
+      "GAMEOVER_FONT_BASE(72)..+4 in the pattern generator table", gameover_font_ok)
+check("boot: group9 (codes72-79) color byte at VRAM 2009h patched to white/black (0F1h)",
+      z.vram[0x2009] == 0xF1)
+
+# ---- DIGIT_PATTERNS (digits0-9, used by score display etc - unrelated to ----
+# ---- Mission text now, but still needs to be loaded somewhere in INIT)  ----
 DIGIT_PATTERNS_EXPECTED = {
     0: [0x3C, 0x66, 0x6E, 0x76, 0x66, 0x66, 0x3C, 0x00],
     1: [0x18, 0x38, 0x58, 0x18, 0x18, 0x18, 0x7E, 0x00],
@@ -182,43 +212,49 @@ for n, bytes_ in DIGIT_PATTERNS_EXPECTED.items():
     got = [z.vram[code * 8 + i] for i in range(8)]
     if got != bytes_:
         digit_ok = False
-check("boot: DIGIT_PATTERNS (digit 0/1/2, used by MISSION1_MSG/MISSION2_MSG's own last "
-      "character) loaded byte-correct at DIGIT_BASE(176)+N in the pattern generator table "
-      "- NOT left as stale/garbage VRAM from the previous stage (Title)",
+check("boot: DIGIT_PATTERNS (digit 0/1/2, score display font) loaded byte-correct at "
+      "DIGIT_BASE(176)+N in the pattern generator table - NOT left as stale/garbage VRAM "
+      "from the previous stage (Title)",
       digit_ok)
 check("boot: group22 (codes176-183, digits0-7) color byte at VRAM 2016h is white/black "
       "(0F1h), matching COLORDATA's own eventual value for this group",
       z.vram[0x2000 + 22] == 0xF1)
 
-# raw instruction trace: confirm DIGIT_PATTERNS is ALREADY loaded (not stale Title VRAM) by
-# the moment DRAW_MISSION_SCREEN itself starts running - catches a future reordering mistake
-# that would silently put DRAW_MISSION_SCREEN before the DIGIT_PATTERNS LDIRVM again.
-z = fresh()
-z.pc = sym["INIT"]
-for _ in range(500_000):
-    if z.pc == DRAW_MISSION_SCREEN_ADDR:
-        break
-    z.step()
-else:
-    raise RuntimeError("never reached DRAW_MISSION_SCREEN from INIT")
-digit1_code = DIGIT_BASE + 1
-digit1_at_draw = [z.vram[digit1_code * 8 + i] for i in range(8)]
-check("raw trace: digit '1' (DIGIT_BASE+1, the glyph MISSION1_MSG actually displays) is "
-      "already the real bitmap - not stale VRAM - by the instant DRAW_MISSION_SCREEN starts "
-      "executing",
-      digit1_at_draw == DIGIT_PATTERNS_EXPECTED[1])
-
-# ---- MISSION1_MSG / MISSION2_MSG content ----
-def read_msg(addr):
-    return [mem0[addr + i] for i in range(9)]
+# ---- MISSION1_MSG / MISSION2_MSG content (末尾は添付フォントの'1'/'2', ----
+# ---- MISSION_FONT_BASE+6/+7 - もうDIGIT_BASEには依存しない)            ----
+def read_msg(addr, length=9):
+    return [mem0[addr + i] for i in range(length)]
 
 expected_msg_prefix = [MISSION_FONT_BASE + 0, MISSION_FONT_BASE + 1, MISSION_FONT_BASE + 2,
                        MISSION_FONT_BASE + 2, MISSION_FONT_BASE + 1, MISSION_FONT_BASE + 3,
                        MISSION_FONT_BASE + 4, MISSION_FONT_BASE + 5]
-check("MISSION1_MSG = 'MISSION' + space + digit(DIGIT_BASE+1)",
-      read_msg(MISSION1_MSG) == expected_msg_prefix + [DIGIT_BASE + 1])
-check("MISSION2_MSG = 'MISSION' + space + digit(DIGIT_BASE+2)",
-      read_msg(MISSION2_MSG) == expected_msg_prefix + [DIGIT_BASE + 2])
+check("MISSION1_MSG = 'MISSION' + space + '1' (MISSION_FONT_BASE+6)",
+      read_msg(MISSION1_MSG) == expected_msg_prefix + [MISSION_FONT_BASE + 6])
+check("MISSION2_MSG = 'MISSION' + space + '2' (MISSION_FONT_BASE+7)",
+      read_msg(MISSION2_MSG) == expected_msg_prefix + [MISSION_FONT_BASE + 7])
+
+# ---- GAME_OVER_MSG content (2026-09-07、"表示もGAME OVERではなく       ----
+# ---- MISSION FAILEDに変更"): "MISSION FAILED"(14 bytes), M/I/S/O/N/    ----
+# ---- spaceはMISSION_FONT_BASE側、F/A/L/E/DはGAMEOVER_FONT_BASE側       ----
+GAME_OVER_MSG_LEN = sym["GAME_OVER_MSG_LEN"]
+expected_gameover_msg = [
+    MISSION_FONT_BASE + 0,   # M
+    MISSION_FONT_BASE + 1,   # I
+    MISSION_FONT_BASE + 2,   # S
+    MISSION_FONT_BASE + 2,   # S
+    MISSION_FONT_BASE + 1,   # I
+    MISSION_FONT_BASE + 3,   # O
+    MISSION_FONT_BASE + 4,   # N
+    MISSION_FONT_BASE + 5,   # space
+    GAMEOVER_FONT_BASE + 5,  # F
+    GAMEOVER_FONT_BASE + 1,  # A
+    MISSION_FONT_BASE + 1,   # I
+    GAMEOVER_FONT_BASE + 6,  # L
+    GAMEOVER_FONT_BASE + 2,  # E
+    GAMEOVER_FONT_BASE + 7,  # D
+]
+check("GAME_OVER_MSG = 'MISSION FAILED' (14 bytes, mixing MISSION_FONT_BASE/GAMEOVER_FONT_BASE)",
+      read_msg(GAME_OVER_MSG, GAME_OVER_MSG_LEN) == expected_gameover_msg)
 
 # ---- DRAW_MISSION_SCREEN: fills the whole name table black + draws the ----
 # ---- 9-byte message centered at row12/col11 + hides all sprites        ----
@@ -264,6 +300,52 @@ check("ERASE_MISSION_TEXT: message region (row12,col11..19) restored to the SPAC
       all(b == MISSION_FONT_BASE + 5 for b in msg_region))
 check("ERASE_MISSION_TEXT: leaves every other byte (including the ground scroller) untouched",
       rest_untouched)
+
+# ---- DRAW_GAMEOVER_TEXT (2026-09-07 "ゲームオーバーは画面中央にMISSION ----
+# ---- FAILEDと表示" - user picked "text-only overlay, background stays  ----
+# ---- visible" over the Mission-screen full-blackout style). 14-byte    ----
+# ---- message centered at row12/col9 ((32-14)/2=9) - unlike             ----
+# ---- DRAW_MISSION_SCREEN, the rest of the name table, sprite table and ----
+# ---- PSG channel A are left completely alone so gameplay keeps         ----
+# ---- rendering underneath.                                              ----
+z = fresh()
+boot(z)
+for i in range(768):
+    z.vram[0x1800 + i] = 0x33
+z.vram[0x1B00] = 0x42
+z.psg_regs[8] = 0x0F
+call_routine(z, sym["DRAW_GAMEOVER_TEXT"])
+nametable = [z.vram[0x1800 + i] for i in range(768)]
+msg_region = nametable[12 * 32 + 9: 12 * 32 + 9 + GAME_OVER_MSG_LEN]
+rest_untouched = all(b == 0x33 for i, b in enumerate(nametable)
+                     if not (12 * 32 + 9 <= i < 12 * 32 + 9 + GAME_OVER_MSG_LEN))
+check("DRAW_GAMEOVER_TEXT: message region (row12,col9..) matches GAME_OVER_MSG",
+      msg_region == read_msg(GAME_OVER_MSG, GAME_OVER_MSG_LEN))
+check("DRAW_GAMEOVER_TEXT: leaves every other name-table byte untouched (no full blackout, "
+      "background/gameplay keeps showing through)", rest_untouched)
+check("DRAW_GAMEOVER_TEXT: does NOT touch the sprite attribute table (sprites stay visible, "
+      "unlike DRAW_MISSION_SCREEN's hide-all)", z.vram[0x1B00] == 0x42)
+check("DRAW_GAMEOVER_TEXT: does NOT touch PSG channel A volume (SE keeps playing normally)",
+      z.psg_regs.get(8) == 0x0F)
+
+# ---- PTH_GAMEOVER wiring: reaching GAME_OVER=1 via a barrier-exhausted hit ----
+# ---- actually draws GAME_OVER_MSG on screen (not just sets the flag)       ----
+BARRIER_HP = sym["BARRIER_HP"]
+GAME_OVER = sym["GAME_OVER"]
+GAME_OVER_SEQ = sym["GAME_OVER_SEQ"]
+z = fresh()
+boot(z)
+z.wr(BARRIER_HP, 0)
+for i in range(768):
+    z.vram[0x1800 + i] = 0x33
+call_routine(z, sym["PTH_GAMEOVER"])
+nametable = [z.vram[0x1800 + i] for i in range(768)]
+msg_region = nametable[12 * 32 + 9: 12 * 32 + 9 + GAME_OVER_MSG_LEN]
+check("PTH_GAMEOVER: sets GAME_OVER=1", z.rd(GAME_OVER) == 1)
+check("PTH_GAMEOVER: draws GAME_OVER_MSG at the screen-center message region",
+      msg_region == read_msg(GAME_OVER_MSG, GAME_OVER_MSG_LEN))
+check("PTH_GAMEOVER: arms GAME_OVER_SEQ=1 (3-second display phase)",
+      z.rd(GAME_OVER_SEQ) == 1)
 
 # ---- UPDATE_STAGE_CLEAR: 4-state machine (0/1/2/3) ----
 z = fresh()
@@ -436,6 +518,127 @@ boot(z)
 check("boot: PLAYER_RETREAT_ACT is explicitly zero-initialized in INIT even from all-0xFF RAM "
       "(round36-14 follow-up#14 lesson: never rely on RAM happening to already be 0)",
       z.rd(PLAYER_RETREAT_ACT) == 0)
+
+# ---- boot: GAME_OVER_SEQ/GAME_OVER_START_TICK must be explicitly zero- ----
+# ---- initialized too (same round36-14 follow-up#14 lesson) - unlike    ----
+# ---- GAMEOVER_ENABLED, which must NOT be cleared (Title sets it)       ----
+GAME_OVER_START_TICK = sym["GAME_OVER_START_TICK"]
+GAMEOVER_ENABLED = sym["GAMEOVER_ENABLED"]
+z = fresh()
+z.wr(GAME_OVER_SEQ, 0xFF)
+z.wr(GAME_OVER_START_TICK, 0xFF); z.wr(GAME_OVER_START_TICK + 1, 0xFF)
+z.wr(GAMEOVER_ENABLED, 0x42)
+boot(z)
+check("boot: GAME_OVER_SEQ is explicitly zero-initialized in INIT even from all-0xFF RAM",
+      z.rd(GAME_OVER_SEQ) == 0)
+check("boot: GAME_OVER_START_TICK is explicitly zero-initialized in INIT even from all-0xFF RAM",
+      z.rd(GAME_OVER_START_TICK) == 0 and z.rd(GAME_OVER_START_TICK + 1) == 0)
+check("boot: GAMEOVER_ENABLED is NOT touched by INIT (Title sets this before Stage1 boots, "
+      "any INIT clear would silently discard the A/B button choice)",
+      z.rd(GAMEOVER_ENABLED) == 0x42)
+
+# ---- UPDATE_GAME_OVER_SEQUENCE: 3-state machine (1=3sec text/2=button- ----
+# ---- or-10sec-timeout wait/3=ready to return to title)                 ----
+UPDATE_GAME_OVER_SEQUENCE = sym["UPDATE_GAME_OVER_SEQUENCE"]
+GAME_OVER_TEXT_TICKS = sym["GAME_OVER_TEXT_TICKS"]
+GAME_OVER_TIMEOUT_TICKS = sym["GAME_OVER_TIMEOUT_TICKS"]
+
+z = fresh()
+boot(z)
+z.wr(GAME_OVER_SEQ, 1)
+z.wr(GAME_OVER_START_TICK, 0); z.wr(GAME_OVER_START_TICK + 1, 0)
+z.wr(SC_VBLANK_COUNT, (GAME_OVER_TEXT_TICKS - 1) & 0xFF)
+z.wr(SC_VBLANK_COUNT + 1, (GAME_OVER_TEXT_TICKS - 1) >> 8)
+call_routine(z, UPDATE_GAME_OVER_SEQUENCE)
+check(f"UPDATE_GAME_OVER_SEQUENCE: stays SEQ=1 one tick before GAME_OVER_TEXT_TICKS"
+      f"({GAME_OVER_TEXT_TICKS}) elapses", z.rd(GAME_OVER_SEQ) == 1)
+
+z = fresh()
+boot(z)
+z.wr(GAME_OVER_SEQ, 1)
+z.wr(GAME_OVER_START_TICK, 0); z.wr(GAME_OVER_START_TICK + 1, 0)
+z.wr(SC_VBLANK_COUNT, GAME_OVER_TEXT_TICKS & 0xFF)
+z.wr(SC_VBLANK_COUNT + 1, GAME_OVER_TEXT_TICKS >> 8)
+call_routine(z, UPDATE_GAME_OVER_SEQUENCE)
+check("UPDATE_GAME_OVER_SEQUENCE: SEQ 1->2 exactly when GAME_OVER_TEXT_TICKS elapses",
+      z.rd(GAME_OVER_SEQ) == 2)
+new_start = z.rd(GAME_OVER_START_TICK) | (z.rd(GAME_OVER_START_TICK + 1) << 8)
+check("UPDATE_GAME_OVER_SEQUENCE: SEQ 1->2 transition re-snapshots GAME_OVER_START_TICK",
+      new_start == GAME_OVER_TEXT_TICKS)
+
+# SEQ==2: no button, time not yet elapsed -> stays SEQ=2
+z = fresh()
+boot(z)
+z.wr(GAME_OVER_SEQ, 2)
+z.wr(GAME_OVER_START_TICK, 0); z.wr(GAME_OVER_START_TICK + 1, 0)
+z.wr(SC_VBLANK_COUNT, 0); z.wr(SC_VBLANK_COUNT + 1, 0)
+call_routine(z, UPDATE_GAME_OVER_SEQUENCE)
+check("UPDATE_GAME_OVER_SEQUENCE: stays SEQ=2 with no button input and time not yet elapsed",
+      z.rd(GAME_OVER_SEQ) == 2)
+
+# SEQ==2: button press (GTTRIG trigger A, sim_trig_a) immediately advances
+# to SEQ=3 even though the 10-second timeout hasn't elapsed.
+z = fresh()
+boot(z)
+z.wr(GAME_OVER_SEQ, 2)
+z.wr(GAME_OVER_START_TICK, 0); z.wr(GAME_OVER_START_TICK + 1, 0)
+z.wr(SC_VBLANK_COUNT, 0); z.wr(SC_VBLANK_COUNT + 1, 0)
+z.sim_trig_a = True
+call_routine(z, UPDATE_GAME_OVER_SEQUENCE)
+check("UPDATE_GAME_OVER_SEQUENCE: SEQ 2->3 on a button press, before the 10-second timeout",
+      z.rd(GAME_OVER_SEQ) == 3)
+
+# SEQ==2: timeout (10 seconds) advances to SEQ=3 even without a button
+z = fresh()
+boot(z)
+z.wr(GAME_OVER_SEQ, 2)
+z.wr(GAME_OVER_START_TICK, 0); z.wr(GAME_OVER_START_TICK + 1, 0)
+z.wr(SC_VBLANK_COUNT, GAME_OVER_TIMEOUT_TICKS & 0xFF)
+z.wr(SC_VBLANK_COUNT + 1, GAME_OVER_TIMEOUT_TICKS >> 8)
+call_routine(z, UPDATE_GAME_OVER_SEQUENCE)
+check(f"UPDATE_GAME_OVER_SEQUENCE: SEQ 2->3 when GAME_OVER_TIMEOUT_TICKS"
+      f"({GAME_OVER_TIMEOUT_TICKS}) elapses with no button press",
+      z.rd(GAME_OVER_SEQ) == 3)
+
+z = fresh()
+boot(z)
+z.wr(GAME_OVER_SEQ, 3)
+call_routine(z, UPDATE_GAME_OVER_SEQUENCE)
+check("UPDATE_GAME_OVER_SEQUENCE: SEQ==3 is a no-op (terminal state)", z.rd(GAME_OVER_SEQ) == 3)
+
+z = fresh()
+boot(z)
+z.wr(GAME_OVER_SEQ, 0)
+call_routine(z, UPDATE_GAME_OVER_SEQUENCE)
+check("UPDATE_GAME_OVER_SEQUENCE: SEQ==0 is a no-op (not yet triggered)", z.rd(GAME_OVER_SEQ) == 0)
+
+# ---- GAMEOVER_ENABLED==0 gating: barrier-exhausted hit no longer      ----
+# ---- reaches PTH_GAMEOVER, matching round37's original "0になっても   ----
+# ---- 死なない" behavior ("Bボタンならゲームオーバー無しに")            ----
+z = fresh()
+boot(z)
+z.wr(GAMEOVER_ENABLED, 0)
+z.wr(BARRIER_HP, 0)
+for i in range(768):
+    z.vram[0x1800 + i] = 0x33
+call_routine(z, sym["PLAYER_TAKE_HIT"])
+nametable = [z.vram[0x1800 + i] for i in range(768)]
+msg_region = nametable[12 * 32 + 9: 12 * 32 + 9 + GAME_OVER_MSG_LEN]
+check("PLAYER_TAKE_HIT with GAMEOVER_ENABLED=0: does NOT set GAME_OVER",
+      z.rd(GAME_OVER) == 0)
+check("PLAYER_TAKE_HIT with GAMEOVER_ENABLED=0: does NOT draw the MISSION FAILED text",
+      all(b == 0x33 for b in msg_region))
+check("PLAYER_TAKE_HIT with GAMEOVER_ENABLED=0: BARRIER_HP stays at 0 (no underflow)",
+      z.rd(BARRIER_HP) == 0)
+
+z = fresh()
+boot(z)
+z.wr(GAMEOVER_ENABLED, 1)
+z.wr(BARRIER_HP, 0)
+call_routine(z, sym["PLAYER_TAKE_HIT"])
+check("PLAYER_TAKE_HIT with GAMEOVER_ENABLED=1: DOES set GAME_OVER (regression guard - "
+      "confirms the GAMEOVER_ENABLED gate itself works both ways)",
+      z.rd(GAME_OVER) == 1)
 
 print(f"\n{len(ok)} passed, {len(fail)} failed")
 if fail:

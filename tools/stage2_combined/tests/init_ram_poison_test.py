@@ -200,6 +200,22 @@ EXPECTED_AT_SPAWN = {"BOSS_MATERIALIZE_ACT": 1}
 if tier_a_failures:
     for poison in POISONS:
         cpu = boot_with_poisoned_ram(poison)
+        # (2026-09-07、"まずステージ2もステージ1同様にHPが無くなったら
+        # 爆発処理を"): TANK_LIFEが0になるとTRIGGER_GAME_OVERが専用
+        # バンク(standalone local index3、Combではglobal bank7)へ一方
+        # 通行のトランポリンで切り替わる設計になった。standaloneの
+        # BankedMemはwindow Aバンクを1つしか持たない(このファイル自身
+        # のbank0のみ)ため、この切替は実際には起きず、行き先アドレス
+        # (0x4000、combined_test.asm自身のROMヘッダ領域)を命令として
+        # 誤実行してしまい、汚染RAMで何度もダメージを受けるうちに
+        # ボススポーンへ到達する前にCPUが暴走する - Combビルドでは
+        # 正しくbank7へ切り替わるため実害はないが、このstandalone
+        # テスト環境固有の制約。GAMEOVER_ENABLEDは"_ACT"/"_POOL"命名
+        # 規則に該当しないためこのテストの検証対象外 - Tier B検証の
+        # 本来の目的(ボス専用の遅延初期化が実際に安全か)を汚染しない
+        # 範囲で、ここだけ明示的に0(ゲームオーバー無効)へ上書きし、
+        # TRIGGER_GAME_OVERへの分岐自体を回避する。
+        cpu.mem[sym["GAMEOVER_ENABLED"]] = 0
         spawned = run_until_boss_spawned(cpu)
         for name, addr in sorted(tier_a_failures):
             expected = EXPECTED_AT_SPAWN.get(name, 0)

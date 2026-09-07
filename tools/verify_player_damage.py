@@ -400,7 +400,11 @@ check("accent color: purple during BARRIER_IFRAMES (\"被弾時はバリア色�
 
 
 # ---------- (11) PLAYER_DAMAGE_CHECK - post-barrier hit (sprite-explosion burst, no freeze) ----------
+# GAMEOVER_ENABLED (2026-09-07, "Bボタンならゲームオーバー無しに") must be
+# explicitly armed here - Title normally sets it via the A-button path,
+# but this test boots Stage1 directly with no Title RAM copy.
 z = fresh(); boot(z)
+z.wr(sym["GAMEOVER_ENABLED"], 1)
 z.wr(PLAYERX, PX); z.wr(PLAYERY, PY)
 z.wr(BARRIER_HP, 0)
 z.wr(BARRIER_IFRAMES, 0)
@@ -466,6 +470,7 @@ check("...hidden off-screen at the attribute table on expiry",
 # a real MAINLOOP run: game keeps playing after death (no freeze), and the
 # burst sequence actually runs to completion inside real gameplay frames
 z = fresh(); boot(z)
+z.wr(sym["GAMEOVER_ENABLED"], 1)
 z.wr(PLAYERX, PX); z.wr(PLAYERY, PY)
 z.wr(BARRIER_HP, 0)
 setup_enemy(z, TYPE_ENEMY1_LOOK, PX, PY, top=1, bot=0)

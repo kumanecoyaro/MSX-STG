@@ -490,16 +490,24 @@ GTD_ONES_TMP EQU 0E4D3h
 
 ; (2026-09-06、"STAGE1も2と同じで一旦画面をブラックで埋めてMISSION 1と
 ; 3秒表示してから"、"画面をブラックで埋めてMISSION 2とセンターに表示
-; 3秒でいいかな"): "MISSION 1"/"MISSION 2"共有の5x7ドット文字("M","I",
-; "S","O","N",space)専用パターンコード。コード64-87(group8-10、"shot-
-; green"/"shot-white"/"shot-brown"用に色だけ予約されビットマップは
-; 一度も実装されなかった、COLORDATA自身のコメント参照)がLDIRVM/WRTVRM
-; 全呼び出し元の横断的な洗い出し+エミュレータでの実VRAM調査(boot直後・
-; 6000フレーム実プレイ後の両方でcodes64-87が全バイト0のまま)の両方で
-; 実際に空きと確認済み - 今回は先頭6コード(64-69)のみ使用。数字の"1"/
-; "2"は新規グリフを起こさず、既存のDIGIT_BASE+1/+2(既に白文字/黒背景
-; 0F1hで着色済み)をそのまま再利用する。
-MISSION_FONT_BASE EQU 64   ; M=64,I=65,S=66,O=67,N=68,space=69 (group8内)
+; 3秒でいいかな"): "MISSION 1"/"MISSION 2"共有の8x8ドット文字専用
+; パターンコード。コード64-87(group8-10、"shot-green"/"shot-white"/
+; "shot-brown"用に色だけ予約されビットマップは一度も実装されなかった、
+; COLORDATA自身のコメント参照)がLDIRVM/WRTVRM全呼び出し元の横断的な
+; 洗い出し+エミュレータでの実VRAM調査(boot直後・6000フレーム実プレイ
+; 後の両方でcodes64-87が全バイト0のまま)の両方で実際に空きと確認済み。
+; (2026-09-07、"Mission表示のフォントは添付ファイルで"): ユーザー添付
+; Font_24x24_1.json(CYBER_SUZUKA)から機械抽出したM,I,S,O,N,1,2の7グリフ
+; +spaceの計8グリフへ差し替え(tools/pixel_font_8x8.py参照)。旧5x7
+; フォント+DIGIT_BASE+1/+2再利用方式から、この8グリフだけで完結する
+; 方式へ変更(group8のcode64-71をちょうど使い切る)。
+MISSION_FONT_BASE EQU 64   ; M=64,I=65,S=66,O=67,N=68,space=69,1=70,2=71 (group8内)
+; (2026-09-07、"ゲームオーバーは画面中央にGAME OVERと表示"): GAME OVER
+; 表示専用の追加5文字(G,A,E,V,R - M/space/Oは上のMISSION_FONT_BASE側を
+; 共用)。同じ調査で空きと確認済みのgroup9(codes72-79)先頭5コードへ配置、
+; tools/pixel_font_8x8.pyの新規描き起こし文字(添付フォントと同じ書体
+; スタイル)。
+GAMEOVER_FONT_BASE EQU 72   ; G=72,A=73,E=74,V=75,R=76 (group9内)
 ; 3秒 @ 60Hz real vblank(SC_VBLANK_COUNT基準、GFEnding[Stage2]の
 ; ENDING_WAIT_TICKS=600[10秒@60Hz]と同じ換算)。
 MISSION_SCREEN_TICKS EQU 180
@@ -759,6 +767,35 @@ PLAYER_EXPL_SPAWN_INTERVAL EQU 8    ; frames between spawn attempts -
                                      ; the full ~2s sequence)
 PLAYER_EXPL_TOTAL_LEN EQU 120       ; ~2 seconds at 60fps - untuned placeholder
 
+; (2026-09-07、"ゲームオーバー表示は3秒表示してボタンが押されるか
+; 10秒経過でタイトル画面に" - 前の"ゲームは止めないでくれ"方針からの
+; 明示的な方針転換、ユーザー自身の新指示で上書き)。安全な未使用領域
+; (0F232h-0F37Fh、SND_TONE_IS_SEの直後、上記コメントと同じ実測済みの
+; 空き帯)に配置。
+GAME_OVER_SEQ       EQU 0F232h  ; 0=未発生/1=MISSION FAILED表示中(3秒
+                                 ; 待ち)/2=ボタンorタイムアウト待ち
+                                 ; (最大10秒)/3=タイトルへ戻る準備完了
+                                 ; (build_full_rom.pyのComb限定
+                                 ; MAINLOOP_PATCHがこれを見てタイトルへの
+                                 ; バンク切替へ進む、このファイル自身は
+                                 ; バンク切替を一切行わない設計 - 既存の
+                                 ; STAGE_CLEAR_ACTと同じ考え方)
+GAME_OVER_START_TICK EQU 0F233h  ; 2 bytes: SC_VBLANK_COUNTのスナップショット
+                                 ; (フェーズ切替のたびに再スナップショット、
+                                 ; UPDATE_STAGE_CLEARと同じ実時間クロック
+                                 ; 再利用パターン)
+GAME_OVER_TEXT_TICKS    EQU 180  ; 3秒 @ 60Hz real vblank
+GAME_OVER_TIMEOUT_TICKS EQU 600  ; 10秒 @ 60Hz real vblank
+; (2026-09-07、"タイトル画面でAボタンスタートならゲームオーバーあり、
+; Bボタンならゲームオーバー無しに"): tools/title_screen/title_test.asm
+; のWAIT_FOR_STARTが同じ物理アドレスへ直接書き込む(値は必ず一致させる
+; こと)。RAM(0xC000-0xFFFF)がバンク切替を跨いで物理的に共有される
+; フラットな領域であることを利用した直接参照 - このファイル自身の
+; INITでは絶対にクリアしないこと(Titleが設定した値を上書きしてしまう)。
+GAMEOVER_ENABLED EQU 0F235h  ; 0=ゲームオーバー無効(バリア0後の被弾は
+                              ; 無視、"今は0になっても死なない"の従来
+                              ; 挙動)/1=ゲームオーバー有効(通常)
+
     DB "AB"
     DW INIT
     DW 0,0,0
@@ -843,15 +880,19 @@ INIT:
     ; 独立した完結フェーズとしてMission1を表示・待機・消去し、それが
     ; 完全に終わってから初めて"ステージ開始処理"(この直後のborder色
     ; 設定〜PSG R7ミキサー設定〜UNMUTE_BGMまでの一連)を開始する。
+    ; (2026-09-07、"Mission表示のフォントは添付ファイルで"): MISSION_FONT_
+    ; PATTERNSをユーザー添付Font_24x24_1.json(CYBER_SUZUKA、M/I/S/O/N/
+    ; 1/2の8x8グリフ)へ差し替え、8グリフ(M,I,S,O,N,space,1,2)構成に
+    ; 拡張(旧6グリフ+DIGIT_BASE+1/+2への依存を解消)。同じcode64-71の
+    ; group8内に収まるため追加コードは不要。
     LD HL,MISSION_FONT_PATTERNS : LD DE,MISSION_FONT_BASE*8 : LD BC,MISSION_FONT_PATTERNS_LEN : CALL LDIRVM
     LD HL,MISSION_FONT_COLOR : LD DE,2008h : LD BC,1 : CALL LDIRVM
-    ; MISSION1_MSG/MISSION2_MSGの末尾1文字が再利用するdigitグリフ
-    ; (DIGIT_BASE+1/+2)自体のビットマップ+色も、Mission1が実際に
-    ; 表示する前にここで読み込んでおく必要がある(前述の"1がアに
-    ; 化けた"実機フィードバック対応、詳細はDIGIT_COLOR_GROUP22の
-    ; コメント参照)。
-    LD HL,DIGIT_PATTERNS : LD DE,DIGIT_BASE*8 : LD BC,80 : CALL LDIRVM
-    LD HL,DIGIT_COLOR_GROUP22 : LD DE,2000h+22 : LD BC,1 : CALL LDIRVM
+    ; GAME OVER表示用(G,A,E,V,R、code72-76、group9内、tools/pixel_font_
+    ; 8x8.pyの新規描き起こし文字)もここで一緒にロードする - GAME OVERは
+    ; ステージ本編プレイ中いつでも発生しうるため、本編初期化が終わる前の
+    ; この早い段階で必ず用意しておく必要がある。
+    LD HL,GAMEOVER_FONT_PATTERNS : LD DE,GAMEOVER_FONT_BASE*8 : LD BC,GAMEOVER_FONT_PATTERNS_LEN : CALL LDIRVM
+    LD HL,GAMEOVER_FONT_COLOR : LD DE,2009h : LD BC,1 : CALL LDIRVM
     LD HL,MISSION1_MSG
     CALL DRAW_MISSION_SCREEN
     DI    ; DRAW_MISSION_SCREEN's own internal EI (harmless - HTIMI_HOOK is
@@ -874,7 +915,15 @@ INIT:
     ; ここで再度書き直して確定させておく(Mission1自身は既に表示・消去
     ; 済みなのでこの再書き込みの影響を受けない)。
     LD HL,MISSION_FONT_COLOR : LD DE,2008h : LD BC,1 : CALL LDIRVM
+    ; GAME OVER用フォント色(group9)も同じ理由で再書き直しが必要。
+    LD HL,GAMEOVER_FONT_COLOR : LD DE,2009h : LD BC,1 : CALL LDIRVM
     LD HL,BLANK_PATTERN : LD DE,BLANKCODE*8 : LD BC,8 : CALL LDIRVM   ; BLANKCODE's glyph was never written before - defaulted to leftover VRAM garbage
+    ; DIGIT_PATTERNS(digit glyphs 0-9、スコア表示等が使う本来の用途)は
+    ; ここが本来のロード位置(round56/57時点ではMission1表示の直前へ
+    ; 一時的に移設されていたが、今回MISSION1_MSG/MISSION2_MSGが添付
+    ; フォントの'1'/'2'グリフ[MISSION_FONT_BASE+6/+7]を使うようになり
+    ; digitグリフへの依存が解消されたため、本来のこの位置へ復元)。
+    LD HL,DIGIT_PATTERNS : LD DE,DIGIT_BASE*8 : LD BC,80 : CALL LDIRVM
 
     XOR A
     LD (TICK),A : LD (PXCHAR_G8),A : LD (PXCHAR_G4),A
@@ -1101,6 +1150,12 @@ INIT_SPRATR_CLR:
     LD A,BARRIER_HP_INIT : LD (BARRIER_HP),A   ; barrier equipped from game start
     XOR A : LD (GAME_OVER),A : LD (BARRIER_IFRAMES),A
     LD (SND_BARRIER_DUTY_TIMER),A
+    ; GAME_OVER_SEQ/GAME_OVER_START_TICK(round36-14 follow-up#14の教訓
+    ; 通り、新規RAMは明示的にゼロクリア - 実機の電源投入直後は不定値)。
+    ; GAMEOVER_ENABLEDは意図的にここでクリアしない(Titleが設定した
+    ; 値をそのまま保持する必要があるため、上記EQU自身のコメント参照)。
+    LD (GAME_OVER_SEQ),A
+    LD (GAME_OVER_START_TICK),A : LD (GAME_OVER_START_TICK+1),A
     LD HL,PLAYER_EXPL_POOL : LD (HL),A
     LD DE,PLAYER_EXPL_POOL+1 : LD BC,21 : LDIR   ; zeroes the pool +
                                                    ; PLAYER_EXPL_TOTAL_TIMER/
@@ -1327,6 +1382,12 @@ MAINLOOP:
     ; --- NOP margins are what keep individual VDP OUT sequences safe    ---
     ; --- from an interrupt landing mid-sequence, not DI.                ---
     LD A,(TICK) : INC A : AND 3Fh : LD (TICK),A
+
+    ; GAME_OVER_SEQ状態機械は毎フレーム無条件に呼ぶ(STAGE_CLEAR_ACTの
+    ; フリーズ有無に関わらず - UPDATE_STAGE_CLEAR自身のフリーズ判定
+    ; より前に置くことで両立させる)。詳細はUPDATE_GAME_OVER_SEQUENCE
+    ; 自身のコメント参照。
+    CALL UPDATE_GAME_OVER_SEQUENCE
 
     ; (2026-09-06、"画面をブラックで埋めてMISSION 2とセンターに表示
     ; 3秒でいいかな"): STAGE_CLEAR_ACTが2(MISSION2黒画面表示中)以上に
@@ -3769,6 +3830,37 @@ EMT_LOOP:
     EI
     RET
 
+; (2026-09-07、"ゲームオーバーは画面中央にGAME OVERと表示"、直後に
+; "表示もGAME OVERではなくMISSION FAILEDに変更"): PTH_GAMEOVERから
+; 1回だけ呼ばれる。DRAW_MISSION_SCREENと違い、画面全体の黒塗り・
+; スプライト全消去・PSG無音化は一切行わない - 死亡直後もゲーム画面は
+; 普通に動き続けるため(下記UPDATE_GAMEOVER_SEQUENCE参照)、
+; GAME_OVER_MSG(14byte、row12/col9 center)だけを既存の背景の上に
+; 上書きするオーバーレイ表示に留める(ユーザー確認済み: "テキストのみ
+; オーバーレイ")。row12はground scroller(row20-23、NAMEBUF/PREVBUF
+; 差分描画キャッシュ管理下)の範囲外かつ、row0-19自体もBLANKCODEで
+; 塗った固定背景(敵/弾は全てスプライトレイヤーで描画されBGネーム
+; テーブル自体は動的に書き換わらない)なので、以後何かに上書きされて
+; 消える心配はない。CLAUDE.md「実機ハードウェア制約」の恒久ルール通り、
+; VDPへの連続転送はOTIR等を使わず手動OUT+DJNZループのみ。
+; Trashes: AF,BC,HL.
+DRAW_GAMEOVER_TEXT:
+    DI
+    LD A,089h : OUT (99h),A
+    NOP
+    NOP
+    LD A,59h : OUT (99h),A      ; write address = 1989h (row12,col9)
+    NOP
+    NOP
+    LD HL,GAME_OVER_MSG
+    LD B,GAME_OVER_MSG_LEN
+DGT_MSG_LOOP:
+    LD A,(HL) : OUT (98h),A
+    INC HL
+    DJNZ DGT_MSG_LOOP
+    EI
+    RET
+
 ; "MISSION 1"導入演出専用: 約3秒間のZ80クロック直接カウントによる
 ; ビジーウェイト(H.TIMI/SC_VBLANK_COUNTには依存しない - この時点では
 ; まだBIOSのINIT32[SCREEN1初期化]すら呼ばれておらず、割り込みに頼れる
@@ -3904,6 +3996,48 @@ USC_CHECK_MISSION2:
     OR A : SBC HL,DE
     RET C
     LD A,3 : LD (STAGE_CLEAR_ACT),A
+    RET
+
+; (2026-09-07、"ゲームオーバー表示は3秒表示してボタンが押されるか
+; 10秒経過でタイトル画面に"): PTH_GAMEOVERがGAME_OVER_SEQ=1で起動、
+; 以後MAINLOOP冒頭から毎フレーム無条件に呼ばれる(UPDATE_STAGE_CLEARと
+; 同じ「フリーズしていても呼び続ける」設計 - ただしGAME_OVER自体は
+; 引き続き"ゲームを止めない"、MAINLOOP本体はそのまま進み続ける)。
+;   1(MISSION FAILED表示中、3秒待ち) -> 2(ボタンorタイムアウト待ち、
+;   最大10秒) -> 3(タイトルへ戻る準備完了、build_full_rom.pyのComb限定
+;   MAINLOOP_PATCHがこれを見てタイトルへのバンク切替へ進む、このファイル
+;   自身はバンク切替を一切行わない)
+UPDATE_GAME_OVER_SEQUENCE:
+    LD A,(GAME_OVER_SEQ)
+    CP 1
+    JR Z,UGOS_CHECK_TEXT_TIMER
+    CP 2
+    JR Z,UGOS_CHECK_BUTTON_OR_TIMEOUT
+    RET
+UGOS_CHECK_TEXT_TIMER:
+    LD HL,(SC_VBLANK_COUNT)
+    LD DE,(GAME_OVER_START_TICK)
+    OR A : SBC HL,DE
+    LD DE,GAME_OVER_TEXT_TICKS
+    OR A : SBC HL,DE
+    RET C
+    LD HL,(SC_VBLANK_COUNT)
+    LD (GAME_OVER_START_TICK),HL
+    LD A,2 : LD (GAME_OVER_SEQ),A
+    RET
+UGOS_CHECK_BUTTON_OR_TIMEOUT:
+    LD A,1
+    CALL GTTRIG
+    OR A
+    JR NZ,UGOS_GOTO_TITLE
+    LD HL,(SC_VBLANK_COUNT)
+    LD DE,(GAME_OVER_START_TICK)
+    OR A : SBC HL,DE
+    LD DE,GAME_OVER_TIMEOUT_TICKS
+    OR A : SBC HL,DE
+    RET C
+UGOS_GOTO_TITLE:
+    LD A,3 : LD (GAME_OVER_SEQ),A
     RET
 
 BGM_TICK:
@@ -7868,7 +8002,17 @@ PDC_GO:
 PLAYER_TAKE_HIT:
     LD A,(BARRIER_HP)
     OR A
-    JR Z,PTH_GAMEOVER
+    JR NZ,PTH_HAS_BARRIER
+    ; (2026-09-07、"Bボタンならゲームオーバー無しに"): GAMEOVER_ENABLED
+    ; ==0の間はバリア枯渇後の被弾を無視する("今は0になっても死なない"、
+    ; round37時点の従来挙動と同じ)。
+    LD A,(GAMEOVER_ENABLED)
+    OR A
+    JR Z,PTH_NO_GAMEOVER
+    JP PTH_GAMEOVER
+PTH_NO_GAMEOVER:
+    RET
+PTH_HAS_BARRIER:
     DEC A : LD (BARRIER_HP),A
     LD A,BARRIER_IFRAMES_INIT : LD (BARRIER_IFRAMES),A
     ; "次にヒットエフェクトは爆発ではなくカラーチェンジで / 被弾時は
@@ -7883,6 +8027,15 @@ PTH_GAMEOVER:
     ; EXPLOSION (still used for regular enemy kills) - see PLAYER_
     ; EXPL_TRIGGER/PLAYER_EXPL_UPDATE_ALL.
     CALL PLAYER_EXPL_TRIGGER
+    ; "ゲームオーバーは画面中央にMISSION FAILEDと表示" - PLAYER_DAMAGE_
+    ; CHECK冒頭のGAME_OVERガードにより、ここは生涯で1回しか通らない
+    ; (以後二度とPTH_GAMEOVERへ来ない)ので、1回だけの描画で十分。
+    CALL DRAW_GAMEOVER_TEXT
+    ; "ゲームオーバー表示は3秒表示してボタンが押されるか10秒経過で
+    ; タイトル画面に" - GAME_OVER_SEQ状態機械(UPDATE_GAME_OVER_
+    ; SEQUENCE、MAINLOOP冒頭から毎フレーム無条件に呼ばれる)を起動。
+    LD A,1 : LD (GAME_OVER_SEQ),A
+    LD HL,(SC_VBLANK_COUNT) : LD (GAME_OVER_START_TICK),HL
     JP SOUND_DESTROY   ; tail call - same "boom" as everything else that dies
 
 ; Kicks off the ~2s player-death burst sequence (see PLAYER_EXPL_
@@ -12034,19 +12187,23 @@ DIGIT_PATTERNS:
     DB 3Ch,66h,66h,3Ch,66h,66h,3Ch,00h   ; 8
     DB 3Ch,66h,66h,3Eh,06h,0Ch,38h,00h   ; 9
 
-; "MISSION 1"/"MISSION 2"共有フォント(5x7ドット、8x8セルの上1行分だけ
-; 空白パディング - tools/stage2_combined/ending_text_gen.pyの_GLYPHS_5X7/
-; _glyph_bytes()と全く同じオリジナル書体・同じエンコード方式、
-; python3 -c "...ending_text_gen._glyph_bytes(ch)..."で計算した値を
-; そのまま転記)。codes64-69=M,I,S,O,N,space。数字は既存DIGIT_PATTERNSの
-; DIGIT_BASE+1/+2を再利用するため、この文字セットには含めない。
+; "MISSION 1"/"MISSION 2"共有フォント(8x8ドット、2026-09-07"Mission表示
+; のフォントは添付ファイルで"対応 - ユーザー添付Font_24x24_1.json
+; [CYBER_SUZUKA]から機械抽出したM,I,S,O,N,1,2の7グリフ+spaceの計8グリフ。
+; tools/pixel_font_8x8.pyの_GLYPHS_ATTACHED/glyph_bytes()と全く同じ値、
+; python3 -c "...pixel_font_8x8.glyph_bytes(ch)..."で計算した値をそのまま
+; 転記)。codes64-71=M,I,S,O,N,space,1,2(group8を丸ごと使い切る)。旧来の
+; DIGIT_BASE+1/+2(既存の数字フォント)への依存は解消 - 添付データに1/2
+; グリフが含まれていたため。
 MISSION_FONT_PATTERNS:
-    DB 0,130,198,170,146,130,130,130    ; M (code64)
-    DB 0,248,32,32,32,32,32,248         ; I (code65)
-    DB 0,120,132,128,120,2,132,120      ; S (code66)
-    DB 0,120,132,132,132,132,132,120    ; O (code67)
-    DB 0,132,196,164,148,140,132,132    ; N (code68)
-    DB 0,0,0,0,0,0,0,0                  ; space (code69) - 全画面黒埋め用にも使う
+    DB 198,238,254,254,214,198,198,198    ; M (code64)
+    DB 48,48,48,48,48,48,48,48            ; I (code65)
+    DB 126,254,224,112,60,14,254,252      ; S (code66)
+    DB 124,254,198,198,198,198,254,124    ; O (code67)
+    DB 198,230,246,254,222,206,198,198    ; N (code68)
+    DB 0,0,0,0,0,0,0,0                    ; space (code69) - 全画面黒埋め用にも使う
+    DB 24,56,56,24,24,24,24,24            ; 1 (code70)
+    DB 252,254,6,126,252,192,254,254      ; 2 (code71)
 MISSION_FONT_PATTERNS_LEN EQU $ - MISSION_FONT_PATTERNS
 
 ; group8(codes64-71)の色を白文字/黒背景(0F1h)へ上書き - 元は"shot-green"
@@ -12054,31 +12211,62 @@ MISSION_FONT_PATTERNS_LEN EQU $ - MISSION_FONT_PATTERNS
 MISSION_FONT_COLOR:
     DB 0F1h
 
-; (2026-09-07、実機フィードバック対応"Mission 1の1のフォントがアに
-; 化けてた"): MISSION1_MSG/MISSION2_MSGの末尾1文字はDIGIT_BASE+1/+2
-; (digit"1"/"2")を再利用する設計だが、そのビットマップ本体
-; (DIGIT_PATTERNS)・色(COLORDATAのgroup22、DIGIT_BASE=176は
-; codes176-183=group22に属する)は元々ステージ本編初期化の一部として
-; ロードされており、Round56でMission1表示をCALL INIT32直後へ移設した
-; 結果、Mission1がまだこのパターン・色を読み込んでいない段階で描画
-; されるようになっていた(絵柄は前ステージ[Title]の残留VRAMのまま、
-; 色も未確定)。DIGIT_PATTERNS自体はMission1表示直前へ一緒に移設した
-; 上で、この1バイトでgroup22の色(COLORDATAの値と同一の0F1h)も
-; Mission1表示前に先出しする。
-DIGIT_COLOR_GROUP22:
-    DB 0F1h    ; COLORDATAのgroup22(digits0-7、white/black)と同値
+; (2026-09-07、"ゲームオーバーは画面中央にGAME OVERと表示"、直後に
+; "表示もGAME OVERではなくMISSION FAILEDに変更"): GAME OVER(現在は
+; "MISSION FAILED")表示専用の追加8文字(G,A,E,V,R,F,L,D)、tools/
+; pixel_font_8x8.pyの_GLYPHS_NEW(添付フォントと同じ書体スタイルで新規に
+; 描き起こしたオリジナル)と同じ値。group9(codes72-79)をちょうど
+; 使い切る。G/A/E/V/Rは当初の"GAME OVER"用、F/L/Dは"MISSION FAILED"へ
+; の変更で追加。
+GAMEOVER_FONT_PATTERNS:
+    DB 124,254,192,192,206,198,254,124    ; G (code72)
+    DB 56,124,198,198,254,254,198,198     ; A (code73)
+    DB 254,254,192,252,252,192,254,254    ; E (code74)
+    DB 198,198,198,108,108,56,56,16       ; V (code75)
+    DB 252,254,198,254,252,206,198,198    ; R (code76)
+    DB 254,254,192,252,252,192,192,192    ; F (code77)
+    DB 192,192,192,192,192,192,254,254    ; L (code78)
+    DB 252,254,198,198,198,198,254,252    ; D (code79)
+GAMEOVER_FONT_PATTERNS_LEN EQU $ - GAMEOVER_FONT_PATTERNS
+
+; group9(codes72-79)の色も白文字/黒背景(0F1h)へ - 元は"shot-white"用に
+; 予約されただけで実際のビットマップが一度も無かった色(0DFh)。
+GAMEOVER_FONT_COLOR:
+    DB 0F1h
 
 ; "MISSION 1"/"MISSION 2" - M,I,S,S,I,O,N,space,digit(9byte、row12/col11
-; center)。digitはDIGIT_BASE+1/+2(白/黒0F1hで既に着色済み、フォント色と
-; 一致)。
+; center)。digitは添付フォントの"1"/"2"グリフ(MISSION_FONT_BASE+6/+7、
+; 白/黒0F1hで既に着色済み、フォント色と一致)。
 MISSION1_MSG:
     DB MISSION_FONT_BASE+0,MISSION_FONT_BASE+1,MISSION_FONT_BASE+2,MISSION_FONT_BASE+2
     DB MISSION_FONT_BASE+1,MISSION_FONT_BASE+3,MISSION_FONT_BASE+4,MISSION_FONT_BASE+5
-    DB DIGIT_BASE+1
+    DB MISSION_FONT_BASE+6   ; '1'
 MISSION2_MSG:
     DB MISSION_FONT_BASE+0,MISSION_FONT_BASE+1,MISSION_FONT_BASE+2,MISSION_FONT_BASE+2
     DB MISSION_FONT_BASE+1,MISSION_FONT_BASE+3,MISSION_FONT_BASE+4,MISSION_FONT_BASE+5
-    DB DIGIT_BASE+2
+    DB MISSION_FONT_BASE+7   ; '2'
+
+; (2026-09-07、"表示もGAME OVERではなくMISSION FAILEDに変更"): 元の
+; "GAME OVER"(9byte)から"MISSION FAILED"(14byte、row12/col9 center -
+; 14byteを画面幅32セルの中央に置くには(32-14)/2=9列目から)へ変更。
+; M,I,S,S,I,O,N,spaceはMISSION_FONT_BASE側(group8)、F,A,L,E,Dは
+; GAMEOVER_FONT_BASE側(group9)を混在参照する。
+GAME_OVER_MSG:
+    DB MISSION_FONT_BASE+0                   ; M
+    DB MISSION_FONT_BASE+1                   ; I
+    DB MISSION_FONT_BASE+2                   ; S
+    DB MISSION_FONT_BASE+2                   ; S
+    DB MISSION_FONT_BASE+1                   ; I
+    DB MISSION_FONT_BASE+3                   ; O
+    DB MISSION_FONT_BASE+4                   ; N
+    DB MISSION_FONT_BASE+5                   ; space
+    DB GAMEOVER_FONT_BASE+5                  ; F
+    DB GAMEOVER_FONT_BASE+1                  ; A
+    DB MISSION_FONT_BASE+1                   ; I
+    DB GAMEOVER_FONT_BASE+6                  ; L
+    DB GAMEOVER_FONT_BASE+2                  ; E
+    DB GAMEOVER_FONT_BASE+7                  ; D
+GAME_OVER_MSG_LEN EQU $ - GAME_OVER_MSG
 
 ; enemy3's orbit: 24-point radius-24 circle around (0,0), as signed
 ; (dx,dy) byte pairs, counter-clockwise on-screen. Position for LUT

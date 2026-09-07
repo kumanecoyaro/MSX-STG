@@ -4200,6 +4200,18 @@ SKIP_BOSS_SUBSYSTEMS:
     CP 2
     CALL NZ,SOUND_UPDATE
 
+    ; (2026-09-07、"ステージ2クリア後は10秒でタイトル画面に"):
+    ; ENDING_ACT==4(タイトルへ戻る準備完了、UPDATE_ENDING自身が実時間
+    ; 10秒後に一度だけ進める)を検出したらここでタイトルへ戻る。この
+    ; ファイル自身はバンク切替を一切行わない設計のため、実際のトラン
+    ; ポリンはbuild_full_rom.py側のASSEMBLE_STAGE2_ENDING_RETURN_ANCHOR
+    ; パッチ(Comb限定)が担当する - standaloneのままではここは単なる
+    ; 状態チェック(ENDING_ACT==4でも実際には何も起きず素通りする)。
+    LD A,(ENDING_ACT)
+    CP 4
+    JR NZ,ENDING_NO_TITLE_RETURN
+ENDING_NO_TITLE_RETURN:
+
     JP MAINLOOP
 
 ; ---------- input ----------
@@ -4254,6 +4266,8 @@ UPDATE_ENDING:
     JR Z,UE_WAITING
     CP 2
     JR Z,UE_PLAYING
+    CP 3
+    JR Z,UE_RETURN_WAIT
     RET
 UE_WAITING:
     LD HL,(VBLANK_COUNT)
@@ -4271,6 +4285,19 @@ UE_PLAYING:
     OR A : SBC HL,DE
     RET C
     JP ENDING_FINISH
+; (2026-09-07、"ステージ2クリア後は10秒でタイトル画面に"): "MISSION
+; COMPLETED"表示から10秒経過したらENDING_ACT=4(タイトルへ戻る準備完了、
+; build_full_rom.pyのComb限定MAINLOOP_PATCHがこれを見てtitleへの
+; バンク切替へ進む)へ進める。
+UE_RETURN_WAIT:
+    LD HL,(VBLANK_COUNT)
+    LD DE,(ENDING_FINISH_START)
+    OR A : SBC HL,DE
+    LD DE,ENDING_RETURN_WAIT_TICKS
+    OR A : SBC HL,DE
+    RET C
+    LD A,4 : LD (ENDING_ACT),A
+    RET
 
 ; 10秒の待機が明けた瞬間に1回だけ呼ばれる: GFEndingの3パート
 ; (melody=chB/bass=chC/harmony=chA)を一括ロードし、両チャンネルの
@@ -4338,6 +4365,7 @@ ENDING_LOAD_FONT:
 ; ブランクしてから"MISSION COMPLETED"を中央寄せで上書きする。
 ENDING_FINISH:
     LD A,3 : LD (ENDING_ACT),A
+    LD HL,(VBLANK_COUNT) : LD (ENDING_FINISH_START),HL
     DI
     LD A,8 : OUT (PSG_ADDR),A
     XOR A : OUT (PSG_DATA),A
@@ -5799,17 +5827,56 @@ LFD_SET:
     JR C,LFD_LOOP
     RET
 
-; decrements TANK_LIFE by 1, floored at 0 ("今は0になっても死なない" -
-; no death handling yet, just stop counting down), then redraws the
-; life bar. Called from both of UPDATE_TANK_BIGZUM_PUNCH's own hit
-; branches (front/behind) - "現在はBigZumのみだがいずれ敵弾実装予定"
-; (future enemy-bullet damage sources will call this same routine).
+; decrements TANK_LIFE by 1, floored at 0, then redraws the life bar.
+; Called from every damage source (BigZum punch/EBULLET/ETankBullet/
+; Mine/FlyerLaser/Thunder/SBeam/BossBrokenBeam - see the many callers).
+; (2026-09-07、"まずステージ2もステージ1同様にHPが無くなったら爆発処理
+; を"): reaching exactly 0 now hands off to TRIGGER_GAME_OVER instead of
+; the old "no death handling yet, just stop counting down" behavior.
+; tools/title_screen/title_test.asmが同じ物理アドレスへ直接書き込む
+; (値は必ず一致させること)。RAM(0xC000-0xFFFF)がバンク切替を跨いで
+; 物理的に共有されるフラットな領域であることを利用した直接参照 -
+; Stage1(src/CYBER SHMUP.asm)側のGAMEOVER_ENABLEDと同じ設計。
+GAMEOVER_ENABLED EQU 0F235h
+
 APPLY_TANK_DAMAGE:
     LD A,(TANK_LIFE)
     OR A
     RET Z
     DEC A : LD (TANK_LIFE),A
+    JR NZ,ATD_LIFE_DISPLAY
+    ; (2026-09-07、"Bボタンならゲームオーバー無しに"): GAMEOVER_ENABLED
+    ; ==0の間はTANK_LIFEが0のまま止まるだけ(旧"死なない"挙動)。
+    LD A,(GAMEOVER_ENABLED)
+    OR A
+    JR Z,ATD_LIFE_DISPLAY
+    JP TRIGGER_GAME_OVER   ; tail call - never returns (see its own comment)
+ATD_LIFE_DISPLAY:
     JP LIFE_DISPLAY
+
+; (2026-09-07、"完全に停止(推奨)"): Stage2本編とは独立した新規バンク
+; (standalone local index3、Combではglobal bank7、これまで0xFFの完全な
+; 空きフィラーだった枠)へ一方通行のトランポリンで切り替える。ROM残り
+; わずか97byteという制約(Stage1同等の「16x16スプライトが自機周辺に
+; 複数回ランダムに派手に発生し続ける2秒間のバースト演出」を移植する
+; 余地が無い)への対応 - tools/bgm_data/bgm_bank_gen.pyのbgm-dataバンク
+; と同じ「専用16KBバンクへ処理を逃がす」設計。GAME OVER後はStage2本編
+; へ二度と戻らない(ユーザー確認済み、Stage1の「ゲームは止めないでくれ」
+; とは異なる方針)ため、bank1(window B)は切り替えず、window Aのみを
+; 切り替える1ホップだけで完結する - window Bに残るStage2本編のbank1
+; 自体はGAME_OVERバンク側のコードから一切参照しない。詳細は
+; tools/gameover_bank/gameover_bank.asm参照。
+TRIGGER_GAME_OVER:
+    DI    ; 以後EIしない - 古いH.TIMIフック(BGM_TICK)が新バンクの中身を
+          ; 誤実行するround41級のレースを未然に防ぐ(CLAUDE.mdの教訓)。
+    ; 全PSGチャンネルを即座に無音化(BGM/SEとも、以後二度と鳴らない)。
+    LD A,8 : OUT (PSG_ADDR),A : XOR A : OUT (PSG_DATA),A
+    LD A,9 : OUT (PSG_ADDR),A : XOR A : OUT (PSG_DATA),A
+    LD A,10 : OUT (PSG_ADDR),A : XOR A : OUT (PSG_DATA),A
+    LD A,3                        ; standalone game-overバンク(Combでは7へパッチ)
+    LD DE,6000h
+    LD HL,04000h                  ; tools/gameover_bank/gameover_bank.asmのINIT(ORG直後、ROMヘッダ無し)
+    JP BANKSWITCH_TRAMPOLINE_RAM
 
 ; Converts GAME_TICK to 3 decimal digits and draws them at row0
 ; cols29-31 - ported from src/CYBER SHMUP.asm's own GAME_TICK_DISPLAY
@@ -6478,11 +6545,18 @@ BGM_C_LOOP_BASE EQU 0CB16h
 ; コメント参照。RAMはBGM_C_LOOP_BASEの直後(0xCB18〜、シンボルテーブル
 ; 実測でこの先0xCC00まで空きと確認済み)に配置。
 VBLANK_COUNT       EQU 0CB18h   ; 実VBlank毎に+1(BGM_TICK内、H.TIMI駆動=真の実時間クロック)
-ENDING_ACT         EQU 0CB1Ah   ; 0=未発生/1=ボス撃破後の待機中/2=曲再生中/3=完了
+ENDING_ACT         EQU 0CB1Ah   ; 0=未発生/1=ボス撃破後の待機中/2=曲再生中/3=完了・
+                                 ; タイトルへの10秒待ち中/4=タイトルへ戻る準備完了
 ENDING_WAIT_START  EQU 0CB1Bh   ; ENDING_ACT=1になった瞬間のVBLANK_COUNTスナップショット
 ENDING_SONG_START  EQU 0CB1Dh   ; ENDING_ACT=2になった瞬間のVBLANK_COUNTスナップショット
 ENDING_WAIT_TICKS       EQU 600   ; "10秒ほど" - 60Hz想定の近似値(未確定、実機フィードバック待ち)
 ENDING_SONG_TOTAL_TICKS EQU 1630  ; tools/bgm_data/midi_to_psg.load_ending_gfending_parts()の全パート共通total_ticks
+; (2026-09-07、"ステージ2クリア後は10秒でタイトル画面に"): ENDING_ACT=3
+; になった瞬間のVBLANK_COUNTスナップショット。安全な未使用領域
+; (0xCB20〜、BGM_MUTEDの直後、シンボルテーブル実測で0xCC00まで空きと
+; 確認済み)に配置。
+ENDING_FINISH_START     EQU 0CB20h
+ENDING_RETURN_WAIT_TICKS EQU 600   ; "10秒" @ 60Hz real vblank
 
 ; "マテリアライズに入る前にそれまでのBGMは停止" 対応(ENDING_SONG_START
 ; の直後、シンボルテーブル実測で0xCC00まで空きと確認済みの領域)。
