@@ -110,101 +110,26 @@ check("no leftover 0x33 poison bytes remain anywhere in row12 (fully "
       "overwritten - blank margins + message, nothing untouched)",
       0x33 not in row12)
 
-# ---- particle-scatter explosion (2026-09-07、実機フィードバック対応 ----
-# ---- "もっとエフェクトが飛び散る形に 地味すぎる 自機中心から           ----
-# ---- エフェクトが飛びランダムに散る様に"): 旧GO_DRAW_EXPLOSION(4隅を  ----
-# ---- 同位置に固定表示する単一ボディ)を、4つの独立した飛び散る          ----
-# ---- パーティクルへ置き換えた。                                        ----
+# ---- single-pop explosion (2026-09-07、実機フィードバック対応その3
+# ---- "4つ爆発を同時に飛ばすんじゃなく1個ずつバラバラにだ でその1回毎に
+# ---- サウンドだ 速度も遅いって何回言わせんだよ 音出して1つ飛ばして
+# ---- また音出して1つ飛ばしての繰り返し ボス爆発がそうなってんだろう
+# ---- が"): 旧・4パーティクル同時直進飛翔モデルを全面撤回し、
+# ---- src/CYBER SHMUP.asmのBOSS_EXPL_UPDATE/BEU_FIRE(「毎回ランダムな
+# ---- 新しい位置に1個ポップ+毎回SOUND_DESTROY+短い待ちで次」の高速連続
+# ---- ポップ)と同じモデルへ再設計した。
 TANK_X = sym["TANK_X"]
 TANK_Y_CUR = sym["TANK_Y_CUR"]
 PAT_EXPLOSION = sym["PAT_EXPLOSION"]
 SPR_WHITE_COLOR = sym["SPR_WHITE_COLOR"]
 SPR_LIGHTRED_COLOR = sym["SPR_LIGHTRED_COLOR"]
-GO_PX = [sym["GO_PX0"], sym["GO_PX1"], sym["GO_PX2"], sym["GO_PX3"]]
-GO_PY = [sym["GO_PY0"], sym["GO_PY1"], sym["GO_PY2"], sym["GO_PY3"]]
+GO_POP_JITTER = sym["GO_POP_JITTER"]
+GO_SLOT_IDX = sym["GO_SLOT_IDX"]
+GO_POP_CTR = sym["GO_POP_CTR"]
 
-
-def call_draw_particles(color_sel, offsets, tank_x=50, tank_y=80):
-    """offsets: list of 4 (dx,dy) pairs (signed) to poke into GO_PX/PYn
-    before calling GO_DRAW_PARTICLES(C=color_sel)."""
-    z = fresh()
-    z.wr(TANK_X, tank_x)
-    z.wr(TANK_Y_CUR, tank_y)
-    for i, (dx, dy) in enumerate(offsets):
-        z.wr(GO_PX[i], dx & 0xFF)
-        z.wr(GO_PY[i], dy & 0xFF)
-    z.c = color_sel
-    z.sp = 0xF000
-    z.wr(0xF000, 0x00); z.wr(0xF001, 0x00)
-    z.pc = sym["GO_DRAW_PARTICLES"]
-    run_until_pc(z, 0x0000, 300000)
-    return [z.vram[0x1B00 + i] for i in range(16)]
-
-
-attrs = call_draw_particles(0, [(0, 0), (0, 0), (0, 0), (0, 0)])
-expected_attrs = [
-    80, 50, PAT_EXPLOSION, SPR_WHITE_COLOR,
-    80, 50, PAT_EXPLOSION, SPR_WHITE_COLOR,
-    80, 50, PAT_EXPLOSION, SPR_WHITE_COLOR,
-    80, 50, PAT_EXPLOSION, SPR_WHITE_COLOR,
-]
-check("GO_DRAW_PARTICLES with all-zero offsets (color=0/white) places all 4 particles "
-      "exactly at TANK_X/TANK_Y_CUR (the player's own center)",
-      attrs == expected_attrs)
-
-attrs_red = call_draw_particles(1, [(0, 0), (0, 0), (0, 0), (0, 0)])
-check("GO_DRAW_PARTICLES with color select=1 draws all 4 particles in SPR_LIGHTRED_COLOR",
-      attrs_red == [
-          80, 50, PAT_EXPLOSION, SPR_LIGHTRED_COLOR,
-          80, 50, PAT_EXPLOSION, SPR_LIGHTRED_COLOR,
-          80, 50, PAT_EXPLOSION, SPR_LIGHTRED_COLOR,
-          80, 50, PAT_EXPLOSION, SPR_LIGHTRED_COLOR,
-      ])
-
-# each particle carries its OWN independent (dx,dy) - this is the entire
-# point of "自機中心からエフェクトが飛びランダムに散る様に" (flying apart
-# in different directions, not one rigid body).
-attrs_scattered = call_draw_particles(0, [(-5, -3), (7, -2), (-4, 6), (3, 5)])
-check("GO_DRAW_PARTICLES applies each particle's own independent offset "
-      "(not the same offset for all 4, unlike the old single-body design)",
-      attrs_scattered == [
-          80 - 3, 50 - 5, PAT_EXPLOSION, SPR_WHITE_COLOR,
-          80 - 2, 50 + 7, PAT_EXPLOSION, SPR_WHITE_COLOR,
-          80 + 6, 50 - 4, PAT_EXPLOSION, SPR_WHITE_COLOR,
-          80 + 5, 50 + 3, PAT_EXPLOSION, SPR_WHITE_COLOR,
-      ])
 
 def signed(v):
     return v - 256 if v >= 128 else v
-
-
-# ---- Round68 (2026-09-07、実機フィードバック対応その2"爆破処理での
-# ---- 爆破スプライトの動きがすごく遅い ボス撃破の様に連続でバンバン
-# ---- 飛び散るイメージで ほぼ処理的にはステージ2の敵を倒したときの
-# ---- パーティクル爆発 それの複数スプライト版 今はふわ～っと飛び散って
-# ---- 気持ち悪い"): GO_ADVANCE_PARTICLES(毎フレーム小さな乱数ジッター
-# ---- を蓄積するだけ)を全面撤回し、combined_test.asm自身のEXPLODE_
-# ---- DIR_DX/DYと同じ8方位固定ベクトルモデル(GO_PICK_DIR/GO_NEW_BURST/
-# ---- GO_STEP_PARTICLES/GO_EXPLOSION_SEQUENCE)へ置き換えた。ジッター
-# ---- 無しの直進(EXPLODE_DIR_DX/DYと完全に同じ値)を複数バースト
-# ---- (NUM_BURSTS回)繰り返すことで「連続でバンバン」を実現する。
-VALID_DIRS = {
-    (0, -2), (2, -2), (2, 0), (2, 2), (0, 2), (-2, 2), (-2, 0), (-2, -2),
-}
-GO_DIR_DX = sym["GO_DIR_DX"]
-GO_DIR_DY = sym["GO_DIR_DY"]
-table_dx = [signed(mem0[GO_DIR_DX + i]) for i in range(8)]
-table_dy = [signed(mem0[GO_DIR_DY + i]) for i in range(8)]
-check("GO_DIR_DX/DY table matches combined_test.asm's own EXPLODE_DIR_DX/DY "
-      "verbatim (the exact model being 'multiplied' into 4 particles)",
-      set(zip(table_dx, table_dy)) == VALID_DIRS)
-
-GO_DIR = [
-    (sym["GO_DIR0X"], sym["GO_DIR0Y"]),
-    (sym["GO_DIR1X"], sym["GO_DIR1Y"]),
-    (sym["GO_DIR2X"], sym["GO_DIR2Y"]),
-    (sym["GO_DIR3X"], sym["GO_DIR3Y"]),
-]
 
 
 def call_ret(z, target, max_instr=300000):
@@ -214,133 +139,86 @@ def call_ret(z, target, max_instr=300000):
     run_until_pc(z, 0x0000, max_instr)
 
 
-# GO_PICK_DIR itself: across many seeds, the (dx,dy) it returns must always
-# be one of the 8 table entries (never garbage from a misaligned lookup).
-picked = set()
-z = fresh()
-for seed in range(0, 256, 3):
+def call_launch_one_pop(seed, slot_idx, pop_ctr_parity, tank_x=50, tank_y=80):
+    z = fresh()
+    z.wr(TANK_X, tank_x)
+    z.wr(TANK_Y_CUR, tank_y)
     z.wr(sym["GO_RNG"], seed)
-    z.a = 0
-    z.sp = 0xF000
-    z.wr(0xF000, 0x00); z.wr(0xF001, 0x00)
-    z.pc = sym["GO_PICK_DIR"]
-    run_until_pc(z, 0x0000, 300000)
-    picked.add((signed(z.a), signed(z.h)))
-check("GO_PICK_DIR only ever returns one of the 8 valid EXPLODE_DIR-style "
-      "vectors across many RNG seeds (no misaligned table lookup)",
-      picked <= VALID_DIRS)
-check("GO_PICK_DIR actually exercises more than one direction across many "
-      "seeds (genuinely randomized, not stuck on a single entry)",
-      len(picked) > 1)
+    z.wr(GO_SLOT_IDX, slot_idx)
+    z.wr(GO_POP_CTR, pop_ctr_parity)
+    call_ret(z, sym["GO_LAUNCH_ONE_POP"])
+    return z
 
-# GO_NEW_BURST: resets all 4 accumulated offsets to 0 (particles snap back
-# to the player's own center - "自機中心から...連続で" popping again) and
-# assigns each of the 4 particles its OWN independently-picked direction.
-z = fresh()
-for addr in GO_PX + GO_PY:
-    z.wr(addr, 0x7F)  # poison so a real reset is actually verified
-z.wr(sym["GO_RNG"], 17)
-call_ret(z, sym["GO_NEW_BURST"])
-offsets_after = [z.rd(a) for a in GO_PX + GO_PY]
-check("GO_NEW_BURST resets all 4 particles' accumulated (dx,dy) offset back "
-      "to 0 (poisoned 0x7F values actually get cleared)",
-      offsets_after == [0] * 8)
-dirs_after = [(signed(z.rd(dx)), signed(z.rd(dy))) for dx, dy in GO_DIR]
-check("GO_NEW_BURST assigns each of the 4 particles a valid 8-way direction",
-      all(d in VALID_DIRS for d in dirs_after))
-check("GO_NEW_BURST's 4 particles don't all get pushed through the exact "
-      "same RNG draw pattern in lockstep (at least 2 distinct directions "
-      "typically appear among 4 independent picks with a non-degenerate seed)",
-      len(set(dirs_after)) >= 2)
 
-# GO_STEP_PARTICLES: adds each particle's own fixed direction (as set by
-# GO_NEW_BURST) to its accumulator by exactly 1 step - constant-velocity
-# straight-line motion, no jitter (the direct fix for "ふわ～っと").
-z = fresh()
-test_dirs = [(2, -2), (-2, 0), (0, 2), (-2, -2)]
-for (dxa, dya), (dx, dy) in zip(GO_DIR, test_dirs):
-    z.wr(dxa, dx & 0xFF)
-    z.wr(dya, dy & 0xFF)
-for addr in GO_PX + GO_PY:
-    z.wr(addr, 0)
-call_ret(z, sym["GO_STEP_PARTICLES"])
-# note: GO_PX + GO_PY is [PX0,PX1,PX2,PX3, PY0,PY1,PY2,PY3] - NOT interleaved
-# per-particle - the expected values below follow that same grouping.
-step1 = [signed(z.rd(a)) for a in GO_PX + GO_PY]
-check("GO_STEP_PARTICLES advances all 4 particles by exactly their own "
-      "fixed direction in one call (straight-line step, matching "
-      "EXPLODE_DIR_DX/DY's own constant 2px/frame magnitude)",
-      step1 == [2, -2, 0, -2, -2, 0, 2, -2])
-call_ret(z, sym["GO_STEP_PARTICLES"])
-step2 = [signed(z.rd(a)) for a in GO_PX + GO_PY]
-check("a second GO_STEP_PARTICLES call advances by the SAME fixed amount "
-      "again (constant velocity, not jitter that varies call to call)",
-      step2 == [4, -4, 0, -4, -4, 0, 4, -4])
+z = call_launch_one_pop(seed=11, slot_idx=0, pop_ctr_parity=0, tank_x=50, tank_y=80)
+attrs0 = [z.vram[0x1B00 + i] for i in range(4)]
+check("GO_LAUNCH_ONE_POP draws exactly 1 explosion sprite in slot0's own "
+      "ATTRIBUTE record (Y at row0-3)",
+      attrs0[2] == PAT_EXPLOSION)
+dx0 = signed(attrs0[1]) - 50 if attrs0[1] < 128 else attrs0[1] - 50
+dy0 = attrs0[0] - 80
+check(f"GO_LAUNCH_ONE_POP's jitter offset stays within -{GO_POP_JITTER // 2}.."
+      f"+{GO_POP_JITTER // 2 - 1}px of TANK_X/TANK_Y_CUR (never a wild "
+      "out-of-range position)",
+      -GO_POP_JITTER // 2 <= signed(dy0) <= GO_POP_JITTER // 2 - 1)
+check("GO_LAUNCH_ONE_POP with pop-counter parity=0 (even) draws in SPR_WHITE_COLOR",
+      attrs0[3] == SPR_WHITE_COLOR)
 
-# ---- GO_EXPLOSION_SEQUENCE: the full "連続でバンバン" burst-repeat loop ----
-NUM_BURSTS = sym["NUM_BURSTS"]
-BURST_FRAMES = sym["BURST_FRAMES"]
+z_red = call_launch_one_pop(seed=11, slot_idx=0, pop_ctr_parity=1, tank_x=50, tank_y=80)
+attrs_red = [z_red.vram[0x1B00 + i] for i in range(4)]
+check("GO_LAUNCH_ONE_POP with pop-counter parity=1 (odd) draws in SPR_LIGHTRED_COLOR",
+      attrs_red[3] == SPR_LIGHTRED_COLOR)
+
+z_slot2 = call_launch_one_pop(seed=11, slot_idx=2, pop_ctr_parity=0, tank_x=50, tank_y=80)
+attrs_slot0 = [z_slot2.vram[0x1B00 + i] for i in range(4)]
+attrs_slot2 = [z_slot2.vram[0x1B00 + 8 + i] for i in range(4)]
+check("GO_LAUNCH_ONE_POP with GO_SLOT_IDX=2 draws into slot2's own ATTRIBUTE "
+      "record, leaving slot0 untouched (still Y=0 from a fresh z80 - default "
+      "VRAM state)",
+      attrs_slot2[2] == PAT_EXPLOSION and attrs_slot0[2] != PAT_EXPLOSION)
+
+z_advance = fresh()
+z_advance.wr(GO_SLOT_IDX, 0)
+call_ret(z_advance, sym["GO_LAUNCH_ONE_POP"])
+check("GO_LAUNCH_ONE_POP advances GO_SLOT_IDX from 0 to 1",
+      z_advance.rd(GO_SLOT_IDX) == 1)
+z_advance.wr(GO_SLOT_IDX, 3)
+call_ret(z_advance, sym["GO_LAUNCH_ONE_POP"])
+check("GO_LAUNCH_ONE_POP wraps GO_SLOT_IDX from 3 back to 0 (round-robin over "
+      "exactly the 4 available ATTRIBUTE slots)",
+      z_advance.rd(GO_SLOT_IDX) == 0)
+
+# ---- GO_EXPLOSION_SEQUENCE: NUM_POPS individual pops, each with its own ----
+# ---- sound - this is the literal fix for "1個ずつバラバラに...音出して  ----
+# ---- 1つ飛ばして"                                                        ----
+NUM_POPS = sym["NUM_POPS"]
 z = fresh()
 z.wr(TANK_X, 120)
 z.wr(TANK_Y_CUR, 90)
 z.wr(sym["GO_RNG"], 5)
-seen_frames = []
-GO_DRAW_PARTICLES = sym["GO_DRAW_PARTICLES"]
-call_ret_target = sym["GO_EXPLOSION_SEQUENCE"]
+GO_LAUNCH_ONE_POP_PC = sym["GO_LAUNCH_ONE_POP"]
+GO_ARM_BOOM_PC = sym["GO_ARM_BOOM"]
+launch_count = 0
+seen_r8_at_launch = []
 z.sp = 0xF000
 z.wr(0xF000, 0x00); z.wr(0xF001, 0x00)
-z.pc = call_ret_target
+z.pc = sym["GO_EXPLOSION_SEQUENCE"]
 steps = 0
+_prev_pc = None
 while z.pc != 0x0000 and steps < 5_000_000:
-    if z.pc == GO_DRAW_PARTICLES:
-        seen_frames.append(tuple(signed(z.rd(a)) for a in GO_PX + GO_PY))
+    if z.pc == GO_LAUNCH_ONE_POP_PC and _prev_pc != GO_LAUNCH_ONE_POP_PC:
+        launch_count += 1
+        seen_r8_at_launch.append(z.psg_regs.get(8))
+    _prev_pc = z.pc
     z.step()
     steps += 1
-check(f"GO_EXPLOSION_SEQUENCE calls GO_DRAW_PARTICLES exactly NUM_BURSTS*"
-      f"BURST_FRAMES ({NUM_BURSTS}*{BURST_FRAMES}={NUM_BURSTS * BURST_FRAMES}) times",
-      len(seen_frames) == NUM_BURSTS * BURST_FRAMES)
-# every BURST_FRAMES-th draw is the 1st frame of a fresh burst - particle0's
-# offset there must be exactly its own per-frame step (not 0, since the
-# frame is drawn AFTER stepping once) and every burst boundary before that
-# must show the particles having traveled outward, then snapping back to a
-# small first-step offset for the next burst - i.e. genuine repeated bursts,
-# not one continuous unbounded drift.
-burst_starts = seen_frames[0::BURST_FRAMES]
-burst_ends = seen_frames[BURST_FRAMES - 1::BURST_FRAMES]
-check("each burst's LAST frame has traveled further from center than its "
-      "FIRST frame (a real outward flight within every burst, not a static "
-      "pose)",
-      all(sum(abs(v) for v in end) > sum(abs(v) for v in start)
-          for start, end in zip(burst_starts, burst_ends)))
-check("each burst's first frame is much closer to center than the PREVIOUS "
-      "burst's last frame (particles genuinely snap back near the player's "
-      "own center at the start of every new burst - the 'pop back and fly "
-      "again' that makes it read as continuous bursts rather than one "
-      "particle wandering off forever)",
-      all(sum(abs(v) for v in burst_starts[i]) < sum(abs(v) for v in burst_ends[i - 1]) / 2
-          for i in range(1, len(burst_starts))))
-check("bursts are not all identical (different random directions are "
-      "picked burst to burst)",
-      len(set(burst_ends)) > 1)
-# within a single burst, consecutive frames must move by a CONSTANT vector
-# per particle (straight-line, matching EXPLODE_DIR_DX/DY's fixed 2px/frame
-# magnitude) - this is the literal fix for "ふわ～っと飛び散って気持ち悪い"
-# (the old design accumulated a varying -1..+2 jitter every frame instead).
-first_burst = seen_frames[0:BURST_FRAMES]
-per_particle_deltas_constant = True
-for p in range(4):
-    deltas = set()
-    prev = (0, 0)
-    for frame in first_burst:
-        cur = (frame[p * 2], frame[p * 2 + 1])
-        deltas.add((cur[0] - prev[0], cur[1] - prev[1]))
-        prev = cur
-    if len(deltas) != 1 or next(iter(deltas)) not in VALID_DIRS:
-        per_particle_deltas_constant = False
-check("within a single burst, each particle's per-frame delta is constant "
-      "and matches one of the 8 fixed EXPLODE_DIR-style vectors (no jitter, "
-      "a true straight-line flight)",
-      per_particle_deltas_constant)
+check(f"GO_EXPLOSION_SEQUENCE launches exactly NUM_POPS ({NUM_POPS}) individual "
+      "pops - one at a time, not 4 simultaneously",
+      launch_count == NUM_POPS)
+check("every pop launch happens right after GO_ARM_BOOM has just set R8 to full "
+      "volume (15) - confirms 'sound THEN launch' ordering, not the other way "
+      "around",
+      all(v == 15 for v in seen_r8_at_launch))
 
 GO_HIDE_EXPLOSION = sym["GO_HIDE_EXPLOSION"]
 GO_WAIT_LOOP = sym["GO_WAIT_LOOP"]
@@ -413,39 +291,10 @@ check("GO_STEP_BOOM_DECAY decays R8 by 2 each call, floored at 0 once it "
 check("GO_STEP_BOOM_DECAY leaves GO_BOOM_VOL at 0 once fully decayed",
       z.rd(GO_BOOM_VOL) == 0)
 
-# GO_EXPLOSION_SEQUENCE itself: each of the NUM_BURSTS bursts must re-arm
-# the boom (R8 back up near 15) at its own start - this is the literal
-# fix for "パーティクルの回数鳴らすんだよ" (a boom retrigger per burst,
-# not one boom for the whole sequence).
-z = fresh()
-z.wr(TANK_X, 120)
-z.wr(TANK_Y_CUR, 90)
-z.wr(sym["GO_RNG"], 9)
-GO_NEW_BURST_PC = sym["GO_NEW_BURST"]
-seen_r8_near_burst_start = []
-z.sp = 0xF000
-z.wr(0xF000, 0x00); z.wr(0xF001, 0x00)
-z.pc = sym["GO_EXPLOSION_SEQUENCE"]
-steps = 0
-_prev_pc = None
-while z.pc != 0x0000 and steps < 5_000_000:
-    if z.pc == GO_NEW_BURST_PC and _prev_pc != GO_NEW_BURST_PC:
-        seen_r8_near_burst_start.append(z.psg_regs.get(8))
-    _prev_pc = z.pc
-    z.step()
-    steps += 1
-NUM_BURSTS_VAL = sym["NUM_BURSTS"]
-check(f"GO_EXPLOSION_SEQUENCE starts all {NUM_BURSTS_VAL} bursts (GO_NEW_BURST reached "
-      f"{NUM_BURSTS_VAL} times)",
-      len(seen_r8_near_burst_start) == NUM_BURSTS_VAL)
-check("every burst but the very first one begins with the PREVIOUS burst's boom already "
-      "decayed low/silent (R8 low) right before GO_ARM_BOOM re-triggers it back to 15 - "
-      "i.e. the boom genuinely re-fires once per burst instead of firing once for the "
-      "whole sequence and staying silent thereafter",
-      all((v or 0) <= 1 for v in seen_r8_near_burst_start[1:]))
-check("GO_ARM_BOOM is actually reached at all (R8 gets set to something at least once - "
-      "guards against a regression where the boom is dropped from the burst loop entirely)",
-      any(v is not None for v in seen_r8_near_burst_start))
+# (2026-09-07、実機フィードバック対応その3で全面撤回): GO_NEW_BURST/
+# NUM_BURSTSベースの旧テストは、上の「GO_EXPLOSION_SEQUENCE: NUM_POPS
+# individual pops」ブロックが同じ主張(音が毎回再着火される)をより
+# 直接検証するため削除した。
 
 z2 = fresh()
 z2.vram[0x1B00:0x1B10] = bytes([1] * 16)

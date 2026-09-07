@@ -561,6 +561,59 @@ check("PLAY_CONFIRM_BEEP never touches R7 (mixer) - channel B was already tone-e
       cpu5.psg_regs.get(7) == 0xB1 and all(k != 7 for k, _v in write_log))
 
 
+# ---- (2026-09-07、実機フィードバック対応、"タイトルでの音だした時の枠
+# 描画はどこいったんだよ"): ユーザーが承認した「Warning Beep Bench」の
+# candidate06はもともと確認音とVDPボーダー(R7=枠/バックドロップ色)の
+# 明滅を対で設計していたが、PSG側だけ実装して枠色フラッシュを実装し
+# 忘れていた抜けの回帰ガード。BORDER_TABLE(53byte、REDGRAD=
+# [黒1,暗赤6,中赤8,明赤9,中赤8,暗赤6,黒1]をrow*7//53で滑らかに配分)を
+# title_test.asm自身と独立にPythonで再計算し、PLAY_CONFIRM_BEEPが実際に
+# 書き込むVDP R7(z80emu.pyのvdp_out - "register write"の分岐、round69
+# follow-upで初めてvdp_regsへ記録するよう拡張済み)の値列と完全一致する
+# ことを検証する。
+REDGRAD = [1, 6, 8, 9, 8, 6, 1]
+expected_border_one_pass = [REDGRAD[r * 7 // 53] for r in range(53)]
+expected_border = expected_border_one_pass * 2
+
+class LoggingVdpRegs(dict):
+    def __init__(self, initial, log):
+        dict.__init__(self, initial)
+        self._log = log
+    def __setitem__(self, k, v):
+        self._log.append((k, v))
+        dict.__setitem__(self, k, v)
+
+cpu6, mem6 = fresh_cpu()
+run_to_wait(cpu6)
+cpu6.sp = (cpu6.sp - 2) & 0xFFFF
+cpu6.mem[cpu6.sp] = 0
+cpu6.mem[cpu6.sp + 1] = 0
+cpu6.pc = sym["PLAY_CONFIRM_BEEP"]
+border_log = []
+cpu6.vdp_regs = LoggingVdpRegs(dict(cpu6.vdp_regs), border_log)
+s = 0
+while cpu6.pc != 0x0000 and s < 2_000_000:
+    cpu6.step()
+    s += 1
+assert s < 2_000_000, "PLAY_CONFIRM_BEEP never returned"
+
+r7_writes = [v for k, v in border_log if k == 7]
+check(f"PLAY_CONFIRM_BEEP: writes VDP R7 (border/backdrop color) exactly "
+      f"{len(expected_border)} times (53 rows x 2 repeats) - the border-flash half of the "
+      "approved 'Warning Beep Bench' design that was missing from the ASM",
+      len(r7_writes) == len(expected_border))
+check("PLAY_CONFIRM_BEEP: the border-color sequence matches REDGRAD=[black,dark-red,"
+      "medium-red,light-red,medium-red,dark-red,black] swept smoothly across the 53 rows "
+      "(row*7//53), twice, re-derived independently in Python",
+      r7_writes == expected_border)
+check("PLAY_CONFIRM_BEEP: leaves the border back at black (1) on return - the gradient "
+      "starts and ends each pass on REDGRAD[0]==REDGRAD[-1]==1",
+      cpu6.vdp_regs.get(7) == 1)
+check("PLAY_CONFIRM_BEEP: never writes VDP R7 to a value outside the approved REDGRAD "
+      "palette (would show as a color glitch, not a red flash)",
+      all(v in REDGRAD for v in r7_writes))
+
+
 print()
 print(f"{len(ok)} passed, {len(fail)} failed")
 if fail:

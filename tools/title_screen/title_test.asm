@@ -278,10 +278,18 @@ BANKSWITCH_TRAMPOLINE_LEN EQU $ - BANKSWITCH_TRAMPOLINE_SRC
 ; 常にちょうど半分になる、Round43のBGMソフトウェアデューティ(位相
 ; カウンタ+ANDマスク)と同じ「音の長さの半分だけ鳴らす」考え方を、
 ; tick駆動ではなくこの短いSFX自身の同期busy-waitループの中で再現した
-; もの。R2/R3(チャンネルBトーン周期)・R9(チャンネルB音量)のみを操作、
-; R7は一切変更しない(チャンネルBは元々INIT_BGMが常時トーン有効のまま
-; 用意している遊休チャンネル)。53行×2回(短い無音ギャップを挟む)で
-; 全体の合成音を構成する。Trashes: AF,BC,DE,HL。
+; もの。R2/R3(チャンネルBトーン周期)・R9(チャンネルB音量)を操作する
+; ことに加え、VDP R7(ボーダー/バックドロップ色レジスタ)も行ごとに
+; BORDER_TABLE(53byte、CONFIRM_STEPSと1:1対応)から読んだ値へ書き換える
+; (Round69 follow-up、"Warning Beep Bench"のcandidate06自身が最初から
+; 音+枠色フラッシュの対で設計されていたのに、PSG部分だけ実装して枠色
+; 側を実装し忘れていた抜け - 「タイトルでボタンを押した時の確認音」に
+; 対して実機で"枠描画はどこいったんだよ"と指摘され判明)。53行かけて
+; REDGRAD=[黒1,暗赤6,中赤8,明赤9,中赤8,暗赤6,黒1]を滑らかに1往復
+; (ビルド時にPython側で`REDGRAD[row*7//53]`を計算しDB literalへ焼き
+; 込み、Z80側は除算不要)、53行×2回再生と対応して枠も2回明滅する。
+; チャンネルB自体は元々INIT_BGMが常時トーン有効のまま用意している
+; 遊休チャンネル。Trashes: AF,BC,DE,HL,IX。
 CONFIRM_STEP_COUNT EQU 53
 CONFIRM_GAP_DELAY  EQU 15150
 
@@ -297,15 +305,18 @@ PCB_GAP_WAIT:
 
 PCB_PLAY_TABLE:
     LD HL,CONFIRM_STEPS
+    LD IX,BORDER_TABLE
     LD B,CONFIRM_STEP_COUNT
 PCB_ROW_LOOP:
     PUSH BC
     CALL PCB_PLAY_ONE_ROW
     POP BC
+    INC IX
     DJNZ PCB_ROW_LOOP
     RET
 
-; HLが指す5byte行を1行分再生し、HLを+5だけ進めて戻る。
+; HLが指す5byte行を1行分再生し、HLを+5だけ進めて戻る(IXの1バイト
+; 分の前進[(IX+0)=このコマの枠色]は呼び出し元PCB_ROW_LOOPが担当)。
 ; 行フォーマット: (周期fine,周期coarse,音量,半区間ウェイトlo,ウェイトhi)
 PCB_PLAY_ONE_ROW:
     DI
@@ -318,6 +329,12 @@ PCB_PLAY_ONE_ROW:
     LD A,9 : OUT (PSG_ADDR),A
     LD A,(HL) : OUT (PSG_DATA),A   ; ch B volume (duty ON half)
     INC HL
+    LD A,(IX+0) : OUT (99h),A
+    NOP
+    NOP
+    LD A,87h : OUT (99h),A         ; reg7|80h = VDP R7 (border/backdrop color)
+    NOP
+    NOP
     EI
     LD E,(HL) : INC HL
     LD D,(HL) : INC HL
@@ -335,6 +352,19 @@ PCB_ROW_OFF_WAIT:
     LD A,D : OR E
     JR NZ,PCB_ROW_OFF_WAIT
     RET
+
+; REDGRAD=[1,6,8,9,8,6,1](黒/暗赤/中赤/明赤/中赤/暗赤/黒)を53行に
+; row*7//53で滑らかに配分(Pythonで事前計算、floor除算なので毎回
+; 7-8行ずつ同じ値が続く形になる)。CONFIRM_STEPSと同じ53要素、
+; 添字も1:1で対応。
+BORDER_TABLE:
+    DB 1,1,1,1,1,1,1,1
+    DB 6,6,6,6,6,6,6,6
+    DB 8,8,8,8,8,8,8
+    DB 9,9,9,9,9,9,9,9
+    DB 8,8,8,8,8,8,8
+    DB 6,6,6,6,6,6,6,6
+    DB 1,1,1,1,1,1,1
 
 ; --- チャープ上昇スイープ(周期520->180、10行、オクターブ下げ済み) ---
 CONFIRM_STEPS:

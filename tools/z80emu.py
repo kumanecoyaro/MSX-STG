@@ -37,6 +37,15 @@ class Z80:
         # psg_latch is which register is currently selected.
         self.psg_latch = 0
         self.psg_regs = {}
+        # VDP register writes (the "data byte, then reg-number|80h" pair to
+        # port 99h) were previously matched but discarded (see vdp_out's own
+        # comment - "pass"). Added for round69 follow-up's title border-
+        # color flash (VDP R7, the backdrop/border color register): a test
+        # needs to observe what value a register write actually set.
+        # Indexed by register number (0-7, TMS9918 has no more), separate
+        # from vdp_addr/vdp_write_mode which track the *other* kind of
+        # 99h-pair (a VRAM address set, hi&80h==0).
+        self.vdp_regs = {}
         # --- T-state (cycle) accounting ---
         # self.tstates: running total, incremented by every step()/step_xx()
         # call with the real Z80 timing for the instruction just executed
@@ -173,8 +182,8 @@ class Z80:
                 lo = self.vdp_latch; hi = val
                 self.vdp_latch = None
                 if hi & 0x80:
-                    # register write (VDP register set), bits0-2 select register (for basic ops)
-                    pass
+                    # register write (VDP register set), bits0-2 select register
+                    self.vdp_regs[hi & 0x07] = lo
                 else:
                     self.vdp_addr = (lo | ((hi&0x3F)<<8)) & 0x3FFF
                     self.vdp_write_mode = bool(hi & 0x40)

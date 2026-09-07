@@ -74,55 +74,38 @@ HUD_ROW_BLANK_CODE EQU 120
 ; 方針と同じ)を再利用する。
 GO_RNG EQU 0F19Bh
 
-; (2026-09-07、実機フィードバック対応"もっとエフェクトが飛び散る形に
-; 地味すぎる 自機中心からエフェクトが飛びランダムに散る様に"): 単一の
-; 静止ボディを点滅させる旧方式から、4つの独立したパーティクルが自機
-; 中心から斜め4方向へ実際に飛び散っていく方式へ変更。各パーティクルの
-; 累積(dx,dy)オフセットを保持する8byteのスクラッチ - GO_RNGと全く同じ
-; 理由("GAME OVER以後はStage2本編が二度と実行されない")で安全に再利用
-; できる、GO_RNGのすぐ後の未使用領域。
-GO_PX0 EQU 0F19Ch
-GO_PY0 EQU 0F19Dh
-GO_PX1 EQU 0F19Eh
-GO_PY1 EQU 0F19Fh
-GO_PX2 EQU 0F1A0h
-GO_PY2 EQU 0F1A1h
-GO_PX3 EQU 0F1A2h
-GO_PY3 EQU 0F1A3h
-
-; (2026-09-07、実機フィードバック対応"爆破処理での爆破スプライトの
-; 動きがすごく遅い ボス撃破の様に連続でバンバン飛び散るイメージで
-; ほぼ処理的にはステージ2の敵を倒したときのパーティクル爆発 それの
-; 複数スプライト版 今はふわ～っと飛び散って気持ち悪い"): 上のRound67
-; 版(毎フレーム-1..+2の小さな乱数ジッターを蓄積するだけ)を全面撤回。
-; combined_test.asm自身の通常の敵撃破演出(UOE_EXPLODING)と同じモデル
-; - 8方位固定ベクトル(EXPLODE_DIR_DX/DY、2px/frame一定・ジッター無し)
-; で直進し8フレームで16px移動して消える - を、4パーティクル同時×
-; 「消えたら即座に自機中心へ戻り新しい方向でまた飛ぶ」の繰り返しへ
-; 再設計。この「戻って再度飛ぶ」の連続がボスの71連続ポップ演出と同種の
-; 「連続でバンバン」感を作る。追加のスクラッチ(GO_PY3のすぐ後、GO_RNG
-; と全く同じ理由でGO_PX0-3/PY0-3同様に安全 - このアドレス帯は
-; combined_test.asm側のENEMY_SPRITE_ATTRS/CLOUD_POOLと物理的に重なる
-; がStage2本編は二度と実行されないため無害)。
-GO_BURST_CTR EQU 0F1A4h  ; 残りバースト数(NUM_BURSTSからカウントダウン)
-GO_FRAME_CTR EQU 0F1A5h  ; 現在のバースト内の残りフレーム数
-GO_CUR_COLOR EQU 0F1A6h  ; このバーストの色選択(0=白/1=ライトレッド)
-GO_DIR0X EQU 0F1A7h
-GO_DIR0Y EQU 0F1A8h
-GO_DIR1X EQU 0F1A9h
-GO_DIR1Y EQU 0F1AAh
-GO_DIR2X EQU 0F1ABh
-GO_DIR2Y EQU 0F1ACh
-GO_DIR3X EQU 0F1ADh
-GO_DIR3Y EQU 0F1AEh
+; (2026-09-07、実機フィードバック対応その3"4つ爆発を同時に飛ばすん
+; じゃなく1個ずつバラバラにだ でその1回毎にサウンドだ 速度も遅いって
+; 何回言わせんだよ 音出して1つ飛ばしてまた音出して1つ飛ばしての繰り
+; 返し ボス爆発がそうなってんだろうが"): Round67/68の「4パーティクル
+; 同時に直進飛翔」方式を全面撤回。src/CYBER SHMUP.asm自身のボス撃破
+; 演出(BOSS_EXPL_UPDATE/BEU_FIRE)を実際に読み直したところ、その実態は
+; 「移動するスプライト」ではなく「毎回ランダムな新しい位置に静止した
+; 爆発を1個ポップさせ、毎回SOUND_DESTROYを1回鳴らし、次のポップまで
+; TIMER=2フレームだけ待つ」という、飛翔ではなく高速連続ポップの
+; 繰り返しだった - これが正しい参照実装。同じモデルへ全面書き換え:
+; 1ポップ=(1)GO_ARM_BOOMで即座に音を鳴らす→(2)自機中心から
+; ランダムオフセットの位置へPAT_EXPLOSIONを1個描画(ラウンドロビンで
+; ATTRIBUTEスロット0-3を回すため、直近4ポップ分が画面上に同時に
+; 残る「散らばった破片」の見た目になる、新規の消滅タイマー機構は
+; 不要)→(3)短いウェイト、を合計NUM_POPS回繰り返す。GO_PX0を
+; ラウンドロビンスロットindex、GO_PY0をポップ残数カウンタへ転用
+; (GO_PX1-3/GO_PY1-3/GO_DIR0-3X/Yだった旧4パーティクル用スクラッチは
+; もう不要)。
+GO_SLOT_IDX EQU 0F19Ch  ; 0-3、次にポップを描くATTRIBUTEスロット(ラウンドロビン)
+GO_POP_CTR  EQU 0F19Dh  ; 残りポップ数(NUM_POPSからカウントダウン)
 
 ; (2026-09-07、実機フィードバック対応"爆発音はステージ1、2ともに
-; パーティクルの回数鳴らすんだよ"): バーストごとの現在音量。GO_DIR3Yの
-; すぐ後、同じ理由(Stage2本編は二度と実行されない)で安全に再利用できる。
-GO_BOOM_VOL EQU 0F1AFh
+; パーティクルの回数鳴らすんだよ"): 現在の音量(ポップごとにGO_ARM_BOOM
+; で撃ち直され、次のポップまでの短いウェイト中に少しだけ減衰する)。
+GO_BOOM_VOL EQU 0F1A7h
 
-NUM_BURSTS   EQU 20   ; 未調整の初期値、実機での見え方次第で再調整
-BURST_FRAMES EQU 8    ; combined_test.asm自身のEXPLOSION_DURATIONと同じ
+NUM_POPS      EQU 40   ; 未調整の初期値、実機での見え方次第で再調整 -
+                        ; 「1個ずつ」化に伴い前回のNUM_BURSTS(20)から
+                        ; 増量(1回あたりが軽くなった分、密度を維持)
+GO_POP_JITTER EQU 16    ; 自機中心からのオフセット範囲、-8..+7px
+                        ; (src/CYBER SHMUP.asmのPEUA_TRY_SPAWNと同じ
+                        ; レンジ)
 
 ; --- Comb globalバンク番号。standaloneでは0/1は無意味(単独バンクの ---
 ; --- ためtitleへは戻れない、テストは戻る直前のGOTO_TITLE_HOP2到達  ---
@@ -167,9 +150,10 @@ INIT:
     ; 説明は上のEQU参照)。
     LD A,(TANK_X) : LD (GO_RNG),A
 
-    ; 自機の最終位置(TANK_X/TANK_Y_CUR)を中心に、20バースト×4パーティ
-    ; クルが「消えたら即座に自機中心へ戻り新しい方向でまた飛ぶ」を
-    ; 繰り返す(詳細はGO_EXPLOSION_SEQUENCE自身のコメント参照)。
+    ; 自機の最終位置(TANK_X/TANK_Y_CUR)を中心に、NUM_POPS回「音を鳴らし
+    ; てから1個ポップさせ、短く待って次」を繰り返す(ボス撃破演出
+    ; BOSS_EXPL_UPDATE/BEU_FIREと同じモデル、詳細はGO_EXPLOSION_
+    ; SEQUENCE自身のコメント参照)。
     CALL GO_EXPLOSION_SEQUENCE
 
     ; "で爆発エフェクトが消えずのこったまま Mission Failedになってる
@@ -254,145 +238,50 @@ GOTO_TITLE_HOP2:
 ; いる)。
 BANKSWITCH_TRAMPOLINE_RAM EQU 0F271h
 
-; (2026-09-07、実機フィードバック対応その2"爆破処理での爆破スプライト
-; の動きがすごく遅い ボス撃破の様に連続でバンバン飛び散るイメージで
-; ほぼ処理的にはステージ2の敵を倒したときのパーティクル爆発 それの
-; 複数スプライト版 今はふわ～っと飛び散って気持ち悪い"): 直前の
-; ジッター蓄積方式(1回の点滅あたり約0.3秒、微小な乱数ジッターだけが
-; 積み上がる)を全面撤回。combined_test.asm自身の通常の敵撃破演出
-; (UOE_EXPLODING)がまさに実装しているモデル - 8方位固定ベクトル
-; (EXPLODE_DIR_DX/DY、2px/frame一定・ジッター無し)で直進しBURST_
-; FRAMES(8)フレームで16px移動して消える - をそのまま踏襲し、4つの
-; パーティクルへ"複数スプライト版"として同時展開する。1バーストが
-; 終わるたびに自機中心へ即座に戻り、新しいランダム方向でまた飛び
-;始める(GO_EXPLOSION_SEQUENCE)ことで、ボスの71連続ポップ演出と同種の
-; 「連続でバンバン」感を作る。
-
-; 8方位固定ベクトル(combined_test.asm自身のEXPLODE_DIR_DX/DYと同じ
-; 値、"ステージ2の敵を倒したときのパーティクル爆発それの複数スプライト
-; 版"に対応するため値を直接転記)。N,NE,E,SE,S,SW,W,NW。
-GO_DIR_DX:
-    DB 0,2,2,2,0,-2,-2,-2
-GO_DIR_DY:
-    DB -2,-2,0,2,2,2,0,-2
-
-; 8方位固定ベクトルから1つをGO_RNGで抽選する。返り値: A=dx、H=dy
-; (BCは呼び出し元で意図的に温存 - 呼び出し元GO_NEW_BURSTがdx/dy
-; テーブルどちらも同じindexで引くため)。Trashes: AF,HL。
-GO_PICK_DIR:
-    LD A,(GO_RNG) : ADD A,53 : LD (GO_RNG),A
-    AND 7
-    LD C,A : LD B,0
-    LD HL,GO_DIR_DY : ADD HL,BC : LD A,(HL) : LD D,A   ; D = dy(スタッシュ) - 直後の
-                                                          ; "LD HL,GO_DIR_DX"がHL全体を
-                                                          ; 再ロードしHをも上書きするため、
-                                                          ; Hに直接保持しても意味が無い
-                                                          ; (実際に自己検証テストで
-                                                          ; 発見した実バグ、当初はLD H,A
-                                                          ; で直接保持しようとしていた)。
-    LD HL,GO_DIR_DX : ADD HL,BC : LD A,(HL)              ; A = dx
-    LD H,D                                                ; H = dy (Dから復元)
-    RET
-
-; 新しいバーストを開始する: 4パーティクル全ての累積オフセット(GO_PX0-3/
-; GO_PY0-3)を0(自機中心)へ戻し、各パーティクルへ独立に新しい8方位
-; ベクトルを抽選してGO_DIR0X-3Y へセットする。Trashes: AF,BC,HL。
-GO_NEW_BURST:
-    XOR A
-    LD (GO_PX0),A : LD (GO_PY0),A
-    LD (GO_PX1),A : LD (GO_PY1),A
-    LD (GO_PX2),A : LD (GO_PY2),A
-    LD (GO_PX3),A : LD (GO_PY3),A
-    CALL GO_PICK_DIR : LD (GO_DIR0X),A : LD C,H : LD A,C : LD (GO_DIR0Y),A
-    CALL GO_PICK_DIR : LD (GO_DIR1X),A : LD C,H : LD A,C : LD (GO_DIR1Y),A
-    CALL GO_PICK_DIR : LD (GO_DIR2X),A : LD C,H : LD A,C : LD (GO_DIR2Y),A
-    CALL GO_PICK_DIR : LD (GO_DIR3X),A : LD C,H : LD A,C : LD (GO_DIR3Y),A
-    RET
-
-; 4パーティクル全ての累積オフセット(GO_PX0-3/GO_PY0-3)を、そのバースト
-; で選ばれた固定方向(GO_DIR0X-3Y)だけ1フレーム分前進させる(ジッター
-; 無し、EXPLODE_DIR_DX/DYと同じ一定速度の直進)。Trashes: AF,H。
-GO_STEP_PARTICLES:
-    LD A,(GO_PX0) : LD H,A : LD A,(GO_DIR0X) : ADD A,H : LD (GO_PX0),A
-    LD A,(GO_PY0) : LD H,A : LD A,(GO_DIR0Y) : ADD A,H : LD (GO_PY0),A
-    LD A,(GO_PX1) : LD H,A : LD A,(GO_DIR1X) : ADD A,H : LD (GO_PX1),A
-    LD A,(GO_PY1) : LD H,A : LD A,(GO_DIR1Y) : ADD A,H : LD (GO_PY1),A
-    LD A,(GO_PX2) : LD H,A : LD A,(GO_DIR2X) : ADD A,H : LD (GO_PX2),A
-    LD A,(GO_PY2) : LD H,A : LD A,(GO_DIR2Y) : ADD A,H : LD (GO_PY2),A
-    LD A,(GO_PX3) : LD H,A : LD A,(GO_DIR3X) : ADD A,H : LD (GO_PX3),A
-    LD A,(GO_PY3) : LD H,A : LD A,(GO_DIR3Y) : ADD A,H : LD (GO_PY3),A
-    RET
-
-; NUM_BURSTS回、各回BURST_FRAMESフレームぶん、4パーティクルを新しい
-; ランダム方向へ直進させながら描画し続ける("連続でバンバン")。ループ
-; 制御は全てメモリ上のカウンタ(GO_BURST_CTR/GO_FRAME_CTR)で行い、B/Cを
-; GO_DRAW_PARTICLES(色選択・BC/DE/HL破壊)呼び出しをまたいで温存する
-; 手間を避ける。色はバースト単位で白/ライトレッドを交互に(Stage1の
-; PLAYER_EXPL_UPDATE_ALLと同じ考え方)。フレーム間のウェイトはGO_DELAY_
-; TINY(約0.0186秒、実機の1フレーム[約1/60秒]に近い) - EXPLODE_DIR_DX/
-; DYの"2px/frame"という値は本来60fps基準の量なので、待ち時間もそれに
-; 近づけて初めて「ほぼ処理的には...それの複数スプライト版」という
-; 見た目になる。
-; (2026-09-07、実機フィードバック対応"爆発音はステージ1、2ともに
-; パーティクルの回数鳴らすんだよ"): 各バースト開始時にGO_ARM_BOOMで
-; 効果音を撃ち直し(音量15)、その後のBURST_FRAMESフレームループの中で
-; GO_STEP_BOOM_DECAYを毎回呼んで1段ずつ減衰させる - 専用の追加ウェイトを
-; 挟まず既存のフレームループ自身の時間経過だけで減衰が完結するため、
-; 20バースト分毎回鳴らしても全体の所要時間は変わらない(Stage1の
-; PEUA_TRY_SPAWNが「spawnごとに毎回SOUND_DESTROY」なのと同じ「パーティ
-; クル[バースト]の数だけ鳴らす」設計)。
+; NUM_POPS回、「音を鳴らす→自機中心付近のランダムな位置へPAT_EXPLOSION
+; を1個ポップさせる→短く待つ」を繰り返す(BOSS_EXPL_UPDATE/BEU_FIREと
+; 同じモデル - あちらは「毎回新しい位置に1個ポップ+毎回SOUND_DESTROY+
+; TIMER=2フレームだけ待って次」の高速連続、"移動する飛翔"ではなく
+; "高速に位置を変えて出現するポップ"の連続だった)。ATTRIBUTEスロット
+; 0-3をラウンドロビンで使うため、直近4ポップ分が同時に画面上に残る -
+; 新規の消滅タイマー機構を追加せずに「散らばった破片」の見た目になる。
+; 色はポップごとに白/ライトレッドを交互に(Stage1のPLAYER_EXPL_UPDATE_
+; ALLと同じ考え方)。
 ; Trashes: AF,BC,DE,HL。
 GO_EXPLOSION_SEQUENCE:
-    LD A,NUM_BURSTS : LD (GO_BURST_CTR),A
-GO_BURST_LOOP:
-    CALL GO_NEW_BURST
+    XOR A
+    LD (GO_SLOT_IDX),A
+    LD A,NUM_POPS : LD (GO_POP_CTR),A
+GO_POP_LOOP:
     CALL GO_ARM_BOOM
-    LD A,(GO_BURST_CTR) : AND 1 : LD (GO_CUR_COLOR),A
-    LD A,BURST_FRAMES : LD (GO_FRAME_CTR),A
-GO_BURST_FRAME_LOOP:
-    CALL GO_STEP_PARTICLES
-    LD A,(GO_CUR_COLOR) : LD C,A
-    CALL GO_DRAW_PARTICLES
+    CALL GO_LAUNCH_ONE_POP
     CALL GO_STEP_BOOM_DECAY
     CALL GO_DELAY_TINY
-    LD A,(GO_FRAME_CTR) : DEC A : LD (GO_FRAME_CTR),A
-    JR NZ,GO_BURST_FRAME_LOOP
-    LD A,(GO_BURST_CTR) : DEC A : LD (GO_BURST_CTR),A
-    JR NZ,GO_BURST_LOOP
+    CALL GO_STEP_BOOM_DECAY
+    CALL GO_DELAY_TINY
+    LD A,(GO_POP_CTR) : DEC A : LD (GO_POP_CTR),A
+    JR NZ,GO_POP_LOOP
     RET
 
-; 4パーティクル全てを、それぞれの累積オフセット(GO_PX0-3/GO_PY0-3)で
-; TANK_X/TANK_Y_CURを中心に描画する。入力: C=色選択(0=SPR_WHITE_
-; COLOR/それ以外=SPR_LIGHTRED_COLOR、4パーティクル共通)。
-; Trashes: AF,BC,DE,HL.
-GO_DRAW_PARTICLES:
-    LD A,C
-    OR A
+; 1個のPAT_EXPLOSIONスプライトを、自機中心(TANK_X/TANK_Y_CUR)から
+; ±GO_POP_JITTER/2pxのランダムオフセット位置へ、GO_SLOT_IDXが指す
+; ATTRIBUTEスロット(0-3)で描く。描いた後GO_SLOT_IDXを次のスロットへ
+; 進める(mod4)。色はGO_POP_CTRの最下位ビットで白/ライトレッドを交互に。
+; Trashes: AF,BC,DE,HL。
+GO_LAUNCH_ONE_POP:
+    LD A,(GO_RNG) : ADD A,53 : LD (GO_RNG),A
+    AND GO_POP_JITTER-1 : SUB GO_POP_JITTER/2 : LD D,A   ; dx
+    LD A,(GO_RNG) : ADD A,53 : LD (GO_RNG),A
+    AND GO_POP_JITTER-1 : SUB GO_POP_JITTER/2 : LD E,A   ; dy
+
+    LD A,(GO_POP_CTR) : AND 1
     LD A,SPR_WHITE_COLOR
-    JR Z,GDP_COLOR_RESOLVED
+    JR Z,GLOP_COLOR_RESOLVED
     LD A,SPR_LIGHTRED_COLOR
-GDP_COLOR_RESOLVED:
-    LD C,A                          ; C now holds the actual color byte
-    LD A,(GO_PX0) : LD D,A
-    LD A,(GO_PY0) : LD E,A
-    XOR A : CALL GO_DRAW_ONE_PARTICLE
-    LD A,(GO_PX1) : LD D,A
-    LD A,(GO_PY1) : LD E,A
-    LD A,1 : CALL GO_DRAW_ONE_PARTICLE
-    LD A,(GO_PX2) : LD D,A
-    LD A,(GO_PY2) : LD E,A
-    LD A,2 : CALL GO_DRAW_ONE_PARTICLE
-    LD A,(GO_PX3) : LD D,A
-    LD A,(GO_PY3) : LD E,A
-    LD A,3 : CALL GO_DRAW_ONE_PARTICLE
-    RET
+GLOP_COLOR_RESOLVED:
+    LD C,A
 
-; 1個のPAT_EXPLOSIONスプライトを、スプライトATTRIBUTEスロットA(0-3、
-; 自機自身がこれまで使っていたスロットをそのまま転用)へ、
-; TANK_X+D(符号付き)/TANK_Y_CUR+E(符号付き)の位置で描く。
-; 入力: A=スロット番号(0-3)、D=dx、E=dy、C=色。Trashes: AF,HL
-; (BCはPUSH/POPで往復するため呼び出し元への値は保存される)。
-GO_DRAW_ONE_PARTICLE:
+    LD A,(GO_SLOT_IDX)
     ADD A,A : ADD A,A                ; A = スロット*4(ATTRIBUTEレコードのバイトオフセット)
     DI
     OUT (99h),A
@@ -410,6 +299,8 @@ GO_DRAW_ONE_PARTICLE:
     LD A,C : OUT (98h),A
     PUSH BC : POP BC : NOP : NOP
     EI
+
+    LD A,(GO_SLOT_IDX) : INC A : AND 3 : LD (GO_SLOT_IDX),A
     RET
 
 ; スロット0-3(16byte)をY=209(MSX標準の「以降のスプライトも含め全部

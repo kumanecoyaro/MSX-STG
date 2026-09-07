@@ -661,6 +661,20 @@ check("TRIGGER_STAGE_CLEAR resets BGM_B/C/A_TIMER and BGM_B/C/A_REST to 0",
       z.rd(BGM_B_TIMER) == 0 and z.rd(BGM_C_TIMER) == 0 and z.rd(BGM_A_TIMER) == 0 and
       z.rd(BGM_B_REST) == 0 and z.rd(BGM_C_REST) == 0 and z.rd(BGM_A_REST) == 0)
 
+# ---- (2026-09-07、実機フィードバック対応、"またステージ1クリア後の音が
+# 止まってない 何回やるんだよ"、3度目の再発の回帰ガード): SOUND_UPDATE
+# はSTAGE_CLEAR_ACT==0の間だけ呼ばれるため、TRIGGER_STAGE_CLEARがACTを
+# 1にした瞬間からR8(チャンネルA音量)は誰にも書き換えられなくなる。
+# flyawayのエンジン音が最後に書いたR8の値がそのまま鳴り続けないよう、
+# TRIGGER_STAGE_CLEAR自身がこの遷移と同時にR8を明示的にゼロへ落とす
+# ことを直接検証する。
+z2 = fresh()
+z2.psg_regs[8] = 12  # poison: pretend the flyaway engine noise left R8 non-zero
+call_routine(z2, sym["TRIGGER_STAGE_CLEAR"])
+check("TRIGGER_STAGE_CLEAR silences R8 (channel A volume) to 0 the moment STAGE_CLEAR_ACT "
+      "becomes 1 (SOUND_UPDATE will never run again to do this itself)",
+      z2.psg_regs.get(8) == 0)
+
 # ---- BGMT_UPDATE_SC_A (chA driver) actually plays StageClear's real chA
 # data once armed - mirrors the TryZ chB REST-vs-note branch above ----
 call_routine(z, BGM_TICK)

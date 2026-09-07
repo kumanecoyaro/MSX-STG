@@ -290,7 +290,11 @@ ANIM_TMP_ROW    EQU 0E422h
 ANIM_TMP_COL    EQU 0E423h
 ANIM_TMP_VAL    EQU 0E424h
 ANIM_ADDR_TMP   EQU 0E425h   ; 2 bytes
-ANIM_FRAME_LEN  EQU 8
+; (2026-09-07、実機フィードバック対応、"新爆発の表示時間は半分でいい
+; 長すぎ"): 8->4へ半減。3フレームアニメの1コマあたりの表示時間が
+; 半分になる(合計の再生時間も半分)、フレーム構成(1個→3個→2個の
+; セル配置)自体は無変更。
+ANIM_FRAME_LEN  EQU 4
 ; round69 follow-up ("爆発処理の変更...元の爆発パターンは削除して空きに"):
 ; the old 8-color-class ANIM1_x/ANIM2_x flicker (2 phases x 4 row-based
 ; colors) is gone. The new 3-frame/multi-cell animation uses exactly 2
@@ -4130,10 +4134,25 @@ SWITCH_BGM_TO_TRYZ:
 ; フレームで1回だけ呼ばれる(下のPFA_FLYAWAY_IDLE周りの分岐参照)。
 ; SWITCH_BGM_TO_TRYZと同じくDI/EIで全体を保護しつつchB/chCを差し替え、
 ; 加えてchA(harmony)も新規に起動する。
+; (2026-09-07、実機フィードバック対応、"またステージ1クリア後の音が
+; 止まってない 何回やるんだよ" - round54/round67で直したはずの症状の
+; 3度目の再発、今度は別経路): SOUND_UPDATEはSTAGE_CLEAR_ACT==0の間だけ
+; 呼ばれる(上のMAINLOOP側ガード参照)ため、STAGE_CLEAR_ACTがここで1に
+; なった瞬間からSOUND_UPDATEは二度と呼ばれなくなる。それまでflyawayの
+; エンジン音("goooo"、PFA_STILLGOING参照)がR8(チャンネルA音量)へ
+; 毎フレーム再武装していたSND_TIMERの最後の値が、SOUND_UPDATE経由の
+; 減衰を受けられないままR8に固まって鳴り続けていた - DRAW_MISSION_
+; SCREENのR8=0書き込み(round54)はジングル再生完了後(STAGE_CLEAR_ACT
+; ==1→2の遷移時)にしか実行されないため、ジングル再生中(最大
+; STAGE_CLEAR_TOTAL_TICKS=約5秒)ずっと鳴りっぱなしになる窓が残って
+; いた。SOUND_UPDATEが止まるのと同じこのタイミングでR8を明示的に
+; ゼロへ落とし、この窓を閉じる。
 TRIGGER_STAGE_CLEAR:
     LD A,1 : LD (STAGE_CLEAR_ACT),A
     LD HL,(SC_VBLANK_COUNT) : LD (SC_START_TICK),HL
     DI
+    LD A,8 : OUT (PSG_ADDR),A
+    XOR A : OUT (PSG_DATA),A   ; channel A (SE) volume=0 - SOUND_UPDATE won't run again to do this itself
     LD HL,STAGE_CLEAR_CHB_BASE
     LD (BGM_B_PTR),HL
     LD (BGM_B_LOOP_BASE),HL
@@ -5778,6 +5797,12 @@ BOSS_UPDATE_BODY:
     CP 16
     JP NZ,BOSS_ADV_NEXTTILE
     CALL BOSS_HIDE_SPRITE
+    ; "マテリアライズ中のショットの反射弾が残ってる 前はそんな事なく
+    ; 消えてた" - DFL0-2(偏向弾)が着地の瞬間まだ生存していると、直後の
+    ; BOSS_ORBIT_DRAW_ALLが同じハードウェアスプライトスロット(9-11)を
+    ; 周回ポッドとして奪い合ってしまう(DFL_FORCE_CLEAR自身のコメント
+    ; 参照)。周回ポッドがスロットを専有する前に強制的に片付ける。
+    CALL DFL_FORCE_CLEAR
     LD A,2 : LD (BOSS_STATE),A
     CALL SWITCH_BGM_TO_TRYZ   ; "ではTryZをボス曲に...マテリアライズ終了後に再生"
     ; --- boss has landed - repoint the 6 dispatch vectors at the  ---
@@ -7473,6 +7498,29 @@ DU_2:
     OR A
     RET Z
     CALL DFL_MOVE2
+    RET
+
+; (2026-09-07、実機フィードバック対応、"マテリアライズ中のショットの
+; 反射弾が残ってる 前はそんな事なく消えてた"): DFL0-2はDFL_SPR0-2=9,10,11
+; という固定ハードウェアスプライトスロットを使っており、これは
+; 「マテリアライズ中に(DFL_LIFESPAN=40フレームで)消え切っている前提で、
+; 着地後に専有するスロット6-13の周回ポッドと安全に重複できる」という
+; 設計だった(DFL_SPR0のEQU直前コメント参照)。しかし着地の瞬間に
+; たまたま生存中の偏向弾が1体でも残っていると、直後のBOSS_ORBIT_
+; DRAW_ALL(周回ポッド8機、スロット6-13を使用)がDFL用スロット9-11を
+; 奪い合い、壊れた/凍りついた見た目のまま残留し続けるバグだった
+; (DFL_UPDATE自体はBOSS_STATE!=0の間ずっと呼ばれ続けるが、スロットが
+; 別の絵で上書きされ続けるため正しく消せない)。着地の瞬間(周回ポッドが
+; スロットを専有し始める前)に強制的に非表示化・非アクティブ化して
+; この競合自体を発生させない。
+DFL_FORCE_CLEAR:
+    XOR A
+    LD (DFL0_ACT),A
+    LD (DFL1_ACT),A
+    LD (DFL2_ACT),A
+    CALL DFL_HIDE0
+    CALL DFL_HIDE1
+    CALL DFL_HIDE2
     RET
 
 DFL_MOVE0:
