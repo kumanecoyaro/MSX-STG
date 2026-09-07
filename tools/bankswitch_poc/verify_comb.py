@@ -447,10 +447,29 @@ steps_g3 = 0
 while cpu2.pc != 0x0000 and steps_g3 < 300000:
     cpu2.step()
     steps_g3 += 1
-assert mem2.flat[GAME_OVER_SEQ] == 1, \
-    "PLAYER_TAKE_HIT with BARRIER_HP=0 did not arm GAME_OVER_SEQ=1 (MISSION FAILED display)"
+PLAYER_DEATH_FALL_ACT = gsym["PLAYER_DEATH_FALL_ACT"]
+PLAYER_DEATH_FALL_TIMER = gsym["PLAYER_DEATH_FALL_TIMER"]
+assert mem2.flat[PLAYER_DEATH_FALL_ACT] == 1, \
+    "PLAYER_TAKE_HIT with BARRIER_HP=0 did not arm the death-fall sequence"
+assert mem2.flat[GAME_OVER_SEQ] == 0, \
+    "GAME_OVER_SEQ armed immediately - should be deferred until the death-fall finishes (round62-follow-up)"
+# (2026-09-07、"操作無効の上爆発しながら右斜め下に落下しMission Failed
+# 表示に"): PLAYER_TAKE_HITはもうGAME_OVER_SEQを即座には起動しない -
+# PLAYER_DEATH_FALL_DURATIONフレーム分の落下演出(tools/verify_stage1_
+# mission_screens.pyで単体検証済み)を経て初めて起動する。この統合
+# テストでは実時間タイマー同様、その待ち自体を短縮(残り1フレームへ
+# ポーク)した上で1フレームだけ実MAINLOOPを回し、演出完了時の遷移が
+# 実バンク構成でも正しく配線されていることだけを確認する。
+mem2.flat[PLAYER_DEATH_FALL_TIMER] = 1
 cpu2.pc = MAINLOOP
-print("Stage1 (2nd run): real PLAYER_TAKE_HIT with BARRIER_HP=0 armed GAME_OVER_SEQ=1, as on real hardware")
+cpu2.step()
+steps_g3b = 0
+while cpu2.pc != MAINLOOP and steps_g3b < 300000:
+    cpu2.step()
+    steps_g3b += 1
+assert mem2.flat[GAME_OVER_SEQ] == 1, \
+    "death-fall completion did not arm GAME_OVER_SEQ=1 (MISSION FAILED display)"
+print("Stage1 (2nd run): real PLAYER_TAKE_HIT with BARRIER_HP=0 -> death-fall -> GAME_OVER_SEQ=1, as on real hardware")
 
 # bypass the real-time 3s-text/10s-timeout waits (this harness never fires
 # H.TIMI on its own, same limitation noted throughout this file for every

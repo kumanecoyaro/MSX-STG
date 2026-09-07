@@ -796,6 +796,21 @@ GAMEOVER_ENABLED EQU 0F235h  ; 0=ゲームオーバー無効(バリア0後の被
                               ; 無視、"今は0になっても死なない"の従来
                               ; 挙動)/1=ゲームオーバー有効(通常)
 
+; (2026-09-07、"ステージ1の自機爆発演出追加 操作無効の上爆発しながら
+; 右斜め下に落下しMission Failed表示に"): PTH_GAMEOVERが即座にMISSION
+; FAILEDテキストを出していた従来の挙動を、まず自機を操作不能にして
+; 右斜め下へ落下させながら爆発(既存のPLAYER_EXPL_POOLバーストをその
+; まま流用 - PEUA_TRY_SPAWNは毎回PLAYERX/PLAYERYを直接読むため、
+; 落下で動く自機の位置に自動的に追従する)させ、この演出が終わって
+; 初めてMISSION FAILEDを表示する2段階へ変更。GAMEOVER_ENABLEDの
+; すぐ後、同じ実測済みの空き帯に配置。
+PLAYER_DEATH_FALL_ACT   EQU 0F236h  ; 0=非活性/1=落下中
+PLAYER_DEATH_FALL_TIMER EQU 0F237h  ; 残りフレーム数(0になった瞬間に
+                                     ; MISSION FAILED表示へ進む)
+PLAYER_DEATH_FALL_SPEED    EQU 2    ; px/frame、斜め45度(X,Yとも同値) -
+                                     ; PLAYER_RETREAT_SPEEDと同じ考え方
+PLAYER_DEATH_FALL_DURATION EQU 45   ; 約0.75秒@60fps - 未調整の初期値
+
     DB "AB"
     DW INIT
     DW 0,0,0
@@ -1156,6 +1171,7 @@ INIT_SPRATR_CLR:
     ; 値をそのまま保持する必要があるため、上記EQU自身のコメント参照)。
     LD (GAME_OVER_SEQ),A
     LD (GAME_OVER_START_TICK),A : LD (GAME_OVER_START_TICK+1),A
+    LD (PLAYER_DEATH_FALL_ACT),A : LD (PLAYER_DEATH_FALL_TIMER),A
     LD HL,PLAYER_EXPL_POOL : LD (HL),A
     LD DE,PLAYER_EXPL_POOL+1 : LD BC,21 : LDIR   ; zeroes the pool +
                                                    ; PLAYER_EXPL_TOTAL_TIMER/
@@ -1809,6 +1825,46 @@ ROWDONE_5:
     ; --- protection wasn't enough to stop VDP/sprite corruption,   ---
     ; --- so BC/DE/HL/IX/IY are all preserved this time.            ---
     ; ============================================================
+    ; (2026-09-07、"ステージ1の自機爆発演出追加 操作無効の上爆発しながら
+    ; 右斜め下に落下しMission Failed表示に"): 上記のPLAYER_RETREAT_ACT
+    ; (ステージクリア専用)より更に手前でチェックする新規サブフェーズ -
+    ; PTH_GAMEOVER(バリア枯渇後の被弾)の瞬間にPLAYER_DEATH_FALL_ACT=1が
+    ; 立ち、以後PLAYER_DEATH_FALL_DURATIONフレームの間ジョイスティック
+    ; 入力を完全に無視してPLAYERX/PLAYERYを両方PLAYER_DEATH_FALL_SPEED
+    ; ずつ加算し続ける(右斜め下への等速落下、8bitオーバーフローで
+    ; ラップして左端へワープしないようキャリーで255クランプ)。この間も
+    ; 既存のPLAYER_EXPL_UPDATE_ALL(PEUA_TRY_SPAWNが毎回PLAYERX/PLAYERY
+    ; を直接読む設計)がそのまま自機の新しい位置に追従して爆発バーストを
+    ; 継続するため、爆発しながら落下する見た目になる。タイマーが0に
+    ; 達した瞬間だけ、従来PTH_GAMEOVERが直接行っていたMISSION FAILED
+    ; テキスト描画・GAME_OVER_SEQ状態機械の起動をここで行う(以後は
+    ; 二度とPLAYER_DEATH_FALL_ACTが1にならないため生涯で1回だけ)。
+    LD A,(PLAYER_DEATH_FALL_ACT)
+    OR A
+    JR Z,PFA_NO_DEATH_FALL
+    LD A,(PLAYER_DEATH_FALL_TIMER)
+    DEC A
+    LD (PLAYER_DEATH_FALL_TIMER),A
+    LD A,(PLAYERX) : ADD A,PLAYER_DEATH_FALL_SPEED
+    JR NC,PDF_X_OK
+    LD A,255
+PDF_X_OK:
+    LD (PLAYERX),A
+    LD A,(PLAYERY) : ADD A,PLAYER_DEATH_FALL_SPEED
+    JR NC,PDF_Y_OK
+    LD A,255
+PDF_Y_OK:
+    LD (PLAYERY),A
+    LD A,(PLAYER_DEATH_FALL_TIMER)
+    OR A
+    JP NZ,DIR_DONE
+    XOR A : LD (PLAYER_DEATH_FALL_ACT),A
+    CALL DRAW_GAMEOVER_TEXT
+    LD A,1 : LD (GAME_OVER_SEQ),A
+    LD HL,(SC_VBLANK_COUNT) : LD (GAME_OVER_START_TICK),HL
+    JP DIR_DONE
+PFA_NO_DEATH_FALL:
+
     ; (2026-09-06、"一旦左端まで下がってから飛び去る様に変更"): 通常の
     ; flyawayシーケンスより前にチェックする新規サブフェーズ - ボス撃破の
     ; 瞬間にPLAYER_RETREAT_ACT=1が立ち、ここでPLAYERXをPLAYER_RETREAT_
@@ -8062,16 +8118,21 @@ PTH_GAMEOVER:
     ; EXPLOSION (still used for regular enemy kills) - see PLAYER_
     ; EXPL_TRIGGER/PLAYER_EXPL_UPDATE_ALL.
     CALL PLAYER_EXPL_TRIGGER
-    ; "ゲームオーバーは画面中央にMISSION FAILEDと表示" - PLAYER_DAMAGE_
-    ; CHECK冒頭のGAME_OVERガードにより、ここは生涯で1回しか通らない
-    ; (以後二度とPTH_GAMEOVERへ来ない)ので、1回だけの描画で十分。
-    CALL DRAW_GAMEOVER_TEXT
-    ; "ゲームオーバー表示は3秒表示してボタンが押されるか10秒経過で
-    ; タイトル画面に" - GAME_OVER_SEQ状態機械(UPDATE_GAME_OVER_
-    ; SEQUENCE、MAINLOOP冒頭から毎フレーム無条件に呼ばれる)を起動。
-    LD A,1 : LD (GAME_OVER_SEQ),A
-    LD HL,(SC_VBLANK_COUNT) : LD (GAME_OVER_START_TICK),HL
+    ; (2026-09-07、"操作無効の上爆発しながら右斜め下に落下しMission
+    ; Failed表示に"): MISSION FAILEDテキストの表示・GAME_OVER_SEQ
+    ; 状態機械の起動は、この落下演出が終わった瞬間(UPDATE_PLAYER_
+    ; DEATH_FALL、PDF_FINISH参照)まで先送りする - ここでは落下演出の
+    ; 起動のみ。
+    CALL PLAYER_DEATH_FALL_TRIGGER
     JP SOUND_DESTROY   ; tail call - same "boom" as everything else that dies
+
+; Arms the death-fall sequence (see UPDATE_PLAYER_DEATH_FALL, called
+; from the player-input block every frame) - just sets the 2 flags,
+; the actual per-frame movement/completion logic lives there.
+PLAYER_DEATH_FALL_TRIGGER:
+    LD A,1 : LD (PLAYER_DEATH_FALL_ACT),A
+    LD A,PLAYER_DEATH_FALL_DURATION : LD (PLAYER_DEATH_FALL_TIMER),A
+    RET
 
 ; Kicks off the ~2s player-death burst sequence (see PLAYER_EXPL_
 ; UPDATE_ALL). Just arms the 2 master timers - the pool itself starts
@@ -8209,6 +8270,15 @@ PETS_FOUND:
     LD (IX+2),A
     LD A,PLAYER_EXPL_LIFE : LD (IX+3),A
     LD A,1 : LD (IX+0),A
+    ; (2026-09-07、"自機爆破でサウンド追加...ボスの爆発音でいい"):
+    ; PTH_GAMEOVER自身の末尾は死亡の瞬間に1回だけSOUND_DESTROYを
+    ; tail-callするが、それだけだとボスの死(BEU_FIRE、71回のポップ
+    ; それぞれでSOUND_DESTROYを呼ぶ)と違い、その後の約2秒間続く
+    ; バーストの残り約14回のスポーンには一切音が伴っていなかった -
+    ; 「ボスの爆発音でいい」はこの"ポップごとに毎回鳴る"連続的な
+    ; 爆発音の作り方自体を指すと解釈し、BEU_FIREと全く同じ呼び出し
+    ; パターン(バースト1回のスポーンごとに1回)をここにも適用する。
+    CALL SOUND_DESTROY
     RET
 
 ; Clears every slot of the unified enemy buffer (ACTIVE=0) and resets

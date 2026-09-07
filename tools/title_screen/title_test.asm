@@ -199,6 +199,15 @@ WFS_BUTTON_A:
     LD A,1 : LD (GAMEOVER_ENABLED),A
 WFS_PROCEED:
 
+    ; (2026-09-07、"タイトル画面でボタン押下でサウンド追加"): チャンネルB
+    ; は上記INIT_BGMがR7で常時トーン有効のまま用意しているが、このファイル
+    ; 自身はBGM再生を行わない設計のため音量ミュートのまま遊休状態 - R7を
+    ; 一切変更せず(トーンA自体は無効のまま)、そのチャンネルBを一時的に
+    ; 借りて短い確認ビープを鳴らすだけで実現できる。Stage1へのバンク切替
+    ; トランポリンより前、このファイル自身の時間軸内で完結させる(切替後は
+    ; H.TIMI/PSG状態がStage1側の管理下に移るため)。
+    CALL PLAY_CONFIRM_BEEP
+
     ; 実機フィードバック対応("バンク切り替えに失敗してる タイトルで
     ; ボタンを押すとフリーズ"): ここまでは割り込み許可(EI済み、BGM_TICK
     ; がH.TIMI経由で毎垂直帰線ごとに発火し続けている)状態。hop1でwindow
@@ -245,6 +254,41 @@ BANKSWITCH_TRAMPOLINE_SRC:
     LD (DE),A
     JP (HL)
 BANKSWITCH_TRAMPOLINE_LEN EQU $ - BANKSWITCH_TRAMPOLINE_SRC
+
+; (2026-09-07、"タイトル画面でボタン押下でサウンド追加") 短い確認ビープ
+; (channel B、単純な直線減衰、割り込み非依存のZ80クロック直接カウントに
+; よるディレイ - MISSION_DELAY_3SEC[src/CYBER SHMUP.asm]と同じ考え方)。
+; 12ステップ、各ステップの間に800回のDEカウントダウン(約20,800T-state)、
+; 合計約249,600T-state(3.579545MHzで約70ms)のウェイトで音量12から1まで
+; 直線的に下げてから明示的にミュート - ゲームの確認音として十分な短さで、
+; かつこのファイルの各種z80emu.pyベースの回帰テスト(WAIT_FOR_START→
+; ボタン押下のトランポリンをmax_instr内でシミュレートする箇所)を圧迫
+; しない命令数(合計約38,400ステップ)に収まる値を選んだ。R7は一切
+; 変更しない(チャンネルBは元々INIT_BGMが常時トーン有効のまま用意している
+; 遊休チャンネル)。Trashes: AF,BC,DE.
+PLAY_CONFIRM_BEEP:
+    DI
+    LD A,2 : OUT (PSG_ADDR),A : LD A,150 : OUT (PSG_DATA),A  ; ch B tone period fine (~1491Hz)
+    LD A,3 : OUT (PSG_ADDR),A : XOR A : OUT (PSG_DATA),A     ; ch B tone period coarse = 0
+    EI
+    LD B,12
+PCB_STEP:
+    DI
+    LD A,9 : OUT (PSG_ADDR),A
+    LD A,B : OUT (PSG_DATA),A
+    EI
+    PUSH BC
+    LD DE,800
+PCB_DELAY:
+    DEC DE
+    LD A,D : OR E
+    JR NZ,PCB_DELAY
+    POP BC
+    DJNZ PCB_STEP
+    DI
+    LD A,9 : OUT (PSG_ADDR),A : XOR A : OUT (PSG_DATA),A
+    EI
+    RET
 
 ; ---------- title background decompressor (round43) ----------
 ; 自前の対称RLE(制御バイトbit7=0:リテラル/1:反復、下位7bitは長さ-1、

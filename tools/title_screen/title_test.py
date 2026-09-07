@@ -483,6 +483,42 @@ check("trampoline wrote window B (7000h)=3 then window A (6000h)=2 - same 2-hop 
       mem.switch_log[len(switch_log_at_wait):] == [("B", 3), ("A", 2)])
 
 
+# ---- 実機フィードバック対応("タイトル画面でボタン押下でサウンド
+# 追加"): PLAY_CONFIRM_BEEPを直接呼び、チャンネルBのトーン周期(R2/R3)・
+# 音量(R9)の12->1直線減衰+明示ミュートの実際の書き込み列を検証する。
+# call_routine(単発呼び出しで戻り値だけ見る既存ヘルパー)は内部で12回
+# ループする本ルーチンの中間状態を捉えられないため、ここだけは自前で
+# 1命令ずつステップしながらR9への書き込みが変化するたびに記録する。
+cpu5, mem5 = fresh_cpu()
+run_to_wait(cpu5)
+cpu5.sp = (cpu5.sp - 2) & 0xFFFF
+cpu5.mem[cpu5.sp] = 0
+cpu5.mem[cpu5.sp + 1] = 0
+cpu5.pc = sym["PLAY_CONFIRM_BEEP"]
+vol_seq = []
+last_vol = cpu5.psg_regs.get(9)  # whatever steady-state value precedes the call - not itself a "change"
+s = 0
+while cpu5.pc != 0x0000 and s < 300000:
+    cpu5.step()
+    s += 1
+    v = cpu5.psg_regs.get(9)
+    if v != last_vol:
+        vol_seq.append(v)
+        last_vol = v
+assert s < 300000, "PLAY_CONFIRM_BEEP never returned"
+
+check("PLAY_CONFIRM_BEEP: channel B tone period set to 150/0 (fine/coarse, ~1491Hz)",
+      (cpu5.psg_regs.get(2), cpu5.psg_regs.get(3)) == (150, 0))
+check("PLAY_CONFIRM_BEEP: channel B volume (R9) steps through a linear decay 12->1 then an "
+      "explicit final mute write (0) - not just left to whatever the last nonzero step wrote",
+      vol_seq == list(range(12, 0, -1)) + [0])
+check("PLAY_CONFIRM_BEEP: leaves the beep muted (R9=0) on return",
+      cpu5.psg_regs.get(9) == 0)
+check("PLAY_CONFIRM_BEEP never touches R7 (mixer) - channel B was already tone-enabled by "
+      "INIT_BGM's own one-time 0B1h write, reused as-is rather than re-derived here",
+      cpu5.psg_regs.get(7) == 0xB1)
+
+
 print()
 print(f"{len(ok)} passed, {len(fail)} failed")
 if fail:

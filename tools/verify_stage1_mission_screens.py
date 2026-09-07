@@ -330,9 +330,20 @@ check("DRAW_GAMEOVER_TEXT: does NOT touch PSG channel A volume (SE keeps playing
 
 # ---- PTH_GAMEOVER wiring: reaching GAME_OVER=1 via a barrier-exhausted hit ----
 # ---- actually draws GAME_OVER_MSG on screen (not just sets the flag)       ----
+# (2026-09-07、"操作無効の上爆発しながら右斜め下に落下しMission Failed
+# 表示に"): PTH_GAMEOVER自身はもうテキスト描画・GAME_OVER_SEQ起動を
+# 即座には行わない - 代わりにPLAYER_DEATH_FALL_ACTを起動するだけで、
+# 実際のテキスト表示/SEQ起動はPLAYER_DEATH_FALL_DURATIONフレーム分の
+# 落下演出が実MAINLOOPを通じて完了した瞬間まで先送りされる(下記
+# step_frame連打で検証)。
 BARRIER_HP = sym["BARRIER_HP"]
 GAME_OVER = sym["GAME_OVER"]
 GAME_OVER_SEQ = sym["GAME_OVER_SEQ"]
+PLAYER_DEATH_FALL_ACT = sym["PLAYER_DEATH_FALL_ACT"]
+PLAYER_DEATH_FALL_TIMER = sym["PLAYER_DEATH_FALL_TIMER"]
+PLAYER_DEATH_FALL_SPEED = sym["PLAYER_DEATH_FALL_SPEED"]
+PLAYER_DEATH_FALL_DURATION = sym["PLAYER_DEATH_FALL_DURATION"]
+PLAYERY = sym["PLAYERY"]
 z = fresh()
 boot(z)
 z.wr(BARRIER_HP, 0)
@@ -340,12 +351,47 @@ for i in range(768):
     z.vram[0x1800 + i] = 0x33
 call_routine(z, sym["PTH_GAMEOVER"])
 nametable = [z.vram[0x1800 + i] for i in range(768)]
-msg_region = nametable[12 * 32 + 9: 12 * 32 + 9 + GAME_OVER_MSG_LEN]
 check("PTH_GAMEOVER: sets GAME_OVER=1", z.rd(GAME_OVER) == 1)
-check("PTH_GAMEOVER: draws GAME_OVER_MSG at the screen-center message region",
+check("PTH_GAMEOVER: arms the death-fall sequence (PLAYER_DEATH_FALL_ACT=1, "
+      "TIMER=PLAYER_DEATH_FALL_DURATION) instead of drawing text immediately",
+      z.rd(PLAYER_DEATH_FALL_ACT) == 1 and z.rd(PLAYER_DEATH_FALL_TIMER) == PLAYER_DEATH_FALL_DURATION)
+check("PTH_GAMEOVER: does NOT draw GAME_OVER_MSG yet (deferred until the death-fall finishes)",
+      all(b == 0x33 for b in nametable))
+check("PTH_GAMEOVER: does NOT arm GAME_OVER_SEQ yet (deferred until the death-fall finishes)",
+      z.rd(GAME_OVER_SEQ) == 0)
+
+x0 = z.rd(PLAYERX)
+y0 = z.rd(PLAYERY)
+z.pc = sym["MAINLOOP"]
+for i in range(PLAYER_DEATH_FALL_DURATION):
+    step_frame(z)
+    if i < PLAYER_DEATH_FALL_DURATION - 1:
+        assert z.rd(GAME_OVER_SEQ) == 0, f"GAME_OVER_SEQ armed early, at frame {i}"
+nametable = [z.vram[0x1800 + i] for i in range(768)]
+msg_region = nametable[12 * 32 + 9: 12 * 32 + 9 + GAME_OVER_MSG_LEN]
+check("death-fall: PLAYERX/PLAYERY both advanced by PLAYER_DEATH_FALL_SPEED*PLAYER_DEATH_FALL_DURATION "
+      "(falls diagonally down-right, ignoring joystick input throughout)",
+      z.rd(PLAYERX) == (x0 + PLAYER_DEATH_FALL_SPEED * PLAYER_DEATH_FALL_DURATION) & 0xFF
+      and z.rd(PLAYERY) == (y0 + PLAYER_DEATH_FALL_SPEED * PLAYER_DEATH_FALL_DURATION) & 0xFF)
+check("death-fall: clears its own ACT flag once the fall finishes",
+      z.rd(PLAYER_DEATH_FALL_ACT) == 0)
+check("death-fall completion: NOW draws GAME_OVER_MSG at the screen-center message region",
       msg_region == read_msg(GAME_OVER_MSG, GAME_OVER_MSG_LEN))
-check("PTH_GAMEOVER: arms GAME_OVER_SEQ=1 (3-second display phase)",
+check("death-fall completion: NOW arms GAME_OVER_SEQ=1 (3-second display phase)",
       z.rd(GAME_OVER_SEQ) == 1)
+
+# regression guard: starting near the right/bottom edge must clamp at 255 instead of
+# wrapping around to 0 (which would look like the ship teleporting to the top-left).
+z = fresh()
+boot(z)
+z.wr(PLAYERX, 254)
+z.wr(PLAYERY, 254)
+z.wr(PLAYER_DEATH_FALL_ACT, 1)
+z.wr(PLAYER_DEATH_FALL_TIMER, PLAYER_DEATH_FALL_DURATION)
+z.pc = sym["MAINLOOP"]
+step_frame(z)
+check("death-fall: PLAYERX/PLAYERY clamp at 255 on overflow instead of wrapping to a low value",
+      z.rd(PLAYERX) == 255 and z.rd(PLAYERY) == 255)
 
 # ---- UPDATE_STAGE_CLEAR: 4-state machine (0/1/2/3) ----
 z = fresh()
