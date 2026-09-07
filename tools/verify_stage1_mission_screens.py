@@ -776,6 +776,32 @@ check("PLAYER_TAKE_HIT with GAMEOVER_ENABLED=1: DOES set GAME_OVER (regression g
       "confirms the GAMEOVER_ENABLED gate itself works both ways)",
       z.rd(GAME_OVER) == 1)
 
+# (2026-09-07、実機フィードバック対応、"画面外に出る処理で壊れたと
+# 思われる"の調査で発見・修正した実バグ): 既にGAME_OVER=1(死亡演出
+# 進行中〜表示中)の間に追加で被弾しても、PTH_GAMEOVERが再実行されて
+# PLAYER_EXPL_TRIGGER/PLAYER_DEATH_FALL_TRIGGER/SOUND_DESTROYを重ねて
+# 再発火してはならない(旧実装にはこのガードが無く、死亡落下が可変長化
+# [round65]したことで再トリガーの機会自体が大幅に増えていた)。
+# PLAYER_EXPL_TOTAL_TIMER(PLAYER_EXPL_TRIGGERが呼ばれるたびPLAYER_
+# EXPL_TOTAL_LEN[120]へリセットされる)を判別に使う - 途中の値のまま
+# 変化しなければ再トリガーされていない証拠になる。
+PLAYER_EXPL_TOTAL_TIMER = sym["PLAYER_EXPL_TOTAL_TIMER"]
+z = fresh()
+boot(z)
+z.wr(GAMEOVER_ENABLED, 1)  # must be 1, else PTH_GAMEOVER is unreachable for an
+                           # unrelated reason and this test wouldn't actually
+                           # exercise the GAME_OVER re-trigger guard at all
+z.wr(GAME_OVER, 1)
+z.wr(PLAYER_DEATH_FALL_ACT, 1)
+z.wr(PLAYER_EXPL_TOTAL_TIMER, 3)  # mid-burst, well below PLAYER_EXPL_TOTAL_LEN(120)
+z.wr(BARRIER_HP, 0)  # already exhausted, as it always is once GAME_OVER=1
+call_routine(z, sym["PLAYER_TAKE_HIT"])
+check("PLAYER_TAKE_HIT while GAME_OVER is already 1: does NOT re-run PTH_GAMEOVER "
+      "(PLAYER_EXPL_TOTAL_TIMER stays at its mid-burst value instead of being reset "
+      "back to PLAYER_EXPL_TOTAL_LEN by a re-triggered PLAYER_EXPL_TRIGGER - the death "
+      "sequence already in progress must not be re-armed by a further hit)",
+      z.rd(PLAYER_EXPL_TOTAL_TIMER) == 3)
+
 print(f"\n{len(ok)} passed, {len(fail)} failed")
 if fail:
     print("FAILURES:")

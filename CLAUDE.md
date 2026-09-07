@@ -2883,3 +2883,27 @@ FAILEDの毎フレーム再描画(完了済み・実機フィードバック待�
   上、標準方針によりComb ROMのみ送付。詳細はHANDOFF.mdのRound65参照。
 - **保留**: 次はステージ2側(自機爆発演出実装+3色化+未使用データ監査+
   ボス攻撃・形態変化データの追加バンク移設)に着手予定。
+
+## Round66: 実機フィードバック対応(Stage1 MISSION FAILED画面破損調査
++PTH_GAMEOVER再トリガーバグ修正、GFEnding CREDITを新フォントへ統一)
+(2026-09-07)
+
+- ユーザー報告2件: (1)Stage1のMISSION FAILED画面が実機で背景全体
+  サーモンピンクに破損(スクショ添付、"画面外に出る処理[round65]で
+  壊れたと思われる"というユーザー仮説)。(2)"Produced by kumanecoyarou
+  が新フォントにならずCが未定義で欠けてた"。
+- (1)は複数シナリオでStage1用render-check経由のエミュレータ再現を
+  試みたが再現できず、根本原因は未確定(z80emu.pyが実機割り込み
+  タイミング競合を再現できない既知の限界の可能性)。副産物として
+  `PLAYER_TAKE_HIT`にGAME_OVER=1後の再被弾を無視するガードが無い
+  実バグを発見・修正(Round65の可変長落下でこの再トリガー機会自体が
+  増えていた)。
+- (2)はCREDIT("PRODUCED BY KUMANECOYAROU")をtools/pixel_font_8x8.py
+  (Round59でMISSION COMPLETEDに導入済みの新フォント)へ統一、不足4文字
+  (B,K,U,Y)を新規描き起こし、旧5x7フォント関連コードを削除。
+- 新規回帰テスト2件、全回帰Stage2側1460 passed/0 failed(1459→1460)、
+  Stage1側4ファイル全てPASS(mission_screens 77→78)。VRAM→PNG
+  レンダリングでCREDIT/COMPLETE両画面を視覚確認。Comb ROM再ビルド・
+  verify_comb.py確認の上、標準方針によりComb ROMのみ送付。詳細は
+  HANDOFF.mdのRound66参照。
+- **保留**: (1)の画面破損の根本原因は未確定、実機再検証が必要。

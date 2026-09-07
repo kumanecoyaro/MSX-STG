@@ -188,6 +188,23 @@ check("all 3 font glyph blocks loaded byte-correct into their pattern-code slots
 check("the 3 reused color groups (12/18/19) are repainted white-on-black",
       cpu.vram[0x2000 + 12] == 0xF1 and cpu.vram[0x2000 + 18] == 0xF1 and cpu.vram[0x2000 + 19] == 0xF1)
 
+# ---- (2026-09-07、実機フィードバック対応 "Produced by kumanecoyarouが ----
+# ---- 新フォントにならず"): CREDITもtools/pixel_font_8x8.pyへ統一 -    ----
+# ---- 直接pixel_font_8x8.glyph_bytes()と突き合わせて確認(上のfont_ok  ----
+# ---- はending_text_gen.py自身が生成した値との内部整合性のみで、この   ----
+# ---- 差し替え自体を検証できないため別途必要)。                         ----
+import pixel_font_8x8  # noqa: E402
+CREDIT_TEXT_CHARS = "PRODUCED BY KUMANECOYAROU"
+credit_font_ok = True
+for ch, code in zip(CREDIT_TEXT_CHARS, credit_codes):
+    expected = pixel_font_8x8.glyph_bytes(ch)
+    got = [cpu.vram[code * 8 + i] for i in range(8)]
+    if got != expected:
+        credit_font_ok = False
+check("\"PRODUCED BY KUMANECOYAROU\" glyphs are byte-correct against "
+      "tools/pixel_font_8x8.py (new 8x8 attached-font style, no longer the "
+      "old 5x7 CREDIT-only font)", credit_font_ok)
+
 # ---- input now genuinely disabled ----
 cpu.sim_dir = 5
 call_routine(cpu, "READ_INPUT")
