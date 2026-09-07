@@ -92,109 +92,149 @@ msg_region = nametable[12 * 32 + 9: 12 * 32 + 9 + GAMEOVER2_MSG_LEN]
 check("MISSION FAILED text is drawn at row12/col9 by the time GO_WAIT_LOOP is reached",
       msg_region == expected_msg)
 
-# ---- explosion drawn at the tank's last known position (4 corners, ----
-# ---- reusing its own hw sprite slots 0-3 - no new ATTRIBUTE slot    ----
-# ---- allocation, since the tank itself is never drawn again after   ----
-# ---- this point).                                                   ----
+# ---- particle-scatter explosion (2026-09-07、実機フィードバック対応 ----
+# ---- "もっとエフェクトが飛び散る形に 地味すぎる 自機中心から           ----
+# ---- エフェクトが飛びランダムに散る様に"): 旧GO_DRAW_EXPLOSION(4隅を  ----
+# ---- 同位置に固定表示する単一ボディ)を、4つの独立した飛び散る          ----
+# ---- パーティクルへ置き換えた。                                        ----
 TANK_X = sym["TANK_X"]
 TANK_Y_CUR = sym["TANK_Y_CUR"]
 PAT_EXPLOSION = sym["PAT_EXPLOSION"]
 SPR_WHITE_COLOR = sym["SPR_WHITE_COLOR"]
 SPR_LIGHTRED_COLOR = sym["SPR_LIGHTRED_COLOR"]
+GO_PX = [sym["GO_PX0"], sym["GO_PX1"], sym["GO_PX2"], sym["GO_PX3"]]
+GO_PY = [sym["GO_PY0"], sym["GO_PY1"], sym["GO_PY2"], sym["GO_PY3"]]
 
 
-def call_draw_explosion(xjit, yjit, color_sel, tank_x=50, tank_y=80):
-    """(2026-09-07、実機フィードバック対応: 4隅を同位置に固定表示する
-    だけだったのを直したため) GO_DRAW_EXPLOSIONはD=Xジッター/E=Yジッター/
-    C=色選択(0=白、非0=ライトレッド)を入力に取るようになった。"""
+def call_draw_particles(color_sel, offsets, tank_x=50, tank_y=80):
+    """offsets: list of 4 (dx,dy) pairs (signed) to poke into GO_PX/PYn
+    before calling GO_DRAW_PARTICLES(C=color_sel)."""
     z = fresh()
     z.wr(TANK_X, tank_x)
     z.wr(TANK_Y_CUR, tank_y)
-    z.d = xjit & 0xFF
-    z.e = yjit & 0xFF
+    for i, (dx, dy) in enumerate(offsets):
+        z.wr(GO_PX[i], dx & 0xFF)
+        z.wr(GO_PY[i], dy & 0xFF)
     z.c = color_sel
     z.sp = 0xF000
     z.wr(0xF000, 0x00); z.wr(0xF001, 0x00)
-    z.pc = sym["GO_DRAW_EXPLOSION"]
+    z.pc = sym["GO_DRAW_PARTICLES"]
     run_until_pc(z, 0x0000, 300000)
     return [z.vram[0x1B00 + i] for i in range(16)]
 
 
-attrs = call_draw_explosion(0, 0, 0)
+attrs = call_draw_particles(0, [(0, 0), (0, 0), (0, 0), (0, 0)])
 expected_attrs = [
     80, 50, PAT_EXPLOSION, SPR_WHITE_COLOR,
-    80, 66, PAT_EXPLOSION, SPR_WHITE_COLOR,
-    96, 50, PAT_EXPLOSION, SPR_WHITE_COLOR,
-    96, 66, PAT_EXPLOSION, SPR_WHITE_COLOR,
+    80, 50, PAT_EXPLOSION, SPR_WHITE_COLOR,
+    80, 50, PAT_EXPLOSION, SPR_WHITE_COLOR,
+    80, 50, PAT_EXPLOSION, SPR_WHITE_COLOR,
 ]
-check("GO_DRAW_EXPLOSION (no jitter, color=0/white) places PAT_EXPLOSION at all 4 "
-      "tank-body corners (+0/+16 offsets, matching UPDATE_TANK_SPRITES' own convention)",
+check("GO_DRAW_PARTICLES with all-zero offsets (color=0/white) places all 4 particles "
+      "exactly at TANK_X/TANK_Y_CUR (the player's own center)",
       attrs == expected_attrs)
 
-attrs_red = call_draw_explosion(0, 0, 1)
-check("GO_DRAW_EXPLOSION with color select=1 draws all 4 corners in SPR_LIGHTRED_COLOR "
-      "(non-zero color selector -> light red, matching src/CYBER SHMUP.asm's own "
-      "PEUA_INSTANCES white/light-red parity strobe)",
+attrs_red = call_draw_particles(1, [(0, 0), (0, 0), (0, 0), (0, 0)])
+check("GO_DRAW_PARTICLES with color select=1 draws all 4 particles in SPR_LIGHTRED_COLOR",
       attrs_red == [
           80, 50, PAT_EXPLOSION, SPR_LIGHTRED_COLOR,
-          80, 66, PAT_EXPLOSION, SPR_LIGHTRED_COLOR,
-          96, 50, PAT_EXPLOSION, SPR_LIGHTRED_COLOR,
-          96, 66, PAT_EXPLOSION, SPR_LIGHTRED_COLOR,
+          80, 50, PAT_EXPLOSION, SPR_LIGHTRED_COLOR,
+          80, 50, PAT_EXPLOSION, SPR_LIGHTRED_COLOR,
+          80, 50, PAT_EXPLOSION, SPR_LIGHTRED_COLOR,
       ])
 
-# (2026-09-07、実機フィードバック対応"一度4つほどエフェクトが出るが
-# その状態で停止してて"): 毎回同じ位置に描くだけだと"止まって見える"と
-# 報告されたため、呼び出し元から渡されたジッター量を全4隅へ均等に
-# 加算するようになった - ここではジッターがそのまま座標へ反映される
-# ことを直接検証する(正のオフセット・負のオフセットの両方)。
-attrs_jit_pos = call_draw_explosion(5, 3, 0)
-check("GO_DRAW_EXPLOSION applies a positive X/Y jitter to all 4 corners uniformly",
-      attrs_jit_pos == [
-          83, 55, PAT_EXPLOSION, SPR_WHITE_COLOR,
-          83, 71, PAT_EXPLOSION, SPR_WHITE_COLOR,
-          99, 55, PAT_EXPLOSION, SPR_WHITE_COLOR,
-          99, 71, PAT_EXPLOSION, SPR_WHITE_COLOR,
+# each particle carries its OWN independent (dx,dy) - this is the entire
+# point of "自機中心からエフェクトが飛びランダムに散る様に" (flying apart
+# in different directions, not one rigid body).
+attrs_scattered = call_draw_particles(0, [(-5, -3), (7, -2), (-4, 6), (3, 5)])
+check("GO_DRAW_PARTICLES applies each particle's own independent offset "
+      "(not the same offset for all 4, unlike the old single-body design)",
+      attrs_scattered == [
+          80 - 3, 50 - 5, PAT_EXPLOSION, SPR_WHITE_COLOR,
+          80 - 2, 50 + 7, PAT_EXPLOSION, SPR_WHITE_COLOR,
+          80 + 6, 50 - 4, PAT_EXPLOSION, SPR_WHITE_COLOR,
+          80 + 5, 50 + 3, PAT_EXPLOSION, SPR_WHITE_COLOR,
       ])
 
-attrs_jit_neg = call_draw_explosion(-8 & 0xFF, -8 & 0xFF, 0)
-check("GO_DRAW_EXPLOSION applies a negative (two's-complement) X/Y jitter to all 4 "
-      "corners uniformly, matching Stage1's own -8..+7 PEUA_TRY_SPAWN jitter range",
-      attrs_jit_neg == [
-          72, 42, PAT_EXPLOSION, SPR_WHITE_COLOR,
-          72, 58, PAT_EXPLOSION, SPR_WHITE_COLOR,
-          88, 42, PAT_EXPLOSION, SPR_WHITE_COLOR,
-          88, 58, PAT_EXPLOSION, SPR_WHITE_COLOR,
-      ])
+# ---- GO_ADVANCE_PARTICLES: each particle's accumulator moves in its own ----
+# ---- fixed diagonal direction (away from center) every call, plus a     ----
+# ---- small jitter - confirm the SIGN of net movement over many calls     ----
+# ---- matches each particle's documented outward direction (up-left/     ----
+# ---- up-right/down-left/down-right), i.e. they really do fly apart      ----
+# ---- rather than just jittering in place.                                ----
+def signed(v):
+    return v - 256 if v >= 128 else v
 
-# ---- GO_BLINK_LOOP: seeds GO_RNG from TANK_X, then jitters/alternates ----
-# ---- color across its own 10 iterations - confirm at least 2 distinct ----
-# ---- (jitter, color) combinations actually get drawn (i.e. it isn't    ----
-# ---- silently drawing the exact same frame 10 times over, the root     ----
-# ---- cause of the original bug report).                                ----
+
+z = fresh()
+z.wr(TANK_X, 1)  # seeds GO_RNG (INIT does this; here we poke it directly)
+z.wr(sym["GO_RNG"], 1)
+for addr in GO_PX + GO_PY:
+    z.wr(addr, 0)
+z.sp = 0xF000
+z.wr(0xF000, 0x00); z.wr(0xF001, 0x00)
+for _ in range(10):
+    z.pc = sym["GO_ADVANCE_PARTICLES"]
+    run_until_pc(z, 0x0000, 300000)
+    z.sp = 0xF000
+    z.wr(0xF000, 0x00); z.wr(0xF001, 0x00)
+final = [(signed(z.rd(GO_PX[i])), signed(z.rd(GO_PY[i]))) for i in range(4)]
+check("particle0 (documented up-left) net-moved left (dx<0) and up (dy<0) after "
+      "10 advances", final[0][0] < 0 and final[0][1] < 0)
+check("particle1 (documented up-right) net-moved right (dx>0) and up (dy<0) after "
+      "10 advances", final[1][0] > 0 and final[1][1] < 0)
+check("particle2 (documented down-left) net-moved left (dx<0) and down (dy>0) after "
+      "10 advances", final[2][0] < 0 and final[2][1] > 0)
+check("particle3 (documented down-right) net-moved right (dx>0) and down (dy>0) after "
+      "10 advances", final[3][0] > 0 and final[3][1] > 0)
+
+# ---- GO_BLINK_LOOP: particles must actually be moving frame to frame ----
+# ---- (not just jittering in place) - this is the direct regression   ----
+# ---- guard for "地味すぎる...もっとエフェクトが飛び散る形に".         ----
 z = fresh()
 z.wr(TANK_X, 120)
 z.wr(TANK_Y_CUR, 90)
 z.pc = sym["INIT"]
 seen_frames = []
-GO_DRAW_EXPLOSION = sym["GO_DRAW_EXPLOSION"]
-GO_BLINK_LOOP = sym["GO_BLINK_LOOP"]
-DJNZ_BLINK_TARGET = sym["GO_WAIT_LOOP"]
+GO_DRAW_PARTICLES = sym["GO_DRAW_PARTICLES"]
+GO_HIDE_EXPLOSION = sym["GO_HIDE_EXPLOSION"]
+GO_WAIT_LOOP = sym["GO_WAIT_LOOP"]
+hide_calls_before_text = 0
 steps = 0
-while z.pc != DJNZ_BLINK_TARGET and steps < 3_000_000:
-    if z.pc == GO_DRAW_EXPLOSION:
-        seen_frames.append((z.d, z.e, z.c))
+while z.pc != GO_WAIT_LOOP and steps < 3_000_000:
+    if z.pc == GO_DRAW_PARTICLES:
+        seen_frames.append(tuple(z.rd(a) for a in GO_PX + GO_PY))
+    if z.pc == GO_HIDE_EXPLOSION:
+        hide_calls_before_text += 1
     z.step()
     steps += 1
-check("GO_BLINK_LOOP actually calls GO_DRAW_EXPLOSION 11 times (10 blinks + the final "
-      "still frame) before reaching GO_WAIT_LOOP",
-      len(seen_frames) == 11)
-check("GO_BLINK_LOOP's own 10 blinks are NOT all identical (jitter+color actually vary "
-      "call to call) - this is the direct regression guard for \"一度4つほどエフェクトが"
-      "出るがその状態で停止してて\"",
-      len(set(seen_frames[:10])) > 1)
-check("GO_BLINK_LOOP's final call (the still frame after DJNZ exits) uses no jitter and "
-      "color=0 (white) - a clean neutral final pose",
-      seen_frames[10] == (0, 0, 0))
+check("GO_BLINK_LOOP calls GO_DRAW_PARTICLES 10 times (once per blink iteration) "
+      "before reaching GO_WAIT_LOOP",
+      len(seen_frames) == 10)
+check("GO_BLINK_LOOP's 10 draws show genuinely different particle positions each "
+      "time (the particles are really flying outward, not stuck jittering in place)",
+      len(set(seen_frames)) == 10)
+check("the particles' distance from center (sum of |offset|) grows over the "
+      "sequence (a real outward flight, not a random walk that stays near 0)",
+      sum(abs(signed(v)) for v in seen_frames[-1]) > sum(abs(signed(v)) for v in seen_frames[0]))
+# (2026-09-07、実機フィードバック対応"爆発エフェクトが消えずのこったまま
+# Mission Failedになってる で爆発エフェクトは消してくれ"): GO_HIDE_
+# EXPLOSIONはループの各反復内で毎回呼ばれる(点滅の非表示側)のに加え、
+# ループを抜けた直後にも明示的にもう1回呼ばれ、その後で初めてテキストを
+# 描画する設計に変更した - 10回(ループ内)+1回(ループ後、テキストより
+# 前)=11回になっているはず。
+check("GO_HIDE_EXPLOSION is called 11 times before GO_WAIT_LOOP (10 blink-hides + "
+      "1 final explicit hide before the MISSION FAILED text is drawn) - the fix for "
+      "the explosion sprites being left visible under the text",
+      hide_calls_before_text == 11)
+
+# confirm the sprite attribute table is really left in the "all hidden" state at
+# the moment GO_WAIT_LOOP (i.e. after the text has already been drawn) is reached -
+# this is the literal on-screen check for "爆発エフェクトは消してくれ".
+hidden_attrs = [z.vram[0x1B00 + i] for i in range(16)]
+check("by the time MISSION FAILED text is on screen (GO_WAIT_LOOP reached), all 4 "
+      "explosion particle sprite slots are hidden (Y=209), not left visible under it",
+      hidden_attrs == [209, 0, 0, 0] * 4)
 
 # ---- "自機爆発はサウンドも欲しい"(2026-09-07、実機フィードバック対応): ----
 # ---- GO_PLAY_BOOM_SOUND arms noise channel A (same R6/R7 values as     ----

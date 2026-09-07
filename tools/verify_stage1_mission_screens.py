@@ -590,6 +590,49 @@ check("MAINLOOP freeze: the frozen path's instruction trace never reaches STAGE_
       "(the label marking the start of normal per-frame gameplay logic)",
       sym["STAGE_CLEAR_NOT_FROZEN"] not in visited_pcs)
 
+# (2026-09-07、実機フィードバック対応、"以前にも同じミスがあって止めた
+# のに再発してる...飛び去るノイズ音がMission 2と出ている間鳴りっぱなし"):
+# 旧実装は"STAGE_CLEAR_ACT!=1ならSOUND_UPDATEを呼ぶ"だったため、ACTが
+# 1->2へ遷移するまさにそのフレーム内で(DRAW_MISSION_SCREENがR8=0を
+# 書いた直後に)SOUND_UPDATEが誤って再度呼ばれ、エンジン音(ノイズ)の
+# 音量計算でR8を上書きしてしまっていた。実際にMAINLOOPを1フレーム
+# 進めてこの遷移を再現し、フレーム終了時点でR8が本当に0のままである
+# ことを検証する(call_routine(UPDATE_STAGE_CLEAR)単体呼び出しでは
+# MAINLOOP側のこのSOUND_UPDATE呼び出しガードを一切経由しないため検出
+# できない - 実際にstep_frame()でMAINLOOP全体を回す必要がある)。
+SND_TONE_TIMER = sym["SND_TONE_TIMER"]
+z = fresh()
+boot(z)
+z.wr(PLAYER_FLYAWAY, 2)  # required for MAINLOOP to actually reach the real
+                          # UPDATE_STAGE_CLEAR call site (PFA_SC_ALREADY_TRIGGERED) -
+                          # call_routine(UPDATE_STAGE_CLEAR) alone wouldn't exercise
+                          # the surrounding MAINLOOP body this bug lives in
+z.wr(STAGE_CLEAR_ACT, 1)
+z.wr(BGM_MUTED, 0)
+elapsed = STAGE_CLEAR_TOTAL_TICKS
+z.wr(SC_VBLANK_COUNT, elapsed & 0xFF); z.wr(SC_VBLANK_COUNT + 1, elapsed >> 8)
+z.wr(SC_START_TICK, 0); z.wr(SC_START_TICK + 1, 0)
+# (SND_TONE_TIMER used instead of SND_TIMER[noise] as the reproduction signal:
+# the noise channel's own duty gate (CALC_NOISE_GATE_VOLUME, AND 1 on TICK)
+# would make a naive test flaky depending on TICK's parity at boot; the tone
+# branch writes unconditionally whenever nonzero, giving a deterministic signal
+# for "did SOUND_UPDATE get invoked at all" regardless of which of its 3
+# internal branches actually fires - confirmed reproducing the bug directly
+# against the pre-fix code before writing this test).
+z.wr(SND_TONE_TIMER, 10)
+z.psg_regs[8] = 15   # a nonzero R8 already on the chip from a prior frame
+step_frame(z)
+check("engine-noise regression: STAGE_CLEAR_ACT really did cross 1->2 during this frame",
+      z.rd(STAGE_CLEAR_ACT) == 2)
+check("engine-noise regression: PSG R8 (channel A volume) is silenced (0) at the end of the "
+      "very frame the MISSION 2 screen appears, not re-armed by a stray SOUND_UPDATE call",
+      z.psg_regs.get(8) == 0)
+for _ in range(5):
+    step_frame(z)
+check("engine-noise regression: R8 stays silenced across further frozen frames while "
+      "MISSION 2 remains on screen (SOUND_UPDATE never runs again once STAGE_CLEAR_ACT!=0)",
+      z.psg_regs.get(8) == 0)
+
 # ---- retreat-to-left-edge before flyaway ----
 z = fresh()
 boot(z)

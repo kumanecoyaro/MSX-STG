@@ -2907,3 +2907,45 @@ FAILEDの毎フレーム再描画(完了済み・実機フィードバック待�
   verify_comb.py確認の上、標準方針によりComb ROMのみ送付。詳細は
   HANDOFF.mdのRound66参照。
 - **保留**: (1)の画面破損の根本原因は未確定、実機再検証が必要。
+
+## Round67: 墜落速度半減+Stage2自機爆発を粒子飛散演出へ再設計+Stage1
+ステージクリア後PSGノイズ鳴りっぱなしバグ修正(完了済み・実機フィード
+バック待ち)(2026-09-07)
+
+- ユーザー指示3点: (1)"墜落速度が速いんで半分の速度に"、(2)"ステージ2
+  の自機爆発はもっとエフェクトが飛び散る形に...自機中心からエフェクト
+  が飛びランダムに散る様に で爆発エフェクトが消えずのこったまま
+  Mission Failedになってる で爆発エフェクトは消してくれ その後に
+  Mission Failed表示"、(3)"ステージ1クリア後にPSGの音がでっぱなしだ
+  ...以前にも同じミスがあって止めたのに再発してる 飛び去るノイズ音が
+  Mission 2と出ている間鳴りっぱなし"。
+- (1) `PLAYER_DEATH_FALL_SPEED`を2→1へ半減(px/frame)。Round65の
+  「画面外[199]到達まで自然落下」方式は無変更。
+- (2) `tools/gameover_bank/gameover_bank.asm`の旧`GO_DRAW_EXPLOSION`
+  (自機本体4隅一律点滅)を、自機中心から4方向(左上/右上/左下/右下)へ
+  独立に飛び散る4粒子方式(`GO_ADVANCE_PARTICLES`/`GO_DRAW_PARTICLES`)
+  へ全面書き換え。**"爆発が消えずMission Failedになる"の直接修正**:
+  点滅ループ後にテキスト描画直前の明示的`CALL GO_HIDE_EXPLOSION`を
+  追加。**自己発見バグ**: ジッター用RNG加算定数8個の合計が4の倍数
+  だったためmod4位相が呼び出し間で前進せず、特定の種で粒子が全く
+  動かなくなる不具合を検出・修正(位相を強制的にずらす1回の追加更新)。
+  `gameover_bank_test.py`を23件へ書き換え、VRAM→PNGレンダリングで
+  中心から散らばった爆発を視覚確認済み。
+- (3) `SOUND_UPDATE`の呼び出しガード`CP 1:CALL NZ`が、
+  `STAGE_CLEAR_ACT`が1→2へ遷移するまさにそのフレームで誤って
+  `SOUND_UPDATE`を再度呼んでしまい、直前に`DRAW_MISSION_SCREEN`が
+  書いたR8=0(エンジン音の無音化)を上書き、以後`SOUND_UPDATE`自体が
+  二度と呼ばれないため非ゼロ値がPSGに永久に固まって鳴り続けていた
+  実バグ(Round54とは別経路の再発)。`OR A:CALL Z,SOUND_UPDATE`
+  (ACT==0の時だけ呼ぶ)へ変更して解消、`verify_stage1_mission_
+  screens.py`に3件追加。
+- 全回帰: Stage2側`run_all.py` **1465 passed/0 failed**(1460→1465)。
+  Stage1側`verify_stage1_mission_screens.py` **81 passed**(78→81)・
+  他3ファイル全てPASS。`verify_comb.py`の既存GAME_OVER_SEQ==3
+  統合テストが墜落速度半減により一時FAIL(旧ポーク値が前提とする
+  距離のまま)、ポーク値を197→198へ修正し解消。3ROM再ビルド・
+  `verify_comb.py`健全性確認の上、標準方針によりComb ROMのみ送付。
+  詳細はHANDOFF.mdのRound67参照。
+- **保留**: 墜落速度・粒子のステップ幅/ジッター範囲は未調整の初期値。
+  Round66から持ち越しの「MISSION FAILED画面破損」の根本原因は依然
+  未確定(今回未言及のため追加調査は未実施)。

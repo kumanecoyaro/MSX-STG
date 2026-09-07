@@ -815,7 +815,9 @@ GAMEOVER_ENABLED EQU 0F235h  ; 0=ゲームオーバー無効(バリア0後の被
 ; (近ければ短く・遠ければ長く、時間ではなく距離で終了が決まる)。
 PLAYER_DEATH_FALL_ACT   EQU 0F236h  ; 0=非活性/1=落下中(PLAYERYが199に
                                      ; 達した瞬間に自動的に0へ戻る)
-PLAYER_DEATH_FALL_SPEED    EQU 2    ; px/frame、斜め45度(X,Yとも同値) -
+; (2026-09-07、実機フィードバック対応"墜落速度が速いんで半分の速度に"):
+; 2→1へ半減。
+PLAYER_DEATH_FALL_SPEED    EQU 1    ; px/frame、斜め45度(X,Yとも同値) -
                                      ; PLAYER_RETREAT_SPEEDと同じ考え方
 
     DB "AB"
@@ -2333,9 +2335,21 @@ ANIM2_DONE:
     ; ACT==1)はchAをBGMT_UPDATE_SC_A(BGM_TICK内)が専有するため、通常の
     ; SEドライバ(SOUND_UPDATE)自体を丸ごとスキップする(GFEnding[Stage2]
     ; のENDING_ACTと全く同じ考え方)。
+    ; (2026-09-07、実機フィードバック対応、"以前にも同じミスがあって
+    ; 止めたのに再発してる...飛び去るノイズ音がMission 2と出ている間
+    ; 鳴りっぱなし"): 旧実装は"ACT!=1なら呼ぶ"だったため、ACTが1→2へ
+    ; 遷移するまさにそのフレームで(MAINLOOP冒頭のフリーズゲートより
+    ; 後、この行に到達する時点では既にACTは2)SOUND_UPDATEが誤って
+    ; 呼ばれてしまい、DRAW_MISSION_SCREENが同じフレーム内で直前に
+    ; 書いたR8=0(エンジン音の無音化)をSOUND_UPDATE自身の音量計算で
+    ; 上書きしてしまっていた。次フレーム以降はACT>=2のフリーズゲートで
+    ; SOUND_UPDATE自体が二度と呼ばれなくなるため、この1フレームで
+    ; 書き込まれた非ゼロ値がR8に永久に固まって鳴り続けていた
+    ; (round54で直したはずの症状の再発 - 原因は同じ現象への別経路)。
+    ; "ACT==0の間だけ呼ぶ"(ACT>=1なら常にスキップ)へ変更して解消。
     LD A,(STAGE_CLEAR_ACT)
-    CP 1
-    CALL NZ,SOUND_UPDATE
+    OR A
+    CALL Z,SOUND_UPDATE
     LD A,(PLAYER_FLYAWAY)
     OR A
     CALL NZ,PLAYER_PARTICLE_FADE

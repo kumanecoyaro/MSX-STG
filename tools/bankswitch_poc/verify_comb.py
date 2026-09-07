@@ -454,15 +454,17 @@ assert mem2.flat[PLAYER_DEATH_FALL_ACT] == 1, \
 assert mem2.flat[GAME_OVER_SEQ] == 0, \
     "GAME_OVER_SEQ armed immediately - should be deferred until the death-fall finishes (round62-follow-up)"
 # (2026-09-07、"操作無効の上爆発しながら右斜め下に落下しMission Failed
-# 表示に"、続けて"斜め下に落下したらそのまま画面外に消えるように変更"):
-# PLAYER_TAKE_HITはもうGAME_OVER_SEQを即座には起動しない - PLAYERYが
-# 実際に画面外(199)へ到達した瞬間(固定フレーム数ではなく、開始位置
-# からの距離で決まる可変長 - tools/verify_stage1_mission_screens.pyで
-# 単体検証済み)を経て初めて起動する。この統合テストでは実時間同様、
-# その待ち自体を短縮(あと1フレームで到達する197へPLAYERYをポーク)
-# した上で1フレームだけ実MAINLOOPを回し、演出完了時の遷移が実バンク
-# 構成でも正しく配線されていることだけを確認する。
-mem2.flat[PLAYERY] = 197
+# 表示に"、続けて"斜め下に落下したらそのまま画面外に消えるように変更"、
+# さらに"墜落速度が速いんで半分の速度に"でPLAYER_DEATH_FALL_SPEEDが
+# 2->1へ半減): PLAYER_TAKE_HITはもうGAME_OVER_SEQを即座には起動しない -
+# PLAYERYが実際に画面外(199)へ到達した瞬間(固定フレーム数ではなく、
+# 開始位置からの距離で決まる可変長 - tools/verify_stage1_mission_
+# screens.pyで単体検証済み)を経て初めて起動する。この統合テストでは
+# 実時間同様、その待ち自体を短縮(あと1フレーム[速度1px/frame]で
+# 到達する198へPLAYERYをポーク)した上で1フレームだけ実MAINLOOPを
+# 回し、演出完了時の遷移が実バンク構成でも正しく配線されていることだけ
+# を確認する。
+mem2.flat[PLAYERY] = 198
 cpu2.pc = MAINLOOP
 cpu2.step()
 steps_g3b = 0

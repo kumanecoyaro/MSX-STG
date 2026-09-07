@@ -70,6 +70,22 @@ SPR_LIGHTRED_COLOR EQU 09h
 ; 方針と同じ)を再利用する。
 GO_RNG EQU 0F19Bh
 
+; (2026-09-07、実機フィードバック対応"もっとエフェクトが飛び散る形に
+; 地味すぎる 自機中心からエフェクトが飛びランダムに散る様に"): 単一の
+; 静止ボディを点滅させる旧方式から、4つの独立したパーティクルが自機
+; 中心から斜め4方向へ実際に飛び散っていく方式へ変更。各パーティクルの
+; 累積(dx,dy)オフセットを保持する8byteのスクラッチ - GO_RNGと全く同じ
+; 理由("GAME OVER以後はStage2本編が二度と実行されない")で安全に再利用
+; できる、GO_RNGのすぐ後の未使用領域。
+GO_PX0 EQU 0F19Ch
+GO_PY0 EQU 0F19Dh
+GO_PX1 EQU 0F19Eh
+GO_PY1 EQU 0F19Fh
+GO_PX2 EQU 0F1A0h
+GO_PY2 EQU 0F1A1h
+GO_PX3 EQU 0F1A2h
+GO_PY3 EQU 0F1A3h
+
 ; --- Comb globalバンク番号。standaloneでは0/1は無意味(単独バンクの ---
 ; --- ためtitleへは戻れない、テストは戻る直前のGOTO_TITLE_HOP2到達  ---
 ; --- までを検証する)。                                              ---
@@ -116,35 +132,40 @@ INIT:
     ; "自機爆発はサウンドも欲しい"への対応 - 点滅演出の前に1回だけ鳴らす。
     CALL GO_PLAY_BOOM_SOUND
 
-    ; 自機の最終位置(TANK_X/TANK_Y_CUR)を起点に、既存のUPDATE_TANK_
-    ; SPRITESと同じ4隅オフセット(+0/+16)へPAT_EXPLOSIONスプライトを
-    ; 点滅表示する(10回、表示->ウェイト->非表示->ウェイト、1回あたり
-    ; 約0.3秒 - 合計約3秒、"3秒表示"に対応)。"一度4つほどエフェクトが
-    ; 出るがその状態で停止してて"への対応で、毎回位置をジッターさせ・
-    ; 色を白/ライトレッドで交互にし、Stage1のPLAYER_EXPL_UPDATE_ALLと
-    ; 同じ「自機を起点に複数派手に」見た目に近づけた。
+    ; 自機の最終位置(TANK_X/TANK_Y_CUR)を中心に、4つの独立したパーティ
+    ; クル(斜め4方向、それぞれ乱数ジッター込みで加速しながら飛び散る)
+    ; がPAT_EXPLOSIONスプライトとして実際に画面上を移動していく
+    ; (10回、表示->ウェイト->非表示->ウェイト、1回あたり約0.3秒 -
+    ; 合計約3秒、"3秒表示"に対応)。全パーティクルはGO_PX0-3/GO_PY0-3
+    ; へ(0,0)で初期化(自機中心からスタート)。色はループカウンタの
+    ; 偶奇で白/ライトレッドを交互に(Stage1のPLAYER_EXPL_UPDATE_ALLと
+    ; 同じ考え方)。
+    XOR A
+    LD (GO_PX0),A : LD (GO_PY0),A
+    LD (GO_PX1),A : LD (GO_PY1),A
+    LD (GO_PX2),A : LD (GO_PY2),A
+    LD (GO_PX3),A : LD (GO_PY3),A
+
     LD B,10
 GO_BLINK_LOOP:
     PUSH BC
-    ; XJit = ((GO_RNG += 61) AND 0Fh) - 8, YJit = ((GO_RNG += 97) AND 0Fh) - 8
-    ; (Stage1 PEUA_TRY_SPAWNと同じ -8..+7レンジのジッター)。
-    LD A,(GO_RNG) : ADD A,61 : LD (GO_RNG),A
-    AND 0Fh : SUB 8 : LD D,A
-    LD A,(GO_RNG) : ADD A,97 : LD (GO_RNG),A
-    AND 0Fh : SUB 8 : LD E,A
+    CALL GO_ADVANCE_PARTICLES
     ; 色はループカウンタ(B、DJNZの残り回数)の偶奇で交互に選ぶ。
     LD A,B : AND 1 : LD C,A
-    CALL GO_DRAW_EXPLOSION
+    CALL GO_DRAW_PARTICLES
     CALL GO_DELAY_SHORT
     CALL GO_HIDE_EXPLOSION
     CALL GO_DELAY_SHORT
     POP BC
     DJNZ GO_BLINK_LOOP
 
-    ; 最後は表示したまま静止させる(ジッター無し・白で、自機本来の
-    ; 位置がわかるニュートラルな最終ポーズ)。
-    LD D,0 : LD E,0 : LD C,0
-    CALL GO_DRAW_EXPLOSION
+    ; "で爆発エフェクトが消えずのこったまま Mission Failedになってる
+    ; で爆発エフェクトは消してくれ その後にMission Failed表示"
+    ; (2026-09-07、実機フィードバック対応): 旧実装は最後にジッター無し
+    ; の静止ポーズを表示したまま残しており、その上にMISSION FAILEDが
+    ; オーバーレイされる形になっていた。明示的に非表示にしてから
+    ; テキスト描画へ進む。
+    CALL GO_HIDE_EXPLOSION
 
     ; "MISSION FAILED"メッセージを画面中央(row12,col9、14byte - 画面幅
     ; 32セルの中央に14byteを置くには(32-14)/2=9列目から)へ描画
@@ -207,26 +228,87 @@ GOTO_TITLE_HOP2:
 ; いる)。
 BANKSWITCH_TRAMPOLINE_RAM EQU 0F271h
 
-; 自機の最終位置(TANK_X/TANK_Y_CUR)を中心に4隅(TL/TR/BL/BR、既存の
-; UPDATE_TANK_SPRITESと同じ+0/+16オフセット)へPAT_EXPLOSIONスプライトを
-; 書く。VDPアドレスは一度だけ設定し、以後は自動インクリメントに任せて
-; 16byte連続で書く(スロット0-3、SPRATR先頭 - 自機自身がこれまで使って
-; いたスロットをそのまま転用、新規スロット確保は不要)。
-; 入力(2026-09-07、実機フィードバック対応で追加): D=Xジッター(符号付き
-; -8..+7)、E=Yジッター(同)、C=色選択(0=SPR_WHITE_COLOR/それ以外=
-; SPR_LIGHTRED_COLOR) - 4隅とも同じジッター量・同じ色を使う(呼び出し
-; 元GO_BLINK_LOOPが毎回別の値を渡すことで「複数派手に」を演出)。
-; Trashes: AF,BC,HL.
-GO_DRAW_EXPLOSION:
+; (2026-09-07、実機フィードバック対応"もっとエフェクトが飛び散る形に
+; 地味すぎる 自機中心からエフェクトが飛びランダムに散る様に"): 旧
+; GO_DRAW_EXPLOSIONは自機中心の4隅(TL/TR/BL/BR)へ全く同じオフセットを
+; 適用し「1つの32x32ボディ」として点滅させるだけだった。GO_ADVANCE_
+; PARTICLES/GO_DRAW_PARTICLES/GO_DRAW_ONE_PARTICLEの3ルーチンへ置き
+; 換え、4つの独立したパーティクル(それぞれ固定の斜め方向+乱数
+; ジッターで加速しながら自機中心から飛び散っていく)として描画する。
+
+; 全4パーティクルの累積(dx,dy)オフセット(GO_PX0-3/GO_PY0-3)を、各
+; パーティクル固有の斜め方向の固定ステップ+小さな乱数ジッターぶんだけ
+; 前進させる("ランダムに散る"演出、Stage1 PEUA_TRY_SPAWNの-8..+7
+; ジッターより小さいレンジ-1..+2を採用 - 毎フレーム蓄積されるため
+; 大きすぎると数フレームで画面外へ出てしまう)。Trashes: AF.
+GO_ADVANCE_PARTICLES:
+    ; particle0: 左上方向(-3,-2)
+    LD A,(GO_RNG) : ADD A,61 : LD (GO_RNG),A : AND 3 : SUB 1 : LD H,A
+    LD A,(GO_PX0) : ADD A,-3 : ADD A,H : LD (GO_PX0),A
+    LD A,(GO_RNG) : ADD A,97 : LD (GO_RNG),A : AND 3 : SUB 1 : LD H,A
+    LD A,(GO_PY0) : ADD A,-2 : ADD A,H : LD (GO_PY0),A
+    ; particle1: 右上方向(+3,-2)
+    LD A,(GO_RNG) : ADD A,131 : LD (GO_RNG),A : AND 3 : SUB 1 : LD H,A
+    LD A,(GO_PX1) : ADD A,3 : ADD A,H : LD (GO_PX1),A
+    LD A,(GO_RNG) : ADD A,167 : LD (GO_RNG),A : AND 3 : SUB 1 : LD H,A
+    LD A,(GO_PY1) : ADD A,-2 : ADD A,H : LD (GO_PY1),A
+    ; particle2: 左下方向(-2,+3)
+    LD A,(GO_RNG) : ADD A,193 : LD (GO_RNG),A : AND 3 : SUB 1 : LD H,A
+    LD A,(GO_PX2) : ADD A,-2 : ADD A,H : LD (GO_PX2),A
+    LD A,(GO_RNG) : ADD A,229 : LD (GO_RNG),A : AND 3 : SUB 1 : LD H,A
+    LD A,(GO_PY2) : ADD A,3 : ADD A,H : LD (GO_PY2),A
+    ; particle3: 右下方向(+2,+3)
+    LD A,(GO_RNG) : ADD A,251 : LD (GO_RNG),A : AND 3 : SUB 1 : LD H,A
+    LD A,(GO_PX3) : ADD A,2 : ADD A,H : LD (GO_PX3),A
+    LD A,(GO_RNG) : ADD A,7 : LD (GO_RNG),A : AND 3 : SUB 1 : LD H,A
+    LD A,(GO_PY3) : ADD A,3 : ADD A,H : LD (GO_PY3),A
+    ; 上記8回の"AND 3"ジッター抽出の加算定数の合計(61+97+131+167+193+
+    ; 229+251+7=1136)がたまたま4の倍数のため、GO_RNGのmod4位相は1回の
+    ; GO_ADVANCE_PARTICLES呼び出し全体を通じて変化しない - 特定のシード
+    ; では、この関数内の8箇所それぞれが呼び出しのたびに"全く同じ"
+    ; ジッター値を返し続けてしまう(実際に自己検証テストで、ある種の
+    ; シードだとparticle0のY方向ジッターが常に+2に固定され、固定step
+    ; (-2)と完全に相殺してY方向の正味移動が毎回ゼロになる退行を発見)。
+    ; 4の倍数でない追加の攪拌(+3、mod4=3)をここに1回加えることで、
+    ; 呼び出しをまたいでmod4位相が確実に変化するようにする。
+    LD A,(GO_RNG) : ADD A,3 : LD (GO_RNG),A
+    RET
+
+; 4パーティクル全てを、それぞれの累積オフセット(GO_PX0-3/GO_PY0-3)で
+; TANK_X/TANK_Y_CURを中心に描画する。入力: C=色選択(0=SPR_WHITE_
+; COLOR/それ以外=SPR_LIGHTRED_COLOR、4パーティクル共通)。
+; Trashes: AF,BC,DE,HL.
+GO_DRAW_PARTICLES:
     LD A,C
     OR A
     LD A,SPR_WHITE_COLOR
-    JR Z,GDE_COLOR_RESOLVED
+    JR Z,GDP_COLOR_RESOLVED
     LD A,SPR_LIGHTRED_COLOR
-GDE_COLOR_RESOLVED:
+GDP_COLOR_RESOLVED:
     LD C,A                          ; C now holds the actual color byte
+    LD A,(GO_PX0) : LD D,A
+    LD A,(GO_PY0) : LD E,A
+    XOR A : CALL GO_DRAW_ONE_PARTICLE
+    LD A,(GO_PX1) : LD D,A
+    LD A,(GO_PY1) : LD E,A
+    LD A,1 : CALL GO_DRAW_ONE_PARTICLE
+    LD A,(GO_PX2) : LD D,A
+    LD A,(GO_PY2) : LD E,A
+    LD A,2 : CALL GO_DRAW_ONE_PARTICLE
+    LD A,(GO_PX3) : LD D,A
+    LD A,(GO_PY3) : LD E,A
+    LD A,3 : CALL GO_DRAW_ONE_PARTICLE
+    RET
+
+; 1個のPAT_EXPLOSIONスプライトを、スプライトATTRIBUTEスロットA(0-3、
+; 自機自身がこれまで使っていたスロットをそのまま転用)へ、
+; TANK_X+D(符号付き)/TANK_Y_CUR+E(符号付き)の位置で描く。
+; 入力: A=スロット番号(0-3)、D=dx、E=dy、C=色。Trashes: AF,HL
+; (BCはPUSH/POPで往復するため呼び出し元への値は保存される)。
+GO_DRAW_ONE_PARTICLE:
+    ADD A,A : ADD A,A                ; A = スロット*4(ATTRIBUTEレコードのバイトオフセット)
     DI
-    LD A,0 : OUT (99h),A
+    OUT (99h),A
     NOP
     NOP
     LD A,5Bh : OUT (99h),A
@@ -240,29 +322,6 @@ GDE_COLOR_RESOLVED:
     PUSH BC : POP BC : NOP : NOP
     LD A,C : OUT (98h),A
     PUSH BC : POP BC : NOP : NOP
-    LD A,(TANK_Y_CUR) : ADD A,E : OUT (98h),A
-    PUSH BC : POP BC : NOP : NOP
-    LD A,(TANK_X) : ADD A,16 : ADD A,D : OUT (98h),A
-    PUSH BC : POP BC : NOP : NOP
-    LD A,PAT_EXPLOSION : OUT (98h),A
-    PUSH BC : POP BC : NOP : NOP
-    LD A,C : OUT (98h),A
-    PUSH BC : POP BC : NOP : NOP
-    LD A,(TANK_Y_CUR) : ADD A,16 : ADD A,E : OUT (98h),A
-    PUSH BC : POP BC : NOP : NOP
-    LD A,(TANK_X) : ADD A,D : OUT (98h),A
-    PUSH BC : POP BC : NOP : NOP
-    LD A,PAT_EXPLOSION : OUT (98h),A
-    PUSH BC : POP BC : NOP : NOP
-    LD A,C : OUT (98h),A
-    PUSH BC : POP BC : NOP : NOP
-    LD A,(TANK_Y_CUR) : ADD A,16 : ADD A,E : OUT (98h),A
-    PUSH BC : POP BC : NOP : NOP
-    LD A,(TANK_X) : ADD A,16 : ADD A,D : OUT (98h),A
-    PUSH BC : POP BC : NOP : NOP
-    LD A,PAT_EXPLOSION : OUT (98h),A
-    PUSH BC : POP BC : NOP : NOP
-    LD A,C : OUT (98h),A
     EI
     RET
 
