@@ -162,17 +162,25 @@ TITLE_INIT   EQU 04010h
 
 INIT:
     ; combined_test.asm側のTRIGGER_GAME_OVERで既にDI済み・PSG無音化済み
-    ; - 念のためここでもDIしたまま、GO_INIT_BGM(下記)がゲームオーバー
-    ; ジングルのRAMコピー+制御変数初期化+実際のH.TIMIフック(GO_BGM_TICK)
-    ; の設置までを全て完了させてからEIする。Stage1/Stage2/Titleの
-    ; INIT_BGM群と同じ「フックが完全に有効になるまでは絶対に割り込みを
-    ; 許可しない」設計(round53/56の教訓 - 古いフックが誤実行される
-    ; レースを閉じる)。旧実装は単にbare RET(BIOS標準)へ戻すだけ
-    ; だったが、"当たり前だろ 鳴らすようにしろ"の指示でこのバンクにも
-    ; ジングルを実装したため、その場所に本物のフックを設置する形へ
-    ; 置き換えた。
+    ; - 念のためここでも明示。
+    ; (2026-09-08、実機フィードバック対応"鳴ってるが最初の方が自機爆発音
+    ; で消えてる 爆発が終わってからMission Failed表示して音消してゲーム
+    ; オーバーサウンドだろうが"): 前Round(74)はGO_INIT_BGM(ジングルの
+    ; RAMコピー+H.TIMIフック設置)をINIT冒頭で即座に呼んでいたため、
+    ; H.TIMI駆動のジングル再生が爆発シーケンス(GO_EXPLOSION_SEQUENCE、
+    ; チャンネルAのブーム音)と最初から並走し、ジングルの出だしが爆発音に
+    ; 埋もれていた。正しい順序は「爆発→(消音+)MISSION FAILED表示→
+    ; ジングル開始」- ここではまだHTIMI_HOOKを安全なbare RET(BIOS
+    ; デフォルト)へ戻すだけに留め(GO_INIT_BGMは呼ばない、= ジングルは
+    ; まだ鳴らさない)、以後の爆発シーケンス・テキスト描画がそれぞれ
+    ; 自前のDI/EIブラケットで割り込みを一時的に再許可しても、その間
+    ; H.TIMIが安全なbare RETを叩くだけで済むようにする(title_test.asmの
+    ; WAIT_FOR_STARTと同じ「フック未確定の間はbare RET」防御パターン)。
+    ; 実際のGO_INIT_BGM呼び出しはMISSION FAILEDテキスト描画の直後
+    ; (下記)へ移設した。
     DI
-    CALL GO_INIT_BGM
+    LD A,0C9h
+    LD (HTIMI_HOOK),A
     EI
 
     ; (2026-09-07、実機ではなく自己レンダリング確認で発見・修正: 当初
@@ -246,6 +254,18 @@ GO_MSG_POST_BLANK:
     LD A,HUD_ROW_BLANK_CODE : OUT (98h),A
     PUSH BC : POP BC : NOP : NOP
     DJNZ GO_MSG_POST_BLANK
+    EI
+
+    ; (2026-09-08、実機フィードバック対応"爆発が終わってからMission
+    ; Failed表示して音消してゲームオーバーサウンドだろうが"): MISSION
+    ; FAILEDが画面に出た直後、ここで初めてゲームオーバージングルの
+    ; RAMコピー+H.TIMIフック(GO_BGM_TICK)設置を行う - これより前は
+    ; HTIMI_HOOKが上のbare RETのままなので、爆発シーケンス中に何度も
+    ; 開閉するEI窓を挟んでもジングルは絶対に鳴らない。GO_INIT_BGM自体は
+    ; 複数命令にまたがる状態遷移(window B切替+LDIR+制御変数初期化+
+    ; フック設置)のため、他ファイルのINIT_BGM群と同じくDI/EIで囲む。
+    DI
+    CALL GO_INIT_BGM
     EI
 
     ; "ボタンが押されるか10秒経過でタイトル画面に" - GO_DELAY_SHORT

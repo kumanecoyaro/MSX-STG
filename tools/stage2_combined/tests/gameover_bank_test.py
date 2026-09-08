@@ -534,6 +534,32 @@ check("real INIT flow: GO_BGM_B_PTR/GO_BGM_C_PTR already point at the jingle's o
       (z.rd(GO_BGM_B_PTR) | (z.rd(GO_BGM_B_PTR + 1) << 8)) == GO_CHB_BASE and
       (z.rd(GO_BGM_C_PTR) | (z.rd(GO_BGM_C_PTR + 1) << 8)) == GO_CHC_BASE)
 
+# ---- (2026-09-08、実機フィードバック対応"鳴ってるが最初の方が自機
+# 爆発音で消えてる 爆発が終わってからMission Failed表示して音消して
+# ゲームオーバーサウンドだろうが"): the jingle must NOT start until AFTER
+# the explosion sequence + MISSION FAILED text are done - confirm HTIMI_HOOK
+# is still the safe bare RET (not yet GO_BGM_TICK) and GO_BGM_B/C_PTR are
+# still untouched right at the moment the explosion finishes (GO_HIDE_
+# EXPLOSION reached), i.e. before the jingle has had any chance to start
+# playing under the boom sound. Poison GO_BGM_B/C_PTR first so an
+# accidental early GO_INIT_BGM call would be caught even if it left them
+# at the same address as GO_CHB/CHC_BASE by coincidence. ----
+z = fresh()
+z.wr(TANK_X, 120)
+z.wr(TANK_Y_CUR, 90)
+z.wr(GO_BGM_B_PTR, 0xAA); z.wr(GO_BGM_B_PTR + 1, 0xAA)
+z.wr(GO_BGM_C_PTR, 0xAA); z.wr(GO_BGM_C_PTR + 1, 0xAA)
+z.pc = sym["INIT"]
+run_until_pc(z, sym["GO_HIDE_EXPLOSION"], 5_000_000)
+check("real INIT flow: HTIMI_HOOK is still the safe bare RET (0C9h), NOT yet "
+      "GO_BGM_TICK, by the time the explosion sequence finishes (GO_HIDE_EXPLOSION "
+      "reached) - the jingle must not start playing underneath the boom sound",
+      z.rd(HTIMI_HOOK) == 0xC9)
+check("real INIT flow: GO_BGM_B_PTR/GO_BGM_C_PTR are still untouched (GO_INIT_BGM "
+      "has not run yet) by the time the explosion sequence finishes",
+      (z.rd(GO_BGM_B_PTR) | (z.rd(GO_BGM_B_PTR + 1) << 8)) != GO_CHB_BASE and
+      (z.rd(GO_BGM_C_PTR) | (z.rd(GO_BGM_C_PTR + 1) << 8)) != GO_CHC_BASE)
+
 print()
 print(f"{len(ok)} passed, {len(fail)} failed")
 if fail:

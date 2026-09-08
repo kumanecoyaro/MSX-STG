@@ -12524,3 +12524,36 @@ literal reuse)+新爆発アニメーション要求受領・プレビューGIF�
 - **保留・実機フィードバック待ち**: Stage2のゲームオーバー時ジングルの
   実機での聞こえ方(爆発音[チャンネルA]との同時再生バランス含む)は
   次回フィードバック待ち。
+
+## Round75: 実機フィードバック対応(Stage2ゲームオーバージングルの再生
+順序修正、爆発音との被り解消)(2026-09-08、完了済み・実機フィードバック
+待ち)
+
+- ユーザー報告: "鳴ってるが最初の方が自機爆発音で消えてる 爆発が終わって
+  からMission Failed表示して音消してゲームオーバーサウンドだろうが 何回
+  言わすんだお前"。
+- **根本原因**: Round74の実装は`GO_INIT_BGM`(ジングルのRAMコピー+H.TIMI
+  フック[GO_BGM_TICK]設置)をINIT冒頭で即座に呼んでいたため、H.TIMI駆動
+  のジングル再生が爆発シーケンス(`GO_EXPLOSION_SEQUENCE`、チャンネルA
+  のブーム音)と最初から並走し、ジングルの出だしが爆発音に埋もれていた。
+  ユーザーの要求する正しい順序は「爆発→(消音+)MISSION FAILED表示→
+  ジングル開始」の直列。
+- **修正**: INIT冒頭の`CALL GO_INIT_BGM`を、Round59以来あった「HTIMI_
+  HOOKを安全なbare RETへ戻すだけ」の処理へ戻し(= ジングルはまだ鳴らさ
+  ない)、実際の`CALL GO_INIT_BGM`呼び出しをMISSION FAILEDテキスト描画
+  完了直後(GO_WAIT_LOOP突入直前)へ移設。爆発シーケンス・テキスト描画は
+  それぞれ自前のDI/EIブラケットで割り込みを一時的に再許可するが、その間
+  H.TIMIは安全なbare RETを叩くだけなのでジングルは絶対に鳴らない
+  (title_test.asmのWAIT_FOR_STARTと同じ「フック未確定の間はbare RET」
+  防御パターンを踏襲)。
+- 新規回帰テスト2件(`gameover_bank_test.py`、GO_HIDE_EXPLOSION到達時点
+  でHTIMI_HOOKがまだbare RETのまま・GO_BGM_B/C_PTRがまだ未初期化のまま
+  であることを直接検証) - 修正前のコード(GO_INIT_BGMを冒頭で呼ぶ旧版)を
+  一時的に再現して実際にこの2件がFAILすることを自己検証した上で、修正を
+  復元して再PASSを確認済み。
+- 全回帰: Stage2側`run_all.py` **1488 passed/0 failed**(1486→1488、
+  `gameover_bank_test.py`42→44件)。`verify_comb.py`全チェックPASS。
+  Comb ROM再ビルド・標準方針によりComb ROMのみ送付。
+- **保留・実機フィードバック待ち**: 修正後の実機での聞こえ方(爆発→
+  Mission Failed→ジングルの順序通りに聞こえるか)は次回フィードバック
+  待ち。
