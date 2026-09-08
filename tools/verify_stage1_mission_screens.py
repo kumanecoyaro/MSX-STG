@@ -855,6 +855,74 @@ check("PLAYER_TAKE_HIT while GAME_OVER is already 1: does NOT re-run PTH_GAMEOVE
       "sequence already in progress must not be re-armed by a further hit)",
       z.rd(PLAYER_EXPL_TOTAL_TIMER) == 3)
 
+# ---- (2026-09-07、実機フィードバック対応、"ステージ1で画面が壊れる原因が
+# 分かった 爆発処理で操作無効で落下していく時に弾を撃った状態で死ぬと
+# 弾を撃ったまま画面外に出てVRAM壊してる つまり操作無効と同時に弾打つのを
+# 停止すれば解決する"): 実際の再現条件は「トリガーを押しっぱなしのまま
+# 死ぬ」ケース - 死亡落下が始まった瞬間、方向入力の読み取り自体が
+# PFA_DEATH_FALL_STEPへ丸ごと迂回されるため、JOY_TRIG(GTTRIGの結果を
+# 保持するRAM変数)を毎フレーム更新するスキャン処理も一緒に迂回され、
+# 死んだ瞬間の値(押していれば0FFh)のまま以後ずっと"凍結"する - 発射
+# チェック自体は独立してPLAYER_FLYAWAYしか見ていなかったため、この
+# "凍結して押しっぱなし"状態のJOY_TRIGにFIRE_COOLDOWNが0になるたび
+# 反応し、死亡落下中ずっと新規弾を吐き続けていた。この時PLAYERYは
+# 死亡落下によって異常な値(150〜199)まで直線的に増加し続けており、
+# 新規弾のBULLET0_ROWはこの生のPLAYERYから計算されるため、24行[0-23]
+# しか正当なエントリを持たないROWADDR_LO/HIテーブルを範囲外indexで
+# 読んでしまい、直後のPATTERNS(キャラクタパターンデータ)領域から
+# 拾った値がそのまま不定のVRAM書き込みアドレスになる(実際に
+# PLAYERY=199で再現・確認済み: ROW=25、結果のアドレスはカラー
+# テーブル近辺0x2B00相当まで飛ぶ) - これが実機で報告された画面全体の
+# 色/絵柄破損の直接原因だった。GAME_OVER=1の間は発射自体も完全に
+# 止めることで、この不正な弾の発生源を断つ。
+BULLET0_ACT = sym["BULLET0_ACT"]
+BULLET0_ROW = sym["BULLET0_ROW"]
+BULLET0_ADDR = sym["BULLET0_ADDR"]
+FIRE_COOLDOWN = sym["FIRE_COOLDOWN"]
+JOY_TRIG = sym["JOY_TRIG"]
+
+z = fresh()
+boot(z)
+z.sim_trig_a = True
+step_frame(z)  # a normal frame, still alive - legitimately latches JOY_TRIG=0FFh via the real scan
+assert z.rd(JOY_TRIG) == 0xFF, "test setup: JOY_TRIG didn't actually latch 'pressed'"
+# now the ship dies mid-frame (as PLAYER_TAKE_HIT/PTH_GAMEOVER would do) -
+# JOY_TRIG is deliberately left untouched (== still 0FFh, "frozen" exactly
+# as it would be for real, since the scan that would refresh it never runs
+# again once death-fall begins).
+z.wr(GAME_OVER, 1)
+z.wr(PLAYER_DEATH_FALL_ACT, 1)
+z.wr(PLAYERY, 199)  # deep into the death-fall, well past the 24-row screen (0-23)
+z.wr(BULLET0_ACT, 0)
+z.wr(BULLET0_ROW, 0xAA)   # sentinel - must stay untouched if no spawn is attempted
+z.wr(BULLET0_ADDR, 0xAA); z.wr(BULLET0_ADDR + 1, 0xAA)
+z.wr(FIRE_COOLDOWN, 0)
+step_frame(z)
+check("a JOY_TRIG frozen 'pressed' from just before death (the real-world scenario - "
+      "dying while holding fire) does NOT spawn a new bullet once GAME_OVER=1 - closes "
+      "the VRAM-corruption source (an out-of-range PLAYERY would compute a bogus "
+      "ROWADDR_LO/HI table index, spilling into the PATTERNS data right after it)",
+      z.rd(BULLET0_ACT) == 0 and z.rd(BULLET0_ROW) == 0xAA and
+      z.rd(BULLET0_ADDR) == 0xAA and z.rd(BULLET0_ADDR + 1) == 0xAA)
+
+# ---- sanity: the same frozen-trigger setup with GAME_OVER=0 (normal play, JOY_TRIG ----
+# ---- just happens to still read pressed) still fires normally - this fix must not  ----
+# ---- accidentally suppress ordinary firing.                                        ----
+z2 = fresh()
+boot(z2)
+z2.sim_trig_a = True
+step_frame(z2)
+z2.wr(GAME_OVER, 0)
+z2.wr(PLAYER_DEATH_FALL_ACT, 0)
+z2.wr(PLAYERY, 100)  # ordinary in-screen Y
+z2.wr(BULLET0_ACT, 0)
+z2.wr(FIRE_COOLDOWN, 0)
+step_frame(z2)
+check("...but normal play (GAME_OVER=0) still fires a new bullet as usual - the new "
+      "GAME_OVER gate doesn't regress ordinary firing",
+      z2.rd(BULLET0_ACT) == 1)
+
+
 print(f"\n{len(ok)} passed, {len(fail)} failed")
 if fail:
     print("FAILURES:")
