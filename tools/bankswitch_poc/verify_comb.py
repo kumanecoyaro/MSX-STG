@@ -197,6 +197,23 @@ assert [mem.flat[_sc_chA_ram + i] for i in range(len(_sc_chA))] == list(_sc_chA)
     "title's own BGM RAM copy: StageClear chA mismatch (Stage1 stage-clear jingle)"
 print("title's own BGM RAM copy of StageClear (Stage1 stage-clear jingle) verified byte-correct")
 
+# (2026-09-08、"ではゲームオーバーBGM...これで組み込んでくれ"): Titleは
+# Stage1のゲームオーバージングル用にGAME_OVERの2パート(melody=chB/
+# harmony=chC)もTryZ/StageClearと同じ要領で別アドレスへ一度だけコピー
+# する。Stage1側の固定アドレス(src/CYBER SHMUP.asmのBGM_GAMEOVER_CHB/
+# CHC_BASE)と一致することを確認。
+_go = bgm_layout["GAME_OVER"]
+_go_start = _go["bank_offset"]
+_go_chB = bgm_bank[_go_start:_go_start + _go["chB_len"]]
+_go_chC = bgm_bank[_go_start + _go["chB_len"]:_go_start + _go["chB_len"] + _go["chC_len"]]
+_go_chB_ram = gsym["BGM_GAMEOVER_CHB_BASE"]
+_go_chC_ram = gsym["BGM_GAMEOVER_CHC_BASE"]
+assert [mem.flat[_go_chB_ram + i] for i in range(len(_go_chB))] == list(_go_chB), \
+    "title's own BGM RAM copy: GAME_OVER chB mismatch (Stage1 game-over jingle)"
+assert [mem.flat[_go_chC_ram + i] for i in range(len(_go_chC))] == list(_go_chC), \
+    "title's own BGM RAM copy: GAME_OVER chC mismatch (Stage1 game-over jingle)"
+print("title's own BGM RAM copy of GAME_OVER (Stage1 game-over jingle) verified byte-correct")
+
 cpu.sim_trig_a = True
 print("simulated PUSH START (sim_trig_a=True)")
 

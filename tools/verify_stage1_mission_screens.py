@@ -405,6 +405,15 @@ check("death-fall completion: NOW draws GAME_OVER_MSG at the screen-center messa
       msg_region == read_msg(GAME_OVER_MSG, GAME_OVER_MSG_LEN))
 check("death-fall completion: NOW arms GAME_OVER_SEQ=1 (3-second display phase)",
       z.rd(GAME_OVER_SEQ) == 1)
+# (2026-09-08、"ではゲームオーバーBGM...これで組み込んでくれ"): same real
+# death-fall trace as above, confirming TRIGGER_GAME_OVER_JINGLE actually
+# fired from the real PFA_DEATH_FALL_STEP code path (not just a synthetic
+# call_routine(TRIGGER_GAME_OVER_JINGLE) test - see tools/verify_stage1_bgm.py
+# for the driver-level checks of TRIGGER_GAME_OVER_JINGLE itself).
+check("death-fall completion: NOW points BGM_B_PTR/BGM_C_PTR at the GAME_OVER jingle's own "
+      "chB/chC start (TRIGGER_GAME_OVER_JINGLE actually fired on the real death-fall path)",
+      (z.rd(sym["BGM_B_PTR"]) | (z.rd(sym["BGM_B_PTR"] + 1) << 8)) == sym["BGM_GAMEOVER_CHB_BASE"] and
+      (z.rd(sym["BGM_C_PTR"]) | (z.rd(sym["BGM_C_PTR"] + 1) << 8)) == sym["BGM_GAMEOVER_CHC_BASE"])
 
 # regression guard: the fall's duration is genuinely tied to the starting
 # distance from the off-screen threshold, not a fixed frame count - dying

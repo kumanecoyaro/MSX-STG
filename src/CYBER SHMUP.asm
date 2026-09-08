@@ -1925,6 +1925,7 @@ PDF_STORE_Y:
     ; FALL_ACTが再び1になることは無い(生涯で1回だけここを通る)。
     XOR A : LD (PLAYER_DEATH_FALL_ACT),A
     LD A,255 : LD (PLAYERX),A
+    CALL TRIGGER_GAME_OVER_JINGLE
     CALL DRAW_GAMEOVER_TEXT
     LD A,1 : LD (GAME_OVER_SEQ),A
     LD HL,(SC_VBLANK_COUNT) : LD (GAME_OVER_START_TICK),HL
@@ -3732,6 +3733,10 @@ SU_NOISE:
 HTIMI_HOOK        EQU 0FD9Fh
 BGM_NOTE_REST     EQU 0FFh
 BGM_LOOP_MARK     EQU 0FEh
+; (2026-09-08、GAME_OVERジングル追加で新規使用) 一度きり再生して以後
+; 無音を保持し続ける終端マーク - Stage2のBGM_END_MARKと同じ値
+; (tools/bgm_data/midi_to_psg.pyのEND_MARKと一致させること)。
+BGM_END_MARK      EQU 0FDh
 ; (2026-09-06、TryZ/GFEnding追加でNUM_NOTES35→60へ拡張、周期テーブルが
 ; 伸びた分だけ以下のRAMオフセットが後方へシフト - Titleが書き込む
 ; アドレスと一致させること、tools/title_screen/title_test.asmの同名
@@ -3864,6 +3869,20 @@ SC_START_TICK           EQU 0CD59h  ; 2 bytes
 ; total_ticks実測値(先頭無音トリム後: melody309/bass316/harmony316)の
 ; 最大値に少し余裕を持たせた値。
 STAGE_CLEAR_TOTAL_TICKS EQU 320
+
+; (2026-09-08、"ではゲームオーバーBGM https://youtu.be/...この曲再現
+; できる?"には著作権上の理由でお断りし、代わりにユーザー自身の
+; オリジナル作曲[和音入りMIDI]を試聴確認の上で採用・"これで組み込んで
+; くれ"): TryZ/StageClearと全く同じ理由(Stage1は自前でバンク切替を
+; しない制約)でTitleが起動時に別アドレスへコピー済みという前提。
+; 2パート(melody=chB/harmony=chC、chAは使わない)・BGM_END_MARK方式 -
+; StageClearと違い外部の実時間タイマーで強制的に次のフェーズへ進める
+; 設計ではなく、曲自身が終わったら以後ずっと無音を保持するだけで
+; 十分なため、END_MARK対応をBGMT_UB/UC_NEWROWに新規追加した(下記
+; 参照)。RAM配置はSC_START_TICKの直後、シンボルテーブル実測で
+; 0xE000(TICK)まで空きと確認済みの領域。
+BGM_GAMEOVER_CHB_BASE EQU 0CD5Bh  ; Titleが埋める(chB melody, 35byte)
+BGM_GAMEOVER_CHC_BASE EQU 0CD7Eh  ; Titleが埋める(chC harmony, 15byte) - 0xCD5B+35
 
 ; BELL: 半減期45tickの指数減衰(15*0.5^(t/45)を4bit丸め、以後この
 ; カーブが完全に0へ収束するまでをRLE圧縮)。試聴ツール(#3 BELL)と
@@ -4147,6 +4166,39 @@ SWITCH_BGM_TO_TRYZ:
     CALL UNMUTE_BGM
     RET
 
+; "ではゲームオーバーBGM...これで組み込んでくれ" - PFA_DEATH_FALL_STEPが
+; PLAYERYの画面外到達を検出した瞬間(MISSION FAILEDテキストを初めて
+; 描画するのと同じフレーム)に1回だけ呼ばれる。TRIGGER_STAGE_CLEAR/
+; SWITCH_BGM_TO_TRYZと同じDI/EI保護でchB/chCを差し替え、念のため
+; CALL UNMUTE_BGMも同様に行う(通常は死亡時点でBGM_MUTED=0のはずだが、
+; もしボスのマテリアライズ中[BGM_MUTED=1]に被弾して即死した場合でも
+; ジングルが無音化されたままにならないための安全策、TRIGGER_STAGE_
+; CLEARと同じ考え方)。BGM_END_MARK方式(上のBGMT_UB/UC_NEWROW参照)
+; なので、曲の終わりに達したら以後ずっと無音を保持するだけで、
+; StageClear/TryZのようなループ復帰先の更新も不要(BGM_B/C_LOOP_BASE
+; には一切触れない)。
+TRIGGER_GAME_OVER_JINGLE:
+    DI
+    LD HL,BGM_GAMEOVER_CHB_BASE
+    LD (BGM_B_PTR),HL
+    XOR A
+    LD (BGM_B_TIMER),A
+    LD (BGM_B_REST),A
+    LD (BGM_B_ENV_LEVEL),A
+    LD (BGM_B_ENV_IDX),A
+    LD (BGM_B_ENV_CD),A
+    LD (BGM_B_DUTY_PHASE),A
+    LD HL,BGM_GAMEOVER_CHC_BASE
+    LD (BGM_C_PTR),HL
+    LD (BGM_C_TIMER),A
+    LD (BGM_C_REST),A
+    LD (BGM_C_ENV_LEVEL),A
+    LD (BGM_C_ENV_IDX),A
+    LD (BGM_C_ENV_CD),A
+    EI
+    CALL UNMUTE_BGM
+    RET
+
 ; "ではステージ1と2のスコアを加算して...これをステージクリアで流して
 ; 3音使って良いんで" - PLAYER_FLYAWAYがちょうど2に到達した最初の
 ; フレームで1回だけ呼ばれる(下のPFA_FLYAWAY_IDLE周りの分岐参照)。
@@ -4343,6 +4395,8 @@ BGMT_UPDATE_B:
 BGMT_UB_NEWROW:
     LD HL,(BGM_B_PTR)
     LD A,(HL)
+    CP BGM_END_MARK
+    JR Z,BGMT_UB_SETREST    ; GAME_OVERジングル専用: 一度きりの終了 - PTRを進めず無音を保持し続ける
     CP BGM_LOOP_MARK
     JR NZ,BGMT_UB_GOT
     LD HL,(BGM_B_LOOP_BASE)   ; ALONE_FIGHTER/TryZどちらの曲でも正しい復帰先(BGM_B_LOOP_BASE参照)
@@ -4443,6 +4497,8 @@ BGMT_UPDATE_C:
 BGMT_UC_NEWROW:
     LD HL,(BGM_C_PTR)
     LD A,(HL)
+    CP BGM_END_MARK
+    JR Z,BGMT_UC_SETREST    ; GAME_OVERジングル専用: 一度きりの終了 - PTRを進めず無音を保持し続ける
     CP BGM_LOOP_MARK
     JR NZ,BGMT_UC_GOT
     LD HL,(BGM_C_LOOP_BASE)   ; ALONE_FIGHTER/TryZどちらの曲でも正しい復帰先(BGM_C_LOOP_BASE参照)

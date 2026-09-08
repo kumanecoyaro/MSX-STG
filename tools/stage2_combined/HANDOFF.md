@@ -12388,3 +12388,93 @@ literal reuse)+新爆発アニメーション要求受領・プレビューGIF�
   ノイズ(Round54/67/70で3度再発)と同型の「ループ終了と無音化の
   タイミングを混同する」バグパターンであり、この種の一過性SEを
   実装する際は今後常にこの点を確認すること。
+
+## Round73: Stage1ゲームオーバージングル実装(完了済み・実機フィード
+バック待ち)(2026-09-08)
+
+- 経緯: ユーザーから"ではゲームオーバーBGM [YouTubeリンク] この曲
+  再現できる?"という依頼があったが、実在の著作権保護された楽曲を
+  動画/音声から直接書き起こすことになるため、これまでのMIDI処理
+  (TryZ/Defeat/Alone Fighter/Stage Clear/GFEnding)とは性質が異なる
+  として辞退。「MIDIファイルを頂ければ同じ経路で処理する」「メロディを
+  コピーしない範囲でオリジナル曲を作曲する」の2案を提示したところ、
+  ユーザーが自作の短い和音入りMIDI(`32a236ce-...__.mid`、3.57秒、
+  単一チャンネルに最大2音の重なりを持つワンショットのステインガー)を
+  アップロードし試聴確認のArtifact上で"じゃあこれで 音色はゲーム中と
+  同じでいいわ"と確定、続けて"これで組み込んでくれ"の指示で実装に着手。
+- **試聴確認**(Artifact): 実装予定のBELL(chB、50%duty)/LINEAR(chC)
+  ソフトウェアエンベロープ・PSG周期計算式(`PSG_CLOCK/(16*freq)`)を
+  そのままJS内でtick単位シミュレートし、実装と寸分違わぬ音で確認
+  してもらった上で承認を得た(前段の3和音案の試聴では"才能0だな
+  ぶーって鳴らしっぱなしとかあり得ねえ ただのノイズ"という厳しい
+  指摘を受け、Bass/Harmonyを2秒近く同一音量で鳴らし続けていた設計
+  ミスを自己修正した経緯もあり - 今回の最終確定曲はユーザー自身の
+  作曲のため、その3和音案自体は不採用のまま終了)。
+- **データパイプライン**: `tools/bgm_data/midi_to_psg.py`に
+  `_split_top_second_voice()`(1チャンネル内の重なり合うnote_on/off
+  から「その瞬間の最高音」「2番目に高い音」の2声を動的に追跡・分離、
+  3和音以上が来たら即assert)+`load_game_over_parts()`を追加。
+  **自己発見・修正したバグ**: このMIDIはticks_per_beat=480・
+  テンポ681818us(≈88BPM)固定で、`_rows_from_segments()`の既定
+  `ticks_per_vblank`(=4、ALONE_FIGHTER/DEFEAT専用の120tpb前提値)を
+  そのまま使うと生成されるdurationが約2.93倍長くなる(=曲が約2.93倍
+  遅くなる)ところだった - StageClear追加時と全く同型の「曲固有の
+  tick変換係数」バグ、実装直後の自己検証(総tick数の逆算)で発見し
+  `load_stage_clear_parts()`と同じ汎用式(`tpb/(tempo/1e6*60)`)へ
+  修正。`tools/bgm_data/bgm_bank_gen.py`に2パート(melody=chB/
+  harmony=chC、chAは使わない)・END_MARK(一度きり再生)方式で
+  "GAME_OVER"曲を追加、`--generate`でキャッシュ再生成
+  (chB35byte+chC15byte、bank6合計7002/16384byte使用)。
+- **Stage1(`src/CYBER SHMUP.asm`)**: 新規`BGM_END_MARK`(0FDh)定数+
+  `BGMT_UB/UC_NEWROW`にEND_MARK対応(Stage2/Titleと同型、一度きり
+  再生後は無音を保持し続ける)を追加 - Stage1は従来LOOP_MARK方式の
+  ALONE_FIGHTER/TryZ/StageClearしか扱っておらず、END_MARK対応は
+  今回が初導入。新規RAM`BGM_GAMEOVER_CHB_BASE`(0xCD5B)/
+  `BGM_GAMEOVER_CHC_BASE`(0xCD7E)をシンボルテーブル実測で空きと
+  確認済みの領域(SC_START_TICKの直後、0xE000[TICK]まで空き)に配置。
+  新規`TRIGGER_GAME_OVER_JINGLE`(TRIGGER_STAGE_CLEARと同型のDI/EI
+  保護+chB/chC差し替え、念のためCALL UNMUTE_BGMも追加 - ボスの
+  マテリアライズ中[BGM_MUTED=1]に被弾即死した場合でもジングルが
+  無音のままにならない安全策)を、`PFA_DEATH_FALL_STEP`がPLAYERYの
+  画面外(199)到達を検出した瞬間(MISSION FAILEDテキストを初めて
+  描画するのと同じフレーム)から呼ぶ。
+- **Title(`tools/title_screen/title_test.asm`)**: `INIT_BGM`に
+  TryZ/StageClearと同じ要領でGAME_OVERのchB+chC(50byte)を起動時に
+  一度だけRAMへコピーするLDIRを追加(`build_full_rom.py`の
+  `TITLE_BGM_BANKSELECT_ANCHOR/PATCH`も合わせて更新、Combビルドで
+  bgm-dataバンク番号2→6のリターゲットが引き続き機能することを確認)。
+- 新規回帰テスト: `tools/verify_stage1_bgm.py`に11件追加(TRIGGER_
+  GAME_OVER_JINGLEの単体検証+多tick通しシミュレーションでBELL/duty
+  envelopeを含む観測列がPython側リファレンスと完全一致することを
+  検証、**mido依存を避けるためbgm_bank_gen.pyのキャッシュ済み
+  bank_imageから直接デコードした行データを「正解」として使用**
+  [pypy3にmidoが無いため、bgm_bank_gen.py自身のポリシー通りregression
+  testからmidito_psg.pyの直接importは行わない])、`tools/verify_
+  stage1_mission_screens.py`に1件追加(実死亡フォールトレース上で
+  TRIGGER_GAME_OVER_JINGLEが実際に発火していることを検証)、
+  `tools/bankswitch_poc/verify_comb.py`に1ブロック追加(TitleのRAM
+  コピーがbyte単位で正しいことを実際のマルチバンクエミュレーション
+  で検証)。全て一時的に修正を取り消してFAILすることを自己検証した
+  上で復元・再PASS確認済み。
+- 全回帰: Stage2側`run_all.py` **1474 passed/0 failed**(無変化、
+  今回`combined_test.asm`は無編集)。Stage1側`verify_stage1_bgm.py`
+  **80 passed**(69→80)・`verify_stage1_mission_screens.py`
+  **87 passed**(86→87)・他の`verify_*.py`群も無退行(`verify_
+  barrier.py`のみ以前のセッションのアップロードファイルパスが
+  失われているための既知の無関係な失敗、今回の変更とは無関係)。
+  `verify_comb.py`全チェックPASS(GAME_OVERジングルのTitle RAM
+  コピー検証含む)。Comb ROM再ビルド・標準方針によりComb ROMのみ
+  送付。
+- **スコープ外(意図的、次回検討)**: Stage2側の独立GAME_OVERバンク
+  (`tools/gameover_bank/gameover_bank.asm`)には今回このジングルを
+  実装していない。同バンクはROM予算に余裕のある新規バンクだが、
+  BGM再生機構(H.TIMIフック・BELL/LINEARエンベロープドライバ・
+  bank6[bgm-data]へのwindow B一時切替+RAMコピー)を全く持たない
+  「単発の爆発演出+ボタン/タイムアウト待ちのビジーウェイト」専用の
+  独立バンクとして意図的に最小構成で設計されていたため、今回は
+  Stage1側のみを完全実装するに留めた(Stage2側への追加実装は
+  規模が大きく、次回以降の判断が必要)。
+- **保留・実機フィードバック待ち**: ジングルの実機での聞こえ方
+  (BELL+50%duty/LINEARという既存BGMエンジンの音色設定そのまま)は
+  次回フィードバック待ち。ボスのマテリアライズ中に被弾即死する
+  エッジケース(CALL UNMUTE_BGMで対処済みだが実プレイでは未検証)。

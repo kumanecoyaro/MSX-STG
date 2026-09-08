@@ -549,6 +549,9 @@ BGM_ENV_LINEAR_TABLE:
 ; chC(73byte)はbgm-dataバンク内で連続しているため1回のLDIRで両方
 ; 転送できる(コピー先0xC910+741=0xCBF5にchCが自動的に来る - src/
 ; CYBER SHMUP.asmのBGM_TRYZ_CHC_BASEと一致させること)。
+; (2026-09-08、"ではゲームオーバーBGM...これで組み込んでくれ"): 同じ
+; 理由でGAME_OVERジングル(chB35byte+chC15byte)もここでコピー。src/
+; CYBER SHMUP.asmのBGM_GAMEOVER_CHB/CHC_BASEと一致させること。
 INIT_BGM:
     LD A,2                       ; standalone bgm-dataバンク(Combでは6へパッチ)
     LD (7000h),A
@@ -556,6 +559,7 @@ INIT_BGM:
     LD HL,08078h : LD DE,0C078h : LD BC,0628h : LDIR  ; ALONE_FIGHTER chB+chC
     LD HL,08E32h : LD DE,0C910h : LD BC,032Eh : LDIR  ; TryZ chB+chC(Stage1ボス用)
     LD HL,0931Bh : LD DE,0CC42h : LD BC,010Dh : LDIR  ; StageClear chB+chC+chA(Stage1ステージクリア用)
+    LD HL,09428h : LD DE,0CD5Bh : LD BC,032h : LDIR   ; GAME_OVER chB+chC(Stage1ゲームオーバー用)
     LD A,1                       ; このファイル自身のbank1(Comb/standaloneとも1のまま)
     LD (7000h),A
 

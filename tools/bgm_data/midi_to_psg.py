@@ -497,6 +497,91 @@ def load_stage_clear_parts():
     return melody_rows, bass_rows, harmony_rows
 
 
+# ===== GAME_OVER(ゲームオーバージングル) - Round(2026-09-08)追加 =====
+# "ではゲームオーバーBGM...この曲再現できる?"には著作権上の理由で
+# お断りし、代わりにユーザー自身のオリジナル作曲(和音入りMIDI、単一
+# チャンネル・単一トラックに最大2音の重なりを持つ短い(3.57秒)
+# ワンショットのステインガー)を試聴確認の上で採用した。
+GAME_OVER_FILE = "GameOver.mid"
+
+
+def _split_top_second_voice(events, channel):
+    """1チャンネル分のイベント列から、常に「その瞬間鳴っている最高音」
+    (melody/chB相当)と「その瞬間鳴っている2番目に高い音」(harmony/chC
+    相当)の2声を抽出する。_segments_for_channel(top_note_only=True)を
+    「2番目の声部」も同時に取れるよう拡張したもの - GameOver.midは単一
+    チャンネルに最大2音までの和音(単音のnote_on/offペアが重なっている
+    区間)が直接書き込まれているため、この関数だけで「メロディ+
+    ハーモニー」の2パートへ機械的に分離できる(3音以上重なる区間は
+    このファイルには存在しないことを生成時にアサートで検証する)。"""
+    ch_events = [e for e in events if e[2] == channel]
+    active = set()
+    cur_top = None
+    top_start = None
+    cur_second = None
+    second_start = None
+    top_segs = []
+    second_segs = []
+    t = 0
+    for (t, is_on, ch, note) in ch_events:
+        prev_sorted = sorted(active, reverse=True)
+        prev_top = prev_sorted[0] if prev_sorted else None
+        prev_second = prev_sorted[1] if len(prev_sorted) > 1 else None
+        assert len(active) <= 2, (t, sorted(active))  # このファイルは最大2音の和音までの前提
+        if is_on:
+            active.add(note)
+        else:
+            active.discard(note)
+        new_sorted = sorted(active, reverse=True)
+        new_top = new_sorted[0] if new_sorted else None
+        new_second = new_sorted[1] if len(new_sorted) > 1 else None
+        if new_top != prev_top:
+            if cur_top is not None:
+                top_segs.append((top_start, t, cur_top))
+            cur_top = new_top
+            top_start = t
+        if new_second != prev_second:
+            if cur_second is not None:
+                second_segs.append((second_start, t, cur_second))
+            cur_second = new_second
+            second_start = t
+    if cur_top is not None:
+        top_segs.append((top_start, t, cur_top))
+    if cur_second is not None:
+        second_segs.append((second_start, t, cur_second))
+    return top_segs, second_segs
+
+
+def load_game_over_parts():
+    """GameOver.mid(type1、単一トラック・単一チャンネル、9個のnote_on/off
+    ペア・最大2音の和音を含む3.57秒のワンショットジングル)から2パート
+    抽出: 高い方の音(chB/melody相当)・低い方の音(chC/harmony相当)。
+    オクターブシフトは掛けない(実測範囲47-60は既存の周期テーブル範囲
+    [32,91]にそのまま収まる、試聴確認時と同じ生MIDIノート値)。
+    このファイルはticks_per_beat=480・テンポ681818us/beat(約88BPM)固定 -
+    load_stage_clear_parts()と同じ理由(グローバルなMIDI_TICKS_PER_VBLANK=4は
+    「120 ticks/beat」の2曲専用に検証済みの値で、このファイル[480 ticks/beat、
+    4倍細かい]にそのまま使うと生成されるdurationが約2.93倍長く[=曲が
+    約2.93倍遅く]なってしまう)で、1 vblank tick=1/60秒・1 MIDI tick=
+    tempo[us]/1e6/ticks_per_beat秒という定義から毎回汎用的に算出する。"""
+    path = os.path.join(MIDI_DIR, GAME_OVER_FILE)
+    mid = mido.MidiFile(path)
+    assert mid.type == 1 and len(mid.tracks) == 2, (mid.type, len(mid.tracks))
+    assert mid.ticks_per_beat == 480
+    tempo = 500000
+    for track in mid.tracks:
+        for msg in track:
+            if msg.type == "set_tempo":
+                tempo = msg.tempo
+    ticks_per_vblank = mid.ticks_per_beat / (tempo / 1e6 * 60)
+    events = _channel_events(mid)
+    total_ticks = max(t for (t, _, _, _) in events)
+    top_seg, second_seg = _split_top_second_voice(events, channel=0)
+    melody_rows = _rows_from_segments(top_seg, total_ticks, ticks_per_vblank)
+    harmony_rows = _rows_from_segments(second_seg, total_ticks, ticks_per_vblank)
+    return melody_rows, harmony_rows
+
+
 if __name__ == "__main__":
     lo, hi = build_period_table()
     print(f"period table: {len(lo)} notes (MIDI {MIDI_MIN}-{MIDI_MAX})")

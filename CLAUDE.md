@@ -3172,3 +3172,29 @@ FAILEDの毎フレーム再描画(完了済み・実機フィードバック待�
   明示的にミュートする後片付けステップを必ず用意すること
   (Stage1のステージクリア後ノイズ[Round54/67/70で3度再発]と同型の
   「ループ終了と無音化のタイミングを混同する」バグパターン)。
+
+## Round73: Stage1ゲームオーバージングル実装(2026-09-08、完了済み・
+実機フィードバック待ち)
+
+- "ゲームオーバーBGMを実在の曲[YouTube]で再現できるか"には著作権上の
+  理由で辞退、代わりにユーザー自身が作曲した短い和音入りMIDIを試聴
+  確認(実装と同じBELL/LINEARソフトウェアエンベロープでシミュレート
+  したArtifact上で)の上で採用・"これで組み込んでくれ"の指示で実装。
+- Stage1(`src/CYBER SHMUP.asm`)に新規END_MARK(一度きり再生)対応を
+  追加した上で、自機死亡→画面外落下完了(MISSION FAILEDテキスト表示と
+  同じ瞬間)にジングルを1回再生するよう実装(`TRIGGER_GAME_OVER_
+  JINGLE`)。Titleが起動時にRAMへ一度だけコピーする既存の設計
+  (TryZ/StageClearと同型)を踏襲。
+- **Stage2側の独立GAME_OVERバンク(`tools/gameover_bank/
+  gameover_bank.asm`)には今回未実装**(意図的スコープ外) - 同バンクは
+  BGM再生機構[H.TIMIフック・エンベロープドライバ・bank6への一時
+  bank切替]を一切持たない最小構成のため、追加実装は次回以降の判断
+  課題として保留。
+- 全回帰: Stage2側`run_all.py` 1474 passed/0 failed(無変化)。
+  Stage1側`verify_stage1_bgm.py` 80 passed(69→80)・`verify_stage1_
+  mission_screens.py` 87 passed(86→87)。`verify_comb.py`全チェック
+  PASS。Comb ROM再ビルド・標準方針によりComb ROMのみ送付。詳細・
+  技術的経緯は`tools/stage2_combined/HANDOFF.md`のRound73を参照。
+- **保留・実機フィードバック待ち**: ジングルの実機での聞こえ方は
+  次回フィードバック待ち。Stage2側GAME_OVERバンクへの同ジングル実装
+  要否はユーザーの次の指示待ち。

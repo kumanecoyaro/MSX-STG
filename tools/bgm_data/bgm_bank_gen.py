@@ -234,6 +234,25 @@ def _generate():
         "chA_len": len(bh),
     }
 
+    # GAME_OVER(2026-09-08、"ではゲームオーバーBGM..."には著作権上の
+    # 理由でお断りし、代わりにユーザー自身のオリジナル作曲(和音入り
+    # MIDI)を試聴確認の上で採用・"これで組み込んでくれ"): 2パート
+    # (melody=chB/harmony=chC、chAは使わない)・END_MARK(一度きり、
+    # ループしない)方式 - ENDING_GFENDINGと同じ考え方(ゲームオーバー
+    # 演出は「曲の終わりを迎えたら無音のまま保持」で十分、StageClearの
+    # ような外部実時間タイマーによる強制遷移は無い)。
+    tm, th = mp.load_game_over_parts()
+    bm, bh = (mp.rows_to_bytes(tm, terminator=mp.END_MARK),
+              mp.rows_to_bytes(th, terminator=mp.END_MARK))
+    song_offset = len(blob)
+    blob += bm
+    blob += bh
+    layout["GAME_OVER"] = {
+        "bank_offset": song_offset,
+        "chB_len": len(bm),
+        "chC_len": len(bh),
+    }
+
     # (2026-09-07、"ステージ2スタートでキャラクター定義データを他の
     # バンクに逃がしてしまえばかなり開くだろう ボスだけでもかなり空くの
     # では"): この時点でblobはまだ16KB中の一部しか使っていない(曲データ

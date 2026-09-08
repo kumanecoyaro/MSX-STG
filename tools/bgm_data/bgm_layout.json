@@ -20,12 +20,17 @@
     "chB_len": 253,
     "chC_len": 121
   },
+  "GAME_OVER": {
+    "bank_offset": 5160,
+    "chB_len": 35,
+    "chC_len": 15
+  },
   "SASAPI_CHARDATA": {
-    "SASAPI_BROKEN_QUADS": 6184,
-    "SASAPI_BROKEN_QUADS_L": 6312,
-    "SASAPI_HAND_TILES": 6440,
-    "SASAPI_QUADS": 5160,
-    "SASAPI_QUADS_L": 5672
+    "SASAPI_BROKEN_QUADS": 6234,
+    "SASAPI_BROKEN_QUADS_L": 6362,
+    "SASAPI_HAND_TILES": 6490,
+    "SASAPI_QUADS": 5210,
+    "SASAPI_QUADS_L": 5722
   },
   "STAGE_CLEAR": {
     "bank_offset": 4891,

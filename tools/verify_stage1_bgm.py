@@ -751,6 +751,137 @@ check("UPDATE_STAGE_CLEAR is a no-op once STAGE_CLEAR_ACT==3 (terminal, Comb's o
 # ここでは対象外(TRIGGER_STAGE_CLEAR/UPDATE_STAGE_CLEARという実際の
 # 状態遷移ロジック自体は上記で直接検証済み)。
 
+# ---- (2026-09-08、"ではゲームオーバーBGM...これで組み込んでくれ")
+# GAME_OVERジングル(2パート: melody=chB/harmony=chC、chAは使わない、
+# BGM_END_MARK方式=一度きり再生・以後無音を保持し続ける)。
+# TRIGGER_GAME_OVER_JINGLEはPFA_DEATH_FALL_STEPがPLAYERYの画面外到達を
+# 検出した瞬間に1回だけ呼ばれる ----
+BGM_END_MARK = sym["BGM_END_MARK"]
+BGM_GAMEOVER_CHB_BASE = sym["BGM_GAMEOVER_CHB_BASE"]
+BGM_GAMEOVER_CHC_BASE = sym["BGM_GAMEOVER_CHC_BASE"]
+check("BGM_END_MARK matches tools/bgm_data/midi_to_psg.py's END_MARK (0xFD)",
+      BGM_END_MARK == 0xFD)
+
+_go_layout = layout["GAME_OVER"]
+_go_start = _go_layout["bank_offset"]
+go_chB_bytes = bank_image[_go_start:_go_start + _go_layout["chB_len"]]
+go_chC_bytes = bank_image[_go_start + _go_layout["chB_len"]:
+                           _go_start + _go_layout["chB_len"] + _go_layout["chC_len"]]
+
+check("BGM_GAMEOVER_CHC_BASE = BGM_GAMEOVER_CHB_BASE + GAME_OVER's own real chB length",
+      BGM_GAMEOVER_CHC_BASE == BGM_GAMEOVER_CHB_BASE + _go_layout["chB_len"])
+check("GAME_OVER's own real chB/chC data both end in BGM_END_MARK (one-shot, not LOOP_MARK)",
+      go_chB_bytes[-1] == BGM_END_MARK and go_chC_bytes[-1] == BGM_END_MARK)
+
+z = fresh()
+poke_period_table(z)
+for i, b in enumerate(go_chB_bytes):
+    z.wr(BGM_GAMEOVER_CHB_BASE + i, b)
+for i, b in enumerate(go_chC_bytes):
+    z.wr(BGM_GAMEOVER_CHC_BASE + i, b)
+for addr in (BGM_B_PTR, BGM_B_PTR + 1, BGM_C_PTR, BGM_C_PTR + 1,
+             BGM_B_TIMER, BGM_C_TIMER, BGM_B_REST, BGM_C_REST,
+             BGM_B_ENV_LEVEL, BGM_B_ENV_IDX, BGM_B_ENV_CD, BGM_B_DUTY_PHASE,
+             BGM_C_ENV_LEVEL, BGM_C_ENV_IDX, BGM_C_ENV_CD):
+    z.wr(addr, 0xAA)  # poison first, same style as SWITCH_BGM_TO_TRYZ's own test above
+z.wr(BGM_MUTED, 1)  # simulate the edge case: dying mid boss-materialize (BGM_MUTED=1)
+call_routine(z, sym["TRIGGER_GAME_OVER_JINGLE"])
+check("TRIGGER_GAME_OVER_JINGLE points BGM_B_PTR at GAME_OVER's own chB(melody) start",
+      (z.rd(BGM_B_PTR) | (z.rd(BGM_B_PTR + 1) << 8)) == BGM_GAMEOVER_CHB_BASE)
+check("TRIGGER_GAME_OVER_JINGLE points BGM_C_PTR at GAME_OVER's own chC(harmony) start",
+      (z.rd(BGM_C_PTR) | (z.rd(BGM_C_PTR + 1) << 8)) == BGM_GAMEOVER_CHC_BASE)
+check("TRIGGER_GAME_OVER_JINGLE resets BGM_B/C_TIMER, BGM_B/C_REST and both channels' "
+      "envelope state (LEVEL/IDX/CD, chB's DUTY_PHASE) to 0",
+      z.rd(BGM_B_TIMER) == 0 and z.rd(BGM_C_TIMER) == 0 and
+      z.rd(BGM_B_REST) == 0 and z.rd(BGM_C_REST) == 0 and
+      z.rd(BGM_B_ENV_LEVEL) == 0 and z.rd(BGM_B_ENV_IDX) == 0 and z.rd(BGM_B_ENV_CD) == 0 and
+      z.rd(BGM_B_DUTY_PHASE) == 0 and
+      z.rd(BGM_C_ENV_LEVEL) == 0 and z.rd(BGM_C_ENV_IDX) == 0 and z.rd(BGM_C_ENV_CD) == 0)
+check("TRIGGER_GAME_OVER_JINGLE clears BGM_MUTED (safety net: dying mid boss-materialize "
+      "must not leave the jingle silenced)",
+      z.rd(BGM_MUTED) == 0)
+
+call_routine(z, BGM_TICK)
+if go_chB_bytes[0] == BGM_NOTE_REST:
+    check("after TRIGGER_GAME_OVER_JINGLE, the very next BGM_TICK correctly reads GAME_OVER's own "
+          "real first chB(melody) row as a REST (BGM_B_REST=1, R9 silenced)",
+          z.rd(BGM_B_REST) == 1 and z.psg_regs.get(9) == 0)
+else:
+    exp_lo, exp_hi = periods[go_chB_bytes[0]]
+    check("after TRIGGER_GAME_OVER_JINGLE, the very next BGM_TICK plays GAME_OVER's own real "
+          "first chB(melody) note",
+          (z.psg_regs.get(2), z.psg_regs.get(3)) == (exp_lo, exp_hi))
+
+# ---- multi-tick full playback: drive BGM_TICK once per row-duration until
+# chB has reached BGM_END_MARK, and confirm the whole observed note sequence
+# matches a from-scratch BELL/duty simulation of GAME_OVER's own real chB
+# row data tick-for-tick (same "don't trust a single-row spot check"
+# discipline as the round40 off-by-one multi-tick regression above).
+# Note: unlike some other tests in this repo, this does NOT re-derive the
+# row data from the source MIDI via tools/bgm_data/midi_to_psg.py - that
+# module imports `mido` at module level, which bgm_bank_gen.py's own
+# top-of-file comment documents as unavailable under pypy3 (the interpreter
+# run_all.py prefers) and therefore off-limits for any regression test.
+# Ground truth here is the row data decoded straight out of the cached
+# bgm_bank.bin/bgm_layout.json (bg.build_bank(), already imported above),
+# which is exactly what TRIGGER_GAME_OVER_JINGLE's own real playback reads. ----
+def decode_rows_with_end(row_bytes):
+    rows = []
+    i = 0
+    while i < len(row_bytes):
+        note = row_bytes[i]
+        if note == BGM_END_MARK:
+            break
+        rows.append((note, row_bytes[i + 1]))
+        i += 2
+    return rows
+
+
+go_melody_rows = decode_rows_with_end(go_chB_bytes)
+
+z = fresh()
+poke_period_table(z)
+for i, b in enumerate(go_chB_bytes):
+    z.wr(BGM_GAMEOVER_CHB_BASE + i, b)
+for i, b in enumerate(go_chC_bytes):
+    z.wr(BGM_GAMEOVER_CHC_BASE + i, b)
+call_routine(z, sym["TRIGGER_GAME_OVER_JINGLE"])
+
+total_ticks = sum(d for _, d in go_melody_rows)
+observed_periods = []
+for _ in range(total_ticks + 30):  # run a bit past the end to confirm it holds silent
+    call_routine(z, BGM_TICK)
+    observed_periods.append((z.psg_regs.get(2), z.psg_regs.get(3), z.psg_regs.get(9) or 0))
+
+# rebuild the expected per-tick (period_lo, period_hi, audible) stream from
+# the same row data + BELL envelope/duty simulation used elsewhere in this file
+expected_periods = []
+for note, dur in go_melody_rows:
+    if note == BGM_NOTE_REST:
+        expected_periods += [(None, None, 0)] * dur
+    else:
+        lo, hi = periods[note]
+        vols = sim_envelope_sequence(bell_table, BGM_B_DUTY_MASK, dur)
+        expected_periods += [(lo, hi, v) for v in vols]
+expected_periods += [(expected_periods[-1][0], expected_periods[-1][1], 0)] * 30
+
+melody_match = True
+for i, (obs, exp) in enumerate(zip(observed_periods, expected_periods)):
+    exp_lo, exp_hi, exp_vol = exp
+    obs_lo, obs_hi, obs_vol = obs
+    if exp_vol == 0:
+        if obs_vol != 0:
+            melody_match = False
+            break
+    else:
+        if (obs_lo, obs_hi, obs_vol) != (exp_lo, exp_hi, exp_vol):
+            melody_match = False
+            break
+check(f"multi-tick playback ({total_ticks} ticks + 30 past the end): chB's observed "
+      "(period, volume) sequence matches a from-scratch BELL/duty simulation of GAME_OVER's "
+      "real melody row data tick-for-tick, and holds silent (R9=0) after the jingle ends",
+      melody_match)
+
 print(f"{len(ok)} passed, {len(fail)} failed")
 if fail:
     print("FAILURES:", fail)
