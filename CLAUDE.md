@@ -3198,3 +3198,24 @@ FAILEDの毎フレーム再描画(完了済み・実機フィードバック待�
 - **保留・実機フィードバック待ち**: ジングルの実機での聞こえ方は
   次回フィードバック待ち。Stage2側GAME_OVERバンクへの同ジングル実装
   要否はユーザーの次の指示待ち。
+
+## Round74: Stage2 GAME_OVERバンクにもゲームオーバージングルを実装
+(2026-09-08、完了済み・実機フィードバック待ち)
+
+- "ステージ2にBGM再生機能がない? BGM鳴ってるだろうが"→説明(Stage2
+  本編は元々DEFEAT/TryZ実装済み、話していたのはTANK_LIFE枯渇時に
+  切り替わる独立バンク`tools/gameover_bank/gameover_bank.asm`限定の
+  話)→"当たり前だろ 鳴らすようにしろ"の指示でRound73で意図的に
+  スコープ外としていたStage2側を実装。
+- `gameover_bank.asm`にBGMドライバ一式(GO_INIT_BGM/GO_BGM_TICK/
+  GO_BGMT_UPDATE_B/C)を新規追加。combined_test.asm自身のBGM RAMと
+  物理的に同一アドレスを再利用(Stage2本編がこのバンクへ来た時点で
+  二度と実行されないため安全)。BGM_END_MARK専用(ジングルは一度きり)。
+- 全回帰: Stage2側`run_all.py` 1486 passed/0 failed(1474→1486、
+  `gameover_bank_test.py`に12件追加)。`verify_comb.py`全チェック
+  PASS(GAME_OVERバンクの実window B切替を経たBGM RAMコピー検証含む)。
+  Comb ROM再ビルド・標準方針によりComb ROMのみ送付。詳細・技術的
+  経緯は`tools/stage2_combined/HANDOFF.md`のRound74を参照。
+- **保留・実機フィードバック待ち**: Stage2ゲームオーバー時のジングルの
+  実機での聞こえ方(爆発音との同時再生バランス含む)は次回フィード
+  バック待ち。

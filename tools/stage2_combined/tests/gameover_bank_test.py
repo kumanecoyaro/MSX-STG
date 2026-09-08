@@ -27,6 +27,26 @@ mem0 = bytearray(65536)
 for addr, val in out.items():
     mem0[addr & 0xFFFF] = val & 0xFF
 
+# (2026-09-08、"当たり前だろ 鳴らすようにしろ" - ゲームオーバージングル
+# をこのバンクにも実装): このファイルの harness は真のマルチバンク
+# エミュレーション(BankedMem)を持たないフラットな64KBメモリ1枚だけ -
+# `LD A,6:LD(7000h),A`(window B選択)はここでは単なるRAM書き込みで
+# 実際のバンク切替効果を持たないため、GO_INIT_BGMのLDIRが読みに行く
+# window B空間(0x8000-0xBFFF)へ、実際のbgm-dataバンク(tools/bgm_data/
+# bgm_bank_gen.py)の内容をあらかじめ直接展開しておく - こうすることで
+# 「window Bが正しくbank6を指している」状態を模擬でき、GO_INIT_BGMの
+# RAMコピーやGO_BGM_TICKの実際の音符再生を、combined_test.asm自身の
+# INIT_BGM検証(bgm_test.py)と同じ水準で直接検証できる。実際のバンク
+# 切替そのもの(TRIGGER_GAME_OVERからここへ、bank5->bank6->bank5等の
+# window B遷移)の統合検証は引き続きverify_comb.py側の役割。
+REPO2 = os.path.join(HERE, "..", "..", "..")
+sys.path.insert(0, os.path.join(REPO2, "tools", "bgm_data"))
+import bgm_bank_gen as bg  # noqa: E402
+
+bgm_bank, bgm_layout = bg.build_bank()
+for i, b in enumerate(bgm_bank):
+    mem0[0x8000 + i] = b
+
 ok = []
 fail = []
 def check(label, cond):
@@ -336,6 +356,183 @@ check("real INIT flow: by the time GO_WAIT_LOOP (MISSION FAILED already drawn) i
       "reached, PSG R8 (channel A) is silenced to 0 - the boom sound does not keep "
       "playing under the game-over text",
       z4.psg_regs.get(8) == 0)
+
+# ---- (2026-09-08、"当たり前だろ 鳴らすようにしろ" - ゲームオーバー
+# ジングルのこのバンクへの実装本体) GO_INIT_BGM: bgm-dataバンク(window B
+# select is a no-op RAM write in this flat harness, real bank content is
+# pre-populated at 0x8000 above)からの周期テーブル+GAME_OVERジングル
+# (chB+chC)のRAMコピー、制御変数の初期化、実際のHTIMI_HOOK設置を検証 ----
+GO_PERIOD_LO_RAM = sym["GO_PERIOD_LO_RAM"]
+GO_PERIOD_HI_RAM = sym["GO_PERIOD_HI_RAM"]
+GO_CHB_BASE = sym["GO_CHB_BASE"]
+GO_CHC_BASE = sym["GO_CHC_BASE"]
+GO_BGM_B_PTR = sym["GO_BGM_B_PTR"]
+GO_BGM_C_PTR = sym["GO_BGM_C_PTR"]
+GO_BGM_B_TIMER = sym["GO_BGM_B_TIMER"]
+GO_BGM_C_TIMER = sym["GO_BGM_C_TIMER"]
+GO_BGM_B_REST = sym["GO_BGM_B_REST"]
+GO_BGM_C_REST = sym["GO_BGM_C_REST"]
+GO_BGM_B_ENV_LEVEL = sym["GO_BGM_B_ENV_LEVEL"]
+GO_BGM_B_ENV_IDX = sym["GO_BGM_B_ENV_IDX"]
+GO_BGM_B_ENV_CD = sym["GO_BGM_B_ENV_CD"]
+GO_BGM_B_DUTY_PHASE = sym["GO_BGM_B_DUTY_PHASE"]
+GO_BGM_C_ENV_LEVEL = sym["GO_BGM_C_ENV_LEVEL"]
+GO_BGM_C_ENV_IDX = sym["GO_BGM_C_ENV_IDX"]
+GO_BGM_C_ENV_CD = sym["GO_BGM_C_ENV_CD"]
+GO_BGM_TICK = sym["GO_BGM_TICK"]
+HTIMI_HOOK = sym["HTIMI_HOOK"]
+BGM_END_MARK = sym["BGM_END_MARK"]
+BGM_NOTE_REST = sym["BGM_NOTE_REST"]
+BGM_B_DUTY_MASK = sym["BGM_B_DUTY_MASK"]
+BGM_VOL_ATTEN = sym["BGM_VOL_ATTEN"]
+
+_go_layout = bgm_layout["GAME_OVER"]
+_go_start = _go_layout["bank_offset"]
+_period_lo = list(bgm_bank[0:bg.NUM_NOTES])
+_period_hi = list(bgm_bank[bg.NUM_NOTES:2 * bg.NUM_NOTES])
+_periods = list(zip(_period_lo, _period_hi))
+go_chB_bytes = bgm_bank[_go_start:_go_start + _go_layout["chB_len"]]
+go_chC_bytes = bgm_bank[_go_start + _go_layout["chB_len"]:
+                         _go_start + _go_layout["chB_len"] + _go_layout["chC_len"]]
+
+check("GO_CHC_BASE = GO_CHB_BASE + GAME_OVER's own real chB length "
+      "(matches bgm_bank_gen.song_constants('GAME_OVER', data_base=0xC200))",
+      GO_CHC_BASE == GO_CHB_BASE + _go_layout["chB_len"])
+check("GAME_OVER's own real chB/chC data both end in BGM_END_MARK (one-shot, no LOOP_MARK)",
+      go_chB_bytes[-1] == BGM_END_MARK and go_chC_bytes[-1] == BGM_END_MARK)
+
+z = fresh()
+for addr in (GO_BGM_B_PTR, GO_BGM_B_PTR + 1, GO_BGM_C_PTR, GO_BGM_C_PTR + 1,
+             GO_BGM_B_TIMER, GO_BGM_C_TIMER, GO_BGM_B_REST, GO_BGM_C_REST,
+             GO_BGM_B_ENV_LEVEL, GO_BGM_B_ENV_IDX, GO_BGM_B_ENV_CD, GO_BGM_B_DUTY_PHASE,
+             GO_BGM_C_ENV_LEVEL, GO_BGM_C_ENV_IDX, GO_BGM_C_ENV_CD, HTIMI_HOOK,
+             HTIMI_HOOK + 1, HTIMI_HOOK + 2):
+    z.wr(addr, 0xAA)  # poison first
+call_ret(z, sym["GO_INIT_BGM"])
+check("GO_INIT_BGM's RAM copy left the period table byte-correct in RAM",
+      [z.rd(GO_PERIOD_LO_RAM + i) for i in range(len(_period_lo))] == _period_lo and
+      [z.rd(GO_PERIOD_HI_RAM + i) for i in range(len(_period_hi))] == _period_hi)
+check("GO_INIT_BGM's RAM copy left GAME_OVER's own real chB (melody) byte-correct in RAM",
+      [z.rd(GO_CHB_BASE + i) for i in range(len(go_chB_bytes))] == list(go_chB_bytes))
+check("GO_INIT_BGM's RAM copy left GAME_OVER's own real chC (harmony) byte-correct in RAM",
+      [z.rd(GO_CHC_BASE + i) for i in range(len(go_chC_bytes))] == list(go_chC_bytes))
+check("GO_INIT_BGM points GO_BGM_B_PTR/GO_BGM_C_PTR at GO_CHB_BASE/GO_CHC_BASE",
+      (z.rd(GO_BGM_B_PTR) | (z.rd(GO_BGM_B_PTR + 1) << 8)) == GO_CHB_BASE and
+      (z.rd(GO_BGM_C_PTR) | (z.rd(GO_BGM_C_PTR + 1) << 8)) == GO_CHC_BASE)
+check("GO_INIT_BGM resets BGM_B/C_TIMER, BGM_B/C_REST and both channels' envelope "
+      "state (LEVEL/IDX/CD, chB's DUTY_PHASE) to 0",
+      z.rd(GO_BGM_B_TIMER) == 0 and z.rd(GO_BGM_C_TIMER) == 0 and
+      z.rd(GO_BGM_B_REST) == 0 and z.rd(GO_BGM_C_REST) == 0 and
+      z.rd(GO_BGM_B_ENV_LEVEL) == 0 and z.rd(GO_BGM_B_ENV_IDX) == 0 and z.rd(GO_BGM_B_ENV_CD) == 0 and
+      z.rd(GO_BGM_B_DUTY_PHASE) == 0 and
+      z.rd(GO_BGM_C_ENV_LEVEL) == 0 and z.rd(GO_BGM_C_ENV_IDX) == 0 and z.rd(GO_BGM_C_ENV_CD) == 0)
+check("GO_INIT_BGM installs a real JP opcode (0C3h) into HTIMI_HOOK pointing at GO_BGM_TICK",
+      z.rd(HTIMI_HOOK) == 0xC3 and
+      (z.rd(HTIMI_HOOK + 1) | (z.rd(HTIMI_HOOK + 2) << 8)) == GO_BGM_TICK)
+check("GO_INIT_BGM enables PSG tone B/C (R7 mixer)",
+      (z.psg_regs.get(7) & 0x06) == 0)  # bits1-2 = tone B/C disable; both must be clear
+
+# ---- multi-tick full playback: drive GO_BGM_TICK once per row-duration until
+# chB reaches BGM_END_MARK, confirming the observed (period, volume) sequence
+# matches a from-scratch BELL/duty simulation of GAME_OVER's real chB row data
+# tick-for-tick (same discipline as tools/verify_stage1_bgm.py's own multi-tick
+# regression - a single-row spot check alone can't catch cumulative drift) ----
+def decode_rows_with_end(row_bytes):
+    rows = []
+    i = 0
+    while i < len(row_bytes):
+        note = row_bytes[i]
+        if note == BGM_END_MARK:
+            break
+        rows.append((note, row_bytes[i + 1]))
+        i += 2
+    return rows
+
+
+def sim_envelope_sequence(table, duty_mask, n_ticks, atten=BGM_VOL_ATTEN):
+    idx = 0
+    level, dur0 = table[0]
+    cd = dur0 - 1
+    phase = duty_mask
+    out = []
+    for tick in range(n_ticks):
+        if tick > 0:
+            if cd > 0:
+                cd -= 1
+            elif idx < len(table) - 1:
+                idx += 1
+                level, dur = table[idx]
+                if dur != 0:
+                    cd = dur - 1
+        if duty_mask:
+            phase = (phase + 1) & 0xFF
+            audible = (phase & duty_mask) == 0
+        else:
+            audible = True
+        out.append(max(0, level - atten) if audible else 0)
+    return out
+
+
+def read_env_table(z, addr, n_entries=16):
+    return [(z.rd(addr + i * 2), z.rd(addr + i * 2 + 1)) for i in range(n_entries)]
+
+
+go_melody_rows = decode_rows_with_end(go_chB_bytes)
+bell_table = read_env_table(fresh(), sym["GO_BGM_ENV_BELL_TABLE"])
+
+z = fresh()
+call_ret(z, sym["GO_INIT_BGM"])
+
+total_ticks = sum(d for _, d in go_melody_rows)
+observed = []
+for _ in range(total_ticks + 30):  # run a bit past the end to confirm it holds silent
+    call_ret(z, GO_BGM_TICK)
+    observed.append((z.psg_regs.get(2), z.psg_regs.get(3), z.psg_regs.get(9) or 0))
+
+expected = []
+for note, dur in go_melody_rows:
+    if note == BGM_NOTE_REST:
+        expected += [(None, None, 0)] * dur
+    else:
+        lo, hi = _periods[note]
+        vols = sim_envelope_sequence(bell_table, BGM_B_DUTY_MASK, dur)
+        expected += [(lo, hi, v) for v in vols]
+expected += [(expected[-1][0], expected[-1][1], 0)] * 30
+
+melody_match = True
+for obs, exp in zip(observed, expected):
+    obs_lo, obs_hi, obs_vol = obs
+    exp_lo, exp_hi, exp_vol = exp
+    if exp_vol == 0:
+        if obs_vol != 0:
+            melody_match = False
+            break
+    elif (obs_lo, obs_hi, obs_vol) != (exp_lo, exp_hi, exp_vol):
+        melody_match = False
+        break
+check(f"multi-tick playback ({total_ticks} ticks + 30 past the end): GO_BGM_TICK's "
+      "observed chB (period, volume) sequence matches a from-scratch BELL/duty "
+      "simulation of GAME_OVER's real melody row data tick-for-tick, and holds "
+      "silent (R9=0) after the jingle ends",
+      melody_match)
+
+# ---- real INIT flow: confirm HTIMI_HOOK is still correctly installed by the ----
+# ---- time GO_WAIT_LOOP is reached (survives font-load/explosion/text-draw)  ----
+z = fresh()
+z.wr(TANK_X, 120)
+z.wr(TANK_Y_CUR, 90)
+z.pc = sym["INIT"]
+run_until_pc(z, GO_WAIT_LOOP, 5_000_000)
+check("real INIT flow: HTIMI_HOOK still correctly points at GO_BGM_TICK by the "
+      "time GO_WAIT_LOOP (MISSION FAILED already drawn) is reached - the jingle "
+      "driver survives font-loading/explosion/text-drawing untouched",
+      z.rd(HTIMI_HOOK) == 0xC3 and
+      (z.rd(HTIMI_HOOK + 1) | (z.rd(HTIMI_HOOK + 2) << 8)) == GO_BGM_TICK)
+check("real INIT flow: GO_BGM_B_PTR/GO_BGM_C_PTR already point at the jingle's own "
+      "chB/chC start by the time GO_WAIT_LOOP is reached (GO_INIT_BGM actually ran "
+      "as part of the real boot sequence, not just in isolation)",
+      (z.rd(GO_BGM_B_PTR) | (z.rd(GO_BGM_B_PTR + 1) << 8)) == GO_CHB_BASE and
+      (z.rd(GO_BGM_C_PTR) | (z.rd(GO_BGM_C_PTR + 1) << 8)) == GO_CHC_BASE)
 
 print()
 print(f"{len(ok)} passed, {len(fail)} failed")

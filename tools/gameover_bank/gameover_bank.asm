@@ -21,9 +21,15 @@
 ; build_full_rom.pyがglobal bank7(これまで完全な0xFF空きフィラー
 ; だった枠)へ配置する。combined_test.asm側のTRIGGER_GAME_OVERが
 ; window Aだけをこのバンクへ切り替える1ホップのトランポリンで飛んで
-; くる(DI済み・window Bはcombined_test.asm自身のbank1のまま一切
-; 触れない)。ここからtitle(GLOBAL bank0/1)へ戻る際も同じ2ホップ
+; くる(DI済み)。ここからtitle(GLOBAL bank0/1)へ戻る際も同じ2ホップ
 ; トランポリン手法(window B→window Aの順)を使う。
+; (2026-09-08、"当たり前だろ 鳴らすようにしろ" - ゲームオーバー
+; ジングルの実装で追記): 着地直後のwindow Bは(TRIGGER_GAME_OVER
+; 自身が一切触れないため)Stage2自身のbank5のままだが、GO_INIT_BGM
+; (下記)が一度だけbgm-dataバンク(global6)へ切り替えてジングルの
+; RAMコピーを行う。このバンクは以後window Bを一切参照しないため、
+; Stage2自身のbank5へ復帰させる必要はない(このバンクからStage2本編
+; へ戻ることは無い設計のため)。
 ;
 ; RAM(TANK_X/TANK_Y_CUR等)とVRAM(PAT_EXPLOSIONスプライトパターン
 ; 含む、Stage2本編のINITが既にロード済み)は物理的に共有されている
@@ -45,6 +51,46 @@ PSG_DATA        EQU 0A1h
 LDIRVM          EQU 005Ch
 GTTRIG          EQU 00D8h
 HTIMI_HOOK      EQU 0FD9Fh
+
+; (2026-09-08、"当たり前だろ 鳴らすようにしろ" - ゲームオーバー
+; ジングルをこのバンクにも実装): combined_test.asm自身のBGM_PERIOD_LO/
+; HI_RAM・BGM_B/C_PTR等と物理的に同じRAM(0xC200〜0xCB0Eh)をそのまま
+; 再利用する(Stage2本編がこのバンクへ来た時点で二度と実行されない
+; ことは、このファイル冒頭のコメント「RAM...は物理的に共有されている
+; ため...再利用する」の方針と同じ - tools/bgm_data/bgm_bank_gen.pyの
+; song_constants("GAME_OVER", data_base=0xC200)の出力値と一致させる
+; こと)。
+GO_PERIOD_LO_RAM  EQU 0C200h
+GO_PERIOD_HI_RAM  EQU 0C23Ch
+GO_CHB_BASE       EQU 0C278h  ; GAME_OVERジングルchB(melody, 35byte)
+GO_CHC_BASE       EQU 0C29Bh  ; GAME_OVERジングルchC(harmony, 15byte)
+GO_BGM_B_PTR      EQU 0CB00h
+GO_BGM_C_PTR      EQU 0CB02h
+GO_BGM_B_TIMER    EQU 0CB04h
+GO_BGM_C_TIMER    EQU 0CB05h
+GO_BGM_B_REST     EQU 0CB06h
+GO_BGM_C_REST     EQU 0CB07h
+GO_BGM_B_ENV_LEVEL  EQU 0CB08h
+GO_BGM_B_ENV_IDX    EQU 0CB09h
+GO_BGM_B_ENV_CD     EQU 0CB0Ah
+GO_BGM_B_DUTY_PHASE EQU 0CB0Bh
+GO_BGM_C_ENV_LEVEL  EQU 0CB0Ch
+GO_BGM_C_ENV_IDX    EQU 0CB0Dh
+GO_BGM_C_ENV_CD     EQU 0CB0Eh
+BGM_NOTE_REST     EQU 0FFh
+BGM_END_MARK      EQU 0FDh  ; 一度きり再生・以後無音保持(LOOP_MARK対応は不要 - このバンクは曲をループしない)
+BGM_ENV_LAST_INDEX EQU 15
+BGM_B_DUTY_MASK    EQU 1
+BGM_VOL_ATTEN      EQU 4
+; bgm-dataバンク(tools/bgm_data/bgm_bank_gen.py)のGLOBAL番号。gameover_
+; bank.asmは他ファイルと違い最初からComb globalの固定番号(TITLE_BANK_A/B
+; と同じ考え方)で書かれているためstandalone/Comb間のパッチは不要
+; (build_full_rom.pyのassemble_gameover_bank()参照、無加工でアセンブル
+; される)。GAME_OVERジングルのバンク内オフセット(0x9428、chB35byte+
+; chC15byte)もtools/bgm_data/bgm_bank_gen.pyの出力値と一致させること。
+BGMDATA_BANK EQU 6
+GO_SONG_SRC  EQU 09428h
+GO_SONG_LEN  EQU 032h
 
 ; "自機爆発はサウンドも欲しい"(2026-09-07): 実機フィードバック対応で
 ; 追加。src/CYBER SHMUP.asmのSOUND_DESTROY/combined_test.asmのSOUND_
@@ -116,14 +162,17 @@ TITLE_INIT   EQU 04010h
 
 INIT:
     ; combined_test.asm側のTRIGGER_GAME_OVERで既にDI済み・PSG無音化済み
-    ; - 念のためここでも明示。H.TIMIフックは明示的にbare RET(BIOS
-    ; デフォルト)へ戻してから安全にEIする(title_test.asmのWAIT_FOR_
-    ; STARTと同じ防御策 - 以後GTTRIGでボタン入力を検出するために割り込み
-    ; を有効化する必要があるが、Stage2自身の古いBGM_TICKフックが window
-    ; Aの中身[このバンク]を誤実行するレースを閉じておく)。
+    ; - 念のためここでもDIしたまま、GO_INIT_BGM(下記)がゲームオーバー
+    ; ジングルのRAMコピー+制御変数初期化+実際のH.TIMIフック(GO_BGM_TICK)
+    ; の設置までを全て完了させてからEIする。Stage1/Stage2/Titleの
+    ; INIT_BGM群と同じ「フックが完全に有効になるまでは絶対に割り込みを
+    ; 許可しない」設計(round53/56の教訓 - 古いフックが誤実行される
+    ; レースを閉じる)。旧実装は単にbare RET(BIOS標準)へ戻すだけ
+    ; だったが、"当たり前だろ 鳴らすようにしろ"の指示でこのバンクにも
+    ; ジングルを実装したため、その場所に本物のフックを設置する形へ
+    ; 置き換えた。
     DI
-    LD A,0C9h
-    LD (HTIMI_HOOK),A
+    CALL GO_INIT_BGM
     EI
 
     ; (2026-09-07、実機ではなく自己レンダリング確認で発見・修正: 当初
@@ -417,6 +466,248 @@ GBD_STORE:
     LD A,(GO_BOOM_VOL) : OUT (PSG_DATA),A
     EI
     RET
+
+; (2026-09-08、"当たり前だろ 鳴らすようにしろ" - ゲームオーバー
+; ジングルをこのバンクにも実装): 一度だけbgm-dataバンク(global6)へ
+; windowBを切り替え、周期テーブル+GAME_OVERジングルのchB/chC(50byte)
+; をcombined_test.asm自身のBGM RAM(GO_PERIOD_LO/HI_RAM・GO_CHB/CHC_
+; BASE、Stage2本編が二度と実行されないため安全に再利用)へLDIRしてから
+; 元のwindow B(Stage2自身のbank5)へは戻さない - このバンクは以後
+; window Bを一切参照しないため復帰は不要(SWITCH_TO_CHARDATA_BANK等の
+; 「必ず自分のbankへ復帰する」パターンとは違い、このバンクは最初から
+; 最後まで単発利用)。続けて制御変数を全てゼロクリアし、BGM_B/C_PTRを
+; ジングルの先頭へ、最後に本物のH.TIMIフック(GO_BGM_TICK)を設置する -
+; INIT側がこの直後にEIするまでは割り込みは一切発生しない。
+; Trashes: AF,BC,DE,HL.
+GO_INIT_BGM:
+    LD A,BGMDATA_BANK
+    LD (7000h),A
+    LD HL,08000h : LD DE,GO_PERIOD_LO_RAM : LD BC,078h : LDIR   ; 周期テーブル(60note*2)
+    LD HL,GO_SONG_SRC : LD DE,GO_CHB_BASE : LD BC,GO_SONG_LEN : LDIR  ; GAME_OVER chB+chC
+
+    LD HL,GO_CHB_BASE
+    LD (GO_BGM_B_PTR),HL
+    XOR A
+    LD (GO_BGM_B_TIMER),A
+    LD (GO_BGM_B_REST),A
+    LD (GO_BGM_B_ENV_LEVEL),A
+    LD (GO_BGM_B_ENV_IDX),A
+    LD (GO_BGM_B_ENV_CD),A
+    LD (GO_BGM_B_DUTY_PHASE),A
+    LD HL,GO_CHC_BASE
+    LD (GO_BGM_C_PTR),HL
+    LD (GO_BGM_C_TIMER),A
+    LD (GO_BGM_C_REST),A
+    LD (GO_BGM_C_ENV_LEVEL),A
+    LD (GO_BGM_C_ENV_IDX),A
+    LD (GO_BGM_C_ENV_CD),A
+
+    ; R7ミキサー: tone B/C有効+noise A有効(MIXER_NOISE_A、GO_ARM_BOOMも
+    ; 同じ値を毎回書くが、爆発音より先にBGMが鳴り始める余地があるため
+    ; ここでも明示的に一度書いておく)。
+    LD A,7 : OUT (PSG_ADDR),A
+    LD A,MIXER_NOISE_A : OUT (PSG_DATA),A
+
+    LD A,0C3h                     ; JP nn opcode
+    LD (HTIMI_HOOK),A
+    LD HL,GO_BGM_TICK
+    LD (HTIMI_HOOK+1),HL
+    RET
+
+; H.TIMIフック本体(実VBlank駆動)。GAME_OVERジングルは2パート(chB/chC)
+; のみ・BGM_END_MARK方式(一度きり再生、以後無音保持) - LOOP_MARK対応は
+; 不要なため、Stage1/Stage2/Titleの同名ドライバよりわずかに単純。
+GO_BGM_TICK:
+    PUSH AF
+    PUSH BC
+    PUSH DE
+    PUSH HL
+    CALL GO_BGMT_UPDATE_B
+    CALL GO_BGMT_UPDATE_C
+    POP HL
+    POP DE
+    POP BC
+    POP AF
+    RET
+
+; チャンネルB(R2/R3 tone、R9 volume、BELL形状+デューティ50%)。
+GO_BGMT_UPDATE_B:
+    LD A,(GO_BGM_B_TIMER)
+    OR A
+    JR Z,GO_BGMT_UB_NEWROW
+    DEC A
+    LD (GO_BGM_B_TIMER),A
+    JR GO_BGMT_UB_ENV_STEP
+GO_BGMT_UB_NEWROW:
+    LD HL,(GO_BGM_B_PTR)
+    LD A,(HL)
+    CP BGM_END_MARK
+    JR Z,GO_BGMT_UB_SETREST    ; 一度きりの終了 - PTRを進めず無音を保持し続ける
+    LD C,A
+    INC HL
+    LD A,(HL)
+    INC HL
+    LD (GO_BGM_B_PTR),HL
+    DEC A                          ; round40 off-by-one修正(他ファイルと同じ)
+    LD (GO_BGM_B_TIMER),A
+    LD A,C
+    CP BGM_NOTE_REST
+    JR Z,GO_BGMT_UB_SETREST
+    XOR A
+    LD (GO_BGM_B_REST),A
+    LD E,C : LD D,0
+    LD HL,GO_PERIOD_LO_RAM : ADD HL,DE : LD A,(HL) : LD B,A
+    LD HL,GO_PERIOD_HI_RAM : ADD HL,DE : LD A,(HL) : LD C,A
+    LD A,2 : OUT (PSG_ADDR),A
+    LD A,B : OUT (PSG_DATA),A
+    LD A,3 : OUT (PSG_ADDR),A
+    LD A,C : OUT (PSG_DATA),A
+    LD HL,GO_BGM_ENV_BELL_TABLE
+    LD A,(HL) : LD (GO_BGM_B_ENV_LEVEL),A
+    INC HL
+    LD A,(HL) : DEC A : LD (GO_BGM_B_ENV_CD),A
+    XOR A : LD (GO_BGM_B_ENV_IDX),A
+    LD A,BGM_B_DUTY_MASK : LD (GO_BGM_B_DUTY_PHASE),A
+    JR GO_BGMT_UB_ENV_WRITE
+GO_BGMT_UB_SETREST:
+    LD A,1
+    LD (GO_BGM_B_REST),A
+    LD A,9 : OUT (PSG_ADDR),A
+    XOR A : OUT (PSG_DATA),A
+    RET
+GO_BGMT_UB_ENV_STEP:
+    LD A,(GO_BGM_B_REST)
+    OR A
+    RET NZ
+    LD A,(GO_BGM_B_ENV_CD)
+    OR A
+    JR Z,GO_BGMT_UB_ENV_ADVANCE
+    DEC A
+    LD (GO_BGM_B_ENV_CD),A
+    JR GO_BGMT_UB_ENV_WRITE
+GO_BGMT_UB_ENV_ADVANCE:
+    LD A,(GO_BGM_B_ENV_IDX)
+    CP BGM_ENV_LAST_INDEX
+    JR Z,GO_BGMT_UB_ENV_WRITE
+    INC A
+    LD (GO_BGM_B_ENV_IDX),A
+    LD L,A : LD H,0
+    ADD HL,HL
+    LD DE,GO_BGM_ENV_BELL_TABLE
+    ADD HL,DE
+    LD A,(HL) : LD (GO_BGM_B_ENV_LEVEL),A
+    INC HL
+    LD A,(HL)
+    OR A
+    JR Z,GO_BGMT_UB_ENV_WRITE
+    DEC A
+    LD (GO_BGM_B_ENV_CD),A
+GO_BGMT_UB_ENV_WRITE:
+    LD A,(GO_BGM_B_DUTY_PHASE)
+    INC A
+    LD (GO_BGM_B_DUTY_PHASE),A
+    AND BGM_B_DUTY_MASK
+    LD B,0
+    JR NZ,GO_BGMT_UB_ENV_OUT
+    LD A,(GO_BGM_B_ENV_LEVEL)
+    SUB BGM_VOL_ATTEN
+    JR NC,GO_BGMT_UB_ATTEN_OK
+    XOR A
+GO_BGMT_UB_ATTEN_OK:
+    LD B,A
+GO_BGMT_UB_ENV_OUT:
+    LD A,9 : OUT (PSG_ADDR),A
+    LD A,B : OUT (PSG_DATA),A
+    RET
+
+; チャンネルC(R4/R5 tone、R10 volume、LINEAR形状+デューティOFF)。
+GO_BGMT_UPDATE_C:
+    LD A,(GO_BGM_C_TIMER)
+    OR A
+    JR Z,GO_BGMT_UC_NEWROW
+    DEC A
+    LD (GO_BGM_C_TIMER),A
+    JR GO_BGMT_UC_ENV_STEP
+GO_BGMT_UC_NEWROW:
+    LD HL,(GO_BGM_C_PTR)
+    LD A,(HL)
+    CP BGM_END_MARK
+    JR Z,GO_BGMT_UC_SETREST
+    LD C,A
+    INC HL
+    LD A,(HL)
+    INC HL
+    LD (GO_BGM_C_PTR),HL
+    DEC A
+    LD (GO_BGM_C_TIMER),A
+    LD A,C
+    CP BGM_NOTE_REST
+    JR Z,GO_BGMT_UC_SETREST
+    XOR A
+    LD (GO_BGM_C_REST),A
+    LD E,C : LD D,0
+    LD HL,GO_PERIOD_LO_RAM : ADD HL,DE : LD A,(HL) : LD B,A
+    LD HL,GO_PERIOD_HI_RAM : ADD HL,DE : LD A,(HL) : LD C,A
+    LD A,4 : OUT (PSG_ADDR),A
+    LD A,B : OUT (PSG_DATA),A
+    LD A,5 : OUT (PSG_ADDR),A
+    LD A,C : OUT (PSG_DATA),A
+    LD HL,GO_BGM_ENV_LINEAR_TABLE
+    LD A,(HL) : LD (GO_BGM_C_ENV_LEVEL),A
+    INC HL
+    LD A,(HL) : DEC A : LD (GO_BGM_C_ENV_CD),A
+    XOR A : LD (GO_BGM_C_ENV_IDX),A
+    JR GO_BGMT_UC_ENV_WRITE
+GO_BGMT_UC_SETREST:
+    LD A,1
+    LD (GO_BGM_C_REST),A
+    LD A,10 : OUT (PSG_ADDR),A
+    XOR A : OUT (PSG_DATA),A
+    RET
+GO_BGMT_UC_ENV_STEP:
+    LD A,(GO_BGM_C_REST)
+    OR A
+    RET NZ
+    LD A,(GO_BGM_C_ENV_CD)
+    OR A
+    JR Z,GO_BGMT_UC_ENV_ADVANCE
+    DEC A
+    LD (GO_BGM_C_ENV_CD),A
+    JR GO_BGMT_UC_ENV_WRITE
+GO_BGMT_UC_ENV_ADVANCE:
+    LD A,(GO_BGM_C_ENV_IDX)
+    CP BGM_ENV_LAST_INDEX
+    JR Z,GO_BGMT_UC_ENV_WRITE
+    INC A
+    LD (GO_BGM_C_ENV_IDX),A
+    LD L,A : LD H,0
+    ADD HL,HL
+    LD DE,GO_BGM_ENV_LINEAR_TABLE
+    ADD HL,DE
+    LD A,(HL) : LD (GO_BGM_C_ENV_LEVEL),A
+    INC HL
+    LD A,(HL)
+    OR A
+    JR Z,GO_BGMT_UC_ENV_WRITE
+    DEC A
+    LD (GO_BGM_C_ENV_CD),A
+GO_BGMT_UC_ENV_WRITE:
+    LD A,10 : OUT (PSG_ADDR),A
+    LD A,(GO_BGM_C_ENV_LEVEL)
+    SUB BGM_VOL_ATTEN
+    JR NC,GO_BGMT_UC_ATTEN_OK
+    XOR A
+GO_BGMT_UC_ATTEN_OK:
+    OUT (PSG_DATA),A
+    RET
+
+; BELL/LINEAR: 他の全ファイル(src/CYBER SHMUP.asm、combined_test.asm、
+; title_test.asm)と全く同一のパラメータ("音色はゲーム中と同じでいいわ"
+; の指示通り、このバンクだけ別の音にしない)。
+GO_BGM_ENV_BELL_TABLE:
+    DB 15,3,14,4,13,5,12,6,11,6,10,6,9,7,8,9,7,9,6,11,5,13,4,16,3,22,2,33,1,71,0,0
+GO_BGM_ENV_LINEAR_TABLE:
+    DB 15,2,14,3,13,2,12,3,11,2,10,3,9,3,8,3,7,2,6,3,5,3,4,2,3,3,2,2,1,3,0,0
 
 ; "MISSION FAILED"フォント(M,I,S,O,N,space,F,A,L,E,D、11グリフ、
 ; tools/pixel_font_8x8.pyの_GLYPHS_ATTACHED/_GLYPHS_NEWと同じ値、

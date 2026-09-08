@@ -12478,3 +12478,49 @@ literal reuse)+新爆発アニメーション要求受領・プレビューGIF�
   (BELL+50%duty/LINEARという既存BGMエンジンの音色設定そのまま)は
   次回フィードバック待ち。ボスのマテリアライズ中に被弾即死する
   エッジケース(CALL UNMUTE_BGMで対処済みだが実プレイでは未検証)。
+
+## Round74: Stage2 GAME_OVERバンクにもゲームオーバージングルを実装
+(2026-09-08、完了済み・実機フィードバック待ち)
+
+- ユーザー: "ステージ2にBGM再生機能がない? BGM鳴ってるだろうが" -
+  「Stage2にBGM再生機能が無い」という発言はStage2本編(combined_
+  test.asm、DEFEAT/TryZ実装済み)全体の話ではなく、TANK_LIFE枯渇時に
+  window Aだけ切り替わる独立バンク(`tools/gameover_bank/gameover_
+  bank.asm`)がBGM駆動機構を一切持たない、という限定的な話だったと
+  説明したところ、"当たり前だろ 鳴らすようにしろ"の指示。Round73で
+  意図的にスコープ外としていたStage2側の実装に着手。
+- **実装**: `gameover_bank.asm`にBGMドライバ一式を新規追加。
+  combined_test.asm自身のBGM RAM(GO_PERIOD_LO/HI_RAM=0xC200/0xC23C・
+  GO_CHB/CHC_BASE=0xC278/0xC29B・制御変数0xCB00-0xCB0E)と物理的に
+  同一アドレスをそのまま再利用(Stage2本編がこのバンクへ来た時点で
+  二度と実行されないため安全、tools/bgm_data/bgm_bank_gen.py
+  song_constants("GAME_OVER", data_base=0xC200)の出力値と一致)。
+  新規`GO_INIT_BGM`(一度だけwindow Bをbgm-dataバンク[global6、この
+  ファイルは他ファイルと違いstandalone/Comb間のパッチが不要 - 
+  TITLE_BANK_A/Bと同じくグローバル固定番号を直接埋め込む設計]へ
+  切り替え、周期テーブル+GAME_OVERジングルのchB/chC[50byte]をLDIR、
+  制御変数ゼロクリア、R7ミキサー設定、本物のHTIMI_HOOK[GO_BGM_TICK]
+  設置)を、INIT冒頭の旧「bare RETへ戻すだけ」の処理と置き換え。
+  `GO_BGM_TICK`/`GO_BGMT_UPDATE_B/C`はStage1/Stage2/Titleと同型だが
+  BGM_END_MARK専用(LOOP_MARK分岐は不要、ジングルは一度きり)。window B
+  はGO_INIT_BGM実行後もbank6のまま復帰させない(このバンクは以後
+  window Bを一切参照しないため不要、ヘッダコメントも「window Bは
+  一切触れない」から実態に合わせて更新)。GO_TO_TITLE(title復帰
+  トランポリン)は既存のR8/R9/R10無音化processingがそのまま新チャンネル
+  もカバー済みのため無変更。
+- 新規回帰テスト: `gameover_bank_test.py`に12件追加(30→42件)。
+  このファイルのharnessは真のマルチバンクエミュレーションを持たない
+  フラット64KBメモリのため、window B読み出し先(0x8000-0xBFFF)へ
+  実際のbgm-dataバンク内容をあらかじめ直接展開しておく手法で
+  GO_INIT_BGMのRAMコピー・制御変数初期化・HTIMI_HOOK設置・多tick
+  通しBELL/duty envelopeシミュレーション一致・実INIT経由での生存確認
+  を検証(実バンク切替そのものの統合検証は`verify_comb.py`が担当、
+  こちらは本物の`BankedMem`でwindow Bの実切替を経た実バイトを直接
+  検証)。`verify_comb.py`にも1ブロック追加(GAME_OVERバンク着地後の
+  BGM RAMコピー・HTIMI_HOOK設置を実マルチバンク環境で検証)。
+- 全回帰: Stage2側`run_all.py` **1486 passed/0 failed**(1474→1486)。
+  `verify_comb.py`全チェックPASS(GAME_OVERバンクのBGM RAMコピー検証
+  含む)。Comb ROM再ビルド・標準方針によりComb ROMのみ送付。
+- **保留・実機フィードバック待ち**: Stage2のゲームオーバー時ジングルの
+  実機での聞こえ方(爆発音[チャンネルA]との同時再生バランス含む)は
+  次回フィードバック待ち。

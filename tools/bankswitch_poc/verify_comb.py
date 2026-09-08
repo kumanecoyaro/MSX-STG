@@ -636,6 +636,40 @@ while cpu3.pc != GO_WAIT_LOOP and steps_s2g6 < 3_000_000:
     cpu3.step()
     steps_s2g6 += 1
 assert cpu3.pc == GO_WAIT_LOOP, "GAME_OVER bank never reached its own GO_WAIT_LOOP (blink sequence + text draw stuck?)"
+
+# (2026-09-08、"当たり前だろ 鳴らすようにしろ" - ゲームオーバージングルを
+# GAME_OVERバンクにも実装): GO_INIT_BGM(gameover_bank.asm)がここまでの
+# 過程で実際にwindow Bをbgm-dataバンク(global6)へ切り替え、周期テーブル+
+# GAME_OVERジングルのchB/chCをこのファイル自身のRAM(GO_PERIOD_LO/HI_RAM・
+# GO_CHB/CHC_BASE、combined_test.asm自身のBGM RAMと物理的に同じアドレス、
+# Stage2本編がもう二度と実行されないため安全に再利用)へコピー済みで
+# あることを確認する。ここは実際のマルチバンクエミュレーション(mem3=
+# BankedMem)上でのテストのため、gameover_bank_test.py側のフラットメモリ
+# harness(window Bのバンク切替を模擬できない)とは違い、本物のwindow B
+# 切替を経た実バイトを直接検証できる。
+_go = bgm_layout["GAME_OVER"]
+_go_start = _go["bank_offset"]
+_go_chB = bgm_bank[_go_start:_go_start + _go["chB_len"]]
+_go_chC = bgm_bank[_go_start + _go["chB_len"]:_go_start + _go["chB_len"] + _go["chC_len"]]
+_go_period_lo = list(bgm_bank[0:bg.NUM_NOTES])
+_go_period_hi = list(bgm_bank[bg.NUM_NOTES:2 * bg.NUM_NOTES])
+assert mem3.bankB == 6, \
+    "GAME_OVER bank's own GO_INIT_BGM should have left window B on the bgm-data bank (6) - " \
+    "it never restores window B afterward since it has no further use for it"
+assert [mem3.flat[gosym["GO_PERIOD_LO_RAM"] + i] for i in range(len(_go_period_lo))] == _go_period_lo, \
+    "GAME_OVER bank's own BGM RAM copy: period table (lo) mismatch"
+assert [mem3.flat[gosym["GO_PERIOD_HI_RAM"] + i] for i in range(len(_go_period_hi))] == _go_period_hi, \
+    "GAME_OVER bank's own BGM RAM copy: period table (hi) mismatch"
+assert [mem3.flat[gosym["GO_CHB_BASE"] + i] for i in range(len(_go_chB))] == list(_go_chB), \
+    "GAME_OVER bank's own BGM RAM copy: chB (melody) mismatch"
+assert [mem3.flat[gosym["GO_CHC_BASE"] + i] for i in range(len(_go_chC))] == list(_go_chC), \
+    "GAME_OVER bank's own BGM RAM copy: chC (harmony) mismatch"
+_go_hook_target = mem3.flat[gosym["HTIMI_HOOK"] + 1] | (mem3.flat[gosym["HTIMI_HOOK"] + 2] << 8)
+assert mem3.flat[gosym["HTIMI_HOOK"]] == 0xC3 and _go_hook_target == gosym["GO_BGM_TICK"], \
+    "GAME_OVER bank's own INIT did not install its HTIMI_HOOK pointing at GO_BGM_TICK"
+print("GAME_OVER bank's own BGM RAM copy (period table + GAME_OVER jingle chB/chC) verified "
+      "byte-correct via a real window B bank switch, HTIMI_HOOK armed to its own GO_BGM_TICK")
+
 cpu3.sim_trig_a = True
 steps_s2g7 = 0
 switched_s2g7 = False
