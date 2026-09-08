@@ -305,9 +305,21 @@ GLOP_COLOR_RESOLVED:
 
 ; スロット0-3(16byte)をY=209(MSX標準の「以降のスプライトも含め全部
 ; 隠す」センチネル)+X=0/pat=0/col=0へ戻し、点滅の非表示側を作る。
+; (2026-09-08、実機フィードバック対応、"ステージ2の自機爆発で音が
+; 出っぱなしでMission Failedになってる 消してからゲームオーバーに
+; しろ 音の消し忘れ多すぎだろうが"): GO_ARM_BOOM/GO_STEP_BOOM_DECAY
+; はポップごとに音量15へ撃ち直してから2段(15→13→11)しか減衰させず、
+; 次のポップの頭でまた15へ撃ち直されるため、シーケンス全体を通じて
+; R8(チャンネルA音量)が0に達することは一度も無い - 最後のポップの
+; 後もR8=11のまま誰にも触れられず、MISSION FAILED表示中もずっと
+; 鳴り続けていた。爆発演出の後片付け(GO_HIDE_EXPLOSION)の一部として
+; ここでR8=0を明示的に書き込み、テキスト表示に進む前に確実に無音化
+; する。
 ; Trashes: AF,B,HL.
 GO_HIDE_EXPLOSION:
     DI
+    LD A,8 : OUT (PSG_ADDR),A
+    XOR A : OUT (PSG_DATA),A   ; channel A (boom SE) volume=0 - GO_STEP_BOOM_DECAY never reaches 0 on its own
     LD A,0 : OUT (99h),A
     NOP
     NOP

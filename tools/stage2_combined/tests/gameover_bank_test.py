@@ -306,6 +306,37 @@ hide_attrs = [z2.vram[0x1B00 + i] for i in range(16)]
 check("GO_HIDE_EXPLOSION hides all 4 slots (Y=209)",
       hide_attrs == [209, 0, 0, 0] * 4)
 
+# ---- (2026-09-08、実機フィードバック対応、"ステージ2の自機爆発で音が
+# 出っぱなしでMission Failedになってる 消してからゲームオーバーにしろ
+# 音の消し忘れ多すぎだろうが"): GO_ARM_BOOM/GO_STEP_BOOM_DECAYはポップ
+# ごとに音量15へ撃ち直してから2段(15→13→11)しか減衰させないため、
+# シーケンス全体を通じてR8が0に達することは無い(最後のポップ後も
+# R8=11のまま残る)。GO_HIDE_EXPLOSIONがこの後片付けの一部として明示的に
+# R8=0を書き込むことを直接検証する。
+z3 = fresh()
+z3.psg_regs[8] = 11  # poison: the leftover non-zero volume GO_STEP_BOOM_DECAY leaves behind
+z3.sp = 0xF000
+z3.wr(0xF000, 0x00); z3.wr(0xF001, 0x00)
+z3.pc = sym["GO_HIDE_EXPLOSION"]
+run_until_pc(z3, 0x0000, 300000)
+check("GO_HIDE_EXPLOSION silences PSG R8 (channel A boom volume) to 0 - "
+      "GO_STEP_BOOM_DECAY alone never reaches 0 (each pop re-arms it to 15), so "
+      "without this the boom sound would keep ringing right through the MISSION "
+      "FAILED text display",
+      z3.psg_regs.get(8) == 0)
+
+# ---- end-to-end: the real INIT flow (explosion sequence -> hide -> text) must ----
+# ---- leave R8 silenced by the time MISSION FAILED is actually on screen.       ----
+z4 = fresh()
+z4.wr(TANK_X, 120)
+z4.wr(TANK_Y_CUR, 90)
+z4.pc = sym["INIT"]
+run_until_pc(z4, GO_WAIT_LOOP, 5_000_000)
+check("real INIT flow: by the time GO_WAIT_LOOP (MISSION FAILED already drawn) is "
+      "reached, PSG R8 (channel A) is silenced to 0 - the boom sound does not keep "
+      "playing under the game-over text",
+      z4.psg_regs.get(8) == 0)
+
 print()
 print(f"{len(ok)} passed, {len(fail)} failed")
 if fail:
