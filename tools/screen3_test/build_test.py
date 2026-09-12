@@ -26,12 +26,13 @@ def assemble():
 def main():
     out, sym, text = assemble()
     lo, hi = min(out), max(out)
-    mem = bytearray(16384)
+    assert hi < 0xC000, f"content ({hi:04X}h) overflows the 32KB window (4000h-BFFFh)"
+    mem = bytearray(32768)
     for a, b in out.items():
         mem[a - 0x4000] = b
     rom_path = os.path.join(HERE, "Screen3Test.rom")
     with open(rom_path, "wb") as f:
-        f.write(bytes(mem) * 2)  # doubled to 32KB, matches terrain_test.rom's own convention
+        f.write(bytes(mem))
     print(f"assembled {lo:04X}h-{hi:04X}h ({hi-lo+1} bytes), wrote {rom_path} (32768 bytes)")
     print("INIT =", hex(sym["INIT"]))
     return out, sym, text

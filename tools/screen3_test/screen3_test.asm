@@ -1,28 +1,23 @@
 ; SCREEN3(Multicolor)画像表示テスト(2026-09-12、"では取り敢えず組み込み
 ; はせずテストをする...この画像を表示してみてくれ 表示テスト用のROMを
-; 作る ベースはタイトル表示までを流用 それ以外は空でいい")。
+; 作る ベースはタイトル表示までを流用 それ以外は空でいい" - 実機で
+; 「おｋ意図通り表示できた」確認済みの続き、"次はこの6枚を連続で表示
+; 3回繰り返して")。
 ;
 ; tools/title_screen/title_test.asmのINIT冒頭(DI・BIOS画面モード初期化
 ; ・VDP R1/R7設定・スプライト停止・EI)をそのまま踏襲した最小構成。
 ; BGM・バンク切替・ボタン入力・ゲーム本編は一切無し(指示通り「それ以外
-; は空」)。単発の16KB flat ROM(tools/stage2_terrain/terrain_test.asmと
+; は空」)。単発の32KB flat ROM(tools/stage2_terrain/terrain_test.asmと
 ; 同じ、ASCII16のページ切替すら不要な単純な構成 - 表示に必要なデータ
-; [PGT2048byte+NAME768byte=2816byte]がこの1バンクに余裕で収まるため)。
+; [PGT2048byte+NAME768byte=2816byte x6枚=16896byte]が32KB[0000h起点で
+; 4000h-BFFFh]に余裕で収まるため)。
 ;
-; (2026-09-12、実機フィードバック対応 "スクリーン3に設定できてないな
-; TMS9918のスクリーン3は64x48px"): 初版は根拠の薄い推測のBIOSアドレス
-; (INIMLT=0075h、INIT32/INIGRPの並びから類推しただけで実機未検証)を
-; 呼んでいたため、SCREEN3へ実際には切り替わっていなかった(添付
-; スクリーンショットの縦縞ノイズは、Multicolorモードのデータを別モード
-; として解釈してしまった結果と一致)。この推測ルーチンは完全に撤回し、
-; 代わりにこのプロジェクトで既に実機検証済みのINIT32(SCREEN1、
-; Stage1/Stage2/terrain_test.asm等で実績あり)をベースに、TMS9918の
-; モード選択ビット(M1=VDP R1 bit4/M2=R1 bit3/M3=VDP R0 bit1)のうち
-; Graphics1→Multicolorへの差分であるM2(R1 bit3)だけを追加で立てる
-; 方式に変更(M1=0/M3=0はGraphics1・Multicolor共通、INIT32が既に
-; 正しく設定済みのまま)。パターンジェネレータ/ネームテーブル/
-; スプライト属性のVRAMアドレス(0000h/1800h/1B00h)もGraphics1と
-; Multicolorで共通のため、INIT32が設定した値をそのまま流用できる。
+; (実機フィードバック対応: "スクリーン3に設定できてないな TMS9918の
+; スクリーン3は64x48px"): このプロジェクトで既に実機検証済みのINIT32
+; (SCREEN1、Stage1/Stage2/terrain_test.asm等で実績あり)をベースに、
+; TMS9918のモード選択ビット(M1=VDP R1 bit4/M2=R1 bit3/M3=VDP R0
+; bit1)のうちGraphics1→Multicolorへの差分であるM2(R1 bit3)だけを
+; 追加で立てる方式(実機確認済み、「おｋ意図通り表示できた」)。
     ORG 4000h
 
 INIT32  EQU 006Fh   ; SCREEN1初期化(BIOS) - 実機検証済み、Multicolorとの
@@ -36,8 +31,9 @@ WRTVRM  EQU 004Dh
     DW 0,0,0
     DS 6,0
 
-SPRATR   EQU 1B00h
-STACKTOP EQU 0F380h
+SPRATR       EQU 1B00h
+STACKTOP     EQU 0F380h
+REPEAT_COUNT EQU 0F000h   ; scratch RAM byte (残り周回数)
 
 INIT:
     LD SP,STACKTOP
@@ -54,16 +50,73 @@ INIT:
     ; border/backdrop black
     LD B,01h : LD C,7 : CALL WRTVDP
 
-    ; パターンジェネレータ(2048byte)->VRAM 0000h、ネームテーブル
-    ; (768byte)->VRAM 1800h(いずれもBIOS標準デフォルトアドレス -
-    ; ソースファイル自体の内部配置[screen3_gen.py参照]とは無関係)。
-    LD HL,SC3_PGT : LD DE,0000h : LD BC,SC3_PGT_LEN : CALL LDIRVM
-    LD HL,SC3_NAME : LD DE,1800h : LD BC,SC3_NAME_LEN : CALL LDIRVM
-
-    ; このテスト画像はスプライトパターンを持たないため、スプライトを
-    ; 一切表示しないことを明示的に保証する(title_test.asmと同じ
-    ; 0D1h停止マーカー)。
+    ; このテスト画像はいずれもスプライトパターンを持たないため、
+    ; スプライトを一切表示しないことを明示的に保証する(title_test.asm
+    ; と同じ0D1h停止マーカー、以後全ループを通して変更不要)。
     LD A,0D1h : LD HL,SPRATR : CALL WRTVRM
+
+    ; "6枚を連続で表示 3回繰り返して" - 6枚1周を3回。
+    LD A,3
+    LD (REPEAT_COUNT),A
+SHOW_ALL_LOOP:
+    CALL SHOW_IMG1
+    CALL SHOW_IMG2
+    CALL SHOW_IMG3
+    CALL SHOW_IMG4
+    CALL SHOW_IMG5
+    CALL SHOW_IMG6
+    LD A,(REPEAT_COUNT)
+    DEC A
+    LD (REPEAT_COUNT),A
+    JR NZ,SHOW_ALL_LOOP
 
 HALT_LOOP:
     JR HALT_LOOP
+
+; パターンジェネレータ(2048byte)->VRAM 0000h、ネームテーブル
+; (768byte)->VRAM 1800h(いずれもBIOS標準デフォルトアドレス -
+; ソースファイル自体の内部配置[screen3_gen.py参照]とは無関係)へ
+; 転送してからDELAYだけの単純な繰り返し。
+SHOW_IMG1:
+    LD HL,SC3_IMG1_PGT : LD DE,0000h : LD BC,SC3_IMG1_PGT_LEN : CALL LDIRVM
+    LD HL,SC3_IMG1_NAME : LD DE,1800h : LD BC,SC3_IMG1_NAME_LEN : CALL LDIRVM
+    JP DELAY
+SHOW_IMG2:
+    LD HL,SC3_IMG2_PGT : LD DE,0000h : LD BC,SC3_IMG2_PGT_LEN : CALL LDIRVM
+    LD HL,SC3_IMG2_NAME : LD DE,1800h : LD BC,SC3_IMG2_NAME_LEN : CALL LDIRVM
+    JP DELAY
+SHOW_IMG3:
+    LD HL,SC3_IMG3_PGT : LD DE,0000h : LD BC,SC3_IMG3_PGT_LEN : CALL LDIRVM
+    LD HL,SC3_IMG3_NAME : LD DE,1800h : LD BC,SC3_IMG3_NAME_LEN : CALL LDIRVM
+    JP DELAY
+SHOW_IMG4:
+    LD HL,SC3_IMG4_PGT : LD DE,0000h : LD BC,SC3_IMG4_PGT_LEN : CALL LDIRVM
+    LD HL,SC3_IMG4_NAME : LD DE,1800h : LD BC,SC3_IMG4_NAME_LEN : CALL LDIRVM
+    JP DELAY
+SHOW_IMG5:
+    LD HL,SC3_IMG5_PGT : LD DE,0000h : LD BC,SC3_IMG5_PGT_LEN : CALL LDIRVM
+    LD HL,SC3_IMG5_NAME : LD DE,1800h : LD BC,SC3_IMG5_NAME_LEN : CALL LDIRVM
+    JP DELAY
+SHOW_IMG6:
+    LD HL,SC3_IMG6_PGT : LD DE,0000h : LD BC,SC3_IMG6_PGT_LEN : CALL LDIRVM
+    LD HL,SC3_IMG6_NAME : LD DE,1800h : LD BC,SC3_IMG6_NAME_LEN : CALL LDIRVM
+    JP DELAY
+
+; src/CYBER SHMUP.asmのMISSION_DELAY_3SEC(実機実測約2.94秒)と全く同じ
+; 構成の純粋なZ80クロックのビジーウェイト(割り込み非依存 - CLAUDE.md
+; 恒久ルールにもOTIR等のブロックI/O命令は関係ないが、このプロジェクトの
+; 既存の「実時間待ちはHALT/EIに頼らずビジーウェイトで組む」流儀を
+; そのまま踏襲)。1枚あたり約3秒表示。
+DELAY:
+    LD D,10
+DELAY_OUTER:
+    LD B,0
+DELAY_MID:
+    LD C,0
+DELAY_INNER:
+    DEC C
+    JR NZ,DELAY_INNER
+    DJNZ DELAY_MID
+    DEC D
+    JR NZ,DELAY_OUTER
+    RET
