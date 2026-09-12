@@ -12913,27 +12913,70 @@ Y段違い+Enemy6速度半減、Stage2自機爆発の自機非表示タイミン
   範囲とも)は次回フィードバック待ち。`GO_POP_JITTER`(32)・
   `NUM_POPS`(40)は依然未調整の初期値。
 
-## セッション引き継ぎメモ(2026-09-12、Round79完了直後)
+## Round80: Stage1スケジュール再々差し替え(Schedule_4.json、549件)
+(2026-09-12、完了済み・実機フィードバック待ち)
 
-- **現在の状態**: Round79(Stage2自機爆発のスプライト優先度修正+範囲
-  拡大)まで完了・コミット・push済み(コミット`1c7c205`、ブランチ
-  `claude/msx-stg-github-integration-cont-g3od47`)。作業ツリーは
-  クリーン(未コミット差分なし)。Comb ROM送付済み、全回帰1507
-  passed/0 failed。
-- **直前のやり取り**: ユーザーから「プライオリティ変更は爆発処理
-  だけだな」との確認質問があり、「はい、`tools/gameover_bank/
-  gameover_bank.asm`のGAME_OVER爆発演出のみが対象で、Stage2本編
-  通常プレイ・Stage1・タイトルのスプライト優先度には一切影響しない」
-  と回答済み(この回答自体はコード変更を伴わない)。
-- **保留・実機フィードバック待ちの項目**(Round79末尾と同一、次回
-  実機確認結果を待つ):
-  - Stage2自機爆発のスプライト優先度修正(TANKの後ろに隠れず手前に
-    描画されるようになったか)・範囲拡大(`GO_POP_JITTER`=32、
-    ±16px)の実機での見え方。
-  - `NUM_POPS`(40)は依然未調整の初期値。
-  - Round78由来の保留(549件スケジュールのペーシング・Enemy2 Y段違い
-    合体演出の見え方・Enemy6速度半減[`ENEMY6_STEP_FRAMES`=2]の
-    難易度感)も引き続き実機フィードバック待ち。
+- ユーザー: "では再度ステージ１のスケジュールを添付ファイルに差し替え"
+  (添付`Schedule_4.json`、549件、maxTick999)。件数・type内訳
+  (enemy6 310/simple 122/enemy5 67/enemy4 33/enemy2 13/enemy3_wave 3/
+  boss 1)・enemy2の出現index([22,38,118,126,130,134,136,165,166,199,
+  200,201,202]、全て255未満)はRound78のSchedule_3.jsonと完全一致、
+  差分はtick800-963のenemy6高密度区間のtick微調整(77箇所)とblock1
+  終盤の数箇所でenemy4/enemy5(SPAWN_E4/E4B)とsimpleの前後1手ずれ
+  のみと確認。
+- Round76/78と同じ「Pythonスクリプトで機械的に再生成」方式を踏襲、
+  今回はスクリプト自体を`/tmp`のスクラッチに新規作成
+  (`gen_schedule.py`、リポジトリ非コミット)し、`SPAWN_THRESHOLDS`/
+  `SPAWN_SIMPLE_Y_TABLE`/`SPAWN_BASEY_TABLE`/`SPAWN_E3_OFFSET_TABLE`/
+  `ENEMY6_ROW_TABLE`の5テーブルと`SSC_FIRE`のH=0/1/2ブロック分岐
+  (Round77で汎用化済みのNブロック機構、549件のままなのでブロック数
+  3のまま変化なし)を丸ごと再生成・置換。`SPAWN_NEXT_INDEX`の長さ
+  定数(`LD DE,549`)・`SSC_BUSY_E2`のCP一覧は値が完全に同じため
+  無変更(スクリプト自体は毎回両方とも再計算して書き込むが、结果が
+  一致したため実質diffなし)。type→handlerマッピング
+  (simple→SPAWN_SIMPLE/enemy2→SPAWN_E2/enemy3_wave→SPAWN_E3_WAVE/
+  enemy4→SPAWN_E4/enemy5→SPAWN_E4B/enemy6→SPAWN_E6/boss→BOSS_SPAWN
+  [最終エントリのみ、CPなしのフォールバック分岐])は過去ラウンドの
+  実装から機械的に確認・踏襲。
+- 生成後の`git diff`は13ハンク・108行(±54行)のみで、上記で特定した
+  正当な差分(enemy6区間のtick/row微調整+block1の数箇所のindex
+  前後シフト)とちょうど一致することを確認済み(想定外の広範な
+  diffが出ないことをこの時点で目視検証)。
+- 検証: `python3 tools/bankswitch_poc/build_full_rom.py`で正常
+  アセンブル・Comb ROM再ビルド、`tools/verify_spawn_schedule_
+  restart.py`(12件、Round62由来の"ソース自身から動的に拾う"方式の
+  ため今回のスケジュール差し替えでもハードコード値の追従不要と
+  確認)・`tools/verify_enemy_bullets.py`(56)・`tools/verify_player_
+  damage.py`(60)・`tools/verify_stage1_bgm.py`(80)・`tools/verify_
+  stage1_mission_screens.py`(87)・`tools/verify_enemy6_durability.py`
+  (15)・`tools/verify_explosion_anim.py`(28)・`tools/verify_boss_dfl_
+  clear.py`(10)、全てPASS。Stage2側`run_all.py` **1507 passed/
+  0 failed**(無変化、今回combined_test.asmは無編集)。
+  `tools/bankswitch_poc/verify_comb.py`全チェックPASS(title→Stage1→
+  Stage2一気通貫のバンク切替・GAME_OVER系トランポリン含む)。標準
+  方針によりComb ROMのみ送付予定。
+- **保留・実機フィードバック待ち**: 新スケジュール(tick800-963の
+  enemy6密度・微調整後のタイミング)の実プレイでのペーシングは
+  次回フィードバック待ち。Round78/79由来の保留(Enemy2 Y段違い合体
+  演出・Enemy6速度半減の難易度感・Stage2自機爆発のスプライト優先度
+  修正+範囲拡大の見え方、`NUM_POPS`=40の初期値)も引き続き実機
+  フィードバック待ち。
+
+## セッション引き継ぎメモ(2026-09-12、Round80完了直後)
+
+- **現在の状態**: Round80(Stage1スケジュールをSchedule_4.json[549件]
+  へ再々差し替え)まで完了。全回帰: Stage1側`verify_spawn_schedule_
+  restart.py` 12・`verify_enemy_bullets.py` 56・`verify_player_
+  damage.py` 60・`verify_stage1_bgm.py` 80・`verify_stage1_mission_
+  screens.py` 87・`verify_enemy6_durability.py` 15・`verify_
+  explosion_anim.py` 28・`verify_boss_dfl_clear.py` 10、全てPASS。
+  Stage2側`run_all.py` 1507 passed/0 failed(無変化)。
+  `verify_comb.py`全チェックPASS。Comb ROM再ビルド済み。
+- **コミット・push状況**: 本メモ記載時点でコミット・push作業中
+  (このメモ自体が同じコミットに含まれる想定)。作業ツリーの内容:
+  `src/CYBER SHMUP.asm`(SPAWN_THRESHOLDS等5テーブル+SSC_FIRE
+  ブロックの再生成)・`rom/CyberS Comb.ascii16k.rom`(再ビルド)・
+  `CLAUDE.md`/本HANDOFF.md(記録追記)。
 - **次に着手すべきこと**: 特になし(指示なしに着手しない方針)。
   ユーザーからの次の実機フィードバック・新規指示を待つ状態。
 - **新セッションが最初にすべきこと**: このHANDOFF.md末尾(本項目)を
