@@ -3,7 +3,15 @@
 ; 作る ベースはタイトル表示までを流用 それ以外は空でいい" - 実機で
 ; 「おｋ意図通り表示できた」確認済みの続き、"次はこの6枚を連続で表示
 ; 3回繰り返して"→"ウェイトいらない 最大速度みたいんで"→
-; "6枚目こうなってるんだけど これで正しいのか"[市松模様ノイズ])。
+; "6枚目こうなってるんだけど これで正しいのか"[市松模様ノイズ]→
+; RLE圧縮で単一バンクへ収める修正→"では各画像を3フレ表示でループに
+; したRomを"で3フレーム[vblank]間隔の無限ループへ変更)。
+;
+; フレーム待ちはBIOS標準のJIFFY(0FC9Eh、H.TIMIのデフォルトハンドラが
+; 毎vblank+1する2byteシステム変数 - このファイルは独自のHTIMI_HOOK
+; インストールを一切行わないため、EI後はBIOSデフォルトハンドラが
+; そのまま有効)を参照するだけで実現 - 自前のビジーウェイトでは
+; なく本物のvblank同期(3フレーム=3/60秒≒50ms)。
 ;
 ; tools/title_screen/title_test.asmのINIT冒頭(DI・BIOS画面モード初期化
 ; ・VDP R1/R7設定・スプライト停止・EI)をそのまま踏襲した最小構成。
@@ -36,6 +44,8 @@ WRTVDP   EQU 0047h
 WRTVRM   EQU 004Dh
 VDP_ADDR EQU 099h
 VDP_DATA EQU 098h
+JIFFY    EQU 0FC9Eh   ; BIOS標準システム変数(2byte)、H.TIMIデフォルト
+                       ; ハンドラが毎vblank+1する実時間クロック
 
     DB "AB"
     DW INIT
@@ -44,7 +54,6 @@ VDP_DATA EQU 098h
 
 SPRATR       EQU 1B00h
 STACKTOP     EQU 0F380h
-REPEAT_COUNT EQU 0F000h   ; scratch RAM byte (残り周回数)
 
 INIT:
     LD SP,STACKTOP
@@ -66,9 +75,8 @@ INIT:
     ; と同じ0D1h停止マーカー、以後全ループを通して変更不要)。
     LD A,0D1h : LD HL,SPRATR : CALL WRTVRM
 
-    ; "6枚を連続で表示 3回繰り返して" - 6枚1周を3回。
-    LD A,3
-    LD (REPEAT_COUNT),A
+    ; "各画像を3フレ表示でループにした" - 6枚を順に表示し続け、
+    ; 6枚目の後は1枚目へ戻って無限に繰り返す(回数制限なし)。
 SHOW_ALL_LOOP:
     CALL SHOW_IMG1
     CALL SHOW_IMG2
@@ -76,52 +84,63 @@ SHOW_ALL_LOOP:
     CALL SHOW_IMG4
     CALL SHOW_IMG5
     CALL SHOW_IMG6
-    LD A,(REPEAT_COUNT)
-    DEC A
-    LD (REPEAT_COUNT),A
-    JR NZ,SHOW_ALL_LOOP
-
-HALT_LOOP:
-    JR HALT_LOOP
+    JR SHOW_ALL_LOOP
 
 ; パターンジェネレータ->VRAM 0000h、ネームテーブル->VRAM 1800h(いずれも
-; BIOS標準デフォルトアドレス)へRLE展開するだけ("ウェイトいらない
-; 最大速度みたいんで" - 展開完了次第即座に次の画像へ進む)。
+; BIOS標準デフォルトアドレス)へRLE展開後、3フレーム(vblank)分待って
+; から戻る。
 SHOW_IMG1:
     LD HL,0000h : CALL SET_VRAM_WRITE
     LD HL,SC3_IMG1_PGT_RLE : LD DE,SC3_IMG1_PGT_SEGMENTS : CALL DECOMPRESS_STREAM
     LD HL,1800h : CALL SET_VRAM_WRITE
     LD HL,SC3_IMG1_NAME_RLE : LD DE,SC3_IMG1_NAME_SEGMENTS : CALL DECOMPRESS_STREAM
-    RET
+    JP WAIT_3_FRAMES
 SHOW_IMG2:
     LD HL,0000h : CALL SET_VRAM_WRITE
     LD HL,SC3_IMG2_PGT_RLE : LD DE,SC3_IMG2_PGT_SEGMENTS : CALL DECOMPRESS_STREAM
     LD HL,1800h : CALL SET_VRAM_WRITE
     LD HL,SC3_IMG2_NAME_RLE : LD DE,SC3_IMG2_NAME_SEGMENTS : CALL DECOMPRESS_STREAM
-    RET
+    JP WAIT_3_FRAMES
 SHOW_IMG3:
     LD HL,0000h : CALL SET_VRAM_WRITE
     LD HL,SC3_IMG3_PGT_RLE : LD DE,SC3_IMG3_PGT_SEGMENTS : CALL DECOMPRESS_STREAM
     LD HL,1800h : CALL SET_VRAM_WRITE
     LD HL,SC3_IMG3_NAME_RLE : LD DE,SC3_IMG3_NAME_SEGMENTS : CALL DECOMPRESS_STREAM
-    RET
+    JP WAIT_3_FRAMES
 SHOW_IMG4:
     LD HL,0000h : CALL SET_VRAM_WRITE
     LD HL,SC3_IMG4_PGT_RLE : LD DE,SC3_IMG4_PGT_SEGMENTS : CALL DECOMPRESS_STREAM
     LD HL,1800h : CALL SET_VRAM_WRITE
     LD HL,SC3_IMG4_NAME_RLE : LD DE,SC3_IMG4_NAME_SEGMENTS : CALL DECOMPRESS_STREAM
-    RET
+    JP WAIT_3_FRAMES
 SHOW_IMG5:
     LD HL,0000h : CALL SET_VRAM_WRITE
     LD HL,SC3_IMG5_PGT_RLE : LD DE,SC3_IMG5_PGT_SEGMENTS : CALL DECOMPRESS_STREAM
     LD HL,1800h : CALL SET_VRAM_WRITE
     LD HL,SC3_IMG5_NAME_RLE : LD DE,SC3_IMG5_NAME_SEGMENTS : CALL DECOMPRESS_STREAM
-    RET
+    JP WAIT_3_FRAMES
 SHOW_IMG6:
     LD HL,0000h : CALL SET_VRAM_WRITE
     LD HL,SC3_IMG6_PGT_RLE : LD DE,SC3_IMG6_PGT_SEGMENTS : CALL DECOMPRESS_STREAM
     LD HL,1800h : CALL SET_VRAM_WRITE
     LD HL,SC3_IMG6_NAME_RLE : LD DE,SC3_IMG6_NAME_SEGMENTS : CALL DECOMPRESS_STREAM
+    JP WAIT_3_FRAMES
+
+; JIFFY(BIOSがH.TIMI毎に+1する2byteシステム変数)が3回進むまで待つ。
+; DEに基準値を保持したまま(SBC HL,DEはHLしか書き換えない)HLだけ毎回
+; 読み直して比較する方式 - CLAUDE.md恒久ルールに抵触するブロックI/O
+; 命令は使わない、単純なメモリ参照のみ。
+WAIT_3_FRAMES:
+    CALL WAIT_1_FRAME
+    CALL WAIT_1_FRAME
+    JP WAIT_1_FRAME     ; 3回目はJPでRET先をSHOW_IMGxの呼び出し元(SHOW_ALL_LOOP)に委ねる
+WAIT_1_FRAME:
+    LD DE,(JIFFY)
+WF1_LOOP:
+    LD HL,(JIFFY)
+    OR A
+    SBC HL,DE
+    JR Z,WF1_LOOP
     RET
 
 ; HL=VRAM書き込み先アドレス。以後VDPのオートインクリメントで
