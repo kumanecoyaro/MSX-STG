@@ -402,23 +402,24 @@ STAGE2_GAMEOVER_BANKSELECT_PATCH = """    LD A,7                        ; standa
     LD HL,04000h                  ; tools/gameover_bank/gameover_bank.asmのINIT(ORG直後、ROMヘッダ無し)
     JP BANKSWITCH_TRAMPOLINE_RAM"""
 
-# (2026-09-07、"ステージ2クリア後は10秒でタイトル画面に"): ENDING_ACT==4
+# (2026-09-07、"ステージ2クリア後は10秒でタイトル画面に"、2026-09-12、
+# "ではこの画像をMission completed表示後10秒したら表示 ボタンが押され
+# たらスタート画面へ"で最終画像表示+ボタン待ちを追加): ENDING_ACT==4
 # (GFEnding "MISSION COMPLETED"表示から実時間10秒経過、UPDATE_ENDING
-# 自身が一度だけ進める)検出時にtitle(GLOBAL bank0/1)へ2ホップトランポリン
-# で戻る。combined_test.asm自身はバンク切替を一切行わない設計のため、
-# standaloneのソース中はただの状態チェック(JR NZで素通り)になっている
-# アンカーブロックを丸ごと実際のトランポリンコードへ置き換える。
-STAGE2_ENDING_RETURN_ANCHOR = """    LD A,(ENDING_ACT)
-    CP 4
-    JR NZ,ENDING_NO_TITLE_RETURN
-ENDING_NO_TITLE_RETURN:
+# 自身が一度だけ進める)検出時にcombined_test.asm自身がENDING_SHOW_
+# FINAL_IMAGE(SCREEN2の最終画像表示+ボタン待ち、standalone/Comb共通
+# コード)へ一方通行で分岐するのは元々のソースのまま(バンク切替を
+# 一切行わない設計は変わらず)。実際にtitle(GLOBAL bank0/1)へ2ホップ
+# トランポリンするのは、ボタン押下を検出した直後のこのアンカー
+# ブロック(standaloneのままではtitleバンクが存在しないため単なる
+# アイドルループになっている)だけ - STAGE2_GAMEOVER_BANKSELECT_PATCH
+# 等と全く同じANCHOR/PATCHパターンで丸ごと実際のトランポリンコードへ
+# 置き換える。
+STAGE2_ENDING_RETURN_ANCHOR = """ENDING_FINAL_BUTTON_PRESSED:
+ENDING_FINAL_IDLE:
+    JR ENDING_FINAL_IDLE"""
 
-    JP MAINLOOP"""
-
-STAGE2_ENDING_RETURN_PATCH = """    LD A,(ENDING_ACT)
-    CP 4
-    JR NZ,ENDING_NO_TITLE_RETURN
-
+STAGE2_ENDING_RETURN_PATCH = """ENDING_FINAL_BUTTON_PRESSED:
     DI
     LD A,8 : OUT (PSG_ADDR),A : XOR A : OUT (PSG_DATA),A
     LD A,9 : OUT (PSG_ADDR),A : XOR A : OUT (PSG_DATA),A
@@ -431,10 +432,7 @@ ENDING_RETURN_HOP2:
     LD A,0
     LD DE,6000h
     LD HL,04010h
-    JP BANKSWITCH_TRAMPOLINE_RAM
-ENDING_NO_TITLE_RETURN:
-
-    JP MAINLOOP"""
+    JP BANKSWITCH_TRAMPOLINE_RAM"""
 
 
 def assemble_real_stage2():

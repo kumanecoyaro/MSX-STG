@@ -283,6 +283,23 @@ def _generate():
     blob += hand_bytes
     layout["SASAPI_CHARDATA"] = chardata_layout
 
+    # ENDING_IMAGE(2026-09-12、"ではこの画像をMission completed表示後
+    # 10秒したら表示...タイトル表示同様に圧縮かけて"): GFEnding
+    # "MISSION COMPLETED"表示から実時間10秒後に表示する最終SCREEN2
+    # 画像(tools/stage2_combined/ending_image_gen.py、タイトルと同じ
+    # 自前RLEで圧縮済み)。SASAPI_CHARDATAと全く同じ相乗り方式 -
+    # Stage2本編は表示する瞬間だけwindowBをこのバンクへ切り替えて
+    # ストリーム展開する(combined_test.asm側のENDING_SHOW_FINAL_IMAGE
+    # 参照)。
+    import ending_image_gen as eig
+    img_compressed, img_segments = eig.compressed_raw()
+    layout["ENDING_IMAGE"] = {
+        "bank_offset": len(blob),
+        "len": len(img_compressed),
+        "segments": img_segments,
+    }
+    blob += img_compressed
+
     assert len(blob) <= BANK_SIZE, f"BGM data ({len(blob)} bytes) exceeds one 16KB bank"
     bank = bytes(blob) + bytes([0xFF] * (BANK_SIZE - len(blob)))
     return bank, layout
@@ -362,5 +379,5 @@ if __name__ == "__main__":
     print(f"bank image: {len(bank)} bytes total, {used} bytes actually used, {len(bank)-used} bytes free")
     for key, info in layout.items():
         print(key, info)
-        if key != "SASAPI_CHARDATA":  # not a song - song_constants() doesn't apply
+        if key not in ("SASAPI_CHARDATA", "ENDING_IMAGE"):  # not songs - song_constants() doesn't apply
             print("  constants:", song_constants(key))

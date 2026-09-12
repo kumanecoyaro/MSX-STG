@@ -694,5 +694,127 @@ assert mem3.flat[tsym["HTIMI_HOOK"]] == 0xC9, \
 print("title's own INIT correctly reset the stale HTIMI_HOOK (inherited from the GAME_OVER bank) "
       "to a safe bare RET")
 
+# (2026-09-12、"ではこの画像をMission completed表示後10秒したら表示
+# ボタンが押されたらスタート画面へ"): Stage2 ENDING_ACT==4(最終画像
+# 表示+ボタン待ち)->titleトランポリンは、ENDING_SHOW_FINAL_IMAGE自身の
+# 挙動(実VRAM内容・windowB切替/復帰・ボタン待ちループ)は
+# ending_final_image_test.py(standaloneの簡易3スロットBankedMem)で
+# 既に検証済みだが、そちらでは検証できない2点(a)Comb実レイアウトでの
+# SWITCH_TO_CHARDATA_BANKのパッチ済みバンク番号(6)が本物の共有bgm_bank
+# 内容へ実際にルーティングされること、(b)ボタン押下トランポリンが実際に
+# title(global bank0/1)のINITへ正しく着地すること、を本物の4バンク配置
+# (GAME_OVERバンクと同じ一気通貫スタイル)で確認する。ENDING_ACT 0->1->
+# 2->3->4の状態遷移自体はending_sequence_test.pyで既に別途検証済みの
+# ため、ここでは実ボス撃破シーケンスを再現せずENDING_ACT=4へ直接poke
+# して(GAME_OVERシナリオのSTAGE_CLEAR_ACT=3直接pokeと同じ手法)本題
+# (バンク切替の一気通貫)に絞る。
+print()
+print("---- Stage2 ENDING_ACT==4 -> final image -> button press -> title trampoline "
+      "(round80follow-up, previously untested here) ----")
+mem4 = BankedMem(
+    banksA=[title_bank0, dummy, game_bank0, dummy, bank4, dummy, dummy, gameover_bank],
+    banksB=[dummy, title_bank1, dummy, game_bank1, dummy, bank5, bytearray(bgm_bank), dummy],
+)
+cpu4 = z80emu.Z80(mem4)
+cpu4.pc = tsym["INIT"]
+cpu4.sp = 0xF380
+
+steps_e0 = 0
+while cpu4.pc != WAIT_FOR_START and steps_e0 < 2_000_000:
+    cpu4.step()
+    steps_e0 += 1
+assert cpu4.pc == WAIT_FOR_START, "title screen (4th run) never reached WAIT_FOR_START"
+
+cpu4.sim_trig_a = True
+steps_e1 = 0
+switched_e1 = False
+while steps_e1 < 2_000_000:
+    if cpu4.pc == GAME_INIT and mem4.bankA == 2:
+        switched_e1 = True
+        break
+    cpu4.step()
+    steps_e1 += 1
+assert switched_e1, "title -> Stage1 (4th run, for the ending scenario) never trampolined"
+
+steps_e2 = 0
+while cpu4.pc != MAINLOOP and steps_e2 < 2_000_000:
+    cpu4.step()
+    steps_e2 += 1
+assert cpu4.pc == MAINLOOP, "Stage1 (4th run) never reached its own MAINLOOP"
+
+mem4.flat[PLAYER_FLYAWAY] = 2
+mem4.flat[STAGE_CLEAR_ACT] = 3
+cpu4.sim_trig_a = False
+
+steps_e3 = 0
+switched_e3 = False
+while steps_e3 < 2_000_000:
+    if cpu4.pc == STAGE2_INIT and mem4.bankA == 4:
+        switched_e3 = True
+        break
+    cpu4.step()
+    steps_e3 += 1
+assert switched_e3, "Stage1 -> real Stage2 (4th run) never trampolined"
+
+STAGE2_MAINLOOP = s2sym["MAINLOOP"]
+steps_e4 = 0
+while cpu4.pc != STAGE2_MAINLOOP and steps_e4 < 2_000_000:
+    cpu4.step()
+    steps_e4 += 1
+assert cpu4.pc == STAGE2_MAINLOOP, "Stage2 (4th run) never reached its own MAINLOOP"
+print("Stage2 (4th run): reached its own MAINLOOP, ready to drive ENDING_ACT==4")
+
+ENDING_ACT = s2sym["ENDING_ACT"]
+ENDING_WAIT_FINAL_BUTTON = s2sym["ENDING_WAIT_FINAL_BUTTON"]
+mem4.flat[ENDING_ACT] = 4
+steps_e5 = 0
+while cpu4.pc != ENDING_WAIT_FINAL_BUTTON and steps_e5 < 600_000:
+    cpu4.step()
+    steps_e5 += 1
+assert cpu4.pc == ENDING_WAIT_FINAL_BUTTON, \
+    "ENDING_ACT==4 (4th run, real Comb bank layout) never reached ENDING_WAIT_FINAL_BUTTON"
+assert mem4.bankB == 5, \
+    "window B should be restored to Stage2's own page2 (5) after borrowing the real shared " \
+    "bgm-data bank (6, SWITCH_TO_CHARDATA_BANK's Comb-patched value) to decompress the final image"
+
+sys.path.insert(0, os.path.join(REPO, "tools", "title_screen"))
+import title_bg_gen
+sys.path.insert(0, os.path.join(REPO, "tools", "stage2_combined"))
+import ending_image_gen
+_ending_payload = ending_image_gen.load_payload()
+_ending_vram = bytes(cpu4.vram[0:title_bg_gen.PAYLOAD_LEN])
+_ending_payload_minus_sprattr0 = (_ending_payload[:0x1B00] + bytes([_ending_vram[0x1B00]])
+                                  + _ending_payload[0x1B01:])
+assert _ending_vram == _ending_payload_minus_sprattr0, \
+    "final-image VRAM doesn't match EndingImage.SC2's real payload - the real shared bgm_bank " \
+    "(global bank6) content didn't decompress correctly through the Comb-patched " \
+    "SWITCH_TO_CHARDATA_BANK"
+print("final-image VRAM verified byte-correct via a real window B switch to the shared "
+      "bgm-data/chardata bank (global bank6)")
+
+cpu4.sim_trig_a = True
+steps_e6 = 0
+switched_e6 = False
+while steps_e6 < 2_000_000:
+    if cpu4.pc == TITLE_INIT and mem4.bankA == 0:
+        switched_e6 = True
+        break
+    cpu4.step()
+    steps_e6 += 1
+assert switched_e6, "ENDING_FINAL_BUTTON_PRESSED trampoline never reached title's own INIT (bank0)"
+assert mem4.bankA == 0 and mem4.bankB == 1, "banks not switched back to title (0,1) on ending return"
+assert cpu4.iff1 is False, \
+    "interrupts still enabled on entry to title's INIT via the ending's own trampoline"
+print(f"final-image -> title trampoline verified: bankA={mem4.bankA} bankB={mem4.bankB}, "
+      f"interrupts correctly disabled on landing")
+
+for _ in range(300):
+    cpu4.step()
+assert mem4.flat[tsym["HTIMI_HOOK"]] == 0xC9, \
+    "title's own INIT did not reset the stale HTIMI_HOOK after being re-entered via the " \
+    "ending's own trampoline"
+print("title's own INIT correctly reset the stale HTIMI_HOOK (inherited from Stage2's ending) "
+      "to a safe bare RET")
+
 print()
 print("COMB BUILD (TITLE -> STAGE1 -> REAL STAGE2) BANK-SWITCH INTEGRATION: ALL CHECKS PASSED")

@@ -289,9 +289,10 @@ check(f"stays ENDING_ACT=3 one tick before ENDING_RETURN_WAIT_TICKS"
 
 call_routine(cpu2, "BGM_TICK")
 call_routine(cpu2, "UPDATE_ENDING")
-check("ENDING_ACT becomes 4 (ready to return to title) exactly when "
-      "ENDING_RETURN_WAIT_TICKS elapses (build_full_rom.py's Comb-only "
-      "MAINLOOP patch watches for this to trampoline back to title)",
+check("ENDING_ACT becomes 4 (show the final image + wait for a button) "
+      "exactly when ENDING_RETURN_WAIT_TICKS elapses (MAINLOOP's own "
+      "per-frame body watches for this to jump into ENDING_SHOW_FINAL_IMAGE "
+      "- see ending_final_image_test.py for that part)",
       cpu2.mem[ENDING_ACT] == 4)
 
 for _ in range(500):

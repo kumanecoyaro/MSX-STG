@@ -12962,21 +12962,91 @@ Y段違い+Enemy6速度半減、Stage2自機爆発の自機非表示タイミン
   修正+範囲拡大の見え方、`NUM_POPS`=40の初期値)も引き続き実機
   フィードバック待ち。
 
-## セッション引き継ぎメモ(2026-09-12、Round80完了直後)
+## Round81: GFEnding最終画面(SCREEN2アート+ボタン待ち→タイトル復帰)
+実装(2026-09-12、完了済み・実機フィードバック待ち)
 
-- **現在の状態**: Round80(Stage1スケジュールをSchedule_4.json[549件]
-  へ再々差し替え)まで完了。全回帰: Stage1側`verify_spawn_schedule_
-  restart.py` 12・`verify_enemy_bullets.py` 56・`verify_player_
-  damage.py` 60・`verify_stage1_bgm.py` 80・`verify_stage1_mission_
-  screens.py` 87・`verify_enemy6_durability.py` 15・`verify_
-  explosion_anim.py` 28・`verify_boss_dfl_clear.py` 10、全てPASS。
-  Stage2側`run_all.py` 1507 passed/0 failed(無変化)。
-  `verify_comb.py`全チェックPASS。Comb ROM再ビルド済み。
+- ユーザー指示(添付`___4.SC2`、SCREEN2形式BSAVEダンプ、14336byte):
+  "ではこの画像をMission completed表示後10秒したら表示 ボタンが押され
+  たらスタート画面へ タイトル表示同様に圧縮かけて"。従来の
+  ENDING_ACT==4("MISSION COMPLETED"表示から10秒後、直ちにtitleへ
+  トランポリン)を、"10秒後にこの新画像を表示→ボタン待ち→titleへ"の
+  3段階へ拡張。
+- **画像の格納先**: Stage2本編(bank4/5)のROM残り容量は常に極めて
+  少ない(この時点で残り1537byte)ため、Round64のボスキャラクター
+  データ移設と同じ「共有bgm-data/chardataバンクへ相乗り」方式を採用。
+  新規`tools/stage2_combined/ending_image_gen.py`
+  (`tools/title_screen/title_bg_gen.py`の汎用RLE関数を再利用、
+  画像自体は`tools/stage2_combined/assets/EndingImage.SC2`)を
+  `tools/bgm_data/bgm_bank_gen.py`の`_generate()`から呼び出し、
+  圧縮後8860byte(61.8%、2621セグメント)を追記(バンク使用量
+  7002→15861byte、残り523byte)。`emit_asm_tables()`が
+  `ENDING_IMAGE_RLE_OFFSET`/`_SEGMENTS`をsasapi_gen.py方式(ビルド時に
+  bgm_layout.jsonから動的計算)でEQU化、実データはcombined_test.asmの
+  ソースには一切含まれない。mido未インストールだったため`pip install
+  mido pillow`で導入し`bgm_bank_gen.py --generate`でキャッシュ再生成。
+- **表示ロジック(`ENDING_SHOW_FINAL_IMAGE`、combined_test.asm新設)**:
+  MAINLOOP側の`ENDING_ACT==4`検出チェックが、従来の「Comb限定パッチで
+  即座にtitleへ」から「素のJPで一方通行に分岐」(呼び出し元は
+  MAINLOOP本体のトップレベルでネストしたCALLが無いため、RETせず
+  JPしても安全 - 既存のGAME_OVER系トランポリンと同型)へ変更。
+  分岐先で(1)PSG全ch即ミュート、(2)`CALL INIGRP`でSCREEN1→SCREEN2へ
+  切替(Title画面と同じ手順・R1=0E2h・border黒)、(3)
+  `SWITCH_TO_CHARDATA_BANK`でwindowBを共有バンクへ一時切替し、
+  `title_test.asm`の`DECOMPRESS_TITLE_BG`と全く同じ自前RLEデコード
+  (制御バイトbit7=0:リテラル/1:反復、CLAUDE.md恒久ルール通りOTIR等の
+  ブロックI/O命令は不使用・DJNZ+通常のOUTのみ)でVRAM 0000h-37FFhへ
+  展開後`RESTORE_OWN_BANK_B`、(4)スプライト全停止(SPRATR=0D1h)、
+  という順でSCREEN2アートを表示する。以後
+  `ENDING_WAIT_FINAL_BUTTON`でトリガーA(id1)優先→トリガーB(id3)の
+  順にGTTRIGポーリング(title_test.asmのWAIT_FOR_STARTと同じ規約)、
+  いずれか押下で`ENDING_FINAL_BUTTON_PRESSED`(standaloneではアイドル
+  ループ、Combではbuild_full_rom.pyの`STAGE2_ENDING_RETURN_ANCHOR/
+  PATCH`が実際のtitleへの2ホップトランポリンへ置き換え)。
+- **新規回帰テスト**: `tools/stage2_combined/tests/ending_final_image_
+  test.py`(18件、新規)- この関数はRETせず一方通行のため
+  `call_routine`/`step_frame`が使えず、title_test.pyの`run_to_wait`と
+  同型の「目的のPCへ到達するまでcpu.step()」方式を採用。実VRAM内容の
+  バイト単位一致・PSG3ch即ミュート・windowB復帰・ボタン未押下時は
+  永久待機・トリガーA/B双方での解除、を実際にMAINLOOPからの1フレーム
+  実行で検証(`RESTORE_OWN_BANK_B`呼び出しを一時的にコメントアウトし
+  windowB復帰チェックが実際にFAILすることを自己検証済み)。
+  `verify_comb.py`にも実4バンク構成での一気通貫チェック(Title→Stage1→
+  実Stage2→ENDING_ACT=4→共有bank6経由の実画像展開→ボタン押下→title
+  トランポリン)を追加、実際に生成された全VRAM内容をPythonでレンダリング
+  し(スクラッチ製SCREEN2レンダラ)アップロード画像と同一の絵になる
+  ことを視覚確認済み。全回帰: Stage2側`run_all.py`
+  **1525 passed/0 failed**(1507→1525)。`verify_comb.py`全チェック
+  PASS。Comb ROM再ビルド・標準方針によりComb ROMのみ送付。
+- **保留・実機フィードバック待ち**: SCREEN2切替・展開・ボタン待ちの
+  実機での見え方/挙動は全て次回フィードバック待ち(このセッションの
+  テスト環境ではCALL INIGRP等BIOS内部動作を再現できないため、
+  round53/59と同型の「テスト全緑でも実機依存の未知のリスク」が
+  理論上は残る)。Round80由来の保留(549件スケジュールのペーシング・
+  Enemy2 Y段違い合体演出・Enemy6速度半減の難易度感)・Round78/79由来の
+  保留(Stage2自機爆発のスプライト優先度修正+範囲拡大の見え方、
+  `NUM_POPS`=40の初期値)も引き続き実機フィードバック待ち。
+
+## セッション引き継ぎメモ(2026-09-12、Round81完了直後)
+
+- **現在の状態**: Round81(GFEnding最終画面のSCREEN2アート表示+
+  ボタン待ち→タイトル復帰)まで完了。全回帰: Stage2側`run_all.py`
+  **1525 passed/0 failed**。`verify_comb.py`全チェックPASS。Comb ROM
+  再ビルド済み。
 - **コミット・push状況**: 本メモ記載時点でコミット・push作業中
   (このメモ自体が同じコミットに含まれる想定)。作業ツリーの内容:
-  `src/CYBER SHMUP.asm`(SPAWN_THRESHOLDS等5テーブル+SSC_FIRE
-  ブロックの再生成)・`rom/CyberS Comb.ascii16k.rom`(再ビルド)・
-  `CLAUDE.md`/本HANDOFF.md(記録追記)。
+  `tools/stage2_combined/combined_test.asm`(ENDING_SHOW_FINAL_IMAGE
+  新設等)・`tools/stage2_combined/ending_image_gen.py`(新規)・
+  `tools/stage2_combined/assets/EndingImage.SC2`(新規、ユーザー
+  提供画像)・`tools/stage2_combined/build_test.py`・`tools/
+  stage2_combined/tests/terrain_render_perf_test.py`・`tools/
+  stage2_combined/tests/ending_sequence_test.py`(コメント更新)・
+  `tools/stage2_combined/tests/ending_final_image_test.py`(新規)・
+  `tools/bgm_data/bgm_bank_gen.py`・`tools/bgm_data/bgm_bank.bin`/
+  `bgm_layout.json`(再生成キャッシュ)・`tools/bankswitch_poc/
+  build_full_rom.py`(STAGE2_ENDING_RETURN_ANCHOR/PATCH更新)・
+  `tools/bankswitch_poc/verify_comb.py`(新規統合チェック追加)・
+  `rom/CyberS Comb.ascii16k.rom`(再ビルド)・`CLAUDE.md`/本HANDOFF.md
+  (記録追記)。
 - **次に着手すべきこと**: 特になし(指示なしに着手しない方針)。
   ユーザーからの次の実機フィードバック・新規指示を待つ状態。
 - **新セッションが最初にすべきこと**: このHANDOFF.md末尾(本項目)を

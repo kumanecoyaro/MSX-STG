@@ -20,6 +20,11 @@
     "chB_len": 253,
     "chC_len": 121
   },
+  "ENDING_IMAGE": {
+    "bank_offset": 7002,
+    "len": 8860,
+    "segments": 2621
+  },
   "GAME_OVER": {
     "bank_offset": 5160,
     "chB_len": 35,

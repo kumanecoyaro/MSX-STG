@@ -10,10 +10,14 @@
     ORG 4000h
 
 INIT32  EQU 006Fh
+INIGRP  EQU 0072h
 LDIRVM  EQU 005Ch
 WRTVDP  EQU 0047h
+WRTVRM  EQU 004Dh
 GTSTCK  EQU 00D5h
 GTTRIG  EQU 00D8h
+VDP_ADDR EQU 099h
+VDP_DATA EQU 098h
 
     DB "AB"
     DW INIT
@@ -4195,16 +4199,23 @@ SKIP_BOSS_SUBSYSTEMS:
     CP 2
     CALL NZ,SOUND_UPDATE
 
-    ; (2026-09-07、"ステージ2クリア後は10秒でタイトル画面に"):
-    ; ENDING_ACT==4(タイトルへ戻る準備完了、UPDATE_ENDING自身が実時間
-    ; 10秒後に一度だけ進める)を検出したらここでタイトルへ戻る。この
-    ; ファイル自身はバンク切替を一切行わない設計のため、実際のトラン
-    ; ポリンはbuild_full_rom.py側のASSEMBLE_STAGE2_ENDING_RETURN_ANCHOR
-    ; パッチ(Comb限定)が担当する - standaloneのままではここは単なる
-    ; 状態チェック(ENDING_ACT==4でも実際には何も起きず素通りする)。
+    ; (2026-09-07、"ステージ2クリア後は10秒でタイトル画面に"、
+    ; 2026-09-12、"ではこの画像をMission completed表示後10秒したら
+    ; 表示"で最終画像表示を追加): ENDING_ACT==4(MISSION COMPLETED表示
+    ; から実時間10秒経過、UPDATE_ENDING自身が一度だけ進める)を検出
+    ; したらENDING_SHOW_FINAL_IMAGEへ一方通行で分岐する(以後MAINLOOP
+    ; には二度と戻らない - この分岐自体がMAINLOOP本体のトップレベル
+    ; [ネストしたCALLの外]にあるため、RETせず素のJPで飛んでも呼び出し
+    ; 元のスタックを一切傷つけない、既存のGAME_OVER/タイトル復帰系
+    ; トランポリンと同じ安全な設計)。ENDING_SHOW_FINAL_IMAGE自身は
+    ; standalone/Comb共通のコード(画面表示+ボタン待ちまで)で、実際に
+    ; titleへバンク切替するのはその末尾のENDING_FINAL_BUTTON_PRESSED
+    ; ブロックのみ(build_full_rom.py側のSTAGE2_ENDING_RETURN_ANCHOR/
+    ; PATCHがComb限定でそこだけ実トランポリンへ置き換える)。
     LD A,(ENDING_ACT)
     CP 4
     JR NZ,ENDING_NO_TITLE_RETURN
+    JP ENDING_SHOW_FINAL_IMAGE
 ENDING_NO_TITLE_RETURN:
 
     JP MAINLOOP
@@ -4377,6 +4388,106 @@ ENDING_FINISH:
     LD HL,ENDING_COMPLETE_FONT_BLOCK1 : LD DE,ENDING_COMPLETE_FONT_BLOCK1_CODE*8 : LD BC,ENDING_COMPLETE_FONT_BLOCK1_LEN : CALL LDIRVM
     LD HL,ENDING_MSG_COMPLETE : LD DE,01967h : LD BC,ENDING_MSG_COMPLETE_LEN : CALL LDIRVM  ; row11 col7(17文字中央寄せ)
     RET
+
+; (2026-09-12、"ではこの画像をMission completed表示後10秒したら表示
+; ボタンが押されたらスタート画面へ タイトル表示同様に圧縮かけて"):
+; "MISSION COMPLETED"表示から実時間10秒経過(ENDING_ACT==4)を検出した
+; 上のMAINLOOP側チェックから素のJPで一方通行に分岐してくる(呼び出し元
+; スタックは無傷 - 上のコメント参照)。以後は完全にStage2本編を離れ、
+; ユーザー提供のSCREEN2アート(tools/stage2_combined/ending_image_gen.py
+; がtools/title_screen/title_bg_gen.pyと同じ自前RLEで圧縮、共有
+; bgm-data/chardataバンクへSASAPI_*と同じ相乗り方式で配置済み)を全画面
+; 表示し、ボタン入力を待つだけの終端画面になる。
+;
+; SCREEN1(Stage2本編)からSCREEN2への切替を伴うため、タイトル画面の
+; INIT(CALL INIGRP付近)と同じ手順を踏む: PSG全chミュート→CALL INIGRP
+; (BIOS)→R1(16x16スプライト+表示/割込on、Title/Stage1/Stage2共通の
+; 0E2h)→border黒→画像展開→スプライト全停止、の順。CALL INIGRPは
+; round53/59で判明した通り実機ではBIOS内部でEI+HALT+DIのvblank待ちを
+; 行いうる(z80emu.pyはこれを再現しない)が、この時点ではwindowA
+; (このバンク自身)もwindowB(まだ切り替えていない、Stage2自身の
+; bank5のまま)も一切変更していないため、途中でH.TIMIが発火しても
+; Stage2自身の既存BGM_TICK(有効なまま)が呼ばれるだけで安全 -
+; Title/Stage1トランポリンの時のような「切り替わった別バンクの
+; コードを古いフックが指す」リスクはこの時点ではまだ存在しない。
+;
+; 圧縮画像データの読み出しはtitle_test.asmのDECOMPRESS_TITLE_BGと
+; 全く同じロジック(制御バイトbit7=0:リテラル/1:反復、セグメント数を
+; 16bit down-counterとして消費)だが、データ本体が自分のバンクではなく
+; 共有chardataバンクにあるため、SWITCH_TO_CHARDATA_BANKでwindowBを
+; 一時的にそちらへ切り替えてから読む(SASAPI_HAND_TILES等と同じ
+; パターン、コード自体はwindowA[このバンク]常駐なのでwindowB切替中も
+; 安全に実行し続けられる)。DI開始からwindowB復帰・スプライト停止まで
+; 一貫してDI(CLAUDE.md恒久ルール通りOTIR等のブロックI/O命令は不使用、
+; VDPデータポートへの連続書き込みはDJNZ+通常のOUTのみ)。
+ENDING_SHOW_FINAL_IMAGE:
+    DI
+    LD A,8 : OUT (PSG_ADDR),A : XOR A : OUT (PSG_DATA),A
+    LD A,9 : OUT (PSG_ADDR),A : XOR A : OUT (PSG_DATA),A
+    LD A,10 : OUT (PSG_ADDR),A : XOR A : OUT (PSG_DATA),A
+
+    CALL INIGRP                        ; SCREEN2へ切替(BIOS)
+    LD B,0E2h : LD C,1 : CALL WRTVDP   ; 16x16 sprite mode + display/IE on (Title/Stage1/Stage2共通のR1値)
+    LD B,01h : LD C,7 : CALL WRTVDP    ; border/backdrop black
+
+    LD HL,ENDING_IMAGE_RLE_OFFSET : LD DE,8000h : ADD HL,DE   ; -> windowBアドレス(演算子優先順位の罠を避け2段階で計算)
+    CALL SWITCH_TO_CHARDATA_BANK
+    XOR A : OUT (VDP_ADDR),A
+    LD A,40h : OUT (VDP_ADDR),A        ; VRAM書き込みアドレス=0000h、以後オートインクリメント
+    LD DE,ENDING_IMAGE_RLE_SEGMENTS
+ESFI_LOOP:
+    LD A,(HL) : INC HL
+    OR A
+    JP M,ESFI_RUN                      ; bit7=1(符号ビット) -> 反復セグメント
+    AND 7Fh
+    INC A
+    LD B,A
+ESFI_LIT_LOOP:
+    LD A,(HL) : INC HL
+    OUT (VDP_DATA),A
+    DJNZ ESFI_LIT_LOOP
+    JR ESFI_NEXT
+ESFI_RUN:
+    AND 7Fh
+    INC A
+    LD B,A
+    LD A,(HL) : INC HL
+ESFI_RUN_LOOP:
+    OUT (VDP_DATA),A
+    DJNZ ESFI_RUN_LOOP
+ESFI_NEXT:
+    DEC DE
+    LD A,D : OR E
+    JR NZ,ESFI_LOOP
+    CALL RESTORE_OWN_BANK_B
+
+    ; 展開したVRAM 1B00h-1B7Fh(スプライト属性テーブル)はアート制作
+    ; ツールが書いた生バイトをそのまま含んでいる可能性があるため、
+    ; title_test.asmのINITと同じくスプライトを一切表示しないことを
+    ; 明示的に保証する(このアートはスプライトパターンデータを
+    ; 持たない)。
+    LD A,0D1h : LD HL,SPRATR : CALL WRTVRM
+
+    EI
+
+; ボタン(トリガーA=id1優先、無ければトリガーB=id3、title_test.asmの
+; WAIT_FOR_STARTと同じGTTRIG id規約)が押されるまでアイドル。
+ENDING_WAIT_FINAL_BUTTON:
+    LD A,1 : CALL GTTRIG
+    OR A
+    JR NZ,ENDING_FINAL_BUTTON_PRESSED
+    LD A,3 : CALL GTTRIG
+    OR A
+    JR Z,ENDING_WAIT_FINAL_BUTTON
+
+; ここから先はComb限定(build_full_rom.py側のSTAGE2_ENDING_RETURN_
+; ANCHOR/PATCHが丸ごと実際のtitleへの2ホップトランポリンへ置き換える -
+; STAGE2_GAMEOVER_BANKSELECT_PATCH等と全く同じANCHOR/PATCHパターン)。
+; standaloneのままではtitleバンクが存在しないため、単にここでアイドル
+; し続けるだけ(実害なし、回帰テストもこの手前までしか検証しない)。
+ENDING_FINAL_BUTTON_PRESSED:
+ENDING_FINAL_IDLE:
+    JR ENDING_FINAL_IDLE
 
 ; ---------- horizontal movement + aim-up flag ----------
 UPDATE_TANK_XY:
@@ -6492,7 +6603,10 @@ BGM_C_LOOP_BASE EQU 0CB16h
 ; 実測でこの先0xCC00まで空きと確認済み)に配置。
 VBLANK_COUNT       EQU 0CB18h   ; 実VBlank毎に+1(BGM_TICK内、H.TIMI駆動=真の実時間クロック)
 ENDING_ACT         EQU 0CB1Ah   ; 0=未発生/1=ボス撃破後の待機中/2=曲再生中/3=完了・
-                                 ; タイトルへの10秒待ち中/4=タイトルへ戻る準備完了
+                                 ; MISSION COMPLETED表示中・10秒待ち中/4=最終画像
+                                 ; 表示中(2026-09-12〜、ENDING_SHOW_FINAL_IMAGEへ
+                                 ; 一方通行で分岐しMAINLOOPには二度と戻らないため、
+                                 ; 以後この変数自体はもう参照されない)
 ENDING_WAIT_START  EQU 0CB1Bh   ; ENDING_ACT=1になった瞬間のVBLANK_COUNTスナップショット
 ENDING_SONG_START  EQU 0CB1Dh   ; ENDING_ACT=2になった瞬間のVBLANK_COUNTスナップショット
 ENDING_WAIT_TICKS       EQU 600   ; "10秒ほど" - 60Hz想定の近似値(未確定、実機フィードバック待ち)
@@ -6503,6 +6617,19 @@ ENDING_SONG_TOTAL_TICKS EQU 1630  ; tools/bgm_data/midi_to_psg.load_ending_gfend
 ; 確認済み)に配置。
 ENDING_FINISH_START     EQU 0CB20h
 ENDING_RETURN_WAIT_TICKS EQU 600   ; "10秒" @ 60Hz real vblank
+
+; (2026-09-12、"ではこの画像をMission completed表示後10秒したら表示
+; ボタンが押されたらスタート画面へ タイトル表示同様に圧縮かけて"):
+; ENDING_IMAGE_RLE_OFFSET/_SEGMENTSはtools/stage2_combined/ending_
+; image_gen.pyのemit_asm_tables()がbuild_test.py経由でここより前に
+; 埋め込む(sasapi_gen.pyのSASAPI_QUADS等と同じ規約 - 共有bgm-data/
+; chardataバンクへ相乗り済みの最終画像のバンク内オフセット+セグメント
+; 数、実データはこのファイルには含まれない)。ENDING_SHOW_FINAL_IMAGE
+; 側は"LD HL,ENDING_IMAGE_RLE_OFFSET:LD DE,8000h:ADD HL,DE"という
+; 2段階の計算でwindowBアドレスへ変換する(このアセンブラの演算子
+; 優先順位なし・左から右へ逐次評価される罠[round36-14 follow-up#8の
+; BASE+N*4等で繰り返し踏んだもの]を避けるため、SASAPI_HAND_TILESの
+; 呼び出し元と同じ書き方)。
 
 ; "マテリアライズに入る前にそれまでのBGMは停止" 対応(ENDING_SONG_START
 ; の直後、シンボルテーブル実測で0xCC00まで空きと確認済みの領域)。
