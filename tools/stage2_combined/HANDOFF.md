@@ -12692,3 +12692,99 @@ Enemy6耐久値制+両ステージのスケジュール差し替え(2026-09-08�
   実プレイでのペーシングは、いずれも次回フィードバック待ち。
   `verify_vdp_wait_shrink.py`のOUT件数期待値のズレ(pre-existing)は
   今回スコープ外・未対応のまま。
+
+## Round76 訂正+Round77: 自機爆発タイミングのBG化を撤回、Stage1
+tick580停止バグの根本原因特定・修正(2026-09-12、完了済み・実機
+フィードバック待ち)
+
+- **Round76(1)の訂正(重要)**: Round76で実装した「Stage2自機爆発を
+  BGセル方式へ全面再設計」は、ユーザーから明確に却下された:
+  "誰がBG爆発に差し替えろなんて指示した / 爆発はいまのままだぞ /
+  自機を消すタイミングを変えるだけ / 余計なことしてんじゃねえよ"。
+  `tools/gameover_bank/gameover_bank.asm`・
+  `tools/stage2_combined/tests/gameover_bank_test.py`を`git checkout
+  3a1b6a7 --`でRound75時点(Round76着手前)へ完全復元(`git diff --stat`
+  で差分ゼロを確認済み)。**Round76の記述のうち(1)自機爆発タイミング
+  修正の実装内容は撤回済み・無効。(2)EBULLET色変更・(3)Enemy6耐久値・
+  (4)両スケジュール差し替えの3件は影響なくそのまま有効。** 自機を
+  消すタイミングをどう変えるべきかは、下記の理由でユーザーへの
+  確認前に別件が優先されたため未着手のまま保留。
+- **Round77(本題)**: 上記の確認を求めたところ、ユーザーから
+  "その前にステージ１がTick600くらいから一切敵が出ないしボスも
+  出なくなってる"と、より緊急度の高い別バグの報告を受け、そちらを
+  最優先で調査。
+  - **根本原因**: `SPAWN_SCHEDULE_CHECK`の境界チェック
+    `LD A,(SPAWN_NEXT_INDEX) : CP 397 : RET NC`が、8bitの即値比較
+    命令`CP`に397という255を超える値を渡していたため、アセンブラが
+    `397 & 0FFh = 141`へ黙って切り詰めていた(`mini_z80asm.py`の
+    `enc_alu_a`が`n & 0xFF`する仕様、エラーにはならない)。この結果
+    `SPAWN_NEXT_INDEX`が141に達した瞬間(スケジュール上のtick580
+    手前、実際は397件中まだ256件残っている)に「スケジュール終了」と
+    誤認して以後は毎フレーム即座に`RET`し続け、tick580以降スポーン・
+    ボスが一切発生しない状態になっていた。Round76での`Schedule_1.json`
+    (397件、旧253件から大幅増)差し替えで初めて255件を超えたために
+    顕在化した、8bitインデックスの構造的な上限超えバグ。
+  - **調査経緯**: 実プレイ相当のnatural-AI(無操作)シミュレーションで
+    `SPAWN_NEXT_INDEX`の値をフレーム毎に追跡し、frame=4584
+    (GAME_TICK=573)でindex141に達した後、GAME_TICK=700まで一切
+    進まないことを確認・再現。`SSC_BUSY_E2`(Enemy2の枠待ち機構)の
+    CP対象リストにindex141が含まれないことを確認して除外、
+    `SSC_FIRE`自身のCP-dispatchチェーンで`CP 256`,`CP 257`...
+    `CP 395`という255超の即値がソースに直接書かれていることを発見 -
+    これも同様に全て切り詰められ、仮に境界チェックを直しても
+    index256以降のディスパッチ自体が別の形で壊れたままになる
+    (低位バイトが重複する既存の低range indexへ誤って一致してしまう
+    エイリアシングリスク)ことが判明。加えて各`SPAWN_*`ハンドラ
+    (SPAWN_SIMPLE/E2/E3_WAVE/E4/E4B/E6)自身も`LD H,0:LD L,A`で
+    Aを8bitゼロ拡張してY-table等の添字にしており、この経路も
+    index256以降で同じ問題を抱えていた。
+  - **修正方針**: 397エントリ(0-396)を表現するため、`SPAWN_NEXT_
+    INDEX`を1byteから2byteへ拡張。旧アドレス`0E4D4h`は直後の
+    `SCORE`(0E4D5h、3byte)と隣接しておりそのまま2byte化できないため、
+    `ENEMY6_HP`末尾(0F259h)の直後・`STACKTOP`(0F380h)手前の空き
+    領域`0F25Ah`へ移設(旧`0E4D4h`は以後誰も参照しない未使用バイトと
+    して残置、実害なし)。`SPAWN_SCHEDULE_CHECK`の境界チェック・
+    `SPAWN_THRESHOLDS`添字計算を全てHLレジスタによる16bit演算へ
+    書き換え(8bitの`SBC HL,DE`による比較→キャリーで判定後、
+    `ADD HL,DE`で元の値へ復元し`ADD HL,HL`で2倍、という手順で
+    スタックを一切使わずに実現)。`SSC_FIRE`のCP-dispatchチェーンは
+    「H(index上位byte)が0か否か」で低位(0-255)/高位(256-396)の
+    2ブロックへ分割 - H!=1の場合`JP`(範囲外のため`JR`不可)で高位
+    ブロックへ、各ブロック内では`LD A,L`でCP比較用の8bitコピーを
+    作るのみでHL自体はCPに一切破壊されないため、そのままの16bit
+    indexを各`SPAWN_*`ハンドラへ渡せる。`SSC_BUSY_E2`のEnemy2枠待ち
+    判定は対象indexが全て255未満と分かっているため、まず上位byteを
+    チェックして非ゼロなら即座にスキップ(255以下限定の判定へ
+    256以上の値がエイリアスして誤爆しないようにするガード)。6つの
+    `SPAWN_*`ハンドラは冒頭の`LD H,0:LD L,A`を削除し、HLをそのまま
+    Y-table等の添字として使う設計に統一。
+  - **検証**: natural-AIシミュレーションでtick1010まで進め、
+    `SPAWN_NEXT_INDEX`がindex141を含め一切stallせず397(スケジュール
+    完全消化)まで進行し、ボス(`BOSS_ROW`等の状態変化)も正しく
+    スポーンすることを確認。既存の`verify_enemy6_durability.py`が
+    `SPAWN_E6`をSSC_FIRE経由ではなく直接A入力で呼び出すテスト
+    ヘルパーを使っていたため、新しいHL入力規約に合わせてH/Lレジスタ
+    設定へ更新(1件修正、他14件は無変更でPASS)。
+  - 全回帰: Stage2側`run_all.py` **1499 passed/0 failed**
+    (Round76のBG爆発revertにより`gameover_bank_test.py`が33→23件へ
+    復元、1505から純減)。Stage1側`verify_enemy_bullets.py` 56・
+    `verify_player_damage.py` 60・`verify_stage1_bgm.py` 80・
+    `verify_stage1_mission_screens.py` 87・`verify_spawn_schedule_
+    restart.py` 12・`verify_enemy6_durability.py` 15(1件更新)・
+    `verify_explosion_anim.py` 28・`verify_boss_dfl_clear.py` 10、
+    全てPASS。Comb ROM再ビルド・`verify_comb.py`全チェックPASS
+    (title→Stage1→Stage2の一気通貫バンク切替、GAME_OVER関連の2本の
+    トランポリンテストも含め健全性確認)の上、標準方針によりComb
+    ROMのみ送付。
+- **保留・実機フィードバック待ち**:
+  - 「Stage2自機爆発の自機を消すタイミングをどう変えるべきか」は
+    依然未回答・未着手(Round76で問いかけたAskUserQuestionへの
+    回答が今回の緊急報告により持ち越しになっている)。次回ユーザーの
+    指示・回答を待って着手する。
+  - 今回のtick580停止バグ修正が実機で実際にtick600以降の敵出現・
+    ボス出現を解消するかは、次回の実機フィードバック待ち。
+  - 397エントリという規模で初めて顕在化した「8bit index上限超え」
+    という種類のバグ - 同種の構造(スケジュール系以外にも、8bitの
+    `A`だけでカウンタ/添字を扱っている箇所)が他に残っていないかの
+    網羅的な監査は今回未実施(今回の指摘・報告に基づく対症的な修正に
+    留めた)。

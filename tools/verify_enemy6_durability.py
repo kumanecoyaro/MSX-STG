@@ -57,10 +57,13 @@ check("ENEMY6_HP_INIT is 4 (\"耐久値4に\")", ENEMY6_HP_INIT == 4)
 
 
 def spawn_enemy6(z, row_table_index=0, row=10):
-    """Spawns via the real SPAWN_E6 entry point (A=schedule row-table
-    index on entry), matching SSC_FIRE's own calling convention."""
+    """Spawns via the real SPAWN_E6 entry point (HL=schedule index on
+    entry - 2026-09-12: widened from A to HL so index>=256 works, see
+    SPAWN_SCHEDULE_CHECK's own comment), matching SSC_FIRE's own
+    calling convention."""
     z.wr(ENEMY6_ROW_TABLE + row_table_index, row)
-    z.a = row_table_index
+    z.h = (row_table_index >> 8) & 0xFF
+    z.l = row_table_index & 0xFF
     call_routine(z, SPAWN_E6)
 
 

@@ -556,7 +556,13 @@ MISSION_SCREEN_TICKS EQU 180
 ; --- ticks in order enemy1,enemy1,enemy2,enemy2,enemy3 (enemy3     ---
 ; --- lands around tick120). One-shot - once all 5 have fired,      ---
 ; --- nothing more triggers automatically (no looping).             ---
-SPAWN_NEXT_INDEX EQU 0E4D4h
+; --- 2026-09-12: 397エントリ(>255)のスケジュールを表現するため2byteへ
+; --- 拡張、旧1byteの0E4D4hから独立した空き領域(0F25Ah、ENEMY6_HP末尾
+; --- [0F259h]の直後・STACKTOP[0F380h]の手前)へ移設。0E4D4hはもう
+; --- 誰も参照しない(旧アドレスの値の移行は不要、常にINITでゼロ
+; --- クリアされるカウンタのため)。詳細はSPAWN_SCHEDULE_CHECK自身の
+; --- コメント参照。
+SPAWN_NEXT_INDEX EQU 0F25Ah    ; 2 bytes (0F25Ah-0F25Bh)
 SPAWN_E1_Y EQU 0E506h          ; Y chosen for the next independent Enemy1 spawn
 NEXT_SPRITE_NUM EQU 0E507h     ; rotating sprite attribute slot allocator (1-31, 0=player reserved)
 
@@ -1362,7 +1368,7 @@ INIT_SPRATR_CLR:
     LD (SND_TIMER),A
     LD (SND_TONE_TIMER),A
     LD (SND_TONE_IS_SE),A
-    LD (SPAWN_NEXT_INDEX),A
+    LD (SPAWN_NEXT_INDEX),A : LD (SPAWN_NEXT_INDEX+1),A
 
     ; --- PSG: 実機フィードバック対応("そもそもchB、Cは空けてあってSE類は
     ; --- chAのみで鳴らすはず") - 全SE(破壊音=ノイズ、ショット/ポッド
@@ -5434,11 +5440,22 @@ ESC_COMPLEX_INIT_B:
 ; entry, index252. One-shot: once all 253 have fired, this just returns
 ; immediately forever after, so nothing loops.
 SPAWN_SCHEDULE_CHECK:
-    LD A,(SPAWN_NEXT_INDEX)
-    CP 397
-    RET NC
-    LD H,0 : LD L,A
-    ADD HL,HL
+    ; --- 2026-09-12 修正: 397エントリ(>255)になったため、8bitの A
+    ; --- レジスタだけでは指標(0-396)を表現しきれない - 旧実装は
+    ; --- "CP 397"という8bit即値比較が397&0FFh=141に切り詰められ、
+    ; --- SPAWN_NEXT_INDEXが141に達した瞬間"スケジュール終了"と誤認して
+    ; --- 即RETし続け、以後tick580以降のスポーン・ボスが一切発生しない
+    ; --- 実バグになっていた(実機/エミュレータ両方で100%再現)。
+    ; --- SPAWN_NEXT_INDEXを2byteのRAM(0-396を表現可能)へ拡張し、以後
+    ; --- このチェック・SSC_FIRE・各SPAWN_*ハンドラのテーブル添字は全て
+    ; --- HLによる16bit演算で行う(Aは8bit範囲のCP比較にのみ使う)。
+    LD HL,(SPAWN_NEXT_INDEX)
+    LD DE,397
+    OR A
+    SBC HL,DE
+    RET NC                      ; index >= 397 -> schedule finished
+    ADD HL,DE                   ; undo the SBC - HL = index again (index-397+397)
+    ADD HL,HL                   ; HL = index*2 (word-table stride)
     LD DE,SPAWN_THRESHOLDS
     ADD HL,DE
     LD E,(HL) : INC HL : LD D,(HL)
@@ -5448,11 +5465,18 @@ SPAWN_SCHEDULE_CHECK:
     RET C
 
     ; --- Enemy2スポーン(SPAWN_E2)は、AとBのどちらも稼働中なら今回は
-    ;     何もせず戻る(次フレームで同じ番号を再チェック)。片方でも
-    ;     空いていればSPAWN_E2がそちらを自動選択するので、この各
-    ;     インデックスはもう「Aだけ待つ/Bだけ待つ」を区別しない -
-    ;     どちらの枠が空いても即発火。インデックス番号は現在の
-    ;     スケジュールJSON(253エントリ)でtype=enemy2の位置そのまま。 ---
+    ; --- 何もせず戻る(次フレームで同じ番号を再チェック)。片方でも
+    ; --- 空いていればSPAWN_E2がそちらを自動選択するので、この各
+    ; --- インデックスはもう「Aだけ待つ/Bだけ待つ」を区別しない -
+    ; --- どちらの枠が空いても即発火。インデックス番号は現在の
+    ; --- スケジュールJSON(397エントリ)でtype=enemy2の位置そのまま。
+    ; --- 全て255未満の値なので、この判定だけは従来通りAの8bit比較で
+    ; --- 良いが、index>=256(H!=0)の場合に誤って同じ低位バイトへ
+    ; --- エイリアスしないよう、まずHをチェックして256以上なら丸ごと
+    ; --- スキップする(この一覧に該当する値は全て255未満のため安全)。
+    LD A,(SPAWN_NEXT_INDEX+1)
+    OR A
+    JR NZ,SSC_FIRE              ; index >= 256 -> can't be any of the (all <256) enemy2 waits
     LD A,(SPAWN_NEXT_INDEX)
     CP 19 : JR Z,SSC_BUSY_E2
     CP 20 : JR Z,SSC_BUSY_E2
@@ -5477,20 +5501,21 @@ SSC_BUSY_E2:
     LD A,(E2B_ACTIVE) : OR A : RET NZ          ; both busy -> wait
 
 SSC_FIRE:
-    LD A,(SPAWN_NEXT_INDEX)
-    INC A
-    LD (SPAWN_NEXT_INDEX),A
-    DEC A
-    ; --- 253-entry schedule, imported directly from the schedule editor's ---
-    ; --- exported JSON (tick/row/type per placement, sorted tick then     ---
-    ; --- row) - each index's dispatch target below is just that          ---
-    ; --- placement's own type. simple/enemy2/enemy4/enemy5 pull baseY    ---
-    ; --- from SPAWN_SIMPLE_Y_TABLE/SPAWN_BASEY_TABLE (row*8), enemy6      ---
-    ; --- from ENEMY6_ROW_TABLE (raw row), enemy3_wave's own offset from  ---
-    ; --- SPAWN_E3_OFFSET_TABLE (cells*8) - all parallel arrays, same     ---
-    ; --- index/order as SPAWN_THRESHOLDS. The last index (the boss)      ---
-    ; --- falls through to JP BOSS_SPAWN below instead of its own CP,     ---
-    ; --- same convention the previous schedule used.                     ---
+    ; HL = current index (0-396), preserved unchanged all the way through
+    ; to whichever SPAWN_* handler gets dispatched below - CP only touches
+    ; AF, so the handlers can keep using HL directly as their own 16bit
+    ; Y/offset-table index (see SPAWN_SIMPLE/SPAWN_E2/SPAWN_E4/etc, which no
+    ; longer do "LD H,0:LD L,A" - that zero-extension is exactly what broke
+    ; for index>=256 before this fix).
+    LD HL,(SPAWN_NEXT_INDEX)
+    PUSH HL
+    INC HL
+    LD (SPAWN_NEXT_INDEX),HL
+    POP HL                       ; HL = old index (pre-increment)
+    LD A,H
+    OR A
+    JP NZ,SSC_FIRE_HI            ; index >= 256 (JP: LOW block below is >255 bytes, out of JR range)
+    LD A,L                       ; H=0, so L IS the true index (0-255)
     CP 0   : JP Z,SPAWN_SIMPLE
     CP 1   : JP Z,SPAWN_SIMPLE
     CP 2   : JP Z,SPAWN_SIMPLE
@@ -5747,146 +5772,150 @@ SSC_FIRE:
     CP 253 : JP Z,SPAWN_E6
     CP 254 : JP Z,SPAWN_E6
     CP 255 : JP Z,SPAWN_E6
-    CP 256 : JP Z,SPAWN_E6
-    CP 257 : JP Z,SPAWN_E6
-    CP 258 : JP Z,SPAWN_E6
-    CP 259 : JP Z,SPAWN_E6
-    CP 260 : JP Z,SPAWN_E6
-    CP 261 : JP Z,SPAWN_E6
-    CP 262 : JP Z,SPAWN_E6
-    CP 263 : JP Z,SPAWN_E6
-    CP 264 : JP Z,SPAWN_E6
-    CP 265 : JP Z,SPAWN_E6
-    CP 266 : JP Z,SPAWN_E6
-    CP 267 : JP Z,SPAWN_E6
-    CP 268 : JP Z,SPAWN_E6
-    CP 269 : JP Z,SPAWN_E6
-    CP 270 : JP Z,SPAWN_E6
-    CP 271 : JP Z,SPAWN_E6
-    CP 272 : JP Z,SPAWN_E6
-    CP 273 : JP Z,SPAWN_E6
-    CP 274 : JP Z,SPAWN_SIMPLE
-    CP 275 : JP Z,SPAWN_E6
-    CP 276 : JP Z,SPAWN_E6
-    CP 277 : JP Z,SPAWN_E6
-    CP 278 : JP Z,SPAWN_E6
-    CP 279 : JP Z,SPAWN_E6
-    CP 280 : JP Z,SPAWN_E6
-    CP 281 : JP Z,SPAWN_E6
-    CP 282 : JP Z,SPAWN_E6
-    CP 283 : JP Z,SPAWN_E6
-    CP 284 : JP Z,SPAWN_E6
-    CP 285 : JP Z,SPAWN_E6
-    CP 286 : JP Z,SPAWN_E6
-    CP 287 : JP Z,SPAWN_E6
-    CP 288 : JP Z,SPAWN_E6
-    CP 289 : JP Z,SPAWN_E6
-    CP 290 : JP Z,SPAWN_SIMPLE
-    CP 291 : JP Z,SPAWN_E6
-    CP 292 : JP Z,SPAWN_E6
-    CP 293 : JP Z,SPAWN_E6
-    CP 294 : JP Z,SPAWN_E6
-    CP 295 : JP Z,SPAWN_E6
-    CP 296 : JP Z,SPAWN_E6
-    CP 297 : JP Z,SPAWN_E6
-    CP 298 : JP Z,SPAWN_E6
-    CP 299 : JP Z,SPAWN_E6
-    CP 300 : JP Z,SPAWN_E6
-    CP 301 : JP Z,SPAWN_E6
-    CP 302 : JP Z,SPAWN_SIMPLE
-    CP 303 : JP Z,SPAWN_E6
-    CP 304 : JP Z,SPAWN_E6
-    CP 305 : JP Z,SPAWN_SIMPLE
-    CP 306 : JP Z,SPAWN_E6
-    CP 307 : JP Z,SPAWN_E6
-    CP 308 : JP Z,SPAWN_SIMPLE
-    CP 309 : JP Z,SPAWN_E6
-    CP 310 : JP Z,SPAWN_E6
-    CP 311 : JP Z,SPAWN_E6
-    CP 312 : JP Z,SPAWN_E6
-    CP 313 : JP Z,SPAWN_E6
-    CP 314 : JP Z,SPAWN_E6
-    CP 315 : JP Z,SPAWN_E6
-    CP 316 : JP Z,SPAWN_SIMPLE
-    CP 317 : JP Z,SPAWN_E6
-    CP 318 : JP Z,SPAWN_E6
-    CP 319 : JP Z,SPAWN_E6
-    CP 320 : JP Z,SPAWN_E6
-    CP 321 : JP Z,SPAWN_E6
-    CP 322 : JP Z,SPAWN_E6
-    CP 323 : JP Z,SPAWN_E6
-    CP 324 : JP Z,SPAWN_E6
-    CP 325 : JP Z,SPAWN_SIMPLE
-    CP 326 : JP Z,SPAWN_E6
-    CP 327 : JP Z,SPAWN_E6
-    CP 328 : JP Z,SPAWN_E6
-    CP 329 : JP Z,SPAWN_E6
-    CP 330 : JP Z,SPAWN_E6
-    CP 331 : JP Z,SPAWN_E6
-    CP 332 : JP Z,SPAWN_E6
-    CP 333 : JP Z,SPAWN_E6
-    CP 334 : JP Z,SPAWN_E6
-    CP 335 : JP Z,SPAWN_E6
-    CP 336 : JP Z,SPAWN_E6
-    CP 337 : JP Z,SPAWN_E6
-    CP 338 : JP Z,SPAWN_E6
-    CP 339 : JP Z,SPAWN_E6
-    CP 340 : JP Z,SPAWN_E6
-    CP 341 : JP Z,SPAWN_E6
-    CP 342 : JP Z,SPAWN_E6
-    CP 343 : JP Z,SPAWN_E6
-    CP 344 : JP Z,SPAWN_E6
-    CP 345 : JP Z,SPAWN_SIMPLE
-    CP 346 : JP Z,SPAWN_E6
-    CP 347 : JP Z,SPAWN_E6
-    CP 348 : JP Z,SPAWN_E6
-    CP 349 : JP Z,SPAWN_E6
-    CP 350 : JP Z,SPAWN_E6
-    CP 351 : JP Z,SPAWN_E6
-    CP 352 : JP Z,SPAWN_E6
-    CP 353 : JP Z,SPAWN_E6
-    CP 354 : JP Z,SPAWN_E6
-    CP 355 : JP Z,SPAWN_E6
-    CP 356 : JP Z,SPAWN_E6
-    CP 357 : JP Z,SPAWN_E6
-    CP 358 : JP Z,SPAWN_E6
-    CP 359 : JP Z,SPAWN_E6
-    CP 360 : JP Z,SPAWN_E6
-    CP 361 : JP Z,SPAWN_E6
-    CP 362 : JP Z,SPAWN_E6
-    CP 363 : JP Z,SPAWN_E6
-    CP 364 : JP Z,SPAWN_E6
-    CP 365 : JP Z,SPAWN_E6
-    CP 366 : JP Z,SPAWN_E6
-    CP 367 : JP Z,SPAWN_E6
-    CP 368 : JP Z,SPAWN_E6
-    CP 369 : JP Z,SPAWN_E6
-    CP 370 : JP Z,SPAWN_E6
-    CP 371 : JP Z,SPAWN_E6
-    CP 372 : JP Z,SPAWN_E6
-    CP 373 : JP Z,SPAWN_E6
-    CP 374 : JP Z,SPAWN_E6
-    CP 375 : JP Z,SPAWN_E6
-    CP 376 : JP Z,SPAWN_E6
-    CP 377 : JP Z,SPAWN_E6
-    CP 378 : JP Z,SPAWN_E6
-    CP 379 : JP Z,SPAWN_E6
-    CP 380 : JP Z,SPAWN_E6
-    CP 381 : JP Z,SPAWN_E6
-    CP 382 : JP Z,SPAWN_E6
-    CP 383 : JP Z,SPAWN_E6
-    CP 384 : JP Z,SPAWN_E6
-    CP 385 : JP Z,SPAWN_E6
-    CP 386 : JP Z,SPAWN_E6
-    CP 387 : JP Z,SPAWN_E6
-    CP 388 : JP Z,SPAWN_E6
-    CP 389 : JP Z,SPAWN_E6
-    CP 390 : JP Z,SPAWN_E6
-    CP 391 : JP Z,SPAWN_E6
-    CP 392 : JP Z,SPAWN_E6
-    CP 393 : JP Z,SPAWN_E6
-    CP 394 : JP Z,SPAWN_E6
-    CP 395 : JP Z,SPAWN_E6
+    JP BOSS_SPAWN                ; unreachable safety net (should never fall through here)
+SSC_FIRE_HI:
+    ; H=1 here (max index 396 < 512), so L = index-256 exactly.
+    LD A,L
+    CP 0   : JP Z,SPAWN_E6
+    CP 1   : JP Z,SPAWN_E6
+    CP 2   : JP Z,SPAWN_E6
+    CP 3   : JP Z,SPAWN_E6
+    CP 4   : JP Z,SPAWN_E6
+    CP 5   : JP Z,SPAWN_E6
+    CP 6   : JP Z,SPAWN_E6
+    CP 7   : JP Z,SPAWN_E6
+    CP 8   : JP Z,SPAWN_E6
+    CP 9   : JP Z,SPAWN_E6
+    CP 10  : JP Z,SPAWN_E6
+    CP 11  : JP Z,SPAWN_E6
+    CP 12  : JP Z,SPAWN_E6
+    CP 13  : JP Z,SPAWN_E6
+    CP 14  : JP Z,SPAWN_E6
+    CP 15  : JP Z,SPAWN_E6
+    CP 16  : JP Z,SPAWN_E6
+    CP 17  : JP Z,SPAWN_E6
+    CP 18  : JP Z,SPAWN_SIMPLE
+    CP 19  : JP Z,SPAWN_E6
+    CP 20  : JP Z,SPAWN_E6
+    CP 21  : JP Z,SPAWN_E6
+    CP 22  : JP Z,SPAWN_E6
+    CP 23  : JP Z,SPAWN_E6
+    CP 24  : JP Z,SPAWN_E6
+    CP 25  : JP Z,SPAWN_E6
+    CP 26  : JP Z,SPAWN_E6
+    CP 27  : JP Z,SPAWN_E6
+    CP 28  : JP Z,SPAWN_E6
+    CP 29  : JP Z,SPAWN_E6
+    CP 30  : JP Z,SPAWN_E6
+    CP 31  : JP Z,SPAWN_E6
+    CP 32  : JP Z,SPAWN_E6
+    CP 33  : JP Z,SPAWN_E6
+    CP 34  : JP Z,SPAWN_SIMPLE
+    CP 35  : JP Z,SPAWN_E6
+    CP 36  : JP Z,SPAWN_E6
+    CP 37  : JP Z,SPAWN_E6
+    CP 38  : JP Z,SPAWN_E6
+    CP 39  : JP Z,SPAWN_E6
+    CP 40  : JP Z,SPAWN_E6
+    CP 41  : JP Z,SPAWN_E6
+    CP 42  : JP Z,SPAWN_E6
+    CP 43  : JP Z,SPAWN_E6
+    CP 44  : JP Z,SPAWN_E6
+    CP 45  : JP Z,SPAWN_E6
+    CP 46  : JP Z,SPAWN_SIMPLE
+    CP 47  : JP Z,SPAWN_E6
+    CP 48  : JP Z,SPAWN_E6
+    CP 49  : JP Z,SPAWN_SIMPLE
+    CP 50  : JP Z,SPAWN_E6
+    CP 51  : JP Z,SPAWN_E6
+    CP 52  : JP Z,SPAWN_SIMPLE
+    CP 53  : JP Z,SPAWN_E6
+    CP 54  : JP Z,SPAWN_E6
+    CP 55  : JP Z,SPAWN_E6
+    CP 56  : JP Z,SPAWN_E6
+    CP 57  : JP Z,SPAWN_E6
+    CP 58  : JP Z,SPAWN_E6
+    CP 59  : JP Z,SPAWN_E6
+    CP 60  : JP Z,SPAWN_SIMPLE
+    CP 61  : JP Z,SPAWN_E6
+    CP 62  : JP Z,SPAWN_E6
+    CP 63  : JP Z,SPAWN_E6
+    CP 64  : JP Z,SPAWN_E6
+    CP 65  : JP Z,SPAWN_E6
+    CP 66  : JP Z,SPAWN_E6
+    CP 67  : JP Z,SPAWN_E6
+    CP 68  : JP Z,SPAWN_E6
+    CP 69  : JP Z,SPAWN_SIMPLE
+    CP 70  : JP Z,SPAWN_E6
+    CP 71  : JP Z,SPAWN_E6
+    CP 72  : JP Z,SPAWN_E6
+    CP 73  : JP Z,SPAWN_E6
+    CP 74  : JP Z,SPAWN_E6
+    CP 75  : JP Z,SPAWN_E6
+    CP 76  : JP Z,SPAWN_E6
+    CP 77  : JP Z,SPAWN_E6
+    CP 78  : JP Z,SPAWN_E6
+    CP 79  : JP Z,SPAWN_E6
+    CP 80  : JP Z,SPAWN_E6
+    CP 81  : JP Z,SPAWN_E6
+    CP 82  : JP Z,SPAWN_E6
+    CP 83  : JP Z,SPAWN_E6
+    CP 84  : JP Z,SPAWN_E6
+    CP 85  : JP Z,SPAWN_E6
+    CP 86  : JP Z,SPAWN_E6
+    CP 87  : JP Z,SPAWN_E6
+    CP 88  : JP Z,SPAWN_E6
+    CP 89  : JP Z,SPAWN_SIMPLE
+    CP 90  : JP Z,SPAWN_E6
+    CP 91  : JP Z,SPAWN_E6
+    CP 92  : JP Z,SPAWN_E6
+    CP 93  : JP Z,SPAWN_E6
+    CP 94  : JP Z,SPAWN_E6
+    CP 95  : JP Z,SPAWN_E6
+    CP 96  : JP Z,SPAWN_E6
+    CP 97  : JP Z,SPAWN_E6
+    CP 98  : JP Z,SPAWN_E6
+    CP 99  : JP Z,SPAWN_E6
+    CP 100 : JP Z,SPAWN_E6
+    CP 101 : JP Z,SPAWN_E6
+    CP 102 : JP Z,SPAWN_E6
+    CP 103 : JP Z,SPAWN_E6
+    CP 104 : JP Z,SPAWN_E6
+    CP 105 : JP Z,SPAWN_E6
+    CP 106 : JP Z,SPAWN_E6
+    CP 107 : JP Z,SPAWN_E6
+    CP 108 : JP Z,SPAWN_E6
+    CP 109 : JP Z,SPAWN_E6
+    CP 110 : JP Z,SPAWN_E6
+    CP 111 : JP Z,SPAWN_E6
+    CP 112 : JP Z,SPAWN_E6
+    CP 113 : JP Z,SPAWN_E6
+    CP 114 : JP Z,SPAWN_E6
+    CP 115 : JP Z,SPAWN_E6
+    CP 116 : JP Z,SPAWN_E6
+    CP 117 : JP Z,SPAWN_E6
+    CP 118 : JP Z,SPAWN_E6
+    CP 119 : JP Z,SPAWN_E6
+    CP 120 : JP Z,SPAWN_E6
+    CP 121 : JP Z,SPAWN_E6
+    CP 122 : JP Z,SPAWN_E6
+    CP 123 : JP Z,SPAWN_E6
+    CP 124 : JP Z,SPAWN_E6
+    CP 125 : JP Z,SPAWN_E6
+    CP 126 : JP Z,SPAWN_E6
+    CP 127 : JP Z,SPAWN_E6
+    CP 128 : JP Z,SPAWN_E6
+    CP 129 : JP Z,SPAWN_E6
+    CP 130 : JP Z,SPAWN_E6
+    CP 131 : JP Z,SPAWN_E6
+    CP 132 : JP Z,SPAWN_E6
+    CP 133 : JP Z,SPAWN_E6
+    CP 134 : JP Z,SPAWN_E6
+    CP 135 : JP Z,SPAWN_E6
+    CP 136 : JP Z,SPAWN_E6
+    CP 137 : JP Z,SPAWN_E6
+    CP 138 : JP Z,SPAWN_E6
+    CP 139 : JP Z,SPAWN_E6
     JP BOSS_SPAWN
 
 ; --- saved (disabled) boss-only fast-iteration schedule - kept for  ---
@@ -7987,10 +8016,10 @@ DFL_VEC_DY:
 ; EBSD_UPDATE), not from which spawn slot it came from - so it isn't
 ; restricted to 2 fixed rows (ENEMY_Y0/ENEMY_Y1) like the old TOP/BOT
 ; split implied. A can spawn at any Y. On entry A = this schedule
-; index (SSC_FIRE's CP-dispatch leaves the pre-increment index in A),
+; index (SSC_FIRE's CP-dispatch leaves the pre-increment index in HL,
+; 16bit since 2026-09-12 - see SPAWN_SCHEDULE_CHECK's own comment),
 ; used to look up this spawn's Y in SPAWN_SIMPLE_Y_TABLE.
 SPAWN_SIMPLE:
-    LD H,0 : LD L,A
     LD DE,SPAWN_SIMPLE_Y_TABLE
     ADD HL,DE
     LD A,(HL)
@@ -8899,7 +8928,6 @@ SIMPLE_REDRAW:
 ; has to make - same reasoning as ENEMY4_CLAIM_ANY picking "any" free
 ; ENEMY_POOL slot instead of the caller naming one.
 SPAWN_E2:
-    LD H,0 : LD L,A
     LD DE,SPAWN_BASEY_TABLE
     ADD HL,DE
     LD A,(HL)
@@ -8920,7 +8948,6 @@ SPAWN_E2:
 ; ENEMY3_SPAWN_INTERVAL countdown against its own budget). If every
 ; slot is already claimed, this trigger is dropped.
 SPAWN_E3_WAVE:
-    LD H,0 : LD L,A
     LD DE,SPAWN_E3_OFFSET_TABLE
     ADD HL,DE
     LD A,(HL) : LD B,A             ; B = this trigger's own offset (px)
@@ -10330,7 +10357,6 @@ ECS_S8_B:
 ; so a wave can be placed at any row, not just the 3 fixed ones - the
 ; schedule editor's row is honored directly, same as Enemy1.
 SPAWN_E4:
-    LD H,0 : LD L,A
     LD DE,SPAWN_BASEY_TABLE
     ADD HL,DE
     LD A,(HL)
@@ -10342,7 +10368,6 @@ SPAWN_E4:
 ; TYPE_ENEMY1_LOOK instead - proves TYPE (display) and BEHAVIOR
 ; (movement) are independent. Same any-row baseY lookup as SPAWN_E4.
 SPAWN_E4B:
-    LD H,0 : LD L,A
     LD DE,SPAWN_BASEY_TABLE
     ADD HL,DE
     LD A,(HL)
@@ -11736,7 +11761,6 @@ CBVE3_HIT:
 ; pixel baseY). Claims a free ENEMY6_POOL slot and draws it immediately
 ; there - drops the trigger silently if the pool (4 slots) is already full.
 SPAWN_E6:
-    LD H,0 : LD L,A
     LD DE,ENEMY6_ROW_TABLE
     ADD HL,DE
     LD A,(HL) : LD C,A           ; C = this trigger's row

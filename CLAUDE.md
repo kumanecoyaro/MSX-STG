@@ -3272,3 +3272,46 @@ Enemy6耐久値制+両ステージのスケジュール差し替え(2026-09-08�
 - **保留・実機フィードバック待ち**: 新爆発演出の見え方・ライトイエロー
   の見え方・Enemy6耐久値4の難易度感・両スケジュールの実プレイでの
   ペーシングは、いずれも次回フィードバック待ち。
+
+## Round76訂正+Round77: Stage2自機爆発BG化を撤回、Stage1 tick580停止
+バグの根本原因特定・修正(2026-09-12、完了済み・実機フィードバック待ち)
+
+- **Round76(1)の実装は撤回済み**: "誰がBG爆発に差し替えろなんて指示した
+  爆発はいまのままだぞ 自機を消すタイミングを変えるだけ 余計なことしてん
+  じゃねえよ"というユーザーの明確な却下を受け、Round76で行った
+  `tools/gameover_bank/gameover_bank.asm`のBGセル方式への全面再設計を
+  `git checkout 3a1b6a7 --`でRound75時点へ完全復元(差分ゼロ確認済み)。
+  Round76の(2)EBULLET色変更・(3)Enemy6耐久値・(4)両スケジュール差し替え
+  の3件は影響なくそのまま有効。自機を消すタイミングの正しい修正方法は
+  ユーザー未回答のまま保留(下記の緊急バグ報告が優先されたため)。
+- **Round77(本題)**: 上記の確認を求めたところ"その前にステージ１が
+  Tick600くらいから一切敵が出ないしボスも出なくなってる"との報告。
+  根本原因は`SPAWN_SCHEDULE_CHECK`の`CP 397`(8bit即値比較)が
+  `397 & 0FFh = 141`へ黙って切り詰められ、`SPAWN_NEXT_INDEX`が141に
+  達した瞬間(397件中まだ256件残っているのに)スケジュール終了と誤認して
+  以後永久にRETし続けるバグ - Round76での`Schedule_1.json`(397件、
+  旧253件から大幅増)差し替えで初めて255件を超えたことで顕在化した
+  8bitインデックス上限超えの構造的問題。`SSC_FIRE`のCP-dispatchチェーン
+  自身も`CP 256`〜`CP 395`という255超の即値を含んでおり同様に破損して
+  いた。`SPAWN_NEXT_INDEX`を1byte(旧0E4D4h、SCOREと隣接し拡張不可)から
+  2byte(新0F25Ah、ENEMY6_HP末尾直後の空き領域)へ拡張、`SPAWN_SCHEDULE_
+  CHECK`/`SSC_FIRE`/`SSC_BUSY_E2`を全てHLによる16bit演算へ書き換え
+  (CP-dispatchチェーンはH=0/H=1で低位0-255・高位256-396の2ブロックに
+  分割、HL自体はCPで破壊されないため各SPAWN_*ハンドラへ16bit indexの
+  まま渡す設計)、6つのSPAWN_*ハンドラ(SIMPLE/E2/E3_WAVE/E4/E4B/E6)の
+  `LD H,0:LD L,A`(Aの8bitゼロ拡張)も削除。natural-AIシミュレーションで
+  tick1010まで進めindex141を含め一切stallせず397まで完全消化・ボスも
+  正しくスポーンすることを確認。全回帰: Stage2側`run_all.py`
+  **1499 passed/0 failed**。Stage1側`verify_enemy_bullets.py` 56・
+  `verify_player_damage.py` 60・`verify_stage1_bgm.py` 80・
+  `verify_stage1_mission_screens.py` 87・`verify_spawn_schedule_
+  restart.py` 12・`verify_enemy6_durability.py` 15・`verify_explosion_
+  anim.py` 28・`verify_boss_dfl_clear.py` 10、全てPASS。Comb ROM
+  再ビルド・`verify_comb.py`全チェックPASS。詳細はHANDOFF.mdの
+  Round76訂正+Round77を参照。
+- **保留・実機フィードバック待ち**: (1)Stage2自機爆発の「自機を消す
+  タイミング」修正は依然未着手・ユーザー回答待ち。(2)今回のtick580
+  停止バグ修正が実機で実際に解消するかは次回フィードバック待ち。
+  (3)397エントリで初めて顕在化した「8bit index上限超え」という種類の
+  バグが他の8bit index/カウンタ箇所にも残っていないかの網羅的監査は
+  今回未実施。
