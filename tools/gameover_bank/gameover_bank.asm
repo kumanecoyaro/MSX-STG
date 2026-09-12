@@ -148,8 +148,22 @@ GO_RNG EQU 0F19Bh
 ; TANK自身のスロットには一切触れないため、爆発中も自機がそのまま
 ; 表示され続ける。Etank用は2スロットしか無いため、ラウンドロビンは
 ; mod4からmod2へ縮小(同時に画面上に残る破片は4個→2個)。
-EXPL_SPR_BASE_SLOT EQU 24  ; = ETANK_SPR_BASE_SLOT (combined_test.asm)
-EXPL_SPR_SLOT_COUNT EQU 2  ; = ETANK_SLOT_COUNT*2 (BL/BRのみ、TANKのTL/TRは持たない)
+; (2026-09-12、続けての実機フィードバック対応"爆発のスプライト
+; プライオリティを一番上にして 自機の後ろに隠れて見えないんで と言う
+; ほもっと爆発の範囲広げて"): TMS9918のスプライト優先度はATTRIBUTE
+; テーブル上のスロット番号が若いほど手前(他を隠す側)に描かれる。上の
+; Etank流用(スロット24-25)はTANK自身のスロット0-3より若さで劣るため、
+; 爆発がTANKの裏に隠れてしまっていた。TANK自身を(このバンクでは他に
+; 誰も使わない)新規スロットNEW_TANK_SPR_BASE_SLOT(28-31)へ一度だけ
+; VRAM上で移動(RELOCATE_TANK_SPRITE参照)し、空いた最若スロット0-3を
+; 爆発側へ割り当て直す - これで爆発が常にTANKより手前に描かれる。
+; Etank由来の「2スロットまで」という制約はTANK移動後は存在しないため
+; mod2からmod4へ戻し(同時に画面上に残る破片は2個→4個)、範囲も
+; GO_POP_JITTERの拡大と合わせて見た目の派手さを底上げする。
+NEW_TANK_SPR_BASE_SLOT EQU 28  ; TANK自身の退避先(28-31、このバンクでは
+                                ; 他に誰も使わない安全な領域)
+EXPL_SPR_BASE_SLOT EQU 0   ; 爆発は最若=最優先スロットへ(TANKより必ず手前)
+EXPL_SPR_SLOT_COUNT EQU 4  ; TANK移動によりEtankの2スロット制約は消滅、4に復元
 GO_SLOT_IDX EQU 0F19Ch  ; 0-(EXPL_SPR_SLOT_COUNT-1)、次にポップを描く
                         ; EXPL_SPR_BASE_SLOT相対のATTRIBUTEスロット(ラウンドロビン)
 GO_POP_CTR  EQU 0F19Dh  ; 残りポップ数(NUM_POPSからカウントダウン)
@@ -162,9 +176,10 @@ GO_BOOM_VOL EQU 0F1A7h
 NUM_POPS      EQU 40   ; 未調整の初期値、実機での見え方次第で再調整 -
                         ; 「1個ずつ」化に伴い前回のNUM_BURSTS(20)から
                         ; 増量(1回あたりが軽くなった分、密度を維持)
-GO_POP_JITTER EQU 16    ; 自機中心からのオフセット範囲、-8..+7px
-                        ; (src/CYBER SHMUP.asmのPEUA_TRY_SPAWNと同じ
-                        ; レンジ)
+; (2026-09-12、実機フィードバック対応"もっと爆発の範囲広げて 今は
+; ほぼ自機の範囲だけなんで"): 8→32へ拡大(AND用マスクのため2の
+; べき乗を維持)。
+GO_POP_JITTER EQU 32    ; 自機中心からのオフセット範囲、-16..+15px
 
 ; --- Comb globalバンク番号。standaloneでは0/1は無意味(単独バンクの ---
 ; --- ためtitleへは戻れない、テストは戻る直前のGOTO_TITLE_HOP2到達  ---
@@ -219,6 +234,14 @@ INIT:
     ; RNGの種を自機の最終X座標から取る(プレイごとに変わる値、GO_RNG自身の
     ; 説明は上のEQU参照)。
     LD A,(TANK_X) : LD (GO_RNG),A
+
+    ; "爆発のスプライトプライオリティを一番上にして"(2026-09-12、実機
+    ; フィードバック対応): 爆発をスロット0-3(最優先)で描くため、まず
+    ; TANK自身の現在のスロット0-3の内容をNEW_TANK_SPR_BASE_SLOT(28-31)
+    ; へ退避する。詳細はRELOCATE_TANK_SPRITE自身のコメント参照。
+    DI
+    CALL RELOCATE_TANK_SPRITE
+    EI
 
     ; 自機の最終位置(TANK_X/TANK_Y_CUR)を中心に、NUM_POPS回「音を鳴らし
     ; てから1個ポップさせ、短く待って次」を繰り返す(ボス撃破演出
@@ -320,6 +343,44 @@ GOTO_TITLE_HOP2:
 ; いる)。
 BANKSWITCH_TRAMPOLINE_RAM EQU 0F271h
 
+; "爆発のスプライトプライオリティを一番上にして 自機の後ろに隠れて
+; 見えないんで"(2026-09-12、実機フィードバック対応): TANK自身の
+; 現在のATTRIBUTEスロット0-3(16byte、SPRATR基準)の内容を、そのまま
+; NEW_TANK_SPR_BASE_SLOT(28-31)へVRAM上で移動する。TMS9918には
+; VRAM→VRAM直接DMAが無いため、1byteずつVDPアドレスを読み出し用→
+; 書き込み用に都度張り替えながらIN/OUTする(CLAUDE.md恒久ルール通り
+; OTIR等のブロックI/O命令は使わない、16byteのみなので性能上も問題
+; ない)。呼び出し元(INIT)がDI/EIで囲む。
+; Trashes: AF,BC,DE,HL.
+; (このアセンブラのeval_exprは演算子優先順位を持たず左から右へ逐次
+; 評価するため、"SPRATR+NEW_TANK_SPR_BASE_SLOT*4"だと
+; "(SPRATR+NEW_TANK_SPR_BASE_SLOT)*4"という誤ったアドレスに評価されて
+; しまう[Round36-14 follow-up#8等で繰り返し踏んだ既知の罠] - 乗算を
+; 先に書く"NEW_TANK_SPR_BASE_SLOT*4+SPRATR"の順で回避する。
+RELOCATE_TANK_SPRITE:
+    LD HL,SPRATR                                   ; source = slot0 base
+    LD DE,NEW_TANK_SPR_BASE_SLOT*4+SPRATR          ; dest   = slot28 base
+    LD B,16
+RTS_LOOP:
+    PUSH BC
+    LD A,L : OUT (99h),A
+    NOP : NOP
+    LD A,H : OUT (99h),A      ; bit6=0 -> read mode (H=1Bh, bit6 already 0)
+    NOP : NOP
+    IN A,(98h)
+    LD C,A
+    LD A,E : OUT (99h),A
+    NOP : NOP
+    LD A,D : OR 40h : OUT (99h),A   ; bit6=1 -> write mode
+    NOP : NOP
+    LD A,C : OUT (98h),A
+    NOP : NOP
+    POP BC
+    INC HL
+    INC DE
+    DJNZ RTS_LOOP
+    RET
+
 ; NUM_POPS回、「音を鳴らす→自機中心付近のランダムな位置へPAT_EXPLOSION
 ; を1個ポップさせる→短く待つ」を繰り返す(BOSS_EXPL_UPDATE/BEU_FIREと
 ; 同じモデル - あちらは「毎回新しい位置に1個ポップ+毎回SOUND_DESTROY+
@@ -347,9 +408,11 @@ GO_POP_LOOP:
 
 ; 1個のPAT_EXPLOSIONスプライトを、自機中心(TANK_X/TANK_Y_CUR)から
 ; ±GO_POP_JITTER/2pxのランダムオフセット位置へ、GO_SLOT_IDXが指す
-; EXPL_SPR_BASE_SLOT相対のATTRIBUTEスロット(Etank用の24-25、TANK自身の
-; スロット0-3には一切触れない - 上のEQU群の2026-09-12コメント参照)で
-; 描く。描いた後GO_SLOT_IDXを次のスロットへ進める(mod EXPL_SPR_SLOT_
+; EXPL_SPR_BASE_SLOT相対のATTRIBUTEスロット(2026-09-12実機フィード
+; バック対応で0-3へ変更、TANK自身は別途NEW_TANK_SPR_BASE_SLOTへ退避
+; 済みのためここには一切残っていない - 上のEQU群のコメント参照)で
+; 描く。スロット0-3は最若=最優先のためTANKより必ず手前に描かれる。
+; 描いた後GO_SLOT_IDXを次のスロットへ進める(mod EXPL_SPR_SLOT_
 ; COUNT)。色はGO_POP_CTRの最下位ビットで白/ライトレッドを交互に。
 ; Trashes: AF,BC,DE,HL。
 GO_LAUNCH_ONE_POP:
@@ -388,10 +451,10 @@ GLOP_COLOR_RESOLVED:
     LD A,(GO_SLOT_IDX) : INC A : AND EXPL_SPR_SLOT_COUNT-1 : LD (GO_SLOT_IDX),A
     RET
 
-; TANK自身のスロット0-3(自機、爆発中は一切触れていないので実は
-; Y=209へ戻す必要はないが、他のGAME_OVER後処理と同じ「明示的に隠す」
-; 規約に合わせて念のため含める)+EXPL_SPR_BASE_SLOT(24-25、爆発の
-; 破片)を、いずれもY=209(MSX標準の「個別に隠す」センチネル、project
+; TANK自身の退避先NEW_TANK_SPR_BASE_SLOT(28-31、爆発中は一切触れて
+; いないので実はY=209へ戻す必要はないが、他のGAME_OVER後処理と同じ
+; 「明示的に隠す」規約に合わせて念のため含める)+EXPL_SPR_BASE_SLOT
+; (0-3、爆発の破片)を、いずれもY=209(MSX標準の「個別に隠す」センチネル、project
 ; 全体の規約 - real terminator 208とは別、詳細はcombined_test.asm
 ; 自身のコメント参照)+X=0/pat=0/col=0へ戻し、点滅の非表示側を作る。
 ; (2026-09-08、実機フィードバック対応、"ステージ2の自機爆発で音が
@@ -411,12 +474,15 @@ GLOP_COLOR_RESOLVED:
 ; タイミングを"爆発処理が終わったら"に一本化)必要があるため、TANK
 ; スロット0-3への隠しループはそのまま維持し、EXPL_SPR_BASE_SLOT
 ; (24-25)を隠す2回目のループを追加した。
+; (2026-09-12、続けての実機フィードバック対応でTANKをNEW_TANK_SPR_
+; BASE_SLOT[28-31]へ退避・EXPL_SPR_BASE_SLOTを0-3へ変更したことに伴い
+; 1回目のループのアドレスもNEW_TANK_SPR_BASE_SLOT基準へ更新。
 ; Trashes: AF,B,HL.
 GO_HIDE_EXPLOSION:
     DI
     LD A,8 : OUT (PSG_ADDR),A
     XOR A : OUT (PSG_DATA),A   ; channel A (boom SE) volume=0 - GO_STEP_BOOM_DECAY never reaches 0 on its own
-    LD A,0 : OUT (99h),A
+    LD A,NEW_TANK_SPR_BASE_SLOT*4 : OUT (99h),A
     NOP
     NOP
     LD A,5Bh : OUT (99h),A

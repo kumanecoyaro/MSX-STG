@@ -12861,3 +12861,54 @@ Y段違い+Enemy6速度半減、Stage2自機爆発の自機非表示タイミン
   いずれも次回フィードバック待ち。汎用化したSSC_FIREのNブロック
   分岐機構により、今後スケジュールが256の倍数をまたいで増減しても
   自動的に追随する(手作業でのブロック数調整は不要)。
+
+## Round79: Stage2自機爆発のスプライト優先度修正+範囲拡大(2026-09-12、
+完了済み・実機フィードバック待ち)
+
+- ユーザー報告(Round78のEtankスロット流用直後): "ステージ2の自機爆発
+  処理のみ 爆発のスプライトプライオリティを一番上にして 自機の後ろに
+  隠れて見えないんで と言うかもっと爆発の範囲広げて 今はほぼ自機の
+  範囲だけなんで"。
+- **根本原因**: TMS9918のhwスプライト優先度はATTRIBUTEテーブル上の
+  スロット番号が若いほど手前(他を隠す側)に描かれる。Round78で爆発を
+  Etank流用スロット(24-25)へ移した結果、TANK自身のスロット0-3の方が
+  若いため爆発がTANKの裏に隠れてしまっていた。
+- **修正**: `tools/gameover_bank/gameover_bank.asm`にTANK自身の現在の
+  ATTRIBUTE内容(スロット0-3、16byte)をVRAM上で新設`NEW_TANK_SPR_
+  BASE_SLOT`(28-31、このバンクでは他に誰も使わない安全な領域)へ
+  一度だけ退避する`RELOCATE_TANK_SPRITE`を新設し、INIT冒頭
+  (`GO_EXPLOSION_SEQUENCE`呼び出し直前)で1回呼ぶ。TMS9918にVRAM→VRAM
+  直接DMAが無いため、1byteずつVDPアドレスを読み出し用→書き込み用に
+  都度張り替えながらIN/OUTする手動コピー(CLAUDE.md恒久ルール通り
+  OTIR等のブロックI/O命令は使わない、16byteのみなので性能上も
+  問題ない)。空いた最若スロット0-3を`EXPL_SPR_BASE_SLOT`として爆発
+  側に割り当て直し(24→0)、TANKが移動した今Etank由来の「2スロット
+  まで」という制約も消滅したため`EXPL_SPR_SLOT_COUNT`を2→4へ復元
+  (同時に画面上に残る破片も2個→4個)。`GO_HIDE_EXPLOSION`の1回目の
+  隠しループもNEW_TANK_SPR_BASE_SLOT基準へ追随。範囲拡大は
+  `GO_POP_JITTER`を16→32(オフセット範囲-8..+7px→-16..+15px、AND
+  マスクのため2のべき乗を維持)。
+- **自己発見バグ**: `LD DE,SPRATR+NEW_TANK_SPR_BASE_SLOT*4`という
+  当初の書き方が、このアセンブラのeval_exprが演算子優先順位を持たず
+  左から右へ逐次評価する既知の罠(`(SPRATR+NEW_TANK_SPR_BASE_SLOT)*4`
+  という誤ったアドレスに評価される、Round36-14 follow-up#8等で
+  繰り返し踏んだのと同型)を再び踏み、DE=0x6C70という全く無関係な
+  アドレスへコピーしてしまっていた。新規回帰テスト(`RELOCATE_TANK_
+  SPRITE`のコピー結果を直接バイト比較)で即座に検出、乗算を先に書く
+  `NEW_TANK_SPR_BASE_SLOT*4+SPRATR`の順へ修正して解消。
+- **視覚確認**: 標準の`render_check.py`はこのバンクの独立性(Stage2
+  本編のINITが積むはずのスプライトパターンVRAMが空)のため使えず、
+  スクラッチスクリプトでチェッカーボード柄の"TANKスタンドイン"
+  パターン+単色の"爆発"パターンを手動でVRAMへ注入し、実際のINITフロー
+  (RELOCATE_TANK_SPRITE→GO_EXPLOSION_SEQUENCE)を回してPNGレンダリング
+  - 爆発の単色矩形がTANKスタンドインのチェッカーボード柄を完全に
+  覆い隠す(=爆発が手前)ことを視覚確認済み。
+- `gameover_bank_test.py`を新設計に合わせ改訂、`RELOCATE_TANK_SPRITE`
+  自体の新規テスト3件(コピー内容の直接バイト比較・コピー元の非破壊・
+  実INITフローでの実行順序)を追加。全回帰: Stage2側`run_all.py`
+  **1507 passed/0 failed**(1502→1507、gameover_bank_test.py 47→52
+  件)。Comb ROM再ビルド・`verify_comb.py`全チェックPASS。標準方針
+  によりComb ROMのみ送付。
+- **保留・実機フィードバック待ち**: 修正後の実機での見え方(優先度・
+  範囲とも)は次回フィードバック待ち。`GO_POP_JITTER`(32)・
+  `NUM_POPS`(40)は依然未調整の初期値。

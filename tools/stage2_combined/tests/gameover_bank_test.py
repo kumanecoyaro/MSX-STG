@@ -173,11 +173,49 @@ def call_launch_one_pop(seed, slot_idx, pop_ctr_parity, tank_x=50, tank_y=80):
 # (2026-09-12、実機フィードバック対応"自機は消さず爆発処理して 爆発
 # 処理が終わったら消すだけ もしパターンが足りないならEtankのエリア
 # 使え"): 爆発の描画先がTANK自身のスロット0-3からEXPL_SPR_BASE_SLOT
-# (=ETANK_SPR_BASE_SLOT=24-25、EXPL_SPR_SLOT_COUNT=2)へ移動したため、
-# 検証対象のVRAMアドレスもそちらに追随。
+# (当初=ETANK_SPR_BASE_SLOT=24-25、EXPL_SPR_SLOT_COUNT=2)へ移動。
+# 続けて"爆発のスプライトプライオリティを一番上にして 自機の後ろに
+# 隠れて見えないんで"(2026-09-12): TMS9918はスロット番号が若いほど
+# 手前に描かれるため、TANK自身をNEW_TANK_SPR_BASE_SLOT(28-31)へ退避し
+# 爆発を最若スロット(EXPL_SPR_BASE_SLOT=0-3)へ割り当て直した - 以後
+# EXPL_SPR_BASE_SLOTはTANKの"元"スロット0-3と同じ物理アドレスを指す
+# (TANKはもうそこにいない)。検証対象のVRAMアドレスもそちらに追随。
 EXPL_SPR_BASE_SLOT = sym["EXPL_SPR_BASE_SLOT"]
 EXPL_SPR_SLOT_COUNT = sym["EXPL_SPR_SLOT_COUNT"]
 EXPL_ATTR_BASE = 0x1B00 + EXPL_SPR_BASE_SLOT * 4
+NEW_TANK_SPR_BASE_SLOT = sym["NEW_TANK_SPR_BASE_SLOT"]
+NEW_TANK_ATTR_BASE = 0x1B00 + NEW_TANK_SPR_BASE_SLOT * 4
+
+# ---- RELOCATE_TANK_SPRITE (2026-09-12、実機フィードバック対応"爆発の
+# ---- スプライトプライオリティを一番上にして"): TANK自身のスロット0-3
+# ---- の内容をNEW_TANK_SPR_BASE_SLOTへVRAM上でIN/OUTしながら1byteずつ
+# ---- コピーする(TMS9918にVRAM->VRAM直接DMAが無いため)。
+z_reloc = fresh()
+src_pattern = bytes(range(10, 26))  # 16 distinct bytes, easy to spot a mis-copy
+z_reloc.vram[0x1B00:0x1B10] = src_pattern
+call_ret(z_reloc, sym["RELOCATE_TANK_SPRITE"])
+dest_bytes = bytes(z_reloc.vram[NEW_TANK_ATTR_BASE:NEW_TANK_ATTR_BASE + 16])
+check("RELOCATE_TANK_SPRITE copies TANK's 16 attribute bytes (slot0-3) "
+      "byte-for-byte to NEW_TANK_SPR_BASE_SLOT",
+      dest_bytes == src_pattern)
+src_after = bytes(z_reloc.vram[0x1B00:0x1B10])
+check("RELOCATE_TANK_SPRITE leaves the source bytes (slot0-3) untouched (a "
+      "copy, not a destructive move - GO_LAUNCH_ONE_POP is what overwrites "
+      "them afterward)",
+      src_after == src_pattern)
+
+# real INIT flow: confirm RELOCATE_TANK_SPRITE actually runs, and runs BEFORE
+# GO_EXPLOSION_SEQUENCE starts overwriting slot0-3 with explosion pops - this
+# is the literal fix for "爆発の後ろに隠れて見えない".
+z_flow = fresh()
+z_flow.vram[0x1B00:0x1B10] = src_pattern
+z_flow.pc = sym["INIT"]
+run_until_pc(z_flow, sym["GO_EXPLOSION_SEQUENCE"], 300000)
+dest_at_flow = bytes(z_flow.vram[NEW_TANK_ATTR_BASE:NEW_TANK_ATTR_BASE + 16])
+check("real INIT flow: by the time GO_EXPLOSION_SEQUENCE is reached, TANK's "
+      "original slot0-3 content has already been relocated to "
+      "NEW_TANK_SPR_BASE_SLOT",
+      dest_at_flow == src_pattern)
 
 z = call_launch_one_pop(seed=11, slot_idx=0, pop_ctr_parity=0, tank_x=50, tank_y=80)
 attrs0 = [z.vram[EXPL_ATTR_BASE + i] for i in range(4)]
@@ -206,21 +244,22 @@ check("GO_LAUNCH_ONE_POP with GO_SLOT_IDX=1 draws into EXPL_SPR_BASE_SLOT+1's ow
       "ATTRIBUTE record, leaving EXPL_SPR_BASE_SLOT+0 untouched (still Y=0 from a "
       "fresh z80 - default VRAM state)",
       attrs_slot1[2] == PAT_EXPLOSION and attrs_slot0[2] != PAT_EXPLOSION)
-tank_slot_attrs = [z_slot1.vram[0x1B00 + i] for i in range(16)]
-check("GO_LAUNCH_ONE_POP never writes into TANK's own ATTRIBUTE slots 0-3 (all "
-      "still Y=0 from a fresh z80 - the self-ship stays exactly as-is during the "
-      "explosion, per '自機は消さず爆発処理して')",
-      tank_slot_attrs == [0] * 16)
+new_tank_slot_attrs = [z_slot1.vram[NEW_TANK_ATTR_BASE + i] for i in range(16)]
+check("GO_LAUNCH_ONE_POP never writes into TANK's relocated ATTRIBUTE slots "
+      "(NEW_TANK_SPR_BASE_SLOT, all still Y=0 from a fresh z80 - the self-ship "
+      "stays exactly as-is during the explosion, per '自機は消さず爆発処理して')",
+      new_tank_slot_attrs == [0] * 16)
 
 z_advance = fresh()
 z_advance.wr(GO_SLOT_IDX, 0)
-call_ret(z_advance, sym["GO_LAUNCH_ONE_POP"])
-check("GO_LAUNCH_ONE_POP advances GO_SLOT_IDX from 0 to 1",
-      z_advance.rd(GO_SLOT_IDX) == 1)
+for i in range(EXPL_SPR_SLOT_COUNT - 1):
+    call_ret(z_advance, sym["GO_LAUNCH_ONE_POP"])
+    check(f"GO_LAUNCH_ONE_POP advances GO_SLOT_IDX from {i} to {i + 1}",
+          z_advance.rd(GO_SLOT_IDX) == i + 1)
 call_ret(z_advance, sym["GO_LAUNCH_ONE_POP"])
 check(f"GO_LAUNCH_ONE_POP wraps GO_SLOT_IDX back to 0 after "
       f"EXPL_SPR_SLOT_COUNT ({EXPL_SPR_SLOT_COUNT}) pops (round-robin over "
-      "exactly the 2 Etank-borrowed ATTRIBUTE slots)",
+      f"the {EXPL_SPR_SLOT_COUNT} top-priority ATTRIBUTE slots)",
       z_advance.rd(GO_SLOT_IDX) == 0)
 
 # ---- GO_EXPLOSION_SEQUENCE: NUM_POPS individual pops, each with its own ----
@@ -283,11 +322,13 @@ check("GO_HIDE_EXPLOSION is called exactly once before GO_WAIT_LOOP (the "
 # the moment GO_WAIT_LOOP (i.e. after the text has already been drawn) is reached -
 # this is the literal on-screen check for "爆発エフェクトは消してくれ", extended
 # (2026-09-12、"自機は消さず爆発処理して 爆発処理が終わったら消すだけ") to also
-# cover TANK's own slots (0-3, now hidden here too instead of during the pops).
-hidden_attrs_tank = [z.vram[0x1B00 + i] for i in range(16)]
+# cover TANK's relocated slots (NEW_TANK_SPR_BASE_SLOT, now hidden here too
+# instead of during the pops - "プライオリティを一番上に" moved TANK away
+# from slot0-3, but the hide-on-finish contract is unchanged).
+hidden_attrs_tank = [z.vram[NEW_TANK_ATTR_BASE + i] for i in range(16)]
 check("by the time MISSION FAILED text is on screen (GO_WAIT_LOOP reached), TANK's "
-      "own sprite slots (0-3) are hidden (Y=209) - the self-ship disappears only "
-      "here, at the end, not during the explosion",
+      "own (relocated) sprite slots are hidden (Y=209) - the self-ship disappears "
+      "only here, at the end, not during the explosion",
       hidden_attrs_tank == [209, 0, 0, 0] * 4)
 hidden_attrs_expl = [z.vram[EXPL_ATTR_BASE + i] for i in range(EXPL_SPR_SLOT_COUNT * 4)]
 check("by the time MISSION FAILED text is on screen (GO_WAIT_LOOP reached), the "
@@ -340,15 +381,15 @@ check("GO_STEP_BOOM_DECAY leaves GO_BOOM_VOL at 0 once fully decayed",
 # 直接検証するため削除した。
 
 z2 = fresh()
-z2.vram[0x1B00:0x1B10] = bytes([1] * 16)
+z2.vram[NEW_TANK_ATTR_BASE:NEW_TANK_ATTR_BASE + 16] = bytes([1] * 16)
 z2.vram[EXPL_ATTR_BASE:EXPL_ATTR_BASE + EXPL_SPR_SLOT_COUNT * 4] = bytes([1] * (EXPL_SPR_SLOT_COUNT * 4))
 z2.sp = 0xF000
 z2.wr(0xF000, 0x00); z2.wr(0xF001, 0x00)
 z2.pc = sym["GO_HIDE_EXPLOSION"]
 run_until_pc(z2, 0x0000, 300000)
-hide_attrs_tank = [z2.vram[0x1B00 + i] for i in range(16)]
+hide_attrs_tank = [z2.vram[NEW_TANK_ATTR_BASE + i] for i in range(16)]
 hide_attrs_expl = [z2.vram[EXPL_ATTR_BASE + i] for i in range(EXPL_SPR_SLOT_COUNT * 4)]
-check("GO_HIDE_EXPLOSION hides TANK's own slots 0-3 (Y=209)",
+check("GO_HIDE_EXPLOSION hides TANK's relocated slots (Y=209)",
       hide_attrs_tank == [209, 0, 0, 0] * 4)
 check("GO_HIDE_EXPLOSION also hides the EXPL_SPR_BASE_SLOT explosion slots (Y=209)",
       hide_attrs_expl == [209, 0, 0, 0] * EXPL_SPR_SLOT_COUNT)
