@@ -134,11 +134,17 @@ def fresh_clean():
     z2 = Z80(bytearray(mem0))
     return z2
 
-# SPAWN_THRESHOLDS index17 (type=enemy2, one of SSC_BUSY_E2's own CP list)
-# has a real threshold of tick70 (DW 10,12,14,18,20,22,26,28,30,33,35,41,
-# 43,45,53,55,57 for indices0-16, then 70 at index17).
-E2_INDEX = 17
-E2_THRESHOLD = 70
+# (2026-09-08、Schedule_1.json差し替えでSSC_BUSY_E2の対象indexが
+# ずれたため、旧スケジュール前提のハードコード値[index17/tick70]を
+# 「ソース自身のCP nn : JR Z,SSC_BUSY_E2列から動的に最初の1件を拾う」
+# 方式へ変更 - 以後スケジュールが差し替わってもこのテスト自体は
+# 追随する。SPAWN_THRESHOLDSは16bit DW配列なので2byte/indexで読む。
+import re as _re
+_e2_indices = [int(m) for m in _re.findall(r"CP (\d+) : JR Z,SSC_BUSY_E2", text)]
+assert _e2_indices, "no SSC_BUSY_E2 CP entries found in source"
+E2_INDEX = _e2_indices[0]
+_thr_addr = sym["SPAWN_THRESHOLDS"] + E2_INDEX * 2
+E2_THRESHOLD = mem0[_thr_addr] | (mem0[_thr_addr + 1] << 8)
 
 z2 = fresh_clean()
 z2.wr(SPAWN_NEXT_INDEX, E2_INDEX)

@@ -73,12 +73,16 @@ check("assembles standalone within a single 16KB window-A bank (4000h-7FFFh)",
 # ---- same "boss-only, safe after terrain's own code0-93" reasoning as ----
 # ---- ending_text_gen.py's GFEnding font, NOT the original code0-10    ----
 # ---- that clobbered the live terrain (found via self-rendering, see   ----
-# ---- this file's own INIT comment).                                  ----
+# ---- this file's own INIT comment). (2026-09-08、爆発の全面再設計に   ----
+# ---- 伴い、フォント自体の読込は爆発シーケンスの"後"に移動した -       ----
+# ---- code96/group18は爆発中はスパーク専用として一時的に使われるため、 ----
+# ---- 本物のフォント・本来の白色は全て終わった後(GO_WAIT_LOOP)で       ----
+# ---- 初めて確認できる。                                                ----
 FONT_CHARS = ["M", "I", "S", "O", "N", " ", "F", "A", "L", "E", "D"]
 FONT_CODES = [96, 97, 98, 99, 100, 101, 102, 103, 144, 145, 146]
 z = fresh()
 z.pc = sym["INIT"]
-run_until_pc(z, sym["GO_EXPLOSION_SEQUENCE"])
+run_until_pc(z, sym["GO_WAIT_LOOP"])
 font_ok = True
 for ch, code in zip(FONT_CHARS, FONT_CODES):
     expected = pixel_font_8x8.glyph_bytes(ch)
@@ -88,7 +92,9 @@ for ch, code in zip(FONT_CHARS, FONT_CODES):
 check("MISSION FAILED font glyphs loaded byte-correct at code96-103+144-146, "
       "matching tools/pixel_font_8x8.py", font_ok)
 check("group12 (codes96-103) color patched to white/black (0F1h)", z.vram[0x200C] == 0xF1)
-check("group18 (codes144-151) color patched to white/black (0F1h)", z.vram[0x2012] == 0xF1)
+check("group18 (codes144-151) color patched to white/black (0F1h) - after the "
+      "explosion's own temporary red (see GO_SPARK_RED_COLOR) has been overwritten "
+      "by the real font's own color load", z.vram[0x2012] == 0xF1)
 
 # ---- GAMEOVER2_MSG content: "MISSION FAILED" using the relocated codes ----
 def read_msg(addr, length):
@@ -130,26 +136,31 @@ check("no leftover 0x33 poison bytes remain anywhere in row12 (fully "
       "overwritten - blank margins + message, nothing untouched)",
       0x33 not in row12)
 
-# ---- single-pop explosion (2026-09-07、実機フィードバック対応その3
-# ---- "4つ爆発を同時に飛ばすんじゃなく1個ずつバラバラにだ でその1回毎に
-# ---- サウンドだ 速度も遅いって何回言わせんだよ 音出して1つ飛ばして
-# ---- また音出して1つ飛ばしての繰り返し ボス爆発がそうなってんだろう
-# ---- が"): 旧・4パーティクル同時直進飛翔モデルを全面撤回し、
-# ---- src/CYBER SHMUP.asmのBOSS_EXPL_UPDATE/BEU_FIRE(「毎回ランダムな
-# ---- 新しい位置に1個ポップ+毎回SOUND_DESTROY+短い待ちで次」の高速連続
-# ---- ポップ)と同じモデルへ再設計した。
+# ---- BG-cell spark explosion (2026-09-08、実機フィードバック対応
+# ---- "ステージ2の自機爆発は消すのが早い 爆発中は表示してて終わる少し
+# ---- 前に消すんだよ 今は爆発処置に入った途端に消えてて不自然"):
+# ---- VRAM->PNGレンダリングで実際に1ポップずつ確認したところ、旧実装
+# ---- (GO_LAUNCH_ONE_POPが毎ポップTANK自身のhwスプライトATTRIBUTE
+# ---- スロット0-3[UPDATE_TANK_SPRITES参照、自機の4象限が常駐]を直接
+# ---- 上書きしていた)がまさにこの症状の原因と判明 - スロットが4つしか
+# ---- 無くTANK自身も4つ全部を占有している以上、ポップ4回目(40ポップ中
+# ---- わずか最初の4回)で自機が完全にポップ絵へ置き換わっていた。
+# ---- round32のINIT_BOSS_EXPLOSION/BOSS_EXPL_SPARK自身のコメント
+# ---- 「スプライトで描画すると消えてしまうんでBGで」と同じ失敗パターン
+# ---- だったため、同じ解決策(BGセル方式)を適用: TANK自身のスプライト
+# ---- は一切触れず、自機周囲の固定4セルへBGスパークを描き、TANKの
+# ---- スプライトは全ポップ完了後の一度だけ隠す。
 TANK_X = sym["TANK_X"]
 TANK_Y_CUR = sym["TANK_Y_CUR"]
-PAT_EXPLOSION = sym["PAT_EXPLOSION"]
 SPR_WHITE_COLOR = sym["SPR_WHITE_COLOR"]
 SPR_LIGHTRED_COLOR = sym["SPR_LIGHTRED_COLOR"]
-GO_POP_JITTER = sym["GO_POP_JITTER"]
 GO_SLOT_IDX = sym["GO_SLOT_IDX"]
 GO_POP_CTR = sym["GO_POP_CTR"]
-
-
-def signed(v):
-    return v - 256 if v >= 128 else v
+GO_SPARK_ROW = sym["GO_SPARK_ROW"]
+GO_SPARK_COL = sym["GO_SPARK_COL"]
+GO_SPARK_SAVED = sym["GO_SPARK_SAVED"]
+GO_SPARK_WHITE_CODE = sym["GO_SPARK_WHITE_CODE"]
+GO_SPARK_RED_CODE = sym["GO_SPARK_RED_CODE"]
 
 
 def call_ret(z, target, max_instr=300000):
@@ -159,67 +170,109 @@ def call_ret(z, target, max_instr=300000):
     run_until_pc(z, 0x0000, max_instr)
 
 
-def call_launch_one_pop(seed, slot_idx, pop_ctr_parity, tank_x=50, tank_y=80):
+def nt_addr(row, col):
+    return 0x1800 + row * 32 + col
+
+
+# ---- GO_PREPARE_SPARKS: computes the 4 fixed diagonal cells around ----
+# ---- TANK's own name-table cell, and snapshots what was already there ----
+z = fresh()
+z.wr(TANK_X, 40)
+z.wr(TANK_Y_CUR, 80)  # base col=5, base row=10
+for i in range(4):
+    z.vram[nt_addr(9 + (i // 2) * 2, 4 + (i % 2) * 2)] = 200 + i  # unique poison per cell
+call_ret(z, sym["GO_PREPARE_SPARKS"])
+rows = [z.rd(GO_SPARK_ROW + i) for i in range(4)]
+cols = [z.rd(GO_SPARK_COL + i) for i in range(4)]
+saved = [z.rd(GO_SPARK_SAVED + i) for i in range(4)]
+check("GO_PREPARE_SPARKS computes the 4 diagonal cells around TANK's own name-table "
+      "cell (col-1/+1, row-1/+1 from TANK_X>>3, TANK_Y_CUR>>3)",
+      list(zip(rows, cols)) == [(9, 4), (9, 6), (11, 4), (11, 6)])
+check("GO_PREPARE_SPARKS snapshots the real name-table byte already at each of the "
+      "4 cells (so they can be restored verbatim later)",
+      saved == [200, 201, 202, 203])
+
+# ---- edge clamping: TANK parked at the very edge of the name table must not ----
+# ---- wrap the spark cells off the visible 0-31/0-23 grid ----
+z_edge = fresh()
+z_edge.wr(TANK_X, 0)     # base col = 0
+z_edge.wr(TANK_Y_CUR, 8)  # base row = 1 (still >0, only column edge tested here)
+call_ret(z_edge, sym["GO_PREPARE_SPARKS"])
+edge_cols = [z_edge.rd(GO_SPARK_COL + i) for i in range(4)]
+check("GO_PREPARE_SPARKS clamps the col-1 slots (0,2) to column 0 instead of "
+      "wrapping negative when TANK sits at the left edge",
+      edge_cols[0] == 0 and edge_cols[2] == 0)
+
+z_edge2 = fresh()
+z_edge2.wr(TANK_X, 255)  # base col = 31 (max)
+z_edge2.wr(TANK_Y_CUR, 191)  # base row = 23 (max)
+call_ret(z_edge2, sym["GO_PREPARE_SPARKS"])
+edge_rows2 = [z_edge2.rd(GO_SPARK_ROW + i) for i in range(4)]
+edge_cols2 = [z_edge2.rd(GO_SPARK_COL + i) for i in range(4)]
+check("GO_PREPARE_SPARKS clamps the col+1 slots (1,3) to column 31 instead of "
+      "overflowing when TANK sits at the right edge",
+      edge_cols2[1] == 31 and edge_cols2[3] == 31)
+check("GO_PREPARE_SPARKS clamps the row+1 slots (2,3) to row 23 instead of "
+      "overflowing when TANK sits at the bottom edge",
+      edge_rows2[2] == 23 and edge_rows2[3] == 23)
+
+# ---- GO_LAUNCH_ONE_POP: draws into the precomputed cell for GO_SLOT_IDX, ----
+# ---- alternating white/red every 4 pops (once per full round-robin lap), ----
+# ---- and never touches TANK's own hw sprite attribute table (slots0-3) ----
+TANK_ATTRS_BEFORE = bytes([156, 40, 0, 8, 156, 56, 4, 1, 172, 40, 8, 1, 172, 56, 12, 1])
+
+
+def call_launch_one_pop(slot_idx, pop_ctr, tank_x=40, tank_y=80):
     z = fresh()
     z.wr(TANK_X, tank_x)
     z.wr(TANK_Y_CUR, tank_y)
-    z.wr(sym["GO_RNG"], seed)
+    z.vram[0x1B00:0x1B10] = TANK_ATTRS_BEFORE
+    call_ret(z, sym["GO_PREPARE_SPARKS"])
     z.wr(GO_SLOT_IDX, slot_idx)
-    z.wr(GO_POP_CTR, pop_ctr_parity)
+    z.wr(GO_POP_CTR, pop_ctr)
     call_ret(z, sym["GO_LAUNCH_ONE_POP"])
     return z
 
 
-z = call_launch_one_pop(seed=11, slot_idx=0, pop_ctr_parity=0, tank_x=50, tank_y=80)
-attrs0 = [z.vram[0x1B00 + i] for i in range(4)]
-check("GO_LAUNCH_ONE_POP draws exactly 1 explosion sprite in slot0's own "
-      "ATTRIBUTE record (Y at row0-3)",
-      attrs0[2] == PAT_EXPLOSION)
-dx0 = signed(attrs0[1]) - 50 if attrs0[1] < 128 else attrs0[1] - 50
-dy0 = attrs0[0] - 80
-check(f"GO_LAUNCH_ONE_POP's jitter offset stays within -{GO_POP_JITTER // 2}.."
-      f"+{GO_POP_JITTER // 2 - 1}px of TANK_X/TANK_Y_CUR (never a wild "
-      "out-of-range position)",
-      -GO_POP_JITTER // 2 <= signed(dy0) <= GO_POP_JITTER // 2 - 1)
-check("GO_LAUNCH_ONE_POP with pop-counter parity=0 (even) draws in SPR_WHITE_COLOR",
-      attrs0[3] == SPR_WHITE_COLOR)
+z0 = call_launch_one_pop(slot_idx=0, pop_ctr=40)  # (40>>2)&1 = 2&1 = 0 -> white
+check("GO_LAUNCH_ONE_POP draws GO_SPARK_WHITE_CODE into slot0's own precomputed "
+      "cell when (GO_POP_CTR>>2)&1==0",
+      z0.vram[nt_addr(9, 4)] == GO_SPARK_WHITE_CODE)
+check("GO_LAUNCH_ONE_POP leaves TANK's own hw sprite attribute table (slots0-3) "
+      "completely untouched - the literal fix for the ship vanishing the instant "
+      "the explosion starts",
+      bytes(z0.vram[0x1B00:0x1B10]) == TANK_ATTRS_BEFORE)
 
-z_red = call_launch_one_pop(seed=11, slot_idx=0, pop_ctr_parity=1, tank_x=50, tank_y=80)
-attrs_red = [z_red.vram[0x1B00 + i] for i in range(4)]
-check("GO_LAUNCH_ONE_POP with pop-counter parity=1 (odd) draws in SPR_LIGHTRED_COLOR",
-      attrs_red[3] == SPR_LIGHTRED_COLOR)
+z1 = call_launch_one_pop(slot_idx=1, pop_ctr=36)  # (36>>2)&1 = 9&1 = 1 -> red
+check("GO_LAUNCH_ONE_POP draws GO_SPARK_RED_CODE into slot1's own precomputed cell "
+      "when (GO_POP_CTR>>2)&1==1",
+      z1.vram[nt_addr(9, 6)] == GO_SPARK_RED_CODE)
 
-z_slot2 = call_launch_one_pop(seed=11, slot_idx=2, pop_ctr_parity=0, tank_x=50, tank_y=80)
-attrs_slot0 = [z_slot2.vram[0x1B00 + i] for i in range(4)]
-attrs_slot2 = [z_slot2.vram[0x1B00 + 8 + i] for i in range(4)]
-check("GO_LAUNCH_ONE_POP with GO_SLOT_IDX=2 draws into slot2's own ATTRIBUTE "
-      "record, leaving slot0 untouched (still Y=0 from a fresh z80 - default "
-      "VRAM state)",
-      attrs_slot2[2] == PAT_EXPLOSION and attrs_slot0[2] != PAT_EXPLOSION)
+z2 = call_launch_one_pop(slot_idx=2, pop_ctr=40)
+check("GO_LAUNCH_ONE_POP with GO_SLOT_IDX=2 draws into slot2's own cell, leaving "
+      "slot0's cell exactly as GO_PREPARE_SPARKS left it (untouched by this call)",
+      z2.vram[nt_addr(11, 4)] == GO_SPARK_WHITE_CODE and
+      z2.vram[nt_addr(9, 4)] != GO_SPARK_WHITE_CODE)
 
-z_advance = fresh()
-z_advance.wr(GO_SLOT_IDX, 0)
-call_ret(z_advance, sym["GO_LAUNCH_ONE_POP"])
+z_advance = call_launch_one_pop(slot_idx=0, pop_ctr=40)
 check("GO_LAUNCH_ONE_POP advances GO_SLOT_IDX from 0 to 1",
       z_advance.rd(GO_SLOT_IDX) == 1)
-z_advance.wr(GO_SLOT_IDX, 3)
-call_ret(z_advance, sym["GO_LAUNCH_ONE_POP"])
+z_advance2 = call_launch_one_pop(slot_idx=3, pop_ctr=40)
 check("GO_LAUNCH_ONE_POP wraps GO_SLOT_IDX from 3 back to 0 (round-robin over "
-      "exactly the 4 available ATTRIBUTE slots)",
-      z_advance.rd(GO_SLOT_IDX) == 0)
+      "exactly the 4 precomputed cells)",
+      z_advance2.rd(GO_SLOT_IDX) == 0)
 
 # ---- GO_EXPLOSION_SEQUENCE: NUM_POPS individual pops, each with its own ----
-# ---- sound - this is the literal fix for "1個ずつバラバラに...音出して  ----
-# ---- 1つ飛ばして"                                                        ----
+# ---- sound, and TANK's own sprite left fully alone the entire time ----
 NUM_POPS = sym["NUM_POPS"]
+GO_LAUNCH_ONE_POP_PC = sym["GO_LAUNCH_ONE_POP"]
 z = fresh()
 z.wr(TANK_X, 120)
 z.wr(TANK_Y_CUR, 90)
-z.wr(sym["GO_RNG"], 5)
-GO_LAUNCH_ONE_POP_PC = sym["GO_LAUNCH_ONE_POP"]
-GO_ARM_BOOM_PC = sym["GO_ARM_BOOM"]
+z.vram[0x1B00:0x1B10] = TANK_ATTRS_BEFORE
 launch_count = 0
 seen_r8_at_launch = []
+tank_attrs_ever_changed = False
 z.sp = 0xF000
 z.wr(0xF000, 0x00); z.wr(0xF001, 0x00)
 z.pc = sym["GO_EXPLOSION_SEQUENCE"]
@@ -229,6 +282,8 @@ while z.pc != 0x0000 and steps < 5_000_000:
     if z.pc == GO_LAUNCH_ONE_POP_PC and _prev_pc != GO_LAUNCH_ONE_POP_PC:
         launch_count += 1
         seen_r8_at_launch.append(z.psg_regs.get(8))
+    if bytes(z.vram[0x1B00:0x1B10]) != TANK_ATTRS_BEFORE:
+        tank_attrs_ever_changed = True
     _prev_pc = z.pc
     z.step()
     steps += 1
@@ -239,6 +294,12 @@ check("every pop launch happens right after GO_ARM_BOOM has just set R8 to full 
       "volume (15) - confirms 'sound THEN launch' ordering, not the other way "
       "around",
       all(v == 15 for v in seen_r8_at_launch))
+check("GO_EXPLOSION_SEQUENCE never touches TANK's own hw sprite attribute table "
+      "(slots0-3) at any point during all NUM_POPS pops - the ship stays fully "
+      "displayed throughout the explosion, only disappearing once at the very end "
+      "(GO_HIDE_EXPLOSION) - the literal fix for \"爆発処置に入った途端に消えてて"
+      "不自然\"",
+      not tank_attrs_ever_changed)
 
 GO_HIDE_EXPLOSION = sym["GO_HIDE_EXPLOSION"]
 GO_WAIT_LOOP = sym["GO_WAIT_LOOP"]
@@ -253,24 +314,44 @@ while z.pc != GO_WAIT_LOOP and steps < 5_000_000:
         hide_calls_before_text += 1
     z.step()
     steps += 1
-# (2026-09-07、実機フィードバック対応"爆発エフェクトが消えずのこったまま
-# Mission Failedになってる で爆発エフェクトは消してくれ"): 新設計では
-# バースト間の点滅ギャップを廃止した(新バーストは即座に自機中心へ戻り
-# 継続して飛ぶ)ため、GO_HIDE_EXPLOSIONはもう全バーストの内部では呼ばれず、
-# 全バースト完了後・テキスト描画直前の明示的な1回だけになった。
-check("GO_HIDE_EXPLOSION is called exactly once before GO_WAIT_LOOP (the "
-      "single explicit hide after all bursts finish, right before the "
-      "MISSION FAILED text is drawn) - the fix for the explosion sprites "
-      "being left visible under the text",
+check("GO_HIDE_EXPLOSION is called exactly once before GO_WAIT_LOOP (the single "
+      "explicit hide after all pops finish, right before the MISSION FAILED text "
+      "is drawn)",
       hide_calls_before_text == 1)
 
-# confirm the sprite attribute table is really left in the "all hidden" state at
-# the moment GO_WAIT_LOOP (i.e. after the text has already been drawn) is reached -
-# this is the literal on-screen check for "爆発エフェクトは消してくれ".
+# confirm TANK's own sprite is really left hidden (Y=209) at the moment
+# GO_WAIT_LOOP (i.e. after the text has already been drawn) is reached - this is
+# the literal on-screen check for "終わる少し前に消すんだよ".
 hidden_attrs = [z.vram[0x1B00 + i] for i in range(16)]
-check("by the time MISSION FAILED text is on screen (GO_WAIT_LOOP reached), all 4 "
-      "explosion particle sprite slots are hidden (Y=209), not left visible under it",
+check("by the time MISSION FAILED text is on screen (GO_WAIT_LOOP reached), TANK's "
+      "own 4 hw sprite slots are hidden (Y=209) - the ship finally disappears only "
+      "once, right at the end",
       hidden_attrs == [209, 0, 0, 0] * 4)
+
+# confirm the 4 spark cells were restored verbatim (not left showing spark
+# graphics under/around the MISSION FAILED text) - the literal on-screen check
+# for "爆発エフェクトは消してくれ" still holding under the new BG-cell design.
+z_restore = fresh()
+z_restore.wr(TANK_X, 120)   # base col = 120>>3 = 15
+# tank_y deliberately chosen so none of the 4 spark rows (base_row-1/+1) lands on
+# row12 - row12 gets unconditionally blanked+overwritten by the MISSION FAILED
+# text draw regardless of what GO_RESTORE_SPARKS just put back there, which
+# would make this restore check spuriously fail for a tank_y that happened to
+# park a spark cell on that exact row (an unrelated, correct behavior - not a bug).
+z_restore.wr(TANK_Y_CUR, 60)  # base row = 60>>3 = 7
+# the 4 fixed slots for this base are (col,row) = (14,6),(16,6),(14,8),(16,8)
+restore_poison_cells = [(6, 14), (6, 16), (8, 14), (8, 16)]
+for i, (row, col) in enumerate(restore_poison_cells):
+    z_restore.vram[nt_addr(row, col)] = 210 + i
+z_restore.pc = sym["INIT"]
+run_until_pc(z_restore, GO_WAIT_LOOP, 5_000_000)
+restored_rows = [z_restore.rd(GO_SPARK_ROW + i) for i in range(4)]
+restored_cols = [z_restore.rd(GO_SPARK_COL + i) for i in range(4)]
+restored = [z_restore.vram[nt_addr(r, c)] for r, c in zip(restored_rows, restored_cols)]
+check("by GO_WAIT_LOOP, all 4 spark cells have been restored to their original "
+      "pre-explosion name-table byte (GO_RESTORE_SPARKS undid GO_PREPARE_SPARKS' "
+      "own snapshot) - no leftover spark graphics remain on screen",
+      restored == [210, 211, 212, 213])
 
 # ---- "自機爆発はサウンドも欲しい"、続けて"爆発音はステージ1、2ともに ----
 # ---- パーティクルの回数鳴らすんだよ"(2026-09-07、実機フィードバック  ----

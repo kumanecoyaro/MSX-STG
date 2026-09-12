@@ -12557,3 +12557,138 @@ literal reuse)+新爆発アニメーション要求受領・プレビューGIF�
 - **保留・実機フィードバック待ち**: 修正後の実機での聞こえ方(爆発→
   Mission Failed→ジングルの順序通りに聞こえるか)は次回フィードバック
   待ち。
+
+## Round76: Stage2自機爆発の演出タイミング修正+Stage1敵弾色変更+
+Enemy6耐久値制+両ステージのスケジュール差し替え(2026-09-08、完了済み・
+実機フィードバック待ち)
+
+- ユーザーからの4件の指示に対応: (1)"ステージ2の自機爆発は消すのが早い
+  爆発中は表示してて終わる少し前に消すんだよ 今は爆発処置に入った途端に
+  消えてて不自然"、(2)"ステージ1の敵弾の色をライトイエローに変更"、
+  (3)"ステージ1のエネミー6の耐久値4に"、(4)"両ステージのスケジュールを
+  添付ファイルに差し替え"(Schedule_1.json/Schedule2_11.json)。
+
+### (1) Stage2 GAME_OVERバンク自機爆発: 演出タイミング全面再設計
+
+- VRAM→PNGレンダリングで実際に1ポップずつ確認したところ根本原因を特定:
+  `GO_LAUNCH_ONE_POP`は毎ポップ、TANK自身が使っているのと全く同じhw
+  スプライトATTRIBUTEスロット0-3(`UPDATE_TANK_SPRITES`参照、自機の
+  4象限がここに常駐)へラウンドロビンで上書きしていたため、スロットが
+  4つしか無くTANK自身も4つ全部を占有している以上、ポップ1回目の時点で
+  既にTANK本体の1/4が消え、ポップ4回目(40ポップ中のわずか最初の4回、
+  実測で200ms未満)で自機が完全にポップ絵へ置き換わっていた - まさに
+  「爆発処置に入った途端に消える」症状の実体。
+- この失敗パターンはこのプロジェクト自身が過去に一度踏んでいる:
+  round32のINIT_BOSS_EXPLOSION/BOSS_EXPL_SPARK自身のコメント「スプライト
+  で描画すると消えてしまうんでBGで」- ボス本体も同様にスプライト予算が
+  足りず、追加のスプライトで爆発を描くとボス自身が競合で消えてしまう
+  ため、当時からBGセル方式に変更済みだった。
+- 同じ解決策を`tools/gameover_bank/gameover_bank.asm`にも適用: TANK
+  自身のスプライト(スロット0-3)はポップの間一切触れず、爆発は自機の
+  名前テーブルセルの周囲4箇所(斜め方向、`GO_PREPARE_SPARKS`が一度だけ
+  計算・元の絵を退避)へBGセルのスパークとして描く方式に全面変更。
+  スパーク自身の絵柄はcombined_test.asm自身のEXPLOSION_PATTERN左上
+  8x8象限のバイト列をそのまま転記(`GO_SPARK_PATTERN`)、白/赤の色は
+  MISSION FAILEDフォントが後で使うgroup12(code96)/group18(code147)を
+  時間差で使い回す(GFEndingのCREDIT/MISSION COMPLETED時間差共有と
+  同じ手法) - フォント読込自体も爆発シーケンスの"後"へ移動。TANK自身の
+  スプライトは、全ポップ完了後の`GO_HIDE_EXPLOSION`が最初で最後に
+  Y=209で隠す - これで「爆発中は自機が表示されたまま、終わってから
+  消える」という指示通りの順序になる。
+- 開発中に2件の実バグを自己発見・修正: (a) 新設した`GO_LAUNCH_ONE_POP`
+  の名前テーブルアドレス計算がCレジスタを「描くコード」と「スロット
+  index」の両方に使い回そうとしてスロットindexを踏み潰していた
+  (専用スクラッチ`GLOP_CODE`へ退避して解消)、(b) 新規テストの初回の
+  「爆発後スパークセルが元に戻っているか」検証で、たまたま選んだ
+  TANK_Y座標がMISSION FAILEDテキスト行(row12)と重なり、正しく復元
+  された値がテキスト描画で正当に上書きされるのをバグと誤検知していた
+  (テスト側のTANK_Y選択を修正、コード側は無問題と確認)。
+- `tools/stage2_combined/tests/gameover_bank_test.py`の該当セクションを
+  全面書き直し(TANK自身のスプライトがGO_EXPLOSION_SEQUENCE全体を通じて
+  一切変化しないことを直接検証する新規テストを追加)。VRAM→PNGレンダ
+  リングで実際にTANKが表示されたまま周囲にスパークが現れ、最後に
+  TANKだけが消えてMISSION FAILEDが出ることを視覚確認済み。
+
+### (2) Stage1敵弾(EBULLET)の色変更
+
+- `UPDATE_EBULLET_ALL`内の描画コードが`SPR_LIGHTRED`(round37の初期
+  実装値)を直書きしていた箇所を`SPR_YELLOW`(round64で追加済みの
+  「light yellow, TMS9918 index11」定数)へ変更。1箇所のみの修正で
+  全パターン(Fighter/E1整列撃ち・E2編隊・E5サインボブ・E1斜めドッジの
+  全EBULLET発射元)に一括で効く。
+
+### (3) Stage1 Enemy6(回転グリフ敵)の耐久値制
+
+- 従来は被弾即死(`ENEMY6_HIT_ONE_SLOT`が命中判定成立で即座に
+  `ACTIVE=0`)だったのを、`ENEMY4_HP`/`E_HP`と同じ「耐久値制」へ変更。
+  `ENEMY6_STRUCT`自体は4バイトのまま拡張しない設計とした - 構造体を
+  伸ばすとENEMY6_POOL(128→160byte)のサイズが変わり、すぐ後ろの
+  EBULLET_POOL/BARRIER_HP等(F1D9h以降、F200h-F201hのCombバンク切替
+  トランポリン専用領域を挟んで詰めて配置済み)を全て玉突きで再配置する
+  必要が生じ、過去に実際に踏んだRAM衝突バグ(round37 follow-up7参照)の
+  再発リスクが高いと判断したため。代わりにHPだけを完全に独立した並列
+  配列`ENEMY6_HP`(32byte、1スロット1バイト)として、EXPLOSION_SAVED_CM3
+  直後の確実に空きと確認済みの「tail-of-RAM pocket」(この用途のために
+  複数ラウンド前から使われている領域)へ新設。新設`ENEMY6_HP_ADDR`
+  サブルーチンがIXの値からENEMY6_POOL内の所属スロットindexを逆算
+  (`SBC HL,DE`で差分を取り、`ENEMY6_STRUCT=4`で割るのに2回の`SRL A`-
+  このアセンブラに`RR`命令が無いため、差分が常に1バイトに収まる
+  [最大124]ことを利用しHのシフトは省略)して`ENEMY6_HP`上の対応バイトを
+  指す。`SPAWN_E6`のスポーン時に`ENEMY6_HP_INIT`(4)で初期化、
+  `ENEMY6_HIT_ONE_SLOT`は命中のたびHPを1減らし、0に達した時だけ実際に
+  破壊(`EBSD_HT_ENEMY4`のEBSD_HT_E4_DAMAGEDと同じ「まだ生きていれば
+  弾は消費するが破壊しない」規約)。新規`tools/verify_enemy6_
+  durability.py`(15件、4発耐えて5発目で死ぬこと・INITでのゼロクリア・
+  複数スロットでの独立性を検証)。
+
+### (4) 両ステージのスケジュール差し替え
+
+- Stage1(`src/CYBER SHMUP.asm`): ユーザー作成の`Schedule_1.json`
+  (397件、simple87/enemy2 17/enemy3_wave3/enemy4 33/enemy5 67/
+  enemy6 189/boss1)へ全面差し替え。Round36-9(Stage2)の前例に倣い、
+  Pythonスクリプトで機械的に`SPAWN_THRESHOLDS`(DW、tick)・
+  `SPAWN_SIMPLE_Y_TABLE`/`SPAWN_BASEY_TABLE`/`SPAWN_E3_OFFSET_TABLE`/
+  `ENEMY6_ROW_TABLE`(各種Y/オフセット、type別に該当インデックスのみ
+  値を持ち他は0)・`SSC_FIRE`のCP-dispatchチェーン(397→396件のCP+
+  最後は無条件`JP BOSS_SPAWN`)・`SSC_BUSY_E2`のインデックス一覧
+  (type=enemy2の17件)を再生成、`SPAWN_SCHEDULE_CHECK`の`CP 253`も
+  `CP 397`へ更新。既存の`tools/verify_spawn_schedule_restart.py`が
+  旧スケジュール前提のハードコード値(`E2_INDEX=17`/`E2_THRESHOLD=70`)
+  を使っていたため2件FAILしたが、これを機に「ソース自身のSSC_BUSY_E2
+  CP列から動的に最初の1件を拾う」方式へ改修し、以後スケジュールが
+  差し替わってもこのテスト自体が追随できるようにした(単なる値の
+  更新ではなく、再発防止の構造化)。
+- Stage2(`tools/stage2_combined/combined_test.asm`): ユーザー作成の
+  `Schedule2_11.json`(177件、s2_zacoii 121/s2_zacoii_red 11/
+  s2_bigzum 5/s2_flyer 23/s2_zum 12/s2_etank 4/s2_boss1 + terrain
+  492列)へ差し替え。同じ手法で`SPAWN2_THRESHOLDS`/`SPAWN2_Y_TABLE`
+  (Stage1と違いtype問わず全エントリrow*8の単一テーブル)/`SSC2_FIRE`の
+  CP-dispatchチェーン(177→176件のCP+最後は無条件`JP S2_BOSS_SPAWN`)を
+  再生成、`SPAWN2_COUNT`も166→177へ更新。terrain配列(492列)は検証の
+  結果、物理的に不可能な2段ジャンプ2箇所(index316: 1→3、index454:
+  2→0)を含めRound36-9/38-2で既に修正・コミット済みのSchedule2_10.json
+  の地形と完全に同一(RLEエンコード結果がterrain_gen.pyの既存
+  `DEFAULT_TIER_PROFILE`と1バイトも違わず一致)と判明 - 今回のユーザー
+  編集はスケジュール(敵配置)のみが対象で地形は変更されていないと
+  確認できたため、terrain_gen.py自体は無変更(TRACK_LEN=608も維持)。
+- 全回帰: Stage2側`run_all.py` **1505 passed/0 failed**
+  (1494→1505、`spawn2_schedule_test.py`が新スケジュールに合わせ
+  177→188件に自動追随)。Stage1側`verify_enemy_bullets.py` 56・
+  `verify_enemy6_durability.py`(新規)15・`verify_spawn_schedule_
+  restart.py`12・`verify_player_damage.py` 60・`verify_stage1_
+  bgm.py` 80・`verify_stage1_mission_screens.py` 87・
+  `verify_explosion_anim.py` 28・`verify_enemy3_erase.py`/
+  `verify_enemy3_init_safety_net.py`/`verify_enemy_pool_scan.py`/
+  `verify_sound_duty_cycle.py`/`verify_boss_dfl_clear.py`/
+  `verify_cell_loop_hoist.py`、全てPASS(`verify_barrier.py`は
+  古いアップロードファイル参照で既存・無関係にFileNotFoundError、
+  `verify_vdp_wait_shrink.py`のOUT件数固定期待値[312/318]も今回の
+  変更前から既に不一致だったベースライン既知問題、いずれも今回の
+  変更とは無関係と`git stash`で確認済み)。`verify_comb.py`全チェック
+  PASS。Comb ROM再ビルド・標準方針によりComb ROMのみ送付。
+- **保留・実機フィードバック待ち**: (1)の新しい爆発演出の実機での
+  見え方(スパークの位置・色の切り替わり方)、(2)のライトイエローの
+  実際の見え方、(3)のEnemy6耐久値4の難易度感、(4)の両スケジュールの
+  実プレイでのペーシングは、いずれも次回フィードバック待ち。
+  `verify_vdp_wait_shrink.py`のOUT件数期待値のズレ(pre-existing)は
+  今回スコープ外・未対応のまま。

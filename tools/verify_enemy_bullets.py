@@ -70,7 +70,7 @@ BEHAVIOR_SINE_BOB = sym["BEHAVIOR_SINE_BOB"]
 PLAYERY = sym["PLAYERY"]
 EBULLET_POOL = sym["EBULLET_POOL"]; EBULLET_STRUCT = sym["EBULLET_STRUCT"]
 EBULLET_SLOTS = sym["EBULLET_SLOTS"]; EBULLET_SPEED = sym["EBULLET_SPEED"]
-PAT_EBULLET = sym["PAT_EBULLET"]; SPR_LIGHTRED = sym["SPR_LIGHTRED"]
+PAT_EBULLET = sym["PAT_EBULLET"]; SPR_LIGHTRED = sym["SPR_LIGHTRED"]; SPR_YELLOW = sym["SPR_YELLOW"]
 SPR_LIGHTGREEN = sym["SPR_LIGHTGREEN"]
 E1_FIRE_COUNTDOWN = sym["E1_FIRE_COUNTDOWN"]; E5_FIRE_COUNTDOWN = sym["E5_FIRE_COUNTDOWN"]
 E2_FIRE_COUNTDOWN = sym["E2_FIRE_COUNTDOWN"]
@@ -529,8 +529,9 @@ check(f"UPDATE_EBULLET_ALL advances X left by EBULLET_SPEED({EBULLET_SPEED}): 40
       active[1] == 40 - EBULLET_SPEED)
 attr_pat = z.vram[ATTR + sprnum * 4 + 2]
 attr_col = z.vram[ATTR + sprnum * 4 + 3]
-check("...draws PAT_EBULLET/SPR_LIGHTRED to its own hw sprite slot",
-      attr_pat == PAT_EBULLET and attr_col == SPR_LIGHTRED)
+check("...draws PAT_EBULLET/SPR_YELLOW to its own hw sprite slot (2026-09-08: "
+      "\"ステージ1の敵弾の色をライトイエローに変更\" - was SPR_LIGHTRED)",
+      attr_pat == PAT_EBULLET and attr_col == SPR_YELLOW)
 
 # run until it exits past the left edge
 for _ in range(20):

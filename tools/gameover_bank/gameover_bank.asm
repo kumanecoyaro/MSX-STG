@@ -107,19 +107,6 @@ SPR_LIGHTRED_COLOR EQU 09h
 ; "Mission Failedの行はブランクブラックで埋めてくれ"対応で使用)。
 HUD_ROW_BLANK_CODE EQU 120
 
-; "一度4つほどエフェクトが出るがその状態で停止しててStage1の様な連続
-; 爆発しない"(2026-09-07、実機フィードバック対応): 4隅を同じ位置に
-; 10回点滅させるだけだったため「同じ絵が点滅しているだけ」に見えて
-; いた。src/CYBER SHMUP.asmのPLAYER_EXPL_UPDATE_ALL(自機を起点に
-; ランダムオフセット・色を白/ライトレッドで交互に、を繰り返す)と同じ
-; 考え方を、このバンクの単純な直列ループの中に持ち込む - 毎回の点滅で
-; 位置をジッターさせ、色を交互にする。RNGの種はcombined_test.asm自身の
-; スケジューリング用ワーク領域SPAWN2_NEXT_INDEX(GAME OVER以後は
-; Stage2本編が二度と実行されないため確実に不要、この点はこのファイル
-; 冒頭のコメント「RAM...は物理的に共有されているため...再利用する」の
-; 方針と同じ)を再利用する。
-GO_RNG EQU 0F19Bh
-
 ; (2026-09-07、実機フィードバック対応その3"4つ爆発を同時に飛ばすん
 ; じゃなく1個ずつバラバラにだ でその1回毎にサウンドだ 速度も遅いって
 ; 何回言わせんだよ 音出して1つ飛ばしてまた音出して1つ飛ばしての繰り
@@ -129,17 +116,59 @@ GO_RNG EQU 0F19Bh
 ; 「移動するスプライト」ではなく「毎回ランダムな新しい位置に静止した
 ; 爆発を1個ポップさせ、毎回SOUND_DESTROYを1回鳴らし、次のポップまで
 ; TIMER=2フレームだけ待つ」という、飛翔ではなく高速連続ポップの
-; 繰り返しだった - これが正しい参照実装。同じモデルへ全面書き換え:
-; 1ポップ=(1)GO_ARM_BOOMで即座に音を鳴らす→(2)自機中心から
-; ランダムオフセットの位置へPAT_EXPLOSIONを1個描画(ラウンドロビンで
-; ATTRIBUTEスロット0-3を回すため、直近4ポップ分が画面上に同時に
-; 残る「散らばった破片」の見た目になる、新規の消滅タイマー機構は
-; 不要)→(3)短いウェイト、を合計NUM_POPS回繰り返す。GO_PX0を
-; ラウンドロビンスロットindex、GO_PY0をポップ残数カウンタへ転用
-; (GO_PX1-3/GO_PY1-3/GO_DIR0-3X/Yだった旧4パーティクル用スクラッチは
-; もう不要)。
-GO_SLOT_IDX EQU 0F19Ch  ; 0-3、次にポップを描くATTRIBUTEスロット(ラウンドロビン)
+; 繰り返しだった - これが正しい参照実装。
+GO_SLOT_IDX EQU 0F19Ch  ; 0-3、次にポップを描くセル(ラウンドロビン、下記GO_SPARK_ROW/COL参照)
 GO_POP_CTR  EQU 0F19Dh  ; 残りポップ数(NUM_POPSからカウントダウン)
+
+; (2026-09-08、実機フィードバック対応"ステージ2の自機爆発は消すのが
+; 早い 爆発中は表示してて終わる少し前に消すんだよ 今は爆発処置に入った
+; 途端に消えてて不自然"): VRAM→PNGレンダリングで実際に1ポップずつ
+; 確認したところ根本原因を特定 - GO_LAUNCH_ONE_POPは毎回ポップを
+; TANK自身が使っているのと全く同じhwスプライトATTRIBUTEスロット0-3
+; (UPDATE_TANK_SPRITES参照、自機の4象限がここに常駐)へラウンドロビンで
+; 上書きしていたため、スロットが4つしか無くTANK自身も4つ全部を占有して
+; いる以上、ポップ1回目の時点で既にTANK本体の1/4が消え、ポップ4回目
+; (40ポップ中のわずか最初の4回、実測で200ms未満)で自機が完全に
+; ポップ絵へ置き換わっていた - まさに「爆発処置に入った途端に消える」
+; 症状の実体。この失敗パターンはこのプロジェクト自身が過去に一度
+; 踏んでいる: round32のINIT_BOSS_EXPLOSION/BOSS_EXPL_SPARK自身の
+; コメント「スプライトで描画すると消えてしまうんでBGで」-
+; ボス本体も同様にスプライト予算が足りず、追加のスプライトで爆発を
+; 描くとボス自身が競合で消えてしまうため、当時からBGセル方式に変更
+; 済みだった。同じ解決策をこのバンクにも適用: TANK自身のスプライト
+; (スロット0-3)はポップの間一切触れず、ポップは自機の名前テーブル
+; セルの周囲4箇所(斜め方向、GO_PREPARE_SPARKSが一度だけ計算・退避)
+; へBGセルとして描く方式に全面変更。TANKのスプライトを実際に隠す
+; (Y=209)のは、全ポップが終わった後の1回だけ(GO_HIDE_EXPLOSION) -
+; これで「爆発中は自機が表示されたまま、終わってから消える」という
+; 指示通りの順序になる。
+GO_SPARK_WHITE_CODE EQU 96    ; group12 - 直後にMISSION FAILEDの"M"へ
+                              ; 上書きされる(時間差での使い回し、コード
+                              ; 自体は同じ96のまま、GAMEOVER2_FONT_
+                              ; PATTERNSのLDIRVMが自然に上書きする)
+GO_SPARK_RED_CODE   EQU 147   ; group18 - "L"(144)/"E"(145)/"D"(146)が
+                              ; 使わない残り5コードのうちの1つ、以後
+                              ; 名前テーブルからは二度と参照されない
+                              ; ("MISSION FAILED"は144-146のみ使用)
+GO_SPARK_RED_COLORBYTE EQU 081h  ; fg8(medium red、EXPLOSION_COLORと
+                                 ; 同じ)/bg1(black) - group18の色は
+                                 ; 爆発中だけ一時的にこの値、その後の
+                                 ; フォント読込(既存のGAMEOVER2_FONT_
+                                 ; COLOR+1書き込み)が白へ戻す
+
+; GO_PREPARE_SPARKSが一度だけ計算する、ラウンドロビン4セルぶんの
+; (行,列)と、そこに元々あった名前テーブルの値(GO_RESTORE_SPARKSが
+; 爆発終了後に書き戻す為の退避先)。TANK自身の名前テーブル座標を基準に
+; 斜め4方向へ1セルずつオフセットするだけの固定配置(自機は死亡後
+; 二度と動かないため、一度計算すれば良い)。
+GO_SPARK_ROW    EQU 0F1A8h  ; 4 bytes
+GO_SPARK_COL    EQU 0F1ACh  ; 4 bytes
+GO_SPARK_SAVED  EQU 0F1B0h  ; 4 bytes
+GPS_BASE_COL    EQU 0F1B4h  ; GO_PREPARE_SPARKSだけが使うスクラッチ(TANK_X>>3)
+GPS_BASE_ROW    EQU 0F1B5h  ; 同上(TANK_Y_CUR>>3)
+GLOP_CODE       EQU 0F1B6h  ; GO_LAUNCH_ONE_POPだけが使うスクラッチ(このポップで描く
+                            ; コード番号の一時保存 - Cレジスタは名前テーブル
+                            ; アドレス計算のBCペアで使い切ってしまうため)
 
 ; (2026-09-07、実機フィードバック対応"爆発音はステージ1、2ともに
 ; パーティクルの回数鳴らすんだよ"): 現在の音量(ポップごとにGO_ARM_BOOM
@@ -149,9 +178,6 @@ GO_BOOM_VOL EQU 0F1A7h
 NUM_POPS      EQU 40   ; 未調整の初期値、実機での見え方次第で再調整 -
                         ; 「1個ずつ」化に伴い前回のNUM_BURSTS(20)から
                         ; 増量(1回あたりが軽くなった分、密度を維持)
-GO_POP_JITTER EQU 16    ; 自機中心からのオフセット範囲、-8..+7px
-                        ; (src/CYBER SHMUP.asmのPEUA_TRY_SPAWNと同じ
-                        ; レンジ)
 
 ; --- Comb globalバンク番号。standaloneでは0/1は無意味(単独バンクの ---
 ; --- ためtitleへは戻れない、テストは戻る直前のGOTO_TITLE_HOP2到達  ---
@@ -183,43 +209,55 @@ INIT:
     LD (HTIMI_HOOK),A
     EI
 
-    ; (2026-09-07、実機ではなく自己レンダリング確認で発見・修正: 当初
-    ; コード0-10[パターンジェネレータ先頭]へ無条件ロードしていたところ、
-    ; 地形システム自体がまさにcode0-93[terrain_gen.pyのMAX_CODE=93]を
-    ; 使っており、GAME OVERの瞬間に画面全体の地形/背景が全てMISSION
-    ; FAILEDフォントの絵柄へ化けるレンダリング事故を実際に確認した -
-    ; 「Stage2本編は二度と実行されないのでコードを自由に上書きしてよい」
-    ; という判断はコード自体の再利用には正しいが、name table(どのマス
-    ; がどのコードを表示するか)はGAME OVERの瞬間の最後のフレームの
-    ; まま固定される、という点を見落としていた)。ending_text_gen.py
-    ; ([GFEnding]"MISSION COMPLETED"表示)が実VRAM調査で確認済みの
-    ; 「ボス戦専用、ボスが実際に描画されていない限り安全」なgroup12
-    ; (codes96-103)+group18先頭3つ(codes144-146)へ変更 - 地形が使う
-    ; code0-93と重ならない。"MISSION FAILED"の11グリフ(M,I,S,O,N,
-    ; space,F,A,L,E,D)をcode96-103(8個)+144-146(3個)の2ブロックで
-    ; ロードする。
-    LD HL,GAMEOVER2_FONT_PATTERNS : LD DE,96*8 : LD BC,64 : CALL LDIRVM
-    LD HL,GAMEOVER2_FONT_PATTERNS+64 : LD DE,144*8 : LD BC,24 : CALL LDIRVM
-    LD HL,GAMEOVER2_FONT_COLOR : LD DE,200Ch : LD BC,1 : CALL LDIRVM   ; group12(96-103)
-    LD HL,GAMEOVER2_FONT_COLOR+1 : LD DE,2012h : LD BC,1 : CALL LDIRVM ; group18(144-151)
+    ; (2026-09-08、実機フィードバック対応"爆発中は表示してて終わる少し
+    ; 前に消すんだよ 今は爆発処置に入った途端に消えてて不自然"への対応で
+    ; 全面再設計): 実際のMISSION FAILEDフォント読込は、爆発シーケンスが
+    ; 終わった後(下記)へ移動した - 爆発中はcode96(group12)/code147
+    ; (group18)を「スパーク」の絵として一時的に使い回し、爆発が終わって
+    ; セルを元に戻した後で初めて本物のフォントに差し替える、という
+    ; GFEnding(ending_text_gen.py)と同じ「時間差でのVRAMコード使い回し」
+    ; を踏襲している。group12/18の色だけはここで先に確定させておく -
+    ; group12は爆発のスパーク(白)もその後の"M"の文字色も同じ白なので
+    ; 一度書けば足りる。group18は爆発中だけ赤にしたいので、白は後段の
+    ; フォント読込時(既存のGAMEOVER2_FONT_COLOR+1書き込み)に任せる。
+    LD HL,GAMEOVER2_FONT_COLOR : LD DE,200Ch : LD BC,1 : CALL LDIRVM   ; group12(96-103) = white
+    LD HL,GO_SPARK_RED_COLOR   : LD DE,2012h : LD BC,1 : CALL LDIRVM   ; group18(144-151) = red (爆発中だけ)
 
-    ; RNGの種を自機の最終X座標から取る(プレイごとに変わる値、GO_RNG自身の
-    ; 説明は上のEQU参照)。
-    LD A,(TANK_X) : LD (GO_RNG),A
+    ; スパーク自身の絵柄(EXPLOSION_PATTERNの左上8x8象限と同じビット
+    ; パターン、combined_test.asm自身の値をそのまま転記)を白コード・
+    ; 赤コードの両方へロード - 色は上のcolor tableで分かれているので
+    ; 絵柄自体は共有できる。
+    LD HL,GO_SPARK_PATTERN : LD DE,GO_SPARK_WHITE_CODE*8 : LD BC,8 : CALL LDIRVM
+    LD HL,GO_SPARK_PATTERN : LD DE,GO_SPARK_RED_CODE*8   : LD BC,8 : CALL LDIRVM
 
     ; 自機の最終位置(TANK_X/TANK_Y_CUR)を中心に、NUM_POPS回「音を鳴らし
     ; てから1個ポップさせ、短く待って次」を繰り返す(ボス撃破演出
     ; BOSS_EXPL_UPDATE/BEU_FIREと同じモデル、詳細はGO_EXPLOSION_
-    ; SEQUENCE自身のコメント参照)。
+    ; SEQUENCE自身のコメント参照)。TANK自身のスプライトはこの間
+    ; 一切触れない - 爆発はTANKの周囲4セルにBGスパークとして描かれる
+    ; だけで、自機本体は最後(GO_HIDE_EXPLOSION)まで表示され続ける。
     CALL GO_EXPLOSION_SEQUENCE
 
     ; "で爆発エフェクトが消えずのこったまま Mission Failedになってる
     ; で爆発エフェクトは消してくれ その後にMission Failed表示"
-    ; (2026-09-07、実機フィードバック対応): 旧実装は最後にジッター無し
-    ; の静止ポーズを表示したまま残しており、その上にMISSION FAILEDが
-    ; オーバーレイされる形になっていた。明示的に非表示にしてから
-    ; テキスト描画へ進む。
+    ; (2026-09-07、実機フィードバック対応)。続けて"爆発中は表示してて
+    ; 終わる少し前に消すんだよ"(2026-09-08、実機フィードバック対応)
+    ; - GO_HIDE_EXPLOSIONは(1)4つのスパークセルを元の絵に戻し、
+    ; (2)ここで初めてTANK自身のスプライト(スロット0-3)をY=209で隠し、
+    ; (3)爆発音を確実に無音化する。自機が「表示されたまま爆発し、
+    ; 終わった瞬間に消える」という指示通りの順序はこれで実現される。
     CALL GO_HIDE_EXPLOSION
+
+    ; ここでようやく本物のMISSION FAILEDフォントをロードする - code96
+    ; (スパーク白と共用済み、"M"へ自然に上書きされる)・code144-146
+    ; ("L","E","D"、スパークとは別コード)。group18の色もここで白へ
+    ; 戻す(既存のGAMEOVER2_FONT_COLOR+1書き込み、爆発中の赤を上書き)。
+    ; どちらのグループも、この時点でスパークが表示していたセル自体は
+    ; 直前のGO_HIDE_EXPLOSIONで既に元の絵へ復元済みなので、ここで
+    ; スパーク用コードの中身を差し替えても画面上には一切影響しない。
+    LD HL,GAMEOVER2_FONT_PATTERNS : LD DE,96*8 : LD BC,64 : CALL LDIRVM
+    LD HL,GAMEOVER2_FONT_PATTERNS+64 : LD DE,144*8 : LD BC,24 : CALL LDIRVM
+    LD HL,GAMEOVER2_FONT_COLOR+1 : LD DE,2012h : LD BC,1 : CALL LDIRVM ; group18(144-151) = white
 
     ; "Mission Failedの行はブランクブラックで埋めてくれ"(2026-09-07、
     ; 実機フィードバック対応): 従来はrow12の中央14セルへメッセージを
@@ -307,17 +345,18 @@ GOTO_TITLE_HOP2:
 ; いる)。
 BANKSWITCH_TRAMPOLINE_RAM EQU 0F271h
 
-; NUM_POPS回、「音を鳴らす→自機中心付近のランダムな位置へPAT_EXPLOSION
-; を1個ポップさせる→短く待つ」を繰り返す(BOSS_EXPL_UPDATE/BEU_FIREと
-; 同じモデル - あちらは「毎回新しい位置に1個ポップ+毎回SOUND_DESTROY+
-; TIMER=2フレームだけ待って次」の高速連続、"移動する飛翔"ではなく
-; "高速に位置を変えて出現するポップ"の連続だった)。ATTRIBUTEスロット
-; 0-3をラウンドロビンで使うため、直近4ポップ分が同時に画面上に残る -
-; 新規の消滅タイマー機構を追加せずに「散らばった破片」の見た目になる。
-; 色はポップごとに白/ライトレッドを交互に(Stage1のPLAYER_EXPL_UPDATE_
-; ALLと同じ考え方)。
+; NUM_POPS回、「音を鳴らす→自機周囲の固定4セルの1つへBGスパークを
+; 描く→短く待つ」を繰り返す(BOSS_EXPL_UPDATE/BEU_FIREと同じモデル -
+; あちらは「毎回新しい位置に1個ポップ+毎回SOUND_DESTROY+TIMER=2フレーム
+; だけ待って次」の高速連続、"移動する飛翔"ではなく"高速に位置を変えて
+; 出現するポップ"の連続だった)。GO_PREPARE_SPARKSで4セルの位置と退避
+; データを一度だけ計算してから、あとはそのセルをラウンドロビンで
+; 使い回す。TANK自身のhwスプライト(スロット0-3)は最初から最後まで
+; 一切触れない(2026-09-08、実機フィードバック対応で全面再設計 - 詳細は
+; GO_SLOT_IDXの上のコメント参照)。
 ; Trashes: AF,BC,DE,HL。
 GO_EXPLOSION_SEQUENCE:
+    CALL GO_PREPARE_SPARKS
     XOR A
     LD (GO_SLOT_IDX),A
     LD A,NUM_POPS : LD (GO_POP_CTR),A
@@ -332,48 +371,161 @@ GO_POP_LOOP:
     JR NZ,GO_POP_LOOP
     RET
 
-; 1個のPAT_EXPLOSIONスプライトを、自機中心(TANK_X/TANK_Y_CUR)から
-; ±GO_POP_JITTER/2pxのランダムオフセット位置へ、GO_SLOT_IDXが指す
-; ATTRIBUTEスロット(0-3)で描く。描いた後GO_SLOT_IDXを次のスロットへ
-; 進める(mod4)。色はGO_POP_CTRの最下位ビットで白/ライトレッドを交互に。
-; Trashes: AF,BC,DE,HL。
+; TANK自身の名前テーブル座標(BASE_COL=TANK_X>>3,BASE_ROW=TANK_Y_CUR>>3)
+; を基準に、斜め4方向へ1セルずつオフセットした固定スパーク位置を
+; GO_SPARK_ROW/COL(4要素ずつ)へ書き込み、GO_LAUNCH_ONE_POPが上書きする
+; 前の元の絵をGO_SPARK_SAVEDへ退避する。自機は死亡後もう動かないため
+; 一度計算すれば爆発シーケンスの間ずっと使い回せる。名前テーブルの
+; 範囲外(0-31列/0-23行)へはみ出さないよう、はみ出す側だけ元のTANK側
+; セルへクランプする(実際のTANKの可動範囲では起こり得ない想定だが、
+; このファイルの他のオフセット計算[GO_POP_JITTERのクランプ等]と同じ
+; 防御的な作法)。
+; Trashes: AF,BC,DE,HL.
+GO_PREPARE_SPARKS:
+    LD A,(TANK_X) : SRL A : SRL A : SRL A : LD (GPS_BASE_COL),A
+    LD A,(TANK_Y_CUR) : SRL A : SRL A : SRL A : LD (GPS_BASE_ROW),A
+
+    ; slot0: col-1,row-1
+    LD A,(GPS_BASE_COL) : OR A : JR Z,GPS0_COL_OK : DEC A
+GPS0_COL_OK:
+    LD (GO_SPARK_COL+0),A
+    LD A,(GPS_BASE_ROW) : OR A : JR Z,GPS0_ROW_OK : DEC A
+GPS0_ROW_OK:
+    LD (GO_SPARK_ROW+0),A
+    LD C,0 : CALL GPS_SAVE_SLOT
+
+    ; slot1: col+1,row-1
+    LD A,(GPS_BASE_COL) : CP 31 : JR Z,GPS1_COL_OK : INC A
+GPS1_COL_OK:
+    LD (GO_SPARK_COL+1),A
+    LD A,(GPS_BASE_ROW) : OR A : JR Z,GPS1_ROW_OK : DEC A
+GPS1_ROW_OK:
+    LD (GO_SPARK_ROW+1),A
+    LD C,1 : CALL GPS_SAVE_SLOT
+
+    ; slot2: col-1,row+1
+    LD A,(GPS_BASE_COL) : OR A : JR Z,GPS2_COL_OK : DEC A
+GPS2_COL_OK:
+    LD (GO_SPARK_COL+2),A
+    LD A,(GPS_BASE_ROW) : CP 23 : JR Z,GPS2_ROW_OK : INC A
+GPS2_ROW_OK:
+    LD (GO_SPARK_ROW+2),A
+    LD C,2 : CALL GPS_SAVE_SLOT
+
+    ; slot3: col+1,row+1
+    LD A,(GPS_BASE_COL) : CP 31 : JR Z,GPS3_COL_OK : INC A
+GPS3_COL_OK:
+    LD (GO_SPARK_COL+3),A
+    LD A,(GPS_BASE_ROW) : CP 23 : JR Z,GPS3_ROW_OK : INC A
+GPS3_ROW_OK:
+    LD (GO_SPARK_ROW+3),A
+    LD C,3 : CALL GPS_SAVE_SLOT
+    RET
+
+; C=スロット番号(0-3)。GO_SPARK_ROW+C/GO_SPARK_COL+Cから名前テーブル
+; アドレスを計算し、そこに現在描かれているコードを生のVRAM読み出しで
+; 取得してGO_SPARK_SAVED+Cへ退避する(LDIRVM/WRTVRMはROM/RAM->VRAM専用
+; の書き込みBIOSのため、逆方向の読み出しは素のOUT×2+IN (98h)で行う -
+; MSX標準のVRAMシーケンシャルリード手順、書き込み時と違い高位バイトの
+; bit6[0x40]は立てない)。
+; Trashes: AF,DE,HL. Bは呼び出し前に0であること(C単体をBCとして使う)。
+GPS_SAVE_SLOT:
+    LD B,0
+    LD HL,GO_SPARK_ROW : ADD HL,BC : LD A,(HL)
+    LD H,0 : LD L,A
+    ADD HL,HL : ADD HL,HL : ADD HL,HL : ADD HL,HL : ADD HL,HL   ; row*32
+    LD DE,1800h : ADD HL,DE
+    PUSH HL
+    LD HL,GO_SPARK_COL : ADD HL,BC : LD A,(HL)
+    POP HL
+    LD D,0 : LD E,A
+    ADD HL,DE                     ; HL = 1800h+row*32+col
+    LD A,L : OUT (99h),A
+    LD A,H : AND 3Fh : OUT (99h),A   ; read mode (bit6=0)
+    IN A,(98h)
+    LD HL,GO_SPARK_SAVED : ADD HL,BC : LD (HL),A
+    RET
+
+; 1個のBGスパークを、GO_SLOT_IDXが指す固定セル(GO_SPARK_ROW/COL、
+; GO_PREPARE_SPARKSが計算済み)へ描く。描いた後GO_SLOT_IDXを次のスロット
+; へ進める(mod4)。色はGO_POP_CTRを2bit右シフトしたビットで白/ライト
+; レッドを4ポップ(1ラウンドロビン周)ごとに交互に(Stage1のPLAYER_EXPL_
+; UPDATE_ALLと同じ「白/ライトレッド交互」という考え方を、4セル固定
+; 配置でも視認できる形に適用)。
+; Trashes: AF,BC,DE,HL.
 GO_LAUNCH_ONE_POP:
-    LD A,(GO_RNG) : ADD A,53 : LD (GO_RNG),A
-    AND GO_POP_JITTER-1 : SUB GO_POP_JITTER/2 : LD D,A   ; dx
-    LD A,(GO_RNG) : ADD A,53 : LD (GO_RNG),A
-    AND GO_POP_JITTER-1 : SUB GO_POP_JITTER/2 : LD E,A   ; dy
+    LD A,(GO_POP_CTR) : SRL A : SRL A : AND 1
+    LD A,GO_SPARK_WHITE_CODE
+    JR Z,GLOP_CODE_RESOLVED
+    LD A,GO_SPARK_RED_CODE
+GLOP_CODE_RESOLVED:
+    LD (GLOP_CODE),A               ; 描くコードを一時退避(下でCレジスタを
+                                    ; 名前テーブルの添字計算に使い切るため)
 
-    LD A,(GO_POP_CTR) : AND 1
-    LD A,SPR_WHITE_COLOR
-    JR Z,GLOP_COLOR_RESOLVED
-    LD A,SPR_LIGHTRED_COLOR
-GLOP_COLOR_RESOLVED:
-    LD C,A
+    LD A,(GO_SLOT_IDX) : LD C,A : LD B,0
+    LD HL,GO_SPARK_ROW : ADD HL,BC : LD A,(HL)
+    LD H,0 : LD L,A
+    ADD HL,HL : ADD HL,HL : ADD HL,HL : ADD HL,HL : ADD HL,HL   ; row*32
+    LD DE,1800h : ADD HL,DE
+    PUSH HL
+    LD HL,GO_SPARK_COL : ADD HL,BC : LD A,(HL)
+    POP HL
+    LD D,0 : LD E,A
+    ADD HL,DE                     ; HL = このスロットの名前テーブルアドレス
 
-    LD A,(GO_SLOT_IDX)
-    ADD A,A : ADD A,A                ; A = スロット*4(ATTRIBUTEレコードのバイトオフセット)
     DI
-    OUT (99h),A
+    LD A,L : OUT (99h),A
     NOP
     NOP
-    LD A,5Bh : OUT (99h),A
+    LD A,H : AND 3Fh : OR 40h : OUT (99h),A   ; write mode
     NOP
     NOP
-    LD A,(TANK_Y_CUR) : ADD A,E : OUT (98h),A
-    PUSH BC : POP BC : NOP : NOP
-    LD A,(TANK_X) : ADD A,D : OUT (98h),A
-    PUSH BC : POP BC : NOP : NOP
-    LD A,PAT_EXPLOSION : OUT (98h),A
-    PUSH BC : POP BC : NOP : NOP
-    LD A,C : OUT (98h),A
+    LD A,(GLOP_CODE) : OUT (98h),A
     PUSH BC : POP BC : NOP : NOP
     EI
 
     LD A,(GO_SLOT_IDX) : INC A : AND 3 : LD (GO_SLOT_IDX),A
     RET
 
-; スロット0-3(16byte)をY=209(MSX標準の「以降のスプライトも含め全部
-; 隠す」センチネル)+X=0/pat=0/col=0へ戻し、点滅の非表示側を作る。
+; GO_PREPARE_SPARKSが退避した4セルぶんの元の絵をそのまま書き戻す
+; (GO_HIDE_EXPLOSIONの一部として、TANK自身の見た目を隠す直前に呼ぶ)。
+; Trashes: AF,BC,DE,HL.
+GO_RESTORE_SPARKS:
+    LD C,0 : CALL GRS_ONE_SLOT
+    LD C,1 : CALL GRS_ONE_SLOT
+    LD C,2 : CALL GRS_ONE_SLOT
+    LD C,3 : CALL GRS_ONE_SLOT
+    RET
+
+; C=スロット番号(0-3)。GPS_SAVE_SLOTと同じアドレス計算を使い、今度は
+; GO_SPARK_SAVED+Cの値を書き戻す(素のOUT×3、書き込みモード)。
+; Trashes: AF,DE,HL. Bは呼び出し前に0であること。
+GRS_ONE_SLOT:
+    LD B,0
+    LD HL,GO_SPARK_ROW : ADD HL,BC : LD A,(HL)
+    LD H,0 : LD L,A
+    ADD HL,HL : ADD HL,HL : ADD HL,HL : ADD HL,HL : ADD HL,HL
+    LD DE,1800h : ADD HL,DE
+    PUSH HL
+    LD HL,GO_SPARK_COL : ADD HL,BC : LD A,(HL)
+    POP HL
+    LD D,0 : LD E,A
+    ADD HL,DE
+    PUSH HL
+    LD HL,GO_SPARK_SAVED : ADD HL,BC : LD A,(HL)   ; A = 元のコード
+    LD B,A
+    POP HL
+    DI
+    LD A,L : OUT (99h),A
+    NOP
+    NOP
+    LD A,H : AND 3Fh : OR 40h : OUT (99h),A
+    NOP
+    NOP
+    LD A,B : OUT (98h),A
+    EI
+    RET
+
 ; (2026-09-08、実機フィードバック対応、"ステージ2の自機爆発で音が
 ; 出っぱなしでMission Failedになってる 消してからゲームオーバーに
 ; しろ 音の消し忘れ多すぎだろうが"): GO_ARM_BOOM/GO_STEP_BOOM_DECAY
@@ -381,14 +533,22 @@ GLOP_COLOR_RESOLVED:
 ; 次のポップの頭でまた15へ撃ち直されるため、シーケンス全体を通じて
 ; R8(チャンネルA音量)が0に達することは一度も無い - 最後のポップの
 ; 後もR8=11のまま誰にも触れられず、MISSION FAILED表示中もずっと
-; 鳴り続けていた。爆発演出の後片付け(GO_HIDE_EXPLOSION)の一部として
-; ここでR8=0を明示的に書き込み、テキスト表示に進む前に確実に無音化
-; する。
-; Trashes: AF,B,HL.
+; 鳴り続けていた。爆発演出の後片付けとして、ここでR8=0を明示的に
+; 書き込み、テキスト表示に進む前に確実に無音化する。続けて4つの
+; スパークセルを元の絵に戻し(GO_RESTORE_SPARKS)、最後にTANK自身の
+; スプライト(スロット0-3)をY=209(MSX標準の「以降のスプライトも含め
+; 全部隠す」センチネル)で隠す - これが自機の見た目が消える唯一の
+; タイミングであり、"爆発中は表示してて終わる少し前に消す"を文字通り
+; 実現する(2026-09-08、実機フィードバック対応で全面再設計 - 詳細は
+; GO_SLOT_IDXの上のコメント参照)。
+; Trashes: AF,BC,DE,HL.
 GO_HIDE_EXPLOSION:
     DI
     LD A,8 : OUT (PSG_ADDR),A
     XOR A : OUT (PSG_DATA),A   ; channel A (boom SE) volume=0 - GO_STEP_BOOM_DECAY never reaches 0 on its own
+    EI
+    CALL GO_RESTORE_SPARKS
+    DI
     LD A,0 : OUT (99h),A
     NOP
     NOP
@@ -755,6 +915,20 @@ GAMEOVER2_FONT_PATTERNS_LEN EQU $ - GAMEOVER2_FONT_PATTERNS
 ; (0F1h)へ。
 GAMEOVER2_FONT_COLOR:
     DB 0F1h,0F1h
+
+; 爆発中のBGスパーク自身の絵柄。combined_test.asm自身のEXPLOSION_
+; PATTERN(左上8x8象限、色8=medium redのスプライトと同じ絵)のバイト列を
+; そのまま転記 - このバンクは独立バンクのため他ファイルのラベルを直接
+; 参照できず、値だけコピーする(GAMEOVER2_FONT_PATTERNSがtools/pixel_
+; font_8x8.pyの値を転記しているのと同じ作法)。
+GO_SPARK_PATTERN:
+    DB 084h,048h,000h,002h,049h,084h,020h,003h
+
+; group18(codes144-151)の色を、爆発中だけ一時的にGO_SPARK_RED_
+; COLORBYTE(赤文字/黒背景)へ - フォント読込時のGAMEOVER2_FONT_COLOR+1
+; 書き込みが白へ戻す。
+GO_SPARK_RED_COLOR:
+    DB GO_SPARK_RED_COLORBYTE
 
 ; "MISSION FAILED" - M,I,S,S,I,O,N,space,F,A,I,L,E,D(14byte、
 ; row12/col9 center)。

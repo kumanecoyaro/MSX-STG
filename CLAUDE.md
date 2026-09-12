@@ -3235,3 +3235,40 @@ FAILEDの毎フレーム再描画(完了済み・実機フィードバック待�
   Round75を参照。
 - **保留・実機フィードバック待ち**: 修正後の実機での聞こえ方は次回
   フィードバック待ち。
+
+## Round76: Stage2自機爆発の演出タイミング修正+Stage1敵弾色変更+
+Enemy6耐久値制+両ステージのスケジュール差し替え(2026-09-08、完了済み・
+実機フィードバック待ち)
+
+- ユーザーからの4件の指示に対応。(1) "ステージ2の自機爆発は消すのが
+  早い 爆発中は表示してて終わる少し前に消すんだよ 今は爆発処置に入った
+  途端に消えてて不自然" - VRAM→PNGレンダリングで原因特定: `GO_LAUNCH_
+  ONE_POP`(`tools/gameover_bank/gameover_bank.asm`)が毎ポップTANK自身の
+  hwスプライトATTRIBUTEスロット0-3(自機の4象限が常駐)を直接上書き
+  していたため、スロット4つしか無い以上ポップ4回目で自機が完全に置き
+  換わっていた - round32のBOSS_EXPL_SPARK「スプライトで描画すると
+  消えてしまうんでBGで」と同型の失敗パターンと判明、同じ解決策(BGセル
+  方式)を適用。TANK自身のスプライトはポップ中一切触れず、爆発は自機
+  周囲4セルのBGスパークとして描画、TANKの非表示は全ポップ完了後の一度
+  だけに変更 - 「爆発中は表示、終わってから消える」を実現。(2) "ステージ1
+  の敵弾の色をライトイエローに変更" - `UPDATE_EBULLET_ALL`のSPR_
+  LIGHTRED直書きをSPR_YELLOWへ変更(1箇所で全EBULLET発射元に一括反映)。
+  (3) "ステージ1のエネミー6の耐久値4に" - 被弾即死からENEMY4_HP/E_HPと
+  同じ耐久値制へ変更。ENEMY6_STRUCT自体は拡張せず(RAM衝突リスク回避)、
+  独立配列`ENEMY6_HP`(32byte、tail-of-RAM pocket)を新設、`ENEMY6_HP_
+  ADDR`がIXから所属スロットindexを逆算。(4) "両ステージのスケジュールを
+  添付ファイルに差し替え" - Stage1は`Schedule_1.json`(397件)、Stage2は
+  `Schedule2_11.json`(177件+terrain492列、terrain自体はSchedule2_10と
+  完全同一と判明・無変更)へ、Round36-9の前例通りPythonスクリプトで
+  機械的にSPAWN_THRESHOLDS/Y-tables/CP-dispatchチェーンを再生成。
+  Stage1側`tools/verify_spawn_schedule_restart.py`の旧スケジュール
+  ハードコード値(E2_INDEX=17等)をソース自身から動的に拾う方式へ改修
+  (再発防止)。新規`tools/verify_enemy6_durability.py`(15件)。全回帰:
+  Stage2側`run_all.py` **1505 passed/0 failed**(1494→1505)。Stage1側
+  既存検証群(verify_enemy_bullets.py 56/verify_player_damage.py 60/
+  verify_stage1_bgm.py 80/verify_stage1_mission_screens.py 87等)全て
+  PASS。`verify_comb.py`全チェックPASS。Comb ROM再ビルド・標準方針に
+  よりComb ROMのみ送付。詳細はHANDOFF.mdのRound76参照。
+- **保留・実機フィードバック待ち**: 新爆発演出の見え方・ライトイエロー
+  の見え方・Enemy6耐久値4の難易度感・両スケジュールの実プレイでの
+  ペーシングは、いずれも次回フィードバック待ち。
