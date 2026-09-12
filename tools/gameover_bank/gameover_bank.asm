@@ -132,13 +132,26 @@ GO_RNG EQU 0F19Bh
 ; 繰り返しだった - これが正しい参照実装。同じモデルへ全面書き換え:
 ; 1ポップ=(1)GO_ARM_BOOMで即座に音を鳴らす→(2)自機中心から
 ; ランダムオフセットの位置へPAT_EXPLOSIONを1個描画(ラウンドロビンで
-; ATTRIBUTEスロット0-3を回すため、直近4ポップ分が画面上に同時に
+; ATTRIBUTEスロットを回すため、直近数ポップ分が画面上に同時に
 ; 残る「散らばった破片」の見た目になる、新規の消滅タイマー機構は
 ; 不要)→(3)短いウェイト、を合計NUM_POPS回繰り返す。GO_PX0を
 ; ラウンドロビンスロットindex、GO_PY0をポップ残数カウンタへ転用
 ; (GO_PX1-3/GO_PY1-3/GO_DIR0-3X/Yだった旧4パーティクル用スクラッチは
 ; もう不要)。
-GO_SLOT_IDX EQU 0F19Ch  ; 0-3、次にポップを描くATTRIBUTEスロット(ラウンドロビン)
+; (2026-09-12、実機フィードバック対応"自機は消さず爆発処理して 爆発
+; 処理が終わったら消すだけ もしパターンが足りないならEtankのエリア
+; 使え"): 従来はこのラウンドロビンがTANK自身のhwスプライトATTRIBUTE
+; スロット0-3(自機の4象限が常駐、Round76で判明済み)を直接上書きして
+; おり、ポップ4回目で自機が爆発の絵に完全に置き換わっていた。指示
+;通りEtankの専用スロット(ETANK_SPR_BASE_SLOT=24-25、Stage2本編が
+; 二度と実行されないこのバンクでは安全に再利用可能)へ回すよう変更 -
+; TANK自身のスロットには一切触れないため、爆発中も自機がそのまま
+; 表示され続ける。Etank用は2スロットしか無いため、ラウンドロビンは
+; mod4からmod2へ縮小(同時に画面上に残る破片は4個→2個)。
+EXPL_SPR_BASE_SLOT EQU 24  ; = ETANK_SPR_BASE_SLOT (combined_test.asm)
+EXPL_SPR_SLOT_COUNT EQU 2  ; = ETANK_SLOT_COUNT*2 (BL/BRのみ、TANKのTL/TRは持たない)
+GO_SLOT_IDX EQU 0F19Ch  ; 0-(EXPL_SPR_SLOT_COUNT-1)、次にポップを描く
+                        ; EXPL_SPR_BASE_SLOT相対のATTRIBUTEスロット(ラウンドロビン)
 GO_POP_CTR  EQU 0F19Dh  ; 残りポップ数(NUM_POPSからカウントダウン)
 
 ; (2026-09-07、実機フィードバック対応"爆発音はステージ1、2ともに
@@ -334,8 +347,10 @@ GO_POP_LOOP:
 
 ; 1個のPAT_EXPLOSIONスプライトを、自機中心(TANK_X/TANK_Y_CUR)から
 ; ±GO_POP_JITTER/2pxのランダムオフセット位置へ、GO_SLOT_IDXが指す
-; ATTRIBUTEスロット(0-3)で描く。描いた後GO_SLOT_IDXを次のスロットへ
-; 進める(mod4)。色はGO_POP_CTRの最下位ビットで白/ライトレッドを交互に。
+; EXPL_SPR_BASE_SLOT相対のATTRIBUTEスロット(Etank用の24-25、TANK自身の
+; スロット0-3には一切触れない - 上のEQU群の2026-09-12コメント参照)で
+; 描く。描いた後GO_SLOT_IDXを次のスロットへ進める(mod EXPL_SPR_SLOT_
+; COUNT)。色はGO_POP_CTRの最下位ビットで白/ライトレッドを交互に。
 ; Trashes: AF,BC,DE,HL。
 GO_LAUNCH_ONE_POP:
     LD A,(GO_RNG) : ADD A,53 : LD (GO_RNG),A
@@ -351,7 +366,8 @@ GLOP_COLOR_RESOLVED:
     LD C,A
 
     LD A,(GO_SLOT_IDX)
-    ADD A,A : ADD A,A                ; A = スロット*4(ATTRIBUTEレコードのバイトオフセット)
+    ADD A,EXPL_SPR_BASE_SLOT
+    ADD A,A : ADD A,A                ; A = (EXPL_SPR_BASE_SLOT+スロット)*4(ATTRIBUTEレコードのバイトオフセット)
     DI
     OUT (99h),A
     NOP
@@ -369,11 +385,15 @@ GLOP_COLOR_RESOLVED:
     PUSH BC : POP BC : NOP : NOP
     EI
 
-    LD A,(GO_SLOT_IDX) : INC A : AND 3 : LD (GO_SLOT_IDX),A
+    LD A,(GO_SLOT_IDX) : INC A : AND EXPL_SPR_SLOT_COUNT-1 : LD (GO_SLOT_IDX),A
     RET
 
-; スロット0-3(16byte)をY=209(MSX標準の「以降のスプライトも含め全部
-; 隠す」センチネル)+X=0/pat=0/col=0へ戻し、点滅の非表示側を作る。
+; TANK自身のスロット0-3(自機、爆発中は一切触れていないので実は
+; Y=209へ戻す必要はないが、他のGAME_OVER後処理と同じ「明示的に隠す」
+; 規約に合わせて念のため含める)+EXPL_SPR_BASE_SLOT(24-25、爆発の
+; 破片)を、いずれもY=209(MSX標準の「個別に隠す」センチネル、project
+; 全体の規約 - real terminator 208とは別、詳細はcombined_test.asm
+; 自身のコメント参照)+X=0/pat=0/col=0へ戻し、点滅の非表示側を作る。
 ; (2026-09-08、実機フィードバック対応、"ステージ2の自機爆発で音が
 ; 出っぱなしでMission Failedになってる 消してからゲームオーバーに
 ; しろ 音の消し忘れ多すぎだろうが"): GO_ARM_BOOM/GO_STEP_BOOM_DECAY
@@ -384,6 +404,13 @@ GLOP_COLOR_RESOLVED:
 ; 鳴り続けていた。爆発演出の後片付け(GO_HIDE_EXPLOSION)の一部として
 ; ここでR8=0を明示的に書き込み、テキスト表示に進む前に確実に無音化
 ; する。
+; (2026-09-12、実機フィードバック対応"自機は消さず爆発処理して 爆発
+; 処理が終わったら消すだけ"): 従来はTANK自身のスロット0-3を隠すだけ
+; だった(爆発自体がそこに描かれていたため)が、爆発をEXPL_SPR_BASE_
+; SLOTへ移した今、爆発終了時にTANK自身も一緒に隠す(=「自機を消す」
+; タイミングを"爆発処理が終わったら"に一本化)必要があるため、TANK
+; スロット0-3への隠しループはそのまま維持し、EXPL_SPR_BASE_SLOT
+; (24-25)を隠す2回目のループを追加した。
 ; Trashes: AF,B,HL.
 GO_HIDE_EXPLOSION:
     DI
@@ -406,6 +433,23 @@ GO_HIDE_LOOP:
     XOR A : OUT (98h),A
     PUSH BC : POP BC : NOP : NOP
     DJNZ GO_HIDE_LOOP
+    LD A,EXPL_SPR_BASE_SLOT*4 : OUT (99h),A
+    NOP
+    NOP
+    LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    LD B,EXPL_SPR_SLOT_COUNT
+GO_HIDE_EXPL_LOOP:
+    LD A,209 : OUT (98h),A
+    PUSH BC : POP BC : NOP : NOP
+    XOR A : OUT (98h),A
+    PUSH BC : POP BC : NOP : NOP
+    XOR A : OUT (98h),A
+    PUSH BC : POP BC : NOP : NOP
+    XOR A : OUT (98h),A
+    PUSH BC : POP BC : NOP : NOP
+    DJNZ GO_HIDE_EXPL_LOOP
     EI
     RET
 

@@ -170,10 +170,20 @@ def call_launch_one_pop(seed, slot_idx, pop_ctr_parity, tank_x=50, tank_y=80):
     return z
 
 
+# (2026-09-12、実機フィードバック対応"自機は消さず爆発処理して 爆発
+# 処理が終わったら消すだけ もしパターンが足りないならEtankのエリア
+# 使え"): 爆発の描画先がTANK自身のスロット0-3からEXPL_SPR_BASE_SLOT
+# (=ETANK_SPR_BASE_SLOT=24-25、EXPL_SPR_SLOT_COUNT=2)へ移動したため、
+# 検証対象のVRAMアドレスもそちらに追随。
+EXPL_SPR_BASE_SLOT = sym["EXPL_SPR_BASE_SLOT"]
+EXPL_SPR_SLOT_COUNT = sym["EXPL_SPR_SLOT_COUNT"]
+EXPL_ATTR_BASE = 0x1B00 + EXPL_SPR_BASE_SLOT * 4
+
 z = call_launch_one_pop(seed=11, slot_idx=0, pop_ctr_parity=0, tank_x=50, tank_y=80)
-attrs0 = [z.vram[0x1B00 + i] for i in range(4)]
-check("GO_LAUNCH_ONE_POP draws exactly 1 explosion sprite in slot0's own "
-      "ATTRIBUTE record (Y at row0-3)",
+attrs0 = [z.vram[EXPL_ATTR_BASE + i] for i in range(4)]
+check("GO_LAUNCH_ONE_POP draws exactly 1 explosion sprite in EXPL_SPR_BASE_SLOT's "
+      "own ATTRIBUTE record (not TANK's own slot0-3 - the fix for the self-ship "
+      "getting overwritten by its own death explosion)",
       attrs0[2] == PAT_EXPLOSION)
 dx0 = signed(attrs0[1]) - 50 if attrs0[1] < 128 else attrs0[1] - 50
 dy0 = attrs0[0] - 80
@@ -185,27 +195,32 @@ check("GO_LAUNCH_ONE_POP with pop-counter parity=0 (even) draws in SPR_WHITE_COL
       attrs0[3] == SPR_WHITE_COLOR)
 
 z_red = call_launch_one_pop(seed=11, slot_idx=0, pop_ctr_parity=1, tank_x=50, tank_y=80)
-attrs_red = [z_red.vram[0x1B00 + i] for i in range(4)]
+attrs_red = [z_red.vram[EXPL_ATTR_BASE + i] for i in range(4)]
 check("GO_LAUNCH_ONE_POP with pop-counter parity=1 (odd) draws in SPR_LIGHTRED_COLOR",
       attrs_red[3] == SPR_LIGHTRED_COLOR)
 
-z_slot2 = call_launch_one_pop(seed=11, slot_idx=2, pop_ctr_parity=0, tank_x=50, tank_y=80)
-attrs_slot0 = [z_slot2.vram[0x1B00 + i] for i in range(4)]
-attrs_slot2 = [z_slot2.vram[0x1B00 + 8 + i] for i in range(4)]
-check("GO_LAUNCH_ONE_POP with GO_SLOT_IDX=2 draws into slot2's own ATTRIBUTE "
-      "record, leaving slot0 untouched (still Y=0 from a fresh z80 - default "
-      "VRAM state)",
-      attrs_slot2[2] == PAT_EXPLOSION and attrs_slot0[2] != PAT_EXPLOSION)
+z_slot1 = call_launch_one_pop(seed=11, slot_idx=1, pop_ctr_parity=0, tank_x=50, tank_y=80)
+attrs_slot0 = [z_slot1.vram[EXPL_ATTR_BASE + i] for i in range(4)]
+attrs_slot1 = [z_slot1.vram[EXPL_ATTR_BASE + 4 + i] for i in range(4)]
+check("GO_LAUNCH_ONE_POP with GO_SLOT_IDX=1 draws into EXPL_SPR_BASE_SLOT+1's own "
+      "ATTRIBUTE record, leaving EXPL_SPR_BASE_SLOT+0 untouched (still Y=0 from a "
+      "fresh z80 - default VRAM state)",
+      attrs_slot1[2] == PAT_EXPLOSION and attrs_slot0[2] != PAT_EXPLOSION)
+tank_slot_attrs = [z_slot1.vram[0x1B00 + i] for i in range(16)]
+check("GO_LAUNCH_ONE_POP never writes into TANK's own ATTRIBUTE slots 0-3 (all "
+      "still Y=0 from a fresh z80 - the self-ship stays exactly as-is during the "
+      "explosion, per '自機は消さず爆発処理して')",
+      tank_slot_attrs == [0] * 16)
 
 z_advance = fresh()
 z_advance.wr(GO_SLOT_IDX, 0)
 call_ret(z_advance, sym["GO_LAUNCH_ONE_POP"])
 check("GO_LAUNCH_ONE_POP advances GO_SLOT_IDX from 0 to 1",
       z_advance.rd(GO_SLOT_IDX) == 1)
-z_advance.wr(GO_SLOT_IDX, 3)
 call_ret(z_advance, sym["GO_LAUNCH_ONE_POP"])
-check("GO_LAUNCH_ONE_POP wraps GO_SLOT_IDX from 3 back to 0 (round-robin over "
-      "exactly the 4 available ATTRIBUTE slots)",
+check(f"GO_LAUNCH_ONE_POP wraps GO_SLOT_IDX back to 0 after "
+      f"EXPL_SPR_SLOT_COUNT ({EXPL_SPR_SLOT_COUNT}) pops (round-robin over "
+      "exactly the 2 Etank-borrowed ATTRIBUTE slots)",
       z_advance.rd(GO_SLOT_IDX) == 0)
 
 # ---- GO_EXPLOSION_SEQUENCE: NUM_POPS individual pops, each with its own ----
@@ -266,11 +281,19 @@ check("GO_HIDE_EXPLOSION is called exactly once before GO_WAIT_LOOP (the "
 
 # confirm the sprite attribute table is really left in the "all hidden" state at
 # the moment GO_WAIT_LOOP (i.e. after the text has already been drawn) is reached -
-# this is the literal on-screen check for "爆発エフェクトは消してくれ".
-hidden_attrs = [z.vram[0x1B00 + i] for i in range(16)]
-check("by the time MISSION FAILED text is on screen (GO_WAIT_LOOP reached), all 4 "
-      "explosion particle sprite slots are hidden (Y=209), not left visible under it",
-      hidden_attrs == [209, 0, 0, 0] * 4)
+# this is the literal on-screen check for "爆発エフェクトは消してくれ", extended
+# (2026-09-12、"自機は消さず爆発処理して 爆発処理が終わったら消すだけ") to also
+# cover TANK's own slots (0-3, now hidden here too instead of during the pops).
+hidden_attrs_tank = [z.vram[0x1B00 + i] for i in range(16)]
+check("by the time MISSION FAILED text is on screen (GO_WAIT_LOOP reached), TANK's "
+      "own sprite slots (0-3) are hidden (Y=209) - the self-ship disappears only "
+      "here, at the end, not during the explosion",
+      hidden_attrs_tank == [209, 0, 0, 0] * 4)
+hidden_attrs_expl = [z.vram[EXPL_ATTR_BASE + i] for i in range(EXPL_SPR_SLOT_COUNT * 4)]
+check("by the time MISSION FAILED text is on screen (GO_WAIT_LOOP reached), the "
+      "explosion particle sprite slots (EXPL_SPR_BASE_SLOT) are also hidden (Y=209), "
+      "not left visible under it",
+      hidden_attrs_expl == [209, 0, 0, 0] * EXPL_SPR_SLOT_COUNT)
 
 # ---- "自機爆発はサウンドも欲しい"、続けて"爆発音はステージ1、2ともに ----
 # ---- パーティクルの回数鳴らすんだよ"(2026-09-07、実機フィードバック  ----
@@ -318,13 +341,17 @@ check("GO_STEP_BOOM_DECAY leaves GO_BOOM_VOL at 0 once fully decayed",
 
 z2 = fresh()
 z2.vram[0x1B00:0x1B10] = bytes([1] * 16)
+z2.vram[EXPL_ATTR_BASE:EXPL_ATTR_BASE + EXPL_SPR_SLOT_COUNT * 4] = bytes([1] * (EXPL_SPR_SLOT_COUNT * 4))
 z2.sp = 0xF000
 z2.wr(0xF000, 0x00); z2.wr(0xF001, 0x00)
 z2.pc = sym["GO_HIDE_EXPLOSION"]
 run_until_pc(z2, 0x0000, 300000)
-hide_attrs = [z2.vram[0x1B00 + i] for i in range(16)]
-check("GO_HIDE_EXPLOSION hides all 4 slots (Y=209)",
-      hide_attrs == [209, 0, 0, 0] * 4)
+hide_attrs_tank = [z2.vram[0x1B00 + i] for i in range(16)]
+hide_attrs_expl = [z2.vram[EXPL_ATTR_BASE + i] for i in range(EXPL_SPR_SLOT_COUNT * 4)]
+check("GO_HIDE_EXPLOSION hides TANK's own slots 0-3 (Y=209)",
+      hide_attrs_tank == [209, 0, 0, 0] * 4)
+check("GO_HIDE_EXPLOSION also hides the EXPL_SPR_BASE_SLOT explosion slots (Y=209)",
+      hide_attrs_expl == [209, 0, 0, 0] * EXPL_SPR_SLOT_COUNT)
 
 # ---- (2026-09-08、実機フィードバック対応、"ステージ2の自機爆発で音が
 # 出っぱなしでMission Failedになってる 消してからゲームオーバーにしろ
