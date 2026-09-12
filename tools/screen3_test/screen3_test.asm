@@ -2,7 +2,8 @@
 ; はせずテストをする...この画像を表示してみてくれ 表示テスト用のROMを
 ; 作る ベースはタイトル表示までを流用 それ以外は空でいい" - 実機で
 ; 「おｋ意図通り表示できた」確認済みの続き、"次はこの6枚を連続で表示
-; 3回繰り返して")。
+; 3回繰り返して"→"ウェイトいらない 最大速度みたいんで"で各画像間の
+; ウェイトを撤去、LDIRVM転送そのものの所要時間だけが切り替わり間隔)。
 ;
 ; tools/title_screen/title_test.asmのINIT冒頭(DI・BIOS画面モード初期化
 ; ・VDP R1/R7設定・スプライト停止・EI)をそのまま踏襲した最小構成。
@@ -76,47 +77,30 @@ HALT_LOOP:
 ; パターンジェネレータ(2048byte)->VRAM 0000h、ネームテーブル
 ; (768byte)->VRAM 1800h(いずれもBIOS標準デフォルトアドレス -
 ; ソースファイル自体の内部配置[screen3_gen.py参照]とは無関係)へ
-; 転送してからDELAYだけの単純な繰り返し。
+; 転送するだけ("ウェイトいらない 最大速度みたいんで" - 表示後は
+; 一切待たず即座に次の画像のLDIRVMへ進む、実質LDIRVM自体の転送時間
+; [2048+768byte]だけが切り替わり間隔になる)。
 SHOW_IMG1:
     LD HL,SC3_IMG1_PGT : LD DE,0000h : LD BC,SC3_IMG1_PGT_LEN : CALL LDIRVM
     LD HL,SC3_IMG1_NAME : LD DE,1800h : LD BC,SC3_IMG1_NAME_LEN : CALL LDIRVM
-    JP DELAY
+    RET
 SHOW_IMG2:
     LD HL,SC3_IMG2_PGT : LD DE,0000h : LD BC,SC3_IMG2_PGT_LEN : CALL LDIRVM
     LD HL,SC3_IMG2_NAME : LD DE,1800h : LD BC,SC3_IMG2_NAME_LEN : CALL LDIRVM
-    JP DELAY
+    RET
 SHOW_IMG3:
     LD HL,SC3_IMG3_PGT : LD DE,0000h : LD BC,SC3_IMG3_PGT_LEN : CALL LDIRVM
     LD HL,SC3_IMG3_NAME : LD DE,1800h : LD BC,SC3_IMG3_NAME_LEN : CALL LDIRVM
-    JP DELAY
+    RET
 SHOW_IMG4:
     LD HL,SC3_IMG4_PGT : LD DE,0000h : LD BC,SC3_IMG4_PGT_LEN : CALL LDIRVM
     LD HL,SC3_IMG4_NAME : LD DE,1800h : LD BC,SC3_IMG4_NAME_LEN : CALL LDIRVM
-    JP DELAY
+    RET
 SHOW_IMG5:
     LD HL,SC3_IMG5_PGT : LD DE,0000h : LD BC,SC3_IMG5_PGT_LEN : CALL LDIRVM
     LD HL,SC3_IMG5_NAME : LD DE,1800h : LD BC,SC3_IMG5_NAME_LEN : CALL LDIRVM
-    JP DELAY
+    RET
 SHOW_IMG6:
     LD HL,SC3_IMG6_PGT : LD DE,0000h : LD BC,SC3_IMG6_PGT_LEN : CALL LDIRVM
     LD HL,SC3_IMG6_NAME : LD DE,1800h : LD BC,SC3_IMG6_NAME_LEN : CALL LDIRVM
-    JP DELAY
-
-; src/CYBER SHMUP.asmのMISSION_DELAY_3SEC(実機実測約2.94秒)と全く同じ
-; 構成の純粋なZ80クロックのビジーウェイト(割り込み非依存 - CLAUDE.md
-; 恒久ルールにもOTIR等のブロックI/O命令は関係ないが、このプロジェクトの
-; 既存の「実時間待ちはHALT/EIに頼らずビジーウェイトで組む」流儀を
-; そのまま踏襲)。1枚あたり約3秒表示。
-DELAY:
-    LD D,10
-DELAY_OUTER:
-    LD B,0
-DELAY_MID:
-    LD C,0
-DELAY_INNER:
-    DEC C
-    JR NZ,DELAY_INNER
-    DJNZ DELAY_MID
-    DEC D
-    JR NZ,DELAY_OUTER
     RET
