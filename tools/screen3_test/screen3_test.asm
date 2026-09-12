@@ -7,11 +7,25 @@
 ;
 ; tools/title_screen/title_test.asmのINIT冒頭(DI・BIOS画面モード初期化
 ; ・VDP R1/R7設定・スプライト停止・EI)をそのまま踏襲した最小構成。
-; BGM・バンク切替・ボタン入力・ゲーム本編は一切無し(指示通り「それ以外
-; は空」)。単発の32KB flat ROM(tools/stage2_terrain/terrain_test.asmと
-; 同じ、ASCII16のページ切替すら不要な単純な構成 - 表示に必要なデータ
-; [PGT2048byte+NAME768byte=2816byte x6枚=16896byte]が32KB[0000h起点で
-; 4000h-BFFFh]に余裕で収まるため)。
+; BGM・ボタン入力・ゲーム本編は一切無し(指示通り「それ以外は空」)。
+;
+; (実機フィードバック対応その2、"6枚目こうなってるんだけど これで
+; 正しいのか"[市松模様ノイズのスクリーンショット添付]): 初版は6枚分の
+; データ(2816byte x6=16896byte、0x4000起点で0x8000をまたぐ)を
+; 単なる「flat 32KB ROM」として書き出していたが、この実機/フラッシュ
+; カートは常にASCII16メガROMとしてマッピングされる(このプロジェクトの
+; 他の全ROM[Comb/Title/Stage2]が実際に使っている方式)ため、windowB
+; (8000h-BFFFh)を明示的にバンク選択しない限りその領域の内容は保証
+; されない - 6枚目のネームテーブルがちょうど8000hをまたいでいたため、
+; windowBの後半だけ別の(未選択の)バンクの内容を指してしまい、市松模様
+; ノイズとして現れていたと判明(tools/stage2_combined/build_test.pyの
+; 自身の過去の教訓"ファイル名に[ASCII16]を含めろ...本番テストは
+; WebMSXでファイル名からマッパー種別を自動判定"と全く同じ罠)。
+; title_test.asm/combined_test.asm等と同じ「INIT冒頭でwindowBを自分
+; 自身のbank1へ明示的に一度だけ選択する(LD A,1:LD(7000h),A)」方式を
+; 追加し、build_test.py側もbank0/bank1を実際に分離した上で64KBへ倍化
+; ・ファイル名に"ascii16"を含める(このプロジェクトの他の全ROMと同じ
+; 規約)よう修正した。
 ;
 ; (実機フィードバック対応: "スクリーン3に設定できてないな TMS9918の
 ; スクリーン3は64x48px"): このプロジェクトで既に実機検証済みのINIT32
@@ -39,6 +53,12 @@ REPEAT_COUNT EQU 0F000h   ; scratch RAM byte (残り周回数)
 INIT:
     LD SP,STACKTOP
     DI
+    ; ASCII16メガROMとしてマッピングされる実機/フラッシュカート向けに、
+    ; windowB(8000h-BFFFh)をこのファイル自身のbank1へ明示的に選択
+    ; (title_test.asmのINIT_BGM等と同じ規約) - これでbank0(windowA、
+    ; 4000h-7FFFh)+bank1(windowB)が真に連続した32KBとしてCPUから見える。
+    LD A,1
+    LD (7000h),A
     CALL INIT32
     EI
 

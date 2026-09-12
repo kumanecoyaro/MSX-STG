@@ -1,7 +1,13 @@
 """Assembles the SCREEN3 image display test (screen3_test.asm +
-screen3_gen.py's generated data tables) into a 32KB standalone flat ROM
-(same shape as tools/stage2_terrain/build_test.py - no ASCII16 paging
-needed, the whole thing fits in one 16KB page doubled to 32KB)."""
+screen3_gen.py's generated data tables) into a real 2-bank ASCII16
+megaROM (same shape/convention as tools/title_screen/build_test.py and
+tools/stage2_combined/build_test.py - see screen3_test.asm's own
+comment on why this project's real hardware/flashcart requires this
+exact convention: bank0=page1(4000h-7FFFh)/bank1=page2(8000h-BFFFh)
+split, the 32KB result doubled to 64KB, and "ascii16" in the filename -
+a plain 32KB flat image (this file's own original, WRONG approach) is
+not reliably recognized as a megaROM and left window B's mapping
+undefined)."""
 import os
 import sys
 
@@ -23,17 +29,37 @@ def assemble():
     return out, asm.symtab, text
 
 
+def build_banks(out):
+    """Splits the flat address->byte dict into bank0(page1,4000h-7FFFh)/
+    bank1(page2,8000h-BFFFh) - same convention as tools/stage2_combined/
+    build_test.py's own build_banks()."""
+    bank0 = bytearray([0xFF] * 0x4000)
+    bank1 = bytearray([0xFF] * 0x4000)
+    for addr, val in out.items():
+        if 0x4000 <= addr <= 0x7FFF:
+            bank0[addr - 0x4000] = val
+        elif 0x8000 <= addr <= 0xBFFF:
+            bank1[addr - 0x8000] = val
+        else:
+            raise Exception(f"address {addr:04X}h outside 4000h-BFFFh (bank0+bank1 budget exceeded)")
+    return bank0, bank1
+
+
 def main():
     out, sym, text = assemble()
     lo, hi = min(out), max(out)
-    assert hi < 0xC000, f"content ({hi:04X}h) overflows the 32KB window (4000h-BFFFh)"
-    mem = bytearray(32768)
-    for a, b in out.items():
-        mem[a - 0x4000] = b
-    rom_path = os.path.join(HERE, "Screen3Test.rom")
+    bank0, bank1 = build_banks(out)
+    rom32 = bytes(bank0) + bytes(bank1)
+    # doubled to 64KB - real-hardware/flashcart-required convention this
+    # project already learned the hard way (see tools/stage2_combined/
+    # build_test.py's own comment): a plain 32KB image isn't reliably
+    # auto-detected as an ASCII16 megaROM, leaving window B undefined.
+    rom = rom32 + rom32
+    rom_path = os.path.join(HERE, "Screen3Test.ascii16k.rom")
     with open(rom_path, "wb") as f:
-        f.write(bytes(mem))
-    print(f"assembled {lo:04X}h-{hi:04X}h ({hi-lo+1} bytes), wrote {rom_path} (32768 bytes)")
+        f.write(rom)
+    print(f"assembled {lo:04X}h-{hi:04X}h ({hi-lo+1} bytes across bank0+bank1), "
+          f"wrote {rom_path}: {len(rom)} bytes (doubled)")
     print("INIT =", hex(sym["INIT"]))
     return out, sym, text
 
