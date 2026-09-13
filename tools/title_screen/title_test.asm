@@ -88,6 +88,20 @@ SC3_CT_ROWS_LEFT EQU 0E7FCh   ; byte: テーブル末尾までの残り行数(0�
 ; (1byte/行)とは違いSC3_CONFIRM_TICKS自体が4byte/行のテーブルなので、
 ; 同じHLでは共有できず別ポインタが必要。
 SC3_CT_BORDER_PTR EQU 0E7FDh  ; word: BORDER_TABLE上の次に読む位置
+; (2026-09-13、"で、サウンドがデューティ比かかってない 前は50%だった
+; はず"): SC3_CONFIRM_TICKは元々「行をロードした瞬間だけR9へ音量を
+; 書き、以後は行の残りtickをただ減算するだけ」の設計で、confirm_
+; beep_gen.py自身のコメント通りデューティ比を意図的に省略していた。
+; PLAY_CONFIRM_BEEP(タイトルボタン押下版)の「1行=ON半区間+OFF半区間の
+; busy-wait」と違い、こちらはH.TIMI駆動(1回の呼び出し=1tick)のため
+; 行内でON/OFFを分割する余地が無い。Round41のBGMデューティ(free-
+; runningな位相カウンタをANDマスクでゲート判定)と同じ考え方を採用し、
+; 行の残りtick数に関係なく毎tick位相を1進め、その最下位ビットで
+; ON/OFFを交互に切り替える(50%duty、mask=1)。SC3_CT_VOLは現在の行の
+; 音量(行ロード時にのみ更新)を保持、SC3_CT_PHASEは呼び出しごとに
+; +1する自由継続カウンタ。
+SC3_CT_VOL       EQU 0F000h   ; byte: 現在の行の音量(行ロード時のみ更新)
+SC3_CT_PHASE     EQU 0F001h   ; byte: デューティ50%用の自由継続位相カウンタ
 
 ; global bank indices in the final ROM (see build_full_rom.py's own
 ; layout comment) - title=bank0/1 (this file), Stage1=bank2/3,
@@ -970,9 +984,8 @@ SC3CT_HAVE_ROWS:
     LD A,(HL) : INC HL : LD C,A
     LD A,3 : OUT (PSG_ADDR),A
     LD A,C : OUT (PSG_DATA),A      ; ch B tone period coarse
-    LD A,(HL) : INC HL : LD C,A
-    LD A,9 : OUT (PSG_ADDR),A
-    LD A,C : OUT (PSG_DATA),A      ; ch B volume
+    LD A,(HL) : INC HL
+    LD (SC3_CT_VOL),A              ; 音量はデューティ適用のため直接書かず保存
     LD A,(HL) : INC HL             ; duration (ticks) - round40と同じ
     DEC A                          ; off-by-one補正(このtick自体で1回目)
     LD (SC3_CT_TIMER),A
@@ -987,10 +1000,25 @@ SC3CT_HAVE_ROWS:
     LD A,87h : OUT (99h),A         ; reg7|80h = VDP R7 選択・確定
     NOP
     NOP
-    JR SC3CT_DONE
+    JR SC3CT_APPLY_DUTY
 SC3CT_DEC_TIMER:
     DEC HL
     LD (SC3_CT_TIMER),HL
+SC3CT_APPLY_DUTY:
+    ; (2026-09-13、"サウンドがデューティ比かかってない 前は50%だった
+    ; はず"): 行の残りtickに関係なく毎tick位相を1進め、最下位ビットで
+    ; ON/OFFを交互に切り替える(Round41のBGMデューティと同じ
+    ; free-running位相+ANDマスク方式、mask=1で50%)。
+    LD A,(SC3_CT_PHASE)
+    INC A
+    LD (SC3_CT_PHASE),A
+    AND 1
+    LD A,9 : OUT (PSG_ADDR),A
+    JR NZ,SC3CT_DUTY_OFF
+    LD A,(SC3_CT_VOL) : OUT (PSG_DATA),A
+    JR SC3CT_DONE
+SC3CT_DUTY_OFF:
+    XOR A : OUT (PSG_DATA),A
 SC3CT_DONE:
     POP HL : POP DE : POP BC : POP AF
     RET
@@ -1037,6 +1065,7 @@ RSS_NAME_LOOP:
     DI
     XOR A
     LD (SC3_CT_TIMER),A : LD (SC3_CT_TIMER+1),A : LD (SC3_CT_ROWS_LEFT),A
+    LD (SC3_CT_PHASE),A            ; デューティ位相も0から開始(決定的な挙動のため)
     LD A,0C3h : LD (HTIMI_HOOK),A
     LD HL,SC3_CONFIRM_TICK : LD (HTIMI_HOOK+1),HL
     EI
@@ -1074,12 +1103,15 @@ RSS_MAIN_LOOP:
     LD B,30
     CALL WAIT_N_FRAMES
 
+    ; (2026-09-13、"8枚目は今30フレだと思うが60に 9枚目は120に"):
+    ; 8枚目(Epilogue2/09.SC3)を30→60フレーム、9枚目(Epilogue3/
+    ; 11.SC3)を90→120フレームへ延長。
     CALL SHOW_SC3_EPI2
-    LD B,30
+    LD B,60
     CALL WAIT_N_FRAMES
 
     CALL SHOW_SC3_EPI3
-    LD B,90
+    LD B,120
     CALL WAIT_N_FRAMES
 
     ; 呼び出し元(WFS_PROCEED)がこの直後にHTIMI_HOOKをbare RETへ戻し

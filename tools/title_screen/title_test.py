@@ -494,7 +494,7 @@ switch_log_at_wait = list(mem.switch_log)  # round40: exclude INIT_BGM's own 2 s
 # 制約)、このステップ実行中にSC3_CONFIRM_TICKが呼ばれることはない -
 # HTIMI_HOOKの設置自体・SC3_CONFIRM_TICK自身の動作は別途、直接呼び
 # 出しによる専用テストで検証する(下記)。
-_RSS_MAIN_LOOP_COUNT_ADDR = sym["RUN_SCREEN3_SLIDESHOW"] + 0x59  # "LD B,3" operand (round97: shifted by the new manual name-table transfer loop)
+_RSS_MAIN_LOOP_COUNT_ADDR = sym["RUN_SCREEN3_SLIDESHOW"] + 0x5c  # "LD B,3" operand (round97 shifted by the name-table transfer loop; +3 further per round99follow-up's SC3_CT_PHASE init)
 _WAIT_1F_DE_ADDR = sym["WAIT_1_FRAME_UNIT"] + 1                   # "LD DE,2295" operand (2 bytes)
 assert mem.banksA[0][_RSS_MAIN_LOOP_COUNT_ADDR - 0x4000] == 3
 assert (mem.banksA[0][_WAIT_1F_DE_ADDR - 0x4000]
@@ -773,31 +773,36 @@ for i in range(1, 4):
 # deliberately shrinks these in its own private mem copy for step-count
 # feasibility, so the real values are checked here independently instead.
 # (2026-09-13、"で、3ループの後に30フレ追加して 7枚目の表示時間伸ばして
-# で、1から6枚目の3フレウェイトを2フレに 他の処理で重くなったんで"):
-# offsets recomputed for the new flow (1-6 x2フレーム [in SHOW_SC3_IMGx
-# itself, checked separately below] + Epilogue1 x30フレーム, x3周; then a
-# standalone 30フレーム待ち; then Epilogue2 x30フレーム; then Epilogue3
-# x90フレーム). WAIT_3_FRAMES itself is gone - 1-6枚目もWAIT_N_FRAMES
-# (B=2)へ統一済み。
+# で、1から6枚目の3フレウェイトを2フレに 他の処理で重くなったんで"、
+# 続けて"8枚目は今30フレだと思うが60に9枚目は120に"): offsets recomputed
+# for the new flow (1-6 x2フレーム [in SHOW_SC3_IMGx itself, checked
+# separately below] + Epilogue1 x30フレーム, x3周; then a standalone
+# 30フレーム待ち; then Epilogue2 x60フレーム; then Epilogue3 x120フレーム).
+# WAIT_3_FRAMES itself is gone - 1-6枚目もWAIT_N_FRAMES(B=2)へ統一済み。
+# 全オフセットはSC3_CT_PHASE初期化(1命令3byte)の追加によりさらに+3
+# シフトしている(name-table転送自体のオフセット[+28/+45-50/+56]は
+# その挿入位置より前のため無変化)。
 _real_out, _real_sym, _ = build_test.assemble()
 _r3s_base = _real_sym["RUN_SCREEN3_SLIDESHOW"]
 check("RUN_SCREEN3_SLIDESHOW's real (unshrunk) main-loop count is 3 "
       "(\"ここまでを3ループ\")",
-      _real_out[_r3s_base + 0x59] == 3)
+      _real_out[_r3s_base + 0x5c] == 3)
 check("WAIT_1_FRAME_UNIT's real (unshrunk) DE count is 2295 (~1/60s @ 3579545Hz / "
       "26 T-states per DEC-DE loop iteration)",
       (_real_out[_real_sym["WAIT_1_FRAME_UNIT"] + 1]
        | (_real_out[_real_sym["WAIT_1_FRAME_UNIT"] + 2] << 8)) == 2295)
 check("RUN_SCREEN3_SLIDESHOW: Epilogue1(08.SC3)'s own wait is 30 frames "
       "(\"7枚目の表示時間伸ばして\"、旧15フレームから倍増)",
-      _real_out[_r3s_base + 0x71] == 30)
+      _real_out[_r3s_base + 0x74] == 30)
 check("RUN_SCREEN3_SLIDESHOW: standalone 30-frame wait right after the 3rd loop "
       "iteration completes, before Epilogue2 (\"3ループの後に30フレ追加して\")",
-      _real_out[_r3s_base + 0x78] == 0x06 and _real_out[_r3s_base + 0x79] == 30)
-check("RUN_SCREEN3_SLIDESHOW: Epilogue2(09.SC3)'s own wait is still 30 frames",
-      _real_out[_r3s_base + 0x81] == 30)
-check("RUN_SCREEN3_SLIDESHOW: Epilogue3(11.SC3)'s own wait is still 90 frames",
-      _real_out[_r3s_base + 0x89] == 90)
+      _real_out[_r3s_base + 0x7b] == 0x06 and _real_out[_r3s_base + 0x7c] == 30)
+check("RUN_SCREEN3_SLIDESHOW: Epilogue2(09.SC3)'s own wait is 60 frames "
+      "(\"8枚目は今30フレだと思うが60に\")",
+      _real_out[_r3s_base + 0x84] == 60)
+check("RUN_SCREEN3_SLIDESHOW: Epilogue3(11.SC3)'s own wait is 120 frames "
+      "(\"9枚目は120に\")",
+      _real_out[_r3s_base + 0x8c] == 120)
 
 
 # ---- (2026-09-12、実機フィードバック"表示は出来た だが音2回鳴らして
@@ -848,12 +853,72 @@ for _tick in range(total_ticks_one_pass * 2):
         observed.append((cpu_ct.psg_regs.get(2), cpu_ct.psg_regs.get(3), cpu_ct.psg_regs.get(9)))
         prev_ptr = ptr
 
-_expected_sequence = [(lo, hi, vol) for lo, hi, vol, _ticks in _expected_rows]
+# (2026-09-13、"で、サウンドがデューティ比かかってない 前は50%だった
+# はず"): SC3_CONFIRM_TICKは今やSC3_CT_PHASE(呼び出しごとに+1する
+# free-runningな位相カウンタ)のパリティでR9を毎tickゲートする
+# (偶数=ON、奇数=OFF/0)。observedは「新しい行がロードされたその
+# tickでのR9値」を記録しているため、行自身のテーブル音量そのままでは
+# なく、その行がロードされた瞬間のグローバルtick通し番号の偶奇に
+# よって0になりうる - 同じ位相進行を独立にシミュレートして期待値を
+# 導出する。
+def _expected_observed_sequence(rows, passes):
+    seq = []
+    tick_index = 0  # SC3_CT_PHASEのインクリメント後の値と同じ、1始まりの通しtick番号
+    for _p in range(passes):
+        for lo, hi, vol, ticks in rows:
+            tick_index += 1  # この行をロードするtick
+            on = (tick_index % 2) == 0
+            seq.append((lo, hi, vol if on else 0))
+            tick_index += ticks - 1  # 同じ行が継続する残りのtick(次の行ロードまで)
+    return seq
+
+
+_expected_sequence = _expected_observed_sequence(_expected_rows, 2)
 check(f"SC3_CONFIRM_TICK: driving it through exactly {total_ticks_one_pass * 2} consecutive "
       "ticks (2 full passes) produces exactly 2 repeats of confirm_beep_gen.py's own 53-row "
-      "(period,volume) sequence, confirming it loops back to row 0 automatically instead of "
-      "stopping after one pass",
-      observed == _expected_sequence * 2)
+      "(period,volume) sequence [each duty-gated by the load tick's own global parity], "
+      "confirming it loops back to row 0 automatically instead of stopping after one pass",
+      observed == _expected_sequence)
+
+# ---- (2026-09-13、"で、サウンドがデューティ比かかってない 前は50%だった
+# はず"): 上のテストは行ロード時点のR9だけを見ているため、行の"継続中"
+# tickでも本当に毎tickON/OFFが交互に切り替わっているか(=デューティ比
+# 50%そのもの)を別途、全tickのR9を直接記録して検証する。
+cpu_duty, mem_duty = fresh_cpu()
+cpu_duty.mem[SC3_CT_TIMER] = 0
+cpu_duty.mem[SC3_CT_TIMER + 1] = 0
+cpu_duty.mem[SC3_CT_ROWS_LEFT] = 0
+_duty_r9_per_tick = []
+_DUTY_TICKS = 40
+for _tick in range(_DUTY_TICKS):
+    call_routine(cpu_duty, "SC3_CONFIRM_TICK")
+    _duty_r9_per_tick.append(cpu_duty.psg_regs.get(9))
+
+
+def _expected_r9_per_tick(rows, n_ticks):
+    out = []
+    tick_index = 0
+    row_iter = iter(rows)
+    lo, hi, vol, remaining = next(row_iter)
+    while len(out) < n_ticks:
+        if remaining == 0:
+            lo, hi, vol, remaining = next(row_iter)
+        tick_index += 1
+        remaining -= 1
+        out.append(vol if (tick_index % 2) == 0 else 0)
+    return out
+
+
+_expected_r9_ticks = _expected_r9_per_tick(_expected_rows, _DUTY_TICKS)
+check(f"SC3_CONFIRM_TICK: R9 over {_DUTY_TICKS} consecutive ticks alternates ON(row volume)/"
+      "OFF(0) every single tick per the row's own global tick parity - true 50% duty, not just "
+      "a one-shot write at row-load time (\"サウンドがデューティ比かかってない 前は50%だった"
+      "はず\", Round41 BGMと同じfree-running位相+ANDマスク方式)",
+      _duty_r9_per_tick == _expected_r9_ticks)
+check(f"SC3_CONFIRM_TICK: over the same {_DUTY_TICKS} ticks, R9 is actually 0 on at least one "
+      "tick and non-zero on at least one other (rules out a vacuously-true all-same-value "
+      "check above)",
+      0 in _duty_r9_per_tick and any(v != 0 for v in _duty_r9_per_tick))
 
 # ---- (2026-09-13、"ではボーダーカラーの点滅をサウンドと同期して 削除前
 # の実装と同じだ"): PLAY_CONFIRM_BEEP同様、SC3_CONFIRM_TICKも新規に行を
