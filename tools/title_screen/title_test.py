@@ -436,6 +436,36 @@ check(f"chC over {N_ENV_TICKS} ticks: R10 sequence (LINEAR, no duty) matches the
       "Python reference exactly, including reaching the terminal (silent) entry",
       observed_c_env == expected_c_env)
 
+# ---- (2026-09-13、"デバウンス処理をタイトル画面にも実装 今は押された
+# ままでも入力と判定してるんで なのでそうであったら一度ボタン押下が
+# 解除されるまでは入力としないように"): このINITはStage1/Stage2/
+# GAME_OVERバンクからの「タイトルへ戻る」トランポリンの着地先としても
+# 使われる共通エントリポイントのため、その画面で押していたボタンを
+# 離さないままここへ来た場合の挙動を検証する。トリガーをINIT実行開始
+# 前から(=WFS_DEBOUNCEへ到達する前から)ずっと押しっぱなしにしておき、
+# 実際の入力ポーリングループ(WAIT_FOR_START)へは絶対に到達しない
+# (WFS_DEBOUNCEに留まり続ける)ことを直接検証する。
+cpu_deb, mem_deb = fresh_cpu()
+cpu_deb.sim_trig_a = True  # 前の画面から押しっぱなしのボタンを最初から held 状態で開始
+wait_addr = sym["WAIT_FOR_START"]
+steps_deb = 0
+while cpu_deb.pc != wait_addr and steps_deb < 300000:
+    cpu_deb.step()
+    steps_deb += 1
+check("with the trigger already held from before this INIT even starts (simulating a stale "
+      "press carried over from a Stage1/Stage2/GAME_OVER-bank trampoline back into title), boot "
+      "never reaches the real input-polling loop (WAIT_FOR_START) - it stays stuck in the new "
+      "WFS_DEBOUNCE wait instead",
+      cpu_deb.pc != wait_addr)
+cpu_deb.sim_trig_a = False  # ボタンが離される
+steps_deb2 = 0
+while cpu_deb.pc != wait_addr and steps_deb2 < 300000:
+    cpu_deb.step()
+    steps_deb2 += 1
+check("releasing the trigger lets boot proceed out of WFS_DEBOUNCE and into the real "
+      "WAIT_FOR_START polling loop",
+      cpu_deb.pc == wait_addr)
+
 # ---- button-press trampoline ----
 cpu, mem = fresh_cpu()
 run_to_wait(cpu)
