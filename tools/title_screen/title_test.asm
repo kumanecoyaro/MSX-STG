@@ -985,6 +985,8 @@ SC3CT_HAVE_ROWS:
     NOP
     NOP
     LD A,87h : OUT (99h),A         ; reg7|80h = VDP R7 選択・確定
+    NOP
+    NOP
     JR SC3CT_DONE
 SC3CT_DEC_TIMER:
     DEC HL
@@ -1063,7 +1065,7 @@ RSS_MAIN_LOOP:
     ; 収束している保証がない。
     DI
     LD A,9 : OUT (PSG_ADDR),A : XOR A : OUT (PSG_DATA),A
-    LD A,1 : OUT (99h),A : NOP : NOP : LD A,87h : OUT (99h),A
+    LD A,1 : OUT (99h),A : NOP : NOP : LD A,87h : OUT (99h),A : NOP : NOP
     RET
 
 ; 1枚目(基準フレーム): RLEをSHADOW_PGTへフル展開してからVRAMへ一括反映。

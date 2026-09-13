@@ -13946,3 +13946,51 @@ Y段違い+Enemy6速度半減、Stage2自機爆発の自機非表示タイミン
   `tools/title_screen/title_test.py`(回帰テスト2件追加)、
   `tools/title_screen/CyberS Title.ascii16k.rom`・
   `rom/CyberS Comb.ascii16k.rom`(再ビルド)。
+
+## Round96: 実機フィードバック対応(SCREEN3スライドショー表示破損・
+速度低下の真因追加特定・修正 - VDPレジスタポート書き込み後のウェイト
+NOP抜け)(2026-09-13、完了済み・実機フィードバック待ち)
+
+- ユーザー報告: "変わらず 遅いし表示壊れてる 一応聞くがVDPウェイトは
+  入ってるよな"。Round95のDI/EI保護だけでは解消しなかった。
+- **真因**: このファイル自身がRound70で確立した規約(実機TMS9918の
+  仕様: VDPレジスタポート[99h]への書き込みは1回ごとに8T=NOP2個分の
+  復帰待ちが必要、`PLAY_CONFIRM_BEEP`の既存コードが「1回目のOUT (99h)
+  の後にNOP2個」「2回目のOUT (99h)の後にもNOP2個」と2箇所ともNOPを
+  置いている)を、Round94で新規追加した`SC3_CONFIRM_TICK`のボーダー
+  同期処理・`RUN_SCREEN3_SLIDESHOW`末尾のボーダーリセット処理の両方
+  とも、**1回目のOUT (99h)の後のNOPは入れていたが、2回目のOUT (99h)
+  の後のNOPを付け忘れていた**(`combined_test.asm`の
+  `WRITE_BULLET_BYTE_HL`でも同じ「99hへの書き込みは毎回NOP2個」規約が
+  確立・厳格にテストされている[`vdp_wait_test.py`]ことを確認)。この
+  待ちが無いと、VDPが2回目の書き込み処理を完了する前に次の命令
+  (tick終了処理・呼び出し元への復帰後の命令)が実行されてしまい、
+  VDPが正しく処理を終えられない - これがRound95のDI/EI保護だけでは
+  解消しなかった表示破損・速度低下の追加の真因と考えられる。
+- **修正**: `SC3_CONFIRM_TICK`の2回目のOUT (99h)の直後、
+  `RUN_SCREEN3_SLIDESHOW`末尾のボーダーリセットの2回目のOUT (99h)の
+  直後、両方にNOP2個を追加(`PLAY_CONFIRM_BEEP`と完全に同じパターンへ
+  統一)。
+- 新規回帰テスト1件(SC3_CONFIRM_TICKの2回目のOUT (99h)直後の2byte
+  がNOP,NOPであることをアセンブル結果から直接検証)。title_test.py
+  全65件PASS。Comb ROM再ビルド・`verify_comb.py`全チェックPASSの上、
+  標準方針によりComb ROMのみ送付。
+
+セッション引き継ぎメモ(2026-09-13、Round96完了直後):
+- Round95(DI/EI保護)・Round96(VDPウェイトの付け忘れ修正)の2つの
+  修正を積み重ねてもまだ実機で表示破損・速度低下が解消しない場合、
+  次に疑うべき点: (a) `RUN_SCREEN3_SLIDESHOW`冒頭のVDPモード設定
+  (R0/R4/R1/R7、`CALL WRTVDP`経由)自体はBIOS呼び出しのため今回の
+  手書きOUT系の対象外だが、BIOSが内部で同様のウェイトを保証している
+  という前提の再検証が必要かもしれない。(b) このタイトルバンク自体に
+  他にも生のOUT (99h)/(98h)書き込み箇所が無いか(`grep -n "OUT (99h)"
+  tools/title_screen/title_test.asm`で全箇所を横断確認すること)。
+  (c) 依然として解消しない場合、Round47のOTIRバグ発見時と同様に
+  openMSX等の高精度エミュレータでの実VRAM/実レジスタ調査に切り替える
+  必要がある(z80emu.pyはVDPアクセスタイミングを一切モデル化して
+  いないため、この種の問題を検出できない)。
+- 変更ファイル: `tools/title_screen/title_test.asm`
+  (SC3_CONFIRM_TICK・RUN_SCREEN3_SLIDESHOW末尾の2箇所にNOP追加)、
+  `tools/title_screen/title_test.py`(回帰テスト1件追加)、
+  `tools/title_screen/CyberS Title.ascii16k.rom`・
+  `rom/CyberS Comb.ascii16k.rom`(再ビルド)。

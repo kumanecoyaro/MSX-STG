@@ -888,6 +888,22 @@ check("FLUSH_SHADOW_TO_VRAM re-enables interrupts (0FBh) immediately after CALL 
       "returns, before its own RET",
       out[_fstv + 13] == 0xFB and out[_fstv + 14] == 0xC9)
 
+# ---- (2026-09-13、実機フィードバック"変わらず 遅いし表示壊れてる 一応
+# 聞くがVDPウェイトは入ってるよな"): 上記のDI/EI保護だけでは不十分だった
+# - この既存ファイル自身のPLAY_CONFIRM_BEEP(round70)が確立した規約
+# (実機TMS9918の仕様: VDPレジスタポート[99h]への書き込みは8T=NOP2個分の
+# 復帰待ちが必要、2byte書き込みの各byteの直後にそれぞれNOP2個)を、
+# 新規追加したSC3_CONFIRM_TICKのボーダー同期・RUN_SCREEN3_SLIDESHOW末尾の
+# ボーダーリセットの両方とも「2回目のOUT (99h)の直後」にだけ付け忘れて
+# いた(1回目の直後にはあったが2回目の直後が抜けていた)。この待ちが
+# 無いと直後に実行される命令(このtickの終了処理・呼び出し元への復帰後の
+# 命令)がVDPの処理完了を待たずに次のVDPポートアクセスをしうる - これが
+# DI/EI保護後も表示破損・速度低下が解消しなかった真因と考えられる。
+check("SC3_CONFIRM_TICK: has NOP,NOP after its SECOND OUT (99h) write too (not just the "
+      "first) - matching PLAY_CONFIRM_BEEP's own established 8T VDP-register-port recovery "
+      "convention, missing here until now per \"VDPウェイトは入ってるよな\"",
+      out[sym["SC3_CONFIRM_TICK"] + 103] == 0x00 and out[sym["SC3_CONFIRM_TICK"] + 104] == 0x00)
+
 # ---- off-by-one check (round40's own established convention: the tick
 # that LOADS a new row already plays it once, so the timer is seeded with
 # duration-1 more ticks - re-verify this holds here too).
