@@ -371,6 +371,67 @@ PCB_ROW_OFF_WAIT:
     JR NZ,PCB_ROW_OFF_WAIT
     RET
 
+; (2026-09-12、実機フィードバック"画面真っ赤だが スクリーン3は枠使え
+; ないのか"): SCREEN3(Multicolor)モード中にPLAY_CONFIRM_BEEPの枠色
+; フラッシュ(VDP R7書き込み)を行うと画面全体が赤一色になる実機不具合が
+; 判明した(この演出自体はGraphics1/SCREEN2[タイトル背景]モードでの
+; ボタン押下時は実機確認済みだったが、Multicolorモードとの組み合わせは
+; 今回が初めての実機テストだった)。ユーザー自身の指摘通りMulticolor
+; モードでのVDP R7の扱いに何らかの相違がある可能性が高いと考えられる
+; が、根本原因の特定は保留し、安全側の対応としてSCREEN3スライドショー
+; 中は枠色フラッシュを完全に省略しPSGトーン(チャープ+ブザー)のみを
+; 鳴らす専用ルーチンへ差し替える(PCB_PLAY_ONE_ROWと同じ行フォーマット・
+; 同じCONFIRM_STEPSテーブルを流用、VDP R7書き込みの2行[NOP 2つ込み]と
+; IXによる枠色テーブル参照だけを省いた形)。
+PLAY_CONFIRM_BEEP_NO_BORDER:
+    CALL PCB_PLAY_TABLE_NB
+    LD DE,CONFIRM_GAP_DELAY
+PCBNB_GAP_WAIT:
+    DEC DE
+    LD A,D : OR E
+    JR NZ,PCBNB_GAP_WAIT
+    CALL PCB_PLAY_TABLE_NB
+    RET
+
+PCB_PLAY_TABLE_NB:
+    LD HL,CONFIRM_STEPS
+    LD B,CONFIRM_STEP_COUNT
+PCBNB_ROW_LOOP:
+    PUSH BC
+    CALL PCB_PLAY_ONE_ROW_NB
+    POP BC
+    DJNZ PCBNB_ROW_LOOP
+    RET
+
+PCB_PLAY_ONE_ROW_NB:
+    DI
+    LD A,2 : OUT (PSG_ADDR),A
+    LD A,(HL) : OUT (PSG_DATA),A   ; ch B tone period fine
+    INC HL
+    LD A,3 : OUT (PSG_ADDR),A
+    LD A,(HL) : OUT (PSG_DATA),A   ; ch B tone period coarse
+    INC HL
+    LD A,9 : OUT (PSG_ADDR),A
+    LD A,(HL) : OUT (PSG_DATA),A   ; ch B volume (duty ON half)
+    INC HL
+    EI
+    LD E,(HL) : INC HL
+    LD D,(HL) : INC HL
+    PUSH DE
+PCBNB_ROW_ON_WAIT:
+    DEC DE
+    LD A,D : OR E
+    JR NZ,PCBNB_ROW_ON_WAIT
+    DI
+    LD A,9 : OUT (PSG_ADDR),A : XOR A : OUT (PSG_DATA),A  ; duty OFF half (silence)
+    EI
+    POP DE
+PCBNB_ROW_OFF_WAIT:
+    DEC DE
+    LD A,D : OR E
+    JR NZ,PCBNB_ROW_OFF_WAIT
+    RET
+
 ; REDGRAD=[1,6,8,9,8,6,1](黒/暗赤/中赤/明赤/中赤/暗赤/黒)を53行に
 ; row*7//53で滑らかに配分(Pythonで事前計算、floor除算なので毎回
 ; 7-8行ずつ同じ値が続く形になる)。CONFIRM_STEPSと同じ53要素、
@@ -836,12 +897,17 @@ BGMT_UC_ATTEN_OK:
 ;
 ; "スタートのサウンドと枠の演出は削除...変わりに...このアニメの間
 ; ループ": 旧来のボタン押下時単発のPLAY_CONFIRM_BEEP呼び出しは撤去し、
-; 代わりにこのスライドショー全体(6枚×10周+締めの3枚)を通じて
-; PLAY_CONFIRM_BEEPを画像の切り替わりごとに繰り返し呼ぶことで、確認音
-; +枠色フラッシュがアニメーションの間ずっと鳴り続ける/明滅し続ける
-; ように実装する(単一スレッドのbusy-wait設計のため、映像と音を厳密に
-; 同期させることはできない - "適当でいい"というユーザー方針に基づき、
-; 画像の切り替わりのたびに1回再生する形で十分とする)。
+; 代わりにこのスライドショー全体(6枚×1周+締めの3枚)を通じて確認音を
+; 画像の切り替わりごとに繰り返し呼ぶことで、アニメーションの間ずっと
+; 鳴り続けるように実装する(単一スレッドのbusy-wait設計のため、映像と
+; 音を厳密に同期させることはできない - "適当でいい"というユーザー
+; 方針に基づき、画像の切り替わりのたびに1回再生する形で十分とする)。
+; (2026-09-12、実機フィードバック"画面真っ赤だが スクリーン3は枠使え
+; ないのか"): SCREEN3モード中の枠色フラッシュが画面全体を赤一色に
+; してしまう不具合が判明したため、枠色フラッシュ無しのPLAY_CONFIRM_
+; BEEP_NO_BORDER(PSGトーンのみ)を使う。
+; (2026-09-12、実機フィードバック"10ループなんて指定してないし"):
+; メインループ回数を当初の10から1(1周のみ、繰り返し無し)へ訂正。
 RUN_SCREEN3_SLIDESHOW:
     ; SCREEN1(Graphics1)からMulticolor(SCREEN3)への切替はVDP R1のM2
     ; ビット(bit3)を追加で立てるだけ - tools/screen3_test/screen3_
@@ -857,11 +923,12 @@ RUN_SCREEN3_SLIDESHOW:
     ; ため、明示的に全停止(既存のtitle自身の0D1hマーカーと同じ)。
     LD A,0D1h : LD HL,SPRATR : CALL WRTVRM
 
-    ; "10回ループでMission 1表示に"
-    LD B,10
+    ; (2026-09-12、"10ループなんて指定してないし"): 当初の10から1へ訂正
+    ; (1周のみ、繰り返し無し)。
+    LD B,1
 RSS_MAIN_LOOP:
     PUSH BC
-    CALL PLAY_CONFIRM_BEEP
+    CALL PLAY_CONFIRM_BEEP_NO_BORDER
     CALL SHOW_SC3_IMG1
     CALL SHOW_SC3_IMG2
     CALL SHOW_SC3_IMG3
@@ -877,17 +944,17 @@ RSS_MAIN_LOOP:
     LD B,4
 RSS_EPI1_LOOP:
     PUSH BC
-    CALL PLAY_CONFIRM_BEEP
+    CALL PLAY_CONFIRM_BEEP_NO_BORDER
     CALL WAIT_HALF_SEC
     POP BC
     DJNZ RSS_EPI1_LOOP
 
     CALL SHOW_SC3_EPI2
-    CALL PLAY_CONFIRM_BEEP
+    CALL PLAY_CONFIRM_BEEP_NO_BORDER
     CALL WAIT_1_SEC
 
     CALL SHOW_SC3_EPI3
-    CALL PLAY_CONFIRM_BEEP
+    CALL PLAY_CONFIRM_BEEP_NO_BORDER
     CALL WAIT_3_SEC
 
     RET

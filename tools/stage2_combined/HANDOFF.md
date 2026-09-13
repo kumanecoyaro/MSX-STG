@@ -13380,24 +13380,79 @@ Y段違い+Enemy6速度半減、Stage2自機爆発の自機非表示タイミン
   確認音+枠色演出がアニメーション全体でどう聞こえる/見えるか・6枚
   ループの10回という回数感、いずれも次回フィードバック待ち。
 
-## セッション引き継ぎメモ(2026-09-12、Round87完了直後)
+## Round88: 実機フィードバック対応(画面真っ赤バグ・ループ回数訂正・
+締めの3枚を本物のSC3ダンプへ差し替え)(2026-09-12、完了済み・実機
+フィードバック待ち)
 
-- **現在の状態**: Round87(SCREEN3スライドショーをタイトルバンクへ
-  本組み込み+締めの3枚[ユーザー提供PNG3枚、モンスター顔ズームイン]
-  追加+確認音/枠色演出のアニメーション全体ループ化)まで完了。全回帰:
-  Stage2側`run_all.py` **1525 passed/0 failed**。`title_test.py`
-  **55 passed**。`verify_comb.py`全チェックPASS。Comb ROM再ビルド済み。
+- ユーザー報告3件: (1)"画面真っ赤だが スクリーン3は枠使えないのか"
+  (Round87で送付したComb ROMを実機で試したところ画面全体が赤一色に
+  なる)、(2)"10ループなんて指定してないし"、(3)"画像データは間違えた
+  添付の3枚"(締めの3枚を本物のBSAVE形式SC3ダンプ3枚[08.SC3/09.SC3/
+  11.SC3、Image01-06.SC3と全く同じレイアウト]へ差し替え)。
+- **(1) 画面真っ赤バグ**: `PLAY_CONFIRM_BEEP`の枠色フラッシュ(VDP R7
+  書き込み)がGraphics1/SCREEN2(タイトル背景)モードでは実機確認済み
+  だった一方、SCREEN3(Multicolor)モードとの組み合わせは今回が初の
+  実機テストだった。根本原因は未特定のまま(ユーザー自身の推測通り
+  MulticolorモードでのVDP R7の扱いに何らかの相違がある可能性が高い)
+  だが、深追いする前に安全側の対応として、SCREEN3スライドショー中は
+  枠色フラッシュを完全に省略しPSGトーン(チャープ+ブザー)のみを鳴らす
+  新規`PLAY_CONFIRM_BEEP_NO_BORDER`(`PCB_PLAY_TABLE_NB`/`PCB_PLAY_
+  ONE_ROW_NB`、既存の`CONFIRM_STEPS`テーブルを流用しVDP R7書き込みの
+  2行とIXによる枠色参照だけを省いた形)を新設し、`RUN_SCREEN3_
+  SLIDESHOW`内の全4箇所の呼び出しをこちらへ差し替えた。元の
+  `PLAY_CONFIRM_BEEP`(枠色フラッシュ込み)自体は削除せず残置(将来
+  Graphics系モードでの再利用に備える、現状はどこからも呼ばれない)。
+- **(2) ループ回数訂正**: `RUN_SCREEN3_SLIDESHOW`のメインループ回数
+  (Round87で誤って10とハードコードしていた)を1(1周のみ、繰り返し
+  無し)へ訂正。
+- **(3) 締めの3枚を本物のSC3ダンプへ差し替え**: Round87で使っていた
+  PNG3枚(ユーザー提供の参考画像を自前のPNG→Multicolorエンコーダで
+  量子化したもの)を撤回し、`tools/title_screen/screen3_epilogue_
+  gen.py`を全面書き直し - `tools/screen3_test/screen3_gen.py`の
+  `load_payload`/`pattern_generator`と全く同じBSAVE形式読み込み
+  ロジックを再利用する形にした(自前のPNGエンコーダは完全に不要に
+  なり削除)。新規添付3枚(`tools/screen3_test/assets/Epilogue1-3.SC3`
+  として保存)のネームテーブルはいずれも実測でImage01-06.SC3と完全
+  一致(共有ランプ`SC3_SHARED_NAME`をそのまま再利用可能)と確認済み。
+  なお実測ではEpilogue1.SC3とEpilogue2.SC3がバイト単位で完全に
+  同一(意図的な「保持フレーム」である可能性が高い、ユーザーへの
+  確認は行わずデータをそのまま採用)。差分圧縮結果は合計2748byte
+  (1468+32+1248、2枚目の差分がほぼ0のため大幅に縮んでいる)。
+- テスト: `title_test.py`の該当チェックを新設計に合わせて更新
+  (PLAY_CONFIRM_BEEP_NO_BORDERの呼び出し回数検証・メインループ
+  回数=1の構造チェック・Epilogue1-3.SC3の直接VRAM比較)、全55件
+  PASS(件数は前回と同じ、内容を更新)。`tools/bankswitch_poc/
+  verify_comb.py`のディレイ短縮パッチ・メインループ回数チェックも
+  同様に更新。
+- 全回帰: Stage2側`run_all.py` **1525 passed/0 failed**(無変化、
+  今回はtitle_screen配下のみの変更)。`title_test.py` **55 passed**。
+  `verify_comb.py`全チェックPASS。Comb ROM再ビルド・標準方針により
+  Comb ROMのみ送付。
+- **保留・実機フィードバック待ち**: 画面真っ赤バグの根本原因(VDP R7
+  とMulticolorモードの相互作用)は未解明のまま回避策のみ実装 - もし
+  枠色フラッシュ自体を今後別の形で復活させたい場合は改めて実機での
+  原因調査が必要。締めの3枚(Epilogue1==Epilogue2という保持フレーム
+  込み)・1周のみになったメインループの見え方は次回フィードバック待ち。
+
+## セッション引き継ぎメモ(2026-09-12、Round88完了直後)
+
+- **現在の状態**: Round88(実機フィードバック対応: 画面真っ赤バグの
+  回避・ループ回数訂正・締めの3枚を本物のSC3ダンプへ差し替え)まで
+  完了。全回帰: Stage2側`run_all.py` **1525 passed/0 failed**。
+  `title_test.py` **55 passed**。`verify_comb.py`全チェックPASS。
+  Comb ROM再ビルド済み。
 - **コミット・push状況**: 本メモ記載時点でコミット・push作業中(この
   メモ自体が同じコミットに含まれる想定)。作業ツリーの内容:
-  `tools/title_screen/title_test.asm`(RUN_SCREEN3_SLIDESHOW一式新設、
-  SCREEN3_TICK撤回済み)・`tools/title_screen/screen3_epilogue_gen.py`
-  (新規、PNG→SCREEN3 Multicolorエンコーダ)・`tools/title_screen/
-  assets/Epilogue1-3.png`(新規、ユーザー提供)・`tools/title_screen/
-  build_test.py`(screen3_gen/screen3_epilogue_gen配線)・`tools/
-  title_screen/title_test.py`(18件追加)・`tools/bankswitch_poc/
-  verify_comb.py`(ディレイ短縮パッチ+ステップ予算拡大、計4箇所)・
-  `tools/title_screen/CyberS Title.ascii16k.rom`(standalone再ビルド)・
-  `rom/CyberS Comb.ascii16k.rom`(再ビルド)・本HANDOFF.md(記録追記)。
+  `tools/title_screen/title_test.asm`(PLAY_CONFIRM_BEEP_NO_BORDER
+  新設・呼び出し差し替え、メインループ回数10→1)・`tools/title_screen/
+  screen3_epilogue_gen.py`(PNGエンコーダを撤回しSC3読み込みへ全面
+  書き直し)・`tools/title_screen/assets/Epilogue1-3.png`(削除、
+  誤った旧データ)・`tools/screen3_test/assets/Epilogue1-3.SC3`
+  (新規、ユーザー提供の正しいデータ)・`tools/title_screen/
+  title_test.py`(該当チェック更新)・`tools/bankswitch_poc/
+  verify_comb.py`(同様に更新)・`tools/title_screen/CyberS
+  Title.ascii16k.rom`(standalone再ビルド)・`rom/CyberS
+  Comb.ascii16k.rom`(再ビルド)・本HANDOFF.md(記録追記)。
 - **次に着手すべきこと**: 特になし(指示なしに着手しない方針)。
   ユーザーからの次の実機フィードバック・新規指示を待つ状態。
 - **新セッションが最初にすべきこと**: このHANDOFF.md末尾(本項目)を

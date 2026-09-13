@@ -461,29 +461,31 @@ cpu, mem = fresh_cpu()
 run_to_wait(cpu)
 switch_log_at_wait = list(mem.switch_log)  # round40: exclude INIT_BGM's own 2 switches (see above)
 
-# (2026-09-12、"タイトルのバンクに...10回ループでMission 1表示に"、
-# 続けて"別に割り込みで同期取る必要はないぞ 適当にNopループでいい
-# 3フレ分の"): ボタン押下後は本物のROMだとRUN_SCREEN3_SLIDESHOW
-# (6枚x10周+締めの3枚、確認音PLAY_CONFIRM_BEEPをアニメーション全体で
-# 繰り返し再生)を経由するようになり、実時間で見て数秒〜十数秒相当の
-# busy-waitをPythonエミュレータで1命令ずつ実際に実行することになる
-# (real ROM自体は無変更 - src/CYBER SHMUP.asmのMISSION_DELAY_3SEC等の
-# 既存テストと同じ「テスト用にmem側だけディレイを短縮するパッチ」を
-# ここでも適用する)。メインループ回数(10->1)・3フレーム待ち(6884->5)・
-# 0.5/1/3秒ネストループのB/C初期値(0->2)をこのcpuインスタンスの
-# bank0コピーだけ書き換える - トランポリンに正しく到達する「構造」を
-# 確認するためのテストであり、実際の10周・正確な待ち時間はここでは
-# 検証しない(それぞれ専用の構造チェック・直接呼び出しチェックを
-# 下に別途用意する)。
-_RSS_MAIN_LOOP_COUNT_ADDR = sym["RUN_SCREEN3_SLIDESHOW"] + 0x23  # "LD B,10" operand
+# (2026-09-12、"タイトルのバンクに...一旦タイトル表示からMission 1
+# 表示の間に差し込んで...Mission 1表示に"、続けて"別に割り込みで同期
+# 取る必要はないぞ 適当にNopループでいい3フレ分の"、続けて実機
+# フィードバック"10ループなんて指定してないし"でメインループ回数を
+# 10から1[1周のみ]へ訂正): ボタン押下後は本物のROMだとRUN_SCREEN3_
+# SLIDESHOW(6枚x1周+締めの3枚、確認音PLAY_CONFIRM_BEEP_NO_BORDERを
+# アニメーション全体で繰り返し再生)を経由するようになり、実時間で
+# 見て数秒相当のbusy-waitをPythonエミュレータで1命令ずつ実際に実行
+# することになる(real ROM自体は無変更 - src/CYBER SHMUP.asmの
+# MISSION_DELAY_3SEC等の既存テストと同じ「テスト用にmem側だけ
+# ディレイを短縮するパッチ」をここでも適用する)。3フレーム待ち
+# (6884->5)・0.5/1/3秒ネストループのB/C初期値(0->2)をこのcpu
+# インスタンスのbank0コピーだけ書き換える - トランポリンに正しく
+# 到達する「構造」を確認するためのテストであり、正確な待ち時間は
+# ここでは検証しない(専用の構造チェック・直接呼び出しチェックを
+# 下に別途用意する)。メインループ回数自体は既に実ROMの値が1のため
+# 短縮パッチ不要(値そのものは下の構造チェックで直接検証する)。
+_RSS_MAIN_LOOP_COUNT_ADDR = sym["RUN_SCREEN3_SLIDESHOW"] + 0x23  # "LD B,1" operand
 _WAIT_3F_DE_ADDR = sym["WAIT_3_FRAMES"] + 1                       # "LD DE,6884" operand (2 bytes)
 _SC3D_B_INIT_ADDR = sym["SCREEN3_DELAY_NESTED"] + 1               # "LD B,0" operand
 _SC3D_C_INIT_ADDR = sym["SCREEN3_DELAY_NESTED"] + 3               # "LD C,0" operand
-assert mem.banksA[0][_RSS_MAIN_LOOP_COUNT_ADDR - 0x4000] == 10
+assert mem.banksA[0][_RSS_MAIN_LOOP_COUNT_ADDR - 0x4000] == 1
 assert mem.banksA[0][_WAIT_3F_DE_ADDR - 0x4000] == (6884 & 0xFF)
 assert mem.banksA[0][_SC3D_B_INIT_ADDR - 0x4000] == 0
 assert mem.banksA[0][_SC3D_C_INIT_ADDR - 0x4000] == 0
-mem.banksA[0][_RSS_MAIN_LOOP_COUNT_ADDR - 0x4000] = 1
 mem.banksA[0][_WAIT_3F_DE_ADDR - 0x4000] = 5
 mem.banksA[0][_WAIT_3F_DE_ADDR + 1 - 0x4000] = 0
 mem.banksA[0][_SC3D_B_INIT_ADDR - 0x4000] = 2
@@ -491,25 +493,25 @@ mem.banksA[0][_SC3D_C_INIT_ADDR - 0x4000] = 2
 
 cpu.sim_trig_a = True
 steps = 0
-confirm_beep_addr = sym["PLAY_CONFIRM_BEEP"]
+confirm_beep_addr = sym["PLAY_CONFIRM_BEEP_NO_BORDER"]
 confirm_beep_hits = 0
-# Round69 follow-up: PLAY_CONFIRM_BEEP now plays the much longer
-# "Rising alert chirp"->"Descending buzzer" v3 sequence (53 rows x2,
-# ~800K Z80 instruction-steps) before the trampoline hops even begin -
+# PLAY_CONFIRM_BEEP_NO_BORDER plays the same much longer "Rising alert
+# chirp"->"Descending buzzer" v3 sequence (53 rows x2, ~800K Z80
+# instruction-steps) as PLAY_CONFIRM_BEEP did, minus the border writes -
 # the old 100,000-step budget (sized for round63's short 12-step beep)
-# is no longer enough to reach the trampoline at all. Round2026-09-12's
-# slideshow now calls it repeatedly (once per main-loop pass + once per
-# epilogue beat) instead of just once, so the budget is widened further.
+# is no longer enough to reach the trampoline at all. The slideshow now
+# calls it repeatedly (once per main-loop pass + once per epilogue beat)
+# instead of just once, so the budget is widened further.
 while cpu.pc != 0x4010 and steps < 10_000_000:
     if cpu.pc == confirm_beep_addr:
         confirm_beep_hits += 1
     cpu.step()
     steps += 1
 check("button press trampolines to Stage1's own INIT address (4010h)", cpu.pc == 0x4010)
-check("PLAY_CONFIRM_BEEP is called repeatedly (once per main-loop pass + once per epilogue beat) "
-      "instead of the old single upfront call, so the sound+border effect keeps looping throughout "
-      "the whole slideshow animation, per \"変わりにスタートのサウンドと枠の色の演出を "
-      "このアニメの間ループ\" - with the shrunk 1-pass main loop above, expect exactly "
+check("PLAY_CONFIRM_BEEP_NO_BORDER is called repeatedly (once per main-loop pass + once per "
+      "epilogue beat) instead of the old single upfront call, so the sound effect keeps looping "
+      "throughout the whole slideshow animation, per \"変わりにスタートのサウンドと枠の色の演出を "
+      "このアニメの間ループ\" - with the real 1-pass main loop, expect exactly "
       "1(main pass) + 4(epilogue1 x4) + 1(epilogue2) + 1(epilogue3) = 7 calls",
       confirm_beep_hits == 7)
 # 実機フィードバック対応("バンク切り替えに失敗してる タイトルでボタンを
@@ -655,10 +657,12 @@ check("PLAY_CONFIRM_BEEP: never writes VDP R7 to a value outside the approved RE
       all(v in REDGRAD for v in r7_writes))
 
 
-# ---- (2026-09-12、"タイトルのバンクに...10回ループでMission 1表示に"
-# +"ではさっきの6枚の後に一枚目を0.5秒 これを4ループ その後に2枚目を
-# 1秒 3枚目を3秒表示"): SCREEN3スライドショー本体(RUN_SCREEN3_
-# SLIDESHOW・SHOW_SC3_IMG1-6・SHOW_SC3_EPI1-3)の回帰テスト。
+# ---- (2026-09-12、"タイトルのバンクに...一旦タイトル表示からMission 1
+# 表示の間に差し込んで...Mission 1表示に"+"ではさっきの6枚の後に一枚目を
+# 0.5秒 これを4ループ その後に2枚目を1秒 3枚目を3秒表示"、続けて実機
+# フィードバック"画像データは間違えた"で締めの3枚を本物のSC3ダンプへ
+# 差し替え済み): SCREEN3スライドショー本体(RUN_SCREEN3_SLIDESHOW・
+# SHOW_SC3_IMG1-6・SHOW_SC3_EPI1-3)の回帰テスト。
 sys.path.insert(0, os.path.join(REPO, "tools", "screen3_test"))
 import screen3_gen
 import screen3_epilogue_gen
@@ -708,9 +712,9 @@ for i in range(1, 7):
           bytes(cpu_dec.vram[0:0x800]) == expected)
 for i in range(1, 4):
     call_routine(cpu_dec, f"SHOW_SC3_EPI{i}")
-    expected = screen3_epilogue_gen.epilogue_pgt(i)
-    check(f"SHOW_SC3_EPI{i}: VRAM 0000h-07FFh (flushed PGT) matches Epilogue{i}.png exactly "
-          "(encoded via screen3_epilogue_gen.py's PNG->Multicolor quantizer)",
+    expected = screen3_epilogue_gen.epilogue_pattern_generator(i)
+    check(f"SHOW_SC3_EPI{i}: VRAM 0000h-07FFh (flushed PGT) matches Epilogue{i}.SC3 exactly "
+          "(real BSAVE dump, same layout as Image01-06.SC3 - not the earlier PNG-based guess)",
           bytes(cpu_dec.vram[0:0x800]) == expected)
 
 # --- structural checks on the REAL (unpatched) ROM's own delay/loop
@@ -718,9 +722,9 @@ for i in range(1, 4):
 # deliberately shrinks these in its own private mem copy for step-count
 # feasibility, so the real values are checked here independently instead.
 _real_out, _real_sym, _ = build_test.assemble()
-check("RUN_SCREEN3_SLIDESHOW's real (unshrunk) main-loop count is 10 "
-      "(\"10回ループでMission 1表示に\")",
-      _real_out[_real_sym["RUN_SCREEN3_SLIDESHOW"] + 0x23] == 10)
+check("RUN_SCREEN3_SLIDESHOW's real (unshrunk) main-loop count is 1 "
+      "(\"10ループなんて指定してないし\" - corrected from the earlier 10)",
+      _real_out[_real_sym["RUN_SCREEN3_SLIDESHOW"] + 0x23] == 1)
 check("WAIT_3_FRAMES's real (unshrunk) DE count is 6884 (~50ms @ 3579545Hz / "
       "26 T-states per DEC-DE loop iteration, \"3フレ分\")",
       (_real_out[_real_sym["WAIT_3_FRAMES"] + 1]

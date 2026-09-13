@@ -1,17 +1,20 @@
 """SCREEN3(Multicolor)スライドショーの締めくくり3枚(2026-09-12、
 "ではさっきの6枚の後に一枚目を0.5秒 これを4ループ その後に2枚目を1秒
-3枚目を3秒表示"で添付された256x192のPNG3枚)を、tools/screen3_test/
-screen3_gen.pyが実測で確立した既存のTMS9918マルチカラーモード
-アドレッシング(ネームテーブルは32*(row_of_name//4)+colという機械的な
-ランプ、パターンジェネレータはPGT[name*8+byte_offset]の各バイトが
-4x4pxセル2個分[高nibble=左4px/低nibble=右4px])へエンコードする。
+3枚目を3秒表示"→実機フィードバック"画像データは間違えた 添付の3枚"で
+実際のBSAVE形式SC3ダンプ[08.SC3/09.SC3/11.SC3、tools/screen3_test/
+screen3_gen.pyのImage01-06.SC3と全く同じレイアウト]へ差し替え済み)。
 
-添付3枚はいずれもちょうど256x192(MSXのSCREEN解像度そのもの)だった
-ため、リサイズ・クロップ一切不要 - そのままピクセル単位でマルチ
-カラーの4x4セルへ量子化する。ネームテーブル自体はscreen3_gen.py・
-title_test.asmが既に使っているSC3_SHARED_NAME(6枚共通のランプ)を
-そのまま再利用する(この3枚専用の別ネームテーブルは持たない)ため、
-生成するのはPGT(2048byte)のみ。
+当初は256x192のPNG3枚(モンスターの顔をズームインしていく演出用に
+ユーザーが用意した参考画像)を自前のPNG→Multicolorエンコーダで量子化
+していたが、ユーザーから「画像データは間違えた」との指摘を受け、
+Image01-06.SC3と同じ本物のBSAVE形式SC3ダンプへ全面差し替えた
+(エンコーダ自体はもう不要 - screen3_gen.pyのload_payload/pattern_
+generatorと全く同じ読み込みロジックをそのまま再利用する)。
+
+ネームテーブルはこの3枚も実測でImage01-06.SC3と完全にバイト一致
+(screen3_gen.shared_name_table()と同一)と確認済みのため、この3枚
+専用の別ネームテーブルは持たず、SC3_SHARED_NAMEをそのまま再利用する
+(生成するのはPGT[2048byte]のXOR差分のみ)。
 
 差分[XOR]圧縮の連鎖はtools/screen3_test/screen3_gen.pyと同じ設計を
 踏襲: エピローグ1枚目は本編6枚目(Image06.SC3)からのXOR差分、2枚目は
@@ -22,87 +25,52 @@ import os
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-ASSETS = os.path.join(HERE, "assets")
 REPO = os.path.join(HERE, "..", "..")
 
 sys.path.insert(0, HERE)
 import title_bg_gen  # noqa: E402  (rle_encode/rle_decode)
 
 sys.path.insert(0, os.path.join(REPO, "tools", "screen3_test"))
-import screen3_gen  # noqa: E402  (pattern_generator(6) = base frame for the diff chain)
+import screen3_gen  # noqa: E402  (load_payload/pattern_generator/shared_name_table)
 
-from PIL import Image  # noqa: E402
-
+ASSETS = screen3_gen.ASSETS  # 添付の08/09/11.SC3もtools/screen3_test/assets/へ配置済み
 EPILOGUE_COUNT = 3
 
-# TMS9918標準15色パレット(index0=透明/backdropは意図的に使わない -
-# ベタ塗りのフルビットマップ画像でindex0を使うとバックドロップ色が
-# 透けて見えてしまうため、黒はindex1で表現する)。
-PALETTE = {
-    1: (0, 0, 0),
-    2: (33, 200, 66),
-    3: (94, 220, 120),
-    4: (84, 85, 237),
-    5: (125, 118, 252),
-    6: (212, 82, 77),
-    7: (66, 235, 245),
-    8: (252, 85, 84),
-    9: (255, 121, 120),
-    10: (212, 193, 84),
-    11: (230, 206, 128),
-    12: (33, 176, 59),
-    13: (201, 91, 186),
-    14: (204, 204, 204),
-    15: (255, 255, 255),
-}
+
+def load_epilogue_payload(index):
+    """index: 1-3。screen3_gen.load_payload()と全く同じBSAVE形式読み込み
+    (Image01-06.SC3と全く同じレイアウト、実測確認済み)。"""
+    path = os.path.join(ASSETS, f"Epilogue{index}.SC3")
+    with open(path, "rb") as f:
+        data = f.read()
+    assert data[0] == 0xFE, f"{path}: not a BSAVE-format file (marker byte was {data[0]:02X}h)"
+    start = data[1] | (data[2] << 8)
+    assert start == 0x0000, f"{path}: expected VRAM start 0000h, got {start:04X}h"
+    payload = data[7:]
+    assert len(payload) >= screen3_gen.NAME_SRC_OFFSET + screen3_gen.NAME_LEN, \
+        f"{path}: payload too short ({len(payload)} bytes)"
+    return payload
 
 
-def _nearest_color_index(rgb):
-    r, g, b = rgb
-    best_idx, best_dist = 1, None
-    for idx, (pr, pg, pb) in PALETTE.items():
-        dist = (r - pr) ** 2 + (g - pg) ** 2 + (b - pb) ** 2
-        if best_dist is None or dist < best_dist:
-            best_dist, best_idx = dist, idx
-    return best_idx
+def epilogue_pattern_generator(index):
+    return load_epilogue_payload(index)[0:screen3_gen.PGT_LEN]
 
 
-def _cell_color_index(img, cell_x0, cell_y0):
-    """4x4pxセルの代表色(平均RGB)を最寄りのMSXパレット色へ量子化する。"""
-    total = [0, 0, 0]
-    count = 0
-    for dy in range(4):
-        for dx in range(4):
-            r, g, b = img.getpixel((cell_x0 + dx, cell_y0 + dy))[:3]
-            total[0] += r
-            total[1] += g
-            total[2] += b
-            count += 1
-    avg = (total[0] // count, total[1] // count, total[2] // count)
-    return _nearest_color_index(avg)
+def epilogue_pgt(index):
+    """screen3_epilogue_gen旧APIとの互換用エイリアス。"""
+    return epilogue_pattern_generator(index)
 
 
-def png_to_pattern_generator(path):
-    """256x192のPNGをTMS9918マルチカラーのPGT(2048byte)へエンコードする
-    (screen3_gen.pyのpattern_generator()と同じアドレッシング規約に
-    従う - NAMEは32*(row_of_name//4)+colの共有ランプを前提)。"""
-    img = Image.open(path).convert("RGB")
-    assert img.size == (256, 192), f"{path}: expected exactly 256x192, got {img.size}"
-
-    pgt = bytearray(2048)
-    for row_of_name in range(24):
-        for col in range(32):
-            name = 32 * (row_of_name // 4) + col
-            pair_index = row_of_name % 4
-            x0 = col * 8
-            y0 = row_of_name * 8
-            for half in range(2):
-                byte_offset = pair_index * 2 + half
-                cell_y0 = y0 + half * 4
-                left = _cell_color_index(img, x0, cell_y0)
-                right = _cell_color_index(img, x0 + 4, cell_y0)
-                pgt[name * 8 + byte_offset] = (left << 4) | right
-    return bytes(pgt)
+def _check_shared_name_table():
+    """3枚ともImage01-06.SC3と同一の共有ランプ(SC3_SHARED_NAME)である
+    ことを実測確認する(実機フィードバックで確認済みだが、将来別の
+    画像に差し替えられた場合に静かに壊れないようビルド時にも検証)。"""
+    base = screen3_gen.shared_name_table()
+    for i in range(1, EPILOGUE_COUNT + 1):
+        name = load_epilogue_payload(i)[screen3_gen.NAME_SRC_OFFSET:
+                                         screen3_gen.NAME_SRC_OFFSET + screen3_gen.NAME_LEN]
+        assert name == base, \
+            f"Epilogue{i}.SC3's name table differs from the main 6 images' shared ramp"
 
 
 def xor_bytes(a, b):
@@ -117,21 +85,16 @@ def db_bytes(byte_list, per_line=16):
     return "\n".join(lines)
 
 
-def epilogue_pgt(index):
-    """index: 1-3。"""
-    path = os.path.join(ASSETS, f"Epilogue{index}.png")
-    return png_to_pattern_generator(path)
-
-
 def emit_asm_tables():
-    out = ["; ===== SCREEN3 slideshow epilogue images (Epilogue1-3.png), "
+    _check_shared_name_table()
+    out = ["; ===== SCREEN3 slideshow epilogue images (Epilogue1-3.SC3), "
            "differential (XOR) RLE-compressed against the main 6-image "
            "loop's final frame (Image06.SC3) - generated by "
            "screen3_epilogue_gen.py, do not hand-edit ====="]
 
     prev = screen3_gen.pattern_generator(6)  # main loop's last frame (SHADOW_PGT state at epilogue start)
     for i in range(1, EPILOGUE_COUNT + 1):
-        cur = epilogue_pgt(i)
+        cur = epilogue_pattern_generator(i)
         diff = xor_bytes(prev, cur)
         diff_c, diff_segs = title_bg_gen.rle_encode(diff)
         assert title_bg_gen.rle_decode(diff_c, diff_segs) == diff, \
@@ -145,10 +108,11 @@ def emit_asm_tables():
 
 
 if __name__ == "__main__":
+    _check_shared_name_table()
     prev = screen3_gen.pattern_generator(6)
     total = 0
     for i in range(1, EPILOGUE_COUNT + 1):
-        cur = epilogue_pgt(i)
+        cur = epilogue_pattern_generator(i)
         diff = xor_bytes(prev, cur)
         diff_c, diff_segs = title_bg_gen.rle_encode(diff)
         print(f"epilogue{i} (diff vs {'Image06.SC3' if i == 1 else f'epilogue{i-1}'}): "
