@@ -14970,3 +14970,41 @@ NOP抜け)(2026-09-13、完了済み・実機フィードバック待ち)
 - 実機での確認事項: 自機の移動可能範囲が狭くなった見た目・スコア行の
   黒背景の見え方・Tick表示が完全に消えていること、いずれも次回
   フィードバック待ち。
+
+## Round113: Stage1スケジュールをSchedule_5.json(501件、微調整版)へ
+差し替え(2026-09-13、完了済み・実機フィードバック待ち)
+
+- ユーザー指示: "ステージ1スケジュール差し替え"(添付Schedule_5.json、
+  501件)。
+- 差し替え前に現在インストール済みのスケジュール(Round111の
+  Schedule_3.json、501件)と新JSONを機械的に突き合わせたところ、
+  件数・type構成・enemy2インデックス・enemy3_waveの3件は完全一致、
+  実質的な差分はわずか3箇所のみと判明: index117(enemy2、tick423の
+  行がrow1→row2)、index140(enemy5、tick504の行がrow2→row3)、
+  index144(enemy5、tick514→513かつrow2→row3)。件数・ブロック構成
+  (H=0/1の2ブロック)ともに無変更のため、Round109/111と同じPython
+  スクリプト機械生成手法で5テーブル・`SSC_FIRE`ディスパッチ・
+  `SSC_BUSY_E2`を丸ごと再生成して置換(`SPAWN_SCHEDULE_CHECK`の
+  終了判定リテラルは501のまま変更不要)。
+- 自然AIシミュレーション(プレイヤー操作なし)でSPAWN_NEXT_INDEXが
+  501全件を消化し`BOSS_STATE`が非0になることをGAME_TICK1100時点で
+  確認(Round111と同一のタイミング、微調整3箇所は消化ペースに
+  影響しない軽微な変更のため)。Round109で新設した64スロット全数の
+  異常検出シミュレータも同時に再実行し、ボススポーンまでの全期間を
+  通じて異常0件を確認。
+- `combined_test.asm`は無変更のため`run_all.py`全回帰は未実施。
+  既存のStage1検証群(`verify_stage1_hud_movement.py` 8/`verify_
+  player_damage.py` 60/`verify_stage1_bgm.py` 80/`verify_stage1_
+  mission_screens.py` 87/`verify_enemy_bullets.py` 60/`verify_
+  spawn_schedule_restart.py` 12/`verify_enemy6_durability.py`
+  19/`verify_explosion_anim.py` 28/`verify_boss_dfl_clear.py`
+  10/`verify_boss_pod_bullet_aim.py` 17/`verify_stage1_boss_
+  score.py` 7)全て無退行で再PASS。Comb ROM再ビルド・`verify_
+  comb.py`全チェックPASSの上、標準方針によりComb ROMのみ送付。
+- 変更ファイル: `src/CYBER SHMUP.asm`(`SPAWN_THRESHOLDS`等5
+  テーブル・`SSC_FIRE`ディスパッチ・`SSC_BUSY_E2`をSchedule_5.json
+  から丸ごと再生成)、Comb ROM再ビルド。
+
+セッション引き継ぎメモ(2026-09-13、Round113完了直後):
+- 実機での確認事項: 501件スケジュール(微調整版)の実プレイでの
+  ペーシングは次回フィードバック待ち。

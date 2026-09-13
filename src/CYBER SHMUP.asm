@@ -5505,7 +5505,7 @@ ESC_COMPLEX_INIT_B:
 ; spawn exactly once, in order, as GAME_TICK reaches its threshold -
 ; not when the previous one finishes. SPAWN_THRESHOLDS is a 16-bit
 ; (DW) array so thresholds aren't capped at 255. Boss is the final
-; entry, index500 (2026-09-13 Schedule_3.json replacement, 501 entries).
+; entry, index500 (2026-09-13 Schedule_5.json replacement, 501 entries).
 ; One-shot: once all 501 have fired, this just returns immediately
 ; forever after, so nothing loops.
 SPAWN_SCHEDULE_CHECK:
@@ -5529,6 +5529,9 @@ SPAWN_SCHEDULE_CHECK:
     ; --- ファイル名は前回と同名だが中身は別物)へ再々差し替え、501<512
     ; --- のためH=0/1の2ブロック構成に戻った(同じ一般化のおかげで
     ; --- SSC_FIRE側は各ブロックの本数を数え直すだけで済んだ)。
+    ; --- 2026-09-13追記その3: Schedule_5.json(同じ501エントリ、
+    ; --- enemy2/enemy4/enemy5の一部の行だけ微調整)へさらに差し替え -
+    ; --- 件数・ブロック構成は無変更。
     LD HL,(SPAWN_NEXT_INDEX)
     LD DE,501
     OR A
@@ -5549,9 +5552,8 @@ SPAWN_SCHEDULE_CHECK:
     ; --- 空いていればSPAWN_E2がそちらを自動選択するので、この各
     ; --- インデックスはもう「Aだけ待つ/Bだけ待つ」を区別しない -
     ; --- どちらの枠が空いても即発火。インデックス番号は現在の
-    ; --- スケジュールJSON(Schedule_3.json[2026-09-13再アップロード版]、
-    ; --- 501エントリ)でtype=enemy2の位置そのまま(値自体は偶然、また
-    ; --- しても直前のSchedule_2.jsonと完全一致)。
+    ; --- スケジュールJSON(Schedule_5.json、501エントリ)でtype=enemy2の
+    ; --- 位置そのまま(値自体は偶然、これで3世代連続で完全一致)。
     ; --- 全て255未満の値なので、この判定だけは従来通りAの8bit比較で
     ; --- 良いが、index>=256(H!=0)の場合に誤って同じ低位バイトへ
     ; --- エイリアスしないよう、まずHをチェックして256以上なら丸ごと
@@ -12303,7 +12305,7 @@ ENEMY6_ANIM_CODES:
     DB NEWENEMY_CODE180_TL, NEWENEMY_CODE180_TR, NEWENEMY_CODE180_BL, NEWENEMY_CODE180_BR
     DB NEWENEMY_CODE270_TL, NEWENEMY_CODE270_TR, NEWENEMY_CODE270_BL, NEWENEMY_CODE270_BR
 
-; Full schedule, 501 entries (indices 0-500, Schedule_3.json,
+; Full schedule, 501 entries (indices 0-500, Schedule_5.json,
 ; 2026-09-13), imported directly from the schedule editor's exported
 ; JSON (tick/row/type per placement) - see
 ; SSC_FIRE for the per-index dispatch this drives. Every tick here is
@@ -12320,7 +12322,7 @@ SPAWN_THRESHOLDS:
     DW 278,279,287,290,292,300,302,302,304,307,314,331,352,354,356,357,359
     DW 362,364,366,368,371,373,375,381,386,388,392,400,402,406,410,423,428
     DW 432,437,439,441,445,447,449,460,461,463,463,465,482,483,485,485,488
-    DW 489,491,491,498,504,505,507,507,514,527,542,551,558,566,573,580,581
+    DW 489,491,491,498,504,505,507,507,513,527,542,551,558,566,573,580,581
     DW 582,591,593,600,610,611,613,613,616,617,619,619,623,624,626,629,630
     DW 632,641,642,644,644,647,648,650,650,675,677,679,683,683,695,695,705
     DW 707,709,712,721,723,725,728,737,739,741,744,751,753,755,757,764,768
@@ -12382,9 +12384,9 @@ SPAWN_BASEY_TABLE:
     DB 0,64,96,72,112,0,72,0,104,0,72,112,72,104,0,0,0
     DB 32,64,0,80,0,0,0,32,72,0,88,0,32,72,0,88,32
     DB 0,104,32,0,112,0,0,0,0,0,0,0,0,0,0,96,40
-    DB 0,0,0,104,0,0,0,96,24,64,48,16,120,72,16,8,0
+    DB 0,0,0,104,0,0,0,96,24,64,48,16,120,72,16,16,0
     DB 144,0,0,0,0,0,0,32,64,0,80,0,80,112,0,128,24
-    DB 56,72,0,24,16,48,64,0,16,96,0,96,32,120,32,80,64
+    DB 56,72,0,24,24,48,64,0,24,96,0,96,32,120,32,80,64
     DB 48,104,24,64,80,112,0,128,24,56,72,0,80,112,0,24,56
     DB 0,80,112,0,128,24,56,72,0,0,0,0,32,104,32,104,40
     DB 72,80,104,40,72,80,104,40,72,80,104,120,88,56,24,0,64
