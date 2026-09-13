@@ -561,6 +561,19 @@ SND_NOISE EQU F17Ch
 DIGIT_BASE       EQU 104
 HUD_DIGIT_COLORBYTE EQU 0F1h   ; fg15 white/bg1 black - same as Stage1's own digit groups ("背景色はブラックで")
 SCORE_PER_KILL   EQU 1         ; ADD_SCORE units of 100 real points - "当たったら100点"
+                                ; (used only by HORMING/HORMING_BG - shooting down the
+                                ; boss's own homing missile, not an enemy kill; the
+                                ; per-enemy values below don't apply to that).
+; (2026-09-13、"ステージ2のエネミーの得点 ZakoIi緑100赤300Flyer500Zum500
+; 戦車1000BigZum2000ボス30000点") - ADD_SCORE units are real points/100
+; (see ADD_SCORE's own comment), so these are just real_points/100.
+SCORE_ZACOII_GREEN EQU 1    ; 100
+SCORE_ZACOII_RED   EQU 3    ; 300
+SCORE_ZUM          EQU 5    ; 500
+SCORE_FLYER        EQU 5    ; 500
+SCORE_ETANK        EQU 10   ; 1000 ("戦車")
+SCORE_BIGZUM       EQU 20   ; 2000
+SCORE_BOSS         EQU 300  ; 30000
 ; "次にカラーバーやその下の数値は削除 変わりに画面最上部にライフバーを
 ; 追加...スコアから１セル空けた位置" - the old calibration strip
 ; (SWATCH_CODES/HEXLABEL_CODES, groups15-30) is gone; group15's own
@@ -5787,8 +5800,10 @@ WHC_ROW_OK:
 
 ; Adds HL to the 24-bit SCORE (low word +0, high byte +2) and redraws
 ; it - ported from src/CYBER SHMUP.asm's ADD_SCORE_COMMON, simplified
-; to a single delta-in-HL entry point since this test only ever adds
-; SCORE_PER_KILL (no 100/200/300 enemy-kill tiers to pick between yet).
+; to a single delta-in-HL entry point (callers just LD HL,<their own
+; SCORE_* constant> first - see SCORE_ZACOII_GREEN/etc, 2026-09-13 -
+; instead of dedicated ADD_SCORE_100/200/300 wrappers like src/CYBER
+; SHMUP.asm has).
 ADD_SCORE:
     LD DE,(SCORE)
     ADD HL,DE
@@ -7888,7 +7903,16 @@ CHP_DESTROY:
 
     CALL SOUND_DESTROY
 
-    LD HL,SCORE_PER_KILL
+    ; "ZakoIi緑100赤300" - E_VARIANT still reads this instance's own
+    ; original spawn variant here (nothing above writes it). LD A,(IY+n)
+    ; itself doesn't touch flags in Z80 - OR A is needed to actually
+    ; test A against zero.
+    LD A,(IY+E_VARIANT)
+    OR A
+    LD HL,SCORE_ZACOII_GREEN
+    JR Z,CHP_DESTROY_SCORE
+    LD HL,SCORE_ZACOII_RED
+CHP_DESTROY_SCORE:
     CALL ADD_SCORE
     RET
 
@@ -8875,7 +8899,7 @@ CHPZ_REAR_SKIP_ERASE:
 
     CALL SOUND_DESTROY
 
-    LD HL,SCORE_PER_KILL
+    LD HL,SCORE_ZUM   ; "Zum500"
     CALL ADD_SCORE
     RET
 
@@ -9878,7 +9902,7 @@ CHPBZ_DESTROY:
     LD HL,EXPLODE_DIR_DY : ADD HL,BC : LD A,(HL) : LD (IY+6),A
 
     CALL SOUND_DESTROY
-    LD HL,SCORE_PER_KILL
+    LD HL,SCORE_BIGZUM   ; "BigZum2000"
     CALL ADD_SCORE
     RET
 
@@ -10312,7 +10336,7 @@ CHPFL_DESTROY:
     LD HL,EXPLODE_DIR_DY : ADD HL,BC : LD A,(HL) : LD (IY+6),A
 
     CALL SOUND_DESTROY
-    LD HL,SCORE_PER_KILL
+    LD HL,SCORE_FLYER   ; "Flyer500"
     CALL ADD_SCORE
     RET
 
@@ -10620,7 +10644,7 @@ CHPET_DESTROY:
     LD HL,EXPLODE_DIR_DY : ADD HL,BC : LD A,(HL) : LD (IY+5),A
 
     CALL SOUND_DESTROY
-    LD HL,SCORE_PER_KILL
+    LD HL,SCORE_ETANK   ; "戦車1000"
     CALL ADD_SCORE
     RET
 
@@ -15322,6 +15346,8 @@ CHPBOSS_NORMAL_HIT:
 ; it, unchanged from before.
 CHPBOSS_DESTROY:
     LD A,2 : LD (BOSS_ACT),A
+    LD HL,SCORE_BOSS   ; "ボス30000点"
+    CALL ADD_SCORE
     CALL INIT_BOSS_EXPLOSION
     RET
 

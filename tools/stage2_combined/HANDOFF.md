@@ -14806,3 +14806,63 @@ NOP抜け)(2026-09-13、完了済み・実機フィードバック待ち)
   非コミット)側で同じロジックを再利用すること - 素朴な「1
   インデックス1CP」方式のままだと、今後もROM予算を素早く食い潰す
   リスクがある。
+
+## Round110: 敵撃破スコアを個別得点化(Stage2各種+Stage1ボス)
+(2026-09-13、完了済み・実機フィードバック待ち)
+
+- ユーザー指示: "ではステージ2のエネミーの得点 ZakoIi緑100赤300
+  Flyer500Zum500戦車1000BigZum2000ボス30000点 ステージ1ボスは
+  10000点"。従来はStage2の全敵撃破が一律`SCORE_PER_KILL`(=1、
+  ADD_SCOREの単位=実得点/100、つまり100点)固定で、Stage1のボスに
+  至っては撃破時のスコア加算処理自体が存在しなかった。
+- **Stage2**: `SCORE_ZACOII_GREEN`(1)/`SCORE_ZACOII_RED`(3)/
+  `SCORE_ZUM`(5)/`SCORE_FLYER`(5)/`SCORE_ETANK`(10)/`SCORE_BIGZUM`
+  (20)/`SCORE_BOSS`(300)を新設(いずれもADD_SCORE単位=実得点/100)。
+  各`CHECK_HIT_PAIR_*`系の撃破処理(`CHP_DESTROY`/`CHPZ_REAR`/
+  `CHPBZ_DESTROY`/`CHPFL_DESTROY`/`CHPET_DESTROY`)の`LD HL,SCORE_
+  PER_KILL`を、対応する新定数へ個別に差し替え。ZacoII(`CHP_DESTROY`)
+  のみ緑/赤の2値があるため、`E_VARIANT`(0=緑/1=赤)を読んで分岐する
+  よう変更。ボス(`CHPBOSS_DESTROY`)にはこれまで一切無かった得点
+  加算処理自体を新規追加(HPが0に達した瞬間、`INIT_BOSS_EXPLOSION`
+  呼び出しの直前に一度だけ`ADD_SCORE`)。ボスの偏向弾(HORMING/
+  HORMING_BG、"敵"ではなくボスの攻撃を撃ち落とす別カテゴリ)は
+  ユーザーの指示対象外のため`SCORE_PER_KILL`のまま無変更。
+  - **自己発見バグ**: `CHP_DESTROY`の分岐に`LD A,(IY+E_VARIANT)`
+    直後いきなり`JR Z,...`と書いたが、Z80の`LD A,(IX+d)`系命令は
+    フラグを一切更新しない(既存コードの前段の同種分岐が`OR A`を
+    挟んでいたのを見落とした)ため、赤ZacoIIの得点が常に緑と
+    同じ100点になってしまう実バグを、新規テストの実行で即座に
+    発見・`OR A`追加で修正(除去→FAIL確認→復元→PASS確認の自己検証
+    済み)。
+- **Stage1**: ボス撃破(`POD_HIT_DESTROY`、最後のポッドが破壊された
+  瞬間に一度だけ発火する`BOSS_EXPL_STARTED`一発ガードの直後)に、
+  `ADD_SCORE_COMMON`(既存の`ADD_SCORE_100/200/300`と同じ共通
+  ルーチン)へ`LD HL,100`(=10000実点)で新規に得点加算処理を追加
+  - この一括ガードの経路自体、ボス撃破が構造上ちょうど1回しか
+    起こり得ない設計のため、二重加算防止のための追加ガードは不要
+    (`BOSS_EXPL_STARTED`自身が既にその役目を果たしている)。
+- 新規`tools/stage2_combined/tests/enemy_score_test.py`(16件、
+  ZacoII緑/赤・Zum・Flyer・Etank・BigZum・ボスそれぞれについて
+  実際に`CHECK_HIT_PAIR_*`を呼び、SCOREが期待どおりの増分だけ
+  増えることを直接検証)、新規`tools/verify_stage1_boss_score.py`
+  (7件、8ポッドを順に破壊し最後の1機でのみ10000点加算・以後の
+  ガード・非致死ヒットでの無加算を検証、修正の一時取消→FAIL確認→
+  復元→PASS確認済み)。`combined_test.asm`を変更したため
+  `tools/stage2_combined/tests/run_all.py`の全回帰を実行、既存の
+  Stage1検証群(`verify_boss_pod_bullet_aim.py`/`verify_player_
+  damage.py`/`verify_enemy_bullets.py`/`verify_stage1_bgm.py`)も
+  無退行で再PASS。Comb ROM再ビルド・`verify_comb.py`全チェックPASS
+  の上、標準方針によりComb ROMのみ送付。
+- 変更ファイル: `tools/stage2_combined/combined_test.asm`
+  (`SCORE_ZACOII_GREEN/RED`/`SCORE_ZUM`/`SCORE_FLYER`/`SCORE_ETANK`/
+  `SCORE_BIGZUM`/`SCORE_BOSS`新設、5箇所のCHECK_HIT_PAIR系撃破処理・
+  `CHPBOSS_DESTROY`を書き換え)、`src/CYBER SHMUP.asm`
+  (`POD_HIT_DESTROY`へ得点加算追加)、新規テスト2ファイル、Comb ROM
+  再ビルド。
+
+セッション引き継ぎメモ(2026-09-13、Round110完了直後):
+- 実機での確認事項: 各敵種の得点表示が指示通りになっているか
+  (特にZacoII赤の300点、ボス2種の得点)は次回フィードバック待ち。
+- ボスの偏向弾(HORMING/HORMING_BG)を撃ち落とした際の得点
+  (`SCORE_PER_KILL`=100点のまま)は今回のユーザー指示に含まれて
+  いなかったため意図的に無変更 - もし何か指示があれば別途対応。

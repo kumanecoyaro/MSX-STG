@@ -6638,6 +6638,13 @@ POD_HIT_DESTROY:
     OR A
     JR NZ,PHD_SKIP_BOSSEXPL
     LD A,1 : LD (BOSS_EXPL_STARTED),A
+    ; "ステージ1ボスは10000点"(2026-09-13) - fires exactly once, right
+    ; alongside BOSS_EXPL_STARTED's own one-shot guard above (the last
+    ; pod's own destroy is what triggers the boss's death sequence in
+    ; this game - see this routine's own comment). ADD_SCORE_COMMON
+    ; units are real_points/100 (see ADD_SCORE_100/200/300's own
+    ; comment), so 100 = 10000 real points.
+    LD HL,100 : CALL ADD_SCORE_COMMON
     CALL BOSS_EXPL_BUILD_LUT
     ; --- bullets erasing themselves over the (now emptying) boss   ---
     ; --- area were "restoring" BOSS_MAP tiles we'd already popped  ---
