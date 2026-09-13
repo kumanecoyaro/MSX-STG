@@ -14540,3 +14540,28 @@ NOP抜け)(2026-09-13、完了済み・実機フィードバック待ち)
   →5テーブル+SSC_FIRE_BLKチェーン+SSC_BUSY_E2+終端比較値を再生成・
   置換→実プレイシミュレーションでstall無し確認→既存Stage1検証群
   再実行→Comb再ビルド・verify_comb.py)を繰り返せばよい。
+
+## Round106: Stage1エネミー6の耐久値を8に変更(2026-09-13、完了済み・
+実機フィードバック待ち)
+
+- ユーザー指示: "エネミー6 耐久値8"。Round76で導入された`ENEMY6_HP_
+  INIT`(独立配列`ENEMY6_HP`による耐久値制)を4→8へ変更(1行のEQU値
+  変更のみ)。
+- `tools/verify_enemy6_durability.py`のヒット連打テストが旧耐久値4を
+  前提にハードコードされていた(`range(1,4)`+"4th hit"固定コメント)
+  ため、`ENEMY6_HP_INIT`を動的に参照する形へ一般化(既に大半のテスト
+  ケースはシンボル参照だったが、この1箇所だけ literal だった)。
+  値そのものの確認テストも4→8へ更新。
+- `python3 tools/verify_enemy6_durability.py` **19 passed, 0 failed**。
+  既存のStage1検証群(enemy_bullets 56/player_damage 60/stage1_bgm 80/
+  stage1_mission_screens 87/spawn_schedule_restart 12/explosion_anim 28/
+  boss_dfl_clear 10)も全て無退行で再PASS確認済み。Comb ROM再ビルド・
+  `verify_comb.py`全チェックPASSの上、標準方針によりComb ROMのみ送付。
+- 変更ファイル: `src/CYBER SHMUP.asm`(ENEMY6_HP_INIT 4→8)、
+  `tools/verify_enemy6_durability.py`(ヒット連打テストの一般化+
+  期待値更新)、Comb ROM再ビルド。`combined_test.asm`は無変更のため
+  `run_all.py`全回帰は未実施。
+
+セッション引き継ぎメモ(2026-09-13、Round106完了直後):
+- 実プレイでの難易度感(耐久値8での撃破手応え)は次回フィードバック
+  待ち。

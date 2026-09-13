@@ -53,7 +53,7 @@ ENEMY6_ROW_TABLE = sym["ENEMY6_ROW_TABLE"]
 SPAWN_E6 = sym["SPAWN_E6"]
 ENEMY6_HIT_ONE_SLOT = sym["ENEMY6_HIT_ONE_SLOT"]
 
-check("ENEMY6_HP_INIT is 4 (\"耐久値4に\")", ENEMY6_HP_INIT == 4)
+check("ENEMY6_HP_INIT is 8 (\"エネミー6 耐久値8\")", ENEMY6_HP_INIT == 8)
 
 
 def spawn_enemy6(z, row_table_index=0, row=10):
@@ -98,18 +98,18 @@ def hit_test_call(z):
     return z.a
 
 
-for i in range(1, 4):
+for i in range(1, ENEMY6_HP_INIT):
     result = hit_test_call(z)
     hp = z.rd(ENEMY6_HP)
     check(f"hit #{i}: bullet is consumed (A=1) but the enemy survives "
           f"(ACTIVE stays 1, HP={ENEMY6_HP_INIT - i})",
           result == 1 and z.rd(IX) == 1 and hp == ENEMY6_HP_INIT - i)
 
-# 4th hit: HP reaches 0 - now it actually dies (ACTIVE=0).
-result4 = hit_test_call(z)
-check("hit #4 (HP reaches 0): bullet is consumed AND the enemy is finally "
-      "destroyed (ACTIVE=0)",
-      result4 == 1 and z.rd(IX) == 0)
+# final hit: HP reaches 0 - now it actually dies (ACTIVE=0).
+result_final = hit_test_call(z)
+check(f"hit #{ENEMY6_HP_INIT} (HP reaches 0): bullet is consumed AND the enemy is "
+      "finally destroyed (ACTIVE=0)",
+      result_final == 1 and z.rd(IX) == 0)
 check("on the killing hit, HP itself lands exactly at 0 (not wrapped/negative)",
       z.rd(ENEMY6_HP) == 0)
 

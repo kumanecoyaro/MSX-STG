@@ -763,7 +763,8 @@ ENEMY6_STRUCT EQU 4             ; ACTIVE,ROW,COL,PHASE (COL = left column of the
 ; 独立した並列配列(ENEMY6_HP、スロットindexで対応)として、確実に
 ; 空きと確認済みのEXPLOSION_SAVED_CM3(F237h-F239h)直後の領域へ新設
 ; する(ENEMY6_HP_ADDRがIXから所属スロットのindexを逆算する)。
-ENEMY6_HP_INIT EQU 4
+; (2026-09-13、"エネミー6 耐久値8"): 4→8。
+ENEMY6_HP_INIT EQU 8
 ; Relocated off EF00h (originally right after ENEMY3_CENTERX_TABLE) to
 ; F158h, clear of that table's real footprint - ENEMY3_CENTERX_TABLE
 ; is addressed by (slot ptr - ENEMY3_POOL) + ENEMY3_CENTERX_TABLE (see
