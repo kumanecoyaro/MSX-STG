@@ -42,6 +42,37 @@
 ;     同時に左方向へ発射。
 ;   - 速度(EBUZ_BULLET_SPEED)は指定が無いため3px/frameの暫定値。
 ;
+; (2026-09-13追記その2、発射位置/タイミング/速度の調整): "まずEbuz1
+; の時の弾の位置を左へ16px移動 この状態で0.5秒維持してから発射
+; 次に添付ファイルの弾をYが0px、24pxの位置から同時発射(添付
+; EbuzBullet2_16x16.json)...弾の速度が早いんで半分に"、続けて
+; (割り込みでの訂正)"同時発射はEbuz2に変形後な 同じく0.5秒維持して
+; 同時発射"。
+;   - state1弾(BULLET_FULL)の発射X位置をEBUZ_BULLET_X(192)から
+;     16px左のEBUZ_BULLET1_X(176)へ変更。state2弾2枚(Y=0/24px)は
+;     従来通りEBUZ_BULLET_X(192)のまま(こちらは"位置を移動"の指示
+;     対象外)。
+;   - EbuzBullet2_16x16.jsonを解析した結果、そのビットマップは既存の
+;     BULLET_HALF_PAT(EbuzBullet1の上半分から自前で切り出したもの)と
+;     TL/BL/TR/BR全象限バイト単位で完全一致(ebuz_bullet_gen.pyの
+;     verify_against_ebuz_bullet2()で検証済み) - 新規タイルデータは
+;     不要、BULLET_HALF_PATをそのまま「専用データとして正式に確認
+;     済みの絵」として引き続き使用する。
+;   - state1・state2いずれも「BGが変化した瞬間」と「実際に発射する
+;     瞬間」を分離し、間に0.5秒相当のウェイト(EBUZ_DELAY_HALF、
+;     EBUZ_DELAYのちょうど半分の反復回数)を挟む2段階構成に変更
+;     (EBUZ_STATE1_BG_DONE/EBUZ_STATE2_BG_DONEを新設、EBUZ_STATE1_
+;     DONE/EBUZ_STATE2_DONEは「発射まで完了した」時点を指す既存の
+;     意味のまま維持)。
+;   - 弾速半減: 3px/frameを整数のまま厳密に半分(1.5px/frame平均)に
+;     するため、1px/2pxを1フレームおきに交互適用する方式
+;     (EBUZ_BULLET_SPEED_LO=1/EBUZ_BULLET_SPEED_HI=2、2フレーム
+;     平均で(1+2)/2=1.5px/frame=元の3px/frameのちょうど半分)。
+;     3発は常にEBUZ_MAINLOOPの同一ループ内で同時に更新されるため
+;     (state1弾はstate2への変化待ち・0.5秒ウェイト中は静止したまま、
+;     3発全てが出揃ってから初めてEBUZ_MAINLOOPへ入る既存の設計は
+;     無変更)、フレームごとの歩幅は3発共通の1個のグローバル
+;     トグル(EBUZ_FRAME_PARITY)で管理すれば足りる。
 ; 本ファイルは本編(src/CYBER SHMUP.asm)に組み込む前の独立した
 ; プロトタイプ("専用の空ステージ1")。背景は完全に空(code0の空白タイル
 ; のみ)で、Ebuzの見た目・状態遷移・弾発射/移動だけを確認する。実際の
@@ -86,8 +117,15 @@ EBUZ_COL  EQU 24
 BULLET_FULL_CODE EQU 0    ; 4コード(0-3)、TL/BL/TR/BR
 BULLET_HALF_CODE EQU 4    ; 4コード(4-7)、TL/BL/TR/BR
 EBUZ_BULLET_COLOR EQU 11  ; fg=11(light yellow) - 添付JSONのfgそのまま
-EBUZ_BULLET_X      EQU 192   ; Ebuz本体のXから発射(暫定)
-EBUZ_BULLET_SPEED  EQU 3     ; px/frame、未調整の暫定値
+EBUZ_BULLET_X      EQU 192   ; Ebuz本体のXから発射(暫定)、state2弾(Y0/24)用
+EBUZ_BULLET1_X     EQU EBUZ_BULLET_X-16   ; state1弾は16px左へ移動(2026-09-13追記)
+; 弾速半減(2026-09-13追記、"弾の速度が早いんで半分に"): 元3px/frameを
+; 整数のまま厳密に半分(平均1.5px/frame)にするため、1px/2pxを1フレーム
+; おきに交互適用する(2フレーム平均=(1+2)/2=1.5px/frame)。3発とも
+; 同一のEBUZ_MAINLOOPで同時に更新されるため、歩幅はグローバルな
+; 1個のトグル(EBUZ_FRAME_PARITY)で管理すれば足りる。
+EBUZ_BULLET_SPEED_LO EQU 1
+EBUZ_BULLET_SPEED_HI EQU 2
 ; TMS9918のY属性は実際の表示開始行より1小さい値を書く規約
 ; (tools/stage1_render_check.pyのrender_full()と同じ"y1=(y+1)&0xFF"
 ; デコードに対応)。state1の弾はY=16(=EBUZ_ROW*8、本体位置基準の
@@ -113,6 +151,7 @@ SPR_TERM_Y  EQU 208   ; SATリスト終端(このスロット以降は描画さ�
 ; (OUT/INポート経由のVDP I/Oが必要) - 毎フレームの移動計算はこちらの
 ; RAM側で行い、更新後にLDIRVMでまとめてSPRATRへ反映する。
 EBUZ_SPR_SHADOW EQU 0F350h   ; 12 bytes (F350h-F35Bh), STACKTOPまで十分な余裕
+EBUZ_FRAME_PARITY EQU 0F35Ch ; 1 byte、弾速半減用のフレーム交互トグル(0/1)
 
 ; フレーム換算しないシンプルなビジーウェイト(src/CYBER SHMUP.asmの
 ; MISSION_DELAY_3SECと同型、Dを小さくして約1秒相当)。
@@ -130,6 +169,24 @@ EBUZ_DELAY_INNER:
     JR NZ,EBUZ_DELAY_OUTER
     RET
 
+; EBUZ_DELAYのちょうど半分の総反復回数(0.5秒相当、2026-09-13追記)。
+; D(3)は同じだが中間ループの初期値をBUZ_DELAYの0(=256回)ではなく
+; 128(=128回)にすることで、総反復回数(D*B*C)を厳密に半分にする
+; (3*128*256 = (3*256*256)/2)。
+EBUZ_DELAY_HALF:
+    LD D,3
+EBUZ_DELAY_HALF_OUTER:
+    LD B,128
+EBUZ_DELAY_HALF_MID:
+    LD C,0
+EBUZ_DELAY_HALF_INNER:
+    DEC C
+    JR NZ,EBUZ_DELAY_HALF_INNER
+    DJNZ EBUZ_DELAY_HALF_MID
+    DEC D
+    JR NZ,EBUZ_DELAY_HALF_OUTER
+    RET
+
 ; 1フレーム相当の短いウェイト(弾移動のステップ間隔、EBUZ_DELAYより
 ; ずっと短い - 未調整の暫定値)。
 EBUZ_FRAME_WAIT:
@@ -140,19 +197,27 @@ EBUZ_FRAME_WAIT_LOOP:
     RET
 
 ; IX = EBUZ_SPR_SHADOW内の弾スロット先頭(+0=Y,+1=X,+2=pattern,+3=color)。
-; 非表示(Y=SPR_HIDE_Y)なら何もしない、そうでなければXをEBUZ_BULLET_
-; SPEEDだけ減算(左へ移動)、画面外に出る場合はY=SPR_HIDE_Yにして非表示化。
+; 非表示(Y=SPR_HIDE_Y)なら何もしない、そうでなければXを今フレームの
+; 歩幅(EBUZ_FRAME_PARITYにより1pxまたは2px、2026-09-13追記の半速化)
+; だけ減算(左へ移動)、画面外に出る場合はY=SPR_HIDE_Yにして非表示化。
 EBUZ_UPDATE_BULLET:
     LD A,(IX+0)
     CP SPR_HIDE_Y
     RET Z
+    LD A,(EBUZ_FRAME_PARITY)
+    OR A
+    LD A,EBUZ_BULLET_SPEED_LO
+    JR Z,EBUZ_UB_GOT_STEP
+    LD A,EBUZ_BULLET_SPEED_HI
+EBUZ_UB_GOT_STEP:
+    LD B,A                  ; B = 今フレームの歩幅
     LD A,(IX+1)
-    CP EBUZ_BULLET_SPEED
+    CP B
     JR NC,EBUZ_UB_MOVE
     LD (IX+0),SPR_HIDE_Y
     RET
 EBUZ_UB_MOVE:
-    SUB EBUZ_BULLET_SPEED
+    SUB B
     LD (IX+1),A
     RET
 
@@ -193,6 +258,10 @@ INIT:
     LD HL,EBUZ_SPR_SHADOW : LD DE,SPRATR : LD BC,12 : CALL LDIRVM
     LD HL,EBUZ_SPR_TERM : LD DE,SPRATR+12 : LD BC,4 : CALL LDIRVM
 
+    ; 弾速半減用のフレーム交互トグルを初期化(0=次のステップはLO)
+    XOR A
+    LD (EBUZ_FRAME_PARITY),A
+
     ; --- state1: A,B,C,D を row2/row3 の col24-27 へ(2行とも同一) ---
     ; NOTE: このアセンブラは演算子優先順位も丸括弧も無い(左から右へ
     ; 逐次評価するだけ)ため、"NAMTBL+ROW*32+COL"式は書かず、name
@@ -208,8 +277,14 @@ INIT:
     LD DE,01878h                 ; row3, col24-27
     LD BC,4
     CALL LDIRVM
+EBUZ_STATE1_BG_DONE:
 
-    ; --- state1登場時: BULLET_FULLを1枚発射(スロット0) ---
+    ; --- "この状態で0.5秒維持してから発射"(2026-09-13追記) ---
+    EI
+    CALL EBUZ_DELAY_HALF
+    DI
+
+    ; --- state1登場時: BULLET_FULLを1枚発射(スロット0、X=16px左へ) ---
     LD HL,EBUZ_SPR_BULLET1 : LD DE,EBUZ_SPR_SHADOW : LD BC,4 : LDIR
     LD HL,EBUZ_SPR_SHADOW : LD DE,SPRATR : LD BC,4 : CALL LDIRVM
 EBUZ_STATE1_DONE:
@@ -236,6 +311,12 @@ EBUZ_STATE1_DONE:
     LD DE,01898h                 ; row4 (new bottom band), col24-27
     LD BC,4
     CALL LDIRVM
+EBUZ_STATE2_BG_DONE:
+
+    ; --- "Ebuz2に変形後...同じく0.5秒維持して同時発射"(2026-09-13追記) ---
+    EI
+    CALL EBUZ_DELAY_HALF
+    DI
 
     ; --- state2変化時: BULLET_HALFを2枚同時発射(スロット1,2) ---
     LD HL,EBUZ_SPR_BULLET23 : LD DE,EBUZ_SPR_SHADOW+4 : LD BC,8 : LDIR
@@ -250,6 +331,10 @@ EBUZ_MAINLOOP:
     LD IX,EBUZ_SPR_SHADOW   : CALL EBUZ_UPDATE_BULLET
     LD IX,EBUZ_SPR_SHADOW+4 : CALL EBUZ_UPDATE_BULLET
     LD IX,EBUZ_SPR_SHADOW+8 : CALL EBUZ_UPDATE_BULLET
+    ; 次フレーム用に歩幅トグルを反転(2026-09-13追記の半速化)
+    LD A,(EBUZ_FRAME_PARITY)
+    XOR 1
+    LD (EBUZ_FRAME_PARITY),A
     LD HL,EBUZ_SPR_SHADOW : LD DE,SPRATR : LD BC,12 : CALL LDIRVM
     EI
 EBUZ_FRAME_TICK:
@@ -286,6 +371,10 @@ BULLET_FULL_PAT:
     DB 0,0,127,255,255,127,0,0        ; BL(元絵の下段バーもTLと同一)
     DB 0,0,254,255,255,254,0,0        ; TR
     DB 0,0,254,255,255,254,0,0        ; BR(同上)
+; 2026-09-13追記: 添付EbuzBullet2_16x16.json(専用データとして正式に
+; 提供)とTL/BL/TR/BR全象限バイト単位で完全一致することを確認済み
+; (ebuz_bullet_gen.py:verify_against_ebuz_bullet2())。データ自体の
+; 変更は無い。
 BULLET_HALF_PAT:
     DB 0,0,127,255,255,127,0,0        ; TL(上半分そのまま)
     DB 0,0,0,0,0,0,0,0                ; BL(空白パディング)
@@ -300,9 +389,10 @@ EBUZ_SPR_INIT:
 EBUZ_SPR_TERM:
     DB SPR_TERM_Y,0,0,0
 
-; state1発射時の弾1(スロット0): BULLET_FULL、Y=16(暫定)、X=192
+; state1発射時の弾1(スロット0): BULLET_FULL、Y=16(暫定)、
+; X=176(=192-16、2026-09-13追記で16px左へ移動)
 EBUZ_SPR_BULLET1:
-    DB EBUZ_BULLET1_STORED_Y,EBUZ_BULLET_X,BULLET_FULL_CODE,EBUZ_BULLET_COLOR
+    DB EBUZ_BULLET1_STORED_Y,EBUZ_BULLET1_X,BULLET_FULL_CODE,EBUZ_BULLET_COLOR
 
 ; state2発射時の弾2/弾3(スロット1,2): BULLET_HALF、Y=0px/24px、X=192
 EBUZ_SPR_BULLET23:

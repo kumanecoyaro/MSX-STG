@@ -24,6 +24,11 @@ import os
 
 UPLOAD_DIR = "/root/.claude/uploads/8adb3f48-429f-5460-9ecb-a8cda4b8e41b"
 BULLET_PATH = os.path.join(UPLOAD_DIR, "d21621cf-EbuzBullet1_16x16.json")
+# 2026-09-13追記: ユーザーが"BULLET_HALF"用の専用データとして改めて
+# 添付したファイル(以前はEbuzBullet1の上半分を自前で切り出して代用
+# していた)。下記verify_against_ebuz_bullet2()でBULLET_HALF_PATと
+# 完全一致することを確認済み(新規タイルデータは不要)。
+BULLET2_PATH = os.path.join(UPLOAD_DIR, "bd587a2b-EbuzBullet2_16x16.json")
 
 
 def load_bits(path=BULLET_PATH):
@@ -61,6 +66,21 @@ def bullet_half_quads():
         "TR": quad_bytes(bits, 0, 8),
         "BR": blank,
     }
+
+
+def verify_against_ebuz_bullet2():
+    """BULLET_HALFの4象限が、専用に添付されたEbuzBullet2_16x16.jsonと
+    バイト単位で完全一致することを検証する(2026-09-13)。"""
+    bits2 = load_bits(BULLET2_PATH)
+    half = bullet_half_quads()
+    actual = {
+        "TL": quad_bytes(bits2, 0, 0),
+        "TR": quad_bytes(bits2, 0, 8),
+        "BL": quad_bytes(bits2, 8, 0),
+        "BR": quad_bytes(bits2, 8, 8),
+    }
+    mismatches = [q for q in ("TL", "BL", "TR", "BR") if actual[q] != half[q]]
+    return (len(mismatches) == 0), mismatches
 
 
 if __name__ == "__main__":
