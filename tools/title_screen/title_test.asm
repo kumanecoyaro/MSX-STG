@@ -941,16 +941,31 @@ RUN_SCREEN3_SLIDESHOW:
 
     ; (2026-09-12、"10ループなんて指定してないし"): 当初の10から1へ訂正
     ; (1周のみ、繰り返し無し)。
+    ; (2026-09-12、実機フィードバック"表示すらできてねえんだよ"):
+    ; 従来は各画像を描画する前に(長い場合1秒を超える)PLAY_CONFIRM_
+    ; BEEP_NO_BORDERを呼んでいたため、まだ新しいPGTデータが一度も
+    ; VRAMへ書き込まれていない間、直前のタイトル背景の生パターン
+    ; データがMulticolorアドレッシングとして誤読され続け、その間
+    ; 画面には無関係な色帯ノイズが表示されていた(音は無関係のPSG
+    ; チャンネルなので正常に鳴っていた、というのも報告と整合する)。
+    ; 「描画してから鳴らす」の順に統一し、VRAMが常に最新の正しい
+    ; 絵柄を保持している状態でのみ長い待ち時間(確認音)に入るように
+    ; 修正した。
     LD B,1
 RSS_MAIN_LOOP:
     PUSH BC
-    CALL PLAY_CONFIRM_BEEP_NO_BORDER
     CALL SHOW_SC3_IMG1
+    CALL PLAY_CONFIRM_BEEP_NO_BORDER
     CALL SHOW_SC3_IMG2
+    CALL PLAY_CONFIRM_BEEP_NO_BORDER
     CALL SHOW_SC3_IMG3
+    CALL PLAY_CONFIRM_BEEP_NO_BORDER
     CALL SHOW_SC3_IMG4
+    CALL PLAY_CONFIRM_BEEP_NO_BORDER
     CALL SHOW_SC3_IMG5
+    CALL PLAY_CONFIRM_BEEP_NO_BORDER
     CALL SHOW_SC3_IMG6
+    CALL PLAY_CONFIRM_BEEP_NO_BORDER
     POP BC
     DJNZ RSS_MAIN_LOOP
 

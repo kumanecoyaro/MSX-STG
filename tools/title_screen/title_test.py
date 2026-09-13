@@ -25,6 +25,14 @@ import title_bg_gen
 import bgm_bank_gen as bg
 from z80emu import Z80
 
+# NOTE: tools/screen3_test has its OWN unrelated build_test.py - insert its
+# path AFTER importing this file's own build_test above, or sys.path
+# ordering would shadow it (screen3_test's build_test.py lacks
+# build_banks() and everything above would break with a confusing
+# AttributeError).
+sys.path.insert(0, os.path.join(REPO, "tools", "screen3_test"))
+import screen3_gen
+
 out, sym, text = build_test.assemble()
 
 ok = []
@@ -495,6 +503,7 @@ cpu.sim_trig_a = True
 steps = 0
 confirm_beep_addr = sym["PLAY_CONFIRM_BEEP_NO_BORDER"]
 confirm_beep_hits = 0
+vram_at_first_beep = None
 # PLAY_CONFIRM_BEEP_NO_BORDER plays the same much longer "Rising alert
 # chirp"->"Descending buzzer" v3 sequence (53 rows x2, ~800K Z80
 # instruction-steps) as PLAY_CONFIRM_BEEP did, minus the border writes -
@@ -505,15 +514,29 @@ confirm_beep_hits = 0
 while cpu.pc != 0x4010 and steps < 10_000_000:
     if cpu.pc == confirm_beep_addr:
         confirm_beep_hits += 1
+        if vram_at_first_beep is None:
+            vram_at_first_beep = bytes(cpu.vram[0:0x800])
     cpu.step()
     steps += 1
 check("button press trampolines to Stage1's own INIT address (4010h)", cpu.pc == 0x4010)
-check("PLAY_CONFIRM_BEEP_NO_BORDER is called repeatedly (once per main-loop pass + once per "
-      "epilogue beat) instead of the old single upfront call, so the sound effect keeps looping "
+# (2026-09-12、実機フィードバック"音は出てるが...表示すらできてねえんだよ"):
+# the very first PLAY_CONFIRM_BEEP_NO_BORDER call must happen AFTER
+# SHOW_SC3_IMG1 has already flushed real PGT data to VRAM 0000h-07FFh -
+# the old ordering called the beep BEFORE drawing anything, leaving the
+# stale title-background pattern data (misread through Multicolor's
+# addressing) visible on screen for the beep's ~1+ second duration.
+check("the FIRST PLAY_CONFIRM_BEEP_NO_BORDER call happens only after VRAM 0000h-07FFh already "
+      "holds Image01.SC3's real PGT data (never idles on stale title-background pattern data "
+      "misread through Multicolor addressing)",
+      vram_at_first_beep == screen3_gen.pattern_generator(1))
+check("PLAY_CONFIRM_BEEP_NO_BORDER is called repeatedly (once after EACH image draw, main loop "
+      "+ epilogue) instead of the old single upfront call, so the sound effect keeps looping "
       "throughout the whole slideshow animation, per \"変わりにスタートのサウンドと枠の色の演出を "
-      "このアニメの間ループ\" - with the real 1-pass main loop, expect exactly "
-      "1(main pass) + 4(epilogue1 x4) + 1(epilogue2) + 1(epilogue3) = 7 calls",
-      confirm_beep_hits == 7)
+      "このアニメの間ループ\" - it's called strictly AFTER each image is drawn (not before, per "
+      "the \"表示すらできてねえんだよ\" fix: never idle on stale VRAM content during the long "
+      "beep) - with the real 1-pass main loop, expect exactly "
+      "6(main pass, one per image) + 4(epilogue1 x4) + 1(epilogue2) + 1(epilogue3) = 12 calls",
+      confirm_beep_hits == 12)
 # 実機フィードバック対応("バンク切り替えに失敗してる タイトルでボタンを
 # 押すとフリーズ"): hop1/hop2実行中〜Stage1自身のDIが効くまでの間、
 # 割り込みが許可されたままだとBGM_TICKの古いH.TIMIフックがwindow Aの
@@ -663,9 +686,7 @@ check("PLAY_CONFIRM_BEEP: never writes VDP R7 to a value outside the approved RE
 # フィードバック"画像データは間違えた"で締めの3枚を本物のSC3ダンプへ
 # 差し替え済み): SCREEN3スライドショー本体(RUN_SCREEN3_SLIDESHOW・
 # SHOW_SC3_IMG1-6・SHOW_SC3_EPI1-3)の回帰テスト。
-sys.path.insert(0, os.path.join(REPO, "tools", "screen3_test"))
-import screen3_gen
-import screen3_epilogue_gen
+import screen3_epilogue_gen  # screen3_gen itself already imported near the top of this file
 
 SC3_SHARED_NAME_bytes = screen3_gen.shared_name_table()
 

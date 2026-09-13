@@ -13506,3 +13506,82 @@ Y段違い+Enemy6速度半減、Stage2自機爆発の自機非表示タイミン
   また同CLAUDE.mdの「テストコマンド・実行方針」に追記済みの
   「combined_test.asm無変更時は全回帰run_all.pyを実行しない」方針にも
   従うこと。
+
+## Round90: 実機フィードバック対応(音は出るが画面真っ黒バグの
+"第2の原因"を特定・修正 - 確認音を描画前ではなく描画後に鳴らす)
+(2026-09-12、完了済み・実機フィードバック待ち)
+
+- ユーザー報告(Round89のVDP R0修正版を試した結果): "音は出てるが
+  画面真っ黒のまま 何も表示されてない さっきのテストRom組み込むだけ
+  だろ バンクにも空きはあるはずだし ちゃんとやれよ"(この報告自体は
+  Round89着手前のものだったが、Round89のR0修正だけでは全体像として
+  不十分だったため、今回さらに調査continue)。
+- **根本原因(第2の原因)**: `RUN_SCREEN3_SLIDESHOW`のメインループが
+  各画像を「`CALL PLAY_CONFIRM_BEEP_NO_BORDER`(確認音、53行×2回
+  再生で実時間1秒超)→`CALL SHOW_SC3_IMGx`(実際の画像描画)」という
+  順で呼んでいたため、スライドショー開始直後の最初の1回は、
+  まだ新しいPGTデータが一度もVRAMへ書き込まれていない状態のまま
+  1秒以上の確認音を再生することになり、その間画面には直前の
+  タイトル背景の生パターンデータがMulticolorアドレッシングとして
+  誤読され続けた状態が表示されていた(音は無関係のPSGチャンネルの
+  ため正常に鳴っていた、という報告内容と正確に整合する)。VDP R0の
+  修正[Round89]で「real ROM表示自体は可能」になったことで、初めて
+  この第2の問題[表示タイミングの誤り]が単独で顕在化したと考えられる。
+- **修正**: 呼び出し順序を「描画してから鳴らす」に統一 -
+  `RSS_MAIN_LOOP`の各画像を`CALL SHOW_SC3_IMGx`→`CALL PLAY_CONFIRM_
+  BEEP_NO_BORDER`の順に入れ替え(6画像全てに適用、メインループの
+  ループ回数が将来1より大きくなってもSHOW_SC3_IMG1がループ先頭で
+  毎回再描画されるようループ内に残した)。締めの3枚は元々EPI2/EPI3が
+  既にこの順で実装済みだったため無変更、EPI1のx4ループも描画自体は
+  ループ突入前の1回のみで(以後は同じ絵のまま確認音+待機を4回)
+  問題なし。
+- テスト: `title_test.py`に新規チェック追加(57件、56→57) - 「最初の
+  PLAY_CONFIRM_BEEP_NO_BORDER呼び出し時点でVRAM 0000h-07FFhが既に
+  Image01.SC3の実データになっていること」を直接検証(修正前の
+  コードで実際にFAILすることを自己検証済み)。呼び出し回数の期待値も
+  6(メイン、画像ごとに1回)+4(epilogue1)+1(epilogue2)+1(epilogue3)=
+  12回へ更新(7→12、確認音が画像の後each個別に鳴る設計になったため)。
+  併せて`title_test.py`自身のsys.path設定に潜んでいた実バグを自己
+  発見・修正: `tools/screen3_test/`にも同名の無関係な`build_test.py`
+  が存在するため、`sys.path.insert(0, ...screen3_test...)`を
+  title_screen自身の`import build_test`より前に置くとPythonの
+  モジュール解決がscreen3_test側を優先してしまい
+  `AttributeError: module 'build_test' has no attribute 'build_
+  banks'`という紛らわしいクラッシュになっていた - screen3_testの
+  パス追加をtitle_screen自身のimport群より後ろへ移動して解消。
+- 全回帰: 今回の変更は`tools/title_screen/`+`tools/bankswitch_poc/
+  verify_comb.py`のみのため、CLAUDE.mdの新方針(Round89)に従い
+  Stage2側`run_all.py`は実行せず。`title_test.py` **57 passed**
+  (56→57)。`verify_comb.py`全チェックPASS(実行時間約65秒)。Comb
+  ROM再ビルド・標準方針によりComb ROMのみ送付。
+- **保留・実機フィードバック待ち**: 今回の修正(確認音を描画後に鳴らす
+  順序変更)が実機で実際に画面表示を復活させるかは次回フィードバック
+  待ち。もし依然として問題が残る場合、次に疑うべきは(a)WebMSX固有の
+  Multicolorモード実装差異の可能性、(b)openMSX等の高精度エミュレータ
+  でのVDPレジスタ・VRAM内容の直接検証(Round47/53と同じ手法)。
+
+## セッション引き継ぎメモ(2026-09-12、Round90完了直後)
+
+- **現在の状態**: Round90(実機フィードバック対応: 確認音を描画前
+  ではなく描画後に鳴らす順序へ修正、title_test.py自身のsys.path
+  バグも修正)まで完了。`title_test.py` **57 passed**。`verify_comb.py`
+  全チェックPASS。Comb ROM再ビルド済み。Stage2側`run_all.py`は
+  Round89から引き続き未実行(方針変更、`combined_test.asm`無変更の
+  ため前回1525 passed/0 failedのまま)。
+- **コミット・push状況**: 本メモ記載時点でコミット・push作業中(この
+  メモ自体が同じコミットに含まれる想定)。作業ツリーの内容:
+  `tools/title_screen/title_test.asm`(RSS_MAIN_LOOPの呼び出し順序を
+  描画→確認音に変更)・`tools/title_screen/title_test.py`(新規
+  チェック追加、呼び出し回数期待値更新、sys.pathバグ修正)・`tools/
+  bankswitch_poc/verify_comb.py`(同様のディレイパッチ・呼び出し
+  回数は今回変更なし、Comb再ビルドのみ)・`tools/title_screen/CyberS
+  Title.ascii16k.rom`(standalone再ビルド)・`rom/CyberS
+  Comb.ascii16k.rom`(再ビルド)・本HANDOFF.md(記録追記)。
+- **次に着手すべきこと**: 特になし(指示なしに着手しない方針)。
+  ユーザーからの次の実機フィードバック・新規指示を待つ状態。
+- **新セッションが最初にすべきこと**: このHANDOFF.md末尾(本項目)を
+  読んだ上で、CLAUDE.md冒頭の「実機ハードウェア制約」恒久ルール
+  (OTIR等のブロックI/O命令禁止)を必ず確認してから作業を再開すること。
+  また同CLAUDE.mdの「テストコマンド・実行方針」に追記済みの
+  「combined_test.asm無変更時は全回帰run_all.pyを実行しない」方針にも
+  従うこと。
