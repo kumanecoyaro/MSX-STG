@@ -478,7 +478,7 @@ switch_log_at_wait = list(mem.switch_log)  # round40: exclude INIT_BGM's own 2 s
 # ここでは検証しない(専用の構造チェック・直接呼び出しチェックを
 # 下に別途用意する)。メインループ回数自体は既に実ROMの値が1のため
 # 短縮パッチ不要(値そのものは下の構造チェックで直接検証する)。
-_RSS_MAIN_LOOP_COUNT_ADDR = sym["RUN_SCREEN3_SLIDESHOW"] + 0x23  # "LD B,1" operand
+_RSS_MAIN_LOOP_COUNT_ADDR = sym["RUN_SCREEN3_SLIDESHOW"] + 0x2A  # "LD B,1" operand
 _WAIT_3F_DE_ADDR = sym["WAIT_3_FRAMES"] + 1                       # "LD DE,6884" operand (2 bytes)
 _SC3D_B_INIT_ADDR = sym["SCREEN3_DELAY_NESTED"] + 1               # "LD B,0" operand
 _SC3D_C_INIT_ADDR = sym["SCREEN3_DELAY_NESTED"] + 3               # "LD C,0" operand
@@ -685,13 +685,24 @@ check("RUN_SCREEN3_SLIDESHOW setup reaches SHOW_SC3_IMG1 within budget",
 # WRTVDP is a BIOS call (z80emu.py stubs it as a pure no-op, "register
 # state not tracked" per its own comment) so it can't be observed via
 # vdp_regs like the raw port OUT writes in PLAY_CONFIRM_BEEP's border
-# flash can - check the LD B,0EAh:LD C,1 operand bytes feeding the CALL
+# flash can - check the LD B,n:LD C,n operand bytes feeding each CALL
 # WRTVDP structurally instead (same technique as the delay/loop-count
 # constant checks below).
+# (2026-09-12、実機フィードバック"音は出てるが画面真っ黒のまま 何も
+# 表示されてない"): INIGRP(SCREEN2)がR0のM3ビットを立てたままだと、
+# R1にM2を追加しても実際にはM1=0,M2=1,M3=1という無効な組み合わせに
+# なってしまい表示だけ死ぬ(音は無関係のため鳴り続ける)ことが実機で
+# 判明 - R0を明示的に0(Graphics1/Multicolor共通値)へ書き戻す1行を
+# R1書き込みより前に追加して修正済み。
+check("RUN_SCREEN3_SLIDESHOW setup: VDP R0 = 00h (clears Graphics2's M3 bit that INIGRP left "
+      "set, back to Graphics1/Multicolor's shared value - real-hardware fix for \"音は出てるが "
+      "画面真っ黒のまま\")",
+      out[sym["RUN_SCREEN3_SLIDESHOW"] + 1] == 0x00
+      and out[sym["RUN_SCREEN3_SLIDESHOW"] + 3] == 0)
 check("RUN_SCREEN3_SLIDESHOW setup: VDP R1 = 0EAh (Graphics1's 0E2h + M2 bit for Multicolor, "
       "the tools/screen3_test/screen3_test.asm sequence confirmed working on real hardware)",
-      out[sym["RUN_SCREEN3_SLIDESHOW"] + 1] == 0xEA
-      and out[sym["RUN_SCREEN3_SLIDESHOW"] + 3] == 1)
+      out[sym["RUN_SCREEN3_SLIDESHOW"] + 8] == 0xEA
+      and out[sym["RUN_SCREEN3_SLIDESHOW"] + 10] == 1)
 check("RUN_SCREEN3_SLIDESHOW setup: shared NAME table written to VRAM 1800h (all 6 main "
       "images share byte-identical NAME data, confirmed by screen3_gen.py)",
       bytes(cpu_setup.vram[0x1800:0x1800 + len(SC3_SHARED_NAME_bytes)]) == SC3_SHARED_NAME_bytes)
@@ -724,7 +735,7 @@ for i in range(1, 4):
 _real_out, _real_sym, _ = build_test.assemble()
 check("RUN_SCREEN3_SLIDESHOW's real (unshrunk) main-loop count is 1 "
       "(\"10ループなんて指定してないし\" - corrected from the earlier 10)",
-      _real_out[_real_sym["RUN_SCREEN3_SLIDESHOW"] + 0x23] == 1)
+      _real_out[_real_sym["RUN_SCREEN3_SLIDESHOW"] + 0x2A] == 1)
 check("WAIT_3_FRAMES's real (unshrunk) DE count is 6884 (~50ms @ 3579545Hz / "
       "26 T-states per DEC-DE loop iteration, \"3フレ分\")",
       (_real_out[_real_sym["WAIT_3_FRAMES"] + 1]

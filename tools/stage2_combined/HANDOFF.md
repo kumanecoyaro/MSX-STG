@@ -13434,27 +13434,75 @@ Y段違い+Enemy6速度半減、Stage2自機爆発の自機非表示タイミン
   原因調査が必要。締めの3枚(Epilogue1==Epilogue2という保持フレーム
   込み)・1周のみになったメインループの見え方は次回フィードバック待ち。
 
-## セッション引き継ぎメモ(2026-09-12、Round88完了直後)
+## Round89: 実機フィードバック対応(音は出るが画面真っ黒バグの根本
+原因特定・修正)+テスト実行方針の見直し(2026-09-12、完了済み・実機
+フィードバック待ち)
 
-- **現在の状態**: Round88(実機フィードバック対応: 画面真っ赤バグの
-  回避・ループ回数訂正・締めの3枚を本物のSC3ダンプへ差し替え)まで
-  完了。全回帰: Stage2側`run_all.py` **1525 passed/0 failed**。
-  `title_test.py` **55 passed**。`verify_comb.py`全チェックPASS。
-  Comb ROM再ビルド済み。
+- ユーザー報告: "音は出てるが画面真っ黒のまま 何も表示されてない
+  さっきのテストRom組み込むだけだろ バンクにも空きはあるはずだし
+  ちゃんとやれよ"。
+- **根本原因特定**: `tools/screen3_test/screen3_test.asm`(独立テスト
+  ツール)は`CALL INIT32`(SCREEN1/Graphics1)をベースにしていたため、
+  VDP R0のM3ビット(bit1)は元々0(Graphics1/Multicolor共通の値)の
+  ままで、R1にM2ビット(0EAh)を追加するだけで正しくMulticolorモード
+  (M1=0,M2=1,M3=0)へ切り替わっていた。しかしタイトルバンクの土台は
+  `CALL INIGRP`(SCREEN2/Graphics2)であり、INIGRP自身がR0のM3ビットを
+  1にセットする(`title_test.asm`139行目付近の既存コメント"this is
+  safe to write unconditionally after INIGRP already set R0's own
+  mode bit"が示す通り)。`RUN_SCREEN3_SLIDESHOW`はR1しか書き換えて
+  いなかったため、実際にはM1=0,M2=1,M3=1という本来のMulticolorとは
+  異なる無効なビット組み合わせになっていた - TMS9918の未定義状態で
+  VDP表示だけが死ぬ(PSGは無関係のため音は鳴り続ける)という報告内容と
+  正確に整合する。
+- **修正**: `RUN_SCREEN3_SLIDESHOW`の先頭にR0を明示的に0(Graphics1/
+  Multicolor共通値)へ書き戻す`LD B,0:LD C,0:CALL WRTVDP`を追加。
+  スライドショー終了後はStage1自身が起動直後に`CALL INIT32`で改めて
+  SCREEN1へ戻すため、R0を元(Graphics2用)に戻す必要はない(既存設計
+  通り)。
+- テスト: `title_test.py`にVDP R0=00hの構造チェックを追加(56件、
+  55→56)、R1書き込みのバイトオフセットもR0書き込み分[7バイト]の
+  追加に伴い更新。`tools/bankswitch_poc/verify_comb.py`のメイン
+  ループ回数バイトオフセットも同様に更新(いずれもWRTVDPがBIOS呼び
+  出しのためz80emu.pyでは`vdp_regs`に反映されず、命令バイト列の直接
+  比較で検証)。
+- **テスト実行方針の見直み(ユーザー指摘)**: "なんでスタートいじってる
+  だけなのに一々ステージレストしてんだよ 時間かかって仕方ねえんだよ"
+  - `combined_test.asm`(Stage2本体)を一切変更していないタイトル画面
+  のみの作業で、毎回`tools/stage2_combined/tests/run_all.py`の全回帰
+  (1500件超)を実行していたのは無駄と判明。CLAUDE.mdに恒久ルールとして
+  「`combined_test.asm`自体を変更した場合のみ全回帰を実行、それ以外は
+  影響範囲のテストのみ(タイトル画面なら`title_test.py`+
+  `verify_comb.py`で十分)」を追記した。
+- 全回帰: Stage2側`run_all.py`は今回未実行(上記方針変更に基づく、
+  `combined_test.asm`は無変更のため前回1525 passed/0 failedのまま
+  変化なしと判断)。`title_test.py` **56 passed**(55→56)。
+  `verify_comb.py`全チェックPASS(実行時間約43秒)。Comb ROM再ビルド・
+  標準方針によりComb ROMのみ送付。
+- **保留・実機フィードバック待ち**: R0修正が実機で実際に画面表示を
+  復活させるかは次回フィードバック待ち。
+
+## セッション引き継ぎメモ(2026-09-12、Round89完了直後)
+
+- **現在の状態**: Round89(実機フィードバック対応: 音は出るが画面
+  真っ黒バグの根本原因[VDP R0のM3ビットがGraphics2のまま残っていた]
+  特定・修正+テスト実行方針の見直し)まで完了。`title_test.py`
+  **56 passed**。`verify_comb.py`全チェックPASS。Comb ROM再ビルド済み。
+  Stage2側`run_all.py`はRound89では実行していない(方針変更、
+  `combined_test.asm`無変更のため前回1525 passed/0 failedのまま)。
 - **コミット・push状況**: 本メモ記載時点でコミット・push作業中(この
   メモ自体が同じコミットに含まれる想定)。作業ツリーの内容:
-  `tools/title_screen/title_test.asm`(PLAY_CONFIRM_BEEP_NO_BORDER
-  新設・呼び出し差し替え、メインループ回数10→1)・`tools/title_screen/
-  screen3_epilogue_gen.py`(PNGエンコーダを撤回しSC3読み込みへ全面
-  書き直し)・`tools/title_screen/assets/Epilogue1-3.png`(削除、
-  誤った旧データ)・`tools/screen3_test/assets/Epilogue1-3.SC3`
-  (新規、ユーザー提供の正しいデータ)・`tools/title_screen/
-  title_test.py`(該当チェック更新)・`tools/bankswitch_poc/
-  verify_comb.py`(同様に更新)・`tools/title_screen/CyberS
-  Title.ascii16k.rom`(standalone再ビルド)・`rom/CyberS
-  Comb.ascii16k.rom`(再ビルド)・本HANDOFF.md(記録追記)。
+  `tools/title_screen/title_test.asm`(RUN_SCREEN3_SLIDESHOW冒頭に
+  VDP R0リセット追加)・`tools/title_screen/title_test.py`(R0構造
+  チェック追加、バイトオフセット更新)・`tools/bankswitch_poc/
+  verify_comb.py`(バイトオフセット更新)・`CLAUDE.md`(テスト実行
+  方針の追記)・`tools/title_screen/CyberS Title.ascii16k.rom`
+  (standalone再ビルド)・`rom/CyberS Comb.ascii16k.rom`(再ビルド)・
+  本HANDOFF.md(記録追記)。
 - **次に着手すべきこと**: 特になし(指示なしに着手しない方針)。
   ユーザーからの次の実機フィードバック・新規指示を待つ状態。
 - **新セッションが最初にすべきこと**: このHANDOFF.md末尾(本項目)を
   読んだ上で、CLAUDE.md冒頭の「実機ハードウェア制約」恒久ルール
   (OTIR等のブロックI/O命令禁止)を必ず確認してから作業を再開すること。
+  また同CLAUDE.mdの「テストコマンド・実行方針」に追記済みの
+  「combined_test.asm無変更時は全回帰run_all.pyを実行しない」方針にも
+  従うこと。

@@ -96,6 +96,16 @@
     だけを先に実行して素早く確認し、全回帰は最終確認時にまとめて回す。
   - 個別テストは同ディレクトリの `*_test.py` を直接実行(`python3 xxx_test.py`または
     `pypy3 xxx_test.py`、後者の方が速い)。
+  - **(2026-09-12、ユーザー指摘)** "なんでスタートいじってるだけなのに一々ステージ
+    レストしてんだよ 時間かかって仕方ねえんだよ" - `tools/stage2_combined/
+    combined_test.asm`(Stage2本体)を一切変更していない作業(タイトル画面
+    `tools/title_screen/`のみの変更等)では、**`tools/stage2_combined/tests/
+    run_all.py`の全回帰(1500件超、PyPy無しだと数分かかる)を毎回実行しないこと**。
+    変更が影響する範囲のテストのみ実行する(タイトル画面のみの変更なら
+    `tools/title_screen/title_test.py`+`tools/bankswitch_poc/verify_comb.py`で
+    十分、Stage1[`src/CYBER SHMUP.asm`]のみの変更なら対応する`tools/verify_*.py`+
+    `verify_comb.py`で十分)。`combined_test.asm`自体を変更した場合のみ
+    `run_all.py`の全回帰を実行すること。
 
 ### 高速化の経緯(2026-08-25、629 passed/0 failedを維持したまま約34倍)
 

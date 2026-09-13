@@ -908,7 +908,23 @@ BGMT_UC_ATTEN_OK:
 ; BEEP_NO_BORDER(PSGトーンのみ)を使う。
 ; (2026-09-12、実機フィードバック"10ループなんて指定してないし"):
 ; メインループ回数を当初の10から1(1周のみ、繰り返し無し)へ訂正。
+; (2026-09-12、実機フィードバック"音は出てるが画面真っ黒のまま 何も
+; 表示されてない"): tools/screen3_test/screen3_test.asmの独立テスト
+; ツールはCALL INIT32(SCREEN1)をベースにしていたため、R0のM3ビット
+; (bit1)は元々0(Graphics1/Multicolor共通の値)のままで、R1にM2ビット
+; (0EAh)を追加するだけでMulticolorモード(M1=0,M2=1,M3=0)へ正しく
+; 切り替わっていた。しかしこのタイトルバンクの土台はCALL INIGRP
+; (SCREEN2/Graphics2)であり、INIGRP自身がR0のM3ビットを1にセット
+; している(139行目付近の既存コメント"this is safe to write
+; unconditionally after INIGRP already set R0's own mode bit"参照)。
+; RUN_SCREEN3_SLIDESHOWはR1しか書き換えていなかったため、実際には
+; M1=0,M2=1,M3=1という本来のMulticolorとは異なるビット組み合わせに
+; なっていた(TMS9918の未定義の組み合わせで、実機で画面が真っ黒に
+; なる=音は鳴るがVDP表示だけ死ぬ、という報告内容と整合する)。
+; R0を明示的に0(M3=0、Graphics1/Multicolor共通値)へ書き戻すことで
+; 解消する。
 RUN_SCREEN3_SLIDESHOW:
+    LD B,00h : LD C,0 : CALL WRTVDP
     ; SCREEN1(Graphics1)からMulticolor(SCREEN3)への切替はVDP R1のM2
     ; ビット(bit3)を追加で立てるだけ - tools/screen3_test/screen3_
     ; test.asmで実機確認済みの0EAh(既存の0E2hへ08hを追加)。
