@@ -176,26 +176,38 @@ EBUZ_SPR_SHADOW EQU 0F350h   ; 12 bytes (F350h-F35Bh), STACKTOPまで十分な�
 ; 発射した側の翼帯(A,B,C の3セル)を1セル右へ「反動」表示し、1ティック
 ; 後に元位置へ戻す。continuous-fireはEBUZ_TOPBOTTOM_ACTIVE=1の間だけ
 ; EBUZ_TICKから呼ばれる(state1の間・state2形成前は従来通り一切
-; 発火しない)。
+; 発火しない)。設計はEBUZ_FIRE_SIDE(次に撃つ側)+EBUZ_FIRE_COUNTDOWN
+; (次の発射までの残りティック数)という単一の共有ターン制御による、
+; 文字通りの「交互に・2フレ交代」("2フレ交代"=カウントダウンの初期値)。
 ;
 ; (2026-09-13追記その8、実機フィードバック対応: "撃った弾戻して交互に
 ; 発射してどうすんだバカ 撃った弾は画面外に消えるまで戻さねえ"):
-; その7時点の実装は「2ティックごとに無条件でその側のスロットを原点へ
-; 上書き」する設計で、飛行中の弾を強制的に呼び戻してしまう重大な誤り
-; だった。修正: 各スロットは「非表示(=画面外に消えた)になったら
-; 即座に再発射」という独立した規則のみに従う(EBUZ_UPDATE_BULLETに
-; よる通常の移動・非表示化ロジックには一切手を加えない - 生きている
-; 弾を強制リセットする経路を完全に排除)。"2フレ交代"は初弾同士の
-; 位相差(上→2ティック後に下)としてのみ使う - EBUZ_BOTTOM_ARM_
-; COUNTDOWNで下側の初回発射だけを2ティック遅らせ、以後は上下とも
-; 「非表示になったら即再発射」という同一周期(=画面横断に要する
-; ティック数)で回り続けるため、この初期位相差は永続的に保たれる
-; (強制リセットが無いため、両者が偶然重なる心配もない)。
-EBUZ_TOPBOTTOM_ACTIVE       EQU 0F35Ch  ; 1 byte: 0=まだ非活性、1=継続発射中
-EBUZ_BOTTOM_ARM_COUNTDOWN   EQU 0F35Dh  ; 1 byte: 下側の初回発射までの残りティック数(1回限りの位相差、以降は未使用)
-EBUZ_TOP_RECOIL_COUNTDOWN   EQU 0F35Eh  ; 1 byte: 上側の反動が元に戻るまでの残りティック数(0=反動なし)
-EBUZ_BOTTOM_RECOIL_COUNTDOWN EQU 0F35Fh ; 1 byte: 下側の反動が元に戻るまでの残りティック数(0=反動なし)
-EBUZ_FIRE_INTERVAL     EQU 2       ; "2フレ交代"(初弾同士の位相差)
+; その7時点の実装はカウントダウンが0になった瞬間、その側のスロットが
+; まだ画面上に生きていても無条件で原点へ上書きしてしまう誤りだった。
+; **修正はこの1点のみ**(ターン制御自体の構造は変更しない): カウント
+; ダウンが0になった時、対象スロットがまだ非表示(SPR_HIDE_Y)でなければ
+; まだ発射せず、カウントダウンを1に戻して次のティックで再チェックする
+; だけ(側の交代=EBUZ_FIRE_SIDEの反転もまだ行わない)。対象スロットが
+; 既に非表示(=画面外に消えた)なら、従来通り原点へ再発射し反動を表示、
+; 側を交代してカウントダウンをEBUZ_FIRE_INTERVALへ戻す。
+;
+; (2026-09-13、ユーザー叱責を受けての再設計方針の訂正: "一つ前は
+; ウェイトと弾が戻るのを除けばシーケンス自体は正しかったんだよ"
+; "お前の解釈は毎度毎度 指示を無視して勝手に手順変えるから まともに
+; 動かねんだろうが"): 直前のRound(122)ではこの「共有ターン変数」設計
+; 自体を「各スロット完全独立([下側だけ初回に1回限りの位相差]、以後は
+; 上下とも自分の非表示状態だけを見て再発射)」という別の構造へ勝手に
+; 作り替えていたが、これは指示にない独自解釈だった。ユーザーの言う
+; 「シーケンス自体は正しかった」はこの共有ターン制御(EBUZ_FIRE_SIDE/
+; EBUZ_FIRE_COUNTDOWNによる文字通りの「交互に・2フレ交代」)を指すと
+; 判断し、Round121の構造へ戻した上で、実際に指摘された不具合(生きて
+; いる弾の強制リセット)だけをピンポイントで修正する最小修正へ変更した。
+EBUZ_TOPBOTTOM_ACTIVE  EQU 0F35Ch  ; 1 byte: 0=まだ非活性、1=継続発射中
+EBUZ_FIRE_SIDE         EQU 0F35Dh  ; 1 byte: 次に撃つ側(0=上/1=下)
+EBUZ_FIRE_COUNTDOWN    EQU 0F35Eh  ; 1 byte: 次の発射(判定)までの残りティック数
+EBUZ_RECOIL_SIDE       EQU 0F35Fh  ; 1 byte: 現在反動表示中の側(0/1)
+EBUZ_RECOIL_COUNTDOWN  EQU 0F360h  ; 1 byte: 反動が元に戻るまでの残りティック数(0=反動なし)
+EBUZ_FIRE_INTERVAL     EQU 2       ; "2フレ交代"
 EBUZ_RECOIL_DURATION   EQU 1       ; 反動表示の持続ティック数(打ったら次のティックで元位置)
 
 ; (2026-09-13追記その8、実機フィードバック対応: "しかもお前ホールド
@@ -206,7 +218,7 @@ EBUZ_RECOIL_DURATION   EQU 1       ; 反動表示の持続ティック数(打っ
 ; から実際に飛ばし始める」。EBUZ_BULLET0_HOLDING=1の間、EBUZ_TICKは
 ; スロット0(bullet0)のEBUZ_UPDATE_BULLET呼び出しをスキップする(表示は
 ; されたまま、移動だけ止める)。
-EBUZ_BULLET0_HOLDING   EQU 0F360h  ; 1 byte: 1=ホールド中(表示のみ、移動しない)、0=通常飛行中
+EBUZ_BULLET0_HOLDING   EQU 0F361h  ; 1 byte: 1=ホールド中(表示のみ、移動しない)、0=通常飛行中
 
 ; (2026-09-13追記その3、実機フィードバック対応、最重要の設計変更):
 ; "だから違うって Ebuz1の時16x16のスプライトの弾を発射 その後Ebuz2に
@@ -293,61 +305,74 @@ EBUZ_TICK_SKIP_B0:
     CALL EBUZ_FRAME_WAIT
     RET
 
-; 上下弾の継続発射処理(2026-09-13追記その7→その8で全面書き直し)。
-; EBUZ_TOPBOTTOM_ACTIVE=1の間、EBUZ_TICKから毎回呼ばれる。
-; 「撃った弾は画面外に消えるまで戻さねえ」を徹底するため、各スロットは
-; 完全に独立: (1)それぞれの反動表示を1ティック後に自動で元へ戻す。
-; (2)上側(スロット1)は「非表示(=画面外に消えた)なら即座に原点へ
-; 再発射」するだけ - 初弾から常にこの規則のみ。(3)下側(スロット2)も
-; 同じ規則だが、"2フレ交代"(初弾同士の位相差)を再現するため
-; EBUZ_BOTTOM_ARM_COUNTDOWNが尽きるまでは発射しない(1回限りの遅延、
-; 以後は上側と全く同じ「非表示なら即再発射」規則のみで動く - 周期が
-; 同じなので位相差は永続的に保たれる)。
+; 上下弾の継続発射処理(2026-09-13、Round121の共有ターン制御方式へ復元+
+; 最小修正)。EBUZ_TOPBOTTOM_ACTIVE=1の間、EBUZ_TICKから毎回呼ばれる。
+; (1)反動表示中なら1ティック後に元位置へ戻す。(2)発射カウントダウンが
+; 0になったら、次に撃つ側(EBUZ_FIRE_SIDE)のスロットが既に非表示
+; (=画面外に消えた)かを確認する - 生きている弾を強制リセットしない
+; ための唯一の追加チェック(Round122で発見された不具合の修正点)。まだ
+; 生きているならカウントダウンを1へ戻して次のティックで再チェックする
+; だけで側は交代しない。既に消えていれば、原点から再発射(スロット1=
+; 上/スロット2=下)し、その側の翼帯に反動を表示、側を反転しカウント
+; ダウンをEBUZ_FIRE_INTERVALへ戻す。
 EBUZ_UPDATE_TOPBOTTOM_FIRE:
-    ; --- 上側の反動を1ティック後に自動で元へ戻す ---
-    LD A,(EBUZ_TOP_RECOIL_COUNTDOWN)
+    ; --- 反動表示の自動解除 ---
+    LD A,(EBUZ_RECOIL_COUNTDOWN)
     OR A
-    JR Z,EUTF_TOP_RECOIL_DONE
+    JR Z,EUTF_SKIP_REVERT
     DEC A
-    LD (EBUZ_TOP_RECOIL_COUNTDOWN),A
-    JR NZ,EUTF_TOP_RECOIL_DONE
+    LD (EBUZ_RECOIL_COUNTDOWN),A
+    JR NZ,EUTF_SKIP_REVERT
+    LD A,(EBUZ_RECOIL_SIDE)
+    OR A
+    JR NZ,EUTF_REVERT_BOTTOM
     LD HL,EBUZ_ROW_0ABC_REST : LD DE,01838h : LD BC,5 : CALL LDIRVM
-EUTF_TOP_RECOIL_DONE:
-    ; --- 下側の反動を1ティック後に自動で元へ戻す ---
-    LD A,(EBUZ_BOTTOM_RECOIL_COUNTDOWN)
-    OR A
-    JR Z,EUTF_BOTTOM_RECOIL_DONE
-    DEC A
-    LD (EBUZ_BOTTOM_RECOIL_COUNTDOWN),A
-    JR NZ,EUTF_BOTTOM_RECOIL_DONE
+    JR EUTF_SKIP_REVERT
+EUTF_REVERT_BOTTOM:
     LD HL,EBUZ_ROW_0ABC_REST : LD DE,01898h : LD BC,5 : CALL LDIRVM
-EUTF_BOTTOM_RECOIL_DONE:
-    ; --- 上側: 非表示なら即座に原点(X=192)へ再発射(生きている弾には ---
-    ; --- 一切触れない - EBUZ_UPDATE_BULLETが既に移動・非表示化を担当) ---
-    LD A,(EBUZ_SPR_SHADOW+4)        ; スロット1のY
+EUTF_SKIP_REVERT:
+    ; --- 次の発射(判定)までのカウントダウン ---
+    LD A,(EBUZ_FIRE_COUNTDOWN)
+    DEC A
+    LD (EBUZ_FIRE_COUNTDOWN),A
+    RET NZ
+    ; --- カウントダウン0: 次に撃つ側のスロットが既に非表示か確認 ---
+    ; (生きている弾は強制リセットしない - 唯一の追加チェック)
+    LD A,(EBUZ_FIRE_SIDE)
+    OR A
+    JR NZ,EUTF_CHECK_BOTTOM_SLOT
+    LD A,(EBUZ_SPR_SHADOW+4)        ; スロット1(上)のY
+    JR EUTF_CHECK_SLOT_Y
+EUTF_CHECK_BOTTOM_SLOT:
+    LD A,(EBUZ_SPR_SHADOW+8)        ; スロット2(下)のY
+EUTF_CHECK_SLOT_Y:
     CP SPR_HIDE_Y
-    JR NZ,EUTF_TOP_ALIVE
+    JR Z,EUTF_DO_FIRE
+    ; まだ生きている: 側は交代せず、次のティックで再チェック
+    LD A,1
+    LD (EBUZ_FIRE_COUNTDOWN),A
+    RET
+EUTF_DO_FIRE:
+    LD A,EBUZ_FIRE_INTERVAL
+    LD (EBUZ_FIRE_COUNTDOWN),A
+    ; --- 発射(側に応じてスロット1/2を原点へ再セット+反動表示) ---
+    LD A,(EBUZ_FIRE_SIDE)
+    OR A
+    JR NZ,EUTF_FIRE_BOTTOM
     LD HL,EBUZ_SPR_BULLET23 : LD DE,EBUZ_SPR_SHADOW+4 : LD BC,4 : LDIR
     LD HL,EBUZ_ROW_0ABC_RECOIL : LD DE,01838h : LD BC,5 : CALL LDIRVM
-    LD A,EBUZ_RECOIL_DURATION
-    LD (EBUZ_TOP_RECOIL_COUNTDOWN),A
-EUTF_TOP_ALIVE:
-    ; --- 下側: 初回だけEBUZ_FIRE_INTERVAL分遅延("2フレ交代"の位相差)、 ---
-    ; --- 以後は上側と同じ「非表示なら即再発射」規則のみ ---
-    LD A,(EBUZ_BOTTOM_ARM_COUNTDOWN)
-    OR A
-    JR Z,EUTF_BOTTOM_CHECK
-    DEC A
-    LD (EBUZ_BOTTOM_ARM_COUNTDOWN),A
-    RET
-EUTF_BOTTOM_CHECK:
-    LD A,(EBUZ_SPR_SHADOW+8)        ; スロット2のY
-    CP SPR_HIDE_Y
-    RET NZ
+    JR EUTF_FIRE_DONE
+EUTF_FIRE_BOTTOM:
     LD HL,EBUZ_SPR_BULLET23+4 : LD DE,EBUZ_SPR_SHADOW+8 : LD BC,4 : LDIR
     LD HL,EBUZ_ROW_0ABC_RECOIL : LD DE,01898h : LD BC,5 : CALL LDIRVM
+EUTF_FIRE_DONE:
+    LD A,(EBUZ_FIRE_SIDE)
+    LD (EBUZ_RECOIL_SIDE),A
     LD A,EBUZ_RECOIL_DURATION
-    LD (EBUZ_BOTTOM_RECOIL_COUNTDOWN),A
+    LD (EBUZ_RECOIL_COUNTDOWN),A
+    LD A,(EBUZ_FIRE_SIDE)
+    XOR 1
+    LD (EBUZ_FIRE_SIDE),A
     RET
 
 ; B=待ちたいティック数(1-255)。EBUZ_TICKをB回呼ぶだけの「弾の移動を
@@ -398,11 +423,15 @@ INIT:
     LD HL,EBUZ_SPR_SHADOW : LD DE,SPRATR : LD BC,12 : CALL LDIRVM
     LD HL,EBUZ_SPR_TERM : LD DE,SPRATR+12 : LD BC,4 : CALL LDIRVM
 
-    ; 上下弾の継続発射状態を非活性で初期化(2026-09-13追記その7/その8)
+    ; 上下弾の継続発射状態を非活性で初期化(2026-09-13追記その7/その8、
+    ; RAM初期化漏れ防止のためEBUZ_FIRE_SIDE/EBUZ_RECOIL_SIDEも含め
+    ; 全ワークエリアを明示的にゼロクリアする)
     XOR A
     LD (EBUZ_TOPBOTTOM_ACTIVE),A
-    LD (EBUZ_TOP_RECOIL_COUNTDOWN),A
-    LD (EBUZ_BOTTOM_RECOIL_COUNTDOWN),A
+    LD (EBUZ_FIRE_SIDE),A
+    LD (EBUZ_FIRE_COUNTDOWN),A
+    LD (EBUZ_RECOIL_SIDE),A
+    LD (EBUZ_RECOIL_COUNTDOWN),A
     LD (EBUZ_BULLET0_HOLDING),A
 
     ; --- state1: A,B,C,D を row2/row3 の col24-27 へ(2行とも同一) ---
@@ -477,14 +506,15 @@ EBUZ_STATE2_BG_DONE:
     LD B,29
     CALL EBUZ_WAIT_TICKS
 
-    ; --- "上下弾は交互に撃ち続けろ 2フレ交代"(2026-09-13追記その7/その8): ---
-    ; 継続発射モードを起動。上側(スロット1)は既にSPR_HIDE_Yのままなので
-    ; 次のEBUZ_TICKで即座に発射される。下側(スロット2)は"2フレ交代"の
-    ; 位相差としてEBUZ_FIRE_INTERVAL(2)ティックだけ発射を遅らせる
-    ; (1回限りの初期位相差、以後は上側と同じ「非表示なら即再発射」
-    ; 規則のみで動く)。
-    LD A,EBUZ_FIRE_INTERVAL
-    LD (EBUZ_BOTTOM_ARM_COUNTDOWN),A
+    ; --- "上下弾は交互に撃ち続けろ 2フレ交代"(2026-09-13、Round121の ---
+    ; 共有ターン制御方式へ復元): 継続発射モードを起動。初弾(上側)は
+    ; 次のEBUZ_TICKで即座に発射されるようFIRE_COUNTDOWN=1とする
+    ; (以後はEBUZ_FIRE_INTERVALで2ティックおきに交互発射、ただし
+    ; 生きている弾がある間は待つ)。
+    XOR A
+    LD (EBUZ_FIRE_SIDE),A          ; 0=まず上側から
+    LD A,1
+    LD (EBUZ_FIRE_COUNTDOWN),A     ; 次のティックで即発射判定
     LD A,1
     LD (EBUZ_TOPBOTTOM_ACTIVE),A
 EBUZ_STATE2_DONE:

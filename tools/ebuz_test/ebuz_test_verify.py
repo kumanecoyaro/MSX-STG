@@ -323,20 +323,26 @@ check(f"EBUZ_FIRE_INTERVAL is exactly 2 (\"2フレ交代\") and "
 
 
 def simulate_topbottom(n_ticks):
-    """Python参照実装(2026-09-13追記その8で全面書き直し): "撃った弾は
-    画面外に消えるまで戻さねえ"を反映した新設計を、EBUZ_UPDATE_
-    TOPBOTTOM_FIREの実行順序(上側反動リバート→下側反動リバート→
-    上側「非表示なら即再発射」→下側「初回だけ位相差、以後は同じ規則」
-    の順)通りに1ティックずつシミュレートする。生きている弾(非表示に
-    なっていない弾)には一切触れない - リセットは「非表示になった
-    その瞬間」にのみ発生する。戻り値は各ティック後の(bullet1_x,
+    """Python参照実装(2026-09-13、Round121の共有ターン制御方式へ復元+
+    最小修正 - "一つ前はウェイトと弾が戻るのを除けばシーケンス自体は
+    正しかった"というユーザー指摘を受け、Round122で勝手に作り替えていた
+    「各スロット完全独立」設計を撤回し、EBUZ_FIRE_SIDE(次に撃つ側)+
+    EBUZ_FIRE_COUNTDOWN(次の発射判定までの残りティック数)という単一の
+    共有ターン変数による、文字通りの「交互に・2フレ交代」へ戻した)。
+    EBUZ_UPDATE_TOPBOTTOM_FIREの実行順序(反動リバート→発射カウントダウン
+    減算→0なら対象スロットが非表示か確認→非表示なら発射+反動表示+側を
+    反転、まだ生きているならカウントダウンを1に戻すだけで側は交代しない)
+    通りに1ティックずつシミュレートする。生きている弾には一切触れない -
+    リセットは「対象スロットが非表示になっている状態でカウントダウンが
+    0になった」時にのみ発生する。戻り値は各ティック後の(bullet1_x,
     bullet1_hidden, bullet2_x, bullet2_hidden, row1_recoiled,
     row4_recoiled)のリスト。"""
     b1_x, b1_hidden = None, True
     b2_x, b2_hidden = None, True
-    top_recoil_cd = 0
-    bottom_recoil_cd = 0
-    bottom_arm = FIRE_INTERVAL
+    recoil_side = 0
+    recoil_cd = 0
+    fire_side = 0
+    fire_cd = 1
     history = []
     for _ in range(n_ticks):
         # EBUZ_UPDATE_BULLET(スロット1,2) - 生きている弾だけ移動
@@ -350,21 +356,27 @@ def simulate_topbottom(n_ticks):
                 b2_hidden = True
             else:
                 b2_x -= SPEED
-        # EBUZ_UPDATE_TOPBOTTOM_FIRE
-        if top_recoil_cd > 0:
-            top_recoil_cd -= 1
-        if bottom_recoil_cd > 0:
-            bottom_recoil_cd -= 1
-        if b1_hidden:
-            b1_x, b1_hidden = BULLET23_X, False
-            top_recoil_cd = RECOIL_DURATION
-        if bottom_arm > 0:
-            bottom_arm -= 1
-        elif b2_hidden:
-            b2_x, b2_hidden = BULLET23_X, False
-            bottom_recoil_cd = RECOIL_DURATION
-        row1_recoiled = top_recoil_cd > 0
-        row4_recoiled = bottom_recoil_cd > 0
+        # EBUZ_UPDATE_TOPBOTTOM_FIRE: 反動リバート
+        if recoil_cd > 0:
+            recoil_cd -= 1
+        # EBUZ_UPDATE_TOPBOTTOM_FIRE: 発射カウントダウン
+        fire_cd -= 1
+        if fire_cd == 0:
+            target_hidden = b1_hidden if fire_side == 0 else b2_hidden
+            if target_hidden:
+                if fire_side == 0:
+                    b1_x, b1_hidden = BULLET23_X, False
+                else:
+                    b2_x, b2_hidden = BULLET23_X, False
+                recoil_side = fire_side
+                recoil_cd = RECOIL_DURATION
+                fire_side ^= 1
+                fire_cd = FIRE_INTERVAL
+            else:
+                # まだ生きている: 側は交代せず、次のティックで再チェック
+                fire_cd = 1
+        row1_recoiled = recoil_cd > 0 and recoil_side == 0
+        row4_recoiled = recoil_cd > 0 and recoil_side == 1
         history.append((b1_x, b1_hidden, b2_x, b2_hidden, row1_recoiled, row4_recoiled))
     return history
 
