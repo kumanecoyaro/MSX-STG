@@ -14866,3 +14866,58 @@ NOP抜け)(2026-09-13、完了済み・実機フィードバック待ち)
 - ボスの偏向弾(HORMING/HORMING_BG)を撃ち落とした際の得点
   (`SCORE_PER_KILL`=100点のまま)は今回のユーザー指示に含まれて
   いなかったため意図的に無変更 - もし何か指示があれば別途対応。
+
+## Round111: Stage1スケジュールをSchedule_3.json(501件、2026-09-13
+再アップロード版)へ差し替え+エネミー6速度を全速に復帰(2026-09-13、
+完了済み・実機フィードバック待ち)
+
+- ユーザー指示: "ステージ1スケジュール差し替え で、エネミー6の速度を
+  全速に戻して"(添付Schedule_3.json、501件 - ファイル名はRound78の
+  Schedule_3.json[549件]と同名だが中身は別物、ユーザーが同じ汎用名で
+  再エクスポートしたものと思われる)。
+- **スケジュール差し替え**: Round105/109と同じPythonスクリプト機械
+  生成手法(`SPAWN_THRESHOLDS`等5テーブル・`SSC_FIRE`のCPディスパッチ
+  チェーン・`SSC_BUSY_E2`・終了判定リテラルを新JSONから丸ごと再生成)。
+  `enemy6`223/`simple`171/`enemy5`66/`enemy4`26/`enemy2`11/
+  `enemy3_wave`3/`boss`1。501件(<512)のため、Round109で576件のために
+  用意した3ブロック(H=0/1/2)構成から2ブロック(H=0/1)構成へ戻る -
+  Round109で導入した「Nエントリから必要なブロック数を自動計算する」
+  設計のおかげで、ディスパッチヘッダ(`CP 0:JP Z,BLK0`以降のチェーン)
+  とブロック本数を数え直すだけで対応できた。enemy2の11件のインデックス
+  値は今回も偶然、直前のSchedule_2.json(576件)と完全一致。
+  `SPAWN_SCHEDULE_CHECK`の終了判定リテラルを576→501へ更新。
+  Round109で導入した「ブロックごとに最頻出ハンドラをデフォルトの
+  無条件フォールスルーにする」ROM節約策もそのまま踏襲、ROM残り
+  margin(2368byte)はRound109時点(1856byte)よりむしろ改善(501件は
+  576件より少ないため素直に縮小)。
+- **エネミー6速度復帰**: `ENEMY6_STEP_FRAMES`をRound76の2(半速)から
+  1(全速、元の値)へ戻すのみ。
+- 自然AIシミュレーション(プレイヤー操作なし)でGAME_TICKを長時間
+  進めた結果、SPAWN_NEXT_INDEXが501全件を消化し`BOSS_STATE`が非0に
+  なる(ボス実スポーン)ことをGAME_TICK1100時点で確認(Round109/78と
+  同型の「1game-tickにつき最大1件しか発射しないディスパッチ設計」に
+  よる正常な累積遅延)。Round109で新設した64スロット全数の異常検出
+  シミュレータ(>10pxの単フレームXジャンプ・X>=245→X<50の左ラップ)
+  も同時に再実行し、ボススポーンまでの全期間を通じて異常0件を確認
+  - `ENEMY3_CENTERX_TABLE`のRAM衝突修正(Round109)が新スケジュールでも
+  引き続き有効であることの追加確認になっている。
+- `combined_test.asm`は無変更のため`tools/stage2_combined/tests/
+  run_all.py`の全回帰は未実施。既存のStage1検証群(`verify_enemy_
+  bullets.py` 60/`verify_player_damage.py` 60/`verify_stage1_bgm.py`
+  80/`verify_stage1_mission_screens.py` 87/`verify_spawn_schedule_
+  restart.py` 12/`verify_enemy6_durability.py` 19/`verify_explosion_
+  anim.py` 28/`verify_boss_dfl_clear.py` 10/`verify_boss_pod_bullet_
+  aim.py` 17/`verify_stage1_boss_score.py` 7)全て無退行で再PASS
+  (`ENEMY6_STEP_FRAMES`をハードコードしているテストは無し、確認済み)。
+  Comb ROM再ビルド・`verify_comb.py`全チェックPASSの上、標準方針に
+  よりComb ROMのみ送付。
+- 変更ファイル: `src/CYBER SHMUP.asm`(`SPAWN_THRESHOLDS`等5テーブル・
+  `SSC_FIRE`ディスパッチ[2ブロック構成へ]・`SSC_BUSY_E2`・終了判定
+  リテラルをSchedule_3.json[501件]から丸ごと再生成、`ENEMY6_STEP_
+  FRAMES`2→1)、Comb ROM再ビルド。
+
+セッション引き継ぎメモ(2026-09-13、Round111完了直後):
+- 実機での確認事項: 501件スケジュールの実プレイでのペーシング
+  (累積遅延によりボスが理論値[tick992]よりかなり遅れて[tick1100
+  相当]出現する点も含む)・エネミー6の全速復帰後の見た目、いずれも
+  次回フィードバック待ち。
