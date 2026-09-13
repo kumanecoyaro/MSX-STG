@@ -228,7 +228,7 @@ print("title's own BGM RAM copy of GAME_OVER (Stage1 game-over jingle) verified 
 # press trampolines」テストと同じ手法(real ROM自体は無変更、この
 # テスト用のtitle_bank0コピーだけディレイを短縮するパッチ)をここでも
 # 適用する。
-_RSS_MAIN_LOOP_COUNT_ADDR = tsym["RUN_SCREEN3_SLIDESHOW"] + 0x5c  # "LD B,3" operand (round97 shifted by the name-table transfer loop; +3 further per round99follow-up's SC3_CT_PHASE init)
+_RSS_MAIN_LOOP_COUNT_ADDR = tsym["RUN_SCREEN3_SLIDESHOW"] + 0x64  # "LD B,3" operand (round97 shifted by the name-table transfer loop; +3 by round99follow-up's SC3_CT_PHASE init; +8 by the skip-to-Mission1 SP-save prologue)
 _WAIT_1F_DE_ADDR = tsym["WAIT_1_FRAME_UNIT"] + 1                   # "LD DE,2295" operand (2 bytes)
 assert mem.banksA[0][_RSS_MAIN_LOOP_COUNT_ADDR - 0x4000] == 3
 assert (mem.banksA[0][_WAIT_1F_DE_ADDR - 0x4000]

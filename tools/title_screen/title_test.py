@@ -494,7 +494,7 @@ switch_log_at_wait = list(mem.switch_log)  # round40: exclude INIT_BGM's own 2 s
 # 制約)、このステップ実行中にSC3_CONFIRM_TICKが呼ばれることはない -
 # HTIMI_HOOKの設置自体・SC3_CONFIRM_TICK自身の動作は別途、直接呼び
 # 出しによる専用テストで検証する(下記)。
-_RSS_MAIN_LOOP_COUNT_ADDR = sym["RUN_SCREEN3_SLIDESHOW"] + 0x5c  # "LD B,3" operand (round97 shifted by the name-table transfer loop; +3 further per round99follow-up's SC3_CT_PHASE init)
+_RSS_MAIN_LOOP_COUNT_ADDR = sym["RUN_SCREEN3_SLIDESHOW"] + 0x64  # "LD B,3" operand (round97 shifted by the name-table transfer loop; +3 by round99follow-up's SC3_CT_PHASE init; +8 by the skip-to-Mission1 SP-save prologue)
 _WAIT_1F_DE_ADDR = sym["WAIT_1_FRAME_UNIT"] + 1                   # "LD DE,2295" operand (2 bytes)
 assert mem.banksA[0][_RSS_MAIN_LOOP_COUNT_ADDR - 0x4000] == 3
 assert (mem.banksA[0][_WAIT_1F_DE_ADDR - 0x4000]
@@ -533,6 +533,42 @@ check("trampoline wrote window B (7000h)=3 then window A (6000h)=2 - same 2-hop 
       "Stage1->Stage2's own trampoline in build_full_rom.py, and the real bank indices "
       "verify_comb.py's own end-to-end test confirms Stage1 actually lives at",
       mem.switch_log[len(switch_log_at_wait):] == [("B", 3), ("A", 2)])
+
+# ---- (2026-09-13、"ではアニメ中にボタン押されたらMission 1表示に
+# スキップ"、続けて"ちゃんと音も止めろよ"): 上のテストが確認したのは
+# 「押しっぱなしのままアニメ全体を完走した」経路のみ。ここでは実際に
+# ボタンを一度離し(デバウンス武装)、アニメの途中(2枚目描画)で再度
+# 押すという現実的なシナリオを本物のstep実行で通し、(1)完走時より
+# はるかに少ないステップ数でトランポリンに到達すること(=本当に残りの
+# 画像/待ちを短絡している、たまたま完走しただけではない)、(2)着地
+# した時点でPSGチャンネルB(R9)がミュート済み・ボーダーが黒に戻って
+# いること(ユーザーの「ちゃんと音も止めろよ」に直接応える回帰ガード)
+# を検証する。
+cpu_skip2, mem_skip2 = fresh_cpu()
+run_to_wait(cpu_skip2)
+mem_skip2.banksA[0][_WAIT_1F_DE_ADDR - 0x4000] = 5
+mem_skip2.banksA[0][_WAIT_1F_DE_ADDR + 1 - 0x4000] = 0
+cpu_skip2.sim_trig_a = True
+show_img2_addr = sym["SHOW_SC3_IMG2"]
+reached_img2 = False
+steps_skip = 0
+while cpu_skip2.pc != 0x4010 and steps_skip < 10_000_000:
+    if not reached_img2 and cpu_skip2.pc == show_img2_addr:
+        reached_img2 = True
+        cpu_skip2.sim_trig_a = False  # release the initial start-button press
+    if reached_img2 and not cpu_skip2.sim_trig_a and cpu_skip2.mem[sym["SC3_SKIP_ARMED"]] == 1:
+        cpu_skip2.sim_trig_a = True  # press again now that the debounce is armed
+    cpu_skip2.step()
+    steps_skip += 1
+check("full flow: releasing then re-pressing the button partway through the slideshow reaches "
+      "Stage1's INIT in far fewer steps than completing the full 3-loop+closing animation would "
+      "need, confirming the skip genuinely short-circuits the remaining images/waits rather than "
+      "coincidentally finishing the animation anyway",
+      cpu_skip2.pc == 0x4010 and steps_skip < steps)
+check("full flow: by the time the trampoline lands in Stage1's INIT via the skip path, PSG "
+      "channel B (R9) is muted and the border is back to black - matching the normal end-of-"
+      "animation cleanup exactly (\"ちゃんと音も止めろよ\")",
+      cpu_skip2.psg_regs.get(9) == 0 and cpu_skip2.vdp_regs.get(7) == 1)
 
 
 # ---- Round69 follow-up("タイトル音はそれで良い ただしオクターブ下げて
@@ -691,18 +727,21 @@ check("RUN_SCREEN3_SLIDESHOW setup reaches SHOW_SC3_IMG1 within budget",
 # モード切替直後(既に表示期間中)に実行されるため、round97と同じ手動
 # ループ(99hは待ち不要・98hは29T厳密ウェイト)+DI/EI保護へ書き換え
 # 済み。アセンブル結果から直接構造検証する。
+# (2026-09-13、"アニメ中にボタン押されたらMission 1表示にスキップ"):
+# RUN_SCREEN3_SLIDESHOWの冒頭にSP退避+SC3_SKIP_ARMEDリセット(8byte)が
+# 追加されたため、以下の全オフセットは+8シフトしている。
 _rss_base = sym["RUN_SCREEN3_SLIDESHOW"]
 check("RUN_SCREEN3_SLIDESHOW's name-table transfer starts with DI (0F3h) right after the "
       "VDP mode WRTVDP calls",
-      out[_rss_base + 28] == 0xF3)
+      out[_rss_base + 36] == 0xF3)
 check("RUN_SCREEN3_SLIDESHOW's name-table transfer's per-byte VRAM-data-port (98h) write is "
       "immediately followed by the exact 29T recovery sequence (PUSH BC:POP BC:NOP:NOP), same "
       "as FLUSH_SHADOW_TO_VRAM",
-      [out[_rss_base + 45], out[_rss_base + 46], out[_rss_base + 47], out[_rss_base + 48],
-       out[_rss_base + 49], out[_rss_base + 50]] == [0xD3, 0x98, 0xC5, 0xC1, 0x00, 0x00])
+      [out[_rss_base + 53], out[_rss_base + 54], out[_rss_base + 55], out[_rss_base + 56],
+       out[_rss_base + 57], out[_rss_base + 58]] == [0xD3, 0x98, 0xC5, 0xC1, 0x00, 0x00])
 check("RUN_SCREEN3_SLIDESHOW's name-table transfer re-enables interrupts (0FBh) right after "
       "the loop, before moving on to the sprite-stop WRTVRM call",
-      out[_rss_base + 56] == 0xFB)
+      out[_rss_base + 64] == 0xFB)
 # WRTVDP is a BIOS call (z80emu.py stubs it as a pure no-op, "register
 # state not tracked" per its own comment) so it can't be observed via
 # vdp_regs like the raw port OUT writes in PLAY_CONFIRM_BEEP's border
@@ -715,11 +754,14 @@ check("RUN_SCREEN3_SLIDESHOW's name-table transfer re-enables interrupts (0FBh) 
 # なってしまい表示だけ死ぬ(音は無関係のため鳴り続ける)ことが実機で
 # 判明 - R0を明示的に0(Graphics1/Multicolor共通値)へ書き戻す1行を
 # R1書き込みより前に追加して修正済み。
+# (2026-09-13、"アニメ中にボタン押されたらMission 1表示にスキップ"):
+# RUN_SCREEN3_SLIDESHOW冒頭にSP退避+SC3_SKIP_ARMEDリセット(8byte)が
+# 追加されたため、以下の小さいオフセットも全て+8シフトしている。
 check("RUN_SCREEN3_SLIDESHOW setup: VDP R0 = 00h (clears Graphics2's M3 bit that INIGRP left "
       "set, back to Graphics1/Multicolor's shared value - real-hardware fix for \"音は出てるが "
       "画面真っ黒のまま\")",
-      out[sym["RUN_SCREEN3_SLIDESHOW"] + 1] == 0x00
-      and out[sym["RUN_SCREEN3_SLIDESHOW"] + 3] == 0)
+      out[sym["RUN_SCREEN3_SLIDESHOW"] + 9] == 0x00
+      and out[sym["RUN_SCREEN3_SLIDESHOW"] + 11] == 0)
 # (2026-09-12、実機フィードバック"グリッチのまま変わってねえよ...ちゃんと
 # スクリーン3に初期化しろ...レンダリングで確認しろ"): openMSXの-control
 # stdio外部制御でPCをRUN_SCREEN3_SLIDESHOWへ直接ジャンプさせ実行、
@@ -737,12 +779,12 @@ check("RUN_SCREEN3_SLIDESHOW setup: VDP R4 = 00h (pattern generator table base b
       "the VDP to misread its own name table ramp as pattern data - the real cause of the "
       "\"グリッチのまま変わってねえよ\" vertical-stripe glitch, found via openMSX's real VDP "
       "register readback + screenshot rendering)",
-      out[sym["RUN_SCREEN3_SLIDESHOW"] + 8] == 0x00
-      and out[sym["RUN_SCREEN3_SLIDESHOW"] + 10] == 4)
+      out[sym["RUN_SCREEN3_SLIDESHOW"] + 16] == 0x00
+      and out[sym["RUN_SCREEN3_SLIDESHOW"] + 18] == 4)
 check("RUN_SCREEN3_SLIDESHOW setup: VDP R1 = 0EAh (Graphics1's 0E2h + M2 bit for Multicolor, "
       "the tools/screen3_test/screen3_test.asm sequence confirmed working on real hardware)",
-      out[sym["RUN_SCREEN3_SLIDESHOW"] + 15] == 0xEA
-      and out[sym["RUN_SCREEN3_SLIDESHOW"] + 17] == 1)
+      out[sym["RUN_SCREEN3_SLIDESHOW"] + 23] == 0xEA
+      and out[sym["RUN_SCREEN3_SLIDESHOW"] + 25] == 1)
 check("RUN_SCREEN3_SLIDESHOW setup: shared NAME table written to VRAM 1800h (all 6 main "
       "images share byte-identical NAME data, confirmed by screen3_gen.py)",
       bytes(cpu_setup.vram[0x1800:0x1800 + len(SC3_SHARED_NAME_bytes)]) == SC3_SHARED_NAME_bytes)
@@ -781,28 +823,31 @@ for i in range(1, 4):
 # WAIT_3_FRAMES itself is gone - 1-6枚目もWAIT_N_FRAMES(B=2)へ統一済み。
 # 全オフセットはSC3_CT_PHASE初期化(1命令3byte)の追加によりさらに+3
 # シフトしている(name-table転送自体のオフセット[+28/+45-50/+56]は
-# その挿入位置より前のため無変化)。
+# その挿入位置より前のため無変化)。続けて"アニメ中にボタン押されたら
+# Mission 1表示にスキップ"対応のSP退避+SC3_SKIP_ARMEDリセット(8byte)が
+# RUN_SCREEN3_SLIDESHOW冒頭(全ての既存コードより前)に追加されたため、
+# 以下は+8さらにシフトしている。
 _real_out, _real_sym, _ = build_test.assemble()
 _r3s_base = _real_sym["RUN_SCREEN3_SLIDESHOW"]
 check("RUN_SCREEN3_SLIDESHOW's real (unshrunk) main-loop count is 3 "
       "(\"ここまでを3ループ\")",
-      _real_out[_r3s_base + 0x5c] == 3)
+      _real_out[_r3s_base + 0x64] == 3)
 check("WAIT_1_FRAME_UNIT's real (unshrunk) DE count is 2295 (~1/60s @ 3579545Hz / "
       "26 T-states per DEC-DE loop iteration)",
       (_real_out[_real_sym["WAIT_1_FRAME_UNIT"] + 1]
        | (_real_out[_real_sym["WAIT_1_FRAME_UNIT"] + 2] << 8)) == 2295)
 check("RUN_SCREEN3_SLIDESHOW: Epilogue1(08.SC3)'s own wait is 30 frames "
       "(\"7枚目の表示時間伸ばして\"、旧15フレームから倍増)",
-      _real_out[_r3s_base + 0x74] == 30)
+      _real_out[_r3s_base + 0x7c] == 30)
 check("RUN_SCREEN3_SLIDESHOW: standalone 30-frame wait right after the 3rd loop "
       "iteration completes, before Epilogue2 (\"3ループの後に30フレ追加して\")",
-      _real_out[_r3s_base + 0x7b] == 0x06 and _real_out[_r3s_base + 0x7c] == 30)
+      _real_out[_r3s_base + 0x83] == 0x06 and _real_out[_r3s_base + 0x84] == 30)
 check("RUN_SCREEN3_SLIDESHOW: Epilogue2(09.SC3)'s own wait is 60 frames "
       "(\"8枚目は今30フレだと思うが60に\")",
-      _real_out[_r3s_base + 0x84] == 60)
+      _real_out[_r3s_base + 0x8c] == 60)
 check("RUN_SCREEN3_SLIDESHOW: Epilogue3(11.SC3)'s own wait is 120 frames "
       "(\"9枚目は120に\")",
-      _real_out[_r3s_base + 0x8c] == 120)
+      _real_out[_r3s_base + 0x94] == 120)
 
 
 # ---- (2026-09-12、実機フィードバック"表示は出来た だが音2回鳴らして
@@ -999,6 +1044,64 @@ check(f"SC3_CONFIRM_TICK off-by-one: row 0's own duration is {first_row_duration
       "the tick that loads it already counts as the first one, so the NEXT row loads exactly "
       f"{first_row_duration} ticks after the first (not {first_row_duration + 1})",
       ticks_until_next_load == first_row_duration)
+
+
+# ---- (2026-09-13、"ではアニメ中にボタン押されたらMission 1表示に
+# スキップ"): SC3_CHECK_SKIP(WAIT_1_FRAME_UNITから毎フレーム呼ばれる
+# デバウンス付きボタン検知)の直接呼び出しによる回帰テスト。
+SC3_SKIP_ARMED = sym["SC3_SKIP_ARMED"]
+SC3_SAVED_SP = sym["SC3_SAVED_SP"]
+
+# (a) アニメ開始直後、まだ最初の押しっぱなしボタンが離されていない間は
+# デバウンスにより何も起きない(通常のRETで戻り、SPも武装フラグも
+# 変化しない) - これが無いとアニメ開始のボタン押下がそのまま継続して
+# いた場合、1コマも表示されずに即スキップしてしまう。
+cpu_sk1, mem_sk1 = fresh_cpu()
+run_to_wait(cpu_sk1)
+cpu_sk1.mem[SC3_SKIP_ARMED] = 0
+cpu_sk1.sim_trig_a = True
+cpu_sk1.sim_trig_b = False
+_sp_before = cpu_sk1.sp
+call_routine(cpu_sk1, "SC3_CHECK_SKIP")
+check("SC3_CHECK_SKIP: while the button is still held (debounce not yet armed), it returns "
+      "normally via RET without touching SP or SC3_SKIP_ARMED - prevents the very same button "
+      "press that started the slideshow from instantly skipping it",
+      cpu_sk1.sp == _sp_before and cpu_sk1.mem[SC3_SKIP_ARMED] == 0)
+
+# (b) 両トリガーとも離れた瞬間にデバウンスが「武装」される。
+cpu_sk2, mem_sk2 = fresh_cpu()
+run_to_wait(cpu_sk2)
+cpu_sk2.mem[SC3_SKIP_ARMED] = 0
+cpu_sk2.sim_trig_a = False
+cpu_sk2.sim_trig_b = False
+call_routine(cpu_sk2, "SC3_CHECK_SKIP")
+check("SC3_CHECK_SKIP: once both triggers read released, SC3_SKIP_ARMED becomes 1 (armed)",
+      cpu_sk2.mem[SC3_SKIP_ARMED] == 1)
+
+# (c) 武装済みの状態でボタンが押されると、SC3_SAVED_SPへSPを強制的に
+# 巻き戻してRSS_CLEANUP(PSGミュート+ボーダー黒復帰+RET)へ直接JPする -
+# SC3_SAVED_SPの指す番地に番兵(0x0000)を仕込んでおき、RSS_CLEANUP自身の
+# RETがそこへ実際に着地することまで確認する(call_routineのデフォルト
+# 番兵と同じ0x0000を使う設計)。
+cpu_sk3, mem_sk3 = fresh_cpu()
+run_to_wait(cpu_sk3)
+_SAVED_SP_VALUE = 0xF370
+cpu_sk3.mem[SC3_SAVED_SP] = _SAVED_SP_VALUE & 0xFF
+cpu_sk3.mem[SC3_SAVED_SP + 1] = (_SAVED_SP_VALUE >> 8) & 0xFF
+cpu_sk3.mem[_SAVED_SP_VALUE] = 0x00
+cpu_sk3.mem[_SAVED_SP_VALUE + 1] = 0x00
+cpu_sk3.mem[SC3_SKIP_ARMED] = 1
+cpu_sk3.sim_trig_a = True
+cpu_sk3.sim_trig_b = False
+call_routine(cpu_sk3, "SC3_CHECK_SKIP")
+check("SC3_CHECK_SKIP: once armed, a press forces SP back to the SC3_SAVED_SP value captured at "
+      "RUN_SCREEN3_SLIDESHOW's own entry and JPs straight to RSS_CLEANUP - unwinding out of "
+      "however many nested CALLs (SHOW_SC3_IMGx/WAIT_N_FRAMES/etc.) were on the stack in one shot",
+      cpu_sk3.sp == _SAVED_SP_VALUE + 2 and cpu_sk3.pc == 0x0000)
+check("SC3_CHECK_SKIP's forced jump actually runs RSS_CLEANUP's own body (not just landing on "
+      "the sentinel by coincidence) - PSG channel B muted (R9=0), border back to black (VDP R7=1), "
+      "and interrupts disabled",
+      cpu_sk3.psg_regs.get(9) == 0 and cpu_sk3.vdp_regs.get(7) == 1 and cpu_sk3.iff1 is False)
 
 
 print()
