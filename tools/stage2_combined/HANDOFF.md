@@ -14677,3 +14677,132 @@ NOP抜け)(2026-09-13、完了済み・実機フィードバック待ち)
   可能性あり。発射時一度だけの予測照準方式のため、発射後に自機が
   大きく縦移動した場合は追従しない(意図した簡易実装、リアルタイム
   ホーミングではない)。
+
+## Round109: エネミー3「左から出てくる」バグの根本原因特定・修正
+(ENEMY3_CENTERX_TABLEのRAM衝突) + Stage1スケジュールをSchedule_2.json
+(576件)へ差し替え(2026-09-13、完了済み・実機フィードバック待ち)
+
+- ユーザー指示: "ステージ1のスケジュール差し替え で、エネミー3が
+  左から出てくる時がある 多分右に戻っても消えてないか 変な位置に
+  スポーンやLutのサークル軌道で出てきてるか 最初の2編隊なので
+  スケジュールに不整合があるかもだが"(Schedule_2.json、576件を添付)。
+  2つの独立したタスク: (1)エネミー3バグの調査・修正、(2)スケジュール
+  差し替え。
+- **エネミー3バグの根本原因(RAM衝突)**: `ENEMY3_CENTERX_TABLE`
+  (0EE98h)は「`ENEMY3_POOL`と同じ704byteストライドの並行配列」として
+  外出しされていたが、実際に使うのは1byte/slot(64byte)だけで、残り
+  640byteは未使用のはずの予約領域だった。ところがこの704byteの
+  footprint(0EE98h-0F157h)の中に、`PLAYER_SHIP_PAT`/`PLAYER_ACCENT_
+  PAT`/`REDRAW_SRC_PATTERN`/`ENEMY5_ANIM_SEQ`・`TIMER`/`EBSD_DRAW_
+  PAT`・`COLOR`/`CLOUDW_ACTIVE`・`COL`・`TIMER`・`WAIT`/`CLOUDN_
+  ACTIVE`・`COL`・`TIMER`・`WAIT`という、本来無関係な15個もの現役
+  RAM変数が(このテーブルの存在を知らずに)配置されてしまっていた
+  (過去に一度EF00hで同型の衝突が発覚し`ENEMY6_POOL`をF158hへ退避した
+  経緯があったが、テーブル自体の過大なfootprintは温存されたまま
+  だった)。
+  - フレーム単位のトレース(`ENEMY3_CENTERX_TABLE`の実際の生バイトを
+    毎フレーム記録)で、特定スロット(2番目のenemy3_waveトリガー、
+    tick130/offset=24)のCENTERX値が、本来書き込み後は不変のはずが
+    ある時点から`61,60,59,58...`と1フレームごとに正確に1ずつ減少する
+    値に化けていることを発見 - この変化パターン・タイミングは
+    まさに`CLOUDW_WAIT`(0EF1Ch、"frames left until next spawn
+    attempt"の1フレームごとのカウントダウン)と一致し、実際に
+    そのスロットのアドレス計算(`0EE98h + 12*11 = 0EF1Ch`)が
+    `CLOUDW_WAIT`と完全一致することを確認。CIRCLE軌道のX計算が
+    このLUT非整合な値を拾い、理論上の最大値(176)を超えて画面右へ
+    ドリフトし続ける異常が生じていた。
+  - **修正方針**: 15個もの現役変数を個別に退避させる対症療法は
+    リスクが高い(このRAM帯には他にも未発見の衝突が潜んでいる
+    可能性がある)ため、根本原因である「704byteの過大な
+    footprint」自体を解消する設計変更を選択。`ENEMY3_CENTERX_TABLE`
+    を独立した並行配列として外出しするのをやめ、`ENEMY3_STRUCT`
+    自身の12番目のフィールド(offset+11、CENTERX)として畳み込んだ
+    - 各インスタンスが自分のCENTERXを自分の構造体内に持つだけなので
+      外部テーブルへのポインタ演算(`ENEMY3_CENTERX_ADDR`、
+      `IX-ENEMY3_POOL+ENEMY3_CENTERX_TABLE`)自体が不要になり、
+      衝突の原因ごと消滅する。`ENEMY3_STRUCT`は11→12byteに拡張
+      (`ENEMY3_POOL`は704→768byteに拡張、0EBD8h-0EED7hに収まり、
+      これは旧`ENEMY3_CENTERX_TABLE`のfootprint内で誰も正当には
+      使っていなかった範囲なので安全)、副産物として実質640byteの
+      RAMを解放。
+  - `ENEMY3_CENTERX_ADDR`ルーチン・専用のINIT時クリアループを完全
+    削除、4箇所の呼び出し元(`ENEMY3_TRY_SPAWN_SLOT`/`ENEMY3_DO_
+    SPAWN`/`E3_DIAG`/`E3_CIRCLE`)を`(IX+11)`への直接アクセスに置換。
+    `ENEMY3_TRY_SPAWN`の8個のウェーブスロット用ハードコード
+    オフセット(0,88,176,...,616、`ENEMY3_SLOTS*ENEMY3_STRUCT`の
+    リテラル値)も新しいstruct長に合わせて0,96,192,...,672へ更新
+    (このアセンブラは演算子優先順位を持たないため式化はせず、
+    コメントで計算根拠を明記)。
+  - **検証**: 全64スロットを追跡する拡張版シミュレータ(最大12000
+    フレーム、>10px の単フレームXジャンプ、およびX>=245→X<50の
+    左ラップを検出)を実行、修正前は4件の異常(全て同一スロットで
+    再発)を検出したのに対し、修正後は最終スケジュール消化(後述の
+    576件完全消化・ボススポーンまで、約9300フレーム)を通じて
+    **異常0件**を確認。
+- **Stage1スケジュール差し替え(Schedule_2.json、576件)**:
+  `enemy6`298/`simple`171/`enemy5`66/`enemy4`26/`enemy2`11/
+  `enemy3_wave`3/`boss`1。Round76/78と同じPythonスクリプト機械生成
+  手法(`SPAWN_THRESHOLDS`/`SPAWN_SIMPLE_Y_TABLE`/`SPAWN_BASEY_
+  TABLE`/`SPAWN_E3_OFFSET_TABLE`/`ENEMY6_ROW_TABLE`/`SSC_FIRE`の
+  CPディスパッチチェーン/`SSC_BUSY_E2`のCP一覧を全て新JSONから
+  再生成して丸ごと置換)。enemy2の11件のインデックス値は偶然にも
+  直前のSchedule_3.json(549件)と完全一致。`SPAWN_SCHEDULE_CHECK`の
+  終了判定リテラルを520→576へ更新。
+  - **ビルド時に発覚した実問題(ROM容量超過)**: 576件(旧520件から
+    +56件)への差し替えで、素朴に「ディスパッチの各インデックスへ
+    個別にCP+JP Zを割り当てる」旧方式のままだと必要なコード量が
+    +616byte増え、Stage1の32KB ROM予算をこの時点で192byte超過して
+    アセンブルが失敗した(このセッション着手前の時点での残り予算は
+    わずか320byteしかなかった)。576件中enemy6が298件(過半数)を
+    占める偏りに着目し、`SSC_FIRE`の各256エントリブロックの生成
+    方式を「そのブロック内で最も頻出するハンドラをデフォルトの
+    無条件フォールスルーとして採用し、それ以外の少数派インデックス
+    だけを明示的なCP+JP Zで列挙する」方式へ変更(ディスパッチ機構
+    自体、つまりCP/JP Zチェーンという仕組みは無変更、Python
+    ジェネレータ側のコード生成アルゴリズムだけを変更) - これにより
+    ディスパッチコードが約2880byte相当から約1049byte相当まで縮小、
+    ROM残り予算は不足192byteから逆に+1856byteの余裕へ転換(この
+    節約と、上記ENEMY3_CENTERX_TABLE除去による副次的なROM削減を
+    合わせた結果)。
+  - 自然AIシミュレーション(プレイヤー操作なし)でGAME_TICKを長時間
+    進めた結果、SPAWN_NEXT_INDEXが576全件を消化し`BOSS_STATE`が
+    非0になる(ボス実スポーン)ことをGAME_TICK1165時点で確認
+    (Round78の549件スケジュールでも同様にGAME_TICK1121まで累積遅延
+    したのと同じ「1game-tickにつき最大1件しか発射しないディスパッチ
+    設計」由来の正常な累積遅延 - schedule上の`maxTick`(999)より
+    実際の完了が後ろにずれるのは仕様通りでバグではない)。
+- 既存のStage1検証群(`verify_enemy_bullets.py` 60/`verify_player_
+  damage.py` 60/`verify_stage1_bgm.py` 80/`verify_stage1_mission_
+  screens.py` 87/`verify_spawn_schedule_restart.py` 12/`verify_
+  enemy6_durability.py` 19/`verify_explosion_anim.py` 28/`verify_
+  boss_dfl_clear.py` 10/`verify_boss_pod_bullet_aim.py` 17)全て
+  無退行で再PASS。`combined_test.asm`は無変更のため`run_all.py`
+  全回帰は未実施。Comb ROM再ビルド・`verify_comb.py`全チェックPASS
+  の上、標準方針によりComb ROMのみ送付。
+- 変更ファイル: `src/CYBER SHMUP.asm`(`ENEMY3_STRUCT`11→12・
+  `ENEMY3_CENTERX_TABLE`/`ENEMY3_CENTERX_ADDR`削除・関連呼び出し元
+  4箇所書き換え・ウェーブスロットオフセットリテラル更新、
+  `SPAWN_THRESHOLDS`等5テーブル・`SSC_FIRE`ディスパッチ・
+  `SSC_BUSY_E2`・終了判定リテラルをSchedule_2.jsonから丸ごと
+  再生成)、Comb ROM再ビルド。既存テストファイルはコード変更を
+  伴わず(シンボリック参照のため無改修で通過)。
+
+セッション引き継ぎメモ(2026-09-13、Round109完了直後):
+- 実機での確認事項: (1)エネミー3が左から出てくる/変な位置に見える
+  症状が解消したか。(2)576件スケジュールの実プレイでのペーシング
+  (累積遅延によりボスが理論値[tick992]よりかなり遅れて[tick1165
+  相当]出現する点も含む)。いずれも次回フィードバック待ち。
+- `ENEMY3_CENTERX_TABLE`除去は今回発見した15個の衝突変数のうち
+  実際に不具合として観測できたのは`CLOUDW_WAIT`との衝突1件のみ
+  (シミュレーションでは他14個との衝突が実害として顕在化する
+  条件[同時にその領域を使うタイミングの一致]に到達しなかった
+  可能性がある)。今回の修正はテーブル自体を丸ごと廃止したため、
+  残り14個との衝突可能性も含めて構造的に解消済みのはず - 個別に
+  再現・検証したわけではない点は正直に申し送る。
+- `SSC_FIRE`のブロック生成方式変更(デフォルトハンドラ化)は
+  今後スケジュールをさらに大きく差し替える際、Pythonジェネレータ
+  (`tools/`配下のスクラッチスクリプト、今回は`/tmp`ではなく
+  `/tmp/claude-0/.../scratchpad/sched2/`に生成、リポジトリには
+  非コミット)側で同じロジックを再利用すること - 素朴な「1
+  インデックス1CP」方式のままだと、今後もROM予算を素早く食い潰す
+  リスクがある。

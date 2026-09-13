@@ -715,7 +715,20 @@ ANIM3_PACE    EQU 6            ; frames held per pulse-animation frame
 ; slot's cell hasn't moved since last frame) that makes a high count
 ; affordable instead.
 ENEMY3_SLOTS  EQU 8
-ENEMY3_STRUCT EQU 11           ; ACTIVE,PHASE,X,Y,ROW,COL,ANGLEIDX,STEPCNT,REVCNT,ANIMIDX,ANIMTIMER
+; (2026-09-13、"エネミー3が左から出てくる時がある"のRAM衝突バグ修正で
+; 11->12。旧CENTERX(byte12)はENEMY3_CENTERX_TABLEという「ENEMY3_POOLと
+; 同じ704byteストライドの並行配列」として外出しされていたが、実際に
+; 使うのは1byte/slotだけなのに704byte分(64byte分の payload に対し
+; 640byte超過)を予約領域として占有しており、その未使用の大半
+; (EE98h-F157h)へPLAYER_SHIP_PAT/PLAYER_ACCENT_PAT/REDRAW_SRC_PATTERN/
+; ENEMY5_ANIM_SEQ・TIMER/EBSD_DRAW_PAT・COLOR/CLOUDW_*/CLOUDN_*が
+; 何重にも誤って配置されてしまっていた(過去にも一度EF00hで同型の
+; 衝突が発覚しENEMY6_POOLをF158hへ退避した経緯があるが、テーブル
+; 自体の過大な footprint は温存されたままだった)。今回はCENTERXを
+; ENEMY3_STRUCT自身の12番目のフィールドとして畳み込み、外出しテーブル
+; ごと廃止(ENEMY3_CENTERX_TABLE/ENEMY3_CENTERX_ADDRは削除)することで
+; 衝突を構造的に解消、副産物としてRAMも640byte解放。
+ENEMY3_STRUCT EQU 12           ; ACTIVE,PHASE,X,Y,ROW,COL,ANGLEIDX,STEPCNT,REVCNT,ANIMIDX,ANIMTIMER,CENTERX
 ENEMY3_SPAWN_X EQU 200
 ENEMY3_SPAWN_Y EQU 8
 ENEMY3_CENTER_X EQU 128
@@ -752,13 +765,16 @@ ENEMY3_WAVE_POOL   EQU 0EBB7h  ; ENEMY3_WAVE_SLOTS*4 bytes: ACTIVE,BUDGET,TIMER,
 ; when it's 0 instead of paying for a full 64-slot scan on every
 ; bullet, every frame, for a wave that isn't even running.
 ENEMY3_ACTIVE_COUNT EQU 0EBD7h
-; ENEMY3_WAVE_SLOTS*ENEMY3_SLOTS*ENEMY3_STRUCT = 704 bytes each, laid
-; out as ENEMY3_WAVE_SLOTS consecutive ENEMY3_SLOTS-instance slices (one
-; per wave slot, same order). ENEMY3_CENTERX_TABLE is parallel to
-; ENEMY3_POOL (same stride/layout): each instance's OWN circle-center X
-; pixel offset, copied at spawn time from its owning wave's OFFSET.
+; ENEMY3_WAVE_SLOTS*ENEMY3_SLOTS*ENEMY3_STRUCT = 768 bytes, laid out as
+; ENEMY3_WAVE_SLOTS consecutive ENEMY3_SLOTS-instance slices (one per
+; wave slot, same order). Each instance's 12th field (offset+11) is its
+; OWN circle-center X pixel offset, copied at spawn time from its owning
+; wave's OFFSET - this used to live in a separate ENEMY3_CENTERX_TABLE
+; parallel array (see git history / HANDOFF.md Round109 if that name
+; still turns up anywhere), which was removed after it turned out to
+; alias several unrelated live variables (see ENEMY3_STRUCT's own
+; comment for the full story).
 ENEMY3_POOL          EQU 0EBD8h
-ENEMY3_CENTERX_TABLE EQU 0EE98h
 
 ; --- enemy6: new BG-cell enemy (16x16, drawn as a 2x2 block of        ---
 ; --- nametable cells, same as enemy3's single-cell approach just      ---
@@ -790,15 +806,18 @@ ENEMY6_STRUCT EQU 4             ; ACTIVE,ROW,COL,PHASE (COL = left column of the
 ; する(ENEMY6_HP_ADDRがIXから所属スロットのindexを逆算する)。
 ; (2026-09-13、"エネミー6 耐久値8"): 4→8。
 ENEMY6_HP_INIT EQU 8
-; Relocated off EF00h (originally right after ENEMY3_CENTERX_TABLE) to
-; F158h, clear of that table's real footprint - ENEMY3_CENTERX_TABLE
-; is addressed by (slot ptr - ENEMY3_POOL) + ENEMY3_CENTERX_TABLE (see
-; ENEMY3_CENTERX_ADDR), i.e. it spans the SAME 704 bytes as ENEMY3_POOL
-; itself (EE98h-F157h), not just the 64 bytes its data actually needs -
-; EF00h sat inside that span, byte-aliasing this pool against whichever
-; enemy3 wave/unit's own X-offset landed on the same byte. Growing this
-; pool 4->32 slots would only have made that collision worse, so it
-; moves out to genuinely free RAM instead of just resizing in place.
+; Relocated off EF00h (originally right after the old ENEMY3_CENTERX_
+; TABLE) to F158h, clear of that table's real footprint - the old table
+; was addressed by (slot ptr - ENEMY3_POOL) + ENEMY3_CENTERX_TABLE, i.e.
+; it spanned the SAME 704 bytes as ENEMY3_POOL itself (EE98h-F157h), not
+; just the 64 bytes its data actually needed - EF00h sat inside that
+; span, byte-aliasing this pool against whichever enemy3 wave/unit's own
+; X-offset landed on the same byte. Growing this pool 4->32 slots would
+; only have made that collision worse, so it moved out to genuinely free
+; RAM instead of just resizing in place. (2026-09-13追記: the old
+; ENEMY3_CENTERX_TABLE itself was later removed entirely - see
+; ENEMY3_STRUCT's comment - but ENEMY6_POOL stays right here, no reason
+; to move it back now that its old neighbor is gone.)
 ENEMY6_POOL   EQU 0F158h        ; ENEMY6_SLOTS*ENEMY6_STRUCT = 128 bytes (F158h-F1D7h)
 ENEMY6_SPAWN_COL    EQU 30      ; matches ENEMY_SPAWNX/ENEMY4_SPAWNX(240) = col30
 ; "エネミー6の速度を半分に"(2026-09-12): 1→2(2フレームに1回1列進む =
@@ -1191,8 +1210,9 @@ E3INIT_ROW_LOOP:
     LD DE,ENEMY3_STRUCT
     ADD HL,DE
     DJNZ E3INIT_ROW_LOOP
-    LD HL,ENEMY3_CENTERX_TABLE : LD (HL),0
-    LD DE,ENEMY3_CENTERX_TABLE+1 : LD BC,ENEMY3_WAVE_SLOTS*ENEMY3_SLOTS*ENEMY3_STRUCT-1 : LDIR
+    ; CENTERX(byte12/offset+11) is part of this same struct now (folded
+    ; in 2026-09-13, see ENEMY3_STRUCT's comment) - the full-pool clear
+    ; above already zeroed it, no separate clear needed here anymore.
     ; All wave slots idle (ACTIVE=0, byte 0 of each 4-byte slot) - see
     ; ENEMY3_WAVE_POOL.
     LD HL,ENEMY3_WAVE_POOL : LD (HL),0
@@ -5503,8 +5523,9 @@ ESC_COMPLEX_INIT_B:
 ; spawn exactly once, in order, as GAME_TICK reaches its threshold -
 ; not when the previous one finishes. SPAWN_THRESHOLDS is a 16-bit
 ; (DW) array so thresholds aren't capped at 255. Boss is the final
-; entry, index252. One-shot: once all 253 have fired, this just returns
-; immediately forever after, so nothing loops.
+; entry, index575 (2026-09-13 Schedule_2.json replacement, 576 entries).
+; One-shot: once all 576 have fired, this just returns immediately
+; forever after, so nothing loops.
 SPAWN_SCHEDULE_CHECK:
     ; --- 2026-09-12 修正: 397エントリ(>255)になったため、8bitの A
     ; --- レジスタだけでは指標(0-396)を表現しきれない - 旧実装は
@@ -5519,8 +5540,11 @@ SPAWN_SCHEDULE_CHECK:
     ; --- H(index上位byte)が0/1の2値では足りず0/1/2の3値になったため、
     ; --- SSC_FIREのブロック分岐をH値に応じた可変本数のCPチェーンへ
     ; --- 一般化した(下記SSC_FIRE参照)。
+    ; --- 2026-09-13追記: Schedule_2.jsonへの再差し替えで576エントリに
+    ; --- なったが、H=0/1/2の3ブロック構成のまま(576<768)対応できた -
+    ; --- 上記の一般化のおかげでSSC_FIRE側の分岐本数自体は無変更。
     LD HL,(SPAWN_NEXT_INDEX)
-    LD DE,520
+    LD DE,576
     OR A
     SBC HL,DE
     RET NC                      ; index >= N -> schedule finished
@@ -5539,7 +5563,8 @@ SPAWN_SCHEDULE_CHECK:
     ; --- 空いていればSPAWN_E2がそちらを自動選択するので、この各
     ; --- インデックスはもう「Aだけ待つ/Bだけ待つ」を区別しない -
     ; --- どちらの枠が空いても即発火。インデックス番号は現在の
-    ; --- スケジュールJSON(549エントリ)でtype=enemy2の位置そのまま。
+    ; --- スケジュールJSON(Schedule_2.json、576エントリ)でtype=enemy2の
+    ; --- 位置そのまま(値自体は偶然、直前のSchedule_3.jsonと完全一致)。
     ; --- 全て255未満の値なので、この判定だけは従来通りAの8bit比較で
     ; --- 良いが、index>=256(H!=0)の場合に誤って同じ低位バイトへ
     ; --- エイリアスしないよう、まずHをチェックして256以上なら丸ごと
@@ -5574,6 +5599,17 @@ SSC_FIRE:
     ; 2026-09-12追記: H(0-2) の値ぶんだけブロックへ分岐する一般化構造 -
     ; スケジュールが今後256の倍数を跨いで増えても、このCPチェーンに
     ; もう1行足すだけで対応できる。
+    ; 2026-09-13追記(Schedule_2.json、576エントリへの差し替えでROM残量
+    ; 192byte超過が発覚): 各ブロック末尾の無条件JPは、以前は常に
+    ; JP BOSS_SPAWN固定の「実際には使われない安全弁」だったが、今は
+    ; 各ブロック内で最頻出のハンドラ(576件中enemy6が298件と過半数を
+    ; 占めるため大半のブロックでSPAWN_E6)を実際のデフォルトとして採用し、
+    ; それ以外の少数派インデックスだけを明示的なCP+JP Zで列挙する方式に
+    ; 変更(BOSS自体もこの意味では単なる「1件しかない少数派」になり、
+    ; 他の型と同じくCP+JP Z,BOSS_SPAWNで明示的に列挙される - もう
+    ; 「最後のインデックスだけCP省略」という特別扱いはしない)。
+    ; ディスパッチ自体のCP/JP Zチェーンという仕組みは無変更、各ブロックの
+    ; 生成方法(tools側のPythonジェネレータ)だけを変えている。
     LD HL,(SPAWN_NEXT_INDEX)
     PUSH HL
     INC HL
@@ -5584,116 +5620,40 @@ SSC_FIRE:
     CP 1 : JP Z,SSC_FIRE_BLK1
     JP SSC_FIRE_BLK2
 SSC_FIRE_BLK0:
-    LD A,L                       ; H=0, so L IS the true index (0-255)
-    CP 0   : JP Z,SPAWN_SIMPLE
-    CP 1   : JP Z,SPAWN_SIMPLE
-    CP 2   : JP Z,SPAWN_SIMPLE
-    CP 3   : JP Z,SPAWN_SIMPLE
-    CP 4   : JP Z,SPAWN_SIMPLE
+    LD A,L                       ; H=0, so L IS the true index (0-255); default handler for this block is SPAWN_SIMPLE (most common)
     CP 5   : JP Z,SPAWN_E6
-    CP 6   : JP Z,SPAWN_SIMPLE
-    CP 7   : JP Z,SPAWN_SIMPLE
-    CP 8   : JP Z,SPAWN_SIMPLE
-    CP 9   : JP Z,SPAWN_SIMPLE
-    CP 10  : JP Z,SPAWN_SIMPLE
-    CP 11  : JP Z,SPAWN_SIMPLE
-    CP 12  : JP Z,SPAWN_SIMPLE
-    CP 13  : JP Z,SPAWN_SIMPLE
-    CP 14  : JP Z,SPAWN_SIMPLE
-    CP 15  : JP Z,SPAWN_SIMPLE
-    CP 16  : JP Z,SPAWN_SIMPLE
-    CP 17  : JP Z,SPAWN_SIMPLE
-    CP 18  : JP Z,SPAWN_SIMPLE
-    CP 19  : JP Z,SPAWN_SIMPLE
-    CP 20  : JP Z,SPAWN_SIMPLE
-    CP 21  : JP Z,SPAWN_SIMPLE
-    CP 22  : JP Z,SPAWN_SIMPLE
-    CP 23  : JP Z,SPAWN_SIMPLE
-    CP 24  : JP Z,SPAWN_SIMPLE
-    CP 25  : JP Z,SPAWN_SIMPLE
-    CP 26  : JP Z,SPAWN_SIMPLE
-    CP 27  : JP Z,SPAWN_SIMPLE
-    CP 28  : JP Z,SPAWN_SIMPLE
-    CP 29  : JP Z,SPAWN_SIMPLE
-    CP 30  : JP Z,SPAWN_SIMPLE
     CP 31  : JP Z,SPAWN_E3_WAVE
     CP 32  : JP Z,SPAWN_E3_WAVE
-    CP 33  : JP Z,SPAWN_SIMPLE
-    CP 34  : JP Z,SPAWN_SIMPLE
-    CP 35  : JP Z,SPAWN_SIMPLE
-    CP 36  : JP Z,SPAWN_SIMPLE
-    CP 37  : JP Z,SPAWN_SIMPLE
-    CP 38  : JP Z,SPAWN_SIMPLE
-    CP 39  : JP Z,SPAWN_SIMPLE
     CP 40  : JP Z,SPAWN_E4
     CP 41  : JP Z,SPAWN_E4
     CP 42  : JP Z,SPAWN_E4
-    CP 43  : JP Z,SPAWN_SIMPLE
-    CP 44  : JP Z,SPAWN_SIMPLE
-    CP 45  : JP Z,SPAWN_SIMPLE
-    CP 46  : JP Z,SPAWN_SIMPLE
-    CP 47  : JP Z,SPAWN_SIMPLE
-    CP 48  : JP Z,SPAWN_SIMPLE
-    CP 49  : JP Z,SPAWN_SIMPLE
-    CP 50  : JP Z,SPAWN_SIMPLE
-    CP 51  : JP Z,SPAWN_SIMPLE
     CP 52  : JP Z,SPAWN_E4
     CP 53  : JP Z,SPAWN_E4
     CP 54  : JP Z,SPAWN_E4
     CP 55  : JP Z,SPAWN_E4
-    CP 56  : JP Z,SPAWN_SIMPLE
     CP 57  : JP Z,SPAWN_E4
-    CP 58  : JP Z,SPAWN_SIMPLE
     CP 59  : JP Z,SPAWN_E4
-    CP 60  : JP Z,SPAWN_SIMPLE
     CP 61  : JP Z,SPAWN_E4
     CP 62  : JP Z,SPAWN_E4
     CP 63  : JP Z,SPAWN_E4
     CP 64  : JP Z,SPAWN_E4
-    CP 65  : JP Z,SPAWN_SIMPLE
-    CP 66  : JP Z,SPAWN_SIMPLE
-    CP 67  : JP Z,SPAWN_SIMPLE
     CP 68  : JP Z,SPAWN_E4B
     CP 69  : JP Z,SPAWN_E4B
-    CP 70  : JP Z,SPAWN_SIMPLE
     CP 71  : JP Z,SPAWN_E4B
-    CP 72  : JP Z,SPAWN_SIMPLE
-    CP 73  : JP Z,SPAWN_SIMPLE
-    CP 74  : JP Z,SPAWN_SIMPLE
     CP 75  : JP Z,SPAWN_E4B
     CP 76  : JP Z,SPAWN_E4B
-    CP 77  : JP Z,SPAWN_SIMPLE
     CP 78  : JP Z,SPAWN_E4B
-    CP 79  : JP Z,SPAWN_SIMPLE
     CP 80  : JP Z,SPAWN_E4B
     CP 81  : JP Z,SPAWN_E4B
-    CP 82  : JP Z,SPAWN_SIMPLE
     CP 83  : JP Z,SPAWN_E4B
     CP 84  : JP Z,SPAWN_E4B
-    CP 85  : JP Z,SPAWN_SIMPLE
     CP 86  : JP Z,SPAWN_E4B
     CP 87  : JP Z,SPAWN_E4B
-    CP 88  : JP Z,SPAWN_SIMPLE
     CP 89  : JP Z,SPAWN_E4B
-    CP 90  : JP Z,SPAWN_SIMPLE
-    CP 91  : JP Z,SPAWN_SIMPLE
-    CP 92  : JP Z,SPAWN_SIMPLE
-    CP 93  : JP Z,SPAWN_SIMPLE
-    CP 94  : JP Z,SPAWN_SIMPLE
-    CP 95  : JP Z,SPAWN_SIMPLE
     CP 96  : JP Z,SPAWN_E3_WAVE
-    CP 97  : JP Z,SPAWN_SIMPLE
-    CP 98  : JP Z,SPAWN_SIMPLE
-    CP 99  : JP Z,SPAWN_SIMPLE
     CP 100 : JP Z,SPAWN_E4B
     CP 101 : JP Z,SPAWN_E2
-    CP 102 : JP Z,SPAWN_SIMPLE
-    CP 103 : JP Z,SPAWN_SIMPLE
-    CP 104 : JP Z,SPAWN_SIMPLE
     CP 105 : JP Z,SPAWN_E4B
-    CP 106 : JP Z,SPAWN_SIMPLE
-    CP 107 : JP Z,SPAWN_SIMPLE
-    CP 108 : JP Z,SPAWN_SIMPLE
     CP 109 : JP Z,SPAWN_E2
     CP 110 : JP Z,SPAWN_E4B
     CP 111 : JP Z,SPAWN_E4B
@@ -5703,35 +5663,22 @@ SSC_FIRE_BLK0:
     CP 115 : JP Z,SPAWN_E4
     CP 116 : JP Z,SPAWN_E4
     CP 117 : JP Z,SPAWN_E2
-    CP 118 : JP Z,SPAWN_SIMPLE
     CP 119 : JP Z,SPAWN_E2
-    CP 120 : JP Z,SPAWN_SIMPLE
-    CP 121 : JP Z,SPAWN_SIMPLE
-    CP 122 : JP Z,SPAWN_SIMPLE
-    CP 123 : JP Z,SPAWN_SIMPLE
-    CP 124 : JP Z,SPAWN_SIMPLE
-    CP 125 : JP Z,SPAWN_SIMPLE
     CP 126 : JP Z,SPAWN_E4B
     CP 127 : JP Z,SPAWN_E4B
-    CP 128 : JP Z,SPAWN_SIMPLE
     CP 129 : JP Z,SPAWN_E4B
-    CP 130 : JP Z,SPAWN_SIMPLE
     CP 131 : JP Z,SPAWN_E4B
     CP 132 : JP Z,SPAWN_E4B
-    CP 133 : JP Z,SPAWN_SIMPLE
     CP 134 : JP Z,SPAWN_E4B
     CP 135 : JP Z,SPAWN_E4B
     CP 136 : JP Z,SPAWN_E4B
     CP 137 : JP Z,SPAWN_E4B
-    CP 138 : JP Z,SPAWN_SIMPLE
     CP 139 : JP Z,SPAWN_E4B
     CP 140 : JP Z,SPAWN_E4B
     CP 141 : JP Z,SPAWN_E4B
     CP 142 : JP Z,SPAWN_E4B
-    CP 143 : JP Z,SPAWN_SIMPLE
     CP 144 : JP Z,SPAWN_E4B
     CP 145 : JP Z,SPAWN_E4B
-    CP 146 : JP Z,SPAWN_SIMPLE
     CP 147 : JP Z,SPAWN_E4B
     CP 148 : JP Z,SPAWN_E2
     CP 149 : JP Z,SPAWN_E2
@@ -5744,29 +5691,20 @@ SSC_FIRE_BLK0:
     CP 156 : JP Z,SPAWN_E4
     CP 157 : JP Z,SPAWN_E4B
     CP 158 : JP Z,SPAWN_E4B
-    CP 159 : JP Z,SPAWN_SIMPLE
     CP 160 : JP Z,SPAWN_E4B
     CP 161 : JP Z,SPAWN_E4B
     CP 162 : JP Z,SPAWN_E4B
     CP 163 : JP Z,SPAWN_E4B
-    CP 164 : JP Z,SPAWN_SIMPLE
     CP 165 : JP Z,SPAWN_E4B
     CP 166 : JP Z,SPAWN_E4B
-    CP 167 : JP Z,SPAWN_SIMPLE
     CP 168 : JP Z,SPAWN_E4B
     CP 169 : JP Z,SPAWN_E4B
-    CP 170 : JP Z,SPAWN_SIMPLE
     CP 171 : JP Z,SPAWN_E4B
     CP 172 : JP Z,SPAWN_E4B
-    CP 173 : JP Z,SPAWN_SIMPLE
     CP 174 : JP Z,SPAWN_E4B
     CP 175 : JP Z,SPAWN_E4B
     CP 176 : JP Z,SPAWN_E4B
     CP 177 : JP Z,SPAWN_E4B
-    CP 178 : JP Z,SPAWN_SIMPLE
-    CP 179 : JP Z,SPAWN_SIMPLE
-    CP 180 : JP Z,SPAWN_SIMPLE
-    CP 181 : JP Z,SPAWN_SIMPLE
     CP 182 : JP Z,SPAWN_E2
     CP 183 : JP Z,SPAWN_E2
     CP 184 : JP Z,SPAWN_E2
@@ -5793,47 +5731,35 @@ SSC_FIRE_BLK0:
     CP 205 : JP Z,SPAWN_E4B
     CP 206 : JP Z,SPAWN_E6
     CP 207 : JP Z,SPAWN_E6
-    CP 208 : JP Z,SPAWN_SIMPLE
-    CP 209 : JP Z,SPAWN_SIMPLE
     CP 210 : JP Z,SPAWN_E6
-    CP 211 : JP Z,SPAWN_E6
     CP 212 : JP Z,SPAWN_E6
     CP 213 : JP Z,SPAWN_E6
     CP 214 : JP Z,SPAWN_E6
     CP 215 : JP Z,SPAWN_E6
     CP 216 : JP Z,SPAWN_E6
-    CP 217 : JP Z,SPAWN_SIMPLE
     CP 218 : JP Z,SPAWN_E6
-    CP 219 : JP Z,SPAWN_E6
     CP 220 : JP Z,SPAWN_E6
     CP 221 : JP Z,SPAWN_E6
     CP 222 : JP Z,SPAWN_E6
     CP 223 : JP Z,SPAWN_E6
     CP 224 : JP Z,SPAWN_E6
-    CP 225 : JP Z,SPAWN_E6
     CP 226 : JP Z,SPAWN_E6
     CP 227 : JP Z,SPAWN_E6
     CP 228 : JP Z,SPAWN_E6
     CP 229 : JP Z,SPAWN_E6
     CP 230 : JP Z,SPAWN_E6
     CP 231 : JP Z,SPAWN_E6
-    CP 232 : JP Z,SPAWN_E6
     CP 233 : JP Z,SPAWN_E6
-    CP 234 : JP Z,SPAWN_E6
-    CP 235 : JP Z,SPAWN_E6
     CP 236 : JP Z,SPAWN_E6
     CP 237 : JP Z,SPAWN_E6
-    CP 238 : JP Z,SPAWN_E6
     CP 239 : JP Z,SPAWN_E6
     CP 240 : JP Z,SPAWN_E6
     CP 241 : JP Z,SPAWN_E6
     CP 242 : JP Z,SPAWN_E6
     CP 243 : JP Z,SPAWN_E6
-    CP 244 : JP Z,SPAWN_E4B
-    CP 245 : JP Z,SPAWN_E6
+    CP 244 : JP Z,SPAWN_E6
     CP 246 : JP Z,SPAWN_E6
     CP 247 : JP Z,SPAWN_E6
-    CP 248 : JP Z,SPAWN_E6
     CP 249 : JP Z,SPAWN_E6
     CP 250 : JP Z,SPAWN_E6
     CP 251 : JP Z,SPAWN_E6
@@ -5841,276 +5767,75 @@ SSC_FIRE_BLK0:
     CP 253 : JP Z,SPAWN_E4B
     CP 254 : JP Z,SPAWN_E6
     CP 255 : JP Z,SPAWN_E6
-    JP BOSS_SPAWN
+    JP SPAWN_SIMPLE
 SSC_FIRE_BLK1:
-    LD A,L                       ; H=1, so L = index-256
-    CP 0   : JP Z,SPAWN_E6
-    CP 1   : JP Z,SPAWN_E6
-    CP 2   : JP Z,SPAWN_E6
-    CP 3   : JP Z,SPAWN_E6
-    CP 4   : JP Z,SPAWN_E6
-    CP 5   : JP Z,SPAWN_E6
-    CP 6   : JP Z,SPAWN_E6
-    CP 7   : JP Z,SPAWN_E6
-    CP 8   : JP Z,SPAWN_E6
-    CP 9   : JP Z,SPAWN_E6
-    CP 10  : JP Z,SPAWN_E6
-    CP 11  : JP Z,SPAWN_E6
-    CP 12  : JP Z,SPAWN_E6
-    CP 13  : JP Z,SPAWN_E6
-    CP 14  : JP Z,SPAWN_SIMPLE
-    CP 15  : JP Z,SPAWN_E6
-    CP 16  : JP Z,SPAWN_E6
-    CP 17  : JP Z,SPAWN_E6
-    CP 18  : JP Z,SPAWN_E6
-    CP 19  : JP Z,SPAWN_E6
-    CP 20  : JP Z,SPAWN_E6
-    CP 21  : JP Z,SPAWN_E6
-    CP 22  : JP Z,SPAWN_E6
-    CP 23  : JP Z,SPAWN_E6
-    CP 24  : JP Z,SPAWN_E6
-    CP 25  : JP Z,SPAWN_SIMPLE
-    CP 26  : JP Z,SPAWN_E6
-    CP 27  : JP Z,SPAWN_E6
-    CP 28  : JP Z,SPAWN_E6
-    CP 29  : JP Z,SPAWN_E6
-    CP 30  : JP Z,SPAWN_E6
-    CP 31  : JP Z,SPAWN_E6
-    CP 32  : JP Z,SPAWN_E6
-    CP 33  : JP Z,SPAWN_E6
-    CP 34  : JP Z,SPAWN_E6
-    CP 35  : JP Z,SPAWN_E6
-    CP 36  : JP Z,SPAWN_E6
-    CP 37  : JP Z,SPAWN_E6
-    CP 38  : JP Z,SPAWN_E6
-    CP 39  : JP Z,SPAWN_E6
-    CP 40  : JP Z,SPAWN_E6
-    CP 41  : JP Z,SPAWN_E6
-    CP 42  : JP Z,SPAWN_E6
-    CP 43  : JP Z,SPAWN_E6
-    CP 44  : JP Z,SPAWN_E6
-    CP 45  : JP Z,SPAWN_E6
-    CP 46  : JP Z,SPAWN_E6
-    CP 47  : JP Z,SPAWN_E6
-    CP 48  : JP Z,SPAWN_E6
-    CP 49  : JP Z,SPAWN_E6
-    CP 50  : JP Z,SPAWN_SIMPLE
-    CP 51  : JP Z,SPAWN_E6
-    CP 52  : JP Z,SPAWN_E6
-    CP 53  : JP Z,SPAWN_E6
-    CP 54  : JP Z,SPAWN_E6
-    CP 55  : JP Z,SPAWN_E6
-    CP 56  : JP Z,SPAWN_E6
-    CP 57  : JP Z,SPAWN_E6
-    CP 58  : JP Z,SPAWN_E6
-    CP 59  : JP Z,SPAWN_E6
-    CP 60  : JP Z,SPAWN_E6
-    CP 61  : JP Z,SPAWN_E6
-    CP 62  : JP Z,SPAWN_E6
-    CP 63  : JP Z,SPAWN_E6
-    CP 64  : JP Z,SPAWN_E6
-    CP 65  : JP Z,SPAWN_E6
-    CP 66  : JP Z,SPAWN_E6
-    CP 67  : JP Z,SPAWN_E6
-    CP 68  : JP Z,SPAWN_E6
-    CP 69  : JP Z,SPAWN_E6
-    CP 70  : JP Z,SPAWN_E6
-    CP 71  : JP Z,SPAWN_E6
-    CP 72  : JP Z,SPAWN_E6
-    CP 73  : JP Z,SPAWN_E6
-    CP 74  : JP Z,SPAWN_E6
-    CP 75  : JP Z,SPAWN_E6
-    CP 76  : JP Z,SPAWN_E6
-    CP 77  : JP Z,SPAWN_E6
-    CP 78  : JP Z,SPAWN_E6
-    CP 79  : JP Z,SPAWN_SIMPLE
-    CP 80  : JP Z,SPAWN_E6
-    CP 81  : JP Z,SPAWN_E6
-    CP 82  : JP Z,SPAWN_E6
-    CP 83  : JP Z,SPAWN_E6
-    CP 84  : JP Z,SPAWN_E6
-    CP 85  : JP Z,SPAWN_E6
-    CP 86  : JP Z,SPAWN_E6
-    CP 87  : JP Z,SPAWN_E6
-    CP 88  : JP Z,SPAWN_E6
-    CP 89  : JP Z,SPAWN_E6
-    CP 90  : JP Z,SPAWN_E6
-    CP 91  : JP Z,SPAWN_E6
-    CP 92  : JP Z,SPAWN_E6
-    CP 93  : JP Z,SPAWN_E6
-    CP 94  : JP Z,SPAWN_E6
-    CP 95  : JP Z,SPAWN_E6
-    CP 96  : JP Z,SPAWN_E6
-    CP 97  : JP Z,SPAWN_E6
-    CP 98  : JP Z,SPAWN_E6
-    CP 99  : JP Z,SPAWN_E6
-    CP 100 : JP Z,SPAWN_E6
-    CP 101 : JP Z,SPAWN_E6
+    LD A,L                       ; H=1, so L = index-256; default handler for this block is SPAWN_E6 (most common)
+    CP 2   : JP Z,SPAWN_SIMPLE
+    CP 9   : JP Z,SPAWN_SIMPLE
+    CP 16  : JP Z,SPAWN_SIMPLE
+    CP 21  : JP Z,SPAWN_SIMPLE
+    CP 26  : JP Z,SPAWN_SIMPLE
+    CP 31  : JP Z,SPAWN_SIMPLE
+    CP 38  : JP Z,SPAWN_SIMPLE
+    CP 43  : JP Z,SPAWN_SIMPLE
+    CP 48  : JP Z,SPAWN_SIMPLE
+    CP 53  : JP Z,SPAWN_SIMPLE
+    CP 58  : JP Z,SPAWN_SIMPLE
+    CP 63  : JP Z,SPAWN_SIMPLE
+    CP 68  : JP Z,SPAWN_SIMPLE
+    CP 75  : JP Z,SPAWN_SIMPLE
+    CP 80  : JP Z,SPAWN_SIMPLE
+    CP 85  : JP Z,SPAWN_SIMPLE
+    CP 92  : JP Z,SPAWN_SIMPLE
+    CP 97  : JP Z,SPAWN_SIMPLE
     CP 102 : JP Z,SPAWN_SIMPLE
-    CP 103 : JP Z,SPAWN_E6
-    CP 104 : JP Z,SPAWN_E6
-    CP 105 : JP Z,SPAWN_E6
-    CP 106 : JP Z,SPAWN_E6
     CP 107 : JP Z,SPAWN_SIMPLE
-    CP 108 : JP Z,SPAWN_E6
-    CP 109 : JP Z,SPAWN_E6
-    CP 110 : JP Z,SPAWN_E6
-    CP 111 : JP Z,SPAWN_E6
     CP 112 : JP Z,SPAWN_SIMPLE
-    CP 113 : JP Z,SPAWN_E6
-    CP 114 : JP Z,SPAWN_E6
-    CP 115 : JP Z,SPAWN_E6
-    CP 116 : JP Z,SPAWN_E6
-    CP 117 : JP Z,SPAWN_E6
-    CP 118 : JP Z,SPAWN_E6
-    CP 119 : JP Z,SPAWN_E6
-    CP 120 : JP Z,SPAWN_E6
-    CP 121 : JP Z,SPAWN_E6
-    CP 122 : JP Z,SPAWN_E6
-    CP 123 : JP Z,SPAWN_E6
-    CP 124 : JP Z,SPAWN_SIMPLE
-    CP 125 : JP Z,SPAWN_E6
-    CP 126 : JP Z,SPAWN_E6
-    CP 127 : JP Z,SPAWN_E6
-    CP 128 : JP Z,SPAWN_E6
-    CP 129 : JP Z,SPAWN_E6
-    CP 130 : JP Z,SPAWN_E6
-    CP 131 : JP Z,SPAWN_E6
-    CP 132 : JP Z,SPAWN_E6
-    CP 133 : JP Z,SPAWN_E6
-    CP 134 : JP Z,SPAWN_E6
-    CP 135 : JP Z,SPAWN_SIMPLE
-    CP 136 : JP Z,SPAWN_E6
-    CP 137 : JP Z,SPAWN_E6
-    CP 138 : JP Z,SPAWN_E6
-    CP 139 : JP Z,SPAWN_E6
-    CP 140 : JP Z,SPAWN_E6
-    CP 141 : JP Z,SPAWN_E6
-    CP 142 : JP Z,SPAWN_E6
-    CP 143 : JP Z,SPAWN_E6
-    CP 144 : JP Z,SPAWN_E6
-    CP 145 : JP Z,SPAWN_E6
-    CP 146 : JP Z,SPAWN_E6
-    CP 147 : JP Z,SPAWN_E6
-    CP 148 : JP Z,SPAWN_E6
-    CP 149 : JP Z,SPAWN_E6
-    CP 150 : JP Z,SPAWN_E6
-    CP 151 : JP Z,SPAWN_E6
-    CP 152 : JP Z,SPAWN_E6
-    CP 153 : JP Z,SPAWN_E6
-    CP 154 : JP Z,SPAWN_E6
-    CP 155 : JP Z,SPAWN_E6
-    CP 156 : JP Z,SPAWN_E6
-    CP 157 : JP Z,SPAWN_E6
-    CP 158 : JP Z,SPAWN_E6
-    CP 159 : JP Z,SPAWN_E6
-    CP 160 : JP Z,SPAWN_E6
-    CP 161 : JP Z,SPAWN_E6
-    CP 162 : JP Z,SPAWN_E6
-    CP 163 : JP Z,SPAWN_SIMPLE
-    CP 164 : JP Z,SPAWN_E6
-    CP 165 : JP Z,SPAWN_E6
-    CP 166 : JP Z,SPAWN_E6
-    CP 167 : JP Z,SPAWN_E6
-    CP 168 : JP Z,SPAWN_E6
-    CP 169 : JP Z,SPAWN_E6
-    CP 170 : JP Z,SPAWN_E6
-    CP 171 : JP Z,SPAWN_E6
-    CP 172 : JP Z,SPAWN_E6
-    CP 173 : JP Z,SPAWN_E6
-    CP 174 : JP Z,SPAWN_E6
-    CP 175 : JP Z,SPAWN_E6
-    CP 176 : JP Z,SPAWN_E6
-    CP 177 : JP Z,SPAWN_E6
-    CP 178 : JP Z,SPAWN_E6
-    CP 179 : JP Z,SPAWN_E6
-    CP 180 : JP Z,SPAWN_E6
-    CP 181 : JP Z,SPAWN_E6
-    CP 182 : JP Z,SPAWN_E6
-    CP 183 : JP Z,SPAWN_E6
-    CP 184 : JP Z,SPAWN_E6
-    CP 185 : JP Z,SPAWN_E6
-    CP 186 : JP Z,SPAWN_E6
-    CP 187 : JP Z,SPAWN_E6
-    CP 188 : JP Z,SPAWN_E6
-    CP 189 : JP Z,SPAWN_E6
-    CP 190 : JP Z,SPAWN_SIMPLE
-    CP 191 : JP Z,SPAWN_E6
-    CP 192 : JP Z,SPAWN_E6
-    CP 193 : JP Z,SPAWN_E6
-    CP 194 : JP Z,SPAWN_E6
-    CP 195 : JP Z,SPAWN_E6
-    CP 196 : JP Z,SPAWN_E6
-    CP 197 : JP Z,SPAWN_E6
-    CP 198 : JP Z,SPAWN_E6
-    CP 199 : JP Z,SPAWN_E6
-    CP 200 : JP Z,SPAWN_E6
-    CP 201 : JP Z,SPAWN_E6
-    CP 202 : JP Z,SPAWN_E6
-    CP 203 : JP Z,SPAWN_E6
-    CP 204 : JP Z,SPAWN_E6
-    CP 205 : JP Z,SPAWN_E6
-    CP 206 : JP Z,SPAWN_E6
-    CP 207 : JP Z,SPAWN_SIMPLE
-    CP 208 : JP Z,SPAWN_E6
-    CP 209 : JP Z,SPAWN_E6
-    CP 210 : JP Z,SPAWN_E6
-    CP 211 : JP Z,SPAWN_E6
-    CP 212 : JP Z,SPAWN_E6
-    CP 213 : JP Z,SPAWN_E6
-    CP 214 : JP Z,SPAWN_E6
-    CP 215 : JP Z,SPAWN_E6
-    CP 216 : JP Z,SPAWN_E6
-    CP 217 : JP Z,SPAWN_E6
-    CP 218 : JP Z,SPAWN_E6
-    CP 219 : JP Z,SPAWN_E6
-    CP 220 : JP Z,SPAWN_E6
-    CP 221 : JP Z,SPAWN_E6
-    CP 222 : JP Z,SPAWN_E6
-    CP 223 : JP Z,SPAWN_E6
-    CP 224 : JP Z,SPAWN_E6
-    CP 225 : JP Z,SPAWN_E6
-    CP 226 : JP Z,SPAWN_E6
-    CP 227 : JP Z,SPAWN_E6
-    CP 228 : JP Z,SPAWN_SIMPLE
-    CP 229 : JP Z,SPAWN_E6
-    CP 230 : JP Z,SPAWN_E6
-    CP 231 : JP Z,SPAWN_E6
-    CP 232 : JP Z,SPAWN_E6
-    CP 233 : JP Z,SPAWN_E6
-    CP 234 : JP Z,SPAWN_E6
-    CP 235 : JP Z,SPAWN_E6
-    CP 236 : JP Z,SPAWN_E6
-    CP 237 : JP Z,SPAWN_E6
-    CP 238 : JP Z,SPAWN_E6
-    CP 239 : JP Z,SPAWN_E6
-    CP 240 : JP Z,SPAWN_E6
-    CP 241 : JP Z,SPAWN_E6
-    CP 242 : JP Z,SPAWN_E6
-    CP 243 : JP Z,SPAWN_E6
-    CP 244 : JP Z,SPAWN_E6
-    CP 245 : JP Z,SPAWN_E6
-    CP 246 : JP Z,SPAWN_E6
-    CP 247 : JP Z,SPAWN_E6
-    CP 248 : JP Z,SPAWN_E6
-    CP 249 : JP Z,SPAWN_E6
-    CP 250 : JP Z,SPAWN_E6
-    CP 251 : JP Z,SPAWN_E6
-    CP 252 : JP Z,SPAWN_E6
-    CP 253 : JP Z,SPAWN_E6
-    CP 254 : JP Z,SPAWN_E6
-    CP 255 : JP Z,SPAWN_E6
-    JP BOSS_SPAWN
+    CP 117 : JP Z,SPAWN_SIMPLE
+    CP 122 : JP Z,SPAWN_SIMPLE
+    CP 129 : JP Z,SPAWN_SIMPLE
+    CP 134 : JP Z,SPAWN_SIMPLE
+    CP 139 : JP Z,SPAWN_SIMPLE
+    CP 144 : JP Z,SPAWN_SIMPLE
+    CP 148 : JP Z,SPAWN_SIMPLE
+    CP 153 : JP Z,SPAWN_SIMPLE
+    CP 158 : JP Z,SPAWN_SIMPLE
+    CP 165 : JP Z,SPAWN_SIMPLE
+    CP 170 : JP Z,SPAWN_SIMPLE
+    CP 174 : JP Z,SPAWN_SIMPLE
+    CP 179 : JP Z,SPAWN_SIMPLE
+    CP 184 : JP Z,SPAWN_SIMPLE
+    CP 189 : JP Z,SPAWN_SIMPLE
+    CP 194 : JP Z,SPAWN_SIMPLE
+    CP 199 : JP Z,SPAWN_SIMPLE
+    CP 204 : JP Z,SPAWN_SIMPLE
+    CP 209 : JP Z,SPAWN_SIMPLE
+    CP 214 : JP Z,SPAWN_SIMPLE
+    CP 219 : JP Z,SPAWN_SIMPLE
+    CP 224 : JP Z,SPAWN_SIMPLE
+    CP 231 : JP Z,SPAWN_SIMPLE
+    CP 236 : JP Z,SPAWN_SIMPLE
+    CP 241 : JP Z,SPAWN_SIMPLE
+    CP 246 : JP Z,SPAWN_SIMPLE
+    CP 251 : JP Z,SPAWN_SIMPLE
+    JP SPAWN_E6
 SSC_FIRE_BLK2:
-    LD A,L                       ; H=2, so L = index-512
-    CP 0   : JP Z,SPAWN_E6
-    CP 1   : JP Z,SPAWN_E6
-    CP 2   : JP Z,SPAWN_E6
-    CP 3   : JP Z,SPAWN_E6
-    CP 4   : JP Z,SPAWN_E6
-    CP 5   : JP Z,SPAWN_E6
-    CP 6   : JP Z,SPAWN_E6
-    JP BOSS_SPAWN
+    LD A,L                       ; H=2, so L = index-512; default handler for this block is SPAWN_E6 (most common)
+    CP 0   : JP Z,SPAWN_SIMPLE
+    CP 5   : JP Z,SPAWN_SIMPLE
+    CP 10  : JP Z,SPAWN_SIMPLE
+    CP 15  : JP Z,SPAWN_SIMPLE
+    CP 20  : JP Z,SPAWN_SIMPLE
+    CP 25  : JP Z,SPAWN_SIMPLE
+    CP 30  : JP Z,SPAWN_SIMPLE
+    CP 35  : JP Z,SPAWN_SIMPLE
+    CP 40  : JP Z,SPAWN_SIMPLE
+    CP 45  : JP Z,SPAWN_SIMPLE
+    CP 50  : JP Z,SPAWN_SIMPLE
+    CP 55  : JP Z,SPAWN_SIMPLE
+    CP 60  : JP Z,SPAWN_SIMPLE
+    CP 63  : JP Z,BOSS_SPAWN
+    JP SPAWN_E6
 
 ; --- saved (disabled) boss-only fast-iteration schedule - kept for  ---
 ; --- quickly testing boss-only features again later. Not active.   ---
@@ -11570,15 +11295,21 @@ ENEMY4_SINE_LUT:
 ; HL), so several waves running at once never share or contend over
 ; anything - each can have up to ENEMY3_SLOTS of its own members alive
 ; at once regardless of what any other wave is doing.
+; Per-wave slice offsets are ENEMY3_SLOTS*ENEMY3_STRUCT(=96, since the
+; 2026-09-13 CENTERX fold-in grew ENEMY3_STRUCT 11->12) * wave index -
+; literal here (this assembler evaluates left-to-right with no operator
+; precedence, so a one-line expression would silently mis-parse; see
+; the ENEMY3_STRUCT comment for why these needed updating from the old
+; 11-byte-stride values of 88/176/264/352/440/528/616).
 ENEMY3_TRY_SPAWN:
     LD IX,ENEMY3_WAVE_POOL    : LD HL,ENEMY3_POOL     : CALL ENEMY3_TRY_SPAWN_SLOT
-    LD IX,ENEMY3_WAVE_POOL+4  : LD HL,ENEMY3_POOL+88  : CALL ENEMY3_TRY_SPAWN_SLOT
-    LD IX,ENEMY3_WAVE_POOL+8  : LD HL,ENEMY3_POOL+176 : CALL ENEMY3_TRY_SPAWN_SLOT
-    LD IX,ENEMY3_WAVE_POOL+12 : LD HL,ENEMY3_POOL+264 : CALL ENEMY3_TRY_SPAWN_SLOT
-    LD IX,ENEMY3_WAVE_POOL+16 : LD HL,ENEMY3_POOL+352 : CALL ENEMY3_TRY_SPAWN_SLOT
-    LD IX,ENEMY3_WAVE_POOL+20 : LD HL,ENEMY3_POOL+440 : CALL ENEMY3_TRY_SPAWN_SLOT
-    LD IX,ENEMY3_WAVE_POOL+24 : LD HL,ENEMY3_POOL+528 : CALL ENEMY3_TRY_SPAWN_SLOT
-    LD IX,ENEMY3_WAVE_POOL+28 : LD HL,ENEMY3_POOL+616 : JP ENEMY3_TRY_SPAWN_SLOT
+    LD IX,ENEMY3_WAVE_POOL+4  : LD HL,ENEMY3_POOL+96  : CALL ENEMY3_TRY_SPAWN_SLOT
+    LD IX,ENEMY3_WAVE_POOL+8  : LD HL,ENEMY3_POOL+192 : CALL ENEMY3_TRY_SPAWN_SLOT
+    LD IX,ENEMY3_WAVE_POOL+12 : LD HL,ENEMY3_POOL+288 : CALL ENEMY3_TRY_SPAWN_SLOT
+    LD IX,ENEMY3_WAVE_POOL+16 : LD HL,ENEMY3_POOL+384 : CALL ENEMY3_TRY_SPAWN_SLOT
+    LD IX,ENEMY3_WAVE_POOL+20 : LD HL,ENEMY3_POOL+480 : CALL ENEMY3_TRY_SPAWN_SLOT
+    LD IX,ENEMY3_WAVE_POOL+24 : LD HL,ENEMY3_POOL+576 : CALL ENEMY3_TRY_SPAWN_SLOT
+    LD IX,ENEMY3_WAVE_POOL+28 : LD HL,ENEMY3_POOL+672 : JP ENEMY3_TRY_SPAWN_SLOT
 
 ; Input: IX = one wave slot (ACTIVE,BUDGET,TIMER,OFFSET), HL = base of
 ; this wave's own dedicated ENEMY3_SLOTS-instance slice of ENEMY3_POOL.
@@ -11612,8 +11343,7 @@ ENEMY3_TRY_SPAWN_SLOT:
     LD (IX+2),1
     RET
 E3TSS_GOTUNIT:
-    CALL ENEMY3_CENTERX_ADDR    ; HL <- &centerx table entry for the unit slot in IX
-    LD (HL),B
+    LD (IX+11),B                ; CENTERX field, folded into the struct itself
     CALL ENEMY3_DO_SPAWN        ; spawns the unit at IX (its own RET returns here)
     POP HL                       ; HL = this wave slot's address again
     PUSH HL : POP IX             ; IX = wave slot, so (IX+n) offsets work below
@@ -11622,18 +11352,6 @@ E3TSS_GOTUNIT:
     LD A,(IX+1) : DEC A : LD (IX+1),A
     RET NZ
     LD (IX+0),0                  ; budget exhausted - deactivate this wave
-    RET
-
-; Input: IX = slot base address (within ENEMY3_POOL). Output: HL =
-; address of this slot's entry in ENEMY3_CENTERX_TABLE (same stride,
-; parallel array). Clobbers: HL, DE, A.
-ENEMY3_CENTERX_ADDR:
-    PUSH IX
-    POP HL
-    LD DE,ENEMY3_POOL
-    OR A : SBC HL,DE
-    LD DE,ENEMY3_CENTERX_TABLE
-    ADD HL,DE
     RET
 
 ; Input: HL = base of an ENEMY3_SLOTS-instance slice of ENEMY3_POOL
@@ -11659,8 +11377,8 @@ E3FFS_FOUND:
 ENEMY3_DO_SPAWN:
     LD A,1 : LD (IX+0),A
     XOR A : LD (IX+1),A
-    CALL ENEMY3_CENTERX_ADDR      ; this slot's centerx offset was just written by
-    LD A,(HL)                     ; the caller - apply it to the entry point too, so
+    LD A,(IX+11)                  ; this slot's centerx offset was just written by
+                                   ; the caller - apply it to the entry point too, so
     ADD A,ENEMY3_SPAWN_X          ; the trio visibly separates from the first frame
     JR NC,E3DS_XOK                ; instead of only once DIAG converges on the center.
     LD A,254                      ; A large offset can push this past 255 - an 8-bit wrap
@@ -11789,12 +11507,11 @@ E3_ANIMDONE:
     JP E3_EXIT
 
 ; Each slot's diagonal approach targets its OWN circle center - X offset
-; by ENEMY3_CENTERX_TABLE(slot), same offset the circle phase orbits -
-; so a trio's members separate horizontally from spawn onward, not just
-; once circling starts.
+; by (IX+11), its own CENTERX field, same offset the circle phase
+; orbits - so a trio's members separate horizontally from spawn onward,
+; not just once circling starts.
 E3_DIAG:
-    CALL ENEMY3_CENTERX_ADDR
-    LD A,(HL) : ADD A,ENEMY3_CENTER_X : LD B,A
+    LD A,(IX+11) : ADD A,ENEMY3_CENTER_X : LD B,A
     LD A,(IX+2) : CP B
     JR Z,E3_DIAG_XOK
     JR C,E3_DIAG_XLOW
@@ -11850,8 +11567,7 @@ E3_CIRCLE_POS:
     LD A,(HL) : LD C,A
     INC HL
     LD A,(HL) : ADD A,ENEMY3_CENTER_Y : LD (IX+3),A
-    CALL ENEMY3_CENTERX_ADDR
-    LD A,(HL) : ADD A,ENEMY3_CENTER_X : ADD A,C : LD (IX+2),A
+    LD A,(IX+11) : ADD A,ENEMY3_CENTER_X : ADD A,C : LD (IX+2),A
     JP E3_DRAW
 
 ; Exit sequence: always drift right; drop toward ENEMY3_EXIT_TARGET_Y
@@ -11994,7 +11710,7 @@ CBVE3_HIT:
 
 ; ============================================================
 ; enemy6: new BG-cell enemy (16x16 = 2x2 nametable cells), straight
-; left drift. See the ENEMY6_* EQUs (near ENEMY3_CENTERX_TABLE) for
+; left drift. See the ENEMY6_* EQUs (near ENEMY3_POOL) for
 ; the pool layout/timing, and NEWENEMY_PATTERN_*/NEWENEMY_CODE_* (near
 ; the end of the file) for the glyph itself.
 ; ============================================================
@@ -12613,8 +12329,9 @@ ENEMY6_ANIM_CODES:
     DB NEWENEMY_CODE180_TL, NEWENEMY_CODE180_TR, NEWENEMY_CODE180_BL, NEWENEMY_CODE180_BR
     DB NEWENEMY_CODE270_TL, NEWENEMY_CODE270_TR, NEWENEMY_CODE270_BL, NEWENEMY_CODE270_BR
 
-; Full schedule, 253 entries (indices 0-252), imported directly from the
-; schedule editor's exported JSON (tick/row/type per placement) - see
+; Full schedule, 576 entries (indices 0-575, Schedule_2.json,
+; 2026-09-13), imported directly from the schedule editor's exported
+; JSON (tick/row/type per placement) - see
 ; SSC_FIRE for the per-index dispatch this drives. Every tick here is
 ; a 16-bit word since thresholds run well past 255. Simple-formation,
 ; Enemy2, and Enemy4/Enemy5 spawns pull their actual Y/baseY from
@@ -12633,35 +12350,29 @@ SPAWN_THRESHOLDS:
     DW 582,591,593,600,610,611,613,613,616,617,619,619,623,624,626,629,630
     DW 632,641,642,644,644,647,648,650,650,675,677,679,683,683,695,695,705
     DW 707,709,712,721,723,725,728,737,739,741,744,751,753,755,757,764,768
-    DW 771,774,779,783,788,794,798,798,800,800,802,802,804,804,804,806,806
-    DW 808,808,810,810,812,812,814,814,816,826,827,827,828,828,829,829,830
-    DW 830,831,831,832,832,833,833,833,834,834,835,835,836,836,837,837,837
-    DW 838,838,839,839,840,840,841,841,842,842,843,843,844,844,845,845,845
-    DW 846,846,847,847,848,848,849,849,850,850,850,851,851,852,852,853,853
-    DW 854,854,855,855,856,856,857,857,858,858,859,859,860,860,861,861,862
-    DW 862,862,863,863,864,864,865,865,866,866,867,867,868,868,869,869,870
-    DW 870,871,871,872,872,873,873,874,874,875,875,876,876,876,877,877,878
-    DW 878,879,879,880,880,881,881,882,882,883,883,884,884,885,885,886,887
-    DW 887,887,887,888,889,889,889,889,890,891,891,891,891,892,893,893,893
-    DW 895,895,895,895,897,897,897,897,897,899,899,899,899,901,901,901,901
-    DW 902,903,903,903,903,905,905,905,907,907,907,907,909,909,909,909,911
-    DW 911,911,911,913,913,913,913,915,915,915,915,916,917,917,917,917,919
-    DW 919,919,919,921,921,921,921,923,923,923,923,925,925,925,925,927,927
-    DW 927,927,929,929,929,929,929,931,931,931,931,933,933,933,933,935,935
-    DW 935,935,937,937,937,937,937,939,939,939,939,941,941,941,941,943,943
-    DW 943,943,945,945,945,945,947,947,947,947,947,949,949,949,949,951,951
-    DW 951,951,953,953,953,953,955,955,955,955,957,957,957,957,959,959,959
-    DW 959,961,961,961,961,963,963,963,963,992
+    DW 771,774,779,783,788,794,798,798,798,800,800,802,802,803,804,804,804
+    DW 806,806,808,808,809,810,810,812,812,814,814,815,816,818,822,826,827
+    DW 827,827,828,828,829,829,830,830,830,831,831,831,832,832,833,833,833
+    DW 834,834,835,835,835,836,836,837,837,838,838,838,839,839,840,840,841
+    DW 841,841,842,842,843,843,843,844,844,845,845,845,846,846,847,847,847
+    DW 848,848,849,849,850,850,850,851,851,852,852,852,853,853,854,854,854
+    DW 855,855,856,856,856,857,857,858,858,858,859,859,860,860,860,861,861
+    DW 862,862,862,863,863,864,864,865,865,865,866,866,867,867,867,868,868
+    DW 869,869,869,870,870,871,871,872,872,872,873,873,874,874,874,875,875
+    DW 876,876,876,877,877,878,878,878,879,879,880,880,880,881,881,882,882
+    DW 882,883,883,884,884,884,885,885,886,887,887,887,887,888,889,889,889
+    DW 889,890,891,891,891,891,892,893,893,893,893,895,895,895,895,895,897
+    DW 897,897,897,897,899,899,899,899,899,901,901,901,901,902,903,903,903
+    DW 903,904,905,905,905,906,907,907,907,907,908,909,909,909,909,910,911
+    DW 911,911,911,912,913,913,913,913,914,915,915,915,915,916,917,917,917
+    DW 917,918,919,919,919,919,920,921,921,921,921,922,923,923,923,923,924
+    DW 925,925,925,925,926,927,927,927,927,929,929,929,929,929,931,931,931
+    DW 931,931,933,933,933,933,933,935,935,935,935,935,937,937,937,937,937
+    DW 939,939,939,939,939,941,941,941,941,941,943,943,943,943,943,945,945
+    DW 945,945,945,947,947,947,947,947,949,949,949,949,949,951,951,951,951
+    DW 951,953,953,953,953,953,955,955,955,955,955,957,957,957,957,957,959
+    DW 959,959,959,959,961,961,961,961,961,963,963,963,963,963,992
 
-; --- saved (disabled) boss-only single-entry schedule, used ---
-; --- while iterating quickly on boss features - not deleted: ---
-;SPAWN_THRESHOLDS_BOSSONLY_SAVED:
-;    DW 10
-
-; Spawn Y for each SPAWN_SIMPLE schedule index (see SSC_FIRE/SPAWN_
-; SIMPLE) - one byte per index, same length/order as SPAWN_THRESHOLDS,
-; row*8 from the schedule editor. Only indices that actually dispatch
-; to SPAWN_SIMPLE are read; the rest are unused placeholders (0).
 SPAWN_SIMPLE_Y_TABLE:
     DB 40,32,24,136,128,0,120,32,24,16,128,120,112,24,40,56,72
     DB 88,104,120,120,120,112,104,96,88,80,72,64,56,48,0,0,88
@@ -12675,31 +12386,29 @@ SPAWN_SIMPLE_Y_TABLE:
     DB 0,0,0,0,0,0,64,0,0,0,0,120,0,0,64,0,0
     DB 120,0,0,64,0,0,0,0,120,16,24,32,0,0,0,0,0
     DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-    DB 0,0,0,0,104,80,0,0,0,0,0,0,0,48,0,0,0
-    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,56,0
-    DB 0,0,0,0,0,0,0,0,0,88,0,0,0,0,0,0,0
-    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-    DB 104,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-    DB 0,0,0,0,0,0,0,0,0,0,0,0,104,0,0,0,0
-    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-    DB 0,96,0,0,0,0,88,0,0,0,0,80,0,0,0,0,0
-    DB 0,0,0,0,0,0,80,0,0,0,0,0,0,0,0,0,0
-    DB 64,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-    DB 0,0,0,0,0,0,0,0,0,0,0,80,0,0,0,0,0
-    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-    DB 0,0,0,0,88,0,0,0,0,0,0,0,0,0,0,0,0
-    DB 0,0,0,0,88,0,0,0,0,0,0,0,0,0,0,0,0
-    DB 0,0,0,0,0,0,0,0,88,0,0,0,0,0,0,0,0
-    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-    DB 0,0,0,0,0,0,0,0,0,0
+    DB 0,0,0,0,104,88,0,80,0,0,0,0,0,72,0,48,0
+    DB 0,0,0,0,88,0,0,0,0,0,0,88,0,80,64,0,0
+    DB 80,0,0,0,0,0,0,64,0,0,80,0,0,0,0,0,0
+    DB 0,0,0,80,0,0,0,0,0,0,72,0,0,0,0,0,0
+    DB 80,0,0,0,0,72,0,0,0,0,56,0,0,0,0,72,0
+    DB 0,0,0,0,0,88,0,0,0,0,72,0,0,0,0,80,0
+    DB 0,0,0,88,0,0,0,0,96,0,0,0,0,96,0,0,0
+    DB 0,104,0,0,0,0,0,0,104,0,0,0,0,96,0,0,0
+    DB 0,96,0,0,0,0,0,0,96,0,0,0,0,96,0,0,0
+    DB 0,104,0,0,0,0,96,0,0,0,0,96,0,0,0,0,96
+    DB 0,0,0,0,96,0,0,0,0,0,0,96,0,0,0,0,88
+    DB 0,0,0,0,80,0,0,0,0,88,0,0,0,96,0,0,0
+    DB 0,80,0,0,0,0,72,0,0,0,0,0,0,64,0,0,0
+    DB 0,56,0,0,0,64,0,0,0,0,72,0,0,0,0,80,0
+    DB 0,0,0,88,0,0,0,0,80,0,0,0,0,80,0,0,0
+    DB 0,80,0,0,0,0,80,0,0,0,0,80,0,0,0,0,80
+    DB 0,0,0,0,88,0,0,0,0,0,0,88,0,0,0,0,80
+    DB 0,0,0,0,80,0,0,0,0,88,0,0,0,0,88,0,0
+    DB 0,0,80,0,0,0,0,80,0,0,0,0,80,0,0,0,0
+    DB 80,0,0,0,0,88,0,0,0,0,80,0,0,0,0,80,0
+    DB 0,0,0,80,0,0,0,0,72,0,0,0,0,64,0,0,0
+    DB 0,56,0,0,0,0,56,0,0,0,0,56,0,0,0
 
-; Same idea as SPAWN_SIMPLE_Y_TABLE but for Enemy4/Enemy5 (SPAWN_E4/
-; SPAWN_E4B) baseY - row*8 from the schedule editor, any row, not
-; just the old 3 fixed presets (32/64/72). Also now used by Enemy2
-; (SPAWN_E2 - same "any row" idea, replacing the old TOP=32/BOT=128
-; stub split). Unused elsewhere (0).
 SPAWN_BASEY_TABLE:
     DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
     DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
@@ -12715,7 +12424,7 @@ SPAWN_BASEY_TABLE:
     DB 72,80,104,40,72,80,104,40,72,80,104,120,88,56,24,0,64
     DB 0,96,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
     DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-    DB 0,0,0,0,0,0,64,0,0,0,0,0,0,0,0,88,0
+    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,64,0
     DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
     DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
     DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
@@ -12731,15 +12440,11 @@ SPAWN_BASEY_TABLE:
     DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
     DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
     DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-    DB 0,0,0,0,0,0,0,0,0,0
+    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
 
-; This trigger's own offset (px = cells*8), one byte per SPAWN_THRESHOLDS
-; index, from the schedule editor's per-placement "offset" field - each
-; enemy3_wave trigger copies its own entry straight into its own
-; ENEMY3_WAVE_POOL slot AND ITS OWN dedicated ENEMY3_POOL slice (see
-; SPAWN_E3_WAVE/ENEMY3_TRY_SPAWN), so several triggers at different
-; offsets run fully independently. Only enemy3_wave indices are read;
-; the rest are unused placeholders (0).
 SPAWN_E3_OFFSET_TABLE:
     DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
     DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,24,0
@@ -12771,12 +12476,11 @@ SPAWN_E3_OFFSET_TABLE:
     DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
     DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
     DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-    DB 0,0,0,0,0,0,0,0,0,0
+    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
 
-; This trigger's own row (raw, NOT *8 - ENEMY6_POOL stores ROW directly,
-; see its own comment), one byte per SPAWN_THRESHOLDS index, from the
-; schedule editor. Only enemy6 indices are read; the rest are unused
-; placeholders (0).
 ENEMY6_ROW_TABLE:
     DB 0,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0
     DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
@@ -12790,26 +12494,28 @@ ENEMY6_ROW_TABLE:
     DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
     DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
     DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,2,0
-    DB 18,0,2,16,0,0,2,18,2,18,2,18,2,0,18,2,18
-    DB 2,18,2,18,2,16,4,14,6,2,4,15,2,17,4,15,2
-    DB 17,4,15,2,17,4,0,15,2,17,4,15,2,17,4,0,15
-    DB 2,17,4,15,2,17,4,15,2,17,4,15,2,17,4,0,15
-    DB 2,17,4,15,2,17,4,15,2,0,17,5,15,3,17,5,15
-    DB 3,17,6,15,4,17,7,15,5,17,8,15,6,17,9,15,7
-    DB 0,17,9,15,7,17,9,15,7,17,9,15,6,17,8,15,6
-    DB 17,8,15,6,17,8,15,6,17,8,15,6,0,17,8,15,6
-    DB 17,8,15,6,17,8,15,6,17,8,15,5,17,7,15,17,6
-    DB 8,0,15,17,5,7,0,15,17,4,6,0,15,17,5,7,15
-    DB 6,8,16,18,5,7,0,15,17,4,6,14,16,3,5,13,15
-    DB 0,2,4,12,14,3,11,13,3,5,12,14,4,6,14,16,5
-    DB 7,15,17,6,8,14,16,6,8,14,16,0,6,8,15,17,5
-    DB 7,14,16,4,6,13,15,5,7,14,16,6,8,13,15,5,7
-    DB 13,15,5,7,0,13,15,5,7,13,15,5,7,13,15,5,7
-    DB 13,15,5,7,0,13,15,5,7,13,15,5,7,13,15,5,7
-    DB 13,15,5,7,13,15,5,7,0,13,15,5,7,13,15,5,7
-    DB 13,15,5,7,13,15,4,6,12,14,3,5,11,13,2,4,10
-    DB 12,2,4,10,12,2,4,10,12,0
-
+    DB 18,0,2,16,0,0,2,0,18,2,18,2,18,0,2,0,18
+    DB 2,18,2,18,0,2,18,2,16,4,14,0,6,0,0,2,4
+    DB 0,15,2,17,4,15,2,0,17,4,0,15,2,17,4,0,15
+    DB 2,17,4,0,15,2,17,4,15,2,0,17,4,15,2,17,4
+    DB 0,15,2,17,4,0,15,2,17,4,0,15,2,17,4,0,15
+    DB 2,17,4,15,2,0,17,5,15,3,0,17,5,15,3,0,17
+    DB 6,15,4,0,17,7,15,5,0,17,8,15,6,0,17,9,15
+    DB 7,0,17,9,15,7,17,9,0,15,7,17,9,0,15,6,17
+    DB 8,0,15,6,17,8,15,6,0,17,8,15,6,0,17,8,15
+    DB 6,0,17,8,15,6,0,17,8,15,6,0,17,8,15,6,0
+    DB 17,8,15,5,0,17,7,15,17,6,8,0,15,17,5,7,0
+    DB 15,17,4,6,0,15,17,5,7,0,15,6,8,0,16,18,5
+    DB 7,0,15,17,4,6,0,14,16,3,5,13,15,0,2,4,12
+    DB 14,0,3,11,13,0,3,5,12,14,0,4,6,14,16,0,5
+    DB 7,15,17,0,6,8,14,16,0,6,8,14,16,0,6,8,15
+    DB 17,0,5,7,14,16,0,4,6,13,15,0,5,7,14,16,0
+    DB 6,8,13,15,0,5,7,13,15,5,7,0,13,15,5,7,0
+    DB 13,15,5,7,0,13,15,5,7,0,13,15,5,7,0,13,15
+    DB 5,7,0,13,15,5,7,0,13,15,5,7,0,13,15,5,7
+    DB 0,13,15,5,7,0,13,15,5,7,0,13,15,5,7,0,13
+    DB 15,5,7,0,13,15,4,6,0,12,14,3,5,0,11,13,2
+    DB 4,0,10,12,2,4,0,10,12,2,4,0,10,12,0
 ; --- Boss BG (nametable) graphics, generated from
 ; --- dotpict_20260806_173500 (12x37 dot art), resized directly
 ; --- to 40x128 dots (5x16 tiles) and quantized to black/gray/red/blue.
