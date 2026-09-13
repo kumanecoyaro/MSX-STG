@@ -13585,3 +13585,110 @@ Y段違い+Enemy6速度半減、Stage2自機爆発の自機非表示タイミン
   また同CLAUDE.mdの「テストコマンド・実行方針」に追記済みの
   「combined_test.asm無変更時は全回帰run_all.pyを実行しない」方針にも
   従うこと。
+
+## Round91: SCREEN3グリッチの真因特定・修正(openMSX+screenshot実機
+検証環境を新規構築、VDP R4のパターンジェネレータベースアドレス誤り)
+(2026-09-12、完了済み・実機フィードバック待ち)
+
+- ユーザー報告(Round90送付版でも変化なしの同一スクリーンショット):
+  "グリッチのまま変わってねえよ タイトルをベースにしたテストRomでは
+  ちゃんと表示できてたのに なんで組み込んだら途端にできねんだよ
+  手抜きせずちゃんとスクリーン3に初期化しろ この実装にボーダー
+  カラーだって無関係なのによ 出来るんだよ ちゃんと実装すりゃ
+  レンダリングで確認しろボケ"。
+- **openMSX実機検証環境の新規構築**: Round47/53で確立済みの
+  "openMSX(headless、-control stdio外部制御)"手法を本セッションでも
+  再構築(このコンテナには未インストールだったため`apt-get install
+  openmsx`から実施)。`Xvfb`で仮想ディスプレイを用意し、`-machine
+  C-BIOS_MSX1 -cart "Comb ROM" -control stdio`で起動、Pythonから
+  `<command>...</command>`プロトコルでTclコマンドを送受信する
+  ドライバスクリプトを新規作成。`debug set_bp`でWAIT_FOR_STARTへ
+  ブレークポイントを張り、`reg PC 0x44F0`で直接RUN_SCREEN3_
+  SLIDESHOWへジャンプ(ボタン入力シミュレーションの実装を省略)、
+  `debug cont`で再開、`screenshot`コマンドで実際の描画結果をPNG
+  として保存。**この手順で実際にユーザー報告と全く同じ縦縞グリッチを
+  再現できた**(WebMSX固有の問題ではなく、genuineなVDP誤動作である
+  ことをこの時点で確定)。
+- **真因特定**: `debug read "VDP regs" <n>`で実際のVDPレジスタ値を
+  直接読み取ったところ、**R4(パターンジェネレータテーブルの
+  ベースアドレスレジスタ)がINIGRPの設定値3のまま一度も書き換えられて
+  いなかった**と判明。R4=3の場合、パターンジェネレータテーブルの
+  実際のベースアドレスは3×0800h=1800h(Text/Graphics1/Multicolorでは
+  2KB単位、R4下位3bitで16KB空間内の8ブロックから選択)になる - これは
+  ネームテーブル自身のベースアドレス(R2=6→1800h)と全く同じ番地で
+  あり、VDPは自分自身が書き込んだネームテーブルの単純なランプ値
+  (0-191の機械的な連番)をパターンジェネレータデータとして誤読して
+  いた。`SHOW_SC3_IMG1`がVRAM 0000hへ正しく書いたPGTデータは、VDPが
+  実際に参照するアドレス(1800h)とは全く別の場所だったため、一切
+  表示に反映されていなかった - これが「規則正しいがおかしい」縦縞
+  模様グリッチの正体。Round90までのR0(M3ビット)修正は必要な修正
+  ではあったが、この第3の原因(R4)を見落としていたため単独では
+  画面を正しく表示させるには至っていなかった。
+- **修正**: `RUN_SCREEN3_SLIDESHOW`の先頭にR4を明示的に0(パターン
+  ジェネレータテーブルを0000hへ、Graphics1/Multicolor共通の標準値)へ
+  書き戻す`LD B,0:LD C,4:CALL WRTVDP`を追加(R0リセットの直後)。
+  修正後、同じopenMSX+screenshot手順で実際に正しい絵柄(Image01.SC3・
+  Epilogue3.SC3)が表示されることを視覚確認済み(このRoundの成果の
+  中で最も重要な検証 - ユーザー指示"レンダリングで確認しろ"を文字通り
+  実行した)。
+- テスト: `title_test.py`にVDP R4=00hの構造チェックを追加(58件、
+  57→58)、R1書き込みのバイトオフセットもR4書き込み分[7バイト]の
+  追加に伴い更新、メインループ回数のバイトオフセットも同様に更新
+  (+0x2A→+0x31)。`tools/bankswitch_poc/verify_comb.py`も同様に更新。
+- 全回帰: 今回も`tools/title_screen/`+`tools/bankswitch_poc/
+  verify_comb.py`のみのためCLAUDE.mdの方針(Round89)に従いStage2側
+  `run_all.py`は実行せず。`title_test.py` **58 passed**(57→58)。
+  `verify_comb.py`全チェックPASS(実行時間約65秒)。Comb ROM再ビルド・
+  実際のopenMSXスクリーンショットで視覚確認の上、標準方針によりComb
+  ROMのみ送付。
+- **教訓(重大)**: SCREEN3(Multicolor)モードへの切替は、Graphics2
+  (SCREEN2)を土台にする場合、少なくともR0(M3ビット)とR4(パターン
+  ジェネレータベース)の**両方**を明示的にGraphics1/Multicolor共通の
+  値へ書き戻す必要がある - どちらか一方だけでは不十分(R0だけでは
+  「音は出るが画面が死ぬ」、R4も直さないと「モードは合っているが
+  全く違うデータを表示する」という別の壊れ方をする)。今後同様の
+  モード切替(Graphics2ベースからGraphics1/Multicolorへ)を実装する
+  際は、INIGRP/INIT32が実際に書き込む全レジスタ(R0-R7)の差分を
+  漏れなく洗い出してから着手すること - 一部のレジスタだけを確認・
+  修正して「もう直っただろう」と判断しないこと。またこのクラスの
+  「z80emu.pyでは検出不可能な実機専用バグ」(WRTVDPがBIOS呼び出しの
+  ためレジスタ状態を追跡できない)に遭遇した場合、openMSXの
+  `-control stdio`+`screenshot`+`debug read "VDP regs"`という組み
+  合わせが今回極めて有効だった - Round47/53のPC/VRAM調査に加え、
+  今後はVDPレジスタの直接読み取りとスクリーンショットによる視覚
+  検証も標準手順に加えるべき。
+- **保留・実機フィードバック待ち**: 今回はopenMSXでの実機同等検証で
+  視覚的に確認できたが、実機・WebMSX本体での最終確認は次回フィード
+  バック待ち。
+
+## セッション引き継ぎメモ(2026-09-12、Round91完了直後)
+
+- **現在の状態**: Round91(SCREEN3グリッチの真因[VDP R4のパターン
+  ジェネレータベースアドレスがGraphics2の値3のまま残っていた]を
+  openMSX実機検証環境で特定・修正、screenshotで視覚確認済み)まで
+  完了。`title_test.py` **58 passed**。`verify_comb.py`全チェック
+  PASS。Comb ROM再ビルド済み。Stage2側`run_all.py`はRound89から
+  引き続き未実行(方針変更、`combined_test.asm`無変更のため前回
+  1525 passed/0 failedのまま)。
+- **コミット・push状況**: 本メモ記載時点でコミット・push作業中(この
+  メモ自体が同じコミットに含まれる想定)。作業ツリーの内容:
+  `tools/title_screen/title_test.asm`(RUN_SCREEN3_SLIDESHOW冒頭に
+  VDP R4リセット追加)・`tools/title_screen/title_test.py`(R4構造
+  チェック追加、バイトオフセット更新)・`tools/bankswitch_poc/
+  verify_comb.py`(バイトオフセット更新)・`tools/title_screen/CyberS
+  Title.ascii16k.rom`(standalone再ビルド)・`rom/CyberS
+  Comb.ascii16k.rom`(再ビルド)・本HANDOFF.md(記録追記)。
+  なお今回新規構築したopenMSX検証用ドライバスクリプト(/tmp配下に
+  作成)はセッション固有の一時ファイルのためリポジトリには含めて
+  いない - 次回同種の調査が必要になった場合は本Round記載の手順
+  (apt-get install openmsx、Xvfb、-control stdio、debug set_bp/
+  cont、reg PC直接操作、screenshot、debug read "VDP regs")を参考に
+  再構築すること。
+- **次に着手すべきこと**: 特になし(指示なしに着手しない方針)。
+  ユーザーからの次の実機フィードバック・新規指示を待つ状態。
+- **新セッションが最初にすべきこと**: このHANDOFF.md末尾(本項目)を
+  読んだ上で、CLAUDE.md冒頭の「実機ハードウェア制約」恒久ルール
+  (OTIR等のブロックI/O命令禁止)を必ず確認してから作業を再開すること。
+  また同CLAUDE.mdの「テストコマンド・実行方針」に追記済みの
+  「combined_test.asm無変更時は全回帰run_all.pyを実行しない」方針にも
+  従うこと。

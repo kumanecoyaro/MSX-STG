@@ -486,7 +486,7 @@ switch_log_at_wait = list(mem.switch_log)  # round40: exclude INIT_BGM's own 2 s
 # ここでは検証しない(専用の構造チェック・直接呼び出しチェックを
 # 下に別途用意する)。メインループ回数自体は既に実ROMの値が1のため
 # 短縮パッチ不要(値そのものは下の構造チェックで直接検証する)。
-_RSS_MAIN_LOOP_COUNT_ADDR = sym["RUN_SCREEN3_SLIDESHOW"] + 0x2A  # "LD B,1" operand
+_RSS_MAIN_LOOP_COUNT_ADDR = sym["RUN_SCREEN3_SLIDESHOW"] + 0x31  # "LD B,1" operand
 _WAIT_3F_DE_ADDR = sym["WAIT_3_FRAMES"] + 1                       # "LD DE,6884" operand (2 bytes)
 _SC3D_B_INIT_ADDR = sym["SCREEN3_DELAY_NESTED"] + 1               # "LD B,0" operand
 _SC3D_C_INIT_ADDR = sym["SCREEN3_DELAY_NESTED"] + 3               # "LD C,0" operand
@@ -720,10 +720,29 @@ check("RUN_SCREEN3_SLIDESHOW setup: VDP R0 = 00h (clears Graphics2's M3 bit that
       "画面真っ黒のまま\")",
       out[sym["RUN_SCREEN3_SLIDESHOW"] + 1] == 0x00
       and out[sym["RUN_SCREEN3_SLIDESHOW"] + 3] == 0)
+# (2026-09-12、実機フィードバック"グリッチのまま変わってねえよ...ちゃんと
+# スクリーン3に初期化しろ...レンダリングで確認しろ"): openMSXの-control
+# stdio外部制御でPCをRUN_SCREEN3_SLIDESHOWへ直接ジャンプさせ実行、
+# screenshotコマンドで実際にユーザー報告と同じ縦縞グリッチを再現した上で
+# "VDP regs"デバッガブルを直接読んで判明した実バグ - R4(パターン
+# ジェネレータテーブルのベースアドレス)がINIGRPの設定値3(ベース1800h、
+# ネームテーブル自身と同じ番地)のまま一度も書き換えられておらず、VDPが
+# 自分自身のネームテーブルの単純なランプ値をパターンデータとして誤読
+# していた。R4=0(パターンジェネレータを0000hへ、Graphics1/Multicolor
+# 共通の標準値)を明示的に書き戻す1行を追加して解消 - 修正後に同じ
+# openMSX+screenshotの手順で実際に正しい絵柄が表示されることを視覚
+# 確認済み。
+check("RUN_SCREEN3_SLIDESHOW setup: VDP R4 = 00h (pattern generator table base back to 0000h - "
+      "INIGRP had left it at 3 [base 1800h, the SAME address as the name table itself], causing "
+      "the VDP to misread its own name table ramp as pattern data - the real cause of the "
+      "\"グリッチのまま変わってねえよ\" vertical-stripe glitch, found via openMSX's real VDP "
+      "register readback + screenshot rendering)",
+      out[sym["RUN_SCREEN3_SLIDESHOW"] + 8] == 0x00
+      and out[sym["RUN_SCREEN3_SLIDESHOW"] + 10] == 4)
 check("RUN_SCREEN3_SLIDESHOW setup: VDP R1 = 0EAh (Graphics1's 0E2h + M2 bit for Multicolor, "
       "the tools/screen3_test/screen3_test.asm sequence confirmed working on real hardware)",
-      out[sym["RUN_SCREEN3_SLIDESHOW"] + 8] == 0xEA
-      and out[sym["RUN_SCREEN3_SLIDESHOW"] + 10] == 1)
+      out[sym["RUN_SCREEN3_SLIDESHOW"] + 15] == 0xEA
+      and out[sym["RUN_SCREEN3_SLIDESHOW"] + 17] == 1)
 check("RUN_SCREEN3_SLIDESHOW setup: shared NAME table written to VRAM 1800h (all 6 main "
       "images share byte-identical NAME data, confirmed by screen3_gen.py)",
       bytes(cpu_setup.vram[0x1800:0x1800 + len(SC3_SHARED_NAME_bytes)]) == SC3_SHARED_NAME_bytes)
@@ -756,7 +775,7 @@ for i in range(1, 4):
 _real_out, _real_sym, _ = build_test.assemble()
 check("RUN_SCREEN3_SLIDESHOW's real (unshrunk) main-loop count is 1 "
       "(\"10ループなんて指定してないし\" - corrected from the earlier 10)",
-      _real_out[_real_sym["RUN_SCREEN3_SLIDESHOW"] + 0x2A] == 1)
+      _real_out[_real_sym["RUN_SCREEN3_SLIDESHOW"] + 0x31] == 1)
 check("WAIT_3_FRAMES's real (unshrunk) DE count is 6884 (~50ms @ 3579545Hz / "
       "26 T-states per DEC-DE loop iteration, \"3フレ分\")",
       (_real_out[_real_sym["WAIT_3_FRAMES"] + 1]

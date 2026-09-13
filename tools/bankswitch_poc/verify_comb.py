@@ -225,7 +225,7 @@ print("title's own BGM RAM copy of GAME_OVER (Stage1 game-over jingle) verified 
 # tools/title_screen/title_test.pyの「button press trampolines」
 # テストと同じ手法(real ROM自体は無変更、このテスト用のtitle_bank0
 # コピーだけディレイを短縮するパッチ)をここでも適用する。
-_RSS_MAIN_LOOP_COUNT_ADDR = tsym["RUN_SCREEN3_SLIDESHOW"] + 0x2A  # "LD B,1" operand
+_RSS_MAIN_LOOP_COUNT_ADDR = tsym["RUN_SCREEN3_SLIDESHOW"] + 0x31  # "LD B,1" operand
 _WAIT_3F_DE_ADDR = tsym["WAIT_3_FRAMES"] + 1                       # "LD DE,6884" operand (2 bytes)
 _SC3D_B_INIT_ADDR = tsym["SCREEN3_DELAY_NESTED"] + 1               # "LD B,0" operand
 _SC3D_C_INIT_ADDR = tsym["SCREEN3_DELAY_NESTED"] + 3               # "LD C,0" operand
