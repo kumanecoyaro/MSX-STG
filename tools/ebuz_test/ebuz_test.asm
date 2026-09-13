@@ -220,6 +220,24 @@ EBUZ_RECOIL_DURATION   EQU 1       ; 反動表示の持続ティック数(打っ
 ; されたまま、移動だけ止める)。
 EBUZ_BULLET0_HOLDING   EQU 0F361h  ; 1 byte: 1=ホールド中(表示のみ、移動しない)、0=通常飛行中
 
+; (2026-09-13、実機フィードバック対応: "最初の弾止まったままじゃねえかよ
+; マジでスプライトの扱いも知らねえしよ ナンバー使い回したら消えるに
+; 決まってんだろうが 画面内の弾のスプライトナンバーは全て違ってる
+; 必要があんだよ 画面内に10発なら1から10までをループして使わなきゃ
+; きえんだよアホが"): これまでは論理的な弾(スロット0=初弾/スロット1=
+; 上/スロット2=下)ごとに固定のHWスプライト番号(SPRATRの物理オフセット
+; 0/4/8)を割り当て、同じ弾が消えて再発射されるたびに**同じ物理番号を
+; 使い回して**いた。これがまさに指摘された不具合の原因と判断し、
+; 新しい発射(再発射含む)のたびに物理スプライト番号をローテーション
+; (0→1→2→...→9→0→...)で割り当て直す方式に変更する。論理シャドウ
+; (EBUZ_SPR_SHADOW、Y/X/pattern/colorの実データ)は従来通り3枠のまま、
+; 各枠が「現在どの物理HWスプライト番号を使っているか」を別途
+; EBUZ_PHYS_SLOTに記録し、毎ティックの反映(旧: 固定オフセットへの
+; 一括LDIRVM)もこの物理番号ベースの個別LDIRVMへ変更する。
+EBUZ_PHYS_SLOT_COUNT EQU 10  ; "画面内に10発なら1から10まで"に対応、物理スロット0-9をローテーション使用
+EBUZ_PHYS_SLOT       EQU 0F362h  ; 3 bytes: 論理スロット0/1/2それぞれの現在の物理HWスプライト番号(0-9)
+EBUZ_NEXT_PHYS_SLOT  EQU 0F365h  ; 1 byte: 次に割り当てる物理スロット番号(ローテーションカウンタ)
+
 ; (2026-09-13追記その3、実機フィードバック対応、最重要の設計変更):
 ; "だから違うって Ebuz1の時16x16のスプライトの弾を発射 その後Ebuz2に
 ; して上下から発射 人間の目がどうの関係ない お前は見えてないんだから
@@ -280,6 +298,56 @@ EBUZ_UB_MOVE:
     LD (IX+1),A
     RET
 
+; 物理HWスプライト番号を1つローテーションで割り当てる(2026-09-13、
+; "スプライトナンバーは全て違ってる必要がある...1から10までをループ
+; して使わなきゃ消える"対応)。戻り値: A=割り当てた番号(0-9)。
+; EBUZ_NEXT_PHYS_SLOTを(A+1) mod EBUZ_PHYS_SLOT_COUNTへ進める。
+EBUZ_ALLOC_PHYS_SLOT:
+    LD A,(EBUZ_NEXT_PHYS_SLOT)
+    LD B,A                       ; B = 今回割り当てる番号(戻り値用に保持)
+    INC A
+    CP EBUZ_PHYS_SLOT_COUNT
+    JR C,EBUZ_APS_OK
+    XOR A
+EBUZ_APS_OK:
+    LD (EBUZ_NEXT_PHYS_SLOT),A
+    LD A,B
+    RET
+
+; 論理シャドウ1枠(4byte: Y,X,pattern,color)を、指定した物理HW
+; スプライト番号のSPRATR位置へ書き込む。
+; IN: A=物理スロット番号(0-9)、HL=論理シャドウの先頭アドレス
+EBUZ_FLUSH_ONE:
+    ; NOTE: このアセンブラはEX DE,HLに対応していないため、DE<->HLの
+    ; 交換はLD D,H:LD E,Lの2命令で代替する。
+    PUSH HL                      ; HL(シャドウ元アドレス)を退避
+    LD H,0
+    LD L,A
+    ADD HL,HL                    ; *2
+    ADD HL,HL                    ; *4 -> HL=物理スロット*4
+    LD DE,SPRATR
+    ADD HL,DE                    ; HL=SPRATR+物理スロット*4(書き込み先)
+    LD D,H
+    LD E,L                       ; DE=書き込み先
+    POP HL                       ; HL=シャドウ元アドレス(復元)
+    LD BC,4
+    CALL LDIRVM
+    RET
+
+; 論理シャドウ3枠すべてを、それぞれの現在の物理スロットへ反映する
+; (旧: EBUZ_SPR_SHADOW->SPRATRの固定12byte一括LDIRVMを置き換え)。
+EBUZ_FLUSH_ALL:
+    LD A,(EBUZ_PHYS_SLOT+0)
+    LD HL,EBUZ_SPR_SHADOW+0
+    CALL EBUZ_FLUSH_ONE
+    LD A,(EBUZ_PHYS_SLOT+1)
+    LD HL,EBUZ_SPR_SHADOW+4
+    CALL EBUZ_FLUSH_ONE
+    LD A,(EBUZ_PHYS_SLOT+2)
+    LD HL,EBUZ_SPR_SHADOW+8
+    CALL EBUZ_FLUSH_ONE
+    RET
+
 ; 1"フレーム"分の処理をまとめたもの: 弾3枠を更新→(継続発射有効なら)
 ; 上下弾の継続発射処理→VRAMへ反映→ウェイト。EBUZ_WAIT_TICK系と
 ; EBUZ_MAINLOOPの両方から共有で呼ばれる(2026-09-13追記その3、
@@ -300,7 +368,7 @@ EBUZ_TICK_SKIP_B0:
     LD A,(EBUZ_TOPBOTTOM_ACTIVE)
     OR A
     CALL NZ,EBUZ_UPDATE_TOPBOTTOM_FIRE
-    LD HL,EBUZ_SPR_SHADOW : LD DE,SPRATR : LD BC,12 : CALL LDIRVM
+    CALL EBUZ_FLUSH_ALL
     EI
     CALL EBUZ_FRAME_WAIT
     RET
@@ -360,10 +428,16 @@ EUTF_DO_FIRE:
     OR A
     JR NZ,EUTF_FIRE_BOTTOM
     LD HL,EBUZ_SPR_BULLET23 : LD DE,EBUZ_SPR_SHADOW+4 : LD BC,4 : LDIR
+    ; 新しい発射のたびに物理HWスプライト番号を新規割り当て("ナンバー
+    ; 使い回したら消える"対応、2026-09-13)
+    CALL EBUZ_ALLOC_PHYS_SLOT
+    LD (EBUZ_PHYS_SLOT+1),A
     LD HL,EBUZ_ROW_0ABC_RECOIL : LD DE,01838h : LD BC,5 : CALL LDIRVM
     JR EUTF_FIRE_DONE
 EUTF_FIRE_BOTTOM:
     LD HL,EBUZ_SPR_BULLET23+4 : LD DE,EBUZ_SPR_SHADOW+8 : LD BC,4 : LDIR
+    CALL EBUZ_ALLOC_PHYS_SLOT
+    LD (EBUZ_PHYS_SLOT+2),A
     LD HL,EBUZ_ROW_0ABC_RECOIL : LD DE,01898h : LD BC,5 : CALL LDIRVM
 EUTF_FIRE_DONE:
     LD A,(EBUZ_FIRE_SIDE)
@@ -417,11 +491,24 @@ INIT:
     LD HL,BULLET_FULL_PAT : LD DE,03800h : LD BC,32 : CALL LDIRVM   ; SPRPAT+BULLET_FULL_CODE*8
     LD HL,BULLET_HALF_PAT : LD DE,03820h : LD BC,32 : CALL LDIRVM   ; SPRPAT+BULLET_HALF_CODE*8
 
-    ; 弾3枚とも非表示で初期化(RAM側シャドウ+VRAM反映)、4枠目(スロット3)
-    ; はSAT終端(SPR_TERM_Y)を一度だけ書けば以降は触らない。
+    ; 論理シャドウ3枠とも非表示で初期化(RAM側、まだVRAMには反映しない)。
     LD HL,EBUZ_SPR_INIT : LD DE,EBUZ_SPR_SHADOW : LD BC,12 : LDIR
-    LD HL,EBUZ_SPR_SHADOW : LD DE,SPRATR : LD BC,12 : CALL LDIRVM
-    LD HL,EBUZ_SPR_TERM : LD DE,SPRATR+12 : LD BC,4 : CALL LDIRVM
+
+    ; 物理HWスプライト0-9番を全て非表示で初期化し、10番目をSAT終端
+    ; (SPR_TERM_Y)にする(2026-09-13、"スプライトナンバーは全て違って
+    ; る必要がある...1から10までをループして使わなきゃ消える"対応 -
+    ; 論理弾3枚を固定の物理番号に紐付けず、発射のたびにローテーションで
+    ; 新しい物理番号を割り当てる方式に変更したため、あらかじめ物理
+    ; スロット0-9すべてを非表示状態で初期化しておく必要がある)。
+    LD HL,EBUZ_SPR_ALL_HIDDEN : LD DE,SPRATR : LD BC,40 : CALL LDIRVM
+    LD HL,EBUZ_SPR_TERM : LD DE,SPRATR+40 : LD BC,4 : CALL LDIRVM
+
+    ; 論理スロット0/1/2の初期物理番号を仮に0/1/2とし(まだどれも発射
+    ; されていないため実害なし)、次回割り当ては3番から開始する。
+    LD A,0 : LD (EBUZ_PHYS_SLOT+0),A
+    LD A,1 : LD (EBUZ_PHYS_SLOT+1),A
+    LD A,2 : LD (EBUZ_PHYS_SLOT+2),A
+    LD A,3 : LD (EBUZ_NEXT_PHYS_SLOT),A
 
     ; 上下弾の継続発射状態を非活性で初期化(2026-09-13追記その7/その8、
     ; RAM初期化漏れ防止のためEBUZ_FIRE_SIDE/EBUZ_RECOIL_SIDEも含め
@@ -456,7 +543,13 @@ EBUZ_STATE1_BG_DONE:
     ; その位置で0.5秒間静止(ホールド)させてから実際に飛ばし始める
     ; (旧実装は逆に「非表示のまま0.5秒待ってから表示」だった)。
     LD HL,EBUZ_SPR_BULLET1 : LD DE,EBUZ_SPR_SHADOW : LD BC,4 : LDIR
-    LD HL,EBUZ_SPR_SHADOW : LD DE,SPRATR : LD BC,4 : CALL LDIRVM
+    ; 発射のたびに物理HWスプライト番号を新規割り当て(2026-09-13、
+    ; "ナンバー使い回したら消える"対応)
+    CALL EBUZ_ALLOC_PHYS_SLOT
+    LD (EBUZ_PHYS_SLOT+0),A
+    LD A,(EBUZ_PHYS_SLOT+0)
+    LD HL,EBUZ_SPR_SHADOW
+    CALL EBUZ_FLUSH_ONE
     LD A,1
     LD (EBUZ_BULLET0_HOLDING),A
 
@@ -580,6 +673,21 @@ EBUZ_SPR_INIT:
     DB SPR_HIDE_Y,0,0,0
 EBUZ_SPR_TERM:
     DB SPR_TERM_Y,0,0,0
+
+; 物理HWスプライト0-9番全ての起動時初期値(全て非表示、2026-09-13、
+; "スプライトナンバーは全て違ってる必要がある...1から10までをループ"
+; 対応の物理スロットプール)。
+EBUZ_SPR_ALL_HIDDEN:
+    DB SPR_HIDE_Y,0,0,0
+    DB SPR_HIDE_Y,0,0,0
+    DB SPR_HIDE_Y,0,0,0
+    DB SPR_HIDE_Y,0,0,0
+    DB SPR_HIDE_Y,0,0,0
+    DB SPR_HIDE_Y,0,0,0
+    DB SPR_HIDE_Y,0,0,0
+    DB SPR_HIDE_Y,0,0,0
+    DB SPR_HIDE_Y,0,0,0
+    DB SPR_HIDE_Y,0,0,0
 
 ; state1発射時の弾1(スロット0): BULLET_FULL、Y=16(暫定)、
 ; X=176(=192-16、2026-09-13追記で16px左へ移動)

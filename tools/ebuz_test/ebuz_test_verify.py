@@ -156,6 +156,17 @@ def sprite_attr(z, slot):
     return [z.vram[base + i] for i in range(4)]
 
 
+def logical_sprite_attr(z, logical_idx):
+    """論理弾(0=初弾/1=上/2=下)の現在の物理HWスプライト番号を
+    EBUZ_PHYS_SLOT経由で調べ、そのSPRATR内容を返す(2026-09-13、
+    "スプライトナンバーは全て違ってる必要がある...1から10までを
+    ループして使わなきゃ消える"対応で、論理弾ごとの物理番号が
+    発射のたびにローテーションするようになったため、固定オフセット
+    ではなくこの間接参照経由で読む必要がある)。"""
+    phys = z.mem[sym["EBUZ_PHYS_SLOT"] + logical_idx]
+    return sprite_attr(z, phys)
+
+
 def simulate_positions(x_list, n_iters):
     """Python参照実装: EBUZ_TICKの固定速度移動(EBUZ_BULLET_SPEED=2px/
     frame、2026-09-13追記その5で1px/2px交互方式から単純化)を
@@ -225,7 +236,7 @@ run_until_pc(z0, sym["EBUZ_STATE1_BG_DONE"])
 check("state1: at the PC boundary right after BG is drawn (before the "
       "display+hold code runs), bullet0 is still in its boot-time hidden "
       "state",
-      sprite_attr(z0, 0)[0] == SPR_HIDE_Y)
+      logical_sprite_attr(z0, 0)[0] == SPR_HIDE_Y)
 
 # --- an actual ~29-tick wait really elapses between "BG done" and "fired" ---
 # (guards against a regression where the labels are in the right order but
@@ -253,10 +264,12 @@ check("EBUZ_BULLET1_X is exactly 16px left of EBUZ_BULLET_X (the shared base/"
 check("state1: bullet0(slot0) fired as BULLET_FULL at Y=16,X=176 (16px left of "
       "the old X=192 placeholder, per \"Ebuz1の時の弾の位置を左へ16px移動\") "
       "with the attached art's own color(11)",
-      sprite_attr(z, 0) == [Y1_STORED, BULLET1_X, BULLET_FULL_CODE, BULLET_COLOR])
-check("state1: bullet1(slot1) not fired yet (still hidden)", sprite_attr(z, 1)[0] == SPR_HIDE_Y)
-check("state1: bullet2(slot2) not fired yet (still hidden)", sprite_attr(z, 2)[0] == SPR_HIDE_Y)
-check("SAT terminator (slot3) written once at boot", sprite_attr(z, 3)[0] == SPR_TERM_Y)
+      logical_sprite_attr(z, 0) == [Y1_STORED, BULLET1_X, BULLET_FULL_CODE, BULLET_COLOR])
+check("state1: bullet1(slot1) not fired yet (still hidden)", logical_sprite_attr(z, 1)[0] == SPR_HIDE_Y)
+check("state1: bullet2(slot2) not fired yet (still hidden)", logical_sprite_attr(z, 2)[0] == SPR_HIDE_Y)
+# 2026-09-13: 物理スロットプールは0-9番(10発分)、SAT終端は物理スロット
+# 10番("画面内に10発なら1から10までをループ"対応)
+check("SAT terminator (physical slot 10) written once at boot", sprite_attr(z, 10)[0] == SPR_TERM_Y)
 check("BULLET_FULL's sprite pattern actually loaded into SPRPAT (non-blank)",
       any(z.vram[0x3800 + BULLET_FULL_CODE * 8 + i] for i in range(32)))
 check("BULLET_HALF's sprite pattern actually loaded into SPRPAT (non-blank)",
@@ -283,9 +296,9 @@ run_until_pc(z1b, sym["EBUZ_STATE2_BG_DONE"])
 # moving instead of sitting frozen" now shows up as "already hidden", not as
 # some intermediate X value. Either way, it must match the simulation exactly.
 if exp_bg2_hidden:
-    bullet0_bg2_ok = sprite_attr(z1b, 0)[0] == SPR_HIDE_Y
+    bullet0_bg2_ok = logical_sprite_attr(z1b, 0)[0] == SPR_HIDE_Y
 else:
-    bullet0_bg2_ok = sprite_attr(z1b, 0) == [Y1_STORED, exp_bg2_x, BULLET_FULL_CODE, BULLET_COLOR]
+    bullet0_bg2_ok = logical_sprite_attr(z1b, 0) == [Y1_STORED, exp_bg2_x, BULLET_FULL_CODE, BULLET_COLOR]
 check(f"state2: bullet0 has kept moving during the state1-to-state2 wait "
       f"({WAIT_STATE1_TO_STATE2_TICKS} ticks) instead of sitting frozen next "
       f"to the body - simulation says X={exp_bg2_x}/hidden={exp_bg2_hidden}, "
@@ -294,7 +307,7 @@ check(f"state2: bullet0 has kept moving during the state1-to-state2 wait "
 check("state2: right after the BG transforms (before the 0.5s wait), bullets1/2 "
       "have NOT fired yet (still hidden) - proves the transform-then-wait-then-"
       "fire ordering (\"Ebuz2に変形後...0.5秒維持して\")",
-      sprite_attr(z1b, 1)[0] == SPR_HIDE_Y and sprite_attr(z1b, 2)[0] == SPR_HIDE_Y)
+      logical_sprite_attr(z1b, 1)[0] == SPR_HIDE_Y and logical_sprite_attr(z1b, 2)[0] == SPR_HIDE_Y)
 
 gap2 = run_until_pc_count(z1b, sym["EBUZ_STATE2_DONE"])
 check(f"state2: the transform-done -> activation gap actually spends roughly "
@@ -316,6 +329,7 @@ check("bullet0 is already off-screen (Y=SPR_HIDE_Y) by the moment continuous "
 
 FIRE_INTERVAL = sym["EBUZ_FIRE_INTERVAL"]
 RECOIL_DURATION = sym["EBUZ_RECOIL_DURATION"]
+EBUZ_PHYS_SLOT_COUNT = sym["EBUZ_PHYS_SLOT_COUNT"]
 check(f"EBUZ_FIRE_INTERVAL is exactly 2 (\"2フレ交代\") and "
       f"EBUZ_RECOIL_DURATION is 1 (recoil shows for 1 tick then reverts, "
       f"per \"打ったら元位置に戻せ\")",
@@ -395,8 +409,8 @@ for i in range(N_TICKS):
     z2.step()
     run_until_pc(z2, sym["EBUZ_FRAME_TICK"])
     exp_b1x, exp_b1h, exp_b2x, exp_b2h, exp_r1, exp_r4 = sim_history[i]
-    b1 = sprite_attr(z2, 1)
-    b2 = sprite_attr(z2, 2)
+    b1 = logical_sprite_attr(z2, 1)
+    b2 = logical_sprite_attr(z2, 2)
     b1_ok = (b1[0] == SPR_HIDE_Y) if exp_b1h else (b1 == [Y2_STORED, exp_b1x, BULLET_HALF_CODE, BULLET_COLOR])
     b2_ok = (b2[0] == SPR_HIDE_Y) if exp_b2h else (b2 == [Y3_STORED, exp_b2x, BULLET_HALF_CODE, BULLET_COLOR])
     r1 = cells(z2, 1, 24, 5)
@@ -431,18 +445,18 @@ run_until_pc(zh, sym["EBUZ_WAIT_TICK_DONE"])
 check("bullet0 is DISPLAYED (visible, not hidden) from the very first tick "
       "after Ebuz1's BG appears, at its final X=176 position already - not "
       "hidden-then-appearing-later",
-      sprite_attr(zh, 0) == [Y1_STORED, BULLET1_X, BULLET_FULL_CODE, BULLET_COLOR])
+      logical_sprite_attr(zh, 0) == [Y1_STORED, BULLET1_X, BULLET_FULL_CODE, BULLET_COLOR])
 for _ in range(WAIT_BEFORE_FIRE_TICKS - 1):
     zh.step()
     run_until_pc(zh, sym["EBUZ_WAIT_TICK_DONE"])
 check(f"bullet0 stays perfectly still (X unchanged) through the entire "
       f"{WAIT_BEFORE_FIRE_TICKS}-tick hold - it's holding position, not "
       f"flying yet",
-      sprite_attr(zh, 0) == [Y1_STORED, BULLET1_X, BULLET_FULL_CODE, BULLET_COLOR])
+      logical_sprite_attr(zh, 0) == [Y1_STORED, BULLET1_X, BULLET_FULL_CODE, BULLET_COLOR])
 run_until_pc(zh, sym["EBUZ_STATE1_DONE"])
 check("at EBUZ_STATE1_DONE (hold just ended), bullet0 is still exactly at "
       "its held position (hasn't jumped or moved yet this instant)",
-      sprite_attr(zh, 0) == [Y1_STORED, BULLET1_X, BULLET_FULL_CODE, BULLET_COLOR])
+      logical_sprite_attr(zh, 0) == [Y1_STORED, BULLET1_X, BULLET_FULL_CODE, BULLET_COLOR])
 zh.step()
 run_until_pc(zh, sym["EBUZ_WAIT_TICK_DONE"])
 zh.step()
@@ -451,7 +465,70 @@ zh.step()
 run_until_pc(zh, sym["EBUZ_WAIT_TICK_DONE"])
 check(f"after the hold ends, bullet0 actually starts flying (moved left by "
       f"3*{SPEED}px={3*SPEED}px over 3 ticks)",
-      sprite_attr(zh, 0)[1] == BULLET1_X - 3 * SPEED)
+      logical_sprite_attr(zh, 0)[1] == BULLET1_X - 3 * SPEED)
+
+# --- (2026-09-13、実機フィードバック対応: "最初の弾止まったままじゃねえか ---
+# よ マジでスプライトの扱いも知らねえしよ ナンバー使い回したら消えるに
+# 決まってんだろうが 画面内の弾のスプライトナンバーは全て違ってる必要が
+# あんだよ 画面内に10発なら1から10までをループして使わなきゃきえんだ
+# よ") 直接の回帰テスト: (1) 同時に生きている上下2弾(継続発射中の
+# スロット1/2)の物理HWスプライト番号は常に互いに異なること、(2) 発射の
+# たびに実際にローテーションで異なる番号が割り当てられること(固定番号の
+# 使い回しに戻っていないこと)。
+# NOTE: スロット0(bullet0)は一度きりの単発弾で二度と再発射されない
+# ため、その場限りの物理番号が非表示化した後もEBUZ_PHYS_SLOT+0に
+# 永続的に残り続ける(EBUZ_FLUSH_ALLが毎ティック律儀に同じ非表示データを
+# 再送し続けるだけ)。EBUZ_FLUSH_ALLは常にスロット0→1→2の固定順で
+# 反映するため、この番号が後にスロット1/2へローテーションで再割当て
+# されても、その時点の最新の生きたデータの書き込みが同一ティック内で
+# 必ず後から上書きする(実VRAM上は矛盾しない) - よって「現在生きている
+# かどうか」の判定にスロット0自身のEBUZ_PHYS_SLOTを使うのは不適切
+# (使い回された後の値を読んでも「まだ生きている」と誤検知するだけ)。
+# 継続発射する2ストリーム(スロット1/2)同士の相互排他だけを検証する。
+z3 = fresh()
+z3.pc = sym["INIT"]
+run_until_pc(z3, sym["EBUZ_STATE2_DONE"])
+N_ROTATION_TICKS = 200
+prev_phys1 = z3.mem[sym["EBUZ_PHYS_SLOT"] + 1]
+prev_phys2 = z3.mem[sym["EBUZ_PHYS_SLOT"] + 2]
+allocations = []
+distinct_ok = True
+distinct_detail = ""
+for i in range(N_ROTATION_TICKS):
+    z3.step()
+    run_until_pc(z3, sym["EBUZ_FRAME_TICK"])
+    top_alive = logical_sprite_attr(z3, 1)[0] != SPR_HIDE_Y
+    bottom_alive = logical_sprite_attr(z3, 2)[0] != SPR_HIDE_Y
+    if top_alive and bottom_alive:
+        p1 = z3.mem[sym["EBUZ_PHYS_SLOT"] + 1]
+        p2 = z3.mem[sym["EBUZ_PHYS_SLOT"] + 2]
+        if p1 == p2:
+            distinct_ok = False
+            distinct_detail = f"tick{i+1}: top and bottom both use physical slot {p1}!"
+            break
+    cur1 = z3.mem[sym["EBUZ_PHYS_SLOT"] + 1]
+    cur2 = z3.mem[sym["EBUZ_PHYS_SLOT"] + 2]
+    if cur1 != prev_phys1:
+        allocations.append(cur1)
+        prev_phys1 = cur1
+    if cur2 != prev_phys2:
+        allocations.append(cur2)
+        prev_phys2 = cur2
+check(f"the two continuously-firing streams (top/bottom) never simultaneously "
+      f"occupy the same physical HW sprite number over {N_ROTATION_TICKS} "
+      f"ticks of continuous fire "
+      f"(\"画面内の弾のスプライトナンバーは全て違ってる必要がある\")"
+      + (f" - {distinct_detail}" if not distinct_ok else ""),
+      distinct_ok)
+check(f"physical sprite slot allocation actually rotates through multiple "
+      f"distinct numbers across refires instead of reusing a fixed one "
+      f"(\"ナンバー使い回したら消える...1から10までをループ\") - observed "
+      f"sequence starts: {allocations[:12]}",
+      len(set(allocations)) >= EBUZ_PHYS_SLOT_COUNT - 1)
+check(f"the physical slot pool actually cycles through all "
+      f"{EBUZ_PHYS_SLOT_COUNT} numbers (0-{EBUZ_PHYS_SLOT_COUNT-1}), not a "
+      f"smaller subset",
+      set(allocations) == set(range(EBUZ_PHYS_SLOT_COUNT)))
 
 
 print()
