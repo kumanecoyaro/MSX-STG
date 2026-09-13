@@ -28,3 +28,7 @@ tools/stage2_combined/sasapi_tables.inc.asm
 # handed to the user directly, same as Schedule2.json/Terrain2.json never
 # being committed either.
 tools/stage2_combined/Schedule2_current.json
+
+# tools/ebuz_test: same idea, regenerated raw PPM render output (PNG
+# conversions of the same renders are committed instead, round115).
+tools/ebuz_test/*.ppm
