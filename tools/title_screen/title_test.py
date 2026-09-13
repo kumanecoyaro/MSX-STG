@@ -868,41 +868,34 @@ check("SC3_CONFIRM_TICK: the border-color sequence matches the SAME REDGRAD/BORD
       "PLAY_CONFIRM_BEEP uses, swept once per pass and repeated for the 2nd pass",
       r7_writes_ct == expected_border)
 
-# ---- (2026-09-13、実機フィードバック"以前のように真っ赤にはならないが
-# 表示が壊れるな それにかなり処理が遅くなる 関係ない部分まで書き換えてる
-# 感じ"): 根本原因はFLUSH_SHADOW_TO_VRAM(BIOS LDIRVMでのVRAM一括転送)が
-# DI/EIで保護されておらず、転送の途中でH.TIMI(SC3_CONFIRM_TICK)が発火して
-# VDP R7へ2byte書き込むと、VDPの内部アドレスラッチが壊れ残りのデータが
-# 無関係な番地へ書き込まれる(=「関係ない部分まで書き換えてる感じ」)ため
-# と判明。FLUSH_SHADOW_TO_VRAM冒頭がDI・CALL LDIRVM直後がEIになっている
-# ことを構造的に検証する(z80emu.py自体は本物の割り込みを発火しないため
-# 実際の競合そのものは検証できないが、少なくとも保護の枠組み自体が
-# 存在することは検証できる)。
+# ---- (2026-09-13、実機フィードバック3回目"ダメだな 表示は壊れたまま
+# で、99hはウェイトいらないとされてる で98hは表示期間では29T必要"):
+# round95(DI/EI保護)・round96(99h書き込み後のNOP追加)いずれも解消せず、
+# ユーザーからVDPタイミングの訂正を受けて判明した真の根本原因 -
+# FLUSH_SHADOW_TO_VRAMがCALL LDIRVM(BIOS)任せだったため、このスライド
+# ショーが実際に画面表示中(SCREEN3が既に表示されている状態)に呼ばれる
+# にも関わらず、VRAMデータポート(98h)書き込み間隔の29T保証がBIOS実装
+# 依存になっていた。DECOMPRESS_TITLE_BG(INIT時=表示開始前なのでOUT
+# (98h)無待機で実機でも正しく動作する既存コード)と混同せず、
+# combined_test.asmのWRITE_BULLET_BYTE_HL(MAINLOOP中=表示期間中なので
+# 29T厳密ウェイトを入れている既存コード)と同じ手動ループへ書き換えた
+# (99hのアドレス設定2byteには待ち不要という訂正も反映、待ちが必要なのは
+# 98hのみ)。この書き換えでDI/EI保護(round95の対策)も自然に維持される
+# (BIOS呼び出しが無くなったため、LDIRVM内部で予期せずEIされる懸念
+# [round41/53のCALL INIT32と同型のリスク]も同時に解消)。
 _fstv = sym["FLUSH_SHADOW_TO_VRAM"]
-check("FLUSH_SHADOW_TO_VRAM starts with DI (0F3h) - protects the VRAM transfer from being "
-      "interrupted mid-sequence by SC3_CONFIRM_TICK's own VDP R7 border writes, which would "
-      "otherwise desync the VDP's internal set-address latch and corrupt unrelated VRAM "
-      "(\"関係ない部分まで書き換えてる感じ\")",
+check("FLUSH_SHADOW_TO_VRAM starts with DI (0F3h)",
       out[_fstv] == 0xF3)
-check("FLUSH_SHADOW_TO_VRAM re-enables interrupts (0FBh) immediately after CALL LDIRVM "
-      "returns, before its own RET",
-      out[_fstv + 13] == 0xFB and out[_fstv + 14] == 0xC9)
-
-# ---- (2026-09-13、実機フィードバック"変わらず 遅いし表示壊れてる 一応
-# 聞くがVDPウェイトは入ってるよな"): 上記のDI/EI保護だけでは不十分だった
-# - この既存ファイル自身のPLAY_CONFIRM_BEEP(round70)が確立した規約
-# (実機TMS9918の仕様: VDPレジスタポート[99h]への書き込みは8T=NOP2個分の
-# 復帰待ちが必要、2byte書き込みの各byteの直後にそれぞれNOP2個)を、
-# 新規追加したSC3_CONFIRM_TICKのボーダー同期・RUN_SCREEN3_SLIDESHOW末尾の
-# ボーダーリセットの両方とも「2回目のOUT (99h)の直後」にだけ付け忘れて
-# いた(1回目の直後にはあったが2回目の直後が抜けていた)。この待ちが
-# 無いと直後に実行される命令(このtickの終了処理・呼び出し元への復帰後の
-# 命令)がVDPの処理完了を待たずに次のVDPポートアクセスをしうる - これが
-# DI/EI保護後も表示破損・速度低下が解消しなかった真因と考えられる。
-check("SC3_CONFIRM_TICK: has NOP,NOP after its SECOND OUT (99h) write too (not just the "
-      "first) - matching PLAY_CONFIRM_BEEP's own established 8T VDP-register-port recovery "
-      "convention, missing here until now per \"VDPウェイトは入ってるよな\"",
-      out[sym["SC3_CONFIRM_TICK"] + 103] == 0x00 and out[sym["SC3_CONFIRM_TICK"] + 104] == 0x00)
+check("FLUSH_SHADOW_TO_VRAM's per-byte VRAM-data-port (98h) write is immediately followed "
+      "by the exact 29T recovery sequence (PUSH BC:POP BC:NOP:NOP, 0C5h,0C1h,00h,00h) - same "
+      "as combined_test.asm's WRITE_BULLET_BYTE_HL, per \"98hは表示期間では29T必要\" "
+      "(this transfer runs while SCREEN3 is already actively displaying, unlike "
+      "DECOMPRESS_TITLE_BG's pre-display-boot transfer which correctly needs none)",
+      [out[_fstv + 16], out[_fstv + 17], out[_fstv + 18], out[_fstv + 19],
+       out[_fstv + 20], out[_fstv + 21]] == [0xD3, 0x98, 0xC5, 0xC1, 0x00, 0x00])
+check("FLUSH_SHADOW_TO_VRAM re-enables interrupts (0FBh) right before its own RET (0C9h), "
+      "at the very end of the manual transfer loop",
+      out[_fstv + 27] == 0xFB and out[_fstv + 28] == 0xC9)
 
 # ---- off-by-one check (round40's own established convention: the tick
 # that LOADS a new row already plays it once, so the timer is seeded with

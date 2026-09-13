@@ -1118,26 +1118,43 @@ SHOW_SC3_EPI3:
     LD HL,SC3_EPI3_PGT_XORDIFF : LD DE,SC3_EPI3_PGT_SEGMENTS : CALL APPLY_XOR_DIFF
     JP FLUSH_SHADOW_TO_VRAM
 
-; SHADOW_PGT(2048byte、RAM)->VRAM 0000hへ一括コピー(BIOS LDIRVM、
-; CLAUDE.md恒久ルール通りOTIR等は不使用)。
+; SHADOW_PGT(2048byte、RAM)->VRAM 0000hへ一括コピー。
 ;
-; (2026-09-13、実機フィードバック"以前のように真っ赤にはならないが
-; 表示が壊れるな それにかなり処理が遅くなる 関係ない部分まで書き換えて
-; る感じ"): 根本原因はボーダー点滅の追加自体ではなく、それがVDP
-; レジスタポート(99h)へ2byte書き込みを行うタイミングにあった。VDPの
-; VRAMアドレス設定は「99h に下位→上位の2byteを書く」プロトコルで、
-; 内部に「次の1byteが下位/上位のどちらか」を覚えるラッチを持つ。この
-; LDIRVM(内部でOUT (98h)の連続書き込みへ展開される)実行の"途中"で
-; H.TIMI(SC3_CONFIRM_TICK)が発火し、そこでVDP R7へ2byte書き込む
-; (OUT (99h)を2回)と、このラッチの状態がLDIRVMの意図と無関係に
-; 上書きされてしまい、割り込みから戻った後の残りのデータがVRAM上の
-; 全く無関係なアドレスへ書き込まれる(=「関係ない部分まで書き換えてる
-; 感じ」の実体、実機の"表示が壊れる"はこれで説明が付く)。DI/EIで
-; 転送全体を割り込み禁止にし、この競合を閉じる(round38のSFX
-; PSG書き込みペア保護と同じ考え方)。
+; (2026-09-13、実機フィードバック3回目"ダメだな 表示は壊れたまま で、
+; 99hはウェイトいらないとされてる で98hは表示期間では29T必要"): 前回
+; までのDI/EI保護(round95)・99h書き込み後のNOP追加(round96)いずれも
+; 解消せず、ユーザーからVDPタイミングの正確な訂正を受けた -
+; **VDPレジスタポート(99h)は待ち不要、VRAMデータポート(98h)は
+; "表示期間中"のみ29T必要**。このファイル自身の`DECOMPRESS_TITLE_BG`
+; (INIT時、画面表示が始まる前に実行されるためOUT (98h)を無待機で連続
+; 実行しても実機で正しく動作する既存コード)と、`combined_test.asm`の
+; `WRITE_BULLET_BYTE_HL`(MAINLOOP中=表示期間中に実行されるため
+; OUT (98h)の直後に29T相当の待ちを入れている既存コード)を比較すると、
+; この区別は元々このプロジェクト自身のコードに一致していた。
+; **真の根本原因はここ**: このスライドショーはSCREEN3が既に表示中の
+; 状態で画像を切り替える(=表示期間中にVRAM転送する)にも関わらず、
+; BIOS`LDIRVM`任せにしていたため、98hへの書き込み間隔がBIOS実装に
+; 依存し29T保証が無かった。`DECOMPRESS_TITLE_BG`と同じ手動ループへ
+; 書き換え、99h(アドレス設定)は待ち無し・98h(データ)は
+; `combined_test.asm`と同じ29T厳密ウェイト(`PUSH BC:POP BC:NOP:NOP`、
+; 11+10+4+4=29T)を毎バイト後に入れる。2048byteは8bitカウンタに収まら
+; ないためDE 16bit down-counterでループ(`DECOMPRESS_TITLE_BG`の
+; セグメント数カウンタと同じ方式)。DI/EIによる割り込み保護
+; (round95の対策)自体は依然有効なので維持。CLAUDE.md恒久ルール通り
+; OTIR等は不使用。
 FLUSH_SHADOW_TO_VRAM:
     DI
-    LD HL,SHADOW_PGT : LD DE,0000h : LD BC,0800h : CALL LDIRVM
+    XOR A : OUT (99h),A
+    LD A,40h : OUT (99h),A          ; VRAM書き込みアドレス=0000h、以後オートインクリメント(99hは待ち不要)
+    LD HL,SHADOW_PGT
+    LD DE,0800h                     ; 2048byte
+FSTV_LOOP:
+    LD A,(HL) : INC HL
+    OUT (98h),A
+    PUSH BC : POP BC : NOP : NOP    ; 98hは表示期間中29T必要(combined_test.asmのWRITE_BULLET_BYTE_HLと同じ厳密29T)
+    DEC DE
+    LD A,D : OR E
+    JR NZ,FSTV_LOOP
     EI
     RET
 

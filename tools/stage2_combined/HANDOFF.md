@@ -13994,3 +13994,76 @@ NOP抜け)(2026-09-13、完了済み・実機フィードバック待ち)
   `tools/title_screen/title_test.py`(回帰テスト1件追加)、
   `tools/title_screen/CyberS Title.ascii16k.rom`・
   `rom/CyberS Comb.ascii16k.rom`(再ビルド)。
+
+## Round97: 実機フィードバック対応(SCREEN3スライドショー表示破損の真の
+根本原因特定・修正 - FLUSH_SHADOW_TO_VRAMをBIOS LDIRVM任せから
+手動29T厳密ウェイトループへ書き換え)(2026-09-13、完了済み・実機
+フィードバック待ち)
+
+- ユーザー報告・訂正: "ダメだな 表示は壊れたまま で、99hはウェイト
+  いらないとされてる で98hは表示期間では29T必要"。Round95(DI/EI
+  保護)・Round96(99h書き込み後のNOP追加)いずれも解消せず、ユーザー
+  から正確なVDPタイミング仕様の訂正を受けた。
+- **訂正された事実**: VDPレジスタポート(99h)は待ち不要、VRAMデータ
+  ポート(98h)は"表示期間中"のみ29T必要(表示期間外は不要)。これは
+  実はこのプロジェクト自身の既存コードに元々一致していた事実だった:
+  `DECOMPRESS_TITLE_BG`(このファイル自身、INIT時=画面表示が始まる
+  前に実行されるためOUT (98h)を無待機で連続実行しても実機で正しく
+  動作することがRound47で確認済み)と、`combined_test.asm`の
+  `WRITE_BULLET_BYTE_HL`(MAINLOOP中=表示期間中に実行されるため
+  OUT (98h)の直後に29T厳密ウェイトを入れている)を比較すると、この
+  区別は既に確立済みだった - 見落としていたのはこちら側。
+- **真の根本原因**: `FLUSH_SHADOW_TO_VRAM`(画像切り替えのたび毎回
+  呼ばれるVRAM一括転送)はSCREEN3が既に表示中の状態(=表示期間中)で
+  実行されるにも関わらず、BIOS`LDIRVM`任せにしていたため、98hへの
+  書き込み間隔の29T保証がBIOS実装依存のブラックボックスになっていた。
+  Round95のDI/EI保護・Round96のNOP追加はいずれも99hに対する誤った
+  修正で、98h自体の間隔問題には触れていなかったため解消しなかった。
+- **修正**: `FLUSH_SHADOW_TO_VRAM`を`CALL LDIRVM`任せから、
+  `DECOMPRESS_TITLE_BG`と同じ手動ループへ全面書き換え。99hのVRAM
+  アドレス設定2byteは待ち不要(訂正通り)、98hのデータ書き込み1byte
+  ごとに`combined_test.asm`と全く同じ29T厳密ウェイト
+  (`PUSH BC:POP BC:NOP:NOP`)を追加。2048byteは8bitカウンタに収まら
+  ないためDE 16bit down-counterでループ(`DECOMPRESS_TITLE_BG`の
+  セグメント数カウンタと同じ方式)。DI/EI保護(Round95の対策)は
+  自然に維持され、副次的にBIOS LDIRVM呼び出し自体が無くなったため
+  「BIOSルーチン内部で予期せずEIされる」という懸念(round41/53の
+  CALL INIT32と同型のリスク)も同時に解消。CLAUDE.md恒久ルール通り
+  OTIR等は不使用。
+- 新規回帰テスト(旧DI/EIオフセットベースのテストを新しい手動ループの
+  レイアウトに合わせて全面書き直し: DI冒頭・98h書き込み直後の29T
+  厳密シーケンス[0C5h,0C1h,00h,00h]・末尾のEI+RET、いずれもアセンブル
+  結果から直接検証)。title_test.py全65件PASS(SHOW_SC3_IMG1-6/
+  EPI1-3のVRAM内容一致テストも新ループで引き続き全PASS、転送内容
+  自体は変わっていないことを確認)。Comb ROM再ビルド・
+  `verify_comb.py`全チェックPASSの上、標準方針によりComb ROMのみ
+  送付。
+
+セッション引き継ぎメモ(2026-09-13、Round97完了直後):
+- **重要な訂正の記録**: Round95のHANDOFF記述・Round96のHANDOFF記述に
+  記載した「VDPレジスタポート[99h]は8T=NOP2個分の復帰待ちが必要」
+  という理解は、ユーザーの訂正により**誤りだったと判明**(99hは待ち
+  不要)。ただしこれらのRoundで追加したNOP自体(`SC3_CONFIRM_TICK`の
+  ボーダー同期・スライドショー末尾のボーダーリセット)は害が無い
+  (数T-stateの無駄な待ちが増えるだけ)ため、今回撤去はしていない -
+  もし今後この2箇所を触る機会があれば、不要なNOPとして削除しても
+  よい(必須ではない)。`combined_test.asm`自身のコメント(round27
+  由来、"98hは表示期間では29T必要 しかし99hは8Tで良い")は結果的に
+  ほぼ正しかった(99hが8T[2NOP]必要という部分だけが実際には不要
+  だった可能性があるが、今回はcombined_test.asm側の既存コードは
+  変更していない)。
+- 今回の修正が実機で表示破損・速度低下を解消するかは実機再検証待ち。
+  もし依然として解消しない場合、次に疑うべき点: (a) このファイル内に
+  他にも「表示期間中に呼ばれるのに98h待ちが無い」箇所が無いか
+  (`RUN_SCREEN3_SLIDESHOW`冒頭の名前テーブルLDIRVM書き込みは
+  Multicolorモード切替直後[既に表示期間]に実行されるため、理論上
+  同じリスクを抱えている可能性がある - ただし今回はH.TIMI未設置の
+  タイミングでの単発実行[繰り返しなし]のため症状としては出にくいと
+  推測、指示なしに変更していない)。(b) それでも解消しない場合は
+  openMSX等の高精度エミュレータでの実VRAM調査(Round47のOTIR教訓と
+  同じ手法)に切り替える必要がある。
+- 変更ファイル: `tools/title_screen/title_test.asm`
+  (FLUSH_SHADOW_TO_VRAMを手動ループへ全面書き換え)、
+  `tools/title_screen/title_test.py`(構造テストを新レイアウトに
+  合わせ書き直し)、`tools/title_screen/CyberS Title.ascii16k.rom`・
+  `rom/CyberS Comb.ascii16k.rom`(再ビルド)。
