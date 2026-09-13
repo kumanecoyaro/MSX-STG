@@ -13789,3 +13789,62 @@ Y段違い+Enemy6速度半減、Stage2自機爆発の自機非表示タイミン
   また同CLAUDE.mdの「テストコマンド・実行方針」に追記済みの
   「combined_test.asm無変更時は全回帰run_all.pyを実行しない」方針にも
   従うこと。上記の重大な未解決の懸念も必ず引き継ぐこと。
+
+## Round93: SCREEN3スライドショー09画像の不具合発見・PNGからの新規Multicolor
+エンコーダで解決(2026-09-13、完了済み・実機フィードバック待ち)
+
+- ユーザー報告: "09が入ってない 11の前に30フレ表示で間に入れろ"。
+- **調査**: `tools/screen3_test/assets/Epilogue2.SC3`(09番)が
+  `Epilogue1.SC3`(08番)と完全にバイト一致(`cmp`で差分ゼロ、MD5一致)して
+  いたと判明。さらに元のアップロードファイル自体(`f42d5765-08.SC3`/
+  `8496d2bd-09.SC3`)も既に同一内容だった - つまりこのセッションの
+  コピー処理のバグではなく、そもそもユーザー側から提供された「09」の
+  ソースデータ自体が08と同じ内容だった(RUN_SCREEN3_SLIDESHOWのコード
+  自体は09を30フレーム表示する処理を正しく実装・実行していたが、画像が
+  08と同一のため見た目上何も変化せず「09が無い」ように見えていた)。
+- ユーザーへ再送を依頼したところ再送された`adecc4db-09.SC3`も同一内容
+  (MD5一致)のままだった。この時点で初めてMulticolor(SCREEN3)の正しい
+  デコード式を確立するため、Image01-06.SC3を実際にレンダリングして
+  検証 - 当初の実装(`row_of_name`単位で単純に`Y mod 8`をバイト
+  index化)ではノイズ状の縦縞になり誤りと判明、`screen3_gen.py`の
+  ドキュメント化済みネームテーブルのランプ式(`name = 32*(row_of_name
+  //4)+col`)から逆算し、正しいアドレッシング式(帯[32ピクセル行]内の
+  Y位置を4px刻みで8分割、`byte_idx = (Y mod 32) // 4`)を導出・検証
+  (Image01-06で実際にキャラクター絵が正しく表示されることを確認)。
+- ユーザーから「これから作ってくれ」と256x192のPNG(モンスターの顔の
+  一部を捉えた別カットの参考画像)が提供され、新規`tools/title_screen/
+  png_to_multicolor.py`(このセッションで新規作成)を実装 - 上記で
+  確立した正しいアドレッシング式に基づき、任意の256x192 PNGを
+  Multicolor形式のBSAVE(*.SC3)へ変換する汎用エンコーダ。各4x4ピクセル
+  ブロックを実機VDPパレット(`tools/stage2_terrain/verify_terrain.py`
+  のPALETTE)へ最近傍色量子化(ブロック内最頻値)し、ネームテーブルは
+  他画像と共通の固定ランプをそのまま使う(このランプにより名前=
+  パターン番号が0-191の範囲で一意になるため、パターン再利用の最適化を
+  一切考えず「192枚の8x32ピクセル短冊を敷き詰めるだけ」という単純な
+  変換で済む)。エンコード結果を再度レンダリングし元PNGと目視比較して
+  ほぼ同一の見た目になることを確認済み。
+- 生成した新規SC3を`tools/screen3_test/assets/Epilogue2.SC3`(09番)へ
+  設置(3枚とも別々のMD5になったことを確認)。`title_test.py`
+  60 passed(無改修、テスト自体はファイル内容に依存する形で最初から
+  書かれていたため再実行のみで対応完了)。Comb ROM再ビルド・
+  `verify_comb.py`全チェックPASSの上、標準方針によりComb ROMのみ送付。
+- 詳細な調査経緯はセッションの会話ログ参照。
+
+セッション引き継ぎメモ(2026-09-13、Round93完了直後):
+- 今回わかった重要な教訓: SCREEN3(Multicolor)のVRAMバイト単位の
+  デコード式は「name=32*(row_of_name//4)+col」というランプ規則から
+  逆算した「byte_idx=(Y mod 32)//4」が正しい(帯[32ピクセル行]内を
+  4px刻みで8分割)。今後Multicolor画像を新規に扱う/レンダリングする
+  際はこの式を再利用すること(`tools/title_screen/png_to_multicolor.py`
+  に実装済み、必要なら流用可)。
+- 今回新規追加した`tools/title_screen/png_to_multicolor.py`は
+  任意の256x192 PNGをSCREEN3のBSAVE(*.SC3)形式へ変換できる汎用ツール
+  として残してある(コマンドライン: `python3 png_to_multicolor.py
+  <入力PNG> <出力.SC3>`)。今後同様に「画像データが用意できない/
+  食い違う」場面があれば、参考PNGから直接生成する選択肢として使える。
+- 変更ファイル: `tools/screen3_test/assets/Epilogue2.SC3`(差し替え)、
+  `tools/title_screen/png_to_multicolor.py`(新規)、
+  `tools/title_screen/CyberS Title.ascii16k.rom`・
+  `rom/CyberS Comb.ascii16k.rom`(再ビルド)。ASM/Pythonのロジック自体
+  (title_test.asm/screen3_epilogue_gen.py/title_test.py)は無変更 -
+  アセットファイルの中身を正しいものに差し替えただけ。
