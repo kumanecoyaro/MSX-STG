@@ -13,6 +13,7 @@ sys.path.insert(0, os.path.join(REPO, "tools"))
 
 import title_bg_gen  # noqa: E402
 import screen3_epilogue_gen  # noqa: E402
+import confirm_beep_gen  # noqa: E402
 from mini_z80asm import Assembler  # noqa: E402
 
 sys.path.insert(0, os.path.join(REPO, "tools", "screen3_test"))
@@ -23,7 +24,8 @@ def combined_text():
     body = open(os.path.join(HERE, "title_test.asm")).read()
     tables = (title_bg_gen.emit_asm_tables() + "\n"
               + screen3_gen.emit_asm_tables() + "\n"
-              + screen3_epilogue_gen.emit_asm_tables() + "\n")
+              + screen3_epilogue_gen.emit_asm_tables() + "\n"
+              + confirm_beep_gen.emit_asm_table() + "\n")
     return body + "\n" + tables
 
 

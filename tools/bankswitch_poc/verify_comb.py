@@ -214,29 +214,28 @@ assert [mem.flat[_go_chC_ram + i] for i in range(len(_go_chC))] == list(_go_chC)
     "title's own BGM RAM copy: GAME_OVER chC mismatch (Stage1 game-over jingle)"
 print("title's own BGM RAM copy of GAME_OVER (Stage1 game-over jingle) verified byte-correct")
 
-# (2026-09-12、"タイトルのバンクに...一旦タイトル表示からMission 1
-# 表示の間に差し込んで...Mission 1表示に"、続けて"別に割り込みで同期
-# 取る必要はないぞ 適当にNopループでいい3フレ分の"、続けて実機
-# フィードバック"10ループなんて指定してないし"でメインループ回数を
-# 10から1[1周のみ]へ訂正): ボタン押下後は本物のROMだとRUN_SCREEN3_
-# SLIDESHOW(6枚x1周+締めの3枚、確認音PLAY_CONFIRM_BEEP_NO_BORDERを
-# アニメーション全体で繰り返し再生)経由になり、実時間で数秒相当の
-# busy-waitをPythonエミュレータで1命令ずつ実行することになる。
-# tools/title_screen/title_test.pyの「button press trampolines」
-# テストと同じ手法(real ROM自体は無変更、このテスト用のtitle_bank0
-# コピーだけディレイを短縮するパッチ)をここでも適用する。
-_RSS_MAIN_LOOP_COUNT_ADDR = tsym["RUN_SCREEN3_SLIDESHOW"] + 0x31  # "LD B,1" operand
+# (2026-09-12、実機フィードバック"アニメが指示と違う 流れは まず1から
+# 6枚目を3フレ切り替え で7枚目の08を15フレ表示 ここまでを3ループ
+# その後09を30フレ 11を90フレ表示してMission 1表示"): ボタン押下後は
+# 本物のROMだとRUN_SCREEN3_SLIDESHOW(1-6枚目x3フレーム+Epilogue1
+# x15フレームを3周+Epilogue2x30フレーム+Epilogue3x90フレーム、確認音
+# SC3_CONFIRM_TICKをH.TIMI駆動でアニメーション全体を通じて再生)経由に
+# なり、実時間で数秒相当のbusy-waitをPythonエミュレータで1命令ずつ
+# 実行することになる。tools/title_screen/title_test.pyの「button
+# press trampolines」テストと同じ手法(real ROM自体は無変更、この
+# テスト用のtitle_bank0コピーだけディレイを短縮するパッチ)をここでも
+# 適用する。
+_RSS_MAIN_LOOP_COUNT_ADDR = tsym["RUN_SCREEN3_SLIDESHOW"] + 0x48  # "LD B,3" operand
 _WAIT_3F_DE_ADDR = tsym["WAIT_3_FRAMES"] + 1                       # "LD DE,6884" operand (2 bytes)
-_SC3D_B_INIT_ADDR = tsym["SCREEN3_DELAY_NESTED"] + 1               # "LD B,0" operand
-_SC3D_C_INIT_ADDR = tsym["SCREEN3_DELAY_NESTED"] + 3               # "LD C,0" operand
-assert mem.banksA[0][_RSS_MAIN_LOOP_COUNT_ADDR - 0x4000] == 1
+_WAIT_1F_DE_ADDR = tsym["WAIT_1_FRAME_UNIT"] + 1                   # "LD DE,2295" operand (2 bytes)
+assert mem.banksA[0][_RSS_MAIN_LOOP_COUNT_ADDR - 0x4000] == 3
 assert mem.banksA[0][_WAIT_3F_DE_ADDR - 0x4000] == (6884 & 0xFF)
-assert mem.banksA[0][_SC3D_B_INIT_ADDR - 0x4000] == 0
-assert mem.banksA[0][_SC3D_C_INIT_ADDR - 0x4000] == 0
+assert (mem.banksA[0][_WAIT_1F_DE_ADDR - 0x4000]
+        | (mem.banksA[0][_WAIT_1F_DE_ADDR + 1 - 0x4000] << 8)) == 2295
 mem.banksA[0][_WAIT_3F_DE_ADDR - 0x4000] = 5
 mem.banksA[0][_WAIT_3F_DE_ADDR + 1 - 0x4000] = 0
-mem.banksA[0][_SC3D_B_INIT_ADDR - 0x4000] = 2
-mem.banksA[0][_SC3D_C_INIT_ADDR - 0x4000] = 2
+mem.banksA[0][_WAIT_1F_DE_ADDR - 0x4000] = 5
+mem.banksA[0][_WAIT_1F_DE_ADDR + 1 - 0x4000] = 0
 
 cpu.sim_trig_a = True
 print("simulated PUSH START (sim_trig_a=True)")

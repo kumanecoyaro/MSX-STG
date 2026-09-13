@@ -469,74 +469,57 @@ cpu, mem = fresh_cpu()
 run_to_wait(cpu)
 switch_log_at_wait = list(mem.switch_log)  # round40: exclude INIT_BGM's own 2 switches (see above)
 
-# (2026-09-12、"タイトルのバンクに...一旦タイトル表示からMission 1
-# 表示の間に差し込んで...Mission 1表示に"、続けて"別に割り込みで同期
-# 取る必要はないぞ 適当にNopループでいい3フレ分の"、続けて実機
-# フィードバック"10ループなんて指定してないし"でメインループ回数を
-# 10から1[1周のみ]へ訂正): ボタン押下後は本物のROMだとRUN_SCREEN3_
-# SLIDESHOW(6枚x1周+締めの3枚、確認音PLAY_CONFIRM_BEEP_NO_BORDERを
-# アニメーション全体で繰り返し再生)を経由するようになり、実時間で
+# (2026-09-12、実機フィードバック"アニメが指示と違う 流れは まず1から
+# 6枚目を3フレ切り替え で7枚目の08を15フレ表示 ここまでを3ループ
+# その後09を30フレ 11を90フレ表示してMission 1表示"、続けて実機
+# フィードバック"表示は出来た だが音2回鳴らして1コマじゃねえんだよ
+# 音は割り込みで鳴らしてんだろうが 鳴らしながらアニメするんだよ"で
+# 確認音をH.TIMI駆動のバックグラウンドループ[SC3_CONFIRM_TICK]へ
+# 全面変更): ボタン押下後は本物のROMだとRUN_SCREEN3_SLIDESHOW
+# (1-6枚目[各3フレーム]+7枚目[Epilogue1、15フレーム]を3周+Epilogue2
+# [30フレーム]+Epilogue3[90フレーム])を経由するようになり、実時間で
 # 見て数秒相当のbusy-waitをPythonエミュレータで1命令ずつ実際に実行
 # することになる(real ROM自体は無変更 - src/CYBER SHMUP.asmの
 # MISSION_DELAY_3SEC等の既存テストと同じ「テスト用にmem側だけ
 # ディレイを短縮するパッチ」をここでも適用する)。3フレーム待ち
-# (6884->5)・0.5/1/3秒ネストループのB/C初期値(0->2)をこのcpu
-# インスタンスのbank0コピーだけ書き換える - トランポリンに正しく
-# 到達する「構造」を確認するためのテストであり、正確な待ち時間は
-# ここでは検証しない(専用の構造チェック・直接呼び出しチェックを
-# 下に別途用意する)。メインループ回数自体は既に実ROMの値が1のため
-# 短縮パッチ不要(値そのものは下の構造チェックで直接検証する)。
-_RSS_MAIN_LOOP_COUNT_ADDR = sym["RUN_SCREEN3_SLIDESHOW"] + 0x31  # "LD B,1" operand
+# (6884->5)・1フレーム単位待ち(2295->5)をこのcpuインスタンスの
+# bank0コピーだけ書き換える - トランポリンに正しく到達する「構造」を
+# 確認するためのテストであり、正確な待ち時間はここでは検証しない
+# (専用の構造チェック・直接呼び出しチェックを下に別途用意する)。
+# メインループ回数(3)・各待ちフレーム数(15/30/90)自体は下の構造
+# チェックで直接検証する。z80emu.pyは本物の割り込みを一切自動発火
+# しないため(このプロジェクト全体で繰り返し確立済みの制約)、この
+# ステップ実行中にSC3_CONFIRM_TICKが呼ばれることはない -
+# HTIMI_HOOKの設置自体・SC3_CONFIRM_TICK自身の動作は別途、直接呼び
+# 出しによる専用テストで検証する(下記)。
+_RSS_MAIN_LOOP_COUNT_ADDR = sym["RUN_SCREEN3_SLIDESHOW"] + 0x48  # "LD B,3" operand
 _WAIT_3F_DE_ADDR = sym["WAIT_3_FRAMES"] + 1                       # "LD DE,6884" operand (2 bytes)
-_SC3D_B_INIT_ADDR = sym["SCREEN3_DELAY_NESTED"] + 1               # "LD B,0" operand
-_SC3D_C_INIT_ADDR = sym["SCREEN3_DELAY_NESTED"] + 3               # "LD C,0" operand
-assert mem.banksA[0][_RSS_MAIN_LOOP_COUNT_ADDR - 0x4000] == 1
+_WAIT_1F_DE_ADDR = sym["WAIT_1_FRAME_UNIT"] + 1                   # "LD DE,2295" operand (2 bytes)
+assert mem.banksA[0][_RSS_MAIN_LOOP_COUNT_ADDR - 0x4000] == 3
 assert mem.banksA[0][_WAIT_3F_DE_ADDR - 0x4000] == (6884 & 0xFF)
-assert mem.banksA[0][_SC3D_B_INIT_ADDR - 0x4000] == 0
-assert mem.banksA[0][_SC3D_C_INIT_ADDR - 0x4000] == 0
+assert (mem.banksA[0][_WAIT_1F_DE_ADDR - 0x4000]
+        | (mem.banksA[0][_WAIT_1F_DE_ADDR + 1 - 0x4000] << 8)) == 2295
 mem.banksA[0][_WAIT_3F_DE_ADDR - 0x4000] = 5
 mem.banksA[0][_WAIT_3F_DE_ADDR + 1 - 0x4000] = 0
-mem.banksA[0][_SC3D_B_INIT_ADDR - 0x4000] = 2
-mem.banksA[0][_SC3D_C_INIT_ADDR - 0x4000] = 2
+mem.banksA[0][_WAIT_1F_DE_ADDR - 0x4000] = 5
+mem.banksA[0][_WAIT_1F_DE_ADDR + 1 - 0x4000] = 0
 
 cpu.sim_trig_a = True
 steps = 0
-confirm_beep_addr = sym["PLAY_CONFIRM_BEEP_NO_BORDER"]
-confirm_beep_hits = 0
-vram_at_first_beep = None
-# PLAY_CONFIRM_BEEP_NO_BORDER plays the same much longer "Rising alert
-# chirp"->"Descending buzzer" v3 sequence (53 rows x2, ~800K Z80
-# instruction-steps) as PLAY_CONFIRM_BEEP did, minus the border writes -
-# the old 100,000-step budget (sized for round63's short 12-step beep)
-# is no longer enough to reach the trampoline at all. The slideshow now
-# calls it repeatedly (once per main-loop pass + once per epilogue beat)
-# instead of just once, so the budget is widened further.
+run_screen3_slideshow_addr = sym["RUN_SCREEN3_SLIDESHOW"]
+show_img1_addr_for_hook_check = sym["SHOW_SC3_IMG1"]
+htimi_hook_at_show_img1 = None
 while cpu.pc != 0x4010 and steps < 10_000_000:
-    if cpu.pc == confirm_beep_addr:
-        confirm_beep_hits += 1
-        if vram_at_first_beep is None:
-            vram_at_first_beep = bytes(cpu.vram[0:0x800])
+    if cpu.pc == show_img1_addr_for_hook_check and htimi_hook_at_show_img1 is None:
+        htimi_hook_at_show_img1 = (cpu.mem[HTIMI_HOOK], cpu.mem[HTIMI_HOOK + 1] | (cpu.mem[HTIMI_HOOK + 2] << 8))
     cpu.step()
     steps += 1
 check("button press trampolines to Stage1's own INIT address (4010h)", cpu.pc == 0x4010)
-# (2026-09-12、実機フィードバック"音は出てるが...表示すらできてねえんだよ"):
-# the very first PLAY_CONFIRM_BEEP_NO_BORDER call must happen AFTER
-# SHOW_SC3_IMG1 has already flushed real PGT data to VRAM 0000h-07FFh -
-# the old ordering called the beep BEFORE drawing anything, leaving the
-# stale title-background pattern data (misread through Multicolor's
-# addressing) visible on screen for the beep's ~1+ second duration.
-check("the FIRST PLAY_CONFIRM_BEEP_NO_BORDER call happens only after VRAM 0000h-07FFh already "
-      "holds Image01.SC3's real PGT data (never idles on stale title-background pattern data "
-      "misread through Multicolor addressing)",
-      vram_at_first_beep == screen3_gen.pattern_generator(1))
-check("PLAY_CONFIRM_BEEP_NO_BORDER is called repeatedly (once after EACH image draw, main loop "
-      "+ epilogue) instead of the old single upfront call, so the sound effect keeps looping "
-      "throughout the whole slideshow animation, per \"変わりにスタートのサウンドと枠の色の演出を "
-      "このアニメの間ループ\" - it's called strictly AFTER each image is drawn (not before, per "
-      "the \"表示すらできてねえんだよ\" fix: never idle on stale VRAM content during the long "
-      "beep) - with the real 1-pass main loop, expect exactly "
-      "6(main pass, one per image) + 4(epilogue1 x4) + 1(epilogue2) + 1(epilogue3) = 12 calls",
-      confirm_beep_hits == 12)
+check("by the time SHOW_SC3_IMG1 first runs, RUN_SCREEN3_SLIDESHOW has already installed "
+      "HTIMI_HOOK as \"JP SC3_CONFIRM_TICK\" (0C3h + address) - the confirm-chirp now runs as "
+      "an H.TIMI-driven background loop instead of a blocking per-image CALL, per \"音は割り込み"
+      "で鳴らしてんだろうが 鳴らしながらアニメするんだよ\"",
+      htimi_hook_at_show_img1 == (0xC3, sym["SC3_CONFIRM_TICK"]))
 # 実機フィードバック対応("バンク切り替えに失敗してる タイトルでボタンを
 # 押すとフリーズ"): hop1/hop2実行中〜Stage1自身のDIが効くまでの間、
 # 割り込みが許可されたままだとBGM_TICKの古いH.TIMIフックがwindow Aの
@@ -772,31 +755,111 @@ for i in range(1, 4):
 # constants - the "does the trampoline eventually complete" test above
 # deliberately shrinks these in its own private mem copy for step-count
 # feasibility, so the real values are checked here independently instead.
+# (2026-09-12、実機フィードバック"アニメが指示と違う 流れは まず1から
+# 6枚目を3フレ切り替え で7枚目の08を15フレ表示 ここまでを3ループ
+# その後09を30フレ 11を90フレ表示してMission 1表示"): offsets recomputed
+# for the new flow (1-6 x3フレーム + Epilogue1 x15フレーム, x3周; then
+# Epilogue2 x30フレーム; then Epilogue3 x90フレーム).
 _real_out, _real_sym, _ = build_test.assemble()
-check("RUN_SCREEN3_SLIDESHOW's real (unshrunk) main-loop count is 1 "
-      "(\"10ループなんて指定してないし\" - corrected from the earlier 10)",
-      _real_out[_real_sym["RUN_SCREEN3_SLIDESHOW"] + 0x31] == 1)
+_r3s_base = _real_sym["RUN_SCREEN3_SLIDESHOW"]
+check("RUN_SCREEN3_SLIDESHOW's real (unshrunk) main-loop count is 3 "
+      "(\"ここまでを3ループ\")",
+      _real_out[_r3s_base + 0x48] == 3)
 check("WAIT_3_FRAMES's real (unshrunk) DE count is 6884 (~50ms @ 3579545Hz / "
-      "26 T-states per DEC-DE loop iteration, \"3フレ分\")",
+      "26 T-states per DEC-DE loop iteration, \"1から6枚目を3フレ切り替え\")",
       (_real_out[_real_sym["WAIT_3_FRAMES"] + 1]
        | (_real_out[_real_sym["WAIT_3_FRAMES"] + 2] << 8)) == 6884)
-check("WAIT_HALF_SEC's real D preset is 2 (SCREEN3_DELAY_NESTED calibrated to "
-      "~0.294s/unit like MISSION_DELAY_3SEC, \"0.5秒\")",
-      _real_out[_real_sym["WAIT_HALF_SEC"] + 1] == 2)
-check("WAIT_1_SEC's real D preset is 3 (\"1秒\")",
-      _real_out[_real_sym["WAIT_1_SEC"] + 1] == 3)
-check("WAIT_3_SEC's real D preset is 10 (same calibration constant as "
-      "src/CYBER SHMUP.asm's own MISSION_DELAY_3SEC, \"3秒\")",
-      _real_out[_real_sym["WAIT_3_SEC"] + 1] == 10)
+check("WAIT_1_FRAME_UNIT's real (unshrunk) DE count is 2295 (~1/60s @ 3579545Hz / "
+      "26 T-states per DEC-DE loop iteration)",
+      (_real_out[_real_sym["WAIT_1_FRAME_UNIT"] + 1]
+       | (_real_out[_real_sym["WAIT_1_FRAME_UNIT"] + 2] << 8)) == 2295)
+check("RUN_SCREEN3_SLIDESHOW: Epilogue1(08.SC3)'s own wait is 15 frames "
+      "(\"7枚目の08を15フレ表示\")",
+      _real_out[_r3s_base + 0x60] == 15)
+check("RUN_SCREEN3_SLIDESHOW: Epilogue2(09.SC3)'s own wait is 30 frames "
+      "(\"その後09を30フレ\")",
+      _real_out[_r3s_base + 0x6B] == 30)
+check("RUN_SCREEN3_SLIDESHOW: Epilogue3(11.SC3)'s own wait is 90 frames "
+      "(\"11を90フレ表示してMission 1表示\")",
+      _real_out[_r3s_base + 0x73] == 90)
 
-# --- "一枚目を0.5秒 これを4ループ": SHOW_SC3_EPI1 itself is drawn once
-# (a short straight-line routine, no internal repeat loop) - the x4
-# repetition of PLAY_CONFIRM_BEEP+WAIT_HALF_SEC lives in RUN_SCREEN3_
-# SLIDESHOW's own caller loop, already covered by the PLAY_CONFIRM_BEEP
-# call-count check (confirm_beep_hits==7) above.
-check("SHOW_SC3_EPI1 is a short straight-line routine (draw once, no internal repeat loop - "
-      "the x4 repetition lives in RUN_SCREEN3_SLIDESHOW's own caller loop)",
-      sym["SHOW_SC3_EPI2"] - sym["SHOW_SC3_EPI1"] < 32)
+
+# ---- (2026-09-12、実機フィードバック"表示は出来た だが音2回鳴らして
+# 1コマじゃねえんだよ 音は割り込みで鳴らしてんだろうが 鳴らしながら
+# アニメするんだよ"): SC3_CONFIRM_TICK(H.TIMI駆動の確認音バックグラウンド
+# ループ)自体の直接呼び出しによる回帰テスト。z80emu.pyは本物の割り込みを
+# 自動発火しないため、"毎tick呼ばれ続けたら何が起こるか"は明示的に
+# SC3_CONFIRM_TICKを繰り返し直接CALLして検証する(combined_test.asmの
+# BGM_TICK自身のテスト手法と同じ)。
+import confirm_beep_gen  # noqa: E402
+
+SC3_CT_PTR = sym["SC3_CT_PTR"]
+SC3_CT_TIMER = sym["SC3_CT_TIMER"]
+SC3_CT_ROWS_LEFT = sym["SC3_CT_ROWS_LEFT"]
+SC3_CONFIRM_TICKS = sym["SC3_CONFIRM_TICKS"]
+SC3_CONFIRM_TICK_ROW_COUNT = sym["SC3_CONFIRM_TICK_ROW_COUNT"]
+
+_expected_rows = confirm_beep_gen.tick_rows()
+check("SC3_CONFIRM_TICK_ROW_COUNT matches confirm_beep_gen.py's own row count",
+      SC3_CONFIRM_TICK_ROW_COUNT == len(_expected_rows))
+
+cpu_ct, mem_ct = fresh_cpu()
+# prime state exactly as RUN_SCREEN3_SLIDESHOW's own installer does: timer=0,
+# rows_left=0 so the very first tick loads row 0 immediately.
+cpu_ct.mem[SC3_CT_TIMER] = 0
+cpu_ct.mem[SC3_CT_TIMER + 1] = 0
+cpu_ct.mem[SC3_CT_ROWS_LEFT] = 0
+
+observed = []  # one (period_lo, period_hi, volume) snapshot per row actually loaded
+# drive it through 2 full passes worth of ticks (plus a few extra) to check
+# both the per-row PSG output and the wrap-back-to-row-0 looping behavior.
+# Detect a new row load by watching SC3_CT_PTR advance, NOT by comparing PSG
+# output - a few adjacent rows in this melody (e.g. the chirp's hold row and
+# its own fade-out's first row) share byte-identical (period,volume), so a
+# "did the PSG state change" comparison would silently under-count them.
+total_ticks_one_pass = sum(r[3] for r in _expected_rows)
+
+
+def _read_ptr(cpu):
+    return cpu.mem[SC3_CT_PTR] | (cpu.mem[SC3_CT_PTR + 1] << 8)
+
+
+prev_ptr = _read_ptr(cpu_ct)
+for _tick in range(total_ticks_one_pass * 2):
+    call_routine(cpu_ct, "SC3_CONFIRM_TICK")
+    ptr = _read_ptr(cpu_ct)
+    if ptr != prev_ptr:
+        observed.append((cpu_ct.psg_regs.get(2), cpu_ct.psg_regs.get(3), cpu_ct.psg_regs.get(9)))
+        prev_ptr = ptr
+
+_expected_sequence = [(lo, hi, vol) for lo, hi, vol, _ticks in _expected_rows]
+check(f"SC3_CONFIRM_TICK: driving it through exactly {total_ticks_one_pass * 2} consecutive "
+      "ticks (2 full passes) produces exactly 2 repeats of confirm_beep_gen.py's own 53-row "
+      "(period,volume) sequence, confirming it loops back to row 0 automatically instead of "
+      "stopping after one pass",
+      observed == _expected_sequence * 2)
+
+# ---- off-by-one check (round40's own established convention: the tick
+# that LOADS a new row already plays it once, so the timer is seeded with
+# duration-1 more ticks - re-verify this holds here too).
+cpu_ob, mem_ob = fresh_cpu()
+cpu_ob.mem[SC3_CT_TIMER] = 0
+cpu_ob.mem[SC3_CT_TIMER + 1] = 0
+cpu_ob.mem[SC3_CT_ROWS_LEFT] = 0
+first_row_duration = _expected_rows[0][3]
+call_routine(cpu_ob, "SC3_CONFIRM_TICK")  # loads row 0
+ticks_until_next_load = 1
+while True:
+    before = (cpu_ob.psg_regs.get(2), cpu_ob.psg_regs.get(3), cpu_ob.psg_regs.get(9))
+    call_routine(cpu_ob, "SC3_CONFIRM_TICK")
+    after = (cpu_ob.psg_regs.get(2), cpu_ob.psg_regs.get(3), cpu_ob.psg_regs.get(9))
+    if after != before:
+        break
+    ticks_until_next_load += 1
+check(f"SC3_CONFIRM_TICK off-by-one: row 0's own duration is {first_row_duration} ticks, and "
+      "the tick that loads it already counts as the first one, so the NEXT row loads exactly "
+      f"{first_row_duration} ticks after the first (not {first_row_duration + 1})",
+      ticks_until_next_load == first_row_duration)
 
 
 print()

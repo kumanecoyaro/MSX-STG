@@ -13692,3 +13692,100 @@ Y段違い+Enemy6速度半減、Stage2自機爆発の自機非表示タイミン
   また同CLAUDE.mdの「テストコマンド・実行方針」に追記済みの
   「combined_test.asm無変更時は全回帰run_all.pyを実行しない」方針にも
   従うこと。
+
+## Round92: 確認音をH.TIMI駆動へ全面変更+アニメーション構成を
+フレーム数指定で再設計(2026-09-12、完了済み・実機フィードバック待ち
++重大な未解決の懸念あり)
+
+- ユーザー報告・指示3件: (1)"表示は出来た だが音2回鳴らして1コマ
+  じゃねえんだよ 音は割り込みで鳴らしてんだろうが 鳴らしながら
+  アニメするんだよ"。(2)"もう表示は確認したから 一々レンダリング
+  チェックいらない"。(3)"アニメが指示と違う 流れは まず1から6枚目を
+  3フレ切り替え で7枚目の08を15フレ表示 ここまでを3ループ その後09を
+  30フレ 11を90フレ表示してMission 1表示"。
+- **(1) 確認音をH.TIMI駆動バックグラウンドループへ全面変更**: 従来の
+  `PLAY_CONFIRM_BEEP_NO_BORDER`(画像1枚ごとに毎回ブロッキング呼び出し、
+  53行×2回=1秒超かかる)を完全に削除し、`combined_test.asm`の
+  `BGM_TICK`と同じ設計の新規`SC3_CONFIRM_TICK`を実装。53行のチャープ+
+  ブザーメロディを`confirm_beep_gen.py`(新規)でvblank tick単位の
+  テーブル(period_lo,period_hi,volume,duration_ticks×53行、元の
+  ON+OFF半区間の合計T-stateをtick換算・最小1tick)へ変換し、
+  `RUN_SCREEN3_SLIDESHOW`冒頭でHTIMI_HOOKへ設置(`combined_test.asm`
+  のINIT_BGMと同じ"LD A,0C3h:LD(HTIMI_HOOK),A:LD HL,<handler>:
+  LD(HTIMI_HOOK+1),HL"パターン)、以後は画像切り替えのbusy-waitループ
+  中もH.TIMIが発火し続けて自律的にループ再生する。新規RAM
+  `SC3_CT_PTR`/`SC3_CT_TIMER`/`SC3_CT_ROWS_LEFT`。
+- **(3) アニメーション構成の全面再設計**: 従来の「6枚+締め3枚
+  (0.5秒×4/1秒/3秒)」という秒単位の設計を撤回し、「1-6枚目(各3フレーム)
+  +7枚目(Epilogue1/08.SC3、15フレーム)を1周として3周+Epilogue2
+  (09.SC3)30フレーム+Epilogue3(11.SC3)90フレーム」というフレーム数
+  明示の設計へ全面書き換え。任意フレーム数を待つ汎用`WAIT_N_FRAMES`
+  (B=フレーム数)+`WAIT_1_FRAME_UNIT`(1フレーム分のDEデクリメント
+  ループ、N=2295≒59659T-state/26)を新設、旧`WAIT_HALF_SEC`/
+  `WAIT_1_SEC`/`WAIT_3_SEC`/`SCREEN3_DELAY_NESTED`は削除。
+- テスト: `title_test.py`のPLAY_CONFIRM_BEEP_NO_BORDER関連チェックを
+  全て撤去し、SC3_CONFIRM_TICK自体の直接呼び出しテスト(2周分112tick
+  通しでconfirm_beep_gen.py参照実装と完全一致・行境界検出はSC3_CT_PTR
+  の変化で判定[隣接行の値偶然一致に強い]・off-by-one検証)、
+  HTIMI_HOOK設置の構造チェック、新フレーム数構成(3周・15/30/90
+  フレーム)の構造チェックを追加。60 passed。
+- **重大な未解決の懸念(実機フィードバック必須)**: 実装の過程で
+  openMSX(headless、-control stdio)を使い"レンダリングで確認しろ"の
+  指示に従って視覚検証していたところ、**旧設計(WAIT_3_SEC=D×B×C
+  三重busy-waitで約3秒待つ構成)の締めの3枚目表示中に、実行が
+  C-BIOSの起動ロゴ画面まで巻き戻る(=CPUリセットに相当する現象)を
+  複数回のうち1回、再現した**。別の同条件の再実行では再現しない等
+  非決定的で、根本原因は未特定のまま(このセッションでは深追いを
+  完了できていない)。この現象と、Round41-42で当時ユーザーからも
+  指摘された"サウンドというかVsyncでの実装がダメってことだな"という
+  仮説([Title]バンクでのH.TIMI駆動処理が実機・複数エミュレータで
+  過去に原因不明のフリーズを繰り返し起こし、最終的に"タイトル画面
+  自身のBGM再生を停止"という回避策に落ち着いた経緯)との関連性は
+  未確認。**今回のフレーム数ベースの再設計により長時間の単一busy-wait
+  (旧WAIT_3_SEC)自体は無くなった(最大90フレーム=1.5秒のCALL/DJNZ
+  分割ループへ変更)ため、この特定の現象が解消されている可能性はある
+  が、確証はない。** 実機・WebMSXでの検証時、もし数秒以上operating
+  した時点で画面がタイトルロゴ(C-BIOS的な、あるいは本来のBIOS起動
+  画面)に戻る/フリーズする症状が見られた場合、この既知の懸念が
+  再現したものである可能性が高いため、直ちに報告してほしい。
+- 全回帰: 今回も`tools/title_screen/`+`tools/bankswitch_poc/
+  verify_comb.py`のみのためCLAUDE.mdの方針(Round89)に従いStage2側
+  `run_all.py`は実行せず。`title_test.py` **60 passed**。
+  `verify_comb.py`全チェックPASS。Comb ROM再ビルド済み。ユーザー指示
+  (2)"レンダリングチェックいらない"に従い、今回は表示内容の視覚的
+  最終確認(openMSXスクリーンショット)を省略して送付する。
+- **保留・実機フィードバック待ち(最優先)**: 上記の非決定的リセット
+  現象の実機での再現有無。15/30/90フレームという各表示時間の体感、
+  3周構成の見え方も次回フィードバック待ち。
+
+## セッション引き継ぎメモ(2026-09-12、Round92完了直後)
+
+- **現在の状態**: Round92(確認音をH.TIMI駆動バックグラウンドループへ
+  全面変更+アニメーション構成をフレーム数指定[1-6枚3フレ×3周+
+  7枚目15フレ+8枚目30フレ+9枚目90フレ]で再設計)まで完了。
+  `title_test.py` **60 passed**。`verify_comb.py`全チェックPASS。
+  Comb ROM再ビルド済み。**ただし重大な未解決の懸念(非決定的な
+  CPUリセット様の現象、詳細は上記Round92本文参照)が実装中に1回
+  観測されており、実機フィードバックで最優先確認が必要**。
+- **コミット・push状況**: 本メモ記載時点でコミット・push作業中(この
+  メモ自体が同じコミットに含まれる想定)。作業ツリーの内容:
+  `tools/title_screen/title_test.asm`(SC3_CONFIRM_TICK新設・
+  RUN_SCREEN3_SLIDESHOW全面書き換え・WAIT_N_FRAMES新設・旧
+  PLAY_CONFIRM_BEEP_NO_BORDER/WAIT_HALF_SEC等削除)・`tools/
+  title_screen/confirm_beep_gen.py`(新規)・`tools/title_screen/
+  build_test.py`(confirm_beep_gen配線)・`tools/title_screen/
+  title_test.py`(該当テスト全面書き換え)・`tools/bankswitch_poc/
+  verify_comb.py`(バイトオフセット更新)・`tools/title_screen/CyberS
+  Title.ascii16k.rom`(standalone再ビルド)・`rom/CyberS
+  Comb.ascii16k.rom`(再ビルド)・本HANDOFF.md(記録追記)。
+- **次に着手すべきこと**: 特になし(指示なしに着手しない方針)。
+  ただし上記「重大な未解決の懸念」は次回セッションでも記憶しておく
+  べき最優先事項 - ユーザーから実機で数秒以上operating後のフリーズ/
+  リセット症状の報告があった場合、openMSXでの再現・原因調査
+  (reverse debug機能の活用を検討)を最優先で再開すること。
+- **新セッションが最初にすべきこと**: このHANDOFF.md末尾(本項目)を
+  読んだ上で、CLAUDE.md冒頭の「実機ハードウェア制約」恒久ルール
+  (OTIR等のブロックI/O命令禁止)を必ず確認してから作業を再開すること。
+  また同CLAUDE.mdの「テストコマンド・実行方針」に追記済みの
+  「combined_test.asm無変更時は全回帰run_all.pyを実行しない」方針にも
+  従うこと。上記の重大な未解決の懸念も必ず引き継ぐこと。

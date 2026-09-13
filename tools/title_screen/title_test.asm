@@ -62,11 +62,24 @@ BANKSWITCH_TRAMPOLINE_RAM EQU 0F200h
 ; ループでMission 1表示に"、続けて"別に割り込みで同期取る必要はないぞ
 ; 適当にNopループでいい3フレ分の"): SCREEN3画像スライドショー用のRAM。
 ; SHADOW_PGT(2048byte)はtools/screen3_test/screen3_test.asmと同じ
-; 「現在のPGTの実体、差分[XOR]適用先」。フレーム待ちは割り込み/JIFFY
-; 系に一切依存しない単純なZ80クロック直接カウントのbusy-wait
-; (src/CYBER SHMUP.asmのMISSION_DELAY_3SEC等と同じ考え方)で実装する
-; ため、専用のtickカウンタRAMは不要(以前追加したSCREEN3_TICKは撤回)。
+; 「現在のPGTの実体、差分[XOR]適用先」。フレーム待ち(画像の切り替わり
+; タイミング)は割り込み/JIFFY系に一切依存しない単純なZ80クロック
+; 直接カウントのbusy-wait(src/CYBER SHMUP.asmのMISSION_DELAY_3SEC等と
+; 同じ考え方)で実装する(以前追加したSCREEN3_TICKは撤回)。
 SHADOW_PGT   EQU 0E800h
+
+; (2026-09-12、実機フィードバック"表示は出来た だが音2回鳴らして
+; 1コマじゃねえんだよ 音は割り込みで鳴らしてんだろうが 鳴らしながら
+; アニメするんだよ"): 上記のフレーム待ちとは別に、確認音自体は
+; H.TIMI駆動のバックグラウンドループへ変更する(combined_test.asmの
+; BGM_TICKと同じ設計 - 画像の切り替わりごとに毎回ブロッキング呼び出し
+; するのではなく、アニメーション全体を通じて割り込みで鳴り続ける)。
+; SC3_CONFIRM_TICKS(confirm_beep_gen.py生成、53行×4byte)を辿る
+; ポインタ/タイマー/残り行数。
+SC3_CT_PTR       EQU 0E7F8h   ; word: 次に読む行へのポインタ
+SC3_CT_TIMER     EQU 0E7FAh   ; word(下位byteのみ実際に使うが16bit演算で
+                              ; 読み書きするため2byte確保): 現在の行の残りtick数
+SC3_CT_ROWS_LEFT EQU 0E7FCh   ; byte: テーブル末尾までの残り行数(0で先頭へループ)
 
 ; global bank indices in the final ROM (see build_full_rom.py's own
 ; layout comment) - title=bank0/1 (this file), Stage1=bank2/3,
@@ -376,61 +389,18 @@ PCB_ROW_OFF_WAIT:
 ; フラッシュ(VDP R7書き込み)を行うと画面全体が赤一色になる実機不具合が
 ; 判明した(この演出自体はGraphics1/SCREEN2[タイトル背景]モードでの
 ; ボタン押下時は実機確認済みだったが、Multicolorモードとの組み合わせは
-; 今回が初めての実機テストだった)。ユーザー自身の指摘通りMulticolor
-; モードでのVDP R7の扱いに何らかの相違がある可能性が高いと考えられる
-; が、根本原因の特定は保留し、安全側の対応としてSCREEN3スライドショー
-; 中は枠色フラッシュを完全に省略しPSGトーン(チャープ+ブザー)のみを
-; 鳴らす専用ルーチンへ差し替える(PCB_PLAY_ONE_ROWと同じ行フォーマット・
-; 同じCONFIRM_STEPSテーブルを流用、VDP R7書き込みの2行[NOP 2つ込み]と
-; IXによる枠色テーブル参照だけを省いた形)。
-PLAY_CONFIRM_BEEP_NO_BORDER:
-    CALL PCB_PLAY_TABLE_NB
-    LD DE,CONFIRM_GAP_DELAY
-PCBNB_GAP_WAIT:
-    DEC DE
-    LD A,D : OR E
-    JR NZ,PCBNB_GAP_WAIT
-    CALL PCB_PLAY_TABLE_NB
-    RET
-
-PCB_PLAY_TABLE_NB:
-    LD HL,CONFIRM_STEPS
-    LD B,CONFIRM_STEP_COUNT
-PCBNB_ROW_LOOP:
-    PUSH BC
-    CALL PCB_PLAY_ONE_ROW_NB
-    POP BC
-    DJNZ PCBNB_ROW_LOOP
-    RET
-
-PCB_PLAY_ONE_ROW_NB:
-    DI
-    LD A,2 : OUT (PSG_ADDR),A
-    LD A,(HL) : OUT (PSG_DATA),A   ; ch B tone period fine
-    INC HL
-    LD A,3 : OUT (PSG_ADDR),A
-    LD A,(HL) : OUT (PSG_DATA),A   ; ch B tone period coarse
-    INC HL
-    LD A,9 : OUT (PSG_ADDR),A
-    LD A,(HL) : OUT (PSG_DATA),A   ; ch B volume (duty ON half)
-    INC HL
-    EI
-    LD E,(HL) : INC HL
-    LD D,(HL) : INC HL
-    PUSH DE
-PCBNB_ROW_ON_WAIT:
-    DEC DE
-    LD A,D : OR E
-    JR NZ,PCBNB_ROW_ON_WAIT
-    DI
-    LD A,9 : OUT (PSG_ADDR),A : XOR A : OUT (PSG_DATA),A  ; duty OFF half (silence)
-    EI
-    POP DE
-PCBNB_ROW_OFF_WAIT:
-    DEC DE
-    LD A,D : OR E
-    JR NZ,PCBNB_ROW_OFF_WAIT
-    RET
+; 今回が初めての実機テストだった)。根本原因の特定は保留し、SCREEN3
+; スライドショー中は枠色フラッシュを完全に省略する方針にした。
+; (2026-09-12、実機フィードバック"表示は出来た だが音2回鳴らして
+; 1コマじゃねえんだよ 音は割り込みで鳴らしてんだろうが 鳴らしながら
+; アニメするんだよ"): 当初はここに枠色フラッシュ無しのPLAY_CONFIRM_
+; BEEP_NO_BORDER(PCB_PLAY_TABLE_NB/PCB_PLAY_ONE_ROW_NB、画像の
+; 切り替わりごとに毎回ブロッキング呼び出しするbusy-wait版)を実装したが、
+; 「1コマに確認音が2回鳴る」「画像切り替えが確認音の再生時間に
+; 引きずられて遅くなる」という指摘を受け全面撤回。combined_test.asmの
+; BGM_TICKと同じ設計のH.TIMI駆動バックグラウンドループ(下記
+; SC3_CONFIRM_TICK)へ置き換えたため、この3ルーチン(busy-wait版)は
+; 完全に不要になり削除した。
 
 ; REDGRAD=[1,6,8,9,8,6,1](黒/暗赤/中赤/明赤/中赤/暗赤/黒)を53行に
 ; row*7//53で滑らかに配分(Pythonで事前計算、floor除算なので毎回
@@ -943,6 +913,55 @@ BGMT_UC_ATTEN_OK:
 ; 全く別の場所だったため一切表示に反映されていなかった)。
 ; R4を明示的に0(パターンジェネレータテーブルを0000hへ、Graphics1/
 ; Multicolor共通の標準値)へ書き戻すことで解消する。
+;
+; (2026-09-12、実機フィードバック"表示は出来た だが音2回鳴らして
+; 1コマじゃねえんだよ 音は割り込みで鳴らしてんだろうが 鳴らしながら
+; アニメするんだよ"): 確認音はH.TIMI駆動のバックグラウンドループへ
+; 変更(combined_test.asmのBGM_TICKと同じ設計)。SC3_CONFIRM_TICKを
+; HTIMI_HOOKへ設置しSC3_CT_PTR/TIMER/ROWS_LEFTを初期化した後は、
+; 画像の切り替わりループ(busy-wait、"適当にNopループでいい"の方針
+; 通り無変更)を回すだけでよく、確認音はその間ずっと割り込みで自律的に
+; 鳴り続け末尾(SC3_CONFIRM_TICK_ROW_COUNT行)まで行ったら自動的に
+; 先頭へループする - 画像1枚ごとの明示的なCALLは不要になったため撤去。
+SC3_CONFIRM_TICK:
+    PUSH AF : PUSH BC : PUSH DE : PUSH HL
+    LD HL,(SC3_CT_TIMER)
+    LD A,H : OR L
+    JR NZ,SC3CT_DEC_TIMER
+    LD A,(SC3_CT_ROWS_LEFT)
+    OR A
+    JR NZ,SC3CT_HAVE_ROWS
+    LD HL,SC3_CONFIRM_TICKS
+    LD (SC3_CT_PTR),HL
+    LD A,SC3_CONFIRM_TICK_ROW_COUNT
+    LD (SC3_CT_ROWS_LEFT),A
+SC3CT_HAVE_ROWS:
+    LD A,(SC3_CT_ROWS_LEFT)
+    DEC A
+    LD (SC3_CT_ROWS_LEFT),A
+    LD HL,(SC3_CT_PTR)
+    LD A,(HL) : INC HL : LD C,A
+    LD A,2 : OUT (PSG_ADDR),A
+    LD A,C : OUT (PSG_DATA),A      ; ch B tone period fine
+    LD A,(HL) : INC HL : LD C,A
+    LD A,3 : OUT (PSG_ADDR),A
+    LD A,C : OUT (PSG_DATA),A      ; ch B tone period coarse
+    LD A,(HL) : INC HL : LD C,A
+    LD A,9 : OUT (PSG_ADDR),A
+    LD A,C : OUT (PSG_DATA),A      ; ch B volume
+    LD A,(HL) : INC HL             ; duration (ticks) - round40と同じ
+    DEC A                          ; off-by-one補正(このtick自体で1回目)
+    LD (SC3_CT_TIMER),A
+    XOR A : LD (SC3_CT_TIMER+1),A
+    LD (SC3_CT_PTR),HL
+    JR SC3CT_DONE
+SC3CT_DEC_TIMER:
+    DEC HL
+    LD (SC3_CT_TIMER),HL
+SC3CT_DONE:
+    POP HL : POP DE : POP BC : POP AF
+    RET
+
 RUN_SCREEN3_SLIDESHOW:
     LD B,00h : LD C,0 : CALL WRTVDP
     LD B,00h : LD C,4 : CALL WRTVDP
@@ -960,55 +979,56 @@ RUN_SCREEN3_SLIDESHOW:
     ; ため、明示的に全停止(既存のtitle自身の0D1hマーカーと同じ)。
     LD A,0D1h : LD HL,SPRATR : CALL WRTVRM
 
-    ; (2026-09-12、"10ループなんて指定してないし"): 当初の10から1へ訂正
-    ; (1周のみ、繰り返し無し)。
-    ; (2026-09-12、実機フィードバック"表示すらできてねえんだよ"):
-    ; 従来は各画像を描画する前に(長い場合1秒を超える)PLAY_CONFIRM_
-    ; BEEP_NO_BORDERを呼んでいたため、まだ新しいPGTデータが一度も
-    ; VRAMへ書き込まれていない間、直前のタイトル背景の生パターン
-    ; データがMulticolorアドレッシングとして誤読され続け、その間
-    ; 画面には無関係な色帯ノイズが表示されていた(音は無関係のPSG
-    ; チャンネルなので正常に鳴っていた、というのも報告と整合する)。
-    ; 「描画してから鳴らす」の順に統一し、VRAMが常に最新の正しい
-    ; 絵柄を保持している状態でのみ長い待ち時間(確認音)に入るように
-    ; 修正した。
-    LD B,1
+    ; 確認音のH.TIMIフックを設置(combined_test.asmのINIT_BGMと同じ
+    ; "LD A,0C3h[JP opcode]:LD(HTIMI_HOOK),A:LD HL,<handler>:
+    ; LD(HTIMI_HOOK+1),HL"パターン)。次のtickで即座に1行目を読み込ま
+    ; せるためタイマー/残り行数を0にしておく。
+    DI
+    XOR A
+    LD (SC3_CT_TIMER),A : LD (SC3_CT_TIMER+1),A : LD (SC3_CT_ROWS_LEFT),A
+    LD A,0C3h : LD (HTIMI_HOOK),A
+    LD HL,SC3_CONFIRM_TICK : LD (HTIMI_HOOK+1),HL
+    EI
+
+    ; (2026-09-12、実機フィードバック"アニメが指示と違う 流れは まず
+    ; 1から6枚目を3フレ切り替え で7枚目の08を15フレ表示 ここまでを
+    ; 3ループ その後09を30フレ 11を90フレ表示してMission 1表示"):
+    ; 1-6枚目(各3フレーム、SHOW_SC3_IMGx自身に組み込み済み)+7枚目
+    ; (=Epilogue1/08.SC3、15フレーム)を1周として3回繰り返し、その後
+    ; Epilogue2(09.SC3)を30フレーム・Epilogue3(11.SC3)を90フレーム
+    ; 表示してからMission 1(Stage1トランポリン)へ進む。確認音はもう
+    ; 明示的にCALLしない - busy-waitループの最中もH.TIMIは発火し
+    ; 続けるため、上記で設置したSC3_CONFIRM_TICKが自律的に鳴り続ける。
+    LD B,3
 RSS_MAIN_LOOP:
     PUSH BC
     CALL SHOW_SC3_IMG1
-    CALL PLAY_CONFIRM_BEEP_NO_BORDER
     CALL SHOW_SC3_IMG2
-    CALL PLAY_CONFIRM_BEEP_NO_BORDER
     CALL SHOW_SC3_IMG3
-    CALL PLAY_CONFIRM_BEEP_NO_BORDER
     CALL SHOW_SC3_IMG4
-    CALL PLAY_CONFIRM_BEEP_NO_BORDER
     CALL SHOW_SC3_IMG5
-    CALL PLAY_CONFIRM_BEEP_NO_BORDER
     CALL SHOW_SC3_IMG6
-    CALL PLAY_CONFIRM_BEEP_NO_BORDER
+    CALL SHOW_SC3_EPI1
+    LD B,15
+    CALL WAIT_N_FRAMES
     POP BC
     DJNZ RSS_MAIN_LOOP
 
-    ; "ではさっきの6枚の後に一枚目を0.5秒 これを4ループ その後に2枚目を
-    ; 1秒 3枚目を3秒表示": 締めの3枚(本編6枚目からのXOR差分の連鎖)。
-    CALL SHOW_SC3_EPI1
-    LD B,4
-RSS_EPI1_LOOP:
-    PUSH BC
-    CALL PLAY_CONFIRM_BEEP_NO_BORDER
-    CALL WAIT_HALF_SEC
-    POP BC
-    DJNZ RSS_EPI1_LOOP
-
     CALL SHOW_SC3_EPI2
-    CALL PLAY_CONFIRM_BEEP_NO_BORDER
-    CALL WAIT_1_SEC
+    LD B,30
+    CALL WAIT_N_FRAMES
 
     CALL SHOW_SC3_EPI3
-    CALL PLAY_CONFIRM_BEEP_NO_BORDER
-    CALL WAIT_3_SEC
+    LD B,90
+    CALL WAIT_N_FRAMES
 
+    ; 呼び出し元(WFS_PROCEED)がこの直後にHTIMI_HOOKをbare RETへ戻し
+    ; DIしてStage1へトランポリンする既存の設計に合わせ、ここでは
+    ; チャンネルBの音量だけ明示的にミュートしておく(トランポリンまでの
+    ; 僅かな間にもう1tick分鳴ってしまうのを防ぐ、既存のPLAY_CONFIRM_
+    ; BEEP自身の「戻り際に必ずミュート」という流儀と同じ)。
+    DI
+    LD A,9 : OUT (PSG_ADDR),A : XOR A : OUT (PSG_DATA),A
     RET
 
 ; 1枚目(基準フレーム): RLEをSHADOW_PGTへフル展開してからVRAMへ一括反映。
@@ -1151,30 +1171,31 @@ WF3_LOOP:
     JR NZ,WF3_LOOP
     RET
 
-; 0.5/1/3秒の待ち - src/CYBER SHMUP.asmのMISSION_DELAY_3SEC(D=10で
-; 実測約2.94秒)と同型のD×B×C三重ループ、Dだけ呼び出し元が変えて
-; 使い回す(1D単位≒0.294秒の近似較正値、"適当でいい"の方針に基づく)。
-SCREEN3_DELAY_NESTED:
-SC3D_OUTER:
-    LD B,0
-SC3D_MID:
-    LD C,0
-SC3D_INNER:
-    DEC C
-    JR NZ,SC3D_INNER
-    DJNZ SC3D_MID
-    DEC D
-    JR NZ,SC3D_OUTER
+; (2026-09-12、"アニメが指示と違う 流れは まず1から6枚目を3フレ切り替え
+; で7枚目の08を15フレ表示 ここまでを3ループ その後09を30フレ 11を90フレ
+; 表示してMission 1表示"): 任意フレーム数の待ち。WAIT_3_FRAMESと同じ
+; 26T-state/iterationのDEデクリメントループを「1フレーム分」の単位
+; ルーチンとして切り出し、呼び出し元がB(フレーム数、1-255)をセットして
+; CALLする方式に一般化した(15/30/90フレームいずれもDE単体[16bit上限
+; 約476ms=約28フレーム分]には収まらないため、CALL/DJNZの外側ループで
+; 束ねる - 1フレームあたり数十T-stateのCALL/DJNZオーバーヘッドは
+; 59660T-stateの1フレーム全体からすれば無視できる)。
+SC3_WAIT_1F_COUNT EQU 2295   ; ≒1/60秒(59659.083T-state/26T-state per iter)
+WAIT_1_FRAME_UNIT:
+    LD DE,SC3_WAIT_1F_COUNT
+WF1U_LOOP:
+    DEC DE
+    LD A,D : OR E
+    JR NZ,WF1U_LOOP
     RET
 
-WAIT_HALF_SEC:
-    LD D,2
-    JP SCREEN3_DELAY_NESTED
-WAIT_1_SEC:
-    LD D,3
-    JP SCREEN3_DELAY_NESTED
-WAIT_3_SEC:
-    LD D,10
-    JP SCREEN3_DELAY_NESTED
+; B=フレーム数(呼び出し元が事前にセット)。Trashes: AF,B,DE。
+WAIT_N_FRAMES:
+WNF_LOOP:
+    PUSH BC
+    CALL WAIT_1_FRAME_UNIT
+    POP BC
+    DJNZ WNF_LOOP
+    RET
 
 ; ===== boss art tables, generated by title_gen.py - see that file =====
