@@ -14359,3 +14359,56 @@ NOP抜け)(2026-09-13、完了済み・実機フィードバック待ち)
   他のGTTRIG呼び出し箇所(Stage1/Stage2/GAME_OVERバンクのゲームオーバー
   画面のボタン待ち等)にも残っている可能性があるが、今回の指示は
   タイトル画面限定のため未着手・指示なしに拡張しない。
+
+## Round103: SCREEN3スライドショー確認音を9回再生で恒久停止(2026-09-13、
+完了済み・実機フィードバック待ち)
+
+- ユーザー報告: "サウンドが最後尻切れで止まってるので 9回鳴らしたら
+  音止めて"。`SC3_CONFIRM_TICK`(H.TIMI駆動の確認音、53行のメロディ)は
+  末尾まで行ったら無条件に先頭へループし続ける設計だったため、実際の
+  アニメーション終了/スキップのタイミングと一切同期しておらず、曲の
+  途中で強制ミュートされ「尻切れ」になっていた。
+- **修正**: 新規1byte RAM`SC3_CT_PASS`(0F005h、現在までに開始した
+  メロディの再生回数)と定数`SC3_CT_MAX_PASSES`(9)を追加。
+  `SC3_CONFIRM_TICK`が新パスを開始しようとする瞬間(`SC3_CT_ROWS_LEFT`
+  が0になった時)、まず`SC3_CT_PASS`を`SC3_CT_MAX_PASSES`と比較 - 既に
+  9回開始済みなら新規`SC3CT_STOPPED`ラベルへ分岐しPSG(ch B音量)を
+  ミュート・VDP R7(ボーダー)を黒(1)へ強制した上でRET、そうでなければ
+  `SC3_CT_PASS`をインクリメントしてから通常通り1行目をロードする。
+  `RUN_SCREEN3_SLIDESHOW`のHTIMI_HOOK設置ブロック(既存の`SC3_CT_TIMER`/
+  `SC3_CT_ROWS_LEFT`/`SC3_CT_PHASE`ゼロクリアと同じ箇所)に`SC3_CT_PASS`
+  のゼロクリアも追加。
+- この変更は`RUN_SCREEN3_SLIDESHOW`のHTIMI_HOOK設置コード内(3byte命令
+  `LD (SC3_CT_PASS),A`)に挿入されたため、同ルーチン内でこれより後ろの
+  全既存オフセット依存テスト(メインループ回数`LD B,3`・Epilogue1/
+  standalone30フレ/Epilogue2/Epilogue3の各待ちフレーム数)が+3byteずつ
+  シフト - `title_test.py`/`verify_comb.py`の該当ハードコードオフセット
+  (`+0x64`→`+0x67`等、計5箇所)を機械的に再計算して更新(offset drift
+  自体は毎回恒例の作業、新規バグではない)。
+- 新規回帰テスト6件: `SC3_CT_MAX_PASSES`が9であることの直接確認、
+  9パス分のtickを回した後`SC3_CT_PASS`が9であることの確認、10パス目を
+  開始しようとするtickでPSG(R9=0)・ボーダー(R7=1)が正しく強制される
+  ことの確認、`SC3_CT_PASS`が9を超えて増加しないことの確認、さらに
+  1パス分のtickを追加で回しても再生が再開しない(恒久的に停止したまま)
+  ことの確認。一時的に修正(パス数チェック自体)を取り消して新規4件が
+  正しくFAILすることを自己検証した上で復元・再PASSを確認済み。
+- `python3 title_test.py` **84 passed, 0 failed**(78→84)。Comb ROM
+  再ビルド・`verify_comb.py`全チェックPASSの上、標準方針によりComb ROM
+  のみ送付。
+- 変更ファイル: `tools/title_screen/title_test.asm`(SC3_CT_PASS/
+  SC3_CT_MAX_PASSES新設、SC3_CONFIRM_TICKのパス数チェック+SC3CT_STOPPED
+  追加)、`tools/title_screen/title_test.py`(オフセット5箇所更新+新規
+  回帰テスト6件)、`tools/bankswitch_poc/verify_comb.py`(オフセット1箇所
+  更新)、Comb ROM再ビルド。
+
+セッション引き継ぎメモ(2026-09-13、Round103完了直後):
+- 実機での聞こえ方(9回再生後に本当に自然に止まるか、途中で尻切れに
+  ならないか)は次回フィードバック待ち。
+- `SC3_CT_MAX_PASSES`(9)はユーザーの明示的な指定値そのまま(53行×9回
+  ≒8.4秒相当、confirm_beep_gen.pyの1パスあたり56tick≒0.933秒から算出、
+  実測ではなく計算値)。アニメーション自体が9パス分の時間より先に終了/
+  スキップされた場合は、既存の`RSS_CLEANUP`(通常終了)や`SC3_CHECK_SKIP`
+  →`RSS_CLEANUP`(スキップ経由)が引き続きその時点で即座にミュートする
+  ため、今回の9回上限と競合しない(9回未満で終わるのが通常ケース、
+  9回に達してしまうのはアニメが異常に長時間ボタン操作なしで放置された
+  場合のみ)。

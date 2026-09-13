@@ -524,7 +524,7 @@ switch_log_at_wait = list(mem.switch_log)  # round40: exclude INIT_BGM's own 2 s
 # 制約)、このステップ実行中にSC3_CONFIRM_TICKが呼ばれることはない -
 # HTIMI_HOOKの設置自体・SC3_CONFIRM_TICK自身の動作は別途、直接呼び
 # 出しによる専用テストで検証する(下記)。
-_RSS_MAIN_LOOP_COUNT_ADDR = sym["RUN_SCREEN3_SLIDESHOW"] + 0x64  # "LD B,3" operand (round97 shifted by the name-table transfer loop; +3 by round99follow-up's SC3_CT_PHASE init; +8 by the skip-to-Mission1 SP-save prologue)
+_RSS_MAIN_LOOP_COUNT_ADDR = sym["RUN_SCREEN3_SLIDESHOW"] + 0x67  # "LD B,3" operand (round97 shifted by the name-table transfer loop; +3 by round99follow-up's SC3_CT_PHASE init; +8 by the skip-to-Mission1 SP-save prologue; +3 by round103's SC3_CT_PASS init)
 _WAIT_1F_DE_ADDR = sym["WAIT_1_FRAME_UNIT"] + 1                   # "LD DE,2295" operand (2 bytes)
 assert mem.banksA[0][_RSS_MAIN_LOOP_COUNT_ADDR - 0x4000] == 3
 assert (mem.banksA[0][_WAIT_1F_DE_ADDR - 0x4000]
@@ -856,28 +856,30 @@ for i in range(1, 4):
 # その挿入位置より前のため無変化)。続けて"アニメ中にボタン押されたら
 # Mission 1表示にスキップ"対応のSP退避+SC3_SKIP_ARMEDリセット(8byte)が
 # RUN_SCREEN3_SLIDESHOW冒頭(全ての既存コードより前)に追加されたため、
-# 以下は+8さらにシフトしている。
+# 以下は+8さらにシフトしている。続けて"9回鳴らしたら音止めて"対応の
+# SC3_CT_PASS初期化(1命令3byte、SC3_CT_PHASE初期化のすぐ後)が追加された
+# ため、以下は+3さらにシフトしている。
 _real_out, _real_sym, _ = build_test.assemble()
 _r3s_base = _real_sym["RUN_SCREEN3_SLIDESHOW"]
 check("RUN_SCREEN3_SLIDESHOW's real (unshrunk) main-loop count is 3 "
       "(\"ここまでを3ループ\")",
-      _real_out[_r3s_base + 0x64] == 3)
+      _real_out[_r3s_base + 0x67] == 3)
 check("WAIT_1_FRAME_UNIT's real (unshrunk) DE count is 2295 (~1/60s @ 3579545Hz / "
       "26 T-states per DEC-DE loop iteration)",
       (_real_out[_real_sym["WAIT_1_FRAME_UNIT"] + 1]
        | (_real_out[_real_sym["WAIT_1_FRAME_UNIT"] + 2] << 8)) == 2295)
 check("RUN_SCREEN3_SLIDESHOW: Epilogue1(08.SC3)'s own wait is 30 frames "
       "(\"7枚目の表示時間伸ばして\"、旧15フレームから倍増)",
-      _real_out[_r3s_base + 0x7c] == 30)
+      _real_out[_r3s_base + 0x7f] == 30)
 check("RUN_SCREEN3_SLIDESHOW: standalone 30-frame wait right after the 3rd loop "
       "iteration completes, before Epilogue2 (\"3ループの後に30フレ追加して\")",
-      _real_out[_r3s_base + 0x83] == 0x06 and _real_out[_r3s_base + 0x84] == 30)
+      _real_out[_r3s_base + 0x86] == 0x06 and _real_out[_r3s_base + 0x87] == 30)
 check("RUN_SCREEN3_SLIDESHOW: Epilogue2(09.SC3)'s own wait is 60 frames "
       "(\"8枚目は今30フレだと思うが60に\")",
-      _real_out[_r3s_base + 0x8c] == 60)
+      _real_out[_r3s_base + 0x8f] == 60)
 check("RUN_SCREEN3_SLIDESHOW: Epilogue3(11.SC3)'s own wait is 120 frames "
       "(\"9枚目は120に\")",
-      _real_out[_r3s_base + 0x94] == 120)
+      _real_out[_r3s_base + 0x97] == 120)
 
 
 # ---- (2026-09-12、実機フィードバック"表示は出来た だが音2回鳴らして
@@ -1075,6 +1077,58 @@ check(f"SC3_CONFIRM_TICK off-by-one: row 0's own duration is {first_row_duration
       f"{first_row_duration} ticks after the first (not {first_row_duration + 1})",
       ticks_until_next_load == first_row_duration)
 
+# ---- (2026-09-13、"サウンドが最後尻切れで止まってるので9回鳴らしたら
+# 音止めて"): SC3_CONFIRM_TICKは元々53行のメロディを末尾まで行ったら
+# 無条件に先頭へループし続ける設計だったため、アニメの終了/スキップの
+# タイミングと同期しておらず曲の途中で強制ミュートされ尻切れになって
+# いた。SC3_CT_PASS(新パス開始のたびに+1)がSC3_CT_MAX_PASSES(9)に
+# 達したら、以後は明示的にミュート・ボーダー黒のまま恒久的に停止する
+# ことを直接検証する。
+SC3_CT_PASS = sym["SC3_CT_PASS"]
+SC3_CT_MAX_PASSES = sym["SC3_CT_MAX_PASSES"]
+check("SC3_CT_MAX_PASSES is 9 (\"9回鳴らしたら音止めて\")",
+      SC3_CT_MAX_PASSES == 9)
+
+cpu_stop, mem_stop = fresh_cpu()
+cpu_stop.mem[SC3_CT_TIMER] = 0
+cpu_stop.mem[SC3_CT_TIMER + 1] = 0
+cpu_stop.mem[SC3_CT_ROWS_LEFT] = 0
+cpu_stop.mem[SC3_CT_PASS] = 0
+
+total_ticks_all_passes = total_ticks_one_pass * SC3_CT_MAX_PASSES
+for _tick in range(total_ticks_all_passes):
+    call_routine(cpu_stop, "SC3_CONFIRM_TICK")
+
+check("SC3_CONFIRM_TICK: after exactly 9 full passes worth of ticks, SC3_CT_PASS reads 9 "
+      "(one pass was started, and only started, for each completed melody loop)",
+      cpu_stop.mem[SC3_CT_PASS] == SC3_CT_MAX_PASSES)
+
+# The very next tick would normally start pass #10 - confirm it is suppressed instead:
+# PSG channel B volume forced to 0, border forced back to black (1), and SC3_CT_PASS
+# does not advance past the max.
+call_routine(cpu_stop, "SC3_CONFIRM_TICK")
+check("SC3_CONFIRM_TICK: the tick that would have started pass #10 instead mutes PSG "
+      "channel B (R9=0) rather than looping the melody indefinitely and getting cut off "
+      "mid-note later",
+      cpu_stop.psg_regs.get(9) == 0)
+check("SC3_CONFIRM_TICK: that same tick also forces the border back to black (VDP R7=1), "
+      "matching RSS_CLEANUP's own end-of-animation state instead of leaving it mid-fade",
+      cpu_stop.vdp_regs.get(7) == 1)
+check("SC3_CONFIRM_TICK: SC3_CT_PASS stays at 9 (does not increment past SC3_CT_MAX_PASSES) "
+      "once stopped",
+      cpu_stop.mem[SC3_CT_PASS] == SC3_CT_MAX_PASSES)
+
+# Drive it through a further full pass's worth of ticks to confirm the stopped state is
+# permanent (never resumes playing), not a one-tick blip.
+stayed_muted = True
+for _tick in range(total_ticks_one_pass):
+    call_routine(cpu_stop, "SC3_CONFIRM_TICK")
+    if cpu_stop.psg_regs.get(9) != 0:
+        stayed_muted = False
+        break
+check("SC3_CONFIRM_TICK: stays muted permanently (never resumes playing) for a further full "
+      "pass's worth of ticks after hitting the 9-pass limit",
+      stayed_muted)
 
 # ---- (2026-09-13、"ではアニメ中にボタン押されたらMission 1表示に
 # スキップ"): SC3_CHECK_SKIP(WAIT_1_FRAME_UNITから毎フレーム呼ばれる

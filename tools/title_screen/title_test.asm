@@ -114,6 +114,14 @@ SC3_CT_PHASE     EQU 0F001h   ; byte: デューティ50%用の自由継続位相
 ; 継続していた場合、1コマも表示されずに即スキップしてしまう。
 SC3_SKIP_ARMED   EQU 0F002h   ; byte: 0=まだ武装前(初期押しっぱなし無視)、1=武装済み
 SC3_SAVED_SP     EQU 0F003h   ; word: RUN_SCREEN3_SLIDESHOW開始時点のSP
+; (2026-09-13、"サウンドが最後尻切れで止まってるので9回鳴らしたら音止めて"):
+; SC3_CONFIRM_TICKは53行の確認音メロディを末尾に達したら無条件に先頭へ
+; ループし続ける設計のため、アニメ終了/スキップのタイミングと同期しておらず
+; 曲の途中で強制ミュートされ尻切れになっていた。新パス開始のたびに1回だけ
+; カウントし、SC3_CT_MAX_PASSES回再生し終えたら以後は明示的にミュート
+; したまま何もしない停止状態へ移行する。
+SC3_CT_PASS      EQU 0F005h   ; byte: 現在までに開始したメロディの再生回数
+SC3_CT_MAX_PASSES EQU 9        ; 最大再生回数(これに達したら以後は無音のまま停止)
 
 ; global bank indices in the final ROM (see build_full_rom.py's own
 ; layout comment) - title=bank0/1 (this file), Stage1=bank2/3,
@@ -998,6 +1006,14 @@ SC3_CONFIRM_TICK:
     LD A,(SC3_CT_ROWS_LEFT)
     OR A
     JR NZ,SC3CT_HAVE_ROWS
+    ; (2026-09-13、"サウンドが最後尻切れで止まってるので9回鳴らしたら
+    ; 音止めて"): 新しいパスを開始する直前に、既にSC3_CT_MAX_PASSES回
+    ; 開始済みならこれ以上は再生せず明示的にミュートしたまま停止する。
+    LD A,(SC3_CT_PASS)
+    CP SC3_CT_MAX_PASSES
+    JR NC,SC3CT_STOPPED
+    INC A
+    LD (SC3_CT_PASS),A
     LD HL,SC3_CONFIRM_TICKS
     LD (SC3_CT_PTR),HL
     LD HL,BORDER_TABLE
@@ -1053,6 +1069,20 @@ SC3CT_DUTY_OFF:
 SC3CT_DONE:
     POP HL : POP DE : POP BC : POP AF
     RET
+SC3CT_STOPPED:
+    ; SC3_CT_MAX_PASSES回再生し終えた後の恒久停止状態: 明示的にPSG
+    ; (ch B音量)をミュートし、ボーダーも黒へ戻してからRET。SC3_CT_
+    ; ROWS_LEFTは0のまま二度と進まないため、以後毎tickこの分岐を通る
+    ; だけで無害(音は既に鳴っていないため上書きしても実害なし)。
+    LD A,9 : OUT (PSG_ADDR),A : XOR A : OUT (PSG_DATA),A
+    LD A,1 : OUT (99h),A
+    NOP
+    NOP
+    LD A,87h : OUT (99h),A
+    NOP
+    NOP
+    POP HL : POP DE : POP BC : POP AF
+    RET
 
 RUN_SCREEN3_SLIDESHOW:
     ; (2026-09-13、"アニメ中にボタン押されたらMission 1表示にスキップ"):
@@ -1101,6 +1131,7 @@ RSS_NAME_LOOP:
     XOR A
     LD (SC3_CT_TIMER),A : LD (SC3_CT_TIMER+1),A : LD (SC3_CT_ROWS_LEFT),A
     LD (SC3_CT_PHASE),A            ; デューティ位相も0から開始(決定的な挙動のため)
+    LD (SC3_CT_PASS),A             ; 再生回数カウンタも0から開始(9回で停止)
     LD A,0C3h : LD (HTIMI_HOOK),A
     LD HL,SC3_CONFIRM_TICK : LD (HTIMI_HOOK+1),HL
     EI
