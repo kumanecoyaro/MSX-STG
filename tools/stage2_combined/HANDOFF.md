@@ -14412,3 +14412,79 @@ NOP抜け)(2026-09-13、完了済み・実機フィードバック待ち)
   ため、今回の9回上限と競合しない(9回未満で終わるのが通常ケース、
   9回に達してしまうのはアニメが異常に長時間ボタン操作なしで放置された
   場合のみ)。
+
+## Round104: ボス形態変化後の死亡でササピービームが停止する不具合を修正
+(2026-09-13、完了済み・実機フィードバック待ち)
+
+- ユーザー指示: "ではステージ2のボス形態変化後倒した際にササピービーム
+  が出ていたら止めずに画面外まで出るように 今はビームが停止状態で爆発
+  処理になってるんで"。
+- **根本原因**: `UPDATE_BOSS_ALL`は`BOSS_ACT=2`(HP0到達による実死亡)を
+  検出すると`UPDATE_BOSS_EXPLOSION`(SPARK→GROW→SHRINK→FLASH→DONEの
+  死亡演出ステートマシン)へ直接ジャンプし、以後二度と`UPDATE_BOSS_
+  BROKEN_ACTIVE`を呼ばなくなる。ところが形態変化後のササピービーム
+  (`BOSS_BROKEN_PROJ_*`)の移動更新(`UPDATE_BOSS_BROKEN_BEAM_FLIGHT`)・
+  hwスプライト反映(`FLUSH_BOSS_BROKEN_BEAM_SPRITES`)は共に
+  `UPDATE_BOSS_BROKEN_ACTIVE`内でしか呼ばれていなかったため、形態変化
+  後にビームが飛行中の状態でボスが倒される(`BOSS_EXPL_REASON`の
+  コメントに明記の通り、形態変化後の実死亡も同じ`INIT_BOSS_EXPLOSION`
+  経路を通る仕様)と、そのビームは死亡した瞬間の座標で永久に停止した
+  ままGROW等の演出が進行してしまっていた(既に発射済みの弾は飛び続け
+  るという既存設計[Homing/Thunder/SBeamは`BOSS_ACT!=0`の間毎フレーム
+  無条件更新]と非対称になっていたバグ)。
+- **修正**: `UPDATE_BOSS_ALL`の`BOSS_ACT=2`分岐を単純な`JP Z,UPDATE_
+  BOSS_EXPLOSION`から、`CALL UPDATE_BOSS_BROKEN_BEAM_FLIGHT`→`CALL
+  UPDATE_BOSS_EXPLOSION`→`CALL FLUSH_BOSS_BROKEN_BEAM_SPRITES`→`RET`
+  という3段構成へ変更。呼び出し順序が重要: ビームの位置更新を先に行い
+  (hwスプライト属性には触れない)、次に死亡演出本体を実行し(GROW
+  フェーズの点滅処理`HIDE_BOSS_SPRITES`/`FLUSH_BOSS_SPRITES`が旧64x64
+  ボディ用に16スロット[`BOSS_SPR_BASE_SLOT`〜+15]をハードコードで
+  直接VRAM上書きするため、ビーム自身の4スロット[`BOSS_BROKEN_BEAM_
+  SPR_BASE_SLOT`〜+3]と物理的に重なっており、この間に一時的に
+  上書きされる可能性がある)、最後に`FLUSH_BOSS_BROKEN_BEAM_SPRITES`
+  を呼んでビーム自身の4スロットに対する「最後の発言権」を確保する
+  ことで、GROWの点滅処理が同じスロット範囲へ何を書き込んでいても
+  毎フレーム必ずビームの現在位置(または非アクティブなら非表示)で
+  上書きし直される。ボスが通常フォーム(形態変化前)のまま死亡した
+  場合は`BOSS_BROKEN_PROJ_ACTIVE`が全スロット常に0(このフラグは
+  `LAUNCH_BOSS_BROKEN_BEAM`経由でのみセットされ、それ自体
+  `UPDATE_BOSS_BROKEN_ACTIVE`内、つまり形態変化後にしか到達できない
+  ため)と確定しているので、追加した2呼び出しは安全な無害no-opになる
+  (`BOSS_FORM`による追加のガードは不要)。
+- 新規回帰テスト7件を`boss_broken_form_test.py`に追加: (1)形態変化後
+  ビーム発射直後にボスを倒しSPARK burst 20フレーム中も座標が変化し
+  続けることを直接確認、(2)20フレーム後もビームがアクティブなままで
+  あることを確認、(3)SPARK→GROW遷移までシミュレーションで実際に到達
+  させた上で、GROW中に人為的にビームをアクティブへポークし(実プレイ
+  ではビームがSPARK[180フレーム]を生き延びてGROWまで残ることは
+  DY>=1(常に下方向)+画面高の制約上ほぼ起こり得ないため、呼び出し
+  「順序」自体を検証する目的で直接ポーク)、20フレーム(`BOSS_EXPL_
+  BLINK_PERIOD`(16)の1周期以上)にわたり毎フレーム座標が変化すること、
+  (4)実VRAM上のhwスプライト属性テーブル(RAMステージングバッファでは
+  なく`cpu.vram[SAT_BASE+...]`、GROWの点滅処理が直接書き込む先と
+  同じ場所)がGROWの点滅サイクルのどちらの半周期でも常にビームの
+  現在位置と一致すること、(5)発射されていないビームスロットもGROW中
+  ずっと非表示(Y=209)のまま保たれることを検証。一時的に修正を取り
+  消し(`CALL UPDATE_BOSS_BROKEN_BEAM_FLIGHT`/`CALL FLUSH_BOSS_BROKEN_
+  BEAM_SPRITES`を削除し元の`JP Z,UPDATE_BOSS_EXPLOSION`へ戻す)、新規
+  4件が正しくFAILすることを確認した上で復元・再PASSを確認済み。
+- `python3 boss_broken_form_test.py` **114 passed, 0 failed**
+  (107→114)。`combined_test.asm`自体を変更したため全回帰
+  `run_all.py`も実行: **1532 passed, 0 failed**。Comb ROM再ビルド・
+  `verify_comb.py`全チェックPASSの上、標準方針によりComb ROMのみ送付。
+- 変更ファイル: `tools/stage2_combined/combined_test.asm`
+  (`UPDATE_BOSS_ALL`のBOSS_ACT=2分岐を3段構成へ変更)、
+  `tools/stage2_combined/tests/boss_broken_form_test.py`(新規回帰
+  テスト7件)、Comb ROM再ビルド。
+
+セッション引き継ぎメモ(2026-09-13、Round104完了直後):
+- 実機での見え方(死亡演出中にビームが正しく画面外まで飛んでいくか)
+  は次回フィードバック待ち。
+- GROWの点滅処理(`HIDE_BOSS_SPRITES`/`FLUSH_BOSS_SPRITES`)が旧64x64
+  ボディ用の16スロットをハードコードで扱っている点自体は今回変更して
+  いない(スコープ外) - 形態変化後の死亡時、GROW中にこの2ルーチンが
+  書き込む「旧ボディの最後に描画された姿(`BOSS_SPRITE_ATTRS`、形態
+  変化前で凍結したまま)」がスロット10-13(ビーム以外の部分)に一瞬
+  見えてしまう可能性は理論上残っているが、これは今回のユーザー指示
+  (ビームを止めない)とは別の問題であり、今回は指示なしに手を広げて
+  いない。実機で違和感が報告されれば別途調査する。

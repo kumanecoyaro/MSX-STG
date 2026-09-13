@@ -93,6 +93,7 @@ FLASH_DURATION = sym["FLASH_DURATION"]
 GAME_RNG = sym["GAME_RNG"]
 TICK = sym["TICK"]
 BOSS_BROKEN_BEAM_COLOR = sym["BOSS_BROKEN_BEAM_COLOR"]
+BOSS_EXPL_STATE_GROW = sym["BOSS_EXPL_STATE_GROW"]
 
 SAT_BASE = 0x1B00
 
@@ -922,6 +923,91 @@ call_routine(cpu5, "CHECK_BOSS_BROKEN_BEAM_VS_TANK")
 check("1px point judged strictly at the beam's own raw X (no offset) - a beam whose old "
       "16x16-widened far-right edge would have just touched the tank's top-left corner now "
       "correctly misses", cpu5.mem[TANK_LIFE] == life5)
+
+
+# ---- (2026-09-13、"ボス形態変化後倒した際にササピービームが出ていたら
+# 止めずに画面外まで出るように 今はビームが停止状態で爆発処理になって
+# るんで"): a real death (BOSS_ACT=2) used to make UPDATE_BOSS_ALL jump
+# straight to UPDATE_BOSS_EXPLOSION and never call UPDATE_BOSS_BROKEN_
+# BEAM_FLIGHT/FLUSH_BOSS_BROKEN_BEAM_SPRITES again - freezing any beam
+# still in flight at the exact instant of death for the rest of the
+# explosion sequence. ----
+cpu = fresh_cpu()
+make_boss(cpu, x=100, hp=1)
+cpu.mem[BOSS_FORM] = BOSS_FORM_ACTIVE
+# beam1: dx=-2,dy=1 (shallow) - travels slowly, easy to keep in flight for
+# many frames without running off-screen mid-test.
+launched = launch_beam_and_read(cpu, boss_x=100, boss_y=64, beam_idx=0)
+check("(setup) beam1 is active right after launch, before the boss dies",
+      launched["active"] == 1)
+hit_boss(cpu, 100)  # HP->0: destroys the boss, arms the SPARK burst
+check("(setup) the boss is destroyed (BOSS_ACT=2) and SPARK is armed",
+      cpu.mem[BOSS_ACT] == 2 and cpu.mem[BOSS_EXPL_STATE] == BOSS_EXPL_STATE_SPARK)
+
+positions_during_spark = []
+for _ in range(20):
+    call_routine(cpu, "UPDATE_BOSS_ALL")
+    positions_during_spark.append((cpu.mem[BOSS_BROKEN_PROJ_X + 0], cpu.mem[BOSS_BROKEN_PROJ_Y + 0]))
+check("the in-flight beam's own position keeps changing frame after frame during the death "
+      "sequence's own SPARK burst, instead of freezing the instant BOSS_ACT became 2",
+      len(set(positions_during_spark)) > 1)
+check("the beam is still marked active after riding out 20 frames of SPARK (it hasn't been "
+      "artificially killed by the death sequence - only its own natural off-screen check may "
+      "ever deactivate it)",
+      cpu.mem[BOSS_BROKEN_PROJ_ACTIVE + 0] == 1)
+
+# ---- now drive the SAME cpu the rest of the way into GROW (no beam-
+# position assumptions needed for this part - just advancing state), then
+# verify the ordering fix (flight update -> explosion -> beam flush)
+# protects a still-in-flight beam from GROW's own HIDE_BOSS_SPRITES/
+# FLUSH_BOSS_SPRITES, both of which write DIRECTLY to the real hw sprite
+# table (VRAM SAT) across the SAME 16-slot range (BOSS_SPR_BASE_SLOT..+15)
+# the beam's 4 slots (BOSS_BROKEN_BEAM_SPR_BASE_SLOT..+3) sit inside. A
+# beam essentially never naturally survives this long in real play (DY>=1
+# and the SPARK burst alone already spans most of the screen height in
+# frames), so this part pokes PROJ state directly rather than relying on
+# physics - the point being tested is call ORDER, not flight duration. ----
+while cpu.mem[BOSS_EXPL_STATE] != BOSS_EXPL_STATE_GROW:
+    call_routine(cpu, "UPDATE_BOSS_ALL")
+
+cpu.mem[BOSS_BROKEN_PROJ_ACTIVE + 1] = 1
+cpu.mem[BOSS_BROKEN_PROJ_X + 1] = 120
+cpu.mem[BOSS_BROKEN_PROJ_Y + 1] = 100
+cpu.mem[BOSS_BROKEN_PROJ_DX + 1] = (-2) & 0xFF
+cpu.mem[BOSS_BROKEN_PROJ_DY + 1] = 1
+cpu.mem[BOSS_BROKEN_PROJ_CODE + 1] = BOSS_BROKEN_BEAM_CODE2
+
+beam_slot_addr = SAT_BASE + (BOSS_BROKEN_BEAM_SPR_BASE_SLOT + 1) * 4
+never_launched_slot_addr = SAT_BASE + (BOSS_BROKEN_BEAM_SPR_BASE_SLOT + 0) * 4
+moved_ok = True
+sat_matches_live_ok = True
+never_launched_stays_hidden = True
+prev_y = None
+for _ in range(20):  # spans a full BOSS_EXPL_BLINK_PERIOD(16) flip either way
+    call_routine(cpu, "UPDATE_BOSS_ALL")
+    live_y = cpu.mem[BOSS_BROKEN_PROJ_Y + 1]
+    live_x = cpu.mem[BOSS_BROKEN_PROJ_X + 1]
+    if prev_y is not None and live_y == prev_y:
+        moved_ok = False
+    prev_y = live_y
+    if cpu.vram[beam_slot_addr] != live_y or cpu.vram[beam_slot_addr + 1] != live_x:
+        sat_matches_live_ok = False
+    if cpu.vram[never_launched_slot_addr] != 209:
+        never_launched_stays_hidden = False
+
+check("a beam artificially still in flight once the death sequence has reached GROW keeps "
+      "moving every single frame (GROW's own unrelated blink cycle never freezes it)",
+      moved_ok)
+check("...and the REAL hw sprite table (VRAM SAT, not just the RAM staging buffer) always "
+      "matches its live position every frame, in both halves of GROW's own blink cycle - "
+      "FLUSH_BOSS_BROKEN_BEAM_SPRITES is called AFTER UPDATE_BOSS_EXPLOSION each frame so it "
+      "always has the final say over its own 4 slots, even though GROW's HIDE_BOSS_SPRITES/"
+      "FLUSH_BOSS_SPRITES write directly into the very same slot range in between",
+      sat_matches_live_ok)
+check("a beam slot that was never launched at all stays hidden (VRAM SAT Y=209) throughout "
+      "GROW too - the same ordering fix doesn't leave a stale non-hidden byte behind for an "
+      "inactive slot either",
+      never_launched_stays_hidden)
 
 
 print()

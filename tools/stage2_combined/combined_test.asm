@@ -11202,7 +11202,39 @@ UPDATE_BOSS_ALL:
     ; drawing/re-spawning the boss itself forever.
     LD A,(BOSS_ACT)
     CP 2
-    JP Z,UPDATE_BOSS_EXPLOSION
+    JR NZ,UBA_NOT_DEAD
+    ; (2026-09-13、"ボス形態変化後倒した際にササピービームが出ていたら
+    ; 止めずに画面外まで出るように 今はビームが停止状態で爆発処理に
+    ; なってるんで"): a real death used to jump straight to UPDATE_BOSS_
+    ; EXPLOSION and never come back here again - but UPDATE_BOSS_BROKEN_
+    ; BEAM_FLIGHT/FLUSH_BOSS_BROKEN_BEAM_SPRITES (the only 2 routines that
+    ; ever move/redraw an in-flight SasapiBroken beam) are ONLY ever called
+    ; from inside UPDATE_BOSS_BROKEN_ACTIVE, which this jump bypassed for
+    ; good - so a beam still in flight at the exact instant the boss died
+    ; froze in place for the rest of the explosion sequence instead of
+    ; continuing off-screen like every other already-launched projectile
+    ; in this fight (Homing/Thunder/SBeam all keep animating post-death
+    ; the same way - see BOSS_FORM's own EQU comment above). Fixed by
+    ; calling both here too, bracketing UPDATE_BOSS_EXPLOSION itself:
+    ; the flight update runs first (pure position/state, doesn't touch hw
+    ; sprite attrs), then the explosion sequence runs (which, during its
+    ; own GROW-phase blink, calls HIDE_BOSS_SPRITES/FLUSH_BOSS_SPRITES -
+    ; both hardcoded to the OLD normal-form body's full 16-quadrant slot
+    ; range BOSS_SPR_BASE_SLOT..+15, which overlaps the beam's own 4 slots
+    ; BOSS_BROKEN_BEAM_SPR_BASE_SLOT..+3 sitting inside that same range -
+    ; see that EQU's own comment), then FLUSH_BOSS_BROKEN_BEAM_SPRITES
+    ; runs LAST so it always has the final say over its own 4 slots each
+    ; frame, unconditionally re-asserting the beam's real current position
+    ; (or Y=209 hidden, if that slot is inactive) regardless of whatever
+    ; the GROW blink just wrote there in between. Both calls are cheap,
+    ; safe no-ops whenever no beam was ever launched (BOSS_BROKEN_PROJ_
+    ; ACTIVE all 0 - guaranteed true for a death from the normal, pre-
+    ; broken form), so no extra BOSS_FORM gating is needed here.
+    CALL UPDATE_BOSS_BROKEN_BEAM_FLIGHT
+    CALL UPDATE_BOSS_EXPLOSION
+    CALL FLUSH_BOSS_BROKEN_BEAM_SPRITES
+    RET
+UBA_NOT_DEAD:
     OR A
     RET Z                      ; not yet spawned - SSC2_FIRE's job, not ours
     ; round36-14 Part C: BOSS_FORM dispatch, orthogonal to the ACT check
