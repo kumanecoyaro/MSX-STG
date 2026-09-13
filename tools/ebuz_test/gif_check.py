@@ -5,7 +5,11 @@
 静止画3枚では"0.5秒待ってから発射""上下同時発射"というタイミング
 関係そのものが伝わらないと判断し、経過時間を明示したGIFで直接確認
 できるようにした)。その後(その7)"上下弾は交互に撃ち続けろ 2フレ
-交代...反動"対応でstate2以降を継続交互発射+反動の可視化に更新。
+交代...反動"対応でstate2以降を継続交互発射+反動の可視化に更新、
+さらに(その8)"撃った弾戻して交互に発射してどうすんだバカ 撃った弾は
+画面外に消えるまで戻さねえ""弾を表示してホールドだって言っただろが"
+対応でbullet0の表示→ホールド→飛行の流れと、弾が画面端に到達した
+瞬間だけ再発射される様子を可視化。
 
 各フレームは実際にz.tstates(Z80クロック消費量)をINITからの累積で
 記録し、3.579545MHzの実クロックに換算した経過秒数をキャプションに
@@ -70,47 +74,71 @@ def main():
     z.tstates = 0
 
     frames = []
+    durations = []
 
+    def add(label, dur=500):
+        frames.append(snapshot(z, label))
+        durations.append(dur)
+
+    # --- bullet0: "弾を表示してホールド" (2026-09-13追記その8) ---
     run_until_pc(z, sym["EBUZ_STATE1_BG_DONE"])
-    frames.append(snapshot(z, "Ebuz1 appears, no bullet yet"))
-
+    add("Ebuz1 appears, about to display bullet0", 900)
+    z.step()
+    run_until_pc(z, sym["EBUZ_WAIT_TICK_DONE"])
+    add("bullet0 DISPLAYED immediately, now HOLDING (static)", 900)
+    for _ in range(27):
+        z.step()
+        run_until_pc(z, sym["EBUZ_WAIT_TICK_DONE"])
+    add("bullet0 still holding, unmoved (tick28 of 29)", 700)
     run_until_pc(z, sym["EBUZ_STATE1_DONE"])
-    frames.append(snapshot(z, "bullet0 fired (0.5s after appearing)"))
+    z.step()
+    run_until_pc(z, sym["EBUZ_WAIT_TICK_DONE"])
+    add("hold ends -> bullet0 starts flying", 700)
 
     run_until_pc(z, sym["EBUZ_STATE2_BG_DONE"])
-    frames.append(snapshot(z, "Ebuz2 forms, top/bottom fire not active yet"))
+    add("Ebuz2 forms, top/bottom fire not active yet", 900)
 
     run_until_pc(z, sym["EBUZ_STATE2_DONE"])
-    frames.append(snapshot(z, "continuous fire activated (0.5s after forming)"))
+    add("continuous fire activated (0.5s after forming)", 700)
 
-    # close-up on the first few ticks to show the alternating fire + recoil
-    # (2026-09-13追記その7: "上下弾は交互に撃ち続けろ 2フレ交代...反動")
-    close_labels = [
+    # close-up on the first cycle to show the alternating fire + recoil
+    # (2026-09-13追記その7/その8: "上下弾は交互に撃ち続けろ 2フレ交代
+    # ...反動...撃った弾は画面外に消えるまで戻さねえ")
+    for label in [
         "+1 tick: TOP fires (recoil shown)",
-        "+2 ticks: TOP's recoil reverts",
+        "+2 ticks: TOP's recoil reverts, now flying",
         "+3 ticks: BOTTOM fires (recoil shown)",
-        "+4 ticks: BOTTOM's recoil reverts",
-    ]
-    for label in close_labels:
+        "+4 ticks: BOTTOM's recoil reverts, now flying",
+    ]:
         z.step()
         run_until_pc(z, sym["EBUZ_FRAME_TICK"])
-        frames.append(snapshot(z, label))
+        add(label)
 
-    STEP_LAPS = 20
-    cumulative = 4
-    for _ in range(7):
-        for _ in range(STEP_LAPS):
-            z.step()
-            run_until_pc(z, sym["EBUZ_FRAME_TICK"])
-        cumulative += STEP_LAPS
-        frames.append(snapshot(z, f"+{cumulative} frame-ticks: continuous alternating barrage"))
+    for _ in range(20):
+        z.step()
+        run_until_pc(z, sym["EBUZ_FRAME_TICK"])
+    add("+24 ticks: both bullets mid-flight, never reset early")
+
+    # top reaches the edge at tick25 (192/8=24 ticks after its tick1 launch)
+    # and must refire the INSTANT it's gone - not before (this is the exact
+    # bug that was reported: "撃った弾戻して交互に発射してどうすんだバカ
+    # 撃った弾は画面外に消えるまで戻さねえ").
+    for _ in range(4):
+        z.step()
+        run_until_pc(z, sym["EBUZ_FRAME_TICK"])
+    add("+28 ticks: TOP just reached the edge and refired immediately")
+
+    for _ in range(4):
+        z.step()
+        run_until_pc(z, sym["EBUZ_FRAME_TICK"])
+    add("+32 ticks: BOTTOM also reached the edge and refired (2-tick phase kept)")
 
     out_path = os.path.join(HERE, "ebuz_bullets_timeline.gif")
     frames[0].save(
         out_path,
         save_all=True,
         append_images=frames[1:],
-        duration=[900, 700, 900, 700] + [500] * 4 + [500] * (len(frames) - 8),
+        duration=durations,
         loop=0,
     )
     print("timeline GIF written:", out_path, f"({len(frames)} frames)")

@@ -215,12 +215,16 @@ check(f"EBUZ_FRAME_WAIT still costs a realistic ~1/60s of Z80 clock time "
 # the reference unit used by the gap-verification checks below.
 one_tick_steps = call_routine(fresh(), sym["EBUZ_TICK"])
 
-# --- state1 BG drawn, but bullet0 not fired yet (still waiting out the 0.5s) ---
+# --- at the exact PC boundary right after BG draw but before the display+hold ---
+# code runs, bullet0 is still in its boot-time hidden state (this is the
+# instant right before "display, then hold" - see the dedicated hold-time
+# tests further below for the corrected post-display behavior).
 z0 = fresh()
 z0.pc = sym["INIT"]
 run_until_pc(z0, sym["EBUZ_STATE1_BG_DONE"])
-check("state1: right after BG is drawn (before the 0.5s wait), bullet0 has NOT "
-      "fired yet (still hidden) - proves the BG-then-wait-then-fire ordering",
+check("state1: at the PC boundary right after BG is drawn (before the "
+      "display+hold code runs), bullet0 is still in its boot-time hidden "
+      "state",
       sprite_attr(z0, 0)[0] == SPR_HIDE_Y)
 
 # --- an actual ~29-tick wait really elapses between "BG done" and "fired" ---
@@ -319,20 +323,23 @@ check(f"EBUZ_FIRE_INTERVAL is exactly 2 (\"2フレ交代\") and "
 
 
 def simulate_topbottom(n_ticks):
-    """Python参照実装: EBUZ_UPDATE_TOPBOTTOM_FIRE(2026-09-13追記その7の
-    継続発射+反動)を、EBUZ_TICK内の実行順序(先にEBUZ_UPDATE_BULLETで
-    両スロットを移動、その後に反動リバート判定→発射カウントダウン
-    判定の順)通りに1ティックずつシミュレートする。戻り値は各ティック
-    後の(bullet1_x, bullet1_hidden, bullet2_x, bullet2_hidden,
-    row1_recoiled, row4_recoiled)のリスト。"""
+    """Python参照実装(2026-09-13追記その8で全面書き直し): "撃った弾は
+    画面外に消えるまで戻さねえ"を反映した新設計を、EBUZ_UPDATE_
+    TOPBOTTOM_FIREの実行順序(上側反動リバート→下側反動リバート→
+    上側「非表示なら即再発射」→下側「初回だけ位相差、以後は同じ規則」
+    の順)通りに1ティックずつシミュレートする。生きている弾(非表示に
+    なっていない弾)には一切触れない - リセットは「非表示になった
+    その瞬間」にのみ発生する。戻り値は各ティック後の(bullet1_x,
+    bullet1_hidden, bullet2_x, bullet2_hidden, row1_recoiled,
+    row4_recoiled)のリスト。"""
     b1_x, b1_hidden = None, True
     b2_x, b2_hidden = None, True
-    fire_side = 0
-    fire_countdown = 1
-    recoil_side = None
-    recoil_countdown = 0
+    top_recoil_cd = 0
+    bottom_recoil_cd = 0
+    bottom_arm = FIRE_INTERVAL
     history = []
     for _ in range(n_ticks):
+        # EBUZ_UPDATE_BULLET(スロット1,2) - 生きている弾だけ移動
         if not b1_hidden:
             if b1_x < SPEED:
                 b1_hidden = True
@@ -343,20 +350,21 @@ def simulate_topbottom(n_ticks):
                 b2_hidden = True
             else:
                 b2_x -= SPEED
-        if recoil_countdown > 0:
-            recoil_countdown -= 1
-        fire_countdown -= 1
-        if fire_countdown == 0:
-            fire_countdown = FIRE_INTERVAL
-            if fire_side == 0:
-                b1_x, b1_hidden = BULLET23_X, False
-            else:
-                b2_x, b2_hidden = BULLET23_X, False
-            recoil_side = fire_side
-            recoil_countdown = RECOIL_DURATION
-            fire_side ^= 1
-        row1_recoiled = recoil_countdown > 0 and recoil_side == 0
-        row4_recoiled = recoil_countdown > 0 and recoil_side == 1
+        # EBUZ_UPDATE_TOPBOTTOM_FIRE
+        if top_recoil_cd > 0:
+            top_recoil_cd -= 1
+        if bottom_recoil_cd > 0:
+            bottom_recoil_cd -= 1
+        if b1_hidden:
+            b1_x, b1_hidden = BULLET23_X, False
+            top_recoil_cd = RECOIL_DURATION
+        if bottom_arm > 0:
+            bottom_arm -= 1
+        elif b2_hidden:
+            b2_x, b2_hidden = BULLET23_X, False
+            bottom_recoil_cd = RECOIL_DURATION
+        row1_recoiled = top_recoil_cd > 0
+        row4_recoiled = bottom_recoil_cd > 0
         history.append((b1_x, b1_hidden, b2_x, b2_hidden, row1_recoiled, row4_recoiled))
     return history
 
@@ -367,7 +375,7 @@ RECOIL_ROW = [0, 0, sym["EBUZ_CODE_A"], sym["EBUZ_CODE_B"], sym["EBUZ_CODE_C"]]
 z2 = fresh()
 z2.pc = sym["INIT"]
 run_until_pc(z2, sym["EBUZ_STATE2_DONE"])
-N_TICKS = 10
+N_TICKS = 40  # 192/SPEED(8)=24ティックで画面横断するので、再発射・位相差の維持まで検証する
 sim_history = simulate_topbottom(N_TICKS)
 all_match = True
 mismatch_detail = ""
@@ -389,11 +397,49 @@ for i in range(N_TICKS):
                             f"r1={r1} r4={r4} vs sim b1x={exp_b1x}/h={exp_b1h} "
                             f"b2x={exp_b2x}/h={exp_b2h} r1_recoil={exp_r1} r4_recoil={exp_r4}")
         break
-check(f"continuous alternating top/bottom fire (2-tick interval) + recoil "
-      f"animation (3-cell band shifts 1 cell right for 1 tick, then reverts) "
-      f"matches the Python reference simulation exactly over {N_TICKS} ticks"
+check(f"continuous top/bottom fire (\"撃った弾は画面外に消えるまで戻さねえ\" - "
+      f"each slot refires only the instant it naturally goes off-screen, "
+      f"never mid-flight, with the initial 2-tick phase offset preserved "
+      f"forever) + recoil animation matches the Python reference simulation "
+      f"exactly over {N_TICKS} ticks (spans multiple full screen-crossings "
+      f"at SPEED={SPEED})"
       + (f" - MISMATCH: {mismatch_detail}" if not all_match else ""),
       all_match)
+
+# --- (2026-09-13追記その8、実機フィードバック対応: "しかもお前ホールド ---
+# タイムをBuz1で打った後に入れてるじゃねえか 弾を表示してホールドだって
+# 言っただろが") bullet0はEbuz1出現と同時に表示され、その位置で0.5秒
+# 静止(ホールド)してから初めて実際に飛び始める - 旧実装(非表示のまま
+# 待ってから表示)とは正反対の順序。
+zh = fresh()
+zh.pc = sym["INIT"]
+run_until_pc(zh, sym["EBUZ_STATE1_BG_DONE"])
+zh.step()
+run_until_pc(zh, sym["EBUZ_WAIT_TICK_DONE"])
+check("bullet0 is DISPLAYED (visible, not hidden) from the very first tick "
+      "after Ebuz1's BG appears, at its final X=176 position already - not "
+      "hidden-then-appearing-later",
+      sprite_attr(zh, 0) == [Y1_STORED, BULLET1_X, BULLET_FULL_CODE, BULLET_COLOR])
+for _ in range(WAIT_BEFORE_FIRE_TICKS - 1):
+    zh.step()
+    run_until_pc(zh, sym["EBUZ_WAIT_TICK_DONE"])
+check(f"bullet0 stays perfectly still (X unchanged) through the entire "
+      f"{WAIT_BEFORE_FIRE_TICKS}-tick hold - it's holding position, not "
+      f"flying yet",
+      sprite_attr(zh, 0) == [Y1_STORED, BULLET1_X, BULLET_FULL_CODE, BULLET_COLOR])
+run_until_pc(zh, sym["EBUZ_STATE1_DONE"])
+check("at EBUZ_STATE1_DONE (hold just ended), bullet0 is still exactly at "
+      "its held position (hasn't jumped or moved yet this instant)",
+      sprite_attr(zh, 0) == [Y1_STORED, BULLET1_X, BULLET_FULL_CODE, BULLET_COLOR])
+zh.step()
+run_until_pc(zh, sym["EBUZ_WAIT_TICK_DONE"])
+zh.step()
+run_until_pc(zh, sym["EBUZ_WAIT_TICK_DONE"])
+zh.step()
+run_until_pc(zh, sym["EBUZ_WAIT_TICK_DONE"])
+check(f"after the hold ends, bullet0 actually starts flying (moved left by "
+      f"3*{SPEED}px={3*SPEED}px over 3 ticks)",
+      sprite_attr(zh, 0)[1] == BULLET1_X - 3 * SPEED)
 
 
 print()
