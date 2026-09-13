@@ -13848,3 +13848,57 @@ Y段違い+Enemy6速度半減、Stage2自機爆発の自機非表示タイミン
   `rom/CyberS Comb.ascii16k.rom`(再ビルド)。ASM/Pythonのロジック自体
   (title_test.asm/screen3_epilogue_gen.py/title_test.py)は無変更 -
   アセットファイルの中身を正しいものに差し替えただけ。
+
+## Round94: SCREEN3スライドショー確認音にボーダーカラー点滅を追加
+(削除前のPLAY_CONFIRM_BEEPと同期方式で統一)(2026-09-13、完了済み・
+実機フィードバック待ち)
+
+- ユーザー指示: "ではボーダーカラーの点滅を サウンドと同期して 削除前の
+  実装と同じだ"。Round92のH.TIMI駆動化(`SC3_CONFIRM_TICK`)で確認音を
+  `PLAY_CONFIRM_BEEP_NO_BORDER`(ボーダー無し版、削除済み)から置き換えた
+  際、`PLAY_CONFIRM_BEEP`(タイトルボタン押下時の確認音、Round70で実装)
+  が元々持っていたVDP R7(ボーダー/バックドロップ色)のBORDER_TABLE同期
+  フラッシュが移植されていなかった件への対応。
+- `SC3_CONFIRM_TICK`に新規ポインタ`SC3_CT_BORDER_PTR`(0E7FDh、word)を
+  追加し、`SC3_CT_PTR`(SC3_CONFIRM_TICKSテーブルへのポインタ)と全く
+  同じ「新パス開始時にBORDER_TABLE先頭へ、1行進むたびに+1」という歩き方
+  で、`PLAY_CONFIRM_BEEP`と全く同じBORDER_TABLE(REDGRAD、53要素、
+  row*7//53で滑らかに配分)を共有参照する設計にした(新規テーブル生成
+  不要)。新しい行を読み込むたび(SC3CT_HAVE_ROWSブロック内)にPSGの
+  R2/R3/R9書き込みと同じタイミングでVDP R7への2段書き込み
+  (`OUT (99h),A`→NOP×2→`LD A,87h:OUT (99h),A`、PLAY_CONFIRM_BEEPと
+  全く同じ手順)を追加。`RUN_SCREEN3_SLIDESHOW`末尾のミュート処理にも、
+  PSGチャンネルBの音量ゼロ書き込みと合わせてボーダー色を明示的に黒(1)
+  へ戻す1行を追加(PLAY_CONFIRM_BEEPは53行の最初/最後が両方黒のため
+  自然に黒へ収束するが、SC3_CONFIRM_TICKは無限ループの途中の任意の
+  瞬間で停止しうるため明示的なリセットが必要)。
+- **重大な既知のリスクとして開示**: このファイル自身のコメント
+  (Round92のVDP R4修正の説明の直前、2026-09-12付け実機フィードバック
+  "画面真っ赤だが スクリーン3は枠使えないのか")に記録済みの通り、
+  **SCREEN3(Multicolor)モード中にVDP R7へ書き込むと画面全体が赤一色に
+  なる実機不具合が過去に一度確認されている**(根本原因の特定は保留、
+  当時はSCREEN3スライドショー中の枠色フラッシュを完全に省略する方針で
+  回避していた)。今回はユーザーの明示指示により実装したが、この既知の
+  不具合が再発する可能性を排除できていない - 実機での再検証が必須。
+- 新規回帰テスト2件を`title_test.py`に追加(SC3_CONFIRM_TICKが行読込
+  ごとに正確に1回、PLAY_CONFIRM_BEEPと同一のBORDER_TABLE列でVDP R7を
+  書き込むことを、PSG側と同じ「SC3_CT_PTR前進によるrow-load検出」手法で
+  検証)。全62件PASS。Comb ROM再ビルド・`verify_comb.py`全チェックPASS
+  の上、標準方針によりComb ROMのみ送付。
+
+セッション引き継ぎメモ(2026-09-13、Round94完了直後):
+- **最優先の未確定事項**: 上記の「SCREEN3+VDP R7書き込みで画面が
+  赤一色になる」既知の実機不具合が、今回のSC3_CONFIRM_TICKへの移植でも
+  再発するかどうかは実機・WebMSX等での確認待ち。もし再発する場合、
+  根本原因調査(なぜMulticolorモードでR7書き込みが画面全体を破壊するのか
+  - 実機VDPの挙動としては通常あり得ないはずで、他の要因[書き込み
+  タイミング・R7の値そのもの・別レジスタとの競合等]を疑う必要がある)
+  が必要になる。再発しない場合は、当時の「省略」判断自体が別の要因
+  (例えば当時はまだ別のバグが併存していた等)による誤診断だった可能性も
+  ある。
+- 変更ファイル: `tools/title_screen/title_test.asm`
+  (`SC3_CT_BORDER_PTR`追加、`SC3_CONFIRM_TICK`にボーダー同期追加、
+  `RUN_SCREEN3_SLIDESHOW`末尾にボーダー黒リセット追加)、
+  `tools/title_screen/title_test.py`(回帰テスト2件追加)、
+  `tools/title_screen/CyberS Title.ascii16k.rom`・
+  `rom/CyberS Comb.ascii16k.rom`(再ビルド)。

@@ -80,6 +80,14 @@ SC3_CT_PTR       EQU 0E7F8h   ; word: 次に読む行へのポインタ
 SC3_CT_TIMER     EQU 0E7FAh   ; word(下位byteのみ実際に使うが16bit演算で
                               ; 読み書きするため2byte確保): 現在の行の残りtick数
 SC3_CT_ROWS_LEFT EQU 0E7FCh   ; byte: テーブル末尾までの残り行数(0で先頭へループ)
+; (2026-09-13、"ではボーダーカラーの点滅をサウンドと同期して 削除前の
+; 実装と同じだ"): PLAY_CONFIRM_BEEP(タイトルボタン押下音)のBORDER_
+; TABLE(REDGRAD、53要素・CONFIRM_STEPSと1:1対応)をSC3_CONFIRM_TICK
+; からも辿るための専用ポインタ。SC3_CT_PTRと全く同じ「新パス開始時に
+; 先頭へ、1行進むたびに+1」という歩き方だが、PLAY_CONFIRM_BEEPのIX
+; (1byte/行)とは違いSC3_CONFIRM_TICKS自体が4byte/行のテーブルなので、
+; 同じHLでは共有できず別ポインタが必要。
+SC3_CT_BORDER_PTR EQU 0E7FDh  ; word: BORDER_TABLE上の次に読む位置
 
 ; global bank indices in the final ROM (see build_full_rom.py's own
 ; layout comment) - title=bank0/1 (this file), Stage1=bank2/3,
@@ -923,6 +931,20 @@ BGMT_UC_ATTEN_OK:
 ; 通り無変更)を回すだけでよく、確認音はその間ずっと割り込みで自律的に
 ; 鳴り続け末尾(SC3_CONFIRM_TICK_ROW_COUNT行)まで行ったら自動的に
 ; 先頭へループする - 画像1枚ごとの明示的なCALLは不要になったため撤去。
+;
+; (2026-09-13、"ではボーダーカラーの点滅をサウンドと同期して 削除前の
+; 実装と同じだ"): PLAY_CONFIRM_BEEP(タイトルボタン押下時の確認音)が
+; 元々音と対で行っていたVDP R7(ボーダー/バックドロップ色)のBORDER_
+; TABLE同期フラッシュを、このH.TIMI駆動版にも移植。**重要な既知の
+; リスク**: このファイル自身のコメント(下記RUN_SCREEN3_SLIDESHOWの
+; VDP R4修正の説明の直前、2026-09-12付け)に記録済みの通り、"画面
+; 真っ赤だが スクリーン3は枠使えないのか"という実機フィードバックで
+; 「SCREEN3(Multicolor)モード中にVDP R7書き込みを行うと画面全体が
+; 赤一色になる実機不具合」が既に一度確認されており、根本原因の特定は
+; 保留したまま「SCREEN3スライドショー中は枠色フラッシュを完全に
+; 省略する」方針で回避していた経緯がある。今回はユーザーの明示指示
+; により実装するが、この既知の不具合が再発する可能性は排除できて
+; いない(実機での再検証が必要)。
 SC3_CONFIRM_TICK:
     PUSH AF : PUSH BC : PUSH DE : PUSH HL
     LD HL,(SC3_CT_TIMER)
@@ -933,6 +955,8 @@ SC3_CONFIRM_TICK:
     JR NZ,SC3CT_HAVE_ROWS
     LD HL,SC3_CONFIRM_TICKS
     LD (SC3_CT_PTR),HL
+    LD HL,BORDER_TABLE
+    LD (SC3_CT_BORDER_PTR),HL
     LD A,SC3_CONFIRM_TICK_ROW_COUNT
     LD (SC3_CT_ROWS_LEFT),A
 SC3CT_HAVE_ROWS:
@@ -954,6 +978,13 @@ SC3CT_HAVE_ROWS:
     LD (SC3_CT_TIMER),A
     XOR A : LD (SC3_CT_TIMER+1),A
     LD (SC3_CT_PTR),HL
+    LD HL,(SC3_CT_BORDER_PTR)
+    LD A,(HL) : INC HL
+    LD (SC3_CT_BORDER_PTR),HL
+    OUT (99h),A                    ; VDP R7(border/backdrop)データ書き込み
+    NOP
+    NOP
+    LD A,87h : OUT (99h),A         ; reg7|80h = VDP R7 選択・確定
     JR SC3CT_DONE
 SC3CT_DEC_TIMER:
     DEC HL
@@ -1026,9 +1057,13 @@ RSS_MAIN_LOOP:
     ; DIしてStage1へトランポリンする既存の設計に合わせ、ここでは
     ; チャンネルBの音量だけ明示的にミュートしておく(トランポリンまでの
     ; 僅かな間にもう1tick分鳴ってしまうのを防ぐ、既存のPLAY_CONFIRM_
-    ; BEEP自身の「戻り際に必ずミュート」という流儀と同じ)。
+    ; BEEP自身の「戻り際に必ずミュート」という流儀と同じ)。ボーダー色も
+    ; 同様に明示的に黒(1)へ戻す - SC3_CONFIRM_TICKはループの途中の
+    ; 任意の瞬間に停止しうるため、PLAY_CONFIRM_BEEPと違い自然に黒へ
+    ; 収束している保証がない。
     DI
     LD A,9 : OUT (PSG_ADDR),A : XOR A : OUT (PSG_DATA),A
+    LD A,1 : OUT (99h),A : NOP : NOP : LD A,87h : OUT (99h),A
     RET
 
 ; 1枚目(基準フレーム): RLEをSHADOW_PGTへフル展開してからVRAMへ一括反映。

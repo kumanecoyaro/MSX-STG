@@ -839,6 +839,35 @@ check(f"SC3_CONFIRM_TICK: driving it through exactly {total_ticks_one_pass * 2} 
       "stopping after one pass",
       observed == _expected_sequence * 2)
 
+# ---- (2026-09-13、"ではボーダーカラーの点滅をサウンドと同期して 削除前
+# の実装と同じだ"): PLAY_CONFIRM_BEEP同様、SC3_CONFIRM_TICKも新規に行を
+# 読み込むたびBORDER_TABLE(REDGRAD、53要素、PLAY_CONFIRM_BEEPと共有)から
+# 1つ読んでVDP R7へ書き込むはず、という回帰ガード。row-load検出は上と
+# 同じくSC3_CT_PTR前進で行う(観測対象がPSG値ではなくVDP R7のため
+# 別カウンタが必要)。
+cpu_border, mem_border = fresh_cpu()
+cpu_border.mem[SC3_CT_TIMER] = 0
+cpu_border.mem[SC3_CT_TIMER + 1] = 0
+cpu_border.mem[SC3_CT_ROWS_LEFT] = 0
+border_log2 = []
+cpu_border.vdp_regs = LoggingVdpRegs(dict(cpu_border.vdp_regs), border_log2)
+prev_ptr2 = _read_ptr(cpu_border)
+for _tick in range(total_ticks_one_pass * 2):
+    call_routine(cpu_border, "SC3_CONFIRM_TICK")
+    ptr2 = _read_ptr(cpu_border)
+    if ptr2 != prev_ptr2:
+        prev_ptr2 = ptr2
+
+r7_writes_ct = [v for k, v in border_log2 if k == 7]
+check("SC3_CONFIRM_TICK: writes VDP R7 (border/backdrop color) exactly once per row-load "
+      f"({len(_expected_rows) * 2} times over 2 full passes) - same PLAY_CONFIRM_BEEP-style "
+      "border sync now added to the H.TIMI-driven version, per \"ボーダーカラーの点滅をサウンド"
+      "と同期して 削除前の実装と同じだ\"",
+      len(r7_writes_ct) == len(_expected_rows) * 2)
+check("SC3_CONFIRM_TICK: the border-color sequence matches the SAME REDGRAD/BORDER_TABLE "
+      "PLAY_CONFIRM_BEEP uses, swept once per pass and repeated for the 2nd pass",
+      r7_writes_ct == expected_border)
+
 # ---- off-by-one check (round40's own established convention: the tick
 # that LOADS a new row already plays it once, so the timer is seeded with
 # duration-1 more ticks - re-verify this holds here too).
