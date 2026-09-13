@@ -25,10 +25,27 @@
 ;     上下に分かれて広がるような変化。新規タイルは一切不要、BGパターン
 ;     コード4個(A,B,C,D)だけで両状態を表現できる。
 ;
+; (2026-09-13追記、弾発射): "Okこれでいい ではEbuz1で登場した時に
+; 添付ファイルの弾を左へ発射 スプライトで で、Ebuz2に変化したら
+; 添付ファイルの16x8部分だけの スプライトを上下から発射 1つはY位置
+; 0px 2つ目は24pxの位置 つまりスプライトは2枚追加"(添付
+; EbuzBullet1_16x16.json)。この弾グラフィック自体もEbuz本体と同じ
+; 構造で、16x16キャンバス中に上下対称な同一の水平バーが2本(rows2-5と
+; rows10-13、pixel単位で完全一致)描かれているだけと判明 -
+; 上半分(rows0-7)がそのまま「16x8部分」に相当する(tools/ebuz_test/
+; ebuz_bullet_gen.py参照)。
+;   - state1登場時: BULLET_FULL(添付JSONそのまま、バー2本)を1枚、
+;     Ebuz本体の左(X=192、Y=16=EBUZ_ROW*8、共に本体位置基準の暫定値・
+;     具体的な指定なし)から左方向へ発射。
+;   - state2変化時: BULLET_HALF(上半分だけを16x16へパディング、バー
+;     1本)を2枚、Y=0pxとY=24px(ユーザー指定の絶対値そのまま)から
+;     同時に左方向へ発射。
+;   - 速度(EBUZ_BULLET_SPEED)は指定が無いため3px/frameの暫定値。
+;
 ; 本ファイルは本編(src/CYBER SHMUP.asm)に組み込む前の独立した
 ; プロトタイプ("専用の空ステージ1")。背景は完全に空(code0の空白タイル
-; のみ)で、Ebuzの見た目・状態遷移だけを確認する。動き・出現タイミング・
-; 実際のスケジュール組み込みは別途指示待ち。
+; のみ)で、Ebuzの見た目・状態遷移・弾発射/移動だけを確認する。実際の
+; スケジュール組み込みは別途指示待ち。
     ORG 4000h
 
 INIT32   EQU 006Fh
@@ -45,6 +62,9 @@ VDP_DATA EQU 098h
 STACKTOP EQU 0F380h
 NAMTBL   EQU 1800h
 COLTBL   EQU 2000h
+SPRATR   EQU 1B00h
+SPRPAT   EQU 3800h    ; sprite pattern generator table - BG(0000h)とは別のVRAM領域
+RG1SAV   EQU 0F3E0h   ; BIOS RAM mirror of VDP register1
 
 ; Ebuz用に確保したBGパターンコード(このファイル専用の空環境なので
 ; 空き番地を厳密に監査する必要はないが、group8[codes64-71]境界に
@@ -61,6 +81,39 @@ EBUZ_COLOR  EQU 015h   ; fg=1(black)/bg=5(light blue) - 添付JSONのfg/bgその
 EBUZ_ROW  EQU 2
 EBUZ_COL  EQU 24
 
+; --- 弾スプライト(hwスプライト、このファイル専用の独立空間なので ---
+; --- 空き監査は不要、コード0番から素直に割り当て)                ---
+BULLET_FULL_CODE EQU 0    ; 4コード(0-3)、TL/BL/TR/BR
+BULLET_HALF_CODE EQU 4    ; 4コード(4-7)、TL/BL/TR/BR
+EBUZ_BULLET_COLOR EQU 11  ; fg=11(light yellow) - 添付JSONのfgそのまま
+EBUZ_BULLET_X      EQU 192   ; Ebuz本体のXから発射(暫定)
+EBUZ_BULLET_SPEED  EQU 3     ; px/frame、未調整の暫定値
+; TMS9918のY属性は実際の表示開始行より1小さい値を書く規約
+; (tools/stage1_render_check.pyのrender_full()と同じ"y1=(y+1)&0xFF"
+; デコードに対応)。state1の弾はY=16(=EBUZ_ROW*8、本体位置基準の
+; 暫定値、具体的な指定なし)、state2の2発はユーザー指定のY=0px/24pxを
+; そのまま絶対値として使用...のはずだったが、desired Y=0だと
+; stored=0-1=255(wrap)になり、このプロジェクト全体で「非表示化」の
+; 慣習として使っているstored Y>=209の範囲と数値上重なってしまう
+; (実ハードウェアではY=255は実際に画面最上行に正しく表示される -
+; render_full()を含むこのプロジェクトの各所が「Y>=209なら非表示」と
+; 単純化して判定しているのは通常誰もこの折返し値を意図的に使わない
+; という前提に基づくもので、今回はその前提が崩れる)。ENEMY3_DO_SPAWN
+; が同種の折返し衝突を「254で頭打ちにする」形で回避しているのと同じ
+; 考え方で、desired Y=0はY=1へ1px寄せて回避する(stored=0、既存の
+; 非表示慣習と一切重ならない安全な値)。
+EBUZ_BULLET1_STORED_Y EQU 15    ; desired Y=16  -> 16-1=15
+EBUZ_BULLET2_STORED_Y EQU 0     ; desired Y=1(0から1pxだけ寄せた値) -> 1-1=0
+EBUZ_BULLET3_STORED_Y EQU 23    ; desired Y=24  -> 24-1=23
+SPR_HIDE_Y  EQU 209   ; 個別非表示(リストは継続、既存コードの規約と同じ)
+SPR_TERM_Y  EQU 208   ; SATリスト終端(このスロット以降は描画されない)
+
+; 弾3枚分のRAM側シャドウ(Y,X,pattern,color x3=12byte)。SPRATRは
+; VRAMなのでZ80の通常のLD/SUB/CPで直接読み書きできない
+; (OUT/INポート経由のVDP I/Oが必要) - 毎フレームの移動計算はこちらの
+; RAM側で行い、更新後にLDIRVMでまとめてSPRATRへ反映する。
+EBUZ_SPR_SHADOW EQU 0F350h   ; 12 bytes (F350h-F35Bh), STACKTOPまで十分な余裕
+
 ; フレーム換算しないシンプルなビジーウェイト(src/CYBER SHMUP.asmの
 ; MISSION_DELAY_3SECと同型、Dを小さくして約1秒相当)。
 EBUZ_DELAY:
@@ -75,6 +128,32 @@ EBUZ_DELAY_INNER:
     DJNZ EBUZ_DELAY_MID
     DEC D
     JR NZ,EBUZ_DELAY_OUTER
+    RET
+
+; 1フレーム相当の短いウェイト(弾移動のステップ間隔、EBUZ_DELAYより
+; ずっと短い - 未調整の暫定値)。
+EBUZ_FRAME_WAIT:
+    LD B,0
+EBUZ_FRAME_WAIT_LOOP:
+    DEC B
+    JR NZ,EBUZ_FRAME_WAIT_LOOP
+    RET
+
+; IX = EBUZ_SPR_SHADOW内の弾スロット先頭(+0=Y,+1=X,+2=pattern,+3=color)。
+; 非表示(Y=SPR_HIDE_Y)なら何もしない、そうでなければXをEBUZ_BULLET_
+; SPEEDだけ減算(左へ移動)、画面外に出る場合はY=SPR_HIDE_Yにして非表示化。
+EBUZ_UPDATE_BULLET:
+    LD A,(IX+0)
+    CP SPR_HIDE_Y
+    RET Z
+    LD A,(IX+1)
+    CP EBUZ_BULLET_SPEED
+    JR NC,EBUZ_UB_MOVE
+    LD (IX+0),SPR_HIDE_Y
+    RET
+EBUZ_UB_MOVE:
+    SUB EBUZ_BULLET_SPEED
+    LD (IX+1),A
     RET
 
 INIT:
@@ -93,6 +172,27 @@ INIT:
     LD HL,EBUZ_TILE_C : LD DE,EBUZ_CODE_C*8 : LD BC,8 : CALL LDIRVM
     LD HL,EBUZ_TILE_D : LD DE,EBUZ_CODE_D*8 : LD BC,8 : CALL LDIRVM
 
+    ; --- 弾スプライトを16x16モードで初期化 ---
+    ; NOTE(自己発見バグ): 当初"LD DE,BULLET_FULL_CODE*8"と書いてBG用
+    ; パターンジェネレータ(0000h)へ上書きしてしまい、地形/背景が
+    ; チェッカーボード状に破損する実害バグを起こした - スプライトの
+    ; パターンジェネレータはSPRPAT(3800h、BIOSデフォルト)というBGとは
+    ; 全く別のVRAM領域にある(このプロジェクトのround36-14 follow-up#4
+    ; 実機フィードバック対応その2で一度踏んでいるのと同型のミス)。
+    ; さらにこのアセンブラは演算子優先順位が無いため"SPRPAT+CODE*8"も
+    ; 書けず、事前計算済みリテラル(3800h+0*8=3800h、3800h+4*8=3820h)を
+    ; 直接指定する。
+    LD A,(RG1SAV) : OR 02h : LD (RG1SAV),A
+    LD B,A : LD C,1 : CALL WRTVDP
+    LD HL,BULLET_FULL_PAT : LD DE,03800h : LD BC,32 : CALL LDIRVM   ; SPRPAT+BULLET_FULL_CODE*8
+    LD HL,BULLET_HALF_PAT : LD DE,03820h : LD BC,32 : CALL LDIRVM   ; SPRPAT+BULLET_HALF_CODE*8
+
+    ; 弾3枚とも非表示で初期化(RAM側シャドウ+VRAM反映)、4枠目(スロット3)
+    ; はSAT終端(SPR_TERM_Y)を一度だけ書けば以降は触らない。
+    LD HL,EBUZ_SPR_INIT : LD DE,EBUZ_SPR_SHADOW : LD BC,12 : LDIR
+    LD HL,EBUZ_SPR_SHADOW : LD DE,SPRATR : LD BC,12 : CALL LDIRVM
+    LD HL,EBUZ_SPR_TERM : LD DE,SPRATR+12 : LD BC,4 : CALL LDIRVM
+
     ; --- state1: A,B,C,D を row2/row3 の col24-27 へ(2行とも同一) ---
     ; NOTE: このアセンブラは演算子優先順位も丸括弧も無い(左から右へ
     ; 逐次評価するだけ)ため、"NAMTBL+ROW*32+COL"式は書かず、name
@@ -108,6 +208,10 @@ INIT:
     LD DE,01878h                 ; row3, col24-27
     LD BC,4
     CALL LDIRVM
+
+    ; --- state1登場時: BULLET_FULLを1枚発射(スロット0) ---
+    LD HL,EBUZ_SPR_BULLET1 : LD DE,EBUZ_SPR_SHADOW : LD BC,4 : LDIR
+    LD HL,EBUZ_SPR_SHADOW : LD DE,SPRATR : LD BC,4 : CALL LDIRVM
 EBUZ_STATE1_DONE:
 
     EI
@@ -132,11 +236,25 @@ EBUZ_STATE1_DONE:
     LD DE,01898h                 ; row4 (new bottom band), col24-27
     LD BC,4
     CALL LDIRVM
+
+    ; --- state2変化時: BULLET_HALFを2枚同時発射(スロット1,2) ---
+    LD HL,EBUZ_SPR_BULLET23 : LD DE,EBUZ_SPR_SHADOW+4 : LD BC,8 : LDIR
+    LD HL,EBUZ_SPR_SHADOW+4 : LD DE,SPRATR+4 : LD BC,8 : CALL LDIRVM
 EBUZ_STATE2_DONE:
 
     EI
-EBUZ_IDLE:
-    JR EBUZ_IDLE
+
+; --- 以後、弾3枚(スロット0-2)を毎"フレーム"左へ移動、画面外で非表示化 ---
+EBUZ_MAINLOOP:
+    DI
+    LD IX,EBUZ_SPR_SHADOW   : CALL EBUZ_UPDATE_BULLET
+    LD IX,EBUZ_SPR_SHADOW+4 : CALL EBUZ_UPDATE_BULLET
+    LD IX,EBUZ_SPR_SHADOW+8 : CALL EBUZ_UPDATE_BULLET
+    LD HL,EBUZ_SPR_SHADOW : LD DE,SPRATR : LD BC,12 : CALL LDIRVM
+    EI
+EBUZ_FRAME_TICK:
+    CALL EBUZ_FRAME_WAIT
+    JR EBUZ_MAINLOOP
 
 EBUZ_COLOR_BYTE:
     DB EBUZ_COLOR
@@ -158,3 +276,35 @@ EBUZ_TILE_C:
     DB 126,195,189,181,173,189,195,126
 EBUZ_TILE_D:
     DB 255,65,127,127,127,127,65,255
+
+; 弾2種のスプライトパターン(添付EbuzBullet1_16x16.jsonから機械抽出、
+; tools/ebuz_test/ebuz_bullet_gen.pyで再計算可能)。TL/BL/TR/BR順の
+; 32byte(MSX1 16x16スプライトパターンの標準レイアウト、src/CYBER
+; SHMUP.asmのPAT_SHIP等と同じ規約)。
+BULLET_FULL_PAT:
+    DB 0,0,127,255,255,127,0,0        ; TL
+    DB 0,0,127,255,255,127,0,0        ; BL(元絵の下段バーもTLと同一)
+    DB 0,0,254,255,255,254,0,0        ; TR
+    DB 0,0,254,255,255,254,0,0        ; BR(同上)
+BULLET_HALF_PAT:
+    DB 0,0,127,255,255,127,0,0        ; TL(上半分そのまま)
+    DB 0,0,0,0,0,0,0,0                ; BL(空白パディング)
+    DB 0,0,254,255,255,254,0,0        ; TR(上半分そのまま)
+    DB 0,0,0,0,0,0,0,0                ; BR(空白パディング)
+
+; 弾3枚分のRAMシャドウ初期値(全て非表示)+SAT終端行。
+EBUZ_SPR_INIT:
+    DB SPR_HIDE_Y,0,0,0
+    DB SPR_HIDE_Y,0,0,0
+    DB SPR_HIDE_Y,0,0,0
+EBUZ_SPR_TERM:
+    DB SPR_TERM_Y,0,0,0
+
+; state1発射時の弾1(スロット0): BULLET_FULL、Y=16(暫定)、X=192
+EBUZ_SPR_BULLET1:
+    DB EBUZ_BULLET1_STORED_Y,EBUZ_BULLET_X,BULLET_FULL_CODE,EBUZ_BULLET_COLOR
+
+; state2発射時の弾2/弾3(スロット1,2): BULLET_HALF、Y=0px/24px、X=192
+EBUZ_SPR_BULLET23:
+    DB EBUZ_BULLET2_STORED_Y,EBUZ_BULLET_X,BULLET_HALF_CODE,EBUZ_BULLET_COLOR
+    DB EBUZ_BULLET3_STORED_Y,EBUZ_BULLET_X,BULLET_HALF_CODE,EBUZ_BULLET_COLOR

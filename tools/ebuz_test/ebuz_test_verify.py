@@ -83,6 +83,87 @@ check("the 4 extracted tiles (A,B,C,D) reconstruct the uploaded Ebuz3.json exact
       ok_recon)
 
 
+# ---------- bullets ("Okこれでいい ではEbuz1で登場した時に添付ファイルの弾を ----------
+# 左へ発射 スプライトで で、Ebuz2に変化したら添付ファイルの16x8部分だけの
+# スプライトを上下から発射 1つはY位置0px 2つ目は24pxの位置")
+SPRATR = 0x1B00
+BULLET_FULL_CODE = sym["BULLET_FULL_CODE"]
+BULLET_HALF_CODE = sym["BULLET_HALF_CODE"]
+BULLET_COLOR = sym["EBUZ_BULLET_COLOR"]
+BULLET_X = sym["EBUZ_BULLET_X"]
+BULLET_SPEED = sym["EBUZ_BULLET_SPEED"]
+SPR_HIDE_Y = sym["SPR_HIDE_Y"]
+SPR_TERM_Y = sym["SPR_TERM_Y"]
+Y1_STORED = sym["EBUZ_BULLET1_STORED_Y"]
+Y2_STORED = sym["EBUZ_BULLET2_STORED_Y"]
+Y3_STORED = sym["EBUZ_BULLET3_STORED_Y"]
+
+
+def sprite_attr(z, slot):
+    base = SPRATR + slot * 4
+    return [z.vram[base + i] for i in range(4)]
+
+
+# --- state1 fires exactly 1 bullet (BULLET_FULL, slot0); slots1/2 stay hidden ---
+z = fresh()
+z.pc = sym["INIT"]
+run_until_pc(z, sym["EBUZ_STATE1_DONE"])
+check("state1: bullet0(slot0) fired as BULLET_FULL at the documented placeholder "
+      "position (Y=16,X=192) with the attached art's own color(11)",
+      sprite_attr(z, 0) == [Y1_STORED, BULLET_X, BULLET_FULL_CODE, BULLET_COLOR])
+check("state1: bullet1(slot1) not fired yet (still hidden)", sprite_attr(z, 1)[0] == SPR_HIDE_Y)
+check("state1: bullet2(slot2) not fired yet (still hidden)", sprite_attr(z, 2)[0] == SPR_HIDE_Y)
+check("SAT terminator (slot3) written once at boot", sprite_attr(z, 3)[0] == SPR_TERM_Y)
+check("BULLET_FULL's sprite pattern actually loaded into SPRPAT (non-blank)",
+      any(z.vram[0x3800 + BULLET_FULL_CODE * 8 + i] for i in range(32)))
+check("BULLET_HALF's sprite pattern actually loaded into SPRPAT (non-blank)",
+      any(z.vram[0x3800 + BULLET_HALF_CODE * 8 + i] for i in range(32)))
+# NOTE: ebuz_test.asm sets 16x16 sprite mode via the WRTVDP BIOS call
+# (0047h), which tools/z80emu.py implements as a pure no-op stub (register
+# state not tracked) - so z.vdp_regs never gains an entry for R1 this way.
+# Verify indirectly instead: RG1SAV (the BIOS RAM mirror WRTVDP is
+# documented to update) must show bit1 set, since ebuz_test.asm ORs it in
+# before the WRTVDP call.
+check("16x16 sprite size mode enabled (RG1SAV mirror bit1/SI set)",
+      z.mem[sym["RG1SAV"]] & 0x02 != 0)
+
+# --- state2 additionally fires 2 more bullets (BULLET_HALF, slots1/2), at the ---
+# user's own literal Y=0px/24px - Y=0 was nudged to Y=1 to dodge this codebase's
+# own "stored Y>=209 means hidden" convention colliding with the real hardware
+# wraparound encoding for Y=0 (stored 255) - see ebuz_test.asm's own comment.
+z2 = fresh()
+z2.pc = sym["INIT"]
+run_until_pc(z2, sym["EBUZ_STATE2_DONE"])
+check("state2: bullet0(slot0) from state1 is untouched", sprite_attr(z2, 0) == [Y1_STORED, BULLET_X, BULLET_FULL_CODE, BULLET_COLOR])
+check("state2: bullet1(slot1) fired as BULLET_HALF at Y=1px (nudged from the "
+      "requested 0px to dodge the hide-sentinel collision, see comment)",
+      sprite_attr(z2, 1) == [Y2_STORED, BULLET_X, BULLET_HALF_CODE, BULLET_COLOR])
+check("state2: bullet2(slot2) fired as BULLET_HALF at Y=24px exactly as requested",
+      sprite_attr(z2, 2) == [Y3_STORED, BULLET_X, BULLET_HALF_CODE, BULLET_COLOR])
+
+# --- all 3 bullets keep moving left every EBUZ_FRAME_TICK lap ---
+for _ in range(5):
+    z2.step()
+    run_until_pc(z2, sym["EBUZ_FRAME_TICK"])
+expected_x = BULLET_X - 5 * BULLET_SPEED
+check(f"after 5 frame-ticks, all 3 bullets moved left by exactly 5*{BULLET_SPEED}px "
+      f"(X: {BULLET_X}->{expected_x})",
+      sprite_attr(z2, 0)[1] == expected_x and sprite_attr(z2, 1)[1] == expected_x
+      and sprite_attr(z2, 2)[1] == expected_x)
+
+# --- a bullet that reaches the left edge (X < speed) gets hidden, not wrapped ---
+z3 = fresh()
+z3.pc = sym["INIT"]
+run_until_pc(z3, sym["EBUZ_STATE2_DONE"])
+# BULLET_X(192) / BULLET_SPEED(3) = 64 laps to reach X=0, one more to go negative
+laps = BULLET_X // BULLET_SPEED + 2
+for _ in range(laps):
+    z3.step()
+    run_until_pc(z3, sym["EBUZ_FRAME_TICK"])
+check("a bullet that would go off the left edge is hidden (Y=SPR_HIDE_Y), not "
+      "wrapped to a huge positive X", sprite_attr(z3, 0)[0] == SPR_HIDE_Y)
+
+
 print()
 print(f"{len(ok)} passed, {len(fail)} failed")
 if fail:

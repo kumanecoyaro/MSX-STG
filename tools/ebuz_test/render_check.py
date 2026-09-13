@@ -35,6 +35,11 @@ def run_until_pc(z, target_pc, max_instr=2_000_000):
     raise RuntimeError(f"never reached PC {target_pc:04X}, stuck at {z.pc:04X}")
 
 
+def sprite_dump(z, slot):
+    base = 0x1B00 + slot * 4
+    return [z.vram[base + i] for i in range(4)]
+
+
 def main():
     mem0, sym = assemble()
     z = Z80(bytearray(mem0))
@@ -47,6 +52,7 @@ def main():
     row2 = [z.vram[0x1800 + 2 * 32 + 24 + i] for i in range(4)]
     row3 = [z.vram[0x1800 + 3 * 32 + 24 + i] for i in range(4)]
     print("  row2 cols24-27:", row2, "row3 cols24-27:", row3)
+    print("  bullet0(slot0) [Y,X,pat,col]:", sprite_dump(z, 0))
 
     run_until_pc(z, sym["EBUZ_STATE2_DONE"])
     p2 = os.path.join(HERE, "ebuz_state2.ppm")
@@ -57,6 +63,21 @@ def main():
     row2 = [z.vram[0x1800 + 2 * 32 + 24 + i] for i in range(4)]
     row3 = [z.vram[0x1800 + 3 * 32 + 24 + i] for i in range(4)]
     print("  row1 cols24-27:", row1, "row2:", row2, "row3:", row3, "row4:", row4)
+    print("  bullet0(slot0):", sprite_dump(z, 0))
+    print("  bullet1(slot1):", sprite_dump(z, 1))
+    print("  bullet2(slot2):", sprite_dump(z, 2))
+
+    # advance a handful of "frames" (EBUZ_FRAME_TICK laps) to show the bullets
+    # actually moving left, then render a 3rd snapshot.
+    for _ in range(10):
+        z.step()
+        run_until_pc(z, sym["EBUZ_FRAME_TICK"])
+    p3 = os.path.join(HERE, "ebuz_state2_moving.ppm")
+    render_full(bytes(z.vram), p3)
+    print("state2 + bullets-moving rendered:", p3)
+    print("  bullet0(slot0):", sprite_dump(z, 0))
+    print("  bullet1(slot1):", sprite_dump(z, 1))
+    print("  bullet2(slot2):", sprite_dump(z, 2))
 
 
 if __name__ == "__main__":
