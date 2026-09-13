@@ -14488,3 +14488,55 @@ NOP抜け)(2026-09-13、完了済み・実機フィードバック待ち)
   見えてしまう可能性は理論上残っているが、これは今回のユーザー指示
   (ビームを止めない)とは別の問題であり、今回は指示なしに手を広げて
   いない。実機で違和感が報告されれば別途調査する。
+
+## Round105: Stage1スケジュール再差し替え(Schedule_1.json、520件)
+(2026-09-13、完了済み・実機フィードバック待ち)
+
+- ユーザー: "ステージ1スケジュールを差し替え"(添付`Schedule_1.json`、
+  maxTick999、520件)。type内訳: enemy6 298/simple 114/enemy5 67/
+  enemy4 26/enemy2 11/enemy3_wave 3/boss 1。Round77で確立した16bit
+  index化+Round78で汎用化したNブロック(H値ぶん)分岐機構をそのまま
+  適用: 520件は`ceil(520/256)=3`ブロック(H=0/1/2、サイズ256/256/8)で
+  収まり、既存の`SSC_FIRE`のH判定チェーン(CP0→BLK0、CP1→BLK1、
+  else→BLK2)自体は変更不要。
+- Round80と同じ「Pythonスクリプトで機械的に再生成」方式を踏襲、
+  スクリプトは今回もスクラッチ(`/tmp`、リポジトリ非コミット)に新規
+  作成し、`SPAWN_THRESHOLDS`/`SPAWN_SIMPLE_Y_TABLE`/`SPAWN_BASEY_
+  TABLE`/`SPAWN_E3_OFFSET_TABLE`/`ENEMY6_ROW_TABLE`の5テーブル、
+  `SSC_FIRE_BLK0/1/2`のCP-dispatchチェーン(各ブロックの最終エントリは
+  従来通りCPなしの`JP BOSS_SPAWN`で締める規約を踏襲)、`SSC_BUSY_E2`の
+  CP一覧(enemy2の出現index: 101,109,113,117,119,148,149,182,183,184,
+  185、全て255未満のため既存の「H!=0なら即SSC_FIRE」ガードのままで
+  安全と確認済み)、`SPAWN_SCHEDULE_CHECK`の終端比較値(`LD DE,549`→
+  `LD DE,520`)を丸ごと再生成・置換。
+- 実プレイ相当シミュレーション(INIT起動→MAINLOOPをフレーム単位で
+  約8920フレーム進行)で、`SPAWN_NEXT_INDEX`が520まで一切stallする
+  ことなく完全消化され、GAME_TICK1115(理論値992×8/8+若干のSSC_BUSY_E2
+  待ちぶん)でボス(`BOSS_STATE`が非ゼロ)が正しくスポーンすることを
+  確認済み(最大連続stall191フレーム≒24tick相当、enemy6高密度区間
+  でのSSC_BUSY_E2待ちや通常のtick待ちの範囲内で異常なし)。
+- 既存のStage1検証群を全て再実行し無退行を確認:
+  `verify_enemy_bullets.py` 56/`verify_player_damage.py` 60/
+  `verify_stage1_bgm.py` 80/`verify_stage1_mission_screens.py` 87/
+  `verify_spawn_schedule_restart.py` 12(このファイル自身が
+  ソースから動的にenemy2 indexを拾う設計[Round76の教訓]のため、
+  新スケジュールのindex101等も無改修で正しく追従することを確認)/
+  `verify_enemy6_durability.py` 15/`verify_explosion_anim.py` 28/
+  `verify_boss_dfl_clear.py` 10、全てPASS。Comb ROM再ビルド・
+  `verify_comb.py`全チェックPASSの上、標準方針によりComb ROMのみ
+  送付。
+- 変更ファイル: `src/CYBER SHMUP.asm`(SPAWN_THRESHOLDS等5テーブル・
+  SSC_FIRE_BLK0/1/2・SSC_BUSY_E2・SPAWN_SCHEDULE_CHECKの終端比較値を
+  新スケジュールへ差し替え)、Comb ROM再ビルド。
+  `combined_test.asm`(Stage2本体)は無変更のため`run_all.py`全回帰は
+  未実施(CLAUDE.mdの既存方針通り)。
+
+セッション引き継ぎメモ(2026-09-13、Round105完了直後):
+- 新スケジュール(520件)の実プレイでのペーシング・難易度感は次回
+  フィードバック待ち。
+- スケジュール生成スクリプト自体は今回も`/tmp`のスクラッチのみ
+  (リポジトリ非コミット、Round80と同じ運用方針)。次回以降また
+  differentスケジュールへの差し替えが来た場合は、同じ手順(JSON解析
+  →5テーブル+SSC_FIRE_BLKチェーン+SSC_BUSY_E2+終端比較値を再生成・
+  置換→実プレイシミュレーションでstall無し確認→既存Stage1検証群
+  再実行→Comb再ビルド・verify_comb.py)を繰り返せばよい。
