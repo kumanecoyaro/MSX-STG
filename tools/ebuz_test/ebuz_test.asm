@@ -65,14 +65,10 @@
 ;     DONE/EBUZ_STATE2_DONEは「発射まで完了した」時点を指す既存の
 ;     意味のまま維持)。
 ;   - 弾速半減: 3px/frameを整数のまま厳密に半分(1.5px/frame平均)に
-;     するため、1px/2pxを1フレームおきに交互適用する方式
-;     (EBUZ_BULLET_SPEED_LO=1/EBUZ_BULLET_SPEED_HI=2、2フレーム
-;     平均で(1+2)/2=1.5px/frame=元の3px/frameのちょうど半分)。
-;     3発は常にEBUZ_MAINLOOPの同一ループ内で同時に更新されるため
-;     (state1弾はstate2への変化待ち・0.5秒ウェイト中は静止したまま、
-;     3発全てが出揃ってから初めてEBUZ_MAINLOOPへ入る既存の設計は
-;     無変更)、フレームごとの歩幅は3発共通の1個のグローバル
-;     トグル(EBUZ_FRAME_PARITY)で管理すれば足りる。
+;     するため、1px/2pxを1フレームおきに交互適用する方式を採用したが、
+;     後のRound(2026-09-13追記その5、"弾遅いんで速くしてくれ 2pxで")
+;     で単純な固定2px/frameへ再変更、交互方式は撤去済み(詳細は
+;     EBUZ_BULLET_SPEEDのEQU定義コメント参照)。
 ; 本ファイルは本編(src/CYBER SHMUP.asm)に組み込む前の独立した
 ; プロトタイプ("専用の空ステージ1")。背景は完全に空(code0の空白タイル
 ; のみ)で、Ebuzの見た目・状態遷移・弾発射/移動だけを確認する。実際の
@@ -119,13 +115,11 @@ BULLET_HALF_CODE EQU 4    ; 4コード(4-7)、TL/BL/TR/BR
 EBUZ_BULLET_COLOR EQU 11  ; fg=11(light yellow) - 添付JSONのfgそのまま
 EBUZ_BULLET_X      EQU 192   ; Ebuz本体のXから発射(暫定)、state2弾(Y0/24)用
 EBUZ_BULLET1_X     EQU EBUZ_BULLET_X-16   ; state1弾は16px左へ移動(2026-09-13追記)
-; 弾速半減(2026-09-13追記、"弾の速度が早いんで半分に"): 元3px/frameを
-; 整数のまま厳密に半分(平均1.5px/frame)にするため、1px/2pxを1フレーム
-; おきに交互適用する(2フレーム平均=(1+2)/2=1.5px/frame)。3発とも
-; 同一のEBUZ_MAINLOOPで同時に更新されるため、歩幅はグローバルな
-; 1個のトグル(EBUZ_FRAME_PARITY)で管理すれば足りる。
-EBUZ_BULLET_SPEED_LO EQU 1
-EBUZ_BULLET_SPEED_HI EQU 2
+; 弾速(2026-09-13追記その5、実機フィードバック対応: "ようやくかよ
+; 弾遅いんで速くしてくれ 2pxで"): 前回の半減(1px/2px交互で平均
+; 1.5px/frame)を撤回し、単純な固定2px/frameへ変更。1px/2px交互方式・
+; EBUZ_FRAME_PARITYトグルは不要になったため削除。
+EBUZ_BULLET_SPEED EQU 2
 ; TMS9918のY属性は実際の表示開始行より1小さい値を書く規約
 ; (tools/stage1_render_check.pyのrender_full()と同じ"y1=(y+1)&0xFF"
 ; デコードに対応)。state1の弾はY=16(=EBUZ_ROW*8、本体位置基準の
@@ -159,7 +153,6 @@ SPR_TERM_Y  EQU 208   ; SATリスト終端(このスロット以降は描画さ�
 ; (OUT/INポート経由のVDP I/Oが必要) - 毎フレームの移動計算はこちらの
 ; RAM側で行い、更新後にLDIRVMでまとめてSPRATRへ反映する。
 EBUZ_SPR_SHADOW EQU 0F350h   ; 12 bytes (F350h-F35Bh), STACKTOPまで十分な余裕
-EBUZ_FRAME_PARITY EQU 0F35Ch ; 1 byte、弾速半減用のフレーム交互トグル(0/1)
 
 ; (2026-09-13追記その3、実機フィードバック対応、最重要の設計変更):
 ; "だから違うって Ebuz1の時16x16のスプライトの弾を発射 その後Ebuz2に
@@ -204,44 +197,33 @@ EBUZ_FRAME_WAIT_INNER:
     RET
 
 ; IX = EBUZ_SPR_SHADOW内の弾スロット先頭(+0=Y,+1=X,+2=pattern,+3=color)。
-; 非表示(Y=SPR_HIDE_Y)なら何もしない、そうでなければXを今フレームの
-; 歩幅(EBUZ_FRAME_PARITYにより1pxまたは2px、2026-09-13追記の半速化)
-; だけ減算(左へ移動)、画面外に出る場合はY=SPR_HIDE_Yにして非表示化。
+; 非表示(Y=SPR_HIDE_Y)なら何もしない、そうでなければXをEBUZ_BULLET_
+; SPEED(固定2px/frame)だけ減算(左へ移動)、画面外に出る場合は
+; Y=SPR_HIDE_Yにして非表示化。
 EBUZ_UPDATE_BULLET:
     LD A,(IX+0)
     CP SPR_HIDE_Y
     RET Z
-    LD A,(EBUZ_FRAME_PARITY)
-    OR A
-    LD A,EBUZ_BULLET_SPEED_LO
-    JR Z,EBUZ_UB_GOT_STEP
-    LD A,EBUZ_BULLET_SPEED_HI
-EBUZ_UB_GOT_STEP:
-    LD B,A                  ; B = 今フレームの歩幅
     LD A,(IX+1)
-    CP B
+    CP EBUZ_BULLET_SPEED
     JR NC,EBUZ_UB_MOVE
     LD (IX+0),SPR_HIDE_Y
     RET
 EBUZ_UB_MOVE:
-    SUB B
+    SUB EBUZ_BULLET_SPEED
     LD (IX+1),A
     RET
 
-; 1"フレーム"分の処理をまとめたもの: 弾3枠を更新→歩幅トグル反転→
-; VRAMへ反映→ウェイト。EBUZ_WAIT_TICK系とEBUZ_MAINLOOPの両方から
-; 共有で呼ばれる(2026-09-13追記その3、「待ち時間中は弾が動かない」
-; 構造的バグの修正 - 発射前の弾はEBUZ_UPDATE_BULLET冒頭のSPR_HIDE_Y
-; チェックで自動的にスキップされるので、まだ発射されていないスロットに
-; 対して呼んでも安全)。
+; 1"フレーム"分の処理をまとめたもの: 弾3枠を更新→VRAMへ反映→ウェイト。
+; EBUZ_WAIT_TICK系とEBUZ_MAINLOOPの両方から共有で呼ばれる(2026-09-13
+; 追記その3、「待ち時間中は弾が動かない」構造的バグの修正 - 発射前の
+; 弾はEBUZ_UPDATE_BULLET冒頭のSPR_HIDE_Yチェックで自動的にスキップ
+; されるので、まだ発射されていないスロットに対して呼んでも安全)。
 EBUZ_TICK:
     DI
     LD IX,EBUZ_SPR_SHADOW   : CALL EBUZ_UPDATE_BULLET
     LD IX,EBUZ_SPR_SHADOW+4 : CALL EBUZ_UPDATE_BULLET
     LD IX,EBUZ_SPR_SHADOW+8 : CALL EBUZ_UPDATE_BULLET
-    LD A,(EBUZ_FRAME_PARITY)
-    XOR 1
-    LD (EBUZ_FRAME_PARITY),A
     LD HL,EBUZ_SPR_SHADOW : LD DE,SPRATR : LD BC,12 : CALL LDIRVM
     EI
     CALL EBUZ_FRAME_WAIT
@@ -293,10 +275,6 @@ INIT:
     LD HL,EBUZ_SPR_INIT : LD DE,EBUZ_SPR_SHADOW : LD BC,12 : LDIR
     LD HL,EBUZ_SPR_SHADOW : LD DE,SPRATR : LD BC,12 : CALL LDIRVM
     LD HL,EBUZ_SPR_TERM : LD DE,SPRATR+12 : LD BC,4 : CALL LDIRVM
-
-    ; 弾速半減用のフレーム交互トグルを初期化(0=次のステップはLO)
-    XOR A
-    LD (EBUZ_FRAME_PARITY),A
 
     ; --- state1: A,B,C,D を row2/row3 の col24-27 へ(2行とも同一) ---
     ; NOTE: このアセンブラは演算子優先順位も丸括弧も無い(左から右へ

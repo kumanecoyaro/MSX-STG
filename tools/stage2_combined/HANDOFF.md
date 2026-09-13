@@ -15416,3 +15416,30 @@ NOP抜け)(2026-09-13、完了済み・実機フィードバック待ち)
   `EBUZ_ROW_TOP_BAND`/`EBUZ_ROW_BOTTOM_BAND`の値も追従して更新する
   必要がある(ハードコードされた行番号ではあるが、少なくとも実際の
   BG描画行と同じ値を明示的に共有する設計にはなった)。
+
+## Round119: 弾速を固定2px/frameへ変更(実機フィードバック対応・
+完了済み、プロトタイプのまま本編未組み込み)(2026-09-13)
+
+- ユーザー: "ようやくかよ 弾遅いんで速くしてくれ 2pxで"。
+- Round116で導入した「1px/2px交互(平均1.5px/frame)」方式(3px/frameの
+  厳密な半減として実装)を撤回し、単純な固定`EBUZ_BULLET_SPEED EQU 2`
+  へ変更。`EBUZ_FRAME_PARITY`(交互トグル用RAM1byte)・
+  `EBUZ_BULLET_SPEED_LO/HI`・`EBUZ_UPDATE_BULLET`/`EBUZ_TICK`内の
+  トグル参照/反転処理を全て削除し、素直な単一速度の減算処理に戻した
+  (Round118で新設したEBUZ_TICK/EBUZ_WAIT_TICKSの構造自体は無変更)。
+- `ebuz_test_verify.py`のPython参照シミュレータ`simulate_positions()`も
+  parity引数を除去し単純な固定速度モデルへ簡略化、全呼び出し箇所
+  (`start_parity=...`)を更新。2px/frameへの高速化により、bullet0が
+  state1→state2の待ち(102ティック)の間に画面外へ完全に消えるタイミング
+  も変化(旧: 131ティック目で非表示化 → 新: 89ティック目、102ティック
+  待ちが終わる前に既に非表示)したため、該当テストの期待値をこの
+  新しい実際の挙動に合わせて更新(「まだ見えている特定X値」ではなく
+  「既に非表示」を検証する分岐に変更)。全33件、EBUZ_BULLET_SPEEDを
+  一時的に1に戻して3件のテストが正しくFAILすることを確認した上で
+  復元・再PASS済み。
+- レンダリング・タイムラインGIF再生成、ROM再ビルド。
+- **本編への影響なし**: `src/CYBER SHMUP.asm`・`combined_test.asm`
+  いずれも無変更のため、既存の回帰テスト・Comb ROMは今回変更なし。
+- 変更ファイル: `tools/ebuz_test/`内(`ebuz_test.asm`/
+  `ebuz_test_verify.py`を改訂、`EbuzTest.rom`再ビルド、
+  `render_check.py`/`gif_check.py`で再レンダリング)。
