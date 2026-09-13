@@ -14625,3 +14625,55 @@ NOP抜け)(2026-09-13、完了済み・実機フィードバック待ち)
   実行できない点に留意(ユーザーに新たにAcsent_16x16.json相当を
   再アップロードしてもらうか、テスト自体を別のアプローチに書き換える
   必要がある)。
+
+## Round108: Stage1ボスの周回ポッド弾を自機狙い弾に変更(2026-09-13、
+完了済み・実機フィードバック待ち)
+
+- ユーザー指示: "ステージ1ボス ボスの弾は画面のX座標が半分より右に
+  自機がいる場合自機狙い弾になるように変更 半分以下なら従来通りまっ
+  すぐ打つだけ 近寄ったら自機狙いになるって事"。
+- 対象は`POD_BULLET0/1`(8個の周回ポッドが隣接ペアで交互に発射する弾、
+  従来はPOD_BULLET_SPEED(12px/frame)で左へ直進するだけでYは発射時の
+  ポッドのYに固定)。発射の瞬間(`POD_FIRE_DO_PAIR`)にPLAYERXが画面
+  半分(`POD_BULLET_HOMING_THRESHOLD_X EQU 128`)より右かどうかを判定し、
+  右であればその瞬間のPLAYERYへ向かう一定の縦方向速度
+  (`POD_BULLET_HOMING_DY EQU 2`、符号付き)を新規`POD_BULLET_CALC_DY`
+  で1回だけ計算・保持、以後は毎フレーム`POD_BULLET_MOVE`がこのDYを
+  そのままYへ加算するだけの予測照準方式(Stage2のBOSS_BROKEN_BEAM_
+  TABLEと同じ「発射時に一度だけ決める」idiom、リアルタイム追尾では
+  ない)。半分以下ならDY=0固定で、既存の直進のみの挙動とバイト単位で
+  完全に同一。
+- 新規RAM2byte(`POD_BULLET0_DY`=0E739h、`POD_BULLET1_DY`=0E7ABh)は
+  いずれも既存シンボルの隙間を全文grepで直接確認した上で使用(前者は
+  POD_RECOIL[8byte]とDFL_RNGの間、後者はPOD_LOOP_ALIVE_SNAPSHOTと
+  POD_LAP_CYCLEの間)。ボススポーン時の既存一括初期化ブロック
+  (POD_BULLET0/1_ACTの直後)にも明示的ゼロクリアを追加(この教訓は
+  Round36-14 follow-up#14以来繰り返し徹底している方針)。
+- 新規`tools/verify_boss_pod_bullet_aim.py`(17件): `POD_BULLET_CALC_
+  DY`の単体テスト(閾値の境界・上下方向判定・既に整列済みでDY=0になる
+  ケース)、`POD_BULLET_MOVE`がDYを毎フレーム正しく加算すること(DY=0
+  の場合はYが完全不変であることも含む)、実際の発射経路
+  (`POD_FIRE_DO_PAIR`)を通した統合テスト(PLAYERXが左右どちらの
+  半分かでbullet0/1双方の挙動が変わること、ペアの片方のポッドしか
+  生きていない場合でも正しく動作すること)を検証。`POD_BULLET_CALC_
+  DY`を一時的に無条件0返却へ書き換えて新規4件が正しくFAILすることを
+  確認した上で復元・再PASS済み。
+- 既存のStage1検証群(player_damage 60/enemy_bullets 60/stage1_bgm 80/
+  stage1_mission_screens 87/spawn_schedule_restart 12/enemy6_
+  durability 19/explosion_anim 28/boss_dfl_clear 10)全て無退行で
+  再PASS。Comb ROM再ビルド・`verify_comb.py`全チェックPASSの上、
+  標準方針によりComb ROMのみ送付。
+- 変更ファイル: `src/CYBER SHMUP.asm`(POD_BULLET_HOMING_THRESHOLD_X/
+  POD_BULLET_HOMING_DY/POD_BULLET0_DY/POD_BULLET1_DY新設、
+  POD_BULLET_CALC_DY新設、POD_FIRE_DO_PAIR/POD_BULLET_MOVE/ボス
+  スポーン初期化ブロックへの組み込み)、新規
+  `tools/verify_boss_pod_bullet_aim.py`(17件)、Comb ROM再ビルド。
+  `combined_test.asm`は無変更のため`run_all.py`全回帰は未実施。
+
+セッション引き継ぎメモ(2026-09-13、Round108完了直後):
+- 実機での見え方(自機が右半分にいる時のみ確実に狙い弾になるか、
+  縦方向の速度感)は次回フィードバック待ち。`POD_BULLET_HOMING_DY`
+  (2px/frame)は未調整の初期値、実プレイでの手応え次第で再調整の
+  可能性あり。発射時一度だけの予測照準方式のため、発射後に自機が
+  大きく縦移動した場合は追従しない(意図した簡易実装、リアルタイム
+  ホーミングではない)。

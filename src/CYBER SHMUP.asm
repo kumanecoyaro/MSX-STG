@@ -403,6 +403,13 @@ POD_FIRE_INTERVAL_CUR EQU 0E7A7h  ; frames between pair-fires (was always POD_FI
 POD_LAP_ACTIVE   EQU 0E7A8h
 POD_LAP_STEP     EQU 0E7A9h  ; angular step 0-7 within the current lap
 POD_LOOP_ALIVE_SNAPSHOT EQU 0E7AAh
+; (2026-09-13、"ボスの弾は...自機狙い弾になるように変更"): per-frame
+; signed Y velocity for POD_BULLET1 - see POD_BULLET0_DY's own comment
+; for the full design (this is just the 2nd bullet's own copy of the
+; same field). Placed at 0E7ABh, the single confirmed-free byte between
+; POD_LOOP_ALIVE_SNAPSHOT and POD_LAP_CYCLE (verified via a direct grep
+; for "0E7ABh" across the whole file before use - genuinely untouched).
+POD_BULLET1_DY   EQU 0E7ABh
 POD_LAP_CYCLE    EQU 0E7ACh  ; which of the 3 laps we're on
 
 ; --- sprite-number free-list: 32 bytes, index=hardware sprite number ---
@@ -5260,6 +5267,33 @@ POD_BULLET_SPR0      EQU 20   ; fixed sprite numbers, right after the 8 orbit po
 POD_BULLET_SPR1      EQU 21
 BOSS_SPR_BASE    EQU 8       ; fixed hardware sprite number, reused throughout
 BOSS_HEX_PATNUM  EQU 96      ; sprite pattern-table unit (free range)
+; (2026-09-13、"ステージ1ボス ボスの弾は画面のX座標が半分より右に自機が
+; いる場合自機狙い弾になるように変更 半分以下なら従来通りまっすぐ打つ
+; だけ 近寄ったら自機狙いになるって事"): POD_BULLETn used to fly purely
+; horizontal (X decrements by POD_BULLET_SPEED every frame, Y frozen at
+; the firing pod's own Y forever). Decided once at the exact moment each
+; bullet is launched (POD_FIRE_DO_PAIR), not re-evaluated in flight
+; (predictive aim, same idiom as every other fixed-trajectory shot in
+; this file, e.g. Stage2's BOSS_BROKEN_BEAM_TABLE) - if PLAYERX is
+; already past the screen's own halfway point at that instant, the
+; bullet gets a small constant per-frame Y nudge (POD_BULLET_HOMING_DY)
+; toward wherever PLAYERY was at launch; POD_BULLET_MOVE applies it
+; every frame right alongside the existing X decrement. If PLAYERX was
+; still on the left half, DY is forced to exactly 0 - byte-identical to
+; the pre-existing straight-shot behavior.
+POD_BULLET_HOMING_THRESHOLD_X EQU 128  ; screen width(256)/2
+POD_BULLET_HOMING_DY EQU 2   ; px/frame vertical nudge - untuned initial
+                              ; value (POD_BULLET_SPEED=12 horizontal, so
+                              ; a shallow-ish diagonal), revisit if it
+                              ; reads as too weak/strong once seen in
+                              ; motion.
+; per-frame signed Y velocity for POD_BULLET0 (0=straight/no vertical
+; drift, POD_BULLET_HOMING_DY=drifting down, -POD_BULLET_HOMING_DY=
+; drifting up - two's complement, same ADD-based idiom BOSS_BROKEN_BEAM
+; uses in Stage2). Placed at 0E739h, the single confirmed-free byte
+; between POD_RECOIL(8 bytes, E731-E738) and DFL_RNG(E73Ah) - verified
+; via a direct grep for "0E739h" across the whole file before use.
+POD_BULLET0_DY   EQU 0E739h
 
 ; Enemy2 instance A/B sprite pattern codes (sprite pattern table is a
 ; separate 256-code space from the background PATTERNS table, so
@@ -6259,6 +6293,8 @@ BOSS_UPDATE_BODY:
     XOR A : LD (POD_FIRE_PAIR),A
     XOR A : LD (POD_BULLET0_ACT),A
     XOR A : LD (POD_BULLET1_ACT),A
+    XOR A : LD (POD_BULLET0_DY),A
+    XOR A : LD (POD_BULLET1_DY),A
     LD HL,POD_RECOIL : LD B,8
 BSPAWN_CLEARRECOIL:
     LD (HL),0 : INC HL : DJNZ BSPAWN_CLEARRECOIL
@@ -7243,6 +7279,7 @@ POD_FIRE_DO_PAIR:
     LD A,(POD_XY_X) : LD (POD_BULLET0_X),A
     LD A,(POD_XY_Y) : LD (POD_BULLET0_Y),A
     LD A,1 : LD (POD_BULLET0_ACT),A
+    LD A,(POD_BULLET0_Y) : CALL POD_BULLET_CALC_DY : LD (POD_BULLET0_DY),A
     LD HL,POD_RECOIL : LD D,0 : LD E,B : ADD HL,DE
     LD (HL),POD_RECOIL_DURATION
     CALL POD_BULLET_DRAW0
@@ -7259,10 +7296,41 @@ PFDP_SKIP0:
     LD A,(POD_XY_X) : LD (POD_BULLET1_X),A
     LD A,(POD_XY_Y) : LD (POD_BULLET1_Y),A
     LD A,1 : LD (POD_BULLET1_ACT),A
+    LD A,(POD_BULLET1_Y) : CALL POD_BULLET_CALC_DY : LD (POD_BULLET1_DY),A
     LD HL,POD_RECOIL : LD D,0 : LD E,B : ADD HL,DE
     LD (HL),POD_RECOIL_DURATION
     CALL POD_BULLET_DRAW1
 PFDP_SKIP1:
+    RET
+
+; Input: A = the bullet's own Y at the exact instant it's fired. Output:
+; A = the per-frame signed Y velocity POD_BULLET_MOVE should apply every
+; frame for the rest of this bullet's flight (0=straight, no vertical
+; drift at all - byte-identical to the pre-existing behavior;
+; POD_BULLET_HOMING_DY=drift down; -POD_BULLET_HOMING_DY=drift up).
+; Decided ONCE here, at fire time, not re-evaluated in flight - see
+; POD_BULLET_HOMING_THRESHOLD_X's own comment for the full design.
+; Preserves BC (POD_FIRE_DO_PAIR's own callers still need B=pod index
+; right after this returns).
+POD_BULLET_CALC_DY:
+    PUSH BC
+    LD C,A                       ; C = this bullet's own spawn Y
+    LD A,(PLAYERX)
+    CP POD_BULLET_HOMING_THRESHOLD_X
+    JR C,PBCD_STRAIGHT           ; player still on the left half - no homing
+    LD A,(PLAYERY)
+    CP C
+    JR Z,PBCD_STRAIGHT           ; already level - no vertical drift needed
+    JR C,PBCD_UP                 ; PLAYERY < bulletY - player is above - move up
+    LD A,POD_BULLET_HOMING_DY
+    JR PBCD_DONE
+PBCD_UP:
+    LD A,-POD_BULLET_HOMING_DY
+    JR PBCD_DONE
+PBCD_STRAIGHT:
+    XOR A
+PBCD_DONE:
+    POP BC
     RET
 
 ; called every frame from POD_FIRE_UPDATE. While POD_VOLLEY_ACTIVE,
@@ -7667,6 +7735,12 @@ POD_BULLET_MOVE:
     JR PBM_B1
 PBM_B0_OK:
     LD (POD_BULLET0_X),A
+    ; (2026-09-13、"ボスの弾は...自機狙い弾になるように変更"): apply the
+    ; per-frame Y velocity decided once at fire time (POD_BULLET_CALC_DY)
+    ; - 0 here is byte-identical to the old straight-shot behavior.
+    LD A,(POD_BULLET0_Y) : LD B,A
+    LD A,(POD_BULLET0_DY) : ADD A,B
+    LD (POD_BULLET0_Y),A
     CALL POD_BULLET_DRAW0
 PBM_B1:
     LD A,(POD_BULLET1_ACT)
@@ -7680,6 +7754,9 @@ PBM_B1:
     RET
 PBM_B1_OK:
     LD (POD_BULLET1_X),A
+    LD A,(POD_BULLET1_Y) : LD B,A
+    LD A,(POD_BULLET1_DY) : ADD A,B
+    LD (POD_BULLET1_Y),A
     CALL POD_BULLET_DRAW1
     RET
 
