@@ -1006,7 +1006,25 @@ RUN_SCREEN3_SLIDESHOW:
 
     ; ネームテーブルは6枚とも完全同一(screen3_gen.py確認済み)のため
     ; ここで1回だけ書き込み、以後二度と触らない。
-    LD HL,SC3_SHARED_NAME : LD DE,1800h : LD BC,SC3_SHARED_NAME_LEN : CALL LDIRVM
+    ; (2026-09-13、"で、当然だが 99h99h98は DIEIでガードしないと表示
+    ; 壊れる"): FLUSH_SHADOW_TO_VRAM(round97)と全く同じ理由 - この
+    ; 書き込みはMulticolorモード切替(直前のWRTVDP)直後=既に表示期間
+    ; 中に実行されるため、BIOS LDIRVM任せでは98hの29T間隔保証が無い。
+    ; 同じ手動ループ(99hは待ち不要、98hは29T厳密ウェイト)+DI/EI保護
+    ; へ書き換え。
+    DI
+    LD A,00h : OUT (99h),A
+    LD A,58h : OUT (99h),A          ; VRAM書き込みアドレス=1800h、以後オートインクリメント(99hは待ち不要)
+    LD HL,SC3_SHARED_NAME
+    LD DE,SC3_SHARED_NAME_LEN
+RSS_NAME_LOOP:
+    LD A,(HL) : INC HL
+    OUT (98h),A
+    PUSH BC : POP BC : NOP : NOP    ; 98hは表示期間中29T必要
+    DEC DE
+    LD A,D : OR E
+    JR NZ,RSS_NAME_LOOP
+    EI
 
     ; このスライドショーの絵はいずれもスプライトパターンを持たない
     ; ため、明示的に全停止(既存のtitle自身の0D1hマーカーと同じ)。
@@ -1032,6 +1050,12 @@ RUN_SCREEN3_SLIDESHOW:
     ; 表示してからMission 1(Stage1トランポリン)へ進む。確認音はもう
     ; 明示的にCALLしない - busy-waitループの最中もH.TIMIは発火し
     ; 続けるため、上記で設置したSC3_CONFIRM_TICKが自律的に鳴り続ける。
+    ; (2026-09-13、"で、3ループの後に30フレ追加して 7枚目の表示時間
+    ; 伸ばして で、1から6枚目の3フレウェイトを2フレに 他の処理で重く
+    ; なったんで"): 1-6枚目は上記のWAIT_N_FRAMES統一化(B=2)により
+    ; SHOW_SC3_IMGx側で対応済み。7枚目(Epilogue1)の待ちを15→30フレーム
+    ; へ延長、3ループ終了直後(Epilogue2表示の前)に単独の30フレーム待ちを
+    ; 追加。
     LD B,3
 RSS_MAIN_LOOP:
     PUSH BC
@@ -1042,10 +1066,13 @@ RSS_MAIN_LOOP:
     CALL SHOW_SC3_IMG5
     CALL SHOW_SC3_IMG6
     CALL SHOW_SC3_EPI1
-    LD B,15
+    LD B,30
     CALL WAIT_N_FRAMES
     POP BC
     DJNZ RSS_MAIN_LOOP
+
+    LD B,30
+    CALL WAIT_N_FRAMES
 
     CALL SHOW_SC3_EPI2
     LD B,30
@@ -1073,34 +1100,34 @@ SHOW_SC3_IMG1:
     LD IX,SHADOW_PGT
     LD HL,SC3_IMG1_PGT_RLE : LD DE,SC3_IMG1_PGT_SEGMENTS : CALL DECOMPRESS_TO_RAM
     CALL FLUSH_SHADOW_TO_VRAM
-    JP WAIT_3_FRAMES
+    LD B,2 : JP WAIT_N_FRAMES
 ; 2〜6枚目: 直前フレームとのXOR差分をSHADOW_PGTへ適用してからVRAMへ
 ; 一括反映(必ずこの順番[1→2→3→4→5→6]で呼ぶ前提)。
 SHOW_SC3_IMG2:
     LD IX,SHADOW_PGT
     LD HL,SC3_IMG2_PGT_XORDIFF : LD DE,SC3_IMG2_PGT_SEGMENTS : CALL APPLY_XOR_DIFF
     CALL FLUSH_SHADOW_TO_VRAM
-    JP WAIT_3_FRAMES
+    LD B,2 : JP WAIT_N_FRAMES
 SHOW_SC3_IMG3:
     LD IX,SHADOW_PGT
     LD HL,SC3_IMG3_PGT_XORDIFF : LD DE,SC3_IMG3_PGT_SEGMENTS : CALL APPLY_XOR_DIFF
     CALL FLUSH_SHADOW_TO_VRAM
-    JP WAIT_3_FRAMES
+    LD B,2 : JP WAIT_N_FRAMES
 SHOW_SC3_IMG4:
     LD IX,SHADOW_PGT
     LD HL,SC3_IMG4_PGT_XORDIFF : LD DE,SC3_IMG4_PGT_SEGMENTS : CALL APPLY_XOR_DIFF
     CALL FLUSH_SHADOW_TO_VRAM
-    JP WAIT_3_FRAMES
+    LD B,2 : JP WAIT_N_FRAMES
 SHOW_SC3_IMG5:
     LD IX,SHADOW_PGT
     LD HL,SC3_IMG5_PGT_XORDIFF : LD DE,SC3_IMG5_PGT_SEGMENTS : CALL APPLY_XOR_DIFF
     CALL FLUSH_SHADOW_TO_VRAM
-    JP WAIT_3_FRAMES
+    LD B,2 : JP WAIT_N_FRAMES
 SHOW_SC3_IMG6:
     LD IX,SHADOW_PGT
     LD HL,SC3_IMG6_PGT_XORDIFF : LD DE,SC3_IMG6_PGT_SEGMENTS : CALL APPLY_XOR_DIFF
     CALL FLUSH_SHADOW_TO_VRAM
-    JP WAIT_3_FRAMES
+    LD B,2 : JP WAIT_N_FRAMES
 
 ; 締めの3枚(いずれも直前フレームとのXOR差分、待ち時間は個別のため
 ; ここでは待たずRETするだけ - 呼び出し元RUN_SCREEN3_SLIDESHOWが
@@ -1230,27 +1257,20 @@ AXD_NEXT:
     JR NZ,APPLY_XOR_DIFF
     RET
 
-; 3フレーム分(約50ms)の待ち - 割り込み/JIFFYに依存しない単純なDE
-; デクリメントループ(CONFIRM_GAP_DELAY等と同じ26T-state/iteration、
-; N=50ms*3579.545/26≒6884)。
-SC3_WAIT_3F_COUNT EQU 6884
-WAIT_3_FRAMES:
-    LD DE,SC3_WAIT_3F_COUNT
-WF3_LOOP:
-    DEC DE
-    LD A,D : OR E
-    JR NZ,WF3_LOOP
-    RET
-
 ; (2026-09-12、"アニメが指示と違う 流れは まず1から6枚目を3フレ切り替え
 ; で7枚目の08を15フレ表示 ここまでを3ループ その後09を30フレ 11を90フレ
-; 表示してMission 1表示"): 任意フレーム数の待ち。WAIT_3_FRAMESと同じ
-; 26T-state/iterationのDEデクリメントループを「1フレーム分」の単位
-; ルーチンとして切り出し、呼び出し元がB(フレーム数、1-255)をセットして
-; CALLする方式に一般化した(15/30/90フレームいずれもDE単体[16bit上限
-; 約476ms=約28フレーム分]には収まらないため、CALL/DJNZの外側ループで
-; 束ねる - 1フレームあたり数十T-stateのCALL/DJNZオーバーヘッドは
-; 59660T-stateの1フレーム全体からすれば無視できる)。
+; 表示してMission 1表示"): 任意フレーム数の待ち。割り込み/JIFFYに依存
+; しない単純なDEデクリメントループ(CONFIRM_GAP_DELAY等と同じ
+; 26T-state/iteration)を「1フレーム分」の単位ルーチンとして切り出し、
+; 呼び出し元がB(フレーム数、1-255)をセットしてCALLする方式に一般化した
+; (複数フレーム分をDE単体[16bit上限約476ms=約28フレーム分]で表現しようと
+; すると桁あふれするため、CALL/DJNZの外側ループで束ねる - 1フレーム
+; あたり数十T-stateのCALL/DJNZオーバーヘッドは59660T-stateの1フレーム
+; 全体からすれば無視できる)。
+; (2026-09-13、"3ループの後に30フレ追加して 7枚目の表示時間伸ばして
+; 1から6枚目の3フレウェイトを2フレに 他の処理で重くなったんで"):
+; 旧来の専用WAIT_3_FRAMES(3フレーム固定、独自のDE即値埋め込み)は撤去し、
+; 1-6枚目もこのWAIT_N_FRAMESへ統一(呼び出し元でB=2をセット)。
 SC3_WAIT_1F_COUNT EQU 2295   ; ≒1/60秒(59659.083T-state/26T-state per iter)
 WAIT_1_FRAME_UNIT:
     LD DE,SC3_WAIT_1F_COUNT

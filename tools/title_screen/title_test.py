@@ -475,32 +475,30 @@ switch_log_at_wait = list(mem.switch_log)  # round40: exclude INIT_BGM's own 2 s
 # フィードバック"表示は出来た だが音2回鳴らして1コマじゃねえんだよ
 # 音は割り込みで鳴らしてんだろうが 鳴らしながらアニメするんだよ"で
 # 確認音をH.TIMI駆動のバックグラウンドループ[SC3_CONFIRM_TICK]へ
-# 全面変更): ボタン押下後は本物のROMだとRUN_SCREEN3_SLIDESHOW
-# (1-6枚目[各3フレーム]+7枚目[Epilogue1、15フレーム]を3周+Epilogue2
-# [30フレーム]+Epilogue3[90フレーム])を経由するようになり、実時間で
-# 見て数秒相当のbusy-waitをPythonエミュレータで1命令ずつ実際に実行
-# することになる(real ROM自体は無変更 - src/CYBER SHMUP.asmの
+# 全面変更、続けて2026-09-13"3ループの後に30フレ追加して 7枚目の表示
+# 時間伸ばして 1から6枚目の3フレウェイトを2フレに"で全ての待ちが
+# WAIT_N_FRAMES[WAIT_1_FRAME_UNITの束ね]へ統一・旧専用WAIT_3_FRAMESは
+# 撤去済み): ボタン押下後は本物のROMだとRUN_SCREEN3_SLIDESHOW(1-6枚目
+# [各2フレーム]+7枚目[Epilogue1、30フレーム]を3周+単独の30フレーム待ち+
+# Epilogue2[30フレーム]+Epilogue3[90フレーム])を経由するようになり、
+# 実時間で見て数秒相当のbusy-waitをPythonエミュレータで1命令ずつ実際に
+# 実行することになる(real ROM自体は無変更 - src/CYBER SHMUP.asmの
 # MISSION_DELAY_3SEC等の既存テストと同じ「テスト用にmem側だけ
-# ディレイを短縮するパッチ」をここでも適用する)。3フレーム待ち
-# (6884->5)・1フレーム単位待ち(2295->5)をこのcpuインスタンスの
-# bank0コピーだけ書き換える - トランポリンに正しく到達する「構造」を
-# 確認するためのテストであり、正確な待ち時間はここでは検証しない
-# (専用の構造チェック・直接呼び出しチェックを下に別途用意する)。
-# メインループ回数(3)・各待ちフレーム数(15/30/90)自体は下の構造
-# チェックで直接検証する。z80emu.pyは本物の割り込みを一切自動発火
-# しないため(このプロジェクト全体で繰り返し確立済みの制約)、この
-# ステップ実行中にSC3_CONFIRM_TICKが呼ばれることはない -
+# ディレイを短縮するパッチ」をここでも適用する)。1フレーム単位待ち
+# (2295->5)をこのcpuインスタンスのbank0コピーだけ書き換える -
+# トランポリンに正しく到達する「構造」を確認するためのテストであり、
+# 正確な待ち時間はここでは検証しない(専用の構造チェック・直接呼び出し
+# チェックを下に別途用意する)。メインループ回数(3)・各待ちフレーム数
+# 自体は下の構造チェックで直接検証する。z80emu.pyは本物の割り込みを
+# 一切自動発火しないため(このプロジェクト全体で繰り返し確立済みの
+# 制約)、このステップ実行中にSC3_CONFIRM_TICKが呼ばれることはない -
 # HTIMI_HOOKの設置自体・SC3_CONFIRM_TICK自身の動作は別途、直接呼び
 # 出しによる専用テストで検証する(下記)。
-_RSS_MAIN_LOOP_COUNT_ADDR = sym["RUN_SCREEN3_SLIDESHOW"] + 0x48  # "LD B,3" operand
-_WAIT_3F_DE_ADDR = sym["WAIT_3_FRAMES"] + 1                       # "LD DE,6884" operand (2 bytes)
+_RSS_MAIN_LOOP_COUNT_ADDR = sym["RUN_SCREEN3_SLIDESHOW"] + 0x59  # "LD B,3" operand (round97: shifted by the new manual name-table transfer loop)
 _WAIT_1F_DE_ADDR = sym["WAIT_1_FRAME_UNIT"] + 1                   # "LD DE,2295" operand (2 bytes)
 assert mem.banksA[0][_RSS_MAIN_LOOP_COUNT_ADDR - 0x4000] == 3
-assert mem.banksA[0][_WAIT_3F_DE_ADDR - 0x4000] == (6884 & 0xFF)
 assert (mem.banksA[0][_WAIT_1F_DE_ADDR - 0x4000]
         | (mem.banksA[0][_WAIT_1F_DE_ADDR + 1 - 0x4000] << 8)) == 2295
-mem.banksA[0][_WAIT_3F_DE_ADDR - 0x4000] = 5
-mem.banksA[0][_WAIT_3F_DE_ADDR + 1 - 0x4000] = 0
 mem.banksA[0][_WAIT_1F_DE_ADDR - 0x4000] = 5
 mem.banksA[0][_WAIT_1F_DE_ADDR + 1 - 0x4000] = 0
 
@@ -686,6 +684,25 @@ while cpu_setup.pc != _show_img1_addr and s < 2_000_000:
     s += 1
 check("RUN_SCREEN3_SLIDESHOW setup reaches SHOW_SC3_IMG1 within budget",
       cpu_setup.pc == _show_img1_addr)
+
+# ---- (2026-09-13、"で、当然だが 99h99h98は DIEIでガードしないと表示
+# 壊れる"): FLUSH_SHADOW_TO_VRAM(round97)と全く同じ理由でDI/EI保護が
+# 必要な、もう一つの同型サイト - このname-table書き込み自体もMulticolor
+# モード切替直後(既に表示期間中)に実行されるため、round97と同じ手動
+# ループ(99hは待ち不要・98hは29T厳密ウェイト)+DI/EI保護へ書き換え
+# 済み。アセンブル結果から直接構造検証する。
+_rss_base = sym["RUN_SCREEN3_SLIDESHOW"]
+check("RUN_SCREEN3_SLIDESHOW's name-table transfer starts with DI (0F3h) right after the "
+      "VDP mode WRTVDP calls",
+      out[_rss_base + 28] == 0xF3)
+check("RUN_SCREEN3_SLIDESHOW's name-table transfer's per-byte VRAM-data-port (98h) write is "
+      "immediately followed by the exact 29T recovery sequence (PUSH BC:POP BC:NOP:NOP), same "
+      "as FLUSH_SHADOW_TO_VRAM",
+      [out[_rss_base + 45], out[_rss_base + 46], out[_rss_base + 47], out[_rss_base + 48],
+       out[_rss_base + 49], out[_rss_base + 50]] == [0xD3, 0x98, 0xC5, 0xC1, 0x00, 0x00])
+check("RUN_SCREEN3_SLIDESHOW's name-table transfer re-enables interrupts (0FBh) right after "
+      "the loop, before moving on to the sprite-stop WRTVRM call",
+      out[_rss_base + 56] == 0xFB)
 # WRTVDP is a BIOS call (z80emu.py stubs it as a pure no-op, "register
 # state not tracked" per its own comment) so it can't be observed via
 # vdp_regs like the raw port OUT writes in PLAY_CONFIRM_BEEP's border
@@ -755,33 +772,32 @@ for i in range(1, 4):
 # constants - the "does the trampoline eventually complete" test above
 # deliberately shrinks these in its own private mem copy for step-count
 # feasibility, so the real values are checked here independently instead.
-# (2026-09-12、実機フィードバック"アニメが指示と違う 流れは まず1から
-# 6枚目を3フレ切り替え で7枚目の08を15フレ表示 ここまでを3ループ
-# その後09を30フレ 11を90フレ表示してMission 1表示"): offsets recomputed
-# for the new flow (1-6 x3フレーム + Epilogue1 x15フレーム, x3周; then
-# Epilogue2 x30フレーム; then Epilogue3 x90フレーム).
+# (2026-09-13、"で、3ループの後に30フレ追加して 7枚目の表示時間伸ばして
+# で、1から6枚目の3フレウェイトを2フレに 他の処理で重くなったんで"):
+# offsets recomputed for the new flow (1-6 x2フレーム [in SHOW_SC3_IMGx
+# itself, checked separately below] + Epilogue1 x30フレーム, x3周; then a
+# standalone 30フレーム待ち; then Epilogue2 x30フレーム; then Epilogue3
+# x90フレーム). WAIT_3_FRAMES itself is gone - 1-6枚目もWAIT_N_FRAMES
+# (B=2)へ統一済み。
 _real_out, _real_sym, _ = build_test.assemble()
 _r3s_base = _real_sym["RUN_SCREEN3_SLIDESHOW"]
 check("RUN_SCREEN3_SLIDESHOW's real (unshrunk) main-loop count is 3 "
       "(\"ここまでを3ループ\")",
-      _real_out[_r3s_base + 0x48] == 3)
-check("WAIT_3_FRAMES's real (unshrunk) DE count is 6884 (~50ms @ 3579545Hz / "
-      "26 T-states per DEC-DE loop iteration, \"1から6枚目を3フレ切り替え\")",
-      (_real_out[_real_sym["WAIT_3_FRAMES"] + 1]
-       | (_real_out[_real_sym["WAIT_3_FRAMES"] + 2] << 8)) == 6884)
+      _real_out[_r3s_base + 0x59] == 3)
 check("WAIT_1_FRAME_UNIT's real (unshrunk) DE count is 2295 (~1/60s @ 3579545Hz / "
       "26 T-states per DEC-DE loop iteration)",
       (_real_out[_real_sym["WAIT_1_FRAME_UNIT"] + 1]
        | (_real_out[_real_sym["WAIT_1_FRAME_UNIT"] + 2] << 8)) == 2295)
-check("RUN_SCREEN3_SLIDESHOW: Epilogue1(08.SC3)'s own wait is 15 frames "
-      "(\"7枚目の08を15フレ表示\")",
-      _real_out[_r3s_base + 0x60] == 15)
-check("RUN_SCREEN3_SLIDESHOW: Epilogue2(09.SC3)'s own wait is 30 frames "
-      "(\"その後09を30フレ\")",
-      _real_out[_r3s_base + 0x6B] == 30)
-check("RUN_SCREEN3_SLIDESHOW: Epilogue3(11.SC3)'s own wait is 90 frames "
-      "(\"11を90フレ表示してMission 1表示\")",
-      _real_out[_r3s_base + 0x73] == 90)
+check("RUN_SCREEN3_SLIDESHOW: Epilogue1(08.SC3)'s own wait is 30 frames "
+      "(\"7枚目の表示時間伸ばして\"、旧15フレームから倍増)",
+      _real_out[_r3s_base + 0x71] == 30)
+check("RUN_SCREEN3_SLIDESHOW: standalone 30-frame wait right after the 3rd loop "
+      "iteration completes, before Epilogue2 (\"3ループの後に30フレ追加して\")",
+      _real_out[_r3s_base + 0x78] == 0x06 and _real_out[_r3s_base + 0x79] == 30)
+check("RUN_SCREEN3_SLIDESHOW: Epilogue2(09.SC3)'s own wait is still 30 frames",
+      _real_out[_r3s_base + 0x81] == 30)
+check("RUN_SCREEN3_SLIDESHOW: Epilogue3(11.SC3)'s own wait is still 90 frames",
+      _real_out[_r3s_base + 0x89] == 90)
 
 
 # ---- (2026-09-12、実機フィードバック"表示は出来た だが音2回鳴らして

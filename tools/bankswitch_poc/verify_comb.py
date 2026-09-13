@@ -216,24 +216,23 @@ print("title's own BGM RAM copy of GAME_OVER (Stage1 game-over jingle) verified 
 
 # (2026-09-12、実機フィードバック"アニメが指示と違う 流れは まず1から
 # 6枚目を3フレ切り替え で7枚目の08を15フレ表示 ここまでを3ループ
-# その後09を30フレ 11を90フレ表示してMission 1表示"): ボタン押下後は
-# 本物のROMだとRUN_SCREEN3_SLIDESHOW(1-6枚目x3フレーム+Epilogue1
-# x15フレームを3周+Epilogue2x30フレーム+Epilogue3x90フレーム、確認音
-# SC3_CONFIRM_TICKをH.TIMI駆動でアニメーション全体を通じて再生)経由に
-# なり、実時間で数秒相当のbusy-waitをPythonエミュレータで1命令ずつ
-# 実行することになる。tools/title_screen/title_test.pyの「button
+# その後09を30フレ 11を90フレ表示してMission 1表示"、続けて2026-09-13
+# "3ループの後に30フレ追加して 7枚目の表示時間伸ばして 1から6枚目の
+# 3フレウェイトを2フレに"で全ての待ちがWAIT_N_FRAMESへ統一・旧専用
+# WAIT_3_FRAMESは撤去済み): ボタン押下後は本物のROMだと
+# RUN_SCREEN3_SLIDESHOW(1-6枚目x2フレーム+Epilogue1x30フレームを3周+
+# 単独の30フレーム待ち+Epilogue2x30フレーム+Epilogue3x90フレーム、
+# 確認音SC3_CONFIRM_TICKをH.TIMI駆動でアニメーション全体を通じて再生)
+# 経由になり、実時間で数秒相当のbusy-waitをPythonエミュレータで1命令
+# ずつ実行することになる。tools/title_screen/title_test.pyの「button
 # press trampolines」テストと同じ手法(real ROM自体は無変更、この
 # テスト用のtitle_bank0コピーだけディレイを短縮するパッチ)をここでも
 # 適用する。
-_RSS_MAIN_LOOP_COUNT_ADDR = tsym["RUN_SCREEN3_SLIDESHOW"] + 0x48  # "LD B,3" operand
-_WAIT_3F_DE_ADDR = tsym["WAIT_3_FRAMES"] + 1                       # "LD DE,6884" operand (2 bytes)
+_RSS_MAIN_LOOP_COUNT_ADDR = tsym["RUN_SCREEN3_SLIDESHOW"] + 0x59  # "LD B,3" operand (round97: shifted by the new manual name-table transfer loop)
 _WAIT_1F_DE_ADDR = tsym["WAIT_1_FRAME_UNIT"] + 1                   # "LD DE,2295" operand (2 bytes)
 assert mem.banksA[0][_RSS_MAIN_LOOP_COUNT_ADDR - 0x4000] == 3
-assert mem.banksA[0][_WAIT_3F_DE_ADDR - 0x4000] == (6884 & 0xFF)
 assert (mem.banksA[0][_WAIT_1F_DE_ADDR - 0x4000]
         | (mem.banksA[0][_WAIT_1F_DE_ADDR + 1 - 0x4000] << 8)) == 2295
-mem.banksA[0][_WAIT_3F_DE_ADDR - 0x4000] = 5
-mem.banksA[0][_WAIT_3F_DE_ADDR + 1 - 0x4000] = 0
 mem.banksA[0][_WAIT_1F_DE_ADDR - 0x4000] = 5
 mem.banksA[0][_WAIT_1F_DE_ADDR + 1 - 0x4000] = 0
 

@@ -14067,3 +14067,109 @@ NOP抜け)(2026-09-13、完了済み・実機フィードバック待ち)
   `tools/title_screen/title_test.py`(構造テストを新レイアウトに
   合わせ書き直し)、`tools/title_screen/CyberS Title.ascii16k.rom`・
   `rom/CyberS Comb.ascii16k.rom`(再ビルド)。
+
+
+## Round98: 実機フィードバック対応(SCREEN3スライドショー、ネームテーブル
+転送にも同じDI/EI+29T保護が必要と判明・修正)(2026-09-13、完了済み・
+実機フィードバック待ち)
+
+- ユーザー発言: "で、当然だが 99h99h98は DIEIでガードしないと表示壊れる"。
+  Round97で`FLUSH_SHADOW_TO_VRAM`(1画像あたりのVRAM転送)を修正した直後の
+  一般化された確認・追加指摘。これを受け、`title_test.asm`内の生VDP
+  ポート書き込み・BIOS VRAM転送呼び出し箇所を`grep`で横断的に監査
+  (`OUT (99h)|OUT (VDP_ADDR)|OUT (98h)|OUT (VDP_DATA)|CALL LDIRVM|
+  CALL WRTVDP|CALL WRTVRM`)。
+- **発見**: `RUN_SCREEN3_SLIDESHOW`冒頭のネームテーブル転送
+  (`LD HL,SC3_SHARED_NAME : LD DE,1800h : LD BC,SC3_SHARED_NAME_LEN :
+  CALL LDIRVM`)が、Round97でまさに指摘された懸念(Round97の
+  セッション引き継ぎメモに"理論上同じリスクを抱えている可能性がある"と
+  記載済みだった箇所)そのものだったと確認。Multicolorモード切替
+  (直前のWRTVDP)の直後=既に表示期間中に実行されるにも関わらず、BIOS
+  `LDIRVM`任せで98hへの29T間隔保証が無い、Round97と全く同型の脆弱性。
+- **修正**: `FLUSH_SHADOW_TO_VRAM`と全く同じ手動ループパターン(DI、
+  99hによるVRAMアドレス設定[待ち不要]、98hへの1byte書き込み毎に
+  `PUSH BC:POP BC:NOP:NOP`[29T]、768byteをDE 16bitダウンカウンタで
+  ループ、EI)へ書き換え。CLAUDE.md恒久ルール通りOTIR等は不使用。
+  この挿入により`RUN_SCREEN3_SLIDESHOW`内部の以降の全オフセットが
+  シフト(メインループ回数"LD B,3"のオペランドは+0x48→+0x59、
+  Epilogue1/2/3の待ちフレーム数オペランドは+0x60/+0x6B/+0x73→
+  +0x71/+0x7C/+0x84)。
+- `title_test.py`の該当オフセット定数を更新、新規に名前テーブル転送
+  自身のDI(offset+28)・98h書き込み直後の29Tシーケンス(offset+45〜50)・
+  EI(offset+56)を直接検証する構造テスト3件を追加。オフセット再計算の
+  過程で"LD B,n"のオペコード自身のオフセットとオペランドのオフセットを
+  取り違える一時的なオフバイワンミス(+0x70/+0x7B/+0x83)を作り込んだが、
+  バイトダンプで再確認し+0x71/+0x7C/+0x84へ自己修正。`python3
+  title_test.py` **68 passed, 0 failed**。`tools/bankswitch_poc/
+  verify_comb.py`の同オフセットも合わせて更新、全チェックPASS確認済み。
+- 変更ファイル: `tools/title_screen/title_test.asm`(ネームテーブル
+  転送を手動ループへ全面書き換え)、`tools/title_screen/title_test.py`・
+  `tools/bankswitch_poc/verify_comb.py`(オフセット更新+新規構造
+  テスト)、Comb ROM再ビルド。
+
+セッション引き継ぎメモ(2026-09-13、Round98完了直後):
+- Round97の`FLUSH_SHADOW_TO_VRAM`修正・今回のネームテーブル転送修正の
+  2箇所で、`title_test.asm`内の「表示期間中に98hへ書き込むBIOS/生
+  ポートアクセス」は全て監査・修正済みのはず(grepで横断確認したのは
+  この2箇所のみ該当、他に該当パターンは無かった)。もし依然として
+  実機で表示破損・速度低下が解消しない場合は、Round97のセッション
+  引き継ぎメモに記載した通りopenMSX等の高精度エミュレータでの実VRAM
+  調査に切り替える必要がある。
+- 今回の修正が実機で表示破損・速度低下を解消するかは実機再検証待ち。
+
+
+## Round99: SCREEN3スライドショーのタイミング調整(2026-09-13、完了済み・
+実機フィードバック待ち)
+
+- ユーザー報告: "一応さっきのRomはうまく動いた"(Round98のネームテーブル
+  転送修正で表示破損・速度低下が解消したことを確認)。続けて指示:
+  "で、3ループの後に30フレ追加して 7枚目の表示時間伸ばして で、1から
+  6枚目の3フレウェイトを2フレに 他の処理で重くなったんで"。
+- 3点対応: (1) 1〜6枚目の各表示待ちを3フレーム→2フレームへ短縮
+  (「他の処理で重くなった」ため全体のテンポを詰める)。(2) 7枚目
+  (Epilogue1/08.SC3)の表示時間を延長(具体的なフレーム数の指定は
+  無かったため、倍の15→30フレームへ暫定的に設定、実機での見え方
+  次第で再調整可能なようEQU値ではなく単純な即値のまま残した)。
+  (3) 3ループ(1〜7枚目の周回)が終わった直後、Epilogue2表示の前に
+  単独の30フレーム待ちを新規追加。
+- 実装: 旧来1〜6枚目専用だった`WAIT_3_FRAMES`(独自のDE即値6884を
+  埋め込んだ専用busy-waitルーチン)を完全に撤去し、既存の汎用
+  `WAIT_N_FRAMES`(Bにフレーム数をセットしてCALLする既存の一般化
+  ルーチン、Epilogue1/2/3が元々使っていたもの)へ1〜6枚目も統一。
+  `SHOW_SC3_IMG1`〜`SHOW_SC3_IMG6`の末尾`JP WAIT_3_FRAMES`を全て
+  `LD B,2 : JP WAIT_N_FRAMES`へ置換。`RUN_SCREEN3_SLIDESHOW`の
+  `RSS_MAIN_LOOP`内、Epilogue1表示直後の待ちフレーム数を15→30へ
+  変更、ループ終了直後(`DJNZ RSS_MAIN_LOOP`の次)に`LD B,30 : CALL
+  WAIT_N_FRAMES`を追加。
+- この変更により`RUN_SCREEN3_SLIDESHOW`内部のバイトオフセットが再度
+  シフト(Epilogue1待ちフレーム数オペランドはRound98の+0x71のまま
+  [命令サイズ不変のため偶然一致]、新規追加した単独30フレーム待ちの
+  オペランドは+0x79、Epilogue2待ちフレーム数オペランドは+0x7C→
+  +0x81、Epilogue3待ちフレーム数オペランドは+0x84→+0x89)。
+  メインループ回数"LD B,3"のオペランド(+0x59)はループ本体より前に
+  あるため無変更。
+- `title_test.py`の該当箇所を更新: `WAIT_3_FRAMES`関連の定数チェック・
+  ショート化パッチを削除(ルーチン自体が無くなったため)、
+  `WAIT_1_FRAME_UNIT`のショート化パッチのみ残す。実ROM(unshrunk)の
+  構造チェックをEpilogue1=30フレーム・新規単独30フレーム待ち
+  (offset+0x78のLD B opcode+0x79のoperand)・Epilogue2=30フレーム
+  (+0x81)・Epilogue3=90フレーム(+0x89)へ更新。`python3 title_test.py`
+  **68 passed, 0 failed**。`tools/bankswitch_poc/verify_comb.py`の
+  同型の`WAIT_3_FRAMES`参照も合わせて削除・修正、Comb ROM再ビルド・
+  `verify_comb.py`全チェックPASS確認済み。
+- 変更ファイル: `tools/title_screen/title_test.asm`(WAIT_3_FRAMES
+  撤去+SHOW_SC3_IMG1-6/RUN_SCREEN3_SLIDESHOWの待ち時間変更)、
+  `tools/title_screen/title_test.py`・`tools/bankswitch_poc/
+  verify_comb.py`(オフセット更新)、Comb ROM再ビルド。
+
+セッション引き継ぎメモ(2026-09-13、Round99完了直後):
+- **保留・実機フィードバック待ち**: 7枚目(Epilogue1)の延長幅(15→30、
+  倍増)は具体的な指定が無かったため暫定値 - 実機で見て短い/長いと
+  感じたら`title_test.asm`の`RSS_MAIN_LOOP`内の該当`LD B,30`
+  (Epilogue1直後の1個目)を直接調整すればよい。1〜6枚目の2フレーム化・
+  3ループ後の追加30フレームも含め、いずれも実機での見え方次第で
+  再調整の可能性あり。
+- Round98(ネームテーブル転送のDI/EI+29T化)は実機で表示破損・速度
+  低下の解消が確認された("一応さっきのRomはうまく動いた")。これに
+  より、SCREEN3スライドショーの表示破損問題(Round95〜98にわたる
+  一連の調査)は一区切りとみなしてよい。
