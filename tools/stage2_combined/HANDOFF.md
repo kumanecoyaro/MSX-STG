@@ -15443,3 +15443,20 @@ NOP抜け)(2026-09-13、完了済み・実機フィードバック待ち)
 - 変更ファイル: `tools/ebuz_test/`内(`ebuz_test.asm`/
   `ebuz_test_verify.py`を改訂、`EbuzTest.rom`再ビルド、
   `render_check.py`/`gif_check.py`で再レンダリング)。
+
+## Round120: 弾速をさらに6px/frameへ(実機フィードバック対応・
+完了済み、プロトタイプのまま本編未組み込み)(2026-09-13)
+
+- ユーザー: "遅いな6pxで"。Round119の固定2px/frameでもまだ遅いとの
+  指摘で`EBUZ_BULLET_SPEED`を2→6へ変更(構造・処理自体は無変更、
+  EQU値のみの変更)。
+- `ebuz_test_verify.py`のハードコード検証(`SPEED == 2`)も`SPEED == 6`
+  へ更新。全33件、一時的に2へ戻してハードコード検証が正しくFAILする
+  ことを確認した上で復元・再PASS済み(動的にシミュレートする他の
+  テスト群は新速度に自動追従、変更不要)。
+- レンダリング・タイムラインGIF再生成、ROM再ビルド。
+- **本編への影響なし**: `src/CYBER SHMUP.asm`・`combined_test.asm`
+  いずれも無変更のため、既存の回帰テスト・Comb ROMは今回変更なし。
+- 変更ファイル: `tools/ebuz_test/`内(`ebuz_test.asm`/
+  `ebuz_test_verify.py`を改訂、`EbuzTest.rom`再ビルド、
+  `render_check.py`/`gif_check.py`で再レンダリング)。

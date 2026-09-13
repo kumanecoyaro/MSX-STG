@@ -116,14 +116,15 @@ BULLET_HALF_CODE = sym["BULLET_HALF_CODE"]
 BULLET_COLOR = sym["EBUZ_BULLET_COLOR"]
 BULLET1_X = sym["EBUZ_BULLET1_X"]   # state1弾: 192-16=176
 BULLET23_X = sym["EBUZ_BULLET_X"]   # state2弾2枚: 192のまま
-# (2026-09-13追記その5、実機フィードバック対応: "ようやくかよ 弾遅いん
-# で速くしてくれ 2pxで") 前回の1px/2px交互(平均1.5px/frame)方式を撤回、
-# 単純な固定速度へ変更。
+# (2026-09-13追記その5/その6、実機フィードバック対応: "ようやくかよ
+# 弾遅いんで速くしてくれ 2pxで"→"遅いな6pxで") 1px/2px交互
+# (平均1.5px/frame)方式を撤回し単純な固定速度へ、2px/frameでもまだ
+# 遅いとの指摘で最終的に6px/frameへ。
 SPEED = sym["EBUZ_BULLET_SPEED"]
-check(f"EBUZ_BULLET_SPEED is exactly the requested flat 2px/frame "
-      f"(not the old 1px/2px-alternating average), pinned as a literal, "
-      f"not just self-consistency with the simulation below",
-      SPEED == 2)
+check(f"EBUZ_BULLET_SPEED is exactly the requested flat 6px/frame, "
+      f"pinned as a literal, not just self-consistency with the "
+      f"simulation below",
+      SPEED == 6)
 SPR_HIDE_Y = sym["SPR_HIDE_Y"]
 SPR_TERM_Y = sym["SPR_TERM_Y"]
 Y1_STORED = sym["EBUZ_BULLET1_STORED_Y"]

@@ -66,8 +66,8 @@
 ;     意味のまま維持)。
 ;   - 弾速半減: 3px/frameを整数のまま厳密に半分(1.5px/frame平均)に
 ;     するため、1px/2pxを1フレームおきに交互適用する方式を採用したが、
-;     後のRound(2026-09-13追記その5、"弾遅いんで速くしてくれ 2pxで")
-;     で単純な固定2px/frameへ再変更、交互方式は撤去済み(詳細は
+;     後のRound(その5"弾遅いんで速くしてくれ 2pxで"→その6"遅いな
+;     6pxで")で単純な固定速度へ再変更、交互方式は撤去済み(詳細は
 ;     EBUZ_BULLET_SPEEDのEQU定義コメント参照)。
 ; 本ファイルは本編(src/CYBER SHMUP.asm)に組み込む前の独立した
 ; プロトタイプ("専用の空ステージ1")。背景は完全に空(code0の空白タイル
@@ -117,9 +117,11 @@ EBUZ_BULLET_X      EQU 192   ; Ebuz本体のXから発射(暫定)、state2弾(Y0
 EBUZ_BULLET1_X     EQU EBUZ_BULLET_X-16   ; state1弾は16px左へ移動(2026-09-13追記)
 ; 弾速(2026-09-13追記その5、実機フィードバック対応: "ようやくかよ
 ; 弾遅いんで速くしてくれ 2pxで"): 前回の半減(1px/2px交互で平均
-; 1.5px/frame)を撤回し、単純な固定2px/frameへ変更。1px/2px交互方式・
+; 1.5px/frame)を撤回し、単純な固定速度へ変更。1px/2px交互方式・
 ; EBUZ_FRAME_PARITYトグルは不要になったため削除。
-EBUZ_BULLET_SPEED EQU 2
+; (2026-09-13追記その6、実機フィードバック対応: "遅いな6pxで")
+; 2px/frameでもまだ遅いとの指摘で6px/frameへ再変更。
+EBUZ_BULLET_SPEED EQU 6
 ; TMS9918のY属性は実際の表示開始行より1小さい値を書く規約
 ; (tools/stage1_render_check.pyのrender_full()と同じ"y1=(y+1)&0xFF"
 ; デコードに対応)。state1の弾はY=16(=EBUZ_ROW*8、本体位置基準の
