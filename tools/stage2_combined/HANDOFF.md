@@ -13902,3 +13902,47 @@ Y段違い+Enemy6速度半減、Stage2自機爆発の自機非表示タイミン
   `tools/title_screen/title_test.py`(回帰テスト2件追加)、
   `tools/title_screen/CyberS Title.ascii16k.rom`・
   `rom/CyberS Comb.ascii16k.rom`(再ビルド)。
+
+## Round95: 実機フィードバック対応(SCREEN3スライドショーの表示破損・
+速度低下の根本原因特定・修正 - FLUSH_SHADOW_TO_VRAMをDI/EIで保護)
+(2026-09-13、完了済み・実機フィードバック待ち)
+
+- ユーザー報告(スクリーンショット添付、真っ赤にはならなくなったが):
+  "以前のように真っ赤にはならないが 表示が壊れるな それにかなり処理が
+  遅くなる 関係ない部分まで書き換えてる感じ"。
+- **根本原因**: Round94で`SC3_CONFIRM_TICK`(H.TIMI駆動)にVDP R7
+  ボーダー同期を追加したが、既存の`FLUSH_SHADOW_TO_VRAM`(SHADOW_PGT
+  2048byteをBIOS LDIRVMでVRAMへ一括転送するルーチン、画像切り替えの
+  たびに毎回呼ばれる)がDI/EIで一切保護されていなかった。VDPのVRAM
+  アドレス設定は「レジスタポート(99h)へ下位→上位の2byteを書く」
+  プロトコルで、VDP内部に「次の1byteがどちらの半分か」を覚えるラッチを
+  持つ。LDIRVMの転送処理が実行中(内部的にOUT (98h)の連続書き込みへ
+  展開される)にH.TIMIが発火し、そこでSC3_CONFIRM_TICKがVDP R7へ
+  2byte書き込む(ボーダー同期のためOUT (99h)を2回)と、このラッチの
+  状態がLDIRVMの意図と無関係に上書きされてしまい、割り込みから戻った
+  後の残りのデータがVRAM上の全く無関係なアドレスへ書き込まれる
+  (=「関係ない部分まで書き換えてる感じ」の直接的な説明。処理速度低下も
+  VRAM破損に起因する副次的な症状と考えられる)。
+- **修正**: `FLUSH_SHADOW_TO_VRAM`の`CALL LDIRVM`をDI/EIで囲み、転送
+  全体をH.TIMI発火から保護(Round38でSFX 12箇所のPSG書き込みペアを
+  DI/EI保護したのと全く同じ考え方)。この保護により、Round94で追加した
+  ボーダー同期自体は削除せず維持したまま安全に共存できる。
+- 新規回帰テスト2件(`FLUSH_SHADOW_TO_VRAM`先頭がDI(0F3h)、
+  `CALL LDIRVM`直後がEI(0FBh)であることの構造的検証 - z80emu.py自体は
+  本物の割り込みを発火しないため実際の競合再現による検証はできないが、
+  保護の枠組み自体は検証できる)。title_test.py全64件PASS。Comb ROM
+  再ビルド・`verify_comb.py`全チェックPASSの上、標準方針によりComb
+  ROMのみ送付。
+
+セッション引き継ぎメモ(2026-09-13、Round95完了直後):
+- Round94で開示した「SCREEN3+VDP R7書き込みで画面が赤一色になる」
+  既知の不具合は、今回のユーザー報告で「真っ赤にはならない」ことが
+  確認された - つまりその不具合自体は別の要因(当時の実装や状況)に
+  よるもので、今回のFLUSH_SHADOW_TO_VRAM未保護バグとは別問題だった
+  可能性が高い。今回の修正でDI/EI保護を追加したことで、表示破損・
+  速度低下の両方が解消するか実機での再検証が必要。
+- 変更ファイル: `tools/title_screen/title_test.asm`
+  (`FLUSH_SHADOW_TO_VRAM`をDI/EIで保護)、
+  `tools/title_screen/title_test.py`(回帰テスト2件追加)、
+  `tools/title_screen/CyberS Title.ascii16k.rom`・
+  `rom/CyberS Comb.ascii16k.rom`(再ビルド)。

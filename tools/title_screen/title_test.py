@@ -868,6 +868,26 @@ check("SC3_CONFIRM_TICK: the border-color sequence matches the SAME REDGRAD/BORD
       "PLAY_CONFIRM_BEEP uses, swept once per pass and repeated for the 2nd pass",
       r7_writes_ct == expected_border)
 
+# ---- (2026-09-13、実機フィードバック"以前のように真っ赤にはならないが
+# 表示が壊れるな それにかなり処理が遅くなる 関係ない部分まで書き換えてる
+# 感じ"): 根本原因はFLUSH_SHADOW_TO_VRAM(BIOS LDIRVMでのVRAM一括転送)が
+# DI/EIで保護されておらず、転送の途中でH.TIMI(SC3_CONFIRM_TICK)が発火して
+# VDP R7へ2byte書き込むと、VDPの内部アドレスラッチが壊れ残りのデータが
+# 無関係な番地へ書き込まれる(=「関係ない部分まで書き換えてる感じ」)ため
+# と判明。FLUSH_SHADOW_TO_VRAM冒頭がDI・CALL LDIRVM直後がEIになっている
+# ことを構造的に検証する(z80emu.py自体は本物の割り込みを発火しないため
+# 実際の競合そのものは検証できないが、少なくとも保護の枠組み自体が
+# 存在することは検証できる)。
+_fstv = sym["FLUSH_SHADOW_TO_VRAM"]
+check("FLUSH_SHADOW_TO_VRAM starts with DI (0F3h) - protects the VRAM transfer from being "
+      "interrupted mid-sequence by SC3_CONFIRM_TICK's own VDP R7 border writes, which would "
+      "otherwise desync the VDP's internal set-address latch and corrupt unrelated VRAM "
+      "(\"関係ない部分まで書き換えてる感じ\")",
+      out[_fstv] == 0xF3)
+check("FLUSH_SHADOW_TO_VRAM re-enables interrupts (0FBh) immediately after CALL LDIRVM "
+      "returns, before its own RET",
+      out[_fstv + 13] == 0xFB and out[_fstv + 14] == 0xC9)
+
 # ---- off-by-one check (round40's own established convention: the tick
 # that LOADS a new row already plays it once, so the timer is seeded with
 # duration-1 more ticks - re-verify this holds here too).
