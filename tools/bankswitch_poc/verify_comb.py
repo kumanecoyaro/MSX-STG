@@ -214,13 +214,36 @@ assert [mem.flat[_go_chC_ram + i] for i in range(len(_go_chC))] == list(_go_chC)
     "title's own BGM RAM copy: GAME_OVER chC mismatch (Stage1 game-over jingle)"
 print("title's own BGM RAM copy of GAME_OVER (Stage1 game-over jingle) verified byte-correct")
 
+# (2026-09-12、"タイトルのバンクに...10回ループでMission 1表示に"、
+# 続けて"別に割り込みで同期取る必要はないぞ 適当にNopループでいい
+# 3フレ分の"): ボタン押下後は本物のROMだとRUN_SCREEN3_SLIDESHOW
+# (6枚x10周+締めの3枚、確認音PLAY_CONFIRM_BEEPをアニメーション全体で
+# 繰り返し再生)経由になり、実時間で数秒〜十数秒相当のbusy-waitを
+# Pythonエミュレータで1命令ずつ実行することになる。tools/title_screen/
+# title_test.pyの「button press trampolines」テストと同じ手法(real ROM
+# 自体は無変更、このテスト用のtitle_bank0コピーだけディレイ/ループ回数を
+# 短縮するパッチ)をここでも適用する。
+_RSS_MAIN_LOOP_COUNT_ADDR = tsym["RUN_SCREEN3_SLIDESHOW"] + 0x23  # "LD B,10" operand
+_WAIT_3F_DE_ADDR = tsym["WAIT_3_FRAMES"] + 1                       # "LD DE,6884" operand (2 bytes)
+_SC3D_B_INIT_ADDR = tsym["SCREEN3_DELAY_NESTED"] + 1               # "LD B,0" operand
+_SC3D_C_INIT_ADDR = tsym["SCREEN3_DELAY_NESTED"] + 3               # "LD C,0" operand
+assert mem.banksA[0][_RSS_MAIN_LOOP_COUNT_ADDR - 0x4000] == 10
+assert mem.banksA[0][_WAIT_3F_DE_ADDR - 0x4000] == (6884 & 0xFF)
+assert mem.banksA[0][_SC3D_B_INIT_ADDR - 0x4000] == 0
+assert mem.banksA[0][_SC3D_C_INIT_ADDR - 0x4000] == 0
+mem.banksA[0][_RSS_MAIN_LOOP_COUNT_ADDR - 0x4000] = 1
+mem.banksA[0][_WAIT_3F_DE_ADDR - 0x4000] = 5
+mem.banksA[0][_WAIT_3F_DE_ADDR + 1 - 0x4000] = 0
+mem.banksA[0][_SC3D_B_INIT_ADDR - 0x4000] = 2
+mem.banksA[0][_SC3D_C_INIT_ADDR - 0x4000] = 2
+
 cpu.sim_trig_a = True
 print("simulated PUSH START (sim_trig_a=True)")
 
 GAME_INIT = gsym["INIT"]
 switched0 = False
 steps0b = 0
-while steps0b < 2_000_000:
+while steps0b < 10_000_000:
     if cpu.pc == GAME_INIT and mem.bankA == 2:
         switched0 = True
         break
@@ -437,7 +460,11 @@ assert cpu2.pc == WAIT_FOR_START, "title screen (2nd run) never reached WAIT_FOR
 cpu2.sim_trig_a = True
 steps_g1 = 0
 switched_g1 = False
-while steps_g1 < 2_000_000:
+# 2026-09-12のSCREEN3スライドショー統合によりtitle_bank0(mem/mem2/mem3/
+# mem4全てで共有される同一bytearray)は既に上のmemセクションでディレイ
+# 短縮パッチ済み - それでも1周分(main_loop_count=1でもPLAY_CONFIRM_BEEP
+# 複数回分)は依然として旧来の2,000,000を超えるため予算を拡大する。
+while steps_g1 < 10_000_000:
     if cpu2.pc == GAME_INIT and mem2.bankA == 2:
         switched_g1 = True
         break
@@ -566,7 +593,8 @@ assert cpu3.pc == WAIT_FOR_START, "title screen (3rd run) never reached WAIT_FOR
 cpu3.sim_trig_a = True
 steps_s2g1 = 0
 switched_s2g1 = False
-while steps_s2g1 < 2_000_000:
+# (title_bank0のディレイ短縮パッチについては上のmem2セクションのコメント参照)
+while steps_s2g1 < 10_000_000:
     if cpu3.pc == GAME_INIT and mem3.bankA == 2:
         switched_s2g1 = True
         break
@@ -728,7 +756,8 @@ assert cpu4.pc == WAIT_FOR_START, "title screen (4th run) never reached WAIT_FOR
 cpu4.sim_trig_a = True
 steps_e1 = 0
 switched_e1 = False
-while steps_e1 < 2_000_000:
+# (title_bank0のディレイ短縮パッチについては上のmem2セクションのコメント参照)
+while steps_e1 < 10_000_000:
     if cpu4.pc == GAME_INIT and mem4.bankA == 2:
         switched_e1 = True
         break

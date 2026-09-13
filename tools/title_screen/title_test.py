@@ -460,17 +460,58 @@ check("WAIT_FOR_START never touches the bank-select ports while looping",
 cpu, mem = fresh_cpu()
 run_to_wait(cpu)
 switch_log_at_wait = list(mem.switch_log)  # round40: exclude INIT_BGM's own 2 switches (see above)
+
+# (2026-09-12、"タイトルのバンクに...10回ループでMission 1表示に"、
+# 続けて"別に割り込みで同期取る必要はないぞ 適当にNopループでいい
+# 3フレ分の"): ボタン押下後は本物のROMだとRUN_SCREEN3_SLIDESHOW
+# (6枚x10周+締めの3枚、確認音PLAY_CONFIRM_BEEPをアニメーション全体で
+# 繰り返し再生)を経由するようになり、実時間で見て数秒〜十数秒相当の
+# busy-waitをPythonエミュレータで1命令ずつ実際に実行することになる
+# (real ROM自体は無変更 - src/CYBER SHMUP.asmのMISSION_DELAY_3SEC等の
+# 既存テストと同じ「テスト用にmem側だけディレイを短縮するパッチ」を
+# ここでも適用する)。メインループ回数(10->1)・3フレーム待ち(6884->5)・
+# 0.5/1/3秒ネストループのB/C初期値(0->2)をこのcpuインスタンスの
+# bank0コピーだけ書き換える - トランポリンに正しく到達する「構造」を
+# 確認するためのテストであり、実際の10周・正確な待ち時間はここでは
+# 検証しない(それぞれ専用の構造チェック・直接呼び出しチェックを
+# 下に別途用意する)。
+_RSS_MAIN_LOOP_COUNT_ADDR = sym["RUN_SCREEN3_SLIDESHOW"] + 0x23  # "LD B,10" operand
+_WAIT_3F_DE_ADDR = sym["WAIT_3_FRAMES"] + 1                       # "LD DE,6884" operand (2 bytes)
+_SC3D_B_INIT_ADDR = sym["SCREEN3_DELAY_NESTED"] + 1               # "LD B,0" operand
+_SC3D_C_INIT_ADDR = sym["SCREEN3_DELAY_NESTED"] + 3               # "LD C,0" operand
+assert mem.banksA[0][_RSS_MAIN_LOOP_COUNT_ADDR - 0x4000] == 10
+assert mem.banksA[0][_WAIT_3F_DE_ADDR - 0x4000] == (6884 & 0xFF)
+assert mem.banksA[0][_SC3D_B_INIT_ADDR - 0x4000] == 0
+assert mem.banksA[0][_SC3D_C_INIT_ADDR - 0x4000] == 0
+mem.banksA[0][_RSS_MAIN_LOOP_COUNT_ADDR - 0x4000] = 1
+mem.banksA[0][_WAIT_3F_DE_ADDR - 0x4000] = 5
+mem.banksA[0][_WAIT_3F_DE_ADDR + 1 - 0x4000] = 0
+mem.banksA[0][_SC3D_B_INIT_ADDR - 0x4000] = 2
+mem.banksA[0][_SC3D_C_INIT_ADDR - 0x4000] = 2
+
 cpu.sim_trig_a = True
 steps = 0
+confirm_beep_addr = sym["PLAY_CONFIRM_BEEP"]
+confirm_beep_hits = 0
 # Round69 follow-up: PLAY_CONFIRM_BEEP now plays the much longer
 # "Rising alert chirp"->"Descending buzzer" v3 sequence (53 rows x2,
 # ~800K Z80 instruction-steps) before the trampoline hops even begin -
 # the old 100,000-step budget (sized for round63's short 12-step beep)
-# is no longer enough to reach the trampoline at all.
-while cpu.pc != 0x4010 and steps < 2_000_000:
+# is no longer enough to reach the trampoline at all. Round2026-09-12's
+# slideshow now calls it repeatedly (once per main-loop pass + once per
+# epilogue beat) instead of just once, so the budget is widened further.
+while cpu.pc != 0x4010 and steps < 10_000_000:
+    if cpu.pc == confirm_beep_addr:
+        confirm_beep_hits += 1
     cpu.step()
     steps += 1
 check("button press trampolines to Stage1's own INIT address (4010h)", cpu.pc == 0x4010)
+check("PLAY_CONFIRM_BEEP is called repeatedly (once per main-loop pass + once per epilogue beat) "
+      "instead of the old single upfront call, so the sound+border effect keeps looping throughout "
+      "the whole slideshow animation, per \"変わりにスタートのサウンドと枠の色の演出を "
+      "このアニメの間ループ\" - with the shrunk 1-pass main loop above, expect exactly "
+      "1(main pass) + 4(epilogue1 x4) + 1(epilogue2) + 1(epilogue3) = 7 calls",
+      confirm_beep_hits == 7)
 # 実機フィードバック対応("バンク切り替えに失敗してる タイトルでボタンを
 # 押すとフリーズ"): hop1/hop2実行中〜Stage1自身のDIが効くまでの間、
 # 割り込みが許可されたままだとBGM_TICKの古いH.TIMIフックがwindow Aの
@@ -612,6 +653,95 @@ check("PLAY_CONFIRM_BEEP: leaves the border back at black (1) on return - the gr
 check("PLAY_CONFIRM_BEEP: never writes VDP R7 to a value outside the approved REDGRAD "
       "palette (would show as a color glitch, not a red flash)",
       all(v in REDGRAD for v in r7_writes))
+
+
+# ---- (2026-09-12、"タイトルのバンクに...10回ループでMission 1表示に"
+# +"ではさっきの6枚の後に一枚目を0.5秒 これを4ループ その後に2枚目を
+# 1秒 3枚目を3秒表示"): SCREEN3スライドショー本体(RUN_SCREEN3_
+# SLIDESHOW・SHOW_SC3_IMG1-6・SHOW_SC3_EPI1-3)の回帰テスト。
+sys.path.insert(0, os.path.join(REPO, "tools", "screen3_test"))
+import screen3_gen
+import screen3_epilogue_gen
+
+SC3_SHARED_NAME_bytes = screen3_gen.shared_name_table()
+
+# --- setup: VDPモード切替(M2ビット)+ネームテーブル書き込み+スプライト
+# 全停止が、メインループへ入る(=最初にSHOW_SC3_IMG1へ到達する)より前に
+# 済んでいることを検証する。
+cpu_setup, mem_setup = fresh_cpu()
+run_to_wait(cpu_setup)
+cpu_setup.pc = sym["RUN_SCREEN3_SLIDESHOW"]
+_show_img1_addr = sym["SHOW_SC3_IMG1"]
+s = 0
+while cpu_setup.pc != _show_img1_addr and s < 2_000_000:
+    cpu_setup.step()
+    s += 1
+check("RUN_SCREEN3_SLIDESHOW setup reaches SHOW_SC3_IMG1 within budget",
+      cpu_setup.pc == _show_img1_addr)
+# WRTVDP is a BIOS call (z80emu.py stubs it as a pure no-op, "register
+# state not tracked" per its own comment) so it can't be observed via
+# vdp_regs like the raw port OUT writes in PLAY_CONFIRM_BEEP's border
+# flash can - check the LD B,0EAh:LD C,1 operand bytes feeding the CALL
+# WRTVDP structurally instead (same technique as the delay/loop-count
+# constant checks below).
+check("RUN_SCREEN3_SLIDESHOW setup: VDP R1 = 0EAh (Graphics1's 0E2h + M2 bit for Multicolor, "
+      "the tools/screen3_test/screen3_test.asm sequence confirmed working on real hardware)",
+      out[sym["RUN_SCREEN3_SLIDESHOW"] + 1] == 0xEA
+      and out[sym["RUN_SCREEN3_SLIDESHOW"] + 3] == 1)
+check("RUN_SCREEN3_SLIDESHOW setup: shared NAME table written to VRAM 1800h (all 6 main "
+      "images share byte-identical NAME data, confirmed by screen3_gen.py)",
+      bytes(cpu_setup.vram[0x1800:0x1800 + len(SC3_SHARED_NAME_bytes)]) == SC3_SHARED_NAME_bytes)
+check("RUN_SCREEN3_SLIDESHOW setup: sprite attribute table's first Y forced to 0D1h "
+      "(stop marker) - this slideshow has no sprite pattern data of its own",
+      cpu_setup.vram[0x1B00] == 0xD1)
+
+# --- decode correctness: call each SHOW_SC3_IMGx/EPIx directly, in the
+# required order (each depends on SHADOW_PGT already holding the
+# previous frame for its XOR-diff), and check VRAM 0000h-07FFh (the
+# flushed PGT) matches the real source image exactly after each call.
+cpu_dec, mem_dec = fresh_cpu()
+run_to_wait(cpu_dec)
+for i in range(1, 7):
+    call_routine(cpu_dec, f"SHOW_SC3_IMG{i}")
+    expected = screen3_gen.pattern_generator(i)
+    check(f"SHOW_SC3_IMG{i}: VRAM 0000h-07FFh (flushed PGT) matches Image{i:02d}.SC3 exactly",
+          bytes(cpu_dec.vram[0:0x800]) == expected)
+for i in range(1, 4):
+    call_routine(cpu_dec, f"SHOW_SC3_EPI{i}")
+    expected = screen3_epilogue_gen.epilogue_pgt(i)
+    check(f"SHOW_SC3_EPI{i}: VRAM 0000h-07FFh (flushed PGT) matches Epilogue{i}.png exactly "
+          "(encoded via screen3_epilogue_gen.py's PNG->Multicolor quantizer)",
+          bytes(cpu_dec.vram[0:0x800]) == expected)
+
+# --- structural checks on the REAL (unpatched) ROM's own delay/loop
+# constants - the "does the trampoline eventually complete" test above
+# deliberately shrinks these in its own private mem copy for step-count
+# feasibility, so the real values are checked here independently instead.
+_real_out, _real_sym, _ = build_test.assemble()
+check("RUN_SCREEN3_SLIDESHOW's real (unshrunk) main-loop count is 10 "
+      "(\"10回ループでMission 1表示に\")",
+      _real_out[_real_sym["RUN_SCREEN3_SLIDESHOW"] + 0x23] == 10)
+check("WAIT_3_FRAMES's real (unshrunk) DE count is 6884 (~50ms @ 3579545Hz / "
+      "26 T-states per DEC-DE loop iteration, \"3フレ分\")",
+      (_real_out[_real_sym["WAIT_3_FRAMES"] + 1]
+       | (_real_out[_real_sym["WAIT_3_FRAMES"] + 2] << 8)) == 6884)
+check("WAIT_HALF_SEC's real D preset is 2 (SCREEN3_DELAY_NESTED calibrated to "
+      "~0.294s/unit like MISSION_DELAY_3SEC, \"0.5秒\")",
+      _real_out[_real_sym["WAIT_HALF_SEC"] + 1] == 2)
+check("WAIT_1_SEC's real D preset is 3 (\"1秒\")",
+      _real_out[_real_sym["WAIT_1_SEC"] + 1] == 3)
+check("WAIT_3_SEC's real D preset is 10 (same calibration constant as "
+      "src/CYBER SHMUP.asm's own MISSION_DELAY_3SEC, \"3秒\")",
+      _real_out[_real_sym["WAIT_3_SEC"] + 1] == 10)
+
+# --- "一枚目を0.5秒 これを4ループ": SHOW_SC3_EPI1 itself is drawn once
+# (a short straight-line routine, no internal repeat loop) - the x4
+# repetition of PLAY_CONFIRM_BEEP+WAIT_HALF_SEC lives in RUN_SCREEN3_
+# SLIDESHOW's own caller loop, already covered by the PLAY_CONFIRM_BEEP
+# call-count check (confirm_beep_hits==7) above.
+check("SHOW_SC3_EPI1 is a short straight-line routine (draw once, no internal repeat loop - "
+      "the x4 repetition lives in RUN_SCREEN3_SLIDESHOW's own caller loop)",
+      sym["SHOW_SC3_EPI2"] - sym["SHOW_SC3_EPI1"] < 32)
 
 
 print()

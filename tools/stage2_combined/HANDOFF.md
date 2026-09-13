@@ -13288,3 +13288,118 @@ Y段違い+Enemy6速度半減、Stage2自機爆発の自機非表示タイミン
   確認済み。ROM総サイズ5954byte(単一16KBバンクに大幅な余裕)。
 - **保留・実機フィードバック待ち**: 差分圧縮版ROMを送付済み、実機
   での見え方は次回フィードバック待ち。
+
+## Round87: SCREEN3スライドショーをタイトルバンクへ統合+締めの3枚を
+新規追加(2026-09-12、完了済み・実機フィードバック待ち)
+
+- ユーザー指示: "タイトルのバンクに 一旦タイトル表示からMission 1
+  表示の間に差し込んで10回ループでMission 1表示に"。Round82-86で
+  確立済みのXOR差分圧縮方式(`tools/screen3_test/`の独立テストツール)
+  を`tools/title_screen/title_test.asm`のWAIT_FOR_START(ボタン押下)
+  〜Stage1トランポリンの間へ本組み込み。
+- **フレーム待ち方式の変更**: 当初は`tools/screen3_test`と同じBIOS
+  標準JIFFY依存のwait方式を移植しようとしたが、このファイル(title_
+  test.asm)自身のBGM_TICKがH.TIMIを独占する設計(ただし実際には
+  Round42以降"タイトル画面自身はBGM再生しない"方針でHTIMI_HOOK自体を
+  一度も設置しないため、実は無関係だったと後に判明)を懸念し、専用の
+  `SCREEN3_TICK`RAMカウンタをBGM_TICK内でインクリメントする実装を
+  一旦追加した。その後ユーザーから"別に割り込みで同期取る必要はない
+  ぞ 適当にNopループでいい3フレ分の"との指示を受け、この割り込み
+  依存の設計を全面撤回 - `SCREEN3_TICK`EQU・BGM_TICKへの追加コード
+  を削除し、代わりにsrc/CYBER SHMUP.asmの`MISSION_DELAY_3SEC`と同じ
+  「割り込み/JIFFYに一切依存しないZ80クロック直接カウントのbusy-
+  wait」方式へ変更した。3フレーム分(約50ms)は`CONFIRM_GAP_DELAY`と
+  同型のDE 16bitデクリメントループ(26T-state/iteration、N=6884)、
+  0.5/1/3秒はDE単体では桁が足りない(16bit上限は約476ms分)ため
+  `MISSION_DELAY_3SEC`と同型のD×B×C三重ループ(D=10で実測約2.94秒
+  という既存較正値をそのまま流用、1秒はD=3・0.5秒はD=2で近似)。
+- **締めの3枚を新規追加**: ユーザーが3枚の256x192 PNG(モンスターの
+  顔を段階的にズームインしていく演出、それぞれちょうどMSXの
+  SCREEN解像度)を添付し"ではさっきの6枚の後に一枚目を0.5秒 これを
+  4ループ その後に2枚目を1秒 3枚目を3秒表示"と指示。この3枚専用の
+  PNG→SCREEN3(Multicolor)エンコーダ(`tools/title_screen/screen3_
+  epilogue_gen.py`、新規)を作成 - `tools/screen3_test/screen3_gen.py`
+  が実測で確立済みのアドレッシング規約(NAME=32*(row_of_name//4)+col
+  の共有ランプ、PGT[name*8+byte_offset]の各バイトが4x4pxセル2個分)を
+  逆向きに適用し、256x192の各4x4pxセルを平均色→TMS9918標準15色
+  パレットへ最近傍量子化してPGT(2048byte)を生成する。ネームテーブル
+  はこの3枚専用のものは持たず、6枚共通の`SC3_SHARED_NAME`をそのまま
+  再利用(全画像が同一の機械的ランプ構造のため画像内容に依存しない)。
+  圧縮は6枚目(Image06.SC3)→締め1枚目→2枚目→3枚目という一続きの
+  XOR差分RLE連鎖(合計3165byte: 1470+1166+529)。エンコード結果は
+  独立レンダラで元PNGと視覚的に一致することを確認済み。
+- **確認音+枠色演出の再配置**: ユーザー指示"スタートのサウンドと枠の
+  演出は削除 ボタンを押したら即アニメへ 変わりにスタートのサウンドと
+  枠の色の演出を このアニメの間ループ"に対応。旧来のボタン押下時
+  単発`CALL PLAY_CONFIRM_BEEP`(Round69由来のチャープ+ブザー+枠色
+  フラッシュ)を削除し、代わりにスライドショー全体(6枚×10周+締めの
+  3枚)を通じて画像の切り替わりごとに`PLAY_CONFIRM_BEEP`を繰り返し
+  呼ぶ設計に変更 - 単一スレッドのbusy-wait設計のため映像と音を厳密に
+  同期させることはできないが、ユーザー自身の"適当でいい"という方針に
+  基づき画像切り替わり単位での再生で十分とした。
+- **新規ルーチン一式**(`title_test.asm`、`tools/screen3_test/
+  screen3_test.asm`の設計をそのまま移植): `RUN_SCREEN3_SLIDESHOW`
+  (VDPモード切替+NAME書き込み+スプライト全停止のセットアップ→
+  6枚×10周のメインループ[各周でPLAY_CONFIRM_BEEP 1回]→締め3枚
+  [1枚目0.5秒×4/2枚目1秒/3枚目3秒、各区切りでPLAY_CONFIRM_BEEP])、
+  `SHOW_SC3_IMG1`-`IMG6`/`EPI1`-`EPI3`、`DECOMPRESS_TO_RAM`/
+  `APPLY_XOR_DIFF`(ALU命令の(IX+d)非対応という既知の制約を踏まえ
+  読む/合成/書くの3段階)、`FLUSH_SHADOW_TO_VRAM`、`WAIT_3_FRAMES`/
+  `WAIT_HALF_SEC`/`WAIT_1_SEC`/`WAIT_3_SEC`/`SCREEN3_DELAY_NESTED`。
+  RAMは`SHADOW_PGT`(0E800h)のみ新規(SCREEN3_TICKは前述の通り撤回)。
+- `tools/title_screen/build_test.py`に`screen3_gen`/
+  `screen3_epilogue_gen`のインポート+`emit_asm_tables()`呼び出しを
+  追加、standaloneアセンブル結果は20029byte(bank0+bank1合計32768
+  byteの余裕内)。
+- **テスト**: `title_test.py`に18件追加(37→55件) -
+  RUN_SCREEN3_SLIDESHOWのセットアップ(VDP R1=0EAh・NAME書き込み・
+  スプライト停止、いずれもWRTVDPがBIOS呼び出しのためz80emu.pyでは
+  no-op化されており`vdp_regs`では観測不可 - 命令バイト列の直接比較で
+  検証)、9画像全ての直接呼び出しによるVRAM完全一致検証、実ROM側の
+  ディレイ/ループ回数定数(10周・6884・D=2/3/10)の構造チェック、
+  ボタン押下からトランポリンまでの一気通貫実行での`PLAY_CONFIRM_BEEP`
+  呼び出し回数検証。ボタン押下トランポリンの既存テストは、実時間換算
+  で数秒〜十数秒に相当するbusy-waitをPython側で1命令ずつ実行する
+  必要が生じたため、src/CYBER SHMUP.asmの既存Stage1テスト群と同じ
+  「実ROMは無変更、テスト用のbank0コピーだけディレイ/ループ回数
+  定数をパッチして短縮する」手法を適用(メインループ10→1周、
+  WAIT_3_FRAMESのN=6884→5、SCREEN3_DELAY_NESTEDのB/C初期値0→2)、
+  ステップ予算も2,000,000→10,000,000へ拡大。同じ手法・予算拡大を
+  `tools/bankswitch_poc/verify_comb.py`の計4箇所(タイトル→Stage1の
+  直接遷移、Stage1 GAME_OVER→title、Stage2 GAME_OVER→title、
+  GFEnding→title、いずれもtitle_bank0が同一bytearray参照のため
+  パッチは1箇所で全箇所に効く)にも適用。
+- 全回帰: Stage2側`run_all.py` **1525 passed/0 failed**(1507→1525、
+  今回はtitle_test.py側の18件でありcombined_test.asm自体は無変更)。
+  `title_test.py` **55 passed**(37→55)。`verify_comb.py`全チェック
+  PASS(実行時間約44秒、うちボタン押下→Stage1トランポリンの区間が
+  約590万ステップ)。Comb ROM再ビルド・標準方針によりComb ROMのみ
+  送付。
+- **保留・実機フィードバック待ち**: 締めの3枚の切り替わりタイミング
+  (0.5秒×4/1秒/3秒、いずれもMISSION_DELAY_3SECからの近似較正値)・
+  確認音+枠色演出がアニメーション全体でどう聞こえる/見えるか・6枚
+  ループの10回という回数感、いずれも次回フィードバック待ち。
+
+## セッション引き継ぎメモ(2026-09-12、Round87完了直後)
+
+- **現在の状態**: Round87(SCREEN3スライドショーをタイトルバンクへ
+  本組み込み+締めの3枚[ユーザー提供PNG3枚、モンスター顔ズームイン]
+  追加+確認音/枠色演出のアニメーション全体ループ化)まで完了。全回帰:
+  Stage2側`run_all.py` **1525 passed/0 failed**。`title_test.py`
+  **55 passed**。`verify_comb.py`全チェックPASS。Comb ROM再ビルド済み。
+- **コミット・push状況**: 本メモ記載時点でコミット・push作業中(この
+  メモ自体が同じコミットに含まれる想定)。作業ツリーの内容:
+  `tools/title_screen/title_test.asm`(RUN_SCREEN3_SLIDESHOW一式新設、
+  SCREEN3_TICK撤回済み)・`tools/title_screen/screen3_epilogue_gen.py`
+  (新規、PNG→SCREEN3 Multicolorエンコーダ)・`tools/title_screen/
+  assets/Epilogue1-3.png`(新規、ユーザー提供)・`tools/title_screen/
+  build_test.py`(screen3_gen/screen3_epilogue_gen配線)・`tools/
+  title_screen/title_test.py`(18件追加)・`tools/bankswitch_poc/
+  verify_comb.py`(ディレイ短縮パッチ+ステップ予算拡大、計4箇所)・
+  `tools/title_screen/CyberS Title.ascii16k.rom`(standalone再ビルド)・
+  `rom/CyberS Comb.ascii16k.rom`(再ビルド)・本HANDOFF.md(記録追記)。
+- **次に着手すべきこと**: 特になし(指示なしに着手しない方針)。
+  ユーザーからの次の実機フィードバック・新規指示を待つ状態。
+- **新セッションが最初にすべきこと**: このHANDOFF.md末尾(本項目)を
+  読んだ上で、CLAUDE.md冒頭の「実機ハードウェア制約」恒久ルール
+  (OTIR等のブロックI/O命令禁止)を必ず確認してから作業を再開すること。

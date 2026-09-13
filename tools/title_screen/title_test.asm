@@ -58,6 +58,16 @@ SPRPAT EQU 3800h
 ; one only Stage1's INIT would otherwise set up.
 BANKSWITCH_TRAMPOLINE_RAM EQU 0F200h
 
+; (2026-09-12、"タイトル表示からMission 1表示の間に差し込んで10回
+; ループでMission 1表示に"、続けて"別に割り込みで同期取る必要はないぞ
+; 適当にNopループでいい3フレ分の"): SCREEN3画像スライドショー用のRAM。
+; SHADOW_PGT(2048byte)はtools/screen3_test/screen3_test.asmと同じ
+; 「現在のPGTの実体、差分[XOR]適用先」。フレーム待ちは割り込み/JIFFY
+; 系に一切依存しない単純なZ80クロック直接カウントのbusy-wait
+; (src/CYBER SHMUP.asmのMISSION_DELAY_3SEC等と同じ考え方)で実装する
+; ため、専用のtickカウンタRAMは不要(以前追加したSCREEN3_TICKは撤回)。
+SHADOW_PGT   EQU 0E800h
+
 ; global bank indices in the final ROM (see build_full_rom.py's own
 ; layout comment) - title=bank0/1 (this file), Stage1=bank2/3,
 ; Stage2=bank4/5. Stage1's own INIT lives at 4010h (same relative
@@ -199,14 +209,22 @@ WFS_BUTTON_A:
     LD A,1 : LD (GAMEOVER_ENABLED),A
 WFS_PROCEED:
 
-    ; (2026-09-07、"タイトル画面でボタン押下でサウンド追加"): チャンネルB
-    ; は上記INIT_BGMがR7で常時トーン有効のまま用意しているが、このファイル
-    ; 自身はBGM再生を行わない設計のため音量ミュートのまま遊休状態 - R7を
-    ; 一切変更せず(トーンA自体は無効のまま)、そのチャンネルBを一時的に
-    ; 借りて短い確認ビープを鳴らすだけで実現できる。Stage1へのバンク切替
-    ; トランポリンより前、このファイル自身の時間軸内で完結させる(切替後は
-    ; H.TIMI/PSG状態がStage1側の管理下に移るため)。
-    CALL PLAY_CONFIRM_BEEP
+    ; (2026-09-07、"タイトル画面でボタン押下でサウンド追加"→2026-09-12、
+    ; "スタートのサウンドと枠の演出は削除 ボタンを押したら即アニメへ
+    ; 変わりにスタートのサウンドと枠の色の演出を このアニメの間ループ"):
+    ; 旧来のボタン押下時の単発CALL PLAY_CONFIRM_BEEPはここでは呼ばない -
+    ; ボタンを押したら即座にSCREEN3スライドショーへ入り、確認音+枠色
+    ; フラッシュ演出(PLAY_CONFIRM_BEEP自体)はRUN_SCREEN3_SLIDESHOW内部で
+    ; アニメーション全体の間ループし続ける(下記参照)。チャンネルB/PSG
+    ; R7に関する経緯([Stage1へのバンク切替トランポリンより前、この
+    ; ファイル自身の時間軸内で完結させる]等)は無変更のままPLAY_CONFIRM_
+    ; BEEP自身のコメントを参照。
+    ; (2026-09-12、"タイトル表示からMission 1表示の間に差し込んで
+    ; 10回ループでMission 1表示に"): SCREEN3画像スライドショーを
+    ; ここに挟む(6枚×10周+3枚の締めアニメ)。終わったら以下は無変更の
+    ; ままStage1へトランポリン - Stage1自身が起動直後にCALL INIT32で
+    ; SCREEN1へ戻すため、ここでSCREEN2に戻す必要はない。
+    CALL RUN_SCREEN3_SLIDESHOW
 
     ; 実機フィードバック対応("バンク切り替えに失敗してる タイトルで
     ; ボタンを押すとフリーズ"): ここまでは割り込み許可(EI済み、BGM_TICK
@@ -792,5 +810,252 @@ BGMT_UC_ENV_WRITE:
 BGMT_UC_ATTEN_OK:
     OUT (PSG_DATA),A
     RET
+
+; ===== SCREEN3(Multicolor)スライドショー(2026-09-12、"タイトルの
+; バンクに 一旦タイトル表示からMission 1表示の間に差し込んで10回
+; ループでMission 1表示に"、続けて"別に割り込みで同期取る必要は
+; ないぞ 適当にNopループでいい3フレ分の"、続けて"ではさっきの6枚の
+; 後に一枚目を0.5秒 これを4ループ その後に2枚目を1秒 3枚目を3秒表示
+; スタートのサウンドと枠の演出は削除 ボタンを押したら即アニメへ
+; 変わりにスタートのサウンドと枠の色の演出を このアニメの間ループ")。
+; tools/screen3_test/screen3_test.asm(実機で"おｋ意図通り表示できた"
+; 確認済みの独立テストツール)のXOR差分圧縮方式をそのまま移植 - PGT
+; (パターンジェネレータ)はRAM上のSHADOW_PGTを経由してVRAMへ一括反映、
+; 1枚目は通常のRLE圧縮でフル保持、以後は直前フレームとのXOR差分を
+; RLE圧縮して保持(データはtools/screen3_test/screen3_gen.pyが生成)。
+; ネームテーブルは6枚とも完全に同一のため1回だけVRAM 1800hへ書き込む。
+;
+; フレーム待ちは(ユーザー指示"割り込みで同期取る必要はない...Nopループ
+; でいい")src/CYBER SHMUP.asmのMISSION_DELAY_3SEC等と同じ、割り込み/
+; JIFFY系に一切依存しないZ80クロック直接カウントのbusy-waitのみで
+; 実装する。3フレーム分(約50ms)はDE 16bitの単純デクリメントループ
+; (CONFIRM_GAP_DELAY等と同じ26T-state/iteration)、0.5/1/3秒はDE単体
+; では桁が足りない(16bit上限は約476ms分)ためMISSION_DELAY_3SEC同型の
+; D×B×C三重ループ(D=10で実測約2.94秒という既存較正値をそのまま流用、
+; 1秒=D3・0.5秒=D2で近似)を使う。
+;
+; "スタートのサウンドと枠の演出は削除...変わりに...このアニメの間
+; ループ": 旧来のボタン押下時単発のPLAY_CONFIRM_BEEP呼び出しは撤去し、
+; 代わりにこのスライドショー全体(6枚×10周+締めの3枚)を通じて
+; PLAY_CONFIRM_BEEPを画像の切り替わりごとに繰り返し呼ぶことで、確認音
+; +枠色フラッシュがアニメーションの間ずっと鳴り続ける/明滅し続ける
+; ように実装する(単一スレッドのbusy-wait設計のため、映像と音を厳密に
+; 同期させることはできない - "適当でいい"というユーザー方針に基づき、
+; 画像の切り替わりのたびに1回再生する形で十分とする)。
+RUN_SCREEN3_SLIDESHOW:
+    ; SCREEN1(Graphics1)からMulticolor(SCREEN3)への切替はVDP R1のM2
+    ; ビット(bit3)を追加で立てるだけ - tools/screen3_test/screen3_
+    ; test.asmで実機確認済みの0EAh(既存の0E2hへ08hを追加)。
+    LD B,0EAh : LD C,1 : CALL WRTVDP
+    LD B,01h : LD C,7 : CALL WRTVDP
+
+    ; ネームテーブルは6枚とも完全同一(screen3_gen.py確認済み)のため
+    ; ここで1回だけ書き込み、以後二度と触らない。
+    LD HL,SC3_SHARED_NAME : LD DE,1800h : LD BC,SC3_SHARED_NAME_LEN : CALL LDIRVM
+
+    ; このスライドショーの絵はいずれもスプライトパターンを持たない
+    ; ため、明示的に全停止(既存のtitle自身の0D1hマーカーと同じ)。
+    LD A,0D1h : LD HL,SPRATR : CALL WRTVRM
+
+    ; "10回ループでMission 1表示に"
+    LD B,10
+RSS_MAIN_LOOP:
+    PUSH BC
+    CALL PLAY_CONFIRM_BEEP
+    CALL SHOW_SC3_IMG1
+    CALL SHOW_SC3_IMG2
+    CALL SHOW_SC3_IMG3
+    CALL SHOW_SC3_IMG4
+    CALL SHOW_SC3_IMG5
+    CALL SHOW_SC3_IMG6
+    POP BC
+    DJNZ RSS_MAIN_LOOP
+
+    ; "ではさっきの6枚の後に一枚目を0.5秒 これを4ループ その後に2枚目を
+    ; 1秒 3枚目を3秒表示": 締めの3枚(本編6枚目からのXOR差分の連鎖)。
+    CALL SHOW_SC3_EPI1
+    LD B,4
+RSS_EPI1_LOOP:
+    PUSH BC
+    CALL PLAY_CONFIRM_BEEP
+    CALL WAIT_HALF_SEC
+    POP BC
+    DJNZ RSS_EPI1_LOOP
+
+    CALL SHOW_SC3_EPI2
+    CALL PLAY_CONFIRM_BEEP
+    CALL WAIT_1_SEC
+
+    CALL SHOW_SC3_EPI3
+    CALL PLAY_CONFIRM_BEEP
+    CALL WAIT_3_SEC
+
+    RET
+
+; 1枚目(基準フレーム): RLEをSHADOW_PGTへフル展開してからVRAMへ一括反映。
+SHOW_SC3_IMG1:
+    LD IX,SHADOW_PGT
+    LD HL,SC3_IMG1_PGT_RLE : LD DE,SC3_IMG1_PGT_SEGMENTS : CALL DECOMPRESS_TO_RAM
+    CALL FLUSH_SHADOW_TO_VRAM
+    JP WAIT_3_FRAMES
+; 2〜6枚目: 直前フレームとのXOR差分をSHADOW_PGTへ適用してからVRAMへ
+; 一括反映(必ずこの順番[1→2→3→4→5→6]で呼ぶ前提)。
+SHOW_SC3_IMG2:
+    LD IX,SHADOW_PGT
+    LD HL,SC3_IMG2_PGT_XORDIFF : LD DE,SC3_IMG2_PGT_SEGMENTS : CALL APPLY_XOR_DIFF
+    CALL FLUSH_SHADOW_TO_VRAM
+    JP WAIT_3_FRAMES
+SHOW_SC3_IMG3:
+    LD IX,SHADOW_PGT
+    LD HL,SC3_IMG3_PGT_XORDIFF : LD DE,SC3_IMG3_PGT_SEGMENTS : CALL APPLY_XOR_DIFF
+    CALL FLUSH_SHADOW_TO_VRAM
+    JP WAIT_3_FRAMES
+SHOW_SC3_IMG4:
+    LD IX,SHADOW_PGT
+    LD HL,SC3_IMG4_PGT_XORDIFF : LD DE,SC3_IMG4_PGT_SEGMENTS : CALL APPLY_XOR_DIFF
+    CALL FLUSH_SHADOW_TO_VRAM
+    JP WAIT_3_FRAMES
+SHOW_SC3_IMG5:
+    LD IX,SHADOW_PGT
+    LD HL,SC3_IMG5_PGT_XORDIFF : LD DE,SC3_IMG5_PGT_SEGMENTS : CALL APPLY_XOR_DIFF
+    CALL FLUSH_SHADOW_TO_VRAM
+    JP WAIT_3_FRAMES
+SHOW_SC3_IMG6:
+    LD IX,SHADOW_PGT
+    LD HL,SC3_IMG6_PGT_XORDIFF : LD DE,SC3_IMG6_PGT_SEGMENTS : CALL APPLY_XOR_DIFF
+    CALL FLUSH_SHADOW_TO_VRAM
+    JP WAIT_3_FRAMES
+
+; 締めの3枚(いずれも直前フレームとのXOR差分、待ち時間は個別のため
+; ここでは待たずRETするだけ - 呼び出し元RUN_SCREEN3_SLIDESHOWが
+; 個別の待ち時間をCALLする)。
+SHOW_SC3_EPI1:
+    LD IX,SHADOW_PGT
+    LD HL,SC3_EPI1_PGT_XORDIFF : LD DE,SC3_EPI1_PGT_SEGMENTS : CALL APPLY_XOR_DIFF
+    JP FLUSH_SHADOW_TO_VRAM
+SHOW_SC3_EPI2:
+    LD IX,SHADOW_PGT
+    LD HL,SC3_EPI2_PGT_XORDIFF : LD DE,SC3_EPI2_PGT_SEGMENTS : CALL APPLY_XOR_DIFF
+    JP FLUSH_SHADOW_TO_VRAM
+SHOW_SC3_EPI3:
+    LD IX,SHADOW_PGT
+    LD HL,SC3_EPI3_PGT_XORDIFF : LD DE,SC3_EPI3_PGT_SEGMENTS : CALL APPLY_XOR_DIFF
+    JP FLUSH_SHADOW_TO_VRAM
+
+; SHADOW_PGT(2048byte、RAM)->VRAM 0000hへ一括コピー(BIOS LDIRVM、
+; CLAUDE.md恒久ルール通りOTIR等は不使用)。
+FLUSH_SHADOW_TO_VRAM:
+    LD HL,SHADOW_PGT : LD DE,0000h : LD BC,0800h : CALL LDIRVM
+    RET
+
+; 自前の対称RLE(tools/title_screen/title_bg_gen.pyと同一フォーマット)
+; をRAM上のSHADOW_PGTへそのまま展開する(1枚目の基準フレーム用)。
+; HL=圧縮データ先頭、DE=セグメント数、IX=書き込み先(呼び出し前に
+; SHADOW_PGTをセット)。このアセンブラはALU命令の(IX+d)直接オペランド
+; 非対応のためLD経由の3段階(読む/合成/書く)は使わず単純代入のみ。
+DECOMPRESS_TO_RAM:
+    LD A,(HL) : INC HL
+    OR A
+    JP M,DTR_RUN
+    AND 7Fh
+    INC A
+    LD B,A
+DTR_LIT_LOOP:
+    LD A,(HL) : INC HL
+    LD (IX+0),A
+    INC IX
+    DJNZ DTR_LIT_LOOP
+    JR DTR_NEXT
+DTR_RUN:
+    AND 7Fh
+    INC A
+    LD B,A
+    LD A,(HL) : INC HL
+DTR_RUN_LOOP:
+    LD (IX+0),A
+    INC IX
+    DJNZ DTR_RUN_LOOP
+DTR_NEXT:
+    DEC DE
+    LD A,D : OR E
+    JR NZ,DECOMPRESS_TO_RAM
+    RET
+
+; 上と同じRLEフォーマットだが、展開した各バイトをSHADOW_PGTの現在値へ
+; 「XOR適用」する(差分方式)。このアセンブラはALU命令の(IX+d)直接
+; オペランドを非対応のため「LD A,(IX+0)で現在値を読む→XOR Cで差分値と
+; 合成→LD (IX+0),Aで書き戻す」の3段階で行う。HL=圧縮データ先頭、
+; DE=セグメント数、IX=適用先(呼び出し前にSHADOW_PGTをセット)。
+APPLY_XOR_DIFF:
+    LD A,(HL) : INC HL
+    OR A
+    JP M,AXD_RUN
+    AND 7Fh
+    INC A
+    LD B,A
+AXD_LIT_LOOP:
+    LD A,(HL) : INC HL
+    LD C,A
+    LD A,(IX+0)
+    XOR C
+    LD (IX+0),A
+    INC IX
+    DJNZ AXD_LIT_LOOP
+    JR AXD_NEXT
+AXD_RUN:
+    AND 7Fh
+    INC A
+    LD B,A
+    LD A,(HL) : INC HL
+    LD C,A
+AXD_RUN_LOOP:
+    LD A,(IX+0)
+    XOR C
+    LD (IX+0),A
+    INC IX
+    DJNZ AXD_RUN_LOOP
+AXD_NEXT:
+    DEC DE
+    LD A,D : OR E
+    JR NZ,APPLY_XOR_DIFF
+    RET
+
+; 3フレーム分(約50ms)の待ち - 割り込み/JIFFYに依存しない単純なDE
+; デクリメントループ(CONFIRM_GAP_DELAY等と同じ26T-state/iteration、
+; N=50ms*3579.545/26≒6884)。
+SC3_WAIT_3F_COUNT EQU 6884
+WAIT_3_FRAMES:
+    LD DE,SC3_WAIT_3F_COUNT
+WF3_LOOP:
+    DEC DE
+    LD A,D : OR E
+    JR NZ,WF3_LOOP
+    RET
+
+; 0.5/1/3秒の待ち - src/CYBER SHMUP.asmのMISSION_DELAY_3SEC(D=10で
+; 実測約2.94秒)と同型のD×B×C三重ループ、Dだけ呼び出し元が変えて
+; 使い回す(1D単位≒0.294秒の近似較正値、"適当でいい"の方針に基づく)。
+SCREEN3_DELAY_NESTED:
+SC3D_OUTER:
+    LD B,0
+SC3D_MID:
+    LD C,0
+SC3D_INNER:
+    DEC C
+    JR NZ,SC3D_INNER
+    DJNZ SC3D_MID
+    DEC D
+    JR NZ,SC3D_OUTER
+    RET
+
+WAIT_HALF_SEC:
+    LD D,2
+    JP SCREEN3_DELAY_NESTED
+WAIT_1_SEC:
+    LD D,3
+    JP SCREEN3_DELAY_NESTED
+WAIT_3_SEC:
+    LD D,10
+    JP SCREEN3_DELAY_NESTED
 
 ; ===== boss art tables, generated by title_gen.py - see that file =====

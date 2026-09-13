@@ -12,12 +12,19 @@ sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.join(REPO, "tools"))
 
 import title_bg_gen  # noqa: E402
+import screen3_epilogue_gen  # noqa: E402
 from mini_z80asm import Assembler  # noqa: E402
+
+sys.path.insert(0, os.path.join(REPO, "tools", "screen3_test"))
+import screen3_gen  # noqa: E402
 
 
 def combined_text():
     body = open(os.path.join(HERE, "title_test.asm")).read()
-    return body + "\n" + title_bg_gen.emit_asm_tables() + "\n"
+    tables = (title_bg_gen.emit_asm_tables() + "\n"
+              + screen3_gen.emit_asm_tables() + "\n"
+              + screen3_epilogue_gen.emit_asm_tables() + "\n")
+    return body + "\n" + tables
 
 
 def assemble():
