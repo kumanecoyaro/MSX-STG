@@ -169,6 +169,14 @@ def call_routine(z, addr, max_instr=2_000_000):
     return steps
 
 
+def call_routine_tstates(z, addr, max_instr=2_000_000):
+    """call_routine()と同じだが、z.tstatesの消費量(実時間換算に使える
+    実際のZ80クロック数)を返す。呼び出し前にz.tstates=0へリセットする。"""
+    z.tstates = 0
+    call_routine(z, addr, max_instr)
+    return z.tstates
+
+
 # --- EBUZ_DELAY_HALF's dominant (inner-loop) work is exactly half of ---
 # EBUZ_DELAY's, verified against an exact analytic step-count formula
 # derived from the routines' own structure (LD D,3 outer x [LD B,n mid
@@ -197,6 +205,30 @@ check(f"EBUZ_DELAY/EBUZ_DELAY_HALF step counts exactly match the analytic "
       f"and the dominant inner-loop work (B_count*256*2) is exactly halved "
       f"(256*256*2={256*256*2} vs 128*256*2={128*256*2})",
       full_steps == exp_full and half_steps == exp_half)
+
+# --- EBUZ_FRAME_WAIT is calibrated to roughly a real 1/60s frame at 3.58MHz ---
+# (2026-09-13追記、実機フィードバック対応: "今は全て同時に発射してるし
+# 下側の弾も出てない" - 旧EBUZ_FRAME_WAIT(単純256回ループのみ)は実測
+# 約4108T-states(約0.00115秒)しかなく、画面横断に必要な約128回の呼び出し
+# 合計でも実時間わずか約0.15秒だった。人間の目には知覚できないほど速く
+# 発射→移動→非表示化が完了してしまい、「発射と同時に消えた」「弾が出て
+# いない」ように見えていたのが実際の原因だった、というのがこのRoundの
+# 診断結果 - この診断そのものを直接検証するテスト)。
+Z_CLOCK_HZ = 3_579_545
+TARGET_FRAME_SEC = 1 / 60
+frame_wait_tstates = call_routine_tstates(fresh(), sym["EBUZ_FRAME_WAIT"])
+frame_wait_sec = frame_wait_tstates / Z_CLOCK_HZ
+check(f"EBUZ_FRAME_WAIT now costs a realistic ~1/60s of Z80 clock time "
+      f"({frame_wait_tstates} T-states = {frame_wait_sec:.5f}s, vs target "
+      f"{TARGET_FRAME_SEC:.5f}s) instead of the old ~0.00115s that made "
+      f"bullets flash by too fast to see",
+      TARGET_FRAME_SEC * 0.5 <= frame_wait_sec <= TARGET_FRAME_SEC * 2.0)
+full_screen_laps = BULLET23_X // SPEED_LO + 5  # a generous upper bound on laps to cross the screen
+full_screen_sec = full_screen_laps * frame_wait_sec
+check(f"crossing the full screen width now takes a humanly-visible amount of "
+      f"real time (~{full_screen_sec:.2f}s over {full_screen_laps} laps), not "
+      f"the old ~0.15s that made the whole flight imperceptible",
+      full_screen_sec >= 1.0)
 
 # --- state1 BG drawn, but bullet0 not fired yet (still waiting out the 0.5s) ---
 z0 = fresh()

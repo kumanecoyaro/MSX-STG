@@ -187,13 +187,27 @@ EBUZ_DELAY_HALF_INNER:
     JR NZ,EBUZ_DELAY_HALF_OUTER
     RET
 
-; 1フレーム相当の短いウェイト(弾移動のステップ間隔、EBUZ_DELAYより
-; ずっと短い - 未調整の暫定値)。
+; 1フレーム相当のウェイト(弾移動のステップ間隔)。
+; (2026-09-13追記、実機フィードバック対応: "今は全て同時に発射してるし
+; 下側の弾も出てない"): 旧実装(LD B,0の単純256回ループのみ、
+; 実測約4108T-states=約0.00115秒/回)は3.58MHz Z80の1/60秒
+; (=約59659T-states)の約1/14.5しかなく、画面横断に必要な約128回の
+; 呼び出し(192px÷平均1.5px/frame)を合計しても実時間わずか約0.15秒
+; しかかからなかった - 発射された瞬間から画面外に消えるまでが速すぎて
+; 人間の目には知覚できず、「発射と同時に消えた」「弾が出ていない」
+; ように見えていたと判明(実際にはVRAM上は正しく発射・移動・非表示化
+; されていたが、可視時間が短すぎただけ)。B=15の2段ループ
+; (256回×15周)へ変更し、実測約61677T-states(約0.0172秒/回、3.58MHz
+; Z80での1/60秒[0.01667秒]に近似)へ較正 - 画面横断に約128回×0.0172秒
+; ≈2.2秒かかるようになり、目視で追える速さになる。
 EBUZ_FRAME_WAIT:
-    LD B,0
-EBUZ_FRAME_WAIT_LOOP:
-    DEC B
-    JR NZ,EBUZ_FRAME_WAIT_LOOP
+    LD B,15
+EBUZ_FRAME_WAIT_OUTER:
+    LD C,0
+EBUZ_FRAME_WAIT_INNER:
+    DEC C
+    JR NZ,EBUZ_FRAME_WAIT_INNER
+    DJNZ EBUZ_FRAME_WAIT_OUTER
     RET
 
 ; IX = EBUZ_SPR_SHADOW内の弾スロット先頭(+0=Y,+1=X,+2=pattern,+3=color)。
