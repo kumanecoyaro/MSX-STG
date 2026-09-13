@@ -129,20 +129,28 @@ EBUZ_BULLET_SPEED_HI EQU 2
 ; TMS9918のY属性は実際の表示開始行より1小さい値を書く規約
 ; (tools/stage1_render_check.pyのrender_full()と同じ"y1=(y+1)&0xFF"
 ; デコードに対応)。state1の弾はY=16(=EBUZ_ROW*8、本体位置基準の
-; 暫定値、具体的な指定なし)、state2の2発はユーザー指定のY=0px/24pxを
-; そのまま絶対値として使用...のはずだったが、desired Y=0だと
-; stored=0-1=255(wrap)になり、このプロジェクト全体で「非表示化」の
-; 慣習として使っているstored Y>=209の範囲と数値上重なってしまう
-; (実ハードウェアではY=255は実際に画面最上行に正しく表示される -
-; render_full()を含むこのプロジェクトの各所が「Y>=209なら非表示」と
-; 単純化して判定しているのは通常誰もこの折返し値を意図的に使わない
-; という前提に基づくもので、今回はその前提が崩れる)。ENEMY3_DO_SPAWN
-; が同種の折返し衝突を「254で頭打ちにする」形で回避しているのと同じ
-; 考え方で、desired Y=0はY=1へ1px寄せて回避する(stored=0、既存の
-; 非表示慣習と一切重ならない安全な値)。
-EBUZ_BULLET1_STORED_Y EQU 15    ; desired Y=16  -> 16-1=15
-EBUZ_BULLET2_STORED_Y EQU 0     ; desired Y=1(0から1pxだけ寄せた値) -> 1-1=0
-EBUZ_BULLET3_STORED_Y EQU 23    ; desired Y=24  -> 24-1=23
+; 暫定値、具体的な指定なし)。
+;
+; (2026-09-13追記その4、実機フィードバック対応: "で、Ebuz2の弾は2つとも
+; 8px下げろ 絶対位置でやりやがって 当たり前だが相対位置に決まってん
+; だろうが"): state2の2発は当初ユーザー指定のY=0px/24pxを本体位置とは
+; 無関係な絶対値としてそのまま使っていたのが誤りだったと判明。8px
+; 下げた新しい値(Y=8px/32px)は、state2のBG自体が使っている実際の行
+; 位置と厳密に一致する - EBUZ_ROW_0ABC(新設上段の帯)はrow1=Y8pxに、
+; EBUZ_ROW_0ABC(新設下段の帯)はrow4=Y32pxに描画されている(下記
+; EBUZ_STATE2_BG_DONE直前のLDIRVM参照)。つまり本来は「本体の上翼帯・
+; 下翼帯そのものの行位置」を基準にした相対値であるべきだった、という
+; ことだと理解し、EBUZ_ROW_TOP_BAND/EBUZ_ROW_BOTTOM_BANDという名前の
+; 行番号定数から導出する形に変更(将来これらの行番号自体が変わっても
+; 弾のY位置が自動的に追従する)。
+; desired Y=8/32はどちらも既存の「stored Y>=209は非表示」慣習と
+; 数値上重ならない安全な値のため、以前のY=0固有だった1pxナッジ回避策
+; (stored=255問題)は不要になった。
+EBUZ_ROW_TOP_BAND    EQU 1   ; state2の新設上段(EBUZ_ROW_0ABC)の行番号
+EBUZ_ROW_BOTTOM_BAND EQU 4   ; state2の新設下段(EBUZ_ROW_0ABC)の行番号
+EBUZ_BULLET1_STORED_Y EQU 15    ; desired Y=16(state1、本体位置基準)  -> 16-1=15
+EBUZ_BULLET2_STORED_Y EQU EBUZ_ROW_TOP_BAND*8-1     ; desired Y=8(上翼帯の行位置)  -> 8-1=7
+EBUZ_BULLET3_STORED_Y EQU EBUZ_ROW_BOTTOM_BAND*8-1  ; desired Y=32(下翼帯の行位置) -> 32-1=31
 SPR_HIDE_Y  EQU 209   ; 個別非表示(リストは継続、既存コードの規約と同じ)
 SPR_TERM_Y  EQU 208   ; SATリスト終端(このスロット以降は描画されない)
 
@@ -153,53 +161,38 @@ SPR_TERM_Y  EQU 208   ; SATリスト終端(このスロット以降は描画さ�
 EBUZ_SPR_SHADOW EQU 0F350h   ; 12 bytes (F350h-F35Bh), STACKTOPまで十分な余裕
 EBUZ_FRAME_PARITY EQU 0F35Ch ; 1 byte、弾速半減用のフレーム交互トグル(0/1)
 
-; フレーム換算しないシンプルなビジーウェイト(src/CYBER SHMUP.asmの
-; MISSION_DELAY_3SECと同型、Dを小さくして約1秒相当)。
-EBUZ_DELAY:
-    LD D,3
-EBUZ_DELAY_OUTER:
-    LD B,0
-EBUZ_DELAY_MID:
-    LD C,0
-EBUZ_DELAY_INNER:
-    DEC C
-    JR NZ,EBUZ_DELAY_INNER
-    DJNZ EBUZ_DELAY_MID
-    DEC D
-    JR NZ,EBUZ_DELAY_OUTER
-    RET
+; (2026-09-13追記その3、実機フィードバック対応、最重要の設計変更):
+; "だから違うって Ebuz1の時16x16のスプライトの弾を発射 その後Ebuz2に
+; して上下から発射 人間の目がどうの関係ない お前は見えてないんだから
+; 勝手に判断するな"。前回「EBUZ_FRAME_WAITが遅すぎて肉眼で見えない」と
+; 自己診断したが、これは誤りだった。**真因はタイミングの体感速度では
+; なく、構造的なバグ**: 旧実装は「BGが変化した瞬間」と「発射する瞬間」
+; の間だけをEBUZ_DELAY/EBUZ_DELAY_HALFという素のビジーウェイトで
+; つないでいたが、この待ち時間中はEBUZ_UPDATE_BULLETが一切呼ばれず、
+; 既に発射済みのbullet0が完全に静止したままだった。bullet0は
+; state1発射後、次の待ち(2x EBUZ_DELAY)・state2発射前の待ち
+; (EBUZ_DELAY_HALF)の間ずっと本体のすぐ左に張り付いたまま動かず、
+; **bullets1/2が発射されるまさにその瞬間になってようやく3発同時に
+; 動き始める**構造になっていた(EBUZ_MAINLOOPが全弾発射完了後にしか
+; 開始されないため)。そのためbullets1/2発射の瞬間、3発全てが本体
+; すぐそばに集まって見え、「全て同時に発射してる」ように見えていた -
+; これは実際にgif_check.pyのt=2.65s時点のフレームで再現・確認済みの、
+; 正真正銘の構造的バグ(肉眼の速度とは無関係)。
+;
+; 修正: 「BG変化→待ち→発射」の待ち時間そのものを、弾の移動処理を
+; 内包する新設EBUZ_TICK(1"フレーム"分の更新+反映+ウェイト)の
+; 反復(EBUZ_WAIT_TICKS)に置き換えた。これによりbullet0は発射された
+; その次のティックから即座に動き始め、以後の待ち時間中も継続して
+; 移動・画面外での非表示化が進む - bullets1/2が発射される頃には
+; bullet0は既に画面外へ消えているのが正しい挙動になる。
+; EBUZ_DELAY/EBUZ_DELAY_HALF(素のビジーウェイトのみ、弾更新なし)は
+; 完全に削除、EBUZ_MAINLOOPの本体もEBUZ_TICKへ集約し重複を排除した。
 
-; EBUZ_DELAYのちょうど半分の総反復回数(0.5秒相当、2026-09-13追記)。
-; D(3)は同じだが中間ループの初期値をBUZ_DELAYの0(=256回)ではなく
-; 128(=128回)にすることで、総反復回数(D*B*C)を厳密に半分にする
-; (3*128*256 = (3*256*256)/2)。
-EBUZ_DELAY_HALF:
-    LD D,3
-EBUZ_DELAY_HALF_OUTER:
-    LD B,128
-EBUZ_DELAY_HALF_MID:
-    LD C,0
-EBUZ_DELAY_HALF_INNER:
-    DEC C
-    JR NZ,EBUZ_DELAY_HALF_INNER
-    DJNZ EBUZ_DELAY_HALF_MID
-    DEC D
-    JR NZ,EBUZ_DELAY_HALF_OUTER
-    RET
-
-; 1フレーム相当のウェイト(弾移動のステップ間隔)。
-; (2026-09-13追記、実機フィードバック対応: "今は全て同時に発射してるし
-; 下側の弾も出てない"): 旧実装(LD B,0の単純256回ループのみ、
-; 実測約4108T-states=約0.00115秒/回)は3.58MHz Z80の1/60秒
-; (=約59659T-states)の約1/14.5しかなく、画面横断に必要な約128回の
-; 呼び出し(192px÷平均1.5px/frame)を合計しても実時間わずか約0.15秒
-; しかかからなかった - 発射された瞬間から画面外に消えるまでが速すぎて
-; 人間の目には知覚できず、「発射と同時に消えた」「弾が出ていない」
-; ように見えていたと判明(実際にはVRAM上は正しく発射・移動・非表示化
-; されていたが、可視時間が短すぎただけ)。B=15の2段ループ
-; (256回×15周)へ変更し、実測約61677T-states(約0.0172秒/回、3.58MHz
-; Z80での1/60秒[0.01667秒]に近似)へ較正 - 画面横断に約128回×0.0172秒
-; ≈2.2秒かかるようになり、目視で追える速さになる。
+; 1フレーム相当のウェイト(弾移動のステップ間隔、EBUZ_TICKから毎回
+; 呼ばれる)。B=15の2段ループ(256回×15周)で実測約61677T-states
+; (約0.0172秒/回、3.58MHz Z80での1/60秒[0.01667秒]に近似)に較正済み
+; (前Roundでの調整、体感速度の問題ではなかったと判明した今も、
+; 単純に「1フレーム相当」の近似値として妥当なため維持)。
 EBUZ_FRAME_WAIT:
     LD B,15
 EBUZ_FRAME_WAIT_OUTER:
@@ -233,6 +226,35 @@ EBUZ_UB_GOT_STEP:
 EBUZ_UB_MOVE:
     SUB B
     LD (IX+1),A
+    RET
+
+; 1"フレーム"分の処理をまとめたもの: 弾3枠を更新→歩幅トグル反転→
+; VRAMへ反映→ウェイト。EBUZ_WAIT_TICK系とEBUZ_MAINLOOPの両方から
+; 共有で呼ばれる(2026-09-13追記その3、「待ち時間中は弾が動かない」
+; 構造的バグの修正 - 発射前の弾はEBUZ_UPDATE_BULLET冒頭のSPR_HIDE_Y
+; チェックで自動的にスキップされるので、まだ発射されていないスロットに
+; 対して呼んでも安全)。
+EBUZ_TICK:
+    DI
+    LD IX,EBUZ_SPR_SHADOW   : CALL EBUZ_UPDATE_BULLET
+    LD IX,EBUZ_SPR_SHADOW+4 : CALL EBUZ_UPDATE_BULLET
+    LD IX,EBUZ_SPR_SHADOW+8 : CALL EBUZ_UPDATE_BULLET
+    LD A,(EBUZ_FRAME_PARITY)
+    XOR 1
+    LD (EBUZ_FRAME_PARITY),A
+    LD HL,EBUZ_SPR_SHADOW : LD DE,SPRATR : LD BC,12 : CALL LDIRVM
+    EI
+    CALL EBUZ_FRAME_WAIT
+    RET
+
+; B=待ちたいティック数(1-255)。EBUZ_TICKをB回呼ぶだけの「弾の移動を
+; 止めない待ち」- 旧来の素のビジーウェイト(EBUZ_DELAY等)を置き換える。
+EBUZ_WAIT_TICKS:
+EBUZ_WAIT_TICKS_LOOP:
+    PUSH BC
+    CALL EBUZ_TICK
+    POP BC
+    DJNZ EBUZ_WAIT_TICKS_LOOP
     RET
 
 INIT:
@@ -293,20 +315,25 @@ INIT:
     CALL LDIRVM
 EBUZ_STATE1_BG_DONE:
 
-    ; --- "この状態で0.5秒維持してから発射"(2026-09-13追記) ---
-    EI
-    CALL EBUZ_DELAY_HALF
-    DI
+    ; --- "この状態で0.5秒維持してから発射"(2026-09-13追記)。 ---
+    ; 待ち自体はEBUZ_WAIT_TICKS(弾更新を止めない待ち)経由 - この時点
+    ; ではまだどの弾も発射されていない(EBUZ_SPR_INITが全枠SPR_HIDE_Y)
+    ; ため、実質的にはEBUZ_FRAME_WAITを29回呼ぶのと同じ(約0.5秒相当)。
+    LD B,29
+    CALL EBUZ_WAIT_TICKS
 
     ; --- state1登場時: BULLET_FULLを1枚発射(スロット0、X=16px左へ) ---
     LD HL,EBUZ_SPR_BULLET1 : LD DE,EBUZ_SPR_SHADOW : LD BC,4 : LDIR
     LD HL,EBUZ_SPR_SHADOW : LD DE,SPRATR : LD BC,4 : CALL LDIRVM
 EBUZ_STATE1_DONE:
 
-    EI
-    CALL EBUZ_DELAY
-    CALL EBUZ_DELAY
-    DI
+    ; --- state2形成までの間(旧EBUZ_DELAY x2、約1.76秒相当)。 ---
+    ; ここが今回の実機フィードバック対応の核心: この待ちの間、
+    ; bullet0は既に発射済みなのでEBUZ_WAIT_TICKS経由で継続して左へ
+    ; 移動し続ける(旧実装はここで完全静止していたため、bullets1/2が
+    ; 発射される瞬間に3発とも本体のそばへ集まって見えていた)。
+    LD B,102
+    CALL EBUZ_WAIT_TICKS
 
     ; --- state2: A,B,Cの帯が上下へ分離・移動、中央2行はDだけが残る ---
     LD HL,EBUZ_ROW_0ABC
@@ -328,31 +355,23 @@ EBUZ_STATE1_DONE:
 EBUZ_STATE2_BG_DONE:
 
     ; --- "Ebuz2に変形後...同じく0.5秒維持して同時発射"(2026-09-13追記) ---
-    EI
-    CALL EBUZ_DELAY_HALF
-    DI
+    ; ここもEBUZ_WAIT_TICKS経由なのでbullet0は引き続き移動を続ける
+    ; (この時点でbullet0は既に画面外へ消えているはず、下記の較正コメント
+    ; 参照)。
+    LD B,29
+    CALL EBUZ_WAIT_TICKS
 
     ; --- state2変化時: BULLET_HALFを2枚同時発射(スロット1,2) ---
     LD HL,EBUZ_SPR_BULLET23 : LD DE,EBUZ_SPR_SHADOW+4 : LD BC,8 : LDIR
     LD HL,EBUZ_SPR_SHADOW+4 : LD DE,SPRATR+4 : LD BC,8 : CALL LDIRVM
 EBUZ_STATE2_DONE:
 
-    EI
-
 ; --- 以後、弾3枚(スロット0-2)を毎"フレーム"左へ移動、画面外で非表示化 ---
+; (EBUZ_TICK自体がDI/EI/ウェイトを内包するため、ここでは単純にループ
+; するだけでよい)。
 EBUZ_MAINLOOP:
-    DI
-    LD IX,EBUZ_SPR_SHADOW   : CALL EBUZ_UPDATE_BULLET
-    LD IX,EBUZ_SPR_SHADOW+4 : CALL EBUZ_UPDATE_BULLET
-    LD IX,EBUZ_SPR_SHADOW+8 : CALL EBUZ_UPDATE_BULLET
-    ; 次フレーム用に歩幅トグルを反転(2026-09-13追記の半速化)
-    LD A,(EBUZ_FRAME_PARITY)
-    XOR 1
-    LD (EBUZ_FRAME_PARITY),A
-    LD HL,EBUZ_SPR_SHADOW : LD DE,SPRATR : LD BC,12 : CALL LDIRVM
-    EI
+    CALL EBUZ_TICK
 EBUZ_FRAME_TICK:
-    CALL EBUZ_FRAME_WAIT
     JR EBUZ_MAINLOOP
 
 EBUZ_COLOR_BYTE:

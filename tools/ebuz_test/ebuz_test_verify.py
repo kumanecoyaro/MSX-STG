@@ -103,7 +103,13 @@ check("the 4 extracted tiles (A,B,C,D) reconstruct the uploaded Ebuz3.json exact
 # (2026-09-13追記その2)"まずEbuz1の時の弾の位置を左へ16px移動 この状態で
 # 0.5秒維持してから発射 次に...Yが0px、24pxの位置から同時発射...弾の速度
 # が早いんで半分に"、さらに"同時発射はEbuz2に変形後な 同じく0.5秒維持して
-# 同時発射"。
+# 同時発射"。さらに(2026-09-13追記その3、実機フィードバック対応)
+# "だから違うって Ebuz1の時16x16のスプライトの弾を発射 その後Ebuz2に
+# して上下から発射 人間の目がどうの関係ない お前は見えてないんだから
+# 勝手に判断するな" - 前回の「タイミングが速すぎて見えない」という
+# 自己診断は誤りで、実際はbullet0が発射後に全く動かないまま待ち続け、
+# bullets1/2発射の瞬間に3発とも本体のそばに集まって見える構造的バグ
+# だったと判明(ebuz_test.asmのEBUZ_TICK/EBUZ_WAIT_TICKS参照)。
 SPRATR = 0x1B00
 BULLET_FULL_CODE = sym["BULLET_FULL_CODE"]
 BULLET_HALF_CODE = sym["BULLET_HALF_CODE"]
@@ -125,21 +131,44 @@ Y2_STORED = sym["EBUZ_BULLET2_STORED_Y"]
 Y3_STORED = sym["EBUZ_BULLET3_STORED_Y"]
 SENTINEL = 0x0000  # never real code - safe return trap (see tools/verify_sound_duty_cycle.py)
 
+# --- (2026-09-13追記その4、実機フィードバック対応: "で、Ebuz2の弾は2つ ---
+# とも8px下げろ 絶対位置でやりやがって 当たり前だが相対位置に決まって
+# んだろうが") bullets1/2's Y is now derived from the actual state2 wing
+# band row numbers (EBUZ_ROW_TOP_BAND=1/EBUZ_ROW_BOTTOM_BAND=4, i.e.
+# desired Y=8/32 - matching where EBUZ_ROW_0ABC is actually drawn in the
+# BG, not an arbitrary absolute value), not the original literal 0px/24px.
+# Pin the literal numbers directly (not just self-consistency with the
+# formula) to guard against silently drifting back to an unrelated
+# absolute value.
+check("EBUZ_ROW_TOP_BAND(1)/EBUZ_ROW_BOTTOM_BAND(4) match the actual BG row "
+      "numbers used for the wing bands (row1/row4, see EBUZ_STATE2_BG_DONE's "
+      "own LDIRVM destinations 01838h/01898h)",
+      sym["EBUZ_ROW_TOP_BAND"] == 1 and sym["EBUZ_ROW_BOTTOM_BAND"] == 4)
+check(f"bullet1's desired Y is exactly 8px (top wing band's row, stored="
+      f"{Y2_STORED}) and bullet2's is exactly 32px (bottom wing band's row, "
+      f"stored={Y3_STORED}) - both 8px lower than the original literal "
+      f"0px/24px, and both relative to the body's own wing rows now",
+      Y2_STORED == 7 and Y3_STORED == 31)
+
 
 def sprite_attr(z, slot):
     base = SPRATR + slot * 4
     return [z.vram[base + i] for i in range(4)]
 
 
-def simulate_positions(x_list, n_iters):
-    """Python参照実装: EBUZ_MAINLOOPの歩幅トグル(1px/2px交互、平均
+def simulate_positions(x_list, n_iters, start_parity=0):
+    """Python参照実装: EBUZ_TICKの歩幅トグル(1px/2px交互、平均
     1.5px/frame=元の3px/frameのちょうど半分)をシミュレートする。
     引数x_listの各要素を同じフレームスケジュールで同時に進める
     (実装が3発とも同一ループ・同一グローバルparityで動かすのに対応)。
+    start_parityは、この呼び出しより前に既に何回EBUZ_TICKが呼ばれて
+    いるか(2の剰余)を渡す - 発射タイミングがずれた弾ごとに独立して
+    シミュレートする際、グローバルなEBUZ_FRAME_PARITYの現在値と
+    合わせる必要があるため。
     戻り値は各弾の(最終X, 非表示になったか)のリスト。"""
     xs = list(x_list)
     hidden = [False] * len(xs)
-    parity = 0
+    parity = start_parity
     for _ in range(n_iters):
         step = SPEED_LO if parity == 0 else SPEED_HI
         for i in range(len(xs)):
@@ -177,58 +206,22 @@ def call_routine_tstates(z, addr, max_instr=2_000_000):
     return z.tstates
 
 
-# --- EBUZ_DELAY_HALF's dominant (inner-loop) work is exactly half of ---
-# EBUZ_DELAY's, verified against an exact analytic step-count formula
-# derived from the routines' own structure (LD D,3 outer x [LD B,n mid
-# x [LD C,0 x (DEC C+JR NZ) x256 + DJNZ] + DEC D+JR NZ] + RET). Note the
-# measured *ratio* is NOT bit-exact 2.0 (it's ~1.99994) because the fixed
-# per-outer-iteration overhead (LD B,n / DEC D / JR NZ, 3 instructions)
-# doesn't scale with the halved B-count - only the C_count=256 inner loop
-# (the actual "busy work" that dominates wall-clock time) is exactly
-# halved. This is expected, not a bug.
-def expected_delay_steps(d, b_count, c_count=256):
-    per_mid = 1 + c_count * 2 + 1          # LD C,0 + (DEC C+JR NZ)*c_count + DJNZ
-    per_outer = 1 + b_count * per_mid + 2  # LD B,n + mids + DEC D+JR NZ
-    return 2 + d * per_outer               # LD D,3 + outers + RET
-
-
-zd = fresh()
-zd.sp = 0xFE00
-full_steps = call_routine(zd, sym["EBUZ_DELAY"])
-zd2 = fresh()
-zd2.sp = 0xFE00
-half_steps = call_routine(zd2, sym["EBUZ_DELAY_HALF"])
-exp_full = expected_delay_steps(d=3, b_count=256)
-exp_half = expected_delay_steps(d=3, b_count=128)
-check(f"EBUZ_DELAY/EBUZ_DELAY_HALF step counts exactly match the analytic "
-      f"formula (full={full_steps}=={exp_full}, half={half_steps}=={exp_half}), "
-      f"and the dominant inner-loop work (B_count*256*2) is exactly halved "
-      f"(256*256*2={256*256*2} vs 128*256*2={128*256*2})",
-      full_steps == exp_full and half_steps == exp_half)
-
-# --- EBUZ_FRAME_WAIT is calibrated to roughly a real 1/60s frame at 3.58MHz ---
-# (2026-09-13追記、実機フィードバック対応: "今は全て同時に発射してるし
-# 下側の弾も出てない" - 旧EBUZ_FRAME_WAIT(単純256回ループのみ)は実測
-# 約4108T-states(約0.00115秒)しかなく、画面横断に必要な約128回の呼び出し
-# 合計でも実時間わずか約0.15秒だった。人間の目には知覚できないほど速く
-# 発射→移動→非表示化が完了してしまい、「発射と同時に消えた」「弾が出て
-# いない」ように見えていたのが実際の原因だった、というのがこのRoundの
-# 診断結果 - この診断そのものを直接検証するテスト)。
+# --- EBUZ_FRAME_WAIT remains calibrated to roughly a real 1/60s frame at ---
+# 3.58MHz (unrelated to the actual bug this round - see below - but still
+# a meaningful sanity check that per-tick pacing hasn't regressed to the
+# old ~0.00115s that made movement itself flash by too fast to see).
 Z_CLOCK_HZ = 3_579_545
 TARGET_FRAME_SEC = 1 / 60
 frame_wait_tstates = call_routine_tstates(fresh(), sym["EBUZ_FRAME_WAIT"])
 frame_wait_sec = frame_wait_tstates / Z_CLOCK_HZ
-check(f"EBUZ_FRAME_WAIT now costs a realistic ~1/60s of Z80 clock time "
+check(f"EBUZ_FRAME_WAIT still costs a realistic ~1/60s of Z80 clock time "
       f"({frame_wait_tstates} T-states = {frame_wait_sec:.5f}s, vs target "
-      f"{TARGET_FRAME_SEC:.5f}s) instead of the old ~0.00115s that made "
-      f"bullets flash by too fast to see",
+      f"{TARGET_FRAME_SEC:.5f}s)",
       TARGET_FRAME_SEC * 0.5 <= frame_wait_sec <= TARGET_FRAME_SEC * 2.0)
-full_screen_laps = BULLET23_X // SPEED_LO + 5  # a generous upper bound on laps to cross the screen
-full_screen_sec = full_screen_laps * frame_wait_sec
-check(f"crossing the full screen width now takes a humanly-visible amount of "
-      f"real time (~{full_screen_sec:.2f}s over {full_screen_laps} laps), not "
-      f"the old ~0.15s that made the whole flight imperceptible",
-      full_screen_sec >= 1.0)
+
+# --- EBUZ_WAIT_TICKS(B=1) costs exactly one EBUZ_TICK's worth of steps - ---
+# the reference unit used by the gap-verification checks below.
+one_tick_steps = call_routine(fresh(), sym["EBUZ_TICK"])
 
 # --- state1 BG drawn, but bullet0 not fired yet (still waiting out the 0.5s) ---
 z0 = fresh()
@@ -238,17 +231,19 @@ check("state1: right after BG is drawn (before the 0.5s wait), bullet0 has NOT "
       "fired yet (still hidden) - proves the BG-then-wait-then-fire ordering",
       sprite_attr(z0, 0)[0] == SPR_HIDE_Y)
 
-# --- an actual EBUZ_DELAY_HALF-sized wait really elapses between "BG done" and ---
-# "fired" (guards against a regression where the labels are in the right order
-# but the CALL EBUZ_DELAY_HALF itself is missing/short-circuited - a check that
+# --- an actual ~29-tick wait really elapses between "BG done" and "fired" ---
+# (guards against a regression where the labels are in the right order but
+# the CALL EBUZ_WAIT_TICKS itself is missing/short-circuited - a check that
 # only compares PC label order can't catch that, since label position doesn't
-# move even if the delay call in between is deleted).
-half_steps_ref = call_routine(fresh(), sym["EBUZ_DELAY_HALF"])
+# move even if the wait call in between is deleted).
+WAIT_BEFORE_FIRE_TICKS = 29
+WAIT_STATE1_TO_STATE2_TICKS = 102
 gap1 = run_until_pc_count(z0, sym["EBUZ_STATE1_DONE"])
-check(f"state1: the BG-done -> fired gap actually spends roughly one "
-      f"EBUZ_DELAY_HALF's worth of steps ({gap1} >= {half_steps_ref}*0.9), not "
-      f"just a few instructions",
-      gap1 >= half_steps_ref * 0.9)
+check(f"state1: the BG-done -> fired gap actually spends roughly "
+      f"{WAIT_BEFORE_FIRE_TICKS} EBUZ_TICK's worth of steps "
+      f"({gap1} >= {one_tick_steps}*{WAIT_BEFORE_FIRE_TICKS}*0.9), not just a "
+      f"few instructions",
+      gap1 >= one_tick_steps * WAIT_BEFORE_FIRE_TICKS * 0.9)
 
 # --- state1 fires exactly 1 bullet (BULLET_FULL, slot0) after the 0.5s wait; ---
 # slots1/2 stay hidden. Firing X is now 16px left of the old placeholder.
@@ -279,72 +274,104 @@ check("BULLET_HALF's sprite pattern actually loaded into SPRPAT (non-blank)",
 check("16x16 sprite size mode enabled (RG1SAV mirror bit1/SI set)",
       z.mem[sym["RG1SAV"]] & 0x02 != 0)
 
-# --- state2 BG transformed, but bullets1/2 not fired yet (waiting out the 0.5s) ---
+# --- CRITICAL regression test for the actual reported bug ("今は全て同時に ---
+# 発射してるし"): during the wait between bullet0 firing and Ebuz2 forming,
+# bullet0 must keep moving (not sit frozen) - verified against the same
+# alternating-speed simulation used elsewhere in this file. start_parity=1
+# because EBUZ_FRAME_PARITY has already been toggled WAIT_BEFORE_FIRE_TICKS
+# (29, odd) times by the moment bullet0 fires and starts its own first
+# movement tick (the pre-fire wait ticks all 3 hidden slots but the global
+# parity toggle is unconditional).
+(exp_bg2_x, exp_bg2_hidden) = simulate_positions(
+    [BULLET1_X], WAIT_STATE1_TO_STATE2_TICKS, start_parity=WAIT_BEFORE_FIRE_TICKS % 2)[0]
 z1b = fresh()
 z1b.pc = sym["INIT"]
 run_until_pc(z1b, sym["EBUZ_STATE2_BG_DONE"])
-check("state2: right after the BG transforms (before the 0.5s wait), bullet0 is "
-      "unchanged", sprite_attr(z1b, 0) == [Y1_STORED, BULLET1_X, BULLET_FULL_CODE, BULLET_COLOR])
+check(f"state2: bullet0 has kept moving during the state1-to-state2 wait "
+      f"({WAIT_STATE1_TO_STATE2_TICKS} ticks) instead of sitting frozen next "
+      f"to the body - now at X={exp_bg2_x} (hidden={exp_bg2_hidden}), matching "
+      f"the alternating-speed simulation exactly",
+      sprite_attr(z1b, 0) == [Y1_STORED, exp_bg2_x, BULLET_FULL_CODE, BULLET_COLOR]
+      and not exp_bg2_hidden)
 check("state2: right after the BG transforms (before the 0.5s wait), bullets1/2 "
       "have NOT fired yet (still hidden) - proves the transform-then-wait-then-"
       "fire ordering (\"Ebuz2に変形後...0.5秒維持して同時発射\")",
       sprite_attr(z1b, 1)[0] == SPR_HIDE_Y and sprite_attr(z1b, 2)[0] == SPR_HIDE_Y)
 
 gap2 = run_until_pc_count(z1b, sym["EBUZ_STATE2_DONE"])
-check(f"state2: the transform-done -> fired gap actually spends roughly one "
-      f"EBUZ_DELAY_HALF's worth of steps ({gap2} >= {half_steps_ref}*0.9), not "
-      f"just a few instructions",
-      gap2 >= half_steps_ref * 0.9)
+check(f"state2: the transform-done -> fired gap actually spends roughly "
+      f"{WAIT_BEFORE_FIRE_TICKS} EBUZ_TICK's worth of steps "
+      f"({gap2} >= {one_tick_steps}*{WAIT_BEFORE_FIRE_TICKS}*0.9), not just a "
+      f"few instructions",
+      gap2 >= one_tick_steps * WAIT_BEFORE_FIRE_TICKS * 0.9)
 
-# --- state2 additionally fires 2 more bullets (BULLET_HALF, slots1/2) after the ---
-# 0.5s wait, simultaneously, at the user's own literal Y=0px/24px - Y=0 was
-# nudged to Y=1 to dodge this codebase's own "stored Y>=209 means hidden"
-# convention colliding with the real hardware wraparound encoding for Y=0
-# (stored 255) - see ebuz_test.asm's own comment.
+# --- THE definitive regression test for "だから違うって...今は全て同時に ---
+# 発射してるし 下側の弾も出てない": by the moment bullets1/2 actually fire,
+# bullet0 must ALREADY be off-screen (hidden) - not still sitting next to the
+# body. This is what makes the two firing events visually distinct instead
+# of looking like "everything fired together".
 z2 = fresh()
 z2.pc = sym["INIT"]
 run_until_pc(z2, sym["EBUZ_STATE2_DONE"])
-check("state2: bullet0(slot0) from state1 is untouched", sprite_attr(z2, 0) == [Y1_STORED, BULLET1_X, BULLET_FULL_CODE, BULLET_COLOR])
-check("state2: bullet1(slot1) fired as BULLET_HALF at Y=1px (nudged from the "
-      "requested 0px to dodge the hide-sentinel collision, see comment), X=192",
+(exp_final_x, exp_final_hidden) = simulate_positions(
+    [BULLET1_X], WAIT_STATE1_TO_STATE2_TICKS + WAIT_BEFORE_FIRE_TICKS,
+    start_parity=WAIT_BEFORE_FIRE_TICKS % 2)[0]
+check(f"bullet0 is already off-screen (Y=SPR_HIDE_Y) by the moment bullets1/2 "
+      f"fire ({WAIT_STATE1_TO_STATE2_TICKS + WAIT_BEFORE_FIRE_TICKS} ticks after "
+      f"it was fired) - the two firing events are now visually separated, not "
+      f"bunched together at the body",
+      sprite_attr(z2, 0)[0] == SPR_HIDE_Y and exp_final_hidden)
+check("state2: bullet1(slot1) fired as BULLET_HALF at Y=8px (top wing band's "
+      "row, 8px below the original literal 0px per the \"絶対位置でやりやがって\" "
+      "correction), X=192",
       sprite_attr(z2, 1) == [Y2_STORED, BULLET23_X, BULLET_HALF_CODE, BULLET_COLOR])
-check("state2: bullet2(slot2) fired as BULLET_HALF at Y=24px exactly as "
-      "requested, X=192, simultaneously with bullet1",
+check("state2: bullet2(slot2) fired as BULLET_HALF at Y=32px (bottom wing "
+      "band's row, 8px below the original literal 24px), X=192, simultaneously "
+      "with bullet1",
       sprite_attr(z2, 2) == [Y3_STORED, BULLET23_X, BULLET_HALF_CODE, BULLET_COLOR])
 
-# --- all 3 bullets keep moving left every EBUZ_FRAME_TICK lap, at the halved ---
-# speed (1px/2px alternating, average 1.5px/frame = exactly half of the old 3px/frame)
+# --- bullets1/2 keep moving left every EBUZ_FRAME_TICK lap, at the halved ---
+# speed (1px/2px alternating, average 1.5px/frame = exactly half of the old
+# 3px/frame). bullet0 is excluded here - it's already off-screen/hidden by
+# this point (verified above) and EBUZ_UPDATE_BULLET no-ops for hidden
+# slots, so it must stay put at Y=SPR_HIDE_Y. start_parity=0 because
+# WAIT_BEFORE_FIRE_TICKS+WAIT_STATE1_TO_STATE2_TICKS+WAIT_BEFORE_FIRE_TICKS
+# (29+102+29=160, even) EBUZ_TICK calls have already happened by the time
+# bullets1/2 fire and take their own first movement step.
 N_TICKS = 5
 for _ in range(N_TICKS):
     z2.step()
     run_until_pc(z2, sym["EBUZ_FRAME_TICK"])
-(exp0_x, exp0_hidden), (exp1_x, exp1_hidden), (exp2_x, exp2_hidden) = simulate_positions(
-    [BULLET1_X, BULLET23_X, BULLET23_X], N_TICKS)
-check(f"after {N_TICKS} frame-ticks, all 3 bullets moved left by the halved "
+check("bullet0 stays hidden (off-screen) through further frame-ticks, it "
+      "doesn't come back", sprite_attr(z2, 0)[0] == SPR_HIDE_Y)
+(exp1_x, exp1_hidden), (exp2_x, exp2_hidden) = simulate_positions(
+    [BULLET23_X, BULLET23_X], N_TICKS, start_parity=0)
+check(f"after {N_TICKS} frame-ticks, bullets1/2 moved left by the halved "
       f"alternating 1px/2px speed schedule exactly as simulated "
-      f"(bullet0: {BULLET1_X}->{exp0_x}, bullet1/2: {BULLET23_X}->{exp1_x})",
-      not exp0_hidden and not exp1_hidden and not exp2_hidden
-      and sprite_attr(z2, 0)[1] == exp0_x and sprite_attr(z2, 1)[1] == exp1_x
-      and sprite_attr(z2, 2)[1] == exp2_x)
+      f"(bullet1/2: {BULLET23_X}->{exp1_x})",
+      not exp1_hidden and not exp2_hidden
+      and sprite_attr(z2, 1)[1] == exp1_x and sprite_attr(z2, 2)[1] == exp2_x)
 
 # --- a bullet that reaches the left edge gets hidden, not wrapped ---
+# (bullet0 is already hidden by EBUZ_STATE2_DONE in the new design, so this
+# uses bullet1/slot1 - which is still fresh at X=192 at that point - instead.)
 z3 = fresh()
 z3.pc = sym["INIT"]
 run_until_pc(z3, sym["EBUZ_STATE2_DONE"])
-# figure out (via the same python reference model) how many laps bullet0
-# (starting at BULLET1_X=176, the closest to the edge) needs to hide.
+# figure out (via the same python reference model) how many laps bullet1
+# (starting at BULLET23_X=192, start_parity=0 per the note above) needs to hide.
 laps = 0
 while True:
     laps += 1
-    (_, hidden0), = simulate_positions([BULLET1_X], laps)
-    if hidden0:
+    (_, hidden1), = simulate_positions([BULLET23_X], laps, start_parity=0)
+    if hidden1:
         break
 laps += 2   # a couple of extra laps of margin
 for _ in range(laps):
     z3.step()
     run_until_pc(z3, sym["EBUZ_FRAME_TICK"])
 check("a bullet that would go off the left edge is hidden (Y=SPR_HIDE_Y), not "
-      "wrapped to a huge positive X", sprite_attr(z3, 0)[0] == SPR_HIDE_Y)
+      "wrapped to a huge positive X", sprite_attr(z3, 1)[0] == SPR_HIDE_Y)
 
 
 print()
