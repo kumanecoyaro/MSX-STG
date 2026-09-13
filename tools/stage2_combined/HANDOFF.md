@@ -14921,3 +14921,52 @@ NOP抜け)(2026-09-13、完了済み・実機フィードバック待ち)
   (累積遅延によりボスが理論値[tick992]よりかなり遅れて[tick1100
   相当]出現する点も含む)・エネミー6の全速復帰後の見た目、いずれも
   次回フィードバック待ち。
+
+## Round112: 自機移動範囲拡張+スコア行の黒背景化+Tick表示完全削除
+(2026-09-13、完了済み・実機フィードバック待ち)
+
+- ユーザー指示: "自機の移動制限範囲を8px下げて 今は8pxだと思うんで
+  16pxに で スコアの行をブラックで埋めて Tick表示削除"。
+- **自機移動範囲**: `PLAYER_MINY`(自機Y座標の上限クランプ、"one char
+  row(8px)down, clears row0 score/tick display")を8→16へ変更。
+  `MOVE_UP`経由の上方向クランプが実際に16で止まることを直接検証。
+- **Tick表示削除**: 画面右上(row0、cols29-31)にGAME_TICKを3桁表示
+  していた`GAME_TICK_DISPLAY`を、2箇所の呼び出し元(INIT内の初期化・
+  MAINLOOPの8フレーム毎ゲート)ごと完全に削除(Stage2側は既にRound60
+  で同種の表示を削除済み、Stage1でも今回同様に対応)。ルーチン専用の
+  一時変数`GTD_ONES_TMP`も他から一切参照されていないことを確認の上、
+  合わせて削除(「本当に未使用なら完全に削除する」という既定方針)。
+- **スコア行の黒背景化**: 従来row0(スコア表示の行)はrow0-19全体と
+  同じ`BLANKCODE`(青色)で塗られており、スコア数字自体は自前の色
+  グループ(白文字/黒背景)で個別に黒く見えるだけだった。INIT内の
+  row0-19一括青塗りの直後に、row0の32セル分だけを`MISSION_FONT_
+  BASE+5`(SPACE/全ドット消灯グリフ、group8=白文字/黒背景、
+  `DRAW_MISSION_SCREEN`が"黒埋め用"として既に使っている同一コード)
+  で上書きする処理を追加 - 新規VRAM領域確保・新規カラーグループ確保
+  いずれも不要で実現(既存の安全な資産の再利用)。これによりrow0全体が
+  黒背景に統一され、Tick表示が消えた後のcols29-31の空白も自然に黒く
+  なる(スコア数字[cols0-7]はこの上から通常通り描画される)。
+- 新規`tools/verify_stage1_hud_movement.py`(8件): `PLAYER_MINY`の
+  EQU値・実際のクランプ挙動、`GAME_TICK_DISPLAY`シンボル自体の消滅、
+  row0の実VRAM内容(スコア数字セル/黒塗りセル/旧Tick表示セル/実プレイ
+  200フレーム後も黒背景が保たれること)を直接検証。3件全て(PLAYER_
+  MINY・黒塗り追加分)を一時的に取り消してFAILすることを確認した上で
+  復元・再PASS済み。既存のStage1検証群(`verify_player_damage.py`
+  60/`verify_stage1_bgm.py` 80/`verify_stage1_mission_screens.py`
+  87/`verify_enemy_bullets.py` 60/`verify_spawn_schedule_restart.py`
+  12/`verify_enemy6_durability.py` 19/`verify_explosion_anim.py`
+  28/`verify_boss_dfl_clear.py` 10/`verify_boss_pod_bullet_aim.py`
+  17/`verify_stage1_boss_score.py` 7)全て無退行で再PASS(いずれも
+  更新不要だった - PLAYER_MINYやGAME_TICK_DISPLAYをハードコード
+  していたテストは無し)。`combined_test.asm`は無変更のため
+  `run_all.py`全回帰は未実施。Comb ROM再ビルド・`verify_comb.py`
+  全チェックPASSの上、標準方針によりComb ROMのみ送付。
+- 変更ファイル: `src/CYBER SHMUP.asm`(`PLAYER_MINY`8→16、
+  `GAME_TICK_DISPLAY`ルーチン+2箇所の呼び出し+`GTD_ONES_TMP`を削除、
+  INITにrow0黒塗りループを追加)、新規テスト1ファイル、Comb ROM
+  再ビルド。
+
+セッション引き継ぎメモ(2026-09-13、Round112完了直後):
+- 実機での確認事項: 自機の移動可能範囲が狭くなった見た目・スコア行の
+  黒背景の見え方・Tick表示が完全に消えていること、いずれも次回
+  フィードバック待ち。

@@ -113,7 +113,9 @@ PLAYER_SPEED EQU 2     ; was raised to 4 to compensate for the (now-removed)
                         ; per-frame HALT slowdown; back to its original value
 PLAYER_MINX  EQU 0
 PLAYER_MAXX  EQU 240    ; 256-16 (ship is 16 dots wide)
-PLAYER_MINY  EQU 8      ; one char row (8px) down, clears row0 score/tick display
+; "自機の移動制限範囲を8px下げて 今は8pxだと思うんで16pxに"(2026-09-13):
+; 8→16(2 char rows down, clears row0 score display by a full extra row).
+PLAYER_MINY  EQU 16
 PLAYER_MAXY  EQU 150    ; keeps the ship out of the whole 4-row ground
                         ; scroller (screen rows 20-23), with an extra
                         ; PLAYER_SPEED(2)-dot margin on top of the usual
@@ -549,9 +551,11 @@ POD_CUR_Y     EQU 0E77Eh  ; 8 bytes
 POD_HP_MAX    EQU 8
 POD_HIT_RANGE EQU 12       ; px - how close a shot needs to be to register a hit
 
-; --- on-screen game-tick counter (3 decimal digits, top-right) ---
+; --- on-screen score digits (row0, cols0-7 - see SCORE_DISPLAY) ---
 DIGIT_BASE EQU 176   ; digit0 code; digitN = DIGIT_BASE+N (groups22-23)
-GTD_ONES_TMP EQU 0E4D3h
+; (2026-09-13、"Tick表示削除") - the on-screen GAME_TICK counter
+; (GAME_TICK_DISPLAY, row0 cols29-31) itself is gone; DIGIT_BASE lives
+; on as SCORE_DISPLAY's own digit codes.
 
 ; (2026-09-06、"STAGE1も2と同じで一旦画面をブラックで埋めてMISSION 1と
 ; 3秒表示してから"、"画面をブラックで埋めてMISSION 2とセンターに表示
@@ -1111,6 +1115,33 @@ FILLBG_3:
     EI
     DJNZ FILLBG_3
 
+    ; "スコアの行をブラックで埋めて"(2026-09-13) - row0 (the score
+    ; display's own row) just got painted BLANKCODE (blue) above like
+    ; every other sky row; re-paint just this one row's 32 cells with
+    ; MISSION_FONT_BASE+5 (the SPACE/all-blank glyph on group8, already
+    ; loaded+colored white-fg/black-bg a few lines up - the same code
+    ; DRAW_MISSION_SCREEN itself uses "黒埋め用") so it reads solid
+    ; black instead - SCORE_DISPLAY's own white-on-black digit cells
+    ; (cols0-7) then draw on top of this, and the rest of the row
+    ; (cols8-31, including where the now-removed GAME_TICK_DISPLAY used
+    ; to sit at cols29-31) stays a plain black backdrop.
+    DI
+    LD A,00h : OUT (99h),A
+    NOP
+    NOP
+    LD A,58h : OUT (99h),A      ; write address = 1800h (name table row0)
+    NOP
+    NOP
+    LD A,MISSION_FONT_BASE+5
+    LD B,32
+    EI
+FILLBG_ROW0_BLACK:
+    DI
+    OUT (98h),A
+    PUSH BC : POP BC : NOP : NOP
+    EI
+    DJNZ FILLBG_ROW0_BLACK
+
     ; --- sprite pattern generator table (VRAM 3800h): ship/accent are ---
     ; --- static 16x16 patterns (loaded further down, alongside their  ---
     ; --- UP/DOWN animation frames - see SHIP_MID_PATTERN/ACCENT_MID_  ---
@@ -1188,7 +1219,6 @@ FILLBG_3:
     LD HL,SKY_FAST_2H : LD (SKY_VEC_2H),HL
     LD HL,SKY_FAST_2E : LD (SKY_VEC_2E),HL
     LD HL,0 : LD (GAME_TICK),HL
-    CALL GAME_TICK_DISPLAY
     LD HL,0 : LD (SCORE),HL
     XOR A : LD (SCORE+2),A
     CALL SCORE_DISPLAY
@@ -1612,7 +1642,6 @@ STAGE_CLEAR_NOT_FROZEN:
     LD HL,ROWDATA5 : LD A,(PXCHAR_G8) : LD E,A : LD D,0 : ADD HL,DE
     LD IX,IDCACHE5 : CALL REFRESH_IDCACHE_33
     LD HL,(GAME_TICK) : INC HL : LD (GAME_TICK),HL
-    CALL GAME_TICK_DISPLAY
     CALL SPAWN_SCHEDULE_CHECK
 SKIP_G8:
     LD A,(TICK) : AND 07h : LD (PHASE_G8),A
@@ -4744,54 +4773,6 @@ BGMT_USCA_ENV_WRITE:
     XOR A
 BGMT_USCA_ATTEN_OK:
     OUT (PSG_DATA),A
-    RET
-
-; Converts GAME_TICK (mod 1000) to 3 decimal digits and draws them
-; at the top-right of the screen (row0, cols29-31).
-GAME_TICK_DISPLAY:
-    LD HL,(GAME_TICK)
-GTD_MOD1000:
-    LD DE,1000
-    OR A
-    SBC HL,DE
-    JR NC,GTD_MOD1000
-    ADD HL,DE
-
-    LD B,0
-GTD_H100:
-    LD DE,100
-    OR A
-    SBC HL,DE
-    JR C,GTD_H100_DONE
-    INC B
-    JR GTD_H100
-GTD_H100_DONE:
-    ADD HL,DE
-
-    LD C,0
-GTD_T10:
-    LD DE,10
-    OR A
-    SBC HL,DE
-    JR C,GTD_T10_DONE
-    INC C
-    JR GTD_T10
-GTD_T10_DONE:
-    ADD HL,DE
-    LD A,L : LD (GTD_ONES_TMP),A   ; save before WRITE_ANIM_CELL clobbers HL below
-
-    XOR A : LD (ANIM_TMP_ROW),A
-    LD A,29 : LD (ANIM_TMP_COL),A
-    LD A,B : ADD A,DIGIT_BASE : LD (ANIM_TMP_VAL),A
-    CALL WRITE_ANIM_CELL
-    XOR A : LD (ANIM_TMP_ROW),A
-    LD A,30 : LD (ANIM_TMP_COL),A
-    LD A,C : ADD A,DIGIT_BASE : LD (ANIM_TMP_VAL),A
-    CALL WRITE_ANIM_CELL
-    XOR A : LD (ANIM_TMP_ROW),A
-    LD A,31 : LD (ANIM_TMP_COL),A
-    LD A,(GTD_ONES_TMP) : ADD A,DIGIT_BASE : LD (ANIM_TMP_VAL),A
-    CALL WRITE_ANIM_CELL
     RET
 
 ; Extracts SCORE's 6 decimal digits (hundred-thousands..ones, of the
@@ -12805,7 +12786,7 @@ BOSS_MAP:
 ANIM3_SEQ:
     DB ENEMY3_CODE1,ENEMY3_CODE2,ENEMY3_CODE3,ENEMY3_CODE2
 
-; digit glyphs 0-9 for the on-screen game-tick counter (code DIGIT_BASE+N)
+; digit glyphs 0-9 for the on-screen score display (code DIGIT_BASE+N)
 DIGIT_PATTERNS:
     DB 3Ch,66h,6Eh,76h,66h,66h,3Ch,00h   ; 0
     DB 18h,38h,58h,18h,18h,18h,7Eh,00h   ; 1
