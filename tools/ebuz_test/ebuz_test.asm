@@ -67,8 +67,19 @@
 ;   - 弾速半減: 3px/frameを整数のまま厳密に半分(1.5px/frame平均)に
 ;     するため、1px/2pxを1フレームおきに交互適用する方式を採用したが、
 ;     後のRound(その5"弾遅いんで速くしてくれ 2pxで"→その6"遅いな
-;     6pxで")で単純な固定速度へ再変更、交互方式は撤去済み(詳細は
-;     EBUZ_BULLET_SPEEDのEQU定義コメント参照)。
+;     6pxで"→その7"8pxで")で単純な固定速度へ再変更・さらに増速、
+;     交互方式は撤去済み(詳細はEBUZ_BULLET_SPEEDのEQU定義コメント
+;     参照)。
+;
+; (2026-09-13追記その7、実機フィードバック対応、上下弾の継続発射化):
+; "8pxで 初弾のホールドタイムは で、上下弾は交互に撃ち続けろ 2フレ
+; 交代 打つときは反動を見せたいんで 上下の3セル分を1セル右に 打ったら
+; 元位置に戻せ"。state2の上下弾(旧: 変形+0.5秒待ち後に1回だけ同時発射
+; して終わり)を、以後2ティックごとに上下交互に撃ち続ける継続発射へ
+; 変更(初弾=Ebuz1弾のホールドタイム自体は無変更)。発射のたびに、その
+; 側の翼帯(A,B,Cの3セル)を1セル右へ「反動」表示し、1ティック後に元の
+; 位置へ戻す。詳細はEBUZ_UPDATE_TOPBOTTOM_FIRE/EBUZ_ROW_0ABC_REST/
+; EBUZ_ROW_0ABC_RECOILのコメント参照。
 ; 本ファイルは本編(src/CYBER SHMUP.asm)に組み込む前の独立した
 ; プロトタイプ("専用の空ステージ1")。背景は完全に空(code0の空白タイル
 ; のみ)で、Ebuzの見た目・状態遷移・弾発射/移動だけを確認する。実際の
@@ -121,7 +132,8 @@ EBUZ_BULLET1_X     EQU EBUZ_BULLET_X-16   ; state1弾は16px左へ移動(2026-09
 ; EBUZ_FRAME_PARITYトグルは不要になったため削除。
 ; (2026-09-13追記その6、実機フィードバック対応: "遅いな6pxで")
 ; 2px/frameでもまだ遅いとの指摘で6px/frameへ再変更。
-EBUZ_BULLET_SPEED EQU 6
+; (2026-09-13追記その7、実機フィードバック対応: "8pxで") さらに8pxへ。
+EBUZ_BULLET_SPEED EQU 8
 ; TMS9918のY属性は実際の表示開始行より1小さい値を書く規約
 ; (tools/stage1_render_check.pyのrender_full()と同じ"y1=(y+1)&0xFF"
 ; デコードに対応)。state1の弾はY=16(=EBUZ_ROW*8、本体位置基準の
@@ -155,6 +167,23 @@ SPR_TERM_Y  EQU 208   ; SATリスト終端(このスロット以降は描画さ�
 ; (OUT/INポート経由のVDP I/Oが必要) - 毎フレームの移動計算はこちらの
 ; RAM側で行い、更新後にLDIRVMでまとめてSPRATRへ反映する。
 EBUZ_SPR_SHADOW EQU 0F350h   ; 12 bytes (F350h-F35Bh), STACKTOPまで十分な余裕
+
+; (2026-09-13追記その7、実機フィードバック対応: "初弾のホールドタイムは
+; で、上下弾は交互に撃ち続けろ 2フレ交代 打つときは反動を見せたいんで
+; 上下の3セル分を1セル右に 打ったら元位置に戻せ"): state2の上下弾
+; (旧: Ebuz2変形+0.5秒待ち後に1回だけ同時発射して終わり)を、以後
+; 2ティックごとに上下交互に撃ち続ける継続発射へ変更(初弾=Ebuz1弾の
+; ホールドタイム[0.5秒]自体は変更なし)。発射のたびに、発射した側の
+; 翼帯(A,B,C の3セル)を1セル右へ「反動」表示し、1ティック後に元位置へ
+; 戻す。continuous-fireはEBUZ_TOPBOTTOM_ACTIVE=1の間だけEBUZ_TICKから
+; 呼ばれる(state1の間・state2形成前は従来通り一切発火しない)。
+EBUZ_TOPBOTTOM_ACTIVE  EQU 0F35Ch  ; 1 byte: 0=まだ非活性、1=継続発射中
+EBUZ_FIRE_SIDE         EQU 0F35Dh  ; 1 byte: 次に撃つ側(0=上/1=下)
+EBUZ_FIRE_COUNTDOWN    EQU 0F35Eh  ; 1 byte: 次の発射までの残りティック数
+EBUZ_RECOIL_SIDE       EQU 0F35Fh  ; 1 byte: 現在反動表示中の側(0/1)
+EBUZ_RECOIL_COUNTDOWN  EQU 0F360h  ; 1 byte: 反動が元に戻るまでの残りティック数(0=反動なし)
+EBUZ_FIRE_INTERVAL     EQU 2       ; "2フレ交代"
+EBUZ_RECOIL_DURATION   EQU 1       ; 反動表示の持続ティック数(打ったら次のティックで元位置)
 
 ; (2026-09-13追記その3、実機フィードバック対応、最重要の設計変更):
 ; "だから違うって Ebuz1の時16x16のスプライトの弾を発射 その後Ebuz2に
@@ -216,19 +245,71 @@ EBUZ_UB_MOVE:
     LD (IX+1),A
     RET
 
-; 1"フレーム"分の処理をまとめたもの: 弾3枠を更新→VRAMへ反映→ウェイト。
-; EBUZ_WAIT_TICK系とEBUZ_MAINLOOPの両方から共有で呼ばれる(2026-09-13
-; 追記その3、「待ち時間中は弾が動かない」構造的バグの修正 - 発射前の
-; 弾はEBUZ_UPDATE_BULLET冒頭のSPR_HIDE_Yチェックで自動的にスキップ
-; されるので、まだ発射されていないスロットに対して呼んでも安全)。
+; 1"フレーム"分の処理をまとめたもの: 弾3枠を更新→(継続発射有効なら)
+; 上下弾の継続発射処理→VRAMへ反映→ウェイト。EBUZ_WAIT_TICK系と
+; EBUZ_MAINLOOPの両方から共有で呼ばれる(2026-09-13追記その3、
+; 「待ち時間中は弾が動かない」構造的バグの修正 - 発射前の弾は
+; EBUZ_UPDATE_BULLET冒頭のSPR_HIDE_Yチェックで自動的にスキップされる
+; ので、まだ発射されていないスロットに対して呼んでも安全)。
 EBUZ_TICK:
     DI
     LD IX,EBUZ_SPR_SHADOW   : CALL EBUZ_UPDATE_BULLET
     LD IX,EBUZ_SPR_SHADOW+4 : CALL EBUZ_UPDATE_BULLET
     LD IX,EBUZ_SPR_SHADOW+8 : CALL EBUZ_UPDATE_BULLET
+    LD A,(EBUZ_TOPBOTTOM_ACTIVE)
+    OR A
+    CALL NZ,EBUZ_UPDATE_TOPBOTTOM_FIRE
     LD HL,EBUZ_SPR_SHADOW : LD DE,SPRATR : LD BC,12 : CALL LDIRVM
     EI
     CALL EBUZ_FRAME_WAIT
+    RET
+
+; 上下弾の継続発射処理(2026-09-13追記その7)。EBUZ_TOPBOTTOM_ACTIVE=1の
+; 間、EBUZ_TICKから毎回呼ばれる。(1)反動表示中なら1ティック後に元位置
+; へ戻す。(2)発射カウントダウンが0になったら、その側の弾を原点から
+; 再発射(スロット1=上/スロット2=下)し、その側の翼帯に反動を表示、
+; 次は逆側を撃つよう反転する。
+EBUZ_UPDATE_TOPBOTTOM_FIRE:
+    ; --- 反動表示の自動解除 ---
+    LD A,(EBUZ_RECOIL_COUNTDOWN)
+    OR A
+    JR Z,EUTF_SKIP_REVERT
+    DEC A
+    LD (EBUZ_RECOIL_COUNTDOWN),A
+    JR NZ,EUTF_SKIP_REVERT
+    LD A,(EBUZ_RECOIL_SIDE)
+    OR A
+    JR NZ,EUTF_REVERT_BOTTOM
+    LD HL,EBUZ_ROW_0ABC_REST : LD DE,01838h : LD BC,5 : CALL LDIRVM
+    JR EUTF_SKIP_REVERT
+EUTF_REVERT_BOTTOM:
+    LD HL,EBUZ_ROW_0ABC_REST : LD DE,01898h : LD BC,5 : CALL LDIRVM
+EUTF_SKIP_REVERT:
+    ; --- 次の発射までのカウントダウン ---
+    LD A,(EBUZ_FIRE_COUNTDOWN)
+    DEC A
+    LD (EBUZ_FIRE_COUNTDOWN),A
+    RET NZ
+    LD A,EBUZ_FIRE_INTERVAL
+    LD (EBUZ_FIRE_COUNTDOWN),A
+    ; --- 発射(側に応じてスロット1/2を原点へ再セット+反動表示) ---
+    LD A,(EBUZ_FIRE_SIDE)
+    OR A
+    JR NZ,EUTF_FIRE_BOTTOM
+    LD HL,EBUZ_SPR_BULLET23 : LD DE,EBUZ_SPR_SHADOW+4 : LD BC,4 : LDIR
+    LD HL,EBUZ_ROW_0ABC_RECOIL : LD DE,01838h : LD BC,5 : CALL LDIRVM
+    JR EUTF_FIRE_DONE
+EUTF_FIRE_BOTTOM:
+    LD HL,EBUZ_SPR_BULLET23+4 : LD DE,EBUZ_SPR_SHADOW+8 : LD BC,4 : LDIR
+    LD HL,EBUZ_ROW_0ABC_RECOIL : LD DE,01898h : LD BC,5 : CALL LDIRVM
+EUTF_FIRE_DONE:
+    LD A,(EBUZ_FIRE_SIDE)
+    LD (EBUZ_RECOIL_SIDE),A
+    LD A,EBUZ_RECOIL_DURATION
+    LD (EBUZ_RECOIL_COUNTDOWN),A
+    LD A,(EBUZ_FIRE_SIDE)
+    XOR 1
+    LD (EBUZ_FIRE_SIDE),A
     RET
 
 ; B=待ちたいティック数(1-255)。EBUZ_TICKをB回呼ぶだけの「弾の移動を
@@ -278,6 +359,11 @@ INIT:
     LD HL,EBUZ_SPR_SHADOW : LD DE,SPRATR : LD BC,12 : CALL LDIRVM
     LD HL,EBUZ_SPR_TERM : LD DE,SPRATR+12 : LD BC,4 : CALL LDIRVM
 
+    ; 上下弾の継続発射状態を非活性で初期化(2026-09-13追記その7)
+    XOR A
+    LD (EBUZ_TOPBOTTOM_ACTIVE),A
+    LD (EBUZ_RECOIL_COUNTDOWN),A
+
     ; --- state1: A,B,C,D を row2/row3 の col24-27 へ(2行とも同一) ---
     ; NOTE: このアセンブラは演算子優先順位も丸括弧も無い(左から右へ
     ; 逐次評価するだけ)ため、"NAMTBL+ROW*32+COL"式は書かず、name
@@ -316,9 +402,11 @@ EBUZ_STATE1_DONE:
     CALL EBUZ_WAIT_TICKS
 
     ; --- state2: A,B,Cの帯が上下へ分離・移動、中央2行はDだけが残る ---
-    LD HL,EBUZ_ROW_0ABC
-    LD DE,01838h                 ; row1 (new top band), col24-27
-    LD BC,4
+    ; (row1/row4はcol24-28の5byte書き込み - col28は反動アニメーション用に
+    ; 確保した予備セル、静止時は空白)
+    LD HL,EBUZ_ROW_0ABC_REST
+    LD DE,01838h                 ; row1 (new top band), col24-28
+    LD BC,5
     CALL LDIRVM
     LD HL,EBUZ_ROW_000D
     LD DE,01858h                 ; row2 (was A,B,C,D) - A,B,C now gone
@@ -328,22 +416,29 @@ EBUZ_STATE1_DONE:
     LD DE,01878h                 ; row3 (was A,B,C,D) - A,B,C now gone
     LD BC,4
     CALL LDIRVM
-    LD HL,EBUZ_ROW_0ABC
-    LD DE,01898h                 ; row4 (new bottom band), col24-27
-    LD BC,4
+    LD HL,EBUZ_ROW_0ABC_REST
+    LD DE,01898h                 ; row4 (new bottom band), col24-28
+    LD BC,5
     CALL LDIRVM
 EBUZ_STATE2_BG_DONE:
 
-    ; --- "Ebuz2に変形後...同じく0.5秒維持して同時発射"(2026-09-13追記) ---
+    ; --- "Ebuz2に変形後...同じく0.5秒維持して"(2026-09-13追記) ---
     ; ここもEBUZ_WAIT_TICKS経由なのでbullet0は引き続き移動を続ける
     ; (この時点でbullet0は既に画面外へ消えているはず、下記の較正コメント
     ; 参照)。
     LD B,29
     CALL EBUZ_WAIT_TICKS
 
-    ; --- state2変化時: BULLET_HALFを2枚同時発射(スロット1,2) ---
-    LD HL,EBUZ_SPR_BULLET23 : LD DE,EBUZ_SPR_SHADOW+4 : LD BC,8 : LDIR
-    LD HL,EBUZ_SPR_SHADOW+4 : LD DE,SPRATR+4 : LD BC,8 : CALL LDIRVM
+    ; --- "上下弾は交互に撃ち続けろ 2フレ交代"(2026-09-13追記その7): ---
+    ; 単発発射ではなく継続発射モードを起動。初弾は次のEBUZ_TICKで即座に
+    ; 発射されるようFIRE_COUNTDOWN=1とする(以後はEBUZ_FIRE_INTERVALで
+    ; 2ティックおきに交互発射)。
+    XOR A
+    LD (EBUZ_FIRE_SIDE),A          ; 0=まず上側から
+    LD A,1
+    LD (EBUZ_FIRE_COUNTDOWN),A     ; 次のティックで即発射
+    LD A,1
+    LD (EBUZ_TOPBOTTOM_ACTIVE),A
 EBUZ_STATE2_DONE:
 
 ; --- 以後、弾3枚(スロット0-2)を毎"フレーム"左へ移動、画面外で非表示化 ---
@@ -359,8 +454,14 @@ EBUZ_COLOR_BYTE:
 
 EBUZ_ROW_ABCD:
     DB EBUZ_CODE_A,EBUZ_CODE_B,EBUZ_CODE_C,EBUZ_CODE_D
-EBUZ_ROW_0ABC:
-    DB 0,EBUZ_CODE_A,EBUZ_CODE_B,EBUZ_CODE_C
+; 2026-09-13追記その7("打つときは反動を見せたいんで 上下の3セル分を
+; 1セル右に 打ったら元位置に戻せ"): col24-28の5byte(col28は反動時
+; だけC タイルが入る予備セル)。静止時REST=[空,A,B,C,空]、反動時
+; RECOIL=[空,空,A,B,C](A,B,Cの3セルがまるごと1セル右へシフト)。
+EBUZ_ROW_0ABC_REST:
+    DB 0,EBUZ_CODE_A,EBUZ_CODE_B,EBUZ_CODE_C,0
+EBUZ_ROW_0ABC_RECOIL:
+    DB 0,0,EBUZ_CODE_A,EBUZ_CODE_B,EBUZ_CODE_C
 EBUZ_ROW_000D:
     DB 0,0,0,EBUZ_CODE_D
 

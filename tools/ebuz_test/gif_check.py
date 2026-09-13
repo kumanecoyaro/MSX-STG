@@ -1,9 +1,11 @@
-"""tools/ebuz_test/ebuz_test.asmの発射タイミング/移動速度を、実時間
-(T-states換算)キャプション付きのアニメーションGIFとして可視化する
-(2026-09-13、実機フィードバック対応: "今は全て同時に発射してるし
-下側の弾も出てない"への対応後、静止画3枚では"0.5秒待ってから発射"
-"上下同時発射"というタイミング関係そのものが伝わらないと判断し、
-経過時間を明示したGIFで直接確認できるようにした)。
+"""tools/ebuz_test/ebuz_test.asmの発射タイミング/移動速度/上下弾の
+継続交互発射+反動アニメーションを、実時間(T-states換算)キャプション
+付きのアニメーションGIFとして可視化する(2026-09-13、実機フィード
+バック対応: "今は全て同時に発射してるし下側の弾も出てない"への対応後、
+静止画3枚では"0.5秒待ってから発射""上下同時発射"というタイミング
+関係そのものが伝わらないと判断し、経過時間を明示したGIFで直接確認
+できるようにした)。その後(その7)"上下弾は交互に撃ち続けろ 2フレ
+交代...反動"対応でstate2以降を継続交互発射+反動の可視化に更新。
 
 各フレームは実際にz.tstates(Z80クロック消費量)をINITからの累積で
 記録し、3.579545MHzの実クロックに換算した経過秒数をキャプションに
@@ -76,26 +78,39 @@ def main():
     frames.append(snapshot(z, "bullet0 fired (0.5s after appearing)"))
 
     run_until_pc(z, sym["EBUZ_STATE2_BG_DONE"])
-    frames.append(snapshot(z, "Ebuz2 forms, bullets1/2 not fired yet"))
+    frames.append(snapshot(z, "Ebuz2 forms, top/bottom fire not active yet"))
 
     run_until_pc(z, sym["EBUZ_STATE2_DONE"])
-    frames.append(snapshot(z, "bullets1+2 fired together (0.5s after forming)"))
+    frames.append(snapshot(z, "continuous fire activated (0.5s after forming)"))
+
+    # close-up on the first few ticks to show the alternating fire + recoil
+    # (2026-09-13追記その7: "上下弾は交互に撃ち続けろ 2フレ交代...反動")
+    close_labels = [
+        "+1 tick: TOP fires (recoil shown)",
+        "+2 ticks: TOP's recoil reverts",
+        "+3 ticks: BOTTOM fires (recoil shown)",
+        "+4 ticks: BOTTOM's recoil reverts",
+    ]
+    for label in close_labels:
+        z.step()
+        run_until_pc(z, sym["EBUZ_FRAME_TICK"])
+        frames.append(snapshot(z, label))
 
     STEP_LAPS = 20
-    cumulative = 0
-    for _ in range(8):
+    cumulative = 4
+    for _ in range(7):
         for _ in range(STEP_LAPS):
             z.step()
             run_until_pc(z, sym["EBUZ_FRAME_TICK"])
         cumulative += STEP_LAPS
-        frames.append(snapshot(z, f"+{cumulative} frame-ticks: bullets moving/hiding"))
+        frames.append(snapshot(z, f"+{cumulative} frame-ticks: continuous alternating barrage"))
 
     out_path = os.path.join(HERE, "ebuz_bullets_timeline.gif")
     frames[0].save(
         out_path,
         save_all=True,
         append_images=frames[1:],
-        duration=[900, 700, 900, 700] + [500] * (len(frames) - 4),
+        duration=[900, 700, 900, 700] + [500] * 4 + [500] * (len(frames) - 8),
         loop=0,
     )
     print("timeline GIF written:", out_path, f"({len(frames)} frames)")

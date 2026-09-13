@@ -116,15 +116,14 @@ BULLET_HALF_CODE = sym["BULLET_HALF_CODE"]
 BULLET_COLOR = sym["EBUZ_BULLET_COLOR"]
 BULLET1_X = sym["EBUZ_BULLET1_X"]   # state1弾: 192-16=176
 BULLET23_X = sym["EBUZ_BULLET_X"]   # state2弾2枚: 192のまま
-# (2026-09-13追記その5/その6、実機フィードバック対応: "ようやくかよ
-# 弾遅いんで速くしてくれ 2pxで"→"遅いな6pxで") 1px/2px交互
-# (平均1.5px/frame)方式を撤回し単純な固定速度へ、2px/frameでもまだ
-# 遅いとの指摘で最終的に6px/frameへ。
+# (2026-09-13追記その5/その6/その7、実機フィードバック対応: "ようやく
+# かよ 弾遅いんで速くしてくれ 2pxで"→"遅いな6pxで"→"8pxで") 1px/2px
+# 交互(平均1.5px/frame)方式を撤回し単純な固定速度へ、最終的に8px/frame。
 SPEED = sym["EBUZ_BULLET_SPEED"]
-check(f"EBUZ_BULLET_SPEED is exactly the requested flat 6px/frame, "
+check(f"EBUZ_BULLET_SPEED is exactly the requested flat 8px/frame, "
       f"pinned as a literal, not just self-consistency with the "
       f"simulation below",
-      SPEED == 6)
+      SPEED == 8)
 SPR_HIDE_Y = sym["SPR_HIDE_Y"]
 SPR_TERM_Y = sym["SPR_TERM_Y"]
 Y1_STORED = sym["EBUZ_BULLET1_STORED_Y"]
@@ -290,78 +289,111 @@ check(f"state2: bullet0 has kept moving during the state1-to-state2 wait "
       bullet0_bg2_ok)
 check("state2: right after the BG transforms (before the 0.5s wait), bullets1/2 "
       "have NOT fired yet (still hidden) - proves the transform-then-wait-then-"
-      "fire ordering (\"Ebuz2に変形後...0.5秒維持して同時発射\")",
+      "fire ordering (\"Ebuz2に変形後...0.5秒維持して\")",
       sprite_attr(z1b, 1)[0] == SPR_HIDE_Y and sprite_attr(z1b, 2)[0] == SPR_HIDE_Y)
 
 gap2 = run_until_pc_count(z1b, sym["EBUZ_STATE2_DONE"])
-check(f"state2: the transform-done -> fired gap actually spends roughly "
+check(f"state2: the transform-done -> activation gap actually spends roughly "
       f"{WAIT_BEFORE_FIRE_TICKS} EBUZ_TICK's worth of steps "
       f"({gap2} >= {one_tick_steps}*{WAIT_BEFORE_FIRE_TICKS}*0.9), not just a "
       f"few instructions",
       gap2 >= one_tick_steps * WAIT_BEFORE_FIRE_TICKS * 0.9)
 
-# --- THE definitive regression test for "だから違うって...今は全て同時に ---
-# 発射してるし 下側の弾も出てない": by the moment bullets1/2 actually fire,
-# bullet0 must ALREADY be off-screen (hidden) - not still sitting next to the
-# body. This is what makes the two firing events visually distinct instead
-# of looking like "everything fired together".
+# --- (2026-09-13追記その7、実機フィードバック対応: "初弾のホールドタイム ---
+# はで、上下弾は交互に撃ち続けろ 2フレ交代 打つときは反動を見せたいんで
+# 上下の3セル分を1セル右に 打ったら元位置に戻せ")。EBUZ_STATE2_DONEは
+# もはや「bullets1/2が発射済み」ではなく「継続発射モードを起動した」
+# 時点を指す(初弾は次のEBUZ_TICKで発射される) - この意味変更を
+# 反映して以降のテストを全面的に書き直す。
+check("bullet0 is already off-screen (Y=SPR_HIDE_Y) by the moment continuous "
+      "fire activates - the state1 bullet and the state2 volley are visually "
+      "separated, not bunched together at the body",
+      simulate_positions([BULLET1_X], WAIT_STATE1_TO_STATE2_TICKS + WAIT_BEFORE_FIRE_TICKS)[0][1])
+
+FIRE_INTERVAL = sym["EBUZ_FIRE_INTERVAL"]
+RECOIL_DURATION = sym["EBUZ_RECOIL_DURATION"]
+check(f"EBUZ_FIRE_INTERVAL is exactly 2 (\"2フレ交代\") and "
+      f"EBUZ_RECOIL_DURATION is 1 (recoil shows for 1 tick then reverts, "
+      f"per \"打ったら元位置に戻せ\")",
+      FIRE_INTERVAL == 2 and RECOIL_DURATION == 1)
+
+
+def simulate_topbottom(n_ticks):
+    """Python参照実装: EBUZ_UPDATE_TOPBOTTOM_FIRE(2026-09-13追記その7の
+    継続発射+反動)を、EBUZ_TICK内の実行順序(先にEBUZ_UPDATE_BULLETで
+    両スロットを移動、その後に反動リバート判定→発射カウントダウン
+    判定の順)通りに1ティックずつシミュレートする。戻り値は各ティック
+    後の(bullet1_x, bullet1_hidden, bullet2_x, bullet2_hidden,
+    row1_recoiled, row4_recoiled)のリスト。"""
+    b1_x, b1_hidden = None, True
+    b2_x, b2_hidden = None, True
+    fire_side = 0
+    fire_countdown = 1
+    recoil_side = None
+    recoil_countdown = 0
+    history = []
+    for _ in range(n_ticks):
+        if not b1_hidden:
+            if b1_x < SPEED:
+                b1_hidden = True
+            else:
+                b1_x -= SPEED
+        if not b2_hidden:
+            if b2_x < SPEED:
+                b2_hidden = True
+            else:
+                b2_x -= SPEED
+        if recoil_countdown > 0:
+            recoil_countdown -= 1
+        fire_countdown -= 1
+        if fire_countdown == 0:
+            fire_countdown = FIRE_INTERVAL
+            if fire_side == 0:
+                b1_x, b1_hidden = BULLET23_X, False
+            else:
+                b2_x, b2_hidden = BULLET23_X, False
+            recoil_side = fire_side
+            recoil_countdown = RECOIL_DURATION
+            fire_side ^= 1
+        row1_recoiled = recoil_countdown > 0 and recoil_side == 0
+        row4_recoiled = recoil_countdown > 0 and recoil_side == 1
+        history.append((b1_x, b1_hidden, b2_x, b2_hidden, row1_recoiled, row4_recoiled))
+    return history
+
+
+REST_ROW = [0, sym["EBUZ_CODE_A"], sym["EBUZ_CODE_B"], sym["EBUZ_CODE_C"], 0]
+RECOIL_ROW = [0, 0, sym["EBUZ_CODE_A"], sym["EBUZ_CODE_B"], sym["EBUZ_CODE_C"]]
+
 z2 = fresh()
 z2.pc = sym["INIT"]
 run_until_pc(z2, sym["EBUZ_STATE2_DONE"])
-(exp_final_x, exp_final_hidden) = simulate_positions(
-    [BULLET1_X], WAIT_STATE1_TO_STATE2_TICKS + WAIT_BEFORE_FIRE_TICKS)[0]
-check(f"bullet0 is already off-screen (Y=SPR_HIDE_Y) by the moment bullets1/2 "
-      f"fire ({WAIT_STATE1_TO_STATE2_TICKS + WAIT_BEFORE_FIRE_TICKS} ticks after "
-      f"it was fired) - the two firing events are now visually separated, not "
-      f"bunched together at the body",
-      sprite_attr(z2, 0)[0] == SPR_HIDE_Y and exp_final_hidden)
-check("state2: bullet1(slot1) fired as BULLET_HALF at Y=8px (top wing band's "
-      "row, 8px below the original literal 0px per the \"絶対位置でやりやがって\" "
-      "correction), X=192",
-      sprite_attr(z2, 1) == [Y2_STORED, BULLET23_X, BULLET_HALF_CODE, BULLET_COLOR])
-check("state2: bullet2(slot2) fired as BULLET_HALF at Y=32px (bottom wing "
-      "band's row, 8px below the original literal 24px), X=192, simultaneously "
-      "with bullet1",
-      sprite_attr(z2, 2) == [Y3_STORED, BULLET23_X, BULLET_HALF_CODE, BULLET_COLOR])
-
-# --- bullets1/2 keep moving left every EBUZ_FRAME_TICK lap, at the flat ---
-# EBUZ_BULLET_SPEED(2px/frame). bullet0 is excluded here - it's already
-# off-screen/hidden by this point (verified above) and EBUZ_UPDATE_BULLET
-# no-ops for hidden slots, so it must stay put at Y=SPR_HIDE_Y.
-N_TICKS = 5
-for _ in range(N_TICKS):
+N_TICKS = 10
+sim_history = simulate_topbottom(N_TICKS)
+all_match = True
+mismatch_detail = ""
+for i in range(N_TICKS):
     z2.step()
     run_until_pc(z2, sym["EBUZ_FRAME_TICK"])
-check("bullet0 stays hidden (off-screen) through further frame-ticks, it "
-      "doesn't come back", sprite_attr(z2, 0)[0] == SPR_HIDE_Y)
-(exp1_x, exp1_hidden), (exp2_x, exp2_hidden) = simulate_positions(
-    [BULLET23_X, BULLET23_X], N_TICKS)
-check(f"after {N_TICKS} frame-ticks, bullets1/2 moved left by the flat "
-      f"EBUZ_BULLET_SPEED exactly as simulated "
-      f"(bullet1/2: {BULLET23_X}->{exp1_x})",
-      not exp1_hidden and not exp2_hidden
-      and sprite_attr(z2, 1)[1] == exp1_x and sprite_attr(z2, 2)[1] == exp2_x)
-
-# --- a bullet that reaches the left edge gets hidden, not wrapped ---
-# (bullet0 is already hidden by EBUZ_STATE2_DONE in the new design, so this
-# uses bullet1/slot1 - which is still fresh at X=192 at that point - instead.)
-z3 = fresh()
-z3.pc = sym["INIT"]
-run_until_pc(z3, sym["EBUZ_STATE2_DONE"])
-# figure out (via the same python reference model) how many laps bullet1
-# (starting at BULLET23_X=192) needs to hide.
-laps = 0
-while True:
-    laps += 1
-    (_, hidden1), = simulate_positions([BULLET23_X], laps)
-    if hidden1:
+    exp_b1x, exp_b1h, exp_b2x, exp_b2h, exp_r1, exp_r4 = sim_history[i]
+    b1 = sprite_attr(z2, 1)
+    b2 = sprite_attr(z2, 2)
+    b1_ok = (b1[0] == SPR_HIDE_Y) if exp_b1h else (b1 == [Y2_STORED, exp_b1x, BULLET_HALF_CODE, BULLET_COLOR])
+    b2_ok = (b2[0] == SPR_HIDE_Y) if exp_b2h else (b2 == [Y3_STORED, exp_b2x, BULLET_HALF_CODE, BULLET_COLOR])
+    r1 = cells(z2, 1, 24, 5)
+    r4 = cells(z2, 4, 24, 5)
+    r1_ok = r1 == (RECOIL_ROW if exp_r1 else REST_ROW)
+    r4_ok = r4 == (RECOIL_ROW if exp_r4 else REST_ROW)
+    if not (b1_ok and b2_ok and r1_ok and r4_ok):
+        all_match = False
+        mismatch_detail = (f"tick{i+1}: bullet1 actual={b1} b2 actual={b2} "
+                            f"r1={r1} r4={r4} vs sim b1x={exp_b1x}/h={exp_b1h} "
+                            f"b2x={exp_b2x}/h={exp_b2h} r1_recoil={exp_r1} r4_recoil={exp_r4}")
         break
-laps += 2   # a couple of extra laps of margin
-for _ in range(laps):
-    z3.step()
-    run_until_pc(z3, sym["EBUZ_FRAME_TICK"])
-check("a bullet that would go off the left edge is hidden (Y=SPR_HIDE_Y), not "
-      "wrapped to a huge positive X", sprite_attr(z3, 1)[0] == SPR_HIDE_Y)
+check(f"continuous alternating top/bottom fire (2-tick interval) + recoil "
+      f"animation (3-cell band shifts 1 cell right for 1 tick, then reverts) "
+      f"matches the Python reference simulation exactly over {N_TICKS} ticks"
+      + (f" - MISMATCH: {mismatch_detail}" if not all_match else ""),
+      all_match)
 
 
 print()
