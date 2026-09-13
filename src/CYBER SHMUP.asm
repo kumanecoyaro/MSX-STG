@@ -458,6 +458,24 @@ ENEMY_DODGE_DIST EQU 16      ; total px moved diagonally, 1px/frame, per flight
 ; --- here from scratch (EBULLET_PATTERN), not shared/imported.      ---
 EBULLET_SLOTS  EQU 6
 EBULLET_STRUCT EQU 4         ; +0 ACTIVE,+1 X,+2 Y,+3 SPRNUM
+; (2026-09-13、"ステージ1の敵弾のプライオリティを自機とバリアの次に"):
+; hw sprite priority on real TMS9918 hardware is purely slot-number order
+; (lower slot = drawn on top). Slot0=barrier accent/slot1=ship body are
+; already fixed (see PLAYER_ACCENT_PAT's own draw site's "redraw ship:
+; slot1=body, slot0=accent overlay" comment) - EBULLET previously shared
+; the generic ALLOC_SPRITE_NUM pool (slot2-31, first-come-first-served)
+; with every other enemy type, so its priority relative to them was
+; whatever order things happened to spawn in, not guaranteed to be right
+; after the player. Given a fixed, dedicated slot range instead (one
+; slot per EBULLET_POOL index, matching the Stage2 BOSS_SPR_BASE_SLOT-
+; style "index IS the hw sprite number" convention), it's now always
+; drawn above every other non-player/non-barrier sprite. Verified safe
+; via a full-schedule real-MAINLOOP simulation of peak concurrent
+; ALLOC_SPRITE_NUM usage EXCLUDING EBULLET's own slots (peak observed:
+; 12 of the pool's now-24 remaining slots, well within budget) before
+; shrinking ALLOC_SPRITE_NUM's own scan range to skip this reservation
+; (see its own comment).
+EBULLET_SPR_BASE_SLOT EQU 2  ; slots 2-7 (EBULLET_SLOTS=6), right after slot0/1
 EBULLET_SPEED  EQU 6         ; dots/frame, left (faster than any enemy's own drift)
 PAT_EBULLET    EQU 124       ; 4 patterns 124-127 (32 bytes at SPRPAT+992) - free range, see survey
 E4_ALIGN_FIRE_COOLDOWN EQU 90 ; frames between Enemy7's own re-fires once Y keeps matching - untuned placeholder
@@ -797,7 +815,8 @@ BARRIER_HP    EQU 0F210h        ; player's barrier durability, 0-5; equipped fro
                                  ; pattern while nonzero, reverts to the normal accent at 0.
                                  ; No damage/collision exists yet - nothing decrements this
                                  ; today (see PLAYER_ACCENT_PAT selection, INIT).
-BARRIER_HP_INIT EQU 5
+; (2026-09-13、"バリア耐久値9に"): 5→9。
+BARRIER_HP_INIT EQU 9
 GAME_OVER       EQU 0F211h  ; 0=playing, 1=game over. "現状ゲームオーバー
                              ; 処理は残しておくが ゲームは止めないでくれ" -
                              ; MAINLOOP does NOT freeze on this (tracked
@@ -8196,18 +8215,25 @@ E1CA_GOTSLOT:
     LD A,(IX+E_PARAM3)
     JP SIMPLE_REDRAW
 
-; true free-list sprite-number allocator: scans SPRITE_USED[2..31]
+; true free-list sprite-number allocator: scans SPRITE_USED[8..31]
 ; for the first byte still 0 (free), claims it (sets 1), returns its
 ; number in A. Unlike the old blind round-robin counter, this can
 ; never hand out a number that's still in use elsewhere, which is
 ; what was corrupting a still-displayed enemy's VDP attribute entry
 ; (stray white Y=0 sprites - the two writers were racing on the same
-; attribute-table slot). Returns A=0 if all 30 are taken (should not
-; happen - current max concurrent users is well under 30); callers
+; attribute-table slot). Returns A=0 if all 24 are taken (should not
+; happen - current max concurrent users is well under 24); callers
 ; don't currently check for this since it can't occur in practice.
+; (2026-09-13、"敵弾のプライオリティを自機とバリアの次に"): slots 2-7
+; (EBULLET_SPR_BASE_SLOT..+EBULLET_SLOTS-1) are no longer part of this
+; shared pool - EBULLET now owns them as a fixed dedicated range (see
+; EBULLET_SPR_BASE_SLOT's own comment), so this scan starts at 8 instead
+; of 2 and covers 24 slots instead of 30. A real full-schedule MAINLOOP
+; simulation confirmed peak concurrent non-EBULLET usage never exceeds
+; 12, well within the new 24-slot budget.
 ALLOC_SPRITE_NUM:
-    LD HL,SPRITE_USED+2
-    LD B,30
+    LD HL,SPRITE_USED+8
+    LD B,24
 ASN_SCAN:
     LD A,(HL)
     OR A
@@ -8278,14 +8304,18 @@ EBULLET_POOL_INIT:
     LDIR
     RET
 
-; Claims a free EBULLET_POOL slot and a free hw sprite number, then
-; arms it to fly. Input: D=X,E=Y (spawn position, sprite top-left).
-; If the pool is full or no hw sprite number is available, silently
-; drops the shot - same "pool exhaustion -> drop" idiom as
-; ENEMY4_CLAIM_ANY's own pattern-slot exhaustion handling. Preserves
-; the caller's own IX (used internally, restored before RET) so this
-; is safe to call from inside another entity's own IX-indexed update.
-; Trashes A,B,DE,HL.
+; Claims a free EBULLET_POOL slot, then arms it to fly. Input: D=X,E=Y
+; (spawn position, sprite top-left). If the pool is full, silently drops
+; the shot - same "pool exhaustion -> drop" idiom as ENEMY4_CLAIM_ANY's
+; own pattern-slot exhaustion handling. Preserves the caller's own IX
+; (used internally, restored before RET) so this is safe to call from
+; inside another entity's own IX-indexed update. Trashes A,B,DE,HL.
+; (2026-09-13、"敵弾のプライオリティを自機とバリアの次に"): the hw
+; sprite number is now a FIXED dedicated slot (EBULLET_SPR_BASE_SLOT +
+; this pool slot's own index), not an ALLOC_SPRITE_NUM allocation from
+; the shared pool - see EBULLET_SPR_BASE_SLOT's own comment. This can
+; never fail/exhaust (unlike the old ALLOC_SPRITE_NUM call), so the
+; "no hw sprite available" drop path is gone.
 SPAWN_EBULLET:
     PUSH IX
     LD HL,EBULLET_POOL
@@ -8303,12 +8333,8 @@ SEB_SCAN:
     RET                      ; pool full - drop
 SEB_FOUND:
     PUSH HL : POP IX
-    PUSH DE
-    CALL ALLOC_SPRITE_NUM
-    POP DE
-    OR A
-    JR Z,SEB_FAIL            ; no hw sprite available - drop
-    LD (IX+3),A              ; SPRNUM
+    LD A,EBULLET_SLOTS : SUB B : ADD A,EBULLET_SPR_BASE_SLOT
+    LD (IX+3),A              ; SPRNUM (fixed - see header comment)
     LD (IX+1),D              ; X
     ; 実機フィードバック"敵弾(横棒レーザー)が敵との位置が上すぎるんで
     ; 8px下げて" - 全呼び出し元が発射元エネミーの生Y座標をそのまま
@@ -8317,7 +8343,6 @@ SEB_FOUND:
     LD A,E : ADD A,8 : LD E,A
     LD (IX+2),E              ; Y
     LD A,1 : LD (IX+0),A     ; ACTIVE
-SEB_FAIL:
     POP IX
     RET
 
@@ -8341,7 +8366,11 @@ UEA_LOOP:
     LD A,(IX+1)
     CP EBULLET_SPEED
     JR NC,UEA_MOVEOK
-    ; exiting past the left edge: hide, free the sprite number, deactivate
+    ; exiting past the left edge: hide + deactivate. The hw sprite number
+    ; itself is a fixed dedicated slot now (EBULLET_SPR_BASE_SLOT's own
+    ; comment), not a shared ALLOC_SPRITE_NUM allocation, so there is no
+    ; FREE_SPRITE_NUM to call - the slot stays reserved for this same
+    ; EBULLET_POOL index permanently.
     LD A,(IX+3)
     DI
     ADD A,A : ADD A,A : OUT (99h),A
@@ -8355,7 +8384,6 @@ UEA_LOOP:
     LD A,255 : OUT (98h),A
     PUSH BC : POP BC : NOP : NOP
     EI
-    LD A,(IX+3) : CALL FREE_SPRITE_NUM
     XOR A : LD (IX+0),A
     JR UEA_NEXT
 UEA_MOVEOK:

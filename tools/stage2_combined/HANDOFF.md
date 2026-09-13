@@ -14565,3 +14565,63 @@ NOP抜け)(2026-09-13、完了済み・実機フィードバック待ち)
 セッション引き継ぎメモ(2026-09-13、Round106完了直後):
 - 実プレイでの難易度感(耐久値8での撃破手応え)は次回フィードバック
   待ち。
+
+## Round107: Stage1敵弾(EBULLET)のスプライトプライオリティを自機・
+バリアの次に固定+バリア耐久値9(2026-09-13、完了済み・実機フィード
+バック待ち)
+
+- ユーザー指示: "ステージ1の敵弾のプライオリティを自機とバリアの次に
+  バリア耐久値9に"。
+- **敵弾プライオリティ**: TMS9918実機のhwスプライト優先度はスロット
+  番号順(若い番号ほど手前)。自機本体(slot1)・バリアアクセント
+  (slot0)は既に固定済みだったが、EBULLET(敵の横棒レーザー弾)は
+  他の全エネミー種別(E2編隊・Enemy1/E5/Enemy4B等)と共有する
+  `ALLOC_SPRITE_NUM`の動的プール(slot2-31、早い者勝ち)からスロット
+  を取得していたため、他のエネミーとの相対優先度は発生順次第で
+  不定だった。新規`EBULLET_SPR_BASE_SLOT EQU 2`を追加し、EBULLETを
+  「EBULLET_POOLの各スロットindexがそのままhwスプライト番号(2-7)」
+  という固定専用範囲方式(Stage2のBOSS_SPR_BASE_SLOT等と同型)へ変更
+  - `SPAWN_EBULLET`から`ALLOC_SPRITE_NUM`呼び出しを撤去(失敗しうる
+    「hwスプライト枯渇」経路自体が構造的に消滅)、`UPDATE_EBULLET_ALL`
+    の退出時`FREE_SPRITE_NUM`呼び出しも撤去(固定スロットは永久に
+    そのEBULLET_POOLインデックス専用のため解放不要)。
+  - `ALLOC_SPRITE_NUM`自身のスキャン範囲を`SPRITE_USED+2/B=30`から
+    `SPRITE_USED+8/B=24`へ縮小(予約した6スロット分を共有プールから
+    除外)。
+  - 着手前に実プレイ相当シミュレーション(全520件スケジュール消化)で
+    EBULLET以外の共有プール同時使用数のピークを実測(12/24、6スロット
+    縮小後も十分な余裕)し、安全性を確認済み。
+- **バリア耐久値**: `BARRIER_HP_INIT`を5→9へ変更(1行のEQU値変更)。
+- `tools/verify_enemy_bullets.py`を新設計に合わせ改訂(58→60件): 固定
+  スロット値の直接検証・共有プール枯渇状態でも成功することの検証・
+  `ALLOC_SPRITE_NUM`が予約範囲[2,7]を絶対に返さないことの直接検証
+  (2件追加)。`ALLOC_SPRITE_NUM`のスキャン開始位置だけを一時的に
+  戻して新規テストが正しくFAILすることを確認した上で復元・再PASS
+  済み。`tools/verify_barrier.py`のBARRIER_HP_INIT関連アサーション
+  も5→9へ更新(**このファイル自体は本ラウンドと無関係な既存の環境
+  制約 - 過去セッションでアップロードされたJSON添付ファイルの
+  実体`/root/.claude/uploads/d26705dd-.../804d2569-Acsent_16x16.json`
+  がこのコンテナには存在しないため`FileNotFoundError`で実行不能、
+  今回のコード変更が原因ではないことを確認済み**)。
+- 既存のStage1検証群(player_damage 60/stage1_bgm 80/stage1_mission_
+  screens 87/spawn_schedule_restart 12/enemy6_durability 19/
+  explosion_anim 28/boss_dfl_clear 10)全て無退行で再PASS、実プレイ
+  相当シミュレーション(スケジュール完全消化・ボススポーン)も無変化
+  で成功を再確認。Comb ROM再ビルド・`verify_comb.py`全チェックPASS
+  の上、標準方針によりComb ROMのみ送付。
+- 変更ファイル: `src/CYBER SHMUP.asm`(EBULLET_SPR_BASE_SLOT新設・
+  SPAWN_EBULLET/UPDATE_EBULLET_ALL/ALLOC_SPRITE_NUMの固定スロット化・
+  BARRIER_HP_INIT 5→9)、`tools/verify_enemy_bullets.py`(新設計への
+  改訂+新規回帰テスト2件)、`tools/verify_barrier.py`(期待値更新)、
+  Comb ROM再ビルド。`combined_test.asm`は無変更のため`run_all.py`
+  全回帰は未実施。
+
+セッション引き継ぎメモ(2026-09-13、Round107完了直後):
+- 実機での見え方(敵弾が確実に他のエネミーより手前に描画されるか)・
+  バリア耐久値9での難易度感は次回フィードバック待ち。
+- `tools/verify_barrier.py`が実行不能な環境制約(過去アップロード
+  ファイルの非永続化)は今回発見しただけで対応スコープ外。もし
+  今後バリア関連の変更が必要になった場合、このテストは現状のままでは
+  実行できない点に留意(ユーザーに新たにAcsent_16x16.json相当を
+  再アップロードしてもらうか、テスト自体を別のアプローチに書き換える
+  必要がある)。

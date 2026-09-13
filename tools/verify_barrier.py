@@ -80,10 +80,10 @@ for row in range(8, 16):
     expected_br.append(byte)
 
 
-# ---------- (1) BARRIER_HP is equipped (=5) from game start, no pickup needed ----------
+# ---------- (1) BARRIER_HP is equipped (=BARRIER_HP_INIT) from game start, no pickup needed ----------
 z = fresh(); boot(z)
-check("BARRIER_HP is initialized to BARRIER_HP_INIT(5) at boot, equipped from the start",
-      z.rd(BARRIER_HP) == BARRIER_HP_INIT == 5)
+check(f"BARRIER_HP is initialized to BARRIER_HP_INIT({BARRIER_HP_INIT}) at boot, equipped from the start",
+      z.rd(BARRIER_HP) == BARRIER_HP_INIT == 9)
 
 
 # ---------- (2) ACCENT_MID_BARRIER_PATTERN / ACCENT_DOWN_BARRIER_PATTERN VRAM content ----------
@@ -120,7 +120,7 @@ check("ACCENT_DOWN_BARRIER's BR quadrant is the same barrier glyph as the MID va
 z = fresh(); boot(z)
 z.sim_dir = 0   # not diving
 step_frame(z)
-check("equipped (BARRIER_HP=5 from boot), level flight: PLAYER_ACCENT_PAT = PAT_ACCENT_BARRIER",
+check("equipped (BARRIER_HP=BARRIER_HP_INIT from boot), level flight: PLAYER_ACCENT_PAT = PAT_ACCENT_BARRIER",
       z.rd(PLAYER_ACCENT_PAT) == PAT_ACCENT_BARRIER)
 
 z.sim_dir = 4   # down-right (one of the 3 "diving" directions - see GTSTCK comment)

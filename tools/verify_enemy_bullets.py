@@ -70,6 +70,7 @@ BEHAVIOR_SINE_BOB = sym["BEHAVIOR_SINE_BOB"]
 PLAYERY = sym["PLAYERY"]
 EBULLET_POOL = sym["EBULLET_POOL"]; EBULLET_STRUCT = sym["EBULLET_STRUCT"]
 EBULLET_SLOTS = sym["EBULLET_SLOTS"]; EBULLET_SPEED = sym["EBULLET_SPEED"]
+EBULLET_SPR_BASE_SLOT = sym["EBULLET_SPR_BASE_SLOT"]
 PAT_EBULLET = sym["PAT_EBULLET"]; SPR_LIGHTRED = sym["SPR_LIGHTRED"]; SPR_YELLOW = sym["SPR_YELLOW"]
 SPR_LIGHTGREEN = sym["SPR_LIGHTGREEN"]
 E1_FIRE_COUNTDOWN = sym["E1_FIRE_COUNTDOWN"]; E5_FIRE_COUNTDOWN = sym["E5_FIRE_COUNTDOWN"]
@@ -520,7 +521,14 @@ active = [s for s in ebullet_slots(z) if s[0] == 1]
 check("SPAWN_EBULLET claims a free slot with the given X, Y+8 (見た目の位置合わせ)",
       len(active) == 1 and (active[0][1], active[0][2]) == (40, 41))
 sprnum = active[0][3]
-check("...allocated a real hw sprite number (>=2)", sprnum >= 2)
+# (2026-09-13、"敵弾のプライオリティを自機とバリアの次に"): SPRNUM is now
+# a FIXED dedicated slot (EBULLET_SPR_BASE_SLOT + pool index), not an
+# ALLOC_SPRITE_NUM allocation from the shared pool - the very first
+# EBULLET_POOL slot always gets EBULLET_SPR_BASE_SLOT itself (2), not
+# just "some number >=2".
+check(f"...assigned the fixed dedicated hw sprite slot for pool index0 "
+      f"(EBULLET_SPR_BASE_SLOT={EBULLET_SPR_BASE_SLOT}), not a shared-pool allocation",
+      sprnum == EBULLET_SPR_BASE_SLOT)
 check("...drawn nowhere yet (X,Y only written by UPDATE_EBULLET_ALL)", True)
 
 call_routine(z, sym["UPDATE_EBULLET_ALL"])
@@ -539,9 +547,23 @@ for _ in range(20):
     if ebullet_active_count(z) == 0:
         break
 check("bullet deactivates once it drifts past the left edge", ebullet_active_count(z) == 0)
-check("...its hw sprite number is freed (SPRITE_USED byte cleared)", z.rd(SPRITE_USED + sprnum) == 0)
+# (2026-09-13): the fixed dedicated slot is never touched by SPRITE_USED
+# at all now (ALLOC_SPRITE_NUM's own scan range no longer covers it - see
+# EBULLET_SPR_BASE_SLOT's own comment), so there is nothing to "free"; it
+# simply stays 0 forever, which this still confirms (just not by freeing).
+check("...its hw sprite slot was never claimed in the shared SPRITE_USED pool "
+      "(fixed dedicated range, not a shared allocation)", z.rd(SPRITE_USED + sprnum) == 0)
 check("...hidden off-screen (Y=ENEMY_HIDE_Y,X=255) at the attribute table",
       z.vram[ATTR + sprnum * 4] == sym["ENEMY_HIDE_Y"] and z.vram[ATTR + sprnum * 4 + 1] == 255)
+
+# a respawn into the SAME EBULLET_POOL slot (index0, now free again) must
+# get the exact SAME fixed hw sprite slot back - confirms the mapping is
+# permanent per pool index, not re-derived/re-allocated each time.
+z.d = 40; z.e = 33
+call_routine(z, sym["SPAWN_EBULLET"])
+respawned = [s for s in ebullet_slots(z) if s[0] == 1][0]
+check("respawning into the same pool slot reuses the exact same fixed hw sprite slot",
+      respawned[3] == sprnum)
 
 
 # ---------- (7) pool exhaustion: SPAWN_EBULLET drops silently, no crash ----------
@@ -555,14 +577,43 @@ after = bytes(z.mem[EBULLET_POOL:EBULLET_POOL + EBULLET_SLOTS * EBULLET_STRUCT])
 check("a full EBULLET_POOL silently drops a new SPAWN_EBULLET (no state change, no crash)", before == after)
 
 
-# ---------- (8) hw sprite exhaustion: SPAWN_EBULLET drops silently, no crash ----------
+# ---------- (8) immune to shared-pool exhaustion: fixed dedicated slots ----------
+# (2026-09-13、"敵弾のプライオリティを自機とバリアの次に"): SPAWN_EBULLET
+# used to call ALLOC_SPRITE_NUM and drop the shot if the shared pool was
+# fully exhausted. Now that EBULLET owns a fixed dedicated slot range, a
+# fully-exhausted shared pool must NOT stop it from spawning - this is
+# the whole point of the fix (enemy bullets never lose their reserved
+# priority slot to anything else, and can never be starved by it either).
 z = fresh(); boot(z)
 for i in range(32):
-    z.wr(SPRITE_USED + i, 1)  # fake every hw sprite number taken
+    z.wr(SPRITE_USED + i, 1)  # fake every SHARED-POOL hw sprite number taken
 z.d = 10; z.e = 10
 call_routine(z, sym["SPAWN_EBULLET"])
-check("SPAWN_EBULLET drops the shot (pool slot stays inactive) when no hw sprite number is free",
-      ebullet_active_count(z) == 0)
+active8 = [s for s in ebullet_slots(z) if s[0] == 1]
+check("SPAWN_EBULLET still succeeds even with the entire shared ALLOC_SPRITE_NUM "
+      "pool exhausted (fixed dedicated slot, unaffected by shared-pool state)",
+      len(active8) == 1)
+check("...and still gets its own fixed dedicated slot (EBULLET_SPR_BASE_SLOT), "
+      "not a shared-pool number", active8[0][3] == EBULLET_SPR_BASE_SLOT)
+
+# ---------- (8b) the reverse guarantee: ALLOC_SPRITE_NUM (used by every ----------
+# ---------- other enemy type) can never hand out a number inside        ----------
+# ---------- EBULLET's own reserved range, no matter how many times it's ----------
+# ---------- called - this is what actually makes the priority ordering  ----------
+# ---------- ("自機とバリアの次") hold: nothing else can ever end up at   ----------
+# ---------- a slot number lower than EBULLET_SPR_BASE_SLOT+EBULLET_SLOTS.----------
+z = fresh(); boot(z)
+seen = []
+for _ in range(24):  # the entire shrunk shared pool (32 - 8 reserved)
+    call_routine(z, sym["ALLOC_SPRITE_NUM"])
+    seen.append(z.a)
+check(f"ALLOC_SPRITE_NUM never returns a value inside EBULLET's reserved range "
+      f"[{EBULLET_SPR_BASE_SLOT},{EBULLET_SPR_BASE_SLOT + EBULLET_SLOTS - 1}], across "
+      "all 24 remaining shared-pool slots",
+      all(v >= EBULLET_SPR_BASE_SLOT + EBULLET_SLOTS for v in seen))
+call_routine(z, sym["ALLOC_SPRITE_NUM"])
+check("...and handing out all 24 exhausts the shared pool (25th call returns 0)",
+      all(v != 0 for v in seen) and z.a == 0)
 
 
 # ---------- (9) real MAINLOOP play: Enemy7 fires when aligned, in a real frame loop ----------
