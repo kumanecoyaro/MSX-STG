@@ -1731,7 +1731,21 @@ STAGE_CLEAR_NOT_FROZEN:
     OR A
     JR NZ,SKIP_SCHEDULE_TICK
     LD HL,(GAME_TICK) : INC HL : LD (GAME_TICK),HL
-    CALL SPAWN_SCHEDULE_CHECK
+    ; round135follow-up16("ボスでは居ないはずのEbuzが出てる スポーン
+    ; 条件をすり抜けてるな"): CHECK_BOSS_TRIGGERはGAME_TICK>=1024+
+    ; 全プール瞬間空という条件だけで発火し(follow-up13の設計)、
+    ; SPAWN_NEXT_INDEXがスケジュール末尾に達しているかは一切見ない
+    ; ため、まだ未消化のエントリを残したままボスが出現しうる。この
+    ; SPAWN_SCHEDULE_CHECK呼び出し自体はBOSS_STATEを一切見ておらず、
+    ; ボス出現後もGAME_TICKが進み続ける限り毎フレーム呼ばれ続けて
+    ; いたため、ボス戦中に残りのスケジュール(Ebuzを含む)がすり抜けて
+    ; 発火していた。GAME_TICK自体はPOD_FIRE_START(ボス出現時点の
+    ; GAME_TICKからの相対ターゲット)の比較に必要なため凍結できない -
+    ; ディスパッチ側(SPAWN_SCHEDULE_CHECK呼び出し)だけをBOSS_STATE==0
+    ; の間に限定して解消。
+    LD A,(BOSS_STATE)
+    OR A
+    CALL Z,SPAWN_SCHEDULE_CHECK
 SKIP_SCHEDULE_TICK:
 SKIP_G8:
     CALL CHECK_BOSS_TRIGGER
@@ -11621,8 +11635,8 @@ E3DS_XOK:                         ; would silently re-enter from the LEFT edge, 
     LD A,(IX+2) : SRL A : SRL A : SRL A : LD (IX+5),A
     XOR A : LD (IX+6),A : LD (IX+7),A : LD (IX+8),A : LD (IX+9),A
     LD A,ANIM3_PACE : LD (IX+10),A
-    LD A,(ENEMY3_SPAWN_COUNT) : INC A : LD (ENEMY3_SPAWN_COUNT),A
-    LD A,(ENEMY3_ACTIVE_COUNT) : INC A : LD (ENEMY3_ACTIVE_COUNT),A
+    LD HL,ENEMY3_SPAWN_COUNT : INC (HL)
+    LD HL,ENEMY3_ACTIVE_COUNT : INC (HL)
     RET
 
 ; Input: IX = slot base address. Advances one frame of that slot's

@@ -16741,3 +16741,56 @@ ENEMY6のO(1)短絡最適化(2026-09-14、完了済み)
   効くかは実機フィードバック待ち。コメントアウト済みの`SPAWN_
   SCHEDULE_CHECK_BOSSONLY_SAVED`ブロックの削除可否はユーザー未確認
   のまま保留。
+
+## Round136 follow-up: 実機フィードバック対応(ボス戦中にEbuzがスポーン
+条件をすり抜けて出現)(2026-09-14、完了済み・実機フィードバック待ち)
+
+- ユーザー報告(スクショ添付、ボス[ポッド8機]戦闘中の画面左下にEbuz
+  らしき赤い個体が写る): "ボスでは居ないはずのEbuzが出てる スポーン
+  条件をすり抜けてるな"。
+- **根本原因**: `CHECK_BOSS_TRIGGER`(round135follow-up13の設計)は
+  「GAME_TICK>=1024かつ全プール瞬間空」だけを条件にBOSS_SPAWNを発火し、
+  `SPAWN_NEXT_INDEX`がスケジュール(SPAWN_THRESHOLDS、479件)の末尾に
+  達しているかは一切見ない - 未消化のエントリ(Ebuzを含む)を残した
+  ままボスが出現しうる。加えてMAINLOOP側のスケジュール駆動ブロック
+  (GAME_TICKインクリメント+`SPAWN_SCHEDULE_CHECK`呼び出し)は
+  `BOSS_STATE`を一切見ておらず、`EBUZ_ANY_ACTIVE`だけが唯一のゲート
+  だったため、ボス出現後もGAME_TICKが進み続ける限り`SPAWN_SCHEDULE_
+  CHECK`が毎フレーム呼ばれ続け、ボス戦中に残りのスケジュールエントリ
+  (Ebuz含む)がすり抜けて発火していた。
+- **修正**: `SPAWN_SCHEDULE_CHECK`の呼び出しだけを`BOSS_STATE==0`の
+  間に限定(`LD A,(BOSS_STATE):OR A:CALL Z,SPAWN_SCHEDULE_CHECK`)。
+  GAME_TICK自体は凍結しない - `POD_FIRE_START`(BOSS_SPAWN時点の
+  GAME_TICKからの相対ターゲット、`POD_FIRE_UPDATE`が生のGAME_TICKと
+  毎フレーム比較する)がボス戦中も進み続けるGAME_TICKに依存しており、
+  GAME_TICKまで止めるとボスのポッド発射が永久に起動しなくなる別の
+  重大バグになるため(この依存関係を`POD_FIRE_START`のEQUコメント+
+  `BOSS_CLEAR_DYNAMIC_ENEMIES`の実装で確認した上で判断)。
+- **ROM容量の壁(Comb限定)、round136と同じパターンで再発・解消**:
+  この修正(+7byte)も最初のALIGN 256境界(round136で3byteスラックまで
+  切り詰め済み)を再び超過し、`build_full_rom.py`が同じ
+  `game byte at unexpected address c000`で失敗した。round136と全く
+  同じ手法(既存の安全な`LD A,(nn):INC A:LD(nn),A`→`LD HL,nn:INC(HL)`
+  イディオム化)を`ENEMY3_SPAWN_COUNT`/`ENEMY3_ACTIVE_COUNT`の2箇所
+  (いずれも後続でAの値を使わないことを確認済み)へ適用し6byte削減、
+  net+1byteまで圧縮してComb ROMのビルドを復旧(headroom 64byteに
+  復元)。
+- 新規`tools/verify_boss_schedule_gate.py`(4件): (1)ボス戦中は
+  dueなスケジュールエントリがディスパッチされないこと、(2)それでも
+  GAME_TICK自体は進み続けること(POD_FIRE_START経路の安全確認)、
+  (3)BOSS_STATE==0の通常時は従来通りディスパッチされること(ゲートの
+  過剰ブロックでないこと)、(4)自己検証(CALL Z→無条件CALLへ1byte
+  パッチしてこのテストが実際に検出できることを確認)。関連する既存
+  検証群(`verify_boss_spawn_trigger.py` 24/`verify_spawn_schedule_
+  restart.py` 12/`verify_ebuz_integration.py` 109/`verify_boss_dfl_
+  clear.py` 10/`verify_boss_pod_bullet_aim.py` 17/`verify_enemy6_
+  durability.py` 27/`verify_mainloop_loop_bounds.py` 29/`verify_
+  player_damage.py` 60/`verify_stage1_bgm.py` 80/`verify_stage1_
+  mission_screens.py` 87/`verify_enemy_bullets.py` 60/`verify_
+  explosion_anim.py` 28)も全てPASS。Comb ROM再ビルド・
+  `verify_comb.py`全チェックPASS。詳細はHANDOFF.mdのRound136
+  follow-upを参照。
+- **保留・実機フィードバック待ち**: 今回の修正が実機で実際にEbuz
+  すり抜けを解消するかは次回フィードバック待ち。ボス撃破後(ステージ
+  クリア)にスケジュールを再開する必要は無いと判断(ステージが終了
+  するため)、意図的に対応していない。
