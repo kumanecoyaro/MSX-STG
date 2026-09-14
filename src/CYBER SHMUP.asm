@@ -1283,7 +1283,7 @@ E3INIT_ROW_LOOP:
     ; 実際にチェーンが開始する(EBUZ_SPAWN_CHAIN_START)までこの
     ; サブシステムは完全に無害。
     LD HL,EBUZ_CUR_ROW_ADDR : LD (HL),0
-    LD DE,EBUZ_CUR_ROW_ADDR+1 : LD BC,40 : LDIR
+    LD DE,EBUZ_CUR_ROW_ADDR+1 : LD BC,41 : LDIR
     LD HL,EBUZ_SLOT0+0 : LD (HL),0
     LD DE,EBUZ_SLOT0+1 : LD BC,16 : LDIR
     LD HL,EBUZ_SLOT0+EBUZ_OFS_TOP_COLS : LD (HL),EBUZ_SLOT_EMPTY
@@ -1691,14 +1691,19 @@ STAGE_CLEAR_NOT_FROZEN:
     OR A
     JR NZ,SKIP_SCHEDULE_TICK
     LD HL,(GAME_TICK) : INC HL : LD (GAME_TICK),HL
-    LD DE,EBUZ_SPAWN_TICK
+    LD A,(EBUZ_SPAWN_TICK_INDEX)
+    CP EBUZ_SPAWN_TICK_COUNT
+    JR NC,SKIP_EBUZ_SPAWN_TRIGGER    ; 4回とも消化済み
+    ADD A,A : LD E,A : LD D,0
+    PUSH HL
+    LD HL,EBUZ_SPAWN_TICK_TABLE
+    ADD HL,DE
+    LD E,(HL) : INC HL : LD D,(HL)
+    POP HL
     OR A
     SBC HL,DE
-    ADD HL,DE
     JR NZ,SKIP_EBUZ_SPAWN_TRIGGER
-    LD A,(EBUZ_SPAWN_STAGE)
-    OR A
-    JR NZ,SKIP_EBUZ_SPAWN_TRIGGER
+    LD A,(EBUZ_SPAWN_TICK_INDEX) : INC A : LD (EBUZ_SPAWN_TICK_INDEX),A
     CALL EBUZ_SPAWN_CHAIN_START
 SKIP_EBUZ_SPAWN_TRIGGER:
     CALL SPAWN_SCHEDULE_CHECK
@@ -12083,7 +12088,13 @@ EBUZ_ST_STATE2 EQU 3   ; 変形直後、一斉発射前ホールド中(本体4�
 EBUZ_ST_FIRE   EQU 4   ; 継続交互発射中(本体4行)
 EBUZ_ST_EXIT   EQU 5   ; 右へ移動して画面外へ消える(本体4行)
 
-EBUZ_SPAWN_TICK          EQU 100
+; (2026-09-14follow-up2、"スポーンは他に、256、512、768の計4回に"):
+; 単一のEBUZ_SPAWN_TICKを廃止し、4つのトリガーtickをテーブル化
+; (EBUZ_SPAWN_TICK_INDEXが次に使う要素を指す)。GAME_TICKは
+; EBUZ_ANY_ACTIVEがアクティブな間凍結される設計のため、1回のチェーン
+; (1体目→2体目→3体目)が完全に終わるまで次のtickには絶対に到達しない
+; - よって各トリガーは独立した「新しいチェーンの開始」として扱える。
+EBUZ_SPAWN_TICK_COUNT    EQU 4
 ; (2026-09-14 follow-up、"耐久値24に"): 12→24。全インスタンス共通。
 EBUZ_HP_INIT             EQU 24
 ; "生存時間は15秒"(60Hz想定、GAME_OVER_TIMEOUT_TICKS[600=10秒]等
@@ -12199,8 +12210,11 @@ EBUZ_EXPL_POS_X       EQU 0F283h
 EBUZ_EXPL_POS_Y       EQU 0F284h
 EBUZ_EXPL_QUEUE_CAPACITY EQU 16   ; 2の冪(ENQUEUE/UPDATE_QUEUEの容量チェック用)
 EBUZ_EXPL_SPAWN_INTERVAL EQU 4    ; 未調整の初期値、8セル連続ポップの間隔(フレーム)
+; (2026-09-14follow-up2、"スポーンは他に、256、512、768の計4回に"):
+; EBUZ_SPAWN_TICK_TABLEの次に使う要素番号(0-3、4=4回とも消化済み)。
+EBUZ_SPAWN_TICK_INDEX EQU 0F285h
 
-EBUZ_SLOT0 EQU 0F285h
+EBUZ_SLOT0 EQU 0F286h
 EBUZ_SLOT1 EQU EBUZ_SLOT0+EBUZ_SLOT_SIZE
 
 ; VRAMの連続2byteへ書き込む(左セル・右セル)。tools/ebuz_test/
@@ -12830,12 +12844,13 @@ EBUZ_SPAWN_INSTANCE:
     CALL EBUZ_BODY2_WRITE
     RET
 
-; GAME_TICKが100に達した瞬間に一度だけ呼ばれる(MAINLOOP参照)。
-; 1体目をSLOT0(中央行EBUZ_ROW_INST1)へスポーンしEBUZ_SPAWN_STAGEを
-; 1にする。2体目・3体目のスポーンはEBUZ_CHECK_CHAIN_TRIGGERSが毎フレーム
-; 進行させる("2体目のスポーンは1体目が消えたら[撤退/撃破いずれも]"、
-; "3体目は2体目が連射したくらいのタイミング"=2体目がFIRE状態に達した
-; 瞬間)。
+; GAME_TICKがEBUZ_SPAWN_TICK_TABLEの各要素(100,256,512,768)に達する
+; たび毎回呼ばれる(MAINLOOP参照、2026-09-14follow-up2で単発トリガーから
+; 4回トリガーへ拡張)。1体目をSLOT0(中央行EBUZ_ROW_INST1)へスポーンし
+; EBUZ_SPAWN_STAGEを1にする(前回のチェーンが3[終端]のままでも無条件に
+; 上書きし新しいチェーンを開始する)。2体目・3体目のスポーンは
+; EBUZ_CHECK_CHAIN_TRIGGERSが毎フレーム進行させる("2体目のスポーンは
+; 1体目が消えたら[撤退/撃破いずれも]"、"3体目出現を2体目の5秒後に")。
 EBUZ_SPAWN_CHAIN_START:
     LD IX,EBUZ_SLOT0
     LD A,EBUZ_ROW_INST1
@@ -13080,26 +13095,30 @@ PHBEZ_NO:
     XOR A
     RET
 
-; Input: D,E=レーン弾(16x8、BGセル2個分)の左上ピクセル座標。
-; Output: A=1で自機と重なる。Trashes A,H,L.
-PLAYER_HIT_BOX_EBUZLANE:
+; (2026-09-14follow-up2、"Ebuzの弾の判定は1pxに 他もすべて1px"):
+; bullet0・上下レーン弾で共用する1px判定(従来はbullet0=16x16の
+; PLAYER_HIT_BOX16、レーン弾=16x8の専用箱だったが、いずれも箱を
+; 使わず基準座標(D,E)そのものを点として扱う統一ヘルパーへ差し替え)。
+; Input: D,E=弾の基準ピクセル座標。Output: A=1で自機ヒットボックスと
+; 重なる。Trashes A,H,L.
+PLAYER_HIT_BOX_EBUZ_1PX:
     LD A,(PLAYERX) : LD H,A
     LD A,(PLAYERY) : LD L,A
     LD A,H : ADD A,7
     CP D
-    JR C,PHBEL_NO
-    LD A,D : ADD A,15
+    JR C,PHBEZ1_NO
+    LD A,D
     CP H
-    JR C,PHBEL_NO
+    JR C,PHBEZ1_NO
     LD A,L : ADD A,7
     CP E
-    JR C,PHBEL_NO
-    LD A,E : ADD A,7
+    JR C,PHBEZ1_NO
+    LD A,E
     CP L
-    JR C,PHBEL_NO
+    JR C,PHBEZ1_NO
     LD A,1
     RET
-PHBEL_NO:
+PHBEZ1_NO:
     XOR A
     RET
 
@@ -13191,7 +13210,7 @@ PDCEZ_BODY_TEST:
     JR Z,PDCEZ_SKIP_B0
     LD A,(IX+EBUZ_OFS_B0_COL) : ADD A,A : ADD A,A : ADD A,A : LD D,A
     LD A,(IX+EBUZ_OFS_CENTER_ROW) : ADD A,A : ADD A,A : ADD A,A : LD E,A
-    CALL PLAYER_HIT_BOX16
+    CALL PLAYER_HIT_BOX_EBUZ_1PX
     OR A
     JR NZ,PDCEZ_HIT
 PDCEZ_SKIP_B0:
@@ -13224,7 +13243,7 @@ PDCEZ_SL_LOOP:
     PUSH HL
     ADD A,A : ADD A,A : ADD A,A : LD D,A
     LD A,C : ADD A,A : ADD A,A : ADD A,A : LD E,A
-    CALL PLAYER_HIT_BOX_EBUZLANE
+    CALL PLAYER_HIT_BOX_EBUZ_1PX
     POP HL
     OR A
     JR NZ,PDCEZ_SL_HIT
@@ -13236,6 +13255,10 @@ PDCEZ_SL_SKIP:
 PDCEZ_SL_HIT:
     LD A,1
     RET
+
+; 4回分のチェーン開始トリガーtick(EBUZ_SPAWN_TICK_INDEXでindex)。
+EBUZ_SPAWN_TICK_TABLE:
+    DW 100,256,512,768
 
 EBUZ_ROW_ABCD:
     DB EBUZ_CODE_A,EBUZ_CODE_B,EBUZ_CODE_C,EBUZ_CODE_D

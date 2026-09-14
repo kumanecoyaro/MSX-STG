@@ -16367,3 +16367,56 @@ HP24化+8セル死亡演出(PLAYER_EXPL_POOL流用)+ROM容量危機の解決
   いずれも実機での見た目・ペーシング次第で再調整の可能性あり。
   Round130/131から持ち越しの生存時間15秒・退出速度・スコア500点・
   8セル演出間隔も引き続き未調整のまま。
+
+## Round133: Ebuzの弾判定を全て1pxに+スポーンチェーンを4回
+(tick100/256/512/768)トリガーへ拡張(2026-09-14、完了済み・実機
+フィードバック待ち)
+
+- ユーザー指示(原文): "Ebuzの弾の判定は1pxに\n他もすべて1px\nで、
+  スポーンは他に、256、512、768の計4回に"。
+- **弾判定1px化**: Ebuzが持つ2種の"弾"判定 - bullet0(初弾、従来
+  `PLAYER_HIT_BOX16`で16x16箱判定)と上下レーン弾(従来
+  `PLAYER_HIT_BOX_EBUZLANE`で16x8箱判定) - を、Round53で確立済みの
+  「敵弾は基準座標そのものを点として扱う」1px判定パターン
+  (`PLAYER_HIT_BOX_EBULLET`等と同型)に統一。新設`PLAYER_HIT_BOX_
+  EBUZ_1PX`1本を両者で共用(箱の幅・高さに依存しない同一の点内包
+  判定のため、bullet0用・レーン弾用を別々に持つ必要がなかった -
+  ROM容量節約も兼ねる)。本体(`PLAYER_HIT_BOX_EBUZ`、32x32/32x16)は
+  「弾」ではないため対象外(このプロジェクト全体の一貫した方針
+  - Round53以降、1px化は常に投射物のみに適用され敵/ボスの本体
+  当たり判定を縮小した例は一度もない)。旧`PLAYER_HIT_BOX_EBUZLANE`
+  は呼び出し元がこの1本に統一されたことで完全に不要となり削除。
+- **スポーン4回トリガー化**: 従来`EBUZ_SPAWN_TICK EQU 100`という
+  単発のGAME_TICK一致トリガーだったものを、`EBUZ_SPAWN_TICK_TABLE`
+  (DW 100,256,512,768)+`EBUZ_SPAWN_TICK_INDEX`(次に使う要素番号、
+  0-3、4で打ち止め)による4回トリガーへ再設計。Ebuz出現中は
+  `EBUZ_ANY_ACTIVE`によりGAME_TICK自体が凍結される既存設計を活かし、
+  「次のトリガーtickに到達する時点では必ず前回のチェーン(1体目→
+  2体目→3体目)が完全に終わっている」ことが構造的に保証されるため、
+  各トリガーを独立した「新しいチェーンの開始」として扱える。従来
+  存在した「EBUZ_SPAWN_STAGE==0の間だけトリガーを許可する」という
+  二重発火防止ガードは、2回目以降のトリガー時点でSTAGE=3(前回の
+  終端状態)のままになっており誤ってブロックしてしまうため削除、
+  代わりにインデックスのテーブル範囲チェック自体が二重発火防止も
+  兼ねる設計にした(`EBUZ_SPAWN_CHAIN_START`は毎回無条件にSTAGE=1で
+  上書きする)。
+- テスト: `tools/verify_ebuz_integration.py`に1px判定の直接検証
+  4件(基準点ちょうどでHIT+旧箱サイズなら依然HITしていたはずの
+  オフセット点でMISSになることを確認する自己検証ペア×2種)、4回
+  スポーンの直接検証4件(1回目トリガー後にINDEXが1になること、
+  チェーン完全終了後にtick256で新チェーンが[STAGE=3のままでも]
+  正しく開始されること、2回目トリガー後にINDEXが2になること、
+  INDEXが4[番兵]に達した後はtick768を跨いでもスポーンしないことの
+  自己検証)を追加、96→103件全件PASS。既存のStage1回帰8ファイル
+  (verify_enemy_bullets.py 60/verify_player_damage.py 60/verify_
+  stage1_bgm.py 80/verify_stage1_mission_screens.py 87/verify_
+  enemy6_durability.py 19/verify_spawn_schedule_restart.py 12/
+  verify_explosion_anim.py 28/verify_boss_dfl_clear.py 10)も全て
+  無変更で通過を確認。ROM容量はraw/Comb headroomとも64byteのまま
+  変化なし(削除した`PLAYER_HIT_BOX_EBUZLANE`と新設`EBUZ_SPAWN_TICK_
+  TABLE`等がほぼ相殺)。Comb ROM再ビルド・`verify_comb.py`全チェック
+  PASSの上、標準方針によりComb ROMのみ送付。
+- **保留・実機フィードバック待ち**: 1px化後の弾の見た目上の避けやすさ・
+  4回スポーンのペーシング(tick256/512/768という間隔自体は未調整の
+  初期値)はいずれも実機での見た目・難易度感次第で再調整の可能性
+  あり。

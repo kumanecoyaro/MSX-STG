@@ -657,8 +657,14 @@ swr(z7, S0, "B0_ACTIVE", 1)
 swr(z7, S0, "B0_COL", 10)
 z7.wr(sym["PLAYERX"], 80)
 z7.wr(sym["PLAYERY"], 72)
-check("自機がbullet0(row9-10,col10、16x16)に重なると接触検出",
+check("(2026-09-14 follow-up2、'Ebuzの弾の判定は1pxに'): "
+      "自機がbullet0の基準点(row9,col10)にちょうど重なると接触検出",
       pdc_check_ebuz(z7) == 1)
+z7.wr(sym["PLAYERX"], 88)  # 旧16x16判定なら依然ヒットする範囲(+8px)
+z7.wr(sym["PLAYERY"], 72)
+check("自己検証: bullet0基準点から8px右では1px判定によりMISS"
+      "(旧16x16判定ならHITしていたはずの範囲)",
+      pdc_check_ebuz(z7) == 0)
 
 z8 = fresh()
 boot(z8)
@@ -669,7 +675,14 @@ swr(z8, S0, "CENTER_ROW", sym["EBUZ_ROW_INST1"])
 swr(z8, S0, "TOP_COLS", 5)
 z8.wr(sym["PLAYERX"], 40)
 z8.wr(sym["PLAYERY"], (sym["EBUZ_ROW_INST1"] - 1) * 8)  # TOPBAND_ROW = CENTER_ROW-1
-check("自機が上レーン弾(row8,col5)に重なると接触検出", pdc_check_ebuz(z8) == 1)
+check("(2026-09-14 follow-up2、'他もすべて1px'): "
+      "自機が上レーン弾の基準点(row8,col5)にちょうど重なると接触検出",
+      pdc_check_ebuz(z8) == 1)
+z8.wr(sym["PLAYERX"], 40)
+z8.wr(sym["PLAYERY"], (sym["EBUZ_ROW_INST1"] - 1) * 8 + 7)  # 旧16x8判定なら依然ヒットする範囲
+check("自己検証: 上レーン弾基準点から7px下では1px判定によりMISS"
+      "(旧16x8判定ならHITしていたはずの範囲)",
+      pdc_check_ebuz(z8) == 0)
 
 z9 = fresh()
 boot(z9)
@@ -764,6 +777,46 @@ for _ in range(50):
     step_frame(zc)
 check("STAGE=3到達後、50フレーム進めてもSTAGE=3のまま(二重発火なし)",
       zc.rd(sym["EBUZ_SPAWN_STAGE"]) == 3)
+
+# ============================================================
+# 11.5. 4回スポーン(2026-09-14 follow-up2、"スポーンは他に、256、512、
+#       768の計4回に"): 1回目(tick100)のチェーンが完全に終わった後も、
+#       tick256で新しいチェーンが独立して開始することを検証。
+# ============================================================
+zf = fresh()
+spawn_chain_to_tick100(zf)
+check("1回目トリガー: EBUZ_SPAWN_TICK_INDEXが1になる(次はtick256)",
+      zf.rd(sym["EBUZ_SPAWN_TICK_INDEX"]) == 1)
+# チェーンをSTAGE=3(終端)まで進めた上で両スロットを強制的に非活性化し
+# (自然死亡シーケンス自体はセクション11/12で検証済みのためここでは
+# 省略、STAGE=3にしないとEBUZ_CHECK_CHAIN_TRIGGERSがACT=0を"1体目が
+# 消えた"と誤検出して2体目を即再スポーンしてしまう)、GAME_TICKの
+# 凍結を解除する。
+zf.wr(sym["EBUZ_SPAWN_STAGE"], 3)
+swr(zf, S0, "ACT", 0)
+swr(zf, S1, "ACT", 0)
+step_frame(zf)
+wr16(zf, sym["GAME_TICK"], 255)
+run_until(zf, lambda z: game_tick(z) == 256, max_frames=9)
+check("(2026-09-14 follow-up2、'256、512、768の計4回に'): "
+      "tick256到達と同フレームで新チェーンが開始し、SLOT0に1体目が"
+      "再スポーンする(前回チェーンがSTAGE=3[終端]のままでも上書きされる)",
+      zf.rd(sym["EBUZ_SPAWN_STAGE"]) == 1 and
+      srd(zf, S0, "ACT") == sym["EBUZ_ST_ENTER"] and
+      srd(zf, S0, "CENTER_ROW") == sym["EBUZ_ROW_INST1"])
+check("2回目トリガー: EBUZ_SPAWN_TICK_INDEXが2になる(次はtick512)",
+      zf.rd(sym["EBUZ_SPAWN_TICK_INDEX"]) == 2)
+
+zg = fresh()
+boot(zg)
+zg.wr(sym["EBUZ_SPAWN_TICK_INDEX"], sym["EBUZ_SPAWN_TICK_COUNT"])
+wr16(zg, sym["GAME_TICK"], 767)
+for _ in range(20):
+    step_frame(zg)
+check("自己検証: EBUZ_SPAWN_TICK_INDEXが4(番兵、EBUZ_SPAWN_TICK_COUNT)"
+      "に達した後は、tick768を跨いでもEBUZ_SPAWN_STAGEが0のまま"
+      "(5回目のスポーンは発生しない)",
+      zg.rd(sym["EBUZ_SPAWN_STAGE"]) == 0)
 
 # ============================================================
 # 12. チェーン: 1体目が(撃破ではなく)自然EXITで消えた場合も
