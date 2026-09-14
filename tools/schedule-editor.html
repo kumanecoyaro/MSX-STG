@@ -813,6 +813,25 @@
     ctx.fillText("BOSS", x + w / 2, y + h / 2);
   }
 
+  // round135follow-up3: same "plain labeled box" idea as
+  // drawS2BossPlaceholder above (no pixel-perfect body available), sized to
+  // Ebuz's own 8x4-cell placeholder footprint (see ebuzOrigin) - a
+  // distinct violet, not Boss's red, since a schedule can carry both at
+  // once and they should read as different things at a glance.
+  function drawEbuzPlaceholder(ctx, x, y, cell) {
+    var w = 8 * cell, h = 4 * cell;
+    ctx.fillStyle = "#241a3a";
+    ctx.fillRect(x, y, w, h);
+    ctx.strokeStyle = "#b79dff";
+    ctx.lineWidth = 2;
+    ctx.strokeRect(x + 1, y + 1, w - 2, h - 2);
+    ctx.fillStyle = "#b79dff";
+    ctx.font = "700 " + Math.max(10, Math.round(cell * 1.3)) + "px " + tok("--font-mono").split(",")[0] + ", monospace";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText("EBUZ", x + w / 2, y + h / 2);
+  }
+
   // Draws a GLYPHS entry into ctx at (x,y), scaled to fill w x h. 8x8 "rows"
   // glyphs paint their bg first (opaque BG tile); 16x16 "quads" glyphs leave
   // 0-bits untouched (transparent sprite, like the real hardware); 32x32
@@ -882,7 +901,31 @@
     { id: "enemy4",      name: "Enemy4",           desc: "SPAWN_E4 — baseY comes from SPAWN_BASEY_TABLE[row placed], any row", glyph: "enemy4" },
     { id: "enemy5",      name: "Enemy5",           desc: "SPAWN_E4B, TYPE_ENEMY1_LOOK — baseY comes from SPAWN_BASEY_TABLE[row placed], any row", glyph: "asterisk16" },
     { id: "enemy6",      name: "Enemy6",           desc: "NEW - BG-tile spin (0/90/180/270°); placement staged here, not yet wired into SPAWN_THRESHOLDS/SSC_FIRE", glyph: "enemy6" },
-    { id: "boss",       name: "Boss",             desc: "BOSS_SPAWN - fixed position, row/tick here are just for editing", glyph: null }
+    { id: "boss",       name: "Boss",             desc: "BOSS_SPAWN - fixed position, row/tick here are just for editing", glyph: null },
+    // round135follow-up3 ("Tick通りに進まなくなってるんで スケジュール
+    // エディタをEbuz対応に"): unlike every other Stage1 entry above, Ebuz is
+    // NOT part of SPAWN_THRESHOLDS/SSC_FIRE's linear index at all - it's a
+    // wholly separate EBUZ_SPAWN_TICK_TABLE that MAINLOOP checks every
+    // frame, and (this is the part that broke "Tick通りに進む" for anyone
+    // reading the exported JSON) it FREEZES GAME_TICK itself for the whole
+    // duration its 3-instance chain is alive, so every ordinary placement's
+    // own tick number silently stops corresponding to real elapsed time
+    // once an Ebuz trigger has fired. Before this round Ebuz's 5 trigger
+    // ticks (100/256/512/768/950) lived only as a hardcoded ASM table with
+    // no editor representation at all - invisible here, so there was no way
+    // to see where a freeze window sits relative to the rest of the
+    // schedule while placing everything else. Row is purely cosmetic (each
+    // instance's own row is a compile-time constant - EBUZ_ROW_INST1/2/3 -
+    // completely independent of where this icon sits on the grid), same
+    // "just for editing" idea as Boss above. On export it's just another
+    // placements[] entry (type:"ebuz") like everything else here - the ASM-
+    // side generator is expected to special-case type==="ebuz" by pulling
+    // its tick straight into EBUZ_SPAWN_TICK_TABLE/EBUZ_SPAWN_TICK_COUNT
+    // instead of SPAWN_THRESHOLDS/SSC_FIRE, exactly like it already
+    // special-cases nothing for "boss" (boss DOES go through the normal
+    // dispatch) - the two look alike in the palette but are wired
+    // differently on the ASM side, by design.
+    { id: "ebuz",        name: "Ebuz",             desc: "EBUZ_SPAWN_CHAIN_START - NOT part of SPAWN_THRESHOLDS/SSC_FIRE; a separate fixed-tick trigger that freezes GAME_TICK for its whole 3-instance chain. Row is just for editing (each instance's real row is fixed in ASM).", glyph: null }
   ];
   // Stage2 roster - tools/stage2_combined/combined_test.asm. None of
   // these are schedule-table-driven in the ASM yet (per round32's own
@@ -1104,6 +1147,18 @@
     };
   }
 
+  // round135follow-up3: same clamp idea as bossOrigin/s2BossOrigin above,
+  // for Ebuz's own placeholder footprint (8 cols wide - matches
+  // EBUZ_OFS_TOP_COLS/BOTTOM_COLS' real 8-byte-wide body - x 4 rows tall,
+  // purely a legible editing box since row itself is cosmetic here, see
+  // the "ebuz" TYPES1 entry's own comment).
+  function ebuzOrigin(tick, row) {
+    return {
+      tick: Math.max(0, Math.min(tick, MAX_TICK - 8)),
+      row: Math.max(0, Math.min(row, ROWS - 4))
+    };
+  }
+
   // Every placement's real footprint in cells - Enemy3's 8x8 BG tile is
   // exactly 1 cell, every 16x16 sprite is 2x2 cells, every 32x32 sprite
   // (round32: Stage2's own BigZum/Flyer/Etank) is 4x4 cells, Stage1's own
@@ -1121,6 +1176,10 @@
     if (p.type === "s2_boss") {
       var o2 = s2BossOrigin(p.tick, p.row);
       return { t0: o2.tick, t1: o2.tick + 8, r0: o2.row, r1: o2.row + 8 };
+    }
+    if (p.type === "ebuz") {
+      var oe = ebuzOrigin(p.tick, p.row);
+      return { t0: oe.tick, t1: oe.tick + 8, r0: oe.row, r1: oe.row + 4 };
     }
     var span = Math.max(1, GLYPHS[t.glyph].size / 8);
     return { t0: p.tick, t1: p.tick + span, r0: p.row, r1: p.row + span };
@@ -1601,6 +1660,11 @@
         drawS2BossPlaceholder(ctx, bo2.tick * CELL - scrollX, bo2.row * CELL, CELL);
         return;
       }
+      if (p.type === "ebuz") {
+        var boe = ebuzOrigin(p.tick, p.row);
+        drawEbuzPlaceholder(ctx, boe.tick * CELL - scrollX, boe.row * CELL, CELL);
+        return;
+      }
       var glyph = GLYPHS[t.glyph];
       var box = CELL * (glyph.size / 8);
       ctx.drawImage(getGlyphCanvas(t.glyph, box), x, y, box, box);
@@ -1834,6 +1898,11 @@
     if (obj.type === "s2_boss") {
       var bo2 = s2BossOrigin(obj.tick, obj.row);
       drawS2BossPlaceholder(dragOverlayCtx, bo2.tick * CELL - canvasScroll.scrollLeft, bo2.row * CELL, CELL);
+      return;
+    }
+    if (obj.type === "ebuz") {
+      var boe = ebuzOrigin(obj.tick, obj.row);
+      drawEbuzPlaceholder(dragOverlayCtx, boe.tick * CELL - canvasScroll.scrollLeft, boe.row * CELL, CELL);
       return;
     }
     var glyph = GLYPHS[t.glyph];
@@ -2366,6 +2435,11 @@
       if (pd.type === "s2_boss") {
         var bo2 = s2BossOrigin(tick, row);
         drawS2BossPlaceholder(ctx, bo2.tick * CELL - canvasScroll.scrollLeft, bo2.row * CELL, CELL);
+        return;
+      }
+      if (pd.type === "ebuz") {
+        var boe = ebuzOrigin(tick, row);
+        drawEbuzPlaceholder(ctx, boe.tick * CELL - canvasScroll.scrollLeft, boe.row * CELL, CELL);
         return;
       }
       var glyph = GLYPHS[t.glyph];
