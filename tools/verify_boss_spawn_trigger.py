@@ -331,44 +331,76 @@ check("自己検証: MAINLOOPのCALL CHECK_BOSS_TRIGGERを無効化すると、"
 #    はずだ"): BOSS_PATTERNS(ボス本体64x64グラフィック、512byte)は
 #    ソースからDB展開を削除し、Titleが起動時に共有バンク(Comb bank6)
 #    からRAM(BOSS_PATTERNS EQU 0CD8Dh)へ事前コピーする方式へ変更した。
-#    Stage1単体のこのテストはTitleを経由しないため、実機同様に
-#    BOSS_SPAWN直前でRAMへ実データをpokeした上で、BOSS_SPAWN自身の
-#    LDIRVM(RAM→VRAM、宛先192*8~255*8)が正しく機能することだけを
-#    検証する(=RAMコピー先アドレス・LDIRVMの転送先アドレス/バイト数
-#    が今回の変更後も一致していることの確認)。
+#    (2026-09-14、round137follow-up、"キャラデータはかなり圧縮ができる
+#    筈 RLEで十分だろう"): さらにRAM上のBOSS_PATTERNSはRLE圧縮済み
+#    (512byte->290byte)になり、BOSS_SPAWN自身も単純なLDIRVMコピーでは
+#    なくDECOMPRESS_RLE_TO_VRAMによる展開へ変わった。Stage1単体のこの
+#    テストはTitleを経由しないため、実機同様にBOSS_SPAWN直前でRAMへ
+#    圧縮済みの実データをpokeした上で、展開結果のVRAM内容が元の生
+#    512byteと一致することを検証する(=RAMコピー先アドレス・展開先
+#    VRAMアドレス/バイト数が今回の変更後も一致していることの確認)。
 # ============================================================
 with open(os.path.join(REPO_ROOT, 'tools', 'bgm_data', 'stage1_boss_chardata.bin'), 'rb') as f:
     _real_boss_patterns = f.read()
 assert len(_real_boss_patterns) == 512
+
+sys.path.insert(0, os.path.join(REPO_ROOT, 'tools', 'title_screen'))
+import title_bg_gen as _tbg  # noqa: E402 - rle_encode/rle_decode
+
+_real_boss_patterns_compressed, _real_boss_patterns_segments = _tbg.rle_encode(_real_boss_patterns)
+assert _tbg.rle_decode(_real_boss_patterns_compressed, _real_boss_patterns_segments) == _real_boss_patterns
+assert _real_boss_patterns_segments == sym["BOSS_PATTERNS_SEGMENTS"], \
+    "BOSS_PATTERNS_SEGMENTS in src/CYBER SHMUP.asm is stale - re-run tools/bgm_data/bgm_bank_gen.py --generate and update it"
 
 z9 = fresh()
 boot(z9)
 arm_ready(z9)
 z9.wr(BOSS_STATE, 0)
 BOSS_PATTERNS = sym["BOSS_PATTERNS"]
-for i, b in enumerate(_real_boss_patterns):
+for i, b in enumerate(_real_boss_patterns_compressed):
     z9.wr(BOSS_PATTERNS + i, b)
 call_routine(z9, CHECK_BOSS_TRIGGER)
-check("BOSS_SPAWN発火時、BOSS_PATTERNS(RAM、0CD8Dh)の実データが"
+check("BOSS_SPAWN発火時、BOSS_PATTERNS(RAM、0CD8Dh、RLE圧縮済み)が"
       "VRAM上のcode192-255パターンジェネレータ領域(192*8~256*8)へ"
-      "そのままLDIRVMされる(RAM移設後もボス本体グラフィックが正しく"
-      "表示されることの確認)",
+      "正しく展開される(RAM移設+RLE圧縮後もボス本体グラフィックが"
+      "正しく表示されることの確認)",
       bytes(z9.vram[192 * 8:192 * 8 + 512]) == _real_boss_patterns)
 
-# ---- self-verification: poison BOSS_PATTERNS RAM with different bytes ----
-# ---- and confirm the VRAM check above would actually detect a mismatch ----
+# ---- self-verification: corrupt ONE payload byte inside a literal run ----
+# ---- of the compressed RAM stream (leaving every control/length byte  ----
+# ---- untouched, so the segment count BOSS_SPAWN decodes - a fixed ROM ----
+# ---- constant, BOSS_PATTERNS_SEGMENTS - stays valid) and confirm the  ----
+# ---- VRAM check above would actually detect the resulting difference. ----
+_corrupt_index = None
+_walk_i = 0
+_data = _real_boss_patterns_compressed
+for _seg in range(_real_boss_patterns_segments):
+    _c = _data[_walk_i]
+    _length = (_c & 0x7F) + 1
+    if _c & 0x80:  # repeat run: 1 control byte + 1 fill byte
+        _walk_i += 2
+    else:  # literal run: 1 control byte + _length literal bytes
+        _corrupt_index = _walk_i + 1  # first literal payload byte right after the control byte
+        break
+assert _corrupt_index is not None, "expected at least one literal run in the real boss chardata"
+_corrupted_compressed = bytearray(_real_boss_patterns_compressed)
+_corrupted_compressed[_corrupt_index] ^= 0xFF
+_corrupted_payload = _tbg.rle_decode(bytes(_corrupted_compressed), _real_boss_patterns_segments)
+assert _corrupted_payload != _real_boss_patterns
+
 z10 = fresh()
 boot(z10)
 arm_ready(z10)
 z10.wr(BOSS_STATE, 0)
-for i in range(512):
-    z10.wr(BOSS_PATTERNS + i, (i * 37 + 5) & 0xFF)  # deliberately NOT the real data
+for i, b in enumerate(_corrupted_compressed):
+    z10.wr(BOSS_PATTERNS + i, b)
 call_routine(z10, CHECK_BOSS_TRIGGER)
-check("自己検証: BOSS_PATTERNS RAMを実データと異なる内容で汚染すると、"
-      "VRAM上の対応領域もその異なる内容になる(=上の一致チェックが"
-      "実際にRAM内容の違いを検出できることの確認)",
+check("自己検証: BOSS_PATTERNS RAM(圧縮済み)を1byteだけ実データと"
+      "異なる内容で汚染すると、VRAM上の対応領域もその異なる内容へ"
+      "展開される(=上の一致チェックが実際にRAM内容の違いを検出できる"
+      "ことの確認)",
       bytes(z10.vram[192 * 8:192 * 8 + 512]) != _real_boss_patterns and
-      bytes(z10.vram[192 * 8:192 * 8 + 512]) == bytes((i * 37 + 5) & 0xFF for i in range(512)))
+      bytes(z10.vram[192 * 8:192 * 8 + 512]) == _corrupted_payload)
 
 print()
 print(f"{len(ok)} passed, {len(fail)} failed")

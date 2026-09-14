@@ -2,8 +2,10 @@ import os
 import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "bgm_data"))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "title_screen"))
 from banked_helpers import get_out, fresh_cpu, call_routine, step_frame
 import bgm_bank_gen as bg  # noqa: E402 - no mido dependency, reads the cached bgm_bank.bin
+import title_bg_gen as tbg  # noqa: E402 - rle_decode, chardata is RLE-compressed (2026-09-14)
 
 out, sym, text = get_out()
 # (2026-09-07、round64、"キャラクター定義データを他のバンクに逃がして
@@ -12,7 +14,17 @@ out, sym, text = get_out()
 # 共有bgm-data/chardataバンク(tools/bgm_data/bgm_bank_gen.py)側にあり、
 # LOAD_SASAPI_PATTERNSがボス出現/反転時にそこから読む。参照データも
 # 同じ場所(_CHARDATA_BANK)から読む必要がある。
-_CHARDATA_BANK, _ = bg.build_bank()
+# (2026-09-14、"キャラデータはかなり圧縮ができる筈 RLEで十分だろう"):
+# 共有バンク側のSASAPI_QUADS等はもう生バイト列ではなくRLE圧縮済みの
+# バイト列 - 比較にはtitle_bg_gen.rle_decode()で展開してから使う。
+_CHARDATA_BANK, _CHARDATA_LAYOUT = bg.build_bank()
+_SASAPI_LAYOUT = _CHARDATA_LAYOUT["SASAPI_CHARDATA"]
+
+
+def _sasapi_raw(key):
+    entry = _SASAPI_LAYOUT[key]
+    ofs, length, segments = entry["bank_offset"], entry["len"], entry["segments"]
+    return tbg.rle_decode(_CHARDATA_BANK[ofs:ofs + length], segments)
 
 ok = []
 fail = []
@@ -34,17 +46,17 @@ BOSS_X = sym["BOSS_X"]
 BOSS_DIR = sym["BOSS_DIR"]
 BOSS_HP = sym["BOSS_HP"]
 BOSS_SPRITE_ATTRS = sym["BOSS_SPRITE_ATTRS"]
-SASAPI_QUADS = sym["SASAPI_QUADS"]
-SASAPI_QUADS_L = sym["SASAPI_QUADS_L"]
 BOSS_QUAD_OFFSETS = sym["BOSS_QUAD_OFFSETS"]
 SPRPAT = sym["SPRPAT"]
 BOSS_PHASE = sym["BOSS_PHASE"]
 
+SASAPI_QUADS_RAW = _sasapi_raw("SASAPI_QUADS")
+SASAPI_QUADS_L_RAW = _sasapi_raw("SASAPI_QUADS_L")
 
-def sprpat_matches(cpu, chardata_offset):
+
+def sprpat_matches(cpu, raw_bytes):
     base = SPRPAT + PAT_SASAPI * 8
-    rom_bytes = list(_CHARDATA_BANK[chardata_offset: chardata_offset + 16 * 32])
-    return rom_bytes == list(cpu.vram[base: base + 16 * 32])
+    return list(raw_bytes) == list(cpu.vram[base: base + 16 * 32])
 
 
 def set_game_tick(cpu, val):
@@ -81,10 +93,9 @@ check("BOSS_HP starts at BOSS_HP_INIT(255)", cpu.mem[BOSS_HP] == BOSS_HP_INIT)
 # space instead, a real bug caught by rendering the boss and seeing
 # garbage/leftover BigZum patterns instead of Sasapi's own art).
 sprpat_base = SPRPAT + PAT_SASAPI * 8
-rom_quads = list(_CHARDATA_BANK[SASAPI_QUADS: SASAPI_QUADS + 16 * 32])
 vram_quads = list(cpu.vram[sprpat_base: sprpat_base + 16 * 32])
 check("SASAPI_QUADS pattern data loaded into the real sprite pattern table (SPRPAT+PAT_SASAPI*8)",
-      rom_quads == vram_quads)
+      list(SASAPI_QUADS_RAW) == vram_quads)
 
 # Test 6: BOSS_SPRITE_ATTRS staging buffer - all 16 quadrants got the
 # right Y/X/pattern/color from BOSS_QUAD_OFFSETS.
@@ -153,7 +164,7 @@ set_game_tick(cpu, tick_at_pause + BOSS_LEFT_PAUSE_TICKS)
 call_routine(cpu, "UPDATE_BOSS_ALL")
 check("reverses to DIR=1 (moving right) once the left-edge pause elapses", cpu.mem[BOSS_DIR] == 1)
 check("mirrored facing (SASAPI_QUADS_L) reloaded into VRAM on this reversal - まず反転パターンを生成",
-      sprpat_matches(cpu, SASAPI_QUADS_L))
+      sprpat_matches(cpu, SASAPI_QUADS_L_RAW))
 
 # drive it all the way back to the right edge
 steps = 0

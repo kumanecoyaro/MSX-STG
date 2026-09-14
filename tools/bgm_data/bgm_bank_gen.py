@@ -265,22 +265,45 @@ def _generate():
     # データのため、曲データと全く同じ「必要な瞬間だけwindowBを一時的に
     # このバンクへ切替てLDIRVM」方式がそのまま使える(combined_test.asm
     # 側のSWITCH_TO_CHARDATA_BANK/RESTORE_OWN_BANK_B参照)。
+    sys.path.insert(0, os.path.join(HERE, "..", "title_screen"))
+    import title_bg_gen  # noqa: E402  (rle_encode/rle_decode、SASAPI/STAGE1ボスchardata圧縮に流用)
     sys.path.insert(0, os.path.join(HERE, "..", "stage2_combined"))
     import sasapi_gen as sg
     import sasapi_hand_gen as shg
 
+    # (2026-09-14、"次にキャラデータはかなり圧縮ができる筈 RLEで十分だろう
+    # 逐次読み込みはステージ1も2もボスくらいのはず なので初期状態で
+    # キャラデータはVramに転送済みのはずなんで圧縮展開しても問題は無い
+    # はず"): この5ブロックは全てボス出現/形態変化/向き反転という
+    # "逐次読み込み"(non-init)の瞬間にしか読まれない(タイトル画面
+    # ロード後にVRAMへ既に転送済みの他の全キャラクターデータと違う点)
+    # ため、ENDING_IMAGE/タイトル背景と全く同じ自前RLE
+    # (tools/title_screen/title_bg_gen.pyのrle_encode/rle_decode)で
+    # 圧縮する。展開はcombined_test.asm側のLOAD_SASAPI_PATTERNS/
+    # LOAD_SASAPI_BROKEN_PATTERNS/INITのSASAPI_HAND_TILESロードが、
+    # 既存のSWITCH_TO_CHARDATA_BANK切替に続けてVRAMへ直接ストリーム
+    # 展開する(新設DECOMPRESS_RLE_TO_VRAM共有ルーチン、ENDING_SHOW_
+    # FINAL_IMAGEのインラインデコードをサブルーチン化したもの)。
     chardata_layout = {}
     quads, quads_l = sg.sasapi_quads_raw()
-    for key, data in [("SASAPI_QUADS", quads), ("SASAPI_QUADS_L", quads_l)]:
-        chardata_layout[key] = len(blob)
-        blob += data
     bquads, bquads_l = sg.sasapi_broken_quads_raw()
-    for key, data in [("SASAPI_BROKEN_QUADS", bquads), ("SASAPI_BROKEN_QUADS_L", bquads_l)]:
-        chardata_layout[key] = len(blob)
-        blob += data
     hand_bytes = bytes(b for tile in shg.SASAPI_HAND_TILES for b in tile)
-    chardata_layout["SASAPI_HAND_TILES"] = len(blob)
-    blob += hand_bytes
+    for key, data in [
+        ("SASAPI_QUADS", quads),
+        ("SASAPI_QUADS_L", quads_l),
+        ("SASAPI_BROKEN_QUADS", bquads),
+        ("SASAPI_BROKEN_QUADS_L", bquads_l),
+        ("SASAPI_HAND_TILES", hand_bytes),
+    ]:
+        compressed, segments = title_bg_gen.rle_encode(data)
+        assert title_bg_gen.rle_decode(compressed, segments) == data, \
+            f"RLE round-trip mismatch for {key} - encoder bug"
+        chardata_layout[key] = {
+            "bank_offset": len(blob),
+            "len": len(compressed),
+            "segments": segments,
+        }
+        blob += compressed
     layout["SASAPI_CHARDATA"] = chardata_layout
 
     # ENDING_IMAGE(2026-09-12、"ではこの画像をMission completed表示後
@@ -314,18 +337,32 @@ def _generate():
     # ただしStage1は(Round40の判断により)自分ではバンク切替を一切
     # 行わない設計を維持するため、Stage2方式(実行時にwindow Bを一時
     # 切替)ではなく、Title起動時にこのバンクからStage1専用RAM(src/
-    # CYBER SHMUP.asmのBOSS_PATTERNS_RAM、0xCD8D)へ事前コピーする既存の
+    # CYBER SHMUP.asmのBOSS_PATTERNS、0xCD8D)へ事前コピーする既存の
     # BGM/TryZ/ジングル方式をそのまま踏襲する。生バイトはASMのDB羅列
     # から一度だけ機械的に抽出しキャッシュしたtools/bgm_data/
-    # stage1_boss_chardata.bin(512byte)をそのまま埋め込む(mido不要)。
+    # stage1_boss_chardata.bin(512byte)を元に、以下で追記。
+    # (2026-09-14、"キャラデータはかなり圧縮ができる筈 RLEで十分だろう"):
+    # ここもSASAPI_CHARDATAと同じ自前RLEで圧縮(512byte->約290byte、
+    # bank6の空き確保に直接効く一番大きな削減source)。TitleはコピーAT
+    # 起動時に圧縮バイトのままRAM(0xCD8D)へコピーするだけ(コピー量も
+    # 512byte->約290byteへ減りRAMも節約)、実際の展開はStage1自身の
+    # BOSS_SPAWNがVRAM書き込み時に1回だけ行う(DECOMPRESS_RLE_TO_VRAM、
+    # Stage2のLOAD_SASAPI_PATTERNS用と全く同じ共有ルーチンをStage1にも
+    # 複製 - Stage1はバンク切替をしないためRAM上の圧縮データを直接
+    # ソースにできる、Z80命令列自体はROM/RAMどちらが入力でも同一)。
     with open(os.path.join(HERE, "stage1_boss_chardata.bin"), "rb") as f:
         stage1_boss_chardata = f.read()
     assert len(stage1_boss_chardata) == 512
+    stage1_boss_compressed, stage1_boss_segments = title_bg_gen.rle_encode(stage1_boss_chardata)
+    assert title_bg_gen.rle_decode(stage1_boss_compressed, stage1_boss_segments) == stage1_boss_chardata, \
+        "RLE round-trip mismatch for STAGE1_BOSS_CHARDATA - encoder bug"
     layout["STAGE1_BOSS_CHARDATA"] = {
         "bank_offset": len(blob),
-        "len": len(stage1_boss_chardata),
+        "len": len(stage1_boss_compressed),
+        "raw_len": len(stage1_boss_chardata),
+        "segments": stage1_boss_segments,
     }
-    blob += stage1_boss_chardata
+    blob += stage1_boss_compressed
 
     assert len(blob) <= BANK_SIZE, f"BGM data ({len(blob)} bytes) exceeds one 16KB bank"
     bank = bytes(blob) + bytes([0xFF] * (BANK_SIZE - len(blob)))
@@ -406,5 +443,5 @@ if __name__ == "__main__":
     print(f"bank image: {len(bank)} bytes total, {used} bytes actually used, {len(bank)-used} bytes free")
     for key, info in layout.items():
         print(key, info)
-        if key not in ("SASAPI_CHARDATA", "ENDING_IMAGE"):  # not songs - song_constants() doesn't apply
+        if key not in ("SASAPI_CHARDATA", "ENDING_IMAGE", "STAGE1_BOSS_CHARDATA"):  # not songs - song_constants() doesn't apply
             print("  constants:", song_constants(key))

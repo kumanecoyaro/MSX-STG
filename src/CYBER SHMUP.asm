@@ -6155,12 +6155,57 @@ SCAN_POOL_ACTIVE:
     DJNZ SCAN_POOL_ACTIVE
     RET
 
+; (2026-09-14、round137follow-up、"キャラデータはかなり圧縮ができる筈
+; RLEで十分だろう"): tools/title_screen/title_bg_gen.pyのrle_encode/
+; rle_decode(制御バイトbit7=0がリテラル run・bit7=1が反復run、終端は
+; ストリームに埋め込まず別途渡すセグメント数down-counterで判定)と
+; 完全に同じフォーマットのZ80側デコーダ。Stage2のLOAD_SASAPI_PATTERNS
+; 用DECOMPRESS_RLE_TO_VRAMと同一実装(このファイルはバンク切替を
+; 一切行わないためHLはROM/RAMどちらでも同じ命令列で読める)。
+; CLAUDE.md恒久ルール通りOTIR等のブロックI/O命令は使わず、DJNZによる
+; 手動OUTループのみで実装。
+; in: HL=RLE圧縮データの先頭、DE=セグメント数。呼び出し前にVDP書き込み
+; アドレス(オートインクリメント)を2回のOUT (99h)で設定しておくこと。
+; 破壊: A,B,DE,HL。
+DECOMPRESS_RLE_TO_VRAM:
+    LD A,(HL) : INC HL
+    OR A
+    JP M,DRTV_RUN                   ; bit7=1(符号ビット) -> 反復セグメント
+    AND 7Fh
+    INC A
+    LD B,A
+DRTV_LIT_LOOP:
+    LD A,(HL) : INC HL
+    OUT (98h),A
+    DJNZ DRTV_LIT_LOOP
+    JR DRTV_NEXT
+DRTV_RUN:
+    AND 7Fh
+    INC A
+    LD B,A
+    LD A,(HL) : INC HL
+DRTV_RUN_LOOP:
+    OUT (98h),A
+    DJNZ DRTV_RUN_LOOP
+DRTV_NEXT:
+    DEC DE
+    LD A,D : OR E
+    JR NZ,DECOMPRESS_RLE_TO_VRAM
+    RET
+
 BOSS_SPAWN:
     CALL BOSS_CLEAR_DYNAMIC_ENEMIES
     ; --- load boss pattern data now, just in time - not preloaded ---
     ; --- at INIT (that permanently claimed codes192-255, which    ---
     ; --- the terrain scroller actually needs some of - see INIT). ---
-    LD HL,BOSS_PATTERNS : LD DE,192*8 : LD BC,64*8 : CALL LDIRVM
+    ; (2026-09-14) BOSS_PATTERNSはRLE圧縮済み - DECOMPRESS_RLE_TO_VRAM
+    ; 自身のコメント参照。
+    LD DE,192*8
+    LD A,E : OUT (99h),A
+    LD A,D : OR 40h : OUT (99h),A
+    LD HL,BOSS_PATTERNS
+    LD DE,BOSS_PATTERNS_SEGMENTS
+    CALL DECOMPRESS_RLE_TO_VRAM
     LD HL,BOSS_HEX_PATTERN : LD DE,96*8+SPRPAT : LD BC,32 : CALL LDIRVM
     LD HL,BOSS_ORBIT_PATTERN : LD DE,100*8+SPRPAT : LD BC,32 : CALL LDIRVM
     LD HL,DFL_BULLET_PATTERN : LD DE,104*8+SPRPAT : LD BC,32 : CALL LDIRVM
@@ -14127,7 +14172,8 @@ LUT_DY:
     DB D8h,D7h,D6h,D5h,D4h,D3h,D2h,D1h,D1h,D0h,CFh,CEh,CEh,CDh,CCh,CCh
     DB CBh,CBh,CAh,CAh,C9h,C9h,C9h,C8h,C8h,C8h,C8h,C7h,C7h,C7h,C7h,C7h
 
-BOSS_PATTERNS EQU 0CD8Dh  ; 512byte, Titleが起動時にここへ埋める
+BOSS_PATTERNS EQU 0CD8Dh  ; 290byte(RLE圧縮済み)、Titleが起動時にここへ埋める
+BOSS_PATTERNS_SEGMENTS EQU 126  ; tools/bgm_data/bgm_bank_gen.py STAGE1_BOSS_CHARDATAの'segments'と一致させること
 ; round135follow-up16("ボスを別バンクに移してくれ だいぶ削減出来る
 ; はずだ"): ボス本体64x64のグラフィックデータ(旧: ここに直接DB展開
 ; されていた512byte)は、BOSS_SPAWN内の1回のLDIRVM呼び出しでしか
@@ -14143,6 +14189,19 @@ BOSS_PATTERNS EQU 0CD8Dh  ; 512byte, Titleが起動時にここへ埋める
 ; PATTERN/EXPLOSION_PATTERN(計128byte)は、このバンクの実際の空き
 ; 容量(522byte)がBOSS_PATTERNS込みの640byte全部には足りなかった
 ; ため、今回は移設対象から外し引き続きROM側に残している。
+; (2026-09-14、"キャラデータはかなり圧縮ができる筈 RLEで十分だろう
+; 逐次読み込みはステージ1も2もボスくらいのはず なので初期状態で
+; キャラデータはVramに転送済みのはずなんで圧縮展開しても問題は無い
+; はず"): ここでさらにRLE圧縮(512byte->290byte、title_screen/
+; title_bg_gen.pyのrle_encode/rle_decodeと同じ自前フォーマット)。
+; TitleはコピーAT起動時に圧縮バイトのままRAM(BOSS_PATTERNS)へ
+; コピーするだけ(コピー量も減りRAMも節約)、実際の展開はStage1自身の
+; BOSS_SPAWNがVRAM書き込み時に1回だけ行う(DECOMPRESS_RLE_TO_VRAM、
+; Stage2のLOAD_SASAPI_PATTERNS用と全く同じ手法をStage1にも複製 -
+; Stage1はバンク切替をしないためRAM上の圧縮データを直接ソースに
+; できる、Z80命令列自体はROM/RAMどちらが入力でも同一)。ボス出現は
+; ゲーム中1回だけのため、展開コストが毎フレームの処理に影響することは
+; 無い("逐次読み込みはステージ1も2もボスくらいのはず"という前提通り)。
 
 ; boss nametable map: 5 cols x 16 rows of character codes
 ; (48=BLANKCODE/solid-blue, 192-252=boss tiles above)

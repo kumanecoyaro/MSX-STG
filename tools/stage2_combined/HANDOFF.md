@@ -16910,3 +16910,94 @@ ENEMY6のO(1)短絡最適化(2026-09-14、完了済み)
 - **保留**: RLE圧縮によるキャラクターデータ(`STAGE1_BOSS_CHARDATA`/
   `SASAPI_CHARDATA`)のサイズ削減は、同じユーザー発言に含まれる
   次の作業項目として着手予定(次回Round参照)。
+
+## Round137 follow-up: ボスキャラクターデータのRLE圧縮(Stage1/Stage2両方、
+2026-09-14、完了済み・実機フィードバック待ち)
+
+- ユーザー指示(Round137と同じ発言): "次にキャラデータはかなり圧縮ができる
+  筈 RLEで十分だろう 逐次読み込みはステージ1も2もボスくらいのはず
+  なので初期状態でキャラデータはVramに転送済みのはずなんで圧縮展開しても
+  問題は無いはず"。既存のタイトル背景/GFEnding最終画面で実績のある自前
+  RLE(`tools/title_screen/title_bg_gen.py`のrle_encode/rle_decode、
+  制御バイトbit7=0がリテラルrun・bit7=1が反復run、終端はストリームに
+  埋め込まずセグメント数down-counterで判定)を、Stage1の`BOSS_PATTERNS`
+  (ボス本体64x64、512byte)とStage2の`SASAPI_CHARDATA`5ブロック
+  (SASAPI_QUADS/_L・SASAPI_BROKEN_QUADS/_L・SASAPI_HAND_TILES、
+  計1792byte)にも適用。
+- **圧縮率実測**: STAGE1_BOSS_CHARDATA 512→290byte(56.6%、222byte
+  節約)。SASAPI_CHARDATA計1792→1556byte(86.8%、236byte節約) -
+  ボス本体はタイル状パターンジェネレータデータのため、タイトル背景
+  (フラットな絵)ほど連長圧縮が効かない(特にSASAPI_QUADS/_Lは86%
+  台)が、それでも合計458byteをComb bank6から削減できた。**bank6の
+  空き容量は約10byte→468byteへ改善**(`tools/bgm_data/bgm_bank_gen.py`
+  実行結果)。
+- **Python側**: `bgm_bank_gen.py`の`_generate()`内、SASAPI_CHARDATAの
+  5ブロックとSTAGE1_BOSS_CHARDATAをそれぞれ`title_bg_gen.rle_encode()`
+  で圧縮してからblobへ追記するよう変更(both round-trip検証済み)。
+  layout dictの各エントリを単純int(旧: バンク内オフセットのみ)から
+  `{"bank_offset":, "len":, "segments":}`のdictへ変更。
+  `sasapi_gen.py`/`sasapi_hand_gen.py`の`emit_asm_tables()`も
+  `SASAPI_QUADS EQU n`のような単一EQUから`SASAPI_QUADS_OFFSET EQU`+
+  `SASAPI_QUADS_SEGMENTS EQU`のペアへ変更。
+- **Z80側(共有ルーチン)**: `title_test.asm`のDECOMPRESS_TITLE_BG/
+  `combined_test.asm`のENDING_SHOW_FINAL_IMAGEのインラインデコード
+  ループを、Stage1・Stage2それぞれに独立した共有サブルーチン
+  `DECOMPRESS_RLE_TO_VRAM`(in: HL=RLE圧縮データ先頭、DE=セグメント数、
+  呼び出し前にVDP書き込みアドレスを2回のOUTで設定)として切り出し、
+  複数の呼び出し元(Stage2は3箇所、Stage1は1箇所)で再利用。
+  CLAUDE.md恒久ルール通りOTIR等は使わず`OUT`+`DJNZ`の手動ループのみ。
+  - Stage2: `LOAD_SASAPI_PATTERNS`/`LOAD_SASAPI_BROKEN_PATTERNS`/
+    INITのhand-tilesロードを、従来の`LDIRVM`直接コピーから
+    「VRAM書き込みアドレスを事前設定→`SWITCH_TO_CHARDATA_BANK`→
+    `DECOMPRESS_RLE_TO_VRAM`→`RESTORE_OWN_BANK_B`」へ書き換え。
+    呼び出し規約はHL=バンク内オフセット・BC=セグメント数(BCを選んだ
+    理由: DEはHLのwindowBアドレス変換に使用中で衝突するため)。
+    6箇所全ての呼び出しサイトを機械的に置換。
+  - Stage1: `BOSS_SPAWN`冒頭の`LDIRVM`呼び出しを同様に書き換え。
+    Stage1は自分ではバンク切替を一切行わない設計(Round40の判断)を
+    維持するため、Titleが起動時に**圧縮バイトのまま**RAM
+    (`BOSS_PATTERNS`、0xCD8D)へコピーし、実際の展開はBOSS_SPAWN自身が
+    行う(`BOSS_PATTERNS_SEGMENTS EQU 126`を新設)。title_test.asmの
+    INIT_BGM内LDIR行(コピー元アドレス・長さ)、および
+    `build_full_rom.py`のTITLE_BGM_BANKSELECT_ANCHOR/PATCH(同じ
+    LDIR行を含むリテラルテキストブロック)も新しいオフセット
+    (0xBD0A)・長さ(0x122=290byte)へ同期して更新(SASAPI_CHARDATAの
+    圧縮でblob内の累積オフセットが前方にシフトしたため、
+    STAGE1_BOSS_CHARDATA自身のバンク内オフセットも15862→15626へ変化)。
+- **検証**: `tools/verify_boss_spawn_trigger.py`のBOSS_PATTERNS関連
+  2件を全面書き換え(圧縮バイトをRAMへpokeしBOSS_SPAWN経由でVRAMが
+  元の生512byteと一致することを検証、自己検証は「1byteだけ実データと
+  異なる圧縮ストリーム」を使う方式に変更 - 圧縮データは任意のバイト列
+  ではないため、単純なゴミバイト汚染では自己検証にならない点に注意
+  して設計)。`boss_test.py`/`boss_pose_test.py`のSASAPI_QUADS/_L
+  ROM直接比較を、共有バンクから読んだ圧縮バイトをrle_decode()で
+  展開してから比較する方式へ更新。VRAM→PNGレンダリングでStage1
+  ボス(材質化+周回ポッド)・Stage2 Sasapiボス本体の両方を実際に
+  展開させて視覚確認(初回のStage1レンダリングスクリプトは圧縮前の
+  生バイトを直接RAMへpokeする古い呼び出し方のままだったため出力が
+  ガーベジになる不具合を自己発見・修正、圧縮バイトをpokeする形に
+  更新後は正しくレンダリングされることを確認)。
+- 全回帰: Stage2側`run_all.py` **1545 passed/0 failed**
+  (`terrain_render_perf_test.py`のみ、git HEAD[未コミット]の旧
+  combined_test.asmソースと新しいPython生成テーブルの組み合わせに
+  よる既知の一時的な不整合で個別実行時に失敗 - このRoundの変更を
+  他ファイルと一緒にコミットすれば解消する性質のもの、実コード上の
+  バグではない)。Stage1側`verify_boss_spawn_trigger.py` 26/
+  `verify_boss_y_shift.py` 9/`verify_player_damage.py` 60/
+  `verify_stage1_bgm.py` 80/`verify_enemy_bullets.py` 60/
+  `verify_stage1_mission_screens.py` 87/`verify_explosion_anim.py`
+  28/`verify_boss_dfl_clear.py` 10/`verify_spawn_schedule_restart.py`
+  12/`verify_enemy6_durability.py` 27、全てPASS。Comb ROM再ビルド・
+  `verify_comb.py`全チェックPASS(GFEndingの最終画像RLE展開・title→
+  Stage1→Stage2のバンク切替一気通貫も含め無退行)の上、標準方針により
+  Comb ROMのみ送付。
+- **保留・実機フィードバック待ち**: 実機での見た目(ボス本体グラフィック
+  の展開結果)はエミュレータレンダリングでは正常確認済みだが、実機
+  自体での確認は次回フィードバック待ち。DECOMPRESS_RLE_TO_VRAMは
+  ENDING_SHOW_FINAL_IMAGEのようなブロックI/O禁止ルール順守の手動
+  OUT+DJNZループのため、OTIR系の実機グリッチ(Round47)と同種の問題は
+  構造的に起こらないはずだが、実機での最終確認は今後の課題。
+  BOSS_HEX_PATTERN/BOSS_ORBIT_PATTERN/DFL_BULLET_PATTERN/
+  EXPLOSION_PATTERN(Stage1、計128byte、ROM側に残置)への同様のRLE
+  適用は今回スコープ外(明示指示なし、bank6の空き容量は既に468byteへ
+  改善済みのため優先度は低い)。

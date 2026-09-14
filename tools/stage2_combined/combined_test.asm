@@ -3436,10 +3436,16 @@ INIT_RESUME_AFTER_BANK_SELECT:
     ; COLOR8(8byte、DRAW_SASAPI_HANDが毎フレーム参照する小さな色
     ; テーブル)は移設対象外(引き続きこのファイル自身にDB展開されて
     ; いる)なので、windowBを本来のバンクへ戻した後で読む。
+    ; (2026-09-14) SASAPI_HAND_TILESもRLE圧縮済み -
+    ; DECOMPRESS_RLE_TO_VRAM自身のコメント参照。
     DI
-    LD HL,SASAPI_HAND_TILES : LD DE,8000h : ADD HL,DE
+    LD DE,SASAPI_HAND_CODE_BASE*8
+    LD A,E : OUT (VDP_ADDR),A
+    LD A,D : OR 40h : OUT (VDP_ADDR),A
+    LD HL,SASAPI_HAND_TILES_OFFSET : LD DE,8000h : ADD HL,DE
     CALL SWITCH_TO_CHARDATA_BANK
-    LD DE,SASAPI_HAND_CODE_BASE*8 : LD BC,64*8 : CALL LDIRVM
+    LD DE,SASAPI_HAND_TILES_SEGMENTS
+    CALL DECOMPRESS_RLE_TO_VRAM
     CALL RESTORE_OWN_BANK_B
     EI
     LD HL,SASAPI_HAND_COLOR8 : LD DE,2000h+19 : LD BC,8 : CALL LDIRVM
@@ -11148,25 +11154,26 @@ BOSS_QUAD_OFFSETS:
     DB 32,0,32,   32,16,36,   32,32,40,   32,48,44
     DB 48,0,48,   48,16,52,   48,32,56,   48,48,60
 
-; blasts HL (caller sets SASAPI_QUADS or SASAPI_QUADS_L - both 512
-; bytes, sasapi_gen.py) into PAT_SASAPI's own VRAM slot range in one
-; shot. Called only when BOSS_DIR actually changes (spawn, and each
-; edge-reversal - see UPDATE_BOSS_ALL), not every frame: both facings
-; share this same 64-slot range rather than each getting its own (no
-; 2nd free 64-slot block exists anywhere in the pattern-code budget -
-; see PAT_SASAPI's own comment), so whichever one is "in" has to be
-; reloaded on every facing change.
+; decompresses HL (caller sets SASAPI_QUADS_OFFSET or _L_OFFSET, RLE-
+; compressed, sasapi_gen.py/bgm_bank_gen.py) + BC (matching _SEGMENTS)
+; straight into PAT_SASAPI's own VRAM slot range in one shot. Called
+; only when BOSS_DIR actually changes (spawn, and each edge-reversal -
+; see UPDATE_BOSS_ALL), not every frame: both facings share this same
+; 64-slot range rather than each getting its own (no 2nd free 64-slot
+; block exists anywhere in the pattern-code budget - see PAT_SASAPI's
+; own comment), so whichever one is "in" has to be reloaded on every
+; facing change.
 ;
-; DI/EI-wrapped: LDIRVM (a BIOS routine) has no interrupt-safety margin
-; of its own (see UPDATE_TANK_SPRITES' own comment on this exact class
-; of bug) - an H.TIMI interrupt landing mid-copy could run its own VDP
-; port writes, clobbering the VDP's own internal write-address counter
-; this 512-byte transfer relies on auto-incrementing, and corrupt
-; whatever unrelated VRAM the interrupt handler's own address happened
-; to land on next. Only called a handful of times per game (not every
-; frame, unlike FLUSH_BOSS_SPRITES), so a plain DI/EI wrap around the
-; whole call is enough here - no need to chunk it into smaller pieces
-; the way a genuinely per-frame write would.
+; DI/EI-wrapped: this streams straight to the VDP data port relying on
+; its own auto-increment across the whole decompressed run (see
+; UPDATE_TANK_SPRITES' own comment on this exact class of bug) - an
+; H.TIMI interrupt landing mid-stream could run its own VDP port
+; writes, clobbering the VDP's own internal write-address counter and
+; corrupting whatever unrelated VRAM the interrupt handler's own
+; address happened to land on next. Only called a handful of times per
+; game (not every frame, unlike FLUSH_BOSS_SPRITES), so a plain DI/EI
+; wrap around the whole call is enough here - no need to chunk it into
+; smaller pieces the way a genuinely per-frame write would.
 ;
 ; (2026-09-07、round64、"キャラクター定義データを他のバンクに逃がして
 ; しまえばかなり開くだろう ボスだけでもかなり空くのでは"): SASAPI_
@@ -11194,11 +11201,61 @@ RESTORE_OWN_BANK_B:
     LD (7000h),A
     RET
 
+; (2026-09-14、"次にキャラデータはかなり圧縮ができる筈 RLEで十分だろう
+; 逐次読み込みはステージ1も2もボスくらいのはず なので初期状態で
+; キャラデータはVramに転送済みのはずなんで圧縮展開しても問題は無い
+; はず"): SASAPI_QUADS/_L・SASAPI_BROKEN_QUADS/_L・SASAPI_HAND_TILES
+; (計1792byte)は「ボス出現/形態変化/向き反転」というnon-init(逐次)の
+; 瞬間にしかVRAMへ転送されないため、title_test.asmのDECOMPRESS_TITLE_BG/
+; このファイル自身のENDING_SHOW_FINAL_IMAGEと同じ自前RLE(tools/
+; title_screen/title_bg_gen.pyのrle_encode/rle_decode)で圧縮した
+; (tools/bgm_data/bgm_bank_gen.py側で圧縮済み、実データはもう生バイト
+; 列ではない)。ENDING_SHOW_FINAL_IMAGEはあの画像1回きりのため展開
+; ループをインライン展開していたが、こちらは3箇所(LOAD_SASAPI_
+; PATTERNS/LOAD_SASAPI_BROKEN_PATTERNS/INITのhand-tilesロード)から
+; 呼ばれる+ROM残り容量が常に極めて少ないため、共有サブルーチン化した。
+; in: HL=RLE圧縮データの先頭(windowBアドレス済み)、DE=セグメント数。
+; 呼び出し前にVDP書き込みアドレス(オートインクリメント)を2回の
+; OUT (VDP_ADDR)で設定しておくこと。破壊: A,B,DE,HL。
+DECOMPRESS_RLE_TO_VRAM:
+    LD A,(HL) : INC HL
+    OR A
+    JP M,DRTV_RUN                   ; bit7=1(符号ビット) -> 反復セグメント
+    AND 7Fh
+    INC A
+    LD B,A
+DRTV_LIT_LOOP:
+    LD A,(HL) : INC HL
+    OUT (VDP_DATA),A
+    DJNZ DRTV_LIT_LOOP
+    JR DRTV_NEXT
+DRTV_RUN:
+    AND 7Fh
+    INC A
+    LD B,A
+    LD A,(HL) : INC HL
+DRTV_RUN_LOOP:
+    OUT (VDP_DATA),A
+    DJNZ DRTV_RUN_LOOP
+DRTV_NEXT:
+    DEC DE
+    LD A,D : OR E
+    JR NZ,DECOMPRESS_RLE_TO_VRAM
+    RET
+
+; in: HL=bank-relative offset(SASAPI_QUADS_OFFSET/_L_OFFSET)、
+; BC=対応するセグメント数(SASAPI_QUADS_SEGMENTS/_L_SEGMENTS)。BCは
+; SWITCH_TO_CHARDATA_BANK呼び出しでは破壊されないため、DE(HLのwindowB
+; アドレス変換に使用中)と衝突しないセグメント数の運び役として使う。
 LOAD_SASAPI_PATTERNS:
     DI
+    LD DE,PAT_SASAPI*8+SPRPAT       ; VRAM書き込みアドレス設定(オートインクリメント)
+    LD A,E : OUT (VDP_ADDR),A
+    LD A,D : OR 40h : OUT (VDP_ADDR),A
     LD DE,8000h : ADD HL,DE      ; HL: bgm-data/chardataバンク内オフセット -> windowBアドレス
     CALL SWITCH_TO_CHARDATA_BANK
-    LD DE,PAT_SASAPI*8+SPRPAT : LD BC,16*32 : CALL LDIRVM
+    LD D,B : LD E,C
+    CALL DECOMPRESS_RLE_TO_VRAM
     CALL RESTORE_OWN_BANK_B
     EI
     RET
@@ -11403,7 +11460,7 @@ STOP_BOSS_MATERIALIZE:
 ; advance call to make at all - no SSC2_ADVANCE routine exists any
 ; more, the increment happens once, up front, in SSC2_FIRE itself.
 S2_BOSS_SPAWN:
-    LD HL,SASAPI_QUADS : CALL LOAD_SASAPI_PATTERNS   ; DIR=0 facing below
+    LD HL,SASAPI_QUADS_OFFSET : LD BC,SASAPI_QUADS_SEGMENTS : CALL LOAD_SASAPI_PATTERNS   ; DIR=0 facing below
     ; homing missile's own 5 facings, loaded once here (not at INIT) into
     ; Flyer's own now-permanently-dormant pattern block - "スプライトパ
     ; ターンそんなに使ってるか? 自機とボスだけだぞ...動的に書き換えして
@@ -11504,7 +11561,7 @@ UBA_LEFT_PAUSE:
     JP C,UBA_DRAW              ; still pausing
     LD A,1 : LD (BOSS_DIR),A   ; 反転 - now heads right
     XOR A : LD (BOSS_PHASE),A
-    LD HL,SASAPI_QUADS_L : CALL LOAD_SASAPI_PATTERNS
+    LD HL,SASAPI_QUADS_L_OFFSET : LD BC,SASAPI_QUADS_L_SEGMENTS : CALL LOAD_SASAPI_PATTERNS
     ; arm this rightward leg's own Thunder trigger - "そのまま左まで行き
     ; 反転後はボスの左に発射". Only once THUNDER_ELIGIBLE(set permanently
     ; at the first UBAP_END) - not during the boss's very first pre-pose
@@ -11640,7 +11697,7 @@ UBAP_POSE_COUNT_DONE:
     XOR A : LD (BOSS_PHASE),A
     XOR A : LD (BOSS_DIR),A
     CALL ERASE_SASAPI_HAND
-    LD HL,SASAPI_QUADS : CALL LOAD_SASAPI_PATTERNS
+    LD HL,SASAPI_QUADS_OFFSET : LD BC,SASAPI_QUADS_SEGMENTS : CALL LOAD_SASAPI_PATTERNS
     ; arm this leftward leg's own Thunder trigger - "ホーミング攻撃後左
     ; に移動中に...ボスの右のX位置でボスが16px移動したら発射". BOSS_X is
     ; BOSS_SPAWNX here (just reset to the right edge to resume patrol).
@@ -11786,23 +11843,28 @@ BOSS_BROKEN_QUAD_OFFSETS:
     DB 0,0,0,   0,16,4
     DB 16,0,8,  16,16,12
 
-; blasts HL (caller sets SASAPI_BROKEN_QUADS or SASAPI_BROKEN_QUADS_L,
-; both 128 bytes, sasapi_gen.py) into PAT_SASAPI's own VRAM slot range -
-; same base as the old 64x64 body (LOAD_SASAPI_PATTERNS), just the first
-; 4 of its 16 reused pattern groups, since the old body's own pattern
-; data is permanently retired the instant REVEAL_BOSS_BROKEN_FORM runs
-; (DRAW_BOSS/FLUSH_BOSS_SPRITES never run again once BOSS_FORM!=0 - see
-; UPDATE_BOSS_ALL's own dispatch) - "本体についても...予算は解放される".
-; DI/EI-wrapped for the same reason LOAD_SASAPI_PATTERNS itself is (see
-; its own comment) - only called on an actual facing change, not per
-; frame.
+; decompresses HL (caller sets SASAPI_BROKEN_QUADS_OFFSET or
+; _L_OFFSET) + BC (matching _SEGMENTS) into PAT_SASAPI's own VRAM slot
+; range - same base as the old 64x64 body (LOAD_SASAPI_PATTERNS), just
+; the first 4 of its 16 reused pattern groups, since the old body's own
+; pattern data is permanently retired the instant REVEAL_BOSS_BROKEN_
+; FORM runs (DRAW_BOSS/FLUSH_BOSS_SPRITES never run again once
+; BOSS_FORM!=0 - see UPDATE_BOSS_ALL's own dispatch) -
+; "本体についても...予算は解放される". DI/EI-wrapped for the same
+; reason LOAD_SASAPI_PATTERNS itself is (see its own comment) - only
+; called on an actual facing change, not per frame.
 ; (2026-09-07、round64) SASAPI_BROKEN_QUADS/_Lも共有bgm-data/chardata
-; バンクへ移設済み - LOAD_SASAPI_PATTERNS自身のround64コメント参照。
+; バンクへ移設済み。(2026-09-14) さらにRLE圧縮 - LOAD_SASAPI_PATTERNS
+; 自身のround64/2026-09-14コメント参照。
 LOAD_SASAPI_BROKEN_PATTERNS:
     DI
+    LD DE,PAT_SASAPI*8+SPRPAT
+    LD A,E : OUT (VDP_ADDR),A
+    LD A,D : OR 40h : OUT (VDP_ADDR),A
     LD DE,8000h : ADD HL,DE
     CALL SWITCH_TO_CHARDATA_BANK
-    LD DE,PAT_SASAPI*8+SPRPAT : LD BC,BOSS_BROKEN_QUAD_COUNT*32 : CALL LDIRVM
+    LD D,B : LD E,C
+    CALL DECOMPRESS_RLE_TO_VRAM
     CALL RESTORE_OWN_BANK_B
     EI
     RET
@@ -11828,7 +11890,7 @@ RBBF_HIDE_STAGE:
     LD (HL),209 : INC HL : INC HL : INC HL : INC HL
     DJNZ RBBF_HIDE_STAGE
     LD A,BOSS_EXPL_STATE_DONE : LD (BOSS_EXPL_STATE),A   ; retire the shared SPARK/GROW/etc state machine - UPDATE_BOSS_ALL never dispatches to it again anyway once BOSS_FORM leaves SPARK, this just keeps it inert if anything ever reread it
-    LD HL,SASAPI_BROKEN_QUADS : CALL LOAD_SASAPI_BROKEN_PATTERNS
+    LD HL,SASAPI_BROKEN_QUADS_OFFSET : LD BC,SASAPI_BROKEN_QUADS_SEGMENTS : CALL LOAD_SASAPI_BROKEN_PATTERNS
     XOR A : LD (BOSS_BROKEN_DIR),A   ; matches the unmirrored QUADS just loaded above - UPDATE_BOSS_BROKEN_ACTIVE's own RECENTERING branch corrects this on its very first frame if the real direction toward center differs
     ; round36-14 follow-up #4 ("で、停止中にビーム攻撃をする"): load the
     ; 4 fixed beam-angle patterns once here too, same "load once when the
@@ -12013,10 +12075,10 @@ UBBA_APPLY_DIR:
     LD A,B : LD (BOSS_BROKEN_DIR),A
     OR A
     JR NZ,UBBA_LOAD_L
-    LD HL,SASAPI_BROKEN_QUADS : CALL LOAD_SASAPI_BROKEN_PATTERNS
+    LD HL,SASAPI_BROKEN_QUADS_OFFSET : LD BC,SASAPI_BROKEN_QUADS_SEGMENTS : CALL LOAD_SASAPI_BROKEN_PATTERNS
     JR UBBA_DRAW
 UBBA_LOAD_L:
-    LD HL,SASAPI_BROKEN_QUADS_L : CALL LOAD_SASAPI_BROKEN_PATTERNS
+    LD HL,SASAPI_BROKEN_QUADS_L_OFFSET : LD BC,SASAPI_BROKEN_QUADS_L_SEGMENTS : CALL LOAD_SASAPI_BROKEN_PATTERNS
 UBBA_DRAW:
     CALL DRAW_BOSS_BROKEN
     CALL FLUSH_BOSS_BROKEN_SPRITES

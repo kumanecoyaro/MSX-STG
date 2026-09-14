@@ -2,13 +2,23 @@ import os
 import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "bgm_data"))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "title_screen"))
 from banked_helpers import get_out, fresh_cpu, call_routine, step_frame
 import bgm_bank_gen as bg  # noqa: E402 - no mido dependency, reads the cached bgm_bank.bin
+import title_bg_gen as tbg  # noqa: E402 - rle_decode, chardata is RLE-compressed (2026-09-14)
 
 out, sym, text = get_out()
 # (2026-09-07、round64) SASAPI_QUADS/_L等の実データはもう共有bgm-data/
 # chardataバンク側にある - boss_test.pyの同じコメント参照。
-_CHARDATA_BANK, _ = bg.build_bank()
+# (2026-09-14) さらにRLE圧縮済み - rle_decode()で展開してから使う。
+_CHARDATA_BANK, _CHARDATA_LAYOUT = bg.build_bank()
+_SASAPI_LAYOUT = _CHARDATA_LAYOUT["SASAPI_CHARDATA"]
+
+
+def _sasapi_raw(key):
+    entry = _SASAPI_LAYOUT[key]
+    ofs, length, segments = entry["bank_offset"], entry["len"], entry["segments"]
+    return tbg.rle_decode(_CHARDATA_BANK[ofs:ofs + length], segments)
 
 ok = []
 fail = []
@@ -28,8 +38,8 @@ BOSS_SPEED = sym["BOSS_SPEED"]
 BOSS_SPR_BASE_SLOT = sym["BOSS_SPR_BASE_SLOT"]
 SASAPI_HAND_CODE_BASE = sym["SASAPI_HAND_CODE_BASE"]
 HUD_ROW_BLANK_CODE = sym["HUD_ROW_BLANK_CODE"]
-SASAPI_QUADS = sym["SASAPI_QUADS"]
-SASAPI_QUADS_L = sym["SASAPI_QUADS_L"]
+SASAPI_QUADS_RAW = _sasapi_raw("SASAPI_QUADS")
+SASAPI_QUADS_L_RAW = _sasapi_raw("SASAPI_QUADS_L")
 SPRPAT = sym["SPRPAT"]
 PAT_SASAPI = sym["PAT_SASAPI"]
 BOSS_FLASH_TIMER = sym["BOSS_FLASH_TIMER"]
@@ -55,10 +65,9 @@ def get_game_tick(cpu):
     return cpu.mem[GAME_TICK] | (cpu.mem[GAME_TICK + 1] << 8)
 
 
-def sprpat_matches(cpu, chardata_offset):
+def sprpat_matches(cpu, raw_bytes):
     base = SPRPAT + PAT_SASAPI * 8
-    rom_bytes = list(_CHARDATA_BANK[chardata_offset: chardata_offset + 16 * 32])
-    return rom_bytes == list(cpu.vram[base: base + 16 * 32])
+    return list(raw_bytes) == list(cpu.vram[base: base + 16 * 32])
 
 
 def all_hand_codes_present(cpu):
@@ -117,7 +126,7 @@ call_routine(cpu, "UPDATE_BOSS_ALL")
 check("left-edge reversal is still a normal patrol reversal (DIR=1, moving right) once the pause elapses",
       cpu.mem[BOSS_DIR] == 1 and cpu.mem[BOSS_PHASE] == 0)
 check("left-edge reversal reloads the mirrored facing (unchanged from before this round)",
-      sprpat_matches(cpu, SASAPI_QUADS_L))
+      sprpat_matches(cpu, SASAPI_QUADS_L_RAW))
 
 # ---- drive it back to the right edge - THIS should now enter the attack pose ----
 steps = 0
@@ -192,7 +201,7 @@ check("resumes moving left (DIR=0) after the pose, same as the original spawn",
 check("the hand art's own cells are restored to plain night-black - BGは消して",
       all_hand_cells_night(cpu))
 check("the normal (non-mirrored) facing is reloaded on pose-exit",
-      sprpat_matches(cpu, SASAPI_QUADS))
+      sprpat_matches(cpu, SASAPI_QUADS_RAW))
 check("the sprite is visible again immediately after the pose ends",
       cpu.vram[SAT_BASE + BOSS_SPR_BASE_SLOT * 4] != 209)
 

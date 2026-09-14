@@ -21,7 +21,7 @@
     "chC_len": 121
   },
   "ENDING_IMAGE": {
-    "bank_offset": 7002,
+    "bank_offset": 6766,
     "len": 8860,
     "segments": 2621
   },
@@ -31,15 +31,37 @@
     "chC_len": 15
   },
   "SASAPI_CHARDATA": {
-    "SASAPI_BROKEN_QUADS": 6234,
-    "SASAPI_BROKEN_QUADS_L": 6362,
-    "SASAPI_HAND_TILES": 6490,
-    "SASAPI_QUADS": 5210,
-    "SASAPI_QUADS_L": 5722
+    "SASAPI_BROKEN_QUADS": {
+      "bank_offset": 6094,
+      "len": 123,
+      "segments": 13
+    },
+    "SASAPI_BROKEN_QUADS_L": {
+      "bank_offset": 6217,
+      "len": 123,
+      "segments": 13
+    },
+    "SASAPI_HAND_TILES": {
+      "bank_offset": 6340,
+      "len": 426,
+      "segments": 86
+    },
+    "SASAPI_QUADS": {
+      "bank_offset": 5210,
+      "len": 441,
+      "segments": 97
+    },
+    "SASAPI_QUADS_L": {
+      "bank_offset": 5651,
+      "len": 443,
+      "segments": 98
+    }
   },
   "STAGE1_BOSS_CHARDATA": {
-    "bank_offset": 15862,
-    "len": 512
+    "bank_offset": 15626,
+    "len": 290,
+    "raw_len": 512,
+    "segments": 126
   },
   "STAGE_CLEAR": {
     "bank_offset": 4891,

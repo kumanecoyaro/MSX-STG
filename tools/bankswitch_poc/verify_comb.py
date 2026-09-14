@@ -215,10 +215,14 @@ assert [mem.flat[_go_chC_ram + i] for i in range(len(_go_chC))] == list(_go_chC)
 print("title's own BGM RAM copy of GAME_OVER (Stage1 game-over jingle) verified byte-correct")
 
 # (round135follow-up16、"ボスを別バンクに移してくれ だいぶ削減出来る
-# はずだ"): TitleはStage1のボス本体グラフィック(BOSS_PATTERNS、512byte)
-# もBGM/TryZ/ジングルと同じ要領で別アドレスへ一度だけコピーする。
-# Stage1側の固定アドレス(src/CYBER SHMUP.asmのBOSS_PATTERNS)と
-# 一致することを確認。
+# はずだ"): TitleはStage1のボス本体グラフィック(BOSS_PATTERNS)も
+# BGM/TryZ/ジングルと同じ要領で別アドレスへ一度だけコピーする。
+# (2026-09-14、round137follow-up) さらにRLE圧縮済み(512byte->
+# 290byte) - コピーされるのは圧縮バイト列そのものなので、この
+# チェック自体はentry["len"]バイトの単純byte一致のままで正しい
+# (展開はStage1のBOSS_SPAWN自身が行う、tools/verify_boss_spawn_
+# trigger.py参照)。Stage1側の固定アドレス(src/CYBER SHMUP.asmの
+# BOSS_PATTERNS)と一致することを確認。
 _bp = bgm_layout["STAGE1_BOSS_CHARDATA"]
 _bp_start = _bp["bank_offset"]
 _bp_data = bgm_bank[_bp_start:_bp_start + _bp["len"]]

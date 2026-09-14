@@ -61,10 +61,13 @@ def emit_asm_tables():
     sys.path.insert(0, os.path.join(HERE, "..", "bgm_data"))
     import bgm_bank_gen as bg
     _, layout = bg.build_bank()
-    ofs = layout["SASAPI_CHARDATA"]["SASAPI_HAND_TILES"]
+    entry = layout["SASAPI_CHARDATA"]["SASAPI_HAND_TILES"]
     return ("; ===== Sasapi attack-pose BG art DATA moved to the shared bgm-data bank "
-            "(round64) - see combined_test.asm's INIT (hand-tiles load block) =====\n"
-            f"SASAPI_HAND_TILES EQU {ofs}")
+            "(round64) - see combined_test.asm's INIT (hand-tiles load block). "
+            "(2026-09-14) also RLE-compressed, so both the offset and segment count "
+            "are needed =====\n"
+            f"SASAPI_HAND_TILES_OFFSET EQU {entry['bank_offset']}\n"
+            f"SASAPI_HAND_TILES_SEGMENTS EQU {entry['segments']}")
 
 
 if __name__ == "__main__":

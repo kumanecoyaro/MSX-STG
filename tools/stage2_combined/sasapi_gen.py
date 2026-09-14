@@ -162,9 +162,13 @@ def emit_asm_tables():
     layout = _chardata_layout()
     out = ["; ===== Sasapi (boss) sprite pattern DATA moved to the shared bgm-data bank "
            "(round64, tools/bgm_data/bgm_bank_gen.py) - these are now just bank-relative "
-           "byte offsets, see LOAD_SASAPI_PATTERNS in combined_test.asm ====="]
-    out.append(f"SASAPI_QUADS EQU {layout['SASAPI_QUADS']}")
-    out.append(f"SASAPI_QUADS_L EQU {layout['SASAPI_QUADS_L']}")
+           "byte offsets, see LOAD_SASAPI_PATTERNS in combined_test.asm. (2026-09-14) "
+           "also RLE-compressed (tools/title_screen/title_bg_gen.py's rle_encode), so "
+           "each entry needs both its bank offset AND its segment count ====="]
+    for key in ("SASAPI_QUADS", "SASAPI_QUADS_L"):
+        entry = layout[key]
+        out.append(f"{key}_OFFSET EQU {entry['bank_offset']}")
+        out.append(f"{key}_SEGMENTS EQU {entry['segments']}")
     out.append(emit_broken_asm_tables())
     out.append(emit_broken_path_tables())
     out.append(emit_broken_beam_asm_tables())
@@ -179,9 +183,12 @@ def emit_broken_asm_tables():
     列を書き込む - ここでは移設先オフセットのEQUを埋め込むだけ。"""
     layout = _chardata_layout()
     out = ["; ===== Sasapi broken-form (32x32) sprite pattern DATA moved to the shared "
-           "bgm-data bank (round64), see SASAPI_QUADS' own comment ====="]
-    out.append(f"SASAPI_BROKEN_QUADS EQU {layout['SASAPI_BROKEN_QUADS']}")
-    out.append(f"SASAPI_BROKEN_QUADS_L EQU {layout['SASAPI_BROKEN_QUADS_L']}")
+           "bgm-data bank (round64), see SASAPI_QUADS' own comment (also RLE-compressed, "
+           "2026-09-14) ====="]
+    for key in ("SASAPI_BROKEN_QUADS", "SASAPI_BROKEN_QUADS_L"):
+        entry = layout[key]
+        out.append(f"{key}_OFFSET EQU {entry['bank_offset']}")
+        out.append(f"{key}_SEGMENTS EQU {entry['segments']}")
     return "\n".join(out)
 
 

@@ -509,7 +509,7 @@ TITLE_BGM_BANKSELECT_ANCHOR = """    LD A,2                       ; standalone b
     LD HL,08E32h : LD DE,0C910h : LD BC,032Eh : LDIR  ; TryZ chB+chC(Stage1ボス用)
     LD HL,0931Bh : LD DE,0CC42h : LD BC,010Dh : LDIR  ; StageClear chB+chC+chA(Stage1ステージクリア用)
     LD HL,09428h : LD DE,0CD5Bh : LD BC,032h : LDIR   ; GAME_OVER chB+chC(Stage1ゲームオーバー用)
-    LD HL,0BDF6h : LD DE,0CD8Dh : LD BC,0200h : LDIR  ; BOSS_PATTERNS(Stage1ボス本体グラフィック用)
+    LD HL,0BD0Ah : LD DE,0CD8Dh : LD BC,0122h : LDIR  ; BOSS_PATTERNS(Stage1ボス本体グラフィック用、RLE圧縮済み290byte)
     LD A,1                       ; このファイル自身のbank1(Comb/standaloneとも1のまま)
     LD (7000h),A"""
 
@@ -520,7 +520,7 @@ TITLE_BGM_BANKSELECT_PATCH = """    LD A,6                       ; standalone bg
     LD HL,08E32h : LD DE,0C910h : LD BC,032Eh : LDIR  ; TryZ chB+chC(Stage1ボス用)
     LD HL,0931Bh : LD DE,0CC42h : LD BC,010Dh : LDIR  ; StageClear chB+chC+chA(Stage1ステージクリア用)
     LD HL,09428h : LD DE,0CD5Bh : LD BC,032h : LDIR   ; GAME_OVER chB+chC(Stage1ゲームオーバー用)
-    LD HL,0BDF6h : LD DE,0CD8Dh : LD BC,0200h : LDIR  ; BOSS_PATTERNS(Stage1ボス本体グラフィック用)
+    LD HL,0BD0Ah : LD DE,0CD8Dh : LD BC,0122h : LDIR  ; BOSS_PATTERNS(Stage1ボス本体グラフィック用、RLE圧縮済み290byte)
     LD A,1                       ; このファイル自身のbank1(Comb/standaloneとも1のまま)
     LD (7000h),A"""
 
