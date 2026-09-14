@@ -563,11 +563,16 @@
     // 色を変更 現在ブラックだがライトグリーンに", see EBSD_DRAW_E4 in the
     // ASM) and this GLYPHS entry never picked that up, so the editor was
     // still showing Enemy4 in its old color.
-    // bg here is an editor-only visibility aid, not a real hardware trait -
-    // it's a sprite, transparent in-game like every other 16x16 entry here.
-    // Kept even with the brighter color (was added for the old black look)
-    // since it still reads better against this tool's near-black grid than
-    // no backdrop at all.
+    // (round135follow-up7, "エネミー4はスプライトなんで背景はブラックな
+    // 背景はBGキャラのみ"): the sky-blue backdrop above was only ever an
+    // editor-only visibility aid for the OLD black color (a real sprite
+    // has no background of its own - the blue was borrowed from the sky
+    // it usually flies over, which isn't true in general and was already
+    // flagged as such). enemy3/enemy6 legitimately keep their own blue bg
+    // because they're real opaque BG tiles that always render with that
+    // exact background in-game, not sprites - "背景はBGキャラのみ" draws
+    // that line. Plain black instead: reads fine against light green and
+    // doesn't imply a background this sprite doesn't actually have.
     enemy4: {
       size: 16,
       quads: {
@@ -577,7 +582,7 @@
         br: [0x01, 0x06, 0x9C, 0xFF, 0xFE, 0x7C, 0x0E, 0x03]
       },
       color: "#74d07d",
-      bg: "#5955e0"
+      bg: "#000000"
     },
     // Enemy6's 0deg spin frame (NEWENEMY_PATTERN_TL/TR/BL/BR) - unlike every
     // other 16x16 entry here this is 4 BG tiles (2x2, not an MSX sprite), so
@@ -861,10 +866,7 @@
   // confirmed against the real formation's own reference render
   // (tools/ebuz_test/ebuz_state2_zoom.png, an earlier standalone
   // prototype of this same layout, predating the final fg/bg choice
-  // above). Drawn left-aligned in the wider 8x4-cell placeholder
-  // footprint (ebuzOrigin) - that footprint's own size is unchanged, it's
-  // still purely a legible editing box (see its own comment), just no
-  // longer a text label.
+  // above).
   var EBUZ_BG = "#5955e0";
   var EBUZ_FG = "#ffffff";
   var EBUZ_TILES = {
@@ -879,23 +881,26 @@
     [null, null, null, EBUZ_TILES.D, null],
     [null, EBUZ_TILES.A, EBUZ_TILES.B, EBUZ_TILES.C, null]
   ];
-  // totalCols defaults to the full 8-wide placeholder footprint (grid/drag/
-  // paste preview - keeps the existing footprint's backdrop size). The
-  // palette icon below passes 5 instead (just the real content width, no
-  // empty filler columns) so its tiles get a bigger, more legible cell
-  // size out of the same 26px icon box - at 8-wide's ~2.75px/tile the
-  // A/B/C/D shapes blurred into an unreadable blob.
-  function drawEbuzBody(ctx, x, y, cell, totalCols) {
-    totalCols = totalCols || 8;
-    ctx.fillStyle = EBUZ_BG;
-    ctx.fillRect(x, y, totalCols * cell, 4 * cell);
-    ctx.fillStyle = EBUZ_FG;
+  // (round135follow-up7, "Ebuzのグリッド画像後ろいらん 32x32に収まって
+  // るだろう"): draws only the real opaque tiles, each filling just its
+  // own 8x8 cell with its true in-game blue background before its white
+  // ink - matching how an opaque BG tile actually renders (no color
+  // outside a real EBUZ_CODE_A-D tile). Used to stretch one big
+  // background rectangle across the full 8-cell placeholder footprint
+  // (ebuzOrigin) regardless of where the real tiles sat inside it; that
+  // stretch was never real, purely cosmetic backdrop, so it's gone - the
+  // footprint itself (used for placement/collision, not drawing) is
+  // unchanged.
+  function drawEbuzBody(ctx, x, y, cell) {
     var px = cell / 8, py = cell / 8;
     for (var r = 0; r < EBUZ_STATE2_ROWS.length; r++) {
       for (var c = 0; c < EBUZ_STATE2_ROWS[r].length; c++) {
         var tile = EBUZ_STATE2_ROWS[r][c];
         if (!tile) continue;
         var tx = x + c * cell, ty = y + r * cell;
+        ctx.fillStyle = EBUZ_BG;
+        ctx.fillRect(tx, ty, cell, cell);
+        ctx.fillStyle = EBUZ_FG;
         for (var rr = 0; rr < 8; rr++) {
           var byte = tile[rr];
           for (var cc = 0; cc < 8; cc++) {
@@ -1341,12 +1346,12 @@
         // GLYPHS entry (its shape needs the multi-tile layout drawEbuzBody
         // draws, not a single quads/rows bitmap), so this mirrors the
         // s2_terrain branch above rather than the glyph branch below.
-        // Drawn at just its real 5-wide content (not the wider 8-cell
-        // placeholder footprint drawEbuzBody's other callers use), so the
-        // 26px icon box gives each tile ~4.4px instead of ~2.75px - at the
-        // full 8-wide size the A/B/C/D shapes blurred into an unreadable
-        // blob. Centered vertically (5:4 real aspect, close enough to the
-        // 26x26 box to not need horizontal centering too).
+        // Sized off the real 5-wide content (not the wider 8-cell
+        // placeholder footprint used for placement/collision elsewhere),
+        // so the 26px icon box gives each tile ~4.4px instead of ~2.75px -
+        // any wider and the A/B/C/D shapes blur into an unreadable blob.
+        // Centered vertically (5:4 real aspect, close enough to the 26x26
+        // box to not need horizontal centering too).
         var ecv = document.createElement("canvas");
         ecv.className = "picon";
         var eCssSize = 26, eDpr = Math.max(1, window.devicePixelRatio || 1);
@@ -1358,7 +1363,7 @@
         ectx.setTransform(eDpr, 0, 0, eDpr, 0, 0);
         ectx.imageSmoothingEnabled = false;
         var epad = 2, ecell = (eCssSize - epad * 2) / 5, eh = 4 * ecell;
-        drawEbuzBody(ectx, epad, (eCssSize - eh) / 2, ecell, 5);
+        drawEbuzBody(ectx, epad, (eCssSize - eh) / 2, ecell);
         item.appendChild(ecv);
       } else if (t.glyph) {
         var glyph = GLYPHS[t.glyph];
