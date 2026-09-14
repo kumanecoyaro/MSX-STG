@@ -12913,6 +12913,89 @@ Y段違い+Enemy6速度半減、Stage2自機爆発の自機非表示タイミン
   範囲とも)は次回フィードバック待ち。`GO_POP_JITTER`(32)・
   `NUM_POPS`(40)は依然未調整の初期値。
 
+## Round135 follow-up3: schedule-editor.htmlをEbuz対応に(2026-09-14、
+完了済み)
+
+- ユーザー指示: "はやり 現状Tick通りに進まなくなってるんで スケジュール
+  エディタをEbuz対応にアプデしてくれ"。Ebuz(`EBUZ_SPAWN_CHAIN_START`)は
+  他の全Stage1エネミーと違い`SPAWN_THRESHOLDS`/`SSC_FIRE`の通常
+  スケジュール(`SPAWN_NEXT_INDEX`による逐次消化)に一切乗らない、
+  完全に独立した`EBUZ_SPAWN_TICK_TABLE`(現在5回、tick100/256/512/
+  768/950)というトリガー機構で、かつアクティブな間`GAME_TICK`自体を
+  凍結する(他の全placementのtickが実時間と対応しなくなる)。この
+  機構がエディタ側に一切表現されておらず、ユーザーが「なぜTick通りに
+  進まないか」を編集画面から把握できなかったのが動機。
+- `tools/schedule-editor.html`のStage1パレット(`TYPES1`)へ"ebuz"を
+  新規追加。既存の"boss"(`BOSS_SPAWN` - 固定位置・row/tickは編集用の
+  見た目だけ)と同じ設計思想を踏襲し、Ebuzもrowは完全に無視される
+  (3体それぞれの実際の行は`EBUZ_ROW_INST1/2/3`というコンパイル時
+  定数で固定、置いたアイコンの位置とは無関係)。footprintOf/drawGrid/
+  updateDragOverlay/paste previewの4箇所に、boss/s2_bossと並ぶ形で
+  `ebuzOrigin`(8列×4行、`bossOrigin`/`s2BossOrigin`と同型のクランプ)+
+  `drawEbuzPlaceholder`(紫系のラベル付きボックス、Bossの赤と視覚的に
+  区別)を追加。
+- エクスポート自体は特別扱いせず、他の全typeと同じく通常の
+  `placements[]`エントリ(`{tick, row, type:"ebuz"}`)としてそのまま
+  出力する設計 - ASM側の生成スクリプト(次にユーザーがEbuz入りの
+  スケジュールJSONを提示した際に書く想定)が`type==="ebuz"`だけ
+  `SPAWN_THRESHOLDS`/`SSC_FIRE`ではなく`EBUZ_SPAWN_TICK_TABLE`/
+  `EBUZ_SPAWN_TICK_COUNT`へ抜き出す特別扱いを行う前提(Boss同様
+  「エディタ上は似たアイコンだが、ASM側の配線は全く別」という非対称
+  設計を意図的に選択、コード側コメントに明記)。
+- `node --check`でのJS構文検証、diffレビューにより4箇所の特殊描画が
+  漏れなく揃っていることを確認。今回はASM側の変更を伴わないため
+  Stage1/Stage2いずれの`verify_*.py`/`run_all.py`も対象外(CLAUDE.md
+  記載の既存方針通り)、ROM再ビルド・送付も不要と判断。詳細は本セッション
+  の会話ログ参照。
+
+## Round135 follow-up4: Ebuz発射音実装(候補2「ディープ・スタッター」)
+(2026-09-14、完了済み・実機フィードバック待ち)
+
+- ユーザー指示: "Ebuzの発射音欲しい マシンガンみたいなやつ 何種類か
+  作って聞かせてくれ" → 実PSGノイズジェネレータ(17bit LFSR、AY-3-8910
+  互換)をWeb Audioでエミュレートした試聴ページ「Ebuz Fire Bench」を
+  Artifactで公開、6候補(クリスプ・タック/ディープ・スタッター/
+  メタリック・ラトル/シャープ・スナップ/スイープ・バースト/グリッティ・
+  ブルルル)を提示 → ユーザー選定"音は2番で"(候補2「ディープ・
+  スタッター」、試聴ページ上の仕様: noise period=14、envelope
+  [15,12,8,4]の4フレーム)。
+- 既存の`SOUND_DESTROY`(channel Aのノイズジェネレータ、`SND_TIMER`の
+  -1/frame直線減衰+`CALC_NOISE_GATE_VOLUME`のTICK AND 1デューティ
+  ゲート)と全く同じ構造を、周期だけ20→14(候補のNP)に変えて新規
+  `SOUND_EBUZ_FIRE`として実装。試聴ページ側の手書きenvelope
+  [15,12,8,4]自体はこの実エンジンには存在しない専用テーブルを要求
+  するが、Ebuzの発射間隔(`EBUZ_FIRE_INTERVAL`=2フレーム毎)の頻度で
+  毎回`SND_TIMER`が15へ再武装されるため、実際に鳴る音はエンジン本来の
+  1:1デューティゲート(30Hz)がそのまま「ダダダダ」という機関銃的な
+  質感を作り出す - 候補名「ディープ・スタッター」の"スタッター"要素は
+  このデューティゲートそのものが担う形になると判断し、専用envelope
+  テーブルの新設は行わなかった。
+- 呼び出し箇所は`EBUZ_UPDATE_TOPBOTTOM_FIRE`の`EUTF_FIRE_DONE`
+  (上レーン`EUTF_FIRE_TOP`・下レーン`EUTF_FIRE_BOTTOM`の両方が
+  合流する共通ラベル)に`CALL SOUND_EBUZ_FIRE`を1行追加するだけで
+  両レーン対応(IXは不変のため直後の`(IX+...)`読み取りにも影響なし)。
+- `tools/verify_ebuz_integration.py`に新規セクション14(3件)を追加:
+  上レーン発射・下レーン発射それぞれでPSGレジスタ6にノイズ周期14が
+  実際に書き込まれることを確認(`SND_TIMER`自体は同じフレーム内で
+  `SOUND_UPDATE`がすぐ1減算してしまうため、`verify_player_damage.py`
+  の既存パターンに倣いR6書き込みを発射の証拠として使用)、加えて
+  `CALL SOUND_EBUZ_FIRE`を一時的にNOP化するとR6=14が一度も現れなく
+  なることの自己検証も追加(103→111件、全てPASS)。
+- 全回帰: `verify_ebuz_integration.py`111・他のStage1既存検証群
+  (`verify_enemy_bullets.py`60/`verify_player_damage.py`60/
+  `verify_stage1_bgm.py`80/`verify_stage1_mission_screens.py`87/
+  `verify_enemy6_durability.py`19/`verify_explosion_anim.py`28/
+  `verify_boss_dfl_clear.py`10/`verify_spawn_schedule_restart.py`12/
+  `verify_stage1_boss_score.py`7/`verify_stage1_hud_movement.py`8/
+  `verify_boss_pod_bullet_aim.py`17/`verify_sound_duty_cycle.py`54/
+  `verify_cell_loop_hoist.py`3)全てPASS。Comb ROM再ビルド・
+  `verify_comb.py`全チェックPASSの上、標準方針によりComb ROMのみ
+  送付。
+- **保留・実機フィードバック待ち**: 実際の連射時の聞こえ方(30Hz
+  デューティゲート単独で「候補2らしさ」を再現できているか)は実機
+  フィードバック待ち。試聴ページ通りの専用envelopeテーブルが必要と
+  判断される場合は追加実装の余地あり。
+
 ## Round80: Stage1スケジュール再々差し替え(Schedule_4.json、549件)
 (2026-09-12、完了済み・実機フィードバック待ち)
 

@@ -975,6 +975,67 @@ check("自己検証: index=5(番兵)に達した状態でtick950を跨いでも�
       "6回目のスポーンは発生しない(EBUZ_SPAWN_STAGEが0のまま)",
       zi.rd(sym["EBUZ_SPAWN_STAGE"]) == 0)
 
+# ============================================================
+# 14. round135follow-up4「Ebuzの発射音欲しい マシンガンみたいなやつ
+#     ...音は2番で」: 発射のたびSOUND_EBUZ_FIRE(候補2「ディープ・
+#     スタッター」、noise period=14)が実際に呼ばれる。SND_TIMERは
+#     同じフレーム内でSOUND_UPDATE自身がすぐ1減算するため(既存の
+#     SOUND_DESTROY系テスト[verify_player_damage.py]と同じ理由で)
+#     ここではPSGレジスタ6(ノイズ周期)の書き込みだけを発射の証拠と
+#     して見る - EBUZ_FIRE_INTERVAL(2)フレーム以内に必ず1回は発射
+#     されるはずなので、直前に毎フレームpoisonしながら実際にR6=14が
+#     現れるかを確認する。
+# ============================================================
+def _ebuz_fires_sound(fire_side):
+    zj = fresh()
+    spawn_chain_to_tick100(zj)
+    advance_until(zj, lambda z: srd(z, S0, "ACT") == sym["EBUZ_ST_FIRE"], max_frames=2000)
+    swr(zj, S0, "FIRE_SIDE", fire_side)
+    for _ in range(sym["EBUZ_FIRE_INTERVAL"] + 1):
+        zj.psg_regs.pop(6, None)
+        step_frame(zj)
+        if zj.psg_regs.get(6) == 14:
+            return True
+    return False
+
+
+check("Ebuzの発射(FIRE_SIDE=0、上レーン)のたびSOUND_EBUZ_FIREが実際に呼ばれる "
+      "(PSGレジスタ6にノイズ周期14が書き込まれる)",
+      _ebuz_fires_sound(0))
+check("Ebuzの発射(FIRE_SIDE=1、下レーン)でも同様に呼ばれる",
+      _ebuz_fires_sound(1))
+
+
+def _regress_ebuz_fire_sound_not_called():
+    """EUTF_FIRE_DONEへ挿入したCALL SOUND_EBUZ_FIREを一時的にNOP化する
+    自己検証(上2件のPASSがこの1行によって成立していることの裏取り)。"""
+    broken_mem = bytearray(mem0)
+    target = sym["SOUND_EBUZ_FIRE"]
+    pat = bytes([0xCD, target & 0xFF, (target >> 8) & 0xFF])
+    idx = bytes(broken_mem).find(pat)
+    if idx < 0:
+        raise RuntimeError("pattern not found for self-verification")
+    broken_mem[idx] = 0x00
+    broken_mem[idx + 1] = 0x00
+    broken_mem[idx + 2] = 0x00
+    zk = Z80(broken_mem)
+    zk.pc = sym["INIT"]
+    run_until_pc(zk, sym["MAINLOOP"])
+    spawn_chain_to_tick100(zk)
+    advance_until(zk, lambda z: srd(z, S0, "ACT") == sym["EBUZ_ST_FIRE"], max_frames=2000)
+    for _ in range(sym["EBUZ_FIRE_INTERVAL"] * 4):
+        zk.psg_regs.pop(6, None)
+        step_frame(zk)
+        if zk.psg_regs.get(6) == 14:
+            return True
+    return False
+
+
+check("自己検証: CALL SOUND_EBUZ_FIREを取り除くと、発射を何度繰り返しても"
+      "R6=14は一度も現れない(=上2件が本当にこの呼び出しを検証していること"
+      "の確認)",
+      _regress_ebuz_fire_sound_not_called() == False)
+
 print()
 print(f"{len(ok)} passed, {len(fail)} failed")
 if fail:

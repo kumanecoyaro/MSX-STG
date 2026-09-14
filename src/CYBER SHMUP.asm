@@ -3763,6 +3763,28 @@ SOUND_DESTROY:
     EI
     LD A,15 : LD (SND_TIMER),A
     RET
+
+; Ebuz's own rapid-fire "machine gun" SE (round135follow-up4,
+; "Ebuzの発射音欲しい マシンガンみたいなやつ...音は2番で" - ユーザーが
+; "Ebuz Fire Bench"の6候補から選んだ candidate 2「ディープ・スタッター」
+; [NP=14、frames=[15,12,8,4]] をそのまま実装)。既存のSOUND_DESTROYと
+; 全く同じ構造(channel Aのノイズジェネレータ、SND_TIMERの-1/frame
+; 直線減衰+CALC_NOISE_GATE_VOLUMEのTICK AND 1デューティゲート)を、
+; 周期だけ20→14(候補のNP)に変えて再利用 - 試聴ページの手書きenvelope
+; [15,12,8,4]自体はこのエンジンには無い専用テーブルを要求するが、
+; EBUZ_FIRE_INTERVAL(2フレーム毎)の頻度で毎回SND_TIMERが15へ再武装
+; されるため、実際に鳴る音はエンジン本来の1:1デューティゲート(30Hz)が
+; そのまま「ダダダダ」という機関銃的な質感を作り出す - 候補名
+; 「ディープ・スタッター」の"スタッター"要素はこのデューティゲート
+; そのものが担う形になり、専用envelopeテーブルの新設は不要と判断。
+SOUND_EBUZ_FIRE:
+    DI
+    LD A,6 : OUT (PSG_ADDR),A
+    LD A,14 : OUT (PSG_DATA),A    ; noise period 14 - candidate2 "ディープ・スタッター"
+    EI
+    LD A,15 : LD (SND_TIMER),A
+    RET
+
 ; metallic "kin" ping for a non-lethal pod hit - reuses channel A's
 ; tone generator (same as the player's own shot) but at a much higher
 ; pitch so it reads as a distinct sound.
@@ -12523,6 +12545,10 @@ EUTF_FIRE_BOTTOM:
     CALL EBUZ_WRITE5_RECOIL
     CALL EBUZ_FIRE_BOTTOM_BULLET
 EUTF_FIRE_DONE:
+    ; round135follow-up4: both the TOP and BOTTOM fire paths above fall
+    ; through to here, so a single CALL covers every shot (does not touch
+    ; IX - safe, the (IX+...) reads right below still need it).
+    CALL SOUND_EBUZ_FIRE
     LD A,(IX+EBUZ_OFS_FIRE_SIDE)
     LD (IX+EBUZ_OFS_RECOIL_SIDE),A
     LD A,EBUZ_RECOIL_DURATION
