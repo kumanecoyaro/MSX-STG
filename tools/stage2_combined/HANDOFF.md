@@ -16169,3 +16169,154 @@ per-slot独立方式へ作り替えた」設計逸脱を撤回、Round121構造+
   スコア500点)はいずれも実機フィードバック待ち。指示があるまで
   スケジュールJSON(Schedule_*.json)側への統合(例えば特定のスコア
   演出やスケジュール表示との連動)は着手しない。
+
+## Round131: Ebuzを2体同時生存の多インスタンス化+row1描画修正+
+HP24化+8セル死亡演出(PLAYER_EXPL_POOL流用)+ROM容量危機の解決
+(2026-09-14、完了済み・実機フィードバック待ち)
+
+- ユーザー指示(原文): "まず\nスポーンでRow0のブラックの行を破壊してる\n
+  Rowは避けRow1から描画するように\n耐久値24に\n次に2体目\nスポーンは
+  1体目が消えたら\n撤退するか倒されるか\n\nスポーン位置2体目がRow12\n
+  3体目Row5\n3体目は2体目が連射したくらいのタイミング\n爆発エフェクトは
+  Ebuzセル毎に1回\n8セルだから8回エフェクトとサウンド\n自機爆発の
+  サウンドとスプライトを流用"。Round130で組み込んだ単一インスタンス版
+  Ebuzを、IX相対の2スロット(`EBUZ_SLOT0`/`EBUZ_SLOT1`、各36byte)構造体
+  による多インスタンス実装へ全面書き換え。
+- **row0破壊バグの修正**: `EBUZ_ENTER_START_ROW`を0→1に変更するだけ
+  (Round130時点で本体の初期描画行が単純に0固定だったのがそのまま
+  スコア/HUD行を破壊していた)。
+- **耐久値24**: `EBUZ_HP_INIT`を12→24に変更。
+- **3体チェーンスポーン設計**: `EBUZ_SPAWN_STAGE`(0=未スポーン/1=1体目
+  消化待ち/2=2体目消化中/3=3体目トリガー済み・終端)を新設し、毎フレーム
+  `EBUZ_CHECK_CHAIN_TRIGGERS`(`EBUZ_UPDATE_ALL`の直後、MAINLOOPの
+  スケジュール凍結ゲートとは独立に無条件実行)で監視する状態機械として
+  実装。STAGE=1でSLOT0.ACT==0(1体目がEXIT完了/撃破いずれかで完全に
+  消えた瞬間)→SLOT0へ2体目(CENTER_ROW=EBUZ_ROW_INST2=12)をスポーンし
+  STAGE→2。STAGE=2でSLOT0.ACT==EBUZ_ST_FIRE(2体目が継続交互発射に
+  到達した瞬間、"2体目が連射したくらいのタイミング")→SLOT1へ3体目
+  (CENTER_ROW=EBUZ_ROW_INST3=5)をスポーンしSTAGE→3(終端)。2体目と
+  3体目は別スロットなので"撤退するか倒される"を待たずに画面上で同時
+  生存できる("待ちなしで"の原文通り、両遷移とも同一フレーム内で
+  アトミックに発生)。MAINLOOPのスケジュール凍結ゲートは旧来の単一
+  `EBUZ_ACT`チェックから`EBUZ_ANY_ACTIVE`(両スロットのACTをOR判定)へ
+  差し替え。
+- **8セル死亡演出(PLAYER_EXPL_POOL流用)**: 新設`EBUZ_QUEUE_EXPLOSIONS`
+  (`EBUZ_DESTROY`が本体消去より先に呼ぶ)が、span2(ENTER/STATE1、
+  ABCD4タイル×2行)なら2行×4列、span4(STATE2以降、翼帯3セル×2+中央
+  D柱1セル×2)なら8箇所の(row,col)をコンパイル時形状から導出し
+  `EBUZ_EXPL_QUEUE`(16entry×2byte、LIFOスタック)へpixel座標(X=col*8,
+  Y=row*8)として積む。新設`EBUZ_EXPL_UPDATE_QUEUE`(MAINLOOPから
+  `PLAYER_EXPL_UPDATE_ALL`の直後に毎フレーム無条件呼び出し)が
+  `EBUZ_EXPL_SPAWN_INTERVAL`(4)フレームに1個ずつキューを消化し、
+  新設`PEUA_TRY_SPAWN_AT`(既存`PEUA_TRY_SPAWN`の姉妹版、自機周辺の
+  ジッター位置ではなく`EBUZ_EXPL_POS_X/Y`という明示座標へ生成する点
+  のみ異なる)経由で`PLAYER_EXPL_POOL`(自機死亡演出と完全に同じ
+  プール・スプライト・`SOUND_DESTROY`)へ1個ずつポップさせる -
+  "自機爆発のサウンドとスプライトを流用"を文字通り実現、Stage1の
+  他エネミーが使う`TRIGGER_EXPLOSION`(BGタイル1コマアニメ)系とは
+  完全に別の描画経路。
+- **ROM容量危機とその解決(今回最大の技術的山場)**: 上記の多
+  インスタンス化・8セル演出一式でStage1の生アセンブル結果が32768byte
+  (bank0+bank1合計の唯一のハード上限)を576byte超過し、Comb ROMの
+  ビルドが`Exception: game byte at unexpected address c000`で失敗する
+  状態に陥った。EBUZ_SPAWN_INSTANCEの「使われない防御的再初期化ブロック
+  の削除」(256byte)を皮切りに、以下の一連の重複コード集約を実施:
+  - `EBUZ_UPDATE_SLOT`/`EBUZ_CLEAR_SLOT`へ`EBUZ_FIELD_ADDR`計算を融合
+    (32箇所の個別CALLを排除)。
+  - `EBUZ_ADDR_TOPBAND`〜`_BOTBAND_FIRE`の8種の行アドレス計算を
+    `EBUZ_ADDR_CORE`へ集約。
+  - 爆発キューをFIFO環状バッファからLIFOスタックへ簡素化(HEAD管理・
+    mod演算を排除)。
+  - `EBUZ_UPDATE_BULLET0`/`EBUZ_CLEAR_ALL_BULLETS`/`EBUZ_ENTER_STATE1`の
+    計7箇所で使っていた「CALL EBUZ_ADDR_ROW9/ROW10を跨いでcolを保持する
+    ためのPUSH AF/POP AF」を全廃 - colは呼び出しの前後で(IX+d)上
+    不変なので、呼び出し後に`LD E,(IX+d)`で直接読み直す方が
+    (PUSH AF+POP AF+LD E,A=3byteよりLD E,(IX+d)=3byteの方が実質等価
+    に見えて、呼び出し**前**のLD A,(IX+d)自体[3byte]が丸ごと不要になる
+    分)実質3byte/箇所の削減になった。
+  - `LD A,(IX+d):LD X,A`(Xは他の8bitレジスタ)という「一度Aへ読んで
+    から別レジスタへコピーするだけ」の慣用句を、このアセンブラが
+    `LD X,(IX+d)`(任意の8bitレジスタへの直接IX相対ロード)をサポート
+    済みという性質を利用して機械的に1byteずつ短縮(Ebuz区画内で
+    16箇所+INC/DECを伴う6箇所の計22箇所)。
+  - `EBUZ_ENTER_STATE2`/`EBUZ_UPDATE_TOPBOTTOM_FIRE`で計8回重複して
+    いた「LD D,H:LD E,L:LD HL,データ:LD BC,n:CALL LDIRVM」を、5種の
+    共有ヘルパー(`EBUZ_WRITE5_REST`/`_RECOIL`/`EBUZ_WRITE4_DONLY`/
+    `EBUZ_WRITE5_BLANK`/`EBUZ_WRITE4_BLANK`)へ集約。`EBUZ_EXIT_ERASE`/
+    `EBUZ_EXIT_DRAW`も、従来使っていたDE出力の`EBUZ_CELL_ADDR`から
+    HL出力の`EBUZ_ADDR_CORE`(既存の別ヘルパー、A=row/C=colの入力
+    規約は共通)へ切り替えることで、同じ5種のヘルパーをそのまま再利用
+    できるようにした。
+  - **重要な自己発見(ROM容量最適化の一般則として記録に値する)**:
+    `EBUZ_UPDATE_BULLET0`を「CALL ADDR_ROW9/ROW10を1回だけ呼び結果を
+    RAMへキャッシュして使い回す」設計(実行速度目的の最適化)に一度
+    書き換えたところ、ROMサイズが94byte→98byteへ**増加**する結果に
+    なった - `LD (nnnn),HL`/`LD HL,(nnnn)`(各3byte)によるRAM経由の
+    キャッシュ往復コストが、削減できたはずのCALL+PUSH/POP AF
+    (3+1+1=5byte)を上回ってしまうため。**「速度目的の最適化」と
+    「ROM容量目的の最適化」は方向性が逆になりうる**(前者はレジスタ
+    キャッシュを好むが、後者は重複コードそのものの削除を好む)ことを
+    実測で確認し、この変更は破棄して元のPUSH/POP AF方式へ復元した上で、
+    上記の「呼び出し後に(IX+d)を読み直す」という無コストな代替案へ
+    差し替えた。
+  - **ALIGN 256吸収現象の定量的解明(前回セッションで発見した現象を
+    今回さらに具体的に特定)**: Stage1には`REFRESH_IDCACHE_33`直後に
+    地形LUT用の`ALIGN 256`が計6箇所連続する(LUT→SOLOTAB→MUL6→
+    PAIRBASE→ROWADDR_LO→ROWADDR_HI)。このALIGNの直前のコード終端
+    アドレスが対象アドレス(例: `LUT`=0xA100)のちょうど256byte手前の
+    ページ(0xA000)を1byteでも超えている限り、そのページ内でどれだけ
+    コードを削っても`LUT`のアドレスは1byteも動かない(ALIGNが常に
+    次の256byte境界へ切り上げるため) - **削減量がページ境界
+    [今回はRIC_LOOP終端が0xA000を下回る、必要削減量にしてわずか
+    RIC_LOOP=0x9FF6→0x9FF0の6byte]を跨いだ瞬間、それまで蓄積して
+    無風だった削減が一気に256byte分の実効果として顕在化する**という
+    非線形の挙動を、実際にシンボルアドレスを都度計測しながら定量的に
+    確認した(今回の一連の削減は累計約100byte強で、RIC_LOOP終端が
+    ちょうど0xA000を下回った瞬間にComb ROMのオーバーフローが
+    192byte超過→ちょうど収まる[headroom 64byte]へ一気に転じた)。
+  - 最終結果: Stage1生アセンブル結果 32768+576(超過)→32704byte
+    (headroom 64byte)。Comb ROM(パッチ適用後)は32768byteちょうど
+    超過192byte→32704byte(headroom 64byte)で無事ビルド成功。
+- **もう1つの自己発見バグ(テスト実行中に発覚・修正済み)**: 上記の
+  5種共有ヘルパーを最初`JP LDIRVM`という末尾呼び出し(CALL+RETより
+  1byte短い)で実装したところ、`verify_ebuz_integration.py`が
+  state2形成以降で軒並み`RuntimeError`/内容不一致でFAILした。原因は
+  `tools/z80emu.py`のBIOSコール割り込み(`bios_call()`)が`CALL`命令
+  (opcode 0xCD)でのみ発火する実装になっており、`JP`(0xC3)経由での
+  同じ番地(LDIRVM=005Ch)への遷移はインターセプトされず、実際には
+  存在しないROM領域への疑似実行に迷い込んでいた - 実機上では`JP`と
+  `CALL`+`RET`は完全に等価(戻り先アドレスは呼び出し元の`CALL
+  EBUZ_WRITE5_REST`がスタックに積んだものがそのまま使われる)だが、
+  このテスト環境固有の制約により再現できないパターンだった。
+  `CALL LDIRVM:RET`(4byte、`JP LDIRVM`の3byteより1byte増)へ修正して
+  解消 - 5箇所で計5byte増えたが、既にALIGN境界を跨いだ後だったため
+  Comb ROMのheadroomへの影響はゼロ(320→64byteの余裕内に収まった)。
+  Round47のOTIRバグと同様、「z80emu.pyがBIOSコールをCALL命令の
+  opcode一致でのみインターセプトする」という実装上の制約は今後も
+  同種の罠になりうるため記録しておく。
+- テスト: `tools/verify_ebuz_integration.py`を2スロット構造体対応で
+  全面書き換え(96件、3体チェーンスポーン・EXIT/撃破いずれの経路
+  からのチェーン発火・8セル死亡演出の座標一致とPLAYER_EXPL_POOLへの
+  段階的ポップ・row1描画修正の直接検証・HP24化・B/Cレジスタ保持契約を
+  含む)、全件PASS。既存のStage1回帰8ファイル(verify_enemy_bullets.py
+  60/verify_player_damage.py 60/verify_stage1_bgm.py 80/verify_
+  stage1_mission_screens.py 87/verify_enemy6_durability.py 19/
+  verify_spawn_schedule_restart.py 12/verify_explosion_anim.py 28/
+  verify_boss_dfl_clear.py 10)も全て無変更で通過を確認。
+- 副次的なテスト基盤バグの発見・修正: `verify_ebuz_integration.py`
+  自身の`call_routine`/`step_frame`ヘルパーが、センチネル復帰後の
+  `z.pc`を明示的に`MAINLOOP`へ戻していなかったため、`call_routine`で
+  直接`CHECK_BULLET_VS_EBUZ`等を叩いた直後に`step_frame`を呼ぶと
+  `z.pc=0`から実行が始まり、未マップ領域を経由して実際にROM先頭の
+  INITシーケンスへ雪崩れ込む「見せかけのワイルドジャンプ」を起こして
+  いた。両ヘルパーに`z.pc = sym["MAINLOOP"]`を明示設定する防御を
+  追加して解消(ASM側のバグではなく、テストハーネス自身の既知の
+  センチネル設計[Round36-14follow-up#8]をこの新規ヘルパーが踏襲
+  し忘れていただけだった)。
+- Comb ROM再ビルド・`verify_comb.py`全チェックPASSの上、標準方針に
+  よりComb ROMのみ送付。
+- **保留・実機フィードバック待ち**: 2体目/3体目の出現位置(Row12/Row5)・
+  タイミング("2体目が連射したくらい")・8セル演出の間隔
+  (`EBUZ_EXPL_SPAWN_INTERVAL`=4フレーム、未調整の初期値)はいずれも
+  実機での見た目次第で再調整の可能性あり。Round130から持ち越しの
+  生存時間15秒・降下/退出速度・スコア500点も引き続き未調整のまま。

@@ -1276,17 +1276,26 @@ E3INIT_ROW_LOOP:
     LD HL,ENEMY6_HP : LD (HL),0
     LD DE,ENEMY6_HP+1 : LD BC,ENEMY6_SLOTS-1 : LDIR
 
-    ; --- Ebuz(2026-09-14組み込み)のワークエリアを明示的にゼロ/番兵で ---
-    ; 初期化(RAM初期化漏れ防止 - このプロジェクトが何度も踏んできた
-    ; 教訓、詳細はEBUZ_ACT等自身のコメント参照)。EBUZ_ACT=0(未スポーン)
-    ; なので、実際にスポーンする(EBUZ_SPAWN)までこのサブシステムは
-    ; 完全に無害。
-    LD HL,EBUZ_ACT : LD (HL),0
-    LD DE,EBUZ_ACT+1 : LD BC,16 : LDIR
-    LD HL,EBUZ_TOP_COLS : LD (HL),EBUZ_SLOT_EMPTY
-    LD DE,EBUZ_TOP_COLS+1 : LD BC,15 : LDIR
-    LD HL,EBUZ_TOP_NEXT : LD (HL),0
-    LD DE,EBUZ_TOP_NEXT+1 : LD BC,3 : LDIR
+    ; --- Ebuz(2026-09-14 follow-up: マルチインスタンス化[最大2体同時 ---
+    ; 生存])のワークエリアを明示的にゼロ/番兵で初期化(RAM初期化漏れ
+    ; 防止 - このプロジェクトが何度も踏んできた教訓、詳細はEBUZ_SLOT0
+    ; 等自身のコメント参照)。EBUZ_SPAWN_STAGE=0(未スポーン)なので、
+    ; 実際にチェーンが開始する(EBUZ_SPAWN_CHAIN_START)までこの
+    ; サブシステムは完全に無害。
+    LD HL,EBUZ_CUR_ROW_ADDR : LD (HL),0
+    LD DE,EBUZ_CUR_ROW_ADDR+1 : LD BC,40 : LDIR
+    LD HL,EBUZ_SLOT0+0 : LD (HL),0
+    LD DE,EBUZ_SLOT0+1 : LD BC,16 : LDIR
+    LD HL,EBUZ_SLOT0+EBUZ_OFS_TOP_COLS : LD (HL),EBUZ_SLOT_EMPTY
+    LD DE,EBUZ_SLOT0+EBUZ_OFS_TOP_COLS+1 : LD BC,15 : LDIR
+    LD HL,EBUZ_SLOT0+EBUZ_OFS_TOP_NEXT : LD (HL),0
+    LD DE,EBUZ_SLOT0+EBUZ_OFS_TOP_NEXT+1 : LD BC,2 : LDIR
+    LD HL,EBUZ_SLOT1+0 : LD (HL),0
+    LD DE,EBUZ_SLOT1+1 : LD BC,16 : LDIR
+    LD HL,EBUZ_SLOT1+EBUZ_OFS_TOP_COLS : LD (HL),EBUZ_SLOT_EMPTY
+    LD DE,EBUZ_SLOT1+EBUZ_OFS_TOP_COLS+1 : LD BC,15 : LDIR
+    LD HL,EBUZ_SLOT1+EBUZ_OFS_TOP_NEXT : LD (HL),0
+    LD DE,EBUZ_SLOT1+EBUZ_OFS_TOP_NEXT+1 : LD BC,2 : LDIR
 
     ; --- flowing background clouds: idle at boot, each with its own ---
     ; --- random initial wait before first appearing (see CLOUD_UPDATE_ALL) ---
@@ -1671,12 +1680,14 @@ STAGE_CLEAR_NOT_FROZEN:
     LD HL,ROWDATA5 : LD A,(PXCHAR_G8) : LD E,A : LD D,0 : ADD HL,DE
     LD IX,IDCACHE5 : CALL REFRESH_IDCACHE_33
     ; (2026-09-14、"じゃあ組み込む...Ebuz出現中はスケジュールエネミーは
-    ; 一旦停止"): EbuzがアクティブなあいだはGAME_TICK自体を凍結し、
-    ; SPAWN_SCHEDULE_CHECKも呼ばない - 単に「今回だけ呼ばない」方式だと
-    ; GAME_TICKは進み続けスケジュールが後で一気に追いつくバースト
-    ; (density spike)になりかねないため、時計そのものを止める設計に
-    ; した(退出後は止めていた時点からそのまま再開する)。
-    LD A,(EBUZ_ACT)
+    ; 一旦停止"、2026-09-14 follow-up: マルチインスタンス化に伴い
+    ; EBUZ_ANY_ACTIVEへ拡張): 2体・3体目を含むEbuzチェーンが1体でも
+    ; アクティブなあいだはGAME_TICK自体を凍結し、SPAWN_SCHEDULE_CHECK
+    ; も呼ばない - 単に「今回だけ呼ばない」方式だとGAME_TICKは進み
+    ; 続けスケジュールが後で一気に追いつくバースト(density spike)に
+    ; なりかねないため、時計そのものを止める設計にした(退出後は
+    ; 止めていた時点からそのまま再開する)。
+    CALL EBUZ_ANY_ACTIVE
     OR A
     JR NZ,SKIP_SCHEDULE_TICK
     LD HL,(GAME_TICK) : INC HL : LD (GAME_TICK),HL
@@ -1685,7 +1696,10 @@ STAGE_CLEAR_NOT_FROZEN:
     SBC HL,DE
     ADD HL,DE
     JR NZ,SKIP_EBUZ_SPAWN_TRIGGER
-    CALL EBUZ_SPAWN
+    LD A,(EBUZ_SPAWN_STAGE)
+    OR A
+    JR NZ,SKIP_EBUZ_SPAWN_TRIGGER
+    CALL EBUZ_SPAWN_CHAIN_START
 SKIP_EBUZ_SPAWN_TRIGGER:
     CALL SPAWN_SCHEDULE_CHECK
 SKIP_SCHEDULE_TICK:
@@ -2517,7 +2531,8 @@ ENEMY_SECTION_DONE:
     CALL UPDATE_EBULLET_ALL
     CALL ENEMY5_ANIM_STEP
     CALL CLOUD_UPDATE_ALL
-    CALL EBUZ_UPDATE
+    CALL EBUZ_UPDATE_ALL
+    CALL EBUZ_CHECK_CHAIN_TRIGGERS
 
     ; ============================================================
     ; --- shots: advance 1 character (8 dots) per frame. Erasing  ---
@@ -2776,6 +2791,7 @@ BULLET2_NEXT:
 
     CALL PLAYER_DAMAGE_CHECK
     CALL PLAYER_EXPL_UPDATE_ALL
+    CALL EBUZ_EXPL_UPDATE_QUEUE
 
     JP MAINLOOP
 
@@ -8792,6 +8808,35 @@ PETS_FOUND:
     CALL SOUND_DESTROY
     RET
 
+; Same as PEUA_TRY_SPAWN but spawns at an explicit fixed pixel position
+; (EBUZ_EXPL_POS_X/Y) instead of a jittered offset from the player -
+; used by EBUZ_EXPL_UPDATE_QUEUE for Ebuz's 8-cell death burst
+; (2026-09-14、"爆発エフェクトはEbuzセル毎に1回...自機爆発のサウンドと
+; スプライトを流用")。Trashes A,B,D,E,H,L,IX.
+PEUA_TRY_SPAWN_AT:
+    LD HL,PLAYER_EXPL_POOL
+    LD B,PLAYER_EXPL_SLOTS
+PETSA_LOOP:
+    LD A,(HL)
+    OR A
+    JR Z,PETSA_FOUND
+    LD DE,PLAYER_EXPL_STRUCT
+    ADD HL,DE
+    DJNZ PETSA_LOOP
+    RET
+PETSA_FOUND:
+    PUSH HL : POP IX
+    CALL ALLOC_SPRITE_NUM
+    OR A
+    RET Z
+    LD (IX+4),A
+    LD A,(EBUZ_EXPL_POS_X) : LD (IX+1),A
+    LD A,(EBUZ_EXPL_POS_Y) : LD (IX+2),A
+    LD A,PLAYER_EXPL_LIFE : LD (IX+3),A
+    LD A,1 : LD (IX+0),A
+    CALL SOUND_DESTROY
+    RET
+
 ; Clears every slot of the unified enemy buffer (ACTIVE=0) and resets
 ; both shared trail-channel write indices. Called once from INIT.
 ENEMY_POOL_INIT:
@@ -12039,13 +12084,23 @@ EBUZ_ST_FIRE   EQU 4   ; 継続交互発射中(本体4行)
 EBUZ_ST_EXIT   EQU 5   ; 右へ移動して画面外へ消える(本体4行)
 
 EBUZ_SPAWN_TICK          EQU 100
-EBUZ_HP_INIT             EQU 12
+; (2026-09-14 follow-up、"耐久値24に"): 12→24。全インスタンス共通。
+EBUZ_HP_INIT             EQU 24
 ; "生存時間は15秒"(60Hz想定、GAME_OVER_TIMEOUT_TICKS[600=10秒]等
 ; 既存の実フレームカウンタと同じ換算基準)。
 EBUZ_LIFETIME_FRAMES     EQU 900
 EBUZ_DESCEND_ROW_FRAMES  EQU 6     ; 降下速度: 1行あたりのフレーム数(未調整の初期値)
-EBUZ_ENTER_START_ROW     EQU 0     ; "上から登場"
-EBUZ_CENTER_ROW          EQU 9     ; "位置はY中央で"(sky領域row0-19の中央寄り)
+; (2026-09-14 follow-up、"スポーンでRow0のブラックの行を破壊してる
+; Rowは避けRow1から描画するように"): 0→1。row0は画面上端のHUD/スコア
+; 行のため、Ebuzの2行本体がここを跨ぐと破壊してしまっていた。
+EBUZ_ENTER_START_ROW     EQU 1     ; "上から登場"(ただしrow0は避ける)
+; (2026-09-14 follow-up、マルチインスタンス化): 単一のEBUZ_CENTER_ROW
+; 定数を廃止し、インスタンスごとの中央行を3つ用意。実際にどのスロット
+; がどの行を使うかはEBUZ_SPAWN_INSTANCE呼び出し時にAで渡す(各スロット
+; のEBUZ_OFS_CENTER_ROWフィールドへ実行時に格納)。
+EBUZ_ROW_INST1           EQU 9     ; 1体目("位置はY中央で")
+EBUZ_ROW_INST2           EQU 12    ; 2体目("スポーン位置2体目がRow12")
+EBUZ_ROW_INST3           EQU 5     ; 3体目("3体目Row5")
 EBUZ_SPAWN_COL           EQU 24    ; 本体の固定列(X=192px、プロトタイプ踏襲)
 EBUZ_BULLET1_COL         EQU 22    ; 初弾/継続弾の発射列(プロトタイプ踏襲)
 EBUZ_EXIT_COL_FRAMES     EQU 3     ; 退出速度: 1列あたりのフレーム数(未調整の初期値)
@@ -12084,46 +12139,64 @@ EBUZ_BULLET_R_CODE EQU 137
 EBUZ_COLOR_BYTE_VAL        EQU 0F4h
 EBUZ_BULLET_COLOR_BYTE_VAL EQU 0B4h
 
-; state1/state2の行番号・行アドレス(NAMTBL=1800h+row*32のコンパイル
-; 時定数、このアセンブラは演算子優先順位が無いため事前計算した
-; リテラルを使う - tools/ebuz_test/ebuz_test.asmと同じ作法)。
-EBUZ_TOPBAND_ROW  EQU 8
-EBUZ_ROW9_NUM     EQU 9    ; state1本体の上段/state2ではDのみ残る行
-EBUZ_ROW10_NUM    EQU 10   ; state1本体の下段/state2ではDのみ残る行
-EBUZ_BOTBAND_ROW  EQU 11
-EBUZ_TOPBAND_ADDR EQU 1900h   ; row8,  col0
-EBUZ_ROW9_ADDR    EQU 1920h   ; row9,  col0
-EBUZ_ROW10_ADDR   EQU 1940h   ; row10, col0
-EBUZ_BOTBAND_ADDR EQU 1960h   ; row11, col0
-; EBUZ_SPAWN_COL(24)固定時に使う、col込みの絶対アドレス(state2形成・
-; 継続発射の反動アニメーションはEXIT前提でしか起きないため列は常に
-; 固定 - 実行時の列加算は不要)。
-EBUZ_TOPBAND_FIRE_ADDR EQU 1918h  ; row8,  col24
-EBUZ_ROW9_COL_ADDR     EQU 1938h  ; row9,  col24
-EBUZ_ROW10_COL_ADDR    EQU 1958h  ; row10, col24
-EBUZ_BOTBAND_FIRE_ADDR EQU 1978h  ; row11, col24
+; (2026-09-14 follow-up、マルチインスタンス化): 従来のEBUZ_TOPBAND_ROW
+; 等の「row0基準の固定行番号/固定VRAMアドレス」定数は、中央行が
+; インスタンスごとに異なる(9/12/5)以上もはや意味を持たないため全廃。
+; 代わりに各スロットが自分のEBUZ_OFS_CENTER_ROWフィールドを持ち、
+; TOPBAND_ROW=CENTER_ROW-1/ROW9=CENTER_ROW/ROW10=CENTER_ROW+1/
+; BOTBAND_ROW=CENTER_ROW+2を実行時にEBUZ_ADDR_*ヘルパー群(後述)で
+; 都度計算する。EBUZ_SPAWN_COL(24)は全インスタンス共通の固定列の
+; ため引き続きコンパイル時定数のまま。
 
-EBUZ_ACT              EQU 0F25Ch  ; 0=非活性、1-5=EBUZ_ST_*
-EBUZ_ROW              EQU 0F25Dh  ; 現在の本体上段行(降下中のみ変化、以後EBUZ_CENTER_ROW固定)
-EBUZ_COL              EQU 0F25Eh  ; 現在の本体左列(EXIT中のみ変化、それ以外EBUZ_SPAWN_COL固定)
-EBUZ_HP               EQU 0F25Fh
-EBUZ_LIFE_TIMER       EQU 0F260h  ; 2 bytes
-EBUZ_DESCEND_COUNTER  EQU 0F262h
-EBUZ_EXIT_COUNTER     EQU 0F263h
-EBUZ_B0_ACTIVE        EQU 0F264h
-EBUZ_B0_HOLDING       EQU 0F265h
-EBUZ_B0_COL           EQU 0F266h
-EBUZ_B0_HOLD_COUNTER  EQU 0F267h
-EBUZ_PREACT_COUNTER   EQU 0F268h
-EBUZ_FIRE_SIDE        EQU 0F269h
-EBUZ_FIRE_COUNTDOWN   EQU 0F26Ah
-EBUZ_RECOIL_SIDE      EQU 0F26Bh
-EBUZ_RECOIL_COUNTDOWN EQU 0F26Ch
-EBUZ_TOP_COLS         EQU 0F26Dh  ; 8 bytes (F26Dh-F274h)
-EBUZ_BOTTOM_COLS      EQU 0F275h  ; 8 bytes (F275h-F27Ch)
-EBUZ_TOP_NEXT         EQU 0F27Dh
-EBUZ_BOTTOM_NEXT      EQU 0F27Eh
-EBUZ_CUR_ROW_ADDR     EQU 0F27Fh  ; 2 bytes: EBUZ_UPDATE_SLOTが参照する対象行の先頭アドレス
+; スロット構造体オフセット(2インスタンス[EBUZ_SLOT0/EBUZ_SLOT1]が
+; 共有する1本のコード列をIXレジスタ経由で走らせる設計 - このアセン
+; ブラは`ADD IX,DE`非対応のため、フィールドアドレスが必要な箇所は
+; 都度`PUSH IX:POP HL`+オフセット加算[EBUZ_FIELD_ADDR]で求める、
+; ENEMY_POOL等このプロジェクト既存の多インスタンスパターンを踏襲)。
+EBUZ_OFS_ACT              EQU 0    ; 0=非活性、1-5=EBUZ_ST_*
+EBUZ_OFS_ROW              EQU 1    ; 現在の本体上段行(降下中のみ変化、以後CENTER_ROW固定)
+EBUZ_OFS_COL              EQU 2    ; 現在の本体左列(EXIT中のみ変化、それ以外EBUZ_SPAWN_COL固定)
+EBUZ_OFS_HP               EQU 3
+EBUZ_OFS_LIFE_TIMER       EQU 4    ; 2 bytes (4-5)
+EBUZ_OFS_LIFE_TIMER_HI    EQU 5
+EBUZ_OFS_DESCEND_COUNTER  EQU 6
+EBUZ_OFS_EXIT_COUNTER     EQU 7
+EBUZ_OFS_B0_ACTIVE        EQU 8
+EBUZ_OFS_B0_HOLDING       EQU 9
+EBUZ_OFS_B0_COL           EQU 10
+EBUZ_OFS_B0_HOLD_COUNTER  EQU 11
+EBUZ_OFS_PREACT_COUNTER   EQU 12
+EBUZ_OFS_FIRE_SIDE        EQU 13
+EBUZ_OFS_FIRE_COUNTDOWN   EQU 14
+EBUZ_OFS_RECOIL_SIDE      EQU 15
+EBUZ_OFS_RECOIL_COUNTDOWN EQU 16
+EBUZ_OFS_TOP_COLS         EQU 17   ; 8 bytes (17-24)
+EBUZ_OFS_BOTTOM_COLS      EQU 25   ; 8 bytes (25-32)
+EBUZ_OFS_TOP_NEXT         EQU 33
+EBUZ_OFS_BOTTOM_NEXT      EQU 34
+EBUZ_OFS_CENTER_ROW       EQU 35   ; このインスタンスの中央行(9/12/5)、スポーン時に確定
+EBUZ_SLOT_SIZE            EQU 36
+
+; グローバルスクラッチ(top/bottomプール更新中のみ使用、両スロットの
+; 処理が時間的に重ならないため1本の共有バッファで安全)+チェーン進行
+; 状態+8セル死亡演出の待ち行列(EBUZ_QUEUE_EXPLOSIONS参照)。
+EBUZ_CUR_ROW_ADDR     EQU 0F25Ch  ; 2 bytes: ADDR_TOPBAND/BOTBANDのキャッシュ+EBUZ_UPDATE_BULLET0のROW9キャッシュ共用
+EBUZ_SPAWN_STAGE      EQU 0F25Eh  ; 0=未スポーン/1=1体目消化待ち/2=2体目消化中/3=3体目トリガー済み
+EBUZ_EXPL_QUEUE       EQU 0F25Fh  ; 16 entries * 2 bytes (X,Y) = 32 bytes
+EBUZ_EXPL_QUEUE_COUNT EQU 0F27Fh
+; (2026-09-14follow-up、ROM容量節約のためLIFO化): 旧EBUZ_EXPL_QUEUE_HEAD
+; (FIFO環状バッファ用)は不要になったため、EBUZ_UPDATE_BULLET0が
+; ROW9/ROW10アドレスを毎回2回ずつ再計算しない(1回計算してこの2byteへ
+; キャッシュする)ためのスクラッチへ転用。
+EBUZ_B0_ROW10_ADDR    EQU 0F280h  ; 2 bytes
+EBUZ_EXPL_SPAWN_TIMER EQU 0F282h
+EBUZ_EXPL_POS_X       EQU 0F283h
+EBUZ_EXPL_POS_Y       EQU 0F284h
+EBUZ_EXPL_QUEUE_CAPACITY EQU 16   ; 2の冪(ENQUEUE/UPDATE_QUEUEの容量チェック用)
+EBUZ_EXPL_SPAWN_INTERVAL EQU 4    ; 未調整の初期値、8セル連続ポップの間隔(フレーム)
+
+EBUZ_SLOT0 EQU 0F285h
+EBUZ_SLOT1 EQU EBUZ_SLOT0+EBUZ_SLOT_SIZE
 
 ; VRAMの連続2byteへ書き込む(左セル・右セル)。tools/ebuz_test/
 ; ebuz_test.asmのEBUZ_WRITE2と同一設計。
@@ -12147,14 +12220,73 @@ EBUZ_CELL_ADDR:
     LD D,H : LD E,L
     RET
 
-; 現在のEBUZ_ROW(および+1)の2行x4列ぶんをHLが指す4byteテーブルで
-; 一括書き込みする(ENTER中の降下ステップの消去/描画、撃破時の消去に
-; 使う共有ヘルパー)。列は常にEBUZ_SPAWN_COL固定。
+; Input: IX=スロット先頭、A=スロット先頭からのバイトオフセット。
+; Output: HL=IX+A(絶対アドレス)。A自体は保持される(内部ではD,Eしか
+; 破壊しない)。ENEMY_POOL等このプロジェクト既存のIX多インスタンス
+; パターンと同じ「ADD IX,DE非対応の代替」慣用句。Trashes D,E.
+EBUZ_FIELD_ADDR:
+    PUSH IX : POP HL
+    LD E,A : LD D,0
+    ADD HL,DE
+    RET
+
+; Input: A=row(0-23), C=col(0-31)。Output: HL=NAMTBL上の該当セル
+; アドレス(EBUZ_CELL_ADDRのDE出力をHLへコピーするだけの共有テール、
+; 下の8種のEBUZ_ADDR_*ヘルパーから共有され、ROM容量節約のため重複
+; コードをここへ集約する)。Trashes A,D,E,H,L.
+EBUZ_ADDR_CORE:
+    CALL EBUZ_CELL_ADDR
+    LD H,D : LD L,E
+    RET
+
+; IX=スロット先頭。中央行(EBUZ_OFS_CENTER_ROW)から実行時に導出した
+; TOPBAND_ROW(=CENTER_ROW-1)/ROW9(=CENTER_ROW)/ROW10(=CENTER_ROW+1)/
+; BOTBAND_ROW(=CENTER_ROW+2)の col0 または col=EBUZ_SPAWN_COL 地点の
+; VRAMアドレスをHLで返す8種のヘルパー(2026-09-14follow-up、マルチ
+; インスタンス化に伴い旧来のEBUZ_TOPBAND_ADDR等コンパイル時定数を
+; 置換)。共通の末尾処理はEBUZ_ADDR_COREへ集約。Trashes A,D,E,H,L.
+EBUZ_ADDR_TOPBAND:
+    LD A,(IX+EBUZ_OFS_CENTER_ROW) : DEC A
+    LD C,0
+    JP EBUZ_ADDR_CORE
+EBUZ_ADDR_ROW9:
+    LD A,(IX+EBUZ_OFS_CENTER_ROW)
+    LD C,0
+    JP EBUZ_ADDR_CORE
+EBUZ_ADDR_ROW10:
+    LD A,(IX+EBUZ_OFS_CENTER_ROW) : INC A
+    LD C,0
+    JP EBUZ_ADDR_CORE
+EBUZ_ADDR_BOTBAND:
+    LD A,(IX+EBUZ_OFS_CENTER_ROW) : INC A : INC A
+    LD C,0
+    JP EBUZ_ADDR_CORE
+EBUZ_ADDR_TOPBAND_FIRE:
+    LD A,(IX+EBUZ_OFS_CENTER_ROW) : DEC A
+    LD C,EBUZ_SPAWN_COL
+    JP EBUZ_ADDR_CORE
+EBUZ_ADDR_ROW9_FIRE:
+    LD A,(IX+EBUZ_OFS_CENTER_ROW)
+    LD C,EBUZ_SPAWN_COL
+    JP EBUZ_ADDR_CORE
+EBUZ_ADDR_ROW10_FIRE:
+    LD A,(IX+EBUZ_OFS_CENTER_ROW) : INC A
+    LD C,EBUZ_SPAWN_COL
+    JP EBUZ_ADDR_CORE
+EBUZ_ADDR_BOTBAND_FIRE:
+    LD A,(IX+EBUZ_OFS_CENTER_ROW) : INC A : INC A
+    LD C,EBUZ_SPAWN_COL
+    JP EBUZ_ADDR_CORE
+
+; IX=スロット先頭。現在の(IX+ROW)(および+1)の2行x4列ぶんをHLが指す
+; 4byteテーブルで一括書き込みする(ENTER中の降下ステップの消去/描画、
+; 撃破時[span2]の消去に使う共有ヘルパー)。列は常にEBUZ_SPAWN_COL固定
+; (ENTER中はCOLが変化しないため定数のままでよい)。
 ; Input: HL=4byteソーステーブル(EBUZ_ROW_ABCD/EBUZ_ROW_ABCD_BLANK)。
 ; Trashes A,B,C,D,E,H,L。
 EBUZ_BODY2_WRITE:
     PUSH HL
-    LD A,(EBUZ_ROW)
+    LD A,(IX+EBUZ_OFS_ROW)
     LD C,EBUZ_SPAWN_COL
     CALL EBUZ_CELL_ADDR
     POP HL
@@ -12163,7 +12295,7 @@ EBUZ_BODY2_WRITE:
     CALL LDIRVM
     POP HL
     PUSH HL
-    LD A,(EBUZ_ROW) : INC A
+    LD A,(IX+EBUZ_OFS_ROW) : INC A
     LD C,EBUZ_SPAWN_COL
     CALL EBUZ_CELL_ADDR
     POP HL
@@ -12171,11 +12303,50 @@ EBUZ_BODY2_WRITE:
     CALL LDIRVM
     RET
 
-; プール(上/下共通)の1スロット分の更新。IN: HL=スロットの列番号
-; バイトのアドレス、EBUZ_CUR_ROW_ADDR=このプールが使う行の先頭
-; アドレス(呼び出し元がCALL直前にセット)。tools/ebuz_test/
-; ebuz_test.asmのEBUZ_UPDATE_SLOTと同一設計(0→BLANKCODEへ変更のみ)。
+; 共有5byte/4byte書き込みヘルパー3種(2026-09-14follow-up、ROM容量
+; 節約 - EBUZ_ENTER_STATE2/EBUZ_UPDATE_TOPBOTTOM_FIREで計8回重複していた
+; 「LD D,H:LD E,L:LD HL,データ:LD BC,n:CALL LDIRVM」を集約)。
+; Input: HL=EBUZ_ADDR_*_FIRE系が返すセルアドレス(HL出力)。
+; Trashes A,B,C,D,E,H,L。
+; (JP LDIRVMによる末尾呼び出しにしない理由: tools/z80emu.pyのBIOS
+; コールインターセプトはCALL命令[opcode 0xCD]でのみ発火しJPでは効かない
+; ため、実機では等価でもこのテスト環境では暴走する - CALL+RETで統一)
+EBUZ_WRITE5_REST:
+    LD D,H : LD E,L
+    LD HL,EBUZ_ROW_BAND_REST : LD BC,5
+    CALL LDIRVM
+    RET
+EBUZ_WRITE5_RECOIL:
+    LD D,H : LD E,L
+    LD HL,EBUZ_ROW_BAND_RECOIL : LD BC,5
+    CALL LDIRVM
+    RET
+EBUZ_WRITE4_DONLY:
+    LD D,H : LD E,L
+    LD HL,EBUZ_ROW_D_ONLY : LD BC,4
+    CALL LDIRVM
+    RET
+EBUZ_WRITE5_BLANK:
+    LD D,H : LD E,L
+    LD HL,EBUZ_ROW_BAND_BLANK : LD BC,5
+    CALL LDIRVM
+    RET
+EBUZ_WRITE4_BLANK:
+    LD D,H : LD E,L
+    LD HL,EBUZ_ROW_D_BLANK : LD BC,4
+    CALL LDIRVM
+    RET
+
+; プール(上/下共通)の1スロット分の更新。IN: IX=スロット先頭、
+; E=スロット先頭からのTOP_COLS/BOTTOM_COLS内バイトオフセット
+; (EBUZ_FIELD_ADDRの計算をここへ融合し、呼び出し元ごとの個別CALLを
+; 省く - ROM容量節約、tools/ebuz_test/ebuz_test.asmのEBUZ_UPDATE_SLOT
+; と設計思想は同一)。EBUZ_CUR_ROW_ADDR=このプールが使う行の先頭
+; アドレス(呼び出し元がCALL直前にセット)。Trashes A,B,C,D,E,H,L.
 EBUZ_UPDATE_SLOT:
+    PUSH IX : POP HL
+    LD D,0
+    ADD HL,DE
     LD A,(HL)
     CP EBUZ_SLOT_EMPTY
     RET Z
@@ -12203,10 +12374,15 @@ EBUZ_US_OFF:
     LD (HL),EBUZ_SLOT_EMPTY
     RET
 
-; HLが指すレーンスロットを、現在位置に関わらず強制的に消去・非活性化
-; する(EBUZ_UPDATE_SLOTと違い列を進めない) - EXIT開始時/撃破時の
-; 一斉消去専用。EBUZ_CUR_ROW_ADDRは呼び出し元がCALL直前にセット。
+; IX=スロット先頭、E=バイトオフセット(上記EBUZ_UPDATE_SLOTと同じ
+; 呼び出し規約)。対象のレーンスロットを、現在位置に関わらず強制的に
+; 消去・非活性化する(EBUZ_UPDATE_SLOTと違い列を進めない) - EXIT開始時
+; /撃破時の一斉消去専用。EBUZ_CUR_ROW_ADDRは呼び出し元がCALL直前に
+; セット。Trashes A,D,E,H,L.
 EBUZ_CLEAR_SLOT:
+    PUSH IX : POP HL
+    LD D,0
+    ADD HL,DE
     LD A,(HL)
     CP EBUZ_SLOT_EMPTY
     RET Z
@@ -12220,72 +12396,76 @@ EBUZ_CLEAR_SLOT:
     LD (HL),EBUZ_SLOT_EMPTY
     RET
 
+; IX=スロット先頭。Trashes A,B,C,D,E,H,L.
 EBUZ_UPDATE_TOP_POOL:
-    LD HL,EBUZ_TOPBAND_ADDR
+    CALL EBUZ_ADDR_TOPBAND
     LD (EBUZ_CUR_ROW_ADDR),HL
-    LD HL,EBUZ_TOP_COLS+0 : CALL EBUZ_UPDATE_SLOT
-    LD HL,EBUZ_TOP_COLS+1 : CALL EBUZ_UPDATE_SLOT
-    LD HL,EBUZ_TOP_COLS+2 : CALL EBUZ_UPDATE_SLOT
-    LD HL,EBUZ_TOP_COLS+3 : CALL EBUZ_UPDATE_SLOT
-    LD HL,EBUZ_TOP_COLS+4 : CALL EBUZ_UPDATE_SLOT
-    LD HL,EBUZ_TOP_COLS+5 : CALL EBUZ_UPDATE_SLOT
-    LD HL,EBUZ_TOP_COLS+6 : CALL EBUZ_UPDATE_SLOT
-    LD HL,EBUZ_TOP_COLS+7 : CALL EBUZ_UPDATE_SLOT
+    LD E,EBUZ_OFS_TOP_COLS+0 : CALL EBUZ_UPDATE_SLOT
+    LD E,EBUZ_OFS_TOP_COLS+1 : CALL EBUZ_UPDATE_SLOT
+    LD E,EBUZ_OFS_TOP_COLS+2 : CALL EBUZ_UPDATE_SLOT
+    LD E,EBUZ_OFS_TOP_COLS+3 : CALL EBUZ_UPDATE_SLOT
+    LD E,EBUZ_OFS_TOP_COLS+4 : CALL EBUZ_UPDATE_SLOT
+    LD E,EBUZ_OFS_TOP_COLS+5 : CALL EBUZ_UPDATE_SLOT
+    LD E,EBUZ_OFS_TOP_COLS+6 : CALL EBUZ_UPDATE_SLOT
+    LD E,EBUZ_OFS_TOP_COLS+7 : CALL EBUZ_UPDATE_SLOT
     RET
 
+; IX=スロット先頭。Trashes A,B,C,D,E,H,L.
 EBUZ_UPDATE_BOTTOM_POOL:
-    LD HL,EBUZ_BOTBAND_ADDR
+    CALL EBUZ_ADDR_BOTBAND
     LD (EBUZ_CUR_ROW_ADDR),HL
-    LD HL,EBUZ_BOTTOM_COLS+0 : CALL EBUZ_UPDATE_SLOT
-    LD HL,EBUZ_BOTTOM_COLS+1 : CALL EBUZ_UPDATE_SLOT
-    LD HL,EBUZ_BOTTOM_COLS+2 : CALL EBUZ_UPDATE_SLOT
-    LD HL,EBUZ_BOTTOM_COLS+3 : CALL EBUZ_UPDATE_SLOT
-    LD HL,EBUZ_BOTTOM_COLS+4 : CALL EBUZ_UPDATE_SLOT
-    LD HL,EBUZ_BOTTOM_COLS+5 : CALL EBUZ_UPDATE_SLOT
-    LD HL,EBUZ_BOTTOM_COLS+6 : CALL EBUZ_UPDATE_SLOT
-    LD HL,EBUZ_BOTTOM_COLS+7 : CALL EBUZ_UPDATE_SLOT
+    LD E,EBUZ_OFS_BOTTOM_COLS+0 : CALL EBUZ_UPDATE_SLOT
+    LD E,EBUZ_OFS_BOTTOM_COLS+1 : CALL EBUZ_UPDATE_SLOT
+    LD E,EBUZ_OFS_BOTTOM_COLS+2 : CALL EBUZ_UPDATE_SLOT
+    LD E,EBUZ_OFS_BOTTOM_COLS+3 : CALL EBUZ_UPDATE_SLOT
+    LD E,EBUZ_OFS_BOTTOM_COLS+4 : CALL EBUZ_UPDATE_SLOT
+    LD E,EBUZ_OFS_BOTTOM_COLS+5 : CALL EBUZ_UPDATE_SLOT
+    LD E,EBUZ_OFS_BOTTOM_COLS+6 : CALL EBUZ_UPDATE_SLOT
+    LD E,EBUZ_OFS_BOTTOM_COLS+7 : CALL EBUZ_UPDATE_SLOT
     RET
 
 ; 上レーンへ1発、無条件で新規発射する(生存チェックなし、ローテー
 ; ションでプールの次のスロットを使う - tools/ebuz_test/ebuz_test.asm
 ; と同一設計)。
+; IX=スロット先頭。Trashes A,B,C,D,E,H,L.
 EBUZ_FIRE_TOP_BULLET:
-    LD A,(EBUZ_TOP_NEXT)
+    LD A,(IX+EBUZ_OFS_TOP_NEXT)
     LD B,A
     INC A
     CP EBUZ_LANE_POOL_SIZE
     JR C,EBUZ_FTB_OK
     XOR A
 EBUZ_FTB_OK:
-    LD (EBUZ_TOP_NEXT),A
-    LD H,0 : LD L,B
-    LD DE,EBUZ_TOP_COLS
-    ADD HL,DE
+    LD (IX+EBUZ_OFS_TOP_NEXT),A
+    LD A,EBUZ_OFS_TOP_COLS
+    ADD A,B
+    CALL EBUZ_FIELD_ADDR
     LD A,EBUZ_BULLET1_COL
     LD (HL),A
-    LD E,A : LD D,0
-    LD HL,EBUZ_TOPBAND_ADDR
+    CALL EBUZ_ADDR_TOPBAND
+    LD E,EBUZ_BULLET1_COL : LD D,0
     ADD HL,DE
     LD B,EBUZ_BULLET_L_CODE : LD C,EBUZ_BULLET_R_CODE
     CALL EBUZ_WRITE2
     RET
 
+; IX=スロット先頭。Trashes A,B,C,D,E,H,L.
 EBUZ_FIRE_BOTTOM_BULLET:
-    LD A,(EBUZ_BOTTOM_NEXT)
+    LD A,(IX+EBUZ_OFS_BOTTOM_NEXT)
     LD B,A
     INC A
     CP EBUZ_LANE_POOL_SIZE
     JR C,EBUZ_FBB_OK
     XOR A
 EBUZ_FBB_OK:
-    LD (EBUZ_BOTTOM_NEXT),A
-    LD H,0 : LD L,B
-    LD DE,EBUZ_BOTTOM_COLS
-    ADD HL,DE
+    LD (IX+EBUZ_OFS_BOTTOM_NEXT),A
+    LD A,EBUZ_OFS_BOTTOM_COLS
+    ADD A,B
+    CALL EBUZ_FIELD_ADDR
     LD A,EBUZ_BULLET1_COL
     LD (HL),A
-    LD E,A : LD D,0
-    LD HL,EBUZ_BOTBAND_ADDR
+    CALL EBUZ_ADDR_BOTBAND
+    LD E,EBUZ_BULLET1_COL : LD D,0
     ADD HL,DE
     LD B,EBUZ_BULLET_L_CODE : LD C,EBUZ_BULLET_R_CODE
     CALL EBUZ_WRITE2
@@ -12294,297 +12474,305 @@ EBUZ_FBB_OK:
 ; 上下弾の継続発射処理(tools/ebuz_test/ebuz_test.asmのEBUZ_UPDATE_
 ; TOPBOTTOM_FIREと同一設計、行アドレスのみ本編の値に置換)。
 ; EBUZ_ST_FIREの間、EBUZ_UPDATEから毎フレーム呼ばれる。
+; IX=スロット先頭。Trashes A,B,C,D,E,H,L.
 EBUZ_UPDATE_TOPBOTTOM_FIRE:
-    LD A,(EBUZ_RECOIL_COUNTDOWN)
+    LD A,(IX+EBUZ_OFS_RECOIL_COUNTDOWN)
     OR A
     JR Z,EUTF_SKIP_REVERT
     DEC A
-    LD (EBUZ_RECOIL_COUNTDOWN),A
+    LD (IX+EBUZ_OFS_RECOIL_COUNTDOWN),A
     JR NZ,EUTF_SKIP_REVERT
-    LD A,(EBUZ_RECOIL_SIDE)
+    LD A,(IX+EBUZ_OFS_RECOIL_SIDE)
     OR A
     JR NZ,EUTF_REVERT_BOTTOM
-    LD HL,EBUZ_ROW_BAND_REST : LD DE,EBUZ_TOPBAND_FIRE_ADDR : LD BC,5 : CALL LDIRVM
+    CALL EBUZ_ADDR_TOPBAND_FIRE
+    CALL EBUZ_WRITE5_REST
     JR EUTF_SKIP_REVERT
 EUTF_REVERT_BOTTOM:
-    LD HL,EBUZ_ROW_BAND_REST : LD DE,EBUZ_BOTBAND_FIRE_ADDR : LD BC,5 : CALL LDIRVM
+    CALL EBUZ_ADDR_BOTBAND_FIRE
+    CALL EBUZ_WRITE5_REST
 EUTF_SKIP_REVERT:
-    LD A,(EBUZ_FIRE_COUNTDOWN)
+    LD A,(IX+EBUZ_OFS_FIRE_COUNTDOWN)
     DEC A
-    LD (EBUZ_FIRE_COUNTDOWN),A
+    LD (IX+EBUZ_OFS_FIRE_COUNTDOWN),A
     RET NZ
     LD A,EBUZ_FIRE_INTERVAL
-    LD (EBUZ_FIRE_COUNTDOWN),A
-    LD A,(EBUZ_FIRE_SIDE)
+    LD (IX+EBUZ_OFS_FIRE_COUNTDOWN),A
+    LD A,(IX+EBUZ_OFS_FIRE_SIDE)
     OR A
     JR NZ,EUTF_FIRE_BOTTOM
-    LD HL,EBUZ_ROW_BAND_RECOIL : LD DE,EBUZ_TOPBAND_FIRE_ADDR : LD BC,5 : CALL LDIRVM
+    CALL EBUZ_ADDR_TOPBAND_FIRE
+    CALL EBUZ_WRITE5_RECOIL
     CALL EBUZ_FIRE_TOP_BULLET
     JR EUTF_FIRE_DONE
 EUTF_FIRE_BOTTOM:
-    LD HL,EBUZ_ROW_BAND_RECOIL : LD DE,EBUZ_BOTBAND_FIRE_ADDR : LD BC,5 : CALL LDIRVM
+    CALL EBUZ_ADDR_BOTBAND_FIRE
+    CALL EBUZ_WRITE5_RECOIL
     CALL EBUZ_FIRE_BOTTOM_BULLET
 EUTF_FIRE_DONE:
-    LD A,(EBUZ_FIRE_SIDE)
-    LD (EBUZ_RECOIL_SIDE),A
+    LD A,(IX+EBUZ_OFS_FIRE_SIDE)
+    LD (IX+EBUZ_OFS_RECOIL_SIDE),A
     LD A,EBUZ_RECOIL_DURATION
-    LD (EBUZ_RECOIL_COUNTDOWN),A
-    LD A,(EBUZ_FIRE_SIDE)
+    LD (IX+EBUZ_OFS_RECOIL_COUNTDOWN),A
+    LD A,(IX+EBUZ_OFS_FIRE_SIDE)
     XOR 1
-    LD (EBUZ_FIRE_SIDE),A
+    LD (IX+EBUZ_OFS_FIRE_SIDE),A
     RET
 
 ; 初弾(bullet0)の更新: ホールド中は静止表示のまま、ホールド解除後は
 ; 毎フレーム1列ずつ左へ飛び続け、画面外で非活性化する
 ; (tools/ebuz_test/ebuz_test.asmのEBUZ_TICK冒頭部分と同一設計)。
+; IX=スロット先頭。Trashes A,B,C,D,E,H,L.
+; (2026-09-14follow-up、ROM容量節約): CALL EBUZ_ADDR_ROW9/ROW10自体は
+; colを一切読まないため、呼び出し前にAへ退避してPUSH/POP AFで呼び出し
+; 跨ぎ保持する必要はない - colはこの間(IX+EBUZ_OFS_B0_COL)のメモリ上で
+; 不変なので、呼び出し後に直接LD E,(IX+d)で読み直す方が短い。
 EBUZ_UPDATE_BULLET0:
-    LD A,(EBUZ_B0_ACTIVE)
+    LD A,(IX+EBUZ_OFS_B0_ACTIVE)
     OR A
     RET Z
-    LD A,(EBUZ_B0_HOLDING)
+    LD A,(IX+EBUZ_OFS_B0_HOLDING)
     OR A
     RET NZ
-    LD A,(EBUZ_B0_COL)
-    PUSH AF
-    LD E,A : LD D,0
-    LD HL,EBUZ_ROW9_ADDR : ADD HL,DE
+    CALL EBUZ_ADDR_ROW9
+    LD E,(IX+EBUZ_OFS_B0_COL) : LD D,0
+    ADD HL,DE
     LD B,BLANKCODE : LD C,BLANKCODE : CALL EBUZ_WRITE2
-    POP AF
-    PUSH AF
-    LD E,A : LD D,0
-    LD HL,EBUZ_ROW10_ADDR : ADD HL,DE
+    CALL EBUZ_ADDR_ROW10
+    LD E,(IX+EBUZ_OFS_B0_COL) : LD D,0
+    ADD HL,DE
     LD B,BLANKCODE : LD C,BLANKCODE : CALL EBUZ_WRITE2
-    POP AF
+    LD A,(IX+EBUZ_OFS_B0_COL)
     OR A
     JR Z,EBUZ_B0_OFF
     DEC A
-    LD (EBUZ_B0_COL),A
-    PUSH AF
-    LD E,A : LD D,0
-    LD HL,EBUZ_ROW9_ADDR : ADD HL,DE
+    LD (IX+EBUZ_OFS_B0_COL),A
+    CALL EBUZ_ADDR_ROW9
+    LD E,(IX+EBUZ_OFS_B0_COL) : LD D,0
+    ADD HL,DE
     LD B,EBUZ_BULLET_L_CODE : LD C,EBUZ_BULLET_R_CODE : CALL EBUZ_WRITE2
-    POP AF
-    LD E,A : LD D,0
-    LD HL,EBUZ_ROW10_ADDR : ADD HL,DE
+    CALL EBUZ_ADDR_ROW10
+    LD E,(IX+EBUZ_OFS_B0_COL) : LD D,0
+    ADD HL,DE
     LD B,EBUZ_BULLET_L_CODE : LD C,EBUZ_BULLET_R_CODE : CALL EBUZ_WRITE2
     RET
 EBUZ_B0_OFF:
     XOR A
-    LD (EBUZ_B0_ACTIVE),A
+    LD (IX+EBUZ_OFS_B0_ACTIVE),A
     RET
 
 ; 生存中のbullet0+上下レーン全弾を強制消去する共有ヘルパー
 ; (EBUZ_BEGIN_EXIT/EBUZ_DESTROY共通)。
+; IX=スロット先頭。Trashes A,B,C,D,E,H,L.
 EBUZ_CLEAR_ALL_BULLETS:
-    LD A,(EBUZ_B0_ACTIVE)
+    LD A,(IX+EBUZ_OFS_B0_ACTIVE)
     OR A
     JR Z,ECAB_B0_DONE
-    LD A,(EBUZ_B0_COL) : LD E,A : LD D,0
-    LD HL,EBUZ_ROW9_ADDR : ADD HL,DE
+    CALL EBUZ_ADDR_ROW9
+    LD E,(IX+EBUZ_OFS_B0_COL) : LD D,0
+    ADD HL,DE
     LD B,BLANKCODE : LD C,BLANKCODE : CALL EBUZ_WRITE2
-    LD A,(EBUZ_B0_COL) : LD E,A : LD D,0
-    LD HL,EBUZ_ROW10_ADDR : ADD HL,DE
+    CALL EBUZ_ADDR_ROW10
+    LD E,(IX+EBUZ_OFS_B0_COL) : LD D,0
+    ADD HL,DE
     LD B,BLANKCODE : LD C,BLANKCODE : CALL EBUZ_WRITE2
-    XOR A : LD (EBUZ_B0_ACTIVE),A
+    XOR A : LD (IX+EBUZ_OFS_B0_ACTIVE),A
 ECAB_B0_DONE:
-    LD HL,EBUZ_TOPBAND_ADDR
+    CALL EBUZ_ADDR_TOPBAND
     LD (EBUZ_CUR_ROW_ADDR),HL
-    LD HL,EBUZ_TOP_COLS+0 : CALL EBUZ_CLEAR_SLOT
-    LD HL,EBUZ_TOP_COLS+1 : CALL EBUZ_CLEAR_SLOT
-    LD HL,EBUZ_TOP_COLS+2 : CALL EBUZ_CLEAR_SLOT
-    LD HL,EBUZ_TOP_COLS+3 : CALL EBUZ_CLEAR_SLOT
-    LD HL,EBUZ_TOP_COLS+4 : CALL EBUZ_CLEAR_SLOT
-    LD HL,EBUZ_TOP_COLS+5 : CALL EBUZ_CLEAR_SLOT
-    LD HL,EBUZ_TOP_COLS+6 : CALL EBUZ_CLEAR_SLOT
-    LD HL,EBUZ_TOP_COLS+7 : CALL EBUZ_CLEAR_SLOT
-    LD HL,EBUZ_BOTBAND_ADDR
+    LD E,EBUZ_OFS_TOP_COLS+0 : CALL EBUZ_CLEAR_SLOT
+    LD E,EBUZ_OFS_TOP_COLS+1 : CALL EBUZ_CLEAR_SLOT
+    LD E,EBUZ_OFS_TOP_COLS+2 : CALL EBUZ_CLEAR_SLOT
+    LD E,EBUZ_OFS_TOP_COLS+3 : CALL EBUZ_CLEAR_SLOT
+    LD E,EBUZ_OFS_TOP_COLS+4 : CALL EBUZ_CLEAR_SLOT
+    LD E,EBUZ_OFS_TOP_COLS+5 : CALL EBUZ_CLEAR_SLOT
+    LD E,EBUZ_OFS_TOP_COLS+6 : CALL EBUZ_CLEAR_SLOT
+    LD E,EBUZ_OFS_TOP_COLS+7 : CALL EBUZ_CLEAR_SLOT
+    CALL EBUZ_ADDR_BOTBAND
     LD (EBUZ_CUR_ROW_ADDR),HL
-    LD HL,EBUZ_BOTTOM_COLS+0 : CALL EBUZ_CLEAR_SLOT
-    LD HL,EBUZ_BOTTOM_COLS+1 : CALL EBUZ_CLEAR_SLOT
-    LD HL,EBUZ_BOTTOM_COLS+2 : CALL EBUZ_CLEAR_SLOT
-    LD HL,EBUZ_BOTTOM_COLS+3 : CALL EBUZ_CLEAR_SLOT
-    LD HL,EBUZ_BOTTOM_COLS+4 : CALL EBUZ_CLEAR_SLOT
-    LD HL,EBUZ_BOTTOM_COLS+5 : CALL EBUZ_CLEAR_SLOT
-    LD HL,EBUZ_BOTTOM_COLS+6 : CALL EBUZ_CLEAR_SLOT
-    LD HL,EBUZ_BOTTOM_COLS+7 : CALL EBUZ_CLEAR_SLOT
+    LD E,EBUZ_OFS_BOTTOM_COLS+0 : CALL EBUZ_CLEAR_SLOT
+    LD E,EBUZ_OFS_BOTTOM_COLS+1 : CALL EBUZ_CLEAR_SLOT
+    LD E,EBUZ_OFS_BOTTOM_COLS+2 : CALL EBUZ_CLEAR_SLOT
+    LD E,EBUZ_OFS_BOTTOM_COLS+3 : CALL EBUZ_CLEAR_SLOT
+    LD E,EBUZ_OFS_BOTTOM_COLS+4 : CALL EBUZ_CLEAR_SLOT
+    LD E,EBUZ_OFS_BOTTOM_COLS+5 : CALL EBUZ_CLEAR_SLOT
+    LD E,EBUZ_OFS_BOTTOM_COLS+6 : CALL EBUZ_CLEAR_SLOT
+    LD E,EBUZ_OFS_BOTTOM_COLS+7 : CALL EBUZ_CLEAR_SLOT
     RET
 
-; state2形成後(継続発射開始前)へ遷移。BG変形+ホールドカウンタ初期化。
+; IX=スロット先頭。state2形成後(継続発射開始前)へ遷移。BG変形+
+; ホールドカウンタ初期化。
 EBUZ_ENTER_STATE2:
     LD A,EBUZ_ST_STATE2
-    LD (EBUZ_ACT),A
-    LD HL,EBUZ_ROW_BAND_REST : LD DE,EBUZ_TOPBAND_FIRE_ADDR : LD BC,5 : CALL LDIRVM
-    LD HL,EBUZ_ROW_D_ONLY    : LD DE,EBUZ_ROW9_COL_ADDR     : LD BC,4 : CALL LDIRVM
-    LD HL,EBUZ_ROW_D_ONLY    : LD DE,EBUZ_ROW10_COL_ADDR    : LD BC,4 : CALL LDIRVM
-    LD HL,EBUZ_ROW_BAND_REST : LD DE,EBUZ_BOTBAND_FIRE_ADDR : LD BC,5 : CALL LDIRVM
+    LD (IX+EBUZ_OFS_ACT),A
+    CALL EBUZ_ADDR_TOPBAND_FIRE
+    CALL EBUZ_WRITE5_REST
+    CALL EBUZ_ADDR_ROW9_FIRE
+    CALL EBUZ_WRITE4_DONLY
+    CALL EBUZ_ADDR_ROW10_FIRE
+    CALL EBUZ_WRITE4_DONLY
+    CALL EBUZ_ADDR_BOTBAND_FIRE
+    CALL EBUZ_WRITE5_REST
     LD A,EBUZ_PREACT_HOLD_TICKS
-    LD (EBUZ_PREACT_COUNTER),A
+    LD (IX+EBUZ_OFS_PREACT_COUNTER),A
     RET
 
-; 中央到着直後、state1(初弾ホールド)へ遷移。bullet0を表示・ホールド
-; 開始する。
+; IX=スロット先頭。中央到着直後、state1(初弾ホールド)へ遷移。
+; bullet0を表示・ホールド開始する。
 EBUZ_ENTER_STATE1:
     LD A,EBUZ_ST_STATE1
-    LD (EBUZ_ACT),A
-    LD A,1 : LD (EBUZ_B0_ACTIVE),A
-    LD A,1 : LD (EBUZ_B0_HOLDING),A
-    LD A,EBUZ_BULLET1_COL : LD (EBUZ_B0_COL),A
-    LD A,EBUZ_BULLET0_HOLD_TICKS : LD (EBUZ_B0_HOLD_COUNTER),A
-    LD A,EBUZ_BULLET1_COL : LD E,A : LD D,0
-    LD HL,EBUZ_ROW9_ADDR : ADD HL,DE
+    LD (IX+EBUZ_OFS_ACT),A
+    LD A,1 : LD (IX+EBUZ_OFS_B0_ACTIVE),A
+    LD A,1 : LD (IX+EBUZ_OFS_B0_HOLDING),A
+    LD A,EBUZ_BULLET1_COL : LD (IX+EBUZ_OFS_B0_COL),A
+    LD A,EBUZ_BULLET0_HOLD_TICKS : LD (IX+EBUZ_OFS_B0_HOLD_COUNTER),A
+    CALL EBUZ_ADDR_ROW9
+    LD E,EBUZ_BULLET1_COL : LD D,0
+    ADD HL,DE
     LD B,EBUZ_BULLET_L_CODE : LD C,EBUZ_BULLET_R_CODE : CALL EBUZ_WRITE2
-    LD A,(EBUZ_B0_COL) : LD E,A : LD D,0
-    LD HL,EBUZ_ROW10_ADDR : ADD HL,DE
+    CALL EBUZ_ADDR_ROW10
+    LD E,(IX+EBUZ_OFS_B0_COL) : LD D,0
+    ADD HL,DE
     LD B,EBUZ_BULLET_L_CODE : LD C,EBUZ_BULLET_R_CODE : CALL EBUZ_WRITE2
     RET
 
-; ENTER: 6フレームに1回、1行降下。中央行(EBUZ_CENTER_ROW)に到達したら
-; state1へ遷移。
+; IX=スロット先頭。ENTER: 6フレームに1回、1行降下。中央行
+; ((IX+EBUZ_OFS_CENTER_ROW))に到達したらstate1へ遷移。
 EBUZ_DO_ENTER:
-    LD A,(EBUZ_DESCEND_COUNTER)
+    LD A,(IX+EBUZ_OFS_DESCEND_COUNTER)
     INC A
     CP EBUZ_DESCEND_ROW_FRAMES
     JR C,EBUZ_ENTER_WAIT
     XOR A
-    LD (EBUZ_DESCEND_COUNTER),A
+    LD (IX+EBUZ_OFS_DESCEND_COUNTER),A
     LD HL,EBUZ_ROW_ABCD_BLANK
     CALL EBUZ_BODY2_WRITE
-    LD A,(EBUZ_ROW) : INC A : LD (EBUZ_ROW),A
+    LD A,(IX+EBUZ_OFS_ROW) : INC A : LD (IX+EBUZ_OFS_ROW),A
     LD HL,EBUZ_ROW_ABCD
     CALL EBUZ_BODY2_WRITE
-    LD A,(EBUZ_ROW)
-    CP EBUZ_CENTER_ROW
+    LD D,(IX+EBUZ_OFS_CENTER_ROW)
+    LD A,(IX+EBUZ_OFS_ROW)
+    CP D
     RET NZ
     JP EBUZ_ENTER_STATE1
 EBUZ_ENTER_WAIT:
-    LD (EBUZ_DESCEND_COUNTER),A
+    LD (IX+EBUZ_OFS_DESCEND_COUNTER),A
     RET
 
-; STATE1: bullet0のホールドカウントダウン。0になったらホールド解除
-; (次フレームからEBUZ_UPDATE_BULLET0が自動的に飛ばし始める)、
-; 同時に(待ちなしで)state2へ変形。
+; IX=スロット先頭。STATE1: bullet0のホールドカウントダウン。0になったら
+; ホールド解除(次フレームからEBUZ_UPDATE_BULLET0が自動的に飛ばし
+; 始める)、同時に(待ちなしで)state2へ変形。
 EBUZ_DO_STATE1:
-    LD A,(EBUZ_B0_HOLD_COUNTER)
+    LD A,(IX+EBUZ_OFS_B0_HOLD_COUNTER)
     DEC A
-    LD (EBUZ_B0_HOLD_COUNTER),A
+    LD (IX+EBUZ_OFS_B0_HOLD_COUNTER),A
     RET NZ
     XOR A
-    LD (EBUZ_B0_HOLDING),A
+    LD (IX+EBUZ_OFS_B0_HOLDING),A
     JP EBUZ_ENTER_STATE2
 
-; STATE2: 一斉発射前ホールドのカウントダウン。0になったら継続交互
-; 発射を開始。
+; IX=スロット先頭。STATE2: 一斉発射前ホールドのカウントダウン。0に
+; なったら継続交互発射を開始。
 EBUZ_DO_STATE2:
-    LD A,(EBUZ_PREACT_COUNTER)
+    LD A,(IX+EBUZ_OFS_PREACT_COUNTER)
     DEC A
-    LD (EBUZ_PREACT_COUNTER),A
+    LD (IX+EBUZ_OFS_PREACT_COUNTER),A
     RET NZ
     LD A,EBUZ_ST_FIRE
-    LD (EBUZ_ACT),A
-    XOR A : LD (EBUZ_FIRE_SIDE),A
-    LD A,1 : LD (EBUZ_FIRE_COUNTDOWN),A
+    LD (IX+EBUZ_OFS_ACT),A
+    XOR A : LD (IX+EBUZ_OFS_FIRE_SIDE),A
+    LD A,1 : LD (IX+EBUZ_OFS_FIRE_COUNTDOWN),A
     RET
 
-; FIRE: 継続交互発射処理そのもの。
+; FIRE: 継続交互発射処理そのもの。IX=スロット先頭。
 EBUZ_DO_FIRE:
     JP EBUZ_UPDATE_TOPBOTTOM_FIRE
 
-; 現在のEBUZ_COLにおける本体4行footprintを消去する(EXIT移動の
-; 各ステップ、および撃破[state2以降]で共用)。
+; IX=スロット先頭。現在の(IX+EBUZ_OFS_COL)における本体4行footprintを
+; 消去する(EXIT移動の各ステップ、および撃破[state2以降]で共用)。
 EBUZ_EXIT_ERASE:
-    LD A,(EBUZ_COL) : LD C,A
-    LD A,EBUZ_TOPBAND_ROW
-    CALL EBUZ_CELL_ADDR
-    LD HL,EBUZ_ROW_BAND_BLANK
-    LD BC,5
-    CALL LDIRVM
-    LD A,(EBUZ_COL) : LD C,A
-    LD A,EBUZ_ROW9_NUM
-    CALL EBUZ_CELL_ADDR
-    LD HL,EBUZ_ROW_D_BLANK
-    LD BC,4
-    CALL LDIRVM
-    LD A,(EBUZ_COL) : LD C,A
-    LD A,EBUZ_ROW10_NUM
-    CALL EBUZ_CELL_ADDR
-    LD HL,EBUZ_ROW_D_BLANK
-    LD BC,4
-    CALL LDIRVM
-    LD A,(EBUZ_COL) : LD C,A
-    LD A,EBUZ_BOTBAND_ROW
-    CALL EBUZ_CELL_ADDR
-    LD HL,EBUZ_ROW_BAND_BLANK
-    LD BC,5
-    CALL LDIRVM
+    LD C,(IX+EBUZ_OFS_COL)
+    LD A,(IX+EBUZ_OFS_CENTER_ROW) : DEC A
+    CALL EBUZ_ADDR_CORE
+    CALL EBUZ_WRITE5_BLANK
+    LD C,(IX+EBUZ_OFS_COL)
+    LD A,(IX+EBUZ_OFS_CENTER_ROW)
+    CALL EBUZ_ADDR_CORE
+    CALL EBUZ_WRITE4_BLANK
+    LD C,(IX+EBUZ_OFS_COL)
+    LD A,(IX+EBUZ_OFS_CENTER_ROW) : INC A
+    CALL EBUZ_ADDR_CORE
+    CALL EBUZ_WRITE4_BLANK
+    LD C,(IX+EBUZ_OFS_COL)
+    LD A,(IX+EBUZ_OFS_CENTER_ROW) : INC A : INC A
+    CALL EBUZ_ADDR_CORE
+    CALL EBUZ_WRITE5_BLANK
     RET
 
-; 現在のEBUZ_COLにおける本体4行footprint(REST/D-only)を描画する
-; (EXIT移動の各ステップ専用 - 反動は出さない、発射も止まっている)。
+; IX=スロット先頭。現在の(IX+EBUZ_OFS_COL)における本体4行footprint
+; (REST/D-only)を描画する(EXIT移動の各ステップ専用 - 反動は出さない、
+; 発射も止まっている)。
 EBUZ_EXIT_DRAW:
-    LD A,(EBUZ_COL) : LD C,A
-    LD A,EBUZ_TOPBAND_ROW
-    CALL EBUZ_CELL_ADDR
-    LD HL,EBUZ_ROW_BAND_REST
-    LD BC,5
-    CALL LDIRVM
-    LD A,(EBUZ_COL) : LD C,A
-    LD A,EBUZ_ROW9_NUM
-    CALL EBUZ_CELL_ADDR
-    LD HL,EBUZ_ROW_D_ONLY
-    LD BC,4
-    CALL LDIRVM
-    LD A,(EBUZ_COL) : LD C,A
-    LD A,EBUZ_ROW10_NUM
-    CALL EBUZ_CELL_ADDR
-    LD HL,EBUZ_ROW_D_ONLY
-    LD BC,4
-    CALL LDIRVM
-    LD A,(EBUZ_COL) : LD C,A
-    LD A,EBUZ_BOTBAND_ROW
-    CALL EBUZ_CELL_ADDR
-    LD HL,EBUZ_ROW_BAND_REST
-    LD BC,5
-    CALL LDIRVM
+    LD C,(IX+EBUZ_OFS_COL)
+    LD A,(IX+EBUZ_OFS_CENTER_ROW) : DEC A
+    CALL EBUZ_ADDR_CORE
+    CALL EBUZ_WRITE5_REST
+    LD C,(IX+EBUZ_OFS_COL)
+    LD A,(IX+EBUZ_OFS_CENTER_ROW)
+    CALL EBUZ_ADDR_CORE
+    CALL EBUZ_WRITE4_DONLY
+    LD C,(IX+EBUZ_OFS_COL)
+    LD A,(IX+EBUZ_OFS_CENTER_ROW) : INC A
+    CALL EBUZ_ADDR_CORE
+    CALL EBUZ_WRITE4_DONLY
+    LD C,(IX+EBUZ_OFS_COL)
+    LD A,(IX+EBUZ_OFS_CENTER_ROW) : INC A : INC A
+    CALL EBUZ_ADDR_CORE
+    CALL EBUZ_WRITE5_REST
     RET
 
-; 生存時間15秒が経過した瞬間に呼ばれる: 発射停止+残存弾を全消去して
-; EXIT状態へ(本体自体はまだ現在の見た目のまま、EBUZ_DO_EXITが実際に
-; 動かす)。
+; IX=スロット先頭。生存時間15秒が経過した瞬間に呼ばれる: 発射停止+
+; 残存弾を全消去してEXIT状態へ(本体自体はまだ現在の見た目のまま、
+; EBUZ_DO_EXITが実際に動かす)。
 EBUZ_BEGIN_EXIT:
     CALL EBUZ_CLEAR_ALL_BULLETS
     XOR A
-    LD (EBUZ_EXIT_COUNTER),A
+    LD (IX+EBUZ_OFS_EXIT_COUNTER),A
     LD A,EBUZ_ST_EXIT
-    LD (EBUZ_ACT),A
+    LD (IX+EBUZ_OFS_ACT),A
     RET
 
-; EXIT: 3フレームに1回、1列右へ移動(消去→列+1→再描画)。
-; EBUZ_EXIT_COL_MAXに達したら完全非活性化(=スケジュール自動再開)。
+; IX=スロット先頭。EXIT: 3フレームに1回、1列右へ移動(消去→列+1→
+; 再描画)。EBUZ_EXIT_COL_MAXに達したら完全非活性化(=このスロットが
+; 空くことでチェーンの次段階トリガーが発火する)。
 EBUZ_DO_EXIT:
-    LD A,(EBUZ_EXIT_COUNTER)
+    LD A,(IX+EBUZ_OFS_EXIT_COUNTER)
     INC A
     CP EBUZ_EXIT_COL_FRAMES
     JR C,EBUZ_EXIT_WAIT
     XOR A
-    LD (EBUZ_EXIT_COUNTER),A
+    LD (IX+EBUZ_OFS_EXIT_COUNTER),A
     CALL EBUZ_EXIT_ERASE
-    LD A,(EBUZ_COL) : INC A : LD (EBUZ_COL),A
+    LD A,(IX+EBUZ_OFS_COL) : INC A : LD (IX+EBUZ_OFS_COL),A
     CP EBUZ_EXIT_COL_MAX
     JR NC,EBUZ_EXIT_DEACTIVATE
     CALL EBUZ_EXIT_DRAW
     RET
 EBUZ_EXIT_WAIT:
-    LD (EBUZ_EXIT_COUNTER),A
+    LD (IX+EBUZ_OFS_EXIT_COUNTER),A
     RET
 EBUZ_EXIT_DEACTIVATE:
     XOR A
-    LD (EBUZ_ACT),A
+    LD (IX+EBUZ_OFS_ACT),A
     RET
 
-; 撃破処理: 現在の本体形状(2行/4行)を消去し、生存中の弾を全消去して
-; 完全に非活性化する(スケジュール再開はEBUZ_ACT=0で自動的に起こる)。
+; IX=スロット先頭。撃破処理: 8セル分の死亡演出をキューへ積んでから
+; (EBUZ_QUEUE_EXPLOSIONS)現在の本体形状(2行/4行)を消去し、生存中の
+; 弾を全消去して完全に非活性化する(このスロットが空くことでチェーンの
+; 次段階トリガーが発火する)。
 EBUZ_DESTROY:
-    LD A,(EBUZ_ACT)
+    CALL EBUZ_QUEUE_EXPLOSIONS
+    LD A,(IX+EBUZ_OFS_ACT)
     CP EBUZ_ST_STATE2
     JR NC,EBDX_SPAN4
     LD HL,EBUZ_ROW_ABCD_BLANK
@@ -12595,41 +12783,123 @@ EBDX_SPAN4:
 EBDX_BULLETS:
     CALL EBUZ_CLEAR_ALL_BULLETS
     XOR A
-    LD (EBUZ_ACT),A
+    LD (IX+EBUZ_OFS_ACT),A
     RET
 
-; GAME_TICKが100に達した瞬間に一度だけ呼ばれる(MAINLOOP参照)。
-EBUZ_SPAWN:
+; IX=スロット先頭、A=このインスタンスの中央行(EBUZ_ROW_INST1/2/3の
+; いずれか)。スロットを丸ごと(再利用時の汚染防止のため防御的に全
+; フィールド)初期化してENTER状態でスポーンする。Trashes A,B,C,D,E,H,L.
+EBUZ_SPAWN_INSTANCE:
+    LD (IX+EBUZ_OFS_CENTER_ROW),A
     LD A,EBUZ_ST_ENTER
-    LD (EBUZ_ACT),A
+    LD (IX+EBUZ_OFS_ACT),A
     LD A,EBUZ_ENTER_START_ROW
-    LD (EBUZ_ROW),A
+    LD (IX+EBUZ_OFS_ROW),A
     LD A,EBUZ_SPAWN_COL
-    LD (EBUZ_COL),A
+    LD (IX+EBUZ_OFS_COL),A
     LD A,EBUZ_HP_INIT
-    LD (EBUZ_HP),A
+    LD (IX+EBUZ_OFS_HP),A
     LD HL,EBUZ_LIFETIME_FRAMES
-    LD (EBUZ_LIFE_TIMER),HL
+    LD (IX+EBUZ_OFS_LIFE_TIMER),L
+    LD (IX+EBUZ_OFS_LIFE_TIMER_HI),H
     XOR A
-    LD (EBUZ_DESCEND_COUNTER),A
+    LD (IX+EBUZ_OFS_DESCEND_COUNTER),A
+    LD (IX+EBUZ_OFS_EXIT_COUNTER),A
+    LD (IX+EBUZ_OFS_B0_ACTIVE),A
+    LD (IX+EBUZ_OFS_B0_HOLDING),A
+    LD (IX+EBUZ_OFS_FIRE_SIDE),A
+    LD (IX+EBUZ_OFS_FIRE_COUNTDOWN),A
+    LD (IX+EBUZ_OFS_RECOIL_SIDE),A
+    LD (IX+EBUZ_OFS_RECOIL_COUNTDOWN),A
+    ; TOP_COLS/BOTTOM_COLS/TOP_NEXT/BOTTOM_NEXTは明示的に再初期化しない
+    ; (ROM容量の都合上、正しさの根拠をコメントに残す): このスロットの
+    ; 前インスタンスがACT=0(=このEBUZ_SPAWN_INSTANCE自体が呼ばれる
+    ; 前提条件)に至る経路は、EXIT完了[EBUZ_EXIT_DEACTIVATE、EBUZ_BEGIN_
+    ; EXITが既にEBUZ_CLEAR_ALL_BULLETSを呼んでいる]か撃破[EBUZ_DESTROY
+    ; 自身がEBUZ_CLEAR_ALL_BULLETSを呼ぶ]のいずれかしかなく、どちらも
+    ; TOP_COLS/BOTTOM_COLSを必ずEBUZ_SLOT_EMPTYまで戻してから終わる
+    ; (Round130の単一インスタンス設計でも同様に無再初期化だった)。
+    ; TOP_NEXT/BOTTOM_NEXTはローテーションindex(0-7の任意値で開始して
+    ; よい)のため、そもそも0への固定は不要。
     LD HL,EBUZ_ROW_ABCD
     CALL EBUZ_BODY2_WRITE
     RET
 
-; Ebuzのメインエントリ。MAINLOOPから毎フレーム無条件に呼ばれる
+; GAME_TICKが100に達した瞬間に一度だけ呼ばれる(MAINLOOP参照)。
+; 1体目をSLOT0(中央行EBUZ_ROW_INST1)へスポーンしEBUZ_SPAWN_STAGEを
+; 1にする。2体目・3体目のスポーンはEBUZ_CHECK_CHAIN_TRIGGERSが毎フレーム
+; 進行させる("2体目のスポーンは1体目が消えたら[撤退/撃破いずれも]"、
+; "3体目は2体目が連射したくらいのタイミング"=2体目がFIRE状態に達した
+; 瞬間)。
+EBUZ_SPAWN_CHAIN_START:
+    LD IX,EBUZ_SLOT0
+    LD A,EBUZ_ROW_INST1
+    CALL EBUZ_SPAWN_INSTANCE
+    LD A,1
+    LD (EBUZ_SPAWN_STAGE),A
+    RET
+
+; MAINLOOPから毎フレーム無条件に呼ばれる(EBUZ_UPDATE_ALLの直後)。
+; EBUZ_SPAWN_STAGEを見て2体目/3体目のスポーンタイミングを判定する。
+; 1体目・2体目は同じSLOT0を使い回す(1体目が完全に消えてから2体目が
+; 湧くため同時生存しない)、3体目はSLOT1(2体目とは同時生存しうる)。
+EBUZ_CHECK_CHAIN_TRIGGERS:
+    LD A,(EBUZ_SPAWN_STAGE)
+    CP 1
+    JR NZ,ECCT_CHECK2
+    LD A,(EBUZ_SLOT0+EBUZ_OFS_ACT)
+    OR A
+    RET NZ                        ; 1体目はまだ生存中(撤退/撃破いずれも未完了)
+    LD IX,EBUZ_SLOT0
+    LD A,EBUZ_ROW_INST2
+    CALL EBUZ_SPAWN_INSTANCE
+    LD A,2 : LD (EBUZ_SPAWN_STAGE),A
+    RET
+ECCT_CHECK2:
+    CP 2
+    RET NZ
+    LD A,(EBUZ_SLOT0+EBUZ_OFS_ACT)
+    CP EBUZ_ST_FIRE
+    RET NZ                        ; 2体目がまだ継続発射(FIRE)状態に達していない
+    LD IX,EBUZ_SLOT1
+    LD A,EBUZ_ROW_INST3
+    CALL EBUZ_SPAWN_INSTANCE
+    LD A,3 : LD (EBUZ_SPAWN_STAGE),A
+    RET
+
+; Output: A=1でSLOT0/SLOT1いずれかが現在アクティブ。MAINLOOPの
+; スケジュール凍結判定("Ebuz出現中はスケジュールエネミーは一旦停止"、
+; 2体・3体のチェーン全体を通して1回も途切れないよう2スロットを見る)。
+; Trashes A.
+EBUZ_ANY_ACTIVE:
+    LD A,(EBUZ_SLOT0+EBUZ_OFS_ACT)
+    OR A
+    JR NZ,EAA_YES
+    LD A,(EBUZ_SLOT1+EBUZ_OFS_ACT)
+    OR A
+    JR NZ,EAA_YES
+    XOR A
+    RET
+EAA_YES:
+    LD A,1
+    RET
+
+; Ebuz1インスタンス分のメインエントリ。IX=スロット先頭で呼ぶこと
 ; (EBUZ_ACT=0の間は即RET)。生存時間タイマはEXIT中を除く全状態で
 ; 毎フレーム減算され、0に達したら他の処理より先にEXITへ遷移する。
-EBUZ_UPDATE:
-    LD A,(EBUZ_ACT)
+EBUZ_UPDATE_ONE:
+    LD A,(IX+EBUZ_OFS_ACT)
     OR A
     RET Z
     CP EBUZ_ST_EXIT
     JR Z,EBUZ_SKIP_LIFETIMER
-    LD HL,(EBUZ_LIFE_TIMER)
+    LD L,(IX+EBUZ_OFS_LIFE_TIMER)
+    LD H,(IX+EBUZ_OFS_LIFE_TIMER_HI)
     LD A,H : OR L
     JR Z,EBUZ_SKIP_LIFETIMER
     DEC HL
-    LD (EBUZ_LIFE_TIMER),HL
+    LD (IX+EBUZ_OFS_LIFE_TIMER),L
+    LD (IX+EBUZ_OFS_LIFE_TIMER_HI),H
     LD A,H : OR L
     JR NZ,EBUZ_SKIP_LIFETIMER
     JP EBUZ_BEGIN_EXIT
@@ -12637,7 +12907,7 @@ EBUZ_SKIP_LIFETIMER:
     CALL EBUZ_UPDATE_BULLET0
     CALL EBUZ_UPDATE_TOP_POOL
     CALL EBUZ_UPDATE_BOTTOM_POOL
-    LD A,(EBUZ_ACT)
+    LD A,(IX+EBUZ_OFS_ACT)
     CP EBUZ_ST_ENTER
     JP Z,EBUZ_DO_ENTER
     CP EBUZ_ST_STATE1
@@ -12649,6 +12919,128 @@ EBUZ_SKIP_LIFETIMER:
     CP EBUZ_ST_EXIT
     JP Z,EBUZ_DO_EXIT
     RET
+
+; MAINLOOPから毎フレーム無条件に呼ばれる、両スロットを明示的に2回
+; CALLする(project既存のUPDATE_ENEMIES等と同じ固定スロット数の展開
+; 呼び出しパターン)。
+EBUZ_UPDATE_ALL:
+    LD IX,EBUZ_SLOT0
+    CALL EBUZ_UPDATE_ONE
+    LD IX,EBUZ_SLOT1
+    CALL EBUZ_UPDATE_ONE
+    RET
+
+; Input: D=row(0-23), E=col(0-31)。1セル分の爆発待ち行列エントリを
+; EBUZ_EXPL_QUEUEへ追加(X=col*8,Y=row*8としてpush)。キューが
+; EBUZ_EXPL_QUEUE_CAPACITY(16、両インスタンス8セルずつの最悪ケースを
+; 収容)に達している場合は静かにdrop(このプロジェクト標準の
+; 「プール枯渇時はdrop」慣用句)。呼び出し元がD,Eをインクリメントし
+; ながら連続呼び出しできるようD,Eは保持する。
+; (2026-09-14follow-up、ROM容量節約のためLIFO[スタック]方式へ簡略化:
+; 死亡演出のポップ順序は視覚的に無関係なため、EBUZ_EXPL_QUEUE_HEADに
+; よるFIFO環状バッファ[mod演算が必要]をやめ、常にCOUNT位置へpush/
+; そこからpopするだけの単純なスタックにした - HEADフィールド自体と
+; AND演算が丸ごと不要になる)。Trashes A,B,C,H,L.
+EBUZ_EXPL_ENQUEUE_CELL:
+    LD A,(EBUZ_EXPL_QUEUE_COUNT)
+    CP EBUZ_EXPL_QUEUE_CAPACITY
+    RET NC
+    ADD A,A
+    LD C,A : LD B,0
+    PUSH HL
+    LD HL,EBUZ_EXPL_QUEUE
+    ADD HL,BC
+    LD A,E : ADD A,A : ADD A,A : ADD A,A
+    LD (HL),A
+    INC HL
+    LD A,D : ADD A,A : ADD A,A : ADD A,A
+    LD (HL),A
+    POP HL
+    LD A,(EBUZ_EXPL_QUEUE_COUNT) : INC A : LD (EBUZ_EXPL_QUEUE_COUNT),A
+    RET
+
+; IX=撃破されたスロットの先頭(ACT/ROW/COL/CENTER_ROWがまだ生きている
+; うちに呼ぶこと - EBUZ_DESTROYが最初に呼ぶ)。可視本体セル8個ぶんの
+; 位置をEBUZ_EXPL_QUEUEへ積む(2026-09-14 follow-up、"爆発エフェクトは
+; Ebuzセル毎に1回 8セルだから8回エフェクトとサウンド")。span2
+; (ENTER/STATE1、ABCD4タイル×2行=8セル)とspan4(STATE2以降、
+; 翼帯3セル×2+中央D柱1セル×2=8セル)のいずれでもちょうど8個。
+; Trashes A,B,C,D,E,H,L.
+EBUZ_QUEUE_EXPLOSIONS:
+    LD A,(IX+EBUZ_OFS_ACT)
+    CP EBUZ_ST_STATE2
+    JR NC,EQE_SPAN4
+    LD D,(IX+EBUZ_OFS_ROW)
+    CALL EQE_ROW4
+    LD D,(IX+EBUZ_OFS_ROW) : INC D
+    CALL EQE_ROW4
+    RET
+EQE_SPAN4:
+    LD D,(IX+EBUZ_OFS_CENTER_ROW) : DEC D
+    CALL EQE_ROW3
+    LD A,(IX+EBUZ_OFS_CENTER_ROW) : ADD A,2 : LD D,A
+    CALL EQE_ROW3
+    LD D,(IX+EBUZ_OFS_CENTER_ROW)
+    CALL EQE_ROW1
+    LD D,(IX+EBUZ_OFS_CENTER_ROW) : INC D
+    CALL EQE_ROW1
+    RET
+
+; D=row(呼び出し元が設定、EBUZ_EXPL_ENQUEUE_CELL自体はD,Eを保持するため
+; ここでも保持される)。span2の1行ぶん(4セル、col=COL..COL+3)を積む。
+EQE_ROW4:
+    LD E,(IX+EBUZ_OFS_COL)
+    CALL EBUZ_EXPL_ENQUEUE_CELL
+    INC E : CALL EBUZ_EXPL_ENQUEUE_CELL
+    INC E : CALL EBUZ_EXPL_ENQUEUE_CELL
+    INC E : CALL EBUZ_EXPL_ENQUEUE_CELL
+    RET
+
+; D=row。span4の翼帯1本ぶん(3セル、col=COL+1..COL+3)を積む。
+EQE_ROW3:
+    LD E,(IX+EBUZ_OFS_COL) : INC E
+    CALL EBUZ_EXPL_ENQUEUE_CELL
+    INC E : CALL EBUZ_EXPL_ENQUEUE_CELL
+    INC E : CALL EBUZ_EXPL_ENQUEUE_CELL
+    RET
+
+; D=row。span4の中央D柱1セル(col=COL+3)を積む。
+EQE_ROW1:
+    LD A,(IX+EBUZ_OFS_COL) : ADD A,3 : LD E,A
+    JP EBUZ_EXPL_ENQUEUE_CELL
+
+; 毎フレーム無条件に呼ばれる(MAINLOOP、PLAYER_EXPL_UPDATE_ALLの直後)。
+; EBUZ_EXPL_QUEUEを一定間隔(EBUZ_EXPL_SPAWN_INTERVAL)で1個ずつ消化し、
+; PLAYER_EXPL_POOLの1バーストパーティクルとしてポップさせる
+; (PEUA_TRY_SPAWN_AT、"自機爆発のサウンドとスプライトを流用" -
+; 実際の飛散アニメーション・色サイクル・消去は既存のPLAYER_EXPL_
+; UPDATE_ALL[PEUA_INSTANCESループ]がそのまま面倒を見る、ここでは
+; スポーンのみ担当)。Trashes A,B,C,D,E,H,L.
+EBUZ_EXPL_UPDATE_QUEUE:
+    LD A,(EBUZ_EXPL_QUEUE_COUNT)
+    OR A
+    RET Z
+    LD A,(EBUZ_EXPL_SPAWN_TIMER)
+    OR A
+    JR Z,EEUQ_FIRE
+    DEC A
+    LD (EBUZ_EXPL_SPAWN_TIMER),A
+    RET
+EEUQ_FIRE:
+    LD A,EBUZ_EXPL_SPAWN_INTERVAL
+    LD (EBUZ_EXPL_SPAWN_TIMER),A
+    ; LIFO方式(EBUZ_EXPL_ENQUEUE_CELL自身のコメント参照): 常に現在の
+    ; COUNT-1番目(=直近pushされた要素)をpopする。
+    LD A,(EBUZ_EXPL_QUEUE_COUNT) : DEC A
+    LD (EBUZ_EXPL_QUEUE_COUNT),A
+    ADD A,A
+    LD C,A : LD B,0
+    LD HL,EBUZ_EXPL_QUEUE
+    ADD HL,BC
+    LD A,(HL) : LD (EBUZ_EXPL_POS_X),A
+    INC HL
+    LD A,(HL) : LD (EBUZ_EXPL_POS_Y),A
+    JP PEUA_TRY_SPAWN_AT
 
 ; Input: D,E=自機と比較する箱の左上ピクセル座標、B=高さ-1(15=2行分/
 ; 31=4行分、幅は常に32px[4列]固定)。Output: A=1で自機ヒットボックス
@@ -12698,39 +13090,45 @@ PHBEL_NO:
     RET
 
 ; Input: B=bullet col, C=bullet row. Output: A=1 if the bullet hit
-; Ebuz(damaged or destroyed either way - bullet is consumed), else 0.
-; B,Cを読むだけで書き換えないため、呼び出し元のCHECK_BULLET_VS_
-; ENEMY_POOL(B,Cがそのまま生き残っている前提)への影響はない。
+; either Ebuz instance(damaged or destroyed either way - bullet is
+; consumed), else 0. B,Cを読むだけで書き換えないため、呼び出し元の
+; CHECK_BULLET_VS_ENEMY_POOL(B,Cがそのまま生き残っている前提)への
+; 影響はない(両スロットをチェーンしてもMISS経路は一貫してB,Cを
+; 保持するため契約は保たれる)。
 CHECK_BULLET_VS_EBUZ:
-    LD A,(EBUZ_ACT)
+    LD IX,EBUZ_SLOT0
+    CALL CHECK_BULLET_VS_EBUZ_ONE
+    OR A
+    RET NZ
+    LD IX,EBUZ_SLOT1
+    JP CHECK_BULLET_VS_EBUZ_ONE
+
+; IX=スロット先頭、B=bullet col, C=bullet row。Output: A=1でヒット。
+CHECK_BULLET_VS_EBUZ_ONE:
+    LD A,(IX+EBUZ_OFS_ACT)
     OR A
     JR Z,CBVEZ_MISS
-    LD A,(EBUZ_COL) : LD D,A
+    LD D,(IX+EBUZ_OFS_COL)
     LD A,B : SUB D
     CP 4
     JR NC,CBVEZ_MISS
-    LD A,(EBUZ_ACT)
+    LD A,(IX+EBUZ_OFS_ACT)
     CP EBUZ_ST_STATE2
     JR C,CBVEZ_SPAN2
-    LD A,(EBUZ_ROW) : DEC A : LD D,A
+    LD D,(IX+EBUZ_OFS_CENTER_ROW) : DEC D
     LD A,C : SUB D
     CP 4
     JR NC,CBVEZ_MISS
     JR CBVEZ_HIT
 CBVEZ_SPAN2:
-    LD A,(EBUZ_ROW) : LD D,A
+    LD D,(IX+EBUZ_OFS_ROW)
     LD A,C : SUB D
     CP 2
     JR NC,CBVEZ_MISS
 CBVEZ_HIT:
-    LD A,(EBUZ_HP) : DEC A : LD (EBUZ_HP),A
+    LD A,(IX+EBUZ_OFS_HP) : DEC A : LD (IX+EBUZ_OFS_HP),A
     JR NZ,CBVEZ_DAMAGED
-    LD A,B : ADD A,A : ADD A,A : ADD A,A : LD D,A
-    LD A,C : ADD A,A : ADD A,A : ADD A,A : LD E,A
-    PUSH DE
     CALL EBUZ_DESTROY
-    POP DE
-    CALL TRIGGER_EXPLOSION
     CALL ADD_SCORE_500
     LD A,1
     RET
@@ -12741,48 +13139,57 @@ CBVEZ_MISS:
     XOR A
     RET
 
-; Ebuz本体・弾(bullet0+上下レーン)との接触判定。Ebuz自身へのダメージ
-; 処理はここでは行わない(それはCHECK_BULLET_VS_EBUZ側の役割 - 既存の
-; PDC_CHECK_*群と同じ「接触のみ検出、相手[Ebuz]は無傷」という設計)。
-; Output: A=1で接触。
+; Ebuz本体・弾(bullet0+上下レーン)との接触判定(両スロット)。Ebuz自身
+; へのダメージ処理はここでは行わない(それはCHECK_BULLET_VS_EBUZ側の
+; 役割 - 既存のPDC_CHECK_*群と同じ「接触のみ検出、相手[Ebuz]は無傷」
+; という設計)。Output: A=1で接触。
 PDC_CHECK_EBUZ:
-    LD A,(EBUZ_ACT)
+    LD IX,EBUZ_SLOT0
+    CALL PDC_CHECK_EBUZ_ONE
+    OR A
+    RET NZ
+    LD IX,EBUZ_SLOT1
+    JP PDC_CHECK_EBUZ_ONE
+
+; IX=スロット先頭。Output: A=1で接触。
+PDC_CHECK_EBUZ_ONE:
+    LD A,(IX+EBUZ_OFS_ACT)
     OR A
     JR Z,PDCEZ_MISS
-    LD A,(EBUZ_COL) : ADD A,A : ADD A,A : ADD A,A : LD D,A
-    LD A,(EBUZ_ACT)
+    LD A,(IX+EBUZ_OFS_COL) : ADD A,A : ADD A,A : ADD A,A : LD D,A
+    LD A,(IX+EBUZ_OFS_ACT)
     CP EBUZ_ST_STATE2
     JR C,PDCEZ_SPAN2
-    LD A,(EBUZ_ROW) : DEC A
+    LD A,(IX+EBUZ_OFS_CENTER_ROW) : DEC A
     ADD A,A : ADD A,A : ADD A,A : LD E,A
     LD B,31
     JR PDCEZ_BODY_TEST
 PDCEZ_SPAN2:
-    LD A,(EBUZ_ROW)
+    LD A,(IX+EBUZ_OFS_ROW)
     ADD A,A : ADD A,A : ADD A,A : LD E,A
     LD B,15
 PDCEZ_BODY_TEST:
     CALL PLAYER_HIT_BOX_EBUZ
     OR A
     JR NZ,PDCEZ_HIT
-    LD A,(EBUZ_B0_ACTIVE)
+    LD A,(IX+EBUZ_OFS_B0_ACTIVE)
     OR A
     JR Z,PDCEZ_SKIP_B0
-    LD A,(EBUZ_B0_COL) : ADD A,A : ADD A,A : ADD A,A : LD D,A
-    LD A,EBUZ_ROW9_NUM : ADD A,A : ADD A,A : ADD A,A : LD E,A
+    LD A,(IX+EBUZ_OFS_B0_COL) : ADD A,A : ADD A,A : ADD A,A : LD D,A
+    LD A,(IX+EBUZ_OFS_CENTER_ROW) : ADD A,A : ADD A,A : ADD A,A : LD E,A
     CALL PLAYER_HIT_BOX16
     OR A
     JR NZ,PDCEZ_HIT
 PDCEZ_SKIP_B0:
-    LD HL,EBUZ_TOP_COLS
+    LD A,EBUZ_OFS_TOP_COLS : CALL EBUZ_FIELD_ADDR
     LD B,EBUZ_LANE_POOL_SIZE
-    LD C,EBUZ_TOPBAND_ROW
+    LD C,(IX+EBUZ_OFS_CENTER_ROW) : DEC C
     CALL PDCEZ_SCAN_LANE
     OR A
     JR NZ,PDCEZ_HIT
-    LD HL,EBUZ_BOTTOM_COLS
+    LD A,EBUZ_OFS_BOTTOM_COLS : CALL EBUZ_FIELD_ADDR
     LD B,EBUZ_LANE_POOL_SIZE
-    LD C,EBUZ_BOTBAND_ROW
+    LD A,(IX+EBUZ_OFS_CENTER_ROW) : ADD A,2 : LD C,A
     CALL PDCEZ_SCAN_LANE
     OR A
     RET Z
