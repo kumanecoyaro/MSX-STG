@@ -162,11 +162,37 @@ EBUZ_BULLET3_STORED_Y EQU EBUZ_ROW_BOTTOM_BAND*8-1  ; desired Y=32(下翼帯の�
 SPR_HIDE_Y  EQU 209   ; 個別非表示(リストは継続、既存コードの規約と同じ)
 SPR_TERM_Y  EQU 208   ; SATリスト終端(このスロット以降は描画されない)
 
-; 弾3枚分のRAM側シャドウ(Y,X,pattern,color x3=12byte)。SPRATRは
-; VRAMなのでZ80の通常のLD/SUB/CPで直接読み書きできない
+; (2026-09-13、実機フィードバック対応、設計全面見直し: "奇妙な動き
+; させやがって 全くまともに動いてねえ 交互って言ったら平均に交互に
+; 決まってんだろうが だれが画面内2発に制限しろって指示したんだよ
+; クソが...言われたことだけやれ"): 直前のRound(124)は「発射のたびに
+; 新しい物理番号を割り当てる」対応をした際、あわせて「対象スロットが
+; まだ画面上に生きていれば発射を待つ」というRound122由来のチェックを
+; そのまま引き継いでいたが、これが「画面内に上下1発ずつ=2発しか
+; 存在できない」という、指示されていない制限を生んでいた。ユーザーの
+; 原指示"上下弾は交互に撃ち続けろ 2フレ交代"は文字通り「2ティックごとに
+; 無条件で交互に発射し続ける」という**固定間隔**の意味であり、前の弾が
+; 画面上に残っていようがいまいが関係なく撃ち続けるべきだった(結果的に
+; 画面上に多数の弾が同時に飛び続けることになる - "画面内に10発なら"の
+; 例示もこの「多数同時存在」を前提にした発言だったと理解する)。
+;
+; この「固定間隔・無条件発射」を安全に実現するため、論理弾(初弾/上/下)
+; ごとの固定識別という概念自体を廃止し、単一の匿名スロットプール
+; (EBUZ_SLOT_COUNT個、ローテーションで新規発射のたびに次の空きらしき
+; スロットへ書き込む)に統一した。1発の寿命(画面横断に要する約25
+; ティック)に対し、固定2ティック間隔での発射が生み出す同時生存数
+; (約13発)を安全に上回るよう、プールサイズは16とした(1発ごとに
+; 独立してEBUZ_UPDATE_BULLETで移動・非表示化されるため、生きている
+; 弾同士が物理番号を奪い合うことはない)。
+EBUZ_SLOT_COUNT EQU 16  ; 同時に飛び得る弾の最大数を安全に上回る値(前述の見積り約13発+余裕)
+
+; 弾スロット共通のRAM側シャドウ(Y,X,pattern,color x EBUZ_SLOT_COUNT)。
+; SPRATRはVRAMなのでZ80の通常のLD/SUB/CPで直接読み書きできない
 ; (OUT/INポート経由のVDP I/Oが必要) - 毎フレームの移動計算はこちらの
-; RAM側で行い、更新後にLDIRVMでまとめてSPRATRへ反映する。
-EBUZ_SPR_SHADOW EQU 0F350h   ; 12 bytes (F350h-F35Bh), STACKTOPまで十分な余裕
+; RAM側で行い、更新後にLDIRVMでまとめてSPRATRへ反映する。スロット
+; インデックスがそのままSPRATR上のHWスプライト番号に対応する(論理/
+; 物理の区別は廃止、単一のスロット番号のみ)。
+EBUZ_SPR_SHADOW EQU 0F300h   ; 64 bytes (F300h-F33Fh)
 
 ; (2026-09-13追記その7、実機フィードバック対応: "初弾のホールドタイムは
 ; で、上下弾は交互に撃ち続けろ 2フレ交代 打つときは反動を見せたいんで
@@ -178,35 +204,13 @@ EBUZ_SPR_SHADOW EQU 0F350h   ; 12 bytes (F350h-F35Bh), STACKTOPまで十分な�
 ; EBUZ_TICKから呼ばれる(state1の間・state2形成前は従来通り一切
 ; 発火しない)。設計はEBUZ_FIRE_SIDE(次に撃つ側)+EBUZ_FIRE_COUNTDOWN
 ; (次の発射までの残りティック数)という単一の共有ターン制御による、
-; 文字通りの「交互に・2フレ交代」("2フレ交代"=カウントダウンの初期値)。
-;
-; (2026-09-13追記その8、実機フィードバック対応: "撃った弾戻して交互に
-; 発射してどうすんだバカ 撃った弾は画面外に消えるまで戻さねえ"):
-; その7時点の実装はカウントダウンが0になった瞬間、その側のスロットが
-; まだ画面上に生きていても無条件で原点へ上書きしてしまう誤りだった。
-; **修正はこの1点のみ**(ターン制御自体の構造は変更しない): カウント
-; ダウンが0になった時、対象スロットがまだ非表示(SPR_HIDE_Y)でなければ
-; まだ発射せず、カウントダウンを1に戻して次のティックで再チェックする
-; だけ(側の交代=EBUZ_FIRE_SIDEの反転もまだ行わない)。対象スロットが
-; 既に非表示(=画面外に消えた)なら、従来通り原点へ再発射し反動を表示、
-; 側を交代してカウントダウンをEBUZ_FIRE_INTERVALへ戻す。
-;
-; (2026-09-13、ユーザー叱責を受けての再設計方針の訂正: "一つ前は
-; ウェイトと弾が戻るのを除けばシーケンス自体は正しかったんだよ"
-; "お前の解釈は毎度毎度 指示を無視して勝手に手順変えるから まともに
-; 動かねんだろうが"): 直前のRound(122)ではこの「共有ターン変数」設計
-; 自体を「各スロット完全独立([下側だけ初回に1回限りの位相差]、以後は
-; 上下とも自分の非表示状態だけを見て再発射)」という別の構造へ勝手に
-; 作り替えていたが、これは指示にない独自解釈だった。ユーザーの言う
-; 「シーケンス自体は正しかった」はこの共有ターン制御(EBUZ_FIRE_SIDE/
-; EBUZ_FIRE_COUNTDOWNによる文字通りの「交互に・2フレ交代」)を指すと
-; 判断し、Round121の構造へ戻した上で、実際に指摘された不具合(生きて
-; いる弾の強制リセット)だけをピンポイントで修正する最小修正へ変更した。
-EBUZ_TOPBOTTOM_ACTIVE  EQU 0F35Ch  ; 1 byte: 0=まだ非活性、1=継続発射中
-EBUZ_FIRE_SIDE         EQU 0F35Dh  ; 1 byte: 次に撃つ側(0=上/1=下)
-EBUZ_FIRE_COUNTDOWN    EQU 0F35Eh  ; 1 byte: 次の発射(判定)までの残りティック数
-EBUZ_RECOIL_SIDE       EQU 0F35Fh  ; 1 byte: 現在反動表示中の側(0/1)
-EBUZ_RECOIL_COUNTDOWN  EQU 0F360h  ; 1 byte: 反動が元に戻るまでの残りティック数(0=反動なし)
+; 文字通りの「交互に・2フレ交代」("2フレ交代"=カウントダウンの初期値、
+; 常にこの固定間隔で無条件に発射する)。
+EBUZ_TOPBOTTOM_ACTIVE  EQU 0F340h  ; 1 byte: 0=まだ非活性、1=継続発射中
+EBUZ_FIRE_SIDE         EQU 0F341h  ; 1 byte: 次に撃つ側(0=上/1=下)
+EBUZ_FIRE_COUNTDOWN    EQU 0F342h  ; 1 byte: 次の発射までの残りティック数
+EBUZ_RECOIL_SIDE       EQU 0F343h  ; 1 byte: 現在反動表示中の側(0/1)
+EBUZ_RECOIL_COUNTDOWN  EQU 0F344h  ; 1 byte: 反動が元に戻るまでの残りティック数(0=反動なし)
 EBUZ_FIRE_INTERVAL     EQU 2       ; "2フレ交代"
 EBUZ_RECOIL_DURATION   EQU 1       ; 反動表示の持続ティック数(打ったら次のティックで元位置)
 
@@ -216,27 +220,21 @@ EBUZ_RECOIL_DURATION   EQU 1       ; 反動表示の持続ティック数(打っ
 ; は「非表示のまま0.5秒待ってから初めて表示(発射)」だったが、正しくは
 ; 「Ebuz1出現と同時に弾を表示し、その位置で0.5秒静止(ホールド)させて
 ; から実際に飛ばし始める」。EBUZ_BULLET0_HOLDING=1の間、EBUZ_TICKは
-; スロット0(bullet0)のEBUZ_UPDATE_BULLET呼び出しをスキップする(表示は
-; されたまま、移動だけ止める)。
-EBUZ_BULLET0_HOLDING   EQU 0F361h  ; 1 byte: 1=ホールド中(表示のみ、移動しない)、0=通常飛行中
+; bullet0が現在占有しているスロット(EBUZ_BULLET0_SLOT_ADDR、動的に
+; 割り当てられるため固定オフセットではなくアドレスそのものを記憶する)
+; の移動更新をスキップする(表示はされたまま、移動だけ止める)。
+EBUZ_BULLET0_HOLDING    EQU 0F345h  ; 1 byte: 1=ホールド中(表示のみ、移動しない)、0=通常飛行中
+EBUZ_BULLET0_SLOT_ADDR  EQU 0F346h  ; 2 bytes: bullet0が現在占有しているEBUZ_SPR_SHADOW内アドレス
 
-; (2026-09-13、実機フィードバック対応: "最初の弾止まったままじゃねえかよ
-; マジでスプライトの扱いも知らねえしよ ナンバー使い回したら消えるに
-; 決まってんだろうが 画面内の弾のスプライトナンバーは全て違ってる
-; 必要があんだよ 画面内に10発なら1から10までをループして使わなきゃ
-; きえんだよアホが"): これまでは論理的な弾(スロット0=初弾/スロット1=
-; 上/スロット2=下)ごとに固定のHWスプライト番号(SPRATRの物理オフセット
-; 0/4/8)を割り当て、同じ弾が消えて再発射されるたびに**同じ物理番号を
-; 使い回して**いた。これがまさに指摘された不具合の原因と判断し、
-; 新しい発射(再発射含む)のたびに物理スプライト番号をローテーション
-; (0→1→2→...→9→0→...)で割り当て直す方式に変更する。論理シャドウ
-; (EBUZ_SPR_SHADOW、Y/X/pattern/colorの実データ)は従来通り3枠のまま、
-; 各枠が「現在どの物理HWスプライト番号を使っているか」を別途
-; EBUZ_PHYS_SLOTに記録し、毎ティックの反映(旧: 固定オフセットへの
-; 一括LDIRVM)もこの物理番号ベースの個別LDIRVMへ変更する。
-EBUZ_PHYS_SLOT_COUNT EQU 10  ; "画面内に10発なら1から10まで"に対応、物理スロット0-9をローテーション使用
-EBUZ_PHYS_SLOT       EQU 0F362h  ; 3 bytes: 論理スロット0/1/2それぞれの現在の物理HWスプライト番号(0-9)
-EBUZ_NEXT_PHYS_SLOT  EQU 0F365h  ; 1 byte: 次に割り当てる物理スロット番号(ローテーションカウンタ)
+; スロットのローテーション割り当て(2026-09-13、実機フィードバック対応:
+; "ナンバー使い回したら消える...1から10までをループして使わなきゃ
+; きえんだよ"): 発射のたびに、単一のカウンタEBUZ_NEXT_SLOTから次の
+; スロット番号を払い出し、そのスロットのRAM shadowへ弾データを書き込む
+; (0→1→...→EBUZ_SLOT_COUNT-1→0→...)。生存チェックは一切行わない
+; (前述の通り、それ自体が指示にない制限だったため廃止済み) - プール
+; サイズ自体を安全な大きさにすることで、生きている弾を上書きしない
+; ことを保証する設計。
+EBUZ_NEXT_SLOT EQU 0F348h  ; 1 byte: 次に割り当てるスロット番号(ローテーションカウンタ)
 
 ; (2026-09-13追記その3、実機フィードバック対応、最重要の設計変更):
 ; "だから違うって Ebuz1の時16x16のスプライトの弾を発射 その後Ebuz2に
@@ -280,109 +278,101 @@ EBUZ_FRAME_WAIT_INNER:
     DJNZ EBUZ_FRAME_WAIT_OUTER
     RET
 
-; IX = EBUZ_SPR_SHADOW内の弾スロット先頭(+0=Y,+1=X,+2=pattern,+3=color)。
+; HL = EBUZ_SPR_SHADOW内の弾スロット先頭(+0=Y,+1=X,+2=pattern,+3=color)。
 ; 非表示(Y=SPR_HIDE_Y)なら何もしない、そうでなければXをEBUZ_BULLET_
-; SPEED(固定2px/frame)だけ減算(左へ移動)、画面外に出る場合は
-; Y=SPR_HIDE_Yにして非表示化。
-EBUZ_UPDATE_BULLET:
-    LD A,(IX+0)
+; SPEED(固定8px/frame)だけ減算(左へ移動)、画面外に出る場合は
+; Y=SPR_HIDE_Yにして非表示化。呼び出し後のHLは破壊される(呼び出し元は
+; 毎回作り直す設計、EBUZ_TICK参照)。
+EBUZ_UPDATE_BULLET_HL:
+    LD A,(HL)
     CP SPR_HIDE_Y
     RET Z
-    LD A,(IX+1)
+    INC HL
+    LD A,(HL)
     CP EBUZ_BULLET_SPEED
-    JR NC,EBUZ_UB_MOVE
-    LD (IX+0),SPR_HIDE_Y
+    JR NC,EBUZ_UBH_MOVE
+    DEC HL
+    LD (HL),SPR_HIDE_Y
     RET
-EBUZ_UB_MOVE:
+EBUZ_UBH_MOVE:
     SUB EBUZ_BULLET_SPEED
-    LD (IX+1),A
+    LD (HL),A
     RET
 
-; 物理HWスプライト番号を1つローテーションで割り当てる(2026-09-13、
-; "スプライトナンバーは全て違ってる必要がある...1から10までをループ
-; して使わなきゃ消える"対応)。戻り値: A=割り当てた番号(0-9)。
-; EBUZ_NEXT_PHYS_SLOTを(A+1) mod EBUZ_PHYS_SLOT_COUNTへ進める。
-EBUZ_ALLOC_PHYS_SLOT:
-    LD A,(EBUZ_NEXT_PHYS_SLOT)
-    LD B,A                       ; B = 今回割り当てる番号(戻り値用に保持)
+; プール(EBUZ_SLOT_COUNT個)から次のスロットをローテーションで1つ
+; 割り当てる(2026-09-13、"ナンバー使い回したら消える...1から10まで
+; ループ"+"だれが画面内2発に制限しろって言った"対応: 生存チェックは
+; せず、常に次の番号を無条件で払い出す - プールサイズ自体で安全性を
+; 担保する設計)。戻り値: HL=割り当てたスロットの先頭アドレス。
+; EBUZ_NEXT_SLOTを(旧値+1) mod EBUZ_SLOT_COUNTへ進める。
+EBUZ_ALLOC_SLOT:
+    LD A,(EBUZ_NEXT_SLOT)
+    LD B,A                       ; B = 今回割り当てる番号(アドレス計算用に保持)
     INC A
-    CP EBUZ_PHYS_SLOT_COUNT
-    JR C,EBUZ_APS_OK
+    CP EBUZ_SLOT_COUNT
+    JR C,EBUZ_AS_OK
     XOR A
-EBUZ_APS_OK:
-    LD (EBUZ_NEXT_PHYS_SLOT),A
-    LD A,B
-    RET
-
-; 論理シャドウ1枠(4byte: Y,X,pattern,color)を、指定した物理HW
-; スプライト番号のSPRATR位置へ書き込む。
-; IN: A=物理スロット番号(0-9)、HL=論理シャドウの先頭アドレス
-EBUZ_FLUSH_ONE:
-    ; NOTE: このアセンブラはEX DE,HLに対応していないため、DE<->HLの
-    ; 交換はLD D,H:LD E,Lの2命令で代替する。
-    PUSH HL                      ; HL(シャドウ元アドレス)を退避
+EBUZ_AS_OK:
+    LD (EBUZ_NEXT_SLOT),A
     LD H,0
-    LD L,A
+    LD L,B
     ADD HL,HL                    ; *2
-    ADD HL,HL                    ; *4 -> HL=物理スロット*4
-    LD DE,SPRATR
-    ADD HL,DE                    ; HL=SPRATR+物理スロット*4(書き込み先)
-    LD D,H
-    LD E,L                       ; DE=書き込み先
-    POP HL                       ; HL=シャドウ元アドレス(復元)
-    LD BC,4
-    CALL LDIRVM
+    ADD HL,HL                    ; *4 -> HL=番号*4
+    LD DE,EBUZ_SPR_SHADOW
+    ADD HL,DE                    ; HL=EBUZ_SPR_SHADOW+番号*4
     RET
 
-; 論理シャドウ3枠すべてを、それぞれの現在の物理スロットへ反映する
-; (旧: EBUZ_SPR_SHADOW->SPRATRの固定12byte一括LDIRVMを置き換え)。
-EBUZ_FLUSH_ALL:
-    LD A,(EBUZ_PHYS_SLOT+0)
-    LD HL,EBUZ_SPR_SHADOW+0
-    CALL EBUZ_FLUSH_ONE
-    LD A,(EBUZ_PHYS_SLOT+1)
-    LD HL,EBUZ_SPR_SHADOW+4
-    CALL EBUZ_FLUSH_ONE
-    LD A,(EBUZ_PHYS_SLOT+2)
-    LD HL,EBUZ_SPR_SHADOW+8
-    CALL EBUZ_FLUSH_ONE
-    RET
-
-; 1"フレーム"分の処理をまとめたもの: 弾3枠を更新→(継続発射有効なら)
-; 上下弾の継続発射処理→VRAMへ反映→ウェイト。EBUZ_WAIT_TICK系と
-; EBUZ_MAINLOOPの両方から共有で呼ばれる(2026-09-13追記その3、
+; 1"フレーム"分の処理をまとめたもの: 全スロットを更新→(継続発射有効
+; なら)上下弾の継続発射処理→VRAMへ一括反映→ウェイト。EBUZ_WAIT_TICK系
+; とEBUZ_MAINLOOPの両方から共有で呼ばれる(2026-09-13追記その3、
 ; 「待ち時間中は弾が動かない」構造的バグの修正 - 発射前の弾は
-; EBUZ_UPDATE_BULLET冒頭のSPR_HIDE_Yチェックで自動的にスキップされる
-; ので、まだ発射されていないスロットに対して呼んでも安全)。
+; EBUZ_UPDATE_BULLET_HL冒頭のSPR_HIDE_Yチェックで自動的にスキップ
+; されるので、まだ発射されていないスロットに対して呼んでも安全)。
 EBUZ_TICK:
     DI
-    ; bullet0(スロット0)はEBUZ_BULLET0_HOLDING中は移動させない
-    ; (2026-09-13追記その8、"弾を表示してホールドだって言っただろが")
+    ; 全EBUZ_SLOT_COUNTスロットを順に更新。bullet0が現在占有している
+    ; スロット(EBUZ_BULLET0_SLOT_ADDR)だけは、EBUZ_BULLET0_HOLDING中は
+    ; 移動をスキップする(2026-09-13追記その8、"弾を表示してホールド
+    ; だって言っただろが")。
+    LD B,EBUZ_SLOT_COUNT
+    LD HL,EBUZ_SPR_SHADOW
+EBUZ_TICK_LOOP:
+    PUSH BC
+    PUSH HL
     LD A,(EBUZ_BULLET0_HOLDING)
     OR A
-    JR NZ,EBUZ_TICK_SKIP_B0
-    LD IX,EBUZ_SPR_SHADOW   : CALL EBUZ_UPDATE_BULLET
-EBUZ_TICK_SKIP_B0:
-    LD IX,EBUZ_SPR_SHADOW+4 : CALL EBUZ_UPDATE_BULLET
-    LD IX,EBUZ_SPR_SHADOW+8 : CALL EBUZ_UPDATE_BULLET
+    JR Z,EBUZ_TICK_DO_UPDATE
+    LD A,(EBUZ_BULLET0_SLOT_ADDR)
+    CP L
+    JR NZ,EBUZ_TICK_DO_UPDATE
+    LD A,(EBUZ_BULLET0_SLOT_ADDR+1)
+    CP H
+    JR NZ,EBUZ_TICK_DO_UPDATE
+    JR EBUZ_TICK_SKIP_UPDATE
+EBUZ_TICK_DO_UPDATE:
+    CALL EBUZ_UPDATE_BULLET_HL
+EBUZ_TICK_SKIP_UPDATE:
+    POP HL
+    POP BC
+    LD DE,4
+    ADD HL,DE
+    DJNZ EBUZ_TICK_LOOP
     LD A,(EBUZ_TOPBOTTOM_ACTIVE)
     OR A
     CALL NZ,EBUZ_UPDATE_TOPBOTTOM_FIRE
-    CALL EBUZ_FLUSH_ALL
+    LD HL,EBUZ_SPR_SHADOW : LD DE,SPRATR : LD BC,64 : CALL LDIRVM   ; 64=EBUZ_SLOT_COUNT(16)*4
     EI
     CALL EBUZ_FRAME_WAIT
     RET
 
-; 上下弾の継続発射処理(2026-09-13、Round121の共有ターン制御方式へ復元+
-; 最小修正)。EBUZ_TOPBOTTOM_ACTIVE=1の間、EBUZ_TICKから毎回呼ばれる。
-; (1)反動表示中なら1ティック後に元位置へ戻す。(2)発射カウントダウンが
-; 0になったら、次に撃つ側(EBUZ_FIRE_SIDE)のスロットが既に非表示
-; (=画面外に消えた)かを確認する - 生きている弾を強制リセットしない
-; ための唯一の追加チェック(Round122で発見された不具合の修正点)。まだ
-; 生きているならカウントダウンを1へ戻して次のティックで再チェックする
-; だけで側は交代しない。既に消えていれば、原点から再発射(スロット1=
-; 上/スロット2=下)し、その側の翼帯に反動を表示、側を反転しカウント
-; ダウンをEBUZ_FIRE_INTERVALへ戻す。
+; 上下弾の継続発射処理(2026-09-13、実機フィードバック対応で全面見直し:
+; "交互って言ったら平均に交互に決まってんだろうが だれが画面内2発に
+; 制限しろって指示したんだよ"): EBUZ_TOPBOTTOM_ACTIVE=1の間、
+; EBUZ_TICKから毎回呼ばれる。(1)反動表示中なら1ティック後に元位置へ
+; 戻す。(2)発射カウントダウンがEBUZ_FIRE_INTERVAL(2)ティックごとに
+; 0になったら、生存チェックを一切せず**無条件に**新しいスロットを
+; プールから割り当てて発射し、側を反転する - 前の弾がまだ画面上に
+; 残っていても関係なく撃ち続ける、文字通りの固定間隔の交互発射。
 EBUZ_UPDATE_TOPBOTTOM_FIRE:
     ; --- 反動表示の自動解除 ---
     LD A,(EBUZ_RECOIL_COUNTDOWN)
@@ -399,45 +389,33 @@ EBUZ_UPDATE_TOPBOTTOM_FIRE:
 EUTF_REVERT_BOTTOM:
     LD HL,EBUZ_ROW_0ABC_REST : LD DE,01898h : LD BC,5 : CALL LDIRVM
 EUTF_SKIP_REVERT:
-    ; --- 次の発射(判定)までのカウントダウン ---
+    ; --- 次の発射までのカウントダウン ---
     LD A,(EBUZ_FIRE_COUNTDOWN)
     DEC A
     LD (EBUZ_FIRE_COUNTDOWN),A
     RET NZ
-    ; --- カウントダウン0: 次に撃つ側のスロットが既に非表示か確認 ---
-    ; (生きている弾は強制リセットしない - 唯一の追加チェック)
-    LD A,(EBUZ_FIRE_SIDE)
-    OR A
-    JR NZ,EUTF_CHECK_BOTTOM_SLOT
-    LD A,(EBUZ_SPR_SHADOW+4)        ; スロット1(上)のY
-    JR EUTF_CHECK_SLOT_Y
-EUTF_CHECK_BOTTOM_SLOT:
-    LD A,(EBUZ_SPR_SHADOW+8)        ; スロット2(下)のY
-EUTF_CHECK_SLOT_Y:
-    CP SPR_HIDE_Y
-    JR Z,EUTF_DO_FIRE
-    ; まだ生きている: 側は交代せず、次のティックで再チェック
-    LD A,1
-    LD (EBUZ_FIRE_COUNTDOWN),A
-    RET
-EUTF_DO_FIRE:
     LD A,EBUZ_FIRE_INTERVAL
     LD (EBUZ_FIRE_COUNTDOWN),A
-    ; --- 発射(側に応じてスロット1/2を原点へ再セット+反動表示) ---
+    ; --- 発射(側に応じてBULLET23テンプレートを新規スロットへコピー+ ---
+    ; --- 反動表示) - 生存チェックなしの無条件発射 ---
     LD A,(EBUZ_FIRE_SIDE)
     OR A
     JR NZ,EUTF_FIRE_BOTTOM
-    LD HL,EBUZ_SPR_BULLET23 : LD DE,EBUZ_SPR_SHADOW+4 : LD BC,4 : LDIR
-    ; 新しい発射のたびに物理HWスプライト番号を新規割り当て("ナンバー
-    ; 使い回したら消える"対応、2026-09-13)
-    CALL EBUZ_ALLOC_PHYS_SLOT
-    LD (EBUZ_PHYS_SLOT+1),A
+    CALL EBUZ_ALLOC_SLOT            ; HL = 新規割り当てスロットのアドレス
+    PUSH HL
+    LD HL,EBUZ_SPR_BULLET23
+    POP DE
+    LD BC,4
+    LDIR
     LD HL,EBUZ_ROW_0ABC_RECOIL : LD DE,01838h : LD BC,5 : CALL LDIRVM
     JR EUTF_FIRE_DONE
 EUTF_FIRE_BOTTOM:
-    LD HL,EBUZ_SPR_BULLET23+4 : LD DE,EBUZ_SPR_SHADOW+8 : LD BC,4 : LDIR
-    CALL EBUZ_ALLOC_PHYS_SLOT
-    LD (EBUZ_PHYS_SLOT+2),A
+    CALL EBUZ_ALLOC_SLOT
+    PUSH HL
+    LD HL,EBUZ_SPR_BULLET23+4
+    POP DE
+    LD BC,4
+    LDIR
     LD HL,EBUZ_ROW_0ABC_RECOIL : LD DE,01898h : LD BC,5 : CALL LDIRVM
 EUTF_FIRE_DONE:
     LD A,(EBUZ_FIRE_SIDE)
@@ -491,28 +469,21 @@ INIT:
     LD HL,BULLET_FULL_PAT : LD DE,03800h : LD BC,32 : CALL LDIRVM   ; SPRPAT+BULLET_FULL_CODE*8
     LD HL,BULLET_HALF_PAT : LD DE,03820h : LD BC,32 : CALL LDIRVM   ; SPRPAT+BULLET_HALF_CODE*8
 
-    ; 論理シャドウ3枠とも非表示で初期化(RAM側、まだVRAMには反映しない)。
-    LD HL,EBUZ_SPR_INIT : LD DE,EBUZ_SPR_SHADOW : LD BC,12 : LDIR
-
-    ; 物理HWスプライト0-9番を全て非表示で初期化し、10番目をSAT終端
-    ; (SPR_TERM_Y)にする(2026-09-13、"スプライトナンバーは全て違って
-    ; る必要がある...1から10までをループして使わなきゃ消える"対応 -
-    ; 論理弾3枚を固定の物理番号に紐付けず、発射のたびにローテーションで
-    ; 新しい物理番号を割り当てる方式に変更したため、あらかじめ物理
-    ; スロット0-9すべてを非表示状態で初期化しておく必要がある)。
-    LD HL,EBUZ_SPR_ALL_HIDDEN : LD DE,SPRATR : LD BC,40 : CALL LDIRVM
-    LD HL,EBUZ_SPR_TERM : LD DE,SPRATR+40 : LD BC,4 : CALL LDIRVM
-
-    ; 論理スロット0/1/2の初期物理番号を仮に0/1/2とし(まだどれも発射
-    ; されていないため実害なし)、次回割り当ては3番から開始する。
-    LD A,0 : LD (EBUZ_PHYS_SLOT+0),A
-    LD A,1 : LD (EBUZ_PHYS_SLOT+1),A
-    LD A,2 : LD (EBUZ_PHYS_SLOT+2),A
-    LD A,3 : LD (EBUZ_NEXT_PHYS_SLOT),A
+    ; 全EBUZ_SLOT_COUNT(16)スロットを非表示で初期化(RAM shadow+VRAM
+    ; 反映)、SAT終端はオフセット64(=16*4、2026-09-13、"スプライト
+    ; ナンバーは全て違ってる必要がある...1から10までをループして使わ
+    ; なきゃきえんだよ"対応 - スロット番号=HWスプライト番号なので
+    ; 論理/物理の区別なく単一のテーブルで両方を初期化できる)。
+    LD HL,EBUZ_SPR_ALL_HIDDEN : LD DE,EBUZ_SPR_SHADOW : LD BC,64 : LDIR
+    LD HL,EBUZ_SPR_ALL_HIDDEN : LD DE,SPRATR : LD BC,64 : CALL LDIRVM
+    LD HL,EBUZ_SPR_TERM : LD DE,SPRATR+64 : LD BC,4 : CALL LDIRVM
+    XOR A
+    LD (EBUZ_NEXT_SLOT),A
 
     ; 上下弾の継続発射状態を非活性で初期化(2026-09-13追記その7/その8、
-    ; RAM初期化漏れ防止のためEBUZ_FIRE_SIDE/EBUZ_RECOIL_SIDEも含め
-    ; 全ワークエリアを明示的にゼロクリアする)
+    ; RAM初期化漏れ防止のためEBUZ_FIRE_SIDE/EBUZ_RECOIL_SIDE/
+    ; EBUZ_BULLET0_SLOT_ADDRも含め全ワークエリアを明示的にゼロクリア
+    ; する)
     XOR A
     LD (EBUZ_TOPBOTTOM_ACTIVE),A
     LD (EBUZ_FIRE_SIDE),A
@@ -520,6 +491,8 @@ INIT:
     LD (EBUZ_RECOIL_SIDE),A
     LD (EBUZ_RECOIL_COUNTDOWN),A
     LD (EBUZ_BULLET0_HOLDING),A
+    LD (EBUZ_BULLET0_SLOT_ADDR),A
+    LD (EBUZ_BULLET0_SLOT_ADDR+1),A
 
     ; --- state1: A,B,C,D を row2/row3 の col24-27 へ(2行とも同一) ---
     ; NOTE: このアセンブラは演算子優先順位も丸括弧も無い(左から右へ
@@ -542,14 +515,17 @@ EBUZ_STATE1_BG_DONE:
     ; Ebuz1出現と同時に弾(BULLET_FULL、スロット0、X=16px左へ)を表示し、
     ; その位置で0.5秒間静止(ホールド)させてから実際に飛ばし始める
     ; (旧実装は逆に「非表示のまま0.5秒待ってから表示」だった)。
-    LD HL,EBUZ_SPR_BULLET1 : LD DE,EBUZ_SPR_SHADOW : LD BC,4 : LDIR
-    ; 発射のたびに物理HWスプライト番号を新規割り当て(2026-09-13、
-    ; "ナンバー使い回したら消える"対応)
-    CALL EBUZ_ALLOC_PHYS_SLOT
-    LD (EBUZ_PHYS_SLOT+0),A
-    LD A,(EBUZ_PHYS_SLOT+0)
-    LD HL,EBUZ_SPR_SHADOW
-    CALL EBUZ_FLUSH_ONE
+    ; プールから新規スロットを割り当ててbullet0のデータを書き込む
+    ; (2026-09-13、"ナンバー使い回したら消える"対応 - VRAMへの反映
+    ; 自体は次のEBUZ_TICKの一括LDIRVMが行うので、ここではRAM shadow
+    ; への書き込みのみでよい)。
+    CALL EBUZ_ALLOC_SLOT              ; HL = bullet0用に新規割り当てたスロットのアドレス
+    LD (EBUZ_BULLET0_SLOT_ADDR),HL
+    PUSH HL
+    LD HL,EBUZ_SPR_BULLET1
+    POP DE
+    LD BC,4
+    LDIR
     LD A,1
     LD (EBUZ_BULLET0_HOLDING),A
 
@@ -666,18 +642,22 @@ BULLET_HALF_PAT:
     DB 0,0,254,255,255,254,0,0        ; TR(上半分そのまま)
     DB 0,0,0,0,0,0,0,0                ; BR(空白パディング)
 
-; 弾3枚分のRAMシャドウ初期値(全て非表示)+SAT終端行。
-EBUZ_SPR_INIT:
-    DB SPR_HIDE_Y,0,0,0
-    DB SPR_HIDE_Y,0,0,0
-    DB SPR_HIDE_Y,0,0,0
+; SAT終端行。
 EBUZ_SPR_TERM:
     DB SPR_TERM_Y,0,0,0
 
-; 物理HWスプライト0-9番全ての起動時初期値(全て非表示、2026-09-13、
-; "スプライトナンバーは全て違ってる必要がある...1から10までをループ"
-; 対応の物理スロットプール)。
+; スロットプール全EBUZ_SLOT_COUNT(16)個分の起動時初期値(全て非表示、
+; 2026-09-13、"スプライトナンバーは全て違ってる必要がある...1から10
+; までをループ"対応、その後の"画面内2発に制限するな"対応でプールを
+; 16個へ拡張)。RAM shadow初期化(LDIR)とVRAM初期化(LDIRVM)の両方に
+; 同じテーブルを使う。
 EBUZ_SPR_ALL_HIDDEN:
+    DB SPR_HIDE_Y,0,0,0
+    DB SPR_HIDE_Y,0,0,0
+    DB SPR_HIDE_Y,0,0,0
+    DB SPR_HIDE_Y,0,0,0
+    DB SPR_HIDE_Y,0,0,0
+    DB SPR_HIDE_Y,0,0,0
     DB SPR_HIDE_Y,0,0,0
     DB SPR_HIDE_Y,0,0,0
     DB SPR_HIDE_Y,0,0,0
