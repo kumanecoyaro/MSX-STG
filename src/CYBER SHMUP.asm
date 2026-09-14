@@ -1722,6 +1722,7 @@ STAGE_CLEAR_NOT_FROZEN:
     CALL SPAWN_SCHEDULE_CHECK
 SKIP_SCHEDULE_TICK:
 SKIP_G8:
+    CALL CHECK_BOSS_TRIGGER
     LD A,(TICK) : AND 07h : LD (PHASE_G8),A
 
     LD A,(TICK) : AND 0Fh
@@ -5683,8 +5684,14 @@ SPAWN_SCHEDULE_CHECK:
     ; --- から他のSPAWN_*ハンドラと全く同じ形でEBUZ_SPAWN_CHAIN_STARTへ
     ; --- 直接ディスパッチする(EBUZ_SPAWN_CHAIN_START自体がRETで終わる
     ; --- ため専用のラッパーは不要、JP先として直接指定できる)。
+    ; --- round135follow-up13("ボススポーン条件は固定Tickではなく3体目が
+    ; --- 消えたあとにしなきゃダメ...Tick1000以上かつ敵が画面のこってない
+    ; --- 事"): ボス自身のスケジュールエントリ(旧index479、閾値992)を
+    ; --- 撤去し、N=480→479へ変更。ボス出現は本ルーチンの固定Tick駆動を
+    ; --- 完全に離れ、独立したCHECK_BOSS_TRIGGER(MAINLOOP、SKIP_G8直後)が
+    ; --- 毎フレーム判定する。
     LD HL,(SPAWN_NEXT_INDEX)
-    LD DE,480
+    LD DE,479
     OR A
     SBC HL,DE
     RET NC                      ; index >= N -> schedule finished
@@ -5950,7 +5957,6 @@ SSC_FIRE_BLK1:
     CP 213  : JP Z,SPAWN_E4
     CP 218  : JP Z,SPAWN_E4
     CP 222  : JP Z,EBUZ_SPAWN_CHAIN_START
-    CP 223  : JP Z,BOSS_SPAWN
     JP SPAWN_E6
 
 ; --- saved (disabled) boss-only fast-iteration schedule - kept for  ---
@@ -6066,6 +6072,58 @@ BCEP_SKIP:
     LD DE,ENEMY_SLOT_SIZE
     ADD HL,DE
     DJNZ BCEP_LOOP
+    RET
+
+; round135follow-up13("ボススポーン条件は固定Tickではなく3体目が消えた
+; あとにしなきゃダメって事だな Tick1000以上かつ敵が画面のこってない事
+; だな 残っていないかのチェックは常にやったら無駄なんで1000を超えて
+; スポーン条件が満たされたら初めて敵が居ないか調べろ"): MAINLOOPから
+; 毎フレーム無条件に呼ばれる(SKIP_G8直後)。BOSS_STATE(0=未出現、
+; BOSS_SPAWNが1にセット)がそのまま一回性のラッチを兼ねるので、二重
+; スポーン防止の追加フラグは不要。GAME_TICKの上位byteが4未満
+; (GAME_TICK<1024)の間は各プールの走査自体を一切行わない("1000を
+; 超えて...初めて")。EBULLET_POOL(敵弾/投射物)は指示の「敵」に
+; 含めず対象外。
+CHECK_BOSS_TRIGGER:
+    LD A,(BOSS_STATE)
+    OR A
+    RET NZ
+    LD A,(GAME_TICK+1)
+    CP 4
+    RET C
+    LD HL,ENEMY_POOL : LD B,ENEMY_SLOT_COUNT : LD DE,ENEMY_SLOT_SIZE
+    CALL SCAN_POOL_ACTIVE
+    RET NZ
+    ; B must be reloaded every call - SCAN_POOL_ACTIVE's own DJNZ always
+    ; consumes B down to 0 by the time it returns (whether via the
+    ; early RET NZ mid-scan or the final all-clear fall-through), so it
+    ; can never be assumed to still hold the previous slot count.
+    LD HL,ENEMY6_POOL : LD B,ENEMY6_SLOTS : LD DE,4
+    CALL SCAN_POOL_ACTIVE
+    RET NZ
+    LD HL,ENEMY3_WAVE_POOL : LD B,ENEMY3_WAVE_SLOTS
+    CALL SCAN_POOL_ACTIVE
+    RET NZ
+    LD A,(E2A_ACTIVE)
+    OR A
+    RET NZ
+    LD A,(E2B_ACTIVE)
+    OR A
+    RET NZ
+    CALL EBUZ_ANY_ACTIVE
+    OR A
+    RET NZ
+    JP BOSS_SPAWN
+
+; Input: HL=pool base, B=slot count, DE=stride (each slot's own first
+; byte is treated as its active flag). Output: A=0(Z) if every slot is
+; inactive, A=1(NZ) on the first active slot found. Trashes A,B,HL.
+SCAN_POOL_ACTIVE:
+    LD A,(HL)
+    OR A
+    RET NZ
+    ADD HL,DE
+    DJNZ SCAN_POOL_ACTIVE
     RET
 
 BOSS_SPAWN:
@@ -13808,7 +13866,7 @@ SPAWN_THRESHOLDS:
     DW 922,922,922,923,923,924,924,925,925,926,926,927,927,928,928,928,929
     DW 929,930,930,930,931,931,932,932,932,933,933,934,934,934,935,935,936
     DW 936,936,937,937,938,938,938,939,939,940,940,940,941,941,942,942,942
-    DW 943,943,947,992
+    DW 943,943,947
 
 SPAWN_SIMPLE_Y_TABLE:
     DB 40,32,24,136,128,0,120,32,24,16,128,120,112,24,40,56,72
