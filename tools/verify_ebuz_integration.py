@@ -988,6 +988,111 @@ check("自己検証: MAINLOOPのGAME_TICK凍結ガードを無効化すると、
       "(=このガードが実際に効いていることの確認)",
       _regress_no_freeze_check() == False)
 
+# ============================================================
+# 14b. round135follow-up14「まだ3体目が生存中なのにスケジュールが
+#      進行してしまう...3体目が消えたらポーズ解除な」: 実機能テスト
+#      (ebuz_trace系スクリプトによる調査)で発見した実バグの回帰ガード。
+#      EBUZ_DESTROY(プレイヤーが撃破した場合)は8セル分の死亡演出を
+#      EBUZ_EXPL_QUEUEへ積んだ直後にACTを即0クリアしていたため、
+#      EBUZ_ANY_ACTIVE(ACTのみ判定)が「非活性」と誤判定し、爆発演出が
+#      画面上でまだ再生中(EBUZ_EXPL_QUEUE_COUNT>0)でもGAME_TICKの
+#      凍結が解除されてしまっていた。EBUZ_ANY_ACTIVEがEBUZ_EXPL_
+#      QUEUE_COUNTも見るよう修正し、キューが完全に消化されるまで
+#      凍結が続くことを検証する。
+# ============================================================
+zdx = fresh()
+boot(zdx)
+swr(zdx, S0, "ACT", sym["EBUZ_ST_FIRE"])
+swr(zdx, S0, "ROW", sym["EBUZ_ROW_INST1"])
+swr(zdx, S0, "COL", sym["EBUZ_SPAWN_COL"])
+swr(zdx, S0, "CENTER_ROW", sym["EBUZ_ROW_INST1"])
+swr(zdx, S0, "HP", 1)  # 次の1発で即撃破
+for i in range(5):
+    zdx.vram[cell(8, 24 + i) & 0x3FFF] = [BC, A_, B_, C_, BC][i]
+    zdx.vram[cell(11, 24 + i) & 0x3FFF] = [BC, A_, B_, C_, BC][i]
+wr16(zdx, sym["GAME_TICK"], 999)
+wr16(zdx, sym["SPAWN_NEXT_INDEX"], 0)
+hit_ebuz(zdx, 25, 9)  # 撃破 -> ACT=0だがEBUZ_EXPL_QUEUE_COUNT=8
+check("撃破直後: ACTは0だがEBUZ_EXPL_QUEUE_COUNTは8"
+      "(死亡演出がまだ画面上で再生中の状態を再現できている)",
+      srd(zdx, S0, "ACT") == 0 and zdx.rd(sym["EBUZ_EXPL_QUEUE_COUNT"]) == 8)
+tick_at_destroy = game_tick(zdx)
+idx_at_destroy = rd16(zdx, sym["SPAWN_NEXT_INDEX"])
+stayed_frozen = True
+for _ in range(50):
+    q_before = zdx.rd(sym["EBUZ_EXPL_QUEUE_COUNT"])
+    step_frame(zdx)
+    if q_before != 0 and (game_tick(zdx) != tick_at_destroy
+                           or rd16(zdx, sym["SPAWN_NEXT_INDEX"]) != idx_at_destroy):
+        stayed_frozen = False
+    if zdx.rd(sym["EBUZ_EXPL_QUEUE_COUNT"]) == 0:
+        break
+check("撃破後、死亡演出のキュー(EBUZ_EXPL_QUEUE_COUNT)が完全に消化される"
+      "までGAME_TICK/SPAWN_NEXT_INDEXは一切進まない"
+      "(ACTが0になった瞬間ではなく、爆発演出が終わってから凍結解除)",
+      stayed_frozen)
+check("...キューが0になった時点でもGAME_TICK/SPAWN_NEXT_INDEXはまだ"
+      "凍結時の値のまま(キュー消化完了と凍結解除の間には遅延がない、"
+      "= 通常のEbuz消滅[follow-up11のzn]と全く同じ挙動)",
+      zdx.rd(sym["EBUZ_EXPL_QUEUE_COUNT"]) == 0
+      and game_tick(zdx) == tick_at_destroy
+      and rd16(zdx, sym["SPAWN_NEXT_INDEX"]) == idx_at_destroy)
+for _ in range(8):
+    step_frame(zdx)
+check("その後、通常通り1ゲームtickぶんだけ進んで凍結解除される",
+      game_tick(zdx) == tick_at_destroy + 1
+      and rd16(zdx, sym["SPAWN_NEXT_INDEX"]) == idx_at_destroy + 1)
+
+
+def _regress_destroy_queue_not_gated():
+    """EBUZ_ANY_ACTIVEのEBUZ_EXPL_QUEUE_COUNTチェック(今回追加した3行)
+    を無効化する自己検証 - 撃破直後、キューが残っていてもGAME_TICKが
+    即座に進んでしまう(=修正前の実バグ)ことを確認する。"""
+    broken_mem = bytearray(mem0)
+    target = sym["EBUZ_EXPL_QUEUE_COUNT"]
+    # "LD A,(EBUZ_EXPL_QUEUE_COUNT)" (3A xx xx) を "XOR A" (AF) + 2x NOP へ
+    pat = bytes([0x3A, target & 0xFF, (target >> 8) & 0xFF])
+    # 2箇所ヒットしうる(EBUZ_EXPL_UPDATE_QUEUEの冒頭)ので、EBUZ_ANY_ACTIVE
+    # の関数本体(EBUZ_SLOT1チェックの直後)に限定して探す。
+    anchor = sym["EBUZ_ANY_ACTIVE"]
+    search_from = anchor
+    idx = bytes(broken_mem).find(pat, search_from)
+    if idx < 0:
+        raise RuntimeError("pattern not found for self-verification")
+    broken_mem[idx] = 0xAF      # XOR A (A=0, so the following OR A/JR NZ never triggers)
+    broken_mem[idx + 1] = 0x00  # NOP
+    broken_mem[idx + 2] = 0x00  # NOP
+    zz = Z80(broken_mem)
+    zz.pc = sym["INIT"]
+    run_until_pc(zz, sym["MAINLOOP"])
+    zz.wr(sa(S0, "ACT"), sym["EBUZ_ST_FIRE"])
+    zz.wr(sa(S0, "ROW"), sym["EBUZ_ROW_INST1"])
+    zz.wr(sa(S0, "COL"), sym["EBUZ_SPAWN_COL"])
+    zz.wr(sa(S0, "CENTER_ROW"), sym["EBUZ_ROW_INST1"])
+    zz.wr(sa(S0, "HP"), 1)
+    zz.b, zz.c = 25, 9
+    zz.push(0x0000)
+    zz.pc = sym["CHECK_BULLET_VS_EBUZ"]
+    for _ in range(300000):
+        if zz.pc == 0x0000:
+            break
+        zz.step()
+    wr16(zz, sym["GAME_TICK"], 999)
+    wr16(zz, sym["SPAWN_NEXT_INDEX"], 0)
+    t0 = game_tick(zz)
+    zz.pc = sym["MAINLOOP"]; zz.step(); run_until_pc(zz, sym["MAINLOOP"])
+    zz.pc = sym["MAINLOOP"]; zz.step(); run_until_pc(zz, sym["MAINLOOP"])
+    for _ in range(8):
+        zz.pc = sym["MAINLOOP"]; zz.step(); run_until_pc(zz, sym["MAINLOOP"])
+    return game_tick(zz) != t0  # True なら「キューが残っているのに進んでしまった」
+
+
+check("自己検証: EBUZ_ANY_ACTIVEのEBUZ_EXPL_QUEUE_COUNTチェックを無効化"
+      "すると、撃破直後(演出キューがまだ残っている)にもGAME_TICKが"
+      "進んでしまう(=修正前の実バグが再現し、今回の修正が実際に効いて"
+      "いることの確認)",
+      _regress_destroy_queue_not_gated())
+
 print()
 print(f"{len(ok)} passed, {len(fail)} failed")
 if fail:

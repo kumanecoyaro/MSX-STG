@@ -13002,12 +13002,23 @@ ECCT_CHECK2:
 ; まとめて連続発火するバーストを生むため撤回、時計自体を止める
 ; follow-up5以前と同じ構造に戻した)。2体・3体のチェーン全体を通して
 ; 1回も途切れないよう2スロットを見る。
+; (round135follow-up14、"3体目が消えたらポーズ解除な": EBUZ_DESTROY
+; [プレイヤーが撃破した場合]は8セル分の死亡演出をEBUZ_EXPL_QUEUEへ
+; 積んだ直後にACTを即0クリアしていたため、そのキューがまだ画面上で
+; 再生中[EBUZ_EXPL_UPDATE_QUEUEが間隔を置いて1個ずつポップしている
+; 最中]でも「非活性」と誤判定し、爆発演出が終わる前にスケジュールの
+; 凍結が解除されてしまっていた実バグ。EBUZ_EXPL_QUEUE_COUNTが0に
+; 戻るまで[退避エフェクトが全てPLAYER_EXPL_POOLへポップし終わるまで]
+; もアクティブ扱いに含める)。
 ; Trashes A.
 EBUZ_ANY_ACTIVE:
     LD A,(EBUZ_SLOT0+EBUZ_OFS_ACT)
     OR A
     JR NZ,EAA_YES
     LD A,(EBUZ_SLOT1+EBUZ_OFS_ACT)
+    OR A
+    JR NZ,EAA_YES
+    LD A,(EBUZ_EXPL_QUEUE_COUNT)
     OR A
     JR NZ,EAA_YES
     XOR A
