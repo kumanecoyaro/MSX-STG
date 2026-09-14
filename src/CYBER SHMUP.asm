@@ -1697,8 +1697,30 @@ STAGE_CLEAR_NOT_FROZEN:
     ; (EBUZ_ANY_ACTIVE判定+固定tickテーブルでのEBUZ_SPAWN_CHAIN_START
     ; 自動発火)を全面撤去し、GAME_TICKの単純な無条件インクリメント+
     ; SPAWN_SCHEDULE_CHECK呼び出しへ復元(Ebuz導入前の元の形)。
+    ; round135follow-up11("止めると言うのは新規スポーンを阻止する意味
+    ; じゃないぞ Tickを進めてしまったらEbuz出現中の敵がキャンセルされて
+    ; しまうからな Tickカウントをとめるのが合理的だろう"): follow-up10で
+    ; 試したSSC_FIRE側だけのディスパッチ一時停止(GAME_TICKは進め続ける)
+    ; は、Ebuz生存中に経過したtick分のエントリが全てしきい値超過済みに
+    ; なり、Ebuz消滅の瞬間にまとめて連続発火する(本来のスケジュール間隔が
+    ; 潰れてバーストになる)問題があった - ユーザーの指摘通り、時計自体を
+    ; 止めるほうが正しい。上記follow-up5の「単純な無条件インクリメント」を
+    ; 撤回し、EBUZ_ANY_ACTIVEガードでGAME_TICKの加算とSPAWN_SCHEDULE_
+    ; CHECK呼び出し自体を丸ごとスキップする、follow-up5以前と全く同じ
+    ; 凍結構造を再度導入した(ただしEbuz自身のトリガー機構は、follow-up5
+    ; で撤去した固定tickテーブルの自動発火ではなく、follow-up9で配線した
+    ; SSC_FIRE経由のスケジュール駆動[Schedule_2_1.jsonの"ebuz"配置]の
+    ; ままで変更なし - 凍結中はSPAWN_SCHEDULE_CHECK自体を呼ばないため、
+    ; Ebuz自身の次のトリガーも他のエントリと同様に自然に足止めされる)。
+    ; follow-up10で追加したSSC_FIRE冒頭の同種ガードは、この凍結により
+    ; SPAWN_SCHEDULE_CHECKごと呼ばれなくなるため冗長になった - 二重の
+    ; 仕組みを残さず撤去(下記SSC_FIRE参照)。
+    CALL EBUZ_ANY_ACTIVE
+    OR A
+    JR NZ,SKIP_SCHEDULE_TICK
     LD HL,(GAME_TICK) : INC HL : LD (GAME_TICK),HL
     CALL SPAWN_SCHEDULE_CHECK
+SKIP_SCHEDULE_TICK:
 SKIP_G8:
     LD A,(TICK) : AND 07h : LD (PHASE_G8),A
 
@@ -5710,17 +5732,12 @@ SSC_FIRE:
     ; 「最後のインデックスだけCP省略」という特別扱いはしない)。
     ; ディスパッチ自体のCP/JP Zチェーンという仕組みは無変更、各ブロックの
     ; 生成方法(tools側のPythonジェネレータ)だけを変えている。
-    ; (round135follow-up10、"GAME_TICKは進めるが新規スポーンだけ止める"):
-    ; Ebuzが1体でも生存中は、時計(GAME_TICK)自体は普段通り進めつつ、
-    ; 新規スポーンのディスパッチだけをここで一時停止する - SPAWN_NEXT_
-    ; INDEXも増やさないので、しきい値を過ぎていたエントリはEbuz消滅の
-    ; 瞬間にまとめて即座に発火する(バーストにはなるが取りこぼしはない、
-    ; SSC_BUSY_E2の「両インスタンス使用中は待つ」と全く同じ考え方)。
-    ; 新規Ebuzトリガー自身・BOSSも含め、全エントリを一律にこのゲートで
-    ; 待たせる(2チェーンの同時生存やボスとの重複を避けるため)。
-    CALL EBUZ_ANY_ACTIVE
-    OR A
-    RET NZ
+    ; (round135follow-up10で追加した「GAME_TICKは進めるが新規スポーンの
+    ; ディスパッチだけここで止める」EBUZ_ANY_ACTIVEガードは、follow-up11
+    ; でGAME_TICK自体を凍結する方式に変えたことで冗長になったため撤去済み
+    ; - GAME_TICKが進まなければSPAWN_SCHEDULE_CHECK自体がここまで
+    ; 到達しない。詳細はMAINLOOP側のGAME_TICKインクリメント箇所の
+    ; コメント参照。)
     LD HL,(SPAWN_NEXT_INDEX)
     PUSH HL
     INC HL
@@ -12960,11 +12977,13 @@ ECCT_CHECK2:
     RET
 
 ; Output: A=1でSLOT0/SLOT1いずれかが現在アクティブ。
-; (round135follow-up10、"GAME_TICKは進めるが新規スポーンだけ止める"):
-; SSC_FIRE冒頭のスポーンディスパッチ一時停止ゲートから呼ばれる
-; (round135follow-up5で撤去したMAINLOOP側のGAME_TICK凍結とは別物 -
-; 今回は時計は止めず新規スポーンだけを止める)。2体・3体のチェーン
-; 全体を通して1回も途切れないよう2スロットを見る。
+; (round135follow-up11、"Tickカウントをとめるのが合理的だろう"):
+; MAINLOOP側のGAME_TICKインクリメント直前のゲートから呼ばれる
+; (follow-up10で一度試したSSC_FIRE側だけのディスパッチ一時停止
+; [時計は進め続ける]は、Ebuz消滅の瞬間に経過tick分のエントリが
+; まとめて連続発火するバーストを生むため撤回、時計自体を止める
+; follow-up5以前と同じ構造に戻した)。2体・3体のチェーン全体を通して
+; 1回も途切れないよう2スロットを見る。
 ; Trashes A.
 EBUZ_ANY_ACTIVE:
     LD A,(EBUZ_SLOT0+EBUZ_OFS_ACT)
