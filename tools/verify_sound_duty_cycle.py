@@ -216,7 +216,12 @@ check("...and correctly reclaims R0/R1 with the shot's own pitch",
 # ---------------------------------------------------------------------
 cpu = fresh_cpu()
 call_routine(cpu, sym["SOUND_DESTROY"])        # SND_TIMER=15 (lowest priority)
-call_routine(cpu, sym["SOUND_SHOT"])            # SND_TONE_TIMER=12 (mid priority)
+# round135follow-up12 made SOUND_SHOT itself refuse to fire while SND_TIMER
+# is active (see that fix's own tests below), so it can no longer be used to
+# set up this 3-way-priority scenario - poke SND_TONE_TIMER directly instead.
+# SOUND_UPDATE's own masking logic (what this scenario actually exercises)
+# doesn't care how the timer got set.
+cpu.wr(SND_TONE_TIMER, 12)                      # SND_TONE_TIMER=12 (mid priority)
 call_routine(cpu, sym["SOUND_BARRIER_HIT"])     # SND_BARRIER_DUTY_TIMER=8 (highest)
 for frame in range(3):
     cpu.wr(TICK, frame)
@@ -230,6 +235,63 @@ check("lower-priority envelopes are frozen (not decremented) while masked - SND_
 check("all 3 envelopes decay independently while masked - SND_BARRIER_DUTY_TIMER (highest, "
       "actually reaching R8 each of these 3 frames)",
       cpu.rd(SND_BARRIER_DUTY_TIMER) == 5)
+
+# ---------------------------------------------------------------------
+# 5: round135follow-up12 ("敵が爆発や発射音を発声中は自機ショット音で
+# 上書きしないように 何度指示しても出来なかった") - SOUND_SHOT must now
+# also refuse to fire while SND_TIMER (the noise-side envelope SOUND_
+# DESTROY/SOUND_EBUZ_FIRE both use) is still decaying, the same way it
+# already refused for SND_BARRIER_DUTY_TIMER/SND_TONE_TIMER+IS_SE. Before
+# this fix, SOUND_UPDATE's own tone>noise priority (section 4 above) meant
+# a shot fired mid-explosion would win R8 with its own fast decay,
+# effectively cutting the explosion/Ebuz-fire sound short.
+# ---------------------------------------------------------------------
+cpu = fresh_cpu()
+call_routine(cpu, sym["SOUND_DESTROY"])   # SND_TIMER=15, decaying
+call_routine(cpu, sym["SOUND_SHOT"])
+check("a shot fired while SOUND_DESTROY (explosion) is still decaying is dropped, "
+      "not overwritten - SND_TONE_TIMER stays untouched (0)",
+      cpu.rd(SND_TONE_TIMER) == 0)
+check("...SND_TIMER (the explosion's own envelope) is untouched by the dropped shot request",
+      cpu.rd(SND_TIMER) == 15)
+
+cpu = fresh_cpu()
+call_routine(cpu, sym["SOUND_EBUZ_FIRE"])  # SND_TIMER=15, decaying (same timer as SOUND_DESTROY)
+call_routine(cpu, sym["SOUND_SHOT"])
+check("a shot fired while SOUND_EBUZ_FIRE (enemy fire SE) is still decaying is also dropped",
+      cpu.rd(SND_TONE_TIMER) == 0)
+
+cpu = fresh_cpu()
+call_routine(cpu, sym["SOUND_DESTROY"])
+cpu.wr(SND_TIMER, 0)  # simulate full decay
+call_routine(cpu, sym["SOUND_SHOT"])
+check("a shot fired after the noise SE has fully decayed (SND_TIMER==0) fires normally",
+      cpu.rd(SND_TONE_TIMER) == 12)
+
+
+def _regress_no_noise_priority_check():
+    """SOUND_SHOT冒頭に追加したSND_TIMERガード(LD A,(SND_TIMER):OR A:
+    RET NZ)を無効化する自己検証。"""
+    broken_mem = bytearray(mem)
+    target = SND_TIMER
+    # LD A,(nn) = 3A ll hh / OR A = B7 / RET NZ = C0
+    pat = bytes([0x3A, target & 0xFF, (target >> 8) & 0xFF, 0xB7, 0xC0])
+    idx = broken_mem.find(pat, sym["SOUND_SHOT"])
+    if idx < 0 or idx > sym["SOUND_SHOT"] + 40:
+        raise RuntimeError("pattern not found for self-verification")
+    broken_mem[idx + 3] = 0x00  # OR A -> NOP
+    broken_mem[idx + 4] = 0x00  # RET NZ -> NOP
+    zz = Z80(bytearray(broken_mem))
+    zz.sp = 0xFE00
+    call_routine(zz, sym["SOUND_DESTROY"])
+    call_routine(zz, sym["SOUND_SHOT"])
+    return zz.rd(SND_TONE_TIMER) == 0
+
+
+check("自己検証: SOUND_SHOTのSND_TIMERガードを無効化すると、上と同じ"
+      "「爆発中のショットは無視される」チェックが正しくFAILに転じる"
+      "(=このガードが実際に効いていることの確認)",
+      _regress_no_noise_priority_check() == False)
 
 
 print()

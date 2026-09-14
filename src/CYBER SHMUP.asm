@@ -3743,6 +3743,21 @@ WAC_SKIPBUF:
 ; 「バリアのリズムでショットの音程が鳴る」という壊れた合成音になって
 ; いた(ユーザー報告の"SEが鳴らずショットが残る"の実体)。修正:
 ; SND_BARRIER_DUTY_TIMERが非0の間もショット要求を握りつぶす。
+; round135follow-up12("敵が爆発や発射音を発声中は自機ショット音で
+; 上書きしないように 何度指示しても出来なかった"): 上記2件(バリア/
+; POD)はいずれもトーン側(SND_TONE_TIMER)の内輪の優先度調整で、SOUND_
+; DESTROY(破壊音)・SOUND_EBUZ_FIRE(敵の発射音)というノイズ側
+; (SND_TIMER)のSEは一度もこのガードの対象になっていなかった。
+; SOUND_UPDATEの優先順位(バリア>トーン>ノイズ、上記コメント参照)は
+; ノイズ側より常にトーン側を優先してR8(チャンネルA音量、両者で共有)に
+; 書くため、破壊音/敵弾発射音の減衰中にショットを撃つと、ノイズ生成
+; 自体は止まらないもののR8がショット側の速い減衰エンベロープに
+; 乗っ取られ、結果的に敵音が本来の減衰より早く・小さく聞こえてしまう
+; (「自機ショット音で上書きされる」の実体、過去の指示はトーン側だけの
+; 対処[SND_TONE_TIMER/SND_TONE_IS_SE/SND_BARRIER_DUTY_TIMER]に終始して
+; おりノイズ側は一度も対象にしていなかったため直っていなかった)。
+; 修正: SND_TIMERが非0の間(=破壊音か敵弾発射音が減衰中)もショット
+; 要求そのものを握りつぶす、既存の3つと全く同じ考え方。
 SOUND_SHOT:
     ; "マテリアライズ中は自機ショット音は停止" - BOSS_STATE==1の間だけ
     ; 抑制(ボス本体の点滅タイル演出中、Stage2のBOSS_MATERIALIZE_ACT
@@ -3753,6 +3768,9 @@ SOUND_SHOT:
     LD A,(SND_BARRIER_DUTY_TIMER)
     OR A
     RET NZ                     ; barrier-hit SE (top priority) still decaying -> drop
+    LD A,(SND_TIMER)
+    OR A
+    RET NZ                     ; enemy noise SE (destroy/Ebuz-fire) still decaying -> drop
     LD A,(SND_TONE_TIMER)
     OR A
     JR Z,SS_FIRE               ; timer idle -> always OK to fire
