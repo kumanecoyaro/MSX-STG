@@ -215,9 +215,9 @@ one_tick_steps = call_routine(fresh(), sym["EBUZ_TICK"])
 # ティックの2箇所のみに削減した。state1完了→state2 BG形成の間には
 # もうウェイトが一切無い(BG書き込みのみの数命令)ことも直接検証する。
 # 続けて同日"2回目のホールドを30フレに"でTOPBOTTOM_HOLD_TICKSを
-# 15→30へ再変更。
+# 15→30、さらに"45フレに"で30→45へ再変更。
 BULLET0_HOLD_TICKS = 10
-TOPBOTTOM_HOLD_TICKS = 30
+TOPBOTTOM_HOLD_TICKS = 45
 
 z0 = fresh()
 z0.pc = sym["INIT"]

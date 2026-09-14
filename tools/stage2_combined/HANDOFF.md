@@ -16001,3 +16001,28 @@ per-slot独立方式へ作り替えた」設計逸脱を撤回、Round121構造+
   増えるほど誤差が蓄積し破綻しうる。可能な限り、ループ内の目印ラベルの
   通過回数を直接数える(近似を一切含まない)方式を優先すること。
 - 引き続き本編(`src/CYBER SHMUP.asm`)未組み込みのプロトタイプ。
+
+## Round129(ebuz_test、2026-09-14): 一斉発射前ホールドを30→45ティックに
+
+- ユーザー指示: "45フレに"。`ebuz_test.asm`のstate2形成後(継続発射
+  開始前)ホールドを`LD B,30`→`LD B,45`へ変更、`ebuz_test_verify.py`の
+  `TOPBOTTOM_HOLD_TICKS`を30→45へ更新。Round128で`count_marker_hits`
+  (`EBUZ_WAIT_TICK_DONE`の実通過回数を直接数える厳密方式)へ切り替え
+  済みだったため、近似誤差の再発なく即座に20 passed/0 failedを確認。
+- 自己検証として一時的にASMを44へ戻し、`state2-BG-done -> activation
+  gap`のテストが正しく`44 observed`でFAILすることを確認した上で復元・
+  再PASSを確認済み。
+- `gif_check.py`のキャプションを"after 30-tick pre-activation hold"→
+  "after 45-tick pre-activation hold"へ更新、GIF再生成・PILでの
+  フレーム抽出視覚確認(t=0.97sで継続発射が活性化、Round128の
+  30ティック版[t=0.71s]より延びていることを確認)。
+- 本編への影響なし(`src/CYBER SHMUP.asm`・`combined_test.asm`いずれも
+  無変更)。変更ファイル: `tools/ebuz_test/ebuz_test.asm`(ホールド値)/
+  `tools/ebuz_test/ebuz_test_verify.py`(定数値)/
+  `tools/ebuz_test/gif_check.py`(キャプション更新)、`EbuzTest.rom`/
+  `ebuz_bullets_timeline.gif`(再生成)。
+
+セッション引き継ぎメモ(2026-09-14、Round129完了直後):
+- Round128で厳密カウント方式へ移行済みのため、今回のようなホールド値
+  の単純な数値変更は近似誤差の心配なく安全に対応できることを確認。
+- 引き続き本編(`src/CYBER SHMUP.asm`)未組み込みのプロトタイプ。
