@@ -914,6 +914,73 @@ check("自己検証: CALL SOUND_EBUZ_FIREを取り除くと、発射を何度繰
       "の確認)",
       _regress_ebuz_fire_sound_not_called() == False)
 
+# ============================================================
+# 14. round135follow-up10「GAME_TICKは進めるが新規スポーンだけ止める」:
+#     Ebuzが1体でも生存中は、SSC_FIREの新規スポーンディスパッチだけが
+#     一時停止する(GAME_TICK自体・SPAWN_SCHEDULE_CHECKの呼び出し自体は
+#     普段通り)。停止中はSPAWN_NEXT_INDEXも増えない(発火の取りこぼし
+#     なし)、Ebuz消滅の瞬間に即座に再開する。
+# ============================================================
+zn = fresh()
+boot(zn)
+wr16(zn, sym["GAME_TICK"], 999)  # 全thresholdを確実に超過させる
+wr16(zn, sym["SPAWN_NEXT_INDEX"], 0)
+swr(zn, S0, "ACT", sym["EBUZ_ST_ENTER"])  # SLOT0のみアクティブ
+gt_before = game_tick(zn)
+for _ in range(40):
+    step_frame(zn)
+check("Ebuz(SLOT0)生存中は40フレーム経過してもSPAWN_NEXT_INDEXが"
+      "全く進まない(新規スポーンのディスパッチが一時停止している)",
+      rd16(zn, sym["SPAWN_NEXT_INDEX"]) == 0)
+check("...その間もGAME_TICKは普段通り進み続けている"
+      "(止まっているのはスポーンのディスパッチだけ、時計は止めない)",
+      game_tick(zn) > gt_before)
+swr(zn, S0, "ACT", 0)  # Ebuz消滅
+for _ in range(8):
+    step_frame(zn)
+check("Ebuz消滅後は即座にディスパッチが再開し、SPAWN_NEXT_INDEXが"
+      "0から進み始める(取りこぼしなく、待たされていた分から順に発火)",
+      rd16(zn, sym["SPAWN_NEXT_INDEX"]) > 0)
+
+zn2 = fresh()
+boot(zn2)
+wr16(zn2, sym["GAME_TICK"], 999)
+wr16(zn2, sym["SPAWN_NEXT_INDEX"], 0)
+swr(zn2, S1, "ACT", sym["EBUZ_ST_FIRE"])  # SLOT1側だけがアクティブでも同様に止まる
+for _ in range(40):
+    step_frame(zn2)
+check("SLOT1だけがアクティブ(SLOT0は非活性)でも同様にディスパッチが"
+      "一時停止する(EBUZ_ANY_ACTIVEが両スロットを見ている)",
+      rd16(zn2, sym["SPAWN_NEXT_INDEX"]) == 0)
+
+
+def _regress_no_spawn_pause_check():
+    """SSC_FIRE冒頭のEBUZ_ANY_ACTIVEガードを無効化する(CALL直後のOR A:
+    RET NZを潰す)自己検証。"""
+    broken_mem = bytearray(mem0)
+    target = sym["EBUZ_ANY_ACTIVE"]
+    pat = bytes([0xCD, target & 0xFF, (target >> 8) & 0xFF, 0xB7, 0xC0])
+    idx = bytes(broken_mem).find(pat)
+    if idx < 0:
+        raise RuntimeError("pattern not found for self-verification")
+    broken_mem[idx + 3] = 0x00  # OR A -> NOP
+    broken_mem[idx + 4] = 0x00  # RET NZ -> NOP(1バイト目のみ潰し、Zフラグに依存させない)
+    zz = Z80(broken_mem)
+    zz.pc = sym["INIT"]
+    run_until_pc(zz, sym["MAINLOOP"])
+    wr16(zz, sym["GAME_TICK"], 999)
+    wr16(zz, sym["SPAWN_NEXT_INDEX"], 0)
+    zz.wr(S0 + sym["EBUZ_OFS_ACT"], sym["EBUZ_ST_ENTER"])
+    for _ in range(40):
+        zz.pc = sym["MAINLOOP"]; zz.step(); run_until_pc(zz, sym["MAINLOOP"])
+    return rd16(zz, sym["SPAWN_NEXT_INDEX"]) == 0
+
+
+check("自己検証: SSC_FIRE冒頭の新規スポーン一時停止ガードを無効化すると、"
+      "上と同じ40フレーム経過チェックが正しくFAILに転じる"
+      "(=このガードが実際に効いていることの確認)",
+      _regress_no_spawn_pause_check() == False)
+
 print()
 print(f"{len(ok)} passed, {len(fail)} failed")
 if fail:

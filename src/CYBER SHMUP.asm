@@ -5710,6 +5710,17 @@ SSC_FIRE:
     ; 「最後のインデックスだけCP省略」という特別扱いはしない)。
     ; ディスパッチ自体のCP/JP Zチェーンという仕組みは無変更、各ブロックの
     ; 生成方法(tools側のPythonジェネレータ)だけを変えている。
+    ; (round135follow-up10、"GAME_TICKは進めるが新規スポーンだけ止める"):
+    ; Ebuzが1体でも生存中は、時計(GAME_TICK)自体は普段通り進めつつ、
+    ; 新規スポーンのディスパッチだけをここで一時停止する - SPAWN_NEXT_
+    ; INDEXも増やさないので、しきい値を過ぎていたエントリはEbuz消滅の
+    ; 瞬間にまとめて即座に発火する(バーストにはなるが取りこぼしはない、
+    ; SSC_BUSY_E2の「両インスタンス使用中は待つ」と全く同じ考え方)。
+    ; 新規Ebuzトリガー自身・BOSSも含め、全エントリを一律にこのゲートで
+    ; 待たせる(2チェーンの同時生存やボスとの重複を避けるため)。
+    CALL EBUZ_ANY_ACTIVE
+    OR A
+    RET NZ
     LD HL,(SPAWN_NEXT_INDEX)
     PUSH HL
     INC HL
@@ -12948,9 +12959,12 @@ ECCT_CHECK2:
     LD A,3 : LD (EBUZ_SPAWN_STAGE),A
     RET
 
-; Output: A=1でSLOT0/SLOT1いずれかが現在アクティブ。MAINLOOPの
-; スケジュール凍結判定("Ebuz出現中はスケジュールエネミーは一旦停止"、
-; 2体・3体のチェーン全体を通して1回も途切れないよう2スロットを見る)。
+; Output: A=1でSLOT0/SLOT1いずれかが現在アクティブ。
+; (round135follow-up10、"GAME_TICKは進めるが新規スポーンだけ止める"):
+; SSC_FIRE冒頭のスポーンディスパッチ一時停止ゲートから呼ばれる
+; (round135follow-up5で撤去したMAINLOOP側のGAME_TICK凍結とは別物 -
+; 今回は時計は止めず新規スポーンだけを止める)。2体・3体のチェーン
+; 全体を通して1回も途切れないよう2スロットを見る。
 ; Trashes A.
 EBUZ_ANY_ACTIVE:
     LD A,(EBUZ_SLOT0+EBUZ_OFS_ACT)
