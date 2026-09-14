@@ -16320,3 +16320,50 @@ HP24化+8セル死亡演出(PLAYER_EXPL_POOL流用)+ROM容量危機の解決
   (`EBUZ_EXPL_SPAWN_INTERVAL`=4フレーム、未調整の初期値)はいずれも
   実機での見た目次第で再調整の可能性あり。Round130から持ち越しの
   生存時間15秒・降下/退出速度・スコア500点も引き続き未調整のまま。
+
+## Round132: 登場降下速度を倍に+3体目出現を2体目の5秒後に変更
+(2026-09-14、完了済み・実機フィードバック待ち)
+
+- ユーザー指示(原文): "登場の上から降りてくる速度を倍に\n3体目出現を
+  2体目の5秒後に"。
+- **降下速度倍増**: `EBUZ_DESCEND_ROW_FRAMES`(1行あたりのフレーム数)を
+  6→3に変更(半分の時間で1行進む=速度2倍)。ENTER状態の降下ロジック
+  自体は無変更(定数1箇所の変更のみ)。
+- **3体目出現タイミングの再設計**: Round131時点の「2体目がFIRE状態
+  (継続交互発射)に到達した瞬間」というトリガーを、"3体目出現を2体目の
+  5秒後に"の通り実時間ベースの固定5秒トリガーへ変更。Stage1は
+  HALT/EIのvsync同期による1フレーム=1/60秒駆動のため、
+  `EBUZ_LIFETIME_FRAMES`(900=15秒)等の既存の生フレームカウンタと
+  同じ換算基準で新規`EBUZ_INST3_DELAY_FRAMES EQU 300`(5秒)を定義。
+  `EBUZ_CHECK_CHAIN_TRIGGERS`のSTAGE=1→2遷移(2体目スポーン)の瞬間に
+  新規16bitタイマーを0リセット、以後STAGE=2の間は毎フレーム+1し
+  300に達した瞬間(`SBC HL,DE`+`RET C`によるHL<DE判定)に3体目を
+  SLOT1へスポーンしSTAGE=3へ遷移する設計に全面書き換え。
+- **新規タイマー用RAMはROM容量を一切増やさず確保**: Round131で
+  EBUZ_UPDATE_BULLET0のキャッシュ用に確保したが最終的に未使用のまま
+  残っていた2byteスクラッチ`EBUZ_B0_ROW10_ADDR`(旧FIFO環状バッファの
+  HEADから転用した経緯を持つ、詳細はRound131参照)を、今回の
+  `EBUZ_CHAIN_TIMER`としてそのまま再利用 - 新規RAM確保・INIT時
+  ゼロクリア範囲の変更いずれも不要だった(EQUのシンボル名変更のみ)。
+- `tools/verify_ebuz_integration.py`のマルチインスタンスチェーン検証
+  (セクション11)を新設計に合わせ全面書き換え - 「2体目FIRE到達まで
+  待つ」旧アサーションを、「2体目スポーンから299フレームではまだ
+  STAGE=2のまま」「300フレーム目でSTAGE=3・SLOT1に3体目スポーン」の
+  2段階検証へ置換(`EBUZ_INST3_DELAY_FRAMES`をシンボル経由で動的参照
+  するため、将来この定数を再調整してもテスト側の変更は不要)。降下
+  速度テスト(セクション4)は元々`EBUZ_DESCEND_ROW_FRAMES`をシンボル
+  参照する設計だったため無変更で新値(3)に自動追従。
+- 全97件PASS(96→97、詳細アサーションの分割による純増)。既存の
+  Stage1回帰8ファイル(verify_enemy_bullets.py 60/verify_player_
+  damage.py 60/verify_stage1_bgm.py 80/verify_stage1_mission_
+  screens.py 87/verify_enemy6_durability.py 19/verify_spawn_
+  schedule_restart.py 12/verify_explosion_anim.py 28/verify_boss_
+  dfl_clear.py 10)も全て無変更で通過を確認。ROM容量は raw headroom
+  64byte・Comb headroom 64byteのまま変化なし(定数変更+RAM再利用の
+  みでコードサイズにほぼ影響なし)。Comb ROM再ビルド・
+  `verify_comb.py`全チェックPASSの上、標準方針によりComb ROMのみ
+  送付。
+- **保留・実機フィードバック待ち**: 降下速度2倍・3体目5秒後トリガー
+  いずれも実機での見た目・ペーシング次第で再調整の可能性あり。
+  Round130/131から持ち越しの生存時間15秒・退出速度・スコア500点・
+  8セル演出間隔も引き続き未調整のまま。

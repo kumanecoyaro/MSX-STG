@@ -12089,7 +12089,12 @@ EBUZ_HP_INIT             EQU 24
 ; "生存時間は15秒"(60Hz想定、GAME_OVER_TIMEOUT_TICKS[600=10秒]等
 ; 既存の実フレームカウンタと同じ換算基準)。
 EBUZ_LIFETIME_FRAMES     EQU 900
-EBUZ_DESCEND_ROW_FRAMES  EQU 6     ; 降下速度: 1行あたりのフレーム数(未調整の初期値)
+; (2026-09-14follow-up2、"登場の上から降りてくる速度を倍に"): 6→3。
+EBUZ_DESCEND_ROW_FRAMES  EQU 3     ; 降下速度: 1行あたりのフレーム数
+; (2026-09-14follow-up2、"3体目出現を2体目の5秒後に"): 60Hz想定で
+; 5秒=300フレーム(EBUZ_LIFETIME_FRAMESと同じ換算基準)。従来の
+; "2体目がFIRE状態に達した瞬間"トリガーを置き換える。
+EBUZ_INST3_DELAY_FRAMES  EQU 300
 ; (2026-09-14 follow-up、"スポーンでRow0のブラックの行を破壊してる
 ; Rowは避けRow1から描画するように"): 0→1。row0は画面上端のHUD/スコア
 ; 行のため、Ebuzの2行本体がここを跨ぐと破壊してしまっていた。
@@ -12185,10 +12190,10 @@ EBUZ_SPAWN_STAGE      EQU 0F25Eh  ; 0=未スポーン/1=1体目消化待ち/2=2�
 EBUZ_EXPL_QUEUE       EQU 0F25Fh  ; 16 entries * 2 bytes (X,Y) = 32 bytes
 EBUZ_EXPL_QUEUE_COUNT EQU 0F27Fh
 ; (2026-09-14follow-up、ROM容量節約のためLIFO化): 旧EBUZ_EXPL_QUEUE_HEAD
-; (FIFO環状バッファ用)は不要になったため、EBUZ_UPDATE_BULLET0が
-; ROW9/ROW10アドレスを毎回2回ずつ再計算しない(1回計算してこの2byteへ
-; キャッシュする)ためのスクラッチへ転用。
-EBUZ_B0_ROW10_ADDR    EQU 0F280h  ; 2 bytes
+; (FIFO環状バッファ用)は不要になったため、2体目スポーンから3体目
+; スポーンまでの実時間(5秒)をカウントする16bitタイマーへ転用
+; (EBUZ_CHECK_CHAIN_TRIGGERSのSTAGE==2区間で使用)。
+EBUZ_CHAIN_TIMER      EQU 0F280h  ; 2 bytes
 EBUZ_EXPL_SPAWN_TIMER EQU 0F282h
 EBUZ_EXPL_POS_X       EQU 0F283h
 EBUZ_EXPL_POS_Y       EQU 0F284h
@@ -12842,7 +12847,9 @@ EBUZ_SPAWN_CHAIN_START:
 ; MAINLOOPから毎フレーム無条件に呼ばれる(EBUZ_UPDATE_ALLの直後)。
 ; EBUZ_SPAWN_STAGEを見て2体目/3体目のスポーンタイミングを判定する。
 ; 1体目・2体目は同じSLOT0を使い回す(1体目が完全に消えてから2体目が
-; 湧くため同時生存しない)、3体目はSLOT1(2体目とは同時生存しうる)。
+; 湧くため同時生存しない)、3体目はSLOT1(2体目とは同時生存しうる、
+; 2026-09-14follow-up2で"2体目のスポーンから5秒後"の実時間トリガーへ
+; 変更 - Stage1は1フレーム=1/60秒の生フレーム駆動のため300フレーム)。
 EBUZ_CHECK_CHAIN_TRIGGERS:
     LD A,(EBUZ_SPAWN_STAGE)
     CP 1
@@ -12854,13 +12861,20 @@ EBUZ_CHECK_CHAIN_TRIGGERS:
     LD A,EBUZ_ROW_INST2
     CALL EBUZ_SPAWN_INSTANCE
     LD A,2 : LD (EBUZ_SPAWN_STAGE),A
+    XOR A
+    LD (EBUZ_CHAIN_TIMER),A
+    LD (EBUZ_CHAIN_TIMER+1),A
     RET
 ECCT_CHECK2:
     CP 2
     RET NZ
-    LD A,(EBUZ_SLOT0+EBUZ_OFS_ACT)
-    CP EBUZ_ST_FIRE
-    RET NZ                        ; 2体目がまだ継続発射(FIRE)状態に達していない
+    LD HL,(EBUZ_CHAIN_TIMER)
+    INC HL
+    LD (EBUZ_CHAIN_TIMER),HL
+    LD DE,EBUZ_INST3_DELAY_FRAMES
+    OR A
+    SBC HL,DE
+    RET C                          ; まだ5秒(300フレーム)経過していない
     LD IX,EBUZ_SLOT1
     LD A,EBUZ_ROW_INST3
     CALL EBUZ_SPAWN_INSTANCE

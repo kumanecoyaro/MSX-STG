@@ -156,10 +156,10 @@ for a in range(poison_lo, poison_hi):
 boot(z)
 check("INIT: EBUZ_SPAWN_STAGEは0(未スポーン、poison後もゼロ化)",
       z.rd(sym["EBUZ_SPAWN_STAGE"]) == 0)
-check("INIT: EBUZ_EXPL_QUEUE_COUNT/B0_ROW10_ADDR/SPAWN_TIMERは全て0",
+check("INIT: EBUZ_EXPL_QUEUE_COUNT/CHAIN_TIMER/SPAWN_TIMERは全て0",
       z.rd(sym["EBUZ_EXPL_QUEUE_COUNT"]) == 0 and
-      z.rd(sym["EBUZ_B0_ROW10_ADDR"]) == 0 and
-      z.rd(sym["EBUZ_B0_ROW10_ADDR"] + 1) == 0 and
+      z.rd(sym["EBUZ_CHAIN_TIMER"]) == 0 and
+      z.rd(sym["EBUZ_CHAIN_TIMER"] + 1) == 0 and
       z.rd(sym["EBUZ_EXPL_SPAWN_TIMER"]) == 0)
 for slot, name in ((S0, "SLOT0"), (S1, "SLOT1")):
     check(f"INIT: {name}.ACTは0",
@@ -733,19 +733,28 @@ check("2体目スポーン時もrow0は一切変化しない(row1から描画開
       "row0破壊なし)",
       [vrd(zc, cell(0, sym["EBUZ_SPAWN_COL"] + i)) for i in range(4)] == row0_before_spawn_c)
 
-# 2体目がFIREへ到達した瞬間、同一フレーム内で3体目がSLOT1へトリガー
-# される(2体目はまだSLOT0で生存中=同時生存)。
-advance_until(zc, lambda z: srd(z, S0, "ACT") == sym["EBUZ_ST_FIRE"], max_frames=2000)
-check("(2026-09-14 follow-up、'3体目は2体目が連射したくらいのタイミング'):"
-      "2体目FIRE到達と同フレームでSTAGE=3、SLOT1に3体目がスポーンする",
+# (2026-09-14 follow-up2、'3体目出現を2体目の5秒後に'): 2体目スポーンの
+# 瞬間(直前のstep_frame(zc))にEBUZ_CHAIN_TIMERが0にリセットされている。
+# 以後EBUZ_INST3_DELAY_FRAMES(300、60Hz想定で5秒)フレーム経過した瞬間、
+# 同一フレーム内で3体目がSLOT1へトリガーされる
+# (2体目はまだSLOT0で生存中=同時生存)。
+delay = sym["EBUZ_INST3_DELAY_FRAMES"]
+for _ in range(delay - 1):
+    step_frame(zc)
+check(f"3体目トリガーはまだ({delay-1}フレーム経過時点でSTAGE=2のまま)",
+      zc.rd(sym["EBUZ_SPAWN_STAGE"]) == 2)
+step_frame(zc)
+check("(2026-09-14 follow-up2、'3体目出現を2体目の5秒後に'):"
+      f"2体目スポーンから{delay}フレーム(5秒)後、同フレームでSTAGE=3、"
+      "SLOT1に3体目がスポーンする",
       zc.rd(sym["EBUZ_SPAWN_STAGE"]) == 3 and srd(zc, S1, "ACT") == sym["EBUZ_ST_ENTER"])
 check("(2026-09-14 follow-up、'3体目Row5'): 3体目のCENTER_ROWは"
       "EBUZ_ROW_INST3(5)",
       srd(zc, S1, "CENTER_ROW") == sym["EBUZ_ROW_INST3"] == 5)
-check("3体目トリガー時点で、2体目(SLOT0)はまだFIRE状態のまま生存中"
+check("3体目トリガー時点で、2体目(SLOT0)はまだ生存中"
       "(=2体目と3体目が画面上で同時生存する、'撤退するか倒される"
       "まで待たない'仕様の直接確認)",
-      srd(zc, S0, "ACT") == sym["EBUZ_ST_FIRE"])
+      srd(zc, S0, "ACT") != 0)
 check("チェーンはSTAGE=3で完了(以後、新たな追加トリガーは発火しない)",
       True)
 
