@@ -5587,8 +5587,8 @@ ESC_COMPLEX_INIT_B:
 ; spawn exactly once, in order, as GAME_TICK reaches its threshold -
 ; not when the previous one finishes. SPAWN_THRESHOLDS is a 16-bit
 ; (DW) array so thresholds aren't capped at 255. Boss is the final
-; entry, index500 (2026-09-13 Schedule_5.json replacement, 501 entries).
-; One-shot: once all 501 have fired, this just returns immediately
+; entry, index478 (2026-09-14 Schedule.json replacement, 479 entries).
+; One-shot: once all 479 have fired, this just returns immediately
 ; forever after, so nothing loops.
 SPAWN_SCHEDULE_CHECK:
     ; --- 2026-09-12 修正: 397エントリ(>255)になったため、8bitの A
@@ -5614,8 +5614,10 @@ SPAWN_SCHEDULE_CHECK:
     ; --- 2026-09-13追記その3: Schedule_5.json(同じ501エントリ、
     ; --- enemy2/enemy4/enemy5の一部の行だけ微調整)へさらに差し替え -
     ; --- 件数・ブロック構成は無変更。
+    ; --- 2026-09-14追記: Schedule.json(479エントリ)へ再差し替え -
+    ; --- 479<512のためH=0/1の2ブロック構成のまま(SSC_FIRE参照)。
     LD HL,(SPAWN_NEXT_INDEX)
-    LD DE,501
+    LD DE,479
     OR A
     SBC HL,DE
     RET NC                      ; index >= N -> schedule finished
@@ -5690,7 +5692,7 @@ SSC_FIRE:
     CP 0 : JP Z,SSC_FIRE_BLK0
     JP SSC_FIRE_BLK1
 SSC_FIRE_BLK0:
-    LD A,L                       ; H=0, so L IS the true index (0-255); default handler for this block is SPAWN_SIMPLE (most common)
+    LD A,L                       ; H=0, so L IS the true index (0-255); default handler for this block is SPAWN_SIMPLE
     CP 5   : JP Z,SPAWN_E6
     CP 31  : JP Z,SPAWN_E3_WAVE
     CP 32  : JP Z,SPAWN_E3_WAVE
@@ -5831,7 +5833,7 @@ SSC_FIRE_BLK0:
     CP 255 : JP Z,SPAWN_E6
     JP SPAWN_SIMPLE
 SSC_FIRE_BLK1:
-    LD A,L                       ; H=1, so L = index-256; default handler for this block is SPAWN_E6 (most common)
+    LD A,L                       ; H=1, so L = index-256; default handler for this block is SPAWN_E6
     CP 2   : JP Z,SPAWN_SIMPLE
     CP 7   : JP Z,SPAWN_SIMPLE
     CP 12  : JP Z,SPAWN_SIMPLE
@@ -5875,17 +5877,7 @@ SSC_FIRE_BLK1:
     CP 210 : JP Z,SPAWN_SIMPLE
     CP 215 : JP Z,SPAWN_SIMPLE
     CP 220 : JP Z,SPAWN_SIMPLE
-    CP 225 : JP Z,SPAWN_SIMPLE
-    CP 230 : JP Z,SPAWN_SIMPLE
-    CP 235 : JP Z,SPAWN_SIMPLE
-    CP 237 : JP Z,SPAWN_SIMPLE
-    CP 238 : JP Z,SPAWN_SIMPLE
-    CP 239 : JP Z,SPAWN_SIMPLE
-    CP 240 : JP Z,SPAWN_SIMPLE
-    CP 241 : JP Z,SPAWN_SIMPLE
-    CP 242 : JP Z,SPAWN_SIMPLE
-    CP 243 : JP Z,SPAWN_SIMPLE
-    CP 244 : JP Z,BOSS_SPAWN
+    CP 222 : JP Z,BOSS_SPAWN
     JP SPAWN_E6
 
 ; --- saved (disabled) boss-only fast-iteration schedule - kept for  ---
@@ -13653,8 +13645,8 @@ ENEMY6_ANIM_CODES:
     DB NEWENEMY_CODE180_TL, NEWENEMY_CODE180_TR, NEWENEMY_CODE180_BL, NEWENEMY_CODE180_BR
     DB NEWENEMY_CODE270_TL, NEWENEMY_CODE270_TR, NEWENEMY_CODE270_BL, NEWENEMY_CODE270_BR
 
-; Full schedule, 501 entries (indices 0-500, Schedule_5.json,
-; 2026-09-13), imported directly from the schedule editor's exported
+; Full schedule, 479 entries (indices 0-478, Schedule.json,
+; 2026-09-14), imported directly from the schedule editor's exported
 ; JSON (tick/row/type per placement) - see
 ; SSC_FIRE for the per-index dispatch this drives. Every tick here is
 ; a 16-bit word since thresholds run well past 255. Simple-formation,
@@ -13690,8 +13682,7 @@ SPAWN_THRESHOLDS:
     DW 922,923,923,924,924,924,925,925,926,926,926,927,927,928,928,929,929
     DW 929,930,930,931,931,931,932,932,933,933,933,934,934,935,935,935,936
     DW 936,937,937,937,938,938,939,939,939,940,940,941,941,941,942,942,943
-    DW 943,943,944,944,945,945,945,946,946,947,947,947,948,948,949,949,949
-    DW 951,953,955,957,959,961,963,992
+    DW 943,943,992
 
 SPAWN_SIMPLE_Y_TABLE:
     DB 40,32,24,136,128,0,120,32,24,16,128,120,112,24,40,56,72
@@ -13722,8 +13713,7 @@ SPAWN_SIMPLE_Y_TABLE:
     DB 0,0,0,0,80,0,0,0,0,88,0,0,0,0,0,0,88
     DB 0,0,0,0,80,0,0,0,0,80,0,0,0,0,88,0,0
     DB 0,0,88,0,0,0,0,80,0,0,0,0,80,0,0,0,0
-    DB 80,0,0,0,0,80,0,0,0,0,88,0,0,0,0,80,0
-    DB 80,80,72,64,56,56,56,0
+    DB 80,0,0
 
 SPAWN_BASEY_TABLE:
     DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
@@ -13754,12 +13744,11 @@ SPAWN_BASEY_TABLE:
     DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
     DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
     DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-    DB 0,0,0,0,0,0,0,0
+    DB 0,0,0
 
 SPAWN_E3_OFFSET_TABLE:
     DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,24,0
+    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,3,0
     DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
     DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
     DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
@@ -13786,8 +13775,7 @@ SPAWN_E3_OFFSET_TABLE:
     DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
     DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
     DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-    DB 0,0,0,0,0,0,0,0
+    DB 0,0,0
 
 ENEMY6_ROW_TABLE:
     DB 0,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0
@@ -13818,8 +13806,7 @@ ENEMY6_ROW_TABLE:
     DB 16,7,14,5,0,16,8,13,5,0,15,7,13,5,15,7,0
     DB 13,5,15,7,0,13,5,15,7,0,13,5,15,7,0,13,5
     DB 15,7,0,13,5,15,7,0,13,5,15,7,0,13,5,15,7
-    DB 0,13,5,15,7,0,13,5,15,7,0,13,5,15,7,0,13
-    DB 0,0,0,0,0,0,0,0
+    DB 0,13,0
 ; --- Boss BG (nametable) graphics, generated from
 ; --- dotpict_20260806_173500 (12x37 dot art), resized directly
 ; --- to 40x128 dots (5x16 tiles) and quantized to black/gray/red/blue.

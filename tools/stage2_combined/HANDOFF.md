@@ -16420,3 +16420,41 @@ HP24化+8セル死亡演出(PLAYER_EXPL_POOL流用)+ROM容量危機の解決
   4回スポーンのペーシング(tick256/512/768という間隔自体は未調整の
   初期値)はいずれも実機での見た目・難易度感次第で再調整の可能性
   あり。
+
+## Round134: Stage1スケジュール差し替え(Schedule.json、479エントリ)
+(2026-09-14、完了済み・実機フィードバック待ち)
+
+- ユーザー指示: 添付`Schedule.json`(479エントリ、tick11-992、
+  simple161/enemy6 211/enemy5 66/enemy4 26/enemy2 11/enemy3_wave 3/
+  boss 1)を提示し「スケジュールを変更」。Round36-9/76の前例通り、
+  Pythonスクリプトで`SPAWN_THRESHOLDS`(DW、tick一覧)・
+  `SPAWN_SIMPLE_Y_TABLE`/`SPAWN_BASEY_TABLE`(いずれもrow*8、type=
+  simple/enemy2・enemy4・enemy5でのみ非ゼロ)・`SPAWN_E3_OFFSET_TABLE`
+  (offset、type=enemy3_waveでのみ非ゼロ、JSON側で省略時は0扱い)・
+  `ENEMY6_ROW_TABLE`(生row、type=enemy6でのみ非ゼロ)の5テーブルと、
+  `SSC_FIRE`のブロック別CP-dispatchチェーン(各ブロックの最頻出typeを
+  無条件JPのデフォルトに、それ以外を明示的な`CP n:JP Z,handler`で
+  列挙する既存方式)を機械的に再生成、`LD DE,479`(旧501)へ更新。
+  479エントリは256の倍数を跨がないためSSC_FIREの2ブロック構成
+  (H=0/1)は無変更。SSC_BUSY_E2(enemy2エントリのindex一覧、いずれも
+  <256)は偶然にも旧スケジュールと完全に同一の11件(101,109,113,117,
+  119,148,149,182,183,184,185)だったため無変更のまま。
+- 検証は2段階: (1) 479エントリ全件についてSPAWN_NEXT_INDEXと
+  GAME_TICKを直接pokeしてSPAWN_SCHEDULE_CHECKを1件ずつ単独呼び出しし、
+  実際に分岐したハンドラのアドレスをJSONのtypeから期待されるハンドラと
+  突き合わせ - 479件中不一致0件。(2) 実際にbootしてMAINLOOPを
+  step_frame()で自然に回し続ける通しシミュレーションで、GAME_TICKが
+  自然に進行するだけで479エントリ全てが一度もスタールせず消化される
+  ことを確認(17104フレームでindex=479到達、GAME_TICK=1078まで自然
+  進行)。既存回帰: `verify_spawn_schedule_restart.py`12/`verify_
+  enemy_bullets.py`60/`verify_player_damage.py`60/`verify_stage1_
+  bgm.py`80/`verify_stage1_mission_screens.py`87/`verify_enemy6_
+  durability.py`19/`verify_explosion_anim.py`28/`verify_boss_dfl_
+  clear.py`10/`verify_ebuz_integration.py`103、全てPASS(スケジュール
+  非依存のテストのため無変更)。ROM容量はraw headroom 64→320byte
+  (今回もALIGN256吸収の閾値を跨いだ、Round131と同種の現象 - 479件は
+  従来の501/549件より少なくコードサイズが縮んだため)、Comb headroomは
+  64byteのまま変化なし。Comb ROM再ビルド・`verify_comb.py`全チェック
+  PASSの上、標準方針によりComb ROMのみ送付。
+- **保留・実機フィードバック待ち**: 新スケジュールの実プレイでの
+  ペーシング・難易度感は実機フィードバック待ち。
