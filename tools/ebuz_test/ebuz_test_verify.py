@@ -64,6 +64,27 @@ def run_until_pc_count(z, target_pc, max_instr=2_000_000):
     raise RuntimeError(f"never reached PC {target_pc:04X}, stuck at {z.pc:04X}")
 
 
+def count_marker_hits(z, target_pc, marker_pc, max_instr=2_000_000):
+    """target_pcへ到達するまでの間にmarker_pcを何回通過したかを正確に
+    数える(2026-09-14追記: "2回目のホールドを30フレに"対応で自己発見。
+    以前の「1tickあたりのステップ数[fresh()な全ゼロRAM状態で単発CALL
+    測定]で割って丸める」方式は、実際の待ちループ中は各プールスロットが
+    EBUZ_SLOT_EMPTY[255]で初期化済みなのに対し、fresh()の全ゼロRAMでは
+    スロット値が0[=有効な列0として誤って"使用中"扱い]になり単発測定の
+    コストが実際より高く出るため、tick数が大きくなるほど誤差が蓄積し
+    丸め込みが破綻する[15ティックでは偶然セーフだったが30ティックで
+    29と誤判定された]。ループの目印ラベル[EBUZ_WAIT_TICK_DONE]の
+    実通過回数を直接数える、近似に頼らない厳密な方式に変更した)。"""
+    count = 0
+    for _ in range(max_instr):
+        if z.pc == target_pc:
+            return count
+        if z.pc == marker_pc:
+            count += 1
+        z.step()
+    raise RuntimeError(f"never reached PC {target_pc:04X}, stuck at {z.pc:04X}")
+
+
 A, B, C, D = sym["EBUZ_CODE_A"], sym["EBUZ_CODE_B"], sym["EBUZ_CODE_C"], sym["EBUZ_CODE_D"]
 NAMTBL = 0x1800
 
@@ -193,20 +214,23 @@ one_tick_steps = call_routine(fresh(), sym["EBUZ_TICK"])
 # 廃止し、初弾ホールド10ティック・state2形成後の一斉発射前ホールド15
 # ティックの2箇所のみに削減した。state1完了→state2 BG形成の間には
 # もうウェイトが一切無い(BG書き込みのみの数命令)ことも直接検証する。
+# 続けて同日"2回目のホールドを30フレに"でTOPBOTTOM_HOLD_TICKSを
+# 15→30へ再変更。
 BULLET0_HOLD_TICKS = 10
-TOPBOTTOM_HOLD_TICKS = 15
+TOPBOTTOM_HOLD_TICKS = 30
 
 z0 = fresh()
 z0.pc = sym["INIT"]
 run_until_pc(z0, sym["EBUZ_STATE1_BG_DONE"])
-gap1 = run_until_pc_count(z0, sym["EBUZ_STATE1_DONE"])
-gap1_ticks = round(gap1 / one_tick_steps)
-check(f"state1: the BG-done -> fired gap spends exactly "
-      f"{BULLET0_HOLD_TICKS} EBUZ_TICK's worth of steps, not more and not "
-      f"less ({gap1} steps / {one_tick_steps} per tick =~ {gap1_ticks} "
-      f"ticks) - a loose lower-bound-only check would miss a hold that's "
-      f"too LONG (e.g. an unreverted 29), so this checks the exact tick "
-      f"count instead",
+gap1_ticks = count_marker_hits(z0, sym["EBUZ_STATE1_DONE"], sym["EBUZ_WAIT_TICK_DONE"])
+check(f"state1: the BG-done -> fired gap passes EBUZ_WAIT_TICK_DONE "
+      f"(one full EBUZ_TICK iteration inside EBUZ_WAIT_TICKS) exactly "
+      f"{BULLET0_HOLD_TICKS} times, not more and not less "
+      f"({gap1_ticks} observed) - counting the actual loop-marker passes "
+      f"directly (rather than a step-count/baseline-tick-cost ratio, which "
+      f"drifts as the tick count grows) avoids both a hold that's too LONG "
+      f"(e.g. an unreverted 29) and the rounding-drift false negative this "
+      f"same approximation hit once TOPBOTTOM_HOLD_TICKS grew to 30",
       gap1_ticks == BULLET0_HOLD_TICKS)
 
 z1b = fresh()
@@ -219,12 +243,10 @@ check(f"state1-to-state2 gap has NO wait at all anymore (\"それ以外の "
       f"instructions themselves",
       gap2 < one_tick_steps)
 
-gap3 = run_until_pc_count(z1b, sym["EBUZ_STATE2_DONE"])
-gap3_ticks = round(gap3 / one_tick_steps)
-check(f"state2-BG-done -> activation gap spends exactly "
-      f"{TOPBOTTOM_HOLD_TICKS} EBUZ_TICK's worth of steps, not more and not "
-      f"less ({gap3} steps / {one_tick_steps} per tick =~ {gap3_ticks} "
-      f"ticks)",
+gap3_ticks = count_marker_hits(z1b, sym["EBUZ_STATE2_DONE"], sym["EBUZ_WAIT_TICK_DONE"])
+check(f"state2-BG-done -> activation gap passes EBUZ_WAIT_TICK_DONE exactly "
+      f"{TOPBOTTOM_HOLD_TICKS} times, not more and not less "
+      f"({gap3_ticks} observed)",
       gap3_ticks == TOPBOTTOM_HOLD_TICKS)
 
 check("BULLET_L/R's BG tile patterns actually loaded into the VRAM pattern "

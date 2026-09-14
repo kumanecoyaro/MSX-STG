@@ -15958,3 +15958,46 @@ per-slot独立方式へ作り替えた」設計逸脱を撤回、Round121構造+
   修正だけで満足しかけたが、gif_check.py単体の実行(`python3
   gif_check.py`)で初めてクラッシュが発覚した。
 - 引き続き本編(`src/CYBER SHMUP.asm`)未組み込みのプロトタイプ。
+
+## Round128(ebuz_test、2026-09-14): 一斉発射前ホールドを15→30ティックに
+
+- ユーザー指示: "2回目のホールドを30フレに"。`ebuz_test.asm`の
+  state2形成後(継続発射開始前)ホールドを`LD B,15`→`LD B,30`へ変更、
+  `ebuz_test_verify.py`の`TOPBOTTOM_HOLD_TICKS`を15→30へ更新。
+- **Round127で導入した「厳密tick一致」アサーションが、30という大きめの
+  値で自己発見の形で破綻した**: `gap_ticks = round(gap_steps /
+  one_tick_steps)`という方式(`one_tick_steps`は`fresh()`の全ゼロRAM状態
+  で`EBUZ_TICK`を単発CALLして測った基準値)で30を検証したところ
+  `29 observed`でFAILした。原因を調査した結果、`fresh()`の全ゼロRAMでは
+  上下レーンの各プールスロット値が0になり、これは`EBUZ_SLOT_EMPTY`
+  (255)ではなく「列0で使用中」と誤認され、単発測定コストが実際より
+  重く出る(実際の待機中はINITが正しく全スロットをEBUZ_SLOT_EMPTYへ
+  初期化済みのため、各tickは軽い"空き"判定で早期リターンする)。この
+  誤差は1tickあたり約3-4%の固定比率で、15ティックまでは丸め込みで
+  偶然吸収できていたが(round(118224/8146)=14.51→15)、30ティックでは
+  蓄積誤差が0.5tickを超え29に丸められてしまっていた。
+- **修正方式**: ステップ数の近似割り算をやめ、`EBUZ_WAIT_TICKS`ループの
+  目印ラベル`EBUZ_WAIT_TICK_DONE`を実際に何回通過したかを直接数える
+  `count_marker_hits()`を新設、gap1(初弾ホールド)/gap3(一斉発射前
+  ホールド)の両方をこの厳密カウント方式に置き換えた。近似に頼らない
+  ため、以後ホールド値がどれだけ大きくなっても同じ精度で検証できる。
+  自己検証として一時的にASMを29へ戻し、新テストが正しく
+  `29 observed`でFAILすることを確認した上で復元・20 passed再確認済み。
+- `gif_check.py`のタイムラインキャプションを"0.5s after forming"という
+  古い(実態と食い違っていた)固定文言から"after 30-tick pre-activation
+  hold"へ更新、GIF再生成・PILでのフレーム抽出視覚確認(t=0.18sで
+  Ebuz2形成・t=0.71sで継続発射活性化、旧15ティック版のt≈0.36sから
+  約2倍の間隔に伸びていることを確認)。
+- 本編への影響なし(`src/CYBER SHMUP.asm`・`combined_test.asm`いずれも
+  無変更)。変更ファイル: `tools/ebuz_test/ebuz_test.asm`(ホールド値)/
+  `tools/ebuz_test/ebuz_test_verify.py`(定数値+厳密カウント方式への
+  置き換え)/`tools/ebuz_test/gif_check.py`(キャプション更新)、
+  `EbuzTest.rom`/`ebuz_bullets_timeline.gif`(再生成)。
+
+セッション引き継ぎメモ(2026-09-14、Round128完了直後):
+- **教訓(Round127の教訓の続き)**: 「厳密tick一致」に切り替えても、
+  その判定が「ステップ数を基準値で割って丸める」近似実装のままだと、
+  基準値の測定条件(RAM状態)が実際の実行時RAMと食い違う場合、tick数が
+  増えるほど誤差が蓄積し破綻しうる。可能な限り、ループ内の目印ラベルの
+  通過回数を直接数える(近似を一切含まない)方式を優先すること。
+- 引き続き本編(`src/CYBER SHMUP.asm`)未組み込みのプロトタイプ。

@@ -97,7 +97,7 @@ def main():
     add("Ebuz2 forms, top/bottom fire not active yet", 900)
 
     run_until_pc(z, sym["EBUZ_STATE2_DONE"])
-    add("continuous fire activated (0.5s after forming)", 700)
+    add("continuous fire activated (after 30-tick pre-activation hold)", 700)
 
     # close-up on the first cycle to show the alternating fire + recoil
     # (2026-09-13追記その7/その8: "上下弾は交互に撃ち続けろ 2フレ交代
