@@ -82,6 +82,7 @@ ENEMY_SLOT_COUNT = sym["ENEMY_SLOT_COUNT"]
 ENEMY_SLOT_SIZE = sym["ENEMY_SLOT_SIZE"]
 ENEMY6_POOL = sym["ENEMY6_POOL"]
 ENEMY6_SLOTS = sym["ENEMY6_SLOTS"]
+ENEMY6_ACTIVE_COUNT = sym["ENEMY6_ACTIVE_COUNT"]
 ENEMY3_WAVE_POOL = sym["ENEMY3_WAVE_POOL"]
 ENEMY3_WAVE_SLOTS = sym["ENEMY3_WAVE_SLOTS"]
 E2A_ACTIVE = sym["E2A_ACTIVE"]
@@ -104,6 +105,7 @@ def clear_all_pools(z):
         z.wr(ENEMY_POOL + i * ENEMY_SLOT_SIZE, 0)
     for i in range(ENEMY6_SLOTS):
         z.wr(ENEMY6_POOL + i * 4, 0)
+    z.wr(ENEMY6_ACTIVE_COUNT, 0)
     for i in range(ENEMY3_WAVE_SLOTS):
         z.wr(ENEMY3_WAVE_POOL + i * 4, 0)
     z.wr(E2A_ACTIVE, 0)
@@ -223,7 +225,10 @@ def blocked_by(setup_fn, label):
 blocked_by(lambda z: z.wr(ENEMY_POOL, 1), "ENEMY_POOL(slot0)")
 blocked_by(lambda z: z.wr(ENEMY_POOL + (ENEMY_SLOT_COUNT - 1) * ENEMY_SLOT_SIZE, 1),
            "ENEMY_POOL(最終slot、境界)")
-blocked_by(lambda z: z.wr(ENEMY6_POOL + 5 * 4, 1), "ENEMY6_POOL")
+blocked_by(lambda z: (z.wr(ENEMY6_POOL + 5 * 4, 1), z.wr(ENEMY6_ACTIVE_COUNT, 1)),
+           "ENEMY6_POOL")  # round135follow-up15: CHECK_BOSS_TRIGGERはO(1)化された
+           # ENEMY6_ACTIVE_COUNTを見るため、実際のスポーンと同じくスロット+
+           # カウンタ両方をセットする必要がある(スロットだけでは検出されない)
 blocked_by(lambda z: z.wr(ENEMY3_WAVE_POOL + 2 * 4, 1), "ENEMY3_WAVE_POOL")
 blocked_by(lambda z: z.wr(E2A_ACTIVE, 1), "E2A_ACTIVE")
 blocked_by(lambda z: z.wr(E2B_ACTIVE, 1), "E2B_ACTIVE")
@@ -303,6 +308,7 @@ def _regress_no_check_boss_trigger():
         zz.wr(ENEMY_POOL + i * ENEMY_SLOT_SIZE, 0)
     for i in range(ENEMY6_SLOTS):
         zz.wr(ENEMY6_POOL + i * 4, 0)
+    zz.wr(ENEMY6_ACTIVE_COUNT, 0)
     for i in range(ENEMY3_WAVE_SLOTS):
         zz.wr(ENEMY3_WAVE_POOL + i * 4, 0)
     zz.wr(E2A_ACTIVE, 0); zz.wr(E2B_ACTIVE, 0)

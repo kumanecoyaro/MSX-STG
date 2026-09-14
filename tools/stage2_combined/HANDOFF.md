@@ -16647,3 +16647,97 @@ HP24化+8セル死亡演出(PLAYER_EXPL_POOL流用)+ROM容量危機の解決
   の上、標準方針によりComb ROMのみ送付。
 - **保留・実機フィードバック待ち**: 新スケジュールの実プレイでの
   ペーシング・難易度感は実機フィードバック待ち。
+
+## Round136: MAINLOOP監査+ループ回数回帰テスト新設+CHECK_BULLET_VS_
+ENEMY6のO(1)短絡最適化(2026-09-14、完了済み)
+
+- ユーザー指示2点: (1)"EbuzMkII"着手前にMAINLOOPの無駄なコード・
+  未使用の残骸・不可能な条件が無いか監査、(2)"にしては相当重くなって
+  るな...弾を撃つたびに当たってもないのに敵の処理をしてないか?"
+  (地形スクロールは明示的にスコープ外指定)。
+- **(1)監査**: MAINLOOPから到達可能な範囲を精査、到達不能コード・
+  矛盾条件は発見できず。唯一のデッドコードは既にコメントアウト済みの
+  `SPAWN_SCHEDULE_CHECK_BOSSONLY_SAVED`ブロック(実害なし、削除は
+  ユーザー未確認のため保留)。BULLET0/1/2の重複ハンドラ・地形VRAM
+  push x4の重複は、いずれもVDPタイミング依存のループ展開(意図的な
+  高速化)と判断、ユーザーからも"地形スクロールに関しては触らなくて
+  いい それはループ展開で速度を稼いでる"と確認済みのため無変更。
+- **(2)ユーザーの推測が的中**: `CHECK_BULLET_VS_ENEMY6`だけが、
+  `ENEMY3_ACTIVE_COUNT`/`CHECK_BULLET_VS_ENEMY3`が既に持つ「1体も
+  居なければ即RET」という短絡最適化を欠いており、Enemy6が画面上に
+  1体も居なくても自機弾ごと・毎フレーム`ENEMY6_SLOTS`(32)スロット
+  全部のACTフラグを律儀に読みに行っていた(実測: 空プールでも202
+  命令/回、自機弾は最大3発同時、これが毎フレーム発生)。ENEMY3と
+  同じ「専用カウンタ(`ENEMY6_ACTIVE_COUNT`、0F285h、既存の一括
+  ゼロクリア範囲内の空きバイトを再利用しRAM新規確保ゼロ)で0体なら
+  丸ごとスキップ」方式を追加(スポーン時+2つの死亡経路でINC/DEC)。
+  `CHECK_BOSS_TRIGGER`自身が持っていたENEMY6用の32スロット
+  `SCAN_POOL_ACTIVE`呼び出しもこのO(1)カウンタ判定へ置き換え(副産物
+  の追加最適化)。効果: `CHECK_BULLET_VS_ENEMY6`が空プールで202→5
+  命令/回(自己回帰テストでの実測)。
+- **新規ループ回数回帰テスト**(`tools/verify_mainloop_loop_bounds.py`、
+  ユーザーの"これは回帰テストで計測しろ"の指示に対応): 従来の
+  `SCAN_POOL_ACTIVE`のB未リロードバグ(round135follow-up14で実際に
+  踏んだ)のような「不要なループカウント」を検出できる手法として、
+  (a)アイドル時vs全プール最大稼働時の1フレーム丸ごと命令数の安定性
+  チェック、(b)MAINLOOPから毎フレーム呼ばれる主要17ルーチン個々の
+  孤立呼び出し命令数がアイドル1フレーム分を超えないことの直接計測、
+  の2段構成で新設。自己検証中に2回の方法論的な失敗(フルフレーム
+  計測は希釈されすぎて検出感度が低い、`CHECK_BOSS_TRIGGER`全体比較は
+  バグ側が早期に非ゼロバイトへ行き当たり逆に命令数が少なくなる
+  という逆転結果になる)を経て、「`SCAN_POOL_ACTIVE`単体をB=0(バグ時)
+  とB=32(正常時)の両方で安全な全ゼロ領域に対して直接実行し純粋な
+  ループ回数だけを比較する」方式に収束。29件PASS。
+- **ROM容量の壁(Comb限定)とその解消**: 上記修正の初期実装(+16
+  net byte)は、standaloneのStage1アセンブルでは`ALIGN 256`の余剰
+  吸収により無傷(headroom 64byte、無変化)だったが、Comb限定の
+  トランポリン注入分だけ総バイト数の位相が異なるため、最初の
+  `ALIGN 256`境界(line 13524)の実スラック(実測でちょうど3byte)を
+  超過し、192byte(=256byteの追加ページ-64byteの後続吸収分)の
+  オーバーフローで`build_full_rom.py`が`game byte at unexpected
+  address c000`で失敗する事態になった。デバッグ用の一時マーカー
+  ラベル挿入+symtab直読みで各`ALIGN 256`点の実padding量を計測する
+  手法を確立し、この「3byteスラック」を数値として直接特定(以前の
+  推測ベースの記憶に頼らず再検証)。対応: (a)`CHECK_BULLET_VS_
+  ENEMY6`のゲートを`JR Z,CBVE6_NONE`+専用の`XOR A:RET`テールから
+  `RET Z`一本(ロード直後のAが0であることを利用し、テールを完全に
+  削除)へ圧縮、(b)`ENEMY6_HIT_ONE_SLOT`の死亡分岐を独自の
+  deactivate+decrementインラインコードから`ENEMY6_STEP_ONE`の
+  既存の`E6SO_EXIT`(全く同じ処理をIX相対で行いRETで終わる)への
+  `CALL`一本に統合(コード重複を排除しつつ、既存ラベルへの再入と
+  いう形のため専用サブルーチンを新設するより安い)、(c)無関係だが
+  同じ`ALIGN 256`境界より前にある安全な2箇所(`ADD_SCORE_COMMON`の
+  `SCORE+2`インクリメント、ボス死亡演出の`BOSS_EXPL_INDEX`
+  インクリメント)を、後続でAの値を使わないことを確認した上で
+  `LD A,(nn):INC A:LD(nn),A`(7byte)から`LD HL,nn:INC(HL)`(4byte)の
+  既知の省バイトイディオムへ書き換え。net additionを+16→+2byteまで
+  圧縮し、3byteスラックの範囲内に収めてComb ROMのビルドを復旧
+  (headroom 64byteに復元、standalone/Comb双方でmax addr完全一致)。
+- 自己検証していたテスト2件(`verify_enemy6_durability.py`の
+  `_regress_no_active_count_gate`、`verify_boss_spawn_trigger.py`の
+  ENEMY6_POOLブロックテスト)が、それぞれ「`JR Z`2byteパターン
+  決め打ち」「ENEMY6_POOLスロットを直接pokeするだけでブロックされる
+  という旧SCAN_POOL_ACTIVE前提」を持っていたため上記(a)(b)の変更で
+  一時的にFAILしたが、いずれも新しいコード形状(`RET Z`1byteパターン
+  /「スロット+`ENEMY6_ACTIVE_COUNT`両方をセットする必要がある」)に
+  合わせて修正し再PASSを確認(意図した仕様変更の反映であり退行では
+  ない)。
+- 全回帰: `verify_enemy6_durability.py` 27/`verify_mainloop_loop_
+  bounds.py` 29/`verify_boss_spawn_trigger.py` 24/`verify_boss_dfl_
+  clear.py` 10/`verify_player_damage.py` 60/`verify_stage1_bgm.py`
+  80/`verify_stage1_mission_screens.py` 87/`verify_enemy_bullets.py`
+  60/`verify_spawn_schedule_restart.py` 12/`verify_explosion_anim.py`
+  28、全てPASS。`verify_barrier.py`(別セッションのアップロード
+  ファイル参照切れ)・`verify_enemy3_init_safety_net.py`・`verify_
+  idcache_multiframe.py`/`verify_namebuf_regen.py`(ROWDATA1
+  KeyError)・`verify_vdp_wait_shrink.py`(OUT件数の期待値ズレ)の
+  失敗は、本Round着手前のHEADでも同一内容で再現することを直接確認
+  済みの既存の無関係な問題(本Roundの変更によるものではない)。
+  Stage2側`run_all.py`は本Roundでcombined_test.asmを一切変更して
+  いないため対象外。Comb ROM再ビルド・`verify_comb.py`全チェック
+  PASSの上、標準方針によりComb ROMのみ送付。
+- **保留・実機フィードバック待ち**: `CHECK_BULLET_VS_ENEMY6`の
+  短絡最適化が実機での体感速度(特に自機ショット連射時)にどの程度
+  効くかは実機フィードバック待ち。コメントアウト済みの`SPAWN_
+  SCHEDULE_CHECK_BOSSONLY_SAVED`ブロックの削除可否はユーザー未確認
+  のまま保留。

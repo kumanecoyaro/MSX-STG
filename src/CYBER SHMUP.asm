@@ -797,6 +797,18 @@ ENEMY6_SLOTS  EQU 32
 ENEMY6_STRUCT EQU 4             ; ACTIVE,ROW,COL,PHASE (COL = left column of the 2-wide glyph;
                                  ; PHASE = 0/1/2/3, index into ENEMY6_ANIM_CODES - advances
                                  ; one step every 1-cell move, see ENEMY6_STEP_ONE)
+; round135follow-up15("打つたびに当たってもないのに敵の処理をしてないか
+; 探しながら弾を飛ばすとかな"): CHECK_BULLET_VS_ENEMY6は、ENEMY3が既に
+; 持っているENEMY3_ACTIVE_COUNTのような「そもそも1体も居なければ即RET」
+; という短絡が無く、Enemy6が画面上に1体も居なくても毎回ENEMY6_SLOTS(32)
+; 全スロットのACTフラグを律儀に読みに行っていた実測ムダ(実測:
+; 空プールでも202命令/回、フル32体稼働時は1834命令/回 - 発射中の弾ごと・
+; 毎フレーム発生するため自機ショット時の重さに直結していたと判明)。
+; ENEMY3と全く同じ「専用カウンタで0体なら丸ごとスキップ」方式を追加。
+; 空きバイト0F285h(旧EBUZ_SPAWN_TICK_INDEX跡地、EBUZ_CUR_ROW_ADDRからの
+; 既存一括ゼロクリア範囲[42byte]に元々含まれているため新規INIT処理は
+; 不要)を再利用、新規RAM確保ゼロで実装。
+ENEMY6_ACTIVE_COUNT EQU 0F285h
 ; "ステージ1のエネミー6の耐久値4に"(2026-09-08) - 従来は被弾即死
 ; だったのを耐久値制へ変更(ENEMY4_HP/E_HPと同じ「hits to destroy」の
 ; 考え方)。ENEMY6_STRUCT自体は4バイトのまま拡張しない - 既存のROW(+1)/
@@ -5060,7 +5072,7 @@ ADD_SCORE_COMMON:
     ADD HL,DE
     LD (SCORE),HL
     JR NC,ASC_NO_CARRY
-    LD A,(SCORE+2) : INC A : LD (SCORE+2),A
+    LD HL,SCORE+2 : INC (HL)
 ASC_NO_CARRY:
     CALL SCORE_DISPLAY
     RET
@@ -6094,14 +6106,17 @@ CHECK_BOSS_TRIGGER:
     LD HL,ENEMY_POOL : LD B,ENEMY_SLOT_COUNT : LD DE,ENEMY_SLOT_SIZE
     CALL SCAN_POOL_ACTIVE
     RET NZ
-    ; B must be reloaded every call - SCAN_POOL_ACTIVE's own DJNZ always
-    ; consumes B down to 0 by the time it returns (whether via the
-    ; early RET NZ mid-scan or the final all-clear fall-through), so it
-    ; can never be assumed to still hold the previous slot count.
-    LD HL,ENEMY6_POOL : LD B,ENEMY6_SLOTS : LD DE,4
-    CALL SCAN_POOL_ACTIVE
+    ; round135follow-up15: ENEMY6は専用のENEMY6_ACTIVE_COUNT(CHECK_
+    ; BULLET_VS_ENEMY6と同じ短絡最適化)を持つため、ここも32スロットの
+    ; SCAN_POOL_ACTIVE呼び出しを経由せずO(1)で判定できる。
+    LD A,(ENEMY6_ACTIVE_COUNT)
+    OR A
     RET NZ
-    LD HL,ENEMY3_WAVE_POOL : LD B,ENEMY3_WAVE_SLOTS
+    ; DE must be set explicitly here now (was previously inherited from
+    ; the ENEMY6 SCAN_POOL_ACTIVE call's own LD DE,4 before that call was
+    ; replaced by the O(1) ENEMY6_ACTIVE_COUNT check above - DE no longer
+    ; happens to already be 4 at this point).
+    LD HL,ENEMY3_WAVE_POOL : LD B,ENEMY3_WAVE_SLOTS : LD DE,4
     CALL SCAN_POOL_ACTIVE
     RET NZ
     LD A,(E2A_ACTIVE)
@@ -7088,7 +7103,7 @@ BEU_DECODE_DONE:
     CALL SOUND_DESTROY
 
     LD A,(BOSS_EXPL_SPRIDX) : INC A : AND 7 : LD (BOSS_EXPL_SPRIDX),A
-    LD A,(BOSS_EXPL_INDEX) : INC A : LD (BOSS_EXPL_INDEX),A
+    LD HL,BOSS_EXPL_INDEX : INC (HL)
     LD A,2 : LD (BOSS_EXPL_TIMER),A
     RET
 
@@ -11963,6 +11978,7 @@ E6TS_FOUND:
     CALL ENEMY6_HP_ADDR
     LD A,ENEMY6_HP_INIT : LD (HL),A
     POP IX
+    LD HL,ENEMY6_ACTIVE_COUNT : INC (HL)
     JP ENEMY6_DRAW
 
 ; Input: IX = ENEMY6_POOL slot base. Output: HL = &ENEMY6_HP[slot index]
@@ -12030,6 +12046,7 @@ ENEMY6_STEP_ONE:
 E6SO_EXIT:
     XOR A
     LD (IX+0),A
+    LD HL,ENEMY6_ACTIVE_COUNT : DEC (HL)
     RET
 
 ; Input: IX = slot base (ROW at IX+1, COL at IX+2). Blanks this slot's
@@ -12133,7 +12150,7 @@ ENEMY6_HIT_ONE_SLOT:
     LD A,(HL) : DEC A : LD (HL),A
     POP DE
     JR NZ,E6H_DAMAGED
-    XOR A : LD (IX+0),A
+    CALL E6SO_EXIT            ; deactivate slot + ENEMY6_ACTIVE_COUNT-- (shares ENEMY6_STEP_ONE's exit tail, byte budget)
     PUSH DE                  ; D,E = hit X,Y for TRIGGER_EXPLOSION below - ENEMY6_ERASE clobbers DE
     CALL ENEMY6_ERASE
     POP DE
@@ -12153,11 +12170,16 @@ E6H_NO:
     RET
 
 ; Input: B = bullet col, C = bullet row. Output: A=1 if the bullet
-; destroyed an ENEMY6 instance, else 0. Only ENEMY6_SLOTS(32) slots to
-; scan, so (unlike ENEMY3/ENEMY_POOL) this skips an active-count
-; short-circuit. Preserves the caller's B,C across the whole scan
-; (its own loop reuses B as the DJNZ counter).
+; destroyed an ENEMY6 instance, else 0. ENEMY6_ACTIVE_COUNT (round135
+; follow-up15, same idiom as ENEMY3_ACTIVE_COUNT) bails out immediately
+; when nothing is alive anywhere, so the ENEMY6_SLOTS(32)-slot scan below
+; only actually runs while at least one instance is on screen. Preserves
+; the caller's B,C across the whole scan (its own loop reuses B as the
+; DJNZ counter).
 CHECK_BULLET_VS_ENEMY6:
+    LD A,(ENEMY6_ACTIVE_COUNT)
+    OR A
+    RET Z                     ; A is already 0 here = correct "no hit" value
     PUSH BC
     LD A,B : LD (ENEMY_HIT_COL),A
     LD A,C : LD (ENEMY_HIT_ROW),A

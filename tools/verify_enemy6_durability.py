@@ -164,6 +164,131 @@ check("INIT zero-clears the entire ENEMY6_HP array (all 32 bytes), not just "
       "slot0 - poisoned with 0xAA beforehand to catch a partial/short clear",
       all(z4.rd(ENEMY6_HP + i) == 0 for i in range(32)))
 
+# ============================================================
+# round135follow-up15: "打つたびに当たってもないのに敵の処理をしてないか
+# 探しながら弾を飛ばすとかな 普通は当たってからその先のルーチンで処理して
+# リターンだぞ" - CHECK_BULLET_VS_ENEMY6にENEMY3と同じENEMY6_ACTIVE_COUNT
+# 短絡ガードを追加した修正の検証。ENEMY6_ACTIVE_COUNTがSPAWN_E6/撃破/
+# 画面外退出の全経路で正しく増減し、0の間はENEMY6_SLOTS(32)スロットの
+# スキャン自体を完全にスキップすることを直接計測で確認する。
+# ============================================================
+ENEMY6_ACTIVE_COUNT = sym["ENEMY6_ACTIVE_COUNT"]
+CHECK_BULLET_VS_ENEMY6 = sym["CHECK_BULLET_VS_ENEMY6"]
+ENEMY6_STEP_ONE = sym["ENEMY6_STEP_ONE"]
+
+
+def call_counted(z, entry_addr, max_instr=200000):
+    """call_routineと同じだが、実際に何命令実行したかを返す(局所ルーチン
+    単体の実行コストを直接計測するため - tools/verify_mainloop_loop_
+    bounds.pyのcall_routine_countedと同じ手法)。"""
+    z.sp = 0xF000
+    z.wr(0xF000, 0x00); z.wr(0xF001, 0x00)
+    z.pc = entry_addr
+    n = 0
+    for _ in range(max_instr):
+        if z.pc == 0x0000:
+            return n
+        z.step()
+        n += 1
+    raise RuntimeError(f"{entry_addr:04X} did not return within {max_instr} instructions")
+
+
+z5 = fresh()
+z5.wr(ENEMY6_ACTIVE_COUNT, 0xAA)
+z5.pc = sym["INIT"]
+z5.wr(sym["MISSION_DELAY_3SEC"] + 1, 1)
+run_until_pc(z5, sym["MAINLOOP"], max_instr=2_000_000)
+check("INIT zero-clears ENEMY6_ACTIVE_COUNT (poisoned 0xAA beforehand)",
+      z5.rd(ENEMY6_ACTIVE_COUNT) == 0)
+
+z6 = fresh()
+spawn_enemy6(z6)
+check("SPAWN_E6 increments ENEMY6_ACTIVE_COUNT (0->1)",
+      z6.rd(ENEMY6_ACTIVE_COUNT) == 1)
+spawn_enemy6(z6, row_table_index=1, row=11)
+check("a second SPAWN_E6 increments it again (1->2)",
+      z6.rd(ENEMY6_ACTIVE_COUNT) == 2)
+
+slot0_row = z6.rd(ENEMY6_POOL + 1)
+slot0_col = z6.rd(ENEMY6_POOL + 2)
+z6.ix = ENEMY6_POOL
+z6.b = slot0_col
+z6.c = slot0_row
+for _ in range(ENEMY6_HP_INIT):
+    call_routine(z6, ENEMY6_HIT_ONE_SLOT)
+check("killing slot0 (HP reaches 0) decrements ENEMY6_ACTIVE_COUNT (2->1), "
+      "slot1 (the 2nd spawn) is untouched", z6.rd(ENEMY6_ACTIVE_COUNT) == 1)
+
+z7 = fresh()
+spawn_enemy6(z7)
+# 左端(col=0)まで手動で進め、ENEMY6_STEP_ONEが画面外退出で非活性化する
+# 経路(E6SO_EXIT)を直接踏む。
+z7.wr(ENEMY6_POOL + 2, 0)  # COL=0(次のSTEP_ONEで即E6SO_EXIT分岐)
+z7.ix = ENEMY6_POOL
+call_routine(z7, ENEMY6_STEP_ONE)
+check("reaching the left edge (ENEMY6_STEP_ONE's E6SO_EXIT path) also "
+      "decrements ENEMY6_ACTIVE_COUNT (1->0), not just the bullet-kill path",
+      z7.rd(ENEMY6_POOL) == 0 and z7.rd(ENEMY6_ACTIVE_COUNT) == 0)
+
+ENEMY6_SLOTS = sym["ENEMY6_SLOTS"]
+z8 = fresh()
+for i in range(ENEMY6_SLOTS):
+    z8.wr(ENEMY6_POOL + i * ENEMY6_STRUCT, 0)
+z8.wr(ENEMY6_ACTIVE_COUNT, 0)
+z8.b, z8.c = 15, 10
+n_empty = call_counted(z8, CHECK_BULLET_VS_ENEMY6)
+check(f"real measurement: with ENEMY6_ACTIVE_COUNT=0 (no Enemy6 on screen at "
+      f"all - the common case), CHECK_BULLET_VS_ENEMY6 short-circuits to a "
+      f"handful of instructions instead of scanning all {ENEMY6_SLOTS} slots "
+      f"every single bullet, every single frame (measured: {n_empty} "
+      "instructions, must be well under 20)",
+      n_empty < 20)
+
+z9 = fresh()
+for i in range(ENEMY6_SLOTS):
+    z9.wr(ENEMY6_POOL + i * ENEMY6_STRUCT, 1)
+z9.wr(ENEMY6_ACTIVE_COUNT, ENEMY6_SLOTS)
+z9.b, z9.c = 15, 10
+n_full = call_counted(z9, CHECK_BULLET_VS_ENEMY6)
+check(f"...but when Enemy6 instances really are on screen (count={ENEMY6_SLOTS}), "
+      f"the full scan still runs exactly as before (measured: {n_full} "
+      "instructions - this guard must never hide a real hit)",
+      n_full > 1500)
+
+
+def _regress_no_active_count_gate():
+    """CHECK_BULLET_VS_ENEMY6冒頭のENEMY6_ACTIVE_COUNTガード(LD A,(...):OR
+    A:RET Z)を無効化する自己検証 - 無効化すると、Enemy6が1体も居なくても
+    毎回ENEMY6_SLOTS(32)スロットのフルスキャンへ戻ってしまう(=修正前の
+    実測202命令/回のムダが再現する)ことを確認する。RET Z(オペコードC8h、
+    round135follow-up16でJR Z,CBVE6_NONEから1バイトへ切り詰め済み)自体を
+    NOP1個へ置き換え、ガードの判定結果に関わらず常にフルスキャン側へ
+    フォールスルーさせる(LD A,(nn)をXOR Aへ書き換える案は、A=0かつZフラグ
+    セットのままだと逆に"常に早期RET"を強制してしまい逆方向のバグになると
+    判明したため不採用 - 自己検証スクリプト自体のこの誤りも直接デバッグ
+    して発見)。"""
+    target = sym["CHECK_BULLET_VS_ENEMY6"]
+    pat = bytes([0x3A, ENEMY6_ACTIVE_COUNT & 0xFF, (ENEMY6_ACTIVE_COUNT >> 8) & 0xFF,
+                 0xB7, 0xC8])
+    idx = bytes(mem0).find(pat, target)
+    if idx < 0 or idx != target:
+        raise RuntimeError("CHECK_BULLET_VS_ENEMY6's active-count gate pattern not found "
+                            "at the expected entry point")
+    broken_mem = bytearray(mem0)
+    broken_mem[idx + 4] = 0x00  # RET Z opcode -> NOP
+    zz = Z80(broken_mem)
+    for i in range(ENEMY6_SLOTS):
+        zz.wr(ENEMY6_POOL + i * ENEMY6_STRUCT, 0)
+    zz.wr(ENEMY6_ACTIVE_COUNT, 0)
+    zz.b, zz.c = 15, 10
+    return call_counted(zz, CHECK_BULLET_VS_ENEMY6)
+
+
+check("自己検証: CHECK_BULLET_VS_ENEMY6冒頭のENEMY6_ACTIVE_COUNTガードを"
+      "無効化すると、プールが空でも修正前と同じ規模(200命令前後)の"
+      "フルスキャンへ戻る(=このガードが実際に効いていることの確認)",
+      _regress_no_active_count_gate() > 150)
+
 print(f"\n{len(ok)} passed, {len(fail)} failed")
 if fail:
     print("FAILURES:", fail)
