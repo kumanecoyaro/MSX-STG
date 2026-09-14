@@ -813,9 +813,9 @@ zg.wr(sym["EBUZ_SPAWN_TICK_INDEX"], sym["EBUZ_SPAWN_TICK_COUNT"])
 wr16(zg, sym["GAME_TICK"], 767)
 for _ in range(20):
     step_frame(zg)
-check("自己検証: EBUZ_SPAWN_TICK_INDEXが4(番兵、EBUZ_SPAWN_TICK_COUNT)"
+check("自己検証: EBUZ_SPAWN_TICK_INDEXが番兵(EBUZ_SPAWN_TICK_COUNT)"
       "に達した後は、tick768を跨いでもEBUZ_SPAWN_STAGEが0のまま"
-      "(5回目のスポーンは発生しない)",
+      "(テーブルに存在しない追加のスポーンは発生しない)",
       zg.rd(sym["EBUZ_SPAWN_STAGE"]) == 0)
 
 # ============================================================
@@ -942,6 +942,38 @@ check("自己検証: EBUZ_EXPL_UPDATE_QUEUEの呼び出しを無効化すると�
       "40フレーム経過してもキューが全く消化されない(COUNT=8のまま)"
       "=このRoundの新機構が実際に効いていることの確認",
       _regress_explosion_queue_not_drained() == 8)
+
+# ============================================================
+# 13. 5回目のトリガー(2026-09-14 follow-up4、"Tick950にもEbuzを"):
+#     EBUZ_SPAWN_TICK_TABLEに950を追加、COUNTを4→5に拡張。
+# ============================================================
+check("EBUZ_SPAWN_TICK_TABLEの5番目(index4)の要素がtick950",
+      (mem0[sym["EBUZ_SPAWN_TICK_TABLE"] + 8] |
+       (mem0[sym["EBUZ_SPAWN_TICK_TABLE"] + 9] << 8)) == 950)
+check("EBUZ_SPAWN_TICK_COUNTが5", sym["EBUZ_SPAWN_TICK_COUNT"] == 5)
+
+zh = fresh()
+boot(zh)
+zh.wr(sym["EBUZ_SPAWN_TICK_INDEX"], 4)
+wr16(zh, sym["GAME_TICK"], 949)
+run_until(zh, lambda z: game_tick(z) == 950, max_frames=9)
+check("index4からtick950到達と同フレームで5回目のチェーンが開始し、"
+      "SLOT0に1体目が再スポーンする",
+      zh.rd(sym["EBUZ_SPAWN_STAGE"]) == 1 and
+      srd(zh, S0, "ACT") == sym["EBUZ_ST_ENTER"] and
+      srd(zh, S0, "CENTER_ROW") == sym["EBUZ_ROW_INST1"])
+check("5回目トリガー後、EBUZ_SPAWN_TICK_INDEXが5(番兵)になる",
+      zh.rd(sym["EBUZ_SPAWN_TICK_INDEX"]) == 5)
+
+zi = fresh()
+boot(zi)
+zi.wr(sym["EBUZ_SPAWN_TICK_INDEX"], sym["EBUZ_SPAWN_TICK_COUNT"])
+wr16(zi, sym["GAME_TICK"], 949)
+for _ in range(20):
+    step_frame(zi)
+check("自己検証: index=5(番兵)に達した状態でtick950を跨いでも、"
+      "6回目のスポーンは発生しない(EBUZ_SPAWN_STAGEが0のまま)",
+      zi.rd(sym["EBUZ_SPAWN_STAGE"]) == 0)
 
 print()
 print(f"{len(ok)} passed, {len(fail)} failed")

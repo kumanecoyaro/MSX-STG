@@ -16482,6 +16482,41 @@ HP24化+8セル死亡演出(PLAYER_EXPL_POOL流用)+ROM容量危機の解決
 - **保留・実機フィードバック待ち**: 5秒への短縮の実プレイでの
   難易度感・ペーシングは実機フィードバック待ち。
 
+## Round135 follow-up2: Tick950にもEbuzチェーンを追加(2026-09-14、
+完了済み・実機フィードバック待ち)
+
+- ユーザー指示: "Tick950にもEbuzを"。`EBUZ_SPAWN_TICK_TABLE`
+  (100,256,512,768の4回トリガー)へ950を追加し5回目のトリガーとした。
+  `EBUZ_SPAWN_TICK_COUNT`を4→5に変更。トリガー機構自体
+  (`EBUZ_CHECK_CHAIN_TRIGGERS`が呼ぶ`EBUZ_SPAWN_CHAIN_START`)は
+  Round130-133で実装済みのものをそのまま使い、テーブルに1エントリ
+  追加するだけで対応(新規ロジック不要)。950はスケジュールの最終
+  entry(boss、tick992)より前かつ直近の敵配置密集帯(tick943-943)より
+  後の間隔。
+- `verify_ebuz_integration.py`に新規セクション(5件)を追加: テーブル
+  5番目の要素が950であること・COUNTが5であること・index4から
+  tick950到達で実際に5回目のチェーンが開始しSLOT0に1体目が正しく
+  スポーンすること・トリガー後にINDEXが5(番兵)になること・番兵到達後は
+  tick950を跨いでも6回目のスポーンが発生しないことを検証(103→108件)。
+  全てPASS。
+- 全回帰: `verify_ebuz_integration.py`108・他のStage1既存検証群
+  (`verify_enemy_bullets.py`60/`verify_player_damage.py`60/
+  `verify_stage1_bgm.py`80/`verify_stage1_mission_screens.py`87/
+  `verify_enemy6_durability.py`19/`verify_explosion_anim.py`28/
+  `verify_boss_dfl_clear.py`10/`verify_spawn_schedule_restart.py`12/
+  `verify_stage1_boss_score.py`7/`verify_stage1_hud_movement.py`8/
+  `verify_boss_pod_bullet_aim.py`17/`verify_sound_duty_cycle.py`54/
+  `verify_cell_loop_hoist.py`3)全てPASS。step_frame()通し
+  プレイシミュレーションで、Schedule_1.json(476エントリ)全消化+
+  Ebuz5回のトリガー(tick950を含む)を経ても最終的にindex=476へ
+  正常到達することを確認(生存時間短縮[follow-up1]の効果もあり
+  13200フレームで完走、follow-up1の300フレーム/回×5=1500フレーム分の
+  凍結を含めても以前[follow-up1前、17080フレーム]より短時間)。
+  Comb ROM再ビルド・`verify_comb.py`全チェックPASSの上、標準方針
+  によりComb ROMのみ送付。
+- **保留・実機フィードバック待ち**: tick950という配置・5回目トリガー
+  追加後のペーシングは実機フィードバック待ち。
+
 ## Round135: Stage1スケジュール再差し替え(Schedule_1.json、476エントリ)
 (2026-09-14、完了済み・実機フィードバック待ち)
 

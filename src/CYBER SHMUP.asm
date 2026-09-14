@@ -12086,7 +12086,8 @@ EBUZ_ST_EXIT   EQU 5   ; 右へ移動して画面外へ消える(本体4行)
 ; EBUZ_ANY_ACTIVEがアクティブな間凍結される設計のため、1回のチェーン
 ; (1体目→2体目→3体目)が完全に終わるまで次のtickには絶対に到達しない
 ; - よって各トリガーは独立した「新しいチェーンの開始」として扱える。
-EBUZ_SPAWN_TICK_COUNT    EQU 4
+; (2026-09-14 follow-up4、"Tick950にもEbuzを"): 4→5。
+EBUZ_SPAWN_TICK_COUNT    EQU 5
 ; (2026-09-14 follow-up、"耐久値24に"): 12→24。全インスタンス共通。
 EBUZ_HP_INIT             EQU 24
 ; (2026-09-14 follow-up3、"Ebuz生存時間を5秒に"): 900(15秒)→300(5秒)。
@@ -12204,7 +12205,7 @@ EBUZ_EXPL_POS_Y       EQU 0F284h
 EBUZ_EXPL_QUEUE_CAPACITY EQU 16   ; 2の冪(ENQUEUE/UPDATE_QUEUEの容量チェック用)
 EBUZ_EXPL_SPAWN_INTERVAL EQU 4    ; 未調整の初期値、8セル連続ポップの間隔(フレーム)
 ; (2026-09-14follow-up2、"スポーンは他に、256、512、768の計4回に"):
-; EBUZ_SPAWN_TICK_TABLEの次に使う要素番号(0-3、4=4回とも消化済み)。
+; EBUZ_SPAWN_TICK_TABLEの次に使う要素番号(0-4、5=5回とも消化済み)。
 EBUZ_SPAWN_TICK_INDEX EQU 0F285h
 
 EBUZ_SLOT0 EQU 0F286h
@@ -12837,9 +12838,10 @@ EBUZ_SPAWN_INSTANCE:
     CALL EBUZ_BODY2_WRITE
     RET
 
-; GAME_TICKがEBUZ_SPAWN_TICK_TABLEの各要素(100,256,512,768)に達する
+; GAME_TICKがEBUZ_SPAWN_TICK_TABLEの各要素(100,256,512,768,950)に達する
 ; たび毎回呼ばれる(MAINLOOP参照、2026-09-14follow-up2で単発トリガーから
-; 4回トリガーへ拡張)。1体目をSLOT0(中央行EBUZ_ROW_INST1)へスポーンし
+; 4回トリガーへ拡張、2026-09-14follow-up4で5回目[tick950]を追加)。
+; 1体目をSLOT0(中央行EBUZ_ROW_INST1)へスポーンし
 ; EBUZ_SPAWN_STAGEを1にする(前回のチェーンが3[終端]のままでも無条件に
 ; 上書きし新しいチェーンを開始する)。2体目・3体目のスポーンは
 ; EBUZ_CHECK_CHAIN_TRIGGERSが毎フレーム進行させる("2体目のスポーンは
@@ -13249,9 +13251,9 @@ PDCEZ_SL_HIT:
     LD A,1
     RET
 
-; 4回分のチェーン開始トリガーtick(EBUZ_SPAWN_TICK_INDEXでindex)。
+; 5回分のチェーン開始トリガーtick(EBUZ_SPAWN_TICK_INDEXでindex)。
 EBUZ_SPAWN_TICK_TABLE:
-    DW 100,256,512,768
+    DW 100,256,512,768,950
 
 EBUZ_ROW_ABCD:
     DB EBUZ_CODE_A,EBUZ_CODE_B,EBUZ_CODE_C,EBUZ_CODE_D
