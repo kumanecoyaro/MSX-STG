@@ -326,6 +326,50 @@ check("自己検証: MAINLOOPのCALL CHECK_BOSS_TRIGGERを無効化すると、"
       "(=このフックが実際に効いていることの確認)",
       _regress_no_check_boss_trigger() == 0)
 
+# ============================================================
+# 9. round135follow-up16("ボスを別バンクに移してくれ だいぶ削減出来る
+#    はずだ"): BOSS_PATTERNS(ボス本体64x64グラフィック、512byte)は
+#    ソースからDB展開を削除し、Titleが起動時に共有バンク(Comb bank6)
+#    からRAM(BOSS_PATTERNS EQU 0CD8Dh)へ事前コピーする方式へ変更した。
+#    Stage1単体のこのテストはTitleを経由しないため、実機同様に
+#    BOSS_SPAWN直前でRAMへ実データをpokeした上で、BOSS_SPAWN自身の
+#    LDIRVM(RAM→VRAM、宛先192*8~255*8)が正しく機能することだけを
+#    検証する(=RAMコピー先アドレス・LDIRVMの転送先アドレス/バイト数
+#    が今回の変更後も一致していることの確認)。
+# ============================================================
+with open(os.path.join(REPO_ROOT, 'tools', 'bgm_data', 'stage1_boss_chardata.bin'), 'rb') as f:
+    _real_boss_patterns = f.read()
+assert len(_real_boss_patterns) == 512
+
+z9 = fresh()
+boot(z9)
+arm_ready(z9)
+z9.wr(BOSS_STATE, 0)
+BOSS_PATTERNS = sym["BOSS_PATTERNS"]
+for i, b in enumerate(_real_boss_patterns):
+    z9.wr(BOSS_PATTERNS + i, b)
+call_routine(z9, CHECK_BOSS_TRIGGER)
+check("BOSS_SPAWN発火時、BOSS_PATTERNS(RAM、0CD8Dh)の実データが"
+      "VRAM上のcode192-255パターンジェネレータ領域(192*8~256*8)へ"
+      "そのままLDIRVMされる(RAM移設後もボス本体グラフィックが正しく"
+      "表示されることの確認)",
+      bytes(z9.vram[192 * 8:192 * 8 + 512]) == _real_boss_patterns)
+
+# ---- self-verification: poison BOSS_PATTERNS RAM with different bytes ----
+# ---- and confirm the VRAM check above would actually detect a mismatch ----
+z10 = fresh()
+boot(z10)
+arm_ready(z10)
+z10.wr(BOSS_STATE, 0)
+for i in range(512):
+    z10.wr(BOSS_PATTERNS + i, (i * 37 + 5) & 0xFF)  # deliberately NOT the real data
+call_routine(z10, CHECK_BOSS_TRIGGER)
+check("自己検証: BOSS_PATTERNS RAMを実データと異なる内容で汚染すると、"
+      "VRAM上の対応領域もその異なる内容になる(=上の一致チェックが"
+      "実際にRAM内容の違いを検出できることの確認)",
+      bytes(z10.vram[192 * 8:192 * 8 + 512]) != _real_boss_patterns and
+      bytes(z10.vram[192 * 8:192 * 8 + 512]) == bytes((i * 37 + 5) & 0xFF for i in range(512)))
+
 print()
 print(f"{len(ok)} passed, {len(fail)} failed")
 if fail:

@@ -37,6 +37,10 @@
     "SASAPI_QUADS": 5210,
     "SASAPI_QUADS_L": 5722
   },
+  "STAGE1_BOSS_CHARDATA": {
+    "bank_offset": 15862,
+    "len": 512
+  },
   "STAGE_CLEAR": {
     "bank_offset": 4891,
     "chA_len": 79,

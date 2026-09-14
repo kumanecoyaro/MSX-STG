@@ -662,6 +662,10 @@ BGM_ENV_LINEAR_TABLE:
 ; (2026-09-08、"ではゲームオーバーBGM...これで組み込んでくれ"): 同じ
 ; 理由でGAME_OVERジングル(chB35byte+chC15byte)もここでコピー。src/
 ; CYBER SHMUP.asmのBGM_GAMEOVER_CHB/CHC_BASEと一致させること。
+; (round135follow-up16、"ボスを別バンクに移してくれ だいぶ削減出来る
+; はずだ"): 同じ理由でStage1ボス本体グラフィック(BOSS_PATTERNS、
+; 512byte)もここでコピー。src/CYBER SHMUP.asmのBOSS_PATTERNSと
+; 一致させること。
 INIT_BGM:
     LD A,2                       ; standalone bgm-dataバンク(Combでは6へパッチ)
     LD (7000h),A
@@ -670,6 +674,7 @@ INIT_BGM:
     LD HL,08E32h : LD DE,0C910h : LD BC,032Eh : LDIR  ; TryZ chB+chC(Stage1ボス用)
     LD HL,0931Bh : LD DE,0CC42h : LD BC,010Dh : LDIR  ; StageClear chB+chC+chA(Stage1ステージクリア用)
     LD HL,09428h : LD DE,0CD5Bh : LD BC,032h : LDIR   ; GAME_OVER chB+chC(Stage1ゲームオーバー用)
+    LD HL,0BDF6h : LD DE,0CD8Dh : LD BC,0200h : LDIR  ; BOSS_PATTERNS(Stage1ボス本体グラフィック用)
     LD A,1                       ; このファイル自身のbank1(Comb/standaloneとも1のまま)
     LD (7000h),A
 

@@ -16794,3 +16794,77 @@ ENEMY6のO(1)短絡最適化(2026-09-14、完了済み)
   すり抜けを解消するかは次回フィードバック待ち。ボス撃破後(ステージ
   クリア)にスケジュールを再開する必要は無いと判断(ステージが終了
   するため)、意図的に対応していない。
+
+## Round136 follow-up2: Stage1ボス本体グラフィックをComb共有バンクへ
+移設(ROM容量576byte確保)(2026-09-14、完了済み・実機フィードバック待ち)
+
+- ユーザー指示: "で、もしROM容量が足りないならボスを別バンクに移して
+  くれ だいぶ削減出来るはずだ"(round136で3byteスラック問題を繰り返し
+  踏んでいたことを受けての提案)。
+- **方式選定**: Stage2のRound64(Sasapiキャラデータをbank6へ移設)と
+  同じ発想だが、Stage1は(Round40の判断で)自分ではバンク切替を一切
+  行わない設計を維持している。本物のバンク切替方式にすると、Stage1用
+  `tools/verify_*.py`(約15本、全てフラット64KBメモリ前提の作り込み)
+  を軒並み書き換える大改修になるため、AskUserQuestionでユーザーに
+  選択を仰いだ結果**「TitleがStage1のRAMへ起動時に事前コピーする」
+  方式(既にBGM/TryZ/各種ジングルで実績あり)**を選択(ROM 512byte
+  節約と引き換えにRAM 512byte消費、Stage1側は一切バンク切替をしない
+  ためテスト書き換えは最小限で済む)。
+- **対象データの絞り込み**: 当初BOSS_PATTERNS(ボス本体64x64、512byte)
+  +BOSS_HEX_PATTERN/BOSS_ORBIT_PATTERN/DFL_BULLET_PATTERN/EXPLOSION_
+  PATTERN(各32byte、計128byte)の640byte全部を移設候補としたが、
+  実際の移設先(Comb bank6、BGM/TryZ/StageClear/GameOver/ENDING_IMAGE
+  等が既に相乗り済み)の実際の空き容量が522byteしかなく640byte全部は
+  入らないと判明、512byteのBOSS_PATTERNS単体(削減効果の大部分を占め、
+  522byte以内に収まる)だけを移設する現実的な落とし所とした。
+  BOSS_HEX_PATTERN等の4つ(計128byte)は引き続きStage1自身のROMに残る。
+  なお、いずれもBOSS_SPAWN内のLDIRVM呼び出し(ボス出現の瞬間に1回だけ
+  VRAMへ転送)以外からは一切参照されない「一度きりロード専用データ」
+  であることを事前にgrepで確認済み(CPUが直接読み返す使われ方は
+  していない、Stage2のSASAPI_CHARDATAと同じ条件)。
+- **実装**: `src/CYBER SHMUP.asm`のBOSS_PATTERNS(512byteのDB羅列)を
+  削除し、`BOSS_PATTERNS EQU 0CD8Dh`(Stage1が既存で使っている
+  0xC000-0xCD8D台のBGM/ジングル用RAM領域のすぐ後ろ、STACKTOP
+  [0xF380]までまだ1500byte超の余裕がある安全な位置)というRAM
+  アドレスへ置き換えるだけで、BOSS_SPAWN側のLDIRVM呼び出し
+  (`LD HL,BOSS_PATTERNS:...`)はソース変更不要(定数の指す先が
+  ROM→RAMに変わるだけ)。生バイトは一度だけASMのDB羅列から機械的に
+  抽出しキャッシュした`tools/bgm_data/stage1_boss_chardata.bin`
+  (512byte、git管理)としてbank6へ埋め込み(mido/MIDIファイル不要 -
+  このセッションには`.mid`ソースファイル自体が無く`bgm_bank_gen.py`
+  の`_generate()`をフル再実行できなかったため、既存のキャッシュ済み
+  `bgm_bank.bin`/`bgm_layout.json`へ直接500byte強を追記するピンポイント
+  パッチで対応、追記位置が既存の0xFFパディング領域であることを検証
+  した上で実施)。`tools/title_screen/title_test.asm`のINIT_BGMに
+  既存4行と全く同じ形の5行目のLDIRを追加(`build_full_rom.py`の
+  TITLE_BGM_BANKSELECT_ANCHOR/PATCHも同じ行を追加して同期)。
+- **検証**: `tools/verify_boss_spawn_trigger.py`に新規2件(実データを
+  RAMへpokeした状態でBOSS_SPAWN実行→VRAM上のcode192-255パターン
+  ジェネレータ領域が実データと完全一致すること、および自己検証として
+  異なるダミーデータをpokeした場合はVRAM側もそのダミー内容になる
+  ことの確認)、`tools/bankswitch_poc/verify_comb.py`にTryZ/StageClear/
+  GAME_OVERと同型のRAMコピー一致検証を追加。スクラッチスクリプトで
+  実際にBOSS_SPAWN→BOSS_MAPの5x16グリッドをVRAMへ展開→PNGレンダリング
+  し、ボス本体(リング状の周回ポッド構造)が正しい絵柄で表示される
+  ことを視覚確認済み(実装前にBOSS_PATTERNSが空のVRAM書き込み事故等が
+  無いことの最終確認)。
+- **効果**: standalone Stage1アセンブルのheadroom 64byte→**576byte**
+  (512byte増、Comb限定の同時作業だった round136 の3byteスラック問題
+  を大幅に解消 - 以後しばらくの新機能追加はこの512byteの余裕内で
+  安全に収まる見込み)。ROM本体には一切変化なし(データの物理的な
+  配置場所が変わっただけ)。
+- 全回帰: `verify_boss_spawn_trigger.py` 26/`verify_boss_dfl_clear.py`
+  10/`verify_boss_pod_bullet_aim.py` 17/`verify_spawn_schedule_
+  restart.py` 12/`verify_ebuz_integration.py` 109/`verify_boss_
+  schedule_gate.py` 4/`verify_enemy6_durability.py` 27/`verify_
+  mainloop_loop_bounds.py` 29/`verify_player_damage.py` 60/`verify_
+  stage1_bgm.py` 80/`verify_stage1_mission_screens.py` 87/`verify_
+  enemy_bullets.py` 60/`verify_explosion_anim.py` 28、`title_test.py`
+  84、全てPASS。Comb ROM再ビルド・`verify_comb.py`全チェックPASS
+  (新規BOSS_PATTERNS RAMコピー検証含む)の上、標準方針によりComb
+  ROMのみ送付。
+- **保留・実機フィードバック待ち**: 実機でボス本体グラフィックが
+  従来通り正しく表示されるかは次回フィードバック待ち(エミュレータ
+  レンダリングでは正常確認済み)。BOSS_HEX_PATTERN等の残り128byteの
+  追加移設は、Comb bank6側にさらに空きが生まれた場合の将来課題として
+  保留。

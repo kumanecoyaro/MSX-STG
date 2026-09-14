@@ -300,6 +300,33 @@ def _generate():
     }
     blob += img_compressed
 
+    # STAGE1_BOSS_CHARDATA(round135follow-up16、"ボスを別バンクに移して
+    # くれ だいぶ削減出来るはずだ"): src/CYBER SHMUP.asmのBOSS_PATTERNS
+    # (ボス本体64x64、512byte)はBOSS_SPAWN内の1回のLDIRVM呼び出しでしか
+    # 参照されない(ボス出現の瞬間に1回だけVRAMへ転送、以後CPUから直接
+    # 読まれることはない)ため、Stage2のSASAPI_CHARDATAと全く同じ
+    # 「一度きりのロード専用データ」条件を満たす。BOSS_HEX_PATTERN/
+    # BOSS_ORBIT_PATTERN/DFL_BULLET_PATTERN/EXPLOSION_PATTERN(各32byte、
+    # 計128byte)も条件的には同様に移設可能だが、このバンクの実際の
+    # 空き容量(ENDING_IMAGE追加後で522byte)が640byte全部には足りず
+    # (522<640)、512byteのBOSS_PATTERNS単体(522byte以内に収まる、
+    # 削減効果の大部分を占める)だけを移設する現実的な落とし所とした。
+    # ただしStage1は(Round40の判断により)自分ではバンク切替を一切
+    # 行わない設計を維持するため、Stage2方式(実行時にwindow Bを一時
+    # 切替)ではなく、Title起動時にこのバンクからStage1専用RAM(src/
+    # CYBER SHMUP.asmのBOSS_PATTERNS_RAM、0xCD8D)へ事前コピーする既存の
+    # BGM/TryZ/ジングル方式をそのまま踏襲する。生バイトはASMのDB羅列
+    # から一度だけ機械的に抽出しキャッシュしたtools/bgm_data/
+    # stage1_boss_chardata.bin(512byte)をそのまま埋め込む(mido不要)。
+    with open(os.path.join(HERE, "stage1_boss_chardata.bin"), "rb") as f:
+        stage1_boss_chardata = f.read()
+    assert len(stage1_boss_chardata) == 512
+    layout["STAGE1_BOSS_CHARDATA"] = {
+        "bank_offset": len(blob),
+        "len": len(stage1_boss_chardata),
+    }
+    blob += stage1_boss_chardata
+
     assert len(blob) <= BANK_SIZE, f"BGM data ({len(blob)} bytes) exceeds one 16KB bank"
     bank = bytes(blob) + bytes([0xFF] * (BANK_SIZE - len(blob)))
     return bank, layout

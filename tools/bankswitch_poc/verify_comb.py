@@ -214,6 +214,19 @@ assert [mem.flat[_go_chC_ram + i] for i in range(len(_go_chC))] == list(_go_chC)
     "title's own BGM RAM copy: GAME_OVER chC mismatch (Stage1 game-over jingle)"
 print("title's own BGM RAM copy of GAME_OVER (Stage1 game-over jingle) verified byte-correct")
 
+# (round135follow-up16、"ボスを別バンクに移してくれ だいぶ削減出来る
+# はずだ"): TitleはStage1のボス本体グラフィック(BOSS_PATTERNS、512byte)
+# もBGM/TryZ/ジングルと同じ要領で別アドレスへ一度だけコピーする。
+# Stage1側の固定アドレス(src/CYBER SHMUP.asmのBOSS_PATTERNS)と
+# 一致することを確認。
+_bp = bgm_layout["STAGE1_BOSS_CHARDATA"]
+_bp_start = _bp["bank_offset"]
+_bp_data = bgm_bank[_bp_start:_bp_start + _bp["len"]]
+_bp_ram = gsym["BOSS_PATTERNS"]
+assert [mem.flat[_bp_ram + i] for i in range(len(_bp_data))] == list(_bp_data), \
+    "title's own BGM RAM copy: BOSS_PATTERNS mismatch (Stage1 boss body graphics)"
+print("title's own RAM copy of BOSS_PATTERNS (Stage1 boss body graphics) verified byte-correct")
+
 # (2026-09-12、実機フィードバック"アニメが指示と違う 流れは まず1から
 # 6枚目を3フレ切り替え で7枚目の08を15フレ表示 ここまでを3ループ
 # その後09を30フレ 11を90フレ表示してMission 1表示"、続けて2026-09-13

@@ -14127,79 +14127,22 @@ LUT_DY:
     DB D8h,D7h,D6h,D5h,D4h,D3h,D2h,D1h,D1h,D0h,CFh,CEh,CEh,CDh,CCh,CCh
     DB CBh,CBh,CAh,CAh,C9h,C9h,C9h,C8h,C8h,C8h,C8h,C7h,C7h,C7h,C7h,C7h
 
-BOSS_PATTERNS:
-; group24 codes 192-199 color=('G', 'B') byte=E4h
-    DB 00h,00h,01h,03h,07h,0Fh,1Ch,30h    ; code 192 tile#0
-    DB 7Eh,FFh,FFh,FFh,FFh,FFh,7Fh,1Fh    ; code 193 tile#1
-    DB 00h,00h,80h,C0h,E0h,F0h,F8h,FCh    ; code 194 tile#2
-    DB 0Fh,0Fh,17h,27h,27h,43h,43h,81h    ; code 195 tile#5
-    DB FEh,FEh,FFh,FFh,FFh,FFh,FFh,FFh    ; code 196 tile#6
-    DB 00h,00h,00h,00h,80h,80h,80h,C0h    ; code 197 tile#7
-    DB 81h,81h,00h,00h,00h,00h,00h,00h    ; code 198 tile#10
-    DB FFh,FFh,FFh,FFh,7Fh,7Fh,7Fh,7Fh    ; code 199 tile#11
-; group25 codes 200-207 color=('G', 'B') byte=E4h
-    DB C0h,E0h,E0h,E0h,E0h,F0h,F0h,F0h    ; code 200 tile#12
-    DB 3Fh,3Fh,3Fh,3Fh,1Fh,1Fh,1Fh,1Fh    ; code 201 tile#15
-    DB F0h,F8h,F8h,F8h,F8h,F8h,F8h,F8h    ; code 202 tile#16
-    DB 1Fh,0Fh,0Fh,0Fh,0Fh,0Fh,0Fh,0Fh    ; code 203 tile#19
-    DB F8h,F8h,F8h,F8h,F8h,FCh,FCh,FCh    ; code 204 tile#20
-    DB 07h,07h,07h,07h,07h,07h,07h,07h    ; code 205 tile#24
-    DB FCh,FCh,FCh,FCh,FCh,FCh,FCh,FCh    ; code 206 tile#25
-    DB 07h,07h,07h,03h,03h,03h,03h,03h    ; code 207 tile#29
-; group26 codes 208-215 color=('G', 'B') byte=E4h
-    DB FEh,FEh,FEh,FEh,FEh,FEh,FEh,FEh    ; code 208 tile#30
-    DB 03h,03h,03h,03h,03h,03h,03h,03h    ; code 209 tile#33
-    DB 03h,03h,03h,03h,03h,07h,07h,07h    ; code 210 tile#37
-    DB 0Fh,0Fh,0Fh,0Fh,0Fh,0Fh,0Fh,1Fh    ; code 211 tile#40
-    DB FCh,FCh,FCh,F8h,F8h,F8h,F8h,F8h    ; code 212 tile#41
-    DB 1Fh,1Fh,1Fh,1Fh,3Fh,3Fh,3Fh,3Fh    ; code 213 tile#44
-    DB F8h,F8h,F8h,F8h,F8h,F8h,F8h,F0h    ; code 214 tile#45
-    DB 00h,00h,00h,00h,00h,00h,81h,81h    ; code 215 tile#48
-; group27 codes 216-223 color=('G', 'B') byte=E4h
-    DB 7Fh,7Fh,7Fh,7Fh,FFh,FFh,FFh,FFh    ; code 216 tile#49
-    DB F0h,F0h,F0h,E0h,E0h,E0h,E0h,C0h    ; code 217 tile#50
-    DB 81h,43h,43h,27h,27h,17h,0Fh,0Fh    ; code 218 tile#53
-    DB FFh,FFh,FFh,FFh,FFh,FFh,FEh,FEh    ; code 219 tile#54
-    DB C0h,80h,80h,80h,00h,00h,00h,00h    ; code 220 tile#55
-    DB 30h,1Ch,0Fh,07h,03h,01h,00h,00h    ; code 221 tile#56
-    DB 1Fh,7Fh,FFh,FFh,FFh,FFh,FFh,7Eh    ; code 222 tile#57
-    DB FCh,F8h,F0h,E0h,C0h,80h,00h,00h    ; code 223 tile#58
-; group28 codes 224-231 color=('K', 'B') byte=14h
-    DB 00h,00h,00h,00h,01h,01h,01h,03h    ; code 224 tile#3
-    DB 7Fh,7Fh,FFh,FFh,FFh,FFh,FFh,FFh    ; code 225 tile#4
-    DB 03h,07h,07h,07h,07h,0Fh,0Fh,0Fh    ; code 226 tile#8
-    DB FFh,FFh,FEh,FEh,FCh,FCh,FCh,FCh    ; code 227 tile#9
-    DB 0Fh,1Fh,1Fh,1Fh,1Fh,1Fh,3Fh,3Fh    ; code 228 tile#13
-    DB FCh,FCh,FCh,FCh,F8h,F8h,F8h,F8h    ; code 229 tile#14
-    DB 3Fh,3Fh,3Fh,3Fh,3Fh,7Fh,7Fh,7Fh    ; code 230 tile#17
-    DB F8h,F0h,F0h,F0h,F0h,F0h,F0h,F0h    ; code 231 tile#18
-; group29 codes 232-239 color=('K', 'B') byte=14h
-    DB 7Fh,7Fh,7Fh,7Fh,7Fh,7Fh,7Fh,7Fh    ; code 232 tile#21
-    DB E0h,E0h,E0h,E0h,E0h,E0h,E0h,E0h    ; code 233 tile#22
-    DB FFh,FFh,FFh,FFh,FFh,FFh,FFh,FFh    ; code 234 tile#26
-    DB E0h,E0h,E0h,C0h,C0h,C0h,C0h,C0h    ; code 235 tile#27
-    DB C0h,C0h,C0h,C0h,C0h,C0h,C0h,C0h    ; code 236 tile#31
-    DB C0h,C0h,C0h,C0h,C0h,E0h,E0h,E0h    ; code 237 tile#35
-    DB 7Fh,7Fh,7Fh,3Fh,3Fh,3Fh,3Fh,3Fh    ; code 238 tile#38
-    DB F0h,F0h,F0h,F0h,F0h,F0h,F0h,F8h    ; code 239 tile#39
-; group30 codes 240-247 color=('K', 'B') byte=14h
-    DB 3Fh,3Fh,1Fh,1Fh,1Fh,1Fh,1Fh,0Fh    ; code 240 tile#42
-    DB F8h,F8h,F8h,F8h,FCh,FCh,FCh,FCh    ; code 241 tile#43
-    DB 0Fh,0Fh,0Fh,07h,07h,07h,07h,03h    ; code 242 tile#46
-    DB FCh,FCh,FCh,FCh,FEh,FEh,FFh,FFh    ; code 243 tile#47
-    DB 03h,01h,01h,01h,00h,00h,00h,00h    ; code 244 tile#51
-    DB FFh,FFh,FFh,FFh,FFh,FFh,7Fh,7Fh    ; code 245 tile#52
-    DB 00h,00h,00h,00h,00h,00h,00h,00h    ; code 246 (unused)
-    DB 00h,00h,00h,00h,00h,00h,00h,00h    ; code 247 (unused)
-; group31 codes 248-255 color=('R', 'B') byte=84h
-    DB 00h,00h,00h,00h,00h,18h,38h,78h    ; code 248 tile#23
-    DB 78h,D8h,DCh,9Ch,8Ch,0Eh,0Eh,0Eh    ; code 249 tile#28
-    DB 0Fh,3Fh,E7h,07h,07h,C7h,77h,1Fh    ; code 250 tile#32
-    DB 07h,07h,0Fh,0Eh,8Eh,8Ch,DCh,D8h    ; code 251 tile#34
-    DB 78h,78h,30h,30h,00h,00h,00h,00h    ; code 252 tile#36
-    DB 00h,00h,00h,00h,00h,00h,00h,00h    ; code 253 (unused)
-    DB 00h,00h,00h,00h,00h,00h,00h,00h    ; code 254 (unused)
-    DB 00h,00h,00h,00h,00h,00h,00h,00h    ; code 255 (unused)
+BOSS_PATTERNS EQU 0CD8Dh  ; 512byte, Titleが起動時にここへ埋める
+; round135follow-up16("ボスを別バンクに移してくれ だいぶ削減出来る
+; はずだ"): ボス本体64x64のグラフィックデータ(旧: ここに直接DB展開
+; されていた512byte)は、BOSS_SPAWN内の1回のLDIRVM呼び出しでしか
+; 参照されない(ボス出現の瞬間に1回だけVRAMへ転送、以後CPUから直接
+; 読まれることはない)ため、Stage2のSASAPI_CHARDATA(round64)と全く
+; 同じ「一度きりのロード専用データ」条件を満たす。ただしStage1は
+; (Round40の判断により)自分ではバンク切替を一切行わない設計を維持
+; するため、Stage2方式(実行時にwindow Bを一時切替)ではなく、Title
+; 起動時にBGM/TryZ/ジングルと同じ「共有バンク(Comb bank6、tools/
+; bgm_data/bgm_bank_gen.pyのSTAGE1_BOSS_CHARDATA)からStage1専用RAM
+; へ事前コピー」方式を踏襲する(tools/title_screen/title_test.asmの
+; INIT_BGM参照)。BOSS_HEX_PATTERN/BOSS_ORBIT_PATTERN/DFL_BULLET_
+; PATTERN/EXPLOSION_PATTERN(計128byte)は、このバンクの実際の空き
+; 容量(522byte)がBOSS_PATTERNS込みの640byte全部には足りなかった
+; ため、今回は移設対象から外し引き続きROM側に残している。
 
 ; boss nametable map: 5 cols x 16 rows of character codes
 ; (48=BLANKCODE/solid-blue, 192-252=boss tiles above)
