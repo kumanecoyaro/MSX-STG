@@ -520,6 +520,34 @@
       },
       color: "#cccccc"
     },
+    // Enemy2/Enemy5 share this exact same pattern+color in-game too (see the
+    // comment above) - genuinely identical, not a transcription gap. But in
+    // THIS tool three placeable types painting the same gray icon was
+    // reported as unreadable when placing/telling them apart on the grid, so
+    // by user request these two get distinct editor-only recolors of the
+    // same real bitmap (Enemy1 itself keeps the real gray) - yellow/light
+    // blue, standard TMS9918 indices 11/5, not tied to any SPR_* constant
+    // since neither color exists in the ASM for these enemies.
+    asterisk16_yellow: {
+      size: 16,
+      quads: {
+        tl: [0x7F, 0x9E, 0x04, 0x1B, 0x1B, 0x04, 0x9E, 0x7F],
+        bl: [0, 0, 0, 0, 0, 0, 0, 0],
+        tr: [0, 0, 0, 0, 0, 0, 0, 0],
+        br: [0x7F, 0x9E, 0x04, 0x1B, 0x1B, 0x04, 0x9E, 0x7F]
+      },
+      color: "#ded087"
+    },
+    asterisk16_blue: {
+      size: 16,
+      quads: {
+        tl: [0x7F, 0x9E, 0x04, 0x1B, 0x1B, 0x04, 0x9E, 0x7F],
+        bl: [0, 0, 0, 0, 0, 0, 0, 0],
+        tr: [0, 0, 0, 0, 0, 0, 0, 0],
+        br: [0x7F, 0x9E, 0x04, 0x1B, 0x1B, 0x04, 0x9E, 0x7F]
+      },
+      color: "#8076f1"
+    },
     // Enemy3's pulse animation frame1 (ENEMY3_PATTERN1) - an 8x8 BG tile, not a
     // sprite, so it's opaque: FG gray on BG dark-blue (COLORDATA group19 = E4h).
     enemy3: {
@@ -528,16 +556,18 @@
       color: "#cccccc",
       bg: "#5955e0"
     },
-    // Enemy4's static hand-drawn look (ENEMY4_PATTERN) - black, SPR_BLACK(01h)
-    // as of the BEHAVIOR_SIMPLE_DRIFT_DODGE recolor (it used to be light
-    // green); the pixel data itself was also redrawn at some point since
-    // this was last transcribed here, so both changed.
+    // Enemy4's static hand-drawn look (ENEMY4_PATTERN) - the pixel data
+    // here already matches the ASM's DB bytes byte-for-byte (checked
+    // directly against ENEMY4_PATTERN), but the color was stale: Round37
+    // recolored TYPE_ENEMY4 from SPR_BLACK to SPR_LIGHTGREEN(03h, "エネミー7の
+    // 色を変更 現在ブラックだがライトグリーンに", see EBSD_DRAW_E4 in the
+    // ASM) and this GLYPHS entry never picked that up, so the editor was
+    // still showing Enemy4 in its old color.
     // bg here is an editor-only visibility aid, not a real hardware trait -
     // it's a sprite, transparent in-game like every other 16x16 entry here.
-    // Solid black on this tool's near-black grid/palette was reported
-    // completely unreadable ("can't tell where it is to place it"), so it
-    // gets the same sky-blue backdrop as the actual sky the game draws
-    // behind it, purely so the black pixels have something to show against.
+    // Kept even with the brighter color (was added for the old black look)
+    // since it still reads better against this tool's near-black grid than
+    // no backdrop at all.
     enemy4: {
       size: 16,
       quads: {
@@ -546,7 +576,7 @@
         tr: [0, 0, 0, 0, 0, 0, 0, 0],
         br: [0x01, 0x06, 0x9C, 0xFF, 0xFE, 0x7C, 0x0E, 0x03]
       },
-      color: "#000000",
+      color: "#74d07d",
       bg: "#5955e0"
     },
     // Enemy6's 0deg spin frame (NEWENEMY_PATTERN_TL/TR/BL/BR) - unlike every
@@ -813,23 +843,69 @@
     ctx.fillText("BOSS", x + w / 2, y + h / 2);
   }
 
-  // round135follow-up3: same "plain labeled box" idea as
-  // drawS2BossPlaceholder above (no pixel-perfect body available), sized to
-  // Ebuz's own 8x4-cell placeholder footprint (see ebuzOrigin) - a
-  // distinct violet, not Boss's red, since a schedule can carry both at
-  // once and they should read as different things at a glance.
-  function drawEbuzPlaceholder(ctx, x, y, cell) {
-    var w = 8 * cell, h = 4 * cell;
-    ctx.fillStyle = "#241a3a";
-    ctx.fillRect(x, y, w, h);
-    ctx.strokeStyle = "#b79dff";
-    ctx.lineWidth = 2;
-    ctx.strokeRect(x + 1, y + 1, w - 2, h - 2);
-    ctx.fillStyle = "#b79dff";
-    ctx.font = "700 " + Math.max(10, Math.round(cell * 1.3)) + "px " + tok("--font-mono").split(",")[0] + ", monospace";
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    ctx.fillText("EBUZ", x + w / 2, y + h / 2);
+  // round135follow-up6 ("ボス以外はすべて画像だろうが"): Ebuz's real body,
+  // not a placeholder box - unlike Boss it isn't one static struct
+  // (EBUZ_ROW_ABCD during ENTER is just the 4 tiles in a single row; state1
+  // hides bullet0 over it; state2 splits into the wing formation below),
+  // but state2's own layout (EBUZ_ENTER_STATE2/EBUZ_ADDR_TOPBAND_FIRE et al
+  // in the ASM) is the fullest, most recognizable look and is what this
+  // draws. EBUZ_TILE_A/B/C/D are transcribed byte-for-byte from the ASM's
+  // own DB lines; EBUZ_COLOR_BYTE_VAL(0F4h)'s own comment ("本体色:
+  // group0[空/雲]と同じfg15[白]/bg4[青]") gives the real fg/bg - this
+  // tool's own existing "#5955e0" hex for index4 (already used by
+  // enemy3/enemy6's bg below) is reused for consistency.
+  // Column layout: EBUZ_ADDR_TOPBAND_FIRE and EBUZ_ADDR_ROW9_FIRE both
+  // start at the same column (EBUZ_SPAWN_COL), so the 5-wide band's
+  // [-,A,B,C,-] and the 4-wide D-only row's [-,-,-,D] share col index0 -
+  // D lands directly under C (col index3), not centered under the band -
+  // confirmed against the real formation's own reference render
+  // (tools/ebuz_test/ebuz_state2_zoom.png, an earlier standalone
+  // prototype of this same layout, predating the final fg/bg choice
+  // above). Drawn left-aligned in the wider 8x4-cell placeholder
+  // footprint (ebuzOrigin) - that footprint's own size is unchanged, it's
+  // still purely a legible editing box (see its own comment), just no
+  // longer a text label.
+  var EBUZ_BG = "#5955e0";
+  var EBUZ_FG = "#ffffff";
+  var EBUZ_TILES = {
+    A: [126, 191, 1, 63, 63, 1, 191, 126],
+    B: [255, 84, 42, 126, 126, 42, 84, 255],
+    C: [126, 195, 189, 181, 173, 189, 195, 126],
+    D: [255, 65, 127, 127, 127, 127, 65, 255]
+  };
+  var EBUZ_STATE2_ROWS = [
+    [null, EBUZ_TILES.A, EBUZ_TILES.B, EBUZ_TILES.C, null],
+    [null, null, null, EBUZ_TILES.D, null],
+    [null, null, null, EBUZ_TILES.D, null],
+    [null, EBUZ_TILES.A, EBUZ_TILES.B, EBUZ_TILES.C, null]
+  ];
+  // totalCols defaults to the full 8-wide placeholder footprint (grid/drag/
+  // paste preview - keeps the existing footprint's backdrop size). The
+  // palette icon below passes 5 instead (just the real content width, no
+  // empty filler columns) so its tiles get a bigger, more legible cell
+  // size out of the same 26px icon box - at 8-wide's ~2.75px/tile the
+  // A/B/C/D shapes blurred into an unreadable blob.
+  function drawEbuzBody(ctx, x, y, cell, totalCols) {
+    totalCols = totalCols || 8;
+    ctx.fillStyle = EBUZ_BG;
+    ctx.fillRect(x, y, totalCols * cell, 4 * cell);
+    ctx.fillStyle = EBUZ_FG;
+    var px = cell / 8, py = cell / 8;
+    for (var r = 0; r < EBUZ_STATE2_ROWS.length; r++) {
+      for (var c = 0; c < EBUZ_STATE2_ROWS[r].length; c++) {
+        var tile = EBUZ_STATE2_ROWS[r][c];
+        if (!tile) continue;
+        var tx = x + c * cell, ty = y + r * cell;
+        for (var rr = 0; rr < 8; rr++) {
+          var byte = tile[rr];
+          for (var cc = 0; cc < 8; cc++) {
+            if (byte & (0x80 >> cc)) {
+              ctx.fillRect(tx + cc * px, ty + rr * py, Math.ceil(px) + 0.5, Math.ceil(py) + 0.5);
+            }
+          }
+        }
+      }
+    }
   }
 
   // Draws a GLYPHS entry into ctx at (x,y), scaled to fill w x h. 8x8 "rows"
@@ -896,36 +972,38 @@
     // as enemy4/enemy5 below - and auto-claims whichever of A/B is free at
     // spawn time, so neither axis is a real choice anymore: one placeable,
     // any row, same as enemy4/enemy5.
-    { id: "enemy2",     name: "Enemy2",           desc: "SPAWN_E2 — baseY comes from SPAWN_BASEY_TABLE[row placed], any row; A/B instance (2 formations can run at once) is auto-assigned to whichever is free", glyph: "asterisk16" },
+    // round135follow-up6 ("エネミー1、２、5も同じ画像でわかりにくいんで
+    // ２，５のカラーを別のものに イエローとブルーでいいわ"): Enemy1/2/5 are
+    // genuinely pixel- and color-identical in-game (see asterisk16's own
+    // comment), so this recolor is editor-only, to tell 3 placeable types
+    // apart at a glance - Enemy1 itself keeps the real gray.
+    { id: "enemy2",     name: "Enemy2",           desc: "SPAWN_E2 — baseY comes from SPAWN_BASEY_TABLE[row placed], any row; A/B instance (2 formations can run at once) is auto-assigned to whichever is free", glyph: "asterisk16_yellow" },
     { id: "enemy3_wave",name: "Enemy3 — Wave",    desc: "SPAWN_E3_WAVE (budget 32)", glyph: "enemy3" },
     { id: "enemy4",      name: "Enemy4",           desc: "SPAWN_E4 — baseY comes from SPAWN_BASEY_TABLE[row placed], any row", glyph: "enemy4" },
-    { id: "enemy5",      name: "Enemy5",           desc: "SPAWN_E4B, TYPE_ENEMY1_LOOK — baseY comes from SPAWN_BASEY_TABLE[row placed], any row", glyph: "asterisk16" },
+    { id: "enemy5",      name: "Enemy5",           desc: "SPAWN_E4B, TYPE_ENEMY1_LOOK — baseY comes from SPAWN_BASEY_TABLE[row placed], any row", glyph: "asterisk16_blue" },
     { id: "enemy6",      name: "Enemy6",           desc: "NEW - BG-tile spin (0/90/180/270°); placement staged here, not yet wired into SPAWN_THRESHOLDS/SSC_FIRE", glyph: "enemy6" },
-    { id: "boss",       name: "Boss",             desc: "BOSS_SPAWN - fixed position, row/tick here are just for editing", glyph: null },
     // round135follow-up3 ("Tick通りに進まなくなってるんで スケジュール
-    // エディタをEbuz対応に"): unlike every other Stage1 entry above, Ebuz is
-    // NOT part of SPAWN_THRESHOLDS/SSC_FIRE's linear index at all - it's a
-    // wholly separate EBUZ_SPAWN_TICK_TABLE that MAINLOOP checks every
-    // frame, and (this is the part that broke "Tick通りに進む" for anyone
-    // reading the exported JSON) it FREEZES GAME_TICK itself for the whole
-    // duration its 3-instance chain is alive, so every ordinary placement's
-    // own tick number silently stops corresponding to real elapsed time
-    // once an Ebuz trigger has fired. Before this round Ebuz's 5 trigger
-    // ticks (100/256/512/768/950) lived only as a hardcoded ASM table with
-    // no editor representation at all - invisible here, so there was no way
-    // to see where a freeze window sits relative to the rest of the
-    // schedule while placing everything else. Row is purely cosmetic (each
-    // instance's own row is a compile-time constant - EBUZ_ROW_INST1/2/3 -
-    // completely independent of where this icon sits on the grid), same
-    // "just for editing" idea as Boss above. On export it's just another
-    // placements[] entry (type:"ebuz") like everything else here - the ASM-
-    // side generator is expected to special-case type==="ebuz" by pulling
-    // its tick straight into EBUZ_SPAWN_TICK_TABLE/EBUZ_SPAWN_TICK_COUNT
-    // instead of SPAWN_THRESHOLDS/SSC_FIRE, exactly like it already
-    // special-cases nothing for "boss" (boss DOES go through the normal
-    // dispatch) - the two look alike in the palette but are wired
-    // differently on the ASM side, by design.
-    { id: "ebuz",        name: "Ebuz",             desc: "EBUZ_SPAWN_CHAIN_START - NOT part of SPAWN_THRESHOLDS/SSC_FIRE; a separate fixed-tick trigger that freezes GAME_TICK for its whole 3-instance chain. Row is just for editing (each instance's real row is fixed in ASM).", glyph: null }
+    // エディタをEbuz対応に") added Ebuz as a placeable entry so its trigger
+    // ticks are visible while placing everything else around them. Row is
+    // purely cosmetic (each instance's own row is a compile-time constant -
+    // EBUZ_ROW_INST1/2/3 - completely independent of where this icon sits
+    // on the grid). On export it's just another placements[] entry
+    // (type:"ebuz") like everything else here.
+    // (round135follow-up5, "今のハードコードしたEbuzスケジュールは削除
+    // しといて 意図と違ってるんで": the fixed-tick table + GAME_TICK-freeze
+    // machinery this comment used to describe was removed from the ASM
+    // entirely - EBUZ_SPAWN_CHAIN_START now has no caller at all yet. The
+    // ASM-side generator is still expected to special-case type==="ebuz" by
+    // wiring it through SSC_FIRE like every other SPAWN_* handler once
+    // that's implemented - not done yet, next user input pending.)
+    { id: "ebuz",        name: "Ebuz",             desc: "EBUZ_SPAWN_CHAIN_START - a 3-instance chain (not yet wired into SPAWN_THRESHOLDS/SSC_FIRE, see comment above). Row is just for editing (each instance's real row is fixed in ASM).", glyph: null },
+    // round135follow-up6 ("でボスアイコンは右端に ほぼ使わんからな"): moved
+    // to the end of the roster (was 2nd-to-last, immediately before Ebuz
+    // was added) - Boss stays glyph:null/text-only on purpose (see
+    // drawBossBody's own real-body rendering on the grid itself; only the
+    // small palette icon stays a plain label, matching how little it's
+    // actually placed compared to everything above).
+    { id: "boss",       name: "Boss",             desc: "BOSS_SPAWN - fixed position, row/tick here are just for editing", glyph: null }
   ];
   // Stage2 roster - tools/stage2_combined/combined_test.asm. None of
   // these are schedule-table-driven in the ASM yet (per round32's own
@@ -1226,7 +1304,13 @@
     paletteEl.innerHTML = "";
     TYPES.forEach(function (t) {
       var item = document.createElement("button");
-      item.className = "pitem" + (!t.glyph ? " pitem-boss" : "");
+      // round135follow-up6: this used to be "!t.glyph", which also caught
+      // Ebuz (glyph:null, real body drawn via its own special-cased
+      // drawEbuzBody instead of a GLYPHS entry - same reason Boss is
+      // glyph:null). Now that Ebuz gets a real canvas icon below too, only
+      // Boss/s2_boss - the two entries that stay plain text labels on
+      // purpose (see their own comments) - get the red placeholder style.
+      item.className = "pitem" + ((t.id === "boss" || t.id === "s2_boss") ? " pitem-boss" : "");
       item.dataset.type = t.id;
       item.title = t.name + " — " + t.desc;
       if (t.id === "s2_terrain") {
@@ -1250,6 +1334,32 @@
         tctx.fillRect(8, 13, 9, 13);
         tctx.fillRect(17, 6, 9, 20);
         item.appendChild(tcv);
+      } else if (t.id === "ebuz") {
+        // round135follow-up6 ("ボス以外はすべて画像だろうが"): Ebuz's real
+        // body (drawEbuzBody, see its own comment) instead of the red
+        // text-label box every glyph:null entry used to get - it isn't a
+        // GLYPHS entry (its shape needs the multi-tile layout drawEbuzBody
+        // draws, not a single quads/rows bitmap), so this mirrors the
+        // s2_terrain branch above rather than the glyph branch below.
+        // Drawn at just its real 5-wide content (not the wider 8-cell
+        // placeholder footprint drawEbuzBody's other callers use), so the
+        // 26px icon box gives each tile ~4.4px instead of ~2.75px - at the
+        // full 8-wide size the A/B/C/D shapes blurred into an unreadable
+        // blob. Centered vertically (5:4 real aspect, close enough to the
+        // 26x26 box to not need horizontal centering too).
+        var ecv = document.createElement("canvas");
+        ecv.className = "picon";
+        var eCssSize = 26, eDpr = Math.max(1, window.devicePixelRatio || 1);
+        ecv.width = Math.round(eCssSize * eDpr);
+        ecv.height = Math.round(eCssSize * eDpr);
+        ecv.style.width = eCssSize + "px";
+        ecv.style.height = eCssSize + "px";
+        var ectx = ecv.getContext("2d");
+        ectx.setTransform(eDpr, 0, 0, eDpr, 0, 0);
+        ectx.imageSmoothingEnabled = false;
+        var epad = 2, ecell = (eCssSize - epad * 2) / 5, eh = 4 * ecell;
+        drawEbuzBody(ectx, epad, (eCssSize - eh) / 2, ecell, 5);
+        item.appendChild(ecv);
       } else if (t.glyph) {
         var glyph = GLYPHS[t.glyph];
         var cv = document.createElement("canvas");
@@ -1662,7 +1772,7 @@
       }
       if (p.type === "ebuz") {
         var boe = ebuzOrigin(p.tick, p.row);
-        drawEbuzPlaceholder(ctx, boe.tick * CELL - scrollX, boe.row * CELL, CELL);
+        drawEbuzBody(ctx, boe.tick * CELL - scrollX, boe.row * CELL, CELL);
         return;
       }
       var glyph = GLYPHS[t.glyph];
@@ -1902,7 +2012,7 @@
     }
     if (obj.type === "ebuz") {
       var boe = ebuzOrigin(obj.tick, obj.row);
-      drawEbuzPlaceholder(dragOverlayCtx, boe.tick * CELL - canvasScroll.scrollLeft, boe.row * CELL, CELL);
+      drawEbuzBody(dragOverlayCtx, boe.tick * CELL - canvasScroll.scrollLeft, boe.row * CELL, CELL);
       return;
     }
     var glyph = GLYPHS[t.glyph];
@@ -2439,7 +2549,7 @@
       }
       if (pd.type === "ebuz") {
         var boe = ebuzOrigin(tick, row);
-        drawEbuzPlaceholder(ctx, boe.tick * CELL - canvasScroll.scrollLeft, boe.row * CELL, CELL);
+        drawEbuzBody(ctx, boe.tick * CELL - canvasScroll.scrollLeft, boe.row * CELL, CELL);
         return;
       }
       var glyph = GLYPHS[t.glyph];
