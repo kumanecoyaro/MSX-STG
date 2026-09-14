@@ -191,6 +191,120 @@ check("自己検証: BOSS_STATEガードを無効化(CALL Z->無条件CALLへ1by
       rd16(z3, SPAWN_NEXT_INDEX) > index_before3)
 
 
+# ============================================================
+# round137follow-up2: "まだEbuzが敵やボス居るのにでる 出ない場合もある
+# てことは多分また初期化してねえだろ 何回やるんだよお前は 多分記憶じゃ
+# これで7回目"。
+#
+# 根本原因: 上のround135follow-up16はSPAWN_SCHEDULE_CHECK自体の新規
+# ディスパッチだけをBOSS_STATE==0の間に限定したが、EBUZ_CHECK_CHAIN_
+# TRIGGERS(MAINLOOP、EBUZ_UPDATE_ALLの直後で毎フレーム無条件に呼ばれる)
+# は全く別の独立したチェーン進行ロジック - EBUZ_SPAWN_STAGEが1/2の間、
+# 現在のインスタンスのACTが0(消滅済み)になった瞬間に次のインスタンスを
+# 自動スポーンする、SPAWN_SCHEDULE_CHECKの管理下に無いコード経路 - で、
+# 同じガードを経由していなかった。
+#
+# CHECK_BOSS_TRIGGERはEBUZ_ANY_ACTIVE(SLOT0/1のACT・EXPL_QUEUE_COUNTが
+# 全て0)を含む「全プール空」を要求するため、ボスが実際にスポーンできる
+# 瞬間は必ずEbuz本体のACTが0になった直後 - つまりEBUZ_SPAWN_STAGEは
+# まだ1か2のまま(次インスタンスの発火待ち状態)で残っていることが
+# 普通にある。同一フレーム内でCHECK_BOSS_TRIGGER(この関数より先に実行
+# 済み)がボスを出現させた直後に、EBUZ_CHECK_CHAIN_TRIGGERSが無条件に
+# 2体目/3体目を新規スポーンしてしまっていた。
+#
+# 修正: EBUZ_CHECK_CHAIN_TRIGGERSの呼び出しにもSPAWN_SCHEDULE_CHECKと
+# 同じBOSS_STATE==0ガードを追加。
+# ============================================================
+EBUZ_SPAWN_STAGE = sym["EBUZ_SPAWN_STAGE"]
+EBUZ_CHAIN_TIMER = sym["EBUZ_CHAIN_TIMER"]
+EBUZ_INST3_DELAY_FRAMES = sym["EBUZ_INST3_DELAY_FRAMES"]
+EBUZ_CHECK_CHAIN_TRIGGERS = sym["EBUZ_CHECK_CHAIN_TRIGGERS"]
+
+
+def arm_ebuz_stage1_waiting(z):
+    """EBUZ_SPAWN_STAGE=1(1体目消化待ち)かつSLOT0のACTが既に0(1体目が
+    消滅済み)という、次のフレームでEBUZ_CHECK_CHAIN_TRIGGERSが2体目を
+    即座にスポーンする一歩手前の状態を作る。同時にCHECK_BOSS_TRIGGER
+    自身が要求する「全プール空」も満たしておく(実際にボスが出現できる
+    瞬間そのものを再現するため)。"""
+    clear_zako_pools(z)
+    z.wr(EBUZ_SPAWN_STAGE, 1)
+    z.wr(EBUZ_SLOT0 + EBUZ_OFS_ACT, 0)
+
+
+# ---- regression: while BOSS_STATE!=0 (the exact situation right after ----
+# ---- the boss has spawned - CHECK_BOSS_TRIGGER's own EBUZ_ANY_ACTIVE  ----
+# ---- gate guarantees Ebuz's instance1 had just died), a pending Ebuz  ----
+# ---- chain must NOT auto-spawn instance2 (EBUZ_SPAWN_STAGE/SLOT0 ACT  ----
+# ---- stay put) even though it's fully due.                            ----
+z4 = fresh(); boot(z4)
+arm_ebuz_stage1_waiting(z4)
+z4.wr(BOSS_STATE, 2)
+stage_before4 = z4.rd(EBUZ_SPAWN_STAGE)
+act_before4 = z4.rd(EBUZ_SLOT0 + EBUZ_OFS_ACT)
+step_frames(z4, 4)
+check("while BOSS_STATE!=0, a due Ebuz chain does NOT auto-spawn instance2 "
+      "(EBUZ_SPAWN_STAGE/EBUZ_SLOT0's ACT stay unchanged) - this is the fix "
+      "for \"まだEbuzが敵やボス居るのにでる\" (round137follow-up2)",
+      z4.rd(EBUZ_SPAWN_STAGE) == stage_before4 and
+      z4.rd(EBUZ_SLOT0 + EBUZ_OFS_ACT) == act_before4)
+
+# ---- positive control: same setup with BOSS_STATE==0 DOES advance the ----
+# ---- chain as usual - proves the new gate isn't blocking Ebuz chain    ----
+# ---- progression unconditionally, only during an actual boss fight.   ----
+z5 = fresh(); boot(z5)
+arm_ebuz_stage1_waiting(z5)
+z5.wr(BOSS_STATE, 0)
+step_frames(z5, 4)
+check("with BOSS_STATE==0 (no boss active), the same due Ebuz chain "
+      "advances normally (EBUZ_SPAWN_STAGE becomes 2, instance2 spawns "
+      "into EBUZ_SLOT0)",
+      z5.rd(EBUZ_SPAWN_STAGE) == 2 and z5.rd(EBUZ_SLOT0 + EBUZ_OFS_ACT) != 0)
+
+# ---- same regression, but for the STAGE==2 (waiting on instance3's own ----
+# ---- 5-second real-time delay) branch - a separate code path inside   ----
+# ---- EBUZ_CHECK_CHAIN_TRIGGERS from the STAGE==1 branch above.        ----
+z6 = fresh(); boot(z6)
+clear_zako_pools(z6)
+z6.wr(EBUZ_SPAWN_STAGE, 2)
+wr16(z6, EBUZ_CHAIN_TIMER, EBUZ_INST3_DELAY_FRAMES)  # timer already at/over the threshold
+z6.wr(BOSS_STATE, 2)
+stage_before6 = z6.rd(EBUZ_SPAWN_STAGE)
+act_before6 = z6.rd(EBUZ_SLOT1 + EBUZ_OFS_ACT)
+step_frames(z6, 4)
+check("while BOSS_STATE!=0, a due Ebuz instance3 (STAGE==2 branch) does "
+      "NOT auto-spawn either (EBUZ_SPAWN_STAGE/EBUZ_SLOT1's ACT stay "
+      "unchanged)",
+      z6.rd(EBUZ_SPAWN_STAGE) == stage_before6 and
+      z6.rd(EBUZ_SLOT1 + EBUZ_OFS_ACT) == act_before6)
+
+# ---- self-verification: defeat the new fix (CALL Z,EBUZ_CHECK_CHAIN_  ----
+# ---- TRIGGERS -> unconditional CALL, same 0xCC->0xCD 1-byte patch as  ----
+# ---- the self-verification above) and confirm the STAGE==1 regression ----
+# ---- test really is real - i.e. this test actually catches the "Ebuz  ----
+# ---- chain slips through the boss fight" bug, it doesn't just happen  ----
+# ---- to pass.                                                         ----
+pat2 = bytes([0x3A, BOSS_STATE & 0xFF, (BOSS_STATE >> 8) & 0xFF,
+              0xB7, 0xCC, EBUZ_CHECK_CHAIN_TRIGGERS & 0xFF, (EBUZ_CHECK_CHAIN_TRIGGERS >> 8) & 0xFF])
+idx2 = bytes(mem0).find(pat2)
+if idx2 < 0:
+    raise RuntimeError("LD A,(BOSS_STATE):OR A:CALL Z,EBUZ_CHECK_CHAIN_TRIGGERS "
+                        "gate pattern not found - has the fix been refactored?")
+broken_mem2 = bytearray(mem0)
+broken_mem2[idx2 + 4] = 0xCD  # CALL Z,nn -> CALL nn (unconditional, defeats the gate)
+z7 = Z80(broken_mem2)
+boot(z7)
+arm_ebuz_stage1_waiting(z7)
+z7.wr(BOSS_STATE, 2)
+stage_before7 = z7.rd(EBUZ_SPAWN_STAGE)
+step_frames(z7, 4)
+check("自己検証: EBUZ_CHECK_CHAIN_TRIGGERSのBOSS_STATEガードを無効化"
+      "(CALL Z->無条件CALLへ1byteパッチ)すると、実際にボス戦中でも"
+      "due なEbuzチェーンがスポーンしてしまう(=このテストが今回の実"
+      "バグを本当に検出できることの確認)",
+      z7.rd(EBUZ_SPAWN_STAGE) != stage_before7)
+
+
 print()
 print(f"{len(ok)} passed, {len(fail)} failed")
 if fail:

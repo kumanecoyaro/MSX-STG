@@ -2577,7 +2577,27 @@ ENEMY_SECTION_DONE:
     CALL ENEMY5_ANIM_STEP
     CALL CLOUD_UPDATE_ALL
     CALL EBUZ_UPDATE_ALL
-    CALL EBUZ_CHECK_CHAIN_TRIGGERS
+    ; (2026-09-14 follow-up、"まだEbuzが敵やボス居るのにでる 出ない場合
+    ; もある てことは多分また初期化してねえだろ 何回やるんだよ"):
+    ; round135follow-up16はSPAWN_SCHEDULE_CHECK自体の新規ディスパッチを
+    ; BOSS_STATE==0の間だけに限定したが、EBUZ_CHECK_CHAIN_TRIGGERS
+    ; (このすぐ下)は全く別の独立したチェーン進行ロジックで、同じガードを
+    ; 経由していなかった。CHECK_BOSS_TRIGGERはEBUZ_ANY_ACTIVE(SLOT0/1の
+    ; ACT・EXPL_QUEUE_COUNTが全て0)を含む「全プール空」を要求するため、
+    ; ボスが実際にスポーンできる瞬間は必ずEbuz本体が消えた直後
+    ; (EBUZ_SPAWN_STAGEはまだ1か2のまま=次インスタンスの発火待ち状態が
+    ; 普通に残っている)- 同一フレーム内でCHECK_BOSS_TRIGGER(この関数より
+    ; 前で実行済み)がボスを出現させた直後に、このEBUZ_CHECK_CHAIN_
+    ; TRIGGERSが無条件に2体目/3体目を新規スポーンしてしまっていた
+    ; (「初期化漏れ」ではなく、schedule dispatch側だけを塞いでEbuz自身の
+    ; 独立トリガー経路を塞ぎ忘れていた、という同種の見落とし)。
+    ; SPAWN_SCHEDULE_CHECK呼び出しと同じBOSS_STATE==0ガードをこちらにも
+    ; 追加して解消(ボス戦中はチェーン進行ごと凍結、ボス出現時点で
+    ; EBUZ_ANY_ACTIVE=falseだったことは保証済みなので、チェーンを止めても
+    ; 画面上のEbuzが中途半端に消し残ることはない)。
+    LD A,(BOSS_STATE)
+    OR A
+    CALL Z,EBUZ_CHECK_CHAIN_TRIGGERS
 
     ; ============================================================
     ; --- shots: advance 1 character (8 dots) per frame. Erasing  ---

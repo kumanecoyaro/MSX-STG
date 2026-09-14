@@ -17001,3 +17001,60 @@ ENEMY6のO(1)短絡最適化(2026-09-14、完了済み)
   EXPLOSION_PATTERN(Stage1、計128byte、ROM側に残置)への同様のRLE
   適用は今回スコープ外(明示指示なし、bank6の空き容量は既に468byteへ
   改善済みのため優先度は低い)。
+
+## Round137 follow-up2: 実機フィードバック対応(Ebuzがボス/敵在中でも
+出現するバグの真因特定・修正、Round135follow-up16の"BOSS_STATEガード
+漏れ"の第2の経路)(2026-09-14、完了済み・実機フィードバック待ち)
+
+- ユーザー報告(強い叱責付き): "まだEbuzが敵やボス居るのにでる 出ない
+  場合もある てことは多分また初期化してねえだろ 何回やるんだよお前は
+  多分記憶じゃこれで7回目"。
+- **調査**: EBUZ関連RAM(EBUZ_SLOT0/1・EBUZ_CUR_ROW_ADDR以降)自体は
+  INIT時に既に一括ゼロクリア済みと確認(初期化漏れではなかった)。
+  真因は別の場所にあった: Round135follow-up16は`SPAWN_SCHEDULE_CHECK`
+  (新規スケジュールエントリのディスパッチ)自体をBOSS_STATE==0の間に
+  限定したが、`EBUZ_CHECK_CHAIN_TRIGGERS`(MAINLOOP、`EBUZ_UPDATE_ALL`
+  直後で毎フレーム無条件に呼ばれる、Ebuz自身の2体目/3体目を自動連鎖
+  スポーンする独立したロジック)は全くこのガードの管理下になく、
+  無条件のままだった。
+- `CHECK_BOSS_TRIGGER`はボス出現条件として`EBUZ_ANY_ACTIVE`(SLOT0/1の
+  ACT・EXPL_QUEUE_COUNTが全て0)を含む「全プール空」を要求するため、
+  ボスが実際にスポーンできる瞬間は必ずEbuz本体が消えた直後 -
+  `EBUZ_SPAWN_STAGE`は1(1体目消化待ち)や2(2体目のスポーンから3体目
+  までの5秒待ち)のまま残っていることが普通にあった。同一フレーム内で
+  `CHECK_BOSS_TRIGGER`がボスを出現させた直後に、ガード漏れの
+  `EBUZ_CHECK_CHAIN_TRIGGERS`が無条件に2体目/3体目を新規スポーンして
+  しまっていた(「たまに出る/出ない」の非決定性は、ボス出現の瞬間に
+  Ebuzチェーンが1体目消化待ち[STAGE=1]や3体目待ち[STAGE=2]の
+  ちょうど境界にいたかどうかに依存するため)。
+- **修正**: `EBUZ_CHECK_CHAIN_TRIGGERS`の呼び出しに`SPAWN_SCHEDULE_
+  CHECK`と全く同じ`LD A,(BOSS_STATE):OR A:CALL Z,...`ガードを追加
+  (ボス戦中はEbuzチェーンの進行ごと凍結。ボス出現時点で
+  `EBUZ_ANY_ACTIVE`=falseだったことは既に保証済みのため、チェーンを
+  止めても画面上のEbuzが中途半端に消し残ることはない)。
+- `tools/verify_boss_schedule_gate.py`に4件追加(STAGE==1/STAGE==2
+  両方の分岐で「ボス戦中は due でも自動スポーンしない」「ボス戦でなければ
+  通常通り進行する」を検証、既存のround135follow-up16パッチと同じ
+  1byteパッチ[CALL Z→無条件CALL]による自己検証込み、修正を一時的に
+  戻して実際にFAILすることを確認済み)。全回帰: 変更が`src/CYBER
+  SHMUP.asm`(Stage1)のみのため`verify_boss_schedule_gate.py`(12件)+
+  関連するStage1既存検証群(`verify_ebuz_integration.py` 109/
+  `verify_boss_spawn_trigger.py` 26/`verify_boss_y_shift.py` 9/
+  `verify_player_damage.py` 60/`verify_stage1_bgm.py` 80/
+  `verify_enemy_bullets.py` 60/`verify_stage1_mission_screens.py`
+  87/`verify_explosion_anim.py` 28/`verify_boss_dfl_clear.py` 10/
+  `verify_spawn_schedule_restart.py` 12/`verify_enemy6_durability.py`
+  27)を実行、全てPASS(`combined_test.asm`は無変更のためStage2側
+  `run_all.py`は今回省略)。Comb ROM再ビルド・`verify_comb.py`全
+  チェックPASSの上、標準方針によりComb ROMのみ送付。
+- **教訓**: 「あるチェック条件(BOSS_STATE)に対して複数の独立した
+  ディスパッチ経路が存在する場合、1つを塞いだだけで安心せず、同じ
+  条件で新規スポーンを引き起こしうる全ての経路を横断的に洗い出す
+  こと」- 今回はEbuz専用の"チェーン進行"という、通常のスケジュール
+  ディスパッチ(SSC_FIRE)とは別建てのコード経路がその見落とし対象
+  だった。同種の「スケジュール本体は塞いだが、個別サブシステム自身の
+  独立トリガーは塞ぎ忘れる」パターンは今後also他のサブシステム
+  (もしあれば)にも起こりうるため、新規の自律的トリガー機構を追加する
+  際は都度確認すること。
+- **保留・実機フィードバック待ち**: 実機での再現状況(ボス戦中に
+  Ebuzが本当に出なくなるか)は次回フィードバック待ち。
