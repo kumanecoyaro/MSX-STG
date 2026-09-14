@@ -12089,9 +12089,10 @@ EBUZ_ST_EXIT   EQU 5   ; 右へ移動して画面外へ消える(本体4行)
 EBUZ_SPAWN_TICK_COUNT    EQU 4
 ; (2026-09-14 follow-up、"耐久値24に"): 12→24。全インスタンス共通。
 EBUZ_HP_INIT             EQU 24
-; "生存時間は15秒"(60Hz想定、GAME_OVER_TIMEOUT_TICKS[600=10秒]等
-; 既存の実フレームカウンタと同じ換算基準)。
-EBUZ_LIFETIME_FRAMES     EQU 900
+; (2026-09-14 follow-up3、"Ebuz生存時間を5秒に"): 900(15秒)→300(5秒)。
+; 60Hz想定、GAME_OVER_TIMEOUT_TICKS[600=10秒]等既存の実フレーム
+; カウンタと同じ換算基準。
+EBUZ_LIFETIME_FRAMES     EQU 300
 ; (2026-09-14follow-up2、"登場の上から降りてくる速度を倍に"): 6→3。
 EBUZ_DESCEND_ROW_FRAMES  EQU 3     ; 降下速度: 1行あたりのフレーム数
 ; (2026-09-14follow-up2、"3体目出現を2体目の5秒後に"): 60Hz想定で

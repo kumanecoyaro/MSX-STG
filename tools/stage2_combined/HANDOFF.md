@@ -16459,6 +16459,29 @@ HP24化+8セル死亡演出(PLAYER_EXPL_POOL流用)+ROM容量危機の解決
 - **保留・実機フィードバック待ち**: 新スケジュールの実プレイでの
   ペーシング・難易度感は実機フィードバック待ち。
 
+## Round135 follow-up: Ebuz生存時間を15秒→5秒に(2026-09-14、完了済み・
+実機フィードバック待ち)
+
+- ユーザー指示: "Ebuz生存時間を5秒に"。`EBUZ_LIFETIME_FRAMES`
+  (60Hz想定の実フレームカウンタ、`GAME_OVER_TIMEOUT_TICKS`等既存の
+  換算基準と同じ)を900(15秒)→300(5秒)に変更。使用箇所は
+  `EBUZ_SPAWN_INSTANCE`内の`LD HL,EBUZ_LIFETIME_FRAMES`1箇所のみ。
+  `verify_ebuz_integration.py`は生存時間切れテストを直値(2フレーム)で
+  検証する設計のため無変更、コメント中の"15秒(900フレーム)"の記述の
+  みシンボル参照に修正。全回帰: `verify_ebuz_integration.py` 103・
+  他のStage1既存検証群(`verify_enemy_bullets.py`60/`verify_player_
+  damage.py`60/`verify_stage1_bgm.py`80/`verify_stage1_mission_
+  screens.py`87/`verify_enemy6_durability.py`19/`verify_explosion_
+  anim.py`28/`verify_boss_dfl_clear.py`10/`verify_spawn_schedule_
+  restart.py`12/`verify_stage1_boss_score.py`7/`verify_stage1_hud_
+  movement.py`8/`verify_boss_pod_bullet_aim.py`17/`verify_enemy_pool_
+  scan.py`/`verify_sound_duty_cycle.py`54/`verify_cell_loop_hoist.py`
+  3)全てPASS。Stage2側`run_all.py`(参考実行、対象外変更なし)
+  1548 passed/0 failed。Comb ROM再ビルド・`verify_comb.py`全チェック
+  PASSの上、標準方針によりComb ROMのみ送付。
+- **保留・実機フィードバック待ち**: 5秒への短縮の実プレイでの
+  難易度感・ペーシングは実機フィードバック待ち。
+
 ## Round135: Stage1スケジュール再差し替え(Schedule_1.json、476エントリ)
 (2026-09-14、完了済み・実機フィードバック待ち)
 
