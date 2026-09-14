@@ -1197,20 +1197,32 @@ FILLBG_ROW0_BLACK:
     LD HL,NEWENEMY_PATTERN270_BL : LD DE,NEWENEMY_CODE270_BL*8 : LD BC,8 : CALL LDIRVM
     LD HL,NEWENEMY_PATTERN270_BR : LD DE,NEWENEMY_CODE270_BR*8 : LD BC,8 : CALL LDIRVM
 
-    ; --- Ebuz(2026-09-14組み込み)本体4タイル(group16、codes128-131)+ ---
-    ; --- 弾2タイル(group17、codes136-137、別グループにしたのは本体
-    ; --- [白/青]と弾[黄/青]で異なる色にするため - 1グループ8コードは
-    ; --- 色1個共有なので同一グループには入れられない) - いずれも旧
-    ; --- ANIM2_white/ANIM2_green専用だった削除済みの空きグループ
-    ; --- (COLORDATA自身のコメント"groups 6-31...unused by this
-    ; --- scroller"および全LDIRVM呼び出し元の横断チェックで確認済み)。
+    ; --- Ebuz(2026-09-14組み込み)本体4タイル+弾2タイル ---
+    ; (round135follow-up8、"Ebuz1の左から1つ目のセルは背景ライトブルーで
+    ; 文字色グレー 2セル目は背景ブラック文字色レッド 3セル目、背景
+    ; ブラック文字色グレー 4セル目、背景グレー文字色ブラック"): A/B/C/D
+    ; を4色ばらばらにする指示を受け、それまで4タイル共有だったgroup16を
+    ; 撤去し、A/B/C/Dを別々のgroup(11-14)へ1コードずつ分離
+    ; (SCREEN1のカラーテーブルは8連続コード単位で色1個共有というハード
+    ; 制約があるため、コードごとに違う色を持たせるには別グループに
+    ; 置くしかない)。group11-14は旧ANIM1_x flicker(round69で「元の
+    ; 爆発パターンは削除して空きに」と廃止済み)専用だった空きグループ、
+    ; group16-17(旧ANIM2_white/green専用)は本体色の一括共有だった名残で
+    ; 本体側は不要になったが弾(group17)は引き続き使用
+    ; (COLORDATA自身のコメント"groups 6-31...unused by this scroller"
+    ; および全LDIRVM呼び出し元の横断チェックで確認済み)。EBUZ_CODE_A-Dは
+    ; どこにも連続前提の範囲チェックが無いことも確認済み(単純なVRAM
+    ; タイルコードとしてDBテーブル・LDIRVM元アドレス計算にのみ使用)。
     LD HL,EBUZ_TILE_A : LD DE,EBUZ_CODE_A*8 : LD BC,8 : CALL LDIRVM
     LD HL,EBUZ_TILE_B : LD DE,EBUZ_CODE_B*8 : LD BC,8 : CALL LDIRVM
     LD HL,EBUZ_TILE_C : LD DE,EBUZ_CODE_C*8 : LD BC,8 : CALL LDIRVM
     LD HL,EBUZ_TILE_D : LD DE,EBUZ_CODE_D*8 : LD BC,8 : CALL LDIRVM
     LD HL,EBUZ_BULLET_L_TILE : LD DE,EBUZ_BULLET_L_CODE*8 : LD BC,8 : CALL LDIRVM
     LD HL,EBUZ_BULLET_R_TILE : LD DE,EBUZ_BULLET_R_CODE*8 : LD BC,8 : CALL LDIRVM
-    LD HL,EBUZ_COLOR_BYTE : LD DE,2010h : LD BC,1 : CALL LDIRVM        ; 2010h=COLTBL+group16(128/8)
+    LD HL,EBUZ_COLOR_A : LD DE,200Bh : LD BC,1 : CALL LDIRVM           ; 200Bh=COLTBL+group11(88/8)
+    LD HL,EBUZ_COLOR_B : LD DE,200Ch : LD BC,1 : CALL LDIRVM           ; 200Ch=COLTBL+group12(96/8)
+    LD HL,EBUZ_COLOR_C : LD DE,200Dh : LD BC,1 : CALL LDIRVM           ; 200Dh=COLTBL+group13(104/8)
+    LD HL,EBUZ_COLOR_D : LD DE,200Eh : LD BC,1 : CALL LDIRVM           ; 200Eh=COLTBL+group14(112/8)
     LD HL,EBUZ_BULLET_COLOR_BYTE : LD DE,2011h : LD BC,1 : CALL LDIRVM ; 2011h=COLTBL+group17(136/8)
 
     ; (DIGIT_PATTERNS[digit glyphs 0-9]/MISSION_FONT_PATTERNS・COLORの
@@ -12135,22 +12147,37 @@ EBUZ_RECOIL_DURATION     EQU 1
 EBUZ_BULLET0_HOLD_TICKS  EQU 10
 EBUZ_PREACT_HOLD_TICKS   EQU 45
 
-; BGパターンコード: 本体4枚はgroup16(codes128-135のうち128-131)、
-; 弾2枚はgroup17(136-137) - 色を別々にするため別グループにした(1
-; グループ8コードは色1個共有のため)。いずれも旧ANIM2_white/green
-; 専用だった削除済みの空きグループ(round69 follow-upのコメント、
-; COLORDATA自身の"groups 6-31...unused by this scroller"、および
-; このファイルの全LDIRVM呼び出し元横断チェックで空きを確認済み)。
-EBUZ_CODE_A        EQU 128
-EBUZ_CODE_B        EQU 129
-EBUZ_CODE_C        EQU 130
-EBUZ_CODE_D        EQU 131
+; BGパターンコード: 本体4枚はA=group11(88)/B=group12(96)/C=group13(104)/
+; D=group14(112)、各グループの先頭コードを1個だけ使用(round135
+; follow-up8でA/B/C/Dを個別4色にするため、旧来の共有group16から分離。
+; SCREEN1のカラーテーブルは8連続コード単位で色1個共有のため、コード
+; ごとに違う色を持たせるには別グループに置くしかない - 残り7コード
+; ずつ[89-95/97-103/105-111/113-119]は今後の予備)。弾2枚は引き続き
+; group17(136-137、本体と別グループなのは元々本体と弾で色を変える
+; ためだった、今回の変更で本体側も個別色になったが弾側の設計は無変更)。
+; いずれも旧ANIM1_x/ANIM2_white/green専用だった削除済みの空きグループ
+; (round69 follow-upのコメント、COLORDATA自身の"groups 6-31...unused
+; by this scroller"、およびこのファイルの全LDIRVM呼び出し元横断
+; チェックで空きを確認済み)。
+EBUZ_CODE_A        EQU 88
+EBUZ_CODE_B        EQU 96
+EBUZ_CODE_C        EQU 104
+EBUZ_CODE_D        EQU 112
 EBUZ_BULLET_L_CODE EQU 136
 EBUZ_BULLET_R_CODE EQU 137
 
-; 本体色: group0(空/雲)と同じfg15(白)/bg4(青) - 既存の空の配色に
-; そのまま馴染む。弾色: fg11(SPR_YELLOWと同じ光黄色)/bg4(空と同じ青)。
-EBUZ_COLOR_BYTE_VAL        EQU 0F4h
+; (round135follow-up8、"Ebuz1の左から1つ目のセルは背景ライトブルーで
+; 文字色グレー 2セル目は背景ブラック文字色レッド 3セル目、背景ブラック
+; 文字色グレー 4セル目、背景グレー文字色ブラック"): A=gray(14)/
+; lightblue(5)、B=red(8)/black(1)、C=gray(14)/black(1)、D=black(1)/
+; gray(14) - Ebuz1(ENTER時の単一行A,B,C,D)・Ebuz2(変形後の翼帯形態)は
+; どちらも同じ4タイルを共有しているだけなので、コード単位で色を決めれば
+; 両方に自動的に反映される(ユーザー提示のプレビュー画像で確認済み)。
+; 弾色は無変更: fg11(SPR_YELLOWと同じ光黄色)/bg4(空と同じ青)。
+EBUZ_COLOR_A_VAL           EQU 0E5h
+EBUZ_COLOR_B_VAL           EQU 081h
+EBUZ_COLOR_C_VAL           EQU 0E1h
+EBUZ_COLOR_D_VAL           EQU 01Eh
 EBUZ_BULLET_COLOR_BYTE_VAL EQU 0B4h
 
 ; (2026-09-14 follow-up、マルチインスタンス化): 従来のEBUZ_TOPBAND_ROW
@@ -13301,8 +13328,14 @@ EBUZ_BULLET_L_TILE:
 EBUZ_BULLET_R_TILE:
     DB 0,0,254,255,255,254,0,0
 
-EBUZ_COLOR_BYTE:
-    DB EBUZ_COLOR_BYTE_VAL
+EBUZ_COLOR_A:
+    DB EBUZ_COLOR_A_VAL
+EBUZ_COLOR_B:
+    DB EBUZ_COLOR_B_VAL
+EBUZ_COLOR_C:
+    DB EBUZ_COLOR_C_VAL
+EBUZ_COLOR_D:
+    DB EBUZ_COLOR_D_VAL
 EBUZ_BULLET_COLOR_BYTE:
     DB EBUZ_BULLET_COLOR_BYTE_VAL
 
