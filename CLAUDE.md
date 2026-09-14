@@ -47,6 +47,24 @@
 - `tools/stage2_combined/README.md` は360KB超(設計メモの蓄積)。全文Readしない。目次代わりに
   `grep -n "^# \|^## "` で見出しだけ拾ってから該当箇所を読むこと。
 
+## ツール類(HTML)の公開方針(2026-09-14、ユーザー指示、恒久ルール)
+
+- **`tools/schedule-editor.html`等、ブラウザで直接開いて使うツールを更新したら、
+  ユーザーへの確認を待たず毎回claude.aiのArtifactとして公開すること**
+  ("アーティファクトも公開 ツールは更新したら毎回公開だ")。GitHub上のファイルを
+  ユーザーが直接ブラウザで開く運用(content://等のローカルファイル経由)だと
+  ブランチ違いや反映漏れで混乱が起きた実績があるため、Artifact URLを常に最新の
+  動作確認先として維持する。
+  - 初回公開時は`downloads`ケイパビリティを`capabilities: {"downloads": true}`で
+    明示的に宣言すること(schedule-editor.html自身は`claude.use("downloads")`を
+    正しく呼ぶ実装済みだが、宣言を忘れるとSave機能がサンドボックスでブロックされ
+    無言で失敗する - 2026-09-14に一度この不具合を踏んでいる)。2回目以降の再公開
+    (同一ファイルパスでの更新)は`capabilities`を省略すれば前回の宣言がそのまま
+    引き継がれる。
+  - 対象は`tools/schedule-editor.html`。他にも同様の「ブラウザで直接使うツール」
+    (例: 将来追加されるsprite-editor.html等)が増えた場合はそれらにも同じ運用を
+    適用する。
+
 ## ビルドコマンド
 
 - Stage2テストROM: `cd tools/stage2_combined && python3 build_test.py`
