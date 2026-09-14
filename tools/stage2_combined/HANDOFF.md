@@ -15895,3 +15895,66 @@ per-slot独立方式へ作り替えた」設計逸脱を撤回、Round121構造+
   HWスプライトが完全に不要になったため、本編組み込み時のスプライト
   予算(このプロジェクトで何度も問題になってきたHWスプライトスロット
   枯渇)への影響が無くなった点は前向きな副産物。
+
+## Round127(ebuz_test、2026-09-14): 初弾ホールド後の「二重ウェイト」を
+解消・厳密なtick数一致アサーションへ
+
+- ユーザー指示: "初弾撃った後のウェイト 2重にウェイトしてるだろ 初弾
+  ホールドを10フレ 一斉発射は15フレのホールドに変更 それ以外の
+  ウェイトは入れるな"。
+- 旧来の`ebuz_test.asm`INITは「初弾ホールド29ティック→state1-state2
+  遷移102ティック→state2形成後29ティックホールド」という3段構成
+  だったが、これが実質的な二重待ちになっていた指摘を受け、遷移用の
+  102ティック待ちブロックを完全に削除。初弾ホールドを
+  `LD B,29`→`LD B,10`、state2形成後(継続発射開始前)のホールドを
+  `LD B,29`→`LD B,15`へ変更し、この2箇所以外に一切ウェイトを
+  追加しない構成に整理(state2のBG描画自体はEBUZ_STATE1_DONE直後に
+  即座に行われ、間に一切の待ちを挟まない)。
+- `tools/ebuz_test/ebuz_test_verify.py`の3つのgap計測アサーション
+  (`BULLET0_HOLD_TICKS=10`/`TOPBOTTOM_HOLD_TICKS=15`)を書き換える
+  過程で、**既存の`gap_steps >= expected*one_tick_steps*0.9`という
+  下限のみのチェックが「ホールドが長すぎる」regressionを検出できない
+  タウトロジーだったと自己発見**(初弾ホールドを29に戻して再テストしても
+  20 passed/0 failedのまま、という偽陰性で発覚)。`gap_ticks =
+  round(gap_steps/one_tick_steps)`を計算し期待tick数と厳密一致させる
+  方式へ修正、この修正後に同じ29への巻き戻しregressionが正しく
+  1件FAILすることを確認した上で復元・再PASSを確認済み(自己検証
+  完了)。
+- `tools/ebuz_test/gif_check.py`の可視化タイムラインも新タイミングへ
+  追随: 旧`for _ in range(27)`(2+27=29ティックの初弾ホールド前提)を
+  `for _ in range(8)`(2+8=10ティック)へ修正。さらに、旧コードは
+  state1→state2遷移時に102ティック待ちが存在する前提で
+  `z.step()+run_until_pc(EBUZ_WAIT_TICK_DONE)`を挟んでいたが、新設計
+  ではSTATE1_DONE直後に一切ウェイトなくSTATE2_BG_DONEへ到達するため、
+  この中間の`run_until_pc(EBUZ_WAIT_TICK_DONE)`呼び出し自体が
+  `EBUZ_STATE2_BG_DONE`を素通りして15ティック待ちの中のWAIT_TICK_DONE
+  まで暴走し、後続の`run_until_pc(EBUZ_STATE2_BG_DONE)`が既に通過済みの
+  PCを二度と迎えられずスタックする(`RuntimeError: never reached PC
+  ...`)ことを実際に踏んで発見・修正 - 該当ブロックを削除し
+  `EBUZ_STATE1_DONE`から直接`EBUZ_STATE2_BG_DONE`へ`run_until_pc`する
+  形に単純化。
+- `python3 build_test.py`→`python3 ebuz_test_verify.py`で20 passed/
+  0 failedを再確認、`python3 gif_check.py`でタイムラインGIF
+  (13フレーム)を再生成しPILで抜き出したフレームを視覚確認(初弾が
+  10ティックのホールド後に即座にEbuz2へ変形する様子、上下弾が
+  引き続き正しく連続発射される様子、いずれも問題なし)。
+- 本編への影響なし(`src/CYBER SHMUP.asm`・`combined_test.asm`いずれも
+  無変更)。変更ファイル: `tools/ebuz_test/ebuz_test.asm`(INITのタイミング
+  定数・待ちブロック構成を変更)/`tools/ebuz_test/ebuz_test_verify.py`
+  (gapアサーションを厳密tick一致へ、ループ境界を新tick数へ)/
+  `tools/ebuz_test/gif_check.py`(可視化のtickループ・中間ウェイト呼び出し
+  を新設計に追随)、`EbuzTest.rom`/`ebuz_bullets_timeline.gif`(再生成)。
+
+セッション引き継ぎメモ(2026-09-14、Round127完了直後):
+- **教訓**: `gap >= expected * 0.9`のような下限のみのアサーションは、
+  「短すぎる」regressionしか検出できず「長すぎる」regression(二重
+  ウェイトの再発等)を通してしまうタウトロジーになりやすい。tick数を
+  扱う場合は`round(steps/one_tick_steps) == expected_ticks`のような
+  厳密一致に倒すこと。
+- 可視化スクリプト(`gif_check.py`)は本体ASMやverifyスクリプトとは
+  独立に「明示的なtickループ回数」や「中間のraw run_until_pc呼び出し
+  順序」をハードコードしているため、ASM側のタイミング構成(待ちの
+  有無・回数)を変更した際は必ず一緒に見直すこと - 今回はverify側の
+  修正だけで満足しかけたが、gif_check.py単体の実行(`python3
+  gif_check.py`)で初めてクラッシュが発覚した。
+- 引き続き本編(`src/CYBER SHMUP.asm`)未組み込みのプロトタイプ。

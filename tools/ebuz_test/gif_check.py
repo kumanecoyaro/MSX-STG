@@ -86,14 +86,12 @@ def main():
     z.step()
     run_until_pc(z, sym["EBUZ_WAIT_TICK_DONE"])
     add("bullet0 DISPLAYED immediately, now HOLDING (static)", 900)
-    for _ in range(27):
+    for _ in range(8):
         z.step()
         run_until_pc(z, sym["EBUZ_WAIT_TICK_DONE"])
-    add("bullet0 still holding, unmoved (tick28 of 29)", 700)
+    add("bullet0 still holding, unmoved (tick10 of 10)", 700)
     run_until_pc(z, sym["EBUZ_STATE1_DONE"])
-    z.step()
-    run_until_pc(z, sym["EBUZ_WAIT_TICK_DONE"])
-    add("hold ends -> bullet0 starts flying", 700)
+    add("hold ends -> immediately transforms into Ebuz2 (no extra wait)", 700)
 
     run_until_pc(z, sym["EBUZ_STATE2_BG_DONE"])
     add("Ebuz2 forms, top/bottom fire not active yet", 900)

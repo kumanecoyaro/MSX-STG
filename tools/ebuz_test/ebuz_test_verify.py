@@ -187,35 +187,45 @@ check(f"EBUZ_FRAME_WAIT still costs a realistic ~1/60s of Z80 clock time "
 # the reference unit used by the gap-verification checks below.
 one_tick_steps = call_routine(fresh(), sym["EBUZ_TICK"])
 
-WAIT_BEFORE_FIRE_TICKS = 29
-WAIT_STATE1_TO_STATE2_TICKS = 102
+# (2026-09-14、実機フィードバック対応: "初弾撃った後のウェイト 2重に
+# ウェイトしてるだろ 初弾ホールドを10フレ 一斉発射は15フレのホールドに
+# 変更 それ以外のウェイトは入れるな"): 旧来の3段ウェイト(29/102/29)を
+# 廃止し、初弾ホールド10ティック・state2形成後の一斉発射前ホールド15
+# ティックの2箇所のみに削減した。state1完了→state2 BG形成の間には
+# もうウェイトが一切無い(BG書き込みのみの数命令)ことも直接検証する。
+BULLET0_HOLD_TICKS = 10
+TOPBOTTOM_HOLD_TICKS = 15
 
 z0 = fresh()
 z0.pc = sym["INIT"]
 run_until_pc(z0, sym["EBUZ_STATE1_BG_DONE"])
 gap1 = run_until_pc_count(z0, sym["EBUZ_STATE1_DONE"])
-check(f"state1: the BG-done -> fired gap actually spends roughly "
-      f"{WAIT_BEFORE_FIRE_TICKS} EBUZ_TICK's worth of steps "
-      f"({gap1} >= {one_tick_steps}*{WAIT_BEFORE_FIRE_TICKS}*0.9), not just a "
-      f"few instructions",
-      gap1 >= one_tick_steps * WAIT_BEFORE_FIRE_TICKS * 0.9)
+gap1_ticks = round(gap1 / one_tick_steps)
+check(f"state1: the BG-done -> fired gap spends exactly "
+      f"{BULLET0_HOLD_TICKS} EBUZ_TICK's worth of steps, not more and not "
+      f"less ({gap1} steps / {one_tick_steps} per tick =~ {gap1_ticks} "
+      f"ticks) - a loose lower-bound-only check would miss a hold that's "
+      f"too LONG (e.g. an unreverted 29), so this checks the exact tick "
+      f"count instead",
+      gap1_ticks == BULLET0_HOLD_TICKS)
 
 z1b = fresh()
 z1b.pc = sym["INIT"]
 run_until_pc(z1b, sym["EBUZ_STATE1_DONE"])
 gap2 = run_until_pc_count(z1b, sym["EBUZ_STATE2_BG_DONE"])
-check(f"state1-to-state2 gap actually spends roughly "
-      f"{WAIT_STATE1_TO_STATE2_TICKS} EBUZ_TICK's worth of steps "
-      f"({gap2} >= {one_tick_steps}*{WAIT_STATE1_TO_STATE2_TICKS}*0.9), not "
-      f"just a few instructions",
-      gap2 >= one_tick_steps * WAIT_STATE1_TO_STATE2_TICKS * 0.9)
+check(f"state1-to-state2 gap has NO wait at all anymore (\"それ以外の "
+      f"ウェイトは入れるな\") - costs far less than a single EBUZ_TICK's "
+      f"worth of steps ({gap2} < {one_tick_steps}), just the BG-writing "
+      f"instructions themselves",
+      gap2 < one_tick_steps)
 
 gap3 = run_until_pc_count(z1b, sym["EBUZ_STATE2_DONE"])
-check(f"state2-BG-done -> activation gap actually spends roughly "
-      f"{WAIT_BEFORE_FIRE_TICKS} EBUZ_TICK's worth of steps "
-      f"({gap3} >= {one_tick_steps}*{WAIT_BEFORE_FIRE_TICKS}*0.9), not just a "
-      f"few instructions",
-      gap3 >= one_tick_steps * WAIT_BEFORE_FIRE_TICKS * 0.9)
+gap3_ticks = round(gap3 / one_tick_steps)
+check(f"state2-BG-done -> activation gap spends exactly "
+      f"{TOPBOTTOM_HOLD_TICKS} EBUZ_TICK's worth of steps, not more and not "
+      f"less ({gap3} steps / {one_tick_steps} per tick =~ {gap3_ticks} "
+      f"ticks)",
+      gap3_ticks == TOPBOTTOM_HOLD_TICKS)
 
 check("BULLET_L/R's BG tile patterns actually loaded into the VRAM pattern "
       "generator (non-blank bitmaps)",
@@ -381,7 +391,7 @@ ok_i, detail = compare(zf, sim, "tick1 (bullet0 just displayed, holding)")
 if not ok_i:
     all_match, mismatch_detail = False, detail
 
-for i in range(2, WAIT_BEFORE_FIRE_TICKS + 1):
+for i in range(2, BULLET0_HOLD_TICKS + 1):
     zf.step()
     run_until_pc(zf, sym["EBUZ_WAIT_TICK_DONE"])
     sim.tick()
@@ -397,15 +407,8 @@ if all_match:
     if not ok_i:
         all_match, mismatch_detail = False, detail
 
-for i in range(1, WAIT_STATE1_TO_STATE2_TICKS + 1):
-    zf.step()
-    run_until_pc(zf, sym["EBUZ_WAIT_TICK_DONE"])
-    sim.tick()
-    if all_match:
-        ok_i, detail = compare(zf, sim, f"state1->state2 wait tick{i}")
-        if not ok_i:
-            all_match, mismatch_detail = False, detail
-
+# state1->state2は"それ以外のウェイトは入れるな"によりノーウェイトへ
+# 変更済み - EBUZ_TICKを1回も挟まずBG書き込みのみで直接到達する。
 run_until_pc(zf, sym["EBUZ_STATE2_BG_DONE"])
 sim.state2_formed = True
 if all_match:
@@ -413,7 +416,7 @@ if all_match:
     if not ok_i:
         all_match, mismatch_detail = False, detail
 
-for i in range(1, WAIT_BEFORE_FIRE_TICKS + 1):
+for i in range(1, TOPBOTTOM_HOLD_TICKS + 1):
     zf.step()
     run_until_pc(zf, sym["EBUZ_WAIT_TICK_DONE"])
     sim.tick()
