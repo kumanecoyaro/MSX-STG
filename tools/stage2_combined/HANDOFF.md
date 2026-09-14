@@ -16868,3 +16868,45 @@ ENEMY6のO(1)短絡最適化(2026-09-14、完了済み)
   レンダリングでは正常確認済み)。BOSS_HEX_PATTERN等の残り128byteの
   追加移設は、Comb bank6側にさらに空きが生まれた場合の将来課題として
   保留。
+
+## Round137: Stage1ボスのY位置を1セル(8px)下げ(2026-09-14、完了済み・
+実機フィードバック待ち)
+
+- ユーザー指示: "ボスのY位置を1セル下げて"。ボス本体・ポッド・偏向弾
+  当たり判定・地形スクロールでの復元処理まで、ボスのY座標に依存する
+  全箇所を横断的に洗い出して1セル(8px)分下方向へシフト。
+- **修正箇所**: (1) `BOSS_DRAW_CUR_TILE`/`BEU_FIRE`のネームテーブル
+  書き込み先を`183Ah`(row1,col26)→`185Ah`(row2)へ(2箇所)。(2)
+  `BOSS_SETUP_TILE_SPRITE`のマテリアライズ点滅スプライトY計算式
+  `7+row*8`→`15+row*8`。(3) `GET_POD_XY`のポッドY計算式の基準値
+  `63`→`71`。(4) `BOSS_ORBIT_DRAW_ALL`内に同じ計算式のインライン
+  重複コピーが存在(`GET_POD_XY`を呼ばず独自に再実装)、これも同じ
+  `63`→`71`へ - 見落としやすい二重定義箇所だったため回帰テストで
+  両方が同時に正しいことを個別に検証。(5) 自機弾のヒット判定・
+  地形スクロール復元で使われる「絶対行→ボスローカル行(0-15)」変換
+  `SUB 1:CP 16`を`SUB 2:CP 16`へ、12箇所全て(CB0/1/2_ERASE・
+  BOSS_GUARD_UPDATE内BULLET0/1/2・地形スクロール6ルーチン
+  SKY_SLOW_0/1/2 H/E)。`DFL0-2_X/Y`(偏向弾位置、BULLET_COL/ROWから
+  動的算出)・`PDC_CHECK_PODS`(POD_CUR_X/Y参照)は自動的に正しく
+  追従するため無修正で正しいことをコード読解で確認済み。
+- 新規`tools/verify_boss_y_shift.py`(9件): ネームテーブル書き込み
+  先・マテリアライズスプライトY・ポッドY(GET_POD_XY単体+
+  BOSS_ORBIT_DRAW_ALL経由の実スポーン統合テストの両方、2箇所の
+  重複修正漏れを検出できる設計)・偏向境界(新旧の境界値3点)・
+  自己検証(境界修正を一時的に戻して実際にFAILすることを確認)を検証。
+  VRAM→PNGレンダリング(実際の`BOSS_SPAWN`→`BOSS_UPDATE_BODY`連続
+  呼び出しによる本物のマテリアライズ+`BOSS_ORBIT_DRAW_ALL`を経由する
+  真正のコードパスで実施、最初の実装[手動でネームテーブルに直接
+  値を書き込むスクリプト]は実コードを経由しないため無効と自己判断し
+  破棄・書き直し)で修正前後を比較、ボスリング全体が1セル分下に
+  移動していることを視覚確認済み。
+- 全回帰: 変更が`src/CYBER SHMUP.asm`(Stage1)のみのため
+  `tools/verify_boss_y_shift.py`(新規9件)+関連する既存Stage1検証群
+  (`verify_ebuz_integration.py`等)を実行、全てPASS
+  (`combined_test.asm`は無変更のためStage2側`run_all.py`の全回帰は
+  今回省略、CLAUDE.mdの「Stage1のみの変更ならcombined_test.asm側の
+  全回帰は不要」方針に従う)。Comb ROM再ビルド・`verify_comb.py`
+  全チェックPASSの上、標準方針によりComb ROMのみ送付。
+- **保留**: RLE圧縮によるキャラクターデータ(`STAGE1_BOSS_CHARDATA`/
+  `SASAPI_CHARDATA`)のサイズ削減は、同じユーザー発言に含まれる
+  次の作業項目として着手予定(次回Round参照)。

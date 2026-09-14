@@ -6264,13 +6264,13 @@ BOSS_HOLD_WHITE:
     XOR A : LD (BOSS_PHASE),A
     RET
 
-; sets the fixed boss-effect sprite's Y (7+row*8) and X (208+col*8 -
+; sets the fixed boss-effect sprite's Y (15+row*8) and X (208+col*8 -
 ; directly over the 8x8 cell about to be redrawn), pattern (fixed),
 ; and color=white, for the start of a new tile.
 BOSS_SETUP_TILE_SPRITE:
     LD A,(BOSS_ROW)
     ADD A,A : ADD A,A : ADD A,A
-    ADD A,7
+    ADD A,15
     LD (BOSS_YTMP),A
     LD A,(BOSS_COL)
     ADD A,A : ADD A,A : ADD A,A
@@ -6281,7 +6281,7 @@ BOSS_SETUP_TILE_SPRITE:
     RET
 
 ; draws the single current tile (BOSS_ROW,BOSS_COL) into the
-; nametable: dest = 183Ah + row*32 + col, source = BOSS_MAP + row*5 + col
+; nametable: dest = 185Ah + row*32 + col, source = BOSS_MAP + row*5 + col
 ; Raw OUT sequence (not LDIRVM) with extra NOP padding - testing
 ; whether the terrain corruption is a VDP-timing issue (2 NOPs is
 ; normally enough everywhere else in this file, but this write
@@ -6291,7 +6291,7 @@ BOSS_DRAW_CUR_TILE:
     LD A,(BOSS_ROW)
     LD H,0 : LD L,A
     ADD HL,HL : ADD HL,HL : ADD HL,HL : ADD HL,HL : ADD HL,HL
-    LD DE,183Ah
+    LD DE,185Ah
     ADD HL,DE
     LD A,(BOSS_COL)
     LD D,0 : LD E,A
@@ -6433,7 +6433,7 @@ BOD_GRAY:
     ADD A,C
     LD (BOSS_ORBIT_XTMP),A
     LD HL,LUT_DY : ADD HL,DE
-    LD A,63
+    LD A,71
     ADD A,(HL)
     LD (BOSS_ORBIT_YTMP),A
     POP BC
@@ -6561,7 +6561,7 @@ CB0_SKIP:
     JP NZ,CB0_LOOP
     RET
 CB0_ERASE:
-    LD A,(BULLET0_ROW) : SUB 1 : CP 16 : JR NC,CB0_ERASE_FAST
+    LD A,(BULLET0_ROW) : SUB 2 : CP 16 : JR NC,CB0_ERASE_FAST
     LD B,A : LD A,(BULLET0_COL) : SUB 26 : CP 5 : JR NC,CB0_ERASE_FAST
     LD H,0 : LD L,B : LD D,H : LD E,L
     ADD HL,HL : ADD HL,HL : ADD HL,DE
@@ -6650,7 +6650,7 @@ CB1_SKIP:
     JP NZ,CB1_LOOP
     RET
 CB1_ERASE:
-    LD A,(BULLET1_ROW) : SUB 1 : CP 16 : JR NC,CB1_ERASE_FAST
+    LD A,(BULLET1_ROW) : SUB 2 : CP 16 : JR NC,CB1_ERASE_FAST
     LD B,A : LD A,(BULLET1_COL) : SUB 26 : CP 5 : JR NC,CB1_ERASE_FAST
     LD H,0 : LD L,B : LD D,H : LD E,L
     ADD HL,HL : ADD HL,HL : ADD HL,DE
@@ -6739,7 +6739,7 @@ CB2_SKIP:
     JP NZ,CB2_LOOP
     RET
 CB2_ERASE:
-    LD A,(BULLET2_ROW) : SUB 1 : CP 16 : JR NC,CB2_ERASE_FAST
+    LD A,(BULLET2_ROW) : SUB 2 : CP 16 : JR NC,CB2_ERASE_FAST
     LD B,A : LD A,(BULLET2_COL) : SUB 26 : CP 5 : JR NC,CB2_ERASE_FAST
     LD H,0 : LD L,B : LD D,H : LD E,L
     ADD HL,HL : ADD HL,HL : ADD HL,DE
@@ -7063,7 +7063,7 @@ BEU_DECODE_DONE:
 
     LD H,0 : LD L,B
     ADD HL,HL : ADD HL,HL : ADD HL,HL : ADD HL,HL : ADD HL,HL
-    LD DE,183Ah
+    LD DE,185Ah
     ADD HL,DE
     LD A,(BOSS_EXPL_COL)
     LD D,0 : LD E,A
@@ -7134,7 +7134,7 @@ GET_POD_XY:
     ADD A,C
     LD (POD_XY_X),A
     LD HL,LUT_DY : ADD HL,DE
-    LD A,63
+    LD A,71
     ADD A,(HL)
     LD (POD_XY_Y),A
     RET
@@ -7810,21 +7810,21 @@ BOSS_GUARD_UPDATE:
     LD A,(BULLET0_ACT)
     OR A
     JR Z,BGU_1
-    LD A,(BULLET0_ROW) : SUB 1 : CP 16 : JR NC,BGU_1
+    LD A,(BULLET0_ROW) : SUB 2 : CP 16 : JR NC,BGU_1
     LD A,(BULLET0_COL) : CP 25 : JR C,BGU_1
     CALL DEFLECT_BULLET0
 BGU_1:
     LD A,(BULLET1_ACT)
     OR A
     JR Z,BGU_2
-    LD A,(BULLET1_ROW) : SUB 1 : CP 16 : JR NC,BGU_2
+    LD A,(BULLET1_ROW) : SUB 2 : CP 16 : JR NC,BGU_2
     LD A,(BULLET1_COL) : CP 25 : JR C,BGU_2
     CALL DEFLECT_BULLET1
 BGU_2:
     LD A,(BULLET2_ACT)
     OR A
     RET Z
-    LD A,(BULLET2_ROW) : SUB 1 : CP 16 : RET NC
+    LD A,(BULLET2_ROW) : SUB 2 : CP 16 : RET NC
     LD A,(BULLET2_COL) : CP 25 : RET C
     CALL DEFLECT_BULLET2
     RET
@@ -14181,7 +14181,7 @@ SKY_FAST_END:
 ; must re-fetch BULLET_ROW/COL fresh afterward rather than relying on
 ; anything surviving this call.
 SKY_SLOW_0H:
-    LD A,(BULLET0_ROW) : SUB 1 : CP 16 : JR NC,SS0H_FAST
+    LD A,(BULLET0_ROW) : SUB 2 : CP 16 : JR NC,SS0H_FAST
     LD B,A : LD A,(BULLET0_COL) : SUB 26 : CP 5 : JR NC,SS0H_FAST
     LD H,0 : LD L,B : LD D,H : LD E,L
     ADD HL,HL : ADD HL,HL : ADD HL,DE
@@ -14195,7 +14195,7 @@ SS0H_FAST:
 SKY_SLOW_0H_END:
 
 SKY_SLOW_0E:
-    LD A,(BULLET0_ROW) : SUB 1 : CP 16 : JR NC,SS0E_FAST
+    LD A,(BULLET0_ROW) : SUB 2 : CP 16 : JR NC,SS0E_FAST
     LD B,A : LD A,(BULLET0_COL) : SUB 26 : CP 5 : JR NC,SS0E_FAST
     LD H,0 : LD L,B : LD D,H : LD E,L
     ADD HL,HL : ADD HL,HL : ADD HL,DE
@@ -14209,7 +14209,7 @@ SS0E_FAST:
 SKY_SLOW_0E_END:
 
 SKY_SLOW_1H:
-    LD A,(BULLET1_ROW) : SUB 1 : CP 16 : JR NC,SS1H_FAST
+    LD A,(BULLET1_ROW) : SUB 2 : CP 16 : JR NC,SS1H_FAST
     LD B,A : LD A,(BULLET1_COL) : SUB 26 : CP 5 : JR NC,SS1H_FAST
     LD H,0 : LD L,B : LD D,H : LD E,L
     ADD HL,HL : ADD HL,HL : ADD HL,DE
@@ -14223,7 +14223,7 @@ SS1H_FAST:
 SKY_SLOW_1H_END:
 
 SKY_SLOW_1E:
-    LD A,(BULLET1_ROW) : SUB 1 : CP 16 : JR NC,SS1E_FAST
+    LD A,(BULLET1_ROW) : SUB 2 : CP 16 : JR NC,SS1E_FAST
     LD B,A : LD A,(BULLET1_COL) : SUB 26 : CP 5 : JR NC,SS1E_FAST
     LD H,0 : LD L,B : LD D,H : LD E,L
     ADD HL,HL : ADD HL,HL : ADD HL,DE
@@ -14237,7 +14237,7 @@ SS1E_FAST:
 SKY_SLOW_1E_END:
 
 SKY_SLOW_2H:
-    LD A,(BULLET2_ROW) : SUB 1 : CP 16 : JR NC,SS2H_FAST
+    LD A,(BULLET2_ROW) : SUB 2 : CP 16 : JR NC,SS2H_FAST
     LD B,A : LD A,(BULLET2_COL) : SUB 26 : CP 5 : JR NC,SS2H_FAST
     LD H,0 : LD L,B : LD D,H : LD E,L
     ADD HL,HL : ADD HL,HL : ADD HL,DE
@@ -14251,7 +14251,7 @@ SS2H_FAST:
 SKY_SLOW_2H_END:
 
 SKY_SLOW_2E:
-    LD A,(BULLET2_ROW) : SUB 1 : CP 16 : JR NC,SS2E_FAST
+    LD A,(BULLET2_ROW) : SUB 2 : CP 16 : JR NC,SS2E_FAST
     LD B,A : LD A,(BULLET2_COL) : SUB 26 : CP 5 : JR NC,SS2E_FAST
     LD H,0 : LD L,B : LD D,H : LD E,L
     ADD HL,HL : ADD HL,HL : ADD HL,DE
