@@ -1679,35 +1679,14 @@ STAGE_CLEAR_NOT_FROZEN:
     LD A,(PXCHAR_G8) : INC A : AND 3Fh : LD (PXCHAR_G8),A
     LD HL,ROWDATA5 : LD A,(PXCHAR_G8) : LD E,A : LD D,0 : ADD HL,DE
     LD IX,IDCACHE5 : CALL REFRESH_IDCACHE_33
-    ; (2026-09-14、"じゃあ組み込む...Ebuz出現中はスケジュールエネミーは
-    ; 一旦停止"、2026-09-14 follow-up: マルチインスタンス化に伴い
-    ; EBUZ_ANY_ACTIVEへ拡張): 2体・3体目を含むEbuzチェーンが1体でも
-    ; アクティブなあいだはGAME_TICK自体を凍結し、SPAWN_SCHEDULE_CHECK
-    ; も呼ばない - 単に「今回だけ呼ばない」方式だとGAME_TICKは進み
-    ; 続けスケジュールが後で一気に追いつくバースト(density spike)に
-    ; なりかねないため、時計そのものを止める設計にした(退出後は
-    ; 止めていた時点からそのまま再開する)。
-    CALL EBUZ_ANY_ACTIVE
-    OR A
-    JR NZ,SKIP_SCHEDULE_TICK
+    ; round135follow-up5("今のハードコードしたEbuzスケジュールは削除
+    ; しといて 意図と違ってるんで"): 2026-09-14に導入した「Ebuz出現中は
+    ; GAME_TICK自体を凍結しSPAWN_SCHEDULE_CHECKも呼ばない」仕組み
+    ; (EBUZ_ANY_ACTIVE判定+固定tickテーブルでのEBUZ_SPAWN_CHAIN_START
+    ; 自動発火)を全面撤去し、GAME_TICKの単純な無条件インクリメント+
+    ; SPAWN_SCHEDULE_CHECK呼び出しへ復元(Ebuz導入前の元の形)。
     LD HL,(GAME_TICK) : INC HL : LD (GAME_TICK),HL
-    LD A,(EBUZ_SPAWN_TICK_INDEX)
-    CP EBUZ_SPAWN_TICK_COUNT
-    JR NC,SKIP_EBUZ_SPAWN_TRIGGER    ; 4回とも消化済み
-    ADD A,A : LD E,A : LD D,0
-    PUSH HL
-    LD HL,EBUZ_SPAWN_TICK_TABLE
-    ADD HL,DE
-    LD E,(HL) : INC HL : LD D,(HL)
-    POP HL
-    OR A
-    SBC HL,DE
-    JR NZ,SKIP_EBUZ_SPAWN_TRIGGER
-    LD A,(EBUZ_SPAWN_TICK_INDEX) : INC A : LD (EBUZ_SPAWN_TICK_INDEX),A
-    CALL EBUZ_SPAWN_CHAIN_START
-SKIP_EBUZ_SPAWN_TRIGGER:
     CALL SPAWN_SCHEDULE_CHECK
-SKIP_SCHEDULE_TICK:
 SKIP_G8:
     LD A,(TICK) : AND 07h : LD (PHASE_G8),A
 
@@ -12102,14 +12081,17 @@ EBUZ_ST_STATE2 EQU 3   ; 変形直後、一斉発射前ホールド中(本体4�
 EBUZ_ST_FIRE   EQU 4   ; 継続交互発射中(本体4行)
 EBUZ_ST_EXIT   EQU 5   ; 右へ移動して画面外へ消える(本体4行)
 
-; (2026-09-14follow-up2、"スポーンは他に、256、512、768の計4回に"):
-; 単一のEBUZ_SPAWN_TICKを廃止し、4つのトリガーtickをテーブル化
-; (EBUZ_SPAWN_TICK_INDEXが次に使う要素を指す)。GAME_TICKは
-; EBUZ_ANY_ACTIVEがアクティブな間凍結される設計のため、1回のチェーン
-; (1体目→2体目→3体目)が完全に終わるまで次のtickには絶対に到達しない
-; - よって各トリガーは独立した「新しいチェーンの開始」として扱える。
-; (2026-09-14 follow-up4、"Tick950にもEbuzを"): 4→5。
-EBUZ_SPAWN_TICK_COUNT    EQU 5
+; (round135follow-up5、"今のハードコードしたEbuzスケジュールは削除
+; しといて 意図と違ってるんで"): GAME_TICKが固定tick(100/256/512/
+; 768/950)に達するたびEBUZ_SPAWN_CHAIN_STARTを自動発火するハード
+; コード式トリガー(EBUZ_SPAWN_TICK_TABLE/COUNT/INDEX+MAINLOOP側の
+; GAME_TICK凍結・比較ロジック)を全面撤去。schedule-editor.htmlの
+; "ebuz"パレットエントリ(round135follow-up3で追加済み)経由でユーザーが
+; 実際に配置したスケジュールJSONを受け取ってから、その他のエネミー同様
+; SSC_FIRE(SPAWN_SCHEDULE_CHECK)のディスパッチから直接EBUZ_SPAWN_
+; CHAIN_STARTを呼ぶ形へ再配線する想定(未実装、次のユーザー入力待ち)。
+; Ebuz自身のチェーン進行ロジック(EBUZ_SPAWN_CHAIN_START/EBUZ_CHECK_
+; CHAIN_TRIGGERS/EBUZ_ANY_ACTIVE等)自体は一切変更していない。
 ; (2026-09-14 follow-up、"耐久値24に"): 12→24。全インスタンス共通。
 EBUZ_HP_INIT             EQU 24
 ; (2026-09-14 follow-up3、"Ebuz生存時間を5秒に"): 900(15秒)→300(5秒)。
@@ -12226,9 +12208,10 @@ EBUZ_EXPL_POS_X       EQU 0F283h
 EBUZ_EXPL_POS_Y       EQU 0F284h
 EBUZ_EXPL_QUEUE_CAPACITY EQU 16   ; 2の冪(ENQUEUE/UPDATE_QUEUEの容量チェック用)
 EBUZ_EXPL_SPAWN_INTERVAL EQU 4    ; 未調整の初期値、8セル連続ポップの間隔(フレーム)
-; (2026-09-14follow-up2、"スポーンは他に、256、512、768の計4回に"):
-; EBUZ_SPAWN_TICK_TABLEの次に使う要素番号(0-4、5=5回とも消化済み)。
-EBUZ_SPAWN_TICK_INDEX EQU 0F285h
+; 0F285hは旧EBUZ_SPAWN_TICK_INDEX(round135follow-up5で撤去済みの
+; ハードコードスケジュール機構専用だった1byte) - INIT側の一括ゼロ
+; クリア(EBUZ_CUR_ROW_ADDRから42byte、EBUZ_SLOT0の直前まで)の範囲内
+; にそのまま残っているだけの未使用パディング、新規に使ってよい。
 
 EBUZ_SLOT0 EQU 0F286h
 EBUZ_SLOT1 EQU EBUZ_SLOT0+EBUZ_SLOT_SIZE
@@ -12864,9 +12847,14 @@ EBUZ_SPAWN_INSTANCE:
     CALL EBUZ_BODY2_WRITE
     RET
 
-; GAME_TICKがEBUZ_SPAWN_TICK_TABLEの各要素(100,256,512,768,950)に達する
-; たび毎回呼ばれる(MAINLOOP参照、2026-09-14follow-up2で単発トリガーから
-; 4回トリガーへ拡張、2026-09-14follow-up4で5回目[tick950]を追加)。
+; チェーン(1体目→2体目→3体目)を1回開始するエントリポイント。
+; (round135follow-up5、"ハードコードしたEbuzスケジュールは削除"):
+; 従来はMAINLOOPがGAME_TICKをEBUZ_SPAWN_TICK_TABLEの固定値
+; (100/256/512/768/950)と比較して自動的にここを呼んでいたが、その
+; 仕組み自体を撤去した。呼び出し元は現時点では存在しない(schedule-
+; editor.htmlの"ebuz"パレットエントリ経由でユーザーが配置した
+; スケジュールを受け取り次第、他のSPAWN_*ハンドラと同じくSSC_FIRE
+; から呼ぶ形で再配線する想定 - 詳細はEBUZ_HP_INIT直前のコメント参照)。
 ; 1体目をSLOT0(中央行EBUZ_ROW_INST1)へスポーンし
 ; EBUZ_SPAWN_STAGEを1にする(前回のチェーンが3[終端]のままでも無条件に
 ; 上書きし新しいチェーンを開始する)。2体目・3体目のスポーンは
@@ -13276,10 +13264,6 @@ PDCEZ_SL_SKIP:
 PDCEZ_SL_HIT:
     LD A,1
     RET
-
-; 5回分のチェーン開始トリガーtick(EBUZ_SPAWN_TICK_INDEXでindex)。
-EBUZ_SPAWN_TICK_TABLE:
-    DW 100,256,512,768,950
 
 EBUZ_ROW_ABCD:
     DB EBUZ_CODE_A,EBUZ_CODE_B,EBUZ_CODE_C,EBUZ_CODE_D

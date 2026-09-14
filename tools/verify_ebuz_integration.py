@@ -175,68 +175,21 @@ for slot, name in ((S0, "SLOT0"), (S1, "SLOT1")):
           srd(z, slot, "B0_COL") == 0 and srd(z, slot, "B0_HOLD_COUNTER") == 0)
 
 # ============================================================
-# 2. スケジュール凍結(EBUZ_ANY_ACTIVE): いずれかのスロットが
-#    アクティブな間、GAME_TICKは一切進まない
-# ============================================================
-z = fresh()
-boot(z)
-wr16(z, sym["GAME_TICK"], 500)
-wr16(z, sym["SPAWN_NEXT_INDEX"], 0)
-swr(z, S1, "ACT", sym["EBUZ_ST_FIRE"])  # SLOT1(=3体目用)だけアクティブでも凍結する
-before = game_tick(z)
-for _ in range(64):
-    step_frame(z)
-check("SLOT1だけがアクティブでも(SLOT0は非活性)、64フレーム進めても"
-      "GAME_TICKは完全に凍結(EBUZ_ANY_ACTIVEが両スロットを見ている)",
-      game_tick(z) == before)
-swr(z, S1, "ACT", 0)
-for _ in range(8):
-    step_frame(z)
-check("両スロットとも非活性に戻れば、GAME_TICKは凍結していた値から"
-      "丁度1つ進む(一気に複数追いつくバーストにはならない設計)",
-      game_tick(z) == before + 1)
-
-
-def _regress_no_freeze_check():
-    """EBUZ_ANY_ACTIVEの結果を無視させる(CALL直後のOR A:JR NZを潰す)
-    自己検証。"""
-    broken_mem = bytearray(mem0)
-    # CALL EBUZ_ANY_ACTIVE = CD ll hh、その直後 OR A=B7 / JR NZ,d=20 d
-    target = sym["EBUZ_ANY_ACTIVE"]
-    pat = bytes([0xCD, target & 0xFF, (target >> 8) & 0xFF, 0xB7, 0x20])
-    idx = bytes(broken_mem).find(pat)
-    if idx < 0:
-        raise RuntimeError("pattern not found for self-verification")
-    broken_mem[idx + 3] = 0x00  # OR A -> NOP
-    broken_mem[idx + 4] = 0x00  # JR NZ,d -> NOP(1バイト目のみ潰し、Zフラグに依存させない)
-    zz = Z80(broken_mem)
-    zz.pc = sym["INIT"]
-    run_until_pc(zz, sym["MAINLOOP"])
-    wr16(zz, sym["GAME_TICK"], 500)
-    zz.wr(S1 + sym["EBUZ_OFS_ACT"], sym["EBUZ_ST_FIRE"])
-    b4 = game_tick(zz)
-    for _ in range(64):
-        zz.pc = sym["MAINLOOP"]; zz.step(); run_until_pc(zz, sym["MAINLOOP"])
-    return game_tick(zz) == b4
-
-
-check("自己検証: スケジュール凍結ガードを無効化すると、上と同じ64フレーム"
-      "経過チェックが正しくFAILに転じる(=このガードが実際に効いている"
-      "ことの確認)",
-      _regress_no_freeze_check() == False)
-
-# ============================================================
-# 3. スポーントリガー: GAME_TICK==100の瞬間に1体目がSLOT0へ、
-#    中央行EBUZ_ROW_INST1(9)でスポーンする
+# 2. スポーントリガー: EBUZ_SPAWN_CHAIN_STARTを呼んだ瞬間に1体目が
+#    SLOT0へ、中央行EBUZ_ROW_INST1(9)でスポーンする
+#    (round135follow-up5、"ハードコードしたEbuzスケジュールは削除
+#    しといて 意図と違ってるんで": 旧来のGAME_TICK==100固定トリガー+
+#    「Ebuz出現中はGAME_TICK凍結」機構は全面撤去済み。このテストも
+#    直接EBUZ_SPAWN_CHAIN_STARTをcall_routine()する形に変更、GAME_TICK
+#    は一切関与しない)。
 # ============================================================
 z = fresh()
 boot(z)
 row0_before_spawn = [vrd(z, cell(0, sym["EBUZ_SPAWN_COL"] + i)) for i in range(4)]
-wr16(z, sym["GAME_TICK"], 99)
-run_until(z, lambda z: game_tick(z) == 100, max_frames=9)
-check("GAME_TICK==100到達の瞬間、EBUZ_SPAWN_STAGEが1になる",
+call_routine(z, sym["EBUZ_SPAWN_CHAIN_START"])
+check("EBUZ_SPAWN_CHAIN_START呼び出し直後、EBUZ_SPAWN_STAGEが1になる",
       z.rd(sym["EBUZ_SPAWN_STAGE"]) == 1)
-check("GAME_TICK==100到達の瞬間、SLOT0.ACTがEBUZ_ST_ENTERになる",
+check("EBUZ_SPAWN_CHAIN_START呼び出し直後、SLOT0.ACTがEBUZ_ST_ENTERになる",
       srd(z, S0, "ACT") == sym["EBUZ_ST_ENTER"])
 check("SLOT1はまだ完全に非活性のまま",
       srd(z, S1, "ACT") == 0)
@@ -251,9 +204,9 @@ check("(2026-09-14 follow-up、'耐久値24に'): スポーン直後、SLOT0.HP�
       srd(z, S0, "HP") == sym["EBUZ_HP_INIT"] == 24)
 check("スポーン直後、SLOT0.CENTER_ROWはEBUZ_ROW_INST1(9)",
       srd(z, S0, "CENTER_ROW") == sym["EBUZ_ROW_INST1"] == 9)
-check("スポーン直後(かつ同フレーム内でEBUZ_UPDATE_ONEが1回動いた後)、"
-      "SLOT0.LIFE_TIMERはEBUZ_LIFETIME_FRAMES-1(899)",
-      srd16(z, S0, "LIFE_TIMER") == sym["EBUZ_LIFETIME_FRAMES"] - 1)
+check("スポーン直後(まだEBUZ_UPDATE_ONEは一度も動いていない)、"
+      "SLOT0.LIFE_TIMERはEBUZ_LIFETIME_FRAMESそのまま",
+      srd16(z, S0, "LIFE_TIMER") == sym["EBUZ_LIFETIME_FRAMES"])
 row0 = [vrd(z, cell(0, sym["EBUZ_SPAWN_COL"] + i)) for i in range(4)]
 row1 = [vrd(z, cell(1, sym["EBUZ_SPAWN_COL"] + i)) for i in range(4)]
 check("(row0破壊回避の直接確認) スポーン直後、row0のcol24-27はスポーン前"
@@ -266,7 +219,7 @@ check("スポーン直後、row1のcol24-27に本体4タイル(A,B,C,D)が描画
       row1 == ABCD)
 
 # ============================================================
-# 4. 降下(ENTER): EBUZ_DESCEND_ROW_FRAMESフレームに1回、中央行まで
+# 3. 降下(ENTER): EBUZ_DESCEND_ROW_FRAMESフレームに1回、中央行まで
 #    1行ずつ移動。クリーンな状態(SLOT0、カウンタ0、ROW=1)から独立に検証。
 # ============================================================
 z = fresh()
@@ -317,7 +270,7 @@ check("row9/row10のcol24-27は依然として本体4タイル(A,B,C,D)のまま
       [vrd(z, cell(r10, 24 + i)) for i in range(4)] == ABCD)
 
 # ============================================================
-# 5. state1ホールド: 初弾ホールドを10フレ、直後にstate2へ即遷移
+# 4. state1ホールド: 初弾ホールドを10フレ、直後にstate2へ即遷移
 # ============================================================
 HT = sym["EBUZ_BULLET0_HOLD_TICKS"]
 for _ in range(HT - 1):
@@ -347,7 +300,7 @@ check("state2形成後もbullet0は毎フレーム1列ずつ左へ飛び続け�
       srd(z, S0, "B0_COL") == b0col_before - 1)
 
 # ============================================================
-# 6. state2ホールド(45フレ)→継続交互発射開始
+# 5. state2ホールド(45フレ)→継続交互発射開始
 # ============================================================
 PT = sym["EBUZ_PREACT_HOLD_TICKS"]
 for _ in range(PT - 2):
@@ -373,7 +326,7 @@ check("次の発射(2フレーム後)は下レーンへ(交互発射)",
       any(z.rd(sa(S0, "BOTTOM_COLS") + i) == sym["EBUZ_BULLET1_COL"] for i in range(8)))
 
 # ============================================================
-# 7. 生存時間(EBUZ_LIFETIME_FRAMES) - 満了で強制EXIT、残存弾は全消去
+# 6. 生存時間(EBUZ_LIFETIME_FRAMES) - 満了で強制EXIT、残存弾は全消去
 # ============================================================
 z2 = fresh()
 boot(z2)
@@ -408,7 +361,7 @@ check("EXIT中(画面外到達前)は生存時間タイマがこれ以上動か�
       srd(z2, S0, "ACT") == sym["EBUZ_ST_EXIT"])
 
 # ============================================================
-# 8. EXIT: EBUZ_EXIT_COL_FRAMESフレームに1回、1列ずつ右へ移動し、
+# 7. EXIT: EBUZ_EXIT_COL_FRAMESフレームに1回、1列ずつ右へ移動し、
 #    画面外で完全非活性化。クリーンな状態から独立に検証する。
 # ============================================================
 XF = sym["EBUZ_EXIT_COL_FRAMES"]
@@ -442,7 +395,6 @@ check("EXIT移動後、新footprintに含まれなくなった元の左端列"
 
 wr16(z2, sym["GAME_TICK"], 500)
 wr16(z2, sym["SPAWN_NEXT_INDEX"], 0)
-gt_before = game_tick(z2)
 steps_to_offscreen = (sym["EBUZ_EXIT_COL_MAX"] - (start_col + 1)) * XF
 for _ in range(steps_to_offscreen):
     step_frame(z2)
@@ -451,11 +403,6 @@ check("EXIT完了(EBUZ_EXIT_COL_MAX到達)でSLOT0.ACTが0(完全非活性)に�
 check("EXIT完了後、最後に居た列付近のfootprintはBLANKCODE(消し残しなし、"
       "かつ隣接行への書き込み折り返しも無い)",
       all(vrd(z2, cell(r, c)) == BC for r in (8, 9, 10, 11) for c in range(24, 32)))
-for _ in range(8):
-    step_frame(z2)
-check("両スロットとも非活性に戻った後は、GAME_TICKが再び進み始める"
-      "(スケジュール自動再開)",
-      game_tick(z2) == gt_before + 1)
 
 SENTINEL = 200
 
@@ -487,7 +434,7 @@ check("自己検証: EBUZ_EXIT_COL_MAXを32(修正前の値)に戻すと、COL=2
       _regress_exit_col_max_wraps_into_next_row() == False)
 
 # ============================================================
-# 9. 衝突: 自機弾がEbuzに当たるとHPが減り、0で撃破
+# 8. 衝突: 自機弾がEbuzに当たるとHPが減り、0で撃破
 #    (爆発キュー投入+スコア+全消去、耐久値24)
 # ============================================================
 z3 = fresh()
@@ -624,7 +571,7 @@ check("自己検証: HP減算命令を無効化すると、24発当てても撃�
       _regress_no_hp_decrement() == False)
 
 # ============================================================
-# 10. 衝突: Ebuz本体・弾との接触で自機がダメージを受ける
+# 9. 衝突: Ebuz本体・弾との接触で自機がダメージを受ける
 #     (PDC_CHECK_EBUZ、既存のPDC_CHECK_*群と同じ「相手は無傷」設計)
 # ============================================================
 def pdc_check_ebuz(z):
@@ -697,14 +644,17 @@ check("SLOT0が非活性でも、SLOT1本体との接触がPDC_CHECK_EBUZで検�
       pdc_check_ebuz(z9) == 1)
 
 # ============================================================
-# 11. マルチインスタンスチェーン(2026-09-14 follow-up、本Roundの中心):
+# 10. マルチインスタンスチェーン(2026-09-14 follow-up、本Roundの中心):
 #     1体目撃破→(同一SLOT0で)2体目スポーン(Row12)→2体目がFIRE到達→
 #     3体目スポーン(SLOT1、Row5、2体目と同時生存)
 # ============================================================
-def spawn_chain_to_tick100(z):
+def spawn_ebuz_chain(z):
+    """boot()した上でEBUZ_SPAWN_CHAIN_STARTを直接呼びチェーンを開始する。
+    旧名spawn_chain_to_tick100(GAME_TICK==100固定トリガー依存)から
+    round135follow-up5でリネーム - ハードコードスケジュール機構の撤去
+    により、もうどのtick値にも紐付かない。"""
     boot(z)
-    wr16(z, sym["GAME_TICK"], 99)
-    run_until(z, lambda z: game_tick(z) == 100, max_frames=9)
+    call_routine(z, sym["EBUZ_SPAWN_CHAIN_START"])
 
 
 def advance_until(z, pred, max_frames=3000):
@@ -712,7 +662,7 @@ def advance_until(z, pred, max_frames=3000):
 
 
 zc = fresh()
-spawn_chain_to_tick100(zc)
+spawn_ebuz_chain(zc)
 check("チェーン開始: STAGE=1、SLOT0が1体目(CENTER_ROW=9)としてスポーン",
       zc.rd(sym["EBUZ_SPAWN_STAGE"]) == 1 and
       srd(zc, S0, "CENTER_ROW") == sym["EBUZ_ROW_INST1"])
@@ -779,51 +729,11 @@ check("STAGE=3到達後、50フレーム進めてもSTAGE=3のまま(二重発�
       zc.rd(sym["EBUZ_SPAWN_STAGE"]) == 3)
 
 # ============================================================
-# 11.5. 4回スポーン(2026-09-14 follow-up2、"スポーンは他に、256、512、
-#       768の計4回に"): 1回目(tick100)のチェーンが完全に終わった後も、
-#       tick256で新しいチェーンが独立して開始することを検証。
-# ============================================================
-zf = fresh()
-spawn_chain_to_tick100(zf)
-check("1回目トリガー: EBUZ_SPAWN_TICK_INDEXが1になる(次はtick256)",
-      zf.rd(sym["EBUZ_SPAWN_TICK_INDEX"]) == 1)
-# チェーンをSTAGE=3(終端)まで進めた上で両スロットを強制的に非活性化し
-# (自然死亡シーケンス自体はセクション11/12で検証済みのためここでは
-# 省略、STAGE=3にしないとEBUZ_CHECK_CHAIN_TRIGGERSがACT=0を"1体目が
-# 消えた"と誤検出して2体目を即再スポーンしてしまう)、GAME_TICKの
-# 凍結を解除する。
-zf.wr(sym["EBUZ_SPAWN_STAGE"], 3)
-swr(zf, S0, "ACT", 0)
-swr(zf, S1, "ACT", 0)
-step_frame(zf)
-wr16(zf, sym["GAME_TICK"], 255)
-run_until(zf, lambda z: game_tick(z) == 256, max_frames=9)
-check("(2026-09-14 follow-up2、'256、512、768の計4回に'): "
-      "tick256到達と同フレームで新チェーンが開始し、SLOT0に1体目が"
-      "再スポーンする(前回チェーンがSTAGE=3[終端]のままでも上書きされる)",
-      zf.rd(sym["EBUZ_SPAWN_STAGE"]) == 1 and
-      srd(zf, S0, "ACT") == sym["EBUZ_ST_ENTER"] and
-      srd(zf, S0, "CENTER_ROW") == sym["EBUZ_ROW_INST1"])
-check("2回目トリガー: EBUZ_SPAWN_TICK_INDEXが2になる(次はtick512)",
-      zf.rd(sym["EBUZ_SPAWN_TICK_INDEX"]) == 2)
-
-zg = fresh()
-boot(zg)
-zg.wr(sym["EBUZ_SPAWN_TICK_INDEX"], sym["EBUZ_SPAWN_TICK_COUNT"])
-wr16(zg, sym["GAME_TICK"], 767)
-for _ in range(20):
-    step_frame(zg)
-check("自己検証: EBUZ_SPAWN_TICK_INDEXが番兵(EBUZ_SPAWN_TICK_COUNT)"
-      "に達した後は、tick768を跨いでもEBUZ_SPAWN_STAGEが0のまま"
-      "(テーブルに存在しない追加のスポーンは発生しない)",
-      zg.rd(sym["EBUZ_SPAWN_STAGE"]) == 0)
-
-# ============================================================
-# 12. チェーン: 1体目が(撃破ではなく)自然EXITで消えた場合も
+# 11. チェーン: 1体目が(撃破ではなく)自然EXITで消えた場合も
 #     2体目が正しくトリガーされる("撤退するか倒されるか"の両方)
 # ============================================================
 zd = fresh()
-spawn_chain_to_tick100(zd)
+spawn_ebuz_chain(zd)
 swr16(zd, S0, "LIFE_TIMER", 1)  # 1フレームでEXITへ強制遷移させる
 advance_until(zd, lambda z: srd(z, S0, "ACT") == sym["EBUZ_ST_EXIT"], max_frames=10)
 check("1体目が生存時間切れでEXITへ遷移", srd(zd, S0, "ACT") == sym["EBUZ_ST_EXIT"])
@@ -842,7 +752,7 @@ check("(EXIT[撤退]経路でも同様に)1体目のEXIT完了と同フレーム
       srd(zd, S0, "CENTER_ROW") == sym["EBUZ_ROW_INST2"])
 
 # ============================================================
-# 13. 8セル死亡演出(2026-09-14 follow-up、"爆発エフェクトはEbuzセル毎に
+# 12. 8セル死亡演出(2026-09-14 follow-up、"爆発エフェクトはEbuzセル毎に
 #     1回 8セルだから8回エフェクトとサウンド 自機爆発のサウンドと
 #     スプライトを流用"): EBUZ_EXPL_QUEUEがPLAYER_EXPL_POOLを介して
 #     正しく8回分ポップ+SOUND_DESTROYされることを検証する。
@@ -944,39 +854,7 @@ check("自己検証: EBUZ_EXPL_UPDATE_QUEUEの呼び出しを無効化すると�
       _regress_explosion_queue_not_drained() == 8)
 
 # ============================================================
-# 13. 5回目のトリガー(2026-09-14 follow-up4、"Tick950にもEbuzを"):
-#     EBUZ_SPAWN_TICK_TABLEに950を追加、COUNTを4→5に拡張。
-# ============================================================
-check("EBUZ_SPAWN_TICK_TABLEの5番目(index4)の要素がtick950",
-      (mem0[sym["EBUZ_SPAWN_TICK_TABLE"] + 8] |
-       (mem0[sym["EBUZ_SPAWN_TICK_TABLE"] + 9] << 8)) == 950)
-check("EBUZ_SPAWN_TICK_COUNTが5", sym["EBUZ_SPAWN_TICK_COUNT"] == 5)
-
-zh = fresh()
-boot(zh)
-zh.wr(sym["EBUZ_SPAWN_TICK_INDEX"], 4)
-wr16(zh, sym["GAME_TICK"], 949)
-run_until(zh, lambda z: game_tick(z) == 950, max_frames=9)
-check("index4からtick950到達と同フレームで5回目のチェーンが開始し、"
-      "SLOT0に1体目が再スポーンする",
-      zh.rd(sym["EBUZ_SPAWN_STAGE"]) == 1 and
-      srd(zh, S0, "ACT") == sym["EBUZ_ST_ENTER"] and
-      srd(zh, S0, "CENTER_ROW") == sym["EBUZ_ROW_INST1"])
-check("5回目トリガー後、EBUZ_SPAWN_TICK_INDEXが5(番兵)になる",
-      zh.rd(sym["EBUZ_SPAWN_TICK_INDEX"]) == 5)
-
-zi = fresh()
-boot(zi)
-zi.wr(sym["EBUZ_SPAWN_TICK_INDEX"], sym["EBUZ_SPAWN_TICK_COUNT"])
-wr16(zi, sym["GAME_TICK"], 949)
-for _ in range(20):
-    step_frame(zi)
-check("自己検証: index=5(番兵)に達した状態でtick950を跨いでも、"
-      "6回目のスポーンは発生しない(EBUZ_SPAWN_STAGEが0のまま)",
-      zi.rd(sym["EBUZ_SPAWN_STAGE"]) == 0)
-
-# ============================================================
-# 14. round135follow-up4「Ebuzの発射音欲しい マシンガンみたいなやつ
+# 13. round135follow-up4「Ebuzの発射音欲しい マシンガンみたいなやつ
 #     ...音は2番で」: 発射のたびSOUND_EBUZ_FIRE(候補2「ディープ・
 #     スタッター」、noise period=14)が実際に呼ばれる。SND_TIMERは
 #     同じフレーム内でSOUND_UPDATE自身がすぐ1減算するため(既存の
@@ -988,7 +866,7 @@ check("自己検証: index=5(番兵)に達した状態でtick950を跨いでも�
 # ============================================================
 def _ebuz_fires_sound(fire_side):
     zj = fresh()
-    spawn_chain_to_tick100(zj)
+    spawn_ebuz_chain(zj)
     advance_until(zj, lambda z: srd(z, S0, "ACT") == sym["EBUZ_ST_FIRE"], max_frames=2000)
     swr(zj, S0, "FIRE_SIDE", fire_side)
     for _ in range(sym["EBUZ_FIRE_INTERVAL"] + 1):
@@ -1021,7 +899,7 @@ def _regress_ebuz_fire_sound_not_called():
     zk = Z80(broken_mem)
     zk.pc = sym["INIT"]
     run_until_pc(zk, sym["MAINLOOP"])
-    spawn_chain_to_tick100(zk)
+    spawn_ebuz_chain(zk)
     advance_until(zk, lambda z: srd(z, S0, "ACT") == sym["EBUZ_ST_FIRE"], max_frames=2000)
     for _ in range(sym["EBUZ_FIRE_INTERVAL"] * 4):
         zk.psg_regs.pop(6, None)
