@@ -16458,3 +16458,51 @@ HP24化+8セル死亡演出(PLAYER_EXPL_POOL流用)+ROM容量危機の解決
   PASSの上、標準方針によりComb ROMのみ送付。
 - **保留・実機フィードバック待ち**: 新スケジュールの実プレイでの
   ペーシング・難易度感は実機フィードバック待ち。
+
+## Round135: Stage1スケジュール再差し替え(Schedule_1.json、476エントリ)
+(2026-09-14、完了済み・実機フィードバック待ち)
+
+- ユーザーが添付`Schedule_1.json`(476エントリ、Round134の
+  `Schedule.json`[479エントリ]から3件減)を新たに提示。差分を機械的に
+  比較した結果、tick860付近以降の終盤で「simple」だった数十件のうち
+  一部が「enemy4」へ変更され、件数もわずかに調整されていたことを確認
+  (enemy2の11件[index101,109,113,117,119,148,149,182,183,184,185]は
+  Round134と完全に同一のままで、SSC_BUSY_E2のCP対象リストは無変更で
+  良いと判明)。Round134/76-9と同じ機械的再生成手順(5テーブル+
+  SSC_FIREのNブロックCP-dispatchチェーン)を踏襲。
+- 476<512のためH=0/1の2ブロック構成は維持。差分がすべてglobal
+  index256以降(旧Boss index478→新475)に収まっていたため、
+  SSC_FIRE_BLK0(index0-255の分岐チェーン)は1文字も変えずに済んだ
+  (コメント文言のみ更新)- BLK1のみ全面再生成。`LD DE,479`→
+  `LD DE,476`、関連コメントも更新。
+- 検証は2段階(Round134と同じ方式): (1) 476エントリ全件について
+  SPAWN_NEXT_INDEXとGAME_TICKを直接pokeしてSPAWN_SCHEDULE_CHECKを
+  1件ずつ単独呼び出しし、実際に分岐したハンドラのアドレスをJSONの
+  typeから期待されるハンドラと突き合わせ - 476件中不一致0件。
+  (2) 実際にbootしてMAINLOOPをstep_frame()で自然に回し続ける通し
+  シミュレーションで、GAME_TICKが自然に進行するだけで476エントリ
+  全てが一度もスタールせず消化されることを確認(17080フレームで
+  index=476到達、GAME_TICK=1075まで自然進行 - 序盤でEBUZ(Round130-133
+  導入の新HP制エネミー、出現中はGAME_TICK自体を意図的に凍結する仕様)
+  のチェーン消化に約2800フレームかかる区間があったが、これはEbuz
+  自身の既存の意図した挙動でありスケジュール差し替えとは無関係、
+  凍結解除後は正常に進行を再開し最終的に完走を確認)。
+- 既存回帰: `verify_spawn_schedule_restart.py`12/`verify_enemy_
+  bullets.py`60/`verify_player_damage.py`60/`verify_stage1_bgm.py`80/
+  `verify_stage1_mission_screens.py`87/`verify_enemy6_durability.py`
+  19/`verify_explosion_anim.py`28/`verify_boss_dfl_clear.py`10/
+  `verify_ebuz_integration.py`103、全てPASS(スケジュール非依存の
+  テストのため無変更)。`verify_barrier.py`(別セッションのアップロード
+  ファイル参照切れ)・`verify_enemy3_init_safety_net.py`・`verify_
+  idcache_multiframe.py`/`verify_namebuf_regen.py`(ROWDATA1
+  KeyError)・`verify_vdp_wait_shrink.py`(OUT件数の期待値ズレ)の
+  失敗は、差し替え前のコミット(Round134時点)でも同一内容で再現する
+  ことを確認済みの既存の無関係な問題(このRoundの変更によるものでは
+  ない)。Stage2側`run_all.py`は本Roundでcombined_test.asmを一切
+  変更していないため対象外(参考実行のみ)。
+- Comb ROM再ビルド・`verify_comb.py`全チェックPASS(Stage1の実
+  死亡→GAME_OVER→title、Stage2側のTANK_LIFE=0→GAME_OVERバンク→title、
+  ENDING_ACT=4→title、いずれのトランポリンも含め一気通貫で健全性確認)
+  の上、標準方針によりComb ROMのみ送付。
+- **保留・実機フィードバック待ち**: 新スケジュールの実プレイでの
+  ペーシング・難易度感は実機フィードバック待ち。
