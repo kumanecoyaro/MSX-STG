@@ -32,3 +32,6 @@ tools/stage2_combined/Schedule2_current.json
 # tools/ebuz_test: same idea, regenerated raw PPM render output (PNG
 # conversions of the same renders are committed instead, round115).
 tools/ebuz_test/*.ppm
+
+# tools/ebuz_mk2_test: same idea (Ebuz Mk2 prototype, standalone test stage).
+tools/ebuz_mk2_test/*.ppm
