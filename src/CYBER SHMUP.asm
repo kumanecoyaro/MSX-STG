@@ -1053,7 +1053,9 @@ INIT:
     ; --- (BLANKCODE's color group), which stays blue.                ---
     LD B,01h : LD C,7 : CALL WRTVDP
 
-    LD HL,PATTERNS  : LD DE,0000h : LD BC,PATTERNS_LEN : CALL LDIRVM
+    ; (2026-09-19) PATTERNSはRLE圧縮済み(PATTERNS自身のコメント参照)。
+    XOR A : OUT (99h),A : LD A,40h : OUT (99h),A
+    LD HL,PATTERNS : LD DE,PATTERNS_SEGMENTS : CALL DECOMPRESS_RLE_TO_VRAM
     LD HL,COLORDATA : LD DE,2000h : LD BC,COLOR_LEN : CALL LDIRVM
     ; COLORDATAはgroup8(codes64-71、2008h)も含む32グループ全体を上書き
     ; するため、Mission1表示のために上で先に書いたMISSION_FONT_COLOR
@@ -1163,7 +1165,9 @@ FILLBG_ROW0_BLACK:
     ; --- since each asterisk quadrant can be independently shot out.   ---
 
     ; --- shot character patterns (8 vertical phases, blue only), VRAM 0000h+56*8 ---
-    LD HL,BULLET_PATTERNS : LD DE,1C0h : LD BC,64 : CALL LDIRVM  ; 1C0h = BULLET_PAT_BLUE(56)*8
+    ; 1C0h = BULLET_PAT_BLUE(56)*8。(2026-09-19) RLE圧縮済み。
+    LD A,0C0h : OUT (99h),A : LD A,41h : OUT (99h),A
+    LD HL,BULLET_PATTERNS : LD DE,BULLET_PATTERNS_SEGMENTS : CALL DECOMPRESS_RLE_TO_VRAM
 
     ; --- destroy-animation character patterns (round69 follow-up, 2 ---
     ; --- tiles only - see EXP_CODE_THIN/THICK's own comment), VRAM  ---
@@ -1171,13 +1175,17 @@ FILLBG_ROW0_BLACK:
     LD HL,EXPLOSION_TILES : LD DE,EXP_CODE_THIN*8 : LD BC,16 : CALL LDIRVM
 
     ; --- temp assembly-sprite patterns, VRAM SPRPAT+C0h = PAT_TEMP_TOP(24)*8 ---
-    LD HL,TEMP_SPRITE_PATTERNS : LD DE,SPRPAT+0C0h : LD BC,64 : CALL LDIRVM
+    ; (2026-09-19) RLE圧縮済み(TEMP_SPRITE_PATTERNS自身のコメント参照)。
+    LD A,0C0h : OUT (99h),A : LD A,78h : OUT (99h),A
+    LD HL,TEMP_SPRITE_PATTERNS : LD DE,TEMP_SPRITE_PATTERNS_SEGMENTS : CALL DECOMPRESS_RLE_TO_VRAM
     ; --- E2A_TT/E2A_TB (pattern44-51) and E2B_TT/E2B_TB (pattern64-71) ---
     ; --- never had this loaded before - the fly-in phase (states 0-5, ---
     ; --- before the formation assembles) used these pattern codes but ---
     ; --- they were blank VRAM, so nothing was visible until merge.    ---
-    LD HL,TEMP_SPRITE_PATTERNS : LD DE,SPRPAT+160h : LD BC,64 : CALL LDIRVM
-    LD HL,TEMP_SPRITE_PATTERNS : LD DE,SPRPAT+200h : LD BC,64 : CALL LDIRVM
+    LD A,60h : OUT (99h),A : LD A,79h : OUT (99h),A
+    LD HL,TEMP_SPRITE_PATTERNS : LD DE,TEMP_SPRITE_PATTERNS_SEGMENTS : CALL DECOMPRESS_RLE_TO_VRAM
+    XOR A : OUT (99h),A : LD A,7Ah : OUT (99h),A
+    LD HL,TEMP_SPRITE_PATTERNS : LD DE,TEMP_SPRITE_PATTERNS_SEGMENTS : CALL DECOMPRESS_RLE_TO_VRAM
 
     ; --- enemy3 pulse-animation patterns, codes 152/160/168 ---
     LD HL,ENEMY3_PATTERN1 : LD DE,ENEMY3_CODE1*8 : LD BC,8 : CALL LDIRVM
@@ -13834,11 +13842,15 @@ EXPLOSION_TILES:
 ; asterisk (used by the real unit slot while its first quadrant
 ; arrives), PAT_TEMP_BOT shows just the bottom-right one (used by a
 ; spare/transient sprite slot for the second quadrant's arrival).
+; (2026-09-19、"あと圧縮はボスだけじゃなく全てのキャラデータだぞ"):
+; RLE圧縮済み(PATTERNS自身のコメント参照)。元の生データはtop-left=
+; ASTERISK_PATTERN's new art(8byte)+24byteゼロ+24byteゼロ+
+; bottom-right=同じ絵柄(8byte)、計64byte。この1ブロックが3箇所
+; (SPRPAT+0C0h/160h/200h)へ同じ内容のままロードされる。
 TEMP_SPRITE_PATTERNS:
-    DB 7Fh,9Eh,04h,1Bh,1Bh,04h,9Eh,7Fh   ; top-left = ASTERISK_PATTERN's new art
-    DS 24,0
-    DS 24,0
-    DB 7Fh,9Eh,04h,1Bh,1Bh,04h,9Eh,7Fh   ; bottom-right = ASTERISK_PATTERN's new art
+    DB 2,127,158,4,129,27,2,4,158,127,175,0,2,127,158,4
+    DB 129,27,2,4,158,127
+TEMP_SPRITE_PATTERNS_SEGMENTS EQU 7
 
 ; enemy3: 3-frame pulsing animation, gray fg. Patterns1/2 use a
 ; fixed sky-blue bg (they never need row-matching since the whole
@@ -14578,17 +14590,16 @@ CIRCLE_LUT:
 ; off PLAYERY+8 (the row/sub-row immediately below the ship's visible
 ; bottom edge) rather than PLAYERY itself - so the pattern must slide
 ; DOWN as M increases to stay pinned right under the ship, not up.
+; (2026-09-19、"あと圧縮はボスだけじゃなく全てのキャラデータだぞ"):
+; RLE圧縮済み(PATTERNS自身のコメント参照)。GREEN/WHITE/BROWN variants
+; removed - shots can never reach the ground scroller anymore (see
+; PLAYER_MAXY), so only BLUE is loaded. 元の生データはBLUE M=0-6の
+; 対角線ストリーク(M=7は未使用スロット)。
 BULLET_PATTERNS:
-    DB 66h,33h,00h,00h,00h,00h,00h,00h   ; BLUE M=0 (rows0-1)
-    DB 00h,66h,33h,00h,00h,00h,00h,00h   ; BLUE M=1 (rows1-2)
-    DB 00h,00h,66h,33h,00h,00h,00h,00h   ; BLUE M=2 (rows2-3)
-    DB 00h,00h,00h,66h,33h,00h,00h,00h   ; BLUE M=3 (rows3-4)
-    DB 00h,00h,00h,00h,66h,33h,00h,00h   ; BLUE M=4 (rows4-5)
-    DB 00h,00h,00h,00h,00h,66h,33h,00h   ; BLUE M=5 (rows5-6)
-    DB 00h,00h,00h,00h,00h,00h,66h,33h   ; BLUE M=6 (rows6-7)
-    DB 00h,00h,00h,00h,00h,00h,00h,00h   ; BLUE M=7 slot (unused, code clamps to M=6)
-; GREEN/WHITE/BROWN variants removed - shots can never reach the
-; ground scroller anymore (see PLAYER_MAXY), so only BLUE is loaded.
+    DB 1,102,51,134,0,1,102,51,134,0,1,102,51,134,0,1
+    DB 102,51,134,0,1,102,51,134,0,1,102,51,134,0,1,102
+    DB 51,135,0
+BULLET_PATTERNS_SEGMENTS EQU 14
 
     ALIGN 256
 ; VRAM address (low byte) of the start of each of the 24 screen
@@ -14605,64 +14616,40 @@ ROWADDR_HI:
     DB 19h,19h,19h,19h,19h,19h,19h,19h
     DB 1Ah,1Ah,1Ah,1Ah,1Ah,1Ah,1Ah,1Ah
 
+; (2026-09-19、"あと圧縮はボスだけじゃなく全てのキャラデータだぞ"):
+; PATTERNSはINIT時に1回だけLDIRVMされる純粋な静的パターンジェネレータ
+; データ(以後CPUから直接読まれることは無い)のため、ボス本体データと
+; 同じ自前RLEで圧縮。384byte->341byte(呼び出し1箇所分のオーバーヘッド
+; を差し引いても実質+25byte節約)。以下はRLE圧縮済みバイト列 - 元の
+; 生データの意味(codes0-7=mountain/8-15=diamond/16-23=slash/24=unused/
+; 25-26=flowing cloud左右半分/27-31=unused/32-47=wedge)は無変更、
+; 展開後のVRAM内容は圧縮前と完全に一致することをPython側でround-trip
+; 検証済み(tools/内のスクラッチ検証、tools/verify_*.py群でも回帰
+; テストを追加)。
 PATTERNS:
-    ; Character codes, in groups of 8 (SCREEN1 color table granularity -
-    ; see COLORDATA):
-    ;    0- 7 = ground scroller: mountain family (TIER1)
-    ;    8-15 = ground scroller: diamond family  (TIER3)
-    ;   16-23 = ground scroller: slash family    (TIER4)
-    ;      24 = unused
-    ;   25-26 = flowing cloud, left/right half (CLOUD_WA/WB_CODE, rows 1/2)
-    ;   27-31 = unused
-    ;   32-47 = ground scroller: wedge family    (TIER6)
-    DB 5Eh,EBh,FEh,9Bh,65h,FEh,4Bh,BDh    ; code 0 cloud (new design)
-    DB BCh,D7h,FDh,37h,CAh,FDh,96h,7Bh    ; code 1 cloud^2 shift1
-    DB 79h,AFh,FBh,6Eh,95h,FBh,2Dh,F6h    ; code 2 cloud^2 shift2
-    DB F2h,5Fh,F7h,DCh,2Bh,F7h,5Ah,EDh    ; code 3 cloud^2 shift3
-    DB E5h,BEh,EFh,B9h,56h,EFh,B4h,DBh    ; code 4 cloud^2 shift4
-    DB CBh,7Dh,DFh,73h,ACh,DFh,69h,B7h    ; code 5 cloud^2 shift5
-    DB 97h,FAh,BFh,E6h,59h,BFh,D2h,6Fh    ; code 6 cloud^2 shift6
-    DB 2Fh,F5h,7Fh,CDh,B2h,7Fh,A5h,DEh    ; code 7 cloud^2 shift7
-    DB 5Eh,EBh,FEh,9Bh,65h,FEh,4Bh,BDh    ; code 8 cloud (new design)
-    DB BCh,D7h,FDh,37h,CAh,FDh,96h,7Bh    ; code 9 cloud^2 shift1
-    DB 79h,AFh,FBh,6Eh,95h,FBh,2Dh,F6h    ; code 10 cloud^2 shift2
-    DB F2h,5Fh,F7h,DCh,2Bh,F7h,5Ah,EDh    ; code 11 cloud^2 shift3
-    DB E5h,BEh,EFh,B9h,56h,EFh,B4h,DBh    ; code 12 cloud^2 shift4
-    DB CBh,7Dh,DFh,73h,ACh,DFh,69h,B7h    ; code 13 cloud^2 shift5
-    DB 97h,FAh,BFh,E6h,59h,BFh,D2h,6Fh    ; code 14 cloud^2 shift6
-    DB 2Fh,F5h,7Fh,CDh,B2h,7Fh,A5h,DEh    ; code 15 cloud^2 shift7
-    DB 5Eh,EBh,FEh,9Bh,65h,FEh,4Bh,BDh    ; code 16 cloud (new design)
-    DB BCh,D7h,FDh,37h,CAh,FDh,96h,7Bh    ; code 17 cloud^2 shift1
-    DB 79h,AFh,FBh,6Eh,95h,FBh,2Dh,F6h    ; code 18 cloud^2 shift2
-    DB F2h,5Fh,F7h,DCh,2Bh,F7h,5Ah,EDh    ; code 19 cloud^2 shift3
-    DB E5h,BEh,EFh,B9h,56h,EFh,B4h,DBh    ; code 20 cloud^2 shift4
-    DB CBh,7Dh,DFh,73h,ACh,DFh,69h,B7h    ; code 21 cloud^2 shift5
-    DB 97h,FAh,BFh,E6h,59h,BFh,D2h,6Fh    ; code 22 cloud^2 shift6
-    DB 2Fh,F5h,7Fh,CDh,B2h,7Fh,A5h,DEh    ; code 23 cloud^2 shift7
-    DB 00h,00h,00h,00h,00h,00h,00h,00h    ; code 24 unused
-    DB 06h,6Fh,0FEh,1Bh,04h,00h,00h,00h    ; code 25 CLOUD_WA_CODE: flowing cloud, left half (rows 1/2)
-    DB 00h,0D8h,0B4h,0EFh,0B0h,60h,00h,00h ; code 26 CLOUD_WB_CODE: flowing cloud, right half (rows 1/2)
-    DB 00h,00h,00h,00h,00h,00h,00h,00h    ; code 27 unused
-    DB 00h,00h,00h,00h,00h,00h,00h,00h    ; code 28 unused
-    DB 00h,00h,00h,00h,00h,00h,00h,00h    ; code 29 unused
-    DB 00h,00h,00h,00h,00h,00h,00h,00h    ; code 30 unused
-    DB 00h,00h,00h,00h,00h,00h,00h,00h    ; code 31 unused
-    DB 7Dh,E7h,DFh,7Eh,B9h,C7h,BEh,5Fh    ; code 32 cloudA (new design)
-    DB F6h,DBh,BEh,FFh,5Bh,E5h,BEh,7Dh    ; code 33 cloudB (new design)
-    DB FBh,CFh,BFh,FDh,72h,8Fh,7Dh,BEh    ; code 34 cloudA->cloudB shift1
-    DB F7h,9Fh,7Eh,FBh,E5h,1Fh,FAh,7Dh    ; code 35 cloudA->cloudB shift2
-    DB EFh,3Eh,FDh,F7h,CAh,3Fh,F5h,FBh    ; code 36 cloudA->cloudB shift3
-    DB DFh,7Dh,FBh,EFh,95h,7Eh,EBh,F7h    ; code 37 cloudA->cloudB shift4
-    DB BEh,FBh,F7h,DFh,2Bh,FCh,D7h,EFh    ; code 38 cloudA->cloudB shift5
-    DB 7Dh,F6h,EFh,BFh,56h,F9h,AFh,DFh    ; code 39 cloudA->cloudB shift6
-    DB FBh,EDh,DFh,7Fh,ADh,F2h,5Fh,BEh    ; code 40 cloudA->cloudB shift7
-    DB ECh,B7h,7Dh,FEh,B7h,CBh,7Dh,FAh    ; code 41 cloudB->cloudA shift1
-    DB D9h,6Fh,FBh,FDh,6Eh,97h,FAh,F5h    ; code 42 cloudB->cloudA shift2
-    DB B3h,DFh,F6h,FBh,DDh,2Eh,F5h,EAh    ; code 43 cloudB->cloudA shift3
-    DB 67h,BEh,EDh,F7h,BBh,5Ch,EBh,D5h    ; code 44 cloudB->cloudA shift4
-    DB CFh,7Ch,DBh,EFh,77h,B8h,D7h,ABh    ; code 45 cloudB->cloudA shift5
-    DB 9Fh,F9h,B7h,DFh,EEh,71h,AFh,57h    ; code 46 cloudB->cloudA shift6
-    DB 3Eh,F3h,6Fh,BFh,DCh,E3h,5Fh,AFh    ; code 47 cloudB->cloudA shift7
+    DB 127,94,235,254,155,101,254,75,189,188,215,253,55,202,253,150
+    DB 123,121,175,251,110,149,251,45,246,242,95,247,220,43,247,90
+    DB 237,229,190,239,185,86,239,180,219,203,125,223,115,172,223,105
+    DB 183,151,250,191,230,89,191,210,111,47,245,127,205,178,127,165
+    DB 222,94,235,254,155,101,254,75,189,188,215,253,55,202,253,150
+    DB 123,121,175,251,110,149,251,45,246,242,95,247,220,43,247,90
+    DB 237,229,190,239,185,86,239,180,219,203,125,223,115,172,223,105
+    DB 183,151,250,191,230,89,191,210,111,47,245,127,205,178,127,165
+    DB 222,63,94,235,254,155,101,254,75,189,188,215,253,55,202,253
+    DB 150,123,121,175,251,110,149,251,45,246,242,95,247,220,43,247
+    DB 90,237,229,190,239,185,86,239,180,219,203,125,223,115,172,223
+    DB 105,183,151,250,191,230,89,191,210,111,47,245,127,205,178,127
+    DB 165,222,135,0,4,6,111,254,27,4,131,0,4,216,180,239
+    DB 176,96,169,0,127,125,231,223,126,185,199,190,95,246,219,190
+    DB 255,91,229,190,125,251,207,191,253,114,143,125,190,247,159,126
+    DB 251,229,31,250,125,239,62,253,247,202,63,245,251,223,125,251
+    DB 239,149,126,235,247,190,251,247,223,43,252,215,239,125,246,239
+    DB 191,86,249,175,223,251,237,223,127,173,242,95,190,236,183,125
+    DB 254,183,203,125,250,217,111,251,253,110,151,250,245,179,223,246
+    DB 251,221,46,245,234,103,190,237,247,187,92,235,213,207,124,219
+    DB 239,119,184,215,171,159,249,183,223,238,113,175,87,62,243,111
+    DB 191,220,227,95,175
+PATTERNS_SEGMENTS EQU 8
 PATTERNS_LEN EQU 384
 
 BLANK_PATTERN:

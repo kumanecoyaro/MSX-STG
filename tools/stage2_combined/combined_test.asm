@@ -3217,7 +3217,11 @@ INIT_RESUME_AFTER_BANK_SELECT:
     ; page2, BIOS SCREEN1 setup done
     LD B,1 : LD C,7 : CALL WRTVDP
 
-    LD HL,TERRAIN_PATTERNS : LD DE,0000h : LD BC,TERRAIN_PATTERN_COUNT*8 : CALL LDIRVM
+    ; (2026-09-19) TERRAIN_PATTERNSはRLE圧縮済み(terrain_gen.py自身の
+    ; コメント参照) - VRAM書き込みアドレス0000hを設定した上で
+    ; DECOMPRESS_RLE_TO_VRAMで展開。
+    XOR A : OUT (VDP_ADDR),A : LD A,40h : OUT (VDP_ADDR),A
+    LD HL,TERRAIN_PATTERNS : LD DE,TERRAIN_PATTERNS_SEGMENTS : CALL DECOMPRESS_RLE_TO_VRAM
     LD HL,TERRAIN_COLORDATA : LD DE,2000h : LD BC,32 : CALL LDIRVM
 
     ; EtankBullet BG pattern (round36-14 follow-up#11) - group31's own
@@ -3325,11 +3329,22 @@ INIT_RESUME_AFTER_BANK_SELECT:
     LD HL,TANK_TANKFGAP_TL : LD DE,PAT_TANKFGAP*8+SPRPAT : LD BC,128 : CALL LDIRVM
     LD HL,TANK_TANKUGAP_TL : LD DE,PAT_TANKUGAP*8+SPRPAT : LD BC,128 : CALL LDIRVM
     ; mirrored (left-facing) poses - "反転パターンはそっちで生成して
-    ; くれ" (tank_gen.py's own POSE_FLIP_OFFSET quadrants).
-    LD HL,TANK_TANKF_L_TL    : LD DE,PAT_TANKF_L*8+SPRPAT    : LD BC,128 : CALL LDIRVM
-    LD HL,TANK_TANKUP_L_TL   : LD DE,PAT_TANKUP_L*8+SPRPAT   : LD BC,128 : CALL LDIRVM
-    LD HL,TANK_TANKFGAP_L_TL : LD DE,PAT_TANKFGAP_L*8+SPRPAT : LD BC,128 : CALL LDIRVM
-    LD HL,TANK_TANKUGAP_L_TL : LD DE,PAT_TANKUGAP_L*8+SPRPAT : LD BC,128 : CALL LDIRVM
+    ; くれ" (tank_gen.py's own POSE_FLIP_OFFSET quadrants). (2026-09-19)
+    ; もうROMに反転データを二重持ちせず、その場でMIRROR_32X32_POSE_TO_
+    ; VRAMが右向きの生データから生成してVRAMへ直接書き込む
+    ; (MIRROR_32X32_POSE_TO_VRAM/MIRROR_16_TO_VRAM自身のコメント参照)。
+    LD DE,PAT_TANKF_L*8+SPRPAT
+    LD A,E : OUT (VDP_ADDR),A : LD A,D : OR 40h : OUT (VDP_ADDR),A
+    LD HL,TANK_TANKF_TL : CALL MIRROR_32X32_POSE_TO_VRAM
+    LD DE,PAT_TANKUP_L*8+SPRPAT
+    LD A,E : OUT (VDP_ADDR),A : LD A,D : OR 40h : OUT (VDP_ADDR),A
+    LD HL,TANK_TANKUP_TL : CALL MIRROR_32X32_POSE_TO_VRAM
+    LD DE,PAT_TANKFGAP_L*8+SPRPAT
+    LD A,E : OUT (VDP_ADDR),A : LD A,D : OR 40h : OUT (VDP_ADDR),A
+    LD HL,TANK_TANKFGAP_TL : CALL MIRROR_32X32_POSE_TO_VRAM
+    LD DE,PAT_TANKUGAP_L*8+SPRPAT
+    LD A,E : OUT (VDP_ADDR),A : LD A,D : OR 40h : OUT (VDP_ADDR),A
+    LD HL,TANK_TANKUGAP_TL : CALL MIRROR_32X32_POSE_TO_VRAM
 
     ; F's own BG pattern: round36-11 grew from 1 pose to 3 (BulletFU/FM/
     ; FL, bullet_gen.py's own BULLET_F_PATTERN0/1/2) - each loaded once
@@ -3342,9 +3357,9 @@ INIT_RESUME_AFTER_BANK_SELECT:
     LD HL,BULLET_F_PATTERN0 : LD DE,BULLETF_ROCK_CODE0*8 : LD BC,8 : CALL LDIRVM
     LD HL,BULLET_F_PATTERN1 : LD DE,BULLETF_ROCK_CODE1*8 : LD BC,8 : CALL LDIRVM
     LD HL,BULLET_F_PATTERN2 : LD DE,BULLETF_ROCK_CODE2*8 : LD BC,8 : CALL LDIRVM
-    LD HL,BULLET_F_L_PATTERN0 : LD DE,BULLETF_L_SKY_CODE0*8  : LD BC,8 : CALL LDIRVM
-    LD HL,BULLET_F_L_PATTERN1 : LD DE,BULLETF_L_SKY_CODE1*8  : LD BC,8 : CALL LDIRVM
-    LD HL,BULLET_F_L_PATTERN2 : LD DE,BULLETF_L_SKY_CODE2*8  : LD BC,8 : CALL LDIRVM
+    LD HL,BULLET_F_L_PATTERN0 : LD DE,BULLETF_L_SKY_CODE0*8 : LD BC,8 : CALL LDIRVM
+    LD HL,BULLET_F_L_PATTERN1 : LD DE,BULLETF_L_SKY_CODE1*8 : LD BC,8 : CALL LDIRVM
+    LD HL,BULLET_F_L_PATTERN2 : LD DE,BULLETF_L_SKY_CODE2*8 : LD BC,8 : CALL LDIRVM
     LD HL,BULLET_F_L_PATTERN0 : LD DE,BULLETF_L_ROCK_CODE0*8 : LD BC,8 : CALL LDIRVM
     LD HL,BULLET_F_L_PATTERN1 : LD DE,BULLETF_L_ROCK_CODE1*8 : LD BC,8 : CALL LDIRVM
     LD HL,BULLET_F_L_PATTERN2 : LD DE,BULLETF_L_ROCK_CODE2*8 : LD BC,8 : CALL LDIRVM
@@ -3374,7 +3389,7 @@ INIT_RESUME_AFTER_BANK_SELECT:
     ; single non-rotating pose (BulletUM), loaded into F's already-
     ; colored groups28/29/30, no new color-table writes needed.
     LD HL,BULLET_U_PATTERN   : LD DE,BULLETU_SKY_CODE*8    : LD BC,8 : CALL LDIRVM
-    LD HL,BULLET_U_L_PATTERN : LD DE,BULLETU_L_SKY_CODE*8  : LD BC,8 : CALL LDIRVM
+    LD HL,BULLET_U_L_PATTERN : LD DE,BULLETU_L_SKY_CODE*8 : LD BC,8 : CALL LDIRVM
     LD HL,BULLET_U_PATTERN   : LD DE,BULLETU_ROCK_CODE*8   : LD BC,8 : CALL LDIRVM
     LD HL,BULLET_U_L_PATTERN : LD DE,BULLETU_L_ROCK_CODE*8 : LD BC,8 : CALL LDIRVM
     LD HL,BULLET_U_PATTERN   : LD DE,BULLETU_NIGHT_CODE*8   : LD BC,8 : CALL LDIRVM
@@ -3653,7 +3668,12 @@ INIT_SPRATR_CLR:
     ; enemy (ZacoII) sprite patterns + explosion, one hw sprite pattern
     ; slot each (128/132/136 - right after the tank's own 0-127).
     LD HL,ENEMY_ZACOII : LD DE,PAT_ZACO*8+SPRPAT : LD BC,32 : CALL LDIRVM
-    LD HL,ENEMY_ZACOII_FLIP : LD DE,PAT_ZACO_FLIP*8+SPRPAT : LD BC,32 : CALL LDIRVM
+    ; (2026-09-19) 反転版はROMへ二重持ちせず、MIRROR_16_TO_VRAMでその場
+    ; 生成(単一16x16ブロックなのでグリッド段の列入れ替え不要、TL/TR・
+    ; BL/BR入れ替え+各byteのビット反転のみ)。
+    LD DE,PAT_ZACO_FLIP*8+SPRPAT
+    LD A,E : OUT (VDP_ADDR),A : LD A,D : OR 40h : OUT (VDP_ADDR),A
+    LD HL,ENEMY_ZACOII : CALL MIRROR_16_TO_VRAM
     LD HL,EXPLOSION_PATTERN : LD DE,PAT_EXPLOSION*8+SPRPAT : LD BC,32 : CALL LDIRVM
 
     ; EBullet (ZacoII/Flyer enemy bullet - round36-14 follow-up#11) - own
@@ -3685,23 +3705,41 @@ IEBSA_LOOP:
     LD (HL),A : INC HL
     DJNZ IEBSA_LOOP
 
-    ; Zum's own pattern (enemy_gen.py, generated alongside ZacoII's -
-    ; no flip needed, it never reverses direction).
+    ; Zum's own pattern (enemy_gen.py, generated alongside ZacoII's).
+    ; (2026-09-19、実コード確認の上で修正): このコメントは元
+    ; "no flip needed, it never reverses direction"だったが、実際には
+    ; UOZ_DRAW(Z_RETREAT==1の間PAT_ZUM_FLIPを選択)・CHPZ_ORIENT系
+    ; (フリー中は前後判定を反転)の双方でPAT_ZUM_FLIPが現に使われている
+    ; と判明(コメントの方が古く実態と食い違っていた - 「動作が意図した
+    ; もの、コメントがあるならそれはまちがい」の方針に従い実装は無変更、
+    ; コメントのみ訂正)。反転版はENEMY_ZACOIIと同じくMIRROR_16_TO_VRAM
+    ; でその場生成。
     LD HL,ENEMY_ZUM : LD DE,PAT_ZUM*8+SPRPAT : LD BC,32 : CALL LDIRVM
-    LD HL,ENEMY_ZUM_FLIP : LD DE,PAT_ZUM_FLIP*8+SPRPAT : LD BC,32 : CALL LDIRVM
+    LD DE,PAT_ZUM_FLIP*8+SPRPAT
+    LD A,E : OUT (VDP_ADDR),A : LD A,D : OR 40h : OUT (VDP_ADDR),A
+    LD HL,ENEMY_ZUM : CALL MIRROR_16_TO_VRAM
 
     ; BigZum's own patterns (bigzum_gen.py) - both poses, both facings,
     ; 128 bytes each (4 quadrants x32 bytes, same per-pose size as the
     ; tank's own loads above) - "なので添付のデータは反転も生成".
     LD HL,BIGZUM_BIGZUM_TL    : LD DE,PAT_BIGZUM*8+SPRPAT    : LD BC,128 : CALL LDIRVM
     LD HL,BIGZUM_BIGZUMP_TL   : LD DE,PAT_BIGZUMP*8+SPRPAT   : LD BC,128 : CALL LDIRVM
-    LD HL,BIGZUM_BIGZUM_L_TL  : LD DE,PAT_BIGZUM_L*8+SPRPAT  : LD BC,128 : CALL LDIRVM
-    LD HL,BIGZUM_BIGZUMP_L_TL : LD DE,PAT_BIGZUMP_L*8+SPRPAT : LD BC,128 : CALL LDIRVM
+    ; (2026-09-19) 反転版はROMへ二重持ちせず、その場でMIRROR_32X32_
+    ; POSE_TO_VRAMが右向き生データから生成してVRAMへ直接書き込む。
+    LD DE,PAT_BIGZUM_L*8+SPRPAT
+    LD A,E : OUT (VDP_ADDR),A : LD A,D : OR 40h : OUT (VDP_ADDR),A
+    LD HL,BIGZUM_BIGZUM_TL : CALL MIRROR_32X32_POSE_TO_VRAM
+    LD DE,PAT_BIGZUMP_L*8+SPRPAT
+    LD A,E : OUT (VDP_ADDR),A : LD A,D : OR 40h : OUT (VDP_ADDR),A
+    LD HL,BIGZUM_BIGZUMP_TL : CALL MIRROR_32X32_POSE_TO_VRAM
 
     ; Flyer's own pattern (flyer_gen.py) - permanent allocation, both
     ; facings, right after BigZum's own last group.
     LD HL,FLYER_TL   : LD DE,PAT_FLYER*8+SPRPAT   : LD BC,128 : CALL LDIRVM
-    LD HL,FLYER_L_TL : LD DE,PAT_FLYER_L*8+SPRPAT : LD BC,128 : CALL LDIRVM
+    ; (2026-09-19) 反転版はROMへ二重持ちせず、その場生成。
+    LD DE,PAT_FLYER_L*8+SPRPAT
+    LD A,E : OUT (VDP_ADDR),A : LD A,D : OR 40h : OUT (VDP_ADDR),A
+    LD HL,FLYER_TL : CALL MIRROR_32X32_POSE_TO_VRAM
 
     ; enemy pool: zero the whole buffer generically (all slots inactive,
     ; all other fields 0) rather than naming each slot - "管理もバッファ
@@ -11242,6 +11280,97 @@ DRTV_NEXT:
     LD A,D : OR E
     JR NZ,DECOMPRESS_RLE_TO_VRAM
     RET
+
+; (2026-09-19、"あと圧縮はボスだけじゃなく全てのキャラデータだぞ"に
+; 続けて "あとはステージ2はキャラの反転が多いんで 1パターンから反転
+; したデータをその場で生成してVramに書き込むように変更 どちらも
+; ステージ開始前の処理なので問題は無いはず"): Tank/BigZum/Flyer/
+; ZacoIIの各"_L"(左向き)ポーズは、tank_gen.py/bigzum_gen.py/
+; flyer_gen.py/enemy_gen.py側でPython(hflip_bits)により事前計算した
+; 生バイト列をROMへ二重に埋め込んでいたが、水平反転は「行の並び順は
+; 変えず各バイトのビット順を逆転し、かつ16x16内のTL⇔TR・BL⇔BRを
+; 入れ替える(2x2以上のグリッドなら列ブロックの並びも左右反転する)」
+; という完全に機械的な変換のため、Z80側でその場生成すればROMの
+; 反転データそのものを削減できる。全てINIT時に1回だけロードされ
+; 以後常駐する(ボスのように戦闘中に何度も入れ替わるものではない)
+; ため、生成コストは起動時1回のみで実害なし。
+;
+; BITREV_TABLE: 256byte、BITREV_TABLE[n]=nのビット順を逆転した値。
+; ページ境界に揃えず素直な16bit加算でインデックスする(ALIGN 256の
+; パディングコストの方が、この程度の低頻度アクセスで節約できる
+; T-stateより高くつくため)。
+BITREV_TABLE:
+DB 0,128,64,192,32,160,96,224,16,144,80,208,48,176,112,240
+DB 8,136,72,200,40,168,104,232,24,152,88,216,56,184,120,248
+DB 4,132,68,196,36,164,100,228,20,148,84,212,52,180,116,244
+DB 12,140,76,204,44,172,108,236,28,156,92,220,60,188,124,252
+DB 2,130,66,194,34,162,98,226,18,146,82,210,50,178,114,242
+DB 10,138,74,202,42,170,106,234,26,154,90,218,58,186,122,250
+DB 6,134,70,198,38,166,102,230,22,150,86,214,54,182,118,246
+DB 14,142,78,206,46,174,110,238,30,158,94,222,62,190,126,254
+DB 1,129,65,193,33,161,97,225,17,145,81,209,49,177,113,241
+DB 9,137,73,201,41,169,105,233,25,153,89,217,57,185,121,249
+DB 5,133,69,197,37,165,101,229,21,149,85,213,53,181,117,245
+DB 13,141,77,205,45,173,109,237,29,157,93,221,61,189,125,253
+DB 3,131,67,195,35,163,99,227,19,147,83,211,51,179,115,243
+DB 11,139,75,203,43,171,107,235,27,155,91,219,59,187,123,251
+DB 7,135,71,199,39,167,103,231,23,151,87,215,55,183,119,247
+DB 15,143,79,207,47,175,111,239,31,159,95,223,63,191,127,255
+
+; in: HL=1個の16x16スプライトパターン32byte分の先頭(TL8,BL8,TR8,BR8の
+; real-hardware順)。VRAM書き込みアドレス(オートインクリメント)は
+; 呼び出し前に2回のOUT (VDP_ADDR)で設定しておくこと。
+; out: 反転後の32byte(TR,BR,TL,BLの順に各byteをビット反転)をVRAMへ
+; ストリーム出力(TL⇔TR・BL⇔BRの入れ替え=水平反転で左右の8x8タイルが
+; 入れ替わる、各byteのビット反転=1行内の画素順が左右反転する)。
+; 破壊: A,B,D,E,HL。CLAUDE.md恒久ルール通りOTIR等は使わずOUT+DJNZ
+; 手動ループのみ。
+MIRROR_16_TO_VRAM:
+    LD DE,16 : ADD HL,DE   ; HLをTR(src+16)へ進める
+    LD B,16                ; TR(8)+BR(8)の16byteをこの順で出力
+MIRROR_16_LOOP1:
+    LD A,(HL) : INC HL
+    CALL MIRROR_BITREV_OUT
+    DJNZ MIRROR_16_LOOP1
+    LD DE,32 : OR A : SBC HL,DE   ; HLをブロック先頭(src+0)へ巻き戻す
+    LD B,16                ; TL(8)+BL(8)の16byteをこの順で出力
+MIRROR_16_LOOP2:
+    LD A,(HL) : INC HL
+    CALL MIRROR_BITREV_OUT
+    DJNZ MIRROR_16_LOOP2
+    RET
+
+MIRROR_BITREV_OUT:
+    PUSH HL
+    LD HL,BITREV_TABLE
+    LD E,A : LD D,0 : ADD HL,DE
+    LD A,(HL)
+    POP HL
+    OUT (VDP_DATA),A
+    RET
+
+; in: HL=1ポーズ分128byteの先頭(quadrants_from_bits()と同じ[TL,TR,BL,BR]
+; 各32byte連結順、tank_gen.py/bigzum_gen.py/flyer_gen.py共通)。VRAM
+; 書き込みアドレスは呼び出し前に2回のOUT (VDP_ADDR)で設定しておくこと。
+; out: 水平反転後の128byteをVRAMへストリーム出力 - 2x2グリッドの列
+; ブロックも左右入れ替え(dest[TL,TR,BL,BR] = mirror(src[TR,TL,BR,BL]))
+; した上で、各16x16ブロック自身もMIRROR_16_TO_VRAMで反転する。
+; 破壊: A,B,D,E,HL。
+MIRROR_32X32_POSE_TO_VRAM:
+    PUSH HL : LD DE,32 : ADD HL,DE : CALL MIRROR_16_TO_VRAM : POP HL   ; dest TL = mirror(src TR)
+    PUSH HL : CALL MIRROR_16_TO_VRAM : POP HL                          ; dest TR = mirror(src TL)
+    PUSH HL : LD DE,96 : ADD HL,DE : CALL MIRROR_16_TO_VRAM : POP HL   ; dest BL = mirror(src BR)
+    LD DE,64 : ADD HL,DE : CALL MIRROR_16_TO_VRAM                      ; dest BR = mirror(src BL)
+    RET
+
+; (2026-09-19、"1パターンから反転したデータをその場で生成"を検討した
+; 際、bullet_gen.pyのBulletF/BulletU用に単一8x8タイルの反転生成
+; ルーチン[MIRROR_8_TO_VRAM/MIRROR_8_PLUS_ZERO24_TO_VRAM]を一度実装
+; したが、8byte単位の小さなデータでは呼び出し1箇所あたりのコード
+; オーバーヘッド[VDP書き込みアドレス設定+CALL]が節約できるデータ量を
+; 上回りROM容量が正味悪化することを実測で確認、bullet_gen.py側は
+; 元のLDIRVM方式へ撤回した[同ファイル自身のコメント参照] - この
+; 2ルーチンもどこからも呼ばれなくなったため削除。
 
 ; in: HL=bank-relative offset(SASAPI_QUADS_OFFSET/_L_OFFSET)、
 ; BC=対応するセグメント数(SASAPI_QUADS_SEGMENTS/_L_SEGMENTS)。BCは

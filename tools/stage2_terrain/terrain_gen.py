@@ -24,8 +24,11 @@ what smooth left-scroll looks like, so it doesn't need new art.
 """
 import json
 import os
+import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.join(HERE, "..", "title_screen"))
+import title_bg_gen as _tbg  # noqa: E402 - rle_encode/rle_decode, see TERRAIN_PATTERNS compression below
 SPRITE_DIR = os.path.join(HERE, "sprites")
 
 
@@ -471,10 +474,22 @@ def emit_asm_tables():
         out.append(f"TERRAIN_ROWDATA{i}:")
         out.append(db_bytes(ROWDATA_PADDED[i]))
         out.append("")
-    out.append("TERRAIN_PATTERNS:")
+    # (2026-09-19、"あと圧縮はボスだけじゃなく全てのキャラデータだぞ"):
+    # TERRAIN_PATTERNSはINIT時に1回だけLDIRVMされる純粋な静的パターン
+    # ジェネレータデータ(以後CPUから直接読まれることは無い)のため、
+    # タイトル背景/GFEnding最終画像と同じ自前RLEで圧縮しても安全。
+    # 752byte->約629byte(呼び出し1箇所分のオーバーヘッドを差し引いても
+    # 実質100byte超の節約、combined_test.asm側はDECOMPRESS_RLE_TO_VRAM
+    # で展開する)。
+    raw_terrain_patterns = bytearray()
     for code in range(MAX_CODE + 1):
-        bytes_ = PATTERNS.get(code, [0] * 8)
-        out.append(f"    DB " + ",".join(f"{b}" for b in bytes_) + f"  ; code {code}")
+        raw_terrain_patterns.extend(PATTERNS.get(code, [0] * 8))
+    terrain_patterns_compressed, terrain_patterns_segments = _tbg.rle_encode(bytes(raw_terrain_patterns))
+    assert _tbg.rle_decode(terrain_patterns_compressed, terrain_patterns_segments) == bytes(raw_terrain_patterns), \
+        "RLE round-trip mismatch for TERRAIN_PATTERNS - encoder bug"
+    out.append("TERRAIN_PATTERNS:")
+    out.append(db_bytes(list(terrain_patterns_compressed)))
+    out.append(f"TERRAIN_PATTERNS_SEGMENTS EQU {terrain_patterns_segments}")
     out.append(f"TERRAIN_PATTERN_COUNT EQU {MAX_CODE + 1}")
     out.append(f"TERRAIN_BLANK_CODE EQU {BLANK_CODE}")
     out.append("")
