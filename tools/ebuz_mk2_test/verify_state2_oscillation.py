@@ -120,15 +120,23 @@ def main():
           "not a turret cap - this is the documented simplification (fire lanes don't follow the body)")
     check(cells(z4, 8, 23, 5) == [0, 0, 0, 0, 0], "osc UP: nt row8 (base's bottom row) is erased/blank now")
 
+    # NOTE: run_until_pc returns with z.pc already sitting exactly on the
+    # target address, so a second call with the SAME target would return
+    # immediately without executing anything (matching what test 3, above,
+    # already works around with a leading z.step()). Do the same here before
+    # every subsequent wait on EBUZ2_OSC_SHIFT_DONE.
+    z4.step()
     run_until_pc(z4, sym["EBUZ2_OSC_SHIFT_DONE"])  # up -> base
     check(cells(z4, 2, 23, 5) == [0, 0, A, B, C], "osc back to BASE: row2 restored")
     check(cells(z4, 4, 23, 5) == [0, 0, 0, 0, D], "osc back to BASE: row4 turret cap restored")
     check(cells(z4, 1, 23, 5) == [0, 0, 0, 0, 0], "osc back to BASE: row1 (UP's top row) erased")
 
+    z4.step()
     run_until_pc(z4, sym["EBUZ2_OSC_SHIFT_DONE"])  # base -> down
     check(cells(z4, 9, 23, 5) == [0, 0, A, B, C], "osc DOWN: row9 now shows the body's bottom row")
     check(cells(z4, 6, 23, 5) == [A, B, C, D, D], "osc DOWN: nt row6 (FIXED fire lane) shows center-row art now")
 
+    z4.step()
     run_until_pc(z4, sym["EBUZ2_OSC_SHIFT_DONE"])  # down -> base
     check(cells(z4, 2, 23, 5) == [0, 0, A, B, C], "osc back to BASE (2nd time): row2 restored again")
     check(cells(z4, 9, 23, 5) == [0, 0, 0, 0, 0], "osc back to BASE (2nd time): row9 (DOWN's bottom row) erased")
