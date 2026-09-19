@@ -17121,3 +17121,69 @@ ENEMY6のO(1)短絡最適化(2026-09-14、完了済み)
   前と完全に一致することを確認済みのため実機での見た目の変化は無い
   想定だが、実機での動作確認は次回フィードバック待ち。上記の未対応
   Stage1小ブロック群への対応要否はユーザーの次の指示待ち。
+
+## Round137 follow-up4: Stage1ボスの周回ポッド弾を32方向2D照準へ強化
+(2026-09-19、完了済み・実機フィードバック待ち)
+
+- ユーザー指示: "ステージ1のボスの改良 接近時の自機狙い弾の精度が低いん
+  で24や32方向に と言ってもプレイヤーは常に左に居るんでLUTは180度分で
+  済むはず"。
+- **設計**: 旧`POD_BULLET_CALC_DY`(round36-13由来、PLAYERXが画面半分を
+  超えたら発射時点のPLAYERYへ向けてDY=-2/0/+2のみを与える3値の粗い
+  ホーミング、Xは常に固定速度)を、実際の(dx,dy)を32方向に量子化して
+  狙う本物の2D照準(`POD_BULLET_CALC_DIR`/`POD_AIM_CLASSIFY`)へ全面
+  書き換え。ユーザー指摘通りプレイヤーは常にpodより左に居る前提を
+  活かし、360度分ではなく180度分(半円)のLUTのみで32方向をカバー
+  (dxは常に負として畳み込み、fy[dyの符号]とsw[オクタント内での軸
+  入れ替え]の2ビットのみ)。
+- 乗算・除算命令の無いZ80のため、各方向境界の判定は「ay > (ax*Kの
+  上位byte)」(Kは256*tan(境界角)を四捨五入した8bit固定小数点定数、
+  7境界)という形に単純化。fold_code=(fy<<4)|(sw<<3)|bucket(0-7、7回
+  の境界判定の合格数)をPOD_AIM_DIR_LUT(高密度サンプリングで決定、
+  ebullet_gen.pyのDIR16_LUTと同じ「手作業の折り畳み代数はミスしやすい
+  ため機械的に決定する」手法)で最終方向index(0-31)へ変換する。
+- **アセンブラの制約による設計変更(開発中に判明)**: このプロジェクト
+  自作の`tools/mini_z80asm.py`が`NEG`/`SET`/`SLA`/`RL`等の命令を一切
+  サポートしていないと判明。NEGは「XOR A:SUB r」(0-rの2の補数)、
+  SET n,rは「LD A,r:OR (1<<n):LD r,A」で代用。8x8乗算(ay*K)は
+  SLA/RLによるランタイムシフトループの代わりに、K(コンパイル時定数)
+  ごとにADD HL,HL(倍加)/ADD HL,DE(axを加算)だけを使う「定数乗算の
+  シフト&加算展開」(2進数表現をMSBから辿るだけ)をPythonで機械生成
+  してそのまま埋め込む方式に変更、除算・ランタイムループ一切不要。
+- **RAM**: 方向ごとにX速度が変わるため新規に`POD_BULLET0/1_DXMAG`
+  (1byte/bullet、常に正の絶対値、旧来の固定`POD_BULLET_SPEED`と同じ
+  「Xから毎フレーム減算しアンダーフローで画面外判定」を維持)が必要に
+  なった。ファイル全体のEQUアドレスを横断的に洗い出した結果、
+  `EBUZ_SLOT1`直後(0F286h+36+36=0F2CEh)からSTACKTOP(0F380h)まで
+  実測178byte空きと判明、2byte消費(POD_XY_X/Yは分類計算の一時スク
+  ラッチとして既存のまま再利用、新規RAM不要)。このファイルには
+  Stage2のstack_safety_test.pyに相当する自動マージン検証は無いため、
+  この178byteという数字は一度きりの手動ギャップ監査に基づく。
+- **開発時の自己検証**: 実際のZ80命令列をPython側でビット単位で
+  シミュレートした上で(dx,dy)の全域(signed byte全組み合わせ)に対する
+  高密度サンプリングにより、理想角度(atan2)との誤差が最大でも1方向
+  ステップ(5.625度)に収まることを確認済み。テスト自身の初回実行では
+  Python参照実装側の二重LUT適用(実アセンブリの`POD_AIM_CLASSIFY`は
+  最終方向indexを返すのに、テスト側で誤ってさらに`POD_AIM_DIR_LUT`を
+  適用していた)という自己バグを発見・修正。修正一時取消→7356/7396
+  ミスマッチでFAIL確認→復元→全PASS確認済み。
+- `tools/verify_boss_pod_bullet_aim.py`を全面書き直し(旧
+  `POD_BULLET_CALC_DY`向けテストは撤去、新設計の31件へ)。ROM実測
+  32288→32542byte(254byte増)、Stage1側残り空きは226byte(連続107
+  byte)まで減少 - 今後のStage1新機能追加の余地はかなり狭まった。
+  関連するStage1既存検証群(`verify_player_damage.py` 60/
+  `verify_stage1_bgm.py` 80/`verify_enemy_bullets.py` 60/
+  `verify_stage1_mission_screens.py` 87/`verify_spawn_schedule_
+  restart.py` 12/`verify_enemy6_durability.py` 27/`verify_explosion_
+  anim.py` 28/`verify_boss_dfl_clear.py` 10/`verify_boss_schedule_
+  gate.py` 8/`verify_ebuz_integration.py` 109/`verify_boss_spawn_
+  trigger.py` 26/`verify_boss_y_shift.py` 9/`verify_mainloop_loop_
+  bounds.py` 29/`verify_sound_duty_cycle.py` 59/`verify_stage1_boss_
+  score.py` 7)を横断的に再実行、全てPASS(`combined_test.asm`は
+  無変更のためStage2側`run_all.py`は省略)。Comb ROM再ビルド・
+  `verify_comb.py`全チェックPASSの上、標準方針によりComb ROMのみ
+  送付。
+- **保留・実機フィードバック待ち**: 実際に照準が「狙われている」と
+  体感できるかは実機での見え方次第。Stage1のROM空き容量が226byte
+  (連続107byte)まで縮小したため、次の中ボス(Ebuz流用)実装は極めて
+  厳しい予算での作業になる。

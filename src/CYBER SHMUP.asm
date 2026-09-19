@@ -5447,6 +5447,13 @@ POD_BULLET1_X    EQU 0E72Dh
 POD_BULLET1_Y    EQU 0E72Eh
 POD_XY_X         EQU 0E72Fh  ; scratch: GET_POD_XY's result
 POD_XY_Y         EQU 0E730h
+; (2026-09-19、32方向照準の分類計算用の一時スクラッチ): POD_XY_X/Yは
+; GET_POD_XY呼び出し直後にPOD_BULLETn_X/Yへコピーされ、その後
+; POD_BULLET_CALC_DIR/POD_AIM_CLASSIFYが呼ばれるまでの間は完全に不要
+; (次のGET_POD_XY呼び出しまで参照されない)と確認済みのため、そのまま
+; 一時スクラッチとして再利用(新規RAM確保なし)。
+PAC_AX           EQU POD_XY_X
+PAC_AY           EQU POD_XY_Y
 POD_RECOIL       EQU 0E731h  ; 8 bytes, one per pod - frames left of +8px recoil kick
 POD_RECOIL_DURATION EQU 8
 POD_FIRE_DELAY_TICKS EQU 10
@@ -5468,23 +5475,24 @@ BOSS_HEX_PATNUM  EQU 96      ; sprite pattern-table unit (free range)
 ; (predictive aim, same idiom as every other fixed-trajectory shot in
 ; this file, e.g. Stage2's BOSS_BROKEN_BEAM_TABLE) - if PLAYERX is
 ; already past the screen's own halfway point at that instant, the
-; bullet gets a small constant per-frame Y nudge (POD_BULLET_HOMING_DY)
-; toward wherever PLAYERY was at launch; POD_BULLET_MOVE applies it
-; every frame right alongside the existing X decrement. If PLAYERX was
-; still on the left half, DY is forced to exactly 0 - byte-identical to
-; the pre-existing straight-shot behavior.
+; bullet used to get a small constant per-frame Y nudge only (see
+; below, this 3-value scheme is now superseded).
+;
+; (2026-09-19、"接近時の自機狙い弾の精度が低いんで24や32方向に と言っても
+; プレイヤーは常に左に居るんでLUTは180度分で済むはず"): the crude
+; DY=-2/0/+2-only homing above is replaced by a real 32-direction 2D aim
+; (POD_BULLET_CALC_DIR/POD_AIM_CLASSIFY, defined near POD_BULLET_MOVE).
+; Still gated by POD_BULLET_HOMING_THRESHOLD_X exactly as before (straight
+; shot, DXMAG=POD_BULLET_SPEED/DY=0, when PLAYERX hasn't crossed the
+; halfway point yet) - only the "aim" branch's precision changed.
 POD_BULLET_HOMING_THRESHOLD_X EQU 128  ; screen width(256)/2
-POD_BULLET_HOMING_DY EQU 2   ; px/frame vertical nudge - untuned initial
-                              ; value (POD_BULLET_SPEED=12 horizontal, so
-                              ; a shallow-ish diagonal), revisit if it
-                              ; reads as too weak/strong once seen in
-                              ; motion.
-; per-frame signed Y velocity for POD_BULLET0 (0=straight/no vertical
-; drift, POD_BULLET_HOMING_DY=drifting down, -POD_BULLET_HOMING_DY=
-; drifting up - two's complement, same ADD-based idiom BOSS_BROKEN_BEAM
-; uses in Stage2). Placed at 0E739h, the single confirmed-free byte
-; between POD_RECOIL(8 bytes, E731-E738) and DFL_RNG(E73Ah) - verified
-; via a direct grep for "0E739h" across the whole file before use.
+; per-frame signed Y velocity for POD_BULLET0/1 (unchanged fields, now
+; populated by the 32-direction table lookup instead of the old +-2
+; constant). Placed at 0E739h/0E7ABh, the single confirmed-free byte in
+; each of their own regions (POD_BULLET0_DY between POD_RECOIL[8 bytes,
+; E731-E738] and DFL_RNG[E73Ah]; POD_BULLET1_DY between POD_LOOP_ALIVE_
+; SNAPSHOT and POD_LAP_CYCLE) - verified via direct grep before use,
+; unchanged from the original round.
 POD_BULLET0_DY   EQU 0E739h
 
 ; Enemy2 instance A/B sprite pattern codes (sprite pattern table is a
@@ -7287,7 +7295,13 @@ POD_FIRE_DO_PAIR:
     LD A,(POD_XY_X) : LD (POD_BULLET0_X),A
     LD A,(POD_XY_Y) : LD (POD_BULLET0_Y),A
     LD A,1 : LD (POD_BULLET0_ACT),A
-    LD A,(POD_BULLET0_Y) : CALL POD_BULLET_CALC_DY : LD (POD_BULLET0_DY),A
+    LD A,(POD_BULLET0_X) : LD D,A
+    LD A,(POD_BULLET0_Y) : LD E,A
+    PUSH BC                       ; save pod-pair index (B) across the call
+    CALL POD_BULLET_CALC_DIR      ; D,E in -> B=dxmag(1-12),C=dy(signed)
+    LD A,B : LD (POD_BULLET0_DXMAG),A
+    LD A,C : LD (POD_BULLET0_DY),A
+    POP BC
     LD HL,POD_RECOIL : LD D,0 : LD E,B : ADD HL,DE
     LD (HL),POD_RECOIL_DURATION
     CALL POD_BULLET_DRAW0
@@ -7304,42 +7318,287 @@ PFDP_SKIP0:
     LD A,(POD_XY_X) : LD (POD_BULLET1_X),A
     LD A,(POD_XY_Y) : LD (POD_BULLET1_Y),A
     LD A,1 : LD (POD_BULLET1_ACT),A
-    LD A,(POD_BULLET1_Y) : CALL POD_BULLET_CALC_DY : LD (POD_BULLET1_DY),A
+    LD A,(POD_BULLET1_X) : LD D,A
+    LD A,(POD_BULLET1_Y) : LD E,A
+    PUSH BC                       ; save pod-pair index (B) across the call
+    CALL POD_BULLET_CALC_DIR      ; D,E in -> B=dxmag(1-12),C=dy(signed)
+    LD A,B : LD (POD_BULLET1_DXMAG),A
+    LD A,C : LD (POD_BULLET1_DY),A
+    POP BC
     LD HL,POD_RECOIL : LD D,0 : LD E,B : ADD HL,DE
     LD (HL),POD_RECOIL_DURATION
     CALL POD_BULLET_DRAW1
 PFDP_SKIP1:
     RET
 
-; Input: A = the bullet's own Y at the exact instant it's fired. Output:
-; A = the per-frame signed Y velocity POD_BULLET_MOVE should apply every
-; frame for the rest of this bullet's flight (0=straight, no vertical
-; drift at all - byte-identical to the pre-existing behavior;
-; POD_BULLET_HOMING_DY=drift down; -POD_BULLET_HOMING_DY=drift up).
-; Decided ONCE here, at fire time, not re-evaluated in flight - see
-; POD_BULLET_HOMING_THRESHOLD_X's own comment for the full design.
-; Preserves BC (POD_FIRE_DO_PAIR's own callers still need B=pod index
-; right after this returns).
-POD_BULLET_CALC_DY:
-    PUSH BC
-    LD C,A                       ; C = this bullet's own spawn Y
+; (2026-09-19、"ステージ1ボスの改良 接近時の自機狙い弾の精度が低いん
+; で24や32方向に と言ってもプレイヤーは常に左に居るんでLUTは180度分
+; で済むはず"): 旧POD_BULLET_CALC_DYの「DY=-2/0/+2のみ、Xは常に固定
+; 速度」という粗いホーミングを、実際の(dx,dy)を32方向に量子化して
+; 狙う本物の2D照準へ全面書き換え。プレイヤーは常にpodより左に居る
+; という前提(ユーザー指示)を活かし、360度分ではなく180度分(半円)の
+; LUTだけで済ませている - dxは常に負(またはゼロ)として畳み込み、
+; fy(dyの符号)とsw(オクタント内での軸入れ替え)の2ビットのみで半円
+; 全体をカバーする(2^2 x 8方向刻み=32方向)。
+;
+; 乗算・除算命令が無いZ80のため、各方向境界の判定は「ay > (ax*Kの
+; 上位byte)」(Kは256*tan(境界角)を四捨五入した8bit固定小数点定数、
+; POD_AIM_MUL8で8x8→16bit乗算のみ使用、除算は一切不使用)という形に
+; 単純化。fold_code=(fy<<4)|(sw<<3)|bucket(0-7、7回の境界判定の
+; 合格数)をPOD_AIM_DIR_LUT(高密度サンプリングで決定、ebullet_gen.py
+; のDIR16_LUTと同じ「手作業の折り畳み代数はミスしやすいため機械的に
+; 決定する」手法)で最終的な方向index(0-31)へ変換する。
+;
+; 全ての定数・分類ロジックは、実際のZ80命令列をPython側でビット単位で
+; シミュレートした上で(dx,dy)の全域(signed byte全組み合わせ)に対する
+; 高密度サンプリングにより検証済み - 理想角度(atan2)との誤差は最大でも
+; 1方向ステップ(5.625度)に収まることを確認している。
+;
+; Input: D=podX, E=podY(発射の瞬間の値)。Output: B=dxmag(1-12、常に
+; 正の絶対値、元の固定POD_BULLET_SPEEDと同じ「Xから毎フレーム減算し
+; アンダーフローで画面外判定」のidiomをそのまま維持するため)、
+; C=dy(符号付き、-12〜+12、0=水平)。POD_BULLET_HOMING_THRESHOLD_X
+; ゲート(PLAYERXが半分を超えるまでは直進)は変更なし。呼び出し元
+; (POD_FIRE_DO_PAIR)は自身のpod-pair index(B)をこの呼び出し前後で
+; 自分でPUSH/POPすること(この関数はB/Cを出力に使うため)。
+POD_BULLET_CALC_DIR:
     LD A,(PLAYERX)
     CP POD_BULLET_HOMING_THRESHOLD_X
-    JR C,PBCD_STRAIGHT           ; player still on the left half - no homing
-    LD A,(PLAYERY)
-    CP C
-    JR Z,PBCD_STRAIGHT           ; already level - no vertical drift needed
-    JR C,PBCD_UP                 ; PLAYERY < bulletY - player is above - move up
-    LD A,POD_BULLET_HOMING_DY
-    JR PBCD_DONE
-PBCD_UP:
-    LD A,-POD_BULLET_HOMING_DY
-    JR PBCD_DONE
-PBCD_STRAIGHT:
-    XOR A
-PBCD_DONE:
-    POP BC
+    JR NC,PBCDIR_AIM
+    LD B,POD_BULLET_SPEED          ; 半分以下: 従来通り直進
+    LD C,0
     RET
+PBCDIR_AIM:
+    LD A,(PLAYERX) : SUB D
+    LD D,A                          ; D = dx (signed)
+    LD A,(PLAYERY) : SUB E
+    LD E,A                           ; E = dy (signed)
+    CALL POD_AIM_CLASSIFY           ; A = 方向index(0-31)
+    LD C,A                          ; C = 方向indexを一時保持
+    LD H,0 : LD L,A
+    LD DE,POD_AIM_DXMAG_TABLE
+    ADD HL,DE
+    LD B,(HL)                       ; B = dxmag
+    LD H,0 : LD L,C
+    LD DE,POD_AIM_DY_TABLE
+    ADD HL,DE
+    LD A,(HL)
+    LD C,A                          ; C = dy(符号付き) - 方向indexは
+                                     ; もう不要なので上書き
+    RET
+
+; Input: D=dx(signed, PLAYERX-podX), E=dy(signed, PLAYERY-podY)
+; Output: A = 方向index(0-31)。Clobbers: A,B,C,D,E,H,L(全て)。
+; (2026-09-19、mini_z80asm.pyがNEG/SET/SLA/RL命令を一切サポートして
+; いないと判明したため、以下は全てLD/INC/DEC/ADD/SUB/AND/XOR/OR/CP/
+; SRL/JR/JP/CALL/RET/PUSH/POPのみで書き直し済み。NEGの代替は
+; 「XOR A:SUB r」(0-r=2の補数の負数)、SET n,rの代替は
+; 「LD A,r:OR (1<<n):LD r,A」で代用。乗算(ay*K)はSLA/RLによる
+; ランタイムシフトループの代わりに、K(コンパイル時定数)ごとに
+; ADD HL,HL(倍加)/ADD HL,DE(axを加算)だけを使う「定数乗算の
+; シフト&加算展開」(2進数表現をMSBから辿るだけ、除算・ランタイム
+; ループ一切不要)で実装 - Pythonで機械生成し(HANDOFF.md参照)、
+; 生成結果をそのままここに貼り付け。)
+POD_AIM_CLASSIFY:
+    LD A,D
+    OR A
+    JP M,PAC_NEGDX
+    XOR A                            ; dx>=0(通常発生しない想定の
+    JR PAC_UDONE                     ; 端数ケース) -> u=0
+PAC_NEGDX:
+    XOR A : SUB D                    ; A = 0-dx = -dx = u
+PAC_UDONE:
+    LD B,A                           ; B = ax候補(u)
+    LD C,0                           ; fold蓄積用
+    LD A,E
+    OR A
+    JP P,PAC_DYPOS
+    LD A,C : OR 10h : LD C,A         ; fy=1(dyが負=上方向)
+    XOR A : SUB E                    ; A = 0-dy = |dy|
+    JR PAC_AYDONE
+PAC_DYPOS:
+    LD A,E                           ; dyは既に0以上
+PAC_AYDONE:
+    CP B
+    JR C,PAC_FOLD_DONE               ; ay<ax: swapなし
+    JR Z,PAC_FOLD_DONE               ; ay==ax: swapなし
+    LD D,A                           ; ay>ax: swap. D = ay候補(旧)
+    LD A,B                           ; A = ax候補(旧) -> これがay(最終)になる
+    LD B,D                           ; B = ay候補(旧) -> これがax(最終)になる
+    LD D,A                           ; D = ay(最終)を退避(次のOR 08hで
+                                     ; Aを潰す前に、Dはもう空いている
+                                     ; ので安全に再利用)
+    LD A,C : OR 08h : LD C,A         ; sw=1
+    LD A,D                           ; ay(最終)をAへ復元
+    JR PAC_AY_A_READY
+PAC_FOLD_DONE:
+    ; A = ay(最終)のまま
+PAC_AY_A_READY:
+    ; A = ay(最終), B = ax(最終)
+    LD (PAC_AY),A
+    LD A,B
+    LD (PAC_AX),A
+
+    ; boundary test 0: K=13
+    LD A,(PAC_AX) : LD E,A : LD D,0
+    LD HL,0
+    ADD HL,HL
+    ADD HL,DE
+    ADD HL,HL
+    ADD HL,DE
+    ADD HL,HL
+    ADD HL,HL
+    ADD HL,DE
+    LD A,(PAC_AY)
+    CP H
+    JR C,PAC_S0
+    JR Z,PAC_S0
+    INC C
+PAC_S0:
+    ; boundary test 1: K=38
+    LD A,(PAC_AX) : LD E,A : LD D,0
+    LD HL,0
+    ADD HL,HL
+    ADD HL,DE
+    ADD HL,HL
+    ADD HL,HL
+    ADD HL,HL
+    ADD HL,DE
+    ADD HL,HL
+    ADD HL,DE
+    ADD HL,HL
+    LD A,(PAC_AY)
+    CP H
+    JR C,PAC_S1
+    JR Z,PAC_S1
+    INC C
+PAC_S1:
+    ; boundary test 2: K=64
+    LD A,(PAC_AX) : LD E,A : LD D,0
+    LD HL,0
+    ADD HL,HL
+    ADD HL,DE
+    ADD HL,HL
+    ADD HL,HL
+    ADD HL,HL
+    ADD HL,HL
+    ADD HL,HL
+    ADD HL,HL
+    LD A,(PAC_AY)
+    CP H
+    JR C,PAC_S2
+    JR Z,PAC_S2
+    INC C
+PAC_S2:
+    ; boundary test 3: K=92
+    LD A,(PAC_AX) : LD E,A : LD D,0
+    LD HL,0
+    ADD HL,HL
+    ADD HL,DE
+    ADD HL,HL
+    ADD HL,HL
+    ADD HL,DE
+    ADD HL,HL
+    ADD HL,DE
+    ADD HL,HL
+    ADD HL,DE
+    ADD HL,HL
+    ADD HL,HL
+    LD A,(PAC_AY)
+    CP H
+    JR C,PAC_S3
+    JR Z,PAC_S3
+    INC C
+PAC_S3:
+    ; boundary test 4: K=121
+    LD A,(PAC_AX) : LD E,A : LD D,0
+    LD HL,0
+    ADD HL,HL
+    ADD HL,DE
+    ADD HL,HL
+    ADD HL,DE
+    ADD HL,HL
+    ADD HL,DE
+    ADD HL,HL
+    ADD HL,DE
+    ADD HL,HL
+    ADD HL,HL
+    ADD HL,HL
+    ADD HL,DE
+    LD A,(PAC_AY)
+    CP H
+    JR C,PAC_S4
+    JR Z,PAC_S4
+    INC C
+PAC_S4:
+    ; boundary test 5: K=153
+    LD A,(PAC_AX) : LD E,A : LD D,0
+    LD HL,0
+    ADD HL,HL
+    ADD HL,DE
+    ADD HL,HL
+    ADD HL,HL
+    ADD HL,HL
+    ADD HL,DE
+    ADD HL,HL
+    ADD HL,DE
+    ADD HL,HL
+    ADD HL,HL
+    ADD HL,HL
+    ADD HL,DE
+    LD A,(PAC_AY)
+    CP H
+    JR C,PAC_S5
+    JR Z,PAC_S5
+    INC C
+PAC_S5:
+    ; boundary test 6: K=190
+    LD A,(PAC_AX) : LD E,A : LD D,0
+    LD HL,0
+    ADD HL,HL
+    ADD HL,DE
+    ADD HL,HL
+    ADD HL,HL
+    ADD HL,DE
+    ADD HL,HL
+    ADD HL,DE
+    ADD HL,HL
+    ADD HL,DE
+    ADD HL,HL
+    ADD HL,DE
+    ADD HL,HL
+    ADD HL,DE
+    ADD HL,HL
+    LD A,(PAC_AY)
+    CP H
+    JR C,PAC_S6
+    JR Z,PAC_S6
+    INC C
+PAC_S6:
+    ; C = fold_code(0-31、bit4=fy,bit3=sw,bit0-2=bucket 0-7。7回の
+    ; INCのみでbit0-2は最大7[0b111]までしか到達しないためbit3への
+    ; 桁上げは起きない)
+    LD H,0 : LD L,C
+    LD DE,POD_AIM_DIR_LUT
+    ADD HL,DE
+    LD A,(HL)
+    RET
+
+; fold_code(0-31)->方向index(0-31)変換表。高密度サンプリングで決定
+; (手作業の折り畳み代数は符号・swapの組み合わせでミスしやすいため、
+; ebullet_gen.pyのDIR16_LUTと同じ手法をPython側で適用し多数決で
+; 決定、詳細はHANDOFF.md参照)。
+POD_AIM_DIR_LUT:
+    DB 16,17,18,19,20,21,22,23,31,31,30,29,28,27,26,25
+    DB 16,15,14,13,12,11,10,9,0,1,2,3,4,5,6,7
+; 方向index(0-31)ごとのX速度絶対値(1-12、常にXから減算)
+POD_AIM_DXMAG_TABLE:
+    DB 1,2,3,4,5,6,7,8,9,10,10,11,11,12,12,12
+    DB 12,12,12,11,11,10,10,9,8,7,6,5,4,3,2,1
+; 方向index(0-31)ごとのY速度(符号付き、-12〜+12)
+POD_AIM_DY_TABLE:
+    DB 0F4h,0F4h,0F4h,0F5h,0F5h,0F6h,0F6h,0F7h,0F8h,0F9h,0FAh,0FBh,0FCh,0FDh,0FEh,0FFh   ; -12,-12,-12,-11,-11,-10,-10,-9,-8,-7,-6,-5,-4,-3,-2,-1
+    DB 001h,002h,003h,004h,005h,006h,007h,008h,009h,00Ah,00Ah,00Bh,00Bh,00Ch,00Ch,00Ch   ; 1,2,3,4,5,6,7,8,9,10,10,11,11,12,12,12
 
 ; called every frame from POD_FIRE_UPDATE. While POD_VOLLEY_ACTIVE,
 ; moves the 8 launched pods and counts down POD_VOLLEY_TIMER; once
@@ -7735,8 +7994,13 @@ POD_BULLET_MOVE:
     LD A,(POD_BULLET0_ACT)
     OR A
     JR Z,PBM_B1
+    ; (2026-09-19、32方向照準化): Xの減算量はPOD_BULLET0_DXMAG(1-12、
+    ; 発射時にPOD_BULLET_CALC_DIRが決定)を使う - 直進時は常に
+    ; POD_BULLET_SPEED(12)が入っているため、アンダーフロー判定
+    ; (JR NC)のロジック自体は元のまま完全に維持される。
+    LD A,(POD_BULLET0_DXMAG) : LD B,A
     LD A,(POD_BULLET0_X)
-    SUB POD_BULLET_SPEED
+    SUB B
     JR NC,PBM_B0_OK
     XOR A : LD (POD_BULLET0_ACT),A
     CALL POD_BULLET_HIDE0
@@ -7744,7 +8008,7 @@ POD_BULLET_MOVE:
 PBM_B0_OK:
     LD (POD_BULLET0_X),A
     ; (2026-09-13、"ボスの弾は...自機狙い弾になるように変更"): apply the
-    ; per-frame Y velocity decided once at fire time (POD_BULLET_CALC_DY)
+    ; per-frame Y velocity decided once at fire time (POD_BULLET_CALC_DIR)
     ; - 0 here is byte-identical to the old straight-shot behavior.
     LD A,(POD_BULLET0_Y) : LD B,A
     LD A,(POD_BULLET0_DY) : ADD A,B
@@ -7754,8 +8018,9 @@ PBM_B1:
     LD A,(POD_BULLET1_ACT)
     OR A
     RET Z
+    LD A,(POD_BULLET1_DXMAG) : LD B,A
     LD A,(POD_BULLET1_X)
-    SUB POD_BULLET_SPEED
+    SUB B
     JR NC,PBM_B1_OK
     XOR A : LD (POD_BULLET1_ACT),A
     CALL POD_BULLET_HIDE1
@@ -12470,6 +12735,20 @@ EBUZ_EXPL_SPAWN_INTERVAL EQU 4    ; 未調整の初期値、8セル連続ポッ�
 
 EBUZ_SLOT0 EQU 0F286h
 EBUZ_SLOT1 EQU EBUZ_SLOT0+EBUZ_SLOT_SIZE
+
+; (2026-09-19、"ステージ1ボスの接近時自機狙い弾を32方向LUT化"): pod
+; bullets' per-frame X speed magnitude(1-12、常にXから減算する値。元の
+; 固定POD_BULLET_SPEEDと同じ「Xがアンダーフローしたら画面外」判定を
+; そのまま使うため符号なしの絶対値のまま持つ)。方向ごとに値が変わる
+; ようになったため新規に1byte/bulletが必要になった。EBUZ_SLOT1の直後
+; (0F286h+36+36=0F2CEh)からSTACKTOP(0F380h)まで実測178byte空きと
+; ファイル全体のEQUアドレスを横断的に洗い出した上で確認済み、2byte
+; 消費しても176byte残る(このファイルにはStage2のstack_safety_test.py
+; に相当する自動マージン検証は無いため、この178byteという数字は手動の
+; ギャップ監査に基づく一度きりの確認であり、継続的な回帰保護は無い点に
+; 留意)。
+POD_BULLET0_DXMAG EQU 0F2CEh
+POD_BULLET1_DXMAG EQU 0F2CFh
 
 ; VRAMの連続2byteへ書き込む(左セル・右セル)。tools/ebuz_test/
 ; ebuz_test.asmのEBUZ_WRITE2と同一設計。
