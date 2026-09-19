@@ -97,7 +97,14 @@ def main():
     print("oscillation: shifted to UP position:", p5)
 
     # advance to the next shift (up->base) then the one after (base->down).
+    # NOTE (2026-09-20): run_until_pc returns with z.pc already sitting
+    # exactly on the target address, so calling it again with the SAME
+    # target would return instantly without executing anything (this used
+    # to make osc_down.ppm a silent duplicate of osc_up.ppm) - a single
+    # z.step() first forces real progress before waiting again.
+    z.step()
     run_until_pc(z, sym["EBUZ2_OSC_SHIFT_DONE"])
+    z.step()
     run_until_pc(z, sym["EBUZ2_OSC_SHIFT_DONE"])
     p6 = os.path.join(HERE, "ebuz_mk2_osc_down.ppm")
     render_full(bytes(z.vram), p6)

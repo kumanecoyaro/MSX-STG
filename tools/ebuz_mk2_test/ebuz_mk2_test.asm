@@ -286,14 +286,90 @@ EBUZ2_WAIT_TICK_DONE:                ; テスト用: 「待ち期間中の1テ�
 ; 列を1減算、0だった場合はそのまま非活性化(画面外)、そうでなければ
 ; 新しい列に描き直す - Y座標・行アドレスは呼び出しの間ずっと固定。
 ; ============================================================================
+; 2026-09-20訂正(実機フィードバック「砲台は5門に増えてるぞ」の原因):
+; 開幕ボレー3レーンはstate1のうちは何も無い空白の行(nt row3/5/7)を
+; 飛ぶ設計だったが、実際にはFIRE_VOLLEY直後・ノーウェイトでDRAW_BASE
+; (state2への変形)が走るため、TICK_VOLLEYnが実際に「現在位置を消す」
+; 処理を初めて実行する時点では、本体は既にstate2(この3行のちょうど
+; col23-27に本体タイルが存在する形)になっている。旧実装はここを
+; 無条件に0(空白)で消していたため、飛んでいく弾が通過のたびに
+; state2本体の翼タイル(A/B)を剥ぎ取ってしまい、残ったD(砲台)タイルが
+; 複数行に孤立して見える事故になっていた。EBUZ2_ROW3_RESTORE/
+; EBUZ2_ROW5_RESTOREは「col21-28の範囲でstate2本体が実際に表示すべき
+; タイル」を持つ表で、消す際は0ではなくこの表の値で復元する(col21未満は
+; 元々どちらの状態でも空白なので、従来通り0のままでよい - 場合分け
+; 不要)。TICK_VOLLEYnが実際に動く時点で本体は常にstate2なので、
+; state1/state2の判定分岐自体も不要(詳細は本ファイルの会話ログ参照)。
+; ============================================================================
+EBUZ2_ROW3_RESTORE:            ; col21,22,23,24,25,26,27,28 (row3/row7共通、
+    DB 0,0,0,EBUZ2_CODE_A,EBUZ2_CODE_B,EBUZ2_CODE_C,EBUZ2_CODE_C,0
+    ; state2 local row1/row5 " . A B C C"と同一)
+EBUZ2_ROW5_RESTORE:            ; col21,22,23,24,25,26,27,28 (row5=中心行、
+    DB 0,0,EBUZ2_CODE_A,EBUZ2_CODE_B,EBUZ2_CODE_C,EBUZ2_CODE_D,EBUZ2_CODE_D,0
+    ; state2 local row3 "A B C D D"と同一)
+
+; Input: A=消す位置の列(COLCUR、erase前・decrement前)。破壊: AF,BC,DE,HL。
+EBUZ2_ERASE_ROW3_CELL:
+    PUSH AF
+    CP 21
+    JR C,EBUZ2_ERC_ROW3_PLAIN
+    SUB 21
+    LD E,A : LD D,0
+    LD HL,EBUZ2_ROW3_RESTORE : ADD HL,DE
+    LD B,(HL) : INC HL : LD C,(HL)
+    JR EBUZ2_ERC_ROW3_GO
+EBUZ2_ERC_ROW3_PLAIN:
+    LD B,0 : LD C,0
+EBUZ2_ERC_ROW3_GO:
+    POP AF
+    LD E,A : LD D,0
+    LD HL,EBUZ2_ROW3_BASE : ADD HL,DE
+    CALL EBUZ2_WRITE2
+    RET
+
+EBUZ2_ERASE_ROW5_CELL:
+    PUSH AF
+    CP 21
+    JR C,EBUZ2_ERC_ROW5_PLAIN
+    SUB 21
+    LD E,A : LD D,0
+    LD HL,EBUZ2_ROW5_RESTORE : ADD HL,DE
+    LD B,(HL) : INC HL : LD C,(HL)
+    JR EBUZ2_ERC_ROW5_GO
+EBUZ2_ERC_ROW5_PLAIN:
+    LD B,0 : LD C,0
+EBUZ2_ERC_ROW5_GO:
+    POP AF
+    LD E,A : LD D,0
+    LD HL,EBUZ2_ROW5_BASE : ADD HL,DE
+    CALL EBUZ2_WRITE2
+    RET
+
+EBUZ2_ERASE_ROW7_CELL:
+    PUSH AF
+    CP 21
+    JR C,EBUZ2_ERC_ROW7_PLAIN
+    SUB 21
+    LD E,A : LD D,0
+    LD HL,EBUZ2_ROW3_RESTORE : ADD HL,DE   ; row7もrow3と同一内容
+    LD B,(HL) : INC HL : LD C,(HL)
+    JR EBUZ2_ERC_ROW7_GO
+EBUZ2_ERC_ROW7_PLAIN:
+    LD B,0 : LD C,0
+EBUZ2_ERC_ROW7_GO:
+    POP AF
+    LD E,A : LD D,0
+    LD HL,EBUZ2_ROW7_BASE : ADD HL,DE
+    CALL EBUZ2_WRITE2
+    RET
+
 EBUZ2_TICK_VOLLEY0:
     LD A,(EBUZ2_VOLLEY0_ACTIVE)
     OR A
     RET Z
     LD A,(EBUZ2_VOLLEY0_COLCUR)
-    LD E,A : LD D,0
-    LD HL,EBUZ2_ROW3_BASE : ADD HL,DE
-    LD B,0 : LD C,0 : CALL EBUZ2_WRITE2   ; 現在位置を消す(row3固定、Y成分なし)
+    CALL EBUZ2_ERASE_ROW3_CELL            ; 現在位置を消す(row3固定、Y成分なし、
+                                           ; state2本体タイルは剥がさず復元)
     LD A,(EBUZ2_VOLLEY0_COLCUR)
     OR A
     JR Z,EBUZ2_TV0_OFF
@@ -313,9 +389,8 @@ EBUZ2_TICK_VOLLEY1:
     OR A
     RET Z
     LD A,(EBUZ2_VOLLEY1_COLCUR)
-    LD E,A : LD D,0
-    LD HL,EBUZ2_ROW5_BASE : ADD HL,DE
-    LD B,0 : LD C,0 : CALL EBUZ2_WRITE2   ; 現在位置を消す(row5固定、中央=最深部レーン)
+    CALL EBUZ2_ERASE_ROW5_CELL            ; 現在位置を消す(row5固定、中央=最深部
+                                           ; レーン、state2本体タイルは剥がさず復元)
     LD A,(EBUZ2_VOLLEY1_COLCUR)
     OR A
     JR Z,EBUZ2_TV1_OFF
@@ -335,9 +410,8 @@ EBUZ2_TICK_VOLLEY2:
     OR A
     RET Z
     LD A,(EBUZ2_VOLLEY2_COLCUR)
-    LD E,A : LD D,0
-    LD HL,EBUZ2_ROW7_BASE : ADD HL,DE
-    LD B,0 : LD C,0 : CALL EBUZ2_WRITE2   ; 現在位置を消す(row7固定、Y成分なし)
+    CALL EBUZ2_ERASE_ROW7_CELL            ; 現在位置を消す(row7固定、Y成分なし、
+                                           ; state2本体タイルは剥がさず復元)
     LD A,(EBUZ2_VOLLEY2_COLCUR)
     OR A
     JR Z,EBUZ2_TV2_OFF
