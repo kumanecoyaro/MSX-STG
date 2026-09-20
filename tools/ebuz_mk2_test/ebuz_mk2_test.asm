@@ -355,6 +355,13 @@ EBUZ2_ROWED_TMP_ADDR EQU 0F189h  ; 2 bytes: EBUZ2_UPDATE_SLOT_ROWEDの
                                   ; 作業用スクラッチ(行ベースアドレス
                                   ; の一時退避、CALL跨ぎでAFが壊れる
                                   ; ためHL計算結果をここに逃がす)
+; (2026-09-20「では一往復したら上下動停止して 交互連射も停止」対応)
+; 1往復=開始方向(下)へMAX_ROWまで到達→折り返してMIN_ROWまで到達、
+; の2段階。0=まだMAX_ROW未到達/1=MAX_ROW到達済み(折り返し待ち)。
+; MIN_ROW到達時にこれが1ならその時点で1往復完了とみなし停止する。
+EBUZ2_S2_MOVE_REACHED_MAX EQU 0F18Bh  ; 1 byte
+EBUZ2_S2_MOVE_ROUNDTRIP_DONE EQU 0F18Ch  ; 1 byte: 1=1往復完了・上下動/
+                                          ; 交互連射とも停止済み
 
 ; ============================================================================
 ; 1フレーム相当のウェイト(無印Ebuzと同一の較正済みループ)。
@@ -1086,6 +1093,19 @@ EBUZ2_UPDATE_S2_MOVE:
     LD (EBUZ2_S2_ROW_CUR),A
     CP EBUZ2_S2_MOVE_MIN_ROW
     JR NZ,EBUZ2_USM_DRAW
+    ; MIN_ROWに到達。既にMAX_ROWへ到達済み(REACHED_MAX=1)なら
+    ; 「下→上」の1往復が完了したことになるので、ここで上下動を
+    ; 完全停止する(交互連射の停止はEBUZ2_VOLLEY2_ALT_LOOP側が
+    ; EBUZ2_S2_MOVE_ROUNDTRIP_DONEを見て行う)。
+    LD A,(EBUZ2_S2_MOVE_REACHED_MAX)
+    OR A
+    JR Z,EBUZ2_USM_FLIP_UP
+    LD A,1
+    LD (EBUZ2_S2_MOVE_ROUNDTRIP_DONE),A
+    XOR A
+    LD (EBUZ2_S2_MOVE_ACTIVE),A
+    JR EBUZ2_USM_DRAW
+EBUZ2_USM_FLIP_UP:
     XOR A
     LD (EBUZ2_S2_MOVE_DIR),A
     JR EBUZ2_USM_DRAW
@@ -1097,9 +1117,22 @@ EBUZ2_USM_DOWN:
     JR NZ,EBUZ2_USM_DRAW
     LD A,1
     LD (EBUZ2_S2_MOVE_DIR),A
+    LD (EBUZ2_S2_MOVE_REACHED_MAX),A  ; A=1のまま流用
 EBUZ2_USM_DRAW:
     LD A,(EBUZ2_S2_ROW_CUR)
     CALL EBUZ2_DRAW_S2_BODY_AT
+    RET
+
+; リコイル演出の直後、本来は無条件にEBUZ2_S2_MOVE_ACTIVEを1へ戻して
+; いたが、その間に1往復が完了(EBUZ2_S2_MOVE_ROUNDTRIP_DONE=1)して
+; いた場合はここで誤って上下動を再起動させないよう、必ずこの
+; ルーチン経由で復帰させる。
+EBUZ2_S2_RESTORE_MOVE_ACTIVE:
+    LD A,(EBUZ2_S2_MOVE_ROUNDTRIP_DONE)
+    OR A
+    RET NZ
+    LD A,1
+    LD (EBUZ2_S2_MOVE_ACTIVE),A
     RET
 
 ; ============================================================================
@@ -1259,6 +1292,8 @@ EBUZ2_GUARD_DONE:
     LD (EBUZ2_S2_MOVE_ACTIVE),A   ; 0=変形完了までは上下移動を起動しない
     LD (EBUZ2_S2_MOVE_DIR),A
     LD (EBUZ2_S2_MOVE_COUNTDOWN),A
+    LD (EBUZ2_S2_MOVE_REACHED_MAX),A
+    LD (EBUZ2_S2_MOVE_ROUNDTRIP_DONE),A
 
     ; --- 登場フェーズA: 「揃うまで下にシフトする」方式。新たに出現する
     ; 行(本体自身の下段から順)は常に固定の挿入位置(nt1=EBUZ2_ENTRY_
@@ -1450,6 +1485,11 @@ EBUZ2_VOLLEY2_ALT_START_HOLD_TICKS EQU 20  ; 「ウェイトを20Tickに」指�
 ; 計算し直す(固定値のままだと本体が別の行へ移動した後もリコイルが
 ; 元の位置に描かれ続け、背景を壊してしまう)。
 EBUZ2_VOLLEY2_ALT_LOOP:
+    ; 1往復完了済みならここで交互連射ループを抜ける(この時点で本体は
+    ; 既にMIN_ROWで静止・上下動も停止済み)。
+    LD A,(EBUZ2_S2_MOVE_ROUNDTRIP_DONE)
+    OR A
+    JP NZ,EBUZ2_S2_STOP_SEQUENCE
     LD B,EBUZ2_VOLLEY2_WAVE_HOLD_TICKS : CALL EBUZ2_HOLD_N
     CALL EBUZ2_FIRE_IT_BULLET
     CALL EBUZ2_FIRE_IB_BULLET
@@ -1470,7 +1510,7 @@ EBUZ2_VOLLEY2_ALT_LOOP:
     LD A,(EBUZ2_S2_ROW_CUR) : ADD A,5 : LD B,A : LD C,23 : CALL EBUZ2_CALC_ADDR
     PUSH HL : LD HL,EBUZ2_ROW_S2_INNER_REST : POP DE : LD BC,6 : CALL LDIRVM
     LD B,EBUZ2_RECOIL_HOLD_TICKS : CALL EBUZ2_HOLD_N
-    LD A,1 : LD (EBUZ2_S2_MOVE_ACTIVE),A
+    CALL EBUZ2_S2_RESTORE_MOVE_ACTIVE
 EBUZ2_VOLLEY2_ALT_INNER_DONE:              ; テスト用: 交互発射1周ぶんの内側完了地点
     LD B,EBUZ2_VOLLEY2_WAVE_HOLD_TICKS : CALL EBUZ2_HOLD_N
     CALL EBUZ2_FIRE_OT_BULLET
@@ -1488,9 +1528,19 @@ EBUZ2_VOLLEY2_ALT_INNER_DONE:              ; テスト用: 交互発射1周ぶ�
     LD A,(EBUZ2_S2_ROW_CUR) : ADD A,6 : LD B,A : LD C,23 : CALL EBUZ2_CALC_ADDR
     PUSH HL : LD HL,EBUZ2_ROW_S2_OUTER_REST : POP DE : LD BC,6 : CALL LDIRVM
     LD B,EBUZ2_RECOIL_HOLD_TICKS : CALL EBUZ2_HOLD_N
-    LD A,1 : LD (EBUZ2_S2_MOVE_ACTIVE),A
+    CALL EBUZ2_S2_RESTORE_MOVE_ACTIVE
 EBUZ2_VOLLEY2_ALT_OUTER_DONE:              ; テスト用: 交互発射1周ぶんの外側完了地点
     JP EBUZ2_VOLLEY2_ALT_LOOP  ; ループ本体が長くなりJR射程(-128〜127)を超えたためJPに変更
+
+; (2026-09-20「では一往復したら上下動停止して 交互連射も停止 15Tick
+; 停止したら 中央から1発発射」対応) 1往復完了(EBUZ2_S2_MOVE_ROUNDTRIP_
+; DONE=1、上下動自体はEBUZ2_UPDATE_S2_MOVE側で既に停止済み)を検知
+; したら、無制限交互発射のループ自体もここで抜けて停止する。
+EBUZ2_S2_STOP_SEQUENCE:
+    LD B,15 : CALL EBUZ2_HOLD_N
+    CALL EBUZ2_FIRE_S2C_BULLET
+EBUZ2_S2_FINAL_DONE:                       ; テスト用: 最終停止・中央1発発射完了地点
+    JP EBUZ2_S2_FINAL_DONE                 ; テストROMの終端、以降は永久に静止
 
 EBUZ2_COLOR_BYTE:
     DB EBUZ2_COLOR

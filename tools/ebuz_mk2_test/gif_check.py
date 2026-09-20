@@ -1,9 +1,10 @@
 """tools/ebuz_mk2_test/ebuz_mk2_test.asm(2026-09-20、Ebuz Mk2-1[閉状態]
 が「揃うまで下にシフトする」方式で登場(2倍速)→中央で5門1斉発射→
 リコイル(1セル右へ→戻る)→Mk2-2[開状態、7行]へ変形→中央発射→内側2門→
-外側2門の順に間隔を空けて発射、以後は内側2門と外側2門が無制限に交互
-発射し続ける、という版)の一連の流れを実時間(T-states換算)キャプション
-付きのアニメーションGIFとして可視化する。
+外側2門の順に間隔を空けて発射、以後は内側2門と外側2門が交互発射しつつ
+本体が上下に往復、1往復完了で上下動・交互連射とも停止し、15Tick後に
+中央から1発発射して静止する、という版)の一連の流れを実時間(T-states
+換算)キャプション付きのアニメーションGIFとして可視化する。
 """
 import os
 import sys
@@ -106,18 +107,28 @@ def main():
     run_until_pc(z, sym["EBUZ2_VOLLEY2_DONE"])
     add("2nd volley wave 3/3: outer 2 ports fire together", 600)
 
-    # 「内2門と外2門の無制限交互発射」: 以後は本体固定のまま、内側/
-    # 外側ペアが永久に交代発射する。数サイクル分を見せる。
+    # 「内2門と外2門の交互発射」: 本体固定のまま、内側/外側ペアが交代
+    # 発射しつつ本体は上下に往復する。数サイクル分を見せる。
     for cycle in range(3):
         run_until_pc(z, sym["EBUZ2_VOLLEY2_ALT_INNER_DONE"])
-        add(f"unlimited alternating fire: inner pair (cycle {cycle+2})", 500)
+        add(f"alternating fire (until 1 round-trip): inner pair (cycle {cycle+2})", 500)
         run_until_pc(z, sym["EBUZ2_VOLLEY2_ALT_OUTER_DONE"])
-        add(f"unlimited alternating fire: outer pair (cycle {cycle+2})", 500)
+        add(f"alternating fire (until 1 round-trip): outer pair (cycle {cycle+2})", 500)
 
     for _ in range(40):
         z.step()
         run_until_pc(z, sym["EBUZ2_FRAME_TICK"])
-    add("alternating fire continues forever - body drifts up/down, fired bullets keep straight", 1200)
+    add("still oscillating/firing - body drifts up/down, fired bullets keep straight", 900)
+
+    # (2026-09-20「では一往復したら上下動停止して 交互連射も停止
+    # 15Tick停止したら 中央から1発発射」対応) 本体が下→上の1往復を
+    # 完了する(=MIN_ROWに折り返し到達する)まで進め、上下動・交互
+    # 連射の両方が停止する瞬間を見せる。
+    run_until_pc(z, sym["EBUZ2_S2_STOP_SEQUENCE"])
+    add("1 round-trip complete: up-down movement AND alternating fire both stop", 900)
+
+    run_until_pc(z, sym["EBUZ2_S2_FINAL_DONE"])
+    add("after 15-tick pause: single shot fired from center, then holds forever", 1400)
 
     out_path = os.path.join(HERE, "ebuz_mk2_timeline.gif")
     frames[0].save(
