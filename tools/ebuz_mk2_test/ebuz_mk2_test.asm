@@ -255,10 +255,16 @@ EBUZ2_S2_FIRE_COL  EQU 21
 ; 再拡張。下方向(MAX_ROW、row5→8)は要求通り+3、上方向(MIN_ROW、
 ; row2→-2の要求)はガード帯(row0固定・本体7行のためROW_CURは1が
 ; 下限)により+4のうち+1(row2→1)しか実現できない - この制約はユーザー
-; へ別途報告済み。) ---
+; へ別途報告済み。)
+; (2026-09-20さらに追加訂正「そうじゃねえよ 上はこれでいいがYはRow20
+; までの範囲で」により、下方向をさらに拡張。ガード帯(row20-23)固定・
+; 本体7行のためROW_CURの上限は13(13+6=19が最後の非ガード行)が物理的
+; 限界 - これがそのまま「row20までの範囲」の意味(本体最下行が
+; ちょうどrow19まで、row20には掛からない)と解釈しMAX_ROW=13に設定。
+; 上方向(MIN_ROW=1)は「上はこれでいい」の通り変更なし。) ---
 EBUZ2_S2_MOVE_INTERVAL_TICKS EQU 4
 EBUZ2_S2_MOVE_MIN_ROW EQU 1
-EBUZ2_S2_MOVE_MAX_ROW EQU 8
+EBUZ2_S2_MOVE_MAX_ROW EQU 13
 
 ; ============================================================================
 ; RAMワークエリア。
@@ -1417,23 +1423,20 @@ EBUZ2_VOLLEY2_DONE:
 ; EBUZ2_RECOIL_HOLD_TICKS(1)保持→REST位置へ戻して同じく1tick保持、
 ; という無印Ebuzの継続発射リコイルと同じ手順を各発射ごとに行う。
 ; 「一応シーケンス指示しとく...変形後の交互発射を開始したら 画面2行目
-; から下は5行目までを往復だぞ」指示により、この無制限交互発射の開始
-; 直前で初めて本体を上下移動の開始位置(EBUZ2_S2_MOVE_MIN_ROW、
-; 「移動範囲が狭い」追加指示で再拡張済み)へ動かし、往復
-; (EBUZ2_UPDATE_S2_MOVE)を起動する - それまで
+; から下は5行目までを往復だぞ」指示、さらに「動き始めはワープすんな
+; 上から来て中央で止まったんだから 停止位置からまず下に動け」訂正に
+; より、この無制限交互発射の開始直前で上下往復(EBUZ2_UPDATE_S2_MOVE)
+; を起動する。「ワープすんな」の通り本体の位置(row8、変形直後に
+; 止まった位置)はそのまま動かさず、その場から往復を開始し、最初の
+; 一歩は下方向(row8→row13→折り返して上へ)とする - それまで
 ; (変形直後〜中央/内側/外側の順次発射〜このホールド)は本体はrow8で
 ; 静止したまま。 ---
 EBUZ2_VOLLEY2_ALT_START_HOLD_TICKS EQU 20  ; 「ウェイトを20Tickに」指示で15→20
     LD B,EBUZ2_VOLLEY2_ALT_START_HOLD_TICKS : CALL EBUZ2_HOLD_N
-    ; --- 無制限交互発射の開始と同時に上下往復を起動: 現在位置(row8)を
-    ; 消去し、往復の起点row2(下方向から開始)へ再描画する。 ---
-    LD A,(EBUZ2_S2_ROW_CUR)
-    CALL EBUZ2_ERASE_S2_BODY_AT
-    LD A,EBUZ2_S2_MOVE_MIN_ROW
-    LD (EBUZ2_S2_ROW_CUR),A
-    CALL EBUZ2_DRAW_S2_BODY_AT
+    ; --- 無制限交互発射の開始と同時に上下往復を起動: 本体の位置は
+    ; 変えず(ワープさせない)、その場から下方向へ動き始める。 ---
     XOR A
-    LD (EBUZ2_S2_MOVE_DIR),A       ; 0=下方向(row2→row5)から開始
+    LD (EBUZ2_S2_MOVE_DIR),A       ; 0=下方向(row8→row13)から開始
     LD A,EBUZ2_S2_MOVE_INTERVAL_TICKS
     LD (EBUZ2_S2_MOVE_COUNTDOWN),A
     LD A,1
