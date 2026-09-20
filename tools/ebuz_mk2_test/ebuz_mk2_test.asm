@@ -202,46 +202,63 @@ EBUZ2_ROW_OB_BASE  EQU 19E0h  ; row15 (開状態local row6、外側下)
 EBUZ2_S2_FIRE_COL  EQU 21
 
 ; ============================================================================
-; RAMワークエリア(page3、無印Ebuzと同じ0F300h付近を再利用 - 別ROMの
-; ため衝突しない)。2026-09-20リセットでoscillation/発射シーケンス/
-; リコイル関連のRAMは全て削除、必要最小限のみ残す。
+; RAMワークエリア。
+;
+; (2026-09-20、実機フィードバック対応: "何故かスポーン時に画面下部に
+; 弾撃ちまくるコード入れてんだろうが" - openMSXのwatchpointで実測して
+; 特定した真因) 当初は無印Ebuzと同じ0F300h付近を再利用していたが、
+; CALL INIT32(BIOS内部でEI+HALTのvblank待ちを行う)を境に本ファイルは
+; 以後ずっと割り込み許可状態のままになる(WRTVRM/LDIRVM等のBIOSコール
+; 自体が内部でEIし直すため、呼び出し側でDIし直しても次のBIOSコールで
+; また割り込みが有効に戻ってしまうと実測で確認済み - このファイルは
+; 弾の描画そのものがWRTVRM経由のため、割り込みを本当の意味で止め
+; 続けることは事実上不可能と判断)。この状態でBIOSの標準割り込み
+; ハンドラ(H.TIMIフックの手前で毎垂直帰線ごとに走るキー走査・JIFFY
+; 更新等のBIOS自身のシステム変数書き込み)が実際に使うRAM範囲を
+; openMSXのwatchpointで直接計測した結果、少なくとも0F352h-0F3F6h・
+; 0FBD9h-0FBEFh・0FC9Eh-0FC9Fhが実測で書き換えられることを確認した
+; (このファイル自身の0F300h-0F35Fh使用がまさにこの範囲と衝突して
+; いた - これが「本体の位置と無関係な場所に弾が出現し続ける」報告の
+; 直接原因)。実測で一切書き込みが観測されなかった0F100h台へ全面移設し
+; 解消(STACKTOP=0F380hからも0FBD9h危険域からも大きく離れており、
+; どちらの安全マージンも十分)。
 ; ============================================================================
-EBUZ2_BODY_ROW     EQU 0F300h  ; 1 byte: 本体の現在のlocal row0のnt行
+EBUZ2_BODY_ROW     EQU 0F100h  ; 1 byte: 本体の現在のlocal row0のnt行
                                 ; (登場の移動フェーズでのみ使用、発射後は不変)
-EBUZ2_NEXT_0       EQU 0F301h  ; 1 byte: local row0プールのローテーションカウンタ
-EBUZ2_NEXT_1       EQU 0F302h  ; 1 byte: local row1の同上
-EBUZ2_NEXT_2       EQU 0F303h  ; 1 byte: local row2(中央)の同上
-EBUZ2_NEXT_3       EQU 0F304h  ; 1 byte: local row3の同上
-EBUZ2_NEXT_4       EQU 0F305h  ; 1 byte: local row4の同上
+EBUZ2_NEXT_0       EQU 0F101h  ; 1 byte: local row0プールのローテーションカウンタ
+EBUZ2_NEXT_1       EQU 0F102h  ; 1 byte: local row1の同上
+EBUZ2_NEXT_2       EQU 0F103h  ; 1 byte: local row2(中央)の同上
+EBUZ2_NEXT_3       EQU 0F104h  ; 1 byte: local row3の同上
+EBUZ2_NEXT_4       EQU 0F105h  ; 1 byte: local row4の同上
 ; EBUZ2_UPDATE_SLOT(共有プール更新ルーチン)が参照する「今どの行を
 ; 対象にしているか」のスクラッチ(呼び出し元がCALL直前にセットする、
 ; 無印EbuzのEBUZ_CUR_ROW_BASEと全く同じ役割)。
-EBUZ2_CUR_ROW_BASE EQU 0F306h  ; 2 bytes
+EBUZ2_CUR_ROW_BASE EQU 0F106h  ; 2 bytes
 
-; 開状態(Mk2-2)5門分のローテーションカウンタ(0F308h-0F30Ch、
-; 0F307hは未使用の1byteパディング)。
-EBUZ2_S2_OT_NEXT EQU 0F308h
-EBUZ2_S2_IT_NEXT EQU 0F309h
-EBUZ2_S2_C_NEXT  EQU 0F30Ah
-EBUZ2_S2_IB_NEXT EQU 0F30Bh
-EBUZ2_S2_OB_NEXT EQU 0F30Ch
+; 開状態(Mk2-2)5門分のローテーションカウンタ(0F108h-0F10Ch、
+; 0F107hは未使用の1byteパディング)。
+EBUZ2_S2_OT_NEXT EQU 0F108h
+EBUZ2_S2_IT_NEXT EQU 0F109h
+EBUZ2_S2_C_NEXT  EQU 0F10Ah
+EBUZ2_S2_IB_NEXT EQU 0F10Bh
+EBUZ2_S2_OB_NEXT EQU 0F10Ch
 
 ; 各プール8スロット×1byte(列番号のみ、無印EbuzのEBUZ_TOP_COLS等と
 ; 全く同じ設計 - 行はプールごとにEBUZ2_ROW_*_BASEで固定)。
 ; EBUZ2_SLOT_EMPTY(255)で非活性。
-EBUZ2_COLS_0 EQU 0F310h  ; local row0、8 bytes
-EBUZ2_COLS_1 EQU 0F318h  ; local row1、8 bytes
-EBUZ2_COLS_2 EQU 0F320h  ; local row2(中央)、8 bytes
-EBUZ2_COLS_3 EQU 0F328h  ; local row3、8 bytes
-EBUZ2_COLS_4 EQU 0F330h  ; local row4、8 bytes(0F337hで終了)
+EBUZ2_COLS_0 EQU 0F110h  ; local row0、8 bytes
+EBUZ2_COLS_1 EQU 0F118h  ; local row1、8 bytes
+EBUZ2_COLS_2 EQU 0F120h  ; local row2(中央)、8 bytes
+EBUZ2_COLS_3 EQU 0F128h  ; local row3、8 bytes
+EBUZ2_COLS_4 EQU 0F130h  ; local row4、8 bytes(0F137hで終了)
 
-; 開状態(Mk2-2)5門分の列プール(0F338h以降、閉状態プールの直後)。
-EBUZ2_S2_OT_COLS EQU 0F338h  ; 外側上、8 bytes
-EBUZ2_S2_IT_COLS EQU 0F340h  ; 内側上、8 bytes
-EBUZ2_S2_C_COLS  EQU 0F348h  ; 中央、8 bytes
-EBUZ2_S2_IB_COLS EQU 0F350h  ; 内側下、8 bytes
-EBUZ2_S2_OB_COLS EQU 0F358h  ; 外側下、8 bytes(0F35Fhで終了、
-                               ; STACKTOP=0F380hまで余裕あり)
+; 開状態(Mk2-2)5門分の列プール(0F138h以降、閉状態プールの直後)。
+EBUZ2_S2_OT_COLS EQU 0F138h  ; 外側上、8 bytes
+EBUZ2_S2_IT_COLS EQU 0F140h  ; 内側上、8 bytes
+EBUZ2_S2_C_COLS  EQU 0F148h  ; 中央、8 bytes
+EBUZ2_S2_IB_COLS EQU 0F150h  ; 内側下、8 bytes
+EBUZ2_S2_OB_COLS EQU 0F158h  ; 外側下、8 bytes(0F15Fhで終了、
+                               ; 実測で安全と確認済みの0F100h台に収まる)
 
 ; ============================================================================
 ; 1フレーム相当のウェイト(無印Ebuzと同一の較正済みループ)。
@@ -842,6 +859,27 @@ INIT:
     LD SP,STACKTOP
     DI
     CALL INIT32
+    ; (2026-09-20、実機フィードバック対応: "何故かスポーン時に画面下部に
+    ; 弾撃ちまくるコード入れてんだろうが" - 実機/openMSXで再現・特定した
+    ; 真因) CALL INIT32はBIOS内部でEI+HALTによるvblank待ちを行うため、
+    ; 呼び出し後はIFF1が1(割り込み許可)のまま戻ってくる(このファイルの
+    ; 冒頭のDIは無効化される)。ここで再度DIしても、この直後から本体・弾の
+    ; 描画で多用するWRTVRM/LDIRVM自体がBIOS内部で毎回EIし直すため
+    ; (openMSXのbreakpointで実測確認済み: このDI実行直後は確かにIFF=0に
+    ; なるが、数秒後には再びIFF=7[割り込み許可]に戻っている)、この
+    ; ファイルの実行中は事実上ずっと割り込み許可状態のままになる。
+    ; 念のためここでも再DIしておくが(害はない)、真の対策ではない。
+    DI
+    ; 真の原因はBIOS標準割り込みハンドラ(H.TIMIフックの手前で毎垂直
+    ; 帰線ごとに走るキー走査・JIFFY更新等)が使うBIOSシステム変数領域
+    ; と、このファイル自身の作業RAMが重なっていたこと。openMSXの
+    ; watchpointで実測した結果、少なくとも0F352h-0F3F6h・0FBD9h-
+    ; 0FBEFh・0FC9Eh-0FC9Fhの範囲がBIOSに書き換えられることを確認、
+    ; 当時のEBUZ2作業RAM(0F300h-0F35Fh)がまさにこの範囲と衝突して
+    ; いた。これが「本体の位置とは無関係な場所へ弾がスポーン直後から
+    ; 出現し続ける」報告の直接原因 - 真の対策は本ファイルの作業RAM
+    ; 定義(後方、EBUZ2_BODY_ROW等)を実測で無衝突と確認できた0F100h台
+    ; へ全面移設したこと(詳細はそちらのコメント参照)。
 
     ; --- ガードバンド(row0=ブラック、row20-23=ホワイト)を最初に
     ; 塗りつぶす。本体・弾は以後絶対にこの5行へ描画しない。 ---
