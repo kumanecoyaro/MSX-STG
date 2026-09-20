@@ -1,8 +1,7 @@
 """tools/ebuz_mk2_test/ebuz_mk2_test.asm(2026-09-20、Ebuz Mk2-1[閉状態]
-が「揃うまで下にシフトする」方式で登場する版 - 新たに出現する行は常に
-nt1に描画され、既存の行は毎ステップ1行ずつ下へ再描画[シフト]される
-ベルトコンベア式の組み上がり。揃った後は中央へ移動→5門同時1斉発射)の
-VRAM->PNGレンダリングスクリプト。
+が「揃うまで下にシフトする」方式で登場(2倍速)→中央で5門1斉発射→
+リコイル(1セル右へ→戻る)→Mk2-2[開状態、7行]へ変形→5門(中央+内側2+
+外側2)で2度目の1斉発射、という版)のVRAM->PNGレンダリングスクリプト。
 tools/stage1_render_check.pyのrender_full()を使い回す。
 """
 import os
@@ -69,14 +68,29 @@ def main():
     run_until_pc(z, sym["EBUZ2_VOLLEY_DONE"])
     p3 = os.path.join(HERE, "ebuz_mk2_volley.ppm")
     render_full(bytes(z.vram), p3)
-    print("all 5 rows fire simultaneously:", p3)
+    print("1st volley: all 5 closed-body rows fire simultaneously:", p3)
+
+    run_until_pc(z, sym["EBUZ2_RECOIL_DONE"])
+    p3b = os.path.join(HERE, "ebuz_mk2_recoil_done.ppm")
+    render_full(bytes(z.vram), p3b)
+    print("recoil done: body moved 1 cell right then back to center:", p3b)
+
+    run_until_pc(z, sym["EBUZ2_TRANSFORM_DONE"])
+    p3c = os.path.join(HERE, "ebuz_mk2_transform_done.ppm")
+    render_full(bytes(z.vram), p3c)
+    print("transformed to Mk2-2 (open state, 7 rows):", p3c)
+
+    run_until_pc(z, sym["EBUZ2_VOLLEY2_DONE"])
+    p3d = os.path.join(HERE, "ebuz_mk2_volley2.ppm")
+    render_full(bytes(z.vram), p3d)
+    print("2nd volley: center+inner2+outer2 fire simultaneously:", p3d)
 
     for _ in range(60):
         z.step()
         run_until_pc(z, sym["EBUZ2_FRAME_TICK"])
     p4 = os.path.join(HERE, "ebuz_mk2_idle.ppm")
     render_full(bytes(z.vram), p4)
-    print("well after volley: bullets clipped off-screen, body untouched:", p4)
+    print("well after 2nd volley: bullets clipped off-screen, body untouched:", p4)
 
 
 if __name__ == "__main__":

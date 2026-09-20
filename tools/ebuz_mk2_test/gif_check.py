@@ -1,9 +1,8 @@
 """tools/ebuz_mk2_test/ebuz_mk2_test.asm(2026-09-20、Ebuz Mk2-1[閉状態]
-が「揃うまで下にシフトする」方式で登場する版 - 新たに出現する行は常に
-nt1に描画され、既存の行は毎ステップ1行ずつ下へ再描画[シフト]される
-ベルトコンベア式の組み上がり。揃った後は中央へ移動→5門同時1斉発射)の
-一連の流れを実時間(T-states換算)キャプション付きのアニメーションGIF
-として可視化する。
+が「揃うまで下にシフトする」方式で登場(2倍速)→中央で5門1斉発射→
+リコイル(1セル右へ→戻る)→Mk2-2[開状態、7行]へ変形→5門(中央+内側2+
+外側2)で2度目の1斉発射、という版)の一連の流れを実時間(T-states換算)
+キャプション付きのアニメーションGIFとして可視化する。
 """
 import os
 import sys
@@ -89,7 +88,16 @@ def main():
     add("descended to center (row9), still Mk2-1, no deformation", 700)
 
     run_until_pc(z, sym["EBUZ2_VOLLEY_DONE"])
-    add("all 5 body rows fire simultaneously (Ebuz's 1 shot -> 5)", 900)
+    add("1st volley: all 5 closed-body rows fire simultaneously (Ebuz's 1 shot -> 5)", 900)
+
+    run_until_pc(z, sym["EBUZ2_RECOIL_DONE"])
+    add("recoil: body moved 1 cell right then back to original position", 700)
+
+    run_until_pc(z, sym["EBUZ2_TRANSFORM_DONE"])
+    add("transformed to Mk2-2 (open state, 7 rows, 5 gun ports exposed)", 900)
+
+    run_until_pc(z, sym["EBUZ2_VOLLEY2_DONE"])
+    add("2nd volley: center 1 + inner 2 + outer 2 fire simultaneously", 900)
 
     for i in range(6):
         for _ in range(5):
@@ -100,7 +108,7 @@ def main():
     for _ in range(40):
         z.step()
         run_until_pc(z, sym["EBUZ2_FRAME_TICK"])
-    add("all bullets clipped off-screen - body untouched, step ends here", 1200)
+    add("all bullets clipped off-screen - open body untouched, step ends here", 1200)
 
     out_path = os.path.join(HERE, "ebuz_mk2_timeline.gif")
     frames[0].save(
