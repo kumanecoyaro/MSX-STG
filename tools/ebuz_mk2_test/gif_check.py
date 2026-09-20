@@ -1,16 +1,9 @@
-"""tools/ebuz_mk2_test/ebuz_mk2_test.asmの一連の流れ(state1本体[最初から
-Row9で描画]→中央発射管から1発だけ発射→state1→state2は同じRow9のまま
-5行→7行の形状変化(ワープなし)→中央→内側(上下2門)→外側(上下2門)の
-3ステップ無限ループ発射しながら本体がRow1-16を連続的に上下し、飛行中の
-弾のYもその動きにライブトラッキングする)を、実時間(T-states換算)
+"""tools/ebuz_mk2_test/ebuz_mk2_test.asm(2026-09-20三度目の全面リセット
+版)の一連の流れ(ガードバンド初期化→登場[下から1行ずつ積み上げ]→
+中央まで平行移動→5門同時1斉発射→以後は静止)を、実時間(T-states換算)
 キャプション付きのアニメーションGIFとして可視化する。
 tools/ebuz_test/gif_check.pyと全く同じ作法(render_full()の出力を
 3倍拡大+タイムスタンプ焼き込み)。
-
-(2026-09-20 二度目の訂正: ユーザーから「ゴミ/ワープ」と酷評された
-「弾は発射時点のYに固定」「state1は別位置に固定描画してstate2遷移で
-瞬間移動」の2つの設計ミスを撤回。以下のラベル文言・チェックポイントも
-それに合わせて全面更新。)
 """
 import os
 import sys
@@ -18,7 +11,6 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.join(HERE, "..", "..")
 sys.path.insert(0, os.path.join(REPO_ROOT, "tools"))
-sys.path.insert(0, os.path.join(REPO_ROOT, "tools", "stage2_terrain"))
 
 from mini_z80asm import Assembler
 from z80emu import Z80
@@ -76,50 +68,32 @@ def main():
         frames.append(snapshot(z, label))
         durations.append(dur)
 
-    run_until_pc(z, sym["EBUZ2_STATE1_BG_DONE"])
-    add("Mk2 state1 body appears (5 rows, drawn at Row9 from the start)", 900)
+    run_until_pc(z, sym["EBUZ2_GUARD_DONE"])
+    add("guard bands painted (row0=black, row20-23=white) - permanent, never touched again", 1200)
 
-    run_until_pc(z, sym["EBUZ2_STATE1_DONE"])
-    add("release: CENTER tube fires 1 shot only (\"最初はセンター\")", 700)
+    for i in range(7):
+        run_until_pc(z, sym["EBUZ2_TICK"])
+        z.step()
+        add(f"entrance growth: {i+1}/7 rows revealed from the bottom (row19 anchor)", 400)
 
-    # state1->state2 stays at the same Row9 anchor - only the shape
-    # changes (5 rows -> 7 rows), no relocation/warp.
-    run_until_pc(z, sym["EBUZ2_STATE2_BG_DONE"])
-    add("state1->state2: same Row9 anchor, shape only (no warp)", 900)
+    run_until_pc(z, sym["EBUZ2_ENTRY_GROWTH_DONE"])
+    add("entrance growth complete: full 7-row body visible, bottom-anchored", 700)
 
-    for _ in range(6):
+    for i in range(4):
+        run_until_pc(z, sym["EBUZ2_TICK"])
+        z.step()
+        add(f"moving to center: row_top={z.mem[sym['EBUZ2_BODY_ROW']]}", 400)
+
+    run_until_pc(z, sym["EBUZ2_ENTRY_MOVE_DONE"])
+    add("reached center (row_top=9)", 700)
+
+    run_until_pc(z, sym["EBUZ2_VOLLEY_DONE"])
+    add("all 5 ports fire simultaneously (one shot each, no sequencing)", 900)
+
+    for _ in range(80):
         z.step()
         run_until_pc(z, sym["EBUZ2_FRAME_TICK"])
-    add("center shot flying - Y live-tracks the body's current row every tick", 700)
-
-    run_until_pc(z, sym["EBUZ2_STATE2_DONE"])
-    add("sequential fire (center->inner->outer) + oscillation activated", 700)
-
-    for label in [
-        "step: CENTER fires",
-        "step: INNER pair fires (top+bottom)",
-        "step: OUTER pair fires (top+bottom)",
-        "step: back to CENTER (loop)",
-    ]:
-        for _ in range(sym["EBUZ2_FIRE_INTERVAL"]):
-            z.step()
-            run_until_pc(z, sym["EBUZ2_FRAME_TICK"])
-        add(label, 500)
-
-    for _ in range(200):
-        z.step()
-        run_until_pc(z, sym["EBUZ2_FRAME_TICK"])
-    add(f"continuous sweep in progress (OSC_ROW={z.mem[sym['EBUZ2_OSC_ROW']]})", 700)
-
-    for _ in range(200):
-        z.step()
-        run_until_pc(z, sym["EBUZ2_FRAME_TICK"])
-    add(f"continuous sweep (OSC_ROW={z.mem[sym['EBUZ2_OSC_ROW']]}) - bullets Y varies per shot", 700)
-
-    for _ in range(400):
-        z.step()
-        run_until_pc(z, sym["EBUZ2_FRAME_TICK"])
-    add(f"continuous sweep (OSC_ROW={z.mem[sym['EBUZ2_OSC_ROW']]})", 900)
+    add("80 ticks later: body untouched, no oscillation, no repeat fire - step ends here", 1200)
 
     out_path = os.path.join(HERE, "ebuz_mk2_timeline.gif")
     frames[0].save(

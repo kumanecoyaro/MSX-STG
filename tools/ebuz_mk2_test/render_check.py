@@ -1,8 +1,7 @@
-"""tools/ebuz_mk2_test/ebuz_mk2_test.asm のVRAM->PNGレンダリング
-スクリプト(2026-09-20二度目の訂正版: 弾はライブトラッキング[発射時点の
-Yに固定せず本体の現在位置に毎ティック追従]、state1も最初からRow9で
-描画してstate1→state2遷移を「ワープ」ではなく「同じ位置での形状変化」
-にした)。tools/stage1_render_check.pyのrender_full()を使い回す
+"""tools/ebuz_mk2_test/ebuz_mk2_test.asm(2026-09-20三度目の全面リセット
+版: 登場[下から1行ずつ積み上げ→中央まで平行移動]→5門同時1斉発射、
+まずここまで)のVRAM->PNGレンダリングスクリプト。
+tools/stage1_render_check.pyのrender_full()を使い回す
 (tools/ebuz_test/render_check.pyと同じ作法)。
 """
 import os
@@ -42,38 +41,48 @@ def main():
     z = Z80(bytearray(mem0))
     z.pc = sym["INIT"]
 
-    run_until_pc(z, sym["EBUZ2_STATE1_BG_DONE"])
-    p1 = os.path.join(HERE, "ebuz_mk2_state1.ppm")
-    render_full(bytes(z.vram), p1)
-    print("state1 rendered:", p1)
+    run_until_pc(z, sym["EBUZ2_GUARD_DONE"])
+    p0 = os.path.join(HERE, "ebuz_mk2_guard.ppm")
+    render_full(bytes(z.vram), p0)
+    print("guard bands only (row0=black, row20-23=white):", p0)
 
-    run_until_pc(z, sym["EBUZ2_STATE1_DONE"])
-    p2 = os.path.join(HERE, "ebuz_mk2_center_shot_fired.ppm")
-    render_full(bytes(z.vram), p2)
-    print("state1 release: center tube fires 1 shot:", p2)
-
-    # state1->state2 has no wait (instant relocation to Row9), so jump
-    # straight there.
-    run_until_pc(z, sym["EBUZ2_STATE2_BG_DONE"])
-    p3 = os.path.join(HERE, "ebuz_mk2_state2_row9.ppm")
-    render_full(bytes(z.vram), p3)
-    print("state2: same Row9 anchor, shape changed 5-row->7-row (no warp):", p3)
-
-    run_until_pc(z, sym["EBUZ2_STATE2_DONE"])
-    p4 = os.path.join(HERE, "ebuz_mk2_state2_active.ppm")
-    render_full(bytes(z.vram), p4)
-    print("state2, sequential fire (center->inner->outer) + oscillation activated:", p4)
-
-    # advance through a good chunk of the continuous oscillation sweep,
-    # capturing a few snapshots along the way (mainloop runs via
-    # EBUZ2_FRAME_TICK, not EBUZ2_WAIT_TICK_DONE, once past STATE2_DONE).
-    for i, ticks in enumerate([40, 80, 160]):
-        for _ in range(ticks):
-            z.step()
-            run_until_pc(z, sym["EBUZ2_FRAME_TICK"])
-        p = os.path.join(HERE, f"ebuz_mk2_sweep_{i}.ppm")
+    # 成長フェーズ(7ティック、1ティック1行)を1ティックずつ全て撮る。
+    for i in range(7):
+        run_until_pc(z, sym["EBUZ2_TICK"])
+        z.step()
+        p = os.path.join(HERE, f"ebuz_mk2_growth_{i}.ppm")
         render_full(bytes(z.vram), p)
-        print(f"oscillation sweep snapshot {i} (OSC_ROW={z.mem[sym['EBUZ2_OSC_ROW']]}):", p)
+        print(f"growth step {i} ({i+1} rows revealed):", p)
+
+    run_until_pc(z, sym["EBUZ2_ENTRY_GROWTH_DONE"])
+    p1 = os.path.join(HERE, "ebuz_mk2_growth_done.ppm")
+    render_full(bytes(z.vram), p1)
+    print("growth done (all 7 rows visible, bottom-anchored):", p1)
+
+    # 移動フェーズ(4ティック)も1ティックずつ撮る。
+    for i in range(4):
+        run_until_pc(z, sym["EBUZ2_TICK"])
+        z.step()
+        p = os.path.join(HERE, f"ebuz_mk2_move_{i}.ppm")
+        render_full(bytes(z.vram), p)
+        print(f"move step {i} (row_top={z.mem[sym['EBUZ2_BODY_ROW']]}):", p)
+
+    run_until_pc(z, sym["EBUZ2_ENTRY_MOVE_DONE"])
+    p2 = os.path.join(HERE, "ebuz_mk2_centered.ppm")
+    render_full(bytes(z.vram), p2)
+    print("centered (row_top=9):", p2)
+
+    run_until_pc(z, sym["EBUZ2_VOLLEY_DONE"])
+    p3 = os.path.join(HERE, "ebuz_mk2_volley.ppm")
+    render_full(bytes(z.vram), p3)
+    print("volley fired (5 bullets, one per port):", p3)
+
+    for _ in range(60):
+        z.step()
+        run_until_pc(z, sym["EBUZ2_FRAME_TICK"])
+    p4 = os.path.join(HERE, "ebuz_mk2_idle.ppm")
+    render_full(bytes(z.vram), p4)
+    print("60 ticks after volley (bullets flying, body untouched):", p4)
 
 
 if __name__ == "__main__":
