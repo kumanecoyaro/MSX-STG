@@ -201,6 +201,13 @@ EBUZ2_VOLLEY2_WAVE_HOLD_TICKS EQU 2  ; 無印EbuzのEBUZ_FIRE_INTERVALと同値
 ; 変更[無印Ebuz実測値からの意図的な乖離、ユーザー体感を優先]。) ---
 EBUZ2_VOLLEY1_HOLD_TICKS EQU 15  ; 「もっと長く15Tick待つように」指示で10→15
 
+; (2026-09-20 追加訂正「変形後弾を撃つ前のホールドを５Tick挿入」 -
+; 変形(state2)描画完了[EBUZ2_TRANSFORM_DONE]から2度目の発射(中央弾)
+; までの間に、専用のホールドを新設して挿入する。既存のEBUZ2_ENTRY_
+; HOLD[変形描画自体のペーシングに使っている4tick、登場フェーズと共用]
+; とは別に、この「変形後・発射前」区間専用の値として独立させる。) ---
+EBUZ2_VOLLEY2_PRE_FIRE_HOLD_TICKS EQU 5
+
 ; --- Ebuz Mk2-2(開状態、7行、添付Ebuzmkii2_64x64_2.jsonを実際に
 ; Pythonで解析して確認済み)の発射管定数。5門(外側上/内側上/中央/
 ; 内側下/外側下)はrow_top=EBUZ2_ENTRY_TARGET_ROW_TOP(9)固定(変形後は
@@ -1112,7 +1119,10 @@ EBUZ2_TRANSFORM_DONE:
     ; --- 変形後の発射: 「中央から1発 内側2門から1発 外側2門から1発」
     ; の順で書かれている通り、1斉発射(1番目の発射、5門同時)とは違い
     ; 順次発射する - 中央→(間隔)→内側2門(左右同時)→(間隔)→
-    ; 外側2門(左右同時)の3ウェーブに分ける。 ---
+    ; 外側2門(左右同時)の3ウェーブに分ける。「変形後弾を撃つ前の
+    ; ホールドを５Tick挿入」指示により、最初の発射(中央弾)の直前に
+    ; EBUZ2_VOLLEY2_PRE_FIRE_HOLD_TICKS(5)だけ静止ホールドを挿む。 ---
+    LD B,EBUZ2_VOLLEY2_PRE_FIRE_HOLD_TICKS : CALL EBUZ2_HOLD_N
     CALL EBUZ2_FIRE_S2C_BULLET
 EBUZ2_VOLLEY2_WAVE_C_DONE:
     LD B,EBUZ2_VOLLEY2_WAVE_HOLD_TICKS : CALL EBUZ2_HOLD_N
