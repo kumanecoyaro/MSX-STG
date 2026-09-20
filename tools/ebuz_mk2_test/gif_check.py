@@ -1,8 +1,8 @@
-"""tools/ebuz_mk2_test/ebuz_mk2_test.asm(2026-09-20、登場[row1に一度に
-出現、成長演出なし]→中央まで剛体のまま平行移動→5門同時1斉発射→以後は
-静止)の一連の流れを、実時間(T-states換算)キャプション付きの
-アニメーションGIFとして可視化する。tools/ebuz_test/gif_check.pyと
-全く同じ作法(render_full()の出力を3倍拡大+タイムスタンプ焼き込み)。
+"""tools/ebuz_mk2_test/ebuz_mk2_test.asm(2026-09-20、無印Ebuzと全く
+同じ弾シーケンスに統一した版)の一連の流れを、実時間(T-states換算)
+キャプション付きのアニメーションGIFとして可視化する。
+tools/ebuz_test/gif_check.pyと全く同じ作法(render_full()の出力を
+3倍拡大+タイムスタンプ焼き込み)。
 """
 import os
 import sys
@@ -71,24 +71,24 @@ def main():
     add("guard bands painted (row0=black, row20-23=white) - permanent, never touched again", 1200)
 
     run_until_pc(z, sym["EBUZ2_ENTRY_SPAWN_DONE"])
-    add("spawn: full 7-row body appears at row1 (from above) - no growth/deform animation", 900)
-
-    while z.mem[sym["EBUZ2_BODY_ROW"]] != sym["EBUZ2_ENTRY_TARGET_ROW_TOP"]:
-        run_until_pc(z, sym["EBUZ2_ENTRY_MOVE_LOOP"])
-        z.step()
-        run_until_pc(z, sym["EBUZ2_ENTRY_MOVE_LOOP"])
-        add(f"moving down as a rigid body: row_top={z.mem[sym['EBUZ2_BODY_ROW']]}", 350)
+    add("spawn: full 7-row body appears at row1 (from above)", 900)
 
     run_until_pc(z, sym["EBUZ2_ENTRY_MOVE_DONE"])
     add("reached center (row_top=9), shape unchanged throughout", 700)
 
     run_until_pc(z, sym["EBUZ2_VOLLEY_DONE"])
-    add("all 5 ports fire simultaneously (one shot each, no sequencing, no repeat)", 900)
+    add("all 5 ports fire simultaneously, each from its own fixed row (like Ebuz's bullets)", 900)
 
-    for _ in range(80):
+    for i in range(6):
+        for _ in range(5):
+            z.step()
+            run_until_pc(z, sym["EBUZ2_FRAME_TICK"])
+        add("bullets flying straight, one row each, no stray tiles anywhere else", 350)
+
+    for _ in range(40):
         z.step()
         run_until_pc(z, sym["EBUZ2_FRAME_TICK"])
-    add("80 ticks later: body untouched, no oscillation, no repeat fire - step ends here", 1200)
+    add("all 5 bullets clipped off-screen cleanly - body untouched, step ends here", 1200)
 
     out_path = os.path.join(HERE, "ebuz_mk2_timeline.gif")
     frames[0].save(

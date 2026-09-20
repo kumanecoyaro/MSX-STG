@@ -1,6 +1,5 @@
-"""tools/ebuz_mk2_test/ebuz_mk2_test.asm(2026-09-20、登場[row1に一度に
-出現、成長演出なし]→中央まで剛体のまま平行移動→5門同時1斉発射、以後は
-静止)のVRAM->PNGレンダリングスクリプト。
+"""tools/ebuz_mk2_test/ebuz_mk2_test.asm(2026-09-20、無印Ebuzと全く
+同じ弾シーケンスに統一した版)のVRAM->PNGレンダリングスクリプト。
 tools/stage1_render_check.pyのrender_full()を使い回す
 (tools/ebuz_test/render_check.pyと同じ作法)。
 """
@@ -51,13 +50,6 @@ def main():
     render_full(bytes(z.vram), p1)
     print("spawned at row1 (full 7-row shape, no growth):", p1)
 
-    for i in range(8):
-        run_until_pc(z, sym["EBUZ2_TICK"])
-        z.step()
-        p = os.path.join(HERE, f"ebuz_mk2_move_{i}.ppm")
-        render_full(bytes(z.vram), p)
-        print(f"move step {i} (row_top={z.mem[sym['EBUZ2_BODY_ROW']]}):", p)
-
     run_until_pc(z, sym["EBUZ2_ENTRY_MOVE_DONE"])
     p2 = os.path.join(HERE, "ebuz_mk2_centered.ppm")
     render_full(bytes(z.vram), p2)
@@ -66,14 +58,22 @@ def main():
     run_until_pc(z, sym["EBUZ2_VOLLEY_DONE"])
     p3 = os.path.join(HERE, "ebuz_mk2_volley.ppm")
     render_full(bytes(z.vram), p3)
-    print("volley fired (5 bullets, one per port, simultaneous):", p3)
+    print("volley fired (5 bullets, one per port, simultaneous, fixed rows):", p3)
 
-    for _ in range(80):
+    for i, ticks in enumerate([10, 20]):
+        for _ in range(ticks):
+            z.step()
+            run_until_pc(z, sym["EBUZ2_FRAME_TICK"])
+        p = os.path.join(HERE, f"ebuz_mk2_flight_{i}.ppm")
+        render_full(bytes(z.vram), p)
+        print(f"bullets in flight, snapshot {i}:", p)
+
+    for _ in range(60):
         z.step()
         run_until_pc(z, sym["EBUZ2_FRAME_TICK"])
     p4 = os.path.join(HERE, "ebuz_mk2_idle.ppm")
     render_full(bytes(z.vram), p4)
-    print("80 ticks after volley (bullets flying off, body untouched):", p4)
+    print("well after volley: all bullets clipped off-screen, body untouched:", p4)
 
 
 if __name__ == "__main__":
