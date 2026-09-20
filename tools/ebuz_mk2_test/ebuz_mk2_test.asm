@@ -1543,8 +1543,18 @@ EBUZ2_VOLLEY2_ALT_OUTER_DONE:              ; テスト用: 交互発射1周ぶ�
 EBUZ2_S2_STOP_SEQUENCE:
     LD B,15 : CALL EBUZ2_HOLD_N
     CALL EBUZ2_FIRE_S2C_BULLET
+; (実機フィードバック対応「この状態でフリーズしてる わざと止めてん
+; のか? 弾はちゃんと左まで到達させろ」) 当初はJP自己ループで完全に
+; 静止させていたが、これだとEBUZ2_TICK(10プールの弾更新)自体が
+; 二度と呼ばれなくなり、この時点でまだ画面上に残っている飛行中の弾
+; (最後に撃った1発を含む)が左端(列0)まで到達する前にその場で
+; 凍結してしまっていた。新規の発射・本体の上下移動は起こさず
+; (EBUZ2_S2_MOVE_ACTIVE=0のまま、以後どのFIRE_*も呼ばれない)、
+; 既存の弾を最後まで流し切るためだけにEBUZ2_TICKを永久に呼び続ける
+; ループへ変更する。
 EBUZ2_S2_FINAL_DONE:                       ; テスト用: 最終停止・中央1発発射完了地点
-    JP EBUZ2_S2_FINAL_DONE                 ; テストROMの終端、以降は永久に静止
+    CALL EBUZ2_TICK
+    JP EBUZ2_S2_FINAL_DONE                 ; 新規発射・移動は起こさず、既存弾の飛行のみ継続
 
 EBUZ2_COLOR_BYTE:
     DB EBUZ2_COLOR

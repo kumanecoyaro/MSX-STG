@@ -121,14 +121,25 @@ def main():
     add("still oscillating/firing - body drifts up/down, fired bullets keep straight", 900)
 
     # (2026-09-20「では一往復したら上下動停止して 交互連射も停止
-    # 15Tick停止したら 中央から1発発射」対応) 本体が下→上の1往復を
-    # 完了する(=MIN_ROWに折り返し到達する)まで進め、上下動・交互
-    # 連射の両方が停止する瞬間を見せる。
+    # 15Tick停止したら 中央から1発発射」対応、続けて「一周なんだから
+    # 中央まで戻ったら停止だろうがよ」訂正) 本体が中央から下方向へ
+    # 出発しMAX_ROWで折り返して中央に戻ってくるまで進め、上下動・
+    # 交互連射の両方が停止する瞬間を見せる。
     run_until_pc(z, sym["EBUZ2_S2_STOP_SEQUENCE"])
-    add("1 round-trip complete: up-down movement AND alternating fire both stop", 900)
+    add("1 lap complete (back to center): up-down movement AND alternating fire both stop", 900)
 
     run_until_pc(z, sym["EBUZ2_S2_FINAL_DONE"])
-    add("after 15-tick pause: single shot fired from center, then holds forever", 1400)
+    add("after 15-tick pause: single shot fired from center", 900)
+
+    # (実機フィードバック対応「弾はちゃんと左まで到達させろ」)
+    # 停止後もEBUZ2_TICK(弾更新)自体は呼び続けており、新規発射・
+    # 本体移動だけが起こらない。飛行中の弾が全て列0まで到達して
+    # 消えるまで進め、最終的に本体だけが中央に残ることを見せる。
+    z.step()
+    for _ in range(60):
+        run_until_pc(z, sym["EBUZ2_S2_FINAL_DONE"])
+        z.step()
+    add("all remaining bullets reach the left edge and clear - body stays put, no freeze", 1400)
 
     out_path = os.path.join(HERE, "ebuz_mk2_timeline.gif")
     frames[0].save(

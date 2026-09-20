@@ -127,7 +127,18 @@ def main():
     run_until_pc(z, sym["EBUZ2_S2_FINAL_DONE"])
     p6 = os.path.join(HERE, "ebuz_mk2_final_shot.ppm")
     render_full(bytes(z.vram), p6)
-    print("after 15-tick pause: single shot fired from center, then holds forever:", p6)
+    print("after 15-tick pause: single shot fired from center:", p6)
+
+    # (実機フィードバック対応「弾はちゃんと左まで到達させろ」)
+    # 停止後もEBUZ2_TICKは呼び続けており、既存の飛行中の弾は全て
+    # 列0まで到達して自然に消える。それを確認するフレーム。
+    z.step()
+    for _ in range(60):
+        run_until_pc(z, sym["EBUZ2_S2_FINAL_DONE"])
+        z.step()
+    p7 = os.path.join(HERE, "ebuz_mk2_bullets_cleared.ppm")
+    render_full(bytes(z.vram), p7)
+    print("all remaining bullets reached the left edge and cleared, body stays put:", p7)
 
 
 if __name__ == "__main__":
