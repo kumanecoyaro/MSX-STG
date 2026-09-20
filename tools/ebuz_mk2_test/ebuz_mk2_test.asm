@@ -885,6 +885,7 @@ EBUZ2_HOLD_N:
 EBUZ2_HOLD_N_LOOP:
     PUSH BC
     CALL EBUZ2_TICK
+EBUZ2_FRAME_TICK:                  ; テスト用: 「1ティック完了」の目印
     POP BC
     DJNZ EBUZ2_HOLD_N_LOOP
     RET
@@ -1134,12 +1135,25 @@ EBUZ2_VOLLEY2_WAVE_INNER_DONE:
     CALL EBUZ2_FIRE_OB_BULLET
 EBUZ2_VOLLEY2_DONE:
 
-; --- 今回の実装はここまで。以後は本体(開状態)は動かず、連射もしない。
-; 発射済みの弾がX方向に直進して消えるだけの単純なループ。 ---
-EBUZ2_MAINLOOP:
-    CALL EBUZ2_TICK
-EBUZ2_FRAME_TICK:
-    JR EBUZ2_MAINLOOP
+; --- 「では次に内2門と外2門の無制限交互発射」(2026-09-20追加指示):
+; 中央弾はここまでの1発のみ(変更なし)。以後は内側ペア(IT+IB)と
+; 外側ペア(OT+OB)をEBUZ2_VOLLEY2_WAVE_HOLD_TICKS間隔で永久に交互発射
+; し続ける - 無印Ebuzの継続発射(EBUZ_TOPBOTTOM_ACTIVE/EBUZ_FIRE_SIDEに
+; よる上下交代、EBUZ_FIRE_INTERVAL=2フレ交代)と同じ「固定間隔・無条件
+; 発射・生存チェックなし」の考え方を、内・外の2門ペア単位でそのまま
+; 適用したもの(無印Ebuzは1門ずつの交代だが、Mk2は「2門同時発射」を
+; 1ユニットとして交代させる点のみが違う)。本体自体は変形後、以後
+; 二度と動かない(この点は変更なし)。 ---
+EBUZ2_VOLLEY2_ALT_LOOP:
+    LD B,EBUZ2_VOLLEY2_WAVE_HOLD_TICKS : CALL EBUZ2_HOLD_N
+    CALL EBUZ2_FIRE_IT_BULLET
+    CALL EBUZ2_FIRE_IB_BULLET
+EBUZ2_VOLLEY2_ALT_INNER_DONE:              ; テスト用: 交互発射1周ぶんの内側完了地点
+    LD B,EBUZ2_VOLLEY2_WAVE_HOLD_TICKS : CALL EBUZ2_HOLD_N
+    CALL EBUZ2_FIRE_OT_BULLET
+    CALL EBUZ2_FIRE_OB_BULLET
+EBUZ2_VOLLEY2_ALT_OUTER_DONE:              ; テスト用: 交互発射1周ぶんの外側完了地点
+    JR EBUZ2_VOLLEY2_ALT_LOOP
 
 EBUZ2_COLOR_BYTE:
     DB EBUZ2_COLOR

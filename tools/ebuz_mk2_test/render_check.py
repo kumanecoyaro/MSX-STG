@@ -1,8 +1,9 @@
 """tools/ebuz_mk2_test/ebuz_mk2_test.asm(2026-09-20、Ebuz Mk2-1[閉状態]
 が「揃うまで下にシフトする」方式で登場(2倍速)→中央で5門1斉発射→
-リコイル(1セル右へ→戻る)→Mk2-2[開状態、7行]へ変形→中央→内側2門→
-外側2門の順に間隔を空けて順次発射、という版)のVRAM->PNGレンダリング
-スクリプト。tools/stage1_render_check.pyのrender_full()を使い回す。
+リコイル(1セル右へ→戻る)→Mk2-2[開状態、7行]へ変形→中央発射→内側2門→
+外側2門の順に間隔を空けて発射、以後は内側2門と外側2門が無制限に交互
+発射し続ける、という版)のVRAM->PNGレンダリングスクリプト。
+tools/stage1_render_check.pyのrender_full()を使い回す。
 """
 import os
 import sys
@@ -95,12 +96,25 @@ def main():
     render_full(bytes(z.vram), p3d)
     print("2nd volley wave 3/3: outer 2 ports fire together:", p3d)
 
+    # 「内2門と外2門の無制限交互発射」: 以後は本体固定のまま内側/外側
+    # ペアが永久に交代発射し続ける。その2巡目(2回目の内側・外側発射)
+    # を確認する。
+    run_until_pc(z, sym["EBUZ2_VOLLEY2_ALT_INNER_DONE"])
+    p3e1 = os.path.join(HERE, "ebuz_mk2_volley2_alt_inner2.ppm")
+    render_full(bytes(z.vram), p3e1)
+    print("unlimited alternating fire, 2nd cycle inner pair:", p3e1)
+
+    run_until_pc(z, sym["EBUZ2_VOLLEY2_ALT_OUTER_DONE"])
+    p3e2 = os.path.join(HERE, "ebuz_mk2_volley2_alt_outer2.ppm")
+    render_full(bytes(z.vram), p3e2)
+    print("unlimited alternating fire, 2nd cycle outer pair:", p3e2)
+
     for _ in range(60):
         z.step()
         run_until_pc(z, sym["EBUZ2_FRAME_TICK"])
     p4 = os.path.join(HERE, "ebuz_mk2_idle.ppm")
     render_full(bytes(z.vram), p4)
-    print("well after 2nd volley: bullets clipped off-screen, body untouched:", p4)
+    print("well into the alternating fire loop, body still untouched:", p4)
 
 
 if __name__ == "__main__":
