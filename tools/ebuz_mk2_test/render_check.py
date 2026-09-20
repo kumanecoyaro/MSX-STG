@@ -114,7 +114,7 @@ def main():
         run_until_pc(z, sym["EBUZ2_FRAME_TICK"])
     p4 = os.path.join(HERE, "ebuz_mk2_idle.ppm")
     render_full(bytes(z.vram), p4)
-    print("well into the alternating fire loop, body still untouched:", p4)
+    print("well into the alternating fire loop, body drifting up/down, old bullets unaffected:", p4)
 
 
 if __name__ == "__main__":

@@ -117,7 +117,7 @@ def main():
     for _ in range(40):
         z.step()
         run_until_pc(z, sym["EBUZ2_FRAME_TICK"])
-    add("alternating fire continues forever - open body still untouched", 1200)
+    add("alternating fire continues forever - body drifts up/down, fired bullets keep straight", 1200)
 
     out_path = os.path.join(HERE, "ebuz_mk2_timeline.gif")
     frames[0].save(
