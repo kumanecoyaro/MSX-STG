@@ -248,12 +248,17 @@ EBUZ2_S2_FIRE_COL  EQU 21
 ; さらに「開始したら」の通り、この往復はEBUZ2_S2_ROW_TOP(8)での
 ; 変形直後(=中央から1発〜内側2門〜外側2門の順次発射までの間)は
 ; 起動せず、無制限交互発射(EBUZ2_VOLLEY2_ALT_LOOP)が始まる瞬間に
-; 本体をrow2へ動かして初めて往復を開始する(EBUZ2_VOLLEY2_ALT_LOOP
-; 直前の起動処理を参照)。EBUZ2_S2_MOVE_INTERVAL_TICKSごとに1行だけ
-; 動く(未調整の初期値)。
+; 本体を往復の起点へ動かして初めて往復を開始する(EBUZ2_VOLLEY2_ALT_
+; LOOP直前の起動処理を参照)。EBUZ2_S2_MOVE_INTERVAL_TICKSごとに1行
+; だけ動く(未調整の初期値)。
+; (2026-09-20追加訂正「移動範囲が狭い 下は3セル 上は4セル広く」により
+; 再拡張。下方向(MAX_ROW、row5→8)は要求通り+3、上方向(MIN_ROW、
+; row2→-2の要求)はガード帯(row0固定・本体7行のためROW_CURは1が
+; 下限)により+4のうち+1(row2→1)しか実現できない - この制約はユーザー
+; へ別途報告済み。) ---
 EBUZ2_S2_MOVE_INTERVAL_TICKS EQU 4
-EBUZ2_S2_MOVE_MIN_ROW EQU 2
-EBUZ2_S2_MOVE_MAX_ROW EQU 5
+EBUZ2_S2_MOVE_MIN_ROW EQU 1
+EBUZ2_S2_MOVE_MAX_ROW EQU 8
 
 ; ============================================================================
 ; RAMワークエリア。
@@ -1413,8 +1418,9 @@ EBUZ2_VOLLEY2_DONE:
 ; という無印Ebuzの継続発射リコイルと同じ手順を各発射ごとに行う。
 ; 「一応シーケンス指示しとく...変形後の交互発射を開始したら 画面2行目
 ; から下は5行目までを往復だぞ」指示により、この無制限交互発射の開始
-; 直前で初めて本体を上下移動の開始位置(row2、EBUZ2_S2_MOVE_MIN_ROW)
-; へ動かし、往復(EBUZ2_UPDATE_S2_MOVE)を起動する - それまで
+; 直前で初めて本体を上下移動の開始位置(EBUZ2_S2_MOVE_MIN_ROW、
+; 「移動範囲が狭い」追加指示で再拡張済み)へ動かし、往復
+; (EBUZ2_UPDATE_S2_MOVE)を起動する - それまで
 ; (変形直後〜中央/内側/外側の順次発射〜このホールド)は本体はrow8で
 ; 静止したまま。 ---
 EBUZ2_VOLLEY2_ALT_START_HOLD_TICKS EQU 20  ; 「ウェイトを20Tickに」指示で15→20
