@@ -242,14 +242,18 @@ EBUZ2_ROW_IB_BASE  EQU 19A0h  ; row13 (開状態local row5、内側下)
 EBUZ2_ROW_OB_BASE  EQU 19C0h  ; row14 (開状態local row6、外側下)
 EBUZ2_S2_FIRE_COL  EQU 21
 
-; 上下移動のペーシング(未調整の初期値、実プレイでの見え方次第で
-; 再調整の可能性あり)。EBUZ2_S2_ROW_TOP(8)を中心に上下2行ずつ
-; (row6〜row10)を往復させる - 開状態は7行(高さ)あるため、これ以上
-; 振れ幅を広げるとガード帯(row0/row20-23)に接近しすぎるため控えめに
-; 設定。EBUZ2_S2_MOVE_INTERVAL_TICKSごとに1行だけ動く。
+; 上下移動のペーシング。(2026-09-20追加指示「一応シーケンス指示
+; しとく...変形後の交互発射を開始したら 画面2行目から下は5行目までを
+; 往復だぞ」により、往復範囲をrow2〜row5(リテラル指定)に変更。
+; さらに「開始したら」の通り、この往復はEBUZ2_S2_ROW_TOP(8)での
+; 変形直後(=中央から1発〜内側2門〜外側2門の順次発射までの間)は
+; 起動せず、無制限交互発射(EBUZ2_VOLLEY2_ALT_LOOP)が始まる瞬間に
+; 本体をrow2へ動かして初めて往復を開始する(EBUZ2_VOLLEY2_ALT_LOOP
+; 直前の起動処理を参照)。EBUZ2_S2_MOVE_INTERVAL_TICKSごとに1行だけ
+; 動く(未調整の初期値)。
 EBUZ2_S2_MOVE_INTERVAL_TICKS EQU 4
-EBUZ2_S2_MOVE_MIN_ROW EQU EBUZ2_S2_ROW_TOP-2  ; =6
-EBUZ2_S2_MOVE_MAX_ROW EQU EBUZ2_S2_ROW_TOP+2  ; =10
+EBUZ2_S2_MOVE_MIN_ROW EQU 2
+EBUZ2_S2_MOVE_MAX_ROW EQU 5
 
 ; ============================================================================
 ; RAMワークエリア。
@@ -1360,24 +1364,18 @@ EBUZ2_RECOIL_DONE:
     ; 描画する。「変形時に1セルズレてる...上に1セル上げてくれ」指示
     ; により、開状態はEBUZ2_S2_ROW_TOP(=EBUZ2_ENTRY_TARGET_ROW_TOP-1、
     ; row8)を起点に描画し、閉状態(row_top+2=11)と開状態(row_top+3=11)
-    ; の中心行を一致させる。「では上下移動を追加」指示により、以後は
-    ; ここを起点にEBUZ2_UPDATE_S2_MOVEが上下移動を開始する(かつては
-    ; 「以後は二度と動かない」だったが、この指示で変更された)。 ---
+    ; の中心行を一致させる。EBUZ2_S2_ROW_CURはここで確定させる(この後の
+    ; 中央→内側2門→外側2門の順次発射が発射行として読むため必須)が、
+    ; 「変形後の交互発射を開始したら...往復だぞ」指示により上下移動
+    ; 自体(EBUZ2_S2_MOVE_ACTIVE)はまだ起動しない - 本体は無制限交互
+    ; 発射が始まる直前(EBUZ2_VOLLEY2_ALT_LOOP手前)まで、この変形直後の
+    ; 位置(row8)で静止したまま。 ---
     LD A,EBUZ2_ENTRY_TARGET_ROW_TOP
     CALL EBUZ2_ERASE_BODY_AT
     LD A,EBUZ2_S2_ROW_TOP
+    LD (EBUZ2_S2_ROW_CUR),A
     CALL EBUZ2_DRAW_S2_BODY_AT
     CALL EBUZ2_ENTRY_HOLD
-    ; --- 上下移動を起動: 現在行=EBUZ2_S2_ROW_TOP、下方向から開始、
-    ; 移動間隔カウントダウンを初期化。 ---
-    LD A,EBUZ2_S2_ROW_TOP
-    LD (EBUZ2_S2_ROW_CUR),A
-    XOR A
-    LD (EBUZ2_S2_MOVE_DIR),A
-    LD A,EBUZ2_S2_MOVE_INTERVAL_TICKS
-    LD (EBUZ2_S2_MOVE_COUNTDOWN),A
-    LD A,1
-    LD (EBUZ2_S2_MOVE_ACTIVE),A
 EBUZ2_TRANSFORM_DONE:
 
     ; --- 変形後の発射: 「中央から1発 内側2門から1発 外側2門から1発」
@@ -1405,17 +1403,35 @@ EBUZ2_VOLLEY2_DONE:
 ; よる上下交代、EBUZ_FIRE_INTERVAL=2フレ交代)と同じ「固定間隔・無条件
 ; 発射・生存チェックなし」の考え方を、内・外の2門ペア単位でそのまま
 ; 適用したもの(無印Ebuzは1門ずつの交代だが、Mk2は「2門同時発射」を
-; 1ユニットとして交代させる点のみが違う)。本体自体は変形後、以後
-; 二度と動かない(この点は変更なし)。「交互発射するまでに15Tickの
+; 1ユニットとして交代させる点のみが違う)。「交互発射するまでに15Tickの
 ; ウェイト挿入」→さらに追加指示「ウェイトを20Tickに」を受け、外側
 ; ペアの1発目発射完了から無制限交互発射の開始(2巡目の内側ペア)まで
 ; の間にEBUZ2_VOLLEY2_ALT_START_HOLD_TICKS(20)だけ静止ホールドを
 ; 挿む。加えて「リコイル動作を追加」指示により、発射したペアの行
 ; だけをEBUZ2_ROW_S2_INNER/OUTER_RECOILへ1セル右にずらして
 ; EBUZ2_RECOIL_HOLD_TICKS(1)保持→REST位置へ戻して同じく1tick保持、
-; という無印Ebuzの継続発射リコイルと同じ手順を各発射ごとに行う。 ---
+; という無印Ebuzの継続発射リコイルと同じ手順を各発射ごとに行う。
+; 「一応シーケンス指示しとく...変形後の交互発射を開始したら 画面2行目
+; から下は5行目までを往復だぞ」指示により、この無制限交互発射の開始
+; 直前で初めて本体を上下移動の開始位置(row2、EBUZ2_S2_MOVE_MIN_ROW)
+; へ動かし、往復(EBUZ2_UPDATE_S2_MOVE)を起動する - それまで
+; (変形直後〜中央/内側/外側の順次発射〜このホールド)は本体はrow8で
+; 静止したまま。 ---
 EBUZ2_VOLLEY2_ALT_START_HOLD_TICKS EQU 20  ; 「ウェイトを20Tickに」指示で15→20
     LD B,EBUZ2_VOLLEY2_ALT_START_HOLD_TICKS : CALL EBUZ2_HOLD_N
+    ; --- 無制限交互発射の開始と同時に上下往復を起動: 現在位置(row8)を
+    ; 消去し、往復の起点row2(下方向から開始)へ再描画する。 ---
+    LD A,(EBUZ2_S2_ROW_CUR)
+    CALL EBUZ2_ERASE_S2_BODY_AT
+    LD A,EBUZ2_S2_MOVE_MIN_ROW
+    LD (EBUZ2_S2_ROW_CUR),A
+    CALL EBUZ2_DRAW_S2_BODY_AT
+    XOR A
+    LD (EBUZ2_S2_MOVE_DIR),A       ; 0=下方向(row2→row5)から開始
+    LD A,EBUZ2_S2_MOVE_INTERVAL_TICKS
+    LD (EBUZ2_S2_MOVE_COUNTDOWN),A
+    LD A,1
+    LD (EBUZ2_S2_MOVE_ACTIVE),A
 ; (2026-09-20追加指示「上下移動を追加」対応): 本体が上下に動くように
 ; なったため、このリコイル演出の対象行もEBUZ2_S2_ROW_TOP固定値では
 ; なく、その瞬間のEBUZ2_S2_ROW_CUR(+各門の固定オフセット)から毎回
