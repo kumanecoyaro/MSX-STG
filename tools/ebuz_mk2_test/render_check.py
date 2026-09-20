@@ -1,6 +1,6 @@
-"""tools/ebuz_mk2_test/ebuz_mk2_test.asm(2026-09-20三度目の全面リセット
-版: 登場[下から1行ずつ積み上げ→中央まで平行移動]→5門同時1斉発射、
-まずここまで)のVRAM->PNGレンダリングスクリプト。
+"""tools/ebuz_mk2_test/ebuz_mk2_test.asm(2026-09-20、登場[row1に一度に
+出現、成長演出なし]→中央まで剛体のまま平行移動→5門同時1斉発射、以後は
+静止)のVRAM->PNGレンダリングスクリプト。
 tools/stage1_render_check.pyのrender_full()を使い回す
 (tools/ebuz_test/render_check.pyと同じ作法)。
 """
@@ -46,21 +46,12 @@ def main():
     render_full(bytes(z.vram), p0)
     print("guard bands only (row0=black, row20-23=white):", p0)
 
-    # 成長フェーズ(7ティック、1ティック1行)を1ティックずつ全て撮る。
-    for i in range(7):
-        run_until_pc(z, sym["EBUZ2_TICK"])
-        z.step()
-        p = os.path.join(HERE, f"ebuz_mk2_growth_{i}.ppm")
-        render_full(bytes(z.vram), p)
-        print(f"growth step {i} ({i+1} rows revealed):", p)
-
-    run_until_pc(z, sym["EBUZ2_ENTRY_GROWTH_DONE"])
-    p1 = os.path.join(HERE, "ebuz_mk2_growth_done.ppm")
+    run_until_pc(z, sym["EBUZ2_ENTRY_SPAWN_DONE"])
+    p1 = os.path.join(HERE, "ebuz_mk2_spawn.ppm")
     render_full(bytes(z.vram), p1)
-    print("growth done (all 7 rows visible, bottom-anchored):", p1)
+    print("spawned at row1 (full 7-row shape, no growth):", p1)
 
-    # 移動フェーズ(4ティック)も1ティックずつ撮る。
-    for i in range(4):
+    for i in range(8):
         run_until_pc(z, sym["EBUZ2_TICK"])
         z.step()
         p = os.path.join(HERE, f"ebuz_mk2_move_{i}.ppm")
@@ -75,14 +66,14 @@ def main():
     run_until_pc(z, sym["EBUZ2_VOLLEY_DONE"])
     p3 = os.path.join(HERE, "ebuz_mk2_volley.ppm")
     render_full(bytes(z.vram), p3)
-    print("volley fired (5 bullets, one per port):", p3)
+    print("volley fired (5 bullets, one per port, simultaneous):", p3)
 
-    for _ in range(60):
+    for _ in range(80):
         z.step()
         run_until_pc(z, sym["EBUZ2_FRAME_TICK"])
     p4 = os.path.join(HERE, "ebuz_mk2_idle.ppm")
     render_full(bytes(z.vram), p4)
-    print("60 ticks after volley (bullets flying, body untouched):", p4)
+    print("80 ticks after volley (bullets flying off, body untouched):", p4)
 
 
 if __name__ == "__main__":

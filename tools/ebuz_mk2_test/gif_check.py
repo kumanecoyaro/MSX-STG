@@ -1,9 +1,8 @@
-"""tools/ebuz_mk2_test/ebuz_mk2_test.asm(2026-09-20三度目の全面リセット
-版)の一連の流れ(ガードバンド初期化→登場[下から1行ずつ積み上げ]→
-中央まで平行移動→5門同時1斉発射→以後は静止)を、実時間(T-states換算)
-キャプション付きのアニメーションGIFとして可視化する。
-tools/ebuz_test/gif_check.pyと全く同じ作法(render_full()の出力を
-3倍拡大+タイムスタンプ焼き込み)。
+"""tools/ebuz_mk2_test/ebuz_mk2_test.asm(2026-09-20、登場[row1に一度に
+出現、成長演出なし]→中央まで剛体のまま平行移動→5門同時1斉発射→以後は
+静止)の一連の流れを、実時間(T-states換算)キャプション付きの
+アニメーションGIFとして可視化する。tools/ebuz_test/gif_check.pyと
+全く同じ作法(render_full()の出力を3倍拡大+タイムスタンプ焼き込み)。
 """
 import os
 import sys
@@ -71,24 +70,20 @@ def main():
     run_until_pc(z, sym["EBUZ2_GUARD_DONE"])
     add("guard bands painted (row0=black, row20-23=white) - permanent, never touched again", 1200)
 
-    for i in range(7):
-        run_until_pc(z, sym["EBUZ2_TICK"])
-        z.step()
-        add(f"entrance growth: {i+1}/7 rows revealed from the bottom (row19 anchor)", 400)
+    run_until_pc(z, sym["EBUZ2_ENTRY_SPAWN_DONE"])
+    add("spawn: full 7-row body appears at row1 (from above) - no growth/deform animation", 900)
 
-    run_until_pc(z, sym["EBUZ2_ENTRY_GROWTH_DONE"])
-    add("entrance growth complete: full 7-row body visible, bottom-anchored", 700)
-
-    for i in range(4):
-        run_until_pc(z, sym["EBUZ2_TICK"])
+    while z.mem[sym["EBUZ2_BODY_ROW"]] != sym["EBUZ2_ENTRY_TARGET_ROW_TOP"]:
+        run_until_pc(z, sym["EBUZ2_ENTRY_MOVE_LOOP"])
         z.step()
-        add(f"moving to center: row_top={z.mem[sym['EBUZ2_BODY_ROW']]}", 400)
+        run_until_pc(z, sym["EBUZ2_ENTRY_MOVE_LOOP"])
+        add(f"moving down as a rigid body: row_top={z.mem[sym['EBUZ2_BODY_ROW']]}", 350)
 
     run_until_pc(z, sym["EBUZ2_ENTRY_MOVE_DONE"])
-    add("reached center (row_top=9)", 700)
+    add("reached center (row_top=9), shape unchanged throughout", 700)
 
     run_until_pc(z, sym["EBUZ2_VOLLEY_DONE"])
-    add("all 5 ports fire simultaneously (one shot each, no sequencing)", 900)
+    add("all 5 ports fire simultaneously (one shot each, no sequencing, no repeat)", 900)
 
     for _ in range(80):
         z.step()

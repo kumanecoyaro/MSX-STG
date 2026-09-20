@@ -4,39 +4,44 @@
 ; 動作だけを検証する。
 ;
 ; ============================================================================
-; 2026-09-20 三度目の全面リセット(ユーザーからの強い叱責を受けての
-; スコープ大幅縮小): 前の版は「弾がゴミのように散らばる」「本体が
-; 勝手に上下動+連射し続ける」という酷評を受けた。ユーザー原文:
+; 2026-09-20 三度目の全面リセット+ その後2回の追加訂正(ユーザー原文、
+; 2回目の訂正):
 ;
-;   "お前は本当に順序と言うものが全く理解できてない...1ステップずつ
-;    実装するしかないな まず登場 一気に全体を表示するんではなく
-;    下から1セルずつ画面内に描画して 中央まで移動 その後5門全弾発射
-;    まずここまで で、画面1行目と下から4行は破壊しない 侵入も描画も
-;    禁止 本実装でそこは使用してるからな ちゃんと出来ているか見た目で
-;    判断できないから 1行目はブラックでブランクセルを塗りつぶし
-;    下から4行分はホワイトのブランクセルで塗りつぶし"
+;   "上から出てきてねえし 下からだせなんざ言ってねえだろうが 最上部1行目
+;    と下から4行には描画しないんだよ 弾も初弾撃つだけで 何勝手に変形
+;    させてんだ 誰が言った? Ebuzmkii1で上から出て中央で止まって 5門
+;    全弾発射 これだけだろうが 何発もバグだらけの弾撃ちやがって"
 ;
-; これに伴い、oscillation(本体の上下連続往復)・発射シーケンスの無限
-; ループ(中央→内側→外側の周回)・リコイル演出・state1/state2の閉/開
-; 状態区別は全て撤回する。**このステップで実装するのはこれだけ**:
+; **今回実装するのはこれだけ、これ以上でもこれ以下でもない**:
 ;
 ; 1. 画面row0(1行目)は常にブラックのブランクセルで塗りつぶす。
 ;    画面row20-23(下から4行)は常にホワイトのブランクセルで塗りつぶす。
 ;    本編ではこの5行を実際に使用するため、本体・弾は絶対にこの範囲へ
 ;    描画してはならない(侵入禁止)。見た目で違反が一目で分かるよう、
 ;    この2色は他のどの色とも混同しない専用の色グループを新設した。
-; 2. 登場: 本体(5門の砲台が露出した開状態、7行)を一気に全部表示するの
-;    ではなく、画面下端寄りの行(EBUZ2_ENTRY_BOTTOM_ROW=19、row20-23の
-;    ガード帯のすぐ上)に下端を固定したまま、1ティックに1行ずつ下から
-;    上へ積み上げるように描画していく(7ティックで全7行が出現)。
-; 3. 全7行が出現したら、そのまま本体全体を1ティック1行ずつ画面中央
-;    (EBUZ2_ENTRY_TARGET_ROW_TOP=9)まで平行移動する。
+; 2. 登場: 本体(5門の砲台が露出した開状態、7行)をrow1(row0ガード帯の
+;    すぐ下、"上から来て"に対応)へ、形状変化・成長演出無しで一度に
+;    描画する(1行ずつの出現演出は指示されていないため完全撤回 -
+;    直前の版で「下から1セルずつ」の一節を「本体の絵柄を下段から積み
+;    上げて出現させる演出」と拡大解釈したのは誤りだった)。
+; 3. そのまま本体全体(形状は変えず剛体のまま)を1ステップ1行ずつ画面
+;    中央(EBUZ2_ENTRY_TARGET_ROW_TOP=9)まで下方向へ平行移動する。
+;    各ステップはEBUZ2_ENTRY_STEP_HOLD_TICKSティック分だけ間隔を置き、
+;    実機の実時間で見ても動きが分かるようにする(1ティック1行では
+;    速すぎて「いきなり出現した」ようにしか見えないため)。
 ; 4. 中央に到達したら、5門(外側上/内側上/中央/内側下/外側下)全てから
-;    同時に1発ずつ発射する(合計5発、無印Ebuzのような順番待ちは無い)。
+;    同時に1発ずつ発射する(合計5発、これで終わり - 無印Ebuzのような
+;    順番待ちも、その後の追加発射も一切無い)。各発射管の行は発射する
+;    "瞬間"の本体位置から計算するのみ、発射後の弾はX方向にのみ直進し
+;    Yは完全固定(発射後も本体に追従する「ライブトラッキング」は
+;    ワインダーになるため指示されておらず、完全に撤回済み)。
 ; 5. **ここまでで今回の実装は終わり**。以後は本体は動かず、連射も
-;    しない(発射済みの5発の弾がX方向に直進して消えるだけ)。
-;    oscillation・無限連射・リコイル・state1閉状態は次回以降の別
-;    ステップとして、この土台が確認できてから改めて追加する。
+;    しない。oscillation・無限連射・リコイル・state1閉状態は次回以降の
+;    別ステップとして、この土台が確認できてから改めて追加する。
+;
+; またユーザーから「テストで待たせるな、今の段階ではまとまってから」
+; との指示を受け、今回もverify_*.pyのテストスイート更新は行わず、
+; 実装とROMビルド+レンダリングによる視覚確認のみで進める。
 ; ============================================================================
     ORG 4000h
 
@@ -102,13 +107,17 @@ EBUZ2_CENTER_COL EQU 22
 EBUZ2_LANE_POOL_SIZE EQU 8
 EBUZ2_SLOT_EMPTY EQU 255
 
-; --- 登場アニメーション(2026-09-20新設、このステップの主題) ---
-; ENTRY_BOTTOM_ROWは成長フェーズ中、本体の下端(local row6)を固定して
-; おく行(row20-23のガード帯のすぐ上=row19、ガード帯には絶対触れない)。
+; --- 登場アニメーション(2026-09-20新設、二度の訂正を経て確定: 形状
+; 変化・成長演出は一切無し、剛体のまま上から中央へ移動するだけ) ---
+; ENTRY_TOP_ROWは本体をrow0ガード帯のすぐ下に一度に描画する行
+; (local row0の到達nt行=1、"上から来て"に対応)。
 ; ENTRY_TARGET_ROW_TOPは移動フェーズの目標(画面中央、local row0の
-; 到達nt行)。
-EBUZ2_ENTRY_BOTTOM_ROW     EQU 19
+; 到達nt行)。ENTRY_STEP_HOLD_TICKSは移動の各1行ステップの間隔ティック
+; 数(未調整のプレースホルダー - 1ティックでは速すぎて人間の目には
+; 「いきなり出現した」ようにしか見えないため導入)。
+EBUZ2_ENTRY_TOP_ROW        EQU 1
 EBUZ2_ENTRY_TARGET_ROW_TOP EQU 9
+EBUZ2_ENTRY_STEP_HOLD_TICKS EQU 8
 
 ; ============================================================================
 ; RAMワークエリア(page3、無印Ebuzと同じ0F300h付近を再利用 - 別ROMの
@@ -116,15 +125,11 @@ EBUZ2_ENTRY_TARGET_ROW_TOP EQU 9
 ; リコイル関連のRAMは全て削除、必要最小限のみ残す。
 ; ============================================================================
 EBUZ2_BODY_ROW     EQU 0F300h  ; 1 byte: 本体の現在のlocal row0のnt行
-EBUZ2_CUR_PORT_OFS EQU 0F301h  ; 1 byte: EBUZ2_UPDATE_SLOT呼び出し前に
-                           ; 各UPDATE_x_POOLが自分のローカル行オフセット
-                           ; を書いておく作業変数(弾のYを毎ティック
-                           ; [EBUZ2_BODY_ROW]+この値から再計算するため)。
-EBUZ2_C_NEXT       EQU 0F302h  ; 1 byte: 中央プールのローテーションカウンタ
-EBUZ2_OT_NEXT      EQU 0F303h  ; 1 byte: 外側上の同上
-EBUZ2_OB_NEXT      EQU 0F304h  ; 1 byte: 外側下の同上
-EBUZ2_IT_NEXT      EQU 0F305h  ; 1 byte: 内側上の同上
-EBUZ2_IB_NEXT      EQU 0F306h  ; 1 byte: 内側下の同上
+EBUZ2_C_NEXT       EQU 0F301h  ; 1 byte: 中央プールのローテーションカウンタ
+EBUZ2_OT_NEXT      EQU 0F302h  ; 1 byte: 外側上の同上
+EBUZ2_OB_NEXT      EQU 0F303h  ; 1 byte: 外側下の同上
+EBUZ2_IT_NEXT      EQU 0F304h  ; 1 byte: 内側上の同上
+EBUZ2_IB_NEXT      EQU 0F305h  ; 1 byte: 内側下の同上
 
 ; 各プール8スロット×2byte(ROW,COL)。ROW=EBUZ2_SLOT_EMPTY(255)で非活性。
 EBUZ2_C_SLOTS  EQU 0F310h  ; 中央、16 bytes (8slot x 2)
@@ -287,35 +292,29 @@ EBUZ2_ERASE_BC:
 
 ; 弾スロット共通の1ティック更新。Input: HL=スロット先頭(ROWバイト、
 ; 直後にCOLバイトが続く)。ROW=EBUZ2_SLOT_EMPTYなら何もしない。
-; 呼び出し元(各UPDATE_x_POOL)は事前に[EBUZ2_CUR_PORT_OFS]へ自分の
-; ローカル行オフセットを書いておくこと(本ステップでは本体は発射後
-; 動かないため実質固定行になるが、将来のoscillation再導入に備えて
-; ライブ計算のまま残す)。
+; 弾のY(行)は発射した瞬間の値に完全固定、X(列)方向にのみ1ティック
+; 1列で直進する(2026-09-20訂正: 発射後も本体の現在位置に追従させる
+; 「ライブトラッキング」は指示されていない[ワインダーになる]ため撤回、
+; 元の「発射時点で固定」設計に戻した)。
 EBUZ2_UPDATE_SLOT:
     LD A,(HL)
     CP EBUZ2_SLOT_EMPTY
     RET Z
     PUSH HL
-    LD B,A                       ; B = old row(消去用)
+    LD B,A                       ; B = row(固定、以後不変)
     INC HL
     LD A,(HL)
-    LD C,A                        ; C = old col(現在値)
-    CALL EBUZ2_ERASE_BC           ; 古い位置を消す(本体タイルを復元)
+    LD C,A                        ; C = col(現在値)
+    CALL EBUZ2_ERASE_BC           ; 現在位置を消す(本体タイルを復元)
     LD A,C
     OR A
     JR Z,EBUZ2_US_OFF
     DEC A
     LD C,A                         ; C = new col
-    LD A,(EBUZ2_BODY_ROW)
-    LD B,A
-    LD A,(EBUZ2_CUR_PORT_OFS)
-    ADD A,B
-    LD B,A                          ; B = new row(本体の現在位置から都度再計算)
     POP HL
-    LD (HL),B                        ; 新しい行を保存
     INC HL
-    LD (HL),C                         ; 新しい列を保存
-    CALL EBUZ2_CALC_ADDR                ; HL = addr(B=new row,C=new col)
+    LD (HL),A                       ; 新しい列を保存
+    CALL EBUZ2_CALC_ADDR              ; HL = addr(B,C)
     LD B,BULLET_L_CODE : LD C,BULLET_R_CODE
     CALL EBUZ2_WRITE2
     RET
@@ -328,7 +327,6 @@ EBUZ2_US_OFF:
 ; 5プール分の更新(中央/外側上/外側下/内側上/内側下)。
 ; ============================================================================
 EBUZ2_UPDATE_C_POOL:
-    LD A,EBUZ2_CENTER_OFS : LD (EBUZ2_CUR_PORT_OFS),A
     LD HL,EBUZ2_C_SLOTS+0  : CALL EBUZ2_UPDATE_SLOT
     LD HL,EBUZ2_C_SLOTS+2  : CALL EBUZ2_UPDATE_SLOT
     LD HL,EBUZ2_C_SLOTS+4  : CALL EBUZ2_UPDATE_SLOT
@@ -340,7 +338,6 @@ EBUZ2_UPDATE_C_POOL:
     RET
 
 EBUZ2_UPDATE_OT_POOL:
-    LD A,EBUZ2_OUTER_TOP_OFS : LD (EBUZ2_CUR_PORT_OFS),A
     LD HL,EBUZ2_OT_SLOTS+0  : CALL EBUZ2_UPDATE_SLOT
     LD HL,EBUZ2_OT_SLOTS+2  : CALL EBUZ2_UPDATE_SLOT
     LD HL,EBUZ2_OT_SLOTS+4  : CALL EBUZ2_UPDATE_SLOT
@@ -352,7 +349,6 @@ EBUZ2_UPDATE_OT_POOL:
     RET
 
 EBUZ2_UPDATE_OB_POOL:
-    LD A,EBUZ2_OUTER_BOTTOM_OFS : LD (EBUZ2_CUR_PORT_OFS),A
     LD HL,EBUZ2_OB_SLOTS+0  : CALL EBUZ2_UPDATE_SLOT
     LD HL,EBUZ2_OB_SLOTS+2  : CALL EBUZ2_UPDATE_SLOT
     LD HL,EBUZ2_OB_SLOTS+4  : CALL EBUZ2_UPDATE_SLOT
@@ -364,7 +360,6 @@ EBUZ2_UPDATE_OB_POOL:
     RET
 
 EBUZ2_UPDATE_IT_POOL:
-    LD A,EBUZ2_INNER_TOP_OFS : LD (EBUZ2_CUR_PORT_OFS),A
     LD HL,EBUZ2_IT_SLOTS+0  : CALL EBUZ2_UPDATE_SLOT
     LD HL,EBUZ2_IT_SLOTS+2  : CALL EBUZ2_UPDATE_SLOT
     LD HL,EBUZ2_IT_SLOTS+4  : CALL EBUZ2_UPDATE_SLOT
@@ -376,7 +371,6 @@ EBUZ2_UPDATE_IT_POOL:
     RET
 
 EBUZ2_UPDATE_IB_POOL:
-    LD A,EBUZ2_INNER_BOTTOM_OFS : LD (EBUZ2_CUR_PORT_OFS),A
     LD HL,EBUZ2_IB_SLOTS+0  : CALL EBUZ2_UPDATE_SLOT
     LD HL,EBUZ2_IB_SLOTS+2  : CALL EBUZ2_UPDATE_SLOT
     LD HL,EBUZ2_IB_SLOTS+4  : CALL EBUZ2_UPDATE_SLOT
@@ -389,8 +383,8 @@ EBUZ2_UPDATE_IB_POOL:
 
 ; ============================================================================
 ; 5門それぞれの発射。行は発射する瞬間の[EBUZ2_BODY_ROW]+自分のローカル
-; オフセットから計算する。発射後は弾自身のY(行)は固定、Xだけ直進
-; (毎ティックのライブ再計算はEBUZ2_UPDATE_SLOT側で行う)。
+; オフセットから計算する。発射後は弾自身のY(行)は完全固定、Xだけ直進
+; (EBUZ2_UPDATE_SLOT側は再計算しない)。
 ; ============================================================================
 EBUZ2_FIRE_C_BULLET:
     LD A,(EBUZ2_C_NEXT)
@@ -591,6 +585,18 @@ EBUZ2_TICK:
     CALL EBUZ2_FRAME_WAIT
     RET
 
+; 登場の移動フェーズ専用: EBUZ2_ENTRY_STEP_HOLD_TICKS回だけEBUZ2_TICKを
+; 呼ぶ(弾プールの更新を止めない待ち、1ティック=1行では速すぎて
+; 「いきなり出現した」ようにしか見えないため)。
+EBUZ2_ENTRY_HOLD:
+    LD B,EBUZ2_ENTRY_STEP_HOLD_TICKS
+EBUZ2_ENTRY_HOLD_LOOP:
+    PUSH BC
+    CALL EBUZ2_TICK
+    POP BC
+    DJNZ EBUZ2_ENTRY_HOLD_LOOP
+    RET
+
 ; ============================================================================
 INIT:
     LD SP,STACKTOP
@@ -626,7 +632,6 @@ EBUZ2_GUARD_DONE:
 
     ; ワークエリアの明示ゼロ初期化(RAM初期化漏れ防止)。
     XOR A
-    LD (EBUZ2_CUR_PORT_OFS),A
     LD (EBUZ2_C_NEXT),A
     LD (EBUZ2_OT_NEXT),A
     LD (EBUZ2_OB_NEXT),A
@@ -644,36 +649,18 @@ EBUZ2_GUARD_DONE:
     LD (EBUZ2_IB_SLOTS+0),A  : LD (EBUZ2_IB_SLOTS+2),A  : LD (EBUZ2_IB_SLOTS+4),A  : LD (EBUZ2_IB_SLOTS+6),A
     LD (EBUZ2_IB_SLOTS+8),A  : LD (EBUZ2_IB_SLOTS+10),A : LD (EBUZ2_IB_SLOTS+12),A : LD (EBUZ2_IB_SLOTS+14),A
 
-    ; --- 登場フェーズA: 下端をrow19に固定し、1ティックに1行ずつ
-    ; 下から上へ積み上げて描画する(7ティックで全7行が出現)。 ---
-    LD B,EBUZ2_ENTRY_BOTTOM_ROW : LD C,23 : CALL EBUZ2_CALC_ADDR
-    PUSH HL : LD HL,EBUZ2_ROW_S2_6 : POP DE : LD BC,5 : CALL LDIRVM
-    CALL EBUZ2_TICK
-    LD B,EBUZ2_ENTRY_BOTTOM_ROW-1 : LD C,23 : CALL EBUZ2_CALC_ADDR
-    PUSH HL : LD HL,EBUZ2_ROW_S2_5 : POP DE : LD BC,5 : CALL LDIRVM
-    CALL EBUZ2_TICK
-    LD B,EBUZ2_ENTRY_BOTTOM_ROW-2 : LD C,23 : CALL EBUZ2_CALC_ADDR
-    PUSH HL : LD HL,EBUZ2_ROW_S2_4 : POP DE : LD BC,5 : CALL LDIRVM
-    CALL EBUZ2_TICK
-    LD B,EBUZ2_ENTRY_BOTTOM_ROW-3 : LD C,23 : CALL EBUZ2_CALC_ADDR
-    PUSH HL : LD HL,EBUZ2_ROW_S2_3 : POP DE : LD BC,5 : CALL LDIRVM
-    CALL EBUZ2_TICK
-    LD B,EBUZ2_ENTRY_BOTTOM_ROW-4 : LD C,23 : CALL EBUZ2_CALC_ADDR
-    PUSH HL : LD HL,EBUZ2_ROW_S2_2 : POP DE : LD BC,5 : CALL LDIRVM
-    CALL EBUZ2_TICK
-    LD B,EBUZ2_ENTRY_BOTTOM_ROW-5 : LD C,23 : CALL EBUZ2_CALC_ADDR
-    PUSH HL : LD HL,EBUZ2_ROW_S2_1 : POP DE : LD BC,5 : CALL LDIRVM
-    CALL EBUZ2_TICK
-    LD B,EBUZ2_ENTRY_BOTTOM_ROW-6 : LD C,23 : CALL EBUZ2_CALC_ADDR
-    PUSH HL : LD HL,EBUZ2_ROW_S2_0 : POP DE : LD BC,5 : CALL LDIRVM
-    CALL EBUZ2_TICK
-EBUZ2_ENTRY_GROWTH_DONE:
-
-    ; --- 登場フェーズB: 全7行が出現した状態(row_top=ENTRY_BOTTOM_ROW-6)
-    ; から、そのまま画面中央(ENTRY_TARGET_ROW_TOP)まで1ティック1行ずつ
-    ; 平行移動する。 ---
-    LD A,EBUZ2_ENTRY_BOTTOM_ROW-6
+    ; --- 登場: 本体(7行、開状態の姿そのまま)をrow1(ガード直下、
+    ; "上から来て"に対応する位置)へ一度に描画する。1行ずつの成長演出は
+    ; 行わない(2026-09-20再訂正: 指示されていない演出を勝手に追加した
+    ; との指摘を受け撤回、形状変化は一切しない)。 ---
+    LD A,EBUZ2_ENTRY_TOP_ROW
     LD (EBUZ2_BODY_ROW),A
+    CALL EBUZ2_DRAW_BODY_AT
+EBUZ2_ENTRY_SPAWN_DONE:
+
+    ; --- 中央(ENTRY_TARGET_ROW_TOP)まで1ステップ1行ずつ下方向へ
+    ; 平行移動する(形状は変えず、剛体のまま並進移動するだけ)。
+    ; 各ステップはEBUZ2_ENTRY_HOLDで間隔を空け、動きが見えるようにする。 ---
 EBUZ2_ENTRY_MOVE_LOOP:
     LD A,(EBUZ2_BODY_ROW)
     CP EBUZ2_ENTRY_TARGET_ROW_TOP
@@ -682,10 +669,11 @@ EBUZ2_ENTRY_MOVE_LOOP:
                                     ; ルーチンはAを保持しない - 戻り値は
                                     ; row_top+6になっている、以後使わない)
     LD A,(EBUZ2_BODY_ROW)           ; 現在のrow_topをRAMから読み直す
-    DEC A
+    INC A                             ; 下方向(nt行番号は下に行くほど
+                                        ; 大きい)へ1行進める
     LD (EBUZ2_BODY_ROW),A
     CALL EBUZ2_DRAW_BODY_AT          ; A=新しいrow_topで再描画
-    CALL EBUZ2_TICK
+    CALL EBUZ2_ENTRY_HOLD
     JR EBUZ2_ENTRY_MOVE_LOOP
 EBUZ2_ENTRY_MOVE_DONE:
 
