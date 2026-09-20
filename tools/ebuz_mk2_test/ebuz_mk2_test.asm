@@ -251,7 +251,16 @@ EBUZ2_ROW_IT_BASE  EQU 1920h  ; row9  (開状態local row1、内側上)
 EBUZ2_ROW_S2C_BASE EQU 1960h  ; row11 (開状態local row3、中央)
 EBUZ2_ROW_IB_BASE  EQU 19A0h  ; row13 (開状態local row5、内側下)
 EBUZ2_ROW_OB_BASE  EQU 19C0h  ; row14 (開状態local row6、外側下)
-EBUZ2_S2_FIRE_COL  EQU 21
+; (実機フィードバック対応「レーザーも弾も発射位置が遠い ちゃんと
+; 本体先端から出るように右に修正」) 開状態ボディは行ごとに先端の列が
+; 異なる形状(中央行が最も左へ突き出るV字型、実測: 中央=col23・
+; 内側(IT/IB)=col24・外側(OT/OB)=col25)。従来は全門共通の1列
+; (col21)で発射していたため、中央は隙間ゼロで正しかったが内側は
+; 1列・外側は2列の隙間が空いて見えていた。門ごとに「発射位置R側の列
+; +1 = その門の先端列」となる専用の列を用意し、隙間を全門ゼロに揃える。
+EBUZ2_S2_FIRE_COL  EQU 21      ; 中央(レーザー、先端col23) - 変更なし
+EBUZ2_S2_FIRE_COL_INNER EQU 22 ; 内側IT/IB(先端col24)
+EBUZ2_S2_FIRE_COL_OUTER EQU 23 ; 外側OT/OB(先端col25)
 
 ; 上下移動のペーシング。(2026-09-20追加指示「一応シーケンス指示
 ; しとく...変形後の交互発射を開始したら 画面2行目から下は5行目までを
@@ -911,14 +920,14 @@ EBUZ2_FOT_OK:
     LD H,0 : LD L,B
     LD DE,EBUZ2_S2_OT_COLS
     ADD HL,DE
-    LD A,EBUZ2_S2_FIRE_COL
+    LD A,EBUZ2_S2_FIRE_COL_OUTER
     LD (HL),A
     PUSH HL
     LD DE,8 : ADD HL,DE
     LD A,(EBUZ2_S2_ROW_CUR)
     LD (HL),A
     POP HL
-    LD B,A : LD C,EBUZ2_S2_FIRE_COL
+    LD B,A : LD C,EBUZ2_S2_FIRE_COL_OUTER
     CALL EBUZ2_CALC_ADDR
     LD B,BULLET_L_CODE : LD C,BULLET_R_CODE
     CALL EBUZ2_WRITE2
@@ -936,7 +945,7 @@ EBUZ2_FIT_OK:
     LD H,0 : LD L,B
     LD DE,EBUZ2_S2_IT_COLS
     ADD HL,DE
-    LD A,EBUZ2_S2_FIRE_COL
+    LD A,EBUZ2_S2_FIRE_COL_INNER
     LD (HL),A
     PUSH HL
     LD DE,8 : ADD HL,DE
@@ -944,7 +953,7 @@ EBUZ2_FIT_OK:
     ADD A,1
     LD (HL),A
     POP HL
-    LD B,A : LD C,EBUZ2_S2_FIRE_COL
+    LD B,A : LD C,EBUZ2_S2_FIRE_COL_INNER
     CALL EBUZ2_CALC_ADDR
     LD B,BULLET_L_CODE : LD C,BULLET_R_CODE
     CALL EBUZ2_WRITE2
@@ -966,7 +975,7 @@ EBUZ2_FIB_OK:
     LD H,0 : LD L,B
     LD DE,EBUZ2_S2_IB_COLS
     ADD HL,DE
-    LD A,EBUZ2_S2_FIRE_COL
+    LD A,EBUZ2_S2_FIRE_COL_INNER
     LD (HL),A
     PUSH HL
     LD DE,8 : ADD HL,DE
@@ -974,7 +983,7 @@ EBUZ2_FIB_OK:
     ADD A,5
     LD (HL),A
     POP HL
-    LD B,A : LD C,EBUZ2_S2_FIRE_COL
+    LD B,A : LD C,EBUZ2_S2_FIRE_COL_INNER
     CALL EBUZ2_CALC_ADDR
     LD B,BULLET_L_CODE : LD C,BULLET_R_CODE
     CALL EBUZ2_WRITE2
@@ -992,7 +1001,7 @@ EBUZ2_FOB_OK:
     LD H,0 : LD L,B
     LD DE,EBUZ2_S2_OB_COLS
     ADD HL,DE
-    LD A,EBUZ2_S2_FIRE_COL
+    LD A,EBUZ2_S2_FIRE_COL_OUTER
     LD (HL),A
     PUSH HL
     LD DE,8 : ADD HL,DE
@@ -1000,7 +1009,7 @@ EBUZ2_FOB_OK:
     ADD A,6
     LD (HL),A
     POP HL
-    LD B,A : LD C,EBUZ2_S2_FIRE_COL
+    LD B,A : LD C,EBUZ2_S2_FIRE_COL_OUTER
     CALL EBUZ2_CALC_ADDR
     LD B,BULLET_L_CODE : LD C,BULLET_R_CODE
     CALL EBUZ2_WRITE2
@@ -1228,23 +1237,30 @@ EBUZ2_SU_WRITE:
 
 ; (2026-09-20「中央弾はレーザーに変えるんで レーザーは添付ファイルの
 ; 16x8のペアで レーザーだから弾と違って繋がった状態で左端まで到達して
-; その後右から順に消すように」対応) 発射時に列0-21を一括描画する
-; (弾のように1tickずつ移動するのではなく、瞬時に繋がった状態で左端に
-; 到達済みとして描く)。IN: 呼び出し元はEBUZ2_S2_ROW_CURが確定済みの
-; 状態で呼ぶこと(中央の発射行=ROW_CUR+3を内部で計算する)。
+; その後右から順に消すように」対応、続けて実機フィードバック対応
+; 「レーザーも弾も発射位置が遠い ちゃんと本体先端から出るように右に
+; 修正」) 発射時に列1-22を一括描画する(弾のように1tickずつ移動する
+; のではなく、瞬時に繋がった状態で左端に到達済みとして描く)。列は
+; 元々0-21だったが、2列1組のタイリングを列0起点にすると右端が必ず
+; 奇数列(21)止まりになり、中央の本体先端(col23)に隣接する偶数列
+; (col22)まで届かず1列の隙間が空いていた実バグを修正、タイリングの
+; 起点を列1へ1列シフトして右端をcol22(先端col23と隙間ゼロで隣接)に
+; 揃えた(左端は列0ではなく列1までになるが、画面左端まであと1列という
+; 誤差はほぼ視認できない程度と判断)。IN: 呼び出し元はEBUZ2_S2_ROW_CUR
+; が確定済みの状態で呼ぶこと(中央の発射行=ROW_CUR+3を内部で計算する)。
 EBUZ2_FIRE_S2_LASER:
     LD A,(EBUZ2_S2_ROW_CUR)
     ADD A,3
     LD (EBUZ2_LASER_ROW),A
     LD B,A
-    LD C,0
+    LD C,1
 EBUZ2_FLS_LOOP:
     CALL EBUZ2_CALC_ADDR
     PUSH BC
     LD B,LASER_L_CODE : LD C,LASER_R_CODE : CALL EBUZ2_WRITE2
     POP BC
     LD A,C : ADD A,2 : LD C,A
-    CP 22
+    CP 23
     JR NZ,EBUZ2_FLS_LOOP
     LD A,10
     LD (EBUZ2_LASER_RETRACT_UNIT),A
@@ -1253,7 +1269,7 @@ EBUZ2_FLS_LOOP:
     RET
 
 ; 毎tickEBUZ2_TICKから呼ぶ: EBUZ2_LASER_ACT=1の間、発射位置側(列
-; 20-21)から順に1ユニット(2列)ずつ消していき、列0-1を消したら
+; 21-22)から順に1ユニット(2列)ずつ消していき、列1-2を消したら
 ; 非活性化する。
 EBUZ2_UPDATE_S2_LASER:
     LD A,(EBUZ2_LASER_ACT)
@@ -1261,6 +1277,7 @@ EBUZ2_UPDATE_S2_LASER:
     RET Z
     LD A,(EBUZ2_LASER_RETRACT_UNIT)
     ADD A,A
+    ADD A,1
     LD C,A
     LD A,(EBUZ2_LASER_ROW)
     LD B,A
