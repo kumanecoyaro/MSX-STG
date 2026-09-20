@@ -208,11 +208,20 @@ EBUZ2_VOLLEY1_HOLD_TICKS EQU 15  ; 「もっと長く15Tick待つように」指
 ; とは別に、この「変形後・発射前」区間専用の値として独立させる。) ---
 EBUZ2_VOLLEY2_PRE_FIRE_HOLD_TICKS EQU 5
 
+; (2026-09-20追加訂正「変形時に1セルズレてるんで上に1セル上げてくれ
+; 変形前は高さ5セルで変形後7セルなんでセンターがズレてるんで」 -
+; 閉状態(5行、row_top=9〜13)の中心行はrow_top+2=11。開状態(7行)を
+; 従来通りrow_top(9)〜+6(15)で描くと中心行はrow_top+3=12になり、
+; 閉→開の変形前後で中心が1行下にズレる。開状態側の描画開始行を
+; EBUZ2_ENTRY_TARGET_ROW_TOP-1(=8)へ引き上げ、rowを8〜14にすることで
+; 中心行を8+3=11に揃え、閉状態の中心(11)と一致させた。) ---
+EBUZ2_S2_ROW_TOP EQU EBUZ2_ENTRY_TARGET_ROW_TOP-1  ; 開状態(7行)の描画開始行(=8)
+
 ; --- Ebuz Mk2-2(開状態、7行、添付Ebuzmkii2_64x64_2.jsonを実際に
 ; Pythonで解析して確認済み)の発射管定数。5門(外側上/内側上/中央/
-; 内側下/外側下)はrow_top=EBUZ2_ENTRY_TARGET_ROW_TOP(9)固定(変形後は
-; 二度と動かない)。行ベースアドレスはrow9=1920h,10=1940h,12=1980h,
-; 14=19C0h,15=19E0h。
+; 内側下/外側下)はrow_top=EBUZ2_S2_ROW_TOP(8)固定(変形後は
+; 二度と動かない)。行ベースアドレスはrow8=1900h,9=1920h,11=1960h,
+; 13=19A0h,14=19C0h。
 ;
 ; 発射列は既存のEBUZ2_OUTER/INNER/CENTER_COL(24/23/22)を再利用しない
 ; - EBUZ2_WRITE2が2セル書くため、これらの列だと開状態の各行の実際の
@@ -226,11 +235,11 @@ EBUZ2_VOLLEY2_PRE_FIRE_HOLD_TICKS EQU 5
 ; EBUZ_BULLET23_COL定義直前コメント参照)に倣い、開状態5門は全て
 ; col21(本体footprint[col23-27]より確実に左、5行とも常に背景のまま)
 ; から統一して発射する。 ---
-EBUZ2_ROW_OT_BASE  EQU 1920h  ; row9  (開状態local row0、外側上)
-EBUZ2_ROW_IT_BASE  EQU 1940h  ; row10 (開状態local row1、内側上)
-EBUZ2_ROW_S2C_BASE EQU 1980h  ; row12 (開状態local row3、中央)
-EBUZ2_ROW_IB_BASE  EQU 19C0h  ; row14 (開状態local row5、内側下)
-EBUZ2_ROW_OB_BASE  EQU 19E0h  ; row15 (開状態local row6、外側下)
+EBUZ2_ROW_OT_BASE  EQU 1900h  ; row8  (開状態local row0、外側上)
+EBUZ2_ROW_IT_BASE  EQU 1920h  ; row9  (開状態local row1、内側上)
+EBUZ2_ROW_S2C_BASE EQU 1960h  ; row11 (開状態local row3、中央)
+EBUZ2_ROW_IB_BASE  EQU 19A0h  ; row13 (開状態local row5、内側下)
+EBUZ2_ROW_OB_BASE  EQU 19C0h  ; row14 (開状態local row6、外側下)
 EBUZ2_S2_FIRE_COL  EQU 21
 
 ; ============================================================================
@@ -1096,23 +1105,26 @@ EBUZ2_VOLLEY_DONE:
     LD B,EBUZ2_RECOIL_HOLD_TICKS : CALL EBUZ2_HOLD_N
 EBUZ2_RECOIL_DONE:
 
-    ; --- 変形: 閉状態(5行)を消去し、開状態Mk2-2(7行、row9-15)を
-    ; 描画する。中央行はそのまま(row9固定)、以後は二度と動かない。 ---
+    ; --- 変形: 閉状態(5行)を消去し、開状態Mk2-2(7行、row8-14)を
+    ; 描画する。「変形時に1セルズレてる...上に1セル上げてくれ」指示
+    ; により、開状態はEBUZ2_S2_ROW_TOP(=EBUZ2_ENTRY_TARGET_ROW_TOP-1、
+    ; row8)を起点に描画し、閉状態(row_top+2=11)と開状態(row_top+3=11)
+    ; の中心行を一致させる。以後は二度と動かない。 ---
     LD A,EBUZ2_ENTRY_TARGET_ROW_TOP
     CALL EBUZ2_ERASE_BODY_AT
-    LD B,EBUZ2_ENTRY_TARGET_ROW_TOP   : LD C,23 : CALL EBUZ2_CALC_ADDR
+    LD B,EBUZ2_S2_ROW_TOP   : LD C,23 : CALL EBUZ2_CALC_ADDR
     PUSH HL : LD HL,EBUZ2_ROW_S2_0 : POP DE : LD BC,5 : CALL LDIRVM
-    LD B,EBUZ2_ENTRY_TARGET_ROW_TOP+1 : LD C,23 : CALL EBUZ2_CALC_ADDR
+    LD B,EBUZ2_S2_ROW_TOP+1 : LD C,23 : CALL EBUZ2_CALC_ADDR
     PUSH HL : LD HL,EBUZ2_ROW_S2_1 : POP DE : LD BC,5 : CALL LDIRVM
-    LD B,EBUZ2_ENTRY_TARGET_ROW_TOP+2 : LD C,23 : CALL EBUZ2_CALC_ADDR
+    LD B,EBUZ2_S2_ROW_TOP+2 : LD C,23 : CALL EBUZ2_CALC_ADDR
     PUSH HL : LD HL,EBUZ2_ROW_S2_2 : POP DE : LD BC,5 : CALL LDIRVM
-    LD B,EBUZ2_ENTRY_TARGET_ROW_TOP+3 : LD C,23 : CALL EBUZ2_CALC_ADDR
+    LD B,EBUZ2_S2_ROW_TOP+3 : LD C,23 : CALL EBUZ2_CALC_ADDR
     PUSH HL : LD HL,EBUZ2_ROW_S2_3 : POP DE : LD BC,5 : CALL LDIRVM
-    LD B,EBUZ2_ENTRY_TARGET_ROW_TOP+4 : LD C,23 : CALL EBUZ2_CALC_ADDR
+    LD B,EBUZ2_S2_ROW_TOP+4 : LD C,23 : CALL EBUZ2_CALC_ADDR
     PUSH HL : LD HL,EBUZ2_ROW_S2_4 : POP DE : LD BC,5 : CALL LDIRVM
-    LD B,EBUZ2_ENTRY_TARGET_ROW_TOP+5 : LD C,23 : CALL EBUZ2_CALC_ADDR
+    LD B,EBUZ2_S2_ROW_TOP+5 : LD C,23 : CALL EBUZ2_CALC_ADDR
     PUSH HL : LD HL,EBUZ2_ROW_S2_5 : POP DE : LD BC,5 : CALL LDIRVM
-    LD B,EBUZ2_ENTRY_TARGET_ROW_TOP+6 : LD C,23 : CALL EBUZ2_CALC_ADDR
+    LD B,EBUZ2_S2_ROW_TOP+6 : LD C,23 : CALL EBUZ2_CALC_ADDR
     PUSH HL : LD HL,EBUZ2_ROW_S2_6 : POP DE : LD BC,5 : CALL LDIRVM
     CALL EBUZ2_ENTRY_HOLD
 EBUZ2_TRANSFORM_DONE:
@@ -1143,7 +1155,12 @@ EBUZ2_VOLLEY2_DONE:
 ; 発射・生存チェックなし」の考え方を、内・外の2門ペア単位でそのまま
 ; 適用したもの(無印Ebuzは1門ずつの交代だが、Mk2は「2門同時発射」を
 ; 1ユニットとして交代させる点のみが違う)。本体自体は変形後、以後
-; 二度と動かない(この点は変更なし)。 ---
+; 二度と動かない(この点は変更なし)。「交互発射するまでに15Tickの
+; ウェイト挿入」指示により、外側ペアの1発目発射完了から無制限交互
+; 発射の開始(2巡目の内側ペア)までの間にEBUZ2_VOLLEY2_ALT_START_
+; HOLD_TICKS(15)だけ静止ホールドを挿む。 ---
+EBUZ2_VOLLEY2_ALT_START_HOLD_TICKS EQU 15
+    LD B,EBUZ2_VOLLEY2_ALT_START_HOLD_TICKS : CALL EBUZ2_HOLD_N
 EBUZ2_VOLLEY2_ALT_LOOP:
     LD B,EBUZ2_VOLLEY2_WAVE_HOLD_TICKS : CALL EBUZ2_HOLD_N
     CALL EBUZ2_FIRE_IT_BULLET
