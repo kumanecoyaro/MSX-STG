@@ -176,6 +176,17 @@ EBUZ2_ENTRY_TARGET_ROW_TOP EQU 9
 ; 使うため両方が自動的に2倍速になる)。
 EBUZ2_ENTRY_STEP_HOLD_TICKS EQU 4
 
+; (2026-09-20、"タイミングが悪い 一連のシーケンスEbuzと同じになる
+; ように ホールドタイムだな" - リコイル・2度目の発射ウェーブ間隔を
+; 無印Ebuz[tools/ebuz_test/ebuz_test.asm]の実際の値に合わせた専用
+; ホールド定数。従来はどちらもEBUZ2_ENTRY_STEP_HOLD_TICKS[登場の
+; 成長/移動用、4]を流用していたが、無印Ebuzでは局面ごとに全く違う
+; 長さを使っている[EBUZ_RECOIL_DURATION=1(反動は一瞬のフリック)、
+; EBUZ_FIRE_INTERVAL=2(継続発射の交互間隔)] - この2値をそのまま
+; 移植する。) ---
+EBUZ2_RECOIL_HOLD_TICKS       EQU 1  ; 無印EbuzのEBUZ_RECOIL_DURATIONと同値
+EBUZ2_VOLLEY2_WAVE_HOLD_TICKS EQU 2  ; 無印EbuzのEBUZ_FIRE_INTERVALと同値
+
 ; --- Ebuz Mk2-2(開状態、7行、添付Ebuzmkii2_64x64_2.jsonを実際に
 ; Pythonで解析して確認済み)の発射管定数。5門(外側上/内側上/中央/
 ; 内側下/外側下)はrow_top=EBUZ2_ENTRY_TARGET_ROW_TOP(9)固定(変形後は
@@ -845,14 +856,21 @@ EBUZ2_TICK:
 ; 登場の移動フェーズ専用: EBUZ2_ENTRY_STEP_HOLD_TICKS回だけEBUZ2_TICKを
 ; 呼ぶ(弾プールの更新を止めない待ち、1ティック=1行では速すぎて
 ; 「いきなり出現した」ようにしか見えないため)。
-EBUZ2_ENTRY_HOLD:
-    LD B,EBUZ2_ENTRY_STEP_HOLD_TICKS
-EBUZ2_ENTRY_HOLD_LOOP:
+; 汎用版: IN: B=待ちたいティック数(1-255)。無印Ebuzの
+; EBUZ_WAIT_TICKSと全く同じ設計(EBUZ2_TICKをB回呼ぶだけ、弾の移動は
+; 止めない)。EBUZ2_ENTRY_HOLD(登場フェーズ専用、常にEBUZ2_ENTRY_
+; STEP_HOLD_TICKS回)はこれの薄いラッパー。
+EBUZ2_HOLD_N:
+EBUZ2_HOLD_N_LOOP:
     PUSH BC
     CALL EBUZ2_TICK
     POP BC
-    DJNZ EBUZ2_ENTRY_HOLD_LOOP
+    DJNZ EBUZ2_HOLD_N_LOOP
     RET
+
+EBUZ2_ENTRY_HOLD:
+    LD B,EBUZ2_ENTRY_STEP_HOLD_TICKS
+    JR EBUZ2_HOLD_N
 
 ; ============================================================================
 INIT:
@@ -1034,7 +1052,7 @@ EBUZ2_VOLLEY_DONE:
     PUSH HL : LD HL,EBUZ2_ROW_3 : POP DE : LD BC,5 : CALL LDIRVM
     LD B,EBUZ2_ENTRY_TARGET_ROW_TOP+4 : LD C,24 : CALL EBUZ2_CALC_ADDR
     PUSH HL : LD HL,EBUZ2_ROW_4 : POP DE : LD BC,5 : CALL LDIRVM
-    CALL EBUZ2_ENTRY_HOLD
+    LD B,EBUZ2_RECOIL_HOLD_TICKS : CALL EBUZ2_HOLD_N
     ; 戻す: 列24側(1セル右にずれた位置)を消去し、元の列23へ再描画
     LD B,EBUZ2_ENTRY_TARGET_ROW_TOP   : LD C,24 : CALL EBUZ2_CALC_ADDR
     PUSH HL : LD HL,EBUZ2_BLANK5 : POP DE : LD BC,5 : CALL LDIRVM
@@ -1048,7 +1066,7 @@ EBUZ2_VOLLEY_DONE:
     PUSH HL : LD HL,EBUZ2_BLANK5 : POP DE : LD BC,5 : CALL LDIRVM
     LD A,EBUZ2_ENTRY_TARGET_ROW_TOP
     CALL EBUZ2_DRAW_BODY_AT       ; 元の位置(row9,col23)へ再描画
-    CALL EBUZ2_ENTRY_HOLD
+    LD B,EBUZ2_RECOIL_HOLD_TICKS : CALL EBUZ2_HOLD_N
 EBUZ2_RECOIL_DONE:
 
     ; --- 変形: 閉状態(5行)を消去し、開状態Mk2-2(7行、row9-15)を
@@ -1078,11 +1096,11 @@ EBUZ2_TRANSFORM_DONE:
     ; 外側2門(左右同時)の3ウェーブに分ける。 ---
     CALL EBUZ2_FIRE_S2C_BULLET
 EBUZ2_VOLLEY2_WAVE_C_DONE:
-    CALL EBUZ2_ENTRY_HOLD
+    LD B,EBUZ2_VOLLEY2_WAVE_HOLD_TICKS : CALL EBUZ2_HOLD_N
     CALL EBUZ2_FIRE_IT_BULLET
     CALL EBUZ2_FIRE_IB_BULLET
 EBUZ2_VOLLEY2_WAVE_INNER_DONE:
-    CALL EBUZ2_ENTRY_HOLD
+    LD B,EBUZ2_VOLLEY2_WAVE_HOLD_TICKS : CALL EBUZ2_HOLD_N
     CALL EBUZ2_FIRE_OT_BULLET
     CALL EBUZ2_FIRE_OB_BULLET
 EBUZ2_VOLLEY2_DONE:
