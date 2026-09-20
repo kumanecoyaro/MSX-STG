@@ -1,7 +1,9 @@
 """tools/ebuz_mk2_test/ebuz_mk2_test.asm(2026-09-20、Ebuz Mk2-1[閉状態]
-がrow1で静止したまま下段→中央→上段の順に1行ずつ組み上がり、揃って
-から中央へ移動→5門同時1斉発射する版)のVRAM->PNGレンダリング
-スクリプト。tools/stage1_render_check.pyのrender_full()を使い回す。
+が「揃うまで下にシフトする」方式で登場する版 - 新たに出現する行は常に
+nt1に描画され、既存の行は毎ステップ1行ずつ下へ再描画[シフト]される
+ベルトコンベア式の組み上がり。揃った後は中央へ移動→5門同時1斉発射)の
+VRAM->PNGレンダリングスクリプト。
+tools/stage1_render_check.pyのrender_full()を使い回す。
 """
 import os
 import sys
@@ -52,12 +54,12 @@ def main():
             z.step()
         p = os.path.join(HERE, f"ebuz_mk2_growth_{i}.ppm")
         render_full(bytes(z.vram), p)
-        print(f"growth step {i} (row stays at row1, {i+1}/5 rows visible):", p)
+        print(f"growth step {i} ({i+1}/5 rows visible, belt-shifted down each step):", p)
 
     run_until_pc(z, sym["EBUZ2_ENTRY_GROWTH_DONE"])
     p1 = os.path.join(HERE, "ebuz_mk2_growth_done.ppm")
     render_full(bytes(z.vram), p1)
-    print("growth complete, all 5 rows assembled at row1:", p1)
+    print("growth complete, all 5 rows assembled (top row at row1):", p1)
 
     run_until_pc(z, sym["EBUZ2_ENTRY_MOVE_DONE"])
     p2 = os.path.join(HERE, "ebuz_mk2_centered.ppm")

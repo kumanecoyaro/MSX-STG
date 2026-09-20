@@ -1,7 +1,9 @@
 """tools/ebuz_mk2_test/ebuz_mk2_test.asm(2026-09-20、Ebuz Mk2-1[閉状態]
-がrow1で静止したまま下段→中央→上段の順に1行ずつ組み上がり、揃って
-から中央へ移動→5門同時1斉発射する版)の一連の流れを実時間(T-states
-換算)キャプション付きのアニメーションGIFとして可視化する。
+が「揃うまで下にシフトする」方式で登場する版 - 新たに出現する行は常に
+nt1に描画され、既存の行は毎ステップ1行ずつ下へ再描画[シフト]される
+ベルトコンベア式の組み上がり。揃った後は中央へ移動→5門同時1斉発射)の
+一連の流れを実時間(T-states換算)キャプション付きのアニメーションGIF
+として可視化する。
 """
 import os
 import sys
@@ -71,11 +73,11 @@ def main():
 
     hold = sym["EBUZ2_ENTRY_STEP_HOLD_TICKS"]
     labels = [
-        "growth 1/5: bottom row (3-wide) appears, row1 fixed",
-        "growth 2/5: next row (4-wide)",
-        "growth 3/5: center row (5-wide)",
-        "growth 4/5: next row (4-wide)",
-        "growth 5/5: top row (3-wide) - fully assembled, still at row1",
+        "shift 1/5: bottom row (3-wide) appears at nt1",
+        "shift 2/5: prev row shifts down to nt2, next row (4-wide) at nt1",
+        "shift 3/5: prev rows shift down, center row (5-wide) at nt1",
+        "shift 4/5: prev rows shift down, next row (4-wide) at nt1",
+        "shift 5/5: prev rows shift down, top row (3-wide) at nt1 - fully assembled, belt reaches nt1-nt5",
     ]
     for label in labels:
         for _ in range(hold):

@@ -4,20 +4,25 @@
 ; 動作だけを検証する。
 ;
 ; ============================================================================
-; 2026-09-20 三度目の全面リセット+ その後5回の追加訂正(ユーザー原文、
-; 5回目の訂正):
+; 2026-09-20 三度目の全面リセット+ その後6回の追加訂正(ユーザー原文、
+; 6回目[最新]の訂正、2連続):
 ;
-;   "で、いきなり全体を描画してスポーンさせんじゃねえよ不自然だろうが
-;    上から出るんだからキャラの下から1行ずつ描画して揃ったら全体を
-;    動かすんだよ 状態1は高さは5セルだから下の横3セル分から描いて
-;    つぎの4セル 中央の5セルって順に描画する"
+;   "下から描画はそれでいいが 上から下に向かって画面に描画しながら
+;    なんでこんな事が分からねんだよ 1手目は2行目にキャラの下3セル分
+;    2手目は今描いた3セルを1セル下に移動して また2行目に4セル分
+;    これを高さ分"
+;   "揃うまで下にシフトするんだよ 分かったか"
 ;
-; これを受け登場を2段階に再分割: (フェーズA)row1(ガード直下)に上端を
-; 固定したまま本体は静止し、本体自身の下段(local row4、幅3セル)から
-; 上段(local row0、幅3セル)へ向かって1ステップに1行ずつ出現させる
-; (5ステップ、幅は3→4→5[中央]→4→3の順)。全5行が揃うまでは移動を
-; 一切開始しない。(フェーズB)揃った後、初めて本体全体を剛体のまま
-; 画面中央まで平行移動する。
+; 5回目の訂正(直前の版)で実装した「フェーズA中は本体を静止させたまま
+; 下段→上段の順に1行ずつ出現させ、全5行が揃ってから初めて移動を開始
+; する」という2段階(静止して組み上がり→揃ってから移動)構成が誤りと
+; 判明。正しくは、組み上がりと移動を分離せず「新しく出現する行は常に
+; 固定の挿入位置(row1)に描画し、既に描画済みの行は毎ステップ必ず1行
+; 下へシフト(再描画)する」という、組み上がりながら降りてくる単一の
+; ベルトコンベア式動作でなければならない。フェーズA(登場フェーズ)は
+; この方式に全面書き直し。5ステップ終了時点で最終的な行配置(row1に
+; 先頭行が来る形)は5回目の版と一致するため、フェーズB(揃った後の
+; 画面中央への平行移動)は無変更のまま継続して使える。
 ;
 ; 直前の版までの経緯(添付Ebuzmkii1_64x64_2.json[Mk2閉状態の実絵柄]で
 ; 確認済み): このステップの本体は「Ebuz Mk2-1」(閉状態、無印Ebuzと
@@ -587,27 +592,50 @@ EBUZ2_GUARD_DONE:
     LD (EBUZ2_COLS_4+0),A  : LD (EBUZ2_COLS_4+1),A  : LD (EBUZ2_COLS_4+2),A  : LD (EBUZ2_COLS_4+3),A
     LD (EBUZ2_COLS_4+4),A  : LD (EBUZ2_COLS_4+5),A  : LD (EBUZ2_COLS_4+6),A  : LD (EBUZ2_COLS_4+7),A
 
-    ; --- 登場フェーズA: row1(ガード直下、"上から来て"に対応する位置)に
-    ; 上端を固定したまま静止し、本体自身の下段(local row4、幅3セル)から
-    ; 上段(local row0、幅3セル)へ向かって1ステップに1行ずつ出現させる
-    ; (5ステップで全5行が出現、幅は3→4→5[中央]→4→3の順)。全行揃うまで
-    ; 本体は一切動かさない - 描画が終わってから初めて移動を始める。 ---
+    ; --- 登場フェーズA: 「揃うまで下にシフトする」方式。新たに出現する
+    ; 行(本体自身の下段から順)は常に固定の挿入位置(nt1=EBUZ2_ENTRY_
+    ; TOP_ROW)に描画し、既に描画済みの行は全てLDIRVMで1行下の位置へ
+    ; そのまま再描画し直す(=結果として1行下にシフトする)。これを5
+    ; ステップ繰り返すと、ベルトコンベアのように組み上がりながら降りて
+    ; くる見た目になり、5ステップ目で全5行が揃うと同時に先頭行は
+    ; ちょうどnt5まで降りている(=そのままフェーズBの開始位置と一致)。
+    ; 描画先はコンパイル時定数(nt1,col23=1837h 〜 nt5,col23=18B7h、
+    ; NAMTBL+row*32+23)を直接使い、実行時のEBUZ2_CALC_ADDR呼び出しは
+    ; 使わない(このフェーズでは5箇所の行き先しかなく全て既知のため)。 ---
     LD A,EBUZ2_ENTRY_TOP_ROW
     LD (EBUZ2_BODY_ROW),A
-    LD B,EBUZ2_ENTRY_TOP_ROW+4 : LD C,23 : CALL EBUZ2_CALC_ADDR
-    PUSH HL : LD HL,EBUZ2_ROW_4 : POP DE : LD BC,5 : CALL LDIRVM
+
+    ; step 1/5: nt1に本体下段(local row4、幅3)
+    LD HL,EBUZ2_ROW_4 : LD DE,1837h : LD BC,5 : CALL LDIRVM
     CALL EBUZ2_ENTRY_HOLD
-    LD B,EBUZ2_ENTRY_TOP_ROW+3 : LD C,23 : CALL EBUZ2_CALC_ADDR
-    PUSH HL : LD HL,EBUZ2_ROW_3 : POP DE : LD BC,5 : CALL LDIRVM
+
+    ; step 2/5: 既存行をnt1のままにせず1行分下(nt2)へ再描画、
+    ; 新規行(local row3)をnt1へ
+    LD HL,EBUZ2_ROW_3 : LD DE,1837h : LD BC,5 : CALL LDIRVM
+    LD HL,EBUZ2_ROW_4 : LD DE,1857h : LD BC,5 : CALL LDIRVM
     CALL EBUZ2_ENTRY_HOLD
-    LD B,EBUZ2_ENTRY_TOP_ROW+2 : LD C,23 : CALL EBUZ2_CALC_ADDR
-    PUSH HL : LD HL,EBUZ2_ROW_2 : POP DE : LD BC,5 : CALL LDIRVM
+
+    ; step 3/5
+    LD HL,EBUZ2_ROW_2 : LD DE,1837h : LD BC,5 : CALL LDIRVM
+    LD HL,EBUZ2_ROW_3 : LD DE,1857h : LD BC,5 : CALL LDIRVM
+    LD HL,EBUZ2_ROW_4 : LD DE,1877h : LD BC,5 : CALL LDIRVM
     CALL EBUZ2_ENTRY_HOLD
-    LD B,EBUZ2_ENTRY_TOP_ROW+1 : LD C,23 : CALL EBUZ2_CALC_ADDR
-    PUSH HL : LD HL,EBUZ2_ROW_1 : POP DE : LD BC,5 : CALL LDIRVM
+
+    ; step 4/5
+    LD HL,EBUZ2_ROW_1 : LD DE,1837h : LD BC,5 : CALL LDIRVM
+    LD HL,EBUZ2_ROW_2 : LD DE,1857h : LD BC,5 : CALL LDIRVM
+    LD HL,EBUZ2_ROW_3 : LD DE,1877h : LD BC,5 : CALL LDIRVM
+    LD HL,EBUZ2_ROW_4 : LD DE,1897h : LD BC,5 : CALL LDIRVM
     CALL EBUZ2_ENTRY_HOLD
-    LD B,EBUZ2_ENTRY_TOP_ROW : LD C,23 : CALL EBUZ2_CALC_ADDR
-    PUSH HL : LD HL,EBUZ2_ROW_0 : POP DE : LD BC,5 : CALL LDIRVM
+
+    ; step 5/5: 全5行が揃い、EBUZ2_BODY_ROW(=EBUZ2_ENTRY_TOP_ROW)を
+    ; 上端とする配置(nt1-nt5)に一致する - フェーズBはここからそのまま
+    ; 継続できる
+    LD HL,EBUZ2_ROW_0 : LD DE,1837h : LD BC,5 : CALL LDIRVM
+    LD HL,EBUZ2_ROW_1 : LD DE,1857h : LD BC,5 : CALL LDIRVM
+    LD HL,EBUZ2_ROW_2 : LD DE,1877h : LD BC,5 : CALL LDIRVM
+    LD HL,EBUZ2_ROW_3 : LD DE,1897h : LD BC,5 : CALL LDIRVM
+    LD HL,EBUZ2_ROW_4 : LD DE,18B7h : LD BC,5 : CALL LDIRVM
     CALL EBUZ2_ENTRY_HOLD
 EBUZ2_ENTRY_GROWTH_DONE:
 
@@ -621,7 +649,7 @@ EBUZ2_ENTRY_MOVE_LOOP:
     JR Z,EBUZ2_ENTRY_MOVE_DONE
     CALL EBUZ2_ERASE_BODY_AT      ; A=現在のrow_topで消去(注意: この
                                     ; ルーチンはAを保持しない - 戻り値は
-                                    ; row_top+6になっている、以後使わない)
+                                    ; row_top+4になっている、以後使わない)
     LD A,(EBUZ2_BODY_ROW)           ; 現在のrow_topをRAMから読み直す
     INC A                             ; 下方向(nt行番号は下に行くほど
                                         ; 大きい)へ1行進める
