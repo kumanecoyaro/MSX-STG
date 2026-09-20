@@ -197,6 +197,10 @@ EBUZ2_ENTRY_STEP_HOLD_TICKS EQU 4
 ; 移植する。) ---
 EBUZ2_RECOIL_HOLD_TICKS       EQU 1  ; 無印EbuzのEBUZ_RECOIL_DURATIONと同値
 EBUZ2_VOLLEY2_WAVE_HOLD_TICKS EQU 2  ; 無印EbuzのEBUZ_FIRE_INTERVALと同値
+; (実機フィードバック対応「レーザーの根元(一番右)が表示されてないな」)
+; レーザー発射直後、消去を開始するまでに確実に見せるためのホールド
+; tick数(未調整の初期値)。
+EBUZ2_LASER_HOLD_TICKS EQU 4
 
 ; (2026-09-20 追加訂正「初弾から変形後の2弾目発射までのホールドが
 ; Ebuzと違ってるだろ 多分1発目発射後0.3か0.5待ってから変形してただろ」
@@ -423,6 +427,13 @@ EBUZ2_SND_TIMER     EQU 0F18Fh  ; 1 byte: 発射音の残りenvelopeレベル(0=
 EBUZ2_LASER_ACT EQU 0F190h  ; 1 byte: 0=非活性/1=消去シーケンス進行中
 EBUZ2_LASER_ROW EQU 0F191h  ; 1 byte: 発射時に固定した描画行(ROW_CUR+3)
 EBUZ2_LASER_RETRACT_UNIT EQU 0F192h  ; 1 byte: 次に消すユニット番号(10→0)
+; (実機フィードバック対応「レーザーの根元(一番右)が表示されてないな」)
+; 発射直後、リコイル演出の最初の1tickホールドがEBUZ2_TICK経由で
+; EBUZ2_UPDATE_S2_LASERも同時に1tick分進めてしまい、根元(発射位置側の
+; ユニット)が完全に描画された状態のまま1tickも表示されずに消去され
+; 始めていた。発射直後の数tickは消去を始めず、繋がった全体像を確実に
+; 見せてから消去に入るようにするためのホールドカウンタ。
+EBUZ2_LASER_HOLD_COUNTDOWN EQU 0F193h  ; 1 byte: 消去開始までの残りtick数
 
 ; ============================================================================
 ; 1フレーム相当のウェイト(無印Ebuzと同一の較正済みループ)。
@@ -1264,17 +1275,29 @@ EBUZ2_FLS_LOOP:
     JR NZ,EBUZ2_FLS_LOOP
     LD A,10
     LD (EBUZ2_LASER_RETRACT_UNIT),A
+    LD A,EBUZ2_LASER_HOLD_TICKS
+    LD (EBUZ2_LASER_HOLD_COUNTDOWN),A
     LD A,1
     LD (EBUZ2_LASER_ACT),A
     RET
 
-; 毎tickEBUZ2_TICKから呼ぶ: EBUZ2_LASER_ACT=1の間、発射位置側(列
-; 21-22)から順に1ユニット(2列)ずつ消していき、列1-2を消したら
-; 非活性化する。
+; 毎tickEBUZ2_TICKから呼ぶ: EBUZ2_LASER_ACT=1の間、まずEBUZ2_LASER_
+; HOLD_COUNTDOWNが尽きるまでは何もせず待ち(発射直後のリコイル演出用
+; 1tickホールドと消去処理が同一tickで重なり、繋がった全体像[根元含む]
+; が1tickも表示されないまま消え始めていた実バグの修正)、尽きてから
+; 発射位置側(列21-22)から順に1ユニット(2列)ずつ消していき、列1-2を
+; 消したら非活性化する。
 EBUZ2_UPDATE_S2_LASER:
     LD A,(EBUZ2_LASER_ACT)
     OR A
     RET Z
+    LD A,(EBUZ2_LASER_HOLD_COUNTDOWN)
+    OR A
+    JR Z,EBUZ2_USL_RETRACT
+    DEC A
+    LD (EBUZ2_LASER_HOLD_COUNTDOWN),A
+    RET
+EBUZ2_USL_RETRACT:
     LD A,(EBUZ2_LASER_RETRACT_UNIT)
     ADD A,A
     ADD A,1
@@ -1478,6 +1501,7 @@ EBUZ2_GUARD_DONE:
     LD (EBUZ2_LASER_ACT),A
     LD (EBUZ2_LASER_ROW),A
     LD (EBUZ2_LASER_RETRACT_UNIT),A
+    LD (EBUZ2_LASER_HOLD_COUNTDOWN),A
 
     ; --- 登場フェーズA: 「揃うまで下にシフトする」方式。新たに出現する
     ; 行(本体自身の下段から順)は常に固定の挿入位置(nt1=EBUZ2_ENTRY_
