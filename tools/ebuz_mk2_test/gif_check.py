@@ -1,7 +1,7 @@
-"""tools/ebuz_mk2_test/ebuz_mk2_test.asm(2026-09-20、Ebuz Mk2-1
-[閉状態]でスポーン→上から中央へ移動→5門同時1斉発射版)の一連の流れを
-実時間(T-states換算)キャプション付きのアニメーションGIFとして可視化
-する。tools/ebuz_test/gif_check.pyと全く同じ作法。
+"""tools/ebuz_mk2_test/ebuz_mk2_test.asm(2026-09-20、Ebuz Mk2-1[閉状態]
+がrow1で静止したまま下段→中央→上段の順に1行ずつ組み上がり、揃って
+から中央へ移動→5門同時1斉発射する版)の一連の流れを実時間(T-states
+換算)キャプション付きのアニメーションGIFとして可視化する。
 """
 import os
 import sys
@@ -69,8 +69,19 @@ def main():
     run_until_pc(z, sym["EBUZ2_GUARD_DONE"])
     add("guard bands painted (row0=black, row20-23=white)", 1200)
 
-    run_until_pc(z, sym["EBUZ2_ENTRY_SPAWN_DONE"])
-    add("Ebuz Mk2-1 (closed, Ebuz-like 5-row body) spawns at row1", 900)
+    hold = sym["EBUZ2_ENTRY_STEP_HOLD_TICKS"]
+    labels = [
+        "growth 1/5: bottom row (3-wide) appears, row1 fixed",
+        "growth 2/5: next row (4-wide)",
+        "growth 3/5: center row (5-wide)",
+        "growth 4/5: next row (4-wide)",
+        "growth 5/5: top row (3-wide) - fully assembled, still at row1",
+    ]
+    for label in labels:
+        for _ in range(hold):
+            run_until_pc(z, sym["EBUZ2_TICK"])
+            z.step()
+        add(label, 500)
 
     run_until_pc(z, sym["EBUZ2_ENTRY_MOVE_DONE"])
     add("descended to center (row9), still Mk2-1, no deformation", 700)

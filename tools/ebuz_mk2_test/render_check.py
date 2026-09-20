@@ -1,6 +1,6 @@
-"""tools/ebuz_mk2_test/ebuz_mk2_test.asm(2026-09-20、Ebuz Mk2-1
-[閉状態、添付Ebuzmkii1_64x64_2.jsonの実絵柄]でスポーン→上から中央へ
-移動→5門同時1斉発射、まだ変形しない版)のVRAM->PNGレンダリング
+"""tools/ebuz_mk2_test/ebuz_mk2_test.asm(2026-09-20、Ebuz Mk2-1[閉状態]
+がrow1で静止したまま下段→中央→上段の順に1行ずつ組み上がり、揃って
+から中央へ移動→5門同時1斉発射する版)のVRAM->PNGレンダリング
 スクリプト。tools/stage1_render_check.pyのrender_full()を使い回す。
 """
 import os
@@ -45,10 +45,19 @@ def main():
     render_full(bytes(z.vram), p0)
     print("guard bands only:", p0)
 
-    run_until_pc(z, sym["EBUZ2_ENTRY_SPAWN_DONE"])
-    p1 = os.path.join(HERE, "ebuz_mk2_spawn.ppm")
+    hold = sym["EBUZ2_ENTRY_STEP_HOLD_TICKS"]
+    for i in range(5):
+        for _ in range(hold):
+            run_until_pc(z, sym["EBUZ2_TICK"])
+            z.step()
+        p = os.path.join(HERE, f"ebuz_mk2_growth_{i}.ppm")
+        render_full(bytes(z.vram), p)
+        print(f"growth step {i} (row stays at row1, {i+1}/5 rows visible):", p)
+
+    run_until_pc(z, sym["EBUZ2_ENTRY_GROWTH_DONE"])
+    p1 = os.path.join(HERE, "ebuz_mk2_growth_done.ppm")
     render_full(bytes(z.vram), p1)
-    print("Mk2-1 (closed, Ebuz-like 5-row body) spawns at row1:", p1)
+    print("growth complete, all 5 rows assembled at row1:", p1)
 
     run_until_pc(z, sym["EBUZ2_ENTRY_MOVE_DONE"])
     p2 = os.path.join(HERE, "ebuz_mk2_centered.ppm")
@@ -58,21 +67,14 @@ def main():
     run_until_pc(z, sym["EBUZ2_VOLLEY_DONE"])
     p3 = os.path.join(HERE, "ebuz_mk2_volley.ppm")
     render_full(bytes(z.vram), p3)
-    print("all 5 rows fire simultaneously (Ebuz's 1 shot -> 5):", p3)
-
-    for _ in range(15):
-        z.step()
-        run_until_pc(z, sym["EBUZ2_FRAME_TICK"])
-    p4 = os.path.join(HERE, "ebuz_mk2_flight.ppm")
-    render_full(bytes(z.vram), p4)
-    print("bullets in flight:", p4)
+    print("all 5 rows fire simultaneously:", p3)
 
     for _ in range(60):
         z.step()
         run_until_pc(z, sym["EBUZ2_FRAME_TICK"])
-    p5 = os.path.join(HERE, "ebuz_mk2_idle.ppm")
-    render_full(bytes(z.vram), p5)
-    print("well after volley: bullets clipped off-screen, body untouched:", p5)
+    p4 = os.path.join(HERE, "ebuz_mk2_idle.ppm")
+    render_full(bytes(z.vram), p4)
+    print("well after volley: bullets clipped off-screen, body untouched:", p4)
 
 
 if __name__ == "__main__":
