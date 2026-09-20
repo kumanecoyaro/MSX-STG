@@ -265,9 +265,17 @@ EBUZ2_S2_FIRE_COL  EQU 21
 ; 上方向(MIN_ROW=1)は変更なし - row0はガード帯そのもの(常にcode=16
 ; 固定)であり、本体7行のためROW_CURを0にすると本体が row0-6 に
 ; 掛かりガード帯を確実に破壊する。MIN_ROWを0にすることは物理的に
-; 不可能なため、ここは1のまま維持する。) ---
+; 不可能なため、ここは1のまま維持する。)
+; (2026-09-20さらに訂正「一周なんだから中央まで戻ったら停止だろうが
+; よ」: 「1往復」の停止位置をMIN_ROW到達時点からEBUZ2_S2_ROW_TOP
+; (=中央、8)到達時点へ変更 - 中央から下方向へ出発しMAX_ROWで折り
+; 返した後、出発点の中央に戻ってきたところで停止するのが「一周」の
+; 正しい意味だった。この変更によりMIN_ROW自体は上下動の停止/折り
+; 返し判定にはもう使われない(上方向移動は常にMAX_ROW到達後にしか
+; 始まらず、中央到達で必ず先に停止するため)が、可動域の下限を表す
+; 定数として引き続き定義だけ残す。) ---
 EBUZ2_S2_MOVE_INTERVAL_TICKS EQU 4
-EBUZ2_S2_MOVE_MIN_ROW EQU 1
+EBUZ2_S2_MOVE_MIN_ROW EQU 1  ; (現在は上下動の停止判定には未使用、可動域下限の記録用)
 EBUZ2_S2_MOVE_MAX_ROW EQU 13
 
 ; ============================================================================
@@ -1092,23 +1100,18 @@ EBUZ2_UPDATE_S2_MOVE:
     LD A,(EBUZ2_S2_ROW_CUR)
     DEC A
     LD (EBUZ2_S2_ROW_CUR),A
-    CP EBUZ2_S2_MOVE_MIN_ROW
+    CP EBUZ2_S2_ROW_TOP
     JR NZ,EBUZ2_USM_DRAW
-    ; MIN_ROWに到達。既にMAX_ROWへ到達済み(REACHED_MAX=1)なら
-    ; 「下→上」の1往復が完了したことになるので、ここで上下動を
+    ; 開始位置(中央、EBUZ2_S2_ROW_TOP=8)まで戻った = 「一周」完了
+    ; (2026-09-20訂正「一周なんだから中央まで戻ったら停止だろうが
+    ; よ」対応: MIN_ROWまで行かず中央到達時点で止める)。ここで上下動を
     ; 完全停止する(交互連射の停止はEBUZ2_VOLLEY2_ALT_LOOP側が
-    ; EBUZ2_S2_MOVE_ROUNDTRIP_DONEを見て行う)。
-    LD A,(EBUZ2_S2_MOVE_REACHED_MAX)
-    OR A
-    JR Z,EBUZ2_USM_FLIP_UP
+    ; EBUZ2_S2_MOVE_ROUNDTRIP_DONEを見て行う)。上方向はMAX_ROW到達後
+    ; にしか始まらないため、ここに来る時点でREACHED_MAXは常に1。
     LD A,1
     LD (EBUZ2_S2_MOVE_ROUNDTRIP_DONE),A
     XOR A
     LD (EBUZ2_S2_MOVE_ACTIVE),A
-    JR EBUZ2_USM_DRAW
-EBUZ2_USM_FLIP_UP:
-    XOR A
-    LD (EBUZ2_S2_MOVE_DIR),A
     JR EBUZ2_USM_DRAW
 EBUZ2_USM_DOWN:
     LD A,(EBUZ2_S2_ROW_CUR)
