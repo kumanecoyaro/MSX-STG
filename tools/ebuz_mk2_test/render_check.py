@@ -1,7 +1,7 @@
-"""tools/ebuz_mk2_test/ebuz_mk2_test.asm(2026-09-20、無印Ebuzと全く
-同じ弾シーケンスに統一した版)のVRAM->PNGレンダリングスクリプト。
-tools/stage1_render_check.pyのrender_full()を使い回す
-(tools/ebuz_test/render_check.pyと同じ作法)。
+"""tools/ebuz_mk2_test/ebuz_mk2_test.asm(2026-09-20、Ebuz Mk2-1
+[閉状態、添付Ebuzmkii1_64x64_2.jsonの実絵柄]でスポーン→上から中央へ
+移動→5門同時1斉発射、まだ変形しない版)のVRAM->PNGレンダリング
+スクリプト。tools/stage1_render_check.pyのrender_full()を使い回す。
 """
 import os
 import sys
@@ -12,7 +12,7 @@ sys.path.insert(0, os.path.join(REPO_ROOT, "tools"))
 
 from mini_z80asm import Assembler
 from z80emu import Z80
-from stage1_render_check import render_full  # reuse identical rendering logic
+from stage1_render_check import render_full
 
 
 def assemble():
@@ -43,37 +43,36 @@ def main():
     run_until_pc(z, sym["EBUZ2_GUARD_DONE"])
     p0 = os.path.join(HERE, "ebuz_mk2_guard.ppm")
     render_full(bytes(z.vram), p0)
-    print("guard bands only (row0=black, row20-23=white):", p0)
+    print("guard bands only:", p0)
 
     run_until_pc(z, sym["EBUZ2_ENTRY_SPAWN_DONE"])
     p1 = os.path.join(HERE, "ebuz_mk2_spawn.ppm")
     render_full(bytes(z.vram), p1)
-    print("spawned at row1 (full 7-row shape, no growth):", p1)
+    print("Mk2-1 (closed, Ebuz-like 5-row body) spawns at row1:", p1)
 
     run_until_pc(z, sym["EBUZ2_ENTRY_MOVE_DONE"])
     p2 = os.path.join(HERE, "ebuz_mk2_centered.ppm")
     render_full(bytes(z.vram), p2)
-    print("centered (row_top=9):", p2)
+    print("centered (row_top=9), still Mk2-1, no deformation:", p2)
 
     run_until_pc(z, sym["EBUZ2_VOLLEY_DONE"])
     p3 = os.path.join(HERE, "ebuz_mk2_volley.ppm")
     render_full(bytes(z.vram), p3)
-    print("volley fired (5 bullets, one per port, simultaneous, fixed rows):", p3)
+    print("all 5 rows fire simultaneously (Ebuz's 1 shot -> 5):", p3)
 
-    for i, ticks in enumerate([10, 20]):
-        for _ in range(ticks):
-            z.step()
-            run_until_pc(z, sym["EBUZ2_FRAME_TICK"])
-        p = os.path.join(HERE, f"ebuz_mk2_flight_{i}.ppm")
-        render_full(bytes(z.vram), p)
-        print(f"bullets in flight, snapshot {i}:", p)
+    for _ in range(15):
+        z.step()
+        run_until_pc(z, sym["EBUZ2_FRAME_TICK"])
+    p4 = os.path.join(HERE, "ebuz_mk2_flight.ppm")
+    render_full(bytes(z.vram), p4)
+    print("bullets in flight:", p4)
 
     for _ in range(60):
         z.step()
         run_until_pc(z, sym["EBUZ2_FRAME_TICK"])
-    p4 = os.path.join(HERE, "ebuz_mk2_idle.ppm")
-    render_full(bytes(z.vram), p4)
-    print("well after volley: all bullets clipped off-screen, body untouched:", p4)
+    p5 = os.path.join(HERE, "ebuz_mk2_idle.ppm")
+    render_full(bytes(z.vram), p5)
+    print("well after volley: bullets clipped off-screen, body untouched:", p5)
 
 
 if __name__ == "__main__":

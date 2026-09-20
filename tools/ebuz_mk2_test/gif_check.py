@@ -1,8 +1,7 @@
-"""tools/ebuz_mk2_test/ebuz_mk2_test.asm(2026-09-20、無印Ebuzと全く
-同じ弾シーケンスに統一した版)の一連の流れを、実時間(T-states換算)
-キャプション付きのアニメーションGIFとして可視化する。
-tools/ebuz_test/gif_check.pyと全く同じ作法(render_full()の出力を
-3倍拡大+タイムスタンプ焼き込み)。
+"""tools/ebuz_mk2_test/ebuz_mk2_test.asm(2026-09-20、Ebuz Mk2-1
+[閉状態]でスポーン→上から中央へ移動→5門同時1斉発射版)の一連の流れを
+実時間(T-states換算)キャプション付きのアニメーションGIFとして可視化
+する。tools/ebuz_test/gif_check.pyと全く同じ作法。
 """
 import os
 import sys
@@ -68,27 +67,27 @@ def main():
         durations.append(dur)
 
     run_until_pc(z, sym["EBUZ2_GUARD_DONE"])
-    add("guard bands painted (row0=black, row20-23=white) - permanent, never touched again", 1200)
+    add("guard bands painted (row0=black, row20-23=white)", 1200)
 
     run_until_pc(z, sym["EBUZ2_ENTRY_SPAWN_DONE"])
-    add("spawn: full 7-row body appears at row1 (from above)", 900)
+    add("Ebuz Mk2-1 (closed, Ebuz-like 5-row body) spawns at row1", 900)
 
     run_until_pc(z, sym["EBUZ2_ENTRY_MOVE_DONE"])
-    add("reached center (row_top=9), shape unchanged throughout", 700)
+    add("descended to center (row9), still Mk2-1, no deformation", 700)
 
     run_until_pc(z, sym["EBUZ2_VOLLEY_DONE"])
-    add("all 5 ports fire simultaneously, each from its own fixed row (like Ebuz's bullets)", 900)
+    add("all 5 body rows fire simultaneously (Ebuz's 1 shot -> 5)", 900)
 
     for i in range(6):
         for _ in range(5):
             z.step()
             run_until_pc(z, sym["EBUZ2_FRAME_TICK"])
-        add("bullets flying straight, one row each, no stray tiles anywhere else", 350)
+        add("bullets flying straight", 350)
 
     for _ in range(40):
         z.step()
         run_until_pc(z, sym["EBUZ2_FRAME_TICK"])
-    add("all 5 bullets clipped off-screen cleanly - body untouched, step ends here", 1200)
+    add("all bullets clipped off-screen - body untouched, step ends here", 1200)
 
     out_path = os.path.join(HERE, "ebuz_mk2_timeline.gif")
     frames[0].save(
