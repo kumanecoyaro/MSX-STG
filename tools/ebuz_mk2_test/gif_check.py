@@ -1,11 +1,13 @@
 """tools/ebuz_mk2_test/ebuz_mk2_test.asm(2026-09-20、Ebuz Mk2-1[閉状態]
 が「揃うまで下にシフトする」方式で登場(2倍速)→中央で5門1斉発射→
-リコイル(1セル右へ→戻る)→Mk2-2[開状態、7行]へ変形→中央発射→内側2門→
-外側2門の順に間隔を空けて発射、以後は内側2門と外側2門が交互発射しつつ
-本体が上下に往復(中央→下端→上端→中央の1周)、1周完了で上下動・交互
-連射とも停止し、15Tick後に中央から1発発射、その後シーケンス全体が
-無限にループし続ける、という版)の一連の流れを実時間(T-states
-換算)キャプション付きのアニメーションGIFとして可視化する。
+リコイル(1セル右へ→戻る)→Mk2-2[開状態、7行]へ変形→内側2門→外側2門の
+順に間隔を空けて発射(サウンド付き)、以後は内側2門と外側2門が交互発射
+(サウンド付き)しつつ本体が上下に往復(中央→下端→上端→中央の1周)、
+1周完了で上下動・交互連射とも停止し、15Tick後に中央から「レーザー」
+(繋がった状態で瞬時に左端へ到達→発射位置側から順に消える)を発射、
+その後シーケンス全体が無限にループし続ける、という版)の一連の流れを
+実時間(T-states換算)キャプション付きのアニメーションGIFとして
+可視化する。
 """
 import os
 import sys
@@ -99,14 +101,13 @@ def main():
     run_until_pc(z, sym["EBUZ2_TRANSFORM_DONE"])
     add("transformed to Mk2-2 (open state, 7 rows, 5 gun ports exposed)", 900)
 
-    run_until_pc(z, sym["EBUZ2_VOLLEY2_WAVE_C_DONE"])
-    add("2nd volley wave 1/3: center fires alone (sequential, not simultaneous)", 600)
-
+    # (2026-09-20「変形までの中央弾は削除 中央から撃つのは上下動1周後
+    # のみに変更」対応) 変形直後の中央弾は廃止、内側→外側の2ウェーブに。
     run_until_pc(z, sym["EBUZ2_VOLLEY2_WAVE_INNER_DONE"])
-    add("2nd volley wave 2/3: inner 2 ports fire together", 600)
+    add("2nd volley wave 1/2: inner 2 ports fire together (with sound)", 600)
 
     run_until_pc(z, sym["EBUZ2_VOLLEY2_DONE"])
-    add("2nd volley wave 3/3: outer 2 ports fire together", 600)
+    add("2nd volley wave 2/2: outer 2 ports fire together (with sound)", 600)
 
     # 「内2門と外2門の交互発射」: 本体固定のまま、内側/外側ペアが交代
     # 発射しつつ本体は上下に往復する。数サイクル分を見せる。
@@ -131,18 +132,23 @@ def main():
     run_until_pc(z, sym["EBUZ2_S2_STOP_SEQUENCE"])
     add("lap 1 complete (both ends visited, back to center): movement + alternating fire stop", 900)
 
+    # (2026-09-20「中央弾はレーザーに変えるんで...繋がった状態で左端
+    # まで到達して」対応)
+    run_until_pc(z, sym["EBUZ2_SOUND_FIRE"])
+    add("laser fired: connected beam reaches the left edge instantly", 700)
+
     run_until_pc(z, sym["EBUZ2_S2_LAP_SHOT_DONE"])
-    add("after 15-tick pause: single shot fired from center (end of lap 1)", 900)
+    add("laser fully retracted (erased right-to-left), end of lap 1", 900)
 
     # (2026-09-20「では以降上下動シーケンスのループ」対応)
     # 中央から1発撃って終わりではなく、この上下動シーケンス自体が
     # 無限に繰り返される。2周目が実際に始まり、同じように完了して
-    # また中央から発射されることを見せる。
+    # また中央からレーザーが発射されることを見せる。
     run_until_pc(z, sym["EBUZ2_S2_STOP_SEQUENCE"])
     add("lap 2 complete - the whole up-down sequence loops forever", 900)
 
     run_until_pc(z, sym["EBUZ2_S2_LAP_SHOT_DONE"])
-    add("after 15-tick pause: single shot fired from center (end of lap 2, and so on)", 1400)
+    add("laser fully retracted, end of lap 2 (and so on, forever)", 1400)
 
     out_path = os.path.join(HERE, "ebuz_mk2_timeline.gif")
     frames[0].save(

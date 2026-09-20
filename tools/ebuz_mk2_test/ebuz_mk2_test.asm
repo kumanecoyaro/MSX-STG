@@ -121,6 +121,15 @@ BULLET_L_CODE EQU 72
 BULLET_R_CODE EQU 73
 EBUZ2_BULLET_COLOR EQU 0B5h  ; fg=11(light yellow)/bg=5(light blue、無印Ebuzと同じ)
 
+; (2026-09-20「中央弾はレーザーに変えるんで...レーザーは添付ファイルの
+; 16x8のペアで」対応) 添付EbuzIIBeam_16x16.json(fg=7/bg=5)は実際には
+; 上半分16x8のみに絵柄があり(下半分16x8は全て0)、これを既存の弾と
+; 同じ「左右8x8の2タイル1組」規約で切り出す。専用の新規カラーグループ
+; (group10、既存のbody[group8]・bullet[group9]のいずれとも別)を使用。
+LASER_L_CODE EQU 80
+LASER_R_CODE EQU 81
+EBUZ2_LASER_COLOR EQU 075h  ; fg=7(cyan)/bg=5(light blue)
+
 ; --- ガードバンド専用のコード・色(2026-09-20新設) ---
 ; row0とrow20-23は本編で実際に使用する領域のため、本体・弾は絶対に
 ; 描画してはならない。違反が起きれば見た目で即座に分かるよう、他の
@@ -395,6 +404,16 @@ EBUZ2_S2_MOVE_REACHED_MIN EQU 0F18Dh  ; 1 byte
 ; 新設する。
 EBUZ2_TICK_COUNTER EQU 0F18Eh  ; 1 byte: デューティゲート用の毎tick+1カウンタ
 EBUZ2_SND_TIMER     EQU 0F18Fh  ; 1 byte: 発射音の残りenvelopeレベル(0=無音)
+
+; (2026-09-20「中央弾はレーザーに変えるんで...繋がった状態で左端まで
+; 到達して その後右から順に消すように」対応) 中央から発射する弾を、
+; 発射時点で列0〜21(FIRE_COL)を一括して繋げて埋める「レーザー」へ
+; 変更。列2つ(L+R)を1ユニットとして0-1,2-3,...,20-21の計11ユニット、
+; 発射時に一括描画し、以後1tickに1ユニットずつ右側(発射位置側、col
+; 20-21)から順に消していく。
+EBUZ2_LASER_ACT EQU 0F190h  ; 1 byte: 0=非活性/1=消去シーケンス進行中
+EBUZ2_LASER_ROW EQU 0F191h  ; 1 byte: 発射時に固定した描画行(ROW_CUR+3)
+EBUZ2_LASER_RETRACT_UNIT EQU 0F192h  ; 1 byte: 次に消すユニット番号(10→0)
 
 ; ============================================================================
 ; 1フレーム相当のウェイト(無印Ebuzと同一の較正済みループ)。
@@ -931,31 +950,9 @@ EBUZ2_FIT_OK:
     CALL EBUZ2_WRITE2
     RET
 
-EBUZ2_FIRE_S2C_BULLET:
-    LD A,(EBUZ2_S2_C_NEXT)
-    LD B,A
-    INC A
-    CP EBUZ2_LANE_POOL_SIZE
-    JR C,EBUZ2_FS2C_OK
-    XOR A
-EBUZ2_FS2C_OK:
-    LD (EBUZ2_S2_C_NEXT),A
-    LD H,0 : LD L,B
-    LD DE,EBUZ2_S2_C_COLS
-    ADD HL,DE
-    LD A,EBUZ2_S2_FIRE_COL
-    LD (HL),A
-    PUSH HL
-    LD DE,8 : ADD HL,DE
-    LD A,(EBUZ2_S2_ROW_CUR)
-    ADD A,3
-    LD (HL),A
-    POP HL
-    LD B,A : LD C,EBUZ2_S2_FIRE_COL
-    CALL EBUZ2_CALC_ADDR
-    LD B,BULLET_L_CODE : LD C,BULLET_R_CODE
-    CALL EBUZ2_WRITE2
-    RET
+; (2026-09-20「中央弾はレーザーに変えるんで」対応によりEBUZ2_FIRE_
+; S2C_BULLET[通常弾方式の中央発射]は不要になったため削除。以後の
+; 中央発射はEBUZ2_FIRE_S2_LASERのみ[EBUZ2_S2_STOP_SEQUENCE参照])。
 
 EBUZ2_FIRE_IB_BULLET:
     LD A,(EBUZ2_S2_IB_NEXT)
@@ -1229,6 +1226,58 @@ EBUZ2_SU_WRITE:
     LD (EBUZ2_SND_TIMER),A
     RET
 
+; (2026-09-20「中央弾はレーザーに変えるんで レーザーは添付ファイルの
+; 16x8のペアで レーザーだから弾と違って繋がった状態で左端まで到達して
+; その後右から順に消すように」対応) 発射時に列0-21を一括描画する
+; (弾のように1tickずつ移動するのではなく、瞬時に繋がった状態で左端に
+; 到達済みとして描く)。IN: 呼び出し元はEBUZ2_S2_ROW_CURが確定済みの
+; 状態で呼ぶこと(中央の発射行=ROW_CUR+3を内部で計算する)。
+EBUZ2_FIRE_S2_LASER:
+    LD A,(EBUZ2_S2_ROW_CUR)
+    ADD A,3
+    LD (EBUZ2_LASER_ROW),A
+    LD B,A
+    LD C,0
+EBUZ2_FLS_LOOP:
+    CALL EBUZ2_CALC_ADDR
+    PUSH BC
+    LD B,LASER_L_CODE : LD C,LASER_R_CODE : CALL EBUZ2_WRITE2
+    POP BC
+    LD A,C : ADD A,2 : LD C,A
+    CP 22
+    JR NZ,EBUZ2_FLS_LOOP
+    LD A,10
+    LD (EBUZ2_LASER_RETRACT_UNIT),A
+    LD A,1
+    LD (EBUZ2_LASER_ACT),A
+    RET
+
+; 毎tickEBUZ2_TICKから呼ぶ: EBUZ2_LASER_ACT=1の間、発射位置側(列
+; 20-21)から順に1ユニット(2列)ずつ消していき、列0-1を消したら
+; 非活性化する。
+EBUZ2_UPDATE_S2_LASER:
+    LD A,(EBUZ2_LASER_ACT)
+    OR A
+    RET Z
+    LD A,(EBUZ2_LASER_RETRACT_UNIT)
+    ADD A,A
+    LD C,A
+    LD A,(EBUZ2_LASER_ROW)
+    LD B,A
+    CALL EBUZ2_CALC_ADDR
+    LD B,0 : LD C,0
+    CALL EBUZ2_WRITE2
+    LD A,(EBUZ2_LASER_RETRACT_UNIT)
+    OR A
+    JR Z,EBUZ2_USL_DONE
+    DEC A
+    LD (EBUZ2_LASER_RETRACT_UNIT),A
+    RET
+EBUZ2_USL_DONE:
+    XOR A
+    LD (EBUZ2_LASER_ACT),A
+    RET
+
 ; ============================================================================
 ; 1"フレーム"分の処理: 10プール(閉状態5+開状態5)の弾更新(常時)→
 ; ウェイト。開状態5プールは変形前は全スロットEBUZ2_SLOT_EMPTYのため
@@ -1261,6 +1310,7 @@ EBUZ2_TICK:
     CALL EBUZ2_UPDATE_POOL_IB
     CALL EBUZ2_UPDATE_POOL_OB
     CALL EBUZ2_UPDATE_S2_MOVE
+    CALL EBUZ2_UPDATE_S2_LASER
     CALL EBUZ2_SOUND_UPDATE
     CALL EBUZ2_FRAME_WAIT
     RET
@@ -1350,6 +1400,11 @@ EBUZ2_GUARD_DONE:
     LD HL,BULLET_R_TILE : LD DE,BULLET_R_CODE*8 : LD BC,8 : CALL LDIRVM
     LD HL,EBUZ2_BULLET_COLOR_BYTE : LD DE,COLTBL+9 : LD BC,1 : CALL LDIRVM
 
+    ; レーザー用BGタイル2枚+専用カラー(「中央弾はレーザーに変える」対応)
+    LD HL,LASER_L_TILE : LD DE,LASER_L_CODE*8 : LD BC,8 : CALL LDIRVM
+    LD HL,LASER_R_TILE : LD DE,LASER_R_CODE*8 : LD BC,8 : CALL LDIRVM
+    LD HL,EBUZ2_LASER_COLOR_BYTE : LD DE,COLTBL+10 : LD BC,1 : CALL LDIRVM
+
     ; ワークエリアの明示ゼロ初期化(RAM初期化漏れ防止)。
     XOR A
     LD (EBUZ2_NEXT_0),A
@@ -1403,6 +1458,9 @@ EBUZ2_GUARD_DONE:
     LD (EBUZ2_S2_MOVE_REACHED_MIN),A
     LD (EBUZ2_TICK_COUNTER),A
     LD (EBUZ2_SND_TIMER),A
+    LD (EBUZ2_LASER_ACT),A
+    LD (EBUZ2_LASER_ROW),A
+    LD (EBUZ2_LASER_RETRACT_UNIT),A
 
     ; --- 登場フェーズA: 「揃うまで下にシフトする」方式。新たに出現する
     ; 行(本体自身の下段から順)は常に固定の挿入位置(nt1=EBUZ2_ENTRY_
@@ -1536,27 +1594,31 @@ EBUZ2_RECOIL_DONE:
     CALL EBUZ2_ENTRY_HOLD
 EBUZ2_TRANSFORM_DONE:
 
-    ; --- 変形後の発射: 「中央から1発 内側2門から1発 外側2門から1発」
-    ; の順で書かれている通り、1斉発射(1番目の発射、5門同時)とは違い
-    ; 順次発射する - 中央→(間隔)→内側2門(左右同時)→(間隔)→
-    ; 外側2門(左右同時)の3ウェーブに分ける。「変形後弾を撃つ前の
-    ; ホールドを５Tick挿入」指示により、最初の発射(中央弾)の直前に
-    ; EBUZ2_VOLLEY2_PRE_FIRE_HOLD_TICKS(5)だけ静止ホールドを挿む。 ---
+    ; --- 変形後の発射: 当初は「中央から1発 内側2門から1発 外側2門
+    ; から1発」の順次発射だったが、「中央弾はレーザーに変えるんで
+    ; 変形までの中央弾は削除 中央から撃つのは上下動1周後のみに変更」
+    ; 対応により、変形直後の中央弾は削除。以後は内側2門→外側2門の
+    ; 2ウェーブのみ(中央弾は上下動1周完了後のレーザーとしてのみ発射
+    ; される、EBUZ2_S2_STOP_SEQUENCE参照)。「変形後弾を撃つ前の
+    ; ホールドを５Tick挿入」指示による静止ホールドは、最初に生き残る
+    ; 発射(内側2門)の直前としてそのまま維持。 ---
     LD B,EBUZ2_VOLLEY2_PRE_FIRE_HOLD_TICKS : CALL EBUZ2_HOLD_N
-    CALL EBUZ2_FIRE_S2C_BULLET
 EBUZ2_VOLLEY2_WAVE_C_DONE:
     LD B,EBUZ2_VOLLEY2_WAVE_HOLD_TICKS : CALL EBUZ2_HOLD_N
     CALL EBUZ2_FIRE_IT_BULLET
     CALL EBUZ2_FIRE_IB_BULLET
+    CALL EBUZ2_SOUND_FIRE  ; 「交互発射もサウンド追加」対応
 EBUZ2_VOLLEY2_WAVE_INNER_DONE:
     LD B,EBUZ2_VOLLEY2_WAVE_HOLD_TICKS : CALL EBUZ2_HOLD_N
     CALL EBUZ2_FIRE_OT_BULLET
     CALL EBUZ2_FIRE_OB_BULLET
+    CALL EBUZ2_SOUND_FIRE  ; 「交互発射もサウンド追加」対応
 EBUZ2_VOLLEY2_DONE:
 
 ; --- 「では次に内2門と外2門の無制限交互発射」(2026-09-20追加指示):
-; 中央弾はここまでの1発のみ(変更なし)。以後は内側ペア(IT+IB)と
-; 外側ペア(OT+OB)をEBUZ2_VOLLEY2_WAVE_HOLD_TICKS間隔で永久に交互発射
+; 中央弾は変形直後には撃たなくなった(上下動1周後のレーザーのみ)。
+; 以後は内側ペア(IT+IB)と外側ペア(OT+OB)をEBUZ2_VOLLEY2_WAVE_HOLD_
+; TICKS間隔で永久に交互発射
 ; し続ける - 無印Ebuzの継続発射(EBUZ_TOPBOTTOM_ACTIVE/EBUZ_FIRE_SIDEに
 ; よる上下交代、EBUZ_FIRE_INTERVAL=2フレ交代)と同じ「固定間隔・無条件
 ; 発射・生存チェックなし」の考え方を、内・外の2門ペア単位でそのまま
@@ -1602,6 +1664,7 @@ EBUZ2_VOLLEY2_ALT_LOOP:
     LD B,EBUZ2_VOLLEY2_WAVE_HOLD_TICKS : CALL EBUZ2_HOLD_N
     CALL EBUZ2_FIRE_IT_BULLET
     CALL EBUZ2_FIRE_IB_BULLET
+    CALL EBUZ2_SOUND_FIRE  ; 「交互発射もサウンド追加」対応
     ; --- リコイル(内側ペア): IT(row ROW_CUR+1)・IB(row ROW_CUR+5)
     ; を1セル右へずらしてから元へ戻す。リコイル演出の間(HOLD_N経由で
     ; 数tick経過する)だけEBUZ2_S2_MOVE_ACTIVEを一旦止め、演出中に
@@ -1624,6 +1687,7 @@ EBUZ2_VOLLEY2_ALT_INNER_DONE:              ; テスト用: 交互発射1周ぶ�
     LD B,EBUZ2_VOLLEY2_WAVE_HOLD_TICKS : CALL EBUZ2_HOLD_N
     CALL EBUZ2_FIRE_OT_BULLET
     CALL EBUZ2_FIRE_OB_BULLET
+    CALL EBUZ2_SOUND_FIRE  ; 「交互発射もサウンド追加」対応
     ; --- リコイル(外側ペア): OT(row ROW_CUR)・OB(row ROW_CUR+6)
     ; を1セル右へずらしてから元へ戻す(同じ理由で上下移動を一時停止)。 ---
     XOR A : LD (EBUZ2_S2_MOVE_ACTIVE),A
@@ -1647,7 +1711,7 @@ EBUZ2_VOLLEY2_ALT_OUTER_DONE:              ; テスト用: 交互発射1周ぶ�
 ; したら、無制限交互発射のループ自体もここで抜けて停止する。
 EBUZ2_S2_STOP_SEQUENCE:
     LD B,15 : CALL EBUZ2_HOLD_N
-    CALL EBUZ2_FIRE_S2C_BULLET
+    CALL EBUZ2_FIRE_S2_LASER  ; 「中央弾はレーザーに変える」対応
     CALL EBUZ2_SOUND_FIRE
     ; --- リコイル(中央、「では中央発射のリコイル追加」対応):
     ; center row(ROW_CUR+3)を1セル右へずらしてから元へ戻す。この時点で
@@ -1689,6 +1753,9 @@ EBUZ2_COLOR_BYTE:
 EBUZ2_BULLET_COLOR_BYTE:
     DB EBUZ2_BULLET_COLOR
 
+EBUZ2_LASER_COLOR_BYTE:
+    DB EBUZ2_LASER_COLOR
+
 GUARD_BLACK_COLOR_BYTE:
     DB GUARD_BLACK_COLOR
 
@@ -1711,3 +1778,10 @@ BULLET_L_TILE:
     DB 0,0,127,255,255,127,0,0
 BULLET_R_TILE:
     DB 0,0,254,255,255,254,0,0
+
+; レーザーの8x8タイル2枚(添付EbuzIIBeam_16x16.jsonの上半分16x8を
+; 左右8x8に切り出したもの、Pythonでビット単位抽出・bit7=左端列)。
+LASER_L_TILE:
+    DB 0,128,197,111,57,20,32,16
+LASER_R_TILE:
+    DB 33,67,166,28,136,224,36,16

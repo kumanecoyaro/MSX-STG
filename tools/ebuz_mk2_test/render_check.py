@@ -1,11 +1,13 @@
 """tools/ebuz_mk2_test/ebuz_mk2_test.asm(2026-09-20、Ebuz Mk2-1[閉状態]
 が「揃うまで下にシフトする」方式で登場(2倍速)→中央で5門1斉発射→
-リコイル(1セル右へ→戻る)→Mk2-2[開状態、7行]へ変形→中央発射→内側2門→
-外側2門の順に間隔を空けて発射、以後は内側2門と外側2門が交互発射しつつ
-本体が上下に往復(中央→下端→上端→中央の1周)、1周完了で上下動・交互
-連射とも停止し、15Tick後に中央から1発発射、その後シーケンス全体が
-無限にループし続ける、という版)のVRAM->PNGレンダリングスクリプト。
-tools/stage1_render_check.pyのrender_full()を使い回す。
+リコイル(1セル右へ→戻る)→Mk2-2[開状態、7行]へ変形→内側2門→外側2門の
+順に間隔を空けて発射(サウンド付き)、以後は内側2門と外側2門が交互発射
+(サウンド付き)しつつ本体が上下に往復(中央→下端→上端→中央の1周)、
+1周完了で上下動・交互連射とも停止し、15Tick後に中央から「レーザー」
+(繋がった状態で瞬時に左端へ到達→発射位置側から順に消える)を発射、
+その後シーケンス全体が無限にループし続ける、という版)のVRAM->PNG
+レンダリングスクリプト。tools/stage1_render_check.pyのrender_full()を
+使い回す。
 """
 import os
 import sys
@@ -83,20 +85,18 @@ def main():
     render_full(bytes(z.vram), p3c)
     print("transformed to Mk2-2 (open state, 7 rows):", p3c)
 
-    run_until_pc(z, sym["EBUZ2_VOLLEY2_WAVE_C_DONE"])
-    p3d1 = os.path.join(HERE, "ebuz_mk2_volley2_center.ppm")
-    render_full(bytes(z.vram), p3d1)
-    print("2nd volley wave 1/3: center fires alone:", p3d1)
-
+    # (2026-09-20「変形までの中央弾は削除 中央から撃つのは上下動1周後
+    # のみに変更」対応) 変形直後の中央弾は廃止、以後は内側→外側の
+    # 2ウェーブのみ(中央発射は本体が1周した後のレーザーとしてのみ発生)。
     run_until_pc(z, sym["EBUZ2_VOLLEY2_WAVE_INNER_DONE"])
     p3d2 = os.path.join(HERE, "ebuz_mk2_volley2_inner.ppm")
     render_full(bytes(z.vram), p3d2)
-    print("2nd volley wave 2/3: inner 2 ports fire together:", p3d2)
+    print("2nd volley wave 1/2: inner 2 ports fire together:", p3d2)
 
     run_until_pc(z, sym["EBUZ2_VOLLEY2_DONE"])
     p3d = os.path.join(HERE, "ebuz_mk2_volley2.ppm")
     render_full(bytes(z.vram), p3d)
-    print("2nd volley wave 3/3: outer 2 ports fire together:", p3d)
+    print("2nd volley wave 2/2: outer 2 ports fire together:", p3d)
 
     # 「内2門と外2門の交互発射」: 本体固定のまま内側/外側ペアが交代
     # 発射しつつ本体は上下に往復する(1往復するまで)。その2巡目
@@ -126,10 +126,18 @@ def main():
     render_full(bytes(z.vram), p5)
     print("lap 1 complete (both ends visited, back to center): movement+fire stop:", p5)
 
+    # (2026-09-20「中央弾はレーザーに変えるんで...繋がった状態で左端
+    # まで到達して」対応) 発射直後、レーザーが列0-21を一括して繋がった
+    # 状態を確認。
+    run_until_pc(z, sym["EBUZ2_SOUND_FIRE"])
+    p5b = os.path.join(HERE, "ebuz_mk2_laser_extended.ppm")
+    render_full(bytes(z.vram), p5b)
+    print("laser fired: connected beam reaches the left edge instantly:", p5b)
+
     run_until_pc(z, sym["EBUZ2_S2_LAP_SHOT_DONE"])
     p6 = os.path.join(HERE, "ebuz_mk2_final_shot.ppm")
     render_full(bytes(z.vram), p6)
-    print("after 15-tick pause: single shot fired from center (end of lap 1):", p6)
+    print("laser fully retracted (erased right-to-left), end of lap 1:", p6)
 
     # (2026-09-20「では以降上下動シーケンスのループ」対応) 中央から
     # 1発撃って終わりではなく、シーケンス自体が無限に繰り返される。
@@ -142,7 +150,7 @@ def main():
     run_until_pc(z, sym["EBUZ2_S2_LAP_SHOT_DONE"])
     p8 = os.path.join(HERE, "ebuz_mk2_lap2_shot.ppm")
     render_full(bytes(z.vram), p8)
-    print("after 15-tick pause: single shot fired from center (end of lap 2, and so on):", p8)
+    print("laser fully retracted, end of lap 2 (and so on, forever):", p8)
 
 
 if __name__ == "__main__":
