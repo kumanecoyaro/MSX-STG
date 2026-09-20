@@ -104,6 +104,8 @@ STACKTOP EQU 0F380h
 NAMTBL   EQU 1800h
 COLTBL   EQU 2000h
 ; 本ファイルはHWスプライトを一切使わずBG(name table)のみで完結する。
+PSG_ADDR EQU 0A0h  ; 無印Ebuz(src/CYBER SHMUP.asm)と同じ標準PSGポート
+PSG_DATA EQU 0A1h
 
 ; ============================================================================
 ; BGパターンコード・カラー(無印Ebuzと同じ割り当て番号をそのまま再利用 -
@@ -384,6 +386,16 @@ EBUZ2_S2_MOVE_ROUNDTRIP_DONE EQU 0F18Ch  ; 1 byte: 1=1周完了・上下動/
                                           ; 交互連射とも停止済み
 EBUZ2_S2_MOVE_REACHED_MIN EQU 0F18Dh  ; 1 byte
 
+; (2026-09-20「では中央発射のリコイル追加 発射音追加 Ebuzと同じで
+; いい」対応) 発射音は無印Ebuz(src/CYBER SHMUP.asm)のSOUND_EBUZ_FIRE
+; (channel Aのノイズジェネレータ、周期14、SND_TIMER=15から毎tick-1の
+; 直線減衰、TICK AND 1によるデューティゲート)と全く同じ構造を
+; このテストROM専用に移植する。このファイルには元々PSG関連のコードが
+; 一切無かったため、最小限のTICKカウンタ・SND_TIMER・R8書き込みを
+; 新設する。
+EBUZ2_TICK_COUNTER EQU 0F18Eh  ; 1 byte: デューティゲート用の毎tick+1カウンタ
+EBUZ2_SND_TIMER     EQU 0F18Fh  ; 1 byte: 発射音の残りenvelopeレベル(0=無音)
+
 ; ============================================================================
 ; 1フレーム相当のウェイト(無印Ebuzと同一の較正済みループ)。
 ; ============================================================================
@@ -503,6 +515,16 @@ EBUZ2_ROW_S2_INNER_REST:
     DB 0,EBUZ2_CODE_A,EBUZ2_CODE_B,EBUZ2_CODE_C,EBUZ2_CODE_C,0
 EBUZ2_ROW_S2_INNER_RECOIL:
     DB 0,0,EBUZ2_CODE_A,EBUZ2_CODE_B,EBUZ2_CODE_C,EBUZ2_CODE_C
+
+; (2026-09-20「では中央発射のリコイル追加」対応) 中央(EBUZ2_ROW_S2_3)
+; は元々5byteとも全て埋まっている(A,B,C,D,D、leading 0が無い)ため、
+; OUTER/INNERと同じ「6byte化してcol28を予備セルに」方式で1セル右へ
+; シフトする。REST=通常位置+末尾に空セルを1つ追加しただけ、RECOIL=
+; 中身を丸ごと1セル右へずらし先頭(col23)を空にしたもの。
+EBUZ2_ROW_S2_CENTER_REST:
+    DB EBUZ2_CODE_A,EBUZ2_CODE_B,EBUZ2_CODE_C,EBUZ2_CODE_D,EBUZ2_CODE_D,0
+EBUZ2_ROW_S2_CENTER_RECOIL:
+    DB 0,EBUZ2_CODE_A,EBUZ2_CODE_B,EBUZ2_CODE_C,EBUZ2_CODE_D,EBUZ2_CODE_D
 
 ; ============================================================================
 ; 汎用アドレス計算: Input B=nametable行番号(0-23)、C=列番号(0-31)。
@@ -1166,6 +1188,47 @@ EBUZ2_S2_RESTORE_MOVE_ACTIVE:
     LD (EBUZ2_S2_MOVE_ACTIVE),A
     RET
 
+; (2026-09-20「では中央発射のリコイル追加 発射音追加 Ebuzと同じで
+; いい」対応) 発射音: 無印Ebuz(src/CYBER SHMUP.asm)のSOUND_EBUZ_FIRE
+; と全く同じ構造(channel Aのノイズ周期=14、SND_TIMER=15からの直線
+; 減衰、TICK最下位ビットによる1:1デューティゲート)をこのファイル専用に
+; 移植。
+EBUZ2_SOUND_FIRE:
+    DI
+    LD A,6 : OUT (PSG_ADDR),A
+    LD A,14 : OUT (PSG_DATA),A
+    EI
+    LD A,15
+    LD (EBUZ2_SND_TIMER),A
+    RET
+
+; 毎tickEBUZ2_TICKから呼ぶ: デューティゲート用カウンタを進め、R8
+; (channel A音量)へその時点の値を書き込み、SND_TIMERを1減衰させる。
+; 無印EbuzのCALC_NOISE_GATE_VOLUME+SOUND_UPDATE(ノイズ分岐のみ)と
+; 同じ考え方。
+EBUZ2_SOUND_UPDATE:
+    LD A,(EBUZ2_TICK_COUNTER)
+    INC A
+    LD (EBUZ2_TICK_COUNTER),A
+    AND 1
+    JR NZ,EBUZ2_SU_SILENT
+    LD A,(EBUZ2_SND_TIMER)
+    JR EBUZ2_SU_WRITE
+EBUZ2_SU_SILENT:
+    XOR A
+EBUZ2_SU_WRITE:
+    LD B,A
+    DI
+    LD A,8 : OUT (PSG_ADDR),A
+    LD A,B : OUT (PSG_DATA),A
+    EI
+    LD A,(EBUZ2_SND_TIMER)
+    OR A
+    RET Z
+    DEC A
+    LD (EBUZ2_SND_TIMER),A
+    RET
+
 ; ============================================================================
 ; 1"フレーム"分の処理: 10プール(閉状態5+開状態5)の弾更新(常時)→
 ; ウェイト。開状態5プールは変形前は全スロットEBUZ2_SLOT_EMPTYのため
@@ -1198,6 +1261,7 @@ EBUZ2_TICK:
     CALL EBUZ2_UPDATE_POOL_IB
     CALL EBUZ2_UPDATE_POOL_OB
     CALL EBUZ2_UPDATE_S2_MOVE
+    CALL EBUZ2_SOUND_UPDATE
     CALL EBUZ2_FRAME_WAIT
     RET
 
@@ -1247,6 +1311,17 @@ INIT:
     ; 出現し続ける」報告の直接原因 - 真の対策は本ファイルの作業RAM
     ; 定義(後方、EBUZ2_BODY_ROW等)を実測で無衝突と確認できた0F100h台
     ; へ全面移設したこと(詳細はそちらのコメント参照)。
+
+    ; --- PSG R7ミキサー設定(2026-09-20「発射音追加 Ebuzと同じでいい」
+    ; 対応): channel Aのノイズジェネレータのみ有効化(tone A/B/C・
+    ; noise B/Cは無効のまま)。無印Ebuz(src/CYBER SHMUP.asm)と同じ
+    ; DI/EIでOUTペアを保護する作法(このファイルは前述の通りBIOS内部の
+    ; EIにより実質常時割り込み許可状態のため必須)。ポートA/B方向ビット
+    ; (bit6-7='10')も同じく安全のため踏襲。 ---
+    DI
+    LD A,7 : OUT (PSG_ADDR),A
+    LD A,0B7h : OUT (PSG_DATA),A
+    EI
 
     ; --- ガードバンド(row0=ブラック、row20-23=ホワイト)を最初に
     ; 塗りつぶす。本体・弾は以後絶対にこの5行へ描画しない。 ---
@@ -1326,6 +1401,8 @@ EBUZ2_GUARD_DONE:
     LD (EBUZ2_S2_MOVE_REACHED_MAX),A
     LD (EBUZ2_S2_MOVE_ROUNDTRIP_DONE),A
     LD (EBUZ2_S2_MOVE_REACHED_MIN),A
+    LD (EBUZ2_TICK_COUNTER),A
+    LD (EBUZ2_SND_TIMER),A
 
     ; --- 登場フェーズA: 「揃うまで下にシフトする」方式。新たに出現する
     ; 行(本体自身の下段から順)は常に固定の挿入位置(nt1=EBUZ2_ENTRY_
@@ -1571,7 +1648,18 @@ EBUZ2_VOLLEY2_ALT_OUTER_DONE:              ; テスト用: 交互発射1周ぶ�
 EBUZ2_S2_STOP_SEQUENCE:
     LD B,15 : CALL EBUZ2_HOLD_N
     CALL EBUZ2_FIRE_S2C_BULLET
-EBUZ2_S2_LAP_SHOT_DONE:                    ; テスト用: 1周分の中央1発発射完了地点
+    CALL EBUZ2_SOUND_FIRE
+    ; --- リコイル(中央、「では中央発射のリコイル追加」対応):
+    ; center row(ROW_CUR+3)を1セル右へずらしてから元へ戻す。この時点で
+    ; 上下動は既に停止済み(MOVE_ACTIVE=0)のため、内側/外側リコイルの
+    ; ような一時停止・復帰処理は不要。 ---
+    LD A,(EBUZ2_S2_ROW_CUR) : ADD A,3 : LD B,A : LD C,23 : CALL EBUZ2_CALC_ADDR
+    PUSH HL : LD HL,EBUZ2_ROW_S2_CENTER_RECOIL : POP DE : LD BC,6 : CALL LDIRVM
+    LD B,EBUZ2_RECOIL_HOLD_TICKS : CALL EBUZ2_HOLD_N
+    LD A,(EBUZ2_S2_ROW_CUR) : ADD A,3 : LD B,A : LD C,23 : CALL EBUZ2_CALC_ADDR
+    PUSH HL : LD HL,EBUZ2_ROW_S2_CENTER_REST : POP DE : LD BC,6 : CALL LDIRVM
+    LD B,EBUZ2_RECOIL_HOLD_TICKS : CALL EBUZ2_HOLD_N
+EBUZ2_S2_LAP_SHOT_DONE:                    ; テスト用: 1周分の中央1発発射+リコイル完了地点
 ; (実機フィードバック対応「中央の弾撃ったあとのホールド消えてんじゃ
 ; ねえか」) ループ化した際、発射後すぐ次の周(上下動再開)へ移って
 ; いたため、発射前と対称のホールドが無くなっていた。発射後にも同じ
