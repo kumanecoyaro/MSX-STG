@@ -1565,24 +1565,30 @@ EBUZ2_VOLLEY2_ALT_OUTER_DONE:              ; テスト用: 交互発射1周ぶ�
     JP EBUZ2_VOLLEY2_ALT_LOOP  ; ループ本体が長くなりJR射程(-128〜127)を超えたためJPに変更
 
 ; (2026-09-20「では一往復したら上下動停止して 交互連射も停止 15Tick
-; 停止したら 中央から1発発射」対応) 1往復完了(EBUZ2_S2_MOVE_ROUNDTRIP_
+; 停止したら 中央から1発発射」対応) 1周完了(EBUZ2_S2_MOVE_ROUNDTRIP_
 ; DONE=1、上下動自体はEBUZ2_UPDATE_S2_MOVE側で既に停止済み)を検知
 ; したら、無制限交互発射のループ自体もここで抜けて停止する。
 EBUZ2_S2_STOP_SEQUENCE:
     LD B,15 : CALL EBUZ2_HOLD_N
     CALL EBUZ2_FIRE_S2C_BULLET
-; (実機フィードバック対応「この状態でフリーズしてる わざと止めてん
-; のか? 弾はちゃんと左まで到達させろ」) 当初はJP自己ループで完全に
-; 静止させていたが、これだとEBUZ2_TICK(10プールの弾更新)自体が
-; 二度と呼ばれなくなり、この時点でまだ画面上に残っている飛行中の弾
-; (最後に撃った1発を含む)が左端(列0)まで到達する前にその場で
-; 凍結してしまっていた。新規の発射・本体の上下移動は起こさず
-; (EBUZ2_S2_MOVE_ACTIVE=0のまま、以後どのFIRE_*も呼ばれない)、
-; 既存の弾を最後まで流し切るためだけにEBUZ2_TICKを永久に呼び続ける
-; ループへ変更する。
-EBUZ2_S2_FINAL_DONE:                       ; テスト用: 最終停止・中央1発発射完了地点
-    CALL EBUZ2_TICK
-    JP EBUZ2_S2_FINAL_DONE                 ; 新規発射・移動は起こさず、既存弾の飛行のみ継続
+EBUZ2_S2_LAP_SHOT_DONE:                    ; テスト用: 1周分の中央1発発射完了地点
+; (2026-09-20「では以降上下動シーケンスのループ」対応) 中央から1発
+; 撃ったら終わりではなく、上下動シーケンス(中央出発→下端→上端→
+; 中央で停止→15Tick待ち→中央から1発発射)自体を丸ごと無限に繰り返す。
+; 1周ぶんの状態(方向・カウントダウン・両端到達フラグ・完了フラグ)を
+; 全てリセットしてから、無制限交互発射ループの先頭
+; (EBUZ2_VOLLEY2_ALT_LOOP)へ戻る。ボディの位置(中央)は変えない
+; (次の周もワープせずその場から下方向へ再出発する)。
+    XOR A
+    LD (EBUZ2_S2_MOVE_DIR),A
+    LD (EBUZ2_S2_MOVE_REACHED_MAX),A
+    LD (EBUZ2_S2_MOVE_REACHED_MIN),A
+    LD (EBUZ2_S2_MOVE_ROUNDTRIP_DONE),A
+    LD A,EBUZ2_S2_MOVE_INTERVAL_TICKS
+    LD (EBUZ2_S2_MOVE_COUNTDOWN),A
+    LD A,1
+    LD (EBUZ2_S2_MOVE_ACTIVE),A
+    JP EBUZ2_VOLLEY2_ALT_LOOP
 
 EBUZ2_COLOR_BYTE:
     DB EBUZ2_COLOR

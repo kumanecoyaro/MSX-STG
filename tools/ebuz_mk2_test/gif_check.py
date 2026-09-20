@@ -2,8 +2,9 @@
 が「揃うまで下にシフトする」方式で登場(2倍速)→中央で5門1斉発射→
 リコイル(1セル右へ→戻る)→Mk2-2[開状態、7行]へ変形→中央発射→内側2門→
 外側2門の順に間隔を空けて発射、以後は内側2門と外側2門が交互発射しつつ
-本体が上下に往復、1往復完了で上下動・交互連射とも停止し、15Tick後に
-中央から1発発射して静止する、という版)の一連の流れを実時間(T-states
+本体が上下に往復(中央→下端→上端→中央の1周)、1周完了で上下動・交互
+連射とも停止し、15Tick後に中央から1発発射、その後シーケンス全体が
+無限にループし続ける、という版)の一連の流れを実時間(T-states
 換算)キャプション付きのアニメーションGIFとして可視化する。
 """
 import os
@@ -122,24 +123,26 @@ def main():
 
     # (2026-09-20「では一往復したら上下動停止して 交互連射も停止
     # 15Tick停止したら 中央から1発発射」対応、続けて「一周なんだから
-    # 中央まで戻ったら停止だろうがよ」訂正) 本体が中央から下方向へ
-    # 出発しMAX_ROWで折り返して中央に戻ってくるまで進め、上下動・
-    # 交互連射の両方が停止する瞬間を見せる。
+    # 中央まで戻ったら停止だろうがよ」→さらに「お前は一周の意味も
+    # わからんのか 下に動いてRow13まで行きRow0まで到達してまた中央に
+    # 来たら停止して発射だろうが」と2度訂正) 本体が中央から下方向へ
+    # 出発し下端(MAX_ROW)→上端(MIN_ROW)の両方を経由してから中央に
+    # 戻ってくるまで進め、上下動・交互連射の両方が停止する瞬間を見せる。
     run_until_pc(z, sym["EBUZ2_S2_STOP_SEQUENCE"])
-    add("1 lap complete (back to center): up-down movement AND alternating fire both stop", 900)
+    add("lap 1 complete (both ends visited, back to center): movement + alternating fire stop", 900)
 
-    run_until_pc(z, sym["EBUZ2_S2_FINAL_DONE"])
-    add("after 15-tick pause: single shot fired from center", 900)
+    run_until_pc(z, sym["EBUZ2_S2_LAP_SHOT_DONE"])
+    add("after 15-tick pause: single shot fired from center (end of lap 1)", 900)
 
-    # (実機フィードバック対応「弾はちゃんと左まで到達させろ」)
-    # 停止後もEBUZ2_TICK(弾更新)自体は呼び続けており、新規発射・
-    # 本体移動だけが起こらない。飛行中の弾が全て列0まで到達して
-    # 消えるまで進め、最終的に本体だけが中央に残ることを見せる。
-    z.step()
-    for _ in range(60):
-        run_until_pc(z, sym["EBUZ2_S2_FINAL_DONE"])
-        z.step()
-    add("all remaining bullets reach the left edge and clear - body stays put, no freeze", 1400)
+    # (2026-09-20「では以降上下動シーケンスのループ」対応)
+    # 中央から1発撃って終わりではなく、この上下動シーケンス自体が
+    # 無限に繰り返される。2周目が実際に始まり、同じように完了して
+    # また中央から発射されることを見せる。
+    run_until_pc(z, sym["EBUZ2_S2_STOP_SEQUENCE"])
+    add("lap 2 complete - the whole up-down sequence loops forever", 900)
+
+    run_until_pc(z, sym["EBUZ2_S2_LAP_SHOT_DONE"])
+    add("after 15-tick pause: single shot fired from center (end of lap 2, and so on)", 1400)
 
     out_path = os.path.join(HERE, "ebuz_mk2_timeline.gif")
     frames[0].save(

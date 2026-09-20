@@ -2,8 +2,9 @@
 が「揃うまで下にシフトする」方式で登場(2倍速)→中央で5門1斉発射→
 リコイル(1セル右へ→戻る)→Mk2-2[開状態、7行]へ変形→中央発射→内側2門→
 外側2門の順に間隔を空けて発射、以後は内側2門と外側2門が交互発射しつつ
-本体が上下に往復、1往復完了で上下動・交互連射とも停止し、15Tick後に
-中央から1発発射して静止する、という版)のVRAM->PNGレンダリングスクリプト。
+本体が上下に往復(中央→下端→上端→中央の1周)、1周完了で上下動・交互
+連射とも停止し、15Tick後に中央から1発発射、その後シーケンス全体が
+無限にループし続ける、という版)のVRAM->PNGレンダリングスクリプト。
 tools/stage1_render_check.pyのrender_full()を使い回す。
 """
 import os
@@ -118,27 +119,30 @@ def main():
     print("still oscillating/firing, body drifting up/down, old bullets unaffected:", p4)
 
     # (2026-09-20「では一往復したら上下動停止して 交互連射も停止
-    # 15Tick停止したら 中央から1発発射」対応)
+    # 15Tick停止したら 中央から1発発射」対応、2度の訂正を経て最終的に
+    # 「中央→下端→上端→中央」を1周とする実装に確定)
     run_until_pc(z, sym["EBUZ2_S2_STOP_SEQUENCE"])
     p5 = os.path.join(HERE, "ebuz_mk2_roundtrip_stop.ppm")
     render_full(bytes(z.vram), p5)
-    print("1 round-trip complete: up-down movement AND alternating fire both stop:", p5)
+    print("lap 1 complete (both ends visited, back to center): movement+fire stop:", p5)
 
-    run_until_pc(z, sym["EBUZ2_S2_FINAL_DONE"])
+    run_until_pc(z, sym["EBUZ2_S2_LAP_SHOT_DONE"])
     p6 = os.path.join(HERE, "ebuz_mk2_final_shot.ppm")
     render_full(bytes(z.vram), p6)
-    print("after 15-tick pause: single shot fired from center:", p6)
+    print("after 15-tick pause: single shot fired from center (end of lap 1):", p6)
 
-    # (実機フィードバック対応「弾はちゃんと左まで到達させろ」)
-    # 停止後もEBUZ2_TICKは呼び続けており、既存の飛行中の弾は全て
-    # 列0まで到達して自然に消える。それを確認するフレーム。
-    z.step()
-    for _ in range(60):
-        run_until_pc(z, sym["EBUZ2_S2_FINAL_DONE"])
-        z.step()
-    p7 = os.path.join(HERE, "ebuz_mk2_bullets_cleared.ppm")
+    # (2026-09-20「では以降上下動シーケンスのループ」対応) 中央から
+    # 1発撃って終わりではなく、シーケンス自体が無限に繰り返される。
+    # 実際に2周目が完了し、また中央から発射されるところを確認する。
+    run_until_pc(z, sym["EBUZ2_S2_STOP_SEQUENCE"])
+    p7 = os.path.join(HERE, "ebuz_mk2_lap2_stop.ppm")
     render_full(bytes(z.vram), p7)
-    print("all remaining bullets reached the left edge and cleared, body stays put:", p7)
+    print("lap 2 complete - the whole up-down sequence loops forever:", p7)
+
+    run_until_pc(z, sym["EBUZ2_S2_LAP_SHOT_DONE"])
+    p8 = os.path.join(HERE, "ebuz_mk2_lap2_shot.ppm")
+    render_full(bytes(z.vram), p8)
+    print("after 15-tick pause: single shot fired from center (end of lap 2, and so on):", p8)
 
 
 if __name__ == "__main__":
