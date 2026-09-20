@@ -202,6 +202,7 @@ zt2 = fresh()
 boot(zt2)
 arm_ready(zt2, tick_hi=4)  # GAME_TICK=1024ちょうど、高byte=4
 zt2.wr(BOSS_STATE, 0)
+zt2.wr(sym["EBUZ2_DEFEATED"], 1)  # round136: Mk2撃破済み扱いにして実ボスへ直行させる
 call_routine(zt2, CHECK_BOSS_TRIGGER)
 check("GAME_TICK高byte=4(=1024、'1000を超えて'の閾値ちょうど)かつ全プール空"
       "ならBOSS_SPAWNが呼ばれBOSS_STATE=1になる",
@@ -246,6 +247,7 @@ z6 = fresh()
 boot(z6)
 arm_ready(z6)
 z6.wr(BOSS_STATE, 0)
+z6.wr(sym["EBUZ2_DEFEATED"], 1)  # round136: Mk2撃破済み扱いにして実ボスへ直行させる
 EBULLET_POOL = sym["EBULLET_POOL"]
 EBULLET_SLOTS = sym["EBULLET_SLOTS"]
 for i in range(EBULLET_SLOTS):
@@ -264,11 +266,28 @@ z7 = fresh()
 boot(z7)
 arm_ready(z7)
 z7.wr(BOSS_STATE, 0)
+z7.wr(sym["EBUZ2_DEFEATED"], 1)  # round136: Mk2撃破済み扱いにして実ボスへ直行させる
 call_routine(z7, CHECK_BOSS_TRIGGER)
 check("発火時、BOSS_PHASEも1にセットされる(BOSS_SPAWN本体まで到達した証拠)",
       z7.rd(sym["BOSS_PHASE"]) == 1)
 check("発火時、BOSS_ROW/BOSS_COLも0にリセットされる",
       z7.rd(sym["BOSS_ROW"]) == 0 and z7.rd(sym["BOSS_COL"]) == 0)
+
+# ============================================================
+# 6b. round136(Ebuz Mk2追加): EBUZ2_DEFEATED=0(未撃破)のまま発火すると、
+#     実ボスではなくMk2(TRIGGER_EBUZ2_ENCOUNTER)が先にスポーンし、
+#     BOSS_STATEは0のまま据え置かれる。
+# ============================================================
+z7b = fresh()
+boot(z7b)
+arm_ready(z7b)
+z7b.wr(BOSS_STATE, 0)
+call_routine(z7b, CHECK_BOSS_TRIGGER)
+check("EBUZ2_DEFEATED=0のまま発火すると、実ボスではなくMk2が先にスポーンする"
+      "(EBUZ2_ACT=1・HP=EBUZ2_HP_INIT)",
+      z7b.rd(sym["EBUZ2_ACT"]) == 1 and z7b.rd(sym["EBUZ2_HP"]) == sym["EBUZ2_HP_INIT"])
+check("...この時点ではBOSS_STATEはまだ0のまま(実ボスは出現しない)",
+      z7b.rd(BOSS_STATE) == 0)
 
 # ============================================================
 # 7. 実MAINLOOP経由: SPAWN_SCHEDULE_CHECK側の固定Tick駆動は撤去された
@@ -280,6 +299,7 @@ boot(z8)
 arm_ready(z8, tick_hi=4)
 wr16(z8, sym["SPAWN_NEXT_INDEX"], 999)  # スケジュール自体は完全に終了済み
 z8.wr(BOSS_STATE, 0)
+z8.wr(sym["EBUZ2_DEFEATED"], 1)  # round136: Mk2撃破済み扱いにして実ボスへ直行させる
 for _ in range(8):  # SKIP_G8ゲート(TICK AND 7==0)を確実に1回踏むだけの余裕
     step_frame(z8)
 check("実MAINLOOP経由でも、スケジュール完了後(SPAWN_NEXT_INDEX>=479)に"
@@ -356,6 +376,7 @@ z9 = fresh()
 boot(z9)
 arm_ready(z9)
 z9.wr(BOSS_STATE, 0)
+z9.wr(sym["EBUZ2_DEFEATED"], 1)  # round136: Mk2撃破済み扱いにして実ボスへ直行させる
 BOSS_PATTERNS = sym["BOSS_PATTERNS"]
 for i, b in enumerate(_real_boss_patterns_compressed):
     z9.wr(BOSS_PATTERNS + i, b)
@@ -392,6 +413,7 @@ z10 = fresh()
 boot(z10)
 arm_ready(z10)
 z10.wr(BOSS_STATE, 0)
+z10.wr(sym["EBUZ2_DEFEATED"], 1)  # round136: Mk2撃破済み扱いにして実ボスへ直行させる
 for i, b in enumerate(_corrupted_compressed):
     z10.wr(BOSS_PATTERNS + i, b)
 call_routine(z10, CHECK_BOSS_TRIGGER)

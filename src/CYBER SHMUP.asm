@@ -1086,6 +1086,18 @@ INIT:
     ; once their group's PXCHAR actually advances - every 8/16/32/64
     ; frames - so without this, frame 1 would render from stale/zeroed
     ; cache RAM).
+    ; round136: ROWDATA0/2/3/5はもうROMリテラルではなくRAMバッファ
+    ; (上のEQUコメント参照) - IDCACHEへ読ませる前に一度だけ内容を
+    ; 生成しておく。
+    LD HL,ROWDATA0 : LD (HL),4Dh : LD DE,ROWDATA0+1 : LD BC,127 : LDIR  ; 'M'
+    LD HL,ROWDATA2 : LD (HL),44h : LD DE,ROWDATA2+1 : LD BC,127 : LDIR  ; 'D'
+    LD HL,ROWDATA3 : LD (HL),53h : LD DE,ROWDATA3+1 : LD BC,127 : LDIR  ; 'S'
+    LD HL,ROWDATA5 : LD B,64
+RD5_FILL:
+    LD (HL),41h : INC HL   ; 'A'
+    LD (HL),42h : INC HL   ; 'B'
+    DJNZ RD5_FILL
+
     LD HL,ROWDATA0 : LD IX,IDCACHE0 : CALL REFRESH_IDCACHE_33
     LD HL,ROWDATA2 : LD IX,IDCACHE2 : CALL REFRESH_IDCACHE_33
     LD HL,ROWDATA3 : LD IX,IDCACHE3 : CALL REFRESH_IDCACHE_33
@@ -1244,6 +1256,16 @@ FILLBG_ROW0_BLACK:
     LD HL,EBUZ_COLOR_C : LD DE,200Dh : LD BC,1 : CALL LDIRVM           ; 200Dh=COLTBL+group13(104/8)
     LD HL,EBUZ_COLOR_D : LD DE,200Eh : LD BC,1 : CALL LDIRVM           ; 200Eh=COLTBL+group14(112/8)
     LD HL,EBUZ_BULLET_COLOR_BYTE : LD DE,2011h : LD BC,1 : CALL LDIRVM ; 2011h=COLTBL+group17(136/8)
+
+    ; Ebuz Mk2専用: レーザーのみ新規タイル2枚+専用カラー1組(本体・弾は
+    ; 上のEbuz本体タイルをそのまま流用、新規ロード不要 - "キャラは
+    ; レーザー以外流用で")。group18(144-151)は実プレイ長時間監視で
+    ; 空きと確認済み(EBUZ2_LASER_L/R_CODE自身のコメント参照)。
+    LD HL,EBUZ2_LASER_L_TILE : LD DE,EBUZ2_LASER_L_CODE*8 : LD BC,8 : CALL LDIRVM
+    LD HL,EBUZ2_LASER_R_TILE : LD DE,EBUZ2_LASER_R_CODE*8 : LD BC,8 : CALL LDIRVM
+    LD HL,EBUZ2_LASER_COLOR_BYTE : LD DE,2012h : LD BC,1 : CALL LDIRVM ; 2012h=COLTBL+group18(144/8)
+    XOR A : LD (EBUZ2_ACT),A   ; RAM初期化漏れ防止(follow-up#14の教訓)
+    LD (EBUZ2_DEFEATED),A
 
     ; (DIGIT_PATTERNS[digit glyphs 0-9]/MISSION_FONT_PATTERNS・COLORの
     ; 読み込みはここではなく、このINITの冒頭・CALL INIT32の直後、
@@ -2585,6 +2607,7 @@ ENEMY_SECTION_DONE:
     CALL ENEMY5_ANIM_STEP
     CALL CLOUD_UPDATE_ALL
     CALL EBUZ_UPDATE_ALL
+    CALL UPDATE_EBUZ2_ALL
     ; (2026-09-14 follow-up、"まだEbuzが敵やボス居るのにでる 出ない場合
     ; もある てことは多分また初期化してねえだろ 何回やるんだよ"):
     ; round135follow-up16はSPAWN_SCHEDULE_CHECK自体の新規ディスパッチを
@@ -2637,6 +2660,9 @@ ENEMY_SECTION_DONE:
     OR A
     JR NZ,BULLET0_ISHIT
     CALL CHECK_BULLET_VS_EBUZ
+    OR A
+    JR NZ,BULLET0_ISHIT
+    CALL CHECK_BULLET_VS_EBUZ2
     OR A
     JR NZ,BULLET0_ISHIT
     CALL CHECK_BULLET_VS_ENEMY_POOL
@@ -2723,6 +2749,9 @@ BULLET0_NEXT:
     CALL CHECK_BULLET_VS_EBUZ
     OR A
     JR NZ,BULLET1_ISHIT
+    CALL CHECK_BULLET_VS_EBUZ2
+    OR A
+    JR NZ,BULLET1_ISHIT
     CALL CHECK_BULLET_VS_ENEMY_POOL
     OR A
     JR Z,BULLET1_NOHIT
@@ -2803,6 +2832,9 @@ BULLET1_NEXT:
     OR A
     JR NZ,BULLET2_ISHIT
     CALL CHECK_BULLET_VS_EBUZ
+    OR A
+    JR NZ,BULLET2_ISHIT
+    CALL CHECK_BULLET_VS_EBUZ2
     OR A
     JR NZ,BULLET2_ISHIT
     CALL CHECK_BULLET_VS_ENEMY_POOL
@@ -5753,7 +5785,7 @@ SPAWN_SCHEDULE_CHECK:
     ; --- 完全に離れ、独立したCHECK_BOSS_TRIGGER(MAINLOOP、SKIP_G8直後)が
     ; --- 毎フレーム判定する。
     LD HL,(SPAWN_NEXT_INDEX)
-    LD DE,479
+    LD DE,345
     OR A
     SBC HL,DE
     RET NC                      ; index >= N -> schedule finished
@@ -5767,64 +5799,33 @@ SPAWN_SCHEDULE_CHECK:
     SBC HL,DE
     RET C
 
-    ; --- Enemy2スポーン(SPAWN_E2)は、AとBのどちらも稼働中なら今回は
-    ; --- 何もせず戻る(次フレームで同じ番号を再チェック)。片方でも
-    ; --- 空いていればSPAWN_E2がそちらを自動選択するので、この各
-    ; --- インデックスはもう「Aだけ待つ/Bだけ待つ」を区別しない -
-    ; --- どちらの枠が空いても即発火。インデックス番号は現在の
-    ; --- スケジュールJSON(Schedule_5.json、501エントリ)でtype=enemy2の
-    ; --- 位置そのまま(値自体は偶然、これで3世代連続で完全一致)。
-    ; --- 全て255未満の値なので、この判定だけは従来通りAの8bit比較で
-    ; --- 良いが、index>=256(H!=0)の場合に誤って同じ低位バイトへ
-    ; --- エイリアスしないよう、まずHをチェックして256以上なら丸ごと
-    ; --- スキップする(この一覧に該当する値は全て255未満のため安全)。
+    ; round136(Schedule_2_2.json、345エントリへ差し替え): Enemy2スポーン
+    ; (SPAWN_E2)はAとBのどちらも稼働中なら今回は何もせず戻る(次フレーム
+    ; で同じ番号を再チェック)。片方でも空いていればSPAWN_E2がそちらを
+    ; 自動選択するので、この各インデックスはもう「Aだけ待つ/Bだけ待つ」を
+    ; 区別しない - どちらの枠が空いても即発火。インデックス番号は新JSONで
+    ; type=enemy2の位置そのまま(全て255未満、H!=0なら丸ごとスキップ)。
     LD A,(SPAWN_NEXT_INDEX+1)
     OR A
     JR NZ,SSC_FIRE              ; index >= 256 -> can't be any of the (all <256) enemy2 waits
     LD A,(SPAWN_NEXT_INDEX)
-    CP 103 : JR Z,SSC_BUSY_E2
-    CP 111 : JR Z,SSC_BUSY_E2
-    CP 115 : JR Z,SSC_BUSY_E2
-    CP 119 : JR Z,SSC_BUSY_E2
-    CP 121 : JR Z,SSC_BUSY_E2
-    CP 150 : JR Z,SSC_BUSY_E2
-    CP 151 : JR Z,SSC_BUSY_E2
-    CP 185 : JR Z,SSC_BUSY_E2
-    CP 186 : JR Z,SSC_BUSY_E2
-    CP 187 : JR Z,SSC_BUSY_E2
-    CP 188 : JR Z,SSC_BUSY_E2
+    CP 98 : JR Z,SSC_BUSY_E2
+    CP 106 : JR Z,SSC_BUSY_E2
+    CP 110 : JR Z,SSC_BUSY_E2
+    CP 114 : JR Z,SSC_BUSY_E2
+    CP 116 : JR Z,SSC_BUSY_E2
+    CP 140 : JR Z,SSC_BUSY_E2
+    CP 141 : JR Z,SSC_BUSY_E2
+    CP 171 : JR Z,SSC_BUSY_E2
+    CP 172 : JR Z,SSC_BUSY_E2
+    CP 173 : JR Z,SSC_BUSY_E2
+    CP 174 : JR Z,SSC_BUSY_E2
     JR SSC_FIRE
 SSC_BUSY_E2:
     LD A,(E2A_ACTIVE) : OR A : JR Z,SSC_FIRE   ; A is free -> go (SPAWN_E2 will claim it)
     LD A,(E2B_ACTIVE) : OR A : RET NZ          ; both busy -> wait
 
 SSC_FIRE:
-    ; HL = current index (0-548), preserved unchanged all the way through
-    ; to whichever SPAWN_* handler gets dispatched below - CP only touches
-    ; AF, so the handlers can keep using HL directly as their own 16bit
-    ; Y/offset-table index (see SPAWN_SIMPLE/SPAWN_E2/SPAWN_E4/etc, which no
-    ; longer do "LD H,0:LD L,A" - that zero-extension is exactly what broke
-    ; for index>=256 before this fix).
-    ; 2026-09-12追記: H(0-2) の値ぶんだけブロックへ分岐する一般化構造 -
-    ; スケジュールが今後256の倍数を跨いで増えても、このCPチェーンに
-    ; もう1行足すだけで対応できる。
-    ; 2026-09-13追記(Schedule_2.json、576エントリへの差し替えでROM残量
-    ; 192byte超過が発覚): 各ブロック末尾の無条件JPは、以前は常に
-    ; JP BOSS_SPAWN固定の「実際には使われない安全弁」だったが、今は
-    ; 各ブロック内で最頻出のハンドラ(576件中enemy6が298件と過半数を
-    ; 占めるため大半のブロックでSPAWN_E6)を実際のデフォルトとして採用し、
-    ; それ以外の少数派インデックスだけを明示的なCP+JP Zで列挙する方式に
-    ; 変更(BOSS自体もこの意味では単なる「1件しかない少数派」になり、
-    ; 他の型と同じくCP+JP Z,BOSS_SPAWNで明示的に列挙される - もう
-    ; 「最後のインデックスだけCP省略」という特別扱いはしない)。
-    ; ディスパッチ自体のCP/JP Zチェーンという仕組みは無変更、各ブロックの
-    ; 生成方法(tools側のPythonジェネレータ)だけを変えている。
-    ; (round135follow-up10で追加した「GAME_TICKは進めるが新規スポーンの
-    ; ディスパッチだけここで止める」EBUZ_ANY_ACTIVEガードは、follow-up11
-    ; でGAME_TICK自体を凍結する方式に変えたことで冗長になったため撤去済み
-    ; - GAME_TICKが進まなければSPAWN_SCHEDULE_CHECK自体がここまで
-    ; 到達しない。詳細はMAINLOOP側のGAME_TICKインクリメント箇所の
-    ; コメント参照。)
     LD HL,(SPAWN_NEXT_INDEX)
     PUSH HL
     INC HL
@@ -5834,191 +5835,173 @@ SSC_FIRE:
     CP 0 : JP Z,SSC_FIRE_BLK0
     JP SSC_FIRE_BLK1
 SSC_FIRE_BLK0:
-    LD A,L                       ; H=0, so L IS the true index (0-255); default handler for this block is SPAWN_SIMPLE
-    CP 5    : JP Z,SPAWN_E6
-    CP 31   : JP Z,EBUZ_SPAWN_CHAIN_START
+    LD A,L                       ; H=0, so L = index-0; default handler for this block is SPAWN_SIMPLE
+    CP 30   : JP Z,EBUZ_SPAWN_CHAIN_START
+    CP 31   : JP Z,SPAWN_E3_WAVE
     CP 32   : JP Z,SPAWN_E3_WAVE
-    CP 33   : JP Z,SPAWN_E3_WAVE
+    CP 40   : JP Z,SPAWN_E4
     CP 41   : JP Z,SPAWN_E4
     CP 42   : JP Z,SPAWN_E4
-    CP 43   : JP Z,SPAWN_E4
+    CP 52   : JP Z,SPAWN_E4
     CP 53   : JP Z,SPAWN_E4
     CP 54   : JP Z,SPAWN_E4
     CP 55   : JP Z,SPAWN_E4
-    CP 56   : JP Z,SPAWN_E4
-    CP 58   : JP Z,SPAWN_E4
-    CP 60   : JP Z,SPAWN_E4
+    CP 57   : JP Z,SPAWN_E4
+    CP 59   : JP Z,SPAWN_E4
+    CP 61   : JP Z,SPAWN_E4
     CP 62   : JP Z,SPAWN_E4
     CP 63   : JP Z,SPAWN_E4
     CP 64   : JP Z,SPAWN_E4
-    CP 65   : JP Z,SPAWN_E4
-    CP 69   : JP Z,SPAWN_E4B
+    CP 68   : JP Z,SPAWN_E4B
     CP 70   : JP Z,SPAWN_E4B
-    CP 72   : JP Z,SPAWN_E4B
+    CP 74   : JP Z,SPAWN_E4B
     CP 76   : JP Z,SPAWN_E4B
-    CP 77   : JP Z,SPAWN_E4B
-    CP 79   : JP Z,SPAWN_E4B
-    CP 81   : JP Z,SPAWN_E4B
+    CP 78   : JP Z,SPAWN_E4B
+    CP 80   : JP Z,SPAWN_E4B
     CP 82   : JP Z,SPAWN_E4B
-    CP 84   : JP Z,SPAWN_E4B
+    CP 83   : JP Z,SPAWN_E4B
     CP 85   : JP Z,SPAWN_E4B
-    CP 87   : JP Z,SPAWN_E4B
-    CP 88   : JP Z,SPAWN_E4B
-    CP 90   : JP Z,SPAWN_E4B
-    CP 97   : JP Z,EBUZ_SPAWN_CHAIN_START
-    CP 98   : JP Z,SPAWN_E3_WAVE
-    CP 102  : JP Z,SPAWN_E4B
-    CP 103  : JP Z,SPAWN_E2
-    CP 107  : JP Z,SPAWN_E4B
-    CP 111  : JP Z,SPAWN_E2
-    CP 112  : JP Z,SPAWN_E4B
-    CP 113  : JP Z,SPAWN_E4B
-    CP 114  : JP Z,SPAWN_E4B
-    CP 115  : JP Z,SPAWN_E2
-    CP 116  : JP Z,SPAWN_E4
-    CP 117  : JP Z,SPAWN_E4
-    CP 118  : JP Z,SPAWN_E4
-    CP 119  : JP Z,SPAWN_E2
-    CP 121  : JP Z,SPAWN_E2
-    CP 128  : JP Z,SPAWN_E4B
-    CP 129  : JP Z,SPAWN_E4B
-    CP 131  : JP Z,SPAWN_E4B
-    CP 133  : JP Z,SPAWN_E4B
-    CP 134  : JP Z,SPAWN_E4B
-    CP 136  : JP Z,SPAWN_E4B
-    CP 137  : JP Z,SPAWN_E4B
-    CP 138  : JP Z,SPAWN_E4B
-    CP 139  : JP Z,SPAWN_E4B
-    CP 141  : JP Z,SPAWN_E4B
-    CP 142  : JP Z,SPAWN_E4B
-    CP 143  : JP Z,SPAWN_E4B
-    CP 144  : JP Z,SPAWN_E4B
-    CP 146  : JP Z,SPAWN_E4B
-    CP 147  : JP Z,SPAWN_E4B
-    CP 149  : JP Z,SPAWN_E4B
-    CP 150  : JP Z,SPAWN_E2
-    CP 151  : JP Z,SPAWN_E2
-    CP 152  : JP Z,SPAWN_E4B
-    CP 153  : JP Z,SPAWN_E4
-    CP 154  : JP Z,SPAWN_E4
-    CP 155  : JP Z,SPAWN_E4
-    CP 156  : JP Z,SPAWN_E4
-    CP 157  : JP Z,SPAWN_E4
-    CP 158  : JP Z,SPAWN_E4
-    CP 159  : JP Z,SPAWN_E4B
-    CP 160  : JP Z,SPAWN_E4B
-    CP 162  : JP Z,SPAWN_E4B
-    CP 163  : JP Z,SPAWN_E4B
-    CP 164  : JP Z,SPAWN_E4B
-    CP 165  : JP Z,SPAWN_E4B
-    CP 167  : JP Z,SPAWN_E4B
-    CP 168  : JP Z,SPAWN_E4B
-    CP 170  : JP Z,SPAWN_E4B
-    CP 171  : JP Z,SPAWN_E4B
-    CP 173  : JP Z,SPAWN_E4B
-    CP 174  : JP Z,SPAWN_E4B
-    CP 176  : JP Z,SPAWN_E4B
-    CP 177  : JP Z,SPAWN_E4B
-    CP 178  : JP Z,SPAWN_E4B
-    CP 179  : JP Z,SPAWN_E4B
-    CP 181  : JP Z,EBUZ_SPAWN_CHAIN_START
-    CP 185  : JP Z,SPAWN_E2
-    CP 186  : JP Z,SPAWN_E2
-    CP 187  : JP Z,SPAWN_E2
-    CP 188  : JP Z,SPAWN_E2
-    CP 189  : JP Z,SPAWN_E4B
-    CP 190  : JP Z,SPAWN_E4B
-    CP 191  : JP Z,SPAWN_E4B
-    CP 192  : JP Z,SPAWN_E4B
-    CP 193  : JP Z,SPAWN_E4B
-    CP 194  : JP Z,SPAWN_E4B
-    CP 195  : JP Z,SPAWN_E4B
-    CP 196  : JP Z,SPAWN_E4B
-    CP 197  : JP Z,SPAWN_E4B
-    CP 198  : JP Z,SPAWN_E4B
-    CP 199  : JP Z,SPAWN_E4B
-    CP 200  : JP Z,SPAWN_E4B
-    CP 201  : JP Z,SPAWN_E4
-    CP 202  : JP Z,SPAWN_E4
-    CP 203  : JP Z,SPAWN_E4
-    CP 204  : JP Z,SPAWN_E4
-    CP 205  : JP Z,SPAWN_E6
-    CP 206  : JP Z,SPAWN_E4B
-    CP 207  : JP Z,SPAWN_E6
-    CP 208  : JP Z,SPAWN_E4B
-    CP 209  : JP Z,SPAWN_E6
-    CP 210  : JP Z,SPAWN_E6
-    CP 212  : JP Z,SPAWN_E6
-    CP 213  : JP Z,SPAWN_E6
-    CP 215  : JP Z,SPAWN_E6
-    CP 216  : JP Z,SPAWN_E6
-    CP 218  : JP Z,SPAWN_E6
-    CP 219  : JP Z,SPAWN_E6
-    CP 220  : JP Z,SPAWN_E6
-    CP 221  : JP Z,SPAWN_E6
-    CP 223  : JP Z,SPAWN_E6
-    CP 224  : JP Z,SPAWN_E6
-    CP 226  : JP Z,SPAWN_E6
-    CP 227  : JP Z,SPAWN_E6
-    CP 228  : JP Z,SPAWN_E6
-    CP 229  : JP Z,SPAWN_E6
-    CP 231  : JP Z,SPAWN_E6
-    CP 232  : JP Z,SPAWN_E6
-    CP 233  : JP Z,SPAWN_E6
-    CP 234  : JP Z,SPAWN_E6
-    CP 235  : JP Z,SPAWN_E6
-    CP 236  : JP Z,SPAWN_E6
-    CP 238  : JP Z,SPAWN_E6
-    CP 239  : JP Z,SPAWN_E6
-    CP 240  : JP Z,SPAWN_E6
-    CP 246  : JP Z,SPAWN_E4B
-    CP 254  : JP Z,SPAWN_E6
-    CP 255  : JP Z,SPAWN_E6
+    CP 92   : JP Z,EBUZ_SPAWN_CHAIN_START
+    CP 93   : JP Z,SPAWN_E3_WAVE
+    CP 97   : JP Z,SPAWN_E4B
+    CP 98   : JP Z,SPAWN_E2
+    CP 102   : JP Z,SPAWN_E4B
+    CP 106   : JP Z,SPAWN_E2
+    CP 107   : JP Z,SPAWN_E4B
+    CP 108   : JP Z,SPAWN_E4B
+    CP 109   : JP Z,SPAWN_E4B
+    CP 110   : JP Z,SPAWN_E2
+    CP 111   : JP Z,SPAWN_E4
+    CP 112   : JP Z,SPAWN_E4
+    CP 113   : JP Z,SPAWN_E4
+    CP 114   : JP Z,SPAWN_E2
+    CP 116   : JP Z,SPAWN_E2
+    CP 123   : JP Z,SPAWN_E4B
+    CP 125   : JP Z,SPAWN_E4B
+    CP 127   : JP Z,SPAWN_E4B
+    CP 129   : JP Z,SPAWN_E4B
+    CP 130   : JP Z,SPAWN_E4B
+    CP 131   : JP Z,SPAWN_E4B
+    CP 133   : JP Z,SPAWN_E4B
+    CP 134   : JP Z,SPAWN_E4B
+    CP 136   : JP Z,SPAWN_E4B
+    CP 137   : JP Z,SPAWN_E4B
+    CP 139   : JP Z,SPAWN_E4B
+    CP 140   : JP Z,SPAWN_E2
+    CP 141   : JP Z,SPAWN_E2
+    CP 142   : JP Z,SPAWN_E4B
+    CP 143   : JP Z,SPAWN_E4
+    CP 144   : JP Z,SPAWN_E4
+    CP 145   : JP Z,SPAWN_E4
+    CP 146   : JP Z,SPAWN_E4
+    CP 147   : JP Z,SPAWN_E4
+    CP 148   : JP Z,SPAWN_E4
+    CP 149   : JP Z,SPAWN_E4B
+    CP 151   : JP Z,SPAWN_E4B
+    CP 152   : JP Z,SPAWN_E4B
+    CP 153   : JP Z,SPAWN_E4B
+    CP 155   : JP Z,SPAWN_E4B
+    CP 156   : JP Z,SPAWN_E4B
+    CP 158   : JP Z,SPAWN_E4B
+    CP 160   : JP Z,SPAWN_E4B
+    CP 161   : JP Z,SPAWN_E4B
+    CP 163   : JP Z,SPAWN_E4B
+    CP 164   : JP Z,SPAWN_E4B
+    CP 165   : JP Z,SPAWN_E4B
+    CP 167   : JP Z,EBUZ_SPAWN_CHAIN_START
+    CP 171   : JP Z,SPAWN_E2
+    CP 172   : JP Z,SPAWN_E2
+    CP 173   : JP Z,SPAWN_E2
+    CP 174   : JP Z,SPAWN_E2
+    CP 175   : JP Z,SPAWN_E4B
+    CP 176   : JP Z,SPAWN_E4B
+    CP 177   : JP Z,SPAWN_E4B
+    CP 178   : JP Z,SPAWN_E4B
+    CP 179   : JP Z,SPAWN_E4B
+    CP 180   : JP Z,SPAWN_E4B
+    CP 181   : JP Z,SPAWN_E4B
+    CP 182   : JP Z,SPAWN_E4B
+    CP 183   : JP Z,SPAWN_E4B
+    CP 184   : JP Z,SPAWN_E4
+    CP 185   : JP Z,SPAWN_E4
+    CP 186   : JP Z,SPAWN_E4
+    CP 187   : JP Z,SPAWN_E4
+    CP 188   : JP Z,SPAWN_E4B
+    CP 189   : JP Z,SPAWN_E4B
+    CP 202   : JP Z,SPAWN_E4B
+    CP 210   : JP Z,SPAWN_E6
+    CP 212   : JP Z,SPAWN_E6
+    CP 213   : JP Z,SPAWN_E6
+    CP 215   : JP Z,SPAWN_E6
+    CP 216   : JP Z,SPAWN_E6
+    CP 218   : JP Z,SPAWN_E6
+    CP 219   : JP Z,SPAWN_E6
+    CP 221   : JP Z,SPAWN_E6
+    CP 222   : JP Z,SPAWN_E6
+    CP 224   : JP Z,SPAWN_E6
+    CP 225   : JP Z,SPAWN_E6
+    CP 226   : JP Z,SPAWN_E6
+    CP 227   : JP Z,SPAWN_E6
+    CP 228   : JP Z,SPAWN_E6
+    CP 229   : JP Z,SPAWN_E6
+    CP 230   : JP Z,SPAWN_E6
+    CP 231   : JP Z,SPAWN_E6
+    CP 232   : JP Z,SPAWN_E4
+    CP 233   : JP Z,SPAWN_E6
+    CP 234   : JP Z,SPAWN_E6
+    CP 235   : JP Z,SPAWN_E4
+    CP 236   : JP Z,SPAWN_E6
+    CP 237   : JP Z,SPAWN_E6
+    CP 238   : JP Z,SPAWN_E4
+    CP 239   : JP Z,SPAWN_E6
+    CP 240   : JP Z,SPAWN_E6
+    CP 241   : JP Z,SPAWN_E4
+    CP 242   : JP Z,SPAWN_E6
+    CP 243   : JP Z,SPAWN_E6
+    CP 244   : JP Z,SPAWN_E4
+    CP 245   : JP Z,SPAWN_E6
+    CP 246   : JP Z,SPAWN_E6
+    CP 247   : JP Z,SPAWN_E4
+    CP 248   : JP Z,SPAWN_E6
+    CP 249   : JP Z,SPAWN_E6
+    CP 250   : JP Z,SPAWN_E4
+    CP 251   : JP Z,SPAWN_E6
+    CP 252   : JP Z,SPAWN_E6
+    CP 253   : JP Z,SPAWN_E4
+    CP 254   : JP Z,SPAWN_E6
+    CP 255   : JP Z,SPAWN_E6
     JP SPAWN_SIMPLE
 SSC_FIRE_BLK1:
     LD A,L                       ; H=1, so L = index-256; default handler for this block is SPAWN_E6
-    CP 0    : JP Z,SPAWN_SIMPLE
-    CP 5    : JP Z,SPAWN_SIMPLE
-    CP 10   : JP Z,SPAWN_SIMPLE
-    CP 15   : JP Z,SPAWN_SIMPLE
-    CP 20   : JP Z,SPAWN_SIMPLE
-    CP 37   : JP Z,SPAWN_E4
+    CP 0   : JP Z,SPAWN_E4
+    CP 3   : JP Z,SPAWN_E4
+    CP 6   : JP Z,SPAWN_E4
+    CP 9   : JP Z,SPAWN_E4
+    CP 12   : JP Z,SPAWN_E4
+    CP 15   : JP Z,SPAWN_E4
+    CP 18   : JP Z,SPAWN_E4
+    CP 21   : JP Z,SPAWN_E4
+    CP 24   : JP Z,SPAWN_E4
+    CP 27   : JP Z,SPAWN_E4
+    CP 30   : JP Z,SPAWN_E4
+    CP 33   : JP Z,SPAWN_E4
+    CP 36   : JP Z,SPAWN_E4
+    CP 39   : JP Z,SPAWN_E4
     CP 42   : JP Z,SPAWN_E4
-    CP 47   : JP Z,SPAWN_E4
-    CP 52   : JP Z,SPAWN_E4
+    CP 45   : JP Z,SPAWN_E4
+    CP 48   : JP Z,SPAWN_E4
+    CP 51   : JP Z,SPAWN_E4
+    CP 54   : JP Z,SPAWN_E4
     CP 57   : JP Z,SPAWN_E4
-    CP 62   : JP Z,SPAWN_E4
+    CP 64   : JP Z,SPAWN_E4
     CP 67   : JP Z,SPAWN_E4
-    CP 72   : JP Z,SPAWN_E4
-    CP 77   : JP Z,SPAWN_E4
+    CP 70   : JP Z,SPAWN_E4
+    CP 73   : JP Z,SPAWN_E4
+    CP 76   : JP Z,SPAWN_E4
+    CP 79   : JP Z,SPAWN_E4
     CP 82   : JP Z,SPAWN_E4
-    CP 87   : JP Z,SPAWN_E4
-    CP 92   : JP Z,SPAWN_E4
-    CP 97   : JP Z,SPAWN_E4
-    CP 102  : JP Z,SPAWN_E4
-    CP 107  : JP Z,SPAWN_E4
-    CP 112  : JP Z,SPAWN_E4
-    CP 117  : JP Z,SPAWN_E4
-    CP 122  : JP Z,SPAWN_E4
-    CP 126  : JP Z,SPAWN_E4
-    CP 130  : JP Z,SPAWN_E4
-    CP 135  : JP Z,SPAWN_E4
-    CP 140  : JP Z,SPAWN_E4
-    CP 145  : JP Z,SPAWN_E4
-    CP 150  : JP Z,SPAWN_E4
-    CP 155  : JP Z,SPAWN_E4
-    CP 160  : JP Z,SPAWN_E4
-    CP 165  : JP Z,SPAWN_E4
-    CP 170  : JP Z,SPAWN_E4
-    CP 183  : JP Z,SPAWN_E4
-    CP 188  : JP Z,SPAWN_E4
-    CP 193  : JP Z,SPAWN_E4
-    CP 198  : JP Z,SPAWN_E4
-    CP 203  : JP Z,SPAWN_E4
-    CP 208  : JP Z,SPAWN_E4
-    CP 213  : JP Z,SPAWN_E4
-    CP 218  : JP Z,SPAWN_E4
-    CP 222  : JP Z,EBUZ_SPAWN_CHAIN_START
+    CP 85   : JP Z,SPAWN_E4
+    CP 88   : JP Z,EBUZ_SPAWN_CHAIN_START
     JP SPAWN_E6
 
 ; --- saved (disabled) boss-only fast-iteration schedule - kept for  ---
@@ -6178,7 +6161,7 @@ CHECK_BOSS_TRIGGER:
     CALL EBUZ_ANY_ACTIVE
     OR A
     RET NZ
-    JP BOSS_SPAWN
+    JP EBUZ2_ON_BOSS_TRIGGER
 
 ; Input: HL=pool base, B=slot count, DE=stride (each slot's own first
 ; byte is treated as its active flag). Output: A=0(Z) if every slot is
@@ -9074,6 +9057,8 @@ PDC_GO:
     CALL PDC_CHECK_EBULLET
     OR A : JP NZ,PLAYER_TAKE_HIT
     CALL PDC_CHECK_EBUZ
+    OR A : JP NZ,PLAYER_TAKE_HIT
+    CALL PDC_CHECK_EBUZ2
     OR A
     RET Z
     JP PLAYER_TAKE_HIT
@@ -13863,6 +13848,873 @@ EBUZ_COLOR_D:
 EBUZ_BULLET_COLOR_BYTE:
     DB EBUZ_BULLET_COLOR_BYTE_VAL
 
+; ============================================================================
+; Ebuz Mk2: ボス出現の直前に一度だけ現れるスクリプト敵(2026-09-20、
+; tools/ebuz_mk2_test/ebuz_mk2_test.asmで詰めた「5門斉射→リコイル→
+; 変形(7行open)→内外交互連射→上下往復1周ごとにレーザー発射→無限
+; ループ」という一連のシーケンスをそのまま移植)。"キャラはレーザー
+; 以外流用で"の指示通り、本体4タイル(EBUZ_CODE_A-D/EBUZ_COLOR_A-D)・
+; 弾2タイル(EBUZ_BULLET_L/R_CODE)・低レベルヘルパー(EBUZ_WRITE2/
+; EBUZ_CELL_ADDR/SOUND_EBUZ_FIRE/PLAYER_HIT_BOX_EBUZ系)は無印Ebuzの
+; ものをそのまま参照し、新規に用意するのはレーザーのタイル2枚+専用
+; カラー1組のみ。ここでしか出現しない単一インスタンスのため、無印
+; Ebuzのような複数インスタンス用IX構造体は使わず絶対アドレスで直接
+; 扱う(ROM容量節約)。
+;
+; スポーンはCHECK_BOSS_TRIGGER末尾のJP BOSS_SPAWNを横取りする形で
+; 実装(このセクション末尾EBUZ2_ON_BOSS_TRIGGER参照) - Mk2撃破まで
+; 実ボスは出現しない。
+; ============================================================================
+EBUZ2_LASER_L_CODE EQU 144   ; group18(144-151)。実プレイ6000フレーム
+EBUZ2_LASER_R_CODE EQU 145   ; 監視で実際に空きと確認済み(旧ANIM2-brown
+                              ; 跡地、COLORDATAのプレースホルダー色のみ
+                              ; 残存)。
+EBUZ2_LASER_COLOR  EQU 074h  ; fg7(cyan)/bg4(blue、無印Ebuzの弾と同じ
+                              ; 空色 - EBUZ_BULLET_COLOR_BYTE_VAL=0B4hの
+                              ; 下位ニブルと同一)
+
+EBUZ2_HP_INIT EQU 128
+EBUZ2_SLOT_EMPTY EQU 255
+EBUZ2_V2_SLOT_COUNT EQU 4
+
+EBUZ2_ENTRY_START_ROW  EQU 1   ; row0はHUD行のため避ける(無印Ebuzと同じ規約)
+EBUZ2_ENTRY_TARGET_ROW EQU 9   ; 閉状態(5行)の中央到達行
+EBUZ2_S2_ROW_TOP       EQU 8   ; 開状態(7行)の描画開始行(中心行を閉状態と揃える)
+
+EBUZ2_ENTRY_HOLD_TICKS EQU 4
+EBUZ2_RECOIL_HOLD_TICKS EQU 1
+EBUZ2_VOLLEY1_HOLD_TICKS EQU 15
+EBUZ2_VOLLEY2_WAVE_HOLD_TICKS EQU 2
+EBUZ2_VOLLEY2_PRE_FIRE_HOLD_TICKS EQU 5
+EBUZ2_VOLLEY2_ALT_START_HOLD_TICKS EQU 20
+EBUZ2_LAP_STOP_HOLD_TICKS EQU 15
+EBUZ2_LASER_HOLD_TICKS EQU 4
+
+EBUZ2_MOVE_INTERVAL_TICKS EQU 4
+EBUZ2_MOVE_MIN_ROW EQU 2
+EBUZ2_MOVE_MAX_ROW EQU 14
+
+EBUZ2_OUTER_COL EQU 24
+EBUZ2_INNER_COL EQU 23
+EBUZ2_CENTER_COL EQU 22
+EBUZ2_S2_FIRE_COL_INNER EQU 22
+EBUZ2_S2_FIRE_COL_OUTER EQU 23
+
+; row*ベースアドレス(閉状態5列、EBUZ_CELL_ADDR経由で毎回計算するため
+; コンパイル時定数は不要 - 無印Ebuzと同じ設計)。
+
+; ---- RAM(単一インスタンス、絶対アドレス。EBUZ_SLOT1直後の空き
+; 領域[実測176byte、POD_BULLET1_DXMAGコメント参照]の先頭から68byte
+; だけを使用、STACKTOPまで100byte超の余裕を残す) ----
+EBUZ2_ACT              EQU 0F2D0h
+EBUZ2_PHASE            EQU 0F2D1h  ; 0=登場中/1=スクリプト進行中(テーブル駆動)/2=撃破演出中
+EBUZ2_HP               EQU 0F2D2h
+EBUZ2_ROW_CUR          EQU 0F2D3h
+EBUZ2_MOVE_DIR         EQU 0F2D4h
+EBUZ2_MOVE_ACTIVE      EQU 0F2D5h
+EBUZ2_MOVE_COUNTDOWN   EQU 0F2D6h
+EBUZ2_MOVE_R_MAX       EQU 0F2D7h
+EBUZ2_MOVE_R_MIN       EQU 0F2D8h
+EBUZ2_MOVE_RTRIP       EQU 0F2D9h
+EBUZ2_SEQ_PTR          EQU 0F2DAh  ; 2 bytes
+EBUZ2_SEQ_TIMER        EQU 0F2DCh
+EBUZ2_LASER_ACT        EQU 0F2DDh
+EBUZ2_LASER_ROW        EQU 0F2DEh
+EBUZ2_LASER_UNIT       EQU 0F2DFh
+EBUZ2_LASER_HOLD       EQU 0F2E0h
+EBUZ2_EXPL_TIMER       EQU 0F2E1h
+EBUZ2_TMP_A            EQU 0F2E2h
+EBUZ2_TMP_OFS          EQU 0F2E3h
+EBUZ2_TMP_ADDR         EQU 0F2E4h  ; 2 bytes
+EBUZ2_V1_STRUCT        EQU 0F2E6h  ; 5レーン x [ACT,COL] = 10 bytes (F2E6-F2EF)
+EBUZ2_V2_COLS          EQU 0F2F0h  ; 4門 x 4スロット = 16 bytes (F2F0-F2FF)
+EBUZ2_V2_ROWS          EQU 0F300h  ; 16 bytes (F300-F30F、V2_COLSと+16
+                                    ; 固定オフセット規約 - 変更しないこと)
+EBUZ2_V2_NEXT          EQU 0F310h  ; 4 bytes (F310-F313)
+EBUZ2_DEFEATED         EQU 0F314h  ; 0=未撃破(未スポーンor戦闘中)/1=撃破済み
+                                    ; (HPは初回未スポーン時も0のため、"未
+                                    ; スポーン"と"撃破済み"の区別にHP単独
+                                    ; では使えない - 専用フラグが必要)
+EBUZ2_TMP_CNT          EQU 0F315h  ; round136(ROM圧縮): EBUZ2_DRAW_N_ROWS/
+EBUZ2_TMP_W            EQU 0F316h  ; EBUZ2_ERASE_N_ROWS専用の残り行数/幅/列
+EBUZ2_TMP_COL          EQU 0F317h  ; ワーク(旧・行ごとの展開コードを置換)
+
+; round136(ROM圧縮、Ebuz Mk2用予算確保): 本体形状データ+レーザー
+; タイルはStage2/Title共有バンク(Comb bank6、tools/bgm_data/
+; bgm_bank_gen.pyのEBUZ2_MK2_CHARDATAエントリ、計227byte)へ移設し、
+; Titleが起動時にここへ一括コピーする(BOSS_PATTERNS等と全く同じ
+; 方式)。ROM上には二度と実体を持たず、Stage1側は下記EQUアドレスを
+; 直接読むだけ(0xD0C0起点、tools/title_screen/title_test.asm
+; INIT_BGMのLDIR先と一致させること)。
+EBUZ2_BLANK5                 EQU D0C0h
+EBUZ2_BLANK6                 EQU D0C5h
+EBUZ2_ROW_0                  EQU D0CBh
+EBUZ2_ROW_1                  EQU D0D0h
+EBUZ2_ROW_2                  EQU D0D5h
+EBUZ2_ROW_3                  EQU D0DAh
+EBUZ2_ROW_4                  EQU D0DFh
+EBUZ2_ROW_S2_0               EQU D0E4h
+EBUZ2_ROW_S2_1               EQU D0E9h
+EBUZ2_ROW_S2_2               EQU D0EEh
+EBUZ2_ROW_S2_3               EQU D0F3h
+EBUZ2_ROW_S2_4               EQU D0F8h
+EBUZ2_ROW_S2_5               EQU D0FDh
+EBUZ2_ROW_S2_6               EQU D102h
+EBUZ2_ROW_S2_OUTER_REST      EQU D107h
+EBUZ2_ROW_S2_OUTER_RECOIL    EQU D10Dh
+EBUZ2_ROW_S2_INNER_REST      EQU D113h
+EBUZ2_ROW_S2_INNER_RECOIL    EQU D119h
+EBUZ2_ROW_S2_CENTER_REST     EQU D11Fh
+EBUZ2_ROW_S2_CENTER_RECOIL   EQU D125h
+EBUZ2_LASER_L_TILE           EQU D12Bh
+EBUZ2_LASER_R_TILE           EQU D133h
+EBUZ2_LASER_COLOR_BYTE       EQU D13Bh
+
+; ----------------------------------------------------------------------
+; 汎用アドレス計算: A=row(0-23), C=col(0-31) -> HL=VRAMアドレス。
+; 無印EbuzのEBUZ_CELL_ADDR(出力DE)をHLへ持ち替えるだけの薄いラッパー
+; (EBUZ_WRITE2/LDIRVMがHLを取るため)。Trashes A,D,E,H,L.
+; ----------------------------------------------------------------------
+EBUZ2_ADDR:
+    CALL EBUZ_CELL_ADDR
+    LD D,H : LD E,L
+    RET
+
+; round136(ROM圧縮、"3KBも使ってんのか"を踏まえた追加圧縮): 旧DRAW_
+; BODY_AT等4ルーチン(行ごとに全展開、計448byte)を、行データポインタ表
+; (EBUZ2_BODY_TABLE/EBUZ2_S2_BODY_TABLE)+汎用ループ2本へ置換。挙動は
+; 完全に同一(1行ずつEBUZ_CELL_ADDRで宛先計算→LDIRVM)、列(23 or
+; リコイル用24)はEBUZ2_TMP_COL経由で呼び出し側が指定する。
+; ----------------------------------------------------------------------
+; IN: A=row_top, HL=行データポインタ表(DW×B個), B=行数, C=1行のbyte幅。
+; EBUZ2_TMP_COLは呼び出し側が先に設定しておくこと。
+EBUZ2_DRAW_N_ROWS:
+    LD (EBUZ2_TMP_A),A
+    LD (EBUZ2_TMP_ADDR),HL
+    LD A,B : LD (EBUZ2_TMP_CNT),A
+    LD A,C : LD (EBUZ2_TMP_W),A
+EBUZ2_DNR_LOOP:
+    LD HL,(EBUZ2_TMP_ADDR)
+    LD E,(HL) : INC HL : LD D,(HL) : INC HL
+    LD (EBUZ2_TMP_ADDR),HL
+    PUSH DE
+    LD A,(EBUZ2_TMP_COL) : LD C,A
+    LD A,(EBUZ2_TMP_A)
+    CALL EBUZ_CELL_ADDR
+    LD D,H : LD E,L
+    POP HL
+    LD A,(EBUZ2_TMP_W) : LD C,A : LD B,0
+    CALL LDIRVM
+    LD A,(EBUZ2_TMP_A) : INC A : LD (EBUZ2_TMP_A),A
+    LD A,(EBUZ2_TMP_CNT) : DEC A : LD (EBUZ2_TMP_CNT),A
+    JR NZ,EBUZ2_DNR_LOOP
+    RET
+
+; round136(ROM圧縮): この4つのポインタ表(行データ表+"全行同じ場所を
+; 指す"消去用ダミー表、EBUZ2_ERASE_N_ROWS撤去の代替)も、参照先の行
+; データ本体と一緒にEBUZ2_MK2_CHARDATA(Comb bank6経由でRAMへ事前
+; コピー)へ移設済み。ROM上には実体を持たない。
+EBUZ2_BODY_TABLE     EQU D173h
+EBUZ2_S2_BODY_TABLE  EQU D17Dh
+EBUZ2_BLANK5_TABLE   EQU D18Bh
+EBUZ2_BLANK6_TABLE   EQU D195h
+
+; ----------------------------------------------------------------------
+; 本体形状の描画/消去(閉状態5行/開状態7行、col23起点)。IN: A=row_top。
+; ----------------------------------------------------------------------
+EBUZ2_DRAW_BODY_AT:
+    PUSH AF : LD A,23 : LD (EBUZ2_TMP_COL),A : POP AF
+    LD HL,EBUZ2_BODY_TABLE : LD B,5 : LD C,5
+    JP EBUZ2_DRAW_N_ROWS
+
+EBUZ2_ERASE_BODY_AT:
+    PUSH AF : LD A,23 : LD (EBUZ2_TMP_COL),A : POP AF
+    LD HL,EBUZ2_BLANK5_TABLE : LD B,5 : LD C,5
+    JP EBUZ2_DRAW_N_ROWS
+
+EBUZ2_DRAW_S2_BODY_AT:
+    PUSH AF : LD A,23 : LD (EBUZ2_TMP_COL),A : POP AF
+    LD HL,EBUZ2_S2_BODY_TABLE : LD B,7 : LD C,5
+    JP EBUZ2_DRAW_N_ROWS
+
+EBUZ2_ERASE_S2_BODY_AT:
+    PUSH AF : LD A,23 : LD (EBUZ2_TMP_COL),A : POP AF
+    LD HL,EBUZ2_BLANK6_TABLE : LD B,7 : LD C,6
+    JP EBUZ2_DRAW_N_ROWS
+
+; 単一行6byte(col23-28)の描画: IN: A=row, HL=ソースデータ(6byte)。
+; リコイル(外側/内側/中央ペアの1セル右シフト)で共用。
+EBUZ2_DRAW_ROW6_AT:
+    PUSH HL
+    LD C,23 : CALL EBUZ2_ADDR
+    LD D,H : LD E,L
+    POP HL
+    LD BC,6
+    CALL LDIRVM
+    RET
+
+; ----------------------------------------------------------------------
+; リコイル(内側/外側/中央ペア、無印Ebuzの反動と同じ「1セル右へずらし
+; てから戻す」)。内側=ROW_CUR+1(IT)/+5(IB)、外側=ROW_CUR+0(OT)/+6(OB)、
+; 中央=ROW_CUR+3。内側/外側のSHIFTは移動を一時停止(REST側で復帰)、
+; 中央は無制限交互連射停止後[移動も既に停止済み]専用のため不要。
+; ----------------------------------------------------------------------
+EBUZ2_RECOIL_INNER_SHIFT:
+    XOR A : LD (EBUZ2_MOVE_ACTIVE),A
+    LD A,(EBUZ2_ROW_CUR) : ADD A,1
+    LD HL,EBUZ2_ROW_S2_INNER_RECOIL : CALL EBUZ2_DRAW_ROW6_AT
+    LD A,(EBUZ2_ROW_CUR) : ADD A,5
+    LD HL,EBUZ2_ROW_S2_INNER_RECOIL : CALL EBUZ2_DRAW_ROW6_AT
+    RET
+EBUZ2_RECOIL_INNER_REST:
+    LD A,(EBUZ2_ROW_CUR) : ADD A,1
+    LD HL,EBUZ2_ROW_S2_INNER_REST : CALL EBUZ2_DRAW_ROW6_AT
+    LD A,(EBUZ2_ROW_CUR) : ADD A,5
+    LD HL,EBUZ2_ROW_S2_INNER_REST : CALL EBUZ2_DRAW_ROW6_AT
+    JP EBUZ2_RESTORE_MOVE_ACTIVE
+EBUZ2_RECOIL_OUTER_SHIFT:
+    XOR A : LD (EBUZ2_MOVE_ACTIVE),A
+    LD A,(EBUZ2_ROW_CUR)
+    LD HL,EBUZ2_ROW_S2_OUTER_RECOIL : CALL EBUZ2_DRAW_ROW6_AT
+    LD A,(EBUZ2_ROW_CUR) : ADD A,6
+    LD HL,EBUZ2_ROW_S2_OUTER_RECOIL : CALL EBUZ2_DRAW_ROW6_AT
+    RET
+EBUZ2_RECOIL_OUTER_REST:
+    LD A,(EBUZ2_ROW_CUR)
+    LD HL,EBUZ2_ROW_S2_OUTER_REST : CALL EBUZ2_DRAW_ROW6_AT
+    LD A,(EBUZ2_ROW_CUR) : ADD A,6
+    LD HL,EBUZ2_ROW_S2_OUTER_REST : CALL EBUZ2_DRAW_ROW6_AT
+    JP EBUZ2_RESTORE_MOVE_ACTIVE
+EBUZ2_RECOIL_CENTER_SHIFT:
+    LD A,(EBUZ2_ROW_CUR) : ADD A,3
+    LD HL,EBUZ2_ROW_S2_CENTER_RECOIL : JP EBUZ2_DRAW_ROW6_AT
+EBUZ2_RECOIL_CENTER_REST:
+    LD A,(EBUZ2_ROW_CUR) : ADD A,3
+    LD HL,EBUZ2_ROW_S2_CENTER_REST : JP EBUZ2_DRAW_ROW6_AT
+
+; リコイル演出中に一時停止していた上下移動を復帰する。ただし既に1周
+; 完了(EBUZ2_MOVE_RTRIP=1)している場合は再起動しない。
+EBUZ2_RESTORE_MOVE_ACTIVE:
+    LD A,(EBUZ2_MOVE_RTRIP)
+    OR A
+    RET NZ
+    LD A,1
+    LD (EBUZ2_MOVE_ACTIVE),A
+    RET
+
+; ----------------------------------------------------------------------
+; 閉状態一斉発射(volley1)のリコイル(5行まとめて1セル右へ、col24)。
+; EBUZ2_DRAW_N_ROWS/EBUZ2_ERASE_N_ROWSをcol=24・row=ENTRY_TARGET_ROW
+; 固定で再利用(round136、旧DRAW_ROW5_AT24+5行展開を置換)。
+; ----------------------------------------------------------------------
+EBUZ2_RECOIL_CLOSED_SHIFT:
+    LD A,EBUZ2_ENTRY_TARGET_ROW
+    CALL EBUZ2_ERASE_BODY_AT
+    LD A,24 : LD (EBUZ2_TMP_COL),A
+    LD A,EBUZ2_ENTRY_TARGET_ROW
+    LD HL,EBUZ2_BODY_TABLE : LD B,5 : LD C,5
+    JP EBUZ2_DRAW_N_ROWS
+EBUZ2_RECOIL_CLOSED_REST:
+    LD A,24 : LD (EBUZ2_TMP_COL),A
+    LD A,EBUZ2_ENTRY_TARGET_ROW
+    LD HL,EBUZ2_BLANK5_TABLE : LD B,5 : LD C,5
+    CALL EBUZ2_DRAW_N_ROWS
+    LD A,EBUZ2_ENTRY_TARGET_ROW
+    JP EBUZ2_DRAW_BODY_AT
+
+; ----------------------------------------------------------------------
+; 変形: 閉状態(row=ENTRY_TARGET_ROW)を消去し、開状態(row=S2_ROW_TOP)を
+; 描画してEBUZ2_ROW_CURを確定させる。
+; ----------------------------------------------------------------------
+EBUZ2_TRANSFORM:
+    LD A,EBUZ2_ENTRY_TARGET_ROW
+    CALL EBUZ2_ERASE_BODY_AT
+    LD A,EBUZ2_S2_ROW_TOP
+    LD (EBUZ2_ROW_CUR),A
+    JP EBUZ2_DRAW_S2_BODY_AT
+
+; ----------------------------------------------------------------------
+; 上下移動(EBUZ2_MOVE_ACTIVE=1の間、毎tick呼ぶ)。中央出発→下端→
+; 上端→中央到達で1周完了・自動停止(無印Ebuz Mk2テストROMと同一仕様)。
+; ----------------------------------------------------------------------
+EBUZ2_UPDATE_MOVE:
+    LD A,(EBUZ2_MOVE_ACTIVE)
+    OR A
+    RET Z
+    LD A,(EBUZ2_MOVE_COUNTDOWN)
+    DEC A
+    LD (EBUZ2_MOVE_COUNTDOWN),A
+    RET NZ
+    LD A,EBUZ2_MOVE_INTERVAL_TICKS
+    LD (EBUZ2_MOVE_COUNTDOWN),A
+    LD A,(EBUZ2_ROW_CUR)
+    CALL EBUZ2_ERASE_S2_BODY_AT
+    LD A,(EBUZ2_MOVE_DIR)
+    OR A
+    JR Z,EBUZ2_UM_DOWN
+    LD A,(EBUZ2_ROW_CUR) : DEC A
+    LD (EBUZ2_ROW_CUR),A
+    CP EBUZ2_MOVE_MIN_ROW
+    JR NZ,EBUZ2_UM_DRAW
+    LD A,1 : LD (EBUZ2_MOVE_R_MIN),A
+    XOR A : LD (EBUZ2_MOVE_DIR),A
+    JR EBUZ2_UM_DRAW
+EBUZ2_UM_DOWN:
+    LD A,(EBUZ2_ROW_CUR) : INC A
+    LD (EBUZ2_ROW_CUR),A
+    LD B,A
+    LD A,(EBUZ2_MOVE_R_MIN)
+    OR A
+    JR Z,EBUZ2_UM_MAXCHECK
+    LD A,B
+    CP EBUZ2_S2_ROW_TOP
+    JR NZ,EBUZ2_UM_DRAW
+    LD A,1 : LD (EBUZ2_MOVE_RTRIP),A
+    XOR A : LD (EBUZ2_MOVE_ACTIVE),A
+    JR EBUZ2_UM_DRAW
+EBUZ2_UM_MAXCHECK:
+    LD A,B
+    CP EBUZ2_MOVE_MAX_ROW
+    JR NZ,EBUZ2_UM_DRAW
+    LD A,1
+    LD (EBUZ2_MOVE_DIR),A
+    LD (EBUZ2_MOVE_R_MAX),A
+EBUZ2_UM_DRAW:
+    LD A,(EBUZ2_ROW_CUR)
+    JP EBUZ2_DRAW_S2_BODY_AT
+
+; ----------------------------------------------------------------------
+; レーザー(中央、1周ごとに発射)。発射時に列1-22を一括描画、発射位置側
+; (col21-22)から順に1tick1ユニット(2列)ずつ消去する。
+; ----------------------------------------------------------------------
+EBUZ2_FIRE_LASER:
+    LD A,(EBUZ2_ROW_CUR) : ADD A,3
+    LD (EBUZ2_LASER_ROW),A
+    LD B,A
+    LD C,1
+EBUZ2_FL_LOOP:
+    PUSH BC
+    LD A,B : LD C,C
+    CALL EBUZ2_ADDR
+    LD B,EBUZ2_LASER_L_CODE : LD C,EBUZ2_LASER_R_CODE
+    CALL EBUZ_WRITE2
+    POP BC
+    LD A,C : ADD A,2 : LD C,A
+    CP 23
+    JR NZ,EBUZ2_FL_LOOP
+    LD A,10 : LD (EBUZ2_LASER_UNIT),A
+    LD A,EBUZ2_LASER_HOLD_TICKS : LD (EBUZ2_LASER_HOLD),A
+    LD A,1 : LD (EBUZ2_LASER_ACT),A
+    RET
+
+EBUZ2_UPDATE_LASER:
+    LD A,(EBUZ2_LASER_ACT)
+    OR A
+    RET Z
+    LD A,(EBUZ2_LASER_HOLD)
+    OR A
+    JR Z,EBUZ2_UL_RETRACT
+    DEC A
+    LD (EBUZ2_LASER_HOLD),A
+    RET
+EBUZ2_UL_RETRACT:
+    LD A,(EBUZ2_LASER_UNIT)
+    ADD A,A : ADD A,1 : LD C,A
+    LD A,(EBUZ2_LASER_ROW) : LD B,A
+    CALL EBUZ2_ADDR
+    LD B,0 : LD C,0
+    CALL EBUZ_WRITE2
+    LD A,(EBUZ2_LASER_UNIT)
+    OR A
+    JR Z,EBUZ2_UL_DONE
+    DEC A
+    LD (EBUZ2_LASER_UNIT),A
+    RET
+EBUZ2_UL_DONE:
+    XOR A
+    LD (EBUZ2_LASER_ACT),A
+    RET
+
+; ----------------------------------------------------------------------
+; volley1(閉状態5門、単発のみ・回転プール不要 - このシーケンス中
+; 一度しか発射しないため)。EBUZ2_V1_STRUCT: 5レーン x [ACT,COL]。
+; row baseはEBUZ_CELL_ADDR経由で都度計算(コンパイル時定数不要)。
+; ----------------------------------------------------------------------
+; round136(ROM圧縮): EBUZ2_V1_ROWBASE(旧:テーブル)は"ENTRY_TARGET_ROW+
+; lane"という単純な線形加算なので、各参照箇所で"ADD A,EBUZ2_ENTRY_
+; TARGET_ROW"へ置換しテーブル自体を廃止(3箇所の参照コードも同時に圧縮)。
+EBUZ2_V1_FIRECOL EQU D13Ch  ; RAM移設済み(EBUZ2_MK2_CHARDATA)
+
+EBUZ2_FIRE_ALL_V1:
+    XOR A
+EBUZ2_FAV1_LOOP:
+    PUSH AF
+    LD (EBUZ2_TMP_A),A                ; lane number (0-4)
+    LD D,0 : LD E,A
+    LD HL,EBUZ2_V1_FIRECOL : ADD HL,DE
+    LD A,(HL) : LD (EBUZ2_TMP_OFS),A   ; this lane's fire col
+    LD A,(EBUZ2_TMP_A) : ADD A,A       ; round136バグ修正: V1_STRUCTは
+    LD H,0 : LD L,A                    ; [ACT,COL]の2byteペア×5レーン
+    LD DE,EBUZ2_V1_STRUCT : ADD HL,DE  ; なのでlane*2でなければならない
+    LD (HL),1                          ; (旧コードはlaneをそのまま使い
+    INC HL                             ; レーン3/4が永久に更新されない
+    LD A,(EBUZ2_TMP_OFS)               ; バグになっていた)
+    LD (HL),A
+    LD A,(EBUZ2_TMP_A)
+    ADD A,EBUZ2_ENTRY_TARGET_ROW
+    LD B,A
+    LD A,(EBUZ2_TMP_OFS)
+    LD C,A
+    LD A,B
+    CALL EBUZ2_ADDR
+    LD B,EBUZ_BULLET_L_CODE : LD C,EBUZ_BULLET_R_CODE
+    CALL EBUZ_WRITE2
+    POP AF
+    INC A
+    LD (EBUZ2_TMP_A),A
+    CP 5
+    JP NZ,EBUZ2_FAV1_LOOP
+    RET
+
+; 各レーン(0-4)の更新: EBUZ2_V1_STRUCT[lane*2]=ACT、+1=COL。
+; 行はEBUZ2_V1_ROWBASE[lane](固定)。IN: A=lane(0-4)。
+EBUZ2_UPDATE_V1_ONE:
+    LD (EBUZ2_TMP_A),A
+    ADD A,A
+    LD H,0 : LD L,A
+    LD DE,EBUZ2_V1_STRUCT : ADD HL,DE
+    LD A,(HL)
+    OR A
+    RET Z
+    INC HL
+    LD C,(HL)                        ; C=col
+    PUSH HL
+    LD A,(EBUZ2_TMP_A)
+    ADD A,EBUZ2_ENTRY_TARGET_ROW       ; A=row
+    CALL EBUZ2_ADDR
+    LD B,0 : LD C,0
+    CALL EBUZ_WRITE2
+    POP HL                              ; HL=&COL
+    LD A,(HL)
+    OR A
+    JR Z,EBUZ2_UV1O_OFF
+    DEC A
+    LD (HL),A
+    LD C,A
+    PUSH HL
+    LD A,(EBUZ2_TMP_A)
+    ADD A,EBUZ2_ENTRY_TARGET_ROW
+    CALL EBUZ2_ADDR
+    LD B,EBUZ_BULLET_L_CODE : LD C,EBUZ_BULLET_R_CODE
+    CALL EBUZ_WRITE2
+    POP HL
+    RET
+EBUZ2_UV1O_OFF:
+    DEC HL
+    LD (HL),0
+    RET
+
+EBUZ2_UPDATE_V1_ALL:
+    XOR A
+EBUZ2_UV1_LOOP:
+    PUSH AF
+    CALL EBUZ2_UPDATE_V1_ONE
+    POP AF
+    INC A
+    CP 5
+    JR NZ,EBUZ2_UV1_LOOP
+    RET
+
+; ----------------------------------------------------------------------
+; volley2以降の4門(外側上/内側上/内側下/外側下、無印Ebuzの上下2門を
+; 内外2ペア4門へ拡張)。各門4スロットの回転プール、行オフセットと
+; 発射列はポート別テーブル参照。
+; port0=OT(行+0,外側列) port1=IT(行+1,内側列)
+; port2=IB(行+5,内側列) port3=OB(行+6,外側列)
+; ----------------------------------------------------------------------
+EBUZ2_V2_ROWOFS   EQU 0D141h  ; RAM移設済み(EBUZ2_MK2_CHARDATA)
+EBUZ2_V2_FIRECOL  EQU 0D145h  ; RAM移設済み(EBUZ2_MK2_CHARDATA)
+
+; IN: A=port(0-3)。
+EBUZ2_FIRE_V2_PORT:
+    LD (EBUZ2_TMP_A),A
+    LD H,0 : LD L,A
+    LD DE,EBUZ2_V2_NEXT : ADD HL,DE
+    LD A,(HL) : LD B,A
+    INC A : CP EBUZ2_V2_SLOT_COUNT : JR C,EBUZ2_FV2_OK
+    XOR A
+EBUZ2_FV2_OK:
+    LD (HL),A
+    LD A,(EBUZ2_TMP_A)
+    ADD A,A : ADD A,A : LD C,A       ; port*4
+    LD A,B : ADD A,C : LD (EBUZ2_TMP_OFS),A  ; ofs = port*4+slot
+    LD A,(EBUZ2_TMP_A)
+    LD H,0 : LD L,A
+    LD DE,EBUZ2_V2_FIRECOL : ADD HL,DE
+    LD A,(HL) : LD C,A
+    LD A,(EBUZ2_TMP_OFS)
+    LD H,0 : LD L,A
+    LD DE,EBUZ2_V2_COLS : ADD HL,DE
+    LD (HL),C
+    LD A,(EBUZ2_TMP_A)
+    LD H,0 : LD L,A
+    LD DE,EBUZ2_V2_ROWOFS : ADD HL,DE
+    LD A,(HL) : LD B,A
+    LD A,(EBUZ2_ROW_CUR) : ADD A,B : LD B,A
+    PUSH BC
+    LD A,(EBUZ2_TMP_OFS)
+    LD H,0 : LD L,A
+    LD DE,EBUZ2_V2_ROWS : ADD HL,DE
+    POP BC
+    LD (HL),B
+    LD A,B
+    CALL EBUZ2_ADDR
+    LD B,EBUZ_BULLET_L_CODE : LD C,EBUZ_BULLET_R_CODE
+    CALL EBUZ_WRITE2
+    RET
+
+EBUZ2_FIRE_INNER_PAIR:
+    LD A,1 : CALL EBUZ2_FIRE_V2_PORT
+    LD A,2 : CALL EBUZ2_FIRE_V2_PORT
+    JP SOUND_EBUZ_FIRE
+EBUZ2_FIRE_OUTER_PAIR:
+    LD A,0 : CALL EBUZ2_FIRE_V2_PORT
+    LD A,3 : CALL EBUZ2_FIRE_V2_PORT
+    JP SOUND_EBUZ_FIRE
+EBUZ2_FIRE_INNER_PAIR_AND_SHIFT:
+    CALL EBUZ2_FIRE_INNER_PAIR
+    JP EBUZ2_RECOIL_INNER_SHIFT
+EBUZ2_FIRE_OUTER_PAIR_AND_SHIFT:
+    CALL EBUZ2_FIRE_OUTER_PAIR
+    JP EBUZ2_RECOIL_OUTER_SHIFT
+
+; IN: HL=&COLS[ofs]. 対応するROWSは&COLS[ofs+16](EBUZ2_V2_ROWS =
+; EBUZ2_V2_COLS+16の規約 - 変更しないこと)。
+EBUZ2_UPDATE_V2_SLOT:
+    LD A,(HL)
+    CP EBUZ2_SLOT_EMPTY
+    RET Z
+    PUSH HL
+    PUSH AF
+    LD DE,16 : ADD HL,DE
+    LD A,(HL)
+    LD C,0
+    CALL EBUZ2_ADDR
+    LD (EBUZ2_TMP_ADDR),HL
+    POP AF
+    PUSH AF
+    LD E,A : LD D,0
+    LD HL,(EBUZ2_TMP_ADDR)
+    ADD HL,DE
+    LD B,0 : LD C,0
+    CALL EBUZ_WRITE2
+    POP AF
+    OR A
+    JR Z,EBUZ2_UV2S_OFF
+    DEC A
+    POP HL
+    LD (HL),A
+    LD E,A : LD D,0
+    LD HL,(EBUZ2_TMP_ADDR)
+    ADD HL,DE
+    LD B,EBUZ_BULLET_L_CODE : LD C,EBUZ_BULLET_R_CODE
+    CALL EBUZ_WRITE2
+    RET
+EBUZ2_UV2S_OFF:
+    POP HL
+    LD (HL),EBUZ2_SLOT_EMPTY
+    RET
+
+EBUZ2_UPDATE_V2_ALL:
+    LD HL,EBUZ2_V2_COLS
+    LD B,16
+EBUZ2_UV2_LOOP:
+    PUSH BC
+    PUSH HL
+    CALL EBUZ2_UPDATE_V2_SLOT
+    POP HL
+    INC HL
+    POP BC
+    DJNZ EBUZ2_UV2_LOOP
+    RET
+
+; ----------------------------------------------------------------------
+; テーブル駆動シーケンスエンジン(1行=[DW action, DB wait])。
+; EBUZ2_SEQ_TICKが毎frame呼ばれ、タイマーが尽きたら次の行のactionを
+; CALLしてから新しいwaitをセットする。JP (HL)経由の間接CALL。
+; ----------------------------------------------------------------------
+EBUZ2_CALL_HL:
+    JP (HL)
+
+EBUZ2_SEQ_ADVANCE:
+    LD HL,(EBUZ2_SEQ_PTR)
+    LD E,(HL) : INC HL : LD D,(HL) : INC HL
+    LD A,(HL) : INC HL
+    LD (EBUZ2_SEQ_PTR),HL
+    LD (EBUZ2_SEQ_TIMER),A
+    LD H,D : LD L,E
+    CALL EBUZ2_CALL_HL
+    RET
+
+EBUZ2_SEQ_TICK:
+    LD A,(EBUZ2_SEQ_TIMER)
+    OR A
+    JP Z,EBUZ2_SEQ_ADVANCE
+    DEC A
+    LD (EBUZ2_SEQ_TIMER),A
+    RET
+
+EBUZ2_ACT_NOP:
+    RET
+
+; --- テーブル本体(round136、ROM圧縮のためRAM移設済み-
+; EBUZ2_MK2_CHARDATA、内容は[DW action_addr:DB wait]×7行、実データは
+; tools/bgm_data/bgm_bank_gen.py参照) ---
+EBUZ2_SCRIPT_TABLE EQU D149h
+; ここから先はEBUZ2_ACT_START_MOVEMENTがEBUZ2_ALTLOOP_TABLEへ
+; ポインタを差し替えるため、これ以降の行は到達しない。
+
+; 「では次に外側ペア発射→無制限交互ループへ」の橋渡し(volley2の
+; 外側ペアはaltループと共有しない専用発射、そのあとaltloopへ)。
+EBUZ2_ACT_START_MOVEMENT:
+    CALL EBUZ2_FIRE_OUTER_PAIR
+    XOR A
+    LD (EBUZ2_MOVE_DIR),A
+    LD A,EBUZ2_MOVE_INTERVAL_TICKS
+    LD (EBUZ2_MOVE_COUNTDOWN),A
+    LD A,1
+    LD (EBUZ2_MOVE_ACTIVE),A
+    LD HL,EBUZ2_ALTLOOP_TABLE
+    LD (EBUZ2_SEQ_PTR),HL
+    RET
+
+EBUZ2_ALTLOOP_TABLE EQU D15Eh  ; RAM移設済み(EBUZ2_MK2_CHARDATA)
+
+EBUZ2_ACT_ALT_TOP:
+    LD A,(EBUZ2_MOVE_RTRIP)
+    OR A
+    JR Z,EBUZ2_ALT_CONTINUE
+    LD HL,EBUZ2_STOPSEQ_TABLE
+    LD (EBUZ2_SEQ_PTR),HL
+    LD A,EBUZ2_LAP_STOP_HOLD_TICKS
+    LD (EBUZ2_SEQ_TIMER),A
+    RET
+EBUZ2_ALT_CONTINUE:
+    JP EBUZ2_FIRE_INNER_PAIR_AND_SHIFT
+
+EBUZ2_ACT_ALT_LOOP_BACK:
+    LD HL,EBUZ2_ALTLOOP_TABLE
+    LD (EBUZ2_SEQ_PTR),HL
+    RET
+
+EBUZ2_STOPSEQ_TABLE EQU D16Ah  ; RAM移設済み(EBUZ2_MK2_CHARDATA)
+
+EBUZ2_FIRE_LASER_AND_SHIFT:
+    CALL EBUZ2_FIRE_LASER
+    CALL SOUND_EBUZ_FIRE
+    JP EBUZ2_RECOIL_CENTER_SHIFT
+
+EBUZ2_ACT_LOOP_RESET:
+    XOR A
+    LD (EBUZ2_MOVE_DIR),A
+    LD (EBUZ2_MOVE_R_MAX),A
+    LD (EBUZ2_MOVE_R_MIN),A
+    LD (EBUZ2_MOVE_RTRIP),A
+    LD A,EBUZ2_MOVE_INTERVAL_TICKS
+    LD (EBUZ2_MOVE_COUNTDOWN),A
+    LD A,1
+    LD (EBUZ2_MOVE_ACTIVE),A
+    LD HL,EBUZ2_ALTLOOP_TABLE
+    LD (EBUZ2_SEQ_PTR),HL
+    RET
+
+; ----------------------------------------------------------------------
+; 登場(閉状態、剛体のまま上からEBUZ2_ENTRY_TARGET_ROWへ並進移動)。
+; PHASE=0の間、毎tick呼ばれる。到達したらvolley1斉射→PHASE=1へ。
+; ----------------------------------------------------------------------
+EBUZ2_UPDATE_ENTRY:
+    LD A,(EBUZ2_ROW_CUR)
+    CP EBUZ2_ENTRY_TARGET_ROW
+    JP Z,EBUZ2_ENTER_SCRIPT
+    LD A,(EBUZ2_MOVE_COUNTDOWN)
+    DEC A
+    LD (EBUZ2_MOVE_COUNTDOWN),A
+    RET NZ
+    LD A,EBUZ2_ENTRY_HOLD_TICKS
+    LD (EBUZ2_MOVE_COUNTDOWN),A
+    LD A,(EBUZ2_ROW_CUR)
+    CALL EBUZ2_ERASE_BODY_AT
+    LD A,(EBUZ2_ROW_CUR) : INC A
+    LD (EBUZ2_ROW_CUR),A
+    JP EBUZ2_DRAW_BODY_AT
+
+EBUZ2_ENTER_SCRIPT:
+    CALL EBUZ2_FIRE_ALL_V1
+    CALL SOUND_EBUZ_FIRE
+    LD A,1
+    LD (EBUZ2_PHASE),A
+    LD HL,EBUZ2_SCRIPT_TABLE
+    LD (EBUZ2_SEQ_PTR),HL
+    LD A,EBUZ2_VOLLEY1_HOLD_TICKS
+    LD (EBUZ2_SEQ_TIMER),A
+    RET
+
+; ----------------------------------------------------------------------
+; 撃破演出(その場で消滅)。
+; ----------------------------------------------------------------------
+EBUZ2_TRIGGER_DEFEAT:
+    LD A,2 : LD (EBUZ2_PHASE),A
+    XOR A
+    LD (EBUZ2_MOVE_ACTIVE),A
+    LD (EBUZ2_LASER_ACT),A
+    LD A,(EBUZ2_ROW_CUR)
+    CALL EBUZ2_ERASE_S2_BODY_AT
+    CALL SOUND_EBUZ_FIRE
+    LD A,30
+    LD (EBUZ2_EXPL_TIMER),A
+    RET
+
+EBUZ2_UPDATE_DEFEAT:
+    LD A,(EBUZ2_EXPL_TIMER)
+    OR A
+    JR Z,EBUZ2_DEFEAT_DONE
+    DEC A
+    LD (EBUZ2_EXPL_TIMER),A
+    RET
+EBUZ2_DEFEAT_DONE:
+    XOR A
+    LD (EBUZ2_ACT),A
+    LD A,1
+    LD (EBUZ2_DEFEATED),A
+    JP BOSS_SPAWN
+
+; ----------------------------------------------------------------------
+; トップレベル・ディスパッチ(MAINLOOPから毎frame無条件に呼ぶ、
+; EBUZ2_ACT=0の間は即RET)。
+; ----------------------------------------------------------------------
+UPDATE_EBUZ2_ALL:
+    LD A,(EBUZ2_ACT)
+    OR A
+    RET Z
+    CALL EBUZ2_UPDATE_V1_ALL
+    CALL EBUZ2_UPDATE_V2_ALL
+    CALL EBUZ2_UPDATE_LASER
+    LD A,(EBUZ2_PHASE)
+    CP 2
+    JP Z,EBUZ2_UPDATE_DEFEAT
+    OR A
+    JP Z,EBUZ2_UPDATE_ENTRY
+    CALL EBUZ2_UPDATE_MOVE
+    JP EBUZ2_SEQ_TICK
+
+; ----------------------------------------------------------------------
+; スポーン。ボスの直前(CHECK_BOSS_TRIGGER末尾のJP BOSS_SPAWN、後方で
+; フックする)から一度だけ呼ばれる。
+; ----------------------------------------------------------------------
+TRIGGER_EBUZ2_ENCOUNTER:
+    LD A,1 : LD (EBUZ2_ACT),A
+    LD A,EBUZ2_HP_INIT : LD (EBUZ2_HP),A
+    XOR A
+    LD (EBUZ2_PHASE),A
+    LD (EBUZ2_MOVE_DIR),A
+    LD (EBUZ2_MOVE_ACTIVE),A
+    LD (EBUZ2_MOVE_R_MAX),A
+    LD (EBUZ2_MOVE_R_MIN),A
+    LD (EBUZ2_MOVE_RTRIP),A
+    LD (EBUZ2_LASER_ACT),A
+    ; round136(ROM圧縮): V1_STRUCT(10byte)+V2_COLS(16byte)+V2_ROWS
+    ; (16byte、未使用)+V2_NEXT(4byte)は連続46byte(F2E6-F313)なので
+    ; まとめて0で埋め(旧・個別9個のLD (addr),A展開を置換)、直後に
+    ; V2_COLSだけSLOT_EMPTYで上書きする。
+    LD HL,EBUZ2_V1_STRUCT : LD B,46
+EBUZ2_TE_ZLOOP:
+    LD (HL),A : INC HL : DJNZ EBUZ2_TE_ZLOOP
+    LD A,EBUZ2_ENTRY_HOLD_TICKS
+    LD (EBUZ2_MOVE_COUNTDOWN),A
+    LD A,EBUZ2_SLOT_EMPTY
+    LD HL,EBUZ2_V2_COLS : LD B,16
+EBUZ2_TE_ELOOP:
+    LD (HL),A : INC HL : DJNZ EBUZ2_TE_ELOOP
+    LD A,EBUZ2_ENTRY_START_ROW
+    LD (EBUZ2_ROW_CUR),A
+    JP EBUZ2_DRAW_BODY_AT
+
+; ----------------------------------------------------------------------
+; 衝突判定。自機弾→Mk2(HPを減らす、CHECK_BULLET_VS_EBUZと同型)。
+; Mk2本体→自機(既存PDC_CHECK_EBUZ系と同型、PLAYER_HIT_BOX_EBUZ/_1PX
+; をそのまま再利用)。
+; ----------------------------------------------------------------------
+CHECK_BULLET_VS_EBUZ2:
+    LD A,(EBUZ2_ACT)
+    OR A
+    JR Z,CBVE2_MISS
+    LD A,(EBUZ2_PHASE)
+    CP 2
+    JR Z,CBVE2_MISS
+    LD D,23
+    LD A,B : SUB D
+    CP 6
+    JR NC,CBVE2_MISS
+    LD A,(EBUZ2_ROW_CUR)
+    LD D,A
+    LD A,C : SUB D
+    CP 7
+    JR NC,CBVE2_MISS
+    LD A,(EBUZ2_HP) : DEC A : LD (EBUZ2_HP),A
+    JR NZ,CBVE2_DAMAGED
+    CALL EBUZ2_TRIGGER_DEFEAT
+    CALL ADD_SCORE_500
+    CALL ADD_SCORE_500
+    LD A,1
+    RET
+CBVE2_DAMAGED:
+    LD A,1
+    RET
+CBVE2_MISS:
+    XOR A
+    RET
+
+PDC_CHECK_EBUZ2:
+    LD A,(EBUZ2_ACT)
+    OR A
+    JR Z,EBUZ2_PDC_MISS
+    LD A,(EBUZ2_PHASE)
+    CP 2
+    JR Z,EBUZ2_PDC_MISS
+    LD A,(EBUZ2_ROW_CUR) : ADD A,A : ADD A,A : ADD A,A : LD E,A
+    LD D,23*8
+    LD B,55
+    CALL PLAYER_HIT_BOX_EBUZ
+    OR A
+    JR NZ,EBUZ2_PDC_HIT
+    XOR A
+    RET
+EBUZ2_PDC_HIT:
+    LD A,1
+    RET
+EBUZ2_PDC_MISS:
+    XOR A
+    RET
+
+; ----------------------------------------------------------------------
+; CHECK_BOSS_TRIGGERの末尾から横取りする実スポーン起点。1回目の到達で
+; Mk2をスポーンして実ボスは出さない。Mk2生存中は素通り(実ボスも
+; スポーンしない、次フレームもCHECK_BOSS_TRIGGER自体がBOSS_STATE==0の
+; 間毎フレーム呼び直すためこれで足りる)。実際の「Mk2撃破→実ボスへ」
+; 遷移はEBUZ2_DEFEAT_DONEがBOSS_SPAWNを直接呼ぶため、ここでの
+; EBUZ2_DEFEATEDチェックは通常到達しない防御的フォールバックに過ぎない
+; (HP自体は初回未スポーン時も0のため、"未スポーン"と"撃破済み"の
+; 区別に専用フラグEBUZ2_DEFEATEDが必要)。
+; ----------------------------------------------------------------------
+EBUZ2_ON_BOSS_TRIGGER:
+    LD A,(EBUZ2_ACT)
+    OR A
+    RET NZ                       ; 既にスポーン済み・生存中 - 何もしない
+    LD A,(EBUZ2_DEFEATED)
+    OR A
+    JP NZ,BOSS_SPAWN               ; 撃破済み(防御的フォールバック)
+    JP TRIGGER_EBUZ2_ENCOUNTER     ; 初回到達 - Mk2をスポーン
+
 ; Translates 33 consecutive ROWDATA bytes (ASCII terrain letter) through
 ; LUT into an IDCACHEn buffer - used to refresh a row's cache only when
 ; its group's PXCHAR actually advances (see the PXCHAR_G8/G4/G2/G1 gates
@@ -14229,102 +15081,81 @@ ENEMY6_ANIM_CODES:
 ; Enemy6 from ENEMY6_ROW_TABLE (raw row, from the editor), Enemy3-Wave
 ; from SPAWN_E3_OFFSET_TABLE (offset, from the editor's own field),
 ; Ebuz/Boss need no table (fixed position, row/tick are editor-only).
+; round136(Schedule_2_2.json、346エントリへ差し替え、ユーザー提供 -
+; "10KB減らした"。ROM予算確保のためEbuz Mk2追加と合わせて実施)。
+; 16bit thresholds - N=345エントリ。
 SPAWN_THRESHOLDS:
-    DW 11,13,15,26,28,30,30,43,45,47,56,58,60,68,70,72,74
-    DW 76,78,80,88,98,100,102,104,106,108,110,112,114,116,118,120,130
-    DW 139,141,143,145,147,153,157,161,162,163,164,166,168,170,172,183,185
-    DW 187,188,190,191,198,200,201,207,208,208,214,214,214,222,223,230,232
-    DW 234,235,236,238,238,245,247,249,250,252,253,254,262,265,267,268,269
-    DW 275,278,279,287,290,292,300,302,302,304,307,314,317,331,352,354,356
-    DW 357,359,362,364,366,368,371,373,375,381,386,388,392,400,402,406,410
-    DW 423,428,432,437,439,441,445,447,449,460,461,463,463,465,482,483,485
-    DW 485,488,489,491,491,498,504,505,507,507,513,527,542,551,558,566,573
-    DW 580,581,582,591,593,600,610,611,613,613,616,617,619,619,623,624,626
-    DW 629,630,632,641,642,644,644,647,648,650,650,668,675,677,679,683,683
-    DW 695,695,705,707,709,712,721,723,725,728,737,739,741,744,751,753,755
-    DW 757,764,768,771,774,779,783,788,789,790,794,797,798,798,799,800,801
-    DW 802,803,803,804,804,805,806,807,808,809,809,810,811,812,813,814,815
-    DW 815,816,817,818,822,827,830,831,833,835,838,841,843,845,847,850,851
-    DW 852,852,852,853,853,854,854,854,855,855,856,856,856,857,857,858,858
-    DW 858,859,859,860,860,860,861,861,862,862,863,863,864,864,865,865,866
-    DW 866,867,867,868,868,868,869,869,870,870,870,871,871,872,872,872,873
-    DW 873,874,874,874,875,875,876,876,876,877,877,878,878,878,879,879,880
-    DW 880,880,881,881,882,882,882,883,883,884,884,884,885,885,886,886,886
-    DW 887,887,888,888,888,889,889,890,890,890,891,891,892,892,892,893,893
-    DW 894,894,894,895,895,896,896,896,897,897,898,898,898,899,899,900,900
-    DW 900,901,901,902,902,902,903,903,904,904,905,905,906,906,907,907,908
-    DW 908,908,909,909,910,910,910,911,911,912,912,912,913,913,914,914,914
-    DW 915,915,916,916,916,917,917,918,918,918,919,919,920,920,920,921,921
-    DW 922,922,922,923,923,924,924,925,925,926,926,927,927,928,928,928,929
-    DW 929,930,930,930,931,931,932,932,932,933,933,934,934,934,935,935,936
-    DW 936,936,937,937,938,938,938,939,939,940,940,940,941,941,942,942,942
-    DW 943,943,947
+    DW 11,13,15,26,28,30,43,45,47,56,58,60,68,70,72,74,76
+    DW 78,80,88,98,100,102,104,106,108,110,112,114,116,118,120,130,139
+    DW 141,143,145,147,153,157,161,162,163,164,166,168,170,172,183,185,187
+    DW 188,190,191,198,200,201,207,208,208,214,214,214,222,223,230,232,234
+    DW 236,238,238,245,247,249,252,253,254,262,267,268,269,278,279,287,290
+    DW 292,300,302,302,304,307,314,317,331,352,354,356,357,359,362,364,366
+    DW 368,371,373,375,381,386,388,392,400,402,406,410,423,428,432,437,439
+    DW 441,445,447,449,461,463,463,465,483,485,485,489,491,491,505,507,507
+    DW 513,527,542,551,558,566,573,580,581,582,591,593,600,611,613,613,617
+    DW 619,619,623,624,626,630,632,641,642,644,644,648,650,650,668,675,677
+    DW 679,683,683,695,695,707,709,712,723,725,728,739,741,744,751,753,755
+    DW 757,768,774,788,794,798,803,804,809,815,818,822,827,830,831,833,835
+    DW 838,841,843,845,847,850,851,852,853,853,854,855,855,856,857,857,858
+    DW 859,859,860,861,861,863,863,865,865,867,867,868,869,869,870,871,871
+    DW 872,873,873,874,875,875,876,877,877,878,879,879,880,881,881,882,883
+    DW 883,884,885,885,886,887,887,888,889,889,890,891,891,892,893,893,894
+    DW 895,895,896,897,897,898,899,899,900,901,901,902,903,903,904,905,905
+    DW 906,907,907,908,909,909,910,911,911,912,913,913,914,915,915,916,917
+    DW 917,918,919,919,920,921,921,922,923,923,925,925,927,927,928,929,929
+    DW 930,931,931,932,933,933,934,935,935,936,937,937,938,939,939,940,941
+    DW 941,942,943,943,947
 
 SPAWN_SIMPLE_Y_TABLE:
-    DB 40,32,24,136,128,0,120,32,24,16,128,120,112,24,40,56,72
-    DB 88,104,120,120,120,112,104,96,88,80,72,64,56,48,0,0,0
-    DB 88,96,104,112,120,120,120,0,0,0,120,112,104,96,88,48,40
-    DB 32,136,0,0,0,0,32,0,32,0,32,0,0,0,0,144,128
-    DB 112,0,0,16,0,104,112,120,0,0,16,0,104,0,0,128,0
-    DB 0,64,0,0,72,0,32,40,88,48,120,64,0,0,24,16,8
-    DB 0,0,72,64,56,0,48,40,32,0,0,0,0,0,0,0,0
-    DB 0,72,0,24,16,8,136,128,120,0,0,16,0,104,0,0,64
-    DB 0,0,0,0,120,0,0,0,0,112,0,0,64,0,0,0,0
-    DB 0,0,0,0,0,0,0,0,64,0,0,0,0,120,0,0,64
-    DB 0,0,120,0,0,64,0,0,0,0,120,0,16,24,32,0,0
-    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-    DB 0,0,0,0,0,0,0,104,0,0,88,0,0,80,0,0,0
-    DB 0,72,0,0,48,0,0,0,0,88,0,0,0,0,0,0,88
-    DB 0,0,0,80,64,80,64,80,0,80,72,80,72,56,72,88,0
-    DB 0,72,0,0,0,0,80,0,0,0,0,88,0,0,0,0,96
-    DB 0,0,0,0,96,0,0,0,0,0,0,0,0,0,0,0,0
+    DB 40,32,24,136,128,120,32,24,16,128,120,112,24,40,56,72,88
+    DB 104,120,120,120,112,104,96,88,80,72,64,56,48,0,0,0,88
+    DB 96,104,112,120,120,120,0,0,0,120,112,104,96,88,48,40,32
+    DB 136,0,0,0,0,32,0,32,0,32,0,0,0,0,144,128,112
+    DB 0,16,0,104,112,120,0,16,0,104,0,128,0,64,0,0,72
+    DB 0,32,40,88,48,120,64,0,0,24,16,8,0,0,72,64,56
+    DB 0,48,40,32,0,0,0,0,0,0,0,0,0,72,0,24,16
+    DB 8,136,128,120,0,16,0,104,0,64,0,0,0,120,0,0,112
+    DB 0,0,64,0,0,0,0,0,0,0,0,0,0,0,64,0,0
+    DB 0,120,0,0,64,0,120,0,0,64,0,0,0,120,0,16,24
+    DB 32,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+    DB 0,0,0,104,88,80,72,48,88,88,80,64,80,64,80,0,80
+    DB 72,80,72,56,72,88,0,72,0,0,80,0,0,88,0,0,96
+    DB 0,0,96,0,0,0,0,0,0,0,0,0,0,0,0,0,0
     DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
     DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
     DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
     DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
     DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
     DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-    DB 0,0,0,0
+    DB 0,0,0,0,0
 
 SPAWN_BASEY_TABLE:
     DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
     DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-    DB 0,0,0,0,0,0,0,96,104,136,0,0,0,0,0,0,0
-    DB 0,0,64,96,72,112,0,72,0,104,0,72,112,72,104,0,0
-    DB 0,32,64,0,80,0,0,0,32,72,0,88,0,32,72,0,88
-    DB 32,0,104,32,0,112,0,0,0,0,0,0,0,0,0,0,0
-    DB 96,40,0,0,0,104,0,0,0,96,24,64,48,16,120,72,16
-    DB 16,0,144,0,0,0,0,0,0,32,64,0,80,0,80,112,0
-    DB 128,24,56,72,0,24,24,48,64,0,24,96,0,96,32,120,32
-    DB 80,64,48,104,24,64,80,112,0,128,24,56,72,0,80,112,0
-    DB 24,56,0,80,112,0,128,24,56,72,0,0,0,0,0,32,104
-    DB 32,104,40,72,80,104,40,72,80,104,40,72,80,104,120,88,56
-    DB 24,0,64,0,96,0,0,0,0,0,0,0,0,0,0,0,0
+    DB 0,0,0,0,0,0,96,104,136,0,0,0,0,0,0,0,0
+    DB 0,64,96,72,112,0,72,0,104,0,72,112,72,104,0,0,0
+    DB 64,0,80,0,0,0,72,0,88,0,72,0,88,0,104,32,0
+    DB 112,0,0,0,0,0,0,0,0,0,0,0,96,40,0,0,0
+    DB 104,0,0,0,96,24,64,48,16,120,72,16,16,0,144,0,0
+    DB 0,0,0,0,64,0,80,0,112,0,128,56,72,0,48,64,0
+    DB 24,96,0,96,32,120,32,80,64,48,104,24,64,112,0,128,56
+    DB 72,0,80,112,0,56,0,80,112,0,128,56,72,0,0,0,0
+    DB 0,32,104,32,104,72,80,104,72,80,104,72,80,104,120,88,56
+    DB 24,64,96,0,0,0,0,0,0,0,0,0,0,0,0,64,0
     DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-    DB 0,0,0,0,0,0,0,0,64,0,0,0,0,0,0,0,0
-    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-    DB 0,0,0,0,96,0,0,0,0,96,0,0,0,0,96,0,0
-    DB 0,0,96,0,0,0,0,96,0,0,0,0,96,0,0,0,0
-    DB 88,0,0,0,0,88,0,0,0,0,88,0,0,0,0,88,0
-    DB 0,0,0,88,0,0,0,0,88,0,0,0,0,88,0,0,0
-    DB 0,96,0,0,0,0,96,0,0,0,0,88,0,0,0,0,80
-    DB 0,0,0,0,72,0,0,0,64,0,0,0,64,0,0,0,0
-    DB 72,0,0,0,0,80,0,0,0,0,88,0,0,0,0,88,0
-    DB 0,0,0,88,0,0,0,0,88,0,0,0,0,80,0,0,0
-    DB 0,80,0,0,0,0,0,0,0,0,0,0,0,0,80,0,0
-    DB 0,0,80,0,0,0,0,80,0,0,0,0,80,0,0,0,0
-    DB 80,0,0,0,0,80,0,0,0,0,80,0,0,0,0,80,0
-    DB 0,0,0,0
+    DB 0,0,0,0,0,0,0,0,0,0,0,96,0,0,96,0,0
+    DB 96,0,0,96,0,0,96,0,0,96,0,0,88,0,0,88,0
+    DB 0,88,0,0,88,0,0,88,0,0,88,0,0,88,0,0,96
+    DB 0,0,96,0,0,88,0,0,80,0,0,72,0,0,64,0,0
+    DB 64,0,0,72,0,0,80,0,0,88,0,0,88,0,0,88,0
+    DB 0,88,0,0,80,0,0,80,0,0,0,0,0,0,80,0,0
+    DB 80,0,0,80,0,0,80,0,0,80,0,0,80,0,0,80,0
+    DB 0,80,0,0,0
 
 SPAWN_E3_OFFSET_TABLE:
     DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,3
+    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,3,0
     DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
     DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
     DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
@@ -14343,18 +15174,9 @@ SPAWN_E3_OFFSET_TABLE:
     DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
     DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
     DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-    DB 0,0,0,0
+    DB 0,0,0,0,0
 
 ENEMY6_ROW_TABLE:
-    DB 0,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0
     DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
     DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
     DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
@@ -14366,23 +15188,17 @@ ENEMY6_ROW_TABLE:
     DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
     DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
     DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-    DB 0,2,0,18,0,2,16,0,2,15,0,14,2,0,14,2,14
-    DB 2,0,14,2,0,14,2,14,2,0,14,2,14,2,14,4,0
-    DB 14,6,14,0,0,0,0,0,0,0,0,0,0,0,0,0,5
-    DB 3,0,17,5,15,3,0,17,6,15,4,0,17,7,15,5,0
-    DB 17,8,15,6,0,17,9,15,7,17,9,15,7,17,9,15,7
-    DB 17,9,15,6,0,17,8,15,6,0,17,8,15,6,0,17,8
-    DB 15,6,0,17,8,15,6,0,17,8,15,6,0,17,8,15,6
-    DB 0,17,8,15,6,0,17,8,15,5,0,17,7,15,5,0,17
-    DB 8,15,5,0,17,7,15,4,0,17,6,15,3,0,17,7,15
-    DB 5,0,18,8,16,5,0,18,7,15,4,0,17,6,14,3,0
-    DB 16,5,13,2,0,15,4,12,0,14,3,11,0,14,5,12,3
-    DB 0,16,6,14,4,0,17,7,15,5,0,17,8,14,6,0,16
-    DB 8,14,6,0,17,8,15,5,0,17,7,14,4,0,16,6,13
-    DB 4,0,16,7,14,5,16,8,13,5,15,7,13,5,0,15,7
-    DB 13,5,0,15,7,13,5,0,15,7,13,5,0,15,7,13,5
-    DB 0,15,7,13,5,0,15,7,13,5,0,15,7,13,5,0,15
-    DB 7,13,0,0
+    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+    DB 0,0,0,0,0,0,5,0,5,15,0,6,15,0,7,15,0
+    DB 8,15,0,9,15,9,15,9,15,9,15,0,8,15,0,8,15
+    DB 0,8,15,0,8,15,0,8,15,0,8,15,0,8,15,0,8
+    DB 15,0,7,15,0,8,15,0,7,15,0,6,15,0,7,15,0
+    DB 8,16,0,7,15,0,6,14,0,5,13,0,4,12,0,3,11
+    DB 0,5,12,0,6,14,0,7,15,0,8,14,0,8,14,0,8
+    DB 15,0,7,14,0,6,13,0,7,14,8,13,7,13,0,7,13
+    DB 0,7,13,0,7,13,0,7,13,0,7,13,0,7,13,0,7
+    DB 13,0,7,13,0
+
 ; --- Boss BG (nametable) graphics, generated from
 ; --- dotpict_20260806_173500 (12x37 dot art), resized directly
 ; --- to 40x128 dots (5x16 tiles) and quantized to black/gray/red/blue.
@@ -14393,8 +15209,6 @@ ENEMY6_ROW_TABLE:
 ; --- BOSS_HEX_PATTERN: single 16x16 sprite pattern (32 bytes),
 ; --- art only in the top-left 8x8 quadrant (the other 3 quadrants
 ; --- are blank/transparent) - matches the uploaded hex-icon shape.
-; --- Reused at two different sprite-attribute colors (gray/white)
-; --- for the flash effect - see BOSS_SPAWN/BOSS_UPDATE.
 BOSS_HEX_PATTERN:
     DB 3Ch,7Eh,FFh,FFh,FFh,FFh,7Eh,3Ch    ; top-left (the icon)
     DB 00h,00h,00h,00h,00h,00h,00h,00h    ; bottom-left (blank)
@@ -14950,14 +15764,19 @@ COLORDATA:
     DB 0E4h,0E4h,014h,014h,014h,084h                       ; group26=BOSS gray/blue, group27=BOSS gray/blue, group28-30=BOSS black/blue, group31=BOSS red/blue
 COLOR_LEN EQU 32
 
-ROWDATA0:
-    DB "MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM"
-
-ROWDATA2:
-    DB "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD"
-
-ROWDATA3:
-    DB "SSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS"
-
-ROWDATA5:
-    DB "ABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABAB"
+; round136(Ebuz Mk2用ROM予算確保、ユーザー指摘"まず地形データがかなり
+; あるはず、これは開始前に基本パターンから生成可能"): ROWDATA0/2/3/5は
+; いずれも同一文字の128byte単純反復(ROWDATA5のみ2文字交互)で、
+; PXCHAR_G1/G2/G4/G8はAND 3Fhで0-63にしか動かず、REFRESH_IDCACHE_33の
+; 33byte読み取り幅を足しても最大96byte分しか実際には参照されない
+; (128byteの元サイズには32byteの余裕があった)。内容が固定パターン
+; なのでROMにリテラルで128byte×4=512byte持つ必要はなく、RAM上に
+; 同サイズのバッファを確保してINIT時に生成する(以後の参照コードは
+; 完全に無変更、ROWDATA0等のラベルが指す先がROMからRAMに変わるだけ)。
+; 配置先はBOSS_PATTERNS(0xCD8Dから290byte、Titleが起動時に埋める)の
+; 直後の空きRAM(次の既知シンボルTICKが0xE000までのため大きな余裕あり、
+; リテラル16進アドレス参照が無いことも横断検索で確認済み)。
+ROWDATA0 EQU 0CEB0h  ; 128 bytes RAM(INITで'M'を充填)
+ROWDATA2 EQU 0CF30h  ; 128 bytes RAM(INITで'D'を充填)
+ROWDATA3 EQU 0CFB0h  ; 128 bytes RAM(INITで'S'を充填)
+ROWDATA5 EQU 0D030h  ; 128 bytes RAM(INITで'A','B'交互に充填)
