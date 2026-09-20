@@ -187,6 +187,18 @@ EBUZ2_ENTRY_STEP_HOLD_TICKS EQU 4
 EBUZ2_RECOIL_HOLD_TICKS       EQU 1  ; 無印EbuzのEBUZ_RECOIL_DURATIONと同値
 EBUZ2_VOLLEY2_WAVE_HOLD_TICKS EQU 2  ; 無印EbuzのEBUZ_FIRE_INTERVALと同値
 
+; (2026-09-20 追加訂正「初弾から変形後の2弾目発射までのホールドが
+; Ebuzと違ってるだろ 多分1発目発射後0.3か0.5待ってから変形してただろ」
+; - 無印Ebuzを再確認したところ、初弾(bullet0)発射直後にその場で10ティック
+; 静止ホールドしてから初めて飛び始め、そのまま間を置かず変形(state2)に
+; 入る構造だった(EBUZ_WAIT_TICKS呼び出し、B=10)。ユーザーの体感
+; 0.3-0.5秒は10ティック[EBUZ_FRAME_WAIT較正値で約0.167秒]よりやや
+; 長めの見積もりだが、ソース上の実測値はこの10ティックのみなので、
+; ユーザーの目分量ではなくこの実値をそのまま移植する。従来のMk2は
+; 一斉発射(volley1)直後に間を置かず即座にリコイルへ入っていたため、
+; この「発射後の静止ホールド」区間自体が丸ごと欠落していた。) ---
+EBUZ2_VOLLEY1_HOLD_TICKS EQU 10  ; 無印EbuzのEBUZ_WAIT_TICKS(B=10、初弾ホールド)と同値
+
 ; --- Ebuz Mk2-2(開状態、7行、添付Ebuzmkii2_64x64_2.jsonを実際に
 ; Pythonで解析して確認済み)の発射管定数。5門(外側上/内側上/中央/
 ; 内側下/外側下)はrow_top=EBUZ2_ENTRY_TARGET_ROW_TOP(9)固定(変形後は
@@ -1035,6 +1047,11 @@ EBUZ2_ENTRY_MOVE_DONE:
     CALL EBUZ2_FIRE_3_BULLET
     CALL EBUZ2_FIRE_4_BULLET
 EBUZ2_VOLLEY_DONE:
+
+    ; --- 発射後ホールド: 無印Ebuzの「初弾発射直後にその場で10ティック
+    ; 静止してから次(変形)に入る」構造を移植(上のEBUZ2_VOLLEY1_HOLD_
+    ; TICKS定義のコメント参照)。 ---
+    LD B,EBUZ2_VOLLEY1_HOLD_TICKS : CALL EBUZ2_HOLD_N
 
     ; --- リコイル: 「今回は一斉発射だから」個別の発射管ごとではなく
     ; 本体全体が単純に1セル右へ動いてから元の位置へ戻る(閉状態のまま、
