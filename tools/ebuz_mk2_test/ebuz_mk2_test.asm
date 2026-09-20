@@ -394,6 +394,27 @@ EBUZ2_ROW_S2_5:
 EBUZ2_ROW_S2_6:
     DB 0,0,EBUZ2_CODE_A,EBUZ2_CODE_B,EBUZ2_CODE_C
 
+; (2026-09-20追加指示「リコイル動作を追加」 - 無制限交互発射の各発射
+; ごとに、無印Ebuzの継続発射リコイル(EBUZ_ROW_0ABC_REST/RECOIL、
+; "打つときは反動を見せたいんで 上下の3セル分を1セル右に 打ったら
+; 元位置に戻せ")と同じ考え方を、発射したペアの行(外側=OT/OB、
+; 内側=IT/IB)だけに適用する。EBUZ2_ROW_S2_0/S2_6[外側]・S2_1/S2_5
+; [内側]はいずれも元は5byte(col23-27)だが、リコイル時に1セル右へ
+; ずらすための予備セル(col28)を確保するため、この4行だけ6byte
+; (col23-28)のREST/RECOIL版を新設する(通常時の描画[EBUZ2_ROW_S2_0
+; 等の5byte版]自体は無変更 - col28は初期状態でVRAM既定の0のままな
+; ため、そのままREST相当として扱える)。外側上(S2_0)と外側下(S2_6)、
+; 内側上(S2_1)と内側下(S2_5)はそれぞれ中身が同一のため、1組ずつの
+; REST/RECOILペアを両方の行で使い回す。
+EBUZ2_ROW_S2_OUTER_REST:
+    DB 0,0,EBUZ2_CODE_A,EBUZ2_CODE_B,EBUZ2_CODE_C,0
+EBUZ2_ROW_S2_OUTER_RECOIL:
+    DB 0,0,0,EBUZ2_CODE_A,EBUZ2_CODE_B,EBUZ2_CODE_C
+EBUZ2_ROW_S2_INNER_REST:
+    DB 0,EBUZ2_CODE_A,EBUZ2_CODE_B,EBUZ2_CODE_C,EBUZ2_CODE_C,0
+EBUZ2_ROW_S2_INNER_RECOIL:
+    DB 0,0,EBUZ2_CODE_A,EBUZ2_CODE_B,EBUZ2_CODE_C,EBUZ2_CODE_C
+
 ; ============================================================================
 ; 汎用アドレス計算: Input B=nametable行番号(0-23)、C=列番号(0-31)。
 ; Output: HL=NAMTBL+row*32+col。B,Cは保持されたまま返る。
@@ -1156,21 +1177,49 @@ EBUZ2_VOLLEY2_DONE:
 ; 適用したもの(無印Ebuzは1門ずつの交代だが、Mk2は「2門同時発射」を
 ; 1ユニットとして交代させる点のみが違う)。本体自体は変形後、以後
 ; 二度と動かない(この点は変更なし)。「交互発射するまでに15Tickの
-; ウェイト挿入」指示により、外側ペアの1発目発射完了から無制限交互
-; 発射の開始(2巡目の内側ペア)までの間にEBUZ2_VOLLEY2_ALT_START_
-; HOLD_TICKS(15)だけ静止ホールドを挿む。 ---
-EBUZ2_VOLLEY2_ALT_START_HOLD_TICKS EQU 15
+; ウェイト挿入」→さらに追加指示「ウェイトを20Tickに」を受け、外側
+; ペアの1発目発射完了から無制限交互発射の開始(2巡目の内側ペア)まで
+; の間にEBUZ2_VOLLEY2_ALT_START_HOLD_TICKS(20)だけ静止ホールドを
+; 挿む。加えて「リコイル動作を追加」指示により、発射したペアの行
+; だけをEBUZ2_ROW_S2_INNER/OUTER_RECOILへ1セル右にずらして
+; EBUZ2_RECOIL_HOLD_TICKS(1)保持→REST位置へ戻して同じく1tick保持、
+; という無印Ebuzの継続発射リコイルと同じ手順を各発射ごとに行う。 ---
+EBUZ2_VOLLEY2_ALT_START_HOLD_TICKS EQU 20  ; 「ウェイトを20Tickに」指示で15→20
     LD B,EBUZ2_VOLLEY2_ALT_START_HOLD_TICKS : CALL EBUZ2_HOLD_N
 EBUZ2_VOLLEY2_ALT_LOOP:
     LD B,EBUZ2_VOLLEY2_WAVE_HOLD_TICKS : CALL EBUZ2_HOLD_N
     CALL EBUZ2_FIRE_IT_BULLET
     CALL EBUZ2_FIRE_IB_BULLET
+    ; --- リコイル(内側ペア): IT(row S2_ROW_TOP+1)・IB(row S2_ROW_TOP+5)
+    ; を1セル右へずらしてから元へ戻す。 ---
+    LD B,EBUZ2_S2_ROW_TOP+1 : LD C,23 : CALL EBUZ2_CALC_ADDR
+    PUSH HL : LD HL,EBUZ2_ROW_S2_INNER_RECOIL : POP DE : LD BC,6 : CALL LDIRVM
+    LD B,EBUZ2_S2_ROW_TOP+5 : LD C,23 : CALL EBUZ2_CALC_ADDR
+    PUSH HL : LD HL,EBUZ2_ROW_S2_INNER_RECOIL : POP DE : LD BC,6 : CALL LDIRVM
+    LD B,EBUZ2_RECOIL_HOLD_TICKS : CALL EBUZ2_HOLD_N
+    LD B,EBUZ2_S2_ROW_TOP+1 : LD C,23 : CALL EBUZ2_CALC_ADDR
+    PUSH HL : LD HL,EBUZ2_ROW_S2_INNER_REST : POP DE : LD BC,6 : CALL LDIRVM
+    LD B,EBUZ2_S2_ROW_TOP+5 : LD C,23 : CALL EBUZ2_CALC_ADDR
+    PUSH HL : LD HL,EBUZ2_ROW_S2_INNER_REST : POP DE : LD BC,6 : CALL LDIRVM
+    LD B,EBUZ2_RECOIL_HOLD_TICKS : CALL EBUZ2_HOLD_N
 EBUZ2_VOLLEY2_ALT_INNER_DONE:              ; テスト用: 交互発射1周ぶんの内側完了地点
     LD B,EBUZ2_VOLLEY2_WAVE_HOLD_TICKS : CALL EBUZ2_HOLD_N
     CALL EBUZ2_FIRE_OT_BULLET
     CALL EBUZ2_FIRE_OB_BULLET
+    ; --- リコイル(外側ペア): OT(row S2_ROW_TOP)・OB(row S2_ROW_TOP+6)
+    ; を1セル右へずらしてから元へ戻す。 ---
+    LD B,EBUZ2_S2_ROW_TOP   : LD C,23 : CALL EBUZ2_CALC_ADDR
+    PUSH HL : LD HL,EBUZ2_ROW_S2_OUTER_RECOIL : POP DE : LD BC,6 : CALL LDIRVM
+    LD B,EBUZ2_S2_ROW_TOP+6 : LD C,23 : CALL EBUZ2_CALC_ADDR
+    PUSH HL : LD HL,EBUZ2_ROW_S2_OUTER_RECOIL : POP DE : LD BC,6 : CALL LDIRVM
+    LD B,EBUZ2_RECOIL_HOLD_TICKS : CALL EBUZ2_HOLD_N
+    LD B,EBUZ2_S2_ROW_TOP   : LD C,23 : CALL EBUZ2_CALC_ADDR
+    PUSH HL : LD HL,EBUZ2_ROW_S2_OUTER_REST : POP DE : LD BC,6 : CALL LDIRVM
+    LD B,EBUZ2_S2_ROW_TOP+6 : LD C,23 : CALL EBUZ2_CALC_ADDR
+    PUSH HL : LD HL,EBUZ2_ROW_S2_OUTER_REST : POP DE : LD BC,6 : CALL LDIRVM
+    LD B,EBUZ2_RECOIL_HOLD_TICKS : CALL EBUZ2_HOLD_N
 EBUZ2_VOLLEY2_ALT_OUTER_DONE:              ; テスト用: 交互発射1周ぶんの外側完了地点
-    JR EBUZ2_VOLLEY2_ALT_LOOP
+    JP EBUZ2_VOLLEY2_ALT_LOOP  ; ループ本体が長くなりJR射程(-128〜127)を超えたためJPに変更
 
 EBUZ2_COLOR_BYTE:
     DB EBUZ2_COLOR
