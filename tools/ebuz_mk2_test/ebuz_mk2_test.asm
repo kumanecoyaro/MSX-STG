@@ -183,12 +183,19 @@ EBUZ2_OSC_ROW_MAX   EQU 16
 EBUZ2_OSC_ROW_START EQU 9
 EBUZ2_OSC_STEP_TICKS EQU 6
 
-; state1中の中央発射管は、本体がまだ動いていない固定位置(state1は
-; 常にnametable row3-7、中央=row2local=nt5)にいる。EBUZ2_OSC_ROWを
-; 一時的にこの値にしてから(EBUZ2_OSC_ROW+CENTER_OFS(3)=5=nt5と
-; 逆算)発射すれば、state2用と全く同じ発射管ルーチンをstate1でも
-; そのまま使い回せる(状態1/2で発射ロジックを2重に持たずに済む)。
-EBUZ2_STATE1_OSC_ROW EQU 2
+; state1もEBUZ2_OSC_ROW_START(Row9)に固定描画される(2026-09-20
+; 「warp」修正: 旧設計はstate1をnametable row3-7の別位置に固定描画して
+; おり、state2遷移の瞬間に本体全体がRow9へ瞬間移動する「ワープ」に
+; 見えてしまっていた - 以後はstate1も最初からRow9起点で描画し、
+; state1→state2遷移は同じ位置での5行→7行の形状変化のみにする)。
+; ただしstate1(5行)とstate2(7行)ではローカル行番号のズレがある:
+; state1の中央はrow_topから+2行目(row2local)だが、state2の中央は
+; +3行目(row3local、上下キャップ2行が挿入されているため)。
+; EBUZ2_FIRE_C_BULLETの発射行の式はOSC_ROW+CENTER_OFS(3)固定なので、
+; state1の発射時だけEBUZ2_OSC_ROWを一時的にOSC_ROW_START-1(8)にして
+; 発射すれば(8+3=11=row_top[9]+2=state1の中央行と正しく逆算)、
+; state1/state2で発射ロジックを2重に持たずに済む。
+EBUZ2_STATE1_OSC_ROW EQU EBUZ2_OSC_ROW_START-1
 
 ; state2形成後、連射+oscillation開始までのホールド(無印Ebuzの
 ; 実機調整値を踏襲、未調整のプレースホルダー)。
@@ -213,6 +220,13 @@ EBUZ2_OT_NEXT          EQU 0F30Bh  ; 1 byte: 外側上の同上
 EBUZ2_OB_NEXT          EQU 0F30Ch  ; 1 byte: 外側下の同上
 EBUZ2_IT_NEXT          EQU 0F30Dh  ; 1 byte: 内側上の同上
 EBUZ2_IB_NEXT          EQU 0F30Eh  ; 1 byte: 内側下の同上
+EBUZ2_CUR_PORT_OFS     EQU 0F30Fh  ; 1 byte: EBUZ2_UPDATE_SLOT呼び出し前に
+                            ; 各UPDATE_x_POOLが自分のローカル行オフセット
+                            ; (EBUZ2_CENTER_OFS等)を書いておく作業変数。
+                            ; 弾のYを毎ティック[EBUZ2_OSC_ROW]+この値から
+                            ; 都度再計算する(「弾は上下動に合わせてY位置
+                            ; 変わる」を文字通り実装 - 発射時点のYに固定
+                            ; していた旧設計をここで撤回)。
 
 ; 各プール8スロット×2byte(ROW,COL)。ROW=EBUZ2_SLOT_EMPTY(255)で
 ; 非活性、それ以外は「発射された瞬間の実nt行」を保持したまま列だけが
@@ -297,15 +311,6 @@ EBUZ2_ROW_S2_5:
     DB 0,EBUZ2_CODE_A,EBUZ2_CODE_B,EBUZ2_CODE_C,EBUZ2_CODE_C
 EBUZ2_ROW_S2_6:
     DB 0,0,EBUZ2_CODE_A,EBUZ2_CODE_B,EBUZ2_CODE_C
-
-; state1の描画(5行、row3-7、col23起点の5byte単位LDIRVM)。
-EBUZ2_DRAW_STATE1:
-    LD HL,EBUZ2_ROW_S1_0 : LD DE,01877h : LD BC,5 : CALL LDIRVM  ; row3
-    LD HL,EBUZ2_ROW_S1_1 : LD DE,01897h : LD BC,5 : CALL LDIRVM  ; row4
-    LD HL,EBUZ2_ROW_S1_2 : LD DE,018B7h : LD BC,5 : CALL LDIRVM  ; row5(中心)
-    LD HL,EBUZ2_ROW_S1_3 : LD DE,018D7h : LD BC,5 : CALL LDIRVM  ; row6
-    LD HL,EBUZ2_ROW_S1_4 : LD DE,018F7h : LD BC,5 : CALL LDIRVM  ; row7
-    RET
 
 ; ============================================================================
 ; 汎用アドレス計算: Input B=nametable行番号(0-23)、C=列番号(0-31)。
@@ -393,25 +398,39 @@ EBUZ2_ERASE_BC:
 
 ; 弾スロット共通の1ティック更新。Input: HL=スロット先頭(ROWバイト、
 ; 直後にCOLバイトが続く)。ROW=EBUZ2_SLOT_EMPTYなら何もしない。
+; 呼び出し元(各UPDATE_x_POOL)は事前に[EBUZ2_CUR_PORT_OFS]へ自分の
+; ローカル行オフセットを書いておくこと - このスロットのYは発射時点で
+; 固定するのではなく、毎ティック[EBUZ2_OSC_ROW]+[EBUZ2_CUR_PORT_OFS]
+; から都度再計算し直す(「弾は上下動に合わせてY位置変わる」の実装、
+; 2026-09-20訂正: 消去は「古い(行,列)に今あるべき本体タイル」を
+; EBUZ2_ERASE_BC[EBUZ2_BODY_TILE_AT]で復元、再描画は「新しい(行,列)」
+; へ - 古い行と新しい行が一致しない場合は本体の見た目に追従して
+; 弾がジャンプしたように見えるが、これが仕様通りの挙動)。
 EBUZ2_UPDATE_SLOT:
     LD A,(HL)
     CP EBUZ2_SLOT_EMPTY
     RET Z
     PUSH HL
-    LD B,A                       ; B = row(固定、以後不変)
+    LD B,A                       ; B = old row(消去用)
     INC HL
     LD A,(HL)
-    LD C,A                        ; C = col(現在値)
-    CALL EBUZ2_ERASE_BC           ; 現在位置を消す(本体タイルを復元)
+    LD C,A                        ; C = old col(現在値)
+    CALL EBUZ2_ERASE_BC           ; 古い位置を消す(本体タイルを復元)
     LD A,C
     OR A
     JR Z,EBUZ2_US_OFF
     DEC A
     LD C,A                         ; C = new col
+    LD A,(EBUZ2_OSC_ROW)
+    LD B,A
+    LD A,(EBUZ2_CUR_PORT_OFS)
+    ADD A,B
+    LD B,A                          ; B = new row(本体の現在位置から都度再計算)
     POP HL
+    LD (HL),B                        ; 新しい行を保存
     INC HL
-    LD (HL),A                       ; 新しい列を保存
-    CALL EBUZ2_CALC_ADDR              ; HL = addr(B,C)
+    LD (HL),C                         ; 新しい列を保存
+    CALL EBUZ2_CALC_ADDR                ; HL = addr(B=new row,C=new col)
     LD B,BULLET_L_CODE : LD C,BULLET_R_CODE
     CALL EBUZ2_WRITE2
     RET
@@ -426,6 +445,7 @@ EBUZ2_US_OFF:
 ; 素直という、このファイル一貫の方針を踏襲。
 ; ============================================================================
 EBUZ2_UPDATE_C_POOL:
+    LD A,EBUZ2_CENTER_OFS : LD (EBUZ2_CUR_PORT_OFS),A
     LD HL,EBUZ2_C_SLOTS+0  : CALL EBUZ2_UPDATE_SLOT
     LD HL,EBUZ2_C_SLOTS+2  : CALL EBUZ2_UPDATE_SLOT
     LD HL,EBUZ2_C_SLOTS+4  : CALL EBUZ2_UPDATE_SLOT
@@ -437,6 +457,7 @@ EBUZ2_UPDATE_C_POOL:
     RET
 
 EBUZ2_UPDATE_OT_POOL:
+    LD A,EBUZ2_OUTER_TOP_OFS : LD (EBUZ2_CUR_PORT_OFS),A
     LD HL,EBUZ2_OT_SLOTS+0  : CALL EBUZ2_UPDATE_SLOT
     LD HL,EBUZ2_OT_SLOTS+2  : CALL EBUZ2_UPDATE_SLOT
     LD HL,EBUZ2_OT_SLOTS+4  : CALL EBUZ2_UPDATE_SLOT
@@ -448,6 +469,7 @@ EBUZ2_UPDATE_OT_POOL:
     RET
 
 EBUZ2_UPDATE_OB_POOL:
+    LD A,EBUZ2_OUTER_BOTTOM_OFS : LD (EBUZ2_CUR_PORT_OFS),A
     LD HL,EBUZ2_OB_SLOTS+0  : CALL EBUZ2_UPDATE_SLOT
     LD HL,EBUZ2_OB_SLOTS+2  : CALL EBUZ2_UPDATE_SLOT
     LD HL,EBUZ2_OB_SLOTS+4  : CALL EBUZ2_UPDATE_SLOT
@@ -459,6 +481,7 @@ EBUZ2_UPDATE_OB_POOL:
     RET
 
 EBUZ2_UPDATE_IT_POOL:
+    LD A,EBUZ2_INNER_TOP_OFS : LD (EBUZ2_CUR_PORT_OFS),A
     LD HL,EBUZ2_IT_SLOTS+0  : CALL EBUZ2_UPDATE_SLOT
     LD HL,EBUZ2_IT_SLOTS+2  : CALL EBUZ2_UPDATE_SLOT
     LD HL,EBUZ2_IT_SLOTS+4  : CALL EBUZ2_UPDATE_SLOT
@@ -470,6 +493,7 @@ EBUZ2_UPDATE_IT_POOL:
     RET
 
 EBUZ2_UPDATE_IB_POOL:
+    LD A,EBUZ2_INNER_BOTTOM_OFS : LD (EBUZ2_CUR_PORT_OFS),A
     LD HL,EBUZ2_IB_SLOTS+0  : CALL EBUZ2_UPDATE_SLOT
     LD HL,EBUZ2_IB_SLOTS+2  : CALL EBUZ2_UPDATE_SLOT
     LD HL,EBUZ2_IB_SLOTS+4  : CALL EBUZ2_UPDATE_SLOT
@@ -722,6 +746,32 @@ EBUZ2_USF_STEP_OK:
     RET
 
 ; ============================================================================
+; state1本体の汎用描画(5行)。Input: A=row_top。EBUZ2_ROW_S1_0-4を
+; row_top〜row_top+4へ順にLDIRVMする(2026-09-20「warp」修正:
+; 旧設計の固定nt3-7描画を廃し、state2のEBUZ2_DRAW_BODY_ATと同じ
+; row_topパラメータ方式にした - state1もRow9から描画を開始する
+; ことで、state1→state2遷移が「別位置への瞬間移動」ではなく
+; 「同じ位置での5行→7行の形状変化」になる)。
+; ============================================================================
+EBUZ2_DRAW_STATE1_AT:
+    PUSH AF
+    LD B,A : LD C,23 : CALL EBUZ2_CALC_ADDR
+    PUSH HL : LD HL,EBUZ2_ROW_S1_0 : POP DE : LD BC,5 : CALL LDIRVM
+    POP AF : INC A : PUSH AF
+    LD B,A : LD C,23 : CALL EBUZ2_CALC_ADDR
+    PUSH HL : LD HL,EBUZ2_ROW_S1_1 : POP DE : LD BC,5 : CALL LDIRVM
+    POP AF : INC A : PUSH AF
+    LD B,A : LD C,23 : CALL EBUZ2_CALC_ADDR
+    PUSH HL : LD HL,EBUZ2_ROW_S1_2 : POP DE : LD BC,5 : CALL LDIRVM
+    POP AF : INC A : PUSH AF
+    LD B,A : LD C,23 : CALL EBUZ2_CALC_ADDR
+    PUSH HL : LD HL,EBUZ2_ROW_S1_3 : POP DE : LD BC,5 : CALL LDIRVM
+    POP AF : INC A
+    LD B,A : LD C,23 : CALL EBUZ2_CALC_ADDR
+    PUSH HL : LD HL,EBUZ2_ROW_S1_4 : POP DE : LD BC,5 : CALL LDIRVM
+    RET
+
+; ============================================================================
 ; 本体形状の汎用描画/消去(state2、7行)。Input: A=row_top(local row0の
 ; 目標nt行)。EBUZ2_ROW_S2_0-6(後方で定義)を7行分、row_top〜row_top+6
 ; へ順にLDIRVMする。従来の3ポジション固定(base/up/down)を廃し、
@@ -773,17 +823,6 @@ EBUZ2_ERASE_BODY_AT:
     POP AF : INC A
     LD B,A : LD C,23 : CALL EBUZ2_CALC_ADDR
     PUSH HL : LD HL,EBUZ2_BLANK5 : POP DE : LD BC,5 : CALL LDIRVM
-    RET
-
-; state1本体(5行、常にnametable row3-7固定)の消去。state1→state2
-; 遷移の瞬間、本体がrow9(EBUZ2_OSC_ROW_START)へ飛ぶため、元のrow3-7
-; 側を明示的に消しておかないと2つの本体が同時に残ってしまう。
-EBUZ2_ERASE_STATE1:
-    LD HL,EBUZ2_BLANK5 : LD DE,01877h : LD BC,5 : CALL LDIRVM
-    LD HL,EBUZ2_BLANK5 : LD DE,01897h : LD BC,5 : CALL LDIRVM
-    LD HL,EBUZ2_BLANK5 : LD DE,018B7h : LD BC,5 : CALL LDIRVM
-    LD HL,EBUZ2_BLANK5 : LD DE,018D7h : LD BC,5 : CALL LDIRVM
-    LD HL,EBUZ2_BLANK5 : LD DE,018F7h : LD BC,5 : CALL LDIRVM
     RET
 
 ; ============================================================================
@@ -890,6 +929,7 @@ INIT:
     LD (EBUZ2_OB_NEXT),A
     LD (EBUZ2_IT_NEXT),A
     LD (EBUZ2_IB_NEXT),A
+    LD (EBUZ2_CUR_PORT_OFS),A
     LD A,1
     LD (EBUZ2_OSC_DIR),A
     LD A,EBUZ2_SLOT_EMPTY
@@ -904,8 +944,12 @@ INIT:
     LD (EBUZ2_IB_SLOTS+0),A  : LD (EBUZ2_IB_SLOTS+2),A  : LD (EBUZ2_IB_SLOTS+4),A  : LD (EBUZ2_IB_SLOTS+6),A
     LD (EBUZ2_IB_SLOTS+8),A  : LD (EBUZ2_IB_SLOTS+10),A : LD (EBUZ2_IB_SLOTS+12),A : LD (EBUZ2_IB_SLOTS+14),A
 
-    ; --- state1描画 ---
-    CALL EBUZ2_DRAW_STATE1
+    ; --- state1描画(Row9から、"上から来てRow9かな"に対応する初期位置に
+    ; 最初から固定描画する - 2026-09-20「warp」修正、以後state1→state2
+    ; 遷移で本体が別位置へ移動することはない) ---
+    LD A,EBUZ2_OSC_ROW_START
+    LD (EBUZ2_OSC_ROW),A
+    CALL EBUZ2_DRAW_STATE1_AT
 EBUZ2_STATE1_BG_DONE:
 
     ; --- ホールド(解放まで) ---
@@ -913,21 +957,20 @@ EBUZ2_STATE1_BG_DONE:
     CALL EBUZ2_WAIT_TICKS
 
     ; --- 解放: 中央の発射管から1発だけ発射(「最初はセンター」-
-    ; state1のうちは無印Ebuzのbullet0と同じく1発のみ)。state1の本体は
-    ; 常にnametable row3-7固定(中央=row2local=nt5)なので、
-    ; EBUZ2_OSC_ROWを一時的にEBUZ2_STATE1_OSC_ROW(2)にしてから
-    ; state2用と同じEBUZ2_FIRE_C_BULLETを呼べば、
-    ; OSC_ROW+CENTER_OFS(3)=5=nt5と正しく逆算される。
+    ; state1のうちは無印Ebuzのbullet0と同じく1発のみ)。state1は
+    ; row_top=9固定描画・中央はrow_top+2(local row2)にいるため、
+    ; EBUZ2_OSC_ROWを一時的にEBUZ2_STATE1_OSC_ROW(=OSC_ROW_START-1=8)
+    ; にしてからstate2用と同じEBUZ2_FIRE_C_BULLETを呼べば、
+    ; OSC_ROW+CENTER_OFS(3)=8+3=11=row_top(9)+2と正しく逆算される。
     LD A,EBUZ2_STATE1_OSC_ROW
     LD (EBUZ2_OSC_ROW),A
     CALL EBUZ2_FIRE_C_BULLET
 EBUZ2_STATE1_DONE:
 
     ; --- state1→state2遷移(ノーウェイト、無印Ebuzの「それ以外の ---
-    ; ウェイトは入れるな」の作法を踏襲)。state1本体(row3-7)を消し、
-    ; EBUZ2_OSC_ROWを実際の開始位置(Row9)へ進めてから本体を再描画する
-    ; ("スポーン位置は上から来てRow9かな"への対応)。
-    CALL EBUZ2_ERASE_STATE1
+    ; ウェイトは入れるな」の作法を踏襲)。本体は同じrow_top(9)のまま、
+    ; 5行(state1)→7行(state2)の形状だけを描き直す(位置移動はしない -
+    ; 発射時に一時的に8へ変えたEBUZ2_OSC_ROWを実際の値(9)へ戻す)。
     LD A,EBUZ2_OSC_ROW_START
     LD (EBUZ2_OSC_ROW),A
     CALL EBUZ2_DRAW_BODY_AT

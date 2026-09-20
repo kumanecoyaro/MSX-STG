@@ -1,6 +1,8 @@
 """tools/ebuz_mk2_test/ebuz_mk2_test.asm のVRAM->PNGレンダリング
-スクリプト(2026-09-20全面訂正版: 5門砲台+連続oscillation+state1は
-中央のみ発射)。tools/stage1_render_check.pyのrender_full()を使い回す
+スクリプト(2026-09-20二度目の訂正版: 弾はライブトラッキング[発射時点の
+Yに固定せず本体の現在位置に毎ティック追従]、state1も最初からRow9で
+描画してstate1→state2遷移を「ワープ」ではなく「同じ位置での形状変化」
+にした)。tools/stage1_render_check.pyのrender_full()を使い回す
 (tools/ebuz_test/render_check.pyと同じ作法)。
 """
 import os
@@ -55,7 +57,7 @@ def main():
     run_until_pc(z, sym["EBUZ2_STATE2_BG_DONE"])
     p3 = os.path.join(HERE, "ebuz_mk2_state2_row9.ppm")
     render_full(bytes(z.vram), p3)
-    print("state2 body relocated to Row9:", p3)
+    print("state2: same Row9 anchor, shape changed 5-row->7-row (no warp):", p3)
 
     run_until_pc(z, sym["EBUZ2_STATE2_DONE"])
     p4 = os.path.join(HERE, "ebuz_mk2_state2_active.ppm")

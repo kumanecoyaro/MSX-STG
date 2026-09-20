@@ -1,15 +1,16 @@
-"""tools/ebuz_mk2_test/ebuz_mk2_test.asmの一連の流れ(state1本体→
-中央発射管から1発だけ発射→state1→state2への瞬間移動[Row9]→
-中央→内側(上下2門)→外側(上下2門)の3ステップ無限ループ発射しながら
-本体がRow1-16を連続的に上下する)を、実時間(T-states換算)キャプション
-付きのアニメーションGIFとして可視化する。tools/ebuz_test/gif_check.py
-と全く同じ作法(render_full()の出力を3倍拡大+タイムスタンプ焼き込み)。
+"""tools/ebuz_mk2_test/ebuz_mk2_test.asmの一連の流れ(state1本体[最初から
+Row9で描画]→中央発射管から1発だけ発射→state1→state2は同じRow9のまま
+5行→7行の形状変化(ワープなし)→中央→内側(上下2門)→外側(上下2門)の
+3ステップ無限ループ発射しながら本体がRow1-16を連続的に上下し、飛行中の
+弾のYもその動きにライブトラッキングする)を、実時間(T-states換算)
+キャプション付きのアニメーションGIFとして可視化する。
+tools/ebuz_test/gif_check.pyと全く同じ作法(render_full()の出力を
+3倍拡大+タイムスタンプ焼き込み)。
 
-(2026-09-20全面訂正: 旧「開幕3連ボレー」「上下キャップ発射」「外側/
-内側交互ペア」「離散3ポジションoscillation」は全て撤回され、
-「5門・中央のみ→中央/内側/外側巡回・連続oscillation」設計に置き
-換わった。以下のラベル文言・チェックポイントもそれに合わせて全面
-更新。)
+(2026-09-20 二度目の訂正: ユーザーから「ゴミ/ワープ」と酷評された
+「弾は発射時点のYに固定」「state1は別位置に固定描画してstate2遷移で
+瞬間移動」の2つの設計ミスを撤回。以下のラベル文言・チェックポイントも
+それに合わせて全面更新。)
 """
 import os
 import sys
@@ -76,20 +77,20 @@ def main():
         durations.append(dur)
 
     run_until_pc(z, sym["EBUZ2_STATE1_BG_DONE"])
-    add("Mk2 state1 body appears (5 rows, fixed nt row3-7), about to hold", 900)
+    add("Mk2 state1 body appears (5 rows, drawn at Row9 from the start)", 900)
 
     run_until_pc(z, sym["EBUZ2_STATE1_DONE"])
     add("release: CENTER tube fires 1 shot only (\"最初はセンター\")", 700)
 
-    # state1->state2 is an instantaneous relocation (old row3-7 erased,
-    # body reappears at Row9) - no wait in between.
+    # state1->state2 stays at the same Row9 anchor - only the shape
+    # changes (5 rows -> 7 rows), no relocation/warp.
     run_until_pc(z, sym["EBUZ2_STATE2_BG_DONE"])
-    add("state1->state2: body relocates to Row9 (\"上から来てRow9\")", 900)
+    add("state1->state2: same Row9 anchor, shape only (no warp)", 900)
 
     for _ in range(6):
         z.step()
         run_until_pc(z, sym["EBUZ2_FRAME_TICK"])
-    add("center shot still flying - Y fixed at fire-time row, unaffected by relocation", 700)
+    add("center shot flying - Y live-tracks the body's current row every tick", 700)
 
     run_until_pc(z, sym["EBUZ2_STATE2_DONE"])
     add("sequential fire (center->inner->outer) + oscillation activated", 700)

@@ -5,17 +5,24 @@
 内側2門外側2門の順 そのループ で弾は上下動に合わせてY位置変わる
 スポーン位置は上から来てRow9かな で、Row1から16まで上下動"。
 
-検証項目:
+検証項目(2026-09-20 二度目の訂正 - ユーザーから「ゴミ/ワープ」と
+酷評された旧版の2つの設計ミスをここで訂正): 弾のYは発射時点で固定
+するのではなく本体の現在位置に毎ティック追従(ライブトラッキング)
+させ、state1も最初からRow9で描画してstate1→state2遷移を「別位置への
+瞬間移動」ではなく「同じ位置での5行→7行の形状変化」にする。
+
   1. state1解放時は中央発射管から1発だけ発射される(3連ボレーではない)。
-  2. state1→state2遷移(ノーウェイト)で本体がnametable row9へ移動し、
-     旧state1位置(row3-7)が正しく消去される。
+  2. state1は最初からRow9(EBUZ2_OSC_ROW_START)で描画され、state1→
+     state2遷移は本体の位置を一切変えない(EBUZ2_OSC_ROWは遷移の前後で
+     Row9のまま不変、「ワープ」が発生しない)。
   3. state2形成後、発射シーケンスは中央→内側(上下2門)→外側(上下2門)→
      最初に戻る、の3ステップを無限ループする。
   4. 本体はnametable row1〜16の範囲を連続的に(離散3ポジションではなく)
      往復し続ける。
-  5. 弾は発射された瞬間のEBUZ2_OSC_ROW(本体位置)に応じたY(行)に固定
-     されたまま、X(列)方向にのみ1ティック1列で直進する - 本体がその後
-     動いても、既に飛んでいる弾のYは変化しない。
+  5. 発射済みの弾のYは発射時点に固定されず、毎ティック
+     [EBUZ2_OSC_ROW]+[自分のポートオフセット]から再計算され、本体の
+     上下動に追従する("弾は上下動に合わせてY位置変わる"を文字通り
+     実装)。
   6. 本体が移動した後、弾が飛んでいる最中に消去してもstate2本体タイルを
      剥ぎ取らない(2026-09-20最初のバグ報告「砲台は5門に増えてるぞ」と
      同種の事故が新設計でも起きていないことの回帰確認)。
@@ -99,38 +106,44 @@ def main():
     z = Z80(bytearray(mem0))
     z.pc = sym["INIT"]
     run_until_pc(z, sym["EBUZ2_STATE1_DONE"])
-    # state1の中央行はnametable row5固定(EBUZ2_STATE1_OSC_ROW(2)+CENTER_OFS(3)=5)
-    check(cells(z, 5, 22, 2) == [sym["BULLET_L_CODE"], sym["BULLET_R_CODE"]],
-          "state1解放直後: 中央行(nt5)のcol22-23にBULLET_L/Rがある(中央1発発射)")
-    # 他の4管(row3,4,6,7)には弾が無いこと(=3連ボレーではなく1発のみ)
-    for row in (3, 4, 6, 7):
+    # state1はrow_top=EBUZ2_OSC_ROW_START(9)固定描画、中央はlocal row2
+    # (=row_top+2)。EBUZ2_STATE1_OSC_ROW(=OSC_ROW_START-1)+CENTER_OFS(3)
+    # で正しく逆算されるはず。
+    center_row = sym["EBUZ2_STATE1_OSC_ROW"] + sym["EBUZ2_CENTER_OFS"]
+    check(center_row == sym["EBUZ2_OSC_ROW_START"] + 2,
+          f"state1発射行はrow_top(9)+2の局所中央行と一致: got {center_row}")
+    check(cells(z, center_row, 22, 2) == [sym["BULLET_L_CODE"], sym["BULLET_R_CODE"]],
+          f"state1解放直後: 中央行(nt{center_row})のcol22-23にBULLET_L/Rがある(中央1発発射)")
+    # 他の4行(state1の中央以外)には弾が無いこと(=3連ボレーではなく1発のみ)
+    for row in range(sym["EBUZ2_OSC_ROW_START"], sym["EBUZ2_OSC_ROW_START"] + 5):
+        if row == center_row:
+            continue
         check(find_bullet_cols(z, row) == [],
               f"state1解放直後: row{row}には弾が無い(中央以外は発射していない)")
     active = active_slots(z, sym, "C")
-    check(active == [(5, 22)], f"C_SLOTSに(row=5,col=22)が1件だけアクティブ: got {active}")
+    check(active == [(center_row, 22)], f"C_SLOTSに(row={center_row},col=22)が1件だけアクティブ: got {active}")
     for pool in ("OT", "OB", "IT", "IB"):
         check(active_slots(z, sym, pool) == [], f"{pool}_SLOTSはstate1解放直後は全て非アクティブ")
 
-    # ---------- 2. state1→state2遷移: 本体がrow9へ、旧row3-7は消去済み ----------
+    # ---------- 2. state1→state2遷移: 本体は最初からRow9固定、ワープしない ----------
     z2 = Z80(bytearray(mem0))
     z2.pc = sym["INIT"]
-    run_until_pc(z2, sym["EBUZ2_STATE2_BG_DONE"])
+    run_until_pc(z2, sym["EBUZ2_STATE1_BG_DONE"])
     check(z2.mem[sym["EBUZ2_OSC_ROW"]] == sym["EBUZ2_OSC_ROW_START"],
-          f"state2形成直後: EBUZ2_OSC_ROW=={sym['EBUZ2_OSC_ROW_START']}(Row9)")
+          f"state1描画直後: EBUZ2_OSC_ROW==既にRow9(={sym['EBUZ2_OSC_ROW_START']}) - 最初からRow9起点")
     r0 = sym["EBUZ2_OSC_ROW_START"]
-    check(cells(z2, r0, 23, 5) == [0, 0, A, B, C], "state2 row0(local) = ' . . A B C'")
-    check(cells(z2, r0 + 1, 23, 5) == [0, A, B, C, C], "state2 row1(local) = ' . A B C C'")
-    check(cells(z2, r0 + 3, 23, 5) == [A, B, C, D, D], "state2 row3(local、中央) = 'A B C D D'")
-    check(cells(z2, r0 + 6, 23, 5) == [0, 0, A, B, C], "state2 row6(local) = ' . . A B C'")
-    # 旧state1位置(nt row3-7)は完全に消去されている(2つの本体が同時に
-    # 残っていない)。col22は中央発射管の弾自身が発射直後まだそこに
-    # いる列(EBUZ2_ERASE_STATE1は本体の絵柄[col23-27]だけを消す設計、
-    # 弾自身は自分自身のティックで消える - 0ティック目のこの一瞬だけ
-    # col22に弾の左半分が残るのは実害の無い過渡状態、実機でも1回の
-    # VRAM書き込みバーストの範囲内で可視フレームには現れない)。
-    for row in range(3, 8):
-        check(cells(z2, row, 23, 5) == [0, 0, 0, 0, 0],
-              f"state1旧位置row{row}(本体の絵柄col23-27)は消去済み(本体は移動、居残りなし)")
+    check(cells(z2, r0, 23, 5) == [0, 0, A, B, C], "state1 row0(local) = ' . . A B C'")
+    check(cells(z2, r0 + 2, 23, 5) == [A, B, C, D, D], "state1 row2(local、中央) = 'A B C D D'")
+
+    z2b = Z80(bytearray(mem0))
+    z2b.pc = sym["INIT"]
+    run_until_pc(z2b, sym["EBUZ2_STATE2_BG_DONE"])
+    check(z2b.mem[sym["EBUZ2_OSC_ROW"]] == sym["EBUZ2_OSC_ROW_START"],
+          f"state1→state2遷移後もEBUZ2_OSC_ROW==Row9のまま不変(ワープが起きていない)")
+    check(cells(z2b, r0, 23, 5) == [0, 0, A, B, C], "state2 row0(local) = ' . . A B C'")
+    check(cells(z2b, r0 + 1, 23, 5) == [0, A, B, C, C], "state2 row1(local) = ' . A B C C'")
+    check(cells(z2b, r0 + 3, 23, 5) == [A, B, C, D, D], "state2 row3(local、中央) = 'A B C D D'")
+    check(cells(z2b, r0 + 6, 23, 5) == [0, 0, A, B, C], "state2 row6(local) = ' . . A B C'")
 
     # ---------- 3. 発射シーケンス: 中央→内側→外側→中央…の順で無限ループ ----------
     # FIRE_STEPが0→1→2→0…と正しく周回することを確認。
@@ -204,35 +217,35 @@ def main():
     step_diffs = set(rows_seen[i + 1] - rows_seen[i] for i in range(len(rows_seen) - 1))
     check(step_diffs <= {-1, 0, 1}, f"row変化は常に隣接1マス以内(離散ジャンプなし): got diffs {step_diffs}")
 
-    # ---------- 5. 弾のYは発射時点で固定、本体が後で動いてもYは変わらない ----------
+    # ---------- 5. 弾のYはライブトラッキング: 毎ティック本体の現在位置
+    # ([EBUZ2_OSC_ROW]+自分のポートオフセット)に追従して再計算される
+    # (発射時点のYに固定される旧設計はここで撤回された) ----------
     z5 = Z80(bytearray(mem0))
     z5.pc = sym["INIT"]
     run_until_pc(z5, sym["EBUZ2_STATE2_DONE"])
-    # 最初の発射(中央)が起きるまで進める
-    for _ in range(sym["EBUZ2_FIRE_INTERVAL"]):
+
+    saw_row_change = False
+    prev_row = None
+    saw_any_bullet = False
+    for i in range(220):
+        osc_row_before = z5.mem[sym["EBUZ2_OSC_ROW"]]
         z5.step()
         run_until_pc(z5, sym["EBUZ2_FRAME_TICK"])
-    c_slots_after_first_fire = active_slots(z5, sym, "C")
-    check(len(c_slots_after_first_fire) == 1, "中央ステップ発射直後、C_SLOTSに1件アクティブ")
-    fired_row = c_slots_after_first_fire[0][0]
-    check(fired_row == sym["EBUZ2_OSC_ROW_START"] + sym["EBUZ2_CENTER_OFS"],
-          f"発射時の中央弾の行はOSC_ROW_START+CENTER_OFS: got {fired_row}")
-    # 本体がさらに何ティックも動いた後も、この弾のROWは不変のまま
-    for _ in range(200):
-        z5.step()
-        run_until_pc(z5, sym["EBUZ2_FRAME_TICK"])
+        expected_row = osc_row_before + sym["EBUZ2_CENTER_OFS"]
         slots = active_slots(z5, sym, "C")
         for (row, col) in slots:
-            if row == fired_row:
-                break
-        else:
-            # この特定の弾は既にプールから外れた(画面外へ抜けた)可能性がある-
-            # その場合は以降のチェック対象外として抜ける。
-            break
-    else:
-        pass
-    check(z5.mem[sym["EBUZ2_OSC_ROW"]] != sym["EBUZ2_OSC_ROW_START"],
-          "200ティック後、本体は初期位置から実際に動いている(oscillationが機能)")
+            check(row == expected_row,
+                  f"tick{i}: アクティブな中央弾のYはそのティック開始時点の"
+                  f"OSC_ROW+CENTER_OFSに一致: got {row}, expected {expected_row}")
+        if slots:
+            saw_any_bullet = True
+            if prev_row is not None and slots[0][0] != prev_row:
+                saw_row_change = True
+            prev_row = slots[0][0]
+    check(saw_any_bullet, "220ティックの間に中央弾が少なくとも1回観測された")
+    check(saw_row_change,
+          "本体のoscillationに追従して、飛行中の弾のYが実際に変化した"
+          "(発射時点のYに固定される旧「ゴミ」設計ではないことの確認)")
 
     print(f"\n{PASS} passed, {FAIL} failed")
     if FAIL:
