@@ -1,8 +1,8 @@
 """tools/ebuz_mk2_test/ebuz_mk2_test.asm(2026-09-20、Ebuz Mk2-1[閉状態]
 が「揃うまで下にシフトする」方式で登場(2倍速)→中央で5門1斉発射→
-リコイル(1セル右へ→戻る)→Mk2-2[開状態、7行]へ変形→5門(中央+内側2+
-外側2)で2度目の1斉発射、という版)の一連の流れを実時間(T-states換算)
-キャプション付きのアニメーションGIFとして可視化する。
+リコイル(1セル右へ→戻る)→Mk2-2[開状態、7行]へ変形→中央→内側2門→
+外側2門の順に間隔を空けて順次発射、という版)の一連の流れを実時間
+(T-states換算)キャプション付きのアニメーションGIFとして可視化する。
 """
 import os
 import sys
@@ -96,8 +96,14 @@ def main():
     run_until_pc(z, sym["EBUZ2_TRANSFORM_DONE"])
     add("transformed to Mk2-2 (open state, 7 rows, 5 gun ports exposed)", 900)
 
+    run_until_pc(z, sym["EBUZ2_VOLLEY2_WAVE_C_DONE"])
+    add("2nd volley wave 1/3: center fires alone (sequential, not simultaneous)", 600)
+
+    run_until_pc(z, sym["EBUZ2_VOLLEY2_WAVE_INNER_DONE"])
+    add("2nd volley wave 2/3: inner 2 ports fire together", 600)
+
     run_until_pc(z, sym["EBUZ2_VOLLEY2_DONE"])
-    add("2nd volley: center 1 + inner 2 + outer 2 fire simultaneously", 900)
+    add("2nd volley wave 3/3: outer 2 ports fire together", 600)
 
     for i in range(6):
         for _ in range(5):

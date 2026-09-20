@@ -1,8 +1,8 @@
 """tools/ebuz_mk2_test/ebuz_mk2_test.asm(2026-09-20、Ebuz Mk2-1[閉状態]
 が「揃うまで下にシフトする」方式で登場(2倍速)→中央で5門1斉発射→
-リコイル(1セル右へ→戻る)→Mk2-2[開状態、7行]へ変形→5門(中央+内側2+
-外側2)で2度目の1斉発射、という版)のVRAM->PNGレンダリングスクリプト。
-tools/stage1_render_check.pyのrender_full()を使い回す。
+リコイル(1セル右へ→戻る)→Mk2-2[開状態、7行]へ変形→中央→内側2門→
+外側2門の順に間隔を空けて順次発射、という版)のVRAM->PNGレンダリング
+スクリプト。tools/stage1_render_check.pyのrender_full()を使い回す。
 """
 import os
 import sys
@@ -80,10 +80,20 @@ def main():
     render_full(bytes(z.vram), p3c)
     print("transformed to Mk2-2 (open state, 7 rows):", p3c)
 
+    run_until_pc(z, sym["EBUZ2_VOLLEY2_WAVE_C_DONE"])
+    p3d1 = os.path.join(HERE, "ebuz_mk2_volley2_center.ppm")
+    render_full(bytes(z.vram), p3d1)
+    print("2nd volley wave 1/3: center fires alone:", p3d1)
+
+    run_until_pc(z, sym["EBUZ2_VOLLEY2_WAVE_INNER_DONE"])
+    p3d2 = os.path.join(HERE, "ebuz_mk2_volley2_inner.ppm")
+    render_full(bytes(z.vram), p3d2)
+    print("2nd volley wave 2/3: inner 2 ports fire together:", p3d2)
+
     run_until_pc(z, sym["EBUZ2_VOLLEY2_DONE"])
     p3d = os.path.join(HERE, "ebuz_mk2_volley2.ppm")
     render_full(bytes(z.vram), p3d)
-    print("2nd volley: center+inner2+outer2 fire simultaneously:", p3d)
+    print("2nd volley wave 3/3: outer 2 ports fire together:", p3d)
 
     for _ in range(60):
         z.step()
