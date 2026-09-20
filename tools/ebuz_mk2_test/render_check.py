@@ -1,9 +1,7 @@
-"""tools/ebuz_mk2_test/ebuz_mk2_test.asm のVRAM->PNGレンダリングスクリプト。
-tools/stage1_render_check.pyのrender_full()を使い回す
-(tools/ebuz_test/render_check.pyと同じ作法)。state1(登場直後)・
-state1解放直後(開幕ボレー3発発射、2026-09-19訂正でHWスプライトの
-斜めくの字からBGレーン直進3本へ置き換え済み)・state2(変化後)・
-oscillation(up/downそれぞれ)のスナップショットをPNGで保存する。
+"""tools/ebuz_mk2_test/ebuz_mk2_test.asm のVRAM->PNGレンダリング
+スクリプト(2026-09-20全面訂正版: 5門砲台+連続oscillation+state1は
+中央のみ発射)。tools/stage1_render_check.pyのrender_full()を使い回す
+(tools/ebuz_test/render_check.pyと同じ作法)。
 """
 import os
 import sys
@@ -29,24 +27,12 @@ def assemble():
     return mem0, sym
 
 
-def run_until_pc(z, target_pc, max_instr=4_000_000):
+def run_until_pc(z, target_pc, max_instr=8_000_000):
     for _ in range(max_instr):
         if z.pc == target_pc:
             return
         z.step()
     raise RuntimeError(f"never reached PC {target_pc:04X}, stuck at {z.pc:04X}")
-
-
-def volley_dump(z, sym):
-    """3レーンの[ACTIVE,現在列]をRAMから直接読む(2026-09-19訂正で
-    HWスプライトのSPRATRからBGレーンのRAM変数[EBUZ2_VOLLEYn_ACTIVE/
-    COLCUR]へ移行したため、sprite_dumpの代わりにこちらを使う)。"""
-    out = []
-    for i in range(3):
-        act = z.mem[sym[f"EBUZ2_VOLLEY{i}_ACTIVE"]]
-        col = z.mem[sym[f"EBUZ2_VOLLEY{i}_COLCUR"]]
-        out.append((act, col))
-    return out
 
 
 def main():
@@ -60,55 +46,32 @@ def main():
     print("state1 rendered:", p1)
 
     run_until_pc(z, sym["EBUZ2_STATE1_DONE"])
-    p2 = os.path.join(HERE, "ebuz_mk2_volley_fired.ppm")
+    p2 = os.path.join(HERE, "ebuz_mk2_center_shot_fired.ppm")
     render_full(bytes(z.vram), p2)
-    print("opening volley (3 straight BG-lane bullets) just fired:", p2)
-    for i, (act, col) in enumerate(volley_dump(z, sym)):
-        print(f"  lane{i} [active,col]:", act, col)
+    print("state1 release: center tube fires 1 shot:", p2)
 
-    # state1->state2 itself has no wait (immediate BG transform), so jump
-    # straight there; the volley bullets keep flying independently of this.
+    # state1->state2 has no wait (instant relocation to Row9), so jump
+    # straight there.
     run_until_pc(z, sym["EBUZ2_STATE2_BG_DONE"])
-    p3 = os.path.join(HERE, "ebuz_mk2_state2.ppm")
+    p3 = os.path.join(HERE, "ebuz_mk2_state2_row9.ppm")
     render_full(bytes(z.vram), p3)
-    print("state2 (base position) rendered:", p3)
-
-    # let the volley bullets travel a bit during the pre-activation hold
-    # (EBUZ2_WAIT_TICK_DONE is the per-tick marker inside that hold loop,
-    # same idiom as tools/ebuz_test/render_check.py's EBUZ_FRAME_TICK loop).
-    for _ in range(8):
-        z.step()
-        run_until_pc(z, sym["EBUZ2_WAIT_TICK_DONE"])
-    p2b = os.path.join(HERE, "ebuz_mk2_volley_flying.ppm")
-    render_full(bytes(z.vram), p2b)
-    print("volley mid-flight (over the freshly-formed state2 body):", p2b)
-    for i, (act, col) in enumerate(volley_dump(z, sym)):
-        print(f"  lane{i} [active,col]:", act, col)
+    print("state2 body relocated to Row9:", p3)
 
     run_until_pc(z, sym["EBUZ2_STATE2_DONE"])
     p4 = os.path.join(HERE, "ebuz_mk2_state2_active.ppm")
     render_full(bytes(z.vram), p4)
-    print("state2, continuous fire + oscillation activated:", p4)
+    print("state2, sequential fire (center->inner->outer) + oscillation activated:", p4)
 
-    # advance until the first oscillation shift (base->up) actually happens.
-    run_until_pc(z, sym["EBUZ2_OSC_SHIFT_DONE"])
-    p5 = os.path.join(HERE, "ebuz_mk2_osc_up.ppm")
-    render_full(bytes(z.vram), p5)
-    print("oscillation: shifted to UP position:", p5)
-
-    # advance to the next shift (up->base) then the one after (base->down).
-    # NOTE (2026-09-20): run_until_pc returns with z.pc already sitting
-    # exactly on the target address, so calling it again with the SAME
-    # target would return instantly without executing anything (this used
-    # to make osc_down.ppm a silent duplicate of osc_up.ppm) - a single
-    # z.step() first forces real progress before waiting again.
-    z.step()
-    run_until_pc(z, sym["EBUZ2_OSC_SHIFT_DONE"])
-    z.step()
-    run_until_pc(z, sym["EBUZ2_OSC_SHIFT_DONE"])
-    p6 = os.path.join(HERE, "ebuz_mk2_osc_down.ppm")
-    render_full(bytes(z.vram), p6)
-    print("oscillation: shifted to DOWN position:", p6)
+    # advance through a good chunk of the continuous oscillation sweep,
+    # capturing a few snapshots along the way (mainloop runs via
+    # EBUZ2_FRAME_TICK, not EBUZ2_WAIT_TICK_DONE, once past STATE2_DONE).
+    for i, ticks in enumerate([40, 80, 160]):
+        for _ in range(ticks):
+            z.step()
+            run_until_pc(z, sym["EBUZ2_FRAME_TICK"])
+        p = os.path.join(HERE, f"ebuz_mk2_sweep_{i}.ppm")
+        render_full(bytes(z.vram), p)
+        print(f"oscillation sweep snapshot {i} (OSC_ROW={z.mem[sym['EBUZ2_OSC_ROW']]}):", p)
 
 
 if __name__ == "__main__":

@@ -6,44 +6,56 @@
 ; tools/ebuz_test/は一切変更していない(このファイルからも参照しない、
 ; 必要なタイルデータ・弾グラフィックは全てこのファイル内に直接複製済み)。
 ;
-; ユーザー指示(オーケストレーションのClaude経由、原文ママ):
-;   "まず添付ファイルのパターンで 開くとこまでは同じ ただし真ん中に
-;   砲台が増えてる"
-;   (訂正・追記): "発射管は5本あるデザイン 最初はEbuzと同じだが
-;   スプライト3枚でくの字上状に発射 その後2の形態に 上下に移動
-;   しながら連射 まあやってみて 修正は必要だろうから"
+; ============================================================================
+; 設計(2026-09-20、ユーザー原文ママによる全面確定版 - これ以前の
+; 「開幕3連ボレー」「上下キャップからの固定発射」「外側/内側交互ペア」
+; 「離散3ポジションoscillation」は全て試行錯誤の末に撤回・置換済み、
+; 過去の版の詳細は本ファイルの会話ログ/gitの過去コミット参照):
 ;
-; *** 2026-09-19 追加訂正(適用済み、下記1.を全面書き換え) ***
-; ユーザー訂正(原文ママ): "斜め移動はしないぞ"、続けてASCII art
-;   (5行、各行はただの水平な"ー"だが開始X位置が行ごとに異なる):
-;     ー
-;    ー
-;   ー
-;    ー
-;     ー
-;   「砲台のXセル位置が異なるんで 先端に合わせれば自然にそうなる」
-; つまり: 開幕3発をHWスプライトの斜め速度(DX/DY同時)で飛ばす旧設計は
-; 誤りで、正しくは「本体側の5行それぞれが既に不規則[矩形でない]形状
-; なので、各行の弾を"その行自身の先端タイルのすぐ外側"から真横
-; (BGレーン、1ティック1列、Y成分ゼロ)に飛ばすだけで、全体としては
-; 自然にウェッジ/くの字に見える」という単純な仕組み。HWスプライト・
-; 斜め速度・SPRATR/SPRPATは全面撤去し、無印Ebuzと全く同じBGレーン弾
-; (EBUZ2_WRITE2/BULLET_L_CODE/BULLET_R_CODE)を3レーン分だけ独立に
-; 持つ方式へ置き換えた(詳細は下記1.、および各EBUZ2_VOLLEY*定義の
-; コメント参照)。前提となる「本体5行の先端ローカル列(2,1,0,1,2)」は
-; 添付Ebuzmkii1_64x64_2.json(静止ポーズ)のピクセルデータから
-; tools/ebuz_mk2_test/ebuz_mk2_gen.pyで機械的に再検算し、この
-; ユーザーのASCII wedgeと完全一致することを確認済み(このファイル
-; 自身のEBUZ2_ROW_S1_0-4のタイル配置ともちろん整合している - 元々
-; 本体の形状データ自体は変更していない、変えたのは弾の発射方式のみ)。
-; state2(上下往復+連続交互発射)は元々斜めではなく、この訂正の対象
-; 外 - 無変更のまま。
+;   "まず言ったように弾は5門の砲台から出る 最初はセンター 2の状態で
+;    上下4門 数が違うだけでEbuzと同じ 次に全門発射 センター、内側2門
+;    外側2門の順 そのループ で弾は上下動に合わせてY位置変わる スポーン
+;    位置は上から来てRow9かな で、Row1から16まで上下動"
 ;
-; 添付画像(64x64、2状態)をオーケストレーション側で既存の無印Ebuz
-; タイル(A,B,C,D、下記に再掲)とバイト単位で突き合わせた結果、Mk2も
-; 新規タイル一切不要、この4枚だけの再配置で両状態を表現できると判明
-; 済み(オーケストレーション側の作業、このファイルではその結果の
-; タイル配置だけを実装する)。
+; 1. 本体は5"発射管"(本体5行それぞれが1門)- 外側上/内側上/中央/
+;    内側下/外側下。中央=本体の縦方向の中心(最も幅広い行)、内側/外側は
+;    その上下に1行おき。
+; 2. state1(閉状態)のうちは中央の発射管だけが使え、解放の瞬間に1発
+;    だけ発射する(無印Ebuzのbullet0と全く同じ「1発だけ」-「数が違う
+;    だけでEbuzと同じ」)。
+; 3. state1→state2遷移はノーウェイト(即座)。この瞬間、本体は元の
+;    固定位置(nametable row3-7)から、oscillationの開始位置である
+;    Row9("上から来てRow9かな")へ丸ごと移動する(旧位置は明示的に
+;    消去、新位置に7行の開状態ボディを再描画)。
+; 4. state2形成後は5門全てが使用可能になり、「中央→内側2門(上下同時)
+;    →外側2門(上下同時)→最初に戻る」の3ステップを無限ループする。
+;    各発射でその行の翼帯にリコイル(1セル右へ表示シフト、1ティック
+;    後に戻す)がかかる、無印Ebuzと同じ作法。
+; 5. 本体自身がnametable row1〜16の範囲を、離散的な往復ではなく1ティック
+;    1行ずつ連続的にスイープし続ける(EBUZ2_OSC_ROW、MIN/MAXで反転)。
+; 6. 各発射管の実際のY(nametable行)は「今その瞬間の本体位置
+;    (EBUZ2_OSC_ROW)+その管のローカル行オフセット」から都度計算される
+;    - つまり「弾は上下動に合わせてY位置変わる」を文字通り実装したもの。
+;    発射された弾はX(列)方向にのみ1ティック1列で直進し、Y(行)は発射
+;    された瞬間の値に完全固定される(斜め移動はしない、という既存の
+;    恒久ルールは不変)。
+; 7. 本体は発射後も動き続けるため、弾の消去(1ティック1列前進)で単純な
+;    固定の復元テーブルを使うと「本体はもう別の行にいる」ケースで誤って
+;    存在しない本体タイルを描いてしまう。これを避けるため、消去のたびに
+;    「今この瞬間、この行・列に本体が実際に表示しているべきタイルは
+;    何か」をEBUZ2_OSC_ROWから都度計算し直す(EBUZ2_BODY_TILE_AT、
+;    EBUZ2_ROW_S2_0-6[後方で定義]を参照) - 2026-09-19時点の実機/
+;    レンダリング確認で発見された「砲台は5門に増えてるぞ」(弾が
+;    通過するたびに本体の翼タイルを剥ぎ取ってしまう)という事故の
+;    根本原因への対策をそのまま新設計にも引き継いだもの。
+;
+; ステップ数・速度・間隔(EBUZ2_FIRE_INTERVAL/EBUZ2_OSC_STEP_TICKS等)は
+; 全て未調整のプレースホルダー(下記の各EQU定数、コメントに明記)。
+; ============================================================================
+;
+; --- 本体タイル構成(添付画像をオーケストレーション側で既存の無印Ebuz
+; タイル[A,B,C,D、下記に再掲]とバイト単位で突き合わせ済み、新規タイル
+; 一切不要でこの4枚の再配置だけで両状態を表現できる) ---
 ;
 ; --- state1(閉状態、5行x5列、row0が最上段、col0が最左列、空欄=code0) ---
 ;   row0: .  .  A  B  C        (col2,3,4)
@@ -53,75 +65,23 @@
 ;   row4: .  .  A  B  C        (row0と同一)
 ;
 ; --- state2(開状態・砲台露出、7行x5列) ---
-;   row0: .  .  A  B  C        (col2,3,4)
-;   row1: .  A  B  C  C        (col1,2,3,4 - col4はD ではなく C の反復)
-;   row2: .  .  .  .  D        (col4のみ - 砲台上キャップ)
-;   row3: A  B  C  D  D        (col0,1,2,3,4 - 中心行、羽[A,B,C]が砲台
-;                                本体[D,D]と同じ行で直結)
-;   row4: .  .  .  .  D        (row2と同一 - 砲台下キャップ)
-;   row5: .  A  B  C  C        (row1と同一)
-;   row6: .  .  A  B  C        (row0と同一)
-;
-; state1のrow2とstate2のrow3(いずれも"ABCDD"の最幅広行)は物理的に
-; 同一のname table行に固定して置く - state1→state2遷移では既存の
-; 行が動かず、その上下に新しい行が1行ずつ追加される、という無印Ebuz
-; の遷移スタイルをそのまま踏襲する(このファイルではname table row5
-; に固定、state1はrow3-7の5行、state2はrow2-8の7行を占有)。
+;   row0: .  .  A  B  C        (col2,3,4)                    <- 外側上
+;   row1: .  A  B  C  C        (col1,2,3,4)                  <- 内側上
+;   row2: .  .  .  .  D        (col4のみ - 砲台上キャップ、発射管ではない)
+;   row3: A  B  C  D  D        (col0,1,2,3,4 - 中心行)        <- 中央
+;   row4: .  .  .  .  D        (row2と同一 - 砲台下キャップ、発射管ではない)
+;   row5: .  A  B  C  C        (row1と同一)                  <- 内側下
+;   row6: .  .  A  B  C        (row0と同一)                  <- 外側下
 ;
 ; --- 列のname tableへのマッピング ---
 ; 無印Ebuzの規約(local col1 = EBUZ_COL = name table col24)をそのまま
 ; 踏襲: local col0→col23, col1→col24, col2→col25, col3→col26,
-; col4→col27。col23は最幅広行(state1のrow2・state2のrow3)でだけ
-; 使用する。このアセンブラは演算子優先順位も丸括弧も無い(左から右へ
-; 逐次評価するだけ)ため、"NAMTBL+ROW*32+COL"式は一切書かず、name
-; table上の絶対アドレスを全て事前計算したリテラルとして直接記述する
-; (無印Ebuzと同じ規約、tools/ebuz_test/ebuz_test.asmの該当コメント
-; 参照)。
-;
-; --- 発射/移動仕様(ユーザー自身が「修正は必要だろう」と明言済み。 ---
-; 以下は原文の素直な解釈・実装であり、判断に迷った点はこのファイルの
-; 各所と、送付時のレポートで明示する)。
-;
-; 1. state1(2026-09-19訂正版): 無印Ebuzと同じ「登場→少し静止→解放」
-;    の流れ。無印Ebuzが解放の瞬間に1発(bullet0)を撃つのに対し、Mk2は
-;    本体5行のうち3行(上端キャップ/中央[最深部]/下端キャップ、
-;    "3 sprites"とのユーザー指定に沿ったデフォルト選択 - 上下2行
-;    [row1/row3]を使う代替案も要検討、レポートに明記)から同時に3発
-;    発射する。斜め速度は一切使わない - 3発とも無印Ebuzと全く同じ
-;    BGレーン弾(固定name table行・1ティック1列・Y成分ゼロ、
-;    EBUZ2_WRITE2/BULLET_L_CODE/BULLET_R_CODEをそのまま流用)で、
-;    各行自身の「先端」(その行で最も左に描画されているタイル列の、
-;    さらに1セル外側)から個別に発射を開始する列だけが行ごとに異なる
-;    - この発射開始列のズレだけで、全体としては自然にウェッジ/
-;    くの字状に見える(本体自体が既に不規則形状であることの帰結)。
-;    HWスプライトは一切使わない。
-;
-; 2. state1→state2遷移: 無印Ebuzと同じLDIRVMによるタイル差し替え
-;    方式を、5行→7行の大きいレイアウトへそのまま適用。
-;
-; 3. state2: 無印Ebuzの継続発射の仕組み(EBUZ_TOPBOTTOM_ACTIVE/
-;    EBUZ_FIRE_SIDE/EBUZ_FIRE_COUNTDOWNによる固定間隔・無条件の交互
-;    発射、BULLET_L_CODE/BULLET_R_CODEのBGレーン弾)をそのまま流用し、
-;    発射レーンを砲台の上下キャップ行(state2のrow2/row4、中心行の
-;    直上・直下)に割り当てる。「上下に移動しながら連射」については、
-;    BG方式は「動く」=「毎回全体を別の行位置へ再描画する」ことを
-;    意味しコストが高いため、離散的な往復(base→up→base→down→base
-;    …の4段サイクル、各段は一定ティックだけ静止)として実装する。
-;    **重要な簡略化(判断が必要だった点、レポートで明示する)**:
-;    上下移動は本体の見た目(タイル配置)だけを動かし、発射レーン
-;    自体(row2/row4)は本体の移動に追従させず固定のままにしている
-;    - 追従させる設計も検討したが、既に飛行中の弾が属するレーンの
-;    行を実行時に付け替えると「古い行に消し忘れの弾が残る」種類の
-;    新規バグを生みやすく、プロトタイプの最初の一手としてはリスクが
-;    高いと判断した。本体columnsは常にcol23-27の5列に収まり、弾の
-;    飛行経路(col21以下、後述)とは物理的に重ならないため、この
-;    簡略化によるVRAM破壊は起きない - 見た目上、本体がup/down位置に
-;    いる間だけ砲台キャップの絵と実際の発射位置が1行分ズレて見える
-;    (視覚的な違和感はあり得るが、機能的な破損はない)。継続発射
-;    自体は本体の移動サイクルと独立して同じ間隔で回り続ける。
-;
-;    ステップ数・速度・間隔は全て未調整のプレースホルダー(下記の
-;    EQU定数群、コメントに明記)。
+; col4→col27。このアセンブラは演算子優先順位も丸括弧も無い(左から右へ
+; 逐次評価するだけ)ため、"NAMTBL+ROW*32+COL"式のような複合アドレス式は
+; 直接書かず、EBUZ2_CALC_ADDR(後方で定義、B=row,C=colの2レジスタ入力)
+; という専用ヘルパーで都度計算する(無印Ebuzが採用していた「事前計算
+; 済みリテラル」方式は、本体・弾ともに行が実行時に連続変化するこの
+; 新設計にはもう適用できないため、Mk2固有の対応)。
     ORG 4000h
 
 INIT32   EQU 006Fh
@@ -136,8 +96,7 @@ WRTVRM   EQU 004Dh
 STACKTOP EQU 0F380h
 NAMTBL   EQU 1800h
 COLTBL   EQU 2000h
-; (2026-09-19訂正: 旧くの字3連が使っていたSPRATR/SPRPAT/WRTVDPは、
-; HWスプライトを全廃したため削除。本ファイルはBGのみで完結する。)
+; 本ファイルはHWスプライトを一切使わずBG(name table)のみで完結する。
 
 ; ============================================================================
 ; BGパターンコード・カラー(無印Ebuzと同じ割り当て番号をそのまま再利用 -
@@ -154,91 +113,117 @@ BULLET_R_CODE EQU 73
 EBUZ2_BULLET_COLOR EQU 0B5h  ; fg=11(light yellow)/bg=5(light blue、無印Ebuzと同じ)
 
 ; ============================================================================
-; name table行の絶対アドレス(row*32+NAMTBL)。row5を構造的な中心
-; (state1/state2共通の最幅広行)に固定 - state1はrow3-7(5行)、
-; state2の基本位置(base)はrow2-8(7行)、oscillationのup位置は
-; row1-7、down位置はrow3-9を使う。
+; 2026-09-20 全面訂正(ユーザー原文): "まず言ったように弾は5門の砲台
+; から出る 最初はセンター 2の状態で上下4門 数が違うだけでEbuzと同じ
+; 次に全門発射 センター、内側2門外側2門の順 そのループ で弾は上下動に
+; 合わせてY位置変わる スポーン位置は上から来てRow9かな で、Row1から
+; 16まで上下動"。
+;
+; これに伴い、旧来の「開幕3連ボレー」「上下キャップ発射」「外側/内側
+; 交互ペア」の3設計は全て撤回・削除し、以下の統一設計に置き換える:
+;
+; 1. 発射管は5門固定(本体5行にそれぞれ1門ずつ - 開幕ボレーの
+;    ウェッジ検討で確認済みの、先端ローカル列2,1,0,1,2の5行そのもの):
+;    外側上(local row0)/内側上(local row1)/中央(local row2、
+;    state2では中央=local row3)/内側下/外側下。
+; 2. state1のうちは中央のみ発射(無印Ebuzのbullet0と全く同じ「1発だけ」
+;    -「数が違うだけでEbuzと同じ」の通り)。
+; 3. state2形成後は5門全てが使用可能になり、「中央→内側2門→外側2門→
+;    (最初に戻る)」の3ステップを無限ループする(内側/外側はそれぞれ
+;    上下2門が同時発射)。
+; 4. 本体自身がname table row1〜16の範囲を連続的に(1ティック1行ずつ、
+;    従来の「離散3ポジション往復」ではなく)往復し続け、各発射管の
+;    現在位置([EBUZ2_OSC_ROW]+その管のローカル行オフセット)から弾が
+;    発射される - つまり弾のY(発射行)は発射管が今どこにいるかで
+;    毎回変わる。開始位置はRow9(中間、"上から来て"に対応する初期値)。
+; 5. 弾自体はX方向(列)にのみ1ティック1列で直進し、Y(行)は発射された
+;    瞬間の値に固定される(斜め移動はしない、という既存の恒久ルールは
+;    不変)。ただし本体が弾の発射後も動き続けるため、消去時に単純な
+;    固定の復元テーブルを使うと(本体がもう別の行にいるかもしれない
+;    ため)誤って存在しない本体タイルを描いてしまう - 消去のたびに
+;    「今この瞬間、この行・列に本体が実際に表示しているべきタイルは
+;    何か」を[EBUZ2_OSC_ROW]から都度計算し直す(EBUZ2_BODY_TILE_AT)。
 ; ============================================================================
-EBUZ2_ROW1_BASE EQU NAMTBL+32    ; = 1820h
-EBUZ2_ROW2_BASE EQU NAMTBL+64    ; = 1840h
-EBUZ2_ROW3_BASE EQU NAMTBL+96    ; = 1860h
-EBUZ2_ROW4_BASE EQU NAMTBL+128   ; = 1880h  <- 発射レーン(上、固定)
-EBUZ2_ROW5_BASE EQU NAMTBL+160   ; = 18A0h  <- 構造的な中心行
-EBUZ2_ROW6_BASE EQU NAMTBL+192   ; = 18C0h  <- 発射レーン(下、固定)
-EBUZ2_ROW7_BASE EQU NAMTBL+224   ; = 18E0h
-EBUZ2_ROW8_BASE EQU NAMTBL+256   ; = 1900h
-EBUZ2_ROW9_BASE EQU NAMTBL+288   ; = 1920h
 
-; 弾(BGレーン、無印Ebuzと同じ2タイル構成)の発射開始列。本体の最左列
-; がcol23なので、無印Ebuzの「本体最左列から-2列」という規約を踏襲し
-; col21を使う(col23-27の本体アートと物理的に一切重ならない)。
-EBUZ2_BULLET_COL EQU 21
+; 本体5"発射管"のローカル行オフセット(state2の7行レイアウトにおける
+; EBUZ2_OSC_ROW[local row0の現在nt行]からの相対行)。row2/row4
+; (添付画像の砲台キャップ)は発射管ではなく見た目のみのパーツ。
+EBUZ2_OUTER_TOP_OFS    EQU 0
+EBUZ2_INNER_TOP_OFS    EQU 1
+EBUZ2_CENTER_OFS       EQU 3
+EBUZ2_INNER_BOTTOM_OFS EQU 5
+EBUZ2_OUTER_BOTTOM_OFS EQU 6
+
+; 各発射管の発射開始列(「先端ローカル列-1」規約、既存の開幕ボレー検討
+; で確定済みの値をそのまま流用- 外側[local row0/6]は先端nt25→24、
+; 内側[row1/5]は先端nt24→23、中央[row3]は先端nt23→22)。
+EBUZ2_OUTER_COL  EQU 24
+EBUZ2_INNER_COL  EQU 23
+EBUZ2_CENTER_COL EQU 22
 
 EBUZ2_LANE_POOL_SIZE EQU 8
 EBUZ2_SLOT_EMPTY EQU 255
 
-; "2フレ交代"(無印Ebuzの継続発射と同じ固定間隔・無条件発射の作法)。
-EBUZ2_FIRE_INTERVAL EQU 2
+; 発射シーケンス(中央→内側→外側→…)の1ステップあたりの間隔、
+; およびリコイル持続(いずれも無印Ebuzの継続発射と同じ作法を踏襲、
+; 未調整のプレースホルダー)。
+EBUZ2_FIRE_INTERVAL   EQU 8
+EBUZ2_RECOIL_DURATION EQU 1
 
-; --- 開幕ボレー(state1解放時、3本のBGレーン弾) ---
-; (2026-09-19訂正: 斜め速度のHWスプライトを全面撤去、無印Ebuzと同じ
-; 「固定name table行・1ティック1列・Y成分ゼロ」のBGレーン弾3本に
-; 置き換え。斜め成分が無いことがコード上でも自明になるよう、3レーン
-; とも明示的に別ルーチンとして書く - 汎用ループより見た目が素直)。
-;
-; 各レーンの発射開始列 = 「その行の先端ローカル列-1」を、本体タイルと
-; 同じマッピング式(ローカル列c → name table列23+c、このファイル
-; 冒頭コメントの規約)で変換したもの。本体5行の先端ローカル列
-; (2,1,0,1,2、tools/ebuz_mk2_test/ebuz_mk2_gen.pyで添付JSONの実
-; ピクセルデータから検算済み)から:
-;   row0(上端キャップ、先端=2) -> 発射列 = 23+(2-1) = 24
-;   row2(中央、最深部、先端=0) -> 発射列 = 23+(0-1) = 22
-;   row4(下端キャップ、先端=2、row0と同型) -> 発射列 = 24
-; row0とrow4は同じ24、row2(中央)だけが22で一段深い - これが3点だけで
-; 見てもウェッジと分かる形(浅・深・浅)になる。
-EBUZ2_VOLLEY0_COL EQU 24   ; row0(nametable row3、上端キャップ)
-EBUZ2_VOLLEY1_COL EQU 22   ; row2(nametable row5、中央=最深部)
-EBUZ2_VOLLEY2_COL EQU 24   ; row4(nametable row7、下端キャップ、row0と同じ)
+; --- state1解放までのホールド ---(無印Ebuzの実機調整値をそのまま
+; 初期値として踏襲、Mk2用に再調整はしていない)。
+EBUZ2_VOLLEY_HOLD_TICKS EQU 10
 
-; --- state1解放までのホールド・state2形成後の連射開始までのホールド ---
-; (無印Ebuzの10/45ティックという実機フィードバック調整値をそのまま
-; 初期値として踏襲、Mk2用に再調整はしていない - 未調整のプレース
-; ホルダー)。
-EBUZ2_VOLLEY_HOLD_TICKS    EQU 10
+; --- 本体の上下連続往復(oscillation)。離散3ポジションではなく、
+; name table row[MIN]〜row[MAX]の範囲を1ティック1行ずつ連続的に
+; 往復する。STEP_TICKSは1行進むまでの待ちティック数(未調整の仮値)。
+; STARTは"上から来てRow9かな"に対応する初期位置(範囲のほぼ中間)。
+EBUZ2_OSC_ROW_MIN   EQU 1
+EBUZ2_OSC_ROW_MAX   EQU 16
+EBUZ2_OSC_ROW_START EQU 9
+EBUZ2_OSC_STEP_TICKS EQU 6
+
+; state1中の中央発射管は、本体がまだ動いていない固定位置(state1は
+; 常にnametable row3-7、中央=row2local=nt5)にいる。EBUZ2_OSC_ROWを
+; 一時的にこの値にしてから(EBUZ2_OSC_ROW+CENTER_OFS(3)=5=nt5と
+; 逆算)発射すれば、state2用と全く同じ発射管ルーチンをstate1でも
+; そのまま使い回せる(状態1/2で発射ロジックを2重に持たずに済む)。
+EBUZ2_STATE1_OSC_ROW EQU 2
+
+; state2形成後、連射+oscillation開始までのホールド(無印Ebuzの
+; 実機調整値を踏襲、未調整のプレースホルダー)。
 EBUZ2_TOPBOTTOM_HOLD_TICKS EQU 45
-
-; --- 上下往復(oscillation)。4段階サイクル(base→up→base→down→
-; base…)、各段は一定ティック静止してから次へ - 「2-4箇所の離散
-; 位置で第一段としては十分」という指示に沿った未調整の仮値。
-EBUZ2_OSC_HOLD_TICKS EQU 20
 
 ; ============================================================================
 ; RAMワークエリア(page3、無印Ebuzと同じ0F300h付近を再利用 - 別ROMの
 ; ため衝突しない。STACKTOP=0F380hまで十分な余白を確保している)。
 ; ============================================================================
-EBUZ2_TOPBOTTOM_ACTIVE EQU 0F300h  ; 1 byte: 0=まだ非活性、1=継続発射+oscillation中
-EBUZ2_FIRE_SIDE         EQU 0F301h  ; 1 byte: 次に撃つ側(0=上/1=下)
-EBUZ2_FIRE_COUNTDOWN    EQU 0F302h  ; 1 byte: 次の発射までの残りティック数
-EBUZ2_TOP_NEXT          EQU 0F303h  ; 1 byte: 上レーンのプール割当ローテーションカウンタ
-EBUZ2_BOTTOM_NEXT       EQU 0F304h  ; 1 byte: 下レーンの同上
-EBUZ2_CUR_ROW_BASE      EQU 0F305h  ; 2 bytes: EBUZ2_UPDATE_SLOTが参照する「今どの行が対象か」
+EBUZ2_TOPBOTTOM_ACTIVE EQU 0F300h  ; 1 byte: 0=まだ非活性、1=連射+oscillation中
+EBUZ2_FIRE_STEP        EQU 0F301h  ; 1 byte: 次に撃つステップ(0=中央/1=内側/2=外側)
+EBUZ2_FIRE_COUNTDOWN   EQU 0F302h  ; 1 byte: 次の発射までの残りティック数
+EBUZ2_RECOIL_STEP      EQU 0F303h  ; 1 byte: 直前に発射したステップ(反動を戻す対象)
+EBUZ2_RECOIL_COUNTDOWN EQU 0F304h  ; 1 byte: 反動が元に戻るまでの残りティック数(0=反動なし)
+EBUZ2_RECOIL_ROW_A     EQU 0F305h  ; 1 byte: 反動対象1行目の実nt行(発射した瞬間の値を保持)
+EBUZ2_RECOIL_ROW_B     EQU 0F306h  ; 1 byte: 反動対象2行目(中央ステップでは未使用)
+EBUZ2_OSC_ROW          EQU 0F307h  ; 1 byte: 現在のlocal row0のnt行(MIN-MAXで往復)
+EBUZ2_OSC_DIR          EQU 0F308h  ; 1 byte: 1=下へ/0FFh=上へ
+EBUZ2_OSC_TIMER        EQU 0F309h  ; 1 byte: 次の1行移動までの残りティック数
+EBUZ2_C_NEXT           EQU 0F30Ah  ; 1 byte: 中央プールのローテーションカウンタ
+EBUZ2_OT_NEXT          EQU 0F30Bh  ; 1 byte: 外側上の同上
+EBUZ2_OB_NEXT          EQU 0F30Ch  ; 1 byte: 外側下の同上
+EBUZ2_IT_NEXT          EQU 0F30Dh  ; 1 byte: 内側上の同上
+EBUZ2_IB_NEXT          EQU 0F30Eh  ; 1 byte: 内側下の同上
 
-EBUZ2_TOP_COLS    EQU 0F310h  ; EBUZ2_LANE_POOL_SIZE(8) bytes
-EBUZ2_BOTTOM_COLS EQU 0F318h  ; EBUZ2_LANE_POOL_SIZE(8) bytes
-
-EBUZ2_OSC_PHASE EQU 0F320h  ; 1 byte: 0=base(→up待ち)/1=up(→base待ち)/2=base(→down待ち)/3=down(→base待ち)
-EBUZ2_OSC_TIMER EQU 0F321h  ; 1 byte: 次の遷移までの残りティック数
-
-; 開幕ボレー3レーンそれぞれの状態(2026-09-19訂正: X/Y/DX/DYの5byte
-; 構造体[斜め速度]を全廃し、無印Ebuzのbullet0と全く同じACTIVE+COLの
-; 2byteだけに簡略化 - 各レーンは自分のname table行に完全固定された
-; まま列だけが動く、Y成分の概念自体が存在しない設計のため)。
-EBUZ2_VOLLEY0_ACTIVE EQU 0F330h  ; row0レーン(nametable row3、上端キャップ)
-EBUZ2_VOLLEY0_COLCUR EQU 0F331h  ; 現在の左列(0-31)
-EBUZ2_VOLLEY1_ACTIVE EQU 0F332h  ; row2レーン(nametable row5、中央=最深部)
-EBUZ2_VOLLEY1_COLCUR EQU 0F333h
-EBUZ2_VOLLEY2_ACTIVE EQU 0F334h  ; row4レーン(nametable row7、下端キャップ)
-EBUZ2_VOLLEY2_COLCUR EQU 0F335h
+; 各プール8スロット×2byte(ROW,COL)。ROW=EBUZ2_SLOT_EMPTY(255)で
+; 非活性、それ以外は「発射された瞬間の実nt行」を保持したまま列だけが
+; 毎ティック減っていく(Y成分固定・X成分のみ直進、という既存の
+; 恒久ルール通り)。
+EBUZ2_C_SLOTS  EQU 0F310h  ; 中央、16 bytes (8slot x 2)
+EBUZ2_OT_SLOTS EQU 0F320h  ; 外側上、16 bytes
+EBUZ2_OB_SLOTS EQU 0F330h  ; 外側下、16 bytes
+EBUZ2_IT_SLOTS EQU 0F340h  ; 内側上、16 bytes
+EBUZ2_IB_SLOTS EQU 0F350h  ; 内側下、16 bytes ( 0F35Fhで終了、STACKTOP
+                            ; 0F380hまで32byteの余白あり)
 
 ; ============================================================================
 ; 1フレーム相当のウェイト(無印Ebuzと同一の較正済みループ、
@@ -276,309 +261,13 @@ EBUZ2_WAIT_TICK_DONE:                ; テスト用: 「待ち期間中の1テ�
     RET
 
 ; ============================================================================
-; 開幕ボレー3レーンの更新(2026-09-19訂正: 斜め速度のHWスプライト
-; [EBUZ2_UPDATE_CHEVRON]を全廃し、無印EbuzのEBUZ_TICK内bullet0処理・
-; およびEBUZ2_UPDATE_SLOTと全く同じ「固定行・1ティック1列・Y成分
-; ゼロ」のBGレーン弾3本に置き換え。斜め成分が構造的に存在しえない
-; ことがコード上でも自明になるよう、3レーンとも独立ルーチンとして
-; 明示的に書く(汎用ループより見た目が素直 - 無印Ebuzの単一bullet0
-; ルーチンと同じ方針)。ACTIVE=0なら何もしない。現在位置を消し、
-; 列を1減算、0だった場合はそのまま非活性化(画面外)、そうでなければ
-; 新しい列に描き直す - Y座標・行アドレスは呼び出しの間ずっと固定。
-; ============================================================================
-; 2026-09-20訂正(実機フィードバック「砲台は5門に増えてるぞ」の原因):
-; 開幕ボレー3レーンはstate1のうちは何も無い空白の行(nt row3/5/7)を
-; 飛ぶ設計だったが、実際にはFIRE_VOLLEY直後・ノーウェイトでDRAW_BASE
-; (state2への変形)が走るため、TICK_VOLLEYnが実際に「現在位置を消す」
-; 処理を初めて実行する時点では、本体は既にstate2(この3行のちょうど
-; col23-27に本体タイルが存在する形)になっている。旧実装はここを
-; 無条件に0(空白)で消していたため、飛んでいく弾が通過のたびに
-; state2本体の翼タイル(A/B)を剥ぎ取ってしまい、残ったD(砲台)タイルが
-; 複数行に孤立して見える事故になっていた。EBUZ2_ROW3_RESTORE/
-; EBUZ2_ROW5_RESTOREは「col21-28の範囲でstate2本体が実際に表示すべき
-; タイル」を持つ表で、消す際は0ではなくこの表の値で復元する(col21未満は
-; 元々どちらの状態でも空白なので、従来通り0のままでよい - 場合分け
-; 不要)。TICK_VOLLEYnが実際に動く時点で本体は常にstate2なので、
-; state1/state2の判定分岐自体も不要(詳細は本ファイルの会話ログ参照)。
-; ============================================================================
-EBUZ2_ROW3_RESTORE:            ; col21,22,23,24,25,26,27,28 (row3/row7共通、
-    DB 0,0,0,EBUZ2_CODE_A,EBUZ2_CODE_B,EBUZ2_CODE_C,EBUZ2_CODE_C,0
-    ; state2 local row1/row5 " . A B C C"と同一)
-EBUZ2_ROW5_RESTORE:            ; col21,22,23,24,25,26,27,28 (row5=中心行、
-    DB 0,0,EBUZ2_CODE_A,EBUZ2_CODE_B,EBUZ2_CODE_C,EBUZ2_CODE_D,EBUZ2_CODE_D,0
-    ; state2 local row3 "A B C D D"と同一)
-
-; Input: A=消す位置の列(COLCUR、erase前・decrement前)。破壊: AF,BC,DE,HL。
-EBUZ2_ERASE_ROW3_CELL:
-    PUSH AF
-    CP 21
-    JR C,EBUZ2_ERC_ROW3_PLAIN
-    SUB 21
-    LD E,A : LD D,0
-    LD HL,EBUZ2_ROW3_RESTORE : ADD HL,DE
-    LD B,(HL) : INC HL : LD C,(HL)
-    JR EBUZ2_ERC_ROW3_GO
-EBUZ2_ERC_ROW3_PLAIN:
-    LD B,0 : LD C,0
-EBUZ2_ERC_ROW3_GO:
-    POP AF
-    LD E,A : LD D,0
-    LD HL,EBUZ2_ROW3_BASE : ADD HL,DE
-    CALL EBUZ2_WRITE2
-    RET
-
-EBUZ2_ERASE_ROW5_CELL:
-    PUSH AF
-    CP 21
-    JR C,EBUZ2_ERC_ROW5_PLAIN
-    SUB 21
-    LD E,A : LD D,0
-    LD HL,EBUZ2_ROW5_RESTORE : ADD HL,DE
-    LD B,(HL) : INC HL : LD C,(HL)
-    JR EBUZ2_ERC_ROW5_GO
-EBUZ2_ERC_ROW5_PLAIN:
-    LD B,0 : LD C,0
-EBUZ2_ERC_ROW5_GO:
-    POP AF
-    LD E,A : LD D,0
-    LD HL,EBUZ2_ROW5_BASE : ADD HL,DE
-    CALL EBUZ2_WRITE2
-    RET
-
-EBUZ2_ERASE_ROW7_CELL:
-    PUSH AF
-    CP 21
-    JR C,EBUZ2_ERC_ROW7_PLAIN
-    SUB 21
-    LD E,A : LD D,0
-    LD HL,EBUZ2_ROW3_RESTORE : ADD HL,DE   ; row7もrow3と同一内容
-    LD B,(HL) : INC HL : LD C,(HL)
-    JR EBUZ2_ERC_ROW7_GO
-EBUZ2_ERC_ROW7_PLAIN:
-    LD B,0 : LD C,0
-EBUZ2_ERC_ROW7_GO:
-    POP AF
-    LD E,A : LD D,0
-    LD HL,EBUZ2_ROW7_BASE : ADD HL,DE
-    CALL EBUZ2_WRITE2
-    RET
-
-EBUZ2_TICK_VOLLEY0:
-    LD A,(EBUZ2_VOLLEY0_ACTIVE)
-    OR A
-    RET Z
-    LD A,(EBUZ2_VOLLEY0_COLCUR)
-    CALL EBUZ2_ERASE_ROW3_CELL            ; 現在位置を消す(row3固定、Y成分なし、
-                                           ; state2本体タイルは剥がさず復元)
-    LD A,(EBUZ2_VOLLEY0_COLCUR)
-    OR A
-    JR Z,EBUZ2_TV0_OFF
-    DEC A
-    LD (EBUZ2_VOLLEY0_COLCUR),A
-    LD E,A : LD D,0
-    LD HL,EBUZ2_ROW3_BASE : ADD HL,DE
-    LD B,BULLET_L_CODE : LD C,BULLET_R_CODE : CALL EBUZ2_WRITE2
-    RET
-EBUZ2_TV0_OFF:
-    XOR A
-    LD (EBUZ2_VOLLEY0_ACTIVE),A
-    RET
-
-EBUZ2_TICK_VOLLEY1:
-    LD A,(EBUZ2_VOLLEY1_ACTIVE)
-    OR A
-    RET Z
-    LD A,(EBUZ2_VOLLEY1_COLCUR)
-    CALL EBUZ2_ERASE_ROW5_CELL            ; 現在位置を消す(row5固定、中央=最深部
-                                           ; レーン、state2本体タイルは剥がさず復元)
-    LD A,(EBUZ2_VOLLEY1_COLCUR)
-    OR A
-    JR Z,EBUZ2_TV1_OFF
-    DEC A
-    LD (EBUZ2_VOLLEY1_COLCUR),A
-    LD E,A : LD D,0
-    LD HL,EBUZ2_ROW5_BASE : ADD HL,DE
-    LD B,BULLET_L_CODE : LD C,BULLET_R_CODE : CALL EBUZ2_WRITE2
-    RET
-EBUZ2_TV1_OFF:
-    XOR A
-    LD (EBUZ2_VOLLEY1_ACTIVE),A
-    RET
-
-EBUZ2_TICK_VOLLEY2:
-    LD A,(EBUZ2_VOLLEY2_ACTIVE)
-    OR A
-    RET Z
-    LD A,(EBUZ2_VOLLEY2_COLCUR)
-    CALL EBUZ2_ERASE_ROW7_CELL            ; 現在位置を消す(row7固定、Y成分なし、
-                                           ; state2本体タイルは剥がさず復元)
-    LD A,(EBUZ2_VOLLEY2_COLCUR)
-    OR A
-    JR Z,EBUZ2_TV2_OFF
-    DEC A
-    LD (EBUZ2_VOLLEY2_COLCUR),A
-    LD E,A : LD D,0
-    LD HL,EBUZ2_ROW7_BASE : ADD HL,DE
-    LD B,BULLET_L_CODE : LD C,BULLET_R_CODE : CALL EBUZ2_WRITE2
-    RET
-EBUZ2_TV2_OFF:
-    XOR A
-    LD (EBUZ2_VOLLEY2_ACTIVE),A
-    RET
-
-; state1の解放瞬間、3本のBGレーン弾を同時発射する(斜め成分なし、
-; row0/row2/row4それぞれ自分の行に固定されたまま、行ごとに異なる
-; 発射開始列[EBUZ2_VOLLEY0/1/2_COL]から真横に飛び始める)。
-EBUZ2_FIRE_VOLLEY:
-    LD A,1 : LD (EBUZ2_VOLLEY0_ACTIVE),A
-    LD A,EBUZ2_VOLLEY0_COL : LD (EBUZ2_VOLLEY0_COLCUR),A
-    LD E,A : LD D,0
-    LD HL,EBUZ2_ROW3_BASE : ADD HL,DE
-    LD B,BULLET_L_CODE : LD C,BULLET_R_CODE : CALL EBUZ2_WRITE2
-
-    LD A,1 : LD (EBUZ2_VOLLEY1_ACTIVE),A
-    LD A,EBUZ2_VOLLEY1_COL : LD (EBUZ2_VOLLEY1_COLCUR),A
-    LD E,A : LD D,0
-    LD HL,EBUZ2_ROW5_BASE : ADD HL,DE
-    LD B,BULLET_L_CODE : LD C,BULLET_R_CODE : CALL EBUZ2_WRITE2
-
-    LD A,1 : LD (EBUZ2_VOLLEY2_ACTIVE),A
-    LD A,EBUZ2_VOLLEY2_COL : LD (EBUZ2_VOLLEY2_COLCUR),A
-    LD E,A : LD D,0
-    LD HL,EBUZ2_ROW7_BASE : ADD HL,DE
-    LD B,BULLET_L_CODE : LD C,BULLET_R_CODE : CALL EBUZ2_WRITE2
-    RET
-
-; ============================================================================
-; state2連射レーン(BG、無印EbuzのEBUZ_UPDATE_SLOT/EBUZ_UPDATE_TOP_POOL/
-; BOTTOM_POOLと完全に同一のロジック、行だけをEBUZ2_ROW4_BASE/ROW6_BASE
-; [砲台キャップ行、本体の上下移動には追従しない固定レーン - ファイル
-; 冒頭コメント参照]に差し替え)。
-; ============================================================================
-EBUZ2_UPDATE_SLOT:
-    LD A,(HL)
-    CP EBUZ2_SLOT_EMPTY
-    RET Z
-    PUSH HL
-    PUSH AF
-    LD E,A : LD D,0
-    LD HL,(EBUZ2_CUR_ROW_BASE)
-    ADD HL,DE
-    LD B,0 : LD C,0
-    CALL EBUZ2_WRITE2
-    POP AF
-    OR A
-    JR Z,EBUZ2_US_OFF
-    DEC A
-    POP HL
-    LD (HL),A
-    LD E,A : LD D,0
-    LD HL,(EBUZ2_CUR_ROW_BASE)
-    ADD HL,DE
-    LD B,BULLET_L_CODE : LD C,BULLET_R_CODE
-    CALL EBUZ2_WRITE2
-    RET
-EBUZ2_US_OFF:
-    POP HL
-    LD (HL),EBUZ2_SLOT_EMPTY
-    RET
-
-EBUZ2_UPDATE_TOP_POOL:
-    LD HL,EBUZ2_ROW4_BASE
-    LD (EBUZ2_CUR_ROW_BASE),HL
-    LD HL,EBUZ2_TOP_COLS+0 : CALL EBUZ2_UPDATE_SLOT
-    LD HL,EBUZ2_TOP_COLS+1 : CALL EBUZ2_UPDATE_SLOT
-    LD HL,EBUZ2_TOP_COLS+2 : CALL EBUZ2_UPDATE_SLOT
-    LD HL,EBUZ2_TOP_COLS+3 : CALL EBUZ2_UPDATE_SLOT
-    LD HL,EBUZ2_TOP_COLS+4 : CALL EBUZ2_UPDATE_SLOT
-    LD HL,EBUZ2_TOP_COLS+5 : CALL EBUZ2_UPDATE_SLOT
-    LD HL,EBUZ2_TOP_COLS+6 : CALL EBUZ2_UPDATE_SLOT
-    LD HL,EBUZ2_TOP_COLS+7 : CALL EBUZ2_UPDATE_SLOT
-    RET
-
-EBUZ2_UPDATE_BOTTOM_POOL:
-    LD HL,EBUZ2_ROW6_BASE
-    LD (EBUZ2_CUR_ROW_BASE),HL
-    LD HL,EBUZ2_BOTTOM_COLS+0 : CALL EBUZ2_UPDATE_SLOT
-    LD HL,EBUZ2_BOTTOM_COLS+1 : CALL EBUZ2_UPDATE_SLOT
-    LD HL,EBUZ2_BOTTOM_COLS+2 : CALL EBUZ2_UPDATE_SLOT
-    LD HL,EBUZ2_BOTTOM_COLS+3 : CALL EBUZ2_UPDATE_SLOT
-    LD HL,EBUZ2_BOTTOM_COLS+4 : CALL EBUZ2_UPDATE_SLOT
-    LD HL,EBUZ2_BOTTOM_COLS+5 : CALL EBUZ2_UPDATE_SLOT
-    LD HL,EBUZ2_BOTTOM_COLS+6 : CALL EBUZ2_UPDATE_SLOT
-    LD HL,EBUZ2_BOTTOM_COLS+7 : CALL EBUZ2_UPDATE_SLOT
-    RET
-
-EBUZ2_FIRE_TOP_BULLET:
-    LD A,(EBUZ2_TOP_NEXT)
-    LD B,A
-    INC A
-    CP EBUZ2_LANE_POOL_SIZE
-    JR C,EBUZ2_FTB_OK
-    XOR A
-EBUZ2_FTB_OK:
-    LD (EBUZ2_TOP_NEXT),A
-    LD H,0 : LD L,B
-    LD DE,EBUZ2_TOP_COLS
-    ADD HL,DE
-    LD A,EBUZ2_BULLET_COL
-    LD (HL),A
-    LD E,A : LD D,0
-    LD HL,EBUZ2_ROW4_BASE
-    ADD HL,DE
-    LD B,BULLET_L_CODE : LD C,BULLET_R_CODE
-    CALL EBUZ2_WRITE2
-    RET
-
-EBUZ2_FIRE_BOTTOM_BULLET:
-    LD A,(EBUZ2_BOTTOM_NEXT)
-    LD B,A
-    INC A
-    CP EBUZ2_LANE_POOL_SIZE
-    JR C,EBUZ2_FBB_OK
-    XOR A
-EBUZ2_FBB_OK:
-    LD (EBUZ2_BOTTOM_NEXT),A
-    LD H,0 : LD L,B
-    LD DE,EBUZ2_BOTTOM_COLS
-    ADD HL,DE
-    LD A,EBUZ2_BULLET_COL
-    LD (HL),A
-    LD E,A : LD D,0
-    LD HL,EBUZ2_ROW6_BASE
-    ADD HL,DE
-    LD B,BULLET_L_CODE : LD C,BULLET_R_CODE
-    CALL EBUZ2_WRITE2
-    RET
-
-; 継続発射(固定EBUZ2_FIRE_INTERVALティックごとに無条件・交互発射、
-; 無印Ebuzの反動アニメーションは今回のMk2仕様には含まれていないため
-; 省略 - 発射自体のロジックはRound125で確立した「生存チェックなし・
-; 固定間隔」の作法をそのまま流用)。
-EBUZ2_UPDATE_TOPBOTTOM_FIRE:
-    LD A,(EBUZ2_FIRE_COUNTDOWN)
-    DEC A
-    LD (EBUZ2_FIRE_COUNTDOWN),A
-    RET NZ
-    LD A,EBUZ2_FIRE_INTERVAL
-    LD (EBUZ2_FIRE_COUNTDOWN),A
-    LD A,(EBUZ2_FIRE_SIDE)
-    OR A
-    JR NZ,EBUZ2_UTF_FIRE_BOTTOM
-    CALL EBUZ2_FIRE_TOP_BULLET
-    JR EBUZ2_UTF_FIRE_DONE
-EBUZ2_UTF_FIRE_BOTTOM:
-    CALL EBUZ2_FIRE_BOTTOM_BULLET
-EBUZ2_UTF_FIRE_DONE:
-    LD A,(EBUZ2_FIRE_SIDE)
-    XOR 1
-    LD (EBUZ2_FIRE_SIDE),A
-    RET
-
-; ============================================================================
-; 本体形状データ(5byte/行、col23-27の順。0=空白セル)。state1/state2の
-; 全ポジション(base/up/down)がこの同じ7行分のデータを使い回す
-; (state1は5行のみ使用する専用データ、下記EBUZ2_ROW_S1_*)。
+; 本体形状データ(5byte/行、col23-27の順。0=空白セル)。state1は5行のみ
+; 使用する専用データ(EBUZ2_ROW_S1_*)、state2は7行(EBUZ2_ROW_S2_*) -
+; EBUZ2_DRAW_BODY_AT(後方で定義)がEBUZ2_OSC_ROWの現在値に応じて
+; 任意のnametable行へこの7行分を描画する。EBUZ2_BODY_TILE_AT(後方)も
+; この同じEBUZ2_ROW_S2_*データを弾の消去時の復元元として直接参照する
+; ため、参照側より前に定義しておく必要がある(このアセンブラは前方
+; 参照に対応しない - 過去のPAT_SASAPI前方参照バグと同型の制約)。
 ; ============================================================================
 EBUZ2_BLANK5:
     DB 0,0,0,0,0
@@ -609,9 +298,7 @@ EBUZ2_ROW_S2_5:
 EBUZ2_ROW_S2_6:
     DB 0,0,EBUZ2_CODE_A,EBUZ2_CODE_B,EBUZ2_CODE_C
 
-; ============================================================================
 ; state1の描画(5行、row3-7、col23起点の5byte単位LDIRVM)。
-; ============================================================================
 EBUZ2_DRAW_STATE1:
     LD HL,EBUZ2_ROW_S1_0 : LD DE,01877h : LD BC,5 : CALL LDIRVM  ; row3
     LD HL,EBUZ2_ROW_S1_1 : LD DE,01897h : LD BC,5 : CALL LDIRVM  ; row4
@@ -620,141 +307,542 @@ EBUZ2_DRAW_STATE1:
     LD HL,EBUZ2_ROW_S1_4 : LD DE,018F7h : LD BC,5 : CALL LDIRVM  ; row7
     RET
 
-; state2の3ポジション(base=row2-8/up=row1-7/down=row3-9)それぞれの
-; 描画・消去。中身のデータ(EBUZ2_ROW_S2_0-6)は共通、宛先アドレスだけが
-; 1行(32byte)ずつずれる。
-EBUZ2_DRAW_BASE:
-    LD HL,EBUZ2_ROW_S2_0 : LD DE,01857h : LD BC,5 : CALL LDIRVM  ; row2
-    LD HL,EBUZ2_ROW_S2_1 : LD DE,01877h : LD BC,5 : CALL LDIRVM  ; row3
-    LD HL,EBUZ2_ROW_S2_2 : LD DE,01897h : LD BC,5 : CALL LDIRVM  ; row4(上キャップ=発射レーン)
-    LD HL,EBUZ2_ROW_S2_3 : LD DE,018B7h : LD BC,5 : CALL LDIRVM  ; row5(中心)
-    LD HL,EBUZ2_ROW_S2_4 : LD DE,018D7h : LD BC,5 : CALL LDIRVM  ; row6(下キャップ=発射レーン)
-    LD HL,EBUZ2_ROW_S2_5 : LD DE,018F7h : LD BC,5 : CALL LDIRVM  ; row7
-    LD HL,EBUZ2_ROW_S2_6 : LD DE,01917h : LD BC,5 : CALL LDIRVM  ; row8
+; ============================================================================
+; 汎用アドレス計算: Input B=nametable行番号(0-23)、C=列番号(0-31)。
+; Output: HL=NAMTBL+row*32+col。B,Cは保持されたまま返る(呼び出し元が
+; そのまま使い回せるように)。破壊: AF,DE,HL。
+; ============================================================================
+EBUZ2_CALC_ADDR:
+    PUSH BC
+    LD A,B
+    LD H,0 : LD L,A
+    ADD HL,HL
+    ADD HL,HL
+    ADD HL,HL
+    ADD HL,HL
+    ADD HL,HL          ; HL = row*32
+    LD DE,NAMTBL
+    ADD HL,DE
+    POP BC
+    LD D,0 : LD E,C
+    ADD HL,DE           ; HL += col
     RET
 
-EBUZ2_ERASE_BASE:
-    LD HL,EBUZ2_BLANK5 : LD DE,01857h : LD BC,5 : CALL LDIRVM
-    LD HL,EBUZ2_BLANK5 : LD DE,01877h : LD BC,5 : CALL LDIRVM
-    LD HL,EBUZ2_BLANK5 : LD DE,01897h : LD BC,5 : CALL LDIRVM
-    LD HL,EBUZ2_BLANK5 : LD DE,018B7h : LD BC,5 : CALL LDIRVM
-    LD HL,EBUZ2_BLANK5 : LD DE,018D7h : LD BC,5 : CALL LDIRVM
-    LD HL,EBUZ2_BLANK5 : LD DE,018F7h : LD BC,5 : CALL LDIRVM
-    LD HL,EBUZ2_BLANK5 : LD DE,01917h : LD BC,5 : CALL LDIRVM
+; 本体は常に連続的に上下移動する(EBUZ2_OSC_ROW)ため、ある弾が発射
+; された瞬間のnt行は、時間が経つと「今の本体の位置」とは一致しなく
+; なる。したがって弾の消去は、固定の復元テーブルではなく「今この瞬間
+; この(行,列)に本体が実際に表示しているべきタイルは何か」を都度
+; EBUZ2_OSC_ROWから計算し直す必要がある(EBUZ2_ROW_S2_0-6は本体形状
+; データそのもの、後方で定義)。
+; Input: B=行, C=列。Output: A=タイル(本体の現在の占有範囲外なら0)。
+; 破壊: AF,DE,HL。
+EBUZ2_BODY_TILE_AT:
+    LD A,(EBUZ2_OSC_ROW)
+    LD D,A
+    LD A,B
+    SUB D
+    JR C,EBUZ2_BTA_ZERO       ; row < OSC_ROW -> 本体の範囲外
+    CP 7
+    JR NC,EBUZ2_BTA_ZERO      ; local_row >= 7 -> 本体の範囲外
+    LD D,A                     ; D = local_row(0-6)
+    LD A,C
+    SUB 23
+    JR C,EBUZ2_BTA_ZERO        ; col < 23 -> 範囲外
+    CP 5
+    JR NC,EBUZ2_BTA_ZERO       ; local_col >= 5 -> 範囲外
+    LD E,A                      ; E = local_col(0-4)
+    LD H,0 : LD L,D
+    ADD HL,HL                    ; *2
+    ADD HL,HL                    ; *4
+    LD A,L
+    ADD A,D                       ; *4 + local_row = *5 (最大30、桁上がり無し)
+    LD L,A
+    LD H,0
+    LD D,0
+    ADD HL,DE                     ; += local_col
+    LD DE,EBUZ2_ROW_S2_0
+    ADD HL,DE
+    LD A,(HL)
+    RET
+EBUZ2_BTA_ZERO:
+    XOR A
     RET
 
-EBUZ2_DRAW_UP:
-    LD HL,EBUZ2_ROW_S2_0 : LD DE,01837h : LD BC,5 : CALL LDIRVM  ; row1
-    LD HL,EBUZ2_ROW_S2_1 : LD DE,01857h : LD BC,5 : CALL LDIRVM  ; row2
-    LD HL,EBUZ2_ROW_S2_2 : LD DE,01877h : LD BC,5 : CALL LDIRVM  ; row3
-    LD HL,EBUZ2_ROW_S2_3 : LD DE,01897h : LD BC,5 : CALL LDIRVM  ; row4
-    LD HL,EBUZ2_ROW_S2_4 : LD DE,018B7h : LD BC,5 : CALL LDIRVM  ; row5
-    LD HL,EBUZ2_ROW_S2_5 : LD DE,018D7h : LD BC,5 : CALL LDIRVM  ; row6
-    LD HL,EBUZ2_ROW_S2_6 : LD DE,018F7h : LD BC,5 : CALL LDIRVM  ; row7
+; 弾スロット2byte(ROW,COL)の消去(0ではなくEBUZ2_BODY_TILE_ATで求めた
+; 現在の本体タイルへ復元)。Input: B=行、C=列(呼び出し後もB,C保持 -
+; 呼び出し元[EBUZ2_UPDATE_SLOT]が消去後もこの2値を読み続けるため、
+; 内部でWRITE2用にB,Cを潰した後は必ず元の値へ戻してからRETすること)。
+EBUZ2_ERASE_BC:
+    CALL EBUZ2_CALC_ADDR       ; HL = addr(row=B,col=C)、B,Cは保持されたまま返る
+    PUSH HL                      ; 保存: addr
+    PUSH BC                      ; 保存: 元の(row,col)
+    CALL EBUZ2_BODY_TILE_AT       ; B=row,C=colのまま -> A=左セルの復元値
+    LD E,A
+    LD A,C
+    INC A
+    LD C,A                        ; C=col+1(Bは行のまま不変)
+    CALL EBUZ2_BODY_TILE_AT        ; -> A=右セルの復元値
+    LD D,A
+    POP BC                          ; 元の(row,col)を復元
+    POP HL                          ; addrを復元
+    PUSH BC                          ; WRITE2でB,Cを潰す前にもう一度退避
+    LD B,E : LD C,D
+    CALL EBUZ2_WRITE2
+    POP BC                            ; 呼び出し元のためB,C=元の(row,col)へ戻す
     RET
 
-EBUZ2_ERASE_UP:
-    LD HL,EBUZ2_BLANK5 : LD DE,01837h : LD BC,5 : CALL LDIRVM
-    LD HL,EBUZ2_BLANK5 : LD DE,01857h : LD BC,5 : CALL LDIRVM
-    LD HL,EBUZ2_BLANK5 : LD DE,01877h : LD BC,5 : CALL LDIRVM
-    LD HL,EBUZ2_BLANK5 : LD DE,01897h : LD BC,5 : CALL LDIRVM
-    LD HL,EBUZ2_BLANK5 : LD DE,018B7h : LD BC,5 : CALL LDIRVM
-    LD HL,EBUZ2_BLANK5 : LD DE,018D7h : LD BC,5 : CALL LDIRVM
-    LD HL,EBUZ2_BLANK5 : LD DE,018F7h : LD BC,5 : CALL LDIRVM
+; 弾スロット共通の1ティック更新。Input: HL=スロット先頭(ROWバイト、
+; 直後にCOLバイトが続く)。ROW=EBUZ2_SLOT_EMPTYなら何もしない。
+EBUZ2_UPDATE_SLOT:
+    LD A,(HL)
+    CP EBUZ2_SLOT_EMPTY
+    RET Z
+    PUSH HL
+    LD B,A                       ; B = row(固定、以後不変)
+    INC HL
+    LD A,(HL)
+    LD C,A                        ; C = col(現在値)
+    CALL EBUZ2_ERASE_BC           ; 現在位置を消す(本体タイルを復元)
+    LD A,C
+    OR A
+    JR Z,EBUZ2_US_OFF
+    DEC A
+    LD C,A                         ; C = new col
+    POP HL
+    INC HL
+    LD (HL),A                       ; 新しい列を保存
+    CALL EBUZ2_CALC_ADDR              ; HL = addr(B,C)
+    LD B,BULLET_L_CODE : LD C,BULLET_R_CODE
+    CALL EBUZ2_WRITE2
     RET
-
-EBUZ2_DRAW_DOWN:
-    LD HL,EBUZ2_ROW_S2_0 : LD DE,01877h : LD BC,5 : CALL LDIRVM  ; row3
-    LD HL,EBUZ2_ROW_S2_1 : LD DE,01897h : LD BC,5 : CALL LDIRVM  ; row4
-    LD HL,EBUZ2_ROW_S2_2 : LD DE,018B7h : LD BC,5 : CALL LDIRVM  ; row5
-    LD HL,EBUZ2_ROW_S2_3 : LD DE,018D7h : LD BC,5 : CALL LDIRVM  ; row6
-    LD HL,EBUZ2_ROW_S2_4 : LD DE,018F7h : LD BC,5 : CALL LDIRVM  ; row7
-    LD HL,EBUZ2_ROW_S2_5 : LD DE,01917h : LD BC,5 : CALL LDIRVM  ; row8
-    LD HL,EBUZ2_ROW_S2_6 : LD DE,01937h : LD BC,5 : CALL LDIRVM  ; row9
-    RET
-
-EBUZ2_ERASE_DOWN:
-    LD HL,EBUZ2_BLANK5 : LD DE,01877h : LD BC,5 : CALL LDIRVM
-    LD HL,EBUZ2_BLANK5 : LD DE,01897h : LD BC,5 : CALL LDIRVM
-    LD HL,EBUZ2_BLANK5 : LD DE,018B7h : LD BC,5 : CALL LDIRVM
-    LD HL,EBUZ2_BLANK5 : LD DE,018D7h : LD BC,5 : CALL LDIRVM
-    LD HL,EBUZ2_BLANK5 : LD DE,018F7h : LD BC,5 : CALL LDIRVM
-    LD HL,EBUZ2_BLANK5 : LD DE,01917h : LD BC,5 : CALL LDIRVM
-    LD HL,EBUZ2_BLANK5 : LD DE,01937h : LD BC,5 : CALL LDIRVM
+EBUZ2_US_OFF:
+    POP HL
+    LD (HL),EBUZ2_SLOT_EMPTY
     RET
 
 ; ============================================================================
-; 上下往復(oscillation)。EBUZ2_OSC_TIMERが0になるたび、現在のphase
-; (0-3)に応じて1段階だけ遷移する(base→up→base→down→base…の4段
-; サイクル)。遷移のたびに「今の位置を消す→次の位置を描く」の順で
-; 呼ぶ(無印Ebuzの弾更新[消してから動かす]と同じ考え方)。発射レーン
-; (row4/row6)自体はこのファイル冒頭コメントの通り追従させない -
-; 本体の見た目だけが動く。
+; 5プール分の更新(中央/外側上/外側下/内側上/内側下)。中身は完全に
+; 同一ロジック、対象スロット配列だけが違う - 汎用ループより見た目が
+; 素直という、このファイル一貫の方針を踏襲。
+; ============================================================================
+EBUZ2_UPDATE_C_POOL:
+    LD HL,EBUZ2_C_SLOTS+0  : CALL EBUZ2_UPDATE_SLOT
+    LD HL,EBUZ2_C_SLOTS+2  : CALL EBUZ2_UPDATE_SLOT
+    LD HL,EBUZ2_C_SLOTS+4  : CALL EBUZ2_UPDATE_SLOT
+    LD HL,EBUZ2_C_SLOTS+6  : CALL EBUZ2_UPDATE_SLOT
+    LD HL,EBUZ2_C_SLOTS+8  : CALL EBUZ2_UPDATE_SLOT
+    LD HL,EBUZ2_C_SLOTS+10 : CALL EBUZ2_UPDATE_SLOT
+    LD HL,EBUZ2_C_SLOTS+12 : CALL EBUZ2_UPDATE_SLOT
+    LD HL,EBUZ2_C_SLOTS+14 : CALL EBUZ2_UPDATE_SLOT
+    RET
+
+EBUZ2_UPDATE_OT_POOL:
+    LD HL,EBUZ2_OT_SLOTS+0  : CALL EBUZ2_UPDATE_SLOT
+    LD HL,EBUZ2_OT_SLOTS+2  : CALL EBUZ2_UPDATE_SLOT
+    LD HL,EBUZ2_OT_SLOTS+4  : CALL EBUZ2_UPDATE_SLOT
+    LD HL,EBUZ2_OT_SLOTS+6  : CALL EBUZ2_UPDATE_SLOT
+    LD HL,EBUZ2_OT_SLOTS+8  : CALL EBUZ2_UPDATE_SLOT
+    LD HL,EBUZ2_OT_SLOTS+10 : CALL EBUZ2_UPDATE_SLOT
+    LD HL,EBUZ2_OT_SLOTS+12 : CALL EBUZ2_UPDATE_SLOT
+    LD HL,EBUZ2_OT_SLOTS+14 : CALL EBUZ2_UPDATE_SLOT
+    RET
+
+EBUZ2_UPDATE_OB_POOL:
+    LD HL,EBUZ2_OB_SLOTS+0  : CALL EBUZ2_UPDATE_SLOT
+    LD HL,EBUZ2_OB_SLOTS+2  : CALL EBUZ2_UPDATE_SLOT
+    LD HL,EBUZ2_OB_SLOTS+4  : CALL EBUZ2_UPDATE_SLOT
+    LD HL,EBUZ2_OB_SLOTS+6  : CALL EBUZ2_UPDATE_SLOT
+    LD HL,EBUZ2_OB_SLOTS+8  : CALL EBUZ2_UPDATE_SLOT
+    LD HL,EBUZ2_OB_SLOTS+10 : CALL EBUZ2_UPDATE_SLOT
+    LD HL,EBUZ2_OB_SLOTS+12 : CALL EBUZ2_UPDATE_SLOT
+    LD HL,EBUZ2_OB_SLOTS+14 : CALL EBUZ2_UPDATE_SLOT
+    RET
+
+EBUZ2_UPDATE_IT_POOL:
+    LD HL,EBUZ2_IT_SLOTS+0  : CALL EBUZ2_UPDATE_SLOT
+    LD HL,EBUZ2_IT_SLOTS+2  : CALL EBUZ2_UPDATE_SLOT
+    LD HL,EBUZ2_IT_SLOTS+4  : CALL EBUZ2_UPDATE_SLOT
+    LD HL,EBUZ2_IT_SLOTS+6  : CALL EBUZ2_UPDATE_SLOT
+    LD HL,EBUZ2_IT_SLOTS+8  : CALL EBUZ2_UPDATE_SLOT
+    LD HL,EBUZ2_IT_SLOTS+10 : CALL EBUZ2_UPDATE_SLOT
+    LD HL,EBUZ2_IT_SLOTS+12 : CALL EBUZ2_UPDATE_SLOT
+    LD HL,EBUZ2_IT_SLOTS+14 : CALL EBUZ2_UPDATE_SLOT
+    RET
+
+EBUZ2_UPDATE_IB_POOL:
+    LD HL,EBUZ2_IB_SLOTS+0  : CALL EBUZ2_UPDATE_SLOT
+    LD HL,EBUZ2_IB_SLOTS+2  : CALL EBUZ2_UPDATE_SLOT
+    LD HL,EBUZ2_IB_SLOTS+4  : CALL EBUZ2_UPDATE_SLOT
+    LD HL,EBUZ2_IB_SLOTS+6  : CALL EBUZ2_UPDATE_SLOT
+    LD HL,EBUZ2_IB_SLOTS+8  : CALL EBUZ2_UPDATE_SLOT
+    LD HL,EBUZ2_IB_SLOTS+10 : CALL EBUZ2_UPDATE_SLOT
+    LD HL,EBUZ2_IB_SLOTS+12 : CALL EBUZ2_UPDATE_SLOT
+    LD HL,EBUZ2_IB_SLOTS+14 : CALL EBUZ2_UPDATE_SLOT
+    RET
+
+; ============================================================================
+; 5門それぞれの発射。行は発射する瞬間の[EBUZ2_OSC_ROW]+自分のローカル
+; オフセットから毎回計算する(「弾は上下動に合わせてY位置変わる」を
+; そのまま実装したもの) - 発射後は弾自身のY(行)は固定、Xだけ直進。
+; ============================================================================
+EBUZ2_FIRE_C_BULLET:
+    LD A,(EBUZ2_C_NEXT)
+    LD B,A
+    INC A
+    CP EBUZ2_LANE_POOL_SIZE
+    JR C,EBUZ2_FC_OK
+    XOR A
+EBUZ2_FC_OK:
+    LD (EBUZ2_C_NEXT),A
+    LD A,B : ADD A,A
+    LD E,A : LD D,0
+    LD HL,EBUZ2_C_SLOTS
+    ADD HL,DE                     ; HL = スロット先頭(ROWバイト)
+    LD A,(EBUZ2_OSC_ROW)
+    ADD A,EBUZ2_CENTER_OFS
+    LD (HL),A
+    LD B,A                          ; B = row
+    INC HL
+    LD A,EBUZ2_CENTER_COL
+    LD (HL),A
+    LD C,A                           ; C = col
+    CALL EBUZ2_CALC_ADDR
+    LD B,BULLET_L_CODE : LD C,BULLET_R_CODE
+    CALL EBUZ2_WRITE2
+    RET
+
+EBUZ2_FIRE_OT_BULLET:
+    LD A,(EBUZ2_OT_NEXT)
+    LD B,A
+    INC A
+    CP EBUZ2_LANE_POOL_SIZE
+    JR C,EBUZ2_FOT_OK
+    XOR A
+EBUZ2_FOT_OK:
+    LD (EBUZ2_OT_NEXT),A
+    LD A,B : ADD A,A
+    LD E,A : LD D,0
+    LD HL,EBUZ2_OT_SLOTS
+    ADD HL,DE
+    LD A,(EBUZ2_OSC_ROW)
+    ADD A,EBUZ2_OUTER_TOP_OFS
+    LD (HL),A
+    LD B,A
+    INC HL
+    LD A,EBUZ2_OUTER_COL
+    LD (HL),A
+    LD C,A
+    CALL EBUZ2_CALC_ADDR
+    LD B,BULLET_L_CODE : LD C,BULLET_R_CODE
+    CALL EBUZ2_WRITE2
+    RET
+
+EBUZ2_FIRE_OB_BULLET:
+    LD A,(EBUZ2_OB_NEXT)
+    LD B,A
+    INC A
+    CP EBUZ2_LANE_POOL_SIZE
+    JR C,EBUZ2_FOB_OK
+    XOR A
+EBUZ2_FOB_OK:
+    LD (EBUZ2_OB_NEXT),A
+    LD A,B : ADD A,A
+    LD E,A : LD D,0
+    LD HL,EBUZ2_OB_SLOTS
+    ADD HL,DE
+    LD A,(EBUZ2_OSC_ROW)
+    ADD A,EBUZ2_OUTER_BOTTOM_OFS
+    LD (HL),A
+    LD B,A
+    INC HL
+    LD A,EBUZ2_OUTER_COL
+    LD (HL),A
+    LD C,A
+    CALL EBUZ2_CALC_ADDR
+    LD B,BULLET_L_CODE : LD C,BULLET_R_CODE
+    CALL EBUZ2_WRITE2
+    RET
+
+EBUZ2_FIRE_IT_BULLET:
+    LD A,(EBUZ2_IT_NEXT)
+    LD B,A
+    INC A
+    CP EBUZ2_LANE_POOL_SIZE
+    JR C,EBUZ2_FIT_OK
+    XOR A
+EBUZ2_FIT_OK:
+    LD (EBUZ2_IT_NEXT),A
+    LD A,B : ADD A,A
+    LD E,A : LD D,0
+    LD HL,EBUZ2_IT_SLOTS
+    ADD HL,DE
+    LD A,(EBUZ2_OSC_ROW)
+    ADD A,EBUZ2_INNER_TOP_OFS
+    LD (HL),A
+    LD B,A
+    INC HL
+    LD A,EBUZ2_INNER_COL
+    LD (HL),A
+    LD C,A
+    CALL EBUZ2_CALC_ADDR
+    LD B,BULLET_L_CODE : LD C,BULLET_R_CODE
+    CALL EBUZ2_WRITE2
+    RET
+
+EBUZ2_FIRE_IB_BULLET:
+    LD A,(EBUZ2_IB_NEXT)
+    LD B,A
+    INC A
+    CP EBUZ2_LANE_POOL_SIZE
+    JR C,EBUZ2_FIB_OK
+    XOR A
+EBUZ2_FIB_OK:
+    LD (EBUZ2_IB_NEXT),A
+    LD A,B : ADD A,A
+    LD E,A : LD D,0
+    LD HL,EBUZ2_IB_SLOTS
+    ADD HL,DE
+    LD A,(EBUZ2_OSC_ROW)
+    ADD A,EBUZ2_INNER_BOTTOM_OFS
+    LD (HL),A
+    LD B,A
+    INC HL
+    LD A,EBUZ2_INNER_COL
+    LD (HL),A
+    LD C,A
+    CALL EBUZ2_CALC_ADDR
+    LD B,BULLET_L_CODE : LD C,BULLET_R_CODE
+    CALL EBUZ2_WRITE2
+    RET
+
+; リコイル用の翼帯データ(col23-28の6byte窓、無印Ebuzと同じ「発射時に
+; 1セル右へシフト、1ティック後に戻す」作法)。中身は本体形状データ
+; (EBUZ2_ROW_S2_0/1/3、後方で定義)と同一値 - 外側(row0/6)・内側
+; (row1/5)・中央(row3)の3種類。行アドレスは発射時のEBUZ2_OSC_ROWから
+; 都度計算するため、ここではデータ(中身)だけを持つ。
+EBUZ2_OUTER_REST:
+    DB 0,0,EBUZ2_CODE_A,EBUZ2_CODE_B,EBUZ2_CODE_C,0
+EBUZ2_OUTER_RECOIL:
+    DB 0,0,0,EBUZ2_CODE_A,EBUZ2_CODE_B,EBUZ2_CODE_C
+EBUZ2_INNER_REST:
+    DB 0,EBUZ2_CODE_A,EBUZ2_CODE_B,EBUZ2_CODE_C,EBUZ2_CODE_C,0
+EBUZ2_INNER_RECOIL:
+    DB 0,0,EBUZ2_CODE_A,EBUZ2_CODE_B,EBUZ2_CODE_C,EBUZ2_CODE_C
+EBUZ2_CENTER_REST:
+    DB EBUZ2_CODE_A,EBUZ2_CODE_B,EBUZ2_CODE_C,EBUZ2_CODE_D,EBUZ2_CODE_D,0
+EBUZ2_CENTER_RECOIL:
+    DB 0,EBUZ2_CODE_A,EBUZ2_CODE_B,EBUZ2_CODE_C,EBUZ2_CODE_D,EBUZ2_CODE_D
+
+; Input: HL=6byteデータ先頭、B=対象nt行。col23起点へLDIRVM(破壊:AF,DE,HL,BC)。
+EBUZ2_WRITE_RECOIL_ROW:
+    PUSH HL
+    LD C,23
+    CALL EBUZ2_CALC_ADDR   ; HL = addr(row=B,col=23)
+    PUSH HL
+    POP DE
+    POP HL
+    LD BC,6
+    CALL LDIRVM
+    RET
+
+; ============================================================================
+; 発射シーケンス(中央→内側→外側→最初に戻る、無限ループ)。
+; EBUZ2_FIRE_INTERVALごとに1ステップ進み、そのステップの発射管
+; (中央=1門、内側/外側=上下2門ずつ)から一斉発射する。発射した行に
+; リコイル(RECOILデータへ差し替え)、1ティック後にREST(平常状態)へ
+; 戻す。行は発射した瞬間のEBUZ2_OSC_ROWから計算し、
+; EBUZ2_RECOIL_ROW_A/Bへ保存しておく(戻す時点でEBUZ2_OSC_ROWがもう
+; 動いているかもしれないため、発射時の行を必ず覚えておく必要がある)。
+; ============================================================================
+EBUZ2_UPDATE_SEQUENCE_FIRE:
+    LD A,(EBUZ2_RECOIL_COUNTDOWN)
+    OR A
+    JR Z,EBUZ2_USF_SKIP_REVERT
+    DEC A
+    LD (EBUZ2_RECOIL_COUNTDOWN),A
+    JR NZ,EBUZ2_USF_SKIP_REVERT
+    LD A,(EBUZ2_RECOIL_STEP)
+    OR A
+    JR Z,EBUZ2_USF_REVERT_C
+    CP 1
+    JR Z,EBUZ2_USF_REVERT_I
+    LD HL,EBUZ2_OUTER_REST : LD A,(EBUZ2_RECOIL_ROW_A) : LD B,A : CALL EBUZ2_WRITE_RECOIL_ROW
+    LD HL,EBUZ2_OUTER_REST : LD A,(EBUZ2_RECOIL_ROW_B) : LD B,A : CALL EBUZ2_WRITE_RECOIL_ROW
+    JR EBUZ2_USF_SKIP_REVERT
+EBUZ2_USF_REVERT_C:
+    LD HL,EBUZ2_CENTER_REST : LD A,(EBUZ2_RECOIL_ROW_A) : LD B,A : CALL EBUZ2_WRITE_RECOIL_ROW
+    JR EBUZ2_USF_SKIP_REVERT
+EBUZ2_USF_REVERT_I:
+    LD HL,EBUZ2_INNER_REST : LD A,(EBUZ2_RECOIL_ROW_A) : LD B,A : CALL EBUZ2_WRITE_RECOIL_ROW
+    LD HL,EBUZ2_INNER_REST : LD A,(EBUZ2_RECOIL_ROW_B) : LD B,A : CALL EBUZ2_WRITE_RECOIL_ROW
+EBUZ2_USF_SKIP_REVERT:
+    LD A,(EBUZ2_FIRE_COUNTDOWN)
+    DEC A
+    LD (EBUZ2_FIRE_COUNTDOWN),A
+    RET NZ
+    LD A,EBUZ2_FIRE_INTERVAL
+    LD (EBUZ2_FIRE_COUNTDOWN),A
+    LD A,(EBUZ2_FIRE_STEP)
+    OR A
+    JR Z,EBUZ2_USF_FIRE_C
+    CP 1
+    JR Z,EBUZ2_USF_FIRE_I
+    ; --- 外側(上下2門) ---
+    LD A,(EBUZ2_OSC_ROW) : ADD A,EBUZ2_OUTER_TOP_OFS : LD (EBUZ2_RECOIL_ROW_A),A
+    LD B,A : LD HL,EBUZ2_OUTER_RECOIL : CALL EBUZ2_WRITE_RECOIL_ROW
+    LD A,(EBUZ2_OSC_ROW) : ADD A,EBUZ2_OUTER_BOTTOM_OFS : LD (EBUZ2_RECOIL_ROW_B),A
+    LD B,A : LD HL,EBUZ2_OUTER_RECOIL : CALL EBUZ2_WRITE_RECOIL_ROW
+    CALL EBUZ2_FIRE_OT_BULLET
+    CALL EBUZ2_FIRE_OB_BULLET
+    JR EBUZ2_USF_FIRE_DONE
+EBUZ2_USF_FIRE_C:
+    LD A,(EBUZ2_OSC_ROW) : ADD A,EBUZ2_CENTER_OFS : LD (EBUZ2_RECOIL_ROW_A),A
+    LD B,A : LD HL,EBUZ2_CENTER_RECOIL : CALL EBUZ2_WRITE_RECOIL_ROW
+    CALL EBUZ2_FIRE_C_BULLET
+    JR EBUZ2_USF_FIRE_DONE
+EBUZ2_USF_FIRE_I:
+    LD A,(EBUZ2_OSC_ROW) : ADD A,EBUZ2_INNER_TOP_OFS : LD (EBUZ2_RECOIL_ROW_A),A
+    LD B,A : LD HL,EBUZ2_INNER_RECOIL : CALL EBUZ2_WRITE_RECOIL_ROW
+    LD A,(EBUZ2_OSC_ROW) : ADD A,EBUZ2_INNER_BOTTOM_OFS : LD (EBUZ2_RECOIL_ROW_B),A
+    LD B,A : LD HL,EBUZ2_INNER_RECOIL : CALL EBUZ2_WRITE_RECOIL_ROW
+    CALL EBUZ2_FIRE_IT_BULLET
+    CALL EBUZ2_FIRE_IB_BULLET
+EBUZ2_USF_FIRE_DONE:
+    LD A,(EBUZ2_FIRE_STEP)
+    LD (EBUZ2_RECOIL_STEP),A
+    LD A,EBUZ2_RECOIL_DURATION
+    LD (EBUZ2_RECOIL_COUNTDOWN),A
+    LD A,(EBUZ2_FIRE_STEP)
+    INC A
+    CP 3
+    JR C,EBUZ2_USF_STEP_OK
+    XOR A
+EBUZ2_USF_STEP_OK:
+    LD (EBUZ2_FIRE_STEP),A
+    RET
+
+; ============================================================================
+; 本体形状の汎用描画/消去(state2、7行)。Input: A=row_top(local row0の
+; 目標nt行)。EBUZ2_ROW_S2_0-6(後方で定義)を7行分、row_top〜row_top+6
+; へ順にLDIRVMする。従来の3ポジション固定(base/up/down)を廃し、
+; 任意の実行時row_topに対応させたもの(oscillationの連続往復用)。
+; ============================================================================
+EBUZ2_DRAW_BODY_AT:
+    PUSH AF
+    LD B,A : LD C,23 : CALL EBUZ2_CALC_ADDR
+    PUSH HL : LD HL,EBUZ2_ROW_S2_0 : POP DE : LD BC,5 : CALL LDIRVM
+    POP AF : INC A : PUSH AF
+    LD B,A : LD C,23 : CALL EBUZ2_CALC_ADDR
+    PUSH HL : LD HL,EBUZ2_ROW_S2_1 : POP DE : LD BC,5 : CALL LDIRVM
+    POP AF : INC A : PUSH AF
+    LD B,A : LD C,23 : CALL EBUZ2_CALC_ADDR
+    PUSH HL : LD HL,EBUZ2_ROW_S2_2 : POP DE : LD BC,5 : CALL LDIRVM
+    POP AF : INC A : PUSH AF
+    LD B,A : LD C,23 : CALL EBUZ2_CALC_ADDR
+    PUSH HL : LD HL,EBUZ2_ROW_S2_3 : POP DE : LD BC,5 : CALL LDIRVM
+    POP AF : INC A : PUSH AF
+    LD B,A : LD C,23 : CALL EBUZ2_CALC_ADDR
+    PUSH HL : LD HL,EBUZ2_ROW_S2_4 : POP DE : LD BC,5 : CALL LDIRVM
+    POP AF : INC A : PUSH AF
+    LD B,A : LD C,23 : CALL EBUZ2_CALC_ADDR
+    PUSH HL : LD HL,EBUZ2_ROW_S2_5 : POP DE : LD BC,5 : CALL LDIRVM
+    POP AF : INC A
+    LD B,A : LD C,23 : CALL EBUZ2_CALC_ADDR
+    PUSH HL : LD HL,EBUZ2_ROW_S2_6 : POP DE : LD BC,5 : CALL LDIRVM
+    RET
+
+EBUZ2_ERASE_BODY_AT:
+    PUSH AF
+    LD B,A : LD C,23 : CALL EBUZ2_CALC_ADDR
+    PUSH HL : LD HL,EBUZ2_BLANK5 : POP DE : LD BC,5 : CALL LDIRVM
+    POP AF : INC A : PUSH AF
+    LD B,A : LD C,23 : CALL EBUZ2_CALC_ADDR
+    PUSH HL : LD HL,EBUZ2_BLANK5 : POP DE : LD BC,5 : CALL LDIRVM
+    POP AF : INC A : PUSH AF
+    LD B,A : LD C,23 : CALL EBUZ2_CALC_ADDR
+    PUSH HL : LD HL,EBUZ2_BLANK5 : POP DE : LD BC,5 : CALL LDIRVM
+    POP AF : INC A : PUSH AF
+    LD B,A : LD C,23 : CALL EBUZ2_CALC_ADDR
+    PUSH HL : LD HL,EBUZ2_BLANK5 : POP DE : LD BC,5 : CALL LDIRVM
+    POP AF : INC A : PUSH AF
+    LD B,A : LD C,23 : CALL EBUZ2_CALC_ADDR
+    PUSH HL : LD HL,EBUZ2_BLANK5 : POP DE : LD BC,5 : CALL LDIRVM
+    POP AF : INC A : PUSH AF
+    LD B,A : LD C,23 : CALL EBUZ2_CALC_ADDR
+    PUSH HL : LD HL,EBUZ2_BLANK5 : POP DE : LD BC,5 : CALL LDIRVM
+    POP AF : INC A
+    LD B,A : LD C,23 : CALL EBUZ2_CALC_ADDR
+    PUSH HL : LD HL,EBUZ2_BLANK5 : POP DE : LD BC,5 : CALL LDIRVM
+    RET
+
+; state1本体(5行、常にnametable row3-7固定)の消去。state1→state2
+; 遷移の瞬間、本体がrow9(EBUZ2_OSC_ROW_START)へ飛ぶため、元のrow3-7
+; 側を明示的に消しておかないと2つの本体が同時に残ってしまう。
+EBUZ2_ERASE_STATE1:
+    LD HL,EBUZ2_BLANK5 : LD DE,01877h : LD BC,5 : CALL LDIRVM
+    LD HL,EBUZ2_BLANK5 : LD DE,01897h : LD BC,5 : CALL LDIRVM
+    LD HL,EBUZ2_BLANK5 : LD DE,018B7h : LD BC,5 : CALL LDIRVM
+    LD HL,EBUZ2_BLANK5 : LD DE,018D7h : LD BC,5 : CALL LDIRVM
+    LD HL,EBUZ2_BLANK5 : LD DE,018F7h : LD BC,5 : CALL LDIRVM
+    RET
+
+; ============================================================================
+; 本体の連続上下往復(oscillation)。EBUZ2_OSC_TIMERが0になるたび1行
+; だけ移動(消す→EBUZ2_OSC_ROW+=DIR→描く)、MIN/MAXで反転する。
+; 離散3ポジションの旧設計を全廃し、指定範囲(row1-16)を連続的に
+; スイープする方式に変更(「Row1から16まで上下動」への対応)。
 ; ============================================================================
 EBUZ2_UPDATE_OSCILLATION:
     LD A,(EBUZ2_OSC_TIMER)
     DEC A
     LD (EBUZ2_OSC_TIMER),A
     RET NZ
-    LD A,(EBUZ2_OSC_PHASE)
-    CP 0
-    JR Z,EBUZ2_OSC_P0
-    CP 1
-    JR Z,EBUZ2_OSC_P1
-    CP 2
-    JR Z,EBUZ2_OSC_P2
-    JR EBUZ2_OSC_P3
-EBUZ2_OSC_P0:
-    CALL EBUZ2_ERASE_BASE
-    CALL EBUZ2_DRAW_UP
-    LD A,1
-    LD (EBUZ2_OSC_PHASE),A
-    JR EBUZ2_OSC_RESET
-EBUZ2_OSC_P1:
-    CALL EBUZ2_ERASE_UP
-    CALL EBUZ2_DRAW_BASE
-    LD A,2
-    LD (EBUZ2_OSC_PHASE),A
-    JR EBUZ2_OSC_RESET
-EBUZ2_OSC_P2:
-    CALL EBUZ2_ERASE_BASE
-    CALL EBUZ2_DRAW_DOWN
-    LD A,3
-    LD (EBUZ2_OSC_PHASE),A
-    JR EBUZ2_OSC_RESET
-EBUZ2_OSC_P3:
-    CALL EBUZ2_ERASE_DOWN
-    CALL EBUZ2_DRAW_BASE
-    XOR A
-    LD (EBUZ2_OSC_PHASE),A
-EBUZ2_OSC_RESET:
-    LD A,EBUZ2_OSC_HOLD_TICKS
+    LD A,EBUZ2_OSC_STEP_TICKS
     LD (EBUZ2_OSC_TIMER),A
-EBUZ2_OSC_SHIFT_DONE:               ; テスト用: 1回の遷移完了の目印
+    LD A,(EBUZ2_OSC_ROW)
+    CALL EBUZ2_ERASE_BODY_AT
+    LD A,(EBUZ2_OSC_DIR)
+    LD B,A
+    LD A,(EBUZ2_OSC_ROW)
+    ADD A,B
+    LD (EBUZ2_OSC_ROW),A
+    CP EBUZ2_OSC_ROW_MAX
+    JR NZ,EBUZ2_UO_CHECKMIN
+    LD A,0FFh
+    LD (EBUZ2_OSC_DIR),A
+    JR EBUZ2_UO_DRAW
+EBUZ2_UO_CHECKMIN:
+    CP EBUZ2_OSC_ROW_MIN
+    JR NZ,EBUZ2_UO_DRAW
+    LD A,1
+    LD (EBUZ2_OSC_DIR),A
+EBUZ2_UO_DRAW:
+    LD A,(EBUZ2_OSC_ROW)
+    CALL EBUZ2_DRAW_BODY_AT
+EBUZ2_OSC_SHIFT_DONE:               ; テスト用: 1回の移動完了の目印
     RET
 
 ; ============================================================================
-; 1"フレーム"分の処理: 開幕ボレー3レーンの更新(常時、非活性なら早期
-; RETなので無駄コストは小さい、2026-09-19訂正でくの字HWスプライト
-; から差し替え)→連射レーンのプール更新(常時)→継続発射中なら発射
-; カウントダウン+oscillation更新→ウェイト。
+; 1"フレーム"分の処理: 5プールの弾更新(常時)→継続発射中なら発射
+; シーケンス+oscillation更新→ウェイト。
 ; ============================================================================
 EBUZ2_TICK:
     DI
-    CALL EBUZ2_TICK_VOLLEY0
-    CALL EBUZ2_TICK_VOLLEY1
-    CALL EBUZ2_TICK_VOLLEY2
-    CALL EBUZ2_UPDATE_TOP_POOL
-    CALL EBUZ2_UPDATE_BOTTOM_POOL
+    CALL EBUZ2_UPDATE_C_POOL
+    CALL EBUZ2_UPDATE_OT_POOL
+    CALL EBUZ2_UPDATE_OB_POOL
+    CALL EBUZ2_UPDATE_IT_POOL
+    CALL EBUZ2_UPDATE_IB_POOL
     LD A,(EBUZ2_TOPBOTTOM_ACTIVE)
     OR A
-    CALL NZ,EBUZ2_UPDATE_TOPBOTTOM_FIRE
+    CALL NZ,EBUZ2_UPDATE_SEQUENCE_FIRE
     LD A,(EBUZ2_TOPBOTTOM_ACTIVE)
     OR A
     CALL NZ,EBUZ2_UPDATE_OSCILLATION
     EI
     CALL EBUZ2_FRAME_WAIT
     RET
+
 
 ; ============================================================================
 INIT:
@@ -790,35 +878,31 @@ INIT:
     ; ベースの繰り返しの教訓、Round36-14 follow-up#14参照)。
     XOR A
     LD (EBUZ2_TOPBOTTOM_ACTIVE),A
-    LD (EBUZ2_FIRE_SIDE),A
+    LD (EBUZ2_FIRE_STEP),A
     LD (EBUZ2_FIRE_COUNTDOWN),A
-    LD (EBUZ2_TOP_NEXT),A
-    LD (EBUZ2_BOTTOM_NEXT),A
-    LD (EBUZ2_OSC_PHASE),A
+    LD (EBUZ2_RECOIL_STEP),A
+    LD (EBUZ2_RECOIL_COUNTDOWN),A
+    LD (EBUZ2_RECOIL_ROW_A),A
+    LD (EBUZ2_RECOIL_ROW_B),A
     LD (EBUZ2_OSC_TIMER),A
-    LD (EBUZ2_VOLLEY0_ACTIVE),A
-    LD (EBUZ2_VOLLEY0_COLCUR),A
-    LD (EBUZ2_VOLLEY1_ACTIVE),A
-    LD (EBUZ2_VOLLEY1_COLCUR),A
-    LD (EBUZ2_VOLLEY2_ACTIVE),A
-    LD (EBUZ2_VOLLEY2_COLCUR),A
+    LD (EBUZ2_C_NEXT),A
+    LD (EBUZ2_OT_NEXT),A
+    LD (EBUZ2_OB_NEXT),A
+    LD (EBUZ2_IT_NEXT),A
+    LD (EBUZ2_IB_NEXT),A
+    LD A,1
+    LD (EBUZ2_OSC_DIR),A
     LD A,EBUZ2_SLOT_EMPTY
-    LD (EBUZ2_TOP_COLS+0),A
-    LD (EBUZ2_TOP_COLS+1),A
-    LD (EBUZ2_TOP_COLS+2),A
-    LD (EBUZ2_TOP_COLS+3),A
-    LD (EBUZ2_TOP_COLS+4),A
-    LD (EBUZ2_TOP_COLS+5),A
-    LD (EBUZ2_TOP_COLS+6),A
-    LD (EBUZ2_TOP_COLS+7),A
-    LD (EBUZ2_BOTTOM_COLS+0),A
-    LD (EBUZ2_BOTTOM_COLS+1),A
-    LD (EBUZ2_BOTTOM_COLS+2),A
-    LD (EBUZ2_BOTTOM_COLS+3),A
-    LD (EBUZ2_BOTTOM_COLS+4),A
-    LD (EBUZ2_BOTTOM_COLS+5),A
-    LD (EBUZ2_BOTTOM_COLS+6),A
-    LD (EBUZ2_BOTTOM_COLS+7),A
+    LD (EBUZ2_C_SLOTS+0),A  : LD (EBUZ2_C_SLOTS+2),A  : LD (EBUZ2_C_SLOTS+4),A  : LD (EBUZ2_C_SLOTS+6),A
+    LD (EBUZ2_C_SLOTS+8),A  : LD (EBUZ2_C_SLOTS+10),A : LD (EBUZ2_C_SLOTS+12),A : LD (EBUZ2_C_SLOTS+14),A
+    LD (EBUZ2_OT_SLOTS+0),A  : LD (EBUZ2_OT_SLOTS+2),A  : LD (EBUZ2_OT_SLOTS+4),A  : LD (EBUZ2_OT_SLOTS+6),A
+    LD (EBUZ2_OT_SLOTS+8),A  : LD (EBUZ2_OT_SLOTS+10),A : LD (EBUZ2_OT_SLOTS+12),A : LD (EBUZ2_OT_SLOTS+14),A
+    LD (EBUZ2_OB_SLOTS+0),A  : LD (EBUZ2_OB_SLOTS+2),A  : LD (EBUZ2_OB_SLOTS+4),A  : LD (EBUZ2_OB_SLOTS+6),A
+    LD (EBUZ2_OB_SLOTS+8),A  : LD (EBUZ2_OB_SLOTS+10),A : LD (EBUZ2_OB_SLOTS+12),A : LD (EBUZ2_OB_SLOTS+14),A
+    LD (EBUZ2_IT_SLOTS+0),A  : LD (EBUZ2_IT_SLOTS+2),A  : LD (EBUZ2_IT_SLOTS+4),A  : LD (EBUZ2_IT_SLOTS+6),A
+    LD (EBUZ2_IT_SLOTS+8),A  : LD (EBUZ2_IT_SLOTS+10),A : LD (EBUZ2_IT_SLOTS+12),A : LD (EBUZ2_IT_SLOTS+14),A
+    LD (EBUZ2_IB_SLOTS+0),A  : LD (EBUZ2_IB_SLOTS+2),A  : LD (EBUZ2_IB_SLOTS+4),A  : LD (EBUZ2_IB_SLOTS+6),A
+    LD (EBUZ2_IB_SLOTS+8),A  : LD (EBUZ2_IB_SLOTS+10),A : LD (EBUZ2_IB_SLOTS+12),A : LD (EBUZ2_IB_SLOTS+14),A
 
     ; --- state1描画 ---
     CALL EBUZ2_DRAW_STATE1
@@ -828,28 +912,40 @@ EBUZ2_STATE1_BG_DONE:
     LD B,EBUZ2_VOLLEY_HOLD_TICKS
     CALL EBUZ2_WAIT_TICKS
 
-    ; --- 解放: 開幕ボレー(3本のBGレーン弾、斜め成分なし)を発射 ---
-    CALL EBUZ2_FIRE_VOLLEY
+    ; --- 解放: 中央の発射管から1発だけ発射(「最初はセンター」-
+    ; state1のうちは無印Ebuzのbullet0と同じく1発のみ)。state1の本体は
+    ; 常にnametable row3-7固定(中央=row2local=nt5)なので、
+    ; EBUZ2_OSC_ROWを一時的にEBUZ2_STATE1_OSC_ROW(2)にしてから
+    ; state2用と同じEBUZ2_FIRE_C_BULLETを呼べば、
+    ; OSC_ROW+CENTER_OFS(3)=5=nt5と正しく逆算される。
+    LD A,EBUZ2_STATE1_OSC_ROW
+    LD (EBUZ2_OSC_ROW),A
+    CALL EBUZ2_FIRE_C_BULLET
 EBUZ2_STATE1_DONE:
 
     ; --- state1→state2遷移(ノーウェイト、無印Ebuzの「それ以外の ---
-    ; ウェイトは入れるな」の作法を踏襲)。
-    CALL EBUZ2_DRAW_BASE
+    ; ウェイトは入れるな」の作法を踏襲)。state1本体(row3-7)を消し、
+    ; EBUZ2_OSC_ROWを実際の開始位置(Row9)へ進めてから本体を再描画する
+    ; ("スポーン位置は上から来てRow9かな"への対応)。
+    CALL EBUZ2_ERASE_STATE1
+    LD A,EBUZ2_OSC_ROW_START
+    LD (EBUZ2_OSC_ROW),A
+    CALL EBUZ2_DRAW_BODY_AT
 EBUZ2_STATE2_BG_DONE:
 
     ; --- state2形成後、連射開始までのホールド ---
     LD B,EBUZ2_TOPBOTTOM_HOLD_TICKS
     CALL EBUZ2_WAIT_TICKS
 
-    ; --- 継続発射+oscillationを起動 ---
+    ; --- 継続発射(中央→内側→外側→…)+oscillationを起動 ---
     XOR A
-    LD (EBUZ2_FIRE_SIDE),A          ; 0=まず上側から
+    LD (EBUZ2_FIRE_STEP),A          ; 0=まず中央から
     LD A,1
     LD (EBUZ2_FIRE_COUNTDOWN),A     ; 次のティックで即発射
-    XOR A
-    LD (EBUZ2_OSC_PHASE),A          ; 0=base(→up待ち)
-    LD A,EBUZ2_OSC_HOLD_TICKS
+    LD A,EBUZ2_OSC_STEP_TICKS
     LD (EBUZ2_OSC_TIMER),A
+    LD A,1
+    LD (EBUZ2_OSC_DIR),A            ; まず下方向(row16)へ
     LD A,1
     LD (EBUZ2_TOPBOTTOM_ACTIVE),A
 EBUZ2_STATE2_DONE:

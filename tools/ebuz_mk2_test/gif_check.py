@@ -1,13 +1,15 @@
 """tools/ebuz_mk2_test/ebuz_mk2_test.asmの一連の流れ(state1本体→
-開幕ボレー[3本の直進BGレーン弾]の一斉発射→state2遷移→上下往復
-[oscillation]しながらの継続発射)を、実時間(T-states換算)キャプション
+中央発射管から1発だけ発射→state1→state2への瞬間移動[Row9]→
+中央→内側(上下2門)→外側(上下2門)の3ステップ無限ループ発射しながら
+本体がRow1-16を連続的に上下する)を、実時間(T-states換算)キャプション
 付きのアニメーションGIFとして可視化する。tools/ebuz_test/gif_check.py
 と全く同じ作法(render_full()の出力を3倍拡大+タイムスタンプ焼き込み)。
 
-(2026-09-19訂正: 当初はHWスプライトの斜め速度による"くの字3連"
-だったが、ユーザーから「斜め移動はしないぞ」と訂正され、無印Ebuzと
-同じ固定行・1ティック1列のBGレーン弾3本[発射開始列だけが行ごとに
-異なる]へ置き換え済み。以下のラベル文言もそれに合わせて更新した。)
+(2026-09-20全面訂正: 旧「開幕3連ボレー」「上下キャップ発射」「外側/
+内側交互ペア」「離散3ポジションoscillation」は全て撤回され、
+「5門・中央のみ→中央/内側/外側巡回・連続oscillation」設計に置き
+換わった。以下のラベル文言・チェックポイントもそれに合わせて全面
+更新。)
 """
 import os
 import sys
@@ -37,7 +39,7 @@ def assemble():
     return mem0, sym
 
 
-def run_until_pc(z, target_pc, max_instr=4_000_000):
+def run_until_pc(z, target_pc, max_instr=8_000_000):
     for _ in range(max_instr):
         if z.pc == target_pc:
             return
@@ -74,65 +76,49 @@ def main():
         durations.append(dur)
 
     run_until_pc(z, sym["EBUZ2_STATE1_BG_DONE"])
-    add("Mk2 state1 body appears (5 rows), about to hold", 900)
+    add("Mk2 state1 body appears (5 rows, fixed nt row3-7), about to hold", 900)
 
     run_until_pc(z, sym["EBUZ2_STATE1_DONE"])
-    add("release: opening volley (3 straight BG-lane bullets) just fired", 500)
+    add("release: CENTER tube fires 1 shot only (\"最初はセンター\")", 700)
 
-    # NOTE: state1->state2 is an immediate (no-wait) BG transform, so the
-    # PC reaches EBUZ2_STATE2_BG_DONE right away and then enters the
-    # post-transform hold loop (where EBUZ2_WAIT_TICK_DONE actually
-    # recurs). Reaching STATE2_BG_DONE must therefore come BEFORE the
-    # "let a few ticks pass" loop below, not after (matches the order
-    # used in render_check.py; an earlier draft of this script had this
-    # backwards and hung waiting for a PC that had already been passed).
+    # state1->state2 is an instantaneous relocation (old row3-7 erased,
+    # body reappears at Row9) - no wait in between.
     run_until_pc(z, sym["EBUZ2_STATE2_BG_DONE"])
-    add("state1->state2 BG transform (no extra wait) - turret revealed, volley still flying", 900)
+    add("state1->state2: body relocates to Row9 (\"上から来てRow9\")", 900)
 
     for _ in range(6):
         z.step()
-        run_until_pc(z, sym["EBUZ2_WAIT_TICK_DONE"])
-    add("volley mid-flight - each lane purely horizontal, staggered start cols form the wedge", 900)
-
-    for _ in range(20):
-        z.step()
-        run_until_pc(z, sym["EBUZ2_WAIT_TICK_DONE"])
-    add("state2 pre-activation hold, volley bullets continuing off-screen", 700)
+        run_until_pc(z, sym["EBUZ2_FRAME_TICK"])
+    add("center shot still flying - Y fixed at fire-time row, unaffected by relocation", 700)
 
     run_until_pc(z, sym["EBUZ2_STATE2_DONE"])
-    add("continuous top/bottom fire + oscillation activated", 700)
+    add("sequential fire (center->inner->outer) + oscillation activated", 700)
 
     for label in [
-        "+1 tick: top lane fires",
-        "+2 ticks",
-        "+3 ticks: bottom lane fires",
-        "+4 ticks",
+        "step: CENTER fires",
+        "step: INNER pair fires (top+bottom)",
+        "step: OUTER pair fires (top+bottom)",
+        "step: back to CENTER (loop)",
     ]:
+        for _ in range(sym["EBUZ2_FIRE_INTERVAL"]):
+            z.step()
+            run_until_pc(z, sym["EBUZ2_FRAME_TICK"])
+        add(label, 500)
+
+    for _ in range(200):
         z.step()
         run_until_pc(z, sym["EBUZ2_FRAME_TICK"])
-        add(label, 400)
+    add(f"continuous sweep in progress (OSC_ROW={z.mem[sym['EBUZ2_OSC_ROW']]})", 700)
 
-    run_until_pc(z, sym["EBUZ2_OSC_SHIFT_DONE"])
-    add("oscillation: body shifted UP by 1 row (fire lanes stay fixed)", 900)
-
-    for _ in range(6):
+    for _ in range(200):
         z.step()
         run_until_pc(z, sym["EBUZ2_FRAME_TICK"])
-    add("UP position, continuous fire keeps alternating", 700)
+    add(f"continuous sweep (OSC_ROW={z.mem[sym['EBUZ2_OSC_ROW']]}) - bullets Y varies per shot", 700)
 
-    run_until_pc(z, sym["EBUZ2_OSC_SHIFT_DONE"])
-    add("oscillation: shifted back to BASE position", 700)
-
-    run_until_pc(z, sym["EBUZ2_OSC_SHIFT_DONE"])
-    add("oscillation: body shifted DOWN by 1 row", 900)
-
-    for _ in range(6):
+    for _ in range(400):
         z.step()
         run_until_pc(z, sym["EBUZ2_FRAME_TICK"])
-    add("DOWN position, continuous fire keeps alternating", 700)
-
-    run_until_pc(z, sym["EBUZ2_OSC_SHIFT_DONE"])
-    add("oscillation: back to BASE - one full up/down cycle complete", 900)
+    add(f"continuous sweep (OSC_ROW={z.mem[sym['EBUZ2_OSC_ROW']]})", 900)
 
     out_path = os.path.join(HERE, "ebuz_mk2_timeline.gif")
     frames[0].save(
