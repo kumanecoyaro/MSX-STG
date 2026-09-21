@@ -17309,3 +17309,50 @@ ENEMY6のO(1)短絡最適化(2026-09-14、完了済み)
   (DI/EI未保護)を特定して塞いだものだが、割り込みタイミング依存の
   再現性の低いバグのため実機での完全解消は次回フィードバック待ち。
   (3)のパーティクル4個化・32px後退の見え方も実機確認待ち。
+
+## Round143: ステージクリアジングルのサウンド固着バグ、真因を再特定・
+修正(Round142とは別バグ・完了済み・実機フィードバック待ち)(2026-09-21)
+
+- ユーザー報告: "音のバグ直ってないな 音の出元はクリアBGM 多分この完了
+  前にMission2の処理に行ってるんだろう でタイマーが停止し鳴り続けて
+  しまう なのでMission2表示までに少し間を取れば解決できるかもな DIは
+  関係ないと言うか むしろタイマー停止がバグの原因の可能性が高い"。
+  Round142で修正したのは「飛び去り演出のエンジン音(PFA_STILLGOING、
+  ノイズ/chA)」のDI/EI未保護バグだったが、今回の報告は音源が別
+  ("クリアBGM"=StageClearジングル自身のハーモニーパート)であり、
+  完全に別バグと判明。
+- **根本原因**: `USC_CHECK_JINGLE`(STAGE_CLEAR_ACT 1→2遷移)は
+  `LD A,2:LD(STAGE_CLEAR_ACT),A`を`CALL MUTE_BGM`/`CALL DRAW_MISSION_
+  SCREEN`の"後"に書いていた。この2つはどちらも内部でEIするため、
+  `DRAW_MISSION_SCREEN`がR8(chA音量)=0を書いた直後からACT=2が書かれる
+  までのわずかな命令数の間、H.TIMI駆動の`BGM_TICK`が発火すると
+  `STAGE_CLEAR_ACT`はまだ1のまま(`BGM_TICK`は`CP 1:CALL Z,BGMT_UPDATE_
+  SC_A`でゲートしているため)、chAのハーモニードライバ
+  `BGMT_UPDATE_SC_A`がもう一度起動できてしまう。ここで書かれた非ゼロの
+  R8は、直後にACTが2へ遷移して以後誰もR8を更新しなくなる(`SOUND_
+  UPDATE`はACT!=0でスキップ、`BGMT_UPDATE_SC_A`もACT!=1でスキップ)ため
+  永久に固まる - これがユーザーの言う「タイマーが停止し鳴り続けて
+  しまう」の正体。ユーザー自身の診断("DIは関係ない...むしろタイマー
+  停止がバグの原因")と完全に一致。
+- **修正**: `USC_CHECK_JINGLE`内の`LD A,2:LD(STAGE_CLEAR_ACT),A`を
+  `RET C`の直後・`CALL MUTE_BGM`/`CALL DRAW_MISSION_SCREEN`より前へ
+  移動。これによりACT=2が確定した瞬間から`BGMT_UPDATE_SC_A`は二度と
+  起動できなくなり、以後どんなタイミングで`BGM_TICK`が割り込んでも
+  レースが起きない(命令の並べ替えのみでROMサイズは無変化)。
+- 新規回帰テストを`tools/verify_stage1_bgm.py`に追加: `USC_CHECK_
+  JINGLE`を命令単位でトレースし、`STAGE_CLEAR_ACT`が2になる瞬間が
+  `MUTE_BGM`へ分岐するより前であることを直接検証(修正を一時的に
+  取り消して実際にFAILすることを自己検証済み、81 passed)。既存の
+  Stage1回帰群(`verify_stage1_mission_screens.py` 93/`verify_player_
+  damage.py` 60/`verify_enemy_bullets.py` 60/`verify_explosion_anim.py`
+  28/`verify_spawn_schedule_restart.py` 12/`verify_enemy6_
+  durability.py` 27/`verify_boss_dfl_clear.py` 10)も全てPASS
+  (`combined_test.asm`は無変更のためStage2側`run_all.py`は省略)。
+  命令の並べ替えのみでコードサイズが不変のため、EBUZ2テーブルの
+  再パッチも不要と確認。Comb ROM再ビルド・`verify_comb.py`全チェック
+  PASSの上、標準方針によりComb ROMのみ送付。
+- **保留・実機フィードバック待ち**: 今回の修正は特定できたレース
+  条件を構造的に完全に閉じるものだが、実機での完全解消は次回
+  フィードバック待ち。また、message 1で受けた「ステージ開始前の
+  イントロ演出追加」依頼(Titleバンク推奨、空き容量約12,059byte)は
+  具体的な演出内容が未確定のまま保留継続。

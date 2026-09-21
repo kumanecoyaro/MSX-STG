@@ -4529,12 +4529,18 @@ USC_CHECK_JINGLE:
     LD DE,STAGE_CLEAR_TOTAL_TICKS
     OR A : SBC HL,DE
     RET C
+    ; ACT=2を最初に確定させ、以後BGMT_UPDATE_SC_A(chA/ジングル和音)が
+    ; 二度と起動しないようにしてから、MUTE_BGM/DRAW_MISSION_SCREEN
+    ; (どちらも内部でEIするため割り込みが再度有効になる)を呼ぶ。
+    ; 逆順だとDRAW_MISSION_SCREENのR8=0書き込み直後にBGM_TICKが
+    ; もう一度chAへ書き込み、それがACT遷移で永久に固まる
+    ; (ジングルの和音が鳴りっぱなしになる)レースがあった。
+    LD A,2 : LD (STAGE_CLEAR_ACT),A
     CALL MUTE_BGM
     LD HL,MISSION2_MSG
     CALL DRAW_MISSION_SCREEN
     LD HL,(SC_VBLANK_COUNT)
     LD (SC_START_TICK),HL
-    LD A,2 : LD (STAGE_CLEAR_ACT),A
     RET
 USC_CHECK_MISSION2:
     LD HL,(SC_VBLANK_COUNT)

@@ -709,6 +709,49 @@ check("UPDATE_STAGE_CLEAR: advances to STAGE_CLEAR_ACT=2 exactly when "
       "STAGE_CLEAR_TOTAL_TICKS elapses",
       z.rd(STAGE_CLEAR_ACT) == 2)
 
+# (2026-09-21、ユーザー報告"音のバグ直ってないな...多分この完了前に
+# Mission2の処理に行ってるんだろう でタイマーが停止し鳴り続けてしまう
+# ...DIは関係ないと言うか むしろタイマー停止がバグの原因の可能性が
+# 高い"): USC_CHECK_JINGLEは旧実装だとSTAGE_CLEAR_ACT=2の書き込みを
+# CALL MUTE_BGM/CALL DRAW_MISSION_SCREENの"後"に行っていた。この2つは
+# どちらも内部でEIするため、DRAW_MISSION_SCREENがR8(chA音量)=0を書いた
+# 直後からACT=2が書かれるまでのわずかな命令数の間、BGM_TICK割り込みが
+# 発火するとSTAGE_CLEAR_ACTはまだ1のままなのでBGMT_UPDATE_SC_A(chA/
+# ジングル和音ドライバ)がもう一度起動できてしまい、そこで書かれた
+# 非ゼロのR8がACT=2遷移で永久に固まる(ジングルの和音チャンネルが
+# 鳴りっぱなしになる)レースが存在した。修正はSTAGE_CLEAR_ACT=2の
+# 書き込みをRET Cの直後・CALL MUTE_BGM/DRAW_MISSION_SCREENより前へ
+# 動かし、以後BGMT_UPDATE_SC_Aが二度と起動できないようにするもの。
+# 命令単位でトレースし、STAGE_CLEAR_ACTが2になる瞬間が実際にMUTE_BGMへ
+# 分岐するより前であることを直接検証する(この順序を元に戻すと確実に
+# FAILすることを自己検証済み)。
+z = fresh()
+z.wr(STAGE_CLEAR_ACT, 1)
+z.wr(SC_START_TICK, 0); z.wr(SC_START_TICK + 1, 0)
+z.wr(SC_VBLANK_COUNT, STAGE_CLEAR_TOTAL_TICKS & 0xFF)
+z.wr(SC_VBLANK_COUNT + 1, STAGE_CLEAR_TOTAL_TICKS >> 8)
+z.sp = 0xF000
+z.wr(0xF000, 0x00); z.wr(0xF001, 0x00)
+z.pc = sym["USC_CHECK_JINGLE"]
+MUTE_BGM_ADDR = sym["MUTE_BGM"]
+act_became_2_at = None
+mute_bgm_reached_at = None
+for i in range(5000):
+    if z.pc == MUTE_BGM_ADDR and mute_bgm_reached_at is None:
+        mute_bgm_reached_at = i
+    if z.rd(STAGE_CLEAR_ACT) == 2 and act_became_2_at is None:
+        act_became_2_at = i
+    if z.pc == 0x0000:
+        break
+    z.step()
+check("USC_CHECK_JINGLE: STAGE_CLEAR_ACT is written to 2 BEFORE MUTE_BGM/DRAW_MISSION_SCREEN "
+      "are called (closes the race where a BGM_TICK interrupt firing between DRAW_MISSION_"
+      "SCREEN's own EI and the old, later ACT=2 write could re-arm BGMT_UPDATE_SC_A and "
+      "freeze a nonzero R8[chA] forever, i.e. the StageClear jingle's harmony channel getting "
+      "stuck on)",
+      act_became_2_at is not None and mute_bgm_reached_at is not None and
+      act_became_2_at < mute_bgm_reached_at)
+
 z = fresh()
 z.wr(STAGE_CLEAR_ACT, 0)   # not yet triggered - must be a no-op
 z.wr(SC_START_TICK, 0); z.wr(SC_START_TICK + 1, 0)
