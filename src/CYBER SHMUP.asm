@@ -5312,6 +5312,13 @@ PAT_ENEMY4     EQU 84         ; patterns84-87 (32 bytes at SPRPAT+672)
 ; range (92-95, confirmed unused elsewhere in this file).
 PAT_ENEMY4_2   EQU 92         ; patterns92-95 (32 bytes at SPRPAT+736)
 E4_ANIM_FRAME_LEN EQU 4       ; frames per pose toggle while diving - same pacing as ENEMY1_ANIM_FRAME_LEN
+; round141("エネミー4...耐久値2だが1発当たったら左斜め下に墜落 自機の
+; 墜落の逆向きだな 爆発エフェクトも自機と同じだがサウンドは無しで"):
+; 被弾でE_FLAGS(未使用フィールド、TYPE_ENEMY4流用)を1にし、以後
+; EBSD_DIAG_E4がこの間隔でPEUA_TRY_SPAWN_AT_QUIET(自機爆発と同じ
+; PLAYER_EXPL_POOL、ただしSOUND_DESTROY無し)を撃つ - PLAYER_EXPL_
+; SPAWN_INTERVALと同じ未調整の初期値。
+ENEMY4_CRASH_SPAWN_INTERVAL EQU 8
 PAT_PARTICLE   EQU 120        ; single-dot trail particle (32 bytes at SPRPAT+960)
 E4_SPAWN_BASEY EQU 0E709h ; scratch: this wave's base Y, set right before ENEMY4_CLAIM_ANY
 PAT_ENEMY1_LOOK EQU 88     ; test: Enemy1's asterisk look, static (32 bytes at SPRPAT+704),
@@ -5825,17 +5832,16 @@ SPAWN_SCHEDULE_CHECK:
     OR A
     JR NZ,SSC_FIRE              ; index >= 256 -> can't be any of the (all <256) enemy2 waits
     LD A,(SPAWN_NEXT_INDEX)
-    CP 98 : JR Z,SSC_BUSY_E2
-    CP 106 : JR Z,SSC_BUSY_E2
-    CP 110 : JR Z,SSC_BUSY_E2
-    CP 114 : JR Z,SSC_BUSY_E2
-    CP 116 : JR Z,SSC_BUSY_E2
-    CP 140 : JR Z,SSC_BUSY_E2
-    CP 141 : JR Z,SSC_BUSY_E2
-    CP 171 : JR Z,SSC_BUSY_E2
-    CP 172 : JR Z,SSC_BUSY_E2
-    CP 173 : JR Z,SSC_BUSY_E2
-    CP 174 : JR Z,SSC_BUSY_E2
+    CP 95 : JR Z,SSC_BUSY_E2
+    CP 100 : JR Z,SSC_BUSY_E2
+    CP 107 : JR Z,SSC_BUSY_E2
+    CP 112 : JR Z,SSC_BUSY_E2
+    CP 134 : JR Z,SSC_BUSY_E2
+    CP 135 : JR Z,SSC_BUSY_E2
+    CP 162 : JR Z,SSC_BUSY_E2
+    CP 163 : JR Z,SSC_BUSY_E2
+    CP 164 : JR Z,SSC_BUSY_E2
+    CP 165 : JR Z,SSC_BUSY_E2
     JR SSC_FIRE
 SSC_BUSY_E2:
     LD A,(E2A_ACTIVE) : OR A : JR Z,SSC_FIRE   ; A is free -> go (SPAWN_E2 will claim it)
@@ -5850,6 +5856,7 @@ SSC_FIRE:
     LD A,H
     CP 0 : JP Z,SSC_FIRE_BLK0
     JP SSC_FIRE_BLK1
+
 SSC_FIRE_BLK0:
     LD A,L                       ; H=0, so L = index-0; default handler for this block is SPAWN_SIMPLE
     CP 30   : JP Z,EBUZ_SPAWN_CHAIN_START
@@ -5857,109 +5864,111 @@ SSC_FIRE_BLK0:
     CP 32   : JP Z,SPAWN_E3_WAVE
     CP 40   : JP Z,SPAWN_E4
     CP 41   : JP Z,SPAWN_E4
-    CP 42   : JP Z,SPAWN_E4
+    CP 51   : JP Z,SPAWN_E4
     CP 52   : JP Z,SPAWN_E4
     CP 53   : JP Z,SPAWN_E4
     CP 54   : JP Z,SPAWN_E4
-    CP 55   : JP Z,SPAWN_E4
-    CP 57   : JP Z,SPAWN_E4
-    CP 59   : JP Z,SPAWN_E4
+    CP 56   : JP Z,SPAWN_E4
+    CP 58   : JP Z,SPAWN_E4
+    CP 60   : JP Z,SPAWN_E4
     CP 61   : JP Z,SPAWN_E4
     CP 62   : JP Z,SPAWN_E4
     CP 63   : JP Z,SPAWN_E4
-    CP 64   : JP Z,SPAWN_E4
-    CP 68   : JP Z,SPAWN_E4B
-    CP 70   : JP Z,SPAWN_E4B
-    CP 74   : JP Z,SPAWN_E4B
-    CP 76   : JP Z,SPAWN_E4B
-    CP 78   : JP Z,SPAWN_E4B
-    CP 80   : JP Z,SPAWN_E4B
+    CP 67   : JP Z,SPAWN_E4B
+    CP 69   : JP Z,SPAWN_E4B
+    CP 73   : JP Z,SPAWN_E4B
+    CP 75   : JP Z,SPAWN_E4B
+    CP 77   : JP Z,SPAWN_E4B
+    CP 79   : JP Z,SPAWN_E4B
+    CP 81   : JP Z,SPAWN_E4B
     CP 82   : JP Z,SPAWN_E4B
-    CP 83   : JP Z,SPAWN_E4B
-    CP 85   : JP Z,SPAWN_E4B
-    CP 92   : JP Z,EBUZ_SPAWN_CHAIN_START
-    CP 93   : JP Z,SPAWN_E3_WAVE
-    CP 97   : JP Z,SPAWN_E4B
-    CP 98   : JP Z,SPAWN_E2
+    CP 84   : JP Z,SPAWN_E4B
+    CP 91   : JP Z,EBUZ_SPAWN_CHAIN_START
+    CP 92   : JP Z,SPAWN_E3_WAVE
+    CP 94   : JP Z,SPAWN_E4B
+    CP 95   : JP Z,SPAWN_E2
+    CP 96   : JP Z,SPAWN_E4B
+    CP 100   : JP Z,SPAWN_E2
+    CP 101   : JP Z,SPAWN_E4B
     CP 102   : JP Z,SPAWN_E4B
-    CP 106   : JP Z,SPAWN_E2
-    CP 107   : JP Z,SPAWN_E4B
-    CP 108   : JP Z,SPAWN_E4B
-    CP 109   : JP Z,SPAWN_E4B
-    CP 110   : JP Z,SPAWN_E2
-    CP 111   : JP Z,SPAWN_E4
-    CP 112   : JP Z,SPAWN_E4
-    CP 113   : JP Z,SPAWN_E4
-    CP 114   : JP Z,SPAWN_E2
-    CP 116   : JP Z,SPAWN_E2
+    CP 103   : JP Z,SPAWN_E4B
+    CP 104   : JP Z,SPAWN_E4
+    CP 105   : JP Z,SPAWN_E4
+    CP 106   : JP Z,SPAWN_E4
+    CP 107   : JP Z,SPAWN_E2
+    CP 112   : JP Z,SPAWN_E2
+    CP 116   : JP Z,SPAWN_E4B
+    CP 118   : JP Z,SPAWN_E4B
+    CP 120   : JP Z,SPAWN_E4B
+    CP 122   : JP Z,SPAWN_E4B
     CP 123   : JP Z,SPAWN_E4B
-    CP 125   : JP Z,SPAWN_E4B
+    CP 126   : JP Z,SPAWN_E4B
     CP 127   : JP Z,SPAWN_E4B
     CP 129   : JP Z,SPAWN_E4B
-    CP 130   : JP Z,SPAWN_E4B
     CP 131   : JP Z,SPAWN_E4B
     CP 133   : JP Z,SPAWN_E4B
-    CP 134   : JP Z,SPAWN_E4B
+    CP 134   : JP Z,SPAWN_E2
+    CP 135   : JP Z,SPAWN_E2
     CP 136   : JP Z,SPAWN_E4B
-    CP 137   : JP Z,SPAWN_E4B
-    CP 139   : JP Z,SPAWN_E4B
-    CP 140   : JP Z,SPAWN_E2
-    CP 141   : JP Z,SPAWN_E2
+    CP 137   : JP Z,SPAWN_E4
+    CP 138   : JP Z,SPAWN_E4
+    CP 139   : JP Z,SPAWN_E4
+    CP 140   : JP Z,SPAWN_E4
+    CP 141   : JP Z,SPAWN_E4
     CP 142   : JP Z,SPAWN_E4B
-    CP 143   : JP Z,SPAWN_E4
-    CP 144   : JP Z,SPAWN_E4
-    CP 145   : JP Z,SPAWN_E4
-    CP 146   : JP Z,SPAWN_E4
-    CP 147   : JP Z,SPAWN_E4
-    CP 148   : JP Z,SPAWN_E4
-    CP 149   : JP Z,SPAWN_E4B
-    CP 151   : JP Z,SPAWN_E4B
-    CP 152   : JP Z,SPAWN_E4B
+    CP 144   : JP Z,SPAWN_E4B
+    CP 145   : JP Z,SPAWN_E4B
+    CP 147   : JP Z,SPAWN_E4B
+    CP 148   : JP Z,SPAWN_E4B
+    CP 150   : JP Z,SPAWN_E4B
+    CP 152   : JP Z,SPAWN_E4
     CP 153   : JP Z,SPAWN_E4B
-    CP 155   : JP Z,SPAWN_E4B
+    CP 154   : JP Z,SPAWN_E4B
     CP 156   : JP Z,SPAWN_E4B
-    CP 158   : JP Z,SPAWN_E4B
-    CP 160   : JP Z,SPAWN_E4B
-    CP 161   : JP Z,SPAWN_E4B
-    CP 163   : JP Z,SPAWN_E4B
-    CP 164   : JP Z,SPAWN_E4B
-    CP 165   : JP Z,SPAWN_E4B
-    CP 167   : JP Z,EBUZ_SPAWN_CHAIN_START
-    CP 171   : JP Z,SPAWN_E2
-    CP 172   : JP Z,SPAWN_E2
-    CP 173   : JP Z,SPAWN_E2
-    CP 174   : JP Z,SPAWN_E2
-    CP 175   : JP Z,SPAWN_E4B
-    CP 176   : JP Z,SPAWN_E4B
-    CP 177   : JP Z,SPAWN_E4B
-    CP 178   : JP Z,SPAWN_E4B
+    CP 158   : JP Z,EBUZ_SPAWN_CHAIN_START
+    CP 162   : JP Z,SPAWN_E2
+    CP 163   : JP Z,SPAWN_E2
+    CP 164   : JP Z,SPAWN_E2
+    CP 165   : JP Z,SPAWN_E2
+    CP 166   : JP Z,SPAWN_E4B
+    CP 167   : JP Z,SPAWN_E4B
+    CP 168   : JP Z,SPAWN_E4B
+    CP 172   : JP Z,SPAWN_E4B
+    CP 173   : JP Z,SPAWN_E4B
+    CP 174   : JP Z,SPAWN_E4B
+    CP 175   : JP Z,SPAWN_E4
+    CP 176   : JP Z,SPAWN_E4
+    CP 177   : JP Z,SPAWN_E4
+    CP 178   : JP Z,SPAWN_E4
     CP 179   : JP Z,SPAWN_E4B
     CP 180   : JP Z,SPAWN_E4B
-    CP 181   : JP Z,SPAWN_E4B
-    CP 182   : JP Z,SPAWN_E4B
-    CP 183   : JP Z,SPAWN_E4B
-    CP 184   : JP Z,SPAWN_E4
-    CP 185   : JP Z,SPAWN_E4
-    CP 186   : JP Z,SPAWN_E4
-    CP 187   : JP Z,SPAWN_E4
-    CP 188   : JP Z,SPAWN_E4B
-    CP 189   : JP Z,SPAWN_E4B
-    CP 202   : JP Z,SPAWN_E4B
+    CP 190   : JP Z,SPAWN_E4B
+    CP 193   : JP Z,SPAWN_E4B
+    CP 196   : JP Z,SPAWN_E4B
+    CP 201   : JP Z,SPAWN_E6
+    CP 203   : JP Z,SPAWN_E6
+    CP 204   : JP Z,SPAWN_E6
+    CP 206   : JP Z,SPAWN_E6
+    CP 207   : JP Z,SPAWN_E6
+    CP 209   : JP Z,SPAWN_E6
     CP 210   : JP Z,SPAWN_E6
     CP 212   : JP Z,SPAWN_E6
     CP 213   : JP Z,SPAWN_E6
     CP 215   : JP Z,SPAWN_E6
     CP 216   : JP Z,SPAWN_E6
+    CP 217   : JP Z,SPAWN_E6
     CP 218   : JP Z,SPAWN_E6
     CP 219   : JP Z,SPAWN_E6
+    CP 220   : JP Z,SPAWN_E6
     CP 221   : JP Z,SPAWN_E6
     CP 222   : JP Z,SPAWN_E6
+    CP 223   : JP Z,SPAWN_E4
     CP 224   : JP Z,SPAWN_E6
     CP 225   : JP Z,SPAWN_E6
-    CP 226   : JP Z,SPAWN_E6
+    CP 226   : JP Z,SPAWN_E4
     CP 227   : JP Z,SPAWN_E6
     CP 228   : JP Z,SPAWN_E6
-    CP 229   : JP Z,SPAWN_E6
+    CP 229   : JP Z,SPAWN_E4
     CP 230   : JP Z,SPAWN_E6
     CP 231   : JP Z,SPAWN_E6
     CP 232   : JP Z,SPAWN_E4
@@ -5987,6 +5996,7 @@ SSC_FIRE_BLK0:
     CP 254   : JP Z,SPAWN_E6
     CP 255   : JP Z,SPAWN_E6
     JP SPAWN_SIMPLE
+
 SSC_FIRE_BLK1:
     LD A,L                       ; H=1, so L = index-256; default handler for this block is SPAWN_E6
     CP 0   : JP Z,SPAWN_E4
@@ -6006,18 +6016,15 @@ SSC_FIRE_BLK1:
     CP 42   : JP Z,SPAWN_E4
     CP 45   : JP Z,SPAWN_E4
     CP 48   : JP Z,SPAWN_E4
-    CP 51   : JP Z,SPAWN_E4
-    CP 54   : JP Z,SPAWN_E4
-    CP 57   : JP Z,SPAWN_E4
+    CP 55   : JP Z,SPAWN_E4
+    CP 58   : JP Z,SPAWN_E4
+    CP 61   : JP Z,SPAWN_E4
     CP 64   : JP Z,SPAWN_E4
     CP 67   : JP Z,SPAWN_E4
     CP 70   : JP Z,SPAWN_E4
     CP 73   : JP Z,SPAWN_E4
     CP 76   : JP Z,SPAWN_E4
-    CP 79   : JP Z,SPAWN_E4
-    CP 82   : JP Z,SPAWN_E4
-    CP 85   : JP Z,SPAWN_E4
-    CP 88   : JP Z,EBUZ_SPAWN_CHAIN_START
+    CP 79   : JP Z,EBUZ_SPAWN_CHAIN_START
     JP SPAWN_E6
 
 ; --- saved (disabled) boss-only fast-iteration schedule - kept for  ---
@@ -9308,8 +9315,14 @@ PETS_FOUND:
 ; (EBUZ_EXPL_POS_X/Y) instead of a jittered offset from the player -
 ; used by EBUZ_EXPL_UPDATE_QUEUE for Ebuz's 8-cell death burst
 ; (2026-09-14、"爆発エフェクトはEbuzセル毎に1回...自機爆発のサウンドと
-; スプライトを流用")。Trashes A,B,D,E,H,L,IX.
-PEUA_TRY_SPAWN_AT:
+; スプライトを流用")。
+; round141("エネミー4...爆発エフェクトも自機と同じだがサウンドは無しで"):
+; 共通部分をPEUA_TRY_SPAWN_AT_COREへ切り出し、SOUND_DESTROY呼び出しの
+; 有無だけを2つの薄いラッパー(PEUA_TRY_SPAWN_AT/_QUIET)で分岐させる形に
+; 分割 - COREはA=1(成功)/0(失敗、プール満杯 or スプライト枯渇)を返す
+; だけで一切RETせずに戻るため、呼び出し元(CALL)が成否に応じてサウンドを
+; 鳴らすかどうかを選べる。Trashes A,B,D,E,H,L,IX.
+PEUA_TRY_SPAWN_AT_CORE:
     LD HL,PLAYER_EXPL_POOL
     LD B,PLAYER_EXPL_SLOTS
 PETSA_LOOP:
@@ -9319,6 +9332,7 @@ PETSA_LOOP:
     LD DE,PLAYER_EXPL_STRUCT
     ADD HL,DE
     DJNZ PETSA_LOOP
+    XOR A
     RET
 PETSA_FOUND:
     PUSH HL : POP IX
@@ -9330,8 +9344,18 @@ PETSA_FOUND:
     LD A,(EBUZ_EXPL_POS_Y) : LD (IX+2),A
     LD A,PLAYER_EXPL_LIFE : LD (IX+3),A
     LD A,1 : LD (IX+0),A
-    CALL SOUND_DESTROY
+    LD A,1
     RET
+
+PEUA_TRY_SPAWN_AT:
+    CALL PEUA_TRY_SPAWN_AT_CORE
+    OR A
+    RET Z
+    JP SOUND_DESTROY
+
+; round141: 同じ演出だがサウンド無し版(エネミー4の墜落クラッシュ用)。
+PEUA_TRY_SPAWN_AT_QUIET:
+    JP PEUA_TRY_SPAWN_AT_CORE
 
 ; Clears every slot of the unified enemy buffer (ACTIVE=0) and resets
 ; both shared trail-channel write indices. Called once from INIT.
@@ -11491,7 +11515,7 @@ EBSD_DIAG_SKIP_TRIGGER:
 
     LD A,(IX+E_PARAM1)
     OR A
-    JR Z,EBSD_DRAW
+    JP Z,EBSD_DRAW
     DEC A : LD (IX+E_PARAM1),A
     LD A,(IX+E_PARAM2) : LD B,A
     LD A,(IX+E_Y)
@@ -11508,7 +11532,7 @@ EBSD_DIAG_SKIP_TRIGGER:
     JR NZ,EBSD_ANIM_STEP
     LD A,(IX+E_PARAM4)
     OR A
-    JR Z,EBSD_DRAW
+    JP Z,EBSD_DRAW
     XOR A : LD (IX+E_PARAM4),A
     JR EBSD_ANIM_REDRAW
 EBSD_ANIM_STEP:
@@ -11519,7 +11543,7 @@ EBSD_ANIM_STEP:
     JR EBSD_ANIM_REDRAW
 EBSD_ANIM_TICK:
     DEC A : LD (IX+E_PARAM5),A
-    JR EBSD_DRAW
+    JP EBSD_DRAW
 EBSD_ANIM_REDRAW:
     LD A,ENEMY1_ANIM_FRAME_LEN : LD (IX+E_PARAM5),A
     PUSH IX
@@ -11527,7 +11551,7 @@ EBSD_ANIM_REDRAW:
     LD A,(IX+E_PARAM3)
     CALL SIMPLE_REDRAW
     POP IX
-    JR EBSD_DRAW
+    JP EBSD_DRAW
 
 ; "Eは一度上下移動に入ったらそのまま通常のドリフトには戻さず移動して
 ; 消えるように" - once triggered (E_PARAM0=1), TYPE_ENEMY4's dive
@@ -11544,11 +11568,39 @@ EBSD_DIAG_E4:
     ; SLOT's own zero-fill) and don't move Y at all.
     LD A,(IX+E_PARAM0)
     OR A
-    JR Z,EBSD_DRAW
+    JP Z,EBSD_DRAW
     LD A,(IX+E_PARAM2) : LD B,A
     LD A,(IX+E_Y)
     ADD A,B
     LD (IX+E_Y),A
+
+    ; round141: 被弾クラッシュ中(E_FLAGS!=0、EBSD_HT_ENEMY4参照)のみ、
+    ; 自機爆発と同じPLAYER_EXPL_POOLバーストをこのインスタンス自身の
+    ; (E_X,E_Y)起点でENEMY4_CRASH_SPAWN_INTERVALごとに1個ポップ(音無し)。
+    ; 自然な回避ダイブ(被弾せずセンターXを越えただけ)ではE_FLAGSは0の
+    ; ままなのでこのブロックは完全に素通りする。
+    LD A,(IX+E_FLAGS)
+    OR A
+    JR Z,EBSD_E4_CRASH_FX_DONE
+    LD A,(IX+E_TRAIL_DELAY)
+    OR A
+    JR NZ,EBSD_E4_CRASH_FX_TICK
+    LD A,ENEMY4_CRASH_SPAWN_INTERVAL : LD (IX+E_TRAIL_DELAY),A
+    PUSH IX
+    LD A,(DFL_RNG) : INC A : LD (DFL_RNG),A
+    AND 0Fh : SUB 8 : LD B,A          ; -8..+7 pseudo-random X jitter
+    LD A,(IX+E_X) : ADD A,B
+    LD (EBUZ_EXPL_POS_X),A
+    LD A,(DFL_RNG) : INC A : LD (DFL_RNG),A
+    AND 0Fh : SUB 8 : LD B,A          ; -8..+7 pseudo-random Y jitter
+    LD A,(IX+E_Y) : ADD A,B
+    LD (EBUZ_EXPL_POS_Y),A
+    CALL PEUA_TRY_SPAWN_AT_QUIET
+    POP IX
+    JR EBSD_E4_CRASH_FX_DONE
+EBSD_E4_CRASH_FX_TICK:
+    DEC A : LD (IX+E_TRAIL_DELAY),A
+EBSD_E4_CRASH_FX_DONE:
 
     ; "ファイターのアニメは上下移動に入ったら戻さない 今は繰り返しに
     ; なってるな" - ONE-TIME pose switch, not a repeating toggle:
@@ -11811,51 +11863,41 @@ EBSD_HT_NO:
     XOR A
     RET
 
-; TYPE_ENEMY4 on BEHAVIOR_SIMPLE_DRIFT_DODGE: single HP-based hitbox
-; at the bottom half of the 16x16 sprite, mirroring EBSB_HIT_TEST
-; exactly (same art/hitbox offset, same HP-decrement/destroy sequence)
-; since TYPE_ENEMY4 keeps its own PAT_ENEMY4 look and ENEMY4_HP stat
-; regardless of which movement BEHAVIOR it's running under.
+; TYPE_ENEMY4 on BEHAVIOR_SIMPLE_DRIFT_DODGE: single hitbox at the
+; bottom half of the 16x16 sprite (mirroring EBSB_HIT_TEST's offset).
+; round141("エネミー4...耐久値2だが1発当たったら左斜め下に墜落 自機の
+; 墜落の逆向きだな 爆発エフェクトも自機と同じだがサウンドは無しで"):
+; 旧来のE_HP 2段階ダメージ(1発目=被弾のみ・2発目=撃破)を撤回し、
+; 最初の1発で即座に「クラッシュ(左斜め下への永久ダイブ+自機と同じ
+; PLAYER_EXPL_POOL爆発バースト、ただし無音)」をトリガーする1発撃破へ
+; 変更。E_HP自体はこの経路でもう参照しない(ENEMY4_HP=2という値は
+; スポーン時のDB定義として残るだけで無害)。E_FLAGS(この構造体で他に
+; 未使用のフィールド)を「クラッシュ中」フラグとして流用 - 一度立った
+; 後は以後の被弾を完全に無視する(自機がGAME_OVER後は再被弾しない
+; のと同じ考え方、これによりクラッシュ演出中にスコアが二重加算される
+; ことも防ぐ)。スプライト自体は隠さず・スロットも解放しない(自機の
+; 死亡演出中もPLAYERX/PLAYERYの自機スプライトが見え続けるのと同じ -
+; EBSD_DIAG_E4の既存の永久ダイブ+EBSD_EXIT_LEFTの既存の左端到達での
+; 無音・無得点クリーンアップにそのまま任せる、二重スコア加算の心配は
+; 上記のE_FLAGSガードで解消済み)。
 EBSD_HT_ENEMY4:
+    LD A,(IX+E_FLAGS)
+    OR A
+    JR NZ,EBSD_HT_NO             ; 既にクラッシュ中 - 無敵、弾は素通り
     LD A,(IX+E_Y) : ADD A,8 : LD E,A   ; +8: art/hitbox is the bottom half only
     LD A,(IX+E_X) : LD D,A
     CALL QUAD_HIT_TEST
     OR A
     JR Z,EBSD_HT_NO
-    LD A,(IX+E_HP) : DEC A : LD (IX+E_HP),A
-    OR A
-    JR NZ,EBSD_HT_E4_DAMAGED
-    ; --- HP reached 0: fully destroy ---
-    DI
-    LD A,(IX+E_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
-    NOP
-    NOP
-    LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
-    LD A,ENEMY_HIDE_Y : OUT (98h),A
-    PUSH BC : POP BC : NOP : NOP
-    LD A,255 : OUT (98h),A
-    PUSH BC : POP BC : NOP : NOP
-    EI
-    PUSH DE                     ; TRIGGER_EXPLOSION needs D,E = hit X,Y - the type/score
-                                 ; lookup below (ENEMY_TYPE_LOOKUP, LD DE,ETT_SCORESEL) reuses DE
+    ; --- 被弾: 即座にクラッシュ開始(左斜め下への永久ダイブ) ---
+    LD A,1 : LD (IX+E_FLAGS),A         ; crashing=1(以後無敵+FXトリガー)
+    LD A,1 : LD (IX+E_PARAM0),A        ; DIAG_DONE=1(未発動でも強制発動)
+    LD A,1 : LD (IX+E_PARAM2),A        ; DIAG_DIR=+1(必ず下方向)
+    XOR A : LD (IX+E_TRAIL_DELAY),A    ; 最初の爆発パーティクルは即スポーン
     LD A,(IX+E_TYPE) : CALL ENEMY_TYPE_LOOKUP
     LD DE,ETT_SCORESEL : ADD HL,DE
     LD A,(HL)
-    LD (ENEMY_SCORE_SEL_TMP),A
-    CALL FREE_ENEMY_SLOT
-    POP DE
-    PUSH BC
-    CALL TRIGGER_EXPLOSION
-    LD A,(ENEMY_SCORE_SEL_TMP)
     CALL ENEMY_AWARD_SCORE_SEL
-    POP BC
-    LD A,1
-    RET
-EBSD_HT_E4_DAMAGED:
-    ; --- still alive - bullet is consumed (caller stops it here) ---
-    ; --- but the enemy keeps flying, no explosion/score yet.      ---
     LD A,1
     RET
 
@@ -15257,71 +15299,68 @@ ENEMY6_ANIM_CODES:
 SPAWN_THRESHOLDS:
     DW 11,13,15,26,28,30,43,45,47,56,58,60,68,70,72,74,76
     DW 78,80,88,98,100,102,104,106,108,110,112,114,116,118,120,130,139
-    DW 141,143,145,147,153,157,161,162,163,164,166,168,170,172,183,185,187
-    DW 188,190,191,198,200,201,207,208,208,214,214,214,222,223,230,232,234
-    DW 236,238,238,245,247,249,252,253,254,262,267,268,269,278,279,287,290
-    DW 292,300,302,302,304,307,314,317,331,352,354,356,357,359,362,364,366
-    DW 368,371,373,375,381,386,388,392,400,402,406,410,423,428,432,437,439
-    DW 441,445,447,449,461,463,463,465,483,485,485,489,491,491,505,507,507
-    DW 513,527,542,551,558,566,573,580,581,582,591,593,600,611,613,613,617
-    DW 619,619,623,624,626,630,632,641,642,644,644,648,650,650,668,675,677
-    DW 679,683,683,695,695,707,709,712,723,725,728,739,741,744,751,753,755
-    DW 757,768,774,788,794,798,803,804,809,815,818,822,827,830,831,833,835
-    DW 838,841,843,845,847,850,851,852,853,853,854,855,855,856,857,857,858
-    DW 859,859,860,861,861,863,863,865,865,867,867,868,869,869,870,871,871
-    DW 872,873,873,874,875,875,876,877,877,878,879,879,880,881,881,882,883
-    DW 883,884,885,885,886,887,887,888,889,889,890,891,891,892,893,893,894
-    DW 895,895,896,897,897,898,899,899,900,901,901,902,903,903,904,905,905
-    DW 906,907,907,908,909,909,910,911,911,912,913,913,914,915,915,916,917
-    DW 917,918,919,919,920,921,921,922,923,923,925,925,927,927,928,929,929
-    DW 930,931,931,932,933,933,934,935,935,936,937,937,938,939,939,940,941
-    DW 941,942,943,943,947
+    DW 141,143,145,147,153,157,160,163,164,166,168,170,172,183,185,187,188
+    DW 190,191,198,200,201,207,208,208,214,214,214,222,223,230,232,234,236
+    DW 238,238,245,247,249,252,253,254,262,267,268,269,278,279,287,290,292
+    DW 300,302,302,304,307,314,317,331,352,357,359,368,371,373,375,381,386
+    DW 388,392,402,406,410,423,428,433,435,437,442,445,447,449,461,463,463
+    DW 465,483,485,489,491,491,498,505,507,507,513,520,527,542,551,558,566
+    DW 573,590,600,605,607,609,611,613,613,619,619,623,624,626,630,632,634
+    DW 641,642,644,650,650,668,675,677,679,683,683,695,702,707,709,712,721
+    DW 723,725,739,741,744,751,753,755,757,768,774,788,794,798,803,804,809
+    DW 815,818,822,825,827,830,833,835,838,840,841,843,847,850,851,852,853
+    DW 853,854,855,855,856,857,857,858,859,859,860,861,861,863,863,865,865
+    DW 867,867,868,869,869,870,871,871,872,873,873,874,875,875,876,877,877
+    DW 878,879,879,880,881,881,882,883,883,884,885,885,886,887,887,888,889
+    DW 889,890,891,891,892,893,893,894,895,895,896,897,897,898,899,899,900
+    DW 901,901,902,903,903,904,905,905,906,907,907,908,909,909,910,911,911
+    DW 912,913,913,914,915,915,916,917,917,918,919,919,920,921,921,922,923
+    DW 923,925,925,927,927,928,929,929,930,931,931,932,933,933,934,935,935
+    DW 936,937,937,938,939,939,940,941,941,942,943,943,945
 
 SPAWN_SIMPLE_Y_TABLE:
     DB 40,32,24,136,128,120,32,24,16,128,120,112,24,40,56,72,88
     DB 104,120,120,120,112,104,96,88,80,72,64,56,48,0,0,0,88
-    DB 96,104,112,120,120,120,0,0,0,120,112,104,96,88,48,40,32
-    DB 136,0,0,0,0,32,0,32,0,32,0,0,0,0,144,128,112
-    DB 0,16,0,104,112,120,0,16,0,104,0,128,0,64,0,0,72
-    DB 0,32,40,88,48,120,64,0,0,24,16,8,0,0,72,64,56
-    DB 0,48,40,32,0,0,0,0,0,0,0,0,0,72,0,24,16
-    DB 8,136,128,120,0,16,0,104,0,64,0,0,0,120,0,0,112
-    DB 0,0,64,0,0,0,0,0,0,0,0,0,0,0,64,0,0
-    DB 0,120,0,0,64,0,120,0,0,64,0,0,0,120,0,16,24
-    DB 32,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-    DB 0,0,0,104,88,80,72,48,88,88,80,64,80,64,80,0,80
-    DB 72,80,72,56,72,88,0,72,0,0,80,0,0,88,0,0,96
-    DB 0,0,96,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+    DB 96,104,112,120,120,120,0,0,120,112,104,96,88,48,40,32,136
+    DB 0,0,0,0,32,0,32,0,32,0,0,0,0,144,128,112,0
+    DB 16,0,104,112,120,0,16,0,104,0,128,0,64,0,0,72,0
+    DB 32,40,88,48,120,64,0,0,24,0,0,0,48,40,32,0,0
+    DB 0,0,0,0,0,0,72,40,32,24,0,136,128,120,0,16,0
+    DB 104,0,64,0,0,120,64,0,0,112,0,56,0,64,0,0,0
+    DB 0,0,0,0,0,0,0,64,0,0,120,0,0,64,0,120,0
+    DB 0,0,64,0,120,0,16,24,32,0,0,0,0,0,0,0,88
+    DB 88,80,0,0,0,0,0,0,0,0,0,104,88,80,72,48,88
+    DB 88,80,64,0,80,64,0,80,72,0,80,72,72,88,0,72,0
+    DB 0,80,0,0,88,0,0,96,0,0,96,0,0,0,0,0,0
     DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
     DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
     DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
     DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
     DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
     DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-    DB 0,0,0,0,0
+    DB 0,0,0,0,0,0,0,0,0,0,0,0,0
 
 SPAWN_BASEY_TABLE:
     DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
     DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-    DB 0,0,0,0,0,0,96,104,136,0,0,0,0,0,0,0,0
-    DB 0,64,96,72,112,0,72,0,104,0,72,112,72,104,0,0,0
-    DB 64,0,80,0,0,0,72,0,88,0,72,0,88,0,104,32,0
-    DB 112,0,0,0,0,0,0,0,0,0,0,0,96,40,0,0,0
-    DB 104,0,0,0,96,24,64,48,16,120,72,16,16,0,144,0,0
-    DB 0,0,0,0,64,0,80,0,112,0,128,56,72,0,48,64,0
-    DB 24,96,0,96,32,120,32,80,64,48,104,24,64,112,0,128,56
-    DB 72,0,80,112,0,56,0,80,112,0,128,56,72,0,0,0,0
-    DB 0,32,104,32,104,72,80,104,72,80,104,72,80,104,120,88,56
-    DB 24,64,96,0,0,0,0,0,0,0,0,0,0,0,0,64,0
+    DB 0,0,0,0,0,0,88,136,0,0,0,0,0,0,0,0,0
+    DB 64,96,72,112,0,72,0,104,0,72,112,72,104,0,0,0,64
+    DB 0,80,0,0,0,72,0,88,0,72,0,88,0,104,32,0,112
+    DB 0,0,0,0,0,0,0,0,0,96,40,104,0,0,0,96,24
+    DB 64,48,120,72,16,32,0,0,0,0,112,0,0,0,64,0,80
+    DB 0,112,0,56,72,0,0,48,64,0,24,0,96,0,96,32,120
+    DB 32,64,64,88,72,56,112,0,128,72,0,80,112,0,56,0,80
+    DB 80,112,0,72,0,0,0,0,0,32,104,32,112,72,80,104,0
+    DB 0,0,72,80,104,120,88,56,24,64,96,0,0,0,0,0,0
+    DB 0,0,0,64,0,0,64,0,0,64,0,0,0,0,0,0,0
     DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-    DB 0,0,0,0,0,0,0,0,0,0,0,96,0,0,96,0,0
-    DB 96,0,0,96,0,0,96,0,0,96,0,0,88,0,0,88,0
-    DB 0,88,0,0,88,0,0,88,0,0,88,0,0,88,0,0,96
-    DB 0,0,96,0,0,88,0,0,80,0,0,72,0,0,64,0,0
-    DB 64,0,0,72,0,0,80,0,0,88,0,0,88,0,0,88,0
-    DB 0,88,0,0,80,0,0,80,0,0,0,0,0,0,80,0,0
-    DB 80,0,0,80,0,0,80,0,0,80,0,0,80,0,0,80,0
-    DB 0,80,0,0,0
+    DB 0,0,96,0,0,96,0,0,96,0,0,96,0,0,96,0,0
+    DB 96,0,0,88,0,0,88,0,0,88,0,0,88,0,0,88,0
+    DB 0,88,0,0,88,0,0,96,0,0,96,0,0,88,0,0,80
+    DB 0,0,72,0,0,64,0,0,64,0,0,72,0,0,80,0,0
+    DB 88,0,0,88,0,0,88,0,0,88,0,0,80,0,0,80,0
+    DB 0,0,0,0,0,80,0,0,80,0,0,80,0,0,80,0,0
+    DB 80,0,0,80,0,0,80,0,0,80,0,0,0
 
 SPAWN_E3_OFFSET_TABLE:
     DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
@@ -15343,8 +15382,7 @@ SPAWN_E3_OFFSET_TABLE:
     DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
     DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
     DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-    DB 0,0,0,0,0
+    DB 0,0,0,0,0,0,0,0,0,0,0,0,0
 
 ENEMY6_ROW_TABLE:
     DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
@@ -15358,16 +15396,15 @@ ENEMY6_ROW_TABLE:
     DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
     DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
     DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-    DB 0,0,0,0,0,0,5,0,5,15,0,6,15,0,7,15,0
-    DB 8,15,0,9,15,9,15,9,15,9,15,0,8,15,0,8,15
-    DB 0,8,15,0,8,15,0,8,15,0,8,15,0,8,15,0,8
-    DB 15,0,7,15,0,8,15,0,7,15,0,6,15,0,7,15,0
-    DB 8,16,0,7,15,0,6,14,0,5,13,0,4,12,0,3,11
-    DB 0,5,12,0,6,14,0,7,15,0,8,14,0,8,14,0,8
-    DB 15,0,7,14,0,6,13,0,7,14,8,13,7,13,0,7,13
-    DB 0,7,13,0,7,13,0,7,13,0,7,13,0,7,13,0,7
-    DB 13,0,7,13,0
+    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,5,0,5
+    DB 15,0,6,15,0,7,15,0,8,15,0,9,15,9,15,9,15
+    DB 9,15,0,8,15,0,8,15,0,8,15,0,8,15,0,8,15
+    DB 0,8,15,0,8,15,0,8,15,0,7,15,0,8,15,0,7
+    DB 15,0,6,15,0,7,15,0,8,16,0,7,15,0,6,14,0
+    DB 5,13,0,4,12,0,3,11,0,5,12,0,6,14,0,7,15
+    DB 0,8,14,0,8,14,0,8,15,0,7,14,0,6,13,0,7
+    DB 14,8,13,7,13,0,7,13,0,7,13,0,7,13,0,7,13
+    DB 0,7,13,0,7,13,0,7,13,0,7,13,0
 
 ; --- Boss BG (nametable) graphics, generated from
 ; --- dotpict_20260806_173500 (12x37 dot art), resized directly
