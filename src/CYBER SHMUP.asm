@@ -11866,38 +11866,60 @@ EBSD_HT_NO:
 ; TYPE_ENEMY4 on BEHAVIOR_SIMPLE_DRIFT_DODGE: single hitbox at the
 ; bottom half of the 16x16 sprite (mirroring EBSB_HIT_TEST's offset).
 ; round141("エネミー4...耐久値2だが1発当たったら左斜め下に墜落 自機の
-; 墜落の逆向きだな 爆発エフェクトも自機と同じだがサウンドは無しで"):
-; 旧来のE_HP 2段階ダメージ(1発目=被弾のみ・2発目=撃破)を撤回し、
-; 最初の1発で即座に「クラッシュ(左斜め下への永久ダイブ+自機と同じ
-; PLAYER_EXPL_POOL爆発バースト、ただし無音)」をトリガーする1発撃破へ
-; 変更。E_HP自体はこの経路でもう参照しない(ENEMY4_HP=2という値は
-; スポーン時のDB定義として残るだけで無害)。E_FLAGS(この構造体で他に
-; 未使用のフィールド)を「クラッシュ中」フラグとして流用 - 一度立った
-; 後は以後の被弾を完全に無視する(自機がGAME_OVER後は再被弾しない
-; のと同じ考え方、これによりクラッシュ演出中にスコアが二重加算される
-; ことも防ぐ)。スプライト自体は隠さず・スロットも解放しない(自機の
-; 死亡演出中もPLAYERX/PLAYERYの自機スプライトが見え続けるのと同じ -
-; EBSD_DIAG_E4の既存の永久ダイブ+EBSD_EXIT_LEFTの既存の左端到達での
-; 無音・無得点クリーンアップにそのまま任せる、二重スコア加算の心配は
-; 上記のE_FLAGSガードで解消済み)。
+; 墜落の逆向きだな 爆発エフェクトも自機と同じだがサウンドは無しで")、
+; round141 follow-up("エネミー4は墜落で無敵にはならない 2発目が
+; 当たったら爆発するように"): 旧来のE_HP 2段階ダメージを撤回した上で
+; 2段階の被弾を再導入 - ただし段階の意味が異なる。1発目
+; (E_FLAGS==0)は「クラッシュ開始」のみ(左斜め下への永久ダイブを
+; 強制発動、まだ撃破せずスコアも入らない)。クラッシュ中も無敵には
+; ならず、2発目(E_FLAGS!=0の状態への被弾)で実際に撃破 - スプライトを
+; 隠しスロットを解放しスコアを加算、その瞬間に自機と同じPLAYER_EXPL_
+; POOLバースト(無音)を1個追加でポップする。クラッシュ中の継続的な
+; 煙エフェクト自体はEBSD_DIAG_E4のE_FLAGS!=0ゲートが既に処理しており、
+; 1発目〜2発目の間もそのまま鳴らず光らず飛び続ける(無変更)。
 EBSD_HT_ENEMY4:
-    LD A,(IX+E_FLAGS)
-    OR A
-    JR NZ,EBSD_HT_NO             ; 既にクラッシュ中 - 無敵、弾は素通り
     LD A,(IX+E_Y) : ADD A,8 : LD E,A   ; +8: art/hitbox is the bottom half only
     LD A,(IX+E_X) : LD D,A
     CALL QUAD_HIT_TEST
     OR A
     JR Z,EBSD_HT_NO
-    ; --- 被弾: 即座にクラッシュ開始(左斜め下への永久ダイブ) ---
-    LD A,1 : LD (IX+E_FLAGS),A         ; crashing=1(以後無敵+FXトリガー)
+    LD A,(IX+E_FLAGS)
+    OR A
+    JR NZ,EBSD_HT_ENEMY4_KILL
+    ; --- 1発目: クラッシュ開始のみ(まだ無敵にはしない、まだ撃破しない) ---
+    LD A,1 : LD (IX+E_FLAGS),A         ; crashing=1(以後EBSD_DIAG_E4のFXトリガー)
     LD A,1 : LD (IX+E_PARAM0),A        ; DIAG_DONE=1(未発動でも強制発動)
     LD A,1 : LD (IX+E_PARAM2),A        ; DIAG_DIR=+1(必ず下方向)
     XOR A : LD (IX+E_TRAIL_DELAY),A    ; 最初の爆発パーティクルは即スポーン
+    LD A,1
+    RET
+; --- 2発目(クラッシュ中への被弾): 実際に撃破 ---
+; D,E はQUAD_HIT_TESTの入力のまま(E_X,E_Y+8) - PEUA_TRY_SPAWN_AT_QUIETの
+; 起点にそのまま流用する。
+EBSD_HT_ENEMY4_KILL:
+    LD A,D : LD (EBUZ_EXPL_POS_X),A
+    LD A,E : LD (EBUZ_EXPL_POS_Y),A
+    LD A,(IX+E_SPRNUM)
+    DI
+    ADD A,A : ADD A,A : OUT (99h),A
+    NOP
+    NOP
+    LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    LD A,ENEMY_HIDE_Y : OUT (98h),A
+    PUSH BC : POP BC : NOP : NOP
+    LD A,255 : OUT (98h),A
+    PUSH BC : POP BC : NOP : NOP
+    EI
+    PUSH IX
+    CALL PEUA_TRY_SPAWN_AT_QUIET
+    POP IX
     LD A,(IX+E_TYPE) : CALL ENEMY_TYPE_LOOKUP
     LD DE,ETT_SCORESEL : ADD HL,DE
     LD A,(HL)
     CALL ENEMY_AWARD_SCORE_SEL
+    CALL FREE_ENEMY_SLOT
     LD A,1
     RET
 
@@ -14875,8 +14897,8 @@ CHECK_BULLET_VS_EBUZ2:
     LD A,(EBUZ2_HP) : DEC A : LD (EBUZ2_HP),A
     JR NZ,CBVE2_DAMAGED
     CALL EBUZ2_TRIGGER_DEFEAT
-    CALL ADD_SCORE_500
-    CALL ADD_SCORE_500
+    LD HL,50                     ; round141 follow-up: EbuzIIの撃破報酬を5000点に(50*100)
+    CALL ADD_SCORE_COMMON
     LD A,1
     RET
 CBVE2_DAMAGED:

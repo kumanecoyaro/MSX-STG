@@ -409,9 +409,14 @@ row_cur = mem2[gsym["EBUZ2_ROW_CUR"]]
 z2.wr(gsym["EBUZ2_HP"], 1)
 z2.b = 25
 z2.c = row_cur + 3
+score_before_kill = mem2[gsym["SCORE"]] | (mem2[gsym["SCORE"] + 1] << 8) | (mem2[gsym["SCORE"] + 2] << 16)
 kill_ok = call_routine2(gsym["CHECK_BULLET_VS_EBUZ2"])
 check("実際のCHECK_BULLET_VS_EBUZ2経由でHP=1のMk2に命中させると即座にPHASE=2(撃破演出)へ遷移する",
       kill_ok and mem2[gsym["EBUZ2_PHASE"]] == 2)
+score_after_kill = mem2[gsym["SCORE"]] | (mem2[gsym["SCORE"] + 1] << 8) | (mem2[gsym["SCORE"] + 2] << 16)
+check(f"round141follow-up(\"EbuzIIのスコアは5000で\"): 撃破の瞬間にSCOREが50(=5000/100)"
+      f"増える(実測差分={score_after_kill - score_before_kill})",
+      score_after_kill - score_before_kill == 50)
 queue_count_at_kill = mem2[gsym["EBUZ_EXPL_QUEUE_COUNT"]]
 check(f"撃破の瞬間、S2本体の非空白セル数ぶん(キュー容量16でキャップ)がEBUZ_EXPL_QUEUEへ積まれる"
       f"(実測={queue_count_at_kill})", queue_count_at_kill == 16)
