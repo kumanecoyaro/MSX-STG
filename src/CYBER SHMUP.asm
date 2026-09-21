@@ -14264,7 +14264,15 @@ EBUZ2_UL_RETRACT:
     ADD A,A : ADD A,1 : LD C,A
     LD A,(EBUZ2_LASER_ROW) : LD B,A
     CALL EBUZ2_ADDR
-    LD B,0 : LD C,0
+    ; round138 follow-up2(実機フィードバック対応、"ちゃんとやれよ"):
+    ; 移植元テストROMは"消去=生値0"だったが、Stage1ではパターンコード0は
+    ; 空白ではなく非空白の残留グラフィックが残っている(BLANK5/6と同じ
+    ; 規約違反、こちらはBGM共有バンクのデータではなくコード自体に直接
+    ; 埋め込まれていたため前回のBLANKCODE修正で見落としていた)。1フレーム
+    ; ごとに弾/レーザーが通過した跡のセルへ非空白なコード0を書き込み
+    ; 続けるため、画面上に消えない残留物が延々と蓄積していた -
+    ; 「タン色の横棒が変わらず残る」の真因。BLANKCODEへ修正。
+    LD B,BLANKCODE : LD C,BLANKCODE
     CALL EBUZ_WRITE2
     LD A,(EBUZ2_LASER_UNIT)
     OR A
@@ -14334,7 +14342,8 @@ EBUZ2_UPDATE_V1_ONE:
     LD A,(EBUZ2_TMP_A)
     ADD A,EBUZ2_ENTRY_TARGET_ROW       ; A=row
     CALL EBUZ2_ADDR
-    LD B,0 : LD C,0
+    ; round138 follow-up2: 消去はBLANKCODE規約(上のLASER_RETRACTと同じ理由)
+    LD B,BLANKCODE : LD C,BLANKCODE
     CALL EBUZ_WRITE2
     POP HL                              ; HL=&COL
     LD A,(HL)
@@ -14448,7 +14457,8 @@ EBUZ2_UPDATE_V2_SLOT:
     LD E,A : LD D,0
     LD HL,(EBUZ2_TMP_ADDR)
     ADD HL,DE
-    LD B,0 : LD C,0
+    ; round138 follow-up2: 消去はBLANKCODE規約(上のLASER_RETRACTと同じ理由)
+    LD B,BLANKCODE : LD C,BLANKCODE
     CALL EBUZ_WRITE2
     POP AF
     OR A

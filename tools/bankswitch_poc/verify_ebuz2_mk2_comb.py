@@ -294,11 +294,13 @@ check("CHECK_BOSS_TRIGGER発火でEbuz Mk2が実際にスポーンする(EBUZ2_A
 NFRAMES = 2200
 NAMTBL = 0x1800
 GROUND_ROW0 = gsym["GROUND_ROW0"]
+BLANKCODE = gsym["BLANKCODE"]
 completed = True
 killed_mid_run = False
 row_cur_bound_ok = True
 row20_untouched = True
 max_row_cur_seen = -1
+raw_zero_leak_frame = None
 for i in range(NFRAMES):
     if not step_frame():
         check(f"フレーム{i}でスタックせず完走する(ワイルドジャンプ/フリーズが起きていないこと)", False)
@@ -308,6 +310,20 @@ for i in range(NFRAMES):
     max_row_cur_seen = max(max_row_cur_seen, rc)
     if rc + 6 >= GROUND_ROW0:
         row_cur_bound_ok = False
+    # round138 follow-up2("ちゃんとやれよクソが"): EBUZ2_UPDATE_V1_ONE/
+    # EBUZ2_UL_RETRACT/EBUZ2_UV2_SLOTの消去が生値0(=Stage1では非空白の
+    # 残留グラフィック)を書き込んでいた実バグの動的回帰ガード。row0(HUD)・
+    # row20-23(ground scroller)を除く全セルにパターンコード0が一度でも
+    # 現れたら検出する。
+    if raw_zero_leak_frame is None:
+        for row in range(1, GROUND_ROW0):
+            base = NAMTBL + row * 32
+            for col in range(32):
+                if z.vram[base + col] == 0:
+                    raw_zero_leak_frame = (i, row, col)
+                    break
+            if raw_zero_leak_frame is not None:
+                break
     if i == 900:
         killed_mid_run = call_routine(gsym["CHECK_BULLET_VS_EBUZ2"])
 
@@ -321,6 +337,11 @@ if completed:
     check(f"実プレイ中、EBUZ2_ROW_CURの実測範囲が期待通り上端(MOVE_MAX_ROW=13)まで振れている"
           f"(実測max={max_row_cur_seen}、テスト自体が境界を実際に通過していることの確認)",
           max_row_cur_seen >= 12)
+    check(f"実プレイ{NFRAMES}フレームを通じて、EBUZ2_UPDATE_V1_ONE/EBUZ2_UL_RETRACT/"
+          "EBUZ2_UV2_SLOTの消去跡(volley1弾・レーザー・volley2弾が通過した後のセル)に"
+          "生のパターンコード0(Stage1では非空白の残留グラフィック)が一度も現れない"
+          f"(round138 follow-up2の回帰ガード、検出位置={raw_zero_leak_frame})",
+          raw_zero_leak_frame is None)
     check("実プレイを通じて一度もS2本体(row_cur+6)がGROUND_ROW0(20)へ到達しない"
           "(round138の地形破損バグの動的回帰ガード)", row_cur_bound_ok)
 
