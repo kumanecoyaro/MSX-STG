@@ -17187,3 +17187,58 @@ ENEMY6のO(1)短絡最適化(2026-09-14、完了済み)
   体感できるかは実機での見え方次第。Stage1のROM空き容量が226byte
   (連続107byte)まで縮小したため、次の中ボス(Ebuz流用)実装は極めて
   厳しい予算での作業になる。
+
+
+## Round138: Ebuz Mk2静止連射delayバグ修正+Stage1スケジュール差し替え
+(Schedule_2_5.json)+エネミー4を被弾クラッシュ方式へ変更、続けて訂正
+(クラッシュ中も無敵にせず2発目で撃破+EbuzIIスコア5000点)
+(2026-09-21、完了済み・実機フィードバック待ち)
+
+- (a) `EBUZ2_RESTORE_MOVE_ACTIVE`が`EBUZ2_MOVE_PENDING`を確認せずに
+  `EBUZ2_MOVE_ACTIVE`を復帰させていたため、ビーム発射後のループリセット
+  (ALTLOOPの次のリコイル休止サイクル)で新設の20tick静止連射delayが
+  即座に[実測4フレームで]短絡してしまうバグを修正 - `MOVE_PENDING`が
+  立っている間は復帰を保留するガードを追加。`tools/bankswitch_poc/
+  verify_ebuz2_mk2_comb.py`に3件追加(volley1の4発発射・変形直後delay・
+  ループリセット後delayの3系統)。
+- (b) ユーザー添付の`Schedule_2_5.json`(336件)へStage1スケジュール
+  (`SPAWN_THRESHOLDS`/`SPAWN_SIMPLE_Y_TABLE`/`SPAWN_BASEY_TABLE`/
+  `SPAWN_E3_OFFSET_TABLE`/`ENEMY6_ROW_TABLE`/`SSC_FIRE`/`SSC_BUSY_E2`)を
+  Round36-9と同じPythonスクリプトによる機械生成で差し替え。同時に
+  「エネミー4(Fighter)、耐久値2だが1発当たったら左斜め下に墜落(自機の
+  死亡落下の逆向き)、爆発は自機と同じPLAYER_EXPL_POOLだが無音で」を
+  実装 - `PEUA_TRY_SPAWN_AT`を`PEUA_TRY_SPAWN_AT_CORE`(サウンド無し)+
+  有音版ラッパー+新設`PEUA_TRY_SPAWN_AT_QUIET`(無音版)へ分割、TYPE_
+  ENEMY4の構造体で完全未使用と確認済みの`E_FLAGS`(クラッシュ中フラグ)/
+  `E_TRAIL_DELAY`(周期的パーティクル出現用カウントダウン)を流用、
+  既存の自然回避ダイブ経路`EBSD_DIAG_E4`にクラッシュ中のみ動く無音FX
+  ブロックを追加。新規`tools/verify_enemy4_crash.py`。
+- (c) 直後にユーザーから訂正: "エネミー4は墜落で無敵にはならない 2発目が
+  当たったら爆発するように で、EbuzIIのスコアは5000で"。(b)で実装した
+  「E_FLAGS!=0なら弾を素通りさせる無敵化」を完全に撤回し、`EBSD_HT_
+  ENEMY4`を1発目=クラッシュ開始のみ(無得点・無敵化なし)/2発目
+  (E_FLAGS!=0への被弾)=実際の撃破(スプライト非表示・`FREE_ENEMY_SLOT`・
+  スコア加算・`PEUA_TRY_SPAWN_AT_QUIET`の追加バースト)という2段階の
+  ヒット判定へ再設計。1発目〜2発目の間も`EBSD_DIAG_E4`の周期的な無音
+  トリクルFXはそのまま動き続ける(無変更)。`CHECK_BULLET_VS_EBUZ2`の
+  撃破スコアを`ADD_SCORE_500`x2(1000点)から`LD HL,50:CALL ADD_SCORE_
+  COMMON`(5000点)へ変更。`tools/verify_enemy4_crash.py`を2段階ヒットの
+  新設計に合わせ全面書き直し、`verify_ebuz2_mk2_comb.py`にスコア5000点
+  の回帰テストを追加。いずれも一時的に修正を取り消してFAILすることを
+  確認した上で復元・再PASSを確認済み。
+- (b)(c)いずれもEBUZ2シーケンステーブル(`EBUZ2_SCRIPT_TABLE`/
+  `ALTLOOP_TABLE`/`STOPSEQ_TABLE`)がComb組み込み後のアドレスへ再度
+  シフトするため、round136ルール通り`assemble_game()`基準でbgm_bank.bin
+  を都度再パッチ。
+- 全回帰: Stage1側`verify_enemy_bullets.py` 60/`verify_player_damage.py`
+  60/`verify_stage1_bgm.py` 80/`verify_stage1_mission_screens.py` 87/
+  `verify_enemy6_durability.py` 27/`verify_explosion_anim.py` 28/
+  `verify_boss_dfl_clear.py` 10/`verify_spawn_schedule_restart.py` 12/
+  `verify_enemy4_crash.py` 17、全てPASS(`combined_test.asm`は無変更の
+  ためStage2側`run_all.py`は省略)。`verify_ebuz2_mk2_comb.py` 48 passed。
+  Comb ROM再ビルド・`verify_comb.py`全チェックPASSの上、標準方針により
+  Comb ROMのみ送付。
+- **保留・実機フィードバック待ち**: 336件の新スケジュールのペーシング・
+  エネミー4クラッシュ演出(1発目〜2発目間の飛散間隔`ENEMY4_CRASH_
+  SPAWN_INTERVAL`=8は未調整の初期値)・EbuzIIスコア5000点の妥当性は
+  いずれも次回フィードバック待ち。
