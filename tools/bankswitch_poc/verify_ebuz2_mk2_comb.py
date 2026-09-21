@@ -418,13 +418,17 @@ check("撃破の瞬間、本体はEBUZ2_ERASE_S2_BODY_ATで即座に消去され
       all(z2.vram[0x1800 + (row_cur + r) * 32 + c] != gsym["EBUZ_CODE_A"] for r in range(7) for c in range(23, 28)))
 
 drained = False
+drained_at_frame = None
 ever_popped_sprite = False
+frame_counter = 0
 for i in range(200):
     step_frame2()
+    frame_counter += 1
     if mem2[gsym["PLAYER_EXPL_POOL"]] != 0:
         ever_popped_sprite = True
     if mem2[gsym["EBUZ_EXPL_QUEUE_COUNT"]] == 0 and i > 0:
         drained = True
+        drained_at_frame = frame_counter
         break
 check("撃破後、無印Ebuzと共通のPLAYER_EXPL_POOL(自機死亡と同じバースト演出)へ実際に"
       "1個以上ポップされる(専用の爆発演出コードを新設せず流用できていることの確認)",
@@ -432,10 +436,25 @@ check("撃破後、無印Ebuzと共通のPLAYER_EXPL_POOL(自機死亡と同じ�
 check("撃破後、EBUZ_EXPL_QUEUE_COUNTがいずれ0まで正しく減っていく(ポップが無限に残り"
       "続けたりしないこと)", drained)
 
-for _ in range(50):
+# round138follow-up4("EbuzII撃破後50Tickウェイト追加"): キューが完全に
+# 排出されたフレームから実際にEBUZ2_ACTが0になるフレームまでの経過
+# フレーム数を直接カウントし、EBUZ2_POST_DEFEAT_WAIT_TICKS(50)分だけ
+# 実際に遅延していることを検証する(単に「その1フレームだけまだ1」を
+# 見るだけだと、UPDATE_DEFEATとEBUZ_EXPL_UPDATE_QUEUEの呼び出し順序に
+# よる本質的に無関係な1フレームのズレでも偶然PASSしてしまい、ウェイト
+# そのものを検証できていなかった - 自己検証で判明したため経過フレーム数
+# ベースの検証に修正済み)。
+act_zero_at_frame = None
+for i in range(120):
     step_frame2()
+    frame_counter += 1
     if mem2[gsym["EBUZ2_ACT"]] == 0:
+        act_zero_at_frame = frame_counter
         break
+wait_frames_observed = (act_zero_at_frame - drained_at_frame) if (act_zero_at_frame and drained_at_frame) else None
+check(f"EBUZ_EXPL_QUEUE排出完了からEBUZ2_ACT=0になるまで、実測{wait_frames_observed}フレームの"
+      "遅延がある(EBUZ2_POST_DEFEAT_WAIT_TICKS=50ぶん、単発チェックではなく経過フレーム数base)",
+      wait_frames_observed is not None and 48 <= wait_frames_observed <= 52)
 check("キューが完全にポップし終わったあとで初めてEBUZ2_DEFEATED=1・実ボスへのBOSS_SPAWNが"
       "起動する(EBUZ_ANY_ACTIVEと同じ「爆発演出が終わるまで待つ」設計)",
       mem2[gsym["EBUZ2_ACT"]] == 0 and mem2[gsym["EBUZ2_DEFEATED"]] == 1 and mem2[gsym["BOSS_STATE"]] != 0)
