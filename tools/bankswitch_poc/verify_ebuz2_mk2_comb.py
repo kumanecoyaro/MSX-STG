@@ -71,13 +71,15 @@ def eqv(name):
     return gsym[name] & 0xFF
 
 
+# round138follow-up5("変形後1発撃つがこれを削除 なのですぐ交互連射に"):
+# 旧7行(RECOIL_SHIFT/REST/TRANSFORM/NOP/NOP/FIRE_INNER_PAIR/
+# ACT_START_MOVEMENT)から中間の単発発射3行(NOP/NOP/FIRE_INNER_PAIR)を
+# 削除、TRANSFORM完了直後に即座にACT_START_MOVEMENT(=ALTLOOPへ切替、
+# ただし移動開始はEBUZ2_MOVE_PENDING経由で20tick遅延)へ進む4行構成。
 expected_script = (
     w('EBUZ2_RECOIL_CLOSED_SHIFT') + [eqv('EBUZ2_RECOIL_HOLD_TICKS')] +
     w('EBUZ2_RECOIL_CLOSED_REST') + [eqv('EBUZ2_RECOIL_HOLD_TICKS')] +
     w('EBUZ2_TRANSFORM') + [eqv('EBUZ2_ENTRY_HOLD_TICKS')] +
-    w('EBUZ2_ACT_NOP') + [eqv('EBUZ2_VOLLEY2_PRE_FIRE_HOLD_TICKS')] +
-    w('EBUZ2_ACT_NOP') + [eqv('EBUZ2_VOLLEY2_WAVE_HOLD_TICKS')] +
-    w('EBUZ2_FIRE_INNER_PAIR') + [eqv('EBUZ2_VOLLEY2_WAVE_HOLD_TICKS')] +
     w('EBUZ2_ACT_START_MOVEMENT') + [eqv('EBUZ2_VOLLEY2_ALT_START_HOLD_TICKS')]
 )
 expected_altloop = (
@@ -458,6 +460,114 @@ check(f"EBUZ_EXPL_QUEUE排出完了からEBUZ2_ACT=0になるまで、実測{wai
 check("キューが完全にポップし終わったあとで初めてEBUZ2_DEFEATED=1・実ボスへのBOSS_SPAWNが"
       "起動する(EBUZ_ANY_ACTIVEと同じ「爆発演出が終わるまで待つ」設計)",
       mem2[gsym["EBUZ2_ACT"]] == 0 and mem2[gsym["EBUZ2_DEFEATED"]] == 1 and mem2[gsym["BOSS_STATE"]] != 0)
+
+
+# ============================================================
+# 4. round138follow-up5("初弾はセンター無しで4発に...変形後1発撃つのは
+#    削除...20Tick静止連射してから上下動作に...ビーム発射後も20Tick
+#    静止連射してからまた下に動く"): 3つの新規挙動を実際のフレーム単位
+#    シミュレーションで直接検証する。
+# ============================================================
+mem3 = BankedMem(banksA, banksB)
+z3 = z80emu.Z80(mem3)
+z3.pc = tsym["INIT"]
+
+
+def run_until_pc3(target, maxi=3_000_000):
+    for _ in range(maxi):
+        if z3.pc == target:
+            return True
+        z3.step()
+    return False
+
+
+run_until_pc3(tsym["WAIT_FOR_START"])
+z3.sim_trig_a = True
+run_until_pc3(0x4010, maxi=3_000_000)
+run_until_pc3(gsym["MAINLOOP"], maxi=3_000_000)
+
+
+def step_frame3(maxi=300000):
+    z3.pc = gsym["MAINLOOP"]
+    z3.step()
+    for _ in range(maxi):
+        if z3.pc == gsym["MAINLOOP"]:
+            return True
+        z3.step()
+    return False
+
+
+z3.wr(gsym["GAME_TICK"], 0)
+z3.wr(gsym["GAME_TICK"] + 1, 4)
+step_frame3()
+assert mem3[gsym["EBUZ2_ACT"]] == 1
+
+# 4a. volley1(spawn-entry完了直後の全弾発射)がlane0,1,3,4のみ発火し、
+#     lane2(中央)は発火しないこと。entryアニメが完了して実際に発火する
+#     まで数十フレームかかるため、いずれかのlaneが発火するまで進める。
+V1_STRUCT = gsym["EBUZ2_V1_STRUCT"]
+lane_act = None
+for i in range(200):
+    step_frame3()
+    cur = [mem3[V1_STRUCT + lane * 2] for lane in range(5)]
+    if any(cur):
+        lane_act = cur
+        break
+check(f"volley1(初弾)はlane2(中央)を除く4発のみ発射される(実測ACT={lane_act})",
+      lane_act == [1, 1, 0, 1, 1])
+
+# 4b. 変形完了直後、EBUZ2_MOVE_PENDINGが立ってから上下移動が実際に
+#     開始されるまでの遅延がEBUZ2_STATIC_FIRE_TICKS(20)フレーム
+#     ちょうどであること。
+pending_seen_at0 = None
+first_active_at = None
+prev_pending0 = mem3[gsym["EBUZ2_MOVE_PENDING"]]
+for i in range(300):
+    step_frame3()
+    p = mem3[gsym["EBUZ2_MOVE_PENDING"]]
+    if p == 1 and prev_pending0 == 0 and pending_seen_at0 is None:
+        pending_seen_at0 = i
+    if (pending_seen_at0 is not None and first_active_at is None
+            and mem3[gsym["EBUZ2_MOVE_ACTIVE"]] == 1 and i > pending_seen_at0):
+        first_active_at = i
+        break
+    prev_pending0 = p
+initial_delay = (
+    (first_active_at - pending_seen_at0)
+    if (pending_seen_at0 is not None and first_active_at is not None) else None
+)
+check(f"変形直後、上下移動が開始されるまでの静止連射が実測{initial_delay}フレームで"
+      f"EBUZ2_STATIC_FIRE_TICKS(={gsym['EBUZ2_STATIC_FIRE_TICKS']})と一致する",
+      initial_delay == gsym["EBUZ2_STATIC_FIRE_TICKS"])
+
+# 4c. ループリセット(ビーム発射後の1周完了)でも同じ20tick静止連射delay
+#     が再度適用されること(EBUZ2_RESTORE_MOVE_ACTIVEがMOVE_PENDING中は
+#     MOVE_ACTIVEを復帰させてしまわないことの回帰ガード - 修正前は
+#     ALTLOOPの次のリコイル休止サイクルで即座に[実測4フレームで]復帰
+#     してしまっていた)。
+z3.wr(gsym["EBUZ2_MOVE_RTRIP"], 1)
+pending_seen_at = None
+active_after_reset_at = None
+prev_pending = z3.rd(gsym["EBUZ2_MOVE_PENDING"])
+for j in range(400):
+    step_frame3()
+    p = z3.rd(gsym["EBUZ2_MOVE_PENDING"])
+    if p == 1 and prev_pending == 0 and pending_seen_at is None:
+        pending_seen_at = j
+    if (pending_seen_at is not None and active_after_reset_at is None
+            and z3.rd(gsym["EBUZ2_MOVE_ACTIVE"]) == 1 and j > pending_seen_at):
+        active_after_reset_at = j
+        break
+    prev_pending = p
+loop_reset_delay = (
+    (active_after_reset_at - pending_seen_at)
+    if (pending_seen_at is not None and active_after_reset_at is not None) else None
+)
+check(f"ビーム発射後のループリセットでも、上下移動再開までの静止連射が実測"
+      f"{loop_reset_delay}フレームでEBUZ2_STATIC_FIRE_TICKS"
+      f"(={gsym['EBUZ2_STATIC_FIRE_TICKS']})と一致する"
+      "(EBUZ2_RESTORE_MOVE_ACTIVEがMOVE_PENDING中に早期復帰しないことの回帰ガード)",
+      loop_reset_delay == gsym["EBUZ2_STATIC_FIRE_TICKS"])
 
 
 print()

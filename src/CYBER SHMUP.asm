@@ -13906,6 +13906,11 @@ EBUZ2_VOLLEY2_ALT_START_HOLD_TICKS EQU 20
 EBUZ2_LAP_STOP_HOLD_TICKS EQU 15
 EBUZ2_LASER_HOLD_TICKS EQU 4
 EBUZ2_POST_DEFEAT_WAIT_TICKS EQU 50  ; round138follow-up4"EbuzII撃破後50Tickウェイト追加"
+; round138follow-up5("変形後1発撃つがこれを削除...20Tick交互連射して
+; から上下動作に...ビーム発射後は20Tick静止連射してからまた下に動く"):
+; 変形直後・ビーム発射後のループリセット直後の両方で共通して使う
+; 「上下移動を開始する前に静止したまま交互連射する」tick数。
+EBUZ2_STATIC_FIRE_TICKS EQU 20
 
 EBUZ2_MOVE_INTERVAL_TICKS EQU 4
 ; round138(実機フィードバック対応): 移植元tools/ebuz_mk2_test/ebuz_mk2_test.asm
@@ -13967,6 +13972,11 @@ EBUZ2_DEFEATED         EQU 0F314h  ; 0=未撃破(未スポーンor戦闘中)/1=�
 EBUZ2_TMP_CNT          EQU 0F315h  ; round136(ROM圧縮): EBUZ2_DRAW_N_ROWS/
 EBUZ2_TMP_W            EQU 0F316h  ; EBUZ2_ERASE_N_ROWS専用の残り行数/幅/列
 EBUZ2_TMP_COL          EQU 0F317h  ; ワーク(旧・行ごとの展開コードを置換)
+; round138follow-up5: 変形直後・ビーム発射後のループリセット直後で
+; 共通して使う「20tick静止交互連射してから上下移動を開始する」ための
+; 状態(STACKTOP=0F380hまで100byte超の余裕がある空き領域を使用)。
+EBUZ2_MOVE_PENDING     EQU 0F318h  ; 1=静止連射中(移動未開始)、DELAYが0で移動開始
+EBUZ2_MOVE_START_DELAY EQU 0F319h  ; 残りtick数
 
 ; round136(ROM圧縮、Ebuz Mk2用予算確保): 本体形状データ+レーザー
 ; タイルはStage2/Title共有バンク(Comb bank6、tools/bgm_data/
@@ -14139,8 +14149,15 @@ EBUZ2_RECOIL_CENTER_REST:
     LD HL,EBUZ2_ROW_S2_CENTER_REST : JP EBUZ2_DRAW_ROW6_AT
 
 ; リコイル演出中に一時停止していた上下移動を復帰する。ただし既に1周
-; 完了(EBUZ2_MOVE_RTRIP=1)している場合は再起動しない。
+; 完了(EBUZ2_MOVE_RTRIP=1)している場合は再起動しない。また
+; round138follow-up5: EBUZ2_MOVE_PENDING=1(20tick静止連射待ち中)の
+; 間はまだ移動を再開してはならない - これが無いとEBUZ2_ACT_LOOP_RESET
+; がMOVE_RTRIPを0クリアした直後の次のリコイル休止サイクルでここが
+; 即座にMOVE_ACTIVEを1に戻してしまい、20tick待ちが素通りされる。
 EBUZ2_RESTORE_MOVE_ACTIVE:
+    LD A,(EBUZ2_MOVE_PENDING)
+    OR A
+    RET NZ
     LD A,(EBUZ2_MOVE_RTRIP)
     OR A
     RET NZ
@@ -14180,10 +14197,36 @@ EBUZ2_TRANSFORM:
     JP EBUZ2_DRAW_S2_BODY_AT
 
 ; ----------------------------------------------------------------------
+; round138follow-up5: 上下移動を開始する前の「20tick静止交互連射」
+; 待ち(EBUZ2_MOVE_PENDING=1の間)を消化する。EBUZ2_UPDATE_MOVEは
+; UPDATE_EBUZ2_ALLから毎frame無条件に呼ばれているため、ここで
+; カウントダウンし0に達したら実際にEBUZ2_MOVE_ACTIVEを立てて上下移動を
+; 開始する(この間もALTLOOP_TABLE自体は独立してEBUZ2_SEQ_TICK経由で
+; 進行し続けるため、交互連射は普通に続く - 動くのを遅らせるだけ)。
+; ----------------------------------------------------------------------
+EBUZ2_CHECK_MOVE_PENDING:
+    LD A,(EBUZ2_MOVE_PENDING)
+    OR A
+    RET Z
+    LD A,(EBUZ2_MOVE_START_DELAY)
+    DEC A
+    LD (EBUZ2_MOVE_START_DELAY),A
+    RET NZ
+    XOR A
+    LD (EBUZ2_MOVE_PENDING),A
+    LD (EBUZ2_MOVE_DIR),A
+    LD A,EBUZ2_MOVE_INTERVAL_TICKS
+    LD (EBUZ2_MOVE_COUNTDOWN),A
+    LD A,1
+    LD (EBUZ2_MOVE_ACTIVE),A
+    RET
+
+; ----------------------------------------------------------------------
 ; 上下移動(EBUZ2_MOVE_ACTIVE=1の間、毎tick呼ぶ)。中央出発→下端→
 ; 上端→中央到達で1周完了・自動停止(無印Ebuz Mk2テストROMと同一仕様)。
 ; ----------------------------------------------------------------------
 EBUZ2_UPDATE_MOVE:
+    CALL EBUZ2_CHECK_MOVE_PENDING
     LD A,(EBUZ2_MOVE_ACTIVE)
     OR A
     RET Z
@@ -14304,6 +14347,12 @@ EBUZ2_FIRE_ALL_V1:
 EBUZ2_FAV1_LOOP:
     PUSH AF
     LD (EBUZ2_TMP_A),A                ; lane number (0-4)
+    ; round138follow-up5("初弾はセンター無しで4発に"): lane2(中央、
+    ; ENTRY_TARGET_ROW+2)は発射しない - V1_STRUCT[2].ACTは0のまま
+    ; (TRIGGER_EBUZ2_ENCOUNTERの一括ゼロクリアで既に0)なので
+    ; EBUZ2_UPDATE_V1_ONEも自然にこのレーンを無視する。
+    CP 2
+    JR Z,EBUZ2_FAV1_SKIP
     LD D,0 : LD E,A
     LD HL,EBUZ2_V1_FIRECOL : ADD HL,DE
     LD A,(HL) : LD (EBUZ2_TMP_OFS),A   ; this lane's fire col
@@ -14323,6 +14372,7 @@ EBUZ2_FAV1_LOOP:
     CALL EBUZ2_ADDR
     LD B,EBUZ_BULLET_L_CODE : LD C,EBUZ_BULLET_R_CODE
     CALL EBUZ_WRITE2
+EBUZ2_FAV1_SKIP:
     POP AF
     INC A
     LD (EBUZ2_TMP_A),A
@@ -14532,14 +14582,18 @@ EBUZ2_SCRIPT_TABLE EQU D149h
 
 ; 「では次に外側ペア発射→無制限交互ループへ」の橋渡し(volley2の
 ; 外側ペアはaltループと共有しない専用発射、そのあとaltloopへ)。
+; round138follow-up5: 変形直後は即座に交互連射(ALTLOOP)へ入るが、
+; 上下移動はEBUZ2_STATIC_FIRE_TICKS(20)静止連射してから開始する
+; (EBUZ2_MOVE_ACTIVEを直接立てず、EBUZ2_MOVE_PENDING経由でEBUZ2_
+; CHECK_MOVE_PENDINGに委譲)。
 EBUZ2_ACT_START_MOVEMENT:
     CALL EBUZ2_FIRE_OUTER_PAIR
     XOR A
-    LD (EBUZ2_MOVE_DIR),A
-    LD A,EBUZ2_MOVE_INTERVAL_TICKS
-    LD (EBUZ2_MOVE_COUNTDOWN),A
-    LD A,1
     LD (EBUZ2_MOVE_ACTIVE),A
+    LD A,EBUZ2_STATIC_FIRE_TICKS
+    LD (EBUZ2_MOVE_START_DELAY),A
+    LD A,1
+    LD (EBUZ2_MOVE_PENDING),A
     LD HL,EBUZ2_ALTLOOP_TABLE
     LD (EBUZ2_SEQ_PTR),HL
     RET
@@ -14570,16 +14624,22 @@ EBUZ2_FIRE_LASER_AND_SHIFT:
     CALL SOUND_EBUZ_FIRE
     JP EBUZ2_RECOIL_CENTER_SHIFT
 
+; round138follow-up5("ビーム発射後は20Tick静止連射してからまた下に
+; 動く"): ここも即座にEBUZ2_MOVE_ACTIVEを立てず、ACT_START_MOVEMENTと
+; 同じ「20tick静止連射してから移動開始」をEBUZ2_MOVE_PENDING経由で
+; 委譲する(交互連射自体はEBUZ2_ALTLOOP_TABLEへ切替済みなので即座に
+; 再開する)。
 EBUZ2_ACT_LOOP_RESET:
     XOR A
     LD (EBUZ2_MOVE_DIR),A
     LD (EBUZ2_MOVE_R_MAX),A
     LD (EBUZ2_MOVE_R_MIN),A
     LD (EBUZ2_MOVE_RTRIP),A
-    LD A,EBUZ2_MOVE_INTERVAL_TICKS
-    LD (EBUZ2_MOVE_COUNTDOWN),A
-    LD A,1
     LD (EBUZ2_MOVE_ACTIVE),A
+    LD A,EBUZ2_STATIC_FIRE_TICKS
+    LD (EBUZ2_MOVE_START_DELAY),A
+    LD A,1
+    LD (EBUZ2_MOVE_PENDING),A
     LD HL,EBUZ2_ALTLOOP_TABLE
     LD (EBUZ2_SEQ_PTR),HL
     RET
@@ -14731,6 +14791,7 @@ TRIGGER_EBUZ2_ENCOUNTER:
     LD (EBUZ2_MOVE_R_MIN),A
     LD (EBUZ2_MOVE_RTRIP),A
     LD (EBUZ2_LASER_ACT),A
+    LD (EBUZ2_MOVE_PENDING),A
     ; round136(ROM圧縮): V1_STRUCT(10byte)+V2_COLS(16byte)+V2_ROWS
     ; (16byte、未使用)+V2_NEXT(4byte)は連続46byte(F2E6-F313)なので
     ; まとめて0で埋め(旧・個別9個のLD (addr),A展開を置換)、直後に
