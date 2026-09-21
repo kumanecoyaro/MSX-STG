@@ -13891,8 +13891,17 @@ EBUZ2_LAP_STOP_HOLD_TICKS EQU 15
 EBUZ2_LASER_HOLD_TICKS EQU 4
 
 EBUZ2_MOVE_INTERVAL_TICKS EQU 4
-EBUZ2_MOVE_MIN_ROW EQU 2
-EBUZ2_MOVE_MAX_ROW EQU 14
+; round138(実機フィードバック対応): 移植元tools/ebuz_mk2_test/ebuz_mk2_test.asm
+; ではMOVE_MIN_ROW=1・MOVE_MAX_ROW=13だったが、Stage1移植時に誤って2/14
+; (1セル下)へずれていた。これが「上下移動が1セル下にズレてる」の直接
+; 原因。加えてMAX_ROW=14だとS2本体(7行、row_top+6)がrow20(GROUND_ROW0、
+; 4-row ground scrollerの先頭行、NAMEBUF/PREVBUF差分キャッシュ経由でしか
+; 再描画されない領域)まで到達し、Mk2の生VRAM書き込みがこのキャッシュを
+; 素通りして地形を破損させていた(round54と同型のバグ、「ブランクが
+; 地形のデータに化けてる」の実体)。1/13へ戻すことで両方解消(MAX_ROW=13
+; ならS2本体の最下行はrow19までで、row20には一切到達しない)。
+EBUZ2_MOVE_MIN_ROW EQU 1
+EBUZ2_MOVE_MAX_ROW EQU 13
 
 EBUZ2_OUTER_COL EQU 24
 EBUZ2_INNER_COL EQU 23

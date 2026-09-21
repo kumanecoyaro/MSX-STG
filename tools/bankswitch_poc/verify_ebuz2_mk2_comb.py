@@ -109,6 +109,27 @@ for name, expected in [
 
 
 # ============================================================
+# 1b. round138(実機フィードバック対応): Mk2の上下移動範囲
+#     (EBUZ2_MOVE_MIN_ROW/MAX_ROW)が、移植元tools/ebuz_mk2_test/
+#     ebuz_mk2_test.asmの値(1/13)と一致していること、および開状態
+#     (S2、7行)の最下行がGROUND_ROW0(4-row ground scrollerの先頭行、
+#     NAMEBUF/PREVBUF差分キャッシュ経由でしか再描画されない領域)へ
+#     絶対に到達しないことを直接検証する。移植時にこの範囲が誤って
+#     2/14(1セル下)にずれていたことで、(a)「上下移動が1セル下に
+#     ズレてる」という見た目のバグと、(b)S2本体がrow20まで届き
+#     生VRAM書き込みで地形を破損させる「ブランクが地形のデータに
+#     化けてる」という重大バグの両方が同時に起きていた。
+# ============================================================
+check("EBUZ2_MOVE_MIN_ROW==1(移植元テストROMの値と一致、1セル下ズレの回帰ガード)",
+      gsym["EBUZ2_MOVE_MIN_ROW"] == 1)
+check("EBUZ2_MOVE_MAX_ROW==13(移植元テストROMの値と一致、1セル下ズレの回帰ガード)",
+      gsym["EBUZ2_MOVE_MAX_ROW"] == 13)
+check("EBUZ2_MOVE_MAX_ROW+6(S2本体7行の最下行)がGROUND_ROW0より上に収まる"
+      "(round138の地形破損バグの構造的回帰ガード、値そのものではなく不変条件を検証)",
+      gsym["EBUZ2_MOVE_MAX_ROW"] + 6 < gsym["GROUND_ROW0"])
+
+
+# ============================================================
 # 2. 実際のTitle->Stage1トランポリンを経由した本物の起動+長時間
 #    プレイシミュレーションで、ワイルドジャンプ/フリーズ/意図しない
 #    VRAM破損が起きないことを確認する。
@@ -215,13 +236,22 @@ check("CHECK_BOSS_TRIGGER発火でEbuz Mk2が実際にスポーンする(EBUZ2_A
       mem[gsym["EBUZ2_ACT"]] == 1 and mem[gsym["EBUZ2_HP"]] == gsym["EBUZ2_HP_INIT"])
 
 NFRAMES = 2200
+NAMTBL = 0x1800
+GROUND_ROW0 = gsym["GROUND_ROW0"]
 completed = True
 killed_mid_run = False
+row_cur_bound_ok = True
+row20_untouched = True
+max_row_cur_seen = -1
 for i in range(NFRAMES):
     if not step_frame():
         check(f"フレーム{i}でスタックせず完走する(ワイルドジャンプ/フリーズが起きていないこと)", False)
         completed = False
         break
+    rc = mem[gsym["EBUZ2_ROW_CUR"]]
+    max_row_cur_seen = max(max_row_cur_seen, rc)
+    if rc + 6 >= GROUND_ROW0:
+        row_cur_bound_ok = False
     if i == 900:
         killed_mid_run = call_routine(gsym["CHECK_BULLET_VS_EBUZ2"])
 
@@ -232,6 +262,11 @@ if completed:
     check("2200フレーム経過時点でMk2撃破→実ボスへの引き継ぎが完了している"
           "(EBUZ2_ACT=0・EBUZ2_DEFEATED=1・BOSS_STATE!=0)",
           mem[gsym["EBUZ2_ACT"]] == 0 and mem[gsym["EBUZ2_DEFEATED"]] == 1 and mem[gsym["BOSS_STATE"]] != 0)
+    check(f"実プレイ中、EBUZ2_ROW_CURの実測範囲が期待通り上端(MOVE_MAX_ROW=13)まで振れている"
+          f"(実測max={max_row_cur_seen}、テスト自体が境界を実際に通過していることの確認)",
+          max_row_cur_seen >= 12)
+    check("実プレイを通じて一度もS2本体(row_cur+6)がGROUND_ROW0(20)へ到達しない"
+          "(round138の地形破損バグの動的回帰ガード)", row_cur_bound_ok)
 
 
 print()
