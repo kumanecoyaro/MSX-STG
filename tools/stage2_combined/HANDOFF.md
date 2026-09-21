@@ -17356,3 +17356,109 @@ ENEMY6のO(1)短絡最適化(2026-09-14、完了済み)
   フィードバック待ち。また、message 1で受けた「ステージ開始前の
   イントロ演出追加」依頼(Titleバンク推奨、空き容量約12,059byte)は
   具体的な演出内容が未確定のまま保留継続。
+
+## Round144: Stage1「飛び込んでくる」ステージ開始演出を実装(容量ギリギリ
+0byteで収容・完了済み・実機フィードバック待ち)(2026-09-21)
+
+- ユーザー指示(添付ShipStart1_16x16.json[fg=15白]・ShipStart2_16x16.json
+  [fg=8赤]): "ステージ1スタート直後...急に始まるのでなく飛び込んでくる
+  演出...ShipStart1の下にShipStart2を重ねて左上から斜め右下に移動 Y中央
+  まで来たら通常時の絵にして Xが32pxの位置に...なんとか入らないか"。
+- **設計**: 添付2枚の色(fg8=SPR_RED/fg15=SPR_WHITE)が既存の自機body
+  (slot1)/accent(slot0)描画色と完全一致すると気づき、専用の描画コードを
+  一切書かずに済ませた - INIT時にPLAYERX/PLAYERYを(0,0)・PLAYER_SHIP_PAT/
+  PLAYER_ACCENT_PATを新規の2枚(コード140/144、実VRAM調査で16000フレーム
+  の実プレイシミュレーション後も空きと確認済み)にして`SHIP_ENTRY_ACT=1`
+  を立てるだけで、既存の毎フレームship描画コード(色は無変更のまま)が
+  そのまま流用できる。新規`UPDATE_SHIP_ENTRY`(既存の`PLAYER_RETREAT_ACT`
+  と同じ「他の全サブフェーズより手前でチェックする新規分岐」パターン)が
+  PLAYERX→PLAYER_RETREAT_TARGET_X(32、既存定数を再利用)・PLAYERY→
+  PLAYER_INITY(64、既存定数を再利用、"Y中央"=通常の巡航高度と解釈)を
+  それぞれ独立に2px/frameで近づけ、両方到達した瞬間にSHIP_ENTRY_ACT=0へ
+  落として通常制御へ完全に引き継ぐ(新規定数はSHIP_ENTRY_ACT/SHIP_ENTRY_
+  SPEEDの2つのみ)。
+- **ROM予算(このRoundの本題)**: 着手前の残り60byteに対し、素朴な実装
+  (~172byte)は当然入らない。ここから丸1セッション分の試行錯誤で判明した
+  重大な事実: **単純な「バイト数を数える」予算管理は通用しない** - この
+  ファイルは6箇所の`ALIGN 256`境界を持ち、挿入位置によって「既存の
+  端数パディングへ完全に無料で吸収される(実測: ある配置では172byte
+  追加してもファイル総サイズが1byteも変わらなかった)」場合と「ALIGN境界
+  を1つ踏み越え+256byteの余分なパディングが一気に発生する」場合が
+  非連続に切り替わる。さらに深刻だったのは**plain(単体)アセンブルでは
+  無害だった配置が、Comb組み込み側(`build_full_rom.py`のINIT_PATCH/
+  MAINLOOP_PATCHがバンク切替トランポリン用に追加する数十byte)と
+  組み合わさると別のALIGN境界を踏み越えてComb限定で32768byte予算を
+  196byte超過して`build_full_rom.py`自体が例外で落ちる**という、
+  round142で一度遭遇したのと同型だが今回はより深刻なケース(196byte
+  という一見中途半端な超過量からは原因箇所が一切推測できず、実測による
+  総当たりでしか特定できなかった)。
+  - 診断手法: plain/Comb双方でシンボルテーブルの主要ラベルのアドレスを
+    横断比較し、両者の差分(diff)が一定値から突然+256ジャンプする地点
+    (`LUT:`ラベル)を特定。それより手前にあるコードだけが原因と絞り込み。
+  - 試行錯誤の記録(反面教師として): (1)データ64byteのみファイル末尾
+    ([`PLAYER_PARTICLE_FADE`直後、既存の全ALIGN境界より後ろ]、
+    round142由来の確立済み回避策の位置)へ退避→plain単体が逆に4byte
+    超過(該当ALIGN境界の「無料吸収」を失っただけで悪化)。(2)コード側
+    サブルーチンも同じ末尾位置へ追加移設→plain側もComb側も**同じ**
+    -196byteに悪化(データ・コードいずれも「無料」ゾーンから追い出す
+    ほど損をする、という直感に反する挙動)。(3)最終的に「コード一式は
+    ファイル末尾(無料吸収ゾーン外、1:1でコストが乗る)、データは元の
+    位置(無料吸収される)」という組み合わせでplain=Comb=-21byteまで
+    収束(comb限定の非対称超過だけは解消)、そこから**サブルーチン自体を
+    削り込む**(CALL先1本化・SHIP_ENTRY_STEPの事前チェック省略・隣接
+    RAMアドレス[PLAYERX/PLAYERYが連番、PAT_SHIP_ENTRY_BODY/ACCENTの
+    VRAM書き込み先も連続]を利用したLDIRVM統合[64byte一括転送]等)で
+    最終的に81byte→50byte弱まで圧縮し、**plain=Comb=残り0byteでぴったり
+    収容**。
+  - **重要な教訓(今後の全Stage1変更に適用すべき恒久的注意)**: Stage1
+    (`src/CYBER SHMUP.asm`)への今後のいかなる追加も、**plain単体の
+    残りbyte数だけでなく、必ず`tools/bankswitch_poc/build_full_rom.py`
+    の`patched_game_text()`を経由したComb版アセンブルサイズも同時に
+    測定・確認すること**(片方だけ見て「入った」と判断しない)。ALIGN
+    境界を跨ぐ配置は非直感的な閾値効果を持つため、新規コード/データの
+    配置場所を変えるだけで無料と256byte超過の間を行き来しうる - 迷ったら
+    実測すること。
+- **CALL経由に切り出した一式**(`SHIP_ENTRY_STEP`/`UPDATE_SHIP_ENTRY`/
+  `APPLY_SHIP_ENTRY_PAT`/`LOAD_SHIP_ENTRY_PATTERNS`)は`PLAYER_PARTICLE_
+  SPAWN/FADE`と同じくファイル末尾(全ALIGN境界より後ろ)に配置、呼び出し
+  元(MAINLOOP内の新規分岐・ACCFR_GOT直後・INIT)は3-12byte程度のCALL/
+  分岐のみに圧縮。
+- **既存テストへの影響**: `SHIP_ENTRY_ACT`はINIT直後に1(演出中)のまま
+  残るため、「boot()直後にPLAYERX/PLAYERYを好きな値へpokeしてすぐ効果を
+  見る」という多数の既存テストの前提を壊す実害あり(2件で実際にFAIL、
+  `verify_player_damage.py`/`verify_enemy_bullets.py`)。全Stage1
+  `verify_*.py`(boot()ヘルパーを持つ12ファイル全て)の`boot()`に
+  `SHIP_ENTRY_ACT=0`への強制pokeを追加して解消(演出自体は専用の新規
+  `tools/verify_ship_entry.py`(21件)が、この行を経由しない生のブート
+  手順で検証)。`verify_comb.py`の"Stage1(2nd run)"死亡演出テストにも
+  同じ理由で同じ対処を追加(3rd/4th runは緩い step 予算のため無修正で
+  も偶然パスしていた)。
+  - EBUZ2 (Ebuz Mk2)シーケンステーブルの再パッチも必要と判明(round136の
+    教訓通り、コード配置の大幅な変更でRAMアドレスの相対関係がズレた)。
+    `patch_ebuz2_tables.py`(スクラッチスクリプト、内容は過去セッション
+    のものをそのまま再現)を再実行し`tools/bgm_data/bgm_bank.bin`を
+    再パッチ、`verify_ebuz2_mk2_comb.py`(48件)で確認。
+- VRAM→PNG(GIF)レンダリングで左上(0,0)→(32,64)への斜め接近→通常表示
+  切替を視覚確認。全回帰: Stage2側は無変更(`combined_test.asm`は
+  touchしていないため`run_all.py`省略、CLAUDE.md方針通り)。Stage1側
+  `tools/verify_ship_entry.py` 21・`verify_stage1_mission_screens.py`
+  93・`verify_player_damage.py` 60・`verify_stage1_bgm.py` 81・
+  `verify_enemy_bullets.py` 60・`verify_explosion_anim.py` 28・
+  `verify_spawn_schedule_restart.py` 12・`verify_enemy6_durability.py`
+  27・`verify_boss_dfl_clear.py` 10・`verify_boss_schedule_gate.py` 8・
+  `verify_boss_spawn_trigger.py` 28・`verify_boss_y_shift.py` 9・
+  `verify_ebuz_integration.py` 109・`verify_mainloop_loop_bounds.py`
+  29・`verify_stage1_hud_movement.py` 8、全てPASS。`verify_ebuz2_mk2_
+  comb.py` 48 passed。`verify_comb.py`全チェックPASS。Comb ROM再ビルド
+  の上、標準方針によりComb ROMのみ送付。詳細な微最適化の経緯(隣接RAM
+  アドレスの活用・LDIRVM統合等)は本セッションの会話ログ参照。
+- **重要・要注意: Stage1 ROM残り容量が正確にゼロ(0byte)に到達**。
+  plain単体・Comb組み込み側の両方で32768/32768byteちょうど。**今後
+  Stage1(`src/CYBER SHMUP.asm`)へのいかなる新機能追加も、まず既存の
+  何かをバンク6(共有chardata/BGMバンク、round64のBOSS_PATTERNSオフ
+  ロードと同じ手法)またはStage1専用の新規バンクへ退避してROM予算を
+  確保することが前提になる。**`SHIP_ENTRY_SPEED`(2px/frame)・開始
+  座標(0,0)は未調整の初期値。
+- **保留(message 1、未回答のまま)**: なし - 今回の実装でmessage 1の
+  「ステージ開始前のイントロ演出」要望に対応完了。
+

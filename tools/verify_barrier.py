@@ -50,6 +50,13 @@ def run_until_pc(z, target_pc, max_instr=300000):
 def boot(z):
     z.pc = sym["INIT"]
     run_until_pc(z, sym["MAINLOOP"])
+    # (2026-09-21、"ステージ1スタート直後...飛び込んでくる演出"):
+    # INIT終了直後はSHIP_ENTRY_ACT=1・PLAYERX/Y=0のまま(演出開始前)。
+    # 既存の全テストは"boot()直後にPLAYERX/PLAYERYを好きな値へpoke
+    # してすぐ効果を見る"という前提のため、通常のboot()はここで演出を
+    # 即座に完了扱いにする(演出自体の検証はverify_ship_entry.pyが
+    # 専用に、この行を経由しない生のPC=INIT実行で行う)。
+    z.wr(sym["SHIP_ENTRY_ACT"], 0)
 
 
 def step_frame(z):

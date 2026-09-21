@@ -72,6 +72,11 @@ def boot(z):
     z.pc = sym["INIT"]
     for _ in range(500000):
         if z.pc == sym["MAINLOOP"]:
+            # (2026-09-21、飛び込み演出): 既存テストの前提("boot()直後に
+            # PLAYERX/PLAYERYを好きな値へpoke")を保つため、通常のboot()
+            # では演出を即座に完了扱いにする(演出自体はverify_ship_
+            # entry.pyが専用に検証する)。
+            z.wr(sym["SHIP_ENTRY_ACT"], 0)
             return
         z.step()
     raise RuntimeError("never reached MAINLOOP")

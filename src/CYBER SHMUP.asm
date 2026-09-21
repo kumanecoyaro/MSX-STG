@@ -100,6 +100,13 @@ PAT_SHIP_UP   EQU 112   ; SHIP_UP_PATTERN, shown while climbing (32 bytes at SPR
                         ; free range between EXPLOSION_PATNUM's 108-111 and PAT_PARTICLE's 120)
 PAT_SHIP_DOWN EQU 116   ; SHIP_DOWN_PATTERN, shown while diving (32 bytes at SPRPAT+928)
 
+; (2026-09-21、"ステージ1スタート直後...飛び込んでくる演出"): 開始直後の
+; 飛び込み演出専用の2枚(ShipStart1/2)。codes140-255はブート直後・
+; 549件スケジュール完走+ステージクリア一周後のいずれも実VRAM調査で
+; 空きと確認済み(16000フレームの実プレイシミュレーション)。
+PAT_SHIP_ENTRY_BODY   EQU 140  ; SHIP_ENTRY_BODY_PATTERN(ShipStart2、赤)
+PAT_SHIP_ENTRY_ACCENT EQU 144  ; SHIP_ENTRY_ACCENT_PATTERN(ShipStart1、白)
+
 SPR_RED     EQU 08h     ; sprite color: red
 SPR_WHITE   EQU 0Fh     ; sprite color: white
 SPR_BLACK   EQU 01h     ; sprite color: black
@@ -458,6 +465,16 @@ PLAYER_RETREAT_SPEED EQU 2       ; px/frame while retreating to PLAYER_RETREAT_T
 ; XをPARTICLE寿命*|DX|とちょうど一致する32へ変更して解消。
 PLAYER_RETREAT_TARGET_X EQU 32   ; px from the left edge the retreat stops at
 PARTICLE_SPAWN_COOLDOWN EQU 0E83Ah  ; frames until the next spawn is allowed
+
+; (2026-09-21、"ステージ1スタート直後...急に始まるのでなく飛び込んで
+; くる演出...左上から斜め右下に移動 Y中央まで来たら通常時の絵にして
+; Xが32pxの位置に"): 開始直後の飛び込み演出。目標位置はPLAYER_RETREAT_
+; TARGET_X(32)/PLAYER_INITY(64、既存の通常巡航高度)をそのまま再利用
+; (新規定数を増やさないため)。0F332hはPARTICLE_DY(0F32Eh、4byte)直後・
+; STACKTOP(0F380h)手前の既存の空き領域("0F22Bh-0F37Fhの341バイトの
+; 空き領域")内。
+SHIP_ENTRY_ACT   EQU 0F332h  ; 0=通常/1=飛び込み演出中
+SHIP_ENTRY_SPEED EQU 2       ; px/frame、PLAYER_RETREAT_SPEEDと同じ考え方
 
 ; --- Enemy1: one-time diagonal dodge toward the player when     ---
 ; --- crossing screen-center X. Per-instance now: E_PARAM0 (done?),  ---
@@ -1421,10 +1438,16 @@ INIT_SPRATR_CLR:
     ; ステージ側の初期化が半分終わった状態のままだった)。
 
     ; --- player initial state ---
-    LD A,PLAYER_INITX : LD (PLAYERX),A
-    LD A,PLAYER_INITY : LD (PLAYERY),A
-    LD A,PAT_SHIP : LD (PLAYER_SHIP_PAT),A
-    LD A,PAT_ACCENT : LD (PLAYER_ACCENT_PAT),A
+    ; (2026-09-21、"急に始まるのでなく飛び込んでくる演出"): 通常の
+    ; PLAYER_INITX/Y・PAT_SHIP/PAT_ACCENTでは始めず、画面左上(0,0)・
+    ; 飛び込み専用パターンでスタートし、SHIP_ENTRY_ACT=1を立てる。
+    ; 到達後は下記の毎フレーム処理(PFA_NO_DEATH_FALLより手前)が自動で
+    ; PLAYER_INITY相当・PLAYER_RETREAT_TARGET_X(32)・通常パターンへ
+    ; 切り替える。
+    XOR A : LD (PLAYERX),A : LD (PLAYERY),A
+    LD A,PAT_SHIP_ENTRY_BODY : LD (PLAYER_SHIP_PAT),A
+    LD A,PAT_SHIP_ENTRY_ACCENT : LD (PLAYER_ACCENT_PAT),A
+    LD A,1 : LD (SHIP_ENTRY_ACT),A
     LD A,BARRIER_HP_INIT : LD (BARRIER_HP),A   ; barrier equipped from game start
     XOR A : LD (GAME_OVER),A : LD (BARRIER_IFRAMES),A
     LD (SND_BARRIER_DUTY_TIMER),A
@@ -1496,6 +1519,7 @@ INIT_SPRATR_CLR:
     LD HL,ENEMY4_PATTERN : LD DE,PAT_ENEMY4*8+SPRPAT : LD BC,32 : CALL LDIRVM
     LD HL,ENEMY4_PATTERN_2 : LD DE,PAT_ENEMY4_2*8+SPRPAT : LD BC,32 : CALL LDIRVM
     LD HL,EBULLET_PATTERN : LD DE,PAT_EBULLET*8+SPRPAT : LD BC,32 : CALL LDIRVM
+    CALL LOAD_SHIP_ENTRY_PATTERNS
     LD HL,SHIP_MID_PATTERN : LD DE,PAT_SHIP*8+SPRPAT : LD BC,32 : CALL LDIRVM
     LD HL,SHIP_UP_PATTERN : LD DE,PAT_SHIP_UP*8+SPRPAT : LD BC,32 : CALL LDIRVM
     LD HL,SHIP_DOWN_PATTERN : LD DE,PAT_SHIP_DOWN*8+SPRPAT : LD BC,32 : CALL LDIRVM
@@ -2147,6 +2171,21 @@ ROWDONE_5:
     ; --- protection wasn't enough to stop VDP/sprite corruption,   ---
     ; --- so BC/DE/HL/IX/IY are all preserved this time.            ---
     ; ============================================================
+    ; (2026-09-21、"ステージ1スタート直後...急に始まるのでなく飛び込んで
+    ; くる演出...左上から斜め右下に移動 Y中央まで来たら通常時の絵にして
+    ; Xが32pxの位置に"): 全サブフェーズの中で最も手前(GAME_OVERより前)
+    ; でチェック - ステージ開始直後にしか起こり得ないため。ジョイス
+    ; ティック入力は無視し、PLAYERX/PLAYERYをそれぞれ独立にPLAYER_
+    ; RETREAT_TARGET_X(32)/PLAYER_INITY(64)へSHIP_ENTRY_SPEEDずつ近づけ、
+    ; 両方到達したらSHIP_ENTRY_ACTを落として以後の通常チェーンへ引き継ぐ。
+    ; (ROM予算のALIGN-256境界の関係で、実処理はUPDATE_SHIP_ENTRY[後方の
+    ; 安全なコード領域]へ切り出し、ここはCALLのみに留めている)
+    LD A,(SHIP_ENTRY_ACT)
+    OR A
+    JR Z,PFA_NO_ENTRY
+    CALL UPDATE_SHIP_ENTRY
+    JP DIR_DONE
+PFA_NO_ENTRY:
     ; (2026-09-07、"ステージ1の自機爆発演出追加 操作無効の上爆発しながら
     ; 右斜め下に落下しMission Failed表示に"、続けて"落下したら自機は
     ; 画面外に消えるように"、さらに"斜め下に落下したらそのまま画面外に
@@ -2444,6 +2483,15 @@ ACCFR_DOWN:
     LD A,PAT_ACCENT_DOWN_BARRIER
 ACCFR_GOT:
     LD (PLAYER_ACCENT_PAT),A
+
+    ; (2026-09-21、飛び込み演出): 上記の通常ポーズ選択(JOY_STICK/
+    ; BARRIER_HP由来)を丸ごと上書きし、飛び込み演出専用パターンへ
+    ; 差し替える。色は下のDI描画ブロック側が元々SPR_RED/SPR_WHITE
+    ; 固定(ACC_COLOR_GOTのBARRIER_IFRAMES分岐のみ)のため無変更 -
+    ; ShipStart2=赤/ShipStart1=白と一致させて選んだ配色(EQU参照)。
+    LD A,(SHIP_ENTRY_ACT)
+    OR A
+    CALL NZ,APPLY_SHIP_ENTRY_PAT
 
     ; "被弾時はバリア色のホワイトをパープルに" - flashes purple for the
     ; same window as BARRIER_IFRAMES (the post-hit invulnerability
@@ -4194,6 +4242,7 @@ INIT_BGM:
 ; 全く同じ設計(BGM_B/C_PTR等の内部状態には一切触れず、BGM_TICK自身の
 ; chB/chC更新をBGM_MUTEDフラグ1本で丸ごとスキップさせつつ、今鳴って
 ; いる音を即座に切るためR9/R10を明示的に0へ)。
+
 MUTE_BGM:
     LD A,1 : LD (BGM_MUTED),A
     DI
@@ -14966,6 +15015,25 @@ PAIRBASE:
 ; slot1, drawn at ship_X+8, ship_Y): see ACCENT_MID_PATTERN/
 ; ACCENT_DOWN_PATTERN right below.
 
+; (2026-09-21、"急に始まるのでなく飛び込んでくる演出...ShipStart1の下に
+; ShipStart2を重ねて"): 開始直後の飛び込み演出専用の2枚。ShipStart1
+; (白、slot0/accent)・ShipStart2(赤、slot1/body)は既存のSPR_WHITE/
+; SPR_RED描画コードと同じ色を使うため、色バイト自体は無変更(通常の
+; body/accent描画ブロックをそのまま流用、PLAYER_SHIP_PAT/PLAYER_
+; ACCENT_PATだけ一時的にこちらへ差し替える設計、下記SHIP_ENTRY_ACT
+; 参照)。
+SHIP_ENTRY_BODY_PATTERN:  ; ShipStart2 (fg=8=SPR_RED, bg=1)
+    DB 0C0h,0F0h,0FEh,7Fh,0FFh,0FFh,0FFh,7Fh   ; top-left
+    DB 0FFh,0FFh,0FFh,7Fh,0FEh,0F0h,0C0h,00h   ; bottom-left
+    DB 00h,00h,00h,80h,0E0h,0F8h,0FEh,0FFh     ; top-right
+    DB 0FEh,0F8h,0E0h,80h,00h,00h,00h,00h      ; bottom-right
+
+SHIP_ENTRY_ACCENT_PATTERN:  ; ShipStart1 (fg=15=SPR_WHITE, bg=1)
+    DB 0C0h,30h,0Eh,41h,0FEh,0A1h,0A0h,7Fh     ; top-left
+    DB 0A0h,0A1h,0FEh,41h,0Eh,30h,0C0h,00h     ; bottom-left
+    DB 00h,00h,00h,80h,60h,00h,0BAh,7Dh        ; top-right
+    DB 0BAh,00h,60h,80h,00h,00h,00h,00h        ; bottom-right
+
 ; Accent overlay animation, 2 frames (ShipMidW/ShipDownW from the
 ; Sprite Editor): MID shows with no vertical movement, DOWN shows
 ; while diving - no separate up-frame, climbing keeps MID. Picked
@@ -16076,4 +16144,48 @@ PPF_SKIP:
     LD A,C
     CP PARTICLE_SLOTS
     JP NZ,PPF_LOOP
+    RET
+
+; (2026-09-21、飛び込み演出): CALL経由のみで使う一式。ROM予算の
+; ALIGN-256境界の関係で、PLAYER_PARTICLE_SPAWN/FADEと同じくファイル
+; 末尾(全ALIGN境界より後ろ)に配置(実測により、この位置以外では
+; Comb組み込み側の追加パッチぶんでALIGN境界を超え+256byteの余分な
+; パディングが発生することを確認済み)。
+; (自機は常に目標未満から出発するため、事前のCP判定は省略 - 加算後の
+; クランプ判定のみ。呼び出し元はRET直後のAを再利用してターゲット到達を
+; 判定するため、Dを一切破壊しないことと合わせてAに最終格納値を残す。)
+SHIP_ENTRY_STEP:
+    LD A,(HL)
+    ADD A,SHIP_ENTRY_SPEED
+    CP D
+    JR C,SES_STORE
+    LD A,D
+SES_STORE:
+    LD (HL),A
+    RET
+
+; PLAYERX/PLAYERYが隣接アドレスなのを利用しHLをINCで使い回す(ただし
+; X/Yは両方とも毎フレーム無条件に進める必要があるため、Xの到達判定で
+; 早期RETしてYの更新をスキップしてはならない - 最初の実装でこの
+; バグを踏んだため、完了判定は両方のCALLが終わった後にまとめて行う)。
+; 2回目のCALL後もHL=PLAYERY/D=PLAYER_INITYのままな点を再利用し、
+; Y判定はLD A,(HL):CP Dのみで済ませる。
+UPDATE_SHIP_ENTRY:
+    LD HL,PLAYERX : LD D,PLAYER_RETREAT_TARGET_X : CALL SHIP_ENTRY_STEP
+    INC HL : LD D,PLAYER_INITY : CALL SHIP_ENTRY_STEP
+    LD A,(HL) : CP D : RET NZ
+    DEC HL : LD A,(HL) : CP PLAYER_RETREAT_TARGET_X : RET NZ
+    XOR A : LD (SHIP_ENTRY_ACT),A
+    RET
+
+APPLY_SHIP_ENTRY_PAT:
+    LD A,PAT_SHIP_ENTRY_BODY : LD (PLAYER_SHIP_PAT),A
+    LD A,PAT_SHIP_ENTRY_ACCENT : LD (PLAYER_ACCENT_PAT),A
+    RET
+
+; SHIP_ENTRY_BODY/ACCENT_PATTERNはソース側32byte連続、コード140-147
+; (PAT_SHIP_ENTRY_BODY=140の4コード+PAT_SHIP_ENTRY_ACCENT=144の4コード)
+; もVRAM上で連続なため、1回のLDIRVM(64byte)にまとめられる。
+LOAD_SHIP_ENTRY_PATTERNS:
+    LD HL,SHIP_ENTRY_BODY_PATTERN : LD DE,PAT_SHIP_ENTRY_BODY*8+SPRPAT : LD BC,64 : CALL LDIRVM
     RET

@@ -37,6 +37,48 @@
 - 新規にVRAM/PSG/その他ハードウェアポートへのブロック転送を実装する際は、着手前に
   必ずこのセクションを再確認し、`OTIR`系命令を使わないこと。
 
+## Stage1 ROM予算(2026-09-21、Round144時点で残り0byte・恒久的に確認必須)
+
+- `src/CYBER SHMUP.asm`のROM予算(32768byte、bank0/1合計)は、**plain単体アセンブル・
+  `tools/bankswitch_poc/build_full_rom.py`のComb組み込み側アセンブルの両方が
+  ちょうど32768/32768byte(残り0byte)** の状態。**今後Stage1へ1byteでも追加する変更を
+  行う場合、まず何かをバンク6(共有chardata/BGMバンク、round64のBOSS_PATTERNSオフロード
+  と同じ手法でRAMコピー化)またはStage1専用の新規バンクへ退避してROM予算を確保することが
+  大前提になる。**
+- **重要な罠(Round144で丸1セッション分を要して判明)**: このファイルは6箇所の
+  `ALIGN 256`境界を持ち、新規コード/データの挿入位置によって「既存の端数パディングへ
+  無料で吸収される」場合と「ALIGN境界を1つ踏み越えて+256byteの余分なパディングが
+  一気に発生する」場合が非連続に切り替わる、非直感的な閾値効果がある。さらに、
+  **plain単体では無害だった配置が、Comb組み込み側(`build_full_rom.py`のINIT_PATCH/
+  MAINLOOP_PATCHが追加する数十byte)と組み合わさると別のALIGN境界を踏み越え、
+  Comb限定でアセンブルが例外落ちする**ことがある(plainだけ確認して「入った」と
+  判断しないこと)。
+- **対応方針**: 新規のCALL先サブルーチン(呼び出し元からのみ参照される、物理位置が
+  実行順序と無関係なコード)は`PLAYER_PARTICLE_SPAWN`/`PLAYER_PARTICLE_FADE`と同じく
+  ファイル末尾(全`ALIGN 256`境界より後ろ)に配置するのが安全な既定位置(このゾーンは
+  ALIGNの恩恵を受けず1byte単位でコストが乗るが、逆に言えば配置しても**他の場所の
+  ALIGN挙動を一切乱さない**という利点がある)。データ(DB定義済みテーブル等)は
+  逆にファイル中盤の既存ALIGN境界の手前に置く方が無料で吸収されやすい傾向がある
+  (ただし絶対ではなく実測が必要)。
+- **確認手順**: 変更後は必ず両方を実測すること。
+  ```
+  # plain単体
+  python3 -c "import sys; sys.path.insert(0,'tools'); from mini_z80asm import Assembler; \
+    text=open('src/CYBER SHMUP.asm',encoding='utf-8').read(); out=Assembler(text).assemble(); \
+    a=max(out); b=min(out); print('plain remaining:', 32768-(a-b+1))"
+  # Comb組み込み側
+  cd tools/bankswitch_poc && python3 -c "import sys; sys.path.insert(0,'..'); sys.path.insert(0,'.'); \
+    from mini_z80asm import Assembler; from build_full_rom import patched_game_text; \
+    out=Assembler(patched_game_text()).assemble(); a=max(out); b=min(out); \
+    print('comb remaining:', 32768-(a-b+1))"
+  ```
+  両方が0以上であることを確認してから`python3 build_full_rom.py`を実行すること
+  (負の場合は`Exception: game byte at unexpected address ...`で例外落ちする)。
+- コードサイズが変化した場合は`tools/stage2_combined/HANDOFF.md`のRound136由来の
+  教訓通り、EBUZ2(Ebuz Mk2)シーケンステーブルの再パッチ(`patch_ebuz2_tables.py`、
+  詳細はHANDOFF.md該当Round参照)と`verify_ebuz2_mk2_comb.py`での確認も必要になる
+  可能性がある。
+
 ## プロジェクト構造(探索不要)
 
 - 開発中の作業ファイル: `tools/stage2_combined/combined_test.asm`

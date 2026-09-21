@@ -494,6 +494,11 @@ while cpu2.pc != MAINLOOP and steps_g2 < 2_000_000:
     cpu2.step()
     steps_g2 += 1
 assert cpu2.pc == MAINLOOP, "Stage1 (2nd run) never reached its own MAINLOOP"
+# (2026-09-21、"ステージ1スタート直後...飛び込んでくる演出"): 起動直後は
+# SHIP_ENTRY_ACT=1のままで、以後の1フレームテストがPLAYERX/PLAYERYを
+# 飛び込み演出に上書きされてしまう(tools/verify_*.pyのboot()ヘルパーと
+# 同じ理由で同じ対処 - この演出自体は他ファイルで専用に検証済み)。
+mem2.flat[gsym["SHIP_ENTRY_ACT"]] = 0
 
 BARRIER_HP = gsym["BARRIER_HP"]
 GAME_OVER_SEQ = gsym["GAME_OVER_SEQ"]
