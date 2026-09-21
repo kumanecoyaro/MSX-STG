@@ -17242,3 +17242,70 @@ ENEMY6のO(1)短絡最適化(2026-09-14、完了済み)
   エネミー4クラッシュ演出(1発目〜2発目間の飛散間隔`ENEMY4_CRASH_
   SPAWN_INTERVAL`=8は未調整の初期値)・EbuzIIスコア5000点の妥当性は
   いずれも次回フィードバック待ち。
+
+
+## Round142: ステージクリア演出のサウンド固着バグ+撃ちっぱなしバグ修正+
+後退距離32px制限+排気パーティクル4個化(2026-09-21、完了済み・実機
+フィードバック待ち)
+
+- ユーザー報告3点: (1)"ステージ1終了で飛び去る演出のサウンドが鳴り続けて
+  しまうバグ 何度もデバッグしたが未だに何度かに一回起こる"、(2)"弾打ち
+  っぱなしで演出に入ると手を離しても撃ち続けるバグを調査し修正したい"、
+  (3)"一度後ろまで下がってから前に自動で飛ぶ演出 下がり過ぎでパー
+  ティクルが右から出てしまってるんで下がるのは左から32pxまでに
+  パーティクルの数も増やしたい"。
+- (1) 根本原因: `PFA_STILLGOING`(flyawayのエンジン音"goooo"、R6ノイズ
+  周期を毎フレーム再武装)のPSGレジスタ選択+データ書き込みが、ファイル
+  全体で唯一DI/EI保護されていなかった。H.TIMI駆動のBGM_TICKがこの2
+  命令の間に割り込むと、PSGのアドレスラッチがBGM側の別レジスタを指した
+  まま書き込みが飛び、稀にR8(チャンネルA音量)へエンベロープ有効ビット
+  (bit4)付きの値が誤って書き込まれる - 一度この状態になると後続の
+  静的な音量0書き込みが効かなくなり、音が鳴り続ける("何度かに一回"の
+  直接原因)。他の全PSG書き込み箇所と同じDI/EIで挟んで解消。
+- (2) 根本原因: 左端への後退フェーズ(`PLAYER_RETREAT_ACT`)は
+  `PFA_NORMAL_INPUT`のGTTRIG再読込(JOY_TRIGの更新)を一度も経由せず
+  "JP DIR_DONE"で毎回抜けるため、ボス撃破の瞬間にトリガーを押している
+  とその値が後退フェーズの間ずっと凍結された"押しっぱなし"のまま発射
+  チェックに素通りする(GAME_OVER時の死亡落下、round71と全く同型の
+  バグ)。発射ゲートに`PLAYER_RETREAT_ACT`のチェックを追加(`OR (HL)`で
+  PLAYER_FLYAWAYと1命令にまとめ、ROMコスト+3byteに圧縮)。
+- (3) 後退目標を`PLAYER_RETREAT_TARGET_X`(=32px)へ変更。排気パーティクル
+  (`PARTICLE_X`)の移動がクランプ無しの単純ADD(DX=-4/frame)のため、X=0
+  付近まで後退した状態で新規パーティクルが出現すると、寿命8フレーム
+  以内に8bitアンダーフローして画面右端(252等)へラップし、そこで
+  まだ寿命が残っているため実際に描画されてしまっていた - 寿命(8)*
+  |DX|(4)=32pxとちょうど一致する距離まで後退を止めることでアンダー
+  フロー自体を起こさせないようにして解消。排気パーティクルのスロット数
+  を2→4に増加(`PARTICLE_SLOTS`)。RAM配列(ACT/X/Y/COL/DX/DY)は元々
+  隙間の無かったE82B-E836から、既知の空きプール(0F31Ah-、"0F22Bh-
+  0F37Fhの341バイトの空き領域"の残り)へ移設して拡張。
+- **ROM予算の副作用と対応**: 上記の修正(実測+19byte)がComb組み込み後
+  ビルドの`REFRESH_IDCACHE_33`直後の`ALIGN 256`(地形LUTテーブル用)の
+  直前で、たまたまパディング0のギリギリの位置にあったことが判明 - この
+  ALIGNは常に次の256倍数まで切り上げるため、わずか19byteの増加でも
+  +256byteの余分なパディングが発生し、Comb版のビルドが32768byte予算を
+  149byte超過(`assemble_game()`が"game byte at unexpected address
+  c000"で失敗)。`PLAYER_PARTICLE_SPAWN`/`PLAYER_PARTICLE_FADE`(単なる
+  CALL先で物理位置は無関係)をファイル末尾、この地形LUT群の全ALIGN
+  境界より後ろへ移設することで約300byteをこの境界の手前から除去し解消
+  (実装ロジック自体の削減は不要だった)。プレーン単体アセンブルは元々
+  この境界を無傷で通過していたため今回の問題はComb限定だった。
+- `tools/verify_stage1_mission_screens.py`に3件の回帰テストを追加
+  (PSG DI/EI保護・PLAYER_RETREAT_ACT中の発射ゲート・パーティクルの
+  右端ラップ回避)、既存の後退到達テストを新目標値(32px)に更新+新規
+  安全ケース(後退開始時点で既に目標未満)を追加。全て一時的に修正を
+  取り消してFAILすることを確認した上で復元・再PASS済み(計93件PASS)。
+  既存のStage1回帰群(verify_enemy_bullets.py 60/verify_player_
+  damage.py 60/verify_stage1_bgm.py 80/verify_enemy6_durability.py
+  27/verify_explosion_anim.py 28/verify_boss_dfl_clear.py 10/
+  verify_boss_spawn_trigger.py 28/verify_spawn_schedule_restart.py
+  12/verify_enemy4_crash.py 17/verify_mainloop_loop_bounds.py 29)も
+  全てPASS(`combined_test.asm`は無変更のためStage2側`run_all.py`は
+  省略)。EBUZ2シーケンステーブルをComb組み込み後の新アドレスへ再パッチ
+  (round136ルール)、`verify_ebuz2_mk2_comb.py` 48 passed。Comb ROM
+  再ビルド・`verify_comb.py`全チェックPASSの上、標準方針によりComb
+  ROMのみ送付。
+- **保留・実機フィードバック待ち**: (1)の修正は理論上の根本原因
+  (DI/EI未保護)を特定して塞いだものだが、割り込みタイミング依存の
+  再現性の低いバグのため実機での完全解消は次回フィードバック待ち。
+  (3)のパーティクル4個化・32px後退の見え方も実機確認待ち。
