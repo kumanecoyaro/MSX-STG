@@ -130,6 +130,62 @@ check("EBUZ2_MOVE_MAX_ROW+6(S2本体7行の最下行)がGROUND_ROW0より上に�
 
 
 # ============================================================
+# 1c. round138 follow-up(実機フィードバック対応、"上下移動範囲は修整
+#     されたがブランクが地形に化けてるのは直っていない"): 1bの修正
+#     だけではこの症状は解消しなかった。真因は別にあった - 移植元
+#     tools/ebuz_mk2_test/ebuz_mk2_test.asm(スタンドアロンのテストROM)
+#     は本体形状データの「空白セル」を生のパターンコード0で表していた
+#     が、Stage1ではコード0は空白ではなく(BIOSデフォルトフォント由来と
+#     思われる)実グラフィックが残っており、Stage1全体の「空セル」の
+#     唯一正しい規約はBLANKCODE(=48、row0-19のsky全体がこれで塗られて
+#     いる)。移植時にこの規約差を見落とし0のまま持ち込んだ結果、Mk2
+#     本体の隙間セル・BLANK5/BLANK6(消去用)がまだら状の異物(コード0の
+#     残留グラフィック)を表示してしまっていた。EBUZ2_BLANK5〜
+#     EBUZ2_LASER_L_TILE直前(107byte、本体形状+消去データのみ、
+#     レーザータイルのビットマップ本体は対象外)の値0を全てBLANKCODE
+#     (48)へ置換して解消したことを直接検証する。
+# ============================================================
+BLANKCODE = gsym["BLANKCODE"]
+A_, B_, C_, D_ = 88, 96, 104, 112
+Z = BLANKCODE  # このデータ中の"空白セル"の正しい値
+expected_blank_region = {
+    'EBUZ2_BLANK5': [Z, Z, Z, Z, Z],
+    'EBUZ2_BLANK6': [Z, Z, Z, Z, Z, Z],
+    'EBUZ2_ROW_0': [Z, Z, A_, B_, C_],
+    'EBUZ2_ROW_1': [Z, A_, B_, C_, D_],
+    'EBUZ2_ROW_2': [A_, B_, C_, D_, D_],
+    'EBUZ2_ROW_3': [Z, A_, B_, C_, D_],
+    'EBUZ2_ROW_4': [Z, Z, A_, B_, C_],
+    'EBUZ2_ROW_S2_0': [Z, Z, A_, B_, C_],
+    'EBUZ2_ROW_S2_1': [Z, A_, B_, C_, C_],
+    'EBUZ2_ROW_S2_2': [Z, Z, Z, Z, D_],
+    'EBUZ2_ROW_S2_3': [A_, B_, C_, D_, D_],
+    'EBUZ2_ROW_S2_4': [Z, Z, Z, Z, D_],
+    'EBUZ2_ROW_S2_5': [Z, A_, B_, C_, C_],
+    'EBUZ2_ROW_S2_6': [Z, Z, A_, B_, C_],
+    'EBUZ2_ROW_S2_OUTER_REST': [Z, Z, A_, B_, C_, Z],
+    'EBUZ2_ROW_S2_OUTER_RECOIL': [Z, Z, Z, A_, B_, C_],
+    'EBUZ2_ROW_S2_INNER_REST': [Z, A_, B_, C_, C_, Z],
+    'EBUZ2_ROW_S2_INNER_RECOIL': [Z, Z, A_, B_, C_, C_],
+    'EBUZ2_ROW_S2_CENTER_REST': [A_, B_, C_, D_, D_, Z],
+    'EBUZ2_ROW_S2_CENTER_RECOIL': [Z, A_, B_, C_, D_, D_],
+}
+RAM_BASE_BLANK = gsym["EBUZ2_BLANK5"]
+all_blank_region_ok = True
+for name, expected in expected_blank_region.items():
+    ram_addr = gsym[name]
+    blob_pos = mk2_offset + (ram_addr - RAM_BASE_BLANK)
+    actual = list(bgm_bank[blob_pos:blob_pos + len(expected)])
+    if actual != expected:
+        all_blank_region_ok = False
+    check(f"{name}: bank6内のバイト列が空白セル=BLANKCODE({BLANKCODE})規約で正しく格納されている"
+          "(round138 follow-upの地形化けバグの回帰ガード、コード0[残留グラフィック]ではないこと)",
+          actual == expected)
+check("EBUZ2本体形状+消去データ(107byte)の中に、パターンコード0(Stage1では非空白の"
+      "残留グラフィック)が1バイトも残っていない", all_blank_region_ok)
+
+
+# ============================================================
 # 2. 実際のTitle->Stage1トランポリンを経由した本物の起動+長時間
 #    プレイシミュレーションで、ワイルドジャンプ/フリーズ/意図しない
 #    VRAM破損が起きないことを確認する。

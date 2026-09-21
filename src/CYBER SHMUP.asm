@@ -1760,6 +1760,22 @@ STAGE_CLEAR_NOT_FROZEN:
     CALL EBUZ_ANY_ACTIVE
     OR A
     JR NZ,SKIP_SCHEDULE_TICK
+    ; round138(実機フィードバック対応、"ブランクが地形のデータに化けてる"の
+    ; 真因): 上のEBUZ_ANY_ACTIVE(無印Ebuz生存中はスケジュール凍結)と同じ
+    ; 扱いをEbuz Mk2(EBUZ2_ACT)にも適用しないと、Mk2の一体制スクリプト
+    ; 戦闘中もSPAWN_SCHEDULE_CHECKが素通りで走り続け、スケジュール上の
+    ; 無印Ebuz("ebuz"配置)を含む通常エネミーがMk2と同時に湧いてしまう
+    ; (実機報告の「地形データに化けてる」の実体は、無印Ebuzの弾
+    ; [EBUZ_BULLET_L/R_CODE=136/137、色0B4h=水色地に黄]がMk2戦闘中に
+    ; 普通に飛んでいるだけだった - 実機起動シミュレーションでのVRAM
+    ; レンダリング調査により、この弾が正常に1px/frameで左へ飛び続けて
+    ; いる[消し忘れではない]ことを確認済み)。既存のEBUZ_ANY_ACTIVE
+    ; ルーチン自体([無印Ebuz固有のコード)には一切触れず、この汎用
+    ; ディスパッチゲート側にEBUZ2_ACTチェックを追加するだけで対応
+    ; (独立性を保つ - "独立出来るなら独立させろ"の指示に沿う)。
+    LD A,(EBUZ2_ACT)
+    OR A
+    JR NZ,SKIP_SCHEDULE_TICK
     LD HL,(GAME_TICK) : INC HL : LD (GAME_TICK),HL
     ; round135follow-up16("ボスでは居ないはずのEbuzが出てる スポーン
     ; 条件をすり抜けてるな"): CHECK_BOSS_TRIGGERはGAME_TICK>=1024+
@@ -13955,6 +13971,23 @@ EBUZ2_TMP_COL          EQU 0F317h  ; ワーク(旧・行ごとの展開コード
 ; 方式)。ROM上には二度と実体を持たず、Stage1側は下記EQUアドレスを
 ; 直接読むだけ(0xD0C0起点、tools/title_screen/title_test.asm
 ; INIT_BGMのLDIR先と一致させること)。
+;
+; round138(実機フィードバック対応、"ブランクが地形のデータに化けてる"):
+; 移植元tools/ebuz_mk2_test/ebuz_mk2_test.asm(スタンドアロンのテスト
+; ROM)では本体形状データの「空白セル」を生値0で表していたが、Stage1
+; ではパターンコード0は空白ではなく(BIOSのデフォルトフォント由来と
+; 思われる)実グラフィックが残っており、Stage1全体で「空のセル」を
+; 表す唯一の正しい規約はBLANKCODE(=48、行1の定義参照、row0-19の
+; 空模様(sky)全体がこのコードで塗られている)。移植時にこの規約差を
+; 見落とし0のまま持ち込んだ結果、Mk2本体の隙間セル・BLANK5/BLANK6
+; (消去用)がことごとくコード0(=非空白の残留グラフィック、色は白/
+; 濃紺で見た目は不規則な斑模様)を書き込んでしまい、「本体の隙間や
+; 消去跡がまだら状の異物に化けて見える」実機バグになっていた。
+; tools/bgm_data/bgm_bank.bin側でEBUZ2_MK2_CHARDATAの該当領域
+; (EBUZ2_BLANK5〜EBUZ2_LASER_L_TILE直前、107byte)の値0を全てBLANKCODE
+; (48)へ置換して解消(レーザータイル本体[EBUZ2_LASER_L/R_TILE、
+; パターンジェネレータへ読み込むビットマップそのもの]は名前テーブル
+; コードではないため対象外)。
 EBUZ2_BLANK5                 EQU D0C0h
 EBUZ2_BLANK6                 EQU D0C5h
 EBUZ2_ROW_0                  EQU D0CBh
