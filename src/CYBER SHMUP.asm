@@ -446,7 +446,17 @@ BOSS_EXPL_COL       EQU 0E825h   ; scratch: this pop's boss-map col
 PLAYER_FLYAWAY      EQU 0E828h   ; 0=normal control, 1=auto-flying right, 2=off-screen/hidden
 PLAYER_FLYAWAY_SPD  EQU 0E82Ah   ; current flyaway speed
 PLAYER_FLYAWAY_DIST EQU 0E839h   ; total px traveled since flyaway started (accel curve)
-PLAYER_RETREAT_SPEED EQU 2       ; px/frame while retreating to X=0 (constant, no RAM)
+PLAYER_RETREAT_SPEED EQU 2       ; px/frame while retreating to PLAYER_RETREAT_TARGET_X
+; round142("下がり過ぎでパーティクルが右から出てしまってるんで下がるのは
+; 左から32pxまでに"): 元は左端X=0まで後退させていたが、PLAYER_PARTICLE_
+; FADE(下記)のPARTICLE_X更新はクランプなしの単純なADD(X+=DX、DX=-4/frame)
+; のため、Xが0付近まで下がった状態で新しいパーティクルがX=0近辺で
+; spawnすると数フレームで8bitアンダーフローし右端(252等)へラップして
+; 見えてしまっていた(実測: 寿命8フレーム*DX(-4px/frame)=32pxちょうど
+; 移動しきったところで消える設計のため、開始Xが32以上あれば寿命が
+; 尽きるまでX=0に到達しない=アンダーフローが起こり得ない)。後退の目標
+; XをPARTICLE寿命*|DX|とちょうど一致する32へ変更して解消。
+PLAYER_RETREAT_TARGET_X EQU 32   ; px from the left edge the retreat stops at
 PARTICLE_SPAWN_COOLDOWN EQU 0E83Ah  ; frames until the next spawn is allowed
 
 ; --- Enemy1: one-time diagonal dodge toward the player when     ---
@@ -499,16 +509,24 @@ ENEMY1_ANIM_FRAME_LEN EQU 4  ; frames per 1,2,3,2 quadrant-anim step while
 ; --- the unified ENEMY_POOL (see ENEMY_CENTER_X above).             ---
 POD_VOLLEY_COLOR_TEST EQU 0E829h ; trial: +1 every frame while pods are launched, wraps 2-14
 
-; --- rainbow particle trail during the flyaway: 2 slots (sprite    ---
-; --- scanline budget - only 2 to spare), reusing pod-explosion     ---
-; --- sprite numbers 22-23. Each particle actually travels (small   ---
-; --- random angle off due-left) and despawns after ~32px. ---
-PARTICLE_ACT         EQU 0E82Bh  ; 2 bytes: 0=inactive, else frames of life left
-PARTICLE_X           EQU 0E82Dh  ; 2 bytes
-PARTICLE_Y           EQU 0E82Fh  ; 2 bytes
-PARTICLE_COL         EQU 0E831h  ; 2 bytes
-PARTICLE_DX          EQU 0E833h  ; 2 bytes, signed
-PARTICLE_DY          EQU 0E835h  ; 2 bytes, signed
+; --- rainbow particle trail during the flyaway: 4 slots (round142,
+; --- "パーティクルの数も増やしたい" - up from 2), reusing pod-
+; --- explosion sprite numbers 22-25 (of EXPLOSION_SPR_BASE's 8,
+; --- 22-29 - all guaranteed free by the time the flyaway runs, the
+; --- boss and its pods are long gone). Each particle actually
+; --- travels (small random angle off due-left) and despawns after
+; --- ~32px. round142: moved off the old tightly-packed E82B-E836
+; --- block (zero slack before PLAYER_FLYAWAY_WAIT) into the known
+; --- free pocket documented at PLAYER_EXPL_POOL/GAME_OVER_SEQ
+; --- ("0F22Bh-0F37Fhの341バイトの空き領域") to make room for the
+; --- extra 2 slots without shifting every RAM symbol after it.
+PARTICLE_SLOTS       EQU 4
+PARTICLE_ACT         EQU 0F31Ah  ; 4 bytes: 0=inactive, else frames of life left
+PARTICLE_X           EQU 0F31Eh  ; 4 bytes
+PARTICLE_Y           EQU 0F322h  ; 4 bytes
+PARTICLE_COL         EQU 0F326h  ; 4 bytes
+PARTICLE_DX          EQU 0F32Ah  ; 4 bytes, signed
+PARTICLE_DY          EQU 0F32Eh  ; 4 bytes, signed
 PLAYER_FLYAWAY_WAIT  EQU 0E838h  ; frames left in the pre-flyaway pause
 LAP_MARKER_SPR   EQU 30
 LAP_MARKER_SPR2  EQU 31
@@ -1502,7 +1520,7 @@ INIT_SPRATR_CLR:
     XOR A : LD (PARTICLE_SPAWN_COOLDOWN),A
     LD A,2 : LD (POD_VOLLEY_COLOR_TEST),A
     LD HL,PARTICLE_ACT : LD (HL),0
-    LD DE,PARTICLE_ACT+1 : LD BC,11 : LDIR
+    LD DE,PARTICLE_ACT+1 : LD BC,23 : LDIR   ; round142: 4 slots * 6 arrays = 24 bytes
     XOR A
     LD (FIRE_COOLDOWN),A
 
@@ -2196,20 +2214,25 @@ PFA_NO_DEATH_FALL:
     ; (2026-09-06、"一旦左端まで下がってから飛び去る様に変更"): 通常の
     ; flyawayシーケンスより前にチェックする新規サブフェーズ - ボス撃破の
     ; 瞬間にPLAYER_RETREAT_ACT=1が立ち、ここでPLAYERXをPLAYER_RETREAT_
-    ; SPEEDずつ0へ近づける(ジョイスティック入力は無視)。X=0へ到達したら
-    ; 従来通りPLAYER_FLYAWAY_WAIT/SPDを起動して普通のflyawayへ引き継ぐ
-    ; (PFA_MOVING以降のロジックは完全に無変更)。
+    ; SPEEDずつPLAYER_RETREAT_TARGET_Xへ近づける(ジョイスティック入力は
+    ; 無視)。目標に到達したら従来通りPLAYER_FLYAWAY_WAIT/SPDを起動して
+    ; 普通のflyawayへ引き継ぐ(PFA_MOVING以降のロジックは完全に無変更)。
+    ; (round142、"下がり過ぎでパーティクルが右から出てしまってる"):
+    ; 目標を旧来のX=0からPLAYER_RETREAT_TARGET_X(=32、PARTICLE_ACT寿命
+    ; ちょうど分)へ変更、PLAYER_RETREAT_TARGET_X自身のコメント参照。
     LD A,(PLAYER_RETREAT_ACT)
     OR A
     JR Z,PFA_NO_RETREAT
     LD A,(PLAYERX)
-    OR A
+    SUB PLAYER_RETREAT_TARGET_X   ; carry set if PLAYERX<target (safety); Z set if
+    JR C,PFA_RETREAT_DONE         ; equal; else A = remaining distance to the target
     JR Z,PFA_RETREAT_DONE
     CP PLAYER_RETREAT_SPEED
     JR NC,PFA_RETREAT_STEP
-    XOR A
+    LD A,PLAYER_RETREAT_TARGET_X  ; remaining < speed: snap exactly to target
     JR PFA_RETREAT_SET
 PFA_RETREAT_STEP:
+    LD A,(PLAYERX)
     SUB PLAYER_RETREAT_SPEED
 PFA_RETREAT_SET:
     LD (PLAYERX),A
@@ -2292,8 +2315,20 @@ PFA_STILLGOING:
     ; frame so it stays sustained instead of decaying like a normal
     ; sound effect; left alone (and so left to decay away naturally)
     ; once the ship goes fully hidden.
+    ; (round142、"飛び去る演出のサウンドが鳴り続けてしまうバグ...何度か
+    ; に一回起こる"): このPSGレジスタ選択+データの2段書き込みだけが
+    ; ファイル全体で唯一DI/EI保護されていなかった - H.TIMI駆動のBGM_
+    ; TICKがこの2命令の間で割り込むと、アドレスラッチがBGM側の別レジスタ
+    ; を指したままこのA=18の書き込みが飛んでしまい、稀にR8(チャンネルA
+    ; 音量)へエンベロープ有効ビット(bit4)付きの値が誤って書き込まれる -
+    ; 一度この状態になるとSOUND_UPDATE/TRIGGER_STAGE_CLEARが後で書く
+    ; 静的な音量値(0含む)が効かなくなり、ハードウェアエンベロープ任せの
+    ; 音が鳴り続けてしまう。他の全PSG書き込み箇所(SOUND_DESTROY等)と
+    ; 同じDI/EIで挟んで解消。
+    DI
     LD A,6 : OUT (PSG_ADDR),A
     LD A,18 : OUT (PSG_DATA),A
+    EI
     LD A,10 : LD (SND_TIMER),A
     CALL PLAYER_PARTICLE_SPAWN
     JP DIR_DONE
@@ -2461,8 +2496,18 @@ ACC_COLOR_GOT:
     ; --- screen, with a 1-frame gap enforced between spawns so  ---
     ; --- holding the button fires intermittently (shot,gap,shot)---
     ; ============================================================
+    ; (round142、"弾打ちっぱなしで演出に入ると手を離しても撃ち続ける
+    ; バグ"): PLAYER_RETREAT_ACT中(ボス撃破直後、flyawayより前の左端への
+    ; 後退フェーズ)はPFA_NORMAL_INPUT自体を経由しない(退避専用の"JP
+    ; DIR_DONE"で毎回抜ける)ため、GTTRIGでJOY_TRIGを読み直す行に一度も
+    ; 到達しない - ボス撃破の瞬間にトリガーを押していると、その値が
+    ; そのまま後退フェーズの間ずっと"押しっぱなし"として凍結され続け、
+    ; 実際には指を離していても発射され続けていた(GAME_OVER時の死亡落下と
+    ; 全く同型のバグ、round71参照)。PLAYER_FLYAWAYと同じ扱いでここに
+    ; ガードを追加。
     LD A,(PLAYER_FLYAWAY)
-    OR A
+    LD HL,PLAYER_RETREAT_ACT
+    OR (HL)
     EI
     JP NZ,FIRE_DONE
     ; (2026-09-07、実機フィードバック対応、"ステージ1で画面が壊れる原因が
@@ -2982,147 +3027,10 @@ PDYA_DONE:
     POP BC
     RET
 
-; Called every frame while the ship is actively flying away. Looks
-; for a free slot (0 or 1) and, if one's free, launches a new
-; particle from the ship's back at a small random angle around
-; due-left (a 3-way DY spread table approximates +-30 deg at this
-; pixel resolution) - DX is fixed at -2/frame, DY in {-1,0,1}, so
-; each particle covers its ~32px lifetime in 16 frames. With only 2
-; slots and a 16-frame life, actual spawns end up gated by whichever
-; slot frees up next, even though this is called every frame.
-PLAYER_PARTICLE_SPAWN:
-    LD A,(PARTICLE_SPAWN_COOLDOWN)
-    OR A
-    JR Z,PPS_COOLDOWN_OK
-    DEC A : LD (PARTICLE_SPAWN_COOLDOWN),A
-    RET
-PPS_COOLDOWN_OK:
-    LD A,(PARTICLE_ACT+0)
-    OR A
-    JR Z,PPS_USE0
-    LD A,(PARTICLE_ACT+1)
-    OR A
-    RET NZ
-    LD C,1
-    JR PPS_SPAWN
-PPS_USE0:
-    LD C,0
-PPS_SPAWN:
-    LD A,4 : LD (PARTICLE_SPAWN_COOLDOWN),A
-    LD HL,PARTICLE_ACT : LD D,0 : LD E,C : ADD HL,DE
-    LD (HL),8
-
-    LD A,(PLAYERX)
-    SUB 4
-    JR NC,PPS_XOK
-    XOR A
-PPS_XOK:
-    LD HL,PARTICLE_X : LD D,0 : LD E,C : ADD HL,DE
-    LD (HL),A
-
-    LD A,(PLAYERY)
-    LD HL,PARTICLE_Y : LD D,0 : LD E,C : ADD HL,DE
-    LD (HL),A
-
-    LD A,0FCh                        ; dx = -4, straight back, fast
-    LD HL,PARTICLE_DX : LD D,0 : LD E,C : ADD HL,DE
-    LD (HL),A
-
-    LD A,(DFL_RNG) : INC A : LD (DFL_RNG),A
-    AND 3
-    CP 3 : JR NZ,PPS_DYIDX_OK
-    XOR A
-PPS_DYIDX_OK:
-    LD D,0 : LD E,A
-    LD HL,PARTICLE_DY_TABLE : ADD HL,DE
-    LD A,(HL)
-    LD HL,PARTICLE_DY : LD D,0 : LD E,C : ADD HL,DE
-    LD (HL),A
-
-    LD A,SPR_WHITE
-    LD HL,PARTICLE_COL : LD D,0 : LD E,C : ADD HL,DE
-    LD (HL),A
-    RET
-
-; -1/0/+1, indexed by a small random pick - the +-30ish degree
-; spread around due-left (DX=-2 is the dominant component).
-PARTICLE_DY_TABLE:
-    DB 0FFh,00h,01h
-
-; Called every frame, unconditionally: ages, moves, and redraws
-; every active particle slot, hiding one the instant its life
-; reaches 0. Runs regardless of PLAYER_FLYAWAY so already-spawned
-; particles keep travelling/fading even after the ship itself has
-; gone hidden. Bails out immediately (before touching the VDP at
-; all) if both slots are idle, which is the case for the entire rest
-; of the game outside the flyaway - important, since this is called
-; unconditionally every single frame.
-PLAYER_PARTICLE_FADE:
-    LD A,(PARTICLE_ACT+0)
-    LD B,A
-    LD A,(PARTICLE_ACT+1)
-    OR B
-    RET Z
-
-    LD C,0
-PPF_LOOP:
-    LD HL,PARTICLE_ACT : LD D,0 : LD E,C : ADD HL,DE
-    LD A,(HL)
-    OR A
-    JP Z,PPF_SKIP
-    DEC A : LD (HL),A
-
-    LD HL,PARTICLE_DX : LD D,0 : LD E,C : ADD HL,DE
-    LD A,(HL) : LD B,A
-    LD HL,PARTICLE_X : LD D,0 : LD E,C : ADD HL,DE
-    LD A,(HL) : ADD A,B : LD (HL),A
-    LD HL,PARTICLE_DY : LD D,0 : LD E,C : ADD HL,DE
-    LD A,(HL) : LD B,A
-    LD HL,PARTICLE_Y : LD D,0 : LD E,C : ADD HL,DE
-    LD A,(HL) : ADD A,B : LD (HL),A
-
-    LD A,EXPLOSION_SPR_BASE : ADD A,C
-    ADD A,A : ADD A,A : LD E,A : LD D,0
-    DI
-    LD A,E : OUT (99h),A
-    NOP
-    NOP
-    LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
-
-    LD HL,PARTICLE_ACT : LD D,0 : LD E,C : ADD HL,DE
-    LD A,(HL)
-    OR A
-    EI
-    JR NZ,PPF_VISIBLE
-    DI
-    LD A,ENEMY_HIDE_Y : OUT (98h),A
-    PUSH BC : POP BC : NOP : NOP
-    LD A,255 : OUT (98h),A
-    PUSH BC : POP BC : NOP : NOP
-    EI
-    JP PPF_SKIP
-PPF_VISIBLE:
-    LD HL,PARTICLE_Y : LD D,0 : LD E,C : ADD HL,DE
-    DI
-    LD A,(HL) : OUT (98h),A
-    PUSH BC : POP BC : NOP : NOP
-    LD HL,PARTICLE_X : LD D,0 : LD E,C : ADD HL,DE
-    LD A,(HL) : OUT (98h),A
-    PUSH BC : POP BC : NOP : NOP
-    LD A,PAT_PARTICLE : OUT (98h),A
-    PUSH BC : POP BC : NOP : NOP
-    LD HL,PARTICLE_COL : LD D,0 : LD E,C : ADD HL,DE
-    LD A,(HL) : OUT (98h),A
-    PUSH BC : POP BC : NOP : NOP
-    EI
-PPF_SKIP:
-    INC C
-    LD A,C
-    CP 2
-    JP NZ,PPF_LOOP
-    RET
+; round142(ROM budget): PLAYER_PARTICLE_SPAWN/PLAYER_PARTICLE_FADE moved
+; to the tail of the file - see their own header comment there for why
+; (ALIGN 256 cliff avoidance, no functional change; both are plain
+; CALLed routines so their physical file position doesn't matter).
 
 ; ============================================================
 ; enemy formation helpers
@@ -16009,3 +15917,157 @@ ROWDATA0 EQU 0CEB0h  ; 128 bytes RAM(INITで'M'を充填)
 ROWDATA2 EQU 0CF30h  ; 128 bytes RAM(INITで'D'を充填)
 ROWDATA3 EQU 0CFB0h  ; 128 bytes RAM(INITで'S'を充填)
 ROWDATA5 EQU 0D030h  ; 128 bytes RAM(INITで'A','B'交互に充填)
+
+; round142(ROM budget): PLAYER_PARTICLE_SPAWN/PLAYER_PARTICLE_FADE
+; (called from PFA_MOVING/MAINLOOP, formerly right after PLAYER_DIR_
+; ADJUST near the top of the file) relocated down here. Reason: the
+; terrain LUT tables (REFRESH_IDCACHE_33's "ALIGN 256" right before
+; LUT:) were sitting EXACTLY on a 256-byte boundary already (zero
+; slack) - round142's bug fixes (retreat-target rewrite/fire gate
+; PLAYER_RETREAT_ACT check/PSG DI-EI protection, all upstream of that
+; ALIGN) pushed the file's byte count past it by only ~19 bytes, but
+; because ALIGN always rounds up to the FULL next 256-byte boundary,
+; even that tiny overage cost a full extra 256 bytes of padding -
+; enough to blow the Comb build's 32768-byte budget (assemble_game()
+; started raising "game byte at unexpected address c000"). Moving
+; these two routines (pure CALL targets, so their physical position
+; in the file has no functional effect) past ALL of this file's
+; remaining ALIGN directives removes ~300 bytes from before that
+; cliff, restoring comfortable slack without shrinking any of the
+; actual bug-fix logic itself.
+PLAYER_PARTICLE_SPAWN:
+    LD A,(PARTICLE_SPAWN_COOLDOWN)
+    OR A
+    JR Z,PPS_COOLDOWN_OK
+    DEC A : LD (PARTICLE_SPAWN_COOLDOWN),A
+    RET
+PPS_COOLDOWN_OK:
+    LD B,PARTICLE_SLOTS
+    LD HL,PARTICLE_ACT
+PPS_FIND_SLOT:
+    LD A,(HL)
+    OR A
+    JR Z,PPS_SLOT_FOUND
+    INC HL
+    DJNZ PPS_FIND_SLOT
+    RET                          ; every slot busy this frame
+PPS_SLOT_FOUND:
+    LD A,PARTICLE_SLOTS : SUB B : LD C,A   ; C = slot index found
+PPS_SPAWN:
+    LD A,4 : LD (PARTICLE_SPAWN_COOLDOWN),A
+    LD HL,PARTICLE_ACT : LD D,0 : LD E,C : ADD HL,DE
+    LD (HL),8
+
+    LD A,(PLAYERX)
+    SUB 4
+    JR NC,PPS_XOK
+    XOR A
+PPS_XOK:
+    LD HL,PARTICLE_X : LD D,0 : LD E,C : ADD HL,DE
+    LD (HL),A
+
+    LD A,(PLAYERY)
+    LD HL,PARTICLE_Y : LD D,0 : LD E,C : ADD HL,DE
+    LD (HL),A
+
+    LD A,0FCh                        ; dx = -4, straight back, fast
+    LD HL,PARTICLE_DX : LD D,0 : LD E,C : ADD HL,DE
+    LD (HL),A
+
+    LD A,(DFL_RNG) : INC A : LD (DFL_RNG),A
+    AND 3
+    CP 3 : JR NZ,PPS_DYIDX_OK
+    XOR A
+PPS_DYIDX_OK:
+    LD D,0 : LD E,A
+    LD HL,PARTICLE_DY_TABLE : ADD HL,DE
+    LD A,(HL)
+    LD HL,PARTICLE_DY : LD D,0 : LD E,C : ADD HL,DE
+    LD (HL),A
+
+    LD A,SPR_WHITE
+    LD HL,PARTICLE_COL : LD D,0 : LD E,C : ADD HL,DE
+    LD (HL),A
+    RET
+
+; -1/0/+1, indexed by a small random pick - the +-30ish degree
+; spread around due-left (DX=-2 is the dominant component).
+PARTICLE_DY_TABLE:
+    DB 0FFh,00h,01h
+
+; Called every frame, unconditionally: ages, moves, and redraws
+; every active particle slot, hiding one the instant its life
+; reaches 0. Runs regardless of PLAYER_FLYAWAY so already-spawned
+; particles keep travelling/fading even after the ship itself has
+; gone hidden. Bails out immediately (before touching the VDP at
+; all) if every slot is idle, which is the case for the entire rest
+; of the game outside the flyaway - important, since this is called
+; unconditionally every single frame.
+PLAYER_PARTICLE_FADE:
+    LD B,PARTICLE_SLOTS
+    LD HL,PARTICLE_ACT
+PPF_ANYACT_LOOP:
+    LD A,(HL) : OR A : JR NZ,PPF_ANYACT_FOUND
+    INC HL : DJNZ PPF_ANYACT_LOOP
+    RET
+PPF_ANYACT_FOUND:
+
+    LD C,0
+PPF_LOOP:
+    LD HL,PARTICLE_ACT : LD D,0 : LD E,C : ADD HL,DE
+    LD A,(HL)
+    OR A
+    JP Z,PPF_SKIP
+    DEC A : LD (HL),A
+
+    LD HL,PARTICLE_DX : LD D,0 : LD E,C : ADD HL,DE
+    LD A,(HL) : LD B,A
+    LD HL,PARTICLE_X : LD D,0 : LD E,C : ADD HL,DE
+    LD A,(HL) : ADD A,B : LD (HL),A
+    LD HL,PARTICLE_DY : LD D,0 : LD E,C : ADD HL,DE
+    LD A,(HL) : LD B,A
+    LD HL,PARTICLE_Y : LD D,0 : LD E,C : ADD HL,DE
+    LD A,(HL) : ADD A,B : LD (HL),A
+
+    LD A,EXPLOSION_SPR_BASE : ADD A,C
+    ADD A,A : ADD A,A : LD E,A : LD D,0
+    DI
+    LD A,E : OUT (99h),A
+    NOP
+    NOP
+    LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+
+    LD HL,PARTICLE_ACT : LD D,0 : LD E,C : ADD HL,DE
+    LD A,(HL)
+    OR A
+    EI
+    JR NZ,PPF_VISIBLE
+    DI
+    LD A,ENEMY_HIDE_Y : OUT (98h),A
+    PUSH BC : POP BC : NOP : NOP
+    LD A,255 : OUT (98h),A
+    PUSH BC : POP BC : NOP : NOP
+    EI
+    JP PPF_SKIP
+PPF_VISIBLE:
+    LD HL,PARTICLE_Y : LD D,0 : LD E,C : ADD HL,DE
+    DI
+    LD A,(HL) : OUT (98h),A
+    PUSH BC : POP BC : NOP : NOP
+    LD HL,PARTICLE_X : LD D,0 : LD E,C : ADD HL,DE
+    LD A,(HL) : OUT (98h),A
+    PUSH BC : POP BC : NOP : NOP
+    LD A,PAT_PARTICLE : OUT (98h),A
+    PUSH BC : POP BC : NOP : NOP
+    LD HL,PARTICLE_COL : LD D,0 : LD E,C : ADD HL,DE
+    LD A,(HL) : OUT (98h),A
+    PUSH BC : POP BC : NOP : NOP
+    EI
+PPF_SKIP:
+    INC C
+    LD A,C
+    CP PARTICLE_SLOTS
+    JP NZ,PPF_LOOP
+    RET

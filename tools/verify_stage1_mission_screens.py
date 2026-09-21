@@ -653,6 +653,10 @@ check("engine-noise regression: R8 stays silenced across further frozen frames w
       z.psg_regs.get(8) == 0)
 
 # ---- retreat-to-left-edge before flyaway ----
+# (round142、"下がり過ぎでパーティクルが右から出てしまってるんで下がる
+# のは左から32pxまでに"): 目標がX=0からPLAYER_RETREAT_TARGET_X(=32)へ
+# 変更されたことの直接検証。
+PLAYER_RETREAT_TARGET_X = sym["PLAYER_RETREAT_TARGET_X"]
 z = fresh()
 boot(z)
 z.wr(PLAYERX, 100)
@@ -665,31 +669,66 @@ while z.rd(PLAYER_RETREAT_ACT) != 0 and steps < 200:
     step_frame(z)
     steps += 1
     cur_x = z.rd(PLAYERX)
-    if steps < 100 // PLAYER_RETREAT_SPEED:
+    if steps < (100 - PLAYER_RETREAT_TARGET_X) // PLAYER_RETREAT_SPEED:
         check_label = f"retreat step {steps}: PLAYERX decreases by PLAYER_RETREAT_SPEED " \
                       f"({PLAYER_RETREAT_SPEED}) per frame (was {prev_x}, now {cur_x})"
-        if not (prev_x - cur_x == PLAYER_RETREAT_SPEED or cur_x == 0):
+        if not (prev_x - cur_x == PLAYER_RETREAT_SPEED or cur_x == PLAYER_RETREAT_TARGET_X):
             check(check_label, False)
     prev_x = cur_x
-check("retreat: PLAYERX reaches exactly 0 (never wraps/undershoots past the left edge)",
-      z.rd(PLAYERX) == 0)
-check("retreat: PLAYER_RETREAT_ACT clears once X==0", z.rd(PLAYER_RETREAT_ACT) == 0)
-check("retreat: reaching X==0 arms the existing flyaway-wait sequence (PLAYER_FLYAWAY_WAIT=40)",
+check(f"retreat: PLAYERX reaches exactly PLAYER_RETREAT_TARGET_X({PLAYER_RETREAT_TARGET_X}) "
+      "(never wraps/undershoots past it)",
+      z.rd(PLAYERX) == PLAYER_RETREAT_TARGET_X)
+check("retreat: PLAYER_RETREAT_ACT clears once the target is reached", z.rd(PLAYER_RETREAT_ACT) == 0)
+check("retreat: reaching the target arms the existing flyaway-wait sequence (PLAYER_FLYAWAY_WAIT=40)",
       z.rd(PLAYER_FLYAWAY_WAIT) == 40)
-check("retreat: reaching X==0 arms the existing flyaway speed (PLAYER_FLYAWAY_SPD=1)",
+check("retreat: reaching the target arms the existing flyaway speed (PLAYER_FLYAWAY_SPD=1)",
       z.rd(PLAYER_FLYAWAY_SPD) == 1)
 check("retreat: PLAYER_FLYAWAY itself stays 0 until the existing PFA_FLYAWAY_IDLE wait "
       "counts down (unchanged downstream behavior)",
       z.rd(PLAYER_FLYAWAY) == 0)
 
-# retreat already at X=0: must complete in a single frame, no off-by-one stall
+# retreat already at the target: must complete in a single frame, no off-by-one stall
 z = fresh()
 boot(z)
-z.wr(PLAYERX, 0)
+z.wr(PLAYERX, PLAYER_RETREAT_TARGET_X)
 z.wr(PLAYER_RETREAT_ACT, 1)
 step_frame(z)
-check("retreat: starting already at X=0 completes the retreat sub-phase in the very first frame",
-      z.rd(PLAYER_RETREAT_ACT) == 0 and z.rd(PLAYER_FLYAWAY_WAIT) == 40)
+check("retreat: starting already at the target completes the retreat sub-phase in the very first "
+      "frame", z.rd(PLAYER_RETREAT_ACT) == 0 and z.rd(PLAYER_FLYAWAY_WAIT) == 40)
+
+# retreat starting BELOW the target (shouldn't normally happen, but must not get stuck/underflow)
+z = fresh()
+boot(z)
+z.wr(PLAYERX, 10)
+z.wr(PLAYER_RETREAT_ACT, 1)
+step_frame(z)
+check("retreat: starting below the target (safety case) completes immediately rather than "
+      "trying to move further left", z.rd(PLAYER_RETREAT_ACT) == 0 and z.rd(PLAYER_FLYAWAY_WAIT) == 40)
+
+# ---- round142: PARTICLE_X never wraps around to the right side while the ----
+# ---- particle is still visible, even starting flyaway right at the       ----
+# ---- (new) retreat target - this is the actual bug the 32px retreat      ----
+# ---- limit exists to prevent (DX=-4/frame, life=8 frames -> 32px total). ----
+PARTICLE_ACT = sym["PARTICLE_ACT"]
+PARTICLE_X = sym["PARTICLE_X"]
+PARTICLE_SLOTS = sym["PARTICLE_SLOTS"]
+PLAYERY = sym["PLAYERY"]
+z = fresh()
+boot(z)
+z.wr(PLAYERX, PLAYER_RETREAT_TARGET_X)
+z.wr(PLAYERY, 100)
+worst_x_while_visible = 0
+for _ in range(40):
+    call_routine(z, sym["PLAYER_PARTICLE_SPAWN"])
+    call_routine(z, sym["PLAYER_PARTICLE_FADE"])
+    for slot in range(PARTICLE_SLOTS):
+        if z.rd(PARTICLE_ACT + slot) != 0:
+            worst_x_while_visible = max(worst_x_while_visible, z.rd(PARTICLE_X + slot))
+check(f"round142 regression: starting the flyaway exhaust trail right at "
+      f"PLAYER_RETREAT_TARGET_X({PLAYER_RETREAT_TARGET_X}) never lets a still-visible "
+      f"particle's X wrap around to the right side of the screen (worst observed X while "
+      f"visible = {worst_x_while_visible}, must stay well below the retreat target itself)",
+      worst_x_while_visible <= PLAYER_RETREAT_TARGET_X)
 
 # boss-death trigger arms PLAYER_RETREAT_ACT, not PLAYER_FLYAWAY_WAIT directly
 z = fresh()
@@ -930,6 +969,86 @@ step_frame(z2)
 check("...but normal play (GAME_OVER=0) still fires a new bullet as usual - the new "
       "GAME_OVER gate doesn't regress ordinary firing",
       z2.rd(BULLET0_ACT) == 1)
+
+# ---- round142: "弾打ちっぱなしで演出に入ると手を離しても撃ち続けるバグ" ----
+# Same "frozen JOY_TRIG" mechanism as the GAME_OVER death-fall case above, but
+# for PLAYER_RETREAT_ACT (the left-edge retreat sub-phase before flyaway):
+# PFA_NO_RETREAT's retreat branch also returns via "JP DIR_DONE" without ever
+# reaching PFA_NORMAL_INPUT's GTTRIG re-scan, so a trigger held at the exact
+# instant the boss dies stays latched "pressed" for the whole retreat phase
+# even after the player physically lets go.
+z = fresh()
+boot(z)
+z.sim_trig_a = True
+step_frame(z)  # legitimately latches JOY_TRIG=0FFh via the real scan
+assert z.rd(JOY_TRIG) == 0xFF, "test setup: JOY_TRIG didn't actually latch 'pressed'"
+z.wr(PLAYER_RETREAT_ACT, 1)
+z.wr(PLAYER_FLYAWAY, 0)
+z.wr(PLAYERX, 100)
+z.wr(PLAYERY, 100)
+z.wr(BULLET0_ACT, 0)
+z.wr(BULLET0_ROW, 0xAA)
+z.wr(BULLET0_ADDR, 0xAA); z.wr(BULLET0_ADDR + 1, 0xAA)
+z.wr(FIRE_COOLDOWN, 0)
+step_frame(z)
+check("round142 regression: a JOY_TRIG frozen 'pressed' from just before the boss dies "
+      "does NOT spawn a new bullet during the left-edge retreat sub-phase (PLAYER_RETREAT_ACT"
+      "!=0), even though the ship's own X movement is still under PFA_NO_RETREAT's control "
+      "and PLAYER_FLYAWAY itself is still 0",
+      z.rd(BULLET0_ACT) == 0 and z.rd(BULLET0_ROW) == 0xAA and
+      z.rd(BULLET0_ADDR) == 0xAA and z.rd(BULLET0_ADDR + 1) == 0xAA)
+
+# ---- sanity: once the retreat completes and normal control resumes, firing ----
+# ---- works again as usual (the new gate must not stick).                   ----
+z3 = fresh()
+boot(z3)
+z3.sim_trig_a = True
+step_frame(z3)
+z3.wr(PLAYER_RETREAT_ACT, 0)
+z3.wr(PLAYER_FLYAWAY, 0)
+z3.wr(PLAYERX, 100)
+z3.wr(PLAYERY, 100)
+z3.wr(BULLET0_ACT, 0)
+z3.wr(FIRE_COOLDOWN, 0)
+step_frame(z3)
+check("...but once PLAYER_RETREAT_ACT clears (ordinary play, or the retreat having already "
+      "finished), firing works normally again - the new gate doesn't stick",
+      z3.rd(BULLET0_ACT) == 1)
+
+# ---- round142: "飛び去る演出のサウンドが鳴り続けてしまうバグ...何度かに  ----
+# ---- 一回起こる" - the flyaway engine-noise PSG write (the only one in the ----
+# ---- whole file that wasn't DI/EI-protected) must now select the register ----
+# ---- (port A0h) and write its value (port A1h) with interrupts disabled   ----
+# ---- for both halves, exactly like every other PSG write in this file.   ----
+PFA_STILLGOING = sym["PFA_STILLGOING"]
+PSG_ADDR = sym["PSG_ADDR"]
+PSG_DATA = sym["PSG_DATA"]
+z = fresh()
+boot(z)
+z.iff1 = True
+z.a = 200
+z.pc = PFA_STILLGOING
+out_events = []
+for _ in range(20):
+    if len(out_events) >= 2:
+        break
+    pc_before = z.pc
+    opcode = mem0[pc_before]
+    iff1_before = z.iff1
+    if opcode == 0xD3:  # OUT (n),A
+        port = mem0[pc_before + 1]
+        out_events.append((port, iff1_before))
+    z.step()
+check("round142 regression: the flyaway engine-noise PSG register-select write "
+      f"(port {PSG_ADDR:02X}h) happens with interrupts disabled (DI already executed "
+      f"before it)", len(out_events) >= 1 and out_events[0] == (PSG_ADDR, False))
+check("round142 regression: the matching PSG data write "
+      f"(port {PSG_DATA:02X}h) also happens with interrupts still disabled - the DI window "
+      "now spans both halves of the 2-step write, matching every other PSG write in this "
+      "file (an H.TIMI interrupt landing between them would leave the wrong register "
+      "selected and silently corrupt whatever the interrupt handler writes next, which was "
+      "the actual root cause of the intermittent stuck-sound bug)",
+      len(out_events) >= 2 and out_events[1] == (PSG_DATA, False))
 
 
 print(f"\n{len(ok)} passed, {len(fail)} failed")
