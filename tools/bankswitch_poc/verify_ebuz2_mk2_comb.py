@@ -346,6 +346,101 @@ if completed:
           "(round138の地形破損バグの動的回帰ガード)", row_cur_bound_ok)
 
 
+# ============================================================
+# 3. round138follow-up3("Ebuziiの爆発処理、Ebuzと同じ"): 撃破時の爆発が
+#    無印EbuzのEBUZ_QUEUE_EXPLOSIONS/EBUZ_EXPL_QUEUE/EBUZ_EXPL_UPDATE_
+#    QUEUE/PEUA_TRY_SPAWN_ATと同じ仕組みで、現在のS2本体の非空白セル
+#    ごとに1回ポップ(PLAYER_EXPL_POOLバースト+SOUND_DESTROY)している
+#    ことを実際のCHECK_BULLET_VS_EBUZ2経由の撃破で直接検証する。
+# ============================================================
+mem2 = BankedMem(banksA, banksB)
+z2 = z80emu.Z80(mem2)
+z2.pc = tsym["INIT"]
+
+
+def run_until_pc2(target, maxi=3_000_000):
+    for _ in range(maxi):
+        if z2.pc == target:
+            return True
+        z2.step()
+    return False
+
+
+run_until_pc2(tsym["WAIT_FOR_START"])
+z2.sim_trig_a = True
+run_until_pc2(0x4010, maxi=3_000_000)
+run_until_pc2(gsym["MAINLOOP"], maxi=3_000_000)
+
+
+def step_frame2(maxi=300000):
+    z2.pc = gsym["MAINLOOP"]
+    z2.step()
+    for _ in range(maxi):
+        if z2.pc == gsym["MAINLOOP"]:
+            return True
+        z2.step()
+    return False
+
+
+def call_routine2(entry_addr, maxi=300000):
+    saved_sp = z2.sp
+    saved_pc = z2.pc
+    z2.sp = 0xF000
+    mem2[0xF000] = 0x00
+    mem2[0xF001] = 0x00
+    z2.pc = entry_addr
+    for _ in range(maxi):
+        if z2.pc == 0x0000:
+            z2.sp = saved_sp
+            z2.pc = saved_pc
+            return True
+        z2.step()
+    return False
+
+
+z2.wr(gsym["GAME_TICK"], 0)
+z2.wr(gsym["GAME_TICK"] + 1, 4)
+step_frame2()
+for _ in range(60):
+    step_frame2()
+row_cur = mem2[gsym["EBUZ2_ROW_CUR"]]
+z2.wr(gsym["EBUZ2_HP"], 1)
+z2.b = 25
+z2.c = row_cur + 3
+kill_ok = call_routine2(gsym["CHECK_BULLET_VS_EBUZ2"])
+check("実際のCHECK_BULLET_VS_EBUZ2経由でHP=1のMk2に命中させると即座にPHASE=2(撃破演出)へ遷移する",
+      kill_ok and mem2[gsym["EBUZ2_PHASE"]] == 2)
+queue_count_at_kill = mem2[gsym["EBUZ_EXPL_QUEUE_COUNT"]]
+check(f"撃破の瞬間、S2本体の非空白セル数ぶん(キュー容量16でキャップ)がEBUZ_EXPL_QUEUEへ積まれる"
+      f"(実測={queue_count_at_kill})", queue_count_at_kill == 16)
+check("撃破の瞬間、本体はEBUZ2_ERASE_S2_BODY_ATで即座に消去される(EBUZ2_ROW_CURの行にMk2自身の"
+      "タイルコードが残っていない)",
+      all(z2.vram[0x1800 + (row_cur + r) * 32 + c] != gsym["EBUZ_CODE_A"] for r in range(7) for c in range(23, 28)))
+
+drained = False
+ever_popped_sprite = False
+for i in range(200):
+    step_frame2()
+    if mem2[gsym["PLAYER_EXPL_POOL"]] != 0:
+        ever_popped_sprite = True
+    if mem2[gsym["EBUZ_EXPL_QUEUE_COUNT"]] == 0 and i > 0:
+        drained = True
+        break
+check("撃破後、無印Ebuzと共通のPLAYER_EXPL_POOL(自機死亡と同じバースト演出)へ実際に"
+      "1個以上ポップされる(専用の爆発演出コードを新設せず流用できていることの確認)",
+      ever_popped_sprite)
+check("撃破後、EBUZ_EXPL_QUEUE_COUNTがいずれ0まで正しく減っていく(ポップが無限に残り"
+      "続けたりしないこと)", drained)
+
+for _ in range(50):
+    step_frame2()
+    if mem2[gsym["EBUZ2_ACT"]] == 0:
+        break
+check("キューが完全にポップし終わったあとで初めてEBUZ2_DEFEATED=1・実ボスへのBOSS_SPAWNが"
+      "起動する(EBUZ_ANY_ACTIVEと同じ「爆発演出が終わるまで待つ」設計)",
+      mem2[gsym["EBUZ2_ACT"]] == 0 and mem2[gsym["EBUZ2_DEFEATED"]] == 1 and mem2[gsym["BOSS_STATE"]] != 0)
+
+
 print()
 print(f"{len(ok)} passed, {len(fail)} failed")
 if fail:

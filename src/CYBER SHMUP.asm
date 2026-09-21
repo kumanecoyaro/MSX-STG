@@ -13947,7 +13947,8 @@ EBUZ2_LASER_ACT        EQU 0F2DDh
 EBUZ2_LASER_ROW        EQU 0F2DEh
 EBUZ2_LASER_UNIT       EQU 0F2DFh
 EBUZ2_LASER_HOLD       EQU 0F2E0h
-EBUZ2_EXPL_TIMER       EQU 0F2E1h
+; round138follow-up3: EBUZ2_EXPL_TIMER(旧・撃破後の固定30tick待ち)は
+; EBUZ_EXPL_QUEUE_COUNT==0待ちへ置き換えたため削除(0xF2E1は未使用に)。
 EBUZ2_TMP_A            EQU 0F2E2h
 EBUZ2_TMP_OFS          EQU 0F2E3h
 EBUZ2_TMP_ADDR         EQU 0F2E4h  ; 2 bytes
@@ -14612,7 +14613,52 @@ EBUZ2_ENTER_SCRIPT:
     RET
 
 ; ----------------------------------------------------------------------
-; 撃破演出(その場で消滅)。
+; round138follow-up3("Ebuziiの爆発処理、Ebuzと同じ"): 現在のS2本体
+; (EBUZ2_ROW_CUR起点、col23、行データEBUZ2_S2_BODY_TABLE経由)の非空白
+; セルを、無印EbuzのEBUZ_QUEUE_EXPLOSIONSと全く同じ仕組み(共有の
+; EBUZ_EXPL_QUEUE/EBUZ_EXPL_ENQUEUE_CELL/EBUZ_EXPL_UPDATE_QUEUE、1個
+; ポップごとにPLAYER_EXPL_POOLのバースト+SOUND_DESTROY)へそのまま積む -
+; 専用の爆発演出コードを新設せず、無印Ebuzの既存インフラを流用するのみ
+; (無印Ebuz自身のコードは無変更、Mk2生存中は無印Ebuzと共存しないため
+; キューの奪い合いは起きない)。キュー容量(EBUZ_EXPL_QUEUE_CAPACITY=16)
+; を超えるセルは無印Ebuzの他インスタンスと同じ規約で静かにdropされる。
+; Trashes A,B,C,D,E,H,L.
+; ----------------------------------------------------------------------
+EBUZ2_QUEUE_EXPLOSIONS:
+    LD A,(EBUZ2_ROW_CUR)
+    LD (EBUZ2_TMP_A),A
+    LD HL,EBUZ2_S2_BODY_TABLE
+    LD B,7
+EBUZ2_QE_ROW_LOOP:
+    PUSH BC
+    LD E,(HL) : INC HL : LD D,(HL) : INC HL
+    PUSH HL
+    LD H,D : LD L,E
+    LD B,5
+    LD C,23
+EBUZ2_QE_COL_LOOP:
+    LD A,(HL)
+    CP BLANKCODE
+    JR Z,EBUZ2_QE_SKIP
+    PUSH HL : PUSH BC
+    LD A,(EBUZ2_TMP_A) : LD D,A
+    LD E,C
+    CALL EBUZ_EXPL_ENQUEUE_CELL
+    POP BC : POP HL
+EBUZ2_QE_SKIP:
+    INC HL : INC C
+    DJNZ EBUZ2_QE_COL_LOOP
+    POP HL
+    LD A,(EBUZ2_TMP_A) : INC A : LD (EBUZ2_TMP_A),A
+    POP BC
+    DJNZ EBUZ2_QE_ROW_LOOP
+    RET
+
+; ----------------------------------------------------------------------
+; 撃破演出(その場で消滅、本体セルごとの爆発バーストはEBUZ_EXPL_QUEUE
+; 経由で無印Ebuzと共通の仕組みが毎フレーム自動的にポップし続ける -
+; MAINLOOP末尾のCALL EBUZ_EXPL_UPDATE_QUEUEはEBUZ2の生死に関わらず
+; 常時呼ばれている)。
 ; ----------------------------------------------------------------------
 EBUZ2_TRIGGER_DEFEAT:
     LD A,2 : LD (EBUZ2_PHASE),A
@@ -14621,18 +14667,15 @@ EBUZ2_TRIGGER_DEFEAT:
     LD (EBUZ2_LASER_ACT),A
     LD A,(EBUZ2_ROW_CUR)
     CALL EBUZ2_ERASE_S2_BODY_AT
-    CALL SOUND_EBUZ_FIRE
-    LD A,30
-    LD (EBUZ2_EXPL_TIMER),A
+    CALL EBUZ2_QUEUE_EXPLOSIONS
     RET
 
+; 無印EbuzのEBUZ_ANY_ACTIVEと同じ考え方: 爆発バーストが全てポップし
+; 終わる(EBUZ_EXPL_QUEUE_COUNT=0)まで待ってから最終消滅させる。
 EBUZ2_UPDATE_DEFEAT:
-    LD A,(EBUZ2_EXPL_TIMER)
+    LD A,(EBUZ_EXPL_QUEUE_COUNT)
     OR A
-    JR Z,EBUZ2_DEFEAT_DONE
-    DEC A
-    LD (EBUZ2_EXPL_TIMER),A
-    RET
+    RET NZ
 EBUZ2_DEFEAT_DONE:
     XOR A
     LD (EBUZ2_ACT),A
