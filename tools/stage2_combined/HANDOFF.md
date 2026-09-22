@@ -17565,3 +17565,96 @@ EbuzII弾ビームへの1pxコリジョン追加+ROM予算の共有バンク6オ
   するのか、それとも普通にMISSION FAILED表示を経てタイトルに戻るのか」
   を確認し、後者ならこの調査で解決、前者ならopenMSX等の高精度エミュ
   レータでの実機トレース調査(round47/53の前例)が次の一手となる。
+
+## Round145 follow-up: 上記(1)の結論は誤り・TODO化+ボスポッド弾の
+左出現バグ修正+Stage1スケジュール差し替え(Schedule_2_7.json)+ROM予算
+196byte超過の解消(2026-09-21、完了済み)
+
+- ユーザーからの訂正: **"Mission FailedにはならずいきなりMission 1
+  表示に飛ぶな 恐らくEbuzのコードのどこかにルートがあるはず めったに
+  起こらないが2回連続起こったりもした 取り敢えずTodoにしとく"**。
+  直前のRound145本体の結論(「クラッシュではなく正規の死亡→MISSION
+  FAILED→タイトル遷移である可能性が高い」)は、実際にはMISSION FAILED
+  画面を一度も経由せず直接Mission1表示へ飛ぶという新情報と矛盾するため
+  **誤りだったと判明・撤回**。ユーザー自身の指示により今回は追加調査・
+  修正は行わず、**未解決のTODOとして記録するに留める**(下記「保留中
+  タスク」参照、指示があるまで着手しない)。
+- **ボスの自機狙いポッド弾が左から出てしまう事がある**の修正:
+  `POD_BULLET_CALC_DIR`/`PBCDIR_AIM`(round137follow-up4で実装した
+  32方向2D照準)が、dx(=PLAYERX-podX)を常に負(ポッドが自機より右側)と
+  仮定したまま`POD_AIM_CLASSIFY`へ渡していたのが原因 - ポッドは
+  `LUT_DX`/`LUT_DY`によりボス中心を軌道周回するため、周回位置次第で
+  自機より左側に来る瞬間があり、その場合dx>=0となってこの前提が破れて
+  いた。dxを計算した直後に符号チェックを追加し、dx>=0の場合は
+  (`PLAYERX < POD_BULLET_HOMING_THRESHOLD_X`の場合と同じ)まっすぐ撃つ
+  フォールバックへ分岐するよう修正(最小差分)。`tools/verify_boss_pod_
+  bullet_aim.py`のdx<0ケース(既存2件)とdx>=0ケース(新規4件、
+  境界のdx=0含む)を分離、自己検証(修正一時取消→dx>=0の4件が正しく
+  FAIL→復元→32件全PASS)済み。
+- **Stage1スケジュール差し替え(Schedule_2_7.json、342配置=ボス1件+
+  非ボス341件)**: これまでの慣例通り、`SPAWN_SCHEDULE_CHECK`のN
+  (341)・`SSC_BUSY_E2`のCPチェーン・`SSC_FIRE_BLK0`/`BLK1`の
+  CPディスパッチチェーン・5種のサイドテーブル(`SPAWN_THRESHOLDS`・
+  `SPAWN_SIMPLE_Y_TABLE`・`SPAWN_BASEY_TABLE`・`SPAWN_E3_OFFSET_
+  TABLE`・`ENEMY6_ROW_TABLE`)を新JSONから機械的に再生成して置換。
+- **ROM予算: Comb限定で196byte超過(plain=70byte足りているのに
+  Comb=-186byte)という新パターンに遭遇**。従来の「新規コードを
+  ファイル末尾(全ALIGN境界より後ろ)へ移す」という確立済みの回避策を
+  2回試したが、**両方とも改善どころか悪化**した(試行1: SSC_FIRE_
+  BLK0+BLK1丸ごと[4508byte]を移動→plain 70→-146[216byte悪化]、
+  comb -186→-146[40byteしか改善せず]。試行2: BLK1のみ[759byte]を
+  移動→plain 70→-44、comb -186→-300[両方とも114byte悪化]。いずれも
+  即座に元に戻した)。**原因の特定**: このコード自身が元の位置で
+  ALIGN境界のパディング吸収から恩恵を受けていたため、ファイル末尾
+  (吸収の恩恵が無い1:1コストのゾーン)へ移すとその恩恵ごと失われる、
+  という「ファイル末尾移動」ヒューリスティックの初めての反例だった。
+  そこで方針を「移動」から「削減」へ転換 - `plain`/`comb`両ビルドで
+  同一シンボルのアドレスを直接比較したところ、`SSC_FIRE_BLK0`
+  (5849行目)時点ではComb-plain間の差が171byteで安定しているのに、
+  そこから約9000行離れた`LUT`(ALIGN 256境界、14974行目)の時点で
+  差が256byteへ跳ね上がっている(=この1箇所のALIGN境界だけがComb側で
+  1回多く256byteパディングを踏んでいる)ことを突き止めた。ALIGN
+  境界通過時の挙動を数式化(`plain_addr mod 256`をm、Comb-plain差を
+  171とすると、mが[1,85]の範囲に収まればComb側は追加ページを踏まず
+  delta=0のまま素通りできる、mが範囲外だと必ずdelta=256へ跳ね上がる)
+  した上で、当時のm(=230)から逆算すると**このALIGN境界より手前の
+  区間で正味145〜229byteを削減すればComb側の256byte超過がちょうど
+  解消する**と判明(「移動」ではなく「その区間内で使用byte数を実際に
+  減らす」ことが必須条件、単なる場所替えでは条件を満たせないことが
+  ここで数式的に裏付けられた)。
+  - 実際の削減手段: `SSC_FIRE_BLK0`のCPディスパッチチェーン
+    (`CP n : JP Z,HANDLER`、5byte/件が122件)のうち、**連続した
+    index値が同じハンドラを指す35個の "run"(2〜5件ずつ)**を
+    `LD A,L : SUB lo : CP 個数 : JP C,HANDLER`(7〜8byte、runの
+    個数に関わらず定数コスト)へ機械的に圧縮。Pythonスクリプトで
+    現在のCPチェーンをパースしてrunを自動検出・コード生成、置換後は
+    全256通りのL値(H=0)についてSSC_FIRE_BLK0へ実際に分岐させ、
+    到達ハンドラが変換前の元のマッピングと完全一致することをエミュ
+    レータで網羅的に検証(0件不一致)。この1箇所だけで実測156byte
+    削減、これのみでComb側のALIGN境界超過がちょうど解消(SSC_BUSY_E2
+    チェーン側の追加圧縮は不要と判明、手を付けず現状維持)。
+  - **結果: plain/Comb双方とも残り70byteで完全一致**(修正前:
+    plain=70byte / Comb=-186byte)。「アドレス比較でComb-plain間の
+    差がどのシンボルで256の倍数へジャンプするかを二分探索的に特定し、
+    必要な削減量を逆算する」という今回の手法は、従来の「実測して
+    ダメなら別の場所を試す」という試行錯誤よりも再現性が高く、今後
+    同種のComb限定ROM予算超過に遭遇した際の標準手順として有効。
+- 全回帰: Stage1側`verify_spawn_schedule_restart.py` 12・`verify_
+  boss_schedule_gate.py` 8・`verify_boss_spawn_trigger.py` 28・
+  `verify_enemy6_durability.py` 27・`verify_enemy_bullets.py` 60・
+  `verify_player_damage.py` 64・`verify_stage1_bgm.py` 81・`verify_
+  stage1_mission_screens.py` 93・`verify_explosion_anim.py` 28・
+  `verify_boss_dfl_clear.py` 10・`verify_boss_pod_bullet_aim.py` 32、
+  全てPASS。`tools/bgm_data/patch_ebuz2_mk2.py`再実行(スケジュール+
+  CPチェーン圧縮でStage1コードアドレスが再度シフトしたため)・
+  `tools/bankswitch_poc/verify_ebuz2_mk2_comb.py` 48 passed。Comb ROM
+  再ビルド・`verify_comb.py`全チェックPASS。標準方針によりComb ROMの
+  み送付。
+- **保留・TODO(指示により今回は着手せず)**: Ebuz左端-Mission1リセット
+  バグ。Round145本体の「正規の死亡遷移」結論はユーザーの新情報
+  (MISSION FAILEDを経由せずいきなりMission1表示、2回連続で起きたことも
+  ある)と矛盾するため撤回済み。真因はEbuzコードのどこかに未発見の
+  ルートがある可能性が高いとのユーザー見立て。次に着手する際は
+  round47/53/71の前例(z80emu.pyでは検出不可能な実機/BIOS依存の
+  ワイルドジャンプ系バグ)を念頭に、openMSX等の高精度エミュレータでの
+  実機トレース調査が有力な次の一手になる可能性が高い。

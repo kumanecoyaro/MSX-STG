@@ -238,19 +238,45 @@ check("PLAYERX well left of threshold: straight regardless of Y",
       calc_dir(pod_x=200, pod_y=100, player_x=10, player_y=180) == (POD_BULLET_SPEED, 0))
 
 # aim case: cross-check against the direct classify()+table lookup path
+# (round145follow-up、"ボスの自機狙いポッド弾が左から出てしまう事がある"):
+# only meaningful when dx=(PLAYERX-podX) < 0, i.e. the pod is actually to the
+# player's right - only then can a leftward-only bullet home toward it at
+# all. pod=(200,60)/player=(220,30) etc below have dx>=0 (pod already at/left
+# of the player) and are covered separately further down.
 for (pod_x, pod_y, player_x, player_y) in [
-    (228, 72, 200, 150), (200, 60, 220, 30), (210, 100, 250, 100),
-    (228, 90, 128, 0), (200, 50, 240, 191),
+    (228, 72, 200, 150), (228, 90, 128, 0),
 ]:
     dxmag, dy = calc_dir(pod_x, pod_y, player_x, player_y)
     dx_signed = s8((player_x - pod_x) & 0xFF)
     dy_signed = s8((player_y - pod_y) & 0xFF)
+    assert dx_signed < 0, "this group is for dx<0 cases only"
     dirn = classify(dx_signed, dy_signed)
     exp_dxmag = real_dxmag[dirn]
     exp_dy = real_dy_table[dirn]
     check(f"POD_BULLET_CALC_DIR(pod=({pod_x},{pod_y}), player=({player_x},{player_y})) "
           f"matches independent classify+table lookup (dxmag,dy)=({dxmag},{dy})",
           dxmag == exp_dxmag and dy == exp_dy)
+
+# (round145follow-up、"ボスの自機狙いポッド弾が左から出てしまう事がある"の
+# 修正): dx=(PLAYERX-podX)>=0(podが自機の右にいて、自機は既にpodの左か
+# 同じX)は、弾が常に左方向にしか飛べない設計上「ホーミング」が原理的に
+# 不可能なケース。旧実装はPOD_AIM_CLASSIFYへdx>=0をそのまま渡し「u=0」の
+# 出鱈目な近垂直方向を計算していた(結果、ホーミング弾のはずが変な角度で
+# 自機から見て左寄りに飛んでいくように見えるバグになっていた)。修正後は
+# PLAYERX<閾値の場合と同じ「直進(dxmag=POD_BULLET_SPEED, dy=0)」へ
+# フォールバックする。
+for (pod_x, pod_y, player_x, player_y) in [
+    (200, 60, 220, 30),     # dx=20>0
+    (210, 100, 250, 100),   # dx=40>0
+    (200, 50, 240, 191),    # dx=40>0
+    (210, 100, 210, 50),    # dx=0 (exactly at the pod's own X)
+]:
+    dx_signed = s8((player_x - pod_x) & 0xFF)
+    assert dx_signed >= 0, "this group is for dx>=0 cases only"
+    dxmag, dy = calc_dir(pod_x, pod_y, player_x, player_y)
+    check(f"POD_BULLET_CALC_DIR(pod=({pod_x},{pod_y}), player=({player_x},{player_y}), dx>=0): "
+          f"falls back to straight (dxmag=POD_BULLET_SPEED, dy=0) instead of a bogus aim",
+          (dxmag, dy) == (POD_BULLET_SPEED, 0))
 
 
 # ================= (3) POD_BULLET_MOVE: variable DXMAG + signed DY =================

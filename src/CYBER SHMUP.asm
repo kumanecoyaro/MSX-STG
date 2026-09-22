@@ -5797,7 +5797,7 @@ SPAWN_SCHEDULE_CHECK:
     ; --- 完全に離れ、独立したCHECK_BOSS_TRIGGER(MAINLOOP、SKIP_G8直後)が
     ; --- 毎フレーム判定する。
     LD HL,(SPAWN_NEXT_INDEX)
-    LD DE,345
+    LD DE,341
     OR A
     SBC HL,DE
     RET NC                      ; index >= N -> schedule finished
@@ -5821,16 +5821,16 @@ SPAWN_SCHEDULE_CHECK:
     OR A
     JR NZ,SSC_FIRE              ; index >= 256 -> can't be any of the (all <256) enemy2 waits
     LD A,(SPAWN_NEXT_INDEX)
-    CP 95 : JR Z,SSC_BUSY_E2
-    CP 100 : JR Z,SSC_BUSY_E2
-    CP 107 : JR Z,SSC_BUSY_E2
-    CP 112 : JR Z,SSC_BUSY_E2
-    CP 134 : JR Z,SSC_BUSY_E2
-    CP 135 : JR Z,SSC_BUSY_E2
-    CP 162 : JR Z,SSC_BUSY_E2
-    CP 163 : JR Z,SSC_BUSY_E2
-    CP 164 : JR Z,SSC_BUSY_E2
-    CP 165 : JR Z,SSC_BUSY_E2
+    CP 93 : JR Z,SSC_BUSY_E2
+    CP 98 : JR Z,SSC_BUSY_E2
+    CP 105 : JR Z,SSC_BUSY_E2
+    CP 111 : JR Z,SSC_BUSY_E2
+    CP 143 : JR Z,SSC_BUSY_E2
+    CP 144 : JR Z,SSC_BUSY_E2
+    CP 174 : JR Z,SSC_BUSY_E2
+    CP 175 : JR Z,SSC_BUSY_E2
+    CP 176 : JR Z,SSC_BUSY_E2
+    CP 177 : JR Z,SSC_BUSY_E2
     JR SSC_FIRE
 SSC_BUSY_E2:
     LD A,(E2A_ACTIVE) : OR A : JR Z,SSC_FIRE   ; A is free -> go (SPAWN_E2 will claim it)
@@ -5849,173 +5849,241 @@ SSC_FIRE:
 SSC_FIRE_BLK0:
     LD A,L                       ; H=0, so L = index-0; default handler for this block is SPAWN_SIMPLE
     CP 30   : JP Z,EBUZ_SPAWN_CHAIN_START
-    CP 31   : JP Z,SPAWN_E3_WAVE
-    CP 32   : JP Z,SPAWN_E3_WAVE
-    CP 40   : JP Z,SPAWN_E4
-    CP 41   : JP Z,SPAWN_E4
-    CP 51   : JP Z,SPAWN_E4
-    CP 52   : JP Z,SPAWN_E4
-    CP 53   : JP Z,SPAWN_E4
-    CP 54   : JP Z,SPAWN_E4
-    CP 56   : JP Z,SPAWN_E4
-    CP 58   : JP Z,SPAWN_E4
-    CP 60   : JP Z,SPAWN_E4
-    CP 61   : JP Z,SPAWN_E4
-    CP 62   : JP Z,SPAWN_E4
-    CP 63   : JP Z,SPAWN_E4
-    CP 67   : JP Z,SPAWN_E4B
-    CP 69   : JP Z,SPAWN_E4B
-    CP 73   : JP Z,SPAWN_E4B
-    CP 75   : JP Z,SPAWN_E4B
-    CP 77   : JP Z,SPAWN_E4B
-    CP 79   : JP Z,SPAWN_E4B
-    CP 81   : JP Z,SPAWN_E4B
-    CP 82   : JP Z,SPAWN_E4B
-    CP 84   : JP Z,SPAWN_E4B
-    CP 91   : JP Z,EBUZ_SPAWN_CHAIN_START
-    CP 92   : JP Z,SPAWN_E3_WAVE
+    ; range-merged: 31-32 (was 2 individual CP/JP Z entries)
+    SUB 31
+    CP 2
+    JP C,SPAWN_E3_WAVE
+    LD A,L
+    ; range-merged: 40-41 (was 2 individual CP/JP Z entries)
+    SUB 40
+    CP 2
+    JP C,SPAWN_E4
+    LD A,L
+    ; range-merged: 51-52 (was 2 individual CP/JP Z entries)
+    SUB 51
+    CP 2
+    JP C,SPAWN_E4
+    LD A,L
+    ; range-merged: 54-55 (was 2 individual CP/JP Z entries)
+    SUB 54
+    CP 2
+    JP C,SPAWN_E4
+    LD A,L
+    ; range-merged: 57-58 (was 2 individual CP/JP Z entries)
+    SUB 57
+    CP 2
+    JP C,SPAWN_E4
+    LD A,L
+    ; range-merged: 60-61 (was 2 individual CP/JP Z entries)
+    SUB 60
+    CP 2
+    JP C,SPAWN_E4
+    LD A,L
+    ; range-merged: 63-64 (was 2 individual CP/JP Z entries)
+    SUB 63
+    CP 2
+    JP C,SPAWN_E4
+    LD A,L
+    ; range-merged: 68-69 (was 2 individual CP/JP Z entries)
+    SUB 68
+    CP 2
+    JP C,SPAWN_E4B
+    LD A,L
+    ; range-merged: 73-74 (was 2 individual CP/JP Z entries)
+    SUB 73
+    CP 2
+    JP C,SPAWN_E4B
+    LD A,L
+    CP 76   : JP Z,SPAWN_E4B
+    CP 78   : JP Z,SPAWN_E4B
+    ; range-merged: 80-81 (was 2 individual CP/JP Z entries)
+    SUB 80
+    CP 2
+    JP C,SPAWN_E4B
+    LD A,L
+    CP 83   : JP Z,SPAWN_E4B
+    CP 89   : JP Z,EBUZ_SPAWN_CHAIN_START
+    CP 90   : JP Z,SPAWN_E3_WAVE
+    CP 92   : JP Z,SPAWN_E4B
+    CP 93   : JP Z,SPAWN_E2
     CP 94   : JP Z,SPAWN_E4B
-    CP 95   : JP Z,SPAWN_E2
-    CP 96   : JP Z,SPAWN_E4B
-    CP 100   : JP Z,SPAWN_E2
-    CP 101   : JP Z,SPAWN_E4B
-    CP 102   : JP Z,SPAWN_E4B
-    CP 103   : JP Z,SPAWN_E4B
-    CP 104   : JP Z,SPAWN_E4
-    CP 105   : JP Z,SPAWN_E4
-    CP 106   : JP Z,SPAWN_E4
-    CP 107   : JP Z,SPAWN_E2
-    CP 112   : JP Z,SPAWN_E2
-    CP 116   : JP Z,SPAWN_E4B
-    CP 118   : JP Z,SPAWN_E4B
-    CP 120   : JP Z,SPAWN_E4B
-    CP 122   : JP Z,SPAWN_E4B
-    CP 123   : JP Z,SPAWN_E4B
+    CP 98   : JP Z,SPAWN_E2
+    ; range-merged: 99-101 (was 3 individual CP/JP Z entries)
+    SUB 99
+    CP 3
+    JP C,SPAWN_E4B
+    LD A,L
+    ; range-merged: 102-104 (was 3 individual CP/JP Z entries)
+    SUB 102
+    CP 3
+    JP C,SPAWN_E4
+    LD A,L
+    CP 105   : JP Z,SPAWN_E2
+    CP 111   : JP Z,SPAWN_E2
+    ; range-merged: 120-121 (was 2 individual CP/JP Z entries)
+    SUB 120
+    CP 2
+    JP C,SPAWN_E4B
+    LD A,L
+    CP 124   : JP Z,SPAWN_E4B
     CP 126   : JP Z,SPAWN_E4B
-    CP 127   : JP Z,SPAWN_E4B
-    CP 129   : JP Z,SPAWN_E4B
-    CP 131   : JP Z,SPAWN_E4B
-    CP 133   : JP Z,SPAWN_E4B
-    CP 134   : JP Z,SPAWN_E2
-    CP 135   : JP Z,SPAWN_E2
-    CP 136   : JP Z,SPAWN_E4B
-    CP 137   : JP Z,SPAWN_E4
-    CP 138   : JP Z,SPAWN_E4
-    CP 139   : JP Z,SPAWN_E4
-    CP 140   : JP Z,SPAWN_E4
-    CP 141   : JP Z,SPAWN_E4
+    CP 128   : JP Z,SPAWN_E4B
+    CP 130   : JP Z,SPAWN_E4B
+    ; range-merged: 132-133 (was 2 individual CP/JP Z entries)
+    SUB 132
+    CP 2
+    JP C,SPAWN_E4B
+    LD A,L
+    CP 135   : JP Z,SPAWN_E4B
     CP 142   : JP Z,SPAWN_E4B
-    CP 144   : JP Z,SPAWN_E4B
+    ; range-merged: 143-144 (was 2 individual CP/JP Z entries)
+    SUB 143
+    CP 2
+    JP C,SPAWN_E2
+    LD A,L
     CP 145   : JP Z,SPAWN_E4B
-    CP 147   : JP Z,SPAWN_E4B
-    CP 148   : JP Z,SPAWN_E4B
-    CP 150   : JP Z,SPAWN_E4B
-    CP 152   : JP Z,SPAWN_E4
+    ; range-merged: 146-150 (was 5 individual CP/JP Z entries)
+    SUB 146
+    CP 5
+    JP C,SPAWN_E4
+    LD A,L
+    CP 151   : JP Z,SPAWN_E4B
     CP 153   : JP Z,SPAWN_E4B
-    CP 154   : JP Z,SPAWN_E4B
-    CP 156   : JP Z,SPAWN_E4B
-    CP 158   : JP Z,EBUZ_SPAWN_CHAIN_START
-    CP 162   : JP Z,SPAWN_E2
-    CP 163   : JP Z,SPAWN_E2
-    CP 164   : JP Z,SPAWN_E2
-    CP 165   : JP Z,SPAWN_E2
-    CP 166   : JP Z,SPAWN_E4B
+    CP 155   : JP Z,SPAWN_E4B
+    ; range-merged: 157-158 (was 2 individual CP/JP Z entries)
+    SUB 157
+    CP 2
+    JP C,SPAWN_E4B
+    LD A,L
+    CP 160   : JP Z,SPAWN_E4B
+    CP 162   : JP Z,SPAWN_E4
+    ; range-merged: 163-164 (was 2 individual CP/JP Z entries)
+    SUB 163
+    CP 2
+    JP C,SPAWN_E4B
+    LD A,L
     CP 167   : JP Z,SPAWN_E4B
-    CP 168   : JP Z,SPAWN_E4B
-    CP 172   : JP Z,SPAWN_E4B
-    CP 173   : JP Z,SPAWN_E4B
-    CP 174   : JP Z,SPAWN_E4B
-    CP 175   : JP Z,SPAWN_E4
-    CP 176   : JP Z,SPAWN_E4
-    CP 177   : JP Z,SPAWN_E4
-    CP 178   : JP Z,SPAWN_E4
-    CP 179   : JP Z,SPAWN_E4B
-    CP 180   : JP Z,SPAWN_E4B
-    CP 190   : JP Z,SPAWN_E4B
-    CP 193   : JP Z,SPAWN_E4B
-    CP 196   : JP Z,SPAWN_E4B
-    CP 201   : JP Z,SPAWN_E6
-    CP 203   : JP Z,SPAWN_E6
-    CP 204   : JP Z,SPAWN_E6
-    CP 206   : JP Z,SPAWN_E6
-    CP 207   : JP Z,SPAWN_E6
-    CP 209   : JP Z,SPAWN_E6
-    CP 210   : JP Z,SPAWN_E6
-    CP 212   : JP Z,SPAWN_E6
-    CP 213   : JP Z,SPAWN_E6
-    CP 215   : JP Z,SPAWN_E6
-    CP 216   : JP Z,SPAWN_E6
-    CP 217   : JP Z,SPAWN_E6
-    CP 218   : JP Z,SPAWN_E6
-    CP 219   : JP Z,SPAWN_E6
-    CP 220   : JP Z,SPAWN_E6
-    CP 221   : JP Z,SPAWN_E6
-    CP 222   : JP Z,SPAWN_E6
-    CP 223   : JP Z,SPAWN_E4
-    CP 224   : JP Z,SPAWN_E6
-    CP 225   : JP Z,SPAWN_E6
-    CP 226   : JP Z,SPAWN_E4
-    CP 227   : JP Z,SPAWN_E6
-    CP 228   : JP Z,SPAWN_E6
-    CP 229   : JP Z,SPAWN_E4
-    CP 230   : JP Z,SPAWN_E6
-    CP 231   : JP Z,SPAWN_E6
+    CP 169   : JP Z,EBUZ_SPAWN_CHAIN_START
+    ; range-merged: 174-177 (was 4 individual CP/JP Z entries)
+    SUB 174
+    CP 4
+    JP C,SPAWN_E2
+    LD A,L
+    ; range-merged: 178-180 (was 3 individual CP/JP Z entries)
+    SUB 178
+    CP 3
+    JP C,SPAWN_E4B
+    LD A,L
+    ; range-merged: 188-190 (was 3 individual CP/JP Z entries)
+    SUB 188
+    CP 3
+    JP C,SPAWN_E4B
+    LD A,L
+    ; range-merged: 191-193 (was 3 individual CP/JP Z entries)
+    SUB 191
+    CP 3
+    JP C,SPAWN_E4
+    LD A,L
+    ; range-merged: 194-195 (was 2 individual CP/JP Z entries)
+    SUB 194
+    CP 2
+    JP C,SPAWN_E4B
+    LD A,L
+    CP 205   : JP Z,SPAWN_E4B
+    CP 208   : JP Z,SPAWN_E4B
+    CP 211   : JP Z,SPAWN_E4B
+    ; range-merged: 214-215 (was 2 individual CP/JP Z entries)
+    SUB 214
+    CP 2
+    JP C,SPAWN_E6
+    LD A,L
+    ; range-merged: 217-218 (was 2 individual CP/JP Z entries)
+    SUB 217
+    CP 2
+    JP C,SPAWN_E6
+    LD A,L
+    ; range-merged: 220-221 (was 2 individual CP/JP Z entries)
+    SUB 220
+    CP 2
+    JP C,SPAWN_E6
+    LD A,L
+    ; range-merged: 223-224 (was 2 individual CP/JP Z entries)
+    SUB 223
+    CP 2
+    JP C,SPAWN_E6
+    LD A,L
+    ; range-merged: 226-227 (was 2 individual CP/JP Z entries)
+    SUB 226
+    CP 2
+    JP C,SPAWN_E6
+    LD A,L
+    ; range-merged: 229-231 (was 3 individual CP/JP Z entries)
+    SUB 229
+    CP 3
+    JP C,SPAWN_E6
+    LD A,L
     CP 232   : JP Z,SPAWN_E4
-    CP 233   : JP Z,SPAWN_E6
-    CP 234   : JP Z,SPAWN_E6
-    CP 235   : JP Z,SPAWN_E4
-    CP 236   : JP Z,SPAWN_E6
-    CP 237   : JP Z,SPAWN_E6
-    CP 238   : JP Z,SPAWN_E4
-    CP 239   : JP Z,SPAWN_E6
-    CP 240   : JP Z,SPAWN_E6
-    CP 241   : JP Z,SPAWN_E4
-    CP 242   : JP Z,SPAWN_E6
-    CP 243   : JP Z,SPAWN_E6
+    ; range-merged: 233-235 (was 3 individual CP/JP Z entries)
+    SUB 233
+    CP 3
+    JP C,SPAWN_E6
+    LD A,L
+    CP 236   : JP Z,SPAWN_E4
+    ; range-merged: 237-239 (was 3 individual CP/JP Z entries)
+    SUB 237
+    CP 3
+    JP C,SPAWN_E6
+    LD A,L
+    CP 240   : JP Z,SPAWN_E4
+    ; range-merged: 241-243 (was 3 individual CP/JP Z entries)
+    SUB 241
+    CP 3
+    JP C,SPAWN_E6
+    LD A,L
     CP 244   : JP Z,SPAWN_E4
-    CP 245   : JP Z,SPAWN_E6
-    CP 246   : JP Z,SPAWN_E6
-    CP 247   : JP Z,SPAWN_E4
-    CP 248   : JP Z,SPAWN_E6
-    CP 249   : JP Z,SPAWN_E6
-    CP 250   : JP Z,SPAWN_E4
-    CP 251   : JP Z,SPAWN_E6
-    CP 252   : JP Z,SPAWN_E6
+    ; range-merged: 245-247 (was 3 individual CP/JP Z entries)
+    SUB 245
+    CP 3
+    JP C,SPAWN_E6
+    LD A,L
+    CP 248   : JP Z,SPAWN_E4
+    ; range-merged: 249-252 (was 4 individual CP/JP Z entries)
+    SUB 249
+    CP 4
+    JP C,SPAWN_E6
+    LD A,L
     CP 253   : JP Z,SPAWN_E4
-    CP 254   : JP Z,SPAWN_E6
-    CP 255   : JP Z,SPAWN_E6
+    ; range-merged: 254-255 (was 2 individual CP/JP Z entries)
+    SUB 254
+    CP 2
+    JP C,SPAWN_E6
     JP SPAWN_SIMPLE
 
 SSC_FIRE_BLK1:
     LD A,L                       ; H=1, so L = index-256; default handler for this block is SPAWN_E6
-    CP 0   : JP Z,SPAWN_E4
-    CP 3   : JP Z,SPAWN_E4
-    CP 6   : JP Z,SPAWN_E4
-    CP 9   : JP Z,SPAWN_E4
-    CP 12   : JP Z,SPAWN_E4
-    CP 15   : JP Z,SPAWN_E4
-    CP 18   : JP Z,SPAWN_E4
-    CP 21   : JP Z,SPAWN_E4
-    CP 24   : JP Z,SPAWN_E4
+    CP 2   : JP Z,SPAWN_E4
+    CP 7   : JP Z,SPAWN_E4
+    CP 11   : JP Z,SPAWN_E4
+    CP 17   : JP Z,SPAWN_E4
+    CP 22   : JP Z,SPAWN_E4
     CP 27   : JP Z,SPAWN_E4
-    CP 30   : JP Z,SPAWN_E4
-    CP 33   : JP Z,SPAWN_E4
-    CP 36   : JP Z,SPAWN_E4
+    CP 34   : JP Z,SPAWN_E4
     CP 39   : JP Z,SPAWN_E4
-    CP 42   : JP Z,SPAWN_E4
-    CP 45   : JP Z,SPAWN_E4
-    CP 48   : JP Z,SPAWN_E4
-    CP 55   : JP Z,SPAWN_E4
-    CP 58   : JP Z,SPAWN_E4
-    CP 61   : JP Z,SPAWN_E4
-    CP 64   : JP Z,SPAWN_E4
-    CP 67   : JP Z,SPAWN_E4
-    CP 70   : JP Z,SPAWN_E4
-    CP 73   : JP Z,SPAWN_E4
-    CP 76   : JP Z,SPAWN_E4
-    CP 79   : JP Z,EBUZ_SPAWN_CHAIN_START
+    CP 44   : JP Z,SPAWN_E4
+    CP 49   : JP Z,SPAWN_E4
+    CP 53   : JP Z,SPAWN_E4
+    CP 56   : JP Z,SPAWN_E4
+    CP 59   : JP Z,SPAWN_E4
+    CP 62   : JP Z,SPAWN_E4
+    CP 65   : JP Z,SPAWN_E4
+    CP 68   : JP Z,SPAWN_E4
+    CP 71   : JP Z,SPAWN_E4
+    CP 74   : JP Z,SPAWN_E4
+    CP 77   : JP Z,SPAWN_E4
+    CP 80   : JP Z,SPAWN_E4
+    CP 83   : JP Z,SPAWN_E4
+    CP 84   : JP Z,EBUZ_SPAWN_CHAIN_START
     JP SPAWN_E6
-
 ; --- saved (disabled) boss-only fast-iteration schedule - kept for  ---
 ; --- quickly testing boss-only features again later. Not active.   ---
 ;SPAWN_SCHEDULE_CHECK_BOSSONLY_SAVED:
@@ -7373,6 +7441,18 @@ POD_BULLET_CALC_DIR:
 PBCDIR_AIM:
     LD A,(PLAYERX) : SUB D
     LD D,A                          ; D = dx (signed)
+    ; (round145follow-up、"ボスの自機狙いポッド弾が左から出てしまう事が
+    ; ある"): POD_AIM_CLASSIFY自身のコメント通りdx>=0(pod位置が自機以下
+    ; のX、=podが自機の左側にいる)は本来想定されていなかった端数ケース
+    ; だが、GET_POD_XYの軌道LUTにより実際に起こりうる。従来はdx>=0でも
+    ; そのままPOD_AIM_CLASSIFYへ渡し「u=0」の出鱈目な近垂直方向を計算
+    ; していたが、弾自体は常にXが減る(左方向)へしか飛ばない設計のため
+    ; 「自機は右にいるのに左方向にしか飛べない」矛盾が生じ、ホーミング
+    ; のはずの弾が変な角度で自機から遠ざかる=「左から出てしまう」ように
+    ; 見えるバグになっていた。dx>=0の間はPLAYERX<閾値の場合と同じ直進
+    ; (水平)へフォールバックする。
+    OR A
+    JP P,PBCDIR_STRAIGHT
     LD A,(PLAYERY) : SUB E
     LD E,A                           ; E = dy (signed)
     CALL POD_AIM_CLASSIFY           ; A = 方向index(0-31)
@@ -7387,6 +7467,10 @@ PBCDIR_AIM:
     LD A,(HL)
     LD C,A                          ; C = dy(符号付き) - 方向indexは
                                      ; もう不要なので上書き
+    RET
+PBCDIR_STRAIGHT:
+    LD B,POD_BULLET_SPEED
+    LD C,0
     RET
 
 ; Input: D=dx(signed, PLAYERX-podX), E=dy(signed, PLAYERY-podY)
@@ -15340,70 +15424,74 @@ ENEMY6_ANIM_CODES:
 ; "10KB減らした"。ROM予算確保のためEbuz Mk2追加と合わせて実施)。
 ; 16bit thresholds - N=345エントリ。
 SPAWN_THRESHOLDS:
-    DW 11,13,15,26,28,30,43,45,47,56,58,60,68,70,72,74,76
-    DW 78,80,88,98,100,102,104,106,108,110,112,114,116,118,120,130,139
-    DW 141,143,145,147,153,157,160,163,164,166,168,170,172,183,185,187,188
-    DW 190,191,198,200,201,207,208,208,214,214,214,222,223,230,232,234,236
-    DW 238,238,245,247,249,252,253,254,262,267,268,269,278,279,287,290,292
-    DW 300,302,302,304,307,314,317,331,352,357,359,368,371,373,375,381,386
-    DW 388,392,402,406,410,423,428,433,435,437,442,445,447,449,461,463,463
-    DW 465,483,485,489,491,491,498,505,507,507,513,520,527,542,551,558,566
-    DW 573,590,600,605,607,609,611,613,613,619,619,623,624,626,630,632,634
-    DW 641,642,644,650,650,668,675,677,679,683,683,695,702,707,709,712,721
-    DW 723,725,739,741,744,751,753,755,757,768,774,788,794,798,803,804,809
-    DW 815,818,822,825,827,830,833,835,838,840,841,843,847,850,851,852,853
-    DW 853,854,855,855,856,857,857,858,859,859,860,861,861,863,863,865,865
-    DW 867,867,868,869,869,870,871,871,872,873,873,874,875,875,876,877,877
-    DW 878,879,879,880,881,881,882,883,883,884,885,885,886,887,887,888,889
-    DW 889,890,891,891,892,893,893,894,895,895,896,897,897,898,899,899,900
-    DW 901,901,902,903,903,904,905,905,906,907,907,908,909,909,910,911,911
-    DW 912,913,913,914,915,915,916,917,917,918,919,919,920,921,921,922,923
-    DW 923,925,925,927,927,928,929,929,930,931,931,932,933,933,934,935,935
-    DW 936,937,937,938,939,939,940,941,941,942,943,943,945
+    DW 11,13,15,26,28,30,43,45,47,56,58,60,68,70,72,74
+    DW 76,78,80,88,98,100,102,104,106,108,110,112,114,116,118,120
+    DW 130,139,141,143,145,147,153,157,160,162,164,166,168,170,172,183
+    DW 185,187,188,190,193,195,198,200,202,207,209,211,214,217,219,222
+    DW 225,230,232,234,236,238,245,247,249,252,254,262,267,268,270,275
+    DW 279,286,290,292,299,302,304,307,314,317,331,352,357,359,368,371
+    DW 373,375,381,386,388,392,401,406,411,423,428,430,433,435,437,442
+    DW 445,447,449,451,453,455,457,459,461,463,465,467,483,485,489,491
+    DW 493,498,505,507,509,514,520,527,531,533,535,537,539,541,551,558
+    DW 566,573,590,600,605,607,609,611,613,613,616,619,619,623,626,628
+    DW 630,632,634,640,642,644,647,650,650,668,675,677,679,681,683,683
+    DW 702,702,707,709,712,716,718,721,723,725,730,733,739,741,744,747
+    DW 751,755,768,774,788,794,798,803,804,809,815,818,822,825,827,830
+    DW 833,835,838,840,843,847,851,851,852,853,853,854,855,855,856,857
+    DW 857,858,859,859,860,861,861,863,863,863,865,865,866,867,867,869
+    DW 869,869,871,871,872,873,873,875,875,875,877,877,879,879,879,881
+    DW 881,883,883,883,885,885,887,887,887,889,889,890,891,891,893,893
+    DW 895,895,895,897,897,899,899,899,901,901,903,903,903,905,905,907
+    DW 907,909,909,909,911,911,913,913,913,915,915,917,917,917,919,919
+    DW 921,921,921,923,923,924,925,925,926,927,927,928,929,929,930,931
+    DW 931,932,933,933,934,935,935,936,937,937,938,939,939,940,941,941
+    DW 942,943,943,944,945
 
 SPAWN_SIMPLE_Y_TABLE:
     DB 40,32,24,136,128,120,32,24,16,128,120,112,24,40,56,72,88
     DB 104,120,120,120,112,104,96,88,80,72,64,56,48,0,0,0,88
     DB 96,104,112,120,120,120,0,0,120,112,104,96,88,48,40,32,136
-    DB 0,0,0,0,32,0,32,0,32,0,0,0,0,144,128,112,0
-    DB 16,0,104,112,120,0,16,0,104,0,128,0,64,0,0,72,0
-    DB 32,40,88,48,120,64,0,0,24,0,0,0,48,40,32,0,0
-    DB 0,0,0,0,0,0,72,40,32,24,0,136,128,120,0,16,0
-    DB 104,0,64,0,0,120,64,0,0,112,0,56,0,64,0,0,0
-    DB 0,0,0,0,0,0,0,64,0,0,120,0,0,64,0,120,0
-    DB 0,0,64,0,120,0,16,24,32,0,0,0,0,0,0,0,88
-    DB 88,80,0,0,0,0,0,0,0,0,0,104,88,80,72,48,88
-    DB 88,80,64,0,80,64,0,80,72,0,80,72,72,88,0,72,0
-    DB 0,80,0,0,88,0,0,96,0,0,96,0,0,0,0,0,0
+    DB 0,0,48,0,0,56,0,0,56,0,0,64,0,0,144,128,112
+    DB 0,0,104,112,120,0,0,104,0,128,0,80,0,0,72,0,64
+    DB 56,48,120,64,0,0,24,0,0,0,48,40,32,0,0,0,0
+    DB 0,0,0,0,56,48,40,32,24,0,136,128,120,112,104,96,88
+    DB 80,0,0,104,112,0,64,0,120,0,64,0,112,0,0,56,0
+    DB 112,104,96,88,80,72,0,0,0,0,0,0,0,0,0,0,64
+    DB 0,96,0,120,0,0,72,0,120,0,0,0,64,88,0,120,0
+    DB 16,24,32,48,0,0,0,0,0,0,0,96,88,88,88,80,80
+    DB 72,0,0,0,0,0,0,0,0,104,88,80,72,48,88,88,80
+    DB 64,0,80,64,0,80,72,0,72,72,0,0,72,0,0,80,0
+    DB 0,88,0,0,96,0,0,96,0,0,0,0,0,0,0,0,0
     DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
     DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
     DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
     DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
     DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
     DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-    DB 0,0,0,0,0,0,0,0,0,0,0,0,0
+    DB 0
 
 SPAWN_BASEY_TABLE:
     DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
     DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-    DB 0,0,0,0,0,0,88,136,0,0,0,0,0,0,0,0,0
-    DB 64,96,72,112,0,72,0,104,0,72,112,72,104,0,0,0,64
-    DB 0,80,0,0,0,72,0,88,0,72,0,88,0,104,32,0,112
-    DB 0,0,0,0,0,0,0,0,0,96,40,104,0,0,0,96,24
-    DB 64,48,120,72,16,32,0,0,0,0,112,0,0,0,64,0,80
-    DB 0,112,0,56,72,0,0,48,64,0,24,0,96,0,96,32,120
-    DB 32,64,64,88,72,56,112,0,128,72,0,80,112,0,56,0,80
-    DB 80,112,0,72,0,0,0,0,0,32,104,32,112,72,80,104,0
-    DB 0,0,72,80,104,120,88,56,24,64,96,0,0,0,0,0,0
-    DB 0,0,0,64,0,0,64,0,0,64,0,0,0,0,0,0,0
-    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-    DB 0,0,96,0,0,96,0,0,96,0,0,96,0,0,96,0,0
-    DB 96,0,0,88,0,0,88,0,0,88,0,0,88,0,0,88,0
-    DB 0,88,0,0,88,0,0,96,0,0,96,0,0,88,0,0,80
-    DB 0,0,72,0,0,64,0,0,64,0,0,72,0,0,80,0,0
-    DB 88,0,0,88,0,0,88,0,0,88,0,0,80,0,0,80,0
-    DB 0,0,0,0,0,80,0,0,80,0,0,80,0,0,80,0,0
-    DB 80,0,0,80,0,0,80,0,0,80,0,0,0
+    DB 0,0,0,0,0,0,88,120,0,0,0,0,0,0,0,0,0
+    DB 64,88,0,72,112,0,72,104,0,72,96,0,72,96,0,0,0
+    DB 96,80,0,0,0,72,88,0,72,0,88,0,104,56,0,112,0
+    DB 0,0,0,0,0,0,0,96,40,104,0,0,0,96,24,64,48
+    DB 16,72,112,32,0,0,0,0,0,112,0,0,0,0,0,0,0
+    DB 0,64,80,0,0,112,0,56,0,72,0,48,0,64,64,0,96
+    DB 0,0,0,0,0,0,96,32,120,32,64,64,88,72,56,112,0
+    DB 128,0,72,0,80,96,0,56,0,80,80,112,0,0,72,0,0
+    DB 0,0,0,0,32,104,32,104,72,80,104,0,0,0,0,0,0
+    DB 0,72,80,104,120,88,56,64,96,0,0,0,0,0,0,0,0
+    DB 0,64,0,0,64,0,0,64,0,0,0,0,0,0,0,0,0
+    DB 0,0,0,0,0,0,0,0,0,0,0,96,0,0,0,96,0
+    DB 0,0,88,0,0,0,80,0,0,0,64,0,0,0,0,48,0
+    DB 0,0,0,48,0,0,0,0,72,0,0,0,88,0,0,0,0
+    DB 0,96,0,0,0,0,80,0,0,0,0,64,0,0,0,0,0
+    DB 0,72,0,0,0,0,88,0,0,0,0,88,0,0,0,0,80
+    DB 0,0,0,80,0,0,80,0,0,80,0,0,80,0,0,80,0
+    DB 0,80,0,0,80,0,0,80,0,0,80,0,0,80,0,0,80
+    DB 0
 
 SPAWN_E3_OFFSET_TABLE:
     DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
@@ -15425,7 +15513,8 @@ SPAWN_E3_OFFSET_TABLE:
     DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
     DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
     DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-    DB 0,0,0,0,0,0,0,0,0,0,0,0,0
+    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+    DB 0
 
 ENEMY6_ROW_TABLE:
     DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
@@ -15439,15 +15528,16 @@ ENEMY6_ROW_TABLE:
     DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
     DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
     DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,5,0,5
-    DB 15,0,6,15,0,7,15,0,8,15,0,9,15,9,15,9,15
-    DB 9,15,0,8,15,0,8,15,0,8,15,0,8,15,0,8,15
-    DB 0,8,15,0,8,15,0,8,15,0,7,15,0,8,15,0,7
-    DB 15,0,6,15,0,7,15,0,8,16,0,7,15,0,6,14,0
-    DB 5,13,0,4,12,0,3,11,0,5,12,0,6,14,0,7,15
-    DB 0,8,14,0,8,14,0,8,15,0,7,14,0,6,13,0,7
-    DB 14,8,13,7,13,0,7,13,0,7,13,0,7,13,0,7,13
-    DB 0,7,13,0,7,13,0,7,13,0,7,13,0
+    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+    DB 0,0,0,0,0,0,0,0,0,0,1,18,0,5,12,0,6
+    DB 13,0,7,14,0,8,15,0,9,15,1,0,18,9,15,0,9
+    DB 15,8,0,15,7,14,0,6,13,5,0,12,4,11,3,0,10
+    DB 2,9,1,0,18,3,11,5,0,13,7,15,0,8,15,7,16
+    DB 1,0,18,7,16,6,0,14,5,13,4,0,12,1,11,5,12
+    DB 6,0,14,7,15,8,0,14,8,14,1,0,18,7,14,6,0
+    DB 13,7,14,0,7,13,0,7,13,0,7,13,0,7,13,0,7
+    DB 13,0,7,13,0,7,13,0,7,13,0,7,13,0,7,13,0
+    DB 0
 
 ; --- Boss BG (nametable) graphics, generated from
 ; --- dotpict_20260806_173500 (12x37 dot art), resized directly
@@ -16339,4 +16429,3 @@ PCPB_HIT:
 PCPB_MISS:
     XOR A
     RET
-
