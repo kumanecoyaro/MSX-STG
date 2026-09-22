@@ -37,14 +37,33 @@
 - 新規にVRAM/PSG/その他ハードウェアポートへのブロック転送を実装する際は、着手前に
   必ずこのセクションを再確認し、`OTIR`系命令を使わないこと。
 
-## Stage1 ROM予算(2026-09-21、Round144時点で残り0byte・恒久的に確認必須)
+## Stage1 ROM予算(2026-09-22、Round145時点で残り70byte・恒久的に確認必須)
 
-- `src/CYBER SHMUP.asm`のROM予算(32768byte、bank0/1合計)は、**plain単体アセンブル・
-  `tools/bankswitch_poc/build_full_rom.py`のComb組み込み側アセンブルの両方が
-  ちょうど32768/32768byte(残り0byte)** の状態。**今後Stage1へ1byteでも追加する変更を
-  行う場合、まず何かをバンク6(共有chardata/BGMバンク、round64のBOSS_PATTERNSオフロード
-  と同じ手法でRAMコピー化)またはStage1専用の新規バンクへ退避してROM予算を確保することが
-  大前提になる。**
+- `src/CYBER SHMUP.asm`のROM予算(32768byte、bank0/1合計)は、plain単体アセンブル・
+  `tools/bankswitch_poc/build_full_rom.py`のComb組み込み側アセンブルの両方で
+  **残り70byte**(Round145時点)。Round144時点では残り0byteだったが、Round145で
+  BOSS_HEX_PATTERN/BOSS_ORBIT_PATTERN/DFL_BULLET_PATTERN/EXPLOSION_PATTERN
+  (計128byte)+MISSION_FONT_PATTERNS/GAMEOVER_FONT_PATTERNS(計128byte)を共有
+  バンク6(Comb bank6、`tools/bgm_data/bgm_bank_gen.py`)へRLE圧縮の上でオフロード
+  (BOSS_PATTERNSと全く同じ「Titleが起動時にRAMへ事前コピー、Stage1側は
+  `DECOMPRESS_RLE_TO_VRAM`で読むだけ」方式、詳細は`BOSS_MISC_PATTERNS`/
+  `STAGE1_MISSION_GAMEOVER_FONT`のEQUコメント参照)、実質256byteの静的データを
+  ROMから追い出して確保した。**今後Stage1へ追加する変更でこの70byteを使い切ったら、
+  同じ手法(まだROM上に残っている一度きりロード専用データ[LDIRVM 1回だけで
+  以後CPUから読まれないDBブロック]を探してバンク6へ退避)またはStage1専用の
+  新規バンクへ退避してROM予算を確保することが大前提になる。**
+- **重要な追加の罠(Round145で新規発見)**: 新規コード/データの追加が「ALIGN
+  境界の手前にある既存のパディング余白へ丸ごと吸収され、削除した分がそのまま
+  ALIGN側のパディング増加で相殺されてネット0byteになる」現象が、**データを
+  削除する側でも同じ強さで起こりうる**と判明(Round60/follow-up#8で見つかった
+  「追加してもALIGNに吸収され0byte」の逆パターン)。実際に128byteのDBブロックを
+  削除・共有バンクへオフロードしても、その位置が次のALIGN 256境界の手前だと
+  境界のパディングが同じだけ増え、**ROM残り容量が1byteも変わらないことがある**
+  (Round145では128byte×1回目のオフロードで実測0byte改善、128byte×2回目を
+  追加してようやく257byteの改善が現れた - 閾値を跨ぐまで効果が見えない)。
+  **「削除・オフロードしたのに`plain remaining`が増えない」場合、慌てず
+  もう少しまとめて削る(または場所を変える)こと。1回の実測で「効果なし」と
+  即断しないこと。**
 - **重要な罠(Round144で丸1セッション分を要して判明)**: このファイルは6箇所の
   `ALIGN 256`境界を持ち、新規コード/データの挿入位置によって「既存の端数パディングへ
   無料で吸収される」場合と「ALIGN境界を1つ踏み越えて+256byteの余分なパディングが

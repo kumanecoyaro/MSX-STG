@@ -1,9 +1,10 @@
 """Stage1: "ステージ1スタート直後...急に始まるのでなく飛び込んでくる演出
-...ShipStart1の下にShipStart2を重ねて 左上から斜め右下に移動 Y中央まで
-来たら通常時の絵にして Xが32pxの位置に"の検証。他のtools/verify_*.pyと
-同じ「mini_z80asm.Assemblerで直接アセンブル+step_frameの一回性検証
-スクリプト」の作法だが、この演出自体を検証するため他ファイルのboot()と
-違いSHIP_ENTRY_ACTを即座に0へ落とさない生のブート手順を使う。
+...ShipStart1の下にShipStart2を重ねて...0,0からX128、Y64まで移動して
+そこからX32,Y64な"の検証(2区間構成: leg1=(0,0)→(128,64)の真っ直ぐな
+斜め移動、leg2=(128,64)→(32,64)のXのみの水平移動)。他のtools/
+verify_*.pyと同じ「mini_z80asm.Assemblerで直接アセンブル+step_frameの
+一回性検証スクリプト」の作法だが、この演出自体を検証するため他ファイル
+のboot()と違いSHIP_ENTRY_ACTを即座に0へ落とさない生のブート手順を使う。
 """
 import sys, os
 sys.path.insert(0, os.path.dirname(__file__))
@@ -29,8 +30,23 @@ def check(label, cond):
     print(("PASS " if cond else "FAIL "), label)
 
 
+STAGE1_MISSION_GAMEOVER_FONT = sym["STAGE1_MISSION_GAMEOVER_FONT"]
+sys.path.insert(0, os.path.join(REPO_ROOT, "tools", "title_screen"))
+import title_bg_gen as _tbg  # noqa: E402 - rle_encode/rle_decode
+with open(os.path.join(REPO_ROOT, "tools", "bgm_data", "stage1_mission_gameover_font.bin"), "rb") as f:
+    _real_mission_gameover_font = f.read()
+_real_mgf_compressed, _real_mgf_segments = _tbg.rle_encode(_real_mission_gameover_font)
+assert _tbg.rle_decode(_real_mgf_compressed, _real_mgf_segments) == _real_mission_gameover_font
+
+
 def fresh():
-    return Z80(bytearray(mem0))
+    # (round145、ROM予算確保でMISSION/GAMEOVERフォントをRAM事前コピー
+    # 方式へ変更): INIT自身がこのRAMを読むため、実機同様に起動前から
+    # 圧縮済みの実データが置かれている前提を再現する。
+    z = Z80(bytearray(mem0))
+    for i, b in enumerate(_real_mgf_compressed):
+        z.wr(STAGE1_MISSION_GAMEOVER_FONT + i, b)
+    return z
 
 
 def run_until_pc(z, target_pc, max_instr=500_000):
@@ -56,22 +72,34 @@ PLAYERX = sym["PLAYERX"]
 PLAYERY = sym["PLAYERY"]
 SHIP_ENTRY_ACT = sym["SHIP_ENTRY_ACT"]
 SHIP_ENTRY_SPEED = sym["SHIP_ENTRY_SPEED"]
+SHIP_ENTRY_MID_X = sym["SHIP_ENTRY_MID_X"]
 PLAYER_RETREAT_TARGET_X = sym["PLAYER_RETREAT_TARGET_X"]
 PLAYER_INITY = sym["PLAYER_INITY"]
 PLAYER_SHIP_PAT = sym["PLAYER_SHIP_PAT"]
 PLAYER_ACCENT_PAT = sym["PLAYER_ACCENT_PAT"]
 PAT_SHIP = sym["PAT_SHIP"]
-PAT_ACCENT = sym["PAT_ACCENT"]
 PAT_ACCENT_BARRIER = sym["PAT_ACCENT_BARRIER"]
 PAT_SHIP_ENTRY_BODY = sym["PAT_SHIP_ENTRY_BODY"]
 PAT_SHIP_ENTRY_ACCENT = sym["PAT_SHIP_ENTRY_ACCENT"]
 SPRPAT = sym["SPRPAT"]
 
-# ---- 1. immediately after boot: entry armed, ship at top-left, entry
-#         patterns selected (not the normal PAT_SHIP/PAT_ACCENT) ----
+# leg1: (0,0) -> (SHIP_ENTRY_MID_X, PLAYER_INITY), X speed=SHIP_ENTRY_SPEED,
+# Y speed=1 (half of X's, chosen so distance ratio == speed ratio and both
+# axes arrive on the exact same frame - see the ASM's own comment).
+LEG1_FRAMES = SHIP_ENTRY_MID_X // SHIP_ENTRY_SPEED
+assert SHIP_ENTRY_MID_X % SHIP_ENTRY_SPEED == 0
+assert PLAYER_INITY // 1 == LEG1_FRAMES, "leg1 X/Y no longer arrive simultaneously - ASM's clamp-free assumption would break"
+# leg2: SHIP_ENTRY_MID_X -> PLAYER_RETREAT_TARGET_X, X only, speed=SHIP_ENTRY_SPEED
+LEG2_DIST = SHIP_ENTRY_MID_X - PLAYER_RETREAT_TARGET_X
+assert LEG2_DIST % SHIP_ENTRY_SPEED == 0
+LEG2_FRAMES = LEG2_DIST // SHIP_ENTRY_SPEED
+TOTAL_FRAMES = LEG1_FRAMES + LEG2_FRAMES
+
+# ---- 1. immediately after boot: entry armed (leg1), ship at top-left,
+#         entry patterns selected (not the normal PAT_SHIP/PAT_ACCENT) ----
 z = fresh()
 boot_with_entry(z)
-check("boot: SHIP_ENTRY_ACT=1 (armed)", z.rd(SHIP_ENTRY_ACT) == 1)
+check("boot: SHIP_ENTRY_ACT=1 (armed, leg1)", z.rd(SHIP_ENTRY_ACT) == 1)
 check("boot: PLAYERX=0 (top-left start)", z.rd(PLAYERX) == 0)
 check("boot: PLAYERY=0 (top-left start)", z.rd(PLAYERY) == 0)
 check("boot: PLAYER_SHIP_PAT is the entry body pattern (ShipStart2), not the normal PAT_SHIP",
@@ -115,76 +143,97 @@ check("VRAM at PAT_SHIP_ENTRY_BODY's sprite pattern generator slot matches SHIP_
 check("VRAM at PAT_SHIP_ENTRY_ACCENT's sprite pattern generator slot matches SHIP_ENTRY_ACCENT_PATTERN exactly",
       vram_accent == expected_accent)
 
-# ---- 3. diagonal approach: both PLAYERX/PLAYERY advance by
-#         SHIP_ENTRY_SPEED every frame until each reaches its own
-#         target, independently, with no overshoot ----
+# ---- 2b. (round145、"自機登場演出でスプライトがズレてる"): during the
+#          entry effect, ShipStart1(accent, slot0)/ShipStart2(body, slot1)
+#          must be drawn at the SAME X (overlaid, per the user's original
+#          request), not the normal +8px accent offset used for the
+#          barrier corner decoration. Attribute table: slot1(body)=
+#          SPRATR+4, slot0(accent)=SPRATR+0, byte+1 of each 4-byte entry
+#          is X. ----
+SPRATR = 0x1B00  # VDP sprite attribute table base (this file's own DI blocks write here)
 z = fresh()
 boot_with_entry(z)
-xs = []
-ys = []
-for _ in range(40):
+step_frame(z)  # one entry frame: PLAYERX has advanced off 0, still mid-entry
+body_x_during = z.vram[SPRATR + 1 * 4 + 1]
+accent_x_during = z.vram[SPRATR + 0 * 4 + 1]
+check("during the entry effect, the accent (ShipStart1) is drawn at the SAME X as the body "
+      "(ShipStart2) - overlaid, not offset +8px like the normal barrier decoration",
+      accent_x_during == body_x_during)
+
+z2 = fresh()
+boot_with_entry(z2)
+for _ in range(TOTAL_FRAMES + 2):
+    step_frame(z2)
+body_x_after = z2.vram[SPRATR + 1 * 4 + 1]
+accent_x_after = z2.vram[SPRATR + 0 * 4 + 1]
+check("after the entry effect completes, the normal +8px accent offset (barrier corner "
+      "decoration) is restored", (accent_x_after - body_x_after) % 256 == 8)
+
+#         SHIP_ENTRY_SPEED/frame, Y by 1/frame, both arriving at
+#         (SHIP_ENTRY_MID_X, PLAYER_INITY) on the exact same frame ----
+z = fresh()
+boot_with_entry(z)
+xs, ys, acts = [], [], []
+for _ in range(TOTAL_FRAMES + 5):
     step_frame(z)
     xs.append(z.rd(PLAYERX))
     ys.append(z.rd(PLAYERY))
+    acts.append(z.rd(SHIP_ENTRY_ACT))
 
-expected_xs = []
-expected_ys = []
+expected_xs, expected_ys = [], []
 x, y = 0, 0
-for _ in range(40):
-    x = min(x + SHIP_ENTRY_SPEED, PLAYER_RETREAT_TARGET_X)
-    y = min(y + SHIP_ENTRY_SPEED, PLAYER_INITY)
+for i in range(TOTAL_FRAMES + 5):
+    if i < LEG1_FRAMES:
+        x += SHIP_ENTRY_SPEED
+        y += 1
+    elif i == LEG1_FRAMES - 1 + 1:  # unreachable, kept for clarity of the boundary
+        pass
+    if LEG1_FRAMES <= i < TOTAL_FRAMES:
+        x -= SHIP_ENTRY_SPEED
     expected_xs.append(x)
     expected_ys.append(y)
 
-check(f"PLAYERX advances by SHIP_ENTRY_SPEED({SHIP_ENTRY_SPEED})/frame toward "
-      f"PLAYER_RETREAT_TARGET_X({PLAYER_RETREAT_TARGET_X}) with no overshoot, tick-for-tick "
-      "matching an independent Python simulation over 40 frames",
-      xs == expected_xs)
-check(f"PLAYERY advances by SHIP_ENTRY_SPEED({SHIP_ENTRY_SPEED})/frame toward "
-      f"PLAYER_INITY({PLAYER_INITY}) with no overshoot, tick-for-tick matching an independent "
-      "Python simulation over 40 frames",
-      ys == expected_ys)
+check(f"leg1: PLAYERX advances by SHIP_ENTRY_SPEED({SHIP_ENTRY_SPEED})/frame during the first "
+      f"{LEG1_FRAMES} frames, reaching SHIP_ENTRY_MID_X({SHIP_ENTRY_MID_X}) exactly on frame "
+      f"{LEG1_FRAMES}",
+      xs[LEG1_FRAMES - 1] == SHIP_ENTRY_MID_X)
+check(f"leg1: PLAYERY advances by 1/frame (half of X's speed) during the first {LEG1_FRAMES} "
+      f"frames, reaching PLAYER_INITY({PLAYER_INITY}) exactly on frame {LEG1_FRAMES} - the SAME "
+      "frame as X (straight diagonal, not a bent path)",
+      ys[LEG1_FRAMES - 1] == PLAYER_INITY)
+check("leg1: X and Y are tick-for-tick identical to an independent Python simulation over the "
+      "whole run (both legs)",
+      xs == expected_xs and ys == expected_ys)
+check("SHIP_ENTRY_ACT transitions from 1 (leg1) to 2 (leg2) exactly on the frame both X and Y "
+      "arrive at (SHIP_ENTRY_MID_X, PLAYER_INITY)",
+      acts[LEG1_FRAMES - 2] == 1 and acts[LEG1_FRAMES - 1] == 2)
 
-x_arrival_frame = next(i for i, v in enumerate(expected_xs) if v == PLAYER_RETREAT_TARGET_X)
-y_arrival_frame = next(i for i, v in enumerate(expected_ys) if v == PLAYER_INITY)
-check("X reaches its target strictly before Y (X's distance is shorter, matching the diagonal-then-"
-      "vertical-finish shape this independent-per-axis design produces)",
-      x_arrival_frame < y_arrival_frame)
+# ---- 4. leg2: X alone retreats from SHIP_ENTRY_MID_X down to
+#         PLAYER_RETREAT_TARGET_X, Y stays fixed at PLAYER_INITY ----
+check(f"leg2: PLAYERY stays fixed at PLAYER_INITY({PLAYER_INITY}) for all of leg2 "
+      "(only X moves in leg2)",
+      all(v == PLAYER_INITY for v in ys[LEG1_FRAMES:TOTAL_FRAMES]))
+check(f"leg2: PLAYERX decreases by SHIP_ENTRY_SPEED({SHIP_ENTRY_SPEED})/frame during leg2's "
+      f"{LEG2_FRAMES} frames, reaching PLAYER_RETREAT_TARGET_X({PLAYER_RETREAT_TARGET_X}) exactly "
+      f"on frame {TOTAL_FRAMES}",
+      xs[TOTAL_FRAMES - 1] == PLAYER_RETREAT_TARGET_X)
+check("SHIP_ENTRY_ACT drops to 0 exactly on the frame leg2's X reaches PLAYER_RETREAT_TARGET_X "
+      "(the whole sequence's true completion)",
+      acts[TOTAL_FRAMES - 2] == 2 and acts[TOTAL_FRAMES - 1] == 0)
 
-# ---- 4. SHIP_ENTRY_ACT only drops to 0 on the exact frame BOTH axes
-#         have arrived, not before, and the patterns switch back to
-#         the normal ship look on that very same frame ----
-z = fresh()
-boot_with_entry(z)
-still_armed_frames = []
-for i in range(y_arrival_frame):
-    step_frame(z)
-    still_armed_frames.append(z.rd(SHIP_ENTRY_ACT))
-check(f"SHIP_ENTRY_ACT stays 1 for all {y_arrival_frame} frames before the slower axis (Y) arrives",
-      all(v == 1 for v in still_armed_frames))
-
-step_frame(z)  # the arrival frame itself
-check("SHIP_ENTRY_ACT drops to 0 exactly on the frame both PLAYERX/PLAYERY reach their targets",
-      z.rd(SHIP_ENTRY_ACT) == 0)
-check("...and PLAYERX is exactly at PLAYER_RETREAT_TARGET_X (32) on that same frame",
-      z.rd(PLAYERX) == PLAYER_RETREAT_TARGET_X)
-check("...and PLAYERY is exactly at PLAYER_INITY (64) on that same frame",
-      z.rd(PLAYERY) == PLAYER_INITY)
+# ---- 5. on that exact completion frame, the ship's pattern switches back
+#         to the normal look, and the sequence never re-arms ----
 check("PLAYER_SHIP_PAT switches back to the normal PAT_SHIP (level flight, JOY_STICK centered) "
-      "on the very same arrival frame - not a frame later",
+      "on the true completion frame",
       z.rd(PLAYER_SHIP_PAT) == PAT_SHIP)
 check("PLAYER_ACCENT_PAT switches back to the normal barrier-equipped accent (BARRIER_HP_INIT>0 "
       "from game start, so ACCFR_GOT correctly picks PAT_ACCENT_BARRIER, not plain PAT_ACCENT) "
-      "on the very same arrival frame",
+      "on the true completion frame",
       z.rd(PLAYER_ACCENT_PAT) == PAT_ACCENT_BARRIER)
+check("SHIP_ENTRY_ACT stays 0 for the extra frames stepped past completion (one-shot, never re-arms)",
+      all(v == 0 for v in acts[TOTAL_FRAMES:]))
 
-# once more frames, the sequence must stay inactive (a one-shot, not a loop)
-for _ in range(5):
-    step_frame(z)
-check("SHIP_ENTRY_ACT stays 0 forever after arrival (one-shot, never re-arms)",
-      z.rd(SHIP_ENTRY_ACT) == 0)
-
-# ---- 5. once the entry finishes, normal joystick control genuinely
+# ---- 6. once the entry finishes, normal joystick control genuinely
 #         takes over (not frozen, not still overridden) ----
 z.sim_dir = 3  # right
 prev_x = z.rd(PLAYERX)
@@ -193,17 +242,18 @@ check("after the entry sequence, real joystick input actually moves PLAYERX agai
       "(normal control fully handed back)",
       z.rd(PLAYERX) > prev_x)
 
-# ---- 6. self-verification: a real BGM_TICK-unrelated regression guard -
-#         if the arrival check used only PLAYERX (forgetting PLAYERY),
-#         SHIP_ENTRY_ACT would drop to 0 as soon as X alone arrives,
-#         well before Y catches up. Confirm this is NOT what happens
-#         (both must be checked) by cross-referencing the two arrival
-#         frames computed above. ----
-check("the arrival check genuinely waits for the SLOWER axis (Y), not just X: "
-      "x_arrival_frame != y_arrival_frame confirms the two axes have different "
-      "arrival times in this scenario, so a hypothetical X-only bug would be "
-      "distinguishable from the correct both-axes behavior verified above",
-      x_arrival_frame != y_arrival_frame)
+# ---- 7. self-verification: a regression guard against the specific bug
+#         class this design is fragile to (removed the overshoot clamp
+#         to save ROM, relying on exact divisibility+simultaneous arrival
+#         - if that invariant were ever violated by a future constant
+#         change without restoring the clamp, PLAYERX/PLAYERY would wrap
+#         via 8-bit under/overflow instead of stopping). Confirm the
+#         values never leave the valid 0-255 range at any point (a wrap
+#         would show up as a huge back-and-forth jump). ----
+check("PLAYERX/PLAYERY never show a sign of 8-bit wraparound (a huge single-frame jump) "
+      "anywhere across the full sequence - the clamp-free design's key safety invariant",
+      all(abs(xs[i] - xs[i - 1]) <= SHIP_ENTRY_SPEED for i in range(1, len(xs))) and
+      all(abs(ys[i] - ys[i - 1]) <= SHIP_ENTRY_SPEED for i in range(1, len(ys))))
 
 
 print()

@@ -273,6 +273,42 @@ z.wr(POD_CUR_X + 3, PX); z.wr(POD_CUR_Y + 3, PY)
 call_routine(z, sym["PDC_CHECK_PODS"])
 check("PDC_CHECK_PODS: BOSS_STATE!=2 (boss not landed) never hits, even with a live pod at the same position", z.a == 0)
 
+# ---------- (6b) round145("ステージ1ボスもポッドから発射される弾に ----------
+# ---------- コリジョンがない...先端1pxの判定を入れてくれ"): POD_BULLET0/1 ----------
+POD_BULLET0_ACT = sym["POD_BULLET0_ACT"]; POD_BULLET0_X = sym["POD_BULLET0_X"]; POD_BULLET0_Y = sym["POD_BULLET0_Y"]
+POD_BULLET1_ACT = sym["POD_BULLET1_ACT"]; POD_BULLET1_X = sym["POD_BULLET1_X"]; POD_BULLET1_Y = sym["POD_BULLET1_Y"]
+
+z = fresh()
+z.wr(PLAYERX, PX); z.wr(PLAYERY, PY)
+z.wr(BOSS_STATE, 0)   # even with the boss not landed - bullets already in flight must still hit
+z.wr(POD_BULLET0_ACT, 1); z.wr(POD_BULLET0_X, PX); z.wr(POD_BULLET0_Y, PY)
+call_routine(z, sym["PDC_CHECK_PODS"])
+check("PDC_CHECK_PODS: POD_BULLET0 at the player's own position hits, even while BOSS_STATE!=2 "
+      "(a bullet already fired must still be able to hit as the boss lands/leaves)", z.a == 1)
+
+z = fresh()
+z.wr(PLAYERX, PX); z.wr(PLAYERY, PY)
+z.wr(BOSS_STATE, 2)
+z.wr(POD_BULLET0_ACT, 0)
+z.wr(POD_BULLET1_ACT, 1); z.wr(POD_BULLET1_X, PX); z.wr(POD_BULLET1_Y, PY)
+call_routine(z, sym["PDC_CHECK_PODS"])
+check("PDC_CHECK_PODS: POD_BULLET1 at the player's own position hits (independent of POD_BULLET0)", z.a == 1)
+
+z = fresh()
+z.wr(PLAYERX, PX); z.wr(PLAYERY, PY)
+z.wr(BOSS_STATE, 2)
+z.wr(POD_BULLET0_ACT, 1); z.wr(POD_BULLET0_X, 200); z.wr(POD_BULLET0_Y, 200)
+z.wr(POD_BULLET1_ACT, 1); z.wr(POD_BULLET1_X, 200); z.wr(POD_BULLET1_Y, 200)
+call_routine(z, sym["PDC_CHECK_PODS"])
+check("PDC_CHECK_PODS: pod bullets far from the player never hit", z.a == 0)
+
+z = fresh()
+z.wr(PLAYERX, PX); z.wr(PLAYERY, PY)
+z.wr(BOSS_STATE, 2)
+z.wr(POD_BULLET0_ACT, 0); z.wr(POD_BULLET1_ACT, 0)
+call_routine(z, sym["PDC_CHECK_PODS"])
+check("PDC_CHECK_PODS: inactive pod bullets never hit", z.a == 0)
+
 
 # ---------- (7) PDC_CHECK_EBULLET (consumes the bullet on hit) ----------
 z = fresh()

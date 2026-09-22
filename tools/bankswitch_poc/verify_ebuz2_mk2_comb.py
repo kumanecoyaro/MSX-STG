@@ -308,6 +308,18 @@ for i in range(NFRAMES):
         check(f"フレーム{i}でスタックせず完走する(ワイルドジャンプ/フリーズが起きていないこと)", False)
         completed = False
         break
+    # (round145、"EbuzIIで敵の弾やビームにコリジョンがない"の修正で発覚):
+    # 飛び込み演出終了後、自機はX=32に静止したまま2200フレーム連射し
+    # 続けるだけ(このテストは元々Mk2自身のシーケンス進行/実ボスへの
+    # 引き継ぎを検証するのが目的で、自機の被弾生存は対象外 - それは
+    # tools/verify_player_damage.pyが別途担当)。volley1/volley2/レーザー
+    # に新規追加したコリジョンにより、この静止した自機が現実に被弾し
+    # 続けてBARRIER_HPが0になりGAME_OVERへ落ちる(=死亡演出でPLAYERXが
+    # 画面外へ飛ばされ二度と動かなくなる)ケースが今回初めて起こるように
+    # なったため、このテストの本来の目的(Mk2の状態機械)を汚さないよう
+    # 自機を強制的に無敵に保つ。
+    mem[gsym["BARRIER_HP"]] = 99
+    mem[gsym["GAME_OVER"]] = 0
     rc = mem[gsym["EBUZ2_ROW_CUR"]]
     max_row_cur_seen = max(max_row_cur_seen, rc)
     if rc + 6 >= GROUND_ROW0:

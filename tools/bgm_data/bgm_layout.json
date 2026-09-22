@@ -67,6 +67,18 @@
     "raw_len": 512,
     "segments": 126
   },
+  "STAGE1_BOSS_MISC_PATTERNS": {
+    "bank_offset": 16143,
+    "len": 72,
+    "raw_len": 128,
+    "segments": 22
+  },
+  "STAGE1_MISSION_GAMEOVER_FONT": {
+    "bank_offset": 16215,
+    "len": 114,
+    "raw_len": 128,
+    "segments": 39
+  },
   "STAGE_CLEAR": {
     "bank_offset": 4891,
     "chA_len": 79,

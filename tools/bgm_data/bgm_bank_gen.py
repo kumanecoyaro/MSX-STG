@@ -364,6 +364,89 @@ def _generate():
     }
     blob += stage1_boss_compressed
 
+    # EBUZ2_MK2_CHARDATA(round136、Ebuz Mk2用、227byte)。
+    # (2026-09-22、round145で自己発見・修正): このエントリは元々
+    # `_generate()`自身ではなく、コミットされていない使い捨てスクリプト
+    # (過去セッションのpatch_ebuz2_tables.py)がbgm_bank.bin/
+    # bgm_layout.jsonへ直接後付けしていたため、この関数を素朴に再実行
+    # (`--generate`)するとEBUZ2データが跡形もなく0xFF埋めに戻って
+    # しまう危険な状態だった(実際に本セッションで一度踏んだ - 新規
+    # データ追加のため--generateを実行したところEBUZ2領域が消失した)。
+    # ここで正式に`_generate()`自身の一部として組み込み、再発を防止する。
+    # ただし内容の一部(EBUZ2_SCRIPT_TABLE/ALTLOOP_TABLE/STOPSEQ_TABLE、
+    # 計42byte)はStage1が実際にComb組み込みされた後のコードアドレスに
+    # 依存するため、このファイル単体(Stage1のアセンブル結果を知らない)
+    # では正しい値を計算できない(build_full_rom.py側がbgm_bank_gen.py
+    # を読み込む設計のため、逆方向のimportは循環参照になり不可)。
+    # そのため、まず動作確認済みの現在のバイト列を静的テンプレートとして
+    # 一度だけ抽出・キャッシュした`ebuz2_mk2_chardata_template.bin`を
+    # そのまま使い(タイル絵柄・行データ等コード非依存の部分は正しい
+    # ままになる)、コードアドレス依存の42byteだけは、Stage1のコードが
+    # 変化するたびに`tools/bgm_data/patch_ebuz2_mk2.py`を実行して
+    # 別途更新すること(このファイル自身のコメント・
+    # tools/bankswitch_poc/verify_ebuz2_mk2_comb.pyで検証)。
+    with open(os.path.join(HERE, "ebuz2_mk2_chardata_template.bin"), "rb") as f:
+        ebuz2_mk2_chardata = f.read()
+    assert len(ebuz2_mk2_chardata) == 227
+    layout["EBUZ2_MK2_CHARDATA"] = {
+        "bank_offset": len(blob),
+        "len": len(ebuz2_mk2_chardata),
+    }
+    blob += ebuz2_mk2_chardata
+
+    # STAGE1_BOSS_MISC_PATTERNS(round145、"ではボスポッド弾・EbuzII弾/
+    # ビームに1pxコリジョンを"のROM予算確保): src/CYBER SHMUP.asmの
+    # BOSS_HEX_PATTERN/BOSS_ORBIT_PATTERN/DFL_BULLET_PATTERN/
+    # EXPLOSION_PATTERN(元は4個の32byte DBブロック、計128byte、
+    # BOSS_SPAWN内の1回のLDIRVMでしか参照されない一度きりロード専用
+    # データ)をSTAGE1_BOSS_CHARDATAと同じ理由でオフロード。round135
+    # follow-up16の時点ではbank6の空き(522byte)がBOSS_PATTERNS込み
+    # 640byte全部には足りず移設を見送っていたが、以後の曲/画像追加を
+    # 経た現在の空き(468byte)で128byte単体なら十分収まるため今回
+    # 追加。当初は無圧縮128byteのまま追加する設計だったが、
+    # STAGE1_MISSION_GAMEOVER_FONT(下記)と合わせるとbank6の空きを
+    # 15byteオーバーしたため、BOSS_PATTERNS/PATTERNSと同じ自前RLEで
+    # 圧縮(128byte->72byte)。Stage1側もDECOMPRESS_RLE_TO_VRAMを
+    # 経由してBOSS_SPAWN時に1回だけ展開する(呼び出し元コードは
+    # BOSS_PATTERNSの既存パターンをそのまま踏襲)。
+    with open(os.path.join(HERE, "stage1_boss_misc.bin"), "rb") as f:
+        stage1_boss_misc = f.read()
+    assert len(stage1_boss_misc) == 128
+    stage1_boss_misc_compressed, stage1_boss_misc_segments = title_bg_gen.rle_encode(stage1_boss_misc)
+    assert title_bg_gen.rle_decode(stage1_boss_misc_compressed, stage1_boss_misc_segments) == stage1_boss_misc, \
+        "RLE round-trip mismatch for STAGE1_BOSS_MISC_PATTERNS - encoder bug"
+    layout["STAGE1_BOSS_MISC_PATTERNS"] = {
+        "bank_offset": len(blob),
+        "len": len(stage1_boss_misc_compressed),
+        "raw_len": len(stage1_boss_misc),
+        "segments": stage1_boss_misc_segments,
+    }
+    blob += stage1_boss_misc_compressed
+
+    # STAGE1_MISSION_GAMEOVER_FONT(round145、同じROM予算確保作業の追加分):
+    # MISSION_FONT_PATTERNS+GAMEOVER_FONT_PATTERNS(元は2個の64byte DB
+    # ブロック、計128byte、いずれもINIT冒頭で1回だけLDIRVMされ以後
+    # CPUから直接読まれない静的フォントデータ)も同じ条件を満たすため
+    # オフロード。VRAM上でcodes64-79(MISSION_FONT_BASE=64〜GAMEOVER_
+    # FONT_BASE+7=79)が連続しているため、Stage1側のLDIRVM呼び出しも
+    # 2回→1回へ統合。BOSS_MISC_PATTERNSと合わせるとbank6の空きを
+    # 15byteオーバーしたため、こちらも同じ自前RLEで圧縮(128byte->
+    # 114byte、フォントは黒地の割合が高くないため圧縮率はBOSS_MISCほど
+    # 高くないが、それでも14byte節約できる)。
+    with open(os.path.join(HERE, "stage1_mission_gameover_font.bin"), "rb") as f:
+        stage1_mission_gameover_font = f.read()
+    assert len(stage1_mission_gameover_font) == 128
+    smgf_compressed, smgf_segments = title_bg_gen.rle_encode(stage1_mission_gameover_font)
+    assert title_bg_gen.rle_decode(smgf_compressed, smgf_segments) == stage1_mission_gameover_font, \
+        "RLE round-trip mismatch for STAGE1_MISSION_GAMEOVER_FONT - encoder bug"
+    layout["STAGE1_MISSION_GAMEOVER_FONT"] = {
+        "bank_offset": len(blob),
+        "len": len(smgf_compressed),
+        "raw_len": len(stage1_mission_gameover_font),
+        "segments": smgf_segments,
+    }
+    blob += smgf_compressed
+
     assert len(blob) <= BANK_SIZE, f"BGM data ({len(blob)} bytes) exceeds one 16KB bank"
     bank = bytes(blob) + bytes([0xFF] * (BANK_SIZE - len(blob)))
     return bank, layout
@@ -443,5 +526,5 @@ if __name__ == "__main__":
     print(f"bank image: {len(bank)} bytes total, {used} bytes actually used, {len(bank)-used} bytes free")
     for key, info in layout.items():
         print(key, info)
-        if key not in ("SASAPI_CHARDATA", "ENDING_IMAGE", "STAGE1_BOSS_CHARDATA"):  # not songs - song_constants() doesn't apply
+        if key not in ("SASAPI_CHARDATA", "ENDING_IMAGE", "STAGE1_BOSS_CHARDATA", "STAGE1_BOSS_MISC_PATTERNS", "EBUZ2_MK2_CHARDATA", "STAGE1_MISSION_GAMEOVER_FONT"):  # not songs - song_constants() doesn't apply
             print("  constants:", song_constants(key))

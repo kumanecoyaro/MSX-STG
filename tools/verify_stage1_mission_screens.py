@@ -35,8 +35,29 @@ def check(label, cond):
     print(("PASS " if cond else "FAIL "), label)
 
 
+STAGE1_MISSION_GAMEOVER_FONT = sym["STAGE1_MISSION_GAMEOVER_FONT"]
+sys.path.insert(0, os.path.join(REPO_ROOT, "tools", "title_screen"))
+import title_bg_gen as _tbg  # noqa: E402 - rle_encode/rle_decode
+with open(os.path.join(REPO_ROOT, "tools", "bgm_data", "stage1_mission_gameover_font.bin"), "rb") as f:
+    _real_mission_gameover_font = f.read()
+assert len(_real_mission_gameover_font) == 128
+_real_mgf_compressed, _real_mgf_segments = _tbg.rle_encode(_real_mission_gameover_font)
+assert _tbg.rle_decode(_real_mgf_compressed, _real_mgf_segments) == _real_mission_gameover_font
+assert _real_mgf_segments == sym["STAGE1_MISSION_GAMEOVER_FONT_SEGMENTS"], \
+    "STAGE1_MISSION_GAMEOVER_FONT_SEGMENTS in src/CYBER SHMUP.asm is stale - re-run " \
+    "tools/bgm_data/bgm_bank_gen.py --generate and update it"
+
+
 def fresh():
-    return Z80(bytearray(mem0))
+    # (round145、ROM予算確保でMISSION/GAMEOVERフォントをTitleが起動時に
+    # RAMへ事前コピーする方式へ変更): このファイルはTitleを経由せず
+    # 直接Stage1のINITから起動するため、実機同様にINIT開始前から常に
+    # このRAMへ圧縮済みの実データが置かれている前提を再現する(でないと
+    # INIT自身のDECOMPRESS_RLE_TO_VRAMが全ゼロを展開してしまう)。
+    z = Z80(bytearray(mem0))
+    for i, b in enumerate(_real_mgf_compressed):
+        z.wr(STAGE1_MISSION_GAMEOVER_FONT + i, b)
+    return z
 
 
 def run_until_pc(z, target_pc, max_instr=500_000):

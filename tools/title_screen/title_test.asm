@@ -683,6 +683,8 @@ INIT_BGM:
     LD HL,09428h : LD DE,0CD5Bh : LD BC,032h : LDIR   ; GAME_OVER chB+chC(Stage1ゲームオーバー用)
     LD HL,0BD0Ah : LD DE,0CD8Dh : LD BC,0122h : LDIR  ; BOSS_PATTERNS(Stage1ボス本体グラフィック用、RLE圧縮済み290byte)
     LD HL,0BE2Ch : LD DE,0D0C0h : LD BC,0E3h : LDIR   ; EBUZ2_MK2_CHARDATA(round136、Ebuz Mk2の行形状データ+シーケンステーブル、227byte、無圧縮)
+    LD HL,0BF0Fh : LD DE,0D20Ah : LD BC,048h : LDIR   ; STAGE1_BOSS_MISC_PATTERNS(round145、BOSS_HEX/ORBIT/DFL_BULLET/EXPLOSION統合、RLE圧縮済み72byte)
+    LD HL,0BF57h : LD DE,0D28Ah : LD BC,072h : LDIR   ; STAGE1_MISSION_GAMEOVER_FONT(round145、MISSION/GAMEOVERフォント統合、RLE圧縮済み114byte)
     LD A,1                       ; このファイル自身のbank1(Comb/standaloneとも1のまま)
     LD (7000h),A
 

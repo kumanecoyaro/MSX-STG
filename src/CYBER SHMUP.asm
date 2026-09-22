@@ -467,14 +467,16 @@ PLAYER_RETREAT_TARGET_X EQU 32   ; px from the left edge the retreat stops at
 PARTICLE_SPAWN_COOLDOWN EQU 0E83Ah  ; frames until the next spawn is allowed
 
 ; (2026-09-21、"ステージ1スタート直後...急に始まるのでなく飛び込んで
-; くる演出...左上から斜め右下に移動 Y中央まで来たら通常時の絵にして
-; Xが32pxの位置に"): 開始直後の飛び込み演出。目標位置はPLAYER_RETREAT_
-; TARGET_X(32)/PLAYER_INITY(64、既存の通常巡航高度)をそのまま再利用
-; (新規定数を増やさないため)。0F332hはPARTICLE_DY(0F32Eh、4byte)直後・
-; STACKTOP(0F380h)手前の既存の空き領域("0F22Bh-0F37Fhの341バイトの
-; 空き領域")内。
-SHIP_ENTRY_ACT   EQU 0F332h  ; 0=通常/1=飛び込み演出中
+; くる演出...0,0からX128、Y64まで移動してそこからX32,Y64な"): 開始
+; 直後の飛び込み演出、2区間構成。leg1(ACT=1): (0,0)→(SHIP_ENTRY_MID_X,
+; PLAYER_INITY)、leg2(ACT=2): そこから→(PLAYER_RETREAT_TARGET_X,
+; PLAYER_INITY)。最終位置・巡航高度はPLAYER_RETREAT_TARGET_X(32)/
+; PLAYER_INITY(64、既存の通常巡航高度)をそのまま再利用。0F332hは
+; PARTICLE_DY(0F32Eh、4byte)直後・STACKTOP(0F380h)手前の既存の空き
+; 領域("0F22Bh-0F37Fhの341バイトの空き領域")内。
+SHIP_ENTRY_ACT   EQU 0F332h  ; 0=通常/1=leg1中/2=leg2中
 SHIP_ENTRY_SPEED EQU 2       ; px/frame、PLAYER_RETREAT_SPEEDと同じ考え方
+SHIP_ENTRY_MID_X EQU 128     ; leg1の目標X(画面中央)
 
 ; --- Enemy1: one-time diagonal dodge toward the player when     ---
 ; --- crossing screen-center X. Per-instance now: E_PARAM0 (done?),  ---
@@ -1067,13 +1069,21 @@ INIT:
     ; 1/2の8x8グリフ)へ差し替え、8グリフ(M,I,S,O,N,space,1,2)構成に
     ; 拡張(旧6グリフ+DIGIT_BASE+1/+2への依存を解消)。同じcode64-71の
     ; group8内に収まるため追加コードは不要。
-    LD HL,MISSION_FONT_PATTERNS : LD DE,MISSION_FONT_BASE*8 : LD BC,MISSION_FONT_PATTERNS_LEN : CALL LDIRVM
+    ; round145(ROM予算確保): MISSION_FONT_PATTERNS+GAMEOVER_FONT_PATTERNS
+    ; はVRAM上でcodes64-79の連続128byteなので1回のLDIRVMへ統合した上で
+    ; 自前RLEで圧縮(128byte->114byte、データ自体もSTAGE1_MISSION_
+    ; GAMEOVER_FONTとしてbank6へオフロード済み)。GAME OVER表示用
+    ; (G,A,E,V,R、code72-76、group9内、tools/pixel_font_8x8.pyの新規
+    ; 描き起こし文字)もここで一緒にロードする - GAME OVERはステージ
+    ; 本編プレイ中いつでも発生しうるため、本編初期化が終わる前のこの
+    ; 早い段階で必ず用意しておく必要がある。
+    LD DE,MISSION_FONT_BASE*8
+    LD A,E : OUT (99h),A
+    LD A,D : OR 40h : OUT (99h),A
+    LD HL,STAGE1_MISSION_GAMEOVER_FONT
+    LD DE,STAGE1_MISSION_GAMEOVER_FONT_SEGMENTS
+    CALL DECOMPRESS_RLE_TO_VRAM
     LD HL,MISSION_FONT_COLOR : LD DE,2008h : LD BC,1 : CALL LDIRVM
-    ; GAME OVER表示用(G,A,E,V,R、code72-76、group9内、tools/pixel_font_
-    ; 8x8.pyの新規描き起こし文字)もここで一緒にロードする - GAME OVERは
-    ; ステージ本編プレイ中いつでも発生しうるため、本編初期化が終わる前の
-    ; この早い段階で必ず用意しておく必要がある。
-    LD HL,GAMEOVER_FONT_PATTERNS : LD DE,GAMEOVER_FONT_BASE*8 : LD BC,GAMEOVER_FONT_PATTERNS_LEN : CALL LDIRVM
     LD HL,GAMEOVER_FONT_COLOR : LD DE,2009h : LD BC,1 : CALL LDIRVM
     LD HL,MISSION1_MSG
     CALL DRAW_MISSION_SCREEN
@@ -2506,6 +2516,22 @@ ACCFR_GOT:
 ACC_COLOR_GOT:
     LD (PLAYER_ACCENT_COLOR),A
 
+    ; (2026-09-22、"自機登場演出でスプライトがズレてる"): 通常時は
+    ; アクセントをbody+8pxへオフセットして描く(自機前方のバリア表示
+    ; 用の意図的なズラし)が、飛び込み演出中のShipStart1/2は"重ねて"
+    ; 表示する仕様(オフセット無し)のため、この描画ブロック内の
+    ; "ADD A,8"をD(0か8)との加算へ差し替え、飛び込み演出中だけ0にする。
+    ; DIブロックのT-state固定タイミングを崩さないよう、値はここで
+    ; 事前計算(ADD A,8→ADD A,Dは1byte減・3T速くなるだけで安全側)。
+    ; PLAYER_DRAW_Y_ADJ(CALLのみ挟まる)はA,BCしか触らないためD/Eは
+    ; DIブロック内で使用箇所まで無傷で残る。
+    LD A,(SHIP_ENTRY_ACT)
+    OR A
+    LD D,8
+    JR Z,ACCENT_XOFS_GOT
+    LD D,0
+ACCENT_XOFS_GOT:
+
     ; redraw ship: slot1=body, slot0=accent overlay (priority above ---
     ; body, drawn at PLAYERX+8, PLAYERY)
     DI
@@ -2532,7 +2558,7 @@ ACC_COLOR_GOT:
     NOP
     LD A,(PLAYERY) : SUB 8 : CALL PLAYER_DRAW_Y_ADJ : OUT (98h),A
     PUSH BC : POP BC : NOP : NOP
-    LD A,(PLAYERX) : ADD A,8 : OUT (98h),A
+    LD A,(PLAYERX) : ADD A,D : OUT (98h),A
     PUSH BC : POP BC : NOP : NOP
     LD A,(PLAYER_ACCENT_PAT) : OUT (98h),A
     PUSH BC : POP BC : NOP : NOP
@@ -6211,10 +6237,17 @@ BOSS_SPAWN:
     LD HL,BOSS_PATTERNS
     LD DE,BOSS_PATTERNS_SEGMENTS
     CALL DECOMPRESS_RLE_TO_VRAM
-    LD HL,BOSS_HEX_PATTERN : LD DE,96*8+SPRPAT : LD BC,32 : CALL LDIRVM
-    LD HL,BOSS_ORBIT_PATTERN : LD DE,100*8+SPRPAT : LD BC,32 : CALL LDIRVM
-    LD HL,DFL_BULLET_PATTERN : LD DE,104*8+SPRPAT : LD BC,32 : CALL LDIRVM
-    LD HL,EXPLOSION_PATTERN : LD DE,108*8+SPRPAT : LD BC,32 : CALL LDIRVM
+    ; round145("先端1pxの判定を入れてくれ"対応作業のROM予算確保):
+    ; BOSS_HEX/ORBIT_PATTERN・DFL_BULLET_PATTERN・EXPLOSION_PATTERNは
+    ; VRAM上でcodes96-111の連続128byteなので、旧来の4回の32byte
+    ; LDIRVMを1回へ統合した上で、BOSS_PATTERNSと同じ自前RLEで圧縮
+    ; (128byte->72byte、DECOMPRESS_RLE_TO_VRAM経由)。
+    LD DE,96*8+SPRPAT
+    LD A,E : OUT (99h),A
+    LD A,D : OR 40h : OUT (99h),A
+    LD HL,BOSS_MISC_PATTERNS
+    LD DE,BOSS_MISC_PATTERNS_SEGMENTS
+    CALL DECOMPRESS_RLE_TO_VRAM
     XOR A : LD (BOSS_ROW),A
     XOR A : LD (BOSS_COL),A
     LD A,1 : LD (BOSS_PHASE),A
@@ -8913,7 +8946,7 @@ PDCE6_HIT:
 PDC_CHECK_PODS:
     LD A,(BOSS_STATE)
     CP 2
-    JR NZ,PDCP_NONE
+    JR NZ,PDCP_BULLETS_ONLY
     LD A,(PLAYERX)
     LD (POD_XY_X),A
     LD A,(PLAYERY)
@@ -8950,9 +8983,13 @@ PDCP_SKIP:
     LD A,B
     CP 8
     JR NZ,PDCP_LOOP
-PDCP_NONE:
-    XOR A
-    RET
+    ; round145("ステージ1ボスもポッドから発射される弾にコリジョンが
+    ; ない...先端1pxの判定を入れてくれ"): ポッド本体(上記)とは独立に
+    ; POD_BULLET0/1(発射された弾自体)も自機と判定する。実処理は
+    ; ROM予算のALIGN-256境界回避策でファイル末尾のPDC_CHECK_POD_
+    ; BULLETSへ切り出し、ここでは最小のJPスタブのみ。
+PDCP_BULLETS_ONLY:
+    JP PDC_CHECK_POD_BULLETS
 
 ; Player-vs-enemy-bullet contact check. Unlike the enemy-body checks
 ; above, a bullet that touches the player IS consumed (deactivated +
@@ -14884,8 +14921,10 @@ PDC_CHECK_EBUZ2:
     CALL PLAYER_HIT_BOX_EBUZ
     OR A
     JR NZ,EBUZ2_PDC_HIT
-    XOR A
-    RET
+    ; round145("EbuzIIで敵の弾やビームにコリジョンがない"): 本体(上記)は
+    ; 従来通り。volley1/volley2/レーザーは新規追加(PDC_CHECK_EBUZ2_
+    ; PROJECTILES、ファイル末尾)。
+    JP PDC_CHECK_EBUZ2_PROJECTILES
 EBUZ2_PDC_HIT:
     LD A,1
     RET
@@ -15417,42 +15456,27 @@ ENEMY6_ROW_TABLE:
 ; --- tile's minority pixels just fold into bg=blue, so only 3
 ; --- color pairs are needed: K/B, G/B, R/B - keeps us to exactly
 ; --- the 8 free groups, codes 192-255.)
-; --- BOSS_HEX_PATTERN: single 16x16 sprite pattern (32 bytes),
-; --- art only in the top-left 8x8 quadrant (the other 3 quadrants
-; --- are blank/transparent) - matches the uploaded hex-icon shape.
-BOSS_HEX_PATTERN:
-    DB 3Ch,7Eh,FFh,FFh,FFh,FFh,7Eh,3Ch    ; top-left (the icon)
-    DB 00h,00h,00h,00h,00h,00h,00h,00h    ; bottom-left (blank)
-    DB 00h,00h,00h,00h,00h,00h,00h,00h    ; top-right (blank)
-    DB 00h,00h,00h,00h,00h,00h,00h,00h    ; bottom-right (blank)
-
-; --- BOSS_ORBIT_PATTERN: single 16x16 sprite pattern (32 bytes),
-; --- a small lens/capsule shape spanning the full 16px width but
-; --- only 8px tall (top half) - matches the uploaded pod shape.
-; --- Used by all 8 orbit pods (color set dynamically per pod).
-BOSS_ORBIT_PATTERN:
-    DB 3Fh,7Fh,7Fh,0FFh,0FFh,7Fh,7Fh,3Fh   ; top-left
-    DB 00h,00h,00h,00h,00h,00h,00h,00h     ; bottom-left (blank)
-    DB 0FCh,0FEh,0FEh,0FFh,0FFh,0FEh,0FEh,0FCh  ; top-right
-    DB 00h,00h,00h,00h,00h,00h,00h,00h     ; bottom-right (blank)
-
-; --- deflected boss-shield shots reuse the player's own shot shape ---
-; --- (the small diagonal streak from BULLET_PATTERNS' M=0 frame), ---
-; --- as a 16x16 sprite (only the top-left 8x8 has any art).       ---
-DFL_BULLET_PATTERN:
-    DB 66h,33h,00h,00h,00h,00h,00h,00h     ; top-left (matches player shot M=0)
-    DB 00h,00h,00h,00h,00h,00h,00h,00h     ; bottom-left (blank)
-    DB 00h,00h,00h,00h,00h,00h,00h,00h     ; top-right (blank)
-    DB 00h,00h,00h,00h,00h,00h,00h,00h     ; bottom-right (blank)
-
-; --- pod-destroy burst: 4 copies of the anim2 spark shape         ---
-; --- (08h,42h,24h,80h,01h,24h,42h,10h), scattered at overlapping,  ---
-; --- non-grid-aligned offsets across the full 16x16 area.          ---
-EXPLOSION_PATTERN:
-    DB 84h,48h,00h,02h,49h,84h,20h,03h     ; top-left
-    DB 13h,09h,20h,00h,09h,10h,04h,00h     ; bottom-left
-    DB 00h,00h,40h,10h,20h,10h,8Ch,68h     ; top-right
-    DB 90h,82h,48h,0C4h,20h,80h,00h,00h    ; bottom-right
+; (round145、"ではボスポッド弾・EbuzII弾ビームに1pxコリジョン"対応の
+; ROM予算確保): BOSS_HEX_PATTERN/BOSS_ORBIT_PATTERN/DFL_BULLET_PATTERN/
+; EXPLOSION_PATTERN(元は4個の32byte DBブロック、計128byte)は、
+; BOSS_PATTERNS(上記)と全く同じ「BOSS_SPAWNで1回だけLDIRVMされる
+; 純粋な静的パターンデータ、以後CPUから直接読まれない」条件を満たす。
+; round135follow-up16の時点ではbank6の空きが足りず移設を見送っていたが
+; (このファイル自身の上のコメント参照)、以後の曲・データ追加で
+; bank6側の空きを再計測した結果468byte確保できていたため、今回まとめて
+; オフロード(BOSS_PATTERNSと同じくTitleが起動時にRAM[BOSS_MISC_
+; PATTERNS]へ事前コピー、Stage1側はそのRAMを直接LDIRVMのソースにする
+; だけ)。4個のラベルは廃止し1個のEQUへ統合(元の並び・オフセットは
+; 保持: +0=HEX,+32=ORBIT,+64=DFL_BULLET,+96=EXPLOSION)。さらに
+; STAGE1_MISSION_GAMEOVER_FONT追加分と合わせるとbank6の空きを15byte
+; オーバーしたため、BOSS_PATTERNSと同じ自前RLEで圧縮(128byte->72byte)。
+BOSS_MISC_PATTERNS EQU 0D20Ah  ; 72byte(RLE圧縮済み)、シンボルテーブル
+                                ; 実測で完全に空きと確認済みの領域
+                                ; (EBUZ2_MK2_CHARDATA[D0C0h-D1A3h、
+                                ; 227byte]の直後)。
+BOSS_MISC_PATTERNS_SEGMENTS EQU 22  ; tools/bgm_data/bgm_bank_gen.py
+                                ; STAGE1_BOSS_MISC_PATTERNSの'segments'
+                                ; と一致させること。
 
 ; Same scattered-spark burst glyph as EXPLOSION_PATTERN above (no new
 ; art was supplied for this - reusing the existing "explosion" visual
@@ -15694,47 +15718,29 @@ DIGIT_PATTERNS:
     DB 3Ch,66h,66h,3Ch,66h,66h,3Ch,00h   ; 8
     DB 3Ch,66h,66h,3Eh,06h,0Ch,38h,00h   ; 9
 
-; "MISSION 1"/"MISSION 2"共有フォント(8x8ドット、2026-09-07"Mission表示
-; のフォントは添付ファイルで"対応 - ユーザー添付Font_24x24_1.json
-; [CYBER_SUZUKA]から機械抽出したM,I,S,O,N,1,2の7グリフ+spaceの計8グリフ。
-; tools/pixel_font_8x8.pyの_GLYPHS_ATTACHED/glyph_bytes()と全く同じ値、
-; python3 -c "...pixel_font_8x8.glyph_bytes(ch)..."で計算した値をそのまま
-; 転記)。codes64-71=M,I,S,O,N,space,1,2(group8を丸ごと使い切る)。旧来の
-; DIGIT_BASE+1/+2(既存の数字フォント)への依存は解消 - 添付データに1/2
-; グリフが含まれていたため。
-MISSION_FONT_PATTERNS:
-    DB 198,238,254,254,214,198,198,198    ; M (code64)
-    DB 48,48,48,48,48,48,48,48            ; I (code65)
-    DB 126,254,224,112,60,14,254,252      ; S (code66)
-    DB 124,254,198,198,198,198,254,124    ; O (code67)
-    DB 198,230,246,254,222,206,198,198    ; N (code68)
-    DB 0,0,0,0,0,0,0,0                    ; space (code69) - 全画面黒埋め用にも使う
-    DB 24,56,56,24,24,24,24,24            ; 1 (code70)
-    DB 252,254,6,126,252,192,254,254      ; 2 (code71)
-MISSION_FONT_PATTERNS_LEN EQU $ - MISSION_FONT_PATTERNS
+; (round145、ROM予算確保のためオフロード): "MISSION 1"/"MISSION 2"共有
+; フォント(M,I,S,O,N,space,1,2、codes64-71)+GAME OVER("MISSION FAILED")
+; 用フォント(G,A,E,V,R,F,L,D、codes72-79)は、いずれもINIT冒頭で1回だけ
+; LDIRVMされ以後CPUから直接読まれない静的データ(元は2個の64byte DB
+; ブロック、計128byte)。BOSS_MISC_PATTERNSと同じ理由でbank6(Comb共有
+; バンク)へオフロード、Titleが起動時にRAM[STAGE1_MISSION_GAMEOVER_
+; FONT]へ事前コピーする。元のグリフデータ・並び順(M,I,S,O,N,space,1,2,
+; G,A,E,V,R,F,L,D)はtools/bgm_data/stage1_mission_gameover_font.binに
+; そのまま保持。BOSS_MISC_PATTERNSと合わせるとbank6の空きを15byte
+; オーバーしたため、こちらも自前RLEで圧縮(128byte->114byte)。
+STAGE1_MISSION_GAMEOVER_FONT EQU 0D28Ah  ; 114byte(RLE圧縮済み)、
+                                ; シンボルテーブル実測で完全に空きと
+                                ; 確認済みの領域(BOSS_MISC_PATTERNS
+                                ; [D20Ah-D28Ah、72byte確保だが元の
+                                ; 128byte分の枠を維持]の直後)。
+STAGE1_MISSION_GAMEOVER_FONT_SEGMENTS EQU 39  ; tools/bgm_data/
+                                ; bgm_bank_gen.py STAGE1_MISSION_
+                                ; GAMEOVER_FONTの'segments'と一致させること。
 
 ; group8(codes64-71)の色を白文字/黒背景(0F1h)へ上書き - 元は"shot-green"
 ; 用に予約されただけで実際のビットマップが一度も無かった色(0D3h)。
 MISSION_FONT_COLOR:
     DB 0F1h
-
-; (2026-09-07、"ゲームオーバーは画面中央にGAME OVERと表示"、直後に
-; "表示もGAME OVERではなくMISSION FAILEDに変更"): GAME OVER(現在は
-; "MISSION FAILED")表示専用の追加8文字(G,A,E,V,R,F,L,D)、tools/
-; pixel_font_8x8.pyの_GLYPHS_NEW(添付フォントと同じ書体スタイルで新規に
-; 描き起こしたオリジナル)と同じ値。group9(codes72-79)をちょうど
-; 使い切る。G/A/E/V/Rは当初の"GAME OVER"用、F/L/Dは"MISSION FAILED"へ
-; の変更で追加。
-GAMEOVER_FONT_PATTERNS:
-    DB 124,254,192,192,206,198,254,124    ; G (code72)
-    DB 56,124,198,198,254,254,198,198     ; A (code73)
-    DB 254,254,192,252,252,192,254,254    ; E (code74)
-    DB 198,198,198,108,108,56,56,16       ; V (code75)
-    DB 252,254,198,254,252,206,198,198    ; R (code76)
-    DB 254,254,192,252,252,192,192,192    ; F (code77)
-    DB 192,192,192,192,192,192,254,254    ; L (code78)
-    DB 252,254,198,198,198,198,254,252    ; D (code79)
-GAMEOVER_FONT_PATTERNS_LEN EQU $ - GAMEOVER_FONT_PATTERNS
 
 ; group9(codes72-79)の色も白文字/黒背景(0F1h)へ - 元は"shot-white"用に
 ; 予約されただけで実際のビットマップが一度も無かった色(0DFh)。
@@ -16151,30 +16157,38 @@ PPF_SKIP:
 ; 末尾(全ALIGN境界より後ろ)に配置(実測により、この位置以外では
 ; Comb組み込み側の追加パッチぶんでALIGN境界を超え+256byteの余分な
 ; パディングが発生することを確認済み)。
-; (自機は常に目標未満から出発するため、事前のCP判定は省略 - 加算後の
-; クランプ判定のみ。呼び出し元はRET直後のAを再利用してターゲット到達を
-; 判定するため、Dを一切破壊しないことと合わせてAに最終格納値を残す。)
-SHIP_ENTRY_STEP:
-    LD A,(HL)
-    ADD A,SHIP_ENTRY_SPEED
-    CP D
-    JR C,SES_STORE
-    LD A,D
-SES_STORE:
-    LD (HL),A
-    RET
-
-; PLAYERX/PLAYERYが隣接アドレスなのを利用しHLをINCで使い回す(ただし
-; X/Yは両方とも毎フレーム無条件に進める必要があるため、Xの到達判定で
-; 早期RETしてYの更新をスキップしてはならない - 最初の実装でこの
-; バグを踏んだため、完了判定は両方のCALLが終わった後にまとめて行う)。
-; 2回目のCALL後もHL=PLAYERY/D=PLAYER_INITYのままな点を再利用し、
-; Y判定はLD A,(HL):CP Dのみで済ませる。
+; (2026-09-21、"0,0からX128、Y64まで移動してそこからX32,Y64な"):
+; leg1のY速度をX速度の半分(1、Xは2)にすることで、距離比128:64=2:1と
+; 速度比2:1が一致し、X/Yが"完全に同時"(64フレーム)に(SHIP_ENTRY_MID_X,
+; PLAYER_INITY)へ到達する真っ直ぐな斜め移動になる(レンダリングで直線
+; 移動を確認済み)。両軸とも到達後は二度と呼ばれない(到達した瞬間に
+; ACT遷移する)ため、クランプ判定そのものが不要 - ROM予算の都合で
+; いずれもCALL先を作らずインライン化(Y速度=1は"INC A"1byteで済む
+; ことも利用)。**この前提(距離が速度で割り切れる/両軸が同時到達する)
+; を変える場合は必ずクランプ判定を復元すること**(でないと8bitアンダー
+; /オーバーフローでラップし、自機が瞬間移動する重大なバグになる)。
+; 呼び出し元(MAINLOOP側のCALL直前)が既にSHIP_ENTRY_ACTをAへ読み込み
+; 済み(OR A/JR Zで消費されない)なので、ここでの再読み込みは省略。
+; ACTは1(leg1)か2(leg2)のいずれかしかあり得ない(0ならBlock Aの
+; OR A/JR Zで既に弾かれている)ため、CP 2の代わりにDEC A:JR NZで
+; 判定(A-1!=0 <=> A==2)。PLAYERX/PLAYERYが隣接アドレスなのを利用し
+; HLをINCで使い回す。
 UPDATE_SHIP_ENTRY:
-    LD HL,PLAYERX : LD D,PLAYER_RETREAT_TARGET_X : CALL SHIP_ENTRY_STEP
-    INC HL : LD D,PLAYER_INITY : CALL SHIP_ENTRY_STEP
-    LD A,(HL) : CP D : RET NZ
-    DEC HL : LD A,(HL) : CP PLAYER_RETREAT_TARGET_X : RET NZ
+    DEC A
+    LD HL,PLAYERX
+    JR NZ,SEU_LEG2
+    LD A,(HL) : ADD A,SHIP_ENTRY_SPEED : LD (HL),A
+    INC HL
+    LD A,(HL) : INC A : LD (HL),A
+    CP PLAYER_INITY : RET NZ
+    LD A,2 : LD (SHIP_ENTRY_ACT),A
+    RET
+SEU_LEG2:
+    ; leg2(X:128→32)。距離96(=SHIP_ENTRY_MID_X-PLAYER_RETREAT_TARGET_X)が
+    ; SHIP_ENTRY_SPEEDでちょうど割り切れ、到達後は二度と呼ばれないため
+    ; クランプ不要。
+    LD A,(HL) : SUB SHIP_ENTRY_SPEED : LD (HL),A
+    CP PLAYER_RETREAT_TARGET_X : RET NZ
     XOR A : LD (SHIP_ENTRY_ACT),A
     RET
 
@@ -16189,3 +16203,140 @@ APPLY_SHIP_ENTRY_PAT:
 LOAD_SHIP_ENTRY_PATTERNS:
     LD HL,SHIP_ENTRY_BODY_PATTERN : LD DE,PAT_SHIP_ENTRY_BODY*8+SPRPAT : LD BC,64 : CALL LDIRVM
     RET
+
+; ----------------------------------------------------------------------
+; round145("EbuzIIで敵の弾やビームにコリジョンがない...いずれも先端1px
+; の判定を入れてくれ"): volley1(V1、5レーン)/volley2(V2、4門x4スロット)/
+; レーザーの3種、いずれも自機との接触判定が丸ごと欠けていた(本体
+; [EBUZ_CELL_ADDR経由]のみ判定していた)ため新規追加。呼び出し元
+; (PDC_CHECK_EBUZ2)が既にEBUZ2_ACT!=0・EBUZ2_PHASE!=2を確認済みのため
+; ここでは再チェックしない。PLAYER_HIT_BOX_EBUZ_1PXは名前に反し汎用の
+; 「点(D,E、px単位)が自機8x8ヒットボックスと重なるか」判定のため
+; そのまま再利用する(EBUZ以外の弾でも使える設計)。Output: A=1でヒット。
+; ROM予算の都合(Round144由来のALIGN 256境界回避策)でファイル末尾に配置。
+; ----------------------------------------------------------------------
+PDC_CHECK_EBUZ2_PROJECTILES:
+    CALL PDC_CHECK_EBUZ2_V1
+    OR A
+    RET NZ
+    CALL PDC_CHECK_EBUZ2_V2
+    OR A
+    RET NZ
+    JP PDC_CHECK_EBUZ2_LASER
+
+; V1(volley1、5レーン閉状態弾): EBUZ2_V1_STRUCT[lane]=[ACT,COL](2byte
+; ペア×5)、行はlane+EBUZ2_ENTRY_TARGET_ROW(固定・非保持)。
+PDC_CHECK_EBUZ2_V1:
+    LD IX,EBUZ2_V1_STRUCT
+    LD B,0
+PCEV1_LOOP:
+    LD A,(IX+0)
+    OR A
+    JR Z,PCEV1_SKIP
+    LD A,(IX+1) : ADD A,A : ADD A,A : ADD A,A : LD D,A
+    LD A,B : ADD A,EBUZ2_ENTRY_TARGET_ROW
+    ADD A,A : ADD A,A : ADD A,A : LD E,A
+    PUSH BC
+    CALL PLAYER_HIT_BOX_EBUZ_1PX
+    POP BC
+    OR A
+    JR NZ,PCEV1_HIT
+PCEV1_SKIP:
+    INC IX : INC IX
+    INC B
+    LD A,B
+    CP 5
+    JR NZ,PCEV1_LOOP
+    XOR A
+    RET
+PCEV1_HIT:
+    LD A,1
+    RET
+
+; V2(volley2、4門x4スロットの回転プール): EBUZ2_V2_COLS[16]/
+; EBUZ2_V2_ROWS[16](=COLS+16の規約)、非アクティブはEBUZ2_SLOT_EMPTY。
+PDC_CHECK_EBUZ2_V2:
+    LD HL,EBUZ2_V2_COLS
+    LD B,16
+PCEV2_LOOP:
+    LD A,(HL)
+    CP EBUZ2_SLOT_EMPTY
+    JR Z,PCEV2_SKIP
+    ADD A,A : ADD A,A : ADD A,A
+    PUSH AF
+    PUSH HL
+    LD DE,16 : ADD HL,DE
+    LD A,(HL)
+    POP HL
+    ADD A,A : ADD A,A : ADD A,A : LD E,A
+    POP AF : LD D,A
+    PUSH BC
+    PUSH HL
+    CALL PLAYER_HIT_BOX_EBUZ_1PX
+    POP HL
+    POP BC
+    OR A
+    JR NZ,PCEV2_HIT
+PCEV2_SKIP:
+    INC HL
+    DJNZ PCEV2_LOOP
+    XOR A
+    RET
+PCEV2_HIT:
+    LD A,1
+    RET
+
+; レーザー(先端1pxのみ判定): HOLD中(発射直後、全長固定22列)は先端を
+; 固定col22とし、retract中はEBUZ2_LASER_UNITから毎tick縮む先端位置を
+; 再計算する(EBUZ2_UL_RETRACTの消去列計算[UNIT*2+1]と同じ考え方、
+; +1して消去前の"まだ残っている"側の外側1列を先端とする)。
+PDC_CHECK_EBUZ2_LASER:
+    LD A,(EBUZ2_LASER_ACT)
+    OR A
+    JR Z,PCEL_MISS
+    LD A,(EBUZ2_LASER_HOLD)
+    OR A
+    LD A,22
+    JR NZ,PCEL_GOTCOL
+    LD A,(EBUZ2_LASER_UNIT)
+    ADD A,A : ADD A,2
+PCEL_GOTCOL:
+    ADD A,A : ADD A,A : ADD A,A : LD D,A
+    LD A,(EBUZ2_LASER_ROW)
+    ADD A,A : ADD A,A : ADD A,A : LD E,A
+    JP PLAYER_HIT_BOX_EBUZ_1PX
+PCEL_MISS:
+    XOR A
+    RET
+
+; round145("ステージ1ボスもポッドから発射される弾にコリジョンがない
+; ...先端1pxの判定を入れてくれ"): PDC_CHECK_PODS(ポッド本体判定)から
+; ジャンプしてくる。ポッド本体とは別にPOD_BULLET0/1(発射された弾)を
+; 自機と判定、命中してもポッド本体同様に消費しない(既存のPDC_CHECK_*
+; 群の「接触検出のみ、対象は無傷」という設計を踏襲)。ROM予算の都合
+; (Round144由来のALIGN 256境界回避策)でファイル末尾に配置。
+PDC_CHECK_POD_BULLETS:
+    LD A,(POD_BULLET0_ACT)
+    OR A
+    JR Z,PCPB_SKIP0
+    LD A,(POD_BULLET0_X) : LD D,A
+    LD A,(POD_BULLET0_Y) : LD E,A
+    CALL PLAYER_HIT_BOX_EBUZ_1PX
+    OR A
+    JR NZ,PCPB_HIT
+PCPB_SKIP0:
+    LD A,(POD_BULLET1_ACT)
+    OR A
+    JR Z,PCPB_MISS
+    LD A,(POD_BULLET1_X) : LD D,A
+    LD A,(POD_BULLET1_Y) : LD E,A
+    CALL PLAYER_HIT_BOX_EBUZ_1PX
+    OR A
+    RET
+PCPB_HIT:
+    LD A,1
+    RET
+PCPB_MISS:
+    XOR A
+    RET
+
