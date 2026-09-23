@@ -280,6 +280,22 @@ while z.rd(PH) == 2 and n < 300: frame(z); n += 1
 check("test mode: not cutting in -> countdown restarts too (no self-destruct)",
       z.rd(PH) == 0 and z.rd(CD) > 0 and z.rd(sym['BOSS_EXPL_ACTIVE']) == 0 and z.rd(sym['GAME_OVER']) == 0)
 
+# (2026-09-23) テストモードでエナジー不足・バリア無しでも、カウントダウンの無限ループにならない
+z = landed(); z.wr(sym['GAMEOVER_ENABLED'], 0); z.wr(sym['BARRIER_HP'], 0)
+start_countdown(z, 300); z.wr(sym['PLAYERY'], 120); to_fire(z)
+check("test mode, gauge short and no barrier: the boss still fires and holds (no endless countdown loop)",
+      z.rd(PH) == 2 and z.rd(CD) == 0)
+for _ in range(10): frame(z)
+frame(z, trig_b=True); frame(z)
+check("test mode: the laser can cut in regardless of gauge/barrier -> clash", z.rd(PH) == 3)
+z = landed(); z.wr(sym['GAMEOVER_ENABLED'], 0); z.wr(sym['LZ_SPENT'], 1); start_countdown(z)
+z.wr(sym['PLAYERY'], 120)
+for _ in range(120): frame(z)
+check("test mode, laser already used: one restart of the countdown with the energy refilled (as before)",
+      z.rd(PH) == 0 and z.rd(CD) == 120 and z.rd(sym['LZ_SPENT']) == 0)
+to_fire(z)
+check("... and the next boss shot fires normally", z.rd(PH) == 2)
+
 # ---------------------------------------------------------------- 割り込まない / 帯の中 / 条件未達
 z = landed(); start_countdown(z); z.wr(sym['PLAYERY'], 120); to_fire(z)
 n = 0

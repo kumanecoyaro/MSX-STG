@@ -16756,6 +16756,12 @@ GU_PUT:
 LZ_QUALIFIED:
     LD A,(LZ_SPENT) : OR A
     RET NZ
+    ; (2026-09-23、"無敵でチェックしたらレーザー撃ってこなくて予備動作のポッド弾収束で
+    ; 無限ループした"): テストモード(GAMEOVER_ENABLED=0、タイトルBスタート)では死なない
+    ; ため、条件未達だと「撃たれた瞬間に負け→カウントダウンからやり直し」を永久に
+    ; 繰り返していた。テストモードではバリア・エナジーの条件を外す(1回だけは残す)。
+    LD A,(GAMEOVER_ENABLED) : OR A
+    RET Z
     LD A,(BARRIER_HP) : OR A
     JR Z,LZQ_NO
     CALL GAUGE_VALUE
