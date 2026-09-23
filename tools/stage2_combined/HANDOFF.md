@@ -18432,3 +18432,14 @@ EbuzII弾ビームへの1pxコリジョン追加+ROM予算の共有バンク6オ
   PEUA_TRY_SPAWN_AT_QUIET→PEUA_TRY_SPAWN_AT(自機爆発と同じSOUND_DESTROY)へ。_QUIETは廃止。
 - verify_enemy4_crash.py 18件(実経路でSOUND_DESTROYに入る回数を数える: 墜落20フレームで3回、撃破で1回)。
   ROMはALIGN吸収で変化なし(plain 667 / Comb 617 / DEBUG 584)。bgm_bank.binは番地ずれで再パッチ。
+
+## Round145 follow-up28: ゲージ満タンで赤+バリアの反転アニメ(2026-09-23、レンダリング確認待ち)
+
+- ユーザー: "チャージはレッドで溜まったらレッドにして で、バリアの右側のパターンを反転したものと2フレで
+  切り替えに Up mid downの3枚あるから チャージできたらアニメ開始 まずレンダリングで確認する"。
+- 解釈: 溜め中は白、満タンで赤(ユーザー確認待ち)。旧group23はスコアの数字8/9と共用のため、ゲージを
+  空きのgroup16(BG codes128-130)へ移し、GAUGE_UPDATEが値の変わった時にgroup16の色を白F1h/赤81hへ。
+- バリア付きアクセントはMID(128、upも共用)とDOWN(132)の2枚。右下のバリアグリフだけ左右反転した版を
+  スプライトパターン156/160にLZ_INITで作り(元32byteを写してBRだけBARRIER_GLYPH_Mで上書き)、
+  GAUGE_SHOWN==50の間はTICKのbit1で2フレームごとに切り替え(ACCFR_GOT)。
+- テスト: verify_boss_laser 61・verify_player_damage 67・verify_comb全PASS。ROM plain 587。

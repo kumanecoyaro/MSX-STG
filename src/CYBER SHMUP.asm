@@ -89,6 +89,9 @@ PAT_ACCENT_BARRIER      EQU 128 ; ACCENT_MID_BARRIER_PATTERN, shown instead of P
                                 ; codes128-255 confirmed genuinely free via emulator VRAM
                                 ; survey - nothing else in this file ever LDIRVMs there)
 PAT_ACCENT_DOWN_BARRIER EQU 132 ; ACCENT_DOWN_BARRIER_PATTERN, same idea for the DOWN pose
+; (follow-up28) 満タンの間、バリア付きアクセント(128 MID / 132 DOWN)を右半分だけ
+; 左右反転した絵(156 / 160)と2フレームごとに切り替える。
+PAT_ACCENT_BARRIER_M EQU 156
 PAT_PLAYER_EXPLOSION EQU 136    ; PLAYER_EXPL_PATTERN (16x16 hw-sprite burst
                                  ; glyph for PLAYER_EXPL_UPDATE_ALL), always
                                  ; loaded at INIT unlike the boss's own lazy-
@@ -2523,6 +2526,22 @@ ACCFR_DOWN:
     JR Z,ACCFR_GOT
     LD A,PAT_ACCENT_DOWN_BARRIER
 ACCFR_GOT:
+    ; (follow-up28) レーザーのエナジーが満タンの間、バリアの右半分を反転した絵と
+    ; 2フレームごとに交互に
+    CP PAT_ACCENT_BARRIER
+    JR C,ACCFR_ST
+    LD B,A
+    LD A,(GAUGE_SHOWN) : CP 50
+    LD A,(TICK)
+    JR NZ,ACCFR_B
+    AND 2
+    LD A,B
+    JR Z,ACCFR_ST
+    ADD A,PAT_ACCENT_BARRIER_M-PAT_ACCENT_BARRIER
+    JR ACCFR_ST
+ACCFR_B:
+    LD A,B
+ACCFR_ST:
     LD (PLAYER_ACCENT_PAT),A
 
     ; (2026-09-21、飛び込み演出): 上記の通常ポーズ選択(JOY_STICK/
@@ -16605,9 +16624,16 @@ LZ_CLASH_SPR  EQU 22      ; 干渉点(自機爆発の絵)
 LZ_END_SPR    EQU 23      ; 23/24: ボスレーザーの右端(射出口との隙間2セルを埋める16x24)
 LZ_END_PAT    EQU 148     ; 148-155(スプライトパターンの空き)
 LZ_SCATTER_SPR EQU 26     ; 26-29: 干渉中だけSPRITE_USEDを空けて飛び散りに使わせる
-GAUGE_FULL_CODE EQU 186
-GAUGE_PART_CODE EQU 187   ; 端数1セル分、値が変わるたびパターン自体を書き換える
-GAUGE_EDGE_CODE EQU 188   ; col12の右端1px(px103)
+; (follow-up28) ゲージは空きのgroup16(codes128-135、旧ANIM2-white)へ移し、色を
+; グループごと切り替える: 溜め中は白、満タンで赤(旧group23はスコアの数字8/9と共用で
+; 色を変えられなかった)。
+GAUGE_FULL_CODE EQU 128
+GAUGE_PART_CODE EQU 129   ; 端数1セル分、値が変わるたびパターン自体を書き換える
+GAUGE_EDGE_CODE EQU 130   ; col12の右端1px(px103)
+GAUGE_COLOR_ADDR EQU 2010h   ; COLTBL+group16
+GAUGE_COLOR      EQU 0F1h    ; 白/黒
+GAUGE_FULL_COLOR EQU 081h    ; 赤/黒
+
 GAUGE_BLANK_CODE EQU MISSION_FONT_BASE+5   ; 行0の黒埋めと同じ空白
 
 ; B1beam_24x24.json(16x24、シアン)。上16行=スプライト23、下8行=24
@@ -16616,6 +16642,8 @@ LZ_END_TILES:
     DB 00h,00h,00h,00h,00h,0C0h,60h,0B8h,5Eh,0ABh,0F7h,0AFh,6Fh,0B7h,0EBh,0DEh
     DB 0EDh,9Fh,75h,0EFh,96h,2Ch,70h,0C0h,00h,00h,00h,00h,00h,00h,00h,00h
     DB 0B8h,60h,0C0h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h
+BARRIER_GLYPH_M:                               ; バリアのグリフ(0Ch,22h,55h,99h,99h,0AAh,44h,30h)の左右反転
+    DB 30h,44h,0AAh,99h,99h,55h,22h,0Ch
 GAUGE_TILES:
     DB 00h,0FFh,0FFh,0FFh,0FFh,0FFh,0FFh,00h  ; 186 満
     DB 00h,00h,00h,00h,00h,00h,00h,00h        ; 187 端数(動的)
@@ -16624,6 +16652,12 @@ GAUGE_TILES:
 LZ_INIT:
     LD HL,LZ_END_TILES : LD DE,LZ_END_PAT*8+SPRPAT : LD BC,64 : CALL LDIRVM
     LD HL,GAUGE_TILES : LD DE,GAUGE_FULL_CODE*8 : LD BC,24 : CALL LDIRVM
+    LD HL,GAUGE_COLOR_ADDR : LD A,GAUGE_COLOR : CALL WRTVRM
+    ; 反転バリア: 元の32byteを写し、右下8x8だけ反転グリフで上書き
+    LD HL,ACCENT_MID_BARRIER_PATTERN : LD DE,PAT_ACCENT_BARRIER_M*8+SPRPAT : LD BC,32 : CALL LDIRVM
+    LD HL,ACCENT_DOWN_BARRIER_PATTERN : LD DE,PAT_ACCENT_BARRIER_M+4*8+SPRPAT : LD BC,32 : CALL LDIRVM
+    LD HL,BARRIER_GLYPH_M : LD DE,PAT_ACCENT_BARRIER_M*8+SPRPAT+24 : LD BC,8 : CALL LDIRVM
+    LD HL,BARRIER_GLYPH_M : LD DE,PAT_ACCENT_BARRIER_M+4*8+SPRPAT+24 : LD BC,8 : CALL LDIRVM
     XOR A
     LD (LZ_PHASE),A : LD (LZ_SPENT),A : LD (GAUGE_SHOWN),A : LD (LZ_BLANKING),A
     LD (LZ_FAIL_REASON),A : LD (LZ_CD_T),A
@@ -16659,6 +16693,14 @@ GAUGE_UPDATE:
     CP (HL)
     RET Z
     LD (HL),A
+    LD C,A
+    CP 50                          ; 満タンなら赤
+    LD A,GAUGE_COLOR
+    JR NZ,GU_COL
+    LD A,GAUGE_FULL_COLOR
+GU_COL:
+    LD HL,GAUGE_COLOR_ADDR : CALL WRTVRM
+    LD A,C
     DEC A : LD C,A                 ; C=g-1(g=0なら負)
     AND 7 : LD B,A : LD A,0FFh     ; 端数パターン: 左からk px
     JR Z,GU_PMASK
