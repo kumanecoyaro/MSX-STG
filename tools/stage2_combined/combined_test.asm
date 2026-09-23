@@ -88,6 +88,13 @@ TANK_ENTRY_START_Y EQU 64
 TANK_ENTRY_GRAVITY EQU 1
 TANK_ENTRY_GRAVITY_INTERVAL EQU 3   ; frames between gravity bumps - untuned initial value
 TANK_ENTRY_VX EQU 1                  ; px/frame horizontal drift toward TANK_X_INIT - untuned initial value
+; (2026-09-23follow-up2、"そんな一瞬で着地しても何も確認できんだろうが
+; その10倍遅くしろ"): 物理更新(X/Y前進+ブースターのアニメ反転)自体を
+; 10実フレームに1回だけ行うようゲート(描画自体は毎実フレーム続ける、
+; 静止フレームが9/10増えるだけ)。距離・速度・重力の値は無変更のまま
+; 実時間だけ正確に10倍になる(値を10倍にすると重力の整数演算が変わって
+; しまうため、あえてこちらの方式を選んだ)。
+TANK_ENTRY_SLOWDOWN EQU 10
 BOOSTER_Y_OFFSET EQU 7               ; ブースターのYオフセット(自機基準)、ユーザー指示通り
 BOOSTER_WIDTH EQU 8                  ; 絵柄自体(右半分)の幅
 ; (2026-09-23follow-up、RAM予算+重大な安全性バグの自己発見・修正):
@@ -113,6 +120,7 @@ TANK_ENTRY_VY        EQU 0F315h   ; = BOSS_EXPL_RADIUS、重力加算式の垂�
 TANK_ENTRY_GRAV_CTR  EQU 0F316h   ; = BOSS_EXPL_TIMER、重力加算の間隔カウンタ(MINEの+7と同じ考え方)
 TANK_ENTRY_ANIM      EQU 0F317h   ; = BOSS_EXPL_CX、0/1、ブースターのBunit1/Bunit2切り替え(毎フレーム反転)
 BOOSTER_SPRITE_ATTRS EQU 0F318h   ; = BOSS_EXPL_CY(4byte分、CY/BLINK/ROWTMP/COLTMPを占有)、Y,X,pat,colのステージング
+TANK_ENTRY_SLOW_CTR  EQU 0F31Ch   ; = BOSS_EXPL_RING_MODE/SPARK_SLOT0_COL、同じ理由でエイリアス安全。物理更新の間引きカウンタ(0..TANK_ENTRY_SLOWDOWN-1)
 ; ENEMY_SPR_BASE_SLOT(=4、後方定義)を forward-reference すると過去に
 ; 踏んだアセンブラの罠(前方参照EQUが0として評価される)を再び踏むリスク
 ; があるため、リテラル4を直接使用(ENEMY_SPR_BASE_SLOTの値と一致する
@@ -3616,6 +3624,7 @@ INIT_SPRATR_CLR:
     LD (TANK_ENTRY_VY),A
     LD (TANK_ENTRY_GRAV_CTR),A
     LD (TANK_ENTRY_ANIM),A
+    LD (TANK_ENTRY_SLOW_CTR),A
     LD A,1 : LD (TANK_ENTRY_ACT),A
     XOR A
     LD (TANK_DX),A
@@ -16224,7 +16233,21 @@ BOOSTER2_SPRITE:
 ; フレームでTANK_ENTRY_ACT=0にしてブースターを隠し、以後は二度と
 ; 呼ばれない。
 UPDATE_TANK_ENTRY:
-    ; ブースターのアニメフレームを毎回反転
+    ; (2026-09-23follow-up2、"その10倍遅くしろ"): 物理更新(このラベル
+    ; から下、着地判定より前まで)をTANK_ENTRY_SLOWDOWN実フレームに1回
+    ; だけ実行する。それ以外の9/10フレームは描画のみ繰り返す(位置が
+    ; 変わらないだけで実害なし)。
+    LD A,(TANK_ENTRY_SLOW_CTR) : INC A
+    CP TANK_ENTRY_SLOWDOWN
+    JR C,UTE_SLOW_HOLD
+    XOR A
+    LD (TANK_ENTRY_SLOW_CTR),A
+    JR UTE_PHYSICS
+UTE_SLOW_HOLD:
+    LD (TANK_ENTRY_SLOW_CTR),A
+    JR UTE_DRAW
+UTE_PHYSICS:
+    ; ブースターのアニメフレームを反転(物理更新と同じ頻度)
     LD A,(TANK_ENTRY_ANIM)
     XOR 1
     LD (TANK_ENTRY_ANIM),A
@@ -16265,6 +16288,7 @@ UTE_Y_STORE:
     LD (TANK_Y_CUR),A
 UTE_Y_DONE:
 
+UTE_DRAW:
     ; 自機本体(スロット0-3)を新しいX/Yで再描画
     CALL UPDATE_TANK_SPRITES
 
