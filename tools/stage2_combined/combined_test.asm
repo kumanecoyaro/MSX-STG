@@ -16233,7 +16233,17 @@ BOOSTER2_SPRITE:
 ; フレームでTANK_ENTRY_ACT=0にしてブースターを隠し、以後は二度と
 ; 呼ばれない。
 UPDATE_TANK_ENTRY:
-    ; (2026-09-23follow-up2、"その10倍遅くしろ"): 物理更新(このラベル
+    ; (2026-09-23follow-up3、"なんで10フレ切り替えなんだよ！そんな指示
+    ; してねえだろうが 1フレつったら1フレだろが" - follow-up2で誤って
+    ; ブースターのアニメ反転まで物理更新[X/Y移動]と同じ10フレーム間引き
+    ; に巻き込んでいたのを是正): ブースターのアニメ反転は指示通り常に
+    ; 実1フレームごと(間引きゲートの外)、間引くのはX/Y移動(重力/速度)
+    ; だけにする。
+    LD A,(TANK_ENTRY_ANIM)
+    XOR 1
+    LD (TANK_ENTRY_ANIM),A
+
+    ; (2026-09-23follow-up2、"その10倍遅くしろ"): X/Y移動(このラベル
     ; から下、着地判定より前まで)をTANK_ENTRY_SLOWDOWN実フレームに1回
     ; だけ実行する。それ以外の9/10フレームは描画のみ繰り返す(位置が
     ; 変わらないだけで実害なし)。
@@ -16247,11 +16257,6 @@ UTE_SLOW_HOLD:
     LD (TANK_ENTRY_SLOW_CTR),A
     JR UTE_DRAW
 UTE_PHYSICS:
-    ; ブースターのアニメフレームを反転(物理更新と同じ頻度)
-    LD A,(TANK_ENTRY_ANIM)
-    XOR 1
-    LD (TANK_ENTRY_ANIM),A
-
     ; --- X: TANK_ENTRY_VX/frameでTANK_X_INITへ近づける(クランプ) ---
     LD A,(TANK_X)
     CP TANK_X_INIT

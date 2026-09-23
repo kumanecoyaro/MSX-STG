@@ -101,22 +101,19 @@ check(f"TANK_X advances by exactly TANK_ENTRY_VX on the {TANK_ENTRY_SLOWDOWN}th 
       "real frame (the one real physics step in this window)",
       xs_raw[TANK_ENTRY_SLOWDOWN - 1] == TANK_ENTRY_VX and xs_raw[TANK_ENTRY_SLOWDOWN] == TANK_ENTRY_VX)
 
-# ---- 4. booster animation toggles once every TANK_ENTRY_SLOWDOWN real
-#         frames (synced with the physics step, not every real frame -
-#         "落下中は1と2を1フレ切り替え" means once per physics frame) ----
+# ---- 4. (2026-09-23follow-up3、"なんで10フレ切り替えなんだよ！そんな
+#         指示してねえだろうが 1フレつったら1フレだろが") booster
+#         animation toggles every SINGLE real frame, completely
+#         independent of the 10x movement slowdown - only X/Y motion is
+#         throttled, not the animation ----
 cpu3 = fresh_cpu(skip_intro=False)
 anims = []
 for _ in range(TANK_ENTRY_SLOWDOWN * 3):
     step_frame(cpu3)
     anims.append(cpu3.rd(TANK_ENTRY_ANIM))
-expected_anims = []
-a = 0
-for i in range(TANK_ENTRY_SLOWDOWN * 3):
-    if (i + 1) % TANK_ENTRY_SLOWDOWN == 0:
-        a ^= 1
-    expected_anims.append(a)
-check("TANK_ENTRY_ANIM alternates 0/1 once per TANK_ENTRY_SLOWDOWN real "
-      "frames (synced with the physics step)", anims == expected_anims)
+check("TANK_ENTRY_ANIM alternates 0/1/0/1/... every single real frame "
+      "(\"1フレつったら1フレ\" - independent of the movement slowdown)",
+      anims == [(i + 1) % 2 for i in range(TANK_ENTRY_SLOWDOWN * 3)])
 
 # ---- 5. an independent Python simulation of the X/Y motion, real-frame
 #         for real-frame, gating physics behind the same slowdown counter ----
