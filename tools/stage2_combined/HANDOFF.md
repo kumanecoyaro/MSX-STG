@@ -18014,3 +18014,32 @@ EbuzII弾ビームへの1pxコリジョン追加+ROM予算の共有バンク6オ
   PAT_TANKFGAP(UPDATE_POSEがジャンプ中に選ぶ絵と同じ、描画時の-3px補正も
   同じ)、TANK_ENTRY_FINISHでPAT_TANKFへ戻す。tank_entry_test.py 36件、
   レンダリング確認済み、Comb再ビルド・verify_comb.py全PASS。
+
+## Round145 follow-up12: Stage1メインループ監査+対応A(2026-09-23)
+
+- ユーザー: "ステージ1のメインループで無駄な処理が走ってないか調査...特に
+  自機ショットルーチン 当たり判定やエネミーキューで無意味な深いループに
+  入ってないか 呼ばれないゴミがないか"。
+- 手法: z80emuでCALL/RETを追跡する包括T-stateプロファイラ(スクラッチ、
+  自機ショット撃ちっぱなし+上下移動で9500フレーム)。Stage1のMAINLOOPは
+  HALT無しのfree-running、平均68,129T/周(60Hz 1フレーム≒59,700Tを超過)。
+- 主な発見: ENEMY_POOL(32スロット、実測最大同時7体・43%のフレームで0体)
+  を毎フレーム弾数+2回フル走査(CHECK_BULLET_VS_ENEMY_POOL 11.6%、
+  ENEMY_POOL_UPDATE_ALL 4.8%、PDC_CHECK_ENEMY_POOL 3.2%)。Enemy6
+  (32スロット)はPDC_CHECK_ENEMY6/ENEMY6_UPDATE_ALLが既存の
+  ENEMY6_ACTIVE_COUNTを見ずに毎回走査(計5.2%、計測範囲では出現0体)。
+  Enemy3は1体でも居ると64スロット全走査(最大16体)。未参照コードは
+  EBUZ2_RECOIL_OUTER_REST(19byte)/EBUZ2_ACT_NOP(1byte)のみ。
+- 対応A(ユーザー選択): ENEMY6_UPDATE_ALL(歩進タイマー更新後)と
+  PDC_CHECK_ENEMY6にENEMY6_ACTIVE_COUNTゲート追加。ENEMY6_ACTIVE_COUNTは
+  SPAWN_E6で+1、唯一の出口E6SO_EXITで-1、INIT一括クリアのみで、ずれる
+  経路が無いことを確認。LUT手前ALIGN区間の余裕(8byte)が不足するため、
+  同区間の未参照コード20byteを削除して吸収(ROM残り7byte据え置き)。
+  効果: 同条件2000フレームで平均60,840T→57,928T(-4.8%)。
+- テスト: verify_enemy6_durability.py 33件(+6)、verify_player_damage.py
+  65件(Enemy6テストがACTIVE_COUNTを設定していなかったのを実SPAWNと
+  同じに修正+短絡テスト追加)。EBUZ2再パッチ、verify_ebuz2_mk2_comb.py
+  48件・verify_comb.py全PASS。
+- B(ENEMY_POOLを32→8スロット)はユーザー指示によりボスまで最大同時数を
+  計測してから判断(計測中に、ボス前でゲームが最初からやり直しになる現象を
+  エミュレータで観測、調査中)。
