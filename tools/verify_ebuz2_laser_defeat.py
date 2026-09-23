@@ -1,7 +1,9 @@
 """Stage1 EbuzII: 中央レーザー発射中に撃破されてもレーザーが画面に残らない
 (2026-09-23、実機報告"EbuzIIを倒す直前に中央のレーザーが発射されていると爆発
-処理に即移行してレーザーが消えないままになってる")。保持中と引っ込め途中の
-両方で撃破し、レーザーの行(列1-22)が全部BLANKCODEに戻ることを確認する。
+処理に即移行してレーザーが消えないままになってる"→"消去するのではなく本来の
+処理で終了するように")。撃破後もレーザーは一括消去されず、本来の保持→1フレーム
+1ユニットの引っ込めで終わり、その完了までEbuzIIが無効化されないことを、実際の
+MAINLOOPを回して確認する。
 """
 import sys, os, json
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -41,25 +43,60 @@ def laser_row_cells(z):
     row = z.rd(sym['EBUZ2_LASER_ROW'])
     return [z.vram[0x1800 + row * 32 + c] for c in range(1, 23)]
 
+def frame(z):
+    z.pc = sym['MAINLOOP']; z.step(); run_until_pc(z, sym['MAINLOOP'])
+def n_laser(z):
+    return sum(1 for c in laser_row_cells(z) if c in (L_CODE, R_CODE))
+
 for label, retract_steps in (("hold (just fired, full laser)", 0), ("mid-retract (4 units already pulled back)", 4)):
     z = fresh()
     call(z, 'EBUZ2_FIRE_LASER')
-    cells = laser_row_cells(z)
     check(f"{label}: laser drawn across cols 1-22 after EBUZ2_FIRE_LASER",
-          cells == [L_CODE, R_CODE] * 11)
+          laser_row_cells(z) == [L_CODE, R_CODE] * 11)
     if retract_steps:
         z.wr(sym['EBUZ2_LASER_HOLD'], 0)
         for _ in range(retract_steps): call(z, 'EBUZ2_UPDATE_LASER')
-        cells = laser_row_cells(z)
-        check(f"{label}: some laser cells remain before defeat", any(c in (L_CODE, R_CODE) for c in cells))
+    before = n_laser(z)
     call(z, 'EBUZ2_TRIGGER_DEFEAT')
-    cells = laser_row_cells(z)
-    check(f"{label}: after defeat no laser cell remains on the row (all BLANKCODE)", all(c == BLANK for c in cells))
-    check(f"{label}: EBUZ2_LASER_ACT cleared and PHASE=2 (defeat)", z.rd(sym['EBUZ2_LASER_ACT']) == 0 and z.rd(sym['EBUZ2_PHASE']) == 2)
+    check(f"{label}: defeat does NOT erase the laser at once (still {n_laser(z)} of {before} cells, LASER_ACT kept)",
+          n_laser(z) == before and z.rd(sym['EBUZ2_LASER_ACT']) == 1)
+    counts = []; act_while_laser = True; spawned_early = False
+    for f in range(600):
+        frame(z)
+        counts.append(n_laser(z))
+        if z.rd(sym['EBUZ2_LASER_ACT']) and not z.rd(sym['EBUZ2_ACT']):
+            act_while_laser = False
+        if z.rd(sym['EBUZ2_LASER_ACT']) and z.rd(sym['BOSS_STATE']):
+            spawned_early = True
+        if not z.rd(sym['EBUZ2_ACT']) and not z.rd(sym['EBUZ2_LASER_ACT']):
+            break
+    steps = [counts[i - 1] - counts[i] for i in range(1, len(counts)) if counts[i - 1] != counts[i]]
+    check(f"{label}: after defeat the laser retracts by the normal process, one unit (2 cells) per frame",
+          steps and all(d == 2 for d in steps) and counts[-1] == 0)
+    check(f"{label}: EbuzII is not deactivated (and the boss does not spawn) while the laser is still active",
+          act_while_laser and not spawned_early)
+    check(f"{label}: finally no laser cell remains and EBUZ2_ACT=0 (defeat completed)",
+          all(c == BLANK for c in laser_row_cells(z)) and z.rd(sym['EBUZ2_ACT']) == 0)
 
 z = fresh()
 call(z, 'EBUZ2_TRIGGER_DEFEAT')
 check("no laser active: defeat does not touch the laser path (LASER_ACT stays 0)", z.rd(sym['EBUZ2_LASER_ACT']) == 0)
+
+# 爆発キューと撃破後の待ちが先に終わる場合でも(安全網)、レーザーが引っ込み
+# 終わるまでEBUZ2_ACTを落とさない(落とすと更新が止まり取り残される)
+z = fresh()
+call(z, 'EBUZ2_FIRE_LASER')
+call(z, 'EBUZ2_TRIGGER_DEFEAT')
+z.wr(sym['EBUZ_EXPL_QUEUE_COUNT'], 0); z.wr(sym['EBUZ2_POST_DEFEAT_WAIT'], 0)
+early = False
+for f in range(300):
+    frame(z)
+    if z.rd(sym['EBUZ2_LASER_ACT']) and not z.rd(sym['EBUZ2_ACT']):
+        early = True
+    if not z.rd(sym['EBUZ2_ACT']):
+        break
+check("explosions finished early: EbuzII still waits for the laser to retract before deactivating",
+      not early and all(c == BLANK for c in laser_row_cells(z)))
 
 print(f"\n{len(ok)} passed, {len(fail)} failed")
 if fail:

@@ -18227,3 +18227,19 @@ EbuzII弾ビームへの1pxコリジョン追加+ROM予算の共有バンク6オ
   旧バイト位置チェック3件を動作チェック(VRAM内容一致、98h書き込みは全てDI中、
   29T待ち、最長DI<8000T、EIで戻る)に置換、86件PASS。
 - Comb再ビルド、verify_ebuz2_mk2_comb.py 48件・verify_comb.py全PASS。
+
+## Round145 follow-up20: EbuzII撃破時のレーザーを「本来の処理で終了」に変更(2026-09-23)
+
+- ユーザー: "消去するのではなく本来の処理で終了するようにしてくれ"。follow-up19の
+  一括消去(EBUZ2_ERASE_LASER_REST)を撤回。
+- EBUZ2_TRIGGER_DEFEATでEBUZ2_LASER_ACTを落とさない(撃破後もUPDATE_EBUZ2_ALLが
+  毎フレームEBUZ2_UPDATE_LASERを呼ぶので、保持→1フレーム1ユニットの引っ込めが
+  そのまま続く)。EBUZ2_UPDATE_DEFEATは爆発キュー・撃破後の待ちに加え、
+  LASER_ACT==0になるまでEBUZ2_ACTを落とさない(先に落とすと更新が止まり
+  取り残されるため。通常は爆発の方が長いので安全網)。撃破後(PHASE=2)は
+  既存仕様どおり弾・レーザーの自機への当たり判定は無し(PDC_CHECK_EBUZ2)。
+- verify_ebuz2_laser_defeat.pyを実MAINLOOPで書き直し(12件): 撃破直後も
+  レーザーが残る/1フレーム2セルずつ引っ込む/引っ込み終わるまでEbuzIIは無効化
+  されずボスも出ない/最後は全て空白。爆発が先に終わる場合の安全網の確認も
+  追加(待ちを外すとFAIL)。Stage1 ROM残り960byte。Comb再ビルド、
+  verify_ebuz2_mk2_comb.py 48件・verify_comb.py全PASS。
