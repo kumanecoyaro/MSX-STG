@@ -17945,3 +17945,20 @@ EbuzII弾ビームへの1pxコリジョン追加+ROM予算の共有バンク6オ
   全フレームでブースター=TANK_X-16/TANK_Y_CUR+7を追加、follow-up6の
   Zum/BigZum抑制ハックは削除)、verify_ship_entry.py 28件(+2)。
   Comb再ビルド・verify_comb.py全PASS。レンダリングで確認済み。
+
+## Round145 follow-up8: EbuzII(Mk2)グリッチ→リセットの修正(2026-09-23)
+
+- ユーザー報告(スクショ付き): "Tick弄ったからかEbuzIIが壊れた スポーン
+  からグリッチになりリセットかかる"。
+- 原因: follow-up7でStage1のGAME_TICKゲートに6byte追加したことで、以降の
+  コードアドレスが+6ずれたが、bank6のEBUZ2_MK2_CHARDATA内のジャンプ先
+  テーブル(SCRIPT/ALTLOOP/STOPSEQ、JP (HL)で直接飛ぶ)を再パッチして
+  いなかった(Round136の既知ルール違反)。修正前の
+  `verify_ebuz2_mk2_comb.py`は不正アドレスへ飛んでunhandled opcodeで
+  停止し、実機のグリッチ→リセットと一致。
+- 修正: `python3 tools/bgm_data/patch_ebuz2_mk2.py`で再パッチ(全アドレス
+  +6)、Comb再ビルド。`verify_ebuz2_mk2_comb.py` 48 passed、
+  `verify_comb.py`全PASS。
+- **再発防止**: Stage1(`src/CYBER SHMUP.asm`)を1byteでも変更したら、
+  必ずpatch_ebuz2_mk2.py→build_full_rom.py→verify_ebuz2_mk2_comb.pyを
+  実行すること。
