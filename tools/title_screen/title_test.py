@@ -1042,18 +1042,40 @@ check("SC3_CONFIRM_TICK: the border-color sequence matches the SAME REDGRAD/BORD
 # (BIOS呼び出しが無くなったため、LDIRVM内部で予期せずEIされる懸念
 # [round41/53のCALL INIT32と同型のリスク]も同時に解消)。
 _fstv = sym["FLUSH_SHADOW_TO_VRAM"]
-check("FLUSH_SHADOW_TO_VRAM starts with DI (0F3h)",
-      out[_fstv] == 0xF3)
-check("FLUSH_SHADOW_TO_VRAM's per-byte VRAM-data-port (98h) write is immediately followed "
-      "by the exact 29T recovery sequence (PUSH BC:POP BC:NOP:NOP, 0C5h,0C1h,00h,00h) - same "
-      "as combined_test.asm's WRITE_BULLET_BYTE_HL, per \"98hは表示期間では29T必要\" "
-      "(this transfer runs while SCREEN3 is already actively displaying, unlike "
-      "DECOMPRESS_TITLE_BG's pre-display-boot transfer which correctly needs none)",
-      [out[_fstv + 16], out[_fstv + 17], out[_fstv + 18], out[_fstv + 19],
-       out[_fstv + 20], out[_fstv + 21]] == [0xD3, 0x98, 0xC5, 0xC1, 0x00, 0x00])
-check("FLUSH_SHADOW_TO_VRAM re-enables interrupts (0FBh) right before its own RET (0C9h), "
-      "at the very end of the manual transfer loop",
-      out[_fstv + 27] == 0xFB and out[_fstv + 28] == 0xC9)
+# (2026-09-23): 2048byte全体をDIで囲むと約2.7フレーム割り込みが止まり、確認音
+# (H.TIMI)のtickが欠けて音が乱れていた -> 64byteチャンクごとにDI/アドレス再設定/EI
+# へ変更。以下は構造(バイト位置)ではなく実際の動作で確認する。
+_code = bytes(out[_fstv + i] for i in range(80))
+check("FLUSH_SHADOW_TO_VRAM: every OUT (98h) is immediately followed by the 29T recovery "
+      "sequence (PUSH BC:POP BC:NOP:NOP) - \"98hは表示期間では29T必要\"",
+      _code.count(bytes([0xD3, 0x98])) >= 1 and
+      all(_code[i + 2:i + 6] == bytes([0xC5, 0xC1, 0x00, 0x00])
+          for i in range(len(_code) - 1) if _code[i] == 0xD3 and _code[i + 1] == 0x98))
+cpu_fs, mem_fs = fresh_cpu()
+_pat = bytes((i * 37 + 11) & 0xFF for i in range(2048))
+for i, v in enumerate(_pat):
+    cpu_fs.mem[sym["SHADOW_PGT"] + i] = v
+cpu_fs.iff1 = True
+cpu_fs.sp = 0xF300; cpu_fs.mem[0xF300] = 0; cpu_fs.mem[0xF301] = 0; cpu_fs.pc = _fstv   # SHADOW_PGT(E800-EFFF)と重ならない位置
+_out98_undi = 0; _di_start = None; _max_di = 0
+while cpu_fs.pc != 0:
+    _pc = cpu_fs.pc
+    _is98 = cpu_fs.mem[_pc] == 0xD3 and cpu_fs.mem[_pc + 1] == 0x98
+    if _is98 and cpu_fs.iff1:
+        _out98_undi += 1
+    cpu_fs.step()
+    if not cpu_fs.iff1 and _di_start is None:
+        _di_start = cpu_fs.tstates
+    elif cpu_fs.iff1 and _di_start is not None:
+        _max_di = max(_max_di, cpu_fs.tstates - _di_start); _di_start = None
+check("FLUSH_SHADOW_TO_VRAM copies all 2048 bytes of SHADOW_PGT to VRAM 0000h-07FFh exactly",
+      bytes(cpu_fs.vram[0:2048]) == _pat)
+check("FLUSH_SHADOW_TO_VRAM: every VRAM data write (98h) happens with interrupts disabled",
+      _out98_undi == 0)
+check(f"FLUSH_SHADOW_TO_VRAM: longest continuous DI span is short ({_max_di}T < 8000T, i.e. far "
+      "below one frame ~59,700T) so the H.TIMI confirm-sound ticks are never merged/lost",
+      0 < _max_di < 8000)
+check("FLUSH_SHADOW_TO_VRAM returns with interrupts enabled", cpu_fs.iff1)
 
 # ---- off-by-one check (round40's own established convention: the tick
 # that LOADS a new row already plays it once, so the timer is seeded with

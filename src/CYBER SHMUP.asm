@@ -14925,6 +14925,12 @@ EBUZ2_QE_SKIP:
 ; ----------------------------------------------------------------------
 EBUZ2_TRIGGER_DEFEAT:
     LD A,2 : LD (EBUZ2_PHASE),A
+    ; (2026-09-23、実機報告"倒す直前に中央のレーザーが発射されていると
+    ; 爆発処理に即移行してレーザーが消えないまま"): LASER_ACTを落とすだけだと
+    ; 描画済みのレーザーを消す処理(EBUZ2_UPDATE_LASERの引っ込め)が二度と
+    ; 走らないため、残っている分をここで全部消す。
+    LD A,(EBUZ2_LASER_ACT) : OR A
+    CALL NZ,EBUZ2_ERASE_LASER_REST
     XOR A
     LD (EBUZ2_MOVE_ACTIVE),A
     LD (EBUZ2_LASER_ACT),A
@@ -16542,3 +16548,20 @@ PAP_DX:
     SBC A,A : AND 80h              ; dyの符号bit
     SRL E : OR E : LD E,A          ; dy/2(算術シフト)、OR後C=0
     RET
+
+; EbuzIIの中央レーザーのうち、まだ画面に残っているユニット(EBUZ2_LASER_UNIT
+; から0まで、各2セル)をすべて消す。保持中(UNIT=10)なら全11ユニット、
+; 引っ込め途中なら残りのみ。EBUZ2_TRIGGER_DEFEATから呼ぶ。
+EBUZ2_ERASE_LASER_REST:
+    LD A,(EBUZ2_LASER_UNIT)
+    ADD A,A : ADD A,1 : LD C,A
+    LD A,(EBUZ2_LASER_ROW) : LD B,A
+    CALL EBUZ2_ADDR
+    LD B,BLANKCODE : LD C,BLANKCODE
+    CALL EBUZ_WRITE2
+    LD A,(EBUZ2_LASER_UNIT)
+    OR A
+    RET Z
+    DEC A
+    LD (EBUZ2_LASER_UNIT),A
+    JR EBUZ2_ERASE_LASER_REST

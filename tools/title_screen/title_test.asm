@@ -1289,26 +1289,35 @@ SHOW_SC3_EPI3:
 ; (round95の対策)自体は依然有効なので維持。CLAUDE.md恒久ルール通り
 ; OTIR等は不使用。
 FLUSH_SHADOW_TO_VRAM:
-    DI
-    XOR A : OUT (99h),A
-    LD A,40h : OUT (99h),A          ; VRAM書き込みアドレス=0000h、以後オートインクリメント(99hは待ち不要)
+    ; (2026-09-23、実機報告"アラートサウンドが処理落ちで少し乱れる 割り込みで
+    ; 処理してるはずなのに何故"): 旧実装は2048byte全体をDIで囲んでおり、
+    ; DI区間が約16万T-state(約2.7フレーム)に達していた。その間のvblank
+    ; 割り込み(H.TIMI=SC3_CONFIRM_TICK、確認音と枠色の1tick)はEIの瞬間に
+    ; 1回分しか入らず、画像を切り替えるたびに1-2tick分が消えて音が乱れていた。
+    ; 64byteずつ「DI→VRAMアドレス再設定→64byte→EI」に分割し、DI区間を
+    ; 約4,300Tに短縮(割り込みがR7を書いてアドレスラッチを乱しても、次の
+    ; チャンクで必ずアドレスを設定し直すので転送は壊れない)。
     LD HL,SHADOW_PGT
-    LD DE,0800h                     ; 2048byte
+    LD DE,0000h                     ; 次のチャンクのVRAMアドレス
+    LD C,32                         ; 2048/64
+FSTV_CHUNK:
+    DI
+    LD A,E : OUT (99h),A
+    LD A,D : OR 40h : OUT (99h),A   ; VRAM書き込みアドレス設定(99hは待ち不要)
+    LD B,64
 FSTV_LOOP:
     LD A,(HL) : INC HL
     OUT (98h),A
-    PUSH BC : POP BC : NOP : NOP    ; 98hは表示期間中29T必要(combined_test.asmのWRITE_BULLET_BYTE_HLと同じ厳密29T)
-    DEC DE
-    LD A,D : OR E
-    JR NZ,FSTV_LOOP
+    PUSH BC : POP BC : NOP : NOP    ; 98hは表示期間中29T以上の間隔が必要
+    DJNZ FSTV_LOOP
     EI
+    LD A,E : ADD A,64 : LD E,A
+    JR NC,FSTV_NOCARRY
+    INC D
+FSTV_NOCARRY:
+    DEC C
+    JR NZ,FSTV_CHUNK
     RET
-
-; 自前の対称RLE(tools/title_screen/title_bg_gen.pyと同一フォーマット)
-; をRAM上のSHADOW_PGTへそのまま展開する(1枚目の基準フレーム用)。
-; HL=圧縮データ先頭、DE=セグメント数、IX=書き込み先(呼び出し前に
-; SHADOW_PGTをセット)。このアセンブラはALU命令の(IX+d)直接オペランド
-; 非対応のためLD経由の3段階(読む/合成/書く)は使わず単純代入のみ。
 DECOMPRESS_TO_RAM:
     LD A,(HL) : INC HL
     OR A
