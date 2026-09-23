@@ -17658,3 +17658,55 @@ EbuzII弾ビームへの1pxコリジョン追加+ROM予算の共有バンク6オ
   round47/53/71の前例(z80emu.pyでは検出不可能な実機/BIOS依存の
   ワイルドジャンプ系バグ)を念頭に、openMSX等の高精度エミュレータでの
   実機トレース調査が有力な次の一手になる可能性が高い。
+## Round145 follow-up2: Stage1飛び込み演出のShipStart1差し替え+leg2を
+下向きポーズへ(2026-09-22、完了済み)
+
+- ユーザー指示: "ステージ1のスタート演出の自機のShipStart1を添付ファイル
+  に差し替え で、128,64から後ろに下がるときは下向きのキャラに 32,64に
+  来たらノーマルに"(添付ShipStart1_16x16_1.json)。
+- **ShipStart1差し替え**: SHIP_ENTRY_ACCENT_PATTERN(leg1中のaccent
+  overlay、slot0)のTL/BL/TR/BR 32byteを新JSONから機械的に再変換して
+  差し替え(既存のTL/BL/TR/BR quadrant規約そのまま踏襲)。
+- **leg2(128,64→32,64後退)を「下向きのキャラ」に**: 新規アセットは
+  作らず、通常ゲームプレイでJOY_STICK下入力時に使う既存資産
+  (PAT_SHIP_DOWN/PAT_ACCENT_DOWN系、ACCFR_GOTと同じBARRIER_HP分岐で
+  BARRIER付き版も選択)をそのまま流用 - APPLY_SHIP_ENTRY_PATを
+  SHIP_ENTRY_ACT(呼び出し元が既にAへロード済み)で分岐する形に拡張、
+  leg1(ACT=1)は従来通りShipStart2/1、leg2(ACT=2)はPAT_SHIP_DOWN/
+  PAT_ACCENT_DOWN(_BARRIER)。アクセントのX位置オフセット
+  (ACCENT_XOFS_GOT、leg1のShipStart1/2は重ね合わせ専用絵柄のため
+  オフセット0)も、旧来の「SHIP_ENTRY_ACT!=0なら常に0」から「ACT==1
+  (leg1)の時だけ0、それ以外(0=通常/2=leg2)は通常の+8px」へ変更 -
+  PAT_ACCENT_DOWNは通常表示の+8pxオフセット前提で作られた既存資産の
+  ため、オフセット0のままだと位置がズレるのを防止。32,64到達
+  (ACT→0)後は既存の仕組みのまま(APPLY_SHIP_ENTRY_PATが呼ばれなく
+  なるだけ)で自動的にノーマル(通常のJOY_STICK駆動ポーズ選択)へ
+  戻る - この部分はコード変更不要だった。
+- **副産物としてtools/stage1_render_check.py自身の優先度バグを発見・
+  修正**: 実TMS9918はスプライトスロット番号が若いほど手前(高優先度)に
+  描画されるが、render_full()は単純にs=0→31の昇順でpixelを上書きして
+  いたため実際には逆(番号が大きいほど手前)になっていた。通常の
+  accent/body(+8pxオフセットで一部重なるだけ)ではほぼ症状が出な
+  かったが、leg1(ShipStart1/2、オフセット0で完全重畳)で初めて可視化
+  (slot1[body/赤]がslot0[accent/白]を覆い隠す)、レンダリング確認中に
+  発見。s=31→0の降順(slot0を最後=最前面に描画)へ修正、既存の
+  stage1_mission1.ppm/stage1_mainloop.ppm出力は影響なし(重畳する
+  スプライトが元々無いシーンのため)。
+- tools/verify_ship_entry.pyに3件追加(23→26件、leg2のPLAYER_SHIP_
+  PAT/PLAYER_ACCENT_PAT/アクセントオフセットの直接検証)、自己検証
+  (各修正を個別に一時取消→対応するテストが正しくFAILすることを確認
+  →復元→26件全PASS)済み。VRAM→PNGレンダリング(優先度修正後)で
+  leg1(赤body上に白accentの新デザインが正しく重なる)・leg2(下向き
+  ポーズ+通常のバリア肩飾りオフセット)を視覚確認済み。既存のStage1
+  検証群(verify_player_damage.py/verify_stage1_mission_screens.py/
+  verify_stage1_bgm.py/verify_enemy_bullets.py/verify_explosion_
+  anim.py/verify_boss_dfl_clear.py/verify_boss_pod_bullet_aim.py/
+  verify_spawn_schedule_restart.py/verify_boss_schedule_gate.py/
+  verify_boss_spawn_trigger.py/verify_enemy6_durability.py)も全て
+  無退行。tools/bgm_data/patch_ebuz2_mk2.py再実行(コードアドレス
+  再シフト)・verify_ebuz2_mk2_comb.py 48 passed。Comb ROM再ビルド・
+  verify_comb.py全チェックPASS。plain/Comb ROM予算は70→47byte
+  (leg2分岐ロジック追加ぶん)、両ビルド一致。詳細はこのエントリ参照。
+- **保留・実機フィードバック待ち**: 新ShipStart1デザイン・leg2の
+  下向きポーズ(バリア肩飾り込み)の実際の見え方はいずれも次回
+  フィードバック待ち。

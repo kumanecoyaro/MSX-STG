@@ -57,11 +57,17 @@ def render_full(vram, path):
                 for rx in range(8):
                     v = (byte >> (7 - rx)) & 1
                     img[row * 8 + ry][col * 8 + rx] = fg if v else bg
-    for s in range(32):
+    # (2026-09-22follow-up、"自機登場演出でスプライトがズレてる"修正の
+    # 副産物で発見): 実TMS9918はスロット番号が若いほど手前(高優先度)に
+    # 描画されるが、旧実装はs=0→31の昇順で単純上書きしていたため
+    # 逆順(番号が大きいほど手前)になっていた - 通常のaccent/bodyは
+    # +8pxずれていて重ならないため症状が出なかったが、飛び込み演出の
+    # leg1(ShipStart1/2、オフセット0で完全重畳)で初めて可視化した
+    # (slot1=body[赤]がslot0=accent[白]を覆い隠して見えなくなる)。
+    # 降順(31→0)にしてslot0を最後に描く(=一番手前)よう修正。
+    for s in range(31, -1, -1):
         base = 0x1B00 + s * 4
         y, x, pat, col = vram[base], vram[base + 1], vram[base + 2], vram[base + 3]
-        if y == 208:
-            break
         if y >= 208:
             continue
         color = vt.PALETTE[col & 0xF]

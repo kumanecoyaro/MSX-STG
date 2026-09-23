@@ -2525,10 +2525,13 @@ ACC_COLOR_GOT:
     ; 事前計算(ADD A,8→ADD A,Dは1byte減・3T速くなるだけで安全側)。
     ; PLAYER_DRAW_Y_ADJ(CALLのみ挟まる)はA,BCしか触らないためD/Eは
     ; DIブロック内で使用箇所まで無傷で残る。
+    ; (2026-09-22follow-up): leg2は通常資産(PAT_ACCENT_DOWN系)を流用する
+    ; ため通常と同じ+8オフセットに戻す。オフセット0はleg1(ShipStart1/2の
+    ; 重ね合わせ専用絵柄)の時だけ。
     LD A,(SHIP_ENTRY_ACT)
-    OR A
+    CP 1
     LD D,8
-    JR Z,ACCENT_XOFS_GOT
+    JR NZ,ACCENT_XOFS_GOT
     LD D,0
 ACCENT_XOFS_GOT:
 
@@ -15151,11 +15154,13 @@ SHIP_ENTRY_BODY_PATTERN:  ; ShipStart2 (fg=8=SPR_RED, bg=1)
     DB 00h,00h,00h,80h,0E0h,0F8h,0FEh,0FFh     ; top-right
     DB 0FEh,0F8h,0E0h,80h,00h,00h,00h,00h      ; bottom-right
 
+; (2026-09-22follow-up、"ステージ1のスタート演出の自機のShipStart1を
+; 添付ファイルに差し替え"): ShipStart1_16x16_1.jsonの内容へ差し替え。
 SHIP_ENTRY_ACCENT_PATTERN:  ; ShipStart1 (fg=15=SPR_WHITE, bg=1)
-    DB 0C0h,30h,0Eh,41h,0FEh,0A1h,0A0h,7Fh     ; top-left
-    DB 0A0h,0A1h,0FEh,41h,0Eh,30h,0C0h,00h     ; bottom-left
-    DB 00h,00h,00h,80h,60h,00h,0BAh,7Dh        ; top-right
-    DB 0BAh,00h,60h,80h,00h,00h,00h,00h        ; bottom-right
+    DB 00h,00h,00h,40h,0FEh,0A1h,0A0h,7Fh      ; top-left
+    DB 0A0h,0A1h,0FEh,40h,00h,00h,00h,00h      ; bottom-left
+    DB 00h,00h,00h,00h,00h,00h,0B8h,7Ch        ; top-right
+    DB 0B8h,00h,00h,00h,00h,00h,00h,00h        ; bottom-right
 
 ; Accent overlay animation, 2 frames (ShipMidW/ShipDownW from the
 ; Sprite Editor): MID shows with no vertical movement, DOWN shows
@@ -16282,9 +16287,26 @@ SEU_LEG2:
     XOR A : LD (SHIP_ENTRY_ACT),A
     RET
 
+; (2026-09-22follow-up、"128,64から後ろに下がるときは下向きのキャラに
+; 32,64に来たらノーマルに"): leg1(ACT=1、突入)はShipStart2/1の専用絵柄
+; のまま、leg2(ACT=2、後退)は通常ゲームプレイの「下向き」ポーズ
+; (PAT_SHIP_DOWN/PAT_ACCENT_DOWN、JOY_STICK下入力時と同一資産)を流用。
+; 呼び出し元はCALL直前にSHIP_ENTRY_ACTを既にAへ読み込み済み(OR Aで
+; 消費されない)ため、ここでの再読み込みは省略しそのままCPで分岐する。
 APPLY_SHIP_ENTRY_PAT:
+    CP 2
+    JR Z,ASEP_LEG2
     LD A,PAT_SHIP_ENTRY_BODY : LD (PLAYER_SHIP_PAT),A
     LD A,PAT_SHIP_ENTRY_ACCENT : LD (PLAYER_ACCENT_PAT),A
+    RET
+ASEP_LEG2:
+    LD A,PAT_SHIP_DOWN : LD (PLAYER_SHIP_PAT),A
+    LD A,(BARRIER_HP) : OR A
+    LD A,PAT_ACCENT_DOWN
+    JR Z,ASEP_LEG2_ACC_GOT
+    LD A,PAT_ACCENT_DOWN_BARRIER
+ASEP_LEG2_ACC_GOT:
+    LD (PLAYER_ACCENT_PAT),A
     RET
 
 ; SHIP_ENTRY_BODY/ACCENT_PATTERNはソース側32byte連続、コード140-147

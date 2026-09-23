@@ -208,6 +208,31 @@ check("SHIP_ENTRY_ACT transitions from 1 (leg1) to 2 (leg2) exactly on the frame
       "arrive at (SHIP_ENTRY_MID_X, PLAYER_INITY)",
       acts[LEG1_FRAMES - 2] == 1 and acts[LEG1_FRAMES - 1] == 2)
 
+# ---- 3b. (2026-09-22follow-up、"128,64から後ろに下がるときは下向きの
+#          キャラに 32,64に来たらノーマルに"): during leg2, the ship
+#          switches to the normal gameplay "diving" pose (PAT_SHIP_DOWN/
+#          PAT_ACCENT_DOWN, the same assets JOY_STICK=down normally uses),
+#          drawn with the normal +8px accent offset (not the leg1
+#          ShipStart1/2 overlay-without-offset convention) ----
+PAT_SHIP_DOWN = sym["PAT_SHIP_DOWN"]
+PAT_ACCENT_DOWN_BARRIER = sym["PAT_ACCENT_DOWN_BARRIER"]
+z_leg2 = fresh()
+boot_with_entry(z_leg2)
+for _ in range(LEG1_FRAMES):
+    step_frame(z_leg2)  # now exactly 1 frame into leg2
+check("leg2: PLAYER_SHIP_PAT switches to PAT_SHIP_DOWN (downward-facing, reused from normal "
+      "diving) instead of the leg1 entry body pattern",
+      z_leg2.rd(PLAYER_SHIP_PAT) == PAT_SHIP_DOWN)
+check("leg2: PLAYER_ACCENT_PAT switches to PAT_ACCENT_DOWN_BARRIER (BARRIER_HP_INIT>0 from game "
+      "start, same ACCFR_GOT-style barrier check as normal gameplay) instead of the leg1 entry "
+      "accent pattern",
+      z_leg2.rd(PLAYER_ACCENT_PAT) == PAT_ACCENT_DOWN_BARRIER)
+body_x_leg2 = z_leg2.vram[SPRATR + 1 * 4 + 1]
+accent_x_leg2 = z_leg2.vram[SPRATR + 0 * 4 + 1]
+check("leg2: the accent is drawn with the normal +8px offset from the body (PAT_ACCENT_DOWN is a "
+      "normal-gameplay asset designed for that offset, unlike leg1's ShipStart1/2 overlay pair)",
+      (accent_x_leg2 - body_x_leg2) % 256 == 8)
+
 # ---- 4. leg2: X alone retreats from SHIP_ENTRY_MID_X down to
 #         PLAYER_RETREAT_TARGET_X, Y stays fixed at PLAYER_INITY ----
 check(f"leg2: PLAYERY stays fixed at PLAYER_INITY({PLAYER_INITY}) for all of leg2 "
