@@ -74,7 +74,7 @@ def main():
     ok_pool = True
     print("\n=== 1. ENEMY3_POOL state after real INIT ===")
     for slot in range(8):
-        s = base + slot * 11
+        s = base + slot * sym["ENEMY3_STRUCT"]
         active = z.mem[s + 0]
         row = z.mem[s + 4]
         col = z.mem[s + 5]
@@ -96,7 +96,7 @@ def main():
     print("\n=== 2. Safety net (ENEMY3_UPDATE_SLOT on each idle slot) leaves HUD alone ===")
     ok_hud = True
     for slot in range(8):
-        s = base + slot * 11
+        s = base + slot * sym["ENEMY3_STRUCT"]
         z.ix = s
         call_routine(z, sym['ENEMY3_UPDATE_SLOT'])
         hud_after = row0col0_vram()

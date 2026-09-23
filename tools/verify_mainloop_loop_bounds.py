@@ -383,6 +383,17 @@ _overlap = [n for n, a in _re.findall(r'^([A-Z_0-9]+)\s+EQU\s+0?([0-9A-F]{4})h',
             if n != "ENEMY_POOL" and _pool_lo <= int(a, 16) <= _pool_hi]
 check(f"no other RAM symbol lives inside ENEMY_POOL ({_pool_lo:04X}-{_pool_hi:04X}): {_overlap}", not _overlap)
 
+# ---- (2026-09-23、監査: Enemy3のウェーブ数を3に)。SPAWN_E3_WAVE/ENEMY3_TRY_SPAWN
+# の手展開がENEMY3_WAVE_SLOTSと同じ本数であること ----
+check("ENEMY3_WAVE_SLOTS == 3 (ボスまで実測の同時最大2ウェーブ+余裕1)", sym["ENEMY3_WAVE_SLOTS"] == 3)
+def _block(label):
+    a = text.index(label + ":\n"); b = text.index("\n\n", a)
+    return text[a:b]
+check("SPAWN_E3_WAVE searches exactly ENEMY3_WAVE_SLOTS wave slots",
+      text[text.index("SPAWN_E3_WAVE:\n"):text.index("E3W_FOUND:\n")].count("LD IX,ENEMY3_WAVE_POOL") == sym["ENEMY3_WAVE_SLOTS"])
+check("ENEMY3_TRY_SPAWN advances exactly ENEMY3_WAVE_SLOTS wave slots",
+      _block("ENEMY3_TRY_SPAWN").count("LD IX,ENEMY3_WAVE_POOL") == sym["ENEMY3_WAVE_SLOTS"])
+
 print(f"{len(ok)} passed, {len(fail)} failed")
 if fail:
     print("FAILED:")

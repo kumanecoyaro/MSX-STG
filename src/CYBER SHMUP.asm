@@ -803,7 +803,12 @@ ENEMY3_SPAWN_COUNT EQU 0E4CEh  ; how many spawned so far in total (resume enemy1
 ; each other's visible slots. A wave's offset is just "how much to add
 ; on top of the CIRCLE_LUT position" (see E3_CIRCLE_POS/E3_DIAG) - one
 ; fixed value for every member that wave spawns, nothing more.
-ENEMY3_WAVE_SLOTS EQU 8
+; (2026-09-23、メインループ監査、"Enemy3も同じように調べて減らして"): 8→3。
+; ボスまでスケジュールを通した実測(撃つ/撃たない両条件)で同時に動く
+; ウェーブは最大2本(wave0/1のみ使用)、1ウェーブ内は8体フル使用。余裕1本
+; を残して3本に。SPAWN_E3_WAVE/ENEMY3_TRY_SPAWNの展開もこの数に合わせる
+; こと(4本以上同時に来るとそのトリガーは無言でドロップされる)。
+ENEMY3_WAVE_SLOTS EQU 3
 ENEMY3_WAVE_POOL   EQU 0EBB7h  ; ENEMY3_WAVE_SLOTS*4 bytes: ACTIVE,BUDGET,TIMER,OFFSET
 ; How many ENEMY3_POOL instances are alive right now, across every wave
 ; (incremented in ENEMY3_DO_SPAWN, decremented in E3_DEACTIVATE and
@@ -812,7 +817,7 @@ ENEMY3_WAVE_POOL   EQU 0EBB7h  ; ENEMY3_WAVE_SLOTS*4 bytes: ACTIVE,BUDGET,TIMER,
 ; when it's 0 instead of paying for a full 64-slot scan on every
 ; bullet, every frame, for a wave that isn't even running.
 ENEMY3_ACTIVE_COUNT EQU 0EBD7h
-; ENEMY3_WAVE_SLOTS*ENEMY3_SLOTS*ENEMY3_STRUCT = 768 bytes, laid out as
+; ENEMY3_WAVE_SLOTS*ENEMY3_SLOTS*ENEMY3_STRUCT = 288 bytes (旧768), laid out as
 ; ENEMY3_WAVE_SLOTS consecutive ENEMY3_SLOTS-instance slices (one per
 ; wave slot, same order). Each instance's 12th field (offset+11) is its
 ; OWN circle-center X pixel offset, copied at spawn time from its owning
@@ -5624,9 +5629,9 @@ ESC_COMPLEX_INIT_A:
     LD (E2A_U0_STATE),A : LD (E2A_U1_STATE),A : LD (E2A_U2_STATE),A
     ; "エネミー2のジグザグの合体...Y座標8pxずつずらして合体に変更 1機目
     ; -8で3機目+8"(2026-09-12): 合体(states0-5)中だけU0を-8/U2を+8にずらし、
-    ; V字型に寄ってくる見た目にする。U1(2機目)は無変更。state6(ドリフト
-    ; 開始=合体完了)でENEMY_DRAW_ALL_COMPLEX_Aが3機とも同じE2A_Yへ戻す
-    ; (下記の該当箇所、無変更)ため「合体後は変更無し」も自動的に満たす。
+    ; V字型に寄ってくる見た目にする。U1(2機目)は無変更。(2026-09-23、"合体
+    ; 後も1セルズレたまま移動させたい"): 合体後のドリフト・退出中もこのズレを
+    ; 保つ(ENEMY_DRAW_ALL_COMPLEX_A/ECS_S7_RECORD_A参照)。
     LD A,(E2A_Y) : SUB 8 : LD (E2A_U0_Y),A
     LD A,(E2A_Y) : LD (E2A_U1_Y),A
     LD A,(E2A_Y) : ADD A,8 : LD (E2A_U2_Y),A   ; keep hit-test Y in sync with the drawn Y during assembly (states 0-5), not just from state6 onward
@@ -9631,11 +9636,6 @@ SPAWN_E3_WAVE:
     LD IX,ENEMY3_WAVE_POOL         : LD A,(IX+0) : OR A : JR Z,E3W_FOUND
     LD IX,ENEMY3_WAVE_POOL+4       : LD A,(IX+0) : OR A : JR Z,E3W_FOUND
     LD IX,ENEMY3_WAVE_POOL+8       : LD A,(IX+0) : OR A : JR Z,E3W_FOUND
-    LD IX,ENEMY3_WAVE_POOL+12      : LD A,(IX+0) : OR A : JR Z,E3W_FOUND
-    LD IX,ENEMY3_WAVE_POOL+16      : LD A,(IX+0) : OR A : JR Z,E3W_FOUND
-    LD IX,ENEMY3_WAVE_POOL+20      : LD A,(IX+0) : OR A : JR Z,E3W_FOUND
-    LD IX,ENEMY3_WAVE_POOL+24      : LD A,(IX+0) : OR A : JR Z,E3W_FOUND
-    LD IX,ENEMY3_WAVE_POOL+28      : LD A,(IX+0) : OR A : JR Z,E3W_FOUND
     RET                              ; no free wave slot - drop this trigger
 E3W_FOUND:
     LD A,1 : LD (IX+0),A            ; ACTIVE
@@ -9654,7 +9654,9 @@ ENEMY_DRAW_ALL_COMPLEX_A:
     LD A,(E2A_X) : LD (E2A_U0_X),A
     ADD A,16 : LD (E2A_U1_X),A
     LD A,(E2A_X) : ADD A,32 : LD (E2A_U2_X),A
-    LD A,(E2A_Y) : LD (E2A_U0_Y),A : LD (E2A_U1_Y),A : LD (E2A_U2_Y),A
+    ; (2026-09-23、"合体後も1セルズレたまま移動させたい"): 合体後(ドリフト)も
+    ; 1機目-8/3機目+8のまま(横並び回避)。
+    LD A,(E2A_Y) : LD (E2A_U1_Y),A : SUB 8 : LD (E2A_U0_Y),A : ADD A,16 : LD (E2A_U2_Y),A
     DI
     LD A,(E2A_U0_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
     NOP
@@ -9662,7 +9664,7 @@ ENEMY_DRAW_ALL_COMPLEX_A:
     LD A,5Bh : OUT (99h),A
     NOP
     NOP
-    LD A,(E2A_Y) : OUT (98h),A
+    LD A,(E2A_U0_Y) : OUT (98h),A
     PUSH BC : POP BC : NOP : NOP
     LD A,(E2A_U0_X) : OUT (98h),A
     PUSH BC : POP BC : NOP : NOP
@@ -9676,7 +9678,7 @@ ENEMY_DRAW_ALL_COMPLEX_A:
     LD A,5Bh : OUT (99h),A
     NOP
     NOP
-    LD A,(E2A_Y) : OUT (98h),A
+    LD A,(E2A_U1_Y) : OUT (98h),A
     PUSH BC : POP BC : NOP : NOP
     LD A,(E2A_U1_X) : OUT (98h),A
     PUSH BC : POP BC : NOP : NOP
@@ -9690,7 +9692,7 @@ ENEMY_DRAW_ALL_COMPLEX_A:
     LD A,5Bh : OUT (99h),A
     NOP
     NOP
-    LD A,(E2A_Y) : OUT (98h),A
+    LD A,(E2A_U2_Y) : OUT (98h),A
     PUSH BC : POP BC : NOP : NOP
     LD A,(E2A_U2_X) : OUT (98h),A
     PUSH BC : POP BC : NOP : NOP
@@ -10242,7 +10244,7 @@ ECS_S7_RECORD_A:
     ADD HL,DE
     LD A,(HL) : LD (E2A_U1_X),A
     INC HL
-    LD A,(HL) : LD (E2A_U1_Y),A
+    LD A,(HL) : ADD A,8 : LD (E2A_U1_Y),A    ; 退出中も1機目(軌跡の元)から+8/+16のズレを保つ
 
     LD A,(E2A_TRAIL_WIDX)
     SUB TRAIL_DELAY*2
@@ -10252,7 +10254,7 @@ ECS_S7_RECORD_A:
     ADD HL,DE
     LD A,(HL) : LD (E2A_U2_X),A
     INC HL
-    LD A,(HL) : LD (E2A_U2_Y),A
+    LD A,(HL) : ADD A,16 : LD (E2A_U2_Y),A
 
     ; each unit hides independently the moment IT reaches the left
     ; edge (same as ENEMY2 in simple mode) instead of all 3 waiting
@@ -10344,7 +10346,9 @@ ENEMY_DRAW_ALL_COMPLEX_B:
     LD A,(E2B_X) : LD (E2B_U0_X),A
     ADD A,16 : LD (E2B_U1_X),A
     LD A,(E2B_X) : ADD A,32 : LD (E2B_U2_X),A
-    LD A,(E2B_Y) : LD (E2B_U0_Y),A : LD (E2B_U1_Y),A : LD (E2B_U2_Y),A
+    ; (2026-09-23、"合体後も1セルズレたまま移動させたい"): 合体後(ドリフト)も
+    ; 1機目-8/3機目+8のまま(横並び回避)。
+    LD A,(E2B_Y) : LD (E2B_U1_Y),A : SUB 8 : LD (E2B_U0_Y),A : ADD A,16 : LD (E2B_U2_Y),A
     DI
     LD A,(E2B_U0_SPRNUM) : ADD A,A : ADD A,A : OUT (99h),A
     NOP
@@ -10352,7 +10356,7 @@ ENEMY_DRAW_ALL_COMPLEX_B:
     LD A,5Bh : OUT (99h),A
     NOP
     NOP
-    LD A,(E2B_Y) : OUT (98h),A
+    LD A,(E2B_U0_Y) : OUT (98h),A
     PUSH BC : POP BC : NOP : NOP
     LD A,(E2B_U0_X) : OUT (98h),A
     PUSH BC : POP BC : NOP : NOP
@@ -10366,7 +10370,7 @@ ENEMY_DRAW_ALL_COMPLEX_B:
     LD A,5Bh : OUT (99h),A
     NOP
     NOP
-    LD A,(E2B_Y) : OUT (98h),A
+    LD A,(E2B_U1_Y) : OUT (98h),A
     PUSH BC : POP BC : NOP : NOP
     LD A,(E2B_U1_X) : OUT (98h),A
     PUSH BC : POP BC : NOP : NOP
@@ -10380,7 +10384,7 @@ ENEMY_DRAW_ALL_COMPLEX_B:
     LD A,5Bh : OUT (99h),A
     NOP
     NOP
-    LD A,(E2B_Y) : OUT (98h),A
+    LD A,(E2B_U2_Y) : OUT (98h),A
     PUSH BC : POP BC : NOP : NOP
     LD A,(E2B_U2_X) : OUT (98h),A
     PUSH BC : POP BC : NOP : NOP
@@ -10917,7 +10921,7 @@ ECS_S7_RECORD_B:
     ADD HL,DE
     LD A,(HL) : LD (E2B_U1_X),A
     INC HL
-    LD A,(HL) : LD (E2B_U1_Y),A
+    LD A,(HL) : ADD A,8 : LD (E2B_U1_Y),A    ; 退出中も1機目(軌跡の元)から+8/+16のズレを保つ
 
     LD A,(E2B_TRAIL_WIDX)
     SUB TRAIL_DELAY*2
@@ -10927,7 +10931,7 @@ ECS_S7_RECORD_B:
     ADD HL,DE
     LD A,(HL) : LD (E2B_U2_X),A
     INC HL
-    LD A,(HL) : LD (E2B_U2_Y),A
+    LD A,(HL) : ADD A,16 : LD (E2B_U2_Y),A
 
     ; each unit hides independently the moment IT reaches the left
     ; edge (same as ENEMY2 in simple mode) instead of all 3 waiting
@@ -12049,12 +12053,7 @@ ENEMY4_SINE_LUT:
 ENEMY3_TRY_SPAWN:
     LD IX,ENEMY3_WAVE_POOL    : LD HL,ENEMY3_POOL     : CALL ENEMY3_TRY_SPAWN_SLOT
     LD IX,ENEMY3_WAVE_POOL+4  : LD HL,ENEMY3_POOL+96  : CALL ENEMY3_TRY_SPAWN_SLOT
-    LD IX,ENEMY3_WAVE_POOL+8  : LD HL,ENEMY3_POOL+192 : CALL ENEMY3_TRY_SPAWN_SLOT
-    LD IX,ENEMY3_WAVE_POOL+12 : LD HL,ENEMY3_POOL+288 : CALL ENEMY3_TRY_SPAWN_SLOT
-    LD IX,ENEMY3_WAVE_POOL+16 : LD HL,ENEMY3_POOL+384 : CALL ENEMY3_TRY_SPAWN_SLOT
-    LD IX,ENEMY3_WAVE_POOL+20 : LD HL,ENEMY3_POOL+480 : CALL ENEMY3_TRY_SPAWN_SLOT
-    LD IX,ENEMY3_WAVE_POOL+24 : LD HL,ENEMY3_POOL+576 : CALL ENEMY3_TRY_SPAWN_SLOT
-    LD IX,ENEMY3_WAVE_POOL+28 : LD HL,ENEMY3_POOL+672 : JP ENEMY3_TRY_SPAWN_SLOT
+    LD IX,ENEMY3_WAVE_POOL+8  : LD HL,ENEMY3_POOL+192 : JP ENEMY3_TRY_SPAWN_SLOT   ; ENEMY3_WAVE_SLOTS=3
 
 ; Input: IX = one wave slot (ACTIVE,BUDGET,TIMER,OFFSET), HL = base of
 ; this wave's own dedicated ENEMY3_SLOTS-instance slice of ENEMY3_POOL.
