@@ -37,8 +37,18 @@
 - 新規にVRAM/PSG/その他ハードウェアポートへのブロック転送を実装する際は、着手前に
   必ずこのセクションを再確認し、`OTIR`系命令を使わないこと。
 
-## Stage1 ROM予算(2026-09-23、Round145 follow-up23時点で**plain 188byte /
-Comb 138byte**・恒久的に確認必須、Combの方が少ない)
+## Stage1 ROM予算(2026-09-23、Round145 follow-up24時点で**plain 964byte /
+Comb 914byte / Comb+DEBUG_BOSS_START 881byte**・恒久的に確認必須、Combの方が少ない)
+
+- **(2026-09-23、follow-up24)** スケジュールの4表(SPAWN_SIMPLE_Y/SPAWN_BASEY/
+  SPAWN_E3_OFFSET/ENEMY6_ROW、各341byte)を1本にまとめて約1000byte回復
+  (各エントリのハンドラは4表のうち1つしか読まないため)。**スケジュールを差し替える
+  時は1本にまとめた形で生成すること**(4表に戻すと約1000byte失う)。検証は
+  tools/verify_spawn_param_merge.py。
+- **重要な罠(follow-up24で踏んだ)**: このアセンブラは**EQUの前方参照を0と評価する**。
+  別名EQU(`X EQU LABEL`)は必ずLABELの定義より後ろに置くこと。前に置くとシンボル表上は
+  正しい値に見えるのに、そのEQUを使う命令には0が埋め込まれる(表の内容だけを比べる
+  テストでは検出できない - 実際に命令を実行して読み出し番地を追う必要がある)。
 
 - **(2026-09-23、follow-up23)** ボス条件未達のゲームオーバー分岐でplain 188byte。
   Combはbuild_full_rom.pyのGAMEOVER_SWITCH_TAIL(ファイル末尾に足す)分さらに

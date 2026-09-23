@@ -78,8 +78,8 @@ check("...and no score awarded yet", score_value(z) == before)
 
 hit_pod(z, 7)   # the last pod - (2026-09-23) now starts the boss laser (LZ_BOSS_FIRE)
 check("BOSS_EXPL_STARTED latched after the last pod dies", z.rd(BOSS_EXPL_STARTED) == 1)
-check("(2026-09-23 boss laser) last pod starts the boss laser (LZ_PHASE 2), no score yet",
-      z.rd(sym["LZ_PHASE"]) == 2 and score_value(z) == before)
+check("(2026-09-23 boss laser) last pod starts the boss-laser countdown (LZ_CD_T), no score yet",
+      z.rd(sym["LZ_CD_T"]) == sym["LZ_CD_FRAMES"] and score_value(z) == before)
 call_routine(z, sym["START_BOSS_DEATH"])   # 干渉に勝った時(LZ_WIN)の撃破開始
 check("SCORE increases by exactly 100 units (10000 real points) when the boss death starts",
       score_value(z) - before == 100)

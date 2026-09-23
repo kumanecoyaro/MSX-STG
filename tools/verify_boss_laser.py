@@ -41,7 +41,10 @@ def set_score(z, v):
 def score(z): return rd16(z, sym['SCORE']) | z.rd(sym['SCORE'] + 2) << 16
 
 PH, ROW = sym['LZ_PHASE'], sym['LZ_ROW']
-PL, SP, BL, BLANK = sym['LZ_PL_CODE'], sym['LZ_SPARK_CODE'], sym['LZ_BL_CODE'], sym['BLANKCODE']
+SP, BLANK = sym['LZ_SPARK_CODE'], sym['BLANKCODE']
+LCODE, RCODE = sym['EBUZ2_LASER_L_CODE'], sym['EBUZ2_LASER_R_CODE']
+def beam(c): return LCODE if c & 1 else RCODE          # EbuzIIのレーザー(奇数列L/偶数列R)
+def beams(c0, c1): return [beam(c) for c in range(c0, c1)]
 def cells(z, row, c0=0, c1=26): return [z.vram[0x1800 + row * 32 + c] for c in range(c0, c1)]
 
 _landed = None
@@ -120,88 +123,136 @@ z = landed(); set_score(z, 100)
 frame(z, trig_b=True)
 check("B with the gauge not full does nothing during the boss either", z.rd(PH) == 0 and z.rd(sym['LZ_SPENT']) == 0)
 
-# ---------------------------------------------------------------- 正規ルート: 勝ち
-def to_extend(z, sc=600):
+# ---------------------------------------------------------------- カウントダウン
+CD = sym['LZ_CD_T']
+def start_countdown(z, sc=600):
     set_score(z, sc); frame(z)
     kill_all_pods(z)
-    return z.rd(PH)
-z = landed()
-check("last pod destroyed -> boss does NOT explode at once, boss laser starts (phase 2)",
-      to_extend(z) == 2 and z.rd(sym['BOSS_EXPL_ACTIVE']) == 0)
-z.wr(sym['PLAYERY'], 120)                                # 別の行で待つ
+def to_fire(z, trig_frames=()):
+    n = 0
+    while z.rd(CD) and n < 200:
+        frame(z, trig_b=(n in trig_frames)); n += 1
+    return n
+z = landed(); start_countdown(z)
+check("last pod destroyed -> no immediate boss death, a 120-frame countdown starts (phase stays 0)",
+      z.rd(CD) == 120 and z.rd(PH) == 0 and z.rd(sym['BOSS_EXPL_ACTIVE']) == 0)
+z.wr(sym['PLAYERY'], 120)
+launches, seen_pos, min_d, vanish = 0, [], 999, 0
+prev = (0, 0)
+for f in range(119):
+    frame(z)
+    cb = (z.rd(sym['LZ_CB0']), z.rd(sym['LZ_CB1']))
+    if cb == (1, 1) and prev == (0, 0) or (f == 0 and cb == (1, 1)):
+        launches += 1
+    for s in (0, 1):
+        if cb[s]:
+            x = z.rd(sym[f'POD_BULLET{s}_X']); y = z.rd(sym[f'POD_BULLET{s}_Y'])
+            seen_pos.append((x, y))
+            spr = z.vram[0x1B00 + sym[f'POD_BULLET_SPR{s}'] * 4]
+        if prev[s] and not cb[s]:
+            vanish += 1
+            spr = z.vram[0x1B00 + sym[f'POD_BULLET_SPR{s}'] * 4]
+    prev = cb
+check(f"countdown: 4 pairs of pod bullets launched from the orbit ({launches} launches), each drawn as the pod-bullet sprite",
+      launches == 4)
+check(f"countdown: bullets are pulled into the boss centre ({sym['LZ_CB_CX']},{sym['LZ_CB_CY']}) and vanish there ({vanish} vanished)",
+      vanish == 8 and z.rd(sym['LZ_CB0']) == 0 and z.rd(sym['LZ_CB1']) == 0)
+check("countdown: the boss laser has not fired yet one frame before the end", z.rd(PH) == 0 and z.rd(CD) == 1
+      and cells(z, 9, 0, 26) == [BLANK] * 26)
+frame(z)
+check("after 120 frames the boss fires: whole length at once (cols 0-25) and 3 rows thick (rows 8-10), EbuzII laser tiles",
+      z.rd(PH) == 2 and all(cells(z, r, 0, 26) == beams(0, 26) for r in (8, 9, 10))
+      and cells(z, 7, 0, 26) == [BLANK] * 26 and cells(z, 11, 0, 26) == [BLANK] * 26)
 for _ in range(20): frame(z)
-bf = z.rd(sym['LZ_BFRONT'])
-check(f"boss laser grows left 1 cell / 4 frames from the boss's left edge (front col {bf}, cells BL)",
-      bf == 21 and cells(z, ROW, bf, 26) == [BL] * (26 - bf) and cells(z, ROW, 0, bf) == [BLANK] * bf)
+check("the boss laser stays on (fire-and-hold) while waiting for a cut-in",
+      z.rd(PH) == 2 and all(cells(z, r, 0, 26) == beams(0, 26) for r in (8, 9, 10)))
+
+# ---------------------------------------------------------------- 割り込み → 干渉 → 勝ち
 sc0 = score(z)
-frame(z, trig_b=True); frame(z)                          # 上下から割り込み(押下は次フレームで処理)
+frame(z, trig_b=True); frame(z)                          # 上から割り込み(押下は次フレームで処理)
 pcol = z.rd(sym['LZ_PCOL'])
-cx = z.rd(sym['LZ_CLASH_X']); c = cx >> 3
-check(f"B while the boss laser is growing -> clash (phase 3), ship snapped to the laser row (PLAYERY 64), "
-      f"beams meet halfway (clash col {c})",
-      z.rd(PH) == 3 and z.rd(sym['PLAYERY']) == 64 and (z.rd(sym['PLAYERY']) + 8) >> 3 == ROW and pcol < c < 25)
-check("clash drawn: player beam up to the clash col, spark at it, boss beam beyond",
-      cells(z, ROW, pcol, 26) == [PL] * (c - pcol) + [SP] + [BL] * (25 - c))
+c = z.rd(sym['LZ_CLASH_X']) >> 3
+check(f"B above the beam -> clash (phase 3), ship snapped into the middle row (PLAYERY 64), clash col {c}",
+      z.rd(PH) == 3 and z.rd(sym['PLAYERY']) == 64 and pcol < c < 25)
+check("clash drawn: middle row = player beam | spark | boss beam; rows 8/10 = boss beam only right of the spark",
+      cells(z, 9, pcol, 26) == beams(pcol, c) + [SP] + beams(c + 1, 26)
+      and all(cells(z, r, 0, 26) == [BLANK] * (c + 1) + beams(c + 1, 26) for r in (8, 10)))
 check("gauge stays full during the clash (use does not drain it)", z.rd(sym['GAUGE_SHOWN']) == 50)
 x0 = z.rd(sym['PLAYERX'])
-z.sim_dir = 7                                            # 左を入れても動かない
+z.sim_dir = 7
 frame(z); z.sim_dir = 0
 check("ship is frozen during the clash (stick ignored)", z.rd(sym['PLAYERX']) == x0 and z.rd(sym['PLAYERY']) == 64)
 z.sim_trig_a = True; frame(z); z.sim_trig_a = False
-check("A shots are blocked during the clash (they would overwrite the laser row)",
-      not any(z.rd(sym[f'BULLET{i}_ACT']) for i in range(3)))
+check("A shots are blocked during the clash", not any(z.rd(sym[f'BULLET{i}_ACT']) for i in range(3)))
 def mash(z, every, frames=3000):
     for f in range(frames):
         frame(z, trig_b=(f % every == 0))
         if z.rd(PH) != 3: return f
     return None
-f = mash(z, 6)                                           # 10回/秒
+f = mash(z, 6)
 check(f"mashing 10 presses/s pushes the boss back and wins (after {f} frames)",
       z.rd(PH) == 4 and z.rd(sym['BOSS_EXPL_ACTIVE']) == 1 and z.rd(sym['GAME_OVER']) == 0)
 check("win -> the normal boss death sequence (+10000 points = 100 units)", score(z) - sc0 == 100)
-check("win -> the whole laser row is erased", cells(z, ROW, 0, 26) == [BLANK] * 26)
+check("win -> all three laser rows erased", all(cells(z, r, 0, 26) == [BLANK] * 26 for r in (8, 9, 10)))
 
-# ---------------------------------------------------------------- 連打不足で負け
-z = landed(); to_extend(z)
-frame(z, trig_b=True); frame(z)
-f = mash(z, 9)                                           # 6.7回/秒
+def to_clash(z):
+    start_countdown(z); z.wr(sym['PLAYERY'], 120); to_fire(z)
+    frame(z, trig_b=True); frame(z)
+z = landed(); to_clash(z)
+f = mash(z, 9)
 check(f"mashing 6.7 presses/s loses -> game over even with barrier left (after {f} frames)",
       z.rd(PH) == 4 and z.rd(sym['GAME_OVER']) == 1 and z.rd(sym['BOSS_EXPL_ACTIVE']) == 0)
-check("lose -> laser row erased", cells(z, ROW, 0, 26) == [BLANK] * 26)
-z2 = landed(); to_extend(z2); frame(z2, trig_b=True); frame(z2)
-# ちょうど8回/秒(7,8フレーム交互 = 7.5フレーム間隔)
+check("lose -> the boss beam is left drawn full length over the player (3 rows)",
+      all(cells(z, r, 0, 26) == beams(0, 26) for r in (8, 9, 10)))
+z2 = landed(); to_clash(z2)
 fr = 0; nxt = 0; hits = 0
 while z2.rd(PH) == 3 and fr < 3000:
     p = fr >= nxt
     if p: nxt += 7 if hits % 2 == 0 else 8; hits += 1
     frame(z2, trig_b=p); fr += 1
 check(f"exactly 8 presses/s (7/8-frame alternation) still wins ({fr} frames)", z2.rd(PH) == 4 and z2.rd(sym['GAME_OVER']) == 0)
-z = landed(); to_extend(z); frame(z, trig_b=True); frame(z); z.wr(sym['GAMEOVER_ENABLED'], 0)
+
+# ---------------------------------------------------------------- テストモード: カウントダウンからやり直し
+z = landed(); to_clash(z); z.wr(sym['GAMEOVER_ENABLED'], 0)
 mash(z, 1000)
-check("GAMEOVER_ENABLED=0 (title B test mode): a lost clash does not kill, goes on to the boss death so play can continue",
-      z.rd(PH) == 4 and z.rd(sym['GAME_OVER']) == 0 and z.rd(sym['BOSS_EXPL_ACTIVE']) == 1)
-
-# ---------------------------------------------------------------- 割り込まない
-z = landed(); to_extend(z); z.wr(sym['PLAYERY'], 120)
+check("GAMEOVER_ENABLED=0 (title B test mode): losing the clash does not kill or destroy the boss - lasers erased, "
+      "energy unused again, countdown restarts",
+      z.rd(PH) == 0 and z.rd(CD) == 120 and z.rd(sym['LZ_SPENT']) == 0 and z.rd(sym['GAME_OVER']) == 0
+      and z.rd(sym['BOSS_EXPL_ACTIVE']) == 0 and all(cells(z, r, 0, 26) == [BLANK] * 26 for r in (8, 9, 10)))
+z.wr(sym['PLAYERY'], 120)                                # 中央行に固定されていたので帯の外へ出る
+to_fire(z)
+frame(z, trig_b=True); frame(z)
+check("... and the next round can be fought again (cut in -> clash)", z.rd(PH) == 3)
+z = landed(); start_countdown(z); z.wr(sym['PLAYERY'], 120); z.wr(sym['GAMEOVER_ENABLED'], 0); to_fire(z)
 n = 0
 while z.rd(PH) == 2 and n < 300: frame(z); n += 1
-check(f"never cutting in: boss laser reaches the left edge -> game over ({n} frames)",
-      z.rd(sym['GAME_OVER']) == 1 and 100 <= n <= 110)
-z = landed(); to_extend(z); z.wr(sym['PLAYERX'], 120); z.wr(sym['PLAYERY'], 64)
+check("test mode: not cutting in -> countdown restarts too (no self-destruct)",
+      z.rd(PH) == 0 and z.rd(CD) > 0 and z.rd(sym['BOSS_EXPL_ACTIVE']) == 0 and z.rd(sym['GAME_OVER']) == 0)
+
+# ---------------------------------------------------------------- 割り込まない / 帯の中 / 条件未達
+z = landed(); start_countdown(z); z.wr(sym['PLAYERY'], 120); to_fire(z)
 n = 0
 while z.rd(PH) == 2 and n < 300: frame(z); n += 1
-check(f"standing in the laser row: hit when the growing laser reaches the ship ({n} frames, front col {z.rd(sym['LZ_BFRONT'])})",
-      z.rd(sym['GAME_OVER']) == 1 and n < 60)
-z = landed(); to_extend(z, sc=499); z.wr(sym['PLAYERY'], 120)
-for f in range(30): frame(z, trig_b=(f % 3 == 0))
-check("gauge short of 50000 at the boss laser: B cannot cut in", z.rd(PH) == 2 and z.rd(sym['LZ_SPENT']) == 0)
+check(f"qualified but never cutting in: game over after the {sym['LZ_CUTIN_FRAMES']}-frame cut-in window (firing frame + {n}), "
+      f"normal MISSION FAILED path (reason 0)",
+      z.rd(sym['GAME_OVER']) == 1 and n + 1 == sym['LZ_CUTIN_FRAMES'] and z.rd(sym['LZ_FAIL_REASON']) == 0)
+z = landed(); start_countdown(z); z.wr(sym['PLAYERX'], 60); z.wr(sym['PLAYERY'], 70); to_fire(z)
+check("standing inside the 3-row band when the boss fires: hit at once", z.rd(sym['GAME_OVER']) == 1)
+for y, inside in ((56, False), (57, True), (87, True), (88, False)):
+    z = landed(); start_countdown(z); z.wr(sym['PLAYERX'], 60); z.wr(sym['PLAYERY'], y); to_fire(z)
+    check(f"band edge: PLAYERY {y} ({'hit' if inside else 'safe'}) - hitbox y..y+7 vs rows 8-10 (y64-87)",
+          z.rd(sym['GAME_OVER']) == (1 if inside else 0))
+z = landed(); start_countdown(z, sc=499); z.wr(sym['PLAYERY'], 120)
+n = to_fire(z)
+check("gauge short of 50000: game over the moment the boss fires (reason 2)",
+      z.rd(sym['GAME_OVER']) == 1 and z.rd(sym['LZ_FAIL_REASON']) == 2)
 
-# ---------------------------------------------------------------- 早撃ち(失敗レーザー)
+# ---------------------------------------------------------------- 早撃ち
 z = landed(); set_score(z, 600); z.wr(sym['PLAYERY'], 150); frame(z)   # row19: ポッドの軌道外
 frame(z, trig_b=True); frame(z)
 prow = (150 + 8) >> 3; pcol = z.rd(sym['LZ_PCOL'])
-check(f"B with the gauge full before the boss laser: player laser fires on the ship's row {prow} to the right edge (phase 1)",
-      z.rd(PH) == 1 and z.rd(sym['LZ_PROW']) == prow and cells(z, prow, pcol, 32) == [PL] * (32 - pcol))
+check(f"B with the gauge full before the boss laser: player laser (EbuzII tiles) on the ship's row {prow} to the right edge",
+      z.rd(PH) == 1 and z.rd(sym['LZ_PROW']) == prow and cells(z, prow, pcol, 32) == beams(pcol, 32))
 gs = [z.rd(sym['GAUGE_SHOWN'])]
 n = 1
 while z.rd(PH) == 1 and n < 200:
@@ -209,24 +260,18 @@ while z.rd(PH) == 1 and n < 200:
 check(f"premature laser lasts 100 frames ({n - 1}) while the gauge drains 50->0 ({gs[0]},{gs[50]},{gs[-2]})",
       n - 1 == 100 and gs[0] == 50 and gs[-2] <= 1 and all(a >= b for a, b in zip(gs, gs[1:])))
 frame(z)
-check("after 100 frames the laser is gone, phase back to 0, marked used, gauge 0",
-      z.rd(PH) == 0 and z.rd(sym['LZ_SPENT']) == 1 and cells(z, prow, 0, 32) == [BLANK] * 32
-      and z.rd(sym['GAUGE_SHOWN']) == 0)
+check("after 100 frames the laser is gone, marked used, gauge 0",
+      z.rd(PH) == 0 and z.rd(sym['LZ_SPENT']) == 1 and cells(z, prow, 0, 32) == [BLANK] * 32 and z.rd(sym['GAUGE_SHOWN']) == 0)
 frame(z, trig_b=True); frame(z)
 check("used laser cannot be fired again", z.rd(PH) == 0)
-kill_all_pods(z)
-for f in range(40): frame(z, trig_b=(f % 3 == 0))
-check("used before the boss laser: B cannot cut in", z.rd(PH) == 2)
-while z.rd(PH) == 2: frame(z)
-check("... and the boss laser kills the player (game over)", z.rd(sym['GAME_OVER']) == 1)
-
-# ボスの行(2-17)ではボス左端(列26)で止まる
-z = landed(); set_score(z, 600); z.wr(sym['PLAYERY'], 120); frame(z)
+kill_all_pods(z); to_fire(z)
+check("used before the countdown ended: game over the moment the boss fires (reason 2)",
+      z.rd(sym['GAME_OVER']) == 1 and z.rd(sym['LZ_FAIL_REASON']) == 2)
+z = landed(); set_score(z, 600); frame(z)
+z.wr(sym['PLAYERX'], 40); z.wr(sym['PLAYERY'], 120)
 frame(z, trig_b=True); frame(z)
-check("premature laser on a boss row stops at the boss's left edge (cols up to 25; the boss body is untouched)",
-      z.rd(sym['LZ_PEND']) == 26 and cells(z, 16, z.rd(sym['LZ_PCOL']), 26) == [PL] * (26 - z.rd(sym['LZ_PCOL']))
-      and all(c != PL for c in cells(z, 16, 26, 32)))
-# 早撃ちレーザーでポッドを破壊できる
+check("premature laser on a boss row stops at the boss's left edge (col 25)",
+      z.rd(sym['LZ_PEND']) == 26 and cells(z, 16, z.rd(sym['LZ_PCOL']), 26) == beams(z.rd(sym['LZ_PCOL']), 26))
 z = landed(); set_score(z, 600); frame(z)
 z.wr(sym['PLAYERX'], 40); z.wr(sym['PLAYERY'], 64)
 hp0 = [z.rd(sym['POD_HP'] + i) for i in range(8)]
@@ -236,70 +281,58 @@ for f in range(60):
     if z.rd(PH) != 1: break
 hp1 = [z.rd(sym['POD_HP'] + i) for i in range(8)]
 check(f"the premature laser destroys pods it crosses ({hp0} -> {hp1})", sum(hp1) < sum(hp0) and hp1.count(0) > hp0.count(0))
-
-# 早撃ちの100フレ以内にボスが撃つ → そのまま干渉
-z = landed(); set_score(z, 600); z.wr(sym['PLAYERY'], 150); frame(z)
+# カウントダウン中に撃っておけば、発射の瞬間にそのまま干渉
+z = landed(); start_countdown(z); z.wr(sym['PLAYERY'], 150)
+for _ in range(60): frame(z)
 frame(z, trig_b=True); frame(z)
-for _ in range(30): frame(z)
-t = z.rd(sym['LZ_TIMER'])
-kill_all_pods(z)
-check(f"boss fires within the premature laser's 100 frames -> straight into the clash, ship moved to the laser row",
+t0 = z.rd(sym['LZ_TIMER'])
+check("B during the countdown -> player laser out (phase 1) while the countdown keeps running", z.rd(PH) == 1 and z.rd(CD) > 0)
+to_fire(z)
+check("countdown ends while the player laser is still out -> straight into the clash, ship moved to the middle row",
       z.rd(PH) == 3 and z.rd(sym['PLAYERY']) == 64)
 frame(z)
-check(f"old row {prow} laser erased; gauge frozen at the remaining energy ({z.rd(sym['GAUGE_SHOWN'])} = {t}/2)",
-      cells(z, prow, 0, 32) == [BLANK] * 32 and z.rd(sym['GAUGE_SHOWN']) == t // 2)
+check(f"old row 19 laser erased; gauge frozen at the remaining energy ({z.rd(sym['GAUGE_SHOWN'])})",
+      cells(z, 19, 0, 32) == [BLANK] * 32 and 0 < z.rd(sym['GAUGE_SHOWN']) < 50)
 mash(z, 6)
 check("... and can still be won by mashing", z.rd(PH) == 4 and z.rd(sym['GAME_OVER']) == 0)
 
 # 干渉中に何かがレーザー行を上書きしても次フレームで戻る
-z = landed(); to_extend(z); frame(z, trig_b=True); frame(z)
+z = landed(); to_clash(z)
 pcol = z.rd(sym['LZ_PCOL'])
 z.vram[0x1800 + ROW * 32 + pcol] = BLANK
 frame(z)
-check("laser row is redrawn every frame (a hole left by something else heals next frame)",
-      z.vram[0x1800 + ROW * 32 + pcol] == PL)
+check("laser rows are redrawn every frame (a hole left by something else heals next frame)",
+      z.vram[0x1800 + ROW * 32 + pcol] == beam(pcol))
 
-# ---------------------------------------------------------------- バリア必須(2026-09-23)
+# ---------------------------------------------------------------- バリア必須
 z = landed(); z.wr(sym['BARRIER_HP'], 0); set_score(z, 600); z.wr(sym['PLAYERY'], 150); frame(z)
 frame(z, trig_b=True); frame(z)
-check("no barrier left: B cannot fire the laser even with a full gauge (before the boss laser)", z.rd(PH) == 0)
-z = landed(); to_extend(z); z.wr(sym['BARRIER_HP'], 0); z.wr(sym['PLAYERY'], 120)
-frame(z, trig_b=True); frame(z)
-check("no barrier left: B cannot cut into the boss laser either", z.rd(PH) == 2)
+check("no barrier left: B cannot fire the laser even with a full gauge", z.rd(PH) == 0)
 
-# ---------------------------------------------------------------- 条件未達のゲームオーバー分岐(2026-09-23)
-def die_to_boss_laser(z):
+# ---------------------------------------------------------------- 条件未達のゲームオーバー分岐
+def fall_done(z):
     n = 0
-    while z.rd(PH) == 2 and n < 300: frame(z); n += 1
-    reason = z.rd(sym['LZ_FAIL_REASON'])
-    n = 0
-    while z.rd(sym['GAME_OVER_SEQ']) == 0 and n < 600: frame(z); n += 1   # 爆発しながら落下→完了
-    return reason
+    while z.rd(sym['GAME_OVER_SEQ']) == 0 and n < 600: frame(z); n += 1
 for label, setup, want in (
         ("no barrier", lambda z: z.wr(sym['BARRIER_HP'], 0), 1),
         ("gauge short of 50000", lambda z: set_score(z, 499), 2),
         ("laser already used", lambda z: z.wr(sym['LZ_SPENT'], 1), 2),
         ("no barrier and not enough energy", lambda z: (z.wr(sym['BARRIER_HP'], 0), set_score(z, 100)), 3)):
-    z = landed(); set_score(z, 600); frame(z); kill_all_pods(z)
-    setup(z); z.wr(sym['PLAYERY'], 150)
-    r = die_to_boss_laser(z)
-    check(f"boss laser reaches an unqualified player ({label}): reason {r} (want {want}), after the death fall "
-          f"GAME_OVER_SEQ=4 (Comb switches to the bank7 reason screen), no jingle/normal text",
+    z = landed(); start_countdown(z); setup(z); z.wr(sym['PLAYERY'], 150)
+    to_fire(z)
+    r = z.rd(sym['LZ_FAIL_REASON'])
+    fall_done(z)
+    check(f"unqualified when the boss fires ({label}): reason {r} (want {want}); after the death fall GAME_OVER_SEQ=4 "
+          f"(Comb switches to the bank7 reason screen)",
           r == want and z.rd(sym['GAME_OVER']) == 1 and z.rd(sym['GAME_OVER_SEQ']) == 4)
-    frame(z); frame(z)
-    check(f"({label}) SEQ=4 stays put in the plain build (UPDATE_GAME_OVER_SEQUENCE ignores it)",
-          z.rd(sym['GAME_OVER_SEQ']) == 4)
-z = landed(); set_score(z, 600); frame(z); kill_all_pods(z); z.wr(sym['PLAYERY'], 150)
-r = die_to_boss_laser(z)
-check("qualified player who just never cut in: reason 0 -> normal MISSION FAILED (GAME_OVER_SEQ 1)",
-      r == 0 and z.rd(sym['GAME_OVER_SEQ']) == 1)
-z = landed(); to_extend(z); frame(z, trig_b=True); frame(z); mash(z, 1000)
-n = 0
-while z.rd(sym['GAME_OVER_SEQ']) == 0 and n < 600: frame(z); n += 1
-check("losing the clash itself: reason 0 -> normal MISSION FAILED",
-      z.rd(sym['LZ_FAIL_REASON']) == 0 and z.rd(sym['GAME_OVER_SEQ']) == 1)
-z = landed(); z.wr(sym['LZ_FAIL_REASON'], 3); call(z, 'LZ_INIT')
-check("LZ_INIT clears LZ_FAIL_REASON (restart after a reason game over)", z.rd(sym['LZ_FAIL_REASON']) == 0)
+z = landed(); start_countdown(z); z.wr(sym['PLAYERY'], 150); to_fire(z)
+while z.rd(PH) == 2: frame(z)
+fall_done(z)
+check("qualified player who just never cut in: normal MISSION FAILED (GAME_OVER_SEQ 1)", z.rd(sym['GAME_OVER_SEQ']) == 1)
+z = landed(); to_clash(z); mash(z, 1000); fall_done(z)
+check("losing the clash itself: normal MISSION FAILED", z.rd(sym['LZ_FAIL_REASON']) == 0 and z.rd(sym['GAME_OVER_SEQ']) == 1)
+z = landed(); z.wr(sym['LZ_FAIL_REASON'], 3); z.wr(CD, 50); call(z, 'LZ_INIT')
+check("LZ_INIT clears LZ_FAIL_REASON and the countdown (restart)", z.rd(sym['LZ_FAIL_REASON']) == 0 and z.rd(CD) == 0)
 
 print(f"\n{len(ok)} passed, {len(fail)} failed")
 sys.exit(1 if fail else 0)

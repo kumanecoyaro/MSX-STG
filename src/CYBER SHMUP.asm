@@ -15695,97 +15695,42 @@ SPAWN_THRESHOLDS:
     DW 931,932,933,933,934,935,935,936,937,937,938,939,939,940,941,941
     DW 942,943,943,944,945
 
+; (2026-09-23、ROM予算): 旧SPAWN_SIMPLE_Y_TABLE/SPAWN_BASEY_TABLE/SPAWN_E3_OFFSET_
+; TABLE/ENEMY6_ROW_TABLE(各341byte)を1本にまとめた。スケジュールの各エントリは
+; SSC_FIREでちょうど1つのSPAWN_*へ振り分けられ、各SPAWN_*は4表のうち1つしか読まない
+; (SIMPLE→Y、E2/E4/E4B→BASEY、E3_WAVE→E3_OFFSET、E6→ROW)ので、エントリごとに
+; そのハンドラが読む表の値だけを残せば挙動は同じ(tools/verify_spawn_param_merge.py
+; が全エントリについて旧4表との一致を確認)。スケジュールを差し替える時はこの形で
+; 生成し直すこと。
 SPAWN_SIMPLE_Y_TABLE:
     DB 40,32,24,136,128,120,32,24,16,128,120,112,24,40,56,72,88
-    DB 104,120,120,120,112,104,96,88,80,72,64,56,48,0,0,0,88
-    DB 96,104,112,120,120,120,0,0,120,112,104,96,88,48,40,32,136
-    DB 0,0,48,0,0,56,0,0,56,0,0,64,0,0,144,128,112
-    DB 0,0,104,112,120,0,0,104,0,128,0,80,0,0,72,0,64
-    DB 56,48,120,64,0,0,24,0,0,0,48,40,32,0,0,0,0
-    DB 0,0,0,0,56,48,40,32,24,0,136,128,120,112,104,96,88
-    DB 80,0,0,104,112,0,64,0,120,0,64,0,112,0,0,56,0
-    DB 112,104,96,88,80,72,0,0,0,0,0,0,0,0,0,0,64
-    DB 0,96,0,120,0,0,72,0,120,0,0,0,64,88,0,120,0
-    DB 16,24,32,48,0,0,0,0,0,0,0,96,88,88,88,80,80
-    DB 72,0,0,0,0,0,0,0,0,104,88,80,72,48,88,88,80
-    DB 64,0,80,64,0,80,72,0,72,72,0,0,72,0,0,80,0
-    DB 0,88,0,0,96,0,0,96,0,0,0,0,0,0,0,0,0
-    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+    DB 104,120,120,120,112,104,96,88,80,72,64,56,48,0,0,3,88
+    DB 96,104,112,120,120,120,88,120,120,112,104,96,88,48,40,32,136
+    DB 64,88,48,72,112,56,72,104,56,72,96,64,72,96,144,128,112
+    DB 96,80,104,112,120,72,88,104,72,128,88,80,104,56,72,112,64
+    DB 56,48,120,64,0,0,24,96,40,104,48,40,32,96,24,64,48
+    DB 16,72,112,32,56,48,40,32,24,112,136,128,120,112,104,96,88
+    DB 80,64,80,104,112,112,64,56,120,72,64,48,112,64,64,56,96
+    DB 112,104,96,88,80,72,96,32,120,32,64,64,88,72,56,112,64
+    DB 128,96,72,120,80,96,72,56,120,80,80,112,64,88,72,120,0
+    DB 16,24,32,48,32,104,32,104,72,80,104,96,88,88,88,80,80
+    DB 72,72,80,104,120,88,56,64,96,104,88,80,72,48,88,88,80
+    DB 64,64,80,64,64,80,72,64,72,72,1,18,72,5,12,80,6
+    DB 13,88,7,14,96,8,15,96,9,15,1,96,18,9,15,96,9
+    DB 15,8,88,15,7,14,80,6,13,5,64,12,4,11,3,48,10
+    DB 2,9,1,48,18,3,11,5,72,13,7,15,88,8,15,7,16
+    DB 1,96,18,7,16,6,80,14,5,13,4,64,12,1,11,5,12
+    DB 6,72,14,7,15,8,88,14,8,14,1,88,18,7,14,6,80
+    DB 13,7,14,80,7,13,80,7,13,80,7,13,80,7,13,80,7
+    DB 13,80,7,13,80,7,13,80,7,13,80,7,13,80,7,13,80
     DB 0
+; (このアセンブラはEQUの前方参照を0と評価するので、別名は必ず表の後ろに置く)
+SPAWN_BASEY_TABLE     EQU SPAWN_SIMPLE_Y_TABLE
+SPAWN_E3_OFFSET_TABLE EQU SPAWN_SIMPLE_Y_TABLE
+ENEMY6_ROW_TABLE      EQU SPAWN_SIMPLE_Y_TABLE
 
-SPAWN_BASEY_TABLE:
-    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-    DB 0,0,0,0,0,0,88,120,0,0,0,0,0,0,0,0,0
-    DB 64,88,0,72,112,0,72,104,0,72,96,0,72,96,0,0,0
-    DB 96,80,0,0,0,72,88,0,72,0,88,0,104,56,0,112,0
-    DB 0,0,0,0,0,0,0,96,40,104,0,0,0,96,24,64,48
-    DB 16,72,112,32,0,0,0,0,0,112,0,0,0,0,0,0,0
-    DB 0,64,80,0,0,112,0,56,0,72,0,48,0,64,64,0,96
-    DB 0,0,0,0,0,0,96,32,120,32,64,64,88,72,56,112,0
-    DB 128,0,72,0,80,96,0,56,0,80,80,112,0,0,72,0,0
-    DB 0,0,0,0,32,104,32,104,72,80,104,0,0,0,0,0,0
-    DB 0,72,80,104,120,88,56,64,96,0,0,0,0,0,0,0,0
-    DB 0,64,0,0,64,0,0,64,0,0,0,0,0,0,0,0,0
-    DB 0,0,0,0,0,0,0,0,0,0,0,96,0,0,0,96,0
-    DB 0,0,88,0,0,0,80,0,0,0,64,0,0,0,0,48,0
-    DB 0,0,0,48,0,0,0,0,72,0,0,0,88,0,0,0,0
-    DB 0,96,0,0,0,0,80,0,0,0,0,64,0,0,0,0,0
-    DB 0,72,0,0,0,0,88,0,0,0,0,88,0,0,0,0,80
-    DB 0,0,0,80,0,0,80,0,0,80,0,0,80,0,0,80,0
-    DB 0,80,0,0,80,0,0,80,0,0,80,0,0,80,0,0,80
-    DB 0
 
-SPAWN_E3_OFFSET_TABLE:
-    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,3,0
-    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-    DB 0
 
-ENEMY6_ROW_TABLE:
-    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-    DB 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-    DB 0,0,0,0,0,0,0,0,0,0,1,18,0,5,12,0,6
-    DB 13,0,7,14,0,8,15,0,9,15,1,0,18,9,15,0,9
-    DB 15,8,0,15,7,14,0,6,13,5,0,12,4,11,3,0,10
-    DB 2,9,1,0,18,3,11,5,0,13,7,15,0,8,15,7,16
-    DB 1,0,18,7,16,6,0,14,5,13,4,0,12,1,11,5,12
-    DB 6,0,14,7,15,8,0,14,8,14,1,0,18,7,14,6,0
-    DB 13,7,14,0,7,13,0,7,13,0,7,13,0,7,13,0,7
-    DB 13,0,7,13,0,7,13,0,7,13,0,7,13,0,7,13,0
-    DB 0
 
 ; --- Boss BG (nametable) graphics, generated from
 ; --- dotpict_20260806_173500 (12x37 dot art), resized directly
@@ -16592,21 +16537,33 @@ PAP_DX:
 ; であっても100フレ以内に間に合えば干渉動作に移行できる" "1秒8回以上"
 ; "仮絵で実装、後で差し替え"。
 ;
-; LZ_PHASE: 0=待機(ゲージ満タン+未使用ならBで発射可)
-;           1=自機レーザー単独照射(ポッド破壊、100フレで消滅→使用済み)
-;           2=ボスレーザーが左へ伸長中(B押下で割り込み→干渉。左端到達 or
-;             自機接触でゲームオーバー)
-;           3=干渉(B連打で押し返す)  4=終了
+; (2026-09-23 改訂) "ボスレーザーは打ちっぱなしに 幅も3セルに 4フレは遅いので
+; EbuzIIと同じでよい なのでほぼ正面から撃ち合いは出来ない ただしカウントダウン
+; 動作あり ポッド弾がボス中央に集まって来る これはポッド弾発射そのものを流用
+; ただし中央で消える" "レーザーは仮実装でEbuzIIのレーザーを流用"。回答: テスト
+; モードで負けたらカウントダウンからやり直し / 発射後は上下から割り込み可・制限
+; 時間でゲームオーバー / 軌道8箇所から2発ずつ約2秒 / ボスだけ3行、自機は1行。
+;
+; 流れ: 最後のポッド撃破 → カウントダウン(LZ_CD_T 120→0フレーム。30フレーム
+; ごとにポッドの軌道上の2箇所からポッド弾を出し、ボス中央へ吸い込ませて消す)
+; → 発射: 一瞬で全長(列0-25、行8-10の3行)・出しっぱなし。
+;   ・自機レーザー照射中(カウントダウン中に撃っていた)なら即干渉。
+;   ・条件未達(バリア0/エナジー不足/使用済み)なら即ゲームオーバー(理由付き)。
+;   ・それ以外はLZ_PHASE=2: 3行の帯に入ったら即死、上下からBで割り込めば干渉、
+;     LZ_CUTIN_FRAMESのうちに割り込まなければゲームオーバー。
+; LZ_PHASE: 0=待機 1=自機レーザー単独照射(100フレで消滅→使用済み)
+;           2=ボスレーザー照射中(割り込み待ち) 3=干渉(B連打) 4=終了
 ; ゲージ値(0-50px) = 照射/干渉中はLZ_TIMER/2、使用済みは0、それ以外は
 ; min(SCORE/10,50)(SCOREは実得点/100単位 → 1000点=10=1px)。
 ; 干渉: ボスは毎フレーム1px押し込み(60px/秒)、B1回で8px押し返す
-; (8回/秒=64px/秒で上回り、7回/秒=56px/秒では押し負ける)。干渉点が列25(ボス左端)に届けば勝ち
-; →START_BOSS_DEATH(従来の撃破シーケンス)、自機の先端列まで押し
-; 戻されたら負け→ゲームオーバー(バリア残量に関係なく)。
+; (8回/秒=64px/秒で上回り、7回/秒=56px/秒では押し負ける)。干渉点が列25
+; (ボス左端)に届けば勝ち→START_BOSS_DEATH、自機の先端列まで押し戻されたら
+; 負け→ゲームオーバー(バリア残量に関係なく、ボスレーザーを全長で残す)。
+; 干渉中、ボスの3行のうち上下の行は干渉点より右だけ残る。
 ; GAMEOVER_ENABLED=0(タイトルBスタートのテスト用)で負けた場合は死なない
-; ので、そのまま撃破シーケンスへ進める(進行不能を避ける)。
-; レーザー/干渉点はBGセル(group18、fg cyan/bg blue、実プレイ監査で空きの
-; codes146-148)、ゲージは行0(group23、白/黒、空きのcodes186-188)。
+; ので、レーザーを消し、エナジーを未使用に戻してカウントダウンからやり直す。
+; レーザーの絵はEbuzIIのレーザー(144/145、列の偶奇で交互)を仮に流用、
+; 干渉点だけ専用(147)。ゲージは行0(group23、白/黒、codes186-188)。
 ; ============================================================================
 LZ_PHASE     EQU 0F334h
 LZ_SPENT     EQU 0F335h   ; 1=自機レーザー使用済み
@@ -16615,7 +16572,7 @@ LZ_TICK      EQU 0F337h
 LZ_PROW      EQU 0F338h   ; 単独照射の行
 LZ_PCOL      EQU 0F339h   ; 自機レーザー先頭列(LZ_PENDと連続させること)
 LZ_PEND      EQU 0F33Ah   ; 単独照射の終端列(含まない)
-LZ_BFRONT    EQU 0F33Bh   ; ボスレーザーの先端列(26=未描画)
+LZ_CD_T      EQU 0F33Bh   ; カウントダウン残りフレーム(0=停止中)
 LZ_CLASH_X   EQU 0F33Ch   ; 干渉点のX(px)
 GAUGE_SHOWN  EQU 0F33Dh   ; 画面に描画済みのゲージ値
 LZ_BLANKING  EQU 0F33Eh   ; 非0: LZ_DRAWが空白で塗る(消去)
@@ -16626,34 +16583,35 @@ LZ_BLANKING  EQU 0F33Eh   ; 非0: LZ_DRAWが空白で塗る(消去)
 ; 理由付きで表示する。
 LZ_FAIL_REASON EQU 0F33Fh
 
-LZ_ROW        EQU 9       ; ボス中央(BOSS_MAP row7、画面row9)
+LZ_ROW        EQU 9       ; ボス中央(BOSS_MAP row7、画面row9)。ボスは8-10の3行
 LZ_SOLO_FRAMES EQU 100
+LZ_CD_FRAMES  EQU 120     ; カウントダウン(30フレームごとに2発ずつ、4組)
+LZ_CUTIN_FRAMES EQU 100   ; 発射後、割り込みを待つフレーム数
+LZ_CB_CX      EQU 210     ; ポッド軌道の中心(GET_POD_XY)=ポッド弾の吸い込み先
+LZ_CB_CY      EQU 71
+LZ_CB0        EQU POD_BULLET0_DXMAG   ; 吸い込み中フラグ(ポッド全滅後は未使用の番地)
+LZ_CB1        EQU POD_BULLET1_DXMAG
 LZ_PUSH_PX    EQU 8
 LZ_WIN_X      EQU 200     ; 列25(ボス左端)
-LZ_PL_CODE    EQU 146
 LZ_SPARK_CODE EQU 147
-LZ_BL_CODE    EQU 148
 GAUGE_FULL_CODE EQU 186
 GAUGE_PART_CODE EQU 187   ; 端数1セル分、値が変わるたびパターン自体を書き換える
 GAUGE_EDGE_CODE EQU 188   ; col12の右端1px(px103)
 GAUGE_BLANK_CODE EQU MISSION_FONT_BASE+5   ; 行0の黒埋めと同じ空白
 
 LZ_TILES:
-    DB 00h,00h,0FFh,00h,00h,0FFh,00h,00h      ; 146 自機レーザー(仮)
     DB 99h,5Ah,3Ch,0FFh,0FFh,3Ch,5Ah,99h      ; 147 干渉点(仮)
-    DB 00h,0FFh,0FFh,0FFh,0FFh,0FFh,0FFh,00h  ; 148 ボスレーザー(仮)
 GAUGE_TILES:
     DB 00h,0FFh,0FFh,0FFh,0FFh,0FFh,0FFh,00h  ; 186 満
     DB 00h,00h,00h,00h,00h,00h,00h,00h        ; 187 端数(動的)
     DB 00h,01h,01h,01h,01h,01h,01h,00h        ; 188 左端1px
 
 LZ_INIT:
-    LD HL,LZ_TILES : LD DE,LZ_PL_CODE*8 : LD BC,24 : CALL LDIRVM
+    LD HL,LZ_TILES : LD DE,LZ_SPARK_CODE*8 : LD BC,8 : CALL LDIRVM
     LD HL,GAUGE_TILES : LD DE,GAUGE_FULL_CODE*8 : LD BC,24 : CALL LDIRVM
     XOR A
     LD (LZ_PHASE),A : LD (LZ_SPENT),A : LD (GAUGE_SHOWN),A : LD (LZ_BLANKING),A
-    LD (LZ_FAIL_REASON),A
-    LD A,26 : LD (LZ_BFRONT),A
+    LD (LZ_FAIL_REASON),A : LD (LZ_CD_T),A
     RET
 
 ; Out: A=ゲージ値(0-50)
@@ -16723,21 +16681,25 @@ GU_PUT:
     DJNZ GU_CELL
     RET
 
-; Z=Bで発射可(今フレーム押下+未使用+バリア1枚以上+ゲージ満タン)
+; Z=撃てる状態(未使用+バリア1枚以上+ゲージ満タン)
 ; ("バリアが1枚でも残っていないとレーザーは使用できない")
-LZ_CAN_FIRE:
-    LD A,(FIREB_EDGE) : DEC A
-    RET NZ
+LZ_QUALIFIED:
     LD A,(LZ_SPENT) : OR A
     RET NZ
     LD A,(BARRIER_HP) : OR A
-    JR Z,LZCF_NO
+    JR Z,LZQ_NO
     CALL GAUGE_VALUE
     CP 50
     RET
-LZCF_NO:
+LZQ_NO:
     INC A                          ; NZ
     RET
+
+; Z=Bで発射可(今フレーム押下+LZ_QUALIFIED)
+LZ_CAN_FIRE:
+    LD A,(FIREB_EDGE) : DEC A
+    RET NZ
+    JR LZ_QUALIFIED
 
 ; 毎フレーム(MAINLOOP)。ゲージ更新+BOSS_STATE==2の間だけレーザー処理。
 LZ_FRAME:
@@ -16746,14 +16708,17 @@ LZ_FRAME:
     RET NZ
     LD A,(GAME_OVER) : OR A
     JR Z,LZF_ALIVE
-    LD A,(LZ_PHASE) : DEC A : CP 3  ; 自機死亡: 出ているレーザーを消して終了
+    XOR A : LD (LZ_CD_T),A         ; 自機死亡: カウントダウンを止め、
+    LD A,(LZ_PHASE) : DEC A : CP 3 ; 出ているレーザーを消して終了
     RET NC
     JP LZ_END
 LZF_ALIVE:
+    LD A,(LZ_CD_T) : OR A
+    CALL NZ,LZ_COUNTDOWN
     LD A,(LZ_PHASE)
     OR A : JR Z,LZ_IDLE
     DEC A : JR Z,LZ_SOLO
-    DEC A : JR Z,LZ_EXTEND
+    DEC A : JR Z,LZ_HOLD
     DEC A : RET NZ
     ; --- 3: 干渉 ---
     LD HL,LZ_CLASH_X
@@ -16794,35 +16759,41 @@ LZ_SOLO:
     XOR A : LD (LZ_PHASE),A
     RET
 LZS_ON:
-    CALL LZ_HIT_PODS               ; 最後のポッドを壊すとここで干渉へ移る
+    CALL LZ_HIT_PODS               ; 最後のポッドを壊すとカウントダウンが始まる
     JP LZ_DRAW_CURRENT
 
-LZ_EXTEND:
+; --- 2: ボスレーザー照射中。上下からBで割り込み、帯に入ったら即死、
+; --- LZ_CUTIN_FRAMESのうちに割り込まなければゲームオーバー。
+LZ_HOLD:
     CALL LZ_CAN_FIRE
-    JR NZ,LZE_TICK
+    JR NZ,LZH_WAIT
     LD A,LZ_SOLO_FRAMES : LD (LZ_TIMER),A : LD (LZ_SPENT),A
-    CALL LZ_START_CLASH            ; 伸長中のボスレーザーへ割り込み
-    JR LZ_DRAW_CURRENT
-LZE_TICK:
-    LD HL,LZ_TICK : INC (HL)
-    LD A,(HL) : AND 3
-    JR NZ,LZ_DRAW_CURRENT
-    LD HL,LZ_BFRONT : DEC (HL)     ; 4フレームに1列、左へ伸びる
-    JR Z,LZ_LOSE_EXT                   ; 左端まで届いた
-    LD A,(PLAYERY) : ADD A,8 : AND 0F8h
-    CP LZ_ROW*8
-    JR NZ,LZ_DRAW_CURRENT
-    LD A,(PLAYERX) : ADD A,15
+    CALL LZ_START_CLASH
+    JP LZ_DRAW_CURRENT
+LZH_WAIT:
+    CALL LZ_IN_BEAM
     JR C,LZ_LOSE_EXT
-    SRL A : SRL A : SRL A
-    CP (HL)
-    JR NC,LZ_LOSE_EXT                  ; 同じ行で自機に届いた
-    JR LZ_DRAW_CURRENT
+    LD HL,LZ_TICK : DEC (HL)
+    JR Z,LZ_LOSE_EXT
+    JP LZ_DRAW_CURRENT
+
+; C=自機の当たり判定(PLAYERX,PLAYERY)-(+7,+7)がボスレーザーの帯
+; (x0-207, y64-87=行8-10)に重なっている
+LZ_IN_BEAM:
+    LD A,(PLAYERX) : CP 208
+    JR NC,LZIB_NO
+    LD A,(PLAYERY) : SUB 57        ; y+7>=64 かつ y<=87
+    CP 31
+    RET                            ; C=帯の中
+LZIB_NO:
+    OR A                           ; NC
+    RET
 
 LZ_WIN:
     CALL LZ_END
     JP START_BOSS_DEATH
-; ボスレーザーが届いた(割り込めなかった): 条件未達の理由を記録してから負け処理。
+
+; ボスレーザーに届かれた(割り込めなかった): 条件未達の理由を記録してから負け処理。
 ; (干渉で押し負けた場合はLZ_LOSEへ直接来るので理由0=通常のMISSION FAILED)
 LZ_LOSE_EXT:
     LD B,0
@@ -16839,12 +16810,19 @@ LZLE_SHIELD:
 LZLE_ENERGY:
     LD A,B : LD (LZ_FAIL_REASON),A
 LZ_LOSE:
-    CALL LZ_END
-    XOR A : LD (BARRIER_HP),A
-    CALL PLAYER_TAKE_HIT
-    LD A,(GAME_OVER) : OR A
-    RET NZ
-    JP START_BOSS_DEATH            ; ゲームオーバー無効(テスト用)なら撃破扱い
+    CALL LZ_ERASE
+    LD A,(GAMEOVER_ENABLED) : OR A
+    JR NZ,LZL_DIE
+    ; テストモード(タイトルBスタート): 死なないので、エナジーを未使用に戻して
+    ; カウントダウンからやり直す(何度でも撃ち合える)。
+    XOR A : LD (LZ_SPENT),A : LD (LZ_FAIL_REASON),A : LD (LZ_PHASE),A
+    JP LZ_BOSS_FIRE
+LZL_DIE:
+    LD A,2 : LD (LZ_PHASE),A       ; ボスレーザーを全長で描いたまま残す
+    CALL LZ_DRAW_CURRENT
+    LD A,4 : LD (LZ_PHASE),A
+    XOR A : LD (BARRIER_HP),A      ; バリア残量に関係なくゲームオーバー
+    JP PLAYER_TAKE_HIT
 LZ_END:
     CALL LZ_ERASE
     LD A,4 : LD (LZ_PHASE),A
@@ -16856,40 +16834,59 @@ LZ_ERASE:
     XOR A : LD (LZ_BLANKING),A
     RET
 
-; 現在のLZ_PHASEのレーザー行を丸ごと描き直す(毎フレーム - 途中で何かに
+; 現在のLZ_PHASEのレーザーを丸ごと描き直す(毎フレーム - 途中で何かに
 ; 上書きされても次のフレームで元に戻る)。
 LZ_DRAW_CURRENT:
     LD A,(LZ_PHASE)
     DEC A : JR NZ,LZDC_2
-    LD A,(LZ_PROW) : LD E,A
+    LD A,(LZ_PROW) : LD E,A        ; 1: 自機レーザー(1行)
     LD HL,(LZ_PCOL)                ; L=PCOL,H=PEND
-    LD D,255                       ; 全部自機レーザー
+    LD D,255
     JR LZ_DRAW
 LZDC_2:
     DEC A : JR NZ,LZDC_3
-    LD D,0                         ; 全部ボスレーザー
-    LD A,(LZ_BFRONT)
-    JR LZDC_GO
+    LD HL,26*256                   ; 2: ボスレーザー(3行、列0-25)
+    LD D,255
+    LD E,LZ_ROW-1 : CALL LZ_DRAW
+    INC E : CALL LZ_DRAW
+    INC E
+    JR LZ_DRAW
 LZDC_3:
     DEC A : RET NZ
     LD A,(LZ_CLASH_X) : SRL A : SRL A : SRL A : LD D,A
-    LD A,(LZ_PCOL)
-LZDC_GO:
-    LD L,A : LD H,26 : LD E,LZ_ROW
-; E=行, L=開始列, H=終端列(含まない), D=干渉点の列(未満=自機、同=干渉点、超=ボス)
+    LD A,(LZ_PCOL) : LD L,A : LD H,26
+    LD E,LZ_ROW : CALL LZ_DRAW     ; 3: 中央行 = 自機|干渉点|ボス
+    LD A,(LZ_BLANKING) : PUSH AF   ; 上下の行 = 干渉点より右だけボス
+    OR A : JR NZ,LZDC3_SIDE
+    LD A,2 : LD (LZ_BLANKING),A
+LZDC3_SIDE:
+    LD E,LZ_ROW-1 : CALL LZ_DRAW
+    LD E,LZ_ROW+1 : CALL LZ_DRAW
+    POP AF : LD (LZ_BLANKING),A
+    RET
+; E=行, L=開始列, H=終端列(含まない), D=干渉点の列。絵はEbuzIIのレーザー
+; (奇数列L/偶数列R)、D列だけ干渉点。LZ_BLANKING: 1=全部空白(消去)、
+; 2=D列以下を空白(干渉中の上下の行)。
 LZ_DRAW:
     LD C,L
 LZD_LOOP:
     LD A,C : CP H
     RET NC
-    LD B,LZ_PL_CODE
-    CP D : JR C,LZD_PUT
-    LD B,LZ_SPARK_CODE
-    JR Z,LZD_PUT
-    LD B,LZ_BL_CODE
-LZD_PUT:
+    AND 1 : LD B,A
+    LD A,EBUZ2_LASER_R_CODE : SUB B : LD B,A
     LD A,(LZ_BLANKING) : OR A
-    JR Z,LZD_W
+    JR Z,LZD_MAIN
+    DEC A : JR Z,LZD_BLANK
+    LD A,C : CP D
+    JR C,LZD_BLANK
+    JR Z,LZD_BLANK
+    JR LZD_W
+LZD_MAIN:
+    LD A,C : CP D
+    JR NZ,LZD_W
+    LD B,LZ_SPARK_CODE
+    JR LZD_W
+LZD_BLANK:
     LD B,BLANKCODE
 LZD_W:
     PUSH DE : PUSH HL
@@ -16899,25 +16896,105 @@ LZD_W:
     INC C
     JR LZD_LOOP
 
-; 単独照射中(1)にボスが撃った/伸長中(2)にBで割り込んだ → 干渉(3)。
-; 自機をレーザー行へ固定し、両レーザーの先端の中間から始める。
+; 単独照射中(1)にボスが撃った/照射中(2)にBで割り込んだ → 干渉(3)。
+; 自機をレーザー行へ固定し、自機の先端とボス左端(列26)の中間から始める。
 LZ_START_CLASH:
     CALL LZ_ERASE
     LD A,PLAYER_INITY : LD (PLAYERY),A    ; (PLAYERY+8)>>3 = LZ_ROW
     CALL LZ_CALC_PCOL
-    ADD A,A : ADD A,A : ADD A,4 : LD B,A  ; (PCOL*8+8)/2
-    LD A,(LZ_BFRONT) : ADD A,A : ADD A,A  ; BFRONT*8/2
-    ADD A,B : LD (LZ_CLASH_X),A
+    ADD A,A : ADD A,A : ADD A,4+104       ; (PCOL*8+8)/2 + 26*8/2
+    LD (LZ_CLASH_X),A
     LD A,3 : LD (LZ_PHASE),A
     JP SOUND_EBUZ_FIRE
 
-; 最後のポッド撃破時(POD_HIT_DESTROY)。単独照射中なら即干渉、それ以外は
-; ボスレーザー伸長開始(使用済み/ゲージ不足なら割り込めず、届いてゲームオーバー)。
+; 最後のポッド撃破時(POD_HIT_DESTROY)、およびテストモードでのやり直し:
+; カウントダウン開始。飛んでいる通常のポッド弾は消す。
 LZ_BOSS_FIRE:
+    XOR A
+    LD (POD_BULLET0_ACT),A : LD (POD_BULLET1_ACT),A
+    LD (LZ_CB0),A : LD (LZ_CB1),A
+    CALL POD_BULLET_HIDE0
+    CALL POD_BULLET_HIDE1
+    LD A,LZ_CD_FRAMES : LD (LZ_CD_T),A
+    RET
+
+; カウントダウン1フレーム分。T=120,90,60,30でポッド軌道上の2箇所(2k,2k+1)
+; からポッド弾を出し、毎フレーム中央へ1/4ずつ寄せて、着いたら消す。T=0で発射。
+LZ_COUNTDOWN:
+    LD C,3
+LZCD_FIND:
+    SUB 30
+    JR C,LZCD_MOVE
+    JR Z,LZCD_LAUNCH
+    DEC C
+    JR LZCD_FIND
+LZCD_LAUNCH:
+    LD A,C : ADD A,A : PUSH AF
+    CALL GET_POD_XY
+    LD A,(POD_XY_X) : LD (POD_BULLET0_X),A
+    LD A,(POD_XY_Y) : LD (POD_BULLET0_Y),A
+    POP AF : INC A
+    CALL GET_POD_XY
+    LD A,(POD_XY_X) : LD (POD_BULLET1_X),A
+    LD A,(POD_XY_Y) : LD (POD_BULLET1_Y),A
+    LD A,1 : LD (LZ_CB0),A : LD (LZ_CB1),A
+    CALL SOUND_POD_FIRE
+LZCD_MOVE:
+    LD A,(LZ_CB0) : OR A
+    JR Z,LZCD_B1
+    LD HL,POD_BULLET0_X : CALL LZ_CB_MOVE
+    OR A
+    JR Z,LZCD_D0
+    XOR A : LD (LZ_CB0),A
+    CALL POD_BULLET_HIDE0
+    JR LZCD_B1
+LZCD_D0:
+    CALL POD_BULLET_DRAW0
+LZCD_B1:
+    LD A,(LZ_CB1) : OR A
+    JR Z,LZCD_TICK
+    LD HL,POD_BULLET1_X : CALL LZ_CB_MOVE
+    OR A
+    JR Z,LZCD_D1
+    XOR A : LD (LZ_CB1),A
+    CALL POD_BULLET_HIDE1
+    JR LZCD_TICK
+LZCD_D1:
+    CALL POD_BULLET_DRAW1
+LZCD_TICK:
+    LD HL,LZ_CD_T : DEC (HL)
+    RET NZ
+    ; --- 発射 ---
+    CALL SOUND_EBUZ_FIRE
     LD A,(LZ_PHASE) : DEC A
-    JR Z,LZ_START_CLASH
+    JP Z,LZ_START_CLASH            ; 自機レーザー照射中 → そのまま干渉
     LD A,2 : LD (LZ_PHASE),A
-    JP SOUND_EBUZ_FIRE
+    LD A,LZ_CUTIN_FRAMES : LD (LZ_TICK),A
+    CALL LZ_QUALIFIED
+    JP NZ,LZ_LOSE_EXT              ; 条件未達: 撃たれた時点でゲームオーバー
+    RET
+
+; HL=POD_BULLETn_X(次のbyteがY)。X,Yをそれぞれ中心へ差の1/4ずつ寄せる。
+; Out: A=FFh 両軸とも着いた(寄せ量0か-1)、0 まだ。
+LZ_CB_MOVE:
+    LD C,LZ_CB_CX : CALL LZ_APPROACH
+    SBC A,A : PUSH AF
+    INC HL
+    LD C,LZ_CB_CY : CALL LZ_APPROACH
+    SBC A,A
+    POP BC
+    AND B
+    RET
+; (HL)をCへ(C-(HL))/4(符号付き、9bit差分)だけ寄せる。Out: CF=寄せ量が0か-1(着いた)
+LZ_APPROACH:
+    LD B,(HL)
+    LD A,C : SUB B : LD D,A
+    SBC A,A : AND 0C0h : LD E,A    ; 負なら上位2bitを1で埋める
+    LD A,D : SRL A : SRL A : OR E
+    LD D,A
+    ADD A,B : LD (HL),A
+    LD A,D : INC A : CP 2
+    RET
 
 ; Out: A=LZ_PCOL=(PLAYERX+16)>>3(最大20 - 干渉開始直後の勝ち判定を避ける)
 LZ_CALC_PCOL:
