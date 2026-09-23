@@ -1485,6 +1485,10 @@ INIT_SPRATR_CLR:
     XOR A
     LD (BULLET0_ACT),A : LD (BULLET1_ACT),A : LD (BULLET2_ACT),A
     LD (JOY_TRIGB_PREV),A
+    ; (2026-09-23、監査で発見): 飛び込み演出中は入力読み取りを丸ごと飛ばすため
+    ; JOY_TRIG/FIREB_EDGE/JOY_STICKは前回プレイ(ゲームオーバー後の再スタート)や
+    ; 電源投入時の不定値のまま残り、「押されている」値だと演出中に勝手に撃っていた。
+    LD (JOY_TRIG),A : LD (FIREB_EDGE),A : LD (JOY_STICK),A
     ; --- clear the sprite-number free-list (all 32 bytes; 0-1 are  ---
     ; --- never scanned by the allocator, so they don't need to be  ---
     ; --- marked used separately) ---
@@ -6353,6 +6357,10 @@ BS_AIM_STORE:
     XOR A : LD (BOSS_ROW),A
     XOR A : LD (BOSS_COL),A
     LD A,1 : LD (BOSS_PHASE),A
+    ; (2026-09-23、監査で発見): DFL_UPDATEはマテリアライズ中(BOSS_STATE=1)から
+    ; 動くが、DFL0-2_ACTのクリアは着地時(DFL_FORCE_CLEAR)にしかなかった -
+    ; INIT未初期化/前回プレイの残りの偏向弾が出現直後に不定座標で描かれていた。
+    CALL DFL_FORCE_CLEAR
     LD A,1 : LD (BOSS_STATE),A
     CALL MUTE_BGM   ; "マテリアライズに入る前にそれまでのBGMは停止"
     CALL BOSS_SETUP_TILE_SPRITE
@@ -8952,7 +8960,9 @@ PDCE2_LOOP:
     OR A
     JR Z,PDCE2_CHECKBOT
     PUSH DE
-    CALL PLAYER_HIT_BOX8
+    PUSH HL                        ; (2026-09-23、監査で発見): PLAYER_HIT_BOX8はH,Lを
+    CALL PLAYER_HIT_BOX8           ; PLAYERX/PLAYERYで上書きする - 退避しないと下の
+    POP HL                         ; BOT読み出しが無関係な番地(自機座標)を読んでいた
     POP DE
     OR A
     JR NZ,PDCE2_HIT

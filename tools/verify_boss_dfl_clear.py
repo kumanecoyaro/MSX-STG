@@ -138,6 +138,17 @@ check("...and therefore does NOT force-clear a still-legitimately-flying DFL bul
       z.rd(DFL0_ACT) == 1)
 
 
+# ---- (2026-09-23、監査で発見): DFL_UPDATEはマテリアライズ中(BOSS_STATE=1)から
+# 動くため、ボス出現(BOSS_SPAWN)の時点でDFL0-2を必ず無効にする。前回プレイの残り/
+# 電源投入時の不定値で有効になっていても、出現直後に幽霊の偏向弾を描かないこと ----
+zs = fresh()
+for i in range(3):
+    zs.wr(sym[f"DFL{i}_ACT"], 0xFF)
+call_routine(zs, sym["BOSS_SPAWN"], 3000000)
+check("BOSS_SPAWN clears DFL0-2_ACT (stale deflected bullets never show during materialize)",
+      all(zs.rd(sym[f"DFL{i}_ACT"]) == 0 for i in range(3)))
+check("...and BOSS_SPAWN still enters the materialize state (BOSS_STATE=1)", zs.rd(sym["BOSS_STATE"]) == 1)
+
 print()
 print(f"{len(ok)} passed, {len(fail)} failed")
 if fail:

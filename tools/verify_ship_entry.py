@@ -301,6 +301,25 @@ check("GAME_TICK starts counting after the entry ends",
       (zt.rd(GAME_TICK) | (zt.rd(GAME_TICK + 1) << 8)) > 0)
 
 
+# ---- (2026-09-23、監査で発見): 飛び込み演出中は入力を読まないので、INIT前の
+# JOY_TRIG/FIREB_EDGEが「押されている」値(前回プレイの残り/電源投入時の不定値)
+# だと演出中に勝手に撃っていた。INITでクリアされ、演出中は1発も出ないこと ----
+zp = fresh()
+zp.wr(sym["JOY_TRIG"], 0xFF); zp.wr(sym["FIREB_EDGE"], 1); zp.wr(sym["JOY_STICK"], 3)
+boot_with_entry(zp)
+fired = False
+n = 0
+while zp.rd(SHIP_ENTRY_ACT) and n < 2000:
+    step_frame(zp); n += 1
+    if zp.rd(SHIP_ENTRY_ACT) and any(zp.rd(sym[f"BULLET{i}_ACT"]) for i in range(3)):
+        fired = True
+check("stale JOY_TRIG/FIREB_EDGE from before INIT never fires a shot during the ship entry", not fired)
+zq = fresh()
+zq.wr(sym["JOY_TRIG"], 0xFF); zq.wr(sym["FIREB_EDGE"], 1); zq.wr(sym["JOY_STICK"], 3)
+boot_with_entry(zq)
+check("INIT clears JOY_TRIG/FIREB_EDGE/JOY_STICK",
+      zq.rd(sym["JOY_TRIG"]) == 0 and zq.rd(sym["FIREB_EDGE"]) == 0 and zq.rd(sym["JOY_STICK"]) == 0)
+
 print()
 print(f"{len(ok)} passed, {len(fail)} failed")
 if fail:

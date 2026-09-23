@@ -209,6 +209,30 @@ z.sethl(E2A_U0_STATE)
 call_routine(z, sym["PDC_CHECK_E2_FORMATION"])
 check("PDC_CHECK_E2_FORMATION: U0 misses but U1 (2nd unit, 5-byte stride) overlaps -> hits", z.a == 1)
 
+# (2026-09-23、監査で発見): TOPが外れた後のBOT判定で、PLAYER_HIT_BOX8に上書き
+# されたHL(=PLAYERX*256+PLAYERY)を使って無関係な番地を読んでいた回帰ガード。
+# 壊れたHLが指す番地(+1)には逆の値を仕込み、旧コードなら必ず失敗させる。
+def _bad_addr():
+    return ((PX << 8) | PY) + 1
+# BOTが生きていて自機と重なる(TOPは外れる位置) -> 被弾
+z = fresh()
+z.wr(PLAYERX, PX); z.wr(PLAYERY, PY)
+z.wr(E2A_U0_STATE, 1); z.wr(E2A_U0_X, PX - 8); z.wr(E2A_U0_Y, PY - 8)   # BOT quad = (X+8,Y+8) = 自機位置
+z.wr(E2A_U0_TOP, 1); z.wr(E2A_U0_BOT, 1)
+z.wr(_bad_addr(), 0)
+z.sethl(E2A_U0_STATE)
+call_routine(z, sym["PDC_CHECK_E2_FORMATION"])
+check("PDC_CHECK_E2_FORMATION: TOP misses, live BOT quad overlaps the player -> hits (reads the real BOT flag)", z.a == 1)
+# BOTが撃破済み(0)なら同じ位置でも被弾しない
+z = fresh()
+z.wr(PLAYERX, PX); z.wr(PLAYERY, PY)
+z.wr(E2A_U0_STATE, 1); z.wr(E2A_U0_X, PX - 8); z.wr(E2A_U0_Y, PY - 8)
+z.wr(E2A_U0_TOP, 1); z.wr(E2A_U0_BOT, 0)
+z.wr(_bad_addr(), 1)
+z.sethl(E2A_U0_STATE)
+call_routine(z, sym["PDC_CHECK_E2_FORMATION"])
+check("PDC_CHECK_E2_FORMATION: TOP misses, BOT already destroyed -> no hit", z.a == 0)
+
 
 # ---------- (4) PDC_CHECK_ENEMY3 ----------
 z = fresh()

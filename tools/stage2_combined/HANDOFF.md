@@ -18129,3 +18129,50 @@ EbuzII弾ビームへの1pxコリジョン追加+ROM予算の共有バンク6オ
   フレーム991→930/1077。verify_enemy3_scan_cutoff.py 9件(行違い=外れ・
   呼び出し省略、同じ行の隣の列=外れ、同じマス=撃破)。EBUZ2再パッチ、
   verify_ebuz2_mk2_comb.py 48件・verify_comb.py全PASS。
+
+## Round145 follow-up17: 潜在バグ監査(スタック/RAM衝突/レジスタ不整合)と3件の修正(2026-09-23)
+
+- ユーザー: "潜在的なバグないか確認 特にスタックオーバーやRAM衝突 レジスタの不整合"。
+- 手法(Stage1中心、Stage2は既存の安全性テスト):
+  1. 計装実走(Title同様にEBUZ2テーブル等をRAMへ事前ロード、撃ちながら
+     ボス出現+4000フレームまで計18044フレーム): 最低SP、RETの戻り先と
+     CALLの対応、CALL復帰後に呼び出し側が「呼ばれた側で値が変わった
+     レジスタ」を自分で書く前に読む箇所(アセンブラ2パス目で番地→ソース
+     行を取り、命令文字列から読み書きレジスタを判定。A/フラグと退避の
+     PUSHは対象外)。
+  2. RAM: 全427シンボルの重なり(静的)、Titleがコピーしたデータ領域と
+     監査で縮小した旧プール跡地への書き込み監視(実走)、DI/EIの対応。
+  3. 初期化漏れ: RAMを0x00/0xFFで埋めた2本を同入力で走らせ全フレーム比較。
+- 結果(問題なし): 最低SP 0F36Eh(18byte使用)、スタック直下の変数は
+  POD_AIM_NORMAL(0F333h)で使用可能76byte。BGM_TICKの最深は全モード
+  (通常/TryZ/StageClear/GameOverジングル)で10byte、割り込み1回の合計は
+  約34byte+BIOS内部分→推定最悪でも70byte前後で収まる(余裕は小さい)。
+  RETの戻り先不一致はすべてBULLET*_NOHIT/ISHITの意図的なPUSH HL:RET分岐。
+  静的なRAM重なりは意図的な共用(POD_XY_X/Y=PAC_AX/AY)のみ。Titleコピー
+  データは一度も書き換わらず(書き込まれたのはすき間に置かれたBGM制御
+  変数のみ)、旧プール跡地への書き込みなし。MAINLOOP先頭で割り込み禁止の
+  フレーム0、最長DI区間は103命令。Stage2: stack_safety 5/init_ram_poison
+  36/init_interrupt_safety 2 全PASS。
+- 発見・修正した実バグ3件:
+  (1) PDC_CHECK_E2_FORMATION: PLAYER_HIT_BOX8がH,Lを自機座標で上書きし、
+      TOPが外れた後のBOT判定が無関係な番地(PLAYERX*256+PLAYERY+1)を
+      読んでいた(ジグザグ下半分との被弾判定が不定)。CALL前後でHLを退避。
+      verify_player_damage.pyに2件(壊れたHLの先に逆の値を仕込む)。
+  (2) INITでJOY_TRIG/FIREB_EDGE/JOY_STICKを未初期化。飛び込み演出中は入力を
+      読まないため、前回プレイ(ゲームオーバー後の再スタート)や電源投入時の
+      「押されている」値のまま演出中に勝手に撃っていた。INITでクリア。
+      verify_ship_entry.pyに2件。
+  (3) DFL0-2_ACT(ボス偏向弾)のクリアが着地時のみで、DFL_UPDATEはマテリアライズ
+      中から動くため、ボス出現直後に不定値/前回の残りの偏向弾を不定座標へ
+      描画していた。BOSS_SPAWNでもDFL_FORCE_CLEAR。verify_boss_dfl_clear.py
+      に2件。
+  3件とも修正を一時的に外すとテストが失敗することを確認済み。
+- 修正後、0x00/0xFF比較はボス戦3000フレームを含む17000フレーム超で完全一致
+  (乱数カウンタDFL_RNGのみ意図的な乱数のため種をそろえた)。新規
+  tools/verify_stage1_ram_poison.py(既定2500フレーム、引数でボス戦まで)。
+- ROM: plain/Combとも残り7byte。EBUZ2再パッチ、verify_ebuz2_mk2_comb.py 48件・
+  verify_comb.py全PASS、Stage1 verify群全PASS。
+- 未実施・限界: A/フラグ経由の不整合は対象外。割り込み(BGM_TICK)はz80emuで
+  発火しないため、実際の割り込みタイミングでの競合は検出できない(Round41の
+  openMSX上の「深いSP」も未解明のまま)。計測はこのスケジュール・入力
+  パターンで実際に通った経路のみ。
