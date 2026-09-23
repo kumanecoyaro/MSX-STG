@@ -6,10 +6,10 @@ CHECK_BULLET_VS_ENEMY_POOL経由の被弾で: 1発目はクラッシュ(E_FLAGS=
 E_PARAM0/2を強制的にdown-diveへ)をトリガーするのみでスコア加算も撃破も
 しないこと、以後の被弾には無敵にならず2発目も普通にヒット判定される
 こと、2発目で実際に撃破(スプライト非表示・スロット解放・スコア加算・
-PLAYER_EXPL_POOLの無音バースト追加ポップ)されること、1発目〜2発目の
+PLAYER_EXPL_POOLのバースト追加ポップ)されること、1発目〜2発目の
 間もENEMY_POOL_UPDATE_ALLを回すと実際に左斜め下へドリフトし続け、
-PLAYER_EXPL_POOL(自機爆発と共通のバースト)が音無しで(PSGレジスタを
-一切書き換えずに)ポップし続けることを直接検証する。
+PLAYER_EXPL_POOL(自機爆発と共通のバースト)が自機爆発の音付きでポップし続けることを
+直接検証する(2026-09-23までは音無しだった)。
 """
 import sys, os
 sys.path.insert(0, os.path.dirname(__file__))
@@ -155,26 +155,28 @@ check("2発目の撃破時にもPLAYER_EXPL_POOLへ追加のバーストが実�
 
 
 # ============================================================
-# 3. 爆発エフェクトは自機と同じ仕組み(PEUA_TRY_SPAWN_AT_CORE)だが、
-#    無音版(PEUA_TRY_SPAWN_AT_QUIET)を使っておりSOUND_DESTROYの
-#    PSG書き込みが一切発生しないことを、有音版(PEUA_TRY_SPAWN_AT)との
-#    直接比較で検証する。
+# 3. (2026-09-23、"エネミー4は墜落や爆破で無音になってるけど やっぱ音つけて")
+#    墜落中のポップ・2発目の撃破とも、自機爆発と同じくSOUND_DESTROYが鳴る。
+#    実際の被弾/更新経路を1命令ずつ回し、SOUND_DESTROYへ入った回数を数える。
 # ============================================================
-z_quiet = fresh()
-z_quiet.wr(EBUZ_EXPL_POS_X, 50); z_quiet.wr(EBUZ_EXPL_POS_Y, 50)
-psg_before_quiet = dict(z_quiet.psg_regs)
-call_routine(z_quiet, sym["PEUA_TRY_SPAWN_AT_QUIET"])
-check(f"PEUA_TRY_SPAWN_AT_QUIET はPSGレジスタを一切書き換えない(音無し、実測diff={dict(z_quiet.psg_regs)})",
-      dict(z_quiet.psg_regs) == psg_before_quiet)
-
-z_loud = fresh()
-z_loud.wr(EBUZ_EXPL_POS_X, 50); z_loud.wr(EBUZ_EXPL_POS_Y, 50)
-psg_before_loud = dict(z_loud.psg_regs)
-call_routine(z_loud, sym["PEUA_TRY_SPAWN_AT"])
-check(f"(対照) 有音版PEUA_TRY_SPAWN_AT は実際にPSGレジスタを書き換える"
-      f"(SOUND_DESTROY、実測={dict(z_loud.psg_regs)})",
-      dict(z_loud.psg_regs) != psg_before_loud)
-
+def count_sound(z, entry, b=None, c=None):
+    z.sp = 0xF000; z.wr(0xF000, 0); z.wr(0xF001, 0)
+    if b is not None: z.b = b; z.c = c
+    z.pc = entry; n = 0
+    for _ in range(300000):
+        if z.pc == 0: return n
+        if z.pc == sym["SOUND_DESTROY"]: n += 1
+        z.step()
+    raise RuntimeError("stuck")
+z = fresh()
+z.wr(slot + E_ACTIVE, 1); z.wr(slot + E_TYPE, TYPE_ENEMY4); z.wr(slot + E_BEHAVIOR, BEHAVIOR_SIMPLE_DRIFT_DODGE)
+z.wr(slot + E_X, START_X); z.wr(slot + E_Y, START_Y); z.wr(slot + E_SPRNUM, SPRNUM); z.wr(SPRITE_USED + SPRNUM, 1)
+call_routine_bc(z, sym["CHECK_BULLET_VS_ENEMY_POOL"], col, row)
+n_crash = sum(count_sound(z, sym["ENEMY_POOL_UPDATE_ALL"]) for _ in range(20))
+check(f"墜落中の爆発ポップで自機爆発の音(SOUND_DESTROY)が鳴る(20フレームで{n_crash}回)", n_crash >= 2)
+n_kill = count_sound(z, sym["CHECK_BULLET_VS_ENEMY_POOL"], z.rd(slot + E_X) // 8, (z.rd(slot + E_Y) + 8) // 8)
+check(f"2発目の撃破でも自機爆発の音が鳴る({n_kill}回)", n_kill == 1 and z.rd(slot + E_ACTIVE) == 0)
+check("無音版PEUA_TRY_SPAWN_AT_QUIETは廃止", "PEUA_TRY_SPAWN_AT_QUIET" not in sym)
 
 print()
 print(f"{len(ok)} passed, {len(fail)} failed")

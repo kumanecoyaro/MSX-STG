@@ -5341,8 +5341,8 @@ E4_ANIM_FRAME_LEN EQU 4       ; frames per pose toggle while diving - same pacin
 ; round141("エネミー4...耐久値2だが1発当たったら左斜め下に墜落 自機の
 ; 墜落の逆向きだな 爆発エフェクトも自機と同じだがサウンドは無しで"):
 ; 被弾でE_FLAGS(未使用フィールド、TYPE_ENEMY4流用)を1にし、以後
-; EBSD_DIAG_E4がこの間隔でPEUA_TRY_SPAWN_AT_QUIET(自機爆発と同じ
-; PLAYER_EXPL_POOL、ただしSOUND_DESTROY無し)を撃つ - PLAYER_EXPL_
+; EBSD_DIAG_E4がこの間隔でPEUA_TRY_SPAWN_AT(自機爆発と同じ
+; PLAYER_EXPL_POOL、2026-09-23からSOUND_DESTROYも)を撃つ - PLAYER_EXPL_
 ; SPAWN_INTERVALと同じ未調整の初期値。
 ENEMY4_CRASH_SPAWN_INTERVAL EQU 8
 PAT_PARTICLE   EQU 120        ; single-dot trail particle (32 bytes at SPRPAT+960)
@@ -9467,7 +9467,7 @@ PETS_FOUND:
 ; スプライトを流用")。
 ; round141("エネミー4...爆発エフェクトも自機と同じだがサウンドは無しで"):
 ; 共通部分をPEUA_TRY_SPAWN_AT_COREへ切り出し、SOUND_DESTROY呼び出しの
-; 有無だけを2つの薄いラッパー(PEUA_TRY_SPAWN_AT/_QUIET)で分岐させる形に
+; 有無だけを2つの薄いラッパー(PEUA_TRY_SPAWN_AT/_QUIET、_QUIETは2026-09-23に廃止)で分岐させる形に
 ; 分割 - COREはA=1(成功)/0(失敗、プール満杯 or スプライト枯渇)を返す
 ; だけで一切RETせずに戻るため、呼び出し元(CALL)が成否に応じてサウンドを
 ; 鳴らすかどうかを選べる。Trashes A,B,D,E,H,L,IX.
@@ -9502,9 +9502,6 @@ PEUA_TRY_SPAWN_AT:
     RET Z
     JP SOUND_DESTROY
 
-; round141: 同じ演出だがサウンド無し版(エネミー4の墜落クラッシュ用)。
-PEUA_TRY_SPAWN_AT_QUIET:
-    JP PEUA_TRY_SPAWN_AT_CORE
 
 ; Clears every slot of the unified enemy buffer (ACTIVE=0) and resets
 ; both shared trail-channel write indices. Called once from INIT.
@@ -11743,7 +11740,7 @@ EBSD_DIAG_E4:
     AND 0Fh : SUB 8 : LD B,A          ; -8..+7 pseudo-random Y jitter
     LD A,(IX+E_Y) : ADD A,B
     LD (EBUZ_EXPL_POS_Y),A
-    CALL PEUA_TRY_SPAWN_AT_QUIET
+    CALL PEUA_TRY_SPAWN_AT          ; (2026-09-23 "やっぱ音つけて": 自機爆発の音も)
     POP IX
     JR EBSD_E4_CRASH_FX_DONE
 EBSD_E4_CRASH_FX_TICK:
@@ -12042,7 +12039,7 @@ EBSD_HT_ENEMY4:
     LD A,1
     RET
 ; --- 2発目(クラッシュ中への被弾): 実際に撃破 ---
-; D,E はQUAD_HIT_TESTの入力のまま(E_X,E_Y+8) - PEUA_TRY_SPAWN_AT_QUIETの
+; D,E はQUAD_HIT_TESTの入力のまま(E_X,E_Y+8) - PEUA_TRY_SPAWN_ATの
 ; 起点にそのまま流用する。
 EBSD_HT_ENEMY4_KILL:
     LD A,D : LD (EBUZ_EXPL_POS_X),A
@@ -12061,7 +12058,7 @@ EBSD_HT_ENEMY4_KILL:
     PUSH BC : POP BC : NOP : NOP
     EI
     PUSH IX
-    CALL PEUA_TRY_SPAWN_AT_QUIET
+    CALL PEUA_TRY_SPAWN_AT          ; (2026-09-23 "やっぱ音つけて": 自機爆発の音も)
     POP IX
     LD A,(IX+E_TYPE) : CALL ENEMY_TYPE_LOOKUP
     LD DE,ETT_SCORESEL : ADD HL,DE

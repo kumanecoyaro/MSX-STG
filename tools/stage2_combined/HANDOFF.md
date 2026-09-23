@@ -18424,3 +18424,11 @@ EbuzII弾ビームへの1pxコリジョン追加+ROM予算の共有バンク6オ
 - z80emuの罠: `JP WRTVRM`(末尾ジャンプ)はBIOSスタブが効かず暴走する → `CALL WRTVRM : RET`。
 - テスト素材: tools/stage1_sprites/B1beam_24x24.json。verify_boss_laser.py 61件。ROM: plain 667 /
   Comb 617 / Comb+DEBUG 584byte。
+
+## Round145 follow-up27: エネミー4の墜落・撃破の爆発に音(2026-09-23)
+
+- ユーザー: "エネミー4は墜落や爆破で無音になってるけど やっぱ音つけて"。
+- round141で無音にしていた2箇所(EBSD_DIAG_E4の墜落中ポップ、EBSD_HT_ENEMY4_KILLの撃破)を
+  PEUA_TRY_SPAWN_AT_QUIET→PEUA_TRY_SPAWN_AT(自機爆発と同じSOUND_DESTROY)へ。_QUIETは廃止。
+- verify_enemy4_crash.py 18件(実経路でSOUND_DESTROYに入る回数を数える: 墜落20フレームで3回、撃破で1回)。
+  ROMはALIGN吸収で変化なし(plain 667 / Comb 617 / DEBUG 584)。bgm_bank.binは番地ずれで再パッチ。
