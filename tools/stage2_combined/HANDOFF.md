@@ -18443,3 +18443,13 @@ EbuzII弾ビームへの1pxコリジョン追加+ROM予算の共有バンク6オ
   スプライトパターン156/160にLZ_INITで作り(元32byteを写してBRだけBARRIER_GLYPH_Mで上書き)、
   GAUGE_SHOWN==50の間はTICKのbit1で2フレームごとに切り替え(ACCFR_GOT)。
 - テスト: verify_boss_laser 61・verify_player_damage 67・verify_comb全PASS。ROM plain 587。
+
+## Round145 follow-up29: ボス戦中の自機爆発が出ていなかった(2026-09-23)
+
+- ユーザー: "ボス時に自機の爆破処理がないな 前からだったが 右下に落ちてくがエフェクトがなくなってる"。
+- 原因: ボス出現(BOSS_CLEAR_DYNAMIC_ENEMIES)でSPRITE_USED[8-31]が全部ボス用に予約されるため、
+  PEUA_TRY_SPAWNのALLOC_SPRITE_NUMが常に失敗し、PLAYER_EXPLのバーストが1つも出ていなかった。
+- 修正: PLAYER_EXPL_TRIGGERでBOSS_STATE!=0ならポッド爆発用の26-29を空ける(FREE_SCATTER_SPRITES、
+  干渉の飛び散りと共用)。ボス前は予約が無く、GAME_TICK 766まで250フレームごとに死亡させて毎回3-5個
+  出ることを確認。verify_boss_laser.py 64件(ボス着地中の死亡・レーザー負けの死亡・ボス外では予約を
+  触らない)。

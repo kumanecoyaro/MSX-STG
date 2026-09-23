@@ -399,5 +399,28 @@ check("losing the clash itself: normal MISSION FAILED", z.rd(sym['LZ_FAIL_REASON
 z = landed(); z.wr(sym['LZ_FAIL_REASON'], 3); z.wr(CD, 50); call(z, 'LZ_INIT')
 check("LZ_INIT clears LZ_FAIL_REASON and the countdown (restart)", z.rd(sym['LZ_FAIL_REASON']) == 0 and z.rd(CD) == 0)
 
+# ---------------------------------------------------------------- ボス戦中の自機爆発
+# (2026-09-23、"ボス時に自機の爆破処理がないな"): ボス出現で8-31が全部予約されていたため
+# PLAYER_EXPLが1つも出ていなかった。
+for label, prep in (("landed boss", lambda z: None), ("boss laser lost", None)):
+    if prep is None:
+        z = landed(); to_clash(z); mash(z, 1000)
+    else:
+        z = landed(); z.wr(sym['BARRIER_HP'], 0); call(z, 'PLAYER_TAKE_HIT')
+    seen, sounds = set(), 0
+    for f in range(60):
+        frame(z)
+        for i in range(4):
+            if z.rd(pool + i * 5):
+                sn = z.rd(pool + i * 5 + 4); seen.add(sn)
+                if sattr(z, sn)[2] != sym['PAT_PLAYER_EXPLOSION']: seen.add(-1)
+    check(f"player death during the boss ({label}): the player-explosion bursts appear (sprites {sorted(seen)})",
+          len(seen) >= 3 and seen <= set(range(26, 30)))
+z = landed(); z.wr(sym['BOSS_STATE'], 0)
+for i in range(32): z.wr(sym['SPRITE_USED'] + i, 0)
+call(z, 'PLAYER_EXPL_TRIGGER')
+check("outside the boss, PLAYER_EXPL_TRIGGER leaves SPRITE_USED alone",
+      [z.rd(sym['SPRITE_USED'] + i) for i in range(32)] == [0] * 32)
+
 print(f"\n{len(ok)} passed, {len(fail)} failed")
 sys.exit(1 if fail else 0)

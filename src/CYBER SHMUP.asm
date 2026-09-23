@@ -9321,6 +9321,19 @@ PLAYER_DEATH_FALL_TRIGGER:
 PLAYER_EXPL_TRIGGER:
     LD A,PLAYER_EXPL_TOTAL_LEN : LD (PLAYER_EXPL_TOTAL_TIMER),A
     XOR A : LD (PLAYER_EXPL_SPAWN_TIMER),A   ; spawn the first burst right away
+    ; (2026-09-23、"ボス時に自機の爆破処理がないな"): ボス出現時に
+    ; BOSS_CLEAR_DYNAMIC_ENEMIESがスプライト番号8-31を全部ボス用に予約する
+    ; ため、ボス戦中の死亡ではALLOC_SPRITE_NUMが常に失敗して爆発が1つも
+    ; 出ていなかった。ボス戦中ならポッド爆発用の26-29を空けて使わせる。
+    LD A,(BOSS_STATE) : OR A
+    RET Z
+FREE_SCATTER_SPRITES:
+    XOR A
+    LD HL,SPRITE_USED+LZ_SCATTER_SPR : LD B,4
+FSS_LOOP:
+    LD (HL),A
+    INC HL
+    DJNZ FSS_LOOP
     RET
 
 ; Called unconditionally every frame from MAINLOOP's own tail -
@@ -17040,11 +17053,7 @@ LZ_START_CLASH:
     LD (LZ_CLASH_X),A
     LD A,3 : LD (LZ_PHASE),A
     XOR A : LD (LZ_TICK),A
-    LD HL,SPRITE_USED+LZ_SCATTER_SPR : LD B,4
-LZSC_FREE:
-    LD (HL),A                      ; 飛び散り(PLAYER_EXPL)が26-29を確保できるように
-    INC HL
-    DJNZ LZSC_FREE
+    CALL FREE_SCATTER_SPRITES      ; 飛び散り(PLAYER_EXPL)が26-29を確保できるように
     JP SOUND_EBUZ_FIRE
 
 ; 最後のポッド撃破時(POD_HIT_DESTROY)、およびテストモードでのやり直し:
