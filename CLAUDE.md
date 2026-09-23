@@ -37,8 +37,13 @@
 - 新規にVRAM/PSG/その他ハードウェアポートへのブロック転送を実装する際は、着手前に
   必ずこのセクションを再確認し、`OTIR`系命令を使わないこと。
 
-## Stage1 ROM予算(2026-09-22、Round145 follow-up時点でplain/Comb両方とも
-残り70byte・恒久的に確認必須)
+## Stage1 ROM予算(2026-09-23、Round145 follow-up9時点でplain/Comb両方とも
+**残り7byte**・恒久的に確認必須)
+
+- **(2026-09-23追記)** Stage1を1byteでも変更したら、必ず
+  `python3 tools/bgm_data/patch_ebuz2_mk2.py`→`build_full_rom.py`→
+  `verify_ebuz2_mk2_comb.py`を実行すること(follow-up7でこれを怠り、
+  EbuzIIが出現直後にグリッチ→リセットした)。
 
 - **Round145 follow-up追記**: スケジュール差し替え(Schedule_2_7.json)を
   適用した直後、**plain=70byte(問題なし)なのにComb=-186byte(196byte
