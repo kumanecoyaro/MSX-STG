@@ -18461,3 +18461,14 @@ EbuzII弾ビームへの1pxコリジョン追加+ROM予算の共有バンク6オ
   再生成(verify_boss_laser.pyがJSONとVRAMを直接比較)。
 - build_full_rom.pyのDEBUG_BOSS_STARTをFalseへ戻した(送付ROMは通常の最初から)。
 - ROM: plain 593 / Comb 543byte。verify_boss_laser 64・verify_ebuz2_mk2_comb 48・verify_comb全PASS。
+
+## Round145 follow-up31: 条件未達画面は2行固定(2026-09-23)
+
+- ユーザー: "ボス条件でシールドはあるのに Needs shield出た 満たしてなかったのはenergyだけ なので2つに分けずに
+  You needs shield,and you needs enough energy だけで良いわ まあ今はシールド条件無視されてるぽいが"。
+- bank7のS1_FAIL_INITは理由(S1_FAIL_REASON)を見ずに "YOU NEEDS SHIELD, AND"(row12 col5)と
+  "YOU NEEDS ENOUGH ENERGY"(row14 col4)を常に出す。','をpixel_font_8x8.pyに追加しcode80(group10)へ。
+  Stage1側は無変更(LZ_FAIL_REASONは非0なら理由画面、の判定にだけ使われる)。
+- シールドの誤表示はエミュレータでは再現せず: バリア1/3/5+エナジー不足/使用済みの6通りとも
+  LZ_FAIL_REASON=2(エナジーのみ)。LZ_QUALIFIEDのバリア判定もテスト済み。原因未特定。
+- gameover_bank_test.py 66件・verify_comb全PASS。

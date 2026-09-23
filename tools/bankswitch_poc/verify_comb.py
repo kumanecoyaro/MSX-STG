@@ -921,9 +921,9 @@ while cpu5.pc != gosym["GO_WAIT_LOOP"] and k < 5_000_000:
     cpu5.step(); k += 1
 assert cpu5.pc == gosym["GO_WAIT_LOOP"], "bank7 Stage1 reason screen never reached its wait loop"
 row = lambda r: bytes(cpu5.vram[0x1800 + r * 32:0x1800 + r * 32 + 32])
-order = "MISON FALEDYUHGR"
-txt = lambda r: "".join(order[b - 64] if 64 <= b < 80 else "?" for b in row(r)).strip()
-assert txt(10) == "MISSION FAILED" and txt(12) == "YOU NEEDS SHIELD" and txt(14) == "YOU NEEDS ENOUGH LASER ENERGY", \
+order = "MISON FALEDYUHGR,"
+txt = lambda r: "".join(order[b - 64] if 64 <= b < 81 else "?" for b in row(r)).strip()
+assert txt(10) == "MISSION FAILED" and txt(12) == "YOU NEEDS SHIELD, AND" and txt(14) == "YOU NEEDS ENOUGH ENERGY", \
     (txt(10), txt(12), txt(14))
 assert mem5.bankB == 6, "GO_INIT_BGM should have selected the bgm-data bank (6) in window B for the jingle copy"
 print(f"reason screen drawn on real banks: {txt(10)!r} / {txt(12)!r} / {txt(14)!r}")

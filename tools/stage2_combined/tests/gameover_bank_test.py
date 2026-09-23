@@ -632,15 +632,16 @@ check("real INIT flow: GO_BGM_B_PTR/GO_BGM_C_PTR are still untouched (GO_INIT_BG
 check("entry table: 4000h jumps to Stage2's INIT, 4003h to the Stage1 reason screen",
       mem0[0x4000] == 0xC3 and (mem0[0x4001] | mem0[0x4002] << 8) == sym["INIT"] and
       mem0[0x4003] == 0xC3 and (mem0[0x4004] | mem0[0x4005] << 8) == sym["S1_FAIL_INIT"])
-S1_ORDER = "MISON FALEDYUHGR"
+S1_ORDER = "MISON FALEDYUHGR,"
 def s1_row(z, row):
     inv = {64 + i: c for i, c in enumerate(S1_ORDER)}
     return "".join(inv.get(z.vram[0x1800 + row * 32 + c], "?") for c in range(32))
 def centered(text, col):
     return " " * col + text + " " * (32 - col - len(text))
-for reason, rows in ((1, {12: centered("YOU NEEDS SHIELD", 8), 14: " " * 32}),
-                     (2, {12: centered("YOU NEEDS ENOUGH LASER ENERGY", 1), 14: " " * 32}),
-                     (3, {12: centered("YOU NEEDS SHIELD", 8), 14: centered("YOU NEEDS ENOUGH LASER ENERGY", 1)})):
+# (2026-09-23、"2つに分けずに You needs shield,and you needs enough energy だけで良いわ"):
+# 理由の値に関係なく同じ2行
+BOTH = {12: centered("YOU NEEDS SHIELD, AND", 5), 14: centered("YOU NEEDS ENOUGH ENERGY", 4)}
+for reason, rows in ((1, BOTH), (2, BOTH), (3, BOTH)):
     z = fresh()
     for a in range(0x1800, 0x1B00): z.vram[a] = 0x30           # 死亡直前の画面の代わり
     z.vram[0x1B00] = 100                                        # スプライトが出ている状態
@@ -652,8 +653,8 @@ for reason, rows in ((1, {12: centered("YOU NEEDS SHIELD", 8), 14: " " * 32}),
     check(f"Stage1 reason {reason}: rows 10-15 blacked out, MISSION FAILED + the reason line(s) drawn "
           f"({[got[r].strip() for r in (10, 12, 14)]})", got == want)
     glyph_ok = all(list(z.vram[(64 + i) * 8:(64 + i) * 8 + 8]) == pixel_font_8x8.glyph_bytes(c)
-                   for i, c in enumerate(S1_ORDER)) and z.vram[0x2008] == 0xF1 and z.vram[0x2009] == 0xF1
-    check(f"Stage1 reason {reason}: 16 glyphs loaded to codes 64-79 (white on black)", glyph_ok)
+                   for i, c in enumerate(S1_ORDER)) and z.vram[0x2008] == 0xF1 and z.vram[0x2009] == 0xF1 and z.vram[0x200A] == 0xF1
+    check(f"Stage1 reason {reason}: 17 glyphs loaded to codes 64-80 (white on black)", glyph_ok)
     check(f"Stage1 reason {reason}: all sprites hidden (slot0 Y=208 ends the list)", z.vram[0x1B00] == 0xD0)
     check(f"Stage1 reason {reason}: jingle armed (HTIMI_HOOK -> GO_BGM_TICK) and the title trampoline "
           f"written to RAM (LD (DE),A / JP (HL))",
