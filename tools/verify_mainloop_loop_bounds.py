@@ -373,6 +373,16 @@ for name in ["CHECK_BULLET_VS_ENEMY_POOL", "CHECK_BULLET_VS_ENEMY3", "CHECK_BULL
           (not timed_out) and n <= idle_max)
 
 print()
+# ---- (2026-09-23、メインループ監査B) ENEMY_POOLは8スロット、他のRAM変数と
+# 重ならない(旧E2_SPAWN_Y=0E84EhはスロットのE_TYPEと重なっていた) ----
+import re as _re
+check("ENEMY_SLOT_COUNT == 8 (監査B: ボスまで実測の同時最大7体)", sym["ENEMY_SLOT_COUNT"] == 8)
+_pool_lo = sym["ENEMY_POOL"]
+_pool_hi = _pool_lo + sym["ENEMY_SLOT_SIZE"] * sym["ENEMY_SLOT_COUNT"] - 1
+_overlap = [n for n, a in _re.findall(r'^([A-Z_0-9]+)\s+EQU\s+0?([0-9A-F]{4})h', text, _re.M)
+            if n != "ENEMY_POOL" and _pool_lo <= int(a, 16) <= _pool_hi]
+check(f"no other RAM symbol lives inside ENEMY_POOL ({_pool_lo:04X}-{_pool_hi:04X}): {_overlap}", not _overlap)
+
 print(f"{len(ok)} passed, {len(fail)} failed")
 if fail:
     print("FAILED:")

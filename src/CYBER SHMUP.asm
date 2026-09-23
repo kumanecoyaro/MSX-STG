@@ -5186,7 +5186,10 @@ AWARD_ENEMY2:
 ; Enemy2 spawn - not to distinguish top/bottom anymore (that's now
 ; just this Y value), only so AWARD_FORMATION_SCORE's cycle>=2 check
 ; still recognizes a complex-formation kill as the 200pt Enemy2 case.
-E2_SPAWN_Y EQU 0E84Eh
+; (2026-09-23、メインループ監査): 旧0E84EhはENEMY_POOLスロット0の
+; E_TYPEと同じ番地で、Zigzag出現のたびにスロット0の敵の種類を上書き
+; していた。ENEMY_POOL縮小で空いた旧プール跡地へ移設。
+E2_SPAWN_Y EQU 0EACCh
 
 ; ===== Enemy2 instance A/B state (independent complex-mode formations) =====
 E2A_SEQ_STATE EQU 0E600h
@@ -5357,8 +5360,13 @@ PAT_ENEMY1_LOOK EQU 88     ; test: Enemy1's asterisk look, static (32 bytes at S
 ;   +18 PARAM4       spare algorithm scratch
 ;   +19 PARAM5       spare algorithm scratch
 ENEMY_SLOT_SIZE  EQU 20
-ENEMY_SLOT_COUNT EQU 32
-ENEMY_POOL       EQU 0E84Dh   ; 32*20 = 640 bytes (E84D-EACC)
+; (2026-09-23、メインループ監査B、ユーザー指示"8で実装して"): 32→8。
+; ボスまでスケジュールを通した実測で同時最大7体(撃つ/撃たない両条件、
+; 使用スロット0-6)。毎フレーム弾数+2回の全走査が1/4になる。スケジュール
+; 変更で9体以上同時に出る場面ができると9体目以降は無言でドロップされる
+; ので、その場合は計測し直すこと。
+ENEMY_SLOT_COUNT EQU 8
+ENEMY_POOL       EQU 0E84Dh   ; 8*20 = 160 bytes (E84D-E8EC)。E8ED-EACCは32スロット時代の跡地(空き)
 
 ; field offsets, for readable (IX+E_xxx) access
 E_ACTIVE      EQU 0

@@ -85,7 +85,7 @@ def populate(mem, sym, pattern):
         mem[s + sym['E_PARAM0']] = y  # sine_bob's base Y - see hit_bullet_for
         mem[s + sym['E_PARAM1']] = 0
         mem[s + sym['E_PARAM2']] = 0
-        mem[s + sym['E_PARAM3']] = i
+        mem[s + sym['E_PARAM3']] = i % 6   # 物理パターンスロット番号は0-5のみ(SIMPLE_PATTERN_USEDは6枠)
         mem[s + sym['E_TOP']] = 1     # drift_dodge: both quadrants "alive" so EBSD_HIT_TEST doesn't skip them
         mem[s + sym['E_BOT']] = 1
         mem[s + sym['E_HP']] = 5      # sine_bob: nonzero so EBSB_HIT_TEST doesn't take the destroy-at-0 path oddly
@@ -107,7 +107,8 @@ def build_patterns():
     patterns.append([(1, SB, 50, 50), (1, DD, 60, 60), (1, SB, 70, 70),
                       (1, DD, 80, 80), (1, SB, 90, 90), (1, DD, 100, 100)])  # dense mix, front-packed
     # last-slot-only active (worst case for early-exit scan behavior)
-    p = [None] * 31 + [(1, SB, 111, 77)]
+    # (2026-09-23) ENEMY_SLOT_COUNT 32->8に合わせて最終スロットは7
+    p = [None] * 7 + [(1, SB, 111, 77)]
     patterns.append(p)
     return patterns
 

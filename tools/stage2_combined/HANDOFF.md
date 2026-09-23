@@ -18043,3 +18043,27 @@ EbuzII弾ビームへの1pxコリジョン追加+ROM予算の共有バンク6オ
 - B(ENEMY_POOLを32→8スロット)はユーザー指示によりボスまで最大同時数を
   計測してから判断(計測中に、ボス前でゲームが最初からやり直しになる現象を
   エミュレータで観測、調査中)。
+
+## Round145 follow-up13: Stage1メインループ監査B(ENEMY_POOL 32→8スロット)+E2_SPAWN_Y重なり修正(2026-09-23)
+
+- ユーザー: "8で実装して"。ボスまでの実測(EBUZ2テーブルをTitle同様にRAMへ
+  事前ロードした上で、撃つ/撃たない両条件)で同時最大7体・使用スロット0-6、
+  8体超のフレーム0。ENEMY_SLOT_COUNT 32→8。ROM変化なし(残り7byte)、
+  RAM480byte解放(0E8ED-0EACC)。
+- 副次的に発見・修正: E2_SPAWN_Y(旧0E84Eh)がENEMY_POOLスロット0の
+  E_TYPEと同一番地で、Zigzag出現のたびにスロット0の敵の種類を上書きして
+  いた潜在バグ。空いた旧プール跡地0EACChへ移設。
+- 計測の注意: Stage1単体をTitle無しでエミュレートするとEBUZ2_SCRIPT_TABLE
+  等(RAM 0xD0C0〜、Titleがbank6からコピー)が0のままで、EbuzII出現時に
+  JP (HL)→0000hへ飛び「ボス前に最初からやり直し」になる(計測環境の
+  アーティファクト、実機/Combでは発生しない)。計測時はbank6の
+  EBUZ2_MK2_CHARDATAをRAMへ入れ、patch_ebuz2_mk2.build_tables(plain sym)
+  でテーブルを上書きすること。
+- 効果(同条件2000フレーム平均): 監査前60,840T → A後57,928T → A+B後
+  51,747T(計-15.0%、60Hz 1フレーム≒59,700Tに平均で収まるようになった)。
+  新ビルドでもボス到達フレーム(14043)・同時数は変更前と完全一致。
+- テスト: verify_mainloop_loop_bounds.py 31件(ENEMY_SLOT_COUNT==8、
+  ENEMY_POOL範囲内に他RAMシンボルが無いこと)。verify_enemy_pool_scan.py
+  (HEADとの差分ツール)の合成パターンを8スロット/有効なパターンスロット
+  番号(0-5)に修正、先頭8スロット比較で全シナリオ一致。他Stage1 verify群
+  全PASS、verify_ebuz2_mk2_comb.py 48件・verify_comb.py全PASS。
