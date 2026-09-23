@@ -1719,6 +1719,7 @@ INIT_HIDE_SLOT_LOOP:
     ; (このINIT冒頭のMISSION1表示中に万一H.TIMIが発火してもchB/chCへ
     ; 音を出させないため)。ステージ本編の初期化が全て完了したこの
     ; 時点で初めてUNMUTE_BGMを呼び、以後MAINLOOPで通常通りBGMが鳴る。
+    CALL LZ_INIT
     CALL UNMUTE_BGM
 
     EI
@@ -1794,6 +1795,7 @@ STAGE_CLEAR_NOT_FROZEN:
     LD A,(BOSS_STATE)
     OR A
     CALL NZ,DFL_UPDATE
+    CALL LZ_FRAME    ; レーザーゲージ(毎フレーム)+ボスレーザー干渉(BOSS_STATE==2のみ)
 
     LD A,(TICK) : AND 07h
     JR NZ,SKIP_G8
@@ -2432,6 +2434,8 @@ PFA_NORMAL_INPUT:
     LD A,1 : LD (FIREB_EDGE),A
 FIREB_NOTPRESSED:
     LD A,(JOY_TRIGB) : LD (JOY_TRIGB_PREV),A
+    ; (2026-09-23): レーザー照射中/干渉中(LZ_PHASE 1,3)は自機固定(Bの連打は上で拾う)
+    LD A,(LZ_PHASE) : AND 0FDh : DEC A : JP Z,DIR_DONE
 
     LD A,(JOY_STICK)
     CP 1 : JR Z,DIR_UP
@@ -2632,10 +2636,10 @@ ACCENT_XOFS_GOT:
     JP FIRE_DONE
 CHECK_FIRE:
     LD A,(JOY_TRIG)
-    OR A : JR NZ,FIRE_REQUESTED   ; A button: fires while held
-    LD A,(FIREB_EDGE)
-    OR A : JP Z,FIRE_DONE          ; B button: fires only on press edge
-FIRE_REQUESTED:
+    OR A : JP Z,FIRE_DONE          ; A button: fires while held
+    ; (2026-09-23): Bボタン単発撃ちはボス用レーザー(LZ_FRAME)へ置き換えて削除。
+    ; レーザー中(LZ_PHASE 1-3)はレーザー行を弾が上書きしないよう通常弾も撃たない。
+    LD A,(LZ_PHASE) : DEC A : CP 3 : JP C,FIRE_DONE
     LD A,(BULLET0_ACT)
     OR A
     JR NZ,TRY_BULLET1
@@ -7035,6 +7039,11 @@ POD_HIT_DESTROY:
     OR A
     JR NZ,PHD_SKIP_BOSSEXPL
     LD A,1 : LD (BOSS_EXPL_STARTED),A
+    ; (2026-09-23、ボスレーザー干渉): 最後のポッド撃破で即爆発せず、ボスの
+    ; 中央レーザー→干渉へ(LZ_BOSS_FIRE)。勝てばLZ_WINがSTART_BOSS_DEATHを呼ぶ。
+    CALL LZ_BOSS_FIRE
+    JR PHD_SKIP_BOSSEXPL
+START_BOSS_DEATH:
     ; "ステージ1ボスは10000点"(2026-09-13) - fires exactly once, right
     ; alongside BOSS_EXPL_STARTED's own one-shot guard above (the last
     ; pod's own destroy is what triggers the boss's death sequence in
@@ -7053,6 +7062,7 @@ POD_HIT_DESTROY:
     LD HL,SKY_FAST_1E : LD (SKY_VEC_1E),HL
     LD HL,SKY_FAST_2H : LD (SKY_VEC_2H),HL
     LD HL,SKY_FAST_2E : LD (SKY_VEC_2E),HL
+    RET
 PHD_SKIP_BOSSEXPL:
     POP BC
     RET
@@ -16559,4 +16569,358 @@ PAP_DX:
     LD A,(PLAYERY) : SUB E : LD E,A
     SBC A,A : AND 80h              ; dyの符号bit
     SRL E : OR E : LD E,A          ; dy/2(算術シフト)、OR後C=0
+    RET
+
+; ============================================================================
+; (2026-09-23) ボス専用レーザー+レーザー干渉+エナジーゲージ。
+; "ポッド撃破後中央からレーザーを撃つ...レーザー干渉をし連打で押し返す...
+; Bボタン...敵の撃破数で自機レーザーエナジーがチャージ"、続けて仕様:
+; "ボス専用 / Bボタン単発発射は完全に置き換え / チャージはスコア連動
+; (5万点縛りと連動) / ゲージは画面上部黒帯中央 50px、1000点1px /
+; レーザーはボスで1回のみ / 連打で負ければゲームオーバー / 8連射以上で
+; 押し返し / エナジーは満たされていれば使用可(使用で減らない) / ボス
+; レーザー前に使うと干渉できずボス発射でゲームオーバー / 失敗レーザーは
+; ポッドを破壊できるが100フレでゲージが尽きて無くなる"。補足回答:
+; "発射時に自機をレーザー行へ固定" "ボス発射後上下から割り込める、発射前
+; であっても100フレ以内に間に合えば干渉動作に移行できる" "1秒8回以上"
+; "仮絵で実装、後で差し替え"。
+;
+; LZ_PHASE: 0=待機(ゲージ満タン+未使用ならBで発射可)
+;           1=自機レーザー単独照射(ポッド破壊、100フレで消滅→使用済み)
+;           2=ボスレーザーが左へ伸長中(B押下で割り込み→干渉。左端到達 or
+;             自機接触でゲームオーバー)
+;           3=干渉(B連打で押し返す)  4=終了
+; ゲージ値(0-50px) = 照射/干渉中はLZ_TIMER/2、使用済みは0、それ以外は
+; min(SCORE/10,50)(SCOREは実得点/100単位 → 1000点=10=1px)。
+; 干渉: ボスは毎フレーム1px押し込み(60px/秒)、B1回で8px押し返す
+; (8回/秒=64px/秒で上回り、7回/秒=56px/秒では押し負ける)。干渉点が列25(ボス左端)に届けば勝ち
+; →START_BOSS_DEATH(従来の撃破シーケンス)、自機の先端列まで押し
+; 戻されたら負け→ゲームオーバー(バリア残量に関係なく)。
+; GAMEOVER_ENABLED=0(タイトルBスタートのテスト用)で負けた場合は死なない
+; ので、そのまま撃破シーケンスへ進める(進行不能を避ける)。
+; レーザー/干渉点はBGセル(group18、fg cyan/bg blue、実プレイ監査で空きの
+; codes146-148)、ゲージは行0(group23、白/黒、空きのcodes186-188)。
+; ============================================================================
+LZ_PHASE     EQU 0F334h
+LZ_SPENT     EQU 0F335h   ; 1=自機レーザー使用済み
+LZ_TIMER     EQU 0F336h   ; 照射残りフレーム(ゲージ表示にも使う)
+LZ_TICK      EQU 0F337h
+LZ_PROW      EQU 0F338h   ; 単独照射の行
+LZ_PCOL      EQU 0F339h   ; 自機レーザー先頭列(LZ_PENDと連続させること)
+LZ_PEND      EQU 0F33Ah   ; 単独照射の終端列(含まない)
+LZ_BFRONT    EQU 0F33Bh   ; ボスレーザーの先端列(26=未描画)
+LZ_CLASH_X   EQU 0F33Ch   ; 干渉点のX(px)
+GAUGE_SHOWN  EQU 0F33Dh   ; 画面に描画済みのゲージ値
+LZ_BLANKING  EQU 0F33Eh   ; 非0: LZ_DRAWが空白で塗る(消去)
+
+LZ_ROW        EQU 9       ; ボス中央(BOSS_MAP row7、画面row9)
+LZ_SOLO_FRAMES EQU 100
+LZ_PUSH_PX    EQU 8
+LZ_WIN_X      EQU 200     ; 列25(ボス左端)
+LZ_PL_CODE    EQU 146
+LZ_SPARK_CODE EQU 147
+LZ_BL_CODE    EQU 148
+GAUGE_FULL_CODE EQU 186
+GAUGE_PART_CODE EQU 187   ; 端数1セル分、値が変わるたびパターン自体を書き換える
+GAUGE_EDGE_CODE EQU 188   ; col12の右端1px(px103)
+GAUGE_BLANK_CODE EQU MISSION_FONT_BASE+5   ; 行0の黒埋めと同じ空白
+
+LZ_TILES:
+    DB 00h,00h,0FFh,00h,00h,0FFh,00h,00h      ; 146 自機レーザー(仮)
+    DB 99h,5Ah,3Ch,0FFh,0FFh,3Ch,5Ah,99h      ; 147 干渉点(仮)
+    DB 00h,0FFh,0FFh,0FFh,0FFh,0FFh,0FFh,00h  ; 148 ボスレーザー(仮)
+GAUGE_TILES:
+    DB 00h,0FFh,0FFh,0FFh,0FFh,0FFh,0FFh,00h  ; 186 満
+    DB 00h,00h,00h,00h,00h,00h,00h,00h        ; 187 端数(動的)
+    DB 00h,01h,01h,01h,01h,01h,01h,00h        ; 188 左端1px
+
+LZ_INIT:
+    LD HL,LZ_TILES : LD DE,LZ_PL_CODE*8 : LD BC,24 : CALL LDIRVM
+    LD HL,GAUGE_TILES : LD DE,GAUGE_FULL_CODE*8 : LD BC,24 : CALL LDIRVM
+    XOR A
+    LD (LZ_PHASE),A : LD (LZ_SPENT),A : LD (GAUGE_SHOWN),A : LD (LZ_BLANKING),A
+    LD A,26 : LD (LZ_BFRONT),A
+    RET
+
+; Out: A=ゲージ値(0-50)
+GAUGE_VALUE:
+    LD A,(LZ_PHASE) : AND 0FDh : DEC A
+    JR NZ,GV_NOTIMER
+    LD A,(LZ_TIMER) : SRL A
+    RET
+GV_NOTIMER:
+    LD A,(LZ_SPENT) : OR A
+    LD A,0
+    RET NZ
+    LD A,(SCORE+2) : OR A
+    JR NZ,GV_FULL
+    LD HL,(SCORE) : LD DE,-500 : ADD HL,DE
+    JR C,GV_FULL
+    LD HL,(SCORE) : LD DE,-10 : LD A,0FFh
+GV_DIV:
+    INC A : ADD HL,DE
+    JR C,GV_DIV
+    RET
+GV_FULL:
+    LD A,50
+    RET
+
+; 行0中央(px103-152)へゲージを描く。値が変わった時だけ。
+GAUGE_UPDATE:
+    CALL GAUGE_VALUE
+    LD HL,GAUGE_SHOWN
+    CP (HL)
+    RET Z
+    LD (HL),A
+    DEC A : LD C,A                 ; C=g-1(g=0なら負)
+    AND 7 : LD B,A : LD A,0FFh     ; 端数パターン: 左からk px
+    JR Z,GU_PMASK
+GU_SHIFT:
+    SRL A
+    DJNZ GU_SHIFT
+GU_PMASK:
+    XOR 0FFh
+    LD HL,GAUGE_PART_CODE*8+1 : LD B,6
+GU_PROW:
+    CALL WRTVRM
+    INC HL
+    DJNZ GU_PROW
+    LD HL,1800h+12
+    LD A,C : ADD A,A               ; C=符号bit
+    LD A,GAUGE_BLANK_CODE
+    JR C,GU_EDGE
+    LD A,GAUGE_EDGE_CODE
+GU_EDGE:
+    CALL WRTVRM
+    LD B,7                         ; cols13-19: f=C-8i
+GU_CELL:
+    INC HL
+    LD A,C : ADD A,A
+    LD A,GAUGE_BLANK_CODE
+    JR C,GU_PUT
+    INC C : DEC C : JR Z,GU_PUT
+    LD A,C : CP 8
+    LD A,GAUGE_FULL_CODE
+    JR NC,GU_PUT                   ; f>=8: 満
+    LD A,GAUGE_PART_CODE
+GU_PUT:
+    CALL WRTVRM
+    LD A,C : SUB 8 : LD C,A
+    DJNZ GU_CELL
+    RET
+
+; Z=Bで発射可(今フレーム押下+未使用+ゲージ満タン)
+LZ_CAN_FIRE:
+    LD A,(FIREB_EDGE) : DEC A
+    RET NZ
+    LD A,(LZ_SPENT) : OR A
+    RET NZ
+    CALL GAUGE_VALUE
+    CP 50
+    RET
+
+; 毎フレーム(MAINLOOP)。ゲージ更新+BOSS_STATE==2の間だけレーザー処理。
+LZ_FRAME:
+    CALL GAUGE_UPDATE
+    LD A,(BOSS_STATE) : CP 2
+    RET NZ
+    LD A,(GAME_OVER) : OR A
+    JR Z,LZF_ALIVE
+    LD A,(LZ_PHASE) : DEC A : CP 3  ; 自機死亡: 出ているレーザーを消して終了
+    RET NC
+    JP LZ_END
+LZF_ALIVE:
+    LD A,(LZ_PHASE)
+    OR A : JR Z,LZ_IDLE
+    DEC A : JR Z,LZ_SOLO
+    DEC A : JR Z,LZ_EXTEND
+    DEC A : RET NZ
+    ; --- 3: 干渉 ---
+    LD HL,LZ_CLASH_X
+    LD A,(FIREB_EDGE) : OR A
+    JR Z,LZC_NOPUSH
+    LD A,(HL) : ADD A,LZ_PUSH_PX : LD (HL),A
+    CALL SOUND_POD_HIT
+    LD HL,LZ_CLASH_X
+LZC_NOPUSH:
+    DEC (HL)                       ; ボスの押し込み 1px/フレーム
+    LD A,(HL)
+    CP LZ_WIN_X
+    JP NC,LZ_WIN
+    SRL A : SRL A : SRL A : LD B,A
+    LD A,(LZ_PCOL) : CP B
+    JP NC,LZ_LOSE                  ; 干渉点が自機の先端列まで戻された
+    JP LZ_DRAW_CURRENT
+
+LZ_IDLE:
+    CALL LZ_CAN_FIRE
+    RET NZ
+    LD A,(PLAYERY) : ADD A,8 : SRL A : SRL A : SRL A : LD (LZ_PROW),A
+    LD B,26                        ; ボスの行(2-17)はボス左端で止める
+    CP 18 : JR C,LZI_END
+    LD B,32
+LZI_END:
+    LD A,B : LD (LZ_PEND),A
+    CALL LZ_CALC_PCOL
+    LD A,LZ_SOLO_FRAMES : LD (LZ_TIMER),A
+    LD A,1 : LD (LZ_PHASE),A : LD (LZ_SPENT),A
+    CALL SOUND_POD_FIRE
+    JR LZ_DRAW_CURRENT
+
+LZ_SOLO:
+    LD HL,LZ_TIMER : DEC (HL)
+    JR NZ,LZS_ON
+    CALL LZ_ERASE                  ; 100フレで尽きて消滅(使用済みのまま待機へ)
+    XOR A : LD (LZ_PHASE),A
+    RET
+LZS_ON:
+    CALL LZ_HIT_PODS               ; 最後のポッドを壊すとここで干渉へ移る
+    JR LZ_DRAW_CURRENT
+
+LZ_EXTEND:
+    CALL LZ_CAN_FIRE
+    JR NZ,LZE_TICK
+    LD A,LZ_SOLO_FRAMES : LD (LZ_TIMER),A : LD (LZ_SPENT),A
+    CALL LZ_START_CLASH            ; 伸長中のボスレーザーへ割り込み
+    JR LZ_DRAW_CURRENT
+LZE_TICK:
+    LD HL,LZ_TICK : INC (HL)
+    LD A,(HL) : AND 3
+    JR NZ,LZ_DRAW_CURRENT
+    LD HL,LZ_BFRONT : DEC (HL)     ; 4フレームに1列、左へ伸びる
+    JR Z,LZ_LOSE                   ; 左端まで届いた
+    LD A,(PLAYERY) : ADD A,8 : AND 0F8h
+    CP LZ_ROW*8
+    JR NZ,LZ_DRAW_CURRENT
+    LD A,(PLAYERX) : ADD A,15
+    JR C,LZ_LOSE
+    SRL A : SRL A : SRL A
+    CP (HL)
+    JR NC,LZ_LOSE                  ; 同じ行で自機に届いた
+    JR LZ_DRAW_CURRENT
+
+LZ_WIN:
+    CALL LZ_END
+    JP START_BOSS_DEATH
+LZ_LOSE:
+    CALL LZ_END
+    XOR A : LD (BARRIER_HP),A
+    CALL PLAYER_TAKE_HIT
+    LD A,(GAME_OVER) : OR A
+    RET NZ
+    JP START_BOSS_DEATH            ; ゲームオーバー無効(テスト用)なら撃破扱い
+LZ_END:
+    CALL LZ_ERASE
+    LD A,4 : LD (LZ_PHASE),A
+    RET
+
+LZ_ERASE:
+    LD A,1 : LD (LZ_BLANKING),A
+    CALL LZ_DRAW_CURRENT
+    XOR A : LD (LZ_BLANKING),A
+    RET
+
+; 現在のLZ_PHASEのレーザー行を丸ごと描き直す(毎フレーム - 途中で何かに
+; 上書きされても次のフレームで元に戻る)。
+LZ_DRAW_CURRENT:
+    LD A,(LZ_PHASE)
+    DEC A : JR NZ,LZDC_2
+    LD A,(LZ_PROW) : LD E,A
+    LD HL,(LZ_PCOL)                ; L=PCOL,H=PEND
+    LD D,255                       ; 全部自機レーザー
+    JR LZ_DRAW
+LZDC_2:
+    DEC A : JR NZ,LZDC_3
+    LD D,0                         ; 全部ボスレーザー
+    LD A,(LZ_BFRONT)
+    JR LZDC_GO
+LZDC_3:
+    DEC A : RET NZ
+    LD A,(LZ_CLASH_X) : SRL A : SRL A : SRL A : LD D,A
+    LD A,(LZ_PCOL)
+LZDC_GO:
+    LD L,A : LD H,26 : LD E,LZ_ROW
+; E=行, L=開始列, H=終端列(含まない), D=干渉点の列(未満=自機、同=干渉点、超=ボス)
+LZ_DRAW:
+    LD C,L
+LZD_LOOP:
+    LD A,C : CP H
+    RET NC
+    LD B,LZ_PL_CODE
+    CP D : JR C,LZD_PUT
+    LD B,LZ_SPARK_CODE
+    JR Z,LZD_PUT
+    LD B,LZ_BL_CODE
+LZD_PUT:
+    LD A,(LZ_BLANKING) : OR A
+    JR Z,LZD_W
+    LD B,BLANKCODE
+LZD_W:
+    PUSH DE : PUSH HL
+    LD A,E : CALL EBUZ2_ADDR
+    LD A,B : CALL WRTVRM
+    POP HL : POP DE
+    INC C
+    JR LZD_LOOP
+
+; 単独照射中(1)にボスが撃った/伸長中(2)にBで割り込んだ → 干渉(3)。
+; 自機をレーザー行へ固定し、両レーザーの先端の中間から始める。
+LZ_START_CLASH:
+    CALL LZ_ERASE
+    LD A,PLAYER_INITY : LD (PLAYERY),A    ; (PLAYERY+8)>>3 = LZ_ROW
+    CALL LZ_CALC_PCOL
+    ADD A,A : ADD A,A : ADD A,4 : LD B,A  ; (PCOL*8+8)/2
+    LD A,(LZ_BFRONT) : ADD A,A : ADD A,A  ; BFRONT*8/2
+    ADD A,B : LD (LZ_CLASH_X),A
+    LD A,3 : LD (LZ_PHASE),A
+    JP SOUND_EBUZ_FIRE
+
+; 最後のポッド撃破時(POD_HIT_DESTROY)。単独照射中なら即干渉、それ以外は
+; ボスレーザー伸長開始(使用済み/ゲージ不足なら割り込めず、届いてゲームオーバー)。
+LZ_BOSS_FIRE:
+    LD A,(LZ_PHASE) : DEC A
+    JR Z,LZ_START_CLASH
+    LD A,2 : LD (LZ_PHASE),A
+    JP SOUND_EBUZ_FIRE
+
+; Out: A=LZ_PCOL=(PLAYERX+16)>>3(最大20 - 干渉開始直後の勝ち判定を避ける)
+LZ_CALC_PCOL:
+    LD A,(PLAYERX) : ADD A,16
+    JR NC,LZCP_1
+    LD A,255
+LZCP_1:
+    SRL A : SRL A : SRL A
+    CP 21 : JR C,LZCP_2
+    LD A,20
+LZCP_2:
+    LD (LZ_PCOL),A
+    RET
+
+; 単独照射中: レーザー行に重なり先頭より右にあるポッドへ毎フレーム1ダメージ。
+LZ_HIT_PODS:
+    LD A,(LZ_PROW) : ADD A,A : ADD A,A : ADD A,A : LD (POD_XY_Y),A
+    LD A,(LZ_PCOL) : ADD A,A : ADD A,A : ADD A,A : LD (POD_XY_X),A
+    LD B,0
+LZHP_LOOP:
+    PUSH BC
+    LD D,0 : LD E,B
+    LD HL,POD_HP : ADD HL,DE
+    LD A,(HL) : OR A
+    JR Z,LZHP_SKIP
+    LD HL,POD_CUR_Y : ADD HL,DE
+    LD A,(POD_XY_Y) : SUB (HL) : ADD A,128
+    CP 116 : JR C,LZHP_SKIP
+    CP 141 : JR NC,LZHP_SKIP
+    LD HL,POD_CUR_X : ADD HL,DE
+    LD A,(HL) : ADD A,12
+    JR C,LZHP_HIT
+    LD HL,POD_XY_X
+    CP (HL) : JR C,LZHP_SKIP
+LZHP_HIT:
+    CALL POD_HIT
+LZHP_SKIP:
+    POP BC
+    INC B
+    LD A,B : CP 8
+    JR NZ,LZHP_LOOP
     RET
