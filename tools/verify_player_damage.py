@@ -236,8 +236,12 @@ z.wr(PLAYERX, PX); z.wr(PLAYERY, PY)
 z.wr(ENEMY6_POOL + 0, 1)          # ACTIVE
 z.wr(ENEMY6_POOL + 1, 12)         # ROW -> Y=96
 z.wr(ENEMY6_POOL + 2, 12)         # COL -> X=96 (16x16 box easily reaches the 8x8 hitbox)
+z.wr(sym["ENEMY6_ACTIVE_COUNT"], 1)   # 実際のSPAWN_E6と同じく生存数も1に
 call_routine(z, sym["PDC_CHECK_ENEMY6"])
 check("PDC_CHECK_ENEMY6: active slot's 16x16 box overlapping the player hits", z.a == 1)
+z.wr(sym["ENEMY6_ACTIVE_COUNT"], 0)
+call_routine(z, sym["PDC_CHECK_ENEMY6"])
+check("PDC_CHECK_ENEMY6: ACTIVE_COUNT=0 short-circuits (2026-09-23 監査A、PDC_CHECK_ENEMY3と同じ)", z.a == 0)
 
 z = fresh()
 z.wr(PLAYERX, PX); z.wr(PLAYERY, PY)

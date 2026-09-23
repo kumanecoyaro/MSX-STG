@@ -289,6 +289,37 @@ check("自己検証: CHECK_BULLET_VS_ENEMY6冒頭のENEMY6_ACTIVE_COUNTガード
       "フルスキャンへ戻る(=このガードが実際に効いていることの確認)",
       _regress_no_active_count_gate() > 150)
 
+# ---- (2026-09-23、メインループ監査"A"): ENEMY6_UPDATE_ALL/PDC_CHECK_ENEMY6も
+# ENEMY6_ACTIVE_COUNT==0なら32スロット走査を省略する ----
+def tstates_of(z, entry):
+    t0 = z.tstates
+    call_routine(z, entry)
+    return z.tstates - t0
+
+zg = fresh()
+zg.wr(sym["ENEMY6_ACTIVE_COUNT"], 0)
+zg.wr(sym["ENEMY6_STEP_TIMER"], 1)          # 今フレームが歩進フレーム
+t_upd0 = tstates_of(zg, sym["ENEMY6_UPDATE_ALL"])
+check(f"no Enemy6: ENEMY6_UPDATE_ALL skips the 32-slot scan ({t_upd0}T < 200T)", t_upd0 < 200)
+check("no Enemy6: step timer still reloads to ENEMY6_STEP_FRAMES (cadence unchanged)",
+      zg.rd(sym["ENEMY6_STEP_TIMER"]) == sym["ENEMY6_STEP_FRAMES"])
+t_pdc0 = tstates_of(zg, sym["PDC_CHECK_ENEMY6"])
+check(f"no Enemy6: PDC_CHECK_ENEMY6 skips the 32-slot scan ({t_pdc0}T < 100T) and returns A=0",
+      t_pdc0 < 100 and zg.a == 0)
+
+# 1体居る時は従来通り: 自機と重なれば被弾、更新で動く
+zs = fresh()
+spawn_enemy6(zs, 0, 10)
+check("after SPAWN_E6: ENEMY6_ACTIVE_COUNT=1", zs.rd(sym["ENEMY6_ACTIVE_COUNT"]) == 1)
+row = zs.rd(slot0() + 1); col = zs.rd(slot0() + 2)
+zs.wr(sym["PLAYERX"], col * 8); zs.wr(sym["PLAYERY"], row * 8)
+call_routine(zs, sym["PDC_CHECK_ENEMY6"])
+check("one Enemy6 overlapping the player: PDC_CHECK_ENEMY6 still reports a hit", zs.a == 1)
+zs.wr(sym["ENEMY6_STEP_TIMER"], 1)
+col0 = zs.rd(slot0() + 2)
+call_routine(zs, sym["ENEMY6_UPDATE_ALL"])
+check("one Enemy6: ENEMY6_UPDATE_ALL still steps it (COL changes)", zs.rd(slot0() + 2) != col0)
+
 print(f"\n{len(ok)} passed, {len(fail)} failed")
 if fail:
     print("FAILURES:", fail)
