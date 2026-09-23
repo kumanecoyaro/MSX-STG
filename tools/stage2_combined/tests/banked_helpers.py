@@ -36,17 +36,11 @@ def fresh_cpu(assert_bank_switch=True, skip_intro=True):
     independent mem.flat/vram/registers, so nothing a test does to its
     cpu can leak into another test's.
 
-    skip_intro (2026-09-23、ステージ2のスタート演出、"ブースター込みで
-    0,64から放物線で落下し地上へ着地"): TANK_ENTRY_ACT!=0の間、MAINLOOP
-    冒頭のゲートが他の全処理(地形スクロール・GAME_TICK・敵スポーン等)を
-    完全にスキップするため、この演出の追加前から存在する大多数のテスト
-    (「fresh_cpu()した瞬間から普通に遊べる状態」を暗黙の前提にしている)
-    がそのままでは最初の約40フレーム分「何も起きない」状態を踏んでしまう
-    (dash_test.py/night_effect_test.py/boss_perf_gate_test.py等で実際に
-    検出)。デフォルトでTANK_ENTRY_ACT=0になるまで自動的に先送りし、
-    「普通に遊べる状態」を返す(=演出追加前の暗黙の前提をそのまま維持)。
-    演出自体を検証したいテスト(tank_entry_test.py)だけがskip_intro=
-    Falseを明示的に指定する。"""
+    skip_intro (2026-09-23、ステージ2のスタート演出): 演出中は自機の操作
+    系がUPDATE_TANK_ENTRYに差し替わるため、演出追加前から存在する大多数
+    のテスト(「fresh_cpu()した瞬間から自機を普通に操作できる」前提)の
+    ためにデフォルトで演出を丸ごと飛ばした状態を返す。演出自体を検証
+    したいテスト(tank_entry_test.py)だけがskip_intro=Falseを指定する。"""
     global _BOOT_SNAPSHOT, _BOOT_SNAPSHOT_READY
     if _BOOT_SNAPSHOT is None:
         out, sym, text = get_out()
@@ -66,22 +60,16 @@ def fresh_cpu(assert_bank_switch=True, skip_intro=True):
         if _BOOT_SNAPSHOT_READY is None:
             out, sym, text = get_out()
             ready = copy.deepcopy(_BOOT_SNAPSHOT)
-            tank_entry_act = sym["TANK_ENTRY_ACT"]
-            # (2026-09-23follow-up4、"しかも同じじゃねえかよ 40フレのまま
-            # だろうが"): 落下演出の物理更新は本物のVBlank(VBLANK_COUNT、
-            # H.TIMI駆動)基準に書き換わった - z80emu.pyは実機の割り込みを
-            # 一切発火しないため、step_frame()をいくら呼んでもVBLANK_COUNT
-            # は進まず、このループは元のままだと永久にTANK_ENTRY_ACT=0へ
-            # 到達できない(1000回上限で必ずassert落ちする)。ending_
-            # sequence_test.py等の既存の作法と同じく、BGM_TICK(本来は
-            # H.TIMIが毎VBlank呼ぶルーチン)を明示的に1回ずつ挟んで実際の
-            # VBlank発生をシミュレートする。
-            steps = 0
-            while ready.rd(tank_entry_act) != 0 and steps < 1000:
-                sim_vblank(ready)
-                step_frame(ready)
-                steps += 1
-            assert steps < 1000, "TANK_ENTRY_ACT never reached 0 (stage2 start entry never lands)"
+            # (2026-09-23follow-up5): 落下演出は本編(地形スクロール・GAME_
+            # TICK・敵スポーン)と並行して進むため、フレームを進めて演出を
+            # 消化するとGAME_TICK等まで進んでしまい、演出追加前に書かれた
+            # 既存テストの前提(fresh_cpu()直後=GAME_TICK 0・何もスポーン
+            # していない)が崩れる。ASM自身の終了処理TANK_ENTRY_FINISHを
+            # 直接呼んで「演出を丸ごと飛ばした」状態にする(本編は1フレーム
+            # も進めない)。
+            call_routine(ready, "TANK_ENTRY_FINISH")
+            ready.pc = sym["MAINLOOP"]
+            assert ready.rd(sym["TANK_ENTRY_ACT"]) == 0
             _BOOT_SNAPSHOT_READY = ready
         cpu = copy.deepcopy(_BOOT_SNAPSHOT_READY)
         if assert_bank_switch:
@@ -126,21 +114,5 @@ def step_frame(cpu):
         s += 1
     return s
 
-
-def sim_vblank(cpu):
-    """z80emu.pyは実機のH.TIMI割り込みを一切発火しない(このプロジェクト
-    全体で繰り返し確認済みの既知の限界)ため、VBLANK_COUNT(H.TIMI駆動の
-    本物の実時間クロック、round145follow-up4のステージ2スタート演出や
-    既存のGFEnding等が採用)に依存するコードをテストする際は、本来
-    H.TIMIが毎VBlank呼ぶBGM_TICKを明示的に1回呼んで「本物のVBlankが
-    1回発生した」ことをシミュレートする必要がある
-    (ending_sequence_test.py等の既存の作法と同じ)。call_routine()は
-    戻った時点でPCがsentinel(0x0000)に残るため、呼び出し元がMAINLOOP
-    ループの途中(pc==MAINLOOP)から呼ぶ前提のこのヘルパーは、呼び出し
-    後に明示的にpcをMAINLOOPへ戻す(SPは既にBGM_TICK自身のRETで正しく
-    復元済み、動かすのはPCだけでよい)。"""
-    out, sym, text = get_out()
-    call_routine(cpu, "BGM_TICK")
-    cpu.pc = sym["MAINLOOP"]
 
 

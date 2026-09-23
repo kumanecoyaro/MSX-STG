@@ -121,24 +121,13 @@ TANK_ENTRY_GRAV_CTR  EQU 0F316h   ; = BOSS_EXPL_TIMER、重力加算の間隔カ
 TANK_ENTRY_ANIM      EQU 0F317h   ; = BOSS_EXPL_CX、0/1、ブースターのBunit1/Bunit2切り替え(毎フレーム反転)
 BOOSTER_SPRITE_ATTRS EQU 0F318h   ; = BOSS_EXPL_CY(4byte分、CY/BLINK/ROWTMP/COLTMPを占有)、Y,X,pat,colのステージング
 TANK_ENTRY_SLOW_CTR  EQU 0F31Ch   ; = BOSS_EXPL_RING_MODE/SPARK_SLOT0_COL、同じ理由でエイリアス安全。物理更新の間引きカウンタ(0..TANK_ENTRY_SLOWDOWN-1)
-; (2026-09-23follow-up4、"しかも同じじゃねえかよ 40フレのままだろうが"):
-; このROMはHALT/vsync同期を一切使わない完全free-running設計のため、
-; MAINLOOP冒頭のゲートで他の全処理をスキップすると、UPDATE_TANK_ENTRY
-; 自体の呼び出し間隔にはCPUが処理しきれる限り上限が無くなる - 「10
-; フレームに1回」という呼び出し回数ベースの間引き(follow-up4時点の
-; 実装)は、間引く前の「1回」自体がそもそも実時間としては一瞬未満
-; だったため、10倍にしても体感は変わらなかった(ユーザー指摘通り)。
-; 正しい実時間ペーシングには、H.TIMI駆動の本物の実時間クロック
-; VBLANK_COUNT(0CB18h、GFEnding等のUPDATE_ENDINGと同じ考え方)が必要 -
-; 呼び出し回数ではなく「本物のVBlankが何回発生したか」を基準にする。
-; VBLANK_COUNTは後方定義(6778行目)につき前方参照回避のためリテラル値
-; を直接使用。
-TANK_ENTRY_LAST_VBLANK EQU 0F31Dh ; = BOSS_EXPL_RING_RADIUS/SPARK_SLOT1_ROW、同じ理由でエイリアス安全。直近処理したVBLANK_COUNT下位byte
-; ENEMY_SPR_BASE_SLOT(=4、後方定義)を forward-reference すると過去に
-; 踏んだアセンブラの罠(前方参照EQUが0として評価される)を再び踏むリスク
-; があるため、リテラル4を直接使用(ENEMY_SPR_BASE_SLOTの値と一致する
-; ことは上記コメント通り演出中は敵プールが空である事実により安全)。
-BOOSTER_SPR_BASE_SLOT EQU 4  ; hw sprite slot4を一時借用(演出中は敵プール空が保証されている、= ENEMY_SPR_BASE_SLOT+0)
+; (2026-09-23follow-up5、"本編開始してから落下すんだよ ステージ1も
+; そうしてるだろうが"): 演出中も本編(地形スクロール・敵スポーン)は
+; 進行するため、敵プールのslot4は借用できない(演出中に敵が出うる)。
+; 代わりに自機U弾(斜めショット)用のslot7(BULLET_U_SPR_BASE_SLOT、後方
+; 定義につきリテラル)を借用 - 演出中は自機ショット自体が無効なのでU弾は
+; 構造的に存在せず、MAINLOOP側もその間UPDATE_BULLET_U_SPRITESを止める。
+BOOSTER_SPR_BASE_SLOT EQU 7
 ; PAT_TANKUP(後方定義、=16)もforward-reference回避のためリテラル値を
 ; 直接使用。PAT_BOOSTER1=PAT_TANKUP+0(TL quadrant分の4コード)、
 ; PAT_BOOSTER2=PAT_TANKUP+4(TR quadrant分の4コード)を一時借用。
@@ -3638,7 +3627,6 @@ INIT_SPRATR_CLR:
     LD (TANK_ENTRY_GRAV_CTR),A
     LD (TANK_ENTRY_ANIM),A
     LD (TANK_ENTRY_SLOW_CTR),A
-    LD (TANK_ENTRY_LAST_VBLANK),A   ; VBLANK_COUNT自体もこの時点でまだ0(INIT_BGMがこのDIブロックの中で既に0クリア済み、以後EIまでは増えない)
     LD A,1 : LD (TANK_ENTRY_ACT),A
     XOR A
     LD (TANK_DX),A
@@ -4157,21 +4145,6 @@ ICL_LOOP:
     LD B,1 : LD C,7 : CALL WRTVDP
 
 MAINLOOP:
-    ; (2026-09-23、ステージ2のスタート演出): 落下演出中(TANK_ENTRY_ACT
-    ; !=0)は地形スクロール・GAME_TICK・敵スポーンを含むそれ以外の全処理を
-    ; 完全にスキップしUPDATE_TANK_ENTRYだけを毎フレーム呼ぶ(MISSION
-    ; FAILED/GAME_OVERバンク等と同じ「演出専用フェーズはMAINLOOP本体と
-    ; 完全に分離する」設計) - これによりGAME_TICKが演出中は一切進まず、
-    ; 演出開始時点で敵プールが必ず空であることが以後も構造的に保証され
-    ; 続ける(ブースター用hwスプライトスロット/パターンコードの一時借用
-    ; が安全な根拠、TANK_ENTRY_ACT付近のコメント参照)。
-    LD A,(TANK_ENTRY_ACT)
-    OR A
-    JR Z,MAINLOOP_TANK_ENTRY_DONE
-    CALL UPDATE_TANK_ENTRY
-    JP MAINLOOP
-MAINLOOP_TANK_ENTRY_DONE:
-
     LD A,(TICK) : INC A : LD (TICK),A
 
     ; GAME_RNG += TICK, every single frame, unconditionally - see
@@ -4256,6 +4229,17 @@ SKIP_ADVANCE:
     LD HL,NAMEBUF_T2 : LD DE,1AC0h : LD BC,32 : CALL LDIRVM
     LD HL,NAMEBUF_T3 : LD DE,1AE0h : LD BC,32 : CALL LDIRVM
 
+    ; (2026-09-23follow-up5、"本編開始してから落下すんだよ ステージ1も
+    ; そうしてるだろうが"): ステージ1のSHIP_ENTRY_ACTと同じく、落下演出中
+    ; も地形スクロール・GAME_TICK・敵スポーン等の本編はそのまま進行し、
+    ; 自機の操作系(入力・移動・地形追従・ジャンプ・ポーズ・ショット)だけを
+    ; UPDATE_TANK_ENTRYへ差し替える。
+    LD A,(TANK_ENTRY_ACT)
+    OR A
+    JR Z,ML_NO_TANK_ENTRY
+    CALL UPDATE_TANK_ENTRY
+    JP ML_TANK_CONTROL_DONE
+ML_NO_TANK_ENTRY:
     CALL READ_INPUT
     CALL UPDATE_DASH
     CALL UPDATE_TANK_XY
@@ -4271,6 +4255,7 @@ SKIP_ADVANCE:
     ; a 2nd time by this same frame's UPDATE_BULLETS sweep.
     CALL UPDATE_BULLETS
     CALL UPDATE_SHOT
+ML_TANK_CONTROL_DONE:
     ; "使われない物を呼ぶのは無駄だし ボスはStage1でもそうだが それまでの
     ; 処理は捨ててボス専用 もうザコは出ないからな" - once the boss has
     ; spawned, every ordinary enemy type's own per-frame update+flush
@@ -4298,7 +4283,12 @@ SKIP_ADVANCE:
     CALL UPDATE_EBULLET_ALL
     CALL CHECK_EBULLET_VS_TANK
 SKIP_ZACO_ENEMY:
-    CALL UPDATE_BULLET_U_SPRITES
+    ; 落下演出中はブースターがU弾用hwスプライトslot7を借用しているため、
+    ; U弾の描画(slot7-9を毎フレーム上書き)は止める(演出中は自機ショット
+    ; 自体が無効なのでU弾は構造的に存在しない)。
+    LD A,(TANK_ENTRY_ACT)
+    OR A
+    CALL Z,UPDATE_BULLET_U_SPRITES
     LD A,(BOSS_ACT) : OR A
     JR NZ,SKIP_OTHER_ENEMIES
     CALL UPDATE_ZUM_ALL
@@ -16240,46 +16230,29 @@ BOOSTER2_SPRITE:
 
 ; (2026-09-23、ステージ2のスタート演出、"ブースター込みで0,64から放物線で
 ; 落下し地上へ着地 落下中は1と2を1フレ切り替え 着地したらブースター
-; 消滅"): MAINLOOP冒頭のゲート(TANK_ENTRY_ACT!=0)からのみ毎フレーム
-; 呼ばれる。X/YともMINE(tools/stage2_combined自身のflyer mine落下)と
-; 同じ「Xは毎フレーム一定速度・Yは重力加算式」の放物線モデル、両軸とも
-; 目標値でクランプ(オーバーシュートしない)。両軸が目標へ到達した
-; フレームでTANK_ENTRY_ACT=0にしてブースターを隠し、以後は二度と
-; 呼ばれない。
+; 消滅"): ステージ1のUPDATE_SHIP_ENTRYと同じく、MAINLOOPの自機操作
+; ブロックの代わりに毎フレーム呼ばれる(本編自体は通常通り進行)。
+; X/YともMINEと同じ「Xは一定速度・Yは重力加算式」の放物線モデル、両軸
+; とも目標値でクランプ。両軸が目標へ到達したフレームでTANK_ENTRY_
+; FINISHを呼び、以後は二度と呼ばれない。
 UPDATE_TANK_ENTRY:
-    ; (2026-09-23follow-up4、"しかも同じじゃねえかよ 40フレのままだろう
-    ; が ふざけんな"): follow-up2の「呼び出し回数を10回に1回だけ間引く」
-    ; 方式は誤りだった - このROMはHALT/vsync同期を一切使わないfree-
-    ; running設計のため、MAINLOOP冒頭のゲートで他の全処理をスキップする
-    ; と、UPDATE_TANK_ENTRY自体がCPUの処理できる限りの速さで無制限に
-    ; 呼ばれ続ける。間引く前の「呼び出し1回」自体がそもそも実時間として
-    ; ほぼゼロだったため、10倍しても体感は変わらなかった(ユーザー
-    ; 指摘通り、"40フレのまま")。
-    ; 正しい実時間ペーシングにはH.TIMI駆動の本物のVBlankクロック
-    ; (VBLANK_COUNT、GFEnding等のUPDATE_ENDINGと同じ考え方)が必要 -
-    ; 呼び出し回数ではなく「本物のVBlankが実際に何回発生したか」を
-    ; 基準にする。新しい本物のVBlankがまだ来ていなければ即RET(実質
-    ; ビジーウェイト、MAINLOOP側の"JP MAINLOOP"でここへ戻ってくるだけ)。
-    ; VBLANK_COUNT(0CB18h)は後方定義(6778行目)につき前方参照回避の
-    ; ためリテラル値を直接使用。
-    LD A,(0CB18h)
-    LD B,A
-    LD A,(TANK_ENTRY_LAST_VBLANK)
+    ; 自機直下の地形の地面Y(TANK_GROUND_Y)を通常時と同じルーチンで毎フレーム
+    ; 更新する(演出中も地形はスクロールしているため)。
+    CALL UPDATE_TERRAIN_COLLISION
+    ; 着地済み(地面以下)なら毎フレーム地面へ吸着(地形が迫り上がった場合)。
+    LD A,(TANK_GROUND_Y) : LD B,A
+    LD A,(TANK_Y_CUR)
     CP B
-    RET Z
-    LD A,B
-    LD (TANK_ENTRY_LAST_VBLANK),A
+    JR C,UTE_NOT_GROUNDED
+    LD A,B : LD (TANK_Y_CUR),A
+UTE_NOT_GROUNDED:
 
-    ; 本物の1VBlankが経過: ブースターのアニメ反転は常にここ(実1
-    ; フレーム=実1VBlankごと、"1フレつったら1フレ"のfollow-up3対応を
-    ; 維持)。
+    ; ブースターのアニメ反転は毎フレーム("1フレ切り替え")。
     LD A,(TANK_ENTRY_ANIM)
     XOR 1
     LD (TANK_ENTRY_ANIM),A
 
-    ; (2026-09-23follow-up2、"その10倍遅くしろ"): X/Y移動(このラベル
-    ; から下、着地判定より前まで)は本物のVBlankがTANK_ENTRY_SLOWDOWN回
-    ; 経過するごとに1回だけ実行する。
+    ; ("その10倍遅くしろ"): X/Y移動はTANK_ENTRY_SLOWDOWNフレームに1回。
     LD A,(TANK_ENTRY_SLOW_CTR) : INC A
     CP TANK_ENTRY_SLOWDOWN
     JR C,UTE_SLOW_HOLD
@@ -16302,10 +16275,14 @@ UTE_X_STORE:
     LD (TANK_X),A
 UTE_X_DONE:
 
-    ; --- Y: 重力加算式でTANK_Y_BASEへ近づける(クランプ) ---
+    ; --- Y: 重力加算式で地面(TANK_GROUND_Y)へ近づける(クランプ)。
+    ; (2026-09-23follow-up6): 演出中も地形スクロールが進むため、着地先は
+    ; 固定のTANK_Y_BASEではなく、UTE冒頭で毎フレーム更新している現在の
+    ; 地形の地面Y(TANK_GROUND_Y)。 ---
+    LD A,(TANK_GROUND_Y) : LD B,A
     LD A,(TANK_Y_CUR)
-    CP TANK_Y_BASE
-    JR NC,UTE_Y_DONE
+    CP B
+    JR NC,UTE_Y_LAND
     LD A,(TANK_ENTRY_GRAV_CTR) : INC A
     CP TANK_ENTRY_GRAVITY_INTERVAL
     JR C,UTE_GRAV_HOLD
@@ -16316,12 +16293,12 @@ UTE_X_DONE:
 UTE_GRAV_HOLD:
     LD (TANK_ENTRY_GRAV_CTR),A
 UTE_GRAV_DONE:
-    LD A,(TANK_Y_CUR) : LD D,A
     LD A,(TANK_ENTRY_VY) : LD E,A
-    LD A,D : ADD A,E
-    CP TANK_Y_BASE+1
+    LD A,(TANK_Y_CUR) : ADD A,E
+    CP B
     JR C,UTE_Y_STORE
-    LD A,TANK_Y_BASE
+UTE_Y_LAND:
+    LD A,B
 UTE_Y_STORE:
     LD (TANK_Y_CUR),A
 UTE_Y_DONE:
@@ -16369,10 +16346,18 @@ UTE_PAT_GOT:
     LD A,(TANK_X)
     CP TANK_X_INIT
     RET C
+    LD A,(TANK_GROUND_Y) : LD B,A
     LD A,(TANK_Y_CUR)
-    CP TANK_Y_BASE
+    CP B
     RET C
+    ; fall through
+; 演出の終了処理(着地時にUPDATE_TANK_ENTRYから、またテストハーネスが
+; 演出を丸ごと飛ばしたい時にも直接呼ぶ)。
+TANK_ENTRY_FINISH:
     XOR A : LD (TANK_ENTRY_ACT),A
+    LD A,TANK_X_INIT : LD (TANK_X),A
+    LD A,(TANK_GROUND_Y) : LD (TANK_Y_CUR),A
+    CALL UPDATE_TANK_SPRITES
     LD A,209 : LD (BOOSTER_SPRITE_ATTRS),A
     CALL FLUSH_BOOSTER_SPRITES
     ; MAINLOOP中(H.TIMI割り込み有効)にLDIRVMを呼ぶため、INIT時と違い
