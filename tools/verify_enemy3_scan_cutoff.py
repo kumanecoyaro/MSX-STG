@@ -62,6 +62,20 @@ z0 = world({0: (3, 3)}); t_front = call(z0, "PDC_CHECK_ENEMY3")
 z1 = world({LAST: (3, 3)}); t_back = call(z1, "PDC_CHECK_ENEMY3")
 check(f"PDC_CHECK_ENEMY3 exits early too ({t_front}T vs {t_back}T)", t_front + 1000 < t_back)
 
+# (3) 行の事前チェック: 行が違えば呼び出しをせず外れ、同じ行・同じ列なら当たる
+z = world({0: (10, 12)})
+t_rowmiss = call(z, "CHECK_BULLET_VS_ENEMY3", b=12, c=11)
+check("bullet one row below the unit (same column): miss", z.a == 0)
+z = world({0: (10, 12)})
+t_colmiss = call(z, "CHECK_BULLET_VS_ENEMY3", b=13, c=10)
+check("bullet in the same row, next column: miss", z.a == 0)
+check(f"different-row miss skips the per-unit hit test ({t_rowmiss}T < same-row miss {t_colmiss}T)",
+      t_rowmiss + 100 < t_colmiss)
+z = world({0: (10, 12)})
+call(z, "CHECK_BULLET_VS_ENEMY3", b=12, c=10)
+check("bullet in the same cell: hit, unit removed, ACTIVE_COUNT decremented",
+      z.a == 1 and z.rd(POOL) == 0 and z.rd(sym["ENEMY3_ACTIVE_COUNT"]) == 0)
+
 print(f"\n{len(ok)} passed, {len(fail)} failed")
 if fail:
     print("FAILURES:", fail); sys.exit(1)

@@ -12445,6 +12445,13 @@ CBVE3_LOOP:
     LD A,(HL)
     OR A
     JR Z,CBVE3_SKIP
+    ; (2026-09-23、監査): 弾もEnemy3も8px格子上の8x8なので、行(+4=ROW)が
+    ; 違えばQUAD_HIT_TESTは必ず外れる - 呼び出し前に行だけ比べて弾く。
+    PUSH HL
+    LD DE,4 : ADD HL,DE
+    LD A,(ENEMY_HIT_ROW) : CP (HL)
+    POP HL
+    JR NZ,CBVE3_NEXT_LIVE
     PUSH HL
     PUSH BC
     PUSH HL : POP IX
@@ -12455,6 +12462,7 @@ CBVE3_LOOP:
     POP HL
     OR A
     JR NZ,CBVE3_HIT
+CBVE3_NEXT_LIVE:
     DEC C
     JR Z,CBVE3_NONE                ; 生存個体を全部調べた
 CBVE3_SKIP:
