@@ -16651,9 +16651,9 @@ GAUGE_BLANK_CODE EQU MISSION_FONT_BASE+5   ; 行0の黒埋めと同じ空白
 
 ; B1beam_24x24.json(16x24、シアン)。上16行=スプライト23、下8行=24
 LZ_END_TILES:
-    DB 0C0h,60h,98h,0EEh,33h,9Dh,6Fh,0BBh,0CDh,77h,9Bh,64h,0DBh,64h,9Bh,76h
-    DB 00h,00h,00h,00h,00h,0C0h,60h,0B8h,5Eh,0ABh,0F7h,0AFh,6Fh,0B7h,0EBh,0DEh
-    DB 0EDh,9Fh,75h,0EFh,96h,2Ch,70h,0C0h,00h,00h,00h,00h,00h,00h,00h,00h
+    DB 0C0h,60h,98h,0EEh,33h,9Dh,2Fh,1Bh,85h,61h,9Ah,65h,0DBh,65h,9Ah,61h
+    DB 00h,00h,00h,00h,00h,0C0h,60h,0B8h,5Eh,0ABh,77h,0EFh,0AFh,0F7h,6Bh,0DEh
+    DB 8Bh,17h,3Dh,5Fh,0B6h,6Ch,0F0h,0C0h,00h,00h,00h,00h,00h,00h,00h,00h
     DB 0B8h,60h,0C0h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h
 BARRIER_GLYPH_M:                               ; バリアのグリフ(0Ch,22h,55h,99h,99h,0AAh,44h,30h)の左右反転
     DB 30h,44h,0AAh,99h,99h,55h,22h,0Ch

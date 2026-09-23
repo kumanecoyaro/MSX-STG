@@ -18453,3 +18453,11 @@ EbuzII弾ビームへの1pxコリジョン追加+ROM予算の共有バンク6オ
   干渉の飛び散りと共用)。ボス前は予約が無く、GAME_TICK 766まで250フレームごとに死亡させて毎回3-5個
   出ることを確認。verify_boss_laser.py 64件(ボス着地中の死亡・レーザー負けの死亡・ボス外では予約を
   触らない)。
+
+## Round145 follow-up30: ボスレーザー右端スプライト差し替え+通常スタートへ(2026-09-23)
+
+- ユーザー: "動作確認済み おｋ ボスレーザーのスプライトを添付ファイルに差し替え で、Tickを通常に"。
+- B1beam_24x24_1.json(16x24)をtools/stage1_sprites/B1beam_24x24.jsonへ置き換え、LZ_END_TILESを
+  再生成(verify_boss_laser.pyがJSONとVRAMを直接比較)。
+- build_full_rom.pyのDEBUG_BOSS_STARTをFalseへ戻した(送付ROMは通常の最初から)。
+- ROM: plain 593 / Comb 543byte。verify_boss_laser 64・verify_ebuz2_mk2_comb 48・verify_comb全PASS。

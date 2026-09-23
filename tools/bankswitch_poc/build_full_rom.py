@@ -276,7 +276,7 @@ def patch_postinit32(text):
 # 飛び込み演出の直後にステージ1ボスが出る。送付するComb ROM(main())だけに入れ、
 # verify_*.pyがassemble_game()で組む版には入れない(通常の流れを検証するため)。
 # 調整が終わったらFalseに戻すこと。
-DEBUG_BOSS_START = True
+DEBUG_BOSS_START = False
 DEBUG_BOSS_START_ANCHOR = """    CALL LZ_INIT
     CALL UNMUTE_BGM
 """
