@@ -17991,3 +17991,19 @@ EbuzII弾ビームへの1pxコリジョン追加+ROM予算の共有バンク6オ
   follow-up7(飛び込み演出中GAME_TICK停止)の影響で壊れていたのを修正
   (壊したROMのブート後にSHIP_ENTRY_ACT=0、109件)。EBUZ2テーブル再パッチ
   済み、verify_ebuz2_mk2_comb.py 48件・verify_comb.py全PASS。
+
+## Round145 follow-up10: Stage2スタート演出の落下を滑らかに(2026-09-23)
+
+- ユーザー: "ステージ2スタート演出の落下が荒くて滑らかになってない"。
+- 原因: LUTではなく、follow-up2の「物理更新自体を10フレームに1回だけ
+  行う」方式(Xは1px、Yはその時点の速度ぶんまとめて跳ぶ)。
+- 修正: X/Yとも8.8固定小数点で毎フレーム更新。TANK_ENTRY_VYを2byte
+  (0F315-0F316、速度8.8)、新設TANK_ENTRY_XFRAC(0F31C)/YFRAC(0F31D)
+  (どちらもボス爆発専用RAMへのエイリアス、演出中はボスが存在しない
+  ため安全)。重力1/256px/f^2、X速度28/256px/f。1フレームの移動は最大
+  1px、着地220フレーム(旧240)でX/Y同時到達。SLOWDOWN/GRAV_CTR/
+  GRAVITY_INTERVAL/VXは廃止。
+- tank_entry_test.py 34件(1フレーム最大1pxの検証、固定小数点モデルの
+  Python版との全フレーム一致)。stack_safety/vdp_wait/init_ram_poison/
+  boss_perf_gate PASS、Comb再ビルド・verify_comb.py全PASS(Stage1無変更の
+  ためEBUZ2再パッチ不要、verify_ebuz2_mk2_comb.py 48件PASS確認済み)。

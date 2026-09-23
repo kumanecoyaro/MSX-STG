@@ -87,16 +87,16 @@ TANK_Y_BASE   EQU 156      ; row23 top (23*8=184) - tank height(32) + landing of
 ; ブースター(自機X-16)込みで左端0から始まるよう、自機本体は16から開始。
 TANK_ENTRY_START_X EQU 16
 TANK_ENTRY_START_Y EQU 64
-TANK_ENTRY_GRAVITY EQU 1
-TANK_ENTRY_GRAVITY_INTERVAL EQU 3   ; frames between gravity bumps - untuned initial value
-TANK_ENTRY_VX EQU 1                  ; px/frame horizontal drift toward TANK_X_INIT - untuned initial value
-; (2026-09-23follow-up2、"そんな一瞬で着地しても何も確認できんだろうが
-; その10倍遅くしろ"): 物理更新(X/Y前進+ブースターのアニメ反転)自体を
-; 10実フレームに1回だけ行うようゲート(描画自体は毎実フレーム続ける、
-; 静止フレームが9/10増えるだけ)。距離・速度・重力の値は無変更のまま
-; 実時間だけ正確に10倍になる(値を10倍にすると重力の整数演算が変わって
-; しまうため、あえてこちらの方式を選んだ)。
-TANK_ENTRY_SLOWDOWN EQU 10
+; (2026-09-23follow-up10、"落下が荒くて滑らかになってない"): 旧方式は
+; 物理更新自体を10フレームに1回だけ行っていた(Xは1px、Yはその時点の速度
+; ぶんまとめて跳ぶ)ためカクついていた。X/Yとも8.8固定小数点で毎フレーム
+; 更新する方式へ変更。総所要時間は旧方式(約240フレーム)とほぼ同じ:
+; Y: 速度(8.8)に毎フレームTANK_ENTRY_GRAVITY_SUB/256を加算、64→156(92px)
+;    をsqrt(2*92*256)≒217フレームで落下。
+; X: 毎フレームTANK_ENTRY_XSUB/256px、16→40(24px)を24*256/28≒219フレーム
+;    で移動(X/Yがほぼ同時に着地点へ到達し、地面を滑らない)。
+TANK_ENTRY_GRAVITY_SUB EQU 1   ; 1/256 px/frame^2
+TANK_ENTRY_XSUB EQU 28         ; 28/256 px/frame
 BOOSTER_Y_OFFSET EQU 7               ; ブースターのYオフセット(自機基準)、ユーザー指示通り
 BOOSTER_WIDTH EQU 8                  ; 絵柄自体(右半分)の幅
 ; (2026-09-23follow-up、RAM予算+重大な安全性バグの自己発見・修正):
@@ -118,11 +118,11 @@ BOOSTER_WIDTH EQU 8                  ; 絵柄自体(右半分)の幅
 ; (こちらは「ACT!=0の間=演出中=ボスが存在すらしない期間」でしか
 ; 実際に読み書きされないため、正しく時間的排他が成立する)。
 TANK_ENTRY_ACT       EQU 0F321h   ; 新規専用(他の何にもエイリアスしない)、0=通常(ステージ本編)/1=落下演出中
-TANK_ENTRY_VY        EQU 0F315h   ; = BOSS_EXPL_RADIUS、重力加算式の垂直速度(MINE_VYと同じ考え方)
-TANK_ENTRY_GRAV_CTR  EQU 0F316h   ; = BOSS_EXPL_TIMER、重力加算の間隔カウンタ(MINEの+7と同じ考え方)
+TANK_ENTRY_VY        EQU 0F315h   ; = BOSS_EXPL_RADIUS/TIMER(2byte)、垂直速度 8.8固定小数点(下位=小数部)
 TANK_ENTRY_ANIM      EQU 0F317h   ; = BOSS_EXPL_CX、フレームカウンタ、bit1でBunit1/Bunit2切り替え(2フレごと)
 BOOSTER_SPRITE_ATTRS EQU 0F318h   ; = BOSS_EXPL_CY(4byte分、CY/BLINK/ROWTMP/COLTMPを占有)、Y,X,pat,colのステージング
-TANK_ENTRY_SLOW_CTR  EQU 0F31Ch   ; = BOSS_EXPL_RING_MODE/SPARK_SLOT0_COL、同じ理由でエイリアス安全。物理更新の間引きカウンタ(0..TANK_ENTRY_SLOWDOWN-1)
+TANK_ENTRY_XFRAC     EQU 0F31Ch   ; = BOSS_EXPL_RING_MODE、同じ理由でエイリアス安全。TANK_Xの小数部(1/256px)
+TANK_ENTRY_YFRAC     EQU 0F31Dh   ; = BOSS_EXPL_RING_RADIUS、同上。TANK_Y_CURの小数部(1/256px)
 ; (2026-09-23follow-up5、"本編開始してから落下すんだよ ステージ1も
 ; そうしてるだろうが"): 演出中も本編(地形スクロール・敵スポーン)は
 ; 進行するため、敵プールのslot4は借用できない(演出中に敵が出うる)。
@@ -3626,9 +3626,10 @@ INIT_SPRATR_CLR:
     LD A,TANK_Y_BASE : LD (TANK_GROUND_Y),A
     XOR A
     LD (TANK_ENTRY_VY),A
-    LD (TANK_ENTRY_GRAV_CTR),A
+    LD (TANK_ENTRY_VY+1),A
     LD (TANK_ENTRY_ANIM),A
-    LD (TANK_ENTRY_SLOW_CTR),A
+    LD (TANK_ENTRY_XFRAC),A
+    LD (TANK_ENTRY_YFRAC),A
     LD A,1 : LD (TANK_ENTRY_ACT),A
     XOR A
     LD (TANK_DX),A
@@ -16262,56 +16263,40 @@ UTE_NOT_GROUNDED:
     INC A
     LD (TANK_ENTRY_ANIM),A
 
-    ; ("その10倍遅くしろ"): X/Y移動はTANK_ENTRY_SLOWDOWNフレームに1回。
-    LD A,(TANK_ENTRY_SLOW_CTR) : INC A
-    CP TANK_ENTRY_SLOWDOWN
-    JR C,UTE_SLOW_HOLD
-    XOR A
-    LD (TANK_ENTRY_SLOW_CTR),A
-    JR UTE_PHYSICS
-UTE_SLOW_HOLD:
-    LD (TANK_ENTRY_SLOW_CTR),A
-    JR UTE_DRAW
-UTE_PHYSICS:
-    ; --- X: TANK_ENTRY_VX/frameでTANK_X_INITへ近づける(クランプ) ---
+    ; (follow-up10): X/Yとも8.8固定小数点で毎フレーム更新(滑らかに落下)。
+    ; --- X: 毎フレームTANK_ENTRY_XSUB/256pxずつTANK_X_INITへ ---
     LD A,(TANK_X)
     CP TANK_X_INIT
     JR NC,UTE_X_DONE
-    ADD A,TANK_ENTRY_VX
-    CP TANK_X_INIT+1
-    JR C,UTE_X_STORE
-    LD A,TANK_X_INIT
-UTE_X_STORE:
-    LD (TANK_X),A
+    LD A,(TANK_ENTRY_XFRAC) : ADD A,TANK_ENTRY_XSUB : LD (TANK_ENTRY_XFRAC),A
+    JR NC,UTE_X_DONE
+    LD A,(TANK_X) : INC A : LD (TANK_X),A
 UTE_X_DONE:
 
-    ; --- Y: 重力加算式で地面(TANK_GROUND_Y)へ近づける(クランプ)。
-    ; (2026-09-23follow-up6): 演出中も地形スクロールが進むため、着地先は
-    ; 固定のTANK_Y_BASEではなく、UTE冒頭で毎フレーム更新している現在の
-    ; 地形の地面Y(TANK_GROUND_Y)。 ---
+    ; --- Y: 速度(8.8)に重力を加算し、Y(8.8)へ速度を加算。地面
+    ; (TANK_GROUND_Y、毎フレーム更新)でクランプ ---
     LD A,(TANK_GROUND_Y) : LD B,A
     LD A,(TANK_Y_CUR)
     CP B
     JR NC,UTE_Y_LAND
-    LD A,(TANK_ENTRY_GRAV_CTR) : INC A
-    CP TANK_ENTRY_GRAVITY_INTERVAL
-    JR C,UTE_GRAV_HOLD
-    XOR A
-    LD (TANK_ENTRY_GRAV_CTR),A
-    LD A,(TANK_ENTRY_VY) : ADD A,TANK_ENTRY_GRAVITY : LD (TANK_ENTRY_VY),A
-    JR UTE_GRAV_DONE
-UTE_GRAV_HOLD:
-    LD (TANK_ENTRY_GRAV_CTR),A
-UTE_GRAV_DONE:
-    LD A,(TANK_ENTRY_VY) : LD E,A
-    LD A,(TANK_Y_CUR) : ADD A,E
+    LD HL,(TANK_ENTRY_VY)
+    LD DE,TANK_ENTRY_GRAVITY_SUB
+    ADD HL,DE
+    LD (TANK_ENTRY_VY),HL
+    LD A,(TANK_ENTRY_YFRAC) : ADD A,L : LD (TANK_ENTRY_YFRAC),A
+    LD A,H
+    JR NC,UTE_Y_NOCARRY
+    INC A
+UTE_Y_NOCARRY:
+    LD C,A
+    LD A,(TANK_Y_CUR) : ADD A,C
+    JR C,UTE_Y_LAND
     CP B
     JR C,UTE_Y_STORE
 UTE_Y_LAND:
     LD A,B
 UTE_Y_STORE:
     LD (TANK_Y_CUR),A
-UTE_Y_DONE:
 
 UTE_DRAW:
     ; 自機本体(スロット0-3)を新しいX/Yで再描画

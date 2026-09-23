@@ -30,15 +30,13 @@ def tick(cpu):
 
 TANK_ENTRY_ACT = sym["TANK_ENTRY_ACT"]
 TANK_ENTRY_VY = sym["TANK_ENTRY_VY"]
-TANK_ENTRY_GRAV_CTR = sym["TANK_ENTRY_GRAV_CTR"]
 TANK_ENTRY_ANIM = sym["TANK_ENTRY_ANIM"]
-TANK_ENTRY_SLOW_CTR = sym["TANK_ENTRY_SLOW_CTR"]
-TANK_ENTRY_SLOWDOWN = sym["TANK_ENTRY_SLOWDOWN"]
+TANK_ENTRY_XFRAC = sym["TANK_ENTRY_XFRAC"]
+TANK_ENTRY_YFRAC = sym["TANK_ENTRY_YFRAC"]
+TANK_ENTRY_XSUB = sym["TANK_ENTRY_XSUB"]
+TANK_ENTRY_GRAVITY_SUB = sym["TANK_ENTRY_GRAVITY_SUB"]
 TANK_ENTRY_START_X = sym["TANK_ENTRY_START_X"]
 TANK_ENTRY_START_Y = sym["TANK_ENTRY_START_Y"]
-TANK_ENTRY_GRAVITY = sym["TANK_ENTRY_GRAVITY"]
-TANK_ENTRY_GRAVITY_INTERVAL = sym["TANK_ENTRY_GRAVITY_INTERVAL"]
-TANK_ENTRY_VX = sym["TANK_ENTRY_VX"]
 BOOSTER_Y_OFFSET = sym["BOOSTER_Y_OFFSET"]
 BOOSTER_WIDTH = sym["BOOSTER_WIDTH"]
 TANK_X = sym["TANK_X"]
@@ -63,10 +61,9 @@ cpu = fresh_cpu(skip_intro=False)
 check("boot: TANK_ENTRY_ACT=1 (armed)", cpu.rd(TANK_ENTRY_ACT) == 1)
 check("boot: TANK_X=TANK_ENTRY_START_X(0)", cpu.rd(TANK_X) == TANK_ENTRY_START_X)
 check("boot: TANK_Y_CUR=TANK_ENTRY_START_Y(64)", cpu.rd(TANK_Y_CUR) == TANK_ENTRY_START_Y)
-check("boot: TANK_ENTRY_VY starts at 0", cpu.rd(TANK_ENTRY_VY) == 0)
-check("boot: TANK_ENTRY_GRAV_CTR starts at 0", cpu.rd(TANK_ENTRY_GRAV_CTR) == 0)
+check("boot: TANK_ENTRY_VY (8.8) starts at 0", cpu.rd(TANK_ENTRY_VY) == 0 and cpu.rd(TANK_ENTRY_VY + 1) == 0)
 check("boot: TANK_ENTRY_ANIM starts at 0", cpu.rd(TANK_ENTRY_ANIM) == 0)
-check("boot: TANK_ENTRY_SLOW_CTR starts at 0", cpu.rd(TANK_ENTRY_SLOW_CTR) == 0)
+check("boot: X/Y fraction bytes start at 0", cpu.rd(TANK_ENTRY_XFRAC) == 0 and cpu.rd(TANK_ENTRY_YFRAC) == 0)
 
 # ---- 2. 演出中も本編(TICK・地形スクロール)は進むが、("スタート演出中は
 #         Tickはカウントスタートすんな") GAME_TICKは0のまま・敵は出ない ----
@@ -84,20 +81,17 @@ check("while TANK_ENTRY_ACT!=0, terrain keeps scrolling", (cpu2.rd(sym["PXCHAR_T
 check("while TANK_ENTRY_ACT!=0, GAME_TICK stays 0 (schedule clock not started)",
       game_tick1 == 0)
 
-# ---- 3. TANK_X stays frozen for the first TANK_ENTRY_SLOWDOWN-1 simulated
-#         frames, then advances by exactly 1 step on the
-#         TANK_ENTRY_SLOWDOWN'th ----
+# ---- 3. (follow-up10、"落下が荒くて滑らかになってない") 毎フレーム更新:
+#         X/Yとも1フレームに最大1pxしか動かない(10フレームごとの跳びが無い) ----
 cpu3a = fresh_cpu(skip_intro=False)
-xs_raw = []
-for _ in range(TANK_ENTRY_SLOWDOWN + 2):
+xs_raw, ys_raw = [cpu3a.rd(TANK_X)], [cpu3a.rd(TANK_Y_CUR)]
+while cpu3a.rd(TANK_ENTRY_ACT):
     tick(cpu3a)
-    xs_raw.append(cpu3a.rd(TANK_X))
-check(f"TANK_X stays at TANK_ENTRY_START_X for the first {TANK_ENTRY_SLOWDOWN - 1} simulated "
-      "frames (movement gated behind the slowdown counter, not "
-      "advancing every frame)", all(v == TANK_ENTRY_START_X for v in xs_raw[:TANK_ENTRY_SLOWDOWN - 1]))
-check(f"TANK_X advances by exactly TANK_ENTRY_VX on the {TANK_ENTRY_SLOWDOWN}th "
-      "frame (the one real movement step in this window)",
-      xs_raw[TANK_ENTRY_SLOWDOWN - 1] == TANK_ENTRY_START_X + TANK_ENTRY_VX and xs_raw[TANK_ENTRY_SLOWDOWN] == TANK_ENTRY_START_X + TANK_ENTRY_VX)
+    xs_raw.append(cpu3a.rd(TANK_X)); ys_raw.append(cpu3a.rd(TANK_Y_CUR))
+check("smooth: TANK_X never moves more than 1px in a single frame",
+      max(abs(xs_raw[i] - xs_raw[i - 1]) for i in range(1, len(xs_raw))) <= 1)
+check("smooth: TANK_Y_CUR never moves more than 1px in a single frame during the fall",
+      max(abs(ys_raw[i] - ys_raw[i - 1]) for i in range(1, len(ys_raw) - 1)) <= 1)
 
 # ---- 4. (2026-09-23follow-up3、"なんで10フレ切り替えなんだよ！そんな
 #         指示してねえだろうが 1フレつったら1フレだろが") booster
@@ -105,15 +99,15 @@ check(f"TANK_X advances by exactly TANK_ENTRY_VX on the {TANK_ENTRY_SLOWDOWN}th 
 #         independent of the 10x movement slowdown ----
 cpu3 = fresh_cpu(skip_intro=False)
 anims = []
-for _ in range(TANK_ENTRY_SLOWDOWN * 3):
+for _ in range(30):
     tick(cpu3)
     anims.append(cpu3.rd(TANK_ENTRY_ANIM))
 pats = []
 cpu3 = fresh_cpu(skip_intro=False)
-for _ in range(TANK_ENTRY_SLOWDOWN * 3):
+for _ in range(30):
     tick(cpu3)
     pats.append(cpu3.rd(BOOSTER_SPRITE_ATTRS + 2))
-exp = [PAT_BOOSTER2 if ((i + 1) & 2) else PAT_BOOSTER1 for i in range(TANK_ENTRY_SLOWDOWN * 3)]
+exp = [PAT_BOOSTER2 if ((i + 1) & 2) else PAT_BOOSTER1 for i in range(30)]
 check("booster frame switches Bunit1/Bunit2 every 2 frames (\"2フレで\"), "
       "independent of the movement slowdown", pats == exp and pats[:6] == [PAT_BOOSTER1, PAT_BOOSTER2, PAT_BOOSTER2, PAT_BOOSTER1, PAT_BOOSTER1, PAT_BOOSTER2])
 
@@ -122,30 +116,27 @@ TANK_GROUND_Y = sym["TANK_GROUND_Y"]
 
 
 def simulate(grounds):
-    """grounds[i] = フレームiでUPDATE_TANK_ENTRYが使った地面Y(演出中も
-    地形はスクロールするため、着地先は固定値ではなく毎フレームの地面)。"""
+    """ASMと同じ8.8固定小数点モデル。grounds[i] = フレームiで使われた地面Y。"""
     x, y = TANK_ENTRY_START_X, TANK_ENTRY_START_Y
-    vy, ctr = 0, 0
-    slow_ctr = 0
+    xf, yf, vy = 0, 0, 0
     xs, ys = [], []
     for g in grounds:
         if y >= g:
             y = g
-        slow_ctr += 1
-        if slow_ctr >= TANK_ENTRY_SLOWDOWN:
-            slow_ctr = 0
-            if x < TANK_X_INIT:
-                x = min(x + TANK_ENTRY_VX, TANK_X_INIT)
-            if y < g:
-                ctr += 1
-                if ctr >= TANK_ENTRY_GRAVITY_INTERVAL:
-                    ctr = 0
-                    vy += TANK_ENTRY_GRAVITY
-                y = y + vy
-                if y >= g:
-                    y = g
-            else:
-                y = g
+        if x < TANK_X_INIT:
+            xf += TANK_ENTRY_XSUB
+            if xf >= 256:
+                xf -= 256
+                x += 1
+        if y < g:
+            vy = (vy + TANK_ENTRY_GRAVITY_SUB) & 0xFFFF
+            yf += vy & 0xFF
+            carry = yf >= 256
+            yf &= 0xFF
+            ny = y + (vy >> 8) + carry
+            y = g if (ny > 255 or ny >= g) else ny
+        else:
+            y = g
         xs.append(x)
         ys.append(y)
         if x >= TANK_X_INIT and y >= g:
@@ -163,7 +154,7 @@ for _ in range(N_TRACE):
 xs_exp, ys_exp = simulate(grounds)
 landing_frame = len(xs_exp) - 1
 check("TANK_X matches an independent Python parabola simulation frame-"
-      "for-frame up to landing (slowdown gate included)", xs_real[:landing_frame + 1] == xs_exp)
+      "for-frame up to landing (8.8 fixed point)", xs_real[:landing_frame + 1] == xs_exp)
 check("TANK_Y_CUR matches an independent Python parabola simulation frame-"
       "for-frame up to landing, landing on the LIVE terrain ground Y",
       ys_real[:landing_frame + 1] == ys_exp)
@@ -173,8 +164,8 @@ check("landing: TANK_Y_CUR equals that frame's live TANK_GROUND_Y (not a "
 check("both axes actually reach their real targets within the traced window "
       "(test's own sanity check, not an ASM assertion)",
       landing_frame < N_TRACE - 5 and xs_exp[landing_frame] == TANK_X_INIT)
-check("landing genuinely takes roughly 10x longer in frames "
-      "than the pre-slowdown baseline", landing_frame >= 10 * 20)
+check("landing takes ~220 frames (\"10倍遅く\" duration kept) and X/Y arrive "
+      "together (no sliding on the ground)", 200 <= landing_frame <= 240)
 
 # ---- 6. ("オフセット無視すんな") ブースターは演出の最初から最後まで常に
 #         TANK_X-16 / TANK_Y_CUR+7(めり込み・クランプ無し)、開始時の
