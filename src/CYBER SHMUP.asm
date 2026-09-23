@@ -8980,10 +8980,13 @@ PDCE2_SKIP:
 ; Player-vs-ENEMY3(ground/BG enemy) contact check. Mirrors E3_HIT_
 ; ONE_SLOT/CHECK_BULLET_VS_ENEMY3's own ACTIVE-count short-circuit and
 ; COL/ROW*8 pixel-box geometry ((IX+5)=COL->X, (IX+4)=ROW->Y, box8).
+; (2026-09-23、監査: Enemy3は生きている個体をENEMY3_ACTIVE_COUNT体見つけた
+; 時点で走査を打ち切る。空いたウェーブの後方スロットを調べない)
 PDC_CHECK_ENEMY3:
     LD A,(ENEMY3_ACTIVE_COUNT)
     OR A
     JR Z,PDCE3_NONE
+    LD C,A                         ; C = まだ見つけていない生存数
     LD HL,ENEMY3_POOL
     LD B,ENEMY3_WAVE_SLOTS*ENEMY3_SLOTS
 PDCE3_LOOP:
@@ -8998,6 +9001,8 @@ PDCE3_LOOP:
     POP HL
     OR A
     JR NZ,PDCE3_HIT
+    DEC C
+    JR Z,PDCE3_NONE                ; 生存個体を全部調べた
 PDCE3_SKIP:
     LD DE,ENEMY3_STRUCT
     ADD HL,DE
@@ -12181,10 +12186,13 @@ E3EC_GOT:
 ; now (spawning itself is ENEMY3_TRY_SPAWN's job, not this one's), so
 ; skip the scan entirely rather than pay ~150 T-states/slot to find
 ; that out the slow way.
+; (2026-09-23、監査: Enemy3は生きている個体をENEMY3_ACTIVE_COUNT体見つけた
+; 時点で走査を打ち切る。空いたウェーブの後方スロットを調べない)
 ENEMY3_UPDATE_ALL:
     LD A,(ENEMY3_ACTIVE_COUNT)
     OR A
     RET Z
+    LD C,A                         ; C = まだ見つけていない生存数
     LD HL,ENEMY3_POOL
     LD B,ENEMY3_WAVE_SLOTS*ENEMY3_SLOTS
 E3UA_LOOP:
@@ -12202,6 +12210,8 @@ E3UA_LOOP:
     CALL ENEMY3_UPDATE_SLOT
     POP HL
     POP BC
+    DEC C
+    RET Z                          ; 生存個体を全部処理した
 E3UA_SKIP:
     LD DE,ENEMY3_STRUCT
     ADD HL,DE
@@ -12419,12 +12429,16 @@ E3H_NO:
 ; is offset 0, so it's checked straight off HL first (same idiom as
 ; CHECK_BULLET_VS_ENEMY_POOL/ENEMY_POOL_UPDATE_ALL) and only genuinely
 ; active slots pay for the PUSH/POP/CALL dance.
+; (2026-09-23、監査: Enemy3は生きている個体をENEMY3_ACTIVE_COUNT体見つけた
+; 時点で走査を打ち切る。空いたウェーブの後方スロットを調べない)
 CHECK_BULLET_VS_ENEMY3:
     LD A,(ENEMY3_ACTIVE_COUNT)
     OR A
     JR Z,CBVE3_NONE
+    LD D,A                         ; 生存数(下でCへ)
     LD A,B : LD (ENEMY_HIT_COL),A
     LD A,C : LD (ENEMY_HIT_ROW),A
+    LD C,D                         ; C = まだ見つけていない生存数
     LD HL,ENEMY3_POOL
     LD B,ENEMY3_WAVE_SLOTS*ENEMY3_SLOTS
 CBVE3_LOOP:
@@ -12441,6 +12455,8 @@ CBVE3_LOOP:
     POP HL
     OR A
     JR NZ,CBVE3_HIT
+    DEC C
+    JR Z,CBVE3_NONE                ; 生存個体を全部調べた
 CBVE3_SKIP:
     LD DE,ENEMY3_STRUCT
     ADD HL,DE

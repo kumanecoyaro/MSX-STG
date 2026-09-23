@@ -18091,3 +18091,26 @@ EbuzII弾ビームへの1pxコリジョン追加+ROM予算の共有バンク6オ
   11byte固定で読んでおり(Round109で12byte化済み)、今回とは無関係に
   失敗していた→ENEMY3_STRUCT参照に修正。verify_mainloop_loop_bounds.py
   にENEMY3_WAVE_SLOTS==3と手展開本数の一致チェック追加(34件)。
+
+## Round145 follow-up15: Enemy3走査の生存数打ち切り(2026-09-23)
+
+- ユーザー: "ROMの確保が可能と見積もれればやって欲しい ここだけ沢山出る...
+  スケジュールでわざと2重に出してる...最終的に1回にするかは重いかどうか
+  で判断するつもり"。
+- ROM見積もり: 3ループともLUT手前のALIGN区間にあり、Comb側の同区間の
+  余り(埋め草)が106byte → 追加コードはROM増加なしで入る(plainは余り21byte
+  だが超えても境界を1つ戻るだけで残りは7byte以上)。
+- 実装(新規RAM無し): CHECK_BULLET_VS_ENEMY3/ENEMY3_UPDATE_ALL/
+  PDC_CHECK_ENEMY3で、開始時のENEMY3_ACTIVE_COUNTをCに持ち、生存個体を
+  見つけるたびDEC C、0で走査終了。ROM残り変化なし(plain263/Comb7)。
+- 前提の検証: ボスまで全14043フレームでENEMY3_ACTIVE_COUNT==実生存スロット
+  数(ずれ0件、最大16体)。新規tools/verify_enemy3_scan_cutoff.py(5件、
+  最後尾スロットの個体も処理される/前方だけなら早期終了)。
+- 効果: Enemy3出現区間(1991-2545, 4599-5120フレーム、計1077フレーム)で
+  平均82,276→78,845T(-4.2%、最大-6,599T/フレーム)。
+- 判断材料(Enemy3区間の内訳、変更後): ENEMY3_UPDATE_ALL 12,469T(うち
+  ENEMY3_UPDATE_SLOTの実処理11,071T=約1,240T/体)、CHECK_BULLET_VS_ENEMY3
+  11,958T(うちE3_HIT_ONE_SLOT 26回6,493T)、PDC_CHECK_ENEMY3 2,602T、
+  Enemy3合計≒27kT/フレーム(区間の約34%)。走査の空回りはほぼ残っておらず、
+  残りは個体数に比例する実処理。区間は変更後も1034→991/1077フレームが
+  60Hz 1フレーム(≒59,700T)超過。
