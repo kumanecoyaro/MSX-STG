@@ -8,6 +8,7 @@ from z80emu import Z80
 
 _OUT_CACHE = None
 _BOOT_SNAPSHOT = None  # a real post-boot Z80/BankedMem, cloned (not re-booted) per fresh_cpu() call
+_BOOT_SNAPSHOT_READY = None  # same, but stepped past the stage2-start "falling in" intro too (see fresh_cpu's own skip_intro)
 
 
 def get_out():
@@ -17,7 +18,7 @@ def get_out():
     return _OUT_CACHE
 
 
-def fresh_cpu(assert_bank_switch=True):
+def fresh_cpu(assert_bank_switch=True, skip_intro=True):
     """Real cold-boot simulation: bankB starts at 0 (matching real
     ASCII16 power-on default), steps through INIT's own trampoline
     code, and only reaches MAINLOOP once bank1 has genuinely been
@@ -33,8 +34,20 @@ def fresh_cpu(assert_bank_switch=True):
     that call fresh_cpu() many times (e.g. boss_test.py, 18 cases) slow.
     deepcopy, not a shared/reset object: each caller gets its own
     independent mem.flat/vram/registers, so nothing a test does to its
-    cpu can leak into another test's."""
-    global _BOOT_SNAPSHOT
+    cpu can leak into another test's.
+
+    skip_intro (2026-09-23、ステージ2のスタート演出、"ブースター込みで
+    0,64から放物線で落下し地上へ着地"): TANK_ENTRY_ACT!=0の間、MAINLOOP
+    冒頭のゲートが他の全処理(地形スクロール・GAME_TICK・敵スポーン等)を
+    完全にスキップするため、この演出の追加前から存在する大多数のテスト
+    (「fresh_cpu()した瞬間から普通に遊べる状態」を暗黙の前提にしている)
+    がそのままでは最初の約40フレーム分「何も起きない」状態を踏んでしまう
+    (dash_test.py/night_effect_test.py/boss_perf_gate_test.py等で実際に
+    検出)。デフォルトでTANK_ENTRY_ACT=0になるまで自動的に先送りし、
+    「普通に遊べる状態」を返す(=演出追加前の暗黙の前提をそのまま維持)。
+    演出自体を検証したいテスト(tank_entry_test.py)だけがskip_intro=
+    Falseを明示的に指定する。"""
+    global _BOOT_SNAPSHOT, _BOOT_SNAPSHOT_READY
     if _BOOT_SNAPSHOT is None:
         out, sym, text = get_out()
         bank0, bank1 = build_test.build_banks(out)
@@ -48,6 +61,22 @@ def fresh_cpu(assert_bank_switch=True):
             steps += 1
         assert steps < 300000, "never reached MAINLOOP"
         _BOOT_SNAPSHOT = cpu
+
+    if skip_intro:
+        if _BOOT_SNAPSHOT_READY is None:
+            out, sym, text = get_out()
+            ready = copy.deepcopy(_BOOT_SNAPSHOT)
+            tank_entry_act = sym["TANK_ENTRY_ACT"]
+            steps = 0
+            while ready.rd(tank_entry_act) != 0 and steps < 1000:
+                step_frame(ready)
+                steps += 1
+            assert steps < 1000, "TANK_ENTRY_ACT never reached 0 (stage2 start entry never lands)"
+            _BOOT_SNAPSHOT_READY = ready
+        cpu = copy.deepcopy(_BOOT_SNAPSHOT_READY)
+        if assert_bank_switch:
+            assert cpu.mem.bankB == 1, f"ASCII16 bank1 was never selected for page2 (bankB={cpu.mem.bankB})"
+        return cpu
     cpu = copy.deepcopy(_BOOT_SNAPSHOT)
     if assert_bank_switch:
         assert cpu.mem.bankB == 1, f"ASCII16 bank1 was never selected for page2 (bankB={cpu.mem.bankB})"

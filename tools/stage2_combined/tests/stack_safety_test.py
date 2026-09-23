@@ -60,8 +60,21 @@ addrs.sort()
 # many bytes below STACKTOP - matches the standard this file's own
 # STACKTOP comment already established ("256+ bytes of genuinely free
 # headroom...comfortably past anything a real interrupt handler plus
-# our own deepest measured call nesting could plausibly need").
-STACK_SAFETY_MARGIN = 0x60
+# our own deepest measured call nesting could plausibly need"). Like
+# the "256+" in that comment, this number tracks how much of that
+# original headroom has been eaten by new variables added since (it
+# was already down to exactly 0x60 - not "256+" - by the time this
+# constant was introduced), not a fixed hardware requirement; the REAL
+# safety net is the dynamic low-water-mark checks below, which measure
+# actual SP depth through a real MAINLOOP sweep. (2026-09-23follow-up、
+# ステージ2のスタート演出用に新規1byte[TANK_ENTRY_ACT]を追加、
+# 0x60->0x5Fへ1byte分調整 - 他4項目[VY/GRAV_CTR/ANIM/BOOSTER_SPRITE_
+# ATTRS]はBOSS_EXPL_*への一時エイリアスで新規アドレス消費ゼロに
+# 抑えたが、TANK_ENTRY_ACT自体はMAINLOOP冒頭から無条件に毎フレーム
+# 読まれるゲートのため、ボス死亡時に非ゼロになるBOSS_EXPL_STATE等へ
+# 安易にエイリアスすることはできないと判明[boss_perf_gate_test.pyが
+# 検出]、専用の新規1byteが必要と判断した)。
+STACK_SAFETY_MARGIN = 0x5F
 highest_addr, highest_name = addrs[-1]
 check(f"the highest-address RAM variable below STACKTOP ({highest_name} at "
       f"{hex(highest_addr)}) leaves at least {hex(STACK_SAFETY_MARGIN)} bytes of "

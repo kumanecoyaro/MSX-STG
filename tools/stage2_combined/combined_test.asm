@@ -51,6 +51,79 @@ TANK_COLOR_BL EQU 1        ; black
 TANK_COLOR_BR EQU 1        ; black
 TANK_X_INIT   EQU 40
 TANK_Y_BASE   EQU 156      ; row23 top (23*8=184) - tank height(32) + landing offset(3+1)
+
+; (2026-09-23、ステージ2のスタート演出、"ブースター込みで0,64から放物線で
+; 落下し地上へ着地"): INITはTANK_X/TANK_Y_CURをTANK_X_INIT/TANK_Y_BASE
+; ではなくここへセットし、TANK_ENTRY_ACT=1で開始する。MAINLOOP冒頭の
+; ゲート(TANK_ENTRY_ACT!=0の間は他の全処理[地形スクロール・敵スポーン
+; 含む]を完全にスキップしUPDATE_TANK_ENTRYのみ呼ぶ)により、この演出中は
+; GAME_TICKも地形も一切進まない - よって敵プールは演出中ずっと初期化
+; 直後の空のままである事が構造的に保証され、ブースター描画用のhwスプ
+; ライトATTRIBUTEスロットを一時的に借用できる。
+; (2026-09-23follow-up、実機/実際のスプライト描画で確認された不具合の
+; 修正): 当初slot4/5に別々の8x8タイル1枚ずつ(パターンコード4,6,15,22)
+; を置く設計で実装したが、実際にレンダリングし直したユーザーから
+; "レンダリング無茶苦茶だぞ スプライトでこうなるんだぞ"とスクショで
+; 指摘を受け根本原因を特定 - このゲームのhwスプライトは16x16固定
+; (VDP R1のSIZE=1、1個のATTRIBUTE ENTRYがパターンコードN,N+1,N+2,N+3の
+; 4個セット[TL,BL,TR,BR]を自動的に使う本物のTMS9918大型スプライト方式、
+; TANK自身が4つのATTRIBUTE ENTRY x コードCUR_POSE_PAT+0/+4/+8/+12で
+; 32x32を組み立てているのがまさにこの規約)だったため、8x8のつもりで
+; 1コードだけロードした残り3コード分(N+1,N+2,N+3)には無関係な他機能の
+; ゴミデータが residual していて、それが混ざって表示されていた。
+; **空きコード自体が実質ゼロ**(4-code境界に整列した完全未使用ブロックは
+; ブート直後の時点ですら1つも存在しないと実測確認済み)なため、新規
+; コードを確保する代わりに、**演出中は絶対に表示されないPAT_TANKUP
+; (自機の「上向き」ポーズ、16コード分)の先頭8コードを一時的に借用**
+; する設計に変更(演出中はJOY_STICKもUPDATE_POSEも一切呼ばれずCUR_
+; POSE_PATはPAT_TANKF[通常]のまま固定されるため、PAT_TANKUPは演出中
+; 構造的に一度も参照されない)。着地の瞬間、INITと全く同じLDIRVM
+; (TANK_TANKUP_TL、128byte)を再実行してPAT_TANKUPの実データを復元する
+; ため、以後の通常プレイ(JOY_STICK上入力での「上向き」ポーズ)には
+; 一切影響しない。ブースター自体は16x16キャンバスの右半分(8x16)だけに
+; 絵柄があり左半分は空白の添付データそのままを1枚のATTRIBUTE ENTRYで
+; 描く(TL/BLは空白8x8、TR/BRに実データ)。
+TANK_ENTRY_START_X EQU 0
+TANK_ENTRY_START_Y EQU 64
+TANK_ENTRY_GRAVITY EQU 1
+TANK_ENTRY_GRAVITY_INTERVAL EQU 3   ; frames between gravity bumps - untuned initial value
+TANK_ENTRY_VX EQU 1                  ; px/frame horizontal drift toward TANK_X_INIT - untuned initial value
+BOOSTER_Y_OFFSET EQU 7               ; ブースターのYオフセット(自機基準)、ユーザー指示通り
+BOOSTER_WIDTH EQU 8                  ; 絵柄自体(右半分)の幅
+; (2026-09-23follow-up、RAM予算+重大な安全性バグの自己発見・修正):
+; 当初BOSS_EXPL_STATE〜COLTMPへの丸ごとエイリアス(TANK_ENTRY_ACT自身も
+; 含む)を試したが、boss_perf_gate_test.pyが即座に検出: BOSS_EXPL_STATE
+; は「自機の落下演出」とは違い、ボスを倒すたび毎回、通常のゲームプレイ
+; 中に実際に非ゼロへ変化する(round36-14follow-up#18のBOSS_WIPE_ACTとは
+; 根本的に性質が違う - あちらはボス出現時の一度きりの演出専用フラグで
+; ボス"死亡"演出[BOSS_EXPL_*]とは時間的に重ならないよう設計されて
+; いたが、今回のTANK_ENTRY_ACTはMAINLOOP冒頭から無条件に毎フレーム
+; 読まれるゲート自身であり、その判定対象を"ボスが死ぬたび普通に非ゼロ
+; になる"領域へ重ねてしまうと、実際にボスを倒した瞬間MAINLOOP全体が
+; 誤って凍結する重大バグになるところだった)。
+; 対応: TANK_ENTRY_ACT自身だけは新規専用アドレス(0xF321、後述の
+; stack_safety_test.py側マージン定数を1byte分調整して確保)とし、
+; ACT!=0の間しか参照されない残り4項目(VY/GRAV_CTR/ANIM/
+; BOOSTER_SPRITE_ATTRS)だけをBOSS_EXPL_RADIUS〜CY(0xF315-0xF31B、
+; 後方定義につき前方参照回避のためリテラル値を直接使用)へエイリアス
+; (こちらは「ACT!=0の間=演出中=ボスが存在すらしない期間」でしか
+; 実際に読み書きされないため、正しく時間的排他が成立する)。
+TANK_ENTRY_ACT       EQU 0F321h   ; 新規専用(他の何にもエイリアスしない)、0=通常(ステージ本編)/1=落下演出中
+TANK_ENTRY_VY        EQU 0F315h   ; = BOSS_EXPL_RADIUS、重力加算式の垂直速度(MINE_VYと同じ考え方)
+TANK_ENTRY_GRAV_CTR  EQU 0F316h   ; = BOSS_EXPL_TIMER、重力加算の間隔カウンタ(MINEの+7と同じ考え方)
+TANK_ENTRY_ANIM      EQU 0F317h   ; = BOSS_EXPL_CX、0/1、ブースターのBunit1/Bunit2切り替え(毎フレーム反転)
+BOOSTER_SPRITE_ATTRS EQU 0F318h   ; = BOSS_EXPL_CY(4byte分、CY/BLINK/ROWTMP/COLTMPを占有)、Y,X,pat,colのステージング
+; ENEMY_SPR_BASE_SLOT(=4、後方定義)を forward-reference すると過去に
+; 踏んだアセンブラの罠(前方参照EQUが0として評価される)を再び踏むリスク
+; があるため、リテラル4を直接使用(ENEMY_SPR_BASE_SLOTの値と一致する
+; ことは上記コメント通り演出中は敵プールが空である事実により安全)。
+BOOSTER_SPR_BASE_SLOT EQU 4  ; hw sprite slot4を一時借用(演出中は敵プール空が保証されている、= ENEMY_SPR_BASE_SLOT+0)
+; PAT_TANKUP(後方定義、=16)もforward-reference回避のためリテラル値を
+; 直接使用。PAT_BOOSTER1=PAT_TANKUP+0(TL quadrant分の4コード)、
+; PAT_BOOSTER2=PAT_TANKUP+4(TR quadrant分の4コード)を一時借用。
+PAT_BOOSTER1 EQU 16
+PAT_BOOSTER2 EQU 20
+BOOSTER_COLOR EQU 15   ; white (fg=15、添付データ通り)
 ; px/frame, left/right - was 2, slowed to 1 per direct instruction
 ; ("自機移動速度が速い気がするんで速度落として"), then asked for 1.5
 ; ("速度1.5に出来ないか") - alternates 1,2,1,2,... (gated by TICK
@@ -3482,6 +3555,15 @@ INIT_RESUME_AFTER_BANK_SELECT:
     ; appears, same timing constraint LOAD_SASAPI_PATTERNS already
     ; follows for the boss's own body reusing BigZum's block.
 
+    ; ブースターユニット(スタート演出専用、Bunit1/Bunit2_16x16.jsonの
+    ; 右側8x16、左半分は空白のまま16x16スプライト1枚として使う)。
+    ; PAT_TANKUPの先頭8コード(演出中は構造的に未参照)を一時的に上書き -
+    ; 詳細はTANK_ENTRY_ACT付近のコメント参照。TANK_TANKUP_TL自身のロード
+    ; (このさらに上、通常のtankパターン読み込みブロック)より後に実行する
+    ; 必要がある(こちらが最終的に勝つ)。
+    LD HL,BOOSTER1_SPRITE : LD DE,PAT_BOOSTER1*8+SPRPAT : LD BC,32 : CALL LDIRVM
+    LD HL,BOOSTER2_SPRITE : LD DE,PAT_BOOSTER2*8+SPRPAT : LD BC,32 : CALL LDIRVM
+
     ; checkpoint 6: tank + bullet patterns loaded
     LD B,6 : LD C,7 : CALL WRTVDP
 
@@ -3522,10 +3604,19 @@ INIT_SPRATR_CLR:
     EI
     DJNZ INIT_SPRATR_CLR
 
-    ; tank state: centered start, grounded, facing/aiming neutral
-    LD A,TANK_X_INIT : LD (TANK_X),A
-    LD A,TANK_Y_BASE : LD (TANK_Y_CUR),A
+    ; tank state: (2026-09-23、スタート演出)開始位置は(TANK_ENTRY_START_X,
+    ; TANK_ENTRY_START_Y)、TANK_X_INIT/TANK_Y_BASEへはUPDATE_TANK_ENTRYが
+    ; 落下演出完了時に到達させる。TANK_GROUND_Yは演出中は一切参照されない
+    ; (MAINLOOP冒頭のゲートでUPDATE_TERRAIN_COLLISION等ごとスキップされる
+    ; ため)、通常ゲームプレイ再開時に備え最初から実際の地上Yへ設定。
+    LD A,TANK_ENTRY_START_X : LD (TANK_X),A
+    LD A,TANK_ENTRY_START_Y : LD (TANK_Y_CUR),A
     LD A,TANK_Y_BASE : LD (TANK_GROUND_Y),A
+    XOR A
+    LD (TANK_ENTRY_VY),A
+    LD (TANK_ENTRY_GRAV_CTR),A
+    LD (TANK_ENTRY_ANIM),A
+    LD A,1 : LD (TANK_ENTRY_ACT),A
     XOR A
     LD (TANK_DX),A
     LD (TANK_AIMUP),A
@@ -4043,6 +4134,21 @@ ICL_LOOP:
     LD B,1 : LD C,7 : CALL WRTVDP
 
 MAINLOOP:
+    ; (2026-09-23、ステージ2のスタート演出): 落下演出中(TANK_ENTRY_ACT
+    ; !=0)は地形スクロール・GAME_TICK・敵スポーンを含むそれ以外の全処理を
+    ; 完全にスキップしUPDATE_TANK_ENTRYだけを毎フレーム呼ぶ(MISSION
+    ; FAILED/GAME_OVERバンク等と同じ「演出専用フェーズはMAINLOOP本体と
+    ; 完全に分離する」設計) - これによりGAME_TICKが演出中は一切進まず、
+    ; 演出開始時点で敵プールが必ず空であることが以後も構造的に保証され
+    ; 続ける(ブースター用hwスプライトスロット/パターンコードの一時借用
+    ; が安全な根拠、TANK_ENTRY_ACT付近のコメント参照)。
+    LD A,(TANK_ENTRY_ACT)
+    OR A
+    JR Z,MAINLOOP_TANK_ENTRY_DONE
+    CALL UPDATE_TANK_ENTRY
+    JP MAINLOOP
+MAINLOOP_TANK_ENTRY_DONE:
+
     LD A,(TICK) : INC A : LD (TICK),A
 
     ; GAME_RNG += TICK, every single frame, unconditionally - see
@@ -16093,5 +16199,147 @@ CLOUD_A_PATTERN:
     DB 06h,6Fh,0FEh,1Bh,04h,00h,00h,00h
 CLOUD_B_PATTERN:
     DB 00h,0D8h,0B4h,0EFh,0B0h,60h,00h,00h
+
+; (2026-09-23follow-up、ステージ2のスタート演出、添付Bunit1/Bunit2_16x16.
+; jsonそのまま): 実機のhwスプライトは16x16固定(TL,BL,TR,BRの4コード
+; セット)なので、元データの16x16キャンバスをそのまま4quadrant形式で
+; 埋める(左半分[TL/BL]は元データ通り空白、右半分[TR/BR]に実絵柄)。
+BOOSTER1_SPRITE:
+    DB 00h,00h,00h,00h,00h,00h,00h,00h   ; top-left (blank)
+    DB 00h,00h,00h,00h,00h,00h,00h,00h   ; bottom-left (blank)
+    DB 3Eh,63h,49h,5Dh,53h,6Dh,5Dh,5Dh   ; top-right
+    DB 49h,63h,3Fh,1Eh,00h,00h,00h,00h   ; bottom-right
+BOOSTER2_SPRITE:
+    DB 00h,00h,00h,00h,00h,00h,00h,00h   ; top-left (blank)
+    DB 00h,00h,00h,00h,00h,00h,00h,00h   ; bottom-left (blank)
+    DB 3Eh,63h,49h,5Dh,53h,6Dh,5Dh,5Dh   ; top-right
+    DB 49h,63h,3Fh,9Eh,0C0h,0F0h,0A0h,20h ; bottom-right
+
+; (2026-09-23、ステージ2のスタート演出、"ブースター込みで0,64から放物線で
+; 落下し地上へ着地 落下中は1と2を1フレ切り替え 着地したらブースター
+; 消滅"): MAINLOOP冒頭のゲート(TANK_ENTRY_ACT!=0)からのみ毎フレーム
+; 呼ばれる。X/YともMINE(tools/stage2_combined自身のflyer mine落下)と
+; 同じ「Xは毎フレーム一定速度・Yは重力加算式」の放物線モデル、両軸とも
+; 目標値でクランプ(オーバーシュートしない)。両軸が目標へ到達した
+; フレームでTANK_ENTRY_ACT=0にしてブースターを隠し、以後は二度と
+; 呼ばれない。
+UPDATE_TANK_ENTRY:
+    ; ブースターのアニメフレームを毎回反転
+    LD A,(TANK_ENTRY_ANIM)
+    XOR 1
+    LD (TANK_ENTRY_ANIM),A
+
+    ; --- X: TANK_ENTRY_VX/frameでTANK_X_INITへ近づける(クランプ) ---
+    LD A,(TANK_X)
+    CP TANK_X_INIT
+    JR NC,UTE_X_DONE
+    ADD A,TANK_ENTRY_VX
+    CP TANK_X_INIT+1
+    JR C,UTE_X_STORE
+    LD A,TANK_X_INIT
+UTE_X_STORE:
+    LD (TANK_X),A
+UTE_X_DONE:
+
+    ; --- Y: 重力加算式でTANK_Y_BASEへ近づける(クランプ) ---
+    LD A,(TANK_Y_CUR)
+    CP TANK_Y_BASE
+    JR NC,UTE_Y_DONE
+    LD A,(TANK_ENTRY_GRAV_CTR) : INC A
+    CP TANK_ENTRY_GRAVITY_INTERVAL
+    JR C,UTE_GRAV_HOLD
+    XOR A
+    LD (TANK_ENTRY_GRAV_CTR),A
+    LD A,(TANK_ENTRY_VY) : ADD A,TANK_ENTRY_GRAVITY : LD (TANK_ENTRY_VY),A
+    JR UTE_GRAV_DONE
+UTE_GRAV_HOLD:
+    LD (TANK_ENTRY_GRAV_CTR),A
+UTE_GRAV_DONE:
+    LD A,(TANK_Y_CUR) : LD D,A
+    LD A,(TANK_ENTRY_VY) : LD E,A
+    LD A,D : ADD A,E
+    CP TANK_Y_BASE+1
+    JR C,UTE_Y_STORE
+    LD A,TANK_Y_BASE
+UTE_Y_STORE:
+    LD (TANK_Y_CUR),A
+UTE_Y_DONE:
+
+    ; 自機本体(スロット0-3)を新しいX/Yで再描画
+    CALL UPDATE_TANK_SPRITES
+
+    ; --- ブースター(16x16スプライト1枚、実絵柄は右半分[TR/BR]のみ)の
+    ; ATTRIBUTE X = TANK_X-16(実絵柄の右半分がTANK_Xの直前8pxに来る
+    ; ように)。TANK_X<16の間(演出開始直後の数フレームのみ)は0へ
+    ; クランプ(アンダーフロー防止、実絵柄が左端付近へ寄るだけで実害
+    ; なし)。 ---
+    LD A,(TANK_X)
+    CP 16
+    JR NC,UTE_BX_OK
+    XOR A
+    JR UTE_BX_SET
+UTE_BX_OK:
+    SUB 16
+UTE_BX_SET:
+    LD B,A
+
+    ; --- ブースターY = TANK_Y_CUR + BOOSTER_Y_OFFSET ---
+    LD A,(TANK_Y_CUR) : ADD A,BOOSTER_Y_OFFSET
+    LD C,A
+
+    ; --- アニメフレームでBunit1/Bunit2のパターンコードベースを選択 ---
+    LD A,(TANK_ENTRY_ANIM)
+    OR A
+    LD D,PAT_BOOSTER1
+    JR Z,UTE_PAT_GOT
+    LD D,PAT_BOOSTER2
+UTE_PAT_GOT:
+
+    LD HL,BOOSTER_SPRITE_ATTRS
+    LD A,C : LD (HL),A : INC HL     ; Y
+    LD A,B : LD (HL),A : INC HL     ; X
+    LD A,D : LD (HL),A : INC HL     ; pattern (base of the 4-code quad)
+    LD A,BOOSTER_COLOR : LD (HL),A
+    CALL FLUSH_BOOSTER_SPRITES
+
+    ; --- 両軸とも目標到達なら演出終了、ブースターを隠しPAT_TANKUPの
+    ; 実データを復元する(INITと同一のLDIRVM) ---
+    LD A,(TANK_X)
+    CP TANK_X_INIT
+    RET C
+    LD A,(TANK_Y_CUR)
+    CP TANK_Y_BASE
+    RET C
+    XOR A : LD (TANK_ENTRY_ACT),A
+    LD A,209 : LD (BOOSTER_SPRITE_ATTRS),A
+    CALL FLUSH_BOOSTER_SPRITES
+    ; MAINLOOP中(H.TIMI割り込み有効)にLDIRVMを呼ぶため、INIT時と違い
+    ; 明示的にDI/EIで保護する(BIOSルーチンの内部動作は割り込み安全性の
+    ; 保証がない、round53等の教訓)。
+    DI
+    LD HL,TANK_TANKUP_TL : LD DE,PAT_TANKUP*8+SPRPAT : LD BC,128 : CALL LDIRVM
+    EI
+    RET
+
+; BOOSTER_SPRITE_ATTRS(4byte)をhw sprite slot BOOSTER_SPR_BASE_SLOTへ
+; 書き込む - FLUSH_MINE_SPRITES等と同型の生DI-wrapped NOP-padded OUT
+; パターン。
+FLUSH_BOOSTER_SPRITES:
+    DI
+    LD A,BOOSTER_SPR_BASE_SLOT*4 : OUT (99h),A
+    NOP
+    NOP
+    LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    LD HL,BOOSTER_SPRITE_ATTRS
+    LD B,4
+FBS_LOOP:
+    LD A,(HL) : OUT (98h),A
+    PUSH BC : POP BC : NOP : NOP
+    INC HL
+    DJNZ FBS_LOOP
+    EI
+    RET
 
 ; ===== generated tables (terrain + tank) appended below by build_test.py =====

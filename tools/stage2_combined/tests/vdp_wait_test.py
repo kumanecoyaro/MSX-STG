@@ -104,11 +104,15 @@ for i, line in enumerate(lines):
 # different X each frame (DRAW_BOSS/FLUSH_BOSS_SPRITES, already-existing
 # call sites, no new raw OUT sites of its own at all) - back down to the
 # pre-wipe baseline, 40->38 / 44->28.
+# (2026-09-23、ステージ2のスタート演出、FLUSH_BOOSTER_SPRITES新設):
+# 他のFLUSH_*_SPRITESと同型の1箇所(OUT(99h)x2[アドレス下位/上位]+
+# DJNZループ内のOUT(98h)x1[テキスト上は1箇所、実行時は4回])を追加、
+# 38->40 / 28->29。
 check(f"found the expected number of raw OUT (99h),A sites ({len(n99)} - update this "
       "count deliberately if a new one is added, don't just let the test drift)",
-      len(n99) == 38)
+      len(n99) == 40)
 check(f"found the expected number of raw OUT (98h),A sites ({len(n98_delay)})",
-      len(n98_delay) == 28)
+      len(n98_delay) == 29)
 
 bad99 = [(ln, n) for ln, n in n99 if n != 2]
 check("every OUT (99h),A (VRAM address setup) is padded with exactly 2 NOPs (8T)",
