@@ -18007,3 +18007,10 @@ EbuzII弾ビームへの1pxコリジョン追加+ROM予算の共有バンク6オ
   Python版との全フレーム一致)。stack_safety/vdp_wait/init_ram_poison/
   boss_perf_gate PASS、Comb再ビルド・verify_comb.py全PASS(Stage1無変更の
   ためEBUZ2再パッチ不要、verify_ebuz2_mk2_comb.py 48件PASS確認済み)。
+
+## Round145 follow-up11: 落下中の自機をジャンプ時の絵に(2026-09-23)
+
+- ユーザー: "落下中の自機はジャンプ時のものにしてくれ"。INITでCUR_POSE_PAT=
+  PAT_TANKFGAP(UPDATE_POSEがジャンプ中に選ぶ絵と同じ、描画時の-3px補正も
+  同じ)、TANK_ENTRY_FINISHでPAT_TANKFへ戻す。tank_entry_test.py 36件、
+  レンダリング確認済み、Comb再ビルド・verify_comb.py全PASS。

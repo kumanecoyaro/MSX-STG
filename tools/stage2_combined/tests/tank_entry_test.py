@@ -270,6 +270,21 @@ for name, data in BUNIT.items():
     check(f"{name} matches Bunit JSON 16x16 exactly (incl. left-bottom flame)",
           [out[sym[name] + i] & 0xFF for i in range(32)] == data)
 
+# ---- (follow-up11、"落下中の自機はジャンプ時のものに") ----
+PAT_TANKFGAP = sym["PAT_TANKFGAP"]; PAT_TANKF = sym["PAT_TANKF"]
+TANK_SPR_BASE_SLOT = sym.get("TANK_SPR_BASE_SLOT", 0)
+cj = fresh_cpu(skip_intro=False)
+pose_ok = True
+while True:
+    tick(cj)
+    if not cj.rd(TANK_ENTRY_ACT):
+        break
+    if cj.rd(sym["CUR_POSE_PAT"]) != PAT_TANKFGAP or cj.vram[SPRATR + TANK_SPR_BASE_SLOT * 4 + 2] != PAT_TANKFGAP:
+        pose_ok = False
+check("during the fall the tank uses the jump pose PAT_TANKFGAP (RAM and VRAM slot0)", pose_ok)
+check("on landing the tank returns to the normal pose PAT_TANKF",
+      cj.rd(sym["CUR_POSE_PAT"]) == PAT_TANKF and cj.vram[SPRATR + TANK_SPR_BASE_SLOT * 4 + 2] == PAT_TANKF)
+
 print()
 print(f"{len(ok)} passed, {len(fail)} failed")
 if fail:
