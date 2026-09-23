@@ -48,7 +48,13 @@ def check(label, cond):
 
 
 def fresh():
-    return Z80(bytearray(mem0))
+    # (2026-09-23) POD_AIM_NORMAL=0はボス到達時5万点未満の「常時自機狙い」。
+    # このテストは従来のゲート(PLAYERX半分)を検証するので5万点以上相当に
+    # する(SCOREも50000点にしておきBOSS_SPAWN経由でも同じ判定になるように)。
+    z = Z80(bytearray(mem0))
+    z.wr(sym["POD_AIM_NORMAL"], 0xFF)
+    z.wr(sym["SCORE"], 500 & 0xFF); z.wr(sym["SCORE"] + 1, 500 >> 8)
+    return z
 
 
 def run_until_pc(z, target_pc, max_instr=300000):

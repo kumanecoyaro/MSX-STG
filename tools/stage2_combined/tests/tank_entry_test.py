@@ -108,9 +108,14 @@ anims = []
 for _ in range(TANK_ENTRY_SLOWDOWN * 3):
     tick(cpu3)
     anims.append(cpu3.rd(TANK_ENTRY_ANIM))
-check("TANK_ENTRY_ANIM alternates 0/1/0/1/... every single frame "
-      "(\"1フレつったら1フレ\" - independent of the movement slowdown)",
-      anims == [(i + 1) % 2 for i in range(TANK_ENTRY_SLOWDOWN * 3)])
+pats = []
+cpu3 = fresh_cpu(skip_intro=False)
+for _ in range(TANK_ENTRY_SLOWDOWN * 3):
+    tick(cpu3)
+    pats.append(cpu3.rd(BOOSTER_SPRITE_ATTRS + 2))
+exp = [PAT_BOOSTER2 if ((i + 1) & 2) else PAT_BOOSTER1 for i in range(TANK_ENTRY_SLOWDOWN * 3)]
+check("booster frame switches Bunit1/Bunit2 every 2 frames (\"2フレで\"), "
+      "independent of the movement slowdown", pats == exp and pats[:6] == [PAT_BOOSTER1, PAT_BOOSTER2, PAT_BOOSTER2, PAT_BOOSTER1, PAT_BOOSTER1, PAT_BOOSTER2])
 
 # ---- 5. an independent Python simulation of the X/Y motion, frame-for-frame, gating movement behind the same slowdown counter ----
 TANK_GROUND_Y = sym["TANK_GROUND_Y"]
@@ -203,7 +208,7 @@ booster_x2 = cpu6.rd(BOOSTER_SPRITE_ATTRS + 1)
 booster_pat = cpu6.rd(BOOSTER_SPRITE_ATTRS + 2)
 booster_col = cpu6.rd(BOOSTER_SPRITE_ATTRS + 3)
 anim = cpu6.rd(TANK_ENTRY_ANIM)
-expected_pat = PAT_BOOSTER2 if anim else PAT_BOOSTER1
+expected_pat = PAT_BOOSTER2 if (anim & 2) else PAT_BOOSTER1
 check("booster ATTRIBUTE X = TANK_X-16 (so the real art, which only occupies "
       "the right half of the 16x16 sprite, lands just left of the tank)",
       booster_x2 == tank_x - 16)
@@ -219,7 +224,7 @@ check("booster color is BOOSTER_COLOR (white)", booster_col == BOOSTER_COLOR)
 #          from whatever else last owned them) - verify all 4 codes of
 #          whichever frame is showing exactly match the source data (TL/BL
 #          blank, TR/BL real art), not just the base code's own 8 bytes ----
-src_frame = BOOSTER2_SPRITE if anim else BOOSTER1_SPRITE
+src_frame = BOOSTER2_SPRITE if (anim & 2) else BOOSTER1_SPRITE
 expected_32 = [out[src_frame + i] & 0xFF for i in range(32)]
 vram_32 = list(cpu6.vram[SPRPAT + booster_pat * 8: SPRPAT + booster_pat * 8 + 32])
 check("all 4 pattern codes of the currently-showing booster frame (TL/BL/TR/BR, "
@@ -263,6 +268,16 @@ step_frame(cpu7)
 tick_after = cpu7.rd(TICK)
 check("after landing, TICK advances again (normal MAINLOOP processing "
       "resumed, not stuck)", tick_after != tick_before)
+
+# ---- ("右が渡したデータだぞ") 両フレームの32byteが添付JSON(16x16)を
+#      そのまま4quadrant変換したものと一致(左下の炎を含む) ----
+BUNIT = {
+    "BOOSTER1_SPRITE": [0]*8 + [0]*8 + [0x3E,0x63,0x49,0x5D,0x53,0x6D,0x5D,0x5D] + [0x49,0x63,0x3F,0x1E,0,0,0,0],
+    "BOOSTER2_SPRITE": [0]*8 + [0x00,0x01,0x07,0x01,0x03,0x06,0x01,0x01] + [0x3E,0x63,0x49,0x5D,0x53,0x6D,0x5D,0x5D] + [0x49,0x63,0x3F,0x9E,0xC0,0xF0,0xA0,0x20],
+}
+for name, data in BUNIT.items():
+    check(f"{name} matches Bunit JSON 16x16 exactly (incl. left-bottom flame)",
+          [out[sym[name] + i] & 0xFF for i in range(32)] == data)
 
 print()
 print(f"{len(ok)} passed, {len(fail)} failed")

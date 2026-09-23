@@ -120,7 +120,7 @@ BOOSTER_WIDTH EQU 8                  ; 絵柄自体(右半分)の幅
 TANK_ENTRY_ACT       EQU 0F321h   ; 新規専用(他の何にもエイリアスしない)、0=通常(ステージ本編)/1=落下演出中
 TANK_ENTRY_VY        EQU 0F315h   ; = BOSS_EXPL_RADIUS、重力加算式の垂直速度(MINE_VYと同じ考え方)
 TANK_ENTRY_GRAV_CTR  EQU 0F316h   ; = BOSS_EXPL_TIMER、重力加算の間隔カウンタ(MINEの+7と同じ考え方)
-TANK_ENTRY_ANIM      EQU 0F317h   ; = BOSS_EXPL_CX、0/1、ブースターのBunit1/Bunit2切り替え(毎フレーム反転)
+TANK_ENTRY_ANIM      EQU 0F317h   ; = BOSS_EXPL_CX、フレームカウンタ、bit1でBunit1/Bunit2切り替え(2フレごと)
 BOOSTER_SPRITE_ATTRS EQU 0F318h   ; = BOSS_EXPL_CY(4byte分、CY/BLINK/ROWTMP/COLTMPを占有)、Y,X,pat,colのステージング
 TANK_ENTRY_SLOW_CTR  EQU 0F31Ch   ; = BOSS_EXPL_RING_MODE/SPARK_SLOT0_COL、同じ理由でエイリアス安全。物理更新の間引きカウンタ(0..TANK_ENTRY_SLOWDOWN-1)
 ; (2026-09-23follow-up5、"本編開始してから落下すんだよ ステージ1も
@@ -16224,7 +16224,7 @@ CLOUD_B_PATTERN:
 ; (2026-09-23follow-up、ステージ2のスタート演出、添付Bunit1/Bunit2_16x16.
 ; jsonそのまま): 実機のhwスプライトは16x16固定(TL,BL,TR,BRの4コード
 ; セット)なので、元データの16x16キャンバスをそのまま4quadrant形式で
-; 埋める(左半分[TL/BL]は元データ通り空白、右半分[TR/BR]に実絵柄)。
+; 埋める(元データ16x16をそのまま4quadrantへ変換、左下の炎も含む)。
 BOOSTER1_SPRITE:
     DB 00h,00h,00h,00h,00h,00h,00h,00h   ; top-left (blank)
     DB 00h,00h,00h,00h,00h,00h,00h,00h   ; bottom-left (blank)
@@ -16232,7 +16232,7 @@ BOOSTER1_SPRITE:
     DB 49h,63h,3Fh,1Eh,00h,00h,00h,00h   ; bottom-right
 BOOSTER2_SPRITE:
     DB 00h,00h,00h,00h,00h,00h,00h,00h   ; top-left (blank)
-    DB 00h,00h,00h,00h,00h,00h,00h,00h   ; bottom-left (blank)
+    DB 00h,01h,07h,01h,03h,06h,01h,01h   ; bottom-left (flame)
     DB 3Eh,63h,49h,5Dh,53h,6Dh,5Dh,5Dh   ; top-right
     DB 49h,63h,3Fh,9Eh,0C0h,0F0h,0A0h,20h ; bottom-right
 
@@ -16255,9 +16255,11 @@ UPDATE_TANK_ENTRY:
     LD A,B : LD (TANK_Y_CUR),A
 UTE_NOT_GROUNDED:
 
-    ; ブースターのアニメ反転は毎フレーム("1フレ切り替え")。
+    ; ブースターのアニメ用カウンタ(毎フレーム+1)。(2026-09-23follow-up9、
+    ; "1フレだと点滅が見えないんで2フレで"): 絵柄はbit1で選ぶので2フレ
+    ; ごとにBunit1/Bunit2が切り替わる。
     LD A,(TANK_ENTRY_ANIM)
-    XOR 1
+    INC A
     LD (TANK_ENTRY_ANIM),A
 
     ; ("その10倍遅くしろ"): X/Y移動はTANK_ENTRY_SLOWDOWNフレームに1回。
@@ -16328,7 +16330,7 @@ UTE_DRAW:
 
     ; --- アニメフレームでBunit1/Bunit2のパターンコードベースを選択 ---
     LD A,(TANK_ENTRY_ANIM)
-    OR A
+    AND 2
     LD D,PAT_BOOSTER1
     JR Z,UTE_PAT_GOT
     LD D,PAT_BOOSTER2

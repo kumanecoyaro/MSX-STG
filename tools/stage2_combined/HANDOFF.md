@@ -17962,3 +17962,32 @@ EbuzII弾ビームへの1pxコリジョン追加+ROM予算の共有バンク6オ
 - **再発防止**: Stage1(`src/CYBER SHMUP.asm`)を1byteでも変更したら、
   必ずpatch_ebuz2_mk2.py→build_full_rom.py→verify_ebuz2_mk2_comb.pyを
   実行すること。
+
+## Round145 follow-up9: Stage2ブースター左下の炎欠け修正+2フレ切替、Stage1 Ebuz 2000点化+ボス到達時5万点未満でポッド弾常時自機狙い(2026-09-23)
+
+- Stage2(ユーザー報告"ブースターの左側が切れてる 右が渡したデータだぞ
+  で、1フレだと点滅が見えないんで2フレで"): Bunit2_16x16.jsonの左下
+  8x8(炎)を空白扱いで捨てていた変換ミスを修正(BOOSTER2_SPRITEのBLを
+  JSONどおり00,01,07,01,03,06,01,01へ)。TANK_ENTRY_ANIMをフレーム
+  カウンタ化しbit1で絵柄選択=2フレごと切替。tank_entry_test.py 35件
+  (JSON直接照合2件追加)。
+- Stage1("Ebuzのスコアを500点から2000点に"): ADD_SCORE_500→
+  ADD_SCORE_2000(HL=20)。
+- Stage1("ボス到達時に5万点を下回った場合どこに居てもポッド弾は自機狙い
+  チェックは到達時にのみ メインで回すな"): BOSS_SPAWN内で1回だけ判定し
+  POD_AIM_NORMAL(0F333h、0=強制自機狙い)へ格納。POD_BULLET_CALC_DIRは
+  ファイル末尾の新設POD_AIM_PREPを呼ぶだけ。自機が左端寄りだと
+  dx=PLAYERX-podXが-128未満で8bitに収まらず符号反転→直進になる問題を
+  発見、dx/dyを9bit差分として1/2にしてから分類する方式に変更(方向は
+  保存、全域サンプリングで理想角度との誤差最大10度=32方向の1ステップ
+  以内)。podが自機より左(dx>=0)の場合は弾が左にしか飛ばないため従来
+  どおり直進。
+- ROM予算: 最初の実装でComb側がLUT手前のALIGN 256で-209byte超過
+  (plainは47のまま)。判定をBOSS_SPAWN内インライン、照準処理をファイル
+  末尾へ移して解消。**plain/Comb残り7byte**(極めて逼迫)。
+- テスト: 新規tools/verify_boss_arrival_aim.py(13件)。
+  verify_boss_pod_bullet_aim.pyはfresh()でPOD_AIM_NORMAL=FFh/SCORE=
+  50000点を設定(32件)。verify_ebuz_integration.pyの自己検証2件が
+  follow-up7(飛び込み演出中GAME_TICK停止)の影響で壊れていたのを修正
+  (壊したROMのブート後にSHIP_ENTRY_ACT=0、109件)。EBUZ2テーブル再パッチ
+  済み、verify_ebuz2_mk2_comb.py 48件・verify_comb.py全PASS。

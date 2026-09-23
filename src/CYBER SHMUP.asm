@@ -475,6 +475,11 @@ PARTICLE_SPAWN_COOLDOWN EQU 0E83Ah  ; frames until the next spawn is allowed
 ; PARTICLE_DY(0F32Eh、4byte)直後・STACKTOP(0F380h)手前の既存の空き
 ; 領域("0F22Bh-0F37Fhの341バイトの空き領域")内。
 SHIP_ENTRY_ACT   EQU 0F332h  ; 0=通常/1=leg1中/2=leg2中
+; (2026-09-23、"ボス到達時に5万点を下回った場合どこに居てもポッド弾は自機
+; 狙いになるように チェックは到達時にのみ行え メインで回すな"):
+; BOSS_SPAWNで1回だけ判定・格納(0=5万点未満で常時自機狙い、非0=従来
+; 通り)。POD_BULLET_CALC_DIR(POD_AIM_PREP)はこれを読むだけ。
+POD_AIM_NORMAL   EQU 0F333h
 SHIP_ENTRY_SPEED EQU 2       ; px/frame、PLAYER_RETREAT_SPEEDと同じ考え方
 SHIP_ENTRY_MID_X EQU 128     ; leg1の目標X(画面中央)
 
@@ -5150,10 +5155,10 @@ ADD_SCORE_200:
 ADD_SCORE_300:
     LD HL,3
     JR ADD_SCORE_COMMON
-; Ebuz(2026-09-14組み込み、耐久値12のミニボス的存在)の撃破報酬 - 他の
-; 通常敵より高めの500点。
-ADD_SCORE_500:
-    LD HL,5
+; Ebuz(2026-09-14組み込み、耐久値12のミニボス的存在)の撃破報酬。
+; (2026-09-23、"Ebuzのスコアを500点から2000点に")。
+ADD_SCORE_2000:
+    LD HL,20
 ADD_SCORE_COMMON:
     LD DE,(SCORE)
     ADD HL,DE
@@ -6302,6 +6307,14 @@ DRTV_NEXT:
 
 BOSS_SPAWN:
     CALL BOSS_CLEAR_DYNAMIC_ENEMIES
+    ; ボス到達時に1回だけ5万点判定: SCORE(実得点/100)<500ならPOD_AIM_NORMAL=0
+    ; (上位byte!=0ならそのまま非0を格納、それ以外は500以上でSBC A,A=FFh)
+    LD A,(SCORE+2) : OR A
+    JR NZ,BS_AIM_STORE
+    LD HL,(SCORE) : LD DE,-500 : ADD HL,DE   ; C=1 if SCORE>=500
+    SBC A,A
+BS_AIM_STORE:
+    LD (POD_AIM_NORMAL),A
     ; --- load boss pattern data now, just in time - not preloaded ---
     ; --- at INIT (that permanently claimed codes192-255, which    ---
     ; --- the terrain scroller actually needs some of - see INIT). ---
@@ -7440,29 +7453,13 @@ PFDP_SKIP1:
 ; (POD_FIRE_DO_PAIR)は自身のpod-pair index(B)をこの呼び出し前後で
 ; 自分でPUSH/POPすること(この関数はB/Cを出力に使うため)。
 POD_BULLET_CALC_DIR:
-    LD A,(PLAYERX)
-    CP POD_BULLET_HOMING_THRESHOLD_X
-    JR NC,PBCDIR_AIM
-    LD B,POD_BULLET_SPEED          ; 半分以下: 従来通り直進
-    LD C,0
-    RET
-PBCDIR_AIM:
-    LD A,(PLAYERX) : SUB D
-    LD D,A                          ; D = dx (signed)
+    ; (2026-09-23): 照準ゲート+dx/dy計算はPOD_AIM_PREP(ファイル末尾)へ。
+    ; C=直進、NC=自機狙い(D=dx/2,E=dy/2、符号付き)。
+    CALL POD_AIM_PREP
+    JR C,PBCDIR_STRAIGHT
     ; (round145follow-up、"ボスの自機狙いポッド弾が左から出てしまう事が
-    ; ある"): POD_AIM_CLASSIFY自身のコメント通りdx>=0(pod位置が自機以下
-    ; のX、=podが自機の左側にいる)は本来想定されていなかった端数ケース
-    ; だが、GET_POD_XYの軌道LUTにより実際に起こりうる。従来はdx>=0でも
-    ; そのままPOD_AIM_CLASSIFYへ渡し「u=0」の出鱈目な近垂直方向を計算
-    ; していたが、弾自体は常にXが減る(左方向)へしか飛ばない設計のため
-    ; 「自機は右にいるのに左方向にしか飛べない」矛盾が生じ、ホーミング
-    ; のはずの弾が変な角度で自機から遠ざかる=「左から出てしまう」ように
-    ; 見えるバグになっていた。dx>=0の間はPLAYERX<閾値の場合と同じ直進
-    ; (水平)へフォールバックする。
-    OR A
-    JP P,PBCDIR_STRAIGHT
-    LD A,(PLAYERY) : SUB E
-    LD E,A                           ; E = dy (signed)
+    ; ある"): dx>=0(podが自機より左)は弾が左にしか飛ばないため直進へ
+    ; フォールバック(POD_AIM_PREP内)。
     CALL POD_AIM_CLASSIFY           ; A = 方向index(0-31)
     LD C,A                          ; C = 方向indexを一時保持
     LD H,0 : LD L,A
@@ -13879,7 +13876,7 @@ CBVEZ_HIT:
     LD A,(IX+EBUZ_OFS_HP) : DEC A : LD (IX+EBUZ_OFS_HP),A
     JR NZ,CBVEZ_DAMAGED
     CALL EBUZ_DESTROY
-    CALL ADD_SCORE_500
+    CALL ADD_SCORE_2000
     LD A,1
     RET
 CBVEZ_DAMAGED:
@@ -16455,4 +16452,29 @@ PCPB_HIT:
     RET
 PCPB_MISS:
     XOR A
+    RET
+
+; (2026-09-23、"ボス到達時に5万点を下回った場合どこに居てもポッド弾は
+; 自機狙いになるように チェックは到達時にのみ行え メインで回すな"):
+; POD_BULLET_CALC_DIRの照準ゲート+dx/dy計算。In: D=podX,E=podY。
+; Out: C=直進、NC=自機狙い(D=dx,E=dy、どちらも9bit差分を1/2にした符号付き
+; 8bit - 自機が左端寄りだとdxが-128を下回り8bitに収まらないため。方向は
+; 保たれる)。POD_AIM_NORMAL=0(ボス到達時5万点未満)ならPLAYERXに関係なく
+; 自機狙い。(ALIGN 256境界[LUT手前]の予算の都合でファイル末尾に配置)
+POD_AIM_PREP:
+    LD A,(POD_AIM_NORMAL) : OR A
+    JR Z,PAP_AIM
+    LD A,(PLAYERX)
+    CP POD_BULLET_HOMING_THRESHOLD_X
+    RET C                          ; 半分以下: 直進
+PAP_AIM:
+    LD A,(PLAYERX) : SUB D         ; C=1 if 自機がpodより左(正常)
+    JR C,PAP_DX
+    XOR A : CP 1                   ; dx>=0: 直進(C=1)
+    RET
+PAP_DX:
+    SRL A : OR 80h : LD D,A        ; dx/2(常に負)
+    LD A,(PLAYERY) : SUB E : LD E,A
+    SBC A,A : AND 80h              ; dyの符号bit
+    SRL E : OR E : LD E,A          ; dy/2(算術シフト)、OR後C=0
     RET

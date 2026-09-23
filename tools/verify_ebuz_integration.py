@@ -423,6 +423,7 @@ def _regress_exit_col_max_wraps_into_next_row():
     zz = Z80(broken_mem)
     zz.pc = sym["INIT"]
     run_until_pc(zz, sym["MAINLOOP"])
+    zz.wr(sym["SHIP_ENTRY_ACT"], 0)  # boot()と同じく飛び込み演出をスキップ(演出中はGAME_TICK停止)
     zz.wr(sa(S0, "ACT"), sym["EBUZ_ST_EXIT"])
     zz.wr(sa(S0, "ROW"), sym["EBUZ_ROW_INST1"])
     zz.wr(sa(S0, "COL"), 27)
@@ -477,7 +478,7 @@ last_hit = hit_ebuz(z3, 25, 9)
 check(f"耐久値ちょうど{sym['EBUZ_HP_INIT']}発目でHPが0になり撃破 - "
       "SLOT0.ACTが0に戻る(完全消去+スケジュール再開)",
       last_hit == 1 and srd(z3, S0, "ACT") == 0)
-check("撃破でスコアが加算される(ADD_SCORE_500)", rd16(z3, sym["SCORE"]) > score0)
+check("撃破でスコアが加算される(ADD_SCORE_2000)", rd16(z3, sym["SCORE"]) > score0)
 check("(2026-09-14 follow-up、'爆発エフェクトはEbuzセル毎に1回 8セルだ"
       "から8回エフェクトとサウンド'): 撃破の瞬間、span4(state2以降)の"
       "8セル分がEBUZ_EXPL_QUEUEへ積まれる",
@@ -554,6 +555,7 @@ def _regress_no_hp_decrement():
     zz = Z80(broken_mem)
     zz.pc = sym["INIT"]
     run_until_pc(zz, sym["MAINLOOP"])
+    zz.wr(sym["SHIP_ENTRY_ACT"], 0)  # boot()と同じく飛び込み演出をスキップ(演出中はGAME_TICK停止)
     zz.wr(sa(S0, "ACT"), sym["EBUZ_ST_FIRE"])
     zz.wr(sa(S0, "ROW"), sym["EBUZ_ROW_INST1"])
     zz.wr(sa(S0, "COL"), sym["EBUZ_SPAWN_COL"])
@@ -836,6 +838,7 @@ def _regress_explosion_queue_not_drained():
     zz = Z80(broken_mem)
     zz.pc = sym["INIT"]
     run_until_pc(zz, sym["MAINLOOP"])
+    zz.wr(sym["SHIP_ENTRY_ACT"], 0)  # boot()と同じく飛び込み演出をスキップ(演出中はGAME_TICK停止)
     zz.wr(sa(S0, "ACT"), sym["EBUZ_ST_FIRE"])
     zz.wr(sa(S0, "ROW"), sym["EBUZ_ROW_INST1"])
     zz.wr(sa(S0, "COL"), sym["EBUZ_SPAWN_COL"])
@@ -983,6 +986,7 @@ def _regress_no_freeze_check():
     zz = Z80(broken_mem)
     zz.pc = sym["INIT"]
     run_until_pc(zz, sym["MAINLOOP"])
+    zz.wr(sym["SHIP_ENTRY_ACT"], 0)  # boot()と同じく飛び込み演出をスキップ(演出中はGAME_TICK停止)
     wr16(zz, sym["GAME_TICK"], 999)
     zz.wr(S0 + sym["EBUZ_OFS_ACT"], sym["EBUZ_ST_ENTER"])
     for _ in range(64):
@@ -1072,6 +1076,7 @@ def _regress_destroy_queue_not_gated():
     zz = Z80(broken_mem)
     zz.pc = sym["INIT"]
     run_until_pc(zz, sym["MAINLOOP"])
+    zz.wr(sym["SHIP_ENTRY_ACT"], 0)  # boot()と同じく飛び込み演出をスキップ(演出中はGAME_TICK停止)
     zz.wr(sa(S0, "ACT"), sym["EBUZ_ST_FIRE"])
     zz.wr(sa(S0, "ROW"), sym["EBUZ_ROW_INST1"])
     zz.wr(sa(S0, "COL"), sym["EBUZ_SPAWN_COL"])
