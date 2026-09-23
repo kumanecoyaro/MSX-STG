@@ -814,6 +814,17 @@ while cpu4.pc != STAGE2_MAINLOOP and steps_e4 < 2_000_000:
 assert cpu4.pc == STAGE2_MAINLOOP, "Stage2 (4th run) never reached its own MAINLOOP"
 print("Stage2 (4th run): reached its own MAINLOOP, ready to drive ENDING_ACT==4")
 
+# (2026-09-23follow-up4、ステージ2のスタート演出): 新規INITはTANK_ENTRY_ACT
+# =1で始まり、MAINLOOP冒頭のゲートが他の全処理(ENDING_ACT関連含む)を
+# TANK_ENTRY_ACT=0になるまでスキップする。本物のVBlank(VBLANK_COUNT)
+# 基準のため、この4th runのように生のcpu.step()ループで一気に進める
+# シナリオでは実際には決して0にならず(z80emu.pyは割り込みを発火しない)
+# 無限に足踏みしてしまう - このシナリオはENDING_ACT==4の挙動自体を
+# 検証したいだけで演出そのものには無関係なため、直接バイパスする。
+mem4.flat[s2sym["TANK_ENTRY_ACT"]] = 0
+mem4.flat[s2sym["TANK_X"]] = s2sym["TANK_X_INIT"]
+mem4.flat[s2sym["TANK_Y_CUR"]] = s2sym["TANK_Y_BASE"]
+
 ENDING_ACT = s2sym["ENDING_ACT"]
 ENDING_WAIT_FINAL_BUTTON = s2sym["ENDING_WAIT_FINAL_BUTTON"]
 mem4.flat[ENDING_ACT] = 4

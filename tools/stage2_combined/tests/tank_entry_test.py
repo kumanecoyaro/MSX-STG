@@ -2,22 +2,23 @@
 8x16はブースターユニット 自機の左側に表示しYのオフセットは7 ブースター
 込みで0,64から放物線で落下し地上へ着地 落下中は1と2を1フレ切り替え
 着地したらブースター消滅"、続けて"そんな一瞬で着地しても何も確認できん
-だろうが その10倍遅くしろ")の検証。
+だろうが その10倍遅くしろ"、続けて"なんで10フレ切り替えなんだよ！そんな
+指示してねえだろうが 1フレつったら1フレだろが"、続けて"しかも同じ
+じゃねえかよ 40フレのままだろうが")の検証。
 
-MAINLOOP冒頭のゲート(TANK_ENTRY_ACT!=0の間は他の全処理をスキップし
-UPDATE_TANK_ENTRYのみ呼ぶ)方式のため、他のverify系テストと同じ
-「step_frame()でMAINLOOP1周分だけ進める」作法がそのまま使える -
-1回のstep_frame()呼び出しが演出中の1"実フレーム"(TANK_ENTRY_ACT!=0の
-JP MAINLOOPループ含む)に正確に対応する。ただし"10倍遅くしろ"対応で
-物理更新(X/Y前進・ブースターのアニメ反転)自体はTANK_ENTRY_SLOWDOWN
-(10)実フレームに1回だけ行われ、それ以外の9/10フレームは同じ位置での
-再描画のみ - このテストの独立Pythonシミュレーションもこの間引きを
-そのまま再現する。
+**重要**: このROMはHALT/vsync同期を一切使わないfree-running設計のため、
+落下演出の実時間ペーシングは本物のVBlank(VBLANK_COUNT、H.TIMI駆動、
+GFEnding等と同じ考え方)基準で実装されている。z80emu.pyは実機の割り込み
+を一切発火しない(このプロジェクト全体で繰り返し確認済みの既知の限界)
+ため、このテストは`banked_helpers.sim_vblank()`(本来H.TIMIが毎VBlank
+呼ぶBGM_TICKを明示的に1回呼ぶ)を`step_frame()`と対にして呼ぶことで
+「本物のVBlankが1回発生した」を1回ずつシミュレートする
+(ending_sequence_test.py等の既存の作法と同じ)。
 """
 import os
 import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from banked_helpers import get_out, fresh_cpu, step_frame
+from banked_helpers import get_out, fresh_cpu, step_frame, sim_vblank
 
 out, sym, text = get_out()
 
@@ -28,12 +29,20 @@ def check(label, cond):
     print(("PASS " if cond else "FAIL "), label)
 
 
+def tick(cpu):
+    """1回の呼び出し=本物のVBlank1回分(sim_vblank)+MAINLOOP1周分
+    (step_frame)。新設計ではこれが「実1フレーム」に対応する。"""
+    sim_vblank(cpu)
+    step_frame(cpu)
+
+
 TANK_ENTRY_ACT = sym["TANK_ENTRY_ACT"]
 TANK_ENTRY_VY = sym["TANK_ENTRY_VY"]
 TANK_ENTRY_GRAV_CTR = sym["TANK_ENTRY_GRAV_CTR"]
 TANK_ENTRY_ANIM = sym["TANK_ENTRY_ANIM"]
 TANK_ENTRY_SLOW_CTR = sym["TANK_ENTRY_SLOW_CTR"]
 TANK_ENTRY_SLOWDOWN = sym["TANK_ENTRY_SLOWDOWN"]
+TANK_ENTRY_LAST_VBLANK = sym["TANK_ENTRY_LAST_VBLANK"]
 TANK_ENTRY_START_X = sym["TANK_ENTRY_START_X"]
 TANK_ENTRY_START_Y = sym["TANK_ENTRY_START_Y"]
 TANK_ENTRY_GRAVITY = sym["TANK_ENTRY_GRAVITY"]
@@ -47,6 +56,7 @@ TANK_X_INIT = sym["TANK_X_INIT"]
 TANK_Y_BASE = sym["TANK_Y_BASE"]
 TICK = sym["TICK"]
 GAME_TICK = sym["GAME_TICK"]
+VBLANK_COUNT = sym["VBLANK_COUNT"]
 BOOSTER_SPRITE_ATTRS = sym["BOOSTER_SPRITE_ATTRS"]
 BOOSTER_SPR_BASE_SLOT = sym["BOOSTER_SPR_BASE_SLOT"]
 SPRATR = sym["SPRATR"]
@@ -67,17 +77,18 @@ check("boot: TANK_ENTRY_VY starts at 0", cpu.rd(TANK_ENTRY_VY) == 0)
 check("boot: TANK_ENTRY_GRAV_CTR starts at 0", cpu.rd(TANK_ENTRY_GRAV_CTR) == 0)
 check("boot: TANK_ENTRY_ANIM starts at 0", cpu.rd(TANK_ENTRY_ANIM) == 0)
 check("boot: TANK_ENTRY_SLOW_CTR starts at 0", cpu.rd(TANK_ENTRY_SLOW_CTR) == 0)
+check("boot: TANK_ENTRY_LAST_VBLANK starts at 0", cpu.rd(TANK_ENTRY_LAST_VBLANK) == 0)
 
 # ---- 2. while falling, TICK/GAME_TICK stay completely frozen (the
 #         MAINLOOP-top gate skips everything else, including the
-#         terrain-scroll/GAME_TICK-advance block) - unaffected by the
-#         10x slowdown gate, since that only throttles the physics
-#         sub-step, not the outer MAINLOOP-freeze itself ----
+#         terrain-scroll/GAME_TICK-advance block) - true regardless of
+#         whether any simulated vblank ever happens, since this gate is
+#         keyed purely on TANK_ENTRY_ACT ----
 cpu2 = fresh_cpu(skip_intro=False)
 tick0 = cpu2.rd(TICK)
 game_tick0 = cpu2.rd(GAME_TICK) | (cpu2.rd(GAME_TICK + 1) << 8)
 for _ in range(50):
-    step_frame(cpu2)
+    tick(cpu2)
 tick1 = cpu2.rd(TICK)
 game_tick1 = cpu2.rd(GAME_TICK) | (cpu2.rd(GAME_TICK + 1) << 8)
 check("while TANK_ENTRY_ACT!=0, TICK never advances (whole MAINLOOP body "
@@ -85,44 +96,60 @@ check("while TANK_ENTRY_ACT!=0, TICK never advances (whole MAINLOOP body "
 check("while TANK_ENTRY_ACT!=0, GAME_TICK never advances either (no spawn "
       "scheduler activity is possible during the fall)", game_tick1 == game_tick0)
 
-# ---- 3. (2026-09-23follow-up2、"その10倍遅くしろ") TANK_X stays frozen
-#         for the first TANK_ENTRY_SLOWDOWN-1 real frames, then advances
-#         by exactly 1 step on the TANK_ENTRY_SLOWDOWN'th - the physics
-#         genuinely only runs 1/10th as often, not just "looks slower" ----
+# ---- 2b. (2026-09-23follow-up4、"しかも同じじゃねえかよ 40フレのまま
+#          だろうが") without any real vblank ever happening (exactly what
+#          z80emu.py's own step_frame() alone gives you - no interrupts
+#          simulated at all), the fall must NOT progress even 1px - this
+#          is the direct regression guard for the bug the user's own
+#          real-hardware/real-time observation caught (the old call-count-
+#          based throttle "progressed" even with zero real elapsed time) ----
+cpu2b = fresh_cpu(skip_intro=False)
+for _ in range(500):
+    step_frame(cpu2b)  # no sim_vblank() - pure busy-wait, no real time passes
+check("with zero real vblanks simulated (matching what pure CPU-instruction "
+      "stepping alone provides), TANK_X does not move at all - progress is "
+      "driven by real elapsed vblank time, not by how many times MAINLOOP "
+      "happens to spin", cpu2b.rd(TANK_X) == TANK_ENTRY_START_X)
+check("...same for TANK_Y_CUR", cpu2b.rd(TANK_Y_CUR) == TANK_ENTRY_START_Y)
+check("...same for TANK_ENTRY_ANIM (no real frame has elapsed yet)",
+      cpu2b.rd(TANK_ENTRY_ANIM) == 0)
+
+# ---- 3. TANK_X stays frozen for the first TANK_ENTRY_SLOWDOWN-1 simulated
+#         real vblanks, then advances by exactly 1 step on the
+#         TANK_ENTRY_SLOWDOWN'th ----
 cpu3a = fresh_cpu(skip_intro=False)
 xs_raw = []
 for _ in range(TANK_ENTRY_SLOWDOWN + 2):
-    step_frame(cpu3a)
+    tick(cpu3a)
     xs_raw.append(cpu3a.rd(TANK_X))
-check(f"TANK_X stays at 0 for the first {TANK_ENTRY_SLOWDOWN - 1} real frames "
-      "(physics gated behind the slowdown counter, not advancing every frame)",
-      all(v == 0 for v in xs_raw[:TANK_ENTRY_SLOWDOWN - 1]))
+check(f"TANK_X stays at 0 for the first {TANK_ENTRY_SLOWDOWN - 1} simulated "
+      "real vblanks (movement gated behind the slowdown counter, not "
+      "advancing every vblank)", all(v == 0 for v in xs_raw[:TANK_ENTRY_SLOWDOWN - 1]))
 check(f"TANK_X advances by exactly TANK_ENTRY_VX on the {TANK_ENTRY_SLOWDOWN}th "
-      "real frame (the one real physics step in this window)",
+      "simulated real vblank (the one real movement step in this window)",
       xs_raw[TANK_ENTRY_SLOWDOWN - 1] == TANK_ENTRY_VX and xs_raw[TANK_ENTRY_SLOWDOWN] == TANK_ENTRY_VX)
 
 # ---- 4. (2026-09-23follow-up3、"なんで10フレ切り替えなんだよ！そんな
 #         指示してねえだろうが 1フレつったら1フレだろが") booster
-#         animation toggles every SINGLE real frame, completely
-#         independent of the 10x movement slowdown - only X/Y motion is
-#         throttled, not the animation ----
+#         animation toggles every SINGLE simulated real vblank, completely
+#         independent of the 10x movement slowdown ----
 cpu3 = fresh_cpu(skip_intro=False)
 anims = []
 for _ in range(TANK_ENTRY_SLOWDOWN * 3):
-    step_frame(cpu3)
+    tick(cpu3)
     anims.append(cpu3.rd(TANK_ENTRY_ANIM))
-check("TANK_ENTRY_ANIM alternates 0/1/0/1/... every single real frame "
+check("TANK_ENTRY_ANIM alternates 0/1/0/1/... every single real vblank "
       "(\"1フレつったら1フレ\" - independent of the movement slowdown)",
       anims == [(i + 1) % 2 for i in range(TANK_ENTRY_SLOWDOWN * 3)])
 
-# ---- 5. an independent Python simulation of the X/Y motion, real-frame
-#         for real-frame, gating physics behind the same slowdown counter ----
-def simulate(n_real_frames):
+# ---- 5. an independent Python simulation of the X/Y motion, real-vblank-
+#         for-real-vblank, gating movement behind the same slowdown counter ----
+def simulate(n_vblanks):
     x, y = TANK_ENTRY_START_X, TANK_ENTRY_START_Y
     vy, ctr = 0, 0
     slow_ctr = 0
     xs, ys = [], []
-    for _ in range(n_real_frames):
+    for _ in range(n_vblanks):
         slow_ctr += 1
         if slow_ctr >= TANK_ENTRY_SLOWDOWN:
             slow_ctr = 0
@@ -138,30 +165,31 @@ def simulate(n_real_frames):
         ys.append(y)
     return xs, ys
 
-N_TRACE = 600
+N_TRACE = 450
 cpu4 = fresh_cpu(skip_intro=False)
 xs_real, ys_real = [], []
 for _ in range(N_TRACE):
-    step_frame(cpu4)
+    tick(cpu4)
     xs_real.append(cpu4.rd(TANK_X))
     ys_real.append(cpu4.rd(TANK_Y_CUR))
 xs_exp, ys_exp = simulate(N_TRACE)
-check("TANK_X matches an independent Python parabola simulation real-frame-"
-      "for-real-frame (slowdown gate included)", xs_real == xs_exp)
+check("TANK_X matches an independent Python parabola simulation real-"
+      "vblank-for-real-vblank (slowdown gate included)", xs_real == xs_exp)
 check("TANK_Y_CUR matches an independent Python parabola simulation real-"
-      "frame-for-real-frame (slowdown gate included)", ys_real == ys_exp)
+      "vblank-for-real-vblank (slowdown gate included)", ys_real == ys_exp)
 
-# landing frame: the first real frame where BOTH axes have reached their target
+# landing frame: the first simulated real vblank where BOTH axes have
+# reached their target
 landing_frame = next(i for i in range(N_TRACE) if xs_exp[i] == TANK_X_INIT and ys_exp[i] == TANK_Y_BASE)
 check("both axes actually reach their real targets within the traced window "
       "(test's own sanity check, not an ASM assertion)",
       xs_exp[landing_frame] == TANK_X_INIT and ys_exp[landing_frame] == TANK_Y_BASE)
-check("landing now genuinely takes roughly 10x longer in real frames than "
-      "the pre-slowdown baseline (~40 real frames)", landing_frame > 300)
+check("landing genuinely takes roughly 10x longer in real vblanks (~400) "
+      "than the pre-slowdown baseline (~40)", landing_frame > 300)
 
 # ---- 6. booster X clamps to 0 instead of underflowing while TANK_X<16 ----
 cpu5 = fresh_cpu(skip_intro=False)
-step_frame(cpu5)  # frame1: TANK_X still 0 (physics hasn't run yet)
+tick(cpu5)  # 1 real vblank: TANK_X still 0 (movement hasn't stepped yet)
 booster_x = cpu5.rd(BOOSTER_SPRITE_ATTRS + 1)
 check("early frame (TANK_X < 16): booster X clamps to 0 instead of "
       "underflowing off-screen", booster_x == 0)
@@ -170,7 +198,7 @@ check("early frame (TANK_X < 16): booster X clamps to 0 instead of "
 cpu6 = fresh_cpu(skip_intro=False)
 frame6 = next(i for i in range(N_TRACE) if xs_exp[i] >= 16) + 1
 for _ in range(frame6):
-    step_frame(cpu6)
+    tick(cpu6)
 tank_x = cpu6.rd(TANK_X)
 tank_y = cpu6.rd(TANK_Y_CUR)
 assert tank_x >= 16, "test precondition: need TANK_X>=16"
@@ -216,7 +244,7 @@ real_tankup = [out[sym["TANK_TANKUP_TL"] + i] & 0xFF for i in range(128)]
 cpu7 = fresh_cpu(skip_intro=False)
 acts = []
 for _ in range(landing_frame + 5):
-    step_frame(cpu7)
+    tick(cpu7)
     acts.append(cpu7.rd(TANK_ENTRY_ACT))
 check(f"TANK_ENTRY_ACT is still 1 the frame before landing, 0 exactly on the "
       f"landing frame (frame {landing_frame + 1})",

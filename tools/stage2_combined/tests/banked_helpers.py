@@ -67,8 +67,18 @@ def fresh_cpu(assert_bank_switch=True, skip_intro=True):
             out, sym, text = get_out()
             ready = copy.deepcopy(_BOOT_SNAPSHOT)
             tank_entry_act = sym["TANK_ENTRY_ACT"]
+            # (2026-09-23follow-up4、"しかも同じじゃねえかよ 40フレのまま
+            # だろうが"): 落下演出の物理更新は本物のVBlank(VBLANK_COUNT、
+            # H.TIMI駆動)基準に書き換わった - z80emu.pyは実機の割り込みを
+            # 一切発火しないため、step_frame()をいくら呼んでもVBLANK_COUNT
+            # は進まず、このループは元のままだと永久にTANK_ENTRY_ACT=0へ
+            # 到達できない(1000回上限で必ずassert落ちする)。ending_
+            # sequence_test.py等の既存の作法と同じく、BGM_TICK(本来は
+            # H.TIMIが毎VBlank呼ぶルーチン)を明示的に1回ずつ挟んで実際の
+            # VBlank発生をシミュレートする。
             steps = 0
             while ready.rd(tank_entry_act) != 0 and steps < 1000:
+                sim_vblank(ready)
                 step_frame(ready)
                 steps += 1
             assert steps < 1000, "TANK_ENTRY_ACT never reached 0 (stage2 start entry never lands)"
@@ -115,5 +125,22 @@ def step_frame(cpu):
         cpu.step()
         s += 1
     return s
+
+
+def sim_vblank(cpu):
+    """z80emu.pyは実機のH.TIMI割り込みを一切発火しない(このプロジェクト
+    全体で繰り返し確認済みの既知の限界)ため、VBLANK_COUNT(H.TIMI駆動の
+    本物の実時間クロック、round145follow-up4のステージ2スタート演出や
+    既存のGFEnding等が採用)に依存するコードをテストする際は、本来
+    H.TIMIが毎VBlank呼ぶBGM_TICKを明示的に1回呼んで「本物のVBlankが
+    1回発生した」ことをシミュレートする必要がある
+    (ending_sequence_test.py等の既存の作法と同じ)。call_routine()は
+    戻った時点でPCがsentinel(0x0000)に残るため、呼び出し元がMAINLOOP
+    ループの途中(pc==MAINLOOP)から呼ぶ前提のこのヘルパーは、呼び出し
+    後に明示的にpcをMAINLOOPへ戻す(SPは既にBGM_TICK自身のRETで正しく
+    復元済み、動かすのはPCだけでよい)。"""
+    out, sym, text = get_out()
+    call_routine(cpu, "BGM_TICK")
+    cpu.pc = sym["MAINLOOP"]
 
 

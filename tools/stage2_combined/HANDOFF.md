@@ -17840,3 +17840,55 @@ EbuzII弾ビームへの1pxコリジョン追加+ROM予算の共有バンク6オ
   その後の別の指示(今回は"10倍遅くしろ")の実装で関連する仕組みを
   再利用・共有ゲート化する際、暗黙に巻き込んで変更しないこと。数値が
   明示されている項目は、後続の変更の影響範囲外として個別に維持する。
+## Round145 follow-up6: 落下演出の実時間ペーシングをVBLANK_COUNT基準へ
+全面書き換え(2026-09-23、完了済み)
+
+- ユーザーから重ねての強い指摘: "しかも同じじゃねえかよ 40フレのまま
+  だろうが ふざけんなお前 指示を全然実行できてない"。follow-up4の
+  「呼び出し回数を10回に1回だけ間引く」方式は根本的に誤りだったと
+  判明: このROMはHALT/vsync同期を一切使わないfree-running設計のため、
+  MAINLOOP冒頭のゲートで他の全処理をスキップすると、UPDATE_TANK_ENTRY
+  自体がCPUの処理できる限りの速さで無制限に呼ばれ続ける - 間引く前の
+  「呼び出し1回」自体がそもそも実時間としてほぼゼロだったため、10倍に
+  しても体感は変わらなかった(ユーザー指摘通り"40フレのまま")。
+- 修正: 呼び出し回数ベースの間引きを全廃し、H.TIMI駆動の本物のVBlank
+  クロックVBLANK_COUNT(0CB18h、GFEnding等のUPDATE_ENDINGと同じ設計
+  思想)基準へ全面書き換え。新規1byte(TANK_ENTRY_LAST_VBLANK、これも
+  BOSS_EXPL_RING_RADIUS[0xF31D]へエイリアス、新規アドレス消費ゼロ)で
+  直近処理したVBLANK_COUNT下位byteを保持し、実際に変化していなければ
+  即RET(実質ビジーウェイト、MAINLOOP側の"JP MAINLOOP"でループする
+  だけ)。本物の1VBlankが経過した時だけブースターのアニメ反転(常に
+  毎VBlank、follow-up3の"1フレつったら1フレ"を維持)とX/Y移動の間引き
+  判定(TANK_ENTRY_SLOWDOWN VBlankに1回)を行う。これにより着地までの
+  実時間は正確に約400/60≒6.7秒(follow-up4以前の約1回分＝1/60秒
+  弱の10倍)になる。
+- **テストの根本的な作り直し**: z80emu.pyは実機のH.TIMI割り込みを
+  一切発火しない(プロジェクト全体で繰り返し確認済みの既知の限界)ため、
+  VBLANK_COUNTに依存するこのコードは素のstep_frame()ループだけでは
+  一切前進しない。`banked_helpers.py`に新規`sim_vblank()`ヘルパー
+  (ending_sequence_test.py等の既存の「BGM_TICKを明示的に呼んでVBlankを
+  シミュレートする」作法をヘルパー化、call_routine()の戻り先PCを
+  MAINLOOPへ明示的に戻す後処理込み)を追加。**この変更にはより広い
+  波及効果があった**: `fresh_cpu()`自身の`skip_intro`内部ループ
+  (follow-up3で追加)も同じ理由で無限に足踏みするようになっていたため
+  `sim_vblank()`を組み込んで修正 - この修正1箇所で他の全テストファイル
+  (fresh_cpu()を使う約1500件超)が引き続き問題なく動作することを確認
+  (個別修正不要)。ただし`tools/bankswitch_poc/verify_comb.py`は
+  `banked_helpers.py`を使わない独立実装のため、ENDING_ACT==4シナリオ
+  (4th run)が同じ理由でハングしていた実バグを発見・修正(MAINLOOP到達
+  直後にTANK_ENTRY_ACT=0/TANK_X=TANK_X_INIT/TANK_Y_CUR=TANK_Y_BASEを
+  直接ポークしてバイパス、このシナリオ自体は演出と無関係なENDING_ACT
+  ロジックの検証が目的のため)。
+- `tank_entry_test.py`を全面改訂(30→34件)、"実VBlankが0回のままなら
+  1pxも動かない"という直接の回帰ガードを新規追加(follow-up4のバグを
+  ピンポイントで再現・検出できる形)。自己検証(RET Zガードを削除して
+  実VBlankチェックを無効化→2件が正しくFAILすることを確認→復元→
+  34件全PASS)済み。Comb ROM再ビルド・`verify_comb.py`全チェックPASS
+  (ENDING_ACT==4シナリオの修正込み)。標準方針によりComb ROMのみ送付。
+- **教訓(重大)**: HALT/vsync同期を使わないfree-running設計のROMで
+  「実時間の長さ」を制御したい場合、呼び出し回数やMAINLOOPの周回数を
+  基準にした間引きは無意味(呼び出し自体の頻度がハードウェア速度に
+  対して無制限なため) - 必ずH.TIMI駆動の本物のVBlankクロック
+  (VBLANK_COUNT)を基準にすること。またこの種のコードをテストする際は
+  z80emu.pyが割り込みを発火しないため、`sim_vblank()`(BGM_TICKの
+  明示呼び出し)によるシミュレーションが必須。

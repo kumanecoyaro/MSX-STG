@@ -121,6 +121,19 @@ TANK_ENTRY_GRAV_CTR  EQU 0F316h   ; = BOSS_EXPL_TIMER、重力加算の間隔カ
 TANK_ENTRY_ANIM      EQU 0F317h   ; = BOSS_EXPL_CX、0/1、ブースターのBunit1/Bunit2切り替え(毎フレーム反転)
 BOOSTER_SPRITE_ATTRS EQU 0F318h   ; = BOSS_EXPL_CY(4byte分、CY/BLINK/ROWTMP/COLTMPを占有)、Y,X,pat,colのステージング
 TANK_ENTRY_SLOW_CTR  EQU 0F31Ch   ; = BOSS_EXPL_RING_MODE/SPARK_SLOT0_COL、同じ理由でエイリアス安全。物理更新の間引きカウンタ(0..TANK_ENTRY_SLOWDOWN-1)
+; (2026-09-23follow-up4、"しかも同じじゃねえかよ 40フレのままだろうが"):
+; このROMはHALT/vsync同期を一切使わない完全free-running設計のため、
+; MAINLOOP冒頭のゲートで他の全処理をスキップすると、UPDATE_TANK_ENTRY
+; 自体の呼び出し間隔にはCPUが処理しきれる限り上限が無くなる - 「10
+; フレームに1回」という呼び出し回数ベースの間引き(follow-up4時点の
+; 実装)は、間引く前の「1回」自体がそもそも実時間としては一瞬未満
+; だったため、10倍にしても体感は変わらなかった(ユーザー指摘通り)。
+; 正しい実時間ペーシングには、H.TIMI駆動の本物の実時間クロック
+; VBLANK_COUNT(0CB18h、GFEnding等のUPDATE_ENDINGと同じ考え方)が必要 -
+; 呼び出し回数ではなく「本物のVBlankが何回発生したか」を基準にする。
+; VBLANK_COUNTは後方定義(6778行目)につき前方参照回避のためリテラル値
+; を直接使用。
+TANK_ENTRY_LAST_VBLANK EQU 0F31Dh ; = BOSS_EXPL_RING_RADIUS/SPARK_SLOT1_ROW、同じ理由でエイリアス安全。直近処理したVBLANK_COUNT下位byte
 ; ENEMY_SPR_BASE_SLOT(=4、後方定義)を forward-reference すると過去に
 ; 踏んだアセンブラの罠(前方参照EQUが0として評価される)を再び踏むリスク
 ; があるため、リテラル4を直接使用(ENEMY_SPR_BASE_SLOTの値と一致する
@@ -3625,6 +3638,7 @@ INIT_SPRATR_CLR:
     LD (TANK_ENTRY_GRAV_CTR),A
     LD (TANK_ENTRY_ANIM),A
     LD (TANK_ENTRY_SLOW_CTR),A
+    LD (TANK_ENTRY_LAST_VBLANK),A   ; VBLANK_COUNT自体もこの時点でまだ0(INIT_BGMがこのDIブロックの中で既に0クリア済み、以後EIまでは増えない)
     LD A,1 : LD (TANK_ENTRY_ACT),A
     XOR A
     LD (TANK_DX),A
@@ -16233,20 +16247,39 @@ BOOSTER2_SPRITE:
 ; フレームでTANK_ENTRY_ACT=0にしてブースターを隠し、以後は二度と
 ; 呼ばれない。
 UPDATE_TANK_ENTRY:
-    ; (2026-09-23follow-up3、"なんで10フレ切り替えなんだよ！そんな指示
-    ; してねえだろうが 1フレつったら1フレだろが" - follow-up2で誤って
-    ; ブースターのアニメ反転まで物理更新[X/Y移動]と同じ10フレーム間引き
-    ; に巻き込んでいたのを是正): ブースターのアニメ反転は指示通り常に
-    ; 実1フレームごと(間引きゲートの外)、間引くのはX/Y移動(重力/速度)
-    ; だけにする。
+    ; (2026-09-23follow-up4、"しかも同じじゃねえかよ 40フレのままだろう
+    ; が ふざけんな"): follow-up2の「呼び出し回数を10回に1回だけ間引く」
+    ; 方式は誤りだった - このROMはHALT/vsync同期を一切使わないfree-
+    ; running設計のため、MAINLOOP冒頭のゲートで他の全処理をスキップする
+    ; と、UPDATE_TANK_ENTRY自体がCPUの処理できる限りの速さで無制限に
+    ; 呼ばれ続ける。間引く前の「呼び出し1回」自体がそもそも実時間として
+    ; ほぼゼロだったため、10倍しても体感は変わらなかった(ユーザー
+    ; 指摘通り、"40フレのまま")。
+    ; 正しい実時間ペーシングにはH.TIMI駆動の本物のVBlankクロック
+    ; (VBLANK_COUNT、GFEnding等のUPDATE_ENDINGと同じ考え方)が必要 -
+    ; 呼び出し回数ではなく「本物のVBlankが実際に何回発生したか」を
+    ; 基準にする。新しい本物のVBlankがまだ来ていなければ即RET(実質
+    ; ビジーウェイト、MAINLOOP側の"JP MAINLOOP"でここへ戻ってくるだけ)。
+    ; VBLANK_COUNT(0CB18h)は後方定義(6778行目)につき前方参照回避の
+    ; ためリテラル値を直接使用。
+    LD A,(0CB18h)
+    LD B,A
+    LD A,(TANK_ENTRY_LAST_VBLANK)
+    CP B
+    RET Z
+    LD A,B
+    LD (TANK_ENTRY_LAST_VBLANK),A
+
+    ; 本物の1VBlankが経過: ブースターのアニメ反転は常にここ(実1
+    ; フレーム=実1VBlankごと、"1フレつったら1フレ"のfollow-up3対応を
+    ; 維持)。
     LD A,(TANK_ENTRY_ANIM)
     XOR 1
     LD (TANK_ENTRY_ANIM),A
 
     ; (2026-09-23follow-up2、"その10倍遅くしろ"): X/Y移動(このラベル
-    ; から下、着地判定より前まで)をTANK_ENTRY_SLOWDOWN実フレームに1回
-    ; だけ実行する。それ以外の9/10フレームは描画のみ繰り返す(位置が
-    ; 変わらないだけで実害なし)。
+    ; から下、着地判定より前まで)は本物のVBlankがTANK_ENTRY_SLOWDOWN回
+    ; 経過するごとに1回だけ実行する。
     LD A,(TANK_ENTRY_SLOW_CTR) : INC A
     CP TANK_ENTRY_SLOWDOWN
     JR C,UTE_SLOW_HOLD
