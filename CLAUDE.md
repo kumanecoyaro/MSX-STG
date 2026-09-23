@@ -37,8 +37,16 @@
 - 新規にVRAM/PSG/その他ハードウェアポートへのブロック転送を実装する際は、着手前に
   必ずこのセクションを再確認し、`OTIR`系命令を使わないこと。
 
-## Stage1 ROM予算(2026-09-23、Round145 follow-up9時点でplain/Comb両方とも
-**残り7byte**・恒久的に確認必須)
+## Stage1 ROM予算(2026-09-23、Round145 follow-up18時点でplain/Comb両方とも
+**残り960byte**・恒久的に確認必須)
+
+- **(2026-09-23、follow-up18)** 末尾区間(ROWADDR_HI以降)のコード/データを、
+  ページ先頭固定の小さな表(SOLOTAB/MUL6/ROWADDR_LO)の後ろの空白と
+  ROWADDR_LO手前の空白へ詰め直し、PATTERNSは2分割(PATTERNS_A/B)して
+  7byte→960byteに回復。**これらのページ内の残り空白はほぼゼロ**
+  (SOLOTABページ0、MUL6ページ3、ROWADDR_LO手前20、ROWADDR_LOページ0byte)。
+  このページ内のコードを伸ばすとALIGN境界を越えて+256byte単位で膨らむので、
+  新規コードは引き続きファイル末尾(POD_AIM_PREPの後ろ)へ置くこと。
 
 - **(2026-09-23追記)** Stage1を1byteでも変更したら、必ず
   `python3 tools/bgm_data/patch_ebuz2_mk2.py`→`build_full_rom.py`→

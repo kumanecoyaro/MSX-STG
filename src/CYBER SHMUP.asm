@@ -1110,7 +1110,8 @@ INIT:
 
     ; (2026-09-19) PATTERNSはRLE圧縮済み(PATTERNS自身のコメント参照)。
     XOR A : OUT (99h),A : LD A,40h : OUT (99h),A
-    LD HL,PATTERNS : LD DE,PATTERNS_SEGMENTS : CALL DECOMPRESS_RLE_TO_VRAM
+    LD HL,PATTERNS_A : LD DE,PATTERNS_A_SEGMENTS : CALL DECOMPRESS_RLE_TO_VRAM
+    LD HL,PATTERNS_B : LD DE,PATTERNS_B_SEGMENTS : CALL DECOMPRESS_RLE_TO_VRAM   ; 続き(同じVRAMアドレスから連続)
     LD HL,COLORDATA : LD DE,2000h : LD BC,COLOR_LEN : CALL LDIRVM
     ; COLORDATAはgroup8(codes64-71、2008h)も含む32グループ全体を上書き
     ; するため、Mission1表示のために上で先に書いたMISSION_FONT_COLOR
@@ -15145,6 +15146,43 @@ LUT:
 SOLOTAB:
     DB 00h,08h,10h,18h,20h,21h
 
+; ---- (2026-09-23、ROM詰め直し) SOLOTABのページ残りへ末尾区間から移設 ----
+
+; (2026-09-19、"あと圧縮はボスだけじゃなく全てのキャラデータだぞ"):
+; PATTERNSはINIT時に1回だけLDIRVMされる純粋な静的パターンジェネレータ
+; データ(以後CPUから直接読まれることは無い)のため、ボス本体データと
+; 同じ自前RLEで圧縮。384byte->341byte(呼び出し1箇所分のオーバーヘッド
+; を差し引いても実質+25byte節約)。以下はRLE圧縮済みバイト列 - 元の
+; 生データの意味(codes0-7=mountain/8-15=diamond/16-23=slash/24=unused/
+; 25-26=flowing cloud左右半分/27-31=unused/32-47=wedge)は無変更、
+; 展開後のVRAM内容は圧縮前と完全に一致することをPython側でround-trip
+; 検証済み(tools/内のスクラッチ検証、tools/verify_*.py群でも回帰
+; テストを追加)。
+; (2026-09-23、ROM詰め直し): 末尾区間を減らすため、ALIGN 256ページの空白へ
+; 収まるよう展開前データ(384byte)を293byte目で2分割して各々RLE圧縮し直した
+; (A=SOLOTABページの残り、B=MUL6ページの残りに配置)。INITは同じVRAMアドレス
+; から続けて2回DECOMPRESS_RLE_TO_VRAMを呼ぶ(VDPアドレスは自動で進むので
+; 展開結果は分割前と完全に同一)。
+PATTERNS_A:
+    DB 127,94,235,254,155,101,254,75,189,188,215,253,55,202,253,150
+    DB 123,121,175,251,110,149,251,45,246,242,95,247,220,43,247,90
+    DB 237,229,190,239,185,86,239,180,219,203,125,223,115,172,223,105
+    DB 183,151,250,191,230,89,191,210,111,47,245,127,205,178,127,165
+    DB 222,94,235,254,155,101,254,75,189,188,215,253,55,202,253,150
+    DB 123,121,175,251,110,149,251,45,246,242,95,247,220,43,247,90
+    DB 237,229,190,239,185,86,239,180,219,203,125,223,115,172,223,105
+    DB 183,151,250,191,230,89,191,210,111,47,245,127,205,178,127,165
+    DB 222,63,94,235,254,155,101,254,75,189,188,215,253,55,202,253
+    DB 150,123,121,175,251,110,149,251,45,246,242,95,247,220,43,247
+    DB 90,237,229,190,239,185,86,239,180,219,203,125,223,115,172,223
+    DB 105,183,151,250,191,230,89,191,210,111,47,245,127,205,178,127
+    DB 165,222,135,0,4,6,111,254,27,4,131,0,4,216,180,239
+    DB 176,96,169,0,36,125,231,223,126,185,199,190,95,246,219,190
+    DB 255,91,229,190,125,251,207,191,253,114,143,125,190,247,159,126
+    DB 251,229,31,250,125,239,62,253,247,202
+PATTERNS_A_SEGMENTS EQU 8
+PATTERNS_LEN EQU 384
+
     ALIGN 256
 ; MUL6: base id (0-5) -> id*6. Optimization: avoids a previous
 ; 5x(LD/ADD/LD) repeated-addition chain used to multiply curr_id
@@ -15152,6 +15190,128 @@ SOLOTAB:
 ; table lookup replaces roughly 15 instructions with 4 per cell.
 MUL6:
     DB 0,6,12,18,24,30
+
+; ---- (2026-09-23、ROM詰め直し) MUL6のページ残りへ末尾区間から移設 ----
+
+; round142(ROM budget): PLAYER_PARTICLE_SPAWN/PLAYER_PARTICLE_FADE
+; (called from PFA_MOVING/MAINLOOP, formerly right after PLAYER_DIR_
+; ADJUST near the top of the file) relocated down here. Reason: the
+; terrain LUT tables (REFRESH_IDCACHE_33's "ALIGN 256" right before
+; LUT:) were sitting EXACTLY on a 256-byte boundary already (zero
+; slack) - round142's bug fixes (retreat-target rewrite/fire gate
+; PLAYER_RETREAT_ACT check/PSG DI-EI protection, all upstream of that
+; ALIGN) pushed the file's byte count past it by only ~19 bytes, but
+; because ALIGN always rounds up to the FULL next 256-byte boundary,
+; even that tiny overage cost a full extra 256 bytes of padding -
+; enough to blow the Comb build's 32768-byte budget (assemble_game()
+; started raising "game byte at unexpected address c000"). Moving
+; these two routines (pure CALL targets, so their physical position
+; in the file has no functional effect) past ALL of this file's
+; remaining ALIGN directives removes ~300 bytes from before that
+; cliff, restoring comfortable slack without shrinking any of the
+; actual bug-fix logic itself.
+PLAYER_PARTICLE_SPAWN:
+    LD A,(PARTICLE_SPAWN_COOLDOWN)
+    OR A
+    JR Z,PPS_COOLDOWN_OK
+    DEC A : LD (PARTICLE_SPAWN_COOLDOWN),A
+    RET
+PPS_COOLDOWN_OK:
+    LD B,PARTICLE_SLOTS
+    LD HL,PARTICLE_ACT
+PPS_FIND_SLOT:
+    LD A,(HL)
+    OR A
+    JR Z,PPS_SLOT_FOUND
+    INC HL
+    DJNZ PPS_FIND_SLOT
+    RET                          ; every slot busy this frame
+PPS_SLOT_FOUND:
+    LD A,PARTICLE_SLOTS : SUB B : LD C,A   ; C = slot index found
+PPS_SPAWN:
+    LD A,4 : LD (PARTICLE_SPAWN_COOLDOWN),A
+    LD HL,PARTICLE_ACT : LD D,0 : LD E,C : ADD HL,DE
+    LD (HL),8
+
+    LD A,(PLAYERX)
+    SUB 4
+    JR NC,PPS_XOK
+    XOR A
+PPS_XOK:
+    LD HL,PARTICLE_X : LD D,0 : LD E,C : ADD HL,DE
+    LD (HL),A
+
+    LD A,(PLAYERY)
+    LD HL,PARTICLE_Y : LD D,0 : LD E,C : ADD HL,DE
+    LD (HL),A
+
+    LD A,0FCh                        ; dx = -4, straight back, fast
+    LD HL,PARTICLE_DX : LD D,0 : LD E,C : ADD HL,DE
+    LD (HL),A
+
+    LD A,(DFL_RNG) : INC A : LD (DFL_RNG),A
+    AND 3
+    CP 3 : JR NZ,PPS_DYIDX_OK
+    XOR A
+PPS_DYIDX_OK:
+    LD D,0 : LD E,A
+    LD HL,PARTICLE_DY_TABLE : ADD HL,DE
+    LD A,(HL)
+    LD HL,PARTICLE_DY : LD D,0 : LD E,C : ADD HL,DE
+    LD (HL),A
+
+    LD A,SPR_WHITE
+    LD HL,PARTICLE_COL : LD D,0 : LD E,C : ADD HL,DE
+    LD (HL),A
+    RET
+
+; -1/0/+1, indexed by a small random pick - the +-30ish degree
+; spread around due-left (DX=-2 is the dominant component).
+PARTICLE_DY_TABLE:
+    DB 0FFh,00h,01h
+
+; SCREEN1 color table: 1 byte per 8 CONSECUTIVE character codes.
+; Only groups 0,1,2,3,4,5 (codes 0-47) are meaningful here;
+; groups 6-31 (codes 48-255, unused by this scroller) are filled
+; with a harmless placeholder color.
+COLORDATA:
+    DB 0F4h    ; group0 codes  0- 7 mountain family (white/blue, cloud design)
+    DB 0F4h    ; group1 codes  8-15 diamond family (white/blue, cloud design)
+    DB 0F4h    ; group2 codes 16-23 slash family (white/blue, cloud design)
+    DB 0F4h    ; group3 codes 24-31 backslash family (unused, matched anyway)
+    DB 0F4h    ; group4 codes 32-39 wedge family (white/blue, cloud design)
+    DB 0F4h    ; group5 codes 40-47 wedge family (white/blue, cloud design)
+    DB 44h,0D4h,0D3h,0DFh,0DAh,0F4h,0FFh,0F3h,0FAh,084h  ; group6=BLANKCODE, group7=shot-blue, group8=shot-green, group9=shot-white, group10=shot-brown, group11=anim1-blue(white/blue, DEBUG was yellow), group12=anim1-white(white/white, DEBUG), group13=anim1-green(white/lightgreen, DEBUG), group14=anim1-brown(white/brown, DEBUG), group15=anim2-blue(red/blue)
+    DB 08Fh,083h,08Ah,0E4h,0E4h,0E8h,0F1h,0F1h,0E4h,0E4h  ; group16=anim2-white, group17=anim2-green, group18=anim2-brown, group19=enemy3-pat1(gray/blue), group20=enemy3-pat2(gray/blue), group21=enemy3-pat3(gray/red), group22=digits0-7(white/black), group23=digits8-9(white/black), group24=BOSS gray/blue, group25=BOSS gray/blue
+    DB 0E4h,0E4h,014h,014h,014h,084h                       ; group26=BOSS gray/blue, group27=BOSS gray/blue, group28-30=BOSS black/blue, group31=BOSS red/blue
+COLOR_LEN EQU 32
+
+; round136(Ebuz Mk2用ROM予算確保、ユーザー指摘"まず地形データがかなり
+; あるはず、これは開始前に基本パターンから生成可能"): ROWDATA0/2/3/5は
+; いずれも同一文字の128byte単純反復(ROWDATA5のみ2文字交互)で、
+; PXCHAR_G1/G2/G4/G8はAND 3Fhで0-63にしか動かず、REFRESH_IDCACHE_33の
+; 33byte読み取り幅を足しても最大96byte分しか実際には参照されない
+; (128byteの元サイズには32byteの余裕があった)。内容が固定パターン
+; なのでROMにリテラルで128byte×4=512byte持つ必要はなく、RAM上に
+; 同サイズのバッファを確保してINIT時に生成する(以後の参照コードは
+; 完全に無変更、ROWDATA0等のラベルが指す先がROMからRAMに変わるだけ)。
+; 配置先はBOSS_PATTERNS(0xCD8Dから290byte、Titleが起動時に埋める)の
+; 直後の空きRAM(次の既知シンボルTICKが0xE000までのため大きな余裕あり、
+; リテラル16進アドレス参照が無いことも横断検索で確認済み)。
+ROWDATA0 EQU 0CEB0h  ; 128 bytes RAM(INITで'M'を充填)
+ROWDATA2 EQU 0CF30h  ; 128 bytes RAM(INITで'D'を充填)
+ROWDATA3 EQU 0CFB0h  ; 128 bytes RAM(INITで'S'を充填)
+ROWDATA5 EQU 0D030h  ; 128 bytes RAM(INITで'A','B'交互に充填)
+; PATTERNS_Aの続き(上のPATTERNS_Aのコメント参照)
+PATTERNS_B:
+    DB 90,63,245,251,223,125,251,239,149,126,235,247,190,251,247,223
+    DB 43,252,215,239,125,246,239,191,86,249,175,223,251,237,223,127
+    DB 173,242,95,190,236,183,125,254,183,203,125,250,217,111,251,253
+    DB 110,151,250,245,179,223,246,251,221,46,245,234,103,190,237,247
+    DB 187,92,235,213,207,124,219,239,119,184,215,171,159,249,183,223
+    DB 238,113,175,87,62,243,111,191,220,227,95,175
+PATTERNS_B_SEGMENTS EQU 1
+
 
 
     ALIGN 256
@@ -16054,315 +16214,7 @@ BULLET_PATTERNS:
     DB 51,135,0
 BULLET_PATTERNS_SEGMENTS EQU 14
 
-    ALIGN 256
-; VRAM address (low byte) of the start of each of the 24 screen
-; rows in the name table (1800h + row*32), used to place a shot
-; character at (row, col) without doing 16-bit multiply at runtime.
-ROWADDR_LO:
-    DB 00h,20h,40h,60h,80h,0A0h,0C0h,0E0h
-    DB 00h,20h,40h,60h,80h,0A0h,0C0h,0E0h
-    DB 00h,20h,40h,60h,80h,0A0h,0C0h,0E0h
-
-    ALIGN 256
-ROWADDR_HI:
-    DB 18h,18h,18h,18h,18h,18h,18h,18h
-    DB 19h,19h,19h,19h,19h,19h,19h,19h
-    DB 1Ah,1Ah,1Ah,1Ah,1Ah,1Ah,1Ah,1Ah
-
-; (2026-09-19、"あと圧縮はボスだけじゃなく全てのキャラデータだぞ"):
-; PATTERNSはINIT時に1回だけLDIRVMされる純粋な静的パターンジェネレータ
-; データ(以後CPUから直接読まれることは無い)のため、ボス本体データと
-; 同じ自前RLEで圧縮。384byte->341byte(呼び出し1箇所分のオーバーヘッド
-; を差し引いても実質+25byte節約)。以下はRLE圧縮済みバイト列 - 元の
-; 生データの意味(codes0-7=mountain/8-15=diamond/16-23=slash/24=unused/
-; 25-26=flowing cloud左右半分/27-31=unused/32-47=wedge)は無変更、
-; 展開後のVRAM内容は圧縮前と完全に一致することをPython側でround-trip
-; 検証済み(tools/内のスクラッチ検証、tools/verify_*.py群でも回帰
-; テストを追加)。
-PATTERNS:
-    DB 127,94,235,254,155,101,254,75,189,188,215,253,55,202,253,150
-    DB 123,121,175,251,110,149,251,45,246,242,95,247,220,43,247,90
-    DB 237,229,190,239,185,86,239,180,219,203,125,223,115,172,223,105
-    DB 183,151,250,191,230,89,191,210,111,47,245,127,205,178,127,165
-    DB 222,94,235,254,155,101,254,75,189,188,215,253,55,202,253,150
-    DB 123,121,175,251,110,149,251,45,246,242,95,247,220,43,247,90
-    DB 237,229,190,239,185,86,239,180,219,203,125,223,115,172,223,105
-    DB 183,151,250,191,230,89,191,210,111,47,245,127,205,178,127,165
-    DB 222,63,94,235,254,155,101,254,75,189,188,215,253,55,202,253
-    DB 150,123,121,175,251,110,149,251,45,246,242,95,247,220,43,247
-    DB 90,237,229,190,239,185,86,239,180,219,203,125,223,115,172,223
-    DB 105,183,151,250,191,230,89,191,210,111,47,245,127,205,178,127
-    DB 165,222,135,0,4,6,111,254,27,4,131,0,4,216,180,239
-    DB 176,96,169,0,127,125,231,223,126,185,199,190,95,246,219,190
-    DB 255,91,229,190,125,251,207,191,253,114,143,125,190,247,159,126
-    DB 251,229,31,250,125,239,62,253,247,202,63,245,251,223,125,251
-    DB 239,149,126,235,247,190,251,247,223,43,252,215,239,125,246,239
-    DB 191,86,249,175,223,251,237,223,127,173,242,95,190,236,183,125
-    DB 254,183,203,125,250,217,111,251,253,110,151,250,245,179,223,246
-    DB 251,221,46,245,234,103,190,237,247,187,92,235,213,207,124,219
-    DB 239,119,184,215,171,159,249,183,223,238,113,175,87,62,243,111
-    DB 191,220,227,95,175
-PATTERNS_SEGMENTS EQU 8
-PATTERNS_LEN EQU 384
-
-BLANK_PATTERN:
-    DB 00h,00h,00h,00h,00h,00h,00h,00h    ; BLANKCODE's actual glyph: truly blank
-
-; SCREEN1 color table: 1 byte per 8 CONSECUTIVE character codes.
-; Only groups 0,1,2,3,4,5 (codes 0-47) are meaningful here;
-; groups 6-31 (codes 48-255, unused by this scroller) are filled
-; with a harmless placeholder color.
-COLORDATA:
-    DB 0F4h    ; group0 codes  0- 7 mountain family (white/blue, cloud design)
-    DB 0F4h    ; group1 codes  8-15 diamond family (white/blue, cloud design)
-    DB 0F4h    ; group2 codes 16-23 slash family (white/blue, cloud design)
-    DB 0F4h    ; group3 codes 24-31 backslash family (unused, matched anyway)
-    DB 0F4h    ; group4 codes 32-39 wedge family (white/blue, cloud design)
-    DB 0F4h    ; group5 codes 40-47 wedge family (white/blue, cloud design)
-    DB 44h,0D4h,0D3h,0DFh,0DAh,0F4h,0FFh,0F3h,0FAh,084h  ; group6=BLANKCODE, group7=shot-blue, group8=shot-green, group9=shot-white, group10=shot-brown, group11=anim1-blue(white/blue, DEBUG was yellow), group12=anim1-white(white/white, DEBUG), group13=anim1-green(white/lightgreen, DEBUG), group14=anim1-brown(white/brown, DEBUG), group15=anim2-blue(red/blue)
-    DB 08Fh,083h,08Ah,0E4h,0E4h,0E8h,0F1h,0F1h,0E4h,0E4h  ; group16=anim2-white, group17=anim2-green, group18=anim2-brown, group19=enemy3-pat1(gray/blue), group20=enemy3-pat2(gray/blue), group21=enemy3-pat3(gray/red), group22=digits0-7(white/black), group23=digits8-9(white/black), group24=BOSS gray/blue, group25=BOSS gray/blue
-    DB 0E4h,0E4h,014h,014h,014h,084h                       ; group26=BOSS gray/blue, group27=BOSS gray/blue, group28-30=BOSS black/blue, group31=BOSS red/blue
-COLOR_LEN EQU 32
-
-; round136(Ebuz Mk2用ROM予算確保、ユーザー指摘"まず地形データがかなり
-; あるはず、これは開始前に基本パターンから生成可能"): ROWDATA0/2/3/5は
-; いずれも同一文字の128byte単純反復(ROWDATA5のみ2文字交互)で、
-; PXCHAR_G1/G2/G4/G8はAND 3Fhで0-63にしか動かず、REFRESH_IDCACHE_33の
-; 33byte読み取り幅を足しても最大96byte分しか実際には参照されない
-; (128byteの元サイズには32byteの余裕があった)。内容が固定パターン
-; なのでROMにリテラルで128byte×4=512byte持つ必要はなく、RAM上に
-; 同サイズのバッファを確保してINIT時に生成する(以後の参照コードは
-; 完全に無変更、ROWDATA0等のラベルが指す先がROMからRAMに変わるだけ)。
-; 配置先はBOSS_PATTERNS(0xCD8Dから290byte、Titleが起動時に埋める)の
-; 直後の空きRAM(次の既知シンボルTICKが0xE000までのため大きな余裕あり、
-; リテラル16進アドレス参照が無いことも横断検索で確認済み)。
-ROWDATA0 EQU 0CEB0h  ; 128 bytes RAM(INITで'M'を充填)
-ROWDATA2 EQU 0CF30h  ; 128 bytes RAM(INITで'D'を充填)
-ROWDATA3 EQU 0CFB0h  ; 128 bytes RAM(INITで'S'を充填)
-ROWDATA5 EQU 0D030h  ; 128 bytes RAM(INITで'A','B'交互に充填)
-
-; round142(ROM budget): PLAYER_PARTICLE_SPAWN/PLAYER_PARTICLE_FADE
-; (called from PFA_MOVING/MAINLOOP, formerly right after PLAYER_DIR_
-; ADJUST near the top of the file) relocated down here. Reason: the
-; terrain LUT tables (REFRESH_IDCACHE_33's "ALIGN 256" right before
-; LUT:) were sitting EXACTLY on a 256-byte boundary already (zero
-; slack) - round142's bug fixes (retreat-target rewrite/fire gate
-; PLAYER_RETREAT_ACT check/PSG DI-EI protection, all upstream of that
-; ALIGN) pushed the file's byte count past it by only ~19 bytes, but
-; because ALIGN always rounds up to the FULL next 256-byte boundary,
-; even that tiny overage cost a full extra 256 bytes of padding -
-; enough to blow the Comb build's 32768-byte budget (assemble_game()
-; started raising "game byte at unexpected address c000"). Moving
-; these two routines (pure CALL targets, so their physical position
-; in the file has no functional effect) past ALL of this file's
-; remaining ALIGN directives removes ~300 bytes from before that
-; cliff, restoring comfortable slack without shrinking any of the
-; actual bug-fix logic itself.
-PLAYER_PARTICLE_SPAWN:
-    LD A,(PARTICLE_SPAWN_COOLDOWN)
-    OR A
-    JR Z,PPS_COOLDOWN_OK
-    DEC A : LD (PARTICLE_SPAWN_COOLDOWN),A
-    RET
-PPS_COOLDOWN_OK:
-    LD B,PARTICLE_SLOTS
-    LD HL,PARTICLE_ACT
-PPS_FIND_SLOT:
-    LD A,(HL)
-    OR A
-    JR Z,PPS_SLOT_FOUND
-    INC HL
-    DJNZ PPS_FIND_SLOT
-    RET                          ; every slot busy this frame
-PPS_SLOT_FOUND:
-    LD A,PARTICLE_SLOTS : SUB B : LD C,A   ; C = slot index found
-PPS_SPAWN:
-    LD A,4 : LD (PARTICLE_SPAWN_COOLDOWN),A
-    LD HL,PARTICLE_ACT : LD D,0 : LD E,C : ADD HL,DE
-    LD (HL),8
-
-    LD A,(PLAYERX)
-    SUB 4
-    JR NC,PPS_XOK
-    XOR A
-PPS_XOK:
-    LD HL,PARTICLE_X : LD D,0 : LD E,C : ADD HL,DE
-    LD (HL),A
-
-    LD A,(PLAYERY)
-    LD HL,PARTICLE_Y : LD D,0 : LD E,C : ADD HL,DE
-    LD (HL),A
-
-    LD A,0FCh                        ; dx = -4, straight back, fast
-    LD HL,PARTICLE_DX : LD D,0 : LD E,C : ADD HL,DE
-    LD (HL),A
-
-    LD A,(DFL_RNG) : INC A : LD (DFL_RNG),A
-    AND 3
-    CP 3 : JR NZ,PPS_DYIDX_OK
-    XOR A
-PPS_DYIDX_OK:
-    LD D,0 : LD E,A
-    LD HL,PARTICLE_DY_TABLE : ADD HL,DE
-    LD A,(HL)
-    LD HL,PARTICLE_DY : LD D,0 : LD E,C : ADD HL,DE
-    LD (HL),A
-
-    LD A,SPR_WHITE
-    LD HL,PARTICLE_COL : LD D,0 : LD E,C : ADD HL,DE
-    LD (HL),A
-    RET
-
-; -1/0/+1, indexed by a small random pick - the +-30ish degree
-; spread around due-left (DX=-2 is the dominant component).
-PARTICLE_DY_TABLE:
-    DB 0FFh,00h,01h
-
-; Called every frame, unconditionally: ages, moves, and redraws
-; every active particle slot, hiding one the instant its life
-; reaches 0. Runs regardless of PLAYER_FLYAWAY so already-spawned
-; particles keep travelling/fading even after the ship itself has
-; gone hidden. Bails out immediately (before touching the VDP at
-; all) if every slot is idle, which is the case for the entire rest
-; of the game outside the flyaway - important, since this is called
-; unconditionally every single frame.
-PLAYER_PARTICLE_FADE:
-    LD B,PARTICLE_SLOTS
-    LD HL,PARTICLE_ACT
-PPF_ANYACT_LOOP:
-    LD A,(HL) : OR A : JR NZ,PPF_ANYACT_FOUND
-    INC HL : DJNZ PPF_ANYACT_LOOP
-    RET
-PPF_ANYACT_FOUND:
-
-    LD C,0
-PPF_LOOP:
-    LD HL,PARTICLE_ACT : LD D,0 : LD E,C : ADD HL,DE
-    LD A,(HL)
-    OR A
-    JP Z,PPF_SKIP
-    DEC A : LD (HL),A
-
-    LD HL,PARTICLE_DX : LD D,0 : LD E,C : ADD HL,DE
-    LD A,(HL) : LD B,A
-    LD HL,PARTICLE_X : LD D,0 : LD E,C : ADD HL,DE
-    LD A,(HL) : ADD A,B : LD (HL),A
-    LD HL,PARTICLE_DY : LD D,0 : LD E,C : ADD HL,DE
-    LD A,(HL) : LD B,A
-    LD HL,PARTICLE_Y : LD D,0 : LD E,C : ADD HL,DE
-    LD A,(HL) : ADD A,B : LD (HL),A
-
-    LD A,EXPLOSION_SPR_BASE : ADD A,C
-    ADD A,A : ADD A,A : LD E,A : LD D,0
-    DI
-    LD A,E : OUT (99h),A
-    NOP
-    NOP
-    LD A,5Bh : OUT (99h),A
-    NOP
-    NOP
-
-    LD HL,PARTICLE_ACT : LD D,0 : LD E,C : ADD HL,DE
-    LD A,(HL)
-    OR A
-    EI
-    JR NZ,PPF_VISIBLE
-    DI
-    LD A,ENEMY_HIDE_Y : OUT (98h),A
-    PUSH BC : POP BC : NOP : NOP
-    LD A,255 : OUT (98h),A
-    PUSH BC : POP BC : NOP : NOP
-    EI
-    JP PPF_SKIP
-PPF_VISIBLE:
-    LD HL,PARTICLE_Y : LD D,0 : LD E,C : ADD HL,DE
-    DI
-    LD A,(HL) : OUT (98h),A
-    PUSH BC : POP BC : NOP : NOP
-    LD HL,PARTICLE_X : LD D,0 : LD E,C : ADD HL,DE
-    LD A,(HL) : OUT (98h),A
-    PUSH BC : POP BC : NOP : NOP
-    LD A,PAT_PARTICLE : OUT (98h),A
-    PUSH BC : POP BC : NOP : NOP
-    LD HL,PARTICLE_COL : LD D,0 : LD E,C : ADD HL,DE
-    LD A,(HL) : OUT (98h),A
-    PUSH BC : POP BC : NOP : NOP
-    EI
-PPF_SKIP:
-    INC C
-    LD A,C
-    CP PARTICLE_SLOTS
-    JP NZ,PPF_LOOP
-    RET
-
-; (2026-09-21、飛び込み演出): CALL経由のみで使う一式。ROM予算の
-; ALIGN-256境界の関係で、PLAYER_PARTICLE_SPAWN/FADEと同じくファイル
-; 末尾(全ALIGN境界より後ろ)に配置(実測により、この位置以外では
-; Comb組み込み側の追加パッチぶんでALIGN境界を超え+256byteの余分な
-; パディングが発生することを確認済み)。
-; (2026-09-21、"0,0からX128、Y64まで移動してそこからX32,Y64な"):
-; leg1のY速度をX速度の半分(1、Xは2)にすることで、距離比128:64=2:1と
-; 速度比2:1が一致し、X/Yが"完全に同時"(64フレーム)に(SHIP_ENTRY_MID_X,
-; PLAYER_INITY)へ到達する真っ直ぐな斜め移動になる(レンダリングで直線
-; 移動を確認済み)。両軸とも到達後は二度と呼ばれない(到達した瞬間に
-; ACT遷移する)ため、クランプ判定そのものが不要 - ROM予算の都合で
-; いずれもCALL先を作らずインライン化(Y速度=1は"INC A"1byteで済む
-; ことも利用)。**この前提(距離が速度で割り切れる/両軸が同時到達する)
-; を変える場合は必ずクランプ判定を復元すること**(でないと8bitアンダー
-; /オーバーフローでラップし、自機が瞬間移動する重大なバグになる)。
-; 呼び出し元(MAINLOOP側のCALL直前)が既にSHIP_ENTRY_ACTをAへ読み込み
-; 済み(OR A/JR Zで消費されない)なので、ここでの再読み込みは省略。
-; ACTは1(leg1)か2(leg2)のいずれかしかあり得ない(0ならBlock Aの
-; OR A/JR Zで既に弾かれている)ため、CP 2の代わりにDEC A:JR NZで
-; 判定(A-1!=0 <=> A==2)。PLAYERX/PLAYERYが隣接アドレスなのを利用し
-; HLをINCで使い回す。
-UPDATE_SHIP_ENTRY:
-    DEC A
-    LD HL,PLAYERX
-    JR NZ,SEU_LEG2
-    LD A,(HL) : ADD A,SHIP_ENTRY_SPEED : LD (HL),A
-    INC HL
-    LD A,(HL) : INC A : LD (HL),A
-    CP PLAYER_INITY : RET NZ
-    LD A,2 : LD (SHIP_ENTRY_ACT),A
-    RET
-SEU_LEG2:
-    ; leg2(X:128→32)。距離96(=SHIP_ENTRY_MID_X-PLAYER_RETREAT_TARGET_X)が
-    ; SHIP_ENTRY_SPEEDでちょうど割り切れ、到達後は二度と呼ばれないため
-    ; クランプ不要。
-    LD A,(HL) : SUB SHIP_ENTRY_SPEED : LD (HL),A
-    CP PLAYER_RETREAT_TARGET_X : RET NZ
-    XOR A : LD (SHIP_ENTRY_ACT),A
-    RET
-
-; (2026-09-22follow-up、"128,64から後ろに下がるときは下向きのキャラに
-; 32,64に来たらノーマルに"): leg1(ACT=1、突入)はShipStart2/1の専用絵柄
-; のまま、leg2(ACT=2、後退)は通常ゲームプレイの「下向き」ポーズ
-; (PAT_SHIP_DOWN/PAT_ACCENT_DOWN、JOY_STICK下入力時と同一資産)を流用。
-; 呼び出し元はCALL直前にSHIP_ENTRY_ACTを既にAへ読み込み済み(OR Aで
-; 消費されない)ため、ここでの再読み込みは省略しそのままCPで分岐する。
-APPLY_SHIP_ENTRY_PAT:
-    CP 2
-    JR Z,ASEP_LEG2
-    LD A,PAT_SHIP_ENTRY_BODY : LD (PLAYER_SHIP_PAT),A
-    LD A,PAT_SHIP_ENTRY_ACCENT : LD (PLAYER_ACCENT_PAT),A
-    RET
-ASEP_LEG2:
-    LD A,PAT_SHIP_DOWN : LD (PLAYER_SHIP_PAT),A
-    LD A,(BARRIER_HP) : OR A
-    LD A,PAT_ACCENT_DOWN
-    JR Z,ASEP_LEG2_ACC_GOT
-    LD A,PAT_ACCENT_DOWN_BARRIER
-ASEP_LEG2_ACC_GOT:
-    LD (PLAYER_ACCENT_PAT),A
-    RET
-
-; SHIP_ENTRY_BODY/ACCENT_PATTERNはソース側32byte連続、コード140-147
-; (PAT_SHIP_ENTRY_BODY=140の4コード+PAT_SHIP_ENTRY_ACCENT=144の4コード)
-; もVRAM上で連続なため、1回のLDIRVM(64byte)にまとめられる。
-LOAD_SHIP_ENTRY_PATTERNS:
-    LD HL,SHIP_ENTRY_BODY_PATTERN : LD DE,PAT_SHIP_ENTRY_BODY*8+SPRPAT : LD BC,64 : CALL LDIRVM
-    RET
+; ---- (2026-09-23、ROM詰め直し) ROWADDR_LO手前のページ残りへ末尾区間から移設 ----
 
 ; ----------------------------------------------------------------------
 ; round145("EbuzIIで敵の弾やビームにコリジョンがない...いずれも先端1px
@@ -16469,6 +16321,163 @@ PCEL_MISS:
     XOR A
     RET
 
+; (2026-09-21、飛び込み演出): CALL経由のみで使う一式。ROM予算の
+; ALIGN-256境界の関係で、PLAYER_PARTICLE_SPAWN/FADEと同じくファイル
+; 末尾(全ALIGN境界より後ろ)に配置(実測により、この位置以外では
+; Comb組み込み側の追加パッチぶんでALIGN境界を超え+256byteの余分な
+; パディングが発生することを確認済み)。
+; (2026-09-21、"0,0からX128、Y64まで移動してそこからX32,Y64な"):
+; leg1のY速度をX速度の半分(1、Xは2)にすることで、距離比128:64=2:1と
+; 速度比2:1が一致し、X/Yが"完全に同時"(64フレーム)に(SHIP_ENTRY_MID_X,
+; PLAYER_INITY)へ到達する真っ直ぐな斜め移動になる(レンダリングで直線
+; 移動を確認済み)。両軸とも到達後は二度と呼ばれない(到達した瞬間に
+; ACT遷移する)ため、クランプ判定そのものが不要 - ROM予算の都合で
+; いずれもCALL先を作らずインライン化(Y速度=1は"INC A"1byteで済む
+; ことも利用)。**この前提(距離が速度で割り切れる/両軸が同時到達する)
+; を変える場合は必ずクランプ判定を復元すること**(でないと8bitアンダー
+; /オーバーフローでラップし、自機が瞬間移動する重大なバグになる)。
+; 呼び出し元(MAINLOOP側のCALL直前)が既にSHIP_ENTRY_ACTをAへ読み込み
+; 済み(OR A/JR Zで消費されない)なので、ここでの再読み込みは省略。
+; ACTは1(leg1)か2(leg2)のいずれかしかあり得ない(0ならBlock Aの
+; OR A/JR Zで既に弾かれている)ため、CP 2の代わりにDEC A:JR NZで
+; 判定(A-1!=0 <=> A==2)。PLAYERX/PLAYERYが隣接アドレスなのを利用し
+; HLをINCで使い回す。
+UPDATE_SHIP_ENTRY:
+    DEC A
+    LD HL,PLAYERX
+    JR NZ,SEU_LEG2
+    LD A,(HL) : ADD A,SHIP_ENTRY_SPEED : LD (HL),A
+    INC HL
+    LD A,(HL) : INC A : LD (HL),A
+    CP PLAYER_INITY : RET NZ
+    LD A,2 : LD (SHIP_ENTRY_ACT),A
+    RET
+SEU_LEG2:
+    ; leg2(X:128→32)。距離96(=SHIP_ENTRY_MID_X-PLAYER_RETREAT_TARGET_X)が
+    ; SHIP_ENTRY_SPEEDでちょうど割り切れ、到達後は二度と呼ばれないため
+    ; クランプ不要。
+    LD A,(HL) : SUB SHIP_ENTRY_SPEED : LD (HL),A
+    CP PLAYER_RETREAT_TARGET_X : RET NZ
+    XOR A : LD (SHIP_ENTRY_ACT),A
+    RET
+
+; (2026-09-22follow-up、"128,64から後ろに下がるときは下向きのキャラに
+; 32,64に来たらノーマルに"): leg1(ACT=1、突入)はShipStart2/1の専用絵柄
+; のまま、leg2(ACT=2、後退)は通常ゲームプレイの「下向き」ポーズ
+; (PAT_SHIP_DOWN/PAT_ACCENT_DOWN、JOY_STICK下入力時と同一資産)を流用。
+; 呼び出し元はCALL直前にSHIP_ENTRY_ACTを既にAへ読み込み済み(OR Aで
+; 消費されない)ため、ここでの再読み込みは省略しそのままCPで分岐する。
+APPLY_SHIP_ENTRY_PAT:
+    CP 2
+    JR Z,ASEP_LEG2
+    LD A,PAT_SHIP_ENTRY_BODY : LD (PLAYER_SHIP_PAT),A
+    LD A,PAT_SHIP_ENTRY_ACCENT : LD (PLAYER_ACCENT_PAT),A
+    RET
+ASEP_LEG2:
+    LD A,PAT_SHIP_DOWN : LD (PLAYER_SHIP_PAT),A
+    LD A,(BARRIER_HP) : OR A
+    LD A,PAT_ACCENT_DOWN
+    JR Z,ASEP_LEG2_ACC_GOT
+    LD A,PAT_ACCENT_DOWN_BARRIER
+ASEP_LEG2_ACC_GOT:
+    LD (PLAYER_ACCENT_PAT),A
+    RET
+
+; SHIP_ENTRY_BODY/ACCENT_PATTERNはソース側32byte連続、コード140-147
+; (PAT_SHIP_ENTRY_BODY=140の4コード+PAT_SHIP_ENTRY_ACCENT=144の4コード)
+; もVRAM上で連続なため、1回のLDIRVM(64byte)にまとめられる。
+LOAD_SHIP_ENTRY_PATTERNS:
+    LD HL,SHIP_ENTRY_BODY_PATTERN : LD DE,PAT_SHIP_ENTRY_BODY*8+SPRPAT : LD BC,64 : CALL LDIRVM
+    RET
+
+    ALIGN 256
+; VRAM address (low byte) of the start of each of the 24 screen
+; rows in the name table (1800h + row*32), used to place a shot
+; character at (row, col) without doing 16-bit multiply at runtime.
+ROWADDR_LO:
+    DB 00h,20h,40h,60h,80h,0A0h,0C0h,0E0h
+    DB 00h,20h,40h,60h,80h,0A0h,0C0h,0E0h
+    DB 00h,20h,40h,60h,80h,0A0h,0C0h,0E0h
+
+; ---- (2026-09-23、ROM詰め直し) ROWADDR_LOのページ残りへ末尾区間から移設 ----
+
+; Called every frame, unconditionally: ages, moves, and redraws
+; every active particle slot, hiding one the instant its life
+; reaches 0. Runs regardless of PLAYER_FLYAWAY so already-spawned
+; particles keep travelling/fading even after the ship itself has
+; gone hidden. Bails out immediately (before touching the VDP at
+; all) if every slot is idle, which is the case for the entire rest
+; of the game outside the flyaway - important, since this is called
+; unconditionally every single frame.
+PLAYER_PARTICLE_FADE:
+    LD B,PARTICLE_SLOTS
+    LD HL,PARTICLE_ACT
+PPF_ANYACT_LOOP:
+    LD A,(HL) : OR A : JR NZ,PPF_ANYACT_FOUND
+    INC HL : DJNZ PPF_ANYACT_LOOP
+    RET
+PPF_ANYACT_FOUND:
+
+    LD C,0
+PPF_LOOP:
+    LD HL,PARTICLE_ACT : LD D,0 : LD E,C : ADD HL,DE
+    LD A,(HL)
+    OR A
+    JP Z,PPF_SKIP
+    DEC A : LD (HL),A
+
+    LD HL,PARTICLE_DX : LD D,0 : LD E,C : ADD HL,DE
+    LD A,(HL) : LD B,A
+    LD HL,PARTICLE_X : LD D,0 : LD E,C : ADD HL,DE
+    LD A,(HL) : ADD A,B : LD (HL),A
+    LD HL,PARTICLE_DY : LD D,0 : LD E,C : ADD HL,DE
+    LD A,(HL) : LD B,A
+    LD HL,PARTICLE_Y : LD D,0 : LD E,C : ADD HL,DE
+    LD A,(HL) : ADD A,B : LD (HL),A
+
+    LD A,EXPLOSION_SPR_BASE : ADD A,C
+    ADD A,A : ADD A,A : LD E,A : LD D,0
+    DI
+    LD A,E : OUT (99h),A
+    NOP
+    NOP
+    LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+
+    LD HL,PARTICLE_ACT : LD D,0 : LD E,C : ADD HL,DE
+    LD A,(HL)
+    OR A
+    EI
+    JR NZ,PPF_VISIBLE
+    DI
+    LD A,ENEMY_HIDE_Y : OUT (98h),A
+    PUSH BC : POP BC : NOP : NOP
+    LD A,255 : OUT (98h),A
+    PUSH BC : POP BC : NOP : NOP
+    EI
+    JP PPF_SKIP
+PPF_VISIBLE:
+    LD HL,PARTICLE_Y : LD D,0 : LD E,C : ADD HL,DE
+    DI
+    LD A,(HL) : OUT (98h),A
+    PUSH BC : POP BC : NOP : NOP
+    LD HL,PARTICLE_X : LD D,0 : LD E,C : ADD HL,DE
+    LD A,(HL) : OUT (98h),A
+    PUSH BC : POP BC : NOP : NOP
+    LD A,PAT_PARTICLE : OUT (98h),A
+    PUSH BC : POP BC : NOP : NOP
+    LD HL,PARTICLE_COL : LD D,0 : LD E,C : ADD HL,DE
+    LD A,(HL) : OUT (98h),A
+    PUSH BC : POP BC : NOP : NOP
+    EI
+PPF_SKIP:
+    INC C
+    LD A,C
+    CP PARTICLE_SLOTS
+    JP NZ,PPF_LOOP
+    RET
+
 ; round145("ステージ1ボスもポッドから発射される弾にコリジョンがない
 ; ...先端1pxの判定を入れてくれ"): PDC_CHECK_PODS(ポッド本体判定)から
 ; ジャンプしてくる。ポッド本体とは別にPOD_BULLET0/1(発射された弾)を
@@ -16499,6 +16508,15 @@ PCPB_HIT:
 PCPB_MISS:
     XOR A
     RET
+
+BLANK_PATTERN:
+    DB 00h,00h,00h,00h,00h,00h,00h,00h    ; BLANKCODE's actual glyph: truly blank
+
+    ALIGN 256
+ROWADDR_HI:
+    DB 18h,18h,18h,18h,18h,18h,18h,18h
+    DB 19h,19h,19h,19h,19h,19h,19h,19h
+    DB 1Ah,1Ah,1Ah,1Ah,1Ah,1Ah,1Ah,1Ah
 
 ; (2026-09-23、"ボス到達時に5万点を下回った場合どこに居てもポッド弾は
 ; 自機狙いになるように チェックは到達時にのみ行え メインで回すな"):

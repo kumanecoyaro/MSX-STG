@@ -18176,3 +18176,31 @@ EbuzII弾ビームへの1pxコリジョン追加+ROM予算の共有バンク6オ
   発火しないため、実際の割り込みタイミングでの競合は検出できない(Round41の
   openMSX上の「深いSP」も未解明のまま)。計測はこのスケジュール・入力
   パターンで実際に通った経路のみ。
+
+## Round145 follow-up18: Stage1 ROMをALIGNページの空白へ詰め直し(7→960byte)(2026-09-23)
+
+- 経緯: ASCII8化の相談→"別バンクに移せる部分を見積もって"→見積もりの途中で、
+  ページ先頭固定の小さな表(SOLOTAB 6byte/MUL6 6byte/ROWADDR_LO 24byte)の
+  後ろと、ROWADDR_LO手前に合計977byteの空白(ALIGN 256の埋め草)があると判明。
+  ユーザー: "案1で実装して PATTERNSも分割して"。
+- 実装: 末尾区間(1byte単位でROMに効く区間)のコード・データを空白へ移設。
+  SOLOTABページ: PATTERNS_A(250)。MUL6ページ: PLAYER_PARTICLE_SPAWN(123)+
+  COLORDATA(32)+PATTERNS_B(92)。ROWADDR_LO手前: PDC_CHECK_EBUZ2_PROJECTILES群
+  (143)+UPDATE_SHIP_ENTRY群(82)。ROWADDR_LOページ: PLAYER_PARTICLE_FADE(180)+
+  PDC_CHECK_POD_BULLETS(44)+BLANK_PATTERN(8)。末尾にはROWADDR_HIとPOD_AIM_PREP
+  だけが残る。PATTERNSは展開前384byteを293byte目で分けて各々RLE圧縮し直し
+  (A=250byte/8セグメント、B=92byte/1セグメント、分割前の全体再圧縮がROMと
+  一致=同一エンコーダを確認)、INITは同じVRAMアドレスから2回続けて展開。
+- 結果: plain/Combとも残り7→960byte。ページ固定の表(LUT/SOLOTAB/MUL6/
+  ROWADDR_LO/ROWADDR_HI)はすべて元のページのまま。
+- 検証: 変更前後で同じ入力を16000フレーム(ボス戦含む)流し、INIT直後のVRAM
+  全体・毎フレームのVRAM全体ハッシュ・スコア・自機座標・GAME_TICKが全フレーム
+  完全一致。EBUZ2再パッチ、verify_ebuz2_mk2_comb.py 48件・verify_comb.py全PASS、
+  Stage1 verify群全PASS(verify_barrier.pyは以前のセッションのアップロード
+  JSONを直接読むため、この環境では起動できない既存の問題で今回と無関係)。
+- 注意: 空白はほぼ使い切り(SOLOTABページ0/MUL6ページ3/ROWADDR_LO手前20/
+  ROWADDR_LOページ0byte)。これらのページのコードを伸ばすと境界を越えて
+  256byte単位で膨らむため、新規コードはファイル末尾へ(CLAUDE.md参照)。
+- 見積もりのみ(未実施): INIT専用部分(コード1,942+データ約1,240byte)を
+  bank7へ移すと約3,400byte空くが、Stage1が自前でバンク切替する必要があり、
+  平面メモリ前提の検証ツール約20本の改修と実機での再確認が必要。
