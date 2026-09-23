@@ -8179,12 +8179,21 @@ LEB_FOUND2:
     LD DE,10
 LEB_LAUNCH:
     PUSH DE                          ; DE = this slot's own byte offset into EBULLET_POOL - saved across EBULLET_DIR16's own DE clobber
+    ; (2026-09-23、実機報告"絶対に敵より下に自機があるのに上に打ち上げる敵がいる
+    ; 多分画面最上部付近の敵"): dx/dyを8bitの引き算のまま符号付きとして扱って
+    ; いたため、差が±127を超える(敵が画面上端付近・自機が地上だとdy≒+140)と
+    ; 符号が反転し逆方向を狙っていた(dxも敵が右端・自機が左寄りで同様)。9bitの
+    ; 差(借り=負)を1/2にして符号付き8bitへ収める(比率=方向は保たれる)。
     LD A,(TANK_X) : LD B,A
     LD A,(EBULLET_ORIGIN_X) : LD C,A
-    LD A,B : SUB C : LD D,A          ; D = dx = TANK_X - origin_X
+    LD A,B : SUB C : LD D,A          ; D = dx(下位8bit)、キャリー=負
+    SBC A,A : AND 80h : LD H,A       ; H = dxの符号ビット
+    SRL D : LD A,D : OR H : LD D,A   ; D = dx/2(符号付き)
     LD A,(TANK_Y_CUR) : LD B,A
     LD A,(EBULLET_ORIGIN_Y) : LD C,A
-    LD A,B : SUB C : LD E,A          ; E = dy = TANK_Y_CUR - origin_Y
+    LD A,B : SUB C : LD E,A          ; E = dy(下位8bit)、キャリー=負
+    SBC A,A : AND 80h : LD H,A
+    SRL E : LD A,E : OR H : LD E,A   ; E = dy/2(符号付き)
     CALL EBULLET_DIR16               ; A = direction 0-15
     LD E,A : LD D,0
     LD HL,EBULLET_DX_TABLE : ADD HL,DE : LD A,(HL) : LD B,A   ; B = this shot's own DX

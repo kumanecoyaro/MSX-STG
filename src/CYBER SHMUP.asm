@@ -8115,6 +8115,7 @@ POD_BULLET_MOVE:
     LD A,(POD_BULLET0_X)
     SUB B
     JR NC,PBM_B0_OK
+PBM_B0_OFF:
     XOR A : LD (POD_BULLET0_ACT),A
     CALL POD_BULLET_HIDE0
     JR PBM_B1
@@ -8125,6 +8126,12 @@ PBM_B0_OK:
     ; - 0 here is byte-identical to the old straight-shot behavior.
     LD A,(POD_BULLET0_Y) : LD B,A
     LD A,(POD_BULLET0_DY) : ADD A,B
+    ; (2026-09-23、実機報告"ステージ1ボスでまだ後ろからポッド弾が出てくる"):
+    ; 自機狙いの縦成分(最大±12px/frame)で画面の上下端を越えると、Yが8bitで
+    ; 回り込んで反対側から再出現していた(途中Y=208はスプライト終端の意味にも
+    ; なる)。X方向と同じく、可視範囲(Y<192)を外れたら消す。
+    CP 192
+    JR NC,PBM_B0_OFF
     LD (POD_BULLET0_Y),A
     CALL POD_BULLET_DRAW0
 PBM_B1:
@@ -8135,6 +8142,7 @@ PBM_B1:
     LD A,(POD_BULLET1_X)
     SUB B
     JR NC,PBM_B1_OK
+PBM_B1_OFF:
     XOR A : LD (POD_BULLET1_ACT),A
     CALL POD_BULLET_HIDE1
     RET
@@ -8142,6 +8150,8 @@ PBM_B1_OK:
     LD (POD_BULLET1_X),A
     LD A,(POD_BULLET1_Y) : LD B,A
     LD A,(POD_BULLET1_DY) : ADD A,B
+    CP 192
+    JR NC,PBM_B1_OFF
     LD (POD_BULLET1_Y),A
     CALL POD_BULLET_DRAW1
     RET

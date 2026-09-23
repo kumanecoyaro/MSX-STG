@@ -394,6 +394,24 @@ check("pod-pair index (B) survives the CALC_DIR call correctly: POD_RECOIL[2] (t
       z.rd(POD_RECOIL + 2) == POD_RECOIL_DURATION)
 
 
+# ---- (2026-09-23、実機報告"ステージ1ボスでまだ後ろからポッド弾が出てくる"):
+# 縦成分で画面の上下端を越えた弾は、Yが回り込んで反対側から出る前に消える ----
+def _move(y, dy, x=200):
+    z = fresh()
+    z.wr(sym["POD_BULLET0_ACT"], 1); z.wr(sym["POD_BULLET0_X"], x)
+    z.wr(sym["POD_BULLET0_Y"], y); z.wr(sym["POD_BULLET0_DY"], dy & 0xFF)
+    z.wr(sym["POD_BULLET0_DXMAG"], 4); z.wr(sym["POD_BULLET1_ACT"], 0)
+    call_routine(z, sym["POD_BULLET_MOVE"])
+    return z
+z = _move(4, -12)
+check("pod bullet crossing the TOP edge (Y=4, DY=-12) is deactivated instead of wrapping to Y=248",
+      z.rd(sym["POD_BULLET0_ACT"]) == 0 and z.rd(sym["POD_BULLET0_Y"]) == 4)
+z = _move(185, 12)
+check("pod bullet crossing the BOTTOM edge (Y=185, DY=+12) is deactivated", z.rd(sym["POD_BULLET0_ACT"]) == 0)
+z = _move(100, -12)
+check("pod bullet inside the screen keeps flying (Y 100 -> 88, still active)",
+      z.rd(sym["POD_BULLET0_ACT"]) == 1 and z.rd(sym["POD_BULLET0_Y"]) == 88 and z.rd(sym["POD_BULLET0_X"]) == 196)
+
 print()
 print(f"{len(ok)} passed, {len(fail)} failed")
 if fail:

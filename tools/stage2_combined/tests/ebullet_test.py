@@ -330,6 +330,36 @@ check("real MAINLOOP play: ZacoII's own EBullet actually fires before the boss s
       ever_fired)
 
 
+# ---- (2026-09-23、実機報告"絶対に敵より下に自機があるのに上に打ち上げる敵がいる"):
+# 自機との差が±127を超えても(画面上端の敵/右端の敵)正しい方向を狙う ----
+import math as _m
+def _launch(ox, oy, tx, ty):
+    c = fresh_cpu()
+    for i in range(4):
+        c.mem[sym["EBULLET_POOL"] + i * 5] = 0
+    c.mem[sym["EBULLET_ORIGIN_X"]] = ox; c.mem[sym["EBULLET_ORIGIN_Y"]] = oy
+    c.mem[sym["TANK_X"]] = tx; c.mem[sym["TANK_Y_CUR"]] = ty
+    call_routine(c, "LAUNCH_EBULLET")
+    dx = c.mem[sym["EBULLET_POOL"] + 3]; dy = c.mem[sym["EBULLET_POOL"] + 4]
+    return (dx - 256 if dx >= 128 else dx), (dy - 256 if dy >= 128 else dy)
+dx, dy = _launch(120, 10, 120, 150)
+check(f"enemy at the top (Y=10), tank far below (Y=150, dy=+140): shot goes DOWN (DX={dx}, DY={dy})", dy > 0 and dx == 0)
+dx, dy = _launch(220, 80, 40, 80)
+check(f"enemy at the right (X=220), tank far left (X=40, dx=-180): shot goes LEFT (DX={dx}, DY={dy})", dx < 0 and dy == 0)
+worst = 0.0; bad = []
+for ox in range(8, 240, 24):
+    for oy in range(8, 180, 20):
+        for tx, ty in ((16, 150), (120, 150), (220, 150), (40, 100), (200, 60)):
+            if abs(tx - ox) < 4 and abs(ty - oy) < 4:
+                continue
+            dx, dy = _launch(ox, oy, tx, ty)
+            err = abs((_m.degrees(_m.atan2(ty - oy, tx - ox) - _m.atan2(dy, dx)) + 180) % 360 - 180)
+            worst = max(worst, err)
+            if err > 20:
+                bad.append((ox, oy, tx, ty, dx, dy, round(err)))
+check(f"every enemy/tank position pair: the shot heads at the tank within one 16-direction step "
+      f"(worst {worst:.1f} deg, bad {bad[:3]})", not bad)
+
 print()
 print(f"{len(ok)} passed, {len(fail)} failed")
 if fail:
