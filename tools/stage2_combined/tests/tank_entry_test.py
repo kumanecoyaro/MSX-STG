@@ -23,17 +23,8 @@ def check(label, cond):
 
 
 def tick(cpu):
-    """1回の呼び出し=MAINLOOP1周=1フレーム(本編と演出が同時に進む)。
-
-    本編が並走するため、スケジュール上最初のBigZum(frame250前後)が着地前
-    の自機に到達し、パンチのノックバックでTANK_Xを押し戻す(実ゲームでも
-    起こる、演出側の不具合ではない)。演出自身の軌道・終了処理を決定的に
-    検証するため、ここではTANK_Xを動かす地上敵(Zum/BigZum)だけを毎フレーム
-    非アクティブ化する(本編のTICK/GAME_TICK/地形スクロール自体は止めない)。"""
-    for i in range(sym["ZUM_SLOT_COUNT"]):
-        cpu.mem[sym["ZUM_POOL"] + i * sym["ZUM_SLOT_SIZE"]] = 0
-    for i in range(sym["BIGZUM_SLOT_COUNT"]):
-        cpu.mem[sym["BIGZUM_POOL"] + i * sym["BIGZUM_SLOT_SIZE"]] = 0
+    """1回の呼び出し=MAINLOOP1周=1フレーム。演出中もTICK・地形スクロールは
+    進むが、GAME_TICK(スケジュール)は演出終了まで0のまま(敵は出ない)。"""
     step_frame(cpu)
 
 
@@ -77,20 +68,21 @@ check("boot: TANK_ENTRY_GRAV_CTR starts at 0", cpu.rd(TANK_ENTRY_GRAV_CTR) == 0)
 check("boot: TANK_ENTRY_ANIM starts at 0", cpu.rd(TANK_ENTRY_ANIM) == 0)
 check("boot: TANK_ENTRY_SLOW_CTR starts at 0", cpu.rd(TANK_ENTRY_SLOW_CTR) == 0)
 
-# ---- 2. (2026-09-23follow-up6、"本編開始してから落下すんだよ") 演出中も
-#         本編は止まらない: TICK/GAME_TICKが通常通り進む ----
+# ---- 2. 演出中も本編(TICK・地形スクロール)は進むが、("スタート演出中は
+#         Tickはカウントスタートすんな") GAME_TICKは0のまま・敵は出ない ----
 cpu2 = fresh_cpu(skip_intro=False)
 tick0 = cpu2.rd(TICK)
-game_tick0 = cpu2.rd(GAME_TICK) | (cpu2.rd(GAME_TICK + 1) << 8)
+px0 = cpu2.rd(sym["PXCHAR_T"]) | (cpu2.rd(sym["PXCHAR_T"] + 1) << 8)
 for _ in range(50):
     tick(cpu2)
 tick1 = cpu2.rd(TICK)
 game_tick1 = cpu2.rd(GAME_TICK) | (cpu2.rd(GAME_TICK + 1) << 8)
 check("entry still active after 50 frames (test precondition)", cpu2.rd(TANK_ENTRY_ACT) == 1)
-check("while TANK_ENTRY_ACT!=0, TICK advances every frame (main game runs "
-      "in parallel, like Stage1's SHIP_ENTRY_ACT)", (tick1 - tick0) & 0xFF == 50)
-check("while TANK_ENTRY_ACT!=0, GAME_TICK advances too (terrain scroll / "
-      "schedule keep running)", game_tick1 - game_tick0 == 50 // 8 or game_tick1 - game_tick0 == 50 // 8 + 1)
+check("while TANK_ENTRY_ACT!=0, TICK advances every frame (main loop runs)",
+      (tick1 - tick0) & 0xFF == 50)
+check("while TANK_ENTRY_ACT!=0, terrain keeps scrolling", (cpu2.rd(sym["PXCHAR_T"]) | (cpu2.rd(sym["PXCHAR_T"] + 1) << 8)) != px0)
+check("while TANK_ENTRY_ACT!=0, GAME_TICK stays 0 (schedule clock not started)",
+      game_tick1 == 0)
 
 # ---- 3. TANK_X stays frozen for the first TANK_ENTRY_SLOWDOWN-1 simulated
 #         frames, then advances by exactly 1 step on the
@@ -100,12 +92,12 @@ xs_raw = []
 for _ in range(TANK_ENTRY_SLOWDOWN + 2):
     tick(cpu3a)
     xs_raw.append(cpu3a.rd(TANK_X))
-check(f"TANK_X stays at 0 for the first {TANK_ENTRY_SLOWDOWN - 1} simulated "
+check(f"TANK_X stays at TANK_ENTRY_START_X for the first {TANK_ENTRY_SLOWDOWN - 1} simulated "
       "frames (movement gated behind the slowdown counter, not "
-      "advancing every frame)", all(v == 0 for v in xs_raw[:TANK_ENTRY_SLOWDOWN - 1]))
+      "advancing every frame)", all(v == TANK_ENTRY_START_X for v in xs_raw[:TANK_ENTRY_SLOWDOWN - 1]))
 check(f"TANK_X advances by exactly TANK_ENTRY_VX on the {TANK_ENTRY_SLOWDOWN}th "
       "frame (the one real movement step in this window)",
-      xs_raw[TANK_ENTRY_SLOWDOWN - 1] == TANK_ENTRY_VX and xs_raw[TANK_ENTRY_SLOWDOWN] == TANK_ENTRY_VX)
+      xs_raw[TANK_ENTRY_SLOWDOWN - 1] == TANK_ENTRY_START_X + TANK_ENTRY_VX and xs_raw[TANK_ENTRY_SLOWDOWN] == TANK_ENTRY_START_X + TANK_ENTRY_VX)
 
 # ---- 4. (2026-09-23follow-up3、"なんで10フレ切り替えなんだよ！そんな
 #         指示してねえだろうが 1フレつったら1フレだろが") booster
@@ -176,19 +168,31 @@ check("landing: TANK_Y_CUR equals that frame's live TANK_GROUND_Y (not a "
 check("both axes actually reach their real targets within the traced window "
       "(test's own sanity check, not an ASM assertion)",
       landing_frame < N_TRACE - 5 and xs_exp[landing_frame] == TANK_X_INIT)
-check("landing genuinely takes roughly 10x longer in frames (~400) "
-      "than the pre-slowdown baseline (~40)", landing_frame > 300)
+check("landing genuinely takes roughly 10x longer in frames "
+      "than the pre-slowdown baseline", landing_frame >= 10 * 20)
 
-# ---- 6. booster X clamps to 0 instead of underflowing while TANK_X<16 ----
+# ---- 6. ("オフセット無視すんな") ブースターは演出の最初から最後まで常に
+#         TANK_X-16 / TANK_Y_CUR+7(めり込み・クランプ無し)、開始時の
+#         ブースター込み左端は0 ----
 cpu5 = fresh_cpu(skip_intro=False)
-tick(cpu5)  # 1 frame: TANK_X still 0 (movement hasn't stepped yet)
-booster_x = cpu5.rd(BOOSTER_SPRITE_ATTRS + 1)
-check("early frame (TANK_X < 16): booster X clamps to 0 instead of "
-      "underflowing off-screen", booster_x == 0)
+offs_ok = True
+first_bx = None
+while cpu5.rd(TANK_ENTRY_ACT):
+    tick(cpu5)
+    if not cpu5.rd(TANK_ENTRY_ACT):
+        break
+    bx = cpu5.rd(BOOSTER_SPRITE_ATTRS + 1); by = cpu5.rd(BOOSTER_SPRITE_ATTRS + 0)
+    if first_bx is None:
+        first_bx = bx
+    if bx != cpu5.rd(TANK_X) - 16 or by != cpu5.rd(TANK_Y_CUR) + BOOSTER_Y_OFFSET:
+        offs_ok = False
+check("first frame: booster sprite X = 0 (\"ブースター込みで0,64から\")", first_bx == 0)
+check("every entry frame: booster X = TANK_X-16 and Y = TANK_Y_CUR+7 exactly "
+      "(no clamp, the booster never overlaps the tank)", offs_ok)
 
 # ---- 7. booster position/Y-offset/pattern once TANK_X is comfortably >=16 ----
 cpu6 = fresh_cpu(skip_intro=False)
-frame6 = next(i for i in range(len(xs_exp)) if xs_exp[i] >= 16) + 1
+frame6 = 150
 for _ in range(frame6):
     tick(cpu6)
 tank_x = cpu6.rd(TANK_X)

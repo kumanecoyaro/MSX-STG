@@ -17923,3 +17923,25 @@ EbuzII弾ビームへの1pxコリジョン追加+ROM予算の共有バンク6オ
   繰り返しパンチし(ノックバックでX=0へ戻される)、演出中にHPを大きく
   失い着地が遅れる(レンダリングで確認、frame404時点でHP2)。演出中の
   無敵化・スケジュール側の調整など、どう扱うかはユーザー判断待ち。
+
+## Round145 follow-up7: スタート演出中はGAME_TICKを止める(Stage1/Stage2)+ブースターオフセット厳守(2026-09-23)
+
+- ユーザー指摘: "そのままステージ1と同じ実装なら余計なことしないで済む"、
+  "ブースターも最初自機にめり込んでて離れていくとかどんな動作だよ
+  オフセット無視すんな"、"ステージ1もそうだが スタート演出中はTickは
+  カウントスタートすんな そうすりゃそんな不具合は起こらない"。
+- Stage2: GAME_TICK加算(+CHECK_NIGHT/SPAWN2_SCHEDULE_CHECK)の直前に
+  `TANK_ENTRY_ACT!=0ならSKIP_ADVANCE`を追加(地形スクロール・TICKは継続)。
+  演出中は敵が一切出ないため、follow-up6で問題になった「BigZumが落下中の
+  自機を殴る」は構造的に発生しなくなった。
+- Stage2ブースター: X<16で0へクランプしていた処理(開始直後に自機へ
+  めり込む原因)を削除し常にTANK_X-16。"ブースター込みで0,64から"に
+  合わせTANK_ENTRY_START_Xを0→16(ブースタースプライトXが0)。結果X/Y
+  が同時(frame240)に目標へ到達し、地上を滑る区間も無くなった。
+- Stage1: GAME_TICK加算ゲート(EBUZ_ANY_ACTIVE/EBUZ2_ACTと同じ場所)に
+  `SHIP_ENTRY_ACT!=0ならSKIP_SCHEDULE_TICK`を追加。ROM残り47byte
+  (plain/Comb同値)。
+- テスト: tank_entry_test.py 33件(演出中GAME_TICK=0・地形は進行・
+  全フレームでブースター=TANK_X-16/TANK_Y_CUR+7を追加、follow-up6の
+  Zum/BigZum抑制ハックは削除)、verify_ship_entry.py 28件(+2)。
+  Comb再ビルド・verify_comb.py全PASS。レンダリングで確認済み。

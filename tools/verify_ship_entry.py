@@ -281,6 +281,26 @@ check("PLAYERX/PLAYERY never show a sign of 8-bit wraparound (a huge single-fram
       all(abs(ys[i] - ys[i - 1]) <= SHIP_ENTRY_SPEED for i in range(1, len(ys))))
 
 
+# ---- (2026-09-23、"スタート演出中はTickはカウントスタートすんな"):
+# 飛び込み演出中はGAME_TICKが0のまま、演出終了後にカウント開始 ----
+zt = fresh()
+boot_with_entry(zt)
+GAME_TICK = sym["GAME_TICK"]
+gt_during = []
+n = 0
+while zt.rd(SHIP_ENTRY_ACT) and n < 2000:
+    step_frame(zt)
+    n += 1
+    if zt.rd(SHIP_ENTRY_ACT):
+        gt_during.append(zt.rd(GAME_TICK) | (zt.rd(GAME_TICK + 1) << 8))
+check("GAME_TICK stays 0 on every frame while SHIP_ENTRY_ACT!=0",
+      len(gt_during) > 8 and all(v == 0 for v in gt_during))
+for _ in range(64):
+    step_frame(zt)
+check("GAME_TICK starts counting after the entry ends",
+      (zt.rd(GAME_TICK) | (zt.rd(GAME_TICK + 1) << 8)) > 0)
+
+
 print()
 print(f"{len(ok)} passed, {len(fail)} failed")
 if fail:

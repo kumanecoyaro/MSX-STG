@@ -1828,6 +1828,11 @@ STAGE_CLEAR_NOT_FROZEN:
     LD A,(EBUZ2_ACT)
     OR A
     JR NZ,SKIP_SCHEDULE_TICK
+    ; (2026-09-23、"スタート演出中はTickはカウントスタートすんな"):
+    ; 飛び込み演出中はGAME_TICKを進めずスケジュールも回さない。
+    LD A,(SHIP_ENTRY_ACT)
+    OR A
+    JR NZ,SKIP_SCHEDULE_TICK
     LD HL,(GAME_TICK) : INC HL : LD (GAME_TICK),HL
     ; round135follow-up16("ボスでは居ないはずのEbuzが出てる スポーン
     ; 条件をすり抜けてるな"): CHECK_BOSS_TRIGGERはGAME_TICK>=1024+

@@ -83,7 +83,9 @@ TANK_Y_BASE   EQU 156      ; row23 top (23*8=184) - tank height(32) + landing of
 ; 一切影響しない。ブースター自体は16x16キャンバスの右半分(8x16)だけに
 ; 絵柄があり左半分は空白の添付データそのままを1枚のATTRIBUTE ENTRYで
 ; 描く(TL/BLは空白8x8、TR/BRに実データ)。
-TANK_ENTRY_START_X EQU 0
+; (2026-09-23follow-up7、"ブースター込みで0,64から"・"オフセット無視すんな"):
+; ブースター(自機X-16)込みで左端0から始まるよう、自機本体は16から開始。
+TANK_ENTRY_START_X EQU 16
 TANK_ENTRY_START_Y EQU 64
 TANK_ENTRY_GRAVITY EQU 1
 TANK_ENTRY_GRAVITY_INTERVAL EQU 3   ; frames between gravity bumps - untuned initial value
@@ -4207,6 +4209,12 @@ PXT_NOWRAP:
     ; いい"): 上記の「見た目上999で止まる」表示専用ロジック(GAME_TICK_
     ; DISPLAY、画面右上のデバッグ用3桁カウンター)自体をユーザー許可の
     ; 上で完全削除。GAME_TICK自身の増加ロジックは無変更。
+    ; (2026-09-23follow-up7、"スタート演出中はTickはカウントスタートすんな"):
+    ; 落下演出中はGAME_TICKを進めずスケジュールも回さない(地形スクロール
+    ; 自体は継続)。演出終了の瞬間からGAME_TICK 0としてカウント開始。
+    LD A,(TANK_ENTRY_ACT)
+    OR A
+    JR NZ,SKIP_ADVANCE
     LD HL,(GAME_TICK) : INC HL : LD (GAME_TICK),HL
     CALL CHECK_NIGHT
     ; round34 ("ランダムスポーンは廃止 全てスケジュールに") - see
@@ -16308,18 +16316,10 @@ UTE_DRAW:
     CALL UPDATE_TANK_SPRITES
 
     ; --- ブースター(16x16スプライト1枚、実絵柄は右半分[TR/BR]のみ)の
-    ; ATTRIBUTE X = TANK_X-16(実絵柄の右半分がTANK_Xの直前8pxに来る
-    ; ように)。TANK_X<16の間(演出開始直後の数フレームのみ)は0へ
-    ; クランプ(アンダーフロー防止、実絵柄が左端付近へ寄るだけで実害
-    ; なし)。 ---
+    ; ATTRIBUTE X = TANK_X-16(指定オフセット、常に固定)。演出はTANK_X=
+    ; TANK_ENTRY_START_X(16)から始まるためアンダーフローしない。 ---
     LD A,(TANK_X)
-    CP 16
-    JR NC,UTE_BX_OK
-    XOR A
-    JR UTE_BX_SET
-UTE_BX_OK:
     SUB 16
-UTE_BX_SET:
     LD B,A
 
     ; --- ブースターY = TANK_Y_CUR + BOOSTER_Y_OFFSET ---
