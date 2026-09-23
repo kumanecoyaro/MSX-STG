@@ -40,6 +40,12 @@
 ; 二度と参照されない)。
     ORG 4000h
 
+; (2026-09-23) 入口テーブル。4000h=Stage2(combined_test.asmのTRIGGER_GAME_OVERが
+; 04000hへ飛ぶ、従来通り)、4003h=Stage1のボス条件未達ゲームオーバー
+; (build_full_rom.pyのMAINLOOP_PATCH、GAME_OVER_SEQ==4)。
+    JP INIT
+    JP S1_FAIL_INIT
+
 ; --- combined_test.asmと物理的に同じRAM/VRAMアドレス。値は必ず一致 ---
 ; --- させること(このファイル単体では検証できない)。                 ---
 TANK_X          EQU 0F120h
@@ -307,6 +313,7 @@ GO_MSG_POST_BLANK:
     ; "ボタンが押されるか10秒経過でタイトル画面に" - GO_DELAY_SHORT
     ; (約0.15秒)単位でGTTRIGをポーリング、10秒÷0.15秒 ~= 67回で
     ; タイムアウト。
+GO_WAIT_START:
     LD B,67
 GO_WAIT_LOOP:
     PUSH BC
@@ -884,3 +891,114 @@ GAMEOVER2_MSG:
     DB 145  ; E
     DB 146  ; D
 GAMEOVER2_MSG_LEN EQU $ - GAMEOVER2_MSG
+
+; ============================================================================
+; (2026-09-23) Stage1ボス: レーザーを撃たれた後、条件未達で割り込めずに
+; やられた場合のゲームオーバー画面。"ボス条件未達の場合別バンクに
+; Mission Faied / You needs Shield / You needs enough laser energy の
+; それぞれの表示でゲームオーバー この分岐はあくまでボスがレーザーを
+; 撃った後の処理"。Stage1(src/CYBER SHMUP.asm)が自機の死亡落下完了時に
+; LZ_FAIL_REASON(bit0=バリア無し、bit1=エナジー不足)を残してGAME_OVER_SEQ=4に
+; し、CombのMAINLOOP_PATCHがwindow Aだけをこのバンクへ切り替えて4003hへ来る
+; (window BはStage1のbank3のまま、DI済み・PSG無音化済み)。
+; Stage1は二度と実行されないので、RAM/VRAMは自由に上書きしてよい
+; (Stage2側INITと同じ方針)。フォントはStage1自身のMISSION/GAMEOVERフォント
+; と同じgroup8-9(codes64-79、白/黒)へ16文字を読み込み直す。
+; 条件が両方未達なら2行とも出す。以後はStage2側と同じくジングル→ボタンか
+; 10秒でタイトルへ。
+; ============================================================================
+S1_FAIL_REASON EQU 0F33Fh   ; src/CYBER SHMUP.asmのLZ_FAIL_REASONと一致させること
+S1_FONT_BASE   EQU 64
+S1_SPACE_CODE  EQU 69
+
+S1_FAIL_INIT:
+    DI
+    LD A,0C9h : LD (HTIMI_HOOK),A
+    ; GO_TO_TITLEが使うRAMトランポリン(Stage2はINITで0F271hへ置くが、
+    ; Stage1は0F200hにしか置いていない)をここで置く。
+    LD A,12h : LD (BANKSWITCH_TRAMPOLINE_RAM),A     ; LD (DE),A
+    LD A,0E9h : LD (BANKSWITCH_TRAMPOLINE_RAM+1),A  ; JP (HL)
+    ; 全スプライト非表示(スロット0のY=208でリスト終端)
+    LD A,00h : OUT (99h),A
+    NOP
+    NOP
+    LD A,5Bh : OUT (99h),A      ; write 1B00h
+    NOP
+    NOP
+    LD A,0D0h : OUT (98h),A
+    PUSH BC : POP BC : NOP : NOP
+    LD HL,S1_FONT : LD DE,S1_FONT_BASE*8 : LD BC,128 : CALL LDIRVM
+    LD HL,S1_FONT_COLOR : LD DE,2008h : LD BC,2 : CALL LDIRVM   ; group8-9 白/黒
+    DI
+    ; rows10-15を黒で埋める(192セル)
+    LD A,40h : OUT (99h),A
+    NOP
+    NOP
+    LD A,59h : OUT (99h),A      ; write 1940h (row10,col0)
+    NOP
+    NOP
+    LD B,192
+S1F_BLANK:
+    LD A,S1_SPACE_CODE : OUT (98h),A
+    PUSH BC : POP BC : NOP : NOP
+    DJNZ S1F_BLANK
+    LD DE,10*32+1800h+9 : LD HL,S1_MSG_FAILED : CALL S1_PUT_MSG
+    LD DE,12*32+1800h+1          ; エナジー行の位置(バリア行があれば14行目へ)
+    LD A,(S1_FAIL_REASON) : AND 1
+    JR Z,S1F_NO_SHIELD
+    LD DE,12*32+1800h+8 : LD HL,S1_MSG_SHIELD : CALL S1_PUT_MSG
+    LD DE,14*32+1800h+1
+S1F_NO_SHIELD:
+    LD A,(S1_FAIL_REASON) : AND 2
+    JR Z,S1F_NO_ENERGY
+    LD HL,S1_MSG_ENERGY : CALL S1_PUT_MSG
+S1F_NO_ENERGY:
+    CALL GO_INIT_BGM
+    EI
+    JP GO_WAIT_START
+
+; IN: DE=VRAM書き込み先、HL=[長さ,コード...]。DI中に呼ぶこと。
+S1_PUT_MSG:
+    LD A,E : OUT (99h),A
+    NOP
+    NOP
+    LD A,D : OR 40h : OUT (99h),A
+    NOP
+    NOP
+    LD B,(HL)
+    INC HL
+S1PM_LOOP:
+    LD A,(HL) : OUT (98h),A
+    PUSH BC : POP BC : NOP : NOP
+    INC HL
+    DJNZ S1PM_LOOP
+    RET
+
+S1_FONT:
+    DB 198,238,254,254,214,198,198,198   ; 'M' (code64)
+    DB 48,48,48,48,48,48,48,48   ; 'I' (code65)
+    DB 126,254,224,112,60,14,254,252   ; 'S' (code66)
+    DB 124,254,198,198,198,198,254,124   ; 'O' (code67)
+    DB 198,230,246,254,222,206,198,198   ; 'N' (code68)
+    DB 0,0,0,0,0,0,0,0   ; ' ' (code69)
+    DB 254,254,192,252,252,192,192,192   ; 'F' (code70)
+    DB 56,124,198,198,254,254,198,198   ; 'A' (code71)
+    DB 192,192,192,192,192,192,254,254   ; 'L' (code72)
+    DB 254,254,192,252,252,192,254,254   ; 'E' (code73)
+    DB 252,254,198,198,198,198,254,252   ; 'D' (code74)
+    DB 198,198,108,108,56,48,48,48   ; 'Y' (code75)
+    DB 198,198,198,198,198,198,254,124   ; 'U' (code76)
+    DB 198,198,198,254,254,198,198,198   ; 'H' (code77)
+    DB 124,254,192,192,206,198,254,124   ; 'G' (code78)
+    DB 252,254,198,254,252,206,198,198   ; 'R' (code79)
+S1_FONT_COLOR:
+    DB 0F1h,0F1h
+S1_MSG_FAILED:
+    DB 14
+    DB 64,65,66,66,65,67,68,69,70,71,65,72,73,74   ; "MISSION FAILED"
+S1_MSG_SHIELD:
+    DB 16
+    DB 75,67,76,69,68,73,73,74,66,69,66,77,65,73,72,74   ; "YOU NEEDS SHIELD"
+S1_MSG_ENERGY:
+    DB 29
+    DB 75,67,76,69,68,73,73,74,66,69,73,68,67,76,78,77,69,72,71,66,73,79,69,73,68,73,79,78,75   ; "YOU NEEDS ENOUGH LASER ENERGY"

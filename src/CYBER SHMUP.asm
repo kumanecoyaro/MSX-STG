@@ -2273,6 +2273,13 @@ PDF_STORE_Y:
     ; FALL_ACTが再び1になることは無い(生涯で1回だけここを通る)。
     XOR A : LD (PLAYER_DEATH_FALL_ACT),A
     LD A,255 : LD (PLAYERX),A
+    ; (2026-09-23) ボス条件未達でやられた場合は通常のMISSION FAILEDを出さず、
+    ; GAME_OVER_SEQ=4(Combがbank7の理由付き画面へ切り替える)。
+    LD A,(LZ_FAIL_REASON) : OR A
+    JR Z,PDF_NORMAL_FAIL
+    LD A,4 : LD (GAME_OVER_SEQ),A
+    JP DIR_DONE
+PDF_NORMAL_FAIL:
     CALL TRIGGER_GAME_OVER_JINGLE
     CALL DRAW_GAMEOVER_TEXT
     LD A,1 : LD (GAME_OVER_SEQ),A
@@ -16612,6 +16619,12 @@ LZ_BFRONT    EQU 0F33Bh   ; ボスレーザーの先端列(26=未描画)
 LZ_CLASH_X   EQU 0F33Ch   ; 干渉点のX(px)
 GAUGE_SHOWN  EQU 0F33Dh   ; 画面に描画済みのゲージ値
 LZ_BLANKING  EQU 0F33Eh   ; 非0: LZ_DRAWが空白で塗る(消去)
+; (2026-09-23) ボスレーザーに割り込めずにやられた時の条件未達理由。bit0=バリア
+; 無し、bit1=エナジー不足(使用済み含む)。非0なら死亡落下の完了時に通常の
+; MISSION FAILEDではなくGAME_OVER_SEQ=4にし、Combがbank7(tools/gameover_bank/
+; gameover_bank.asmのS1_FAIL_INIT、同じ番地をS1_FAIL_REASONとして読む)へ切り替えて
+; 理由付きで表示する。
+LZ_FAIL_REASON EQU 0F33Fh
 
 LZ_ROW        EQU 9       ; ボス中央(BOSS_MAP row7、画面row9)
 LZ_SOLO_FRAMES EQU 100
@@ -16639,6 +16652,7 @@ LZ_INIT:
     LD HL,GAUGE_TILES : LD DE,GAUGE_FULL_CODE*8 : LD BC,24 : CALL LDIRVM
     XOR A
     LD (LZ_PHASE),A : LD (LZ_SPENT),A : LD (GAUGE_SHOWN),A : LD (LZ_BLANKING),A
+    LD (LZ_FAIL_REASON),A
     LD A,26 : LD (LZ_BFRONT),A
     RET
 
@@ -16709,14 +16723,20 @@ GU_PUT:
     DJNZ GU_CELL
     RET
 
-; Z=Bで発射可(今フレーム押下+未使用+ゲージ満タン)
+; Z=Bで発射可(今フレーム押下+未使用+バリア1枚以上+ゲージ満タン)
+; ("バリアが1枚でも残っていないとレーザーは使用できない")
 LZ_CAN_FIRE:
     LD A,(FIREB_EDGE) : DEC A
     RET NZ
     LD A,(LZ_SPENT) : OR A
     RET NZ
+    LD A,(BARRIER_HP) : OR A
+    JR Z,LZCF_NO
     CALL GAUGE_VALUE
     CP 50
+    RET
+LZCF_NO:
+    INC A                          ; NZ
     RET
 
 ; 毎フレーム(MAINLOOP)。ゲージ更新+BOSS_STATE==2の間だけレーザー処理。
@@ -16765,7 +16785,7 @@ LZI_END:
     LD A,LZ_SOLO_FRAMES : LD (LZ_TIMER),A
     LD A,1 : LD (LZ_PHASE),A : LD (LZ_SPENT),A
     CALL SOUND_POD_FIRE
-    JR LZ_DRAW_CURRENT
+    JP LZ_DRAW_CURRENT
 
 LZ_SOLO:
     LD HL,LZ_TIMER : DEC (HL)
@@ -16775,7 +16795,7 @@ LZ_SOLO:
     RET
 LZS_ON:
     CALL LZ_HIT_PODS               ; 最後のポッドを壊すとここで干渉へ移る
-    JR LZ_DRAW_CURRENT
+    JP LZ_DRAW_CURRENT
 
 LZ_EXTEND:
     CALL LZ_CAN_FIRE
@@ -16788,20 +16808,36 @@ LZE_TICK:
     LD A,(HL) : AND 3
     JR NZ,LZ_DRAW_CURRENT
     LD HL,LZ_BFRONT : DEC (HL)     ; 4フレームに1列、左へ伸びる
-    JR Z,LZ_LOSE                   ; 左端まで届いた
+    JR Z,LZ_LOSE_EXT                   ; 左端まで届いた
     LD A,(PLAYERY) : ADD A,8 : AND 0F8h
     CP LZ_ROW*8
     JR NZ,LZ_DRAW_CURRENT
     LD A,(PLAYERX) : ADD A,15
-    JR C,LZ_LOSE
+    JR C,LZ_LOSE_EXT
     SRL A : SRL A : SRL A
     CP (HL)
-    JR NC,LZ_LOSE                  ; 同じ行で自機に届いた
+    JR NC,LZ_LOSE_EXT                  ; 同じ行で自機に届いた
     JR LZ_DRAW_CURRENT
 
 LZ_WIN:
     CALL LZ_END
     JP START_BOSS_DEATH
+; ボスレーザーが届いた(割り込めなかった): 条件未達の理由を記録してから負け処理。
+; (干渉で押し負けた場合はLZ_LOSEへ直接来るので理由0=通常のMISSION FAILED)
+LZ_LOSE_EXT:
+    LD B,0
+    LD A,(BARRIER_HP) : OR A
+    JR NZ,LZLE_SHIELD
+    INC B                          ; bit0: バリア無し
+LZLE_SHIELD:
+    PUSH BC
+    CALL GAUGE_VALUE               ; 使用済みなら0を返す
+    POP BC
+    CP 50
+    JR Z,LZLE_ENERGY
+    LD A,B : OR 2 : LD B,A         ; bit1: エナジー不足
+LZLE_ENERGY:
+    LD A,B : LD (LZ_FAIL_REASON),A
 LZ_LOSE:
     CALL LZ_END
     XOR A : LD (BARRIER_HP),A

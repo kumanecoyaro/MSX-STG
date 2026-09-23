@@ -877,5 +877,63 @@ assert mem4.flat[tsym["HTIMI_HOOK"]] == 0xC9, \
 print("title's own INIT correctly reset the stale HTIMI_HOOK (inherited from Stage2's ending) "
       "to a safe bare RET")
 
+# (2026-09-23) Stage1ボス: レーザーに条件未達で割り込めずやられた場合
+# (LZ_FAIL_REASON!=0)は、死亡落下の完了でGAME_OVER_SEQ=4になり、
+# MAINLOOP_PATCHがwindow Aだけをbank7(gameover_bank.asmのS1_FAIL_INIT、
+# 4003h)へ切り替える。理由付きの画面を描いてからボタンでtitleへ戻る所まで
+# 実バンク構成で確認する(Stage1のINITから直接始める - Titleを経由しない
+# のでBGM等のRAMコピーは無いが、この経路には関係しない)。
+print()
+print("---- Stage1 boss-laser reason game over (GAME_OVER_SEQ==4) -> bank7 -> title ----")
+mem5 = BankedMem(
+    banksA=[title_bank0, dummy, game_bank0, dummy, bank4, dummy, dummy, gameover_bank],
+    banksB=[dummy, title_bank1, dummy, game_bank1, dummy, bank5, bytearray(bgm_bank)],
+)
+mem5.bankA, mem5.bankB = 2, 3
+cpu5 = z80emu.Z80(mem5)
+cpu5.pc = GAME_INIT
+cpu5.sp = 0xF380
+n5 = 0
+while cpu5.pc != MAINLOOP and n5 < 20_000_000:
+    cpu5.step(); n5 += 1
+assert cpu5.pc == MAINLOOP, "Stage1 INIT never reached MAINLOOP (reason game-over test)"
+mem5.flat[gsym["SHIP_ENTRY_ACT"]] = 0
+mem5.flat[gsym["GAME_OVER"]] = 1
+mem5.flat[gsym["PLAYER_DEATH_FALL_ACT"]] = 1
+mem5.flat[gsym["PLAYERY"]] = 198
+mem5.flat[gsym["LZ_FAIL_REASON"]] = 3
+assert gosym["S1_FAIL_REASON"] == gsym["LZ_FAIL_REASON"], "bank7 S1_FAIL_REASON != Stage1 LZ_FAIL_REASON"
+def frame5():
+    cpu5.pc = MAINLOOP; cpu5.step()
+    k = 0
+    while cpu5.pc != MAINLOOP and k < 3_000_000 and not (mem5.bankA == 7):
+        cpu5.step(); k += 1
+frame5()
+assert mem5.flat[gsym["GAME_OVER_SEQ"]] == 4, "death-fall completion with LZ_FAIL_REASON!=0 did not set GAME_OVER_SEQ=4"
+k = 0
+while not (mem5.bankA == 7 and cpu5.pc == 0x4003) and k < 3_000_000:
+    cpu5.step(); k += 1
+assert mem5.bankA == 7 and cpu5.pc == 0x4003, "GAME_OVER_SEQ==4 never switched window A to bank7 at 4003h"
+assert mem5.bankB == 3, "window B should still be Stage1's bank3 on arrival"
+assert cpu5.iff1 is False, "interrupts enabled on arrival at bank7's Stage1 entry"
+k = 0
+while cpu5.pc != gosym["GO_WAIT_LOOP"] and k < 5_000_000:
+    cpu5.step(); k += 1
+assert cpu5.pc == gosym["GO_WAIT_LOOP"], "bank7 Stage1 reason screen never reached its wait loop"
+row = lambda r: bytes(cpu5.vram[0x1800 + r * 32:0x1800 + r * 32 + 32])
+order = "MISON FALEDYUHGR"
+txt = lambda r: "".join(order[b - 64] if 64 <= b < 80 else "?" for b in row(r)).strip()
+assert txt(10) == "MISSION FAILED" and txt(12) == "YOU NEEDS SHIELD" and txt(14) == "YOU NEEDS ENOUGH LASER ENERGY", \
+    (txt(10), txt(12), txt(14))
+assert mem5.bankB == 6, "GO_INIT_BGM should have selected the bgm-data bank (6) in window B for the jingle copy"
+print(f"reason screen drawn on real banks: {txt(10)!r} / {txt(12)!r} / {txt(14)!r}")
+cpu5.sim_trig_a = True
+k = 0
+while not (cpu5.pc == tsym["INIT"] and mem5.bankA == 0) and k < 5_000_000:
+    cpu5.step(); k += 1
+assert cpu5.pc == tsym["INIT"] and mem5.bankA == 0 and mem5.bankB == 1, \
+    "bank7 Stage1 reason screen never returned to title (0,1)"
+print("bank7 reason screen -> title verified (bankA=0 bankB=1)")
+
 print()
 print("COMB BUILD (TITLE -> STAGE1 -> REAL STAGE2) BANK-SWITCH INTEGRATION: ALL CHECKS PASSED")

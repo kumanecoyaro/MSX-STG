@@ -37,8 +37,21 @@
 - 新規にVRAM/PSG/その他ハードウェアポートへのブロック転送を実装する際は、着手前に
   必ずこのセクションを再確認し、`OTIR`系命令を使わないこと。
 
-## Stage1 ROM予算(2026-09-23、Round145 follow-up22時点でplain/Comb両方とも
-**残り216byte**・恒久的に確認必須)
+## Stage1 ROM予算(2026-09-23、Round145 follow-up23時点で**plain 188byte /
+Comb 138byte**・恒久的に確認必須、Combの方が少ない)
+
+- **(2026-09-23、follow-up23)** ボス条件未達のゲームオーバー分岐でplain 188byte。
+  Combはbuild_full_rom.pyのGAMEOVER_SWITCH_TAIL(ファイル末尾に足す)分さらに
+  減って138byte。**MAINLOOP_PATCHに数十byte足しただけでComb版がALIGN境界を越えて
+  -68byteになった**ため、Comb側の追加コードは末尾(GAMEOVER_SWITCH_TAILと同じ
+  方式)へ置くこと。
+- **(2026-09-23、follow-up23、調整用・一時的)** `build_full_rom.py`の
+  `DEBUG_BOSS_START = True`: 送付するComb ROMだけ、INITの最後でGAME_TICK=1024・
+  スケジュール消化済み・EbuzII撃破済み・スコア5万点にしてボス直前から始まる
+  (INITの`CALL LZ_INIT`を同じ3byteの`CALL DEBUG_BOSS_START_INIT`へ差し替え、
+  本体はファイル末尾 - 既存ラベルの番地は1つも動かない。このとき残り105byte)。
+  verify_*.pyが使う`assemble_game()`は既定でdebug無し。**ボスの調整が終わったら
+  Falseに戻すこと**(ユーザー指示待ち)。
 
 - **(2026-09-23、follow-up22)** ボス専用レーザー+レーザー干渉+エナジー
   ゲージ(LZ_*/GAUGE_*、ファイル末尾)で744byte使用、960→216byte。

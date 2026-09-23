@@ -18303,3 +18303,44 @@ EbuzII弾ビームへの1pxコリジョン追加+ROM予算の共有バンク6オ
   verify_vdp_wait_shrinkのOUT件数は変更前から失敗していたもの)。
 - レンダリングで確認(ボス中央から伸びるレーザー、干渉点、ゲージ)。パターンは仮絵。
 - Comb再ビルド、verify_ebuz2_mk2_comb.py 48件・verify_comb.py全PASS。
+
+## Round145 follow-up23: ボス直前スタート(調整用)+バリア必須+条件未達ゲームオーバー画面(2026-09-23)
+
+- ユーザー: "今回は初期Tickをボス前まで進めて調整する おそらく何度もラリーが必要なので
+  あと書き忘れたがバリアが1枚でも残っていないとレーザーは使用できない で、ゲームオーバーの
+  処理分岐 通常の自機破壊は従来通りMission Failed ボス条件未達の場合別バンクに Mission Faied /
+  You needs Shield / You needs enough laser enegy のそれぞれの表示でゲームオーバー この分岐は
+  あくまでボスがレーザーを撃った後の処理 energyスペルミスった"。
+- ボス直前スタート: build_full_rom.pyのDEBUG_BOSS_START(=True、送付ROMのみ)。INITの
+  "CALL LZ_INIT"を同じ3byteの"CALL DEBUG_BOSS_START_INIT"へ差し替え、本体(GAME_TICK=1024・
+  SPAWN_NEXT_INDEX=スケジュール件数・EBUZ2_DEFEATED=1・SCORE=500[5万点]→JP LZ_INIT)は
+  ファイル末尾。最初は本体をINITに直接挿入したが、以降の983ラベル(EbuzII含む)がずれ、
+  patch_ebuz2_mk2.pyがdebug無しの番地で作るbank6側テーブルと食い違うため差し替え方式にした
+  (debug有無でアセンブル結果の違いはCALLの2byteと末尾のみ)。実バンク構成のシミュレーションで
+  飛び込み演出と並行してボスがマテリアライズを始め、160フレームで着地、ゲージ満タンを確認。
+  verify_*.pyはassemble_game()既定(debug無し)を使う。調整後はFalseに戻す。
+- バリア必須: LZ_CAN_FIREにBARRIER_HP>0を追加(早撃ち・割り込みの両方)。
+- 条件未達の分岐(ボスレーザー発射後、伸長中のレーザーに届かれた時=LZ_LOSE_EXTのみ):
+  LZ_FAIL_REASON(0F33Fh)にbit0=バリア0、bit1=エナジー不足(GAUGE_VALUE<50、使用済みは0を返す
+  ので含む)を記録。干渉で押し負けた場合・条件を満たしていて割り込まなかった場合は0=通常の
+  MISSION FAILED。自機は通常通り爆発しながら落下し、落下完了時(PDF_FINISH)に理由が非0なら
+  ジングル/通常テキストを出さずGAME_OVER_SEQ=4。UPDATE_GAME_OVER_SEQUENCEは4を無視する。
+  LZ_INITでクリア。
+- Comb: MAINLOOP_PATCHのGAME_OVER_SEQ>=3処理を"CP 3/JR C/JP GAMEOVER_SWITCH_TAIL"+
+  window Aに残す必要のあるtitle hop2だけにし、無音化と3/4の分岐はファイル末尾の
+  GAMEOVER_SWITCH_TAILへ(MAINLOOP_PATCHにそのまま足すとALIGN境界を越えComb版だけ-68byte)。
+  4ならwindow Aだけbank7へ切り替えて4003hへ。
+- bank7(gameover_bank.asm): 先頭に入口テーブル(4000h: JP INIT=Stage2従来通り、4003h:
+  JP S1_FAIL_INIT)。S1_FAIL_INIT: H.TIMIをRETへ、GO_TO_TITLE用のRAMトランポリン(Stage1は
+  0F200hにしか置かないので0F271hへLD (DE),A/JP (HL)を書く)、スプライト全非表示、16文字
+  (M,I,S,O,N,空白,F,A,L,E,D,Y,U,H,G,R)をcodes64-79(group8-9、白/黒)へ、rows10-15を黒で埋め、
+  row10にMISSION FAILED、bit0ならrow12に"YOU NEEDS SHIELD"、bit1ならその下(row12か14)に
+  "YOU NEEDS ENOUGH LASER ENERGY"。以後Stage2側と同じジングル→ボタンか10秒でタイトル。
+  文言はユーザーの記載どおり"YOU NEEDS"(energyのみ綴り訂正)。Hはpixel_font_8x8.pyへ追加。
+- テスト: verify_boss_laser.py 46件(+13: バリア0で早撃ち/割り込み不可、理由1/2/2(使用済み)/3で
+  SEQ=4、SEQ=4はplainでは動かない、条件を満たして割り込まなかった/押し負けは通常、LZ_INITで
+  クリア)。gameover_bank_test.py 66件(+14: 入口テーブル、理由1/2/3の画面・フォント・スプライト
+  非表示・ジングル/トランポリン、ボタンでタイトルへ)。verify_comb.pyに実バンクでSEQ=4→bank7
+  4003h(window Bはbank3のまま・DI)→画面→タイトル(0,1)を追加。関連verify_*全PASS。
+  3種の理由画面を実バンク構成でレンダリングして確認。
+- ROM: Stage1 plain 188 / Comb 138 / Comb+DEBUG_BOSS_START 105byte。

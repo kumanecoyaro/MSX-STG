@@ -259,5 +259,47 @@ frame(z)
 check("laser row is redrawn every frame (a hole left by something else heals next frame)",
       z.vram[0x1800 + ROW * 32 + pcol] == PL)
 
+# ---------------------------------------------------------------- バリア必須(2026-09-23)
+z = landed(); z.wr(sym['BARRIER_HP'], 0); set_score(z, 600); z.wr(sym['PLAYERY'], 150); frame(z)
+frame(z, trig_b=True); frame(z)
+check("no barrier left: B cannot fire the laser even with a full gauge (before the boss laser)", z.rd(PH) == 0)
+z = landed(); to_extend(z); z.wr(sym['BARRIER_HP'], 0); z.wr(sym['PLAYERY'], 120)
+frame(z, trig_b=True); frame(z)
+check("no barrier left: B cannot cut into the boss laser either", z.rd(PH) == 2)
+
+# ---------------------------------------------------------------- 条件未達のゲームオーバー分岐(2026-09-23)
+def die_to_boss_laser(z):
+    n = 0
+    while z.rd(PH) == 2 and n < 300: frame(z); n += 1
+    reason = z.rd(sym['LZ_FAIL_REASON'])
+    n = 0
+    while z.rd(sym['GAME_OVER_SEQ']) == 0 and n < 600: frame(z); n += 1   # 爆発しながら落下→完了
+    return reason
+for label, setup, want in (
+        ("no barrier", lambda z: z.wr(sym['BARRIER_HP'], 0), 1),
+        ("gauge short of 50000", lambda z: set_score(z, 499), 2),
+        ("laser already used", lambda z: z.wr(sym['LZ_SPENT'], 1), 2),
+        ("no barrier and not enough energy", lambda z: (z.wr(sym['BARRIER_HP'], 0), set_score(z, 100)), 3)):
+    z = landed(); set_score(z, 600); frame(z); kill_all_pods(z)
+    setup(z); z.wr(sym['PLAYERY'], 150)
+    r = die_to_boss_laser(z)
+    check(f"boss laser reaches an unqualified player ({label}): reason {r} (want {want}), after the death fall "
+          f"GAME_OVER_SEQ=4 (Comb switches to the bank7 reason screen), no jingle/normal text",
+          r == want and z.rd(sym['GAME_OVER']) == 1 and z.rd(sym['GAME_OVER_SEQ']) == 4)
+    frame(z); frame(z)
+    check(f"({label}) SEQ=4 stays put in the plain build (UPDATE_GAME_OVER_SEQUENCE ignores it)",
+          z.rd(sym['GAME_OVER_SEQ']) == 4)
+z = landed(); set_score(z, 600); frame(z); kill_all_pods(z); z.wr(sym['PLAYERY'], 150)
+r = die_to_boss_laser(z)
+check("qualified player who just never cut in: reason 0 -> normal MISSION FAILED (GAME_OVER_SEQ 1)",
+      r == 0 and z.rd(sym['GAME_OVER_SEQ']) == 1)
+z = landed(); to_extend(z); frame(z, trig_b=True); frame(z); mash(z, 1000)
+n = 0
+while z.rd(sym['GAME_OVER_SEQ']) == 0 and n < 600: frame(z); n += 1
+check("losing the clash itself: reason 0 -> normal MISSION FAILED",
+      z.rd(sym['LZ_FAIL_REASON']) == 0 and z.rd(sym['GAME_OVER_SEQ']) == 1)
+z = landed(); z.wr(sym['LZ_FAIL_REASON'], 3); call(z, 'LZ_INIT')
+check("LZ_INIT clears LZ_FAIL_REASON (restart after a reason game over)", z.rd(sym['LZ_FAIL_REASON']) == 0)
+
 print(f"\n{len(ok)} passed, {len(fail)} failed")
 sys.exit(1 if fail else 0)

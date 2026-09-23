@@ -628,6 +628,41 @@ check("real INIT flow: GO_BGM_B_PTR/GO_BGM_C_PTR are still untouched (GO_INIT_BG
       (z.rd(GO_BGM_B_PTR) | (z.rd(GO_BGM_B_PTR + 1) << 8)) != GO_CHB_BASE and
       (z.rd(GO_BGM_C_PTR) | (z.rd(GO_BGM_C_PTR + 1) << 8)) != GO_CHC_BASE)
 
+# ---- (2026-09-23) Stage1ボス条件未達のゲームオーバー画面(入口4003h) ----
+check("entry table: 4000h jumps to Stage2's INIT, 4003h to the Stage1 reason screen",
+      mem0[0x4000] == 0xC3 and (mem0[0x4001] | mem0[0x4002] << 8) == sym["INIT"] and
+      mem0[0x4003] == 0xC3 and (mem0[0x4004] | mem0[0x4005] << 8) == sym["S1_FAIL_INIT"])
+S1_ORDER = "MISON FALEDYUHGR"
+def s1_row(z, row):
+    inv = {64 + i: c for i, c in enumerate(S1_ORDER)}
+    return "".join(inv.get(z.vram[0x1800 + row * 32 + c], "?") for c in range(32))
+def centered(text, col):
+    return " " * col + text + " " * (32 - col - len(text))
+for reason, rows in ((1, {12: centered("YOU NEEDS SHIELD", 8), 14: " " * 32}),
+                     (2, {12: centered("YOU NEEDS ENOUGH LASER ENERGY", 1), 14: " " * 32}),
+                     (3, {12: centered("YOU NEEDS SHIELD", 8), 14: centered("YOU NEEDS ENOUGH LASER ENERGY", 1)})):
+    z = fresh()
+    for a in range(0x1800, 0x1B00): z.vram[a] = 0x30           # 死亡直前の画面の代わり
+    z.vram[0x1B00] = 100                                        # スプライトが出ている状態
+    z.wr(sym["S1_FAIL_REASON"], reason)
+    z.pc = 0x4003
+    run_until_pc(z, GO_WAIT_LOOP, 5_000_000)
+    got = {r: s1_row(z, r) for r in range(10, 16)}
+    want = {10: centered("MISSION FAILED", 9), 11: " " * 32, 13: " " * 32, 15: " " * 32, **rows}
+    check(f"Stage1 reason {reason}: rows 10-15 blacked out, MISSION FAILED + the reason line(s) drawn "
+          f"({[got[r].strip() for r in (10, 12, 14)]})", got == want)
+    glyph_ok = all(list(z.vram[(64 + i) * 8:(64 + i) * 8 + 8]) == pixel_font_8x8.glyph_bytes(c)
+                   for i, c in enumerate(S1_ORDER)) and z.vram[0x2008] == 0xF1 and z.vram[0x2009] == 0xF1
+    check(f"Stage1 reason {reason}: 16 glyphs loaded to codes 64-79 (white on black)", glyph_ok)
+    check(f"Stage1 reason {reason}: all sprites hidden (slot0 Y=208 ends the list)", z.vram[0x1B00] == 0xD0)
+    check(f"Stage1 reason {reason}: jingle armed (HTIMI_HOOK -> GO_BGM_TICK) and the title trampoline "
+          f"written to RAM (LD (DE),A / JP (HL))",
+          z.rd(HTIMI_HOOK) == 0xC3 and (z.rd(HTIMI_HOOK + 1) | (z.rd(HTIMI_HOOK + 2) << 8)) == GO_BGM_TICK
+          and z.rd(sym["BANKSWITCH_TRAMPOLINE_RAM"]) == 0x12 and z.rd(sym["BANKSWITCH_TRAMPOLINE_RAM"] + 1) == 0xE9)
+z.sim_trig_a = True
+run_until_pc(z, sym["GOTO_TITLE_HOP2"], 5_000_000)
+check("Stage1 reason screen: a button press goes on to the title (GOTO_TITLE_HOP2 reached)", True)
+
 print()
 print(f"{len(ok)} passed, {len(fail)} failed")
 if fail:

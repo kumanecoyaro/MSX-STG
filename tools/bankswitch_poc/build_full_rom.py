@@ -197,20 +197,16 @@ MAINLOOP_NO_TEST_SWITCH:
     ; --- 検出したら、上のSTAGE_CLEAR_ACT==3と全く同じ手法(DI+PSG全     ---
     ; --- チャンネル無音化+2ホップトランポリン)でtitle(GLOBAL bank0/1、 ---
     ; --- 起動時と同じ番号)へ戻る。                                      ---
+    ; --- (2026-09-23) GAME_OVER_SEQ==4: ボスレーザーに条件未達(バリア無し/ ---
+    ; --- エナジー不足)で割り込めずにやられた - 理由付きのゲームオーバー画面 ---
+    ; --- はbank7(tools/gameover_bank/gameover_bank.asmのS1_FAIL_INIT、入口 ---
+    ; --- 4003h)。window Aだけを切り替える(window BはStage1のbank3のまま)。 ---
+    ; --- ROM予算(ALIGN境界)のため3/4で無音化部分を共有する。            ---
     LD A,(GAME_OVER_SEQ)
     CP 3
-    JR NZ,MAINLOOP_NO_GAMEOVER_SWITCH
-
-    DI
-    LD A,8 : OUT (PSG_ADDR),A : XOR A : OUT (PSG_DATA),A
-    LD A,9 : OUT (PSG_ADDR),A : XOR A : OUT (PSG_DATA),A
-    LD A,10 : OUT (PSG_ADDR),A : XOR A : OUT (PSG_DATA),A
-
-    LD A,1
-    LD DE,7000h
-    LD HL,MAINLOOP_GAMEOVER_HOP2
-    JP 0F200h
-MAINLOOP_GAMEOVER_HOP2:
+    JR C,MAINLOOP_NO_GAMEOVER_SWITCH
+    JP GAMEOVER_SWITCH_TAIL      ; 無音化+分岐はファイル末尾(ROM予算のALIGN境界対策)
+MAINLOOP_GAMEOVER_HOP2:           ; window Aに置くこと(hop1でwindow Bが変わるため)
     LD A,0
     LD DE,6000h
     LD HL,04010h
@@ -274,7 +270,67 @@ def patch_postinit32(text):
     return text.replace(POSTINIT32_ANCHOR, POSTINIT32_PATCH, 1)
 
 
-def patched_game_text():
+# (2026-09-23、"今回は初期Tickをボス前まで進めて調整する おそらく何度もラリーが
+# 必要なので"): 調整用の一時パッチ。INITの最後でGAME_TICK=1024(CHECK_BOSS_TRIGGERの
+# 閾値)・スケジュール消化済み・EbuzII撃破済み・スコア5万点(ゲージ満タン)にして、
+# 飛び込み演出の直後にステージ1ボスが出る。送付するComb ROM(main())だけに入れ、
+# verify_*.pyがassemble_game()で組む版には入れない(通常の流れを検証するため)。
+# 調整が終わったらFalseに戻すこと。
+DEBUG_BOSS_START = True
+DEBUG_BOSS_START_ANCHOR = """    CALL LZ_INIT
+    CALL UNMUTE_BGM
+"""
+
+
+def debug_boss_start_patch(text):
+    # INITの"CALL LZ_INIT"を同じ3byteの"CALL DEBUG_BOSS_START_INIT"へ差し替え、本体は
+    # ファイルの一番最後へ足す - 既存のラベル番地を1つも動かさない(EbuzIIのbank6側
+    # テーブルはpatch_ebuz2_mk2.pyがdebug無しの番地で作るため、ずれると壊れる)。
+    import re
+    n = int(re.search(r"LD HL,\(SPAWN_NEXT_INDEX\)\n    LD DE,(\d+)", text).group(1))
+    assert text.count(DEBUG_BOSS_START_ANCHOR) == 1, "LZ_INIT/UNMUTE_BGM anchor not found - source drifted"
+    text = text.replace(DEBUG_BOSS_START_ANCHOR, DEBUG_BOSS_START_ANCHOR.replace(
+        "CALL LZ_INIT", "CALL DEBUG_BOSS_START_INIT"), 1)
+    return text + f"""
+; --- [bankswitch_poc DEBUG PATCH: DEBUG_BOSS_START] ---
+DEBUG_BOSS_START_INIT:
+    LD HL,1024 : LD (GAME_TICK),HL
+    LD HL,{n} : LD (SPAWN_NEXT_INDEX),HL
+    LD A,1 : LD (EBUZ2_DEFEATED),A
+    LD HL,500 : LD (SCORE),HL
+    XOR A : LD (SCORE+2),A
+    CALL SCORE_DISPLAY
+    JP LZ_INIT
+"""
+
+
+# (2026-09-23) GAME_OVER_SEQ>=3の切り替え本体。MAINLOOP_PATCHに置くとALIGN境界を
+# 越えてComb版だけ容量超過したため、ファイル末尾(1byte単位のコスト、他のALIGNを
+# 乱さない)へ置く。3=タイトルへ(hop2はwindow AのMAINLOOP_GAMEOVER_HOP2)、
+# 4=ボス条件未達のゲームオーバー画面(bank7の4003h、window Aだけ切り替え)。
+GAMEOVER_SWITCH_TAIL = """
+GAMEOVER_SWITCH_TAIL:
+    DI
+    LD B,A
+    LD A,8 : OUT (PSG_ADDR),A : XOR A : OUT (PSG_DATA),A
+    LD A,9 : OUT (PSG_ADDR),A : XOR A : OUT (PSG_DATA),A
+    LD A,10 : OUT (PSG_ADDR),A : XOR A : OUT (PSG_DATA),A
+    LD A,B
+    CP 4
+    JR Z,GST_S1FAIL
+    LD A,1
+    LD DE,7000h
+    LD HL,MAINLOOP_GAMEOVER_HOP2
+    JP 0F200h
+GST_S1FAIL:
+    LD A,7
+    LD DE,6000h
+    LD HL,04003h
+    JP 0F200h
+"""
+
+
+def patched_game_text(debug=False):
     src_path = os.path.join(REPO, "src", "CYBER SHMUP.asm")
     text = open(src_path, encoding="utf-8").read()
     assert text.count(INIT_ANCHOR) == 1, "INIT anchor not found (or not unique) - source drifted"
@@ -283,11 +339,14 @@ def patched_game_text():
     text = patch_postinit32(text)
     text = text.replace(INIT_ANCHOR, INIT_PATCH, 1)
     text = text.replace(MAINLOOP_ANCHOR, MAINLOOP_PATCH, 1)
+    text = text + GAMEOVER_SWITCH_TAIL
+    if debug:
+        text = debug_boss_start_patch(text)
     return text
 
 
-def assemble_game():
-    a = Assembler(patched_game_text())
+def assemble_game(debug=False):
+    a = Assembler(patched_game_text(debug))
     out = a.assemble()
     bank0 = bytearray([0xFF] * 0x4000)
     bank1 = bytearray([0xFF] * 0x4000)
@@ -544,7 +603,9 @@ def assemble_title():
 
 def main():
     title_bank0, title_bank1, title_sym = assemble_title()
-    game_bank0, game_bank1, game_sym = assemble_game()
+    game_bank0, game_bank1, game_sym = assemble_game(DEBUG_BOSS_START)
+    if DEBUG_BOSS_START:
+        print("*** DEBUG_BOSS_START: Stage1 starts right before the boss (score 50000) ***")
     bank4, bank5, stage2_sym = assemble_real_stage2()
 
     # --- round39 layout: title(0,1) -> Stage1(2,3) -> Stage2(4,5). The   ---
