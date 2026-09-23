@@ -16555,8 +16555,9 @@ PAP_DX:
 ;           2=ボスレーザー照射中(割り込み待ち) 3=干渉(B連打) 4=終了
 ; ゲージ値(0-50px) = 照射/干渉中はLZ_TIMER/2、使用済みは0、それ以外は
 ; min(SCORE/10,50)(SCOREは実得点/100単位 → 1000点=10=1px)。
-; 干渉: ボスは毎フレーム1px押し込み(60px/秒)、B1回で8px押し返す
-; (8回/秒=64px/秒で上回り、7回/秒=56px/秒では押し負ける)。干渉点が列25
+; 干渉: ボスは4フレームに3px押し込み(45px/秒)、B1回で8px押し返す
+; ("8連射は厳しいな...6連射で": 6回/秒=48px/秒で上回り、5回/秒=40px/秒では
+; 押し負ける)。開始点は自機とボスの射出口の中間。干渉点が列25
 ; (ボス左端)に届けば勝ち→START_BOSS_DEATH、自機の先端列まで押し戻されたら
 ; 負け→ゲームオーバー(バリア残量に関係なく、ボスレーザーを全長で残す)。
 ; 干渉中、ボスの3行のうち上下の行は干渉点より右だけ残る。
@@ -16718,7 +16719,7 @@ LZF_ALIVE:
     LD A,(LZ_PHASE)
     OR A : JR Z,LZ_IDLE
     DEC A : JR Z,LZ_SOLO
-    DEC A : JR Z,LZ_HOLD
+    DEC A : JP Z,LZ_HOLD
     DEC A : RET NZ
     ; --- 3: 干渉 ---
     LD HL,LZ_CLASH_X
@@ -16728,7 +16729,10 @@ LZF_ALIVE:
     CALL SOUND_POD_HIT
     LD HL,LZ_CLASH_X
 LZC_NOPUSH:
-    DEC (HL)                       ; ボスの押し込み 1px/フレーム
+    LD A,(LZ_TICK) : INC A : LD (LZ_TICK),A
+    AND 3 : JR Z,LZC_NOBOSS        ; ボスの押し込み 4フレームに3px(45px/秒)
+    DEC (HL)
+LZC_NOBOSS:
     LD A,(HL)
     CP LZ_WIN_X
     JP NC,LZ_WIN

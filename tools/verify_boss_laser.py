@@ -199,18 +199,20 @@ def to_clash(z):
     start_countdown(z); z.wr(sym['PLAYERY'], 120); to_fire(z)
     frame(z, trig_b=True); frame(z)
 z = landed(); to_clash(z)
-f = mash(z, 9)
-check(f"mashing 6.7 presses/s loses -> game over even with barrier left (after {f} frames)",
+f = mash(z, 12)
+check(f"mashing 5 presses/s loses -> game over even with barrier left (after {f} frames)",
       z.rd(PH) == 4 and z.rd(sym['GAME_OVER']) == 1 and z.rd(sym['BOSS_EXPL_ACTIVE']) == 0)
 check("lose -> the boss beam is left drawn full length over the player (3 rows)",
       all(cells(z, r, 0, 26) == beams(0, 26) for r in (8, 9, 10)))
 z2 = landed(); to_clash(z2)
-fr = 0; nxt = 0; hits = 0
-while z2.rd(PH) == 3 and fr < 3000:
-    p = fr >= nxt
-    if p: nxt += 7 if hits % 2 == 0 else 8; hits += 1
-    frame(z2, trig_b=p); fr += 1
-check(f"exactly 8 presses/s (7/8-frame alternation) still wins ({fr} frames)", z2.rd(PH) == 4 and z2.rd(sym['GAME_OVER']) == 0)
+f = mash(z2, 10, 6000)
+check(f"exactly 6 presses/s (every 10 frames) still wins (after {f} frames)", z2.rd(PH) == 4 and z2.rd(sym['GAME_OVER']) == 0)
+z2 = landed(); to_clash(z2)
+c0 = z2.rd(sym['LZ_CLASH_X']); p0 = z2.rd(sym['LZ_PCOL'])
+check(f"clash starts halfway between the player's muzzle (x{p0 * 8 + 8}) and the boss's (x208): x{c0}",
+      abs(c0 - (p0 * 8 + 8 + 208) // 2) <= 1)
+f = mash(z2, 100000)
+check(f"no presses at all: boss pushes 45px/s - {f} frames before the loss (was 76 at 60px/s)", f is not None and f >= 95)
 
 # ---------------------------------------------------------------- テストモード: カウントダウンからやり直し
 z = landed(); to_clash(z); z.wr(sym['GAMEOVER_ENABLED'], 0)
