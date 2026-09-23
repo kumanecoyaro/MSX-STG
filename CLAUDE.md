@@ -37,8 +37,12 @@
 - 新規にVRAM/PSG/その他ハードウェアポートへのブロック転送を実装する際は、着手前に
   必ずこのセクションを再確認し、`OTIR`系命令を使わないこと。
 
-## Stage1 ROM予算(2026-09-23、Round145 follow-up25時点で**plain 952byte /
-Comb 902byte / Comb+DEBUG_BOSS_START 869byte**・恒久的に確認必須、Combの方が少ない)
+## Stage1 ROM予算(2026-09-23、Round145 follow-up26時点で**plain 667byte /
+Comb 617byte / Comb+DEBUG_BOSS_START 584byte**・恒久的に確認必須、Combの方が少ない)
+
+- **(2026-09-23、follow-up26)** ボスレーザーを連射の流れ化+干渉点/飛び散り/右端スプライト(16x24、
+  パターン148-155)で約285byte。z80emuはCALL経由のBIOSしかスタブしないので、BIOSへの末尾`JP`
+  (`JP WRTVRM`等)は使わず`CALL ...: RET`にすること。
 
 - **(2026-09-23、follow-up24)** スケジュールの4表(SPAWN_SIMPLE_Y/SPAWN_BASEY/
   SPAWN_E3_OFFSET/ENEMY6_ROW、各341byte)を1本にまとめて約1000byte回復

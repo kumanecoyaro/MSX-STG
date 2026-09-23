@@ -16555,16 +16555,21 @@ PAP_DX:
 ;           2=ボスレーザー照射中(割り込み待ち) 3=干渉(B連打) 4=終了
 ; ゲージ値(0-50px) = 照射/干渉中はLZ_TIMER/2、使用済みは0、それ以外は
 ; min(SCORE/10,50)(SCOREは実得点/100単位 → 1000点=10=1px)。
-; 干渉: ボスは4フレームに3px押し込み(45px/秒)、B1回で8px押し返す
-; ("8連射は厳しいな...6連射で": 6回/秒=48px/秒で上回り、5回/秒=40px/秒では
-; 押し負ける)。開始点は自機とボスの射出口の中間。干渉点が列25
+; 干渉: ボスは毎フレーム1px押し込み(60px/秒)、B1回で8px押し返す("8連射に戻して":
+; 8回/秒=64px/秒でわずかに上回る、7回/秒=56px/秒では押し負ける)。撃つのを止めると
+; (LZ_STOP_FRAMES押さない)ボスの押し込みは倍。開始点は自機とボスの射出口の中間。干渉点が列25
 ; (ボス左端)に届けば勝ち→START_BOSS_DEATH、自機の先端列まで押し戻されたら
 ; 負け→ゲームオーバー(バリア残量に関係なく、ボスレーザーを全長で残す)。
 ; 干渉中、ボスの3行のうち上下の行は干渉点より右だけ残る。
 ; GAMEOVER_ENABLED=0(タイトルBスタートのテスト用)で負けた場合は死なない
 ; ので、レーザーを消し、エナジーを未使用に戻してカウントダウンからやり直す。
-; レーザーの絵はEbuzIIのレーザー(144/145、列の偶奇で交互)を仮に流用、
-; 干渉点だけ専用(147)。ゲージは行0(group23、白/黒、codes186-188)。
+; レーザーの絵はEbuzIIのレーザー(144/145)を仮に流用し、L/Rの2セル弾を途切れず
+; 撃ち続ける流れとして描く(毎フレーム1セル送り、先端も1列/フレームで伸びる)。
+; 干渉点のセルは空白(両方の弾がそこで消える)で、その上に自機爆発の絵のスプライト
+; (22)、まわりに自機爆発の飛び散り(PLAYER_EXPL、26-29、音も自機爆発)。
+; ボスレーザーの右端(列26-27)には16x24のスプライト(23/24)。ボスは干渉点を
+; 毎フレーム1px押し込み、LZ_STOP_FRAMES押さなければ2px。
+; ゲージは行0(group23、白/黒、codes186-188)。
 ; ============================================================================
 LZ_PHASE     EQU 0F334h
 LZ_SPENT     EQU 0F335h   ; 1=自機レーザー使用済み
@@ -16592,23 +16597,35 @@ LZ_CB_CX      EQU 210     ; ポッド軌道の中心(GET_POD_XY)=ポッド弾の
 LZ_CB_CY      EQU 71
 LZ_CB0        EQU POD_BULLET0_DXMAG   ; 吸い込み中フラグ(ポッド全滅後は未使用の番地)
 LZ_CB1        EQU POD_BULLET1_DXMAG
-LZ_PUSH_PX    EQU 8
+LZ_PUSH_PX    EQU 8       ; 1回押すごとの押し返し。ボスは毎フレーム1px(60px/秒)
+                          ; なので1秒8回でほぼ互角
+LZ_STOP_FRAMES EQU 15     ; これだけ押さないと「撃つのを止めた」扱いでボスが2px/フレーム
 LZ_WIN_X      EQU 200     ; 列25(ボス左端)
-LZ_SPARK_CODE EQU 147
+LZ_BFRONT     EQU LZ_CLASH_X  ; 照射中(2)はボスレーザーの先端列(26→0へ1列/フレーム)
+; スプライト(ボス戦中は8-31が全部ボスの固定番号として予約済み。ポッド全滅後の
+; レーザー中はポッド爆発の22-29が空いている)。
+LZ_CLASH_SPR  EQU 22      ; 干渉点(自機爆発の絵)
+LZ_END_SPR    EQU 23      ; 23/24: ボスレーザーの右端(射出口との隙間2セルを埋める16x24)
+LZ_END_PAT    EQU 148     ; 148-155(スプライトパターンの空き)
+LZ_SCATTER_SPR EQU 26     ; 26-29: 干渉中だけSPRITE_USEDを空けて飛び散りに使わせる
 GAUGE_FULL_CODE EQU 186
 GAUGE_PART_CODE EQU 187   ; 端数1セル分、値が変わるたびパターン自体を書き換える
 GAUGE_EDGE_CODE EQU 188   ; col12の右端1px(px103)
 GAUGE_BLANK_CODE EQU MISSION_FONT_BASE+5   ; 行0の黒埋めと同じ空白
 
-LZ_TILES:
-    DB 99h,5Ah,3Ch,0FFh,0FFh,3Ch,5Ah,99h      ; 147 干渉点(仮)
+; B1beam_24x24.json(16x24、シアン)。上16行=スプライト23、下8行=24
+LZ_END_TILES:
+    DB 0C0h,60h,98h,0EEh,33h,9Dh,6Fh,0BBh,0CDh,77h,9Bh,64h,0DBh,64h,9Bh,76h
+    DB 00h,00h,00h,00h,00h,0C0h,60h,0B8h,5Eh,0ABh,0F7h,0AFh,6Fh,0B7h,0EBh,0DEh
+    DB 0EDh,9Fh,75h,0EFh,96h,2Ch,70h,0C0h,00h,00h,00h,00h,00h,00h,00h,00h
+    DB 0B8h,60h,0C0h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h
 GAUGE_TILES:
     DB 00h,0FFh,0FFh,0FFh,0FFh,0FFh,0FFh,00h  ; 186 満
     DB 00h,00h,00h,00h,00h,00h,00h,00h        ; 187 端数(動的)
     DB 00h,01h,01h,01h,01h,01h,01h,00h        ; 188 左端1px
 
 LZ_INIT:
-    LD HL,LZ_TILES : LD DE,LZ_SPARK_CODE*8 : LD BC,8 : CALL LDIRVM
+    LD HL,LZ_END_TILES : LD DE,LZ_END_PAT*8+SPRPAT : LD BC,64 : CALL LDIRVM
     LD HL,GAUGE_TILES : LD DE,GAUGE_FULL_CODE*8 : LD BC,24 : CALL LDIRVM
     XOR A
     LD (LZ_PHASE),A : LD (LZ_SPENT),A : LD (GAUGE_SHOWN),A : LD (LZ_BLANKING),A
@@ -16718,22 +16735,39 @@ LZF_ALIVE:
     CALL NZ,LZ_COUNTDOWN
     LD A,(LZ_PHASE)
     OR A : JR Z,LZ_IDLE
-    DEC A : JR Z,LZ_SOLO
+    DEC A : JP Z,LZ_SOLO
     DEC A : JP Z,LZ_HOLD
     DEC A : RET NZ
     ; --- 3: 干渉 ---
-    LD HL,LZ_CLASH_X
+    ; LZ_TICK=最後にBを押してからのフレーム数(LZ_STOP_FRAMESで頭打ち)
+    LD HL,LZ_TICK
     LD A,(FIREB_EDGE) : OR A
     JR Z,LZC_NOPUSH
-    LD A,(HL) : ADD A,LZ_PUSH_PX : LD (HL),A
+    LD (HL),0
+    LD A,(LZ_CLASH_X) : ADD A,LZ_PUSH_PX : LD (LZ_CLASH_X),A
     CALL SOUND_POD_HIT
-    LD HL,LZ_CLASH_X
+    JR LZC_BOSS
 LZC_NOPUSH:
-    LD A,(LZ_TICK) : INC A : LD (LZ_TICK),A
-    AND 3 : JR Z,LZC_NOBOSS        ; ボスの押し込み 4フレームに3px(45px/秒)
+    LD A,(HL) : CP LZ_STOP_FRAMES
+    JR NC,LZC_BOSS
+    INC (HL)
+LZC_BOSS:
+    LD A,(LZ_TICK) : CP LZ_STOP_FRAMES   ; ボスの押し込み 1px/フレーム、
+    LD HL,LZ_CLASH_X                     ; 撃つのを止めていたら倍
     DEC (HL)
-LZC_NOBOSS:
-    LD A,(HL)
+    JR C,LZC_SCATTER
+    DEC (HL)
+LZC_SCATTER:
+    ; 干渉点のまわりへ4フレームごとに自機爆発を1つ(音も自機爆発)
+    LD A,(TICK) : AND 3
+    JR NZ,LZC_JUDGE
+    CALL LZ_RND : AND 1Fh : SUB 24 : ADD A,(HL)   ; X: 干渉点-24..+7
+    LD (EBUZ_EXPL_POS_X),A
+    CALL LZ_RND : AND 1Fh : ADD A,LZ_ROW*8-20     ; Y: 行の中心-16..+15(左上基準)
+    LD (EBUZ_EXPL_POS_Y),A
+    CALL PEUA_TRY_SPAWN_AT
+LZC_JUDGE:
+    LD A,(LZ_CLASH_X)
     CP LZ_WIN_X
     JP NC,LZ_WIN
     SRL A : SRL A : SRL A : LD B,A
@@ -16745,12 +16779,8 @@ LZ_IDLE:
     CALL LZ_CAN_FIRE
     RET NZ
     LD A,(PLAYERY) : ADD A,8 : SRL A : SRL A : SRL A : LD (LZ_PROW),A
-    LD B,26                        ; ボスの行(2-17)はボス左端で止める
-    CP 18 : JR C,LZI_END
-    LD B,32
-LZI_END:
-    LD A,B : LD (LZ_PEND),A
     CALL LZ_CALC_PCOL
+    LD (LZ_PEND),A                 ; 先端は自機の前から1列/フレームで伸ばす
     LD A,LZ_SOLO_FRAMES : LD (LZ_TIMER),A
     LD A,1 : LD (LZ_PHASE),A : LD (LZ_SPENT),A
     CALL SOUND_POD_FIRE
@@ -16763,6 +16793,16 @@ LZ_SOLO:
     XOR A : LD (LZ_PHASE),A
     RET
 LZS_ON:
+    LD A,(LZ_PROW) : CP 18         ; 先端を1列伸ばす。ボスの行(2-17)は
+    LD A,26                        ; ボス左端(列26)、それより下は画面端まで
+    JR C,LZS_END
+    LD A,32
+LZS_END:
+    LD HL,LZ_PEND
+    CP (HL)
+    JR Z,LZS_HIT
+    INC (HL)
+LZS_HIT:
     CALL LZ_HIT_PODS               ; 最後のポッドを壊すとカウントダウンが始まる
     JP LZ_DRAW_CURRENT
 
@@ -16775,6 +16815,11 @@ LZ_HOLD:
     CALL LZ_START_CLASH
     JP LZ_DRAW_CURRENT
 LZH_WAIT:
+    LD HL,LZ_BFRONT                ; ボスレーザーの先端を1列/フレームで左へ
+    LD A,(HL) : OR A
+    JR Z,LZH_FULL
+    DEC (HL)
+LZH_FULL:
     CALL LZ_IN_BEAM
     JR C,LZ_LOSE_EXT
     LD HL,LZ_TICK : DEC (HL)
@@ -16782,10 +16827,13 @@ LZH_WAIT:
     JP LZ_DRAW_CURRENT
 
 ; C=自機の当たり判定(PLAYERX,PLAYERY)-(+7,+7)がボスレーザーの帯
-; (x0-207, y64-87=行8-10)に重なっている
+; (x=先端列*8-207, y64-87=行8-10)に重なっている
 LZ_IN_BEAM:
+    LD A,(LZ_BFRONT) : ADD A,A : ADD A,A : ADD A,A : LD B,A
     LD A,(PLAYERX) : CP 208
     JR NC,LZIB_NO
+    ADD A,7 : CP B
+    JR C,LZIB_NO
     LD A,(PLAYERY) : SUB 57        ; y+7>=64 かつ y<=87
     CP 31
     RET                            ; C=帯の中
@@ -16822,6 +16870,7 @@ LZ_LOSE:
     XOR A : LD (LZ_SPENT),A : LD (LZ_FAIL_REASON),A : LD (LZ_PHASE),A
     JP LZ_BOSS_FIRE
 LZL_DIE:
+    XOR A : LD (LZ_BFRONT),A
     LD A,2 : LD (LZ_PHASE),A       ; ボスレーザーを全長で描いたまま残す
     CALL LZ_DRAW_CURRENT
     LD A,4 : LD (LZ_PHASE),A
@@ -16846,15 +16895,15 @@ LZ_DRAW_CURRENT:
     LD A,(LZ_PROW) : LD E,A        ; 1: 自機レーザー(1行)
     LD HL,(LZ_PCOL)                ; L=PCOL,H=PEND
     LD D,255
-    JR LZ_DRAW
+    JP LZ_DRAW
 LZDC_2:
     DEC A : JR NZ,LZDC_3
-    LD HL,26*256                   ; 2: ボスレーザー(3行、列0-25)
+    LD A,(LZ_BFRONT) : LD L,A : LD H,26   ; 2: ボスレーザー(3行、先端-列25)
     LD D,255
     LD E,LZ_ROW-1 : CALL LZ_DRAW
     INC E : CALL LZ_DRAW
-    INC E
-    JR LZ_DRAW
+    INC E : CALL LZ_DRAW
+    JR LZ_SPRITES
 LZDC_3:
     DEC A : RET NZ
     LD A,(LZ_CLASH_X) : SRL A : SRL A : SRL A : LD D,A
@@ -16867,15 +16916,59 @@ LZDC3_SIDE:
     LD E,LZ_ROW-1 : CALL LZ_DRAW
     LD E,LZ_ROW+1 : CALL LZ_DRAW
     POP AF : LD (LZ_BLANKING),A
+; ボスレーザー(2/3)に付くスプライト: 右端の16x24、干渉中(3)は干渉点。
+; LZ_BLANKING=1(消去)なら隠す。
+LZ_SPRITES:
+    LD A,(LZ_BLANKING) : DEC A
+    JR Z,LZSP_HIDE
+    LD BC,63*256+208 : LD DE,LZ_END_PAT*256+7
+    LD A,LZ_END_SPR : CALL LZ_SPR
+    LD BC,79*256+208 : LD DE,LZ_END_PAT+4*256+7
+    LD A,LZ_END_SPR+1 : CALL LZ_SPR
+    LD A,(LZ_PHASE) : CP 3
+    RET NZ
+    LD A,(LZ_CLASH_X) : AND 0F8h : SUB 4 : LD C,A
+    LD B,LZ_ROW*8-5
+    LD A,(TICK) : AND 1
+    LD E,SPR_WHITE
+    JR Z,LZSP_COL
+    LD E,SPR_YELLOW
+LZSP_COL:
+    LD D,PAT_PLAYER_EXPLOSION
+    LD A,LZ_CLASH_SPR
+    JR LZ_SPR
+LZSP_HIDE:
+    LD BC,ENEMY_HIDE_Y*256+255
+    LD A,LZ_CLASH_SPR : CALL LZ_SPR
+    LD A,LZ_END_SPR : CALL LZ_SPR
+    LD A,LZ_END_SPR+1
+; A=スプライト番号, B=Y, C=X, D=パターン, E=色
+LZ_SPR:
+    ADD A,A : ADD A,A : LD L,A : LD H,SPRATR/256
+    LD A,B : CALL WRTVRM : INC HL
+    LD A,C : CALL WRTVRM : INC HL
+    LD A,D : CALL WRTVRM : INC HL
+    LD A,E : CALL WRTVRM           ; (JPで末尾呼び出しするとz80emuのBIOSスタブが効かない)
     RET
+
+; Out: A=DFL_RNG←DFL_RNG*5+1(8bit、周期256)
+LZ_RND:
+    LD A,(DFL_RNG) : LD B,A
+    ADD A,A : ADD A,A : ADD A,B : INC A
+    LD (DFL_RNG),A
+    RET
+
 ; E=行, L=開始列, H=終端列(含まない), D=干渉点の列。絵はEbuzIIのレーザー
-; (奇数列L/偶数列R)、D列だけ干渉点。LZ_BLANKING: 1=全部空白(消去)、
-; 2=D列以下を空白(干渉中の上下の行)。
+; (L/Rの2セル弾)を途切れず撃ち続ける流れ: 毎フレーム1セルずつ送るので、
+; 列の偶奇とTICKの偶奇でL/Rが入れ替わる。D列(干渉点)は空白 - 両方の弾が
+; そこで消える。LZ_BLANKING: 1=全部空白(消去)、2=D列以下を空白(干渉中の
+; 上下の行)。
 LZ_DRAW:
     LD C,L
 LZD_LOOP:
     LD A,C : CP H
     RET NC
+    LD A,(TICK) : ADD A,C
     AND 1 : LD B,A
     LD A,EBUZ2_LASER_R_CODE : SUB B : LD B,A
     LD A,(LZ_BLANKING) : OR A
@@ -16888,8 +16981,6 @@ LZD_LOOP:
 LZD_MAIN:
     LD A,C : CP D
     JR NZ,LZD_W
-    LD B,LZ_SPARK_CODE
-    JR LZD_W
 LZD_BLANK:
     LD B,BLANKCODE
 LZD_W:
@@ -16909,6 +17000,12 @@ LZ_START_CLASH:
     ADD A,A : ADD A,A : ADD A,4+104       ; (PCOL*8+8)/2 + 26*8/2
     LD (LZ_CLASH_X),A
     LD A,3 : LD (LZ_PHASE),A
+    XOR A : LD (LZ_TICK),A
+    LD HL,SPRITE_USED+LZ_SCATTER_SPR : LD B,4
+LZSC_FREE:
+    LD (HL),A                      ; 飛び散り(PLAYER_EXPL)が26-29を確保できるように
+    INC HL
+    DJNZ LZSC_FREE
     JP SOUND_EBUZ_FIRE
 
 ; 最後のポッド撃破時(POD_HIT_DESTROY)、およびテストモードでのやり直し:
@@ -16973,6 +17070,7 @@ LZCD_TICK:
     LD A,(LZ_PHASE) : DEC A
     JP Z,LZ_START_CLASH            ; 自機レーザー照射中 → そのまま干渉
     LD A,2 : LD (LZ_PHASE),A
+    LD A,26 : LD (LZ_BFRONT),A     ; 先端は射出口(列26)から伸びていく
     LD A,LZ_CUTIN_FRAMES : LD (LZ_TICK),A
     CALL LZ_QUALIFIED
     JP NZ,LZ_LOSE_EXT              ; 条件未達: 撃たれた時点でゲームオーバー
@@ -17017,6 +17115,11 @@ LZCP_2:
 LZ_HIT_PODS:
     LD A,(LZ_PROW) : ADD A,A : ADD A,A : ADD A,A : LD (POD_XY_Y),A
     LD A,(LZ_PCOL) : ADD A,A : ADD A,A : ADD A,A : LD (POD_XY_X),A
+    LD A,(LZ_PEND) : ADD A,A : ADD A,A : ADD A,A   ; C=先端のX(列32なら255)
+    JR NC,LZHP_FRONT
+    LD A,255
+LZHP_FRONT:
+    LD C,A
     LD B,0
 LZHP_LOOP:
     PUSH BC
@@ -17029,7 +17132,9 @@ LZHP_LOOP:
     CP 116 : JR C,LZHP_SKIP
     CP 141 : JR NC,LZHP_SKIP
     LD HL,POD_CUR_X : ADD HL,DE
-    LD A,(HL) : ADD A,12
+    LD A,(HL) : CP C               ; まだ先端が届いていない
+    JR NC,LZHP_SKIP
+    ADD A,12
     JR C,LZHP_HIT
     LD HL,POD_XY_X
     CP (HL) : JR C,LZHP_SKIP

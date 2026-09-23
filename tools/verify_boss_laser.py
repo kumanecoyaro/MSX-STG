@@ -22,7 +22,8 @@ for a, v in out.items():
 bank = open(os.path.join(HERE, 'bgm_data', 'bgm_bank.bin'), 'rb').read()
 lay = json.load(open(os.path.join(HERE, 'bgm_data', 'bgm_layout.json')))
 ok, fail = [], []
-def check(label, cond):
+def check(label, cond, info=None):
+    if info is not None and not cond: label += f" {info}"
     (ok if cond else fail).append(label); print(("PASS " if cond else "FAIL "), label)
 def run_until_pc(z, pc, n=3000000):
     for _ in range(n):
@@ -33,18 +34,24 @@ def call(z, name, b=None):
     if b is not None: z.b = b
     z.sp = 0xF000; z.wr(0xF000, 0); z.wr(0xF001, 0); z.pc = sym[name]; run_until_pc(z, 0)
 def frame(z, trig_b=False):
+    _cur[0] = z
     z.sim_trig_b = trig_b
     z.pc = sym['MAINLOOP']; z.step(); run_until_pc(z, sym['MAINLOOP'])
+def sattr(z, s): return tuple(z.vram[0x1B00 + s * 4 + i] for i in range(4))
 def rd16(z, a): return z.rd(a) | z.rd(a + 1) << 8
 def set_score(z, v):
     z.wr(sym['SCORE'], v & 255); z.wr(sym['SCORE'] + 1, (v >> 8) & 255); z.wr(sym['SCORE'] + 2, v >> 16)
 def score(z): return rd16(z, sym['SCORE']) | z.rd(sym['SCORE'] + 2) << 16
 
 PH, ROW = sym['LZ_PHASE'], sym['LZ_ROW']
-SP, BLANK = sym['LZ_SPARK_CODE'], sym['BLANKCODE']
+BLANK = sym['BLANKCODE']
 LCODE, RCODE = sym['EBUZ2_LASER_L_CODE'], sym['EBUZ2_LASER_R_CODE']
-def beam(c): return LCODE if c & 1 else RCODE          # EbuzIIのレーザー(奇数列L/偶数列R)
-def beams(c0, c1): return [beam(c) for c in range(c0, c1)]
+_cur = [None]
+def beam(c, z=None):
+    """EbuzIIのレーザー(L/Rの2セル弾)の流れ: (TICK+列)の偶奇でL/R。描いた時点のTICK"""
+    z = z or _cur[0]
+    return LCODE if (z.rd(sym['TICK']) + c) & 1 else RCODE
+def beams(c0, c1, z=None): return [beam(c, z) for c in range(c0, c1)]
 def cells(z, row, c0=0, c1=26): return [z.vram[0x1800 + row * 32 + c] for c in range(c0, c1)]
 
 _landed = None
@@ -160,11 +167,28 @@ check(f"countdown: bullets are pulled into the boss centre ({sym['LZ_CB_CX']},{s
 check("countdown: the boss laser has not fired yet one frame before the end", z.rd(PH) == 0 and z.rd(CD) == 1
       and cells(z, 9, 0, 26) == [BLANK] * 26)
 frame(z)
-check("after 120 frames the boss fires: whole length at once (cols 0-25) and 3 rows thick (rows 8-10), EbuzII laser tiles",
-      z.rd(PH) == 2 and all(cells(z, r, 0, 26) == beams(0, 26) for r in (8, 9, 10))
+fr = z.rd(sym['LZ_BFRONT'])
+check(f"after 120 frames the boss fires: the front leaves the muzzle (col {fr}), 3 rows thick (rows 8-10), EbuzII tiles",
+      z.rd(PH) == 2 and fr == 25 and all(cells(z, r, 0, 26) == [BLANK] * 25 + beams(25, 26) for r in (8, 9, 10))
       and cells(z, 7, 0, 26) == [BLANK] * 26 and cells(z, 11, 0, 26) == [BLANK] * 26)
+fronts = [fr]
+for _ in range(10): frame(z); fronts.append(z.rd(sym['LZ_BFRONT']))
+check(f"the boss beam is pushed out one cell per frame {fronts}",
+      fronts == list(range(25, 14, -1)) and all(cells(z, r, 0, 26) == [BLANK] * 15 + beams(15, 26) for r in (8, 9, 10)))
+e = sym['LZ_END_SPR']; ep = sym['LZ_END_PAT']
+check(f"16x24 end sprite fills the 2-cell gap right of the beam (cols 26-27): slots {e},{e+1} = {sattr(z, e)} {sattr(z, e + 1)}",
+      sattr(z, e) == (63, 208, ep, 7) and sattr(z, e + 1) == (79, 208, ep + 4, 7))
+bits = json.load(open(os.path.join(HERE, 'stage1_sprites', 'B1beam_24x24.json')))['bits']
+rows_ = [r[:16] for r in bits] + [[0] * 16] * 8
+def sbyte(r, x0): return sum(r[x0 + i] << (7 - i) for i in range(8))
+want = [sbyte(r, x) for part in (rows_[:16], rows_[16:]) for x in (0, 8) for r in part]
+check("end sprite patterns 148-155 = B1beam_24x24.json (16 wide x 24 tall)",
+      list(z.vram[0x3800 + ep * 8: 0x3800 + ep * 8 + 64]) == want)
+t0 = beams(15, 26); frame(z); t1 = cells(z, 9, 15, 26)
+check("the stream is re-shot every frame: each cell flips L/R from one frame to the next (バリバリ)",
+      all(a != b for a, b in zip(t0, t1)))
 for _ in range(20): frame(z)
-check("the boss laser stays on (fire-and-hold) while waiting for a cut-in",
+check("the boss laser stays on (fire-and-hold) at full length while waiting for a cut-in",
       z.rd(PH) == 2 and all(cells(z, r, 0, 26) == beams(0, 26) for r in (8, 9, 10)))
 
 # ---------------------------------------------------------------- 割り込み → 干渉 → 勝ち
@@ -174,9 +198,13 @@ pcol = z.rd(sym['LZ_PCOL'])
 c = z.rd(sym['LZ_CLASH_X']) >> 3
 check(f"B above the beam -> clash (phase 3), ship snapped into the middle row (PLAYERY 64), clash col {c}",
       z.rd(PH) == 3 and z.rd(sym['PLAYERY']) == 64 and pcol < c < 25)
-check("clash drawn: middle row = player beam | spark | boss beam; rows 8/10 = boss beam only right of the spark",
-      cells(z, 9, pcol, 26) == beams(pcol, c) + [SP] + beams(c + 1, 26)
+check("clash drawn: middle row = player stream | blank (both streams vanish there) | boss stream; rows 8/10 = boss "
+      "stream only right of the clash cell",
+      cells(z, 9, pcol, 26) == beams(pcol, c) + [BLANK] + beams(c + 1, 26)
       and all(cells(z, r, 0, 26) == [BLANK] * (c + 1) + beams(c + 1, 26) for r in (8, 10)))
+cs = sattr(z, sym['LZ_CLASH_SPR'])
+check(f"clash-point sprite (player-explosion pattern) centred on the clash cell: {cs}",
+      cs[0] == ROW * 8 - 5 and cs[1] == c * 8 - 4 and cs[2] == sym['PAT_PLAYER_EXPLOSION'] and cs[3] in (15, 11))
 check("gauge stays full during the clash (use does not drain it)", z.rd(sym['GAUGE_SHOWN']) == 50)
 x0 = z.rd(sym['PLAYERX'])
 z.sim_dir = 7
@@ -189,30 +217,51 @@ def mash(z, every, frames=3000):
         frame(z, trig_b=(f % every == 0))
         if z.rd(PH) != 3: return f
     return None
+pool = sym['PLAYER_EXPL_POOL']
+nact, nums, xs, snd = 0, set(), [], 0
+for f in range(24):
+    frame(z, trig_b=(f % 6 == 0))
+    if f == 23:
+        for i in range(4):
+            if z.rd(pool + i * 5):
+                nact += 1; nums.add(z.rd(pool + i * 5 + 4)); xs.append(z.rd(pool + i * 5 + 1))
+cx = z.rd(sym['LZ_CLASH_X'])
+check(f"scatter: player-explosion bursts pop around the clash point every 4 frames ({nact} alive, sprites {sorted(nums)}, "
+      f"x {xs} vs clash x{cx})",
+      nact >= 3 and nums <= set(range(26, 30)) and all(-24 <= x - cx <= 7 for x in xs))
 f = mash(z, 6)
 check(f"mashing 10 presses/s pushes the boss back and wins (after {f} frames)",
       z.rd(PH) == 4 and z.rd(sym['BOSS_EXPL_ACTIVE']) == 1 and z.rd(sym['GAME_OVER']) == 0)
 check("win -> the normal boss death sequence (+10000 points = 100 units)", score(z) - sc0 == 100)
 check("win -> all three laser rows erased", all(cells(z, r, 0, 26) == [BLANK] * 26 for r in (8, 9, 10)))
+check("win -> clash and end sprites hidden",
+      all(sattr(z, s)[0] == 191 for s in (sym['LZ_CLASH_SPR'], e, e + 1)))
 
 def to_clash(z):
     start_countdown(z); z.wr(sym['PLAYERY'], 120); to_fire(z)
     frame(z, trig_b=True); frame(z)
 z = landed(); to_clash(z)
-f = mash(z, 12)
-check(f"mashing 5 presses/s loses -> game over even with barrier left (after {f} frames)",
+f = mash(z, 9)
+check(f"mashing 6.7 presses/s loses -> game over even with barrier left (after {f} frames)",
       z.rd(PH) == 4 and z.rd(sym['GAME_OVER']) == 1 and z.rd(sym['BOSS_EXPL_ACTIVE']) == 0)
-check("lose -> the boss beam is left drawn full length over the player (3 rows)",
-      all(cells(z, r, 0, 26) == beams(0, 26) for r in (8, 9, 10)))
+check("lose -> the boss beam is left drawn full length over the player (3 rows), end sprite still on",
+      all(cells(z, r, 0, 26) == beams(0, 26) for r in (8, 9, 10)) and sattr(z, e)[0] == 63
+      and sattr(z, sym['LZ_CLASH_SPR'])[0] == 191)
 z2 = landed(); to_clash(z2)
-f = mash(z2, 10, 6000)
-check(f"exactly 6 presses/s (every 10 frames) still wins (after {f} frames)", z2.rd(PH) == 4 and z2.rd(sym['GAME_OVER']) == 0)
+f = mash(z2, 7, 6000)
+check(f"8.6 presses/s (every 7 frames) wins (after {f} frames)", z2.rd(PH) == 4 and z2.rd(sym['GAME_OVER']) == 0)
 z2 = landed(); to_clash(z2)
 c0 = z2.rd(sym['LZ_CLASH_X']); p0 = z2.rd(sym['LZ_PCOL'])
 check(f"clash starts halfway between the player's muzzle (x{p0 * 8 + 8}) and the boss's (x208): x{c0}",
       abs(c0 - (p0 * 8 + 8 + 208) // 2) <= 1)
-f = mash(z2, 100000)
-check(f"no presses at all: boss pushes 45px/s - {f} frames before the loss (was 76 at 60px/s)", f is not None and f >= 95)
+frame(z2, trig_b=True)
+xs = [z2.rd(sym['LZ_CLASH_X'])]
+for _ in range(22): frame(z2); xs.append(z2.rd(sym['LZ_CLASH_X']))
+d = [b - a for a, b in zip(xs, xs[1:])]
+st = sym['LZ_STOP_FRAMES']
+check(f"boss push: the press frame +8-1, then 1px/frame (60px/s, so 8 presses/s x 8px is about even), doubled to "
+      f"2px/frame once the player has stopped pressing for {st} frames {d}",
+      d == [7] + [-1] * (st - 1) + [-2] * (22 - st))
 
 # ---------------------------------------------------------------- テストモード: カウントダウンからやり直し
 z = landed(); to_clash(z); z.wr(sym['GAMEOVER_ENABLED'], 0)
@@ -238,10 +287,19 @@ while z.rd(PH) == 2 and n < 300: frame(z); n += 1
 check(f"qualified but never cutting in: game over after the {sym['LZ_CUTIN_FRAMES']}-frame cut-in window (firing frame + {n}), "
       f"normal MISSION FAILED path (reason 0)",
       z.rd(sym['GAME_OVER']) == 1 and n + 1 == sym['LZ_CUTIN_FRAMES'] and z.rd(sym['LZ_FAIL_REASON']) == 0)
+def hit_frame(z):
+    n = 0
+    while z.rd(sym['GAME_OVER']) == 0 and z.rd(PH) == 2 and n < 60: frame(z); n += 1
+    return n
 z = landed(); start_countdown(z); z.wr(sym['PLAYERX'], 60); z.wr(sym['PLAYERY'], 70); to_fire(z)
-check("standing inside the 3-row band when the boss fires: hit at once", z.rd(sym['GAME_OVER']) == 1)
+n = hit_frame(z)
+check(f"standing inside the 3-row band: hit the moment the beam front reaches the ship (x60-67 -> front col 8, "
+      f"{n} frames after firing)", z.rd(sym['GAME_OVER']) == 1 and n == 17, n)
+z = landed(); start_countdown(z); z.wr(sym['PLAYERX'], 60); z.wr(sym['PLAYERY'], 70); to_fire(z)
+for _ in range(16): frame(z)
+check("... not before (front still at col 9, right of the ship)", z.rd(sym['GAME_OVER']) == 0 and z.rd(PH) == 2)
 for y, inside in ((56, False), (57, True), (87, True), (88, False)):
-    z = landed(); start_countdown(z); z.wr(sym['PLAYERX'], 60); z.wr(sym['PLAYERY'], y); to_fire(z)
+    z = landed(); start_countdown(z); z.wr(sym['PLAYERX'], 60); z.wr(sym['PLAYERY'], y); to_fire(z); hit_frame(z)
     check(f"band edge: PLAYERY {y} ({'hit' if inside else 'safe'}) - hitbox y..y+7 vs rows 8-10 (y64-87)",
           z.rd(sym['GAME_OVER']) == (1 if inside else 0))
 z = landed(); start_countdown(z, sc=499); z.wr(sym['PLAYERY'], 120)
@@ -253,14 +311,18 @@ check("gauge short of 50000: game over the moment the boss fires (reason 2)",
 z = landed(); set_score(z, 600); z.wr(sym['PLAYERY'], 150); frame(z)   # row19: ポッドの軌道外
 frame(z, trig_b=True); frame(z)
 prow = (150 + 8) >> 3; pcol = z.rd(sym['LZ_PCOL'])
-check(f"B with the gauge full before the boss laser: player laser (EbuzII tiles) on the ship's row {prow} to the right edge",
-      z.rd(PH) == 1 and z.rd(sym['LZ_PROW']) == prow and cells(z, prow, pcol, 32) == beams(pcol, 32))
+ends = [z.rd(sym['LZ_PEND'])]
+for _ in range(34): frame(z); ends.append(z.rd(sym['LZ_PEND']))
+check(f"B with the gauge full before the boss laser: player stream (EbuzII tiles) on the ship's row {prow}, pushed "
+      f"out one cell per frame to the right edge {ends[:4]}..{ends[-1]}",
+      z.rd(PH) == 1 and z.rd(sym['LZ_PROW']) == prow and ends[0] == pcol
+      and ends == [min(pcol + i, 32) for i in range(35)] and cells(z, prow, pcol, 32) == beams(pcol, 32))
 gs = [z.rd(sym['GAUGE_SHOWN'])]
-n = 1
+n = 35
 while z.rd(PH) == 1 and n < 200:
     frame(z); gs.append(z.rd(sym['GAUGE_SHOWN'])); n += 1
-check(f"premature laser lasts 100 frames ({n - 1}) while the gauge drains 50->0 ({gs[0]},{gs[50]},{gs[-2]})",
-      n - 1 == 100 and gs[0] == 50 and gs[-2] <= 1 and all(a >= b for a, b in zip(gs, gs[1:])))
+check(f"premature laser lasts 100 frames ({n - 1}) while the gauge drains to 0 ({gs[0]},{gs[20]},{gs[-2]})",
+      n - 1 == 100 and gs[0] == 33 and gs[-2] <= 1 and all(a >= b for a, b in zip(gs, gs[1:])))
 frame(z)
 check("after 100 frames the laser is gone, marked used, gauge 0",
       z.rd(PH) == 0 and z.rd(sym['LZ_SPENT']) == 1 and cells(z, prow, 0, 32) == [BLANK] * 32 and z.rd(sym['GAUGE_SHOWN']) == 0)
@@ -272,6 +334,7 @@ check("used before the countdown ended: game over the moment the boss fires (rea
 z = landed(); set_score(z, 600); frame(z)
 z.wr(sym['PLAYERX'], 40); z.wr(sym['PLAYERY'], 120)
 frame(z, trig_b=True); frame(z)
+for _ in range(30): frame(z)
 check("premature laser on a boss row stops at the boss's left edge (col 25)",
       z.rd(sym['LZ_PEND']) == 26 and cells(z, 16, z.rd(sym['LZ_PCOL']), 26) == beams(z.rd(sym['LZ_PCOL']), 26))
 z = landed(); set_score(z, 600); frame(z)
