@@ -2765,7 +2765,7 @@ HORMING_HOMING_Y_OFFSET EQU 8
 ; round145 follow-up45 (inertial state2, see UOH_W_ARRIVED): frames
 ; between each 22.5-degree turn of the heading. Bigger = wider loop
 ; (180 degrees takes 8 turns = 8*this frames at ~3px/frame).
-HORMING_TURN_FRAMES EQU 6
+HORMING_TURN_FRAMES EQU 4
 ; aim X offset from TANK_X (missile 8px wide, tank hitbox 16px wide ->
 ; missile centre onto hitbox centre).
 HORMING_AIM_X_OFS EQU 4

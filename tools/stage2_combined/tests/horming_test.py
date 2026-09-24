@@ -292,8 +292,10 @@ new_addr = name_table_addr(s["x"], s["y"])
 check("BG missile actually moved to a new cell over these frames", new_addr != old_addr)
 check("the OLD cell was erased back to true sky background (SKY_BLANK_CODE), not left with a stale glyph",
       cpu.vram[old_addr] == SKY_BLANK_CODE)
+BG_CODE_BY_FACING = [HORMING_BG_SL_CODE, HORMING_BG_DL_CODE, HORMING_BG_DOWN_CODE,
+                     HORMING_BG_DR_CODE, HORMING_BG_SR_CODE]
 check("the NEW cell shows the current facing's own code",
-      cpu.vram[new_addr] == HORMING_BG_SR_CODE)
+      cpu.vram[new_addr] == BG_CODE_BY_FACING[s["facing"]])
 
 # a bullet shooting down a BG-pool missile must ALSO erase its own cell
 # (unlike the sprite pool, whose own per-frame hide path does that for

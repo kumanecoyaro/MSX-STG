@@ -18677,7 +18677,7 @@ EbuzII弾ビームへの1pxコリジョン追加+ROM予算の共有バンク6オ
   - 進行方向(heading)0-8を持つ(0=右,2=右下,4=真下,6=左下,8=左、22.5度刻みの下半円)。
     スロットの空きバイトを流用: (IX+5)=heading、(IX+6)=旋回カウンタ(RAM追加なし)。
   - 毎フレームheadingの速度表(HORMING_HEADING_DX/DY、速さ約3、Enemy3のCIRCLE_LUTと同じく
-    事前に丸めた値の表)だけ進む。HORMING_TURN_FRAMES(6)フレームに1回だけ、狙いの向きへ1段(22.5度)
+    事前に丸めた値の表)だけ進む。HORMING_TURN_FRAMES(6→後に4)フレームに1回だけ、狙いの向きへ1段(22.5度)
     旋回。下半円だけなので左→右の旋回は必ず真下経由=左へ膨らんでから右へ向かう。
   - 狙いの向きはHORMING_DESIRED_HEADING_IX(割り算なし: dy*5<=dx, dy*3<=dx*2, dy*2<=dx*3,
     dy<=dx*5の比較だけで5段階)。狙い点は「撃ち落とせる高さ(TANK_GROUND_Y+8)」で、その高さに着く
@@ -18692,4 +18692,5 @@ EbuzII弾ビームへの1pxコリジョン追加+ROM予算の共有バンク6オ
   水平での減速折り返し、ロック条件、画面端)。192件PASS、全回帰1616件PASS、verify_comb・
   verify_ebuz2_mk2_comb PASS。
 - Stage2の空き: 5729→5473byte。
+- (同日追記) ユーザー指示"では4にしてみて"でHORMING_TURN_FRAMES 6→4(小回り寄り)。
 - 調整用: HORMING_TURN_FRAMES(大きいほど大回り)、HORMING_APPROACH_DX(最後の水平進入の長さ)。
