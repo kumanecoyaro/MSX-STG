@@ -18718,5 +18718,7 @@ EbuzII弾ビームへの1pxコリジョン追加+ROM予算の共有バンク6オ
   HEADとの一致を見るリファクタ用なので今回の挙動変更で当然差が出る。
 - ROM: Stage1 plain 2814 / Comb 2764(最初はアニメを本体内に置いてComb側がALIGNを越え2564になったので
   末尾のサブルーチンへ移した)。patch_ebuz2_mk2→build_full_rom→verify_ebuz2_mk2_comb 48件・verify_comb PASS。
-- 気づいた既存の問題(未修正、報告のみ): 自機との接触判定PDC_CHECK_ENEMY_POOLはウェーブにもE_Yを使うが、
-  ウェーブはE_Yを一度も書かない(0のまま)ので、ウェーブ本体との体当たり判定が実質効いていない。
+- (同日、"ではそこも修正して") 自機との接触判定PDC_CHECK_ENEMY_POOLはウェーブにもE_Yを使うが、ウェーブは
+  E_Yを一度も書かず0のままだったため体当たり判定が実質効いていなかった。EBSB_ANIMの先頭で毎フレーム
+  E_Y=基準Y+サインLUTを書き戻すよう修正。verify_wave_anim_hit.pyに3件追加(15件、旧コードで3件失敗を確認)。
+  ROM: plain 2797 / Comb 2764→2747。

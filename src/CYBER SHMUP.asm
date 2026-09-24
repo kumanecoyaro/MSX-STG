@@ -17123,6 +17123,12 @@ STAGE1_GFX_RAM_END:
 
 ; ウェーブのアニメ(EBSB_UPDATEから呼ぶ、説明はそちら)。IX=スロット先頭、IXは保持。
 EBSB_ANIM:
+    ; (2026-09-24、"ではそこも修正して"): ウェーブは描画位置(基準Y+サインLUT)を
+    ; E_Yへ書いていなかったため、E_Yを読む自機との体当たり判定(PDC_CHECK_ENEMY_POOL)
+    ; が常にY=0で判定していた。毎フレームここで現在のYをE_Yへ書き戻す。
+    LD A,(IX+E_STATE) : LD E,A : LD D,0
+    LD HL,ENEMY4_SINE_LUT : ADD HL,DE
+    LD A,(IX+E_PARAM0) : ADD A,(HL) : LD (IX+E_Y),A
     LD A,(IX+E_PARAM5)
     OR A
     JR NZ,EBSB_ANIM_FROZEN

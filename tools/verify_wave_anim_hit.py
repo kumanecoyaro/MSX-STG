@@ -127,5 +127,18 @@ check("zigzag unit: top part's bottom line (Y+8) is hit by the shot row just bel
 z.wr(sym['E2A_U0_TOP'], 1)
 check("zigzag unit: row above the drawn part misses", call(z, 'CHECK_BULLET_VS_FORMATION_A', b=12, c=5) == 0)
 
+# ---- (3) "ではそこも修正して": wave body contact uses its real drawn Y (E_Y written every frame) ----
+z = spawn('wave', 100, state0=4, x=120)
+call(z, 'ENEMY_POOL_UPDATE_ALL')
+wy = (z.rd(E + sym['E_PARAM0']) + LUT[z.rd(E + sym['E_STATE'])]) & 255
+wx = z.rd(E + sym['E_X'])
+check(f"wave: E_Y follows the drawn Y every frame (E_Y={z.rd(E + sym['E_Y'])}, drawn {wy})", z.rd(E + sym['E_Y']) == wy)
+z.wr(sym['PLAYERX'], wx); z.wr(sym['PLAYERY'], wy)
+check("wave: player overlapping the wave's top part is detected by PDC_CHECK_ENEMY_POOL",
+      call(z, 'PDC_CHECK_ENEMY_POOL') == 1)
+z.wr(sym['PLAYERX'], wx); z.wr(sym['PLAYERY'], 2)
+check("wave: player at the top of the screen (Y=2, far above the wave) is NOT hit any more",
+      call(z, 'PDC_CHECK_ENEMY_POOL') == 0)
+
 print(f"\n{len(ok)} passed, {len(fail)} failed")
 if fail: print("FAILED:", fail)
