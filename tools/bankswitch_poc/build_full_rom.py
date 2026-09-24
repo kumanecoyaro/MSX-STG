@@ -350,14 +350,26 @@ def assemble_game(debug=False):
     out = a.assemble()
     bank0 = bytearray([0xFF] * 0x4000)
     bank1 = bytearray([0xFF] * 0x4000)
+    ram = stage1_gfx_ram(out, a.symtab)
     for addr, val in out.items():
         if 0x4000 <= addr <= 0x7FFF:
             bank0[addr - 0x4000] = val
         elif 0x8000 <= addr <= 0xBFFF:
             bank1[addr - 0x8000] = val
+        elif addr - a.symtab["STAGE1_GFX_RAM"] in range(len(ram)):
+            pass                   # RAM配置の絵柄(タイトルのbank1へ、assemble_title参照)
         else:
             raise Exception(f"game byte at unexpected address {addr:04x}")
     return bank0, bank1, a.symtab
+
+
+# (2026-09-24、"絵柄データとローダーから逃がして"): Stage1の起動時の絵柄データ+転送の一覧表は
+# ソース上でRAM(STAGE1_GFX_RAM=D300h〜)にORGしてある。その区画のバイト列を取り出す(タイトルが
+# 自分のbank1からRAMへコピーする)。
+def stage1_gfx_ram(out, sym):
+    base, end = sym["STAGE1_GFX_RAM"], sym["STAGE1_GFX_RAM_END"]
+    assert base == sym["STAGE1_GFX_RAM_START"] and base < end <= 0xE000, (hex(base), hex(end))
+    return bytes(out.get(x, 0) for x in range(base, end))
 
 
 # combined_test.asm assembles standalone (tools/stage2_combined/build_test.py)
@@ -590,13 +602,30 @@ TITLE_BGM_BANKSELECT_PATCH = """    LD A,6                       ; standalone bg
     LD (7000h),A"""
 
 
+STAGE1_GFX_ANCHOR = """STAGE1_GFX_LEN   EQU 1
+STAGE1_GFX_BLOB:
+    DB 0
+"""
+
+
 def assemble_title():
     text = title_build.combined_text()
     assert text.count(TITLE_BGM_BANKSELECT_ANCHOR) == 1, \
         "title BGM bank-select anchor not found (or not unique) - title_test.asm drifted"
     text = text.replace(TITLE_BGM_BANKSELECT_ANCHOR, TITLE_BGM_BANKSELECT_PATCH, 1)
+    # Stage1の起動時の絵柄データ(RAM配置区画)をタイトルのbank1へ入れる
+    ga = Assembler(patched_game_text())
+    gout = ga.assemble()
+    blob = stage1_gfx_ram(gout, ga.symtab)
+    assert text.count(STAGE1_GFX_ANCHOR) == 1, "title STAGE1_GFX anchor drifted"
+    rows = "\n".join("    DB " + ",".join(f"{b:03d}" for b in blob[i:i + 16]) for i in range(0, len(blob), 16))
+    # 置き場はテキスト全体の最後(タイトル画面の表の後ろ=bank1の空き)へ
+    text = text.replace(STAGE1_GFX_ANCHOR, f"STAGE1_GFX_LEN   EQU {len(blob)}\n", 1)
+    text = text.rstrip("\n") + f"\n\nSTAGE1_GFX_BLOB:\n{rows}\n"
     a = Assembler(text)
     out = a.assemble()
+    assert a.symtab["STAGE1_GFX_RAM_T"] == ga.symtab["STAGE1_GFX_RAM"], "title/Stage1 STAGE1_GFX_RAM mismatch"
+    assert a.symtab["STAGE1_GFX_BLOB"] >= 0x8000, "STAGE1_GFX_BLOB must sit in the title's own bank1 (window B)"
     bank0, bank1 = title_build.build_banks(out)
     return bank0, bank1, a.symtab
 

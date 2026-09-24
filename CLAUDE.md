@@ -37,8 +37,19 @@
 - 新規にVRAM/PSG/その他ハードウェアポートへのブロック転送を実装する際は、着手前に
   必ずこのセクションを再確認し、`OTIR`系命令を使わないこと。
 
-## Stage1 ROM予算(2026-09-24、Round145 follow-up33時点で**plain 1861byte /
-Comb 1811byte**・恒久的に確認必須、Combの方が少ない)
+## Stage1 ROM予算(2026-09-24、Round145 follow-up43時点で**plain 2876byte /
+Comb 2826byte**・恒久的に確認必須、Combの方が少ない)
+
+- **(2026-09-24、follow-up43)** 起動時に1回だけVRAMへ送る絵柄データ(58ブロック)と転送の一覧表
+  (GFX_LIST_n)をRAM区画(`STAGE1_GFX_RAM`=D300h〜、ソース末尾で`ORG`)へ移し、INIT内の連続した
+  LDIRVMを`GFX_LOAD_LIST`(一覧表を順にLDIRVM)の呼び出しに置き換えた。Comb版では
+  build_full_rom.pyの`stage1_gfx_ram()`がこの区画を取り出してタイトルのbank1末尾に入れ、タイトルの
+  INIT_BGMがD300hへコピーする。**アセンブル結果にRAM番地(D300h〜)が含まれるので、ROM残量は
+  C000h未満の番地だけで数えること**(下の確認手順も修正済み)。バンクの無いメモリのテストは
+  アセンブル結果をそのまま読むので最初からRAMにある。RAMを汚すテストはこの区画を戻すこと
+  (verify_stage1_ram_poison.py参照)。
+- **(同上)** Comb版だけLUT手前のALIGN 256を越えて256byte損していたので、CHECK_BULLET_VS_EBUZ2/
+  PDC_CHECK_EBUZ2/EBUZ2_ON_BOSS_TRIGGERをファイル末尾(ALIGNより後ろ)へ移した。
 
 - **(2026-09-24、follow-up33)** 自機ショット3発ぶんの複製コードをBULLETC_*+BULLET_EACHの1本に
   まとめて約1270byte回復し、BULLET_SLOTS=5にした。**自機ショットの処理を足す/直す時はBULLET_STEP等の
@@ -170,12 +181,12 @@ Comb 1811byte**・恒久的に確認必須、Combの方が少ない)
   ```
   # plain単体
   python3 -c "import sys; sys.path.insert(0,'tools'); from mini_z80asm import Assembler; \
-    text=open('src/CYBER SHMUP.asm',encoding='utf-8').read(); out=Assembler(text).assemble(); \
+    text=open('src/CYBER SHMUP.asm',encoding='utf-8').read(); out=[x for x in Assembler(text).assemble() if x<0xC000]; \
     a=max(out); b=min(out); print('plain remaining:', 32768-(a-b+1))"
   # Comb組み込み側
   cd tools/bankswitch_poc && python3 -c "import sys; sys.path.insert(0,'..'); sys.path.insert(0,'.'); \
     from mini_z80asm import Assembler; from build_full_rom import patched_game_text; \
-    out=Assembler(patched_game_text()).assemble(); a=max(out); b=min(out); \
+    out=[x for x in Assembler(patched_game_text()).assemble() if x<0xC000]; a=max(out); b=min(out); \
     print('comb remaining:', 32768-(a-b+1))"
   ```
   両方が0以上であることを確認してから`python3 build_full_rom.py`を実行すること

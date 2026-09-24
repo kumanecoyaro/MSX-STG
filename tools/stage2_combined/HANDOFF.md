@@ -18605,3 +18605,22 @@ EbuzII弾ビームへの1pxコリジョン追加+ROM予算の共有バンク6オ
   SSC_BUSY_E2がスケジュールの次のジグザグを待たせていた。未到着の機も出現時からTOP/BOT=1なので
   全滅の時だけ終わる。
 - 新規verify_enemy_kill_free.py 13件(旧コードでは4件失敗することを確認)。ROM plain 1390。
+
+## Round145 follow-up43: Stage1の起動時の絵柄データと転送処理をタイトルのバンクへ逃がす(2026-09-24)
+
+- ユーザー: "ステージ1,2のバンクは他に逃がせるなら逃がしたい ... 1回きりの操作なら空きバンクに" →
+  "じゃあ絵柄データとローダーから逃がして"。
+- 方式(Stage1は自分でバンクを切り替えない既存の設計に合わせた): INITで1回だけVRAMへ送る絵柄の
+  DBブロック58個(地形パターン・BULLET/TEMPスプライト・敵/Ebuz/爆発タイル・色表・数字・自機/アクセント/
+  敵のスプライト・ゲージ・ボスレーザー右端など)と、転送の一覧表GFX_LIST_0-5(DW 転送元,VRAM先,
+  バイト数)を、ソース末尾のRAM区画(ORG STAGE1_GFX_RAM=D300h、1646byte、D96Dhまで)へ移した。INIT内の
+  連続したLDIRVM(54件)はLD HL,GFX_LIST_n : CALL GFX_LOAD_LISTに。EbuzIIのレーザータイル3つは元から
+  bank6→RAMのデータなので対象外。
+- Comb: build_full_rom.pyのstage1_gfx_ram()がこの区画を取り出し、assemble_titleがタイトルのテキスト
+  末尾(bank1、9112h〜)にSTAGE1_GFX_BLOBとして入れる。タイトルのINIT_BGMが自分のbank1へ戻した直後に
+  D300hへLDIR(タイトル単体では1byteの置き場)。タイトルbank1の空きは約10.4KBに。
+- 確認: 旧コミットと新ビルドを実際のバンク構成でタイトル→Stage1のMAINLOOPまで動かし、VRAM 16KBが
+  完全一致。Stage1のverify_*.pyは既知の失敗4本以外すべてPASS(verify_stage1_ram_poisonはRAMを汚す
+  テストなのでこの区画を戻すよう修正)。verify_comb・title_test 86件・verify_ebuz2_mk2_comb PASS。
+- ROM: Stage1 plain 1390→2876 / Comb 1340→2826。Comb版だけLUT手前のALIGN 256を越えて256byte
+  損していたので、CHECK_BULLET_VS_EBUZ2〜EBUZ2_ON_BOSS_TRIGGER(約110byte)をファイル末尾へ移して回収。

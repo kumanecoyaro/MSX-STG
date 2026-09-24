@@ -68,6 +68,8 @@ IDCACHE5    EQU 0E0B1h
 NAMEBUF     EQU 0E200h
 PREVBUF     EQU 0E300h
 STACKTOP    EQU 0F380h
+STAGE1_GFX_RAM EQU 0D300h  ; 起動時にVRAMへ送る絵柄データ+一覧表(タイトルがコピー、E000h手前まで)
+GFX_LOAD_PTR   EQU 0E9C5h  ; GFX_LOAD_LISTの作業用(旧ENEMY_POOLの跡地)
 BLANKCODE   EQU 48    ; unused pattern code reused as a solid "blue" filler
 
 GTSTCK      EQU 00D5h   ; BIOS: read joystick direction (A=id -> A=0-8)
@@ -1117,8 +1119,7 @@ INIT:
     LD HL,STAGE1_MISSION_GAMEOVER_FONT
     LD DE,STAGE1_MISSION_GAMEOVER_FONT_SEGMENTS
     CALL DECOMPRESS_RLE_TO_VRAM
-    LD HL,MISSION_FONT_COLOR : LD DE,2008h : LD BC,1 : CALL LDIRVM
-    LD HL,GAMEOVER_FONT_COLOR : LD DE,2009h : LD BC,1 : CALL LDIRVM
+    LD HL,GFX_LIST_0 : CALL GFX_LOAD_LIST   ; (2026-09-24) 転送の一覧表と絵柄はRAM(STAGE1_GFX_RAM)
     LD HL,MISSION1_MSG
     CALL DRAW_MISSION_SCREEN
     DI    ; DRAW_MISSION_SCREEN's own internal EI (harmless - HTIMI_HOOK is
@@ -1136,23 +1137,19 @@ INIT:
     XOR A : OUT (99h),A : LD A,40h : OUT (99h),A
     LD HL,PATTERNS_A : LD DE,PATTERNS_A_SEGMENTS : CALL DECOMPRESS_RLE_TO_VRAM
     LD HL,PATTERNS_B : LD DE,PATTERNS_B_SEGMENTS : CALL DECOMPRESS_RLE_TO_VRAM   ; 続き(同じVRAMアドレスから連続)
-    LD HL,COLORDATA : LD DE,2000h : LD BC,COLOR_LEN : CALL LDIRVM
+    LD HL,GFX_LIST_1 : CALL GFX_LOAD_LIST   ; (2026-09-24) 転送の一覧表と絵柄はRAM(STAGE1_GFX_RAM)
     ; COLORDATAはgroup8(codes64-71、2008h)も含む32グループ全体を上書き
     ; するため、Mission1表示のために上で先に書いたMISSION_FONT_COLOR
     ; (白文字/黒背景)がここで消されてしまう。MISSION2(ステージクリア
     ; 演出)はゲーム本編の実行中に同じフォント・同じ色を再利用するため、
     ; ここで再度書き直して確定させておく(Mission1自身は既に表示・消去
     ; 済みなのでこの再書き込みの影響を受けない)。
-    LD HL,MISSION_FONT_COLOR : LD DE,2008h : LD BC,1 : CALL LDIRVM
     ; GAME OVER用フォント色(group9)も同じ理由で再書き直しが必要。
-    LD HL,GAMEOVER_FONT_COLOR : LD DE,2009h : LD BC,1 : CALL LDIRVM
-    LD HL,BLANK_PATTERN : LD DE,BLANKCODE*8 : LD BC,8 : CALL LDIRVM   ; BLANKCODE's glyph was never written before - defaulted to leftover VRAM garbage
     ; DIGIT_PATTERNS(digit glyphs 0-9、スコア表示等が使う本来の用途)は
     ; ここが本来のロード位置(round56/57時点ではMission1表示の直前へ
     ; 一時的に移設されていたが、今回MISSION1_MSG/MISSION2_MSGが添付
     ; フォントの'1'/'2'グリフ[MISSION_FONT_BASE+6/+7]を使うようになり
     ; digitグリフへの依存が解消されたため、本来のこの位置へ復元)。
-    LD HL,DIGIT_PATTERNS : LD DE,DIGIT_BASE*8 : LD BC,80 : CALL LDIRVM
 
     XOR A
     LD (TICK),A : LD (PXCHAR_G8),A : LD (PXCHAR_G4),A
@@ -1264,7 +1261,7 @@ FILLBG_ROW0_BLACK:
     ; --- destroy-animation character patterns (round69 follow-up, 2 ---
     ; --- tiles only - see EXP_CODE_THIN/THICK's own comment), VRAM  ---
     ; --- 3C0h = EXP_CODE_THIN(120)*8 ---
-    LD HL,EXPLOSION_TILES : LD DE,EXP_CODE_THIN*8 : LD BC,16 : CALL LDIRVM
+    LD HL,GFX_LIST_2 : CALL GFX_LOAD_LIST   ; (2026-09-24) 転送の一覧表と絵柄はRAM(STAGE1_GFX_RAM)
 
     ; --- temp assembly-sprite patterns, VRAM SPRPAT+C0h = PAT_TEMP_TOP(24)*8 ---
     ; (2026-09-19) RLE圧縮済み(TEMP_SPRITE_PATTERNS自身のコメント参照)。
@@ -1280,9 +1277,7 @@ FILLBG_ROW0_BLACK:
     LD HL,TEMP_SPRITE_PATTERNS : LD DE,TEMP_SPRITE_PATTERNS_SEGMENTS : CALL DECOMPRESS_RLE_TO_VRAM
 
     ; --- enemy3 pulse-animation patterns, codes 152/160/168 ---
-    LD HL,ENEMY3_PATTERN1 : LD DE,ENEMY3_CODE1*8 : LD BC,8 : CALL LDIRVM
-    LD HL,ENEMY3_PATTERN2 : LD DE,ENEMY3_CODE2*8 : LD BC,8 : CALL LDIRVM
-    LD HL,ENEMY3_PATTERN3 : LD DE,ENEMY3_CODE3*8 : LD BC,8 : CALL LDIRVM
+    LD HL,GFX_LIST_3 : CALL GFX_LOAD_LIST   ; (2026-09-24) 転送の一覧表と絵柄はRAM(STAGE1_GFX_RAM)
 
     ; --- enemy6's 4 quadrant glyphs, at ENEMY3_CODE1's group's spare  ---
     ; --- codes 153-156 (152 itself untouched) - see the pattern       ---
@@ -1290,24 +1285,8 @@ FILLBG_ROW0_BLACK:
     ; --- cell here - SPAWN_E6/ENEMY6_DRAW place and move it for real  ---
     ; --- for real now (see the ENEMY6_* routines, near                ---
     ; --- CHECK_BULLET_VS_ENEMY3).                                     ---
-    LD HL,NEWENEMY_PATTERN_TL : LD DE,NEWENEMY_CODE_TL*8 : LD BC,8 : CALL LDIRVM
-    LD HL,NEWENEMY_PATTERN_TR : LD DE,NEWENEMY_CODE_TR*8 : LD BC,8 : CALL LDIRVM
-    LD HL,NEWENEMY_PATTERN_BL : LD DE,NEWENEMY_CODE_BL*8 : LD BC,8 : CALL LDIRVM
-    LD HL,NEWENEMY_PATTERN_BR : LD DE,NEWENEMY_CODE_BR*8 : LD BC,8 : CALL LDIRVM
     ; --- enemy6's 90/180/270-degree spin-animation quadrants (see  ---
     ; --- their own comment, near NEWENEMY_PATTERN90_TL)             ---
-    LD HL,NEWENEMY_PATTERN90_TL : LD DE,NEWENEMY_CODE90_TL*8 : LD BC,8 : CALL LDIRVM
-    LD HL,NEWENEMY_PATTERN90_TR : LD DE,NEWENEMY_CODE90_TR*8 : LD BC,8 : CALL LDIRVM
-    LD HL,NEWENEMY_PATTERN90_BL : LD DE,NEWENEMY_CODE90_BL*8 : LD BC,8 : CALL LDIRVM
-    LD HL,NEWENEMY_PATTERN90_BR : LD DE,NEWENEMY_CODE90_BR*8 : LD BC,8 : CALL LDIRVM
-    LD HL,NEWENEMY_PATTERN180_TL : LD DE,NEWENEMY_CODE180_TL*8 : LD BC,8 : CALL LDIRVM
-    LD HL,NEWENEMY_PATTERN180_TR : LD DE,NEWENEMY_CODE180_TR*8 : LD BC,8 : CALL LDIRVM
-    LD HL,NEWENEMY_PATTERN180_BL : LD DE,NEWENEMY_CODE180_BL*8 : LD BC,8 : CALL LDIRVM
-    LD HL,NEWENEMY_PATTERN180_BR : LD DE,NEWENEMY_CODE180_BR*8 : LD BC,8 : CALL LDIRVM
-    LD HL,NEWENEMY_PATTERN270_TL : LD DE,NEWENEMY_CODE270_TL*8 : LD BC,8 : CALL LDIRVM
-    LD HL,NEWENEMY_PATTERN270_TR : LD DE,NEWENEMY_CODE270_TR*8 : LD BC,8 : CALL LDIRVM
-    LD HL,NEWENEMY_PATTERN270_BL : LD DE,NEWENEMY_CODE270_BL*8 : LD BC,8 : CALL LDIRVM
-    LD HL,NEWENEMY_PATTERN270_BR : LD DE,NEWENEMY_CODE270_BR*8 : LD BC,8 : CALL LDIRVM
 
     ; --- Ebuz(2026-09-14組み込み)本体4タイル+弾2タイル ---
     ; (round135follow-up8、"Ebuz1の左から1つ目のセルは背景ライトブルーで
@@ -1325,25 +1304,11 @@ FILLBG_ROW0_BLACK:
     ; および全LDIRVM呼び出し元の横断チェックで確認済み)。EBUZ_CODE_A-Dは
     ; どこにも連続前提の範囲チェックが無いことも確認済み(単純なVRAM
     ; タイルコードとしてDBテーブル・LDIRVM元アドレス計算にのみ使用)。
-    LD HL,EBUZ_TILE_A : LD DE,EBUZ_CODE_A*8 : LD BC,8 : CALL LDIRVM
-    LD HL,EBUZ_TILE_B : LD DE,EBUZ_CODE_B*8 : LD BC,8 : CALL LDIRVM
-    LD HL,EBUZ_TILE_C : LD DE,EBUZ_CODE_C*8 : LD BC,8 : CALL LDIRVM
-    LD HL,EBUZ_TILE_D : LD DE,EBUZ_CODE_D*8 : LD BC,8 : CALL LDIRVM
-    LD HL,EBUZ_BULLET_L_TILE : LD DE,EBUZ_BULLET_L_CODE*8 : LD BC,8 : CALL LDIRVM
-    LD HL,EBUZ_BULLET_R_TILE : LD DE,EBUZ_BULLET_R_CODE*8 : LD BC,8 : CALL LDIRVM
-    LD HL,EBUZ_COLOR_A : LD DE,200Bh : LD BC,1 : CALL LDIRVM           ; 200Bh=COLTBL+group11(88/8)
-    LD HL,EBUZ_COLOR_B : LD DE,200Ch : LD BC,1 : CALL LDIRVM           ; 200Ch=COLTBL+group12(96/8)
-    LD HL,EBUZ_COLOR_C : LD DE,200Dh : LD BC,1 : CALL LDIRVM           ; 200Dh=COLTBL+group13(104/8)
-    LD HL,EBUZ_COLOR_D : LD DE,200Eh : LD BC,1 : CALL LDIRVM           ; 200Eh=COLTBL+group14(112/8)
-    LD HL,EBUZ_BULLET_COLOR_BYTE : LD DE,2011h : LD BC,1 : CALL LDIRVM ; 2011h=COLTBL+group17(136/8)
 
     ; Ebuz Mk2専用: レーザーのみ新規タイル2枚+専用カラー1組(本体・弾は
     ; 上のEbuz本体タイルをそのまま流用、新規ロード不要 - "キャラは
     ; レーザー以外流用で")。group18(144-151)は実プレイ長時間監視で
     ; 空きと確認済み(EBUZ2_LASER_L/R_CODE自身のコメント参照)。
-    LD HL,EBUZ2_LASER_L_TILE : LD DE,EBUZ2_LASER_L_CODE*8 : LD BC,8 : CALL LDIRVM
-    LD HL,EBUZ2_LASER_R_TILE : LD DE,EBUZ2_LASER_R_CODE*8 : LD BC,8 : CALL LDIRVM
-    LD HL,EBUZ2_LASER_COLOR_BYTE : LD DE,2012h : LD BC,1 : CALL LDIRVM ; 2012h=COLTBL+group18(144/8)
     XOR A : LD (EBUZ2_ACT),A   ; RAM初期化漏れ防止(follow-up#14の教訓)
     LD (EBUZ2_DEFEATED),A
 
@@ -1565,20 +1530,9 @@ INIT_BULLET_CLR:
     LD HL,E5_FIRE_COUNTDOWN : CALL RANDOM_3_5 : LD (HL),A
     LD HL,E2_FIRE_COUNTDOWN : CALL RANDOM_3_5 : LD (HL),A
     XOR A : LD (E4_FIRED_THIS_FRAME),A
-    LD HL,ENEMY4_PATTERN : LD DE,PAT_ENEMY4*8+SPRPAT : LD BC,32 : CALL LDIRVM
-    LD HL,ENEMY4_PATTERN_2 : LD DE,PAT_ENEMY4_2*8+SPRPAT : LD BC,32 : CALL LDIRVM
-    LD HL,EBULLET_PATTERN : LD DE,PAT_EBULLET*8+SPRPAT : LD BC,32 : CALL LDIRVM
+    LD HL,GFX_LIST_4 : CALL GFX_LOAD_LIST   ; (2026-09-24) 転送の一覧表と絵柄はRAM(STAGE1_GFX_RAM)
     CALL LOAD_SHIP_ENTRY_PATTERNS
-    LD HL,SHIP_MID_PATTERN : LD DE,PAT_SHIP*8+SPRPAT : LD BC,32 : CALL LDIRVM
-    LD HL,SHIP_UP_PATTERN : LD DE,PAT_SHIP_UP*8+SPRPAT : LD BC,32 : CALL LDIRVM
-    LD HL,SHIP_DOWN_PATTERN : LD DE,PAT_SHIP_DOWN*8+SPRPAT : LD BC,32 : CALL LDIRVM
-    LD HL,ACCENT_MID_PATTERN : LD DE,PAT_ACCENT*8+SPRPAT : LD BC,32 : CALL LDIRVM
-    LD HL,ACCENT_DOWN_PATTERN : LD DE,PAT_ACCENT_DOWN*8+SPRPAT : LD BC,32 : CALL LDIRVM
-    LD HL,ACCENT_MID_BARRIER_PATTERN : LD DE,PAT_ACCENT_BARRIER*8+SPRPAT : LD BC,32 : CALL LDIRVM
-    LD HL,ACCENT_DOWN_BARRIER_PATTERN : LD DE,PAT_ACCENT_DOWN_BARRIER*8+SPRPAT : LD BC,32 : CALL LDIRVM
-    LD HL,PLAYER_EXPL_PATTERN : LD DE,PAT_PLAYER_EXPLOSION*8+SPRPAT : LD BC,32 : CALL LDIRVM
-    LD HL,E1A_PATTERN : LD DE,PAT_ENEMY1*8+SPRPAT : LD BC,32 : CALL LDIRVM
-    LD HL,PARTICLE_PATTERN : LD DE,PAT_PARTICLE*8+SPRPAT : LD BC,32 : CALL LDIRVM
+    LD HL,GFX_LIST_5 : CALL GFX_LOAD_LIST   ; (2026-09-24) 転送の一覧表と絵柄はRAM(STAGE1_GFX_RAM)
     LD A,1 : LD (ENEMY1_LOOK_FLAGS),A : LD (ENEMY1_LOOK_FLAGS+1),A
     XOR A : LD (ENEMY5_ANIM_SEQ),A : LD (ENEMY5_ANIM_TIMER),A
     LD HL,ASTERISK_PATTERN : LD (REDRAW_SRC_PATTERN),HL
@@ -13586,31 +13540,9 @@ EBUZ_ROW_D_BLANK:
 
 ; 4つの8x8タイル(tools/ebuz_test/ebuz_test.asmと同一データ、添付
 ; Ebuz1_32x32.jsonから機械抽出済み)。
-EBUZ_TILE_A:
-    DB 126,191,1,63,63,1,191,126
-EBUZ_TILE_B:
-    DB 255,84,42,126,126,42,84,255
-EBUZ_TILE_C:
-    DB 126,195,189,181,173,189,195,126
-EBUZ_TILE_D:
-    DB 255,65,127,127,127,127,65,255
 
 ; 弾の8x8タイル2枚(tools/ebuz_test/ebuz_test.asmと同一データ)。
-EBUZ_BULLET_L_TILE:
-    DB 0,0,127,255,255,127,0,0
-EBUZ_BULLET_R_TILE:
-    DB 0,0,254,255,255,254,0,0
 
-EBUZ_COLOR_A:
-    DB EBUZ_COLOR_A_VAL
-EBUZ_COLOR_B:
-    DB EBUZ_COLOR_B_VAL
-EBUZ_COLOR_C:
-    DB EBUZ_COLOR_C_VAL
-EBUZ_COLOR_D:
-    DB EBUZ_COLOR_D_VAL
-EBUZ_BULLET_COLOR_BYTE:
-    DB EBUZ_BULLET_COLOR_BYTE_VAL
 
 ; ============================================================================
 ; Ebuz Mk2: ボス出現の直前に一度だけ現れるスクリプト敵(2026-09-20、
@@ -14567,78 +14499,6 @@ EBUZ2_TE_ELOOP:
 ; Mk2本体→自機(既存PDC_CHECK_EBUZ系と同型、PLAYER_HIT_BOX_EBUZ/_1PX
 ; をそのまま再利用)。
 ; ----------------------------------------------------------------------
-CHECK_BULLET_VS_EBUZ2:
-    LD A,(EBUZ2_ACT)
-    OR A
-    JR Z,CBVE2_MISS
-    LD A,(EBUZ2_PHASE)
-    CP 2
-    JR Z,CBVE2_MISS
-    LD D,23
-    LD A,B : SUB D
-    CP 6
-    JR NC,CBVE2_MISS
-    LD A,(EBUZ2_ROW_CUR)
-    LD D,A
-    LD A,C : SUB D
-    CP 7
-    JR NC,CBVE2_MISS
-    LD A,(EBUZ2_HP) : DEC A : LD (EBUZ2_HP),A
-    JR NZ,CBVE2_DAMAGED
-    CALL EBUZ2_TRIGGER_DEFEAT
-    LD HL,50                     ; round141 follow-up: EbuzIIの撃破報酬を5000点に(50*100)
-    CALL ADD_SCORE_COMMON
-    LD A,1
-    RET
-CBVE2_DAMAGED:
-    LD A,1
-    RET
-CBVE2_MISS:
-    XOR A
-    RET
-
-PDC_CHECK_EBUZ2:
-    LD A,(EBUZ2_ACT)
-    OR A
-    JR Z,EBUZ2_PDC_MISS
-    LD A,(EBUZ2_PHASE)
-    CP 2
-    JR Z,EBUZ2_PDC_MISS
-    LD A,(EBUZ2_ROW_CUR) : ADD A,A : ADD A,A : ADD A,A : LD E,A
-    LD D,23*8
-    LD B,55
-    CALL PLAYER_HIT_BOX_EBUZ
-    OR A
-    JR NZ,EBUZ2_PDC_HIT
-    ; round145("EbuzIIで敵の弾やビームにコリジョンがない"): 本体(上記)は
-    ; 従来通り。volley1/volley2/レーザーは新規追加(PDC_CHECK_EBUZ2_
-    ; PROJECTILES、ファイル末尾)。
-    JP PDC_CHECK_EBUZ2_PROJECTILES
-EBUZ2_PDC_HIT:
-    LD A,1
-    RET
-EBUZ2_PDC_MISS:
-    XOR A
-    RET
-
-; ----------------------------------------------------------------------
-; CHECK_BOSS_TRIGGERの末尾から横取りする実スポーン起点。1回目の到達で
-; Mk2をスポーンして実ボスは出さない。Mk2生存中は素通り(実ボスも
-; スポーンしない、次フレームもCHECK_BOSS_TRIGGER自体がBOSS_STATE==0の
-; 間毎フレーム呼び直すためこれで足りる)。実際の「Mk2撃破→実ボスへ」
-; 遷移はEBUZ2_DEFEAT_DONEがBOSS_SPAWNを直接呼ぶため、ここでの
-; EBUZ2_DEFEATEDチェックは通常到達しない防御的フォールバックに過ぎない
-; (HP自体は初回未スポーン時も0のため、"未スポーン"と"撃破済み"の
-; 区別に専用フラグEBUZ2_DEFEATEDが必要)。
-; ----------------------------------------------------------------------
-EBUZ2_ON_BOSS_TRIGGER:
-    LD A,(EBUZ2_ACT)
-    OR A
-    RET NZ                       ; 既にスポーン済み・生存中 - 何もしない
-    LD A,(EBUZ2_DEFEATED)
-    OR A
-    JP NZ,BOSS_SPAWN               ; 撃破済み(防御的フォールバック)
-    JP TRIGGER_EBUZ2_ENCOUNTER     ; 初回到達 - Mk2をスポーン
 
 ; Translates 33 consecutive ROWDATA bytes (ASCII terrain letter) through
 ; LUT into an IDCACHEn buffer - used to refresh a row's cache only when
@@ -14716,23 +14576,6 @@ SOLOTAB:
 ; (A=SOLOTABページの残り、B=MUL6ページの残りに配置)。INITは同じVRAMアドレス
 ; から続けて2回DECOMPRESS_RLE_TO_VRAMを呼ぶ(VDPアドレスは自動で進むので
 ; 展開結果は分割前と完全に同一)。
-PATTERNS_A:
-    DB 127,94,235,254,155,101,254,75,189,188,215,253,55,202,253,150
-    DB 123,121,175,251,110,149,251,45,246,242,95,247,220,43,247,90
-    DB 237,229,190,239,185,86,239,180,219,203,125,223,115,172,223,105
-    DB 183,151,250,191,230,89,191,210,111,47,245,127,205,178,127,165
-    DB 222,94,235,254,155,101,254,75,189,188,215,253,55,202,253,150
-    DB 123,121,175,251,110,149,251,45,246,242,95,247,220,43,247,90
-    DB 237,229,190,239,185,86,239,180,219,203,125,223,115,172,223,105
-    DB 183,151,250,191,230,89,191,210,111,47,245,127,205,178,127,165
-    DB 222,63,94,235,254,155,101,254,75,189,188,215,253,55,202,253
-    DB 150,123,121,175,251,110,149,251,45,246,242,95,247,220,43,247
-    DB 90,237,229,190,239,185,86,239,180,219,203,125,223,115,172,223
-    DB 105,183,151,250,191,230,89,191,210,111,47,245,127,205,178,127
-    DB 165,222,135,0,4,6,111,254,27,4,131,0,4,216,180,239
-    DB 176,96,169,0,36,125,231,223,126,185,199,190,95,246,219,190
-    DB 255,91,229,190,125,251,207,191,253,114,143,125,190,247,159,126
-    DB 251,229,31,250,125,239,62,253,247,202
 PATTERNS_A_SEGMENTS EQU 8
 PATTERNS_LEN EQU 384
 
@@ -14827,16 +14670,6 @@ PARTICLE_DY_TABLE:
 ; Only groups 0,1,2,3,4,5 (codes 0-47) are meaningful here;
 ; groups 6-31 (codes 48-255, unused by this scroller) are filled
 ; with a harmless placeholder color.
-COLORDATA:
-    DB 0F4h    ; group0 codes  0- 7 mountain family (white/blue, cloud design)
-    DB 0F4h    ; group1 codes  8-15 diamond family (white/blue, cloud design)
-    DB 0F4h    ; group2 codes 16-23 slash family (white/blue, cloud design)
-    DB 0F4h    ; group3 codes 24-31 backslash family (unused, matched anyway)
-    DB 0F4h    ; group4 codes 32-39 wedge family (white/blue, cloud design)
-    DB 0F4h    ; group5 codes 40-47 wedge family (white/blue, cloud design)
-    DB 44h,0F4h,0D3h,0DFh,0DAh,0F4h,0FFh,0F3h,0FAh,084h  ; group6=BLANKCODE, group7=shot(2026-09-24から白/青、旧0D4h), group8=shot-green, group9=shot-white, group10=shot-brown, group11=anim1-blue(white/blue, DEBUG was yellow), group12=anim1-white(white/white, DEBUG), group13=anim1-green(white/lightgreen, DEBUG), group14=anim1-brown(white/brown, DEBUG), group15=anim2-blue(red/blue)
-    DB 08Fh,083h,08Ah,0E4h,0E4h,0E8h,0F1h,0F1h,0E4h,0E4h  ; group16=anim2-white, group17=anim2-green, group18=anim2-brown, group19=enemy3-pat1(gray/blue), group20=enemy3-pat2(gray/blue), group21=enemy3-pat3(gray/red), group22=digits0-7(white/black), group23=digits8-9(white/black), group24=BOSS gray/blue, group25=BOSS gray/blue
-    DB 0E4h,0E4h,014h,014h,014h,084h                       ; group26=BOSS gray/blue, group27=BOSS gray/blue, group28-30=BOSS black/blue, group31=BOSS red/blue
 COLOR_LEN EQU 32
 
 ; round136(Ebuz Mk2用ROM予算確保、ユーザー指摘"まず地形データがかなり
@@ -14856,13 +14689,6 @@ ROWDATA2 EQU 0CF30h  ; 128 bytes RAM(INITで'D'を充填)
 ROWDATA3 EQU 0CFB0h  ; 128 bytes RAM(INITで'S'を充填)
 ROWDATA5 EQU 0D030h  ; 128 bytes RAM(INITで'A','B'交互に充填)
 ; PATTERNS_Aの続き(上のPATTERNS_Aのコメント参照)
-PATTERNS_B:
-    DB 90,63,245,251,223,125,251,239,149,126,235,247,190,251,247,223
-    DB 43,252,215,239,125,246,239,191,86,249,175,223,251,237,223,127
-    DB 173,242,95,190,236,183,125,254,183,203,125,250,217,111,251,253
-    DB 110,151,250,245,179,223,246,251,221,46,245,234,103,190,237,247
-    DB 187,92,235,213,207,124,219,239,119,184,215,171,159,249,183,223
-    DB 238,113,175,87,62,243,111,191,220,227,95,175
 PATTERNS_B_SEGMENTS EQU 1
 
 
@@ -14909,35 +14735,15 @@ PAIRBASE:
 ; body/accent描画ブロックをそのまま流用、PLAYER_SHIP_PAT/PLAYER_
 ; ACCENT_PATだけ一時的にこちらへ差し替える設計、下記SHIP_ENTRY_ACT
 ; 参照)。
-SHIP_ENTRY_BODY_PATTERN:  ; ShipStart2 (fg=8=SPR_RED, bg=1)
-    DB 0C0h,0F0h,0FEh,7Fh,0FFh,0FFh,0FFh,7Fh   ; top-left
-    DB 0FFh,0FFh,0FFh,7Fh,0FEh,0F0h,0C0h,00h   ; bottom-left
-    DB 00h,00h,00h,80h,0E0h,0F8h,0FEh,0FFh     ; top-right
-    DB 0FEh,0F8h,0E0h,80h,00h,00h,00h,00h      ; bottom-right
 
 ; (2026-09-22follow-up、"ステージ1のスタート演出の自機のShipStart1を
 ; 添付ファイルに差し替え"): ShipStart1_16x16_1.jsonの内容へ差し替え。
-SHIP_ENTRY_ACCENT_PATTERN:  ; ShipStart1 (fg=15=SPR_WHITE, bg=1)
-    DB 00h,00h,00h,40h,0FEh,0A1h,0A0h,7Fh      ; top-left
-    DB 0A0h,0A1h,0FEh,40h,00h,00h,00h,00h      ; bottom-left
-    DB 00h,00h,00h,00h,00h,00h,0B8h,7Ch        ; top-right
-    DB 0B8h,00h,00h,00h,00h,00h,00h,00h        ; bottom-right
 
 ; Accent overlay animation, 2 frames (ShipMidW/ShipDownW from the
 ; Sprite Editor): MID shows with no vertical movement, DOWN shows
 ; while diving - no separate up-frame, climbing keeps MID. Picked
 ; alongside the ship body's own frame - see PLAYER_ACCENT_PAT.
-ACCENT_MID_PATTERN:
-    DB 00h,00h,00h,00h,00h,00h,00h,00h   ; top-left (blank)
-    DB 30h,08h,00h,00h,00h,00h,00h,00h   ; bottom-left
-    DB 00h,00h,00h,00h,00h,00h,00h,00h   ; top-right (blank)
-    DB 00h,00h,00h,00h,00h,00h,00h,00h   ; bottom-right (blank)
 
-ACCENT_DOWN_PATTERN:
-    DB 00h,00h,00h,00h,00h,00h,00h,00h   ; top-left (blank)
-    DB 70h,38h,00h,00h,00h,00h,00h,00h   ; bottom-left
-    DB 00h,00h,00h,00h,00h,00h,00h,00h   ; top-right (blank)
-    DB 00h,00h,00h,00h,00h,00h,00h,00h   ; bottom-right (blank)
 
 ; "装備中はどちらのパターンにも追加 / 右下の8x8ドットのエリアがバリア
 ; の絵だからそれを未提出のアクセントに追記" - the barrier glyph is just
@@ -14947,17 +14753,7 @@ ACCENT_DOWN_PATTERN:
 ; leaving TL/BL/TR exactly as ACCENT_MID_PATTERN/ACCENT_DOWN_PATTERN
 ; above. Selected instead of the plain accent while BARRIER_HP>0 - see
 ; PLAYER_ACCENT_PAT's selection logic.
-ACCENT_MID_BARRIER_PATTERN:
-    DB 00h,00h,00h,00h,00h,00h,00h,00h   ; top-left (blank)
-    DB 30h,08h,00h,00h,00h,00h,00h,00h   ; bottom-left (same as ACCENT_MID_PATTERN)
-    DB 00h,00h,00h,00h,00h,00h,00h,00h   ; top-right (blank)
-    DB 0Ch,22h,55h,99h,99h,0AAh,44h,30h  ; bottom-right (barrier glyph)
 
-ACCENT_DOWN_BARRIER_PATTERN:
-    DB 00h,00h,00h,00h,00h,00h,00h,00h   ; top-left (blank)
-    DB 70h,38h,00h,00h,00h,00h,00h,00h   ; bottom-left (same as ACCENT_DOWN_PATTERN)
-    DB 00h,00h,00h,00h,00h,00h,00h,00h   ; top-right (blank)
-    DB 0Ch,22h,55h,99h,99h,0AAh,44h,30h  ; bottom-right (barrier glyph)
 
 ; 8x8 asterisk glyph: each enemy-formation quadrant that's still
 ; alive is drawn with this shape (not a solid fill). One asterisk
@@ -14969,21 +14765,11 @@ ACCENT_DOWN_BARRIER_PATTERN:
 ; the bottom 8 rows - top-left/top-right quadrants stay blank so the
 ; top half is fully transparent. Loaded once at INIT (not per-spawn -
 ; unlike the shared asterisk quadrant system, this is a static image).
-ENEMY4_PATTERN:
-    DB 00h,00h,00h,00h,00h,00h,00h,00h   ; top-left
-    DB 30h,64h,FFh,07h,01h,2Ah,15h,00h   ; bottom-left
-    DB 00h,00h,00h,00h,00h,00h,00h,00h   ; top-right
-    DB 01h,06h,9Ch,FFh,FEh,7Ch,0Eh,03h   ; bottom-right
 
 ; "E4にアニメ追加 上下移動中に適用" - 2nd pose (user-supplied
 ; E42_16x16.json, fg=3=SPR_LIGHTGREEN matching Fighter's own color;
 ; replaces the earlier E4_2_16x16.json revision), switched to (once,
 ; permanently) with ENEMY4_PATTERN while diving - see EBSD_DIAG_E4.
-ENEMY4_PATTERN_2:
-    DB 00h,00h,00h,00h,00h,00h,00h,00h   ; top-left
-    DB 00h,7Ch,0FFh,07h,00h,2Ah,00h,00h  ; bottom-left
-    DB 00h,00h,00h,00h,00h,00h,00h,00h   ; top-right
-    DB 01h,06h,9Eh,0F5h,0AAh,54h,0Ah,01h ; bottom-right
 
 ; enemy-fired bullet (new) - "パターンはFlyerレーザーを流用". Stage2's
 ; own FlyerLaser art (tools/stage2_combined/flyerlaser_gen.py) is just
@@ -14992,19 +14778,9 @@ ENEMY4_PATTERN_2:
 ; 16px-wide bar across the sprite's own upper half (bottom-left/right
 ; left blank) - Stage1 is a separate bank/build from Stage2, so these
 ; bytes are redefined from scratch, not shared.
-EBULLET_PATTERN:
-    DB 00h,00h,0FFh,0FFh,00h,00h,00h,00h   ; top-left: the bar
-    DB 00h,00h,00h,00h,00h,00h,00h,00h     ; bottom-left: blank
-    DB 00h,00h,0FFh,0FFh,00h,00h,00h,00h   ; top-right: the bar
-    DB 00h,00h,00h,00h,00h,00h,00h,00h     ; bottom-right: blank
 
 ; 2x2 lit block, top-left corner of the 16x16 - the flyaway trail
 ; particle. Small but clearly visible, unlike a single dot.
-PARTICLE_PATTERN:
-    DB 0C0h,0C0h,00h,00h,00h,00h,00h,00h
-    DB 00h,00h,00h,00h,00h,00h,00h,00h
-    DB 00h,00h,00h,00h,00h,00h,00h,00h
-    DB 00h,00h,00h,00h,00h,00h,00h,00h
 
 ASTERISK_PATTERN:
     DB 7Fh   ; .XXXXXXX
@@ -15033,33 +14809,13 @@ ENEMY_ANIM_SEQ_TABLE:
     DW ASTERISK_PATTERN, ASTERISK_PATTERN2, ASTERISK_PATTERN3, ASTERISK_PATTERN2
 
 ; Enemy1 4-frame animation pattern
-E1A_PATTERN:
-    DB 7Fh,9Eh,04h,1Bh,1Bh,04h,9Eh,7Fh   ; top-left
-    DB 00h,00h,00h,00h,00h,00h,00h,00h   ; bottom-left
-    DB 00h,00h,00h,00h,00h,00h,00h,00h   ; top-right
-    DB 00h,00h,00h,00h,00h,00h,00h,00h   ; bottom-right
 
 ; Ship animation patterns (from the Sprite Editor's newer ship design).
 ; MID/UP/DOWN load into PAT_SHIP/PAT_SHIP_UP/PAT_SHIP_DOWN at INIT;
 ; PLAYER_SHIP_PAT picks which one to draw each frame from JOY_STICK
 ; (see DIR_DONE, just before the sprite-attribute redraw block).
-SHIP_UP_PATTERN:
-    DB 00h,00h,00h,00h,F0h,7Eh,1Fh,7Fh   ; top-left
-    DB AFh,D5h,AAh,D5h,AAh,D7h,68h,30h   ; bottom-left
-    DB 00h,00h,00h,00h,00h,00h,80h,E0h   ; top-right
-    DB F8h,54h,AAh,5Fh,E1h,00h,00h,00h   ; bottom-right
 
-SHIP_MID_PATTERN:
-    DB 00h,00h,E0h,38h,7Ch,0Fh,3Fh,FFh   ; top-left
-    DB 80h,7Fh,D5h,80h,7Fh,B0h,00h,00h   ; bottom-left
-    DB 00h,00h,00h,00h,00h,00h,C0h,F0h   ; top-right
-    DB C8h,74h,BEh,1Fh,F1h,00h,00h,00h   ; bottom-right
 
-SHIP_DOWN_PATTERN:
-    DB 00h,00h,00h,E0h,78h,FEh,F3h,87h   ; top-left
-    DB FFh,FFh,81h,7Eh,7Fh,8Ch,F0h,C0h   ; bottom-left
-    DB 00h,00h,00h,00h,00h,00h,00h,C0h   ; top-right
-    DB 88h,C4h,FEh,FFh,01h,00h,00h,00h   ; bottom-right
 
 ; Destroyed-quadrant explosion (round69 follow-up, ExpAnim_24x24.json):
 ; 2 distinct 8x8 tiles only, reused across all 3 sequential frames -
@@ -15069,9 +14825,6 @@ SHIP_DOWN_PATTERN:
 ; 512-byte/64-code blob this replaced only ever used its own 8 group-
 ; leader codes (the other 56 were always-zero unused padding), so this
 ; frees the remaining 6 codes (122-127) of the same group15 too.
-EXPLOSION_TILES:
-    DB 00h,00h,00h,0FFh,0FFh,00h,00h,00h   ; EXP_CODE_THIN  (2-row bar)
-    DB 00h,00h,0FFh,0FFh,0FFh,0FFh,00h,00h ; EXP_CODE_THICK (4-row bar)
 
 ; Static sprite patterns used only while a quadrant is "flying in"
 ; during formation assembly: PAT_TEMP_TOP shows just the top-left
@@ -15083,21 +14836,12 @@ EXPLOSION_TILES:
 ; ASTERISK_PATTERN's new art(8byte)+24byteゼロ+24byteゼロ+
 ; bottom-right=同じ絵柄(8byte)、計64byte。この1ブロックが3箇所
 ; (SPRPAT+0C0h/160h/200h)へ同じ内容のままロードされる。
-TEMP_SPRITE_PATTERNS:
-    DB 2,127,158,4,129,27,2,4,158,127,175,0,2,127,158,4
-    DB 129,27,2,4,158,127
 TEMP_SPRITE_PATTERNS_SEGMENTS EQU 7
 
 ; enemy3: 3-frame pulsing animation, gray fg. Patterns1/2 use a
 ; fixed sky-blue bg (they never need row-matching since the whole
 ; flight path stays over the sky); pattern3 uses a red bg, giving
 ; the "gray frame with a red 2x2 dot in the middle" look.
-ENEMY3_PATTERN1:
-    DB 00h,00h,00h,0FFh,0FFh,00h,00h,00h
-ENEMY3_PATTERN2:
-    DB 00h,00h,0FFh,0FFh,0FFh,0FFh,00h,00h
-ENEMY3_PATTERN3:
-    DB 0FFh,0FFh,0FFh,0E7h,0E7h,0FFh,0FFh,0FFh
 
 ; New BG enemy's 16x16 glyph, split into 4 8x8 quadrants (TL/TR/BL/BR,
 ; drawn as 4 adjacent nametable cells - not a hardware sprite). Pixel
@@ -15110,14 +14854,6 @@ NEWENEMY_CODE_TL EQU 153
 NEWENEMY_CODE_TR EQU 154
 NEWENEMY_CODE_BL EQU 155
 NEWENEMY_CODE_BR EQU 156
-NEWENEMY_PATTERN_TL:
-    DB 00h,2Ah,6Ah,0Ah,7Ah,02h,7Eh,00h
-NEWENEMY_PATTERN_TR:
-    DB 00h,0AAh,0AEh,0AEh,0BEh,0BEh,0FEh,0FEh
-NEWENEMY_PATTERN_BL:
-    DB 7Fh,03h,7Fh,0Fh,7Fh,3Fh,7Fh,00h
-NEWENEMY_PATTERN_BR:
-    DB 7Eh,0BEh,0DEh,0EEh,0F6h,0FAh,0FCh,00h
 
 ; enemy6's 90/180/270-degree rotations of the same 16x16 glyph above
 ; (bit-rotated the source grid itself, then re-split into quadrants -
@@ -15143,30 +14879,6 @@ NEWENEMY_CODE270_TL EQU 169
 NEWENEMY_CODE270_TR EQU 170
 NEWENEMY_CODE270_BL EQU 171
 NEWENEMY_CODE270_BR EQU 172
-NEWENEMY_PATTERN90_TL:
-    DB 00h,57h,77h,77h,7Fh,7Fh,7Dh,7Dh
-NEWENEMY_PATTERN90_TR:
-    DB 00h,54h,56h,50h,5Eh,40h,7Eh,00h
-NEWENEMY_PATTERN90_BL:
-    DB 7Eh,7Dh,7Bh,77h,6Fh,5Fh,3Fh,00h
-NEWENEMY_PATTERN90_BR:
-    DB 0FEh,0C0h,0EEh,0F0h,0FEh,0F4h,0F6h,00h
-NEWENEMY_PATTERN180_TL:
-    DB 00h,3Fh,5Fh,6Fh,77h,7Bh,7Dh,7Eh
-NEWENEMY_PATTERN180_TR:
-    DB 00h,0FEh,0FCh,0FEh,0F0h,0FEh,3Eh,0FEh
-NEWENEMY_PATTERN180_BL:
-    DB 7Fh,7Fh,7Dh,79h,15h,75h,55h,00h
-NEWENEMY_PATTERN180_BR:
-    DB 00h,7Eh,40h,5Eh,50h,56h,54h,00h
-NEWENEMY_PATTERN270_TL:
-    DB 00h,6Fh,2Fh,7Fh,0Fh,77h,03h,7Fh
-NEWENEMY_PATTERN270_TR:
-    DB 00h,0FCh,0FAh,0F6h,0EEh,0DEh,0BEh,7Eh
-NEWENEMY_PATTERN270_BL:
-    DB 00h,7Eh,02h,7Ah,0Ah,6Ah,2Ah,00h
-NEWENEMY_PATTERN270_BR:
-    DB 0BEh,0BEh,0FEh,0FEh,0EEh,0EEh,0EAh,00h
 
 ; Per-phase code quads (TL,TR,BL,BR), phase order 0/90/180/270 -
 ; indexed by ENEMY6_DRAW using (IX+3)*4. Must stay in this order.
@@ -15285,11 +14997,6 @@ BOSS_MISC_PATTERNS_SEGMENTS EQU 22  ; tools/bgm_data/bgm_bank_gen.py
 ; at INIT under its own always-available code (PAT_PLAYER_EXPLOSION)
 ; instead of EXPLOSION_PATTERN's own lazy/boss-only loading - see
 ; PLAYER_EXPL_UPDATE_ALL.
-PLAYER_EXPL_PATTERN:
-    DB 84h,48h,00h,02h,49h,84h,20h,03h     ; top-left
-    DB 13h,09h,20h,00h,09h,10h,04h,00h     ; bottom-left
-    DB 00h,00h,40h,10h,20h,10h,8Ch,68h     ; top-right
-    DB 90h,82h,48h,0C4h,20h,80h,00h,00h    ; bottom-right
 
 ; --- vertical-ellipse orbit LUT, 256 steps, signed byte offsets  ---
 ; --- from the boss ring's center. Asymmetric egg shape: top     ---
@@ -15439,17 +15146,6 @@ ANIM3_SEQ:
     DB ENEMY3_CODE1,ENEMY3_CODE2,ENEMY3_CODE3,ENEMY3_CODE2
 
 ; digit glyphs 0-9 for the on-screen score display (code DIGIT_BASE+N)
-DIGIT_PATTERNS:
-    DB 3Ch,66h,6Eh,76h,66h,66h,3Ch,00h   ; 0
-    DB 18h,38h,58h,18h,18h,18h,7Eh,00h   ; 1
-    DB 3Ch,66h,06h,0Ch,30h,60h,7Eh,00h   ; 2
-    DB 3Ch,66h,06h,1Ch,06h,66h,3Ch,00h   ; 3
-    DB 0Ch,1Ch,2Ch,4Ch,7Eh,0Ch,0Ch,00h   ; 4
-    DB 7Eh,60h,7Ch,06h,06h,66h,3Ch,00h   ; 5
-    DB 1Ch,30h,60h,7Ch,66h,66h,3Ch,00h   ; 6
-    DB 7Eh,06h,0Ch,18h,30h,30h,30h,00h   ; 7
-    DB 3Ch,66h,66h,3Ch,66h,66h,3Ch,00h   ; 8
-    DB 3Ch,66h,66h,3Eh,06h,0Ch,38h,00h   ; 9
 
 ; (round145、ROM予算確保のためオフロード): "MISSION 1"/"MISSION 2"共有
 ; フォント(M,I,S,O,N,space,1,2、codes64-71)+GAME OVER("MISSION FAILED")
@@ -15472,13 +15168,9 @@ STAGE1_MISSION_GAMEOVER_FONT_SEGMENTS EQU 39  ; tools/bgm_data/
 
 ; group8(codes64-71)の色を白文字/黒背景(0F1h)へ上書き - 元は"shot-green"
 ; 用に予約されただけで実際のビットマップが一度も無かった色(0D3h)。
-MISSION_FONT_COLOR:
-    DB 0F1h
 
 ; group9(codes72-79)の色も白文字/黒背景(0F1h)へ - 元は"shot-white"用に
 ; 予約されただけで実際のビットマップが一度も無かった色(0DFh)。
-GAMEOVER_FONT_COLOR:
-    DB 0F1h
 
 ; "MISSION 1"/"MISSION 2" - M,I,S,S,I,O,N,space,digit(9byte、row12/col11
 ; center)。digitは添付フォントの"1"/"2"グリフ(MISSION_FONT_BASE+6/+7、
@@ -15638,10 +15330,6 @@ CIRCLE_LUT:
 ; removed - shots can never reach the ground scroller anymore (see
 ; PLAYER_MAXY), so only BLUE is loaded. 元の生データはBLUE M=0-6の
 ; 対角線ストリーク(M=7は未使用スロット)。
-BULLET_PATTERNS:
-    DB 1,102,51,134,0,1,102,51,134,0,1,102,51,134,0,1
-    DB 102,51,134,0,1,102,51,134,0,1,102,51,134,0,1,102
-    DB 51,135,0
 BULLET_PATTERNS_SEGMENTS EQU 14
 
 ; ---- (2026-09-23、ROM詰め直し) ROWADDR_LO手前のページ残りへ末尾区間から移設 ----
@@ -15939,8 +15627,6 @@ PCPB_MISS:
     XOR A
     RET
 
-BLANK_PATTERN:
-    DB 00h,00h,00h,00h,00h,00h,00h,00h    ; BLANKCODE's actual glyph: truly blank
 
     ALIGN 256
 ROWADDR_HI:
@@ -16083,16 +15769,6 @@ GAUGE_FULL_COLOR EQU 081h    ; 赤/黒
 GAUGE_BLANK_CODE EQU MISSION_FONT_BASE+5   ; 行0の黒埋めと同じ空白
 
 ; B1beam_24x24.json(16x24、シアン)。上16行=スプライト23、下8行=24
-LZ_END_TILES:
-    DB 0C0h,60h,98h,0EEh,33h,9Dh,2Fh,1Bh,85h,61h,9Ah,65h,0DBh,65h,9Ah,61h
-    DB 00h,00h,00h,00h,00h,0C0h,60h,0B8h,5Eh,0ABh,77h,0EFh,0AFh,0F7h,6Bh,0DEh
-    DB 8Bh,17h,3Dh,5Fh,0B6h,6Ch,0F0h,0C0h,00h,00h,00h,00h,00h,00h,00h,00h
-    DB 0B8h,60h,0C0h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h
-BARRIER_GLYPH_M:                               ; バリアのグリフ(0Ch,22h,55h,99h,99h,0AAh,44h,30h)の左右反転
-    DB 30h,44h,0AAh,99h,99h,55h,22h,0Ch
-GAUGE_TILES:
-    DB 00h,0FFh,0FFh,0FFh,0FFh,0FFh,0FFh,00h  ; 128 満
-    DB 00h,00h,00h,00h,00h,00h,00h,00h        ; 129 端数(動的)
 
 LZ_INIT:
     LD HL,LZ_END_TILES : LD DE,LZ_END_PAT*8+SPRPAT : LD BC,64 : CALL LDIRVM
@@ -16994,3 +16670,440 @@ E2_ANY_PART_LEFT:
     ADD HL,DE
     OR (HL) : INC HL : OR (HL)
     RET
+
+; ============================================================================
+; (2026-09-24、"絵柄データとローダーから逃がして"): 起動時に1回だけVRAMへ送る絵柄データと、
+; 送り先の一覧表は、ROMではなくRAM(STAGE1_GFX_RAM=D300h〜)に置く。Comb版では
+; tools/bankswitch_poc/build_full_rom.pyがこの区画をタイトルの後半バンク(bank1)へ入れ、
+; タイトルがINIT_BGMの最後でSTAGE1_GFX_RAMへコピーする(BGMやボスの絵柄と同じ流れ)。
+; バンクの無いメモリで動くテストはアセンブル結果をそのまま読み込むので、最初からRAMにある。
+; ============================================================================
+; HL=一覧表(DW 転送元,VRAM先,バイト数 … DW 0で終わり)を順にLDIRVMする。
+GFX_LOAD_LIST:
+    LD E,(HL) : INC HL : LD D,(HL) : INC HL
+    LD A,D : OR E
+    RET Z
+    PUSH DE                        ; 転送元
+    LD E,(HL) : INC HL : LD D,(HL) : INC HL     ; VRAM先
+    LD C,(HL) : INC HL : LD B,(HL) : INC HL     ; バイト数
+    LD (GFX_LOAD_PTR),HL
+    POP HL
+    CALL LDIRVM
+    LD HL,(GFX_LOAD_PTR)
+    JR GFX_LOAD_LIST
+
+; (2026-09-24) 以下3つ(CHECK_BULLET_VS_EBUZ2/PDC_CHECK_EBUZ2/EBUZ2_ON_BOSS_TRIGGER)は、Comb版だけ
+; LUT手前のALIGN 256を越えて256byte損していたため、ALIGNより後ろのここへ移した(中身は無変更)。
+CHECK_BULLET_VS_EBUZ2:
+    LD A,(EBUZ2_ACT)
+    OR A
+    JR Z,CBVE2_MISS
+    LD A,(EBUZ2_PHASE)
+    CP 2
+    JR Z,CBVE2_MISS
+    LD D,23
+    LD A,B : SUB D
+    CP 6
+    JR NC,CBVE2_MISS
+    LD A,(EBUZ2_ROW_CUR)
+    LD D,A
+    LD A,C : SUB D
+    CP 7
+    JR NC,CBVE2_MISS
+    LD A,(EBUZ2_HP) : DEC A : LD (EBUZ2_HP),A
+    JR NZ,CBVE2_DAMAGED
+    CALL EBUZ2_TRIGGER_DEFEAT
+    LD HL,50                     ; round141 follow-up: EbuzIIの撃破報酬を5000点に(50*100)
+    CALL ADD_SCORE_COMMON
+    LD A,1
+    RET
+CBVE2_DAMAGED:
+    LD A,1
+    RET
+CBVE2_MISS:
+    XOR A
+    RET
+
+PDC_CHECK_EBUZ2:
+    LD A,(EBUZ2_ACT)
+    OR A
+    JR Z,EBUZ2_PDC_MISS
+    LD A,(EBUZ2_PHASE)
+    CP 2
+    JR Z,EBUZ2_PDC_MISS
+    LD A,(EBUZ2_ROW_CUR) : ADD A,A : ADD A,A : ADD A,A : LD E,A
+    LD D,23*8
+    LD B,55
+    CALL PLAYER_HIT_BOX_EBUZ
+    OR A
+    JR NZ,EBUZ2_PDC_HIT
+    ; round145("EbuzIIで敵の弾やビームにコリジョンがない"): 本体(上記)は
+    ; 従来通り。volley1/volley2/レーザーは新規追加(PDC_CHECK_EBUZ2_
+    ; PROJECTILES、ファイル末尾)。
+    JP PDC_CHECK_EBUZ2_PROJECTILES
+EBUZ2_PDC_HIT:
+    LD A,1
+    RET
+EBUZ2_PDC_MISS:
+    XOR A
+    RET
+
+; ----------------------------------------------------------------------
+; CHECK_BOSS_TRIGGERの末尾から横取りする実スポーン起点。1回目の到達で
+; Mk2をスポーンして実ボスは出さない。Mk2生存中は素通り(実ボスも
+; スポーンしない、次フレームもCHECK_BOSS_TRIGGER自体がBOSS_STATE==0の
+; 間毎フレーム呼び直すためこれで足りる)。実際の「Mk2撃破→実ボスへ」
+; 遷移はEBUZ2_DEFEAT_DONEがBOSS_SPAWNを直接呼ぶため、ここでの
+; EBUZ2_DEFEATEDチェックは通常到達しない防御的フォールバックに過ぎない
+; (HP自体は初回未スポーン時も0のため、"未スポーン"と"撃破済み"の
+; 区別に専用フラグEBUZ2_DEFEATEDが必要)。
+; ----------------------------------------------------------------------
+EBUZ2_ON_BOSS_TRIGGER:
+    LD A,(EBUZ2_ACT)
+    OR A
+    RET NZ                       ; 既にスポーン済み・生存中 - 何もしない
+    LD A,(EBUZ2_DEFEATED)
+    OR A
+    JP NZ,BOSS_SPAWN               ; 撃破済み(防御的フォールバック)
+    JP TRIGGER_EBUZ2_ENCOUNTER     ; 初回到達 - Mk2をスポーン
+
+STAGE1_ROM_RESUME:
+    ORG STAGE1_GFX_RAM
+STAGE1_GFX_RAM_START:
+GFX_LIST_0:
+    DW MISSION_FONT_COLOR,2008h,1
+    DW GAMEOVER_FONT_COLOR,2009h,1
+    DW 0
+
+GFX_LIST_1:
+    DW COLORDATA,2000h,COLOR_LEN
+    DW MISSION_FONT_COLOR,2008h,1
+    DW GAMEOVER_FONT_COLOR,2009h,1
+    DW BLANK_PATTERN,BLANKCODE*8,8   ; BLANKCODE's glyph was never written before - defaulted to leftover VRAM garbage
+    DW DIGIT_PATTERNS,DIGIT_BASE*8,80
+    DW 0
+
+GFX_LIST_2:
+    DW EXPLOSION_TILES,EXP_CODE_THIN*8,16
+    DW 0
+
+GFX_LIST_3:
+    DW ENEMY3_PATTERN1,ENEMY3_CODE1*8,8
+    DW ENEMY3_PATTERN2,ENEMY3_CODE2*8,8
+    DW ENEMY3_PATTERN3,ENEMY3_CODE3*8,8
+    DW NEWENEMY_PATTERN_TL,NEWENEMY_CODE_TL*8,8
+    DW NEWENEMY_PATTERN_TR,NEWENEMY_CODE_TR*8,8
+    DW NEWENEMY_PATTERN_BL,NEWENEMY_CODE_BL*8,8
+    DW NEWENEMY_PATTERN_BR,NEWENEMY_CODE_BR*8,8
+    DW NEWENEMY_PATTERN90_TL,NEWENEMY_CODE90_TL*8,8
+    DW NEWENEMY_PATTERN90_TR,NEWENEMY_CODE90_TR*8,8
+    DW NEWENEMY_PATTERN90_BL,NEWENEMY_CODE90_BL*8,8
+    DW NEWENEMY_PATTERN90_BR,NEWENEMY_CODE90_BR*8,8
+    DW NEWENEMY_PATTERN180_TL,NEWENEMY_CODE180_TL*8,8
+    DW NEWENEMY_PATTERN180_TR,NEWENEMY_CODE180_TR*8,8
+    DW NEWENEMY_PATTERN180_BL,NEWENEMY_CODE180_BL*8,8
+    DW NEWENEMY_PATTERN180_BR,NEWENEMY_CODE180_BR*8,8
+    DW NEWENEMY_PATTERN270_TL,NEWENEMY_CODE270_TL*8,8
+    DW NEWENEMY_PATTERN270_TR,NEWENEMY_CODE270_TR*8,8
+    DW NEWENEMY_PATTERN270_BL,NEWENEMY_CODE270_BL*8,8
+    DW NEWENEMY_PATTERN270_BR,NEWENEMY_CODE270_BR*8,8
+    DW EBUZ_TILE_A,EBUZ_CODE_A*8,8
+    DW EBUZ_TILE_B,EBUZ_CODE_B*8,8
+    DW EBUZ_TILE_C,EBUZ_CODE_C*8,8
+    DW EBUZ_TILE_D,EBUZ_CODE_D*8,8
+    DW EBUZ_BULLET_L_TILE,EBUZ_BULLET_L_CODE*8,8
+    DW EBUZ_BULLET_R_TILE,EBUZ_BULLET_R_CODE*8,8
+    DW EBUZ_COLOR_A,200Bh,1   ; 200Bh=COLTBL+group11(88/8)
+    DW EBUZ_COLOR_B,200Ch,1   ; 200Ch=COLTBL+group12(96/8)
+    DW EBUZ_COLOR_C,200Dh,1   ; 200Dh=COLTBL+group13(104/8)
+    DW EBUZ_COLOR_D,200Eh,1   ; 200Eh=COLTBL+group14(112/8)
+    DW EBUZ_BULLET_COLOR_BYTE,2011h,1   ; 2011h=COLTBL+group17(136/8)
+    DW EBUZ2_LASER_L_TILE,EBUZ2_LASER_L_CODE*8,8
+    DW EBUZ2_LASER_R_TILE,EBUZ2_LASER_R_CODE*8,8
+    DW EBUZ2_LASER_COLOR_BYTE,2012h,1   ; 2012h=COLTBL+group18(144/8)
+    DW 0
+
+GFX_LIST_4:
+    DW ENEMY4_PATTERN,PAT_ENEMY4*8+SPRPAT,32
+    DW ENEMY4_PATTERN_2,PAT_ENEMY4_2*8+SPRPAT,32
+    DW EBULLET_PATTERN,PAT_EBULLET*8+SPRPAT,32
+    DW 0
+
+GFX_LIST_5:
+    DW SHIP_MID_PATTERN,PAT_SHIP*8+SPRPAT,32
+    DW SHIP_UP_PATTERN,PAT_SHIP_UP*8+SPRPAT,32
+    DW SHIP_DOWN_PATTERN,PAT_SHIP_DOWN*8+SPRPAT,32
+    DW ACCENT_MID_PATTERN,PAT_ACCENT*8+SPRPAT,32
+    DW ACCENT_DOWN_PATTERN,PAT_ACCENT_DOWN*8+SPRPAT,32
+    DW ACCENT_MID_BARRIER_PATTERN,PAT_ACCENT_BARRIER*8+SPRPAT,32
+    DW ACCENT_DOWN_BARRIER_PATTERN,PAT_ACCENT_DOWN_BARRIER*8+SPRPAT,32
+    DW PLAYER_EXPL_PATTERN,PAT_PLAYER_EXPLOSION*8+SPRPAT,32
+    DW E1A_PATTERN,PAT_ENEMY1*8+SPRPAT,32
+    DW PARTICLE_PATTERN,PAT_PARTICLE*8+SPRPAT,32
+    DW 0
+
+EBUZ_TILE_A:
+    DB 126,191,1,63,63,1,191,126
+
+EBUZ_TILE_B:
+    DB 255,84,42,126,126,42,84,255
+
+EBUZ_TILE_C:
+    DB 126,195,189,181,173,189,195,126
+
+EBUZ_TILE_D:
+    DB 255,65,127,127,127,127,65,255
+
+EBUZ_BULLET_L_TILE:
+    DB 0,0,127,255,255,127,0,0
+
+EBUZ_BULLET_R_TILE:
+    DB 0,0,254,255,255,254,0,0
+
+EBUZ_COLOR_A:
+    DB EBUZ_COLOR_A_VAL
+
+EBUZ_COLOR_B:
+    DB EBUZ_COLOR_B_VAL
+
+EBUZ_COLOR_C:
+    DB EBUZ_COLOR_C_VAL
+
+EBUZ_COLOR_D:
+    DB EBUZ_COLOR_D_VAL
+
+EBUZ_BULLET_COLOR_BYTE:
+    DB EBUZ_BULLET_COLOR_BYTE_VAL
+
+PATTERNS_A:
+    DB 127,94,235,254,155,101,254,75,189,188,215,253,55,202,253,150
+    DB 123,121,175,251,110,149,251,45,246,242,95,247,220,43,247,90
+    DB 237,229,190,239,185,86,239,180,219,203,125,223,115,172,223,105
+    DB 183,151,250,191,230,89,191,210,111,47,245,127,205,178,127,165
+    DB 222,94,235,254,155,101,254,75,189,188,215,253,55,202,253,150
+    DB 123,121,175,251,110,149,251,45,246,242,95,247,220,43,247,90
+    DB 237,229,190,239,185,86,239,180,219,203,125,223,115,172,223,105
+    DB 183,151,250,191,230,89,191,210,111,47,245,127,205,178,127,165
+    DB 222,63,94,235,254,155,101,254,75,189,188,215,253,55,202,253
+    DB 150,123,121,175,251,110,149,251,45,246,242,95,247,220,43,247
+    DB 90,237,229,190,239,185,86,239,180,219,203,125,223,115,172,223
+    DB 105,183,151,250,191,230,89,191,210,111,47,245,127,205,178,127
+    DB 165,222,135,0,4,6,111,254,27,4,131,0,4,216,180,239
+    DB 176,96,169,0,36,125,231,223,126,185,199,190,95,246,219,190
+    DB 255,91,229,190,125,251,207,191,253,114,143,125,190,247,159,126
+    DB 251,229,31,250,125,239,62,253,247,202
+
+COLORDATA:
+    DB 0F4h    ; group0 codes  0- 7 mountain family (white/blue, cloud design)
+    DB 0F4h    ; group1 codes  8-15 diamond family (white/blue, cloud design)
+    DB 0F4h    ; group2 codes 16-23 slash family (white/blue, cloud design)
+    DB 0F4h    ; group3 codes 24-31 backslash family (unused, matched anyway)
+    DB 0F4h    ; group4 codes 32-39 wedge family (white/blue, cloud design)
+    DB 0F4h    ; group5 codes 40-47 wedge family (white/blue, cloud design)
+    DB 44h,0F4h,0D3h,0DFh,0DAh,0F4h,0FFh,0F3h,0FAh,084h  ; group6=BLANKCODE, group7=shot(2026-09-24から白/青、旧0D4h), group8=shot-green, group9=shot-white, group10=shot-brown, group11=anim1-blue(white/blue, DEBUG was yellow), group12=anim1-white(white/white, DEBUG), group13=anim1-green(white/lightgreen, DEBUG), group14=anim1-brown(white/brown, DEBUG), group15=anim2-blue(red/blue)
+    DB 08Fh,083h,08Ah,0E4h,0E4h,0E8h,0F1h,0F1h,0E4h,0E4h  ; group16=anim2-white, group17=anim2-green, group18=anim2-brown, group19=enemy3-pat1(gray/blue), group20=enemy3-pat2(gray/blue), group21=enemy3-pat3(gray/red), group22=digits0-7(white/black), group23=digits8-9(white/black), group24=BOSS gray/blue, group25=BOSS gray/blue
+    DB 0E4h,0E4h,014h,014h,014h,084h                       ; group26=BOSS gray/blue, group27=BOSS gray/blue, group28-30=BOSS black/blue, group31=BOSS red/blue
+
+PATTERNS_B:
+    DB 90,63,245,251,223,125,251,239,149,126,235,247,190,251,247,223
+    DB 43,252,215,239,125,246,239,191,86,249,175,223,251,237,223,127
+    DB 173,242,95,190,236,183,125,254,183,203,125,250,217,111,251,253
+    DB 110,151,250,245,179,223,246,251,221,46,245,234,103,190,237,247
+    DB 187,92,235,213,207,124,219,239,119,184,215,171,159,249,183,223
+    DB 238,113,175,87,62,243,111,191,220,227,95,175
+
+SHIP_ENTRY_BODY_PATTERN:  ; ShipStart2 (fg=8=SPR_RED, bg=1)
+    DB 0C0h,0F0h,0FEh,7Fh,0FFh,0FFh,0FFh,7Fh   ; top-left
+    DB 0FFh,0FFh,0FFh,7Fh,0FEh,0F0h,0C0h,00h   ; bottom-left
+    DB 00h,00h,00h,80h,0E0h,0F8h,0FEh,0FFh     ; top-right
+    DB 0FEh,0F8h,0E0h,80h,00h,00h,00h,00h      ; bottom-right
+
+SHIP_ENTRY_ACCENT_PATTERN:  ; ShipStart1 (fg=15=SPR_WHITE, bg=1)
+    DB 00h,00h,00h,40h,0FEh,0A1h,0A0h,7Fh      ; top-left
+    DB 0A0h,0A1h,0FEh,40h,00h,00h,00h,00h      ; bottom-left
+    DB 00h,00h,00h,00h,00h,00h,0B8h,7Ch        ; top-right
+    DB 0B8h,00h,00h,00h,00h,00h,00h,00h        ; bottom-right
+
+ACCENT_MID_PATTERN:
+    DB 00h,00h,00h,00h,00h,00h,00h,00h   ; top-left (blank)
+    DB 30h,08h,00h,00h,00h,00h,00h,00h   ; bottom-left
+    DB 00h,00h,00h,00h,00h,00h,00h,00h   ; top-right (blank)
+    DB 00h,00h,00h,00h,00h,00h,00h,00h   ; bottom-right (blank)
+
+ACCENT_DOWN_PATTERN:
+    DB 00h,00h,00h,00h,00h,00h,00h,00h   ; top-left (blank)
+    DB 70h,38h,00h,00h,00h,00h,00h,00h   ; bottom-left
+    DB 00h,00h,00h,00h,00h,00h,00h,00h   ; top-right (blank)
+    DB 00h,00h,00h,00h,00h,00h,00h,00h   ; bottom-right (blank)
+
+ACCENT_MID_BARRIER_PATTERN:
+    DB 00h,00h,00h,00h,00h,00h,00h,00h   ; top-left (blank)
+    DB 30h,08h,00h,00h,00h,00h,00h,00h   ; bottom-left (same as ACCENT_MID_PATTERN)
+    DB 00h,00h,00h,00h,00h,00h,00h,00h   ; top-right (blank)
+    DB 0Ch,22h,55h,99h,99h,0AAh,44h,30h  ; bottom-right (barrier glyph)
+
+ACCENT_DOWN_BARRIER_PATTERN:
+    DB 00h,00h,00h,00h,00h,00h,00h,00h   ; top-left (blank)
+    DB 70h,38h,00h,00h,00h,00h,00h,00h   ; bottom-left (same as ACCENT_DOWN_PATTERN)
+    DB 00h,00h,00h,00h,00h,00h,00h,00h   ; top-right (blank)
+    DB 0Ch,22h,55h,99h,99h,0AAh,44h,30h  ; bottom-right (barrier glyph)
+
+ENEMY4_PATTERN:
+    DB 00h,00h,00h,00h,00h,00h,00h,00h   ; top-left
+    DB 30h,64h,FFh,07h,01h,2Ah,15h,00h   ; bottom-left
+    DB 00h,00h,00h,00h,00h,00h,00h,00h   ; top-right
+    DB 01h,06h,9Ch,FFh,FEh,7Ch,0Eh,03h   ; bottom-right
+
+ENEMY4_PATTERN_2:
+    DB 00h,00h,00h,00h,00h,00h,00h,00h   ; top-left
+    DB 00h,7Ch,0FFh,07h,00h,2Ah,00h,00h  ; bottom-left
+    DB 00h,00h,00h,00h,00h,00h,00h,00h   ; top-right
+    DB 01h,06h,9Eh,0F5h,0AAh,54h,0Ah,01h ; bottom-right
+
+EBULLET_PATTERN:
+    DB 00h,00h,0FFh,0FFh,00h,00h,00h,00h   ; top-left: the bar
+    DB 00h,00h,00h,00h,00h,00h,00h,00h     ; bottom-left: blank
+    DB 00h,00h,0FFh,0FFh,00h,00h,00h,00h   ; top-right: the bar
+    DB 00h,00h,00h,00h,00h,00h,00h,00h     ; bottom-right: blank
+
+PARTICLE_PATTERN:
+    DB 0C0h,0C0h,00h,00h,00h,00h,00h,00h
+    DB 00h,00h,00h,00h,00h,00h,00h,00h
+    DB 00h,00h,00h,00h,00h,00h,00h,00h
+    DB 00h,00h,00h,00h,00h,00h,00h,00h
+
+E1A_PATTERN:
+    DB 7Fh,9Eh,04h,1Bh,1Bh,04h,9Eh,7Fh   ; top-left
+    DB 00h,00h,00h,00h,00h,00h,00h,00h   ; bottom-left
+    DB 00h,00h,00h,00h,00h,00h,00h,00h   ; top-right
+    DB 00h,00h,00h,00h,00h,00h,00h,00h   ; bottom-right
+
+SHIP_UP_PATTERN:
+    DB 00h,00h,00h,00h,F0h,7Eh,1Fh,7Fh   ; top-left
+    DB AFh,D5h,AAh,D5h,AAh,D7h,68h,30h   ; bottom-left
+    DB 00h,00h,00h,00h,00h,00h,80h,E0h   ; top-right
+    DB F8h,54h,AAh,5Fh,E1h,00h,00h,00h   ; bottom-right
+
+SHIP_MID_PATTERN:
+    DB 00h,00h,E0h,38h,7Ch,0Fh,3Fh,FFh   ; top-left
+    DB 80h,7Fh,D5h,80h,7Fh,B0h,00h,00h   ; bottom-left
+    DB 00h,00h,00h,00h,00h,00h,C0h,F0h   ; top-right
+    DB C8h,74h,BEh,1Fh,F1h,00h,00h,00h   ; bottom-right
+
+SHIP_DOWN_PATTERN:
+    DB 00h,00h,00h,E0h,78h,FEh,F3h,87h   ; top-left
+    DB FFh,FFh,81h,7Eh,7Fh,8Ch,F0h,C0h   ; bottom-left
+    DB 00h,00h,00h,00h,00h,00h,00h,C0h   ; top-right
+    DB 88h,C4h,FEh,FFh,01h,00h,00h,00h   ; bottom-right
+
+EXPLOSION_TILES:
+    DB 00h,00h,00h,0FFh,0FFh,00h,00h,00h   ; EXP_CODE_THIN  (2-row bar)
+    DB 00h,00h,0FFh,0FFh,0FFh,0FFh,00h,00h ; EXP_CODE_THICK (4-row bar)
+
+TEMP_SPRITE_PATTERNS:
+    DB 2,127,158,4,129,27,2,4,158,127,175,0,2,127,158,4
+    DB 129,27,2,4,158,127
+
+ENEMY3_PATTERN1:
+    DB 00h,00h,00h,0FFh,0FFh,00h,00h,00h
+
+ENEMY3_PATTERN2:
+    DB 00h,00h,0FFh,0FFh,0FFh,0FFh,00h,00h
+
+ENEMY3_PATTERN3:
+    DB 0FFh,0FFh,0FFh,0E7h,0E7h,0FFh,0FFh,0FFh
+
+NEWENEMY_PATTERN_TL:
+    DB 00h,2Ah,6Ah,0Ah,7Ah,02h,7Eh,00h
+
+NEWENEMY_PATTERN_TR:
+    DB 00h,0AAh,0AEh,0AEh,0BEh,0BEh,0FEh,0FEh
+
+NEWENEMY_PATTERN_BL:
+    DB 7Fh,03h,7Fh,0Fh,7Fh,3Fh,7Fh,00h
+
+NEWENEMY_PATTERN_BR:
+    DB 7Eh,0BEh,0DEh,0EEh,0F6h,0FAh,0FCh,00h
+
+NEWENEMY_PATTERN90_TL:
+    DB 00h,57h,77h,77h,7Fh,7Fh,7Dh,7Dh
+
+NEWENEMY_PATTERN90_TR:
+    DB 00h,54h,56h,50h,5Eh,40h,7Eh,00h
+
+NEWENEMY_PATTERN90_BL:
+    DB 7Eh,7Dh,7Bh,77h,6Fh,5Fh,3Fh,00h
+
+NEWENEMY_PATTERN90_BR:
+    DB 0FEh,0C0h,0EEh,0F0h,0FEh,0F4h,0F6h,00h
+
+NEWENEMY_PATTERN180_TL:
+    DB 00h,3Fh,5Fh,6Fh,77h,7Bh,7Dh,7Eh
+
+NEWENEMY_PATTERN180_TR:
+    DB 00h,0FEh,0FCh,0FEh,0F0h,0FEh,3Eh,0FEh
+
+NEWENEMY_PATTERN180_BL:
+    DB 7Fh,7Fh,7Dh,79h,15h,75h,55h,00h
+
+NEWENEMY_PATTERN180_BR:
+    DB 00h,7Eh,40h,5Eh,50h,56h,54h,00h
+
+NEWENEMY_PATTERN270_TL:
+    DB 00h,6Fh,2Fh,7Fh,0Fh,77h,03h,7Fh
+
+NEWENEMY_PATTERN270_TR:
+    DB 00h,0FCh,0FAh,0F6h,0EEh,0DEh,0BEh,7Eh
+
+NEWENEMY_PATTERN270_BL:
+    DB 00h,7Eh,02h,7Ah,0Ah,6Ah,2Ah,00h
+
+NEWENEMY_PATTERN270_BR:
+    DB 0BEh,0BEh,0FEh,0FEh,0EEh,0EEh,0EAh,00h
+
+PLAYER_EXPL_PATTERN:
+    DB 84h,48h,00h,02h,49h,84h,20h,03h     ; top-left
+    DB 13h,09h,20h,00h,09h,10h,04h,00h     ; bottom-left
+    DB 00h,00h,40h,10h,20h,10h,8Ch,68h     ; top-right
+    DB 90h,82h,48h,0C4h,20h,80h,00h,00h    ; bottom-right
+
+DIGIT_PATTERNS:
+    DB 3Ch,66h,6Eh,76h,66h,66h,3Ch,00h   ; 0
+    DB 18h,38h,58h,18h,18h,18h,7Eh,00h   ; 1
+    DB 3Ch,66h,06h,0Ch,30h,60h,7Eh,00h   ; 2
+    DB 3Ch,66h,06h,1Ch,06h,66h,3Ch,00h   ; 3
+    DB 0Ch,1Ch,2Ch,4Ch,7Eh,0Ch,0Ch,00h   ; 4
+    DB 7Eh,60h,7Ch,06h,06h,66h,3Ch,00h   ; 5
+    DB 1Ch,30h,60h,7Ch,66h,66h,3Ch,00h   ; 6
+    DB 7Eh,06h,0Ch,18h,30h,30h,30h,00h   ; 7
+    DB 3Ch,66h,66h,3Ch,66h,66h,3Ch,00h   ; 8
+    DB 3Ch,66h,66h,3Eh,06h,0Ch,38h,00h   ; 9
+
+MISSION_FONT_COLOR:
+    DB 0F1h
+
+GAMEOVER_FONT_COLOR:
+    DB 0F1h
+
+BULLET_PATTERNS:
+    DB 1,102,51,134,0,1,102,51,134,0,1,102,51,134,0,1
+    DB 102,51,134,0,1,102,51,134,0,1,102,51,134,0,1,102
+    DB 51,135,0
+
+BLANK_PATTERN:
+    DB 00h,00h,00h,00h,00h,00h,00h,00h    ; BLANKCODE's actual glyph: truly blank
+
+LZ_END_TILES:
+    DB 0C0h,60h,98h,0EEh,33h,9Dh,2Fh,1Bh,85h,61h,9Ah,65h,0DBh,65h,9Ah,61h
+    DB 00h,00h,00h,00h,00h,0C0h,60h,0B8h,5Eh,0ABh,77h,0EFh,0AFh,0F7h,6Bh,0DEh
+    DB 8Bh,17h,3Dh,5Fh,0B6h,6Ch,0F0h,0C0h,00h,00h,00h,00h,00h,00h,00h,00h
+    DB 0B8h,60h,0C0h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h,00h
+
+BARRIER_GLYPH_M:                               ; バリアのグリフ(0Ch,22h,55h,99h,99h,0AAh,44h,30h)の左右反転
+    DB 30h,44h,0AAh,99h,99h,55h,22h,0Ch
+
+GAUGE_TILES:
+    DB 00h,0FFh,0FFh,0FFh,0FFh,0FFh,0FFh,00h  ; 128 満
+    DB 00h,00h,00h,00h,00h,00h,00h,00h        ; 129 端数(動的)
+STAGE1_GFX_RAM_END:
+    ORG STAGE1_ROM_RESUME
