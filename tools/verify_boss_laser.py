@@ -329,31 +329,32 @@ check("gauge short of 64000 (63900): no instant game over any more - the boss st
 # ---------------------------------------------------------------- 乱射(条件未達、2026-09-24)
 # "3本レーザーを1本にするが 画面Row1からRow19まで ボス中央からランダムにレーザー乱射
 # セルでラインを描く感じで 特に特別処理は入れず自然に死ぬように"
-ROWS = sym['LZ_BR_ROWS']
+BASE, NS, SZ = sym['LZ_BR_BASE'], sym['LZ_BR_SLOTS'], sym['LZ_BR_SIZE']
+def br(z, k):
+    b = BASE + k * SZ
+    return z.rd(b), [z.rd(b + 2 + c) for c in range(26)]
 z.wr(sym['PLAYERX'], 200); z.wr(sym['PLAYERY'], 150)      # 当たらない場所で観察
-targets, bad_shape, fronts = [], [], []
-prev_target = None
-for f in range(400):
+bad_shape, new_shots, on_screen = [], 0, []
+prev = [br(z, k)[1] for k in range(NS)]
+for f in range(300):
     frame(z)
-    rows = [z.rd(ROWS + c) for c in range(26)]
-    fr = z.rd(sym['LZ_BR_FRONT'])
-    fronts.append(fr)
-    if rows[25] != ROW or any(abs(a - b) > 1 for a, b in zip(rows, rows[1:])) or not 1 <= rows[0] <= 19:
-        bad_shape.append(rows)
-    if fr == 0 and rows[0] != prev_target:
-        targets.append(rows[0]); prev_target = rows[0]
-    # 描かれているのは先端〜列25の1本だけ(各列にレーザーのタイルは1セル)
-    for c in range(fr, 26):
-        col = [z.vram[0x1800 + r * 32 + c] for r in range(1, 20)]
-        n = sum(1 for t in col if t in (LCODE, RCODE))
-        if n != 1 or col[rows[c] - 1] not in (LCODE, RCODE): bad_shape.append(('cell', f, c, n)); break
-check(f"barrage: each shot is a 1-cell-thick line from the boss centre (col25,row{ROW}) to col0 at a random row 1-19, "
-      f"at most one row step per column {bad_shape[:2]}", not bad_shape)
-check(f"barrage: lines keep coming at different rows ({len(targets)} shots in 400 frames, rows {targets[:12]})",
-      len(targets) >= 20 and len(set(targets)) >= 8 and z.rd(sym['GAME_OVER']) == 0)
-steps = [a - b for a, b in zip(fronts, fronts[1:]) if a > b]
-check(f"barrage: the line is pushed out {sym['LZ_BR_SPEED']} columns per frame {sorted(set(steps))}",
-      set(steps) <= {sym['LZ_BR_SPEED'], 26 % sym['LZ_BR_SPEED'] or sym['LZ_BR_SPEED'], 2})
+    lines = [br(z, k) for k in range(NS)]
+    for k, (fr, rows) in enumerate(lines):
+        if rows[25] != ROW or any(abs(a - b) > 1 for a, b in zip(rows, rows[1:])) or not 1 <= rows[0] <= 19:
+            bad_shape.append((k, rows))
+        if rows != prev[k]: new_shots += 1
+        prev[k] = rows
+    on_screen.append(sum(1 for fr, _ in lines if fr < 26))
+    # 描かれている全部の線のセルがレーザーのタイル、それ以外の列0-25(行1-19)は空
+    want = {(r, c) for fr, rows in lines for c in range(fr, 26) for r in [rows[c]]}
+    got = {(r, c) for r in range(1, 20) for c in range(26) if z.vram[0x1800 + r * 32 + c] in (LCODE, RCODE)}
+    if want != got: bad_shape.append(('cells', f, len(want ^ got)))
+check(f"barrage: every line is a 1-cell-thick line from the boss centre (col25,row{ROW}) to col0 at a random row 1-19 "
+      f"(at most one row step per column) and exactly those cells are drawn {bad_shape[:2]}", not bad_shape)
+avg = sum(on_screen[30:]) / len(on_screen[30:])
+check(f"barrage fills the screen: {NS} lines at once, restarted as soon as each ends ({new_shots} new lines in 300 "
+      f"frames, {avg:.1f} on screen on average, min {min(on_screen[30:])})",
+      new_shots >= 80 and min(on_screen[30:]) >= NS - 1 and z.rd(sym['GAME_OVER']) == 0)
 # 自然に死ぬ: バリアがあれば普通に減る(無敵時間つき)、無ければ死ぬ
 z2 = landed(); start_countdown(z2, sc=639); z2.wr(sym['BARRIER_HP'], 3); z2.wr(sym['PLAYERX'], 40)
 z2.wr(sym['PLAYERY'], 70); to_fire(z2)

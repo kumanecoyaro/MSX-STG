@@ -16012,9 +16012,12 @@ LZ_BLANKING  EQU 0F33Eh   ; 非0: LZ_DRAWが空白で塗る(消去)
 ; gameover_bank.asmのS1_FAIL_INIT、同じ番地をS1_FAIL_REASONとして読む)へ切り替えて
 ; 理由付きで表示する。
 LZ_FAIL_REASON EQU 0F33Fh
-LZ_BR_ROWS   EQU 0E919h   ; 乱射レーザーの各列(0-25)の行(26 bytes、E919h-E932h)
-LZ_BR_CNT    EQU 0E933h
-LZ_BR_FRONT  EQU LZ_CLASH_X  ; 乱射中(5)の先端列(26→0)
+; 乱射(フェーズ5)のレーザーLZ_BR_SLOTS本。1本LZ_BR_SIZE byte: +0 先端列(26以上は
+; まだ画面に出ていない)、+1 伸び切ってからの残りフレーム、+2..+27 列0-25の行。
+LZ_BR_BASE   EQU 0E919h   ; LZ_BR_SLOTS*LZ_BR_SIZE = 168 bytes (E919h-E9C0h)
+LZ_BR_CUR    EQU 0E9C1h   ; 処理中の1本の番地(2 bytes)
+LZ_BR_K      EQU 0E9C3h   ; 残り本数(ループ用)
+LZ_BR_CNT    EQU 0E9C4h
 
 LZ_ROW        EQU 9       ; ボス中央(BOSS_MAP row7、画面row9)。ボスは8-10の3行
 LZ_SOLO_FRAMES EQU 100
@@ -16026,8 +16029,11 @@ LZ_CB0        EQU POD_BULLET0_DXMAG   ; 吸い込み中フラグ(ポッド全滅
 LZ_CB1        EQU POD_BULLET1_DXMAG
 LZ_PUSH_PX    EQU 8       ; 1回押すごとの押し返し。ボスは毎フレーム1px(60px/秒)
                           ; なので1秒8回でほぼ互角
+LZ_BR_SLOTS   EQU 6       ; 乱射レーザーの同時本数
+LZ_BR_SIZE    EQU 28
 LZ_BR_SPEED   EQU 4       ; 乱射レーザーの伸びる速さ(列/フレーム)
-LZ_BR_HOLD    EQU 6       ; 伸び切ってから消えて次を撃つまでのフレーム数
+LZ_BR_HOLD    EQU 10      ; 伸び切ってから消えて次を撃つまでのフレーム数
+LZ_BR_STAGGER EQU 12      ; 乱射開始時、各本の撃ち始めをずらす量(列ぶん=3フレーム)
 LZ_STOP_FRAMES EQU 15     ; これだけ押さないと「撃つのを止めた」扱いでボスが2px/フレーム
 LZ_WIN_X      EQU 200     ; 列25(ボス左端)
 LZ_BFRONT     EQU LZ_CLASH_X  ; 照射中(2)はボスレーザーの先端列(26→0へ1列/フレーム)
@@ -16545,7 +16551,7 @@ LZCD_TICK:
     ; 死ねば理由付きの画面(LZ_FAIL_REASON)になる。
     CALL LZ_SET_REASON
     LD A,5 : LD (LZ_PHASE),A
-    JP LZ_BR_NEW
+    JP LZ_BR_START
 
 ; HL=POD_BULLETn_X(次のbyteがY)。X,Yをそれぞれ中心へ差の1/4ずつ寄せる。
 ; Out: A=FFh 両軸とも着いた(寄せ量0か-1)、0 まだ。
@@ -16754,10 +16760,37 @@ BIP_NEXT:
 ; ============================================================================
 ; (2026-09-24) 条件未達時のボスの乱射(LZ_PHASE=5)。ボス中央(列25、行LZ_ROW)から
 ; 画面左端(列0)まで、行1-19のランダムな行へ向けて1本幅のレーザーをセルで線を
-; 引くように伸ばし、伸び切ったらLZ_BR_HOLDフレームで消して次を撃つ。
+; 引くように伸ばす。"もっと間を置かず 1本うち終わり待つのではなく レーザーで埋め
+; 尽くす感じで": LZ_BR_SLOTS本を撃ち始めをずらして同時に回し、1本が伸び切って
+; LZ_BR_HOLDフレームで消えたらその場で次を撃つ。
 ; ============================================================================
+LZ_BR_START:
+    LD HL,LZ_BR_BASE : LD (LZ_BR_CUR),HL
+    LD A,LZ_BR_SLOTS : LD (LZ_BR_K),A
+    LD C,26
+LBS_LOOP:
+    PUSH BC
+    CALL LZ_BR_NEW
+    POP BC
+    LD HL,(LZ_BR_CUR) : LD (HL),C  ; 撃ち始めをずらす(先端26以上=まだ画面外)
+    LD A,C : ADD A,LZ_BR_STAGGER : LD C,A
+    CALL LZ_BR_NEXT
+    JR NZ,LBS_LOOP
+    JP LZ_DRAW_CURRENT
+
+; LZ_BR_CURを次の1本へ。Out: Z=全部終わった(LZ_BR_CURは先頭へ戻る)
+LZ_BR_NEXT:
+    LD HL,(LZ_BR_CUR) : LD DE,LZ_BR_SIZE : ADD HL,DE : LD (LZ_BR_CUR),HL
+    LD HL,LZ_BR_K : DEC (HL)
+    RET NZ
+    LD HL,LZ_BR_BASE : LD (LZ_BR_CUR),HL
+    LD A,LZ_BR_SLOTS : LD (LZ_BR_K),A
+    XOR A
+    RET
+
 LZ_BARRAGE:
-    LD HL,LZ_BR_FRONT
+LZB_LOOP:
+    LD HL,(LZ_BR_CUR)
     LD A,(HL) : OR A
     JR Z,LZB_HOLD
     SUB LZ_BR_SPEED
@@ -16765,16 +16798,21 @@ LZ_BARRAGE:
     XOR A
 LZB_SETF:
     LD (HL),A
-    JP LZ_DRAW_CURRENT
+    JR LZB_NEXT
 LZB_HOLD:
-    LD HL,LZ_TICK : DEC (HL)
-    JP NZ,LZ_DRAW_CURRENT
-    CALL LZ_ERASE
+    INC HL : DEC (HL)
+    JR NZ,LZB_NEXT
+    LD A,1 : LD (LZ_BLANKING),A    ; 伸び切って時間切れ: 消してすぐ次を撃つ
+    CALL LZ_BR_DRAW1
+    XOR A : LD (LZ_BLANKING),A
     CALL LZ_BR_NEW
-    JP LZ_DRAW_CURRENT
+LZB_NEXT:
+    CALL LZ_BR_NEXT
+    JR NZ,LZB_LOOP
+    JP LZ_DRAW_CURRENT             ; 全部描き直す(消した線と重なっていたセルも戻る)
 
-; 新しい1本: 目標の行(1-19)を決め、列25→0の各列の行をブレゼンハムで
-; LZ_BR_ROWSへ(|行の差|<=10<25なので1列に最大1行ずつ)。
+; LZ_BR_CURの1本を新しく: 目標の行(1-19)を決め、列25→0の各列の行をブレゼンハムで
+; +2..+27へ(|行の差|<=10<25なので1列に最大1行ずつ)。
 LZ_BR_NEW:
     CALL LZ_RND : LD C,A           ; 乱数(下位bitの周期が短いのでTICKを混ぜ、19の余り)
     LD A,(TICK) : ADD A,A : ADD A,A : ADD A,C
@@ -16789,7 +16827,7 @@ LBN_MOD:
     LD C,0FFh
 LBN_ABS:
     LD B,A                         ; B=|行の差|, C=±1
-    LD HL,LZ_BR_ROWS+25
+    LD HL,(LZ_BR_CUR) : LD DE,2+25 : ADD HL,DE
     LD D,LZ_ROW                    ; 行
     LD E,12                        ; 誤差
     LD A,26 : LD (LZ_BR_CNT),A
@@ -16807,54 +16845,75 @@ LBN_NOSTEP:
 LBN_NEXT:
     LD A,(LZ_BR_CNT) : DEC A : LD (LZ_BR_CNT),A
     JR NZ,LBN_LOOP
-    LD A,26 : LD (LZ_BR_FRONT),A
-    LD A,LZ_BR_HOLD : LD (LZ_TICK),A
+    LD HL,(LZ_BR_CUR)
+    LD (HL),26 : INC HL
+    LD (HL),LZ_BR_HOLD
     JP SOUND_EBUZ_FIRE
 
-; 乱射レーザーを先端列から列25まで1セルずつ描く(LZ_BLANKING=1なら消す)。
+; 乱射レーザーを全部描く(LZ_BLANKING=1なら消す)。
 LZDC_5:
-    LD A,(LZ_BR_FRONT) : LD L,A
-LZDC5_LOOP:
-    LD A,L : CP 26
-    JP NC,LZ_SPRITES
-    PUSH HL
-    LD E,L : LD D,0 : LD HL,LZ_BR_ROWS : ADD HL,DE : LD E,(HL)
-    POP HL
-    LD H,L : INC H : LD D,255
+    CALL LZ_BR_DRAW1
+    CALL LZ_BR_NEXT
+    JR NZ,LZDC_5
+    JP LZ_SPRITES
+; LZ_BR_CURの1本を先端列から列25まで1セルずつ
+LZ_BR_DRAW1:
+    LD HL,(LZ_BR_CUR) : LD A,(HL)
+LBD_LOOP:
+    CP 26
+    RET NC
+    PUSH AF
+    LD HL,(LZ_BR_CUR) : INC HL : INC HL : LD E,A : LD D,0 : ADD HL,DE : LD E,(HL)
+    POP AF
+    PUSH AF
+    LD L,A : LD H,A : INC H : LD D,255
     CALL LZ_DRAW
-    INC L
-    JR LZDC5_LOOP
+    POP AF
+    INC A
+    JR LBD_LOOP
 
 ; PLAYER_DAMAGE_CHECKから: 乱射中(5)、描かれたレーザーのセルが自機の当たり判定
 ; (PLAYERX,PLAYERY)-(+7,+7)に重なっていればA!=0。
 LZ_BARRAGE_HIT:
     LD A,(LZ_PHASE) : CP 5
     JR NZ,LZBH_NO
+LZBH_SLOT:
     LD A,(PLAYERX) : SRL A : SRL A : SRL A
     CALL LZBH_COL
-    RET NZ
+    JR NZ,LZBH_HIT
     LD A,(PLAYERX) : ADD A,7
-    JR C,LZBH_NO
+    JR C,LZBH_SKIP
     SRL A : SRL A : SRL A
     CALL LZBH_COL
-    RET
+    JR NZ,LZBH_HIT
+LZBH_SKIP:
+    CALL LZ_BR_NEXT
+    JR NZ,LZBH_SLOT
 LZBH_NO:
     XOR A
     RET
-; A=列。その列にレーザーが描かれていて、その行が自機の行範囲に入っていればNZ
+LZBH_HIT:
+    LD HL,LZ_BR_BASE : LD (LZ_BR_CUR),HL     ; 途中で抜けるのでループ位置を戻す
+    LD A,LZ_BR_SLOTS : LD (LZ_BR_K),A
+    LD A,1 : OR A
+    RET
+; A=列。LZ_BR_CURの1本がその列に描かれていて、その行が自機の行範囲に入っていればNZ
 LZBH_COL:
     CP 26
-    JR NC,LZBH_NO
-    LD HL,LZ_BR_FRONT
+    JR NC,LZBH_ZERO
+    LD HL,(LZ_BR_CUR)
     CP (HL)
-    JR C,LZBH_NO
-    LD E,A : LD D,0 : LD HL,LZ_BR_ROWS : ADD HL,DE : LD B,(HL)
+    JR C,LZBH_ZERO
+    INC HL : INC HL : LD E,A : LD D,0 : ADD HL,DE : LD B,(HL)
     LD A,(PLAYERY) : SRL A : SRL A : SRL A : LD C,A    ; 自機の上の行
     LD A,B : SUB C
-    JR C,LZBH_NO
+    JR C,LZBH_ZERO
     LD D,A
     LD A,(PLAYERY) : ADD A,7 : SRL A : SRL A : SRL A : SUB C   ; 下の行-上の行
     CP D
-    JR C,LZBH_NO
+    JR C,LZBH_ZERO
     LD A,1 : OR A
+    RET
+LZBH_ZERO:
+    XOR A
     RET
