@@ -18574,3 +18574,11 @@ EbuzII弾ビームへの1pxコリジョン追加+ROM予算の共有バンク6オ
   EQU 0で256を表す(CHECK_BULLET_VS_EBUZ2はDECして0で撃破 → 256発目で撃破)。EBUZ2_HPを読むのは
   初期化と被弾の2箇所だけ。
 - 新規verify_ebuz_hp.py(EbuzIIが256発目で撃破)、verify_ebuz_integration.pyの48を更新。
+
+## Round145 follow-up41: E1/E2が倒した後・離れた位置から撃つ件(2026-09-24)
+
+- ユーザー: "結構な頻度でE1、E2で離れた位置から弾撃ってきたり、倒した後に撃ってる場合があるように感じる"。
+- E2(ジグザグ編隊): ECS_S7_A/Bの退出ダイブ時の弾が常にU0の位置から出ていた(U0撃破後も見えない
+  位置から撃っていた)。E2_FIRE_FROM_ALIVE(STATE=1かつTOP/BOTが残る最初の機、全滅なら撃たない)へ。
+- E1(Fighter): EBSD_UPDATEの整列撃ちが墜落中(E_FLAGS!=0、1発目で墜落開始)も撃っていた → 撃たない。
+- 新規verify_enemy_fire_alive.py 13件。ROM plain 1440。

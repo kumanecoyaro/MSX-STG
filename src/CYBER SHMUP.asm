@@ -9694,9 +9694,7 @@ ECS_S7_A:
     CP 1
     JR NZ,ECS_S7_A_FIRE_DONE
     LD A,2 : LD (E2A_FIRE_FLAG),A
-    LD A,(E2A_U0_X) : LD D,A
-    LD A,(E2A_U0_Y) : LD E,A
-    CALL SPAWN_EBULLET
+    LD HL,E2A_U0_STATE : CALL E2_FIRE_FROM_ALIVE
 ECS_S7_A_FIRE_DONE:
 
     ; quadrant-glyph animation (1,2,3,2 repeating), shared across all
@@ -10381,9 +10379,7 @@ ECS_S7_B:
     CP 1
     JR NZ,ECS_S7_B_FIRE_DONE
     LD A,2 : LD (E2B_FIRE_FLAG),A
-    LD A,(E2B_U0_X) : LD D,A
-    LD A,(E2B_U0_Y) : LD E,A
-    CALL SPAWN_EBULLET
+    LD HL,E2B_U0_STATE : CALL E2_FIRE_FROM_ALIVE
 ECS_S7_B_FIRE_DONE:
 
     ; quadrant-glyph animation - see ECS_S7_A's own comment.
@@ -11071,6 +11067,11 @@ EBSD_MOVEOK:
     XOR A : LD (E4_FIRED_THIS_FRAME),A
     LD A,(IX+E_TYPE)
     CP TYPE_ENEMY4
+    JR NZ,EBSD_E4_FIRE_DONE
+    ; (2026-09-24、"倒した後に撃ってる場合がある"): 1発目を受けて墜落中(E_FLAGS!=0)は
+    ; もう撃たない(以前は自機と同じ高さになると墜落中でも撃っていた)。
+    LD A,(IX+E_FLAGS)
+    OR A
     JR NZ,EBSD_E4_FIRE_DONE
     LD A,(IX+E_PARAM3)
     OR A
@@ -16921,4 +16922,25 @@ LZBH_COL:
     RET
 LZBH_ZERO:
     XOR A
+    RET
+
+; (2026-09-24、"E2で離れた位置から弾撃ってきたり、倒した後に撃ってる"): 旧コードは編隊の
+; 弾を常に1機目(U0)の位置から撃っており、U0を倒した後も見えない位置から撃っていた。
+; HL=編隊のU0_STATE(STATE,X,Y,TOP,BOTの5byte×3機)。生きている最初の機(STATE=1かつ
+; TOP/BOTのどちらかが残っている)の位置から撃つ。全滅なら撃たない。
+E2_FIRE_FROM_ALIVE:
+    LD B,3
+EFA_LOOP:
+    LD A,(HL) : DEC A
+    JR NZ,EFA_NEXT
+    PUSH HL
+    INC HL : LD D,(HL)
+    INC HL : LD E,(HL)
+    INC HL : LD A,(HL)
+    INC HL : OR (HL)
+    POP HL
+    JP NZ,SPAWN_EBULLET
+EFA_NEXT:
+    LD DE,5 : ADD HL,DE
+    DJNZ EFA_LOOP
     RET
