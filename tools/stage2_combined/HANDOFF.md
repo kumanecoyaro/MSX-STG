@@ -18588,3 +18588,7 @@ EbuzII弾ビームへの1pxコリジョン追加+ROM予算の共有バンク6オ
 - (続き) 直前のコミットでFIRE_FROM_QUADがFighter(TYPE_ENEMY4、耐久値管理でE_TOP/E_BOTは0のまま)の
   回避時の弾まで止めていた(verify_enemy_bullets.pyが2件失敗して発覚、コミット後に気づいた)。
   TYPE_ENEMY4はパーツを見ずに撃つよう修正。verify_enemy_bullets 60・verify_enemy_fire_alive 19件。
+- (続き、"じゃあシンプルもチェック") SPAWN_SIMPLE(ENEMY1_CLAIM_ANY、E_TYPE=0、上下2パーツ)の弾は
+  EBSDの回避開始時の1発だけで、前のコミットのFIRE_FROM_QUAD経由で既に直っていた。実際の
+  EBSD_UPDATEで両パーツ生存/下だけ/両方撃破を確認するテストを追加(verify_enemy_fire_alive 22件)。
+  敵弾の発射箇所は5つ(E2 A/B・ウェーブ・E1型回避・Fighter整列)で全部対応済み。

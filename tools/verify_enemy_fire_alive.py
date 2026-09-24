@@ -94,5 +94,24 @@ def wave(top, bot):
 w11, w00 = wave(1, 1), wave(0, 0)
 check(f"real Wave update crossing the centre as the chosen shooter: fires when alive {w11}, not when both parts are "
       f"already destroyed {w00}", len(w11) == 1 and w00 == [])
+
+# (2026-09-24、"じゃあシンプルもチェック"): スケジュールのSPAWN_SIMPLE(ENEMY1_CLAIM_ANY、E_TYPE=0、
+# 上下2パーツ)は画面中央を越えて回避を始める瞬間に撃つ(射手に選ばれた時だけ)。実際のEBSD_UPDATEで。
+def simple(top, bot):
+    z = Z80(bytearray(mem))
+    z.wr(sym['E1_FIRE_COUNTDOWN'], 1)          # この回避を射手に選ばせる
+    z.wr(E + sym['E_ACTIVE'], 1); z.wr(E + sym['E_TYPE'], 0)
+    z.wr(E + sym['E_BEHAVIOR'], sym['BEHAVIOR_SIMPLE_DRIFT_DODGE'])
+    z.wr(E + sym['E_X'], sym['ENEMY_CENTER_X'] + sym['ENEMY_SPEED'] - 1); z.wr(E + sym['E_Y'], 70)
+    z.wr(E + sym['E_SPRNUM'], 9); z.wr(E + sym['E_PARAM0'], 0)
+    z.wr(E + sym['E_TOP'], top); z.wr(E + sym['E_BOT'], bot)
+    z.wr(sym['PLAYERY'], 150)
+    call(z, 'EBSD_UPDATE', ix=E)
+    return bullets(z), z.rd(E + sym['E_X'])
+(s11, x), (s01, _), (s00, _) = simple(1, 1), simple(0, 1), simple(0, 0)
+check(f"Simple enemy (SPAWN_SIMPLE) dodging at the centre as the chosen shooter: both parts alive -> fires from the "
+      f"top-left part {s11}", s11 == [(x, 78)])
+check(f"Simple enemy with only the bottom part left -> fires from it {s01}", s01 == [(x + 8, 86)])
+check(f"Simple enemy with both parts destroyed (still flying invisibly) -> no shot {s00}", s00 == [])
 print(f"\n{len(ok)} passed, {len(fail)} failed")
 sys.exit(1 if fail else 0)
