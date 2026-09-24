@@ -83,27 +83,27 @@ def kill_all_pods(z):
 
 # ---------------------------------------------------------------- ゲージ
 def gauge_model(g):
-    t = g - 1
-    names = ['E' if t >= 0 else '.']
-    for i in range(7):
-        f = t - 8 * i
+    """(2026-09-24) 64px = cols12-19の8セル、左端x=96"""
+    names = []
+    for i in range(8):
+        f = g - 8 * i
         names.append('.' if f <= 0 else ('F' if f >= 8 else 'P'))
-    k = t & 7
+    k = g & 7
     return ''.join(names), (0xFF ^ (0xFF >> k)) if any(n == 'P' for n in names) else None
 def gauge_screen(z):
-    m = {sym['GAUGE_BLANK_CODE']: '.', sym['GAUGE_EDGE_CODE']: 'E', sym['GAUGE_FULL_CODE']: 'F', sym['GAUGE_PART_CODE']: 'P'}
+    m = {sym['GAUGE_BLANK_CODE']: '.', sym['GAUGE_FULL_CODE']: 'F', sym['GAUGE_PART_CODE']: 'P'}
     return ''.join(m.get(z.vram[0x1800 + c], '?') for c in range(12, 20))
 z = landed()
 bad = []
-for sc in (0, 9, 10, 15, 25, 79, 80, 81, 170, 250, 489, 490, 499, 500, 777, 0x10000):
+for sc in (0, 9, 10, 15, 25, 79, 80, 81, 170, 250, 499, 500, 629, 630, 639, 640, 777, 0x10000):
     set_score(z, sc); frame(z)
-    g = min(sc // 10, 50)
+    g = min(sc // 10, 64)
     want, part = gauge_model(g)
     got = gauge_screen(z)
     pat = z.vram[sym['GAUGE_PART_CODE'] * 8 + 3]
     if got != want or (part is not None and pat != part) or z.rd(sym['GAUGE_SHOWN']) != g:
         bad.append((sc, g, want, got, hex(pat)))
-check(f"gauge: row0 cols12-19 = 50px bar at px103-152, 1px per 1000 points, full at 50000 (and above) {bad}", not bad)
+check(f"gauge: row0 cols12-19 = 64px bar at px96-159, 1px per 1000 points, full at 64000 (and above) {bad}", not bad)
 # 1px単位で左端から伸びること(実ピクセル)
 def gauge_pixels(z):
     px = []
@@ -112,12 +112,15 @@ def gauge_pixels(z):
         px += [(row >> (7 - b)) & 1 for b in range(8)]
     return px
 bad = []
-for g in range(51):
+for g in range(65):
     set_score(z, g * 10); frame(z)
     p = gauge_pixels(z)
     lit = [i + 96 for i, v in enumerate(p) if v]
-    if lit != list(range(103, 103 + g)): bad.append(g)
-check(f"gauge: exactly g pixels lit from x=103 (centre 128 minus 25) for every g=0..50 {bad[:5]}", not bad)
+    if lit != list(range(96, 96 + g)): bad.append(g)
+check(f"gauge: exactly g pixels lit from x=96 (centre 128 minus 32) for every g=0..64 {bad[:5]}", not bad)
+set_score(z, 639); frame(z); c1 = z.vram[0x2000 + sym['GAUGE_FULL_CODE'] // 8]
+set_score(z, 640); frame(z); c2 = z.vram[0x2000 + sym['GAUGE_FULL_CODE'] // 8]
+check(f"gauge colour: white while charging (63900 -> {c1:#x}), red once full at 64000 ({c2:#x})", c1 == 0xF1 and c2 == 0x81)
 
 # ---------------------------------------------------------------- B単発撃ちの削除
 z = landed(); set_score(z, 0)
@@ -132,7 +135,7 @@ check("B with the gauge not full does nothing during the boss either", z.rd(PH) 
 
 # ---------------------------------------------------------------- カウントダウン
 CD = sym['LZ_CD_T']
-def start_countdown(z, sc=600):
+def start_countdown(z, sc=700):
     set_score(z, sc); frame(z)
     kill_all_pods(z)
 def to_fire(z, trig_frames=()):
@@ -205,7 +208,7 @@ check("clash drawn: middle row = player stream | blank (both streams vanish ther
 cs = sattr(z, sym['LZ_CLASH_SPR'])
 check(f"clash-point sprite (player-explosion pattern) centred on the clash cell: {cs}",
       cs[0] == ROW * 8 - 5 and cs[1] == c * 8 - 4 and cs[2] == sym['PAT_PLAYER_EXPLOSION'] and cs[3] in (15, 11))
-check("gauge stays full during the clash (use does not drain it)", z.rd(sym['GAUGE_SHOWN']) == 50)
+check("gauge stays full during the clash (use does not drain it)", z.rd(sym['GAUGE_SHOWN']) == 64)
 x0 = z.rd(sym['PLAYERX'])
 z.sim_dir = 7
 frame(z); z.sim_dir = 0
@@ -318,13 +321,13 @@ for y, inside in ((56, False), (57, True), (87, True), (88, False)):
     z = landed(); start_countdown(z); z.wr(sym['PLAYERX'], 60); z.wr(sym['PLAYERY'], y); to_fire(z); hit_frame(z)
     check(f"band edge: PLAYERY {y} ({'hit' if inside else 'safe'}) - hitbox y..y+7 vs rows 8-10 (y64-87)",
           z.rd(sym['GAME_OVER']) == (1 if inside else 0))
-z = landed(); start_countdown(z, sc=499); z.wr(sym['PLAYERY'], 120)
+z = landed(); start_countdown(z, sc=639); z.wr(sym['PLAYERY'], 120)
 n = to_fire(z)
-check("gauge short of 50000: game over the moment the boss fires (reason 2)",
+check("gauge short of 64000 (63900): game over the moment the boss fires (reason 2)",
       z.rd(sym['GAME_OVER']) == 1 and z.rd(sym['LZ_FAIL_REASON']) == 2)
 
 # ---------------------------------------------------------------- 早撃ち
-z = landed(); set_score(z, 600); z.wr(sym['PLAYERY'], 150); frame(z)   # row19: ポッドの軌道外
+z = landed(); set_score(z, 700); z.wr(sym['PLAYERY'], 150); frame(z)   # row19: ポッドの軌道外
 frame(z, trig_b=True); frame(z)
 prow = (150 + 8) >> 3; pcol = z.rd(sym['LZ_PCOL'])
 ends = [z.rd(sym['LZ_PEND'])]
@@ -338,7 +341,7 @@ n = 35
 while z.rd(PH) == 1 and n < 200:
     frame(z); gs.append(z.rd(sym['GAUGE_SHOWN'])); n += 1
 check(f"premature laser lasts 100 frames ({n - 1}) while the gauge drains to 0 ({gs[0]},{gs[20]},{gs[-2]})",
-      n - 1 == 100 and gs[0] == 33 and gs[-2] <= 1 and all(a >= b for a, b in zip(gs, gs[1:])))
+      n - 1 == 100 and gs[0] == 66 // 2 + 66 // 8 + 66 // 32 and gs[-2] <= 1 and all(a >= b for a, b in zip(gs, gs[1:])))
 frame(z)
 check("after 100 frames the laser is gone, marked used, gauge 0",
       z.rd(PH) == 0 and z.rd(sym['LZ_SPENT']) == 1 and cells(z, prow, 0, 32) == [BLANK] * 32 and z.rd(sym['GAUGE_SHOWN']) == 0)
@@ -347,13 +350,13 @@ check("used laser cannot be fired again", z.rd(PH) == 0)
 kill_all_pods(z); to_fire(z)
 check("used before the countdown ended: game over the moment the boss fires (reason 2)",
       z.rd(sym['GAME_OVER']) == 1 and z.rd(sym['LZ_FAIL_REASON']) == 2)
-z = landed(); set_score(z, 600); frame(z)
+z = landed(); set_score(z, 700); frame(z)
 z.wr(sym['PLAYERX'], 40); z.wr(sym['PLAYERY'], 120)
 frame(z, trig_b=True); frame(z)
 for _ in range(30): frame(z)
 check("premature laser on a boss row stops at the boss's left edge (col 25)",
       z.rd(sym['LZ_PEND']) == 26 and cells(z, 16, z.rd(sym['LZ_PCOL']), 26) == beams(z.rd(sym['LZ_PCOL']), 26))
-z = landed(); set_score(z, 600); frame(z)
+z = landed(); set_score(z, 700); frame(z)
 z.wr(sym['PLAYERX'], 40); z.wr(sym['PLAYERY'], 64)
 hp0 = [z.rd(sym['POD_HP'] + i) for i in range(8)]
 frame(z, trig_b=True); frame(z)
@@ -373,7 +376,7 @@ check("countdown ends while the player laser is still out -> straight into the c
       z.rd(PH) == 3 and z.rd(sym['PLAYERY']) == 64)
 frame(z)
 check(f"old row 19 laser erased; gauge frozen at the remaining energy ({z.rd(sym['GAUGE_SHOWN'])})",
-      cells(z, 19, 0, 32) == [BLANK] * 32 and 0 < z.rd(sym['GAUGE_SHOWN']) < 50)
+      cells(z, 19, 0, 32) == [BLANK] * 32 and 0 < z.rd(sym['GAUGE_SHOWN']) < 64)
 mash(z, 6)
 check("... and can still be won by mashing", z.rd(PH) == 4 and z.rd(sym['GAME_OVER']) == 0)
 
@@ -386,7 +389,7 @@ check("laser rows are redrawn every frame (a hole left by something else heals n
       z.vram[0x1800 + ROW * 32 + pcol] == beam(pcol))
 
 # ---------------------------------------------------------------- バリア必須
-z = landed(); z.wr(sym['BARRIER_HP'], 0); set_score(z, 600); z.wr(sym['PLAYERY'], 150); frame(z)
+z = landed(); z.wr(sym['BARRIER_HP'], 0); set_score(z, 700); z.wr(sym['PLAYERY'], 150); frame(z)
 frame(z, trig_b=True); frame(z)
 check("no barrier left: B cannot fire the laser even with a full gauge", z.rd(PH) == 0)
 
@@ -396,7 +399,7 @@ def fall_done(z):
     while z.rd(sym['GAME_OVER_SEQ']) == 0 and n < 600: frame(z); n += 1
 for label, setup, want in (
         ("no barrier", lambda z: z.wr(sym['BARRIER_HP'], 0), 1),
-        ("gauge short of 50000", lambda z: set_score(z, 499), 2),
+        ("gauge short of 64000", lambda z: set_score(z, 639), 2),
         ("laser already used", lambda z: z.wr(sym['LZ_SPENT'], 1), 2),
         ("no barrier and not enough energy", lambda z: (z.wr(sym['BARRIER_HP'], 0), set_score(z, 100)), 3)):
     z = landed(); start_countdown(z); setup(z); z.wr(sym['PLAYERY'], 150)

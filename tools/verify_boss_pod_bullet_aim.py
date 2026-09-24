@@ -48,12 +48,12 @@ def check(label, cond):
 
 
 def fresh():
-    # (2026-09-23) POD_AIM_NORMAL=0はボス到達時5万点未満の「常時自機狙い」。
-    # このテストは従来のゲート(PLAYERX半分)を検証するので5万点以上相当に
-    # する(SCOREも50000点にしておきBOSS_SPAWN経由でも同じ判定になるように)。
+    # (2026-09-23) POD_AIM_NORMAL=0はボス到達時の点数不足(2026-09-24から6万4千点未満、
+    # 旧5万点)の「常時自機狙い」。このテストは従来のゲート(PLAYERX半分)を検証するので
+    # 足りている状態にする(SCOREも64000点にしておきBOSS_SPAWN経由でも同じ判定に)。
     z = Z80(bytearray(mem0))
     z.wr(sym["POD_AIM_NORMAL"], 0xFF)
-    z.wr(sym["SCORE"], 500 & 0xFF); z.wr(sym["SCORE"] + 1, 500 >> 8)
+    z.wr(sym["SCORE"], 640 & 0xFF); z.wr(sym["SCORE"] + 1, 640 >> 8)
     return z
 
 
@@ -413,6 +413,18 @@ check("pod bullet inside the screen keeps flying (Y 100 -> 88, still active)",
       z.rd(sym["POD_BULLET0_ACT"]) == 1 and z.rd(sym["POD_BULLET0_Y"]) == 88 and z.rd(sym["POD_BULLET0_X"]) == 196)
 
 print()
+# (2026-09-24、"ボス条件の5000点縛りを64000点に"): BOSS_SPAWNでの判定の境目
+res = {}
+for sc in (639, 640, 0x10000):
+    z = fresh()
+    z.wr(sym["SCORE"], sc & 0xFF); z.wr(sym["SCORE"] + 1, (sc >> 8) & 0xFF); z.wr(sym["SCORE"] + 2, sc >> 16)
+    z.wr(sym["POD_AIM_NORMAL"], 0x55)
+    z.sp = 0xF000; z.wr(0xF000, 0); z.wr(0xF001, 0); z.pc = sym["BOSS_SPAWN"]
+    run_until_pc(z, 0, 3000000)
+    res[sc] = z.rd(sym["POD_AIM_NORMAL"])
+check(f"BOSS_SPAWN: 63900 points -> always aimed (POD_AIM_NORMAL=0), 64000 and above -> normal gate {res}",
+      res[639] == 0 and res[640] != 0 and res[0x10000] != 0)
+
 print(f"{len(ok)} passed, {len(fail)} failed")
 if fail:
     print("FAILURES:", fail)

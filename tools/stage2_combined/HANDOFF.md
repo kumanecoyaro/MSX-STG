@@ -18516,3 +18516,13 @@ EbuzII弾ビームへの1pxコリジョン追加+ROM予算の共有バンク6オ
   固定値では埋めきれない。撃たない時も持ち時間(約59,700T)を超えるので全体に少し遅くなる。
 - 弾の色: COLORDATA group7(codes56-63)を0D4h→0F4h(白/青)。
 - verify_shot_pool.py 7件(空回りの量を追加)。ROM plain 1834 / Comb 1784。
+
+## Round145 follow-up35: ゲージ64px=6万4千点、ボス到達時の点数判定も6万4千点(2026-09-24)
+
+- ユーザー: "チャージを64px64000点に 同時にボス条件の5000点(5万点)縛りを64000点に"。
+- GAUGE_MAX EQU 64(ファイル先頭付近)。ゲージはcols12-19の8セル丸ごと(px96-159、中央128±32)、
+  旧の左端1pxセル(GAUGE_EDGE_CODE)は廃止。満タン判定(色・バリアアニメ・LZ_QUALIFIED・
+  LZ_LOSE_EXT)は全部GAUGE_MAX。照射/干渉中の表示はLZ_TIMER(100→0)をT/2+T/8+T/32(64で頭打ち)。
+- BOSS_SPAWNのPOD_AIM_NORMAL判定(ポッド弾が常時自機狙いになる点数不足)をSCORE<640(6万4千点)へ。
+- テスト: verify_boss_laser 69・verify_boss_pod_bullet_aim 36(境目追加)・verify_boss_arrival_aim 14を更新。
+  ROM plain 1838 / Comb 1788。

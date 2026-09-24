@@ -46,7 +46,7 @@ def call_routine(z, entry_addr, max_instr=300000):
 
 
 SCORE = sym["SCORE"]
-FLAG = sym["POD_AIM_NORMAL"]   # 0=5万点未満で常時自機狙い
+FLAG = sym["POD_AIM_NORMAL"]   # 0=6万4千点未満(旧5万点)で常時自機狙い
 
 
 def set_score(z, real):
@@ -74,7 +74,8 @@ check("POD_AIM_NORMAL is written only inside BOSS_SPAWN (not in the main loop)",
 # BOSS_SPAWNの判定部分だけを実行する(先頭〜BS_AIM_STOREの格納直後まで)
 start = sym["BOSS_SPAWN"]
 store = sym["BS_AIM_STORE"]
-for real, force in [(0, True), (49900, True), (50000, False), (50100, False),
+# (2026-09-24) 境目は6万4千点(旧5万点)
+for real, force in [(0, True), (50000, True), (63900, True), (64000, False), (64100, False),
                     (6553600, False), (6553600 + 100, False)]:
     z = fresh(); set_score(z, real); z.wr(FLAG, 0x55)
     # BOSS_CLEAR_DYNAMIC_ENEMIESのCALL(3byte)を飛ばして判定コードから実行

@@ -272,7 +272,7 @@ def patch_postinit32(text):
 
 # (2026-09-23、"今回は初期Tickをボス前まで進めて調整する おそらく何度もラリーが
 # 必要なので"): 調整用の一時パッチ。INITの最後でGAME_TICK=1024(CHECK_BOSS_TRIGGERの
-# 閾値)・スケジュール消化済み・EbuzII撃破済み・スコア5万点(ゲージ満タン)にして、
+# 閾値)・スケジュール消化済み・EbuzII撃破済み・スコア6万4千点(ゲージ満タン)にして、
 # 飛び込み演出の直後にステージ1ボスが出る。送付するComb ROM(main())だけに入れ、
 # verify_*.pyがassemble_game()で組む版には入れない(通常の流れを検証するため)。
 # 調整が終わったらFalseに戻すこと。
@@ -297,7 +297,7 @@ DEBUG_BOSS_START_INIT:
     LD HL,1024 : LD (GAME_TICK),HL
     LD HL,{n} : LD (SPAWN_NEXT_INDEX),HL
     LD A,1 : LD (EBUZ2_DEFEATED),A
-    LD HL,500 : LD (SCORE),HL
+    LD HL,640 : LD (SCORE),HL
     XOR A : LD (SCORE+2),A
     CALL SCORE_DISPLAY
     JP LZ_INIT

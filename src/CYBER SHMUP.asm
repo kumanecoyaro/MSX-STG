@@ -92,6 +92,7 @@ PAT_ACCENT_DOWN_BARRIER EQU 132 ; ACCENT_DOWN_BARRIER_PATTERN, same idea for the
 ; (follow-up28) 満タンの間、バリア付きアクセント(128 MID / 132 DOWN)を右半分だけ
 ; 左右反転した絵(156 / 160)と2フレームごとに切り替える。
 PAT_ACCENT_BARRIER_M EQU 156
+GAUGE_MAX EQU 64               ; レーザーのエナジーゲージ満タン(px、1000点=1px、6万4千点)
 PAT_PLAYER_EXPLOSION EQU 136    ; PLAYER_EXPL_PATTERN (16x16 hw-sprite burst
                                  ; glyph for PLAYER_EXPL_UPDATE_ALL), always
                                  ; loaded at INIT unlike the boss's own lazy-
@@ -2551,7 +2552,7 @@ ACCFR_GOT:
     CP PAT_ACCENT_BARRIER
     JR C,ACCFR_ST
     LD B,A
-    LD A,(GAUGE_SHOWN) : CP 50
+    LD A,(GAUGE_SHOWN) : CP GAUGE_MAX
     LD A,(TICK)
     JR NZ,ACCFR_B
     AND 2
@@ -6077,11 +6078,12 @@ DRTV_NEXT:
 
 BOSS_SPAWN:
     CALL BOSS_CLEAR_DYNAMIC_ENEMIES
-    ; ボス到達時に1回だけ5万点判定: SCORE(実得点/100)<500ならPOD_AIM_NORMAL=0
-    ; (上位byte!=0ならそのまま非0を格納、それ以外は500以上でSBC A,A=FFh)
+    ; ボス到達時に1回だけ点数判定(2026-09-24から6万4千点、旧5万点): SCORE(実得点/100)
+    ; <GAUGE_MAX*10ならPOD_AIM_NORMAL=0(上位byte!=0ならそのまま非0を格納、それ以外は
+    ; 640以上でSBC A,A=FFh)
     LD A,(SCORE+2) : OR A
     JR NZ,BS_AIM_STORE
-    LD HL,(SCORE) : LD DE,-500 : ADD HL,DE   ; C=1 if SCORE>=500
+    LD HL,(SCORE) : LD DE,-640 : ADD HL,DE   ; C=1 if SCORE>=640
     SBC A,A
 BS_AIM_STORE:
     LD (POD_AIM_NORMAL),A
@@ -15973,8 +15975,8 @@ PAP_DX:
 ;     LZ_CUTIN_FRAMESのうちに割り込まなければゲームオーバー。
 ; LZ_PHASE: 0=待機 1=自機レーザー単独照射(100フレで消滅→使用済み)
 ;           2=ボスレーザー照射中(割り込み待ち) 3=干渉(B連打) 4=終了
-; ゲージ値(0-50px) = 照射/干渉中はLZ_TIMER/2、使用済みは0、それ以外は
-; min(SCORE/10,50)(SCOREは実得点/100単位 → 1000点=10=1px)。
+; ゲージ値(0-64px、2026-09-24から。旧0-50px) = 照射/干渉中はLZ_TIMERを64px幅へ、
+; 使用済みは0、それ以外はmin(SCORE/10,64)(SCOREは実得点/100単位 → 1000点=10=1px)。
 ; 干渉: ボスは毎フレーム1px押し込み(60px/秒)、B1回で8px押し返す("8連射に戻して":
 ; 8回/秒=64px/秒でわずかに上回る、7回/秒=56px/秒では押し負ける)。撃つのを止めると
 ; (LZ_STOP_FRAMES押さない)ボスの押し込みは倍。開始点は自機とボスの射出口の中間。干渉点が列25
@@ -16033,7 +16035,6 @@ LZ_SCATTER_SPR EQU 26     ; 26-29: 干渉中だけSPRITE_USEDを空けて飛び�
 ; 色を変えられなかった)。
 GAUGE_FULL_CODE EQU 128
 GAUGE_PART_CODE EQU 129   ; 端数1セル分、値が変わるたびパターン自体を書き換える
-GAUGE_EDGE_CODE EQU 130   ; col12の右端1px(px103)
 GAUGE_COLOR_ADDR EQU 2010h   ; COLTBL+group16
 GAUGE_COLOR      EQU 0F1h    ; 白/黒
 GAUGE_FULL_COLOR EQU 081h    ; 赤/黒
@@ -16049,13 +16050,12 @@ LZ_END_TILES:
 BARRIER_GLYPH_M:                               ; バリアのグリフ(0Ch,22h,55h,99h,99h,0AAh,44h,30h)の左右反転
     DB 30h,44h,0AAh,99h,99h,55h,22h,0Ch
 GAUGE_TILES:
-    DB 00h,0FFh,0FFh,0FFh,0FFh,0FFh,0FFh,00h  ; 186 満
-    DB 00h,00h,00h,00h,00h,00h,00h,00h        ; 187 端数(動的)
-    DB 00h,01h,01h,01h,01h,01h,01h,00h        ; 188 左端1px
+    DB 00h,0FFh,0FFh,0FFh,0FFh,0FFh,0FFh,00h  ; 128 満
+    DB 00h,00h,00h,00h,00h,00h,00h,00h        ; 129 端数(動的)
 
 LZ_INIT:
     LD HL,LZ_END_TILES : LD DE,LZ_END_PAT*8+SPRPAT : LD BC,64 : CALL LDIRVM
-    LD HL,GAUGE_TILES : LD DE,GAUGE_FULL_CODE*8 : LD BC,24 : CALL LDIRVM
+    LD HL,GAUGE_TILES : LD DE,GAUGE_FULL_CODE*8 : LD BC,16 : CALL LDIRVM
     LD HL,GAUGE_COLOR_ADDR : LD A,GAUGE_COLOR : CALL WRTVRM
     ; 反転バリア: 元の32byteを写し、右下8x8だけ反転グリフで上書き
     LD HL,ACCENT_MID_BARRIER_PATTERN : LD DE,PAT_ACCENT_BARRIER_M*8+SPRPAT : LD BC,32 : CALL LDIRVM
@@ -16067,11 +16067,19 @@ LZ_INIT:
     LD (LZ_FAIL_REASON),A : LD (LZ_CD_T),A
     RET
 
-; Out: A=ゲージ値(0-50)
+; Out: A=ゲージ値(0-GAUGE_MAX)。(2026-09-24、"チャージを64px64000点に"): 1000点=1px、
+; 64px=6万4千点で満タン。照射/干渉中はLZ_TIMER(100→0)を64px幅へ
+; (T/2+T/8+T/32、64で頭打ち)。
 GAUGE_VALUE:
     LD A,(LZ_PHASE) : AND 0FDh : DEC A
     JR NZ,GV_NOTIMER
-    LD A,(LZ_TIMER) : SRL A
+    LD A,(LZ_TIMER) : SRL A : LD B,A     ; T/2
+    SRL A : SRL A : LD C,A               ; T/8
+    SRL A : SRL A                        ; T/32
+    ADD A,B : ADD A,C
+    CP GAUGE_MAX+1
+    RET C
+    LD A,GAUGE_MAX
     RET
 GV_NOTIMER:
     LD A,(LZ_SPENT) : OR A
@@ -16079,7 +16087,7 @@ GV_NOTIMER:
     RET NZ
     LD A,(SCORE+2) : OR A
     JR NZ,GV_FULL
-    LD HL,(SCORE) : LD DE,-500 : ADD HL,DE
+    LD HL,(SCORE) : LD DE,-640 : ADD HL,DE
     JR C,GV_FULL
     LD HL,(SCORE) : LD DE,-10 : LD A,0FFh
 GV_DIV:
@@ -16087,10 +16095,10 @@ GV_DIV:
     JR C,GV_DIV
     RET
 GV_FULL:
-    LD A,50
+    LD A,GAUGE_MAX
     RET
 
-; 行0中央(px103-152)へゲージを描く。値が変わった時だけ。
+; 行0中央(px96-159=cols12-19)へゲージを描く。値が変わった時だけ。
 GAUGE_UPDATE:
     CALL GAUGE_VALUE
     LD HL,GAUGE_SHOWN
@@ -16098,14 +16106,13 @@ GAUGE_UPDATE:
     RET Z
     LD (HL),A
     LD C,A
-    CP 50                          ; 満タンなら赤
+    CP GAUGE_MAX                   ; 満タンなら赤
     LD A,GAUGE_COLOR
     JR NZ,GU_COL
     LD A,GAUGE_FULL_COLOR
 GU_COL:
     LD HL,GAUGE_COLOR_ADDR : CALL WRTVRM
-    LD A,C
-    DEC A : LD C,A                 ; C=g-1(g=0なら負)
+    LD A,C                         ; C=g
     AND 7 : LD B,A : LD A,0FFh     ; 端数パターン: 左からk px
     JR Z,GU_PMASK
 GU_SHIFT:
@@ -16118,14 +16125,8 @@ GU_PROW:
     CALL WRTVRM
     INC HL
     DJNZ GU_PROW
-    LD HL,1800h+12
-    LD A,C : ADD A,A               ; C=符号bit
-    LD A,GAUGE_BLANK_CODE
-    JR C,GU_EDGE
-    LD A,GAUGE_EDGE_CODE
-GU_EDGE:
-    CALL WRTVRM
-    LD B,7                         ; cols13-19: f=C-8i
+    LD HL,1800h+12-1
+    LD B,8                         ; cols12-19: f=C-8i
 GU_CELL:
     INC HL
     LD A,C : ADD A,A
@@ -16156,7 +16157,7 @@ LZ_QUALIFIED:
     LD A,(BARRIER_HP) : OR A
     JR Z,LZQ_NO
     CALL GAUGE_VALUE
-    CP 50
+    CP GAUGE_MAX
     RET
 LZQ_NO:
     INC A                          ; NZ
@@ -16305,7 +16306,7 @@ LZLE_SHIELD:
     PUSH BC
     CALL GAUGE_VALUE               ; 使用済みなら0を返す
     POP BC
-    CP 50
+    CP GAUGE_MAX
     JR Z,LZLE_ENERGY
     LD A,B : OR 2 : LD B,A         ; bit1: エナジー不足
 LZLE_ENERGY:
