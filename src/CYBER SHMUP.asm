@@ -230,21 +230,36 @@ CLOUDN_WAIT   EQU 0EF20h
 ; to know whether to restore ground terrain or sky blank on erase,
 ; and whether to use the blue or green shot color), PAT (character
 ; code to draw, fixed at spawn)
-BULLET0_ACT  EQU 0E3C2h
-BULLET0_ADDR EQU 0E3C3h   ; +0 low, +1 high
-BULLET0_COL  EQU 0E3C5h
-BULLET0_ROW  EQU 0E3C6h
-BULLET0_PAT  EQU 0E3C7h
-BULLET1_ACT  EQU 0E3C8h
-BULLET1_ADDR EQU 0E3C9h
-BULLET1_COL  EQU 0E3CBh
-BULLET1_ROW  EQU 0E3CCh
-BULLET1_PAT  EQU 0E3CDh
-BULLET2_ACT  EQU 0E3CEh
-BULLET2_ADDR EQU 0E3CFh
-BULLET2_COL  EQU 0E3D1h
-BULLET2_ROW  EQU 0E3D3h
-BULLET2_PAT  EQU 0E3D4h
+; (2026-09-24、"まず5発目標で"): 3発ぶん丸ごと複製していた弾の処理を、
+; BULLETC(作業用コピー)に対する1本の処理+BULLET_EACH(全スロットを回す)へ
+; まとめ、スロット数をBULLET_SLOTSで変えられるようにした。本体は旧ENEMY_POOLの
+; 32スロット時代の跡地(E8ED-EACB、未使用)へ移した。1スロット6byte:
+; +0 ACT, +1/+2 ADDR, +3 COL, +4 ROW, +5 PAT。
+BULLET_SLOTS EQU 5
+BULLET_POOL  EQU 0E8F0h   ; BULLET_SLOTS*6 = 30 bytes (E8F0h-E90Dh)
+BULLETC_ACT  EQU 0E90Eh   ; 処理中のスロットのコピー(6 bytes、E90Eh-E913h)
+BULLETC_ADDR EQU 0E90Fh
+BULLETC_COL  EQU 0E911h
+BULLETC_ROW  EQU 0E912h
+BULLETC_PAT  EQU 0E913h
+BULLET_CUR_PTR EQU 0E914h ; 処理中のスロットの番地(2 bytes)
+BULLET_CUR_IDX EQU 0E916h ; 処理中のスロット番号(0..BULLET_SLOTS-1)
+BULLET_EACH_FN EQU 0E917h ; BULLET_EACHが呼ぶ処理(2 bytes)
+BULLET0_ACT  EQU BULLET_POOL      ; テスト等が参照する旧名(スロット0-2)
+BULLET0_ADDR EQU BULLET_POOL+1
+BULLET0_COL  EQU BULLET_POOL+3
+BULLET0_ROW  EQU BULLET_POOL+4
+BULLET0_PAT  EQU BULLET_POOL+5
+BULLET1_ACT  EQU BULLET_POOL+6
+BULLET1_ADDR EQU BULLET_POOL+7
+BULLET1_COL  EQU BULLET_POOL+9
+BULLET1_ROW  EQU BULLET_POOL+10
+BULLET1_PAT  EQU BULLET_POOL+11
+BULLET2_ACT  EQU BULLET_POOL+12
+BULLET2_ADDR EQU BULLET_POOL+13
+BULLET2_COL  EQU BULLET_POOL+15
+BULLET2_ROW  EQU BULLET_POOL+16
+BULLET2_PAT  EQU BULLET_POOL+17
 
 ; --- enemy: one slow left-moving 16x16 sprite (sprite slot 1). ---
 ; --- Pattern is a solid diagonal (top-left+bottom-right filled, ---
@@ -1342,12 +1357,8 @@ FILLBG_ROW0_BLACK:
     ; --- sky-erase dispatch vectors start pointed at the fast      ---
     ; --- (BLANKCODE) routines; repointed at the boss-aware ones    ---
     ; --- once it lands - see BOSS_UPDATE_BODY.                     ---
-    LD HL,SKY_FAST_0H : LD (SKY_VEC_0H),HL
-    LD HL,SKY_FAST_0E : LD (SKY_VEC_0E),HL
-    LD HL,SKY_FAST_1H : LD (SKY_VEC_1H),HL
-    LD HL,SKY_FAST_1E : LD (SKY_VEC_1E),HL
-    LD HL,SKY_FAST_2H : LD (SKY_VEC_2H),HL
-    LD HL,SKY_FAST_2E : LD (SKY_VEC_2E),HL
+    LD HL,SKY_FAST_H : LD (SKY_VEC_H),HL
+    LD HL,SKY_FAST_E : LD (SKY_VEC_E),HL
     LD HL,0 : LD (GAME_TICK),HL
     LD HL,0 : LD (SCORE),HL
     XOR A : LD (SCORE+2),A
@@ -1487,7 +1498,11 @@ INIT_SPRATR_CLR:
                                                    ; PLAYER_EXPL_TOTAL_TIMER/
                                                    ; SPAWN_TIMER (all 3 contiguous)
     XOR A
-    LD (BULLET0_ACT),A : LD (BULLET1_ACT),A : LD (BULLET2_ACT),A
+    LD HL,BULLET_POOL : LD B,BULLET_SLOTS*6
+INIT_BULLET_CLR:
+    LD (HL),A
+    INC HL
+    DJNZ INIT_BULLET_CLR
     LD (JOY_TRIGB_PREV),A
     ; (2026-09-23、監査で発見): 飛び込み演出中は入力読み取りを丸ごと飛ばすため
     ; JOY_TRIG/FIREB_EDGE/JOY_STICKは前回プレイ(ゲームオーバー後の再スタート)や
@@ -2666,76 +2681,35 @@ CHECK_FIRE:
     ; (2026-09-23): Bボタン単発撃ちはボス用レーザー(LZ_FRAME)へ置き換えて削除。
     ; レーザー中(LZ_PHASE 1-3)はレーザー行を弾が上書きしないよう通常弾も撃たない。
     LD A,(LZ_PHASE) : DEC A : CP 3 : JP C,FIRE_DONE
-    LD A,(BULLET0_ACT)
+    LD HL,BULLET_POOL : LD DE,6 : LD B,BULLET_SLOTS
+CF_FIND:
+    LD A,(HL)
     OR A
-    JR NZ,TRY_BULLET1
-    LD A,1 : LD (BULLET0_ACT),A
-    LD A,(PLAYERY) : ADD A,8 : SRL A : SRL A : SRL A : LD (BULLET0_ROW),A
-    LD A,(PLAYERY) : ADD A,8 : AND 07h : LD (M_TMP),A
-    CP 7
-    JR NZ,BULLET0_NOCLAMP
-    LD A,6 : LD (M_TMP),A
-BULLET0_NOCLAMP:
+    JR Z,CF_FOUND
+    ADD HL,DE
+    DJNZ CF_FIND
+    JP FIRE_DONE
+CF_FOUND:
+    LD (HL),1 : INC HL
+    LD A,(PLAYERY) : ADD A,8 : SRL A : SRL A : SRL A : LD C,A    ; C=行
+    LD E,A : LD D,ROWADDR_LO/256 : LD A,(DE) : LD (HL),A : INC HL
+    LD D,ROWADDR_HI/256 : LD A,(DE) : LD (HL),A : INC HL
+    LD A,(PLAYERX) : ADD A,8
+    JR NC,CF_SPAWN_OK
+    LD A,255
+CF_SPAWN_OK:
+    SRL A : SRL A : SRL A
+    LD (HL),A : INC HL             ; COL
+    LD (HL),C : INC HL             ; ROW
     ; shots can never reach the ground scroller anymore (see
     ; PLAYER_MAXY) - always the sky/blue variant.
-    LD A,(M_TMP) : ADD A,BULLET_PAT_BLUE
-    LD (BULLET0_PAT),A
-    LD A,(BULLET0_ROW) : LD E,A : LD D,ROWADDR_LO/256 : LD A,(DE) : LD (BULLET0_ADDR),A
-    LD A,(BULLET0_ROW) : LD E,A : LD D,ROWADDR_HI/256 : LD A,(DE) : LD (BULLET0_ADDR+1),A
-    LD A,(PLAYERX) : ADD A,8
-    JR NC,BULLET0_SPAWN_OK
-    LD A,255
-BULLET0_SPAWN_OK:
-    SRL A : SRL A : SRL A
-    LD (BULLET0_COL),A
-    LD A,FIRE_COOLDOWN_LEN : LD (FIRE_COOLDOWN),A
-    CALL SOUND_SHOT
-    JP FIRE_DONE
-TRY_BULLET1:
-    LD A,(BULLET1_ACT)
-    OR A
-    JR NZ,TRY_BULLET2
-    LD A,1 : LD (BULLET1_ACT),A
-    LD A,(PLAYERY) : ADD A,8 : SRL A : SRL A : SRL A : LD (BULLET1_ROW),A
-    LD A,(PLAYERY) : ADD A,8 : AND 07h : LD (M_TMP),A
+    LD A,(PLAYERY) : ADD A,8 : AND 07h
     CP 7
-    JR NZ,BULLET1_NOCLAMP
-    LD A,6 : LD (M_TMP),A
-BULLET1_NOCLAMP:
-    LD A,(M_TMP) : ADD A,BULLET_PAT_BLUE
-    LD (BULLET1_PAT),A
-    LD A,(BULLET1_ROW) : LD E,A : LD D,ROWADDR_LO/256 : LD A,(DE) : LD (BULLET1_ADDR),A
-    LD A,(BULLET1_ROW) : LD E,A : LD D,ROWADDR_HI/256 : LD A,(DE) : LD (BULLET1_ADDR+1),A
-    LD A,(PLAYERX) : ADD A,8
-    JR NC,BULLET1_SPAWN_OK
-    LD A,255
-BULLET1_SPAWN_OK:
-    SRL A : SRL A : SRL A
-    LD (BULLET1_COL),A
-    LD A,FIRE_COOLDOWN_LEN : LD (FIRE_COOLDOWN),A
-    CALL SOUND_SHOT
-    JP FIRE_DONE
-TRY_BULLET2:
-    LD A,(BULLET2_ACT)
-    OR A
-    JP NZ,FIRE_DONE
-    LD A,1 : LD (BULLET2_ACT),A
-    LD A,(PLAYERY) : ADD A,8 : SRL A : SRL A : SRL A : LD (BULLET2_ROW),A
-    LD A,(PLAYERY) : ADD A,8 : AND 07h : LD (M_TMP),A
-    CP 7
-    JR NZ,BULLET2_NOCLAMP
-    LD A,6 : LD (M_TMP),A
-BULLET2_NOCLAMP:
-    LD A,(M_TMP) : ADD A,BULLET_PAT_BLUE
-    LD (BULLET2_PAT),A
-    LD A,(BULLET2_ROW) : LD E,A : LD D,ROWADDR_LO/256 : LD A,(DE) : LD (BULLET2_ADDR),A
-    LD A,(BULLET2_ROW) : LD E,A : LD D,ROWADDR_HI/256 : LD A,(DE) : LD (BULLET2_ADDR+1),A
-    LD A,(PLAYERX) : ADD A,8
-    JR NC,BULLET2_SPAWN_OK
-    LD A,255
-BULLET2_SPAWN_OK:
-    SRL A : SRL A : SRL A
-    LD (BULLET2_COL),A
+    JR NZ,CF_NOCLAMP
+    DEC A
+CF_NOCLAMP:
+    ADD A,BULLET_PAT_BLUE
+    LD (HL),A                      ; PAT
     LD A,FIRE_COOLDOWN_LEN : LD (FIRE_COOLDOWN),A
     CALL SOUND_SHOT
 FIRE_DONE:
@@ -2825,262 +2799,8 @@ ENEMY_SECTION_DONE:
     ; --- or the sky blank otherwise - so the shot never leaves a ---
     ; --- hole in the terrain behind it.                          ---
     ; ============================================================
-    ; shot 0
-    LD A,(BULLET0_ACT)
-    OR A
-    JP Z,BULLET0_NEXT
-    LD A,(BULLET0_COL) : LD B,A
-    LD A,(BULLET0_ROW) : LD C,A
-    CALL CHECK_BULLET_VS_FORMATION_A
-    OR A
-    JR NZ,BULLET0_ISHIT
-    LD A,(BULLET0_COL) : LD B,A
-    LD A,(BULLET0_ROW) : LD C,A
-    CALL CHECK_BULLET_VS_FORMATION_B
-    OR A
-    JR NZ,BULLET0_ISHIT
-    CALL CHECK_BULLET_VS_ENEMY3
-    OR A
-    JR NZ,BULLET0_ISHIT
-    LD A,(BULLET0_COL) : LD B,A
-    LD A,(BULLET0_ROW) : LD C,A
-    CALL CHECK_BULLET_VS_ENEMY6
-    OR A
-    JR NZ,BULLET0_ISHIT
-    CALL CHECK_BULLET_VS_EBUZ
-    OR A
-    JR NZ,BULLET0_ISHIT
-    CALL CHECK_BULLET_VS_EBUZ2
-    OR A
-    JR NZ,BULLET0_ISHIT
-    CALL CHECK_BULLET_VS_ENEMY_POOL
-    OR A
-    JR Z,BULLET0_NOHIT
-BULLET0_ISHIT:
-    ; a shot's row can never reach the ground scroller (see
-    ; PLAYER_MAXY) - always restore sky on erase.
-    LD HL,(SKY_VEC_0H) : PUSH HL : RET
-BULLET0_HITERASE_GOT:
-    LD (TEMP_ERASE_BYTE),A
-    LD HL,(BULLET0_ADDR)
-    LD A,(BULLET0_COL) : LD E,A : LD D,0 : ADD HL,DE
-    DI
-    LD A,L : OUT (99h),A
-    NOP
-    NOP
-    LD A,H : OR 40h : OUT (99h),A
-    NOP
-    NOP
-    LD A,(TEMP_ERASE_BYTE) : OUT (98h),A
-    PUSH BC : POP BC : NOP : NOP
-    XOR A : LD (BULLET0_ACT),A
-    EI
-    JP BULLET0_NEXT
-BULLET0_NOHIT:
-    LD HL,(SKY_VEC_0E) : PUSH HL : RET
-BULLET0_ERASE_GOT:
-    LD (TEMP_ERASE_BYTE),A
-    LD HL,(BULLET0_ADDR)
-    LD A,(BULLET0_COL) : LD E,A : LD D,0 : ADD HL,DE
-    DI
-    LD A,L : OUT (99h),A
-    NOP
-    NOP
-    LD A,H : OR 40h : OUT (99h),A
-    NOP
-    NOP
-    LD A,(TEMP_ERASE_BYTE) : OUT (98h),A
-    PUSH BC : POP BC : NOP : NOP
-    LD A,(BULLET0_COL) : INC A : LD (BULLET0_COL),A
-    CP BULLET_MAXCOL+1
-    EI
-    JR NC,BULLET0_OFF
-    LD HL,(BULLET0_ADDR)
-    LD A,(BULLET0_COL) : LD E,A : LD D,0 : ADD HL,DE
-    DI
-    LD A,L : OUT (99h),A
-    NOP
-    NOP
-    LD A,H : OR 40h : OUT (99h),A
-    NOP
-    NOP
-    LD A,(BULLET0_PAT) : OUT (98h),A
-    PUSH BC : POP BC : NOP : NOP
-    EI
-    JP BULLET0_NEXT
-BULLET0_OFF:
-    XOR A : LD (BULLET0_ACT),A
-BULLET0_NEXT:
-
-    ; shot 1
-    LD A,(BULLET1_ACT)
-    OR A
-    JP Z,BULLET1_NEXT
-    LD A,(BULLET1_COL) : LD B,A
-    LD A,(BULLET1_ROW) : LD C,A
-    CALL CHECK_BULLET_VS_FORMATION_A
-    OR A
-    JR NZ,BULLET1_ISHIT
-    LD A,(BULLET1_COL) : LD B,A
-    LD A,(BULLET1_ROW) : LD C,A
-    CALL CHECK_BULLET_VS_FORMATION_B
-    OR A
-    JR NZ,BULLET1_ISHIT
-    CALL CHECK_BULLET_VS_ENEMY3
-    OR A
-    JR NZ,BULLET1_ISHIT
-    LD A,(BULLET1_COL) : LD B,A
-    LD A,(BULLET1_ROW) : LD C,A
-    CALL CHECK_BULLET_VS_ENEMY6
-    OR A
-    JR NZ,BULLET1_ISHIT
-    CALL CHECK_BULLET_VS_EBUZ
-    OR A
-    JR NZ,BULLET1_ISHIT
-    CALL CHECK_BULLET_VS_EBUZ2
-    OR A
-    JR NZ,BULLET1_ISHIT
-    CALL CHECK_BULLET_VS_ENEMY_POOL
-    OR A
-    JR Z,BULLET1_NOHIT
-BULLET1_ISHIT:
-    LD HL,(SKY_VEC_1H) : PUSH HL : RET
-BULLET1_HITERASE_GOT:
-    LD (TEMP_ERASE_BYTE),A
-    LD HL,(BULLET1_ADDR)
-    LD A,(BULLET1_COL) : LD E,A : LD D,0 : ADD HL,DE
-    DI
-    LD A,L : OUT (99h),A
-    NOP
-    NOP
-    LD A,H : OR 40h : OUT (99h),A
-    NOP
-    NOP
-    LD A,(TEMP_ERASE_BYTE) : OUT (98h),A
-    PUSH BC : POP BC : NOP : NOP
-    XOR A : LD (BULLET1_ACT),A
-    EI
-    JP BULLET1_NEXT
-BULLET1_NOHIT:
-    LD HL,(SKY_VEC_1E) : PUSH HL : RET
-BULLET1_ERASE_GOT:
-    LD (TEMP_ERASE_BYTE),A
-    LD HL,(BULLET1_ADDR)
-    LD A,(BULLET1_COL) : LD E,A : LD D,0 : ADD HL,DE
-    DI
-    LD A,L : OUT (99h),A
-    NOP
-    NOP
-    LD A,H : OR 40h : OUT (99h),A
-    NOP
-    NOP
-    LD A,(TEMP_ERASE_BYTE) : OUT (98h),A
-    PUSH BC : POP BC : NOP : NOP
-    LD A,(BULLET1_COL) : INC A : LD (BULLET1_COL),A
-    CP BULLET_MAXCOL+1
-    EI
-    JR NC,BULLET1_OFF
-    LD HL,(BULLET1_ADDR)
-    LD A,(BULLET1_COL) : LD E,A : LD D,0 : ADD HL,DE
-    DI
-    LD A,L : OUT (99h),A
-    NOP
-    NOP
-    LD A,H : OR 40h : OUT (99h),A
-    NOP
-    NOP
-    LD A,(BULLET1_PAT) : OUT (98h),A
-    PUSH BC : POP BC : NOP : NOP
-    EI
-    JP BULLET1_NEXT
-BULLET1_OFF:
-    XOR A : LD (BULLET1_ACT),A
-BULLET1_NEXT:
-
-    ; shot 2
-    LD A,(BULLET2_ACT)
-    OR A
-    JP Z,BULLET2_NEXT
-    LD A,(BULLET2_COL) : LD B,A
-    LD A,(BULLET2_ROW) : LD C,A
-    CALL CHECK_BULLET_VS_FORMATION_A
-    OR A
-    JR NZ,BULLET2_ISHIT
-    LD A,(BULLET2_COL) : LD B,A
-    LD A,(BULLET2_ROW) : LD C,A
-    CALL CHECK_BULLET_VS_FORMATION_B
-    OR A
-    JR NZ,BULLET2_ISHIT
-    CALL CHECK_BULLET_VS_ENEMY3
-    OR A
-    JR NZ,BULLET2_ISHIT
-    LD A,(BULLET2_COL) : LD B,A
-    LD A,(BULLET2_ROW) : LD C,A
-    CALL CHECK_BULLET_VS_ENEMY6
-    OR A
-    JR NZ,BULLET2_ISHIT
-    CALL CHECK_BULLET_VS_EBUZ
-    OR A
-    JR NZ,BULLET2_ISHIT
-    CALL CHECK_BULLET_VS_EBUZ2
-    OR A
-    JR NZ,BULLET2_ISHIT
-    CALL CHECK_BULLET_VS_ENEMY_POOL
-    OR A
-    JR Z,BULLET2_NOHIT
-BULLET2_ISHIT:
-    LD HL,(SKY_VEC_2H) : PUSH HL : RET
-BULLET2_HITERASE_GOT:
-    LD (TEMP_ERASE_BYTE),A
-    LD HL,(BULLET2_ADDR)
-    LD A,(BULLET2_COL) : LD E,A : LD D,0 : ADD HL,DE
-    DI
-    LD A,L : OUT (99h),A
-    NOP
-    NOP
-    LD A,H : OR 40h : OUT (99h),A
-    NOP
-    NOP
-    LD A,(TEMP_ERASE_BYTE) : OUT (98h),A
-    PUSH BC : POP BC : NOP : NOP
-    XOR A : LD (BULLET2_ACT),A
-    EI
-    JP BULLET2_NEXT
-BULLET2_NOHIT:
-    LD HL,(SKY_VEC_2E) : PUSH HL : RET
-BULLET2_ERASE_GOT:
-    LD (TEMP_ERASE_BYTE),A
-    LD HL,(BULLET2_ADDR)
-    LD A,(BULLET2_COL) : LD E,A : LD D,0 : ADD HL,DE
-    DI
-    LD A,L : OUT (99h),A
-    NOP
-    NOP
-    LD A,H : OR 40h : OUT (99h),A
-    NOP
-    NOP
-    LD A,(TEMP_ERASE_BYTE) : OUT (98h),A
-    PUSH BC : POP BC : NOP : NOP
-    LD A,(BULLET2_COL) : INC A : LD (BULLET2_COL),A
-    CP BULLET_MAXCOL+1
-    EI
-    JR NC,BULLET2_OFF
-    LD HL,(BULLET2_ADDR)
-    LD A,(BULLET2_COL) : LD E,A : LD D,0 : ADD HL,DE
-    DI
-    LD A,L : OUT (99h),A
-    NOP
-    NOP
-    LD A,H : OR 40h : OUT (99h),A
-    NOP
-    NOP
-    LD A,(BULLET2_PAT) : OUT (98h),A
-    PUSH BC : POP BC : NOP : NOP
-    EI
-    JP BULLET2_NEXT
-BULLET2_OFF:
-    XOR A : LD (BULLET2_ACT),A
-BULLET2_NEXT:
+    LD HL,BULLET_STEP
+    CALL BULLET_EACH
 
     CALL PLAYER_DAMAGE_CHECK
     CALL PLAYER_EXPL_UPDATE_ALL
@@ -5511,12 +5231,8 @@ BOSS_TILETMP     EQU 0E712h  ; scratch: the tile byte being written to VRAM
 ; --- SKY_SLOW_* routine instead (BOSS_MAP-aware restore, also in  ---
 ; --- ROM - nothing is ever copied/written into ROM, just this     ---
 ; --- 2-byte RAM pointer, once, at the moment the boss lands).      ---
-SKY_VEC_0H EQU 0E713h
-SKY_VEC_0E EQU 0E715h
-SKY_VEC_1H EQU 0E717h
-SKY_VEC_1E EQU 0E719h
-SKY_VEC_2H EQU 0E71Bh
-SKY_VEC_2E EQU 0E71Dh
+SKY_VEC_H EQU 0E713h   ; 弾が当たって消える時の空の復元先(FAST/SLOW)
+SKY_VEC_E EQU 0E715h   ; 弾が進む時の空の復元先(0E717h-0E71Eh は旧2-3発目用の跡地)
 
 ; --- boss ring orbit pods: 8 small sprites (fixed numbers 20-27) ---
 ; --- orbiting the boss ring in a vertical ellipse, starting once ---
@@ -6427,12 +6143,8 @@ BOSS_UPDATE_BODY:
     ; --- BOSS_MAP-aware routines instead of BLANKCODE. Just a     ---
     ; --- 2-byte pointer write each, once, here - not on every     ---
     ; --- bullet-erase call.                                       ---
-    LD HL,SKY_SLOW_0H : LD (SKY_VEC_0H),HL
-    LD HL,SKY_SLOW_0E : LD (SKY_VEC_0E),HL
-    LD HL,SKY_SLOW_1H : LD (SKY_VEC_1H),HL
-    LD HL,SKY_SLOW_1E : LD (SKY_VEC_1E),HL
-    LD HL,SKY_SLOW_2H : LD (SKY_VEC_2H),HL
-    LD HL,SKY_SLOW_2E : LD (SKY_VEC_2E),HL
+    LD HL,SKY_SLOW_H : LD (SKY_VEC_H),HL
+    LD HL,SKY_SLOW_E : LD (SKY_VEC_E),HL
     ; --- start the 8 orbiting ring pods ---
     ; --- BOSS_ORBIT_DRAW_ALL reads POD_HP (hide-if-dead check) and     ---
     ; --- POD_RECOIL (kick offset) for every pod it draws - it MUST run ---
@@ -6735,70 +6447,62 @@ BOD_NEXT:
 ; launch/volley). Dead pods (HP==0) are skipped automatically since
 ; their HP check fails first.
 POD_COLLISION_UPDATE:
-    LD A,(BULLET0_ACT)
-    OR A
-    CALL NZ,CHECK_BULLET0_VS_PODS
-    LD A,(BULLET1_ACT)
-    OR A
-    CALL NZ,CHECK_BULLET1_VS_PODS
-    LD A,(BULLET2_ACT)
-    OR A
-    CALL NZ,CHECK_BULLET2_VS_PODS
-    RET
+    LD HL,CHECK_BULLETC_VS_PODS
+    JP BULLET_EACH
 
-CHECK_BULLET0_VS_PODS:
-    LD A,(BULLET0_COL) : ADD A,A : ADD A,A : ADD A,A
+CHECK_BULLETC_VS_PODS:
+    LD A,(BULLETC_COL) : ADD A,A : ADD A,A : ADD A,A
     LD (POD_XY_X),A
-    LD A,(BULLET0_ROW) : ADD A,A : ADD A,A : ADD A,A
+    LD A,(BULLETC_ROW) : ADD A,A : ADD A,A : ADD A,A
     LD (POD_XY_Y),A
     LD B,0
-CB0_LOOP:
+CBC_LOOP:
     PUSH BC
     LD HL,POD_HP : LD D,0 : LD E,B : ADD HL,DE
     LD A,(HL)
     OR A
-    JR Z,CB0_SKIP
+    JR Z,CBC_SKIP
     LD HL,POD_CUR_X : LD D,0 : LD E,B : ADD HL,DE
     LD A,(POD_XY_X)
     SUB (HL)
     ADD A,128
     CP 116
-    JR C,CB0_SKIP
+    JR C,CBC_SKIP
     CP 141
-    JR NC,CB0_SKIP
+    JR NC,CBC_SKIP
     LD HL,POD_CUR_Y : LD D,0 : LD E,B : ADD HL,DE
     LD A,(POD_XY_Y)
     SUB (HL)
     ADD A,128
     CP 116
-    JR C,CB0_SKIP
+    JR C,CBC_SKIP
     CP 141
-    JR NC,CB0_SKIP
+    JR NC,CBC_SKIP
     CALL POD_HIT
     POP BC
-    JP CB0_ERASE
-CB0_SKIP:
+    JP CBC_ERASE
+CBC_SKIP:
     POP BC
     INC B
     LD A,B
     CP 8
-    JP NZ,CB0_LOOP
+    JP NZ,CBC_LOOP
     RET
-CB0_ERASE:
-    LD A,(BULLET0_ROW) : SUB 2 : CP 16 : JR NC,CB0_ERASE_FAST
-    LD B,A : LD A,(BULLET0_COL) : SUB 26 : CP 5 : JR NC,CB0_ERASE_FAST
+CBC_ERASE:
+    LD A,(BULLETC_ROW) : SUB 2 : CP 16 : JR NC,CBC_ERASE_FAST
+    LD B,A : LD A,(BULLETC_COL) : SUB 26 : CP 5 : JR NC,CBC_ERASE_FAST
     LD H,0 : LD L,B : LD D,H : LD E,L
     ADD HL,HL : ADD HL,HL : ADD HL,DE
     LD D,0 : LD E,A : ADD HL,DE
     LD DE,BOSS_MAP : ADD HL,DE
     LD A,(HL)
     LD (TEMP_ERASE_BYTE),A
-    LD A,(BULLET0_ROW)
+    LD A,(BULLETC_ROW)
     LD H,0 : LD L,A
     ADD HL,HL : ADD HL,HL : ADD HL,HL : ADD HL,HL : ADD HL,HL
     LD DE,1800h
     ADD HL,DE
-    LD A,(BULLET0_COL)
+    LD A,(BULLETC_COL)
     LD D,0 : LD E,A
     ADD HL,DE
     DI
@@ -6810,16 +6514,16 @@ CB0_ERASE:
     NOP
     LD A,(TEMP_ERASE_BYTE) : OUT (98h),A
     PUSH BC : POP BC : NOP : NOP
-    XOR A : LD (BULLET0_ACT),A
+    XOR A : LD (BULLETC_ACT),A
     EI
     RET
-CB0_ERASE_FAST:
-    LD A,(BULLET0_ROW)
+CBC_ERASE_FAST:
+    LD A,(BULLETC_ROW)
     LD H,0 : LD L,A
     ADD HL,HL : ADD HL,HL : ADD HL,HL : ADD HL,HL : ADD HL,HL
     LD DE,1800h
     ADD HL,DE
-    LD A,(BULLET0_COL)
+    LD A,(BULLETC_COL)
     LD D,0 : LD E,A
     ADD HL,DE
     DI
@@ -6831,185 +6535,7 @@ CB0_ERASE_FAST:
     NOP
     LD A,BLANKCODE : OUT (98h),A
     PUSH BC : POP BC : NOP : NOP
-    XOR A : LD (BULLET0_ACT),A
-    EI
-    RET
-
-CHECK_BULLET1_VS_PODS:
-    LD A,(BULLET1_COL) : ADD A,A : ADD A,A : ADD A,A
-    LD (POD_XY_X),A
-    LD A,(BULLET1_ROW) : ADD A,A : ADD A,A : ADD A,A
-    LD (POD_XY_Y),A
-    LD B,0
-CB1_LOOP:
-    PUSH BC
-    LD HL,POD_HP : LD D,0 : LD E,B : ADD HL,DE
-    LD A,(HL)
-    OR A
-    JR Z,CB1_SKIP
-    LD HL,POD_CUR_X : LD D,0 : LD E,B : ADD HL,DE
-    LD A,(POD_XY_X)
-    SUB (HL)
-    ADD A,128
-    CP 116
-    JR C,CB1_SKIP
-    CP 141
-    JR NC,CB1_SKIP
-    LD HL,POD_CUR_Y : LD D,0 : LD E,B : ADD HL,DE
-    LD A,(POD_XY_Y)
-    SUB (HL)
-    ADD A,128
-    CP 116
-    JR C,CB1_SKIP
-    CP 141
-    JR NC,CB1_SKIP
-    CALL POD_HIT
-    POP BC
-    JP CB1_ERASE
-CB1_SKIP:
-    POP BC
-    INC B
-    LD A,B
-    CP 8
-    JP NZ,CB1_LOOP
-    RET
-CB1_ERASE:
-    LD A,(BULLET1_ROW) : SUB 2 : CP 16 : JR NC,CB1_ERASE_FAST
-    LD B,A : LD A,(BULLET1_COL) : SUB 26 : CP 5 : JR NC,CB1_ERASE_FAST
-    LD H,0 : LD L,B : LD D,H : LD E,L
-    ADD HL,HL : ADD HL,HL : ADD HL,DE
-    LD D,0 : LD E,A : ADD HL,DE
-    LD DE,BOSS_MAP : ADD HL,DE
-    LD A,(HL)
-    LD (TEMP_ERASE_BYTE),A
-    LD A,(BULLET1_ROW)
-    LD H,0 : LD L,A
-    ADD HL,HL : ADD HL,HL : ADD HL,HL : ADD HL,HL : ADD HL,HL
-    LD DE,1800h
-    ADD HL,DE
-    LD A,(BULLET1_COL)
-    LD D,0 : LD E,A
-    ADD HL,DE
-    DI
-    LD A,L : OUT (99h),A
-    NOP
-    NOP
-    LD A,H : OR 40h : OUT (99h),A
-    NOP
-    NOP
-    LD A,(TEMP_ERASE_BYTE) : OUT (98h),A
-    PUSH BC : POP BC : NOP : NOP
-    XOR A : LD (BULLET1_ACT),A
-    EI
-    RET
-CB1_ERASE_FAST:
-    LD A,(BULLET1_ROW)
-    LD H,0 : LD L,A
-    ADD HL,HL : ADD HL,HL : ADD HL,HL : ADD HL,HL : ADD HL,HL
-    LD DE,1800h
-    ADD HL,DE
-    LD A,(BULLET1_COL)
-    LD D,0 : LD E,A
-    ADD HL,DE
-    DI
-    LD A,L : OUT (99h),A
-    NOP
-    NOP
-    LD A,H : OR 40h : OUT (99h),A
-    NOP
-    NOP
-    LD A,BLANKCODE : OUT (98h),A
-    PUSH BC : POP BC : NOP : NOP
-    XOR A : LD (BULLET1_ACT),A
-    EI
-    RET
-
-CHECK_BULLET2_VS_PODS:
-    LD A,(BULLET2_COL) : ADD A,A : ADD A,A : ADD A,A
-    LD (POD_XY_X),A
-    LD A,(BULLET2_ROW) : ADD A,A : ADD A,A : ADD A,A
-    LD (POD_XY_Y),A
-    LD B,0
-CB2_LOOP:
-    PUSH BC
-    LD HL,POD_HP : LD D,0 : LD E,B : ADD HL,DE
-    LD A,(HL)
-    OR A
-    JR Z,CB2_SKIP
-    LD HL,POD_CUR_X : LD D,0 : LD E,B : ADD HL,DE
-    LD A,(POD_XY_X)
-    SUB (HL)
-    ADD A,128
-    CP 116
-    JR C,CB2_SKIP
-    CP 141
-    JR NC,CB2_SKIP
-    LD HL,POD_CUR_Y : LD D,0 : LD E,B : ADD HL,DE
-    LD A,(POD_XY_Y)
-    SUB (HL)
-    ADD A,128
-    CP 116
-    JR C,CB2_SKIP
-    CP 141
-    JR NC,CB2_SKIP
-    CALL POD_HIT
-    POP BC
-    JP CB2_ERASE
-CB2_SKIP:
-    POP BC
-    INC B
-    LD A,B
-    CP 8
-    JP NZ,CB2_LOOP
-    RET
-CB2_ERASE:
-    LD A,(BULLET2_ROW) : SUB 2 : CP 16 : JR NC,CB2_ERASE_FAST
-    LD B,A : LD A,(BULLET2_COL) : SUB 26 : CP 5 : JR NC,CB2_ERASE_FAST
-    LD H,0 : LD L,B : LD D,H : LD E,L
-    ADD HL,HL : ADD HL,HL : ADD HL,DE
-    LD D,0 : LD E,A : ADD HL,DE
-    LD DE,BOSS_MAP : ADD HL,DE
-    LD A,(HL)
-    LD (TEMP_ERASE_BYTE),A
-    LD A,(BULLET2_ROW)
-    LD H,0 : LD L,A
-    ADD HL,HL : ADD HL,HL : ADD HL,HL : ADD HL,HL : ADD HL,HL
-    LD DE,1800h
-    ADD HL,DE
-    LD A,(BULLET2_COL)
-    LD D,0 : LD E,A
-    ADD HL,DE
-    DI
-    LD A,L : OUT (99h),A
-    NOP
-    NOP
-    LD A,H : OR 40h : OUT (99h),A
-    NOP
-    NOP
-    LD A,(TEMP_ERASE_BYTE) : OUT (98h),A
-    PUSH BC : POP BC : NOP : NOP
-    XOR A : LD (BULLET2_ACT),A
-    EI
-    RET
-CB2_ERASE_FAST:
-    LD A,(BULLET2_ROW)
-    LD H,0 : LD L,A
-    ADD HL,HL : ADD HL,HL : ADD HL,HL : ADD HL,HL : ADD HL,HL
-    LD DE,1800h
-    ADD HL,DE
-    LD A,(BULLET2_COL)
-    LD D,0 : LD E,A
-    ADD HL,DE
-    DI
-    LD A,L : OUT (99h),A
-    NOP
-    NOP
-    LD A,H : OR 40h : OUT (99h),A
-    NOP
-    NOP
-    LD A,BLANKCODE : OUT (98h),A
-    PUSH BC : POP BC : NOP : NOP
-    XOR A : LD (BULLET2_ACT),A
+    XOR A : LD (BULLETC_ACT),A
     EI
     RET
 
@@ -7082,12 +6608,8 @@ START_BOSS_DEATH:
     ; --- area were "restoring" BOSS_MAP tiles we'd already popped  ---
     ; --- (SKY_SLOW_* repaints from BOSS_MAP). Switch back to the   ---
     ; --- plain-sky vectors so an erase just leaves blank sky.      ---
-    LD HL,SKY_FAST_0H : LD (SKY_VEC_0H),HL
-    LD HL,SKY_FAST_0E : LD (SKY_VEC_0E),HL
-    LD HL,SKY_FAST_1H : LD (SKY_VEC_1H),HL
-    LD HL,SKY_FAST_1E : LD (SKY_VEC_1E),HL
-    LD HL,SKY_FAST_2H : LD (SKY_VEC_2H),HL
-    LD HL,SKY_FAST_2E : LD (SKY_VEC_2E),HL
+    LD HL,SKY_FAST_H : LD (SKY_VEC_H),HL
+    LD HL,SKY_FAST_E : LD (SKY_VEC_E),HL
     RET
 PHD_SKIP_BOSSEXPL:
     POP BC
@@ -8298,44 +7820,28 @@ POD_BULLET_HIDE1:
 
 ; called every frame while BOSS_STATE==1 (materializing only - once
 ; landed, the SKY_VEC dispatch already handles restoring boss BG
-; correctly, so no guard is needed there). Checks each of the 3
-; player shots; any that reaches col25 (row1-16) is deflected
+; correctly, so no guard is needed there). Checks each of the
+; BULLET_SLOTS player shots; any that reaches col25 (row1-16) is deflected
 ; before it can ever touch the boss's own cols26-30, which used to
 ; leave permanent gaps (the erase there was writing BLANKCODE over
 ; boss cells that hadn't been safely handled yet).
 BOSS_GUARD_UPDATE:
-    LD A,(BULLET0_ACT)
-    OR A
-    JR Z,BGU_1
-    LD A,(BULLET0_ROW) : SUB 2 : CP 16 : JR NC,BGU_1
-    LD A,(BULLET0_COL) : CP 25 : JR C,BGU_1
-    CALL DEFLECT_BULLET0
-BGU_1:
-    LD A,(BULLET1_ACT)
-    OR A
-    JR Z,BGU_2
-    LD A,(BULLET1_ROW) : SUB 2 : CP 16 : JR NC,BGU_2
-    LD A,(BULLET1_COL) : CP 25 : JR C,BGU_2
-    CALL DEFLECT_BULLET1
-BGU_2:
-    LD A,(BULLET2_ACT)
-    OR A
-    RET Z
-    LD A,(BULLET2_ROW) : SUB 2 : CP 16 : RET NC
-    LD A,(BULLET2_COL) : CP 25 : RET C
-    CALL DEFLECT_BULLET2
-    RET
-
+    LD HL,BOSS_GUARD_ONE
+    JP BULLET_EACH
+BOSS_GUARD_ONE:
+    LD A,(BULLETC_ROW) : SUB 2 : CP 16 : RET NC
+    LD A,(BULLETC_COL) : CP 25 : RET C
+    ; fall through
 ; erases the shot's current BG cell (safe here - col25 is still
 ; outside the boss's own cols26-30), deactivates it, and spawns a
 ; deflected sprite in its place with a random left-biased vector.
-DEFLECT_BULLET0:
-    LD A,(BULLET0_ROW)
+DEFLECT_BULLETC:
+    LD A,(BULLETC_ROW)
     LD H,0 : LD L,A
     ADD HL,HL : ADD HL,HL : ADD HL,HL : ADD HL,HL : ADD HL,HL
     LD DE,1800h
     ADD HL,DE
-    LD A,(BULLET0_COL)
+    LD A,(BULLETC_COL)
     LD D,0 : LD E,A
     ADD HL,DE
     DI
@@ -8347,80 +7853,27 @@ DEFLECT_BULLET0:
     NOP
     LD A,BLANKCODE : OUT (98h),A
     PUSH BC : POP BC : NOP : NOP
-    XOR A : LD (BULLET0_ACT),A
-    LD A,(BULLET0_COL) : ADD A,A : ADD A,A : ADD A,A
-    LD (DFL0_X),A
-    LD A,(BULLET0_ROW) : ADD A,A : ADD A,A : ADD A,A
-    LD (DFL0_Y),A
-    LD A,(DFL_RNG) : INC A : LD (DFL_RNG),A : AND 7
-    LD (DFL0_VEC),A
-    LD A,1 : LD (DFL0_ACT),A
-    LD A,DFL_LIFESPAN : LD (DFL0_LIFE),A
+    XOR A : LD (BULLETC_ACT),A
+    ; スロット0-2はDFL0-2、3-4はDFL0-1(ボス出現中の演出用、同時に来たら上書き)
+    LD A,(BULLET_CUR_IDX) : CP 3
+    JR C,DB_DFL
+    SUB 3
+DB_DFL:
+    LD C,A
+    ADD A,A : ADD A,A : ADD A,C : LD E,A : LD D,0
+    LD HL,DFL0_ACT : ADD HL,DE     ; DFLn: +0 ACT,+1 X,+2 Y,+3 VEC,+4 LIFE
+    LD (HL),1 : INC HL
+    LD A,(BULLETC_COL) : ADD A,A : ADD A,A : ADD A,A : LD (HL),A : INC HL
+    LD A,(BULLETC_ROW) : ADD A,A : ADD A,A : ADD A,A : LD (HL),A : INC HL
+    LD A,(DFL_RNG) : INC A : LD (DFL_RNG),A : AND 7 : LD (HL),A : INC HL
+    LD (HL),DFL_LIFESPAN
     EI
-    CALL DFL_DRAW0
-    RET
-
-DEFLECT_BULLET1:
-    LD A,(BULLET1_ROW)
-    LD H,0 : LD L,A
-    ADD HL,HL : ADD HL,HL : ADD HL,HL : ADD HL,HL : ADD HL,HL
-    LD DE,1800h
-    ADD HL,DE
-    LD A,(BULLET1_COL)
-    LD D,0 : LD E,A
-    ADD HL,DE
-    DI
-    LD A,L : OUT (99h),A
-    NOP
-    NOP
-    LD A,H : OR 40h : OUT (99h),A
-    NOP
-    NOP
-    LD A,BLANKCODE : OUT (98h),A
-    PUSH BC : POP BC : NOP : NOP
-    XOR A : LD (BULLET1_ACT),A
-    LD A,(BULLET1_COL) : ADD A,A : ADD A,A : ADD A,A
-    LD (DFL1_X),A
-    LD A,(BULLET1_ROW) : ADD A,A : ADD A,A : ADD A,A
-    LD (DFL1_Y),A
-    LD A,(DFL_RNG) : INC A : LD (DFL_RNG),A : AND 7
-    LD (DFL1_VEC),A
-    LD A,1 : LD (DFL1_ACT),A
-    LD A,DFL_LIFESPAN : LD (DFL1_LIFE),A
-    EI
-    CALL DFL_DRAW1
-    RET
-
-DEFLECT_BULLET2:
-    LD A,(BULLET2_ROW)
-    LD H,0 : LD L,A
-    ADD HL,HL : ADD HL,HL : ADD HL,HL : ADD HL,HL : ADD HL,HL
-    LD DE,1800h
-    ADD HL,DE
-    LD A,(BULLET2_COL)
-    LD D,0 : LD E,A
-    ADD HL,DE
-    DI
-    LD A,L : OUT (99h),A
-    NOP
-    NOP
-    LD A,H : OR 40h : OUT (99h),A
-    NOP
-    NOP
-    LD A,BLANKCODE : OUT (98h),A
-    PUSH BC : POP BC : NOP : NOP
-    XOR A : LD (BULLET2_ACT),A
-    LD A,(BULLET2_COL) : ADD A,A : ADD A,A : ADD A,A
-    LD (DFL2_X),A
-    LD A,(BULLET2_ROW) : ADD A,A : ADD A,A : ADD A,A
-    LD (DFL2_Y),A
-    LD A,(DFL_RNG) : INC A : LD (DFL_RNG),A : AND 7
-    LD (DFL2_VEC),A
-    LD A,1 : LD (DFL2_ACT),A
-    LD A,DFL_LIFESPAN : LD (DFL2_LIFE),A
-    EI
-    CALL DFL_DRAW2
-    RET
+    LD A,C
+    OR A
+    JP Z,DFL_DRAW0
+    DEC A
+    JP Z,DFL_DRAW1
+    JP DFL_DRAW2
 
 ; moves all 3 deflected shots (called every frame from state1 on),
 ; despawning (hiding) any whose lifespan has run out.
@@ -15881,24 +15334,12 @@ BOSS_PATTERNS_SEGMENTS EQU 126  ; tools/bgm_data/bgm_bank_gen.py STAGE1_BOSS_CHA
 ; --- sky-erase stub templates (copied into the RAM stubs at INIT ---
 ; --- and again when the boss lands - see SKY_STUB_* above).       ---
 ; --- FAST: original behavior, just BLANKCODE.                     ---
-SKY_FAST_0H:
+SKY_FAST_H:
     LD A,BLANKCODE
-    JP BULLET0_HITERASE_GOT
-SKY_FAST_0E:
+    JP BULLETC_HITERASE_GOT
+SKY_FAST_E:
     LD A,BLANKCODE
-    JP BULLET0_ERASE_GOT
-SKY_FAST_1H:
-    LD A,BLANKCODE
-    JP BULLET1_HITERASE_GOT
-SKY_FAST_1E:
-    LD A,BLANKCODE
-    JP BULLET1_ERASE_GOT
-SKY_FAST_2H:
-    LD A,BLANKCODE
-    JP BULLET2_HITERASE_GOT
-SKY_FAST_2E:
-    LD A,BLANKCODE
-    JP BULLET2_ERASE_GOT
+    JP BULLETC_ERASE_GOT
 SKY_FAST_END:
 
 ; --- SLOW: boss has landed - restore from BOSS_MAP if this cell is ---
@@ -15911,89 +15352,33 @@ SKY_FAST_END:
 ; can't leave a partial gap behind. Trashes A,B,C,D,E,H,L - callers
 ; must re-fetch BULLET_ROW/COL fresh afterward rather than relying on
 ; anything surviving this call.
-SKY_SLOW_0H:
-    LD A,(BULLET0_ROW) : SUB 2 : CP 16 : JR NC,SS0H_FAST
-    LD B,A : LD A,(BULLET0_COL) : SUB 26 : CP 5 : JR NC,SS0H_FAST
+SKY_SLOW_H:
+    LD A,(BULLETC_ROW) : SUB 2 : CP 16 : JR NC,SSH_FAST
+    LD B,A : LD A,(BULLETC_COL) : SUB 26 : CP 5 : JR NC,SSH_FAST
     LD H,0 : LD L,B : LD D,H : LD E,L
     ADD HL,HL : ADD HL,HL : ADD HL,DE
     LD D,0 : LD E,A : ADD HL,DE
     LD DE,BOSS_MAP : ADD HL,DE
     LD A,(HL)
-    JP BULLET0_HITERASE_GOT
-SS0H_FAST:
+    JP BULLETC_HITERASE_GOT
+SSH_FAST:
     LD A,BLANKCODE
-    JP BULLET0_HITERASE_GOT
-SKY_SLOW_0H_END:
+    JP BULLETC_HITERASE_GOT
+SKY_SLOW_H_END:
 
-SKY_SLOW_0E:
-    LD A,(BULLET0_ROW) : SUB 2 : CP 16 : JR NC,SS0E_FAST
-    LD B,A : LD A,(BULLET0_COL) : SUB 26 : CP 5 : JR NC,SS0E_FAST
+SKY_SLOW_E:
+    LD A,(BULLETC_ROW) : SUB 2 : CP 16 : JR NC,SSE_FAST
+    LD B,A : LD A,(BULLETC_COL) : SUB 26 : CP 5 : JR NC,SSE_FAST
     LD H,0 : LD L,B : LD D,H : LD E,L
     ADD HL,HL : ADD HL,HL : ADD HL,DE
     LD D,0 : LD E,A : ADD HL,DE
     LD DE,BOSS_MAP : ADD HL,DE
     LD A,(HL)
-    JP BULLET0_ERASE_GOT
-SS0E_FAST:
+    JP BULLETC_ERASE_GOT
+SSE_FAST:
     LD A,BLANKCODE
-    JP BULLET0_ERASE_GOT
-SKY_SLOW_0E_END:
-
-SKY_SLOW_1H:
-    LD A,(BULLET1_ROW) : SUB 2 : CP 16 : JR NC,SS1H_FAST
-    LD B,A : LD A,(BULLET1_COL) : SUB 26 : CP 5 : JR NC,SS1H_FAST
-    LD H,0 : LD L,B : LD D,H : LD E,L
-    ADD HL,HL : ADD HL,HL : ADD HL,DE
-    LD D,0 : LD E,A : ADD HL,DE
-    LD DE,BOSS_MAP : ADD HL,DE
-    LD A,(HL)
-    JP BULLET1_HITERASE_GOT
-SS1H_FAST:
-    LD A,BLANKCODE
-    JP BULLET1_HITERASE_GOT
-SKY_SLOW_1H_END:
-
-SKY_SLOW_1E:
-    LD A,(BULLET1_ROW) : SUB 2 : CP 16 : JR NC,SS1E_FAST
-    LD B,A : LD A,(BULLET1_COL) : SUB 26 : CP 5 : JR NC,SS1E_FAST
-    LD H,0 : LD L,B : LD D,H : LD E,L
-    ADD HL,HL : ADD HL,HL : ADD HL,DE
-    LD D,0 : LD E,A : ADD HL,DE
-    LD DE,BOSS_MAP : ADD HL,DE
-    LD A,(HL)
-    JP BULLET1_ERASE_GOT
-SS1E_FAST:
-    LD A,BLANKCODE
-    JP BULLET1_ERASE_GOT
-SKY_SLOW_1E_END:
-
-SKY_SLOW_2H:
-    LD A,(BULLET2_ROW) : SUB 2 : CP 16 : JR NC,SS2H_FAST
-    LD B,A : LD A,(BULLET2_COL) : SUB 26 : CP 5 : JR NC,SS2H_FAST
-    LD H,0 : LD L,B : LD D,H : LD E,L
-    ADD HL,HL : ADD HL,HL : ADD HL,DE
-    LD D,0 : LD E,A : ADD HL,DE
-    LD DE,BOSS_MAP : ADD HL,DE
-    LD A,(HL)
-    JP BULLET2_HITERASE_GOT
-SS2H_FAST:
-    LD A,BLANKCODE
-    JP BULLET2_HITERASE_GOT
-SKY_SLOW_2H_END:
-
-SKY_SLOW_2E:
-    LD A,(BULLET2_ROW) : SUB 2 : CP 16 : JR NC,SS2E_FAST
-    LD B,A : LD A,(BULLET2_COL) : SUB 26 : CP 5 : JR NC,SS2E_FAST
-    LD H,0 : LD L,B : LD D,H : LD E,L
-    ADD HL,HL : ADD HL,HL : ADD HL,DE
-    LD D,0 : LD E,A : ADD HL,DE
-    LD DE,BOSS_MAP : ADD HL,DE
-    LD A,(HL)
-    JP BULLET2_ERASE_GOT
-SS2E_FAST:
-    LD A,BLANKCODE
-    JP BULLET2_ERASE_GOT
-SKY_SLOW_2E_END:
+    JP BULLETC_ERASE_GOT
+SKY_SLOW_E_END:
 
 BOSS_MAP:
     DB 48,192,193,194,48   ; boss row 0
@@ -17199,4 +16584,116 @@ LZHP_SKIP:
     INC B
     LD A,B : CP 8
     JR NZ,LZHP_LOOP
+    RET
+
+; ============================================================================
+; (2026-09-24) 自機ショット1発ぶんの処理(旧"shot 0"〜"shot 2"の3つの複製を1本に)。
+; BULLET_EACHがBULLETC_*へスロットをコピーしてから呼び、終わったら書き戻す。
+; ============================================================================
+; IN: HL=各スロットで呼ぶ処理。ACT!=0のスロットだけ、BULLETC_*へコピー→CALL→書き戻し。
+BULLET_EACH:
+    LD (BULLET_EACH_FN),HL
+    LD HL,BULLET_POOL
+    XOR A
+BE_LOOP:
+    LD (BULLET_CUR_IDX),A
+    LD (BULLET_CUR_PTR),HL
+    LD A,(HL)
+    OR A
+    JR Z,BE_NEXT
+    LD DE,BULLETC_ACT : LD BC,6 : LDIR
+    CALL BE_CALL
+    LD HL,BULLETC_ACT : LD DE,(BULLET_CUR_PTR) : LD BC,6 : LDIR
+BE_NEXT:
+    LD HL,(BULLET_CUR_PTR) : LD DE,6 : ADD HL,DE
+    LD A,(BULLET_CUR_IDX) : INC A : CP BULLET_SLOTS
+    JR C,BE_LOOP
+    RET
+BE_CALL:
+    LD HL,(BULLET_EACH_FN)
+    JP (HL)
+
+; --- shots: advance 1 character (8 dots) per frame (see MAINLOOP) ---
+BULLET_STEP:
+    LD A,(BULLETC_COL) : LD B,A
+    LD A,(BULLETC_ROW) : LD C,A
+    CALL CHECK_BULLET_VS_FORMATION_A
+    OR A
+    JR NZ,BS_ISHIT
+    LD A,(BULLETC_COL) : LD B,A
+    LD A,(BULLETC_ROW) : LD C,A
+    CALL CHECK_BULLET_VS_FORMATION_B
+    OR A
+    JR NZ,BS_ISHIT
+    CALL CHECK_BULLET_VS_ENEMY3
+    OR A
+    JR NZ,BS_ISHIT
+    LD A,(BULLETC_COL) : LD B,A
+    LD A,(BULLETC_ROW) : LD C,A
+    CALL CHECK_BULLET_VS_ENEMY6
+    OR A
+    JR NZ,BS_ISHIT
+    CALL CHECK_BULLET_VS_EBUZ
+    OR A
+    JR NZ,BS_ISHIT
+    CALL CHECK_BULLET_VS_EBUZ2
+    OR A
+    JR NZ,BS_ISHIT
+    CALL CHECK_BULLET_VS_ENEMY_POOL
+    OR A
+    JR Z,BS_NOHIT
+BS_ISHIT:
+    ; a shot's row can never reach the ground scroller (see
+    ; PLAYER_MAXY) - always restore sky on erase.
+    LD HL,(SKY_VEC_H) : PUSH HL : RET
+BULLETC_HITERASE_GOT:
+    LD (TEMP_ERASE_BYTE),A
+    LD HL,(BULLETC_ADDR)
+    LD A,(BULLETC_COL) : LD E,A : LD D,0 : ADD HL,DE
+    DI
+    LD A,L : OUT (99h),A
+    NOP
+    NOP
+    LD A,H : OR 40h : OUT (99h),A
+    NOP
+    NOP
+    LD A,(TEMP_ERASE_BYTE) : OUT (98h),A
+    PUSH BC : POP BC : NOP : NOP
+    XOR A : LD (BULLETC_ACT),A
+    EI
+    RET
+BS_NOHIT:
+    LD HL,(SKY_VEC_E) : PUSH HL : RET
+BULLETC_ERASE_GOT:
+    LD (TEMP_ERASE_BYTE),A
+    LD HL,(BULLETC_ADDR)
+    LD A,(BULLETC_COL) : LD E,A : LD D,0 : ADD HL,DE
+    DI
+    LD A,L : OUT (99h),A
+    NOP
+    NOP
+    LD A,H : OR 40h : OUT (99h),A
+    NOP
+    NOP
+    LD A,(TEMP_ERASE_BYTE) : OUT (98h),A
+    PUSH BC : POP BC : NOP : NOP
+    LD A,(BULLETC_COL) : INC A : LD (BULLETC_COL),A
+    CP BULLET_MAXCOL+1
+    EI
+    JR NC,BS_OFF
+    LD HL,(BULLETC_ADDR)
+    LD A,(BULLETC_COL) : LD E,A : LD D,0 : ADD HL,DE
+    DI
+    LD A,L : OUT (99h),A
+    NOP
+    NOP
+    LD A,H : OR 40h : OUT (99h),A
+    NOP
+    NOP
+    LD A,(BULLETC_PAT) : OUT (98h),A
+    PUSH BC : POP BC : NOP : NOP
+    EI
+    RET
+BS_OFF:
+    XOR A : LD (BULLETC_ACT),A
     RET

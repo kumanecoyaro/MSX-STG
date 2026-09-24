@@ -37,8 +37,12 @@
 - 新規にVRAM/PSG/その他ハードウェアポートへのブロック転送を実装する際は、着手前に
   必ずこのセクションを再確認し、`OTIR`系命令を使わないこと。
 
-## Stage1 ROM予算(2026-09-23、Round145 follow-up30時点で**plain 593byte /
-Comb 543byte**・恒久的に確認必須、Combの方が少ない)
+## Stage1 ROM予算(2026-09-24、Round145 follow-up33時点で**plain 1861byte /
+Comb 1811byte**・恒久的に確認必須、Combの方が少ない)
+
+- **(2026-09-24、follow-up33)** 自機ショット3発ぶんの複製コードをBULLETC_*+BULLET_EACHの1本に
+  まとめて約1270byte回復し、BULLET_SLOTS=5にした。**自機ショットの処理を足す/直す時はBULLET_STEP等の
+  共通ルーチン側を触ること**(BULLET0-2_*は旧名の別名として残してあるだけ)。
 
 - **(2026-09-23、follow-up26)** ボスレーザーを連射の流れ化+干渉点/飛び散り/右端スプライト(16x24、
   パターン148-155)で約285byte。z80emuはCALL経由のBIOSしかスタブしないので、BIOSへの末尾`JP`

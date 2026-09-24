@@ -211,9 +211,11 @@ check("BOSS_GUARD_UPDATE: row17(新しいボス本体の16行分の範囲の上�
 # ---- back to "SUB 1 : CP 16" and confirm test (5)'s row2 case would ----
 # ---- then fail to deflect - proving these tests actually exercise   ----
 # ---- the real fix rather than passing by coincidence.               ----
-target = BOSS_GUARD_UPDATE
-pat = bytes([0x3A, BULLET0_ROW & 0xFF, (BULLET0_ROW >> 8) & 0xFF,
-             0xD6, 0x02, 0xFE, 0x10])  # LD A,(BULLET0_ROW):SUB 2:CP 16
+# (2026-09-24) 弾処理の共通化で判定はBOSS_GUARD_ONE(BULLETC_ROW)に1箇所だけになった
+target = sym["BOSS_GUARD_ONE"]
+BULLETC_ROW = sym["BULLETC_ROW"]
+pat = bytes([0x3A, BULLETC_ROW & 0xFF, (BULLETC_ROW >> 8) & 0xFF,
+             0xD6, 0x02, 0xFE, 0x10])  # LD A,(BULLETC_ROW):SUB 2:CP 16
 idx = bytes(mem0).find(pat, target, target + 40)
 if idx < 0:
     raise RuntimeError("BOSS_GUARD_UPDATE's SUB 2:CP 16 byte pattern not found - "

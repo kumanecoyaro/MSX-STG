@@ -181,10 +181,9 @@ def saturate_all_pools(z, boss_state):
     # 雲
     z.wr(CLOUDW_ACTIVE, 1)
     z.wr(CLOUDN_ACTIVE, 1)
-    # 自機弾3発とも飛行中
-    z.wr(BULLET0_ACT, 1)
-    z.wr(BULLET1_ACT, 1)
-    z.wr(BULLET2_ACT, 1)
+    # 自機弾が全スロット飛行中(2026-09-24から BULLET_SLOTS、1スロット6byte)
+    for i in range(sym["BULLET_SLOTS"]):
+        z.wr(BULLET0_ACT + i * 6, 1)
     # ボス関連(DFL偏向弾3・8機ポッド・ボリー/ラップ)
     z.wr(DFL0_ACT, 1); z.wr(DFL1_ACT, 1); z.wr(DFL2_ACT, 1)
     for i in range(8):

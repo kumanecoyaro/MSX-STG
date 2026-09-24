@@ -18482,3 +18482,25 @@ EbuzII弾ビームへの1pxコリジョン追加+ROM予算の共有バンク6オ
 - 修正: LZ_QUALIFIEDはテストモードならバリア・エナジーの条件を見ない(使用済みだけは見る。使用済みは
   やり直し時に未使用へ戻るので1回だけ)。テストモードなら撃てるのでクラッシュまで確認できる。
 - verify_boss_laser.py 68件。ROM plain 588 / Comb 538。
+
+## Round145 follow-up33: 自機ショットを5発に(共通化で約1270byte回復)(2026-09-24)
+
+- ユーザー: "まず5発目標で 入らなかったら4発で ギャップ調整はその後じゃないと待ち量が確定しないんで
+  あと確か3発と言っても間欠連射になってたよな"。
+- 旧コードは弾3発ぶんの処理(CHECK_FIREの発射・毎フレームの当たり判定/移動/消去・CHECK_BULLETn_VS_PODS・
+  BOSS_GUARD_UPDATE/DEFLECT_BULLETn・SKY_FAST/SLOW_nH/nEスタブ×6)を丸ごと複製していた。
+  BULLETC_*(作業用コピー6byte)に対する1本の処理(BULLET_STEP/CHECK_BULLETC_VS_PODS/BOSS_GUARD_ONE+
+  DEFLECT_BULLETC/SKY_FAST・SLOW_H/E)と、全スロットを回すBULLET_EACH(ACT!=0のスロットだけLDIRで
+  コピー→CALL→書き戻し)へまとめ、BULLET_SLOTS EQU 5。
+- RAM: BULLET_POOL=E8F0h(5×6)、BULLETC=E90Eh、BULLET_CUR_PTR/IDX/EACH_FN=E914h-E918h(旧ENEMY_POOLの
+  32スロット時代の跡地E8ED-EACB、未使用を確認)。BULLET0-2_*は旧名の別名。SKY_VEC_H/E(E713h/E715h)。
+  ボス出現中のはじきはスロット0-2→DFL0-2、3-4→DFL0-1。
+- 等価性: BULLET_SLOTS=3にした版と旧コードを同じ入力で、道中1万フレーム+ボス出現〜ポッド全滅4000
+  フレーム動かし、10フレームごとの画面(name table+スプライト属性)・スコア・ポッドHP・DFLが完全一致。
+- 間欠連射: 押しっぱなしで2フレームごとに発射、全スロットが埋まると先頭が画面外へ出るまで止まる
+  (3発: 3発→約27フレーム休み、5発: 5発→約23フレーム休み)。
+- フレームコスト実測(押しっぱなし、1フレームの持ち時間は約59,700T): 道中の3地点で、撃たない時
+  50.4k/56.6k/59.0kTに対し、3発版は55.3k/64.0k/75.7k、5発版は61.1k/72.6k/88.9k(最大106kT)。
+  1発あたり約2,000〜6,500T(敵が多いほど当たり判定が増える)。
+- ROM: plain 1861 / Comb 1811byte(588→1861)。新規verify_shot_pool.py 6件、verify_boss_y_shift/
+  verify_mainloop_loop_boundsを新構造に合わせて更新。
