@@ -207,8 +207,8 @@ check("(2026-09-14 follow-up、'Row0のブラックの行を破壊してる Row�
 check("スポーン直後、SLOT0.COLはEBUZ_SPAWN_COL(24)",
       srd(z, S0, "COL") == sym["EBUZ_SPAWN_COL"])
 check("(2026-09-14 follow-up、'耐久値24に'): スポーン直後、SLOT0.HPは"
-      "EBUZ_HP_INIT(24、12ではない)",
-      srd(z, S0, "HP") == sym["EBUZ_HP_INIT"] == 24)
+      "EBUZ_HP_INIT(48、2026-09-24に24から倍)",
+      srd(z, S0, "HP") == sym["EBUZ_HP_INIT"] == 48)
 check("スポーン直後、SLOT0.CENTER_ROWはEBUZ_ROW_INST1(9)",
       srd(z, S0, "CENTER_ROW") == sym["EBUZ_ROW_INST1"] == 9)
 check("スポーン直後(まだEBUZ_UPDATE_ONEは一度も動いていない)、"

@@ -12323,7 +12323,8 @@ EBUZ_ST_EXIT   EQU 5   ; 右へ移動して画面外へ消える(本体4行)
 ; Ebuz自身のチェーン進行ロジック(EBUZ_SPAWN_CHAIN_START/EBUZ_CHECK_
 ; CHAIN_TRIGGERS/EBUZ_ANY_ACTIVE等)自体は一切変更していない。
 ; (2026-09-14 follow-up、"耐久値24に"): 12→24。全インスタンス共通。
-EBUZ_HP_INIT             EQU 24
+; (2026-09-24、"EbuzとEbuzIIの耐久値を倍に"): 24→48。
+EBUZ_HP_INIT             EQU 48
 ; (2026-09-14 follow-up3、"Ebuz生存時間を5秒に"): 900(15秒)→300(5秒)。
 ; 60Hz想定、GAME_OVER_TIMEOUT_TICKS[600=10秒]等既存の実フレーム
 ; カウンタと同じ換算基準。
@@ -13613,7 +13614,9 @@ EBUZ2_LASER_COLOR  EQU 074h  ; fg7(cyan)/bg4(blue、無印Ebuzの弾と同じ
                               ; 空色 - EBUZ_BULLET_COLOR_BYTE_VAL=0B4hの
                               ; 下位ニブルと同一)
 
-EBUZ2_HP_INIT EQU 128
+; (2026-09-24、"EbuzとEbuzIIの耐久値を倍に"): 128→256。1byteのままなので0で256を表す
+; (被弾ごとにDECして0で撃破 → 0,255,...,1,0の256発目で撃破)。
+EBUZ2_HP_INIT EQU 0
 EBUZ2_SLOT_EMPTY EQU 255
 EBUZ2_V2_SLOT_COUNT EQU 4
 

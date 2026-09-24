@@ -18567,3 +18567,10 @@ EbuzII弾ビームへの1pxコリジョン追加+ROM予算の共有バンク6オ
 - LZ_BR_SLOTS 6→3、LZ_BR_HOLD 29→11(寿命 伸びる7+11=18=3本×6、元の17とほぼ同じ)、
   LZ_BR_STAGGER 24(6フレーム)のまま。実測: 6フレームごとに1本、画面に2-3本、乱射中1フレーム
   約99kT(6本時136kT)。verify_boss_laser.py 72件。
+
+## Round145 follow-up40: EbuzとEbuzIIの耐久値を倍に(2026-09-24)
+
+- ユーザー: "EbuzとEbuzIIの耐久値を倍に"。EBUZ_HP_INIT 24→48。EBUZ2_HP_INIT 128→256だが1byteのため
+  EQU 0で256を表す(CHECK_BULLET_VS_EBUZ2はDECして0で撃破 → 256発目で撃破)。EBUZ2_HPを読むのは
+  初期化と被弾の2箇所だけ。
+- 新規verify_ebuz_hp.py(EbuzIIが256発目で撃破)、verify_ebuz_integration.pyの48を更新。
