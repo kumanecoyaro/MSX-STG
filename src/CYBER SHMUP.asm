@@ -11010,7 +11010,7 @@ EBSB_DRAW_FROM_LUT:
     LD A,(IX+E_PARAM0) : ADD A,(HL)
     LD E,A
     LD A,(IX+E_X) : LD D,A
-    CALL SPAWN_EBULLET
+    CALL FIRE_FROM_QUAD
 EBSB_FIRE_DONE:
     RET
 
@@ -11145,7 +11145,7 @@ EBSD_DIAG_DIR_SET:
     OR A
     JR NZ,EBSD_E1_NOFIRE
     LD D,(IX+E_X) : LD E,(IX+E_Y)
-    CALL SPAWN_EBULLET
+    CALL FIRE_FROM_QUAD
 EBSD_E1_NOFIRE:
     POP HL
     XOR A : LD (IX+E_PARAM4),A : LD (IX+E_PARAM5),A  ; reset quadrant-anim seq/timer for this dodge
@@ -16944,3 +16944,16 @@ EFA_NEXT:
     LD DE,5 : ADD HL,DE
     DJNZ EFA_LOOP
     RET
+
+; (2026-09-24、"ウェーブは?"): 上下2パーツ(E_TOP=左上8x8、E_BOT=右下8x8)の敵は両方倒しても
+; 消えずに見えないまま左端まで飛び続けるので、撃つ時は残っているパーツを見る。
+; IN: IX=敵、D,E=左上のX,Y。上が残っていれば(D,E)、下だけなら(D+8,E+8)から撃つ。
+; 両方倒されていれば撃たない。
+FIRE_FROM_QUAD:
+    LD A,(IX+E_TOP) : OR A
+    JP NZ,SPAWN_EBULLET
+    LD A,(IX+E_BOT) : OR A
+    RET Z
+    LD A,D : ADD A,8 : LD D,A
+    LD A,E : ADD A,8 : LD E,A
+    JP SPAWN_EBULLET

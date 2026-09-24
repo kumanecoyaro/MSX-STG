@@ -18582,3 +18582,6 @@ EbuzII弾ビームへの1pxコリジョン追加+ROM予算の共有バンク6オ
   位置から撃っていた)。E2_FIRE_FROM_ALIVE(STATE=1かつTOP/BOTが残る最初の機、全滅なら撃たない)へ。
 - E1(Fighter): EBSD_UPDATEの整列撃ちが墜落中(E_FLAGS!=0、1発目で墜落開始)も撃っていた → 撃たない。
 - 新規verify_enemy_fire_alive.py 13件。ROM plain 1440。
+- (続き、"ウェーブは?") ウェーブ(EBSB)とE1型の回避時の弾(EBSD)も、上下2パーツ(E_TOP/E_BOT)を
+  両方倒しても消えずに見えないまま飛び続ける機体から撃っていた。FIRE_FROM_QUAD(上が残れば左上、
+  下だけなら+8,+8、両方無ければ撃たない)経由に。verify_enemy_fire_alive.py 18件。

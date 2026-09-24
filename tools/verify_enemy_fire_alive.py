@@ -66,5 +66,30 @@ def fighter(flags):
 b0 = fighter(0); b1 = fighter(1)
 check(f"Fighter level with the player fires as before {b0}", len(b0) == 1)
 check(f"Fighter already crashing (hit once, E_FLAGS=1) no longer fires even when level with the player {b1}", b1 == [])
+
+# (2026-09-24、"ウェーブは?"): 上下2パーツの敵(ウェーブ/E1型)は残っているパーツから撃つ
+def quad(top, bot):
+    z = Z80(bytearray(mem))
+    z.wr(E + sym['E_TOP'], top); z.wr(E + sym['E_BOT'], bot)
+    z.d, z.e = 100, 50
+    call(z, 'FIRE_FROM_QUAD', ix=E)
+    return bullets(z)
+check(f"two-part enemy, both parts alive -> fires from the top-left part {quad(1, 1)}", quad(1, 1) == [(100, 58)])
+check(f"only the bottom-right part left -> fires from it (+8,+8) {quad(0, 1)}", quad(0, 1) == [(108, 66)])
+check(f"both parts destroyed (it keeps flying invisibly) -> no shot {quad(0, 0)}", quad(0, 0) == [])
+check("Wave (EBSB) and the E1-type dodge shot both fire through FIRE_FROM_QUAD",
+      text.count("CALL FIRE_FROM_QUAD") == 2)
+# 実際のウェーブの発射処理で: 両パーツ撃破済みなら撃たない
+def wave(top, bot):
+    z = Z80(bytearray(mem))
+    z.wr(E + sym['E_ACTIVE'], 1); z.wr(E + sym['E_TYPE'], sym['TYPE_ENEMY1_LOOK'])
+    z.wr(E + sym['E_X'], sym['ENEMY_CENTER_X'] - 2); z.wr(E + sym['E_PARAM0'], 60); z.wr(E + sym['E_STATE'], 0)
+    z.wr(E + sym['E_PARAM1'], 1); z.wr(E + sym['E_PARAM2'], 0); z.wr(E + sym['E_SPRNUM'], 9)
+    z.wr(E + sym['E_TOP'], top); z.wr(E + sym['E_BOT'], bot)
+    call(z, 'EBSB_UPDATE', ix=E)
+    return bullets(z)
+w11, w00 = wave(1, 1), wave(0, 0)
+check(f"real Wave update crossing the centre as the chosen shooter: fires when alive {w11}, not when both parts are "
+      f"already destroyed {w00}", len(w11) == 1 and w00 == [])
 print(f"\n{len(ok)} passed, {len(fail)} failed")
 sys.exit(1 if fail else 0)
