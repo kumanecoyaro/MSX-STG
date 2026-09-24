@@ -18649,3 +18649,19 @@ EbuzII弾ビームへの1pxコリジョン追加+ROM予算の共有バンク6オ
   H.TIMIフックの飛び先番地のみ。
 - Stage2の空き: 1596→5729byte(INITが短くなってTERRAIN_LUTのALIGNが1ページ前へ、9A00h台のデータ
   削除でさらに前へ詰まった分を含む)。GFX2区画は2882byte、ゲームオーバーバンクの残りは約11.9KB。
+
+## セッション引継ぎ(2026-09-24、follow-up44の直後)
+
+- 作業ブランチ: `claude/msx-stg-github-integration-cont-g3od47`(最新コミットまでpush済み、未コミットなし)。
+- 直近の状態: Stage1(follow-up43)・Stage2(follow-up44)とも起動時1回きりの絵柄データと転送処理を
+  別バンクへ移し終えた。ROM残り: Stage1 plain 2876 / Comb 2826byte、Stage2 5729byte。
+  受け皿の残り: タイトルbank1 約10.4KB、bank7(ゲームオーバー+GFX2) 約11.9KB、bank6 55byte。
+- ユーザーの振り返り(方針として記録): 「初期化処理は最初からINITとして、1回限定の処理は分けておく
+  べきだった」。今後、起動時に1回だけ使う絵柄/転送を足す時は、最初からStage1はGFX_LIST(タイトル
+  bank1→RAM D300h)、Stage2はGFX2_LIST(bank7)の区画へ入れ、ROM本体に置かないこと。
+  「空き1KBを常に残す」ルールは今回は入れない(ユーザー判断)。
+- 保留中の指示なし。次の指示待ち。Ebuz Mission1リセットTODOは引き続き着手しない。
+- 常設の運用: 日本語で報告、変更のたびにComb ROMを送付、対象を絞ったテストのみ(combined_test.asmを
+  変えた時だけrun_all.py)、Stage1変更後はpatch_ebuz2_mk2.py→build_full_rom.py→
+  verify_ebuz2_mk2_comb.py→verify_comb.py、未追跡PNGをリポジトリに残さない、見た目の確認は
+  レンダリングで先に見せる。
