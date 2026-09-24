@@ -68,8 +68,9 @@ check(f"Fighter level with the player fires as before {b0}", len(b0) == 1)
 check(f"Fighter already crashing (hit once, E_FLAGS=1) no longer fires even when level with the player {b1}", b1 == [])
 
 # (2026-09-24、"ウェーブは?"): 上下2パーツの敵(ウェーブ/E1型)は残っているパーツから撃つ
-def quad(top, bot):
+def quad(top, bot, typ=None):
     z = Z80(bytearray(mem))
+    z.wr(E + sym['E_TYPE'], typ if typ is not None else sym['TYPE_ENEMY1_LOOK'])
     z.wr(E + sym['E_TOP'], top); z.wr(E + sym['E_BOT'], bot)
     z.d, z.e = 100, 50
     call(z, 'FIRE_FROM_QUAD', ix=E)
@@ -77,6 +78,8 @@ def quad(top, bot):
 check(f"two-part enemy, both parts alive -> fires from the top-left part {quad(1, 1)}", quad(1, 1) == [(100, 58)])
 check(f"only the bottom-right part left -> fires from it (+8,+8) {quad(0, 1)}", quad(0, 1) == [(108, 66)])
 check(f"both parts destroyed (it keeps flying invisibly) -> no shot {quad(0, 0)}", quad(0, 0) == [])
+check(f"Fighter (TYPE_ENEMY4, tracked by HP, E_TOP/E_BOT stay 0) still fires {quad(0, 0, sym['TYPE_ENEMY4'])}",
+      quad(0, 0, sym['TYPE_ENEMY4']) == [(100, 58)])
 check("Wave (EBSB) and the E1-type dodge shot both fire through FIRE_FROM_QUAD",
       text.count("CALL FIRE_FROM_QUAD") == 2)
 # 実際のウェーブの発射処理で: 両パーツ撃破済みなら撃たない

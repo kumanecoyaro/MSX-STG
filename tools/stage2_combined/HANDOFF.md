@@ -18585,3 +18585,6 @@ EbuzII弾ビームへの1pxコリジョン追加+ROM予算の共有バンク6オ
 - (続き、"ウェーブは?") ウェーブ(EBSB)とE1型の回避時の弾(EBSD)も、上下2パーツ(E_TOP/E_BOT)を
   両方倒しても消えずに見えないまま飛び続ける機体から撃っていた。FIRE_FROM_QUAD(上が残れば左上、
   下だけなら+8,+8、両方無ければ撃たない)経由に。verify_enemy_fire_alive.py 18件。
+- (続き) 直前のコミットでFIRE_FROM_QUADがFighter(TYPE_ENEMY4、耐久値管理でE_TOP/E_BOTは0のまま)の
+  回避時の弾まで止めていた(verify_enemy_bullets.pyが2件失敗して発覚、コミット後に気づいた)。
+  TYPE_ENEMY4はパーツを見ずに撃つよう修正。verify_enemy_bullets 60・verify_enemy_fire_alive 19件。
