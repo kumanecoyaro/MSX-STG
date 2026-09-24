@@ -18694,3 +18694,29 @@ EbuzII弾ビームへの1pxコリジョン追加+ROM予算の共有バンク6オ
 - Stage2の空き: 5729→5473byte。
 - (同日追記) ユーザー指示"では4にしてみて"でHORMING_TURN_FRAMES 6→4(小回り寄り)。
 - 調整用: HORMING_TURN_FRAMES(大きいほど大回り)、HORMING_APPROACH_DX(最後の水平進入の長さ)。
+
+## Round145 follow-up46: Stage1 ウェーブのアニメ・スプライト敵の弾抜け・Ebuz交互連射の発射列(2026-09-24)
+
+- ユーザー: "エネミーのウェーブが上下移動時アニメしてないので アニメするように 同系統のシンプルやジグザクは
+  アニメしてるので参考に で、この系統のヒット位置で判定してる敵で おそらく丁度Y位置真ん中を撃つと弾抜けが
+  起こってる あとEbuzの交互連射が本体から1セル離れた位置から発射してるんで右に1セルずらして"。
+- ウェーブ: 旧ENEMY5_ANIM_STEPは共有のPAT_ENEMY1_LOOKを書き換えていたが、ウェーブは各自の絵の枠
+  (E_PARAM3)で描くようになっていたので効いていなかった。EBSB_UPDATEの属性書き込み後にCALL EBSB_ANIM
+  (本体はファイル末尾): サイン移動中(E_PARAM5=0)はシンプルと同じ1,2,3,2をENEMY1_ANIM_FRAME_LENごとに進め
+  (コマ=E_PARAM4、待ち=未使用のE_DELAY)、頂点/下限の水平ドリフト中は基本コマへ戻す。ENEMY5_ANIM_STEPは
+  触っていない(害は無いが今は空回り)。
+- 弾抜け: TMS9918のスプライトは属性Y+1の行から表示されるので、8x8パーツは実際にはY+1〜Y+8に見える。
+  QUAD_HIT_TESTはY〜Y+7で判定していたため上パーツの最下段(=本体の真ん中の行)が判定外だった。
+  スプライトで描く敵(シンプル/E4・ウェーブ・ジグザグA/B)の17箇所をQUAD_HIT_TEST_SPR(E+1で判定、Eは戻す、
+  ファイル末尾)へ。BGで描くEnemy3(E3_HIT_ONE_SLOT)は従来のまま。
+- Ebuz: 上下交互の継続弾だけ発射列22→23(新EQU EBUZ_LANE_FIRE_COL)。弾の右半分が翼帯の先頭の空白セル
+  (列24)に重なる。初弾(bullet0)は22のまま。
+- 新規tools/verify_wave_anim_hit.py 12件(旧コードでは7件失敗を確認): ウェーブのコマ送り/ドリフト中の
+  基本コマ/VRAMの絵、シンプル・ウェーブを実際のENEMY_POOL_UPDATE_ALL+CHECK_BULLET_VS_ENEMY_POOLで
+  毎フレーム回し「弾の線が見えている絵に重なったのに当たらず抜ける」組み合わせが0件、ジグザグ単機の静的確認。
+  verify_ebuz_integration.pyの発射列/RECOIL形状の期待値を更新(109件PASS)。verify_enemy_pool_scan.pyは
+  HEADとの一致を見るリファクタ用なので今回の挙動変更で当然差が出る。
+- ROM: Stage1 plain 2814 / Comb 2764(最初はアニメを本体内に置いてComb側がALIGNを越え2564になったので
+  末尾のサブルーチンへ移した)。patch_ebuz2_mk2→build_full_rom→verify_ebuz2_mk2_comb 48件・verify_comb PASS。
+- 気づいた既存の問題(未修正、報告のみ): 自機との接触判定PDC_CHECK_ENEMY_POOLはウェーブにもE_Yを使うが、
+  ウェーブはE_Yを一度も書かない(0のまま)ので、ウェーブ本体との体当たり判定が実質効いていない。

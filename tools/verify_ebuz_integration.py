@@ -321,16 +321,19 @@ step_frame(z)
 check(f"{PT}フレーム目でEBUZ_ST_FIREへ遷移", srd(z, S0, "ACT") == sym["EBUZ_ST_FIRE"])
 
 step_frame(z)
-check("FIRE突入1フレーム目: 上レーンへ1発発射",
-      any(z.rd(sa(S0, "TOP_COLS") + i) == sym["EBUZ_BULLET1_COL"] for i in range(8)))
-check("発射直後、上翼帯はRECOIL形状[空,空,A,B,C]",
-      [vrd(z, cell(8, 24 + i)) for i in range(5)] == [BC, BC, A_, B_, C_])
+# (2026-09-24、"交互連射が本体から1セル離れた位置から発射...右に1セルずらして"):
+# 継続弾はEBUZ_LANE_FIRE_COL(23)から。弾の右半分が翼帯先頭(列24、空白セル)に重なる。
+check("FIRE突入1フレーム目: 上レーンへ1発発射(列EBUZ_LANE_FIRE_COL=23)",
+      sym["EBUZ_LANE_FIRE_COL"] == 23 and
+      any(z.rd(sa(S0, "TOP_COLS") + i) == sym["EBUZ_LANE_FIRE_COL"] for i in range(8)))
+check("発射直後、弾は列23-24、上翼帯はRECOIL形状[弾R,空,A,B,C](本体との隙間なし)",
+      [vrd(z, cell(8, 23 + i)) for i in range(6)] == [BL, BR, BC, A_, B_, C_])
 step_frame(z)
 check("発射1フレーム後、上翼帯はREST形状[空,A,B,C,空]に戻る",
       [vrd(z, cell(8, 24 + i)) for i in range(5)] == [BC, A_, B_, C_, BC])
 step_frame(z)
 check("次の発射(2フレーム後)は下レーンへ(交互発射)",
-      any(z.rd(sa(S0, "BOTTOM_COLS") + i) == sym["EBUZ_BULLET1_COL"] for i in range(8)))
+      any(z.rd(sa(S0, "BOTTOM_COLS") + i) == sym["EBUZ_LANE_FIRE_COL"] for i in range(8)))
 
 # ============================================================
 # 6. 生存時間(EBUZ_LIFETIME_FRAMES) - 満了で強制EXIT、残存弾は全消去

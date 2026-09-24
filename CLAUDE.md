@@ -45,8 +45,11 @@
   1行足し、データはGFX2_MOVEへ名前を足す(INIT以外でも読むならGFX2_DUP)**。Stage2のROM残量は
   C000h未満の番地だけで数えること(build_banks()はC000h以上を捨てる)。
 
-## Stage1 ROM予算(2026-09-24、Round145 follow-up43時点で**plain 2876byte /
-Comb 2826byte**・恒久的に確認必須、Combの方が少ない)
+## Stage1 ROM予算(2026-09-24、Round145 follow-up46時点で**plain 2814byte /
+Comb 2764byte**・恒久的に確認必須、Combの方が少ない)
+
+- **(2026-09-24、follow-up46)** スプライトで描く敵のパーツ当たりはQUAD_HIT_TEST_SPR(表示に合わせY+1)を
+  使うこと。BGで描く敵(Enemy3等)は従来のQUAD_HIT_TEST。
 
 - **(2026-09-24、follow-up43)** 起動時に1回だけVRAMへ送る絵柄データ(58ブロック)と転送の一覧表
   (GFX_LIST_n)をRAM区画(`STAGE1_GFX_RAM`=D300h〜、ソース末尾で`ORG`)へ移し、INIT内の連続した

@@ -3048,14 +3048,14 @@ CHECK_BULLET_VS_FORMATION_A:
     LD A,(E2A_U0_TOP) : OR A : JR Z,CBF_SKIP1_A
     LD A,(E2A_U0_X) : LD D,A
     LD A,(E2A_U0_Y) : LD E,A
-    CALL QUAD_HIT_TEST
+    CALL QUAD_HIT_TEST_SPR
     OR A
     JP NZ,CBF_KILL_U0_TOP_A
 CBF_SKIP1_A:
     LD A,(E2A_U0_BOT) : OR A : JR Z,CBF_SKIP2_A
     LD A,(E2A_U0_X) : ADD A,8 : LD D,A
     LD A,(E2A_U0_Y) : ADD A,8 : LD E,A
-    CALL QUAD_HIT_TEST
+    CALL QUAD_HIT_TEST_SPR
     OR A
     JP NZ,CBF_KILL_U0_BOT_A
 CBF_SKIP2_A:
@@ -3063,14 +3063,14 @@ CBF_SKIP2_A:
     LD A,(E2A_U1_TOP) : OR A : JR Z,CBF_SKIP3_A
     LD A,(E2A_U1_X) : LD D,A
     LD A,(E2A_U1_Y) : LD E,A
-    CALL QUAD_HIT_TEST
+    CALL QUAD_HIT_TEST_SPR
     OR A
     JP NZ,CBF_KILL_U1_TOP_A
 CBF_SKIP3_A:
     LD A,(E2A_U1_BOT) : OR A : JR Z,CBF_SKIP4_A
     LD A,(E2A_U1_X) : ADD A,8 : LD D,A
     LD A,(E2A_U1_Y) : ADD A,8 : LD E,A
-    CALL QUAD_HIT_TEST
+    CALL QUAD_HIT_TEST_SPR
     OR A
     JP NZ,CBF_KILL_U1_BOT_A
 CBF_SKIP4_A:
@@ -3078,14 +3078,14 @@ CBF_SKIP4_A:
     LD A,(E2A_U2_TOP) : OR A : JR Z,CBF_SKIP5_A
     LD A,(E2A_U2_X) : LD D,A
     LD A,(E2A_U2_Y) : LD E,A
-    CALL QUAD_HIT_TEST
+    CALL QUAD_HIT_TEST_SPR
     OR A
     JP NZ,CBF_KILL_U2_TOP_A
 CBF_SKIP5_A:
     LD A,(E2A_U2_BOT) : OR A : JP Z,CBF_MISS_A
     LD A,(E2A_U2_X) : ADD A,8 : LD D,A
     LD A,(E2A_U2_Y) : ADD A,8 : LD E,A
-    CALL QUAD_HIT_TEST
+    CALL QUAD_HIT_TEST_SPR
     OR A
     JP Z,CBF_MISS_A
 CBF_KILL_U2_BOT_A:
@@ -3163,14 +3163,14 @@ CHECK_BULLET_VS_FORMATION_B:
     LD A,(E2B_U0_TOP) : OR A : JR Z,CBF_SKIP1_B
     LD A,(E2B_U0_X) : LD D,A
     LD A,(E2B_U0_Y) : LD E,A
-    CALL QUAD_HIT_TEST
+    CALL QUAD_HIT_TEST_SPR
     OR A
     JP NZ,CBF_KILL_U0_TOP_B
 CBF_SKIP1_B:
     LD A,(E2B_U0_BOT) : OR A : JR Z,CBF_SKIP2_B
     LD A,(E2B_U0_X) : ADD A,8 : LD D,A
     LD A,(E2B_U0_Y) : ADD A,8 : LD E,A
-    CALL QUAD_HIT_TEST
+    CALL QUAD_HIT_TEST_SPR
     OR A
     JP NZ,CBF_KILL_U0_BOT_B
 CBF_SKIP2_B:
@@ -3178,14 +3178,14 @@ CBF_SKIP2_B:
     LD A,(E2B_U1_TOP) : OR A : JR Z,CBF_SKIP3_B
     LD A,(E2B_U1_X) : LD D,A
     LD A,(E2B_U1_Y) : LD E,A
-    CALL QUAD_HIT_TEST
+    CALL QUAD_HIT_TEST_SPR
     OR A
     JP NZ,CBF_KILL_U1_TOP_B
 CBF_SKIP3_B:
     LD A,(E2B_U1_BOT) : OR A : JR Z,CBF_SKIP4_B
     LD A,(E2B_U1_X) : ADD A,8 : LD D,A
     LD A,(E2B_U1_Y) : ADD A,8 : LD E,A
-    CALL QUAD_HIT_TEST
+    CALL QUAD_HIT_TEST_SPR
     OR A
     JP NZ,CBF_KILL_U1_BOT_B
 CBF_SKIP4_B:
@@ -3193,14 +3193,14 @@ CBF_SKIP4_B:
     LD A,(E2B_U2_TOP) : OR A : JR Z,CBF_SKIP5_B
     LD A,(E2B_U2_X) : LD D,A
     LD A,(E2B_U2_Y) : LD E,A
-    CALL QUAD_HIT_TEST
+    CALL QUAD_HIT_TEST_SPR
     OR A
     JP NZ,CBF_KILL_U2_TOP_B
 CBF_SKIP5_B:
     LD A,(E2B_U2_BOT) : OR A : JP Z,CBF_MISS_B
     LD A,(E2B_U2_X) : ADD A,8 : LD D,A
     LD A,(E2B_U2_Y) : ADD A,8 : LD E,A
-    CALL QUAD_HIT_TEST
+    CALL QUAD_HIT_TEST_SPR
     OR A
     JP Z,CBF_MISS_B
 CBF_KILL_U2_BOT_B:
@@ -10944,6 +10944,15 @@ EBSB_DRAW_FROM_LUT:
     LD A,SPR_GRAY : OUT (98h),A      ; color
     PUSH BC : POP BC : NOP : NOP
     EI
+    ; (2026-09-24、"ウェーブが上下移動時アニメしてないので アニメするように
+    ; 同系統のシンプルやジグザクはアニメしてるので参考に"): シンプル(EBSD_ANIM_*)と
+    ; 同じ1,2,3,2の4コマを、サイン移動中(E_PARAM5=0)だけENEMY1_ANIM_FRAME_LEN
+    ; ごとに進め、頂点/下限の水平ドリフト中(E_PARAM5!=0)は基本コマへ戻す。
+    ; コマ番号はE_PARAM4(SIMPLE_REDRAWが読む)、待ち数はこのBEHAVIORで未使用の
+    ; E_DELAY。スプライト属性の書き込み(上)が終わってからVRAMを触ること。
+    ; 旧ENEMY5_ANIM_STEPは共有のPAT_ENEMY1_LOOKを書き換えていたが、ウェーブは
+    ; 各自の絵の枠(E_PARAM3)で描くようになっていたため効いていなかった。
+    CALL EBSB_ANIM
     ; "E1,E2,E5はランダムに3から5機に一度発射 ただし斜め移動中のみ" -
     ; this BEHAVIOR (continuous left-drift + sine-wave bob) has no
     ; discrete diagonal phase, unlike Enemy1's one-shot dodge or
@@ -11376,7 +11385,7 @@ EBSB_HIT_TEST:
     LD HL,ENEMY4_SINE_LUT : ADD HL,DE
     LD A,(IX+E_PARAM0) : ADD A,(HL) : LD E,A
     LD A,(IX+E_X) : LD D,A
-    CALL QUAD_HIT_TEST
+    CALL QUAD_HIT_TEST_SPR
     OR A
     JR NZ,EBSB_HT_KILL_TOP
 EBSB_HT_CHECKBOT:
@@ -11385,7 +11394,7 @@ EBSB_HT_CHECKBOT:
     LD HL,ENEMY4_SINE_LUT : ADD HL,DE
     LD A,(IX+E_PARAM0) : ADD A,(HL) : ADD A,8 : LD E,A
     LD A,(IX+E_X) : ADD A,8 : LD D,A
-    CALL QUAD_HIT_TEST
+    CALL QUAD_HIT_TEST_SPR
     OR A
     JR Z,EBSBH_NO
     XOR A : LD (IX+E_BOT),A
@@ -11443,14 +11452,14 @@ EBSD_HIT_TEST:
     LD A,(IX+E_TOP) : OR A : JR Z,EBSD_HT_CHECKBOT
     LD A,(IX+E_X) : LD D,A
     LD A,(IX+E_Y) : LD E,A
-    CALL QUAD_HIT_TEST
+    CALL QUAD_HIT_TEST_SPR
     OR A
     JR NZ,EBSD_HT_KILL_TOP
 EBSD_HT_CHECKBOT:
     LD A,(IX+E_BOT) : OR A : JR Z,EBSD_HT_NO
     LD A,(IX+E_X) : ADD A,8 : LD D,A
     LD A,(IX+E_Y) : ADD A,8 : LD E,A
-    CALL QUAD_HIT_TEST
+    CALL QUAD_HIT_TEST_SPR
     OR A
     JR Z,EBSD_HT_NO
     XOR A : LD (IX+E_BOT),A
@@ -11497,7 +11506,7 @@ EBSD_HT_NO:
 EBSD_HT_ENEMY4:
     LD A,(IX+E_Y) : ADD A,8 : LD E,A   ; +8: art/hitbox is the bottom half only
     LD A,(IX+E_X) : LD D,A
-    CALL QUAD_HIT_TEST
+    CALL QUAD_HIT_TEST_SPR
     OR A
     JR Z,EBSD_HT_NO
     LD A,(IX+E_FLAGS)
@@ -12324,7 +12333,11 @@ EBUZ_ROW_INST1           EQU 9     ; 1体目("位置はY中央で")
 EBUZ_ROW_INST2           EQU 12    ; 2体目("スポーン位置2体目がRow12")
 EBUZ_ROW_INST3           EQU 5     ; 3体目("3体目Row5")
 EBUZ_SPAWN_COL           EQU 24    ; 本体の固定列(X=192px、プロトタイプ踏襲)
-EBUZ_BULLET1_COL         EQU 22    ; 初弾/継続弾の発射列(プロトタイプ踏襲)
+EBUZ_BULLET1_COL         EQU 22    ; 初弾の発射列(プロトタイプ踏襲)
+; (2026-09-24、"Ebuzの交互連射が本体から1セル離れた位置から発射してるんで右に
+; 1セルずらして"): 上下交互の継続弾だけ22→23(翼帯の先頭セル=本体列24は空白なので
+; 弾の右半分がそこへ重なり、隙間が無くなる)。初弾(bullet0)は22のまま。
+EBUZ_LANE_FIRE_COL       EQU 23
 EBUZ_EXIT_COL_FRAMES     EQU 3     ; 退出速度: 1列あたりのフレーム数(未調整の初期値)
 ; EBUZ_EXIT_COL_MAX(2026-09-14自己発見バグ経由での訂正): 翼帯行は
 ; 5列幅(col+0..+4)のため、name tableが32列/行である以上、COLが27を
@@ -12695,10 +12708,10 @@ EBUZ_FTB_OK:
     LD A,EBUZ_OFS_TOP_COLS
     ADD A,B
     CALL EBUZ_FIELD_ADDR
-    LD A,EBUZ_BULLET1_COL
+    LD A,EBUZ_LANE_FIRE_COL
     LD (HL),A
     CALL EBUZ_ADDR_TOPBAND
-    LD E,EBUZ_BULLET1_COL : LD D,0
+    LD E,EBUZ_LANE_FIRE_COL : LD D,0
     ADD HL,DE
     LD B,EBUZ_BULLET_L_CODE : LD C,EBUZ_BULLET_R_CODE
     CALL EBUZ_WRITE2
@@ -12717,10 +12730,10 @@ EBUZ_FBB_OK:
     LD A,EBUZ_OFS_BOTTOM_COLS
     ADD A,B
     CALL EBUZ_FIELD_ADDR
-    LD A,EBUZ_BULLET1_COL
+    LD A,EBUZ_LANE_FIRE_COL
     LD (HL),A
     CALL EBUZ_ADDR_BOTBAND
-    LD E,EBUZ_BULLET1_COL : LD D,0
+    LD E,EBUZ_LANE_FIRE_COL : LD D,0
     ADD HL,DE
     LD B,EBUZ_BULLET_L_CODE : LD C,EBUZ_BULLET_R_CODE
     CALL EBUZ_WRITE2
@@ -17107,3 +17120,42 @@ GAUGE_TILES:
     DB 00h,00h,00h,00h,00h,00h,00h,00h        ; 129 端数(動的)
 STAGE1_GFX_RAM_END:
     ORG STAGE1_ROM_RESUME
+
+; ウェーブのアニメ(EBSB_UPDATEから呼ぶ、説明はそちら)。IX=スロット先頭、IXは保持。
+EBSB_ANIM:
+    LD A,(IX+E_PARAM5)
+    OR A
+    JR NZ,EBSB_ANIM_FROZEN
+    LD A,(IX+E_DELAY)
+    OR A
+    JR Z,EBSB_ANIM_STEP
+    DEC A : LD (IX+E_DELAY),A
+    RET
+EBSB_ANIM_STEP:
+    LD A,(IX+E_PARAM4) : INC A : AND 3 : LD (IX+E_PARAM4),A
+    JR EBSB_ANIM_REDRAW
+EBSB_ANIM_FROZEN:
+    LD A,(IX+E_PARAM4)
+    OR A
+    RET Z
+    XOR A : LD (IX+E_PARAM4),A
+EBSB_ANIM_REDRAW:
+    LD A,ENEMY1_ANIM_FRAME_LEN : LD (IX+E_DELAY),A
+    PUSH IX
+    PUSH IX : POP HL
+    LD A,(IX+E_PARAM3)
+    CALL SIMPLE_REDRAW
+    POP IX
+    RET
+
+; (2026-09-24、"この系統のヒット位置で判定してる敵で おそらく丁度Y位置真ん中を
+; 撃つと弾抜けが起こってる"): TMS9918のスプライトは属性のY+1の行から表示される
+; ので、スプライトで描く敵(シンプル/ウェーブ/ジグザグ/E4)の8x8パーツは実際には
+; Y+1〜Y+8に見えている。QUAD_HIT_TESTはY〜Y+7で判定していたため、上パーツの
+; 最下段(=本体の真ん中の行)が判定から1行はみ出し、ちょうどそこを通る弾が抜けていた。
+; Y+1で判定する入口。E(=爆発位置にも使われる)は元に戻して返す。
+QUAD_HIT_TEST_SPR:
+    INC E
+    CALL QUAD_HIT_TEST
+    DEC E
+    RET
