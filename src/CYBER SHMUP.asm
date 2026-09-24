@@ -236,6 +236,11 @@ CLOUDN_WAIT   EQU 0EF20h
 ; 32スロット時代の跡地(E8ED-EACB、未使用)へ移した。1スロット6byte:
 ; +0 ACT, +1/+2 ADDR, +3 COL, +4 ROW, +5 PAT。
 BULLET_SLOTS EQU 5
+; (2026-09-24、"ギャップ埋めのウェイトを"): 空いているスロット1つにつき、弾1発を
+; 処理したのと同じくらい空回りして、撃っている時と撃っていない時の速さの差を埋める。
+; 実測の弾1発の重さは約2,300〜6,500T(敵が多いほど重い)。実機で調整する値。
+BULLET_IDLE_T     EQU 3000
+BULLET_IDLE_LOOPS EQU BULLET_IDLE_T/26      ; BIP_WAITの1周=26T
 BULLET_POOL  EQU 0E8F0h   ; BULLET_SLOTS*6 = 30 bytes (E8F0h-E90Dh)
 BULLETC_ACT  EQU 0E90Eh   ; 処理中のスロットのコピー(6 bytes、E90Eh-E913h)
 BULLETC_ADDR EQU 0E90Fh
@@ -2799,6 +2804,7 @@ ENEMY_SECTION_DONE:
     ; --- or the sky blank otherwise - so the shot never leaves a ---
     ; --- hole in the terrain behind it.                          ---
     ; ============================================================
+    CALL BULLET_IDLE_PAD
     LD HL,BULLET_STEP
     CALL BULLET_EACH
 
@@ -14798,7 +14804,7 @@ COLORDATA:
     DB 0F4h    ; group3 codes 24-31 backslash family (unused, matched anyway)
     DB 0F4h    ; group4 codes 32-39 wedge family (white/blue, cloud design)
     DB 0F4h    ; group5 codes 40-47 wedge family (white/blue, cloud design)
-    DB 44h,0D4h,0D3h,0DFh,0DAh,0F4h,0FFh,0F3h,0FAh,084h  ; group6=BLANKCODE, group7=shot-blue, group8=shot-green, group9=shot-white, group10=shot-brown, group11=anim1-blue(white/blue, DEBUG was yellow), group12=anim1-white(white/white, DEBUG), group13=anim1-green(white/lightgreen, DEBUG), group14=anim1-brown(white/brown, DEBUG), group15=anim2-blue(red/blue)
+    DB 44h,0F4h,0D3h,0DFh,0DAh,0F4h,0FFh,0F3h,0FAh,084h  ; group6=BLANKCODE, group7=shot(2026-09-24から白/青、旧0D4h), group8=shot-green, group9=shot-white, group10=shot-brown, group11=anim1-blue(white/blue, DEBUG was yellow), group12=anim1-white(white/white, DEBUG), group13=anim1-green(white/lightgreen, DEBUG), group14=anim1-brown(white/brown, DEBUG), group15=anim2-blue(red/blue)
     DB 08Fh,083h,08Ah,0E4h,0E4h,0E8h,0F1h,0F1h,0E4h,0E4h  ; group16=anim2-white, group17=anim2-green, group18=anim2-brown, group19=enemy3-pat1(gray/blue), group20=enemy3-pat2(gray/blue), group21=enemy3-pat3(gray/red), group22=digits0-7(white/black), group23=digits8-9(white/black), group24=BOSS gray/blue, group25=BOSS gray/blue
     DB 0E4h,0E4h,014h,014h,014h,084h                       ; group26=BOSS gray/blue, group27=BOSS gray/blue, group28-30=BOSS black/blue, group31=BOSS red/blue
 COLOR_LEN EQU 32
@@ -16696,4 +16702,25 @@ BULLETC_ERASE_GOT:
     RET
 BS_OFF:
     XOR A : LD (BULLETC_ACT),A
+    RET
+
+; 空いているスロット1つにつきBULLET_IDLE_T(約)だけ空回りする(BULLET_IDLE_Tの説明参照)。
+BULLET_IDLE_PAD:
+    LD HL,BULLET_POOL : LD DE,6 : LD A,BULLET_SLOTS
+BIP_LOOP:
+    PUSH AF
+    LD A,(HL)
+    OR A
+    JR NZ,BIP_NEXT
+    LD BC,BULLET_IDLE_LOOPS
+BIP_WAIT:
+    DEC BC
+    LD A,B
+    OR C
+    JR NZ,BIP_WAIT
+BIP_NEXT:
+    ADD HL,DE
+    POP AF
+    DEC A
+    JR NZ,BIP_LOOP
     RET

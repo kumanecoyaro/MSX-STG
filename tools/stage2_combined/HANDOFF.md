@@ -18504,3 +18504,15 @@ EbuzII弾ビームへの1pxコリジョン追加+ROM予算の共有バンク6オ
   1発あたり約2,000〜6,500T(敵が多いほど当たり判定が増える)。
 - ROM: plain 1861 / Comb 1811byte(588→1861)。新規verify_shot_pool.py 6件、verify_boss_y_shift/
   verify_mainloop_loop_boundsを新構造に合わせて更新。
+
+## Round145 follow-up34: 撃つ/撃たないの速さの差を埋める空回り+弾を白に(2026-09-24)
+
+- ユーザー: "これちょうどいいかな ではギャップ埋めのウェイトを で、弾の色をホワイトに"(発射間隔
+  FIRE_COOLDOWN_LEN=1=弾の間に1発分の隙間、はそのまま)。
+- BULLET_IDLE_PAD: MAINLOOPで弾の処理の直前に、空きスロット1つにつきBULLET_IDLE_T(3000T、
+  BULLET_IDLE_LOOPS=T/26のDEC BCループ)空回り。実機で調整する値。
+- 実測(5発、押しっぱなし vs 押さない、follow-up33と同じ3地点): 撃たない 65.8k/71.9k/74.3kT、
+  撃つ 62.0k/73.6k/90.2kT(差 -3.8k/+1.7k/+15.8k)。敵が多い場面は弾1発が約6,500Tになるので
+  固定値では埋めきれない。撃たない時も持ち時間(約59,700T)を超えるので全体に少し遅くなる。
+- 弾の色: COLORDATA group7(codes56-63)を0D4h→0F4h(白/青)。
+- verify_shot_pool.py 7件(空回りの量を追加)。ROM plain 1834 / Comb 1784。

@@ -92,5 +92,20 @@ check("boss materializing: shots in slots 3/4 reaching col25 are deflected into 
       "deactivated", acts(z)[3:] == [0, 0] and z.rd(sym['DFL0_ACT']) == 1 and z.rd(sym['DFL1_ACT']) == 1
       and z.rd(sym['DFL0_Y']) == 8 * 8 and z.rd(sym['DFL1_Y']) == 9 * 8)
 
+# (2026-09-24、"ギャップ埋めのウェイトを"): 空きスロット1つにつき約BULLET_IDLE_T空回り
+def pad_t(z):
+    t0 = z.tstates; call(z, 'BULLET_IDLE_PAD'); return z.tstates - t0
+z = boot()
+for i in range(N): z.wr(P + i * 6, 0)
+t_empty = pad_t(z)
+for i in range(N): z.wr(P + i * 6, 1)
+t_full = pad_t(z)
+for i in range(N): z.wr(P + i * 6, 1 if i < 2 else 0)
+t_three = pad_t(z)
+IT = sym['BULLET_IDLE_T']
+check(f"BULLET_IDLE_PAD: about BULLET_IDLE_T ({IT}T) per empty slot - all empty {t_empty}T, all busy {t_full}T, "
+      f"3 empty {t_three}T", abs((t_empty - t_full) - N * IT) < N * 60 and abs((t_three - t_full) - 3 * IT) < 3 * 60
+      and t_full < 400)
+
 print(f"\n{len(ok)} passed, {len(fail)} failed")
 sys.exit(1 if fail else 0)
