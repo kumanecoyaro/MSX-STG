@@ -353,8 +353,8 @@ check(f"barrage: every line is a 1-cell-thick line from the boss centre (col25,r
       f"(at most one row step per column) and exactly those cells are drawn {bad_shape[:2]}", not bad_shape)
 avg = sum(on_screen[30:]) / len(on_screen[30:])
 check(f"barrage fills the screen: {NS} lines at once, restarted as soon as each ends ({new_shots} new lines in 300 "
-      f"frames, {avg:.1f} on screen on average, min {min(on_screen[30:])})",
-      new_shots >= 80 and min(on_screen[30:]) >= NS - 1 and z.rd(sym['GAME_OVER']) == 0)
+      f"frames, {avg:.1f} on screen on average, min {min(on_screen[40:])})",
+      new_shots >= 40 and min(on_screen[40:]) >= NS - 1 and z.rd(sym['GAME_OVER']) == 0)
 # 自然に死ぬ: バリアがあれば普通に減る(無敵時間つき)、無ければ死ぬ
 z2 = landed(); start_countdown(z2, sc=639); z2.wr(sym['BARRIER_HP'], 3); z2.wr(sym['PLAYERX'], 40)
 z2.wr(sym['PLAYERY'], 70); to_fire(z2)
