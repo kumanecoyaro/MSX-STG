@@ -48,8 +48,7 @@ HORMING_WANDER_MAX_X = sym["HORMING_WANDER_MAX_X"]
 HORMING_WANDER_WIDTH = sym["HORMING_WANDER_WIDTH"]
 HORMING_MAXX = sym["HORMING_MAXX"]
 HORMING_HOMING_Y_OFFSET = sym["HORMING_HOMING_Y_OFFSET"]
-TANK_WIDTH = sym["TANK_WIDTH"]
-HORMING_SIDE_DIST = sym["HORMING_SIDE_DIST"]
+HORMING_TURN_FRAMES = sym["HORMING_TURN_FRAMES"]
 HORMING_COLOR = sym["HORMING_COLOR"]
 HORMING_SPR_BASE_SLOT = sym["HORMING_SPR_BASE_SLOT"]
 PAT_HORMING_SL = sym["PAT_HORMING_SL"]
@@ -459,60 +458,54 @@ s = slot(cpu, 0)
 check("state1 steps toward TARGET_X (target right -> steps right)", s["x"] == 100 + HORMING_SPEED)
 check("state1 never changes Y (target-right case too)", s["y"] == 42)
 
-# the instant X reaches TARGET_X, switches to state2 (2D pursuit) -
-# "指定した範囲のランダムX位置まで水平移動後ホーミング". round5: the
-# arrival frame itself now ALSO performs one forced DL step - "ホーミ
-# ング開始直後は左斜下に1回だけ必ず移動 自機が右にいた場合に急激な曲
-# がりを防ぐため" - so X/Y both move by HORMING_SPEED on this exact
-# frame, not held in place.
+# the instant X reaches TARGET_X, switches to state2 - round145
+# follow-up45 (慣性): the arrival frame no longer does a forced DL step.
+# It starts the inertial heading pointing the way the wander was going
+# (left -> heading 8 = W), holds it for HORMING_TURN_FRAMES before the
+# first turn, and moves one frame along it right away (no stall frame).
 cpu = fresh_cpu()
 make_slot(cpu, 0, x=100, y=42, facing=2, state=1, target_x=100)  # already exactly at the target
 cpu.ix = slot_addr(0)
 call_routine(cpu, "UPDATE_ONE_HORMING")
 s = slot(cpu, 0)
 check("state1->state2 transition happens the instant X reaches TARGET_X", s["state"] == 2)
-check("the arrival frame's own forced DL step moves X left by HORMING_SPEED", s["x"] == 100 - HORMING_SPEED)
-check("the arrival frame's own forced DL step moves Y down by HORMING_SPEED", s["y"] == 42 + HORMING_SPEED)
-check("the arrival frame's own forced step shows facing DL(1) immediately, not eased", s["facing"] == 1)
+check("arrival: heading starts at W(8), continuing the wander's own direction", s["rise_remain"] == 8)
+check("arrival: turn countdown starts at HORMING_TURN_FRAMES", s["target_x"] == HORMING_TURN_FRAMES)
+check("arrival frame moves one step along W (X-3, Y unchanged)", s["x"] == 100 - 3 and s["y"] == 42)
+check("arrival frame shows facing SL for heading W", s["facing"] == 0)
 
-# real bug caught by inspecting a rendered frame, not the unit tests:
-# an ODD TARGET_X can never be reached by a missile that only ever moves
-# in HORMING_SPEED-px, always-even-parity steps - a plain "step by
-# HORMING_SPEED, check for exact equality" loop would oscillate 1px
-# short/over forever, stuck in state1 permanently. Verify the actual
-# snap-when-within-range fix: a 1px gap (well under HORMING_SPEED) lands
-# exactly on the target (before the arrival frame's own forced DL step
-# then moves it 1 more HORMING_SPEED from there), from both sides.
 cpu = fresh_cpu()
-make_slot(cpu, 0, x=101, y=42, facing=2, state=1, target_x=100)  # 1px right of an odd-parity-mismatched target
+make_slot(cpu, 0, x=100, y=42, facing=3, state=1, target_x=100)  # wander was heading right (DR)
 cpu.ix = slot_addr(0)
 call_routine(cpu, "UPDATE_ONE_HORMING")
 s = slot(cpu, 0)
-check("a sub-HORMING_SPEED gap (missile right of target) snaps onto TARGET_X then takes the forced DL step",
-      s["x"] == 100 - HORMING_SPEED)
-check("and transitions to state2 on that same snap frame (odd-parity target reachable at all)",
-      s["state"] == 2)
+check("arrival after a rightward wander starts heading E(0)", s["rise_remain"] == 0 and s["x"] == 103)
 
+# odd TARGET_X snap (real bug found in an earlier round): a 1px gap
+# still lands on the target and transitions on that frame, from both sides.
 cpu = fresh_cpu()
-make_slot(cpu, 0, x=99, y=42, facing=2, state=1, target_x=100)  # 1px left of the target
+make_slot(cpu, 0, x=101, y=42, facing=2, state=1, target_x=100)
 cpu.ix = slot_addr(0)
 call_routine(cpu, "UPDATE_ONE_HORMING")
 s = slot(cpu, 0)
-check("a sub-HORMING_SPEED gap (missile left of target) also snaps onto TARGET_X then takes the forced DL step",
-      s["x"] == 100 - HORMING_SPEED)
-check("and transitions to state2 on that same snap frame (left-side case too)",
-      s["state"] == 2)
+check("a sub-HORMING_SPEED gap (missile right of target) snaps onto TARGET_X, then moves W",
+      s["x"] == 100 - 3 and s["state"] == 2)
 
-# a gap of exactly HORMING_SPEED (even-parity, the common case) still
-# lands exactly on the target and transitions, same as before this fix
+cpu = fresh_cpu()
+make_slot(cpu, 0, x=99, y=42, facing=2, state=1, target_x=100)
+cpu.ix = slot_addr(0)
+call_routine(cpu, "UPDATE_ONE_HORMING")
+s = slot(cpu, 0)
+check("a sub-HORMING_SPEED gap (missile left of target) also snaps onto TARGET_X",
+      s["x"] == 100 - 3 and s["state"] == 2)
+
 cpu = fresh_cpu()
 make_slot(cpu, 0, x=100 + HORMING_SPEED, y=42, facing=2, state=1, target_x=100)
 cpu.ix = slot_addr(0)
 call_routine(cpu, "UPDATE_ONE_HORMING")
 s = slot(cpu, 0)
-check("a gap of exactly HORMING_SPEED lands on the target, then the forced DL step moves on from there",
-      s["x"] == 100 - HORMING_SPEED and s["state"] == 2)
-check("Y moves by the forced DL step's own HORMING_SPEED on the arrival frame", s["y"] == 42 + HORMING_SPEED)
+check("a gap of exactly HORMING_SPEED lands on the target and transitions",
+      s["x"] == 100 - 3 and s["state"] == 2 and s["y"] == 42)
 
 # the 45-degree-max-turn rule still applies during state1 (DL/DR steps
 # ease in, not snap) - "で方向を変える時は45度まで"
@@ -544,160 +537,242 @@ call_routine(cpu, "UPDATE_ONE_HORMING")
 check("state1 deactivates instead of overflowing off the right edge", slot(cpu, 0)["act"] == 0)
 
 
-# ---- RESOLVE_HORMING_FACING_IX bucket boundaries (restored round4 -
-# state2 is real 2D pursuit again, using the ORIGINAL 5-way classifier
-# from the very first spec message) ----
+# ---- state2 (round145 follow-up45): inertial pursuit ----
+# "発射直後にミサイルより自機が右にいると急に方向を変えてしまう ...
+# 慣性が働くので左に回ってから自機に向かうようにしたい". Heading
+# (IX+5) is 0-8 (0=E .. 4=S .. 8=W, 22.5deg steps), turns at most one
+# step every HORMING_TURN_FRAMES frames; (IX+6) is the turn countdown.
+import math
+HDX = [3, 3, 2, 1, 0, -1, -2, -3, -3]
+HDY = [0, 1, 2, 3, 3, 3, 2, 1, 0]
+HFACE = [4, 4, 3, 3, 2, 1, 1, 0, 0]
+HORMING_AIM_X_OFS = sym["HORMING_AIM_X_OFS"]
+HORMING_H2_MAXY = sym["HORMING_H2_MAXY"]
+for name, want in (("HORMING_HEADING_DX", [v & 0xFF for v in HDX]),
+                   ("HORMING_HEADING_DY", HDY), ("HORMING_HEADING_FACING", HFACE)):
+    got = [out[sym[name] + i] for i in range(9)]
+    check(f"{name} table matches", got == want)
+
+
+def ref_bucket(ax, ay):
+    if ay * 5 <= ax: return 0
+    if ay * 3 <= ax * 2: return 1
+    if ay * 2 <= ax * 3: return 2
+    if ay <= ax * 5: return 3
+    return 4
+
+
+HORMING_APPROACH_DX = sym["HORMING_APPROACH_DX"]
+
+
+def ref_heading(mx, my, tank_x, tgy):
+    """desired heading 0-8. Above bullet height the aim point is
+    HORMING_APPROACH_DX out on the missile's own side of the tank."""
+    d = ((tank_x + HORMING_AIM_X_OFS) & 0xFF) - mx      # >0: tank centre is right
+    dy = ((tgy + HORMING_HOMING_Y_OFFSET) & 0xFF) - my
+    if dy > 0:
+        side = 1 if d >= 0 else -1                        # direction toward the tank
+        aim_dx = d - side * HORMING_APPROACH_DX
+    else:
+        dy = 0
+        aim_dx = d
+    b = ref_bucket(abs(aim_dx), dy)
+    return b if aim_dx >= 0 else 8 - b
+
+
+# HORMING_DESIRED_HEADING_IX vs the reference on a coarse grid, and the
+# reference itself vs the true angle (never more than 1 step = 22.5deg off)
 cpu = fresh_cpu()
-missile_x = 160
-label_to_code = {"SL": 0, "DL": 1, "Down": 2, "DR": 3, "SR": 4}
-cases_right_of_tank = [
-    (0, "Down"),
-    (32, "Down"),      # TANK_WIDTH, boundary -> Down
-    (33, "DL"),        # diagonal
-    (63, "DL"),
-    (64, "SL"),        # HORMING_SIDE_DIST, boundary -> side
-    (104, "SL"),
-]
-for dx, expected in cases_right_of_tank:
-    cpu.mem[TANK_X] = max(missile_x - dx, 0)
-    cpu.mem[slot_addr(0) + 1] = missile_x
+mism = 0
+worst = 0.0
+n = 0
+for mx in range(0, 249, 13):
+    for my in range(0, 190, 11):
+        for tx in range(0, 227, 23):
+            for tgy in (120, 150, 170):
+                cpu.mem[slot_addr(0) + 1] = mx
+                cpu.mem[slot_addr(0) + 2] = my
+                cpu.mem[TANK_X] = tx
+                cpu.mem[TANK_GROUND_Y] = tgy
+                cpu.ix = slot_addr(0)
+                call_routine(cpu, "HORMING_DESIRED_HEADING_IX")
+                r = ref_heading(mx, my, tx, tgy)
+                n += 1
+                if cpu.a != r:
+                    mism += 1
+                d0 = tx + HORMING_AIM_X_OFS - mx
+                dy = max(0, tgy + HORMING_HOMING_Y_OFFSET - my)
+                dx = d0 - (1 if d0 >= 0 else -1) * HORMING_APPROACH_DX if dy else d0
+                if dx or dy:
+                    ang = math.degrees(math.atan2(dy, dx))       # 0=E, 90=S, 180=W
+                    worst = max(worst, abs(ang - r * 22.5))
+check(f"HORMING_DESIRED_HEADING_IX matches the reference on all {n} grid points", mism == 0)
+check(f"desired heading is within half a step of the real angle (worst {worst:.1f}deg)", worst <= 12.0)
+
+# movement along each heading, no turn this frame (countdown > 0)
+for h in range(9):
+    cpu = fresh_cpu()
+    make_slot(cpu, 0, x=120, y=60, facing=0, state=2, rise_remain=h, target_x=3, tank_x=10, tank_y=150)
     cpu.ix = slot_addr(0)
-    call_routine(cpu, "RESOLVE_HORMING_FACING_IX")
-    check(f"missile right of tank by {dx}px -> facing {expected}",
-          cpu.mem[slot_addr(0) + 3] == label_to_code[expected])
+    call_routine(cpu, "UPDATE_ONE_HORMING")
+    s = slot(cpu, 0)
+    check(f"heading {h}: moves ({HDX[h]},{HDY[h]}), facing {HFACE[h]}, countdown -1, heading kept",
+          s["x"] == 120 + HDX[h] and s["y"] == 60 + HDY[h] and s["facing"] == HFACE[h]
+          and s["target_x"] == 2 and s["rise_remain"] == h and s["state"] == 2)
 
-cases_left_of_tank = [
-    (0, "Down"),
-    (32, "Down"),
-    (33, "DR"),
-    (63, "DR"),
-    (64, "SR"),
-    (104, "SR"),
-]
-for dx, expected in cases_left_of_tank:
-    cpu.mem[TANK_X] = min(missile_x + dx, 255)
-    cpu.mem[slot_addr(0) + 1] = missile_x
-    cpu.ix = slot_addr(0)
-    call_routine(cpu, "RESOLVE_HORMING_FACING_IX")
-    check(f"missile left of tank by {dx}px -> facing {expected}",
-          cpu.mem[slot_addr(0) + 3] == label_to_code[expected])
-
-
-# ---- state2 (2D pursuit/descend): real 2D movement toward the tank ----
+# a turn frame: heading moves ONE step toward the desired heading only,
+# even when the target is on the far side (W -> E wanted)
 cpu = fresh_cpu()
-make_slot(cpu, 0, x=80, y=80, facing=2, state=2, tank_x=80 + 100, tank_y=200)  # tank far right -> SR
+make_slot(cpu, 0, x=100, y=20, facing=0, state=2, rise_remain=8, target_x=0, tank_x=230, tank_y=150)
 cpu.ix = slot_addr(0)
 call_routine(cpu, "UPDATE_ONE_HORMING")
 s = slot(cpu, 0)
-check("state2 SR steps right, Y unchanged", s["x"] == 80 + HORMING_SPEED and s["y"] == 80)
+check("turn frame: W with the tank far right turns just one step (8->7, via the down side)",
+      s["rise_remain"] == 7)
+check("turn frame: countdown restarts at HORMING_TURN_FRAMES-1", s["target_x"] == HORMING_TURN_FRAMES - 1)
+check("turn frame: moves along the NEW heading (WSW: -3,+1) - still going left",
+      s["x"] == 100 - 3 and s["y"] == 21)
 
 cpu = fresh_cpu()
-make_slot(cpu, 0, x=80, y=80, facing=2, state=2, tank_x=80 - 70, tank_y=200)  # tank far left -> SL
+# aim point (HORMING_APPROACH_DX out from the tank centre) directly below
+make_slot(cpu, 0, x=100, y=20, facing=0, state=2, rise_remain=4, target_x=0,
+          tank_x=100 + HORMING_APPROACH_DX - HORMING_AIM_X_OFS, tank_y=150)
+cpu.ix = slot_addr(0)
+call_routine(cpu, "UPDATE_ONE_HORMING")
+check("turn frame: already on the desired heading -> heading unchanged", slot(cpu, 0)["rise_remain"] == 4)
+
+# the whole point: launched leftward with the tank to the RIGHT, the
+# missile keeps drifting left for a while (inertia), swings round
+# through "down", then heads right - heading changes only by 1 per turn,
+# never faster than one turn per HORMING_TURN_FRAMES frames.
+for tank_x in (200, 160):
+    cpu = fresh_cpu()
+    cpu.mem[TANK_LIFE] = 5
+    make_slot(cpu, 0, x=120, y=16, facing=1, state=1, target_x=120, tank_x=tank_x, tank_y=150)
+    hs, xs, ok_steps, last_turn = [], [], True, None
+    for f in range(300):
+        cpu.ix = slot_addr(0)
+        call_routine(cpu, "UPDATE_ONE_HORMING")
+        s = slot(cpu, 0)
+        if not s["act"] or s["state"] != 2:
+            break
+        h = s["rise_remain"]
+        if hs and h != hs[-1]:
+            if abs(h - hs[-1]) != 1 or (last_turn is not None and f - last_turn < HORMING_TURN_FRAMES):
+                ok_steps = False
+            last_turn = f
+        hs.append(h)
+        xs.append(s["x"])
+    check(f"tank right at X{tank_x}: heading turns 1 step at a time, >= HORMING_TURN_FRAMES apart", ok_steps)
+    check(f"tank right at X{tank_x}: missile first loops LEFT of where state2 began (min X < 117-20)",
+          min(xs) < 117 - 20)
+    check(f"tank right at X{tank_x}: the loop passes through straight-down(4) and ends heading right (<4)",
+          4 in hs and hs[-1] < 4)
+
+# --- state2->state3 lock: missile_Y >= TANK_GROUND_Y+HORMING_HOMING_Y_OFFSET,
+# only when already heading toward the tank's side (or straight down) ---
+thr = 100 + HORMING_HOMING_Y_OFFSET
+cpu = fresh_cpu()
+make_slot(cpu, 0, x=100, y=thr - 4, facing=2, state=2, rise_remain=4, target_x=3, tank_x=100, tank_y=100)
+cpu.ix = slot_addr(0)
+call_routine(cpu, "UPDATE_ONE_HORMING")
+check("stays in state2 while still above bullet height", slot(cpu, 0)["state"] == 2)
+
+cpu = fresh_cpu()
+make_slot(cpu, 0, x=100, y=thr - 3, facing=2, state=2, rise_remain=4, target_x=3, tank_x=100, tank_y=100)
 cpu.ix = slot_addr(0)
 call_routine(cpu, "UPDATE_ONE_HORMING")
 s = slot(cpu, 0)
-check("state2 SL steps left, Y unchanged", s["x"] == 80 - HORMING_SPEED and s["y"] == 80)
+check("heading straight down: locks into state3 on reaching bullet height", s["state"] == 3)
+check("Y is NOT re-snapped - keeps this frame's own step", s["y"] == thr)
 
 cpu = fresh_cpu()
-make_slot(cpu, 0, x=80, y=80, facing=2, state=2, tank_x=80, tank_y=200)  # directly below -> Down
+make_slot(cpu, 0, x=60, y=thr - 1, facing=3, state=2, rise_remain=2, target_x=3, tank_x=150, tank_y=100)
 cpu.ix = slot_addr(0)
 call_routine(cpu, "UPDATE_ONE_HORMING")
-s = slot(cpu, 0)
-check("state2 Down steps down, X unchanged", s["x"] == 80 and s["y"] == 80 + HORMING_SPEED)
+check("heading right (SE) with the tank right: locks", slot(cpu, 0)["state"] == 3)
 
 cpu = fresh_cpu()
-make_slot(cpu, 0, x=80, y=80, facing=2, state=2, tank_x=80 + 45, tank_y=200)  # diagonal, tank right -> DR
+make_slot(cpu, 0, x=60, y=thr - 1, facing=1, state=2, rise_remain=6, target_x=3, tank_x=150, tank_y=100)
 cpu.ix = slot_addr(0)
 call_routine(cpu, "UPDATE_ONE_HORMING")
-s = slot(cpu, 0)
-check("state2 DR steps down-right (real 2D pursuit)", s["x"] == 80 + HORMING_SPEED and s["y"] == 80 + HORMING_SPEED)
-
-cpu = fresh_cpu()
-make_slot(cpu, 0, x=80, y=80, facing=2, state=2, tank_x=80 - 45, tank_y=200)  # diagonal, tank left -> DL
-cpu.ix = slot_addr(0)
-call_routine(cpu, "UPDATE_ONE_HORMING")
-s = slot(cpu, 0)
-check("state2 DL steps down-left (real 2D pursuit)", s["x"] == 80 - HORMING_SPEED and s["y"] == 80 + HORMING_SPEED)
-
-# off-screen bail-out on the right edge - not reachable through
-# UPDATE_ONE_HORMING with a real TANK_X (RESOLVE_HORMING_FACING_IX
-# would just reclassify to Down once dx<TANK_WIDTH, and TANK_X can't
-# exceed 255 to force a genuine SR facing way out at HORMING_MAXX), so
-# tested by calling the internal step label directly, same "construct
-# the state manually" approach already used elsewhere in this file for
-# guards a static setup can't organically reach.
-cpu = fresh_cpu()
-make_slot(cpu, 0, x=HORMING_MAXX, y=80, facing=4, state=2)
-cpu.ix = slot_addr(0)
-call_routine(cpu, "UOH_H2_STEP_SR")
-check("state2 deactivates instead of overflowing off the right edge", slot(cpu, 0)["act"] == 0)
-
-# round5: state2's own Y-moving branches no longer bail out at all -
-# "仮に飛び越えた場合消えなくなるんで" - even deep near the bottom of
-# the screen, a Down step just keeps moving (UOH_H2_TRIGGER, not a
-# MAXY guard, is what ends vertical movement).
-cpu = fresh_cpu()
-make_slot(cpu, 0, x=100, y=180, facing=2, state=2, tank_x=100, tank_y=255)  # Down, deep near the bottom
-cpu.ix = slot_addr(0)
-call_routine(cpu, "UPDATE_ONE_HORMING")
-check("state2 no longer deactivates from a Down step near the bottom of the screen",
-      slot(cpu, 0)["act"] == 1)
-
-# --- state2->state3 trigger: missile_Y >= TANK_Y_CUR+HORMING_HOMING_Y_OFFSET
-# (not TANK_Y_CUR itself) - "自機狙い水平移動の位置を8pxさげてくれ 水平
-# 打ちで撃ち落とせる高さ" ---
-cpu = fresh_cpu()
-# directly below the tank (Down facing) so Y is the only thing moving;
-# one step short of the threshold - should stay in state2
-make_slot(cpu, 0, x=100, y=100 + HORMING_HOMING_Y_OFFSET - HORMING_SPEED - 1, facing=2, state=2,
-          tank_x=100, tank_y=100)
-cpu.ix = slot_addr(0)
-call_routine(cpu, "UPDATE_ONE_HORMING")
-check("stays in state2 while missile_Y is still below TANK_Y_CUR+HORMING_HOMING_Y_OFFSET",
+check("heading left (SW) with the tank right: does NOT lock yet (keeps turning, no flip)",
       slot(cpu, 0)["state"] == 2)
 
 cpu = fresh_cpu()
-# exactly at the threshold minus HORMING_SPEED -> this step lands
-# exactly on (or past) the threshold -> should trigger state3
-make_slot(cpu, 0, x=100, y=100 + HORMING_HOMING_Y_OFFSET - HORMING_SPEED, facing=2, state=2,
-          tank_x=100, tank_y=100)
+make_slot(cpu, 0, x=200, y=thr - 1, facing=1, state=2, rise_remain=6, target_x=3, tank_x=50, tank_y=100)
 cpu.ix = slot_addr(0)
 call_routine(cpu, "UPDATE_ONE_HORMING")
-s = slot(cpu, 0)
-check("switches to state3 (locked horizontal) once missile_Y >= TANK_Y_CUR+HORMING_HOMING_Y_OFFSET",
-      s["state"] == 3)
-check("Y is NOT re-snapped to the exact threshold - keeps whatever this frame's own step produced",
-      s["y"] == 100 + HORMING_HOMING_Y_OFFSET)
+check("heading left (SW) with the tank left: locks", slot(cpu, 0)["state"] == 3)
 
-# round36-12 (実機フィードバック "ホーミングがたまに自機の上あたりに残る
-# 事がある 多分ジャンプしたとき"): the trigger must key off TANK_GROUND_Y
-# (the terrain-following resting height), not TANK_Y_CUR (which dips
-# below TANK_GROUND_Y while airborne) - otherwise a missile that happens
-# to cross the threshold during a jump locks in at the tank's transient
-# mid-air height, then stays there even after the tank lands.
 cpu = fresh_cpu()
-# tank mid-jump: TANK_Y_CUR is 20px ABOVE (smaller than) its real resting
-# TANK_GROUND_Y. If the trigger used TANK_Y_CUR here it would fire
-# (missile_Y >= 100+HORMING_HOMING_Y_OFFSET), locking in above the
-# tank's real ground height; using TANK_GROUND_Y it must NOT fire yet
-# (100 < 120+HORMING_HOMING_Y_OFFSET).
-make_slot(cpu, 0, x=100, y=100, facing=2, state=2, tank_x=100, tank_y=100 - 20, tank_ground_y=120)
+make_slot(cpu, 0, x=200, y=thr - 1, facing=3, state=2, rise_remain=2, target_x=3, tank_x=50, tank_y=100)
 cpu.ix = slot_addr(0)
 call_routine(cpu, "UPDATE_ONE_HORMING")
-check("mid-jump: stays in state2 (uses TANK_GROUND_Y, not the transiently-higher TANK_Y_CUR)",
-      slot(cpu, 0)["state"] == 2)
+check("heading right (SE) with the tank left: does NOT lock yet", slot(cpu, 0)["state"] == 2)
 
+# round36-12: the threshold uses TANK_GROUND_Y, not the mid-jump TANK_Y_CUR
 cpu = fresh_cpu()
-# same mid-jump gap, but missile_Y has now actually reached
-# TANK_GROUND_Y+HORMING_HOMING_Y_OFFSET - should trigger regardless of
-# how far below TANK_Y_CUR currently sits.
-make_slot(cpu, 0, x=100, y=120 + HORMING_HOMING_Y_OFFSET, facing=2, state=2,
+make_slot(cpu, 0, x=100, y=100, facing=2, state=2, rise_remain=4, target_x=3,
           tank_x=100, tank_y=100 - 20, tank_ground_y=120)
 cpu.ix = slot_addr(0)
 call_routine(cpu, "UPDATE_ONE_HORMING")
-check("mid-jump: triggers state3 once missile_Y reaches TANK_GROUND_Y+HORMING_HOMING_Y_OFFSET",
+check("mid-jump: stays in state2 (uses TANK_GROUND_Y, not TANK_Y_CUR)", slot(cpu, 0)["state"] == 2)
+
+cpu = fresh_cpu()
+make_slot(cpu, 0, x=100, y=120 + HORMING_HOMING_Y_OFFSET, facing=2, state=2, rise_remain=4, target_x=3,
+          tank_x=100, tank_y=100 - 20, tank_ground_y=120)
+cpu.ix = slot_addr(0)
+call_routine(cpu, "UPDATE_ONE_HORMING")
+check("mid-jump: locks once missile_Y reaches TANK_GROUND_Y+HORMING_HOMING_Y_OFFSET",
       slot(cpu, 0)["state"] == 3)
 
+# off-screen bail-outs
+cpu = fresh_cpu()
+make_slot(cpu, 0, x=HORMING_MAXX - 2, y=60, facing=4, state=2, rise_remain=0, target_x=3, tank_x=250, tank_y=150)
+cpu.ix = slot_addr(0)
+call_routine(cpu, "UPDATE_ONE_HORMING")
+check("state2 deactivates at the right edge", slot(cpu, 0)["act"] == 0)
+
+cpu = fresh_cpu()
+make_slot(cpu, 0, x=2, y=60, facing=0, state=2, rise_remain=8, target_x=3, tank_x=0, tank_y=150)
+cpu.ix = slot_addr(0)
+call_routine(cpu, "UPDATE_ONE_HORMING")
+check("state2 deactivates at the left edge instead of wrapping to X255", slot(cpu, 0)["act"] == 0)
+
+cpu = fresh_cpu()
+make_slot(cpu, 0, x=3, y=60, facing=0, state=2, rise_remain=8, target_x=3, tank_x=0, tank_y=150)
+cpu.ix = slot_addr(0)
+call_routine(cpu, "UPDATE_ONE_HORMING")
+check("X exactly 3 moving W lands on X0 (still active)", slot(cpu, 0)["act"] == 1 and slot(cpu, 0)["x"] == 0)
+
+cpu = fresh_cpu()
+# bullet height below the screen bottom (never in real play) - the
+# HORMING_H2_MAXY safety still catches it
+make_slot(cpu, 0, x=60, y=HORMING_H2_MAXY - 2, facing=1, state=2, rise_remain=6, target_x=3, tank_x=200, tank_y=200)
+cpu.ix = slot_addr(0)
+call_routine(cpu, "UPDATE_ONE_HORMING")
+check("state2 deactivates off the bottom (safety)", slot(cpu, 0)["act"] == 0)
+
+# at bullet height the missile stops moving in Y; heading away from the
+# tank it brakes and turns back instead of flipping (X step 3,2,1,0,..)
+cpu = fresh_cpu()
+cpu.mem[TANK_LIFE] = 5
+make_slot(cpu, 0, x=150, y=thr, facing=3, state=2, rise_remain=2, target_x=0, tank_x=60, tank_y=100)
+xs, ys = [], []
+for f in range(60):
+    cpu.ix = slot_addr(0)
+    call_routine(cpu, "UPDATE_ONE_HORMING")
+    s = slot(cpu, 0)
+    xs.append(s["x"]); ys.append(s["y"])
+    if s["state"] != 2:
+        break
+check("level braking turn: Y never changes while turning back", set(ys) == {thr})
+steps = [b - a for a, b in zip([150] + xs, xs)]
+check("level braking turn: X step slows down and reverses without jumping (|change| <= 1 per frame)",
+      all(abs(b - a) <= 1 for a, b in zip(steps, steps[1:])))
+check("level braking turn: ends up locked (state3) heading back toward the tank", slot(cpu, 0)["state"] == 3
+      and steps[-1] <= 0)
 
 # ---- state3 (locked horizontal): purely horizontal, Y frozen ----
 cpu = fresh_cpu()

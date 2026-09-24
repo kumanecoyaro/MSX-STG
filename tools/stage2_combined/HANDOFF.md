@@ -18665,3 +18665,31 @@ EbuzII弾ビームへの1pxコリジョン追加+ROM予算の共有バンク6オ
   変えた時だけrun_all.py)、Stage1変更後はpatch_ebuz2_mk2.py→build_full_rom.py→
   verify_ebuz2_mk2_comb.py→verify_comb.py、未追跡PNGをリポジトリに残さない、見た目の確認は
   レンダリングで先に見せる。
+
+## Round145 follow-up45: Stage2ボスのホーミングに慣性(大回り)を入れる(2026-09-24)
+
+- ユーザー: "発射直後にミサイルより自機が右にいると急に方向を変えてしまう ... 右から発射されてるので
+  本来は物理的に慣性が働くので左に回ってから自機に向かうようにしたい 複雑な計算は8Bitマシンなので
+  できない前提で簡易で慣性を実装して大回りさせたい ステージ1のエネミー3が円のLutを持ってるので参考に"。
+- 原因: state2(ワンダー後の追尾)が毎フレーム自機との距離から5方向(SL/DL/Down/DR/SR)を選び直し、
+  その向きへ即座に動いていた(round5の「開始直後に1回だけDL」も1フレームしか効かない)。
+- 新方式(state2のみ、state0上昇/state1ワンダー/state3水平ロックは従来通り):
+  - 進行方向(heading)0-8を持つ(0=右,2=右下,4=真下,6=左下,8=左、22.5度刻みの下半円)。
+    スロットの空きバイトを流用: (IX+5)=heading、(IX+6)=旋回カウンタ(RAM追加なし)。
+  - 毎フレームheadingの速度表(HORMING_HEADING_DX/DY、速さ約3、Enemy3のCIRCLE_LUTと同じく
+    事前に丸めた値の表)だけ進む。HORMING_TURN_FRAMES(6)フレームに1回だけ、狙いの向きへ1段(22.5度)
+    旋回。下半円だけなので左→右の旋回は必ず真下経由=左へ膨らんでから右へ向かう。
+  - 狙いの向きはHORMING_DESIRED_HEADING_IX(割り算なし: dy*5<=dx, dy*3<=dx*2, dy*2<=dx*3,
+    dy<=dx*5の比較だけで5段階)。狙い点は「撃ち落とせる高さ(TANK_GROUND_Y+8)」で、その高さに着く
+    までは自機中心からHORMING_APPROACH_DX(32)だけミサイル側へずらす(真上から突っ込まず、最後は
+    横から水平に来る=従来のstate3の意図を維持)。
+  - 撃ち落とせる高さに着いたらYは止め、自機側を向いていればstate3へ。逆を向いて着いた場合はその高さで
+    旋回を続ける(Xの速さが3,2,1,0,-1..と減速して折り返すので急反転しない)。
+  - ワンダー終了時: headingはワンダーの向き(左なら8)で始め、最初の旋回までTURN_FRAMES保持。
+  - 旧RESOLVE_HORMING_FACING_IX/UOH_H2_STEP_*/TANK_WIDTH/HORMING_SIDE_DISTは削除。
+- horming_test.py: 旧state2/強制DLステップのテストを新方式のテストに置換(目標方向の格子比較・
+  理想角との誤差12度以内、1段ずつ・TURN_FRAMES間隔の旋回、自機が右の時に左へ膨らむこと、
+  水平での減速折り返し、ロック条件、画面端)。192件PASS、全回帰1616件PASS、verify_comb・
+  verify_ebuz2_mk2_comb PASS。
+- Stage2の空き: 5729→5473byte。
+- 調整用: HORMING_TURN_FRAMES(大きいほど大回り)、HORMING_APPROACH_DX(最後の水平進入の長さ)。

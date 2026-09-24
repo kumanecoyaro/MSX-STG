@@ -2754,15 +2754,6 @@ TANK_COLLISION_Y_OFFSET EQU 14
 ; 24 spreads all 4 shots across the first third of it, leaving the rest
 ; of the pose for them to actually fly).
 HORMING_VOLLEY_INTERVAL EQU 24
-; round4: state2 (after the wander's own random-X arrival) is real 2D
-; pursuit again, restored from the very first spec message - "自機のX
-; との距離が自機幅より外にある時は斜めのミサイルへ Downは自機幅内に
-; 収まっている時 SL、SRは自機から64px以上Xが離れている時 自機より右方
-; 向に離れている時はSL、DL 左ならSR、DR" - the tank's own real sprite
-; width (tank_gen.py's poses are all 32x32).
-TANK_WIDTH EQU 32
-; "SL、SRは自機から64px以上Xが離れている時"
-HORMING_SIDE_DIST EQU 64
 ; "自機狙い水平移動の位置を8pxさげてくれ 水平打ちで撃ち落とせる高さ" -
 ; state2's own 2D pursuit locks onto pure horizontal movement (state3)
 ; once missile_Y reaches TANK_Y_CUR+this, not exactly TANK_Y_CUR - so
@@ -2771,6 +2762,20 @@ HORMING_SIDE_DIST EQU 64
 ; down before it ever reaches the tank itself (see CHECK_BULLET_VS_
 ; HORMING). Magnitude given directly by the user, not inferred.
 HORMING_HOMING_Y_OFFSET EQU 8
+; round145 follow-up45 (inertial state2, see UOH_W_ARRIVED): frames
+; between each 22.5-degree turn of the heading. Bigger = wider loop
+; (180 degrees takes 8 turns = 8*this frames at ~3px/frame).
+HORMING_TURN_FRAMES EQU 6
+; aim X offset from TANK_X (missile 8px wide, tank hitbox 16px wide ->
+; missile centre onto hitbox centre).
+HORMING_AIM_X_OFS EQU 4
+; while still above bullet height, aim this far out to the missile's
+; own side of the tank so the final run is horizontal (see
+; HORMING_DESIRED_HEADING_IX).
+HORMING_APPROACH_DX EQU 32
+; state2 bail-out at the bottom of the screen (only reachable while a
+; missile is still turning past bullet height, see UOH_HOMING2).
+HORMING_H2_MAXY EQU 192
 ; ---------- Thunder (BG-drawn lightning column, fired during patrol) ----------
 ; "サンダーの実装 ホーミング攻撃後左に移動中に添付のキャラを画面2行目
 ; から下まで移動しながら埋める 埋め終わったら上から消す 発射位置とタ
@@ -14646,156 +14651,204 @@ UOH_W_AT_OR_RIGHT:
 UOH_W_SNAP:
     LD A,(IX+6) : LD (IX+1),A        ; within reach - land on it exactly, this frame
 UOH_W_ARRIVED:
-    ; "ホーミング開始直後は左斜下に1回だけ必ず移動 自機が右にいた場合に
-    ; 急激な曲がりを防ぐため" - one forced DL step, unconditional, the
-    ; instant state2 begins, before any real tracking happens - absorbs
-    ; whatever facing swing the tank's own position would otherwise
-    ; demand on the very first pursuit frame. Shown facing snaps to DL
-    ; immediately (not eased) - this one deliberate step is meant to be
-    ; seen, not gradually caught up to; every following frame's own real
-    ; RESOLVE_HORMING_FACING_IX/EASE_HORMING_FACING_IX pass then eases
-    ; from this DL baseline same as any other transition.
-    LD A,(IX+1)
-    CP HORMING_SPEED
-    JP C,UOH_DEACTIVATE
-    SUB HORMING_SPEED : LD (IX+1),A
-    LD A,(IX+2) : ADD A,HORMING_SPEED : LD (IX+2),A
-    LD A,1 : LD (IX+3),A             ; facing DL, shown immediately
-    LD A,2 : LD (IX+4),A             ; now in state2 (2D pursuit)
-    JP UOH_COLLIDE
+    ; round145 follow-up45: "発射直後にミサイルより自機が右にいると急に
+    ; 方向を変えてしまう ... 右から発射されてるので本来は物理的に慣性が
+    ; 働くので左に回ってから自機に向かうようにしたい ... 簡易で慣性を
+    ; 実装して大回りさせたい". state2 now keeps a real heading (IX+5,
+    ; 0-8, see HORMING_HEADING_DX) that starts out continuing the wander's
+    ; own horizontal direction and only turns ONE 22.5-degree step every
+    ; HORMING_TURN_FRAMES frames - so a tank to the right makes the
+    ; missile swing left-down-right in a wide arc instead of snapping
+    ; straight to it. (IX+6) (TARGET_X, no longer needed) becomes the
+    ; turn countdown. Replaces the old forced one-frame DL step.
+    LD A,2 : LD (IX+4),A             ; now in state2 (inertial pursuit)
+    LD A,HORMING_TURN_FRAMES : LD (IX+6),A   ; hold the wander heading a little first
+    LD A,(IX+3)
+    CP 3
+    LD A,8                           ; wander was heading left (DL facing) -> W
+    JR C,UOH_W_SETH
+    XOR A                            ; wander was heading right (DR) -> E
+UOH_W_SETH:
+    LD (IX+5),A
+    JP UOH_H2_MOVE
 UOH_W_EASE:
     CALL EASE_HORMING_FACING_IX
     JP UOH_COLLIDE
 
-; IX = slot base. Sets FACING (0=SL,1=DL,2=Down,3=DR,4=SR) from the
-; CURRENT horizontal pixel distance to the tank - restored in round4
-; (deleted in round3, brought back now that state2 needs real 2D
-; pursuit again) - "自機のXとの距離が自機幅より外にある時は斜めのミサ
-; イルへ Downは自機幅内に収まっている時 SL、SRは自機から64px以上Xが
-; 離れている時 自機より右方向に離れている時はSL、DL 左ならSR、DR"
-; (from the very first spec message). Checked fresh every frame - "自
-; 機方向に追尾".
-RESOLVE_HORMING_FACING_IX:
-    LD A,(IX+1) : LD B,A        ; missile_X
-    LD A,(TANK_X) : LD C,A
+; round145 follow-up45: per-heading velocity, facing art and the aim
+; bucket math. Heading 0-8 = the lower half-circle in 22.5-degree steps,
+; 0=E(right) 2=SE 4=S(down) 6=SW 8=W(left) - state2 only ever needs
+; directions that go sideways or down, so the heading is a plain 0-8
+; number and "turn toward the target" is just +1/-1: going from W to E
+; always passes through S, which is exactly the "左に回ってから" loop.
+; speed ~HORMING_SPEED(3) px/frame, same idea as Stage1 Enemy3's own
+; CIRCLE_LUT (a small table of pre-rounded offsets instead of any
+; sin/cos math at run time).
+HORMING_HEADING_DX:
+    DB 3,3,2,1,0,-1,-2,-3,-3
+HORMING_HEADING_DY:
+    DB 0,1,2,3,3,3,2,1,0
+; heading -> shown facing (0=SL,1=DL,2=Down,3=DR,4=SR)
+HORMING_HEADING_FACING:
+    DB 4,4,3,3,2,1,1,0,0
 
-    LD A,B : SUB C
-    JR NC,RHFI_RIGHT     ; missile_X>=TANK_X, no borrow - missile is right of the tank
-    LD A,C : SUB B         ; TANK_X-missile_X - missile is LEFT of the tank
-    LD D,A
-    JR RHFI_LEFT_SIDE
-RHFI_RIGHT:
-    LD D,A                  ; A already = missile_X-TANK_X
-RHFI_RIGHT_SIDE:
-    LD A,D
-    CP TANK_WIDTH+1
-    JR C,RHFI_DOWN
-    CP HORMING_SIDE_DIST
-    JR NC,RHFI_SET_SL
-    LD A,1 : LD (IX+3),A    ; DL - missile right of tank, needs to head left
-    RET
-RHFI_SET_SL:
-    XOR A : LD (IX+3),A     ; SL
-    RET
-RHFI_LEFT_SIDE:
-    LD A,D
-    CP TANK_WIDTH+1
-    JR C,RHFI_DOWN
-    CP HORMING_SIDE_DIST
-    JR NC,RHFI_SET_SR
-    LD A,3 : LD (IX+3),A    ; DR - missile left of tank, needs to head right
-    RET
-RHFI_SET_SR:
-    LD A,4 : LD (IX+3),A    ; SR
-    RET
-RHFI_DOWN:
-    LD A,2 : LD (IX+3),A
-    RET
-
-; state2: real 2D pursuit toward the tank (both X and Y move together,
-; per RESOLVE_HORMING_FACING_IX's own 5-way facing) until missile_Y
-; reaches TANK_Y_CUR+HORMING_HOMING_Y_OFFSET, then hands off to state3
-; (locked horizontal) - see UPDATE_ONE_HORMING's own comment.
-UOH_HOMING2:
-    CALL RESOLVE_HORMING_FACING_IX
-    LD A,(IX+3)
-    OR A
-    JP Z,UOH_H2_STEP_SL
-    CP 1
-    JP Z,UOH_H2_STEP_DL
-    CP 2
-    JP Z,UOH_H2_STEP_DOWN
-    CP 3
-    JP Z,UOH_H2_STEP_DR
-    JP UOH_H2_STEP_SR
-
-UOH_H2_STEP_SL:
-    LD A,(IX+1)
-    CP HORMING_SPEED
-    JP C,UOH_DEACTIVATE
-    SUB HORMING_SPEED : LD (IX+1),A
-    JP UOH_H2_TRIGGER
-UOH_H2_STEP_SR:
-    LD A,(IX+1) : ADD A,HORMING_SPEED
-    CP HORMING_MAXX
-    JP NC,UOH_DEACTIVATE
-    LD (IX+1),A
-    JP UOH_H2_TRIGGER
-; "自機狙いY位置マッチ水平移動後はホーミングせずそのまま水平移動固定
-; で 仮に飛び越えた場合消えなくなるんで" - state2's own Y-moving
-; branches (Down/DL/DR) no longer bail out on HORMING_MAXY at all
-; (round5 fix) - TANK_Y_CUR is always a sane on-screen value and
-; UOH_H2_TRIGGER fires the very same frame Y reaches TANK_Y_CUR+
-; HORMING_HOMING_Y_OFFSET, so the old MAXY guard could only ever fire
-; BEFORE that trigger if the threshold itself sat past HORMING_MAXY(184)
-; - deactivating (vanishing) a missile that should instead have leveled
-; off into state3. X off-screen bail-outs (HORMING_MAXX) are unrelated
-; and stay.
-UOH_H2_STEP_DOWN:
-    LD A,(IX+2) : ADD A,HORMING_SPEED : LD (IX+2),A
-    JP UOH_H2_TRIGGER
-UOH_H2_STEP_DL:
-    LD A,(IX+1)
-    CP HORMING_SPEED
-    JP C,UOH_DEACTIVATE
-    LD A,(IX+2) : ADD A,HORMING_SPEED : LD (IX+2),A
-    LD A,(IX+1) : SUB HORMING_SPEED : LD (IX+1),A
-    JP UOH_H2_TRIGGER
-UOH_H2_STEP_DR:
-    LD A,(IX+1) : ADD A,HORMING_SPEED
-    CP HORMING_MAXX
-    JP NC,UOH_DEACTIVATE
+; IX = slot base. Returns A = the heading (0-8) the missile wants.
+; Aim point: bullet height (TANK_GROUND_Y+HORMING_HOMING_Y_OFFSET, the
+; height state3 locks onto) and, while the missile is still above that
+; height, HORMING_APPROACH_DX px out to the missile's own side of the
+; tank centre (tank X+HORMING_AIM_X_OFS) - so the missile comes down
+; beside the tank and makes its final run horizontally at bullet height
+; (shootable, same idea as the old state3 lock) instead of diving onto
+; it from above. At/below bullet height the aim is the tank centre
+; itself, flat sideways.
+HORMING_DESIRED_HEADING_IX:
+    LD A,(IX+1) : LD B,A
+    LD A,(TANK_X) : ADD A,HORMING_AIM_X_OFS
+    SUB B
+    LD D,0                          ; D=0: aim is to the right
+    JR NC,HDH_RIGHT
+    LD C,A : XOR A : SUB C          ; |dx|
+    LD D,1                          ; D=1: aim is to the left
+HDH_RIGHT:
+    LD B,A                          ; B = |dx| to the tank centre
+    LD A,(IX+2) : LD E,A
+    LD A,(TANK_GROUND_Y) : ADD A,HORMING_HOMING_Y_OFFSET
+    SUB E
+    JR C,HDH_LEVEL                  ; already at/below bullet height
+    JR Z,HDH_LEVEL
+    LD C,A                          ; C = dy (>0)
+    ; aim HORMING_APPROACH_DX short of the tank, on the missile's side
+    LD A,B : SUB HORMING_APPROACH_DX
+    JR NC,HDH_LEAD_OK               ; still beyond that point - aim toward the tank, |dx|-lead
+    LD E,A : XOR A : SUB E          ; between the point and the tank - aim back outward
+    LD E,A
+    LD A,D : XOR 1 : LD D,A
+    LD A,E
+HDH_LEAD_OK:
     LD B,A
-    LD A,(IX+2) : ADD A,HORMING_SPEED : LD (IX+2),A
-    LD A,B : LD (IX+1),A
+    JR HDH_BUCKET
+HDH_LEVEL:
+    LD C,0                          ; flat toward the tank centre
+HDH_BUCKET:
+    PUSH DE
+    CALL HORMING_ANGLE_BUCKET       ; A = 0 (sideways) .. 4 (straight down)
+    POP DE
+    DEC D
+    RET NZ                          ; aim right: heading = bucket
+    LD C,A : LD A,8 : SUB C         ; aim left: heading = 8-bucket
+    RET
 
-; --- trigger: missile_Y >= TANK_GROUND_Y+HORMING_HOMING_Y_OFFSET - see
-; UPDATE_ONE_HORMING's own comment for why this is an inequality (not
-; exact match) and why it targets bullet height, not the tank itself.
-; round36-12 (実機フィードバック "ホーミングがたまに自機の上あたりに
-; 残る事がある 多分ジャンプしたとき"): uses TANK_GROUND_Y (the terrain-
-; tier-following resting Y, updated every frame regardless of jump
-; state - see its own comment) instead of TANK_Y_CUR (the actually-
-; drawn Y, which dips below TANK_GROUND_Y while JUMP_ACTIVE - see
-; UPDATE_JUMP's own "TANK_Y_CUR = TANK_GROUND_Y - JUMP_Y_OFFSET").
-; State3 is deliberately locked once triggered ("自機狙いY位置マッチ
-; 水平移動後はホーミングせずそのまま水平移動固定で" - round5's own
-; direct instruction, not something to relax) - the bug wasn't the lock
-; itself, it was locking in at whatever height the tank's OWN sprite
-; happened to be at that exact instant. If that instant landed mid-jump,
-; TANK_Y_CUR was transiently smaller (higher on screen) than the tank's
-; real resting height, so the missile locked in above where the tank
-; would be once it landed - and then just stayed there, since state3
-; never re-checks. TANK_GROUND_Y is immune to this because it tracks
-; the terrain-following resting height continuously, jump or not, so
-; the lock-in height no longer depends on whether the tank happened to
-; be airborne the instant the threshold was crossed.
-UOH_H2_TRIGGER:
+; B = |dx|, C = dy. Returns A = 0-4, the angle below horizontal in
+; 22.5-degree buckets, using fixed ratios instead of division:
+; dy*5<=dx (<11.3deg) ->0, dy*3<=dx*2 (<33.7) ->1, dy*2<=dx*3 (<56.3)
+; ->2, dy<=dx*5 (<78.7) ->3, else 4. 16-bit compares (dx,dy up to 255).
+HORMING_ANGLE_BUCKET:
+    LD L,C : LD H,0 : ADD HL,HL : ADD HL,HL
+    LD E,C : LD D,0 : ADD HL,DE
+    LD D,H : LD E,L                 ; DE = dy*5
+    LD L,B : LD H,0                 ; HL = dx
+    OR A : SBC HL,DE
+    LD A,0 : RET NC
+    LD L,C : LD H,0 : LD E,L : LD D,H
+    ADD HL,HL : ADD HL,DE
+    LD D,H : LD E,L                 ; DE = dy*3
+    LD L,B : LD H,0 : ADD HL,HL     ; HL = dx*2
+    OR A : SBC HL,DE
+    LD A,1 : RET NC
+    LD L,B : LD H,0 : LD E,L : LD D,H
+    ADD HL,HL : ADD HL,DE           ; HL = dx*3
+    PUSH HL
+    LD L,C : LD H,0 : ADD HL,HL
+    LD D,H : LD E,L                 ; DE = dy*2
+    POP HL
+    OR A : SBC HL,DE
+    LD A,2 : RET NC
+    LD L,B : LD H,0 : ADD HL,HL : ADD HL,HL
+    LD E,B : LD D,0 : ADD HL,DE     ; HL = dx*5
+    LD E,C : LD D,0                 ; DE = dy
+    OR A : SBC HL,DE
+    LD A,3 : RET NC
+    LD A,4
+    RET
+
+; state2: inertial pursuit (round145 follow-up45, see UOH_W_ARRIVED).
+; Every HORMING_TURN_FRAMES frames the heading turns one step toward
+; HORMING_DESIRED_HEADING_IX; every frame the missile moves along its
+; current heading. Once missile_Y reaches TANK_GROUND_Y+HORMING_HOMING_
+; Y_OFFSET (bullet height, see the round36-12 notes on UOH_LOCKED) it
+; stops moving in Y and locks into state3 once it is heading toward the
+; tank's side (or straight down). If it arrives heading away from the
+; tank it keeps turning at that height - the X part of the heading runs
+; 3,2,1,0,-1.. so it brakes and comes back instead of flipping around.
+UOH_HOMING2:
+    LD A,(IX+6)
+    OR A
+    JR Z,UOH_H2_TURN
+    DEC A : LD (IX+6),A
+    JP UOH_H2_MOVE
+UOH_H2_TURN:
+    LD A,HORMING_TURN_FRAMES-1 : LD (IX+6),A
+    CALL HORMING_DESIRED_HEADING_IX
+    LD B,A
+    LD A,(IX+5)
+    CP B
+    JR Z,UOH_H2_MOVE
+    JR C,UOH_H2_TURN_UP
+    DEC A
+    JR UOH_H2_SETH
+UOH_H2_TURN_UP:
+    INC A
+UOH_H2_SETH:
+    LD (IX+5),A
+UOH_H2_MOVE:
+    LD A,(IX+5) : LD E,A : LD D,0
+    LD HL,HORMING_HEADING_FACING : ADD HL,DE
+    LD A,(HL) : LD (IX+3),A
+    LD HL,HORMING_HEADING_DX : ADD HL,DE
+    LD C,(HL)
+    LD A,C
+    CP 80h                           ; CF=0 -> dx is negative (moving left)
+    LD A,(IX+1)
+    JR NC,UOH_H2_DX_NEG
+    ADD A,C
+    CP HORMING_MAXX
+    JP NC,UOH_DEACTIVATE             ; off the right edge
+    JR UOH_H2_DX_DONE
+UOH_H2_DX_NEG:
+    ADD A,C                          ; adding a negative byte: no carry = went below 0
+    JP NC,UOH_DEACTIVATE             ; off the left edge
+UOH_H2_DX_DONE:
+    LD (IX+1),A
     LD A,(TANK_GROUND_Y) : ADD A,HORMING_HOMING_Y_OFFSET : LD B,A
     LD A,(IX+2)
     CP B
-    JP C,UOH_COLLIDE                  ; still above the threshold - stay in state2
-    LD A,3 : LD (IX+4),A              ; threshold reached/passed - lock horizontal (state3)
+    JR NC,UOH_H2_LEVEL               ; at bullet height: Y stays, X brakes/turns
+    LD HL,HORMING_HEADING_DY : ADD HL,DE
+    LD C,(HL)
+    ADD A,C
+    CP HORMING_H2_MAXY
+    JP NC,UOH_DEACTIVATE             ; safety: off the bottom
+    LD (IX+2),A
+    CP B
+    JP C,UOH_COLLIDE                 ; still above bullet height
+UOH_H2_LEVEL:
+    LD A,(IX+5)
+    CP 4
+    JR Z,UOH_H2_LOCK                 ; straight down - either side is fine
+    LD B,A
+    LD A,(IX+1) : LD C,A
+    LD A,(TANK_X) : ADD A,HORMING_AIM_X_OFS
+    CP C                             ; CF=1 -> tank is left of the missile
+    LD A,B
+    JR C,UOH_H2_TANK_LEFT
+    CP 4
+    JP NC,UOH_COLLIDE                ; heading left, tank right - keep turning
+    JR UOH_H2_LOCK
+UOH_H2_TANK_LEFT:
+    CP 5
+    JP C,UOH_COLLIDE                 ; heading right, tank left - keep turning
+UOH_H2_LOCK:
+    LD A,3 : LD (IX+4),A             ; lock horizontal (state3)
     JP UOH_COLLIDE
 
 ; state3: locked horizontal - Y stays exactly wherever state2's own
