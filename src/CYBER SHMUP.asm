@@ -9327,6 +9327,10 @@ ENEMY_COMPLEX_STEP_A:
     LD A,(E2A_ACTIVE)
     OR A
     RET Z
+    ; (2026-09-24、"倒されたら枠自体消去だ"): 3機とも倒したら、その場で編隊ごと終わらせる
+    ; (以前は見えないまま画面外まで動き続け、その間スケジュールの次のジグザグも待たされていた)。
+    LD HL,E2A_U0_STATE : CALL E2_ANY_PART_LEFT
+    JP Z,ECS_S8_A
     LD A,(E2A_SEQ_STATE)
     CP 0 : JP Z,ECS_S0_A
     CP 1 : JP Z,ECS_S1_A
@@ -10017,6 +10021,10 @@ ENEMY_COMPLEX_STEP_B:
     LD A,(E2B_ACTIVE)
     OR A
     RET Z
+    ; (2026-09-24、"倒されたら枠自体消去だ"): 3機とも倒したら、その場で編隊ごと終わらせる
+    ; (以前は見えないまま画面外まで動き続け、その間スケジュールの次のジグザグも待たされていた)。
+    LD HL,E2B_U0_STATE : CALL E2_ANY_PART_LEFT
+    JP Z,ECS_S8_B
     LD A,(E2B_SEQ_STATE)
     CP 0 : JP Z,ECS_S0_B
     CP 1 : JP Z,ECS_S1_B
@@ -11406,8 +11414,8 @@ CBVEP_SKIP:
 ; comment for the full rationale) - only the quadrants' current
 ; position differs, since this one bobs along the sine LUT each frame
 ; instead of sitting at a stored E_Y. Like EBSD_HIT_TEST, a
-; fully-gutted (both quadrants dead) unit is NOT freed early - it
-; keeps flying invisibly until EBSB_EXIT_LEFT.
+; fully-gutted (both quadrants dead) unit is freed on the spot
+; (2026-09-24; it used to keep flying invisibly until EBSB_EXIT_LEFT).
 EBSB_HIT_TEST:
     LD A,(IX+E_TOP) : OR A : JR Z,EBSB_HT_CHECKBOT
     LD A,(IX+E_STATE) : LD E,A : LD D,0
@@ -11439,9 +11447,17 @@ EBSB_HT_REDRAW:
     LD DE,ETT_SCORESEL : ADD HL,DE
     LD A,(HL)
     LD (ENEMY_SCORE_SEL_TMP),A
+    ; (2026-09-24、"倒されたら枠自体消去だ"): 上下とも倒したらその場で枠ごと消す
+    ; (以前は見えないまま左端まで飛び続けていた)。
+    PUSH BC : LD A,(IX+E_BOT) : LD B,A : LD A,(IX+E_TOP) : OR B : POP BC
+    JR NZ,EBSB_HT_PARTIAL
+    CALL EBSD_EXIT_LEFT
+    JR EBSB_HT_FX
+EBSB_HT_PARTIAL:
     PUSH IX : POP HL
     LD A,(IX+E_PARAM3)
     CALL SIMPLE_REDRAW
+EBSB_HT_FX:
     POP DE
     PUSH BC
     CALL TRIGGER_EXPLOSION
@@ -11460,9 +11476,8 @@ EBSBH_NO:
 ; (TOP-left at X,Y and BOT-right at X+8,Y+8) is independently
 ; destructible - killing one just redraws the pattern with that
 ; asterisk dropped and scores; it does NOT free the slot even once
-; both are gone (matches the legacy behavior exactly: a fully-gutted,
-; now-invisible unit keeps flying/dodging until it exits off the left
-; edge - see EBSD_EXIT_LEFT). An already-dead quadrant is skipped, so
+; both are gone - (2026-09-24) the slot is then freed on the spot via
+; EBSD_EXIT_LEFT (it used to keep flying invisibly to the left edge). An already-dead quadrant is skipped, so
 ; a bullet passes straight through it.
 EBSD_HIT_TEST:
     ; TYPE_ENEMY4 keeps its own single HP-based hitbox (matching
@@ -11490,9 +11505,16 @@ EBSD_HT_KILL_TOP:
     XOR A : LD (IX+E_TOP),A
 EBSD_HT_REDRAW:
     PUSH DE                     ; TRIGGER_EXPLOSION needs D,E = hit X,Y - SIMPLE_REDRAW below reuses DE
+    ; (2026-09-24、"倒されたら枠自体消去だ"): 上下とも倒したらその場で枠ごと消す。
+    PUSH BC : LD A,(IX+E_BOT) : LD B,A : LD A,(IX+E_TOP) : OR B : POP BC
+    JR NZ,EBSD_HT_PARTIAL
+    CALL EBSD_EXIT_LEFT
+    JR EBSD_HT_FX
+EBSD_HT_PARTIAL:
     PUSH IX : POP HL
     LD A,(IX+E_PARAM3)
     CALL SIMPLE_REDRAW
+EBSD_HT_FX:
     POP DE
     PUSH BC
     CALL TRIGGER_EXPLOSION
@@ -16961,3 +16983,14 @@ FIRE_FROM_QUAD:
     LD A,D : ADD A,8 : LD D,A
     LD A,E : ADD A,8 : LD E,A
     JP SPAWN_EBULLET
+
+; HL=編隊のU0_STATE(STATE,X,Y,TOP,BOTの5byte×3機)。3機のTOP/BOTのどれかが残っていればNZ、
+; 全部倒されていればZ(まだ到着していない機も出現時からTOP/BOT=1なので、全滅の時だけZ)。
+E2_ANY_PART_LEFT:
+    LD DE,3 : ADD HL,DE
+    LD A,(HL) : INC HL : OR (HL)
+    LD DE,4 : ADD HL,DE
+    OR (HL) : INC HL : OR (HL)
+    ADD HL,DE
+    OR (HL) : INC HL : OR (HL)
+    RET
