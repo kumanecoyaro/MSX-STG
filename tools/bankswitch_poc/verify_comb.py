@@ -78,6 +78,10 @@ title_bank0, title_bank1, tsym = assemble_title()
 game_bank0, game_bank1, gsym = assemble_game()
 bank4, bank5, s2sym = assemble_real_stage2()
 gameover_bank, gosym = assemble_gameover_bank()
+# Stage2のGFX2区画(INIT専用の絵柄)はゲームオーバーバンクのオフセット2000h
+# (window BでA000h)にある - build_full_rom.pyのmain()と同じ組み立て。
+import build_full_rom as _bfr
+gameover_bank = _bfr.stage2_build.gfx2_bank(bank5.gfx2_blob, gameover_bank)
 
 assert "BOSS_SPAWN_TICK" in s2sym, "stage2 symtab missing BOSS_SPAWN_TICK - not the real stage2_combined content?"
 print("confirmed: bank4/bank5 are the real stage2_combined content (BOSS_SPAWN_TICK present)")
@@ -99,7 +103,7 @@ bgm_bank, bgm_layout = bg.build_bank()
 dummy = bytearray([0xFF] * 0x4000)
 mem = BankedMem(
     banksA=[title_bank0, dummy, game_bank0, dummy, bank4, dummy, dummy, gameover_bank],
-    banksB=[dummy, title_bank1, dummy, game_bank1, dummy, bank5, bytearray(bgm_bank), dummy],
+    banksB=[dummy, title_bank1, dummy, game_bank1, dummy, bank5, bytearray(bgm_bank), gameover_bank],
 )
 cpu = z80emu.Z80(mem)
 cpu.pc = tsym["INIT"]
@@ -394,11 +398,14 @@ assert cpu.iff1 is False, \
 steps3 = 0
 bad_bankB = None
 saw_bank6 = False
+saw_bank7 = False  # (2026-09-24) INITのGFX2_LOAD_LISTがゲームオーバーバンクの絵柄を読む
 while cpu.pc != s2sym["MAINLOOP"] and steps3 < 2_000_000:
     cpu.step()
     steps3 += 1
     if mem.bankB == 6:
         saw_bank6 = True
+    elif mem.bankB == 7:
+        saw_bank7 = True
     elif mem.bankB != 5:
         bad_bankB = (steps3, mem.bankB, cpu.pc)
         break
@@ -407,6 +414,7 @@ assert bad_bankB is None, (
     "(the STAGE2_BANKSELECT_ANCHOR/PATCH or STAGE2_BGM_BANKSELECT_ANCHOR/PATCH retarget likely isn't taking effect)"
 )
 assert saw_bank6, "stage2's own INIT_BGM never selected bank6 (BGM data bank) - the BGM copy step didn't run?"
+assert saw_bank7, "stage2's own INIT never selected bank7 (GFX2 graphics) - the SWITCH_TO_GFX2_BANK retarget didn't apply?"
 assert mem.bankB == 5, f"stage2 reached its own MAINLOOP with bankB={mem.bankB}, expected 5"
 print(f"real stage2 reached its own MAINLOOP after {steps3} more steps, bankB visited 6 (BGM copy) then settled back on 5")
 assert cpu.pc == s2sym["MAINLOOP"]
@@ -461,7 +469,7 @@ print()
 print("---- Stage1 GAME_OVER_SEQ==3 -> title trampoline (round59, previously untested here) ----")
 mem2 = BankedMem(
     banksA=[title_bank0, dummy, game_bank0, dummy, bank4, dummy, dummy],
-    banksB=[dummy, title_bank1, dummy, game_bank1, dummy, bank5, bytearray(bgm_bank)],
+    banksB=[dummy, title_bank1, dummy, game_bank1, dummy, bank5, bytearray(bgm_bank), gameover_bank],
 )
 cpu2 = z80emu.Z80(mem2)
 cpu2.pc = tsym["INIT"]
@@ -599,7 +607,7 @@ print("---- Stage2 TANK_LIFE==0 -> GAME_OVER bank -> title trampoline (round59/r
       "previously untested here) ----")
 mem3 = BankedMem(
     banksA=[title_bank0, dummy, game_bank0, dummy, bank4, dummy, dummy, gameover_bank],
-    banksB=[dummy, title_bank1, dummy, game_bank1, dummy, bank5, bytearray(bgm_bank), dummy],
+    banksB=[dummy, title_bank1, dummy, game_bank1, dummy, bank5, bytearray(bgm_bank), gameover_bank],
 )
 cpu3 = z80emu.Z80(mem3)
 cpu3.pc = tsym["INIT"]
@@ -762,7 +770,7 @@ print("---- Stage2 ENDING_ACT==4 -> final image -> button press -> title trampol
       "(round80follow-up, previously untested here) ----")
 mem4 = BankedMem(
     banksA=[title_bank0, dummy, game_bank0, dummy, bank4, dummy, dummy, gameover_bank],
-    banksB=[dummy, title_bank1, dummy, game_bank1, dummy, bank5, bytearray(bgm_bank), dummy],
+    banksB=[dummy, title_bank1, dummy, game_bank1, dummy, bank5, bytearray(bgm_bank), gameover_bank],
 )
 cpu4 = z80emu.Z80(mem4)
 cpu4.pc = tsym["INIT"]
@@ -887,7 +895,7 @@ print()
 print("---- Stage1 boss-laser reason game over (GAME_OVER_SEQ==4) -> bank7 -> title ----")
 mem5 = BankedMem(
     banksA=[title_bank0, dummy, game_bank0, dummy, bank4, dummy, dummy, gameover_bank],
-    banksB=[dummy, title_bank1, dummy, game_bank1, dummy, bank5, bytearray(bgm_bank)],
+    banksB=[dummy, title_bank1, dummy, game_bank1, dummy, bank5, bytearray(bgm_bank), gameover_bank],
 )
 mem5.bankA, mem5.bankB = 2, 3
 cpu5 = z80emu.Z80(mem5)

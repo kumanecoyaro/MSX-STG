@@ -473,6 +473,16 @@ STAGE2_GAMEOVER_BANKSELECT_PATCH = """    LD A,7                        ; standa
     LD HL,04000h                  ; tools/gameover_bank/gameover_bank.asmのINIT(ORG直後、ROMヘッダ無し)
     JP BANKSWITCH_TRAMPOLINE_RAM"""
 
+# (2026-09-24、"Stage2も進めて"): INITで1回だけ使う絵柄/色データ
+# (GFX2区画)はゲームオーバーバンクの後半に置いてある。combined_test.asm
+# のSWITCH_TO_GFX2_BANKがwindow Bをそのバンクへ切り替えるので、
+# standalone番号3をComb globalの7へリターゲットする。
+STAGE2_GFX2_BANKSELECT_ANCHOR = """SWITCH_TO_GFX2_BANK:
+    LD A,3                       ; standalone gfx2(ゲームオーバー)バンク(Combでは7へパッチ)"""
+
+STAGE2_GFX2_BANKSELECT_PATCH = """SWITCH_TO_GFX2_BANK:
+    LD A,7                       ; standalone gfx2(ゲームオーバー)バンク(Combでは7へパッチ)"""
+
 # (2026-09-07、"ステージ2クリア後は10秒でタイトル画面に"、2026-09-12、
 # "ではこの画像をMission completed表示後10秒したら表示 ボタンが押され
 # たらスタート画面へ"で最終画像表示+ボタン待ちを追加): ENDING_ACT==4
@@ -523,6 +533,9 @@ def assemble_real_stage2():
     assert text.count(STAGE2_ENDING_RETURN_ANCHOR) == 1, \
         "stage2 ending-return anchor not found (or not unique) - combined_test.asm drifted"
     text = text.replace(STAGE2_ENDING_RETURN_ANCHOR, STAGE2_ENDING_RETURN_PATCH, 1)
+    assert text.count(STAGE2_GFX2_BANKSELECT_ANCHOR) == 1, \
+        "stage2 GFX2 bank-select anchor not found (or not unique) - combined_test.asm drifted"
+    text = text.replace(STAGE2_GFX2_BANKSELECT_ANCHOR, STAGE2_GFX2_BANKSELECT_PATCH, 1)
     a = Assembler(text)
     out = a.assemble()
     bank4, bank5 = stage2_build.build_banks(out)
@@ -672,6 +685,9 @@ def main():
     # --- (6000h, index7 after STAGE2_GAMEOVER_BANKSELECT_PATCH above).    ---
     bgm_bank, _ = bgm_bank_gen.build_bank()
     gameover_bank, gameover_sym = assemble_gameover_bank()
+    # Stage2のGFX2区画(INIT専用の絵柄)をゲームオーバーバンクのオフセット
+    # 2000h(window BでA000h)へ入れる。
+    gameover_bank = stage2_build.gfx2_bank(bank5.gfx2_blob, gameover_bank)
     rom = rom96 + bytes(bgm_bank) + bytes(gameover_bank)
 
     out_path = os.path.join(REPO, "rom", "CyberS Comb.ascii16k.rom")

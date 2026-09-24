@@ -227,10 +227,14 @@ class BankedMem:
 title_bank0, title_bank1, tsym = assemble_title()
 bank4, bank5, s2sym = assemble_real_stage2()
 gameover_bank, gosym = assemble_gameover_bank()
+# Stage2のGFX2区画(INIT専用の絵柄)はゲームオーバーバンクのオフセット2000h
+# (window BでA000h)にある - build_full_rom.pyのmain()と同じ組み立て。
+import build_full_rom as _bfr
+gameover_bank = _bfr.stage2_build.gfx2_bank(bank5.gfx2_blob, gameover_bank)
 dummy = bytearray([0xFF] * 0x4000)
 
 banksA = [title_bank0, dummy, game_bank0, dummy, bank4, dummy, dummy, gameover_bank]
-banksB = [title_bank1, title_bank1, game_bank1, game_bank1, bank5, bank5, bgm_bank, dummy]
+banksB = [title_bank1, title_bank1, game_bank1, game_bank1, bank5, bank5, bgm_bank, gameover_bank]
 
 mem = BankedMem(banksA, banksB)
 z = z80emu.Z80(mem)

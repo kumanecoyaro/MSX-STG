@@ -35,6 +35,8 @@ def assemble_flat(text):
     out = asm.assemble()
     mem = bytearray(65536)
     for addr, val in out.items():
+        if addr >= 0xC000:
+            continue  # GFX2区画(2026-09-24、ゲームオーバーバンクへ入る分)
         mem[addr & 0xFFFF] = val & 0xFF
     return mem, asm.symtab
 
@@ -71,7 +73,12 @@ def build_source(git_ref=None):
         # with combined_test.asm's own EQUs of the same names.
         import bgm_gen
         tables += "\n" + bgm_gen.emit_asm_tables()
-    return body + "\n" + tables + "\n"
+    text = body + "\n" + tables + "\n"
+    if "GFX2_BLOB_END:" in body:
+        # (2026-09-24) INIT専用の絵柄をGFX2区画へ移す処理(build_test.py)
+        import build_test
+        text = build_test.gfx2_relocate(text)
+    return text
 
 
 mem_old, sym_old = assemble_flat(build_source("HEAD"))

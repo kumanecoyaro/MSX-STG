@@ -18624,3 +18624,28 @@ EbuzII弾ビームへの1pxコリジョン追加+ROM予算の共有バンク6オ
   テストなのでこの区画を戻すよう修正)。verify_comb・title_test 86件・verify_ebuz2_mk2_comb PASS。
 - ROM: Stage1 plain 1390→2876 / Comb 1340→2826。Comb版だけLUT手前のALIGN 256を越えて256byte
   損していたので、CHECK_BULLET_VS_EBUZ2〜EBUZ2_ON_BOSS_TRIGGER(約110byte)をファイル末尾へ移して回収。
+
+## Round145 follow-up44: Stage2の起動時の絵柄データと転送一覧をゲームオーバーバンクへ逃がす(2026-09-24)
+
+- ユーザー: "Stage2も進めて"(follow-up43のStage1と同じく、1回きりの絵柄データとローダーを空きバンクへ)。
+- 置き場: ゲームオーバーバンク(standalone 3/Comb 7、1528byteしか使っていない)のオフセット2000h以降。
+  Stage2自身がINIT中にwindow Bをそこへ切り替えて読む(SWITCH_TO_GFX2_BANK、Combは3→7をアンカーで
+  パッチ)。window Bを切り替えている間もBGM_TICK(H.TIMI)はwindowAとRAMしか触らないことを確認済み。
+- ソース: combined_test.asmの末尾にGFX2区画(ORG GFX2_SCRATCH=C000h、転送一覧GFX2_LIST_0-6と色1byte
+  定数G2B_*)。window B上の実番地は「ラベル-GFX2_DELTA(2000h)」。build_test.pyのgfx2_relocate()が
+  INIT専用のDBブロック(GFX2_MOVE: 地形パターンRLE・自機/弾/敵/BigZum/Flyer/Horming BG/Thunder/
+  数字/雲/ブースター等)をROMから切り出してこの区画へ入れ、INIT以外でも読むブロック(GFX2_DUP:
+  TANK_TANKUP・BIGZUM・BULLET_U_SPRITE0/_L・EXPLOSION・HUD_BLACKROW32・SASAPI_HAND_COLOR8)は
+  ROMに残したまま"G2D_"付きの複製を入れる。TERRAIN_BLANK_ROW(0が768byte)は削除してFILVRMで埋める
+  (z80emuにFILVRMの代役を追加)。
+- 一覧の形式: DW 転送元,VRAM番地,長さ / DW 0で終わり。長さ0FF00h=MIRROR_32X32_POSE_TO_VRAM、
+  0FF01h=MIRROR_16_TO_VRAM(左右反転版の生成もリスト化)。色の1byte書き込み(HUD_TEMP_BYTE経由)も
+  G2B_*の1byteを転送元にしてリストへ入れた。
+- build_banks()はC000h以上を捨て、bank1.gfx2_blobに区画を持たせる。テスト用BankedMemはbanksB[3]に
+  gfx2_bank(blob)を置く。build_full_rom.py/verify_comb.py/verify_ebuz2_mk2_comb.pyはゲームオーバー
+  バンクへgfx2_bank()で埋め込む(verify_combはbankB=7を通ることも確認)。
+- 確認: 旧コミットと新ビルドでStage2のINIT→MAINLOOPのVRAM 16KBが完全一致(standalone)、送付Comb ROMの
+  実バンクからのStage2起動も同じVRAM。RAMの差は一時変数(HUD/BULLET_TEMP_BYTE)・スタック残骸・
+  H.TIMIフックの飛び先番地のみ。
+- Stage2の空き: 1596→5729byte(INITが短くなってTERRAIN_LUTのALIGNが1ページ前へ、9A00h台のデータ
+  削除でさらに前へ詰まった分を含む)。GFX2区画は2882byte、ゲームオーバーバンクの残りは約11.9KB。

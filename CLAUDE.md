@@ -37,6 +37,14 @@
 - 新規にVRAM/PSG/その他ハードウェアポートへのブロック転送を実装する際は、着手前に
   必ずこのセクションを再確認し、`OTIR`系命令を使わないこと。
 
+## Stage2 ROM予算(2026-09-24、follow-up44時点で**残り5729byte**)
+
+- INITで1回だけVRAMへ送る絵柄/色はゲームオーバーバンク(standalone 3/Comb 7)のオフセット2000h以降
+  (window BでA000h〜)へ移した。ソースはcombined_test.asm末尾のGFX2区画(ORG C000h、GFX2_LIST_n)、
+  移すDBブロックはbuild_test.pyのGFX2_MOVE/GFX2_DUP。**INITで新しい絵柄を足す時はGFX2_LIST_nへ
+  1行足し、データはGFX2_MOVEへ名前を足す(INIT以外でも読むならGFX2_DUP)**。Stage2のROM残量は
+  C000h未満の番地だけで数えること(build_banks()はC000h以上を捨てる)。
+
 ## Stage1 ROM予算(2026-09-24、Round145 follow-up43時点で**plain 2876byte /
 Comb 2826byte**・恒久的に確認必須、Combの方が少ない)
 

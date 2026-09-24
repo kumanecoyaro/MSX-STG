@@ -97,6 +97,13 @@ class Z80:
                 self.vram_writes_log.append((vaddr,v,self.pc))
             self.sethl((hl+bc)&0xFFFF); self.setde((de+bc)&0xFFFF); self.setbc(0)
             return True
+        if target == 0x0056:  # FILVRM: HL=dest(VRAM), BC=count, A=byte
+            hl=self.hl(); bc=self.bc()
+            for i in range(bc):
+                vaddr = (hl+i)&0x3FFF
+                self.vram[vaddr]=self.a
+                self.vram_writes_log.append((vaddr,self.a,self.pc))
+            return True
         if target == 0x006F:  # INIT32: VDP mode setup, no-op for our tracing
             return True
         if target == 0x0072:  # INIGRP: SCREEN2 mode setup, no-op for our tracing

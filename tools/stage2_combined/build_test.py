@@ -20,6 +20,7 @@ own multi-bank build, there's no later mid-game switch to test.
 """
 import importlib.util
 import os
+import re
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -66,7 +67,107 @@ def combined_text():
               + "\n" + ebullet_gen.emit_asm_tables() + "\n" + etankbullet_gen.emit_asm_tables()
               + "\n" + mine_gen.emit_asm_tables() + "\n" + flyerlaser_gen.emit_asm_tables()
               + "\n" + ending_text_gen.emit_asm_tables() + "\n" + ending_image_gen.emit_asm_tables())
-    return body + "\n" + tables + "\n"
+    return gfx2_relocate(body + "\n" + tables + "\n")
+
+
+# (2026-09-24、"Stage2も進めて"): INITで1回だけVRAMへ送る絵柄データを
+# ゲームオーバーバンクの後半へ移す(combined_test.asmのGFX2_BLOB_START
+# 区画参照)。GFX2_MOVEはINIT以外から読まれないDBブロック(ROMから消す)、
+# GFX2_DUPはINIT以外からも読むブロック(ROMに残したまま"G2D_"付きの
+# 複製をGFX2区画へ置く)。32x32の4分割ブロックは_TL/_TR/_BL/_BRを並び順
+# のまま移す(MIRROR_32X32_POSE_TO_VRAMが128byte連続で読むため)。
+def _quad(name):
+    base = name[:-3]
+    return [base + s for s in ("_TL", "_TR", "_BL", "_BR")]
+
+
+GFX2_MOVE = (["TERRAIN_PATTERNS", "TERRAIN_COLORDATA"]
+             + _quad("TANK_TANKF_TL") + _quad("TANK_TANKFGAP_TL") + _quad("TANK_TANKUGAP_TL")
+             + ["BULLET_F_PATTERN0", "BULLET_F_PATTERN1", "BULLET_F_PATTERN2",
+                "BULLET_F_L_PATTERN0", "BULLET_F_L_PATTERN1", "BULLET_F_L_PATTERN2",
+                "BULLET_U_PATTERN", "BULLET_U_L_PATTERN", "ENEMY_ZACOII", "ENEMY_ZUM"]
+             + _quad("BIGZUM_BIGZUMP_TL") + _quad("FLYER_TL")
+             + ["HORMING_BG_SL_PATTERN", "HORMING_BG_DL_PATTERN", "HORMING_BG_DOWN_PATTERN",
+                "HORMING_BG_DR_PATTERN", "HORMING_BG_SR_PATTERN", "THUNDER_TILES", "THUNDERS_TILE",
+                "EBULLET_SPRITE", "ETANK_BULLET_PATTERN", "MINE1_PATTERN", "MINE2_PATTERN",
+                "FLYER_LASER_PATTERN",
+                "ROCK_COLOR_SWAPPED_PATCH", "CLOUD_A_PATTERN", "CLOUD_B_PATTERN", "HUD_ZERO8",
+                "SKYSAND_PATTERN", "TERRAIN_ROW_SKYSAND", "TERRAIN_ROW_SAND", "LIFE_PATTERN",
+                "DIGIT_PATTERNS_LOCAL", "BOOSTER1_SPRITE", "BOOSTER2_SPRITE"])
+GFX2_DROP = ["TERRAIN_BLANK_ROW"]  # 0が768byte - INITはFILVRMで埋める
+GFX2_DUP = (_quad("TANK_TANKUP_TL") + _quad("BIGZUM_BIGZUM_TL")
+            + ["BULLET_U_SPRITE0", "BULLET_U_SPRITE0_L", "EXPLOSION_PATTERN",
+               "HUD_BLACKROW32", "SASAPI_HAND_COLOR8"])
+GFX2_SCRATCH = 0xC000   # combined_test.asmのGFX2_SCRATCH
+GFX2_BANK_OFFSET = 0x2000  # ゲームオーバーバンク内の置き場所(window BでA000h)
+
+_LBL_RE = re.compile(r"^([A-Z_][A-Z0-9_]*):\s*(;.*)?$")
+_DATA_RE = re.compile(r"^\s*(DB|DW|DS)\b", re.I)
+
+
+def _data_unit(lines, name):
+    """name:の行から、次のラベル行の手前までのDB/DW/DS行(途中の空行・
+    コメントを含み、末尾の空行・コメントは含まない)の範囲を返す。"""
+    idx = [i for i, l in enumerate(lines) if l is not None and _LBL_RE.match(l)
+           and _LBL_RE.match(l).group(1) == name]
+    assert len(idx) == 1, f"GFX2: label {name} not found exactly once"
+    i = idx[0]
+    j = i + 1
+    last = i
+    while j < len(lines):
+        l = lines[j]
+        if l is None or _LBL_RE.match(l):
+            break
+        c = l.split(";")[0].strip()
+        if c == "":
+            j += 1
+            continue
+        if _DATA_RE.match(l):
+            last = j
+            j += 1
+            continue
+        break
+    assert last > i, f"GFX2: {name} has no data lines"
+    return i, last + 1
+
+
+def gfx2_relocate(text):
+    lines = text.split("\n")
+    moved = []
+    for name in GFX2_DUP:
+        a, b = _data_unit(lines, name)
+        moved.append("G2D_" + lines[a].lstrip())
+        moved.extend(lines[a + 1:b])
+    for name in GFX2_MOVE + GFX2_DROP:
+        a, b = _data_unit(lines, name)
+        if name in GFX2_MOVE:
+            moved.extend(lines[a:b])
+        for k in range(a, b):
+            lines[k] = None
+    lines = [l for l in lines if l is not None]
+    end = [i for i, l in enumerate(lines) if l.startswith("GFX2_BLOB_END:")]
+    assert len(end) == 1
+    lines[end[0]:end[0]] = moved
+    return "\n".join(lines)
+
+
+def gfx2_blob(out):
+    """アセンブル結果からGFX2区画(C000h〜)を取り出す。"""
+    addrs = [a for a in out if a >= GFX2_SCRATCH]
+    assert addrs, "GFX2 blob missing"
+    size = max(addrs) - GFX2_SCRATCH + 1
+    assert size <= 0x4000 - GFX2_BANK_OFFSET, f"GFX2 blob too large ({size} bytes)"
+    return bytes(out.get(GFX2_SCRATCH + i, 0xFF) for i in range(size))
+
+
+def gfx2_bank(blob, base=None):
+    """ゲームオーバーバンク(base、無ければ0xFF埋め)のオフセット2000hへ
+    GFX2区画を入れた16KBを返す。"""
+    bank = bytearray(base) if base is not None else bytearray([0xFF] * 0x4000)
+    assert all(b == 0xFF for b in bank[GFX2_BANK_OFFSET:]), \
+        "gameover bank already uses the GFX2 area (offset 2000h-)"
+    bank[GFX2_BANK_OFFSET:GFX2_BANK_OFFSET + len(blob)] = blob
+    return bank
 
 
 def assemble():
@@ -85,13 +186,22 @@ def build_banks(out):
     bank0 = bytearray([0xFF] * 0x4000)
     bank1 = bytearray([0xFF] * 0x4000)
     for addr, val in out.items():
+        if addr >= GFX2_SCRATCH:
+            continue  # GFX2区画(gfx2_blob()がゲームオーバーバンクへ入れる)
         if 0x4000 <= addr <= 0x7FFF:
             bank0[addr - 0x4000] = val
         elif 0x8000 <= addr <= 0xBFFF:
             bank1[addr - 0x8000] = val
         else:
             raise Exception(f"address {addr:04X}h outside 4000h-BFFFh (bank0+bank1 budget exceeded)")
+    bank1 = _Bank(bank1)
+    bank1.gfx2_blob = gfx2_blob(out)
     return bank0, bank1
+
+
+class _Bank(bytearray):
+    """bank1にGFX2区画を持たせてBankedMemへ渡すためだけの入れ物。"""
+    gfx2_blob = None
 
 
 class BankedMem:
@@ -126,6 +236,11 @@ class BankedMem:
         bgm_spec.loader.exec_module(bgm_mod)
         bgm_bank, _ = bgm_mod.build_bank()
         self.banksB = [bytearray([0xFF] * 0x4000), bank1, bytearray(bgm_bank)]
+        # index3: ゲームオーバーバンク(standalone番号3)。INITのGFX2_LOAD_LIST
+        # がwindow Bをここへ切り替えて絵柄を読む(2026-09-24)。
+        blob = getattr(bank1, "gfx2_blob", None)
+        if blob is not None:
+            self.banksB.append(gfx2_bank(blob))
         self.bankA = 0
         self.bankB = 0
         self.portA = portA

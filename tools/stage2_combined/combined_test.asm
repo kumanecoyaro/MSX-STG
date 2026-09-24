@@ -12,6 +12,9 @@
 INIT32  EQU 006Fh
 INIGRP  EQU 0072h
 LDIRVM  EQU 005Ch
+FILVRM  EQU 0056h
+GFX2_SCRATCH EQU 0C000h   ; GFX2区画のアセンブル上の番地(ファイル末尾GFX2_BLOB_START参照)
+GFX2_DELTA   EQU 2000h    ; GFX2区画のwindow B上の実番地 = ラベル-GFX2_DELTA(A000h〜)
 WRTVDP  EQU 0047h
 WRTVRM  EQU 004Dh
 GTSTCK  EQU 00D5h
@@ -3305,26 +3308,27 @@ INIT_RESUME_AFTER_BANK_SELECT:
     ; (2026-09-19) TERRAIN_PATTERNSはRLE圧縮済み(terrain_gen.py自身の
     ; コメント参照) - VRAM書き込みアドレス0000hを設定した上で
     ; DECOMPRESS_RLE_TO_VRAMで展開。
+    ; (2026-09-24、"Stage2も進めて"): INITで1回だけVRAMへ送る絵柄/色は
+    ; GFX2バンク(ゲームオーバーバンクの後半、window BでA000h〜)へ移した。
+    ; 転送の一覧表GFX2_LIST_nをGFX2_LOAD_LISTが順にLDIRVMする(ファイル
+    ; 末尾のGFX2_BLOB_START参照)。以下のコメントは元の個々の転送の説明。
+    CALL SWITCH_TO_GFX2_BANK
     XOR A : OUT (VDP_ADDR),A : LD A,40h : OUT (VDP_ADDR),A
-    LD HL,TERRAIN_PATTERNS : LD DE,TERRAIN_PATTERNS_SEGMENTS : CALL DECOMPRESS_RLE_TO_VRAM
-    LD HL,TERRAIN_COLORDATA : LD DE,2000h : LD BC,32 : CALL LDIRVM
+    LD HL,TERRAIN_PATTERNS-GFX2_DELTA : LD DE,TERRAIN_PATTERNS_SEGMENTS : CALL DECOMPRESS_RLE_TO_VRAM
+    LD HL,GFX2_LIST_0-GFX2_DELTA : CALL GFX2_LOAD_LIST
 
     ; EtankBullet BG pattern (round36-14 follow-up#11) - group31's own
     ; free tail, code249 - see ETANK_BULLET_PATTERN_CODE's own comment.
     ; No color write: reuses group31's own existing fg5/bg11 unchanged.
-    LD HL,ETANK_BULLET_PATTERN : LD DE,ETANK_BULLET_PATTERN_CODE*8+0000h : LD BC,8 : CALL LDIRVM
 
     ; FlyerLaser BG pattern (round36-14 follow-up#12) - group31's own
     ; tail, code250 - see FLYER_LASER_PATTERN_CODE's own comment. No
     ; color write: reuses group31's own existing fg5/bg11 unchanged.
-    LD HL,FLYER_LASER_PATTERN : LD DE,FLYER_LASER_PATTERN_CODE*8+0000h : LD BC,8 : CALL LDIRVM
 
     ; Mine BG pattern, 2-frame anim (round36-14 follow-up#12) - group17's
     ; own free tail, codes137-138 - see MINE1_CODE/MINE2_CODE's own
     ; comment. No color write: reuses group17's own existing fg1/bg5
     ; unchanged (exact match to both source images).
-    LD HL,MINE1_PATTERN : LD DE,MINE1_CODE*8+0000h : LD BC,8 : CALL LDIRVM
-    LD HL,MINE2_PATTERN : LD DE,MINE2_CODE*8+0000h : LD BC,8 : CALL LDIRVM
 
     ; "カラー変更 Rockの文字色レッドと自機のレッドを入れ替えて" - swap
     ; the rock's own fg color (terrain_gen.py's ROCK_COLOR, fg8 medium
@@ -3348,18 +3352,12 @@ INIT_RESUME_AFTER_BANK_SELECT:
     ; groups by construction), so it can't be changed for "just Rock"
     ; without a much larger restructuring - see ROCK_COLOR_SWAPPED_
     ; PATCH's own comment for the full reasoning.
-    LD HL,ROCK_COLOR_SWAPPED_PATCH : LD DE,2001h : LD BC,1 : CALL LDIRVM
-    LD HL,ROCK_COLOR_SWAPPED_PATCH : LD DE,2003h : LD BC,29 : CALL LDIRVM
 
     ; flowing background clouds: 2-tile glyph pair at codes1-2, genuinely
     ; unused slots within group0 (SKY_BLANK_CODE=0 is group0's only real
     ; occupant per terrain_gen.py - codes1-7 are never emitted by the
     ; terrain generator at all). Group0's color becomes white-on-sky-
     ; blue instead of sky-on-sky.
-    LD HL,CLOUD_A_PATTERN : LD DE,CLOUD_A_CODE*8 : LD BC,8 : CALL LDIRVM
-    LD HL,CLOUD_B_PATTERN : LD DE,CLOUD_B_CODE*8 : LD BC,8 : CALL LDIRVM
-    LD A,CLOUD_GROUP0_COLOR : LD (HUD_TEMP_BYTE),A
-    LD HL,HUD_TEMP_BYTE : LD DE,2000h : LD BC,1 : CALL LDIRVM
     ; SKY_BLANK_CODE(0)'s own pattern actually has a few stray "1" bits
     ; (terrain_gen.py's BLANK tile, some faint speckle never meant to
     ; be visible) - harmless while group0 was sky-on-sky (fg==bg hid
@@ -3368,12 +3366,11 @@ INIT_RESUME_AFTER_BANK_SELECT:
     ; the ROM and comparing against the intended cloud-only look).
     ; Zeroed here (VRAM-only patch, terrain_gen.py's own BLANK data
     ; untouched) so plain open sky stays genuinely blank.
-    LD HL,HUD_ZERO8 : LD DE,SKY_BLANK_CODE*8 : LD BC,8 : CALL LDIRVM
 
     ; checkpoint 2: terrain patterns + color table loaded
     LD B,2 : LD C,7 : CALL WRTVDP
 
-    LD HL,TERRAIN_BLANK_ROW : LD DE,1800h : LD BC,768 : CALL LDIRVM
+    LD HL,1800h : LD BC,768 : XOR A : CALL FILVRM   ; 元はTERRAIN_BLANK_ROW(0が768byte)をLDIRVM
 
     ; checkpoint 3: whole name table cleared to sky
     LD B,3 : LD C,7 : CALL WRTVDP
@@ -3381,13 +3378,7 @@ INIT_RESUME_AFTER_BANK_SELECT:
     ; row16: SkySand pattern + its own dedicated color group, static
     ; one-time fill. rows17-19: plain Sand fill (TERRAIN_BLANK_CODE, the
     ; scrolling terrain's own BLANK code/color - no new group needed).
-    LD HL,SKYSAND_PATTERN : LD DE,SKYSAND_CODE*8 : LD BC,8 : CALL LDIRVM
-    LD A,SKYSAND_COLOR : LD (HUD_TEMP_BYTE),A
-    LD HL,HUD_TEMP_BYTE : LD DE,2000h+31 : LD BC,1 : CALL LDIRVM
-    LD HL,TERRAIN_ROW_SKYSAND : LD DE,1A00h : LD BC,32 : CALL LDIRVM
-    LD HL,TERRAIN_ROW_SAND : LD DE,1A20h : LD BC,32 : CALL LDIRVM
-    LD HL,TERRAIN_ROW_SAND : LD DE,1A40h : LD BC,32 : CALL LDIRVM
-    LD HL,TERRAIN_ROW_SAND : LD DE,1A60h : LD BC,32 : CALL LDIRVM
+    LD HL,GFX2_LIST_1-GFX2_DELTA : CALL GFX2_LOAD_LIST
 
     XOR A
     LD (TICK),A
@@ -3409,76 +3400,31 @@ INIT_RESUME_AFTER_BANK_SELECT:
     ; checkpoint 5: 16x16 sprite mode set
     LD B,5 : LD C,7 : CALL WRTVDP
 
-    LD HL,TANK_TANKF_TL    : LD DE,PAT_TANKF*8+SPRPAT    : LD BC,128 : CALL LDIRVM
-    LD HL,TANK_TANKUP_TL   : LD DE,PAT_TANKUP*8+SPRPAT   : LD BC,128 : CALL LDIRVM
-    LD HL,TANK_TANKFGAP_TL : LD DE,PAT_TANKFGAP*8+SPRPAT : LD BC,128 : CALL LDIRVM
-    LD HL,TANK_TANKUGAP_TL : LD DE,PAT_TANKUGAP*8+SPRPAT : LD BC,128 : CALL LDIRVM
+    LD HL,GFX2_LIST_2-GFX2_DELTA : CALL GFX2_LOAD_LIST
     ; mirrored (left-facing) poses - "反転パターンはそっちで生成して
     ; くれ" (tank_gen.py's own POSE_FLIP_OFFSET quadrants). (2026-09-19)
     ; もうROMに反転データを二重持ちせず、その場でMIRROR_32X32_POSE_TO_
     ; VRAMが右向きの生データから生成してVRAMへ直接書き込む
     ; (MIRROR_32X32_POSE_TO_VRAM/MIRROR_16_TO_VRAM自身のコメント参照)。
-    LD DE,PAT_TANKF_L*8+SPRPAT
-    LD A,E : OUT (VDP_ADDR),A : LD A,D : OR 40h : OUT (VDP_ADDR),A
-    LD HL,TANK_TANKF_TL : CALL MIRROR_32X32_POSE_TO_VRAM
-    LD DE,PAT_TANKUP_L*8+SPRPAT
-    LD A,E : OUT (VDP_ADDR),A : LD A,D : OR 40h : OUT (VDP_ADDR),A
-    LD HL,TANK_TANKUP_TL : CALL MIRROR_32X32_POSE_TO_VRAM
-    LD DE,PAT_TANKFGAP_L*8+SPRPAT
-    LD A,E : OUT (VDP_ADDR),A : LD A,D : OR 40h : OUT (VDP_ADDR),A
-    LD HL,TANK_TANKFGAP_TL : CALL MIRROR_32X32_POSE_TO_VRAM
-    LD DE,PAT_TANKUGAP_L*8+SPRPAT
-    LD A,E : OUT (VDP_ADDR),A : LD A,D : OR 40h : OUT (VDP_ADDR),A
-    LD HL,TANK_TANKUGAP_TL : CALL MIRROR_32X32_POSE_TO_VRAM
 
     ; F's own BG pattern: round36-11 grew from 1 pose to 3 (BulletFU/FM/
     ; FL, bullet_gen.py's own BULLET_F_PATTERN0/1/2) - each loaded once
     ; per background color group it can appear over (see BULLETF_SKY_
     ; CODE0 etc. above), and the mirrored (left-facing) shape the same
     ; way at its own codes.
-    LD HL,BULLET_F_PATTERN0 : LD DE,BULLETF_SKY_CODE0*8  : LD BC,8 : CALL LDIRVM
-    LD HL,BULLET_F_PATTERN1 : LD DE,BULLETF_SKY_CODE1*8  : LD BC,8 : CALL LDIRVM
-    LD HL,BULLET_F_PATTERN2 : LD DE,BULLETF_SKY_CODE2*8  : LD BC,8 : CALL LDIRVM
-    LD HL,BULLET_F_PATTERN0 : LD DE,BULLETF_ROCK_CODE0*8 : LD BC,8 : CALL LDIRVM
-    LD HL,BULLET_F_PATTERN1 : LD DE,BULLETF_ROCK_CODE1*8 : LD BC,8 : CALL LDIRVM
-    LD HL,BULLET_F_PATTERN2 : LD DE,BULLETF_ROCK_CODE2*8 : LD BC,8 : CALL LDIRVM
-    LD HL,BULLET_F_L_PATTERN0 : LD DE,BULLETF_L_SKY_CODE0*8 : LD BC,8 : CALL LDIRVM
-    LD HL,BULLET_F_L_PATTERN1 : LD DE,BULLETF_L_SKY_CODE1*8 : LD BC,8 : CALL LDIRVM
-    LD HL,BULLET_F_L_PATTERN2 : LD DE,BULLETF_L_SKY_CODE2*8 : LD BC,8 : CALL LDIRVM
-    LD HL,BULLET_F_L_PATTERN0 : LD DE,BULLETF_L_ROCK_CODE0*8 : LD BC,8 : CALL LDIRVM
-    LD HL,BULLET_F_L_PATTERN1 : LD DE,BULLETF_L_ROCK_CODE1*8 : LD BC,8 : CALL LDIRVM
-    LD HL,BULLET_F_L_PATTERN2 : LD DE,BULLETF_L_ROCK_CODE2*8 : LD BC,8 : CALL LDIRVM
 
     ; F's own bullet color groups: patch over terrain_gen.py's generic
     ; per-group defaults for the 2 groups its codes live in - see
     ; BULLET_SKY_COLORADDR/BULLET_ROCK_COLORADDR above.
-    LD A,BULLET_SKY_COLORBYTE : LD (BULLET_TEMP_BYTE),A
-    LD HL,BULLET_TEMP_BYTE : LD DE,BULLET_SKY_COLORADDR : LD BC,1 : CALL LDIRVM
-    LD A,BULLET_ROCK_COLORBYTE : LD (BULLET_TEMP_BYTE),A
-    LD HL,BULLET_TEMP_BYTE : LD DE,BULLET_ROCK_COLORADDR : LD BC,1 : CALL LDIRVM
 
     ; F's own night-black glyph (see BULLETF_NIGHT_CODE0's own comment) -
     ; same shapes as the day glyph, own dedicated color group (round36-11:
     ; moved to group30, BULLET_NIGHT_COLORADDR, from the old fixed
     ; "2000h+18" literal - see that EQU's own comment).
-    LD HL,BULLET_F_PATTERN0   : LD DE,BULLETF_NIGHT_CODE0*8   : LD BC,8 : CALL LDIRVM
-    LD HL,BULLET_F_PATTERN1   : LD DE,BULLETF_NIGHT_CODE1*8   : LD BC,8 : CALL LDIRVM
-    LD HL,BULLET_F_PATTERN2   : LD DE,BULLETF_NIGHT_CODE2*8   : LD BC,8 : CALL LDIRVM
-    LD HL,BULLET_F_L_PATTERN0 : LD DE,BULLETF_L_NIGHT_CODE0*8 : LD BC,8 : CALL LDIRVM
-    LD HL,BULLET_F_L_PATTERN1 : LD DE,BULLETF_L_NIGHT_CODE1*8 : LD BC,8 : CALL LDIRVM
-    LD HL,BULLET_F_L_PATTERN2 : LD DE,BULLETF_L_NIGHT_CODE2*8 : LD BC,8 : CALL LDIRVM
-    LD A,BULLET_NIGHT_COLORBYTE : LD (HUD_TEMP_BYTE),A
-    LD HL,HUD_TEMP_BYTE : LD DE,BULLET_NIGHT_COLORADDR : LD BC,1 : CALL LDIRVM
 
     ; U's own BG-cell pattern (see BULLETU_SKY_CODE's own comment) - a
     ; single non-rotating pose (BulletUM), loaded into F's already-
     ; colored groups28/29/30, no new color-table writes needed.
-    LD HL,BULLET_U_PATTERN   : LD DE,BULLETU_SKY_CODE*8    : LD BC,8 : CALL LDIRVM
-    LD HL,BULLET_U_L_PATTERN : LD DE,BULLETU_L_SKY_CODE*8 : LD BC,8 : CALL LDIRVM
-    LD HL,BULLET_U_PATTERN   : LD DE,BULLETU_ROCK_CODE*8   : LD BC,8 : CALL LDIRVM
-    LD HL,BULLET_U_L_PATTERN : LD DE,BULLETU_L_ROCK_CODE*8 : LD BC,8 : CALL LDIRVM
-    LD HL,BULLET_U_PATTERN   : LD DE,BULLETU_NIGHT_CODE*8   : LD BC,8 : CALL LDIRVM
-    LD HL,BULLET_U_L_PATTERN : LD DE,BULLETU_L_NIGHT_CODE*8 : LD BC,8 : CALL LDIRVM
 
     ; U's own hw sprite pattern (16x16, right after PAT_EXPLOSION) -
     ; primed here with variant0 (BulletUU) purely as a sane INIT-time
@@ -3487,8 +3433,6 @@ INIT_RESUME_AFTER_BANK_SELECT:
     ; overwrites this same slot with the correct rotating variant at
     ; every actual diagonal shot spawn (see BULLET_U_SPR_BASE_SLOT's own
     ; comment for why there's only ever 1 resident bitmap here).
-    LD HL,BULLET_U_SPRITE0 : LD DE,PAT_BULLETU*8+SPRPAT : LD BC,32 : CALL LDIRVM
-    LD HL,BULLET_U_SPRITE0_L : LD DE,PAT_BULLETU_L*8+SPRPAT : LD BC,32 : CALL LDIRVM
     XOR A : LD (BULLETF_ROT_COUNTER),A : LD (BULLETU_ROT_COUNTER),A
 
     ; round36-12: the new BG-drawn Horming pool's own 5 facing patterns
@@ -3498,13 +3442,6 @@ INIT_RESUME_AFTER_BANK_SELECT:
     ; take over Flyer's still-in-use block) - nothing else in this game
     ; ever needs codes144-151 at any point, so there's no "guaranteed
     ; dead owner" timing dependency to wait for.
-    LD HL,HORMING_BG_SL_PATTERN   : LD DE,HORMING_BG_SL_CODE*8   : LD BC,8 : CALL LDIRVM
-    LD HL,HORMING_BG_DL_PATTERN   : LD DE,HORMING_BG_DL_CODE*8   : LD BC,8 : CALL LDIRVM
-    LD HL,HORMING_BG_DOWN_PATTERN : LD DE,HORMING_BG_DOWN_CODE*8 : LD BC,8 : CALL LDIRVM
-    LD HL,HORMING_BG_DR_PATTERN   : LD DE,HORMING_BG_DR_CODE*8   : LD BC,8 : CALL LDIRVM
-    LD HL,HORMING_BG_SR_PATTERN   : LD DE,HORMING_BG_SR_CODE*8   : LD BC,8 : CALL LDIRVM
-    LD A,HORMING_BG_COLORBYTE : LD (BULLET_TEMP_BYTE),A
-    LD HL,BULLET_TEMP_BYTE : LD DE,HORMING_BG_COLORADDR : LD BC,1 : CALL LDIRVM
 
     ; round36-14 (relocated to group12/codes96-100 after the group2/
     ; codes18-22 attempt turned out to collide with real terrain blend
@@ -3512,13 +3449,6 @@ INIT_RESUME_AFTER_BANK_SELECT:
     ; bitmaps again, plus this time a real, needed color write (group12
     ; is NOT a group terrain leaves alone the way group2's SAND_GROUPS
     ; carve-out is).
-    LD HL,HORMING_BG_SL_PATTERN   : LD DE,HORMING_BG_SAND_SL_CODE*8   : LD BC,8 : CALL LDIRVM
-    LD HL,HORMING_BG_DL_PATTERN   : LD DE,HORMING_BG_SAND_DL_CODE*8   : LD BC,8 : CALL LDIRVM
-    LD HL,HORMING_BG_DOWN_PATTERN : LD DE,HORMING_BG_SAND_DOWN_CODE*8 : LD BC,8 : CALL LDIRVM
-    LD HL,HORMING_BG_DR_PATTERN   : LD DE,HORMING_BG_SAND_DR_CODE*8   : LD BC,8 : CALL LDIRVM
-    LD HL,HORMING_BG_SR_PATTERN   : LD DE,HORMING_BG_SAND_SR_CODE*8   : LD BC,8 : CALL LDIRVM
-    LD A,HORMING_BG_SAND_COLORBYTE : LD (BULLET_TEMP_BYTE),A
-    LD HL,BULLET_TEMP_BYTE : LD DE,HORMING_BG_SAND_COLORADDR : LD BC,1 : CALL LDIRVM
 
     ; Sasapi's own attack-pose hand art (BG pattern, not a hw sprite -
     ; see SASAPI_HAND_CODE_BASE's own comment) - a permanent allocation
@@ -3548,16 +3478,10 @@ INIT_RESUME_AFTER_BANK_SELECT:
     CALL DECOMPRESS_RLE_TO_VRAM
     CALL RESTORE_OWN_BANK_B
     EI
-    LD HL,SASAPI_HAND_COLOR8 : LD DE,2000h+19 : LD BC,8 : CALL LDIRVM
+    LD HL,GFX2_LIST_3-GFX2_DELTA : CALL GFX2_LOAD_LIST
 
     ; Thunder's own BG art (group27, see THUNDER_CODE_BASE's own
     ; comment) - same permanent-allocation idiom as the hand art above.
-    DI
-    LD HL,THUNDER_TILES : LD DE,THUNDER_CODE_BASE*8 : LD BC,4*8 : CALL LDIRVM
-    LD HL,THUNDERS_TILE : LD DE,THUNDERS_CODE*8 : LD BC,1*8 : CALL LDIRVM
-    EI
-    LD A,THUNDER_COLORBYTE : LD (HUD_TEMP_BYTE),A
-    LD HL,HUD_TEMP_BYTE : LD DE,2000h+27 : LD BC,1 : CALL LDIRVM
 
     ; homing missile's own hw sprite patterns are NOT loaded here - round-
     ; 2 correction moved them to a dynamically-reused block (Flyer's own,
@@ -3573,8 +3497,6 @@ INIT_RESUME_AFTER_BANK_SELECT:
     ; 詳細はTANK_ENTRY_ACT付近のコメント参照。TANK_TANKUP_TL自身のロード
     ; (このさらに上、通常のtankパターン読み込みブロック)より後に実行する
     ; 必要がある(こちらが最終的に勝つ)。
-    LD HL,BOOSTER1_SPRITE : LD DE,PAT_BOOSTER1*8+SPRPAT : LD BC,32 : CALL LDIRVM
-    LD HL,BOOSTER2_SPRITE : LD DE,PAT_BOOSTER2*8+SPRPAT : LD BC,32 : CALL LDIRVM
 
     ; checkpoint 6: tank + bullet patterns loaded
     LD B,6 : LD C,7 : CALL WRTVDP
@@ -3665,35 +3587,21 @@ INIT_SPRATR_CLR:
 
     ; digit/hex glyphs (16 consecutive codes, DIGIT_BASE=104-119) and
     ; their shared color (groups13-14, both white/black).
-    LD HL,DIGIT_PATTERNS_LOCAL : LD DE,DIGIT_BASE*8 : LD BC,128 : CALL LDIRVM
-    LD A,HUD_DIGIT_COLORBYTE : LD (HUD_TEMP_BYTE),A
-    LD HL,HUD_TEMP_BYTE : LD DE,2000h+13 : LD BC,1 : CALL LDIRVM
-    LD A,HUD_DIGIT_COLORBYTE : LD (HUD_TEMP_BYTE),A
-    LD HL,HUD_TEMP_BYTE : LD DE,2000h+14 : LD BC,1 : CALL LDIRVM
+    LD HL,GFX2_LIST_4-GFX2_DELTA : CALL GFX2_LOAD_LIST
 
     ; life bar (see LIFE_CODE's own comment): HUD_ROW_BLANK_CODE's own
     ; pattern (blank) + color (black), LIFE_CODE's own pattern (Life_
     ; 8x8.json) + color (fg3/bg5).
-    LD HL,HUD_ZERO8 : LD DE,HUD_ROW_BLANK_CODE*8 : LD BC,8 : CALL LDIRVM
-    LD A,HUD_ROW_BLANK_COLOR : LD (HUD_TEMP_BYTE),A
-    LD HL,HUD_TEMP_BYTE : LD DE,2000h+15 : LD BC,1 : CALL LDIRVM
-    LD HL,LIFE_PATTERN : LD DE,LIFE_CODE*8 : LD BC,8 : CALL LDIRVM
-    LD A,LIFE_COLOR : LD (HUD_TEMP_BYTE),A
-    LD HL,HUD_TEMP_BYTE : LD DE,2000h+16 : LD BC,1 : CALL LDIRVM
 
     ; night-transition tile: SKYSAND_PATTERN's own bits (the striped
     ; look), own dedicated group17 colored fg5/bg1 instead of SkySand's
     ; own fg5/bg11 - see NIGHT_START_TICK's own comment.
-    LD HL,SKYSAND_PATTERN : LD DE,NIGHT_CODE*8 : LD BC,8 : CALL LDIRVM
-    LD A,NIGHT_COLOR : LD (HUD_TEMP_BYTE),A
-    LD HL,HUD_TEMP_BYTE : LD DE,2000h+17 : LD BC,1 : CALL LDIRVM
     XOR A : LD (NIGHT_ROW),A
     LD HL,NIGHT_START_TICK : LD (NIGHT_NEXT_TICK),HL
 
     ; "最上部の行はブラックで初期化" - the whole top HUD row (32 cells)
     ; to HUD_ROW_BLANK_CODE first; SCORE_DISPLAY/LIFE_DISPLAY/
     ; GAME_TICK_DISPLAY overwrite their own specific cells afterward.
-    LD HL,HUD_BLACKROW32 : LD DE,1800h : LD BC,32 : CALL LDIRVM
 
     LD A,TANK_LIFE_INIT : LD (TANK_LIFE),A
     CALL LIFE_DISPLAY
@@ -3774,18 +3682,13 @@ INIT_SPRATR_CLR:
 
     ; enemy (ZacoII) sprite patterns + explosion, one hw sprite pattern
     ; slot each (128/132/136 - right after the tank's own 0-127).
-    LD HL,ENEMY_ZACOII : LD DE,PAT_ZACO*8+SPRPAT : LD BC,32 : CALL LDIRVM
+    LD HL,GFX2_LIST_5-GFX2_DELTA : CALL GFX2_LOAD_LIST
     ; (2026-09-19) 反転版はROMへ二重持ちせず、MIRROR_16_TO_VRAMでその場
     ; 生成(単一16x16ブロックなのでグリッド段の列入れ替え不要、TL/TR・
     ; BL/BR入れ替え+各byteのビット反転のみ)。
-    LD DE,PAT_ZACO_FLIP*8+SPRPAT
-    LD A,E : OUT (VDP_ADDR),A : LD A,D : OR 40h : OUT (VDP_ADDR),A
-    LD HL,ENEMY_ZACOII : CALL MIRROR_16_TO_VRAM
-    LD HL,EXPLOSION_PATTERN : LD DE,PAT_EXPLOSION*8+SPRPAT : LD BC,32 : CALL LDIRVM
 
     ; EBullet (ZacoII/Flyer enemy bullet - round36-14 follow-up#11) - own
     ; verified-free 4-code group, see PAT_EBULLET's own comment.
-    LD HL,EBULLET_SPRITE : LD DE,PAT_EBULLET*8+SPRPAT : LD BC,32 : CALL LDIRVM
     ; pool + RAM staging buffer both need priming, same 2-part reasoning
     ; as ENEMY_SPRITE_ATTRS's own comment just above (IESA_LOOP) - the
     ; real VRAM SAT is already hidden via the earlier full 32-slot clear,
@@ -3821,32 +3724,17 @@ IEBSA_LOOP:
     ; もの、コメントがあるならそれはまちがい」の方針に従い実装は無変更、
     ; コメントのみ訂正)。反転版はENEMY_ZACOIIと同じくMIRROR_16_TO_VRAM
     ; でその場生成。
-    LD HL,ENEMY_ZUM : LD DE,PAT_ZUM*8+SPRPAT : LD BC,32 : CALL LDIRVM
-    LD DE,PAT_ZUM_FLIP*8+SPRPAT
-    LD A,E : OUT (VDP_ADDR),A : LD A,D : OR 40h : OUT (VDP_ADDR),A
-    LD HL,ENEMY_ZUM : CALL MIRROR_16_TO_VRAM
+    LD HL,GFX2_LIST_6-GFX2_DELTA : CALL GFX2_LOAD_LIST
 
     ; BigZum's own patterns (bigzum_gen.py) - both poses, both facings,
     ; 128 bytes each (4 quadrants x32 bytes, same per-pose size as the
     ; tank's own loads above) - "なので添付のデータは反転も生成".
-    LD HL,BIGZUM_BIGZUM_TL    : LD DE,PAT_BIGZUM*8+SPRPAT    : LD BC,128 : CALL LDIRVM
-    LD HL,BIGZUM_BIGZUMP_TL   : LD DE,PAT_BIGZUMP*8+SPRPAT   : LD BC,128 : CALL LDIRVM
     ; (2026-09-19) 反転版はROMへ二重持ちせず、その場でMIRROR_32X32_
     ; POSE_TO_VRAMが右向き生データから生成してVRAMへ直接書き込む。
-    LD DE,PAT_BIGZUM_L*8+SPRPAT
-    LD A,E : OUT (VDP_ADDR),A : LD A,D : OR 40h : OUT (VDP_ADDR),A
-    LD HL,BIGZUM_BIGZUM_TL : CALL MIRROR_32X32_POSE_TO_VRAM
-    LD DE,PAT_BIGZUMP_L*8+SPRPAT
-    LD A,E : OUT (VDP_ADDR),A : LD A,D : OR 40h : OUT (VDP_ADDR),A
-    LD HL,BIGZUM_BIGZUMP_TL : CALL MIRROR_32X32_POSE_TO_VRAM
 
     ; Flyer's own pattern (flyer_gen.py) - permanent allocation, both
     ; facings, right after BigZum's own last group.
-    LD HL,FLYER_TL   : LD DE,PAT_FLYER*8+SPRPAT   : LD BC,128 : CALL LDIRVM
     ; (2026-09-19) 反転版はROMへ二重持ちせず、その場生成。
-    LD DE,PAT_FLYER_L*8+SPRPAT
-    LD A,E : OUT (VDP_ADDR),A : LD A,D : OR 40h : OUT (VDP_ADDR),A
-    LD HL,FLYER_TL : CALL MIRROR_32X32_POSE_TO_VRAM
 
     ; enemy pool: zero the whole buffer generically (all slots inactive,
     ; all other fields 0) rather than naming each slot - "管理もバッファ
@@ -11378,6 +11266,53 @@ RESTORE_OWN_BANK_B:
     LD (7000h),A
     RET
 
+; (2026-09-24、"Stage2も進めて"): INITで1回だけ使う絵柄/色データは
+; ゲームオーバーバンク(standalone 3/Comb 7)の後半16KB中オフセット2000h
+; 以降(window BではA000h〜)に置いてある(build_test.pyのgfx2_blob()が
+; アセンブル結果から取り出し、build_full_rom.pyがゲームオーバーバンクへ
+; 埋め込む)。ソース上はファイル末尾のGFX2_BLOB_START区画(ORG GFX2_
+; SCRATCH=C000h)にあるので、window B上の実番地はラベル-GFX2_DELTA。
+; この2ルーチンもwindowA常駐。window Bを切り替えている間もBGM_TICK
+; (H.TIMI)はwindowAとRAMしか触らないので割り込みが入っても安全。
+SWITCH_TO_GFX2_BANK:
+    LD A,3                       ; standalone gfx2(ゲームオーバー)バンク(Combでは7へパッチ)
+    LD (7000h),A
+    RET
+
+; HL=一覧表(window B上の番地)。1件=DW 転送元,VRAM番地,長さ、DW 0で終わり。
+; 長さの上位が0FFhなら反転転送: 0FF00h=MIRROR_32X32_POSE_TO_VRAM、
+; 0FF01h=MIRROR_16_TO_VRAM。終わったらwindow Bを自分のbank1へ戻す。
+GFX2_LOAD_LIST:
+    CALL SWITCH_TO_GFX2_BANK
+    PUSH HL
+    POP IX
+G2LL_LOOP:
+    LD A,(IX+1)
+    OR A
+    JP Z,RESTORE_OWN_BANK_B
+    LD H,A : LD L,(IX+0)
+    LD E,(IX+2) : LD D,(IX+3)
+    LD C,(IX+4) : LD B,(IX+5)
+    INC IX : INC IX : INC IX : INC IX : INC IX : INC IX
+    PUSH IX
+    LD A,B
+    INC A
+    JR Z,G2LL_MIRROR
+    CALL LDIRVM
+    POP IX
+    JR G2LL_LOOP
+G2LL_MIRROR:
+    LD A,E : OUT (VDP_ADDR),A : LD A,D : OR 40h : OUT (VDP_ADDR),A
+    DEC C
+    JR Z,G2LL_M16
+    CALL MIRROR_32X32_POSE_TO_VRAM
+    POP IX
+    JR G2LL_LOOP
+G2LL_M16:
+    CALL MIRROR_16_TO_VRAM
+    POP IX
+    JR G2LL_LOOP
+
 ; (2026-09-14、"次にキャラデータはかなり圧縮ができる筈 RLEで十分だろう
 ; 逐次読み込みはステージ1も2もボスくらいのはず なので初期状態で
 ; キャラデータはVramに転送済みのはずなんで圧縮展開しても問題は無い
@@ -16387,5 +16322,152 @@ FBS_LOOP:
     DJNZ FBS_LOOP
     EI
     RET
+
+; ===== GFX2区画(2026-09-24、"Stage2も進めて") =====
+; INITで1回だけVRAMへ送る絵柄/色と転送の一覧表。ソース上はC000h
+; (GFX2_SCRATCH)に置いてアセンブルし、build_test.pyのgfx2_blob()が
+; 取り出してゲームオーバーバンクのオフセット2000hへ入れる(window Bで
+; A000h)。ラベル-GFX2_DELTAがwindow B上の実番地。INIT以外からも読む
+; データ(TANK_TANKUP_TL等)はROMに残したまま、ここへ複製(G2D_*)を置く。
+; 移す/複製するDBブロックはbuild_test.pyのGFX2_MOVE/GFX2_DUPが
+; このファイル末尾・生成テーブルの中から切り出してGFX2_BLOB_ENDの
+; 直前へ差し込む。
+GFX2_ROM_RESUME:
+    ORG GFX2_SCRATCH
+GFX2_BLOB_START:
+GFX2_LIST_0:
+    DW TERRAIN_COLORDATA-GFX2_DELTA,2000h,32
+    DW ETANK_BULLET_PATTERN-GFX2_DELTA,ETANK_BULLET_PATTERN_CODE*8,8
+    DW FLYER_LASER_PATTERN-GFX2_DELTA,FLYER_LASER_PATTERN_CODE*8,8
+    DW MINE1_PATTERN-GFX2_DELTA,MINE1_CODE*8,8
+    DW MINE2_PATTERN-GFX2_DELTA,MINE2_CODE*8,8
+    DW ROCK_COLOR_SWAPPED_PATCH-GFX2_DELTA,2001h,1
+    DW ROCK_COLOR_SWAPPED_PATCH-GFX2_DELTA,2003h,29
+    DW CLOUD_A_PATTERN-GFX2_DELTA,CLOUD_A_CODE*8,8
+    DW CLOUD_B_PATTERN-GFX2_DELTA,CLOUD_B_CODE*8,8
+    DW G2B_CLOUD_GROUP0-GFX2_DELTA,2000h,1
+    DW HUD_ZERO8-GFX2_DELTA,SKY_BLANK_CODE*8,8
+    DW 0
+GFX2_LIST_1:
+    DW SKYSAND_PATTERN-GFX2_DELTA,SKYSAND_CODE*8,8
+    DW G2B_SKYSAND-GFX2_DELTA,2000h+31,1
+    DW TERRAIN_ROW_SKYSAND-GFX2_DELTA,1A00h,32
+    DW TERRAIN_ROW_SAND-GFX2_DELTA,1A20h,32
+    DW TERRAIN_ROW_SAND-GFX2_DELTA,1A40h,32
+    DW TERRAIN_ROW_SAND-GFX2_DELTA,1A60h,32
+    DW 0
+GFX2_LIST_2:
+    DW TANK_TANKF_TL-GFX2_DELTA,PAT_TANKF*8+SPRPAT,128
+    DW G2D_TANK_TANKUP_TL-GFX2_DELTA,PAT_TANKUP*8+SPRPAT,128
+    DW TANK_TANKFGAP_TL-GFX2_DELTA,PAT_TANKFGAP*8+SPRPAT,128
+    DW TANK_TANKUGAP_TL-GFX2_DELTA,PAT_TANKUGAP*8+SPRPAT,128
+    DW TANK_TANKF_TL-GFX2_DELTA,PAT_TANKF_L*8+SPRPAT,0FF00h
+    DW G2D_TANK_TANKUP_TL-GFX2_DELTA,PAT_TANKUP_L*8+SPRPAT,0FF00h
+    DW TANK_TANKFGAP_TL-GFX2_DELTA,PAT_TANKFGAP_L*8+SPRPAT,0FF00h
+    DW TANK_TANKUGAP_TL-GFX2_DELTA,PAT_TANKUGAP_L*8+SPRPAT,0FF00h
+    DW BULLET_F_PATTERN0-GFX2_DELTA,BULLETF_SKY_CODE0*8,8
+    DW BULLET_F_PATTERN1-GFX2_DELTA,BULLETF_SKY_CODE1*8,8
+    DW BULLET_F_PATTERN2-GFX2_DELTA,BULLETF_SKY_CODE2*8,8
+    DW BULLET_F_PATTERN0-GFX2_DELTA,BULLETF_ROCK_CODE0*8,8
+    DW BULLET_F_PATTERN1-GFX2_DELTA,BULLETF_ROCK_CODE1*8,8
+    DW BULLET_F_PATTERN2-GFX2_DELTA,BULLETF_ROCK_CODE2*8,8
+    DW BULLET_F_L_PATTERN0-GFX2_DELTA,BULLETF_L_SKY_CODE0*8,8
+    DW BULLET_F_L_PATTERN1-GFX2_DELTA,BULLETF_L_SKY_CODE1*8,8
+    DW BULLET_F_L_PATTERN2-GFX2_DELTA,BULLETF_L_SKY_CODE2*8,8
+    DW BULLET_F_L_PATTERN0-GFX2_DELTA,BULLETF_L_ROCK_CODE0*8,8
+    DW BULLET_F_L_PATTERN1-GFX2_DELTA,BULLETF_L_ROCK_CODE1*8,8
+    DW BULLET_F_L_PATTERN2-GFX2_DELTA,BULLETF_L_ROCK_CODE2*8,8
+    DW G2B_BULLET_SKY-GFX2_DELTA,BULLET_SKY_COLORADDR,1
+    DW G2B_BULLET_ROCK-GFX2_DELTA,BULLET_ROCK_COLORADDR,1
+    DW BULLET_F_PATTERN0-GFX2_DELTA,BULLETF_NIGHT_CODE0*8,8
+    DW BULLET_F_PATTERN1-GFX2_DELTA,BULLETF_NIGHT_CODE1*8,8
+    DW BULLET_F_PATTERN2-GFX2_DELTA,BULLETF_NIGHT_CODE2*8,8
+    DW BULLET_F_L_PATTERN0-GFX2_DELTA,BULLETF_L_NIGHT_CODE0*8,8
+    DW BULLET_F_L_PATTERN1-GFX2_DELTA,BULLETF_L_NIGHT_CODE1*8,8
+    DW BULLET_F_L_PATTERN2-GFX2_DELTA,BULLETF_L_NIGHT_CODE2*8,8
+    DW G2B_BULLET_NIGHT-GFX2_DELTA,BULLET_NIGHT_COLORADDR,1
+    DW BULLET_U_PATTERN-GFX2_DELTA,BULLETU_SKY_CODE*8,8
+    DW BULLET_U_L_PATTERN-GFX2_DELTA,BULLETU_L_SKY_CODE*8,8
+    DW BULLET_U_PATTERN-GFX2_DELTA,BULLETU_ROCK_CODE*8,8
+    DW BULLET_U_L_PATTERN-GFX2_DELTA,BULLETU_L_ROCK_CODE*8,8
+    DW BULLET_U_PATTERN-GFX2_DELTA,BULLETU_NIGHT_CODE*8,8
+    DW BULLET_U_L_PATTERN-GFX2_DELTA,BULLETU_L_NIGHT_CODE*8,8
+    DW G2D_BULLET_U_SPRITE0-GFX2_DELTA,PAT_BULLETU*8+SPRPAT,32
+    DW G2D_BULLET_U_SPRITE0_L-GFX2_DELTA,PAT_BULLETU_L*8+SPRPAT,32
+    DW HORMING_BG_SL_PATTERN-GFX2_DELTA,HORMING_BG_SL_CODE*8,8
+    DW HORMING_BG_DL_PATTERN-GFX2_DELTA,HORMING_BG_DL_CODE*8,8
+    DW HORMING_BG_DOWN_PATTERN-GFX2_DELTA,HORMING_BG_DOWN_CODE*8,8
+    DW HORMING_BG_DR_PATTERN-GFX2_DELTA,HORMING_BG_DR_CODE*8,8
+    DW HORMING_BG_SR_PATTERN-GFX2_DELTA,HORMING_BG_SR_CODE*8,8
+    DW G2B_HORMING_BG-GFX2_DELTA,HORMING_BG_COLORADDR,1
+    DW HORMING_BG_SL_PATTERN-GFX2_DELTA,HORMING_BG_SAND_SL_CODE*8,8
+    DW HORMING_BG_DL_PATTERN-GFX2_DELTA,HORMING_BG_SAND_DL_CODE*8,8
+    DW HORMING_BG_DOWN_PATTERN-GFX2_DELTA,HORMING_BG_SAND_DOWN_CODE*8,8
+    DW HORMING_BG_DR_PATTERN-GFX2_DELTA,HORMING_BG_SAND_DR_CODE*8,8
+    DW HORMING_BG_SR_PATTERN-GFX2_DELTA,HORMING_BG_SAND_SR_CODE*8,8
+    DW G2B_HORMING_BG_SAND-GFX2_DELTA,HORMING_BG_SAND_COLORADDR,1
+    DW 0
+GFX2_LIST_3:
+    DW G2D_SASAPI_HAND_COLOR8-GFX2_DELTA,2000h+19,8
+    DW THUNDER_TILES-GFX2_DELTA,THUNDER_CODE_BASE*8,32
+    DW THUNDERS_TILE-GFX2_DELTA,THUNDERS_CODE*8,8
+    DW G2B_THUNDER-GFX2_DELTA,2000h+27,1
+    DW BOOSTER1_SPRITE-GFX2_DELTA,PAT_BOOSTER1*8+SPRPAT,32
+    DW BOOSTER2_SPRITE-GFX2_DELTA,PAT_BOOSTER2*8+SPRPAT,32
+    DW 0
+GFX2_LIST_4:
+    DW DIGIT_PATTERNS_LOCAL-GFX2_DELTA,DIGIT_BASE*8,128
+    DW G2B_HUD_DIGIT-GFX2_DELTA,2000h+13,1
+    DW G2B_HUD_DIGIT-GFX2_DELTA,2000h+14,1
+    DW HUD_ZERO8-GFX2_DELTA,HUD_ROW_BLANK_CODE*8,8
+    DW G2B_HUD_ROW_BLANK-GFX2_DELTA,2000h+15,1
+    DW LIFE_PATTERN-GFX2_DELTA,LIFE_CODE*8,8
+    DW G2B_LIFE-GFX2_DELTA,2000h+16,1
+    DW SKYSAND_PATTERN-GFX2_DELTA,NIGHT_CODE*8,8
+    DW G2B_NIGHT-GFX2_DELTA,2000h+17,1
+    DW G2D_HUD_BLACKROW32-GFX2_DELTA,1800h,32
+    DW 0
+GFX2_LIST_5:
+    DW ENEMY_ZACOII-GFX2_DELTA,PAT_ZACO*8+SPRPAT,32
+    DW ENEMY_ZACOII-GFX2_DELTA,PAT_ZACO_FLIP*8+SPRPAT,0FF01h
+    DW G2D_EXPLOSION_PATTERN-GFX2_DELTA,PAT_EXPLOSION*8+SPRPAT,32
+    DW EBULLET_SPRITE-GFX2_DELTA,PAT_EBULLET*8+SPRPAT,32
+    DW 0
+GFX2_LIST_6:
+    DW ENEMY_ZUM-GFX2_DELTA,PAT_ZUM*8+SPRPAT,32
+    DW ENEMY_ZUM-GFX2_DELTA,PAT_ZUM_FLIP*8+SPRPAT,0FF01h
+    DW G2D_BIGZUM_BIGZUM_TL-GFX2_DELTA,PAT_BIGZUM*8+SPRPAT,128
+    DW BIGZUM_BIGZUMP_TL-GFX2_DELTA,PAT_BIGZUMP*8+SPRPAT,128
+    DW G2D_BIGZUM_BIGZUM_TL-GFX2_DELTA,PAT_BIGZUM_L*8+SPRPAT,0FF00h
+    DW BIGZUM_BIGZUMP_TL-GFX2_DELTA,PAT_BIGZUMP_L*8+SPRPAT,0FF00h
+    DW FLYER_TL-GFX2_DELTA,PAT_FLYER*8+SPRPAT,128
+    DW FLYER_TL-GFX2_DELTA,PAT_FLYER_L*8+SPRPAT,0FF00h
+    DW 0
+G2B_CLOUD_GROUP0:
+    DB CLOUD_GROUP0_COLOR
+G2B_SKYSAND:
+    DB SKYSAND_COLOR
+G2B_BULLET_SKY:
+    DB BULLET_SKY_COLORBYTE
+G2B_BULLET_ROCK:
+    DB BULLET_ROCK_COLORBYTE
+G2B_BULLET_NIGHT:
+    DB BULLET_NIGHT_COLORBYTE
+G2B_HORMING_BG:
+    DB HORMING_BG_COLORBYTE
+G2B_HORMING_BG_SAND:
+    DB HORMING_BG_SAND_COLORBYTE
+G2B_THUNDER:
+    DB THUNDER_COLORBYTE
+G2B_HUD_DIGIT:
+    DB HUD_DIGIT_COLORBYTE
+G2B_HUD_ROW_BLANK:
+    DB HUD_ROW_BLANK_COLOR
+G2B_LIFE:
+    DB LIFE_COLOR
+G2B_NIGHT:
+    DB NIGHT_COLOR
+GFX2_BLOB_END:
+    ORG GFX2_ROM_RESUME
 
 ; ===== generated tables (terrain + tank) appended below by build_test.py =====
