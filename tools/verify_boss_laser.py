@@ -323,8 +323,47 @@ for y, inside in ((56, False), (57, True), (87, True), (88, False)):
           z.rd(sym['GAME_OVER']) == (1 if inside else 0))
 z = landed(); start_countdown(z, sc=639); z.wr(sym['PLAYERY'], 120)
 n = to_fire(z)
-check("gauge short of 64000 (63900): game over the moment the boss fires (reason 2)",
-      z.rd(sym['GAME_OVER']) == 1 and z.rd(sym['LZ_FAIL_REASON']) == 2)
+check("gauge short of 64000 (63900): no instant game over any more - the boss starts the random barrage "
+      "(phase 5), reason 2 recorded", z.rd(PH) == 5 and z.rd(sym['GAME_OVER']) == 0 and z.rd(sym['LZ_FAIL_REASON']) == 2)
+
+# ---------------------------------------------------------------- 乱射(条件未達、2026-09-24)
+# "3本レーザーを1本にするが 画面Row1からRow19まで ボス中央からランダムにレーザー乱射
+# セルでラインを描く感じで 特に特別処理は入れず自然に死ぬように"
+ROWS = sym['LZ_BR_ROWS']
+z.wr(sym['PLAYERX'], 200); z.wr(sym['PLAYERY'], 150)      # 当たらない場所で観察
+targets, bad_shape, fronts = [], [], []
+prev_target = None
+for f in range(400):
+    frame(z)
+    rows = [z.rd(ROWS + c) for c in range(26)]
+    fr = z.rd(sym['LZ_BR_FRONT'])
+    fronts.append(fr)
+    if rows[25] != ROW or any(abs(a - b) > 1 for a, b in zip(rows, rows[1:])) or not 1 <= rows[0] <= 19:
+        bad_shape.append(rows)
+    if fr == 0 and rows[0] != prev_target:
+        targets.append(rows[0]); prev_target = rows[0]
+    # 描かれているのは先端〜列25の1本だけ(各列にレーザーのタイルは1セル)
+    for c in range(fr, 26):
+        col = [z.vram[0x1800 + r * 32 + c] for r in range(1, 20)]
+        n = sum(1 for t in col if t in (LCODE, RCODE))
+        if n != 1 or col[rows[c] - 1] not in (LCODE, RCODE): bad_shape.append(('cell', f, c, n)); break
+check(f"barrage: each shot is a 1-cell-thick line from the boss centre (col25,row{ROW}) to col0 at a random row 1-19, "
+      f"at most one row step per column {bad_shape[:2]}", not bad_shape)
+check(f"barrage: lines keep coming at different rows ({len(targets)} shots in 400 frames, rows {targets[:12]})",
+      len(targets) >= 20 and len(set(targets)) >= 8 and z.rd(sym['GAME_OVER']) == 0)
+steps = [a - b for a, b in zip(fronts, fronts[1:]) if a > b]
+check(f"barrage: the line is pushed out {sym['LZ_BR_SPEED']} columns per frame {sorted(set(steps))}",
+      set(steps) <= {sym['LZ_BR_SPEED'], 26 % sym['LZ_BR_SPEED'] or sym['LZ_BR_SPEED'], 2})
+# 自然に死ぬ: バリアがあれば普通に減る(無敵時間つき)、無ければ死ぬ
+z2 = landed(); start_countdown(z2, sc=639); z2.wr(sym['BARRIER_HP'], 3); z2.wr(sym['PLAYERX'], 40)
+z2.wr(sym['PLAYERY'], 70); to_fire(z2)
+hp, n = [], 0
+while z2.rd(sym['GAME_OVER']) == 0 and n < 3000:
+    frame(z2); n += 1; hp.append(z2.rd(sym['BARRIER_HP']))
+drops = [i for i in range(1, len(hp)) if hp[i] < hp[i - 1]]
+check(f"barrage hits go through the normal damage path: the barrier drops 3->0 one at a time ({drops}), "
+      f"then the next hit kills (frame {n})", z2.rd(sym['GAME_OVER']) == 1 and len(drops) == 3
+      and all(b - a >= sym['BARRIER_IFRAMES_INIT'] for a, b in zip(drops, drops[1:])))
 
 # ---------------------------------------------------------------- 早撃ち
 z = landed(); set_score(z, 700); z.wr(sym['PLAYERY'], 150); frame(z)   # row19: ポッドの軌道外
@@ -348,8 +387,8 @@ check("after 100 frames the laser is gone, marked used, gauge 0",
 frame(z, trig_b=True); frame(z)
 check("used laser cannot be fired again", z.rd(PH) == 0)
 kill_all_pods(z); to_fire(z)
-check("used before the countdown ended: game over the moment the boss fires (reason 2)",
-      z.rd(sym['GAME_OVER']) == 1 and z.rd(sym['LZ_FAIL_REASON']) == 2)
+check("used before the countdown ended: the barrage starts when the boss fires (reason 2)",
+      z.rd(PH) == 5 and z.rd(sym['GAME_OVER']) == 0 and z.rd(sym['LZ_FAIL_REASON']) == 2)
 z = landed(); set_score(z, 700); frame(z)
 z.wr(sym['PLAYERX'], 40); z.wr(sym['PLAYERY'], 120)
 frame(z, trig_b=True); frame(z)
@@ -394,20 +433,21 @@ frame(z, trig_b=True); frame(z)
 check("no barrier left: B cannot fire the laser even with a full gauge", z.rd(PH) == 0)
 
 # ---------------------------------------------------------------- 条件未達のゲームオーバー分岐
-def fall_done(z):
+def fall_done(z, limit=600):
     n = 0
-    while z.rd(sym['GAME_OVER_SEQ']) == 0 and n < 600: frame(z); n += 1
+    while z.rd(sym['GAME_OVER_SEQ']) == 0 and n < limit: frame(z); n += 1
 for label, setup, want in (
         ("no barrier", lambda z: z.wr(sym['BARRIER_HP'], 0), 1),
         ("gauge short of 64000", lambda z: set_score(z, 639), 2),
         ("laser already used", lambda z: z.wr(sym['LZ_SPENT'], 1), 2),
         ("no barrier and not enough energy", lambda z: (z.wr(sym['BARRIER_HP'], 0), set_score(z, 100)), 3)):
-    z = landed(); start_countdown(z); setup(z); z.wr(sym['PLAYERY'], 150)
+    z = landed(); start_countdown(z); setup(z); z.wr(sym['PLAYERY'], 70); z.wr(sym['PLAYERX'], 40)
+    if z.rd(sym['BARRIER_HP']): z.wr(sym['BARRIER_HP'], 1)
     to_fire(z)
     r = z.rd(sym['LZ_FAIL_REASON'])
-    fall_done(z)
-    check(f"unqualified when the boss fires ({label}): reason {r} (want {want}); after the death fall GAME_OVER_SEQ=4 "
-          f"(Comb switches to the bank7 reason screen)",
+    fall_done(z, 4000)
+    check(f"unqualified when the boss fires ({label}): reason {r} (want {want}); killed by the barrage, after the death "
+          f"fall GAME_OVER_SEQ=4 (Comb switches to the bank7 reason screen)",
           r == want and z.rd(sym['GAME_OVER']) == 1 and z.rd(sym['GAME_OVER_SEQ']) == 4)
 z = landed(); start_countdown(z); z.wr(sym['PLAYERY'], 150); to_fire(z)
 while z.rd(PH) == 2: frame(z)

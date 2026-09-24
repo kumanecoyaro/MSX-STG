@@ -8706,6 +8706,8 @@ PDC_GO:
     OR A : JP NZ,PLAYER_TAKE_HIT
     CALL PDC_CHECK_PODS
     OR A : JP NZ,PLAYER_TAKE_HIT
+    CALL LZ_BARRAGE_HIT            ; ボスの乱射レーザー(条件未達時、LZ_PHASE=5)
+    OR A : JP NZ,PLAYER_TAKE_HIT
     CALL PDC_CHECK_EBULLET
     OR A : JP NZ,PLAYER_TAKE_HIT
     CALL PDC_CHECK_EBUZ
@@ -16010,6 +16012,9 @@ LZ_BLANKING  EQU 0F33Eh   ; 非0: LZ_DRAWが空白で塗る(消去)
 ; gameover_bank.asmのS1_FAIL_INIT、同じ番地をS1_FAIL_REASONとして読む)へ切り替えて
 ; 理由付きで表示する。
 LZ_FAIL_REASON EQU 0F33Fh
+LZ_BR_ROWS   EQU 0E919h   ; 乱射レーザーの各列(0-25)の行(26 bytes、E919h-E932h)
+LZ_BR_CNT    EQU 0E933h
+LZ_BR_FRONT  EQU LZ_CLASH_X  ; 乱射中(5)の先端列(26→0)
 
 LZ_ROW        EQU 9       ; ボス中央(BOSS_MAP row7、画面row9)。ボスは8-10の3行
 LZ_SOLO_FRAMES EQU 100
@@ -16021,6 +16026,8 @@ LZ_CB0        EQU POD_BULLET0_DXMAG   ; 吸い込み中フラグ(ポッド全滅
 LZ_CB1        EQU POD_BULLET1_DXMAG
 LZ_PUSH_PX    EQU 8       ; 1回押すごとの押し返し。ボスは毎フレーム1px(60px/秒)
                           ; なので1秒8回でほぼ互角
+LZ_BR_SPEED   EQU 4       ; 乱射レーザーの伸びる速さ(列/フレーム)
+LZ_BR_HOLD    EQU 6       ; 伸び切ってから消えて次を撃つまでのフレーム数
 LZ_STOP_FRAMES EQU 15     ; これだけ押さないと「撃つのを止めた」扱いでボスが2px/フレーム
 LZ_WIN_X      EQU 200     ; 列25(ボス左端)
 LZ_BFRONT     EQU LZ_CLASH_X  ; 照射中(2)はボスレーザーの先端列(26→0へ1列/フレーム)
@@ -16177,13 +16184,16 @@ LZ_FRAME:
     LD A,(GAME_OVER) : OR A
     JR Z,LZF_ALIVE
     XOR A : LD (LZ_CD_T),A         ; 自機死亡: カウントダウンを止め、
-    LD A,(LZ_PHASE) : DEC A : CP 3 ; 出ているレーザーを消して終了
-    RET NC
+    LD A,(LZ_PHASE) : OR A         ; 出ているレーザー(1-3、5)を消して終了
+    RET Z
+    CP 4
+    RET Z
     JP LZ_END
 LZF_ALIVE:
     LD A,(LZ_CD_T) : OR A
     CALL NZ,LZ_COUNTDOWN
     LD A,(LZ_PHASE)
+    CP 5 : JP Z,LZ_BARRAGE
     OR A : JR Z,LZ_IDLE
     DEC A : JP Z,LZ_SOLO
     DEC A : JP Z,LZ_HOLD
@@ -16298,6 +16308,10 @@ LZ_WIN:
 ; ボスレーザーに届かれた(割り込めなかった): 条件未達の理由を記録してから負け処理。
 ; (干渉で押し負けた場合はLZ_LOSEへ直接来るので理由0=通常のMISSION FAILED)
 LZ_LOSE_EXT:
+    CALL LZ_SET_REASON
+    JR LZ_LOSE
+; 条件未達の理由をLZ_FAIL_REASONへ(bit0 バリア無し、bit1 エナジー不足/使用済み)
+LZ_SET_REASON:
     LD B,0
     LD A,(BARRIER_HP) : OR A
     JR NZ,LZLE_SHIELD
@@ -16311,6 +16325,7 @@ LZLE_SHIELD:
     LD A,B : OR 2 : LD B,A         ; bit1: エナジー不足
 LZLE_ENERGY:
     LD A,B : LD (LZ_FAIL_REASON),A
+    RET
 LZ_LOSE:
     CALL LZ_ERASE
     LD A,(GAMEOVER_ENABLED) : OR A
@@ -16341,6 +16356,7 @@ LZ_ERASE:
 ; 上書きされても次のフレームで元に戻る)。
 LZ_DRAW_CURRENT:
     LD A,(LZ_PHASE)
+    CP 5 : JP Z,LZDC_5
     DEC A : JR NZ,LZDC_2
     LD A,(LZ_PROW) : LD E,A        ; 1: 自機レーザー(1行)
     LD HL,(LZ_PCOL)                ; L=PCOL,H=PEND
@@ -16519,8 +16535,17 @@ LZCD_TICK:
     LD A,26 : LD (LZ_BFRONT),A     ; 先端は射出口(列26)から伸びていく
     LD A,LZ_CUTIN_FRAMES : LD (LZ_TICK),A
     CALL LZ_QUALIFIED
-    JP NZ,LZ_LOSE_EXT              ; 条件未達: 撃たれた時点でゲームオーバー
-    RET
+    RET Z
+    LD A,(GAMEOVER_ENABLED) : OR A ; テストモード(ここへ来るのは使用済みだけ):
+    JP Z,LZ_LOSE_EXT               ; 死なないので従来どおりカウントダウンからやり直し
+    ; (2026-09-24、"条件未達時の即ゲームオーバーを変更 3本レーザーを1本にするが
+    ; 画面Row1からRow19まで ボス中央からランダムにレーザー乱射 セルでラインを描く
+    ; 感じで 特に特別処理は入れず自然に死ぬように"): 条件未達なら即ゲームオーバーに
+    ; せず乱射(フェーズ5)へ。当たりはPLAYER_DAMAGE_CHECKの普通の被弾(LZ_BARRAGE_HIT)で、
+    ; 死ねば理由付きの画面(LZ_FAIL_REASON)になる。
+    CALL LZ_SET_REASON
+    LD A,5 : LD (LZ_PHASE),A
+    JP LZ_BR_NEW
 
 ; HL=POD_BULLETn_X(次のbyteがY)。X,Yをそれぞれ中心へ差の1/4ずつ寄せる。
 ; Out: A=FFh 両軸とも着いた(寄せ量0か-1)、0 まだ。
@@ -16724,4 +16749,112 @@ BIP_NEXT:
     POP AF
     DEC A
     JR NZ,BIP_LOOP
+    RET
+
+; ============================================================================
+; (2026-09-24) 条件未達時のボスの乱射(LZ_PHASE=5)。ボス中央(列25、行LZ_ROW)から
+; 画面左端(列0)まで、行1-19のランダムな行へ向けて1本幅のレーザーをセルで線を
+; 引くように伸ばし、伸び切ったらLZ_BR_HOLDフレームで消して次を撃つ。
+; ============================================================================
+LZ_BARRAGE:
+    LD HL,LZ_BR_FRONT
+    LD A,(HL) : OR A
+    JR Z,LZB_HOLD
+    SUB LZ_BR_SPEED
+    JR NC,LZB_SETF
+    XOR A
+LZB_SETF:
+    LD (HL),A
+    JP LZ_DRAW_CURRENT
+LZB_HOLD:
+    LD HL,LZ_TICK : DEC (HL)
+    JP NZ,LZ_DRAW_CURRENT
+    CALL LZ_ERASE
+    CALL LZ_BR_NEW
+    JP LZ_DRAW_CURRENT
+
+; 新しい1本: 目標の行(1-19)を決め、列25→0の各列の行をブレゼンハムで
+; LZ_BR_ROWSへ(|行の差|<=10<25なので1列に最大1行ずつ)。
+LZ_BR_NEW:
+    CALL LZ_RND : LD C,A           ; 乱数(下位bitの周期が短いのでTICKを混ぜ、19の余り)
+    LD A,(TICK) : ADD A,A : ADD A,A : ADD A,C
+LBN_MOD:
+    SUB 19
+    JR NC,LBN_MOD
+    ADD A,19+1                     ; 1..19
+    SUB LZ_ROW
+    LD C,1
+    JR NC,LBN_ABS
+    XOR 0FFh : INC A
+    LD C,0FFh
+LBN_ABS:
+    LD B,A                         ; B=|行の差|, C=±1
+    LD HL,LZ_BR_ROWS+25
+    LD D,LZ_ROW                    ; 行
+    LD E,12                        ; 誤差
+    LD A,26 : LD (LZ_BR_CNT),A
+LBN_LOOP:
+    LD (HL),D
+    DEC HL
+    LD A,E : SUB B
+    JR NC,LBN_NOSTEP
+    ADD A,25
+    LD E,A
+    LD A,D : ADD A,C : LD D,A
+    JR LBN_NEXT
+LBN_NOSTEP:
+    LD E,A
+LBN_NEXT:
+    LD A,(LZ_BR_CNT) : DEC A : LD (LZ_BR_CNT),A
+    JR NZ,LBN_LOOP
+    LD A,26 : LD (LZ_BR_FRONT),A
+    LD A,LZ_BR_HOLD : LD (LZ_TICK),A
+    JP SOUND_EBUZ_FIRE
+
+; 乱射レーザーを先端列から列25まで1セルずつ描く(LZ_BLANKING=1なら消す)。
+LZDC_5:
+    LD A,(LZ_BR_FRONT) : LD L,A
+LZDC5_LOOP:
+    LD A,L : CP 26
+    JP NC,LZ_SPRITES
+    PUSH HL
+    LD E,L : LD D,0 : LD HL,LZ_BR_ROWS : ADD HL,DE : LD E,(HL)
+    POP HL
+    LD H,L : INC H : LD D,255
+    CALL LZ_DRAW
+    INC L
+    JR LZDC5_LOOP
+
+; PLAYER_DAMAGE_CHECKから: 乱射中(5)、描かれたレーザーのセルが自機の当たり判定
+; (PLAYERX,PLAYERY)-(+7,+7)に重なっていればA!=0。
+LZ_BARRAGE_HIT:
+    LD A,(LZ_PHASE) : CP 5
+    JR NZ,LZBH_NO
+    LD A,(PLAYERX) : SRL A : SRL A : SRL A
+    CALL LZBH_COL
+    RET NZ
+    LD A,(PLAYERX) : ADD A,7
+    JR C,LZBH_NO
+    SRL A : SRL A : SRL A
+    CALL LZBH_COL
+    RET
+LZBH_NO:
+    XOR A
+    RET
+; A=列。その列にレーザーが描かれていて、その行が自機の行範囲に入っていればNZ
+LZBH_COL:
+    CP 26
+    JR NC,LZBH_NO
+    LD HL,LZ_BR_FRONT
+    CP (HL)
+    JR C,LZBH_NO
+    LD E,A : LD D,0 : LD HL,LZ_BR_ROWS : ADD HL,DE : LD B,(HL)
+    LD A,(PLAYERY) : SRL A : SRL A : SRL A : LD C,A    ; 自機の上の行
+    LD A,B : SUB C
+    JR C,LZBH_NO
+    LD D,A
+    LD A,(PLAYERY) : ADD A,7 : SRL A : SRL A : SRL A : SUB C   ; 下の行-上の行
+    CP D
+    JR C,LZBH_NO
+    LD A,1 : OR A
     RET

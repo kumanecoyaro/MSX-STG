@@ -18526,3 +18526,20 @@ EbuzII弾ビームへの1pxコリジョン追加+ROM予算の共有バンク6オ
 - BOSS_SPAWNのPOD_AIM_NORMAL判定(ポッド弾が常時自機狙いになる点数不足)をSCORE<640(6万4千点)へ。
 - テスト: verify_boss_laser 69・verify_boss_pod_bullet_aim 36(境目追加)・verify_boss_arrival_aim 14を更新。
   ROM plain 1838 / Comb 1788。
+
+## Round145 follow-up36: 条件未達はボスの乱射で自然に死ぬ(2026-09-24)
+
+- ユーザー: "条件未達時の即ゲームオーバーを変更 3本レーザーを1本にするが 画面Row1からRow19まで
+  ボス中央からランダムにレーザー乱射 セルでラインを描く感じで 特に特別処理は入れず自然に死ぬように"。
+  (シールドの最大は9枚。テストのlanded()が書く99は倒されないための値にすぎない。)
+- 発射時にLZ_QUALIFIEDが不可なら、LZ_SET_REASONで理由だけ記録してLZ_PHASE=5(乱射)へ。
+  テストモード(ここへ来るのは使用済みだけ)は従来どおりLZ_LOSE_EXT→カウントダウンやり直し。
+- 乱射: LZ_BR_NEWが目標行(1-19、LZ_RNDにTICKを混ぜて19の余り)を決め、列25(行LZ_ROW)→列0の
+  各列の行をブレゼンハムでLZ_BR_ROWS(E919h、26byte)へ。先端(LZ_BR_FRONT=LZ_CLASH_Xの別名)が
+  LZ_BR_SPEED(4)列/フレームで伸び、伸び切ってLZ_BR_HOLD(6)フレームで消して次。描画はLZ_DRAWを
+  1セルずつ(流れるL/Rタイル)、右端スプライトも出す。
+- 当たり: PLAYER_DAMAGE_CHECKの並びにLZ_BARRAGE_HIT(自機の当たり判定の2列について、描かれた
+  レーザーのセルの行が自機の行範囲に入るか)。無敵時間・バリアの減り方は他の敵弾と同じ。死ねば
+  LZ_FAIL_REASON!=0なので理由画面。死んだら乱射は消す(LZ_FRAMEのGAME_OVER処理)。
+- 罠: LZ_RNDはBを壊す(1回目の乱数をBに置いたまま2回目を呼んで目標行が30になった)。
+- verify_boss_laser.py 73件。ROM plain 1576 / Comb 1526。
