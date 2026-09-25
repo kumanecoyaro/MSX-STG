@@ -36,6 +36,21 @@
     確認を求めるまでもなく毎回自動的に送付すること。** 明示的な要求を待たない。この指示は
     上記2026-08-29の指示を明確に上書きするもの。
 
+### itch.io公開用WebMSXパッケージ(2026-09-25〜)
+
+- `cd tools/webmsx_itch && python3 build_itch_package.py [ROMパス]`
+  → `tools/webmsx_itch/dist/CyberShmup_webmsx_itch.zip`(gitignore対象、index.html+ROMの2ファイル)。
+  WebMSX 6.0.8 C-BIOS standalone版(`vendor/`)に設定を注入するだけで、ASMソースは一切関与しない。
+- ROM引数省略時は`rom/CyberS Comb.ascii16k.rom`。ただしユーザーがitch.io用に指定したのは
+  添付ROM(「DOUBLE MISSION」タイトル付きの別系統の旧ビルド、リポジトリ非収録)で、
+  どのROMを使うかは都度確認すること。
+- 設定の経緯・理由(MSX1J、ROM名の`[ASCII16]`ヒント、Full Windowed、タッチUI強制、
+  JoyKeys無効、パッドA/B割り当て・1台に絞る処理、ENVIRONMENT=77、画面向きは
+  itch.io任せ等)は`tools/webmsx_itch/README.md`に集約。実機で問題が出た設定が多いので、
+  変更前に必ず読むこと。ブラウザネイティブAPI(Fullscreen/Orientation)への介入は実機検証なしに入れない。
+- 2026-09-25時点でユーザー確認済み: スマホ(BT/USBパッド・タッチUI)、PC(パッド)で動作OK。
+  パッドの機種ごとのA/B等のずれは既定値では吸収しきれず、WebMSXの設定画面で各自変更してもらう方針。
+
 ビルド(アセンブル)そのものは高速。「ビルドが遅い」と感じる場合、実際は次項の
 回帰テスト(Z80エミュレータでの命令実行)が重い。オブジェクトファイル分離・リンカ機能の
 実装は効果がほぼ無いため不要と判断済み(2026-08-25 実測により確認)。
