@@ -110,9 +110,9 @@ for i, line in enumerate(lines):
 # 38->40 / 28->29。
 check(f"found the expected number of raw OUT (99h),A sites ({len(n99)} - update this "
       "count deliberately if a new one is added, don't just let the test drift)",
-      len(n99) == 42)
+      len(n99) == 44)
 check(f"found the expected number of raw OUT (98h),A sites ({len(n98_delay)})",
-      len(n98_delay) == 37)
+      len(n98_delay) == 38)
 
 bad99 = [(ln, n) for ln, n in n99 if n != 2]
 check("every OUT (99h),A (VRAM address setup) is padded with exactly 2 NOPs (8T)",

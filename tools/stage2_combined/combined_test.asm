@@ -4209,8 +4209,10 @@ SKIP_ZACO_ENEMY:
     ; 落下演出中はブースターがU弾用hwスプライトslot7を借用しているため、
     ; U弾の描画(slot7-9を毎フレーム上書き)は止める(演出中は自機ショット
     ; 自体が無効なのでU弾は構造的に存在しない)。
+    ; (2026-09-25) エンディングのステージ1自機(slot8/9借用)の間も同様に止める。
     LD A,(TANK_ENTRY_ACT)
-    OR A
+    LD HL,ENDING_SHIP_ACT
+    OR (HL)
     CALL Z,UPDATE_BULLET_U_SPRITES
     LD A,(BOSS_ACT) : OR A
     JR NZ,SKIP_OTHER_ENEMIES
@@ -4290,6 +4292,7 @@ SKIP_BOSS_BROKEN_BEAM_CHECK:
 SKIP_BOSS_SUBSYSTEMS:
     CALL CLOUD_UPDATE_ALL
     CALL UPDATE_ENDING
+    CALL UPDATE_ENDING_SHIP
     ; エンディング曲再生中(ENDING_ACT==2)はchAをBGMT_UPDATE_ENDING_A
     ; (BGM_TICK内)が専有するため、通常のSEドライバ(SOUND_UPDATE)自体を
     ; 丸ごとスキップする("これは3音使って良い" - ゲーム中と違いchAが
@@ -4444,6 +4447,7 @@ ENDING_START_PLAYBACK:
     LD (BGM_A_ENV_IDX),A
     LD (BGM_A_ENV_CD),A
 
+    CALL ENDING_SHIP_START
     CALL ENDING_LOAD_FONT
     LD HL,ENDING_MSG_CREDIT : LD DE,01963h : LD BC,ENDING_MSG_CREDIT_LEN : CALL LDIRVM  ; row11 col3(25文字中央寄せ)
     RET
@@ -6718,6 +6722,16 @@ ENDING_SONG_TOTAL_TICKS EQU 1630  ; tools/bgm_data/midi_to_psg.load_ending_gfend
 ; 確認済み)に配置。
 ENDING_FINISH_START     EQU 0CB20h
 ENDING_RETURN_WAIT_TICKS EQU 600   ; "10秒" @ 60Hz real vblank
+; (2026-09-25、"エンディングに同様の演出を追加 ただ飛び去るのではなく
+; Row1から並走するようにステージ2自機の操作無効位置Xまでゆっくり飛ぶ
+; その際は上下に120フレ程度何度か上下に動き"): ステージ1自機の並走飛行
+; (UPDATE_ENDING_SHIP)。0xCB22〜(上記ENDING_FINISH_STARTの直後、0xCC00
+; まで空き)。
+ENDING_SHIP_ACT  EQU 0CB22h   ; 0=無し/1=飛行・並走中(ENDING_START_PLAYBACKで1)
+ENDING_SHIP_T    EQU 0CB23h   ; 飛行開始からのフレーム数(ENDING_SHIP_FRAMESで停止)
+ENDING_SHIP_ACC  EQU 0CB24h   ; X(8.8固定小数点、上位バイト=表示X)
+ENDING_SHIP_TGT  EQU 0CB26h   ; 目標X=操作無効になった瞬間のTANK_X
+ENDING_SHIP_FRAMES EQU 128    ; X=0→TGTを128フレーム(毎フレームTGT*2/256px)、"120フレ程度"
 
 ; (2026-09-12、"ではこの画像をMission completed表示後10秒したら表示
 ; ボタンが押されたらスタート画面へ タイトル表示同様に圧縮かけて"):
@@ -6801,6 +6815,7 @@ INIT_BGM:
     LD (VBLANK_COUNT),A
     LD (VBLANK_COUNT+1),A
     LD (ENDING_ACT),A
+    LD (ENDING_SHIP_ACT),A
     LD (ENDING_WAIT_START),A
     LD (ENDING_WAIT_START+1),A
     LD (ENDING_SONG_START),A
@@ -16470,6 +16485,67 @@ S1SHIP_FLY_X:
     DB 25,29,33,41,49,57,65,73,81,89,97,105,113,121,129,137
     DB 145,153,161,169,177,185,193,201,209,217,225,233,241
 
+; ===== エンディング: ステージ1自機の並走飛行(2026-09-25) =====
+; "エンディングに同様の演出を追加 ただ飛び去るのではなくRow1から並走する
+; ようにステージ2自機の操作無効位置Xまでゆっくり飛ぶ その際は上下に
+; 120フレ程度何度か上下に動き Mission Completedで1枚絵に遷移して終わり"
+; ENDING_START_PLAYBACK(操作無効になる瞬間)から1回だけ呼ぶ。絵柄は
+; スタート演出と同じS1SHIP_*(GFX2_DUPで本体ROMにも残してある)を同じ
+; コード24-31へ送る(操作無効後は上向きポーズが出ないのでPAT_TANKUPの
+; 後半8コードは使われない)。slot7に残っているかもしれないU弾は隠す。
+ENDING_SHIP_START:
+    LD A,(TANK_X) : LD (ENDING_SHIP_TGT),A
+    XOR A : LD (ENDING_SHIP_T),A
+    LD HL,0 : LD (ENDING_SHIP_ACC),HL
+    LD A,1 : LD (ENDING_SHIP_ACT),A
+    DI
+    LD HL,S1SHIP_BODY_SPRITE : LD DE,PAT_S1SHIP_BODY*8+SPRPAT : LD BC,64 : CALL LDIRVM
+    LD A,BULLET_U_SPR_BASE_SLOT*4 : OUT (99h),A
+    NOP
+    NOP
+    LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    LD A,209 : OUT (98h),A
+    PUSH BC : POP BC : NOP : NOP
+    EI
+    RET
+
+; MAINLOOPから毎フレーム。X=ACC上位(ACCに毎フレームTGT*2を足すので
+; ENDING_SHIP_FRAMES=128フレーム目でちょうどTGT)、Yは表で上下に揺らす
+; (32フレーム周期x4回、下方向へ最大8px)。到着後はTGT・Row1で静止し、
+; 最終画像(ENDING_SHOW_FINAL_IMAGE、全スプライトを隠す)まで並走する。
+UPDATE_ENDING_SHIP:
+    LD A,(ENDING_SHIP_ACT)
+    OR A
+    RET Z
+    LD A,(ENDING_SHIP_T)
+    CP ENDING_SHIP_FRAMES
+    JR NC,UES_ARRIVED
+    INC A
+    LD (ENDING_SHIP_T),A
+    AND 31
+    LD E,A : LD D,0
+    LD HL,ENDING_SHIP_BOB : ADD HL,DE
+    LD A,(HL) : ADD A,S1SHIP_FLY_Y
+    LD C,A
+    LD A,(ENDING_SHIP_TGT) : LD E,A : LD D,0
+    LD HL,(ENDING_SHIP_ACC)
+    ADD HL,DE
+    ADD HL,DE
+    LD (ENDING_SHIP_ACC),HL
+    LD B,H
+    JP DSF_WRITE
+UES_ARRIVED:
+    LD A,(ENDING_SHIP_TGT) : LD B,A
+    LD C,S1SHIP_FLY_Y
+    JP DSF_WRITE
+
+; 上下の揺れ(1周32フレーム、0→8→0px下方向、(1-cos)/2*8)。
+ENDING_SHIP_BOB:
+    DB 0,0,0,1,1,2,2,3,4,5,6,6,7,7,8,8
+    DB 8,8,8,7,7,6,6,5,4,3,2,2,1,1,0,0
+
 ; ===== GFX2区画(2026-09-24、"Stage2も進めて") =====
 ; INITで1回だけVRAMへ送る絵柄/色と転送の一覧表。ソース上はC000h
 ; (GFX2_SCRATCH)に置いてアセンブルし、build_test.pyのgfx2_blob()が
@@ -16561,8 +16637,8 @@ GFX2_LIST_3:
     DW G2B_THUNDER-GFX2_DELTA,2000h+27,1
     DW BOOSTER1_SPRITE-GFX2_DELTA,PAT_BOOSTER1*8+SPRPAT,32
     DW BOOSTER2_SPRITE-GFX2_DELTA,PAT_BOOSTER2*8+SPRPAT,32
-    DW S1SHIP_BODY_SPRITE-GFX2_DELTA,PAT_S1SHIP_BODY*8+SPRPAT,32
-    DW S1SHIP_ACCENT_SPRITE-GFX2_DELTA,PAT_S1SHIP_ACCENT*8+SPRPAT,32
+    DW G2D_S1SHIP_BODY_SPRITE-GFX2_DELTA,PAT_S1SHIP_BODY*8+SPRPAT,32
+    DW G2D_S1SHIP_ACCENT_SPRITE-GFX2_DELTA,PAT_S1SHIP_ACCENT*8+SPRPAT,32
     DW 0
 GFX2_LIST_4:
     DW DIGIT_PATTERNS_LOCAL-GFX2_DELTA,DIGIT_BASE*8,128

@@ -18744,3 +18744,16 @@ EbuzII弾ビームへの1pxコリジョン追加+ROM予算の共有バンク6オ
 - (follow-up48追記) "直ぐに動き始めるのではなく60フレ停止してから飛び去るように": 新EQUのS1SHIP_FLY_WAIT(60)を追加し、DRAW_S1SHIP_FLYAWAYが表を引く位置をANIM-(WAIT-1)へずらした(負になる間は表の[0]=X0)。
   - 落下1〜60フレーム目はX=0で停止表示、61フレーム目からX=1,2,3...と加速する。104フレーム目に画面外へ出て非表示になり、着地(220フレーム目)に十分間に合う。パターン借用は着地時の復元まで有効なので問題なし。
   - tank_entry_test 42件、run_all 1622 passed/0 failed。Stage2残り5217byte(変化なし)。
+
+## Round145 follow-up49(2026-09-25): エンディングにステージ1自機の並走飛行を追加
+
+- ユーザー: "ではエンディングに同様の演出を追加 ただ飛び去るのではなくRow1から並走するようにステージ2自機の操作無効位置Xまでゆっくり飛ぶ その際は上下に120フレ程度何度か上下に動き Mission Completedで1枚絵に遷移して終わり"。
+- 開始: ENDING_START_PLAYBACK(ENDING_ACT=2、操作が無効になる瞬間)からENDING_SHIP_STARTを呼ぶ。その瞬間のTANK_XをENDING_SHIP_TGTに記録。
+- 絵柄: スタート演出と同じS1SHIP_*を同じコード24-31へLDIRVMで送る。実行時にも読むため、build_test.pyではGFX2_MOVEからGFX2_DUPへ移した(GFX2_LIST_3はG2D_*を参照)。操作無効後はTANK_AIMUPが毎フレーム0になり、上向きポーズ(PAT_TANKUP)は出ないので、このコードを借りられる。
+- スロット: スタート演出と同じslot8/9。ボス撃破後(BOSS_ACT=0)はほぼ全スロットが毎フレーム書き直されるため、UPDATE_BULLET_U_SPRITESのゲートを「TANK_ENTRY_ACT | ENDING_SHIP_ACT が0の時だけ」にした。開始時にslot7も一度だけ隠す(飛んでいたU弾の絵が残らないように)。
+- 動き: UPDATE_ENDING_SHIP(MAINLOOPでUPDATE_ENDINGの直後)がENDING_SHIP_ACCに毎フレームTGT*2を足す。上位バイトがXなので、ENDING_SHIP_FRAMES=128フレーム(≒"120フレ程度")でちょうどX=TGTに着く。Yは7+ENDING_SHIP_BOB[t&31](32フレーム周期で(1-cos)/2*8、下方向に0〜8px、4往復)。到着後はX=TGT・Y=7で止まり、戦車の真上で並走する。最終画像(ENDING_SHOW_FINAL_IMAGE)に切り替わるとスプライトはすべて隠れる。
+- 最終画像へのタイミング(MISSION COMPLETEDの10秒後)は変えていない。
+- RAM: 0xCB22〜26(ENDING_SHIP_ACT/T/ACC/TGT)。ENDING_SHIP_ACTはINITでゼロクリアし、init_ram_poison_testは36 passed。
+- テスト: ending_sequence_test.py 32件(6件追加。実MAINLOOPで毎フレームのslot8/9属性・到着後の静止・slot7の非表示・パターンのロードを確認)。vdp_wait_testの生OUTの数を42→44/37→38に更新。run_all 1628 passed/0 failed。
+- レンダリングでRow1を揺れながら右へ進み、戦車の真上で止まることを確認した(画面中央のボスの絵は、テストが撃破を近道で作っているための残骸)。
+- Stage2の残りは5217→4961byte(ALIGN境界を越えて256byte減)。Comb再ビルド・verify_comb PASS。
