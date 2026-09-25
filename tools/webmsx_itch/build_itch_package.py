@@ -74,6 +74,16 @@ def patch_config(html, rom_filename, title):
     html = replace_field(html, "JOYSTICKS_MODE", "0", "0")
     html = replace_field(html, "JOYKEYS_MODE", "-1", "0")
 
+    # 本ゲームはキーボード操作を想定しておらず実ジョイスティック専用のため、
+    # 実ゲームパッドが無い/認識されない環境(itch.ioのiframe内でGamepad APIが
+    # Permissions Policyでブロックされている場合等)でも遊べるよう、画面上の
+    # タッチ/マウス操作対応バーチャルジョイスティックUIを強制表示する
+    # (TOUCH_MODE=1でタッチ入力自体を強制有効化、MOBILE_MODE=1でUI自体の表示を
+    # 強制。ControllersHubの優先順位はMouse>Joystick>JoyKeys>Touchのため、
+    # 実ジョイスティックが認識されればそちらが優先され、この設定は影響しない)
+    html = replace_field(html, "TOUCH_MODE", "0", "1")
+    html = replace_field(html, "MOBILE_MODE", "0", "1")
+
     # 起動時の旧AppCache参照を除去(廃止済みAPIで、ファイルも同梱しないため)
     html = html.replace(
         '<html lang="en" translate="no" class="notranslate" manifest="cache.manifest">',
