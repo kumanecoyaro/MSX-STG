@@ -18757,3 +18757,16 @@ EbuzII弾ビームへの1pxコリジョン追加+ROM予算の共有バンク6オ
 - テスト: ending_sequence_test.py 32件(6件追加。実MAINLOOPで毎フレームのslot8/9属性・到着後の静止・slot7の非表示・パターンのロードを確認)。vdp_wait_testの生OUTの数を42→44/37→38に更新。run_all 1628 passed/0 failed。
 - レンダリングでRow1を揺れながら右へ進み、戦車の真上で止まることを確認した(画面中央のボスの絵は、テストが撃破を近道で作っているための残骸)。
 - Stage2の残りは5217→4961byte(ALIGN境界を越えて256byte減)。Comb再ビルド・verify_comb PASS。
+- (follow-up49追記、2026-09-25) まずゴミの件。ユーザー「レンダリングでボスのゴミが出てるが ゲームでは大丈夫か?」
+  - 正規の流れ(夜の空・スケジュール消化済み・S2_BOSS_SPAWN→マテリアライズ→形態変化→撃破)で再レンダリングし、ゴミは出ないことを確認。
+  - 前回のゴミは、テストで撃破を近道で作った残骸と、昼の空にHUD_ROW_BLANK_CODE(黒)が浮いて見えたもの。本番のボス戦は夜で空が黒なので見えない。
+- 続けて「もっとゆっくり移動して…操作無効からMission Completedまでの時間から逆算でいいわ 上下移動も通常の半分の速度でゆっくり で、自機位置まではやめて X160、Y32の固定位置で」。
+  - 目標: TANK_Xではなく固定位置(ENDING_SHIP_X_END=160, ENDING_SHIP_Y_END=32)。
+  - 移動: 実VBlank(VBLANK_COUNTの差分)ごとにX/Yの8.8を進める。速度は曲の長さ(ENDING_SONG_TOTAL_TICKS=1630)から切り上げで逆算する(XSPD=26, YSPD=4 → Xは1576、Yは1600 VBlank目に到着)。
+  - 逆算のEQUは左から順に評価される前提で「距離*256+総tick-1/総tick」と書いている。
+  - 揺れ: 2フレームに1段進める(1周64フレーム、スタート演出の半分の速さ)。
+  - MISSION COMPLETED(ENDING_ACT>=3)以後は(160,32)で静止。
+  - RAM: ENDING_SHIP_TGT/FRAMESを廃止し、ENDING_SHIP_YACC(CB26)・ENDING_SHIP_LASTV(CB28)を追加。
+  - このアセンブラはRRCAに非対応なので、揺れの段の計算はSRL Aにした。
+  - テスト: ending_sequence_testを「1フレームに1VBlank」で曲全体(1630VBlank)を通して、毎フレームslot8/9を検証する形に書き換え(33 passed)。run_all 1629 passed/0 failed。Stage2残り4961(変化なし)。
+  - レンダリングでゆっくり右上から(160,32)へ到着し、MISSION COMPLETEDの時点で止まっていることを確認。Comb再ビルド・verify_comb PASS。

@@ -6728,10 +6728,22 @@ ENDING_RETURN_WAIT_TICKS EQU 600   ; "10秒" @ 60Hz real vblank
 ; (UPDATE_ENDING_SHIP)。0xCB22〜(上記ENDING_FINISH_STARTの直後、0xCC00
 ; まで空き)。
 ENDING_SHIP_ACT  EQU 0CB22h   ; 0=無し/1=飛行・並走中(ENDING_START_PLAYBACKで1)
-ENDING_SHIP_T    EQU 0CB23h   ; 飛行開始からのフレーム数(ENDING_SHIP_FRAMESで停止)
+ENDING_SHIP_T    EQU 0CB23h   ; 飛行開始からのフレーム数(上下の揺れ用、8bitで周回)
 ENDING_SHIP_ACC  EQU 0CB24h   ; X(8.8固定小数点、上位バイト=表示X)
-ENDING_SHIP_TGT  EQU 0CB26h   ; 目標X=操作無効になった瞬間のTANK_X
-ENDING_SHIP_FRAMES EQU 128    ; X=0→TGTを128フレーム(毎フレームTGT*2/256px)、"120フレ程度"
+ENDING_SHIP_YACC EQU 0CB26h   ; Y(8.8固定小数点、上位バイト=揺れを足す前のY)
+ENDING_SHIP_LASTV EQU 0CB28h  ; 前回見たVBLANK_COUNT(進んだ実VBlank数だけ進める)
+; (2026-09-25follow-up、"もっとゆっくり移動して...操作無効からMission
+; Completedまでの時間から逆算でいいわ 上下移動も通常の半分の速度で
+; ゆっくり で、自機位置まではやめて X160、Y32の固定位置で"): 操作無効
+; (曲の頭)からMISSION COMPLETED(曲の終わり=ENDING_SONG_TOTAL_TICKS実
+; VBlank後)までの間に(0,Row1)から(160,32)へ移動する。速度はVBlank1回
+; あたりの8.8固定小数点で、曲の長さから切り上げで逆算(左から順に評価
+; されるので"距離*256+総tick-1/総tick"=ceil(距離*256/総tick))。切り
+; 上げなので曲の終わりの少し前に到着して止まる。
+ENDING_SHIP_X_END EQU 160
+ENDING_SHIP_Y_END EQU 32
+ENDING_SHIP_XSPD EQU ENDING_SHIP_X_END*256+ENDING_SONG_TOTAL_TICKS-1/ENDING_SONG_TOTAL_TICKS
+ENDING_SHIP_YSPD EQU ENDING_SHIP_Y_END-7*256+ENDING_SONG_TOTAL_TICKS-1/ENDING_SONG_TOTAL_TICKS
 
 ; (2026-09-12、"ではこの画像をMission completed表示後10秒したら表示
 ; ボタンが押されたらスタート画面へ タイトル表示同様に圧縮かけて"):
@@ -16494,9 +16506,10 @@ S1SHIP_FLY_X:
 ; コード24-31へ送る(操作無効後は上向きポーズが出ないのでPAT_TANKUPの
 ; 後半8コードは使われない)。slot7に残っているかもしれないU弾は隠す。
 ENDING_SHIP_START:
-    LD A,(TANK_X) : LD (ENDING_SHIP_TGT),A
     XOR A : LD (ENDING_SHIP_T),A
     LD HL,0 : LD (ENDING_SHIP_ACC),HL
+    LD HL,S1SHIP_FLY_Y*256 : LD (ENDING_SHIP_YACC),HL
+    LD HL,(VBLANK_COUNT) : LD (ENDING_SHIP_LASTV),HL
     LD A,1 : LD (ENDING_SHIP_ACT),A
     DI
     LD HL,S1SHIP_BODY_SPRITE : LD DE,PAT_S1SHIP_BODY*8+SPRPAT : LD BC,64 : CALL LDIRVM
@@ -16511,37 +16524,60 @@ ENDING_SHIP_START:
     EI
     RET
 
-; MAINLOOPから毎フレーム。X=ACC上位(ACCに毎フレームTGT*2を足すので
-; ENDING_SHIP_FRAMES=128フレーム目でちょうどTGT)、Yは表で上下に揺らす
-; (32フレーム周期x4回、下方向へ最大8px)。到着後はTGT・Row1で静止し、
-; 最終画像(ENDING_SHOW_FINAL_IMAGE、全スプライトを隠す)まで並走する。
+; MAINLOOPから毎フレーム。前回から進んだ実VBlank数だけX/Yの8.8を
+; ENDING_SHIP_XSPD/YSPDずつ進め、(160,32)でクランプ。Yには表の上下の
+; 揺れを足す(2フレームに1段=1周64フレーム、スタート演出の半分の速さ)。
+; MISSION COMPLETED(ENDING_ACT>=3)以後は(160,32)で静止し、最終画像
+; (ENDING_SHOW_FINAL_IMAGE、全スプライトを隠す)まで表示し続ける。
 UPDATE_ENDING_SHIP:
     LD A,(ENDING_SHIP_ACT)
     OR A
     RET Z
-    LD A,(ENDING_SHIP_T)
-    CP ENDING_SHIP_FRAMES
+    LD A,(ENDING_ACT)
+    CP 3
     JR NC,UES_ARRIVED
-    INC A
-    LD (ENDING_SHIP_T),A
+    LD HL,(VBLANK_COUNT)
+    LD DE,(ENDING_SHIP_LASTV)
+    LD (ENDING_SHIP_LASTV),HL
+    OR A : SBC HL,DE
+    LD A,H : OR A
+    JR Z,UES_DELTA8
+    LD L,255
+UES_DELTA8:
+    LD A,L : OR A
+    JR Z,UES_POS
+    LD B,A
+UES_STEP:
+    LD HL,(ENDING_SHIP_ACC) : LD DE,ENDING_SHIP_XSPD : ADD HL,DE : LD (ENDING_SHIP_ACC),HL
+    LD HL,(ENDING_SHIP_YACC) : LD DE,ENDING_SHIP_YSPD : ADD HL,DE : LD (ENDING_SHIP_YACC),HL
+    DJNZ UES_STEP
+UES_POS:
+    LD A,(ENDING_SHIP_ACC+1)
+    CP ENDING_SHIP_X_END
+    JR C,UES_XOK
+    LD A,ENDING_SHIP_X_END
+UES_XOK:
+    LD B,A
+    LD A,(ENDING_SHIP_YACC+1)
+    CP ENDING_SHIP_Y_END
+    JR C,UES_YOK
+    LD A,ENDING_SHIP_Y_END
+UES_YOK:
+    LD C,A
+    LD A,(ENDING_SHIP_T) : INC A : LD (ENDING_SHIP_T),A
+    SRL A
     AND 31
     LD E,A : LD D,0
     LD HL,ENDING_SHIP_BOB : ADD HL,DE
-    LD A,(HL) : ADD A,S1SHIP_FLY_Y
+    LD A,(HL) : ADD A,C
     LD C,A
-    LD A,(ENDING_SHIP_TGT) : LD E,A : LD D,0
-    LD HL,(ENDING_SHIP_ACC)
-    ADD HL,DE
-    ADD HL,DE
-    LD (ENDING_SHIP_ACC),HL
-    LD B,H
     JP DSF_WRITE
 UES_ARRIVED:
-    LD A,(ENDING_SHIP_TGT) : LD B,A
-    LD C,S1SHIP_FLY_Y
+    LD B,ENDING_SHIP_X_END
+    LD C,ENDING_SHIP_Y_END
     JP DSF_WRITE
 
-; 上下の揺れ(1周32フレーム、0→8→0px下方向、(1-cos)/2*8)。
+; 上下の揺れ(32段、0→8→0px下方向、(1-cos)/2*8)。2フレームに1段進める。
 ENDING_SHIP_BOB:
     DB 0,0,0,1,1,2,2,3,4,5,6,6,7,7,8,8
     DB 8,8,8,7,7,6,6,5,4,3,2,2,1,1,0,0

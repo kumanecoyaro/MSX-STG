@@ -318,43 +318,57 @@ from banked_helpers import step_frame  # noqa: E402
 TANK_X = sym["TANK_X"]
 SLOT = sym["S1SHIP_SPR_BASE_SLOT"]
 PB = sym["PAT_S1SHIP_BODY"]; PA = sym["PAT_S1SHIP_ACCENT"]
-FR = sym["ENDING_SHIP_FRAMES"]
 BOB = [round(4 * (1 - math.cos(2 * math.pi * i / 32))) for i in range(32)]
 cs = fresh_cpu()
 check("ENDING_SHIP_ACT is 0 after boot", cs.mem[sym["ENDING_SHIP_ACT"]] == 0)
 kill_boss_for_real(cs)
-TGT = 120
-cs.mem[TANK_X] = TGT
-for _ in range(ENDING_WAIT_TICKS):
+cs.mem[TANK_X] = 120
+for _ in range(ENDING_WAIT_TICKS - 1):
     call_routine(cs, "BGM_TICK")
-cs.pc = sym["MAINLOOP"]
+TOTAL = ENDING_SONG_TOTAL_TICKS
+XS = sym["ENDING_SHIP_XSPD"]; YS = sym["ENDING_SHIP_YSPD"]
+XE = sym["ENDING_SHIP_X_END"]; YE = sym["ENDING_SHIP_Y_END"]
+check("ending ship speed is derived from the song length (ceil), so it arrives just before MISSION COMPLETED",
+      (XS * TOTAL >> 8) >= XE and ((XS - 1) * TOTAL >> 8) < XE and
+      ((7 << 8) + YS * TOTAL >> 8) >= YE and ((7 << 8) + (YS - 1) * TOTAL >> 8) < YE)
+# 実機と同じく「1フレームに1回VBlank」で進める(BGM_TICKでVBLANK_COUNTを進めてからMAINLOOP1周)
 traj_ok = True; arrived_ok = True; slot7_ok = True
-start_ok = None
-for f in range(1, FR + 40):
+start_ok = None; v = None; frame = 0; arrived_frames = 0
+while True:
+    call_routine(cs, "BGM_TICK")
+    cs.pc = sym["MAINLOOP"]
     step_frame(cs)
-    if start_ok is None:
-        start_ok = (cs.mem[ENDING_ACT] == 2 and cs.mem[sym["ENDING_SHIP_ACT"]] == 1
-                    and cs.mem[sym["ENDING_SHIP_TGT"]] == TGT)
+    act = cs.mem[ENDING_ACT]
+    if v is None:
+        if act != 2:
+            continue
+        v = 0; frame = 0
+        start_ok = cs.mem[sym["ENDING_SHIP_ACT"]] == 1
+    else:
+        v += 1
+    frame += 1
     a = [cs.vram[0x1B00 + SLOT * 4 + k] for k in range(8)]
     if cs.vram[0x1B00 + 7 * 4] != 209:
         slot7_ok = False
-    if f <= FR:
-        ex = (f * 2 * TGT) >> 8
-        ey = 7 + BOB[f & 31]
-        if a != [ey, ex, PA, 15, ey, ex, PB, 8]:
-            traj_ok = False
-    elif a != [7, TGT, PA, 15, 7, TGT, PB, 8]:
-        arrived_ok = False
-check("ending ship starts on the same frame controls are disabled (ENDING_ACT=2), target X = TANK_X at that moment",
-      bool(start_ok))
+    if act >= 3:
+        if a != [YE, XE, PA, 15, YE, XE, PB, 8]:
+            arrived_ok = False
+        arrived_frames += 1
+        if arrived_frames >= 20:
+            break
+        continue
+    ex = min(XE, (v * XS) >> 8)
+    ey = min(YE, ((7 << 8) + v * YS) >> 8) + BOB[(frame >> 1) & 31]
+    if a != [ey, ex, PA, 15, ey, ex, PB, 8]:
+        traj_ok = False
+check("ending ship starts on the same frame controls are disabled (ENDING_ACT=2)", bool(start_ok))
 check("ending ship: Stage1 ship patterns (body/accent, same as the start-of-stage flyaway) loaded into codes 24-31",
       list(cs.vram[0x3800 + PB * 8:0x3800 + PB * 8 + 64]) ==
       [out[sym["S1SHIP_BODY_SPRITE"] + i] & 0xFF for i in range(64)])
-check(f"ending ship: X goes 0 -> TANK_X over {FR} frames (Row1, Y=7 + bob, 4 up/down swings of 0-8px), every frame",
-      traj_ok)
-check("ending ship: after arriving it stays at X=TANK_X, Y=7 (running alongside)", arrived_ok)
+check(f"ending ship: over the whole song ({TOTAL} vblanks) it moves (0,Row1) -> fixed ({XE},{YE}), bobbing 0-8px at half the start-flyaway speed (1 step / 2 frames)",
+      traj_ok and v is not None and v >= TOTAL)
+check(f"ending ship: from MISSION COMPLETED on it holds still at ({XE},{YE})", arrived_ok)
 check("ending ship: slot7 (U bullet, not redrawn while slots 8/9 are borrowed) stays hidden", slot7_ok)
-
 
 print()
 print(f"{len(ok)} passed, {len(fail)} failed")
