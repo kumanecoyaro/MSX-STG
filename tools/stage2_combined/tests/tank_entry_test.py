@@ -168,7 +168,7 @@ check("landing takes ~220 frames (\"10倍遅く\" duration kept) and X/Y arrive 
       "together (no sliding on the ground)", 200 <= landing_frame <= 240)
 
 # ---- 6. ("オフセット無視すんな") ブースターは演出の最初から最後まで常に
-#         TANK_X-16 / TANK_Y_CUR+7(めり込み・クランプ無し)、開始時の
+#         TANK_X-15 / TANK_Y_CUR+7(めり込み・クランプ無し)、開始時の
 #         ブースター込み左端は0 ----
 cpu5 = fresh_cpu(skip_intro=False)
 offs_ok = True
@@ -180,10 +180,10 @@ while cpu5.rd(TANK_ENTRY_ACT):
     bx = cpu5.rd(BOOSTER_SPRITE_ATTRS + 1); by = cpu5.rd(BOOSTER_SPRITE_ATTRS + 0)
     if first_bx is None:
         first_bx = bx
-    if bx != cpu5.rd(TANK_X) - 16 or by != cpu5.rd(TANK_Y_CUR) + BOOSTER_Y_OFFSET:
+    if bx != cpu5.rd(TANK_X) - 15 or by != cpu5.rd(TANK_Y_CUR) + BOOSTER_Y_OFFSET:
         offs_ok = False
-check("first frame: booster sprite X = 0 (\"ブースター込みで0,64から\")", first_bx == 0)
-check("every entry frame: booster X = TANK_X-16 and Y = TANK_Y_CUR+7 exactly "
+check("first frame: booster sprite X = 1 (\"ブースター込みで0,64から\"、2026-09-25の\"1px右に\"で0→1)", first_bx == 1)
+check("every entry frame: booster X = TANK_X-15 and Y = TANK_Y_CUR+7 exactly "
       "(no clamp, the booster never overlaps the tank)", offs_ok)
 
 # ---- 7. booster position/Y-offset/pattern once TANK_X is comfortably >=16 ----
@@ -200,9 +200,9 @@ booster_pat = cpu6.rd(BOOSTER_SPRITE_ATTRS + 2)
 booster_col = cpu6.rd(BOOSTER_SPRITE_ATTRS + 3)
 anim = cpu6.rd(TANK_ENTRY_ANIM)
 expected_pat = PAT_BOOSTER2 if (anim & 2) else PAT_BOOSTER1
-check("booster ATTRIBUTE X = TANK_X-16 (so the real art, which only occupies "
+check("booster ATTRIBUTE X = TANK_X-15 (so the real art, which only occupies "
       "the right half of the 16x16 sprite, lands just left of the tank)",
-      booster_x2 == tank_x - 16)
+      booster_x2 == tank_x - 15)
 check("booster Y = TANK_Y_CUR + BOOSTER_Y_OFFSET(7)", booster_y == tank_y + BOOSTER_Y_OFFSET)
 check("booster pattern code (base of the 4-code TL/BL/TR/BR quad) matches the "
       "current TANK_ENTRY_ANIM frame", booster_pat == expected_pat)
@@ -263,8 +263,8 @@ check("after landing, TICK advances again (normal MAINLOOP processing "
 # ---- ("右が渡したデータだぞ") 両フレームの32byteが添付JSON(16x16)を
 #      そのまま4quadrant変換したものと一致(左下の炎を含む) ----
 BUNIT = {
-    "BOOSTER1_SPRITE": [0]*8 + [0]*8 + [0x3E,0x63,0x49,0x5D,0x53,0x6D,0x5D,0x5D] + [0x49,0x63,0x3F,0x1E,0,0,0,0],
-    "BOOSTER2_SPRITE": [0]*8 + [0x00,0x01,0x07,0x01,0x03,0x06,0x01,0x01] + [0x3E,0x63,0x49,0x5D,0x53,0x6D,0x5D,0x5D] + [0x49,0x63,0x3F,0x9E,0xC0,0xF0,0xA0,0x20],
+    "BOOSTER1_SPRITE": [0]*8 + [0]*8 + [0x7F,0x7F,0x00,0x7F,0x63,0x6B,0x63,0x3F] + [0x5F,0x6F,0x37,0x1B,0,0,0,0],
+    "BOOSTER2_SPRITE": [0]*8 + [0x00,0x01,0x07,0x01,0x03,0x06,0x01,0x01] + [0x7F,0x7F,0x00,0x7F,0x63,0x6B,0x63,0x3F] + [0x5F,0x6F,0x37,0x9B,0xC0,0xF0,0xA0,0x20],
 }
 for name, data in BUNIT.items():
     check(f"{name} matches Bunit JSON 16x16 exactly (incl. left-bottom flame)",

@@ -18722,3 +18722,10 @@ EbuzII弾ビームへの1pxコリジョン追加+ROM予算の共有バンク6オ
   E_Yを一度も書かず0のままだったため体当たり判定が実質効いていなかった。EBSB_ANIMの先頭で毎フレーム
   E_Y=基準Y+サインLUTを書き戻すよう修正。verify_wave_anim_hit.pyに3件追加(15件、旧コードで3件失敗を確認)。
   ROM: plain 2797 / Comb 2764→2747。
+
+## Round145 follow-up47(2026-09-25): Bunit差し替え+ブースター1px右
+
+- ユーザー: "Bunitのデータ差し替え で、レンダリング見ると1px左にズレてたんで1px右に"(添付Bunit1/Bunit2_16x16_1.json)。
+- BOOSTER1_SPRITE/BOOSTER2_SPRITEを新JSONから機械変換した32byteへ差し替え(左下の炎[Bunit2のみ]は従来と同一、TR/BRが新絵柄)。
+- 新絵柄は右端列(列15)まで使っているため、ビットマップを右へずらすと1列欠ける。そのためデータはJSONのまま、UPDATE_TANK_ENTRYのブースターX=TANK_X-16→TANK_X-15(描画位置を+1px)で対応。
+- tank_entry_test.py(期待値のバイト列・X=TANK_X-15・初回X=1)を更新して36 passed、run_all 1616 passed/0 failed。レンダリングでブースターが自機の左端に接していることを確認。Stage2残り5473byte(変化なし)。Comb再ビルド・verify_comb PASS。

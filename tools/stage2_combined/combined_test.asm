@@ -16228,13 +16228,13 @@ CLOUD_B_PATTERN:
 BOOSTER1_SPRITE:
     DB 00h,00h,00h,00h,00h,00h,00h,00h   ; top-left (blank)
     DB 00h,00h,00h,00h,00h,00h,00h,00h   ; bottom-left (blank)
-    DB 3Eh,63h,49h,5Dh,53h,6Dh,5Dh,5Dh   ; top-right
-    DB 49h,63h,3Fh,1Eh,00h,00h,00h,00h   ; bottom-right
+    DB 7Fh,7Fh,00h,7Fh,63h,6Bh,63h,3Fh   ; top-right
+    DB 5Fh,6Fh,37h,1Bh,00h,00h,00h,00h   ; bottom-right
 BOOSTER2_SPRITE:
     DB 00h,00h,00h,00h,00h,00h,00h,00h   ; top-left (blank)
     DB 00h,01h,07h,01h,03h,06h,01h,01h   ; bottom-left (flame)
-    DB 3Eh,63h,49h,5Dh,53h,6Dh,5Dh,5Dh   ; top-right
-    DB 49h,63h,3Fh,9Eh,0C0h,0F0h,0A0h,20h ; bottom-right
+    DB 7Fh,7Fh,00h,7Fh,63h,6Bh,63h,3Fh   ; top-right
+    DB 5Fh,6Fh,37h,9Bh,0C0h,0F0h,0A0h,20h ; bottom-right
 
 ; (2026-09-23、ステージ2のスタート演出、"ブースター込みで0,64から放物線で
 ; 落下し地上へ着地 落下中は1と2を1フレ切り替え 着地したらブースター
@@ -16302,10 +16302,11 @@ UTE_DRAW:
     CALL UPDATE_TANK_SPRITES
 
     ; --- ブースター(16x16スプライト1枚、実絵柄は右半分[TR/BR]のみ)の
-    ; ATTRIBUTE X = TANK_X-16(指定オフセット、常に固定)。演出はTANK_X=
-    ; TANK_ENTRY_START_X(16)から始まるためアンダーフローしない。 ---
+    ; ATTRIBUTE X = TANK_X-15(2026-09-25、"1px左にズレてたんで1px右に"で
+    ; -16から変更、常に固定)。演出はTANK_X=TANK_ENTRY_START_X(16)から
+    ; 始まるためアンダーフローしない。 ---
     LD A,(TANK_X)
-    SUB 16
+    SUB 15
     LD B,A
 
     ; --- ブースターY = TANK_Y_CUR + BOOSTER_Y_OFFSET ---
