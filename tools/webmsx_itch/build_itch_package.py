@@ -157,8 +157,13 @@ def patch_config(html, rom_filename, title):
     # 実ゲームパッドが無い/認識されない環境(itch.ioのiframe内でGamepad APIが
     # Permissions Policyでブロックされている場合等)でも遊べるよう、画面上の
     # タッチ/マウス操作対応バーチャルジョイスティックUIを強制表示する
-    # (TOUCH_MODE=1でタッチ入力自体を強制有効化、MOBILE_MODE=1でUI自体の表示を
-    # 強制)。
+    # (TOUCH_MODE=1)。
+    #
+    # MOBILE_MODEは既定の0(自動)のままにする: 1で強制するとPCでもスマホ扱い
+    # (isMobileDevice)になり、歯車メニューから「Help & Settings」(ジョイスティック
+    # のボタン割り当て画面)が消える(CanvasDisplay.createSettingsMenuOptions)。
+    # タッチUIの表示自体はTOUCH_MODE=1とJoyKeys無効だけで足りる(以前MOBILE_MODE
+    # 強制が要るように見えたのはJoyKeysがポートを塞いでいたため)。
     #
     # JOYKEYS_MODE(キーボード代替入力)は意図的に既定の-1(無効)のままにする:
     # ControllersHubの各ポートの担当優先順位はMouse > Joystick > JoyKeys > Touchで
@@ -171,7 +176,6 @@ def patch_config(html, rom_filename, title):
     # 実機検証で確認済み)。キーボード操作を想定していない本ゲームではJoyKeys有効化に
     # メリットが無い一方デメリットだけがあるため、外したままにする。
     html = replace_field(html, "TOUCH_MODE", "0", "1")
-    html = replace_field(html, "MOBILE_MODE", "0", "1")
 
     # 起動時の旧AppCache参照を除去(廃止済みAPIで、ファイルも同梱しないため)
     html = html.replace(
