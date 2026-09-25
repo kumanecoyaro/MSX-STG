@@ -67,20 +67,27 @@ def patch_config(html, rom_filename, title):
     # (実際のブラウザFullscreen APIへの切替はユーザー操作が必要、これは変わらない)
     html = replace_field(html, "SCREEN_FULLSCREEN_MODE", "-1", "1")
 
-    # ジョイスティック: 実ゲームパッド接続を自動検出(既定のまま/明示化)に加え、
-    # キーボードでもジョイスティック入力ができるようJoyKeysをポート1で有効化
-    # (本ゲームはBIOS経由でポート1のジョイスティックのみを読むため、実機のパッドを
-    # 持たないブラウザ利用者でも遊べるようにする)
+    # ジョイスティック: 実ゲームパッド接続を自動検出(既定のまま/明示化)
     html = replace_field(html, "JOYSTICKS_MODE", "0", "0")
-    html = replace_field(html, "JOYKEYS_MODE", "-1", "0")
 
-    # 本ゲームはキーボード操作を想定しておらず実ジョイスティック専用のため、
+    # 本ゲームはキーボード操作を想定しておらず実ジョイスティック専用のため
+    # (実際に検証済み: JoyKeysでは一切反応せずGamepad APIでのみ動作した)、
     # 実ゲームパッドが無い/認識されない環境(itch.ioのiframe内でGamepad APIが
     # Permissions Policyでブロックされている場合等)でも遊べるよう、画面上の
     # タッチ/マウス操作対応バーチャルジョイスティックUIを強制表示する
     # (TOUCH_MODE=1でタッチ入力自体を強制有効化、MOBILE_MODE=1でUI自体の表示を
-    # 強制。ControllersHubの優先順位はMouse>Joystick>JoyKeys>Touchのため、
-    # 実ジョイスティックが認識されればそちらが優先され、この設定は影響しない)
+    # 強制)。
+    #
+    # JOYKEYS_MODE(キーボード代替入力)は意図的に既定の-1(無効)のままにする:
+    # ControllersHubの各ポートの担当優先順位はMouse > Joystick > JoyKeys > Touchで
+    # 固定(1ポートにつき同時に1つの入力ソースしか有効にならない)。この優先順位表の
+    # 通り、JoyKeysをport1で有効にするとJoyKeysがTouchより先にport1を専有し続け、
+    # 実際には一切使われないJoyKeysのせいで、有効な代替手段であるTouchのUI自体が
+    # 表示されなくなる(`ControllersHub.getSettingsState().touchActive`が常にfalseの
+    # ままになり、CSS側の`.wmsx-full-screen.wmsx-touch-active`ゲートが掛からず
+    # バーチャルジョイスティックUIの要素が0x0サイズのまま描画されない、という実害を
+    # 実機検証で確認済み)。キーボード操作を想定していない本ゲームではJoyKeys有効化に
+    # メリットが無い一方デメリットだけがあるため、外したままにする。
     html = replace_field(html, "TOUCH_MODE", "0", "1")
     html = replace_field(html, "MOBILE_MODE", "0", "1")
 
