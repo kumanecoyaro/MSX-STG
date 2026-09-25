@@ -99,35 +99,13 @@ def patch_config(html, rom_filename, title):
     )
     html = re.sub(r'\s*<link rel="manifest" href="manifest\.webapp">\n', "\n", html, count=1)
 
-    # ランドスケープ固定の試み: WebMSX自身はScreen Orientation APIによる
-    # ロックを一切行わず(レスポンシブCSSで現在の向きに追従するだけ)、
-    # itch.io側の「Mobile orientation」設定だけでは実機で向きが安定しない
-    # (触った瞬間にポートレイトへ戻ってしまう)との報告があったための追加。
-    # Screen Orientation APIのlock()は多くのブラウザで「documentが
-    # フルスクリーン状態であること」を要求するため、フルスクリーン遷移の
-    # たびに再試行する。iOS Safariは本APIを実装しておらず(2026-09時点)、
-    # レスポンシブレイアウト側での自動追従に頼るしかない - この既知の
-    # プラットフォーム制限も併せて明記しておく。
-    orientation_lock_script = """
-    <script>
-    (function() {
-        function tryLockLandscape() {
-            try {
-                if (screen.orientation && screen.orientation.lock) {
-                    screen.orientation.lock("landscape").catch(function() {});
-                }
-            } catch (e) {}
-        }
-        document.addEventListener("fullscreenchange", tryLockLandscape);
-        document.addEventListener("webkitfullscreenchange", tryLockLandscape);
-        window.addEventListener("load", tryLockLandscape);
-    })();
-    </script>
-    """
-    body_close_idx = html.rfind("</body>")
-    if body_close_idx == -1:
-        raise RuntimeError("テンプレート内に</body>が見つからなかった")
-    html = html[:body_close_idx] + orientation_lock_script + html[body_close_idx:]
+    # (2026-09-25: ランドスケープ固定のためscreen.orientation.lock()を
+    # fullscreenchangeイベントで試行するスクリプトを一時追加したが、実機
+    # 検証で「フルスクリーン終了案内がずっと消えない」という重大な副作用が
+    # 発生したため撤回済み。ロック処理自体がフルスクリーン状態の再検知を
+    # 誘発し、ブラウザの案内表示がフェードする隙を与えず出続けていたと
+    # 推測される。この種のブラウザネイティブAPIへの介入は実機検証なしに
+    # 追加しないこと。)
 
     if title:
         html = re.sub(r"<title>.*?</title>", "<title>%s</title>" % title, html, count=1)
