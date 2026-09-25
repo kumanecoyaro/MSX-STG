@@ -1,7 +1,7 @@
 # itch.io向けWebMSXパッケージ
 
 `rom/CyberS Comb.ascii16k.rom`(Stage1+実Stage2統合"Comb"ビルド)を、ブラウザだけで
-遊べる単一HTMLファイルに変換する。ベースは
+遊べるHTMLパッケージに変換する。ベースは
 [WebMSX](https://webmsx.org)([ppeccin/WebMSX](https://github.com/ppeccin/WebMSX))
 の公式リリース「C-BIOS standalone」版(`release/stable/6.0/cbios/standalone/index.html`、
 C-BIOS(フリーの互換BIOS)埋め込み済み・単一HTML)で、これを`vendor/`に取得済み。
@@ -18,12 +18,24 @@ python3 build_itch_package.py
 別のROMファイルを指定する場合は `python3 build_itch_package.py path/to/other.rom`。
 
 出力: `dist/CyberShmup_webmsx_itch.zip`(gitignore対象、都度手元でビルドする)。
-中身は`index.html`1つだけ(ROMはdata: URIとしてHTML内に埋め込み済み)。
+中身は`index.html`と`CyberShmup [ASCII16].rom`の2ファイル(後述の理由によりROMは
+data: URIとしてHTMLに埋め込まず、zip内の別ファイルとして同梱している)。
 
 ## 適用している設定
 
 - 機種: `MSX1J`(日本語MSX1、NTSC 60Hz)
-- ROMフォーマット: `ASCII16`固定指定(128KB, 実際のマッパーポートは0x6000/0x7000)
+- ROMフォーマット: **明示指定せず自動判定のまま**。ただしROMファイル名を
+  `CyberShmup [ASCII16].rom`にすることでWebMSX自身のフォーマットヒント機能
+  (`SlotCreator.js`の`finishInfo`/`formatMatchesByHint`、ドキュメントの
+  「ROM Format...You can also put the format specification in the ROM file
+  name, between brackets」)を使い、常にASCII16として選択されるようにしている。
+  - 検証: ROMをdata: URIとしてHTML内に埋め込みつつ`CARTRIDGE1_FORMAT`も空の
+    ままにすると、WebMSXは純粋なヒューリスティックで**誤って"ASCII 8K Mapper
+    Cartridge"と判定し画面が崩壊**することを確認済み(このROMは128KB・ポート
+    0x6000/0x7000のASCII16で、8Kマッパーとは非互換)。ファイル名ヒントに
+    切り替えたことでこの誤判定を避けつつ、設定側は純粋に自動判定のままにできる
+    (`AUTO Format selected: ASCII 16K Mapper Cartridge`とコンソールに出ることを
+    Playwright+ローカルHTTPサーバでの実起動確認で検証済み)
 - フルスクリーン: `SCREEN_FULLSCREEN_MODE=1`(起動時から画面いっぱいのレイアウト。
   ブラウザの実フルスクリーンAPIへの切替はユーザー操作が必要 - これはブラウザの制約で
   変更不可)
@@ -36,8 +48,9 @@ python3 build_itch_package.py
 ## itch.ioへのアップロード手順
 
 1. itch.ioでプロジェクト作成、Kind: **HTML**を選択
-2. `dist/CyberShmup_webmsx_itch.zip`をそのままアップロード(index.htmlがzip直下に
-   あるので追加設定不要)
+2. `dist/CyberShmup_webmsx_itch.zip`をそのままアップロード(`index.html`がzip直下に
+   あるので追加設定不要。`CyberShmup [ASCII16].rom`も同じzipに同梱済みで、
+   index.htmlから同一originの相対パスとして参照される)
 3. "This file will be played in the browser" にチェック
 4. Embed optionsで **Fullscreen button** を有効化
    (WebMSX自身のフルスクリーンボタンがブラウザの実フルスクリーンAPIを呼び出すため、

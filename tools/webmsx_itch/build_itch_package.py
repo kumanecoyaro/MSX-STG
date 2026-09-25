@@ -2,9 +2,20 @@
 
 WebMSX(https://webmsx.org / https://github.com/ppeccin/WebMSX)の
 "C-BIOS standalone" 公式リリース版(release/stable/6.0/cbios/standalone/index.html、
-C-BIOS同梱・単一HTMLファイル)をベースに、指定したROMファイルをdata: URIとして
-埋め込み、MSX1J・フルスクリーン・ジョイスティック有効の設定を適用したうえで、
-itch.ioにそのままアップロードできるzipファイルを生成する。
+C-BIOS同梱・単一HTMLファイル)をベースに、指定したROMファイルを同梱し、MSX1J・
+フルスクリーン・ジョイスティック有効の設定を適用したうえで、itch.ioにそのまま
+アップロードできるzipファイルを生成する。
+
+ROM本体はindex.htmlに埋め込まず、zip内の別ファイルとして同梱する
+(例: "CyberShmup [ASCII16].rom")。ファイル名の[ASCII16]はWebMSX自身の
+フォーマットヒント機能(SlotCreator.js finishInfo/formatMatchesByHint、
+ドキュントの「ROM Format...You can also put the format specification in
+the ROM file name, between brackets」)で、これによりCARTRIDGE1_FORMATを
+明示指定しなくても常にASCII16として自動選択される。CARTRIDGE1_FORMATを
+空のまま(自動判定)にしてWebMSXの純粋なヒューリスティックに任せると、この
+ROM(128KB, ポート0x6000/0x7000のASCII16)は"ASCII 8K Mapper Cartridge"と
+誤判定され画面が壊れることを確認済み - ファイル名ヒントはその誤判定を
+確実に避けつつ、設定側は自動判定のままにできる。
 
 ベーステンプレートは vendor/wmsx-cbios-standalone-6.0.8.html
 (WebMSX 6.0.8, ppeccin/WebMSXリポジトリのrelease/stable/6.0/cbios/standalone/index.html
@@ -18,7 +29,6 @@ itch.ioにそのままアップロードできるzipファイルを生成する�
     "Comb"ビルド)を使う。
 """
 import argparse
-import base64
 import os
 import re
 import sys
@@ -29,12 +39,10 @@ REPO = os.path.join(HERE, "..", "..")
 TEMPLATE = os.path.join(HERE, "vendor", "wmsx-cbios-standalone-6.0.8.html")
 DEFAULT_ROM = os.path.join(REPO, "rom", "CyberS Comb.ascii16k.rom")
 DEFAULT_OUT = os.path.join(HERE, "dist", "CyberShmup_webmsx_itch.zip")
+ROM_NAME_IN_ZIP = "CyberShmup [ASCII16].rom"
 
 
-def patch_config(html, rom_bytes, title):
-    b64 = base64.b64encode(rom_bytes).decode("ascii")
-    data_uri = "data:application/octet-stream;base64," + b64
-
+def patch_config(html, rom_filename, title):
     def replace_field(src, field, old_literal, new_literal, count=1):
         pattern = re.compile(
             r'(\b' + re.escape(field) + r':\s*)' + re.escape(old_literal)
@@ -48,10 +56,9 @@ def patch_config(html, rom_bytes, title):
             )
         return new_src
 
-    # ROM本体(data: URI として直接埋め込み。MultiDownloaderはXHR status===0を
-    # 成功として扱うため data: URI からのロードに標準対応している)
-    html = replace_field(html, "CARTRIDGE1_URL", '""', '"' + data_uri + '"')
-    html = replace_field(html, "CARTRIDGE1_FORMAT", '""', '"ASCII16"')
+    # ROM本体: zip同梱の相対ファイルを指定(ファイル名の[ASCII16]がヒントとして
+    # 働くため、CARTRIDGE1_FORMATは触らず空("" = 自動判定)のままにする)
+    html = replace_field(html, "CARTRIDGE1_URL", '""', '"' + rom_filename + '"')
 
     # 機種: MSX1 日本(NTSC 60Hz, JIS配列)
     html = replace_field(html, "MACHINE", '""', '"MSX1J"')
@@ -87,13 +94,14 @@ def build(rom_path, out_zip, title):
     with open(rom_path, "rb") as f:
         rom_bytes = f.read()
 
-    patched = patch_config(html, rom_bytes, title)
+    patched = patch_config(html, ROM_NAME_IN_ZIP, title)
 
     os.makedirs(os.path.dirname(out_zip), exist_ok=True)
     with zipfile.ZipFile(out_zip, "w", zipfile.ZIP_DEFLATED) as z:
         z.writestr("index.html", patched)
+        z.writestr(ROM_NAME_IN_ZIP, rom_bytes)
 
-    print("wrote %s (%d bytes, ROM %d bytes embedded)" % (out_zip, os.path.getsize(out_zip), len(rom_bytes)))
+    print("wrote %s (%d bytes, ROM %r: %d bytes)" % (out_zip, os.path.getsize(out_zip), ROM_NAME_IN_ZIP, len(rom_bytes)))
 
 
 def main():
