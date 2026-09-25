@@ -63,11 +63,18 @@ def patch_config(html, rom_filename, title):
     # 機種: MSX1 日本(NTSC 60Hz, JIS配列)
     html = replace_field(html, "MACHINE", '""', '"MSX1J"')
 
-    # フルスクリーン: SCREEN_FULLSCREEN_MODEは公式と同じ既定値(-1=自動)のまま。
-    # 1にするとpowerOn時点でCSS上の疑似全画面(isFullscreen=true)になるため、
-    # フルスクリーンボタンが「全画面解除」側にトグルしてしまい本物の
-    # Fullscreen APIに入れず(回転追従も効かない)、モバイル起動時の
-    # 「GO!」(タップで本物の全画面へ)も出なくなる。
+    # フルスクリーン: itch.ioのiframe内ではWebMSX自身にFullscreen APIを
+    # 呼ばせない。全画面化と画面向きはitch.io側(埋め込みのFullscreen button、
+    # モバイルの自動全画面+Orientation設定)に任せる。
+    # - 1: 起動後の最初のタッチでWebMSXがiframe内部要素をrequestFullscreenし、
+    #   itch.ioがiframeに掛けていた全画面+向きロックを奪ってポートレイトに戻る。
+    #   さらにWebMSXのボタンは「解除」側にトグルする。
+    # - -1(既定): MOBILE_MODE=1だと起動時に「GO!」待ちになり自動ロードされず、
+    #   GO!/ボタンのrequestFullscreenもitch.ioのiframe内では効かない。
+    # - 2(Full Windowed): CSS上だけiframe内いっぱいに表示し、APIは呼ばない。
+    #   起動時から全画面扱いなので即自動ロード、タッチUIのCSSゲート
+    #   (.wmsx-full-screen)も満たす。回転はiframeのリサイズとして追従する。
+    html = replace_field(html, "SCREEN_FULLSCREEN_MODE", "-1", "2")
 
     # ジョイスティック: 実ゲームパッド接続を自動検出(既定のまま/明示化)
     html = replace_field(html, "JOYSTICKS_MODE", "0", "0")
@@ -100,6 +107,16 @@ def patch_config(html, rom_filename, title):
         1,
     )
     html = re.sub(r'\s*<link rel="manifest" href="manifest\.webapp">\n', "\n", html, count=1)
+
+    # WebMSX側のフルスクリーンボタンは非表示にする(mode 2では押すと
+    # iframe内いっぱいの表示を解除するだけで、タッチUIも消えるため)。
+    # 全画面化はitch.io側のFullscreen buttonを使う。
+    head_close_idx = html.find("</head>")
+    if head_close_idx == -1:
+        raise RuntimeError("テンプレート内に</head>が見つからなかった")
+    html = (html[:head_close_idx]
+            + "<style>#wmsx-bar-full-screen { display: none !important; }</style>\n"
+            + html[head_close_idx:])
 
     # (2026-09-25: ランドスケープ固定のためscreen.orientation.lock()を
     # fullscreenchangeイベントで試行するスクリプトを一時追加したが、実機

@@ -36,9 +36,17 @@ data: URIとしてHTMLに埋め込まず、zip内の別ファイルとして同�
     切り替えたことでこの誤判定を避けつつ、設定側は純粋に自動判定のままにできる
     (`AUTO Format selected: ASCII 16K Mapper Cartridge`とコンソールに出ることを
     Playwright+ローカルHTTPサーバでの実起動確認で検証済み)
-- フルスクリーン: `SCREEN_FULLSCREEN_MODE`は公式と同じ既定値(-1=自動)。1にするとフルスクリーンボタンが「解除」側にトグルして本物のFullscreen APIに入れなくなる(回転追従も効かない)ため不可。起動時の「GO!」タップで本物の全画面に入る(
-  ブラウザの実フルスクリーンAPIへの切替はユーザー操作が必要 - これはブラウザの制約で
-  変更不可)
+- フルスクリーン: `SCREEN_FULLSCREEN_MODE=2`(Full Windowed)。WebMSXは
+  Fullscreen APIを一切呼ばず、iframe内いっぱいに表示するだけ。全画面化と
+  画面向きはitch.io側(埋め込みのFullscreen button/モバイルの自動全画面+
+  Orientation設定)に任せる。WebMSX側のフルスクリーンボタンはCSSで非表示。
+  - 1だと起動後最初のタッチでWebMSXがiframe内部要素をrequestFullscreenし、
+    itch.ioの全画面+向きロックを奪ってポートレイトに戻る。ボタンも解除側に
+    トグルする。-1(既定)だとMOBILE_MODE=1により起動時「GO!」待ちになり
+    自動ロードされない。いずれも実機報告で不具合を確認済み。
+  - 疑似itchページ(iframe、meta viewportあり)+スマホ横/縦サイズで、
+    自動ロード・タッチUI表示・回転時の再レイアウト・タッチ操作でタイトル
+    突破をPlaywrightで確認済み。
 - ジョイスティック: `JOYSTICKS_MODE=0`(実ゲームパッド自動検出、既定のまま)。
   **このゲームは実ジョイスティック専用でキーボード操作を想定していない**
   (実際に検証済み: タイトル画面はJoyKeys/キーボード入力では一切反応せず、
