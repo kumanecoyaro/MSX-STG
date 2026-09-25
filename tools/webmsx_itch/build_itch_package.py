@@ -49,24 +49,47 @@ ROM_NAME_IN_ZIP = "CyberShmup [ASCII16].rom"
 #   (実機報告: 公式webmsx.orgでも同症状。timestamp固定の擬似パッドで再現済み)。
 # - 非標準配列(mapping !== "standard")のパッドだけ、0=X,1=A,2=B,3=Y の並びを
 #   標準配列の位置(0=下=A, 1=右=B, 2=左=X, 3=上=Y)へ並べ替える。
+# - 最後にボタンが新たに押されたパッド1台だけを返す: PCではパッド以外にも
+#   ボタン付きのゲームパッド扱いの機器(仮想デバイス等)が先に列挙されることがあり、
+#   WebMSXは先頭の機器をジョイスティック1に割り当てるため、実際のパッドが
+#   ジョイスティック2(ポート2)になってA/Bが効かなかった(実機のデバッグ表示で
+#   確認)。本ゲームはポート1しか読まない1人用なので1台に絞る。軸はドリフトで
+#   誤判定しうるため切り替えはボタンの押下のみで行う。
 GAMEPAD_REMAP_SCRIPT = """<script>
 (function () {
     if (!navigator.getGamepads) return;
     var original = navigator.getGamepads.bind(navigator);
     var ORDER = [1, 2, 0, 3];
+    var activeIndex = -1;
+    var prevPressed = {};
+    function pressedMask(p) {
+        var m = "";
+        for (var b = 0; b < p.buttons.length; b++)
+            m += (p.buttons[b].pressed || p.buttons[b].value > 0.5) ? "1" : "0";
+        return m;
+    }
+    function newlyPressed(prev, cur) {
+        for (var c = 0; c < cur.length; c++)
+            if (cur.charAt(c) === "1" && (!prev || prev.charAt(c) !== "1")) return true;
+        return false;
+    }
     navigator.getGamepads = function () {
         var pads = original();
-        var out = [];
+        var chosen = null;
         for (var i = 0; i < pads.length; i++) {
-            var p = pads[i];
-            if (!p) { out.push(p); continue; }
-            var buttons = Array.prototype.slice.call(p.buttons);
-            if (p.mapping !== "standard" && buttons.length >= 4)
-                for (var j = 0; j < ORDER.length; j++) buttons[j] = p.buttons[ORDER[j]];
-            out.push({ id: p.id, index: p.index, connected: p.connected, timestamp: 0,
-                       mapping: p.mapping, axes: p.axes, buttons: buttons });
+            if (!pads[i]) continue;
+            var cur = pressedMask(pads[i]);
+            if (newlyPressed(prevPressed[i], cur)) activeIndex = i;
+            prevPressed[i] = cur;
         }
-        return out;
+        if (activeIndex >= 0 && pads[activeIndex]) chosen = pads[activeIndex];
+        else for (var k = 0; k < pads.length; k++) if (pads[k]) { chosen = pads[k]; break; }
+        if (!chosen) return [];
+        var buttons = Array.prototype.slice.call(chosen.buttons);
+        if (chosen.mapping !== "standard" && buttons.length >= 4)
+            for (var j = 0; j < ORDER.length; j++) buttons[j] = chosen.buttons[ORDER[j]];
+        return [{ id: chosen.id, index: 0, connected: chosen.connected, timestamp: 0,
+                  mapping: chosen.mapping, axes: chosen.axes, buttons: buttons }];
     };
 })();
 </script>
