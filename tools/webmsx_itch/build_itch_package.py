@@ -177,6 +177,35 @@ def patch_config(html, rom_filename, title):
     # メリットが無い一方デメリットだけがあるため、外したままにする。
     html = replace_field(html, "TOUCH_MODE", "0", "1")
 
+    # スマホ扱い(isMobileDevice)のときも歯車メニューに「Help & Settings」を出す。
+    # WebMSXはスマホではこの項目を外す作り(公式サイトも同じ)だが、スマホに
+    # BT/USBパッドを繋いで遊ぶ場合、ボタン割り当てを変える手段がこの画面しか無い。
+    # 設定画面を開く処理(openSettings)自体にはスマホ除外の条件は無い。
+    old_menu = ('isMobileDevice?a.push({label:"Quick Options",clickModif:0,'
+                'control:wmsx.PeripheralControls.SCREEN_OPEN_QUICK_OPTIONS}):(')
+    new_menu = ('isMobileDevice?(a.push({label:"Help & Settings",clickModif:0,'
+                'control:wmsx.PeripheralControls.SCREEN_OPEN_SETTINGS}),'
+                'a.push({label:"Quick Options",clickModif:0,'
+                'control:wmsx.PeripheralControls.SCREEN_OPEN_QUICK_OPTIONS})):(')
+    if html.count(old_menu) != 1:
+        raise RuntimeError("歯車メニューのスマホ分岐が想定通り1箇所見つからなかった")
+    html = html.replace(old_menu, new_menu)
+
+    # 設定画面(600x440固定)は表示領域が537x434未満だと開かない作りで、スマホの
+    # 横画面は高さが足りず開けない(WebMSXがスマホでメニュー自体を外しているのは
+    # このため)。狭いときだけ縮小(transform: scale)して中央に表示する。十分な
+    # 広さがあるときは元の処理のまま。
+    old_pos = ('this.position=function(){var b=a.clientWidth,c=a.clientHeight;'
+               'return b<537||c<434?(this.hide(),!1):(')
+    new_pos = ('this.position=function(){var b=a.clientWidth,c=a.clientHeight;'
+               'if(b<537||c<434){var s=Math.min(b/600,c/440);'
+               'm.style.transformOrigin="0 0";m.style.transform="scale("+s+")";'
+               'm.style.top=((c-440*s)/2|0)+"px";m.style.left=((b-600*s)/2|0)+"px";return!0}'
+               'm.style.transform="";return b<537||c<434?(this.hide(),!1):(')
+    if html.count(old_pos) != 1:
+        raise RuntimeError("設定画面の位置決め処理が想定通り1箇所見つからなかった")
+    html = html.replace(old_pos, new_pos)
+
     # 起動時の旧AppCache参照を除去(廃止済みAPIで、ファイルも同梱しないため)
     html = html.replace(
         '<html lang="en" translate="no" class="notranslate" manifest="cache.manifest">',
