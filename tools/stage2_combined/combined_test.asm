@@ -139,6 +139,24 @@ BOOSTER_SPR_BASE_SLOT EQU 7
 PAT_BOOSTER1 EQU 16
 PAT_BOOSTER2 EQU 20
 BOOSTER_COLOR EQU 15   ; white (fg=15、添付データ通り)
+; (2026-09-25、"ステージ2のスタート演出にステージ1自機がRow1左から飛び去る
+; 演出を追加 飛び去りはステージ2自機落下と同時にスタート データはバリア
+; なしノーマルのもの"): ステージ1自機(SHIP_MID_PATTERN=赤の本体+
+; ACCENT_MID_PATTERN=白のアクセント)を落下演出中だけ表示する。スロットは
+; ブースターと同じ理由(演出中はU弾が構造的に存在しない)でU弾用の残り
+; slot8(アクセント、手前)/slot9(本体)を借用。パターンもブースターと同じく
+; PAT_TANKUPの残り8コード(24-31、演出終了時にTANK_ENTRY_FINISHが
+; PAT_TANKUP全体を復元)を借用。X座標はステージ1のPFA_MOVINGの加速
+; カーブ(1,2,3,4px/frame→巡航8)をそのまま表にしたS1SHIP_FLY_X
+; (TANK_ENTRY_ANIMで引く=落下と同時に開始)、X>=248で非表示(ステージ1と
+; 同じ)。Y=7(=表示ライン8、Row1の上端)。
+S1SHIP_SPR_BASE_SLOT EQU 8
+PAT_S1SHIP_ACCENT EQU 28
+PAT_S1SHIP_BODY EQU 24
+S1SHIP_FLY_Y EQU 7
+S1SHIP_FLY_LEN EQU 45        ; S1SHIP_FLY_Xの要素数(前方参照回避のためここで定義)
+S1SHIP_BODY_COLOR EQU 8     ; SPR_RED(ステージ1と同じ)
+S1SHIP_ACCENT_COLOR EQU 15  ; SPR_WHITE(ステージ1と同じ、被弾時の紫は不要)
 ; px/frame, left/right - was 2, slowed to 1 per direct instruction
 ; ("自機移動速度が速い気がするんで速度落として"), then asked for 1.5
 ; ("速度1.5に出来ないか") - alternates 1,2,1,2,... (gated by TICK
@@ -16236,6 +16254,21 @@ BOOSTER2_SPRITE:
     DB 7Fh,7Fh,00h,7Fh,63h,6Bh,63h,3Fh   ; top-right
     DB 5Fh,6Fh,37h,9Bh,0C0h,0F0h,0A0h,20h ; bottom-right
 
+; ステージ1自機(src/CYBER SHMUP.asmのSHIP_MID_PATTERNそのまま)。
+S1SHIP_BODY_SPRITE:
+    DB 00h,00h,0E0h,38h,7Ch,0Fh,3Fh,0FFh   ; top-left
+    DB 80h,7Fh,0D5h,80h,7Fh,0B0h,00h,00h   ; bottom-left
+    DB 00h,00h,00h,00h,00h,00h,0C0h,0F0h   ; top-right
+    DB 0C8h,74h,0BEh,1Fh,0F1h,00h,00h,00h  ; bottom-right
+; ステージ1のACCENT_MID_PATTERN(バリア無し)。ステージ1は本体X+8へ描いて
+; いるが、ここでは本体と同じXで描けるよう8px右へずらした形で持つ
+; (元のbottom-left 30h,08h → bottom-right、はみ出しは無い)。
+S1SHIP_ACCENT_SPRITE:
+    DB 00h,00h,00h,00h,00h,00h,00h,00h   ; top-left
+    DB 00h,00h,00h,00h,00h,00h,00h,00h   ; bottom-left
+    DB 00h,00h,00h,00h,00h,00h,00h,00h   ; top-right
+    DB 30h,08h,00h,00h,00h,00h,00h,00h   ; bottom-right
+
 ; (2026-09-23、ステージ2のスタート演出、"ブースター込みで0,64から放物線で
 ; 落下し地上へ着地 落下中は1と2を1フレ切り替え 着地したらブースター
 ; 消滅"): ステージ1のUPDATE_SHIP_ENTRYと同じく、MAINLOOPの自機操作
@@ -16327,6 +16360,7 @@ UTE_PAT_GOT:
     LD A,D : LD (HL),A : INC HL     ; pattern (base of the 4-code quad)
     LD A,BOOSTER_COLOR : LD (HL),A
     CALL FLUSH_BOOSTER_SPRITES
+    CALL DRAW_S1SHIP_FLYAWAY
 
     ; --- 両軸とも目標到達なら演出終了、ブースターを隠しPAT_TANKUPの
     ; 実データを復元する(INITと同一のLDIRVM) ---
@@ -16348,6 +16382,7 @@ TANK_ENTRY_FINISH:
     CALL UPDATE_TANK_SPRITES
     LD A,209 : LD (BOOSTER_SPRITE_ATTRS),A
     CALL FLUSH_BOOSTER_SPRITES
+    CALL HIDE_S1SHIP
     ; MAINLOOP中(H.TIMI割り込み有効)にLDIRVMを呼ぶため、INIT時と違い
     ; 明示的にDI/EIで保護する(BIOSルーチンの内部動作は割り込み安全性の
     ; 保証がない、round53等の教訓)。
@@ -16376,6 +16411,55 @@ FBS_LOOP:
     DJNZ FBS_LOOP
     EI
     RET
+
+; ステージ1自機の飛び去り(落下演出中、UPDATE_TANK_ENTRYから毎フレーム)。
+; TANK_ENTRY_ANIM(落下開始から1,2,3...)でS1SHIP_FLY_Xを引き、表を
+; 超えたら(=X>=248、画面右端)非表示。slot8=アクセント、slot9=本体を
+; FLUSH_BOOSTER_SPRITESと同型のDI+NOPパディング付き生OUTで書く。
+DRAW_S1SHIP_FLYAWAY:
+    LD A,(TANK_ENTRY_ANIM)
+    CP S1SHIP_FLY_LEN
+    JR NC,HIDE_S1SHIP
+    LD E,A : LD D,0
+    LD HL,S1SHIP_FLY_X : ADD HL,DE
+    LD B,(HL)
+    LD C,S1SHIP_FLY_Y
+    JR DSF_WRITE
+HIDE_S1SHIP:
+    LD BC,209
+DSF_WRITE:
+    DI
+    LD A,S1SHIP_SPR_BASE_SLOT*4 : OUT (99h),A
+    NOP
+    NOP
+    LD A,5Bh : OUT (99h),A
+    NOP
+    NOP
+    LD A,C : OUT (98h),A
+    PUSH BC : POP BC : NOP : NOP
+    LD A,B : OUT (98h),A
+    PUSH BC : POP BC : NOP : NOP
+    LD A,PAT_S1SHIP_ACCENT : OUT (98h),A
+    PUSH BC : POP BC : NOP : NOP
+    LD A,S1SHIP_ACCENT_COLOR : OUT (98h),A
+    PUSH BC : POP BC : NOP : NOP
+    LD A,C : OUT (98h),A
+    PUSH BC : POP BC : NOP : NOP
+    LD A,B : OUT (98h),A
+    PUSH BC : POP BC : NOP : NOP
+    LD A,PAT_S1SHIP_BODY : OUT (98h),A
+    PUSH BC : POP BC : NOP : NOP
+    LD A,S1SHIP_BODY_COLOR : OUT (98h),A
+    PUSH BC : POP BC : NOP : NOP
+    EI
+    RET
+
+; ステージ1 PFA_MOVINGの加速カーブ(距離0-7:1px,8-15:2px,16-23:3px,
+; 24-31:4px,以後8px/frame)をX=0から積算した表。[0]はANIM=0用の未使用枠。
+S1SHIP_FLY_X:
+    DB 0,0,1,2,3,4,5,6,7,8,10,12,14,16,19,22
+    DB 25,29,33,41,49,57,65,73,81,89,97,105,113,121,129,137
+    DB 145,153,161,169,177,185,193,201,209,217,225,233,241
 
 ; ===== GFX2区画(2026-09-24、"Stage2も進めて") =====
 ; INITで1回だけVRAMへ送る絵柄/色と転送の一覧表。ソース上はC000h
@@ -16468,6 +16552,8 @@ GFX2_LIST_3:
     DW G2B_THUNDER-GFX2_DELTA,2000h+27,1
     DW BOOSTER1_SPRITE-GFX2_DELTA,PAT_BOOSTER1*8+SPRPAT,32
     DW BOOSTER2_SPRITE-GFX2_DELTA,PAT_BOOSTER2*8+SPRPAT,32
+    DW S1SHIP_BODY_SPRITE-GFX2_DELTA,PAT_S1SHIP_BODY*8+SPRPAT,32
+    DW S1SHIP_ACCENT_SPRITE-GFX2_DELTA,PAT_S1SHIP_ACCENT*8+SPRPAT,32
     DW 0
 GFX2_LIST_4:
     DW DIGIT_PATTERNS_LOCAL-GFX2_DELTA,DIGIT_BASE*8,128

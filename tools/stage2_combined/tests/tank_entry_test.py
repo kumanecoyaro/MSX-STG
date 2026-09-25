@@ -285,6 +285,63 @@ check("during the fall the tank uses the jump pose PAT_TANKFGAP (RAM and VRAM sl
 check("on landing the tank returns to the normal pose PAT_TANKF",
       cj.rd(sym["CUR_POSE_PAT"]) == PAT_TANKF and cj.vram[SPRATR + TANK_SPR_BASE_SLOT * 4 + 2] == PAT_TANKF)
 
+# ---- (2026-09-25、"ステージ2のスタート演出にステージ1自機がRow1左から
+#      飛び去る演出を追加 飛び去りはステージ2自機落下と同時にスタート
+#      データはバリアなしノーマルのもの") ----
+import re as _re
+_s1 = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "src", "CYBER SHMUP.asm"), encoding="utf-8").read()
+def _s1_pat(label):
+    m = _re.search(r"^" + label + r":\s*\n((?:\s*DB[^\n]*\n){4})", _s1, _re.M)
+    vals = []
+    for line in m.group(1).splitlines():
+        for v in line.split(";")[0].replace("DB", "").split(","):
+            vals.append(int(v.strip().rstrip("hH"), 16))
+    return vals
+s1_body = _s1_pat("SHIP_MID_PATTERN")
+s1_acc = _s1_pat("ACCENT_MID_PATTERN")
+check("S1SHIP_BODY_SPRITE == Stage1 SHIP_MID_PATTERN byte-for-byte",
+      [out[sym["S1SHIP_BODY_SPRITE"] + i] & 0xFF for i in range(32)] == s1_body)
+# Stage1はアクセントを本体X+8に描く -> 8px右へずらした形と一致すること
+acc_shift = [0] * 32
+for r in range(16):
+    left = s1_acc[r] if r < 8 else s1_acc[8 + (r - 8)]
+    # accentの左半分(TL/BL)の各行 -> 本体基準では右半分(TR/BR)
+    acc_shift[16 + r] = left
+    assert (s1_acc[16 + r] if r < 8 else s1_acc[24 + r - 8]) == 0  # 元の右半分は空白
+check("S1SHIP_ACCENT_SPRITE == Stage1 ACCENT_MID_PATTERN shifted 8px right (Stage1 draws it at body X+8)",
+      [out[sym["S1SHIP_ACCENT_SPRITE"] + i] & 0xFF for i in range(32)] == acc_shift)
+cs = fresh_cpu(skip_intro=False)
+PB = sym["PAT_S1SHIP_BODY"]; PA = sym["PAT_S1SHIP_ACCENT"]
+check("boot: Stage1 ship body/accent patterns are in sprite VRAM",
+      list(cs.vram[SPRPAT + PB * 8:SPRPAT + PB * 8 + 32]) == s1_body
+      and list(cs.vram[SPRPAT + PA * 8:SPRPAT + PA * 8 + 32]) == acc_shift)
+# 期待X: ステージ1 PFA_MOVINGの加速カーブ(X=0から、落下1フレーム目がX=0)
+exp_x = [0]; d = 0; x = 0
+while True:
+    sp = 8 if d >= 32 else 1 + d // 8
+    d += sp; x += sp
+    if x >= 248:
+        break
+    exp_x.append(x)
+slot = sym["S1SHIP_SPR_BASE_SLOT"]
+fly_ok = True; hide_ok = True; frames = 0
+while True:
+    tick(cs)
+    if not cs.rd(TANK_ENTRY_ACT):
+        break
+    frames += 1
+    a = [cs.vram[SPRATR + slot * 4 + i] for i in range(8)]
+    if frames <= len(exp_x):
+        if a != [7, exp_x[frames - 1], PA, 15, 7, exp_x[frames - 1], PB, 8]:
+            fly_ok = False
+    elif a[0] != 209 or a[4] != 209:
+        hide_ok = False
+check("Stage1 ship: from the very first fall frame, slot8(accent white)/slot9(body red) at Y=7 (Row1), X follows Stage1's flyaway accel curve from X=0",
+      fly_ok and frames > len(exp_x))
+check("Stage1 ship: hidden (Y=209) once past X>=248, for the rest of the fall", hide_ok)
+check("after entry: PAT_TANKUP (incl. codes 24-31 borrowed by the Stage1 ship) restored",
+      list(cs.vram[SPRPAT + PAT_TANKUP * 8:SPRPAT + PAT_TANKUP * 8 + 128]) == [out[sym["TANK_TANKUP_TL"] + i] & 0xFF for i in range(128)])
+
 print()
 print(f"{len(ok)} passed, {len(fail)} failed")
 if fail:

@@ -18729,3 +18729,15 @@ EbuzII弾ビームへの1pxコリジョン追加+ROM予算の共有バンク6オ
 - BOOSTER1_SPRITE/BOOSTER2_SPRITEを新JSONから機械変換した32byteへ差し替え(左下の炎[Bunit2のみ]は従来と同一、TR/BRが新絵柄)。
 - 新絵柄は右端列(列15)まで使っているため、ビットマップを右へずらすと1列欠ける。そのためデータはJSONのまま、UPDATE_TANK_ENTRYのブースターX=TANK_X-16→TANK_X-15(描画位置を+1px)で対応。
 - tank_entry_test.py(期待値のバイト列・X=TANK_X-15・初回X=1)を更新して36 passed、run_all 1616 passed/0 failed。レンダリングでブースターが自機の左端に接していることを確認。Stage2残り5473byte(変化なし)。Comb再ビルド・verify_comb PASS。
+
+## Round145 follow-up48(2026-09-25): Stage2スタート演出にStage1自機の飛び去りを追加
+
+- ユーザー: "ステージ2のスタート演出に ステージ1自機がRow1左から飛び去る演出を追加 飛び去りはステージ2自機落下と同時にスタート データはバリアなしノーマルのもの"。
+- データ: Stage1のSHIP_MID_PATTERN(本体、赤)とACCENT_MID_PATTERN(バリア無しのアクセント、白)。Stage1はアクセントを本体X+8に描くため、8px右へずらした形(BR 30h,08h)で持ち、本体と同じXで描く。GFX2区画(INITで1回だけVRAMへ送る)に置いた(GFX2_LIST_3・GFX2_MOVE)。
+- パターン: PAT_TANKUPの残り8コード(24-27本体/28-31アクセント)を借用。落下演出の終了時にTANK_ENTRY_FINISHがPAT_TANKUPの128byteを丸ごと戻すので、追加の復元は不要。
+- スロット: U弾用の残りslot8(アクセント、手前)/slot9(本体)。演出中はU弾が存在せず、UPDATE_BULLET_U_SPRITESも止まっている(ブースターがslot7を借りているのと同じ理由)。
+- 動き: DRAW_S1SHIP_FLYAWAYをUPDATE_TANK_ENTRYのブースター描画直後から毎フレーム呼ぶ。X座標は、Stage1のPFA_MOVINGの加速カーブ(1〜4px/frame→巡航8px/frame)をX=0から積算した表S1SHIP_FLY_Xを、TANK_ENTRY_ANIM(落下1フレーム目=1)で引く。そのため落下と同時に動き出す。Yは7(表示ライン8=Row1、HUDのすぐ下)。表の終わり(Stage1と同じX>=248)以降はY=209で隠す。TANK_ENTRY_FINISHからもHIDE_S1SHIPを呼ぶ。
+- 表の長さS1SHIP_FLY_LENは前方参照で0に評価されてしまうため、EQU群の側に定義した。
+- テスト: tank_entry_test.py 42件(Stage1ソースとのバイト一致、VRAMへのロード、毎フレームのslot8/9の属性、非表示、PAT_TANKUPの復元)。vdp_wait_test.pyの生OUTの数を40→42/29→37に更新。run_all 1619 passedで、失敗はHEADと比較するterrain_render_perf_test.pyだけ(コミット後に解消)。
+- レンダリングで、Row1に赤い自機が出て右へ加速して去ることを確認した。
+- Stage2の残りは5473→5217byte。追加は約130byteだが、ALIGN境界を1つ越えて256byte減った。Comb再ビルド・verify_comb PASS。

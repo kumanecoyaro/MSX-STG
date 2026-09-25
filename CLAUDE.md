@@ -37,7 +37,7 @@
 - 新規にVRAM/PSG/その他ハードウェアポートへのブロック転送を実装する際は、着手前に
   必ずこのセクションを再確認し、`OTIR`系命令を使わないこと。
 
-## Stage2 ROM予算(2026-09-24、follow-up45時点で**残り5473byte**)
+## Stage2 ROM予算(2026-09-25、follow-up48時点で**残り5217byte**)
 
 - INITで1回だけVRAMへ送る絵柄/色はゲームオーバーバンク(standalone 3/Comb 7)のオフセット2000h以降
   (window BでA000h〜)へ移した。ソースはcombined_test.asm末尾のGFX2区画(ORG C000h、GFX2_LIST_n)、
