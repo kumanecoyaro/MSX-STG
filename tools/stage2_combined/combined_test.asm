@@ -6728,7 +6728,6 @@ ENDING_RETURN_WAIT_TICKS EQU 600   ; "10秒" @ 60Hz real vblank
 ; (UPDATE_ENDING_SHIP)。0xCB22〜(上記ENDING_FINISH_STARTの直後、0xCC00
 ; まで空き)。
 ENDING_SHIP_ACT  EQU 0CB22h   ; 0=無し/1=飛行・並走中(ENDING_START_PLAYBACKで1)
-ENDING_SHIP_T    EQU 0CB23h   ; 飛行開始からのフレーム数(上下の揺れ用、8bitで周回)
 ENDING_SHIP_ACC  EQU 0CB24h   ; X(8.8固定小数点、上位バイト=表示X)
 ENDING_SHIP_YACC EQU 0CB26h   ; Y(8.8固定小数点、上位バイト=揺れを足す前のY)
 ENDING_SHIP_LASTV EQU 0CB28h  ; 前回見たVBLANK_COUNT(進んだ実VBlank数だけ進める)
@@ -15120,6 +15119,15 @@ UHA_NEXT:
     INC IX : INC IX : INC IX : INC IX : INC IX : INC IX : INC IX
     POP BC
     DJNZ UHA_LOOP
+    ; (2026-09-25、"何故かステージ1自機が点滅してる"): エンディングの
+    ; ステージ1自機がslot8/9(このプールのslot6-9の後半)を借りている間は
+    ; VRAMへ書かない(ここが毎フレーム非表示を書き、DRAW_S1SHIP_FLYAWAYが
+    ; 書き戻すため、実機では1フレームの中で消える瞬間が見えて点滅していた)。
+    ; 操作無効はボス撃破の約10秒後なのでミサイルは残っておらず、slot6/7は
+    ; ENDING_SHIP_STARTが一度だけ隠す。
+    LD A,(ENDING_SHIP_ACT)
+    OR A
+    RET NZ
     CALL FLUSH_HORMING_SPRITES
     RET
 
@@ -16506,27 +16514,37 @@ S1SHIP_FLY_X:
 ; コード24-31へ送る(操作無効後は上向きポーズが出ないのでPAT_TANKUPの
 ; 後半8コードは使われない)。slot7に残っているかもしれないU弾は隠す。
 ENDING_SHIP_START:
-    XOR A : LD (ENDING_SHIP_T),A
     LD HL,0 : LD (ENDING_SHIP_ACC),HL
     LD HL,S1SHIP_FLY_Y*256 : LD (ENDING_SHIP_YACC),HL
     LD HL,(VBLANK_COUNT) : LD (ENDING_SHIP_LASTV),HL
     LD A,1 : LD (ENDING_SHIP_ACT),A
     DI
     LD HL,S1SHIP_BODY_SPRITE : LD DE,PAT_S1SHIP_BODY*8+SPRPAT : LD BC,64 : CALL LDIRVM
-    LD A,BULLET_U_SPR_BASE_SLOT*4 : OUT (99h),A
+    ; slot6/7(ホーミング/U弾)を隠す(以後どちらも書かれなくなるため)。
+    LD A,HORMING_SPR_BASE_SLOT*4 : OUT (99h),A
     NOP
     NOP
     LD A,5Bh : OUT (99h),A
     NOP
     NOP
-    LD A,209 : OUT (98h),A
+    LD B,8
+    LD C,209
+ESS_HIDE_LOOP:
+    LD A,C : OUT (98h),A
     PUSH BC : POP BC : NOP : NOP
+    LD A,B : AND 3
+    CP 1
+    LD C,0
+    JR NZ,ESS_HIDE_NEXT
+    LD C,209
+ESS_HIDE_NEXT:
+    DJNZ ESS_HIDE_LOOP
     EI
     RET
 
 ; MAINLOOPから毎フレーム。前回から進んだ実VBlank数だけX/Yの8.8を
-; ENDING_SHIP_XSPD/YSPDずつ進め、(160,32)でクランプ。Yには表の上下の
-; 揺れを足す(2フレームに1段=1周64フレーム、スタート演出の半分の速さ)。
+; ENDING_SHIP_XSPD/YSPDずつ進め、(160,32)でクランプ(2026-09-25follow-up、
+; "上下移動はなしでいいわ 固定位置に向かうだけで"で上下の揺れは削除)。
 ; MISSION COMPLETED(ENDING_ACT>=3)以後は(160,32)で静止し、最終画像
 ; (ENDING_SHOW_FINAL_IMAGE、全スプライトを隠す)まで表示し続ける。
 UPDATE_ENDING_SHIP:
@@ -16564,23 +16582,11 @@ UES_XOK:
     LD A,ENDING_SHIP_Y_END
 UES_YOK:
     LD C,A
-    LD A,(ENDING_SHIP_T) : INC A : LD (ENDING_SHIP_T),A
-    SRL A
-    AND 31
-    LD E,A : LD D,0
-    LD HL,ENDING_SHIP_BOB : ADD HL,DE
-    LD A,(HL) : ADD A,C
-    LD C,A
     JP DSF_WRITE
 UES_ARRIVED:
     LD B,ENDING_SHIP_X_END
     LD C,ENDING_SHIP_Y_END
     JP DSF_WRITE
-
-; 上下の揺れ(32段、0→8→0px下方向、(1-cos)/2*8)。2フレームに1段進める。
-ENDING_SHIP_BOB:
-    DB 0,0,0,1,1,2,2,3,4,5,6,6,7,7,8,8
-    DB 8,8,8,7,7,6,6,5,4,3,2,2,1,1,0,0
 
 ; ===== GFX2区画(2026-09-24、"Stage2も進めて") =====
 ; INITで1回だけVRAMへ送る絵柄/色と転送の一覧表。ソース上はC000h

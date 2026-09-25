@@ -318,7 +318,6 @@ from banked_helpers import step_frame  # noqa: E402
 TANK_X = sym["TANK_X"]
 SLOT = sym["S1SHIP_SPR_BASE_SLOT"]
 PB = sym["PAT_S1SHIP_BODY"]; PA = sym["PAT_S1SHIP_ACCENT"]
-BOB = [round(4 * (1 - math.cos(2 * math.pi * i / 32))) for i in range(32)]
 cs = fresh_cpu()
 check("ENDING_SHIP_ACT is 0 after boot", cs.mem[sym["ENDING_SHIP_ACT"]] == 0)
 kill_boss_for_real(cs)
@@ -358,17 +357,40 @@ while True:
             break
         continue
     ex = min(XE, (v * XS) >> 8)
-    ey = min(YE, ((7 << 8) + v * YS) >> 8) + BOB[(frame >> 1) & 31]
+    ey = min(YE, ((7 << 8) + v * YS) >> 8)
     if a != [ey, ex, PA, 15, ey, ex, PB, 8]:
         traj_ok = False
 check("ending ship starts on the same frame controls are disabled (ENDING_ACT=2)", bool(start_ok))
 check("ending ship: Stage1 ship patterns (body/accent, same as the start-of-stage flyaway) loaded into codes 24-31",
       list(cs.vram[0x3800 + PB * 8:0x3800 + PB * 8 + 64]) ==
       [out[sym["S1SHIP_BODY_SPRITE"] + i] & 0xFF for i in range(64)])
-check(f"ending ship: over the whole song ({TOTAL} vblanks) it moves (0,Row1) -> fixed ({XE},{YE}), bobbing 0-8px at half the start-flyaway speed (1 step / 2 frames)",
+check(f"ending ship: over the whole song ({TOTAL} vblanks) it moves (0,Row1) -> fixed ({XE},{YE}) in a straight line, no up/down bob",
       traj_ok and v is not None and v >= TOTAL)
 check(f"ending ship: from MISSION COMPLETED on it holds still at ({XE},{YE})", arrived_ok)
 check("ending ship: slot7 (U bullet, not redrawn while slots 8/9 are borrowed) stays hidden", slot7_ok)
+
+# ---- (2026-09-25、"何故かステージ1自機が点滅してる"): 1フレームの途中でも
+#      slot8/9のYが非表示(209)にならないこと(ホーミングの毎フレーム非表示
+#      書き込みとの取り合いが点滅の原因だった)。命令単位で監視する。 ----
+cf = fresh_cpu()
+kill_boss_for_real(cf)
+for _ in range(ENDING_WAIT_TICKS):
+    call_routine(cf, "BGM_TICK")
+cf.pc = sym["MAINLOOP"]
+for _ in range(3):
+    call_routine(cf, "BGM_TICK"); cf.pc = sym["MAINLOOP"]; step_frame(cf)
+no_flicker = cf.mem[sym["ENDING_SHIP_ACT"]] == 1
+for _ in range(40):
+    call_routine(cf, "BGM_TICK"); cf.pc = sym["MAINLOOP"]
+    cf.step()
+    while cf.pc != sym["MAINLOOP"]:
+        cf.step()
+        if cf.vram[0x1B00 + SLOT * 4] == 209 or cf.vram[0x1B00 + SLOT * 4 + 4] == 209:
+            no_flicker = False
+check("ending ship: slot8/9 never go hidden even mid-frame (no flicker from the homing pool's per-frame flush)", no_flicker)
+check("ending ship: slot6 (homing pool, no longer flushed) is hidden",
+      cf.vram[0x1B00 + sym["HORMING_SPR_BASE_SLOT"] * 4] == 209)
+
 
 print()
 print(f"{len(ok)} passed, {len(fail)} failed")

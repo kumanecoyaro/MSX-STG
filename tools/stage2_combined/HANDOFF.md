@@ -18770,3 +18770,10 @@ EbuzII弾ビームへの1pxコリジョン追加+ROM予算の共有バンク6オ
   - このアセンブラはRRCAに非対応なので、揺れの段の計算はSRL Aにした。
   - テスト: ending_sequence_testを「1フレームに1VBlank」で曲全体(1630VBlank)を通して、毎フレームslot8/9を検証する形に書き換え(33 passed)。run_all 1629 passed/0 failed。Stage2残り4961(変化なし)。
   - レンダリングでゆっくり右上から(160,32)へ到着し、MISSION COMPLETEDの時点で止まっていることを確認。Comb再ビルド・verify_comb PASS。
+- (follow-up49追記その2、2026-09-25) 「上下移動はなしでいいわ 固定位置に向かうだけで で、何故かステージ1自機が点滅してる」
+  - 揺れ: ENDING_SHIP_BOB/ENDING_SHIP_Tを削除し、(0,Row1)→(160,32)へ直線で移動するだけにした。
+  - 点滅の原因: 命令単位のトレースで特定した。ボス撃破後もUPDATE_HORMING_ALLのFLUSH_HORMING_SPRITES(ホーミングのslot6-9)が毎フレーム非表示(Y=209)を書き、その後DRAW_S1SHIP_FLYAWAYが書き戻していた。z80emuはフレーム末のVRAMしか見ないので正常に見えるが、実機では1フレームの中で消えている瞬間が映る。
+  - 修正: ENDING_SHIP_ACTの間はFLUSH_HORMING_SPRITESを呼ばない。操作無効は撃破の約10秒後なのでミサイルは残っていない。slot6/7はENDING_SHIP_STARTが一度だけ隠す(slot7だけだったのを6/7の2スロットのループに)。
+  - スタート演出側(slot8/9)の書き手はDSF_WRITEだけで、点滅しないことを確認済み。
+  - テスト: ending_sequence_testに「命令単位で見てもslot8/9のYが一度も209にならない」「slot6が隠れている」を追加(35 passed)。修正を一時的に外すと前者がFAILすることも確認済み。run_all 1631 passed/0 failed。Stage2残り4961(変化なし)。Comb再ビルド・verify_comb PASS。
+  - 教訓: 他のプールのスロットを借りる時は、フレーム末のVRAMだけでなく、フレームの途中に別の書き手がいないかを命令単位で確認すること(実機では途中状態も映る)。
