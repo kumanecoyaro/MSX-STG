@@ -28,3 +28,8 @@ tools/stage2_combined/sasapi_tables.inc.asm
 # handed to the user directly, same as Schedule2.json/Terrain2.json never
 # being committed either.
 tools/stage2_combined/Schedule2_current.json
+
+# tools/webmsx_itch: build output (itch.io zip), handed to the user
+# directly rather than committed - same convention as above.
+tools/webmsx_itch/dist/
+tools/webmsx_itch/dist_unzipped*/
