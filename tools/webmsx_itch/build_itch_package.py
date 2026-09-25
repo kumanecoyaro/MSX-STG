@@ -41,6 +41,30 @@ DEFAULT_ROM = os.path.join(REPO, "rom", "CyberS Comb.ascii16k.rom")
 DEFAULT_OUT = os.path.join(HERE, "dist", "CyberShmup_webmsx_itch.zip")
 ROM_NAME_IN_ZIP = "CyberShmup [ASCII16].rom"
 
+# 非標準配列(mapping !== "standard")のパッドだけ、0=X,1=A,2=B,3=Y の並びを
+# 標準配列の位置(0=下=A, 1=右=B, 2=左=X, 3=上=Y)へ並べ替える。
+GAMEPAD_REMAP_SCRIPT = """<script>
+(function () {
+    if (!navigator.getGamepads) return;
+    var original = navigator.getGamepads.bind(navigator);
+    var ORDER = [1, 2, 0, 3];
+    navigator.getGamepads = function () {
+        var pads = original();
+        var out = [];
+        for (var i = 0; i < pads.length; i++) {
+            var p = pads[i];
+            if (!p || p.mapping === "standard" || p.buttons.length < 4) { out.push(p); continue; }
+            var buttons = Array.prototype.slice.call(p.buttons);
+            for (var j = 0; j < ORDER.length; j++) buttons[j] = p.buttons[ORDER[j]];
+            out.push({ id: p.id, index: p.index, connected: p.connected, timestamp: p.timestamp,
+                       mapping: p.mapping, axes: p.axes, buttons: buttons });
+        }
+        return out;
+    };
+})();
+</script>
+"""
+
 
 def patch_config(html, rom_filename, title):
     def replace_field(src, field, old_literal, new_literal, count=1):
@@ -68,13 +92,16 @@ def patch_config(html, rom_filename, title):
     # localStorageの設定(ジョイスティック割り当て等)を共有してしまう。
     html = replace_field(html, "ENVIRONMENT", "101", "77")
 
-    # ゲームパッドのA/B初期割り当て: WebMSX既定はA=[0,2] B=[1,2]で、ボタン2が
-    # A/B両方に入っている。PCブラウザで非標準配列のパッド(実機報告: A=1, B=2)
-    # だと、Aを押すと「B」、Bを押すと「A+B同時」になり、A/Bが効かないように
-    # 見える。A=[0,1] B=[2,3]に変更し、標準配列でも下/右=A、左/上=Bとなる
-    # ようにする(2人分の定義があるため2箇所)。
+    # ゲームパッドのA/B割り当て: 実機報告では、スマホ(標準配列)はA=0/B=1、
+    # PCブラウザの非標準配列パッドはA=1/B=2で、固定の番号割り当て1つでは両立
+    # しない(WebMSX既定のA=[0,2] B=[1,2]はボタン2がA/B両方に入っているため、
+    # PCではAが「B」、Bが「A+B」になっていた)。そこで割り当て自体は標準配列
+    # 基準のA=[0,2](下/左) B=[1,3](右/上)にし、非標準配列のパッドだけ
+    # head内のスクリプト(GAMEPAD_REMAP_SCRIPT)で汎用USBパッドによくある
+    # 0=X,1=A,2=B,3=Y の並びを標準配列の位置へ並べ替えてからWebMSXに渡す
+    # (2人分の定義があるため2箇所)。
     old_joy = "J_A:[d.GB_1,d.GB_3],J_B:[d.GB_2,d.GB_3]"
-    new_joy = "J_A:[d.GB_1,d.GB_2],J_B:[d.GB_3,d.GB_4]"
+    new_joy = "J_A:[d.GB_1,d.GB_3],J_B:[d.GB_2,d.GB_4]"
     if html.count(old_joy) != 2:
         raise RuntimeError("ゲームパッド既定割り当ての定義が想定通り2箇所見つからなかった")
     html = html.replace(old_joy, new_joy)
@@ -132,6 +159,7 @@ def patch_config(html, rom_filename, title):
         raise RuntimeError("テンプレート内に</head>が見つからなかった")
     html = (html[:head_close_idx]
             + "<style>#wmsx-bar-full-screen { display: none !important; }</style>\n"
+            + GAMEPAD_REMAP_SCRIPT
             + html[head_close_idx:])
 
     # (2026-09-25: ランドスケープ固定のためscreen.orientation.lock()を
