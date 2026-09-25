@@ -78,6 +78,11 @@ data: URIとしてHTMLに埋め込まず、zip内の別ファイルとして同�
   スマホでA/B両方がAになった)。割り当ては標準配列基準のA=[0,2] B=[1,3]とし、
   mapping!=="standard"のパッドだけhead内スクリプトで0=X,1=A,2=B,3=Yの並びを
   標準位置へ並べ替える。擬似パッドで両配列ともA/Bが正しく入ることを確認済み。
+- パッドのtimestamp無効化: WebMSXはGamepadのtimestampが増えたときだけボタンを
+  読み直すが、PCブラウザ+パッドの組み合わせによってはボタン押下でtimestampが
+  更新されず、接続は認識されるのにA/Bが入らず設定画面の割り当て検出も効かない
+  (公式webmsx.orgでも同症状を確認)。head内スクリプトでtimestamp=0にして毎回
+  読ませる。timestamp固定の擬似パッドで症状再現→修正後に入力を確認済み。
 - 設定保存区画: `ENVIRONMENT=77`。itch.ioのHTMLゲームは全作品が同じoriginで動くため、
   C-BIOS版既定の101のままだと他のWebMSX作品とlocalStorageの設定を共有してしまう。
 - 旧AppCache(`manifest="cache.manifest"`)関連の参照は未使用のため削除済み

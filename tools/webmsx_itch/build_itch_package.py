@@ -41,8 +41,14 @@ DEFAULT_ROM = os.path.join(REPO, "rom", "CyberS Comb.ascii16k.rom")
 DEFAULT_OUT = os.path.join(HERE, "dist", "CyberShmup_webmsx_itch.zip")
 ROM_NAME_IN_ZIP = "CyberShmup [ASCII16].rom"
 
-# 非標準配列(mapping !== "standard")のパッドだけ、0=X,1=A,2=B,3=Y の並びを
-# 標準配列の位置(0=下=A, 1=右=B, 2=左=X, 3=上=Y)へ並べ替える。
+# WebMSXに渡す前にnavigator.getGamepads()の結果を加工する:
+# - timestampを0にする: WebMSXのGamepad.hasMoved()はtimestampが前回より増えた
+#   ときだけボタン/軸を読み直す(timestampが偽値なら毎回読む)。PCブラウザと
+#   パッドの組み合わせによってはボタン押下でtimestampが更新されず、接続は
+#   認識されるのにA/Bが一切入らず、設定画面のボタン割り当て検出も反応しない
+#   (実機報告: 公式webmsx.orgでも同症状。timestamp固定の擬似パッドで再現済み)。
+# - 非標準配列(mapping !== "standard")のパッドだけ、0=X,1=A,2=B,3=Y の並びを
+#   標準配列の位置(0=下=A, 1=右=B, 2=左=X, 3=上=Y)へ並べ替える。
 GAMEPAD_REMAP_SCRIPT = """<script>
 (function () {
     if (!navigator.getGamepads) return;
@@ -53,10 +59,11 @@ GAMEPAD_REMAP_SCRIPT = """<script>
         var out = [];
         for (var i = 0; i < pads.length; i++) {
             var p = pads[i];
-            if (!p || p.mapping === "standard" || p.buttons.length < 4) { out.push(p); continue; }
+            if (!p) { out.push(p); continue; }
             var buttons = Array.prototype.slice.call(p.buttons);
-            for (var j = 0; j < ORDER.length; j++) buttons[j] = p.buttons[ORDER[j]];
-            out.push({ id: p.id, index: p.index, connected: p.connected, timestamp: p.timestamp,
+            if (p.mapping !== "standard" && buttons.length >= 4)
+                for (var j = 0; j < ORDER.length; j++) buttons[j] = p.buttons[ORDER[j]];
+            out.push({ id: p.id, index: p.index, connected: p.connected, timestamp: 0,
                        mapping: p.mapping, axes: p.axes, buttons: buttons });
         }
         return out;
