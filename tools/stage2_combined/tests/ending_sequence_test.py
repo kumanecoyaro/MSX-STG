@@ -115,6 +115,8 @@ def kill_boss_for_real(cpu):
     raise AssertionError("boss explosion never reached DONE")
 
 
+check("ENDING_WAIT_TICKS is 300 (boss death -> ending, 5s @60Hz, \"10秒から5秒に変更\")", ENDING_WAIT_TICKS == 300)
+
 # ---- real boot, real death ----
 cpu = fresh_cpu()
 check("ENDING_ACT starts at 0 (fresh boot, no ending pending)", cpu.mem[ENDING_ACT] == 0)

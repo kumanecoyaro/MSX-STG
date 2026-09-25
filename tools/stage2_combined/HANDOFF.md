@@ -18777,3 +18777,7 @@ EbuzII弾ビームへの1pxコリジョン追加+ROM予算の共有バンク6オ
   - スタート演出側(slot8/9)の書き手はDSF_WRITEだけで、点滅しないことを確認済み。
   - テスト: ending_sequence_testに「命令単位で見てもslot8/9のYが一度も209にならない」「slot6が隠れている」を追加(35 passed)。修正を一時的に外すと前者がFAILすることも確認済み。run_all 1631 passed/0 failed。Stage2残り4961(変化なし)。Comb再ビルド・verify_comb PASS。
   - 教訓: 他のプールのスロットを借りる時は、フレーム末のVRAMだけでなく、フレームの途中に別の書き手がいないかを命令単位で確認すること(実機では途中状態も映る)。
+- (follow-up49追記その3、2026-09-25) 「操作無効から演出に入るまで 10秒から5秒に変更」
+  - ENDING_WAIT_TICKS(ボス撃破→ENDING_START_PLAYBACK=操作無効・GFEnding・ステージ1自機の開始)を600→300(5秒@60Hz)。
+  - もう1つの10秒(MISSION COMPLETED→最終画像、ENDING_RETURN_WAIT_TICKS=600)は変えていない。
+  - ending_sequence_testに値の確認を1件追加。run_all 1632 passed/0 failed。Comb再ビルド・verify_comb PASS。

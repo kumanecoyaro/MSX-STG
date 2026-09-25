@@ -6714,7 +6714,7 @@ ENDING_ACT         EQU 0CB1Ah   ; 0=未発生/1=ボス撃破後の待機中/2=�
                                  ; 以後この変数自体はもう参照されない)
 ENDING_WAIT_START  EQU 0CB1Bh   ; ENDING_ACT=1になった瞬間のVBLANK_COUNTスナップショット
 ENDING_SONG_START  EQU 0CB1Dh   ; ENDING_ACT=2になった瞬間のVBLANK_COUNTスナップショット
-ENDING_WAIT_TICKS       EQU 600   ; "10秒ほど" - 60Hz想定の近似値(未確定、実機フィードバック待ち)
+ENDING_WAIT_TICKS       EQU 300   ; ボス撃破→エンディング演出(操作無効・曲・ステージ1自機)開始まで。"10秒ほど"(600)→2026-09-25"10秒から5秒に変更"で300(60Hz想定)
 ENDING_SONG_TOTAL_TICKS EQU 1630  ; tools/bgm_data/midi_to_psg.load_ending_gfending_parts()の全パート共通total_ticks
 ; (2026-09-07、"ステージ2クリア後は10秒でタイトル画面に"): ENDING_ACT=3
 ; になった瞬間のVBLANK_COUNTスナップショット。安全な未使用領域
