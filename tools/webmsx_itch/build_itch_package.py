@@ -206,6 +206,20 @@ def patch_config(html, rom_filename, title):
         raise RuntimeError("設定画面の位置決め処理が想定通り1箇所見つからなかった")
     html = html.replace(old_pos, new_pos)
 
+    # 設定画面PORTSのボタン割り当て: WebMSXはボタン絵にマウスを乗せる
+    # (mouseenter)ことでしか割り当て待ちに入らず、スマホでは設定できない。
+    # タップ(touchstart)でも同じ処理を呼ぶようにする。スマホには右クリック(割り当て
+    # クリア)が無いので、割り当て待ち中の同じボタンを再タップしたらクリアする。
+    old_ports = ('function e(a){a.addEventListener("mouseenter",f),'
+                 'a.addEventListener("mouseleave",g)}')
+    new_ports = ('function e(a){a.addEventListener("mouseenter",f),'
+                 'a.addEventListener("mouseleave",g),'
+                 'a.addEventListener("touchstart",function(b){b.preventDefault(),'
+                 'b.stopPropagation(),r===a?h({which:3}):f({target:a})},{passive:!1})}')
+    if html.count(old_ports) != 1:
+        raise RuntimeError("PORTS設定のボタンイベント登録が想定通り1箇所見つからなかった")
+    html = html.replace(old_ports, new_ports)
+
     # 起動時の旧AppCache参照を除去(廃止済みAPIで、ファイルも同梱しないため)
     html = html.replace(
         '<html lang="en" translate="no" class="notranslate" manifest="cache.manifest">',
