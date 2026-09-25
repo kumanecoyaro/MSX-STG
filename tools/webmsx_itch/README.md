@@ -73,6 +73,11 @@ data: URIとしてHTMLに埋め込まず、zip内の別ファイルとして同�
   - itch.io側のiframeが`allow="gamepad"`を含むかは、このセッションの
     ネットワーク制限でitch.ioに直接アクセスできず未確認。実ゲームパッドが
     itch.io上で反応しない場合でも、上記のタッチ/マウスUIがあるので操作は可能。
+- ゲームパッドA/B初期割り当て: WebMSX既定のA=[0,2] B=[1,2]を、A=[0,1] B=[2,3]に
+  変更(ボタン2がA/B両方に入っていたため、非標準配列のPCパッド(実機報告: A=1, B=2)で
+  Aを押すと「B」、Bを押すと「A+B」になっていた)。標準配列では下/右=A、左/上=B。
+- 設定保存区画: `ENVIRONMENT=77`。itch.ioのHTMLゲームは全作品が同じoriginで動くため、
+  C-BIOS版既定の101のままだと他のWebMSX作品とlocalStorageの設定を共有してしまう。
 - 旧AppCache(`manifest="cache.manifest"`)関連の参照は未使用のため削除済み
 - **画面向き(ランドスケープ)固定は未対応(撤回済み)**: WebMSX自身は
   レスポンシブCSSで現在の向きに追従するだけで、Screen Orientation APIに

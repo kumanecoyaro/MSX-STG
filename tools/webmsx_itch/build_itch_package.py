@@ -63,6 +63,22 @@ def patch_config(html, rom_filename, title):
     # 機種: MSX1 日本(NTSC 60Hz, JIS配列)
     html = replace_field(html, "MACHINE", '""', '"MSX1J"')
 
+    # 設定保存区画: itch.ioのHTMLゲームは全作品が同じorigin(html-classic.itch.zone)
+    # で動くため、C-BIOS版WebMSX既定の101のままだと他のWebMSX作品と
+    # localStorageの設定(ジョイスティック割り当て等)を共有してしまう。
+    html = replace_field(html, "ENVIRONMENT", "101", "77")
+
+    # ゲームパッドのA/B初期割り当て: WebMSX既定はA=[0,2] B=[1,2]で、ボタン2が
+    # A/B両方に入っている。PCブラウザで非標準配列のパッド(実機報告: A=1, B=2)
+    # だと、Aを押すと「B」、Bを押すと「A+B同時」になり、A/Bが効かないように
+    # 見える。A=[0,1] B=[2,3]に変更し、標準配列でも下/右=A、左/上=Bとなる
+    # ようにする(2人分の定義があるため2箇所)。
+    old_joy = "J_A:[d.GB_1,d.GB_3],J_B:[d.GB_2,d.GB_3]"
+    new_joy = "J_A:[d.GB_1,d.GB_2],J_B:[d.GB_3,d.GB_4]"
+    if html.count(old_joy) != 2:
+        raise RuntimeError("ゲームパッド既定割り当ての定義が想定通り2箇所見つからなかった")
+    html = html.replace(old_joy, new_joy)
+
     # フルスクリーン: itch.ioのiframe内ではWebMSX自身にFullscreen APIを
     # 呼ばせない。全画面化と画面向きはitch.io側(埋め込みのFullscreen button、
     # モバイルの自動全画面+Orientation設定)に任せる。
