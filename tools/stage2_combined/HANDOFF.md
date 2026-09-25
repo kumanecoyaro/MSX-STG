@@ -18741,3 +18741,6 @@ EbuzII弾ビームへの1pxコリジョン追加+ROM予算の共有バンク6オ
 - テスト: tank_entry_test.py 42件(Stage1ソースとのバイト一致、VRAMへのロード、毎フレームのslot8/9の属性、非表示、PAT_TANKUPの復元)。vdp_wait_test.pyの生OUTの数を40→42/29→37に更新。run_all 1619 passedで、失敗はHEADと比較するterrain_render_perf_test.pyだけ(コミット後に解消)。
 - レンダリングで、Row1に赤い自機が出て右へ加速して去ることを確認した。
 - Stage2の残りは5473→5217byte。追加は約130byteだが、ALIGN境界を1つ越えて256byte減った。Comb再ビルド・verify_comb PASS。
+- (follow-up48追記) "直ぐに動き始めるのではなく60フレ停止してから飛び去るように": 新EQUのS1SHIP_FLY_WAIT(60)を追加し、DRAW_S1SHIP_FLYAWAYが表を引く位置をANIM-(WAIT-1)へずらした(負になる間は表の[0]=X0)。
+  - 落下1〜60フレーム目はX=0で停止表示、61フレーム目からX=1,2,3...と加速する。104フレーム目に画面外へ出て非表示になり、着地(220フレーム目)に十分間に合う。パターン借用は着地時の復元まで有効なので問題なし。
+  - tank_entry_test 42件、run_all 1622 passed/0 failed。Stage2残り5217byte(変化なし)。

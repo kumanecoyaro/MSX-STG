@@ -148,12 +148,13 @@ BOOSTER_COLOR EQU 15   ; white (fg=15、添付データ通り)
 ; PAT_TANKUPの残り8コード(24-31、演出終了時にTANK_ENTRY_FINISHが
 ; PAT_TANKUP全体を復元)を借用。X座標はステージ1のPFA_MOVINGの加速
 ; カーブ(1,2,3,4px/frame→巡航8)をそのまま表にしたS1SHIP_FLY_X
-; (TANK_ENTRY_ANIMで引く=落下と同時に開始)、X>=248で非表示(ステージ1と
+; (TANK_ENTRY_ANIMで引く、落下開始から60フレーム停止した後に開始)、X>=248で非表示(ステージ1と
 ; 同じ)。Y=7(=表示ライン8、Row1の上端)。
 S1SHIP_SPR_BASE_SLOT EQU 8
 PAT_S1SHIP_ACCENT EQU 28
 PAT_S1SHIP_BODY EQU 24
 S1SHIP_FLY_Y EQU 7
+S1SHIP_FLY_WAIT EQU 60       ; 落下開始から飛び去り開始までの停止フレーム数
 S1SHIP_FLY_LEN EQU 45        ; S1SHIP_FLY_Xの要素数(前方参照回避のためここで定義)
 S1SHIP_BODY_COLOR EQU 8     ; SPR_RED(ステージ1と同じ)
 S1SHIP_ACCENT_COLOR EQU 15  ; SPR_WHITE(ステージ1と同じ、被弾時の紫は不要)
@@ -16417,7 +16418,15 @@ FBS_LOOP:
 ; 超えたら(=X>=248、画面右端)非表示。slot8=アクセント、slot9=本体を
 ; FLUSH_BOOSTER_SPRITESと同型のDI+NOPパディング付き生OUTで書く。
 DRAW_S1SHIP_FLYAWAY:
+    ; (2026-09-25follow-up、"直ぐに動き始めるのではなく60フレ停止してから
+    ; 飛び去るように"): 落下1-60フレーム目はX=0で停止表示、61フレーム目
+    ; からX=1,2,...と加速(表の引き位置をANIM-(WAIT-1)にずらすだけ、表の
+    ; [0]と[1]はどちらもX=0)。
     LD A,(TANK_ENTRY_ANIM)
+    SUB S1SHIP_FLY_WAIT-1
+    JR NC,DSF_IDX
+    XOR A
+DSF_IDX:
     CP S1SHIP_FLY_LEN
     JR NC,HIDE_S1SHIP
     LD E,A : LD D,0

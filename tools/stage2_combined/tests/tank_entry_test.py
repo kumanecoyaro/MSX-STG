@@ -331,13 +331,15 @@ while True:
         break
     frames += 1
     a = [cs.vram[SPRATR + slot * 4 + i] for i in range(8)]
-    if frames <= len(exp_x):
-        if a != [7, exp_x[frames - 1], PA, 15, 7, exp_x[frames - 1], PB, 8]:
+    WAIT = sym["S1SHIP_FLY_WAIT"]
+    ex = 0 if frames <= WAIT else (exp_x[frames - WAIT] if frames - WAIT < len(exp_x) else None)
+    if ex is not None:
+        if a != [7, ex, PA, 15, 7, ex, PB, 8]:
             fly_ok = False
     elif a[0] != 209 or a[4] != 209:
         hide_ok = False
-check("Stage1 ship: from the very first fall frame, slot8(accent white)/slot9(body red) at Y=7 (Row1), X follows Stage1's flyaway accel curve from X=0",
-      fly_ok and frames > len(exp_x))
+check("Stage1 ship: slot8(accent white)/slot9(body red) at Y=7 (Row1), held at X=0 for the first S1SHIP_FLY_WAIT(60) fall frames, then X follows Stage1's flyaway accel curve (frame61 = X1)",
+      fly_ok and sym["S1SHIP_FLY_WAIT"] == 60 and frames > 60 + len(exp_x))
 check("Stage1 ship: hidden (Y=209) once past X>=248, for the rest of the fall", hide_ok)
 check("after entry: PAT_TANKUP (incl. codes 24-31 borrowed by the Stage1 ship) restored",
       list(cs.vram[SPRPAT + PAT_TANKUP * 8:SPRPAT + PAT_TANKUP * 8 + 128]) == [out[sym["TANK_TANKUP_TL"] + i] & 0xFF for i in range(128)])
