@@ -63,9 +63,11 @@ def patch_config(html, rom_filename, title):
     # 機種: MSX1 日本(NTSC 60Hz, JIS配列)
     html = replace_field(html, "MACHINE", '""', '"MSX1J"')
 
-    # フルスクリーン: 起動時から画面いっぱいに表示するレイアウトを既定にする
-    # (実際のブラウザFullscreen APIへの切替はユーザー操作が必要、これは変わらない)
-    html = replace_field(html, "SCREEN_FULLSCREEN_MODE", "-1", "1")
+    # フルスクリーン: SCREEN_FULLSCREEN_MODEは公式と同じ既定値(-1=自動)のまま。
+    # 1にするとpowerOn時点でCSS上の疑似全画面(isFullscreen=true)になるため、
+    # フルスクリーンボタンが「全画面解除」側にトグルしてしまい本物の
+    # Fullscreen APIに入れず(回転追従も効かない)、モバイル起動時の
+    # 「GO!」(タップで本物の全画面へ)も出なくなる。
 
     # ジョイスティック: 実ゲームパッド接続を自動検出(既定のまま/明示化)
     html = replace_field(html, "JOYSTICKS_MODE", "0", "0")
